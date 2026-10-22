@@ -104,7 +104,7 @@ export default defineConfig({
   // H7 fix: restore webServer so E2E tests auto-start the app
   // Use `npx next dev` directly to bypass pnpm predev hook (which kills port 3000)
   webServer: {
-    command: "npx next dev --port " + webPort,
+    command: "npx vite --port " + webPort,
     url: `http://localhost:${webPort}`,
     reuseExistingServer: !process.env.CI,
     timeout: 180_000,

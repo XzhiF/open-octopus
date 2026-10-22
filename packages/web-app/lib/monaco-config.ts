@@ -1,18 +1,7 @@
-// Monaco editor configuration - must only be called on client side
-let configured = false
+// Monaco must be configured synchronously before @monaco-editor/react renders;
+// the old async loader.config() could race into the CDN fallback.
+import '@/lib/monaco-setup'
 
 export function configureMonaco() {
-  if (configured || typeof window === "undefined") return
-  configured = true
-
-  // Dynamic imports - bundler will resolve these at build time
-  Promise.all([
-    import("@monaco-editor/react").then(m => m.loader),
-    import("monaco-editor"),
-  ]).then(([loader, monaco]) => {
-    loader.config({ monaco })
-  }).catch(error => {
-    console.warn("Failed to configure Monaco:", error)
-    configured = false
-  })
+  // Kept as the call-site seam; setup runs on module evaluation.
 }

@@ -18,13 +18,6 @@ vi.mock("@/lib/observability-api", () => ({
 vi.mock("@/lib/billing-currency", () => ({
   useBillingCurrency: () => ({ currency: "CNY", rate: 7 }),
 }))
-vi.mock("next/link", () => ({
-  // 透传 href/target/rel 成真 <a>，钉「完整台账」新标签页行为（1e842875 同款，随 body 白拿）
-  default: (props: { children: ReactNode; href?: string; target?: string; rel?: string }) => (
-    <a href={props.href} target={props.target} rel={props.rel}>{props.children}</a>
-  ),
-}))
-
 // 与草稿 chip 测试同一独立样本：totals 174.6K / 命中率 63.1%（分母含缓存写，ADR-0027）/ $0.4583→¥3.21
 const USAGE: LlmUsageAggregates = {
   totalCalls: 30,

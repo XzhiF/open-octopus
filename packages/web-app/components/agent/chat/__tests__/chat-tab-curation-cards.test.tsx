@@ -5,8 +5,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest"
 import { render, screen, fireEvent, waitFor } from "@testing-library/react"
 
-vi.mock("next/navigation", () => ({ usePathname: () => "/agent", useRouter: () => ({ push: vi.fn() }) }))
-
 const chatBox: {
   messages: Array<{ id: string; session_id: string; role: "user" | "assistant"; content: string; created_at: string; is_summary: boolean; is_compressed: boolean; is_edited: boolean }>
   sent: string[]

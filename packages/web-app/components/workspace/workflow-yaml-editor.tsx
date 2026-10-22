@@ -2,6 +2,7 @@
 
 import { useRef, useCallback, useEffect } from "react"
 import { configureMonaco } from "@/lib/monaco-config"
+import { useIsActiveRoute } from "@/lib/app-navigation"
 import Editor, { type OnMount } from "@monaco-editor/react"
 
 interface WorkflowYamlEditorProps {
@@ -14,6 +15,7 @@ interface WorkflowYamlEditorProps {
 const OCTOPUS_DARK_THEME = "octopus-dark-tui"
 
 export function WorkflowYamlEditor({ value, onChange, onSave }: WorkflowYamlEditorProps) {
+  const isActive = useIsActiveRoute()
   const editorRef = useRef<unknown>(null)
   const onSaveRef = useRef(onSave)
   onSaveRef.current = onSave
@@ -26,7 +28,7 @@ export function WorkflowYamlEditor({ value, onChange, onSave }: WorkflowYamlEdit
   // Global Cmd+S / Ctrl+S — capture phase prevents the browser's native
   // "Save Page" dialog from stealing the event on macOS.
   useEffect(() => {
-    if (!onSave) return
+    if (!onSave || !isActive) return
     const handler = (e: KeyboardEvent) => {
       if ((e.metaKey || e.ctrlKey) && e.key === "s") {
         e.preventDefault()
@@ -36,7 +38,7 @@ export function WorkflowYamlEditor({ value, onChange, onSave }: WorkflowYamlEdit
     }
     window.addEventListener("keydown", handler, { capture: true })
     return () => window.removeEventListener("keydown", handler, { capture: true })
-  }, [!!onSave])
+  }, [!!onSave, isActive])
 
   const handleMount: OnMount = (editor, monaco) => {
     editorRef.current = editor

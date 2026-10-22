@@ -118,9 +118,6 @@ vi.mock("@/lib/sse-manager", () => ({
   subscribeSSEStatus: () => () => {},
 }))
 vi.mock("@/lib/server-config", () => ({ getServerUrl: () => "http://localhost:3001" }))
-vi.mock("next/navigation", () => ({
-  useRouter: () => ({ push: pushSpy, replace: vi.fn(), refresh: vi.fn(), back: vi.fn() }),
-}))
 vi.mock("sonner", () => ({ toast: { success: vi.fn(), error: vi.fn(), warning: vi.fn() } }))
 
 // 重组件桩（只测控制台盘面编排，弹窗本体各有自己的测试）

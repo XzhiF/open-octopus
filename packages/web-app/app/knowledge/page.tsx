@@ -1,6 +1,7 @@
 "use client"
 
 import { useCallback, useEffect, useRef, useState } from "react"
+import { useIsActiveRoute } from "@/lib/app-navigation"
 import {
   getKcArticle,
   getKcFs,
@@ -65,6 +66,7 @@ const TREE_W_MIN = 200
 const TREE_W_MAX = 560
 
 export default function KnowledgePage() {
+  const isActive = useIsActiveRoute()
   const [tree, setTree] = useState<KcTree | null>(null)
   const [treeError, setTreeError] = useState<string | null>(null)
   /** 知识根真实目录树（左栏数据面；缺席/失败显形，不伪造空树） */
@@ -186,6 +188,7 @@ export default function KnowledgePage() {
 
   // Ctrl/⌘+K 开合检索命令条（useGlobalCommandPalette 先例同律）
   useEffect(() => {
+    if (!isActive) return
     const handler = (e: KeyboardEvent) => {
       if ((e.metaKey || e.ctrlKey) && e.key === "k") {
         e.preventDefault()
@@ -194,7 +197,7 @@ export default function KnowledgePage() {
     }
     window.addEventListener("keydown", handler)
     return () => window.removeEventListener("keydown", handler)
-  }, [])
+  }, [isActive])
 
   // 视图态 ⇒ 取数（page/raw/log 各一路；INDEX 随 tree 响应零额外请求）
   useEffect(() => {

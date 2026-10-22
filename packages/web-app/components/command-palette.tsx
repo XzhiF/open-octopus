@@ -1,7 +1,7 @@
 "use client"
 
 import { useState, useEffect } from "react"
-import { useRouter } from "@/lib/app-navigation"
+import { useIsActiveRoute, useRouter } from "@/lib/app-navigation"
 import { CommandDialog, CommandInput, CommandList, CommandEmpty, CommandGroup, CommandItem } from "@/components/ui/command"
 import { GitBranch, Play, Settings, RefreshCw } from "lucide-react"
 
@@ -15,7 +15,7 @@ interface CommandPaletteProps {
 
 const ACTIONS = [
   { id: 'run-workflow', label: '运行工作流', icon: Play, prefix: '>' },
-  { id: 'refresh', label: '刷新数据', icon: RefreshCw, prefix: '>' },
+  { id: 'refresh', label: '重新加载', icon: RefreshCw, prefix: '>' },
   { id: 'settings', label: '设置', icon: Settings, prefix: '>' },
 ]
 
@@ -77,8 +77,10 @@ export function CommandPalette({ open, onOpenChange, workflows = [], executions 
 
 export function useGlobalCommandPalette() {
   const [open, setOpen] = useState(false)
+  const active = useIsActiveRoute()
 
   useEffect(() => {
+    if (!active) return
     const handler = (e: KeyboardEvent) => {
       if ((e.metaKey || e.ctrlKey) && e.key === 'k') {
         e.preventDefault()
@@ -87,7 +89,7 @@ export function useGlobalCommandPalette() {
     }
     window.addEventListener('keydown', handler)
     return () => window.removeEventListener('keydown', handler)
-  }, [])
+  }, [active])
 
   return { open, setOpen }
 }

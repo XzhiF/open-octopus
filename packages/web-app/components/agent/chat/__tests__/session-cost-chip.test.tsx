@@ -12,13 +12,6 @@ import { SessionCostChip } from "../session-cost-chip"
 vi.mock("@/lib/billing-currency", () => ({
   useBillingCurrency: () => ({ currency: "CNY", rate: 7 }),
 }))
-vi.mock("next/link", () => ({
-  // 透传 href/target/rel 成真 <a>，才能钉「完整台账」新标签页行为（1e842875）
-  default: (props: { children: ReactNode; href?: string; target?: string; rel?: string }) => (
-    <a href={props.href} target={props.target} rel={props.rel}>{props.children}</a>
-  ),
-}))
-
 const CTX = { percentage: 43, totalTokens: 86100, maxTokens: 200000 } as ContextUsageData
 
 const USAGE: LlmUsageAggregates = {

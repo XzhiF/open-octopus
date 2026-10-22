@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, useEffect, useCallback } from 'react'
-import { useSearchParams, useRouter } from "@/lib/app-navigation"
+import { usePathname, useSearchParams, useRouter } from "@/lib/app-navigation"
 import { Users, Plus, Cpu, User } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { useAgentClones } from '@/hooks/useAgentClones'
@@ -15,6 +15,7 @@ import { AgentEmptyState } from '../shared/AgentEmptyState'
 import type { CloneInfo } from '@/lib/agent/types'
 
 export function CloneTab() {
+  const pathname = usePathname()
   const searchParams = useSearchParams()
   const router = useRouter()
   const { clones, loading, error, refetch } = useAgentClones()
@@ -29,16 +30,17 @@ export function CloneTab() {
   const activeChatClone = clones.find(c => c.name === cloneParam) ?? null
 
   const enterClone = useCallback((clone: CloneInfo) => {
-    const url = new URL(window.location.href)
-    url.searchParams.set('clone', clone.name)
-    router.replace(url.toString())
-  }, [router])
+    const params = new URLSearchParams(searchParams.toString())
+    params.set('clone', clone.name)
+    router.replace(`${pathname}?${params.toString()}`)
+  }, [pathname, router, searchParams])
 
   const exitClone = useCallback(() => {
-    const url = new URL(window.location.href)
-    url.searchParams.delete('clone')
-    router.replace(url.toString())
-  }, [router])
+    const params = new URLSearchParams(searchParams.toString())
+    params.delete('clone')
+    const query = params.toString()
+    router.replace(query ? `${pathname}?${query}` : pathname)
+  }, [pathname, router, searchParams])
 
   // D3: Click clone → enter three-column detail view (URL-persisted)
   if (activeChatClone) {

@@ -7,6 +7,7 @@ import fs from "fs"
 import os from "os"
 import path from "path"
 import { createYjsWebSocketServer, setYjsWorkspaceDAO } from "./routes/yjs-ws"
+import { createWebStaticHandler } from "./web/static"
 import { initDb, getDb, getDbPath } from "./db/connection"
 import { applySchema } from "./db/schema"
 import {
@@ -969,7 +970,11 @@ if (shouldServe) {
   const portArg = process.argv.find(a => a.startsWith("--port="))
   const port = parseInt(portArg?.split("=")[1] ?? process.env.PORT ?? "3001", 10)
 
+  const webStatic = createWebStaticHandler(process.env.OCTOPUS_WEB_DIR)
+
   const server = http.createServer(async (req, res) => {
+    if (webStatic?.(req, res)) return
+
     const host = req.headers.host ?? "localhost"
     const proto = req.headers["x-forwarded-proto"] ?? "http"
     const url = `${proto}://${host}${req.url}`

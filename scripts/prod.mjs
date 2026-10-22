@@ -5,23 +5,23 @@
  * Usage:
  *   pnpm prod                    # build → copy to stable dir → run
  *   pnpm prod --skip-build       # skip build, use existing stable copy
- *   pnpm prod --port 3098,3099   # explicit web,server pair (web first)
+ *   pnpm prod --port 3098,3099   # explicit ports (UI is served on the server port)
  *
  * Port allocation (fully isolated from dev):
  *   dev (main):     Server 3001, Web 3000, DB octopus.db
  *   dev (worktree): Server 3100-3598 (hash), Web +1, DB octopus-{branch}.db
- *   prod:           Server 3099, Web 3098 (default), DB octopus-prod.db
+ *   prod:           Server 3099 (UI + API), DB octopus-prod.db
  *
  * Resilience:
- *   - Server/web auto-restart on unexpected exit (up to MAX_RESTARTS in window)
+ *   - Server auto-restarts on unexpected exit (up to MAX_RESTARTS in window)
  *   - PID lock file prevents multiple prod.mjs instances
  *   - Detailed exit logging (code, signal) for debugging crashes
  *
  * How it works:
- *   1. pnpm build (compile all packages)
+ *   1. pnpm build (compile all packages, including Vite web dist)
  *   2. Copy dist/ outputs to ~/.octopus/prod/{package}/dist/
  *   3. Start server from stable copy with OCTOPUS_DB_PATH=octopus-prod.db
- *   4. Start web-app pointing to prod server
+ *      and OCTOPUS_WEB_DIR=packages/web-app/dist (same-origin UI)
  *   Source code changes won't affect the running instance.
  */
 
@@ -37,6 +37,7 @@ const PROD_DIR = path.join(os.homedir(), ".octopus", "prod")
 // prod 独占端口，完全独立于 dev (3001/3000) 和 worktree (3100-3598)
 // 可用 --port <web>,<server> 覆盖
 let SERVER_PORT = 3099
+// Kept for CLI compatibility with the old web/server pair; the SPA is same-origin on SERVER_PORT.
 let WEB_PORT = 3098
 const DB_PATH = path.join(os.homedir(), ".octopus", "db", "octopus-prod.db")
 
@@ -161,28 +162,6 @@ function copyDist() {
       copyDirSync(src, dest)
       console.log(`[prod]   copied core-pack/${dir}/`)
     }
-  }
-
-  // Copy web-app .next build output (for `next start`, skip dev cache)
-  const webAppNextSrc = path.join(repoRoot, "packages", "web-app", ".next")
-  const webAppNextDest = path.join(PROD_DIR, "packages", "web-app", ".next")
-  if (fs.existsSync(webAppNextSrc)) {
-    fs.rmSync(webAppNextDest, { recursive: true, force: true })
-    fs.mkdirSync(webAppNextDest, { recursive: true })
-    // Only copy production files (skip dev cache, trace, lock files, node_modules)
-    const skipDirs = new Set(["dev", "trace", "cache", "node_modules"])
-    const entries = fs.readdirSync(webAppNextSrc, { withFileTypes: true })
-    for (const entry of entries) {
-      if (skipDirs.has(entry.name)) continue
-      const src = path.join(webAppNextSrc, entry.name)
-      const dest = path.join(webAppNextDest, entry.name)
-      if (entry.isDirectory()) {
-        copyDirSync(src, dest)
-      } else {
-        fs.copyFileSync(src, dest)
-      }
-    }
-    console.log(`[prod]   copied web-app/.next/ (production build)`)
   }
 
   console.log(`[prod] Stable copy ready at ${PROD_DIR}`)
@@ -394,8 +373,7 @@ async function main() {
   console.log("[prod] Octopus Production Mode")
   console.log("[prod] ═══════════════════════════════════════")
   console.log(`[prod] Stable dir: ${PROD_DIR}`)
-  console.log(`[prod] Server:     http://localhost:${SERVER_PORT} (LAN: http://${localIP}:${SERVER_PORT})`)
-  console.log(`[prod] Web:        http://localhost:${WEB_PORT} (LAN: http://${localIP}:${WEB_PORT})`)
+  console.log(`[prod] UI + API:   http://localhost:${SERVER_PORT} (LAN: http://${localIP}:${SERVER_PORT})`)
   console.log(`[prod] DB:         ${DB_PATH}`)
   console.log(`[prod] PID:        ${process.pid}`)
   console.log(`[prod] Auto-restart: up to ${MAX_RESTARTS} times in ${RESTART_WINDOW_MS / 1000}s`)
@@ -429,14 +407,18 @@ async function main() {
     console.log(`[prod] DB: reusing octopus-prod.db`)
   }
 
-  // Step 4: Kill stale processes on prod ports only
+  // Step 4: Kill stale processes on prod server port only
   killPort(SERVER_PORT)
-  killPort(WEB_PORT)
 
-  // Step 5: Start server from stable copy
+  // Step 5: Start server from stable copy (it hosts the Vite SPA too)
   const serverDistPath = path.join(PROD_DIR, "packages", "server", "dist", "index.js")
   if (!fs.existsSync(serverDistPath)) {
     console.error(`[prod] Server not found at ${serverDistPath}`)
+    process.exit(1)
+  }
+  const webDistPath = path.join(PROD_DIR, "packages", "web-app", "dist")
+  if (!fs.existsSync(path.join(webDistPath, "index.html"))) {
+    console.error(`[prod] Web build not found at ${webDistPath}/index.html`)
     process.exit(1)
   }
 
@@ -444,9 +426,10 @@ async function main() {
     PORT: String(SERVER_PORT),
     OCTOPUS_DB_PATH: DB_PATH,
     OCTOPUS_BRANCH: "prod",
+    OCTOPUS_WEB_DIR: webDistPath,
   }
 
-  console.log("\n[prod] Starting server from stable copy...")
+  console.log("\n[prod] Starting server (UI + API) from stable copy...")
   startProcess(
     process.execPath,
     [serverDistPath],
@@ -463,23 +446,7 @@ async function main() {
     return
   }
 
-  // Step 7: Start web-app with `next start` (production mode, no dev lock conflict)
-  console.log("[prod] Starting web-app (production mode)...")
-  const prodWebAppDir = path.join(PROD_DIR, "packages", "web-app")
-  const nextBin = path.join(prodWebAppDir, "node_modules", "next", "dist", "bin", "next")
-  const webEnv = {
-    SERVER_URL: `http://${localIP}:${SERVER_PORT}`,
-  }
-  startProcess(
-    process.execPath,
-    [nextBin, "start", "-p", String(WEB_PORT)],
-    webEnv,
-    "web",
-    prodWebAppDir
-  )
-
-  console.log(`\n[prod] ✓ server: http://${localIP}:${SERVER_PORT} (PID: ${health.pid})`)
-  console.log(`[prod] ✓ web:    http://localhost:${WEB_PORT}`)
+  console.log(`\n[prod] ✓ UI/API: http://${localIP}:${SERVER_PORT} (PID: ${health.pid})`)
   console.log(`[prod] ✓ db:     ${DB_PATH}`)
   console.log(`\n[prod] Source code changes will NOT affect the running server.`)
   console.log(`[prod] If server crashes, it will auto-restart (up to ${MAX_RESTARTS} times).`)

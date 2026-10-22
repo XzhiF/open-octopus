@@ -108,8 +108,6 @@ vi.mock("@/components/scheduler/project-selector", () => ({
     </div>
   ),
 }))
-vi.mock("next/navigation", () => ({ useRouter: () => ({ push: vi.fn() }) }))
-
 import { listSkillGroups } from "@/lib/skill-groups-api"
 import { readyTask, getBatchTree, TaskApiError } from "@/lib/tasks-api"
 import { AuthoringWorkspace } from "../authoring-workspace"

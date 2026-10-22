@@ -38,11 +38,15 @@ function dispatchSSE(eventType: string, data: unknown): void {
   listener({ data: JSON.stringify(data) })
 }
 
-// Mock next/navigation router to assert the workspace deep-link (票03 drill-down).
+// Mock the shell router to assert the workspace deep-link (票03 drill-down).
 const pushSpy = vi.fn()
-vi.mock("next/navigation", () => ({
-  useRouter: () => ({ push: pushSpy, replace: vi.fn(), refresh: vi.fn() }),
-}))
+vi.mock("@/lib/app-navigation", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/lib/app-navigation")>()
+  return {
+    ...actual,
+    useRouter: () => ({ push: pushSpy, replace: vi.fn(), refresh: vi.fn() }),
+  }
+})
 
 // Mock the DAG component to avoid rendering ReactFlow in jsdom.
 vi.mock("@/components/tasks/composite-dag", () => ({

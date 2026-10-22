@@ -7,14 +7,6 @@
 import { describe, it, expect, vi, beforeEach } from "vitest"
 import { render, screen, fireEvent, waitFor, within } from "@testing-library/react"
 
-vi.mock("next/navigation", () => ({
-  usePathname: () => "/knowledge",
-}))
-vi.mock("next/link", () => ({
-  default: ({ children, href }: { children: React.ReactNode; href: string }) => (
-    <a href={href}>{children}</a>
-  ),
-}))
 // react-markdown 全家桶对单测是纯负担 — 桩到内容透传（wiki-page.test.tsx:15 同款）
 vi.mock("@/components/resource/MarkdownPreview", () => ({
   MarkdownPreview: ({ content }: { content: string }) => <div data-md-preview>{content}</div>,

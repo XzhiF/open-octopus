@@ -10,11 +10,11 @@ vi.mock("@/components/tasks/task-modal", () => ({
     open ? <div data-testid="task-modal" /> : null,
 }))
 
-import ConversationPage from "../page"
+import { ConversationHome } from "@/components/agent/chat/ConversationHome"
 
 describe("对话首页", () => {
   it("复用 ChatTab，并从草稿按钮打开既有 TaskModal", () => {
-    render(<ConversationPage />)
+    render(<ConversationHome />)
 
     expect(
       screen.getByRole("heading", { name: "对话", level: 1 }),

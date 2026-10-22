@@ -6,9 +6,10 @@ import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { ArrowLeft, Archive, TrendingUp, DollarSign, Clock, CheckCircle2, FileText, Package } from "lucide-react"
 import Link from "@/lib/app-navigation"
-import { useParams } from "next/navigation"
+import { useParams } from "@/lib/app-navigation"
 import { toast } from "sonner"
 import { formatCost, formatDuration } from "@/lib/format"
+import { getServerUrl } from "@/lib/server-config"
 
 interface ArchiveDetail {
   workspace_id: string
@@ -34,7 +35,7 @@ export default function ArchiveDetailPage() {
   useEffect(() => {
     async function fetchArchive() {
       try {
-        const res = await fetch(`/api/archive/workspaces/${workspaceId}`)
+        const res = await fetch(`${getServerUrl()}/api/archive/workspaces/${workspaceId}`)
         if (!res.ok) throw new Error("Failed to fetch archive details")
         const data = await res.json()
         setArchive(data)

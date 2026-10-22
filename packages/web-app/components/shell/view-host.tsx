@@ -4,15 +4,15 @@
 // 切视图不丢滚动/筛选/弹窗状态。每个视图有独立导航作用域，避免互串 search params。
 // 对话视图由 AppShell 单独常驻（chat 不在此表）。
 
-import dynamic from 'next/dynamic'
-import { useCallback, useEffect, useMemo, useState, type ComponentType } from 'react'
+import { Suspense, useCallback, useEffect, useMemo, useState, type ComponentType } from 'react'
 import { cn } from '@/lib/utils'
 import {
   AppNavigationScope,
+  createNavigationScopeValue,
   useAppNavigation,
-  type AppNavigationValue,
 } from '@/lib/app-navigation'
-import type { ReadonlyURLSearchParams } from 'next/navigation'
+import { VIEW_COMPONENTS } from '@/lib/route-components'
+import { RouteErrorBoundary } from './route-error-boundary'
 
 function ViewLoading() {
   return (
@@ -20,30 +20,6 @@ function ViewLoading() {
       加载视图…
     </div>
   )
-}
-
-const VIEWS: Record<string, ComponentType> = {
-  dashboard: dynamic(() => import('@/app/dashboard/page'), { ssr: false, loading: ViewLoading }),
-  tasks: dynamic(() => import('@/app/tasks/page'), { ssr: false, loading: ViewLoading }),
-  workspaces: dynamic(() => import('@/app/workspaces/page'), { ssr: false, loading: ViewLoading }),
-  agent: dynamic(
-    () => import('@/components/agent/layout/AgentLayout').then((m) => m.AgentLayout),
-    { ssr: false, loading: ViewLoading },
-  ),
-  knowledge: dynamic(() => import('@/app/knowledge/page'), { ssr: false, loading: ViewLoading }),
-  resources: dynamic(
-    () => import('./resources-view').then((m) => m.ResourcesView),
-    { ssr: false, loading: ViewLoading },
-  ),
-  scheduler: dynamic(() => import('@/app/scheduler/page'), { ssr: false, loading: ViewLoading }),
-  system: dynamic(
-    () => import('./system-view').then((m) => m.SystemView),
-    { ssr: false, loading: ViewLoading },
-  ),
-  settings: dynamic(
-    () => import('./settings-view').then((m) => m.SettingsView),
-    { ssr: false, loading: ViewLoading },
-  ),
 }
 
 const BASE_PATH: Record<string, string> = {
@@ -80,30 +56,25 @@ function ViewScope({
   id: string
   active: boolean
   pinned: PinnedNav | undefined
-  globalValue: AppNavigationValue | null
+  globalValue: ReturnType<typeof useAppNavigation>
   onPin: (id: string, entry: PinnedNav) => void
   View: ComponentType
 }) {
-  const value = useMemo<AppNavigationValue | null>(() => {
+  const value = useMemo(() => {
     if (active && globalValue) return globalValue
-
     const entry = pinned ?? { pathname: BASE_PATH[id] ?? '/', search: '' }
-    const searchParams = new URLSearchParams(entry.search) as unknown as ReadonlyURLSearchParams
-    const navigate = (href: string) => onPin(id, splitFull(href))
-    const router = {
-      push: (href: string) => navigate(href),
-      replace: (href: string) => navigate(href),
-      back: () => {},
-      forward: () => {},
-      refresh: () => {},
-      prefetch: () => {},
-    } as unknown as AppNavigationValue['router']
-    return { pathname: entry.pathname, searchParams, mode: 'view', view: id, navigate, router }
+    return createNavigationScopeValue({
+      pathname: entry.pathname,
+      search: entry.search,
+      onNavigate: (target) => onPin(id, splitFull(target)),
+    })
   }, [active, globalValue, pinned, id, onPin])
 
   return (
     <AppNavigationScope value={value}>
-      <View />
+      <Suspense fallback={<ViewLoading />}>
+        <View />
+      </Suspense>
     </AppNavigationScope>
   )
 }
@@ -118,7 +89,7 @@ export function ViewHost({ activeView }: { activeView: string | null }) {
   }, [])
 
   useEffect(() => {
-    if (!activeView || !VIEWS[activeView]) return
+    if (!activeView || !VIEW_COMPONENTS[activeView as keyof typeof VIEW_COMPONENTS]) return
     setMounted((prev) => (prev.includes(activeView) ? prev : [...prev, activeView]))
     if (globalValue) {
       setPinned((prev) => ({
@@ -132,23 +103,35 @@ export function ViewHost({ activeView }: { activeView: string | null }) {
   }, [activeView, globalValue])
 
   return (
-    <div className={cn('min-h-0 flex-1', activeView ? 'block' : 'hidden')} aria-hidden={!activeView}>
-      {mounted.map((id) => (
-        <div
-          key={id}
-          className={cn('h-full min-h-0 overflow-y-auto', id === activeView ? 'block' : 'hidden')}
-          aria-hidden={id !== activeView}
-        >
-          <ViewScope
-            id={id}
-            active={id === activeView}
-            pinned={pinned[id]}
-            globalValue={globalValue}
-            onPin={onPin}
-            View={VIEWS[id]}
-          />
-        </div>
-      ))}
+    <div
+      className={cn('relative min-h-0 flex-1', activeView ? 'flex flex-col' : 'hidden')}
+      aria-hidden={!activeView}
+    >
+      {mounted.map((id) => {
+        const View = VIEW_COMPONENTS[id as keyof typeof VIEW_COMPONENTS]
+        if (!View) return null
+        const active = id === activeView
+        return (
+          <div
+            key={id}
+            className={cn('h-full min-h-0 overflow-y-auto', active ? 'block' : 'hidden')}
+            aria-hidden={!active}
+            inert={!active}
+            data-view-id={id}
+          >
+            <RouteErrorBoundary>
+              <ViewScope
+                id={id}
+                active={active}
+                pinned={pinned[id]}
+                globalValue={globalValue}
+                onPin={onPin}
+                View={View}
+              />
+            </RouteErrorBoundary>
+          </div>
+        )
+      })}
     </div>
   )
 }

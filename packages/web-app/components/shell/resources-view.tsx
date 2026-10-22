@@ -1,17 +1,28 @@
 'use client'
 
-import dynamic from 'next/dynamic'
+import { lazy, Suspense } from 'react'
 
-const ResourceLayout = dynamic(
-  () => import('@/components/resource/resource-layout').then((m) => m.ResourceLayout),
-  { ssr: false },
+function ViewLoading() {
+  return (
+    <div className="flex h-full items-center justify-center font-mono text-[11px] text-pop-dim">
+      加载视图…
+    </div>
+  )
+}
+
+const ResourceLayout = lazy(() =>
+  import('@/components/resource/resource-layout').then((m) => ({ default: m.ResourceLayout })),
 )
-const ResourcesPage = dynamic(() => import('@/app/resources/page'), { ssr: false })
+const ResourcesPage = lazy(() => import('@/app/resources/page'))
 
 export function ResourcesView() {
   return (
-    <ResourceLayout>
-      <ResourcesPage />
-    </ResourceLayout>
+    <Suspense fallback={<ViewLoading />}>
+      <ResourceLayout>
+        <Suspense fallback={<ViewLoading />}>
+          <ResourcesPage />
+        </Suspense>
+      </ResourceLayout>
+    </Suspense>
   )
 }

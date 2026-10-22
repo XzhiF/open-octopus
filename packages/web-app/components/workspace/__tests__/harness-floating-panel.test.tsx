@@ -17,14 +17,7 @@ vi.mock("@/lib/server-config", () => ({
   getServerUrl: () => "http://localhost:3001",
 }))
 
-// Mock next/navigation useRouter
 const mockPush = vi.fn()
-vi.mock("next/navigation", () => ({
-  useRouter: () => ({ push: mockPush }),
-  useParams: () => ({}),
-  useSearchParams: () => new URLSearchParams(),
-}))
-
 // Mock chatbot's fetch calls
 const mockFetch = vi.fn()
 vi.stubGlobal("fetch", mockFetch)

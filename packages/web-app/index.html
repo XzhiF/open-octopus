@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="zh-CN" class="h-screen overflow-hidden bg-background">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Octopus</title>
+    <script>
+      // @octopus/shared dist references process.env/process.cwd(os.homedir is stubbed
+      // by empty-browser-module.js). Next used to provide this polyfill.
+      window.process = window.process || {
+        env: { NODE_ENV: 'production' },
+        cwd: function () { return '/' },
+        exit: function () {},
+        nextTick: function (fn) { setTimeout(fn, 0) },
+        stderr: { write: function () {} },
+        stdout: { write: function () {} },
+        platform: 'browser',
+        version: ''
+      }
+      window.global = window
+    </script>
+  </head>
+  <body class="h-screen flex flex-col font-sans antialiased">
+    <div id="root" class="flex min-h-0 flex-1 flex-col"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>

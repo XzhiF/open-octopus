@@ -1,7 +1,6 @@
 "use client"
 
-import { useState, useEffect, type RefObject } from "react"
-import dynamic from "next/dynamic"
+import { useState, useEffect, lazy, Suspense, type RefObject } from "react"
 import { configureMonaco } from "@/lib/monaco-config"
 import type { Control } from "react-hook-form"
 import {
@@ -36,14 +35,7 @@ import {
   type ChainStep,
 } from "./workflow-chain-dialog"
 
-const MonacoEditor = dynamic(() => import("@monaco-editor/react"), {
-  ssr: false,
-  loading: () => (
-    <div className="flex h-32 items-center justify-center rounded-xl border-2 border-pop-bd bg-pop-paper text-sm text-muted-foreground shadow-pop-sm">
-      加载编辑器...
-    </div>
-  ),
-})
+const MonacoEditor = lazy(() => import("@monaco-editor/react"))
 
 interface WorkflowScheduleFormProps {
   control: Control<any>
@@ -146,21 +138,29 @@ export function WorkflowScheduleForm({
           <div className="space-y-1.5">
             <Label>工作流配置 (v2.0 JSON)</Label>
             <div className={cn("overflow-hidden rounded-xl border-2 border-pop-bd", configError && "border-destructive")}>
-              <MonacoEditor
-                height="300px"
-                language="json"
-                theme="vs-dark"
-                value={configValue}
-                onChange={(val) => onConfigChange(val ?? "")}
-                options={{
-                  minimap: { enabled: false },
-                  scrollBeyondLastLine: false,
-                  fontSize: 13,
-                  tabSize: 2,
-                  wordWrap: "on",
-                  formatOnPaste: true,
-                }}
-              />
+              <Suspense
+                fallback={
+                  <div className="flex h-32 items-center justify-center rounded-xl border-2 border-pop-bd bg-pop-paper text-sm text-muted-foreground shadow-pop-sm">
+                    加载编辑器...
+                  </div>
+                }
+              >
+                <MonacoEditor
+                  height="300px"
+                  language="json"
+                  theme="vs-dark"
+                  value={configValue}
+                  onChange={(val) => onConfigChange(val ?? "")}
+                  options={{
+                    minimap: { enabled: false },
+                    scrollBeyondLastLine: false,
+                    fontSize: 13,
+                    tabSize: 2,
+                    wordWrap: "on",
+                    formatOnPaste: true,
+                  }}
+                />
+              </Suspense>
             </div>
             {configError && <p className="text-sm text-destructive">{configError}</p>}
           </div>

@@ -1,15 +1,23 @@
 'use client'
 
-import dynamic from 'next/dynamic'
+import { lazy, Suspense } from 'react'
 import { usePathname } from '@/lib/app-navigation'
 
-const SystemLayout = dynamic(() => import('@/app/system/layout'), { ssr: false })
+function ViewLoading() {
+  return (
+    <div className="flex h-full items-center justify-center font-mono text-[11px] text-pop-dim">
+      加载视图…
+    </div>
+  )
+}
+
+const SystemLayout = lazy(() => import('@/app/system/layout'))
 
 const PAGES = {
-  models: dynamic(() => import('@/app/system/models/page'), { ssr: false }),
-  billing: dynamic(() => import('@/app/system/billing/page'), { ssr: false }),
-  repos: dynamic(() => import('@/app/system/repos/page'), { ssr: false }),
-  harness: dynamic(() => import('@/app/system/harness/page'), { ssr: false }),
+  models: lazy(() => import('@/app/system/models/page')),
+  billing: lazy(() => import('@/app/system/billing/page')),
+  repos: lazy(() => import('@/app/system/repos/page')),
+  harness: lazy(() => import('@/app/system/harness/page')),
 }
 
 export function SystemView() {
@@ -18,8 +26,12 @@ export function SystemView() {
   const Page = PAGES[section as keyof typeof PAGES] ?? PAGES.models
 
   return (
-    <SystemLayout>
-      <Page />
-    </SystemLayout>
+    <Suspense fallback={<ViewLoading />}>
+      <SystemLayout>
+        <Suspense fallback={<ViewLoading />}>
+          <Page />
+        </Suspense>
+      </SystemLayout>
+    </Suspense>
   )
 }

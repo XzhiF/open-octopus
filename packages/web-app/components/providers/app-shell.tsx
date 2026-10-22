@@ -7,27 +7,33 @@ import { AppRail } from "@/components/layout/app-rail"
 import { WorkDock } from "@/components/layout/work-dock"
 import { ConversationHome } from "@/components/agent/chat/ConversationHome"
 import { ViewHost } from "@/components/shell/view-host"
+import { DetailTabsProvider } from "@/lib/detail-tabs"
+import { DetailTabBar } from "@/components/shell/detail-tab-bar"
+import { DetailTabsHost } from "@/components/shell/detail-tabs-host"
+import { StandaloneHost } from "@/components/shell/standalone-host"
+import { NotFoundView } from "@/components/shell/not-found-view"
 import { AppNavProvider, useAppNavigation } from "@/lib/app-navigation"
 import { Toaster } from "@/components/ui/sonner"
 import { cn } from "@/lib/utils"
 
-export function AppShell({ children }: { children: React.ReactNode }) {
+export function AppShell() {
   return (
     <AppNavProvider>
-      <ShellInner>{children}</ShellInner>
+      <ShellInner />
     </AppNavProvider>
   )
 }
 
-function ShellInner({ children }: { children: React.ReactNode }) {
+function ShellInner() {
   const [mobileNavOpen, setMobileNavOpen] = useState(false)
   const nav = useAppNavigation()
-  const mode = nav?.mode ?? 'view'
-  const view = nav?.view ?? 'chat'
+  if (!nav) throw new Error("ShellInner must be rendered inside AppNavProvider")
 
-  const chatVisible = mode === 'view' && view === 'chat'
-  const viewHostActive = mode === 'view' && view !== 'chat' ? view : null
-  const detailVisible = mode === 'detail'
+  const activeView = nav.mode === "view" ? nav.view : null
+  const chatVisible = activeView === "chat"
+  const viewHostActive = activeView && activeView !== "chat" ? activeView : null
+  const detailVisible = nav.mode === "detail"
+  const standalone = nav.mode === "standalone" && nav.route.kind === "standalone" ? nav.route : null
 
   return (
     <div className="flex flex-1 flex-col min-h-0">
@@ -38,22 +44,49 @@ function ShellInner({ children }: { children: React.ReactNode }) {
           onMobileOpenChange={setMobileNavOpen}
         />
         {/* 🎪 全站页面底:奶油纸 + 圆点彩纸 */}
-        <main className="pop-confetti flex flex-1 flex-col min-h-0 overflow-hidden">
-          {/* 对话应用级常驻：任何视图切换/详情路由都只隐藏不卸载，SSE 不断。 */}
-          <div
-            className={cn("flex min-h-0 flex-1 flex-col", chatVisible ? "" : "hidden")}
-            aria-hidden={!chatVisible}
-          >
-            <ConversationHome />
-          </div>
+        <main className="pop-confetti relative flex flex-1 flex-col min-h-0 overflow-hidden">
+          <DetailTabsProvider>
+            <DetailTabBar />
+            <div className="relative flex min-h-0 flex-1 flex-col">
+              {/* 对话应用级常驻：任何视图切换/详情路由都只隐藏不卸载，SSE 不断。 */}
+              <div
+                className={cn(
+                  "flex min-h-0 flex-1 flex-col",
+                  chatVisible ? "" : "hidden",
+                )}
+                aria-hidden={!chatVisible}
+                inert={!chatVisible}
+              >
+                <ConversationHome />
+              </div>
 
-          {/* 顶层视图宿主：懒挂载一次后常驻，切视图保留状态。 */}
-          <ViewHost activeView={viewHostActive} />
+              {/* 顶层视图宿主：懒挂载一次后常驻，切视图保留状态。 */}
+              <ViewHost activeView={viewHostActive} />
 
-          {/* 详情路由继续交给 Next 渲染；对话与视图宿主保持挂载。 */}
-          {detailVisible && (
-            <div className="flex-1 overflow-y-auto">{children}</div>
-          )}
+              {/* 详情标签宿主：全部标签常驻，仅活动标签可见。 */}
+              <DetailTabsHost />
+
+              {standalone && <StandaloneHost route={standalone} />}
+
+              {nav.mode === "not-found" && (
+                <div className="absolute inset-0 overflow-y-auto">
+                  <NotFoundView />
+                </div>
+              )}
+
+              {nav.mode === "redirect" && (
+                <div className="absolute inset-0 flex items-center justify-center font-mono text-[11px] text-pop-dim">
+                  跳转中…
+                </div>
+              )}
+
+              {detailVisible && nav.tabKey === null && (
+                <div className="absolute inset-0 flex items-center justify-center font-mono text-[11px] text-pop-dim">
+                  加载详情…
+                </div>
+              )}
+            </div>
+          </DetailTabsProvider>
         </main>
         <WorkDock />
       </div>

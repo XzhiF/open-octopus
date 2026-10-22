@@ -3,7 +3,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest"
 
 const nav = vi.hoisted(() => ({ pathname: "/" }))
 
-vi.mock("next/navigation", () => ({
+vi.mock("@/lib/app-navigation", () => ({
   usePathname: () => nav.pathname,
 }))
 

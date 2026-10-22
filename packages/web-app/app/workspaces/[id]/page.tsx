@@ -1,7 +1,7 @@
 "use client"
 
-import { use, useState, useCallback, useEffect, useRef } from "react"
-import { notFound, useRouter, useSearchParams } from "next/navigation"
+import { useState, useCallback, useEffect, useRef } from "react"
+import { useParams, useRouter, useSearchParams } from "@/lib/app-navigation"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
 import { SidebarFileTree } from "@/components/workspace/sidebar-file-tree"
@@ -187,12 +187,8 @@ import {
 } from "lucide-react"
 import { getServerUrl } from "@/lib/server-config"
 
-interface WorkspaceDetailPageProps {
-  params: Promise<{ id: string }>
-}
-
-export default function WorkspaceDetailPage({ params }: WorkspaceDetailPageProps) {
-  const { id } = use(params)
+export default function WorkspaceDetailPage() {
+  const { id } = useParams()
   const router = useRouter()
   const searchParams = useSearchParams()
 
@@ -878,7 +874,6 @@ const handleOpenAsText = async (file: FileNode) => {
   }
 
   if (loadError || !workspace) {
-    if (!loadError && !workspace) notFound()
     return (
       <div className="flex flex-1 min-h-0 flex-col items-center justify-center gap-2">
         <p className="text-destructive">{loadError ?? "工作空间不存在"}</p>

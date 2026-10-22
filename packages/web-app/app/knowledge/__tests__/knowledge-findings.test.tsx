@@ -3,10 +3,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest"
 import { render, screen, fireEvent, waitFor, within } from "@testing-library/react"
 
-vi.mock("next/navigation", () => ({ usePathname: () => "/knowledge" }))
-vi.mock("next/link", () => ({
-  default: ({ children, href }: { children: React.ReactNode; href: string }) => <a href={href}>{children}</a>,
-}))
 vi.mock("@/components/resource/MarkdownPreview", () => ({
   MarkdownPreview: ({ content }: { content: string }) => <div data-md-preview>{content}</div>,
 }))

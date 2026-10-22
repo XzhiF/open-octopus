@@ -13,7 +13,7 @@ octopus/
 │   ├── cli/         ← octopus (Commander.js CLI)
 │   ├── engine/      ← @octopus/engine (7 executors + SQLite + JSONL)
 │   ├── server/      ← @octopus/server (Hono REST API + SSE + WebSocket)
-│   ├── web-app/     ← @octopus/web-app (Next.js 前端)
+│   ├── web-app/     ← @octopus/web-app (Vite SPA 前端 · React Router)
 │   └── core-pack/   ← @octopus/core-pack (skills/agents/workflows)
 ├── scripts/         ← dev.mjs, prod.mjs, branch-port.mjs
 ├── pnpm-workspace.yaml
@@ -44,7 +44,7 @@ Swarm 子模式: review(1轮审查) · debate(N轮讨论+共识检测) · dispat
 |------|--------|-----|-----|
 | dev (主仓库) | 3001 | 3000 | `~/.octopus/db/octopus.db` |
 | dev (worktree) | 3100-3598 | +1 | `octopus-{branch}.db` |
-| prod | 3099 | 3098 | `octopus-prod.db` |
+| prod | 3099 | 3099（server 同源托管 SPA） | `octopus-prod.db` |
 
 ## 开发与测试
 
@@ -54,7 +54,7 @@ pnpm build            # 构建所有包
 pnpm dev              # 主仓库开发 (server:3001 web:3000)
 pnpm dev --isolated   # 隔离模式
 pnpm dev --port 3101,3100    # 指定端口 (web 在前, server 在后)
-pnpm prod             # 生产模式 (server:3099 web:3098)
+pnpm prod             # 生产模式 (server:3099，UI + API 同源)
 pnpm prod --port 3098,3099   # 指定端口 (web 在前, server 在后)
 pnpm port             # 查看端口分配
 pnpm test             # Vitest 测试
@@ -69,7 +69,8 @@ pnpm kill:port <n>    # 杀占用指定端口的进程（worktree 拆机，详�
 |------|--------|
 | `PORT` | 3001 (主仓库) / hash (worktree) |
 | `OCTOPUS_DB_PATH` | `~/.octopus/db/octopus.db` |
-| `NEXT_PUBLIC_SERVER_URL` | `http://localhost:3001` |
+| `SERVER_URL` | dev 下由 `scripts/dev.mjs` 注入 Vite；prod 同源可省略 |
+| `OCTOPUS_WEB_DIR` | prod 的 Vite `dist/` 目录（server 静态托管 + SPA fallback） |
 
 ### Worktree 并行开发
 

@@ -10,7 +10,6 @@ import type { Task, LlmUsageSummary } from "@octopus/shared"
 vi.mock("@/lib/sse-manager", () => ({ subscribeSSE: vi.fn(() => () => {}) }))
 vi.mock("@/lib/server-config", () => ({ getServerUrl: () => "http://localhost:3001" }))
 vi.mock("sonner", () => ({ toast: { success: vi.fn(), error: vi.fn(), loading: vi.fn() } }))
-vi.mock("next/navigation", () => ({ useSearchParams: () => new URLSearchParams("") }))
 vi.mock("@/components/tasks/task-modal", () => ({ TaskModal: () => null }))
 vi.mock("@/components/tasks/trigger-dialog", () => ({ TriggerDialog: () => null }))
 vi.mock("@/lib/billing-currency", () => ({

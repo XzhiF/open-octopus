@@ -5,6 +5,7 @@
 
 import { useEffect, useMemo, useState } from "react"
 import Link from "@/lib/app-navigation"
+import { useIsActiveRoute } from "@/lib/app-navigation"
 import { Search } from "lucide-react"
 import type { Workspace } from "@/lib/types"
 import { formatRelativeTime } from "@/lib/format"
@@ -62,6 +63,7 @@ interface GenieTarget {
 }
 
 export function WorkspaceBands({ workspaces, onNew, onDelete, onArchive, onViewArchive }: WorkspaceBandsProps) {
+  const isActive = useIsActiveRoute()
   const [search, setSearch] = useState("")
   const [collapsed, setCollapsed] = useState<Record<BandKey, boolean>>(
     () => Object.fromEntries(BANDS.map((b) => [b.key, !!b.defaultCollapsed])) as Record<BandKey, boolean>,
@@ -419,11 +421,12 @@ function GenieModal({
   }
 
   useEffect(() => {
+    if (!isActive) return
     const h = (e: KeyboardEvent) => { if (e.key === "Escape") close() }
     window.addEventListener("keydown", h)
     return () => window.removeEventListener("keydown", h)
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [])
+  }, [isActive])
 
   const band = bandOf(ws)
   const shown = entered && !closing

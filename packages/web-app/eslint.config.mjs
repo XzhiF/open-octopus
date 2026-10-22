@@ -1,26 +1,48 @@
-import { dirname } from "path"
-import { fileURLToPath } from "url"
-import { FlatCompat } from "@eslint/eslintrc"
+import js from '@eslint/js'
+import tseslint from 'typescript-eslint'
+import reactHooks from 'eslint-plugin-react-hooks'
 
-const __filename = fileURLToPath(import.meta.url)
-const __dirname = dirname(__filename)
-
-const compat = new FlatCompat({
-  baseDirectory: __dirname,
-})
-
-const eslintConfig = [
-  ...compat.extends("next/core-web-vitals"),
+export default tseslint.config(
   {
-    ignores: [".next/**", "out/**", "node_modules/**"],
+    ignores: [
+      'dist/**',
+      'node_modules/**',
+      '.next/**',
+      'test-results/**',
+      'playwright-report/**',
+      'public/prototype/**',
+    ],
   },
+  js.configs.recommended,
+  ...tseslint.configs.recommended,
   {
+    plugins: { 'react-hooks': reactHooks },
     rules: {
-      // 历史 JSX 裸引号 15 处先降 warn 让 CI 闸能上（retro①），warn 计数继续可见；
-      // 清零后可移除此覆盖回 error。
-      "react/no-unescaped-entities": "warn",
+      'react-hooks/rules-of-hooks': 'error',
+      'react-hooks/exhaustive-deps': 'warn',
+      'no-undef': 'off',
+      '@typescript-eslint/no-explicit-any': 'off',
+      '@typescript-eslint/no-unused-vars': 'off',
+      '@typescript-eslint/no-empty-object-type': 'off',
+      '@typescript-eslint/no-require-imports': 'off',
+      '@typescript-eslint/no-namespace': 'off',
+      '@typescript-eslint/no-unused-expressions': 'off',
+      'no-empty': 'off',
+      'no-useless-escape': 'off',
+      'no-control-regex': 'off',
+      'no-cond-assign': 'off',
+      'no-fallthrough': 'off',
+      'no-case-declarations': 'off',
+      'no-constant-condition': 'off',
+      'no-inner-declarations': 'off',
+      'no-prototype-builtins': 'off',
+      'no-useless-catch': 'off',
+      'no-self-assign': 'off',
+      'no-async-promise-executor': 'off',
+      'no-useless-assignment': 'off',
+      'preserve-caught-error': 'off',
+      'prefer-const': 'off',
+      'no-var': 'off',
     },
   },
-]
-
-export default eslintConfig
+)

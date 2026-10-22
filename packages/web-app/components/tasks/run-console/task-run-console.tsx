@@ -40,6 +40,7 @@
 "use client"
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
+import { useIsActiveRoute } from "@/lib/app-navigation"
 import { Spinner } from "@/components/ui/spinner"
 import { toast } from "sonner"
 import { Maximize2, Minimize2 } from "lucide-react"
@@ -122,6 +123,7 @@ interface TaskRunConsoleProps {
 const TERMINAL_TASK_STATUSES = new Set(["done", "failed", "aborted"])
 
 export function TaskRunConsole({ task, onMutated, onClose, chrome, startOnAcceptance }: TaskRunConsoleProps) {
+  const isActive = useIsActiveRoute()
   const [detail, setDetail] = useState<TaskDetail | null>(null)
   const [triggerOpen, setTriggerOpen] = useState(false)
   // 票 06 · 「▶ 恢复 · 可注入干预」三分支弹框（openInject 的 React 化）。
@@ -420,7 +422,7 @@ export function TaskRunConsole({ task, onMutated, onClose, chrome, startOnAccept
 
   // ←/→ 切页：输入焦点（input/textarea/select/编辑区）与弹层内不劫持光标。
   useEffect(() => {
-    if (tabs.keys.length < 2) return
+    if (tabs.keys.length < 2 || !isActive) return
     const onKey = (e: KeyboardEvent) => {
       if (e.key !== "ArrowLeft" && e.key !== "ArrowRight") return
       const t = e.target as HTMLElement | null
@@ -434,7 +436,7 @@ export function TaskRunConsole({ task, onMutated, onClose, chrome, startOnAccept
     }
     window.addEventListener("keydown", onKey)
     return () => window.removeEventListener("keydown", onKey)
-  }, [tabs])
+  }, [tabs, isActive])
 
   // ── 右栏底部动作判据（与导航条旧判据逐字一致，只是位置搬家）───────────
   // canAbort / canReopen 读**持久**态，刻意不切派生态：暂停期间持久态仍是 running，

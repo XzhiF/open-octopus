@@ -1,19 +1,6 @@
 import { describe, it, expect, vi } from "vitest"
 import { render, screen } from "@testing-library/react"
 
-// Mock next/navigation
-vi.mock("next/navigation", () => ({
-  usePathname: () => "/system/repos",
-  redirect: vi.fn(),
-}))
-
-// Mock next/link
-vi.mock("next/link", () => ({
-  default: ({ children, href }: { children: React.ReactNode; href: string }) => (
-    <a href={href}>{children}</a>
-  ),
-}))
-
 // Mock sonner Toaster (requires window.matchMedia)
 vi.mock("@/components/ui/sonner", () => ({
   Toaster: () => null,

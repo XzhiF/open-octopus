@@ -4,25 +4,6 @@ import { beforeEach, describe, expect, it, vi } from "vitest"
 
 const mocks = vi.hoisted(() => ({ remove: vi.fn() }))
 
-vi.mock("next/navigation", () => ({
-  usePathname: () => "/tasks",
-}))
-
-vi.mock("next/link", () => ({
-  default: ({
-    href,
-    children,
-    ...props
-  }: {
-    href: string
-    children: ReactNode
-  }) => (
-    <a href={href} {...props}>
-      {children}
-    </a>
-  ),
-}))
-
 vi.mock("@/hooks/use-nav-history", () => ({
   useNavHistory: () => ({
     entries: [{ href: "/tasks", label: "任务看板", sub: "/tasks" }],

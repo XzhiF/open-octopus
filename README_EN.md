@@ -195,7 +195,7 @@ Three fully isolated run modes that can be up at the same time:
 |------|---------|--------|-----|----------|----------|
 | **dev (main repo)** | `pnpm dev` | 3001 | 3000 | `octopus.db` | Daily development |
 | **dev (worktree)** | `pnpm dev` | hash | +1 | `octopus-{branch}.db` | Parallel branches |
-| **prod** | `pnpm prod` | 3099 | 3098 | `octopus-prod.db` | Use Octopus to iterate on itself |
+| **prod** | `pnpm prod` | 3099 | 3099 (same-origin UI) | `octopus-prod.db` | Use Octopus to iterate on itself |
 
 Each workspace = its own git worktree + pipeline.yaml + skills/agents config + Checkpoint + logs. Create one manually, or let the Scheduler rebuild a clean environment from the ProjectSpec every time, auto-generating instruction files and preset resources.
 

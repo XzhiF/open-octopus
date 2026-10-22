@@ -1,6 +1,7 @@
 "use client"
 
 import { useCallback, useEffect, useRef, useState } from "react"
+import { useIsActiveRoute } from "@/lib/app-navigation"
 import { searchKc, type KcSearchHit, type KcTree, type KcTreeEntry } from "@/lib/knowledge/knowledge-center-api"
 
 /**
@@ -21,6 +22,7 @@ interface KcSearchPaletteProps {
 }
 
 export function KcSearchPalette({ open, onClose, tree, onHit }: KcSearchPaletteProps) {
+  const isActive = useIsActiveRoute()
   const [q, setQ] = useState("")
   const [hits, setHits] = useState<KcSearchHit[] | null>(null)
   const [mode, setMode] = useState<"fts" | "like">("fts")
@@ -30,12 +32,12 @@ export function KcSearchPalette({ open, onClose, tree, onHit }: KcSearchPaletteP
 
   // Esc 关闭；打开即聚焦
   useEffect(() => {
-    if (!open) return
+    if (!open || !isActive) return
     inputRef.current?.focus()
     const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") onClose() }
     window.addEventListener("keydown", onKey)
     return () => window.removeEventListener("keydown", onKey)
-  }, [open, onClose])
+  }, [open, onClose, isActive])
 
   const runSearch = useCallback((query: string) => {
     setSearching(true)

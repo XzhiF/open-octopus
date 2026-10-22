@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, useCallback, useEffect, Suspense } from 'react'
-import { useRouter, useSearchParams } from "@/lib/app-navigation"
+import { usePathname, useRouter, useSearchParams } from "@/lib/app-navigation"
 import { AgentTopBar } from './AgentTopBar'
 import { AgentTabs } from './AgentTabs'
 import { MemoryTab } from '../memory/MemoryTab'
@@ -27,6 +27,7 @@ function TabContent({ tab }: { tab: TabId }) {
 }
 
 function AgentLayoutInner() {
+  const pathname = usePathname()
   const router = useRouter()
   const searchParams = useSearchParams()
   const requestedTab = searchParams.get('tab')
@@ -52,10 +53,11 @@ function AgentLayoutInner() {
 
   const handleTabChange = useCallback((tab: string) => {
     setActiveTab(tab as TabId)
-    const url = new URL(window.location.href)
-    url.searchParams.set('tab', tab)
-    window.history.replaceState({}, '', url.toString())
-  }, [])
+    const params = new URLSearchParams(searchParams.toString())
+    params.set('tab', tab)
+    const query = params.toString()
+    router.replace(query ? `${pathname}?${query}` : pathname)
+  }, [pathname, router, searchParams])
 
   return (
     <div className="flex flex-col flex-1 min-h-0">
