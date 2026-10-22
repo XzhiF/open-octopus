@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, useCallback, useEffect, Suspense } from 'react'
-import { useRouter, useSearchParams } from 'next/navigation'
+import { useRouter, useSearchParams } from "@/lib/app-navigation"
 import { AgentTopBar } from './AgentTopBar'
 import { AgentTabs } from './AgentTabs'
 import { MemoryTab } from '../memory/MemoryTab'

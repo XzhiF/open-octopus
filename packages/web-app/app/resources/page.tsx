@@ -1,6 +1,6 @@
 "use client"
 
-import { useSearchParams } from "next/navigation"
+import { useSearchParams } from "@/lib/app-navigation"
 import { ResourceList } from "@/components/resource/resource-list"
 import { AuditLog } from "@/components/resource/audit-log"
 import { SourceList } from "@/components/resource/source-list"

@@ -4,7 +4,7 @@
 // 布局样式在 app/ws-bands.css（.wsb-*）。
 
 import { useEffect, useMemo, useState } from "react"
-import Link from "next/link"
+import Link from "@/lib/app-navigation"
 import { Search } from "lucide-react"
 import type { Workspace } from "@/lib/types"
 import { formatRelativeTime } from "@/lib/format"

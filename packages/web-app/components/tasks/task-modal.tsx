@@ -35,7 +35,7 @@ import {
 import { TriggerActions } from "@/components/tasks/trigger-dialog"
 import { subscribeSSE } from "@/lib/sse-manager"
 import { getServerUrl } from "@/lib/server-config"
-import { useRouter } from "next/navigation"
+import { useRouter } from "@/lib/app-navigation"
 import { computeAggregateStatus } from "@/lib/composite-status"
 import { CompositeDag } from "@/components/tasks/composite-dag"
 import { CompositeEventsPanel, type CompositeEvent } from "@/components/tasks/composite-events-panel"

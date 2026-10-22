@@ -1,6 +1,6 @@
 "use client"
 
-import { usePathname, useRouter, useSearchParams } from "next/navigation"
+import { usePathname, useRouter, useSearchParams } from "@/lib/app-navigation"
 import { cn } from "@/lib/utils"
 import { Package, ScrollText, FolderOpen, FolderGit2 } from "lucide-react"
 

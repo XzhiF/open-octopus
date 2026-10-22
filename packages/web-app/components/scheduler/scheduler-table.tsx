@@ -1,6 +1,6 @@
 "use client"
 
-import Link from "next/link"
+import Link from "@/lib/app-navigation"
 import { format, formatDistanceToNow } from "date-fns"
 import { zhCN } from "date-fns/locale"
 import {

@@ -1,7 +1,7 @@
 "use client"
 
 import { useState, useEffect, useCallback, useRef } from "react"
-import { useSearchParams } from "next/navigation"
+import { useSearchParams } from "@/lib/app-navigation"
 import { RefreshCw, Plus, Trash2, Copy, Inbox } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import {

@@ -2,7 +2,7 @@
 
 import { useEffect, useState, useCallback } from "react"
 import { useParams } from "next/navigation"
-import Link from "next/link"
+import Link from "@/lib/app-navigation"
 import {
   ArrowLeft,
   Pencil,

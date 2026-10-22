@@ -6,8 +6,8 @@ import {
   useState,
   type PointerEvent as ReactPointerEvent,
 } from "react"
-import Link from "next/link"
-import { usePathname } from "next/navigation"
+import Link from "@/lib/app-navigation"
+import { usePathname } from "@/lib/app-navigation"
 import {
   Archive,
   ArrowUpRight,

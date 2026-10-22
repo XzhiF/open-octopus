@@ -357,6 +357,9 @@ export function ChatArea({
   const busyPhase = toolCalls.some((tc) => tc.status === 'start' || tc.status === 'running' || tc.status === 'pending')
     ? 'exec' : 'thinking'
   const spinGlyph = TUI_SPIN[Math.floor(busyElapsed * 10) % TUI_SPIN.length]
+  const contextUsageTitle = contextUsage
+    ? `上下文占用 · ${formatTokenCount(contextUsage.totalTokens)} / ${formatTokenCount(contextUsage.maxTokens)} · ${contextUsage.percentage.toFixed(1)}%` // fmt-ok: percentage 量纲为 0–100（SDK context_usage），非 0–1 比率
+    : ''
 
   return (
     <div className="flex flex-col flex-1 min-h-0">
@@ -910,7 +913,7 @@ export function ChatArea({
                   <PopoverTrigger asChild>
                     <button
                       type="button"
-                      title={`上下文占用 · ${formatTokenCount(contextUsage.totalTokens)} / ${formatTokenCount(contextUsage.maxTokens)} · ${contextUsage.percentage.toFixed(1)}%`}
+                      title={contextUsageTitle}
                       className={cn(
                         'flex h-[22px] shrink-0 items-center gap-1 rounded-[7px] border border-transparent px-1.5 text-[11px] leading-none text-pop-dim transition-colors hover:bg-pop-paper hover:text-pop-ink',
                         contextExpanded && 'border-pop-bd bg-pop-paper text-pop-ink',
@@ -977,7 +980,7 @@ function ContextUsagePanel({ contextUsage }: { contextUsage: ContextUsageData })
       <div className="mb-2 flex items-center justify-between gap-2">
         <span className="text-[11px] font-bold text-pop-ink">上下文占用</span>
         <span className="font-mono text-[10px] tabular-nums text-pop-dim">
-          {formatTokenCount(contextUsage.totalTokens)} / {formatTokenCount(contextUsage.maxTokens)} · {contextUsage.percentage.toFixed(1)}%
+          {formatTokenCount(contextUsage.totalTokens)} / {formatTokenCount(contextUsage.maxTokens)} · {contextUsage.percentage.toFixed(1)}%{/* fmt-ok: percentage 量纲为 0–100（SDK context_usage），非 0–1 比率 */}
         </span>
       </div>
       <div className="space-y-1">

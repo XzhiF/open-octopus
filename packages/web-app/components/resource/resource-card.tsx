@@ -1,6 +1,6 @@
 "use client"
 
-import Link from "next/link"
+import Link from "@/lib/app-navigation"
 import { cva, type VariantProps } from "class-variance-authority"
 import { cn } from "@/lib/utils"
 import { Badge } from "@/components/ui/badge"

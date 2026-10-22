@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, useEffect, useCallback } from 'react'
-import { useSearchParams, useRouter } from 'next/navigation'
+import { useSearchParams, useRouter } from "@/lib/app-navigation"
 import { Users, Plus, Cpu, User } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { useAgentClones } from '@/hooks/useAgentClones'
