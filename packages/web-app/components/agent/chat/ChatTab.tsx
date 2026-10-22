@@ -6,6 +6,7 @@ import { useAgentChat } from '@/hooks/useAgentChat'
 import { useSessionUsage } from '@/hooks/useSessionUsage'
 import { useComposerSettings } from '@/hooks/useComposerSettings'
 import { useKcFeed } from '@/hooks/use-kc-feed'
+import * as agentApi from '@/lib/agent/api'
 import { SessionList } from './SessionList'
 import { ChatArea } from './ChatArea'
 import { ToolCallPanel } from './ToolCallPanel'
@@ -38,7 +39,11 @@ export function ChatTab() {
     error: chatError, statusMessage, contextUsage,
     sendMessage, stopGenerate, handleConfirm, loadMessages,
     steer, steeringRef, resumeStreaming,
-  } = useAgentChat(activeSessionId, { onTitleUpdate: handleTitleUpdate })
+  } = useAgentChat(activeSessionId, {
+    onTitleUpdate: handleTitleUpdate,
+    // 刷新/关页后主对话也能续看：服务端 partial + running 探测。
+    api: { checkRunning: agentApi.getSessionRunning },
+  })
   const sessionUsage = useSessionUsage(activeSessionId, streaming)
   // 模型别名 / 思考强度 / 最大上下文 —— 与任务草稿共用同一份本机设置。
   const {

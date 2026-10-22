@@ -78,6 +78,9 @@ export function listSessions(query?: { clone?: string; limit?: number; cursor?: 
   const qs = params.toString()
   return request<PaginatedResponse<AgentSession>>(`/sessions${qs ? `?${qs}` : ''}`)
 }
+export function getSessionRunning(id: string) {
+  return request<{ running: boolean; partial: boolean }>(`/sessions/${id}/running`)
+}
 export function getSession(id: string, query?: { limit?: number; cursor?: string }) {
   const params = new URLSearchParams()
   if (query?.limit) params.set('limit', String(query.limit))

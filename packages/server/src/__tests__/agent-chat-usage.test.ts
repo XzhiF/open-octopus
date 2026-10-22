@@ -145,4 +145,39 @@ describe("主对话 ctx / tok 数据链路", () => {
     })
     expect(tokenDao.findLlmCallsBySession("s-1")).toHaveLength(1)
   })
+
+  it("流式期间 running=true + partial 可续看，结束后原地 finalize", async () => {
+    let release!: () => void
+    const gate = new Promise<void>((resolve) => { release = resolve })
+    vi.spyOn(providers, "getProvider").mockImplementation((() => ({
+      sendQuery: async function* () {
+        sendQueryCalls += 1
+        yield { type: "text_delta", content: "partial answer" }
+        await gate
+        yield { type: "result", sessionId: "provider-sess", usage: USAGE, modelUsages: [{ model: MODEL, ...USAGE }] }
+      },
+    })) as never)
+
+    const resPromise = chat({ message: "E2E_TEST resume", model: MODEL })
+    await new Promise((r) => setTimeout(r, 80))
+
+    const running = await app().request("/api/agent/sessions/s-1/running")
+    expect(await running.json()).toMatchObject({ running: true, partial: true })
+    const streamingRows = db.prepare("SELECT content, metadata FROM messages WHERE role='assistant'").all() as Array<{ content: string; metadata: string | null }>
+    expect(streamingRows).toHaveLength(1)
+    expect(streamingRows[0].content).toBe("partial answer")
+    expect(streamingRows[0].metadata).toContain('"streaming":true')
+
+    release()
+    const res = await resPromise
+    await res.text()
+    await new Promise((r) => setTimeout(r, 20))
+
+    const after = await app().request("/api/agent/sessions/s-1/running")
+    expect(await after.json()).toMatchObject({ running: false, partial: false })
+    const finalRows = db.prepare("SELECT content, metadata FROM messages WHERE role='assistant'").all() as Array<{ content: string; metadata: string | null }>
+    expect(finalRows).toHaveLength(1)
+    expect(finalRows[0].content).toBe("partial answer")
+    expect(finalRows[0].metadata).toBeNull()
+  })
 })

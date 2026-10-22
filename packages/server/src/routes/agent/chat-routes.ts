@@ -14,7 +14,7 @@ import { createAgentError } from './middleware'
 import { SystemPromptAssembler } from '../../services/agent/system-prompt-assembler'
 import { getNotificationService } from '../../services/agent/notification-service'
 import { getSessionCompressService } from '../../services/agent/session-compress-service'
-import { getAgentService, registerActiveStream, unregisterActiveStream } from '../../services/agent/agent-service'
+import { getAgentService, isStreamActive, registerActiveStream, unregisterActiveStream } from '../../services/agent/agent-service'
 import { getSafetyInterceptor } from '../../services/agent/safety-interceptor'
 import { getAgentDir, getDailyMemoryDir, getExperiencesDir, getDebugTracesDir } from '../../services/agent/paths'
 import type { AgentSessionDAO, SafetyDAO, ScheduleConfigDAO } from '../../db/dao'
@@ -34,6 +34,21 @@ export interface ChatRouteDeps {
 export function createChatRoutes(deps: ChatRouteDeps): Hono {
   const { sessionDAO: sessionDao, safetyDAO, scheduleConfigDAO, tokenUsageDao } = deps
   const app = new Hono()
+
+  // ── Session running state（"关闭不丢失"）──────────────────────────
+  // running = 内存里仍有该会话的生成流；partial = DB 里还有 streaming partial。
+  // 刷新/重开页面时前端先探测这里，再轮询 messages 续看上一条回复。
+  app.get('/sessions/:id/running', (c) => {
+    const id = c.req.param('id')
+    const session = sessionDao.findById(id)
+    if (!session || session.is_deleted) {
+      return c.json(createAgentError('NOT_FOUND', `Session ${id} not found`), 404)
+    }
+    return c.json({
+      running: isStreamActive(id),
+      partial: sessionDao.hasStreamingMessage(id),
+    })
+  })
 
   // ── Chat SSE streaming ─────────────────────────────────────────────
   app.post('/sessions/:id/chat', async (c) => {
@@ -191,6 +206,38 @@ export function createChatRoutes(deps: ChatRouteDeps): Hono {
     orchestrationFullResult: any, model?: string, effort?: EffortLevel,
   ): Promise<{ generated: boolean }> {
     let generated = false
+    let fullContent = ''
+    let fullThinking = ''
+    const currentToolCalls: Array<{ id: string; name: string; input?: unknown; result?: unknown; status?: string }> = []
+    // "关闭不丢失"：流式期间增量写同一条 assistant partial（metadata.streaming），
+    // 刷新/重开时前端用 running + messages 轮询续看；轮次结束再原地 finalize。
+    const assistantMsgId = crypto.randomUUID()
+    let partialRowId: string | null = null
+    // 中途失败 / 没有正文时也要把 partial 收尾，避免永久 streaming。
+    const finalizePartial = () => {
+      if (!partialRowId) return
+      try {
+        const assistantNow = new Date().toISOString()
+        const toolCallsJson = JSON.stringify({
+          thinking: fullThinking || undefined,
+          tool_calls: currentToolCalls.length > 0
+            ? currentToolCalls.map((tc) => {
+                const terminal = tc.status === 'success' || tc.status === 'result' || tc.status === 'fail'
+                return terminal ? tc : { ...tc, status: 'fail' }
+              })
+            : undefined,
+        })
+        sessionDao.updateMessage(assistantMsgId, {
+          content: fullContent, tool_calls: toolCallsJson, metadata: null,
+        })
+        sessionDao.updateLastMessageAt(sessionId, assistantNow)
+      } catch (err: unknown) {
+        console.error(
+          '[agent-chat] partial finalize failed (non-fatal):',
+          err instanceof Error ? err.message : String(err),
+        )
+      }
+    }
     try {
       const provider = getProvider('claude')
       const cwd = getAgentDir()
@@ -201,9 +248,36 @@ export function createChatRoutes(deps: ChatRouteDeps): Hono {
         ...(effort ? { effort } : {}),
       })
 
-      let fullContent = ''
-      let fullThinking = ''
-      const currentToolCalls: Array<{ id: string; name: string; input?: unknown; result?: unknown; status?: string }> = []
+      let lastFlushAt = 0
+      const partialFlushMs = 500
+      const partialToolCalls = () => JSON.stringify({
+        thinking: fullThinking || undefined,
+        tool_calls: currentToolCalls.length > 0 ? currentToolCalls : undefined,
+      })
+      const maybeFlushPartial = () => {
+        try {
+          if (Date.now() - lastFlushAt < partialFlushMs) return
+          if (!fullContent && !fullThinking && currentToolCalls.length === 0) return
+          lastFlushAt = Date.now()
+          const toolCallsJson = partialToolCalls()
+          const metadata = JSON.stringify({ streaming: true })
+          if (!partialRowId) {
+            sessionDao.insertMessage({
+              id: assistantMsgId, session_id: sessionId, role: 'assistant',
+              content: fullContent, tool_calls: toolCallsJson, metadata,
+              created_at: new Date().toISOString(),
+            })
+            partialRowId = assistantMsgId
+          } else {
+            sessionDao.updateMessage(assistantMsgId, { content: fullContent, tool_calls: toolCallsJson, metadata })
+          }
+        } catch (err: unknown) {
+          console.error(
+            '[agent-chat] partial flush failed (non-fatal):',
+            err instanceof Error ? err.message : String(err),
+          )
+        }
+      }
 
       for await (const chunk of messageChunks) {
         if ((stream as any)._aborted) break
@@ -267,19 +341,25 @@ export function createChatRoutes(deps: ChatRouteDeps): Hono {
             await stream.writeSSE({ event: 'error', data: JSON.stringify({ code: chunk.code, message: chunk.message }) })
             break
         }
+        maybeFlushPartial()
       }
 
       if (generated && fullContent) {
-        const assistantMsgId = crypto.randomUUID()
         const assistantNow = new Date().toISOString()
         const toolCallsJson = JSON.stringify({
           thinking: fullThinking || undefined,
           tool_calls: currentToolCalls.length > 0 ? currentToolCalls : undefined,
         })
-        sessionDao.insertMessage({
-          id: assistantMsgId, session_id: sessionId, role: 'assistant',
-          content: fullContent, tool_calls: toolCallsJson, created_at: assistantNow,
-        })
+        if (partialRowId) {
+          sessionDao.updateMessage(assistantMsgId, {
+            content: fullContent, tool_calls: toolCallsJson, metadata: null,
+          })
+        } else {
+          sessionDao.insertMessage({
+            id: assistantMsgId, session_id: sessionId, role: 'assistant',
+            content: fullContent, tool_calls: toolCallsJson, created_at: assistantNow,
+          })
+        }
         sessionDao.updateLastMessageAt(sessionId, assistantNow)
 
         autoGenerateTitle(sessionId, org, message, sessionDao)
@@ -293,10 +373,13 @@ export function createChatRoutes(deps: ChatRouteDeps): Hono {
             session_title: sessionDao.findById(sessionId)?.title,
           }),
         })
+      } else if (partialRowId) {
+        finalizePartial()
       }
     } catch (err: unknown) {
       const errMsg = err instanceof Error ? err.message : String(err)
       console.error(`[agent] Claude SDK call failed: ${errMsg}`, err instanceof Error ? err.stack : '')
+      finalizePartial()
     }
     return { generated }
   }
