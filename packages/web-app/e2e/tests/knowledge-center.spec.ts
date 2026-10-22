@@ -17,21 +17,15 @@ test.describe("知识中心 · wiki 主场 + 策展人抽屉", () => {
   })
 
   test("抽屉开合零重排：正文列几何纹丝不动（双模式重排病的根治钉）", async ({ page }) => {
-    const asideBox = await page.locator("aside").boundingBox()
-    const stageBefore = await page.evaluate(() => {
-      const el = document.querySelector("section")
-      return el ? el.getBoundingClientRect().width : 0
-    })
+    const asideBox = await page.getByTestId("kc-tree-pane").boundingBox()
+    const stageBefore = (await page.getByTestId("kc-stage").boundingBox())?.width ?? 0
     expect(asideBox).not.toBeNull()
 
     // 开抽屉（overlay 盖上来，不是重排）——className 判态（真实数据内容撑满视口，isVisible 会假绿）
     await page.getByTestId("kc-drawer-toggle").click()
     await expect(page.getByTestId("kc-curator-drawer")).toHaveClass(/translate-x-0/, { timeout: 5000 })
-    const asideAfter = await page.locator("aside").boundingBox()
-    const stageAfter = await page.evaluate(() => {
-      const el = document.querySelector("section")
-      return el ? el.getBoundingClientRect().width : 0
-    })
+    const asideAfter = await page.getByTestId("kc-tree-pane").boundingBox()
+    const stageAfter = (await page.getByTestId("kc-stage").boundingBox())?.width ?? 0
     expect(asideAfter!.x).toBeCloseTo(asideBox!.x, 1)
     expect(Math.abs(stageAfter - stageBefore)).toBeLessThan(1)
 
@@ -85,7 +79,7 @@ test.describe("知识中心 · wiki 主场 + 策展人抽屉", () => {
   })
 
   test("左树拖宽：把手骑分界线，拖拽即时改宽且刷新后记忆（视图态 localStorage）", async ({ page }) => {
-    const aside = page.locator("aside")
+    const aside = page.getByTestId("kc-tree-pane")
     const before = (await aside.boundingBox())!
     const hb = (await page.getByTestId("kc-tree-resize").boundingBox())!
     // 把手中心应压在树/正文分界线上（±2px）

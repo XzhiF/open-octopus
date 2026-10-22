@@ -1,10 +1,9 @@
 'use client'
 
 import { useState, useCallback, useEffect, Suspense } from 'react'
-import { useSearchParams } from 'next/navigation'
+import { useRouter, useSearchParams } from 'next/navigation'
 import { AgentTopBar } from './AgentTopBar'
 import { AgentTabs } from './AgentTabs'
-import { ChatTab } from '../chat/ChatTab'
 import { MemoryTab } from '../memory/MemoryTab'
 import { SkillTab } from '../skill/SkillTab'
 import { CloneTab } from '../clone/CloneTab'
@@ -13,28 +12,33 @@ import { ConfigTab } from '../config/ConfigTab'
 import { OnboardingCard } from '../shared/OnboardingCard'
 import * as api from '@/lib/agent/api'
 
-const TABS = ['chat', 'memory', 'skill', 'clone', 'task', 'config'] as const
+const TABS = ['memory', 'skill', 'clone', 'task', 'config'] as const
 type TabId = typeof TABS[number]
 
 function TabContent({ tab }: { tab: TabId }) {
   switch (tab) {
-    case 'chat': return <ChatTab />
     case 'memory': return <MemoryTab />
     case 'skill': return <SkillTab />
     case 'clone': return <CloneTab />
     case 'task': return <TaskTab />
     case 'config': return <ConfigTab />
-    default: return <ChatTab />
+    default: return <MemoryTab />
   }
 }
 
 function AgentLayoutInner() {
+  const router = useRouter()
   const searchParams = useSearchParams()
+  const requestedTab = searchParams.get('tab')
   const [activeTab, setActiveTab] = useState<TabId>(() => {
-    const tab = searchParams.get('tab')
-    return (TABS.includes(tab as TabId) ? tab : 'chat') as TabId
+    return (TABS.includes(requestedTab as TabId) ? requestedTab : 'memory') as TabId
   })
   const [showOnboarding, setShowOnboarding] = useState(false)
+
+  // The global 「对话」 page is the single chat entry now.
+  useEffect(() => {
+    if (requestedTab === 'chat') router.replace('/')
+  }, [requestedTab, router])
 
   useEffect(() => {
     api.getConfig()

@@ -1,173 +1,56 @@
 "use client"
 
-import { useState, useEffect, useCallback } from "react"
-import { StatsCards } from "@/components/dashboard/stats-cards"
-import { HeroMetrics } from "@/components/dashboard/hero-metrics"
-import { QueuePanel } from "@/components/dashboard/queue-panel"
-import { RecentExecutions } from "@/components/dashboard/recent-executions"
-import { LeaderboardSection } from "@/components/dashboard/leaderboard-section"
-import { WorkflowHealthCard } from "@/components/dashboard/workflow-health-card"
-import { CostTrendChart } from "@/components/dashboard/cost-trend-chart"
-import { fetchDashboardStats, fetchRunningQueue, fetchRecentExecutions, fetchWorkflowHealth } from "@/lib/api-client"
-import type { Execution } from "@/lib/types"
+import { useCallback, useState } from "react"
+import { FilePlus2 } from "lucide-react"
+import { Button } from "@/components/ui/button"
+import { ChatTab } from "@/components/agent/chat/ChatTab"
+import { TaskModal } from "@/components/tasks/task-modal"
+import { getTask, type TaskView } from "@/lib/tasks-api"
 
-interface WorkflowHealth {
-  workflow_ref: string
-  executions: number
-  success_rate: number | null
-  avg_duration_ms: number | null
-}
+export default function ConversationPage() {
+  const [draftOpen, setDraftOpen] = useState(false)
+  const [modalTask, setModalTask] = useState<TaskView | null>(null)
 
-export default function DashboardPage() {
-  const [stats, setStats] = useState({
-    total_workspaces: 0,
-    total_workflows: 0,
-    total_executions: 0,
-    completed_executions: 0,
-    failed_executions: 0,
-    running_executions: 0,
-    pending_executions: 0,
-    avg_duration_ms: null as number | null,
-    total_cost: { usd: null, complete: true } as { usd: number | null; complete: boolean },
-  })
-  const [runningExecutions, setRunningExecutions] = useState<Execution[]>([])
-  const [pendingExecutions, setPendingExecutions] = useState<Execution[]>([])
-  const [recentExecutions, setRecentExecutions] = useState<Execution[]>([])
-  const [workflows, setWorkflows] = useState<WorkflowHealth[]>([])
-  const [loading, setLoading] = useState(true)
-  const [error, setError] = useState<string | null>(null)
-
-  const fetchData = useCallback(async () => {
-    setLoading(true)
-    setError(null)
+  // Keep the draft workspace live: agent-driven spec writes re-read the task
+  // through the same GET the tasks board uses.
+  const refreshModalTask = useCallback(async () => {
+    if (!modalTask) return
     try {
-      const [statsResult, queueResult, recentResult, healthResult] = await Promise.allSettled([
-        fetchDashboardStats(),
-        fetchRunningQueue(),
-        fetchRecentExecutions(),
-        fetchWorkflowHealth(),
-      ])
-      if (statsResult.status === "fulfilled") {
-        setStats(statsResult.value)
-      } else {
-        setStats({ total_workspaces: 0, total_workflows: 0, total_executions: 0, completed_executions: 0, failed_executions: 0, running_executions: 0, pending_executions: 0, avg_duration_ms: null, total_cost: { usd: null, complete: true } })
-      }
-      if (queueResult.status === "fulfilled") {
-        const allQueue = Array.isArray(queueResult.value) ? queueResult.value : []
-        setRunningExecutions(allQueue.filter((e: Execution) => e.status === "running"))
-        setPendingExecutions(allQueue.filter((e: Execution) => e.status === "pending"))
-      }
-      if (recentResult.status === "fulfilled") {
-        setRecentExecutions(Array.isArray(recentResult.value) ? recentResult.value : [])
-      }
-      if (healthResult.status === "fulfilled") {
-        setWorkflows(Array.isArray(healthResult.value) ? healthResult.value : [])
-      }
-
-      if (statsResult.status === "rejected" && queueResult.status === "rejected" && recentResult.status === "rejected" && healthResult.status === "rejected") {
-        setError("获取数据失败")
-      }
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "获取数据失败")
-    } finally {
-      setLoading(false)
+      setModalTask(await getTask(modalTask.id))
+    } catch {
+      /* keep the last known task; the modal surfaces its own errors */
     }
-  }, [])
-
-  useEffect(() => {
-    fetchData()
-  }, [fetchData])
-
-  if (loading) {
-    return (
-      <div className="container mx-auto flex items-center justify-center px-4 py-12 lg:px-6">
-        <p className="text-muted-foreground">加载中...</p>
-      </div>
-    )
-  }
-
-  if (error) {
-    return (
-      <div className="container mx-auto space-y-6 px-4 py-6 lg:px-6">
-        <div>
-          <h1 className="text-2xl font-black tracking-tight text-pop-ink">Dashboard</h1>
-          <p className="text-muted-foreground">工作流编排平台概览</p>
-        </div>
-        <div className="flex flex-col items-center justify-center rounded-xl border-2 border-dashed border-pop-bd/40 bg-pop-paper py-12 text-center shadow-pop-sm">
-          <p className="text-destructive">{error}</p>
-          <button className="mt-4 text-sm text-primary underline" onClick={fetchData}>重试</button>
-        </div>
-      </div>
-    )
-  }
-
-  const dashboardStats = {
-    activeWorkspaces: stats.total_workspaces,
-    totalWorkspaces: stats.total_workspaces,
-    runningExecutions: stats.running_executions,
-    pendingExecutions: stats.pending_executions ?? 0,
-    completedToday: stats.completed_executions ?? stats.total_executions,
-    failedToday: stats.failed_executions ?? 0,
-  }
-
-  // Calculate metrics for HeroMetrics
-  const totalExecutions = stats.total_executions
-  const completedCount = stats.completed_executions ?? stats.total_executions
-  const successRate = totalExecutions > 0 ? completedCount / totalExecutions : 0
+  }, [modalTask])
 
   return (
-    <div className="container mx-auto space-y-6 px-4 py-6 lg:px-6">
-      {/* Page Header */}
-      <div>
-        <h1 className="text-2xl font-black tracking-tight text-pop-ink">Dashboard</h1>
-        <p className="text-muted-foreground">
-          工作流编排平台概览
-        </p>
-      </div>
-
-      {/* Stats Cards - Overview */}
-      <StatsCards stats={dashboardStats} />
-
-      {/* Hero Metrics - Key Performance Indicators */}
-      <HeroMetrics
-        totalExecutions={totalExecutions}
-        successRate={successRate}
-        totalCost={stats.total_cost?.usd ?? null}
-        totalCostComplete={stats.total_cost?.complete ?? true}
-        avgDurationMs={stats.avg_duration_ms ?? 0}
-      />
-
-      {/* Leaderboard Rankings */}
-      <LeaderboardSection />
-
-      {/* Workflow Health - Above Queue/Recent */}
-      {workflows.length > 0 && (
-        <div>
-          <h2 className="text-xl font-black mb-4">Workflow 健康度</h2>
-          <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
-            {workflows.map((w) => (
-              <WorkflowHealthCard
-                key={w.workflow_ref}
-                workflowRef={w.workflow_ref}
-                healthScore={w.success_rate ? Math.round(w.success_rate * 100) : 0}
-                grade={w.success_rate && w.success_rate > 0.9 ? 'A' : w.success_rate && w.success_rate > 0.75 ? 'B' : w.success_rate && w.success_rate > 0.6 ? 'C' : w.success_rate && w.success_rate > 0.4 ? 'D' : 'F'}
-                successRate={w.success_rate ?? 0}
-                avgDurationMs={w.avg_duration_ms ?? 0}
-                totalCost={0}
-              />
-            ))}
-          </div>
+    <div className="flex h-full min-h-0 flex-col">
+      <div className="flex shrink-0 flex-wrap items-center gap-3 border-b-[1.5px] border-pop-bd bg-pop-paper px-4 py-3 lg:px-6">
+        <div className="min-w-0 flex-1">
+          <h1 className="text-xl font-black tracking-tight text-pop-ink">对话</h1>
+          <p className="text-xs text-pop-dim">
+            与主 Agent 对话；需要产出计划时，从任务草稿开始。
+          </p>
         </div>
-      )}
-
-      {/* Queue & Recent */}
-      <div className="grid gap-6 lg:grid-cols-2 items-stretch max-h-[400px]">
-        <QueuePanel
-          runningExecutions={runningExecutions}
-          pendingExecutions={pendingExecutions}
-        />
-        <RecentExecutions executions={recentExecutions} />
+        <Button size="sm" onClick={() => setDraftOpen(true)}>
+          <FilePlus2 className="h-4 w-4" />
+          新建任务草稿
+        </Button>
       </div>
+
+      <div className="min-h-0 flex-1">
+        <ChatTab />
+      </div>
+
+      <TaskModal
+        open={draftOpen}
+        onOpenChange={(open) => {
+          setDraftOpen(open)
+          if (!open) setModalTask(null)
+        }}
+        task={modalTask}
+        onMutated={refreshModalTask}
+        onDraftResolved={(task) => setModalTask(task)}
+      />
     </div>
   )
 }

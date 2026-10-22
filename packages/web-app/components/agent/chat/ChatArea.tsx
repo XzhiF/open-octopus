@@ -90,6 +90,9 @@ interface ChatAreaProps {
   currentModel?: string
   /** Callback when user switches model. */
   onModelChange?: (model: string) => void
+  /** Non-TUI composer: always render ctx/token slots, with `ctx --%` / `tok --`
+   *  placeholders until the first usage arrives (conversation home uses this). */
+  showUsagePlaceholders?: boolean
   /** 输入行左端的动作槽（草稿工作台把「专家咨询」小贴纸挂这里，替代独立辅助条）。 */
   composerLeading?: ReactNode
   /** 非流式时的输入框 placeholder（草稿工作台把「/ 调用技能」计数提示收编于此）。 */
@@ -125,6 +128,7 @@ export function ChatArea({
   reviewItems, onReviewAction,
   emptyStateTitle, emptyStateDescription, hideEmptyState,
   commands, contextUsage, sessionUsage, currentModel, onModelChange,
+  showUsagePlaceholders,
   composerLeading, composerPlaceholder,
   tui, onSteer, steerActiveRef, resumeTailing,
   messageExtras, transcriptTail, composerSeed,
@@ -768,7 +772,7 @@ export function ChatArea({
                 <div className="flex shrink-0 items-center gap-1.5" data-composer-leading>{composerLeading}</div>
               )}
               {/* Context usage */}
-              {contextUsage && (
+              {contextUsage ? (
                 <button
                   onClick={() => setContextExpanded(!contextExpanded)}
                   className="flex shrink-0 items-center gap-1 text-[10px] text-muted-foreground transition-colors hover:text-foreground"
@@ -779,8 +783,25 @@ export function ChatArea({
                   <span className="opacity-60">({contextUsage.percentage.toFixed(1)}%) {/* fmt-ok: percentage 量纲未经 server 核实（providers wire），待查后收编 */}</span>
                   {contextExpanded ? <ChevronDown className="size-2.5" /> : <ChevronUp className="size-2.5" />}
                 </button>
-              )}
-              <SessionCostChip usage={sessionUsage} contextUsage={contextUsage} />
+              ) : showUsagePlaceholders ? (
+                <span
+                  className="flex shrink-0 items-center gap-1 text-[10px] text-muted-foreground/60"
+                  title="暂无上下文用量"
+                >
+                  <span>📋</span>
+                  <span>ctx --%</span>
+                </span>
+              ) : null}
+              {sessionUsage && sessionUsage.totalCalls > 0 ? (
+                <SessionCostChip usage={sessionUsage} contextUsage={contextUsage} />
+              ) : showUsagePlaceholders ? (
+                <span
+                  className="shrink-0 rounded-full border border-pop-bd bg-pop-bg/70 px-1.5 py-0.5 text-[10px] font-black tabular-nums text-pop-dim"
+                  title="暂无会话用量"
+                >
+                  tok --
+                </span>
+              ) : null}
               {/* Model selector */}
               {currentModel && onModelChange && (
                 <div className="flex shrink-0 items-center gap-1 text-[10px] text-muted-foreground">

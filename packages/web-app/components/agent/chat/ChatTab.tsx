@@ -34,10 +34,12 @@ export function ChatTab() {
 
   const {
     messages, streaming, streamContent, streamThinking, streamTimeline, isThinking, toolCalls, pendingConfirm,
-    error: chatError, statusMessage,
+    error: chatError, statusMessage, contextUsage,
     sendMessage, stopGenerate, handleConfirm, loadMessages,
   } = useAgentChat(activeSessionId, { onTitleUpdate: handleTitleUpdate })
   const sessionUsage = useSessionUsage(activeSessionId, streaming)
+  // Same model aliases as the task-draft workspace (ChatArea's composer bar).
+  const [model, setModel] = useState('pro')
 
   // ── 票10 投喂泛化：会话策展卡回流呈现 ──
   // 卡片回流原会话的普通侧宿主：Lane A fenced 块剥块渲染（注册表复用=零新卡类），
@@ -146,19 +148,19 @@ export function ChatTab() {
       const msg = pendingMessageRef.current
       pendingMessageRef.current = null
       // Small delay to ensure useAgentChat has updated with new sessionId
-      requestAnimationFrame(() => sendMessage(msg))
+      requestAnimationFrame(() => sendMessage(msg, { model }))
     }
-  }, [activeSessionId, sendMessage])
+  }, [activeSessionId, sendMessage, model])
 
   const handleSendMessage = useCallback((message: string) => {
     if (activeSessionId) {
-      sendMessage(message)
+      sendMessage(message, { model })
     } else {
       // No session — auto-create one, then send message
       pendingMessageRef.current = message
       createNewSession()
     }
-  }, [activeSessionId, sendMessage, createNewSession])
+  }, [activeSessionId, sendMessage, createNewSession, model])
 
   const handleSelectSession = (id: string) => {
     setActiveSessionId(id)
@@ -197,9 +199,9 @@ export function ChatTab() {
 
       {/* Main chat area */}
       <div className="flex-1 flex flex-col min-w-0 min-h-0">
-        {/* Toolbar with perspective indicator */}
-        <div className="flex items-center justify-between px-2 py-1.5 border-b border-agent-divider bg-agent-surface-raised">
-          <div className="md:hidden flex items-center">
+        {/* Mobile-only toolbar: session list trigger + active title */}
+        <div className="flex items-center justify-between px-2 py-1.5 border-b border-agent-divider bg-agent-surface-raised md:hidden">
+          <div className="flex items-center">
             <Button variant="ghost" size="icon" onClick={() => setMobileSidebarOpen(true)}>
               <PanelLeftOpen className="h-5 w-5" />
             </Button>
@@ -207,7 +209,6 @@ export function ChatTab() {
               {sessions.find(s => s.id === activeSessionId)?.title ?? '对话'}
             </span>
           </div>
-          <div className="hidden md:flex items-center" />
         </div>
 
         <ChatArea
@@ -225,7 +226,11 @@ export function ChatTab() {
           onStop={stopGenerate}
           onConfirm={handleConfirm}
           hasSession={!!activeSessionId}
+          contextUsage={contextUsage}
           sessionUsage={sessionUsage}
+          currentModel={model}
+          onModelChange={setModel}
+          showUsagePlaceholders
           composerSeed={composerSeed}
           messageExtras={extras}
           transcriptTail={tail}

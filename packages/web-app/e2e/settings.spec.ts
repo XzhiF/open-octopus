@@ -1,9 +1,9 @@
 import { test, expect } from "@playwright/test"
 
 test.describe("Settings 页面", () => {
-  test("Header 设置按钮导航到 Settings 页面", async ({ page }) => {
+  test("左导轨设置入口导航到 Settings 页面", async ({ page }) => {
     await page.goto("/")
-    // 点击 Header 的设置图标按钮
+    // 设置入口已从左/顶栏迁移到全局左导轨「系统」组
     await page.locator('a[href="/settings"]').first().click()
     await expect(page).toHaveURL(/\/settings/)
     // 验证页面标题
@@ -80,7 +80,7 @@ test.describe("Settings 页面", () => {
     expect(hasCostEmpty || hasCostData).toBe(true)
   })
 
-  test("Header 导航栏设置链接可点击（bonus）", async ({ page }) => {
+  test("左导轨设置链接可点击（bonus）", async ({ page }) => {
     await page.goto("/")
     const settingsLink = page.locator('nav a[href="/settings"]')
     await expect(settingsLink.first()).toBeVisible()

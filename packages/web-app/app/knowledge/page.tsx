@@ -347,7 +347,7 @@ export default function KnowledgePage() {
           relative+overflow-hidden = 策展人抽屉的锚定框：抽屉 absolute 于此，
           顶边天然落在页头下沿，收起时平移出界被裁掉（不产生横向滚动条） */}
       <div className="relative grid min-h-0 flex-1 overflow-hidden" style={{ gridTemplateColumns: `${treeW}px minmax(0,1fr)` }}>
-        <aside className="min-h-0 overflow-y-auto border-r-[1.5px] border-pop-bd bg-pop-idle p-2">
+        <aside data-testid="kc-tree-pane" className="min-h-0 overflow-y-auto border-r-[1.5px] border-pop-bd bg-pop-idle p-2">
           {fsError && <div data-testid="kc-fs-error" className="p-2 text-xs text-pop-red">目录树加载失败：{fsError}</div>}
           {treeError && <div data-testid="kc-tree-error" className="p-2 text-xs text-pop-red">页元数据加载失败：{treeError}（wiki 页将以原文视图打开）</div>}
           {!fs && !fsError && <div className="p-2 text-xs text-pop-dim">加载中…</div>}
@@ -377,7 +377,7 @@ export default function KnowledgePage() {
           style={{ left: treeW }}
         />
 
-        <section className="flex min-h-0 overflow-hidden bg-pop-bg">
+        <section data-testid="kc-stage" className="flex min-h-0 overflow-hidden bg-pop-bg">
           <div className="min-w-0 flex-1 overflow-y-auto">
             {view === null && (
               <div data-testid="kc-empty-state" className="flex items-center justify-center py-16 text-sm text-pop-dim">

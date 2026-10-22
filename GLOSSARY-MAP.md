@@ -147,6 +147,11 @@
 | **回填 (Backfill)** | 探索复利通道（spec 故事 14）：策展人对话中有价值的合成答案 → 回填卡 [编进 wiki] → 对话摘录落 `raw/inbox/`（origin=`chat:<session>`，票02 冻结契约原样）→ 异步入队编译、diff 卡落对话流（引用药丸跳，ADR-0033）。**窄口纪律**：执行中 agent 的产出**不自动回填**——BackfillService 是回填唯一入口，只由知识中心对话/显式 API 触发。 | server, web-app |
 | **知识中心 (Knowledge Center)** | `/knowledge` 页——对话驱动的界面知识管理主界面（交互契约 v2，ADR-0033）：**wiki 主场恒定布局**（左导航树 + 中正文阅读线 + 右栏三件套：本页目录/实效账/反向链接）+ **策展人抽屉**（右侧 overlay，560px 默认可拖 420px~94vw，开合调宽永不重排正文；内为 archive 分身 TUI 对话流 + 卡片特殊框，复用既有 agent chat 通道 scope=knowledge，不自建聊天基建）；对话**多会话**：主通道恒在 + 手动新建（`知识中心 · N`），tab/历史为客户端视图态（会话本体零删除零归档）；卡片引用页经**引用药丸**显式跳转，**永不自动跟随**（跟随/钉住/双模式概念已废除）；页头健康三槽（健康分/开放 findings/队列）点开弹层全量指标（**没有"待审核"计数**，概念已废除，spec 故事 10）+ Ctrl+K 检索 + 特殊视图：INDEX 总览（在盘导航层只读渲染）与**原料库**（raw 层首个浏览 importer，独立库视图不平铺进树）。十一类已知卡片沉淀每次操作（抓取/来源摘要/编译 diff/归档编译/finding/回填/词条迷你/写保护/素材包/判例/skill 草案）+ 开放 kind 注册即用（页退役卡/自动退役通知卡/页恢复回执卡）——卡片协议单源 shared card-protocol，新卡类一行注册。旧路由 /wiki 与 /experience 已整页删除。 _Avoid_: 复活对话/浏览双模式；右栏自动跟随；把 raw 平铺进知识导航树。 | web-app, server |
 | **引用药丸 (Citation Pill)** | 策展人卡片引用 wiki 页时的主场跳转件：页头亮「策展人刚动了 X」药丸，**显式点击才渲染该页**——ADR-0033 用它替代「右栏跟随对话」；任何自动跳转=负断言对象。_Avoid_: 跟随、自动渲染右栏、"智能"抢焦点。 | web-app |
+| **对话页 (Conversation)** | 全站唯一的聊天入口与默认首页——承载主 Agent 会话；另提供「新建任务草稿」入口进入既有任务草稿工作台，任务草稿不进入对话页的会话列表。Agent 页不再保留同名对话标签。_Avoid_: 把对话页做成任务线程工作台；在 Agent 页留第二个聊天入口。 | web-app |
+| **今日页 (Today)** | 原 Dashboard 概览页迁址后的现名——保留执行统计、排行榜、队列与近期执行；首屏让位给对话页。 | web-app |
+| **作业坞 (Work Dock)** | 右侧常驻的工作上下文面板，分「导航」与「作业」两区；可拖宽、可收起、记忆偏好，窄屏隐藏。_Avoid_: 把坞当成成员面板或待决收件箱（本期不承载该语义）；把「作业」当独立数据实体。 | web-app |
+| **导航记录 (Navigation MRU)** | 作业坞「导航」区展示的本次会话最近访问页面序列——最近优先、按页去重、不含首页、最多四条、不跨刷新保留；点击回跳，可移除。 | web-app |
+| **作业 (Active Task)** | 作业坞「作业」区对活跃任务的展示口径——实体仍是任务 (Task)，含执行中、暂停、待验收、归档中四种状态；不是新数据实体，也不是执行 (Execution)。_Avoid_: 用「作业」另造一套任务/执行模型。 | web-app |
 | **主通道 (Primary Session)** | title=`知识中心` 的 archive 分身会话——夜巡/归档/裁决回执等**机器播报的唯一落点**（patrol 判据 ADR-0033 起仅认 title，∨scope 判据废除防多会话漂移）；恒存在（缺席即由 ensureSession 重建）；用户手动新建的会话命名 `知识中心 · N`，不占主通道语义。 | server, web-app |
 | **审核队列 (Review Queue)** | **已废弃**（知识中心票09 物理删除，ADR-0030）：事前审批的 wiki 通道——rule/wiki-edit/wiki-split 策展分发、approve→curate 链、拆分提案入队语义、auto_approve 概念、审核 UI 组件整体废除（输入即审批，质控改事后六道）。pending_review 表 P2' 暂留空壳后已于 **P3 票08 物理退役**：导出审计件（空表也留=归档先于删除红线）→ 蓝绿 drop 表+三索引；其最后消费者 legacy 执行归档流（workflow 详情 ArchiveDialog→/api/archive/:id/propose→/api/review/batch 审批残链）同批删除，非审批面（GET /:id/summary、Archive V2）保留。skill 草案走 drafts 区+卡片通道，不经任何审批表。_Avoid_: 复活任何 approve→自动写库 形态；UI 上报"待审核"计数。 | server |
 | **工作经验页 (/experience)** | **已废弃**（owner 裁决「删除干净一点」，知识中心票09）：/experience 整页删除，含经验库、知识管理 tab、审核组件、助手面板、偏好编辑器（user_preference 彼时仅留浏览模式只读渲染——该概念已于 ADR-0033 整体退役：UI/读端点/INDEX 必读行/文件本体入 `_archive/`）；experiences 数据导出归档 `_archive/` 后 drop 表（含 FTS）；经验三级提炼/experience-merger 随归档自动投喂替代而删除。旧链接 404 或重定向 /knowledge。_Avoid_: 重建经验库或偏好编辑 UI；把 agent 记忆系统（另一域）牵进删除面。 | web-app, server |
@@ -206,5 +211,6 @@ core-pack ← (纯数据资源)
 - [0031-wiki-global-write-serialization.md](docs/adr/0031-wiki-global-write-serialization.md) — wiki 全局写串行：进程内 FIFO 编译队列 + wiki 根锁两级互斥，读永不锁
 - [0032-revert-state-rebuild.md](docs/adr/0032-revert-state-rebuild.md) — 深回滚=状态重建：git revert 三方合并退役、REVERT_CONFLICT 废弃、LOG append-only 换芯（amends ADR-0030 质控③机制侧；承 ADR-0031 闸不变）
 - [0033-knowledge-center-interaction-v2-wiki-mainstage-drawer.md](docs/adr/0033-knowledge-center-interaction-v2-wiki-mainstage-drawer.md) — 知识中心交互契约 v2：双模式与右栏跟随废除 → wiki 主场 + 策展人抽屉 + 引用药丸 + 主通道 + user_preference 概念退役（spec 故事 6/7/8/16 与票12 AC4 就此失效）
+- [0034-global-shell-left-rail-right-work-dock.md](docs/adr/0034-global-shell-left-rail-right-work-dock.md) — 全局三栏外壳：左导轨 + 内容区 + 右作业坞；对话页取代 Dashboard 成为首页，Agent 会话栈与任务草稿入口复用，坞 = 导航 MRU + 活跃任务
 
 （注：本索引非穷举——0021～0029 未列，补齐留治理整理票；新增 ADR 请顺手在此挂行。）
