@@ -2,6 +2,7 @@
 
 import { useReducer, useCallback, useState, useEffect } from "react"
 import { cn } from "@/lib/utils"
+import { randomId } from "@/lib/random-id"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
@@ -45,9 +46,9 @@ type MoaConfigAction =
   | { type: "update_aggregator"; field: keyof MoaAggregator; value: string | number }
   | { type: "import_config"; config: Partial<MoaConfigState> }
 
-// C2 fix: crypto.randomUUID() — SSR-safe, no module-level mutable state
+// C2 fix: secure-context-safe id, no module-level mutable state
 function nextExpertId() {
-  return crypto.randomUUID()
+  return randomId()
 }
 
 function moaConfigReducer(state: MoaConfigState, action: MoaConfigAction): MoaConfigState {

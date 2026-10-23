@@ -2,6 +2,7 @@ import { StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
 import { BrowserRouter } from 'react-router-dom'
 import { AppShell } from '@/components/providers/app-shell'
+import { randomId } from '@/lib/random-id'
 import '@/app/globals.css'
 
 declare global {
@@ -10,7 +11,7 @@ declare global {
   }
 }
 
-window.__OCTOPUS_BOOT_ID__ = crypto.randomUUID()
+window.__OCTOPUS_BOOT_ID__ = randomId()
 
 const root = document.getElementById('root')
 if (!root) throw new Error('#root missing')
