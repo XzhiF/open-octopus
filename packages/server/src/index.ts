@@ -893,6 +893,8 @@ try { getAgentService().setSchedulerService(schedSvc) } catch {}
 
 // ── Actuator: operational diagnostics endpoints ──────────────────
 let actuatorService: ActuatorService | null = null
+/** Set after every service route is mounted; desktop sidecar polls this. */
+let routesReady = false
 try {
   const serverStartedAt = new Date(Date.now() - process.uptime() * 1000)
   const serverBranch = process.env.OCTOPUS_BRANCH ?? null
@@ -952,6 +954,11 @@ try {
 // ── System management: model config + connectivity test ─────────────
 app.route("/api/system", createSystemRoutes())
 
+// ── Desktop sidecar readiness (routes mounted after listen) ──────────
+app.get("/api/actuator/ready", (c) =>
+  routesReady ? c.json({ status: "UP" }) : c.json({ status: "STARTING" }, 503),
+)
+
 // ── Repos management: read manifest data for org ─────────────────────
 app.route("/api/repos", createReposRoutes())
 
@@ -969,6 +976,7 @@ if (shouldServe) {
 
   const portArg = process.argv.find(a => a.startsWith("--port="))
   const port = parseInt(portArg?.split("=")[1] ?? process.env.PORT ?? "3001", 10)
+  const host = process.env.OCTOPUS_HOST ?? "0.0.0.0"
 
   const webStatic = createWebStaticHandler(process.env.OCTOPUS_WEB_DIR)
 
@@ -1060,7 +1068,7 @@ if (shouldServe) {
     server.keepAliveTimeout = 70_000
     server.headersTimeout = 75_000
 
-    server.listen(port, "0.0.0.0", () => {
+    server.listen(port, host, () => {
       const localIP = (() => {
         for (const ifaces of Object.values(os.networkInterfaces())) {
           for (const iface of ifaces || []) {
@@ -1069,8 +1077,9 @@ if (shouldServe) {
         }
         return "localhost"
       })()
-      console.log(`Octopus Server running on http://0.0.0.0:${port} (LAN: http://${localIP}:${port}) (PID: ${process.pid})`)
-      console.log(`WebSocket ready on ws://0.0.0.0:${port}`)
+      const lan = host === "0.0.0.0" ? ` (LAN: http://${localIP}:${port})` : ""
+      console.log(`Octopus Server running on http://${host}:${port}${lan} (PID: ${process.pid})`)
+      console.log(`WebSocket ready on ws://${host}:${port}`)
       console.log(`Log file: ${getLogFilePath()}`)
       logInfo(`Server started`, {
         pid: process.pid,
@@ -1299,6 +1308,8 @@ if (shouldServe) {
         // Surface this clearly so users don't see perpetual 'triggered' rows.
         console.warn('[scheduler] scheduler feature flag OFF — jobs will not execute (CRUD API still available)')
       }
+
+      routesReady = true
     })
 
     // Graceful shutdown on Ctrl+C / SIGTERM
@@ -1320,6 +1331,11 @@ if (shouldServe) {
         } catch {}
         process.exit(0)
       })
+      // SSE/WS clients keep server.close() pending; give normal requests a beat,
+      // then tear down idle/held connections so DB close + process exit can run.
+      setTimeout(() => {
+        try { server.closeAllConnections() } catch {}
+      }, 250).unref()
       // Force exit after 3s if graceful shutdown stalls
       setTimeout(() => {
         console.error(`[server] Graceful shutdown timed out, forcing exit.`)

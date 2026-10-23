@@ -14,6 +14,7 @@ octopus/
 │   ├── engine/      ← @octopus/engine (7 executors + SQLite + JSONL)
 │   ├── server/      ← @octopus/server (Hono REST API + SSE + WebSocket)
 │   ├── web-app/     ← @octopus/web-app (Vite SPA 前端 · React Router)
+│   ├── desktop/     ← @octopus/desktop (Electron 桌面宿主 · Node sidecar)
 │   └── core-pack/   ← @octopus/core-pack (skills/agents/workflows)
 ├── scripts/         ← dev.mjs, prod.mjs, branch-port.mjs
 ├── pnpm-workspace.yaml
@@ -55,6 +56,8 @@ pnpm dev              # 主仓库开发 (server:3001 web:3000)
 pnpm dev --isolated   # 隔离模式
 pnpm dev --port 3101,3100    # 指定端口 (web 在前, server 在后)
 pnpm prod             # 生产模式 (server:3099，UI + API 同源)
+pnpm desktop:dev      # 桌面 dev（需先 pnpm dev；Electron 连 localhost:3000）
+pnpm desktop:pack     # 生成 Electron .app（macOS arm64，未签名，见 packages/desktop/README.md）
 pnpm prod --port 3098,3099   # 指定端口 (web 在前, server 在后)
 pnpm port             # 查看端口分配
 pnpm test             # Vitest 测试

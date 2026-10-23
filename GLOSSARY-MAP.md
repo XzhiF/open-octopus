@@ -155,6 +155,8 @@
 | **详情标签 (Detail Tab)** | 在壳主内容区顶部以标签形式打开的详情路由（工作空间、调度作业、资源、运行观测、归档）；同一资源去重聚焦，最多 8 个，切走只隐藏不卸载。_Avoid_: 把顶层导航项也做成详情标签；把标签当成独立路由页面重新挂载。 | web-app |
 | **详情标签宿主 (Detail Tabs Host)** | 管理详情标签生命周期与作用域的壳层组件：URL 是活动标签唯一真相，隐藏标签保留自己的 pinned 路径/查询与滚动状态。_Avoid_: 用 `<Routes>` 直接按 URL 挂载详情页（会丢状态）。 | web-app |
 | **路由描述表 (Route Table)** | `lib/routes.tsx` 的集中路由声明：视图/详情/重定向/standalone/404 的匹配、tab key、标题、回退路径与 owner view；壳内导航和直达 URL 共用同一份判定。_Avoid_: 在组件里散落 pathname 字符串判断。 | web-app |
+| **桌面宿主 (Desktop Host)** | `packages/desktop` 的 Electron 主进程：单实例、窗口、外链/下载、sidecar 生命周期；加载固定 `http://127.0.0.1:47820` 的同源 SPA。_Avoid_: 把桌面宿主当作第二个 web server 或让渲染进程直连 Node。 | desktop |
+| **桌面 sidecar** | 由桌面宿主启动、随包携带独立 Node runtime 的 `@octopus/server` 进程；与 CLI 共享 `~/.octopus`，通过 `OCTOPUS_HOST=127.0.0.1` 只监听本机。_Avoid_: 用 `ELECTRON_RUN_AS_NODE` 启动并重建原生模块（会污染 Node dev）。 | desktop |
 | **主通道 (Primary Session)** | title=`知识中心` 的 archive 分身会话——夜巡/归档/裁决回执等**机器播报的唯一落点**（patrol 判据 ADR-0033 起仅认 title，∨scope 判据废除防多会话漂移）；恒存在（缺席即由 ensureSession 重建）；用户手动新建的会话命名 `知识中心 · N`，不占主通道语义。 | server, web-app |
 | **审核队列 (Review Queue)** | **已废弃**（知识中心票09 物理删除，ADR-0030）：事前审批的 wiki 通道——rule/wiki-edit/wiki-split 策展分发、approve→curate 链、拆分提案入队语义、auto_approve 概念、审核 UI 组件整体废除（输入即审批，质控改事后六道）。pending_review 表 P2' 暂留空壳后已于 **P3 票08 物理退役**：导出审计件（空表也留=归档先于删除红线）→ 蓝绿 drop 表+三索引；其最后消费者 legacy 执行归档流（workflow 详情 ArchiveDialog→/api/archive/:id/propose→/api/review/batch 审批残链）同批删除，非审批面（GET /:id/summary、Archive V2）保留。skill 草案走 drafts 区+卡片通道，不经任何审批表。_Avoid_: 复活任何 approve→自动写库 形态；UI 上报"待审核"计数。 | server |
 | **工作经验页 (/experience)** | **已废弃**（owner 裁决「删除干净一点」，知识中心票09）：/experience 整页删除，含经验库、知识管理 tab、审核组件、助手面板、偏好编辑器（user_preference 彼时仅留浏览模式只读渲染——该概念已于 ADR-0033 整体退役：UI/读端点/INDEX 必读行/文件本体入 `_archive/`）；experiences 数据导出归档 `_archive/` 后 drop 表（含 FTS）；经验三级提炼/experience-merger 随归档自动投喂替代而删除。旧链接 404 或重定向 /knowledge。_Avoid_: 重建经验库或偏好编辑 UI；把 agent 记忆系统（另一域）牵进删除面。 | web-app, server |
@@ -216,5 +218,6 @@ core-pack ← (纯数据资源)
 - [0033-knowledge-center-interaction-v2-wiki-mainstage-drawer.md](docs/adr/0033-knowledge-center-interaction-v2-wiki-mainstage-drawer.md) — 知识中心交互契约 v2：双模式与右栏跟随废除 → wiki 主场 + 策展人抽屉 + 引用药丸 + 主通道 + user_preference 概念退役（spec 故事 6/7/8/16 与票12 AC4 就此失效）
 - [0034-global-shell-left-rail-right-work-dock.md](docs/adr/0034-global-shell-left-rail-right-work-dock.md) — 全局三栏外壳：左导轨 + 内容区 + 右作业坞；对话页取代 Dashboard 成为首页，Agent 会话栈与任务草稿入口复用，坞 = 导航 MRU + 活跃任务
 - [0035-vite-spa-detail-tabs.md](docs/adr/0035-vite-spa-detail-tabs.md) — Web 去 Next：Vite + React Router 纯 SPA，全路由壳内渲染，详情页升级为常驻标签，生产由 server 同源托管 dist
+- [0036-electron-sidecar-loopback.md](docs/adr/0036-electron-sidecar-loopback.md) — Electron 宿主：固定 127.0.0.1:47820 同源 SPA + 独立 Node runtime sidecar；vendor/NODE_PATH 打包，避免 Electron ABI 重建污染 dev
 
 （注：本索引非穷举——0021～0029 未列，补齐留治理整理票；新增 ADR 请顺手在此挂行。）

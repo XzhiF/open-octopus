@@ -62,3 +62,7 @@ e2e-screenshots/
 infra/.env
 .claude/sessions/
 packages/*/dist-scripts/
+
+# desktop build artifacts
+packages/desktop/resources/
+packages/desktop/release/

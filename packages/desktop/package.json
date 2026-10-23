@@ -1,0 +1,23 @@
+{
+  "name": "@octopus/desktop",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Octopus desktop shell (Electron)",
+  "author": "XzhiF",
+  "main": "dist/main.js",
+  "scripts": {
+    "build": "node scripts/build-main.mjs",
+    "dev": "node scripts/build-main.mjs && electron .",
+    "typecheck": "tsc --noEmit",
+    "prepare:resources": "node scripts/prepare-resources.mjs",
+    "pack:dir": "node scripts/build-main.mjs && node scripts/prepare-resources.mjs && electron-builder --dir",
+    "dist": "node scripts/build-main.mjs && node scripts/prepare-resources.mjs && electron-builder"
+  },
+  "devDependencies": {
+    "@types/node": "^22.15.0",
+    "electron": "^38.0.0",
+    "electron-builder": "^26.0.12",
+    "tsup": "^8.5.1",
+    "typescript": "5.7.3"
+  }
+}
