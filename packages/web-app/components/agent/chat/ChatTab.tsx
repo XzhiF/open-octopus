@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react'
-import { useAgentSessions } from '@/hooks/useAgentSessions'
+import { useChatSessions } from '@/components/providers/chat-sessions'
 import { useAgentChat } from '@/hooks/useAgentChat'
 import { useSessionUsage } from '@/hooks/useSessionUsage'
 import { useComposerSettings } from '@/hooks/useComposerSettings'
@@ -27,7 +27,7 @@ export function ChatTab() {
     sessions, activeSessionId, setActiveSessionId,
     loading: sessionsLoading, createNewSession, renameSession, removeSession,
     updateSessionTitle,
-  } = useAgentSessions()
+  } = useChatSessions()
 
   // Callback to update session title in sidebar when server auto-generates one
   const handleTitleUpdate = useCallback((sessionId: string, title: string) => {

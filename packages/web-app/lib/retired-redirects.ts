@@ -10,3 +10,13 @@ export function retiredRedirectTarget(pathname: string): string | null {
   }
   return null
 }
+
+/**
+ * Query-dependent legacy links the old pages redirected client-side.
+ * `/agent?tab=chat` was a route-level redirect to the chat desktop.
+ */
+export function queryRedirectTarget(pathname: string, search: string): string | null {
+  if (pathname !== "/agent") return null
+  const params = new URLSearchParams(search.startsWith("?") ? search.slice(1) : search)
+  return params.get("tab") === "chat" ? "/" : null
+}

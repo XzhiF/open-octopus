@@ -220,7 +220,7 @@ export function AppNavProvider({ children }: { children: ReactNode }) {
   return <AppNavProviderInner>{children}</AppNavProviderInner>
 }
 
-/** 壳内状态（AppShell/ViewHost/DetailTabsHost 专用）。无 Provider 时返回 null。 */
+/** 壳内状态（AppShell/Desktop/窗口层专用）。无 Provider 时返回 null。 */
 export function useAppNavigation(): AppNavigationValue | null {
   return useContext(AppNavigationContext)
 }

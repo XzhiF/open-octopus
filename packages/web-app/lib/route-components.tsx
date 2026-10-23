@@ -1,5 +1,5 @@
 import { lazy, type ComponentType, type LazyExoticComponent } from 'react'
-import type { ViewId } from '@/lib/routes'
+import type { AppRoute, ViewId } from '@/lib/routes'
 
 type LazyPage = LazyExoticComponent<ComponentType>
 
@@ -38,4 +38,14 @@ export const STANDALONE_COMPONENTS: Record<string, LazyPage> = {
   'dev-harness': lazy(() => import('@/app/dev/harness-test/page')),
   'dev-moa': lazy(() => import('@/app/dev/moa-test/page')),
   'dev-swarm': lazy(() => import('@/app/dev/swarm-test/page')),
+}
+
+export function componentForRoute(route: AppRoute): LazyPage | null {
+  if (route.kind === 'view') {
+    if (route.view === 'chat') return null
+    return VIEW_COMPONENTS[route.view] ?? null
+  }
+  if (route.kind === 'detail') return DETAIL_COMPONENTS[route.componentKey] ?? null
+  if (route.kind === 'standalone') return STANDALONE_COMPONENTS[route.componentKey] ?? null
+  return null
 }

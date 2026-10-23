@@ -1,5 +1,7 @@
 # 全局三栏外壳：左导轨 + 内容区 + 右作业坞，对话页取代 Dashboard 成为首页
 
+> **Superseded by ADR-0037**（macOS 式窗口桌面）：左导轨、右作业坞和详情标签已移除；应用目录与「对话为首屏」的决策继续有效。
+
 现状 web-app 是「薄外壳 + 胖页面」：`AppShell` 只提供顶栏与滚动容器，全站导航是 `header.tsx` 里一条横向数组（Dashboard `/` 居首），每个页面自管列布局。原型 `octopus-ai-native-proto/index.html` 给出驾驶台式布局：左导轨、中央视口、右作业坞，并以「对话」为首屏。owner 要求按原型调整项目布局、新增对话菜单替代 Dashboard，同时保留当前暗色 TUI 风格。硬约束：已有聊天实现（Agent 会话栈、任务草稿工作台）必须复用，不重造。
 
 ## Decision

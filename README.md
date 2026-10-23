@@ -26,7 +26,7 @@ Octopus 的目标是一个 **Loop Engineering** 开发平台：让 AI Agent 在�
 
 ## 技术栈
 
-TypeScript 5.9 · Node.js 20 · pnpm Workspaces · Hono 4（REST + SSE + WebSocket）· Next.js 16 + React 19 · Claude Agent SDK + Pi Agent SDK · SQLite · XYFlow · Yjs · Monaco Editor · Zod · Vitest + Playwright
+TypeScript 5.9 · Node.js 20 · pnpm Workspaces · Hono 4（REST + SSE + WebSocket）· Vite 8 + React Router 7 + React 19 · Electron 38 · Claude Agent SDK + Pi Agent SDK · SQLite · XYFlow · Yjs · Monaco Editor · Zod · Vitest + Playwright
 
 ---
 
@@ -75,7 +75,8 @@ octopus/
 │   ├── cli/             ← octopus (Commander.js CLI)
 │   ├── engine/          ← @octopus/engine (12 执行器 + WorkflowEngine + Harness + Checkpoint)
 │   ├── server/          ← @octopus/server (Hono REST + SSE + WebSocket/Yjs + Actuator)
-│   ├── web-app/         ← @octopus/web-app (Next.js 16 + React 19 前端)
+│   ├── web-app/         ← @octopus/web-app (Vite SPA + React Router · macOS 式窗口桌面)
+│   ├── desktop/         ← @octopus/desktop (Electron 宿主 + Node sidecar 打包)
 │   └── core-pack/       ← @octopus/core-pack (skills / agents / workflow 模板)
 ├── scripts/             ← 开发工具 (dev.mjs, prod.mjs, branch-port.mjs)
 ├── pnpm-workspace.yaml

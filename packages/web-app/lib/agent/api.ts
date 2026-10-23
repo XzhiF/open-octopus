@@ -81,6 +81,17 @@ export function listSessions(query?: { clone?: string; limit?: number; cursor?: 
 export function getSessionRunning(id: string) {
   return request<{ running: boolean; partial: boolean }>(`/sessions/${id}/running`)
 }
+export interface RunningAgentSession {
+  id: string
+  title: string
+  clone_name: string | null
+  session_type: string
+  started_at: string
+  stream_count: number
+}
+export function listRunningSessions(limit = 50) {
+  return request<{ items: RunningAgentSession[] }>(`/sessions/running?limit=${limit}`)
+}
 export function getSession(id: string, query?: { limit?: number; cursor?: string }) {
   const params = new URLSearchParams()
   if (query?.limit) params.set('limit', String(query.limit))

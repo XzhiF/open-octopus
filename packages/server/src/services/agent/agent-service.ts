@@ -96,6 +96,26 @@ export function isStreamActive(sessionId: string): boolean {
   return sessionStreams !== undefined && sessionStreams.size > 0
 }
 
+export interface ActiveStreamInfo {
+  sessionId: string
+  startedAt: number
+  streamCount: number
+}
+
+/** Sessions with at least one in-memory generation stream, newest first. */
+export function listActiveStreams(): ActiveStreamInfo[] {
+  const result: ActiveStreamInfo[] = []
+  for (const [sessionId, streams] of activeStreams) {
+    if (streams.size === 0) continue
+    let startedAt = Number.POSITIVE_INFINITY
+    for (const entry of streams.values()) {
+      startedAt = Math.min(startedAt, entry.startedAt)
+    }
+    result.push({ sessionId, startedAt, streamCount: streams.size })
+  }
+  return result.sort((a, b) => b.startedAt - a.startedAt)
+}
+
 // ── AgentService ─────────────────────────────────────────────────
 
 export class AgentService {

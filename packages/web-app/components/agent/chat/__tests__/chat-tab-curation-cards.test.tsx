@@ -33,8 +33,8 @@ vi.mock("@/hooks/useAgentChat", () => ({
   }),
 }))
 
-vi.mock("@/hooks/useAgentSessions", () => ({
-  useAgentSessions: () => ({
+vi.mock("@/components/providers/chat-sessions", () => ({
+  useChatSessions: () => ({
     sessions: [{
       id: "s1", title: "投喂讨论", org: "global", clone_name: null,
       perspective_clone_name: null, session_type: "main", created_at: "2026-10-15T08:00:00Z",

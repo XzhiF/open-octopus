@@ -20,7 +20,6 @@ vi.mock("@/components/knowledge-center/curator-drawer", () => ({
 }))
 
 import KnowledgePage from "../page"
-import { AppRail } from "@/components/layout/app-rail"
 
 // ── fixtures（expected 独立真相源：原型 Tab④ mockup 数字与票面口径）──
 
@@ -603,20 +602,5 @@ describe("LOG.md 时间线视图（行格式渲染 + 前缀过滤）", () => {
     // 非 compile 行不得残留
     expect(screen.queryByText(/raw\/inbox\/2026-10-13/)).toBeNull()
     expect(screen.queryByText(/回滚本次编译/)).toBeNull()
-  })
-})
-
-describe("全站导航注册（AC：知识中心入口，只加不删）", () => {
-  it("左导轨含「知识中心」→ /knowledge", () => {
-    render(<AppRail mobileOpen={false} onMobileOpenChange={() => {}} />)
-    const link = screen.getByRole("link", { name: /知识中心/ })
-    expect(link.getAttribute("href")).toBe("/knowledge")
-  })
-
-  it("票09 删除面生效：旧导航项退役，知识入口唯一 = 知识中心", () => {
-    render(<AppRail mobileOpen={false} onMobileOpenChange={() => {}} />)
-    expect(screen.queryByRole("link", { name: /知识词条/ })).toBeNull()
-    expect(screen.queryByRole("link", { name: /工作经验/ })).toBeNull()
-    expect(screen.getByRole("link", { name: /知识中心/ })).toBeDefined()
   })
 })

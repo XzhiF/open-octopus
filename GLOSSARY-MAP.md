@@ -8,6 +8,11 @@
 | **Spec** | 实现契约 — 单一连贯文档，含问题、方案、用户故事、测试决策、Seam 约定、Out of Scope。 | core-pack |
 | **Seam** | 可测试的公共边界 — 测试和调用者走同一个接口。数量越少越好，理想为 1。 | core-pack |
 | **Grilling** | 逐问决策拷问 — 一次一个问题，带推荐答案。决策归人，事实归环境。 | core-pack |
+| **应用窗口 (App Window)** | 壳内承载单个应用的单实例浮动窗口。关闭即销毁，最小化收进全局 header；不是 OS 级窗口。 | web-app |
+| **桌面层 (Desktop Layer)** | 常驻在最底层的对话界面，不参与窗口层叠；窗口关闭后回到这里。 | web-app |
+| **窗口作用域 (Window Scope)** | 每个窗口独立的导航作用域：只有焦点窗口连接全局地址，非焦点窗口只保留自己的落点路径。 | web-app |
+| **窗口总览 (Mission Control)** | 对已打开窗口做实时缩放的总览视图；选中任一格即置顶该窗口或回到桌面。 | web-app |
+| **运行中 Agent (Running Agent)** | 服务端内存中仍有生成流的 Agent 会话，在全局 header 中按启动时间从右向左排列。 | server, web-app |
 | **Vertical Slice** | Ticket 的结构约束 — 切片穿越所有层（schema → API → UI → test）。 | core-pack |
 | **Blocking Edge** | Ticket 间依赖声明 — 引擎通过 `depends_on` 实现拓扑排序。 | engine |
 | **Tracer Bullet** | Ticket 的执行模式 — 从测试到实现到验证的完整路径。 | core-pack |

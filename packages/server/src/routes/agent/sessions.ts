@@ -1,5 +1,6 @@
 import { Hono } from 'hono'
 import { getSessionService } from '../../services/agent/session-service'
+import { listActiveStreams } from '../../services/agent/agent-service'
 import { AgentSessionDAO } from '../../db/dao'
 import { createAgentError, mapErrorToStatus } from './middleware'
 
@@ -59,6 +60,50 @@ export function createSessionRoutes(sessionDAO: AgentSessionDAO): Hono {
       })
 
       return c.json(result)
+    } catch (err: unknown) {
+      const error = err instanceof Error ? err : new Error(String(err))
+      const code = (error as { code?: string }).code ?? 'INTERNAL_ERROR'
+      return c.json(createAgentError(code, error.message), mapErrorToStatus(code))
+    }
+  })
+
+  /**
+   * GET /sessions/running — Sessions with an in-memory generation stream.
+   * Literal route, must be registered before `GET /sessions/:id`.
+   */
+  sessions.get('/sessions/running', (c) => {
+    try {
+      const org = c.req.header('X-Octopus-Org') || (c.get('org') as string)
+      if (!org) {
+        return c.json(createAgentError('ORG_NOT_FOUND', 'Organization not resolved'), 403)
+      }
+      const requested = parseInt(c.req.query('limit') ?? '100', 10)
+      const limit = Number.isFinite(requested) ? Math.min(Math.max(requested, 1), 200) : 100
+
+      const items: Array<{
+        id: string
+        title: string
+        clone_name: string | null
+        session_type: string
+        started_at: string
+        stream_count: number
+      }> = []
+
+      for (const active of listActiveStreams()) {
+        const session = getSessionService().getSession(org, active.sessionId)
+        if (!session) continue
+        items.push({
+          id: session.id,
+          title: session.title,
+          clone_name: session.clone_name ?? null,
+          session_type: session.session_type,
+          started_at: new Date(active.startedAt).toISOString(),
+          stream_count: active.streamCount,
+        })
+        if (items.length >= limit) break
+      }
+
+      return c.json({ items })
     } catch (err: unknown) {
       const error = err instanceof Error ? err : new Error(String(err))
       const code = (error as { code?: string }).code ?? 'INTERNAL_ERROR'

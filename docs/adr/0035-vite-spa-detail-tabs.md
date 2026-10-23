@@ -1,5 +1,7 @@
 # Web 去 Next：Vite SPA + 壳内常驻详情标签
 
+> **详情标签部分已被 ADR-0037 取代**（macOS 式窗口桌面）：详情改为应用窗口内钻取。Vite SPA、静态托管与导航作用域部分继续有效。
+
 ## Context
 
 `feat-new-ui-20261022` 已完成「桌面壳 v0.8」：AppShell 三栏、左导轨、右作业坞、对话常驻，`lib/app-navigation.tsx` 统一了 Link/useRouter/useSearchParams。但前端仍依赖 Next.js：根 layout 用 `headers()` 动态渲染并注入 `SERVER_URL`，5 组详情路由（工作空间、归档、运行观测、资源、调度作业）走 Next RSC，无法产出可打包的静态单页；后续 Electron 也无法只带一个静态渲染器。

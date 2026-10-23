@@ -1,13 +1,14 @@
 import { test, expect } from "@playwright/test"
+import { openApp } from "./helpers/desktop"
 
 test.describe("Settings 页面", () => {
-  test("左导轨设置入口导航到 Settings 页面", async ({ page }) => {
+  test("Octopus 菜单设置入口导航到 Settings 窗口", async ({ page }) => {
     await page.goto("/")
-    // 设置入口已从左/顶栏迁移到全局左导轨「系统」组
-    await page.locator('a[href="/settings"]').first().click()
+    await openApp(page, "设置")
     await expect(page).toHaveURL(/\/settings/)
+    await expect(page.locator('[data-window-id="settings"]')).toBeVisible()
     // 验证页面标题（侧栏与页签都叫「日志分析」）
-    await expect(page.getByText("日志分析").first()).toBeVisible()
+    await expect(page.getByText("日志分析").first()).toBeVisible({ timeout: 15_000 })
   })
 
   test("Settings 页面显示左侧 Sidebar", async ({ page }) => {
@@ -54,8 +55,7 @@ test.describe("Settings 页面", () => {
     expect(hasStats || hasEmpty || hasError).toBe(true)
   })
 
-  test("各 Tab 空状态正确显示", async ({ page }) => {
-    await page.goto("/settings")
+  test("各 Tab 空状态正确显示", async ({ page }) => {    await page.goto("/settings")
     await page.waitForTimeout(2000)
 
     // 失败分析 Tab 空状态
@@ -78,13 +78,5 @@ test.describe("Settings 页面", () => {
     const hasCostEmpty = await page.getByText(/暂无成本数据/).isVisible().catch(() => false)
     const hasCostData = await page.getByText("成本趋势").isVisible().catch(() => false)
     expect(hasCostEmpty || hasCostData).toBe(true)
-  })
-
-  test("左导轨设置链接可点击（bonus）", async ({ page }) => {
-    await page.goto("/")
-    const settingsLink = page.locator('nav a[href="/settings"]')
-    await expect(settingsLink.first()).toBeVisible()
-    await settingsLink.first().click()
-    await expect(page).toHaveURL(/\/settings/)
   })
 })

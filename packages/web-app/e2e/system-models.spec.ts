@@ -34,9 +34,8 @@ test.describe("spec-001: 系统模型管理", () => {
     // URL should be /system/models (redirect from /system)
     await expect(page).toHaveURL(/\/system\/models/)
 
-    // Check for "系统管理" in navigation
-    const systemNav = page.locator('a:has-text("系统管理")')
-    await expect(systemNav.first()).toBeVisible()
+    // Check the system app window is open
+    await expect(page.locator('[data-window-id="system"]')).toBeVisible()
 
     // Check "模型管理" in sidebar is active
     const modelNav = page.locator('a:has-text("模型管理")')

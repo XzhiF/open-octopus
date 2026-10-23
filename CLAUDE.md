@@ -30,6 +30,14 @@ server ← shared+engine+core-pack+providers
 web-app ← shared (类型)          core-pack ← (纯数据)
 ```
 
+## Web 桌面壳
+
+- 对话是桌面底层；9 个应用以单实例浮动窗口打开（`lib/desktop-windows.tsx`），详情在所属窗口内钻取。
+- 全局 URL = 焦点目标的完整路由；切焦点 `replace`，窗口内导航 `push`；深链打开归属窗口。
+- 每个窗口/桌面层有独立导航作用域；全局快捷键先过 `useIsActiveRoute`，隐藏窗口另由 capture 门禁兜底。
+- 窗口几何/顺序/最小化状态持久化在 `localStorage['octopus.desktop.v1']`；窗口总览实时缩放已挂载窗口 DOM。
+- 运行中 agent = `GET /api/agent/sessions/running`（服务端内存流），在 header 从右往左排列。
+
 ## Workflow Engine
 
 YAML 定义工作流。**7 种执行器**: Bash / Python / Agent / Condition / Approval / Loop / Swarm。
@@ -58,7 +66,7 @@ pnpm dev --port 3101,3100    # 指定端口 (web 在前, server 在后)
 pnpm prod             # 生产模式 (server:3099，UI + API 同源)
 pnpm desktop:dev      # 桌面 dev（需先 pnpm dev；Electron 连 localhost:3000）
 pnpm desktop:pack     # 生成 Electron .app（macOS arm64，未签名，见 packages/desktop/README.md）
-pnpm prod --port 3098,3099   # 指定端口 (web 在前, server 在后)
+pnpm prod --port 3099        # 指定生产端口（server 同源）
 pnpm port             # 查看端口分配
 pnpm test             # Vitest 测试
 pnpm test:watch       # 监听模式
