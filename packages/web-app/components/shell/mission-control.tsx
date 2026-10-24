@@ -1,8 +1,8 @@
 'use client'
 
-import { X } from 'lucide-react'
 import type { MissionSlot } from '@/lib/window-geometry'
 import { cn } from '@/lib/utils'
+import { CloseLightGlyph } from '@/components/ui/close-light'
 
 export interface MissionItem {
   id: string
@@ -32,16 +32,16 @@ export function MissionControl({ items, narrow, onPick, onClose }: MissionContro
           onClick={onClose}
         />
         <div className="relative max-h-[70vh] overflow-y-auto rounded-t-xl border-t-[1.5px] border-pop-bd bg-pop-paper p-3 shadow-pop-lg">
-          <div className="mb-2 flex items-center justify-between px-1">
-            <span className="text-[10px] font-black tracking-[0.2em] text-pop-dim">窗口总览</span>
+          <div className="mb-2 flex items-center gap-2 px-1">
             <button
               type="button"
               aria-label="关闭窗口总览"
               onClick={onClose}
-              className="grid size-7 place-items-center rounded-md text-pop-dim hover:bg-accent hover:text-pop-ink"
+              className="group/light grid size-6 place-items-center rounded-full outline-none focus-visible:ring-2 focus-visible:ring-pop-yellow"
             >
-              <X className="size-4" />
+              <CloseLightGlyph />
             </button>
+            <span className="text-[10px] font-black tracking-[0.2em] text-pop-dim">窗口总览</span>
           </div>
           <div className="grid grid-cols-2 gap-2">
             {items.map((item) => (

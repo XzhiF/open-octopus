@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useState } from "react"
 import { toast } from "sonner"
 import { Loader2, Plus, Save, Pencil, Trash2, Calculator } from "lucide-react"
 import { Button } from "@/components/ui/button"
+import { CloseLightGlyph, closeLightButtonClass } from "@/components/ui/close-light"
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
@@ -343,8 +344,16 @@ export function BillingPriceTab() {
       {/* 新增/编辑弹窗 */}
       {dialog && (
         <div role="dialog" aria-label={dialog.mode === "edit" ? "编辑价格" : "新增价格"} className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
-          <div className="w-[520px] max-w-[92vw] rounded-xl border-2 border-pop-bd bg-pop-paper p-4 shadow-lg space-y-3">
-            <h3 className="text-base font-black">{dialog.mode === "edit" ? `编辑价格 — ${dialog.price.model_id}` : "新增价格"}</h3>
+          <div className="relative w-[520px] max-w-[92vw] max-h-[calc(100dvh-2rem)] overflow-y-auto rounded-xl border-2 border-pop-bd bg-pop-paper p-4 shadow-lg space-y-3">
+            <button
+              type="button"
+              aria-label="关闭"
+              onClick={() => setDialog(null)}
+              className={closeLightButtonClass}
+            >
+              <CloseLightGlyph />
+            </button>
+            <h3 className="pl-10 text-base font-black">{dialog.mode === "edit" ? `编辑价格 — ${dialog.price.model_id}` : "新增价格"}</h3>
             <datalist id="billing-model-options">
               {models.map(m => <option key={m} value={m} />)}
             </datalist>

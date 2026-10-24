@@ -7,6 +7,7 @@ import { useEffect, useMemo, useState } from "react"
 import Link from "@/lib/app-navigation"
 import { useIsActiveRoute } from "@/lib/app-navigation"
 import { Search } from "lucide-react"
+import { CloseLightGlyph } from "@/components/ui/close-light"
 import type { Workspace } from "@/lib/types"
 import { formatRelativeTime } from "@/lib/format"
 
@@ -452,7 +453,9 @@ function GenieModal({
           opacity: shown ? 1 : 0,
         }}
       >
-        <button type="button" className="wsb-genie-close" onClick={close} aria-label="关闭">×</button>
+        <button type="button" className="wsb-genie-close group/light" onClick={close} aria-label="关闭">
+          <CloseLightGlyph />
+        </button>
         <div className="wsb-genie-head">📁 {ws.name}</div>
         <div className="wsb-genie-body">
           <div className="wsb-kv">

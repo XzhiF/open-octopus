@@ -44,6 +44,7 @@ import { useIsActiveRoute } from "@/lib/app-navigation"
 import { Spinner } from "@/components/ui/spinner"
 import { toast } from "sonner"
 import { Maximize2, Minimize2 } from "lucide-react"
+import { CloseLightGlyph } from "@/components/ui/close-light"
 import {
   PHASE_STATUS_UPDATE_EVENT, TASK_ARTIFACTS_UPDATE_EVENT, TASK_EXECUTION_EVENT,
   TASK_STATUS_EVENT, TASK_VERIFY_EVENT,
@@ -686,6 +687,16 @@ export function TaskRunConsole({ task, onMutated, onClose, chrome, startOnAccept
           (chrome ? "cursor-grab touch-none active:cursor-grabbing" : "")
         }
       >
+        <button
+          type="button"
+          aria-label="关闭"
+          title="关闭"
+          onClick={onClose}
+          onPointerDown={(event) => event.stopPropagation()}
+          className="group/light grid size-6 shrink-0 place-items-center rounded-full outline-none transition-transform focus-visible:ring-2 focus-visible:ring-pop-yellow"
+        >
+          <CloseLightGlyph />
+        </button>
         <span aria-hidden className="shrink-0 font-black text-pop-pink">❯</span>
         <EditableTitle task={task} onMutated={onMutated} variant="term" />
         <span
@@ -741,20 +752,12 @@ export function TaskRunConsole({ task, onMutated, onClose, chrome, startOnAccept
               {chrome.isFullscreen ? <Minimize2 className="size-3.5" /> : <Maximize2 className="size-3.5" />}
             </button>
           )}
-          <button
-            onClick={onClose}
-            aria-label="关闭"
-            title="关闭"
-            className="grid size-[22px] shrink-0 place-items-center rounded-[8px] border-[1.5px] border-pop-bd bg-pop-red text-[11px] font-black leading-none text-pop-ink shadow-pop-sm transition-colors pop-press hover:brightness-110"
-          >
-            <span aria-hidden>✕</span>
-          </button>
         </span>
       </div>
 
       {/* ── 主体：左（页签+内容）· 右 rail（原型 .m-body / .m-rail）── */}
-      <div className="flex min-h-0 flex-1">
-        <div className="flex min-w-0 flex-1 flex-col bg-pop-bg">
+      <div className="flex min-h-0 flex-1 max-lg:flex-col">
+        <div className="flex min-w-0 flex-1 flex-col bg-pop-bg max-lg:min-h-0">
           {/* 页签条（装配表驱动；count 徽标随 03/04 填充） */}
           <div className="flex shrink-0 items-center gap-1.5 border-b-[1.5px] border-pop-bd bg-pop-paper py-1.5 pl-3 pr-2.5" data-console-tabs>
             {tabs.keys.map((k) => (
@@ -931,7 +934,7 @@ export function TaskRunConsole({ task, onMutated, onClose, chrome, startOnAccept
         </div>
 
         {/* 右 rail：Pipeline + LIVE/验收卡（滚动） + 底部动作区（钉底） */}
-        <aside className="flex w-[296px] shrink-0 min-h-0 flex-col border-l-[1.5px] border-pop-bd bg-pop-idle">
+        <aside className="flex w-[296px] shrink-0 min-h-0 flex-col border-l-[1.5px] border-pop-bd bg-pop-idle max-lg:max-h-[42%] max-lg:w-full max-lg:border-l-0 max-lg:border-t-[1.5px]">
           <div className="min-h-0 flex-1 overflow-y-auto">
             <PipelineRail
               task={task} detail={detail} phaseViews={phaseViews}

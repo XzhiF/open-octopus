@@ -146,10 +146,16 @@ export function Desktop() {
         }
         return
       }
-      if (state.focused !== 'desktop') {
-        event.preventDefault()
-        event.stopImmediatePropagation()
+      const desktopElement = target.closest('[data-desktop-layer]')
+      if (desktopElement) {
+        if (state.focused !== 'desktop') {
+          event.preventDefault()
+          event.stopImmediatePropagation()
+        }
+        return
       }
+      // body / document / portaled chrome: the focused surface's own window
+      // listeners must run; hidden surfaces are gated by useIsActiveRoute.
     }
     window.addEventListener('keydown', onKey, true)
     return () => window.removeEventListener('keydown', onKey, true)

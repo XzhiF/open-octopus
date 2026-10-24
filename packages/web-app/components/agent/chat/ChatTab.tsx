@@ -198,7 +198,7 @@ export function ChatTab() {
 
       {/* Mobile sidebar */}
       <Sheet open={mobileSidebarOpen} onOpenChange={setMobileSidebarOpen}>
-        <SheetContent side="left" className="w-72 p-0 md:hidden">
+        <SheetContent side="left" className="w-72 p-0 pt-10 md:hidden">
           <SessionList
             sessions={sessions}
             activeId={activeSessionId}

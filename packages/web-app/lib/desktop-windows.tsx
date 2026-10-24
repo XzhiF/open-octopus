@@ -11,7 +11,7 @@ import {
   type ReactNode,
 } from 'react'
 import { useLocation, useNavigate } from 'react-router-dom'
-import { APP_CATALOG, appRootPath, isAppId, type AppId } from './app-catalog'
+import { APP_CATALOG, appPreferredSize, appRootPath, isAppId, type AppId } from './app-catalog'
 import { matchAppRoute, titleForRoute } from './routes'
 import { queryRedirectTarget } from './retired-redirects'
 import { useViewport, type Breakpoint } from '@/hooks/use-viewport'
@@ -174,7 +174,8 @@ function openState(
   pathname: string,
   search: string,
 ): DesktopState {
-  const record = createRecord(id, pathname, search, cascadeRect(stageSize(state.viewport), state.order.length))
+  const preferred = isAppId(id) ? appPreferredSize(id) : undefined
+  const record = createRecord(id, pathname, search, cascadeRect(stageSize(state.viewport), state.order.length, preferred))
   return focusState(
     {
       ...state,

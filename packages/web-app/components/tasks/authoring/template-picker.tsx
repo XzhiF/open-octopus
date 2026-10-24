@@ -59,59 +59,65 @@ export function TemplatePicker({ onCreate, busy }: TemplatePickerProps) {
   }
 
   return (
-    <div className="h-full overflow-y-auto" data-template-picker>
-      <div className="max-w-lg mx-auto py-8 px-4 space-y-6">
-        <div>
-          <h2 className="text-lg font-semibold">新建开发任务</h2>
-          <p className="text-xs text-muted-foreground mt-1">
-            直通 spec agent（matt 技能族自动就位）：对话澄清 → 拆 Phase 交付，
-            每个 Phase 一份可验收的 Batch 产物（spec + 票 + 绑定工作流）。
-            项目语境可现在选，也可对话中补 <Lock className="inline size-3" />（选定后锁定）。
-          </p>
+    <div className="flex h-full flex-col" data-template-picker>
+      <div className="min-h-0 flex-1 overflow-y-auto">
+        <div className="max-w-lg mx-auto py-8 px-4 space-y-6">
+          <div>
+            <h2 className="text-lg font-semibold">新建开发任务</h2>
+            <p className="text-xs text-muted-foreground mt-1">
+              直通 spec agent（matt 技能族自动就位）：对话澄清 → 拆 Phase 交付，
+              每个 Phase 一份可验收的 Batch 产物（spec + 票 + 绑定工作流）。
+              项目语境可现在选，也可对话中补 <Lock className="inline size-3" />（选定后锁定）。
+            </p>
+          </div>
+
+          {/* ── 任务标题（必填，创建即落 name）── */}
+          <section data-preset-name>
+            <div className="text-xs font-medium mb-2">
+              任务标题 <span className="text-destructive">*</span>
+            </div>
+            <Input
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              placeholder="一句话描述这个任务（必填）"
+              maxLength={120}
+              data-task-name-input
+            />
+          </section>
+
+          {/* ── codebase 语境（org + projects；US14/D13 恢复）── */}
+          <section data-preset-context>
+            <div className="text-xs font-medium mb-2">
+              codebase <span className="text-muted-foreground font-normal">（领域阅读路由键；执行技能归 workflow.requires）</span>
+            </div>
+            {orgs.length > 1 ? (
+              <select
+                className="h-7 w-full rounded-md border border-border bg-background px-2 text-xs mb-2"
+                value={org}
+                onChange={(e) => { setOrg(e.target.value); setProjects([]) }}
+              >
+                {orgs.map((o) => (
+                  <option key={o.name} value={o.name}>{o.name}</option>
+                ))}
+              </select>
+            ) : (
+              <div className="text-xs text-muted-foreground mb-2">{org || "未配置组织"}</div>
+            )}
+            {org ? (
+              <ProjectSelector org={org} value={projects} onChange={setProjects} />
+            ) : (
+              <p className="text-xs text-muted-foreground">未配置组织 — 请先运行 octopus setup。</p>
+            )}
+          </section>
         </div>
+      </div>
 
-        {/* ── 任务标题（必填，创建即落 name）── */}
-        <section data-preset-name>
-          <div className="text-xs font-medium mb-2">
-            任务标题 <span className="text-destructive">*</span>
-          </div>
-          <Input
-            value={name}
-            onChange={(e) => setName(e.target.value)}
-            placeholder="一句话描述这个任务（必填）"
-            maxLength={120}
-            data-task-name-input
-          />
-        </section>
-
-        {/* ── codebase 语境（org + projects；US14/D13 恢复）── */}
-        <section data-preset-context>
-          <div className="text-xs font-medium mb-2">
-            codebase <span className="text-muted-foreground font-normal">（领域阅读路由键；执行技能归 workflow.requires）</span>
-          </div>
-          {orgs.length > 1 ? (
-            <select
-              className="h-7 w-full rounded-md border border-border bg-background px-2 text-xs mb-2"
-              value={org}
-              onChange={(e) => { setOrg(e.target.value); setProjects([]) }}
-            >
-              {orgs.map((o) => (
-                <option key={o.name} value={o.name}>{o.name}</option>
-              ))}
-            </select>
-          ) : (
-            <div className="text-xs text-muted-foreground mb-2">{org || "未配置组织"}</div>
-          )}
-          {org ? (
-            <ProjectSelector org={org} value={projects} onChange={setProjects} />
-          ) : (
-            <p className="text-xs text-muted-foreground">未配置组织 — 请先运行 octopus setup。</p>
-          )}
-        </section>
-
-        <Button className="w-full" onClick={handleCreate} disabled={!canCreate || busy} data-template-create>
-          {busy ? "创建中…" : "开始编写 →"}
-        </Button>
+      <div className="shrink-0 border-t border-pop-bd bg-pop-paper px-4 py-3">
+        <div className="max-w-lg mx-auto">
+          <Button className="w-full" onClick={handleCreate} disabled={!canCreate || busy} data-template-create>
+            {busy ? "创建中…" : "开始编写 →"}
+          </Button>
+        </div>
       </div>
     </div>
   )

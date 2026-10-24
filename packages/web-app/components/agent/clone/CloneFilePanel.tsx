@@ -78,7 +78,7 @@ export function CloneFilePanel({ clone, onClose }: CloneFilePanelProps) {
   return (
     <Sheet open={!!clone} onOpenChange={(open) => { if (!open) onClose() }}>
       <SheetContent className="w-[480px] sm:w-[540px] flex flex-col p-0">
-        <SheetHeader className="px-4 py-3 border-b">
+        <SheetHeader className="py-3 pl-12 pr-4 border-b">
           <SheetTitle className="flex items-center gap-2 text-sm">
             <FileText className="h-4 w-4" />
             文件管理 — {clone?.display_name || clone?.name}

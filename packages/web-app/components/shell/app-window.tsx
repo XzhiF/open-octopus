@@ -86,7 +86,10 @@ function WindowContent({ record, focused }: { record: DesktopWindow; focused: bo
     return (
       <>
         <div
-          className={cn('absolute inset-0 overflow-y-auto', isDetail ? 'hidden' : 'block')}
+          className={cn(
+            'absolute inset-0 flex min-h-0 flex-col overflow-y-auto',
+            isDetail ? 'hidden' : 'flex',
+          )}
           aria-hidden={isDetail}
           inert={isDetail}
           data-window-layer="view"
@@ -106,7 +109,7 @@ function WindowContent({ record, focused }: { record: DesktopWindow; focused: bo
               'absolute inset-0',
               detailRoute.panel === 'contained'
                 ? 'flex flex-col overflow-hidden'
-                : 'overflow-y-auto',
+                : 'flex min-h-0 flex-col overflow-y-auto',
             )}
             data-window-layer="detail"
           >

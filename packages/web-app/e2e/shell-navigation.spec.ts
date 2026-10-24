@@ -97,4 +97,28 @@ test.describe('桌面壳 · 窄屏', () => {
     await page.keyboard.press('Escape')
     await expect(page.getByTestId('mission-control')).toHaveCount(0)
   })
+
+  test('窄屏任务看板：标题不竖排，单列纵向排列', async ({ page }) => {
+    await page.goto('/tasks')
+    const win = appWindow(page, 'tasks')
+    await expect(win).toBeVisible()
+    await expect(page.locator('[data-task-column]')).toHaveCount(5)
+
+    const title = win.locator('h1').first()
+    await expect(title).toBeVisible()
+    const titleBox = await title.boundingBox()
+    expect(titleBox!.height).toBeLessThan(40)
+
+    const draft = await page.locator('[data-task-column="draft"]').boundingBox()
+    const ready = await page.locator('[data-task-column="ready"]').boundingBox()
+    expect(draft!.width).toBeGreaterThan(300)
+    expect(draft!.width).toBeLessThan(375)
+    expect(Math.round(ready!.y)).toBeGreaterThan(Math.round(draft!.y))
+
+    const scroll = page.getByTestId('task-board-scroll')
+    expect(await scroll.evaluate((el) => el.scrollWidth <= el.clientWidth + 1)).toBe(true)
+
+    await expect(win.getByTestId('task-search')).toBeVisible()
+    await expect(win.getByRole('button', { name: '新建任务', exact: true })).toBeVisible()
+  })
 })

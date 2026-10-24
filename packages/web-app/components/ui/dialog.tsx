@@ -2,9 +2,9 @@
 
 import * as React from 'react'
 import * as DialogPrimitive from '@radix-ui/react-dialog'
-import { XIcon } from 'lucide-react'
 
 import { cn } from '@/lib/utils'
+import { CloseLightGlyph, closeLightButtonClass } from '@/components/ui/close-light'
 
 function Dialog({
   ...props
@@ -65,9 +65,9 @@ function DialogContent({
         data-slot="dialog-content"
         className={cn(
           // 🎪 贴纸弹窗框:厚黑边 + 硬投影 —— 全站 Dialog 统一皮肤。
-          // overflow-hidden 必加:border-radius 不裁剪子元素,顶栏/右栏的直角
-          // 背景会从圆角外顶出来(四角白斑、黑边看起来断裂)。
-          'bg-pop-paper text-pop-ink data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95 fixed top-[50%] left-[50%] z-50 grid w-full max-w-[calc(100%-2rem)] translate-x-[-50%] translate-y-[-50%] gap-4 overflow-hidden rounded-2xl border-[1.5px] border-pop-bd p-6 shadow-pop-lg duration-200 sm:max-w-lg',
+          // 关闭灯在左上（macOS 三色灯语义），顶部预留 40px；内容超长时整框滚动。
+          'bg-pop-paper text-pop-ink data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95 fixed top-[50%] left-[50%] z-50 grid w-full max-w-[calc(100%-2rem)] max-h-[calc(100dvh-2rem)] translate-x-[-50%] translate-y-[-50%] gap-4 overflow-x-hidden overflow-y-auto rounded-2xl border-[1.5px] border-pop-bd px-6 pb-6 shadow-pop-lg duration-200 sm:max-w-lg',
+          showCloseButton ? 'pt-10' : 'pt-6',
           className,
         )}
         {...props}
@@ -76,13 +76,10 @@ function DialogContent({
         {showCloseButton && (
           <DialogPrimitive.Close
             data-slot="dialog-close"
-            // 关闭方糖（2026-09-12 两轮反馈）：圆圈包 X 突兀 + size-7 太大 ——
-            // 与 terminal 导航条（task-run-console/authoring-workspace）完全同款：
-            // 19px 红实心方糖 + 黑边 + 硬投影 + pop-press。
-            className="pop-press absolute top-4 right-4 grid size-[19px] place-items-center rounded-[7px] border-[1.5px] border-pop-bd bg-pop-red text-destructive-foreground shadow-pop-sm transition-colors hover:bg-pop-red/90 focus:outline-hidden disabled:pointer-events-none [&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg]:size-3"
+            aria-label="关闭"
+            className={closeLightButtonClass}
           >
-            <XIcon />
-            <span className="sr-only">Close</span>
+            <CloseLightGlyph />
           </DialogPrimitive.Close>
         )}
       </DialogPrimitive.Content>

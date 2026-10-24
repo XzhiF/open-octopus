@@ -7,6 +7,7 @@
 import { useEffect, useState } from 'react'
 import { Check, Plus, Sparkles, Users } from 'lucide-react'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
+import { CloseLightGlyph } from '@/components/ui/close-light'
 import { cn } from '@/lib/utils'
 import { formatTokenCount } from '@/lib/format'
 import * as api from '@/lib/agent/api'
@@ -92,16 +93,16 @@ export function ComposerAttachPopover({ skill, expert, onSkillChange, onExpertCh
         className="w-[372px] max-w-[calc(100vw_-_24px)] overflow-hidden rounded-[14px] border-[1.5px] border-pop-bd bg-pop-paper p-0 shadow-pop"
       >
         <div className="flex items-center gap-2 border-b border-pop-bd/60 px-3 py-2.5">
-          <span className="text-[12px] font-bold text-pop-ink">添加到对话</span>
-          <span className="text-[10px] text-pop-dim">勾选后随下一条消息发送</span>
           <button
             type="button"
             onClick={() => setOpen(false)}
             aria-label="关闭"
-            className="ml-auto grid size-5 place-items-center rounded-md text-pop-dim transition-colors hover:bg-pop-bd/20 hover:text-pop-ink"
+            className="group/light grid size-6 shrink-0 place-items-center rounded-full outline-none focus-visible:ring-2 focus-visible:ring-pop-yellow"
           >
-            ×
+            <CloseLightGlyph />
           </button>
+          <span className="text-[12px] font-bold text-pop-ink">添加到对话</span>
+          <span className="text-[10px] text-pop-dim">勾选后随下一条消息发送</span>
         </div>
 
         <div className="grid grid-cols-2 gap-1.5 p-2.5">

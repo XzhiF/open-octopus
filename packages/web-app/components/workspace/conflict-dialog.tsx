@@ -94,7 +94,7 @@ export function ConflictDialog({
   if (mode === "merge") {
     return (
       <AlertDialog open={open} onOpenChange={onOpenChange}>
-        <AlertDialogContent className="max-w-[95vw] w-[95vw] sm:max-w-[95vw] max-h-[95vh] p-4 flex flex-col">
+        <AlertDialogContent className="max-w-[95vw] w-[95vw] sm:max-w-[95vw] max-h-[95vh] px-4 pb-4 pt-12 flex flex-col">
           <AlertDialogHeader>
             <AlertDialogTitle className="flex items-center gap-2 text-lg">
               <span className="text-pop-amber">&#9888;</span>
@@ -142,7 +142,7 @@ export function ConflictDialog({
 
   return (
     <AlertDialog open={open} onOpenChange={onOpenChange}>
-      <AlertDialogContent className="max-w-[95vw] w-[95vw] sm:max-w-[95vw] max-h-[95vh] p-4 flex flex-col">
+      <AlertDialogContent className="max-w-[95vw] w-[95vw] sm:max-w-[95vw] max-h-[95vh] px-4 pb-4 pt-12 flex flex-col">
         <AlertDialogHeader>
           <AlertDialogTitle className="flex items-center gap-2 text-lg">
             <span className="text-pop-amber">&#9888;</span>

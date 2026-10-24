@@ -200,8 +200,8 @@ export function CreateWorkspaceDialog({ open, onOpenChange, onCreated }: CreateW
             创建一个新的工作空间来管理您的项目和工作流。
           </DialogDescription>
         </DialogHeader>
-        <form onSubmit={handleSubmit} className="flex flex-col overflow-hidden">
-          <div className="grid gap-4 py-4 flex-1 overflow-y-auto pr-1">
+        <form onSubmit={handleSubmit} className="flex min-h-0 flex-col overflow-hidden">
+          <div className="grid min-h-0 gap-4 py-4 flex-1 overflow-y-auto pr-1">
             {/* Name */}
             <div className="grid gap-2">
               <Label htmlFor="name">名称</Label>

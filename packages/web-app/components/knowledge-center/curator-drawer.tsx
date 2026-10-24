@@ -9,6 +9,7 @@ import { useKcPacks } from '@/hooks/use-kc-packs'
 import { useKcCases } from '@/hooks/use-kc-cases'
 import { useKcGrants } from '@/hooks/use-kc-grants'
 import { KcCard, type KcCardActionCtx } from './cards/registry'
+import { CloseLightGlyph } from '@/components/ui/close-light'
 import {
   createCloneSession,
   getCloneSession,
@@ -452,6 +453,15 @@ export function CuratorDrawer({ tree, open, onClose, onCite, onOpenPage, onOpenR
       />
       {/* 抽屉头 */}
       <div className="relative flex shrink-0 items-center gap-2 border-b-[1.5px] border-pop-bd bg-pop-bg px-3 py-1.5 text-[11px] font-bold text-pop-dim">
+        <button
+          type="button"
+          data-testid="kc-drawer-close"
+          onClick={onClose}
+          aria-label="关闭"
+          className="group/light grid size-6 shrink-0 place-items-center rounded-full outline-none focus-visible:ring-2 focus-visible:ring-pop-yellow"
+        >
+          <CloseLightGlyph />
+        </button>
         <span className="text-pop-green">●</span>
         <span className="text-pop-ink">策展人 · archive</span>
         <button
@@ -479,14 +489,6 @@ export function CuratorDrawer({ tree, open, onClose, onCite, onOpenPage, onOpenR
               {openFindingCount}
             </span>
           )}
-        </button>
-        <button
-          type="button"
-          data-testid="kc-drawer-close"
-          onClick={onClose}
-          className="ml-auto rounded px-2 py-0.5 text-pop-dim hover:bg-accent hover:text-pop-ink"
-        >
-          ✕
         </button>
       {/* 两浮层收进页头行内：top 以页头行下沿为锚（calc(100%+6px)），
           按钮正下方贴脸出现——原硬编码 top-[88px] 隔出 tab 条高度的漂移病 */}

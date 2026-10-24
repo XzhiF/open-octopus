@@ -55,14 +55,21 @@ export function clampRect(rect: Rect, stage: Size): Rect {
   }
 }
 
-export function cascadeRect(stage: Size, index: number): Rect {
+export interface PreferredSize {
+  width?: number
+  height?: number
+}
+
+export function cascadeRect(stage: Size, index: number, preferred?: PreferredSize): Rect {
+  const targetW = preferred?.width ?? Math.round(stage.width * 0.72)
+  const targetH = preferred?.height ?? Math.round(stage.height * 0.72)
   const w = clamp(
-    Math.round(stage.width * 0.72),
+    targetW,
     Math.min(MIN_WINDOW_WIDTH, stage.width),
     Math.min(1280, stage.width),
   )
   const h = clamp(
-    Math.round(stage.height * 0.72),
+    targetH,
     Math.min(MIN_WINDOW_HEIGHT, stage.height),
     Math.min(860, stage.height),
   )

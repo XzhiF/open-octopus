@@ -191,7 +191,7 @@ export function MoATriggerDialog({
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="sm:max-w-[640px] max-h-[85vh] flex flex-col gap-0 p-0" showCloseButton>
-        <DialogHeader className="px-5 pt-4 pb-3 border-b shrink-0">
+        <DialogHeader className="pl-12 pr-5 pt-4 pb-3 border-b shrink-0">
           <DialogTitle className="text-sm flex items-center gap-2">
             <Brain className="size-4 text-pop-purple" />
             专家分析

@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useEffect, useCallback, useRef } from "react"
+import { useState, useEffect, useLayoutEffect, useCallback, useRef } from "react"
 import { useSearchParams } from "@/lib/app-navigation"
 import { RefreshCw, Plus, Trash2, Copy, Inbox } from "lucide-react"
 import { Button } from "@/components/ui/button"
@@ -399,22 +399,47 @@ export default function TasksPage() {
   /** 列成本统计（v49）：草稿列也算 —— 草稿的钱挂在作者会话上，读模型已带 ai_usage。 */
   const boardUsage = sumTaskUsage(displayTasks)
 
+  // 看板按「容器实际宽度」重排：桌面窗口默认约 1037px，五列会挤到 1240 横向滚动；
+  // 这里以看板自身宽度（而非视口）决定列数，窗口拖动/缩放时自动重排。
+  const boardRef = useRef<HTMLDivElement>(null)
+  const [boardWidth, setBoardWidth] = useState(0)
+  useLayoutEffect(() => {
+    const element = boardRef.current
+    if (!element) return
+    const update = () => setBoardWidth(element.clientWidth)
+    update()
+    if (typeof ResizeObserver === 'undefined') return
+    const observer = new ResizeObserver(update)
+    observer.observe(element)
+    return () => observer.disconnect()
+  }, [error])
+  const boardLayout: 'five' | 'three' | 'two' | 'one' =
+    boardWidth >= 1200 ? 'five' : boardWidth >= 780 ? 'three' : boardWidth >= 520 ? 'two' : 'one'
+  const boardLayoutClass =
+    boardLayout === 'five'
+      ? 'flex h-full gap-3'
+      : boardLayout === 'three'
+        ? 'grid grid-cols-3 content-start gap-3'
+        : boardLayout === 'two'
+          ? 'grid grid-cols-2 content-start gap-3'
+          : 'grid grid-cols-1 content-start gap-3'
+
   return (
     <div className="pop-confetti flex flex-1 min-h-0 flex-col text-pop-ink">
       <div className="flex flex-col h-full min-w-0">
-        <header className="flex items-center gap-3 px-6 py-3 border-b-[1.5px] border-pop-bd bg-pop-paper">
-          <h1 className="text-lg font-black tracking-tight before:text-pop-pink before:content-['❯_']">任务看板</h1>
-          <span className="rounded-full border border-pop-bd bg-pop-idle px-2 py-0.5 text-xs font-black tabular-nums text-pop-dim">{tasks.length} 个任务</span>
+        <header className="flex flex-wrap items-center gap-2 border-b-[1.5px] border-pop-bd bg-pop-paper px-4 py-2.5 sm:gap-3 sm:px-6 sm:py-3">
+          <h1 className="shrink-0 whitespace-nowrap text-lg font-black tracking-tight before:text-pop-pink before:content-['❯_']">任务看板</h1>
+          <span className="shrink-0 rounded-full border border-pop-bd bg-pop-idle px-2 py-0.5 text-xs font-black tabular-nums text-pop-dim">{tasks.length} 个任务</span>
           {boardUsage && (
             <span
               data-board-usage
               title={`Σ ${formatTokenCount(boardUsage.totals.tokens)} tok · ${boardUsage.totalCalls} 次请求 · 缓存命中 ${formatPercent(boardUsage.totals.cacheHitRate, 1)}（含草稿作者会话）`}
-              className="rounded-full border border-pop-bd bg-pop-idle px-2 py-0.5 text-xs font-black tabular-nums text-pop-yellow"
+              className="shrink-0 rounded-full border border-pop-bd bg-pop-idle px-2 py-0.5 text-xs font-black tabular-nums text-pop-yellow"
             >
               {formatCost(boardUsage.totals.cost.usd, boardUsage.totals.cost.complete, currency)}
             </span>
           )}
-          <div className="ml-auto flex gap-2">
+          <div className="ml-auto flex w-full flex-wrap items-center gap-2 sm:w-auto">
             {/* 票06: 最小搜索框——输入即透传 q 给服务端（name ∨ semantic_summary LIKE）。 */}
             <input
               data-testid="task-search"
@@ -428,7 +453,7 @@ export default function TasksPage() {
               }}
               placeholder="搜索任务 / 语义摘要…"
               aria-label="搜索任务"
-              className="h-8 w-52 rounded-md border-[1.5px] border-pop-bd bg-pop-paper px-2 text-xs font-bold text-pop-ink outline-none focus:border-pop-pink"
+              className="h-9 min-w-0 flex-1 rounded-md border-[1.5px] border-pop-bd bg-pop-paper px-2 text-xs font-bold text-pop-ink outline-none focus:border-pop-pink sm:w-52 sm:flex-none"
             />
             <Button variant="pop-quiet" size="sm" onClick={fetchTasks} disabled={loading}>
               <RefreshCw className="size-4" />
@@ -446,10 +471,14 @@ export default function TasksPage() {
             {error}
           </div>
         ) : (
-          <div className="flex-1 min-h-0 overflow-auto p-4">
-            {/* 泳道等分占满：min-w-[1240px] 保 5 道最低可读宽（窄屏出横向滚动），
-                各列 flex-1 basis-0 均分 —— 宽屏不再留右侧死空间。 */}
-            <div className="flex h-full min-w-[1240px] gap-3">
+          <div
+            ref={boardRef}
+            className="flex-1 min-h-0 overflow-y-auto p-4"
+            data-testid="task-board-scroll"
+          >
+            {/* 按容器宽度重排：≥1240 五列；780–1239 三列；520–779 两列；更窄单列。
+                多列放不下时换行纵向排布，任何宽度都不出现横向滚动。 */}
+            <div className={boardLayoutClass}>
               {TASK_COLUMNS.map((col) => {
                 const colTasks = tasksForColumn(grouped, col.id)
                 const theme = COLUMN_THEME[col.id]
@@ -459,7 +488,7 @@ export default function TasksPage() {
                   key={col.id}
                   data-task-column={col.id}
                   aria-label={col.label}
-                  className={`flex min-w-0 flex-1 basis-0 flex-col overflow-hidden rounded-xl border-[1.5px] border-pop-bd shadow-pop-sm ${theme.lane}`}
+                  className={`flex min-w-0 flex-col overflow-hidden rounded-xl border-[1.5px] border-pop-bd shadow-pop-sm ${boardLayout === 'five' ? 'flex-1 basis-0' : ''} ${theme.lane}`}
                 >
                   <header className={`flex items-center gap-2 border-b-[1.5px] border-dashed px-3 py-2 text-xs font-black ${theme.head} ${theme.headBd}`}>
                     <span className={`size-2 shrink-0 rounded-full shadow-[0_0_8px_currentColor] ${theme.dot}`} aria-hidden />

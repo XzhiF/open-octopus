@@ -13,61 +13,112 @@ test.describe('桌面壳 · 窗口', () => {
 
   test('应用单实例；拖拽、缩放、最大化、最小化、关闭', async ({ page }) => {
     await page.goto('/')
-    await openApp(page, '任务看板')
+    await openApp(page, '今日')
     await openApp(page, '工作空间')
     await expect(page).toHaveURL(/\/workspaces$/)
 
-    const tasks = appWindow(page, 'tasks')
-    await openApp(page, '任务看板')
-    await expect(tasks).toHaveCount(1)
-    await expect(page).toHaveURL(/\/tasks$/)
+    const dashboard = appWindow(page, 'dashboard')
+    await openApp(page, '今日')
+    await expect(dashboard).toHaveCount(1)
+    await expect(page).toHaveURL(/\/dashboard$/)
 
-    const before = await tasks.boundingBox()
-    await dragWindow(page, 'tasks', 100, 50)
+    const before = await dashboard.boundingBox()
+    await dragWindow(page, 'dashboard', 100, 50)
     await expect
-      .poll(async () => Math.round((await tasks.boundingBox())!.x))
+      .poll(async () => Math.round((await dashboard.boundingBox())!.x))
       .toBeGreaterThan(Math.round(before!.x) + 60)
 
-    const widthBefore = (await tasks.boundingBox())!.width
-    const se = await tasks.locator('[data-resize-dir="se"]').boundingBox()
+    const widthBefore = (await dashboard.boundingBox())!.width
+    const se = await dashboard.locator('[data-resize-dir="se"]').boundingBox()
     await page.mouse.move(se!.x + se!.width / 2, se!.y + se!.height / 2)
     await page.mouse.down()
     await page.mouse.move(se!.x + se!.width / 2 + 80, se!.y + se!.height / 2 + 60, { steps: 8 })
     await page.mouse.up()
     await expect
-      .poll(async () => (await tasks.boundingBox())!.width)
+      .poll(async () => (await dashboard.boundingBox())!.width)
       .toBeGreaterThan(widthBefore + 40)
 
-    await tasks.getByRole('button', { name: '最大化窗口' }).click()
-    const maximized = await tasks.boundingBox()
+    await dashboard.getByRole('button', { name: '最大化窗口' }).click()
+    const maximized = await dashboard.boundingBox()
     expect(Math.round(maximized!.height)).toBe(900 - 40)
-    await tasks.getByRole('button', { name: '最大化窗口' }).click()
+    await dashboard.getByRole('button', { name: '最大化窗口' }).click()
 
-    await tasks.locator('[data-window-titlebar]').dblclick({ position: { x: 300, y: 18 } })
+    await dashboard.locator('[data-window-titlebar]').dblclick({ position: { x: 300, y: 18 } })
     await expect
-      .poll(async () => Math.round((await tasks.boundingBox())!.height))
+      .poll(async () => Math.round((await dashboard.boundingBox())!.height))
       .toBe(900 - 40)
-    await tasks.locator('[data-window-titlebar]').dblclick({ position: { x: 300, y: 18 } })
+    await dashboard.locator('[data-window-titlebar]').dblclick({ position: { x: 300, y: 18 } })
     await expect
-      .poll(async () => Math.round((await tasks.boundingBox())!.height))
+      .poll(async () => Math.round((await dashboard.boundingBox())!.height))
       .toBeLessThan(900 - 40)
 
-    await tasks.getByRole('button', { name: '最小化窗口' }).click()
-    await expect(tasks).toBeHidden()
+    await dashboard.getByRole('button', { name: '最小化窗口' }).click()
+    await expect(dashboard).toBeHidden()
     await expect(page).toHaveURL(/\/workspaces$/)
-    await focusApp(page, 'tasks')
-    await expect(tasks).toBeVisible()
-    await expect(page).toHaveURL(/\/tasks$/)
+    await focusApp(page, 'dashboard')
+    await expect(dashboard).toBeVisible()
+    await expect(page).toHaveURL(/\/dashboard$/)
 
     const boot = await bootId(page)
-    await tasks.getByRole('button', { name: '关闭窗口' }).click()
-    await expect(tasks).toHaveCount(0)
+    await dashboard.getByRole('button', { name: '关闭窗口' }).click()
+    await expect(dashboard).toHaveCount(0)
     await expect(page).toHaveURL(/\/workspaces$/)
     expect(await bootId(page)).toBe(boot)
 
     await page.goBack()
-    await expect(page).toHaveURL(/\/tasks$/)
-    await expect(appWindow(page, 'tasks')).toBeVisible()
+    await expect(page).toHaveURL(/\/dashboard$/)
+    await expect(appWindow(page, 'dashboard')).toBeVisible()
+  })
+
+  test('三色灯左侧整条不可拖拽，灯点外仍可关闭', async ({ page }) => {
+    await page.goto('/')
+    await openApp(page, '任务看板')
+    const win = appWindow(page, 'tasks')
+    const bar = await win.locator('[data-window-titlebar]').boundingBox()
+    const close = await win.getByRole('button', { name: '关闭窗口' }).boundingBox()
+    const cx = close!.x + close!.width / 2
+    const cy = close!.y + close!.height / 2
+
+    const hit = await page.evaluate(
+      ({ x, y }) => {
+        const el = document.elementFromPoint(x, y)
+        return {
+          noDrag: !!el?.closest('[data-no-drag]'),
+          cursor: el ? getComputedStyle(el).cursor : '',
+        }
+      },
+      { x: cx, y: bar!.y + 30 },
+    )
+    expect(hit.noDrag).toBe(true)
+    expect(hit.cursor).not.toBe('grab')
+
+    const before = await win.boundingBox()
+    await page.mouse.move(cx, bar!.y + 30)
+    await page.mouse.down()
+    await page.mouse.move(cx + 90, bar!.y + 40, { steps: 6 })
+    await page.mouse.up()
+    await expect
+      .poll(async () => Math.round((await win.boundingBox())!.x))
+      .toBe(Math.round(before!.x))
+
+    // 2px outside the 12px dot still lands in the expanded hit area.
+    await page.mouse.click(cx + 8, cy)
+    await expect(win).toHaveCount(0)
+  })
+
+  test('默认任务窗口五列自适应，无横向滚动', async ({ page }) => {
+    await page.goto('/tasks')
+    const win = appWindow(page, 'tasks')
+    await expect(win).toBeVisible()
+    await expect(page.locator('[data-task-column]')).toHaveCount(5)
+
+    const scroll = page.getByTestId('task-board-scroll')
+    expect(await scroll.evaluate((el) => el.scrollWidth <= el.clientWidth + 1)).toBe(true)
+
+    const draft = await page.locator('[data-task-column="draft"]').boundingBox()
+    const done = await page.locator('[data-task-column="done"]').boundingBox()
+    expect(Math.round(draft!.y)).toBe(Math.round(done!.y))
+    expect(draft!.width).toBeGreaterThan(220)
   })
 
   test('详情深链、刷新恢复与窗口布局持久化', async ({ page }) => {
@@ -205,5 +256,22 @@ test.describe('桌面壳 · 中屏', () => {
       expect(Math.round(box!.width)).toBe(900)
       expect(Math.round(box!.height)).toBe(800 - 40)
     }
+  })
+
+  test('中屏任务看板三列重排，无横向滚动', async ({ page }) => {
+    await page.goto('/tasks')
+    await expect(appWindow(page, 'tasks')).toBeVisible()
+
+    const scroll = page.getByTestId('task-board-scroll')
+    expect(await scroll.evaluate((el) => el.scrollWidth <= el.clientWidth + 1)).toBe(true)
+
+    const draft = await page.locator('[data-task-column="draft"]').boundingBox()
+    const ready = await page.locator('[data-task-column="ready"]').boundingBox()
+    const running = await page.locator('[data-task-column="running"]').boundingBox()
+    const awaiting = await page.locator('[data-task-column="awaiting_review"]').boundingBox()
+    expect(Math.round(draft!.y)).toBe(Math.round(ready!.y))
+    expect(Math.round(running!.y)).toBe(Math.round(draft!.y))
+    expect(Math.round(awaiting!.y)).toBeGreaterThan(Math.round(draft!.y))
+    expect(draft!.width).toBeGreaterThan(240)
   })
 })

@@ -1,8 +1,9 @@
 'use client'
 
 import { useState } from 'react'
-import { Sparkles, X, ArrowRight, RotateCcw } from 'lucide-react'
+import { Sparkles, ArrowRight, RotateCcw } from 'lucide-react'
 import { Button } from '@/components/ui/button'
+import { CloseLightGlyph, closeLightButtonClass } from '@/components/ui/close-light'
 import { toast } from 'sonner'
 import * as api from '@/lib/agent/api'
 
@@ -53,20 +54,21 @@ export function RefineModal({ currentContent, onRefined, onClose }: RefineModalP
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-transparent p-4">
-      <div className="w-full max-w-2xl rounded-xl border-2 border-pop-bd bg-pop-paper shadow-pop-lg overflow-hidden">
+      <div className="relative flex max-h-[calc(100dvh-2rem)] w-full max-w-2xl flex-col overflow-hidden rounded-xl border-2 border-pop-bd bg-pop-paper shadow-pop-lg">
+        <button
+          type="button"
+          aria-label="关闭"
+          onClick={onClose}
+          className={closeLightButtonClass}
+        >
+          <CloseLightGlyph />
+        </button>
         {/* Header */}
-        <div className="flex items-center justify-between px-5 py-3 border-b border-agent-divider bg-agent-surface-inset">
+        <div className="flex items-center justify-between border-b border-agent-divider bg-agent-surface-inset py-3 pl-12 pr-5">
           <div className="flex items-center gap-2">
             <Sparkles className="h-4 w-4 text-agent-accent" />
             <span className="text-sm font-medium">M-MEM-REFINE · 长期记忆精炼</span>
           </div>
-          <button
-            onClick={onClose}
-            className="p-1 rounded hover:bg-pop-idle transition-colors"
-            aria-label="关闭"
-          >
-            <X className="h-4 w-4 text-muted-foreground" />
-          </button>
         </div>
 
         {/* Content */}

@@ -18,6 +18,7 @@ import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription,
 } from "@/components/ui/dialog"
 import { Button } from "@/components/ui/button"
+import { CloseLightGlyph } from "@/components/ui/close-light"
 import { Spinner } from "@/components/ui/spinner"
 import { Lock, Brain, Maximize2, Minimize2, Trash2 } from "lucide-react"
 import { toast } from "sonner"
@@ -501,12 +502,17 @@ export function AuthoringWorkspace({ task, onMutated, onClose, chrome }: Authori
           (chrome ? "cursor-grab touch-none active:cursor-grabbing" : "")
         }
       >
-        {/* 红绿灯糖豆 */}
-        <span aria-hidden className="flex shrink-0 items-center gap-[5px]">
-          <i className="block size-[9px] rounded-full border-[1.5px] border-black/30 bg-pop-pink" />
-          <i className="block size-[9px] rounded-full border-[1.5px] border-black/30 bg-pop-yellow" />
-          <i className="block size-[9px] rounded-full border-[1.5px] border-black/30 bg-pop-cyan" />
-        </span>
+        {/* macOS 关闭灯：左侧，鼠标移入显示 × */}
+        <button
+          type="button"
+          aria-label="关闭"
+          title="关闭（Esc 同效）"
+          onClick={onClose}
+          onPointerDown={(event) => event.stopPropagation()}
+          className="group/light grid size-6 shrink-0 place-items-center rounded-full outline-none transition-transform focus-visible:ring-2 focus-visible:ring-pop-yellow"
+        >
+          <CloseLightGlyph />
+        </button>
         <span aria-hidden className="shrink-0 text-pop-ink/25">│</span>
         <EditableTitle task={task} onMutated={onMutated} variant="term" />
         <span aria-hidden className="shrink-0 text-pop-ink/25">│</span>
@@ -582,20 +588,10 @@ export function AuthoringWorkspace({ task, onMutated, onClose, chrome }: Authori
               {chrome.isFullscreen ? <Minimize2 className="size-3" /> : <Maximize2 className="size-3" />}
             </button>
           )}
-          {/* 关闭钮收进条内（2026-09-12 反馈）：入队右侧、同框 —— 原右上角
-              悬浮 X 经 showCloseButton=false 摘除（overlay/Esc 仍可关）。 */}
-          <button
-            onClick={onClose}
-            aria-label="关闭"
-            title="关闭（Esc 同效）"
-            className="grid size-[19px] shrink-0 place-items-center rounded-md border border-pop-bd bg-pop-red text-[10px] font-bold leading-none text-pop-ink transition-colors hover:bg-pop-red/80"
-          >
-            <span aria-hidden>✕</span>
-          </button>
         </span>
       </div>
 
-      <div className="flex-1 flex min-h-0">
+      <div className="flex-1 flex min-h-0 max-md:flex-col">
         {/* ── LEFT: chat (AC7 command bar above it) ── */}
         {/* min-w-0 (bugfix 2026-08-19): the command bar's shrink-0 chips give
             this column a huge min-content width; without min-w-0 the flex item
@@ -691,7 +687,7 @@ export function AuthoringWorkspace({ task, onMutated, onClose, chrome }: Authori
 
         {/* ── RIGHT: spec panel（原型 #outcol 1:1：phases / 入队清单 /
             输出区 = 任务 home 磁盘直扫树，点击文件 = 只读查看弹窗） ── */}
-        <div style={{ width: rightWidth }} className="shrink-0 min-w-0" data-output-viewer>
+        <div style={{ width: rightWidth }} className="shrink-0 min-w-0 max-md:!w-full max-md:max-h-[45%] max-md:border-t max-md:border-pop-bd max-md:overflow-hidden" data-output-viewer>
           <SpecPanel
             task={task}
             onMutated={onMutated}

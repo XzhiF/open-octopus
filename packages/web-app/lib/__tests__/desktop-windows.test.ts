@@ -66,6 +66,14 @@ describe('createInitialState', () => {
     expect(state.order).toEqual(['workspaces'])
   })
 
+  it('opens the task board at its preferred wide size', () => {
+    const tasks = createInitialState(null, '/tasks', VIEWPORT)
+    expect(tasks.windows.tasks?.rect).toMatchObject({ w: 1240, h: 760 })
+
+    const dashboard = createInitialState(null, '/dashboard', VIEWPORT)
+    expect(dashboard.windows.dashboard?.rect.w).toBe(Math.round(1440 * 0.72))
+  })
+
   it('restores the layout but lets a / URL focus the desktop', () => {
     const persisted: PersistedDesktop = {
       version: 1,

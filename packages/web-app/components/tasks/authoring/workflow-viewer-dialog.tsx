@@ -95,7 +95,7 @@ export function WorkflowViewerDialog({ taskId, workflowRef, open, onOpenChange }
         showCloseButton
         data-workflow-viewer-dialog
       >
-        <DialogHeader className="px-4 py-3 border-b shrink-0 space-y-0">
+        <DialogHeader className="py-3 pl-12 pr-4 border-b shrink-0 space-y-0">
           <DialogTitle className="text-sm flex items-center gap-2">
             <FileCode2 className="size-3.5 shrink-0" />
             <span className="truncate font-mono">{workflowRef ?? (state.kind === "loaded" ? state.view.ref : "")}</span>

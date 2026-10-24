@@ -53,6 +53,17 @@ describe('window-geometry', () => {
     expect(first.h).toBeGreaterThanOrEqual(MIN_WINDOW_HEIGHT)
   })
 
+  it('honors a preferred window size and clamps it to the stage', () => {
+    const preferred = cascadeRect(STAGE, 0, { width: 1240, height: 760 })
+    expect(preferred).toMatchObject({ w: 1240, h: 760 })
+    expect(preferred.x).toBe(Math.round((STAGE.width - 1240) / 2))
+    expect(preferred.y).toBe(Math.round((STAGE.height - 760) / 2))
+
+    const tiny = cascadeRect({ width: 700, height: 500 }, 0, { width: 1240, height: 760 })
+    expect(tiny.w).toBe(700)
+    expect(tiny.h).toBe(500)
+  })
+
   it('resizes from every direction and enforces the minimum size', () => {
     const start = { x: 100, y: 100, w: 600, h: 400 }
     expect(resizeRect(start, 'e', 100, 0, STAGE)).toEqual({ x: 100, y: 100, w: 700, h: 400 })

@@ -20,11 +20,22 @@ export interface AppEntry {
   href: string
   icon: LucideIcon
   group: '工作' | '资产' | '系统'
+  /** Preferred window size on a wide stage; falls back to the 72% cascade. */
+  preferredWidth?: number
+  preferredHeight?: number
 }
 
 const ENTRIES: AppEntry[] = [
   { id: 'dashboard', label: '今日', href: '/dashboard', icon: LayoutDashboard, group: '工作' },
-  { id: 'tasks', label: '任务看板', href: '/tasks', icon: ListTodo, group: '工作' },
+  {
+    id: 'tasks',
+    label: '任务看板',
+    href: '/tasks',
+    icon: ListTodo,
+    group: '工作',
+    preferredWidth: 1240,
+    preferredHeight: 760,
+  },
   { id: 'workspaces', label: '工作空间', href: '/workspaces', icon: FolderKanban, group: '工作' },
   { id: 'agent', label: 'Agent', href: '/agent', icon: BrainCircuit, group: '工作' },
   { id: 'knowledge', label: '知识中心', href: '/knowledge', icon: Library, group: '资产' },
@@ -53,4 +64,12 @@ export function isAppId(value: string): value is AppId {
 
 export function appRootPath(id: AppId): string {
   return APP_CATALOG[id].href
+}
+
+export function appPreferredSize(
+  id: AppId,
+): { width?: number; height?: number } | undefined {
+  const entry = APP_CATALOG[id]
+  if (entry.preferredWidth == null && entry.preferredHeight == null) return undefined
+  return { width: entry.preferredWidth, height: entry.preferredHeight }
 }

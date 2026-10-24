@@ -446,13 +446,13 @@ function ModalHeader({ task, mode, isFullscreen, onToggleFullscreen, onDeleteDra
     <DialogHeader
       onPointerDown={onHeaderPointerDown}
       title="按住空白处拖拽移动窗口"
-      className="px-5 py-3 border-b-[1.5px] border-pop-bd bg-pop-paper flex-row items-center justify-between space-y-0 touch-none cursor-grab active:cursor-grabbing"
+      className="px-5 py-3 pl-12 pr-5 border-b-[1.5px] border-pop-bd bg-pop-paper flex-row items-center justify-between space-y-0 touch-none cursor-grab active:cursor-grabbing"
     >
       <div className="min-w-0">
         <EditableTitle task={task} onMutated={onMutated} />
         <DialogDescription className="text-xs">{subtitle}</DialogDescription>
       </div>
-      <div className="flex items-center gap-2 shrink-0 mr-8">
+      <div className="flex items-center gap-2 shrink-0">
         {isDraft && (
           <Button
             variant="ghost"

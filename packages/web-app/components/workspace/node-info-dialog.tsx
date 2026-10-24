@@ -63,7 +63,7 @@ export function NodeInfoDialog({
         </DialogDescription>
 
         {/* Header */}
-        <div className="shrink-0 px-6 pt-5 pb-3 border-b border-border/30">
+        <div className="shrink-0 pl-12 pr-6 pt-5 pb-3 border-b border-border/30">
           <div className="flex items-center gap-3">
             <h3 className="text-base font-semibold truncate">{step.stepName}</h3>
             <Badge variant="outline" className="text-xs">

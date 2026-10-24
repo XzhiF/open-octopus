@@ -84,14 +84,17 @@ export function WindowTitlebar({
       onPointerCancel={finishDrag}
       onDoubleClick={handleDoubleClick}
     >
-      <div className="group/lights flex items-center gap-2 pl-3" data-no-drag>
+      <div
+        className="group/lights flex h-full cursor-default items-center gap-2 pl-3 pr-2"
+        data-no-drag
+      >
         <button
           type="button"
           aria-label="关闭窗口"
           title="关闭"
           onClick={onClose}
           className={cn(
-            'grid size-3 place-items-center rounded-full border transition-colors',
+            'relative grid size-3 cursor-default place-items-center rounded-full border transition-colors before:absolute before:-inset-1 before:rounded-full before:content-[""]',
             focused ? 'border-pop-bd/40 bg-pop-red' : 'border-pop-bd bg-pop-idle',
           )}
         >
@@ -103,7 +106,7 @@ export function WindowTitlebar({
           title="最小化"
           onClick={onMinimize}
           className={cn(
-            'grid size-3 place-items-center rounded-full border transition-colors',
+            'relative grid size-3 cursor-default place-items-center rounded-full border transition-colors before:absolute before:-inset-1 before:rounded-full before:content-[""]',
             focused ? 'border-pop-bd/40 bg-pop-amber' : 'border-pop-bd bg-pop-idle',
           )}
         >
@@ -115,7 +118,7 @@ export function WindowTitlebar({
           title="最大化 / 还原"
           onClick={onToggleMaximize}
           className={cn(
-            'grid size-3 place-items-center rounded-full border transition-colors',
+            'relative grid size-3 cursor-default place-items-center rounded-full border transition-colors before:absolute before:-inset-1 before:rounded-full before:content-[""]',
             focused ? 'border-pop-bd/40 bg-pop-green' : 'border-pop-bd bg-pop-idle',
           )}
         >
