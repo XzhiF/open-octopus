@@ -109,6 +109,27 @@ export function stopChat(id: string) {
   return request<void>(`/sessions/${id}/stop`, { method: 'POST' })
 }
 
+// Session expert identity (role switch). The role card is delivered on the
+// next chat turn; system prompt/tools stay frozen.
+export interface SessionRoleState {
+  session_id: string
+  active_expert: string | null
+  expert: { id: string; name: string; label: string; desc: string } | null
+  revision: number
+  delivered_revision: number
+}
+
+export function getSessionRole(id: string) {
+  return request<SessionRoleState>(`/sessions/${id}/role`)
+}
+
+export function setSessionRole(id: string, expert: string | null) {
+  return request<SessionRoleState>(`/sessions/${id}/role`, {
+    method: 'PUT',
+    body: JSON.stringify({ expert }),
+  })
+}
+
 // Chat SSE (POST + ReadableStream, compatible with contract POST method)
 export interface AgentSSEConnection {
   reader: ReadableStreamDefaultReader<Uint8Array>
@@ -369,6 +390,18 @@ export function cloneChatStream(
 export function stopCloneChat(cloneName: string, sessionId: string) {
   return cloneRequest<{ success: boolean }>(`/${cloneName}/sessions/${sessionId}/stop`, {
     method: 'POST',
+  })
+}
+
+// Clone-session expert identity (task-author chat etc.).
+export function getCloneSessionRole(cloneName: string, sessionId: string) {
+  return cloneRequest<SessionRoleState>(`/${cloneName}/sessions/${sessionId}/role`)
+}
+
+export function setCloneSessionRole(cloneName: string, sessionId: string, expert: string | null) {
+  return cloneRequest<SessionRoleState>(`/${cloneName}/sessions/${sessionId}/role`, {
+    method: 'PUT',
+    body: JSON.stringify({ expert }),
   })
 }
 

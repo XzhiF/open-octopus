@@ -74,7 +74,7 @@ export function ComposerAttachPopover({ skill, expert, onSkillChange, onExpertCh
         <button
           type="button"
           aria-label="添加上下文"
-          title="附加上下文：SKILL / 专家"
+          title="附加上下文：SKILL / 分身"
           className={cn(
             'flex h-[22px] shrink-0 items-center gap-1 rounded-[7px] border border-transparent px-1.5 text-[11px] transition-colors hover:bg-pop-paper hover:text-pop-ink',
             open
@@ -108,7 +108,7 @@ export function ComposerAttachPopover({ skill, expert, onSkillChange, onExpertCh
         <div className="grid grid-cols-2 gap-1.5 p-2.5">
           {([
             { id: 'skill' as const, label: 'SKILLS', icon: Sparkles, count: skills?.length },
-            { id: 'expert' as const, label: '专家', icon: Users, count: clones?.length },
+            { id: 'expert' as const, label: '分身', icon: Users, count: clones?.length },
           ]).map(({ id, label, icon: Icon, count }) => (
             <button
               key={id}

@@ -151,6 +151,41 @@ CREATE TABLE IF NOT EXISTS chat_sessions (
   provider_session_id TEXT
 );
 
+-- 6b. Session prompt cache stability (schema v56)
+-- The provider cache is prefix-based: tools → system → messages. Any change
+-- before the history invalidates the whole cached prefix. A session therefore
+-- freezes its system prompt (persona + memory snapshot) and its expert roster
+-- on first use, so resumed turns keep the exact same prefix. Volatile facts
+-- (task status / spec notices / authoring resources) travel as a trailing
+-- <system-reminder> on the user message, never as a system-prompt mutation.
+CREATE TABLE IF NOT EXISTS session_prompt_snapshots (
+  session_id    TEXT PRIMARY KEY,
+  system_prompt TEXT NOT NULL,
+  prompt_hash   TEXT NOT NULL,
+  created_at    TEXT NOT NULL,
+  updated_at    TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS session_expert_rosters (
+  session_id TEXT PRIMARY KEY,
+  experts    TEXT NOT NULL DEFAULT '[]',
+  updated_at TEXT NOT NULL
+);
+
+-- 6c. Session role state (schema v57)
+-- A session's active expert is a *role switch* delivered as an append-only
+-- role card on the user message, NOT a system-prompt mutation. revision bumps
+-- on every switch; delivered_revision tracks whether the current card is
+-- already in the provider transcript. This keeps tools/system/agents stable
+-- so the prompt-cache prefix survives every switch.
+CREATE TABLE IF NOT EXISTS session_role_states (
+  session_id         TEXT PRIMARY KEY,
+  active_expert      TEXT,
+  revision           INTEGER NOT NULL DEFAULT 0,
+  delivered_revision INTEGER NOT NULL DEFAULT 0,
+  updated_at         TEXT NOT NULL
+);
+
 -- 7. Chat Messages
 CREATE TABLE IF NOT EXISTS chat_messages (
   id TEXT PRIMARY KEY,

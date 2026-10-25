@@ -1345,6 +1345,29 @@ export async function getTaskChatBinding(taskId: string): Promise<TaskDoerChatBi
   return handleResponse<TaskDoerChatBinding>(res)
 }
 
+/** Expert identity of the task's doer chat (role switch, not @ dispatch). */
+export interface TaskChatRoleState {
+  session_id: string
+  active_expert: string | null
+  expert: { id: string; name: string; label: string; desc: string } | null
+  revision: number
+  delivered_revision: number
+}
+
+export async function getTaskChatRole(taskId: string): Promise<TaskChatRoleState> {
+  const res = await fetch(buildUrl(`/${taskId}/chat/role`))
+  return handleResponse<TaskChatRoleState>(res)
+}
+
+export async function setTaskChatRole(taskId: string, expert: string | null): Promise<TaskChatRoleState> {
+  const res = await fetch(buildUrl(`/${taskId}/chat/role`), {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ expert }),
+  })
+  return handleResponse<TaskChatRoleState>(res)
+}
+
 /** 会话历史（ws-chat GET 的 raw 行 → ChatMessage，映射单源 fromDBMessage）。 */
 export async function getDoerChatHistory(workspaceId: string, sessionId: string, limit = 200): Promise<ChatMessage[]> {
   const url = new URL(`${getServerUrl()}/api/workspaces/${encodeURIComponent(workspaceId)}/chat/sessions/${encodeURIComponent(sessionId)}`)

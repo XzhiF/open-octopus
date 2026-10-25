@@ -7,6 +7,7 @@ import type { IAgentProvider, MessageChunk } from '@octopus/providers'
 import { getProvider } from '@octopus/providers'
 import { ScheduleRunDAO } from '../../../db/dao'
 import { ExecutionDAO } from '../../../db/dao'
+import { buildPhaseExpertContext } from '../../tasks/phase-expert-context'
 
 const DEFAULT_TIMEOUT_SECONDS = 300
 const MAX_OUTPUT_LENGTH = 50_000
@@ -114,8 +115,13 @@ export class AgentExecutor implements Executor {
     let tokenUsage: TokenUsage | undefined
     let resultContent: string | undefined
 
+    const expertContext = this.expertContext(executionId)
+    const prompt = expertContext
+      ? `${expertContext}\n\n---\n\n${config.prompt}`
+      : config.prompt
+
     try {
-      const stream = provider.sendQuery(config.prompt, cwd, undefined, {
+      const stream = provider.sendQuery(prompt, cwd, undefined, {
         model: config.model && config.model !== 'default' ? config.model : undefined,
         abortSignal: controller.signal,
       })
@@ -213,6 +219,21 @@ export class AgentExecutor implements Executor {
     const wsPath = this.execDAO.findWorkspacePath(workspaceId)
     if (!wsPath) return os.tmpdir()
     return wsPath.replace(/^~/, os.homedir())
+  }
+
+  /**
+   * Per-phase fixed experts (task_spec.phases[i].experts) as an execution
+   * prompt prefix. Scheduled non-task runs have no task_id/phase → empty.
+   * Agent files come from the same registry the MoA consult flow uses.
+   */
+  private expertContext(executionId: string): string {
+    try {
+      const exec = this.execDAO.findById(executionId)
+      if (!exec?.task_id || exec.phase_index == null) return ''
+      return buildPhaseExpertContext(this.execDAO.getDb(), exec.task_id, exec.phase_index)
+    } catch {
+      return ''
+    }
   }
 
   private calculateDelay(policy: AgentRetryPolicy, attempt: number): number {

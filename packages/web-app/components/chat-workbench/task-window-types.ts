@@ -1,6 +1,6 @@
 import type { Rect } from '@/lib/window-geometry'
 
-export type TaskModule = 'changes' | 'artifacts' | 'files' | 'workflow' | 'acceptance'
+export type TaskModule = 'plan' | 'run' | 'changes' | 'acceptance' | 'experts'
 
 export interface TaskWindowRecord {
   module: TaskModule

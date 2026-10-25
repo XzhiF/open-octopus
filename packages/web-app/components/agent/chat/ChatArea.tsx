@@ -23,6 +23,8 @@ import { EvolutionConfirmCard } from './EvolutionConfirmCard'
 import { AgentEmptyState } from '../shared/AgentEmptyState'
 import { ReviewCard } from '../knowledge/cards/ReviewCard'
 import { MentionAutocomplete, parseMention } from './MentionAutocomplete'
+import { ExpertMentionAutocomplete } from './ExpertMentionAutocomplete'
+import type { ExpertRole } from '@/lib/expert-roles'
 import { SlashCommandAutocomplete, type SlashCommand } from './SlashCommandAutocomplete'
 import { ComposerModelPopover } from './composer-model-popover'
 import { ComposerAttachPopover, type ComposerExpertRef, type ComposerSkillRef } from './composer-attach-popover'
@@ -155,6 +157,7 @@ export function ChatArea({
 }: ChatAreaProps) {
   const [input, setInput] = useState('')
   const [slashOpen, setSlashOpen] = useState(false)
+  const [expertMentionOpen, setExpertMentionOpen] = useState(false)
   const [contextExpanded, setContextExpanded] = useState(false)
   const [attachedSkill, setAttachedSkill] = useState<ComposerSkillRef | null>(null)
   const [attachedExpert, setAttachedExpert] = useState<ComposerExpertRef | null>(null)
@@ -243,6 +246,11 @@ export function ChatArea({
     setInput(prev => prev.replace(/@@[a-z0-9-]*$/, `@@${cloneName} `))
   }
 
+  const handleExpertMentionSelect = (role: ExpertRole) => {
+    // Replace @partial with @中文名 (server parses the same catalog).
+    setInput(prev => prev.replace(/(^|\s)@[^\s@]*$/, `$1@${role.name} `))
+  }
+
   const handleSlashSelect = (commandName: string) => {
     // Replace entire input with /command (user continues typing the prompt)
     setInput(`/${commandName} `)
@@ -317,6 +325,7 @@ export function ChatArea({
       return
     }
     if (slashOpen) return // 自动补全下拉打开时 Enter 归下拉
+    if (expertMentionOpen) return // @专家 下拉打开时 Enter 归下拉
     const text = input.trim()
     if (e.key === 'Enter') {
       e.preventDefault()
@@ -631,6 +640,11 @@ export function ChatArea({
               textareaRef={null}
               currentCloneName={currentCloneName}
             />
+            <ExpertMentionAutocomplete
+              inputValue={input}
+              onSelect={handleExpertMentionSelect}
+              onOpenChange={setExpertMentionOpen}
+            />
             {commands && commands.length > 0 && (
               <SlashCommandAutocomplete
                 inputValue={input}
@@ -677,7 +691,7 @@ export function ChatArea({
                 {attachedExpert && (
                   <span className="flex items-center gap-1 rounded-full border border-pop-purple/40 bg-pop-purple-soft px-2 py-0.5 text-[10.5px] text-pop-purple">
                     <Users className="size-2.5" />
-                    <span>专家 · {attachedExpert.displayName}</span>
+                    <span>分身 · {attachedExpert.displayName}</span>
                     <button
                       type="button"
                       onClick={() => setAttachedExpert(null)}

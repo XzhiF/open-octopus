@@ -44,6 +44,41 @@ export interface ExpertSubagentRef {
 }
 
 /**
+ * Resolve one expert role id into a subagent definition. Exported for the
+ * session role-card path (identity switch) so both surfaces use one loader.
+ */
+export function resolveExpertDefinition(id: string, label?: string): OctopusAgentDef | undefined {
+  const key = id?.trim()
+  if (!key) return undefined
+  const filePath = resolveAgentPath(key)
+  if (filePath) {
+    const { body, metadata } = loadAgentFile(filePath)
+    const description =
+      typeof metadata.description === "string" && metadata.description
+        ? metadata.description
+        : label ?? key
+    const def: OctopusAgentDef = {
+      description,
+      prompt: body || `你是 ${label ?? key} 专家。请基于你的专业视角回答用户的咨询问题。`,
+    }
+    if (typeof metadata.model === "string" && metadata.model) def.model = metadata.model
+    if (Array.isArray(metadata.tools) && metadata.tools.length > 0) {
+      def.tools = metadata.tools
+    } else {
+      def.tools = DEFAULT_TOOLS
+    }
+    return def
+  }
+  // No agent file installed — register a minimal persona so the main agent
+  // still has an invocable subagent for this turn.
+  return {
+    description: label ?? key,
+    prompt: `你是 ${label ?? key} 专家。请基于你的专业视角回答用户的咨询问题，不要编造超出你专业领域的断言。`,
+    tools: DEFAULT_TOOLS,
+  }
+}
+
+/**
  * Resolve expert role ids into a subagent map keyed by agent name.
  * Returns undefined when no subagents are requested.
  */
@@ -56,33 +91,8 @@ export function resolveExpertSubagents(
   for (const item of items) {
     const id = item.id?.trim()
     if (!id) continue
-    const filePath = resolveAgentPath(id)
-    if (filePath) {
-      const { body, metadata } = loadAgentFile(filePath)
-      const description =
-        typeof metadata.description === "string" && metadata.description
-          ? metadata.description
-          : item.label ?? id
-      const def: OctopusAgentDef = {
-        description,
-        prompt: body || `你是 ${item.label ?? id} 专家。请基于你的专业视角回答用户的咨询问题。`,
-      }
-      if (typeof metadata.model === "string" && metadata.model) def.model = metadata.model
-      if (Array.isArray(metadata.tools) && metadata.tools.length > 0) {
-        def.tools = metadata.tools
-      } else {
-        def.tools = DEFAULT_TOOLS
-      }
-      out[id] = def
-    } else {
-      // No agent file installed — register a minimal persona so the main agent
-      // still has an invocable subagent for this turn.
-      out[id] = {
-        description: item.label ?? id,
-        prompt: `你是 ${item.label ?? id} 专家。请基于你的专业视角回答用户的咨询问题，不要编造超出你专业领域的断言。`,
-        tools: DEFAULT_TOOLS,
-      }
-    }
+    const def = resolveExpertDefinition(id, item.label)
+    if (def) out[id] = def
   }
   return Object.keys(out).length > 0 ? out : undefined
 }

@@ -113,6 +113,12 @@ async function insertPhaseRoundExec(
   created.executionIds.push(execId)
 }
 
+// 看板详情已统一进 chat（卡片点击 → 任务 chat 并关闭看板）；本文件的
+// 后续步骤仍按旧控制台弹窗编写，保留为领域存档，等待 chat-flow 版重写。
+test.beforeEach(() => {
+  test.skip(true, 'legacy board-detail modal retired — use task chat flow')
+})
+
 test.beforeAll(async () => {
   serverAvailable = await isServerAvailable()
   if (!serverAvailable) log(`server not available at ${SERVER_URL} — specs will skip`)

@@ -22,6 +22,7 @@ import type { Context } from "hono"
 import { streamSSE } from "hono/streaming"
 import { TaskNotFoundError, TaskStatusConflictError } from "../services/tasks/tasks-service"
 import type { TaskDoerService } from "../services/tasks/task-doer-service"
+import { EXPERT_ROLES } from "@octopus/shared"
 
 function classifyError(err: unknown): { status: number; message: string } {
   if (err instanceof TaskNotFoundError) return { status: 404, message: err.message }
@@ -72,10 +73,58 @@ export function createTaskChatRoutes(doer: TaskDoerService): Hono {
     })
   }
 
+  // ── Expert identity (doer chat) ──────────────────────────────────
+  routes.get("/:id/chat/role", (c) => {
+    try {
+      const { sessionId, state } = doer.getRole(c.req.param("id")!)
+      return c.json(roleResponse(sessionId, state))
+    } catch (err) {
+      const { status, message } = classifyError(err)
+      return c.json({ error: message }, status)
+    }
+  })
+
+  routes.put("/:id/chat/role", async (c) => {
+    const taskId = c.req.param("id")!
+    let body: { expert?: unknown } = {}
+    try {
+      body = await c.req.json<{ expert?: unknown }>()
+    } catch {
+      return c.json({ error: "Invalid JSON body" }, 400)
+    }
+    const expert = body.expert == null ? null : String(body.expert)
+    if (expert && !EXPERT_ROLES.some((role) => role.id === expert)) {
+      return c.json({ error: `Unknown expert: ${expert}` }, 400)
+    }
+    try {
+      const { sessionId, state } = doer.setRole(taskId, expert)
+      return c.json(roleResponse(sessionId, state))
+    } catch (err) {
+      const { status, message } = classifyError(err)
+      return c.json({ error: message }, status)
+    }
+  })
+
   // Canonical path is POST /api/tasks/:id/chat（票面 S1）；/chat/messages 是
   // spec 行文里的同义别名，两处行为完全一致。
   routes.post("/:id/chat", messageHandler)
   routes.post("/:id/chat/messages", messageHandler)
 
   return routes
+}
+
+function roleResponse(
+  sessionId: string,
+  state: { activeExpert: string | null; revision: number; deliveredRevision: number },
+) {
+  const expert = state.activeExpert
+    ? EXPERT_ROLES.find((role) => role.id === state.activeExpert) ?? null
+    : null
+  return {
+    session_id: sessionId,
+    active_expert: state.activeExpert,
+    expert,
+    revision: state.revision,
+    delivered_revision: state.deliveredRevision,
+  }
 }

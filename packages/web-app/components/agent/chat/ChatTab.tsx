@@ -13,10 +13,10 @@ import { useRunningAgents } from '@/hooks/use-running-agents'
 import { useOrgs } from '@/hooks/useOrgs'
 import * as agentApi from '@/lib/agent/api'
 import { ChatSidebar } from './chat-sidebar'
+import { ExpertIdentityChip } from './expert-identity-chip'
 import { TaskWorkbench } from '@/components/chat-workbench/task-workbench'
 import { TaskOverview } from '@/components/chat-workbench/task-overview'
 import { TaskProjectChip } from '@/components/chat-workbench/task-project-chip'
-import { TaskModal } from '@/components/tasks/task-modal'
 import type { TaskWindowMap } from '@/components/chat-workbench/task-window-types'
 import { createTask, getTask, type TaskView } from '@/lib/tasks-api'
 import { cn } from '@/lib/utils'
@@ -63,7 +63,7 @@ export function ChatTab() {
   const [pendingTaskSession, setPendingTaskSession] = useState<PendingTaskSession | null>(null)
   const [creatingTask, setCreatingTask] = useState(false)
   const [overviewOpen, setOverviewOpen] = useState(false)
-  const [acceptTask, setAcceptTask] = useState<TaskView | null>(null)
+  const [overviewInitialTab, setOverviewInitialTab] = useState<'plan' | 'acceptance'>('plan')
   const [taskWindows, setTaskWindows] = useState<Record<string, TaskWindowMap>>({})
   const { tasks: chatTasks, loading: chatTasksLoading, refresh: refreshChatTasks } = useChatTasks()
   const runningAgents = useRunningAgents()
@@ -370,7 +370,6 @@ export function ChatTab() {
     setActiveTask(null)
     setPendingTaskSession(null)
     setOverviewOpen(false)
-    setAcceptTask(null)
     setActiveSessionId(id)
     setMobileSidebarOpen(false)
   }
@@ -378,7 +377,6 @@ export function ChatTab() {
   const handleSelectTask = useCallback((task: TaskView) => {
     setMobileSidebarOpen(false)
     setOverviewOpen(false)
-    setAcceptTask(null)
     if (task.status === 'draft') {
       if (!task.source_chat_session_id) {
         toast.error('该草稿没有关联的任务会话')
@@ -397,7 +395,6 @@ export function ChatTab() {
     setActiveTask(null)
     setPendingTaskSession(null)
     setOverviewOpen(false)
-    setAcceptTask(null)
     setMobileSidebarOpen(false)
     createNewSession()
   }
@@ -408,7 +405,6 @@ export function ChatTab() {
     setActiveTask(null)
     setPendingTaskSession(null)
     setOverviewOpen(false)
-    setAcceptTask(null)
     setMobileSidebarOpen(false)
     try {
       const session = await agentApi.createCloneSession('task-author')
@@ -432,10 +428,15 @@ export function ChatTab() {
   useEffect(() => {
     const onNewTask = () => { void handleCreateTask() }
     const onOpenTask = (event: Event) => {
-      const taskId = (event as CustomEvent<{ taskId?: string }>).detail?.taskId
+      const detail = (event as CustomEvent<{ taskId?: string; view?: 'acceptance' }>).detail
+      const taskId = detail?.taskId
       if (!taskId) return
       getTask(taskId)
-        .then((task) => handleSelectTask(task))
+        .then((task) => {
+          handleSelectTask(task)
+          setOverviewInitialTab(detail?.view === 'acceptance' ? 'acceptance' : 'plan')
+          if (detail?.view === 'acceptance') setOverviewOpen(true)
+        })
         .catch(() => toast.error('任务不存在或已被删除'))
     }
     window.addEventListener('octopus:new-task', onNewTask)
@@ -474,7 +475,17 @@ export function ChatTab() {
         <span className="size-1.5 rounded-full bg-pop-purple" />
         task-author
       </span>
+      {activeSessionId && (
+        <>
+          <span aria-hidden className="h-3 w-px bg-white/10" />
+          <ExpertIdentityChip kind="clone" cloneName="task-author" sessionId={activeSessionId} />
+        </>
+      )}
     </span>
+  ) : undefined
+
+  const mainLead = !authoring && activeSessionId ? (
+    <ExpertIdentityChip kind="agent" sessionId={activeSessionId} />
   ) : undefined
 
   return (
@@ -561,7 +572,10 @@ export function ChatTab() {
             aria-label="任务概览"
             title="任务概览"
             data-testid="task-overview-trigger"
-            onClick={() => setOverviewOpen(true)}
+            onClick={() => {
+              setOverviewInitialTab('plan')
+              setOverviewOpen(true)
+            }}
             className="absolute right-3 top-2.5 z-30 grid size-7 place-items-center rounded-md border border-white/10 bg-pop-paper/80 text-pop-dim backdrop-blur transition-colors hover:text-pop-ink"
           >
             <PanelsTopLeft className="size-3.5" />
@@ -602,7 +616,7 @@ export function ChatTab() {
             resumeTailing={resumeStreaming}
             emptyStateTitle={authoring ? '描述要开发的任务' : undefined}
             emptyStateDescription={authoring ? '第一句话会成为任务草稿的标题，后续对话用于澄清与拆分 Phase。' : undefined}
-            composerLeading={authoringLead}
+            composerLeading={authoring ? authoringLead : mainLead}
             composerPlaceholder={authoring ? '描述要开发的任务…　⏎ 发送' : '问主 Agent…　⏎ 发送 · ⇧⏎ 排队 · Alt⏎ 换行'}
             composerSeed={composerSeed}
             messageExtras={extras}
@@ -614,6 +628,10 @@ export function ChatTab() {
           <TaskWorkbench
             task={activeTask}
             windows={taskWindows[activeTask.id] ?? {}}
+            onMutated={() => {
+              void refreshChatTasks()
+              void refetchSessions()
+            }}
             onWindowsChange={(next) =>
               setTaskWindows((prev) => ({ ...prev, [activeTask.id]: next }))
             }
@@ -644,39 +662,18 @@ export function ChatTab() {
       {activeTask && overviewOpen && (
         <TaskOverview
           task={activeTask}
+          initialTab={overviewInitialTab}
           onClose={() => setOverviewOpen(false)}
           onEnqueued={() => {
             setOverviewOpen(false)
-            setActiveTask(null)
-            setPendingTaskSession(null)
-            // The draft chat has done its job; execution continues in the task
-            // board / console. Hand the user back to a normal conversation.
-            const main = sessions.find((session) => !session.clone_name)
-            if (main) setActiveSessionId(main.id)
+            // Stay on the task: the list refresh flips it to ready and the
+            // workbench renders the ready/running center in place.
             void refreshChatTasks()
             void refetchSessions()
-          }}
-          onOpenAcceptance={(task) => {
-            setOverviewOpen(false)
-            setAcceptTask(task)
           }}
         />
       )}
 
-      {acceptTask && (
-        <TaskModal
-          open
-          onOpenChange={(open) => {
-            if (!open) setAcceptTask(null)
-          }}
-          task={acceptTask}
-          startOnAcceptance
-          onMutated={() => {
-            void refreshChatTasks()
-            void refetchSessions()
-          }}
-        />
-      )}
     </div>
   )
 }

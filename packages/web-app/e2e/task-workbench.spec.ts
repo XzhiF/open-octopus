@@ -19,7 +19,6 @@ test.describe('AI Native · 任务工作台体验版', () => {
     const dock = page.getByTestId('task-dock')
     await expect(dock).toBeVisible()
     await expect(dock.locator('[data-dock-module]')).toHaveCount(5)
-    await expect(dock.locator('[data-dock-module]:disabled')).toHaveCount(4)
 
     await dock.locator('[data-dock-module="changes"]').click()
     const changesWindow = page.locator('[data-task-window="changes"]')

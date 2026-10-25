@@ -8,7 +8,8 @@ import { RecentExecutions } from "@/components/dashboard/recent-executions"
 import { LeaderboardSection } from "@/components/dashboard/leaderboard-section"
 import { WorkflowHealthCard } from "@/components/dashboard/workflow-health-card"
 import { CostTrendChart } from "@/components/dashboard/cost-trend-chart"
-import { fetchDashboardStats, fetchRunningQueue, fetchRecentExecutions, fetchWorkflowHealth } from "@/lib/api-client"
+import { CacheHitCard } from "@/components/dashboard/cache-hit-card"
+import { fetchDashboardStats, fetchRunningQueue, fetchRecentExecutions, fetchWorkflowHealth, fetchCacheStats, type CacheStatsResponse } from "@/lib/api-client"
 import type { Execution } from "@/lib/types"
 
 interface WorkflowHealth {
@@ -34,6 +35,7 @@ export default function TodayPage() {
   const [pendingExecutions, setPendingExecutions] = useState<Execution[]>([])
   const [recentExecutions, setRecentExecutions] = useState<Execution[]>([])
   const [workflows, setWorkflows] = useState<WorkflowHealth[]>([])
+  const [cacheStats, setCacheStats] = useState<CacheStatsResponse | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
 
@@ -41,11 +43,12 @@ export default function TodayPage() {
     setLoading(true)
     setError(null)
     try {
-      const [statsResult, queueResult, recentResult, healthResult] = await Promise.allSettled([
+      const [statsResult, queueResult, recentResult, healthResult, cacheResult] = await Promise.allSettled([
         fetchDashboardStats(),
         fetchRunningQueue(),
         fetchRecentExecutions(),
         fetchWorkflowHealth(),
+        fetchCacheStats(),
       ])
       if (statsResult.status === "fulfilled") {
         setStats(statsResult.value)
@@ -62,6 +65,9 @@ export default function TodayPage() {
       }
       if (healthResult.status === "fulfilled") {
         setWorkflows(Array.isArray(healthResult.value) ? healthResult.value : [])
+      }
+      if (cacheResult.status === "fulfilled") {
+        setCacheStats(cacheResult.value)
       }
 
       if (statsResult.status === "rejected" && queueResult.status === "rejected" && recentResult.status === "rejected" && healthResult.status === "rejected") {
@@ -136,6 +142,10 @@ export default function TodayPage() {
         totalCostComplete={stats.total_cost?.complete ?? true}
         avgDurationMs={stats.avg_duration_ms ?? 0}
       />
+
+      {cacheStats && (
+        <CacheHitCard sources={cacheStats.sources} windowDays={cacheStats.window_days} />
+      )}
 
       {/* Leaderboard Rankings */}
       <LeaderboardSection />

@@ -298,7 +298,7 @@ if (!process.env.VITEST && daos) {
   observability = new ObservabilityService(daos.execution, daos.tokenUsage, new PrivacyFilter())
   setExecutionDependencies(sse, observability, daos.execution, daos.tokenUsage)
   setHarnessDependencies(daos.harness)
-  initExecutionServiceRegistry(daos.execution as any, sse, observability, {
+  initExecutionServiceRegistry(getDb(), sse, observability, {
     executionDAO: daos.execution,
     workspaceDAO: daos.workspace,
   })

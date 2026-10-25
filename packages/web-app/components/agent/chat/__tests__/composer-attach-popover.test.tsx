@@ -65,11 +65,11 @@ describe("composer + 上下文", () => {
     await waitFor(() => expect(listClones).toHaveBeenCalled())
 
     fireEvent.click(await screen.findByText("open-spec"))
-    fireEvent.click(screen.getByRole("button", { name: /专家/ }))
+    fireEvent.click(screen.getByRole("button", { name: /分身/ }))
     fireEvent.click(await screen.findByText("开发分身"))
 
     expect(screen.getByText("/open-spec")).toBeInTheDocument()
-    expect(screen.getByText("专家 · 开发分身")).toBeInTheDocument()
+    expect(screen.getByText("分身 · 开发分身")).toBeInTheDocument()
 
     fireEvent.click(screen.getByRole("button", { name: "完成" }))
     fireEvent.change(screen.getByRole("textbox"), { target: { value: "看一下这个 spec" } })
@@ -77,6 +77,6 @@ describe("composer + 上下文", () => {
 
     expect(onSend).toHaveBeenCalledWith("/open-spec 看一下这个 spec", { delegate_to: "dev-clone" })
     expect(screen.queryByText("/open-spec")).toBeNull()
-    expect(screen.queryByText("专家 · 开发分身")).toBeNull()
+    expect(screen.queryByText("分身 · 开发分身")).toBeNull()
   })
 })

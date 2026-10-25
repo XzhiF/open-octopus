@@ -40,6 +40,12 @@ import { TaskNotFoundError, TaskStatusConflictError, type TasksService } from ".
 import { batchRelPath } from "./task-artifact-sync"
 import { specRunbookLevel } from "./runbook-spec"
 import { ExecutionDAO, TaskDAO } from "../../db/dao"
+import { SessionCacheContextDAO } from "../../db/dao/session-cache-context-dao"
+import type { SessionRoleState } from "../../db/dao/session-cache-context-dao"
+import { resolveSessionExpertRoster } from "../agent/session-expert-roster"
+import { resolveExpertSubagents } from "../agent/expert-registry"
+import { pendingRoleCard } from "../agent/role-card"
+import { parseExpertMentions } from "@octopus/shared"
 import { resolveGlobalWikiRoot } from "../knowledge/global-paths"
 import {
   QUICK_EDIT_MARKER,
@@ -181,11 +187,12 @@ export class TaskDoerService {
   /**
    * POST /api/tasks/:id/chat — one doer turn on the bound session.
    *
-   * System prompt = task-doer persona (CloneRuntime, same assembly as ws-chat
-   * uses for the workspace clone) + a per-turn injected 任务现场 block
-   * (buildTaskContext) — the 「server 侧解析会话归属并注入任务上下文」 half of
-   * US38. Everything else (SSE event shapes, message persistence, provider
-   * session threading, abort) is the extracted ws-chat engine verbatim.
+   * System prompt = the doer persona, frozen per session (cache discipline).
+   * The per-turn 任务现场 block (buildTaskContext) rides the user message as a
+   * trailing <system-reminder> — the 「server 侧解析会话归属并注入任务上下文」
+   * half of US38, without invalidating the resumed transcript's prefix cache.
+   * Everything else (SSE event shapes, message persistence, provider session
+   * threading, abort) is the extracted ws-chat engine verbatim.
    */
   async streamTurn(
     taskId: string,
@@ -203,7 +210,40 @@ export class TaskDoerService {
     // 其余 → [quick-edit]。取一次贯穿本回合 —— 中途交付/改派不改判已开始的回合。
     const takeoverTurn = this.isTakeoverTurn(taskId)
     const row = this.rawTaskRow(taskId)
-    const append = `${this.personaPrompt(row.org)}\n\n${this.buildTaskContext(taskId, target, takeoverTurn)}`
+    // Cache discipline: the system prompt is only the frozen doer persona.
+    // The per-turn 任务现场 block rides the user message as a trailing
+    // <system-reminder> — phase/round/status changes must not invalidate the
+    // whole resumed transcript's prefix cache.
+    const cacheCtx = new SessionCacheContextDAO(this.deps.db)
+    const persona = cacheCtx.getOrCreatePromptSnapshot(
+      target.sessionId,
+      () => this.personaPrompt(row.org),
+    ).systemPrompt
+
+    // Identity switch + @ dispatch ride the user message; system prompt and
+    // the SDK agents map stay stable (cache discipline).
+    let roleState = cacheCtx.getRoleState(target.sessionId)
+    if (!session.providerSessionId && roleState.deliveredRevision > 0) {
+      // Provider transcript was lost/reset → the role card must be replayed.
+      cacheCtx.resetRoleDelivery(target.sessionId)
+      roleState = cacheCtx.getRoleState(target.sessionId)
+    }
+    const roleCard = pendingRoleCard(roleState)
+    const mentions = parseExpertMentions(content)
+    const roster = resolveSessionExpertRoster(cacheCtx, {
+      sessionId: target.sessionId,
+      cloneName: "task-doer",
+      requested: mentions.map((role) => role.id),
+      seedCatalog: true,
+    })
+    const agents = resolveExpertSubagents(roster.map((id) => ({ id })))
+    const mentionReminder = mentions.length > 0
+      ? `用户本轮通过 @ 指定了以下专家：${mentions.map((role) => role.name).join("、")}。请调用对应的 subagent 获取其专业意见，再整合成最终回答；不要简单拼接。`
+      : undefined
+    const taskContext = this.buildTaskContext(taskId, target, takeoverTurn)
+    const promptReminder = [roleCard, mentionReminder, taskContext]
+      .filter(Boolean)
+      .join("\n\n")
 
     const outcome = await runChatTurn({
       stream,
@@ -215,7 +255,9 @@ export class TaskDoerService {
       cwd: target.wsPath,
       provider: session.provider,
       providerSessionId: session.providerSessionId,
-      systemPromptAppend: append,
+      systemPromptAppend: persona,
+      promptReminder,
+      agents,
       // 计划回写 票04 (S2) 反向硬闸：ws 侧批次目录（.scratch 同构位 = seed 的
       // 覆盖目标，「会被洗」断层）的写入当场拒绝，tool 结果带回可见原因 +
       // 计划回写 REST 指路（POST /api/tasks/:id/plan[/issues]）；projects/ 写、
@@ -242,7 +284,29 @@ export class TaskDoerService {
         }
       },
     })
+    if (roleCard && !outcome.aborted) {
+      cacheCtx.markRoleDelivered(target.sessionId, roleState.revision)
+    }
     return { outcome, target }
+  }
+
+  /** Current expert identity of the task's doer chat (lazy-creates it). */
+  getRole(taskId: string): { sessionId: string; state: SessionRoleState } {
+    const target = this.ensureSession(taskId)
+    return {
+      sessionId: target.sessionId,
+      state: new SessionCacheContextDAO(this.deps.db).getRoleState(target.sessionId),
+    }
+  }
+
+  /** Switch the doer chat's active expert (null = base role). The role card
+   *  is delivered on the next chat turn — no system-prompt mutation. */
+  setRole(taskId: string, expert: string | null): { sessionId: string; state: SessionRoleState } {
+    const target = this.ensureSession(taskId)
+    return {
+      sessionId: target.sessionId,
+      state: new SessionCacheContextDAO(this.deps.db).setActiveExpert(target.sessionId, expert),
+    }
   }
 
   /**

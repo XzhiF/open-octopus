@@ -278,6 +278,26 @@ export async function fetchWorkflowHealth() {
   return res.json()
 }
 
+export interface CacheSourceStat {
+  sourcePath: string
+  calls: number
+  inputTokens: number
+  cacheReadTokens: number
+  cacheCreationTokens: number
+  hitRate: number | null
+}
+
+export interface CacheStatsResponse {
+  window_days: number
+  since: string
+  sources: CacheSourceStat[]
+}
+
+export async function fetchCacheStats(days = 7): Promise<CacheStatsResponse> {
+  const res = await apiFetch(`${getServerUrl()}/api/dashboard/cache?days=${days}`)
+  return handleResponse(res)
+}
+
 // ============ Chat ============
 
 // sendMessage is now handled by useChatStream hook consuming streamSSE directly

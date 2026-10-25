@@ -14,8 +14,10 @@ import { getProvider } from '@octopus/providers'
 import type { EffortLevel } from '@octopus/shared'
 import { parseComposerContext, parseComposerEffort, resolveChatModel } from './composer-options'
 import type { AgentSessionDAO } from '../../db/dao'
+import { SessionCacheContextDAO } from '../../db/dao/session-cache-context-dao'
 import { CloneRuntime } from '../../services/agent/clone-runtime'
 import { SystemPromptAssembler } from '../../services/agent/system-prompt-assembler'
+import { isResumeFailureMessage, usableResumeId } from '../../services/agent/resume'
 import { registerActiveStream, unregisterActiveStream } from '../../services/agent/agent-service'
 import { getAgentDir, getBuiltInCloneDir, getCloneDir, getAgentSkillsDir, backupFile } from '../../services/agent/paths'
 import { getEvolutionService } from '../../services/agent/evolution-service'
@@ -217,6 +219,7 @@ export function createMainAgentRoute(deps: MainAgentRouteDeps): Hono {
 
     // Resolve or create session
     let sessionId = body.session_id
+    let resumeSessionId: string | undefined
     if (!sessionId) {
       sessionId = crypto.randomUUID()
       const now = new Date().toISOString()
@@ -233,6 +236,10 @@ export function createMainAgentRoute(deps: MainAgentRouteDeps): Hono {
       const existing = sessionDAO.findById(sessionId)
       if (!existing || existing.is_deleted) {
         return c.json({ error: { code: 'NOT_FOUND', message: `Session ${sessionId} not found` } }, 404)
+      }
+      resumeSessionId = usableResumeId(getAgentDir(), existing.provider_session_id)
+      if (existing.provider_session_id && !resumeSessionId) {
+        sessionDAO.clearProviderSession(sessionId)
       }
     }
 
@@ -361,7 +368,15 @@ export function createMainAgentRoute(deps: MainAgentRouteDeps): Hono {
     // Normal LLM routing (with optional tool-based delegation)
     // ══════════════════════════════════════════════════════════════
     const assembler = new SystemPromptAssembler(org)
-    const baseSystemPrompt = assembler.assemble()
+    // Frozen per session: re-reading persona/memory each turn changes the
+    // cached prefix and forces a full transcript recompute. New sessions pick
+    // up the latest files; existing ones stay byte-identical.
+    // (Test doubles may not expose getDb — they keep the per-turn assembly.)
+    const cacheDb = typeof sessionDAO.getDb === 'function' ? sessionDAO.getDb() : null
+    const cacheCtx = cacheDb ? new SessionCacheContextDAO(cacheDb) : null
+    const baseSystemPrompt = cacheCtx
+      ? cacheCtx.getOrCreatePromptSnapshot(sessionId!, () => assembler.assemble()).systemPrompt
+      : assembler.assemble()
     const curationSegment = curation ? `\n\n${CURATION_TOOLS_PROMPT}` : ''
     const systemPrompt = `${baseSystemPrompt}\n\n${DELEGATION_TOOLS_PROMPT}${curationSegment}\n\n${EVOLUTION_TOOLS_PROMPT}\n\n${RECORD_DAILY_TOOLS_PROMPT}`
 
@@ -374,7 +389,7 @@ export function createMainAgentRoute(deps: MainAgentRouteDeps): Hono {
         const provider = getProvider('claude')
         const cwd = getAgentDir()
 
-        const chunks = provider.sendQuery(body.message!, cwd, undefined, {
+        const chunks = provider.sendQuery(body.message!, cwd, resumeSessionId, {
           systemPrompt: { type: 'preset', preset: 'claude_code', append: systemPrompt },
           ...(model ? { model } : {}),
           ...(effort ? { effort } : {}),
@@ -462,6 +477,8 @@ export function createMainAgentRoute(deps: MainAgentRouteDeps): Hono {
               await stream.writeSSE({ event: 'status', data: JSON.stringify({ status: chunk.status }) })
               break
             case 'result':
+              // Persist the SDK session id for the next turn's native resume.
+              if (chunk.sessionId) sessionDAO.updateProviderSession(sessionId!, chunk.sessionId)
               // billing-coverage-2 票03 (US2)：Main Agent 路由轮自身是一次真实 provider
               // 调用 → 单独入账 global_chat（一 chunk 一行，重试=新调用=新行，KD23）。
               if (tokenUsageDao) {
@@ -478,6 +495,11 @@ export function createMainAgentRoute(deps: MainAgentRouteDeps): Hono {
               }
               break
             case 'error':
+              // Stale resume: drop the pointer so the next turn starts clean
+              // instead of failing forever. Only before any output.
+              if (resumeSessionId && !fullContent && isResumeFailureMessage(chunk.message)) {
+                sessionDAO.clearProviderSession(sessionId!)
+              }
               await stream.writeSSE({ event: 'error', data: JSON.stringify({ code: chunk.code, message: chunk.message }) })
               break
           }

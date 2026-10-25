@@ -26,6 +26,7 @@ import { PhaseSpecDialog, normalizeRel } from "./phase-spec-dialog"
 import { WorkflowBindingDialog } from "./phase-binding-dialog"
 import { HomeFileViewerDialog, type HomeFileViewerTarget } from "./home-file-viewer-dialog"
 import { findSpecEntry, isRelativeScratchSpec, type BatchTreeState } from "./use-batch-tree"
+import { expertLabel } from "@/lib/expert-roles"
 import type { HomeTreeState } from "./use-home-tree"
 import {
   DEFAULT_NEW_WORKFLOW,
@@ -262,6 +263,11 @@ export function SpecPanel({ task, onMutated, batchTree, rows, gateHits, home, au
                     </button>
                   </li>
                 </>
+              )}
+              {(p.experts?.length ?? 0) > 0 && (
+                <li className="text-pop-purple">
+                  · 专家 {p.experts!.map((id) => expertLabel(id)).join(" / ")}
+                </li>
               )}
             </ul>
           </>

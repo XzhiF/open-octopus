@@ -27,6 +27,7 @@ export function Desktop() {
     navigateWindow,
     setMissionControl,
     toggleMissionControl,
+    closeWindow,
   } = useDesktopWindows()
 
   const narrow = breakpoint === 'narrow'
@@ -112,6 +113,15 @@ export function Desktop() {
     window.addEventListener('octopus:focus-desktop', onFocusDesktop)
     return () => window.removeEventListener('octopus:focus-desktop', onFocusDesktop)
   }, [focusDesktop])
+
+  useEffect(() => {
+    const onCloseApp = (event: Event) => {
+      const id = (event as CustomEvent<{ id?: string }>).detail?.id
+      if (id) closeWindow(id as WindowId)
+    }
+    window.addEventListener('octopus:close-app', onCloseApp)
+    return () => window.removeEventListener('octopus:close-app', onCloseApp)
+  }, [closeWindow])
 
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {

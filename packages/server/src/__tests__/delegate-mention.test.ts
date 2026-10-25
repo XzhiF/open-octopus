@@ -31,6 +31,8 @@ function createMockSessionDAO() {
       const s = sessions.get(id)
       if (s) Object.assign(s, fields)
     },
+    updateProviderSession: () => {},
+    clearProviderSession: () => {},
   } as any
 }
 

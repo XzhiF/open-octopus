@@ -70,6 +70,12 @@ let installedSkill: { name: string; type: string } | null = null
 
 test.describe.configure({ mode: "serial" })
 
+// 看板详情已统一进 chat（卡片点击 → 任务 chat 并关闭看板）；本文件的
+// 后续步骤仍按旧控制台弹窗编写，保留为领域存档，等待 chat-flow 版重写。
+test.beforeEach(() => {
+  test.skip(true, 'legacy board-detail modal retired — use task chat flow')
+})
+
 test.describe("Story C: Draft autosave + spec↔agent linkage + resource loading", () => {
   test.beforeAll(async () => {
     serverAvailable = await isServerAvailable()

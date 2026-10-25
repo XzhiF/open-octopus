@@ -176,15 +176,13 @@ describe('CloneRuntime', () => {
     })
   })
 
-  // 05 — reverse context msg (SPIKE S1, v2-D7). The notice is concatenated
-  // into the provider's systemPrompt.append by sendWithProvider so the
-  // task-author agent sees the user's spec override on the next turn.
+  // 05 — reverse context msg (SPIKE S1, v2-D7). The notice rides the user
+  // message as a trailing <system-reminder> so the system prompt (and the
+  // provider's cached prefix) stays byte-identical across resumed turns.
   describe('chat — specUpdateNotice (05, SPIKE S1)', () => {
-    // Shape of the sendQuery options we assert on (systemPrompt.append is
-    // where sendWithProvider concatenates the notice — clone-runtime.ts:319).
     type SpyOpts = { systemPrompt: { type: string; preset: string; append: string } }
 
-    it('appends specUpdateNotice to the systemPrompt.append sent to the provider', async () => {
+    it('delivers specUpdateNotice on the user message, not the system prompt', async () => {
       const providers = await import('@octopus/providers')
       const sendQuerySpy = vi.fn(async function* (
         _prompt: string,
@@ -209,9 +207,13 @@ describe('CloneRuntime', () => {
 
       // sendQuery called once (first attempt with resume=null succeeds)
       expect(sendQuerySpy).toHaveBeenCalledTimes(1)
+      const prompt = sendQuerySpy.mock.calls[0][0]
       const options = sendQuerySpy.mock.calls[0][3]!
-      // SPIKE S1: the notice is concatenated into the append string
-      expect(options.systemPrompt.append).toContain(NOTICE)
+      // The notice travels with the user message as a system-reminder…
+      expect(prompt).toContain(NOTICE)
+      expect(prompt).toContain('<system-reminder>')
+      // …and never mutates the system prompt.
+      expect(options.systemPrompt.append).not.toContain(NOTICE)
       // The assembled clone context (persona) is still the base of the append
       expect(options.systemPrompt.append).toContain('Test persona for workspace clone')
       // Preset unchanged — we only append, never replace
@@ -241,10 +243,12 @@ describe('CloneRuntime', () => {
         // drain — no specUpdateNotice passed
       }
 
+      const prompt = sendQuerySpy.mock.calls[0][0]
       const options = sendQuerySpy.mock.calls[0][3]!
-      // No notice → no @@spec_updated token in the system prompt
+      // No notice → the user message is untouched, no @@spec_updated leak
+      expect(prompt).toBe('hello')
       expect(options.systemPrompt.append).not.toContain('@@spec_updated')
-      // Persona still present (append == assembled context, unmodified)
+      // Persona still present (system prompt == assembled context, unmodified)
       expect(options.systemPrompt.append).toContain('Test persona for workspace clone')
 
       vi.restoreAllMocks()
@@ -328,18 +332,12 @@ describe('CloneRuntime', () => {
   })
 
   // 07 (SG6, v2-D8/D13): draft-scope authoring_resources[] SKILL.md content
-  // is injected into the task-author session's systemPrompt.append via a new
-  // `authoringResourcesContent` param on chat(). sendWithProvider appends it
-  // ALONGSIDE specUpdateNotice (clone-runtime.ts:346-348 — same concat seam
-  // 05's specUpdateNotice uses). Mechanism B (SPIKE S2): assembleContext is
-  // fresh per turn, so the latest authoring_resources[] content is re-read
-  // every turn by the route (which calls TaskAuthorSessionAugmenter before
-  // runtime.chat). For Claude SDK (the provider task-author uses), resume
-  // works natively — no fresh-session / DB-history-prepend needed.
+  // travels on the user message (trailing system-reminder) alongside the spec
+  // notice. The route re-reads it per turn; the system prompt stays frozen.
   describe('chat — authoringResourcesContent (07, SG6)', () => {
     type SpyOpts = { systemPrompt: { type: string; preset: string; append: string } }
 
-    it('appends authoringResourcesContent to systemPrompt.append (alongside specUpdateNotice)', async () => {
+    it('delivers authoringResourcesContent on the user message (alongside specUpdateNotice)', async () => {
       const providers = await import('@octopus/providers')
       const sendQuerySpy = vi.fn(async function* (
         _prompt: string,
@@ -363,11 +361,15 @@ describe('CloneRuntime', () => {
         // drain — provider receives the system prompt during iteration
       }
 
+      const prompt = sendQuerySpy.mock.calls[0][0]
       const options = sendQuerySpy.mock.calls[0][3]!
-      // AUTHORING content is in the append string
-      expect(options.systemPrompt.append).toContain(AUTHORING)
-      // specUpdateNotice is also in the append string (alongside)
-      expect(options.systemPrompt.append).toContain(NOTICE)
+      // AUTHORING content is on the user message…
+      expect(prompt).toContain(AUTHORING)
+      // …alongside the specUpdateNotice
+      expect(prompt).toContain(NOTICE)
+      // Neither leaks into the cached system prompt
+      expect(options.systemPrompt.append).not.toContain(AUTHORING)
+      expect(options.systemPrompt.append).not.toContain(NOTICE)
       // Base persona is still the foundation of the append
       expect(options.systemPrompt.append).toContain('Test persona for workspace clone')
       // Preset unchanged
@@ -402,9 +404,12 @@ describe('CloneRuntime', () => {
         // drain
       }
 
+      const prompt = sendQuerySpy.mock.calls[0][0]
       const options = sendQuerySpy.mock.calls[0][3]!
-      expect(options.systemPrompt.append).toContain(AUTHORING)
+      expect(prompt).toContain(AUTHORING)
+      expect(options.systemPrompt.append).not.toContain(AUTHORING)
       // No notice → no @@spec_updated leak
+      expect(prompt).not.toContain('@@spec_updated')
       expect(options.systemPrompt.append).not.toContain('@@spec_updated')
       // Persona still present
       expect(options.systemPrompt.append).toContain('Test persona for workspace clone')
@@ -636,13 +641,16 @@ describe('CloneRuntime', () => {
         // drain
       }
 
+      const prompt = sendQuerySpy.mock.calls[0][0]
       const options = sendQuerySpy.mock.calls[0][3]!
       // 3 plugins (third = taskHomePath)
       expect(options.plugins).toHaveLength(3)
       expect(options.plugins[2]).toEqual({ type: 'local', path: taskHome })
-      // Both append segments still present alongside the third plugin
-      expect(options.systemPrompt.append).toContain(NOTICE)
-      expect(options.systemPrompt.append).toContain(AUTHORING)
+      // Both per-turn segments ride the user message, not the system prompt
+      expect(prompt).toContain(NOTICE)
+      expect(prompt).toContain(AUTHORING)
+      expect(options.systemPrompt.append).not.toContain(NOTICE)
+      expect(options.systemPrompt.append).not.toContain(AUTHORING)
       vi.restoreAllMocks()
     })
   })

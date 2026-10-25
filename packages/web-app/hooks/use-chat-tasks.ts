@@ -40,8 +40,8 @@ export function useChatTasks() {
           const effective = effectiveStatusOf(task, derivedMap[task.id])
           return effective === task.status ? task : { ...task, status: effective }
         })
-        .filter((task) => task.status === 'draft' || task.status === 'awaiting_review')
-        // Legacy drafts without an authoring session cannot be opened in chat.
+        // Chat is the task's home across its whole lifecycle; legacy drafts
+        // without an authoring session still cannot be opened here.
         .filter((task) => task.status !== 'draft' || !!task.source_chat_session_id)
       setTasks(chatEligible)
     } catch {

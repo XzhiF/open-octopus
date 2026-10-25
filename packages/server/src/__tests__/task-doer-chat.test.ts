@@ -459,34 +459,136 @@ describe("S1: POST /api/tasks/:id/chat — task-doer answers over SSE with injec
     const append = opts.systemPrompt?.append ?? ""
     // persona (task-doer, fallback copy = builtin-clones.ts registration)
     expect(append).toContain("任务执行者")
+    // The per-turn 任务现场 lives on the user message (cache discipline), never
+    // on the frozen system prompt.
+    const prompt = call.content
+    expect(append).not.toContain("P1 MVP")
     // phase/round of the live现场
-    expect(append).toContain("P1 MVP")
-    expect(append).toMatch(/round\s*1/i)
+    expect(prompt).toContain("P1 MVP")
+    expect(prompt).toMatch(/round\s*1/i)
     // batch 目录 spec 家族 —— spec.md 与打回反馈按名注入
     // (K10 同构相对位, posix 分隔符)
-    expect(append).toContain([".scratch", BATCH_DATE, "p1-mvp"].join("/"))
-    expect(append).toContain("spec.md")
-    expect(append).toContain("fix-feedback-r1.md")
+    expect(prompt).toContain([".scratch", BATCH_DATE, "p1-mvp"].join("/"))
+    expect(prompt).toContain("spec.md")
+    expect(prompt).toContain("fix-feedback-r1.md")
     // 启动 Runbook —— up/ready 命令原样带上
-    expect(append).toContain("pnpm -C projects/app dev")
-    expect(append).toContain("curl -s -o /dev/null")
+    expect(prompt).toContain("pnpm -C projects/app dev")
+    expect(prompt).toContain("curl -s -o /dev/null")
     // 写纪律 —— 快改每改即 commit 的标记词就在上下文里
-    expect(append).toContain("[quick-edit]")
-    expect(append).toContain("快速修改")
+    expect(prompt).toContain("[quick-edit]")
+    expect(prompt).toContain("快速修改")
     // 票05（ADR-0026）：计划回写通道与 plan-before-code 确认闸随 persona+上下文注入；
     // curl 配方字段名逐字可见（routes/tasks.ts planWriteBodySchema 同形）。
-    expect(append).toContain("计划回写")
-    expect(append).toContain("plan-before-code")
-    expect(append).toContain("确认闸")
+    // 静态配方在 persona（缓存的 system prompt）里，逐轮纪律在 prompt 里。
+    expect(prompt).toContain("计划回写")
+    expect(prompt).toContain("plan-before-code")
+    expect(prompt).toContain("确认闸")
     expect(append).toContain('"reason"')
     expect(append).toContain('"source"')
     expect(append).toContain("--data-binary")
   })
 
+  it("switches expert identity via a role card and dispatches @expert as a subagent", async () => {
+    const { taskId } = seedV4Task({ kind: "awaiting_review" })
+
+    // Identity switch (role card) — persisted per doer chat session.
+    const roleRes = await app.request(`/api/tasks/${taskId}/chat/role`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ expert: "engineering-sre" }),
+    })
+    expect(roleRes.status).toBe(200)
+    const roleBody = await roleRes.json() as { active_expert: string; revision: number }
+    expect(roleBody).toMatchObject({ active_expert: "engineering-sre", revision: 1 })
+
+    h.queue.push({ chunks: textResult("收到") })
+    await (await app.request(`/api/tasks/${taskId}/chat`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ content: "先以 SRE 视角看下风险" }),
+    })).text()
+
+    const first = h.calls[0]
+    const firstAppend = (first.options as { systemPrompt?: { append?: string } }).systemPrompt?.append ?? ""
+    const firstAgents = (first.options as { agents?: Record<string, unknown> }).agents ?? {}
+    expect(first.content).toContain('name="SRE"')
+    expect(first.content).toContain("服务端角色切换")
+    // The persona is NOT in the frozen system prompt; the full roster is stable.
+    expect(firstAppend).not.toContain('name="SRE"')
+    expect(firstAgents).toHaveProperty("engineering-sre")
+    expect(firstAgents).toHaveProperty("product-manager")
+
+    // @ expert = one-turn subagent, identity unchanged.
+    h.queue.push({ chunks: textResult("审查完毕") })
+    await (await app.request(`/api/tasks/${taskId}/chat`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ content: "@代码审查员 检查一下这个改动" }),
+    })).text()
+
+    const second = h.calls[1]
+    const secondAppend = (second.options as { systemPrompt?: { append?: string } }).systemPrompt?.append ?? ""
+    const secondAgents = (second.options as { agents?: Record<string, unknown> }).agents ?? {}
+    expect(second.content).toContain("用户本轮通过 @ 指定了以下专家：代码审查员")
+    expect(second.content).not.toContain('name="SRE"') // role card delivered once
+    expect(secondAppend).toBe(firstAppend)
+    expect(secondAgents).toEqual(firstAgents)
+    const roleAfter = await (await app.request(`/api/tasks/${taskId}/chat/role`)).json() as {
+      active_expert: string | null
+      delivered_revision: number
+    }
+    expect(roleAfter.active_expert).toBe("engineering-sre")
+    expect(roleAfter.delivered_revision).toBe(1)
+  })
+
+  it("freezes the doer persona per session: memory drift and task-context changes never touch the system prompt", async () => {
+    const { taskId, wsBatchDir } = seedV4Task({ kind: "awaiting_review" })
+    const personaDir = path.join(MOCK_HOME, "agent", "built-in", "task-doer")
+    const personaPath = path.join(personaDir, "persona.md")
+    fs.mkdirSync(personaDir, { recursive: true })
+    const originalPersona = fs.existsSync(personaPath) ? fs.readFileSync(personaPath, "utf-8") : null
+    fs.writeFileSync(personaPath, "# task-doer\n\npersona-v1")
+
+    try {
+      h.queue.push({ chunks: textResult("第一轮") })
+      await (await app.request(`/api/tasks/${taskId}/chat`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ content: "第一轮" }),
+      })).text()
+      const first = h.calls[0]
+      const append1 = (first.options as { systemPrompt?: { append?: string } }).systemPrompt?.append ?? ""
+      expect(append1).toContain("persona-v1")
+
+      // Another session edits the clone memory; a new spec file lands in the batch.
+      fs.writeFileSync(personaPath, "# task-doer\n\npersona-v2")
+      fs.writeFileSync(path.join(wsBatchDir, "late-note.md"), "late")
+
+      h.queue.push({ chunks: textResult("第二轮") })
+      await (await app.request(`/api/tasks/${taskId}/chat`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ content: "第二轮" }),
+      })).text()
+      const second = h.calls[1]
+      const append2 = (second.options as { systemPrompt?: { append?: string } }).systemPrompt?.append ?? ""
+
+      // Frozen system prompt: byte-identical prefix across resumed turns.
+      expect(append2).toBe(append1)
+      expect(append2).not.toContain("persona-v2")
+      // Volatile task context still updates on the user message.
+      expect(second.content).toContain("late-note.md")
+      expect(first.content).not.toContain("late-note.md")
+    } finally {
+      if (originalPersona == null) fs.rmSync(personaPath, { force: true })
+      else fs.writeFileSync(personaPath, originalPersona)
+    }
+  })
+
   // llm-wiki-loop 票11（spec US27/D2「指针 ≠ 注入」）：每轮 buildTaskContext 恒带
   // 一行知识指针 —— wiki 根路径 + 查阅纪律（octo-wiki / wiki_refs），~50 token 级，
   // 且该行不含任何知识正文（长度有界即排除词条体混入；正文只归 agent 按导航协议自读）。
-  it("票11: 每轮 append 恰有一行恒定知识指针（wiki 根 + 查阅纪律），长度有界、零知识正文", async () => {
+  it("票11: 每轮 prompt 恰有一行恒定知识指针（wiki 根 + 查阅纪律），长度有界、零知识正文", async () => {
     const { taskId } = seedV4Task({ kind: "running" })
 
     const grabPointerLines = async (content: string): Promise<string[]> => {
@@ -499,8 +601,7 @@ describe("S1: POST /api/tasks/:id/chat — task-doer answers over SSE with injec
       expect(res.status).toBe(200)
       await res.text()
       const call = h.calls[h.calls.length - 1]
-      const append = (call.options as { systemPrompt?: { append?: string } }).systemPrompt?.append ?? ""
-      return append.split(/\r?\n/).filter((l) => l.includes("knowledge"))
+      return call.content.split(/\r?\n/).filter((l) => l.includes("knowledge"))
     }
 
     // 第一轮：恰一行指针，携带全局 wiki 根（知识中心票08/D6①：org 路径随 org
@@ -656,9 +757,11 @@ describe("S1: 快速修改每改即 commit — [quick-edit] 落在执行分支",
     expect(execFileSync("git", ["rev-parse", "--abbrev-ref", "HEAD"], { cwd: repoPath, encoding: "utf-8" }).trim()).toBe(branch)
 
     // 注入的写纪律同步换词 —— 模型看到的每回合纪律与 server 实际落的标记一致。
+    // It rides the per-turn prompt, not the frozen system prompt.
     const call = h.calls[0]
+    expect(call.content).toContain("[takeover-edit]")
     const append = (call.options as { systemPrompt?: { append?: string } }).systemPrompt?.append ?? ""
-    expect(append).toContain("[takeover-edit]")
+    expect(append).not.toContain("[takeover-edit]")
   })
 
   it("接管交付后的回合回到 [quick-edit]（待验收小改 = 快速修改，票01 契约字符串）", async () => {

@@ -308,6 +308,13 @@ export class AgentSessionDAO extends BaseDAO {
     ).run(providerSessionId, new Date().toISOString(), id)
   }
 
+  /** Drop a stale/expired provider session (resume retry path). */
+  clearProviderSession(id: string): Database.RunResult {
+    return this.stmt(
+      "UPDATE sessions SET provider_session_id = NULL, updated_at = ? WHERE id = ?"
+    ).run(new Date().toISOString(), id)
+  }
+
   /** Insert message with type + metadata (clone-specific) */
   insertCloneMessage(row: {
     id: string; session_id: string; role: string;

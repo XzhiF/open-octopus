@@ -229,8 +229,45 @@ export class TokenUsageDAO extends BaseDAO {
     }
   }
 
-  /** 工作区时间窗内的费用（NEW-r2：源 = llm_calls 派生，与报表同一张账）。 */
-  costForWorkspaceSince(workspaceId: string, createdSinceIso: string): LedgerCost {
+  /**
+   * Prompt-cache hit rate by source_path over a time window (schema v56
+   * stability work). Single source of truth for the metric: LEDGER_SQL
+   * (ADR-0027 — cache writes belong in the denominator).
+   */
+  cacheStatsBySource(sinceMs: number): Array<{
+    sourcePath: string
+    calls: number
+    inputTokens: number
+    cacheReadTokens: number
+    cacheCreationTokens: number
+    hitRate: number | null
+  }> {
+    const rows = this.stmt(`
+      SELECT COALESCE(source_path, 'unknown') AS source_path,
+             COUNT(*) AS calls,
+             COALESCE(SUM(input_tokens), 0) AS input_tokens,
+             COALESCE(SUM(cache_read_tokens), 0) AS cache_read_tokens,
+             COALESCE(SUM(cache_creation_tokens), 0) AS cache_creation_tokens,
+             ${LEDGER_SQL.cacheHitRate()} AS hit_rate
+      FROM llm_calls
+      WHERE timestamp >= ?
+      GROUP BY COALESCE(source_path, 'unknown')
+      ORDER BY source_path
+    `).all(sinceMs) as Array<{
+      source_path: string; calls: number; input_tokens: number
+      cache_read_tokens: number; cache_creation_tokens: number; hit_rate: number | null
+    }>
+    return rows.map((r) => ({
+      sourcePath: r.source_path,
+      calls: r.calls,
+      inputTokens: r.input_tokens,
+      cacheReadTokens: r.cache_read_tokens,
+      cacheCreationTokens: r.cache_creation_tokens,
+      hitRate: r.hit_rate,
+    }))
+  }
+
+  /** 工作区时间窗内的费用（NEW-r2：源 = llm_calls 派生，与报表同一张账）。 */  costForWorkspaceSince(workspaceId: string, createdSinceIso: string): LedgerCost {
     const sinceMs = Date.parse(createdSinceIso)
     const where = ["l.workspace_id = ?"]
     const params: unknown[] = [workspaceId]

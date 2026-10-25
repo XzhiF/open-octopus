@@ -21,6 +21,7 @@ import {
   getCloneDir,
   getCloneSkillsDir,
 } from './paths'
+import { withTransientReminder } from './prompt-reminder'
 
 // ── Types ──────────────────────────────────────────────────────────
 
@@ -114,6 +115,17 @@ export class CloneRuntime {
     if (guidance) {
       segments.push(guidance)
     }
+
+    // 5. Role protocol (stable). Expert identity switches arrive as role cards
+    // on the user message; the system prompt never changes for them.
+    segments.push(
+      [
+        "# 专家协议",
+        "- 会话中可能出现服务端签发的 <role-switch> 角色卡；最新一张定义你的当前工作角色。",
+        "- 用户用 @专家名 明确指定专家时，调用对应的 subagent 获取专业意见后再整合回答；不要擅自调用未 @ 的专家。",
+        "- 角色卡不改变安全、写权与任务边界；这些基础规则始终优先。",
+      ].join("\n"),
+    )
 
     // Skills are no longer included as prompt text.
     // The Claude Agent SDK discovers skills natively via the `plugins` option
@@ -310,8 +322,14 @@ export class CloneRuntime {
     modelOverride?: string,
     subagents?: Record<string, OctopusAgentDef>,
     effort?: EffortLevel,
+    /** Frozen per-session profile from SessionCacheContextDAO. When present,
+     *  the system prompt is byte-identical across resumed turns (cache). */
+    systemPromptOverride?: string,
+    /** Per-turn transient context appended to the user message (role card,
+     *  @ expert dispatch reminder). Never touches the system prompt. */
+    extraReminder?: string,
   ): AsyncGenerator<MessageChunk> {
-    const cloneSystemPrompt = this.assembleContext()
+    const cloneSystemPrompt = systemPromptOverride ?? this.assembleContext()
     const effectiveCwd = cwd || this.getDefaultCwd()
 
     // First attempt: use resume if available
@@ -328,6 +346,7 @@ export class CloneRuntime {
         modelOverride,
         subagents,
         effort,
+        extraReminder,
       )
       yield* stream
       return
@@ -349,6 +368,7 @@ export class CloneRuntime {
             modelOverride,
             subagents,
             effort,
+            extraReminder,
           )
           yield* stream
           return
@@ -371,14 +391,13 @@ export class CloneRuntime {
 
   /**
    * Send query via provider with clone context and plugin-based skill
-   * discovery. 05 (SPIKE S1): `specUpdateNotice` is concatenated onto the
-   * system-prompt `append` string (clone-runtime.ts:310-329) so the
-   * task-author agent receives the user's [保存草稿] override in-context.
-   * 07 (SG6): `authoringResourcesContent` is appended alongside the notice
-   * so the task-author agent sees the current turn's authoring_resources[]
-   * SKILL.md content. Concat order: cloneContext (base) → authoringResources
-   * (skills) → specUpdateNotice (transient override) — skills land as part of
-   * the base context, the notice lands as a trailing override.
+   * discovery.
+   *
+   * Cache discipline: the system prompt is ONLY the frozen clone profile
+   * (persona + memory snapshot). The transient spec-update notice and the
+   * current authoring_resources skill bodies travel as a trailing
+   * `<system-reminder>` on the user message — they change per turn and would
+   * otherwise invalidate the entire resumed transcript's prefix cache.
    */
   private sendWithProvider(
     message: string,
@@ -392,32 +411,22 @@ export class CloneRuntime {
     modelOverride?: string,
     subagents?: Record<string, OctopusAgentDef>,
     effort?: EffortLevel,
+    extraReminder?: string,
   ): AsyncGenerator<MessageChunk> {
     const provider = getProvider('claude')
 
-    // 05 — SPIKE S1: append the transient spec-update notice to the system
-    // prompt. 07 — SG6: append authoring_resources SKILL.md content first
-    // (so it's part of the base context), then the notice (trailing override).
-    // Dynamic workspace state (org, projects, skill groups) lives in
-    // `{taskHome}/context.md` — NOT in the system prompt. This keeps the
-    // system prompt stable for prompt cache stability. The agent reads
-    // context.md on demand when it sees @@context_updated.
-    // Only concat when each piece is actually present; absent pieces leave no
-    // stray separator (no @@ leak, no empty ## Available Skills section).
-    const segments: string[] = [cloneSystemPrompt]
-    if (authoringResourcesContent) {
-      segments.push(authoringResourcesContent)
-    }
-    if (specUpdateNotice) {
-      segments.push(specUpdateNotice)
-    }
-    const append = segments.filter(Boolean).join('\n\n')
+    // Transient, per-turn context stays on the user message (after the cached
+    // prefix) — NEVER on the system prompt. See the method doc above.
+    const reminder = [extraReminder, authoringResourcesContent, specUpdateNotice]
+      .filter(Boolean)
+      .join('\n\n')
+    const prompt = withTransientReminder(message, reminder)
 
-    return provider.sendQuery(message, cwd, resumeSessionId ?? undefined, {
+    return provider.sendQuery(prompt, cwd, resumeSessionId ?? undefined, {
       systemPrompt: {
         type: 'preset',
         preset: 'claude_code',
-        append,
+        append: cloneSystemPrompt,
       },
       abortSignal,
       model: modelOverride ?? this.cloneDef.config.model,

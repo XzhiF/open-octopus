@@ -39,10 +39,25 @@ const ROW =
   'group flex h-[30px] w-full items-center gap-2.5 rounded-[7px] px-2 text-left text-[13px] leading-none transition-colors duration-100'
 
 const STATUS_DOT: Record<string, string> = {
-  awaiting_review: 'bg-pop-amber',
+  draft: 'bg-pop-cyan',
+  ready: 'bg-pop-navy',
   running: 'bg-pop-green',
   paused: 'bg-pop-dim',
-  draft: 'bg-pop-cyan',
+  awaiting_review: 'bg-pop-amber',
+  archiving: 'bg-pop-purple',
+  done: 'bg-pop-green/50',
+  failed: 'bg-pop-red',
+  aborted: 'bg-pop-dim',
+}
+
+const TASK_SHORT_LABEL: Record<string, string> = {
+  draft: '草稿',
+  ready: '待执行',
+  awaiting_review: '待验收',
+  archiving: '归档中',
+  done: '完成',
+  failed: '失败',
+  aborted: '中止',
 }
 
 function SectionLabel({
@@ -192,8 +207,9 @@ export function ChatSidebar({
                 {tasks.map((task) => {
                   const active = activeTaskId === task.id
                   const running =
-                    !!task.source_chat_session_id &&
-                    !!runningSessionIds?.has(task.source_chat_session_id)
+                    task.status === 'running' ||
+                    (!!task.source_chat_session_id &&
+                      !!runningSessionIds?.has(task.source_chat_session_id))
                   return (
                     <button
                       key={task.id}
@@ -222,8 +238,10 @@ export function ChatSidebar({
                       <span className="min-w-0 flex-1 truncate">{task.name}</span>
                       {running ? (
                         <RunningPill />
-                      ) : task.status === 'draft' ? (
-                        <span className="shrink-0 text-[10px] text-pop-dim">草稿</span>
+                      ) : TASK_SHORT_LABEL[task.status] ? (
+                        <span className="shrink-0 text-[10px] text-pop-dim">
+                          {TASK_SHORT_LABEL[task.status]}
+                        </span>
                       ) : null}
                     </button>
                   )

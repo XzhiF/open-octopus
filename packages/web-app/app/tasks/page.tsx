@@ -277,16 +277,13 @@ export default function TasksPage() {
     // AI-native: task creation is a chat session, not the legacy template modal.
     window.dispatchEvent(new Event('octopus:new-task'))
     window.dispatchEvent(new Event('octopus:focus-desktop'))
+    window.dispatchEvent(new CustomEvent('octopus:close-app', { detail: { id: 'tasks' } }))
   }
-  const openCard = (task: TaskView) => {
-    // Drafts are authoring conversations; open them in the unified chat.
-    if (task.status === 'draft') {
-      window.dispatchEvent(new CustomEvent('octopus:open-task', { detail: { taskId: task.id } }))
-      window.dispatchEvent(new Event('octopus:focus-desktop'))
-      return
-    }
-    setModalTask(task)
-    setModalOpen(true)
+  const openCard = (task: TaskView, view?: 'acceptance') => {
+    // Every task status opens its unified chat; the board is only an overview.
+    window.dispatchEvent(new CustomEvent('octopus:open-task', { detail: { taskId: task.id, view } }))
+    window.dispatchEvent(new Event('octopus:focus-desktop'))
+    window.dispatchEvent(new CustomEvent('octopus:close-app', { detail: { id: 'tasks' } }))
   }
   const close = () => { setModalOpen(false); setModalTask(null); setAcceptTaskId(null) }
 
@@ -528,7 +525,7 @@ export default function TasksPage() {
                         onClick={() => openCard(task)}
                         onDeleteRequest={(t) => setDeletingTaskId(t.id)}
                         onTriggerRequest={(t) => setTriggerTaskId(t.id)}
-                        onAcceptRequest={(t) => { setAcceptTaskId(t.id); openCard(t) }}
+                        onAcceptRequest={(t) => openCard(t, 'acceptance')}
                         onAdvanceRequest={(t) => void handleAdvance(t)}
                         onArchiveRetryRequest={(t) => void handleArchiveRetry(t)}
                         onDuplicateRequest={(t) => void handleDuplicate(t)}

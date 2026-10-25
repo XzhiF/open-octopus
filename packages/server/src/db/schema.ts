@@ -25,7 +25,12 @@ const _dirname: string =
 // injected_count→cited_count、last_injected→last_cited（引用计数/最近被引用时间，
 // 存量行零丢失，migrateEffectivenessV55）；新表 effectiveness_cursors（记账解析游标，
 // PK=execution_id ⇒ 重跑幂等零重复）。
-export const SCHEMA_VERSION = 55
+// 55→56：提示缓存稳定面——纯增量两张表 session_prompt_snapshots /
+// session_expert_rosters（会话级 system prompt 快照 + 固定专家花名册）。
+// 56→57：会话级专家身份——纯增量 session_role_states（active_expert /
+// revision / delivered_revision）。角色切换以 role card 追加到用户消息，
+// system/tools/agents 不变，因此不破坏 prompt cache 前缀。
+export const SCHEMA_VERSION = 57
 
 /**
  * Apply the complete unified schema to the given database.

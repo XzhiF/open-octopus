@@ -21,21 +21,11 @@ import { Textarea } from "@/components/ui/textarea"
 import { Button } from "@/components/ui/button"
 import { Brain, Loader2, Plus, X } from "lucide-react"
 import type { Task } from "@octopus/shared"
+import { EXPERT_ROLES as AVAILABLE_ROLES } from '@/lib/expert-roles'
 
 // ── Constants ──────────────────────────────────────────────────────
 
-export const AVAILABLE_ROLES = [
-  { id: "product-manager", label: "📦 产品经理", desc: "需求完整性、用户价值、优先级" },
-  { id: "engineering-software-architect", label: "🏛️ 软件架构师", desc: "系统设计、DDD、技术决策" },
-  { id: "engineering-code-reviewer", label: "👀 代码审查员", desc: "正确性、可维护性、性能" },
-  { id: "engineering-security-engineer", label: "🔒 安全工程师", desc: "威胁建模、漏洞评估" },
-  { id: "engineering-sre", label: "🛠️ SRE", desc: "可靠性、SLO、可观测性" },
-  { id: "engineering-rapid-prototyper", label: "⚡ 快速原型师", desc: "快速验证想法、MVP 创建" },
-  { id: "engineering-frontend-developer", label: "💻 前端开发者", desc: "UI 实现、性能优化" },
-  { id: "engineering-codebase-onboarding-engineer", label: "🧭 代码库引导工程师", desc: "快速上手陌生代码库" },
-  { id: "prompt-engineer", label: "🧠 提示词工程师", desc: "提示词设计、输出质量优化" },
-  { id: "agents-orchestrator", label: "🎭 智能体编排者", desc: "编排多智能体工作流" },
-] as const
+export { AVAILABLE_ROLES }
 
 export const AVAILABLE_ENGINES = [
   { id: "claude", label: "Claude" },

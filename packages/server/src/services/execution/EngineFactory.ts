@@ -9,6 +9,7 @@ import { CrossExecResolver, collectNodeEngines, parseWorkflow, WorkflowRef, Vers
 import type { WorkflowDef, AgentVersionInfo, TaskDispatchPort } from "@octopus/shared"
 import { getProvider } from "@octopus/providers"
 import { selectAndInstallAgents } from "../resource-agent-service"
+import { buildPhaseExpertContext, injectPhaseExpertContext } from "../tasks/phase-expert-context"
 import { existsSync, readFileSync } from "fs"
 import { join } from "path"
 
@@ -85,8 +86,24 @@ export class EngineFactory implements IEngineFactory {
       : undefined
 
     // 边界：注入链已物理删除（知识中心票08）——server/CLI 双入口共用纯编排装配签名，勿增 knowledge 尾参。
+    // Per-phase fixed experts: workflow nodes run on the engine's executor, so
+    // inject the phase roster into every agent node's goal/prompt here (each
+    // node is a fresh session; no cache prefix to preserve).
+    const effectiveWorkflow = execution.task_id && execution.phase_index != null
+      ? (() => {
+          // ctx.db may be a legacy wrapper in some test/bootstrap paths; the
+          // ExecutionDAO always exposes the real better-sqlite3 handle.
+          const expertContext = buildPhaseExpertContext(this.dao.getDb(), execution.task_id, execution.phase_index)
+          if (expertContext) {
+            console.log(
+              `[EngineFactory] injecting ${expertContext.length} chars of phase experts for task ${execution.task_id} P${execution.phase_index}`,
+            )
+          }
+          return injectPhaseExpertContext(workflow, expertContext)
+        })()
+      : workflow
     const engine = new WorkflowEngine(
-      workflow, providers, this.ctx.workspacePath,
+      effectiveWorkflow, providers, this.ctx.workspacePath,
       this.ctx.workspacePath,
       callbacks, signal,
       execution.id, inputValues,

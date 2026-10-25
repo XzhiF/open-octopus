@@ -1,7 +1,7 @@
 'use client'
 
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import { CheckCircle2, FileText, GitCompare, RefreshCw } from 'lucide-react'
+import { CheckCircle2, FileText, GitCompare, RefreshCw, Users } from 'lucide-react'
 import { toast } from 'sonner'
 import { SPEC_FIELD_UPDATE_EVENT, TASK_STATUS_EVENT } from '@octopus/shared'
 import { getTask, readyTask, TaskReadyGateError, type TaskDetail, type TaskView } from '@/lib/tasks-api'
@@ -19,13 +19,16 @@ import { Spinner } from '@/components/ui/spinner'
 import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
 import { ChangesWindow } from './changes-window'
+import { ExpertsWindow } from './experts-window'
+import { TaskConsoleWindow } from './task-console-window'
 
-type OverviewTab = 'plan' | 'changes' | 'acceptance'
+type OverviewTab = 'plan' | 'changes' | 'acceptance' | 'experts'
 
 const TABS: Array<{ id: OverviewTab; label: string; icon: typeof FileText }> = [
   { id: 'plan', label: '计划与产物', icon: FileText },
   { id: 'changes', label: '变更', icon: GitCompare },
   { id: 'acceptance', label: '验收', icon: CheckCircle2 },
+  { id: 'experts', label: '专家', icon: Users },
 ]
 
 interface TaskOverviewProps {
@@ -34,18 +37,18 @@ interface TaskOverviewProps {
   /** Enqueue succeeded: the parent leaves the draft chat and follows the task
    *  on the board / execution console. */
   onEnqueued: () => void
-  /** Transitional bridge to the existing acceptance console. */
-  onOpenAcceptance: (task: TaskView) => void
+  /** Board's 验收 action lands directly on this tab. */
+  initialTab?: OverviewTab
 }
 
 /**
  * Task-scoped result surface: one floating overview for the plan, artifacts,
  * code changes and acceptance. Chat stays behind it and keeps its width.
  */
-export function TaskOverview({ task, onClose, onEnqueued, onOpenAcceptance }: TaskOverviewProps) {
+export function TaskOverview({ task, onClose, onEnqueued, initialTab = 'plan' }: TaskOverviewProps) {
   const [detail, setDetail] = useState<TaskDetail | null>(null)
   const [loading, setLoading] = useState(true)
-  const [tab, setTab] = useState<OverviewTab>('plan')
+  const [tab, setTab] = useState<OverviewTab>(initialTab)
   const [catalog, setCatalog] = useState<BuiltInWorkflowSummary[]>([])
   const [enqueueBusy, setEnqueueBusy] = useState(false)
   const [gateMissing, setGateMissing] = useState<string[] | null>(null)
@@ -260,11 +263,20 @@ export function TaskOverview({ task, onClose, onEnqueued, onOpenAcceptance }: Ta
             ) : (
               <ChangesWindow task={task} />
             )
+          ) : tab === 'experts' ? (
+            <ExpertsWindow task={detail} onMutated={() => void refresh()} />
+          ) : isDraft ? (
+            <EmptyTab
+              icon={CheckCircle2}
+              title="入队并执行后才能验收"
+              hint="先在对话里把 Phase、规格和 Runbook 定下来；入队执行后会在这里看到运行结果、预览和验收闸门。"
+            />
           ) : (
-            <AcceptanceTab
+            <TaskConsoleWindow
               task={task}
-              detail={detail}
-              onOpenAcceptance={onOpenAcceptance}
+              startOnAcceptance
+              onClose={onClose}
+              onMutated={() => void refresh()}
             />
           )}
         </div>
@@ -289,78 +301,6 @@ function EmptyTab({
       </div>
       <div className="mt-3 text-[13px] font-medium text-pop-ink">{title}</div>
       <p className="mt-1 max-w-sm text-[11.5px] leading-relaxed text-pop-dim">{hint}</p>
-    </div>
-  )
-}
-
-function AcceptanceTab({
-  task,
-  detail,
-  onOpenAcceptance,
-}: {
-  task: TaskView
-  detail: TaskDetail
-  onOpenAcceptance: (task: TaskView) => void
-}) {
-  const spec = detail.task_spec
-  const runbook = spec.acceptance_runbook
-  const preview = spec.acceptance_preview
-  const verify = spec.acceptance_verify
-
-  if (task.status === 'draft') {
-    return (
-      <EmptyTab
-        icon={CheckCircle2}
-        title="入队并执行后才能验收"
-        hint="先在对话里把 Phase、规格和 Runbook 定下来；入队执行后会在这里看到运行结果、预览和验收闸门。"
-      />
-    )
-  }
-
-  return (
-    <div className="h-full overflow-y-auto">
-      <div className="mx-auto w-full max-w-2xl px-6 py-6">
-        <h2 className="text-[15px] font-semibold tracking-[-0.01em] text-pop-ink">验收</h2>
-        <p className="mt-1 text-[11.5px] leading-relaxed text-pop-dim">
-          先跑起来看，再对照变更与用例决定通过还是打回。
-        </p>
-
-        <div className="mt-5 space-y-2.5">
-          <AcceptanceRow
-            label="起停"
-            value={
-              runbook?.up?.command && runbook?.ready?.command
-                ? `${runbook.up.command} → ${runbook.ready.command}`
-                : null
-            }
-          />
-          <AcceptanceRow
-            label="预览"
-            value={preview?.command ? `${preview.command}${preview.url ? ` · ${preview.url}` : ''}` : null}
-          />
-          <AcceptanceRow label="复检" value={verify?.command ?? null} />
-        </div>
-
-        <div className="mt-6 flex items-center gap-2">
-          <Button size="sm" variant="pop" onClick={() => onOpenAcceptance(task)}>
-            打开验收控制台
-          </Button>
-          <span className="text-[10.5px] text-pop-dim">
-            运行记录、逐轮 diff、用例与打回仍在原控制台里
-          </span>
-        </div>
-      </div>
-    </div>
-  )
-}
-
-function AcceptanceRow({ label, value }: { label: string; value: string | null }) {
-  return (
-    <div className="flex gap-3 rounded-[9px] border border-white/[0.06] bg-white/[0.02] px-3 py-2">
-      <span className="w-9 shrink-0 text-[10.5px] text-pop-dim">{label}</span>
-      <span className={cn('min-w-0 flex-1 break-all font-mono text-[11px]', value ? 'text-pop-ink' : 'text-pop-dim/60')}>
-        {value ?? '未配置'}
-      </span>
     </div>
   )
 }

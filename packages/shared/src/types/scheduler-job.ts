@@ -142,6 +142,10 @@ export const taskPhaseSchema = z.object({
   specPath: z.string().min(1),
   workflowRef: WorkflowRef.zodSchema(),
   inputValues: z.record(z.string().min(1), z.string().min(1).max(2048)).default({}),
+  /** Fixed expert roster for this phase (clone names). The task-author proposes
+   *  it in draft; it is displayed in the task chat and injected as the phase's
+   *  expert context at execution. Locked at enqueue. */
+  experts: z.array(z.string().min(1).max(100)).max(12).optional(),
   // @deprecated（2026-10-10 ADR-0028：入队闸⑤「人工确认绑定」废除 —— 绑定存在
   // 且可解析即视为已确认）。字段保留 optional 仅为 wire 兼容（老任务行/老请求带
   // 本字段仍可解析）；server 不再检查其值，web 也不再读写。

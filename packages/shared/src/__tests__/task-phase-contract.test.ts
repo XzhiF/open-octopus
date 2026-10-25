@@ -28,15 +28,18 @@ interface SpecTaskPhase {
   specPath: string
   workflowRef: string
   inputValues: Record<string, string>
+  /** Fixed expert roster for this phase (clone names). */
+  experts?: string[]
   /** @deprecated 2026-10-10 ADR-0028：入队闸 ⑤ 废除（绑定可解析 = 已确认）。
    *  保留 optional 仅 wire 兼容，值不再被检查 —— 契约快照仍含本键。 */
   bindingConfirmed?: boolean
 }
 
 describe("AC2 contract — TaskPhase Zod single source ↔ spec shape", () => {
-  it("Zod shape keys snapshot exactly the 7 spec fields", () => {
+  it("Zod shape keys snapshot exactly the 8 spec fields", () => {
     expect(Object.keys(taskPhaseSchema.shape).sort()).toEqual([
       "bindingConfirmed",
+      "experts",
       "index",
       "inputValues",
       "name",

@@ -22,6 +22,9 @@ import { useCallback, useEffect, useRef, useState, type ReactNode } from "react"
 import { toast } from "sonner"
 import type { ChatMessage } from "@/lib/types"
 import { getTaskChatBinding, getDoerChatHistory } from "@/lib/tasks-api"
+import { ExpertIdentityChip } from "@/components/agent/chat/expert-identity-chip"
+import { ExpertMentionAutocomplete } from "@/components/agent/chat/ExpertMentionAutocomplete"
+import type { ExpertRole } from "@/lib/expert-roles"
 import { getServerUrl } from "@/lib/server-config"
 import { applyChunkToMessages, parseSSEStream } from "@/components/workspace/chat/apply-chunk"
 import { INTERVENTION_MAX, isOverLimit, interventionLineText, type InterventionRow } from "../intervention"
@@ -73,6 +76,7 @@ export function TaskChatTab({
   const [unavailable, setUnavailable] = useState<string | null>(null)
   const [streaming, setStreaming] = useState(false)
   const [draft, setDraft] = useState("")
+  const [expertMentionOpen, setExpertMentionOpen] = useState(false)
   // quick_edit_commit 尾帧计数走 state（与 messages 同一效应发布视图 —— 用 ref
   // 会在流回调里读到过期闭包，徽标与 ×N 说谎）。
   const [commitCount, setCommitCount] = useState(0)
@@ -174,8 +178,13 @@ export function TaskChatTab({
   }, [draft, streaming, isFixing, onInterventionSend, onQuickEditCommit, taskId])
 
   const onKeyDown = useCallback((e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    if (expertMentionOpen) return // @专家 下拉接管 Enter
     if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); void send() }
-  }, [send])
+  }, [send, expertMentionOpen])
+
+  const handleExpertMentionSelect = (role: ExpertRole) => {
+    setDraft((prev) => prev.replace(/(^|\s)@[^\s@]*$/, `$1@${role.name} `))
+  }
 
   // ── fixing：⚑ 历史 + 本地回执 ─────────────────────────────────────────
   if (isFixing) {
@@ -334,7 +343,16 @@ export function TaskChatTab({
         </div>
       </div>
       <div className="shrink-0 border-t border-white/[0.06] bg-pop-bg px-4 pb-3 pt-2">
-        <div className="mx-auto w-full max-w-4xl">
+        <div className="relative mx-auto w-full max-w-4xl">
+          <ExpertMentionAutocomplete
+            inputValue={draft}
+            onSelect={handleExpertMentionSelect}
+            onOpenChange={setExpertMentionOpen}
+          />
+          <div className="mb-1.5 flex items-center gap-2" data-testid="task-chat-identity-row">
+            <ExpertIdentityChip kind="task" taskId={taskId} />
+            <span className="text-[10px] text-pop-dim">身份切换；输入 @专家 仅派一次性子代理</span>
+          </div>
           <div className="flex items-start gap-2 rounded-[9px] border border-white/[0.08] bg-pop-paper/60 px-2.5 py-1.5 transition-colors focus-within:border-white/[0.16]">
             <span aria-hidden className="shrink-0 pt-1.5 font-bold leading-6 text-pop-pink">❯</span>
             <textarea

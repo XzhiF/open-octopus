@@ -60,6 +60,11 @@ import { getResourceRegistry } from '../../services/resource-registry'
 import { recordProviderResultUsage } from '../../services/llm-call-ledger'
 import type { TokenUsageDAO } from '../../db/dao/token-usage-dao'
 import type { ResourceRef } from '@octopus/shared'
+import { EXPERT_ROLE_IDS, EXPERT_ROLES, parseExpertMentions } from '@octopus/shared'
+import { SessionCacheContextDAO } from '../../db/dao/session-cache-context-dao'
+import { resolveSessionExpertRoster } from '../../services/agent/session-expert-roster'
+import { pendingRoleCard } from '../../services/agent/role-card'
+import { usableResumeId } from '../../services/agent/resume'
 
 // ── Route deps ─────────────────────────────────────────────────────
 
@@ -245,6 +250,11 @@ export function createCloneSessionRoutes(deps: CloneSessionRouteDeps): Hono {
       updated_at: now,
     })
 
+    // task-author: stable expert roster from turn 0 (see chat route above).
+    if (cloneName === 'task-author') {
+      new SessionCacheContextDAO(sessionDAO.getDb()).saveExpertRoster(sessionId, EXPERT_ROLE_IDS)
+    }
+
     const session = sessionDAO.findById(sessionId)
     return c.json({
       ...session,
@@ -351,16 +361,37 @@ export function createCloneSessionRoutes(deps: CloneSessionRouteDeps): Hono {
     const effort = parseComposerEffort(body.effort)
     const model = resolveChatModel(body.model, parseComposerContext(body.maxContext), org)
 
-    // Single-expert consultation: optional subagent refs → SDK agent defs
-    // registered for THIS turn only (the main agent invokes them via its
-    // Agent tool, then they vanish on the next turn).
-    const subagents = resolveExpertSubagents(body.subagents ?? [])
-
     // Verify session exists and belongs to clone
     const session = sessionDAO.findById(sessionId)
     if (!session || session.is_deleted || session.clone_name !== cloneName) {
       return c.json({ error: { code: 'NOT_FOUND', message: `Session ${sessionId} not found` } }, 404)
     }
+
+    // Stable expert roster (cache discipline). Chat sessions register the
+    // whole catalog once, so consulting a different expert changes only the
+    // user message — the SDK `agents` metadata (part of the cached prefix)
+    // stays byte-identical across turns.
+    const cacheCtx = new SessionCacheContextDAO(sessionDAO.getDb())
+    const mentions = parseExpertMentions(body.message)
+    const expertRoster = resolveSessionExpertRoster(cacheCtx, {
+      sessionId,
+      cloneName,
+      requested: [
+        ...mentions.map((role) => role.id),
+        ...(body.subagents ?? []).map((ref) => ref.id),
+      ],
+      seedCatalog: true,
+    })
+    const subagents = resolveExpertSubagents(expertRoster.map((id) => ({ id })))
+
+    // Identity switch + @ dispatch ride the user message; system prompt stays
+    // frozen (see role-card.ts / prompt-reminder.ts).
+    const roleState = cacheCtx.getRoleState(sessionId)
+    const roleCard = pendingRoleCard(roleState)
+    const mentionReminder = mentions.length > 0
+      ? `用户本轮通过 @ 指定了以下专家：${mentions.map((role) => role.name).join('、')}。请调用对应的 subagent 获取其专业意见，再整合成最终回答；不要简单拼接。`
+      : undefined
+    const turnReminder = [roleCard, mentionReminder].filter(Boolean).join('\n\n') || undefined
 
     // Resolve clone definition from filesystem
     const cloneDef = resolveCloneDefFromFs(cloneName)
@@ -398,18 +429,18 @@ export function createCloneSessionRoutes(deps: CloneSessionRouteDeps): Hono {
     // dir, not the clone's own dir). Resolved after noticeTaskId + homeService
     // below; falls back to the clone's own dir when no task home exists.
     const defaultCwd = runtime.getDefaultCwd()
-    const providerSessionId = session.provider_session_id ?? null
+    const storedProviderSessionId = session.provider_session_id ?? null
 
     // 05 — reverse context msg (SPIKE S1, v2-D7). If the user saved a draft
     // (PUT /api/tasks) since the last turn, TasksService.updateTask set a
     // transient, in-memory notice keyed by task_id. Resolve the task bound
     // to this session (same lookup the autosave seam uses) and read the
     // pending notice. Passed to CloneRuntime.chat below as `specUpdateNotice`
-    // → sendWithProvider appends it to the system-prompt `append` string
-    // (assembleContext is fresh per turn, clone-runtime.ts:261, so this
-    // re-delivers only while the notice stays pending). Cleared AFTER the
-    // stream (below) so a mid-stream error / abort re-delivers next turn
-    // (at-least-once; the notice is an idempotent nudge, not a state change).
+    // → sendWithProvider attaches it to the USER MESSAGE as a trailing
+    // <system-reminder> (cache discipline: the system prompt stays frozen).
+    // Cleared AFTER the stream (below) so a mid-stream error / abort
+    // re-delivers next turn (at-least-once; the notice is an idempotent nudge,
+    // not a state change).
     // Gated by task-author + taskDAO: only task-author sessions carry spec
     // notices, and taskDAO is optional (wired only with the autosave seam).
     // This is a DIFFERENT location from 04's turn-end autosave block
@@ -431,10 +462,9 @@ export function createCloneSessionRoutes(deps: CloneSessionRouteDeps): Hono {
     // TaskAuthorSessionAugmenter (ResourceManager → readFile →
     // enhancePromptWithSkills — SG11 resurrects the dead code), and passes
     // the content string to runtime.chat as `authoringResourcesContent`.
-    // sendWithProvider appends it to systemPrompt.append ALONGSIDE
-    // specUpdateNotice (clone-runtime.ts:346-348 — same concat seam 05 uses).
-    // assembleContext is fresh per turn, so the latest authoring_resources[]
-    // is re-read every turn (Mechanism B). Only skill-type refs are injected
+    // sendWithProvider attaches it to the user message alongside
+    // specUpdateNotice (trailing <system-reminder>) — never to the system
+    // prompt, whose prefix must stay cached. Only skill-type refs are injected
     // (agent/command/rule are workspace-scope → workflow.requires via SG7).
     // Gated by task-author + taskDAO (same gate as specUpdateNotice); absent
     // taskDAO (older test paths) → no injection (unchanged behavior).
@@ -490,6 +520,21 @@ export function createCloneSessionRoutes(deps: CloneSessionRouteDeps): Hono {
     // skill-relative paths (e.g. writing-plans → docs/superpowers/plans/...)
     // resolve inside the task dir rather than the clone's own dir.
     const cwd = taskHomePath || defaultCwd
+    // Resume only when the SDK transcript still exists; a restored DB with a
+    // dangling pointer would otherwise fail every turn (CloneRuntime retries
+    // without resume, but we also clear the dead pointer here).
+    const providerSessionId = usableResumeId(cwd, storedProviderSessionId) ?? null
+    if (storedProviderSessionId && !providerSessionId) {
+      sessionDAO.clearProviderSession(sessionId)
+      cacheCtx.resetRoleDelivery(sessionId)
+    }
+    // Frozen clone profile: persona + memory snapshot, captured on first use.
+    // Transient notices/resources no longer live here (they ride the user
+    // message), so resumed turns keep an identical cached prefix.
+    const stableSystemPrompt = cacheCtx.getOrCreatePromptSnapshot(
+      sessionId,
+      () => (typeof runtime.assembleContext === 'function' ? runtime.assembleContext() : ''),
+    ).systemPrompt
 
     // 05 → context.md (v3 task-authoring, cache-friendly redesign):
     // Dynamic workspace state (org, projects, skill groups) lives in
@@ -613,7 +658,7 @@ export function createCloneSessionRoutes(deps: CloneSessionRouteDeps): Hono {
           }
         }
 
-        for await (const chunk of runtime.chat(body.message!, sessionId, providerSessionId, cwd, specUpdateNotice, authoringResourcesContent, undefined, taskHomePath, model, subagents, effort)) {
+        for await (const chunk of runtime.chat(body.message!, sessionId, providerSessionId, cwd, specUpdateNotice, authoringResourcesContent, undefined, taskHomePath, model, subagents, effort, stableSystemPrompt, turnReminder)) {
           // ONLY the explicit stop endpoint may interrupt the turn.
           // Deliberately NOT checking stream.aborted here: hono's node
           // server sets it when the CLIENT disconnects (closing the dialog),
@@ -793,6 +838,11 @@ export function createCloneSessionRoutes(deps: CloneSessionRouteDeps): Hono {
           if (resultSessionId) {
             sessionDAO.updateProviderSession(sessionId, resultSessionId)
           }
+          // The role card (if any) is now in the provider transcript; do not
+          // replay it next turn (that would only add tokens, not help).
+          if (roleCard) {
+            cacheCtx.markRoleDelivered(sessionId, roleState.revision)
+          }
 
           // Auto-generate title on first message (title still placeholder).
           // Runs even when a task is bound to the session: the session title
@@ -883,6 +933,41 @@ export function createCloneSessionRoutes(deps: CloneSessionRouteDeps): Hono {
     })
   })
 
+  // ── Session role (expert identity) ───────────────────────────────
+  // Identity is persisted per session; the role card is appended to the next
+  // user message by the chat route (system prompt/tools stay frozen).
+  app.get('/:name/sessions/:id/role', (c) => {
+    const cloneName = c.req.param('name')
+    const sessionId = c.req.param('id')
+    const session = sessionDAO.findById(sessionId)
+    if (!session || session.is_deleted || session.clone_name !== cloneName) {
+      return c.json({ error: { code: 'NOT_FOUND', message: `Session ${sessionId} not found` } }, 404)
+    }
+    const state = new SessionCacheContextDAO(sessionDAO.getDb()).getRoleState(sessionId)
+    return c.json(roleResponse(sessionId, state))
+  })
+
+  app.put('/:name/sessions/:id/role', async (c) => {
+    const cloneName = c.req.param('name')
+    const sessionId = c.req.param('id')
+    const session = sessionDAO.findById(sessionId)
+    if (!session || session.is_deleted || session.clone_name !== cloneName) {
+      return c.json({ error: { code: 'NOT_FOUND', message: `Session ${sessionId} not found` } }, 404)
+    }
+    let body: { expert?: unknown } = {}
+    try {
+      body = await c.req.json<{ expert?: unknown }>()
+    } catch {
+      return c.json({ error: { code: 'INVALID_PARAM', message: 'Invalid JSON body' } }, 400)
+    }
+    const expert = body.expert == null ? null : String(body.expert)
+    if (expert && !EXPERT_ROLES.some((role) => role.id === expert)) {
+      return c.json({ error: { code: 'INVALID_PARAM', message: `Unknown expert: ${expert}` } }, 400)
+    }
+    const state = new SessionCacheContextDAO(sessionDAO.getDb()).setActiveExpert(sessionId, expert)
+    return c.json(roleResponse(sessionId, state))
+  })
+
   // ── Stop generation ──────────────────────────────────────────────
   app.post('/:name/sessions/:id/stop', async (c) => {
     const sessionId = c.req.param('id')
@@ -899,4 +984,17 @@ export function createCloneSessionRoutes(deps: CloneSessionRouteDeps): Hono {
   })
 
   return app
+}
+
+function roleResponse(sessionId: string, state: { activeExpert: string | null; revision: number; deliveredRevision: number }) {
+  const expert = state.activeExpert
+    ? EXPERT_ROLES.find((role) => role.id === state.activeExpert) ?? null
+    : null
+  return {
+    session_id: sessionId,
+    active_expert: state.activeExpert,
+    expert,
+    revision: state.revision,
+    delivered_revision: state.deliveredRevision,
+  }
 }

@@ -23,6 +23,7 @@ import path from "path"
 import { Hono } from "hono"
 import { applySchema } from "../db/schema"
 import { AgentSessionDAO, TaskDAO } from "../db/dao"
+import { SessionCacheContextDAO } from "../db/dao/session-cache-context-dao"
 import { SSEService } from "../services/sse"
 import { TasksService } from "../services/tasks/tasks-service"
 import { createCloneSessionRoutes } from "../routes/clone"
@@ -40,6 +41,8 @@ const capture = vi.hoisted(() => ({
   notice: undefined as string | undefined,
   taskHomePath: undefined as string | undefined,
   taskContext: undefined as string | undefined,
+  systemPrompt: undefined as string | undefined,
+  roleCard: undefined as string | undefined,
   chatCalls: 0,
 }))
 
@@ -87,10 +90,16 @@ vi.mock("../services/agent/clone-runtime", () => ({
       _abortSignal?: AbortSignal,
       taskHomePath?: string,
       _modelOverride?: string,
+      _subagents?: unknown,
+      _effort?: unknown,
+      systemPromptOverride?: string,
+      extraReminder?: string,
     ) {
       capture.chatCalls += 1
       capture.notice = specUpdateNotice
       capture.taskHomePath = taskHomePath
+      capture.systemPrompt = systemPromptOverride
+      capture.roleCard = extraReminder
       // taskContextContent no longer exists — dynamic state lives in context.md
       capture.taskContext = undefined
       yield { type: "text_delta", content: "ack — spec noted", messageId: "fake-msg-id" }
@@ -156,6 +165,8 @@ describe("05: reverse context msg — [save] → store → next chat → CloneRu
     capture.notice = undefined
     capture.taskHomePath = undefined
     capture.taskContext = undefined
+    capture.systemPrompt = undefined
+    capture.roleCard = undefined
     capture.chatCalls = 0
   })
 
@@ -423,5 +434,49 @@ describe("05: reverse context msg — [save] → store → next chat → CloneRu
     await res.text()
     expect(capture.taskHomePath).toBeUndefined()
     expect(capture.taskContext).toBeUndefined()
+  })
+
+  it("role switch: role card rides the user turn, system prompt frozen, delivered once", async () => {
+    const createRes = await app.request("/api/clones/task-author/sessions", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "X-Octopus-Org": ORG },
+      body: JSON.stringify({}),
+    })
+    expect(createRes.status).toBe(201)
+    const session = (await createRes.json()) as { id: string }
+
+    const roleRes = await app.request(`/api/clones/task-author/sessions/${session.id}/role`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json", "X-Octopus-Org": ORG },
+      body: JSON.stringify({ expert: "engineering-sre" }),
+    })
+    expect(roleRes.status).toBe(200)
+
+    const r1 = await app.request(`/api/clones/task-author/sessions/${session.id}/chat`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "X-Octopus-Org": ORG },
+      body: JSON.stringify({ message: "以 SRE 视角看下风险" }),
+    })
+    expect(r1.status).toBe(200)
+    await r1.text()
+
+    expect(capture.roleCard).toContain('name="SRE"')
+    expect(capture.systemPrompt ?? "").not.toContain('name="SRE"')
+    const state = new SessionCacheContextDAO(db).getRoleState(session.id)
+    expect(state).toMatchObject({
+      activeExpert: "engineering-sre",
+      revision: 1,
+      deliveredRevision: 1,
+    })
+
+    const r2 = await app.request(`/api/clones/task-author/sessions/${session.id}/chat`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "X-Octopus-Org": ORG },
+      body: JSON.stringify({ message: "继续" }),
+    })
+    expect(r2.status).toBe(200)
+    await r2.text()
+    expect(capture.roleCard).toBeUndefined()
+    expect(capture.systemPrompt ?? "").not.toContain('name="SRE"')
   })
 })

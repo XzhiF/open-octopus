@@ -2,6 +2,9 @@ import { Hono } from 'hono'
 import { getSessionService } from '../../services/agent/session-service'
 import { listActiveStreams } from '../../services/agent/agent-service'
 import { AgentSessionDAO } from '../../db/dao'
+import { SessionCacheContextDAO } from '../../db/dao/session-cache-context-dao'
+import type { SessionRoleState } from '../../db/dao/session-cache-context-dao'
+import { EXPERT_ROLES } from '@octopus/shared'
 import { createAgentError, mapErrorToStatus } from './middleware'
 
 export function createSessionRoutes(sessionDAO: AgentSessionDAO): Hono {
@@ -213,6 +216,44 @@ export function createSessionRoutes(sessionDAO: AgentSessionDAO): Hono {
   })
 
   /**
+   * GET /sessions/:id/role — current expert identity for this session.
+   * PUT /sessions/:id/role — switch identity (body { expert: string | null }).
+   * Identity is persisted here; the actual role card is appended to the next
+   * user message by the chat route (system prompt/tools stay frozen).
+   */
+  sessions.get('/sessions/:id/role', (c) => {
+    const org = c.req.header('X-Octopus-Org') || (c.get('org') as string)
+    const id = c.req.param('id')
+    const session = sessionDAO.findById(id)
+    if (!session || session.is_deleted || (org && session.org !== org)) {
+      return c.json(createAgentError('NOT_FOUND', `Session ${id} not found`), 404)
+    }
+    const state = new SessionCacheContextDAO(sessionDAO.getDb()).getRoleState(id)
+    return c.json(roleResponse(id, state))
+  })
+
+  sessions.put('/sessions/:id/role', async (c) => {
+    const org = c.req.header('X-Octopus-Org') || (c.get('org') as string)
+    const id = c.req.param('id')
+    const session = sessionDAO.findById(id)
+    if (!session || session.is_deleted || (org && session.org !== org)) {
+      return c.json(createAgentError('NOT_FOUND', `Session ${id} not found`), 404)
+    }
+    let body: { expert?: unknown } = {}
+    try {
+      body = await c.req.json<{ expert?: unknown }>()
+    } catch {
+      return c.json(createAgentError('INVALID_PARAM', 'Invalid JSON body'), 400)
+    }
+    const expert = body.expert == null ? null : String(body.expert)
+    if (expert && !EXPERT_ROLES.some((role) => role.id === expert)) {
+      return c.json(createAgentError('INVALID_PARAM', `Unknown expert: ${expert}`), 400)
+    }
+    const state = new SessionCacheContextDAO(sessionDAO.getDb()).setActiveExpert(id, expert)
+    return c.json(roleResponse(id, state))
+  })
+
+  /**
    * DELETE /sessions/:id — Delete session
    */
   sessions.delete('/sessions/:id', async (c) => {
@@ -238,4 +279,17 @@ export function createSessionRoutes(sessionDAO: AgentSessionDAO): Hono {
 
 
   return sessions
+}
+
+function roleResponse(sessionId: string, state: SessionRoleState) {
+  const expert = state.activeExpert
+    ? EXPERT_ROLES.find((role) => role.id === state.activeExpert) ?? null
+    : null
+  return {
+    session_id: sessionId,
+    active_expert: state.activeExpert,
+    expert,
+    revision: state.revision,
+    delivered_revision: state.deliveredRevision,
+  }
 }
