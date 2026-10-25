@@ -30,7 +30,9 @@ const _dirname: string =
 // 56→57：会话级专家身份——纯增量 session_role_states（active_expert /
 // revision / delivered_revision）。角色切换以 role card 追加到用户消息，
 // system/tools/agents 不变，因此不破坏 prompt cache 前缀。
-export const SCHEMA_VERSION = 57
+// 57→58：会话级 cwd/workspace 绑定——sessions.cwd / sessions.workspace_id
+// （ADDITIVE，ensureColumn；首次 prompt 时才确定）。
+export const SCHEMA_VERSION = 58
 
 /**
  * Apply the complete unified schema to the given database.
@@ -567,6 +569,10 @@ function ensureColumnsForExistingTables(db: Database.Database): void {
   // Clone system columns for sessions
   ensureColumn(db, 'sessions', 'scope_id', "TEXT")
   ensureColumn(db, 'sessions', 'provider_session_id', "TEXT")
+  // v58 (lazy cwd/workspace binding): a chat session may run in a workspace or
+  // an arbitrary directory chosen on the first prompt.
+  ensureColumn(db, 'sessions', 'cwd', "TEXT")
+  ensureColumn(db, 'sessions', 'workspace_id', "TEXT")
 
   // 知识中心改版：wiki_articles.links（链接目标 JSON 数组，反链倒排的落库基础）。
   // NULL=历史行未回灌（启动 backfillWikiArticleLinks 一次性补齐）；新写恒为 JSON 数组。

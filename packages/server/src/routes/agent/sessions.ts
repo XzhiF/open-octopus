@@ -2,6 +2,8 @@ import { Hono } from 'hono'
 import { getSessionService } from '../../services/agent/session-service'
 import { listActiveStreams } from '../../services/agent/agent-service'
 import { AgentSessionDAO } from '../../db/dao'
+import { WorkspaceDAO } from '../../db/dao/workspace-dao'
+import { WorkspaceService } from '../../services/workspace'
 import { SessionCacheContextDAO } from '../../db/dao/session-cache-context-dao'
 import type { SessionRoleState } from '../../db/dao/session-cache-context-dao'
 import { EXPERT_ROLES } from '@octopus/shared'
@@ -20,7 +22,7 @@ export function createSessionRoutes(sessionDAO: AgentSessionDAO): Hono {
         return c.json(createAgentError('ORG_NOT_FOUND', 'Organization not resolved'), 403)
       }
 
-      let body: { clone_name?: string } = {}
+      let body: { clone_name?: string; cwd?: string; workspace_id?: string } = {}
       try {
         const raw = await c.req.json()
         body = raw ?? {}
@@ -28,8 +30,33 @@ export function createSessionRoutes(sessionDAO: AgentSessionDAO): Hono {
         // Empty body is fine
       }
 
+      // v58 lazy cwd/workspace binding: main sessions default to the persistent
+      // main-agent workspace; an explicit workspace or directory wins.
+      let cwd = body.cwd ?? null
+      let workspaceId = body.workspace_id ?? null
+      if (!body.clone_name) {
+        const wsService = new WorkspaceService(new WorkspaceDAO(sessionDAO.getDb()))
+        if (workspaceId) {
+          const ws = wsService.getById(workspaceId)
+          if (ws) cwd = ws.path.replace(/^~/, require('os').homedir())
+          else workspaceId = null
+        }
+        if (!workspaceId && cwd) {
+          const ws = wsService.attachDirectory({ org, path: cwd })
+          workspaceId = ws.id
+          cwd = ws.path.replace(/^~/, require('os').homedir())
+        }
+        if (!workspaceId && !cwd) {
+          const ws = wsService.ensureMainWorkspace(org)
+          workspaceId = ws.id
+          cwd = ws.path.replace(/^~/, require('os').homedir())
+        }
+      }
+
       const session = getSessionService().createSession(org, {
         clone_name: body.clone_name,
+        cwd,
+        workspace_id: workspaceId,
       })
 
       return c.json(session, 201)
@@ -170,6 +197,7 @@ export function createSessionRoutes(sessionDAO: AgentSessionDAO): Hono {
           is_summary: r.is_summary === 1,
           is_compressed: r.is_compressed === 1,
           created_at: r.created_at,
+          metadata: r.metadata ?? null,
         }
       })
 

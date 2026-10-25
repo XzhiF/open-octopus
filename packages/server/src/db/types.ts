@@ -456,6 +456,10 @@ export interface SessionRow {
   is_deleted: number
   scope_id: string | null
   provider_session_id: string | null
+  /** v58: chat cwd (workspace path or arbitrary directory chosen on first prompt). */
+  cwd: string | null
+  /** v58: bound workspace (main-agent / user / task workspace). */
+  workspace_id: string | null
   last_message_at: string | null
   created_at: string
   updated_at: string

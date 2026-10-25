@@ -12,6 +12,7 @@ import {
 } from '@/lib/window-geometry'
 import { WindowTitlebar } from '@/components/shell/window-titlebar'
 import { WindowResizeHandles } from '@/components/shell/window-resize-handles'
+import { useEscapeClose } from '@/lib/escape-stack'
 import type { TaskWindowRecord } from './task-window-types'
 
 interface TaskWindowProps {
@@ -43,6 +44,9 @@ export function TaskWindow({
   const dragLayerRef = useRef<HTMLDivElement>(null)
   const resizeStartRef = useRef<{ rect: Rect; direction: ResizeDirection } | null>(null)
   const resizeLastRef = useRef<Rect | null>(null)
+
+  // Esc closes only the focused task window (top-most custom layer).
+  useEscapeClose(focused, onClose, 20)
 
   const handleDragStart = () => {
     const layer = dragLayerRef.current
@@ -113,7 +117,7 @@ export function TaskWindow({
     <div
       ref={positionerRef}
       data-task-window={record.module}
-      className="absolute"
+      className="pointer-events-auto absolute"
       style={{ left: rect.x, top: rect.y, width: rect.w, height: rect.h, zIndex }}
       onPointerDownCapture={onFocus}
     >

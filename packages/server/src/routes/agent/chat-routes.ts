@@ -11,6 +11,7 @@ import type { OctopusAgentDef } from '@octopus/providers'
 import crypto from 'crypto'
 import fs from 'fs'
 import path from 'path'
+import os from 'os'
 import { createAgentError } from './middleware'
 import { SystemPromptAssembler } from '../../services/agent/system-prompt-assembler'
 import { getNotificationService } from '../../services/agent/notification-service'
@@ -28,6 +29,7 @@ import { pendingRoleCard } from '../../services/agent/role-card'
 import { withTransientReminder } from '../../services/agent/prompt-reminder'
 import { parseExpertMentions } from '@octopus/shared'
 import { recordProviderResultUsage } from '../../services/llm-call-ledger'
+import { createWorkflowToolServer } from '../../services/chat/workflow-tools'
 import type { TokenUsageDAO } from '../../db/dao/token-usage-dao'
 import type { EffortLevel } from '@octopus/shared'
 import { parseComposerContext, parseComposerEffort, resolveChatModel } from './composer-options'
@@ -38,10 +40,12 @@ export interface ChatRouteDeps {
   scheduleConfigDAO: ScheduleConfigDAO
   /** 会话 token 角标（llm_calls 账本）—— 与 clone / main-agent 路由共用落账 helper。 */
   tokenUsageDao?: TokenUsageDAO
+  /** 服务端唤醒（ChatEventBridge）→ 前端 session SSE 通知。 */
+  sse?: import('../../services/sse').SSEService
 }
 
 export function createChatRoutes(deps: ChatRouteDeps): Hono {
-  const { sessionDAO: sessionDao, safetyDAO, scheduleConfigDAO, tokenUsageDao } = deps
+  const { sessionDAO: sessionDao, safetyDAO, scheduleConfigDAO, tokenUsageDao, sse } = deps
   const app = new Hono()
 
   // ── Session running state（"关闭不丢失"）──────────────────────────
@@ -69,6 +73,9 @@ export function createChatRoutes(deps: ChatRouteDeps): Hono {
     let body: {
       message?: string; system_prompt?: string; model?: string; effort?: string; maxContext?: string
       subagents?: Array<{ id: string; label?: string }>
+      /** Server-originated activity wake (ChatEventBridge). */
+      wake?: boolean
+      activity?: Record<string, unknown>
     }
     try {
       body = await c.req.json()
@@ -95,6 +102,9 @@ export function createChatRoutes(deps: ChatRouteDeps): Hono {
     sessionDao.insertMessage({
       id: userMsgId, session_id: id, role: 'user',
       content: body.message, created_at: now,
+      ...(body.wake
+        ? { metadata: JSON.stringify({ displayType: 'event', activity: body.activity ?? null }) }
+        : {}),
     })
     sessionDao.updateLastMessageAt(id, now)
 
@@ -117,6 +127,12 @@ export function createChatRoutes(deps: ChatRouteDeps): Hono {
       // Safety check failure is non-fatal — proceed with chat
     }
 
+    // v58: the session's cwd (selected workspace/directory) is the agent's
+    // working directory; legacy sessions fall back to the agent home.
+    const sessionCwd = session.cwd
+      ? path.resolve(session.cwd.replace(/^~/, os.homedir()))
+      : getAgentDir()
+
     // Assemble system prompt. The prompt is part of the provider's cached
     // prefix, so a resumed session freezes it on first use: re-reading persona
     // / memory / skills every turn would invalidate the whole transcript cache.
@@ -129,7 +145,7 @@ export function createChatRoutes(deps: ChatRouteDeps): Hono {
     // Native SDK resume: the transcript (and its cache prefix) continues
     // across turns. A pointer whose transcript is gone is treated as cold and
     // cleared, so a restored DB never bricks the conversation.
-    const resumeSessionId = usableResumeId(getAgentDir(), session.provider_session_id)
+    const resumeSessionId = usableResumeId(sessionCwd, session.provider_session_id)
     if (session.provider_session_id && !resumeSessionId) {
       sessionDao.clearProviderSession(id)
       // The provider transcript is gone → the active role card must be replayed.
@@ -157,6 +173,11 @@ export function createChatRoutes(deps: ChatRouteDeps): Hono {
       : undefined
     const turnReminder = [roleCard, mentionReminder].filter(Boolean).join('\n\n')
     const providerMessage = withTransientReminder(body.message!, turnReminder)
+    // Workflow control tools (list/run/status/cancel/approve/retry) are
+    // registered as an in-process MCP server bound to this chat's workspace.
+    const mcpServers = session.workspace_id
+      ? { 'octopus-workflow': createWorkflowToolServer(session.workspace_id, { sessionId: id, org }) }
+      : undefined
 
     // ── Trigger self-check on first message (E2E-055) ──────────────
     runSelfCheck()
@@ -166,6 +187,16 @@ export function createChatRoutes(deps: ChatRouteDeps): Hono {
       let aborted = false
       const abortStream = () => { aborted = true }
       const streamId = registerActiveStream(id, abortStream)
+      // Wake turns have no client-owned SSE; tell the open chat to tail the
+      // server-side partial (same stream-resume path as reopening a dialog).
+      const notifyWake = (phase: 'started' | 'done') => {
+        if (!body.wake || !session.workspace_id || !sse) return
+        sse.emit(session.workspace_id, {
+          event: 'session_updated',
+          data: { sessionId: id, wake: true, phase },
+        })
+      }
+      notifyWake('started')
 
       try {
         // Step 1: Auto-compress long sessions
@@ -181,6 +212,8 @@ export function createChatRoutes(deps: ChatRouteDeps): Hono {
           resumeSessionId,
           providerMessage,
           agents,
+          cwd: sessionCwd,
+          mcpServers,
           onResult: roleCard
             ? () => cacheCtx.markRoleDelivered(id, roleState.revision)
             : undefined,
@@ -195,6 +228,7 @@ export function createChatRoutes(deps: ChatRouteDeps): Hono {
         await stream.writeSSE({ event: 'error', data: JSON.stringify({ code: 'STREAM_ERROR', message: msg }) })
       } finally {
         unregisterActiveStream(id, streamId)
+        notifyWake('done')
       }
     })
   })
@@ -266,6 +300,10 @@ export function createChatRoutes(deps: ChatRouteDeps): Hono {
       providerMessage?: string
       /** Stable SDK agents map (full expert roster) — never changes per turn. */
       agents?: Record<string, OctopusAgentDef>
+      /** Session cwd (workspace/selected directory); defaults to agent home. */
+      cwd?: string
+      /** In-process MCP servers (workflow control tools). */
+      mcpServers?: Record<string, unknown>
       /** Called once when the turn produces a result (mark role card delivered). */
       onResult?: () => void
     },
@@ -311,7 +349,7 @@ export function createChatRoutes(deps: ChatRouteDeps): Hono {
 
     try {
       const provider = getProvider('claude')
-      const cwd = getAgentDir()
+      const cwd = extra?.cwd ?? getAgentDir()
       const turnStartedAtMs = Date.now()
 
       let lastFlushAt = 0
@@ -351,6 +389,7 @@ export function createChatRoutes(deps: ChatRouteDeps): Hono {
           ...(model ? { model } : {}),
           ...(effort ? { effort } : {}),
           ...(extra?.agents ? { agents: extra.agents } : {}),
+          ...(extra?.mcpServers ? { mcpServers: extra.mcpServers } : {}),
         })) {
           if ((stream as any)._aborted) break
           switch (chunk.type) {

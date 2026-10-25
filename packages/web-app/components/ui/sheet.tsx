@@ -5,6 +5,7 @@ import * as SheetPrimitive from '@radix-ui/react-dialog'
 
 import { cn } from '@/lib/utils'
 import { CloseLightGlyph, closeLightButtonClass } from '@/components/ui/close-light'
+import { DialogResizeHandles } from '@/components/ui/dialog-resize'
 
 function Sheet({ ...props }: React.ComponentProps<typeof SheetPrimitive.Root>) {
   return <SheetPrimitive.Root data-slot="sheet" {...props} />
@@ -84,6 +85,7 @@ function SheetContent({
             <CloseLightGlyph />
           </SheetPrimitive.Close>
         )}
+        <DialogResizeHandles className="pointer-events-none absolute inset-0 z-20" />
       </SheetPrimitive.Content>
     </SheetPortal>
   )

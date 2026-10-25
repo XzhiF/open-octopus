@@ -188,6 +188,10 @@ export interface CreateTaskInput {
   task_spec?: Partial<TaskSpec>
   /** Top-level project ids (wins over preset.projects; both → project_ids col). */
   project_ids?: string[]
+  /** v58: reuse an existing workspace (chat cwd picker). */
+  workspace_id?: string
+  /** v58: attach an arbitrary directory as the task workspace. */
+  cwd?: string
   skills?: string[]
   resources?: ResourceRef[]
   authoring_resources?: ResourceRef[]

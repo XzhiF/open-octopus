@@ -529,6 +529,8 @@ CREATE TABLE IF NOT EXISTS sessions (
   is_deleted INTEGER NOT NULL DEFAULT 0,
   scope_id TEXT,
   provider_session_id TEXT,
+  cwd TEXT,
+  workspace_id TEXT,
   last_message_at TEXT,
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL

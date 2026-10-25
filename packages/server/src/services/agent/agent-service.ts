@@ -168,12 +168,15 @@ export class AgentService {
     const messages = slicedRows.reverse().map((r) => ({
       id: r.id,
       session_id: r.session_id,
-      role: r.role,
+      role: r.role as AgentMessage['role'],
       content: r.content,
       tool_calls: r.tool_calls ? JSON.parse(r.tool_calls) : null,
       is_summary: r.is_summary === 1,
       is_compressed: r.is_compressed === 1,
+      is_edited: false,
       created_at: r.created_at,
+      // Server-originated event cards (activity wake) live in metadata.
+      metadata: r.metadata ?? null,
     }))
 
     return {

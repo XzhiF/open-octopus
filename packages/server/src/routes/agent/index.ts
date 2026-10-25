@@ -40,6 +40,8 @@ interface AgentRouteDeps {
   /** 票10 投喂泛化: 知识策展执行面（透传给 createMainAgentRoute 的 ingest_to_wiki 工具）。
    *  装配侧可用惰性闭包（挂载先于服务构造时，请求时才解析）。 */
   curation?: MainAgentCurationSurface
+  /** 服务端唤醒通知（ChatEventBridge → 前端 session SSE）。 */
+  sse?: import('../../services/sse').SSEService
 }
 
 export function createAgentRoutes(deps: AgentRouteDeps): Hono {
@@ -88,7 +90,7 @@ export function createAgentRoutes(deps: AgentRouteDeps): Hono {
   agent.route('/', createSessionRoutes(sessionDAO))
   agent.route('/', createMemoryRoutes())
   agent.route('/', createSafetyRoutes(safetyDAO))
-  agent.route('/', createChatRoutes({ sessionDAO, safetyDAO, scheduleConfigDAO, tokenUsageDao }))
+  agent.route('/', createChatRoutes({ sessionDAO, safetyDAO, scheduleConfigDAO, tokenUsageDao, sse: deps.sse }))
 
   // New extractions
   agent.route('/', createCloneRoutes({}))

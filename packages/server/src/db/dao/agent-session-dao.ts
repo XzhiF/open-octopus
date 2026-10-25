@@ -33,18 +33,20 @@ export class AgentSessionDAO extends BaseDAO {
     return { items, has_more: hasMore, next_cursor: hasMore ? items[items.length - 1].created_at : null }
   }
 
-  insertSession(row: Omit<SessionRow, "is_active" | "is_deleted" | "perspective_clone_name" | "last_message_at" | "scope_id" | "provider_session_id"> & {
+  insertSession(row: Omit<SessionRow, "is_active" | "is_deleted" | "perspective_clone_name" | "last_message_at" | "scope_id" | "provider_session_id" | "cwd" | "workspace_id"> & {
     is_active?: number; is_deleted?: number; perspective_clone_name?: string | null;
     scope_id?: string | null; provider_session_id?: string | null
+    cwd?: string | null; workspace_id?: string | null
   }): Database.RunResult {
     return this.stmt(`
-      INSERT INTO sessions (id, org, title, clone_name, perspective_clone_name, session_type, is_active, is_deleted, scope_id, provider_session_id, last_message_at, created_at, updated_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO sessions (id, org, title, clone_name, perspective_clone_name, session_type, is_active, is_deleted, scope_id, provider_session_id, cwd, workspace_id, last_message_at, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       row.id, row.org, row.title, row.clone_name,
       row.perspective_clone_name ?? null, row.session_type,
       row.is_active ?? 1, row.is_deleted ?? 0,
       row.scope_id ?? null, row.provider_session_id ?? null,
+      row.cwd ?? null, row.workspace_id ?? null,
       null,
       row.created_at, row.updated_at,
     )

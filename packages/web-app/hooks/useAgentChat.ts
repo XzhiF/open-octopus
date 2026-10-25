@@ -228,6 +228,24 @@ export function useAgentChat(sessionId: string | null, options?: { onTitleUpdate
     resumePollRef.current = setInterval(tick, 1500)
   }, [loadMessages, stopResumePolling])
 
+  // Wake path: a server-originated turn (workflow event → ChatEventBridge)
+  // starts without a local SSE. Probe once and tail it when it is live.
+  const checkAndResume = useCallback(async (sid: string): Promise<boolean> => {
+    const fn = apiOverrideRef.current?.checkRunning
+    if (!fn) return false
+    if (streamingSessionRef.current === sid) return true
+    try {
+      const r = await fn(sid)
+      if (r.running) {
+        startResumePolling(sid)
+        return true
+      }
+    } catch {
+      /* server offline — nothing to tail */
+    }
+    return false
+  }, [startResumePolling])
+
   // On (re)mount / session switch: if a turn is still generating server-side
   // and this instance doesn't own the live stream, resume automatically.
   useEffect(() => {
@@ -658,5 +676,6 @@ export function useAgentChat(sessionId: string | null, options?: { onTitleUpdate
     steeringRef,
     handleConfirm,
     loadMessages,
+    checkAndResume,
   }
 }

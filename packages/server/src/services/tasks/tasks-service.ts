@@ -328,6 +328,10 @@ export interface CreateTaskInput {
   /** Top-level project ids (SKILL §1 recipe). When present wins over
    *  preset.projects; both land in the tasks.project_ids column. */
   project_ids?: string[]
+  /** v58: reuse an existing workspace for this task (chat cwd picker). */
+  workspace_id?: string
+  /** v58: attach an arbitrary directory as the task workspace. */
+  cwd?: string
   /** Creation-time column bindings (SKILL §1 sends these explicitly; the route
    *  parses with zod like the PUT path). Absent → DAO defaults ("[]"). */
   skills?: string[]
@@ -446,7 +450,8 @@ function toDTO(row: TaskRow): TaskDTO {
     resources: parseJSON<ResourceRef[]>(row.resources, []),
     skills: parseJSON<string[]>(row.skills, []),
     project_ids: parseJSON<string[]>(row.project_ids, []),
-    workflow_ref: row.workflow_ref,
+    workspace_id: row.workspace_id,
+    workflow_ref: row.workflow_ref ?? undefined,
     version: row.version,
     source_chat_session_id: row.source_chat_session_id,
     // ADR-0025 票01: the doer session pointer.
@@ -496,7 +501,7 @@ function toExecutionBadge(row: ExecutionRow, children?: ExecutionRow[]): TaskExe
   return {
     id: row.id,
     status: row.status,
-    workflow_ref: row.workflow_ref,
+    workflow_ref: row.workflow_ref ?? undefined,
     // The subunit's label (a child run's name IS which arm it is) — 票05's replacement
     // for reading `schedules.origin_role`.
     name: row.name ?? null,
@@ -952,7 +957,23 @@ export class TasksService {
     // planning home at `<workspace>/.task` instead of ~/.octopus/tasks/{id}.
     if (isV3 || isV4) {
       try {
-        const workspaceId = this.createTaskWorkspaceShell({
+        // v58: an explicit workspace/directory wins over the default shell.
+        let boundWorkspaceId: string | null = null
+        if (input.workspace_id && this.workspaceService && typeof this.workspaceService.getById === "function") {
+          const explicit = this.workspaceService.getById(input.workspace_id)
+          if (explicit) boundWorkspaceId = explicit.id
+        }
+        if (!boundWorkspaceId && input.cwd && this.workspaceService) {
+          try {
+            boundWorkspaceId = this.workspaceService.attachDirectory({ org, path: input.cwd }).id
+          } catch (err: unknown) {
+            console.error(
+              "[TasksService] createTask: attach cwd failed (falling back to new workspace):",
+              err instanceof Error ? err.message : String(err),
+            )
+          }
+        }
+        const workspaceId = boundWorkspaceId ?? this.createTaskWorkspaceShell({
           id, org, name, taskSpec: taskSpecObj, now,
         })
         if (workspaceId) {
@@ -960,6 +981,16 @@ export class TasksService {
             .getDb()
             .prepare("UPDATE tasks SET workspace_id = ?, updated_at = ? WHERE id = ?")
             .run(workspaceId, now, id)
+          // v58: the task-author chat runs in the task workspace; bind the
+          // session so the UI cwd chip / file explorer have a workspace.
+          if (input.source_chat_session_id) {
+            const ws = this.workspaceService?.getById(workspaceId)
+            if (ws) {
+              this.taskDAO.getDb()
+                .prepare("UPDATE sessions SET workspace_id = ?, cwd = COALESCE(NULLIF(cwd, ''), ?) WHERE id = ?")
+                .run(ws.id, ws.path, input.source_chat_session_id)
+            }
+          }
         }
       } catch (err: unknown) {
         // Don't leave a half-created task row without its workspace.

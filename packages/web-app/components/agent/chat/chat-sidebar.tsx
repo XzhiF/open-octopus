@@ -33,6 +33,9 @@ interface ChatSidebarProps {
   onCreateTask: () => void
   onRenameSession: (id: string, title: string) => void
   onDeleteSession: (id: string) => void
+  /** Task row management (chat sidebar mirrors the board's rename/delete). */
+  onRenameTask?: (task: TaskView) => void
+  onDeleteTask?: (task: TaskView) => void
 }
 
 const ROW =
@@ -119,6 +122,8 @@ export function ChatSidebar({
   onCreateTask,
   onRenameSession,
   onDeleteSession,
+  onRenameTask,
+  onDeleteTask,
 }: ChatSidebarProps) {
   const [editingId, setEditingId] = useState<string | null>(null)
   const [editTitle, setEditTitle] = useState('')
@@ -211,39 +216,68 @@ export function ChatSidebar({
                     (!!task.source_chat_session_id &&
                       !!runningSessionIds?.has(task.source_chat_session_id))
                   return (
-                    <button
-                      key={task.id}
-                      type="button"
-                      data-testid="task-session-item"
-                      data-task-id={task.id}
-                      data-task-status={task.status}
-                      data-running-task={running ? 'true' : undefined}
-                      aria-current={active ? 'page' : undefined}
-                      title={running ? `${task.name} · Agent 运行中` : task.name}
-                      onClick={() => onSelectTask(task)}
-                      className={cn(
-                        ROW,
-                        active
-                          ? 'bg-white/[0.07] text-pop-ink'
-                          : 'text-pop-ink/80 hover:bg-white/[0.035] hover:text-pop-ink',
-                      )}
-                    >
-                      <span
+                    <div key={task.id} className="group/task relative">
+                      <button
+                        type="button"
+                        data-testid="task-session-item"
+                        data-task-id={task.id}
+                        data-task-status={task.status}
+                        data-running-task={running ? 'true' : undefined}
+                        aria-current={active ? 'page' : undefined}
+                        title={running ? `${task.name} · Agent 运行中` : task.name}
+                        onClick={() => onSelectTask(task)}
                         className={cn(
-                          'size-[6px] shrink-0 rounded-full',
-                          STATUS_DOT[task.status] ?? 'bg-pop-amber',
-                          !active && 'opacity-70',
+                          ROW,
+                          'pr-7',
+                          active
+                            ? 'bg-white/[0.07] text-pop-ink'
+                            : 'text-pop-ink/80 hover:bg-white/[0.035] hover:text-pop-ink',
                         )}
-                      />
-                      <span className="min-w-0 flex-1 truncate">{task.name}</span>
-                      {running ? (
-                        <RunningPill />
-                      ) : TASK_SHORT_LABEL[task.status] ? (
-                        <span className="shrink-0 text-[10px] text-pop-dim">
-                          {TASK_SHORT_LABEL[task.status]}
-                        </span>
-                      ) : null}
-                    </button>
+                      >
+                        <span
+                          className={cn(
+                            'size-[6px] shrink-0 rounded-full',
+                            STATUS_DOT[task.status] ?? 'bg-pop-amber',
+                            !active && 'opacity-70',
+                          )}
+                        />
+                        <span className="min-w-0 flex-1 truncate">{task.name}</span>
+                        {running ? (
+                          <RunningPill />
+                        ) : TASK_SHORT_LABEL[task.status] ? (
+                          <span className="shrink-0 text-[10px] text-pop-dim">
+                            {TASK_SHORT_LABEL[task.status]}
+                          </span>
+                        ) : null}
+                      </button>
+                      <DropdownMenu>
+                        <DropdownMenuTrigger asChild>
+                          <button
+                            type="button"
+                            aria-label={`任务操作 ${task.name}`}
+                            data-testid="task-session-menu"
+                            onClick={(event) => event.stopPropagation()}
+                            className="absolute right-1 top-1/2 grid size-5 -translate-y-1/2 place-items-center rounded text-pop-dim opacity-0 transition-all hover:bg-white/[0.08] hover:text-pop-ink group-hover/task:opacity-100"
+                          >
+                            <MoreHorizontal className="size-3.5" />
+                          </button>
+                        </DropdownMenuTrigger>
+                        <DropdownMenuContent align="end" side="bottom" sideOffset={4}>
+                          <DropdownMenuItem
+                            onClick={() => onRenameTask?.(task)}
+                            className="gap-2"
+                          >
+                            <Pencil className="size-3.5" /> 重命名
+                          </DropdownMenuItem>
+                          <DropdownMenuItem
+                            onClick={() => onDeleteTask?.(task)}
+                            className="gap-2 text-pop-red focus:text-pop-red"
+                          >
+                            <Trash2 className="size-3.5" /> 删除
+                          </DropdownMenuItem>
+                        </DropdownMenuContent>
+                      </DropdownMenu>
+                    </div>
                   )
                 })}
               </div>
@@ -324,14 +358,14 @@ export function ChatSidebar({
                         <DropdownMenuTrigger asChild>
                           <button
                             type="button"
-                            className="hidden size-5 place-items-center rounded text-pop-dim transition-colors hover:bg-white/[0.08] hover:text-pop-ink group-hover:grid"
+                            className="grid size-5 place-items-center rounded text-pop-dim opacity-0 transition-all hover:bg-white/[0.08] hover:text-pop-ink group-hover:opacity-100"
                             onClick={(event) => event.stopPropagation()}
                             aria-label={`会话操作 ${session.title}`}
                           >
                             <MoreHorizontal className="size-3.5" />
                           </button>
                         </DropdownMenuTrigger>
-                        <DropdownMenuContent align="end">
+                        <DropdownMenuContent align="end" side="bottom" sideOffset={4}>
                           <DropdownMenuItem
                             onClick={() => {
                               setEditingId(session.id)

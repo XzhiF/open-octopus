@@ -37,6 +37,8 @@ function parseMessageMetadata(msg: any): AgentMessage {
       timeline: meta.timeline ?? normalized.timeline,
       interrupted: meta.interrupted ?? normalized.interrupted,
       streaming: meta.streaming ?? normalized.streaming,
+      displayType: meta.displayType ?? normalized.displayType,
+      activity: meta.activity ?? normalized.activity,
     }
   } catch {
     return normalized
@@ -67,7 +69,7 @@ async function request<T>(url: string, init?: RequestInit): Promise<T> {
 }
 
 // Sessions
-export function createSession(opts?: { clone_name?: string }) {
+export function createSession(opts?: { clone_name?: string; cwd?: string; workspace_id?: string }) {
   return request<AgentSession>('/sessions', { method: 'POST', body: JSON.stringify(opts ?? {}) })
 }
 export function listSessions(query?: { clone?: string; limit?: number; cursor?: string }) {
@@ -97,7 +99,15 @@ export function getSession(id: string, query?: { limit?: number; cursor?: string
   if (query?.limit) params.set('limit', String(query.limit))
   if (query?.cursor) params.set('cursor', query.cursor)
   const qs = params.toString()
-  return request<{ session: AgentSession; messages: PaginatedResponse<AgentMessage> }>(`/sessions/${id}${qs ? `?${qs}` : ''}`)
+  return request<{ session: AgentSession; messages: PaginatedResponse<AgentMessage> }>(
+    `/sessions/${id}${qs ? `?${qs}` : ''}`,
+  ).then((raw) => ({
+    ...raw,
+    messages: {
+      ...raw.messages,
+      items: (raw.messages.items ?? []).map(parseMessageMetadata),
+    },
+  }))
 }
 export function updateSession(id: string, data: { title: string }) {
   return request<void>(`/sessions/${id}`, { method: 'PATCH', body: JSON.stringify(data) })

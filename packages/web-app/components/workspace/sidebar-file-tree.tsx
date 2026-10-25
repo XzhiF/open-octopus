@@ -110,7 +110,7 @@ function filterTree(nodes: FileNode[], query: string): FileNode[] {
   return nodes.map(filterNode).filter((n): n is FileNode => n !== null)
 }
 
-function ymapToFileNodes(map: Y.Map<unknown>, parentPath: string): FileNode[] {
+export function ymapToFileNodes(map: Y.Map<unknown>, parentPath: string): FileNode[] {
   const nodes: FileNode[] = []
   const dirEntries: [string, Y.Map<unknown>][] = []
   const fileEntries: [string, Y.Map<unknown>][] = []

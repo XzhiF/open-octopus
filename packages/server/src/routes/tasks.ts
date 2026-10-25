@@ -296,6 +296,8 @@ export function createTasksRoutes(
       // 契约修复: v4 create-time fields (route idioms mirror PUT :313-317).
       if (body.task_spec !== undefined) input.task_spec = body.task_spec
       if (body.project_ids !== undefined) input.project_ids = z.array(z.string()).parse(body.project_ids)
+      if (typeof body.workspace_id === "string" && body.workspace_id.length > 0) input.workspace_id = body.workspace_id
+      if (typeof body.cwd === "string" && body.cwd.length > 0) input.cwd = body.cwd
       if (body.skills !== undefined) input.skills = z.array(z.string()).parse(body.skills)
       if (body.resources !== undefined) input.resources = z.array(resourceRefSchema).parse(body.resources)
       if (body.authoring_resources !== undefined) input.authoring_resources = z.array(resourceRefSchema).parse(body.authoring_resources)

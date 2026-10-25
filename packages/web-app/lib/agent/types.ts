@@ -39,6 +39,9 @@ export interface AgentSession {
   is_active: boolean
   /** 会话挂靠语义（clone 通道：'knowledge'=知识中心；服务端行带此列，知识抽屉历史筛选用） */
   scope_id?: string | null
+  /** v58: chat cwd + bound workspace. */
+  cwd?: string | null
+  workspace_id?: string | null
 }
 
 export interface ToolCallRecord {
@@ -76,6 +79,18 @@ export interface AgentMessage {
   is_summary: boolean
   is_compressed: boolean
   is_edited: boolean
+  /** metadata.displayType — e.g. 'event' for server-originated activity cards. */
+  displayType?: string
+  /** metadata.activity — payload of a server-originated activity event. */
+  activity?: {
+    kind?: string
+    severity?: 'info' | 'warn' | 'critical' | string
+    title?: string
+    executionId?: string | null
+    taskId?: string | null
+    nodeId?: string | null
+    workspaceId?: string | null
+  }
   /** True when the user interrupted (stopped) this response mid-stream.
    *  The message contains whatever the agent produced before the abort. */
   interrupted?: boolean

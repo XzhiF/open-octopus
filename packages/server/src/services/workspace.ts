@@ -9,6 +9,7 @@ import { logError } from "../file-logger"
 import { getArchiveService } from "./archive/archive-service"
 import { WorkspaceScaffold, DEFAULT_PIPELINE_YAML } from "./workspace-scaffold"
 import { WorkspaceGit, type SpecWorktreeEntry } from "./workspace-git"
+import { getAgentDir } from "./agent/paths"
 
 /**
  * Pipeline Guide — detailed reference for pipeline.yaml configuration.
@@ -195,6 +196,65 @@ export class WorkspaceService {
     this.dao = dao!
   }
 
+  /**
+   * The persistent main-agent workspace (cwd = ~/.octopus/agent). It is a real
+   * workspace row so the Yjs file tree / file APIs work, but it is not
+   * scaffolded with projects/workflows/logs/state (the agent dir is shared).
+   */
+  ensureMainWorkspace(org: string): WorkspaceRow {
+    const existing = this.dao.findAll(org, "main").find((w) => w.name === "main-agent")
+    if (existing) return existing
+    const id = randomUUID()
+    const now = new Date().toISOString()
+    this.dao.insert({
+      id,
+      name: "main-agent",
+      org,
+      description: "Main Agent 工作区（默认 cwd）",
+      status: "active",
+      path: getAgentDir(),
+      source: "main",
+      archive_status: null,
+      created_at: now,
+      updated_at: now,
+    })
+    return this.dao.findById(id)!
+  }
+
+  /**
+   * Register an existing directory as a workspace WITHOUT scaffolding subdirs.
+   * Used by the chat cwd picker when the user selects an arbitrary directory;
+   * the Yjs tree / file APIs only need the path + a stable workspace id.
+   */
+  attachDirectory(input: { org: string; name?: string; path: string; source?: string }): WorkspaceRow {
+    const resolved = path.resolve(input.path.replace(/^~/, os.homedir()))
+    const home = os.homedir()
+    if (resolved !== home && !resolved.startsWith(home + path.sep)) {
+      throw new Error(`目录必须在用户 home 下: ${resolved}`)
+    }
+    const existing = this.dao.findByPath(resolved)
+    if (existing) return existing
+    if (!fs.existsSync(resolved)) {
+      throw new Error(`目录不存在: ${resolved}`)
+    }
+    const id = randomUUID()
+    const now = new Date().toISOString()
+    const base = path.basename(resolved).replace(/[^a-zA-Z0-9_-]/g, "-") || "workspace"
+    this.dao.insert({
+      id,
+      name: `${base}-${id.slice(0, 6)}`,
+      org: input.org,
+      description: "Chat cwd",
+      status: "active",
+      path: resolved,
+      source: input.source ?? "user",
+      archive_status: null,
+      created_at: now,
+      updated_at: now,
+    })
+    return this.dao.findById(id)!
+  }
+
   create(input: { name: string; org: string; description?: string; path: string; repos?: string[]; branch?: string }): WorkspaceRow & { worktreeStatus?: { created: number; failed: string[] } } {
     // 禁中文命名 (2026-09-20)：name 直接进目录名 + git 分支名（branchName 兜底），
     // route 层已 400，这里挡住内部新调用方漏网。
@@ -261,6 +321,7 @@ export class WorkspaceService {
       id, name: input.name, org: input.org,
       description: input.description ?? null,
       status: "active", path: input.path,
+      archive_status: null,
       created_at: now, updated_at: now,
     })
 
@@ -402,6 +463,7 @@ export class WorkspaceService {
       status: "active", path: wsDir,
       source: input.source, source_schedule_id: input.source_schedule_id ?? null,
       task_id: input.task_id ?? null,
+      archive_status: null,
       created_at: now, updated_at: now,
     })
 

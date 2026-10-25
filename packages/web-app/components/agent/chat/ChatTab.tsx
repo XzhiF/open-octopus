@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, useEffect, useCallback, useMemo, useRef, type PointerEvent as ReactPointerEvent } from 'react'
-import { Menu, PanelsTopLeft } from 'lucide-react'
+import { Menu } from 'lucide-react'
 import { toast } from 'sonner'
 import { useChatSessions } from '@/components/providers/chat-sessions'
 import { useAgentChat, type UseAgentChatApiOverride } from '@/hooks/useAgentChat'
@@ -14,12 +14,23 @@ import { useOrgs } from '@/hooks/useOrgs'
 import * as agentApi from '@/lib/agent/api'
 import { ChatSidebar } from './chat-sidebar'
 import { ExpertIdentityChip } from './expert-identity-chip'
+import { CwdPicker, type CwdChoice } from './cwd-picker'
 import { TaskWorkbench } from '@/components/chat-workbench/task-workbench'
-import { TaskOverview } from '@/components/chat-workbench/task-overview'
+import { TaskModulesLayer } from '@/components/chat-workbench/task-modules-layer'
+import type { TaskModule } from '@/components/chat-workbench/task-window-types'
 import { TaskProjectChip } from '@/components/chat-workbench/task-project-chip'
+import { WorkspaceExplorerDock } from '@/components/workspace/workspace-explorer-dock'
+import { useActivitySnapshot } from '@/components/chat-workbench/inspector-activity'
+import { WorkflowWindow } from '@/components/chat-workbench/workflow-window'
 import type { TaskWindowMap } from '@/components/chat-workbench/task-window-types'
-import { createTask, getTask, type TaskView } from '@/lib/tasks-api'
+import { createTask, getTask, readyTask, TaskReadyGateError, updateTask, deleteTask, abortTask, type TaskView } from '@/lib/tasks-api'
+import { subscribeSSE } from '@/lib/sse-manager'
+import { getServerUrl } from '@/lib/server-config'
 import { cn } from '@/lib/utils'
+import { Dialog, DialogContent, DialogTitle } from '@/components/ui/dialog'
+import { Input } from '@/components/ui/input'
+import { Button } from '@/components/ui/button'
+import { ConfirmDialog } from '@/components/agent/shared/ConfirmDialog'
 import { ChatArea } from './ChatArea'
 import { ToolCallPanel } from './ToolCallPanel'
 import { KcCard, type KcCardActionCtx } from '@/components/knowledge-center/cards/registry'
@@ -62,9 +73,20 @@ export function ChatTab() {
   const [activeTask, setActiveTask] = useState<TaskView | null>(null)
   const [pendingTaskSession, setPendingTaskSession] = useState<PendingTaskSession | null>(null)
   const [creatingTask, setCreatingTask] = useState(false)
-  const [overviewOpen, setOverviewOpen] = useState(false)
-  const [overviewInitialTab, setOverviewInitialTab] = useState<'plan' | 'acceptance'>('plan')
+  const [taskModuleRequest, setTaskModuleRequest] = useState<{ module: TaskModule; nonce: number } | null>(null)
+  const [enqueueBusy, setEnqueueBusy] = useState(false)
   const [taskWindows, setTaskWindows] = useState<Record<string, TaskWindowMap>>({})
+  const [renameTarget, setRenameTarget] = useState<TaskView | null>(null)
+  const [renameValue, setRenameValue] = useState('')
+  const [taskBusy, setTaskBusy] = useState(false)
+  const [deleteTarget, setDeleteTarget] = useState<TaskView | null>(null)
+  const [mainCwd, setMainCwd] = useState<CwdChoice>({ kind: 'default', label: 'Main Agent 工作区' })
+  const [taskCwd, setTaskCwd] = useState<CwdChoice>({ kind: 'default', label: '新建工作空间' })
+  const [workflowWindow, setWorkflowWindow] = useState<{
+    workspaceId: string
+    executionId: string
+    title?: string
+  } | null>(null)
   const { tasks: chatTasks, loading: chatTasksLoading, refresh: refreshChatTasks } = useChatTasks()
   const runningAgents = useRunningAgents()
   const { orgs: appOrgs } = useOrgs()
@@ -148,7 +170,7 @@ export function ChatTab() {
     messages, streaming, streamContent, streamThinking, streamTimeline, isThinking, toolCalls, pendingConfirm,
     error: chatError, statusMessage, contextUsage,
     sendMessage, stopGenerate, handleConfirm, loadMessages,
-    steer, steeringRef, resumeStreaming,
+    steer, steeringRef, resumeStreaming, checkAndResume,
   } = useAgentChat(activeSessionId, {
     onTitleUpdate: handleTitleUpdate,
     api: authoring ? taskAuthorApi : mainChatApi,
@@ -329,32 +351,45 @@ export function ChatTab() {
       if (activeSessionId) {
         sendMessage(message, { model, effort, maxContext, delegate_to: opts?.delegate_to })
       } else {
-        // No session — auto-create one, then send message
+        // First prompt creates the session (lazy). cwd/workspace is chosen here,
+        // not when the empty "+" tab was opened.
         pendingMessageRef.current = { message, delegate_to: opts?.delegate_to }
-        createNewSession()
+        const cwdOpts = mainCwd.kind === 'default'
+          ? undefined
+          : { workspace_id: mainCwd.workspaceId, cwd: mainCwd.path }
+        createNewSession(cwdOpts)
       }
       return
     }
 
-    // First message of a task session: the draft is created from it, then the
-    // same unified composer sends the turn to task-author.
+    // First message of a task session: create the clone session + draft from it,
+    // then hand the same message to the unified composer.
     if (creatingTask) return
     const session = pendingTaskSession
     setCreatingTask(true)
     void (async () => {
       try {
+        let sid = session.sessionId
+        if (!sid) {
+          const created = await agentApi.createCloneSession('task-author')
+          sid = created.id
+        }
         const task = await createTask({
           org: session.org || 'default',
           name: NEW_TASK_NAME,
-          source_chat_session_id: session.sessionId,
+          source_chat_session_id: sid,
           task_spec: { format: 'v4' },
           project_ids: session.projectIds,
+          ...(taskCwd.kind === 'default'
+            ? {}
+            : { workspace_id: taskCwd.workspaceId, cwd: taskCwd.path }),
         })
         setPendingTaskSession(null)
         setActiveTask(task)
         void refreshChatTasks()
         void refetchSessions()
-        sendMessage(message, { model, effort, maxContext, delegate_to: opts?.delegate_to })
+        pendingMessageRef.current = { message, delegate_to: opts?.delegate_to }
+        setActiveSessionId(sid)
       } catch (err: unknown) {
         toast.error(err instanceof Error ? err.message : '创建任务失败')
       } finally {
@@ -363,20 +398,20 @@ export function ChatTab() {
     })()
   }, [
     pendingTaskSession, creatingTask, activeSessionId, sendMessage, createNewSession,
-    model, effort, maxContext, refreshChatTasks, refetchSessions,
+    model, effort, maxContext, refreshChatTasks, refetchSessions, mainCwd, taskCwd,
   ])
 
   const handleSelectSession = (id: string) => {
     setActiveTask(null)
     setPendingTaskSession(null)
-    setOverviewOpen(false)
+    setTaskModuleRequest(null)
     setActiveSessionId(id)
     setMobileSidebarOpen(false)
   }
 
-  const handleSelectTask = useCallback((task: TaskView) => {
+  const handleSelectTask = useCallback((task: TaskView, opts?: { module?: TaskModule }) => {
     setMobileSidebarOpen(false)
-    setOverviewOpen(false)
+    setTaskModuleRequest(opts?.module ? { module: opts.module, nonce: Date.now() } : null)
     if (task.status === 'draft') {
       if (!task.source_chat_session_id) {
         toast.error('该草稿没有关联的任务会话')
@@ -391,51 +426,109 @@ export function ChatTab() {
     setActiveTask(task)
   }, [setActiveSessionId])
 
+  const openTaskRename = (task: TaskView) => {
+    setRenameTarget(task)
+    setRenameValue(task.name)
+  }
+
+  const confirmTaskRename = async () => {
+    if (!renameTarget || taskBusy) return
+    const name = renameValue.trim()
+    if (!name) return
+    setTaskBusy(true)
+    try {
+      const fresh = await getTask(renameTarget.id)
+      const updated = await updateTask(renameTarget.id, { name }, fresh.version)
+      setActiveTask((prev) => (prev?.id === updated.id ? updated : prev))
+      setRenameTarget(null)
+      void refreshChatTasks()
+      void refetchSessions()
+      toast.success('任务已重命名')
+    } catch (err: unknown) {
+      toast.error(err instanceof Error ? err.message : '重命名失败')
+    } finally {
+      setTaskBusy(false)
+    }
+  }
+
+  const confirmTaskDelete = async () => {
+    if (!deleteTarget || taskBusy) return
+    setTaskBusy(true)
+    try {
+      if (deleteTarget.status === 'running') {
+        await abortTask(deleteTarget.id)
+      }
+      await deleteTask(deleteTarget.id)
+      if (activeTask?.id === deleteTarget.id) {
+        setActiveTask(null)
+        setActiveSessionId(null)
+      }
+      setDeleteTarget(null)
+      void refreshChatTasks()
+      void refetchSessions()
+      toast.success('任务已删除')
+    } catch (err: unknown) {
+      toast.error(err instanceof Error ? err.message : '删除失败')
+    } finally {
+      setTaskBusy(false)
+    }
+  }
+
   const handleCreateSession = () => {
     setActiveTask(null)
     setPendingTaskSession(null)
-    setOverviewOpen(false)
+    setTaskModuleRequest(null)
     setMobileSidebarOpen(false)
-    createNewSession()
+    // Lazy: the DB session is created on the first prompt, after cwd selection.
+    setActiveSessionId(null)
+    setMainCwd({ kind: 'default', label: 'Main Agent 工作区' })
   }
 
   const handleCreateTask = useCallback(async () => {
     if (creatingTask) return
-    setCreatingTask(true)
     setActiveTask(null)
-    setPendingTaskSession(null)
-    setOverviewOpen(false)
+    setPendingTaskSession({
+      sessionId: '',
+      org: preferredOrg,
+      title: NEW_TASK_NAME,
+      projectIds: [],
+    })
+    setActiveSessionId(null)
+    setTaskCwd({ kind: 'default', label: '新建工作空间' })
+    setTaskModuleRequest(null)
     setMobileSidebarOpen(false)
+  }, [creatingTask, preferredOrg])
+
+  const handleEnqueueTask = useCallback(async (task: TaskView) => {
+    if (enqueueBusy) return
+    setEnqueueBusy(true)
     try {
-      const session = await agentApi.createCloneSession('task-author')
-      setPendingTaskSession({
-        sessionId: session.id,
-        org: preferredOrg,
-        title: NEW_TASK_NAME,
-        projectIds: [],
-      })
-      setActiveSessionId(session.id)
+      await readyTask(task.id)
+      toast.success('已入队 · 在任务看板触发执行')
+      await refreshChatTasks()
       void refetchSessions()
     } catch (err: unknown) {
-      toast.error(err instanceof Error ? err.message : '创建任务会话失败')
+      if (err instanceof TaskReadyGateError) {
+        toast.error(`入队被拒：缺少 ${err.missing.join('、')}`)
+        setTaskModuleRequest({ module: 'plan', nonce: Date.now() })
+      } else {
+        toast.error(err instanceof Error ? err.message : '入队失败')
+      }
     } finally {
-      setCreatingTask(false)
+      setEnqueueBusy(false)
     }
-  }, [creatingTask, refetchSessions, setActiveSessionId, preferredOrg])
+  }, [enqueueBusy, refreshChatTasks, refetchSessions])
 
   // Cross-app entry points: the tasks board's [+新建任务] and draft cards
   // open the unified chat instead of the legacy authoring modal.
   useEffect(() => {
     const onNewTask = () => { void handleCreateTask() }
-    const onOpenTask = (event: Event) => {
-      const detail = (event as CustomEvent<{ taskId?: string; view?: 'acceptance' }>).detail
+    const onOpenTask = (event: Event) => {      const detail = (event as CustomEvent<{ taskId?: string; view?: 'acceptance' }>).detail
       const taskId = detail?.taskId
       if (!taskId) return
       getTask(taskId)
         .then((task) => {
-          handleSelectTask(task)
-          setOverviewInitialTab(detail?.view === 'acceptance' ? 'acceptance' : 'plan')
-          if (detail?.view === 'acceptance') setOverviewOpen(true)
+          handleSelectTask(task, detail?.view === 'acceptance' ? { module: 'acceptance' } : undefined)
         })
         .catch(() => toast.error('任务不存在或已被删除'))
     }
@@ -447,6 +540,20 @@ export function ChatTab() {
     }
   }, [handleCreateTask, handleSelectTask])
 
+  useEffect(() => {
+    const onOpenWorkflow = (event: Event) => {
+      const detail = (event as CustomEvent<{ workspaceId?: string; executionId?: string; title?: string }>).detail
+      if (!detail?.workspaceId || !detail?.executionId) return
+      setWorkflowWindow({
+        workspaceId: detail.workspaceId,
+        executionId: detail.executionId,
+        title: detail.title,
+      })
+    }
+    window.addEventListener('octopus:open-workflow', onOpenWorkflow)
+    return () => window.removeEventListener('octopus:open-workflow', onOpenWorkflow)
+  }, [])
+
   const sidebarTasks = useMemo(() => {
     if (activeTask?.status === 'draft' && !chatTasks.some((task) => task.id === activeTask.id)) {
       return [activeTask, ...chatTasks]
@@ -456,6 +563,13 @@ export function ChatTab() {
 
   const authoringLead = authoring ? (
     <span className="flex items-center gap-1.5">
+      <CwdPicker
+        mode="task"
+        org={pendingTaskSession?.org ?? activeTask?.org ?? preferredOrg}
+        value={taskCwd}
+        onChange={setTaskCwd}
+        disabled={!!activeTask}
+      />
       <TaskProjectChip
         org={pendingTaskSession?.org ?? activeTask?.org ?? preferredOrg}
         projectIds={pendingTaskSession?.projectIds ?? activeTask?.project_ids ?? []}
@@ -485,8 +599,48 @@ export function ChatTab() {
   ) : undefined
 
   const mainLead = !authoring && activeSessionId ? (
-    <ExpertIdentityChip kind="agent" sessionId={activeSessionId} />
+    <span className="flex items-center gap-1.5">
+      <CwdPicker mode="main" org={preferredOrg} value={mainCwd} onChange={setMainCwd} disabled />
+      <ExpertIdentityChip kind="agent" sessionId={activeSessionId} />
+    </span>
+  ) : !authoring ? (
+    <CwdPicker mode="main" org={preferredOrg} value={mainCwd} onChange={setMainCwd} />
   ) : undefined
+
+  const explorerWorkspaceId =
+    activeTask?.workspace_id ??
+    activeSession?.workspace_id ??
+    (authoring ? taskCwd.workspaceId : mainCwd.workspaceId) ??
+    null
+  const explorerWorkspaceName =
+    activeTask?.name ?? activeSession?.title ?? (authoring ? taskCwd.label : mainCwd.label)
+  const activitySnapshot = useActivitySnapshot(explorerWorkspaceId, chatTasks, runningAgents, toolCalls)
+
+  // Server-originated wake turns (workflow/task events → ChatEventBridge) have
+  // no client SSE. The workspace channel tells the open chat to tail them.
+  const activeWorkspaceId = activeSession?.workspace_id ?? null
+  useEffect(() => {
+    if (!activeWorkspaceId || !activeSessionId) return
+    const off = subscribeSSE(
+      `${getServerUrl()}/api/workspaces/${activeWorkspaceId}/events`,
+      'session_updated',
+      (event) => {
+        try {
+          const data = JSON.parse(event.data) as { sessionId?: string; wake?: boolean; phase?: string }
+          if (data.sessionId !== activeSessionId) return
+          if (data.wake && data.phase === 'started') {
+            void checkAndResume(activeSessionId)
+          } else {
+            void loadMessages()
+          }
+          void refetchSessions()
+        } catch {
+          /* malformed frame — ignore */
+        }
+      },
+    )
+    return off
+  }, [activeWorkspaceId, activeSessionId, checkAndResume, loadMessages, refetchSessions])
 
   return (
     <div className={cn('ui-font relative flex h-full min-h-0', resizingSidebar && 'cursor-col-resize select-none [&_*]:cursor-col-resize')}>
@@ -513,6 +667,8 @@ export function ChatTab() {
           onCreateTask={handleCreateTask}
           onRenameSession={renameSession}
           onDeleteSession={removeSession}
+          onRenameTask={openTaskRename}
+          onDeleteTask={setDeleteTarget}
         />
         <div
           role="separator"
@@ -551,6 +707,8 @@ export function ChatTab() {
             onCreateTask={handleCreateTask}
             onRenameSession={renameSession}
             onDeleteSession={removeSession}
+            onRenameTask={openTaskRename}
+            onDeleteTask={setDeleteTarget}
           />
         </SheetContent>
       </Sheet>
@@ -566,21 +724,6 @@ export function ChatTab() {
         >
           <Menu className="size-3.5" />
         </button>
-        {activeTask && (
-          <button
-            type="button"
-            aria-label="任务概览"
-            title="任务概览"
-            data-testid="task-overview-trigger"
-            onClick={() => {
-              setOverviewInitialTab('plan')
-              setOverviewOpen(true)
-            }}
-            className="absolute right-3 top-2.5 z-30 grid size-7 place-items-center rounded-md border border-white/10 bg-pop-paper/80 text-pop-dim backdrop-blur transition-colors hover:text-pop-ink"
-          >
-            <PanelsTopLeft className="size-3.5" />
-          </button>
-        )}
         <div className={cn('flex min-h-0 flex-1 flex-col', showWorkbench && 'hidden')}>
           <ChatArea
             messages={viewMessages}
@@ -624,6 +767,23 @@ export function ChatTab() {
           />
         </div>
 
+        {/* Draft keeps the authoring chat in the center; the same floating
+            dock/windows surface as running tasks lives on top of it. */}
+        {activeTask && !showWorkbench && (
+          <TaskModulesLayer
+            task={activeTask}
+            windows={taskWindows[activeTask.id] ?? {}}
+            onWindowsChange={(next) =>
+              setTaskWindows((prev) => ({ ...prev, [activeTask.id]: next }))
+            }
+            onMutated={() => {
+              void refreshChatTasks()
+              void refetchSessions()
+            }}
+            openModule={taskModuleRequest}
+          />
+        )}
+
         {showWorkbench && activeTask && (
           <TaskWorkbench
             task={activeTask}
@@ -635,9 +795,21 @@ export function ChatTab() {
             onWindowsChange={(next) =>
               setTaskWindows((prev) => ({ ...prev, [activeTask.id]: next }))
             }
+            openModule={taskModuleRequest}
           />
         )}
       </div>
+
+      <WorkspaceExplorerDock
+        workspaceId={explorerWorkspaceId}
+        workspaceName={explorerWorkspaceName}
+        task={activeTask}
+        taskWindows={activeTask ? (taskWindows[activeTask.id] ?? {}) : {}}
+        onOpenTaskModule={(module) => setTaskModuleRequest({ module, nonce: Date.now() })}
+        onEnqueue={activeTask ? () => void handleEnqueueTask(activeTask) : undefined}
+        enqueueBusy={enqueueBusy}
+        activity={activitySnapshot}
+      />
 
         {/* Tool call panel */}
         {!showWorkbench && showToolPanel && toolCalls.length > 0 && (
@@ -659,18 +831,54 @@ export function ChatTab() {
         </button>
       )}
 
-      {activeTask && overviewOpen && (
-        <TaskOverview
-          task={activeTask}
-          initialTab={overviewInitialTab}
-          onClose={() => setOverviewOpen(false)}
-          onEnqueued={() => {
-            setOverviewOpen(false)
-            // Stay on the task: the list refresh flips it to ready and the
-            // workbench renders the ready/running center in place.
-            void refreshChatTasks()
-            void refetchSessions()
-          }}
+      <Dialog open={!!renameTarget} onOpenChange={(open) => { if (!open) setRenameTarget(null) }}>
+        <DialogContent
+          showCloseButton={false}
+          aria-describedby={undefined}
+          className="ui-font w-[420px] max-w-[calc(100vw_-_32px)] rounded-2xl border border-white/[0.10] bg-pop-bg p-4"
+        >
+          <DialogTitle className="text-[14px] font-semibold text-pop-ink">重命名任务</DialogTitle>
+          <Input
+            autoFocus
+            value={renameValue}
+            maxLength={200}
+            onChange={(event) => setRenameValue(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key === 'Enter') void confirmTaskRename()
+              if (event.key === 'Escape') setRenameTarget(null)
+            }}
+            className="mt-3"
+            placeholder="任务名称"
+          />
+          <div className="mt-4 flex justify-end gap-2">
+            <Button size="sm" variant="ghost" onClick={() => setRenameTarget(null)}>取消</Button>
+            <Button size="sm" variant="pop" disabled={!renameValue.trim() || taskBusy} onClick={() => void confirmTaskRename()}>
+              {taskBusy ? '保存中…' : '保存'}
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      <ConfirmDialog
+        open={!!deleteTarget}
+        onOpenChange={(open) => { if (!open) setDeleteTarget(null) }}
+        title={deleteTarget?.status === 'running' ? '中止并删除任务？' : '删除任务？'}
+        description={
+          deleteTarget?.status === 'running'
+            ? `「${deleteTarget.name}」正在运行。删除会先中止当前执行，然后移除任务与工作区记录。`
+            : `「${deleteTarget?.name ?? ''}」将被删除，此操作不可撤销。`
+        }
+        confirmLabel={deleteTarget?.status === 'running' ? '中止并删除' : '删除'}
+        variant="destructive"
+        onConfirm={() => void confirmTaskDelete()}
+      />
+
+      {workflowWindow && (
+        <WorkflowWindow
+          workspaceId={workflowWindow.workspaceId}
+          executionId={workflowWindow.executionId}
+          title={workflowWindow.title}
+          onClose={() => setWorkflowWindow(null)}
         />
       )}
 

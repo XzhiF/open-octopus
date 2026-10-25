@@ -11,7 +11,7 @@ export class SessionService {
   /**
    * Create a new session.
    */
-  createSession(org: string, opts?: { clone_name?: string }): AgentSession {
+  createSession(org: string, opts?: { clone_name?: string; cwd?: string | null; workspace_id?: string | null }): AgentSession {
     const id = crypto.randomUUID()
     const now = new Date().toISOString()
 
@@ -21,6 +21,8 @@ export class SessionService {
       title: '新会话',
       clone_name: opts?.clone_name ?? null,
       session_type: opts?.clone_name ? 'clone_direct' : 'main',
+      cwd: opts?.cwd ?? null,
+      workspace_id: opts?.workspace_id ?? null,
       created_at: now,
       updated_at: now,
     })
@@ -89,12 +91,15 @@ export class SessionService {
   private rowToSession(row: DBSessionRow): AgentSession {
     return {
       id: row.id,
+      org: row.org,
       title: row.title,
-      clone_name: row.clone_name ?? undefined,
-      perspective_clone_name: row.perspective_clone_name ?? undefined,
+      clone_name: row.clone_name ?? null,
+      perspective_clone_name: row.perspective_clone_name ?? null,
       session_type: row.session_type as 'main' | 'delegate' | 'clone_direct',
       is_active: row.is_active === 1,
-      last_message_at: row.last_message_at ?? undefined,
+      last_message_at: row.last_message_at ?? null,
+      cwd: row.cwd ?? null,
+      workspace_id: row.workspace_id ?? null,
       created_at: row.created_at,
       updated_at: row.updated_at,
     }

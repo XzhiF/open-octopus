@@ -39,6 +39,16 @@ export async function createWorkspace(data: { name: string; org: string; descrip
   return handleResponse(res)
 }
 
+/** Register an existing directory as a chat cwd workspace (no scaffolding). */
+export async function attachWorkspaceDirectory(data: { org: string; path: string; name?: string }) {
+  const res = await apiFetch(`${getServerUrl()}/api/workspaces/attach`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(data),
+  })
+  return handleResponse(res)
+}
+
 export async function deleteWorkspace(id: string) {
   const res = await apiFetch(`${getServerUrl()}/api/workspaces/${id}`, { method: "DELETE" })
   return handleResponse(res)
@@ -259,6 +269,28 @@ export async function fetchDashboardStats() {
 export async function fetchRunningQueue() {
   const res = await apiFetch(`${getServerUrl()}/api/dashboard/queue`)
   return res.json()
+}
+
+export interface ActivityEventRow {
+  id: string
+  kind: string
+  severity: 'info' | 'warn' | 'critical'
+  title: string
+  message?: string
+  workspaceId?: string | null
+  executionId?: string | null
+  taskId?: string | null
+  sessionId?: string | null
+  nodeId?: string | null
+  createdAt: string
+}
+
+export async function fetchActivity(workspaceId?: string | null, limit = 20): Promise<ActivityEventRow[]> {
+  const params = new URLSearchParams({ limit: String(limit) })
+  if (workspaceId) params.set('workspace_id', workspaceId)
+  const res = await apiFetch(`${getServerUrl()}/api/activity?${params}`)
+  const body = await res.json()
+  return Array.isArray(body?.events) ? body.events : []
 }
 
 export async function fetchLeaderboard(limit: number = 6): Promise<LeaderboardResponse> {

@@ -29,9 +29,9 @@ export function useAgentSessions() {
     }
   }, [])
 
-  const createNewSession = useCallback(async () => {
+  const createNewSession = useCallback(async (opts?: { cwd?: string; workspace_id?: string }) => {
     try {
-      const session = await api.createSession()
+      const session = await api.createSession(opts)
       setSessions(prev => [session, ...prev])
       setActiveSessionId(session.id)
       return session

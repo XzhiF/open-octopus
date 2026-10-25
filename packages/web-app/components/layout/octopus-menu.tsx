@@ -1,7 +1,6 @@
 'use client'
 
 import { useState, type ComponentPropsWithRef } from 'react'
-import { Activity } from 'lucide-react'
 import { APP_GROUPS, type AppId } from '@/lib/app-catalog'
 import { useDesktopWindows } from '@/lib/desktop-windows'
 import { cn } from '@/lib/utils'
@@ -31,16 +30,11 @@ function LogoButton({ ref, className, ...rest }: ComponentPropsWithRef<'button'>
       aria-haspopup="menu"
       title="Octopus 菜单"
       className={cn(
-        'flex shrink-0 items-center gap-2 rounded-lg px-1 py-0.5 transition-colors hover:bg-accent',
+        'flex size-9 shrink-0 items-center justify-center rounded-lg text-[22px] leading-none transition-colors hover:bg-accent',
         className,
       )}
     >
-      <span className="grid size-7 place-items-center rounded-lg border-[1.5px] border-pop-bd bg-pop-pink text-pop-bg shadow-pop-sm">
-        <Activity className="size-4" />
-      </span>
-      <span className="hidden text-base font-black tracking-tight text-pop-ink sm:inline">
-        Octopus
-      </span>
+      <span aria-hidden>🐙</span>
     </button>
   )
 }

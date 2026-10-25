@@ -183,6 +183,22 @@ export function createWorkspaceRoutes(workspaceService: WorkspaceService, orgDAO
     }
   })
 
+  // POST /attach — register an existing directory as a chat cwd workspace
+  // without scaffolding projects/workflows/logs/state inside it.
+  workspaceRoutes.post("/attach", async (c) => {
+    try {
+      const body = await c.req.json<{ org?: string; path?: string; name?: string }>()
+      const org = body.org || (c.req.query("org") ?? "xzf")
+      if (!body.path || typeof body.path !== "string") {
+        return c.json({ error: "path is required" }, 400)
+      }
+      const ws = workspaceService.attachDirectory({ org, path: body.path, name: body.name })
+      return c.json(ws, 201)
+    } catch (err: unknown) {
+      return c.json({ error: err instanceof Error ? err.message : String(err) }, 400)
+    }
+  })
+
   workspaceRoutes.get("/:id", (c) => {
     const id = c.req.param("id")
     const workspace = workspaceService.getById(id)

@@ -524,6 +524,8 @@ export interface Task {
   resources: ResourceRef[]
   skills: string[]
   project_ids: string[]
+  /** v58: bound workspace (draft shell / reused cwd workspace). */
+  workspace_id?: string | null
   workflow_ref?: string
   version: number
   /** sessions.scope_id retargets to tasks.id (SG3); this is the back-ref. */

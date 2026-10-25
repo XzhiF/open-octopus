@@ -38,6 +38,7 @@ export interface AgentPaginatedResponse<T> {
   items: T[]
   next_cursor?: string | null
   total: number
+  has_more?: boolean
 }
 
 // ===== Sessions =====
@@ -53,6 +54,10 @@ export interface AgentSession {
   updated_at: string
   last_message_at: string | null
   is_active: boolean
+  /** v58: chat cwd (workspace path or selected directory). */
+  cwd?: string | null
+  /** v58: bound workspace id (main-agent / user / task). */
+  workspace_id?: string | null
 }
 
 export interface AgentMessage {
@@ -61,6 +66,8 @@ export interface AgentMessage {
   role: 'user' | 'assistant' | 'system' | 'tool'
   content: string
   tool_calls?: ToolCallRecord[]
+  /** Raw metadata JSON (displayType/timeline/activity wake payload/streaming). */
+  metadata?: string | null
   created_at: string
   is_summary: boolean
   is_compressed: boolean

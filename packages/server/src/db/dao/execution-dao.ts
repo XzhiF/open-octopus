@@ -907,8 +907,14 @@ export class ExecutionDAO extends BaseDAO {
   }
 
   findRootExecutionId(workspaceId: string): { id: string } | null {
+    // Only a LIVE root blocks a new root: the guard's meaning is "not two
+    // runs of this workspace at once", not "this workspace can never run
+    // again" (completed/failed/cancelled history must not lock it forever).
     return (this.stmt(
-      "SELECT id FROM executions WHERE workspace_id = ? AND (parent_id = '0' OR parent_id IS NULL) LIMIT 1"
+      `SELECT id FROM executions
+       WHERE workspace_id = ? AND (parent_id = '0' OR parent_id IS NULL)
+         AND status IN ('pending','running','paused','pending_approval','pending_interaction','pending_task_dispatch')
+       LIMIT 1`
     ).get(workspaceId) as { id: string }) ?? null
   }
 
@@ -1065,8 +1071,8 @@ export class ExecutionDAO extends BaseDAO {
          ORDER BY started_at DESC LIMIT 1) as current_step
       FROM executions e
       LEFT JOIN workspaces w ON e.workspace_id = w.id
-      WHERE e.status IN ('running', 'pending')
-      ORDER BY CASE e.status WHEN 'running' THEN 0 ELSE 1 END, e.created_at DESC
+      WHERE e.status IN ('running', 'pending', 'paused', 'pending_approval', 'pending_interaction', 'pending_task_dispatch')
+      ORDER BY CASE e.status WHEN 'running' THEN 0 WHEN 'pending' THEN 1 ELSE 2 END, e.created_at DESC
     `).all() as Array<Record<string, unknown>>
   }
 

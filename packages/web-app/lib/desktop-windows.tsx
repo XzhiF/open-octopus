@@ -11,6 +11,7 @@ import {
   type ReactNode,
 } from 'react'
 import { useLocation, useNavigate } from 'react-router-dom'
+import { useEscapeClose } from './escape-stack'
 import { APP_CATALOG, appPreferredSize, appRootPath, isAppId, type AppId } from './app-catalog'
 import { matchAppRoute, titleForRoute } from './routes'
 import { queryRedirectTarget } from './retired-redirects'
@@ -571,6 +572,15 @@ export function DesktopWindowsProvider({ children }: { children: ReactNode }) {
   const closeWindow = useCallback((id: WindowId) => {
     dispatch({ type: 'close', id })
   }, [])
+
+  // Esc closes the focused app window (the desktop itself stays).
+  useEscapeClose(
+    state.hydrated && state.focused !== 'desktop' && !state.missionControl,
+    () => {
+      if (state.focused !== 'desktop') closeWindow(state.focused)
+    },
+    50,
+  )
 
   const minimizeWindow = useCallback((id: WindowId) => {
     dispatch({ type: 'minimize', id })

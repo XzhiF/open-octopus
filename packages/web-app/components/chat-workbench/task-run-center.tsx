@@ -220,10 +220,10 @@ export function TaskRunCenter({ task, onMutated }: TaskRunCenterProps) {
 
   return (
     <div className="relative flex min-h-0 flex-1 flex-col" data-testid="task-run-center">
-      {/* Floating right-side status card (the overview trigger sits above it). */}
+      {/* Inline status strip: part of the document, never a floating right pill. */}
       <div
         data-testid="task-run-status"
-        className="pointer-events-none absolute right-4 top-12 z-20 flex items-center gap-2 rounded-full border border-white/[0.08] bg-pop-paper/85 px-3 py-1.5 text-[10.5px] text-pop-dim shadow-pop backdrop-blur"
+        className="flex shrink-0 items-center gap-2 border-b border-white/[0.05] px-4 py-1.5 text-[10.5px] text-pop-dim"
       >
         <span
           className={cn(
@@ -238,13 +238,16 @@ export function TaskRunCenter({ task, onMutated }: TaskRunCenterProps) {
         <span className="font-medium text-pop-ink">{statusLabel}</span>
         {badge && <span className="font-mono">P{badge.phase}/{badge.total}{badge.round != null ? ` · R${badge.round}` : ''}</span>}
         {phaseExperts.length > 0 && (
-          <span className="max-w-[220px] truncate text-pop-purple">
+          <span className="max-w-[300px] truncate text-pop-purple">
             {phaseExperts.join(' / ')}
           </span>
         )}
         {status === 'running' && currentEvent?.nodeId && (
-          <span className="max-w-[140px] truncate font-mono text-pop-cyan">{currentEvent.nodeId}</span>
+          <span className="max-w-[160px] truncate font-mono text-pop-cyan">{currentEvent.nodeId}</span>
         )}
+        <span className="ml-auto hidden text-pop-dim/60 sm:inline">
+          {status === 'running' ? '运行中' : '本轮已结束'}
+        </span>
       </div>
 
       <div className="min-h-0 flex-1 overflow-hidden px-4 pt-3">

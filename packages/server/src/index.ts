@@ -86,6 +86,7 @@ import { createWorkflowRoutes } from "./routes/workflow"
 import executionRoutes, { setExecutionDependencies } from "./routes/execution"
 import harnessRoutes, { setHarnessDependencies } from "./routes/harness"
 import { createDashboardRoutes } from "./routes/dashboard"
+import { createActivityRoutes } from "./routes/activity"
 import { chatRoutes } from "./routes/chat"
 import { globalChatRoutes } from "./routes/global-chat"
 import { createFileRoutes } from "./routes/file-routes"
@@ -122,6 +123,7 @@ import { registerProvider, ClaudeSDKProvider, PiAgentProvider } from "@octopus/p
 import { isPortInUse, findPidOnPort, killPid, waitForPort } from "./port-utils"
 import { globalErrorTracker, setupDataRetention } from "./services/error-tracker"
 import { initExecutionServiceRegistry, getExecutionService } from "./services/execution-service-registry"
+import { initChatEventBridge } from "./services/activity/chat-event-bridge"
 import { WorkspaceScheduleService } from "./services/schedule"
 import { SchedulerService } from "./services/scheduler/scheduler-service"
 import { SchedulerEngine } from "./services/scheduler/scheduler-engine"
@@ -302,6 +304,8 @@ if (!process.env.VITEST && daos) {
     executionDAO: daos.execution,
     workspaceDAO: daos.workspace,
   })
+  // Activity bus + chat wake: one global SSE fan-in for workflow/task events.
+  initChatEventBridge(sse, getDb())
   registerProvider('claude', () => new ClaudeSDKProvider())
 
   // Pi Provider registration — always available (lazy-loaded, SDK imported on first query)
@@ -314,6 +318,23 @@ if (!process.env.VITEST && daos) {
   initRecoveryService(daos.agentSession, daos.execution)
   initSessionCompressService(daos.agentSession, daos.tokenUsage)
   initAgentService(daos.agentSession, daos.safety)
+
+  // v58: bind legacy main sessions to their main-agent workspace so the cwd
+  // chip and resident explorer have a workspace from boot (new sessions bind
+  // themselves on first prompt).
+  try {
+    const db = getDb()
+    const orgRows = db.prepare('SELECT name FROM orgs').all() as Array<{ name: string }>
+    for (const { name } of orgRows) {
+      const main = workspaceService!.ensureMainWorkspace(name)
+      db.prepare(
+        `UPDATE sessions SET workspace_id = ?, cwd = COALESCE(cwd, ?)
+         WHERE org = ? AND workspace_id IS NULL AND clone_name IS NULL`,
+      ).run(main.id, main.path, name)
+    }
+  } catch (err: unknown) {
+    console.warn('[server] main workspace backfill failed:', err instanceof Error ? err.message : String(err))
+  }
 
   // "关闭不丢失" stream-resume: sweep orphan streaming partials left by a
   // crash/restart mid-turn (finalize them as interrupted). Runs before any
@@ -525,6 +546,7 @@ app.route("/api/workspaces/:id/executions", executionRoutes)
 app.route("/api/workspaces/:id/harness", harnessRoutes)
 app.route("/api/workspaces/:id/analytics", createAnalyticsLogRoutes(d.workspace, getLogAnalysisService({ tokenDao: d.tokenUsage, execDao: d.execution }) ?? new (require('./services/log-analysis').LogAnalysisService)(d.tokenUsage, d.execution)))
 app.route("/api/dashboard", createDashboardRoutes(wsSvc, lbSvc, d.execution, d.tokenUsage, d.archive))
+app.route("/api/activity", createActivityRoutes())
 app.route("/api/workspaces/:id/chat", chatRoutes(sse, chatSvc, wsSvc))
 app.route("/api/chat/global", globalChatRoutes(sse, chatSvc, d.tokenUsage))
 app.route("/api/workspaces/:id/interactions", createInteractionRoutes(interactionSvc, d.workspace, d.execution))
@@ -544,6 +566,7 @@ app.route("/api/agent", createAgentRoutes({
   schedulerService: schedSvc,
   // billing-coverage-2 票03: Main Agent 统一入口/委托链入账。
   tokenUsageDao: d.tokenUsage,
+  sse,
   // 票10 投喂泛化: 知识策展执行面（ingest_to_wiki 工具）。闭包惰性解析
   // sessionCurationService（声明在下方 wiki 装配段——票14 惰性纪律同轨：
   // 请求时才求值，不受挂载先于构造的 TDZ 影响）。

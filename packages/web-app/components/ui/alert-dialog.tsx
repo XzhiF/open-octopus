@@ -6,6 +6,7 @@ import * as AlertDialogPrimitive from '@radix-ui/react-alert-dialog'
 import { cn } from '@/lib/utils'
 import { buttonVariants } from '@/components/ui/button'
 import { CloseLightGlyph, closeLightButtonClass } from '@/components/ui/close-light'
+import { DialogResizeHandles } from '@/components/ui/dialog-resize'
 
 function AlertDialog({
   ...props
@@ -77,6 +78,7 @@ function AlertDialogContent({
             <CloseLightGlyph />
           </AlertDialogPrimitive.Cancel>
         )}
+        <DialogResizeHandles className="pointer-events-none absolute inset-0 z-20" />
       </AlertDialogPrimitive.Content>
     </AlertDialogPortal>
   )

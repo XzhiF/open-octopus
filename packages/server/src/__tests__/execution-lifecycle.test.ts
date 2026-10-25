@@ -173,6 +173,16 @@ describe("ExecutionLifecycle.create", () => {
       .toThrow(/already has a root/)
   })
 
+  it("allows a new root after the previous root is terminal", () => {
+    // The invariant is "not two live runs at once" — completed/failed history
+    // must not lock the workspace forever (chat run_workflow re-runs).
+    const first = lifecycle.create(workspaceId, { workflow_ref: "test.yaml" }, ORG)
+    db.prepare("UPDATE executions SET status = 'completed' WHERE id = ?").run(first.id)
+    const second = lifecycle.create(workspaceId, { workflow_ref: "test.yaml" }, ORG)
+    expect(second.parent_id).toBe("0")
+    expect(second.id).not.toBe(first.id)
+  })
+
   // ── ADR-0021 票03 — the seam the whole design rests on, tested UNSUBSTUBBED ──
   it("writes task_id / phase_index / round_index AT INSERT (the row IS the instance)", () => {
     // This is the one line of the refactor that no tasks-domain test could catch: those

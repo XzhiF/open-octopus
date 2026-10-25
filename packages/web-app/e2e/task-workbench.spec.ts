@@ -16,9 +16,10 @@ test.describe('AI Native · 任务工作台体验版', () => {
 
     await items.first().click()
     await page.waitForSelector('[data-testid="task-workbench"]')
-    const dock = page.getByTestId('task-dock')
+    const dock = page.getByTestId('workspace-explorer-dock')
     await expect(dock).toBeVisible()
-    await expect(dock.locator('[data-dock-module]')).toHaveCount(5)
+    await expect(dock.locator('[data-dock-module]')).toHaveCount(4)
+    await expect(dock.locator('[data-dock-module="run"]')).toHaveCount(0)
 
     await dock.locator('[data-dock-module="changes"]').click()
     const changesWindow = page.locator('[data-task-window="changes"]')
@@ -27,7 +28,7 @@ test.describe('AI Native · 任务工作台体验版', () => {
 
     await changesWindow.getByRole('button', { name: '最小化窗口' }).click()
     await expect(changesWindow).toHaveCount(0)
-    await expect(dock.locator('[data-dock-module="changes"]')).toHaveAttribute('data-minimized', 'true')
+    await expect(dock.locator('[data-dock-module="changes"]')).toHaveAttribute('aria-pressed', 'false')
     await dock.locator('[data-dock-module="changes"]').click()
     await expect(changesWindow).toBeVisible()
 

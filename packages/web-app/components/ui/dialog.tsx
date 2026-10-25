@@ -5,6 +5,7 @@ import * as DialogPrimitive from '@radix-ui/react-dialog'
 
 import { cn } from '@/lib/utils'
 import { CloseLightGlyph, closeLightButtonClass } from '@/components/ui/close-light'
+import { DialogResizeHandles } from '@/components/ui/dialog-resize'
 
 function Dialog({
   ...props
@@ -82,6 +83,7 @@ function DialogContent({
             <CloseLightGlyph />
           </DialogPrimitive.Close>
         )}
+        <DialogResizeHandles className="pointer-events-none absolute inset-0 z-20" />
       </DialogPrimitive.Content>
     </DialogPortal>
   )

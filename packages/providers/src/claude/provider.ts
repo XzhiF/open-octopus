@@ -351,6 +351,9 @@ export class ClaudeSDKProvider implements IAgentProvider {
             Object.entries(options.agents).map(([k, v]) => [k, toClaudeAgentDef(v)])
           )
         : undefined,
+      ...(options?.mcpServers
+        ? { mcpServers: options.mcpServers as unknown as Options['mcpServers'] }
+        : {}),
       plugins: resolvePlugins(options),
       tools: options?.tools,
       disallowedTools: options?.disallowedTools,

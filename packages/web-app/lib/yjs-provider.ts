@@ -24,6 +24,12 @@ export function useYDoc(workspaceId: string): UseYDocResult {
   const providerRef = useRef<WebsocketProvider | null>(null)
 
   useEffect(() => {
+    if (!workspaceId) {
+      setDoc(null)
+      setConnected(false)
+      setSynced(false)
+      return
+    }
     const doc = new Y.Doc()
     const provider = new WebsocketProvider(getWsUrl(), `workspace:${workspaceId}`, doc)
 

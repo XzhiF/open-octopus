@@ -143,10 +143,67 @@ function TuiMeta({ thinking, toolCalls, timeline }: {
   )
 }
 
+/** Server-originated activity card (workflow approval/failure/completion, task
+ *  terminal states). Append-only in the transcript; never mutates the system
+ *  prompt, so the cached prefix stays intact. */
+function ActivityEventCard({ message }: { message: AgentMessage }) {
+  const activity = message.activity
+  const severity = activity?.severity
+  const tone =
+    severity === 'critical'
+      ? 'border-pop-red/40 bg-pop-red/[0.06] text-pop-red'
+      : severity === 'warn'
+        ? 'border-pop-amber/40 bg-pop-amber/[0.06] text-pop-amber'
+        : 'border-pop-cyan/35 bg-pop-cyan/[0.05] text-pop-cyan'
+  const mark = severity === 'critical' ? '✕' : severity === 'warn' ? '!' : '✓'
+  const summary = message.content.split('\n').slice(1).find((line) => line.trim() && !line.startsWith('请判断'))?.trim()
+  const canOpenWorkflow = !!activity?.executionId && !!activity?.workspaceId
+
+  return (
+    <div
+      data-tui-msg="event"
+      data-testid="activity-event-card"
+      className={`rounded-md border px-3 py-2 font-mono text-[11.5px] shadow-[inset_0_0_0_1px_rgba(255,255,255,0.03)] ${tone}`}
+    >
+      <div className="flex items-center gap-2">
+        <span aria-hidden className="grid size-4 place-items-center rounded-full border border-current text-[9px]">
+          {mark}
+        </span>
+        <span className="min-w-0 flex-1 truncate font-semibold">
+          {activity?.title ?? '活动通知'}
+        </span>
+        {canOpenWorkflow && (
+          <button
+            type="button"
+            onClick={() =>
+              window.dispatchEvent(new CustomEvent('octopus:open-workflow', {
+                detail: {
+                  workspaceId: activity?.workspaceId,
+                  executionId: activity?.executionId,
+                  title: activity?.title,
+                },
+              }))
+            }
+            className="shrink-0 rounded border border-current/30 px-1.5 py-0.5 text-[10px] opacity-80 transition-opacity hover:opacity-100"
+          >
+            打开 DAG
+          </button>
+        )}
+      </div>
+      {summary && <div className="mt-1 pl-6 text-pop-dim">{summary}</div>}
+      {activity?.nodeId && <div className="mt-0.5 pl-6 text-[10px] text-pop-dim">node · {activity.nodeId}</div>}
+    </div>
+  )
+}
+
 export function TuiMessage({ message }: { message: AgentMessage }) {
   const isUser = message.role === 'user'
   const timeline = !isUser ? message.timeline : undefined
   const hasTimeline = !!timeline && timeline.length > 0
+
+  if (message.displayType === 'event') {
+    return <ActivityEventCard message={message} />
+  }
 
   // 与 ChatBubble 同语义：有 timeline 时正文只显最后一段 text，其余收进 meta。
   const displayContent = useMemo(() => {
