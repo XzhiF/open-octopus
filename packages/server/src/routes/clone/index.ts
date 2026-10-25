@@ -43,8 +43,11 @@ import {
   unregisterActiveStream,
   isStreamActive,
 } from '../../services/agent/agent-service'
-import { getBuiltInCloneDir, getCloneDir } from '../../services/agent/paths'
+import { getBuiltInCloneDir, getCloneDir, getAgentDir } from '../../services/agent/paths'
+import { getProvider } from '@octopus/providers'
+import { isPlaceholderTaskName } from '../../services/tasks/tasks-service'
 import { getMemoryService } from '../../services/agent/memory-service'
+import { deriveSessionTitle } from '../../services/agent/session-title'
 import { autosaveTaskDraft } from './autosave'
 import { finalizePartialMeta } from './stream-partials'
 import { getSpecNotice, clearSpecNotice } from '../../services/tasks/spec-notice-store'
@@ -800,8 +803,41 @@ export function createCloneSessionRoutes(deps: CloneSessionRouteDeps): Hono {
           // 2026-08-21 + refinement). A header rename syncs the session title
           // to the new name, so the placeholder check below skips re-deriving.
           if (session.title === `${cloneName} 会话` || session.title === '新会话') {
-            const autoTitle = body.message!.slice(0, 20).replace(/\n/g, ' ').trim() || `${cloneName} 会话`
+            const autoTitle = deriveSessionTitle(body.message!)
             sessionDAO.updateSession(sessionId, { title: autoTitle })
+
+            // Same fire-and-forget LLM refinement as the main agent session.
+            // When this is a task-author session, also refresh the bound
+            // task's name while it still holds the derived title (never a
+            // user rename).
+            setImmediate(async () => {
+              if (process.env.VITEST) return
+              try {
+                const provider = getProvider('claude')
+                const cwd = getAgentDir()
+                let titleContent = ''
+                const prompt = `Generate a concise session title (max 20 chars, Chinese preferred) from: "${body.message!.replace(/\n/g, ' ').slice(0, 200)}". Reply with ONLY the title.`
+                for await (const chunk of provider.sendQuery(
+                  prompt,
+                  cwd,
+                  undefined,
+                  { model: 'haiku' },
+                )) {
+                  if (chunk.type === 'text_delta') titleContent += chunk.content
+                }
+                const llmTitle = titleContent.trim().replace(/[.。,，!！?？""]/g, '').slice(0, 30)
+                if (!llmTitle || llmTitle === autoTitle) return
+                sessionDAO.updateSession(sessionId, { title: llmTitle })
+                if (cloneName === 'task-author' && taskDAO) {
+                  const bound = taskDAO.getBySourceChatSession(sessionId)
+                  if (bound && (bound.name === autoTitle || isPlaceholderTaskName(bound.name))) {
+                    taskDAO.updateAutosave(bound.id, llmTitle)
+                  }
+                }
+              } catch {
+                /* non-fatal — the deterministic derived title stands */
+              }
+            })
           }
 
           // 04 — task-author autosave seam (v2-D6/D11/SG3/SG8).

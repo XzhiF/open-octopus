@@ -273,8 +273,21 @@ export default function TasksPage() {
     if (fresh && fresh !== modalTask) setModalTask(fresh)
   }, [tasks, modalOpen, modalTask])
 
-  const openNew = () => { setModalTask(null); setModalOpen(true) }
-  const openCard = (task: TaskView) => { setModalTask(task); setModalOpen(true) }
+  const openNew = () => {
+    // AI-native: task creation is a chat session, not the legacy template modal.
+    window.dispatchEvent(new Event('octopus:new-task'))
+    window.dispatchEvent(new Event('octopus:focus-desktop'))
+  }
+  const openCard = (task: TaskView) => {
+    // Drafts are authoring conversations; open them in the unified chat.
+    if (task.status === 'draft') {
+      window.dispatchEvent(new CustomEvent('octopus:open-task', { detail: { taskId: task.id } }))
+      window.dispatchEvent(new Event('octopus:focus-desktop'))
+      return
+    }
+    setModalTask(task)
+    setModalOpen(true)
+  }
   const close = () => { setModalOpen(false); setModalTask(null); setAcceptTaskId(null) }
 
   // Deep link: /tasks?task=<id> (票03: the scheduler table's 任务 origin badge that

@@ -180,7 +180,17 @@ export function SpecPanel({ task, onMutated, batchTree, rows, gateHits, home, au
     },
     { id: "inputs", ok: rows.rowInputs, hits: gateHits.inputs, label: "inputs 齐", value: "必填非空/占位符" },
     { id: "runbook", ok: rows.rowRunbook, hits: gateHits.runbook, label: "runbook 内容", value: "起停 up∧ready ∨ preview ∨ verify" },
-    { id: "repos", ok: rows.rowRepos, hits: gateHits.repos, label: "项目仓库", value: `${task.org || "—"} · ${(task.project_ids ?? []).length} 项目` },
+    {
+      id: "repos",
+      ok: rows.rowRepos,
+      hits: gateHits.repos.length > 0
+        ? gateHits.repos
+        : rows.rowRepos
+          ? []
+          : ["未绑定项目：执行前需要至少选择一个项目（执行环境要挂 worktree）"],
+      label: "项目仓库",
+      value: `${task.org || "—"} · ${(task.project_ids ?? []).length} 项目`,
+    },
   ] as const
 
   return (

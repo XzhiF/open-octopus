@@ -38,7 +38,7 @@
 import crypto from "crypto"
 import type { TaskDAO, AgentSessionDAO } from "../../db/dao"
 import { TaskHomeService } from "../../services/tasks/task-home-service"
-import { DEFAULT_TASK_NAME } from "../../services/tasks/tasks-service"
+import { isPlaceholderTaskName } from "../../services/tasks/tasks-service"
 
 export interface AutosaveDeps {
   taskDAO: TaskDAO
@@ -89,7 +89,7 @@ export function autosaveTaskDraft(
         input.autoTitle.trim().length > 0 &&
         input.autoTitle !== (input.placeholderTitle ?? "")
       const name =
-        existing.name === DEFAULT_TASK_NAME && meaningfulTitle
+        isPlaceholderTaskName(existing.name) && meaningfulTitle
           ? input.autoTitle
           : existing.name
       taskDAO.updateAutosave(existing.id, name)

@@ -3,7 +3,7 @@
 import { useEffect, useState } from 'react'
 import { listRunningSessions, type RunningAgentSession } from '@/lib/agent/api'
 
-const POLL_MS = 5_000
+const POLL_MS = 2_000
 
 /** Agent sessions with a live generation stream. Failures keep the last good list. */
 export function useRunningAgents(): RunningAgentSession[] {

@@ -200,16 +200,35 @@ export function resolveWithinRoot(rootAbs: string, relRaw: string, what: string)
  *  authoritative one. */
 export const MAX_HOME_FILE_READ_BYTES = 512_000
 
+/**
+ * One-workspace model: a task's planning home lives at
+ * `~/.octopus/orgs/{org}/workspaces/{task-ws}/.task`, resolved from the task
+ * row's workspace_id. The bootstrap installs this resolver; tests that inject
+ * a temp baseDir keep the legacy deterministic `{base}/tasks/{id}` path.
+ */
+let taskHomeResolver: ((taskId: string) => string | null) | null = null
+
+export function setTaskHomeResolver(resolver: ((taskId: string) => string | null) | null): void {
+  taskHomeResolver = resolver
+}
+
 export class TaskHomeService {
   private readonly baseDir: string
+  private readonly injectedBaseDir: boolean
 
   constructor(baseDir?: string) {
     this.baseDir = baseDir ?? path.join(os.homedir(), ".octopus")
+    this.injectedBaseDir = !!baseDir
   }
 
-  /** Pure derivation of the task home path from the id. NO fs side effect, NO
-   *  DB field (ADR-0011). `homePath(id) === base/tasks/id`. */
+  /** Task home path. Production: the workspace's `.task` directory (resolved
+   *  from tasks.workspace_id). Tests with an injected baseDir: the legacy
+   *  `{base}/tasks/{id}` path. */
   homePath(taskId: string): string {
+    if (!this.injectedBaseDir && taskHomeResolver) {
+      const resolved = taskHomeResolver(taskId)
+      if (resolved) return resolved
+    }
     return path.join(this.baseDir, "tasks", taskId)
   }
 

@@ -49,8 +49,10 @@ export function ReadySpecTab({ task, detail }: { task: Task; detail: TaskDetail 
     () => computeSpecRows({
       phases, spec, catalog,
       batches: batchTree.batches, batchLoading: batchTree.loading, batchError: batchTree.error,
+      projectCount: (task.project_ids ?? []).length,
+      composite: Array.isArray(spec.subunits) && spec.subunits.length >= 2,
     }),
-    [phases, spec, catalog, batchTree.batches, batchTree.loading, batchTree.error],
+    [phases, spec, catalog, batchTree.batches, batchTree.loading, batchTree.error, task.project_ids],
   )
   const gateHits = useMemo(() => computeGateHits(null), [])
 

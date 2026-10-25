@@ -126,7 +126,7 @@ import { WorkspaceScheduleService } from "./services/schedule"
 import { SchedulerService } from "./services/scheduler/scheduler-service"
 import { SchedulerEngine } from "./services/scheduler/scheduler-engine"
 import { TasksService } from "./services/tasks/tasks-service"
-import { TaskHomeService } from "./services/tasks/task-home-service"
+import { TaskHomeService, setTaskHomeResolver } from "./services/tasks/task-home-service"
 import { PluginMaterializer } from "./services/tasks/plugin-materializer"
 import { AssistWorkflowService } from "./services/tasks/assist-workflow-service"
 import { WorkflowPresetsService } from "./services/workflow-presets-service"
@@ -229,6 +229,20 @@ const db = process.env.VITEST ? null : initDb()
 let daos: AllDAOs | null = null
 if (db) {
   applySchema(db)
+
+  // One-workspace model: a task's planning home is `<workspace>/.task`.
+  // Resolve it from the task's bound workspace so every TaskHomeService call
+  // (clone cwd, artifacts, gates, archiving) sees the same single space.
+  setTaskHomeResolver((taskId) => {
+    const row = db
+      .prepare(
+        `SELECT w.path AS path FROM tasks t
+         JOIN workspaces w ON w.id = t.workspace_id
+         WHERE t.id = ?`,
+      )
+      .get(taskId) as { path?: string } | undefined
+    return row?.path ? path.join(row.path, ".task") : null
+  })
 
   // 反链倒排基础：wiki_articles.links 一次性回灌（仅启动跑，运行时零扫盘——失败非致命）
   try {

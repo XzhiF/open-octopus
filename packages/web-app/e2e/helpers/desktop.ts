@@ -19,6 +19,9 @@ export async function openApp(page: Page, app: keyof typeof APP_IDS | string): P
   const item = page.locator(`[data-app-id="${id}"]`)
   await expect(item).toBeVisible({ timeout: 5_000 })
   await item.click()
+  // Radix closes with a short animation; wait for the menu to unmount before
+  // interacting with the window underneath (the menu overlays the titlebar).
+  await expect(page.locator(`[data-app-id="${id}"]`)).toHaveCount(0, { timeout: 5_000 })
   await expect(page.locator(`[data-window-id="${id}"]`)).toBeVisible({ timeout: 20_000 })
   return id
 }

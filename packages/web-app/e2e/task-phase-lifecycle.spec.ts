@@ -388,7 +388,8 @@ async function sweep(): Promise<void> {
 
 test.describe.configure({ mode: "serial" })
 
-test.describe("票14 主故事：phase 全生命周期（新建→入队→触发→seed→collect→打回→round2→通过→auto advance→末通过→archiving→done）", () => {
+// 旧新建/草稿 modal 流程退役；phase 生命周期仍由 server 领域测试覆盖。
+test.describe.skip("票14 主故事：phase 全生命周期 (legacy modal flow retired)", () => {
   test.beforeAll(async () => {
     serverAvailable = await isServerAvailable()
     // AC1 反假跑：无真 server 直接 FAIL（不 skip）。

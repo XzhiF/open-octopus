@@ -579,10 +579,33 @@ export class TaskLifecycleService {
     const ws = this.deps.workspaceService
     if (!ws) throw new TaskLifecycleError("workspace", "WorkspaceService 未注入，无法准备工作区")
 
+    const composite = isCompositeWorkflowConfig(plan)
+    const { branchPrefix, branchSuffix, workspaceName } = computeTaskWsLaunchParams({
+      instanceKey: task.id,
+      naming: "task",
+      config: plan,
+      taskRow: task,
+    })
+    const projects = (plan.workspace_spec?.projects ?? []).filter(
+      (p) => p.name && p.name !== "default",
+    )
+
     const bound = task.workspace_id ? ws.getById(task.workspace_id) : undefined
     if (bound) {
       try {
-        ws.ensureWorktreesForReuse(bound)
+        // One-workspace model: the shell was created at draft time; project
+        // worktrees are attached here, at enqueue/trigger time.
+        if (typeof ws.ensureWorktreesForProjects === "function") {
+          ws.ensureWorktreesForProjects(
+            bound,
+            composite ? [] : projects,
+            branchPrefix,
+            branchSuffix,
+          )
+        } else {
+          // Test doubles / older injected services only implement self-heal.
+          ws.ensureWorktreesForReuse(bound)
+        }
         return bound.id
       } catch (err: unknown) {
         // A bound row that cannot self-heal is not "reuse and continue" — the run would
@@ -603,16 +626,6 @@ export class TaskLifecycleService {
       )
     }
 
-    const composite = isCompositeWorkflowConfig(plan)
-    const { branchPrefix, branchSuffix, workspaceName } = computeTaskWsLaunchParams({
-      instanceKey: task.id,
-      naming: "task",
-      config: plan,
-      taskRow: task,
-    })
-    const projects = (plan.workspace_spec?.projects ?? []).filter(
-      (p) => p.name && p.name !== "default",
-    )
     try {
       const created = ws.createFromSpec({
         org: plan.workspace_spec?.org ?? task.org ?? "",

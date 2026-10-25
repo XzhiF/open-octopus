@@ -23,6 +23,7 @@ import { Hono } from "hono"
 import { applySchema } from "../db/schema"
 import { AgentSessionDAO, TaskDAO } from "../db/dao"
 import { createCloneSessionRoutes } from "../routes/clone"
+import { deriveSessionTitle } from "../services/agent/session-title"
 
 // ── Mocks ────────────────────────────────────────────────────────────────
 
@@ -142,11 +143,10 @@ describe("04: task-author autosave seam + scope_id writer (integration)", () => 
     expect(taskRow).toBeDefined()
     expect(taskRow.status).toBe("draft")
     expect(taskRow.source_chat_session_id).toBe(session.id)
-    // Auto-title = first 20 chars of the first user message (the auto-title
-    // block fires before the seam and sets the session title; the seam reads
-    // the session title to name the task).
-    const expectedTitle =
-      firstMessage.slice(0, 20).replace(/\n/g, " ").trim() || "task-author 会话"
+    // Auto-title = shared smart derivation of the first user message (the
+    // auto-title block fires before the seam and sets the session title; the
+    // seam reads the session title to name the task).
+    const expectedTitle = deriveSessionTitle(firstMessage)
     expect(taskRow.name).toBe(expectedTitle)
     expect(taskRow.version).toBe(1)
     expect(taskRow.task_spec).toBe("{}") // SG8: autosave never touches task_spec
@@ -252,8 +252,8 @@ describe("04: task-author autosave seam + scope_id writer (integration)", () => 
     const before = db
       .prepare("SELECT name FROM tasks WHERE source_chat_session_id = ?")
       .get(session.id) as { name: string }
-    // Auto-title = first 20 chars of the first message (truncated).
-    expect(before.name).toBe("E2E_TD establish tit")
+    // Auto-title = shared smart derivation of the first message.
+    expect(before.name).toBe(deriveSessionTitle("E2E_TD establish title"))
 
     // Session renamed in the sidebar (no task sync — this is NOT a header
     // rename). The autosave must not propagate it into the task name.
@@ -323,7 +323,7 @@ describe("04: task-author autosave seam + scope_id writer (integration)", () => 
     const s = db.prepare("SELECT title FROM sessions WHERE id = ?").get(session.id) as {
       title: string
     }
-    expect(s.title).toBe("E2E_TD first message")
+    expect(s.title).toBe(deriveSessionTitle("E2E_TD first message here"))
   })
 
   // ── Refinement: default-name draft adopts the smart title after first chat ──
@@ -359,12 +359,11 @@ describe("04: task-author autosave seam + scope_id writer (integration)", () => 
     await r1.text()
 
     // The default name is NOT user-owned → autosave adopts the smart session
-    // title (first 20 chars of the first message).
+    // title (shared derivation).
     const row = db.prepare("SELECT name FROM tasks WHERE id = ?").get(taskId) as {
       name: string
     }
-    const expectedTitle =
-      "E2E_TD 给 workflow 执行增加监控 context 功能".slice(0, 20).replace(/\n/g, " ").trim()
+    const expectedTitle = deriveSessionTitle("E2E_TD 给 workflow 执行增加监控 context 功能")
     expect(row.name).toBe(expectedTitle)
     expect(row.name).not.toBe("Untitled task")
 

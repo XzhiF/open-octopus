@@ -106,6 +106,9 @@ export function useAgentChat(sessionId: string | null, options?: { onTitleUpdate
   // Ref-based API overrides (avoids recreating callbacks when overrides change identity)
   const apiOverrideRef = useRef(options?.api)
   apiOverrideRef.current = options?.api
+  // Current session for stale-response guards.
+  const sessionIdRef = useRef(sessionId)
+  sessionIdRef.current = sessionId
 
   // Abort any in-flight stream when session changes
   useEffect(() => {
@@ -134,6 +137,20 @@ export function useAgentChat(sessionId: string | null, options?: { onTitleUpdate
       resumeModeRef.current = false
       setResumeStreaming(false)
     }
+    // Never carry another session's transcript/error into this one. The caller
+    // reloads the active session right after the switch.
+    setMessages([])
+    setError(null)
+    setStatusMessage('')
+    setStreamContent('')
+    setStreamThinking('')
+    setIsThinking(false)
+    setToolCalls([])
+    setStreamTimeline([])
+    streamContentRef.current = ''
+    streamThinkingRef.current = ''
+    toolCallsRef.current = []
+    timelineRef.current = []
     // Restore contextUsage for the new session (or null if no cached value).
     if (sessionId) {
       try {
@@ -147,11 +164,15 @@ export function useAgentChat(sessionId: string | null, options?: { onTitleUpdate
 
   const loadMessages = useCallback(async () => {
     if (!sessionId) return
+    const requestedSessionId = sessionId
     try {
       const getSessionFn = apiOverrideRef.current?.getSession ?? api.getSession
       const res = await getSessionFn(sessionId, { limit: 50 })
+      // Fast session switches: never let an old response overwrite the new chat.
+      if (sessionIdRef.current !== requestedSessionId) return
       setMessages(res.messages.items)
     } catch {
+      if (sessionIdRef.current !== requestedSessionId) return
       setError('Failed to load messages')
     }
   }, [sessionId])

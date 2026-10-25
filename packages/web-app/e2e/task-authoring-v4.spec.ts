@@ -63,7 +63,9 @@ test.afterAll(async () => {
   if (createdTaskId) await deleteTaskRaw(createdTaskId)
 })
 
-test.describe("契约修复 — v4-only 创建链路穿线", () => {
+// 旧模板弹窗创作面已退役：新任务从 / 的 task-author 会话直建 v4 draft。
+// 保留文件作为域知识存档；新链路见 chat-sidebar + task-overview E2E。
+test.describe.skip("契约修复 — v4-only 创建链路穿线 (legacy template modal retired)", () => {
   test("新建任务 → 直建 v4 → UI 添加 Phase → spec.md 骨架 → 清单变绿", async ({ page }) => {
     test.skip(!serverOk || !webOk, "dev server / web not reachable")
 

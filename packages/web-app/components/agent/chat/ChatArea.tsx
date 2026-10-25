@@ -399,6 +399,21 @@ export function ChatArea({
           className="flex-1 overflow-y-auto"
         >
           <div className={tui ? 'mx-auto max-w-4xl px-5 py-4 space-y-1.5 text-[12.5px] leading-relaxed' : 'max-w-3xl mx-auto px-4 py-4 space-y-2.5'}>
+            {/* Session exists but has no turns yet (new chat / new task). */}
+            {tui && messages.length === 0 && !streaming && !hideEmptyState && (
+              <div className="py-8" role="status" aria-live="polite">
+                <div className="text-pop-pink">
+                  ❯ <span className="text-pop-ink">{emptyStateTitle ?? '开始你的第一个对话'}</span>
+                </div>
+                <div className="mt-2 max-w-xl text-pop-dim">
+                  {emptyStateDescription ?? 'Agent 可以理解你的意图，自动编排工作流、管理记忆和分身。试试发送一条指令吧。'}
+                </div>
+                <div className="mt-5 flex items-center gap-2 text-[11px] text-pop-dim/70">
+                  <span className="text-pop-pink">✳</span>
+                  <span>⏎ 发送 · ⇧⏎ 排队 · Alt⏎ 换行</span>
+                </div>
+              </div>
+            )}
             {Array.from(new Map(messages.map(m => [m.id, m])).values()).map((msg) => (
               <Fragment key={msg.id}>
                 {tui ? <TuiMessage message={msg} /> : <ChatBubble message={msg} />}
@@ -608,7 +623,7 @@ export function ChatArea({
       {/* Input area — always visible。TUI 变体（草稿工作台）：排队 dock + ❯ 单行
           输入（busy 不锁死）+ 控件条（专家咨询│model│ctx … 右端挂快捷键提示/busy）。 */}
       {tui ? (
-        <div ref={dockRef} className="shrink-0 border-t border-pop-bd bg-pop-bg px-4 pb-3 pt-2" data-tui-dock>
+        <div ref={dockRef} className="shrink-0 border-t border-white/[0.06] bg-pop-bg px-4 pb-3 pt-2" data-tui-dock>
           <div className="relative mx-auto max-w-4xl">
             <MentionAutocomplete
               inputValue={input}
@@ -677,7 +692,7 @@ export function ChatArea({
             )}
             <div
               data-composer-block
-              className="rounded-lg border border-pop-bd bg-pop-bg px-2.5 py-1.5 transition-colors focus-within:border-pop-pink"
+              className="rounded-[9px] border border-white/[0.08] bg-pop-paper/60 px-2.5 py-1.5 transition-colors focus-within:border-white/[0.16]"
             >
               <div className="flex items-start gap-2">
                 {/* pt-1.5 与 textarea 的 py-1.5 对齐：两者行高同为 24px，
@@ -729,12 +744,9 @@ export function ChatArea({
             </div>
             {/* 控件条：+ 上下文 / model / ctx 居左；快捷键提示 + busy 计时挂
                 最右（2026-09-24 用户改判：提示不再单独占输入框下方一行）。 */}
-            <div className="mt-1.5 flex items-center gap-2 border-t border-pop-bd pt-1.5 text-[11px] text-pop-dim" data-tui-ctrlbar>
+            <div className="mt-2 flex min-w-0 items-center gap-1 overflow-x-auto text-[10.5px] text-pop-dim/85 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden" data-tui-ctrlbar>
               {composerLeading && (
-                <>
-                  <span className="flex shrink-0 items-center gap-1.5" data-composer-leading>{composerLeading}</span>
-                  <span aria-hidden className="text-pop-bd">│</span>
-                </>
+                <span className="flex shrink-0 items-center gap-1.5" data-composer-leading>{composerLeading}</span>
               )}
               {showComposerAttach && (
                 <ComposerAttachPopover
@@ -764,40 +776,38 @@ export function ChatArea({
                   </span>
                 )
               )}
-              {contextUsage ? (
-                <>
-                  <span aria-hidden className="text-pop-bd">│</span>
+              <span className="hidden items-center gap-1 sm:flex">
+                {contextUsage ? (
                   <Popover open={contextExpanded} onOpenChange={setContextExpanded}>
-                    <PopoverTrigger asChild>
-                      <button
-                        type="button"
-                        className={cn(
-                          'flex h-[22px] shrink-0 items-center rounded-[7px] border border-transparent px-1.5 text-[11px] transition-colors hover:bg-pop-paper hover:text-pop-ink',
-                          contextExpanded ? 'border-pop-bd bg-pop-paper text-pop-ink' : 'text-pop-ink/90',
-                        )}
-                        data-tui-ctx
+                      <PopoverTrigger asChild>
+                        <button
+                          type="button"
+                          className={cn(
+                            'flex h-[22px] shrink-0 items-center rounded-[7px] border border-transparent px-1.5 text-[11px] transition-colors hover:bg-pop-paper hover:text-pop-ink',
+                            contextExpanded ? 'border-pop-bd bg-pop-paper text-pop-ink' : 'text-pop-ink/90',
+                          )}
+                          data-tui-ctx
+                        >
+                          {'ctx '}{/* fmt-ok: 终端角标百分比 */}{contextUsage.percentage.toFixed(0)}%{contextExpanded ? ' ▴' : ' ▾'}
+                        </button>
+                      </PopoverTrigger>
+                      <PopoverContent
+                        side="top"
+                        align="start"
+                        sideOffset={8}
+                        className="w-72 rounded-[14px] border-[1.5px] border-pop-bd bg-pop-paper p-3 shadow-pop"
                       >
-                        {'ctx '}{/* fmt-ok: 终端角标百分比 */}{contextUsage.percentage.toFixed(0)}%{contextExpanded ? ' ▴' : ' ▾'}
-                      </button>
-                    </PopoverTrigger>
-                    <PopoverContent
-                      side="top"
-                      align="start"
-                      sideOffset={8}
-                      className="w-72 rounded-[14px] border-[1.5px] border-pop-bd bg-pop-paper p-3 shadow-pop"
-                    >
-                      <ContextUsagePanel contextUsage={contextUsage} />
-                    </PopoverContent>
-                  </Popover>
-                </>
-              ) : showUsagePlaceholders ? (
-                <>
-                  <span aria-hidden className="text-pop-bd">│</span>
+                        <ContextUsagePanel contextUsage={contextUsage} />
+                      </PopoverContent>
+                    </Popover>
+                ) : showUsagePlaceholders ? (
                   <span className="flex h-[22px] shrink-0 items-center px-1.5 text-pop-dim/60" title="暂无上下文用量">ctx --% ▾</span>
-                </>
-              ) : null}
-              <SessionCostChip usage={sessionUsage} contextUsage={contextUsage} placeholder={showUsagePlaceholders} />
-              <span className="ml-auto flex min-w-0 items-center justify-end gap-2 text-[10.5px]">
+                ) : null}
+              </span>
+              <span className="hidden sm:flex">
+                <SessionCostChip usage={sessionUsage} contextUsage={contextUsage} placeholder={showUsagePlaceholders} />
+              </span>
+              <span className="ml-auto hidden min-w-0 items-center justify-end gap-2 text-[10.5px] sm:flex">
                 {streaming && (
                   <span className="shrink-0 text-pop-amber" data-tui-busy>
                     <span className="text-pop-pink">{spinGlyph}</span> {busyPhase} {busyElapsed.toFixed(1)}s {/* fmt-ok: 终端 busy 行秒数，非全站计时器 */}

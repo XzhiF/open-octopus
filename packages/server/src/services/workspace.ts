@@ -457,6 +457,66 @@ export class WorkspaceService {
     return { rebuilt }
   }
 
+  ensureWorktreesForProjects(
+    ws: WorkspaceRow,
+    projects: Array<{ name: string; source_path: string; group?: string }>,
+    branchPrefix: string,
+    branchSuffix: string,
+  ): { created: string[] } {
+    const wanted = projects.filter((p) => p.name && p.name !== "default")
+    if (wanted.length === 0) return { created: [] }
+
+    const configPath = path.join(ws.path, "config.json")
+    let entries: Array<{ name: string; main_path?: string; worktree_path?: string; branch?: string; group?: string }> = []
+    try {
+      const raw = JSON.parse(fs.readFileSync(configPath, "utf-8")) as { repos?: unknown }
+      entries = Array.isArray(raw.repos) ? raw.repos as typeof entries : []
+    } catch {
+      entries = []
+    }
+
+    const branchName = `${branchPrefix}-${branchSuffix}`
+    const resolved: SpecWorktreeEntry[] = []
+    const created: string[] = []
+    for (const project of wanted) {
+      const existing = entries.find((entry) => entry.name === project.name)
+      if (
+        existing?.worktree_path &&
+        existing.branch &&
+        this.git.worktreeAlive(existing.worktree_path)
+      ) {
+        resolved.push({
+          name: existing.name,
+          main_path: existing.main_path ?? "",
+          worktree_path: existing.worktree_path,
+          branch: existing.branch,
+        })
+        continue
+      }
+      const fresh = this.git.initWorktreeOne(ws.path, project, branchName, ws.org)
+      created.push(project.name)
+      resolved.push(fresh)
+    }
+
+    if (resolved.length > 0) {
+      this.git.writeSpecWorktreeMeta(ws.path, resolved, ws.name)
+    }
+    return { created }
+  }
+
+  /** Remove a shell workspace (draft deletion): no archive, no history. */
+  deleteShell(id: string): boolean {
+    const ws = this.getById(id)
+    if (!ws) return false
+    try {
+      fs.rmSync(ws.path.replace(/^~/, os.homedir()), { recursive: true, force: true })
+    } catch (err: unknown) {
+      console.error(`[workspace] deleteShell rm failed for ${ws.path}:`, err instanceof Error ? err.message : String(err))
+    }
+    this.dao.deleteById(id)
+    return true
+  }
+
   list(org?: string, source?: 'user' | 'scheduler' | 'all'): WorkspaceRow[] {
     return this.dao.findAll(org, source)
   }

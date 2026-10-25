@@ -16,9 +16,11 @@ export function useAgentSessions() {
       setError(null)
       const res = await api.listSessions({ limit: 50 })
       setSessions(res.items)
-      // Auto-select first session if none active
+      // Auto-select the newest *main* chat; task-author clone sessions are
+      // opened from the task list, never as the default conversation.
       if (res.items.length > 0) {
-        setActiveSessionId(prev => prev ?? res.items[0].id)
+        const preferred = res.items.find((session) => !session.clone_name) ?? res.items[0]
+        setActiveSessionId(prev => prev ?? preferred.id)
       }
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : 'Failed to load sessions')

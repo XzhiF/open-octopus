@@ -70,7 +70,9 @@ let sseSub: SseSubscriber | null = null
 
 test.describe.configure({ mode: "serial" })
 
-test.describe("Story A: Simple task full closed loop", () => {
+// 旧模板弹窗/草稿 modal 创作面已退役：新流程从 / 的新任务会话开始。
+// 域逻辑仍由 server 单测覆盖；新 UI 由 chat-sidebar/task-overview E2E 覆盖。
+test.describe.skip("Story A: Simple task full closed loop (legacy modal flow retired)", () => {
   test.beforeAll(async () => {
     serverAvailable = await isServerAvailable()
     if (!serverAvailable) {

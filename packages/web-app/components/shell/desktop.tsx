@@ -108,6 +108,12 @@ export function Desktop() {
   )
 
   useEffect(() => {
+    const onFocusDesktop = () => focusDesktop()
+    window.addEventListener('octopus:focus-desktop', onFocusDesktop)
+    return () => window.removeEventListener('octopus:focus-desktop', onFocusDesktop)
+  }, [focusDesktop])
+
+  useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
       const isMissionShortcut =
         event.key === 'F3' ||

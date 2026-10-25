@@ -27,6 +27,17 @@ export function ChatBubble({ message }: ChatBubbleProps) {
     return last?.text ?? message.content
   }, [hasTimeline, timeline, message.content])
 
+  // User turns use the shared terminal echo style (same as TuiTranscript):
+  // left-aligned full width, pop-paper + inset hairline, pink ❯ prefix.
+  if (isUser) {
+    return (
+      <div className="rounded-md bg-pop-paper px-3 py-1.5 shadow-[inset_0_0_0_1px_var(--pop-bd)]" data-tui-msg="user">
+        <span className="font-bold text-pop-pink">❯ </span>
+        <span className="break-words whitespace-pre-wrap">{message.content}</span>
+      </div>
+    )
+  }
+
   return (
     <div
       className={cn('flex gap-2.5', isUser ? 'flex-row-reverse' : 'flex-row')}

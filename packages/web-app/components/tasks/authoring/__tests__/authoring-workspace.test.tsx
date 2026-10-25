@@ -561,7 +561,7 @@ describe("AuthoringWorkspace — v4 入队清单 (票 12 C)", () => {
     })
   })
 
-  it("v4 无 project_ids：repos 行恒 ✓ 且不禁点（服务端权威，✗ 只由 409 回填）", async () => {
+  it("v4 无 project_ids：repos 行 ✗ 且禁点（执行必须挂 worktree）", async () => {
     vi.mocked(getBatchTree).mockResolvedValue(treeWith(["p1-1", "p2-2"]) as never)
     render(
       <AuthoringWorkspace
@@ -572,8 +572,10 @@ describe("AuthoringWorkspace — v4 入队清单 (票 12 C)", () => {
     )
     const list = await waitFor(() => screen.getByTestId("enqueue-checklist-v4"))
     await waitFor(() => expect(listBuiltInWorkflows).toHaveBeenCalled())
-    expect(list.querySelector('[data-checklist-v4="repos"]')!.textContent).toContain("✓")
-    await waitFor(() => expect((screen.getByTestId("task-enqueue") as HTMLButtonElement).disabled).toBe(false))
+    const repos = list.querySelector('[data-checklist-v4="repos"]')!
+    expect(repos.textContent).toContain("✗")
+    expect(repos.textContent).toContain("未绑定项目")
+    expect((screen.getByTestId("task-enqueue") as HTMLButtonElement).disabled).toBe(true)
   })
 
   it("绑定确认闸 ⑤ 废除 (ADR-0028)：confirm 行退役不再拦点；runbook 缺失本地仍即拦", async () => {

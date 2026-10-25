@@ -383,14 +383,16 @@ export function AuthoringWorkspace({ task, onMutated, onClose, chrome }: Authori
     () => computeSpecRows({
       phases: v4Phases, spec, catalog,
       batches: batchTree.batches, batchLoading: batchTree.loading, batchError: batchTree.error,
+      projectCount: (task.project_ids ?? []).length,
+      composite: Array.isArray(spec.subunits) && spec.subunits.length >= 2,
     }),
-    [v4Phases, spec, catalog, batchTree.batches, batchTree.loading, batchTree.error],
+    [v4Phases, spec, catalog, batchTree.batches, batchTree.loading, batchTree.error, task.project_ids],
   )
 
   // v4 单路（goal/ac 双确认随 v3 UI 退役；非 v4 历史行天然不绿，不崩即可）
   // repos 行不并入 canEnqueue —— 本地无 fs 无从验证，恒乐观 ✅；✗ 只由服务端
   // 409 missing 回填（与 inputs 行的「服务端权威」同模式）。
-  const canEnqueue = v4Rows.rowPhases && v4Rows.rowSpec && v4Rows.rowBind && v4Rows.rowInputs && v4Rows.rowRunbook
+  const canEnqueue = v4Rows.rowPhases && v4Rows.rowSpec && v4Rows.rowBind && v4Rows.rowInputs && v4Rows.rowRunbook && v4Rows.rowRepos
 
   const [enqueueBusy, setEnqueueBusy] = useState(false)
   const [gateMissing, setGateMissing] = useState<string[] | null>(null)

@@ -74,6 +74,7 @@ import {
 } from "./task-materialize"
 // trigger-prebuild (2026-09-08): 与 WorkflowExecutor 共享的命名/复合判定纯函数。
 import { isCompositeWorkflowConfig } from "../scheduler/ws-launch"
+import { taskBranchPrefix, taskWorkspaceName } from "../scheduler/task-ws-name"
 import { TaskLifecycleService, TaskLifecycleError, type ArmOptions } from "./task-lifecycle-service"
 // task-phase-redesign (ticket 05): STATIC registry access for dispatchPhaseRound.
 // Cycle-free: execution-service-registry's closure (execution/workspace/workflow/
@@ -117,6 +118,14 @@ import { resolveInputValues, parseWorkflowInputDefs } from "../scheduler/templat
  *  while the name equals this. A user rename (header/POST) makes the name
  *  user-owned and freezes it against autosave. */
 export const DEFAULT_TASK_NAME = "Untitled task"
+/** Chat-created tasks start with this placeholder so the task-author autosave
+ *  can adopt the smart session title after the first turn (same behavior as a
+ *  main-agent session). Treated as non-user-owned. */
+export const TASK_PLACEHOLDER_NAME = "新任务"
+
+export function isPlaceholderTaskName(name: string): boolean {
+  return name === DEFAULT_TASK_NAME || name === TASK_PLACEHOLDER_NAME
+}
 import {
   setSpecNotice,
   getSpecNotice,
@@ -819,6 +828,42 @@ export class TasksService {
 
   // ── Create ────────────────────────────────────────────────────────
 
+  /**
+   * One-workspace model: a draft's workspace is created up front as a shell
+   * (no project worktrees). Worktrees are added at enqueue time; the task home
+   * lives at `<workspace>/.task`. Returns null when no workspace service is
+   * injected (unit tests keep the legacy deterministic home).
+   */
+  private createTaskWorkspaceShell(input: {
+    id: string
+    org: string
+    name: string
+    taskSpec: Record<string, unknown>
+    now: string
+  }): string | null {
+    if (!this.workspaceService || typeof this.workspaceService.createFromSpec !== "function") return null
+    const spec = JSON.stringify(input.taskSpec)
+    const baseName =
+      taskWorkspaceName({ name: input.name, task_spec: spec }) ?? `task-${input.id.slice(0, 8)}`
+    // Short id suffix keeps same-title/same-second tasks from colliding.
+    const workspaceName = `${baseName}-${input.id.slice(0, 6)}`
+    const branchPrefix =
+      taskBranchPrefix({ task_spec: spec, created_at: input.now }) ?? `taskpool-${input.id}`
+    const created = this.workspaceService.createFromSpec({
+      org: input.org || "default",
+      name: workspaceName,
+      description: input.name,
+      // Worktrees are materialized at enqueue, not draft time.
+      projects: [],
+      branch_prefix: branchPrefix,
+      branch_suffix: input.id.slice(0, 8),
+      source: "task",
+      task_id: input.id,
+      workflow_chain: [],
+    })
+    return created.id
+  }
+
   /** POST /api/tasks — explicit draft creation. The autosave seam (04) may
    *  also create a draft implicitly; both paths converge here. SG3: if a
    *  source_chat_session_id is provided, link the session's scope_id to the
@@ -898,6 +943,28 @@ export class TasksService {
           "[TasksService] createTask: failed to link session scope_id (non-fatal — task row created):",
           err instanceof Error ? err.message : String(err),
         )
+      }
+    }
+
+    // ── One-workspace model ─────────────────────────────────────────
+    // A draft owns its workspace from the start (shell only, no worktrees).
+    // Binding it BEFORE createHome lets the TaskHomeService resolver place the
+    // planning home at `<workspace>/.task` instead of ~/.octopus/tasks/{id}.
+    if (isV3 || isV4) {
+      try {
+        const workspaceId = this.createTaskWorkspaceShell({
+          id, org, name, taskSpec: taskSpecObj, now,
+        })
+        if (workspaceId) {
+          this.taskDAO
+            .getDb()
+            .prepare("UPDATE tasks SET workspace_id = ?, updated_at = ? WHERE id = ?")
+            .run(workspaceId, now, id)
+        }
+      } catch (err: unknown) {
+        // Don't leave a half-created task row without its workspace.
+        this.taskDAO.softDelete(id)
+        throw err
       }
     }
 
@@ -2107,6 +2174,14 @@ export class TasksService {
       // 第 5 行 ✗），而不是等触发执行/runner claim 才炸。project_ids 为空
       // → vacuous 通过（composite 子单元各自带项目在 dispatch 校验）。
       const gateProjects = parseJSON<string[]>(existing.project_ids, [])
+      const gateComposite =
+        Array.isArray(taskSpec.subunits) && taskSpec.subunits.length >= 2
+      // One-workspace model: a workspace-backed simple task must bind at least
+      // one project, otherwise enqueue would create no worktree. Legacy /
+      // test-only tasks without a bound workspace keep the old vacuous pass.
+      if (gateProjects.length === 0 && !gateComposite && existing.workspace_id) {
+        missing.push("project-binding")
+      }
       if (gateProjects.length > 0) {
         const git = new WorkspaceGit()
         for (const name of gateProjects) {
@@ -3548,6 +3623,20 @@ export class TasksService {
           `[TasksService] deleteTask: reapHome failed for ${id} (non-fatal — task soft-deleted):`,
           err instanceof Error ? err.message : String(err),
         )
+      }
+      // One-workspace model: a draft's shell workspace has no history — remove
+      // it together with the planning home.
+      if (existing.workspace_id) {
+        try {
+          if (typeof this.workspaceService?.deleteShell === "function") {
+            this.workspaceService.deleteShell(existing.workspace_id)
+          }
+        } catch (err: unknown) {
+          console.error(
+            `[TasksService] deleteTask: deleteShell failed for ${existing.workspace_id} (non-fatal):`,
+            err instanceof Error ? err.message : String(err),
+          )
+        }
       }
     }
     // 票03: nothing to cascade — a task's runs are executions rows (they outlive it as

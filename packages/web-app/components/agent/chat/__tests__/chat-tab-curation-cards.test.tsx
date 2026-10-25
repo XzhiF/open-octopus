@@ -54,6 +54,10 @@ vi.mock("@/hooks/useSessionUsage", () => ({
   useSessionUsage: () => null,
 }))
 
+vi.mock("@/hooks/use-chat-tasks", () => ({
+  useChatTasks: () => ({ tasks: [], loading: false, refresh: vi.fn() }),
+}))
+
 import { ChatTab } from "../ChatTab"
 import { serializeKcCardBlock, type KcCardEvent } from "@/lib/knowledge-center/card-protocol"
 

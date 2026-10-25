@@ -17,6 +17,7 @@ import { getSessionCompressService } from '../../services/agent/session-compress
 import { getAgentService, isStreamActive, registerActiveStream, unregisterActiveStream } from '../../services/agent/agent-service'
 import { getSafetyInterceptor } from '../../services/agent/safety-interceptor'
 import { getAgentDir, getDailyMemoryDir, getExperiencesDir, getDebugTracesDir } from '../../services/agent/paths'
+import { deriveSessionTitle } from '../../services/agent/session-title'
 import type { AgentSessionDAO, SafetyDAO, ScheduleConfigDAO } from '../../db/dao'
 import { recordProviderResultUsage } from '../../services/llm-call-ledger'
 import type { TokenUsageDAO } from '../../db/dao/token-usage-dao'
@@ -389,14 +390,7 @@ export function createChatRoutes(deps: ChatRouteDeps): Hono {
       const sessionRow = dao.findById(sessionId)
       if (sessionRow && sessionRow.title === '新会话') {
         const rawMsg = message.replace(/\n/g, ' ').trim()
-        const stripped = rawMsg
-          .replace(/^(请|帮我|我想|给我|把|将|能不能|可以|帮我看看|看看)\s*/g, '')
-          .replace(/^(please |help me |can you |i want |i need )/gi, '')
-        let autoTitle = stripped.slice(0, 40)
-        const cutPoint = autoTitle.search(/[，。！？,.!?]/)
-        if (cutPoint > 4) autoTitle = autoTitle.slice(0, cutPoint)
-        if (autoTitle.length > 40) autoTitle = autoTitle.slice(0, 37) + '...'
-        autoTitle = autoTitle.trim() || rawMsg.slice(0, 30)
+        const autoTitle = deriveSessionTitle(message)
         dao.updateSession(sessionId, { title: autoTitle || '新会话' })
 
         // Fire-and-forget LLM title refinement

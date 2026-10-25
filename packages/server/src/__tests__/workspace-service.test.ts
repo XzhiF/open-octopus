@@ -219,3 +219,38 @@ describe("WorkspaceService", () => {
     })
   })
 })
+describe("WorkspaceService · one-workspace model", () => {
+  it("attaches project worktrees to an existing shell workspace at enqueue", () => {
+    const base = fs.mkdtempSync(path.join(os.tmpdir(), "ws-shell-"))
+    const repo = path.join(base, "repo")
+    const wsPath = path.join(base, "ws")
+    try {
+      fs.mkdirSync(repo, { recursive: true })
+      execFileSync("git", ["init"], { cwd: repo })
+      execFileSync("git", ["config", "user.email", "test@example.com"], { cwd: repo })
+      execFileSync("git", ["config", "user.name", "Test"], { cwd: repo })
+      fs.writeFileSync(path.join(repo, "README.md"), "hello\n")
+      execFileSync("git", ["add", "."], { cwd: repo })
+      execFileSync("git", ["commit", "-m", "init"], { cwd: repo })
+
+      const ws = service.create({ name: "shell", org: "xzf", path: wsPath })
+      fs.writeFileSync(path.join(wsPath, "config.json"), JSON.stringify({ repos: [] }))
+
+      const result = service.ensureWorktreesForProjects(
+        ws,
+        [{ name: "repo", source_path: repo }],
+        "feat",
+        "smoke",
+      )
+      expect(result.created).toEqual(["repo"])
+      expect(fs.existsSync(path.join(wsPath, "projects", "repo", ".git"))).toBe(true)
+      const config = JSON.parse(fs.readFileSync(path.join(wsPath, "config.json"), "utf-8"))
+      expect(config.repos).toHaveLength(1)
+      expect(config.repos[0]).toMatchObject({ name: "repo", branch: "feat-smoke" })
+
+      execFileSync("git", ["worktree", "remove", "--force", path.join(wsPath, "projects", "repo")], { cwd: repo })
+    } finally {
+      fs.rmSync(base, { recursive: true, force: true })
+    }
+  })
+})

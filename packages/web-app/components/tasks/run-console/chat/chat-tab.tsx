@@ -18,7 +18,7 @@
 
 "use client"
 
-import { useCallback, useEffect, useRef, useState } from "react"
+import { useCallback, useEffect, useRef, useState, type ReactNode } from "react"
 import { toast } from "sonner"
 import type { ChatMessage } from "@/lib/types"
 import { getTaskChatBinding, getDoerChatHistory } from "@/lib/tasks-api"
@@ -53,13 +53,17 @@ export interface TaskChatTabProps {
   /** 票08 分支②的可选指令：停流后作为**开场草稿**预填输入口（一步一交 —— 预填
    *  不代发，人按发送才算第一交；nonce 允许连开两次框各带各的字）。 */
   openingDraft?: { text: string; nonce: number } | null
+  /** 工作台统一顶栏时隐藏组件内部头，避免二次标题和高度跳动。 */
+  hideHeader?: boolean
+  /** 任务标题等内容，作为对话流的第一项（不占固定头高度）。 */
+  heading?: ReactNode
 }
 
 const BUBBLE = "max-w-[85%] whitespace-pre-wrap break-words rounded-[14px] border-[1.5px] border-pop-bd px-3 py-2 font-mono text-[11.5px] leading-relaxed shadow-pop-sm"
 
 export function TaskChatTab({
   taskId, form, onEditsChange, onQuickEditCommit, onJumpToDiff, onRejectDraft, interventions, onInterventionSend,
-  takeoverDelivered, openingDraft,
+  takeoverDelivered, openingDraft, hideHeader = false, heading,
 }: TaskChatTabProps) {
   const copy = chatCopy(form, { takeoverDelivered })
   const isFixing = form === "fixing"
@@ -227,106 +231,135 @@ export function TaskChatTab({
 
   // ── quick-edit / takeover：doer 整屏对话 ──────────────────────────────
   return (
-    <div className="flex min-h-0 flex-1 flex-col" data-testid="task-chat-tab" data-chat-form={form}>
-      <div className="flex shrink-0 items-center gap-2 border-b-[1.5px] border-pop-bd px-4 py-2 font-mono">
-        <span className="text-[11.5px] font-black text-pop-ink">{copy.header}</span>
-        <span className="text-[9.5px] text-pop-dim">{copy.hint}</span>
-      </div>
+    <div className="ui-font flex min-h-0 flex-1 flex-col" data-testid="task-chat-tab" data-chat-form={form}>
+      {!hideHeader && (
+        <div className="flex shrink-0 items-center gap-2 border-b border-white/[0.06] px-4 py-2">
+          <span className="text-[12px] font-medium text-pop-ink">{copy.header}</span>
+          <span className="text-[11px] text-pop-dim">{copy.hint}</span>
+        </div>
+      )}
       {unavailable && (
-        <div className="mx-4 mt-3 rounded-[10px] border-[1.5px] border-pop-bd bg-pop-amber-soft px-3 py-2 font-mono text-[10.5px] font-black text-pop-amber" data-testid="chat-unavailable">
+        <div className="mx-auto mt-4 w-full max-w-4xl rounded-lg border border-pop-amber/25 bg-pop-amber-soft/50 px-3 py-2 text-[12px] text-pop-amber" data-testid="chat-unavailable">
           {unavailable}
         </div>
       )}
-      <div ref={logRef} className="flex min-h-0 flex-1 flex-col gap-2.5 overflow-y-auto p-4" data-testid="chat-log">
-        {messages.length === 0 && !unavailable && (
-          <div className={`${BUBBLE} self-start bg-pop-paper text-pop-ink`}>
-            <div className="mb-1 text-[9.5px] font-black text-pop-purple">task-doer ✎</div>
-            {copy.welcome}
-          </div>
-        )}
-        {messages.map((m) => {
-          if (m.displayType === "user") {
-            return <div key={m.id} data-testid="chat-msg-user" className={`${BUBBLE} self-end bg-pop-yellow font-bold text-pop-bg`}>{m.content}</div>
-          }
-          if (m.displayType === "thinking") return null
-          if (m.displayType === "tool_call") {
-            const card = classifyToolCall(m.toolName, m.toolInput)
-            if (!card) return null
-            if (card.kind === "question") {
+      <div ref={logRef} className="min-h-0 flex-1 overflow-y-auto" data-testid="chat-log">
+        <div className="mx-auto flex w-full max-w-4xl flex-col gap-3 px-5 py-6">
+          {heading}
+          {messages.length === 0 && !unavailable && (
+            <div className="flex gap-3">
+              <span className="mt-[3px] w-8 shrink-0 text-right text-[10px] font-medium tracking-wide text-pop-dim/55">doer</span>
+              <div className="min-w-0 flex-1 whitespace-pre-wrap break-words text-[13px] leading-[1.65] text-pop-ink/95">
+                {copy.welcome}
+              </div>
+            </div>
+          )}
+          {messages.map((m) => {
+            if (m.displayType === "user") {
               return (
-                <div key={m.id} className={`${BUBBLE} self-start bg-pop-paper text-pop-ink`} data-testid="chat-msg-question">
-                  <div className="mb-1 text-[9.5px] font-black text-pop-purple">task-doer ✎ 提问</div>
-                  {card.text}
+                <div
+                  key={m.id}
+                  data-testid="chat-msg-user"
+                  className="rounded-md bg-pop-paper px-3 py-1.5 shadow-[inset_0_0_0_1px_var(--pop-bd)]"
+                >
+                  <span className="font-bold text-pop-pink">❯ </span>
+                  <span className="break-words whitespace-pre-wrap">{m.content}</span>
                 </div>
               )
             }
-            const base = card.file.split("/").pop() ?? card.file
-            return (
-              <div key={m.id} data-testid="chat-tool-card"
-                className="self-start rounded-[11px] border-[1.5px] border-pop-purple/40 bg-pop-purple-soft px-2.5 py-1.5 font-mono text-[10px] text-pop-purple"
-              >
-                ⚙ {card.verb} <b className="text-pop-ink">{base}</b>
-                {card.adds != null && <span className="ml-1.5 text-pop-green">+{card.adds}</span>}
-                {card.dels != null && <span className="ml-1 text-pop-red">−{card.dels}</span>}
-                {m.toolStatus === "running" && <span className="ml-1.5 text-pop-dim">…</span>}
-                {onJumpToDiff && (
-                  <button
-                    data-testid="chat-tool-diff"
-                    onClick={() => onJumpToDiff(card.file)}
-                    className="ml-2 text-pop-cyan underline underline-offset-2"
-                  >
-                    查看 diff
-                  </button>
-                )}
-              </div>
-            )
-          }
-          if (m.displayType === "text" && m.content) {
-            const escalation = form === "quick-edit" && detectEscalationReply(m.content)
-            return (
-              <div key={m.id} data-testid="chat-msg-ai" className={`${BUBBLE} self-start bg-pop-paper text-pop-ink`}>
-                <div className="mb-1 text-[9.5px] font-black text-pop-purple">task-doer ✎</div>
-                {m.content}
-                {escalation && (
-                  <div>
-                    <button
-                      data-testid="chat-reject-draft"
-                      onClick={() => onRejectDraft?.(buildRejectPrefill(m.content))}
-                      className="mt-2 rounded-[10px] border-[1.5px] border-pop-pink/55 bg-pop-pink-soft px-2.5 py-1 font-mono text-[10.5px] font-black text-pop-pink hover:bg-pop-pink hover:text-pop-bg"
-                    >
-                      ↩ 打回 · 派 task-fix（已带指令草稿）
-                    </button>
+            if (m.displayType === "thinking") return null
+            if (m.displayType === "tool_call") {
+              const card = classifyToolCall(m.toolName, m.toolInput)
+              if (!card) return null
+              if (card.kind === "question") {
+                return (
+                  <div key={m.id} className="ml-11 flex gap-3" data-testid="chat-msg-question">
+                    <span className="mt-[3px] w-8 shrink-0 text-right text-[10px] font-medium tracking-wide text-pop-dim/55">doer</span>
+                    <div className="min-w-0 flex-1 whitespace-pre-wrap break-words text-[13px] leading-[1.65] text-pop-ink/95">
+                      {card.text}
+                    </div>
                   </div>
-                )}
-              </div>
-            )
-          }
-          return null
-        })}
-        {streaming && !messages.some((m) => m.displayType === "text") && (
-          <div className="self-start font-mono text-[10.5px] text-pop-dim" data-testid="chat-typing">
-            ◍ ◍ ◍ <i className="pop-blink not-italic">正在改…</i>
-          </div>
-        )}
+                )
+              }
+              const base = card.file.split("/").pop() ?? card.file
+              return (
+                <div key={m.id} data-testid="chat-tool-card"
+                  className="ml-11 w-fit rounded-[8px] border border-white/[0.07] bg-white/[0.025] px-2.5 py-1.5 font-mono text-[10.5px] text-pop-purple"
+                >
+                  ⚙ {card.verb} <b className="text-pop-ink">{base}</b>
+                  {card.adds != null && <span className="ml-1.5 text-pop-green">+{card.adds}</span>}
+                  {card.dels != null && <span className="ml-1 text-pop-red">−{card.dels}</span>}
+                  {m.toolStatus === "running" && <span className="ml-1.5 text-pop-dim">…</span>}
+                  {onJumpToDiff && (
+                    <button
+                      data-testid="chat-tool-diff"
+                      onClick={() => onJumpToDiff(card.file)}
+                      className="ml-2 text-pop-cyan underline underline-offset-2"
+                    >
+                      查看 diff
+                    </button>
+                  )}
+                </div>
+              )
+            }
+            if (m.displayType === "text" && m.content) {
+              const escalation = form === "quick-edit" && detectEscalationReply(m.content)
+              return (
+                <div key={m.id} data-testid="chat-msg-ai" className="flex gap-3">
+                  <span className="mt-[3px] w-8 shrink-0 text-right text-[10px] font-medium tracking-wide text-pop-dim/55">doer</span>
+                  <div className="min-w-0 flex-1 whitespace-pre-wrap break-words text-[13px] leading-[1.65] text-pop-ink/95">
+                    {m.content}
+                    {escalation && (
+                      <div>
+                        <button
+                          data-testid="chat-reject-draft"
+                          onClick={() => onRejectDraft?.(buildRejectPrefill(m.content))}
+                          className="mt-3 rounded-md border border-pop-pink/40 px-2.5 py-1 text-[11px] font-medium text-pop-pink transition-colors hover:bg-pop-pink/10"
+                        >
+                          ↩ 打回 · 派 task-fix（已带指令草稿）
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              )
+            }
+            return null
+          })}
+          {streaming && !messages.some((m) => m.displayType === "text") && (
+            <div className="ml-11 font-mono text-[10.5px] text-pop-dim" data-testid="chat-typing">
+              ◍ ◍ ◍ <i className="pop-blink not-italic">正在改…</i>
+            </div>
+          )}
+        </div>
       </div>
-      <div className="flex shrink-0 items-end gap-2 border-t-[1.5px] border-pop-bd bg-pop-idle p-2.5">
-        <textarea
-          data-testid="chat-input"
-          className="min-h-[52px] flex-1 resize-none rounded-[11px] border-[1.5px] border-pop-bd bg-pop-inset px-2.5 py-2 font-mono text-[11px] text-pop-ink outline-none focus:border-pop-cyan"
-          placeholder={copy.placeholder}
-          value={draft}
-          onChange={(e) => setDraft(e.target.value)}
-          onKeyDown={onKeyDown}
-          disabled={streaming || !bindingOk || unavailable !== null}
-        />
-        <button
-          data-testid="chat-send"
-          onClick={() => void send()}
-          disabled={streaming || !draft.trim() || !bindingOk || unavailable !== null}
-          className="rounded-[11px] border-[1.5px] border-pop-cyan bg-pop-cyan px-3 py-1.5 font-mono text-[11px] font-black text-pop-bg disabled:opacity-50"
-        >
-          {streaming ? "◍ 正在改…" : "发送 ↵"}
-        </button>
+      <div className="shrink-0 border-t border-white/[0.06] bg-pop-bg px-4 pb-3 pt-2">
+        <div className="mx-auto w-full max-w-4xl">
+          <div className="flex items-start gap-2 rounded-[9px] border border-white/[0.08] bg-pop-paper/60 px-2.5 py-1.5 transition-colors focus-within:border-white/[0.16]">
+            <span aria-hidden className="shrink-0 pt-1.5 font-bold leading-6 text-pop-pink">❯</span>
+            <textarea
+              data-testid="chat-input"
+              rows={1}
+              className="min-h-6 flex-1 resize-none border-0 bg-transparent px-0 py-1.5 text-[12.5px] leading-6 text-pop-ink outline-none placeholder:text-pop-dim/70"
+              placeholder={copy.placeholder}
+              value={draft}
+              onChange={(e) => setDraft(e.target.value)}
+              onKeyDown={onKeyDown}
+              disabled={streaming || !bindingOk || unavailable !== null}
+            />
+            <span className="shrink-0 pt-1">
+              <button
+                data-testid="chat-send"
+                onClick={() => void send()}
+                disabled={streaming || !draft.trim() || !bindingOk || unavailable !== null}
+                title="发送（⏎）"
+                className="grid size-6 place-items-center rounded-md border border-white/[0.08] bg-pop-pink text-[10px] font-bold text-pop-bg transition-opacity disabled:opacity-35"
+              >
+                {streaming ? "■" : "⏎"}
+              </button>
+            </span>
+          </div>
+        </div>
       </div>
     </div>
   )

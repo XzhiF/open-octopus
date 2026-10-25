@@ -80,7 +80,8 @@ test.afterAll(async () => {
   if (taskId) await deleteTaskRaw(taskId)
 })
 
-test.describe("起草面产物可见性 — 任务 home 磁盘直扫树", () => {
+// 草稿创作面迁入统一 chat 的任务概览；旧 modal 直扫树用例退役。
+test.describe.skip("起草面产物可见性 — 任务 home 磁盘直扫树 (legacy modal retired)", () => {
   test("落盘即现 → 完整路径 / 全目录如实 / 只读弹窗 / [↻] 刷新", async ({ page }) => {
     test.skip(!serverOk || !webOk, "dev server / web not reachable")
 

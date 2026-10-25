@@ -141,7 +141,7 @@ test.afterAll(async () => {
 
 // ── AC1: 新建 coding 任务全程无技能组/preset 控件 ───────────────────
 
-test("AC1 template picker is v4-only: no type cards, no skill groups, codebase section restored", async ({ page }) => {
+test.skip("AC1 template picker retired: new task starts from the unified chat", async ({ page }) => {
   test.skip(!serverAvailable, "server not available")
   await page.goto("/tasks")
   await page.waitForLoadState("domcontentloaded")
@@ -196,7 +196,7 @@ test("AC2 five columns render; awaiting_review task sits in 待验收 with amber
 
 // ── AC3: 时间线行数=phases 数；v3 legacy 单行不报错 ─────────────────
 
-test("AC3 phase timeline shows one row per phase; v3 legacy card shows single row", async ({ page }) => {
+test.skip("AC3 draft card now opens the unified chat (legacy modal timeline retired)", async ({ page }) => {
   test.skip(!serverAvailable || !dbAvailable, "server or rw-sqlite unavailable")
 
   // v4：3 个 phase → 3 行
