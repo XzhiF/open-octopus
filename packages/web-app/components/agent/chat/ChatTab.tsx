@@ -645,6 +645,17 @@ export function ChatTab() {
         <TaskOverview
           task={activeTask}
           onClose={() => setOverviewOpen(false)}
+          onEnqueued={() => {
+            setOverviewOpen(false)
+            setActiveTask(null)
+            setPendingTaskSession(null)
+            // The draft chat has done its job; execution continues in the task
+            // board / console. Hand the user back to a normal conversation.
+            const main = sessions.find((session) => !session.clone_name)
+            if (main) setActiveSessionId(main.id)
+            void refreshChatTasks()
+            void refetchSessions()
+          }}
           onOpenAcceptance={(task) => {
             setOverviewOpen(false)
             setAcceptTask(task)

@@ -2,15 +2,16 @@
 
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { CheckCircle2, FileText, GitCompare, RefreshCw } from 'lucide-react'
+import { toast } from 'sonner'
 import { SPEC_FIELD_UPDATE_EVENT, TASK_STATUS_EVENT } from '@octopus/shared'
-import { getTask, type TaskDetail, type TaskView } from '@/lib/tasks-api'
+import { getTask, readyTask, TaskReadyGateError, type TaskDetail, type TaskView } from '@/lib/tasks-api'
 import { listBuiltInWorkflows, type BuiltInWorkflowSummary } from '@/lib/workflow-presets-api'
 import { subscribeSSE } from '@/lib/sse-manager'
 import { getServerUrl } from '@/lib/server-config'
 import { SpecPanel } from '@/components/tasks/authoring/spec-panel'
 import { useBatchTree } from '@/components/tasks/authoring/use-batch-tree'
 import { useHomeTree } from '@/components/tasks/authoring/use-home-tree'
-import { computeSpecRows, type SpecGateHits } from '@/components/tasks/authoring/spec-gate'
+import { computeGateHits, computeSpecRows } from '@/components/tasks/authoring/spec-gate'
 import { TASK_STATUS_LABEL } from '@/components/tasks/run-console/phase-status'
 import { CloseLightGlyph } from '@/components/ui/close-light'
 import { Dialog, DialogContent, DialogTitle } from '@/components/ui/dialog'
@@ -18,10 +19,6 @@ import { Spinner } from '@/components/ui/spinner'
 import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
 import { ChangesWindow } from './changes-window'
-
-const EMPTY_GATE_HITS: SpecGateHits = {
-  phases: [], spec: [], bind: [], inputs: [], repos: [], runbook: [],
-}
 
 type OverviewTab = 'plan' | 'changes' | 'acceptance'
 
@@ -34,6 +31,9 @@ const TABS: Array<{ id: OverviewTab; label: string; icon: typeof FileText }> = [
 interface TaskOverviewProps {
   task: TaskView
   onClose: () => void
+  /** Enqueue succeeded: the parent leaves the draft chat and follows the task
+   *  on the board / execution console. */
+  onEnqueued: () => void
   /** Transitional bridge to the existing acceptance console. */
   onOpenAcceptance: (task: TaskView) => void
 }
@@ -42,11 +42,13 @@ interface TaskOverviewProps {
  * Task-scoped result surface: one floating overview for the plan, artifacts,
  * code changes and acceptance. Chat stays behind it and keeps its width.
  */
-export function TaskOverview({ task, onClose, onOpenAcceptance }: TaskOverviewProps) {
+export function TaskOverview({ task, onClose, onEnqueued, onOpenAcceptance }: TaskOverviewProps) {
   const [detail, setDetail] = useState<TaskDetail | null>(null)
   const [loading, setLoading] = useState(true)
   const [tab, setTab] = useState<OverviewTab>('plan')
   const [catalog, setCatalog] = useState<BuiltInWorkflowSummary[]>([])
+  const [enqueueBusy, setEnqueueBusy] = useState(false)
+  const [gateMissing, setGateMissing] = useState<string[] | null>(null)
 
   const batchTree = useBatchTree(task.id, { versionKey: detail?.version })
   const home = useHomeTree(task.id, { versionKey: detail?.version })
@@ -119,6 +121,35 @@ export function TaskOverview({ task, onClose, onOpenAcceptance }: TaskOverviewPr
           ? '完成'
           : '执行'
   const meta = [stage, TASK_STATUS_LABEL[task.status] ?? task.status, phase].filter(Boolean).join(' · ')
+  const gateHits = useMemo(() => computeGateHits(gateMissing), [gateMissing])
+  const canEnqueue =
+    !!rows &&
+    rows.rowPhases &&
+    rows.rowSpec &&
+    rows.rowBind &&
+    rows.rowInputs &&
+    rows.rowRunbook &&
+    rows.rowRepos
+
+  const handleEnqueue = async () => {
+    if (!canEnqueue || enqueueBusy) return
+    setEnqueueBusy(true)
+    try {
+      await readyTask(task.id)
+      toast.success('已入队 · 在任务看板触发执行')
+      onEnqueued()
+    } catch (err: unknown) {
+      if (err instanceof TaskReadyGateError) {
+        setGateMissing(err.missing)
+        setTab('plan')
+        toast.error(`入队被拒：缺少 ${err.missing.join('、')}`)
+      } else {
+        toast.error(err instanceof Error ? err.message : '入队失败')
+      }
+    } finally {
+      setEnqueueBusy(false)
+    }
+  }
 
   return (
     <Dialog open onOpenChange={(next) => { if (!next) onClose() }}>
@@ -180,6 +211,20 @@ export function TaskOverview({ task, onClose, onOpenAcceptance }: TaskOverviewPr
           >
             <RefreshCw className={cn('size-3.5', loading && 'animate-spin')} />
           </button>
+
+          {isDraft && (
+            <Button
+              size="sm"
+              variant="pop"
+              data-testid="task-overview-enqueue"
+              onClick={() => void handleEnqueue()}
+              disabled={!canEnqueue || enqueueBusy}
+              title={canEnqueue ? '入队后到任务看板触发执行' : '入队清单未全绿'}
+              className="shrink-0"
+            >
+              {enqueueBusy ? '入队中…' : '入队执行'}
+            </Button>
+          )}
         </div>
 
         <div className="min-h-0 flex-1 overflow-hidden">
@@ -194,7 +239,7 @@ export function TaskOverview({ task, onClose, onOpenAcceptance }: TaskOverviewPr
                 onMutated={() => void refresh()}
                 batchTree={batchTree}
                 rows={rows}
-                gateHits={EMPTY_GATE_HITS}
+                gateHits={gateHits}
                 home={home}
                 readOnly
               />

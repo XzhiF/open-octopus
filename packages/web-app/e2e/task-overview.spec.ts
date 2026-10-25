@@ -23,6 +23,7 @@ test.describe('任务窗口 · 概览与项目绑定', () => {
     const dialog = page.locator('[role="dialog"]')
     await expect(dialog).toBeVisible({ timeout: 10_000 })
     await expect(page.locator('[data-overview-tab]')).toHaveCount(3)
+    await expect(page.getByTestId('task-overview-enqueue')).toBeVisible()
     await page.locator('[data-overview-tab="changes"]').click()
     await expect(page.getByText('还没有代码变更')).toBeVisible()
     await page.locator('[data-overview-tab="acceptance"]').click()
