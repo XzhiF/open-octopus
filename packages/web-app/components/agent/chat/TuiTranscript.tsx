@@ -197,10 +197,46 @@ function ActivityEventCard({ message }: { message: AgentMessage }) {
   )
 }
 
+/** 身份切换标记（v59）：一行 + 可折叠的岗位包全文。追加式，永不改写。 */
+export function RoleSwitchCard({ payload }: { payload: NonNullable<AgentMessage['roleSwitch']> }) {
+  const [open, setOpen] = useState(false)
+  const isReset = payload.kind === 'reset'
+  return (
+    <div
+      data-testid="role-switch-card"
+      data-role-switch={payload.kind}
+      className="rounded-md border border-pop-purple/35 bg-pop-purple-soft/20 px-3 py-1.5 font-mono text-[11.5px]"
+    >
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        title={open ? '收起岗位包' : '查看岗位包全文'}
+        className="flex w-full items-center gap-2 text-left transition-colors hover:text-pop-ink"
+      >
+        <span aria-hidden className="text-pop-purple">⬢</span>
+        <span className="min-w-0 flex-1 truncate text-pop-dim">
+          {isReset ? '已解除分身身份 · 回到基础角色' : `已切换分身身份 · ${payload.displayName}`}
+          <span className="ml-1.5 text-pop-dim/60">rev {payload.revision}</span>
+        </span>
+        <span className="shrink-0 text-[10px] text-pop-dim/70">{open ? '▾ 收起' : '▸ 查看岗位包'}</span>
+      </button>
+      {open && (
+        <pre className="mt-1.5 max-h-[40vh] overflow-y-auto whitespace-pre-wrap break-words border-l border-pop-purple/40 pl-2 text-[11px] leading-relaxed text-pop-dim">
+          {payload.card}
+        </pre>
+      )}
+    </div>
+  )
+}
+
 export function TuiMessage({ message }: { message: AgentMessage }) {
   const isUser = message.role === 'user'
   const timeline = !isUser ? message.timeline : undefined
   const hasTimeline = !!timeline && timeline.length > 0
+
+  if (message.roleSwitch) {
+    return <RoleSwitchCard payload={message.roleSwitch} />
+  }
 
   if (message.displayType === 'event') {
     return <ActivityEventCard message={message} />

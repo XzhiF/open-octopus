@@ -9,7 +9,7 @@ import { SessionCacheContextDAO, hashPrompt } from "../db/dao/session-cache-cont
 import { resolveSessionExpertRoster } from "../services/agent/session-expert-roster"
 import { withTransientReminder } from "../services/agent/prompt-reminder"
 import { pendingRoleCard, buildRoleCard, buildRoleResetCard } from "../services/agent/role-card"
-import { EXPERT_ROLE_IDS } from "@octopus/shared"
+import { resolveCloneRolePack } from "../services/agent/clone-resolver"
 
 let db: Database.Database
 let dao: SessionCacheContextDAO
@@ -84,71 +84,81 @@ describe("SessionCacheContextDAO — expert roster", () => {
 })
 
 describe("resolveSessionExpertRoster — stable across consults", () => {
-  it("task-author registers the full catalog from turn 0", () => {
+  it("registers the full clone roster from turn 0", () => {
     const roster = resolveSessionExpertRoster(dao, {
       sessionId: "s-author",
-      cloneName: "task-author",
       requested: [],
     })
-    expect(roster).toEqual([...EXPERT_ROLE_IDS])
+    expect(roster).toEqual(expect.arrayContaining(["workspace", "scheduler", "archive"]))
+    expect(roster.length).toBeGreaterThanOrEqual(8)
+    expect(roster).not.toContain("main-agent")
   })
 
-  it("consulting different experts never changes the task-author roster", () => {
-    resolveSessionExpertRoster(dao, {
+  it("consulting different clones never changes the seeded roster", () => {
+    const seeded = resolveSessionExpertRoster(dao, {
       sessionId: "s-author-2",
-      cloneName: "task-author",
       requested: [],
     })
     const first = resolveSessionExpertRoster(dao, {
       sessionId: "s-author-2",
-      cloneName: "task-author",
-      requested: ["product-manager"],
+      requested: [seeded[0]],
     })
     const second = resolveSessionExpertRoster(dao, {
       sessionId: "s-author-2",
-      cloneName: "task-author",
-      requested: ["engineering-sre"],
+      requested: [seeded[1]],
+    })
+    expect(first).toEqual(seeded)
+    expect(second).toEqual(seeded)
+  })
+
+  it("clones created later union in on first use (no remove/re-add cycle)", () => {
+    const seeded = resolveSessionExpertRoster(dao, {
+      sessionId: "s-other",
+      requested: [],
+    })
+    const first = resolveSessionExpertRoster(dao, {
+      sessionId: "s-other",
+      requested: ["later-created-clone"],
+    })
+    expect(first).toEqual([...seeded, "later-created-clone"])
+    // Repeat consults of an already-listed clone are a no-op (byte-stable).
+    const second = resolveSessionExpertRoster(dao, {
+      sessionId: "s-other",
+      requested: ["later-created-clone"],
     })
     expect(second).toEqual(first)
-    expect(second).toEqual([...EXPERT_ROLE_IDS])
-  })
-
-  it("other clones union requested experts (no remove/re-add cycle)", () => {
-    const first = resolveSessionExpertRoster(dao, {
-      sessionId: "s-other",
-      cloneName: "workspace",
-      requested: ["product-manager"],
-    })
-    const second = resolveSessionExpertRoster(dao, {
-      sessionId: "s-other",
-      cloneName: "workspace",
-      requested: ["engineering-sre"],
-    })
-    expect(first).toEqual(["product-manager"])
-    expect(second).toEqual(["product-manager", "engineering-sre"])
   })
 })
 
 describe("SessionCacheContextDAO — role state", () => {
   it("bumps revision on a real switch, not on a duplicate selection", () => {
-    expect(dao.setActiveExpert("s-role", "product-manager")).toMatchObject({
+    expect(dao.setActiveExpert("s-role", "product-manager", "expert")).toMatchObject({
       activeExpert: "product-manager",
+      activeKind: "expert",
       revision: 1,
       deliveredRevision: 0,
     })
-    expect(dao.setActiveExpert("s-role", "product-manager").revision).toBe(1)
-    expect(dao.setActiveExpert("s-role", "engineering-sre")).toMatchObject({
+    expect(dao.setActiveExpert("s-role", "product-manager", "expert").revision).toBe(1)
+    expect(dao.setActiveExpert("s-role", "engineering-sre", "expert")).toMatchObject({
       activeExpert: "engineering-sre",
       revision: 2,
     })
-    expect(dao.setActiveExpert("s-role", null)).toMatchObject({
-      activeExpert: null,
+    // Identity now targets clones by default (v59).
+    expect(dao.setActiveExpert("s-role", "workspace")).toMatchObject({
+      activeExpert: "workspace",
+      activeKind: "clone",
       revision: 3,
     })
+    expect(dao.setActiveExpert("s-role", null)).toMatchObject({
+      activeExpert: null,
+      revision: 4,
+    })
+    // Clearing an already-clear role is a no-op regardless of kind.
+    expect(dao.setActiveExpert("s-role", null).revision).toBe(4)
   })
 
   it("tracks delivery and can reset it when the provider transcript is lost", () => {
-    dao.setActiveExpert("s-role-2", "engineering-sre")
+    dao.setActiveExpert("s-role-2", "engineering-sre", "expert")
     dao.markRoleDelivered("s-role-2", 1)
     expect(dao.getRoleState("s-role-2").deliveredRevision).toBe(1)
     dao.resetRoleDelivery("s-role-2")
@@ -156,7 +166,7 @@ describe("SessionCacheContextDAO — role state", () => {
   })
 
   it("builds a role card only for an undelivered revision", () => {
-    dao.setActiveExpert("s-role-3", "engineering-sre")
+    dao.setActiveExpert("s-role-3", "engineering-sre", "expert")
     const card = pendingRoleCard(dao.getRoleState("s-role-3"))
     expect(card).toContain('name="SRE"')
     expect(card).toContain('id="engineering-sre"')
@@ -164,6 +174,23 @@ describe("SessionCacheContextDAO — role state", () => {
     expect(pendingRoleCard(dao.getRoleState("s-role-3"))).toBeNull()
     dao.setActiveExpert("s-role-3", null)
     expect(pendingRoleCard(dao.getRoleState("s-role-3"))).toContain("专家身份已结束")
+  })
+
+  it("clone card carries the WHOLE role pack (no truncation) + skills + boundary", () => {
+    const pack = resolveCloneRolePack("workspace")
+    expect(pack).not.toBeNull()
+    if (!pack?.persona) throw new Error("workspace clone must carry a persona")
+
+    dao.setActiveExpert("s-role-4", "workspace")
+    const card = pendingRoleCard(dao.getRoleState("s-role-4"))
+    expect(card).toContain("clone: workspace")
+    expect(card).toContain(`<clone name="workspace"`)
+    expect(card).toContain("## 可用技能")
+    expect(card).toContain("## 边界")
+    expect(card).toContain("## 岗位包")
+    // Full persona inline — head and tail both present (nothing sliced off).
+    expect(card).toContain(pack.persona.slice(0, 60))
+    expect(card).toContain(pack.persona.slice(-60))
   })
 
   it("role card is the persona carrier — the reset card explicitly exits the role", () => {

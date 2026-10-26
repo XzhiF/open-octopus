@@ -27,7 +27,6 @@ import type { CloneDef } from '@octopus/shared'
 import { parseComposerContext, parseComposerEffort, resolveChatModel } from '../agent/composer-options'
 import type { AgentSessionDAO, TaskDAO } from '../../db/dao'
 import { CloneRuntime } from '../../services/agent/clone-runtime'
-import { resolveExpertSubagents } from '../../services/agent/expert-registry'
 import { isBuiltinClone } from '../../services/agent/builtin-clones'
 import { WorkspaceGit } from '../../services/workspace-git'
 import type { ProjectRef } from '../../services/tasks/task-home-service'
@@ -60,10 +59,12 @@ import { getResourceRegistry } from '../../services/resource-registry'
 import { recordProviderResultUsage } from '../../services/llm-call-ledger'
 import type { TokenUsageDAO } from '../../db/dao/token-usage-dao'
 import type { ResourceRef } from '@octopus/shared'
-import { EXPERT_ROLE_IDS, EXPERT_ROLES, parseExpertMentions } from '@octopus/shared'
 import { SessionCacheContextDAO } from '../../db/dao/session-cache-context-dao'
 import { resolveSessionExpertRoster } from '../../services/agent/session-expert-roster'
+import { parseCloneMentions, resolveCloneSubagents } from '../../services/agent/clone-resolver'
 import { pendingRoleCard } from '../../services/agent/role-card'
+import { appendRoleSwitchEvent, roleSwitchEventPayload } from '../../services/agent/role-switch-event'
+import { isCloneRoleTarget, roleResponse } from '../../services/agent/role-response'
 import { usableResumeId } from '../../services/agent/resume'
 
 // ── Route deps ─────────────────────────────────────────────────────
@@ -250,10 +251,7 @@ export function createCloneSessionRoutes(deps: CloneSessionRouteDeps): Hono {
       updated_at: now,
     })
 
-    // task-author: stable expert roster from turn 0 (see chat route above).
-    if (cloneName === 'task-author') {
-      new SessionCacheContextDAO(sessionDAO.getDb()).saveExpertRoster(sessionId, EXPERT_ROLE_IDS)
-    }
+    // The clone roster seeds on the first chat turn (see chat route above).
 
     const session = sessionDAO.findById(sessionId)
     return c.json({
@@ -367,29 +365,27 @@ export function createCloneSessionRoutes(deps: CloneSessionRouteDeps): Hono {
       return c.json({ error: { code: 'NOT_FOUND', message: `Session ${sessionId} not found` } }, 404)
     }
 
-    // Stable expert roster (cache discipline). Chat sessions register the
-    // whole catalog once, so consulting a different expert changes only the
+    // Stable consultable roster (cache discipline). Chat sessions register the
+    // whole clone roster once, so consulting a different clone changes only the
     // user message — the SDK `agents` metadata (part of the cached prefix)
     // stays byte-identical across turns.
     const cacheCtx = new SessionCacheContextDAO(sessionDAO.getDb())
-    const mentions = parseExpertMentions(body.message)
+    const consults = [
+      ...parseCloneMentions(body.message),
+      ...(body.subagents ?? []).map((ref) => ({ name: ref.id, displayName: ref.label ?? ref.id })),
+    ].filter((c, i, all) => c.name !== cloneName && all.findIndex((x) => x.name === c.name) === i)
     const expertRoster = resolveSessionExpertRoster(cacheCtx, {
       sessionId,
-      cloneName,
-      requested: [
-        ...mentions.map((role) => role.id),
-        ...(body.subagents ?? []).map((ref) => ref.id),
-      ],
-      seedCatalog: true,
+      requested: consults.map((c) => c.name),
     })
-    const subagents = resolveExpertSubagents(expertRoster.map((id) => ({ id })))
+    const subagents = resolveCloneSubagents(expertRoster)
 
-    // Identity switch + @ dispatch ride the user message; system prompt stays
+    // Identity switch + @ delegation ride the user message; system prompt stays
     // frozen (see role-card.ts / prompt-reminder.ts).
     const roleState = cacheCtx.getRoleState(sessionId)
     const roleCard = pendingRoleCard(roleState)
-    const mentionReminder = mentions.length > 0
-      ? `用户本轮通过 @ 指定了以下专家：${mentions.map((role) => role.name).join('、')}。请调用对应的 subagent 获取其专业意见，再整合成最终回答；不要简单拼接。`
+    const mentionReminder = consults.length > 0
+      ? `用户本轮委派了以下分身：${consults.map((c) => c.displayName).join('、')}。请调用对应的 subagent 获取其专业意见，再整合成最终回答；不要简单拼接。`
       : undefined
     const turnReminder = [roleCard, mentionReminder].filter(Boolean).join('\n\n') || undefined
 
@@ -842,6 +838,7 @@ export function createCloneSessionRoutes(deps: CloneSessionRouteDeps): Hono {
           // replay it next turn (that would only add tokens, not help).
           if (roleCard) {
             cacheCtx.markRoleDelivered(sessionId, roleState.revision)
+            appendRoleSwitchEvent(sessionDAO.getDb(), sessionId, roleSwitchEventPayload(roleState, roleCard))
           }
 
           // Auto-generate title on first message (title still placeholder).
@@ -961,10 +958,10 @@ export function createCloneSessionRoutes(deps: CloneSessionRouteDeps): Hono {
       return c.json({ error: { code: 'INVALID_PARAM', message: 'Invalid JSON body' } }, 400)
     }
     const expert = body.expert == null ? null : String(body.expert)
-    if (expert && !EXPERT_ROLES.some((role) => role.id === expert)) {
-      return c.json({ error: { code: 'INVALID_PARAM', message: `Unknown expert: ${expert}` } }, 400)
+    if (expert && !isCloneRoleTarget(expert)) {
+      return c.json({ error: { code: 'INVALID_PARAM', message: `Unknown clone: ${expert}` } }, 400)
     }
-    const state = new SessionCacheContextDAO(sessionDAO.getDb()).setActiveExpert(sessionId, expert)
+    const state = new SessionCacheContextDAO(sessionDAO.getDb()).setActiveExpert(sessionId, expert, 'clone')
     return c.json(roleResponse(sessionId, state))
   })
 
@@ -984,17 +981,4 @@ export function createCloneSessionRoutes(deps: CloneSessionRouteDeps): Hono {
   })
 
   return app
-}
-
-function roleResponse(sessionId: string, state: { activeExpert: string | null; revision: number; deliveredRevision: number }) {
-  const expert = state.activeExpert
-    ? EXPERT_ROLES.find((role) => role.id === state.activeExpert) ?? null
-    : null
-  return {
-    session_id: sessionId,
-    active_expert: state.activeExpert,
-    expert,
-    revision: state.revision,
-    delivered_revision: state.deliveredRevision,
-  }
 }

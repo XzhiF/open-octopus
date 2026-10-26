@@ -488,56 +488,57 @@ describe("S1: POST /api/tasks/:id/chat — task-doer answers over SSE with injec
     expect(append).toContain("--data-binary")
   })
 
-  it("switches expert identity via a role card and dispatches @expert as a subagent", async () => {
+  it("switches identity to a clone via a role card and dispatches @expert as a subagent", async () => {
     const { taskId } = seedV4Task({ kind: "awaiting_review" })
 
-    // Identity switch (role card) — persisted per doer chat session.
+    // Identity switch (role card, v59 clone roster) — persisted per doer chat session.
     const roleRes = await app.request(`/api/tasks/${taskId}/chat/role`, {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ expert: "engineering-sre" }),
+      body: JSON.stringify({ expert: "workspace" }),
     })
     expect(roleRes.status).toBe(200)
-    const roleBody = await roleRes.json() as { active_expert: string; revision: number }
-    expect(roleBody).toMatchObject({ active_expert: "engineering-sre", revision: 1 })
+    const roleBody = await roleRes.json() as { active_expert: string; active_kind: string; revision: number }
+    expect(roleBody).toMatchObject({ active_expert: "workspace", active_kind: "clone", revision: 1 })
 
     h.queue.push({ chunks: textResult("收到") })
     await (await app.request(`/api/tasks/${taskId}/chat`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ content: "先以 SRE 视角看下风险" }),
+      body: JSON.stringify({ content: "先以全栈开发助手的姿势看下风险" }),
     })).text()
 
     const first = h.calls[0]
     const firstAppend = (first.options as { systemPrompt?: { append?: string } }).systemPrompt?.append ?? ""
     const firstAgents = (first.options as { agents?: Record<string, unknown> }).agents ?? {}
-    expect(first.content).toContain('name="SRE"')
+    expect(first.content).toContain("clone: workspace")
     expect(first.content).toContain("服务端角色切换")
-    // The persona is NOT in the frozen system prompt; the full roster is stable.
-    expect(firstAppend).not.toContain('name="SRE"')
-    expect(firstAgents).toHaveProperty("engineering-sre")
-    expect(firstAgents).toHaveProperty("product-manager")
+    expect(first.content).toContain("## 岗位包")
+    // The role pack is NOT in the frozen system prompt; the full roster is stable.
+    expect(firstAppend).not.toContain("clone: workspace")
+    expect(firstAgents).toHaveProperty("workspace")
+    expect(firstAgents).toHaveProperty("task-author")
 
-    // @ expert = one-turn subagent, identity unchanged.
+    // @ clone = one-turn subagent consult, identity unchanged.
     h.queue.push({ chunks: textResult("审查完毕") })
     await (await app.request(`/api/tasks/${taskId}/chat`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ content: "@代码审查员 检查一下这个改动" }),
+      body: JSON.stringify({ content: "@@archive 检查一下这个改动" }),
     })).text()
 
     const second = h.calls[1]
     const secondAppend = (second.options as { systemPrompt?: { append?: string } }).systemPrompt?.append ?? ""
     const secondAgents = (second.options as { agents?: Record<string, unknown> }).agents ?? {}
-    expect(second.content).toContain("用户本轮通过 @ 指定了以下专家：代码审查员")
-    expect(second.content).not.toContain('name="SRE"') // role card delivered once
+    expect(second.content).toContain("本轮委派了以下分身：工程分析师")
+    expect(second.content).not.toContain("clone: workspace") // role card delivered once
     expect(secondAppend).toBe(firstAppend)
     expect(secondAgents).toEqual(firstAgents)
     const roleAfter = await (await app.request(`/api/tasks/${taskId}/chat/role`)).json() as {
       active_expert: string | null
       delivered_revision: number
     }
-    expect(roleAfter.active_expert).toBe("engineering-sre")
+    expect(roleAfter.active_expert).toBe("workspace")
     expect(roleAfter.delivered_revision).toBe(1)
   })
 

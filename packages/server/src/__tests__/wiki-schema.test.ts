@@ -20,11 +20,11 @@ describe("wiki schema migration (v52)", () => {
 
   // 版本推进注记：票01 建表时为 51→52；票05 增 findings 表后 SCHEMA_VERSION=53；
   // 票08 清理账 pending_review 表退役 53→54；P4 票06 effectiveness v2 列面蓝绿改名
-  // 54→55，user_version 随之——wiki 表形态断言不变（纯增量/纯删表/纯列名迁移）。
-  it("bumps SCHEMA_VERSION to 55 and stamps user_version", () => {
-    expect(SCHEMA_VERSION).toBe(55)
+  // wiki 表形态断言不变（纯增量/纯删表/纯列名迁移）；版本号随 SCHEMA_VERSION 走。
+  it("stamps the current SCHEMA_VERSION onto user_version", () => {
+    expect(SCHEMA_VERSION).toBeGreaterThanOrEqual(55)
     applySchema(db)
-    expect(db.pragma("user_version", { simple: true })).toBe(55)
+    expect(db.pragma("user_version", { simple: true })).toBe(SCHEMA_VERSION)
   })
 
   it("creates wiki_articles with the index columns (org-scoped composite PK)", () => {

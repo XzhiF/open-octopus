@@ -5,6 +5,7 @@ import type { AgentMessage, MessageTimelineEntry, ToolCallRecord } from '@/lib/a
 import { cn } from '@/lib/utils'
 import { Bot, User, Brain, Wrench, ChevronRight, Square } from 'lucide-react'
 import { ToolCallCard } from './ToolCallCard'
+import { RoleSwitchCard } from './TuiTranscript'
 
 interface ChatBubbleProps {
   message: AgentMessage
@@ -26,6 +27,11 @@ export function ChatBubble({ message }: ChatBubbleProps) {
     const last = texts[texts.length - 1]
     return last?.text ?? message.content
   }, [hasTimeline, timeline, message.content])
+
+  // Identity-switch marker rides its own compact card (whole pack collapsible).
+  if (message.roleSwitch) {
+    return <RoleSwitchCard payload={message.roleSwitch} />
+  }
 
   // User turns use the shared terminal echo style (same as TuiTranscript):
   // left-aligned full width, pop-paper + inset hairline, pink ❯ prefix.

@@ -24,10 +24,10 @@ import { isResumeFailureMessage, usableResumeId } from '../../services/agent/res
 import type { AgentSessionDAO, SafetyDAO, ScheduleConfigDAO } from '../../db/dao'
 import { SessionCacheContextDAO } from '../../db/dao/session-cache-context-dao'
 import { resolveSessionExpertRoster } from '../../services/agent/session-expert-roster'
-import { resolveExpertSubagents } from '../../services/agent/expert-registry'
+import { parseCloneMentions, resolveCloneSubagents } from '../../services/agent/clone-resolver'
 import { pendingRoleCard } from '../../services/agent/role-card'
+import { appendRoleSwitchEvent, roleSwitchEventPayload } from '../../services/agent/role-switch-event'
 import { withTransientReminder } from '../../services/agent/prompt-reminder'
-import { parseExpertMentions } from '@octopus/shared'
 import { recordProviderResultUsage } from '../../services/llm-call-ledger'
 import { createWorkflowToolServer } from '../../services/chat/workflow-tools'
 import type { TokenUsageDAO } from '../../db/dao/token-usage-dao'
@@ -152,24 +152,22 @@ export function createChatRoutes(deps: ChatRouteDeps): Hono {
       cacheCtx.resetRoleDelivery(id)
     }
 
-    // Identity switch (role card) and @ expert dispatch both ride the user
-    // message. system prompt / tools / agents stay byte-stable for the cache.
+    // Identity switch (role card) and @ delegation (one-turn subagent consult)
+    // both ride the user message. system prompt / tools / agents stay stable.
     const roleState = cacheCtx.getRoleState(id)
     const roleCard = pendingRoleCard(roleState)
-    const mentions = parseExpertMentions(body.message!)
-    const requestedExperts = [
-      ...mentions.map((role) => role.id),
-      ...(body.subagents ?? []).map((ref) => ref.id),
-    ]
+    const self = session.clone_name ?? null
+    const consults = [
+      ...parseCloneMentions(body.message!),
+      ...(body.subagents ?? []).map((ref) => ({ name: ref.id, displayName: ref.label ?? ref.id })),
+    ].filter((c, i, all) => c.name !== self && all.findIndex((x) => x.name === c.name) === i)
     const roster = resolveSessionExpertRoster(cacheCtx, {
       sessionId: id,
-      cloneName: session.clone_name ?? 'main',
-      requested: requestedExperts,
-      seedCatalog: true,
+      requested: consults.map((c) => c.name),
     })
-    const agents = resolveExpertSubagents(roster.map((expertId) => ({ id: expertId })))
-    const mentionReminder = mentions.length > 0
-      ? `用户本轮通过 @ 指定了以下专家：${mentions.map((role) => role.name).join('、')}。请调用对应的 subagent 获取其专业意见，再整合成最终回答；不要简单拼接。`
+    const agents = resolveCloneSubagents(roster)
+    const mentionReminder = consults.length > 0
+      ? `用户本轮委派了以下分身：${consults.map((c) => c.displayName).join('、')}。请调用对应的 subagent 获取其专业意见，再整合成最终回答；不要简单拼接。`
       : undefined
     const turnReminder = [roleCard, mentionReminder].filter(Boolean).join('\n\n')
     const providerMessage = withTransientReminder(body.message!, turnReminder)
@@ -215,7 +213,10 @@ export function createChatRoutes(deps: ChatRouteDeps): Hono {
           cwd: sessionCwd,
           mcpServers,
           onResult: roleCard
-            ? () => cacheCtx.markRoleDelivered(id, roleState.revision)
+            ? () => {
+                cacheCtx.markRoleDelivered(id, roleState.revision)
+                appendRoleSwitchEvent(sessionDao.getDb(), id, roleSwitchEventPayload(roleState, roleCard))
+              }
             : undefined,
         })
 

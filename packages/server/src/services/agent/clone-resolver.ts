@@ -6,8 +6,12 @@
 //
 import fs from 'fs'
 import path from 'path'
+import type { OctopusAgentDef } from '@octopus/providers'
 import { getBuiltInClonesDir, getClonesDir, getBuiltInCloneDir, getCloneDir } from './paths'
-import { BUILTIN_CLONES, isBuiltinClone } from './builtin-clones'
+import { BUILTIN_CLONES, getBuiltinCloneDef, isBuiltinClone } from './builtin-clones'
+
+/** Read-only tools every consulting clone gets — it advises, it does not mutate. */
+const CONSULT_TOOLS = ['Read', 'Grep', 'Glob']
 
 // ── Types ──────────────────────────────────────────────────────────
 
@@ -63,6 +67,105 @@ export function resolveCloneInfo(name: string): CloneInfo | null {
 
   // Check user clones
   return resolveUserCloneInfo(name)
+}
+
+/** Role-card pack: what an identity switch needs to describe itself. */
+export interface CloneRolePack {
+  name: string
+  displayName: string
+  /** Full persona text (persona.md on disk wins over the built-in template). */
+  persona: string | null
+  /** Where the full persona lives, when a file exists (role card points at it). */
+  personaPath: string | null
+  skills: string[]
+  memoryScope: 'shared' | 'isolated'
+  type: 'built-in' | 'user'
+}
+
+/**
+ * Resolve the full role pack for a clone identity (identity switch / role card).
+ * Unlike CloneInfo.persona (200-char excerpt), the persona here is the whole
+ * text so the role card can be complete without truncation.
+ */
+export function resolveCloneRolePack(name: string): CloneRolePack | null {
+  if (!isValidCloneName(name)) return null
+  const info = resolveCloneInfo(name)
+  if (!info) return null
+
+  const cloneDir = info.type === 'built-in' ? getBuiltInCloneDir(name) : getCloneDir(name)
+  const personaPath = path.join(cloneDir, 'persona.md')
+  let persona: string | null = null
+  let personaOnDisk = false
+  if (fs.existsSync(personaPath)) {
+    try {
+      const text = fs.readFileSync(personaPath, 'utf-8').trim()
+      if (text) { persona = text; personaOnDisk = true }
+    } catch { /* fall through to the built-in template */ }
+  }
+  if (!persona) {
+    const inline = isBuiltinClone(name) ? getBuiltinCloneDef(name)?.persona?.trim() : ''
+    if (inline) persona = inline
+  }
+
+  return {
+    name: info.name,
+    displayName: info.display_name,
+    persona,
+    personaPath: personaOnDisk ? personaPath : null,
+    skills: info.skills,
+    memoryScope: info.memory_scope,
+    type: info.type,
+  }
+}
+
+/** Clones that may be consulted as subagents (main-agent has no upward target). */
+export function listConsultableClones(): CloneInfo[] {
+  return listAllClones().filter((c) => c.name !== 'main-agent')
+}
+
+export interface CloneMention {
+  name: string
+  displayName: string
+}
+
+/**
+ * Parse `@name` / `@@name` clone mentions from a user message. Matches by
+ * clone name (slug) or exact display name; ordered, de-duplicated.
+ */
+export function parseCloneMentions(text: string): CloneMention[] {
+  const clones = listConsultableClones()
+  const byName = new Map(clones.map((c) => [c.name, c]))
+  const out: CloneMention[] = []
+  const seen = new Set<string>()
+  for (const match of text.matchAll(/(^|\s)@(@?)([^\s@]+)/g)) {
+    const token = match[3]
+    const hit = byName.get(token) ?? clones.find((c) => c.display_name === token)
+    if (!hit || seen.has(hit.name)) continue
+    seen.add(hit.name)
+    out.push({ name: hit.name, displayName: hit.display_name })
+  }
+  return out
+}
+
+/**
+ * Resolve clone names into subagent definitions for one-turn consultation
+ * (`@分身` / 挂载 panel). The prompt is the clone's WHOLE persona — the same
+ * text the identity role card carries.
+ */
+export function resolveCloneSubagents(names: readonly string[]): Record<string, OctopusAgentDef> | undefined {
+  const out: Record<string, OctopusAgentDef> = {}
+  for (const name of names) {
+    const pack = resolveCloneRolePack(name)
+    if (!pack) continue
+    out[pack.name] = {
+      description: pack.skills.length > 0
+        ? `${pack.displayName}（分身 · SKILL ${pack.skills.join(' / ')}）`
+        : `${pack.displayName}（分身）`,
+      prompt: pack.persona ?? `你是 ${pack.displayName} 分身。基于你的专业视角给出意见，不要编造超出你专业领域的断言。`,
+      tools: CONSULT_TOOLS,
+    }
+  }
+  return Object.keys(out).length > 0 ? out : undefined
 }
 
 /**

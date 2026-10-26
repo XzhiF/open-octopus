@@ -56,7 +56,7 @@ describe("composer + 挂载", () => {
     vi.clearAllMocks()
   })
 
-  it("列出系统 SKILL 与分身，SKILL 加前缀、专家走 delegate_to 随消息发送", async () => {
+  it("列出系统 SKILL 与分身，SKILL 加前缀、分身走本轮会诊随消息发送", async () => {
     const onSend = vi.fn()
     render(<ChatArea {...baseProps} onSend={onSend} />)
 
@@ -75,7 +75,9 @@ describe("composer + 挂载", () => {
     fireEvent.change(screen.getByRole("textbox"), { target: { value: "看一下这个 spec" } })
     fireEvent.keyDown(screen.getByRole("textbox"), { key: "Enter" })
 
-    expect(onSend).toHaveBeenCalledWith("/open-spec 看一下这个 spec", { delegate_to: "dev-clone" })
+    expect(onSend).toHaveBeenCalledWith("/open-spec 看一下这个 spec", {
+      subagents: [{ id: "dev-clone", label: "开发分身" }],
+    })
     expect(screen.queryByText("/open-spec")).toBeNull()
     expect(screen.queryByText("分身 · 开发分身")).toBeNull()
   })

@@ -172,15 +172,20 @@ CREATE TABLE IF NOT EXISTS session_expert_rosters (
   updated_at TEXT NOT NULL
 );
 
--- 6c. Session role state (schema v57)
--- A session's active expert is a *role switch* delivered as an append-only
+-- 6c. Session role state (schema v57; expert_kind v59)
+-- A session's active identity is a *role switch* delivered as an append-only
 -- role card on the user message, NOT a system-prompt mutation. revision bumps
 -- on every switch; delivered_revision tracks whether the current card is
 -- already in the provider transcript. This keeps tools/system/agents stable
 -- so the prompt-cache prefix survives every switch.
+-- v59: expert_kind distinguishes the identity source ('expert' = legacy
+-- agency roster, 'clone' = system/user clone). Identity switching targets
+-- clones now; legacy rows keep 'expert' so their already-delivered cards
+-- stay interpretable.
 CREATE TABLE IF NOT EXISTS session_role_states (
   session_id         TEXT PRIMARY KEY,
   active_expert      TEXT,
+  expert_kind        TEXT NOT NULL DEFAULT 'expert',
   revision           INTEGER NOT NULL DEFAULT 0,
   delivered_revision INTEGER NOT NULL DEFAULT 0,
   updated_at         TEXT NOT NULL

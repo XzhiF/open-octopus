@@ -1349,11 +1349,21 @@ export async function getTaskChatBinding(taskId: string): Promise<TaskDoerChatBi
   return handleResponse<TaskDoerChatBinding>(res)
 }
 
-/** Expert identity of the task's doer chat (role switch, not @ dispatch). */
+/** Identity of the task's doer chat (role switch, not @ dispatch).
+ *  v59: identities are clones; `expert` only resolves for legacy rows. */
 export interface TaskChatRoleState {
   session_id: string
   active_expert: string | null
+  active_kind: 'expert' | 'clone'
   expert: { id: string; name: string; label: string; desc: string } | null
+  clone: {
+    id: string
+    display_name: string
+    type: 'built-in' | 'user'
+    skills: string[]
+    memory_scope: 'shared' | 'isolated'
+    status: 'active' | 'idle' | 'executing'
+  } | null
   revision: number
   delivered_revision: number
 }

@@ -1,3 +1,9 @@
+// Main-agent legacy endpoint (/api/agent/chat) — delegate_to 已退役（v59）。
+//
+// 分身的两条出路现在是「切换身份（chip）」与「委派会诊（@ / 挂载面板）」，
+// 整轮转交不再由用户面产生。旧客户端仍可能带上 delegate_to 字段 —— 该字段被
+// 忽略，消息走正常 LLM 路由（不再有 delegation_start / clone_chat 落账）。
+
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import fs from 'fs'
 import path from 'path'
@@ -7,7 +13,7 @@ import { createMainAgentRoute } from '../routes/agent/main-agent-route'
 
 // ── Test helpers ──────────────────────────────────────────────────
 
-const TEST_DIR = path.join(os.tmpdir(), `delegate-mention-test-${Date.now()}`)
+const TEST_DIR = path.join(os.tmpdir(), `delegate-retired-test-${Date.now()}`)
 
 function setOctopusHome(): void {
   process.env.OCTOPUS_HOME = TEST_DIR
@@ -38,7 +44,7 @@ function createMockSessionDAO() {
 
 // ── Tests ─────────────────────────────────────────────────────────
 
-describe('@@mention Backend (delegate_to)', () => {
+describe('delegate_to 退役（legacy main-agent endpoint）', () => {
   let app: Hono
 
   beforeEach(() => {
@@ -49,18 +55,13 @@ describe('@@mention Backend (delegate_to)', () => {
     // Create test directory structure
     fs.mkdirSync(path.join(TEST_DIR, 'agent', 'built-in', 'workspace'), { recursive: true })
     fs.mkdirSync(path.join(TEST_DIR, 'agent', 'built-in', 'scheduler'), { recursive: true })
-    fs.mkdirSync(path.join(TEST_DIR, 'agent', 'built-in', 'archive'), { recursive: true })
-    fs.mkdirSync(path.join(TEST_DIR, 'agent', 'built-in', 'resource'), { recursive: true })
     fs.mkdirSync(path.join(TEST_DIR, 'agent', 'clones'), { recursive: true })
     fs.mkdirSync(path.join(TEST_DIR, 'agent', 'memory'), { recursive: true })
     fs.mkdirSync(path.join(TEST_DIR, 'agent', 'skills'), { recursive: true })
 
-    // Write config + persona for built-in clones
     for (const [name, displayName] of [
       ['workspace', '全栈开发助手'],
       ['scheduler', '定时任务管理'],
-      ['archive', '工程分析师'],
-      ['resource', '资源操作专家'],
     ]) {
       fs.writeFileSync(
         path.join(TEST_DIR, 'agent', 'built-in', name, 'config.json'),
@@ -89,95 +90,37 @@ describe('@@mention Backend (delegate_to)', () => {
     }
   })
 
-  describe('delegate_to validation', () => {
-    it('returns error SSE for nonexistent clone', async () => {
-      const res = await app.request('/chat', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ message: 'hello', delegate_to: 'nonexistent-clone' }),
-      })
+  it('ignores delegate_to and routes through the normal LLM turn (no delegation events)', async () => {
+    const providers = await import('@octopus/providers')
+    vi.spyOn(providers, 'getProvider').mockImplementation((() => ({
+      sendQuery: async function* () {
+        yield { type: 'text_delta', content: 'ok' }
+        yield { type: 'result', content: 'ok', sessionId: 'sdk-1' }
+      },
+    })) as never)
 
-      expect(res.status).toBe(200) // SSE always returns 200
-
-      // Read SSE stream to find error event
-      const text = await res.text()
-      expect(text).toContain('CLONE_NOT_FOUND')
-      expect(text).toContain('nonexistent-clone')
+    const res = await app.request('/chat', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ message: 'help me with cron', delegate_to: 'scheduler' }),
     })
 
-    it('accepts delegate_to for built-in clone', async () => {
-      // Mock getProvider to simulate provider unavailable (graceful error)
-      const providers = await import('@octopus/providers')
-      vi.spyOn(providers, 'getProvider').mockImplementation(() => {
-        throw new Error('Provider not configured in test')
-      })
-
-      const res = await app.request('/chat', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ message: 'help me with cron', delegate_to: 'scheduler' }),
-      })
-
-      expect(res.status).toBe(200)
-      const text = await res.text()
-      // Should contain delegation_start event (clone exists)
-      expect(text).toContain('delegation_start')
-      expect(text).toContain('scheduler')
-    })
-
-    it('stores user message in session when delegate_to is present', async () => {
-      const providers = await import('@octopus/providers')
-      vi.spyOn(providers, 'getProvider').mockImplementation(() => {
-        throw new Error('Provider not configured in test')
-      })
-
-      await app.request('/chat', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ message: 'test message', delegate_to: 'scheduler' }),
-      })
-
-      // User message should be stored
-      expect(messages.length).toBeGreaterThanOrEqual(1)
-      expect(messages[0].content).toBe('test message')
-      expect(messages[0].role).toBe('user')
-    })
-
-    it('returns error when message is missing', async () => {
-      const res = await app.request('/chat', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ delegate_to: 'scheduler' }),
-      })
-
-      expect(res.status).toBe(400)
-    })
+    expect(res.status).toBe(200)
+    const text = await res.text()
+    expect(text).not.toContain('delegation_start')
+    expect(text).not.toContain('delegation_end')
+    // The user message is stored raw; no assistant row carries a delegation marker.
+    expect(messages.some((m) => m.role === 'user' && m.content === 'help me with cron')).toBe(true)
+    expect(messages.every((m) => !/"?delegation"?\s*:\s*true/.test(String(m.metadata ?? '')))).toBe(true)
   })
 
-  describe('self-reference', () => {
-    it('treats delegate_to matching session clone_name as normal message', async () => {
-      // Pre-create a session with clone_name = 'scheduler'
-      const sessionId = 'test-session-self'
-      sessions.set(sessionId, {
-        id: sessionId,
-        org: 'default',
-        clone_name: 'scheduler',
-        is_deleted: false,
-        title: 'Scheduler 会话',
-      })
-
-      // When delegate_to matches session's clone_name, it should fall through
-      // to normal LLM routing (which will fail in test because provider is unavailable)
-      const res = await app.request('/chat', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ message: 'hello', delegate_to: 'scheduler', session_id: sessionId }),
-      })
-
-      expect(res.status).toBe(200)
-      const text = await res.text()
-      // Should NOT contain delegation_start (self-reference = normal flow)
-      expect(text).not.toContain('delegation_start')
+  it('returns 400 when message is missing', async () => {
+    const res = await app.request('/chat', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ delegate_to: 'scheduler' }),
     })
+
+    expect(res.status).toBe(400)
   })
 })

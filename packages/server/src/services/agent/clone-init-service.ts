@@ -8,7 +8,7 @@ import path from 'path'
 import { createHash } from 'crypto'
 import { copyDirSync, type CloneDef } from '@octopus/shared'
 import type { CloneDAO } from '../../db/dao'
-import { BUILTIN_CLONES } from './builtin-clones'
+import { BUILTIN_CLONES, PREV_BUILTIN_PERSONA_HASHES, builtinPersonaHash, normalizePersonaText } from './builtin-clones'
 import { getBuiltInClonesDir, getBuiltInCloneDir, getBuiltInCloneMemoryDir } from './paths'
 import { DEFAULT_WORKFLOW_PRESETS_YAML, PREV_DEFAULT_WORKFLOW_PRESETS_YAMLS, PRESETS_VERSION, hashPresetsContent } from './workflow-presets-seed'
 
@@ -278,6 +278,99 @@ export class CloneInitService {
     }
   }
 
+  /** Write ⧸ refresh ⧸ preserve a built-in persona template (step 3 rules).
+   *  Untouched detection: the config.json `persona_template_hash` stamp when
+   *  present, else the embedded previous-template hash ledger (one-time
+   *  migration for installs seeded before tracking existed). */
+  private seedBuiltinPersona(
+    cloneName: string,
+    cloneDef: CloneDef,
+    cloneDir: string,
+    personaPath: string,
+    result: CloneInitResult,
+  ): void {
+    const key = `built-in/${cloneName}/persona.md`
+    const current = cloneDef.persona
+    const currentHash = builtinPersonaHash(cloneDef)
+
+    let existing: string | null = null
+    if (fs.existsSync(personaPath)) {
+      try {
+        existing = fs.readFileSync(personaPath, 'utf-8')
+      } catch {
+        existing = null
+      }
+    }
+
+    if (existing === null) {
+      try {
+        fs.writeFileSync(personaPath, current, 'utf-8')
+        result.filesCreated.push(key)
+      } catch (err: unknown) {
+        console.warn(`[CloneInitService] seed failed for ${key}:`, err instanceof Error ? err.message : String(err))
+      }
+      return
+    }
+
+    const diskHash = createHash('sha256').update(normalizePersonaText(existing), 'utf-8').digest('hex')
+    if (diskHash === currentHash) {
+      result.filesSkipped.push(key)
+      this.updateBuiltinPersonaStamp(cloneDir, currentHash)
+      return
+    }
+
+    const recorded = this.readBuiltinPersonaStamp(cloneDir)
+    const untouched = recorded !== null
+      ? diskHash === recorded
+      : (PREV_BUILTIN_PERSONA_HASHES[cloneName] ?? []).includes(diskHash)
+
+    if (untouched) {
+      try {
+        fs.writeFileSync(personaPath, current, 'utf-8')
+        result.filesRefreshed.push(key)
+        this.updateBuiltinPersonaStamp(cloneDir, currentHash)
+        console.log(`[CloneInitService] ${key} matched a previous template — refreshed to the current one`)
+      } catch (err: unknown) {
+        console.warn(`[CloneInitService] refresh failed for ${key}:`, err instanceof Error ? err.message : String(err))
+      }
+      return
+    }
+
+    result.filesSkipped.push(key)
+    this.warnUserModified(personaPath, key)
+  }
+
+  /** config.json `persona_template_hash`, or null when absent/unreadable. */
+  private readBuiltinPersonaStamp(cloneDir: string): string | null {
+    try {
+      const raw = JSON.parse(fs.readFileSync(path.join(cloneDir, 'config.json'), 'utf-8')) as {
+        persona_template_hash?: unknown
+      }
+      return typeof raw.persona_template_hash === 'string' ? raw.persona_template_hash : null
+    } catch {
+      return null
+    }
+  }
+
+  /** Stamp the last-written template hash into config.json (merge-write).
+   *  No-op when config.json does not exist yet — step 4 creates it stamped. */
+  private updateBuiltinPersonaStamp(cloneDir: string, hash: string): void {
+    const configPath = path.join(cloneDir, 'config.json')
+    try {
+      if (!fs.existsSync(configPath)) return
+      const raw = JSON.parse(fs.readFileSync(configPath, 'utf-8')) as Record<string, unknown>
+      if (raw.persona_template_hash === hash) return
+      raw.persona_template_hash = hash
+      fs.writeFileSync(configPath, JSON.stringify(raw, null, 2), 'utf-8')
+    } catch (err: unknown) {
+      // Losing the stamp only costs the next run's edit detection.
+      console.warn(
+        `[CloneInitService] could not stamp persona_template_hash in ${cloneDir}:`,
+        err instanceof Error ? err.message : String(err),
+      )
+    }
+  }
+
   /** Read the seed manifest, or null when missing/unparseable. */
   private readSeedManifest(manifestPath: string): SeedManifest | null {
     try {
@@ -422,18 +515,24 @@ export class CloneInitService {
       this.seedArchiveAssets(cloneDir, result)
     }
 
-    // 3. Write default persona.md — only a fallback now: for non-task-author
-    // clones (no fork), and for task-author installs where the fork was
-    // unavailable. When the seed already wrote it, this is a no-op.
+    // 3. Write/migrate persona.md. task-author / archive personas are owned by
+    // their forks (step 2) and left alone; every other built-in template is
+    // versioned like the workflow presets:
+    //   missing                  → write the current template
+    //   ≡ current template       → skip (already fresh)
+    //   ≡ a previous template    → refresh to the current one + log. An old
+    //                              seed copy must never shadow a code update.
+    //   hand-edited              → preserve + warn once (delete to re-seed)
     const personaPath = path.join(cloneDir, 'persona.md')
-    if (!fs.existsSync(personaPath)) {
-      fs.writeFileSync(personaPath, cloneDef.persona, 'utf-8')
-      result.filesCreated.push(`built-in/${name}/persona.md`)
-    } else {
+    const forkOwnedPersona = name === 'task-author' || name === 'archive'
+    if (forkOwnedPersona) {
       result.filesSkipped.push(`built-in/${name}/persona.md`)
+    } else {
+      this.seedBuiltinPersona(name, cloneDef, cloneDir, personaPath, result)
     }
 
-    // 4. Write config.json
+    // 4. Write config.json (creation stamps the persona template hash so the
+    //    next run can tell an untouched seed from a hand-edit).
     const configPath = path.join(cloneDir, 'config.json')
     if (!fs.existsSync(configPath)) {
       const config = {
@@ -443,6 +542,7 @@ export class CloneInitService {
         skills: cloneDef.skills,
         memoryScope: cloneDef.memoryScope,
         config: cloneDef.config,
+        persona_template_hash: builtinPersonaHash(cloneDef),
         created_at: new Date().toISOString(),
       }
       fs.writeFileSync(configPath, JSON.stringify(config, null, 2), 'utf-8')

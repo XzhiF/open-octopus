@@ -43,9 +43,9 @@ import { ExecutionDAO, TaskDAO } from "../../db/dao"
 import { SessionCacheContextDAO } from "../../db/dao/session-cache-context-dao"
 import type { SessionRoleState } from "../../db/dao/session-cache-context-dao"
 import { resolveSessionExpertRoster } from "../agent/session-expert-roster"
-import { resolveExpertSubagents } from "../agent/expert-registry"
+import { parseCloneMentions, resolveCloneSubagents } from "../agent/clone-resolver"
 import { pendingRoleCard } from "../agent/role-card"
-import { parseExpertMentions } from "@octopus/shared"
+import { appendRoleSwitchEvent, roleSwitchEventPayload } from "../agent/role-switch-event"
 import { resolveGlobalWikiRoot } from "../knowledge/global-paths"
 import {
   QUICK_EDIT_MARKER,
@@ -229,16 +229,14 @@ export class TaskDoerService {
       roleState = cacheCtx.getRoleState(target.sessionId)
     }
     const roleCard = pendingRoleCard(roleState)
-    const mentions = parseExpertMentions(content)
+    const mentions = parseCloneMentions(content)
     const roster = resolveSessionExpertRoster(cacheCtx, {
       sessionId: target.sessionId,
-      cloneName: "task-doer",
-      requested: mentions.map((role) => role.id),
-      seedCatalog: true,
+      requested: mentions.filter((m) => m.name !== "task-doer").map((m) => m.name),
     })
-    const agents = resolveExpertSubagents(roster.map((id) => ({ id })))
+    const agents = resolveCloneSubagents(roster)
     const mentionReminder = mentions.length > 0
-      ? `用户本轮通过 @ 指定了以下专家：${mentions.map((role) => role.name).join("、")}。请调用对应的 subagent 获取其专业意见，再整合成最终回答；不要简单拼接。`
+      ? `用户本轮委派了以下分身：${mentions.map((m) => m.displayName).join("、")}。请调用对应的 subagent 获取其专业意见，再整合成最终回答；不要简单拼接。`
       : undefined
     const taskContext = this.buildTaskContext(taskId, target, takeoverTurn)
     const promptReminder = [roleCard, mentionReminder, taskContext]
@@ -286,6 +284,7 @@ export class TaskDoerService {
     })
     if (roleCard && !outcome.aborted) {
       cacheCtx.markRoleDelivered(target.sessionId, roleState.revision)
+      appendRoleSwitchEvent(this.deps.db, target.sessionId, roleSwitchEventPayload(roleState, roleCard))
     }
     return { outcome, target }
   }
@@ -305,7 +304,7 @@ export class TaskDoerService {
     const target = this.ensureSession(taskId)
     return {
       sessionId: target.sessionId,
-      state: new SessionCacheContextDAO(this.deps.db).setActiveExpert(target.sessionId, expert),
+      state: new SessionCacheContextDAO(this.deps.db).setActiveExpert(target.sessionId, expert, 'clone'),
     }
   }
 

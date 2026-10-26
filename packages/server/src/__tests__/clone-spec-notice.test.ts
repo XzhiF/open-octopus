@@ -108,19 +108,20 @@ vi.mock("../services/agent/clone-runtime", () => ({
   },
 }))
 
-// Mock clone-resolver so resolveCloneInfo returns built-in task-author info
-// without filesystem setup (mirrors clone-autosave.test.ts).
+// Mock clone-resolver so resolveCloneInfo returns built-in info without
+// filesystem setup (mirrors clone-autosave.test.ts). `workspace` is registered
+// too so the identity-switch test has a valid clone target (v59).
 vi.mock("../services/agent/clone-resolver", async (importOriginal) => {
   const real = await importOriginal<typeof import("../services/agent/clone-resolver")>()
   return {
     ...real,
     resolveCloneInfo: (name: string) => {
-      if (name !== "task-author") return null
+      if (name !== "task-author" && name !== "workspace") return null
       return {
         name,
-        display_name: "Task Author",
+        display_name: name === "workspace" ? "全栈开发助手" : "Task Author",
         type: "built-in" as const,
-        persona: `# task-author\n\nFake persona for test.`,
+        persona: `# ${name}\n\nFake persona for test.`,
         skills: [],
         memory_scope: "shared" as const,
       }
@@ -448,23 +449,25 @@ describe("05: reverse context msg — [save] → store → next chat → CloneRu
     const roleRes = await app.request(`/api/clones/task-author/sessions/${session.id}/role`, {
       method: "PUT",
       headers: { "Content-Type": "application/json", "X-Octopus-Org": ORG },
-      body: JSON.stringify({ expert: "engineering-sre" }),
+      body: JSON.stringify({ expert: "workspace" }),
     })
     expect(roleRes.status).toBe(200)
 
     const r1 = await app.request(`/api/clones/task-author/sessions/${session.id}/chat`, {
       method: "POST",
       headers: { "Content-Type": "application/json", "X-Octopus-Org": ORG },
-      body: JSON.stringify({ message: "以 SRE 视角看下风险" }),
+      body: JSON.stringify({ message: "以全栈开发助手的姿势看下风险" }),
     })
     expect(r1.status).toBe(200)
     await r1.text()
 
-    expect(capture.roleCard).toContain('name="SRE"')
-    expect(capture.systemPrompt ?? "").not.toContain('name="SRE"')
+    expect(capture.roleCard).toContain("clone: workspace")
+    expect(capture.roleCard).toContain("## 岗位包")
+    expect(capture.systemPrompt ?? "").not.toContain("clone: workspace")
     const state = new SessionCacheContextDAO(db).getRoleState(session.id)
     expect(state).toMatchObject({
-      activeExpert: "engineering-sre",
+      activeExpert: "workspace",
+      activeKind: "clone",
       revision: 1,
       deliveredRevision: 1,
     })

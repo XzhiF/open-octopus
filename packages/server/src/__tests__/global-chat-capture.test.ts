@@ -205,19 +205,18 @@ describe("Main Agent 入账与委托去重（US2/KD23）", () => {
     expect(viewCost(rows[0].id)).toBeCloseTo(0.010935, 6)
   })
 
-  it("@@mention 委托（无自引用）→ Main 不产生路由调用，恰一条 clone_chat 行归分身（node_id=clone）", async () => {
+  it("mention 文本 + 遗留 delegate_to 字段 → 走正常路由，恰一条 global_chat 行（整轮转交已退役）", async () => {
     makeSession("ma-2", "workspace")
-    installProvider([[{ type: "text_delta", content: "clone answer" }, resultChunk(SECONDARY, USAGE_S)]])
-    await mainChat(mainApp(), { message: "E2E_TEST @scheduler do it", session_id: "ma-2", delegate_to: "scheduler" })
+    installProvider([[{ type: "text_delta", content: "answer" }, resultChunk(PRIMARY, USAGE_P)]])
+    await mainChat(mainApp(), { message: "E2E_TEST @@scheduler 帮我看下", session_id: "ma-2", delegate_to: "scheduler" })
 
-    expect(sendQueryCalls).toBe(1) // Main Agent 路由轮未发起 provider 调用 → 不该有 global_chat 行
+    expect(sendQueryCalls).toBe(1)
     const rows = llmRows()
     expect(rows).toHaveLength(1)
     expect(rows[0]).toMatchObject({
-      source_path: "clone_chat", session_id: "ma-2", org: ORG,
-      node_id: "scheduler", model: SECONDARY,
+      source_path: "global_chat", session_id: "ma-2", org: ORG, model: PRIMARY,
     })
-    expect(viewCost(rows[0].id)).toBeCloseTo(0.0008275, 6)
+    expect(viewCost(rows[0].id)).toBeCloseTo(0.010935, 6)
   })
 
   it("工具化委托（delegate_to_*）→ Main 路由轮 + 分身应答轮各一行，行数=真实调用数=2，无双计", async () => {

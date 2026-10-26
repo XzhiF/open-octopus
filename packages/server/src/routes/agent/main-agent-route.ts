@@ -1,9 +1,10 @@
 // packages/server/src/routes/agent/main-agent-route.ts
 //
 // Main Agent unified entry route — POST /api/agent/chat
-// Supports:
-//   1. LLM routing with tool-based delegation (default)
-//   2. Deterministic @@mention delegation via delegate_to field
+// LLM routing with tool-based delegation (delegate_to_* tools). The old
+// deterministic user-side delegation (body.delegate_to, @@mention handoff)
+// was retired in v59 — 分身 now switches identity (chip) or is consulted as a
+// one-turn subagent; this endpoint ignores a stray delegate_to field.
 //
 import { Hono } from 'hono'
 import { streamSSE } from 'hono/streaming'
@@ -199,7 +200,6 @@ export function createMainAgentRoute(deps: MainAgentRouteDeps): Hono {
     let body: {
       message?: string
       session_id?: string
-      delegate_to?: string
       model?: string
       effort?: string
       maxContext?: string
@@ -251,118 +251,6 @@ export function createMainAgentRoute(deps: MainAgentRouteDeps): Hono {
       content: body.message, created_at: now,
     })
     sessionDAO.updateLastMessageAt(sessionId, now)
-
-    // ══════════════════════════════════════════════════════════════
-    // Deterministic delegation (@@mention)
-    // ══════════════════════════════════════════════════════════════
-    if (body.delegate_to) {
-      const targetClone = body.delegate_to
-
-      // Self-reference check: if session belongs to same clone, treat as normal message
-      const session = sessionDAO.findById(sessionId)
-      if (session?.clone_name === targetClone) {
-        // Self-reference → fall through to normal LLM routing
-      } else {
-        // Resolve clone from filesystem
-        const cloneDef = resolveCloneDefFromFs(targetClone)
-        if (!cloneDef) {
-          return streamSSE(c, async (stream) => {
-            await stream.writeSSE({
-              event: 'error',
-              data: JSON.stringify({ code: 'CLONE_NOT_FOUND', message: `Clone "${targetClone}" not found` }),
-            })
-          })
-        }
-
-        return streamSSE(c, async (stream) => {
-          const abortStream = () => {}
-          const streamId = registerActiveStream(sessionId!, abortStream)
-
-          try {
-            // Signal delegation start
-            await stream.writeSSE({
-              event: 'delegation_start',
-              data: JSON.stringify({ clone_name: targetClone, display_name: cloneDef.displayName }),
-            })
-
-            const runtime = new CloneRuntime(cloneDef, org)
-            const cwd = runtime.getDefaultCwd()
-            let fullContent = ''
-
-            for await (const chunk of runtime.chat(
-              body.message!, sessionId!, null, cwd,
-              undefined, undefined, undefined, undefined, model, undefined, effort,
-            )) {
-              if ((stream as any)._aborted) break
-
-              if (chunk.type === 'text_delta') fullContent += chunk.content
-              // billing-coverage-2 票03 (KD23)：@@mention 委托 —— 实际 provider 调用发生在
-              // 分身侧（CloneRuntime 流），一行 clone_chat 归本会话、node_id=分身名；
-              // Main Agent 本路径不发起路由调用 → 不多记 global_chat 行，绝不双计。
-              if (tokenUsageDao && chunk.type === 'result') {
-                recordProviderResultUsage({
-                  sourcePath: 'clone_chat',
-                  nodeExecutionId: null,
-                  executionId: null,
-                  sessionId: sessionId!,
-                  org,
-                  nodeId: targetClone,
-                  startedAtMs: turnStartMs,
-                  modelUsages: chunk.modelUsages,
-                  usage: chunk.usage,
-                }, tokenUsageDao)
-              }
-              const sseEvent = forwardableSSEEvent(chunk, fullContent, targetClone)
-              if (sseEvent) await stream.writeSSE(sseEvent)
-            }
-
-            // Signal delegation end
-            await stream.writeSSE({
-              event: 'delegation_end',
-              data: JSON.stringify({ clone_name: targetClone }),
-            })
-
-            // Store assistant message with source metadata
-            if (fullContent) {
-              const assistantMsgId = crypto.randomUUID()
-              const assistantNow = new Date().toISOString()
-              const metadata = JSON.stringify({ source: targetClone, delegation: true })
-
-              sessionDAO.insertMessage({
-                id: assistantMsgId, session_id: sessionId!, role: 'assistant',
-                content: fullContent, metadata, created_at: assistantNow,
-              })
-              sessionDAO.updateLastMessageAt(sessionId!, assistantNow)
-
-              await stream.writeSSE({
-                event: 'done',
-                data: JSON.stringify({
-                  session_id: sessionId,
-                  message_id: assistantMsgId,
-                  session_title: sessionDAO.findById(sessionId!)?.title,
-                }),
-              })
-
-              // P4: Auto-trigger process-marks after delegation response
-              try {
-                const evolutionService = getEvolutionService()
-                evolutionService.processUnprocessedMarks(org, sessionId!)
-              } catch {
-                // process-marks failure is non-fatal
-              }
-            }
-          } catch (err: unknown) {
-            const msg = err instanceof Error ? err.message : String(err)
-            await stream.writeSSE({
-              event: 'error',
-              data: JSON.stringify({ code: 'DELEGATION_ERROR', message: `Delegation to ${targetClone} failed: ${msg}` }),
-            })
-          } finally {
-            unregisterActiveStream(sessionId!, streamId)
-          }
-        })
-      }
-    }
 
     // ══════════════════════════════════════════════════════════════
     // Normal LLM routing (with optional tool-based delegation)

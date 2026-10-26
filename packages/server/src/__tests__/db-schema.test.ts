@@ -15,7 +15,7 @@ describe("DB Schema", () => {
     db?.close()
   })
 
-  it("creates all 43 tables", () => {
+  it("creates all 46 tables", () => {
     db = createTestDb()
     applySchema(db)
     const rows = db.prepare(
@@ -23,7 +23,7 @@ describe("DB Schema", () => {
     ).all() as { name: string }[]
     const names = rows.map(r => r.name).sort()
     expect(names).toEqual([
-      // Core tables (43) — includes `tasks` (schema v38, v2-D1 first-class task
+      // Core tables (46) — includes `tasks` (schema v38, v2-D1 first-class task
       // domain) + `task_phase_acceptances` (schema v40, task-phase-redesign K4)
       // + billing_price_config/billing_setting (schema v45, billing-core-1 票01)
       // + `findings` (schema v53, 知识中心票05——此前漏计本清单，票08 顺带补正)
@@ -34,6 +34,8 @@ describe("DB Schema", () => {
       // v54 (票08 清理账): `pending_review` 退役——蓝绿 drop，schema.sql 不再 CREATE，
       //   故不在此清单。
       // v55 (P4 票06): `effectiveness_cursors` 记账解析游标（PK=execution_id 幂等盘面）。
+      // v56/v57 (缓存稳定 + 身份切换): session_prompt_snapshots / session_expert_rosters /
+      //   session_role_states —— 新增三表，本清单随之补正。
       "agent_events", "agent_versions", "archive_drafts",
       "billing_price_config", "billing_setting",
       "branch_executions", "chat_messages", "chat_sessions",
@@ -48,6 +50,7 @@ describe("DB Schema", () => {
       "pipeline_state", "reports", "safety_events",
       "schedule_audit_logs", "schedule_executions", "schedule_workspaces",
       "scheduled_job_executions", "scheduler_audit_logs", "scheduler_state", "schedules",
+      "session_expert_rosters", "session_prompt_snapshots", "session_role_states",
       "sessions", "task_phase_acceptances", "tasks", "wiki_articles", "workspace_archive", "workspaces",
     ])
   })

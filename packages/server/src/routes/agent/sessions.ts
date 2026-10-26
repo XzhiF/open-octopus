@@ -5,8 +5,7 @@ import { AgentSessionDAO } from '../../db/dao'
 import { WorkspaceDAO } from '../../db/dao/workspace-dao'
 import { WorkspaceService } from '../../services/workspace'
 import { SessionCacheContextDAO } from '../../db/dao/session-cache-context-dao'
-import type { SessionRoleState } from '../../db/dao/session-cache-context-dao'
-import { EXPERT_ROLES } from '@octopus/shared'
+import { isCloneRoleTarget, roleResponse } from '../../services/agent/role-response'
 import { createAgentError, mapErrorToStatus } from './middleware'
 
 export function createSessionRoutes(sessionDAO: AgentSessionDAO): Hono {
@@ -274,10 +273,10 @@ export function createSessionRoutes(sessionDAO: AgentSessionDAO): Hono {
       return c.json(createAgentError('INVALID_PARAM', 'Invalid JSON body'), 400)
     }
     const expert = body.expert == null ? null : String(body.expert)
-    if (expert && !EXPERT_ROLES.some((role) => role.id === expert)) {
-      return c.json(createAgentError('INVALID_PARAM', `Unknown expert: ${expert}`), 400)
+    if (expert && !isCloneRoleTarget(expert)) {
+      return c.json(createAgentError('INVALID_PARAM', `Unknown clone: ${expert}`), 400)
     }
-    const state = new SessionCacheContextDAO(sessionDAO.getDb()).setActiveExpert(id, expert)
+    const state = new SessionCacheContextDAO(sessionDAO.getDb()).setActiveExpert(id, expert, 'clone')
     return c.json(roleResponse(id, state))
   })
 
@@ -307,17 +306,4 @@ export function createSessionRoutes(sessionDAO: AgentSessionDAO): Hono {
 
 
   return sessions
-}
-
-function roleResponse(sessionId: string, state: SessionRoleState) {
-  const expert = state.activeExpert
-    ? EXPERT_ROLES.find((role) => role.id === state.activeExpert) ?? null
-    : null
-  return {
-    session_id: sessionId,
-    active_expert: state.activeExpert,
-    expert,
-    revision: state.revision,
-    delivered_revision: state.deliveredRevision,
-  }
 }

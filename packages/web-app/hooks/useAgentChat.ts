@@ -31,7 +31,6 @@ export interface UseAgentChatApiOverride {
   /** Create SSE stream for chat. Returns { reader, abort } */
   chatStream?: (id: string, message: string, opts?: {
     debug?: boolean
-    delegate_to?: string
     model?: string
     effort?: ComposerEffort
     maxContext?: ComposerContext
@@ -260,7 +259,6 @@ export function useAgentChat(sessionId: string | null, options?: { onTitleUpdate
   }, [sessionId, startResumePolling])
 
   const sendMessage = useCallback(async (message: string, opts?: {
-    delegate_to?: string
     model?: string
     effort?: ComposerEffort
     maxContext?: ComposerContext
@@ -310,7 +308,6 @@ export function useAgentChat(sessionId: string | null, options?: { onTitleUpdate
 
     const chatStreamFn = apiOverrideRef.current?.chatStream ?? api.chatStream
     const source = chatStreamFn(sessionId, message, {
-      delegate_to: opts?.delegate_to,
       model: opts?.model,
       effort: opts?.effort,
       maxContext: opts?.maxContext,
@@ -626,7 +623,6 @@ export function useAgentChat(sessionId: string | null, options?: { onTitleUpdate
   const steerLostRef = useRef(false)
 
   const steer = useCallback(async (message: string, opts?: {
-    delegate_to?: string
     model?: string
     effort?: ComposerEffort
     maxContext?: ComposerContext

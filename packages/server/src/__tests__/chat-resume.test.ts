@@ -212,18 +212,17 @@ describe("main chat — native resume + frozen system prompt", () => {
 
   it("delivers a role card once and keeps the system prompt/tools stable", async () => {
     const dao = new SessionCacheContextDAO(db)
-    dao.setActiveExpert("s-1", "engineering-sre")
+    // Legacy agency identity path (kind='expert') — kept readable for old rows.
+    dao.setActiveExpert("s-1", "engineering-sre", "expert")
 
-    const first = await chat("@产品经理 帮我看下这个方案")
+    const first = await chat("帮我看下这个方案")
     await first.text()
 
-    // Role card + @ dispatch reminder ride the user message.
+    // The role card rides the user message.
     expect(calls[0].prompt).toContain('name="SRE"')
     expect(calls[0].prompt).toContain("<expert id=\"engineering-sre\"")
-    expect(calls[0].prompt).toContain("用户本轮通过 @ 指定了以下专家：产品经理")
-    // Full stable roster is registered → @ never mutates `agents` per turn.
-    expect(calls[0].agents).toEqual(expect.arrayContaining(["product-manager", "engineering-sre"]))
-    expect(calls[0].agents.length).toBeGreaterThanOrEqual(10)
+    // Full stable clone roster is registered → consultations never mutate `agents`.
+    expect(calls[0].agents).toEqual(expect.arrayContaining(["workspace", "task-author"]))
     // System prompt does not carry the persona.
     expect(calls[0].append).not.toContain('name="SRE"')
 
@@ -239,7 +238,7 @@ describe("main chat — native resume + frozen system prompt", () => {
     expect(calls[1].agents).toEqual(calls[0].agents)
 
     // Switching identity appends a new card; the cached prefix stays identical.
-    dao.setActiveExpert("s-1", "engineering-code-reviewer")
+    dao.setActiveExpert("s-1", "engineering-code-reviewer", "expert")
     const third = await chat("再看看代码")
     await third.text()
     expect(calls[2].prompt).toContain('name="代码审查员"')
@@ -248,12 +247,70 @@ describe("main chat — native resume + frozen system prompt", () => {
     expect(calls[2].agents).toEqual(calls[0].agents)
   })
 
-  it("@expert dispatches a subagent without changing the session identity", async () => {
-    const res = await chat("@代码审查员 检查一下边界条件")
+  it("clone identity switch rides the user message with the same cache discipline", async () => {
+    const dao = new SessionCacheContextDAO(db)
+    dao.setActiveExpert("s-1", "workspace")
+
+    const first = await chat("来点活")
+    await first.text()
+    // The clone pack (whole persona + skills + boundary) is on the user turn…
+    expect(calls[0].prompt).toContain("clone: workspace")
+    expect(calls[0].prompt).toContain('<clone name="workspace"')
+    expect(calls[0].prompt).toContain("## 岗位包")
+    // …and the frozen system prompt never carries it. The clone roster seeds
+    // from turn 0 (workspace included) — switching never mutates `agents`.
+    expect(calls[0].append).not.toContain("clone: workspace")
+    expect(calls[0].agents).toEqual(expect.arrayContaining(["workspace"]))
+
+    expect(dao.getRoleState("s-1")).toMatchObject({
+      activeExpert: "workspace",
+      activeKind: "clone",
+      revision: 1,
+      deliveredRevision: 1,
+    })
+
+    // The transcript marker (UI-only row) carries the whole pack, sits right
+    // after the turn's user message, and never duplicates.
+    const markers = db.prepare(
+      "SELECT metadata, created_at FROM messages WHERE session_id = 's-1' AND type = 'role-switch'",
+    ).all() as Array<{ metadata: string; created_at: string }>
+    expect(markers).toHaveLength(1)
+    const payload = JSON.parse(markers[0].metadata).role_switch as { displayName: string; revision: number; card: string }
+    expect(payload.displayName).toBe("全栈开发助手")
+    expect(payload.revision).toBe(1)
+    expect(payload.card).toContain('<clone name="workspace"')
+    const userAt = (db.prepare(
+      "SELECT created_at FROM messages WHERE session_id = 's-1' AND role = 'user' ORDER BY created_at ASC LIMIT 1",
+    ).get() as { created_at: string }).created_at
+    expect(markers[0].created_at > userAt).toBe(true)
+
+    writeTranscript("sdk-1")
+    const second = await chat("继续")
+    await second.text()
+    // Card is delivered once; the prefix stays byte-identical; no extra marker.
+    expect(calls[1].prompt).not.toContain("<clone name=")
+    expect(calls[1].prompt).not.toContain("服务端角色切换")
+    expect(calls[1].append).toBe(calls[0].append)
+    expect(calls[1].agents).toEqual(calls[0].agents)
+    expect(db.prepare(
+      "SELECT COUNT(*) AS n FROM messages WHERE session_id = 's-1' AND type = 'role-switch'",
+    ).get()).toEqual({ n: 1 })
+  })
+
+  it("@分身 委派会诊：reminder 进 user 消息、克隆进名册，身份不变", async () => {
+    const res = await chat("@@workspace 帮我看下这个方案")
     await res.text()
 
-    expect(calls[0].prompt).toContain("用户本轮通过 @ 指定了以下专家：代码审查员")
-    expect(calls[0].agents).toEqual(expect.arrayContaining(["engineering-code-reviewer"]))
+    // 会诊意图作为尾部提醒挂在当轮 user 消息（前缀缓存纪律不变）。
+    expect(calls[0].prompt).toContain("<system-reminder>")
+    expect(calls[0].prompt).toContain("本轮委派了以下分身：全栈开发助手")
+    // 名册 = 克隆名册（agency 专家 id 不再出现），克隆进 agents 供 subagent 调用。
+    expect(calls[0].agents).toEqual(expect.arrayContaining(["workspace"]))
+    expect(calls[0].agents).not.toContain("product-manager")
+    // 系统提示不含岗位包文本。
+    expect(calls[0].append).not.toContain("clone: workspace")
+
+    // 会诊不改会话身份。
     const role = new SessionCacheContextDAO(db).getRoleState("s-1")
     expect(role.activeExpert).toBeNull()
     expect(role.revision).toBe(0)

@@ -32,7 +32,10 @@ const _dirname: string =
 // system/tools/agents 不变，因此不破坏 prompt cache 前缀。
 // 57→58：会话级 cwd/workspace 绑定——sessions.cwd / sessions.workspace_id
 // （ADDITIVE，ensureColumn；首次 prompt 时才确定）。
-export const SCHEMA_VERSION = 58
+// 58→59：会话身份源分型——session_role_states.expert_kind（'expert' 旧 agency
+// 名册 / 'clone' 系统分身）。身份切换改为只认克隆名册；老行保 'expert' 以便
+// 已投递的卡仍可解释（ADDITIVE，ensureColumn）。
+export const SCHEMA_VERSION = 59
 
 /**
  * Apply the complete unified schema to the given database.
@@ -573,6 +576,9 @@ function ensureColumnsForExistingTables(db: Database.Database): void {
   // an arbitrary directory chosen on the first prompt.
   ensureColumn(db, 'sessions', 'cwd', "TEXT")
   ensureColumn(db, 'sessions', 'workspace_id', "TEXT")
+
+  // v59 (identity from clones): which roster the active identity id belongs to.
+  ensureColumn(db, 'session_role_states', 'expert_kind', "TEXT NOT NULL DEFAULT 'expert'")
 
   // 知识中心改版：wiki_articles.links（链接目标 JSON 数组，反链倒排的落库基础）。
   // NULL=历史行未回灌（启动 backfillWikiArticleLinks 一次性补齐）；新写恒为 JSON 数组。

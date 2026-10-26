@@ -9,6 +9,7 @@ import { AutoResizeTextarea } from '@/components/ui/auto-resize-textarea'
 import { Button } from '@/components/ui/button'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { Badge } from '@/components/ui/badge'
+import { toast } from 'sonner'
 import { cn } from '@/lib/utils'
 import { formatTokenCount } from '@/lib/format'
 import { ChatBubble } from './ChatBubble'
@@ -23,9 +24,8 @@ import { EvolutionConfirmCard } from './EvolutionConfirmCard'
 import { ChatTimeline, type ChatTimelineItem } from './chat-timeline'
 import { AgentEmptyState } from '../shared/AgentEmptyState'
 import { ReviewCard } from '../knowledge/cards/ReviewCard'
-import { MentionAutocomplete, parseMention } from './MentionAutocomplete'
-import { ExpertMentionAutocomplete } from './ExpertMentionAutocomplete'
-import type { ExpertRole } from '@/lib/expert-roles'
+import { MentionAutocomplete } from './MentionAutocomplete'
+import type { ChatSubagentRef } from '@/hooks/useAgentChat'
 import { SlashCommandAutocomplete, type SlashCommand } from './SlashCommandAutocomplete'
 import { ComposerModelPopover } from './composer-model-popover'
 import { ComposerAttachPopover, type ComposerExpertRef, type ComposerSkillRef } from './composer-attach-popover'
@@ -60,13 +60,13 @@ interface ChatAreaProps {
   } | null
   error: string | null
   statusMessage: string
-  onSend: (message: string, opts?: { delegate_to?: string }) => void
+  onSend: (message: string, opts?: { subagents?: ChatSubagentRef[] }) => void
   onStop: () => void
   onConfirm: (eventId: string, decision: 'accept' | 'reject') => void
   hasSession: boolean
   /** Current clone name for self-reference detection in @@mention */
   currentCloneName?: string | null
-  /** Source badge for delegation responses */
+  /** Source badge for delegated responses (legacy) */
   streamSource?: string | null
   /** Custom empty state title (default: "开始你的第一个对话") */
   emptyStateTitle?: string
@@ -118,7 +118,7 @@ interface ChatAreaProps {
    *  busy 时输入不锁死（⏎=打断接管 / esc=打断 / esc·点击=队列退回）。 */
   tui?: boolean
   /** 打断接管（tui）：stop → 等服务端停 → 重发（useAgentChat.steer）。 */
-  onSteer?: (message: string, opts?: { delegate_to?: string }) => void
+  onSteer?: (message: string, opts?: { subagents?: ChatSubagentRef[] }) => void
   /** steer 在途（stop→重发谷）：期间 done-flush 让闸，防接管消息被队首抢发。 */
   steerActiveRef?: React.MutableRefObject<boolean>
   /** stream-resume 尾随轮（服务端仍在生成，本地无 SSE 所有权）：此期间
@@ -160,7 +160,7 @@ export function ChatArea({
 }: ChatAreaProps) {
   const [input, setInput] = useState('')
   const [slashOpen, setSlashOpen] = useState(false)
-  const [expertMentionOpen, setExpertMentionOpen] = useState(false)
+  const [mentionOpen, setMentionOpen] = useState(false)
   const [contextExpanded, setContextExpanded] = useState(false)
   const [attachedSkill, setAttachedSkill] = useState<ComposerSkillRef | null>(null)
   const [attachedExpert, setAttachedExpert] = useState<ComposerExpertRef | null>(null)
@@ -209,12 +209,14 @@ export function ChatArea({
   }, [messages, streamContent, toolCalls, streamTimeline, streamThinking])
 
   // 「+ 挂载」的选中项只消费一次：SKILL → `/name` 前缀（显式 / 或 @@ 开头时让位）；
-  // 专家 → delegate_to。返回 expert 供 TUI 队列退回时恢复 chip。
+  // 分身 → 本轮子代理会诊（subagents）。返回 expert 供 TUI 队列退回时恢复 chip。
   const takeComposerAttachments = (raw: string) => {
     const text = attachedSkill && !raw.startsWith('/') && !raw.startsWith('@@')
       ? `/${attachedSkill.name} ${raw}`
       : raw
-    const opts = attachedExpert ? { delegate_to: attachedExpert.name } : undefined
+    const opts = attachedExpert
+      ? { subagents: [{ id: attachedExpert.name, label: attachedExpert.displayName }] }
+      : undefined
     const expert = attachedExpert
     setAttachedSkill(null)
     setAttachedExpert(null)
@@ -225,38 +227,32 @@ export function ChatArea({
     if (!input.trim() || streaming) return
     const raw = input.trim()
     const { text, opts } = takeComposerAttachments(raw)
-
-    // Parse @@mention（显式委托优先于 + 面板选中的专家）
-    const mention = parseMention(text)
-    if (mention) {
-      // Self-reference check
-      if (mention.delegate_to === currentCloneName) {
-        // Self-reference: send as normal message
-        onSend(text)
-      } else {
-        // Delegation: send clean message with delegate_to
-        onSend(mention.cleanMessage, { delegate_to: mention.delegate_to })
-      }
-    } else {
-      onSend(text, opts)
-    }
+    // `@分身` mentions stay in the text — the server parses them and consults
+    // the clone as a one-turn subagent (no delegation, no stripping).
+    onSend(text, opts)
     setInput('')
     stickBottomRef.current = true
   }
 
   const handleMentionSelect = (cloneName: string) => {
-    // Replace @@partial with @@clone-name
-    setInput(prev => prev.replace(/@@[a-z0-9-]*$/, `@@${cloneName} `))
-  }
-
-  const handleExpertMentionSelect = (role: ExpertRole) => {
-    // Replace @partial with @中文名 (server parses the same catalog).
-    setInput(prev => prev.replace(/(^|\s)@[^\s@]*$/, `$1@${role.name} `))
+    // Replace @/@@partial with @@clone-name (slug; server-parsed)
+    setInput(prev => prev.replace(/(^|\s)@(@?)[^\s@]*$/, `$1@@${cloneName} `))
   }
 
   const handleSlashSelect = (commandName: string) => {
     // Replace entire input with /command (user continues typing the prompt)
     setInput(`/${commandName} `)
+  }
+
+  // 模型切换 = 缓存命名空间切换（pro-max→opus / pro→sonnet / se→haiku 为不同
+  // 底层模型）：会话已有历史时，切一次就是整段 prefill。提示一次，不阻断。
+  const handleModelChange = (next: string) => {
+    if (next !== currentModel && messages.length > 0) {
+      toast.message('切换模型将重建会话缓存', {
+        description: '同一会话的缓存按模型隔离：历史会在下一轮重新计算一次。',
+      })
+    }
+    onModelChange?.(next)
   }
 
   // ── TUI 排队 / steer（2026-09-24 草稿工作台改版，仅 tui 变体生效）──────
@@ -288,7 +284,9 @@ export function ChatArea({
     if (was && !streaming && queueRef.current.length > 0 && !steerActiveRef?.current) {
       const [head, ...rest] = queueRef.current
       setQueue(rest)
-      onSend(head.text, head.expert ? { delegate_to: head.expert.name } : undefined)
+      onSend(head.text, head.expert
+        ? { subagents: [{ id: head.expert.name, label: head.expert.displayName }] }
+        : undefined)
     }
   }, [streaming, tui, onSend, steerActiveRef])
 
@@ -328,7 +326,7 @@ export function ChatArea({
       return
     }
     if (slashOpen) return // 自动补全下拉打开时 Enter 归下拉
-    if (expertMentionOpen) return // @专家 下拉打开时 Enter 归下拉
+    if (mentionOpen) return // @分身 下拉打开时 Enter 归下拉
     const text = input.trim()
     if (e.key === 'Enter') {
       e.preventDefault()
@@ -696,11 +694,7 @@ export function ChatArea({
               onSelect={handleMentionSelect}
               textareaRef={null}
               currentCloneName={currentCloneName}
-            />
-            <ExpertMentionAutocomplete
-              inputValue={input}
-              onSelect={handleExpertMentionSelect}
-              onOpenChange={setExpertMentionOpen}
+              onOpenChange={setMentionOpen}
             />
             {commands && commands.length > 0 && (
               <SlashCommandAutocomplete
@@ -831,7 +825,7 @@ export function ChatArea({
                 onModelChange ? (
                   <ComposerModelPopover
                     currentModel={currentModel}
-                    onModelChange={onModelChange}
+                    onModelChange={handleModelChange}
                     effort={effort ?? 'high'}
                     onEffortChange={onEffortChange ?? (() => {})}
                     context={maxContext ?? '200k'}
@@ -900,12 +894,13 @@ export function ChatArea({
       ) : (
       <div className="border-t-[1.5px] border-pop-bd bg-pop-paper p-3">
         <div className="max-w-3xl mx-auto relative">
-          {/* @@mention autocomplete */}
+          {/* @分身 mention autocomplete */}
           <MentionAutocomplete
             inputValue={input}
             onSelect={handleMentionSelect}
             textareaRef={null}
             currentCloneName={currentCloneName}
+            onOpenChange={setMentionOpen}
           />
           {/* /slash-command autocomplete */}
           {commands && commands.length > 0 && (
@@ -970,7 +965,7 @@ export function ChatArea({
                     <div className="relative flex items-center">
                       <select
                         value={currentModel}
-                        onChange={(e) => onModelChange(e.target.value)}
+                        onChange={(e) => handleModelChange(e.target.value)}
                         aria-label="模型"
                         title="切换模型"
                         className="h-[22px] cursor-pointer appearance-none rounded-[7px] border border-transparent bg-transparent pl-1.5 pr-[18px] font-mono text-[11px] leading-none text-pop-dim outline-none transition-colors hover:bg-pop-paper hover:text-pop-ink focus-visible:border-pop-bd [&>option]:bg-pop-paper [&>option]:text-pop-ink"

@@ -298,7 +298,7 @@ describe("Schema v42 — schedules drops the task-envelope columns", () => {
     return (database.prepare("PRAGMA table_info(schedules)").all() as { name: string }[]).map(c => c.name)
   }
 
-  it("pins the current version at 55", () => {
+  it("pins a current version (>= v55) and stamps it", () => {
     db = createTestDb()
     applySchema(db)
     // 票08 清理账 53→54：pending_review 表退役（schema.sql 不再 CREATE；既有库由
@@ -306,7 +306,8 @@ describe("Schema v42 — schedules drops the task-envelope columns", () => {
     // 红线1 导出先于删除）。
     // P4 票06 54→55：knowledge_effectiveness 列义对齐 v2（蓝绿 RENAME injected_count→
     // cited_count、last_injected→last_cited，历史行零丢失）+ 新表 effectiveness_cursors。
-    expect(SCHEMA_VERSION).toBe(55)
+    expect(SCHEMA_VERSION).toBeGreaterThanOrEqual(55)
+    expect(db.pragma("user_version", { simple: true })).toBe(SCHEMA_VERSION)
   })
 
   it("① fresh DB: no envelope columns, run-state columns present", () => {

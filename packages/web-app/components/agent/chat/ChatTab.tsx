@@ -4,7 +4,7 @@ import { useState, useEffect, useCallback, useMemo, useRef, type PointerEvent as
 import { Menu, PanelLeft, Search, SquarePen } from 'lucide-react'
 import { toast } from 'sonner'
 import { useChatSessions } from '@/components/providers/chat-sessions'
-import { useAgentChat, type UseAgentChatApiOverride } from '@/hooks/useAgentChat'
+import { useAgentChat, type UseAgentChatApiOverride, type ChatSubagentRef } from '@/hooks/useAgentChat'
 import { useSessionUsage } from '@/hooks/useSessionUsage'
 import { useComposerSettings } from '@/hooks/useComposerSettings'
 import { useKcFeed } from '@/hooks/use-kc-feed'
@@ -341,8 +341,8 @@ export function ChatTab() {
   const [showToolPanel, setShowToolPanel] = useState(false)
   const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false)
 
-  // Pending message when auto-creating a session (carries + panel expert delegation)
-  const pendingMessageRef = useRef<{ message: string; delegate_to?: string } | null>(null)
+  // Pending message when auto-creating a session (carries + panel clone consult)
+  const pendingMessageRef = useRef<{ message: string; subagents?: ChatSubagentRef[] } | null>(null)
 
   useEffect(() => {
     if (!activeSessionId) return
@@ -361,19 +361,19 @@ export function ChatTab() {
       pendingMessageRef.current = null
       // Small delay to ensure useAgentChat has updated with new sessionId
       requestAnimationFrame(() => sendMessage(pending.message, {
-        model, effort, maxContext, delegate_to: pending.delegate_to,
+        model, effort, maxContext, subagents: pending.subagents,
       }))
     }
   }, [activeSessionId, sendMessage, model, effort, maxContext])
 
-  const handleSendMessage = useCallback((message: string, opts?: { delegate_to?: string }) => {
+  const handleSendMessage = useCallback((message: string, opts?: { subagents?: ChatSubagentRef[] }) => {
     if (!pendingTaskSession) {
       if (activeSessionId) {
-        sendMessage(message, { model, effort, maxContext, delegate_to: opts?.delegate_to })
+        sendMessage(message, { model, effort, maxContext, subagents: opts?.subagents })
       } else {
         // First prompt creates the session (lazy). cwd/workspace is chosen here,
         // not when the empty "+" tab was opened.
-        pendingMessageRef.current = { message, delegate_to: opts?.delegate_to }
+        pendingMessageRef.current = { message, subagents: opts?.subagents }
         const cwdOpts = mainCwd.kind === 'default'
           ? undefined
           : { workspace_id: mainCwd.workspaceId, cwd: mainCwd.path }
@@ -408,7 +408,7 @@ export function ChatTab() {
         setActiveTask(task)
         void refreshChatTasks()
         void refetchSessions()
-        pendingMessageRef.current = { message, delegate_to: opts?.delegate_to }
+        pendingMessageRef.current = { message, subagents: opts?.subagents }
         setActiveSessionId(sid)
       } catch (err: unknown) {
         toast.error(err instanceof Error ? err.message : '创建任务失败')
@@ -816,7 +816,7 @@ export function ChatTab() {
             showComposerAttach={!authoring}
             tui
             onSteer={(message, opts) => void steer(message, {
-              model, effort, maxContext, delegate_to: opts?.delegate_to,
+              model, effort, maxContext, subagents: opts?.subagents,
             })}
             steerActiveRef={steeringRef}
             resumeTailing={resumeStreaming}

@@ -23,8 +23,7 @@ import { toast } from "sonner"
 import type { ChatMessage } from "@/lib/types"
 import { getTaskChatBinding, getDoerChatHistory } from "@/lib/tasks-api"
 import { ExpertIdentityChip } from "@/components/agent/chat/expert-identity-chip"
-import { ExpertMentionAutocomplete } from "@/components/agent/chat/ExpertMentionAutocomplete"
-import type { ExpertRole } from "@/lib/expert-roles"
+import { MentionAutocomplete } from "@/components/agent/chat/MentionAutocomplete"
 import { getServerUrl } from "@/lib/server-config"
 import { applyChunkToMessages, parseSSEStream } from "@/components/workspace/chat/apply-chunk"
 import { INTERVENTION_MAX, isOverLimit, interventionLineText, type InterventionRow } from "../intervention"
@@ -182,8 +181,8 @@ export function TaskChatTab({
     if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); void send() }
   }, [send, expertMentionOpen])
 
-  const handleExpertMentionSelect = (role: ExpertRole) => {
-    setDraft((prev) => prev.replace(/(^|\s)@[^\s@]*$/, `$1@${role.name} `))
+  const handleMentionSelect = (cloneName: string) => {
+    setDraft((prev) => prev.replace(/(^|\s)@(@?)[^\s@]*$/, `$1@@${cloneName} `))
   }
 
   // ── fixing：⚑ 历史 + 本地回执 ─────────────────────────────────────────
@@ -344,14 +343,15 @@ export function TaskChatTab({
       </div>
       <div className="shrink-0 border-t border-white/[0.06] bg-pop-bg px-4 pb-3 pt-2">
         <div className="relative mx-auto w-full max-w-4xl">
-          <ExpertMentionAutocomplete
+          <MentionAutocomplete
             inputValue={draft}
-            onSelect={handleExpertMentionSelect}
+            onSelect={handleMentionSelect}
             onOpenChange={setExpertMentionOpen}
+            currentCloneName="task-doer"
           />
           <div className="mb-1.5 flex items-center gap-2" data-testid="task-chat-identity-row">
             <ExpertIdentityChip kind="task" taskId={taskId} />
-            <span className="text-[10px] text-pop-dim">身份切换；输入 @专家 仅派一次性子代理</span>
+            <span className="text-[10px] text-pop-dim">身份切换；输入 @分身 仅派一次性子代理会诊</span>
           </div>
           <div className="flex items-start gap-2 rounded-[9px] border border-white/[0.08] bg-pop-paper/60 px-2.5 py-1.5 transition-colors focus-within:border-white/[0.16]">
             <span aria-hidden className="shrink-0 pt-1.5 font-bold leading-6 text-pop-pink">❯</span>

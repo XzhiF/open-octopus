@@ -1,5 +1,7 @@
-// Agent-session expert identity API (role switch).
+// Agent-session identity API (role switch).
 // The card is delivered by the chat route; this route only owns the state.
+// v59: identity targets the clone roster (built-in + user) — agency ids are
+// rejected here now (legacy rows still resolve for reading).
 
 import { describe, it, expect, beforeAll, afterAll, beforeEach } from "vitest"
 import Database from "better-sqlite3"
@@ -47,30 +49,39 @@ beforeEach(() => {
 })
 
 describe("agent session role API", () => {
-  it("starts with no active expert", async () => {
+  it("starts with no active identity", async () => {
     const res = await request("/api/agent/sessions/s-role-api/role")
     expect(res.status).toBe(200)
     expect(await res.json()).toMatchObject({
       active_expert: null,
+      active_kind: "expert",
       expert: null,
+      clone: null,
       revision: 0,
       delivered_revision: 0,
     })
   })
 
-  it("switches identity and bumps revision only on a real change", async () => {
+  it("switches to a clone and bumps revision only on a real change", async () => {
     const first = await request("/api/agent/sessions/s-role-api/role", {
       method: "PUT",
-      body: JSON.stringify({ expert: "engineering-sre" }),
+      body: JSON.stringify({ expert: "workspace" }),
     })
     expect(first.status).toBe(200)
-    const body = await first.json() as { active_expert: string; expert: { name: string }; revision: number }
-    expect(body).toMatchObject({ active_expert: "engineering-sre", revision: 1 })
-    expect(body.expert.name).toBe("SRE")
+    const body = await first.json() as {
+      active_expert: string
+      active_kind: string
+      clone: { id: string; display_name: string; memory_scope: string }
+      revision: number
+    }
+    expect(body).toMatchObject({ active_expert: "workspace", active_kind: "clone", revision: 1 })
+    expect(body.clone.id).toBe("workspace")
+    expect(body.clone.display_name).toBeTruthy()
+    expect(["shared", "isolated"]).toContain(body.clone.memory_scope)
 
     const same = await request("/api/agent/sessions/s-role-api/role", {
       method: "PUT",
-      body: JSON.stringify({ expert: "engineering-sre" }),
+      body: JSON.stringify({ expert: "workspace" }),
     })
     expect((await same.json() as { revision: number }).revision).toBe(1)
 
@@ -81,11 +92,18 @@ describe("agent session role API", () => {
     expect(await cleared.json()).toMatchObject({ active_expert: null, revision: 2 })
   })
 
-  it("rejects an unknown expert id", async () => {
-    const res = await request("/api/agent/sessions/s-role-api/role", {
+  it("rejects unknown ids and legacy agency expert ids", async () => {
+    const unknown = await request("/api/agent/sessions/s-role-api/role", {
       method: "PUT",
-      body: JSON.stringify({ expert: "not-a-real-expert" }),
+      body: JSON.stringify({ expert: "not-a-real-clone" }),
     })
-    expect(res.status).toBe(400)
+    expect(unknown.status).toBe(400)
+
+    // agency roster left the identity surface (v59) — clones only now.
+    const agency = await request("/api/agent/sessions/s-role-api/role", {
+      method: "PUT",
+      body: JSON.stringify({ expert: "engineering-sre" }),
+    })
+    expect(agency.status).toBe(400)
   })
 })

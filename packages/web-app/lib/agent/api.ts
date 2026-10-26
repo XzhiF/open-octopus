@@ -39,6 +39,7 @@ function parseMessageMetadata(msg: any): AgentMessage {
       streaming: meta.streaming ?? normalized.streaming,
       displayType: meta.displayType ?? normalized.displayType,
       activity: meta.activity ?? normalized.activity,
+      roleSwitch: meta.role_switch ?? normalized.roleSwitch,
     }
   } catch {
     return normalized
@@ -119,12 +120,24 @@ export function stopChat(id: string) {
   return request<void>(`/sessions/${id}/stop`, { method: 'POST' })
 }
 
-// Session expert identity (role switch). The role card is delivered on the
-// next chat turn; system prompt/tools stay frozen.
+// Session identity (role switch). The role card is delivered on the next chat
+// turn; system prompt/tools stay frozen. v59: identities are clones — `expert`
+// only resolves for legacy rows (agency era).
+export interface SessionRoleClone {
+  id: string
+  display_name: string
+  type: 'built-in' | 'user'
+  skills: string[]
+  memory_scope: 'shared' | 'isolated'
+  status: 'active' | 'idle' | 'executing'
+}
+
 export interface SessionRoleState {
   session_id: string
   active_expert: string | null
+  active_kind: 'expert' | 'clone'
   expert: { id: string; name: string; label: string; desc: string } | null
+  clone: SessionRoleClone | null
   revision: number
   delivered_revision: number
 }
@@ -148,23 +161,20 @@ export interface AgentSSEConnection {
 
 export function chatStream(id: string, message: string, opts?: {
   debug?: boolean
-  delegate_to?: string
   model?: string
   effort?: ComposerEffort
   maxContext?: ComposerContext
+  subagents?: Array<{ id: string; label?: string }>
 }): AgentSSEConnection {
   const controller = new AbortController()
-  // When delegate_to is present, use main agent chat endpoint
-  const url = opts?.delegate_to
-    ? `${BASE()}/chat`
-    : `${BASE()}/sessions/${id}/chat`
+  const url = `${BASE()}/sessions/${id}/chat`
   const body = JSON.stringify({
     message,
     debug: opts?.debug,
     session_id: id,
-    delegate_to: opts?.delegate_to,
     ...(opts?.model ? { model: opts.model } : {}),
     ...(opts?.effort ? { effort: opts.effort } : {}),
+    ...(opts?.subagents && opts.subagents.length > 0 ? { subagents: opts.subagents } : {}),
     ...(opts?.maxContext ? { maxContext: opts.maxContext } : {}),
   })
 

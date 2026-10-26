@@ -22,7 +22,7 @@ import type { Context } from "hono"
 import { streamSSE } from "hono/streaming"
 import { TaskNotFoundError, TaskStatusConflictError } from "../services/tasks/tasks-service"
 import type { TaskDoerService } from "../services/tasks/task-doer-service"
-import { EXPERT_ROLES } from "@octopus/shared"
+import { isCloneRoleTarget, roleResponse } from "../services/agent/role-response"
 
 function classifyError(err: unknown): { status: number; message: string } {
   if (err instanceof TaskNotFoundError) return { status: 404, message: err.message }
@@ -93,8 +93,8 @@ export function createTaskChatRoutes(doer: TaskDoerService): Hono {
       return c.json({ error: "Invalid JSON body" }, 400)
     }
     const expert = body.expert == null ? null : String(body.expert)
-    if (expert && !EXPERT_ROLES.some((role) => role.id === expert)) {
-      return c.json({ error: `Unknown expert: ${expert}` }, 400)
+    if (expert && !isCloneRoleTarget(expert)) {
+      return c.json({ error: `Unknown clone: ${expert}` }, 400)
     }
     try {
       const { sessionId, state } = doer.setRole(taskId, expert)
@@ -111,20 +111,4 @@ export function createTaskChatRoutes(doer: TaskDoerService): Hono {
   routes.post("/:id/chat/messages", messageHandler)
 
   return routes
-}
-
-function roleResponse(
-  sessionId: string,
-  state: { activeExpert: string | null; revision: number; deliveredRevision: number },
-) {
-  const expert = state.activeExpert
-    ? EXPERT_ROLES.find((role) => role.id === state.activeExpert) ?? null
-    : null
-  return {
-    session_id: sessionId,
-    active_expert: state.activeExpert,
-    expert,
-    revision: state.revision,
-    delivered_revision: state.deliveredRevision,
-  }
 }

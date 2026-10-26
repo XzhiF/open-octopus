@@ -91,6 +91,15 @@ export interface AgentMessage {
     nodeId?: string | null
     workspaceId?: string | null
   }
+  /** metadata.role_switch — delivered identity switch (v59). Rendered as a
+   *  collapsible transcript marker carrying the whole role pack. */
+  roleSwitch?: {
+    kind: 'clone' | 'reset'
+    id: string | null
+    displayName: string | null
+    revision: number
+    card: string
+  }
   /** True when the user interrupted (stopped) this response mid-stream.
    *  The message contains whatever the agent produced before the abort. */
   interrupted?: boolean

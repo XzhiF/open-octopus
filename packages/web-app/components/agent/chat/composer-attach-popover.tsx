@@ -2,7 +2,7 @@
 
 // 原型「+ 挂载」面板（SKILLS / 专家）。
 // 数据都走真实系统：SKILL = GET /api/agent/skills，专家 = GET /api/agent/clones。
-// 选择只挂在 composer 上，随下一条消息消费（SKILL → /命令前缀；专家 → delegate_to）。
+// 选择只挂在 composer 上，随下一条消息消费（SKILL → /命令前缀；分身 → 本轮子代理会诊 subagents）。
 
 import { useEffect, useRef, useState } from 'react'
 import { Check, Plus, Search, Sparkles, Users, X } from 'lucide-react'
@@ -273,7 +273,7 @@ export function ComposerAttachPopover({ skill, expert, onSkillChange, onExpertCh
 
         <div className="flex items-center gap-2 border-t border-pop-bd/60 px-3 py-2">
           <span className="text-[10px] text-pop-dim">
-            SKILL 以 /命令发送 · 专家走委托
+            SKILL 以 /命令发送 · 分身本轮会诊
           </span>
           <button
             type="button"

@@ -7,8 +7,12 @@ export interface PromptSnapshot {
   promptHash: string
 }
 
+/** Which roster the active identity id belongs to (v59). */
+export type RoleKind = 'expert' | 'clone'
+
 export interface SessionRoleState {
   activeExpert: string | null
+  activeKind: RoleKind
   revision: number
   deliveredRevision: number
 }
@@ -104,39 +108,46 @@ export class SessionCacheContextDAO extends BaseDAO {
 
   getRoleState(sessionId: string): SessionRoleState {
     const row = this.stmt(
-      "SELECT active_expert, revision, delivered_revision FROM session_role_states WHERE session_id = ?",
+      "SELECT active_expert, expert_kind, revision, delivered_revision FROM session_role_states WHERE session_id = ?",
     ).get(sessionId) as {
       active_expert: string | null
+      expert_kind: string | null
       revision: number
       delivered_revision: number
     } | undefined
-    if (!row) return { activeExpert: null, revision: 0, deliveredRevision: 0 }
+    if (!row) return { activeExpert: null, activeKind: 'expert', revision: 0, deliveredRevision: 0 }
     return {
       activeExpert: row.active_expert,
+      // Legacy rows predate the column-wide backfill → default 'expert'.
+      activeKind: row.expert_kind === 'clone' ? 'clone' : 'expert',
       revision: row.revision,
       deliveredRevision: row.delivered_revision,
     }
   }
 
   /**
-   * Set the session's active expert (null = back to the base role).
-   * Returns the new state. Selecting the same non-null expert twice is a
-   * no-op (no needless role card). Clearing an already-clear role is a no-op.
+   * Set the session's active identity (null = back to the base role).
+   * Returns the new state. Selecting the same id+kind twice is a no-op
+   * (no needless role card). Clearing an already-clear role is a no-op.
    */
-  setActiveExpert(sessionId: string, expertId: string | null): SessionRoleState {
+  setActiveExpert(sessionId: string, expertId: string | null, kind: RoleKind = 'clone'): SessionRoleState {
     const current = this.getRoleState(sessionId)
-    if (current.activeExpert === expertId) return current
+    // Clearing an already-clear role is a no-op regardless of kind.
+    if (current.activeExpert === expertId && (expertId === null || current.activeKind === kind)) {
+      return current
+    }
     const revision = current.revision + 1
     const now = new Date().toISOString()
     this.stmt(`
-      INSERT INTO session_role_states (session_id, active_expert, revision, delivered_revision, updated_at)
-      VALUES (?, ?, ?, ?, ?)
+      INSERT INTO session_role_states (session_id, active_expert, expert_kind, revision, delivered_revision, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?)
       ON CONFLICT(session_id) DO UPDATE SET
         active_expert = excluded.active_expert,
+        expert_kind = excluded.expert_kind,
         revision = excluded.revision,
         updated_at = excluded.updated_at
-    `).run(sessionId, expertId, revision, current.deliveredRevision, now)
-    return { activeExpert: expertId, revision, deliveredRevision: current.deliveredRevision }
+    `).run(sessionId, expertId, kind, revision, current.deliveredRevision, now)
+    return { activeExpert: expertId, activeKind: kind, revision, deliveredRevision: current.deliveredRevision }
   }
 
   /** Mark the provider transcript as having received the current role card. */
