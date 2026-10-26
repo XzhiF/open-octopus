@@ -7,6 +7,7 @@ import {
   focusApp,
   openApp,
 } from './helpers/desktop'
+import { HEADER_HEIGHT } from '../lib/window-geometry'
 
 test.describe('桌面壳 · 窗口', () => {
   test.use({ viewport: { width: 1440, height: 900 } })
@@ -40,17 +41,17 @@ test.describe('桌面壳 · 窗口', () => {
 
     await dashboard.getByRole('button', { name: '最大化窗口' }).click()
     const maximized = await dashboard.boundingBox()
-    expect(Math.round(maximized!.height)).toBe(900 - 40)
+    expect(Math.round(maximized!.height)).toBe(900 - HEADER_HEIGHT)
     await dashboard.getByRole('button', { name: '最大化窗口' }).click()
 
     await dashboard.locator('[data-window-titlebar]').dblclick({ position: { x: 300, y: 18 } })
     await expect
       .poll(async () => Math.round((await dashboard.boundingBox())!.height))
-      .toBe(900 - 40)
+      .toBe(900 - HEADER_HEIGHT)
     await dashboard.locator('[data-window-titlebar]').dblclick({ position: { x: 300, y: 18 } })
     await expect
       .poll(async () => Math.round((await dashboard.boundingBox())!.height))
-      .toBeLessThan(900 - 40)
+      .toBeLessThan(900 - HEADER_HEIGHT)
 
     await dashboard.getByRole('button', { name: '最小化窗口' }).click()
     await expect(dashboard).toBeHidden()
@@ -252,9 +253,9 @@ test.describe('桌面壳 · 中屏', () => {
     for (const id of ['tasks', 'workspaces']) {
       const box = await appWindow(page, id).boundingBox()
       expect(Math.round(box!.x)).toBe(0)
-      expect(Math.round(box!.y)).toBe(40)
+      expect(Math.round(box!.y)).toBe(HEADER_HEIGHT)
       expect(Math.round(box!.width)).toBe(900)
-      expect(Math.round(box!.height)).toBe(800 - 40)
+      expect(Math.round(box!.height)).toBe(800 - HEADER_HEIGHT)
     }
   })
 

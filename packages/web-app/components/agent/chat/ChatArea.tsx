@@ -20,6 +20,7 @@ import type { ChatMessage } from '@/lib/types'
 import { StreamingIndicator } from './StreamingIndicator'
 import { DangerConfirmCard } from './DangerConfirmCard'
 import { EvolutionConfirmCard } from './EvolutionConfirmCard'
+import { ChatTimeline, type ChatTimelineItem } from './chat-timeline'
 import { AgentEmptyState } from '../shared/AgentEmptyState'
 import { ReviewCard } from '../knowledge/cards/ReviewCard'
 import { MentionAutocomplete, parseMention } from './MentionAutocomplete'
@@ -99,7 +100,7 @@ interface ChatAreaProps {
   /** Composer status slots: always render ctx/token, with `ctx --%` / `tok --`
    *  placeholders until the first usage arrives (conversation home uses this). */
   showUsagePlaceholders?: boolean
-  /** TUI composer: enable the `+ 上下文` menu (installed SKILLs + system clones). */
+  /** TUI composer: enable the `+ 挂载` menu (installed SKILLs + system clones). */
   showComposerAttach?: boolean
   /** Composer 模型设置：思考强度 / 最大上下文（Claude SDK effort + [1m] 变体）。 */
   effort?: ComposerEffort
@@ -131,6 +132,8 @@ interface ChatAreaProps {
   transcriptTail?: ReactNode
   /** 知识中心票12：卡片钮「对策展人说」等动作预进取号器文本（值变化即灌入输入框）。 */
   composerSeed?: string
+  /** 右列有工作区作业坞（lg+）：用户输入历史让开该列，避免重叠。 */
+  timelineClearDock?: boolean
 }
 
 /** ⇧⏎ 排队上限（原型 chat-tui.html 拍板）。 */
@@ -153,7 +156,7 @@ export function ChatArea({
   effort, onEffortChange, maxContext, onMaxContextChange, modelPresets,
   composerLeading, composerPlaceholder,
   tui, onSteer, steerActiveRef, resumeTailing,
-  messageExtras, transcriptTail, composerSeed,
+  messageExtras, transcriptTail, composerSeed, timelineClearDock,
 }: ChatAreaProps) {
   const [input, setInput] = useState('')
   const [slashOpen, setSlashOpen] = useState(false)
@@ -205,7 +208,7 @@ export function ChatArea({
     // should follow-scroll, in both timeline and legacy layouts.
   }, [messages, streamContent, toolCalls, streamTimeline, streamThinking])
 
-  // 「+ 上下文」的选中项只消费一次：SKILL → `/name` 前缀（显式 / 或 @@ 开头时让位）；
+  // 「+ 挂载」的选中项只消费一次：SKILL → `/name` 前缀（显式 / 或 @@ 开头时让位）；
   // 专家 → delegate_to。返回 expert 供 TUI 队列退回时恢复 chip。
   const takeComposerAttachments = (raw: string) => {
     const text = attachedSkill && !raw.startsWith('/') && !raw.startsWith('@@')
@@ -370,8 +373,62 @@ export function ChatArea({
     ? `上下文占用 · ${formatTokenCount(contextUsage.totalTokens)} / ${formatTokenCount(contextUsage.maxTokens)} · ${contextUsage.percentage.toFixed(1)}%` // fmt-ok: percentage 量纲为 0–100（SDK context_usage），非 0–1 比率
     : ''
 
+  // ── 用户输入历史（右侧时间线）────────────────────────────────────────
+  // 折叠态 = 每轮一条短横；悬停展开截断的提示词列表；点击滚动到该轮。
+  const userTurns = useMemo<ChatTimelineItem[]>(
+    () =>
+      messages
+        .filter((m) => m.role === 'user' && m.content.trim())
+        .map((m) => ({ id: m.id, text: m.content.trim() })),
+    [messages],
+  )
+  const [activeTurnId, setActiveTurnId] = useState<string | null>(null)
+  useEffect(() => {
+    const el = scrollRef.current
+    if (!el || userTurns.length === 0) {
+      setActiveTurnId(null)
+      return
+    }
+    let raf = 0
+    const compute = () => {
+      raf = 0
+      // 贴底 = 正在看最新一轮（长回答下上一轮提示词早已滚出视野）。
+      if (el.scrollHeight - el.scrollTop - el.clientHeight < 40) {
+        setActiveTurnId(userTurns[userTurns.length - 1].id)
+        return
+      }
+      const top = el.getBoundingClientRect().top
+      let current = userTurns[0].id
+      for (const turn of userTurns) {
+        const node = el.querySelector<HTMLElement>(`[data-message-id="${turn.id}"]`)
+        if (!node) continue
+        if (node.getBoundingClientRect().top - top <= 32) current = turn.id
+        else break
+      }
+      setActiveTurnId(current)
+    }
+    const onScroll = () => {
+      if (!raf) raf = requestAnimationFrame(compute)
+    }
+    compute()
+    el.addEventListener('scroll', onScroll, { passive: true })
+    return () => {
+      el.removeEventListener('scroll', onScroll)
+      if (raf) cancelAnimationFrame(raf)
+    }
+  }, [userTurns])
+
+  const jumpToTurn = (id: string) => {
+    const node = scrollRef.current?.querySelector<HTMLElement>(`[data-message-id="${id}"]`)
+    if (!node) return
+    // Jumping away from the bottom ends follow-mode; scrolling back re-arms it
+    // (the scroll handler above re-sticks within 40px of the bottom).
+    stickBottomRef.current = false
+    node.scrollIntoView({ behavior: 'smooth', block: 'start' })
+  }
+
   return (
-    <div className="flex flex-col flex-1 min-h-0">
+    <div className="relative flex flex-col flex-1 min-h-0">
       {/* Content area */}
       {!hasSession ? (
         hideEmptyState ? (
@@ -756,7 +813,7 @@ export function ChatArea({
                 </span>
               </div>
             </div>
-            {/* 控件条：+ 上下文 / model / ctx 居左；快捷键提示 + busy 计时挂
+            {/* 控件条：+ 挂载 / model / ctx 居左；快捷键提示 + busy 计时挂
                 最右（2026-09-24 用户改判：提示不再单独占输入框下方一行）。 */}
             <div className="mt-2 flex min-w-0 items-center gap-1 overflow-x-auto text-[10.5px] text-pop-dim/85 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden" data-tui-ctrlbar>
               {composerLeading && (
@@ -993,6 +1050,13 @@ export function ChatArea({
         </div>
       </div>
       )}
+
+      <ChatTimeline
+        items={userTurns}
+        activeId={activeTurnId}
+        onJump={jumpToTurn}
+        clearDock={timelineClearDock}
+      />
     </div>
   )
 }

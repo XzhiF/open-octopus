@@ -21,11 +21,11 @@ export function DesktopHeader() {
   return (
     <header
       data-shell-chrome
-      className="z-50 flex h-10 shrink-0 items-center gap-1 border-b-[1.5px] border-pop-bd bg-pop-paper px-2"
+      className="z-50 flex h-8 shrink-0 items-center gap-1 border-b-[1.5px] border-pop-bd bg-pop-paper px-1.5"
     >
       <OctopusMenu narrow={narrow} />
 
-      <div className="mx-1 h-5 w-px shrink-0 bg-pop-bd" aria-hidden />
+      <div className="mx-1 h-4 w-px shrink-0 bg-pop-bd" aria-hidden />
 
       <div
         className="flex min-w-0 flex-1 items-center gap-0.5 overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
@@ -50,14 +50,14 @@ export function DesktopHeader() {
               aria-current={active ? 'page' : undefined}
               onClick={() => (record.minimized ? restoreWindow(id) : focusWindow(id))}
               className={cn(
-                'relative grid size-7 shrink-0 place-items-center rounded-md border-[1.5px] transition-colors',
+                'relative grid size-6 shrink-0 place-items-center rounded-md border-[1.5px] transition-colors',
                 active
                   ? 'border-pop-bd bg-pop-yellow text-pop-bg'
                   : 'border-transparent text-pop-dim hover:border-pop-bd hover:bg-accent hover:text-pop-ink',
                 record.minimized && 'opacity-50',
               )}
             >
-              <Icon className="size-4" />
+              <Icon className="size-3.5" />
               {record.minimized && (
                 <span className="absolute -bottom-0.5 left-1/2 size-1 -translate-x-1/2 rounded-full bg-pop-amber" />
               )}
@@ -78,13 +78,13 @@ export function DesktopHeader() {
         aria-pressed={state.missionControl}
         onClick={toggleMissionControl}
         className={cn(
-          'grid size-7 shrink-0 place-items-center rounded-md border-[1.5px] transition-colors',
+          'grid size-6 shrink-0 place-items-center rounded-md border-[1.5px] transition-colors',
           state.missionControl
             ? 'border-pop-bd bg-pop-yellow text-pop-bg'
             : 'border-transparent text-pop-dim hover:border-pop-bd hover:bg-accent hover:text-pop-ink',
         )}
       >
-        <LayoutGrid className="size-4" />
+        <LayoutGrid className="size-3.5" />
       </button>
     </header>
   )

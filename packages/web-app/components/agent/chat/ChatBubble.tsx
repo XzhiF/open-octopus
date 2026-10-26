@@ -31,7 +31,11 @@ export function ChatBubble({ message }: ChatBubbleProps) {
   // left-aligned full width, pop-paper + inset hairline, pink ❯ prefix.
   if (isUser) {
     return (
-      <div className="rounded-md bg-pop-paper px-3 py-1.5 shadow-[inset_0_0_0_1px_var(--pop-bd)]" data-tui-msg="user">
+      <div
+        className="scroll-mt-6 rounded-md bg-pop-paper px-3 py-1.5 shadow-[inset_0_0_0_1px_var(--pop-bd)]"
+        data-tui-msg="user"
+        data-message-id={message.id}
+      >
         <span className="font-bold text-pop-pink">❯ </span>
         <span className="break-words whitespace-pre-wrap">{message.content}</span>
       </div>
@@ -43,6 +47,7 @@ export function ChatBubble({ message }: ChatBubbleProps) {
       className={cn('flex gap-2.5', isUser ? 'flex-row-reverse' : 'flex-row')}
       role={isUser ? undefined : 'log'}
       aria-live={isUser ? undefined : 'polite'}
+      data-message-id={message.id}
     >
       {/* Avatar — 🎪 糖豆头像(黑边 + 小硬影) */}
       <div className={cn(

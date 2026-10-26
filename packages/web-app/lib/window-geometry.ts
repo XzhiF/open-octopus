@@ -14,7 +14,7 @@ export interface Rect {
 
 export type ResizeDirection = 'n' | 's' | 'e' | 'w' | 'ne' | 'nw' | 'se' | 'sw'
 
-export const HEADER_HEIGHT = 40
+export const HEADER_HEIGHT = 32
 export const TITLE_BAR_HEIGHT = 36
 export const MIN_WINDOW_WIDTH = 480
 export const MIN_WINDOW_HEIGHT = 320

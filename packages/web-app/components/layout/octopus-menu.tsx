@@ -30,7 +30,7 @@ function LogoButton({ ref, className, ...rest }: ComponentPropsWithRef<'button'>
       aria-haspopup="menu"
       title="Octopus 菜单"
       className={cn(
-        'flex size-9 shrink-0 items-center justify-center rounded-lg text-[22px] leading-none transition-colors hover:bg-accent',
+        'flex size-7 shrink-0 items-center justify-center rounded-md text-[17px] leading-none transition-colors hover:bg-accent',
         className,
       )}
     >

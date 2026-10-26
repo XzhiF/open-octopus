@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from "@testing-library/react"
+import { fireEvent, render, screen, waitFor } from "@testing-library/react"
 import { beforeEach, describe, expect, it, vi } from "vitest"
 
 vi.mock("@/lib/agent/api", () => ({
@@ -38,5 +38,23 @@ describe("ExpertIdentityChip", () => {
       expect(screen.getByTestId("expert-identity-chip").textContent).toContain("SRE")
     })
     expect(agentApi.getSessionRole).toHaveBeenCalledWith("s1")
+  })
+
+  it("弹层支持按名称/描述过滤；恢复基础身份常驻", async () => {
+    render(<ExpertIdentityChip kind="agent" sessionId="s1" />)
+    await waitFor(() => {
+      expect(screen.getByTestId("expert-identity-chip").textContent).toContain("SRE")
+    })
+
+    fireEvent.click(screen.getByTestId("expert-identity-chip"))
+    const input = await screen.findByTestId("identity-search")
+
+    fireEvent.change(input, { target: { value: "安全" } })
+    expect(screen.getByText("安全工程师")).toBeInTheDocument()
+    expect(screen.queryByText("产品经理")).toBeNull()
+    expect(screen.getByText("恢复基础身份")).toBeInTheDocument()
+
+    fireEvent.change(input, { target: { value: "zzz" } })
+    expect(screen.getByText("未找到匹配的专家")).toBeInTheDocument()
   })
 })

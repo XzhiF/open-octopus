@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, useEffect, useCallback, useMemo, useRef, type PointerEvent as ReactPointerEvent } from 'react'
-import { Menu } from 'lucide-react'
+import { Menu, PanelLeft, Search, SquarePen } from 'lucide-react'
 import { toast } from 'sonner'
 import { useChatSessions } from '@/components/providers/chat-sessions'
 import { useAgentChat, type UseAgentChatApiOverride } from '@/hooks/useAgentChat'
@@ -44,6 +44,7 @@ import type { AgentMessage } from '@/lib/agent/types'
 import { Sheet, SheetContent } from '@/components/ui/sheet'
 
 const SIDEBAR_WIDTH_KEY = 'octopus.chat.sidebarWidth.v1'
+const SIDEBAR_COLLAPSED_KEY = 'octopus.chat.sidebarCollapsed.v1'
 const SIDEBAR_DEFAULT = 236
 const SIDEBAR_MIN = 200
 const SIDEBAR_MAX = 380
@@ -109,6 +110,11 @@ export function ChatTab() {
   })
   const [resizingSidebar, setResizingSidebar] = useState(false)
   const sidebarDragRef = useRef<{ startX: number; startWidth: number } | null>(null)
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(() => {
+    if (typeof window === 'undefined') return false
+    return window.localStorage.getItem(SIDEBAR_COLLAPSED_KEY) === '1'
+  })
+  const [sidebarSearchOpen, setSidebarSearchOpen] = useState(false)
 
   useEffect(() => {
     try {
@@ -117,6 +123,20 @@ export function ChatTab() {
       /* storage unavailable */
     }
   }, [sidebarWidth])
+
+  useEffect(() => {
+    try {
+      window.localStorage.setItem(SIDEBAR_COLLAPSED_KEY, sidebarCollapsed ? '1' : '0')
+    } catch {
+      /* storage unavailable */
+    }
+  }, [sidebarCollapsed])
+
+  /** Collapsed-rail actions re-open the sidebar; search focuses the filter. */
+  const expandSidebar = useCallback((opts?: { focusSearch?: boolean }) => {
+    setSidebarCollapsed(false)
+    if (opts?.focusSearch) setSidebarSearchOpen(true)
+  }, [])
 
   const handleSidebarResizeStart = (event: ReactPointerEvent<HTMLDivElement>) => {
     event.preventDefault()
@@ -646,47 +666,88 @@ export function ChatTab() {
     <div className={cn('ui-font relative flex h-full min-h-0', resizingSidebar && 'cursor-col-resize select-none [&_*]:cursor-col-resize')}>
       <h1 className="sr-only">对话</h1>
       {/* Desktop sidebar */}
-      <aside
-        className="relative hidden shrink-0 border-r border-white/[0.06] md:flex md:flex-col"
-        style={{ width: sidebarWidth }}
-        data-chat-sidebar
-      >
-        <ChatSidebar
-          tasks={sidebarTasks}
-          tasksLoading={chatTasksLoading}
-          activeTaskId={activeTask?.id ?? null}
-          onSelectTask={handleSelectTask}
-          pendingTask={pendingTaskSession ? { sessionId: pendingTaskSession.sessionId, title: pendingTaskSession.title } : null}
-          activePendingTask={!!pendingTaskSession}
-          sessions={sessions}
-          sessionsLoading={sessionsLoading}
-          activeSessionId={activeTask ? null : activeSessionId}
-          onSelectSession={handleSelectSession}
-          runningSessionIds={runningSessionIds}
-          onCreateSession={handleCreateSession}
-          onCreateTask={handleCreateTask}
-          onRenameSession={renameSession}
-          onDeleteSession={removeSession}
-          onRenameTask={openTaskRename}
-          onDeleteTask={setDeleteTarget}
-        />
+      {!sidebarCollapsed && (
+        <aside
+          className="relative hidden shrink-0 border-r border-white/[0.06] md:flex md:flex-col"
+          style={{ width: sidebarWidth }}
+          data-chat-sidebar
+        >
+          <ChatSidebar
+            tasks={sidebarTasks}
+            tasksLoading={chatTasksLoading}
+            activeTaskId={activeTask?.id ?? null}
+            onSelectTask={handleSelectTask}
+            pendingTask={pendingTaskSession ? { sessionId: pendingTaskSession.sessionId, title: pendingTaskSession.title } : null}
+            activePendingTask={!!pendingTaskSession}
+            sessions={sessions}
+            sessionsLoading={sessionsLoading}
+            activeSessionId={activeTask ? null : activeSessionId}
+            onSelectSession={handleSelectSession}
+            runningSessionIds={runningSessionIds}
+            onCreateSession={handleCreateSession}
+            onCreateTask={handleCreateTask}
+            onRenameSession={renameSession}
+            onDeleteSession={removeSession}
+            onRenameTask={openTaskRename}
+            onDeleteTask={setDeleteTarget}
+            searchOpen={sidebarSearchOpen}
+            onSearchOpenChange={setSidebarSearchOpen}
+            onCollapse={() => setSidebarCollapsed(true)}
+          />
+          <div
+            role="separator"
+            aria-orientation="vertical"
+            aria-label="调整侧栏宽度"
+            title="拖动调整宽度 · 双击复位"
+            data-testid="chat-sidebar-resizer"
+            onPointerDown={handleSidebarResizeStart}
+            onPointerMove={handleSidebarResizeMove}
+            onPointerUp={handleSidebarResizeEnd}
+            onPointerCancel={handleSidebarResizeEnd}
+            onDoubleClick={() => setSidebarWidth(SIDEBAR_DEFAULT)}
+            className={cn(
+              'absolute -right-1 top-0 z-20 hidden h-full w-2 cursor-col-resize touch-none md:block',
+              resizingSidebar ? 'bg-white/[0.12]' : 'hover:bg-white/[0.06]',
+            )}
+          />
+        </aside>
+      )}
+
+      {/* Collapsed rail: floating capsule (sidebar toggle · search · new chat). */}
+      {sidebarCollapsed && (
         <div
-          role="separator"
-          aria-orientation="vertical"
-          aria-label="调整侧栏宽度"
-          title="拖动调整宽度 · 双击复位"
-          data-testid="chat-sidebar-resizer"
-          onPointerDown={handleSidebarResizeStart}
-          onPointerMove={handleSidebarResizeMove}
-          onPointerUp={handleSidebarResizeEnd}
-          onPointerCancel={handleSidebarResizeEnd}
-          onDoubleClick={() => setSidebarWidth(SIDEBAR_DEFAULT)}
-          className={cn(
-            'absolute -right-1 top-0 z-20 hidden h-full w-2 cursor-col-resize touch-none md:block',
-            resizingSidebar ? 'bg-white/[0.12]' : 'hover:bg-white/[0.06]',
-          )}
-        />
-      </aside>
+          data-testid="chat-sidebar-collapsed"
+          className="absolute left-3 top-2.5 z-30 hidden items-center gap-0.5 rounded-full border border-white/[0.08] bg-pop-paper/85 p-1 shadow-pop-lg backdrop-blur-xl md:flex"
+        >
+          <button
+            type="button"
+            aria-label="开启新对话"
+            title="开启新对话"
+            onClick={handleCreateSession}
+            className="grid size-7 place-items-center rounded-full text-pop-dim transition-colors hover:bg-white/[0.08] hover:text-pop-ink"
+          >
+            <SquarePen className="size-[15px]" strokeWidth={1.8} />
+          </button>
+          <button
+            type="button"
+            aria-label="搜索对话"
+            title="搜索对话"
+            onClick={() => expandSidebar({ focusSearch: true })}
+            className="grid size-7 place-items-center rounded-full text-pop-dim transition-colors hover:bg-white/[0.08] hover:text-pop-ink"
+          >
+            <Search className="size-[15px]" strokeWidth={1.8} />
+          </button>
+          <button
+            type="button"
+            aria-label="展开侧栏"
+            title="展开侧栏"
+            onClick={() => expandSidebar()}
+            className="grid size-7 place-items-center rounded-full text-pop-dim transition-colors hover:bg-white/[0.08] hover:text-pop-ink"
+          >
+            <PanelLeft className="size-[15px]" strokeWidth={1.8} />
+          </button>
+        </div>
+      )}
 
       {/* Mobile sidebar */}
       <Sheet open={mobileSidebarOpen} onOpenChange={setMobileSidebarOpen}>
@@ -709,6 +770,8 @@ export function ChatTab() {
             onDeleteSession={removeSession}
             onRenameTask={openTaskRename}
             onDeleteTask={setDeleteTarget}
+            searchOpen={sidebarSearchOpen}
+            onSearchOpenChange={setSidebarSearchOpen}
           />
         </SheetContent>
       </Sheet>
@@ -764,6 +827,7 @@ export function ChatTab() {
             composerSeed={composerSeed}
             messageExtras={extras}
             transcriptTail={tail}
+            timelineClearDock={!!explorerWorkspaceId}
           />
         </div>
 
@@ -809,6 +873,7 @@ export function ChatTab() {
         onEnqueue={activeTask ? () => void handleEnqueueTask(activeTask) : undefined}
         enqueueBusy={enqueueBusy}
         activity={activitySnapshot}
+        sidebarWidth={sidebarCollapsed ? 0 : sidebarWidth}
       />
 
         {/* Tool call panel */}

@@ -45,6 +45,8 @@ export interface WorkspaceExplorerDockProps {
   onEnqueue?: () => void
   enqueueBusy?: boolean
   activity: ActivitySnapshot
+  /** Chat sidebar width (0 when collapsed) — the editor panel sizes around it. */
+  sidebarWidth?: number
   className?: string
 }
 
@@ -75,7 +77,7 @@ const DOCK_WIDTH = 48
 const PANE_WIDTH = 300
 const GAP = 8
 const FLOAT_MARGIN = 12
-const SIDEBAR_WIDTH = 236
+const SIDEBAR_DEFAULT_WIDTH = 236
 
 const MODULE_ROWS: Array<{ id: TaskModule; label: string; icon: typeof FileText }> = [
   { id: 'plan', label: '规格', icon: FileText },
@@ -126,6 +128,7 @@ export function WorkspaceExplorerDock({
   onEnqueue,
   enqueueBusy,
   activity,
+  sidebarWidth = SIDEBAR_DEFAULT_WIDTH,
   className,
 }: WorkspaceExplorerDockProps) {
   const [pane, setPane] = useState<Pane | null>(null)
@@ -181,7 +184,7 @@ export function WorkspaceExplorerDock({
   const editorRight = FLOAT_MARGIN + DOCK_WIDTH + GAP + (pane ? PANE_WIDTH : 0)
   const availableWidth = Math.max(
     EDITOR_MIN_WIDTH,
-    viewportWidth - (viewportWidth >= 768 ? SIDEBAR_WIDTH : 0) - editorRight - 24,
+    viewportWidth - (viewportWidth >= 768 ? sidebarWidth : 0) - editorRight - 24,
   )
   const panelWidth = Math.max(EDITOR_MIN_WIDTH, Math.min(560, availableWidth))
 

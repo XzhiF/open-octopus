@@ -5,8 +5,8 @@
 // lead role via an append-only role card. It is deliberately distinct from
 // `@专家` in the composer, which dispatches a one-turn subagent.
 
-import { useCallback, useEffect, useState } from 'react'
-import { Check, UserRound, X } from 'lucide-react'
+import { useCallback, useEffect, useRef, useState } from 'react'
+import { Check, Search, UserRound, X } from 'lucide-react'
 import { toast } from 'sonner'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { EXPERT_ROLES } from '@/lib/expert-roles'
@@ -34,7 +34,14 @@ export function ExpertIdentityChip({
   const [role, setRole] = useState<TaskChatRoleState | null>(null)
   const [open, setOpen] = useState(false)
   const [busy, setBusy] = useState(false)
+  const [query, setQuery] = useState('')
+  const searchRef = useRef<HTMLInputElement>(null)
   const enabled = kind === 'task' ? !!taskId : !!sessionId
+
+  // 每次打开都是干净的一次检索（名册会越装越多，别让旧词残留）。
+  useEffect(() => {
+    if (open) setQuery('')
+  }, [open])
 
   const load = useCallback(async () => {
     if (!enabled) {
@@ -78,6 +85,14 @@ export function ExpertIdentityChip({
 
   if (!enabled) return null
   const active = role?.expert ?? null
+  const needle = query.trim().toLowerCase()
+  const filteredRoles = EXPERT_ROLES.filter(
+    (expert) =>
+      !needle ||
+      expert.name.toLowerCase().includes(needle) ||
+      expert.id.toLowerCase().includes(needle) ||
+      expert.desc.toLowerCase().includes(needle),
+  )
 
   return (
     <Popover open={open} onOpenChange={setOpen}>
@@ -126,12 +141,47 @@ export function ExpertIdentityChip({
         align="start"
         sideOffset={8}
         className="w-[360px] max-w-[calc(100vw_-_24px)] overflow-hidden rounded-[14px] border-[1.5px] border-pop-bd bg-pop-paper p-0 shadow-pop"
+        onOpenAutoFocus={(event) => {
+          event.preventDefault()
+          searchRef.current?.focus()
+        }}
       >
         <div className="border-b border-pop-bd/60 px-3 py-2.5">
           <div className="text-[12px] font-bold text-pop-ink">当前会话的主专家</div>
           <p className="mt-0.5 text-[10px] leading-relaxed text-pop-dim">
             身份切换：改变这个会话的工作角色。要派一次性专家会诊，请在输入框里用 <span className="font-mono text-pop-purple">@专家</span>。
           </p>
+        </div>
+        <div className="border-b border-pop-bd/60 px-2.5 pb-2 pt-2">
+          <div className="relative">
+            <Search
+              className="pointer-events-none absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-pop-dim/70"
+              strokeWidth={1.8}
+            />
+            <input
+              ref={searchRef}
+              value={query}
+              onChange={(event) => setQuery(event.target.value)}
+              placeholder="搜索专家角色…"
+              aria-label="搜索专家角色"
+              data-testid="identity-search"
+              maxLength={80}
+              className="h-[28px] w-full rounded-[8px] border border-white/[0.08] bg-white/[0.04] pl-8 pr-7 text-[11.5px] text-pop-ink outline-none transition-colors placeholder:text-pop-dim/60 focus:border-pop-purple/40"
+            />
+            {query && (
+              <button
+                type="button"
+                aria-label="清除搜索"
+                onClick={() => {
+                  setQuery('')
+                  searchRef.current?.focus()
+                }}
+                className="absolute right-1.5 top-1/2 grid size-5 -translate-y-1/2 place-items-center rounded text-pop-dim transition-colors hover:text-pop-ink"
+              >
+                <X className="size-3.5" strokeWidth={1.8} />
+              </button>
+            )}
+          </div>
         </div>
         <div className="max-h-[300px] overflow-y-auto p-1.5">
           <button
@@ -154,7 +204,7 @@ export function ExpertIdentityChip({
               <span className="block text-[10px] text-pop-dim">回到主 Agent / task-author 的默认角色</span>
             </span>
           </button>
-          {EXPERT_ROLES.map((expert) => {
+          {filteredRoles.map((expert) => {
             const on = active?.id === expert.id
             return (
               <button
@@ -182,6 +232,9 @@ export function ExpertIdentityChip({
               </button>
             )
           })}
+          {needle && filteredRoles.length === 0 && (
+            <div className="px-2 py-6 text-center text-[11px] text-pop-dim">未找到匹配的专家</div>
+          )}
         </div>
       </PopoverContent>
     </Popover>

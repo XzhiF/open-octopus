@@ -6,6 +6,7 @@ import {
   closeAllWindows,
   openApp,
 } from './helpers/desktop'
+import { HEADER_HEIGHT } from '../lib/window-geometry'
 
 test.describe('桌面壳 · 全局 header', () => {
   test.use({ viewport: { width: 1440, height: 900 } })
@@ -89,7 +90,7 @@ test.describe('桌面壳 · 窄屏', () => {
     await expect(win).toBeVisible()
     const box = await win.boundingBox()
     expect(Math.round(box!.width)).toBe(375)
-    expect(Math.round(box!.height)).toBe(812 - 40)
+    expect(Math.round(box!.height)).toBe(812 - HEADER_HEIGHT)
 
     await page.getByRole('button', { name: '窗口总览' }).click()
     await expect(page.getByTestId('mission-control')).toBeVisible()

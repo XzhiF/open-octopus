@@ -6,8 +6,8 @@
 import { test, expect, request as playwrightRequest } from '@playwright/test'
 
 const API = 'http://127.0.0.1:3001'
-const ORG = 'xzf'
-const AUTH = { Authorization: 'Bearer agent', 'X-Octopus-Org': ORG }
+// 不钉 org：应用侧会话列表走服务端默认 org，测试的预置数据必须落在同一域。
+const AUTH = { Authorization: 'Bearer agent' }
 
 test.describe('专家身份切换 / @ 派发', () => {
   test.use({ viewport: { width: 1440, height: 900 } })
@@ -34,6 +34,12 @@ test.describe('专家身份切换 / @ 派发', () => {
       await expect(chip).toBeVisible({ timeout: 10_000 })
       await expect(chip).toHaveAttribute('data-expert-id', '')
       await chip.click()
+
+      // 名册会越装越多：弹层里先按关键词过滤再点选。
+      const search = page.getByTestId('identity-search')
+      await expect(search).toBeFocused()
+      await search.fill('sre')
+      await expect(page.locator('[data-expert-option="product-manager"]')).toHaveCount(0)
 
       const sre = page.locator('[data-expert-option="engineering-sre"]')
       await expect(sre).toBeVisible()

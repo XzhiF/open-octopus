@@ -17,7 +17,10 @@ const STAGE = { width: 1440, height: 900 - HEADER_HEIGHT }
 
 describe('window-geometry', () => {
   it('subtracts the global header from the stage height', () => {
-    expect(stageSize({ width: 1440, height: 900 })).toEqual({ width: 1440, height: 860 })
+    expect(stageSize({ width: 1440, height: 900 })).toEqual({
+      width: 1440,
+      height: 900 - HEADER_HEIGHT,
+    })
   })
 
   it('clamps windows to the stage and keeps part of the title bar visible', () => {
@@ -77,7 +80,7 @@ describe('window-geometry', () => {
   })
 
   it('maximizes to the full stage', () => {
-    expect(maximizeRect(STAGE)).toEqual({ x: 0, y: 0, w: 1440, h: 860 })
+    expect(maximizeRect(STAGE)).toEqual({ x: 0, y: 0, w: 1440, h: 900 - HEADER_HEIGHT })
   })
 
   it('lays out Mission Control slots without overlap', () => {
@@ -101,8 +104,9 @@ describe('window-geometry', () => {
     expect(four[0].content.y).toBeLessThan(four[2].content.y)
     for (const slot of four) {
       expect(slot.scale).toBeGreaterThan(0)
-      expect(slot.tx).toBeGreaterThanOrEqual(slot.content.x)
-      expect(slot.ty).toBeGreaterThanOrEqual(slot.content.y)
+      // Centering is float math — allow sub-pixel slack.
+      expect(slot.tx).toBeGreaterThanOrEqual(slot.content.x - 0.5)
+      expect(slot.ty).toBeGreaterThanOrEqual(slot.content.y - 0.5)
     }
 
     const nine = missionLayout(

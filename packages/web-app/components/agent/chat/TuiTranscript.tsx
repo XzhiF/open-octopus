@@ -162,6 +162,7 @@ function ActivityEventCard({ message }: { message: AgentMessage }) {
   return (
     <div
       data-tui-msg="event"
+      data-message-id={message.id}
       data-testid="activity-event-card"
       className={`rounded-md border px-3 py-2 font-mono text-[11.5px] shadow-[inset_0_0_0_1px_rgba(255,255,255,0.03)] ${tone}`}
     >
@@ -215,7 +216,11 @@ export function TuiMessage({ message }: { message: AgentMessage }) {
 
   if (isUser) {
     return (
-      <div className="rounded-md bg-pop-paper px-3 py-1.5 shadow-[inset_0_0_0_1px_var(--pop-bd)]" data-tui-msg="user">
+      <div
+        className="scroll-mt-6 rounded-md bg-pop-paper px-3 py-1.5 shadow-[inset_0_0_0_1px_var(--pop-bd)]"
+        data-tui-msg="user"
+        data-message-id={message.id}
+      >
         <span className="font-bold text-pop-pink">❯ </span>
         <span className="break-words whitespace-pre-wrap">{message.content}</span>
       </div>
@@ -224,7 +229,7 @@ export function TuiMessage({ message }: { message: AgentMessage }) {
 
   const metaCount = (hasTimeline ? timeline!.length : 0) + (message.thinking && !hasTimeline ? 1 : 0)
   return (
-    <div data-tui-msg="assistant">
+    <div data-tui-msg="assistant" data-message-id={message.id}>
       <TuiMeta thinking={message.thinking} toolCalls={message.tool_calls} timeline={timeline} />
       {displayContent
         ? (

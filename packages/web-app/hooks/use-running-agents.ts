@@ -16,7 +16,7 @@ export function useRunningAgents(): RunningAgentSession[] {
       if (typeof document !== 'undefined' && document.hidden) return
       try {
         const { items } = await listRunningSessions()
-        if (!cancelled) setAgents(items)
+        if (!cancelled) setAgents(Array.isArray(items) ? items : [])
       } catch {
         /* server unavailable — keep the previous snapshot */
       }

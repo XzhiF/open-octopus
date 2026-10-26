@@ -29,7 +29,7 @@ const baseProps = {
   showComposerAttach: true,
 }
 
-describe("composer + 上下文", () => {
+describe("composer + 挂载", () => {
   beforeEach(() => {
     listSkills.mockReset().mockResolvedValue({
       skills: [{
@@ -60,12 +60,12 @@ describe("composer + 上下文", () => {
     const onSend = vi.fn()
     render(<ChatArea {...baseProps} onSend={onSend} />)
 
-    fireEvent.click(screen.getByRole("button", { name: "添加上下文" }))
+    fireEvent.click(screen.getByRole("button", { name: /挂载/ }))
     await waitFor(() => expect(listSkills).toHaveBeenCalled())
     await waitFor(() => expect(listClones).toHaveBeenCalled())
 
     fireEvent.click(await screen.findByText("open-spec"))
-    fireEvent.click(screen.getByRole("button", { name: /分身/ }))
+    fireEvent.click(screen.getByRole("button", { name: /^分身/ }))
     fireEvent.click(await screen.findByText("开发分身"))
 
     expect(screen.getByText("/open-spec")).toBeInTheDocument()
@@ -78,5 +78,27 @@ describe("composer + 上下文", () => {
     expect(onSend).toHaveBeenCalledWith("/open-spec 看一下这个 spec", { delegate_to: "dev-clone" })
     expect(screen.queryByText("/open-spec")).toBeNull()
     expect(screen.queryByText("分身 · 开发分身")).toBeNull()
+  })
+
+  it("搜索过滤当前分类；当前分类无果时提示另一分类有匹配", async () => {
+    render(<ChatArea {...baseProps} />)
+    fireEvent.click(screen.getByRole("button", { name: /挂载/ }))
+    await waitFor(() => expect(listSkills).toHaveBeenCalled())
+
+    const input = await screen.findByTestId("attach-search")
+    fireEvent.change(input, { target: { value: "open" } })
+    expect(screen.getByText("open-spec")).toBeInTheDocument()
+
+    fireEvent.change(input, { target: { value: "zzz" } })
+    expect(screen.getByText("未找到匹配的 SKILL")).toBeInTheDocument()
+    expect(screen.queryByText("open-spec")).toBeNull()
+
+    // 「开发」只命中分身（display_name 开发分身）→ 跨分类提示可一键切换
+    fireEvent.change(input, { target: { value: "开发" } })
+    expect(screen.getByText("未找到匹配的 SKILL")).toBeInTheDocument()
+    const hint = screen.getByTestId("attach-search-other-tab")
+    expect(hint.textContent).toContain("分身")
+    fireEvent.click(hint)
+    expect(await screen.findByText("开发分身")).toBeInTheDocument()
   })
 })
