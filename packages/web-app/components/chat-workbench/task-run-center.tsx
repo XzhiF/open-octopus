@@ -21,13 +21,11 @@ import {
 } from '@/lib/tasks-api'
 import { getServerUrl } from '@/lib/server-config'
 import { subscribeSSE } from '@/lib/sse-manager'
-import { effectiveStatusOf, computePhaseBadge } from '@/lib/task-board'
+import { effectiveStatusOf } from '@/lib/task-board'
 import { WorkspaceEventStream } from '@/components/tasks/run-console/workspace-event-stream'
 import { agentEventFromWire, retainNewerThan } from '@/components/tasks/run-console/log-model'
 import { ConfirmDialog } from '@/components/agent/shared/ConfirmDialog'
 import { Spinner } from '@/components/ui/spinner'
-import { cn } from '@/lib/utils'
-import { expertLabel } from '@/lib/expert-roles'
 
 const LIVE_RUN_STATUSES = new Set(['pending', 'running', 'paused'])
 
@@ -147,23 +145,6 @@ export function TaskRunCenter({ task, onMutated }: TaskRunCenterProps) {
   }, [ws, executionId, targetLive])
 
   const streamEvents = liveAppends.length > 0 ? [...events, ...liveAppends] : events
-  const badge = computePhaseBadge(detail?.derived)
-  const phaseExperts = useMemo(() => {
-    if (!detail?.task_spec?.phases || !badge) return [] as string[]
-    const phase = detail.task_spec.phases.find((p) => p.index === badge.phase)
-    return (phase?.experts ?? []).map((id) => expertLabel(id))
-  }, [detail?.task_spec?.phases, badge])
-  const currentEvent = streamEvents[streamEvents.length - 1]
-  const statusLabel =
-    status === 'paused' ? '已暂停'
-      : status === 'running' ? '运行中'
-        : status === 'ready' ? '待执行'
-          : status === 'awaiting_review' ? '待验收'
-            : status === 'archiving' ? '归档中'
-              : status === 'done' ? '已完成'
-                : status === 'failed' ? '失败'
-                  : status === 'aborted' ? '中止'
-                    : status
 
   const runAction = async (label: string, fn: () => Promise<unknown>) => {
     setBusy(label)
@@ -220,36 +201,6 @@ export function TaskRunCenter({ task, onMutated }: TaskRunCenterProps) {
 
   return (
     <div className="relative flex min-h-0 flex-1 flex-col" data-testid="task-run-center">
-      {/* Inline status strip: part of the document, never a floating right pill. */}
-      <div
-        data-testid="task-run-status"
-        className="flex shrink-0 items-center gap-2 border-b border-white/[0.05] px-4 py-1.5 text-[10.5px] text-pop-dim"
-      >
-        <span
-          className={cn(
-            'size-1.5 rounded-full',
-            status === 'running' ? 'animate-pulse bg-pop-green'
-              : status === 'paused' ? 'bg-pop-amber'
-                : status === 'done' ? 'bg-pop-green/60'
-                  : status === 'failed' ? 'bg-pop-red'
-                    : 'bg-pop-cyan',
-          )}
-        />
-        <span className="font-medium text-pop-ink">{statusLabel}</span>
-        {badge && <span className="font-mono">P{badge.phase}/{badge.total}{badge.round != null ? ` · R${badge.round}` : ''}</span>}
-        {phaseExperts.length > 0 && (
-          <span className="max-w-[300px] truncate text-pop-purple">
-            {phaseExperts.join(' / ')}
-          </span>
-        )}
-        {status === 'running' && currentEvent?.nodeId && (
-          <span className="max-w-[160px] truncate font-mono text-pop-cyan">{currentEvent.nodeId}</span>
-        )}
-        <span className="ml-auto hidden text-pop-dim/60 sm:inline">
-          {status === 'running' ? '运行中' : '本轮已结束'}
-        </span>
-      </div>
-
       <div className="min-h-0 flex-1 overflow-hidden px-4 pt-3">
         {status === 'ready' && !liveRun ? (
           <ReadyPanel busy={busy === '触发执行'} onTrigger={handleTrigger} />
@@ -260,7 +211,7 @@ export function TaskRunCenter({ task, onMutated }: TaskRunCenterProps) {
         )}
       </div>
 
-      {canIntervene ? (
+      {canIntervene && (
         <div className="shrink-0 border-t border-white/[0.06] bg-pop-bg px-4 pb-3 pt-2">
           <div className="mx-auto w-full max-w-4xl">
             <div className="flex items-start gap-2 rounded-[9px] border border-white/[0.08] bg-pop-paper/60 px-2.5 py-1.5 transition-colors focus-within:border-white/[0.16]">
@@ -323,10 +274,6 @@ export function TaskRunCenter({ task, onMutated }: TaskRunCenterProps) {
               </span>
             </div>
           </div>
-        </div>
-      ) : (
-        <div className="shrink-0 border-t border-white/[0.06] px-4 py-2 text-center text-[10.5px] text-pop-dim">
-          {status === 'ready' ? '待执行 · 触发后进入运行视图' : '本轮已结束 · 可打开验收/变更窗口回看'}
         </div>
       )}
 

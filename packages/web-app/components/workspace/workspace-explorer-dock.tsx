@@ -4,13 +4,20 @@ import { useEffect, useMemo, useState } from 'react'
 import * as Y from 'yjs'
 import {
   Activity,
+  Archive,
+  Ban,
+  Check,
   ClipboardCheck,
   FileText,
   FolderTree,
   GitCompare,
+  Pause,
+  Pencil,
+  Play,
   Upload,
   Users,
   X,
+  type LucideIcon,
 } from 'lucide-react'
 import { toast } from 'sonner'
 import type { FileNode } from '@/lib/types'
@@ -76,6 +83,23 @@ const MODULE_ROWS: Array<{ id: TaskModule; label: string; icon: typeof FileText 
   { id: 'acceptance', label: '验收', icon: ClipboardCheck },
   { id: 'experts', label: '专家', icon: Users },
 ]
+
+const TASK_STATUS_META: Record<string, {
+  label: string
+  badge: string
+  icon: LucideIcon
+  pulse?: boolean
+}> = {
+  draft: { label: '草稿', badge: 'bg-pop-cyan text-pop-bg', icon: Pencil },
+  ready: { label: '待执行', badge: 'bg-pop-cyan text-pop-bg', icon: Play },
+  running: { label: '运行中', badge: 'bg-pop-green text-pop-bg', icon: Play, pulse: true },
+  paused: { label: '已暂停', badge: 'bg-pop-amber text-pop-bg', icon: Pause },
+  awaiting_review: { label: '待验收', badge: 'bg-pop-amber text-pop-bg', icon: ClipboardCheck },
+  archiving: { label: '归档中', badge: 'bg-pop-amber text-pop-bg', icon: Archive },
+  done: { label: '已完成', badge: 'bg-pop-green text-pop-bg', icon: Check },
+  failed: { label: '失败', badge: 'bg-pop-red text-pop-bg', icon: X },
+  aborted: { label: '中止', badge: 'bg-pop-amber text-pop-bg', icon: Ban },
+}
 
 function loadTabs(workspaceId: string): { tabs: EditorFile[]; active: string | null } {
   try {
@@ -221,6 +245,17 @@ export function WorkspaceExplorerDock({
     if (row.id === 'acceptance') return acceptanceStage
     return true
   })
+  const statusMeta = task
+    ? (TASK_STATUS_META[task.status] ?? { label: task.status, badge: 'bg-pop-dim text-pop-bg', icon: FileText })
+    : null
+  const phaseLabel =
+    task?.execution?.phase_index != null
+      ? `P${task.execution.phase_index}${task.execution.round_index != null ? ` · R${task.execution.round_index}` : ''}`
+      : null
+  const statusTitle = statusMeta
+    ? [statusMeta.label, phaseLabel, task?.name].filter(Boolean).join(' · ')
+    : undefined
+  const StatusIcon = statusMeta?.icon ?? null
 
   const dockButton = (
     key: string,
@@ -377,6 +412,21 @@ export function WorkspaceExplorerDock({
           className,
         )}
       >
+        {statusMeta && StatusIcon && (
+          <span
+            role="img"
+            aria-label={statusTitle}
+            title={statusTitle}
+            data-testid="dock-task-status"
+            className={cn(
+              'absolute -right-2 -top-2 grid size-5 place-items-center rounded-full border-2 border-pop-paper shadow-pop-sm',
+              statusMeta.badge,
+              statusMeta.pulse && 'animate-pulse',
+            )}
+          >
+            <StatusIcon className="size-3" strokeWidth={2.6} />
+          </span>
+        )}
         {dockButton('pane:files', '文件', FolderTree, {
           active: pane === 'files',
           onClick: () => togglePane('files'),
