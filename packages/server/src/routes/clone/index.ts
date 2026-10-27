@@ -67,6 +67,7 @@ import { appendRoleSwitchEvent, roleSwitchEventPayload } from '../../services/ag
 import { isCloneRoleTarget, roleResponse } from '../../services/agent/role-response'
 import { usableResumeId } from '../../services/agent/resume'
 import { parseContextUsage } from '../../services/agent/session-service'
+import { estimateContextUsageFromLedger } from '../../services/agent/context-usage'
 
 // ── Route deps ─────────────────────────────────────────────────────
 
@@ -310,8 +311,10 @@ export function createCloneSessionRoutes(deps: CloneSessionRouteDeps): Hono {
         ...session,
         clone_name: session.clone_name,
         // Raw row carries the JSON string — hand the parsed payload to the
-        // composer so a cold load can paint the ctx chip.
-        context_usage: parseContextUsage(session.context_usage),
+        // composer so a cold load can paint the ctx chip. No provider report
+        // yet (turn predates the column) → ledger estimate, never stored back.
+        context_usage: parseContextUsage(session.context_usage)
+          ?? estimateContextUsageFromLedger(sessionDAO.getDb(), sessionId),
       },
       messages: messagesResult.items,
       has_more: messagesResult.has_more,

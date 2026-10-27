@@ -365,7 +365,7 @@ export function ChatArea({
     ? 'exec' : 'thinking'
   const spinGlyph = TUI_SPIN[Math.floor(busyElapsed * 10) % TUI_SPIN.length]
   const contextUsageTitle = contextUsage
-    ? `上下文占用 · ${formatTokenCount(contextUsage.totalTokens)} / ${formatTokenCount(contextUsage.maxTokens)} · ${contextUsage.percentage.toFixed(1)}%` // fmt-ok: percentage 量纲为 0–100（SDK context_usage），非 0–1 比率
+    ? `上下文占用 · ${formatTokenCount(contextUsage.totalTokens)} / ${formatTokenCount(contextUsage.maxTokens)} · ${contextUsage.percentage.toFixed(1)}%${contextUsage.estimated ? '（估算：据最后一轮 token 账本推算，下一轮对话后校准）' : ''}` // fmt-ok: percentage 量纲为 0–100（SDK context_usage），非 0–1 比率
     : ''
 
   // ── 用户输入历史（右侧时间线）────────────────────────────────────────
@@ -836,7 +836,7 @@ export function ChatArea({
                           )}
                           data-tui-ctx
                         >
-                          {'ctx '}{/* fmt-ok: 终端角标百分比 */}{contextUsage.percentage.toFixed(0)}%{contextExpanded ? ' ▴' : ' ▾'}
+                          {'ctx '}{/* fmt-ok: 终端角标百分比 */}{contextUsage.estimated ? '~' : ''}{contextUsage.percentage.toFixed(0)}%{contextExpanded ? ' ▴' : ' ▾'}
                         </button>
                       </PopoverTrigger>
                       <PopoverContent
@@ -978,7 +978,7 @@ export function ChatArea({
                         contextExpanded && 'border-pop-bd bg-pop-paper text-pop-ink',
                       )}
                     >
-                      <span>{'ctx '}{/* fmt-ok: percentage 量纲未经 server 核实（providers wire），待查后收编；角标取整对齐原型 */}{contextUsage.percentage.toFixed(0)}%</span>
+                      <span>{'ctx '}{/* fmt-ok: percentage 量纲未经 server 核实（providers wire），待查后收编；角标取整对齐原型 */}{contextUsage.estimated ? '~' : ''}{contextUsage.percentage.toFixed(0)}%</span>
                       <span aria-hidden className="text-[8px]">{contextExpanded ? '▴' : '▾'}</span>
                     </button>
                   </PopoverTrigger>
@@ -1049,6 +1049,11 @@ function ContextUsagePanel({ contextUsage }: { contextUsage: ContextUsageData })
           {formatTokenCount(contextUsage.totalTokens)} / {formatTokenCount(contextUsage.maxTokens)} · {contextUsage.percentage.toFixed(1)}%{/* fmt-ok: percentage 量纲为 0–100（SDK context_usage），非 0–1 比率 */}
         </span>
       </div>
+      {contextUsage.estimated && (
+        <div className="mb-2 rounded-[7px] border border-dashed border-pop-bd/70 px-2 py-1 text-[10px] leading-relaxed text-pop-dim" data-tui-ctx-estimated>
+          估算值：该会话最后一轮早于 ctx 落库，这里按 token 账本推算；下一轮对话后自动换成精确值。
+        </div>
+      )}
       <div className="space-y-1">
         {contextUsage.categories.map((cat) => (
           <div key={cat.name} className="flex items-center justify-between gap-2 text-[11px]">

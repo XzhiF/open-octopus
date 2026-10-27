@@ -43,3 +43,32 @@ describe("ChatArea usage placeholders", () => {
     expect(screen.queryByText("tok --")).toBeNull()
   })
 })
+
+describe("ChatArea ctx 估算标记", () => {
+  const estimated = {
+    categories: [],
+    totalTokens: 98912,
+    maxTokens: 200000,
+    rawMaxTokens: 200000,
+    percentage: 49.5,
+    model: "claude-opus-5",
+    estimated: true,
+  }
+
+  it("估算值以 ctx ~N% 呈现，不冒充精确值", () => {
+    const { container } = render(<ChatArea {...baseProps} hasSession contextUsage={estimated} />)
+    expect(container.textContent).toContain("ctx ~50%") // 49.5 取整
+  })
+
+  it("provider 上报值不带 ~", () => {
+    const { container } = render(
+      <ChatArea
+        {...baseProps}
+        hasSession
+        contextUsage={{ ...estimated, estimated: undefined, percentage: 5, totalTokens: 43960, maxTokens: 967000 }}
+      />,
+    )
+    expect(container.textContent).toContain("ctx 5%")
+    expect(container.textContent).not.toContain("ctx ~")
+  })
+})

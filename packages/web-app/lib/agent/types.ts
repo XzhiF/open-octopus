@@ -301,6 +301,10 @@ export interface ContextUsageData {
   systemTools?: { name: string; tokens: number }[]
   agents?: { agentType: string; source: string; tokens: number }[]
   slashCommands?: { totalCommands: number; includedCommands: number; tokens: number }
+  /** Server-derived fallback for sessions whose provider report was never
+   *  persisted (turns before the ctx column existed). Rendered as `ctx ~N%`
+   *  and replaced by exact numbers on the next turn. */
+  estimated?: boolean
 }
 
 // ===== SSE Events =====

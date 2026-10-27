@@ -81,6 +81,11 @@ export interface AgentContextUsage {
   systemTools?: { name: string; tokens: number }[]
   agents?: { agentType: string; source: string; tokens: number }[]
   slashCommands?: { totalCommands: number; includedCommands: number; tokens: number }
+  /** True when the value was derived from the turn token ledger because the
+   *  provider's own report was never persisted (turns that predate the
+   *  `sessions.context_usage` column). Never stored back — the next real turn
+   *  replaces it with the provider's exact numbers. */
+  estimated?: boolean
 }
 
 export interface AgentMessage {

@@ -6,6 +6,7 @@ import { WorkspaceDAO } from '../../db/dao/workspace-dao'
 import { WorkspaceService } from '../../services/workspace'
 import { SessionCacheContextDAO } from '../../db/dao/session-cache-context-dao'
 import { isCloneRoleTarget, roleResponse } from '../../services/agent/role-response'
+import { estimateContextUsageFromLedger } from '../../services/agent/context-usage'
 import { createAgentError, mapErrorToStatus } from './middleware'
 
 export function createSessionRoutes(sessionDAO: AgentSessionDAO): Hono {
@@ -201,6 +202,12 @@ export function createSessionRoutes(sessionDAO: AgentSessionDAO): Hono {
 
       return c.json({
         ...session,
+        // The provider's own report when this session has run a turn since the
+        // column existed; otherwise a read-only estimate from the token ledger
+        // so ANY browser paints a number instead of `ctx --%`. The estimate is
+        // never written back — the next turn replaces it with exact numbers.
+        context_usage: session.context_usage
+          ?? estimateContextUsageFromLedger(sessionDAO.getDb(), id),
         messages: {
           items: messages,
           total: messages.length,
