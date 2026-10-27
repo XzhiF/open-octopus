@@ -1,12 +1,13 @@
 /**
- * Fixed expert catalog shared by the web consult UI and the server-side
- * session roster. Ids match the agency-agents-zh role files; the server
- * resolves the same ids into SDK subagent definitions at chat time.
+ * Expert catalog — the AGENCY roster (agency-agents-zh role files).
  *
- * Two surfaces use this catalog:
- *   - chat UI "expert identity" selection → session-level role switch
- *     (a role card appended to the conversation; system prompt unchanged)
- *   - `@专家名` mention → one-turn subagent dispatch (identity unchanged)
+ * Since v59 identities and @ delegation moved to CLONES, so this catalog no
+ * longer drives the chat surfaces. Remaining consumers are the task-domain
+ * views that still label agency-role ids:
+ *   - MoA / 变更专家窗口 (expert-label rendering, 任务域)
+ *   - legacy role-card interpretation (存量 kind='expert' 会话)
+ * The mention parser / id list that used to live here had zero callers after
+ * the move and were removed.
  */
 export const EXPERT_ROLES = [
   { id: 'product-manager', name: '产品经理', label: '📦 产品经理', desc: '需求完整性、用户价值、优先级' },
@@ -23,37 +24,10 @@ export const EXPERT_ROLES = [
 
 export type ExpertRole = (typeof EXPERT_ROLES)[number]
 
-export const EXPERT_ROLE_IDS: readonly string[] = EXPERT_ROLES.map((role) => role.id)
-
 export function expertLabel(id: string): string {
   return EXPERT_ROLES.find((role) => role.id === id)?.label ?? id
 }
 
 export function expertName(id: string): string {
   return EXPERT_ROLES.find((role) => role.id === id)?.name ?? id
-}
-
-/** Resolve a `@` token (id or Chinese name) to a catalog role. */
-export function expertByMention(token: string): ExpertRole | undefined {
-  const key = token.trim().replace(/^@+/, '').trim()
-  if (!key) return undefined
-  return EXPERT_ROLES.find(
-    (role) => role.id === key || role.name === key || role.label === key,
-  )
-}
-
-/**
- * Extract one-turn expert mentions from user text. `@@clone` remains the
- * clone-delegation syntax and is deliberately ignored here.
- */
-export function parseExpertMentions(text: string): ExpertRole[] {
-  const out: ExpertRole[] = []
-  const seen = new Set<string>()
-  for (const match of text.matchAll(/(^|\s)@([^\s@]+)/g)) {
-    const role = expertByMention(match[2])
-    if (!role || seen.has(role.id)) continue
-    seen.add(role.id)
-    out.push(role)
-  }
-  return out
 }
