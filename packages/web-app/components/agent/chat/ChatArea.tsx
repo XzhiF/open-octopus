@@ -8,7 +8,6 @@ import type { StreamTimelineItem } from '@/hooks/useAgentChat'
 import { AutoResizeTextarea } from '@/components/ui/auto-resize-textarea'
 import { Button } from '@/components/ui/button'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
-import { Badge } from '@/components/ui/badge'
 import { toast } from 'sonner'
 import { cn } from '@/lib/utils'
 import { formatTokenCount } from '@/lib/format'
@@ -66,8 +65,6 @@ interface ChatAreaProps {
   hasSession: boolean
   /** Current clone name for self-reference detection in @@mention */
   currentCloneName?: string | null
-  /** Source badge for delegated responses (legacy) */
-  streamSource?: string | null
   /** Custom empty state title (default: "开始你的第一个对话") */
   emptyStateTitle?: string
   /** Custom empty state description (default: agent description) */
@@ -148,7 +145,7 @@ interface QueuedComposerMessage {
 
 export function ChatArea({
   messages, streaming, streamContent, streamThinking, isThinking, toolCalls, streamTimeline, pendingConfirm,
-  error, statusMessage, onSend, onStop, onConfirm, hasSession, currentCloneName, streamSource,
+  error, statusMessage, onSend, onStop, onConfirm, hasSession, currentCloneName,
   reviewItems, onReviewAction,
   emptyStateTitle, emptyStateDescription, hideEmptyState,
   commands, contextUsage, sessionUsage, currentModel, onModelChange,
@@ -520,13 +517,6 @@ export function ChatArea({
                   }
                   return (
                     <div key={item.id}>
-                      {streamSource && (
-                        <div className="flex items-center gap-1.5 mb-1">
-                          <Badge variant="secondary" className="text-[10px] px-1.5 py-0 h-4 bg-agent-primary/10 text-agent-primary border-agent-primary/20">
-                            {streamSource}
-                          </Badge>
-                        </div>
-                      )}
                       <ChatBubble
                         message={{
                           id: item.id,
@@ -578,13 +568,6 @@ export function ChatArea({
             {/* Streaming: text response last */}
             {streaming && !streamTimeline && !tui && streamContent && (
               <div>
-                {streamSource && (
-                  <div className="flex items-center gap-1.5 mb-1">
-                    <Badge variant="secondary" className="text-[10px] px-1.5 py-0 h-4 bg-agent-primary/10 text-agent-primary border-agent-primary/20">
-                      {streamSource}
-                    </Badge>
-                  </div>
-                )}
                 <ChatBubble
                   message={{
                     id: 'streaming',
