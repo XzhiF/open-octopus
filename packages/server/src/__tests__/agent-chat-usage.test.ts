@@ -2,8 +2,9 @@
 //
 // 主对话 composer 指标闭环：
 //  ① context_usage chunk → SSE 原样转发（ctx 角标不再停在 --%）；
-//  ② result chunk → llm_calls 落账（tok 角标的数据源不再恒空）。
-// provider 边界 mock，DB / 路由 / 落账 helper 都是真件。
+//  ② result chunk → llm_calls 落账（tok 角标的数据源不再恒空）；
+//  ③ context_usage 同时落 sessions 列 → 冷启动（刷新/重启服务/换浏览器）
+//     时 GET /sessions/:id 能把它带回来，不必等下一轮。
 
 import { describe, it, expect, beforeAll, afterAll, beforeEach, afterEach, vi } from "vitest"
 import Database from "better-sqlite3"
@@ -15,6 +16,8 @@ import { applySchema } from "../db/schema"
 import { AgentSessionDAO } from "../db/dao"
 import { TokenUsageDAO } from "../db/dao/token-usage-dao"
 import { createChatRoutes } from "../routes/agent/chat-routes"
+import { createSessionRoutes } from "../routes/agent/sessions"
+import { initSessionService } from "../services/agent/session-service"
 import * as providers from "@octopus/providers"
 
 const ORG = "E2E_TEST_agent-chat"
@@ -62,6 +65,7 @@ function app() {
     scheduleConfigDAO: {} as never,
     tokenUsageDao: tokenDao,
   }))
+  a.route("/api/agent", createSessionRoutes(sessionDAO))
   return a
 }
 
@@ -78,6 +82,7 @@ beforeAll(() => {
   applySchema(db)
   tokenDao = new TokenUsageDAO(db)
   sessionDAO = new AgentSessionDAO(db)
+  initSessionService(sessionDAO)
 })
 
 beforeEach(() => {
@@ -144,6 +149,36 @@ describe("主对话 ctx / tok 数据链路", () => {
       cache_creation_tokens: 100,
     })
     expect(tokenDao.findLlmCallsBySession("s-1")).toHaveLength(1)
+  })
+
+  it("persists context_usage on the session and serves it on a cold GET (lists stay lean)", async () => {
+    installProvider([[
+      { type: "context_usage", data: CTX },
+      { type: "text_delta", content: "hello" },
+      { type: "result", sessionId: "provider-sess", usage: USAGE, modelUsages: [{ model: MODEL, ...USAGE }] },
+    ]])
+    const res = await chat({ message: "E2E_TEST ctx", model: MODEL })
+    expect(res.status).toBe(200)
+    await res.text()
+
+    const row = db.prepare("SELECT context_usage FROM sessions WHERE id='s-1'").get() as { context_usage: string | null }
+    expect(JSON.parse(row.context_usage ?? "null")).toMatchObject({ percentage: 21, totalTokens: 42000 })
+
+    // Cold load (refresh / server restart / another browser): the detail
+    // endpoint hands the parsed payload back so the ctx chip can paint.
+    const detail = await app().request("/api/agent/sessions/s-1?limit=50", {
+      headers: { "Content-Type": "application/json", "X-Octopus-Org": ORG },
+    })
+    expect(detail.status).toBe(200)
+    const body = await detail.json() as { context_usage?: { percentage?: number } }
+    expect(body.context_usage?.percentage).toBe(21)
+
+    // Sidebar payload stays lean — no per-session usage breakdown.
+    const list = await app().request("/api/agent/sessions?limit=50", {
+      headers: { "Content-Type": "application/json", "X-Octopus-Org": ORG },
+    })
+    const listBody = await list.json() as { items: Array<Record<string, unknown>> }
+    expect(listBody.items[0].context_usage).toBeUndefined()
   })
 
   it("流式期间 running=true + partial 可续看，结束后原地 finalize", async () => {

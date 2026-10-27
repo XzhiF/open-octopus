@@ -1,7 +1,23 @@
 import crypto from 'crypto'
-import type { AgentSession, AgentPaginatedResponse } from '@octopus/shared'
+import type { AgentSession, AgentPaginatedResponse, AgentContextUsage } from '@octopus/shared'
 import { AgentSessionDAO } from '../../db/dao'
 import type { SessionRow as DBSessionRow } from '../../db/types'
+
+/** Parse the `sessions.context_usage` JSON column. Returns null for legacy
+ *  rows, malformed JSON, or payloads that don't look like a usage report. */
+export function parseContextUsage(raw: string | null | undefined): AgentContextUsage | null {
+  if (!raw) return null
+  try {
+    const parsed = JSON.parse(raw) as unknown
+    if (!parsed || typeof parsed !== 'object') return null
+    const usage = parsed as Partial<AgentContextUsage>
+    return typeof usage.percentage === 'number' && typeof usage.totalTokens === 'number'
+      ? (usage as AgentContextUsage)
+      : null
+  } catch {
+    return null
+  }
+}
 
 // ── SessionService ─────────────────────────────────────────────
 
@@ -60,7 +76,9 @@ export class SessionService {
   getSession(org: string, id: string): AgentSession | null {
     const row = this.dao.findSessionById(id)
     if (!row || row.org !== org || row.is_deleted) return null
-    return this.rowToSession(row)
+    // Detail reads carry the persisted ctx usage so a cold load can paint the
+    // composer chip; list reads stay lean (see listSessions).
+    return this.rowToSession(row, { withContextUsage: true })
   }
 
   /**
@@ -88,7 +106,7 @@ export class SessionService {
 
   // ── Private helpers ─────────────────────────────────────────
 
-  private rowToSession(row: DBSessionRow): AgentSession {
+  private rowToSession(row: DBSessionRow, opts?: { withContextUsage?: boolean }): AgentSession {
     return {
       id: row.id,
       org: row.org,
@@ -102,6 +120,7 @@ export class SessionService {
       workspace_id: row.workspace_id ?? null,
       created_at: row.created_at,
       updated_at: row.updated_at,
+      ...(opts?.withContextUsage ? { context_usage: parseContextUsage(row.context_usage) } : {}),
     }
   }
 }

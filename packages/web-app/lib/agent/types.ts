@@ -42,6 +42,10 @@ export interface AgentSession {
   /** v58: chat cwd + bound workspace. */
   cwd?: string | null
   workspace_id?: string | null
+  /** Server-persisted last context usage (Session column). Only the
+   *  session-detail endpoint fills it — it is the cold-load source for the
+   *  composer's ctx chip (refresh / server restart / another browser). */
+  context_usage?: ContextUsageData | null
 }
 
 export interface ToolCallRecord {

@@ -460,6 +460,8 @@ export interface SessionRow {
   cwd: string | null
   /** v58: bound workspace (main-agent / user / task workspace). */
   workspace_id: string | null
+  /** Last provider-reported context-window usage (JSON) — see AgentSession.context_usage. */
+  context_usage: string | null
   last_message_at: string | null
   created_at: string
   updated_at: string

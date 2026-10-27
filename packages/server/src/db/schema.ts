@@ -35,7 +35,11 @@ const _dirname: string =
 // 58→59：会话身份源分型——session_role_states.expert_kind（'expert' 旧 agency
 // 名册 / 'clone' 系统分身）。身份切换改为只认克隆名册；老行保 'expert' 以便
 // 已投递的卡仍可解释（ADDITIVE，ensureColumn）。
-export const SCHEMA_VERSION = 59
+// 59→60：会话级上下文用量快照——sessions.context_usage（SDK context_usage 的
+// 最近一份 JSON，ADDITIVE，ensureColumn）。轮次级数据客户端算不出来：落库后
+// 刷新 / 重启服务 / 换浏览器时 GET /sessions/:id 能把它带回来，ctx 角标不再
+// 停在 `ctx --%` 等下一轮。
+export const SCHEMA_VERSION = 60
 
 /**
  * Apply the complete unified schema to the given database.
@@ -576,6 +580,12 @@ function ensureColumnsForExistingTables(db: Database.Database): void {
   // an arbitrary directory chosen on the first prompt.
   ensureColumn(db, 'sessions', 'cwd', "TEXT")
   ensureColumn(db, 'sessions', 'workspace_id', "TEXT")
+
+  // Last provider-reported context usage (JSON, SDK context_usage payload).
+  // Turn-granular and not derivable client-side — persisting it is what lets
+  // the composer's ctx chip render on a cold load (refresh / server restart /
+  // another browser) instead of falling back to `ctx --%` until the next turn.
+  ensureColumn(db, 'sessions', 'context_usage', "TEXT")
 
   // v59 (identity from clones): which roster the active identity id belongs to.
   ensureColumn(db, 'session_role_states', 'expert_kind', "TEXT NOT NULL DEFAULT 'expert'")

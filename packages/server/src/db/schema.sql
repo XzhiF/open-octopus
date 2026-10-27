@@ -536,6 +536,9 @@ CREATE TABLE IF NOT EXISTS sessions (
   provider_session_id TEXT,
   cwd TEXT,
   workspace_id TEXT,
+  -- Last provider-reported context usage (JSON, SDK context_usage payload).
+  -- Turn-granular; persisted so the composer ctx chip paints on a cold load.
+  context_usage TEXT,
   last_message_at TEXT,
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL

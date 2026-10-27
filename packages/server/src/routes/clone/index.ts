@@ -66,6 +66,7 @@ import { pendingRoleCard } from '../../services/agent/role-card'
 import { appendRoleSwitchEvent, roleSwitchEventPayload } from '../../services/agent/role-switch-event'
 import { isCloneRoleTarget, roleResponse } from '../../services/agent/role-response'
 import { usableResumeId } from '../../services/agent/resume'
+import { parseContextUsage } from '../../services/agent/session-service'
 
 // ── Route deps ─────────────────────────────────────────────────────
 
@@ -283,7 +284,9 @@ export function createCloneSessionRoutes(deps: CloneSessionRouteDeps): Hono {
       if (linked.size > 0) items = items.filter((s) => !linked.has(s.id))
     }
     return c.json({
-      sessions: items,
+      // Lists stay lean: the persisted ctx payload is only served by the
+      // session-detail endpoint, which is where the composer reads it from.
+      sessions: items.map(({ context_usage: _contextUsage, ...rest }) => rest),
       has_more: result.has_more,
       next_cursor: result.next_cursor,
     })
@@ -306,6 +309,9 @@ export function createCloneSessionRoutes(deps: CloneSessionRouteDeps): Hono {
       session: {
         ...session,
         clone_name: session.clone_name,
+        // Raw row carries the JSON string — hand the parsed payload to the
+        // composer so a cold load can paint the ctx chip.
+        context_usage: parseContextUsage(session.context_usage),
       },
       messages: messagesResult.items,
       has_more: messagesResult.has_more,
@@ -686,6 +692,9 @@ export function createCloneSessionRoutes(deps: CloneSessionRouteDeps): Hono {
               await stream.writeSSE({ event: 'thinking_done', data: '{}' })
               break
             case 'context_usage':
+              // Persist + forward: the browser-side cache dies with the profile,
+              // so the session row is the only source a cold load can paint from.
+              try { sessionDAO.updateContextUsage(sessionId, JSON.stringify(chunk.data)) } catch { /* telemetry — never break the turn */ }
               await stream.writeSSE({ event: 'context_usage', data: JSON.stringify(chunk.data) })
               break
             case 'tool_call_start':

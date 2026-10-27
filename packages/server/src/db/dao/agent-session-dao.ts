@@ -33,10 +33,10 @@ export class AgentSessionDAO extends BaseDAO {
     return { items, has_more: hasMore, next_cursor: hasMore ? items[items.length - 1].created_at : null }
   }
 
-  insertSession(row: Omit<SessionRow, "is_active" | "is_deleted" | "perspective_clone_name" | "last_message_at" | "scope_id" | "provider_session_id" | "cwd" | "workspace_id"> & {
+  insertSession(row: Omit<SessionRow, "is_active" | "is_deleted" | "perspective_clone_name" | "last_message_at" | "scope_id" | "provider_session_id" | "cwd" | "workspace_id" | "context_usage"> & {
     is_active?: number; is_deleted?: number; perspective_clone_name?: string | null;
     scope_id?: string | null; provider_session_id?: string | null
-    cwd?: string | null; workspace_id?: string | null
+    cwd?: string | null; workspace_id?: string | null; context_usage?: string | null
   }): Database.RunResult {
     return this.stmt(`
       INSERT INTO sessions (id, org, title, clone_name, perspective_clone_name, session_type, is_active, is_deleted, scope_id, provider_session_id, cwd, workspace_id, last_message_at, created_at, updated_at)
@@ -78,6 +78,13 @@ export class AgentSessionDAO extends BaseDAO {
     return this.stmt(
       "UPDATE sessions SET last_message_at = ?, updated_at = ? WHERE id = ?"
     ).run(timestamp, timestamp, id)
+  }
+
+  /** Persist the last provider-reported context usage (JSON) for a session.
+   *  Deliberately does not touch updated_at — this is observed telemetry, not
+   *  user activity (the sidebar sorts by updated_at). */
+  updateContextUsage(id: string, json: string | null): Database.RunResult {
+    return this.stmt("UPDATE sessions SET context_usage = ? WHERE id = ?").run(json, id)
   }
 
   // ── messages ────────────────────────────────────────────────────

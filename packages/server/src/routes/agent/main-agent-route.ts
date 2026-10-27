@@ -313,6 +313,11 @@ export function createMainAgentRoute(deps: MainAgentRouteDeps): Hono {
               await stream.writeSSE({ event: 'thinking_done', data: '{}' })
               break
             case 'context_usage':
+              // Persist alongside the SSE forward so the ctx chip survives a
+              // cold load (refresh / server restart / another browser).
+              if (sessionId) {
+                try { sessionDAO.updateContextUsage(sessionId, JSON.stringify(chunk.data)) } catch { /* telemetry — never break the turn */ }
+              }
               await stream.writeSSE({ event: 'context_usage', data: JSON.stringify(chunk.data) })
               break
             case 'tool_call_start':

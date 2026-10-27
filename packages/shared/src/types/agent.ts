@@ -58,6 +58,29 @@ export interface AgentSession {
   cwd?: string | null
   /** v58: bound workspace id (main-agent / user / task). */
   workspace_id?: string | null
+  /** Last provider-reported context-window usage (SDK `context_usage` payload).
+   *  Turn-granular data the client cannot recompute, persisted so the composer's
+   *  ctx chip survives page reloads, server restarts and browser-profile changes
+   *  without waiting for the next turn. Only the session-detail endpoint fills
+   *  it; list endpoints strip it to keep the sidebar payload small. */
+  context_usage?: AgentContextUsage | null
+}
+
+/** Mirror of `@octopus/providers` ContextUsageData — kept structural so the
+ *  shared package stays provider-free. */
+export interface AgentContextUsage {
+  categories: { name: string; tokens: number; color: string; isDeferred?: boolean }[]
+  totalTokens: number
+  maxTokens: number
+  rawMaxTokens: number
+  percentage: number
+  model: string
+  memoryFiles?: { path: string; type: string; tokens: number }[]
+  mcpTools?: { name: string; serverName: string; tokens: number; isLoaded?: boolean }[]
+  systemPromptSections?: { name: string; tokens: number }[]
+  systemTools?: { name: string; tokens: number }[]
+  agents?: { agentType: string; source: string; tokens: number }[]
+  slashCommands?: { totalCommands: number; includedCommands: number; tokens: number }
 }
 
 export interface AgentMessage {

@@ -411,6 +411,10 @@ export function createChatRoutes(deps: ChatRouteDeps): Hono {
             case 'context_usage':
               // composer ctx 角标（与 clone chat 同事件）：主对话此前丢了这个 chunk，
               // 导致 ctx 永远停在占位。
+              // Persist alongside the SSE forward: the browser-side cache dies with
+              // the profile, so the session row is the only source a cold load
+              // (refresh / server restart / another browser) can paint from.
+              try { sessionDao.updateContextUsage(sessionId, JSON.stringify(chunk.data)) } catch { /* telemetry — never break the turn */ }
               await stream.writeSSE({ event: 'context_usage', data: JSON.stringify(chunk.data) })
               break
             case 'tool_call_start':

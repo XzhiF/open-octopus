@@ -22,6 +22,41 @@ export interface ChatSubagentRef {
   label?: string
 }
 
+/** Last known context usage for a session. localStorage (not sessionStorage) so
+ *  the value survives tab closes and browser restarts; legacy sessionStorage
+ *  entries stay readable AND get promoted to localStorage on first read so a
+ *  pre-existing value becomes durable without waiting for the next turn. */
+function readCachedContextUsage(sessionId: string): ContextUsageData | null {
+  try {
+    const key = `context-usage:${sessionId}`
+    const saved = localStorage.getItem(key) ?? sessionStorage.getItem(key)
+    if (!saved) return null
+    if (!localStorage.getItem(key)) localStorage.setItem(key, saved)
+    return JSON.parse(saved)
+  } catch {
+    return null
+  }
+}
+
+/** Pull the persisted context usage out of a session-detail response. The main
+ *  route returns the session fields flat (`{...session, messages}`), the clone
+ *  route nests them under `session` — accept both, and tolerate a raw JSON
+ *  string (older clone responses) so the chip never depends on one shape. */
+function readServerContextUsage(res: unknown): ContextUsageData | null {
+  if (!res || typeof res !== 'object') return null
+  const r = res as { context_usage?: unknown; session?: { context_usage?: unknown } | null }
+  const raw = r.context_usage ?? r.session?.context_usage
+  let value: unknown = raw
+  if (typeof raw === 'string') {
+    try { value = JSON.parse(raw) } catch { return null }
+  }
+  if (!value || typeof value !== 'object') return null
+  const usage = value as Partial<ContextUsageData>
+  return typeof usage.percentage === 'number' && typeof usage.totalTokens === 'number'
+    ? (usage as ContextUsageData)
+    : null
+}
+
 export interface UseAgentChatApiOverride {
   /** Load session messages. Returns { messages: PaginatedResponse<AgentMessage> } */
   getSession?: (id: string, query?: { limit?: number; cursor?: string }) => Promise<{
@@ -66,21 +101,20 @@ export function useAgentChat(sessionId: string | null, options?: { onTitleUpdate
   const [statusMessage, setStatusMessage] = useState('')
   // Context window usage breakdown (from SDK getContextUsage via SSE context_usage event).
   // Updated at the start of each assistant turn (after message_start).
-  // Persisted in sessionStorage keyed by sessionId so reopening the dialog
-  // restores the last known token count without needing to send a message.
+  // Persisted in localStorage keyed by sessionId: the server does not store this
+  // value, so the cache is the only source on a cold load — it must survive tab
+  // closes and browser restarts, not just in-tab reloads (sessionStorage would
+  // be wiped by a tab close and the status bar would fall back to ctx --%).
   const [contextUsage, setContextUsageRaw] = useState<ContextUsageData | null>(() => {
     if (!sessionId) return null
-    try {
-      const saved = sessionStorage.getItem(`context-usage:${sessionId}`)
-      return saved ? JSON.parse(saved) : null
-    } catch { return null }
+    return readCachedContextUsage(sessionId)
   })
   const setContextUsage = useCallback((data: ContextUsageData | null) => {
     setContextUsageRaw(data)
     if (sessionId && data) {
-      try { sessionStorage.setItem(`context-usage:${sessionId}`, JSON.stringify(data)) } catch { /* quota */ }
+      try { localStorage.setItem(`context-usage:${sessionId}`, JSON.stringify(data)) } catch { /* quota */ }
     } else if (sessionId && !data) {
-      try { sessionStorage.removeItem(`context-usage:${sessionId}`) } catch { /* ignore */ }
+      try { localStorage.removeItem(`context-usage:${sessionId}`) } catch { /* ignore */ }
     }
   }, [sessionId])
   const { connect, disconnect } = useSSEConnection()
@@ -123,7 +157,7 @@ export function useAgentChat(sessionId: string | null, options?: { onTitleUpdate
   }, [disconnect])
 
   // When sessionId changes while streaming, abort the old stream.
-  // Also restore contextUsage from sessionStorage for the new session (so the
+  // Also restore contextUsage from the cache for the new session (so the
   // status bar shows the last known token count without a fresh message).
   useEffect(() => {
     if (streamingSessionRef.current && streamingSessionRef.current !== sessionId) {
@@ -152,10 +186,7 @@ export function useAgentChat(sessionId: string | null, options?: { onTitleUpdate
     timelineRef.current = []
     // Restore contextUsage for the new session (or null if no cached value).
     if (sessionId) {
-      try {
-        const saved = sessionStorage.getItem(`context-usage:${sessionId}`)
-        setContextUsageRaw(saved ? JSON.parse(saved) : null)
-      } catch { setContextUsageRaw(null) }
+      setContextUsageRaw(readCachedContextUsage(sessionId))
     } else {
       setContextUsageRaw(null)
     }
@@ -170,11 +201,17 @@ export function useAgentChat(sessionId: string | null, options?: { onTitleUpdate
       // Fast session switches: never let an old response overwrite the new chat.
       if (sessionIdRef.current !== requestedSessionId) return
       setMessages(res.messages.items)
+      // ctx chip source of truth on a cold load: the session row carries the
+      // last provider-reported usage, so a refresh / server restart / another
+      // browser paints the real percentage instead of `ctx --%` until the next
+      // turn. (The localStorage cache above stays as the instant-paint path.)
+      const serverUsage = readServerContextUsage(res)
+      if (serverUsage) setContextUsage(serverUsage)
     } catch {
       if (sessionIdRef.current !== requestedSessionId) return
       setError('Failed to load messages')
     }
-  }, [sessionId])
+  }, [sessionId, setContextUsage])
 
   const stopResumePolling = useCallback(() => {
     if (resumePollRef.current) { clearInterval(resumePollRef.current); resumePollRef.current = null }
