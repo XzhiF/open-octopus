@@ -28,6 +28,7 @@ import type { ChatSubagentRef } from '@/hooks/useAgentChat'
 import { SlashCommandAutocomplete, type SlashCommand } from './SlashCommandAutocomplete'
 import { ComposerModelPopover } from './composer-model-popover'
 import { ComposerAttachPopover, type ComposerExpertRef, type ComposerSkillRef, type ComposerIdentityControls } from './composer-attach-popover'
+import { ComposerIdentityPicker } from './composer-identity-picker'
 import type { ComposerContext, ComposerEffort, ModelPreset } from '@/lib/agent/composer-settings'
 
 /** 状态色带皮肤:一态一糖果(静态 class 字面量,Tailwind JIT)。 */
@@ -116,6 +117,8 @@ interface ChatAreaProps {
   composerHeroFooter?: ReactNode
   /** 会话长期身份（v59 分身）：＋ 按钮展示当前身份，面板里可委派 / 切换。 */
   identity?: ComposerIdentityControls
+  /** 当前工作区（只读）：＋ 面板置顶它自带的 SKILL（<workspace>/.claude/skills）。 */
+  workspaceContext?: { id: string; label: string } | null
   /** TUI（claude-code 终端皮肤）变体 —— 任务草稿工作台 / 对话首页共用（2026-09-24 改版）：
    *  等宽 transcript（❯/✳ 前缀 + ◌ 过程折叠）、⇧⏎ 排队 dock（≤3，done 即 flush）、
    *  busy 时输入不锁死（⏎=打断接管 / esc=打断 / esc·点击=队列退回）。 */
@@ -157,7 +160,7 @@ export function ChatArea({
   commands, contextUsage, sessionUsage, currentModel, onModelChange,
   showUsagePlaceholders, showComposerAttach,
   effort, onEffortChange, maxContext, onMaxContextChange, modelPresets,
-  composerLeading, composerPlaceholder, heroEmpty, composerHeroFooter, identity,
+  composerLeading, composerPlaceholder, heroEmpty, composerHeroFooter, identity, workspaceContext,
   tui, onSteer, steerActiveRef, resumeTailing,
   messageExtras, transcriptTail, composerSeed, timelineClearDock,
 }: ChatAreaProps) {
@@ -834,7 +837,15 @@ export function ChatArea({
                   expert={attachedExpert}
                   onSkillChange={setAttachedSkill}
                   onExpertChange={setAttachedExpert}
-                  identity={identity}
+                  // hero（新会话）身份只走下方单选选择器；＋ 面板不重复展示切换，
+                  // 但保留只读身份上下文，用来置顶「身份自带」的 SKILL。
+                  identity={heroMode ? undefined : identity}
+                  identityContext={
+                    identity?.activeName
+                      ? { name: identity.activeName, label: identity.label }
+                      : null
+                  }
+                  workspaceContext={workspaceContext}
                   open={attachOpen}
                   onOpenChange={setAttachOpen}
                 />
@@ -859,37 +870,42 @@ export function ChatArea({
                   </span>
                 )
               )}
-              <span className="hidden items-center gap-1 sm:flex">
-                {contextUsage ? (
-                  <Popover open={contextExpanded} onOpenChange={setContextExpanded}>
-                      <PopoverTrigger asChild>
-                        <button
-                          type="button"
-                          className={cn(
-                            'flex h-[22px] shrink-0 items-center rounded-[7px] border border-transparent px-1.5 text-[11px] transition-colors hover:bg-pop-paper hover:text-pop-ink',
-                            contextExpanded ? 'border-pop-bd bg-pop-paper text-pop-ink' : 'text-pop-ink/90',
-                          )}
-                          data-tui-ctx
-                        >
-                          {'ctx '}{/* fmt-ok: 终端角标百分比 */}{contextUsage.estimated ? '~' : ''}{contextUsage.percentage.toFixed(0)}%{contextExpanded ? ' ▴' : ' ▾'}
-                        </button>
-                      </PopoverTrigger>
-                      <PopoverContent
-                        side="top"
-                        align="start"
-                        sideOffset={8}
-                        className="w-72 rounded-[14px] border-[1.5px] border-pop-bd bg-pop-paper p-3 shadow-pop"
-                      >
-                        <ContextUsagePanel contextUsage={contextUsage} />
-                      </PopoverContent>
-                    </Popover>
-                ) : showUsagePlaceholders ? (
-                  <span className="flex h-[22px] shrink-0 items-center px-1.5 text-pop-dim/60" title="暂无上下文用量">ctx --% ▾</span>
-                ) : null}
-              </span>
-              <span className="hidden sm:flex">
-                <SessionCostChip usage={sessionUsage} contextUsage={contextUsage} placeholder={showUsagePlaceholders} />
-              </span>
+              {/* hero 还没有会话：ctx / token 都是空占位，只留模型可选。 */}
+              {!heroMode && (
+                <>
+                  <span className="hidden items-center gap-1 sm:flex">
+                    {contextUsage ? (
+                      <Popover open={contextExpanded} onOpenChange={setContextExpanded}>
+                          <PopoverTrigger asChild>
+                            <button
+                              type="button"
+                              className={cn(
+                                'flex h-[22px] shrink-0 items-center rounded-[7px] border border-transparent px-1.5 text-[11px] transition-colors hover:bg-pop-paper hover:text-pop-ink',
+                                contextExpanded ? 'border-pop-bd bg-pop-paper text-pop-ink' : 'text-pop-ink/90',
+                              )}
+                              data-tui-ctx
+                            >
+                              {'ctx '}{/* fmt-ok: 终端角标百分比 */}{contextUsage.estimated ? '~' : ''}{contextUsage.percentage.toFixed(0)}%{contextExpanded ? ' ▴' : ' ▾'}
+                            </button>
+                          </PopoverTrigger>
+                          <PopoverContent
+                            side="top"
+                            align="start"
+                            sideOffset={8}
+                            className="w-72 rounded-[14px] border-[1.5px] border-pop-bd bg-pop-paper p-3 shadow-pop"
+                          >
+                            <ContextUsagePanel contextUsage={contextUsage} />
+                          </PopoverContent>
+                        </Popover>
+                    ) : showUsagePlaceholders ? (
+                      <span className="flex h-[22px] shrink-0 items-center px-1.5 text-pop-dim/60" title="暂无上下文用量">ctx --% ▾</span>
+                    ) : null}
+                  </span>
+                  <span className="hidden sm:flex">
+                    <SessionCostChip usage={sessionUsage} contextUsage={contextUsage} placeholder={showUsagePlaceholders} />
+                  </span>
+                </>
+              )}
               <span className="ml-auto hidden min-w-0 items-center justify-end gap-2 text-[10.5px] sm:flex">
                 {streaming && (
                   <span className="shrink-0 text-pop-amber" data-tui-busy>
@@ -907,32 +923,17 @@ export function ChatArea({
                 )}
               </span>
             </div>
-            {/* hero 态第二行：工作区 + 当前身份（左对齐输入框；2026-10-27 原型 v2） */}
+            {/* hero 态第二行：工作区 + 当前身份（左对齐输入框；2026-10-27 原型 v2）
+                身份选择器只做单选——「委派」属于 ＋ 面板，不搬到新会话首页。 */}
             {heroMode && (composerHeroFooter || identity) && (
               <div className="mt-3 flex flex-wrap items-center gap-2" data-tui-hero-footer>
                 {composerHeroFooter}
                 {identity && (
-                  <button
-                    type="button"
-                    data-tui-hero-identity
-                    data-testid="tui-hero-identity"
-                    onClick={() => setAttachOpen(true)}
-                    title={identity.activeName
-                      ? `当前分身身份：${identity.label}（点击管理）`
-                      : '切换分身身份 / 挂载 SKILL'}
-                    className={cn(
-                      'flex h-[27px] items-center gap-1.5 rounded-[8px] border px-2.5 text-[11.5px] transition-colors',
-                      identity.activeName
-                        ? 'border-pop-purple/45 bg-pop-purple-soft text-pop-purple'
-                        : 'border-dashed border-pop-bd text-pop-dim hover:border-pop-dim hover:text-pop-ink',
-                    )}
-                  >
-                    <Users className="size-3" />
-                    <span className="max-w-[240px] truncate">
-                      {identity.label ?? '基础身份（主 Agent）'}
-                    </span>
-                    <span aria-hidden className="text-[9px] opacity-70">▾</span>
-                  </button>
+                  <ComposerIdentityPicker
+                    activeName={identity.activeName}
+                    label={identity.label}
+                    onSelect={identity.onSwitch}
+                  />
                 )}
               </div>
             )}

@@ -35,6 +35,7 @@ import {
   type ActivitySnapshot,
 } from '@/components/chat-workbench/inspector-activity'
 import { cn } from '@/lib/utils'
+import { useDockLabelsVisible } from '@/hooks/use-dock-labels'
 
 export interface WorkspaceExplorerDockProps {
   workspaceId: string | null
@@ -73,7 +74,9 @@ function tabsKey(workspaceId: string) {
 }
 
 const EDITOR_MIN_WIDTH = 320
-const DOCK_WIDTH = 48
+/** Dock footprint (p-1.5 + border) — icon-only vs. icon + permanent label. */
+const DOCK_WIDTH_ICON = 48
+const DOCK_WIDTH_LABEL = 59
 const PANE_WIDTH = 300
 const GAP = 8
 const FLOAT_MARGIN = 12
@@ -115,9 +118,11 @@ function loadTabs(workspaceId: string): { tabs: EditorFile[]; active: string | n
 }
 
 /**
- * macOS-style vertical Dock on the right: icon-only, no labels, no tabs.
- * A file/activity pane opens to its left (closed by default); module icons
- * open task windows directly. The editor window aligns its top to the Dock.
+ * macOS-style vertical Dock on the right. Icons carry a permanent ≤3-char
+ * label under them by default (设置 → 外观 can hide it, back to icon-only
+ * with hover tooltips). A file/activity pane opens to its left (closed by
+ * default); module icons open task windows directly. The editor window
+ * aligns its top to the Dock.
  */
 export function WorkspaceExplorerDock({
   workspaceId,
@@ -136,6 +141,9 @@ export function WorkspaceExplorerDock({
   const [activePath, setActivePath] = useState<string | null>(null)
   const [editorOpen, setEditorOpen] = useState(false)
   const [contents, setContents] = useState<Record<string, string>>({})
+  // 图标下方的常驻文字（设置 → 外观 可隐藏）。
+  const showLabels = useDockLabelsVisible()
+  const dockWidth = showLabels ? DOCK_WIDTH_LABEL : DOCK_WIDTH_ICON
   const [viewportWidth, setViewportWidth] = useState(() =>
     typeof window === 'undefined' ? 1440 : window.innerWidth,
   )
@@ -181,7 +189,7 @@ export function WorkspaceExplorerDock({
     return () => window.removeEventListener('resize', onResize)
   }, [])
 
-  const editorRight = FLOAT_MARGIN + DOCK_WIDTH + GAP + (pane ? PANE_WIDTH : 0)
+  const editorRight = FLOAT_MARGIN + dockWidth + GAP + (pane ? PANE_WIDTH : 0)
   const availableWidth = Math.max(
     EDITOR_MIN_WIDTH,
     viewportWidth - (viewportWidth >= 768 ? sidebarWidth : 0) - editorRight - 24,
@@ -273,6 +281,8 @@ export function WorkspaceExplorerDock({
       testId?: string
       module?: TaskModule
       pane?: Pane
+      /** 坞内文字（≤3 字约定）；缺省用 label。 */
+      shortLabel?: string
     },
   ) => (
     <button
@@ -283,10 +293,11 @@ export function WorkspaceExplorerDock({
       data-dock-pane={opts.pane}
       aria-pressed={opts.active}
       aria-label={label}
-      title={label}
+      title={showLabels ? undefined : label}
       onClick={opts.onClick}
       className={cn(
-        'relative grid size-9 place-items-center rounded-[11px] transition-all duration-150 hover:scale-105',
+        'relative flex shrink-0 flex-col items-center justify-center rounded-[11px] transition-all duration-150',
+        showLabels ? 'w-11 gap-[3px] px-0.5 py-1' : 'size-9 hover:scale-105',
         opts.primary
           ? 'bg-pop-green text-pop-bg hover:opacity-90'
           : opts.active
@@ -294,17 +305,22 @@ export function WorkspaceExplorerDock({
             : 'text-pop-dim hover:bg-white/[0.07] hover:text-pop-ink',
       )}
     >
-      <Icon className="size-[18px]" strokeWidth={1.8} />
+      <Icon className={showLabels ? 'size-[17px]' : 'size-[18px]'} strokeWidth={1.8} />
+      {showLabels && (
+        <span className="max-w-full truncate text-[9px] font-medium leading-none tracking-tight">
+          {opts.shortLabel ?? label}
+        </span>
+      )}
       {!!opts.badge && opts.badge > 0 && (
         <span className="absolute -right-0.5 -top-0.5 grid min-w-3.5 place-items-center rounded-full bg-pop-cyan px-0.5 font-mono text-[8px] font-bold text-pop-bg">
           {opts.badge}
         </span>
       )}
       {opts.marker === 'open' && (
-        <span className="absolute -bottom-0.5 size-1 rounded-full bg-pop-yellow" />
+        <span className={cn('absolute size-1 rounded-full bg-pop-yellow', showLabels ? 'bottom-0.5 right-1' : '-bottom-0.5')} />
       )}
       {opts.marker === 'minimized' && (
-        <span className="absolute -bottom-0.5 size-1 rounded-full bg-pop-amber" />
+        <span className={cn('absolute size-1 rounded-full bg-pop-amber', showLabels ? 'bottom-0.5 right-1' : '-bottom-0.5')} />
       )}
     </button>
   )
@@ -386,7 +402,7 @@ export function WorkspaceExplorerDock({
           data-pane={pane}
           className="absolute top-14 z-30 hidden flex-col overflow-hidden rounded-2xl border border-white/[0.08] bg-pop-paper/95 shadow-pop-lg backdrop-blur-xl lg:flex"
           style={{
-            right: FLOAT_MARGIN + DOCK_WIDTH + GAP,
+            right: FLOAT_MARGIN + dockWidth + GAP,
             width: PANE_WIDTH,
             height: 'min(700px, calc(100% - 160px))',
           }}
@@ -407,7 +423,7 @@ export function WorkspaceExplorerDock({
         </div>
       )}
 
-      {/* macOS-style Dock: icons only, vertical, no labels. */}
+      {/* macOS-style Dock: vertical; icon + ≤3-char label (可关）。 */}
       <div
         data-testid="workspace-explorer-dock"
         className={cn(
@@ -442,6 +458,7 @@ export function WorkspaceExplorerDock({
           pane: 'activity',
           badge: activity.count,
           testId: 'dock-activity',
+          shortLabel: '活动',
         })}
 
         {task && <div className="my-0.5 h-px w-6 bg-white/[0.12]" />}
@@ -464,14 +481,20 @@ export function WorkspaceExplorerDock({
             data-testid="task-enqueue"
             disabled={enqueueBusy}
             aria-label="入队执行"
-            title="入队执行"
+            title={showLabels ? undefined : '入队执行'}
             onClick={onEnqueue}
             className={cn(
-              'grid size-9 place-items-center rounded-[11px] bg-pop-green text-pop-bg transition-opacity hover:opacity-90',
+              'flex shrink-0 flex-col items-center justify-center rounded-[11px] bg-pop-green text-pop-bg transition-opacity hover:opacity-90',
+              showLabels ? 'w-11 gap-[3px] px-0.5 py-1' : 'size-9',
               enqueueBusy && 'animate-pulse opacity-60',
             )}
           >
-            <Upload className="size-[18px]" strokeWidth={2} />
+            <Upload className={showLabels ? 'size-[17px]' : 'size-[18px]'} strokeWidth={2} />
+            {showLabels && (
+              <span className="max-w-full truncate text-[9px] font-medium leading-none tracking-tight">
+                入队
+              </span>
+            )}
           </button>
         )}
       </div>

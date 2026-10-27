@@ -126,12 +126,16 @@ describe("ChatTab — 新会话身份先选后生效", () => {
     // 第二行身份 chip 打开 ＋ 面板，选一个分身
     fireEvent.click(screen.getByTestId("tui-hero-identity"))
     await waitFor(() => expect(listClones).toHaveBeenCalled())
-    fireEvent.click(await screen.findByTestId("switch-identity-dev-clone"))
+    // hero 选择器只做单选：不出现「委派」与 SKILL 搜索。
+    expect(screen.queryByTestId("delegate-clone-dev-clone")).toBeNull()
+    expect(screen.queryByTestId("attach-search")).toBeNull()
+    fireEvent.click(await screen.findByTestId("hero-identity-dev-clone"))
 
     // chip 立刻反映选择（乐观展示）
     expect(screen.getByTestId("tui-hero-identity").textContent).toContain("开发分身")
 
-    fireEvent.click(screen.getByTestId("composer-plus")) // 收起面板
+    // 选中后选择器自己收起。
+    await waitFor(() => expect(screen.queryByTestId("hero-identity-panel")).toBeNull())
     const textarea = screen.getByRole("textbox")
     fireEvent.change(textarea, { target: { value: "hi" } })
     fireEvent.keyDown(textarea, { key: "Enter" })

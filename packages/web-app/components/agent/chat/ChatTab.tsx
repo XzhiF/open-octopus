@@ -65,8 +65,9 @@ interface PendingTaskSession {
 }
 
 /** Chat-created tasks start unnamed; the task-author autosave adopts the
- *  smart session title after the first turn (same as a main-agent session). */
-const NEW_TASK_NAME = '新任务'
+ *  smart session title after the first turn (same as a main-agent session).
+ *  名称带「开发」：任务品类会扩展，task-author 这条是开发任务。 */
+const NEW_TASK_NAME = '新开发任务'
 
 export function ChatTab() {
   const {
@@ -740,6 +741,20 @@ export function ChatTab() {
     activeTask?.name ?? activeSession?.title ?? (authoring ? taskCwd.label : mainCwd.label)
   const activitySnapshot = useActivitySnapshot(explorerWorkspaceId, chatTasks, runningAgents, toolCalls)
 
+  // ＋ 面板的「工作区自带」层：把当前工作区（任务 / 会话 / 待发送 cwd）传下去。
+  // 名称优先用本地的 cwd chip 文案；会话自带 workspace 没有本地文案时用泛称。
+  const composerWorkspaceContext = explorerWorkspaceId
+    ? {
+        id: explorerWorkspaceId,
+        label:
+          activeTask?.workspace_id === explorerWorkspaceId
+            ? activeTask.name
+            : (authoring ? taskCwd.workspaceId : mainCwd.workspaceId) === explorerWorkspaceId
+              ? (authoring ? taskCwd.label : mainCwd.label)
+              : '当前工作区',
+      }
+    : null
+
   // Server-originated wake turns (workflow/task events → ChatEventBridge) have
   // no client SSE. The workspace channel tells the open chat to tail them.
   const activeWorkspaceId = activeSession?.workspace_id ?? null
@@ -933,6 +948,7 @@ export function ChatTab() {
             composerHeroFooter={!authoring && !activeSessionId ? (
               <CwdPicker mode="main" org={preferredOrg} value={mainCwd} onChange={setMainCwd} hero />
             ) : undefined}
+            workspaceContext={composerWorkspaceContext}
             identity={!authoring ? (
               activeSessionId
                 ? {

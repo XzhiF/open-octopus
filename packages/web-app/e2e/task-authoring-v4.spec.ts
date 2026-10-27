@@ -1,7 +1,7 @@
 // packages/web-app/e2e/task-authoring-v4.spec.ts
 //
 // 契约修复（v4-only 创建链路）浏览器穿线 — 一次真实端到端：
-//   ① 看板 [+新建任务] → 模板页（v4-only：无类型卡、无 skill 组、有 codebase 段）
+//   ① 看板 [+新建开发任务] → 模板页（v4-only：无类型卡、无 skill 组、有 codebase 段）
 //   ② 开始编写 → D15 序列（clone session + POST 直建 v4）→ 进 AuthoringWorkspace
 //   ③ DB 真相：task_spec.format==="v4" 且无 task_type 键；home + manifest.json 快照带旗标
 //   ④ 右栏「添加 Phase」手动建行（workflow 走内置目录初选）→ 整数组 PUT 落库

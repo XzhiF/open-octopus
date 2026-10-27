@@ -199,7 +199,7 @@ export function ChatSidebar({
             <DropdownMenuItem onClick={onCreateTask} className="gap-2.5 py-2">
               <ListTodo className="size-3.5 shrink-0 text-pop-dim" strokeWidth={1.8} />
               <span className="flex flex-col">
-                <span className="text-[12.5px] text-pop-ink">新建任务</span>
+                <span className="text-[12.5px] text-pop-ink">新建开发任务</span>
                 <span className="text-[10.5px] text-pop-dim">从任务作者开始，首句即标题</span>
               </span>
             </DropdownMenuItem>
@@ -294,7 +294,7 @@ export function ChatSidebar({
                     type="button"
                     data-testid="pending-task-item"
                     aria-current={activePendingTask ? 'page' : undefined}
-                    title="新任务 · 等待第一句话"
+                    title="新开发任务 · 等待第一句话"
                     className={cn(
                       ROW,
                       activePendingTask

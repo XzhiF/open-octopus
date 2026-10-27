@@ -49,6 +49,51 @@ export async function attachWorkspaceDirectory(data: { org: string; path: string
   return handleResponse(res)
 }
 
+export interface BrowseRoot {
+  name: string
+  path: string
+}
+
+export interface BrowseEntry {
+  name: string
+  path: string
+}
+
+export interface BrowseResult {
+  path: string
+  parent: string | null
+  home: string
+  roots: BrowseRoot[]
+  dirs: BrowseEntry[]
+  /** 当前目录能否直接选作 cwd（盘根 / 根目录为 false）。 */
+  canSelect: boolean
+}
+
+/** 目录浏览器：非系统敏感目录才可列出/可选。缺省从用户 home 开始。 */
+export async function browseDirectories(path?: string): Promise<BrowseResult> {
+  const qs = path ? `?path=${encodeURIComponent(path)}` : ""
+  const res = await apiFetch(`${getServerUrl()}/api/agent/fs/browse${qs}`, {
+    headers: { Authorization: "Bearer agent" },
+  })
+  return handleResponse<BrowseResult>(res)
+}
+
+export interface WorkspaceSkillInfo {
+  name: string
+  source: "workspace"
+  token_count: number
+  file_size: number
+  last_modified: string | null
+}
+
+/** 工作区自带的 SKILL（<workspace>/.claude/skills）。 */
+export async function listWorkspaceSkills(id: string): Promise<{ items: WorkspaceSkillInfo[]; total: number }> {
+  const res = await apiFetch(`${getServerUrl()}/api/workspaces/${encodeURIComponent(id)}/skills`, {
+    headers: { Authorization: "Bearer agent" },
+  })
+  return handleResponse(res)
+}
+
 export async function deleteWorkspace(id: string) {
   const res = await apiFetch(`${getServerUrl()}/api/workspaces/${id}`, { method: "DELETE" })
   return handleResponse(res)

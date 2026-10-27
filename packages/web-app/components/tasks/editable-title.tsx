@@ -57,7 +57,7 @@ export function EditableTitle({ task, onMutated, variant = "default" }: Editable
         </span>
       )
     }
-    return <DialogTitle className="text-base truncate">{task?.name ?? "新建任务"}</DialogTitle>
+    return <DialogTitle className="text-base truncate">{task?.name ?? "新建开发任务"}</DialogTitle>
   }
 
   const startEdit = () => {
@@ -131,7 +131,7 @@ export function EditableTitle({ task, onMutated, variant = "default" }: Editable
           )}
         >
           {variant === "term" && <span aria-hidden>✎</span>}
-          <span className={variant === "term" ? "truncate" : undefined}>{task?.name ?? "新建任务"}</span>
+          <span className={variant === "term" ? "truncate" : undefined}>{task?.name ?? "新建开发任务"}</span>
           {variant !== "term" && <Pencil className="size-3 shrink-0 opacity-60" aria-hidden="true" />}
         </button>
       )}

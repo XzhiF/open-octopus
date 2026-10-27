@@ -11,6 +11,11 @@ function ViewLoading() {
 }
 
 const SettingsLayout = lazy(() => import('@/app/settings/layout'))
+const AppearancePanel = lazy(() =>
+  import('@/components/settings/appearance-panel').then((m) => ({
+    default: m.AppearancePanel,
+  })),
+)
 const LogAnalysisPanel = lazy(() =>
   import('@/components/settings/log-analysis/log-analysis-panel').then((m) => ({
     default: m.LogAnalysisPanel,
@@ -20,11 +25,20 @@ const LogAnalysisPanel = lazy(() =>
 export function SettingsView() {
   return (
     <Suspense fallback={<ViewLoading />}>
-      <SettingsLayout>
-        <Suspense fallback={<ViewLoading />}>
-          <LogAnalysisPanel />
-        </Suspense>
-      </SettingsLayout>
+      <SettingsLayout
+        panels={{
+          appearance: (
+            <Suspense fallback={<ViewLoading />}>
+              <AppearancePanel />
+            </Suspense>
+          ),
+          'log-analysis': (
+            <Suspense fallback={<ViewLoading />}>
+              <LogAnalysisPanel />
+            </Suspense>
+          ),
+        }}
+      />
     </Suspense>
   )
 }

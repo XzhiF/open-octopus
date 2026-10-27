@@ -134,7 +134,7 @@ test.describe.skip("Story A: Simple task full closed loop (legacy modal flow ret
 
     await page.screenshot({ path: screenshotPath("A-01-kanban-board.png"), fullPage: true })
 
-    // Click [+新建任务] → authoring modal opens
+    // Click [+新建开发任务] → authoring modal opens
     const newBtn = page.locator("[data-task-new]")
     await expect(newBtn, "New task button should be visible").toBeVisible()
     await newBtn.click()

@@ -185,7 +185,7 @@ test.describe('对话侧栏', () => {
     await expect(newMenu).toBeVisible({ timeout: 15_000 })
     await newMenu.click()
     await expect(page.getByRole('menuitem', { name: /新建对话/ })).toBeVisible()
-    await expect(page.getByRole('menuitem', { name: /新建任务/ })).toBeVisible()
+    await expect(page.getByRole('menuitem', { name: /新建开发任务/ })).toBeVisible()
 
     // 新建对话 = lazy main-agent session: empty composer shows its placeholder.
     await page.getByRole('menuitem', { name: /新建对话/ }).click()
@@ -194,8 +194,8 @@ test.describe('对话侧栏', () => {
     await expect(page.locator('textarea').first()).toHaveAttribute('placeholder', /问主 Agent/)
 
     await newMenu.click()
-    await expect(page.getByRole('menuitem', { name: /新建任务/ })).toBeVisible()
-    await page.getByRole('menuitem', { name: /新建任务/ }).click()
+    await expect(page.getByRole('menuitem', { name: /新建开发任务/ })).toBeVisible()
+    await page.getByRole('menuitem', { name: /新建开发任务/ }).click()
     await expect(page.getByTestId('pending-task-item')).toBeVisible()
     await expect(page.getByTestId('pending-task-item')).toHaveAttribute('aria-current', 'page')
     await expect(page.locator('textarea').first()).toHaveAttribute(

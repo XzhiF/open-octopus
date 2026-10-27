@@ -51,8 +51,23 @@ describe("ChatArea hero 空态", () => {
     expect(container.querySelector('[data-tui-hero="true"]')).toBeTruthy()
     expect(screen.getByText("开始新的对话")).toBeInTheDocument()
     expect(screen.getByTestId("hero-workspace")).toBeInTheDocument()
-    // 身份 chip 由 ChatArea 自绘，点它打开 ＋ 面板
+    // 身份 chip 由 ChatArea 自绘，点它打开单选身份面板
     expect(screen.getByTestId("tui-hero-identity")).toBeInTheDocument()
+  })
+
+  it("hero：只留模型可选，ctx / token 占位不出现", () => {
+    render(
+      <ChatArea
+        {...baseProps}
+        heroEmpty
+        showUsagePlaceholders
+        identity={{ activeName: null, label: null, onSwitch: vi.fn() }}
+      />,
+    )
+
+    expect(screen.getByText("model")).toBeInTheDocument()
+    expect(screen.queryByText(/ctx --%/)).toBeNull()
+    expect(screen.queryByText("tok --")).toBeNull()
   })
 
   it("有消息：不再居中，第二行消失", () => {

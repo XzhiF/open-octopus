@@ -7,6 +7,7 @@ import { readFileSync, existsSync, readdirSync } from "fs"
 import { join } from "path"
 import os from "os"
 import { getArchiveService, ArchivePartialFailure } from "../services/archive/archive-service"
+import { listWorkspaceSkills } from "../services/workspace-skills"
 
 export function createWorkspaceRoutes(workspaceService: WorkspaceService, orgDAO: OrgDAO, workspaceDAO: WorkspaceDAO, executionDAO?: ExecutionDAO): Hono {
   const workspaceRoutes = new Hono()
@@ -197,6 +198,19 @@ export function createWorkspaceRoutes(workspaceService: WorkspaceService, orgDAO
     } catch (err: unknown) {
       return c.json({ error: err instanceof Error ? err.message : String(err) }, 400)
     }
+  })
+
+  // GET /:id/skills — 工作区自带的 SKILL（<workspace>/.claude/skills/*/SKILL.md）。
+  // 这些技能随工作区目录被 Claude Code 发现；composer ＋ 面板用它们展示
+  // 「工作区自带」一层（只读，和身份自带并列）。
+  workspaceRoutes.get("/:id/skills", (c) => {
+    const id = c.req.param("id")
+    const ws = workspaceService.getById(id)
+    if (!ws) return c.json({ error: "not found" }, 404)
+
+    const root = ws.path.replace(/^~/, os.homedir())
+    const items = listWorkspaceSkills(root)
+    return c.json({ items, total: items.length })
   })
 
   workspaceRoutes.get("/:id", (c) => {

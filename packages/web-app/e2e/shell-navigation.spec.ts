@@ -120,6 +120,6 @@ test.describe('桌面壳 · 窄屏', () => {
     expect(await scroll.evaluate((el) => el.scrollWidth <= el.clientWidth + 1)).toBe(true)
 
     await expect(win.getByTestId('task-search')).toBeVisible()
-    await expect(win.getByRole('button', { name: '新建任务', exact: true })).toBeVisible()
+    await expect(win.getByRole('button', { name: '新建开发任务', exact: true })).toBeVisible()
   })
 })

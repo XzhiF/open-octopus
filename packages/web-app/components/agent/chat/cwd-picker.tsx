@@ -1,13 +1,17 @@
 'use client'
 
-import { useEffect, useMemo, useState } from 'react'
-import { Check, ChevronDown, Folder, FolderOpen, Plus } from 'lucide-react'
+import { useEffect, useMemo, useRef, useState } from 'react'
+import { ArrowUp, Check, ChevronDown, Folder, FolderOpen, Loader2, Plus } from 'lucide-react'
 import { toast } from 'sonner'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { Dialog, DialogContent, DialogTitle } from '@/components/ui/dialog'
-import { Input } from '@/components/ui/input'
 import { Button } from '@/components/ui/button'
-import { attachWorkspaceDirectory, listWorkspaces } from '@/lib/api-client'
+import {
+  attachWorkspaceDirectory,
+  browseDirectories,
+  listWorkspaces,
+  type BrowseResult,
+} from '@/lib/api-client'
 import type { Workspace } from '@/lib/types'
 import { cn } from '@/lib/utils'
 
@@ -38,9 +42,18 @@ const DEFAULT_LABEL = {
 export function CwdPicker({ mode, org, value, onChange, disabled, hero }: CwdPickerProps) {
   const [open, setOpen] = useState(false)
   const [dirOpen, setDirOpen] = useState(false)
-  const [path, setPath] = useState('')
+  const [browse, setBrowse] = useState<BrowseResult | null>(null)
+  const [browseLoading, setBrowseLoading] = useState(false)
+  const [browseError, setBrowseError] = useState<string | null>(null)
   const [workspaces, setWorkspaces] = useState<Workspace[]>([])
   const [busy, setBusy] = useState(false)
+  const listRef = useRef<HTMLDivElement>(null)
+  const browsePath = browse?.path
+
+  // 切换目录后回到列表顶部，避免沿用上一个目录的滚动位置。
+  useEffect(() => {
+    if (browsePath && listRef.current) listRef.current.scrollTop = 0
+  }, [browsePath])
 
   useEffect(() => {
     if (!open) return
@@ -71,21 +84,41 @@ export function CwdPicker({ mode, org, value, onChange, disabled, hero }: CwdPic
     setOpen(false)
   }
 
+  const loadDir = async (target?: string) => {
+    setBrowseLoading(true)
+    setBrowseError(null)
+    try {
+      const next = await browseDirectories(target)
+      setBrowse(next)
+    } catch (err: unknown) {
+      setBrowseError(err instanceof Error ? err.message : '目录读取失败')
+    } finally {
+      setBrowseLoading(false)
+    }
+  }
+
+  const openBrowser = () => {
+    setOpen(false)
+    setDirOpen(true)
+    // 上次选过目录就从那里开始，否则从 home 开始。
+    const start = value.kind === 'directory' && value.path ? value.path : undefined
+    void loadDir(start)
+  }
+
   const attachDirectory = async () => {
-    const raw = path.trim()
-    if (!raw || busy) return
+    if (!browse || !browse.canSelect || busy) return
     setBusy(true)
     try {
-      const ws = await attachWorkspaceDirectory({ org, path: raw }) as Workspace
+      const ws = await attachWorkspaceDirectory({ org, path: browse.path }) as Workspace
+      const base = browse.path.replace(/[\\/]+$/, '').split(/[\\/]/).pop() || browse.path
       onChange({
         kind: 'directory',
         workspaceId: ws.id,
         path: ws.path,
-        label: raw.replace(/\/+$/, '').split('/').pop() || raw,
+        label: base,
       })
       setDirOpen(false)
       setOpen(false)
-      setPath('')
     } catch (err: unknown) {
       toast.error(err instanceof Error ? err.message : '目录注册失败')
     } finally {
@@ -158,7 +191,8 @@ export function CwdPicker({ mode, org, value, onChange, disabled, hero }: CwdPic
             </button>
             <button
               type="button"
-              onClick={() => setDirOpen(true)}
+              onClick={openBrowser}
+              data-testid="cwd-browse-open"
               className="flex w-full items-center gap-2 rounded-[9px] px-2 py-1.5 text-left transition-colors hover:bg-pop-bd/20"
             >
               <span className="grid size-4 shrink-0 place-items-center rounded-[5px] border-[1.5px] border-pop-bd text-transparent" />
@@ -207,26 +241,97 @@ export function CwdPicker({ mode, org, value, onChange, disabled, hero }: CwdPic
         <DialogContent
           showCloseButton={false}
           aria-describedby={undefined}
-          className="ui-font w-[480px] max-w-[calc(100vw_-_32px)] rounded-2xl border border-white/[0.10] bg-pop-bg p-4"
+          className="ui-font w-[560px] max-w-[calc(100vw_-_32px)] rounded-2xl border border-white/[0.10] bg-pop-bg p-4"
         >
           <DialogTitle className="text-[14px] font-semibold text-pop-ink">选择工作目录</DialogTitle>
-          <p className="mt-1 text-[11px] text-pop-dim">输入用户 home 下的绝对路径；该目录会注册为一个工作空间。</p>
-          <Input
-            autoFocus
-            value={path}
-            onChange={(event) => setPath(event.target.value)}
-            onKeyDown={(event) => {
-              if (event.key === 'Enter') void attachDirectory()
-              if (event.key === 'Escape') setDirOpen(false)
-            }}
-            placeholder="/Users/you/projects/my-app"
-            className="mt-3 font-mono text-[12px]"
-          />
-          <div className="mt-4 flex justify-end gap-2">
-            <Button size="sm" variant="ghost" onClick={() => setDirOpen(false)}>取消</Button>
-            <Button size="sm" variant="pop" disabled={!path.trim() || busy} onClick={() => void attachDirectory()}>
-              {busy ? '注册中…' : '使用该目录'}
-            </Button>
+          <p className="mt-1 text-[11px] text-pop-dim">
+            浏览并选择目录，系统敏感目录不可选；选中后会注册为一个工作空间。
+          </p>
+
+          {/* 导航条：上一级 + 当前路径 + 盘符切换（Windows） */}
+          <div className="mt-3 flex items-center gap-1.5 rounded-[9px] border border-pop-bd bg-pop-paper px-2 py-1.5">
+            <button
+              type="button"
+              aria-label="上一级"
+              title="上一级"
+              data-testid="cwd-browse-up"
+              disabled={!browse?.parent || browseLoading}
+              onClick={() => browse?.parent && void loadDir(browse.parent)}
+              className="grid size-6 shrink-0 place-items-center rounded-[6px] text-pop-dim transition-colors hover:bg-white/[0.06] hover:text-pop-ink disabled:opacity-35"
+            >
+              <ArrowUp className="size-3.5" />
+            </button>
+            <span
+              data-testid="cwd-browse-path"
+              title={browse?.path}
+              className="min-w-0 flex-1 truncate font-mono text-[10.5px] text-pop-ink"
+            >
+              {browse?.path ?? '读取中…'}
+            </span>
+            {browse && browse.roots.length > 1 && (
+              <select
+                aria-label="切换磁盘"
+                value=""
+                onChange={(event) => {
+                  if (event.target.value) void loadDir(event.target.value)
+                }}
+                className="h-[22px] shrink-0 cursor-pointer appearance-none rounded-[6px] border border-pop-bd bg-pop-paper px-1.5 font-mono text-[10px] text-pop-dim outline-none hover:text-pop-ink [&>option]:bg-pop-paper [&>option]:text-pop-ink"
+              >
+                <option value="">磁盘</option>
+                {browse.roots.map((root) => (
+                  <option key={root.path} value={root.path}>{root.name}</option>
+                ))}
+              </select>
+            )}
+          </div>
+
+          {/* 目录列表 */}
+          <div ref={listRef} className="mt-2 h-[260px] overflow-y-auto rounded-[9px] border border-pop-bd/70 bg-pop-paper/40 p-1" data-testid="cwd-browse-list">
+            {browseLoading && !browse ? (
+              <div className="flex h-full items-center justify-center gap-2 text-[11px] text-pop-dim">
+                <Loader2 className="size-3.5 animate-spin" /> 读取目录…
+              </div>
+            ) : browseError ? (
+              <div className="flex h-full flex-col items-center justify-center gap-2 text-[11px] text-pop-dim">
+                <span className="max-w-[90%] text-center text-pop-red">{browseError}</span>
+                <Button size="sm" variant="ghost" onClick={() => void loadDir(browse?.path)}>重试</Button>
+              </div>
+            ) : browse && browse.dirs.length === 0 ? (
+              <div className="flex h-full items-center justify-center text-[11px] text-pop-dim">
+                没有可进入的子目录
+              </div>
+            ) : (
+              browse?.dirs.map((dir) => (
+                <button
+                  key={dir.path}
+                  type="button"
+                  data-browse-dir={dir.name}
+                  onClick={() => void loadDir(dir.path)}
+                  className="flex w-full items-center gap-2 rounded-[7px] px-2 py-1.5 text-left transition-colors hover:bg-white/[0.06]"
+                >
+                  <Folder className="size-3.5 shrink-0 text-pop-yellow" />
+                  <span className="truncate text-[12px] text-pop-ink">{dir.name}</span>
+                </button>
+              ))
+            )}
+          </div>
+
+          <div className="mt-3 flex items-center gap-2">
+            <span className="text-[10px] text-pop-dim">
+              {browse?.canSelect === false ? '当前目录不可选' : '将注册为工作空间'}
+            </span>
+            <div className="ml-auto flex gap-2">
+              <Button size="sm" variant="ghost" onClick={() => setDirOpen(false)}>取消</Button>
+              <Button
+                size="sm"
+                variant="pop"
+                data-testid="cwd-browse-select"
+                disabled={!browse?.canSelect || busy || browseLoading}
+                onClick={() => void attachDirectory()}
+              >
+                {busy ? '注册中…' : '使用此目录'}
+              </Button>
+            </div>
           </div>
         </DialogContent>
       </Dialog>

@@ -10,6 +10,7 @@ import { getArchiveService } from "./archive/archive-service"
 import { WorkspaceScaffold, DEFAULT_PIPELINE_YAML } from "./workspace-scaffold"
 import { WorkspaceGit, type SpecWorktreeEntry } from "./workspace-git"
 import { getAgentDir } from "./agent/paths"
+import { resolveSelectableDirectory } from "./path-policy"
 
 /**
  * Pipeline Guide — detailed reference for pipeline.yaml configuration.
@@ -227,16 +228,11 @@ export class WorkspaceService {
    * the Yjs tree / file APIs only need the path + a stable workspace id.
    */
   attachDirectory(input: { org: string; name?: string; path: string; source?: string }): WorkspaceRow {
-    const resolved = path.resolve(input.path.replace(/^~/, os.homedir()))
-    const home = os.homedir()
-    if (resolved !== home && !resolved.startsWith(home + path.sep)) {
-      throw new Error(`目录必须在用户 home 下: ${resolved}`)
-    }
+    // 允许 home 之外的项目目录（如 C:\MiYuan\ai\kpi-10），只挡系统敏感目录。
+    // 策略在 path-policy 里按 Windows / macOS / Linux 分别维护。
+    const resolved = resolveSelectableDirectory(input.path)
     const existing = this.dao.findByPath(resolved)
     if (existing) return existing
-    if (!fs.existsSync(resolved)) {
-      throw new Error(`目录不存在: ${resolved}`)
-    }
     const id = randomUUID()
     const now = new Date().toISOString()
     const base = path.basename(resolved).replace(/[^a-zA-Z0-9_-]/g, "-") || "workspace"

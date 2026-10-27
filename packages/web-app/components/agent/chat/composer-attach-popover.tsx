@@ -1,15 +1,16 @@
 'use client'
 
-// Composer 的「＋」：单层面板 = 分身（委派 / 切换）+ SKILL。
+// Composer 的「＋」：按类别分层的添加面板。
 //
-// 设计（2026-10-27 原型 v2 拍板）：
-//   - 不再分「挂载 / 切换身份」两个文字入口：＋ 是唯一入口；有长期身份时
-//     ＋ 原地变成紫色 `◈ 名称 ▾`，仍是同一个控件。
-//   - 不再两级下钻：搜索框一次过过滤所有分组，分身行内并列「委派」「切换」。
-//   - 委派 = 一次性子代理会诊（随下一条消息消费）；切换 = 会话长期身份
-//     （每轮生效，走 useSessionIdentity）。
+// 设计（2026-10-27 分层原型 A 拍板）：
+//   - 类别导航放顶部：技能 / 分身（以后 MCP / Prompt / 文件 直接加一类）。
+//     不再把所有条目堆进一个滚动列表。
+//   - 技能类：当前身份自带的 SKILL 固定置顶（只读，随身份生效），
+//     下面才是「全部 SKILL」的挂载列表。
+//   - 分身类：委派（一次性子代理，随下一条消息消费）/ 切换（会话长期身份）
+//     都在这里；hero 新会话不传 identity，只保留委派。
 //
-// 文件上传目前平台没有通道，故面板只列分身 / SKILL —— 不摆假入口。
+// 文件上传目前平台没有通道，故不摆假入口。
 
 import { useEffect, useRef, useState } from 'react'
 import { Check, Plus, Search, Sparkles, Users, X } from 'lucide-react'
@@ -17,6 +18,7 @@ import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover
 import { cn } from '@/lib/utils'
 import { formatTokenCount } from '@/lib/format'
 import * as api from '@/lib/agent/api'
+import { listWorkspaceSkills, type WorkspaceSkillInfo } from '@/lib/api-client'
 import type { CloneInfo, SkillInfo, SkillSource } from '@/lib/agent/types'
 
 export interface ComposerSkillRef {
@@ -39,6 +41,18 @@ export interface ComposerIdentityControls {
   onSwitch: (cloneName: string | null, cloneLabel?: string | null) => void | Promise<void>
 }
 
+/** 只读身份上下文：展示「当前身份 + 它自带的 SKILL」，不提供切换。 */
+export interface ComposerIdentityContext {
+  name: string
+  label: string | null
+}
+
+/** 当前工作区（只读）：展示 <workspace>/.claude/skills 里的技能。 */
+export interface ComposerWorkspaceContext {
+  id: string
+  label: string
+}
+
 interface ComposerAttachPopoverProps {
   skill: ComposerSkillRef | null
   expert: ComposerExpertRef | null
@@ -46,10 +60,16 @@ interface ComposerAttachPopoverProps {
   onExpertChange: (expert: ComposerExpertRef | null) => void
   /** 会话身份控制。缺省 = 该宿主不支持切换身份（不渲染切换钮）。 */
   identity?: ComposerIdentityControls
+  /** 当前身份（只读）——用于置顶它自带的 SKILL；hero 新会话也会传。 */
+  identityContext?: ComposerIdentityContext | null
+  /** 当前工作区（只读）——用于置顶工作区自带的 SKILL。 */
+  workspaceContext?: ComposerWorkspaceContext | null
   /** 受控开合（hero 态的身份 chip 也要能打开同一个面板）。 */
   open?: boolean
   onOpenChange?: (open: boolean) => void
 }
+
+type AttachCategory = 'skill' | 'clone'
 
 const SOURCE_LABEL: Record<SkillSource, string> = {
   builtin: '内置',
@@ -69,6 +89,8 @@ export function ComposerAttachPopover({
   onSkillChange,
   onExpertChange,
   identity,
+  identityContext,
+  workspaceContext,
   open: controlledOpen,
   onOpenChange,
 }: ComposerAttachPopoverProps) {
@@ -81,13 +103,18 @@ export function ComposerAttachPopover({
 
   const [skills, setSkills] = useState<SkillInfo[] | null>(null)
   const [clones, setClones] = useState<CloneInfo[] | null>(null)
+  const [workspaceSkills, setWorkspaceSkills] = useState<WorkspaceSkillInfo[] | null>(null)
   const [loading, setLoading] = useState(false)
   const [query, setQuery] = useState('')
+  const [category, setCategory] = useState<AttachCategory>('skill')
   const searchRef = useRef<HTMLInputElement>(null)
 
   // 每次打开都是干净的一次检索（列表会越装越多，别让旧词残留）。
   useEffect(() => {
-    if (open) setQuery('')
+    if (open) {
+      setQuery('')
+      setCategory('skill')
+    }
   }, [open])
 
   useEffect(() => {
@@ -97,7 +124,13 @@ export function ComposerAttachPopover({
     Promise.allSettled([api.listSkills(), api.listClones()])
       .then(([skillRes, cloneRes]) => {
         if (!alive) return
-        setSkills(skillRes.status === 'fulfilled' ? (skillRes.value.skills ?? []) : [])
+        // 服务端返回 { items }；老接口曾用 { skills } —— 两者都认（
+        // 只读 .skills 会让技能页永远为空，用户只看到分身）。
+        setSkills(
+          skillRes.status === 'fulfilled'
+            ? (skillRes.value.skills ?? skillRes.value.items ?? [])
+            : [],
+        )
         setClones(cloneRes.status === 'fulfilled'
           ? cloneRes.value.clones.filter((c) => c.name !== 'main-agent')
           : [])
@@ -105,6 +138,21 @@ export function ComposerAttachPopover({
       .finally(() => { if (alive) setLoading(false) })
     return () => { alive = false }
   }, [open, skills, clones])
+
+  // 工作区自带技能：<workspace>/.claude/skills（只读）。选了工作区才拉。
+  useEffect(() => {
+    const id = workspaceContext?.id
+    if (!id || !open) {
+      setWorkspaceSkills(null)
+      return
+    }
+    let alive = true
+    setWorkspaceSkills(null)
+    listWorkspaceSkills(id)
+      .then((res) => { if (alive) setWorkspaceSkills(res.items ?? []) })
+      .catch(() => { if (alive) setWorkspaceSkills([]) })
+    return () => { alive = false }
+  }, [open, workspaceContext?.id])
 
   const needle = query.trim().toLowerCase()
   const hit = (text?: string | null) => !needle || !!text && text.toLowerCase().includes(needle)
@@ -114,6 +162,18 @@ export function ComposerAttachPopover({
   const filteredClones = (clones ?? []).filter(
     (c) => hit(c.display_name) || hit(c.name) || c.skills.some((name) => hit(name)),
   )
+
+  // 当前身份自带的 SKILL：只读展示（随身份生效），不参与挂载勾选。
+  const activeClone = identityContext
+    ? (clones ?? []).find((c) => c.name === identityContext.name) ?? null
+    : null
+  const boundSkills = activeClone?.skills ?? []
+  const boundSkillSet = new Set(boundSkills)
+  const filteredBoundSkills = boundSkills.filter((name) => hit(name))
+
+  const workspaceSkillList = workspaceSkills ?? []
+  const workspaceSkillSet = new Set(workspaceSkillList.map((s) => s.name))
+  const filteredWorkspaceSkills = workspaceSkillList.filter((s) => hit(s.name))
 
   const activeCount = (skill ? 1 : 0) + (expert ? 1 : 0)
   const identityActive = !!identity?.activeName
@@ -180,6 +240,14 @@ export function ComposerAttachPopover({
       >
         <div className="flex items-center gap-2 border-b border-pop-bd/60 px-3 py-2.5">
           <span className="text-[12px] font-bold text-pop-ink">添加</span>
+          {identityContext?.label && (
+            <span
+              data-testid="attach-identity-chip"
+              className="inline-flex h-5 items-center gap-1 rounded-[6px] border border-pop-purple/45 bg-pop-purple-soft px-1.5 text-[10px] text-pop-purple"
+            >
+              ◈ {identityContext.label}
+            </span>
+          )}
           <span className="ml-auto font-mono text-[10px] text-pop-dim">Esc</span>
         </div>
 
@@ -193,8 +261,8 @@ export function ComposerAttachPopover({
               ref={searchRef}
               value={query}
               onChange={(event) => setQuery(event.target.value)}
-              placeholder="搜索 SKILL / 分身…"
-              aria-label="搜索 SKILL / 分身"
+              placeholder="搜索技能 / 分身…"
+              aria-label="搜索技能 / 分身"
               data-testid="attach-search"
               maxLength={80}
               className="h-[29px] w-full rounded-[8px] border border-white/[0.08] bg-white/[0.04] pl-8 pr-7 text-[11.5px] text-pop-ink outline-none transition-colors placeholder:text-pop-dim/60 focus:border-pop-cyan/40"
@@ -212,17 +280,166 @@ export function ComposerAttachPopover({
           </div>
         </div>
 
-        <div className="max-h-[300px] overflow-y-auto px-1.5 pb-1.5" data-plus-list>
-          {/* ── 分身 ─────────────────────────────────────────────── */}
-          {(!needle || filteredClones.length > 0) && (
-            <div data-plus-group="clone">
+        {/* 类别导航：以后 MCP / Prompt / 文件 直接在这里加一项。 */}
+        <div className="flex gap-1 px-2 pt-2" role="tablist" aria-label="添加类别">
+          <button
+            type="button"
+            role="tab"
+            aria-selected={category === 'skill'}
+            data-testid="attach-tab-skill"
+            onClick={() => setCategory('skill')}
+            className={cn(
+              'inline-flex h-[26px] items-center gap-1.5 rounded-[7px] border px-2.5 text-[11px] transition-colors',
+              category === 'skill'
+                ? 'border-pop-bd bg-white/[0.06] font-bold text-pop-ink'
+                : 'border-transparent text-pop-dim hover:bg-white/[0.04] hover:text-pop-ink',
+            )}
+          >
+            <Sparkles className="size-3" strokeWidth={1.9} />
+            技能
+            <span className={cn('font-mono text-[9.5px]', category === 'skill' ? 'text-pop-ink' : 'text-pop-dim')}>
+              {filteredSkills.length}
+            </span>
+          </button>
+          <button
+            type="button"
+            role="tab"
+            aria-selected={category === 'clone'}
+            data-testid="attach-tab-clone"
+            onClick={() => setCategory('clone')}
+            className={cn(
+              'inline-flex h-[26px] items-center gap-1.5 rounded-[7px] border px-2.5 text-[11px] transition-colors',
+              category === 'clone'
+                ? 'border-pop-bd bg-white/[0.06] font-bold text-pop-ink'
+                : 'border-transparent text-pop-dim hover:bg-white/[0.04] hover:text-pop-ink',
+            )}
+          >
+            <Users className="size-3" strokeWidth={1.9} />
+            分身
+            <span className={cn('font-mono text-[9.5px]', category === 'clone' ? 'text-pop-ink' : 'text-pop-dim')}>
+              {filteredClones.length}
+            </span>
+          </button>
+        </div>
+
+        <div className="mt-1 max-h-[322px] overflow-y-auto px-1.5 pb-1.5" data-plus-list>
+          {category === 'skill' ? (
+            <div data-plus-group="skill" role="tabpanel" aria-label="技能">
+              {/* 身份自带：只读，随身份生效 */}
+              {boundSkills.length > 0 && (
+                <div data-testid="attach-bound-skills">
+                  <div className="sticky top-0 z-[1] flex items-baseline gap-2 bg-pop-paper px-2 pb-1 pt-2.5">
+                    <span className="text-[9.5px] font-black tracking-[0.08em] text-pop-dim/70">
+                      身份自带 <span className="font-normal">{boundSkills.length}</span>
+                    </span>
+                    <span className="ml-auto text-[9.5px] text-pop-dim">随身份生效 · 无需挂载</span>
+                  </div>
+                  <div className="flex flex-wrap gap-1.5 px-2 pb-2">
+                    {filteredBoundSkills.map((name) => (
+                      <span
+                        key={name}
+                        data-bound-skill={name}
+                        className="inline-flex h-[22px] items-center gap-1 rounded-[6px] border border-pop-green/30 bg-pop-green-soft px-2 font-mono text-[10.5px] text-pop-green"
+                      >
+                        ⬢ {name}
+                        <span aria-hidden className="text-[9px] opacity-80">✓</span>
+                      </span>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* 工作区自带：只读，随工作区目录生效 */}
+              {filteredWorkspaceSkills.length > 0 && (
+                <div data-testid="attach-bound-workspace-skills">
+                  <div className="sticky top-0 z-[1] flex items-baseline gap-2 bg-pop-paper px-2 pb-1 pt-2.5">
+                    <span className="text-[9.5px] font-black tracking-[0.08em] text-pop-dim/70">
+                      工作区自带 <span className="font-normal">{workspaceSkillList.length}</span>
+                    </span>
+                    <span className="ml-auto max-w-[190px] truncate text-[9.5px] text-pop-dim">
+                      {workspaceContext?.label ?? '当前工作区'} · 随工作区生效
+                    </span>
+                  </div>
+                  <div className="flex flex-wrap gap-1.5 px-2 pb-2">
+                    {filteredWorkspaceSkills.map((wsSkill) => (
+                      <span
+                        key={wsSkill.name}
+                        data-bound-workspace-skill={wsSkill.name}
+                        className="inline-flex h-[22px] items-center gap-1 rounded-[6px] border border-pop-yellow/30 bg-pop-yellow-soft px-2 font-mono text-[10.5px] text-pop-yellow"
+                      >
+                        ⬢ {wsSkill.name}
+                        <span aria-hidden className="text-[9px] opacity-80">✓</span>
+                      </span>
+                    ))}
+                  </div>
+                </div>
+              )}
+
               <div className="sticky top-0 z-[1] flex items-baseline gap-2 bg-pop-paper px-2 pb-1 pt-2.5">
                 <span className="text-[9.5px] font-black tracking-[0.08em] text-pop-dim/70">
-                  分身 <span className="font-normal">{clones?.length ?? ''}</span>
+                  全部 SKILL <span className="font-normal">{filteredSkills.length}</span>
                 </span>
-                <span className="ml-auto text-[9.5px] text-pop-dim">
-                  <b className="font-extrabold text-pop-cyan">委派</b>=本轮 · <i className="font-extrabold not-italic text-pop-purple">切换</i>=长期
+                {skill && (
+                  <span className="ml-auto text-[9.5px] text-pop-cyan">已挂载 {skill.name}</span>
+                )}
+              </div>
+              {loading && !skills ? (
+                <div className="px-2 py-4 text-center text-[11px] text-pop-dim">加载 SKILL…</div>
+              ) : filteredSkills.length === 0 ? (
+                <div className="px-2 py-4 text-center text-[11px] text-pop-dim">未找到匹配的 SKILL</div>
+              ) : (
+                filteredSkills.map((s) => {
+                  const on = skill?.name === s.name
+                  return (
+                    <button
+                      key={s.name}
+                      type="button"
+                      onClick={() => onSkillChange(on ? null : { name: s.name, source: s.source, tokenCount: s.token_count })}
+                      className={cn(
+                        'flex w-full items-center gap-2 rounded-[9px] px-2 py-1.5 text-left transition-colors hover:bg-pop-bd/20',
+                        on && 'bg-pop-cyan-soft/60',
+                      )}
+                    >
+                      <span className={cn(
+                        'grid size-4 shrink-0 place-items-center rounded-[5px] border-[1.5px] transition-colors',
+                        on ? 'border-pop-cyan bg-pop-cyan text-pop-bg' : 'border-pop-bd text-transparent',
+                      )}>
+                        {on && <Check className="size-2.5" />}
+                      </span>
+                      <Sparkles className={cn('size-3.5 shrink-0', on ? 'text-pop-cyan' : 'text-pop-dim')} />
+                      <span className="min-w-0 flex-1">
+                        <span className="flex items-center gap-1.5">
+                          <span className="truncate text-[12px] text-pop-ink">{s.name}</span>
+                          {boundSkillSet.has(s.name) ? (
+                            <span className="shrink-0 rounded-[5px] border border-pop-green/30 bg-pop-green-soft px-1 py-0.5 text-[8.5px] text-pop-green">
+                              身份自带
+                            </span>
+                          ) : workspaceSkillSet.has(s.name) ? (
+                            <span className="shrink-0 rounded-[5px] border border-pop-yellow/30 bg-pop-yellow-soft px-1 py-0.5 text-[8.5px] text-pop-yellow">
+                              工作区自带
+                            </span>
+                          ) : null}
+                        </span>
+                        <span className="block truncate text-[10px] text-pop-dim">
+                          {SOURCE_LABEL[s.source]} · {formatTokenCount(s.token_count)} tokens
+                        </span>
+                      </span>
+                    </button>
+                  )
+                })
+              )}
+            </div>
+          ) : (
+            <div data-plus-group="clone" role="tabpanel" aria-label="分身">
+              <div className="sticky top-0 z-[1] flex items-baseline gap-2 bg-pop-paper px-2 pb-1 pt-2.5">
+                <span className="text-[9.5px] font-black tracking-[0.08em] text-pop-dim/70">
+                  分身 <span className="font-normal">{filteredClones.length}</span>
                 </span>
+                {identity && (
+                  <span className="ml-auto text-[9.5px] text-pop-dim">
+                    <b className="font-extrabold text-pop-cyan">委派</b>=本轮 · <i className="font-extrabold not-italic text-pop-purple">切换</i>=长期
+                  </span>
+                )}
               </div>
               {identity && (
                 <div
@@ -262,6 +479,7 @@ export function ComposerAttachPopover({
                 filteredClones.map((c) => {
                   const delegated = expert?.name === c.name
                   const isActive = identity?.activeName === c.name
+                  const isCurrent = identityContext?.name === c.name
                   const status = CLONE_STATUS[c.status] ?? CLONE_STATUS.idle
                   const sub = c.skills.length > 0
                     ? `SKILL ${c.skills.join(' · ')}`
@@ -277,9 +495,9 @@ export function ComposerAttachPopover({
                     >
                       <span className={cn(
                         'grid size-[22px] shrink-0 place-items-center rounded-full text-[11px]',
-                        isActive ? 'bg-pop-purple/20 text-pop-purple' : 'bg-white/[0.05] text-pop-dim',
+                        isActive || isCurrent ? 'bg-pop-purple/20 text-pop-purple' : 'bg-white/[0.05] text-pop-dim',
                       )}>
-                        {isActive ? '◈' : '◉'}
+                        {isActive || isCurrent ? '◈' : '◉'}
                       </span>
                       <span className="min-w-0 flex-1">
                         <span className="flex items-center gap-1.5">
@@ -330,61 +548,26 @@ export function ComposerAttachPopover({
               )}
             </div>
           )}
-
-          {/* ── SKILL ────────────────────────────────────────────── */}
-          {(!needle || filteredSkills.length > 0) && (
-            <div data-plus-group="skill">
-              <div className="sticky top-0 z-[1] flex items-baseline gap-2 bg-pop-paper px-2 pb-1 pt-2.5">
-                <span className="text-[9.5px] font-black tracking-[0.08em] text-pop-dim/70">
-                  SKILL <span className="font-normal">{skills?.length ?? ''}</span>
-                </span>
-              </div>
-              {loading && !skills ? (
-                <div className="px-2 py-4 text-center text-[11px] text-pop-dim">加载 SKILL…</div>
-              ) : filteredSkills.length === 0 ? (
-                <div className="px-2 py-4 text-center text-[11px] text-pop-dim">未找到匹配的 SKILL</div>
-              ) : (
-                filteredSkills.map((s) => {
-                  const on = skill?.name === s.name
-                  return (
-                    <button
-                      key={s.name}
-                      type="button"
-                      onClick={() => onSkillChange(on ? null : { name: s.name, source: s.source, tokenCount: s.token_count })}
-                      className={cn(
-                        'flex w-full items-center gap-2 rounded-[9px] px-2 py-1.5 text-left transition-colors hover:bg-pop-bd/20',
-                        on && 'bg-pop-cyan-soft/60',
-                      )}
-                    >
-                      <span className={cn(
-                        'grid size-4 shrink-0 place-items-center rounded-[5px] border-[1.5px] transition-colors',
-                        on ? 'border-pop-cyan bg-pop-cyan text-pop-bg' : 'border-pop-bd text-transparent',
-                      )}>
-                        {on && <Check className="size-2.5" />}
-                      </span>
-                      <Sparkles className={cn('size-3.5 shrink-0', on ? 'text-pop-cyan' : 'text-pop-dim')} />
-                      <span className="min-w-0 flex-1">
-                        <span className="block truncate text-[12px] text-pop-ink">{s.name}</span>
-                        <span className="block truncate text-[10px] text-pop-dim">
-                          {SOURCE_LABEL[s.source]} · {formatTokenCount(s.token_count)} tokens
-                        </span>
-                      </span>
-                    </button>
-                  )
-                })
-              )}
-            </div>
-          )}
-
-          {needle && filteredClones.length === 0 && filteredSkills.length === 0 && (
-            <div className="px-2 py-6 text-center text-[11px] text-pop-dim">未找到匹配项</div>
-          )}
         </div>
 
         <div className="flex items-center gap-1.5 border-t border-pop-bd/60 px-3 py-2 text-[10px] text-pop-dim">
-          <span className={cn('size-1.5 rounded-full', identityActive ? 'bg-pop-purple' : 'bg-pop-dim')} />
-          <span>当前身份：<b className="font-extrabold text-pop-ink">{identity?.label ?? '基础（主 Agent）'}</b></span>
-          <span className="ml-auto">@ 委派 · / 挂技能</span>
+          {activeClone && identityContext?.label ? (
+            <>
+              <span className="size-1.5 rounded-full bg-pop-purple" />
+              <span>
+                当前身份 <b className="font-extrabold text-pop-ink">{identityContext.label}</b>
+                {' '}· 技能 {boundSkills.length} 随身份生效
+              </span>
+            </>
+          ) : identity ? (
+            <>
+              <span className={cn('size-1.5 rounded-full', identityActive ? 'bg-pop-purple' : 'bg-pop-dim')} />
+              <span>当前身份：<b className="font-extrabold text-pop-ink">{identity.label ?? '基础（主 Agent）'}</b></span>
+            </>
+          ) : (
+            <span>SKILL 随本条消息生效</span>
+          )}
+          <span className="ml-auto">/ 挂技能 · @ 委派</span>
         </div>
       </PopoverContent>
     </Popover>

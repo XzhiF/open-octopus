@@ -254,3 +254,23 @@ describe("WorkspaceService · one-workspace model", () => {
     }
   })
 })
+
+describe("WorkspaceService · attachDirectory path policy", () => {
+  it("attaches an existing non-system directory（不再限制在 home 下）", () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "ws-attach-"))
+    try {
+      const ws = service.attachDirectory({ org: "xzf", path: dir })
+      expect(ws.path).toBe(fs.realpathSync(dir))
+      expect(ws.description).toBe("Chat cwd")
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it("rejects system-sensitive directories", () => {
+    const blocked = process.platform === "win32"
+      ? (process.env.SystemRoot ?? "C:\Windows")
+      : "/etc"
+    expect(() => service.attachDirectory({ org: "xzf", path: blocked })).toThrow(/系统敏感目录/)
+  })
+})

@@ -471,7 +471,7 @@ export default function TasksPage() {
             </Button>
             <Button variant="pop" size="sm" onClick={openNew} data-task-new>
               <Plus className="size-4" />
-              新建任务
+              新建开发任务
             </Button>
           </div>
         </header>
