@@ -163,23 +163,22 @@ export function createSessionRoutes(sessionDAO: AgentSessionDAO): Hono {
       const msgRows = sessionDAO.findMessagesBySessionWithCursor(id, limit + 1, cursor)
       const hasMore = msgRows.length > limit
       const messages = (hasMore ? msgRows.slice(0, limit) : msgRows).reverse().map((r) => {
-        // Parse tool_calls column — may be new format { thinking, tool_calls } or old format (plain array)
-        let toolCalls = null
+        // Parse the tool_calls column — wrapper { thinking?, tool_calls? } for
+        // turns with extras, legacy plain array otherwise. Anything that is not
+        // an array is handed out as null: the transcript UI iterates this
+        // field, and a stray object (older writers serialized an empty wrapper
+        // as "{}") blanks the whole app on mount.
+        let toolCalls: unknown[] | null = null
         let thinking: string | undefined
         if (r.tool_calls) {
           try {
-            const parsed = JSON.parse(r.tool_calls)
-            if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
-              // New format: { thinking?: string, tool_calls: [...] }
-              if ('thinking' in parsed || 'tool_calls' in parsed) {
-                thinking = parsed.thinking ?? undefined
-                toolCalls = parsed.tool_calls ?? null
-              } else {
-                // Old format: plain array
-                toolCalls = parsed
-              }
-            } else {
+            const parsed = JSON.parse(r.tool_calls) as unknown
+            if (Array.isArray(parsed)) {
               toolCalls = parsed
+            } else if (parsed && typeof parsed === 'object') {
+              const wrapper = parsed as { thinking?: unknown; tool_calls?: unknown }
+              thinking = typeof wrapper.thinking === 'string' ? wrapper.thinking : undefined
+              toolCalls = Array.isArray(wrapper.tool_calls) ? wrapper.tool_calls : null
             }
           } catch {
             toolCalls = null

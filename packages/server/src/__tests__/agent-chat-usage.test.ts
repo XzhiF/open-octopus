@@ -215,4 +215,37 @@ describe("主对话 ctx / tok 数据链路", () => {
     expect(finalRows[0].content).toBe("partial answer")
     expect(finalRows[0].metadata).toBeNull()
   })
+
+  it("turn without thinking/tools persists tool_calls NULL — never the junk \"{}\" that blanks the transcript", async () => {
+    installProvider([[
+      { type: "text_delta", content: "plain answer" },
+      { type: "result", sessionId: "provider-sess", usage: USAGE, modelUsages: [{ model: MODEL, ...USAGE }] },
+    ]])
+    const res = await chat({ message: "E2E_TEST plain", model: MODEL })
+    expect(res.status).toBe(200)
+    await res.text()
+
+    const rows = db.prepare("SELECT tool_calls FROM messages WHERE role='assistant'").all() as Array<{ tool_calls: string | null }>
+    expect(rows).toHaveLength(1)
+    expect(rows[0].tool_calls).toBeNull()
+  })
+
+  it("turn with thinking persists the wrapper (thinking restored on re-read)", async () => {
+    installProvider([[
+      { type: "thinking_start", content: "" },
+      { type: "thinking", content: "deep thought" },
+      { type: "thinking_done", content: "" },
+      { type: "text_delta", content: "answered" },
+      { type: "result", sessionId: "provider-sess", usage: USAGE, modelUsages: [{ model: MODEL, ...USAGE }] },
+    ]])
+    const res = await chat({ message: "E2E_TEST think", model: MODEL })
+    expect(res.status).toBe(200)
+    await res.text()
+
+    const rows = db.prepare("SELECT tool_calls FROM messages WHERE role='assistant'").all() as Array<{ tool_calls: string | null }>
+    expect(rows).toHaveLength(1)
+    expect(rows[0].tool_calls).toBeTruthy()
+    expect(JSON.parse(rows[0].tool_calls!)).toMatchObject({ thinking: "deep thought" })
+    expect(JSON.parse(rows[0].tool_calls!).tool_calls).toBeUndefined()
+  })
 })

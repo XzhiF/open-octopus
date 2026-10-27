@@ -320,20 +320,29 @@ export function createChatRoutes(deps: ChatRouteDeps): Hono {
     // 刷新/重开时前端用 running + messages 轮询续看；轮次结束再原地 finalize。
     const assistantMsgId = crypto.randomUUID()
     let partialRowId: string | null = null
+    // Wrapper for the messages.tool_calls column. Write null when there is
+    // nothing to keep — JSON.stringify of all-undefined fields persists "{}",
+    // a truthy non-iterable that readers can hand to the transcript UI (which
+    // iterates it) and blank the whole app.
+    const serializeTurnExtras = (thinking: string, tools: unknown[]): string | null =>
+      thinking || tools.length > 0
+        ? JSON.stringify({
+            thinking: thinking || undefined,
+            tool_calls: tools.length > 0 ? tools : undefined,
+          })
+        : null
     // 中途失败 / 没有正文时也要把 partial 收尾，避免永久 streaming。
     const finalizePartial = () => {
       if (!partialRowId) return
       try {
         const assistantNow = new Date().toISOString()
-        const toolCallsJson = JSON.stringify({
-          thinking: fullThinking || undefined,
-          tool_calls: currentToolCalls.length > 0
-            ? currentToolCalls.map((tc) => {
-                const terminal = tc.status === 'success' || tc.status === 'result' || tc.status === 'fail'
-                return terminal ? tc : { ...tc, status: 'fail' }
-              })
-            : undefined,
-        })
+        const toolCallsJson = serializeTurnExtras(
+          fullThinking,
+          currentToolCalls.map((tc) => {
+            const terminal = tc.status === 'success' || tc.status === 'result' || tc.status === 'fail'
+            return terminal ? tc : { ...tc, status: 'fail' }
+          }),
+        )
         sessionDao.updateMessage(assistantMsgId, {
           content: fullContent, tool_calls: toolCallsJson, metadata: null,
         })
@@ -355,10 +364,7 @@ export function createChatRoutes(deps: ChatRouteDeps): Hono {
 
       let lastFlushAt = 0
       const partialFlushMs = 500
-      const partialToolCalls = () => JSON.stringify({
-        thinking: fullThinking || undefined,
-        tool_calls: currentToolCalls.length > 0 ? currentToolCalls : undefined,
-      })
+      const partialToolCalls = () => serializeTurnExtras(fullThinking, currentToolCalls)
       const maybeFlushPartial = () => {
         try {
           if (Date.now() - lastFlushAt < partialFlushMs) return
@@ -490,10 +496,7 @@ export function createChatRoutes(deps: ChatRouteDeps): Hono {
 
       if (generated && fullContent) {
         const assistantNow = new Date().toISOString()
-        const toolCallsJson = JSON.stringify({
-          thinking: fullThinking || undefined,
-          tool_calls: currentToolCalls.length > 0 ? currentToolCalls : undefined,
-        })
+        const toolCallsJson = serializeTurnExtras(fullThinking, currentToolCalls)
         if (partialRowId) {
           sessionDao.updateMessage(assistantMsgId, {
             content: fullContent, tool_calls: toolCallsJson, metadata: null,

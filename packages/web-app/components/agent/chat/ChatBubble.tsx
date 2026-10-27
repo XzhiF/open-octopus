@@ -109,7 +109,10 @@ function CollapsibleMeta({ thinking, toolCalls, timeline }: {
   timeline?: MessageTimelineEntry[]
 }) {
   const [open, setOpen] = useState(false)
-  const tcCount = toolCalls?.length ?? 0
+  // The server column can hand over a non-array (legacy "{}" rows); treat it
+  // as empty rather than letting `.find`/`.map` throw mid-render.
+  const toolList = Array.isArray(toolCalls) ? toolCalls : []
+  const tcCount = toolList.length
   const hasThinking = !!thinking
   const hasTimeline = !!timeline && timeline.length > 0
 
@@ -158,7 +161,7 @@ function CollapsibleMeta({ thinking, toolCalls, timeline }: {
                 )
               }
               if (entry.kind === 'tool') {
-                const tc = toolCalls?.find((t) => t.id === entry.id)
+                const tc = toolList.find((t) => t.id === entry.id)
                 return tc ? <ToolCallCard key={i} toolCall={tc} /> : null
               }
               // text fragment (skip the final one — it's the bubble body)
@@ -184,12 +187,12 @@ function CollapsibleMeta({ thinking, toolCalls, timeline }: {
                   </pre>
                 </div>
               )}
-              {toolCalls && toolCalls.length > 0 && (
+              {toolList.length > 0 && (
                 <div className="space-y-1.5">
                   <div className="flex items-center gap-1 text-xs font-medium text-muted-foreground">
                     <Wrench className="h-3 w-3" /> 工具调用
                   </div>
-                  {toolCalls.map((tc) => (
+                  {toolList.map((tc) => (
                     <ToolCallCard key={tc.id} toolCall={tc} />
                   ))}
                 </div>

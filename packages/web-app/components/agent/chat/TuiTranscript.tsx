@@ -97,18 +97,21 @@ function TuiMeta({ thinking, toolCalls, timeline }: {
 }) {
   const [open, setOpen] = useState(false)
   const rows = useMemo(() => {
+    // The server column can hand over a non-array (legacy "{}" rows) — treating
+    // it as a list here would throw and blank the whole transcript.
+    const toolList = Array.isArray(toolCalls) ? toolCalls : []
     const out: Array<{ key: string; node: 'think' | 'tool' | 'frag'; text?: string; tc?: ToolCallRecord }> = []
     if (timeline?.length) {
       for (const e of timeline) {
         if (e.kind === 'thinking' && e.text) out.push({ key: `th-${out.length}`, node: 'think', text: e.text })
         else if (e.kind === 'tool') {
-          const tc = toolCalls?.find((t) => t.id === e.id)
+          const tc = toolList.find((t) => t.id === e.id)
           if (tc) out.push({ key: `tc-${e.id}`, node: 'tool', tc })
         } else if (e.kind === 'text' && e.text) out.push({ key: `fx-${out.length}`, node: 'frag', text: e.text })
       }
     } else {
       if (thinking) out.push({ key: 'th-0', node: 'think', text: thinking })
-      for (const tc of toolCalls ?? []) out.push({ key: `tc-${tc.id}`, node: 'tool', tc })
+      for (const tc of toolList) out.push({ key: `tc-${tc.id}`, node: 'tool', tc })
     }
     return out
   }, [thinking, toolCalls, timeline])
@@ -234,6 +237,17 @@ export function TuiMessage({ message }: { message: AgentMessage }) {
   const timeline = !isUser ? message.timeline : undefined
   const hasTimeline = !!timeline && timeline.length > 0
 
+  // 与 ChatBubble 同语义：有 timeline 时正文只显最后一段 text，其余收进 meta。
+  // Hooks must run before the early returns below — a message that flips between
+  // roleSwitch / event / normal types across renders would otherwise change the
+  // hook order (React: "Rendered fewer hooks than expected").
+  const displayContent = useMemo(() => {
+    if (!hasTimeline) return message.content
+    const texts = timeline!.filter((e) => e.kind === 'text' && e.text)
+    const last = texts[texts.length - 1]
+    return last?.text ?? message.content
+  }, [hasTimeline, timeline, message.content])
+
   if (message.roleSwitch) {
     return <RoleSwitchCard payload={message.roleSwitch} />
   }
@@ -241,14 +255,6 @@ export function TuiMessage({ message }: { message: AgentMessage }) {
   if (message.displayType === 'event') {
     return <ActivityEventCard message={message} />
   }
-
-  // 与 ChatBubble 同语义：有 timeline 时正文只显最后一段 text，其余收进 meta。
-  const displayContent = useMemo(() => {
-    if (!hasTimeline) return message.content
-    const texts = timeline!.filter((e) => e.kind === 'text' && e.text)
-    const last = texts[texts.length - 1]
-    return last?.text ?? message.content
-  }, [hasTimeline, timeline, message.content])
 
   if (isUser) {
     return (
