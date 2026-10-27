@@ -2,6 +2,7 @@ import fs from 'fs'
 import path from 'path'
 import yaml from 'js-yaml'
 import { getAgentDir, getPersonaPath, getLongTermMemoryPath, getAgentConfigPath, getAgentSkillsDir } from './paths'
+import { OCTOPUS_DEFAULT_PERSONA } from './main-agent-preset'
 
 /**
  * Directory tree to create during agent initialization.
@@ -22,24 +23,10 @@ const AGENT_DIRS = [
 ] as const
 
 /**
- * Default persona content (~200 tokens).
+ * Default persona content (~200 tokens) — single source: the main-agent
+ * preset registry (main-agent-preset.ts), so the seeded file, the 'octopus'
+ * preset option and the preset detection can never drift apart.
  */
-const DEFAULT_PERSONA = `# 人格
-
-你是 Octopus Agent，一个智能编排助手。
-
-## 核心能力
-- 理解用户意图，将自然语言任务转化为可执行的工作流
-- 管理分身（Clones）并行执行多个任务
-- 维护三层记忆系统，持续学习和改进
-- 通过 SKILL 进化机制自主优化工作方式
-
-## 工作原则
-- 安全第一：危险操作必须确认，文件操作限定在工作空间内
-- 透明沟通：解释你的决策过程，让用户了解每一步
-- 持续学习：从每次任务中提取经验，优化未来表现
-- 尊重边界：在授权范围内行动，超出范围时主动询问
-`
 
 /**
  * Long-term memory template with section headers.
@@ -126,7 +113,7 @@ export class InitService {
     // 2. Generate default persona.md (skip if exists)
     const personaPath = getPersonaPath()
     if (!fs.existsSync(personaPath)) {
-      fs.writeFileSync(personaPath, DEFAULT_PERSONA, 'utf-8')
+      fs.writeFileSync(personaPath, `${OCTOPUS_DEFAULT_PERSONA}\n`, 'utf-8')
       result.filesCreated.push('persona.md')
     } else {
       result.filesSkipped.push('persona.md')
