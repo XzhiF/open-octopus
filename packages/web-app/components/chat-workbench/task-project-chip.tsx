@@ -16,6 +16,12 @@ interface TaskProjectChipProps {
   /** Draft task id; absent before the first message creates the task. */
   taskId?: string
   disabled?: boolean
+  /** Registered org names. Repos are read from the selected org's manifest,
+   *  so the org itself must be pickable here — otherwise a task created in
+   *  the wrong org can never reach another org's repos (bug 2026-10-27). */
+  orgs?: string[]
+  /** Switch org while the task is still draft (before POST /api/tasks). */
+  onOrgChange?: (org: string) => void
   onSaved: (projectIds: string[], task?: TaskView) => void
 }
 
@@ -25,6 +31,8 @@ export function TaskProjectChip({
   projectIds,
   taskId,
   disabled,
+  orgs,
+  onOrgChange,
   onSaved,
 }: TaskProjectChipProps) {
   const [open, setOpen] = useState(false)
@@ -38,6 +46,17 @@ export function TaskProjectChip({
       setProjects(projectIds.map((name) => ({ name, source_path: '', group: '' })))
     }
   }, [projectIds, open])
+
+  // Org is fixed once the task row exists (task.org drives workspace paths);
+  // only a still-draft task can switch where its repos come from.
+  const orgSwitchable = !taskId && !!onOrgChange && (orgs?.length ?? 0) > 1
+
+  const handleOrgChange = (next: string) => {
+    if (next === org) return
+    // Selections are `${group}/${name}` ids from the previous org's manifest.
+    setProjects([])
+    onOrgChange?.(next)
+  }
 
   const save = async () => {
     const names = projects.map((project) => project.name)
@@ -101,6 +120,23 @@ export function TaskProjectChip({
               <div className="text-[10.5px] text-pop-dim">任务要改哪些仓库；入队后锁定</div>
             </div>
           </div>
+          {orgSwitchable && (
+            <div className="flex items-center gap-2 border-b border-white/[0.06] px-4 py-2">
+              <span className="shrink-0 text-[10.5px] text-pop-dim">组织</span>
+              <select
+                data-testid="task-project-org"
+                aria-label="组织"
+                value={org}
+                onChange={(e) => handleOrgChange(e.target.value)}
+                className="h-7 min-w-0 flex-1 rounded-[7px] border border-white/[0.10] bg-pop-paper px-2 text-[12px] text-pop-ink outline-none focus:border-pop-yellow"
+              >
+                {orgs!.map((name) => (
+                  <option key={name} value={name}>{name}</option>
+                ))}
+              </select>
+              <span className="shrink-0 text-[10px] text-pop-dim">决定可选的仓库</span>
+            </div>
+          )}
           <div className="max-h-[50vh] overflow-y-auto px-4 py-4">
             {projectIds.length === 0 && (
               <p className="mb-3 rounded-[8px] border border-pop-amber/25 bg-pop-amber-soft/40 px-2.5 py-2 text-[11px] leading-relaxed text-pop-amber">

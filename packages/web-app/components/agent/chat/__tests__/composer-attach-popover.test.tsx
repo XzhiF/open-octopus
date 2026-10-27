@@ -29,7 +29,7 @@ const baseProps = {
   showComposerAttach: true,
 }
 
-describe("composer + 挂载", () => {
+describe("composer ＋ 面板（单层：分身 / SKILL）", () => {
   beforeEach(() => {
     listSkills.mockReset().mockResolvedValue({
       skills: [{
@@ -56,22 +56,25 @@ describe("composer + 挂载", () => {
     vi.clearAllMocks()
   })
 
-  it("列出系统 SKILL 与分身，SKILL 加前缀、分身走本轮会诊随消息发送", async () => {
+  it("一个 ＋ 入口列出分身与 SKILL；委派随本轮发送，SKILL 变 /前缀", async () => {
     const onSend = vi.fn()
     render(<ChatArea {...baseProps} onSend={onSend} />)
 
-    fireEvent.click(screen.getByRole("button", { name: /挂载/ }))
+    fireEvent.click(screen.getByTestId("composer-plus"))
     await waitFor(() => expect(listSkills).toHaveBeenCalled())
     await waitFor(() => expect(listClones).toHaveBeenCalled())
 
+    // 单层：分身与 SKILL 同屏，不存在「添加 → 分身」的二级下钻
+    expect(await screen.findByText("开发分身")).toBeInTheDocument()
+    expect(screen.getByText("open-spec")).toBeInTheDocument()
+
     fireEvent.click(await screen.findByText("open-spec"))
-    fireEvent.click(screen.getByRole("button", { name: /^分身/ }))
-    fireEvent.click(await screen.findByText("开发分身"))
+    fireEvent.click(await screen.findByTestId("delegate-clone-dev-clone"))
+    fireEvent.click(screen.getByTestId("composer-plus")) // 收起面板
 
     expect(screen.getByText("/open-spec")).toBeInTheDocument()
     expect(screen.getByText("分身 · 开发分身")).toBeInTheDocument()
 
-    fireEvent.click(screen.getByRole("button", { name: "完成" }))
     fireEvent.change(screen.getByRole("textbox"), { target: { value: "看一下这个 spec" } })
     fireEvent.keyDown(screen.getByRole("textbox"), { key: "Enter" })
 
@@ -82,25 +85,52 @@ describe("composer + 挂载", () => {
     expect(screen.queryByText("分身 · 开发分身")).toBeNull()
   })
 
-  it("搜索过滤当前分类；当前分类无果时提示另一分类有匹配", async () => {
+  it("搜索一次过过滤两组：命中分身时 SKILL 组整体收起", async () => {
     render(<ChatArea {...baseProps} />)
-    fireEvent.click(screen.getByRole("button", { name: /挂载/ }))
+    fireEvent.click(screen.getByTestId("composer-plus"))
     await waitFor(() => expect(listSkills).toHaveBeenCalled())
 
     const input = await screen.findByTestId("attach-search")
-    fireEvent.change(input, { target: { value: "open" } })
-    expect(screen.getByText("open-spec")).toBeInTheDocument()
+    fireEvent.change(input, { target: { value: "开发" } })
+    expect(screen.getByText("开发分身")).toBeInTheDocument()
+    expect(screen.queryByText("open-spec")).toBeNull()
+    expect(screen.queryByText(/SKILL 1/)).toBeNull()
 
     fireEvent.change(input, { target: { value: "zzz" } })
-    expect(screen.getByText("未找到匹配的 SKILL")).toBeInTheDocument()
-    expect(screen.queryByText("open-spec")).toBeNull()
+    expect(screen.getByText("未找到匹配项")).toBeInTheDocument()
+    expect(screen.queryByText("开发分身")).toBeNull()
+  })
 
-    // 「开发」只命中分身（display_name 开发分身）→ 跨分类提示可一键切换
-    fireEvent.change(input, { target: { value: "开发" } })
-    expect(screen.getByText("未找到匹配的 SKILL")).toBeInTheDocument()
-    const hint = screen.getByTestId("attach-search-other-tab")
-    expect(hint.textContent).toContain("分身")
-    fireEvent.click(hint)
-    expect(await screen.findByText("开发分身")).toBeInTheDocument()
+  it("身份：＋ 显示当前身份，面板里「切换」调 onSwitch（再点恢复基础身份）", async () => {
+    const onSwitch = vi.fn()
+    const { rerender } = render(
+      <ChatArea
+        {...baseProps}
+        identity={{ activeName: null, label: null, onSwitch }}
+      />,
+    )
+
+    const plus = screen.getByTestId("composer-plus")
+    expect(plus.textContent).not.toContain("开发分身")
+
+    fireEvent.click(plus)
+    await waitFor(() => expect(listClones).toHaveBeenCalled())
+    fireEvent.click(await screen.findByTestId("switch-identity-dev-clone"))
+    expect(onSwitch).toHaveBeenCalledWith("dev-clone", "开发分身")
+
+    // 外层把角色状态回灌后，＋ 原地变成紫色身份 chip（仍是同一个控件）
+    rerender(
+      <ChatArea
+        {...baseProps}
+        identity={{ activeName: "dev-clone", label: "开发分身", onSwitch }}
+      />,
+    )
+    const trigger = screen.getByTestId("composer-plus")
+    expect(trigger.textContent).toContain("开发分身")
+    expect(trigger.getAttribute("aria-label")).toContain("开发分身")
+
+    // 基础身份行可直接切回 null（面板切换后保持打开）
+    fireEvent.click(await screen.findByTestId("switch-identity-base"))
+    expect(onSwitch).toHaveBeenCalledWith(null, null)
   })
 })

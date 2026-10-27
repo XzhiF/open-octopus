@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, useEffect, useCallback, useMemo, useRef, type PointerEvent as ReactPointerEvent } from 'react'
-import { Menu, PanelLeft, Search, SquarePen } from 'lucide-react'
+import { Folder, Menu, PanelLeft, Search, SquarePen } from 'lucide-react'
 import { toast } from 'sonner'
 import { useChatSessions } from '@/components/providers/chat-sessions'
 import { useAgentChat, type UseAgentChatApiOverride, type ChatSubagentRef } from '@/hooks/useAgentChat'
@@ -11,6 +11,8 @@ import { useKcFeed } from '@/hooks/use-kc-feed'
 import { useChatTasks } from '@/hooks/use-chat-tasks'
 import { useRunningAgents } from '@/hooks/use-running-agents'
 import { useOrgs } from '@/hooks/useOrgs'
+import { useWorkspaces } from '@/hooks/use-workspaces'
+import { useSessionIdentity } from '@/hooks/use-session-identity'
 import * as agentApi from '@/lib/agent/api'
 import { ChatSidebar } from './chat-sidebar'
 import { ExpertIdentityChip } from './expert-identity-chip'
@@ -24,6 +26,8 @@ import { useActivitySnapshot } from '@/components/chat-workbench/inspector-activ
 import { WorkflowWindow } from '@/components/chat-workbench/workflow-window'
 import type { TaskWindowMap } from '@/components/chat-workbench/task-window-types'
 import { createTask, getTask, readyTask, TaskReadyGateError, updateTask, deleteTask, abortTask, type TaskView } from '@/lib/tasks-api'
+import { readRememberedTaskOrg, rememberTaskOrg, resolveTaskOrg } from '@/lib/task-org'
+import { readLastChatContext, writeLastChatContext } from '@/lib/last-chat-context'
 import { subscribeSSE } from '@/lib/sse-manager'
 import { getServerUrl } from '@/lib/server-config'
 import { cn } from '@/lib/utils'
@@ -91,9 +95,20 @@ export function ChatTab() {
   const { tasks: chatTasks, loading: chatTasksLoading, refresh: refreshChatTasks } = useChatTasks()
   const runningAgents = useRunningAgents()
   const { orgs: appOrgs } = useOrgs()
-  // The agent session's org may be the server default; tasks belong to the
-  // user's working org (same source the task board/template used).
-  const preferredOrg = appOrgs[0]?.name ?? 'default'
+  // Tasks are org-scoped: their repos come from the org's manifest, and the
+  // org also namespaces the execution workspace. Never take orgs[0] blindly —
+  // the list is sorted by name, so that silently bound new tasks to whichever
+  // org sorts first (miyuan), making org=xzf repos unselectable (bug 2026-10-27).
+  const preferredOrg = useMemo(
+    () => resolveTaskOrg({
+      orgs: appOrgs.map((o) => o.name),
+      remembered: readRememberedTaskOrg(),
+      recentTaskOrgs: [...chatTasks]
+        .sort((a, b) => (b.updated_at ?? '').localeCompare(a.updated_at ?? ''))
+        .map((task) => task.org),
+    }),
+    [appOrgs, chatTasks],
+  )
 
   /** Draft authoring + a not-yet-created task both run on the task-author clone. */
   const activeSession = sessions.find((session) => session.id === activeSessionId)
@@ -102,6 +117,18 @@ export function ChatTab() {
     activeTask?.status === 'draft' ||
     activeSession?.clone_name === 'task-author'
   const showWorkbench = !!activeTask && activeTask.status !== 'draft'
+
+  // 会话长期身份（v59 分身）：主对话用 agent 作用域，交给 ChatArea 的 ＋ 面板；
+  // 草稿工作台仍用原来的 ExpertIdentityChip（本轮不动它的交互契约）。
+  const identity = useSessionIdentity({ kind: 'agent', sessionId: activeSessionId })
+  // 停靠态只在「工作区不是默认 main-agent」时显示名字；默认值整个 chip 不渲染。
+  const { workspaces } = useWorkspaces()
+  const sessionWorkspace = activeSession?.workspace_id && Array.isArray(workspaces)
+    ? workspaces.find((ws) => ws.id === activeSession.workspace_id)
+    : undefined
+  const workspaceLabel = sessionWorkspace && sessionWorkspace.name !== 'main-agent'
+    ? sessionWorkspace.name
+    : null
 
   const [sidebarWidth, setSidebarWidth] = useState(() => {
     if (typeof window === 'undefined') return SIDEBAR_DEFAULT
@@ -343,6 +370,15 @@ export function ChatTab() {
 
   // Pending message when auto-creating a session (carries + panel clone consult)
   const pendingMessageRef = useRef<{ message: string; subagents?: ChatSubagentRef[] } | null>(null)
+  // 新会话（hero）里选的身份：还没有 session 可写角色卡，先存在本地，
+  // 第一条消息创建会话后立刻写入，再发消息（否则第一轮会用基础身份）。
+  const [pendingIdentity, setPendingIdentity] = useState<{ name: string; label: string } | null>(null)
+  const pendingIdentityRef = useRef<{ name: string; label: string } | null>(null)
+  const choosePendingIdentity = useCallback((name: string | null, label?: string | null) => {
+    const next = name ? { name, label: label ?? name } : null
+    pendingIdentityRef.current = next
+    setPendingIdentity(next)
+  }, [])
 
   useEffect(() => {
     if (!activeSessionId) return
@@ -354,16 +390,27 @@ export function ChatTab() {
     loadMessages()
   }, [activeSessionId, loadMessages])
 
-  // When a session is created and there's a pending message, send it
+  // When a session is created and there's a pending message, send it — after
+  // applying the identity picked in the hero: the role card must land before
+  // the first turn, otherwise that turn starts as the base identity.
   useEffect(() => {
-    if (activeSessionId && pendingMessageRef.current) {
-      const pending = pendingMessageRef.current
-      pendingMessageRef.current = null
-      // Small delay to ensure useAgentChat has updated with new sessionId
-      requestAnimationFrame(() => sendMessage(pending.message, {
-        model, effort, maxContext, subagents: pending.subagents,
-      }))
+    if (!activeSessionId || !pendingMessageRef.current) return
+    const pending = pendingMessageRef.current
+    pendingMessageRef.current = null
+    const identityToApply = pendingIdentityRef.current
+    pendingIdentityRef.current = null
+    setPendingIdentity(null)
+    const fire = () => requestAnimationFrame(() => sendMessage(pending.message, {
+      model, effort, maxContext, subagents: pending.subagents,
+    }))
+    if (!identityToApply) {
+      fire()
+      return
     }
+    // 角色卡写失败不挡首发消息（错误提示由 useSessionIdentity 统一出）。
+    void agentApi.setSessionRole(activeSessionId, identityToApply.name)
+      .catch(() => {})
+      .finally(fire)
   }, [activeSessionId, sendMessage, model, effort, maxContext])
 
   const handleSendMessage = useCallback((message: string, opts?: { subagents?: ChatSubagentRef[] }) => {
@@ -404,6 +451,10 @@ export function ChatTab() {
             ? {}
             : { workspace_id: taskCwd.workspaceId, cwd: taskCwd.path }),
         })
+        // The org this task landed in is the user's working org — reuse it for
+        // the next new task instead of falling back to a sorted-first guess.
+        rememberTaskOrg(task.org)
+        writeLastChatContext({ kind: 'task', taskId: task.id })
         setPendingTaskSession(null)
         setActiveTask(task)
         void refreshChatTasks()
@@ -421,15 +472,22 @@ export function ChatTab() {
     model, effort, maxContext, refreshChatTasks, refetchSessions, mainCwd, taskCwd,
   ])
 
+  // Refresh restore runs at most once per mount; any explicit navigation means
+  // the user already chose — never yank them back to the stored context.
+  const restoredChatContextRef = useRef(false)
+
   const handleSelectSession = (id: string) => {
+    restoredChatContextRef.current = true
     setActiveTask(null)
     setPendingTaskSession(null)
     setTaskModuleRequest(null)
     setActiveSessionId(id)
     setMobileSidebarOpen(false)
+    writeLastChatContext({ kind: 'session', sessionId: id })
   }
 
   const handleSelectTask = useCallback((task: TaskView, opts?: { module?: TaskModule }) => {
+    restoredChatContextRef.current = true
     setMobileSidebarOpen(false)
     setTaskModuleRequest(opts?.module ? { module: opts.module, nonce: Date.now() } : null)
     if (task.status === 'draft') {
@@ -440,11 +498,38 @@ export function ChatTab() {
       setPendingTaskSession(null)
       setActiveTask(task)
       setActiveSessionId(task.source_chat_session_id)
+      writeLastChatContext({ kind: 'task', taskId: task.id })
       return
     }
     setPendingTaskSession(null)
     setActiveTask(task)
+    writeLastChatContext({ kind: 'task', taskId: task.id })
   }, [setActiveSessionId])
+
+  // Refresh restore: land back on the task the user was working in (a running
+  // task must not hide behind a second click). Sessions are restored inside
+  // useAgentSessions — it owns the list; tasks need the row, so resolve it from
+  // the chat-eligible list first, then fall back to a direct fetch for rows the
+  // list excludes (archived / legacy drafts).
+  useEffect(() => {
+    if (restoredChatContextRef.current) return
+    const saved = readLastChatContext()
+    if (saved?.kind !== 'task') {
+      restoredChatContextRef.current = true
+      return
+    }
+    const known = chatTasks.find((task) => task.id === saved.taskId)
+    if (known) {
+      restoredChatContextRef.current = true
+      handleSelectTask(known)
+      return
+    }
+    if (chatTasksLoading) return
+    restoredChatContextRef.current = true
+    getTask(saved.taskId)
+      .then((task) => handleSelectTask(task))
+      .catch(() => { /* deleted — stay on the default chat */ })
+  }, [chatTasks, chatTasksLoading, handleSelectTask])
 
   const openTaskRename = (task: TaskView) => {
     setRenameTarget(task)
@@ -482,6 +567,7 @@ export function ChatTab() {
       if (activeTask?.id === deleteTarget.id) {
         setActiveTask(null)
         setActiveSessionId(null)
+        writeLastChatContext(null)
       }
       setDeleteTarget(null)
       void refreshChatTasks()
@@ -502,6 +588,8 @@ export function ChatTab() {
     // Lazy: the DB session is created on the first prompt, after cwd selection.
     setActiveSessionId(null)
     setMainCwd({ kind: 'default', label: 'Main Agent 工作区' })
+    choosePendingIdentity(null)
+    writeLastChatContext(null)
   }
 
   const handleCreateTask = useCallback(async () => {
@@ -517,7 +605,9 @@ export function ChatTab() {
     setTaskCwd({ kind: 'default', label: '新建工作空间' })
     setTaskModuleRequest(null)
     setMobileSidebarOpen(false)
-  }, [creatingTask, preferredOrg])
+    choosePendingIdentity(null)
+    writeLastChatContext(null)
+  }, [creatingTask, preferredOrg, choosePendingIdentity])
 
   const handleEnqueueTask = useCallback(async (task: TaskView) => {
     if (enqueueBusy) return
@@ -597,6 +687,11 @@ export function ChatTab() {
       />
       <TaskProjectChip
         org={pendingTaskSession?.org ?? activeTask?.org ?? preferredOrg}
+        orgs={appOrgs.map((o) => o.name)}
+        onOrgChange={(next) => {
+          rememberTaskOrg(next)
+          setPendingTaskSession((prev) => (prev ? { ...prev, org: next, projectIds: [] } : prev))
+        }}
         projectIds={pendingTaskSession?.projectIds ?? activeTask?.project_ids ?? []}
         taskId={pendingTaskSession ? undefined : activeTask?.id}
         onSaved={(ids, updated) => {
@@ -623,13 +718,17 @@ export function ChatTab() {
     </span>
   ) : undefined
 
-  const mainLead = !authoring && activeSessionId ? (
-    <span className="flex items-center gap-1.5">
-      <CwdPicker mode="main" org={preferredOrg} value={mainCwd} onChange={setMainCwd} disabled />
-      <ExpertIdentityChip kind="agent" sessionId={activeSessionId} />
+  // 停靠态主对话：只有「自定义工作区」才留下名字；默认 main-agent 工作区
+  // 不渲染任何字（需求 1）。身份由 ＋ 面板接管，不再单占一个文字 chip。
+  const mainLead = !authoring && activeSessionId && workspaceLabel ? (
+    <span
+      data-session-workspace
+      title={`工作区：${workspaceLabel}`}
+      className="flex h-[22px] items-center gap-1 rounded-[7px] px-1.5 text-[10.5px] text-pop-dim"
+    >
+      <Folder className="size-3" />
+      <span className="max-w-[140px] truncate">{workspaceLabel}</span>
     </span>
-  ) : !authoring ? (
-    <CwdPicker mode="main" org={preferredOrg} value={mainCwd} onChange={setMainCwd} />
   ) : undefined
 
   const explorerWorkspaceId =
@@ -829,6 +928,25 @@ export function ChatTab() {
             emptyStateDescription={authoring ? '第一句话会成为任务草稿的标题，后续对话用于澄清与拆分 Phase。' : undefined}
             composerLeading={authoring ? authoringLead : mainLead}
             composerPlaceholder={authoring ? '描述要开发的任务…　⏎ 发送' : '问主 Agent…　⏎ 发送 · ⇧⏎ 排队 · Alt⏎ 换行'}
+            // 主对话空会话：composer 居中，第二行放工作区 + 身份（2026-10-27 v2）。
+            heroEmpty={!authoring && !activeSessionId}
+            composerHeroFooter={!authoring && !activeSessionId ? (
+              <CwdPicker mode="main" org={preferredOrg} value={mainCwd} onChange={setMainCwd} hero />
+            ) : undefined}
+            identity={!authoring ? (
+              activeSessionId
+                ? {
+                    activeName: identity.activeName,
+                    label: identity.label,
+                    onSwitch: (cloneName) => { void identity.switchTo(cloneName) },
+                  }
+                : {
+                    // 新会话：身份先选着，第一条消息创建 session 后立刻写角色卡。
+                    activeName: pendingIdentity?.name ?? null,
+                    label: pendingIdentity?.label ?? null,
+                    onSwitch: choosePendingIdentity,
+                  }
+            ) : undefined}
             composerSeed={composerSeed}
             messageExtras={extras}
             transcriptTail={tail}

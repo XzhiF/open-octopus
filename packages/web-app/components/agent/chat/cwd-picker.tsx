@@ -24,6 +24,9 @@ interface CwdPickerProps {
   value: CwdChoice
   onChange: (choice: CwdChoice) => void
   disabled?: boolean
+  /** 空会话第二行的展示形态（2026-10-27 原型 v2）：虚线大 chip，
+   *  未选时文案是「选择工作区」而不是默认工作区名。 */
+  hero?: boolean
 }
 
 const DEFAULT_LABEL = {
@@ -32,7 +35,7 @@ const DEFAULT_LABEL = {
 }
 
 /** cwd chip: main agent defaults to its own cwd; tasks default to a new workspace. */
-export function CwdPicker({ mode, org, value, onChange, disabled }: CwdPickerProps) {
+export function CwdPicker({ mode, org, value, onChange, disabled, hero }: CwdPickerProps) {
   const [open, setOpen] = useState(false)
   const [dirOpen, setDirOpen] = useState(false)
   const [path, setPath] = useState('')
@@ -99,10 +102,22 @@ export function CwdPicker({ mode, org, value, onChange, disabled }: CwdPickerPro
             data-testid="cwd-chip"
             disabled={disabled}
             title={value.path ? `cwd: ${value.path}` : value.label}
-            className="flex h-[22px] shrink-0 items-center gap-1 rounded-[7px] border border-transparent px-1.5 text-[10.5px] text-pop-dim transition-colors hover:bg-pop-paper hover:text-pop-ink disabled:opacity-50"
+            className={cn(
+              'flex shrink-0 items-center gap-1 border transition-colors disabled:opacity-50',
+              hero
+                ? cn(
+                    'h-[27px] rounded-[8px] px-2.5 text-[11.5px]',
+                    value.kind === 'default'
+                      ? 'border-dashed border-pop-bd text-pop-dim hover:border-pop-dim hover:text-pop-ink'
+                      : 'border-solid border-pop-bd bg-white/[0.03] text-pop-ink',
+                  )
+                : 'h-[22px] rounded-[7px] border-transparent px-1.5 text-[10.5px] text-pop-dim hover:bg-pop-paper hover:text-pop-ink',
+            )}
           >
             <Folder className="size-3" />
-            <span className="max-w-[130px] truncate">{value.label}</span>
+            <span className="max-w-[220px] truncate">
+              {hero && value.kind === 'default' ? '选择工作区' : value.label}
+            </span>
             <ChevronDown className="size-2.5 opacity-60" />
           </button>
         </PopoverTrigger>

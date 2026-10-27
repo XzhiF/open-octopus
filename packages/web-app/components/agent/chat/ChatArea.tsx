@@ -27,7 +27,7 @@ import { MentionAutocomplete } from './MentionAutocomplete'
 import type { ChatSubagentRef } from '@/hooks/useAgentChat'
 import { SlashCommandAutocomplete, type SlashCommand } from './SlashCommandAutocomplete'
 import { ComposerModelPopover } from './composer-model-popover'
-import { ComposerAttachPopover, type ComposerExpertRef, type ComposerSkillRef } from './composer-attach-popover'
+import { ComposerAttachPopover, type ComposerExpertRef, type ComposerSkillRef, type ComposerIdentityControls } from './composer-attach-popover'
 import type { ComposerContext, ComposerEffort, ModelPreset } from '@/lib/agent/composer-settings'
 
 /** 状态色带皮肤:一态一糖果(静态 class 字面量,Tailwind JIT)。 */
@@ -110,6 +110,12 @@ interface ChatAreaProps {
   composerLeading?: ReactNode
   /** 非流式时的输入框 placeholder（草稿工作台把「/ 调用技能」计数提示收编于此）。 */
   composerPlaceholder?: string
+  /** 空会话（无消息、非流式）时把 composer 垂直居中，像一张空白工作台。 */
+  heroEmpty?: boolean
+  /** hero 态输入框下方的第二行（工作区选择等）；身份 chip 由 ChatArea 自绘。 */
+  composerHeroFooter?: ReactNode
+  /** 会话长期身份（v59 分身）：＋ 按钮展示当前身份，面板里可委派 / 切换。 */
+  identity?: ComposerIdentityControls
   /** TUI（claude-code 终端皮肤）变体 —— 任务草稿工作台 / 对话首页共用（2026-09-24 改版）：
    *  等宽 transcript（❯/✳ 前缀 + ◌ 过程折叠）、⇧⏎ 排队 dock（≤3，done 即 flush）、
    *  busy 时输入不锁死（⏎=打断接管 / esc=打断 / esc·点击=队列退回）。 */
@@ -151,7 +157,7 @@ export function ChatArea({
   commands, contextUsage, sessionUsage, currentModel, onModelChange,
   showUsagePlaceholders, showComposerAttach,
   effort, onEffortChange, maxContext, onMaxContextChange, modelPresets,
-  composerLeading, composerPlaceholder,
+  composerLeading, composerPlaceholder, heroEmpty, composerHeroFooter, identity,
   tui, onSteer, steerActiveRef, resumeTailing,
   messageExtras, transcriptTail, composerSeed, timelineClearDock,
 }: ChatAreaProps) {
@@ -161,6 +167,8 @@ export function ChatArea({
   const [contextExpanded, setContextExpanded] = useState(false)
   const [attachedSkill, setAttachedSkill] = useState<ComposerSkillRef | null>(null)
   const [attachedExpert, setAttachedExpert] = useState<ComposerExpertRef | null>(null)
+  // ＋ 面板的开合提到 ChatArea：hero 态的身份 chip 也要能打开同一个面板。
+  const [attachOpen, setAttachOpen] = useState(false)
   const scrollRef = useRef<HTMLDivElement>(null)
   // 票12（/knowledge）：卡片动作预进取号器文本 —— 值变化即灌入输入框；
   // 既有消费方不传此 prop，行为零变化。
@@ -422,10 +430,14 @@ export function ChatArea({
     node.scrollIntoView({ behavior: 'smooth', block: 'start' })
   }
 
+  // hero 态（2026-10-27 原型 v2）：空会话把 composer 居中，像一个空白工作台；
+  // 只对 tui + 显式开启的宿主生效（主对话），草稿工作台行为不变。
+  const heroMode = !!tui && !!heroEmpty && !streaming && messages.length === 0
+
   return (
-    <div className="relative flex flex-col flex-1 min-h-0">
+    <div className={cn('relative flex flex-col flex-1 min-h-0', heroMode && 'justify-center')}>
       {/* Content area */}
-      {!hasSession ? (
+      {!heroMode && (!hasSession ? (
         hideEmptyState ? (
           <div className="flex-1" />
         ) : tui ? (
@@ -645,7 +657,7 @@ export function ChatArea({
             )}
           </div>
         </div>
-      )}
+      ))}
 
       {/* 🎪 状态色带 — composer 上方的贴纸 pill(derived from props,无新链路);
           done 态仅在回合刚完成时闪现(见 doneFlash),不再常驻。 */}
@@ -670,8 +682,28 @@ export function ChatArea({
       {/* Input area — always visible。TUI 变体（草稿工作台）：排队 dock + ❯ 单行
           输入（busy 不锁死）+ 控件条（专家咨询│model│ctx … 右端挂快捷键提示/busy）。 */}
       {tui ? (
-        <div ref={dockRef} className="shrink-0 border-t border-white/[0.06] bg-pop-bg px-4 pb-3 pt-2" data-tui-dock>
+        <div
+          ref={dockRef}
+          className={cn(
+            'shrink-0 px-4',
+            heroMode
+              ? 'border-t-0 bg-transparent pb-0 pt-0'
+              : 'border-t border-white/[0.06] bg-pop-bg pb-3 pt-2',
+          )}
+          data-tui-dock
+          data-tui-hero={heroMode ? 'true' : undefined}
+        >
           <div className="relative mx-auto max-w-4xl">
+            {heroMode && !hideEmptyState && (
+              <div className="mb-5 text-center" role="status" aria-live="polite" data-tui-hero-title>
+                <div className="text-[15px] font-semibold text-pop-ink">
+                  {emptyStateTitle ?? '开始新的对话'}
+                </div>
+                <div className="mt-1.5 text-[11.5px] text-pop-dim">
+                  {emptyStateDescription ?? '问点什么，或者直接描述要开发的任务'}
+                </div>
+              </div>
+            )}
             <MentionAutocomplete
               inputValue={input}
               onSelect={handleMentionSelect}
@@ -802,6 +834,9 @@ export function ChatArea({
                   expert={attachedExpert}
                   onSkillChange={setAttachedSkill}
                   onExpertChange={setAttachedExpert}
+                  identity={identity}
+                  open={attachOpen}
+                  onOpenChange={setAttachOpen}
                 />
               )}
               {currentModel && (
@@ -872,6 +907,35 @@ export function ChatArea({
                 )}
               </span>
             </div>
+            {/* hero 态第二行：工作区 + 当前身份（左对齐输入框；2026-10-27 原型 v2） */}
+            {heroMode && (composerHeroFooter || identity) && (
+              <div className="mt-3 flex flex-wrap items-center gap-2" data-tui-hero-footer>
+                {composerHeroFooter}
+                {identity && (
+                  <button
+                    type="button"
+                    data-tui-hero-identity
+                    data-testid="tui-hero-identity"
+                    onClick={() => setAttachOpen(true)}
+                    title={identity.activeName
+                      ? `当前分身身份：${identity.label}（点击管理）`
+                      : '切换分身身份 / 挂载 SKILL'}
+                    className={cn(
+                      'flex h-[27px] items-center gap-1.5 rounded-[8px] border px-2.5 text-[11.5px] transition-colors',
+                      identity.activeName
+                        ? 'border-pop-purple/45 bg-pop-purple-soft text-pop-purple'
+                        : 'border-dashed border-pop-bd text-pop-dim hover:border-pop-dim hover:text-pop-ink',
+                    )}
+                  >
+                    <Users className="size-3" />
+                    <span className="max-w-[240px] truncate">
+                      {identity.label ?? '基础身份（主 Agent）'}
+                    </span>
+                    <span aria-hidden className="text-[9px] opacity-70">▾</span>
+                  </button>
+                )}
+              </div>
+            )}
           </div>
         </div>
       ) : (

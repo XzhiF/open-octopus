@@ -3,6 +3,7 @@
 import { useState, useCallback, useEffect } from 'react'
 import type { AgentSession } from '@/lib/agent/types'
 import * as api from '@/lib/agent/api'
+import { readLastChatContext, writeLastChatContext } from '@/lib/last-chat-context'
 
 export function useAgentSessions() {
   const [sessions, setSessions] = useState<AgentSession[]>([])
@@ -16,10 +17,16 @@ export function useAgentSessions() {
       setError(null)
       const res = await api.listSessions({ limit: 50 })
       setSessions(res.items)
-      // Auto-select the newest *main* chat; task-author clone sessions are
-      // opened from the task list, never as the default conversation.
+      // Refresh must land back on the conversation the user was in — including
+      // a clone (task-author) session that is still generating. Only then fall
+      // back to the newest *main* chat; task contexts are restored by ChatTab
+      // from the same stored record.
+      const saved = readLastChatContext()
+      const restored = saved?.kind === 'session'
+        ? res.items.find((session) => session.id === saved.sessionId)
+        : undefined
       if (res.items.length > 0) {
-        const preferred = res.items.find((session) => !session.clone_name) ?? res.items[0]
+        const preferred = restored ?? res.items.find((session) => !session.clone_name) ?? res.items[0]
         setActiveSessionId(prev => prev ?? preferred.id)
       }
     } catch (err: unknown) {
@@ -34,6 +41,7 @@ export function useAgentSessions() {
       const session = await api.createSession(opts)
       setSessions(prev => [session, ...prev])
       setActiveSessionId(session.id)
+      writeLastChatContext({ kind: 'session', sessionId: session.id })
       return session
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : 'Failed to create session')
@@ -56,6 +64,7 @@ export function useAgentSessions() {
       setSessions(prev => prev.filter(s => s.id !== id))
       if (activeSessionId === id) {
         setActiveSessionId(null)
+        writeLastChatContext(null)
       }
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : 'Failed to delete session')
