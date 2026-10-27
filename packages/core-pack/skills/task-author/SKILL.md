@@ -34,7 +34,7 @@ version: 3.5.2
 ## 前置条件
 
 1. Octopus Server 在跑：主仓库 `3001`、worktree hash 端口（`pnpm port`）、prod `3099`。基础 URL `http://localhost:$PORT/api/tasks`。
-2. 你的 cwd **恒为 task home**（`~/.octopus/tasks/{id}/`）—— 所有相对路径（含 matt 技能的 `<artifacts.dir>`）天然落在 home 内，Batch 目录直接写 `./.scratch/...`。
+2. 你的 cwd **恒为 task home**（生产 = 任务绑定 workspace 根下的 `.task/`，即 `{workspace.path}/.task`）—— 所有相对路径（含 matt 技能的 `<artifacts.dir>`）天然落在 home 内，Batch 目录直接写 `./.scratch/...`。
 3. 多项目路径**不假定 cwd**：只信 `context.md` 的 project 行。
 
 ## 领域阅读
@@ -169,7 +169,7 @@ version: 3.5.2
 
 **启动 Runbook 记忆（逐项目，问一次管永久）**：预设起法前先查自己的长期记忆块 `## runbook:<项目名>`（自动注入在系统提示里）。**有** → 原样展示四槽 + 确认日期（「本仓记忆存过 <项目> 的起法（confirmed YYYY-MM-DD）：up/ready/views/down，命令可能已过期，本次沿用？」），**用户确认才用**；用户说不对 → 走「无」分支，拿到新答案后**覆盖**该块。**无** → 按上面的字面值问一次（四槽，判不出的槽明确问、别编），确认后三写：① spec-field `acceptance_runbook`（或 `acceptance_preview`）＝验收台权威；② append 自己的 `memory/long-term.md` 标准块（守卫已放行本分身 memory 目录），格式定死供下次解析：`## runbook:<项目名> (confirmed YYYY-MM-DD)` + 一个 json 代码块；③ 批次目录落 `runbook/runbook.json`（随 seed 下行进 ws，供执行侧走查票和人现场手跑，内容与 ① 一致）。多仓任务每仓各查各记，任务级字段是聚合（`up` 逐仓拼或指向根编排脚本、`ready` 全过、`views` 并集）。**端口纪律（最大坑）**：任务在 worktree 跑，服务端口按分支 hash 落 3100–3598（见 `scripts/branch-port.mjs`），**URL 端口禁写死主仓 3000/3001** —— 写成在 worktree 里可算的式子（health 命令自算 hash 端口再探），否则 ready 恒拒连、超时判 failed。
 
-**执行分支命名（author 定名）**：优先级 = `spec.branch`（spec-field `branch`，path-safe `[A-Za-z0-9_-]{2,60}`）> `feat-<main-slug>-<创建日YYYYMMDD>` > `taskpool-<taskId>`（无 slug 兜底）。拆分批准时你已写 `task_spec.slug`，默认分支就是 `feat-<main-slug>-<日期>` —— **主 slug 起个好名字就是给分支起名**；用户要专名才显式 `branch=`（同一入队锁定窗，改 slug 即改分支）。
+**执行分支命名（author 定名）**：优先级 = `spec.branch`（spec-field `branch`，path-safe `[A-Za-z0-9_-]{2,60}`）> `feat-<main-slug>-<创建日YYYYMMDD>` > `taskpool-<taskId>`（无 slug 兜底）。这些都是**前缀**：server 落 ws 建支时统一追加唯一性尾缀 `-<YYYYMMDDHHmmss>-<rand4>`（真实例：`feat-sensitive-mask-20261027-20261027083451-x03r`）——尾缀防不同任务撞名，首建时定死、phase/round 不换支；**别向用户承诺精确分支串**，报前缀即可。拆分批准时你已写 `task_spec.slug`，默认分支前缀就是 `feat-<main-slug>-<日期>` —— **主 slug 起个好名字就是给分支起名**；用户要专名才显式 `branch=`（同一入队锁定窗，改 slug 即改分支）。
 
 ### 写权环（单写者、单方向 —— 破坏它 = merge 灾难）
 
