@@ -786,7 +786,7 @@ function buildOverallReportMd(
     "",
     "## 项目",
     "",
-    "| project | ok | ADR | 术语 | 冲突 | commit | push | PR |",
+    "| project | ok | ADR | 术语 | 冲突 | commit | push | 归档PR |",
     "|---|---|---|---|---|---|---|---|",
   ]
   for (const p of report.projects) {
@@ -798,6 +798,10 @@ function buildOverallReportMd(
       lines.push("", `> 术语冲突 **${c.term}** — 任务侧「${c.incoming}」 vs 仓库「${c.existing}」（未写入，待 PR review 裁决）`)
     }
   }
+  lines.push(
+    "",
+    "> `归档PR` = 归档 commit 的落地去向：`merged-into-open` 并入该分支已有的开放 PR（通常是代码交付 PR）；`created` 新开归档专用 PR；`skipped` 无 GitHub 远端，以分支 push 落地；`none` 无新内容。**代码交付 PR** 链接以批次目录 `round-report.md` 为准（不在此表）。",
+  )
   if (unattributedAdrs.length > 0) {
     lines.push("", "## 未归属 ADR（多 project 任务且无子目录/`Project:` 标记 — 留在 home, 人工认领）", "")
     for (const a of unattributedAdrs) lines.push(`- docs/adr/${a}`)
