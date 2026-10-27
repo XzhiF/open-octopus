@@ -543,12 +543,17 @@ export function ChatTab() {
   // open the unified chat instead of the legacy authoring modal.
   useEffect(() => {
     const onNewTask = () => { void handleCreateTask() }
-    const onOpenTask = (event: Event) => {      const detail = (event as CustomEvent<{ taskId?: string; view?: 'acceptance' }>).detail
+    const onOpenTask = (event: Event) => {
+      const detail = (event as CustomEvent<{ taskId?: string; view?: 'acceptance' }>).detail
       const taskId = detail?.taskId
       if (!taskId) return
       getTask(taskId)
         .then((task) => {
           handleSelectTask(task, detail?.view === 'acceptance' ? { module: 'acceptance' } : undefined)
+          // getTask() carries the raw row status — awaiting_review is derived,
+          // so hydrate via the list refresh; the activeTask reconcile effect
+          // above then swaps in the effective status.
+          void refreshChatTasks()
         })
         .catch(() => toast.error('任务不存在或已被删除'))
     }
@@ -558,7 +563,7 @@ export function ChatTab() {
       window.removeEventListener('octopus:new-task', onNewTask)
       window.removeEventListener('octopus:open-task', onOpenTask)
     }
-  }, [handleCreateTask, handleSelectTask])
+  }, [handleCreateTask, handleSelectTask, refreshChatTasks])
 
   useEffect(() => {
     const onOpenWorkflow = (event: Event) => {
