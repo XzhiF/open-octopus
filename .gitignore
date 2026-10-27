@@ -5,6 +5,8 @@
 .archon/.env
 # gstack QA tool artifacts — NEVER commit
 .gstack/
+# Local agent scratch (memory notes, verification screenshots, skills symlink)
+.workbuddy/
 
 # docs
 docs/superpowers/
