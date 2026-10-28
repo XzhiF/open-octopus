@@ -555,7 +555,8 @@ export function createTasksRoutes(
       return c.json({ error: "Query params 'repo' and 'path' are required" }, 400)
     }
     try {
-      return c.json(await evidence.getFilePatch(c.req.param("id"), repo, filePath))
+      const scope = c.req.query("scope") === "cumulative" ? "cumulative" : "round"
+      return c.json(await evidence.getFilePatch(c.req.param("id"), repo, filePath, scope))
     } catch (err: unknown) {
       const { status, message } = classifyError(err)
       return c.json({ error: message }, status)

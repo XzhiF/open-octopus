@@ -6,6 +6,16 @@ vi.mock('@/components/shell/desktop', () => ({
   Desktop: () => <div data-testid="desktop-shell" />,
 }))
 vi.mock('@/components/ui/sonner', () => ({ Toaster: () => null }))
+vi.mock('@/hooks/use-server-health', () => ({
+  useServerHealth: () => ({
+    status: 'online',
+    serverUrl: 'http://localhost:3001',
+    detail: null,
+    failures: 0,
+    lastOnlineAt: null,
+    retry: vi.fn(),
+  }),
+}))
 vi.mock('@/hooks/useAgentSessions', () => ({
   useAgentSessions: () => ({
     sessions: [],

@@ -937,6 +937,11 @@ export interface RoundDiffPayload {
   /** harness 干预次数（executions.harness_summary）；null = 无数据。 */
   interventions: number | null
   repos: RepoDiff[]
+  /** 所锚定的轮次坐标（server 2026-10-28 起带上）：roundIndex === 1 表示
+   *  本 phase 首轮 ⇒ 累计与本轮同区间，UI 据此禁用累计开关。旧 server 无键
+   *  = undefined（保持开关可用，诚实降级）。 */
+  phaseIndex?: number | null
+  roundIndex?: number
   /** 票09 —— 决策后台账预览 + server ledger 同吃这份 payload。旧 server 无键时
    *  undefined（UI 如实归零/显示无），与 0 是两回事但此处统一按「无」渲染。 */
   manualInterventions?: LedgerInterventionEntry[]
@@ -979,13 +984,20 @@ export async function getRoundDiff(taskId: string, scope: RoundDiffScope = "roun
   return res.json()
 }
 
-/** GET /:id/round-diff/patch?repo=&path= — 单文件 unified patch（懒拉，512K 截断）。 */
+/** GET /:id/round-diff/patch?repo=&path=[&scope=] — 单文件 unified patch（懒拉，
+ *  512K 截断）。scope=cumulative → 起点换成同 phase 首轮 start 锚，与累计列表同区间。 */
 export async function getRoundPatch(
   taskId: string,
   repo: string,
   filePath: string,
+  scope: RoundDiffScope = "round",
 ): Promise<{ patch: string; truncated: boolean }> {
-  const res = await fetch(buildUrl(`/${taskId}/round-diff/patch`, { repo, path: filePath }))
+  const res = await fetch(
+    buildUrl(
+      `/${taskId}/round-diff/patch`,
+      scope === "cumulative" ? { repo, path: filePath, scope } : { repo, path: filePath },
+    ),
+  )
   if (!res.ok) {
     const body = await res.json().catch(() => ({}))
     throw new TaskApiError(body.error ?? `HTTP ${res.status}`, res.status)

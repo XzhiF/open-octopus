@@ -121,6 +121,11 @@ export interface RoundDiffPayload {
   /** executions.harness_summary.totalInterventions — 「干预 K」 tile; null = no harness data. */
   interventions: number | null
   repos: RepoDiff[]
+  /** 所锚定的轮次坐标（2026-10-28）：web 用 roundIndex === 1 判定
+   *  「本 phase 首轮 ⇒ 累计 = 本轮」，据此禁用累计开关。旧 server 无键 =
+   *  undefined（web 保持开关可用，诚实降级）。 */
+  phaseIndex?: number | null
+  roundIndex?: number
   /** 票09 三本账三源 —— 与 ledger 文件同 payload（buildLedgerMd 吃这份，web
    *  决策前预览也吃这份）。均可选：旧 server 无键 = 未统计，UI/台账出「—」/0。 */
   /** 人工干预逐条摘要（agent_events 权威，独立于上面的 harness interventions）。 */
@@ -331,7 +336,7 @@ export class RoundEvidenceService {
    *  票03（taskboard-modal-v2「≡ 变更」）：无 awaiting 时解析到任务当前 live 轮，
    *  end 锚 = 各仓当前 HEAD —— 端点/payload 形状逐字不变，仅供货窗口扩大。 */
   async getRoundDiff(taskId: string, scope: RoundDiffScope = "round"): Promise<RoundDiffPayload> {
-    const { execRow, phaseIndex, live: isLive } = this.resolveRoundForDiff(taskId)
+    const { execRow, phaseIndex, roundIndex, live: isLive } = this.resolveRoundForDiff(taskId)
     let starts = parseCommitMap(execRow.start_commit_id)
     if (scope === "cumulative" && phaseIndex != null) {
       const first = this.execDao.findTaskPhaseFirstRound(taskId, phaseIndex)
@@ -351,6 +356,7 @@ export class RoundEvidenceService {
         available: false, reason: "no_commits",
         aggregate: { commits: 0, additions: 0, dels: 0, files: 0 },
         interventions, repos: [],
+        phaseIndex, roundIndex,
         manualInterventions: this.collectInterventions(execRow.id),
         quickEdits: [],
         takeover,
@@ -405,6 +411,7 @@ export class RoundEvidenceService {
       aggregate,
       interventions,
       repos,
+      phaseIndex, roundIndex,
       manualInterventions: this.collectInterventions(execRow.id),
       quickEdits,
       takeover,
@@ -501,9 +508,21 @@ export class RoundEvidenceService {
   /** Lazy single-file patch (实物 tab row click). Ownership falls out of
    *  resolveRoundForDiff (exec belongs to this task); repo must exist in the
    *  map. 票03: live 轮的端锚同样取当前 HEAD，与 getRoundDiff 同闸同口径。 */
-  async getFilePatch(taskId: string, repo: string, filePath: string): Promise<{ patch: string; truncated: boolean }> {
-    const { execRow, live } = this.resolveRoundForDiff(taskId)
-    const starts = parseCommitMap(execRow.start_commit_id)
+  async getFilePatch(
+    taskId: string,
+    repo: string,
+    filePath: string,
+    scope: RoundDiffScope = "round",
+  ): Promise<{ patch: string; truncated: boolean }> {
+    const { execRow, phaseIndex, live } = this.resolveRoundForDiff(taskId)
+    let starts = parseCommitMap(execRow.start_commit_id)
+    // 与 getRoundDiff 同一条口径：累计 patch 的起点换成同 phase 首轮 start 锚，
+    // 否则「累计列表里点开只改了旧轮的文件」会 409 / 只出本轮 delta（2026-10-28）。
+    if (scope === "cumulative" && phaseIndex != null) {
+      const first = this.execDao.findTaskPhaseFirstRound(taskId, phaseIndex)
+      const firstStarts = parseCommitMap(first?.start_commit_id)
+      if (Object.keys(firstStarts).length > 0) starts = firstStarts
+    }
     const storedEnds = parseCommitMap(execRow.end_commit_id)
     const start = starts[repo]
     if (!start || (!live && !storedEnds[repo])) {

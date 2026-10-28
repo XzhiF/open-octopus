@@ -90,7 +90,7 @@ export function RoundDiffPanel({ taskId, diff, loading, error, onRetry, scope = 
         <div className="space-y-3 p-3">
           <StatStrip diff={diff} />
           {diff.repos.map((repo) => (
-            <RepoSection key={repo.name} taskId={taskId} repo={repo} />
+            <RepoSection key={repo.name} taskId={taskId} repo={repo} scope={scope} />
           ))}
         </div>
       )}

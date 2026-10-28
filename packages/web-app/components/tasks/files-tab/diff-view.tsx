@@ -14,7 +14,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react"
 import { AlertTriangle, ChevronDown, ChevronRight, FileCode2, GitCommitHorizontal, Layers } from "lucide-react"
 import { Spinner } from "@/components/ui/spinner"
-import { getRoundPatch, type DiffFile, type RepoDiff, type RoundDiffPayload } from "@/lib/tasks-api"
+import { getRoundPatch, type DiffFile, type RepoDiff, type RoundDiffPayload, type RoundDiffScope } from "@/lib/tasks-api"
 import { addRatio, scopeTotals, sortRepoGroups } from "./files-tab-model"
 
 // ── 统计条（票09 契约：数字与台账预览同源 = scopeTotals）─────────────────
@@ -93,7 +93,7 @@ export function DiffUnavailable({ diff }: { diff: RoundDiffPayload }) {
 export type FileRowDecor = (file: DiffFile) => ReactNode
 
 export function RepoSection({
-  taskId, repo, rowDecor, reveal, defaultOpenThreshold = 25,
+  taskId, repo, rowDecor, reveal, defaultOpenThreshold = 25, scope = "round",
 }: {
   taskId: string
   repo: RepoDiff
@@ -102,6 +102,8 @@ export function RepoSection({
   reveal?: { path: string; nonce: number } | null
   /** 小仓库全开；大仓库默认折叠（>threshold 文件/组）。 */
   defaultOpenThreshold?: number
+  /** 实物口径（累计 patch 的区间起点与本轮不同 —— 行必须按口径重建缓存）。 */
+  scope?: RoundDiffScope
 }) {
   const [overrides, setOverrides] = useState<Record<string, boolean>>({})
   const isGroupOpen = (g: { dir: string }) => overrides[g.dir] ?? repo.files <= defaultOpenThreshold
@@ -140,11 +142,12 @@ export function RepoSection({
             </button>
             {open && g.files.map((f) => (
               <DiffFileRow
-                key={`${repo.name}:${f.path}`}
+                key={`${repo.name}:${f.path}:${scope}`}
                 taskId={taskId}
                 repo={repo.name}
                 file={f}
                 rowDecor={rowDecor}
+                scope={scope}
                 revealNonce={reveal && f.path === reveal.path ? reveal.nonce : undefined}
               />
             ))}
@@ -158,11 +161,13 @@ export function RepoSection({
   )
 }
 
-export function DiffFileRow({ taskId, repo, file, rowDecor, revealNonce }: {
+export function DiffFileRow({ taskId, repo, file, rowDecor, revealNonce, scope = "round" }: {
   taskId: string
   repo: string
   file: DiffFile
   rowDecor?: FileRowDecor
+  /** 口径（累计 patch 的区间起点不同）。缺省本轮。 */
+  scope?: RoundDiffScope
   /** 票 07 跳链命中：本行是揭示目标 —— nonce 每次点击递增重触发（展开 + 1.6s 青闪，
    *  原型 .fitem.flash）。同 nonce 不重放，切页往返不谎闪。 */
   revealNonce?: number
@@ -179,12 +184,15 @@ export function DiffFileRow({ taskId, repo, file, rowDecor, revealNonce }: {
     if (patch == null && !loading && !file.binary) {
       setLoading(true)
       setErr(null)
-      getRoundPatch(taskId, repo, file.path)
+      const req = scope === "cumulative"
+        ? getRoundPatch(taskId, repo, file.path, "cumulative")
+        : getRoundPatch(taskId, repo, file.path)
+      req
         .then((r) => setPatch({ text: r.patch, truncated: r.truncated }))
         .catch((e: unknown) => setErr(e instanceof Error ? e.message : String(e)))
         .finally(() => setLoading(false))
     }
-  }, [patch, loading, file.binary, taskId, repo, file.path])
+  }, [patch, loading, file.binary, taskId, repo, file.path, scope])
 
   const toggle = useCallback(() => {
     const next = !open

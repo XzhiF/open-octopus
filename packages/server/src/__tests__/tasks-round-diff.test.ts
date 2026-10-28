@@ -303,6 +303,28 @@ describe("round-diff — cumulative 口径", () => {
     expect(cum).toEqual(round)
     expect(cum.aggregate.commits).toBe(1)
   })
+
+  it("C3: payload 带轮次坐标；patch 随 scope 走同一 start 锚（累计能出首轮文件 patch）", async () => {
+    const [k0, k1, k2] = freshRepo("acc3")
+    const [taskId] = await newAwaitingTask({ rounds: [
+      { round: 1, start: { acc3: k0 }, end: { acc3: k1 } }, // k0..k1 新增 r1.txt
+      { round: 2, start: { acc3: k1 }, end: { acc3: k2 } }, // k1..k2 新增 r2.txt
+    ] })
+    const round = await diffOf(taskId)
+    expect(round.phaseIndex).toBe(1)
+    expect(round.roundIndex).toBe(2)
+    const cum = (await (await app.request(`/api/tasks/${taskId}/round-diff?scope=cumulative`)).json()) as RoundDiffPayload
+    expect(cum.roundIndex).toBe(2)
+
+    const patchOf = async (qs: string) =>
+      (await (await app.request(`/api/tasks/${taskId}/round-diff/patch?${qs}`)).json()) as { patch: string }
+
+    // 本轮区间 k1..k2：r1.txt 无变更 → 空 patch；r2.txt 是新增
+    expect((await patchOf("repo=acc3&path=r1.txt")).patch.trim()).toBe("")
+    expect((await patchOf("repo=acc3&path=r2.txt")).patch).toContain("+2a")
+    // 累计区间 k0..k2：首轮新增的 r1.txt 也能取到 patch（不再 409 / 不再空）
+    expect((await patchOf("repo=acc3&path=r1.txt&scope=cumulative")).patch).toContain("+1a")
+  })
 })
 
 // ── 票03 (taskboard-modal-v2「≡ 变更」): 执行中轮 live 供货 ──────────────────
