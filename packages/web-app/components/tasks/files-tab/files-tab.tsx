@@ -34,7 +34,8 @@ import { getRoundDiff, getRoundPatch, type DiffFile, type RoundDiffPayload, type
 import type { RoundDiffFeed } from "./use-round-diff-feed"
 import { matchReveal, scopeTotals } from "./files-tab-model"
 import { DiffUnavailable, PatchBlock, type FileRowDecor } from "./diff-view"
-import { EMPTY_SHELL } from "@/components/tasks/run-console/nodes-tab"
+/** 空态长壳类串（原与 run-console 空态共用；旧控制台退役后在此单源）。 */
+const EMPTY_SHELL = "mx-auto mt-10 max-w-[560px] rounded-xl border-[1.5px] border-dashed border-pop-bd bg-pop-idle/40 px-6 py-8 text-center font-mono text-[11px] leading-relaxed text-pop-dim"
 
 export interface FilesTabProps {
   taskId: string

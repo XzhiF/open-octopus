@@ -6,6 +6,7 @@ import { toast } from 'sonner'
 import { useChatSessions } from '@/components/providers/chat-sessions'
 import { useAgentChat, type UseAgentChatApiOverride, type ChatSubagentRef } from '@/hooks/useAgentChat'
 import { useSessionUsage } from '@/hooks/useSessionUsage'
+import { useTaskUsage } from '@/hooks/useTaskUsage'
 import { useComposerSettings } from '@/hooks/useComposerSettings'
 import { useKcFeed } from '@/hooks/use-kc-feed'
 import { useChatTasks } from '@/hooks/use-chat-tasks'
@@ -15,20 +16,25 @@ import { useWorkspaces } from '@/hooks/use-workspaces'
 import { useSessionIdentity } from '@/hooks/use-session-identity'
 import * as agentApi from '@/lib/agent/api'
 import { ChatSidebar } from './chat-sidebar'
-import { ExpertIdentityChip } from './expert-identity-chip'
 import { CwdPicker, type CwdChoice } from './cwd-picker'
-import { TaskWorkbench } from '@/components/chat-workbench/task-workbench'
 import { TaskModulesLayer } from '@/components/chat-workbench/task-modules-layer'
+import { TaskStatusStrip } from '@/components/chat-workbench/task-status-strip'
+import { TriggerDialog } from '@/components/tasks/trigger-dialog'
 import type { TaskModule } from '@/components/chat-workbench/task-window-types'
 import { TaskProjectChip } from '@/components/chat-workbench/task-project-chip'
 import { WorkspaceExplorerDock } from '@/components/workspace/workspace-explorer-dock'
 import { useActivitySnapshot } from '@/components/chat-workbench/inspector-activity'
 import { WorkflowWindow } from '@/components/chat-workbench/workflow-window'
 import type { TaskWindowMap } from '@/components/chat-workbench/task-window-types'
-import { createTask, getTask, readyTask, TaskReadyGateError, updateTask, deleteTask, abortTask, type TaskView } from '@/lib/tasks-api'
+import {
+  createTask, getTask, readyTask, TaskReadyGateError, updateTask, deleteTask, abortTask,
+  triggerTask, pauseTask, resumeTask, reopenTask, duplicateTask, postArchiveRetry,
+  postReflectionDecision, type TaskView,
+} from '@/lib/tasks-api'
 import { readRememberedTaskOrg, rememberTaskOrg, resolveTaskOrg } from '@/lib/task-org'
 import { readLastChatContext, writeLastChatContext } from '@/lib/last-chat-context'
 import { subscribeSSE } from '@/lib/sse-manager'
+import { TASK_EXECUTION_EVENT, TASK_STATUS_EVENT } from '@octopus/shared'
 import { getServerUrl } from '@/lib/server-config'
 import { cn } from '@/lib/utils'
 import { Dialog, DialogContent, DialogTitle } from '@/components/ui/dialog'
@@ -69,6 +75,13 @@ interface PendingTaskSession {
  *  名称带「开发」：任务品类会扩展，task-author 这条是开发任务。 */
 const NEW_TASK_NAME = '新开发任务'
 
+/** First message becomes the task title (same spirit as the old autosave). */
+function taskNameFromMessage(message: string): string {
+  const first = message.split(/\r?\n/)[0].trim()
+  if (!first) return NEW_TASK_NAME
+  return first.length > 40 ? `${first.slice(0, 39)}…` : first
+}
+
 export function ChatTab() {
   const {
     sessions, activeSessionId, setActiveSessionId,
@@ -80,12 +93,19 @@ export function ChatTab() {
   const [pendingTaskSession, setPendingTaskSession] = useState<PendingTaskSession | null>(null)
   const [creatingTask, setCreatingTask] = useState(false)
   const [taskModuleRequest, setTaskModuleRequest] = useState<{ module: TaskModule; nonce: number } | null>(null)
-  const [enqueueBusy, setEnqueueBusy] = useState(false)
   const [taskWindows, setTaskWindows] = useState<Record<string, TaskWindowMap>>({})
   const [renameTarget, setRenameTarget] = useState<TaskView | null>(null)
   const [renameValue, setRenameValue] = useState('')
   const [taskBusy, setTaskBusy] = useState(false)
   const [deleteTarget, setDeleteTarget] = useState<TaskView | null>(null)
+  // 2026-10-28 task-thread: card actions (one confirm gate for destructive ones).
+  const [scheduleTaskId, setScheduleTaskId] = useState<string | null>(null)
+  const [cardConfirm, setCardConfirm] = useState<{
+    taskId: string
+    action: string
+    activity?: AgentMessage['activity']
+  } | null>(null)
+  const [cardBusy, setCardBusy] = useState(false)
   const [mainCwd, setMainCwd] = useState<CwdChoice>({ kind: 'default', label: 'Main Agent 工作区' })
   const [taskCwd, setTaskCwd] = useState<CwdChoice>({ kind: 'default', label: '新建工作空间' })
   const [workflowWindow, setWorkflowWindow] = useState<{
@@ -106,21 +126,22 @@ export function ChatTab() {
       remembered: readRememberedTaskOrg(),
       recentTaskOrgs: [...chatTasks]
         .sort((a, b) => (b.updated_at ?? '').localeCompare(a.updated_at ?? ''))
-        .map((task) => task.org),
+        .map((task) => task.repo_group),
     }),
     [appOrgs, chatTasks],
   )
 
-  /** Draft authoring + a not-yet-created task both run on the task-author clone. */
+  /**
+   * 2026-10-28 task-thread: the MAIN chat is the task's only conversation.
+   * `draftScope` only drives copy/lead chrome — it never swaps the chat engine
+   * or renders a second workbench. Identity is server-derived from the task
+   * state (role card + per-turn profile).
+   */
   const activeSession = sessions.find((session) => session.id === activeSessionId)
-  const authoring =
-    pendingTaskSession !== null ||
-    activeTask?.status === 'draft' ||
-    activeSession?.clone_name === 'task-author'
-  const showWorkbench = !!activeTask && activeTask.status !== 'draft'
+  const draftScope = pendingTaskSession !== null || activeTask?.status === 'draft'
 
-  // 会话长期身份（v59 分身）：主对话用 agent 作用域，交给 ChatArea 的 ＋ 面板；
-  // 草稿工作台仍用原来的 ExpertIdentityChip（本轮不动它的交互契约）。
+  // 会话长期身份（v59 分身）：主对话用 agent 作用域，交给 ChatArea 的 ＋ 面板。
+  // 任务线程的基础身份由服务端按任务状态派生（角色卡），这里只保留手动分身切换。
   const identity = useSessionIdentity({ kind: 'agent', sessionId: activeSessionId })
   // 停靠态只在「工作区不是默认 main-agent」时显示名字；默认值整个 chip 不渲染。
   const { workspaces } = useWorkspaces()
@@ -205,18 +226,12 @@ export function ChatTab() {
     updateSessionTitle(sessionId, title)
   }, [updateSessionTitle])
 
+  const handleQuickEditCommit = useCallback((data: { repo: string; commit: string; message: string }) => {
+    toast.success(`已提交 ${data.repo} · ${data.message}`)
+  }, [])
+
   const mainChatApi = useMemo<UseAgentChatApiOverride>(() => ({
     checkRunning: agentApi.getSessionRunning,
-  }), [])
-
-  /** Task-author sessions live under /api/clones/task-author — the same
-   *  unified chat surface, different persona endpoint. */
-  const taskAuthorApi = useMemo<UseAgentChatApiOverride>(() => ({
-    getSession: (id, query) => agentApi.getCloneSession('task-author', id, query),
-    chatStream: (id, message, opts) =>
-      agentApi.cloneChatStream('task-author', id, message, opts),
-    stopChat: (id) => agentApi.stopCloneChat('task-author', id),
-    checkRunning: (id) => agentApi.getCloneSessionRunning('task-author', id),
   }), [])
 
   const {
@@ -226,9 +241,16 @@ export function ChatTab() {
     steer, steeringRef, resumeStreaming, checkAndResume,
   } = useAgentChat(activeSessionId, {
     onTitleUpdate: handleTitleUpdate,
-    api: authoring ? taskAuthorApi : mainChatApi,
+    api: mainChatApi,
+    onQuickEditCommit: handleQuickEditCommit,
   })
   const sessionUsage = useSessionUsage(activeSessionId, streaming)
+  // Task thread: the composer chip shows the WHOLE task ledger (chat + every
+  // round). Refetched on turn end and on task status/version changes.
+  const taskUsage = useTaskUsage(
+    activeTask?.id,
+    `${activeTask?.version ?? ''}:${activeTask?.status ?? ''}:${streaming ? '1' : '0'}`,
+  )
   // Switching sessions aborts the local SSE, but task-author turns keep
   // generating server-side. Keep the badge for a short grace window while the
   // 2s running poll catches up.
@@ -438,21 +460,28 @@ export function ChatTab() {
       return
     }
 
-    // First message of a task session: create the clone session + draft from it,
-    // then hand the same message to the unified composer.
+    // First message of a task thread: bind (or create) ONE main session, create
+    // the draft on it, then send the message through the normal chat route. The
+    // server resolves the task-author identity from the task's state.
     if (creatingTask) return
     const session = pendingTaskSession
+    const reuseExisting = !!session.sessionId
     setCreatingTask(true)
     void (async () => {
       try {
         let sid = session.sessionId
         if (!sid) {
-          const created = await agentApi.createCloneSession('task-author')
-          sid = created.id
+          const created = await createNewSession(
+            taskCwd.kind === 'default'
+              ? undefined
+              : { workspace_id: taskCwd.workspaceId, cwd: taskCwd.path },
+          )
+          sid = created?.id ?? ''
         }
+        if (!sid) throw new Error('无法创建任务会话')
         const task = await createTask({
-          org: session.org || 'default',
-          name: NEW_TASK_NAME,
+          repo_group: session.org || undefined,
+          name: taskNameFromMessage(message),
           source_chat_session_id: sid,
           task_spec: { format: 'v4' },
           project_ids: session.projectIds,
@@ -462,14 +491,22 @@ export function ChatTab() {
         })
         // The org this task landed in is the user's working org — reuse it for
         // the next new task instead of falling back to a sorted-first guess.
-        rememberTaskOrg(task.org)
+        rememberTaskOrg(task.repo_group ?? '')
         writeLastChatContext({ kind: 'task', taskId: task.id })
         setPendingTaskSession(null)
         setActiveTask(task)
         void refreshChatTasks()
         void refetchSessions()
-        pendingMessageRef.current = { message, subagents: opts?.subagents }
-        setActiveSessionId(sid)
+        if (reuseExisting) {
+          // Same session: activeSessionId doesn't change, so the pending-send
+          // effect below would never fire. Send the first message directly.
+          requestAnimationFrame(() => sendMessage(message, {
+            model, effort, maxContext, subagents: opts?.subagents,
+          }))
+        } else {
+          pendingMessageRef.current = { message, subagents: opts?.subagents }
+          setActiveSessionId(sid)
+        }
       } catch (err: unknown) {
         toast.error(err instanceof Error ? err.message : '创建任务失败')
       } finally {
@@ -499,19 +536,13 @@ export function ChatTab() {
     restoredChatContextRef.current = true
     setMobileSidebarOpen(false)
     setTaskModuleRequest(opts?.module ? { module: opts.module, nonce: Date.now() } : null)
-    if (task.status === 'draft') {
-      if (!task.source_chat_session_id) {
-        toast.error('该草稿没有关联的任务会话')
-        return
-      }
-      setPendingTaskSession(null)
-      setActiveTask(task)
-      setActiveSessionId(task.source_chat_session_id)
-      writeLastChatContext({ kind: 'task', taskId: task.id })
+    if (!task.source_chat_session_id) {
+      toast.error('该任务没有关联的主会话')
       return
     }
     setPendingTaskSession(null)
     setActiveTask(task)
+    setActiveSessionId(task.source_chat_session_id)
     writeLastChatContext({ kind: 'task', taskId: task.id })
   }, [setActiveSessionId])
 
@@ -603,40 +634,195 @@ export function ChatTab() {
 
   const handleCreateTask = useCallback(async () => {
     if (creatingTask) return
+    // 2026-10-28: creating a task from a free chat BINDS that chat (one main
+    // conversation). From inside an existing task we start a fresh thread.
+    const reuseSessionId = !activeTask ? activeSessionId : null
     setActiveTask(null)
     setPendingTaskSession({
-      sessionId: '',
+      sessionId: reuseSessionId ?? '',
       org: preferredOrg,
       title: NEW_TASK_NAME,
       projectIds: [],
     })
-    setActiveSessionId(null)
+    if (!reuseSessionId) setActiveSessionId(null)
     setTaskCwd({ kind: 'default', label: '新建工作空间' })
     setTaskModuleRequest(null)
     setMobileSidebarOpen(false)
     choosePendingIdentity(null)
-    writeLastChatContext(null)
-  }, [creatingTask, preferredOrg, choosePendingIdentity])
+    if (!reuseSessionId) writeLastChatContext(null)
+  }, [creatingTask, preferredOrg, choosePendingIdentity, activeTask, activeSessionId])
 
-  const handleEnqueueTask = useCallback(async (task: TaskView) => {
-    if (enqueueBusy) return
-    setEnqueueBusy(true)
+  // ── 2026-10-28 task-thread: transcript card actions ─────────────────
+  const applyTaskResult = useCallback((updated: TaskView) => {
+    setActiveTask((prev) => (prev?.id === updated.id ? updated : prev))
+    void refreshChatTasks()
+    void refetchSessions()
+  }, [refreshChatTasks, refetchSessions])
+
+  const executeTaskAction = useCallback(async (
+    taskId: string,
+    actionId: string,
+    activity?: AgentMessage['activity'],
+  ) => {
+    if (!taskId || cardBusy) return
+    const payload = (activity?.payload ?? {}) as Record<string, unknown>
+    const action = actionId === 'confirm_action' ? String(payload.action ?? '') : actionId
+    if (actionId === 'cancel_action') {
+      toast.message('已取消')
+      return
+    }
+    if (action === 'abort') {
+      setCardConfirm({ taskId, action, activity })
+      return
+    }
+    setCardBusy(true)
     try {
-      await readyTask(task.id)
-      toast.success('已入队 · 在任务看板触发执行')
-      await refreshChatTasks()
-      void refetchSessions()
+      let updated: TaskView | null = null
+      switch (action) {
+        case 'trigger':
+          updated = await triggerTask(taskId)
+          break
+        case 'launch_now':
+          await readyTask(taskId)
+          updated = await triggerTask(taskId)
+          break
+        case 'enqueue':
+          updated = await readyTask(taskId)
+          toast.success('已入列 · 等你手动触发')
+          break
+        case 'schedule':
+          setScheduleTaskId(taskId)
+          return
+        case 'pause':
+          updated = await pauseTask(taskId)
+          break
+        case 'resume':
+          updated = await resumeTask(taskId)
+          break
+        case 'inject': {
+          const intervention = typeof payload.intervention === 'string' ? payload.intervention : undefined
+          await pauseTask(taskId)
+          updated = await resumeTask(taskId, intervention)
+          break
+        }
+        case 'reopen':
+          updated = await reopenTask(taskId)
+          break
+        case 'retry_archive':
+          await postArchiveRetry(taskId)
+          updated = await getTask(taskId)
+          toast.success('归档续跑已触发')
+          break
+        case 'duplicate': {
+          const result = await duplicateTask(taskId)
+          updated = result.task
+          break
+        }
+        case 'open_spec':
+          setTaskModuleRequest({ module: 'plan', nonce: Date.now() })
+          return
+        case 'open_changes':
+          setTaskModuleRequest({ module: 'changes', nonce: Date.now() })
+          return
+        case 'open_acceptance':
+          setTaskModuleRequest({ module: 'acceptance', nonce: Date.now() })
+          return
+        case 'open_run':
+          setTaskModuleRequest({ module: 'run', nonce: Date.now() })
+          return
+        case 'open_archive':
+          setTaskModuleRequest({ module: 'archive', nonce: Date.now() })
+          return
+        case 'open_usage':
+          setTaskModuleRequest({ module: 'usage', nonce: Date.now() })
+          return
+        case 'new_task':
+          void handleCreateTask()
+          return
+        case 'keep_editing':
+          toast.message('继续改规格')
+          return
+        default:
+          return
+      }
+      if (updated) applyTaskResult(updated)
     } catch (err: unknown) {
       if (err instanceof TaskReadyGateError) {
-        toast.error(`入队被拒：缺少 ${err.missing.join('、')}`)
+        toast.error(`入列被拒：缺少 ${err.missing.join('、')}`)
         setTaskModuleRequest({ module: 'plan', nonce: Date.now() })
       } else {
-        toast.error(err instanceof Error ? err.message : '入队失败')
+        toast.error(err instanceof Error ? err.message : '任务操作失败')
       }
     } finally {
-      setEnqueueBusy(false)
+      setCardBusy(false)
     }
-  }, [enqueueBusy, refreshChatTasks, refetchSessions])
+  }, [cardBusy, applyTaskResult, handleCreateTask])
+
+  const confirmDestructiveCardAction = useCallback(async () => {
+    if (!cardConfirm || cardBusy) return
+    setCardBusy(true)
+    try {
+      const updated = await abortTask(cardConfirm.taskId)
+      applyTaskResult(updated)
+      toast.success('已中止任务')
+      setCardConfirm(null)
+    } catch (err: unknown) {
+      toast.error(err instanceof Error ? err.message : '中止失败')
+    } finally {
+      setCardBusy(false)
+    }
+  }, [cardConfirm, cardBusy, applyTaskResult])
+
+  useEffect(() => {
+    const onAction = (event: Event) => {
+      const detail = (event as CustomEvent<{
+        taskId?: string | null
+        actionId?: string
+        activity?: AgentMessage['activity']
+      }>).detail
+      if (!detail?.taskId || !detail.actionId) return
+      void executeTaskAction(detail.taskId, detail.actionId, detail.activity)
+    }
+    const onReflection = (event: Event) => {
+      const detail = (event as CustomEvent<{
+        taskId?: string | null
+        entryId?: string
+        action?: 'ingest' | 'skip'
+      }>).detail
+      if (!detail?.taskId || !detail.entryId || !detail.action) return
+      void postReflectionDecision(detail.taskId, { entry_id: detail.entryId, action: detail.action })
+        .then(() => toast.success(detail.action === 'ingest' ? '已落 wiki' : '已跳过'))
+        .catch((err: unknown) => toast.error(err instanceof Error ? err.message : '沉淀决策失败'))
+    }
+    window.addEventListener('octopus:task-card-action', onAction)
+    window.addEventListener('octopus:reflection-decision', onReflection)
+    return () => {
+      window.removeEventListener('octopus:task-card-action', onAction)
+      window.removeEventListener('octopus:reflection-decision', onReflection)
+    }
+  }, [executeTaskAction])
+
+  // Task status/execution events reload the transcript (silent cards are
+  // inserted server-side; draft/ready threads have no workspace SSE channel).
+  useEffect(() => {
+    if (!activeTask?.id) return
+    const url = `${getServerUrl()}/api/tasks/events`
+    const onTask = (event: MessageEvent) => {
+      try {
+        const data = JSON.parse(event.data) as { task_id?: string }
+        if (data.task_id !== activeTask.id) return
+        void loadMessages()
+        void refreshChatTasks()
+      } catch {
+        /* malformed frame */
+      }
+    }
+    const offs = [
+      subscribeSSE(url, TASK_STATUS_EVENT, onTask),
+      subscribeSSE(url, TASK_EXECUTION_EVENT, onTask),
+    ]
+    return () => offs.forEach((off) => off())
+  }, [activeTask?.id, loadMessages, refreshChatTasks])
 
   // Cross-app entry points: the tasks board's [+新建任务] and draft cards
   // open the unified chat instead of the legacy authoring modal.
@@ -685,17 +871,17 @@ export function ChatTab() {
     return chatTasks
   }, [chatTasks, activeTask])
 
-  const authoringLead = authoring ? (
+  const draftLead = draftScope ? (
     <span className="flex items-center gap-1.5">
       <CwdPicker
         mode="task"
-        org={pendingTaskSession?.org ?? activeTask?.org ?? preferredOrg}
+        org={pendingTaskSession?.org ?? activeTask?.repo_group ?? preferredOrg}
         value={taskCwd}
         onChange={setTaskCwd}
         disabled={!!activeTask}
       />
       <TaskProjectChip
-        org={pendingTaskSession?.org ?? activeTask?.org ?? preferredOrg}
+        org={pendingTaskSession?.org ?? activeTask?.repo_group ?? preferredOrg}
         orgs={appOrgs.map((o) => o.name)}
         onOrgChange={(next) => {
           rememberTaskOrg(next)
@@ -713,23 +899,12 @@ export function ChatTab() {
           }
         }}
       />
-      <span aria-hidden className="h-3 w-px bg-white/10" />
-      <span className="flex h-[22px] items-center gap-1 rounded-[7px] px-1.5 text-[10.5px] text-pop-purple">
-        <span className="size-1.5 rounded-full bg-pop-purple" />
-        task-author
-      </span>
-      {activeSessionId && (
-        <>
-          <span aria-hidden className="h-3 w-px bg-white/10" />
-          <ExpertIdentityChip kind="clone" cloneName="task-author" sessionId={activeSessionId} />
-        </>
-      )}
     </span>
   ) : undefined
 
   // 停靠态主对话：只有「自定义工作区」才留下名字；默认 main-agent 工作区
   // 不渲染任何字（需求 1）。身份由 ＋ 面板接管，不再单占一个文字 chip。
-  const mainLead = !authoring && activeSessionId && workspaceLabel ? (
+  const mainLead = !draftScope && activeSessionId && workspaceLabel ? (
     <span
       data-session-workspace
       title={`工作区：${workspaceLabel}`}
@@ -743,10 +918,10 @@ export function ChatTab() {
   const explorerWorkspaceId =
     activeTask?.workspace_id ??
     activeSession?.workspace_id ??
-    (authoring ? taskCwd.workspaceId : mainCwd.workspaceId) ??
+    (draftScope ? taskCwd.workspaceId : mainCwd.workspaceId) ??
     null
   const explorerWorkspaceName =
-    activeTask?.name ?? activeSession?.title ?? (authoring ? taskCwd.label : mainCwd.label)
+    activeTask?.name ?? activeSession?.title ?? (draftScope ? taskCwd.label : mainCwd.label)
   const activitySnapshot = useActivitySnapshot(explorerWorkspaceId, chatTasks, runningAgents, toolCalls)
 
   // ＋ 面板的「工作区自带」层：把当前工作区（任务 / 会话 / 待发送 cwd）传下去。
@@ -757,8 +932,8 @@ export function ChatTab() {
         label:
           activeTask?.workspace_id === explorerWorkspaceId
             ? activeTask.name
-            : (authoring ? taskCwd.workspaceId : mainCwd.workspaceId) === explorerWorkspaceId
-              ? (authoring ? taskCwd.label : mainCwd.label)
+            : (draftScope ? taskCwd.workspaceId : mainCwd.workspaceId) === explorerWorkspaceId
+              ? (draftScope ? taskCwd.label : mainCwd.label)
               : '当前工作区',
       }
     : null
@@ -914,7 +1089,8 @@ export function ChatTab() {
         >
           <Menu className="size-3.5" />
         </button>
-        <div className={cn('flex min-h-0 flex-1 flex-col', showWorkbench && 'hidden')}>
+        <div className="flex min-h-0 flex-1 flex-col">
+          {activeTask && <TaskStatusStrip task={activeTask} />}
           <ChatArea
             messages={viewMessages}
             streaming={streaming}
@@ -932,6 +1108,7 @@ export function ChatTab() {
             hasSession={!!activeSessionId}
             contextUsage={contextUsage}
             sessionUsage={sessionUsage}
+            taskUsage={activeTask ? taskUsage : undefined}
             currentModel={model}
             onModelChange={setModel}
             effort={effort}
@@ -940,20 +1117,20 @@ export function ChatTab() {
             onMaxContextChange={setMaxContext}
             modelPresets={modelPresets}
             showUsagePlaceholders
-            showComposerAttach={!authoring}
+            showComposerAttach
             tui
             onSteer={(message, opts) => void steer(message, {
               model, effort, maxContext, subagents: opts?.subagents,
             })}
             steerActiveRef={steeringRef}
             resumeTailing={resumeStreaming}
-            emptyStateTitle={authoring ? '描述要开发的任务' : undefined}
-            emptyStateDescription={authoring ? '第一句话会成为任务草稿的标题，后续对话用于澄清与拆分 Phase。' : undefined}
-            composerLeading={authoring ? authoringLead : mainLead}
-            composerPlaceholder={authoring ? '描述要开发的任务…　⏎ 发送' : '问主 Agent…　⏎ 发送 · ⇧⏎ 排队 · Alt⏎ 换行'}
+            emptyStateTitle={draftScope ? '描述要开发的任务' : undefined}
+            emptyStateDescription={draftScope ? '第一句话会成为任务草稿的标题，后续对话用于澄清与拆分 Phase。' : undefined}
+            composerLeading={draftScope ? draftLead : mainLead}
+            composerPlaceholder={draftScope ? '描述要开发的任务…　⏎ 发送' : '问主 Agent…　⏎ 发送 · ⇧⏎ 排队 · Alt⏎ 换行'}
             // 主对话空会话：composer 居中，第二行放工作区 + 身份（2026-10-27 v2）。
-            heroEmpty={!authoring && !activeSessionId}
-            composerHeroFooter={!authoring && !activeSessionId ? (
+            heroEmpty={!draftScope && !activeSessionId}
+            composerHeroFooter={!draftScope && !activeSessionId ? (
               <CwdPicker
                 mode="main"
                 org={preferredOrg}
@@ -966,7 +1143,7 @@ export function ChatTab() {
               />
             ) : undefined}
             workspaceContext={composerWorkspaceContext}
-            identity={!authoring ? (
+            identity={!draftScope ? (
               activeSessionId
                 ? {
                     activeName: identity.activeName,
@@ -987,12 +1164,12 @@ export function ChatTab() {
           />
         </div>
 
-        {/* Draft keeps the authoring chat in the center; the same floating
-            dock/windows surface as running tasks lives on top of it. */}
-        {activeTask && !showWorkbench && (
+        {/* One main chat for every task state. Task modules float over it. */}
+        {activeTask && (
           <TaskModulesLayer
             task={activeTask}
             windows={taskWindows[activeTask.id] ?? {}}
+            onTaskAction={(action) => { void executeTaskAction(activeTask.id, action) }}
             onWindowsChange={(next) =>
               setTaskWindows((prev) => ({ ...prev, [activeTask.id]: next }))
             }
@@ -1000,21 +1177,6 @@ export function ChatTab() {
               void refreshChatTasks()
               void refetchSessions()
             }}
-            openModule={taskModuleRequest}
-          />
-        )}
-
-        {showWorkbench && activeTask && (
-          <TaskWorkbench
-            task={activeTask}
-            windows={taskWindows[activeTask.id] ?? {}}
-            onMutated={() => {
-              void refreshChatTasks()
-              void refetchSessions()
-            }}
-            onWindowsChange={(next) =>
-              setTaskWindows((prev) => ({ ...prev, [activeTask.id]: next }))
-            }
             openModule={taskModuleRequest}
           />
         )}
@@ -1026,14 +1188,13 @@ export function ChatTab() {
         task={activeTask}
         taskWindows={activeTask ? (taskWindows[activeTask.id] ?? {}) : {}}
         onOpenTaskModule={(module) => setTaskModuleRequest({ module, nonce: Date.now() })}
-        onEnqueue={activeTask ? () => void handleEnqueueTask(activeTask) : undefined}
-        enqueueBusy={enqueueBusy}
+        onTaskAction={(action) => { if (activeTask) void executeTaskAction(activeTask.id, action) }}
         activity={activitySnapshot}
         sidebarWidth={sidebarCollapsed ? 0 : sidebarWidth}
       />
 
         {/* Tool call panel */}
-        {!showWorkbench && showToolPanel && toolCalls.length > 0 && (
+        {showToolPanel && toolCalls.length > 0 && (
           <aside className="hidden w-80 border-l border-agent-divider bg-agent-surface-raised lg:block">
             <ToolCallPanel
               toolCalls={toolCalls}
@@ -1043,7 +1204,7 @@ export function ChatTab() {
         )}
 
         {/* Tool panel toggle */}
-      {!showWorkbench && toolCalls.length > 0 && !showToolPanel && (
+      {toolCalls.length > 0 && !showToolPanel && (
         <button
           onClick={() => setShowToolPanel(true)}
           className="absolute bottom-28 right-6 hidden items-center gap-1.5 rounded-full border border-white/[0.08] bg-pop-paper/85 px-3 py-1.5 text-[11px] text-pop-dim shadow-pop backdrop-blur transition-colors hover:text-pop-ink lg:flex"
@@ -1092,6 +1253,32 @@ export function ChatTab() {
         confirmLabel={deleteTarget?.status === 'running' ? '中止并删除' : '删除'}
         variant="destructive"
         onConfirm={() => void confirmTaskDelete()}
+      />
+
+      <ConfirmDialog
+        open={!!cardConfirm}
+        onOpenChange={(open) => { if (!open) setCardConfirm(null) }}
+        title="确认中止任务？"
+        description="会停止当前轮并清理工作区，此操作不可撤销。"
+        confirmLabel="确认中止"
+        variant="destructive"
+        loading={cardBusy}
+        onConfirm={() => void confirmDestructiveCardAction()}
+      />
+
+      <TriggerDialog
+        open={!!scheduleTaskId}
+        onOpenChange={(open) => { if (!open) setScheduleTaskId(null) }}
+        task={
+          (activeTask && activeTask.id === scheduleTaskId
+            ? activeTask
+            : chatTasks.find((task) => task.id === scheduleTaskId)) ?? null
+        }
+        onTriggered={() => {
+          setScheduleTaskId(null)
+          void refreshChatTasks()
+          void refetchSessions()
+        }}
       />
 
       {workflowWindow && (

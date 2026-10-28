@@ -11,6 +11,7 @@ export type ActivityKind =
   | "workflow.failed"
   | "workflow.stalled"
   | "task.started"
+  | "task.status"
   | "task.review"
   | "task.completed"
   | "task.failed"

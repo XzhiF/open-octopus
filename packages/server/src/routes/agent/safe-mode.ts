@@ -11,10 +11,7 @@ export function createSafeModeRoutes(sessionDAO: AgentSessionDAO, safetyDAO?: Sa
    */
   safeMode.get('/safe-mode', async (c) => {
     try {
-      const org = c.req.header('X-Octopus-Org') || (c.get('org') as string)
-      if (!org) {
-        return c.json(createAgentError('ORG_NOT_FOUND', 'Organization not resolved'), 403)
-      }
+      const org = c.req.header('X-Octopus-Org') || (c.get('org') as string) || ''
 
       const manager = getConfigManager()
       const config = manager.getConfig(org)
@@ -62,10 +59,7 @@ export function createSafeModeRoutes(sessionDAO: AgentSessionDAO, safetyDAO?: Sa
    */
   safeMode.post('/safe-mode/enable', async (c) => {
     try {
-      const org = c.req.header('X-Octopus-Org') || (c.get('org') as string)
-      if (!org) {
-        return c.json(createAgentError('ORG_NOT_FOUND', 'Organization not resolved'), 403)
-      }
+      const org = c.req.header('X-Octopus-Org') || (c.get('org') as string) || ''
 
       const manager = getConfigManager()
       const result = manager.updateConfig(org, {
@@ -93,7 +87,6 @@ export function createSafeModeRoutes(sessionDAO: AgentSessionDAO, safetyDAO?: Sa
           decision: 'intercept',
           actor: 'system',
           context: null,
-          org,
           timestamp: new Date().toISOString(),
         })
       } catch {
@@ -120,10 +113,7 @@ export function createSafeModeRoutes(sessionDAO: AgentSessionDAO, safetyDAO?: Sa
    */
   safeMode.post('/safe-mode/disable', (c) => {
     try {
-      const org = c.req.header('X-Octopus-Org') || (c.get('org') as string)
-      if (!org) {
-        return c.json(createAgentError('ORG_NOT_FOUND', 'Organization not resolved'), 403)
-      }
+      const org = c.req.header('X-Octopus-Org') || (c.get('org') as string) || ''
 
       const manager = getConfigManager()
       const result = manager.updateConfig(org, {
@@ -138,7 +128,6 @@ export function createSafeModeRoutes(sessionDAO: AgentSessionDAO, safetyDAO?: Sa
           decision: 'intercept',
           actor: 'system',
           context: null,
-          org,
           timestamp: new Date().toISOString(),
         })
       } catch {

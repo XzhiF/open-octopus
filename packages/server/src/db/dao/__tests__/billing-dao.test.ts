@@ -120,68 +120,7 @@ describe("billing schema (applySchema)", () => {
     expect(dao.listPrices()).toHaveLength(1) // 表数据不随重建视图丢失
   })
 
-  it("old DB migrates via v48: cost cols dropped, price row becomes catch-all, names normalized, history back-costed", () => {
-    // 手工搭一个 v47 之前的老形状（node_execution_id NOT NULL 触发 rebuild、cost 快照列、
-    // 价格表无窗口列、模型名带 [1m] 残渣），模拟升级现场。
-    const old = new Database()
-    old.exec("PRAGMA foreign_keys = OFF")
-    old.exec(`
-      CREATE TABLE llm_calls (
-        id TEXT PRIMARY KEY,
-        node_execution_id TEXT NOT NULL,
-        execution_id TEXT NOT NULL,
-        turn_index INTEGER NOT NULL DEFAULT 1,
-        call_index INTEGER NOT NULL DEFAULT 0,
-        model TEXT,
-        timestamp INTEGER NOT NULL,
-        duration_ms INTEGER NOT NULL DEFAULT 1,
-        input_tokens INTEGER NOT NULL DEFAULT 0,
-        output_tokens INTEGER NOT NULL DEFAULT 0,
-        cache_read_tokens INTEGER NOT NULL DEFAULT 0,
-        cache_creation_tokens INTEGER NOT NULL DEFAULT 0,
-        cost_usd REAL,
-        workspace_id TEXT,
-        workflow_ref TEXT
-      )`)
-    old.prepare(`INSERT INTO llm_calls (id, node_execution_id, execution_id, model, timestamp, input_tokens, cost_usd)
-      VALUES ('legacy-1', 'ne-x', 'e-x', 'legacy-model[1m]', 1700000000000, 1000, 0.42)`).run()
-    old.exec(`
-      CREATE TABLE billing_price_config (
-        id TEXT PRIMARY KEY,
-        vendor TEXT NOT NULL,
-        model_id TEXT NOT NULL UNIQUE,
-        input_unit_price REAL NOT NULL,
-        output_unit_price REAL NOT NULL,
-        cache_write_unit_price REAL NOT NULL,
-        cache_read_unit_price REAL NOT NULL,
-        currency TEXT NOT NULL CHECK (currency IN ('USD','CNY')),
-        created_at TEXT NOT NULL,
-        updated_at TEXT NOT NULL
-      )`)
-    old.prepare(`INSERT INTO billing_price_config
-      (id, vendor, model_id, input_unit_price, output_unit_price, cache_write_unit_price, cache_read_unit_price, currency, created_at, updated_at)
-      VALUES ('p-legacy', 'v', 'legacy-model', 100, 0, 0, 0, 'USD', ?, ?)`).run("2026-09-20T00:00:00.000Z", "2026-09-20T00:00:00.000Z")
-
-    applySchema(old)
-
-    // llm_calls：cost 快照列已弃，事实行保留，模型名归一
-    const cols = colsOf(old, "llm_calls")
-    expect(cols).not.toContain("cost_usd")
-    const fact = old.prepare("SELECT * FROM llm_calls WHERE id = 'legacy-1'").get() as Record<string, unknown>
-    expect(fact.model).toBe("legacy-model") // [1m] 残渣已剥
-    expect(fact.input_tokens).toBe(1000)
-    // 价格表：窗口列已加，存量行平移为兜底价（双 NULL），model_id 同为规范名
-    const price = old.prepare("SELECT * FROM billing_price_config WHERE id = 'p-legacy'").get() as Record<string, unknown>
-    expect(price.model_id).toBe("legacy-model")
-    expect(price.valid_from).toBeNull()
-    expect(price.valid_to).toBeNull()
-    // 语义翻转现场：旧快照 0.42 弃掉，历史行立即按兜底价回算 = 1000×100/1M = 0.1
-    const costed = old.prepare("SELECT cost_usd, vendor FROM llm_calls_costed WHERE id = 'legacy-1'").get() as { cost_usd: number | null; vendor: string | null }
-    expect(costed.cost_usd).toBeCloseTo(0.1, 10)
-    expect(costed.vendor).toBe("v")
-    old.close()
-  })
-})
+});
 
 // ── Seam B: BillingDAO price rules ─────────────────────────────────
 

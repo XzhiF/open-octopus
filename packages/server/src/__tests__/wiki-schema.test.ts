@@ -1,13 +1,11 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest"
 import Database from "better-sqlite3"
-import { applySchema, SCHEMA_VERSION } from "../db/schema"
+import { applySchema } from "../db/schema"
 
 /**
- * Ticket 01 — wiki_articles + wiki_fts 蓝绿迁移（纯增量：新表进 schema.sql +
- * SCHEMA_VERSION 51→52；migrations 先于 schema.sql 跑，CREATE IF NOT EXISTS 幂等，
- * 旧库升级不丢既有行 — experiences_fts v2 先例同款断言，schema-migration.test.ts）。
+ * wiki_articles + wiki_fts 是初始 schema 的一部分（global id PK）。
  */
-describe("wiki schema migration (v52)", () => {
+describe("wiki schema", () => {
   let db: Database.Database
 
   beforeEach(() => {
@@ -18,20 +16,11 @@ describe("wiki schema migration (v52)", () => {
     db?.close()
   })
 
-  // 版本推进注记：票01 建表时为 51→52；票05 增 findings 表后 SCHEMA_VERSION=53；
-  // 票08 清理账 pending_review 表退役 53→54；P4 票06 effectiveness v2 列面蓝绿改名
-  // wiki 表形态断言不变（纯增量/纯删表/纯列名迁移）；版本号随 SCHEMA_VERSION 走。
-  it("stamps the current SCHEMA_VERSION onto user_version", () => {
-    expect(SCHEMA_VERSION).toBeGreaterThanOrEqual(55)
-    applySchema(db)
-    expect(db.pragma("user_version", { simple: true })).toBe(SCHEMA_VERSION)
-  })
-
-  it("creates wiki_articles with the index columns (org-scoped composite PK)", () => {
+  it("creates wiki_articles with the index columns (global id PK)", () => {
     applySchema(db)
     const cols = db.prepare("PRAGMA table_info(wiki_articles)").all() as { name: string }[]
     expect(cols.map(c => c.name)).toEqual(expect.arrayContaining([
-      "org", "id", "domain", "title", "summary", "topics",
+      "id", "domain", "title", "summary", "topics",
       "stability", "last_compiled", "sources", "confidence", "body", "path", "updated_at",
     ]))
   })

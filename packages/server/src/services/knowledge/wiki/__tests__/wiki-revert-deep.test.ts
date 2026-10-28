@@ -81,7 +81,7 @@ describe("RevertTaskService — 深回滚状态重建（票02 · 故事22/23/31 
       confidence: 0.5, body: `\n## 规则节\n- ${bodyWord}纪律 <!--#oct-090-->\n`,
       path: relPath,
     })
-    const rowid = dao.getRowid(GLOBAL_WIKI_ORG, id)
+    const rowid = dao.getRowid(id)
     if (rowid !== undefined) {
       dao.deleteFts(rowid)
       dao.insertFts({ rowid, id, domain: "concept", title, summary: `深回滚复现靶页 ${id}`, topics: '["probe"]', body: `${bodyWord}纪律` })
@@ -142,9 +142,9 @@ describe("RevertTaskService — 深回滚状态重建（票02 · 故事22/23/31 
     const logPath = path.join(wikiRoot, WIKI_LOG_FILE)
     fs.writeFileSync(logPath, fs.readFileSync(logPath, "utf-8") + `## [2026-10-14] retire | ${relPath}\n  → 退役入 _retired/ · fixture · owner ✓\n`, "utf-8")
     const dao = new WikiArticleDAO(db)
-    const rowid = dao.getRowid(GLOBAL_WIKI_ORG, id)
+    const rowid = dao.getRowid(id)
     if (rowid !== undefined) dao.deleteFts(rowid)
-    dao.delete(GLOBAL_WIKI_ORG, id)
+    dao.delete(id)
     git.run(["add", "-A"])
     const r = git.run(["commit", "-m", `retire: ${relPath} → _retired/（superseded）`])
     if (r.status !== 0) throw new Error(`fixture commit failed: ${r.stderr}`)

@@ -153,7 +153,7 @@ describe("GET /api/knowledge/health — 健康条聚合（票面口径七项，�
     // DB 索引层：v3 类型值 5 行 + v2 域值 2 行（重蒸馏前混存实况；桶映射 = shared 单源）
     const seed = (id: string, domain: string, last: string) =>
       dao.upsert({
-        org: "global", id, domain, title: id, summary: "-", topics: "[]", stability: "stable",
+        repo_group: "global", id, domain, title: id, summary: "-", topics: "[]", stability: "stable",
         last_compiled: last, sources: "[]", confidence: 0.5, body: "-", path: `${domain}/${id}.md`,
       })
     seed("ent-open-octopus", "entity", "2026-10-13")
@@ -176,7 +176,6 @@ describe("GET /api/knowledge/health — 健康条聚合（票面口径七项，�
     expect(res.status).toBe(200)
     const data = await res.json()
 
-    expect(data.org).toBe("global")
     // 页数按类：v2 域值经 shared 映射入 v3 桶（projects→topic、cases→case）
     expect(data.pages).toEqual({ total: 7, entity: 1, concept: 1, topic: 2, source: 1, case: 2 })
     expect(data.rawSources).toBe(3)
@@ -251,7 +250,7 @@ confidence: 0.9
 
   it("carries page{type/entityKind/aliases/links} for v3 pages", async () => {
     dao.upsert({
-      org: "global", id: "con-compiled-rag", domain: "concept", title: "编译式 RAG",
+      repo_group: "global", id: "con-compiled-rag", domain: "concept", title: "编译式 RAG",
       summary: "检索的重活挪到编译时", topics: JSON.stringify(["rag"]), stability: "stable",
       last_compiled: "2026-10-13", sources: JSON.stringify(["raw/inbox/2026-10-13-karpathy-llm-wiki.md"]),
       confidence: 0.9, body: "## 定义\n\n检索的重活从 query 时挪到维护编译时。<!--#oct-008-->\n", path: "concepts/con-compiled-rag.md",
@@ -274,7 +273,7 @@ confidence: 0.9
 
   it("v2-domain row / missing file ⇒ page null（兼容读面诚实降级，不炸 500）", async () => {
     dao.upsert({
-      org: "global", id: "prj-octopus", domain: "projects", title: "Octopus",
+      repo_group: "global", id: "prj-octopus", domain: "projects", title: "Octopus",
       summary: "-", topics: "[]", stability: "stable", last_compiled: "2026-10-12",
       sources: "[]", confidence: 0.8, body: "- x\n", path: "projects/prj-octopus.md",
     })
@@ -290,7 +289,6 @@ describe("GET /api/knowledge/log — LOG.md 行数组 + 前缀过滤", () => {
     expect(res.status).toBe(200)
     const data = await res.json()
 
-    expect(data.org).toBe("global")
     expect(data.lines).toHaveLength(4) // 头行与旧表格行不入阵（v2 表行机械转换属票07）
     expect(data.lines[0]).toEqual({
       date: "2026-10-12", op: "compile", title: "projects/prj-octopus.md",
@@ -331,7 +329,7 @@ describe("ADR-0033 preference 端点退役", () => {
 describe("P4 票07 — article effectiveness 实时段（引用数/helpful 率/confidence，DB 真源）", () => {
   const seedArticleRow = () =>
     dao.upsert({
-      org: "global", id: "top-x", domain: "topic", title: "T", summary: "-", topics: "[]",
+      repo_group: "global", id: "top-x", domain: "topic", title: "T", summary: "-", topics: "[]",
       stability: "stable", last_compiled: "2026-10-12", sources: "[]", confidence: 0.9,
       body: "## 硬约束\n- 规则甲 <!--#oct-050-->\n", path: "topics/top-x.md",
     })
@@ -421,8 +419,7 @@ describe("GET /api/knowledge/fs + /fs/file — 知识根目录树只读投影", 
 
   it("/fs 契约形状（键集恒等）；.git 与 user_preference 零出现（防复活对称）；pending-review 保留（防过杀）", async () => {
     const data = await (await app().request("/fs")).json()
-    expect(Object.keys(data).sort()).toEqual(["org", "root", "total", "tree", "truncated"])
-    expect(data.org).toBe("global")
+    expect(Object.keys(data).sort()).toEqual(["root", "total", "tree", "truncated"])
     expect(data.root).toBe("knowledge")
     expect(data.truncated).toBe(false)
     const text = JSON.stringify(data)
@@ -452,7 +449,7 @@ describe("GET /api/knowledge/fs + /fs/file — 知识根目录树只读投影", 
     const res = await app().request(`/fs/file?path=${encodeURIComponent("SCHEMA.md")}`)
     expect(res.status).toBe(200)
     const data = await res.json()
-    expect(Object.keys(data).sort()).toEqual(["bytes", "content", "org", "path"])
+    expect(Object.keys(data).sort()).toEqual(["bytes", "content", "path"])
     expect(data.content).toContain("纪律文本")
   })
 

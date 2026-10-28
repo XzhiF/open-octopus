@@ -23,7 +23,7 @@ beforeEach(() => {
 
   // Seed a workspace for foreign key references
   db.prepare(
-    "INSERT INTO workspaces (id, name, org, path, status, created_at, updated_at) VALUES (?, ?, ?, ?, 'active', ?, ?)",
+    "INSERT INTO workspaces (id, name, repo_group, path, status, created_at, updated_at) VALUES (?, ?, ?, ?, 'active', ?, ?)",
   ).run("ws-1", "Test Workspace", "xzf", "/tmp/ws", new Date().toISOString(), new Date().toISOString())
 
   sse = new SSEService()
@@ -72,15 +72,9 @@ describe("WorkspaceScheduleService CRUD", () => {
     ).toThrow(/已存在/)
   })
 
-  it("allows same name in different orgs", () => {
-    // Create second workspace in a different org
-    db.prepare(
-      "INSERT INTO workspaces (id, name, org, path, status, created_at, updated_at) VALUES (?, ?, ?, ?, 'active', ?, ?)",
-    ).run("ws-2", "WS2", "other-org", "/tmp/ws2", new Date().toISOString(), new Date().toISOString())
-
+  it("rejects the same name across workspaces (global uniqueness)", () => {
     service.create("ws-1", makeScheduleInput({ name: "Shared" }))
-    const s2 = service.create("ws-2", makeScheduleInput({ name: "Shared" }))
-    expect(s2.name).toBe("Shared")
+    expect(() => service.create("ws-2", makeScheduleInput({ name: "Shared" }))).toThrow(/已存在/)
   })
 
   it("lists schedules for workspace", () => {

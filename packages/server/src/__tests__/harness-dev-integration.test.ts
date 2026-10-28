@@ -70,7 +70,7 @@ beforeEach(() => {
   workspaceId = randomUUID()
   const now = new Date().toISOString()
   db.prepare(
-    "INSERT INTO workspaces (id, name, org, path, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)",
+    "INSERT INTO workspaces (id, name, repo_group, path, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)",
   ).run(workspaceId, "test-ws", ORG, workspacePath, now, now)
 
   harnessDAO = new HarnessDAO(db)
@@ -228,8 +228,7 @@ describe("R2-02 Harness Dev Integration", () => {
         var_pool: "{}",
         triggered_by: "manual",
         node_type: "normal",
-        branch: "main",
-        org: ORG,
+        branch: "main",
         created_at: new Date().toISOString(),
         updated_at: new Date().toISOString(),
       })
@@ -310,8 +309,7 @@ describe("R2-02 Harness Dev Integration", () => {
         var_pool: "{}",
         triggered_by: "manual",
         node_type: "normal",
-        branch: "main",
-        org: ORG,
+        branch: "main",
         created_at: new Date().toISOString(),
         updated_at: new Date().toISOString(),
       })
@@ -344,8 +342,7 @@ describe("R2-02 Harness Dev Integration", () => {
         var_pool: "{}",
         triggered_by: "manual",
         node_type: "normal",
-        branch: "main",
-        org: ORG,
+        branch: "main",
         created_at: new Date().toISOString(),
         updated_at: new Date().toISOString(),
       })
@@ -378,8 +375,7 @@ describe("R2-02 Harness Dev Integration", () => {
         var_pool: "{}",
         triggered_by: "manual",
         node_type: "normal",
-        branch: "main",
-        org: ORG,
+        branch: "main",
         created_at: new Date().toISOString(),
         updated_at: new Date().toISOString(),
       })
@@ -409,8 +405,7 @@ describe("R2-02 Harness Dev Integration", () => {
           var_pool: "{}",
           triggered_by: "manual",
           node_type: "normal",
-          branch: "main",
-          org: ORG,
+          branch: "main",
           created_at: new Date().toISOString(),
           updated_at: new Date().toISOString(),
         })

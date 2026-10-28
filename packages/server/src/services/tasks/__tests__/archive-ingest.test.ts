@@ -105,11 +105,11 @@ function seedV4Task(taskHome: TaskHomeService, opts: SeedOpts = {}): { taskId: s
     const wsPath = path.join(tmpRoot, "ws", workspaceId)
     fs.mkdirSync(wsPath, { recursive: true })
     db.prepare(
-      "INSERT INTO workspaces (id, name, org, path, source, status, task_id, created_at, updated_at) VALUES (?, ?, ?, ?, 'task', 'active', ?, datetime('now'), datetime('now'))",
+      "INSERT INTO workspaces (id, name, repo_group, path, source, status, task_id, created_at, updated_at) VALUES (?, ?, ?, ?, 'task', 'active', ?, datetime('now'), datetime('now'))",
     ).run(workspaceId, `task:${taskId}`, "kc10-org", wsPath, taskId)
   }
   db.prepare(`
-    INSERT INTO tasks (id, org, name, status, source_chat_session_id, task_spec,
+    INSERT INTO tasks (id, repo_group, name, status, source_chat_session_id, task_spec,
       authoring_resources, resources, skills, project_ids, workflow_ref, version,
       deleted_at, created_at, updated_at, completed_at, workspace_id)
     VALUES (?, ?, ?, ?, NULL, ?, '[]', '[]', '[]', '["authsvc"]', NULL, 1, NULL, ?, ?, NULL, ?)
@@ -419,7 +419,7 @@ describe("总结 prompt 捕获（AC1 四段素材）", () => {
     const { service, taskHome, calls } = makeDeps()
     await expect(service.ingestTask("kc10-does-not-exist")).resolves.toMatchObject({ status: "skipped", reason: "TASK_NOT_FOUND" })
     db.prepare(`
-      INSERT INTO tasks (id, org, name, status, task_spec, authoring_resources, resources, skills, project_ids, version, created_at, updated_at)
+      INSERT INTO tasks (id, repo_group, name, status, task_spec, authoring_resources, resources, skills, project_ids, version, created_at, updated_at)
       VALUES ('kc10-v3-task', 'kc10-org', 'legacy v3', 'archiving', '{"goal":"x","ac":[]}', '[]', '[]', '[]', '[]', 1, datetime('now'), datetime('now'))
     `).run()
     await expect(service.ingestTask("kc10-v3-task")).resolves.toMatchObject({ status: "skipped", reason: "NOT_V4" })

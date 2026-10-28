@@ -97,7 +97,7 @@ describe("A. POST 直建 v4 draft（契约修复主案）", () => {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({
-        org: ORG,
+        repo_group: ORG,
         name: "E2E_TD direct-v4",
         task_spec: { format: "v4" },
         project_ids: ["p-alpha"],
@@ -133,7 +133,6 @@ describe("A. POST 直建 v4 draft（契约修复主案）", () => {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({
-        org: ORG,
         name: "E2E_TD type-coexist",
         task_type: "coding",
         task_spec: { format: "v4" },
@@ -160,7 +159,6 @@ describe("A. POST 直建 v4 draft（契约修复主案）", () => {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({
-        org: ORG,
         name: "E2E_TD session-link",
         source_chat_session_id: "e2e-td-s1",
         task_spec: { format: "v4" },
@@ -182,7 +180,7 @@ describe("B. POST 校验（body 缺陷 = 400）", () => {
     const res = await app.request("/api/tasks", {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ org: ORG, name: "E2E_TD bad-phases", task_spec: { format: "v4", phases: [] } }),
+      body: JSON.stringify({ repo_group: ORG, name: "E2E_TD bad-phases", task_spec: { format: "v4", phases: [] } }),
     })
     expect(res.status).toBe(400)
   })
@@ -191,7 +189,7 @@ describe("B. POST 校验（body 缺陷 = 400）", () => {
     const res = await app.request("/api/tasks", {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ org: ORG, name: "E2E_TD empty-goal", task_spec: { goal: "" } }),
+      body: JSON.stringify({ repo_group: ORG, name: "E2E_TD empty-goal", task_spec: { goal: "" } }),
     })
     expect(res.status).toBe(400)
   })
@@ -200,7 +198,7 @@ describe("B. POST 校验（body 缺陷 = 400）", () => {
     const res = await app.request("/api/tasks", {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ org: ORG, name: "E2E_TD bad-projects", project_ids: [42] }),
+      body: JSON.stringify({ repo_group: ORG, name: "E2E_TD bad-projects", project_ids: [42] }),
     })
     expect(res.status).toBe(400)
   })
@@ -210,7 +208,6 @@ describe("B. POST 校验（body 缺陷 = 400）", () => {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({
-        org: ORG,
         name: "E2E_TD with-phases",
         task_spec: {
           format: "v4",
@@ -236,13 +233,13 @@ describe("B. POST 校验（body 缺陷 = 400）", () => {
     const noName = await app.request("/api/tasks", {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ org: ORG, task_spec: { format: "v4" } }),
+      body: JSON.stringify({ repo_group: ORG, task_spec: { format: "v4" } }),
     })
     expect(noName.status).toBe(400)
     const blankName = await app.request("/api/tasks", {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ org: ORG, name: "   ", task_spec: { format: "v4" } }),
+      body: JSON.stringify({ repo_group: ORG, name: "   ", task_spec: { format: "v4" } }),
     })
     expect(blankName.status).toBe(400)
   })
@@ -255,7 +252,7 @@ describe("C. 向后兼容（带 name 的旧调用零变化；name 本身已必�
     const res = await app.request("/api/tasks", {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ org: ORG, name: "E2E_TD legacy-v2" }),
+      body: JSON.stringify({ repo_group: ORG, name: "E2E_TD legacy-v2" }),
     })
     expect(res.status).toBe(201)
     const dto = (await res.json()) as { id: string; task_spec: Record<string, unknown> }
@@ -269,7 +266,7 @@ describe("C. 向后兼容（带 name 的旧调用零变化；name 本身已必�
     const res = await app.request("/api/tasks", {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ org: ORG, name: "E2E_TD v3-generic", task_type: "generic", skill_groups: [] }),
+      body: JSON.stringify({ repo_group: ORG, name: "E2E_TD v3-generic", task_type: "generic", skill_groups: [] }),
     })
     expect(res.status).toBe(201)
     const dto = (await res.json()) as { id: string; task_spec: Record<string, unknown> }
@@ -287,7 +284,7 @@ describe("D. spec-field(phases) 的 v4 旗标补写（autosave 壳自救）", ()
     const id = "e2e-td-d1-shell"
     const now = new Date().toISOString()
     db.prepare(
-      `INSERT INTO tasks (id, org, name, status, task_spec, authoring_resources, resources,
+      `INSERT INTO tasks (id, repo_group, name, status, task_spec, authoring_resources, resources,
         skills, project_ids, version, created_at, updated_at)
        VALUES (?, ?, 'E2E_TD shell', 'draft', '{}', '[]', '[]', '[]', '[]', 1, ?, ?)`,
     ).run(id, ORG, now, now)
@@ -328,7 +325,7 @@ describe("D. spec-field(phases) 的 v4 旗标补写（autosave 壳自救）", ()
     const res = await app.request("/api/tasks", {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ org: ORG, name: "E2E_TD d2-v4", task_spec: { format: "v4" } }),
+      body: JSON.stringify({ repo_group: ORG, name: "E2E_TD d2-v4", task_spec: { format: "v4" } }),
     })
     const dto = (await res.json()) as { id: string; version: number }
     const put = await app.request(`/api/tasks/${dto.id}/spec-field`, {
@@ -361,7 +358,7 @@ describe("E. 黄金链：直建 → home-file 写 spec → phases → ready 物�
     const created = await app.request("/api/tasks", {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ org: ORG, name: "E2E_TD golden", task_spec: { format: "v4" } }),
+      body: JSON.stringify({ repo_group: ORG, name: "E2E_TD golden", task_spec: { format: "v4" } }),
     })
     expect(created.status).toBe(201)
     const dto = (await created.json()) as { id: string }

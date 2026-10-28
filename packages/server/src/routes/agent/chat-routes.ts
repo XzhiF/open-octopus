@@ -20,7 +20,7 @@ import { getAgentService, isStreamActive, registerActiveStream, unregisterActive
 import { getSafetyInterceptor } from '../../services/agent/safety-interceptor'
 import { getAgentDir, getDailyMemoryDir, getExperiencesDir, getDebugTracesDir } from '../../services/agent/paths'
 import { deriveSessionTitle } from '../../services/agent/session-title'
-import { isResumeFailureMessage, usableResumeId } from '../../services/agent/resume'
+import { isResumeFailureMessage, migrateProviderTranscript, usableResumeId } from '../../services/agent/resume'
 import type { AgentSessionDAO, SafetyDAO, ScheduleConfigDAO } from '../../db/dao'
 import { SessionCacheContextDAO } from '../../db/dao/session-cache-context-dao'
 import { resolveSessionExpertRoster } from '../../services/agent/session-expert-roster'
@@ -30,9 +30,12 @@ import { appendRoleSwitchEvent, roleSwitchEventPayload } from '../../services/ag
 import { withTransientReminder } from '../../services/agent/prompt-reminder'
 import { recordProviderResultUsage } from '../../services/llm-call-ledger'
 import { createWorkflowToolServer } from '../../services/chat/workflow-tools'
+import { createTaskToolServer } from '../../services/chat/task-tools'
 import type { TokenUsageDAO } from '../../db/dao/token-usage-dao'
 import type { EffortLevel } from '@octopus/shared'
 import { parseComposerContext, parseComposerEffort, resolveChatModel } from './composer-options'
+import type { TaskThreadService } from '../../services/tasks/task-thread-service'
+import { commitWorkspaceEdits, quickEditMarkerFor } from '../../services/tasks/quick-edit'
 
 export interface ChatRouteDeps {
   sessionDAO: AgentSessionDAO
@@ -42,10 +45,12 @@ export interface ChatRouteDeps {
   tokenUsageDao?: TokenUsageDAO
   /** 服务端唤醒（ChatEventBridge）→ 前端 session SSE 通知。 */
   sse?: import('../../services/sse').SSEService
+  /** 2026-10-28 task-thread: one main chat per task, identity by task state. */
+  taskThread?: TaskThreadService
 }
 
 export function createChatRoutes(deps: ChatRouteDeps): Hono {
-  const { sessionDAO: sessionDao, safetyDAO, scheduleConfigDAO, tokenUsageDao, sse } = deps
+  const { sessionDAO: sessionDao, safetyDAO, scheduleConfigDAO, tokenUsageDao, sse, taskThread } = deps
   const app = new Hono()
 
   // ── Session running state（"关闭不丢失"）──────────────────────────
@@ -65,8 +70,7 @@ export function createChatRoutes(deps: ChatRouteDeps): Hono {
 
   // ── Chat SSE streaming ─────────────────────────────────────────────
   app.post('/sessions/:id/chat', async (c) => {
-    const org = c.req.header('X-Octopus-Org') || (c.get('org') as string)
-    if (!org) return c.json(createAgentError('ORG_NOT_FOUND', 'Organization not resolved'), 403)
+    const org = c.req.header('X-Octopus-Org') || (c.get('org') as string) || ''
 
     const id = c.req.param('id')
 
@@ -76,6 +80,9 @@ export function createChatRoutes(deps: ChatRouteDeps): Hono {
       /** Server-originated activity wake (ChatEventBridge). */
       wake?: boolean
       activity?: Record<string, unknown>
+      /** 2026-10-28 task-thread: the bridge already appended the deterministic
+       *  event card, so the wake turn must not persist a second copy. */
+      ephemeral?: boolean
     }
     try {
       body = await c.req.json()
@@ -88,25 +95,28 @@ export function createChatRoutes(deps: ChatRouteDeps): Hono {
     }
 
     const effort = parseComposerEffort(body.effort)
-    const model = resolveChatModel(body.model, parseComposerContext(body.maxContext), org)
+    const model = resolveChatModel(body.model, parseComposerContext(body.maxContext))
 
     // Verify session exists
     const session = sessionDao.findSessionById(id)
-    if (!session || session.org !== org || session.is_deleted) {
+    if (!session || session.is_deleted) {
       return c.json(createAgentError('NOT_FOUND', `Session ${id} not found`), 404)
     }
 
-    // Store user message
+    // Store user message. Ephemeral wakes (task-thread event cards) reach the
+    // model but are NOT persisted — the bridge already wrote the card.
     const userMsgId = crypto.randomUUID()
     const now = new Date().toISOString()
-    sessionDao.insertMessage({
-      id: userMsgId, session_id: id, role: 'user',
-      content: body.message, created_at: now,
-      ...(body.wake
-        ? { metadata: JSON.stringify({ displayType: 'event', activity: body.activity ?? null }) }
-        : {}),
-    })
-    sessionDao.updateLastMessageAt(id, now)
+    if (!body.ephemeral) {
+      sessionDao.insertMessage({
+        id: userMsgId, session_id: id, role: 'user',
+        content: body.message, created_at: now,
+        ...(body.wake
+          ? { metadata: JSON.stringify({ displayType: 'event', activity: body.activity ?? null }) }
+          : {}),
+      })
+      sessionDao.updateLastMessageAt(id, now)
+    }
 
     // ── Safety: detect dangerous commands in user message (B5 fix) ────
     try {
@@ -119,7 +129,6 @@ export function createChatRoutes(deps: ChatRouteDeps): Hono {
           decision: 'intercept',
           actor: 'user',
           context: JSON.stringify({ reason, session_id: id }),
-          org,
           timestamp: now,
         })
       }
@@ -133,11 +142,46 @@ export function createChatRoutes(deps: ChatRouteDeps): Hono {
       ? path.resolve(session.cwd.replace(/^~/, os.homedir()))
       : getAgentDir()
 
+    // 2026-10-28 task-thread: a MAIN session bound to a task gets a per-turn
+    // profile (identity / cwd / guard / plugins / context). Legacy clone
+    // sessions and free chat sessions resolve to null and are untouched.
+    const thread = taskThread?.resolveForSession({
+      id,
+      clone_name: session.clone_name ?? null,
+    }) ?? null
+    const effectiveCwd = thread?.cwd ?? sessionCwd
+    // The SDK keys its transcript by cwd. Identity switches move the thread
+    // task home → execution workspace; carry the provider transcript across so
+    // the one-chat promise survives the switch. Best-effort + idempotent.
+    if (thread && session.provider_session_id && path.resolve(sessionCwd) !== path.resolve(effectiveCwd)) {
+      migrateProviderTranscript(sessionCwd, effectiveCwd, session.provider_session_id)
+    }
+
     // Assemble system prompt. The prompt is part of the provider's cached
     // prefix, so a resumed session freezes it on first use: re-reading persona
     // / memory / skills every turn would invalidate the whole transcript cache.
+    // Task-thread identity is a ROLE CARD (below), never a rebuilt prompt.
     const assembler = new SystemPromptAssembler(org)
     const cacheCtx = new SessionCacheContextDAO(sessionDao.getDb())
+    // 2026-10-28 task-thread: keep the session role aligned with the task state.
+    // The full task-author / task-doer personas are delivered ONCE per identity
+    // transition as a role card (cache discipline), never re-injected per turn.
+    // A user-picked third clone is respected until the next task transition.
+    if (thread) {
+      const desired = thread.identity === 'author'
+        ? 'task-author'
+        : thread.identity === 'doer'
+          ? 'task-doer'
+          : null
+      const currentRole = cacheCtx.getRoleState(id)
+      const taskRoles = new Set(['task-author', 'task-doer'])
+      if (
+        (currentRole.activeExpert == null || taskRoles.has(currentRole.activeExpert)) &&
+        currentRole.activeExpert !== desired
+      ) {
+        cacheCtx.setActiveExpert(id, desired, 'clone')
+      }
+    }
     const systemPrompt = body.system_prompt ?? cacheCtx.getOrCreatePromptSnapshot(
       id,
       () => assembler.assemble({ clone_name: session.clone_name ?? undefined }),
@@ -145,7 +189,7 @@ export function createChatRoutes(deps: ChatRouteDeps): Hono {
     // Native SDK resume: the transcript (and its cache prefix) continues
     // across turns. A pointer whose transcript is gone is treated as cold and
     // cleared, so a restored DB never bricks the conversation.
-    const resumeSessionId = usableResumeId(sessionCwd, session.provider_session_id)
+    const resumeSessionId = usableResumeId(effectiveCwd, session.provider_session_id)
     if (session.provider_session_id && !resumeSessionId) {
       sessionDao.clearProviderSession(id)
       // The provider transcript is gone → the active role card must be replayed.
@@ -169,13 +213,26 @@ export function createChatRoutes(deps: ChatRouteDeps): Hono {
     const mentionReminder = consults.length > 0
       ? `用户本轮委派了以下分身：${consults.map((c) => c.displayName).join('、')}。请调用对应的 subagent 获取其专业意见，再整合成最终回答；不要简单拼接。`
       : undefined
-    const turnReminder = [roleCard, mentionReminder].filter(Boolean).join('\n\n')
+    // Task state is injected per turn (never into the frozen system prompt).
+    const turnReminder = [roleCard, mentionReminder, thread?.context].filter(Boolean).join('\n\n')
     const providerMessage = withTransientReminder(body.message!, turnReminder)
     // Workflow control tools (list/run/status/cancel/approve/retry) are
     // registered as an in-process MCP server bound to this chat's workspace.
-    const mcpServers = session.workspace_id
-      ? { 'octopus-workflow': createWorkflowToolServer(session.workspace_id, { sessionId: id, org }) }
-      : undefined
+    // A task thread also gets the read/action tools (spec + confirm cards).
+    const mcpWorkspaceId = thread?.task.workspaceId ?? session.workspace_id
+    const toolServers: Record<string, unknown> = {}
+    if (mcpWorkspaceId) {
+      toolServers['octopus-workflow'] = createWorkflowToolServer(mcpWorkspaceId, { sessionId: id, org })
+    }
+    if (thread) {
+      toolServers['octopus-task'] = createTaskToolServer({
+        db: sessionDao.getDb(),
+        sessionId: id,
+        profile: thread,
+        identity: thread.identity,
+      })
+    }
+    const mcpServers = Object.keys(toolServers).length > 0 ? toolServers : undefined
 
     // ── Trigger self-check on first message (E2E-055) ──────────────
     runSelfCheck()
@@ -196,6 +253,27 @@ export function createChatRoutes(deps: ChatRouteDeps): Hono {
       }
       notifyWake('started')
 
+      // Execution identity: land one marked commit per dirty repo after the
+      // turn (announced before the terminal `done` frame — same frame name as
+      // the doer chat). Defined here so it closes over the SSE stream.
+      const onTurnComplete = thread?.autoCommit && thread.task.wsPath
+        ? async () => {
+            const commits = await commitWorkspaceEdits({
+              wsPath: thread.task.wsPath!,
+              taskId: thread.task.id,
+              sessionId: id,
+              content: body.message!,
+              marker: quickEditMarkerFor(thread.takeover),
+            })
+            for (const cm of commits) {
+              await stream.writeSSE({
+                event: 'quick_edit_commit',
+                data: JSON.stringify({ sessionId: id, taskId: thread.task.id, ...cm }),
+              })
+            }
+          }
+        : undefined
+
       try {
         // Step 1: Auto-compress long sessions
         await autoCompressSession(id, org, stream)
@@ -210,8 +288,11 @@ export function createChatRoutes(deps: ChatRouteDeps): Hono {
           resumeSessionId,
           providerMessage,
           agents,
-          cwd: sessionCwd,
+          cwd: effectiveCwd,
           mcpServers,
+          plugins: thread?.plugins,
+          onBeforeToolCall: thread?.guard,
+          onTurnComplete,
           onResult: roleCard
             ? () => {
                 cacheCtx.markRoleDelivered(id, roleState.revision)
@@ -237,8 +318,7 @@ export function createChatRoutes(deps: ChatRouteDeps): Hono {
   // ── Stop generation ──────────────────────────────────────────────────
   app.post('/sessions/:id/stop', async (c) => {
     try {
-      const org = c.req.header('X-Octopus-Org') || (c.get('org') as string)
-      if (!org) return c.json(createAgentError('ORG_NOT_FOUND', 'Organization not resolved'), 403)
+      const org = c.req.header('X-Octopus-Org') || (c.get('org') as string) || ''
       const id = c.req.param('id')
       const result = await getAgentService().stopChat(org, id)
       return c.json({ success: true, ...result })
@@ -305,6 +385,12 @@ export function createChatRoutes(deps: ChatRouteDeps): Hono {
       cwd?: string
       /** In-process MCP servers (workflow control tools). */
       mcpServers?: Record<string, unknown>
+      /** Stable skill-discovery set for a task thread (agent + author + home). */
+      plugins?: Array<{ type: 'local'; path: string }>
+      /** Per-turn write guard (author fence / doer batch fence / read-only). */
+      onBeforeToolCall?: (toolName: string, input: unknown) => Promise<{ allow: boolean; reason?: string } | undefined>
+      /** After the turn: land [quick-edit] commits for a task thread. */
+      onTurnComplete?: () => Promise<void> | void
       /** Called once when the turn produces a result (mark role card delivered). */
       onResult?: () => void
     },
@@ -397,6 +483,8 @@ export function createChatRoutes(deps: ChatRouteDeps): Hono {
           ...(effort ? { effort } : {}),
           ...(extra?.agents ? { agents: extra.agents } : {}),
           ...(extra?.mcpServers ? { mcpServers: extra.mcpServers } : {}),
+          ...(extra?.plugins ? { plugins: extra.plugins } : {}),
+          ...(extra?.onBeforeToolCall ? { onBeforeToolCall: extra.onBeforeToolCall } : {}),
         })) {
           if ((stream as any)._aborted) break
           switch (chunk.type) {
@@ -494,6 +582,19 @@ export function createChatRoutes(deps: ChatRouteDeps): Hono {
         }
       }
 
+      // Task-thread execution turns: commit whatever the turn actually changed.
+      // Runs BEFORE the terminal `done` frame (the client treats `done` as the
+      // end of the stream, so trailing frames would be dropped) and even after
+      // a model error — the files on disk are the truth.
+      try {
+        await extra?.onTurnComplete?.()
+      } catch (err: unknown) {
+        console.warn(
+          '[agent-chat] onTurnComplete failed (non-fatal):',
+          err instanceof Error ? err.message : String(err),
+        )
+      }
+
       if (generated && fullContent) {
         const assistantNow = new Date().toISOString()
         const toolCallsJson = serializeTurnExtras(fullThinking, currentToolCalls)
@@ -554,7 +655,7 @@ export function createChatRoutes(deps: ChatRouteDeps): Hono {
             if (titleContent) {
               const llmTitle = titleContent.trim().replace(/[.。,，!！?？""]/g, '').slice(0, 30)
               if (llmTitle && llmTitle !== autoTitle) {
-                dao.updateSessionByOrg(sessionId, org, { title: llmTitle })
+                dao.updateSessionIfActive(sessionId, { title: llmTitle })
               }
             }
           } catch { /* non-fatal */ }

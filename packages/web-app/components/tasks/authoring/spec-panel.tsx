@@ -190,7 +190,7 @@ export function SpecPanel({ task, onMutated, batchTree, rows, gateHits, home, au
           ? []
           : ["未绑定项目：执行前需要至少选择一个项目（执行环境要挂 worktree）"],
       label: "项目仓库",
-      value: `${task.org || "—"} · ${(task.project_ids ?? []).length} 项目`,
+      value: `${task.repo_group || "—"} · ${(task.project_ids ?? []).length} 项目`,
     },
   ] as const
 

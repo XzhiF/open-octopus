@@ -1720,7 +1720,7 @@ export class ExecutionLifecycle {
       workflow_name: workflowName, name: input.name || workflowName,
       status: "pending", input_values: inputValuesJson, var_pool: varPoolJson,
       triggered_by: input.triggered_by ?? "manual",
-      node_type: nodeType, branch, org,
+      node_type: nodeType, branch,
       // ADR-0021 票03 — the identity the root-guard above just reasoned about must land on
       // the row in the SAME statement. Without it the row is not a task instance: the
       // latch (ux_exec_task_active) cannot protect it, idx_exec_pending_claimable cannot

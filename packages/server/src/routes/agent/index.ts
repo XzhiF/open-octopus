@@ -23,6 +23,9 @@ import { createFsRoutes } from './fs-routes'
 import { WorkspaceDAO, AgentSessionDAO, EvolutionDAO, SafetyDAO, ScheduleConfigDAO, ExecutionDAO, CloneDAO } from '../../db/dao'
 import { SchedulerService } from '../../services/scheduler/scheduler-service'
 import type { TokenUsageDAO } from '../../db/dao/token-usage-dao'
+import { TaskThreadService } from '../../services/tasks/task-thread-service'
+import { TaskHomeService } from '../../services/tasks/task-home-service'
+import { WorkspaceService } from '../../services/workspace'
 import fs from 'fs'
 import path from 'path'
 import os from 'os'
@@ -56,27 +59,6 @@ export function createAgentRoutes(deps: AgentRouteDeps): Hono {
   agent.use('*', agentErrorMiddleware)
   agent.use('*', agentAuthMiddleware)
 
-  // ── Org resolution middleware — fallback to default_org from config ──
-  agent.use('*', async (c, next) => {
-    if (!c.req.header('X-Octopus-Org') && !c.get('org')) {
-      try {
-        const configPath = path.join(os.homedir(), '.octopus', 'config.yaml')
-        if (fs.existsSync(configPath)) {
-          const yaml = require('js-yaml')
-          const raw = yaml.load(fs.readFileSync(configPath, 'utf-8')) as { default_org?: string }
-          if (raw?.default_org) {
-            c.set('org', raw.default_org)
-          }
-        }
-      } catch {
-        if (process.env.OCTOPUS_ORG) {
-          c.set('org', process.env.OCTOPUS_ORG)
-        }
-      }
-    }
-    await next()
-  })
-
   // ── Mount sub-route modules ─────────────────────────────────────────
   // Literal routes before parameterized routes (Hono priority)
   agent.route('/', createScheduleRoutes({ scheduleConfigDAO }))
@@ -92,7 +74,15 @@ export function createAgentRoutes(deps: AgentRouteDeps): Hono {
   agent.route('/', createSessionRoutes(sessionDAO))
   agent.route('/', createMemoryRoutes())
   agent.route('/', createSafetyRoutes(safetyDAO))
-  agent.route('/', createChatRoutes({ sessionDAO, safetyDAO, scheduleConfigDAO, tokenUsageDao, sse: deps.sse }))
+  // 2026-10-28 task-thread: one main chat per task. Constructed here because
+  // the chat route needs it before TasksService is created (async init block).
+  const taskThread = new TaskThreadService({
+    db: sessionDAO.getDb(),
+    workspaceService: new WorkspaceService(deps.workspaceDAO),
+    taskHomeService: new TaskHomeService(),
+  })
+
+  agent.route('/', createChatRoutes({ sessionDAO, safetyDAO, scheduleConfigDAO, tokenUsageDao, sse: deps.sse, taskThread }))
 
   // New extractions
   agent.route('/', createCloneRoutes({}))

@@ -168,9 +168,9 @@ describe("CuratorCompileService — raw→多页编译主链条（票05 AC1）",
 
     // DB/FTS 同步（org 钉 global，domain 列存 v3 type 值）
     const dao = new WikiArticleDAO(db)
-    expect(dao.get(GLOBAL_WIKI_ORG, "con-compiled-rag")?.domain).toBe("concept")
-    expect(dao.get(GLOBAL_WIKI_ORG, "ent-karpathy")?.title).toBe("Karpathy")
-    expect(dao.search(GLOBAL_WIKI_ORG, "Karpathy").length).toBeGreaterThan(0)
+    expect(dao.get("con-compiled-rag")?.domain).toBe("concept")
+    expect(dao.get("ent-karpathy")?.title).toBe("Karpathy")
+    expect(dao.search("Karpathy").length).toBeGreaterThan(0)
   })
 
   it("prompt carries SCHEMA.md, INDEX.md, full raw text, and existing page bodies（编译前必读）", async () => {

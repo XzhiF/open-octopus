@@ -18,7 +18,7 @@ describe('Scheduler Routes (integration)', () => {
     db = new Database(':memory:')
     applySchema(db)
     db.prepare(`
-      INSERT INTO workspaces (id, name, org, path, created_at, updated_at)
+      INSERT INTO workspaces (id, name, repo_group, path, created_at, updated_at)
       VALUES (?, 'test-ws', 'test', '/tmp/test', datetime('now'), datetime('now'))
     `).run(wsId)
 
@@ -74,12 +74,11 @@ describe('Scheduler Routes (integration)', () => {
         job_type: 'workflow',
         cron_expression: '0 9 * * *',
         timezone: 'Asia/Shanghai',
-        org: 'test',
+        repo_group: 'test',
         config: {
           schema_version: '2.0',
           type: 'workflow',
-          workspace_spec: {
-            org: 'test',
+          workspace_spec: { org: 'test',
             branch_prefix: 'sched',
             projects: [{ name: 'proj', source_path: '/tmp/proj' }],
           },
@@ -103,7 +102,7 @@ describe('Scheduler Routes (integration)', () => {
         job_type: 'workflow',
         cron_expression: '0 10 * * *',
         timezone: 'UTC',
-        org: 'test',
+        repo_group: 'test',
         config: { schema_version: '2.0', type: 'workflow', workspace_spec: { org: 'test', branch_prefix: 's', projects: [{ name: 'p', source_path: '/tmp' }] }, workflow_chain: [{ workflow_ref: 'other.yaml', input_values: {} }], max_retain: 10 },
       }),
     })
@@ -119,7 +118,7 @@ describe('Scheduler Routes (integration)', () => {
         job_type: 'workflow',
         cron_expression: 'invalid',
         timezone: 'UTC',
-        org: 'test',
+        repo_group: 'test',
         config: { schema_version: '2.0', type: 'workflow', workspace_spec: { org: 'test', branch_prefix: 's', projects: [{ name: 'p', source_path: '/tmp' }] }, workflow_chain: [{ workflow_ref: 'x.yaml', input_values: {} }], max_retain: 10 },
       }),
     })
@@ -138,7 +137,7 @@ describe('Scheduler Routes (integration)', () => {
         job_type: 'workflow',
         cron_expression: null,
         timezone: 'Asia/Shanghai',
-        org: 'test',
+        repo_group: 'test',
         trigger_source: 'requirement', // 旧载荷：必须被忽略，而不是被当成入队凭据
         config: { schema_version: '2.0', type: 'workflow', workspace_spec: { org: 'test', branch_prefix: 's', projects: [{ name: 'p', source_path: '/tmp' }] }, workflow_chain: [{ workflow_ref: 'x.yaml', input_values: {} }], max_retain: 10 },
       }),
@@ -323,7 +322,7 @@ describe('Scheduler Routes (integration)', () => {
         job_type: 'workflow',
         cron_expression: '0 9 * * *',
         timezone: 'Asia/Shanghai',
-        org: 'test',
+        repo_group: 'test',
         config: jobConfig,
       }),
     })
@@ -524,7 +523,7 @@ describe('Scheduler Routes (integration)', () => {
         job_type: 'job',
         cron_expression: '* * * * *',
         timezone: 'Asia/Shanghai',
-        org: 'test',
+        repo_group: 'test',
         // 票02 的形状：库里只有 handler 名 + args，代码永不入库。
         config: { schema_version: '1.0', type: 'job', handler: 'task-lifecycle', args: {} },
       }),
@@ -559,7 +558,7 @@ describe('Scheduler Routes (integration)', () => {
         name: 'e2e-job-ghost',
         job_type: 'job',
         cron_expression: '* * * * *',
-        org: 'test',
+        repo_group: 'test',
         config: { schema_version: '1.0', type: 'job', handler: 'ghost-handler', args: {} },
       }),
     })

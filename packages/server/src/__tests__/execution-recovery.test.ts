@@ -28,7 +28,7 @@ describe("ExecutionService.recoverInterruptedExecutions", () => {
     const wsId = randomUUID()
     const now = new Date().toISOString()
     db.prepare(
-      "INSERT INTO workspaces (id, name, org, path, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)"
+      "INSERT INTO workspaces (id, name, repo_group, path, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)"
     ).run(wsId, "test-ws", "test-org", "/tmp/test-ws", now, now)
 
     const execId = randomUUID()
@@ -56,7 +56,7 @@ describe("ExecutionService.recoverInterruptedExecutions", () => {
     const wsId = randomUUID()
     const now = new Date().toISOString()
     db.prepare(
-      "INSERT INTO workspaces (id, name, org, path, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)"
+      "INSERT INTO workspaces (id, name, repo_group, path, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)"
     ).run(wsId, "test-ws", "test-org", "/tmp/test-ws", now, now)
 
     const execId = randomUUID()
@@ -80,7 +80,7 @@ describe("ExecutionService.recoverInterruptedExecutions", () => {
     const wsId = randomUUID()
     const now = new Date().toISOString()
     db.prepare(
-      "INSERT INTO workspaces (id, name, org, path, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)"
+      "INSERT INTO workspaces (id, name, repo_group, path, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)"
     ).run(wsId, "test-ws", "test-org", "/tmp/test-ws", now, now)
 
     const execId = randomUUID()
@@ -108,7 +108,7 @@ describe("ExecutionService.recoverInterruptedExecutions", () => {
     const fifteenMinAgo = new Date(now.getTime() - 15 * 60 * 1000).toISOString()
 
     db.prepare(
-      "INSERT INTO workspaces (id, name, org, path, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)"
+      "INSERT INTO workspaces (id, name, repo_group, path, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)"
     ).run(wsId, "test-ws", "test-org", "/tmp/test-ws", nowISO, nowISO)
 
     const execId = randomUUID()
@@ -134,7 +134,7 @@ describe("ExecutionService.recoverInterruptedExecutions", () => {
     const fiveMinAgo = new Date(now.getTime() - 5 * 60 * 1000).toISOString()
 
     db.prepare(
-      "INSERT INTO workspaces (id, name, org, path, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)"
+      "INSERT INTO workspaces (id, name, repo_group, path, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)"
     ).run(wsId, "test-ws", "test-org", "/tmp/test-ws", nowISO, nowISO)
 
     const execId = randomUUID()
@@ -159,7 +159,7 @@ describe("ExecutionService.recoverInterruptedExecutions", () => {
     const nowISO = now.toISOString()
 
     db.prepare(
-      "INSERT INTO workspaces (id, name, org, path, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)"
+      "INSERT INTO workspaces (id, name, repo_group, path, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)"
     ).run(wsId, "test-ws", "test-org", "/tmp/test-ws", nowISO, nowISO)
 
     // Execution already failed
@@ -184,7 +184,7 @@ describe("ExecutionService.recoverInterruptedExecutions", () => {
     const wsId = randomUUID()
     const now = new Date().toISOString()
     db.prepare(
-      "INSERT INTO workspaces (id, name, org, path, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)"
+      "INSERT INTO workspaces (id, name, repo_group, path, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)"
     ).run(wsId, "test-ws", "test-org", "/tmp/test-ws", now, now)
 
     const execId1 = randomUUID()
@@ -208,7 +208,7 @@ describe("retry auto-detect failedNodeId", () => {
     const wsId = randomUUID()
     const now = new Date().toISOString()
     db.prepare(
-      "INSERT INTO workspaces (id, name, org, path, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)"
+      "INSERT INTO workspaces (id, name, repo_group, path, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)"
     ).run(wsId, "test-ws", "test-org", "/tmp/test-ws", now, now)
 
     const execId = randomUUID()
@@ -240,7 +240,7 @@ describe("onNodeEnd clears error on completed status", () => {
     const wsId = randomUUID()
     const now = new Date().toISOString()
     db.prepare(
-      "INSERT INTO workspaces (id, name, org, path, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)"
+      "INSERT INTO workspaces (id, name, repo_group, path, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)"
     ).run(wsId, "test-ws", "test-org", "/tmp/test-ws", now, now)
 
     // Execution that was marked failed by recovery

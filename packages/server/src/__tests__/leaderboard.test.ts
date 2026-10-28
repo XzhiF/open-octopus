@@ -35,7 +35,7 @@ describe("LeaderboardService", () => {
 
   function seedWorkspace(id: string, name: string) {
     db.prepare(
-      "INSERT INTO workspaces (id, name, org, path, status, created_at, updated_at) VALUES (?, ?, 'xzf', '/tmp/ws', 'active', datetime('now'), datetime('now'))"
+      "INSERT INTO workspaces (id, name, repo_group, path, status, created_at, updated_at) VALUES (?, ?, 'xzf', '/tmp/ws', 'active', datetime('now'), datetime('now'))"
     ).run(id, name)
   }
 

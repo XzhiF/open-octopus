@@ -42,7 +42,6 @@ export interface ExecutionRow {
   end_commit_id: string | null
   global_session_id: string | null
   approval_metadata: string | null
-  org: string
   created_at: string
   updated_at: string
   // v17 新增

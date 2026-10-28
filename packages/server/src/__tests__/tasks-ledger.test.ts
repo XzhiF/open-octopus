@@ -50,7 +50,7 @@ async function newAwaiting(twoPhase = false, autoAdvance?: boolean): Promise<str
     : [{ index: 1, name: "P1", slug: "p-1", specPath: `./${BATCH_REL}/spec.md`, workflowRef: "task-dev", inputValues: {} }]
   const r = await app.request("/api/tasks", {
     method: "POST", headers: { "content-type": "application/json" },
-    body: JSON.stringify({ org: ORG, name: `E2E_TD lg ${seq++}`, task_spec: {
+    body: JSON.stringify({ repo_group: ORG, name: `E2E_TD lg ${seq++}`, task_spec: {
       format: "v4", goal: "g", ac: ["a"], autoAdvance, phases,
     } }),
   })
@@ -71,7 +71,7 @@ beforeAll(() => {
   applySchema(db)
   tmp = fs.mkdtempSync(path.join(os.tmpdir(), "td-ledger-"))
   fs.mkdirSync(path.join(tmp, "ws1"), { recursive: true })
-  db.prepare(`INSERT INTO workspaces (id,name,org,path,created_at,updated_at) VALUES (?,?,?,?,?,?)`)
+  db.prepare(`INSERT INTO workspaces (id,name,repo_group,path,created_at,updated_at) VALUES (?,?,?,?,?,?)`)
     .run(WS_ID, "lg-ws", ORG, path.join(tmp, "ws1"), new Date().toISOString(), new Date().toISOString())
   const sse = new SSEService()
   taskHome = new TaskHomeService(path.join(tmp, "home"))

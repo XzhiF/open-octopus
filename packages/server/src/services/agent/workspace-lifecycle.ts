@@ -210,7 +210,7 @@ export class WorkspaceLifecycleService {
    * List active workspaces for this org.
    */
   listWorkspaces(): WorkspaceInfo[] {
-    const workspacesDir = path.join(this.orgDir, 'workspaces')
+    const workspacesDir = path.join(os.homedir(), '.octopus', 'workspaces')
     if (!fs.existsSync(workspacesDir)) return []
 
     const results: WorkspaceInfo[] = []

@@ -162,6 +162,26 @@ function ActivityEventCard({ message }: { message: AgentMessage }) {
   const summary = message.content.split('\n').slice(1).find((line) => line.trim() && !line.startsWith('请判断'))?.trim()
   const canOpenWorkflow = !!activity?.executionId && !!activity?.workspaceId
 
+  // 2026-10-28 task-thread: the card's buttons are a protocol, not local logic:
+  // ChatTab listens for these and owns the handlers (trigger/accept/archive…).
+  const actions = Array.isArray(activity?.actions) ? activity!.actions! : []
+  const entries = (() => {
+    const raw = (activity?.payload as { entries?: unknown } | undefined)?.entries
+    return Array.isArray(raw)
+      ? (raw as Array<{ id: string; title: string; target?: string }>)
+      : []
+  })()
+  const fireAction = (actionId: string) => {
+    window.dispatchEvent(new CustomEvent('octopus:task-card-action', {
+      detail: { taskId: activity?.taskId ?? null, activity, actionId },
+    }))
+  }
+  const decideReflection = (entryId: string, action: 'ingest' | 'skip') => {
+    window.dispatchEvent(new CustomEvent('octopus:reflection-decision', {
+      detail: { taskId: activity?.taskId ?? null, entryId, action },
+    }))
+  }
+
   return (
     <div
       data-tui-msg="event"
@@ -196,6 +216,40 @@ function ActivityEventCard({ message }: { message: AgentMessage }) {
       </div>
       {summary && <div className="mt-1 pl-6 text-pop-dim">{summary}</div>}
       {activity?.nodeId && <div className="mt-0.5 pl-6 text-[10px] text-pop-dim">node · {activity.nodeId}</div>}
+      {entries.length > 0 && (
+        <div className="mt-2 space-y-1 pl-6" data-testid="reflection-entries">
+          {entries.map((entry) => (
+            <div key={entry.id} className="rounded border border-current/20 bg-black/10 px-2 py-1.5">
+              <div className="text-[10.5px] font-semibold text-pop-ink">{entry.title}</div>
+              {entry.target && <div className="text-[9px] text-pop-dim">{entry.target}</div>}
+              <div className="mt-1 flex gap-1">
+                <button type="button" onClick={() => decideReflection(entry.id, 'ingest')}
+                  className="rounded bg-pop-purple px-1.5 py-0.5 text-[9px] font-black text-pop-bg">
+                  落 wiki
+                </button>
+                <button type="button" onClick={() => decideReflection(entry.id, 'skip')}
+                  className="rounded border border-current/30 px-1.5 py-0.5 text-[9px] text-pop-dim hover:text-pop-ink">
+                  跳过
+                </button>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+      {actions.length > 0 && (
+        <div className="mt-1.5 flex flex-wrap gap-1 pl-6" data-testid="task-card-actions">
+          {actions.map((action) => (
+            <button
+              key={action.id}
+              type="button"
+              onClick={() => fireAction(action.id)}
+              className="rounded border border-current/30 bg-black/10 px-1.5 py-0.5 text-[10px] text-pop-ink transition-colors hover:bg-white/[0.08]"
+            >
+              {action.label}
+            </button>
+          ))}
+        </div>
+      )}
     </div>
   )
 }

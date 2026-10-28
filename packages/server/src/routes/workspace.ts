@@ -1,7 +1,6 @@
 import { Hono } from "hono"
 import { WorkspaceService } from "../services/workspace"
 import { WorkspaceDAO, OrgDAO, ExecutionDAO } from "../db/dao"
-import { orgExists } from "../services/org"
 import { parseManifest, parseManifestJson, loadModelAliasConfig, WorkspaceNameSchema } from "@octopus/shared"
 import { readFileSync, existsSync, readdirSync } from "fs"
 import { join } from "path"
@@ -41,20 +40,17 @@ export function createWorkspaceRoutes(workspaceService: WorkspaceService, orgDAO
   })
 
   workspaceRoutes.post("/", async (c) => {
-    const body = await c.req.json<{ name: string; org: string; description?: string; path?: string; repos?: string[]; branch?: string }>()
-    if (!orgExists(orgDAO, body.org)) {
-      return c.json({ error: `Org '${body.org}' not found` }, 400)
-    }
+    const body = await c.req.json<{ name: string; repo_group?: string; description?: string; path?: string; repos?: string[]; branch?: string }>()
     // 禁中文命名 (2026-09-20)：name 直接进目录名/分支名，web dialog 早已拦，
     // 这里收口 CLI / 直连 API 的旁路（name 非法 → 400，错误信息中文可读）。
     const nameCheck = WorkspaceNameSchema.safeParse(body.name)
     if (!nameCheck.success) {
       return c.json({ error: nameCheck.error.issues[0]?.message ?? "workspace 名称非法" }, 400)
     }
-    const workoutPath = body.path || `~/.octopus/orgs/${body.org}/workspaces/${body.name}`
+    const workoutPath = body.path || `~/.octopus/workspaces/${body.name}`
     const workspace = workspaceService.create({
       name: body.name,
-      org: body.org,
+      repo_group: body.repo_group ?? null,
       description: body.description,
       path: workoutPath,
       repos: body.repos,
@@ -83,11 +79,10 @@ export function createWorkspaceRoutes(workspaceService: WorkspaceService, orgDAO
   })
 
   workspaceRoutes.get("/importable", (c) => {
-    const org = c.req.query("org") || "xzf"
-    const workspacesDir = join(os.homedir(), ".octopus", "orgs", org, "workspaces")
+    const workspacesDir = join(os.homedir(), ".octopus", "workspaces")
     if (!existsSync(workspacesDir)) return c.json({ workspaces: [] })
 
-    const allDbWorkspaces = workspaceService.list(org)
+    const allDbWorkspaces = workspaceService.list()
     const dbPaths = new Set(allDbWorkspaces.map(w => w.path))
 
     const importable: { name: string; path: string; repoCount: number; branch: string | null }[] = []
@@ -96,7 +91,7 @@ export function createWorkspaceRoutes(workspaceService: WorkspaceService, orgDAO
         if (!entry.isDirectory()) continue
         const configPath = join(workspacesDir, entry.name, "config.json")
         if (!existsSync(configPath)) continue
-        const wsPath = `~/.octopus/orgs/${org}/workspaces/${entry.name}`
+        const wsPath = `~/.octopus/workspaces/${entry.name}`
         if (dbPaths.has(wsPath)) continue
 
         try {
@@ -111,17 +106,17 @@ export function createWorkspaceRoutes(workspaceService: WorkspaceService, orgDAO
       }
     } catch { /* directory read error */ }
 
-    return c.json({ workspaces: importable, org })
+    return c.json({ workspaces: importable })
   })
 
   workspaceRoutes.post("/import", async (c) => {
-    const body = await c.req.json<{ name: string; org: string }>()
+    const body = await c.req.json<{ name: string; repo_group?: string }>()
     // import ＝ 建行（此后新建一律英文名；存量中文目录不再可导入，属预期收紧）
     const nameCheck = WorkspaceNameSchema.safeParse(body.name)
     if (!nameCheck.success) {
       return c.json({ error: nameCheck.error.issues[0]?.message ?? "workspace 名称非法" }, 400)
     }
-    const wsPath = `~/.octopus/orgs/${body.org}/workspaces/${body.name}`
+    const wsPath = `~/.octopus/workspaces/${body.name}`
     const resolvedPath = wsPath.replace(/^~/, os.homedir())
     const configPath = join(resolvedPath, "config.json")
 
@@ -138,7 +133,7 @@ export function createWorkspaceRoutes(workspaceService: WorkspaceService, orgDAO
       const config = JSON.parse(readFileSync(configPath, "utf-8"))
       const workspace = workspaceService.create({
         name: body.name,
-        org: body.org,
+        repo_group: body.repo_group ?? null,
         description: config.description,
         path: wsPath,
         repos: (config.repos || []).map((r: any) => `${r.group}/${r.name}`),
@@ -188,12 +183,11 @@ export function createWorkspaceRoutes(workspaceService: WorkspaceService, orgDAO
   // without scaffolding projects/workflows/logs/state inside it.
   workspaceRoutes.post("/attach", async (c) => {
     try {
-      const body = await c.req.json<{ org?: string; path?: string; name?: string }>()
-      const org = body.org || (c.req.query("org") ?? "xzf")
+      const body = await c.req.json<{ repo_group?: string; path?: string; name?: string }>()
       if (!body.path || typeof body.path !== "string") {
         return c.json({ error: "path is required" }, 400)
       }
-      const ws = workspaceService.attachDirectory({ org, path: body.path, name: body.name })
+      const ws = workspaceService.attachDirectory({ repo_group: body.repo_group ?? null, path: body.path, name: body.name })
       return c.json(ws, 201)
     } catch (err: unknown) {
       return c.json({ error: err instanceof Error ? err.message : String(err) }, 400)
@@ -222,7 +216,7 @@ export function createWorkspaceRoutes(workspaceService: WorkspaceService, orgDAO
 
   workspaceRoutes.put("/:id", async (c) => {
     const id = c.req.param("id")
-    const body = await c.req.json<{ name?: string; org?: string }>()
+    const body = await c.req.json<{ name?: string; repo_group?: string | null }>()
     if (body.name !== undefined) {
       const nameCheck = WorkspaceNameSchema.safeParse(body.name)
       if (!nameCheck.success) {

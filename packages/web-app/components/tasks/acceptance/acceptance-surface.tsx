@@ -62,7 +62,6 @@ import {
   stopPreview,
   type HomeFileListingEntry,
   type RoundDiffPayload,
-  type RoundDiffScope,
   type VerifySummary,
   type VerifyState,
   type PlaybookPayload,
@@ -77,11 +76,10 @@ import { getServerUrl } from "@/lib/server-config"
 import { ArtifactViewerDialog, type HomeViewEntry } from "../authoring/artifact-viewer-dialog"
 import { batchDirOf } from "../authoring/phase-spec-dialog"
 import { isRelativeScratchSpec } from "../authoring/use-batch-tree"
-// 票08 接管件判据单源（与对话页 hint 同一函数 —— 两本账不各写各的）。
-import { isTakeoverDeliveredRound } from "../run-console/chat/chat-model"
+// 票08 接管件判据单源。
+import { isTakeoverDeliveredRound } from "./acceptance-labels"
 // 票09 台账预览统计口径复用 03 的 files-tab-model（scopeTotals 单源，勿另算）。
 import { scopeTotals } from "../files-tab/files-tab-model"
-import { RoundDiffPanel } from "./round-diff-panel"
 import { VerifyPanel } from "./verify-panel"
 import { PreviewBar } from "./preview-bar"
 import { InstancesPanel } from "./instances-panel"
@@ -129,6 +127,9 @@ export interface AcceptanceSurfaceProps {
    *  内列）—— 决策/中止入口唯一化到壳右栏（经 onActionApi 句柄，行为单源）。
    *  独立挂载（缺省 false）形态零变化。 */
   railless?: boolean
+  /** 2026-10-28 M5: the acceptance window no longer renders a diff; this
+   *  focuses the dedicated changes window in round scope. */
+  onOpenChanges?: () => void
 }
 
 const ROUND_STATE_LABEL: Record<string, string> = {
@@ -136,7 +137,7 @@ const ROUND_STATE_LABEL: Record<string, string> = {
   failed: "执行失败", cancelled: "已取消/中止",
 }
 
-export function AcceptanceSurface({ task, onMutated, onDecided, detailOverride, onRefetch, onActionApi, railless }: AcceptanceSurfaceProps) {
+export function AcceptanceSurface({ task, onMutated, onDecided, detailOverride, onRefetch, onActionApi, railless, onOpenChanges }: AcceptanceSurfaceProps) {
   const taskId = task?.id ?? null
   const embedded = detailOverride !== undefined
   const [internalDetail, setInternalDetail] = useState<TaskDetail | null>(null)
@@ -157,12 +158,10 @@ export function AcceptanceSurface({ task, onMutated, onDecided, detailOverride, 
   // getBatchTree 按 slug 取 latest_mtime 最新 dir（specPath 优先,正常 v4 恒命中）。
   const [fallbackDir, setFallbackDir] = useState<string | null>(null)
   // ── 验货台 (acceptance v2) 状态 ──
-  // subTab：实物(默认=C位) | 核对；roundDiff=真实提交区间；verify=当场复检。
-  const [midTab, setMidTab] = useState<"diff" | "matrix">("diff")
+  // 2026-10-28 M5: the diff moved to its own window; this surface keeps the
+  // roundDiff DATA (the AC matrix cross-checks report claims against it) but
+  // no longer renders a 实物 tab.
   const [roundDiff, setRoundDiff] = useState<RoundDiffPayload | null>(null)
-  const [diffLoading, setDiffLoading] = useState(false)
-  const [diffError, setDiffError] = useState<string | null>(null)
-  const [diffReload, setDiffReload] = useState(0) // 实物面板「重试」
   const [specMd, setSpecMd] = useState<string | null>(null) // 核对 tab 懒拉;"" = 不存在
   const [specLoading, setSpecLoading] = useState(false)
   // 懒拉 once 门（改版修正）：旧实现把 specLoading 放进 effect deps，
@@ -206,12 +205,7 @@ export function AcceptanceSurface({ task, onMutated, onDecided, detailOverride, 
     setFiles(null)
     setRoundReport(null)
     setFallbackDir(null)
-    setMidTab("diff")
     setRoundDiff(null)
-    setDiffError(null)
-    setDiffScope("round")
-    setCumDiff(null)
-    setCumError(null)
     setFixReportMd(null)
     setSpecMd(null)
     specFetchedForRef.current = null
@@ -447,43 +441,13 @@ export function AcceptanceSurface({ task, onMutated, onDecided, detailOverride, 
   // null —— 面板本身有 idle 态）。exec id 变化（换轮/重开）即重拉。
   const awaitingExecId = awaitingRound?.exec.id ?? ""
   useEffect(() => {
-    if (!taskId || !awaitingExecId) { setRoundDiff(null); setDiffError(null); return }
+    if (!taskId || !awaitingExecId) { setRoundDiff(null); return }
     let cancelled = false
-    setDiffLoading(true)
-    setDiffError(null)
     getRoundDiff(taskId)
       .then((d) => { if (!cancelled) setRoundDiff(d) })
-      .catch((err: unknown) => {
-        if (cancelled) return
-        setRoundDiff(null)
-        setDiffError(err instanceof Error ? err.message : "实物 diff 读取失败")
-      })
-      .finally(() => { if (!cancelled) setDiffLoading(false) })
+      .catch(() => { if (!cancelled) setRoundDiff(null) })
     return () => { cancelled = true }
-  }, [taskId, awaitingExecId, diffReload])
-
-  // ── 实物口径（B 档 / server S3）：本轮 = 本次执行增量；累计 = 本 phase 全轮 ──
-  // 修复轮旧病：人只看到 delta，放行对象却是整个 phase 终态。cumulative 按需拉、
-  // 换轮/重试即清仓；round-1 时两口径同物，开关不出现。
-  const [diffScope, setDiffScope] = useState<RoundDiffScope>("round")
-  const [cumDiff, setCumDiff] = useState<RoundDiffPayload | null>(null)
-  const [cumLoading, setCumLoading] = useState(false)
-  const [cumError, setCumError] = useState<string | null>(null)
-  useEffect(() => {
-    if (!taskId || !awaitingExecId || diffScope !== "cumulative") return
-    let cancelled = false
-    setCumLoading(true)
-    setCumError(null)
-    getRoundDiff(taskId, "cumulative")
-      .then((d) => { if (!cancelled) setCumDiff(d) })
-      .catch((err: unknown) => {
-        if (cancelled) return
-        setCumDiff(null)
-        setCumError(err instanceof Error ? err.message : "累计 diff 读取失败")
-      })
-      .finally(() => { if (!cancelled) setCumLoading(false) })
-    return () => { cancelled = true }
-  }, [taskId, awaitingExecId, diffScope, diffReload])
+  }, [taskId, awaitingExecId])
 
   // ── 打回→修复 回应对账（B 档）：round R 为修复轮时，批次目录成对存在
   // fix-feedback-r{R-1}.md / fix-report-r{R-1}.md（task-fix SKILL：N=被打回轮，
@@ -518,10 +482,10 @@ export function AcceptanceSurface({ task, onMutated, onDecided, detailOverride, 
     return () => { cancelled = true }
   }, [taskId, awaitingExecId])
 
-  // 核对 tab 的 spec.md：首访懒拉，"" 缓存「不存在」防重拉风暴。once 门走 ref
+  // 核对面的 spec.md：首访懒拉，"" 缓存「不存在」防重拉风暴。once 门走 ref
   // （不进 deps → 不会被 setSpecLoading 自己的重跑掐死,见声明处注释）。
   useEffect(() => {
-    if (!taskId || !batchDir || midTab !== "matrix") return
+    if (!taskId || !batchDir) return
     if (specFetchedForRef.current === `${taskId}:${batchDir}`) return
     specFetchedForRef.current = `${taskId}:${batchDir}`
     let cancelled = false
@@ -535,7 +499,7 @@ export function AcceptanceSurface({ task, onMutated, onDecided, detailOverride, 
       })
       .finally(() => { if (!cancelled) setSpecLoading(false) })
     return () => { cancelled = true }
-  }, [taskId, batchDir, midTab])
+  }, [taskId, batchDir])
 
   const verifyCfg = (detail?.task_spec ?? task?.task_spec)?.acceptance_verify ?? null
   const verifyRunning = verify?.state === "running"
@@ -1024,94 +988,74 @@ export function AcceptanceSurface({ task, onMutated, onDecided, detailOverride, 
             </div>
           ) : (
             <>
-              {/* sub-tab 条：两枚 chunky 贴纸，选中的黄底压黑边（波普） */}
-              <div className="flex shrink-0 items-center gap-1.5 border-b-[1.5px] border-pop-bd bg-pop-paper px-3 py-2">
-                {([
-                  ["diff", "实物", roundDiff?.available ? String(roundDiff.aggregate.files) : ""],
-                  ["matrix", "核对", ""],
-                ] as const).map(([id, label, count]) => (
+              {/* 2026-10-28 M5: no more 实物/核对 sub-tabs — the diff lives in
+                  its own window; this surface is the 核对 + 复检 + 预览 + 实例 +
+                  playbook walkthrough. */}
+              <div className="flex shrink-0 items-center gap-2 border-b-[1.5px] border-pop-bd bg-pop-paper px-3 py-2">
+                <span className="rounded-full border-[1.5px] border-pop-bd bg-pop-yellow px-3 py-0.5 font-mono text-[10.5px] font-black tracking-[.06em] text-pop-bg shadow-pop-sm">
+                  核对
+                </span>
+                <span className="font-mono text-[9.5px] text-pop-dim">spec AC × 报告声称 × 实物</span>
+                {onOpenChanges && (
                   <button
-                    key={id}
-                    onClick={() => setMidTab(id)}
-                    aria-selected={midTab === id}
-                    className={`rounded-full border-[1.5px] px-3 py-0.5 font-mono text-[10.5px] font-black tracking-[.06em] transition-transform ${
-                      midTab === id
-                        ? "border-pop-bd bg-pop-yellow text-pop-bg shadow-pop-sm"
-                        : "border-pop-bd text-pop-dim hover:border-pop-bd/60"
-                    }`}
-                    data-acceptance-midtab={id} data-testid={`acceptance-tab-${id}`}
+                    type="button"
+                    onClick={onOpenChanges}
+                    data-testid="acceptance-open-changes"
+                    className="ml-auto rounded border border-pop-cyan/40 bg-pop-cyan-soft px-2 py-0.5 text-[10px] font-black text-pop-cyan transition-opacity hover:opacity-90"
                   >
-                    {label}{count && <span className="ml-1 tabular-nums opacity-70">{count}</span>}
+                    ↗ 本轮变更
                   </button>
-                ))}
-
+                )}
               </div>
 
               <div className="min-h-0 flex-1 space-y-3 overflow-y-auto p-3">
-                {midTab === "diff" && (
-                  <>
-                    <RoundDiffPanel
-                      taskId={taskId ?? ""}
-                      diff={diffScope === "round" ? roundDiff : cumDiff}
-                      loading={diffScope === "round" ? diffLoading : cumLoading}
-                      error={diffScope === "round" ? diffError : cumError}
-                      onRetry={() => setDiffReload((v) => v + 1)}
-                      scope={diffScope}
-                      onScopeChange={setDiffScope}
-                      canCumulative={fixPairRound >= 1}
-                      roundIndex={awaitingRound?.roundIndex ?? null}
-                    />
-                    <VerifyPanel
-                      cfg={verifyCfg}
-                      summary={verify}
-                      lines={verifyLines}
-                      running={!!verifyRunning}
-                      busy={verifyBusy}
-                      disabledReason={verifyDisabled}
-                      onSaveCommand={handleVerifySave}
-                      onOpenVerdict={(p) => setHomeViewing({ path: p })}
-                      onRun={() => void handleVerifyRun()}
-                      onAbort={() => void handleVerifyAbort()}
-                    />
-                    <PreviewBar
-                      cfg={previewCfg}
-                      runbook={runbookCfg}
-                      preview={preview}
-                      busy={previewBusy}
-                      disabledReason={wsGone ? "工作区目录已不在 — 预览不可用" : undefined}
-                      onSaveCfg={handlePreviewSave}
-                      onSaveRunbook={handleRunbookSave}
-                      onStart={() => void handlePreviewStart()}
-                      onStop={() => void handlePreviewStop()}
-                    />
-                    <InstancesPanel
-                      taskId={taskId ?? ""}
-                      rev={(preview?.state ?? "stopped") + (awaitingPhase?.awaitingRound ?? 0)}
-                      disabledReason={wsGone ? "工作区目录已不在 — 回收不可用" : undefined}
-                    />
-                    {playbook && (
-                      <PlaybookPanel
-                        taskId={taskId ?? ""}
-                        batchRelDir={batchDir}
-                        roundIndex={awaitingPhase?.awaitingRound ?? 0}
-                        playbook={playbook}
-                        onGate={setGate}
-                        disabledReason={wsGone ? "工作区已清理 — 勾选暂停（历史台账/verdict 仍在）" : undefined}
-                        saving={checksSaving}
-                        onSaveStateChange={setChecksSaving}
-                        registerFlush={registerPlaybookFlush}
-                      />
-                    )}
-                  </>
-                )}
-                {midTab === "matrix" && (
-                  <AcMatrixPanel
-                    specMd={specMd === "" ? null : specMd}
-                    specLoading={specLoading}
-                    reportMd={roundReport}
-                    diff={roundDiff}
-                    fixReportMd={fixReportMd}
-                    hasFixFeedback={!!fixFeedbackFile}
+                <AcMatrixPanel
+                  specMd={specMd === "" ? null : specMd}
+                  specLoading={specLoading}
+                  reportMd={roundReport}
+                  diff={roundDiff}
+                  fixReportMd={fixReportMd}
+                  hasFixFeedback={!!fixFeedbackFile}
+                />
+                <VerifyPanel
+                  cfg={verifyCfg}
+                  summary={verify}
+                  lines={verifyLines}
+                  running={!!verifyRunning}
+                  busy={verifyBusy}
+                  disabledReason={verifyDisabled}
+                  onSaveCommand={handleVerifySave}
+                  onOpenVerdict={(p) => setHomeViewing({ path: p })}
+                  onRun={() => void handleVerifyRun()}
+                  onAbort={() => void handleVerifyAbort()}
+                />
+                <PreviewBar
+                  cfg={previewCfg}
+                  runbook={runbookCfg}
+                  preview={preview}
+                  busy={previewBusy}
+                  disabledReason={wsGone ? "工作区目录已不在 — 预览不可用" : undefined}
+                  onSaveCfg={handlePreviewSave}
+                  onSaveRunbook={handleRunbookSave}
+                  onStart={() => void handlePreviewStart()}
+                  onStop={() => void handlePreviewStop()}
+                />
+                <InstancesPanel
+                  taskId={taskId ?? ""}
+                  rev={(preview?.state ?? "stopped") + (awaitingPhase?.awaitingRound ?? 0)}
+                  disabledReason={wsGone ? "工作区目录已不在 — 回收不可用" : undefined}
+                />
+                {playbook && (
+                  <PlaybookPanel
+                    taskId={taskId ?? ""}
+                    batchRelDir={batchDir}
+                    roundIndex={awaitingPhase?.awaitingRound ?? 0}
+                    playbook={playbook}
+                    onGate={setGate}
+                    disabledReason={wsGone ? "工作区已清理 — 勾选暂停（历史台账/verdict 仍在）" : undefined}
+                    saving={checksSaving}
+                    onSaveStateChange={setChecksSaving}
+                    registerFlush={registerPlaybookFlush}
                   />
                 )}
               </div>

@@ -16,7 +16,7 @@ beforeAll(() => {
   taskDAO = new TaskDAO(db)
   taskDAO.insert({
     id: "t-expert",
-    org: "e2e",
+    repo_group: "e2e",
     name: "phase expert test",
     task_spec: JSON.stringify({
       format: "v4",

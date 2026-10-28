@@ -290,17 +290,17 @@ export class ExecutionDAO extends BaseDAO {
     ).run(status, now, now, error ?? "", JSON.stringify({ error }), id)
   }
 
-  insertExecution(row: Partial<ExecutionRow> & { id: string; workspace_id: string; org: string }): Database.RunResult {
+  insertExecution(row: Partial<ExecutionRow> & { id: string; workspace_id: string }): Database.RunResult {
     const now = new Date().toISOString()
     return this.stmt(`
       INSERT INTO executions (
         id, workspace_id, parent_id, child_index, workflow_ref, workflow_name,
         status, gate_status, rollback, rollback_on_error, input_values, var_pool,
-        progress, triggered_by, started_at, completed_at, duration, org,
+        progress, triggered_by, started_at, completed_at, duration,
         created_at, updated_at, node_type, branch, start_commit_id, end_commit_id,
         name, global_session_id, approval_metadata, interaction_metadata, chain_retry_count, preset_inputs,
         phase_index, round_index, task_id
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       row.id, row.workspace_id, row.parent_id ?? "0", row.child_index ?? 0,
       row.workflow_ref ?? "", row.workflow_name ?? "",
@@ -309,7 +309,7 @@ export class ExecutionDAO extends BaseDAO {
       row.input_values ?? "{}", row.var_pool ?? "{}",
       row.progress ?? 0, row.triggered_by ?? "manual",
       row.started_at ?? null, row.completed_at ?? null, row.duration ?? null,
-      row.org, row.created_at ?? now, row.updated_at ?? now,
+      row.created_at ?? now, row.updated_at ?? now,
       row.node_type ?? "normal", row.branch ?? null,
       row.start_commit_id ?? null, row.end_commit_id ?? null,
       row.name ?? null, row.global_session_id ?? null,
@@ -1194,7 +1194,7 @@ export class ExecutionDAO extends BaseDAO {
     return row !== undefined
   }
 
-  findByOrgWithWorkspace(org: string, limit: number = 50): Array<{
+  findRecentWithWorkspace(limit: number = 50): Array<{
     id: string; workspace_id: string; workflow_name: string; status: string;
     started_at: string | null; completed_at: string | null; workspace_name?: string
   }> {
@@ -1204,9 +1204,8 @@ export class ExecutionDAO extends BaseDAO {
                e.started_at, e.completed_at, w.name as workspace_name
         FROM executions e
         LEFT JOIN workspaces w ON e.workspace_id = w.id
-        WHERE e.org = ?
         ORDER BY e.created_at DESC LIMIT ?
-      `).all(org, limit) as Array<{
+      `).all(limit) as Array<{
         id: string; workspace_id: string; workflow_name: string; status: string;
         started_at: string | null; completed_at: string | null; workspace_name?: string
       }>
@@ -1215,7 +1214,7 @@ export class ExecutionDAO extends BaseDAO {
     }
   }
 
-  findActiveExecutionsByOrg(org: string): Array<{
+  findActiveExecutions(): Array<{
     id: string; workspace_id: string; workflow_name: string; status: string;
     started_at: string | null; current_node: string | null; progress: number | null;
     workspace_name?: string
@@ -1226,9 +1225,9 @@ export class ExecutionDAO extends BaseDAO {
                e.started_at, e.current_node, e.progress, w.name as workspace_name
         FROM executions e
         LEFT JOIN workspaces w ON e.workspace_id = w.id
-        WHERE e.org = ? AND e.status IN ('running', 'active', 'pending')
+        WHERE e.status IN ('running', 'active', 'pending')
         ORDER BY e.started_at DESC
-      `).all(org) as Array<{
+      `).all() as Array<{
         id: string; workspace_id: string; workflow_name: string; status: string;
         started_at: string | null; current_node: string | null; progress: number | null;
         workspace_name?: string
@@ -1276,11 +1275,11 @@ export class ExecutionDAO extends BaseDAO {
     `).get(executionId) as { total: number; completed: number; running: number; pending: number }
   }
 
-  findByIdAndOrg(id: string, org: string): { id: string; workspace_id: string; status: string; workflow_name: string } | null {
+  findByIdAndOrg(id: string, _org: string): { id: string; workspace_id: string; status: string; workflow_name: string } | null {
     try {
       return (this.stmt(
-        "SELECT id, workspace_id, status, workflow_name FROM executions WHERE id = ? AND org = ?"
-      ).get(id, org) as { id: string; workspace_id: string; status: string; workflow_name: string }) ?? null
+        "SELECT id, workspace_id, status, workflow_name FROM executions WHERE id = ?"
+      ).get(id) as { id: string; workspace_id: string; status: string; workflow_name: string }) ?? null
     } catch {
       return null
     }
@@ -1453,20 +1452,20 @@ export class ExecutionDAO extends BaseDAO {
     `).get(executionId) as { error: string | null }) ?? null
   }
 
-  insertContainerExecution(id: string, workspaceId: string, workflowRef: string, org: string, now: string): Database.RunResult {
+  insertContainerExecution(id: string, workspaceId: string, workflowRef: string, _org: string, now: string): Database.RunResult {
     return this.stmt(`
       INSERT INTO executions (
         id, workspace_id, parent_id, workflow_ref, workflow_name,
-        status, node_type, triggered_by, org, created_at, updated_at,
+        status, node_type, triggered_by, created_at, updated_at,
         var_pool, input_values
-      ) VALUES (?, ?, '0', ?, ?, 'completed', 'scheduler-root', 'scheduler', ?, ?, ?, '{}', '{}')
-    `).run(id, workspaceId, workflowRef, workflowRef, org, now, now)
+      ) VALUES (?, ?, '0', ?, ?, 'completed', 'scheduler-root', 'scheduler', ?, ?, '{}', '{}')
+    `).run(id, workspaceId, workflowRef, workflowRef, now, now)
   }
 
-  markInterruptedExecutions(org: string, completedAt: string): number {
+  markInterruptedExecutions(completedAt: string): number {
     const result = this.stmt(
-      "UPDATE executions SET status = 'interrupted', completed_at = ? WHERE org = ? AND status = 'running'"
-    ).run(completedAt, org)
+      "UPDATE executions SET status = 'interrupted', completed_at = ? WHERE status = 'running'"
+    ).run(completedAt)
     return result.changes ?? 0
   }
 

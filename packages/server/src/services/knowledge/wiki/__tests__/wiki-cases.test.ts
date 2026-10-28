@@ -134,7 +134,7 @@ describe("cases domain — compile (ticket 04, S1)", () => {
     expect(written).toContain("## 教训")
 
     // DB 行：title/summary = symptom（检索加权面），topics = tags，domain = cases
-    const row = db.prepare("SELECT * FROM wiki_articles WHERE org='testorg' AND id='case-2026-003'").get() as Record<string, unknown>
+    const row = db.prepare("SELECT * FROM wiki_articles WHERE id='case-2026-003'").get() as Record<string, unknown>
     expect(row.domain).toBe("cases")
     expect(row.title).toBe("CI 报 LOCKFILE_CONFIG_MISMATCH")
     expect(JSON.parse(row.topics as string)).toEqual(["ci", "pnpm", "lockfile"])
@@ -212,7 +212,7 @@ describe("cases domain — compile (ticket 04, S1)", () => {
     expect(log).toContain(`## [${today()}] compile | cases/2026-06-23-pnpm-lockfile-mismatch.md`)
     expect(log).toContain("正文改写被拒（append-only 判例即历史）")
     // DB 行仍只有入库那一条
-    expect((db.prepare("SELECT COUNT(*) AS n FROM wiki_articles WHERE org='testorg'").get() as { n: number }).n).toBe(1)
+    expect((db.prepare("SELECT COUNT(*) AS n FROM wiki_articles ").get() as { n: number }).n).toBe(1)
   })
 
   it("append-only: fixed fields (symptom/tags/severity/source) are also immutable", async () => {

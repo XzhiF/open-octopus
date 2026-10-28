@@ -366,14 +366,14 @@ export class TokenUsageDAO extends BaseDAO {
         id, node_execution_id, execution_id, turn_index, call_index, message_id,
         model, stop_reason, timestamp, duration_ms, ttft_ms,
         input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens,
-        org, workspace_id, workflow_ref, node_id, session_id, instance_id, source_path
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        workspace_id, workflow_ref, node_id, session_id, instance_id, source_path
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       row.id, row.node_execution_id, row.execution_id, row.turn_index, row.call_index,
       row.message_id, row.model, row.stop_reason, row.timestamp, row.duration_ms,
       row.ttft_ms, row.input_tokens, row.output_tokens, row.cache_read_tokens,
       row.cache_creation_tokens,
-      row.org, row.workspace_id, row.workflow_ref, row.node_id, row.session_id, row.instance_id,
+      row.workspace_id, row.workflow_ref, row.node_id, row.session_id, row.instance_id,
       row.source_path ?? null,
     )
   }
@@ -429,12 +429,12 @@ export class TokenUsageDAO extends BaseDAO {
         id, node_execution_id, execution_id, turn_index, call_index, message_id,
         model, stop_reason, timestamp, duration_ms, ttft_ms,
         input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens,
-        org, workspace_id, workflow_ref, node_id, session_id, instance_id, source_path
+        workspace_id, workflow_ref, node_id, session_id, instance_id, source_path
       ) VALUES (
         @id, @node_execution_id, @execution_id, @turn_index, @call_index,
         @message_id, @model, @stop_reason, @timestamp, @duration_ms, @ttft_ms,
         @input_tokens, @output_tokens, @cache_read_tokens, @cache_creation_tokens,
-        @org, @workspace_id, @workflow_ref, @node_id, @session_id, @instance_id, @source_path
+        @workspace_id, @workflow_ref, @node_id, @session_id, @instance_id, @source_path
       )
     `)
     this.transaction(() => {

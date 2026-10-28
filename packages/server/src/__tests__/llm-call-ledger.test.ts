@@ -43,7 +43,6 @@ function fullInput(over: Partial<LlmCallLedgerInput> = {}): LlmCallLedgerInput {
     messageId: "m1",
     stopReason: "end_turn",
     ttftMs: 90,
-    org: "test-org",
     workspaceId: "ws-1",
     workflowRef: null,
     nodeId: "n1",
@@ -74,7 +73,7 @@ describe("共用落账 helper —— recordLlmCall 行形状 = 纯事实", () =>
       model: "claude-sonnet-4-5-20250827",
       turn_index: 2, call_index: 1,
       message_id: "m1", stop_reason: "end_turn", timestamp: 1700000000000,
-      duration_ms: 420, ttft_ms: 90, org: "test-org", workspace_id: "ws-1",
+      duration_ms: 420, ttft_ms: 90, workspace_id: "ws-1",
       node_id: "n1", session_id: "sess-9", instance_id: "inst-1",
     })
     expect(Object.keys(r).sort()).toEqual([...FACT_COLS].sort()) // 行形状封闭：不得长出快照列
@@ -90,7 +89,8 @@ describe("共用落账 helper —— recordLlmCall 行形状 = 纯事实", () =>
   it("composeLlmCallRow 纯函数与 recordLlmCall 落库同形（批量路径复用同一组行逻辑）", () => {
     const composed = composeLlmCallRow(fullInput())
     recordLlmCall(fullInput(), dao)
-    expect(row("call-1")).toEqual({ ...composed })
+    const { org: _org, ...dbRow } = row("call-1")
+    expect(dbRow).toEqual({ ...composed })
   })
 })
 

@@ -609,7 +609,6 @@ export class CloneInitService {
         const now = new Date().toISOString()
         cloneDAO.insert({
           name: cloneDef.name,
-          org,
           type: 'built-in',
           status: 'active',
           persona: cloneDef.persona,

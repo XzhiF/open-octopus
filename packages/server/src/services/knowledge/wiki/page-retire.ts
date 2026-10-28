@@ -333,21 +333,21 @@ export class PageRetireTaskService {
 
       // ── 5. DB/FTS 摘除（按原 path 定位行；在 _retired/ 的页不进索引面）──
       const articles = new WikiArticleDAO(this.db)
-      const found = articles.getByPath(GLOBAL_WIKI_ORG, relPath)
+      const found = articles.getByPath(relPath)
       if (found) {
-        const rowid = articles.getRowid(GLOBAL_WIKI_ORG, found.id)
+        const rowid = articles.getRowid(found.id)
         if (rowid !== undefined) {
           try { articles.deleteFts(rowid) } catch (err) {
             ftsWarnings.push(`FTS 删除失败（非致命）: ${err instanceof Error ? err.message : String(err)}`)
           }
         }
-        articles.delete(GLOBAL_WIKI_ORG, found.id)
+        articles.delete(found.id)
       }
 
       // ── 5.5 宿主页 DB/FTS 同步（票04：正文已摘链，wiki_articles.body/FTS 与盘一致；
       //        FTS 失败非致命 gotcha #6 同律）──
       for (const c of cleaned) {
-        const hostRow = articles.getByPath(GLOBAL_WIKI_ORG, c.relPath)
+        const hostRow = articles.getByPath(c.relPath)
         if (!hostRow) continue
         const { updated_at: _ut, ...upsert } = hostRow
         this.db.transaction(() => {
@@ -355,7 +355,7 @@ export class PageRetireTaskService {
           // c.next 为改写后全文，解析必成——cleanInboundLinksInContent 产物同形）
           const hp = parseWikiFile(c.next)
           articles.upsert({ ...upsert, body: c.newBody, links: hp.kind === "page" ? computeArticleLinks(hp.meta.links, c.newBody) : wikiLinkTargets(c.newBody) })
-          const rowid = articles.getRowid(GLOBAL_WIKI_ORG, hostRow.id)
+          const rowid = articles.getRowid(hostRow.id)
           if (rowid === undefined) return
           try {
             articles.deleteFts(rowid)

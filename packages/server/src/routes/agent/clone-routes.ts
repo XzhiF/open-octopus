@@ -27,8 +27,7 @@ export function createCloneRoutes(deps: CloneRouteDeps): Hono {
   // ── Clone merge (archive memory + cleanup) ────────────────────────
   app.post('/clones/:name/merge', async (c) => {
     try {
-      const org = c.req.header('X-Octopus-Org') || (c.get('org') as string)
-      if (!org) return c.json(createAgentError('ORG_NOT_FOUND', 'Organization not resolved'), 403)
+      const org = c.req.header('X-Octopus-Org') || (c.get('org') as string) || ''
       const name = c.req.param('name')
       if (!validateNameParam(name)) return c.json(createAgentError('INVALID_PARAM', 'Invalid name parameter'), 400)
       const cloneDir = path.join(clonesBaseDir(), name)
@@ -116,8 +115,7 @@ export function createCloneRoutes(deps: CloneRouteDeps): Hono {
   // ── Clone delegate cancel ─────────────────────────────────────────
   app.post('/clones/:name/delegate/cancel', (c) => {
     try {
-      const org = c.req.header('X-Octopus-Org') || (c.get('org') as string)
-      if (!org) return c.json(createAgentError('ORG_NOT_FOUND', 'Organization not resolved'), 403)
+      const org = c.req.header('X-Octopus-Org') || (c.get('org') as string) || ''
       const name = c.req.param('name')
       if (!validateNameParam(name)) return c.json(createAgentError('INVALID_PARAM', 'Invalid name parameter'), 400)
       const cloneDir = path.join(clonesBaseDir(), name)
@@ -140,8 +138,7 @@ export function createCloneRoutes(deps: CloneRouteDeps): Hono {
   // ── Clone experiences (stub) ──────────────────────────────────────
   app.get('/clones/:name/experiences', (c) => {
     try {
-      const org = c.req.header('X-Octopus-Org') || (c.get('org') as string)
-      if (!org) return c.json(createAgentError('ORG_NOT_FOUND', 'Organization not resolved'), 403)
+      const org = c.req.header('X-Octopus-Org') || (c.get('org') as string) || ''
       const name = c.req.param('name')
       if (!validateNameParam(name)) return c.json(createAgentError('INVALID_PARAM', 'Invalid name parameter'), 400)
       const cloneDir = path.join(clonesBaseDir(), name)
@@ -156,8 +153,7 @@ export function createCloneRoutes(deps: CloneRouteDeps): Hono {
   // ── Clone activate (TC-038: clone use) ────────────────────────────
   app.post('/clones/:name/activate', async (c) => {
     try {
-      const org = c.req.header('X-Octopus-Org') || (c.get('org') as string)
-      if (!org) return c.json(createAgentError('ORG_NOT_FOUND', 'Organization not resolved'), 403)
+      const org = c.req.header('X-Octopus-Org') || (c.get('org') as string) || ''
       const name = c.req.param('name')
       if (!validateNameParam(name)) return c.json(createAgentError('INVALID_PARAM', 'Invalid name parameter'), 400)
 
@@ -182,8 +178,7 @@ export function createCloneRoutes(deps: CloneRouteDeps): Hono {
   // ── Clone deactivate (TC-038: switch back to default) ──────────────
   app.delete('/clones/active', async (c) => {
     try {
-      const org = c.req.header('X-Octopus-Org') || (c.get('org') as string)
-      if (!org) return c.json(createAgentError('ORG_NOT_FOUND', 'Organization not resolved'), 403)
+      const org = c.req.header('X-Octopus-Org') || (c.get('org') as string) || ''
 
       const { getConfigManager } = await import('../../services/agent/config-manager')
       const configManager = getConfigManager()

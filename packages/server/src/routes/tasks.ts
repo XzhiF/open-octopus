@@ -27,6 +27,7 @@ import {
   type UpdateTaskInput,
   type UpdateSpecFieldInput,
   type ServerSpecField,
+  type ReflectionIngest,
 } from "../services/tasks/tasks-service"
 import { AssistWorkflowService, AssistWorkflowError } from "../services/tasks/assist-workflow-service"
 import { SSEService } from "../services/sse"
@@ -37,9 +38,6 @@ import {
 } from "@octopus/shared"
 import type { RoundEvidenceService } from "../services/tasks/round-evidence-service"
 import { InstanceGateError } from "../services/tasks/round-evidence-service"
-// taskboard-modal-v2 票08: takeover 聚合端点复用 01 的 doer 会话就绪（type-only，
-// 与 routes/task-chat.ts 同一实例由 index.ts 注入）。
-import type { TaskDoerService } from "../services/tasks/task-doer-service"
 
 // ── Error Classification ────────────────────────────────────────────
 
@@ -195,10 +193,9 @@ export function createTasksRoutes(
   sse: SSEService,
   assistService?: AssistWorkflowService,
   evidence?: RoundEvidenceService,
-  // taskboard-modal-v2 票08: takeover 聚合端点的会话就绪一步（01 的 ensureSession）。
-  // tail-appended optional —— 未接线（老测试/嵌入方）takeover 仍停流+落标记，
-  // session 如实 null。
-  doer?: TaskDoerService,
+  // 2026-10-28 task-thread: reflection decision → knowledge ingest. Optional:
+  // absent = ingest action returns 409 (skip still works).
+  reflectionIngest?: ReflectionIngest,
 ): Hono {
   const router = new Hono()
   // SSE route — MUST be registered BEFORE /:id below. Hono v4 matches
@@ -262,7 +259,12 @@ export function createTasksRoutes(
         return c.json({ error: "name is required: 任务标题必须非空" }, 400)
       }
       const input: CreateTaskInput = {
-        org: typeof body.org === "string" ? body.org : "default",
+        repo_group:
+          typeof body.repo_group === "string"
+            ? body.repo_group
+            : typeof body.org === "string"
+              ? body.org
+              : undefined,
         name: body.name,
         source_chat_session_id:
           typeof body.source_chat_session_id === "string"
@@ -309,16 +311,16 @@ export function createTasksRoutes(
     }
   })
 
-  // GET / — list (kanban); ?status=&org=&q=
+  // GET / — list (kanban); ?status=&repo_group=&q=
   router.get("/", (c) => {
     try {
       const statusParam = c.req.query("status") as TaskStatus | undefined
-      const orgParam = c.req.query("org")
+      const repoGroupParam = c.req.query("repo_group") ?? c.req.query("org") ?? undefined
       // 票06 (语义摘要进任务板): q = 服务端关键字搜索（name ∨ semantic_summary LIKE）。
       const qParam = c.req.query("q")
       const result = service.listTasks({
         status: statusParam,
-        org: orgParam,
+        repo_group: repoGroupParam,
         q: qParam,
       })
       return c.json(result)
@@ -351,6 +353,57 @@ export function createTasksRoutes(
       const id = c.req.param("id")
       const rows = service.listRunHistory(id, limit)
       return c.json({ items: rows, total: rows.length })
+    } catch (err: unknown) {
+      const { status, message } = classifyError(err)
+      return c.json({ error: message }, status)
+    }
+  })
+
+  // GET /:id/usage — task-lifecycle ledger: the main thread's chat rows plus
+  // EVERY execution row tagged with this task. Double-count guard lives in
+  // TasksService.taskUsage (session pass = execution_id IS NULL).
+  router.get("/:id/usage", (c) => {
+    try {
+      return c.json(service.taskUsage(c.req.param("id")))
+    } catch (err: unknown) {
+      const { status, message } = classifyError(err)
+      return c.json({ error: message }, status)
+    }
+  })
+
+  // GET /:id/archive — archive-window read model (state.json + report.md +
+  // whether a run is in flight). Reading is safe in every status.
+  router.get("/:id/archive", (c) => {
+    try {
+      return c.json(service.readArchive(c.req.param("id")))
+    } catch (err: unknown) {
+      const { status, message } = classifyError(err)
+      return c.json({ error: message }, status)
+    }
+  })
+
+  // POST /:id/reflection/decision — per-entry knowledge decision (ingest/skip).
+  // Ingest goes through the same RawIngestService + compile queue as the
+  // knowledge center's POST /api/knowledge/ingest.
+  router.post("/:id/reflection/decision", async (c) => {
+    let raw: unknown
+    try {
+      raw = await c.req.json()
+    } catch {
+      return c.json({ error: "Invalid JSON body" }, 400)
+    }
+    const parsed = z.object({
+      entry_id: z.string().min(1),
+      action: z.enum(["ingest", "skip"]),
+      title: z.string().max(200).optional(),
+      content: z.string().max(50_000).optional(),
+    }).strict().safeParse(raw)
+    if (!parsed.success) {
+      return c.json({ error: "invalid body", issues: parsed.error.issues }, 400)
+    }
+    try {
+      const result = await service.decideReflection(c.req.param("id"), parsed.data, reflectionIngest)
+      return c.json(result)
     } catch (err: unknown) {
       const { status, message } = classifyError(err)
       return c.json({ error: message }, status)
@@ -1133,19 +1186,16 @@ export function createTasksRoutes(
   router.post("/:id/takeover", async (c) => {
     try {
       const result = await service.takeoverTask(c.req.param("id"))
-      // 会话就绪是聚合的第三步，但停流已是既成事实 —— ensureSession 的拒绝
-      // （理论上不该发生：running+绑定 ws 是 01 闸门的放行态）不伪装成「接管失败」，
-      // 而是 200 + session_error 如实透出（UI 侧可在对话页重试懒建）。
-      let session: { session_id: string; workspace_id: string; created: boolean } | null = null
-      let sessionError: string | null = null
-      if (doer) {
-        try {
-          const s = doer.ensureSession(result.task.id)
-          session = { session_id: s.sessionId, workspace_id: s.workspaceId, created: s.created }
-        } catch (err: unknown) {
-          sessionError = err instanceof Error ? err.message : String(err)
-        }
-      }
+      // 2026-10-28 task-thread: takeover talks into the task's MAIN thread.
+      const sessionId = result.task.source_chat_session_id
+      const session = sessionId
+        ? {
+            session_id: sessionId,
+            workspace_id: result.task.workspace_id ?? '',
+            created: false,
+          }
+        : null
+      const sessionError = session ? null : '任务没有主对话会话'
       return c.json({
         task: result.task,
         takeover: result.takeover,

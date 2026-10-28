@@ -43,7 +43,7 @@ beforeEach(() => {
   db.prepare("DELETE FROM session_role_states").run()
   const now = new Date().toISOString()
   sessionDAO.insertSession({
-    id: "s-role-api", org: ORG, title: "T", clone_name: null, session_type: "main",
+    id: "s-role-api", repo_group: ORG, title: "T", clone_name: null, session_type: "main",
     created_at: now, updated_at: now,
   })
 })

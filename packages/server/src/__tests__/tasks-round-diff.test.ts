@@ -44,8 +44,7 @@ async function newBareTask(): Promise<string> {
   const res = await app.request("/api/tasks", {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({
-      org: ORG,
+    body: JSON.stringify({
       name: `E2E_TD rd ${seq++}`,
       task_spec: {
         format: "v4",
@@ -152,7 +151,7 @@ beforeAll(() => {
   c2 = git(repoDir, "rev-parse", "HEAD")
 
   db.prepare(`
-    INSERT INTO workspaces (id, name, org, path, created_at, updated_at)
+    INSERT INTO workspaces (id, name, repo_group, path, created_at, updated_at)
     VALUES (?, 'rd-ws', ?, ?, ?, ?)
   `).run(WS_ID, ORG, wsDir, new Date().toISOString(), new Date().toISOString())
 

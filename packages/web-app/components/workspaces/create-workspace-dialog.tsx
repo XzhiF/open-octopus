@@ -101,8 +101,7 @@ export function CreateWorkspaceDialog({ open, onOpenChange, onCreated }: CreateW
     return null
   }, [name])
 
-  const orgPath = orgs.find(o => o.name === org)?.path ?? ""
-  const derivedPath = name ? `${orgPath}/workspaces/${name}` : ""
+  const derivedPath = name ? `~/.octopus/workspaces/${name}` : ""
 
   // Filter repos by search query
   const filteredRepos = useMemo(() => {
@@ -171,7 +170,7 @@ export function CreateWorkspaceDialog({ open, onOpenChange, onCreated }: CreateW
     try {
       await createWorkspace({
         name,
-        org,
+        repo_group: org,
         description: description || undefined,
         path: derivedPath,
         repos: selectedRepos.length > 0 ? selectedRepos : undefined,

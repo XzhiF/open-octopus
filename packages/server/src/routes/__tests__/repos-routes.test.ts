@@ -215,7 +215,7 @@ describe("POST /api/repos", () => {
     const res = await app.request("/api/repos", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ name: "", git_url: "git@x.git", branch: "main", group: "G", manual_tags: [], org: "o" }),
+      body: JSON.stringify({ name: "", git_url: "git@x.git", branch: "main", group: "G", manual_tags: [], repo_group: "o" }),
     })
     expect(res.status).toBe(400)
     const body = await res.json()

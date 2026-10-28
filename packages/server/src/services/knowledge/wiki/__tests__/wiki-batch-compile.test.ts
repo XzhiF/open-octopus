@@ -118,13 +118,13 @@ describe("compilePages — 一次编译多页单 commit（票05 基座）", () =
 
     // DB/FTS 同步（domain 列存 v3 type 值，票04 AC6 口径）
     const dao = new WikiArticleDAO(db)
-    expect(dao.get("testorg", "ent-hermes")?.domain).toBe("entity")
-    expect(dao.get("testorg", "con-compiled-rag")?.domain).toBe("concept")
-    expect(dao.get("testorg", "top-windows-bash-ops")?.domain).toBe("topic")
-    expect(dao.search("testorg", "LOCKFILE_CONFIG_MISMATCH")).toHaveLength(0)
+    expect(dao.get("ent-hermes")?.domain).toBe("entity")
+    expect(dao.get("con-compiled-rag")?.domain).toBe("concept")
+    expect(dao.get("top-windows-bash-ops")?.domain).toBe("topic")
+    expect(dao.search("LOCKFILE_CONFIG_MISMATCH")).toHaveLength(0)
     // FTS5 unicode61 不分 CJK（DAO 注释 gotcha）——FTS 同步证据用 ASCII token
-    expect(dao.search("testorg", "hermes").length).toBeGreaterThan(0)
-    expect(dao.searchLike("testorg", "推送通道").length).toBeGreaterThan(0)
+    expect(dao.search("hermes").length).toBeGreaterThan(0)
+    expect(dao.searchLike("推送通道").length).toBeGreaterThan(0)
   })
 
   it("rejects the whole batch (zero artifacts) when any page fails validation", async () => {
@@ -151,7 +151,7 @@ describe("compilePages — 一次编译多页单 commit（票05 基座）", () =
     expect(fs.existsSync(path.join(root, "INDEX.md"))).toBe(false)
     expect(fs.existsSync(path.join(root, "LOG.md"))).toBe(false)
     const dao = new WikiArticleDAO(db)
-    expect(dao.get("testorg", "ent-hermes")).toBeUndefined()
+    expect(dao.get("ent-hermes")).toBeUndefined()
   })
 
   it("rolls back everything (files/INDEX/LOG/DB) when git commit fails mid-write", async () => {
@@ -188,6 +188,6 @@ describe("compilePages — 一次编译多页单 commit（票05 基座）", () =
     // 工作树干净（git 索引的 add -A 被 reset 补偿掉）
     expect(realGit(root).run(["status", "--porcelain"]).stdout.trim()).toBe("")
     const dao = new WikiArticleDAO(db)
-    expect(dao.get("testorg", "ent-new")).toBeUndefined()
+    expect(dao.get("ent-new")).toBeUndefined()
   })
 })

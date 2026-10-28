@@ -21,7 +21,7 @@ function makeV2Row(overrides: Partial<ExperienceRowV2> = {}): Omit<ExperienceRow
     skill_name: "test-skill",
     content: "test experience content",
     source_session_id: null,
-    org: TEST_ORG,
+    repo_group: TEST_ORG,
     created_at: "2024-01-01T00:00:00.000Z",
     scope: "harness",
     scope_ref: "deterministic_error",
@@ -101,13 +101,13 @@ describe("EvolutionDAO V2 — Scope-aware methods", () => {
     })
 
     it("filters by scope", () => {
-      const harnessExps = dao.listByScope(TEST_ORG, "harness")
+      const harnessExps = dao.listByScope("harness")
       expect(harnessExps).toHaveLength(3)
       harnessExps.forEach(e => expect(e.scope).toBe("harness"))
     })
 
     it("filters by scope + scopeRef", () => {
-      const results = dao.listByScope(TEST_ORG, "harness", { scopeRef: "detector_a" })
+      const results = dao.listByScope("harness", { scopeRef: "detector_a" })
       expect(results).toHaveLength(2)
       results.forEach(e => {
         expect(e.scope).toBe("harness")
@@ -116,33 +116,33 @@ describe("EvolutionDAO V2 — Scope-aware methods", () => {
     })
 
     it("returns empty array for non-matching scope", () => {
-      const results = dao.listByScope(TEST_ORG, "global")
+      const results = dao.listByScope("global")
       expect(results).toHaveLength(0)
     })
 
     it("respects limit parameter", () => {
-      const results = dao.listByScope(TEST_ORG, "harness", { limit: 2 })
+      const results = dao.listByScope("harness", { limit: 2 })
       expect(results).toHaveLength(2)
     })
 
     it("orders by created_at DESC", () => {
-      const results = dao.listByScope(TEST_ORG, "harness")
+      const results = dao.listByScope("harness")
       // All have the same timestamp, so just verify they're returned
       expect(results.length).toBeGreaterThan(0)
     })
 
     it("does not return data from other scopes (AC-6 scope isolation)", () => {
-      const agentExps = dao.listByScope(TEST_ORG, "agent")
+      const agentExps = dao.listByScope("agent")
       expect(agentExps).toHaveLength(1)
       expect(agentExps[0].scope).toBe("agent")
 
-      const harnessExps = dao.listByScope(TEST_ORG, "harness")
+      const harnessExps = dao.listByScope("harness")
       expect(harnessExps.every(e => e.scope === "harness")).toBe(true)
     })
 
-    it("does not return data from other orgs", () => {
-      const results = dao.listByScope("other-org", "harness")
-      expect(results).toHaveLength(0)
+    it("returns all rows (org demotion: no org isolation)", () => {
+      const results = dao.listByScope("harness")
+      expect(results).toHaveLength(3)
     })
   })
 
@@ -304,13 +304,13 @@ describe("EvolutionDAO V2 — Scope-aware methods", () => {
     })
 
     it("returns decision stats grouped by first pattern tag", () => {
-      const stats = dao.getSuccessStats(TEST_ORG, "harness")
+      const stats = dao.getSuccessStats("harness")
       expect(stats.decisionStats).toHaveProperty("fix_and_retry")
       expect(stats.decisionStats).toHaveProperty("guide_and_retry")
     })
 
     it("calculates correct success rate for fix_and_retry", () => {
-      const stats = dao.getSuccessStats(TEST_ORG, "harness")
+      const stats = dao.getSuccessStats("harness")
       const fixAndRetry = stats.decisionStats["fix_and_retry"]
       expect(fixAndRetry.success).toBe(3)
       expect(fixAndRetry.failed).toBe(1)
@@ -321,7 +321,7 @@ describe("EvolutionDAO V2 — Scope-aware methods", () => {
     })
 
     it("calculates correct stats for guide_and_retry", () => {
-      const stats = dao.getSuccessStats(TEST_ORG, "harness")
+      const stats = dao.getSuccessStats("harness")
       const guideAndRetry = stats.decisionStats["guide_and_retry"]
       expect(guideAndRetry.success).toBe(1)
       expect(guideAndRetry.failed).toBe(0)
@@ -332,7 +332,7 @@ describe("EvolutionDAO V2 — Scope-aware methods", () => {
     })
 
     it("does not include data from other scopes", () => {
-      const stats = dao.getSuccessStats(TEST_ORG, "harness")
+      const stats = dao.getSuccessStats("harness")
       // The agent scope fix_and_retry failure should NOT be counted
       const fixAndRetry = stats.decisionStats["fix_and_retry"]
       expect(fixAndRetry.failed).toBe(1) // Only harness failure, not agent
@@ -346,13 +346,13 @@ describe("EvolutionDAO V2 — Scope-aware methods", () => {
         scope_ref: "detector_b",
       }))
 
-      const stats = dao.getSuccessStats(TEST_ORG, "harness", "detector_a")
+      const stats = dao.getSuccessStats("harness", "detector_a")
       expect(stats.decisionStats).not.toHaveProperty("agent_takeover")
       expect(stats.decisionStats).toHaveProperty("fix_and_retry")
     })
 
     it("returns pattern stats for all tags", () => {
-      const stats = dao.getSuccessStats(TEST_ORG, "harness")
+      const stats = dao.getSuccessStats("harness")
       // pattern stats include all tags, not just the first
       expect(stats.patternStats).toHaveProperty("bash")
       expect(stats.patternStats).toHaveProperty("python")
@@ -367,26 +367,26 @@ describe("EvolutionDAO V2 — Scope-aware methods", () => {
         scope_ref: "detector_c",
       }))
 
-      const stats = dao.getSuccessStats(TEST_ORG, "harness", "detector_c")
+      const stats = dao.getSuccessStats("harness", "detector_c")
       const newDecision = stats.decisionStats["new_decision"]
       expect(newDecision.pending).toBe(1)
       expect(newDecision.rate).toBe(0) // No resolved outcomes
     })
 
     it("handles empty result set", () => {
-      const stats = dao.getSuccessStats("nonexistent-org", "harness")
+      const stats = dao.getSuccessStats("nonexistent-scope")
       expect(Object.keys(stats.decisionStats)).toHaveLength(0)
       expect(Object.keys(stats.patternStats)).toHaveLength(0)
     })
 
     it("returns rate 0 when no resolved outcomes exist", () => {
       // Clear and insert only pending
-      const allHarness = dao.listByScope(TEST_ORG, "harness")
+      const allHarness = dao.listByScope("harness")
       for (const exp of allHarness) {
         dao.updateOutcome(exp.id, JSON.stringify({ label: "pending" }))
       }
 
-      const stats = dao.getSuccessStats(TEST_ORG, "harness")
+      const stats = dao.getSuccessStats("harness")
       for (const key of Object.keys(stats.decisionStats)) {
         expect(stats.decisionStats[key].rate).toBe(0)
       }
@@ -402,11 +402,11 @@ describe("EvolutionDAO V2 — Scope-aware methods", () => {
         skill_name: "old-skill",
         content: "old content",
         source_session_id: null,
-        org: TEST_ORG,
+        repo_group: TEST_ORG,
         created_at: "2024-01-01",
       })
 
-      const results = dao.listExperiences(TEST_ORG)
+      const results = dao.listExperiences()
       expect(results).toHaveLength(1)
       expect(results[0].skill_name).toBe("old-skill")
       expect(results[0].content).toBe("old content")
@@ -417,7 +417,7 @@ describe("EvolutionDAO V2 — Scope-aware methods", () => {
         skill_name: "search-skill",
         content: "searchable content about errors",
         source_session_id: null,
-        org: TEST_ORG,
+        repo_group: TEST_ORG,
         created_at: "2024-01-01",
       })
 
@@ -431,7 +431,7 @@ describe("EvolutionDAO V2 — Scope-aware methods", () => {
         skill_name: "fts-skill",
         content: "fts content about failures",
         source_session_id: null,
-        org: TEST_ORG,
+        repo_group: TEST_ORG,
         created_at: "2024-01-01",
       })
 
@@ -444,7 +444,7 @@ describe("EvolutionDAO V2 — Scope-aware methods", () => {
         skill_name: "default-scope-skill",
         content: "should have default scope",
         source_session_id: null,
-        org: TEST_ORG,
+        repo_group: TEST_ORG,
         created_at: "2024-01-01",
       })
 

@@ -43,7 +43,6 @@ import { MAX_PARALLEL_WORKSPACES } from '../concurrency'
 
 interface ScheduleRow {
   id: string
-  org: string
   name: string
   cron_expression: string | null
   timezone: string
@@ -189,7 +188,7 @@ export class WorkflowExecutor implements Executor {
     let workspace
     try {
       workspace = this.workspaceService.createFromSpec({
-        org: config.workspace_spec.org,
+        repo_group: config.workspace_spec.org,
         name: workspaceName,
         projects: config.workspace_spec.projects,
         branch_prefix: branchPrefix,

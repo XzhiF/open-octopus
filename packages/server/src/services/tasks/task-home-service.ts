@@ -318,7 +318,7 @@ export class TaskHomeService {
    *      under `.scratch/…` and manifest's phases[].specPath points at them.)
    *    - System prompt = **no dynamic context** — only static persona + skill
    *      content. Prompt cache stays stable across turns. */
-  createHome(taskId: string, opts: { org?: string; projects?: ProjectRef[]; skillGroups?: string[] } = {}): string {
+  createHome(taskId: string, opts: { repo_group?: string | null; projects?: ProjectRef[]; skillGroups?: string[] } = {}): string {
     const home = this.homePath(taskId)
     fs.mkdirSync(path.join(home, SKILLS_DIR), { recursive: true })
     fs.mkdirSync(path.join(home, ARTIFACTS_DIR), { recursive: true })
@@ -328,7 +328,7 @@ export class TaskHomeService {
     fs.mkdirSync(path.join(home, WORKFLOWS_DIR), { recursive: true })
     fs.mkdirSync(path.join(home, RULES_DIR), { recursive: true })
     this.writeTaskContextRule(taskId)
-    this.writeContextFile(taskId, opts.org, opts.projects, opts.skillGroups)
+    this.writeContextFile(taskId, opts.repo_group, opts.projects, opts.skillGroups)
     this.writeManifestFile(taskId, { version: 1, spec: {}, updated_at: new Date().toISOString() })
     return home
   }
@@ -344,7 +344,7 @@ export class TaskHomeService {
    *  「先确认已 pull 到最新 main/master 再分析」即读这行成立。 */
   writeContextFile(
     taskId: string,
-    org?: string,
+    repoGroup?: string | null,
     projects?: ProjectRef[],
     skillGroups?: string[],
     syncNotes?: Record<string, string>,
@@ -353,7 +353,7 @@ export class TaskHomeService {
     const filePath = path.join(home, CONTEXT_FILENAME)
     try {
       const lines = ['# Workspace Context', '']
-      if (org) lines.push(`- org: ${org}`)
+      if (repoGroup) lines.push(`- repo_group: ${repoGroup}`)
       lines.push(`- cwd: ${home}`)
       if (projects && projects.length > 0) {
         for (const p of projects) {
@@ -480,12 +480,12 @@ export class TaskHomeService {
 
   /** Ensure `context.md` exists. No-op when the file is already present.
    *  Called from the chat route so existing task homes get backfilled. */
-  ensureContextFile(taskId: string, org?: string, projects?: ProjectRef[], skillGroups?: string[]): void {
+  ensureContextFile(taskId: string, repoGroup?: string | null, projects?: ProjectRef[], skillGroups?: string[]): void {
     const home = this.homePath(taskId)
     if (!fs.existsSync(home)) return
     const filePath = path.join(home, CONTEXT_FILENAME)
     if (fs.existsSync(filePath)) return
-    this.writeContextFile(taskId, org, projects, skillGroups)
+    this.writeContextFile(taskId, repoGroup, projects, skillGroups)
   }
 
   /** Write `.claude/rules/task-context.md` — static path constraints + a

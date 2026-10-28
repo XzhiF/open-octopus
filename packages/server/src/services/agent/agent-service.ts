@@ -476,7 +476,7 @@ export class AgentService {
 
   async getTasks(org: string, history?: boolean): Promise<{ active: TaskInfo[]; scheduled: ScheduledJob[] }> {
     if (!this.schedulerService) return { active: [], scheduled: [] }
-    const result = this.schedulerService.listJobs({ org })
+    const result = this.schedulerService.listJobs({})
     return { active: [], scheduled: result.items as unknown as ScheduledJob[] }
   }
 

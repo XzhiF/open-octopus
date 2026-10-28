@@ -189,7 +189,7 @@ function seedAwaitingReview(opts: {
   const wsPath = path.join(fakeHome, ".octopus", "orgs", ORG, "workspaces", `${taskId}-ws`)
   fs.mkdirSync(wsPath, { recursive: true })
   db.prepare(
-    "INSERT INTO workspaces (id, name, org, path, source, status, task_id, created_at, updated_at) VALUES (?, ?, ?, ?, 'task', 'active', ?, datetime('now'), datetime('now'))",
+    "INSERT INTO workspaces (id, name, repo_group, path, source, status, task_id, created_at, updated_at) VALUES (?, ?, ?, ?, 'task', 'active', ?, datetime('now'), datetime('now'))",
   ).run(workspaceId, `task:${taskId}`, ORG, wsPath, taskId)
 
   const spec = {
@@ -207,7 +207,7 @@ function seedAwaitingReview(opts: {
     })),
   }
   db.prepare(`
-    INSERT INTO tasks (id, org, name, status, source_chat_session_id, task_spec,
+    INSERT INTO tasks (id, repo_group, name, status, source_chat_session_id, task_spec,
       authoring_resources, resources, skills, project_ids, workflow_ref, version,
       deleted_at, created_at, updated_at, completed_at, workspace_id)
     VALUES (?, ?, ?, ?, NULL, ?, '[]', '[]', '[]', '[]', NULL, 1, NULL, ?, ?, NULL, ?)
@@ -632,7 +632,7 @@ describe("AC4 — guards (409/404/400)", () => {
     const now = new Date().toISOString()
     const id = `e2e-ac-v3-${taskSeq++}`
     db.prepare(`
-      INSERT INTO tasks (id, org, name, status, source_chat_session_id, task_spec,
+      INSERT INTO tasks (id, repo_group, name, status, source_chat_session_id, task_spec,
         authoring_resources, resources, skills, project_ids, workflow_ref, version,
         deleted_at, created_at, updated_at, completed_at)
       VALUES (?, ?, ?, 'running', NULL, ?, '[]', '[]', '[]', '[]', NULL, 1, NULL, ?, ?, NULL)
@@ -708,7 +708,7 @@ describe("derived view on GET /:id + board visibility", () => {
     const now = new Date().toISOString()
     const id = `e2e-ac-v3view-${taskSeq++}`
     db.prepare(`
-      INSERT INTO tasks (id, org, name, status, source_chat_session_id, task_spec,
+      INSERT INTO tasks (id, repo_group, name, status, source_chat_session_id, task_spec,
         authoring_resources, resources, skills, project_ids, workflow_ref, version,
         deleted_at, created_at, updated_at, completed_at)
       VALUES (?, ?, ?, 'failed', NULL, ?, '[]', '[]', '[]', '[]', NULL, 1, NULL, ?, ?, NULL)
@@ -720,10 +720,10 @@ describe("derived view on GET /:id + board visibility", () => {
   it("the unfiltered board scan surfaces v4-only statuses (awaiting_review / archiving)", () => {
     const { taskId } = seedAwaitingReview({ status: "awaiting_review" })
     const { taskId: archivingId } = seedAwaitingReview({ status: "archiving", phases: [TWO_PHASES[0]] })
-    const items = service.listTasks({ org: ORG }).items.map((t) => t.id)
+    const items = service.listTasks({ repo_group: ORG }).items.map((t) => t.id)
     expect(items).toContain(taskId)
     expect(items).toContain(archivingId)
-    expect(service.listTasks({ status: "archiving", org: ORG }).items.map((t) => t.id)).toEqual([archivingId])
+    expect(service.listTasks({ status: "archiving", repo_group: ORG }).items.map((t) => t.id)).toEqual([archivingId])
   })
 })
 
@@ -732,7 +732,7 @@ describe("AC5 — spec-field field=phases (whole-array PUT + optimistic lock)", 
     const now = new Date().toISOString()
     const id = `e2e-ac-draft-${taskSeq++}`
     db.prepare(`
-      INSERT INTO tasks (id, org, name, status, source_chat_session_id, task_spec,
+      INSERT INTO tasks (id, repo_group, name, status, source_chat_session_id, task_spec,
         authoring_resources, resources, skills, project_ids, workflow_ref, version,
         deleted_at, created_at, updated_at, completed_at)
       VALUES (?, ?, ?, 'draft', NULL, ?, '[]', '[]', '[]', '[]', NULL, 1, NULL, ?, ?, NULL)
@@ -906,7 +906,7 @@ describe("review M2 — K16 v4 spec edit window (running editable, terminal froz
   it("v3 running: still frozen (K13 byte-stable)", async () => {
     const now = new Date().toISOString()
     db.prepare(`
-      INSERT INTO tasks (id, org, name, status, source_chat_session_id, task_spec,
+      INSERT INTO tasks (id, repo_group, name, status, source_chat_session_id, task_spec,
         authoring_resources, resources, skills, project_ids, workflow_ref, version,
         deleted_at, created_at, updated_at, completed_at, workspace_id)
       VALUES (?, ?, 'E2E_AC v3-edit', 'running', NULL, ?, '[]', '[]', '[]', '[]', NULL, 1, NULL, ?, ?, NULL, NULL)

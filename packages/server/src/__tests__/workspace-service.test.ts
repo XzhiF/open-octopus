@@ -29,28 +29,28 @@ afterEach(() => {
 
 describe("WorkspaceService", () => {
   it("creates a workspace with auto-generated id", () => {
-    const ws = service.create({ name: "Test", org: "xzf", path: "/tmp/ws" })
+    const ws = service.create({ name: "Test", repo_group: "xzf", path: "/tmp/ws" })
     expect(ws.id).toBeTruthy()
     expect(ws.name).toBe("Test")
-    expect(ws.org).toBe("xzf")
+    expect(ws.repo_group).toBe("xzf")
     expect(ws.status).toBe("active")
   })
 
   it("lists all workspaces", () => {
-    service.create({ name: "WS1", org: "xzf", path: "/tmp/ws1" })
-    service.create({ name: "WS2", org: "xzf", path: "/tmp/ws2" })
+    service.create({ name: "WS1", repo_group: "xzf", path: "/tmp/ws1" })
+    service.create({ name: "WS2", repo_group: "xzf", path: "/tmp/ws2" })
     expect(service.list().length).toBe(2)
   })
 
   it("filters list by org", () => {
-    service.create({ name: "A", org: "xzf", path: "/tmp/a" })
-    service.create({ name: "B", org: "other", path: "/tmp/b" })
+    service.create({ name: "A", repo_group: "xzf", path: "/tmp/a" })
+    service.create({ name: "B", repo_group: "other", path: "/tmp/b" })
     expect(service.list("xzf").length).toBe(1)
     expect(service.list("other").length).toBe(1)
   })
 
   it("gets workspace by id", () => {
-    const ws = service.create({ name: "Test", org: "xzf", path: "/tmp/ws" })
+    const ws = service.create({ name: "Test", repo_group: "xzf", path: "/tmp/ws" })
     const found = service.getById(ws.id)
     expect(found).toBeDefined()
     expect(found!.name).toBe("Test")
@@ -61,7 +61,7 @@ describe("WorkspaceService", () => {
   })
 
   it("updates a workspace", () => {
-    const ws = service.create({ name: "Old", org: "xzf", path: "/tmp/ws" })
+    const ws = service.create({ name: "Old", repo_group: "xzf", path: "/tmp/ws" })
     const updated = service.update(ws.id, { name: "New" })
     expect(updated!.name).toBe("New")
   })
@@ -71,7 +71,7 @@ describe("WorkspaceService", () => {
   })
 
   it("deletes a workspace with cascade", async () => {
-    const ws = service.create({ name: "Test", org: "xzf", path: "/tmp/test-ws-cascade" })
+    const ws = service.create({ name: "Test", repo_group: "xzf", path: "/tmp/test-ws-cascade" })
     const execId = "exec-test"
     const neId = "ne-test"
     const sessionId = "session-test"
@@ -96,7 +96,7 @@ describe("WorkspaceService", () => {
   })
 
   it("creates standard subdirectories", () => {
-    const ws = service.create({ name: "SubTest", org: "xzf", path: "/tmp/ws-subdirs" })
+    const ws = service.create({ name: "SubTest", repo_group: "xzf", path: "/tmp/ws-subdirs" })
     const resolvedPath = "/tmp/ws-subdirs"
     expect(fs.existsSync(path.join(resolvedPath, "projects"))).toBe(true)
     expect(fs.existsSync(path.join(resolvedPath, "workflows"))).toBe(true)
@@ -109,7 +109,7 @@ describe("WorkspaceService", () => {
     const basePath = "/tmp/ws-existing"
     fs.mkdirSync(basePath, { recursive: true })
     fs.writeFileSync(path.join(basePath, "existing-file.txt"), "hello")
-    const ws = service.create({ name: "Existing", org: "xzf", path: basePath })
+    const ws = service.create({ name: "Existing", repo_group: "xzf", path: basePath })
     expect(ws.name).toBe("Existing")
     expect(fs.existsSync(path.join(basePath, "existing-file.txt"))).toBe(true)
     fs.rmSync(basePath, { recursive: true, force: true })
@@ -159,7 +159,7 @@ describe("WorkspaceService", () => {
         )
 
         const ws = service.createFromSpec({
-          org: "xzf",
+          repo_group: "xzf",
           name: "taskpool-sched-1",
           projects: [{ name: "demo", source_path: "", group: "core" }],
           branch_prefix: "taskpool-s1",
@@ -177,7 +177,7 @@ describe("WorkspaceService", () => {
 
     it("createFromSpec 持久化 description（task-board-title 改版: task 触发写入任务标题）；缺省为 null", () => {
       const withDesc = service.createFromSpec({
-        org: "xzf",
+        repo_group: "xzf",
         name: "taskpool-desc-1",
         description: "任务标题映射到工作区描述",
         projects: [],
@@ -190,7 +190,7 @@ describe("WorkspaceService", () => {
       expect(withDesc.description).toBe("任务标题映射到工作区描述")
 
       const noDesc = service.createFromSpec({
-        org: "xzf",
+        repo_group: "xzf",
         name: "taskpool-desc-2",
         projects: [],
         branch_prefix: "taskpool-d2",
@@ -206,7 +206,7 @@ describe("WorkspaceService", () => {
       // which must propagate out of createFromSpec.
       expect(() =>
         service.createFromSpec({
-          org: "xzf",
+          repo_group: "xzf",
           name: "taskpool-sched-2",
           projects: [{ name: "ghost", source_path: "", group: "core" }],
           branch_prefix: "taskpool-s2",
@@ -233,7 +233,7 @@ describe("WorkspaceService · one-workspace model", () => {
       execFileSync("git", ["add", "."], { cwd: repo })
       execFileSync("git", ["commit", "-m", "init"], { cwd: repo })
 
-      const ws = service.create({ name: "shell", org: "xzf", path: wsPath })
+      const ws = service.create({ name: "shell", repo_group: "xzf", path: wsPath })
       fs.writeFileSync(path.join(wsPath, "config.json"), JSON.stringify({ repos: [] }))
 
       const result = service.ensureWorktreesForProjects(
@@ -259,7 +259,7 @@ describe("WorkspaceService · attachDirectory path policy", () => {
   it("attaches an existing non-system directory（不再限制在 home 下）", () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), "ws-attach-"))
     try {
-      const ws = service.attachDirectory({ org: "xzf", path: dir })
+      const ws = service.attachDirectory({ repo_group: "xzf", path: dir })
       expect(ws.path).toBe(fs.realpathSync(dir))
       expect(ws.description).toBe("Chat cwd")
     } finally {
@@ -271,6 +271,6 @@ describe("WorkspaceService · attachDirectory path policy", () => {
     const blocked = process.platform === "win32"
       ? (process.env.SystemRoot ?? "C:\Windows")
       : "/etc"
-    expect(() => service.attachDirectory({ org: "xzf", path: blocked })).toThrow(/系统敏感目录/)
+    expect(() => service.attachDirectory({ repo_group: "xzf", path: blocked })).toThrow(/系统敏感目录/)
   })
 })

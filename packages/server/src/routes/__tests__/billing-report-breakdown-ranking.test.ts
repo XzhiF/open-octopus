@@ -41,7 +41,7 @@ function row(id: string, over: Partial<LlmCallRow> & { model: string | null; tim
     id, node_execution_id: null, execution_id: null, turn_index: 1, call_index: 0,
     message_id: null, stop_reason: null, duration_ms: 100, ttft_ms: null,
     input_tokens: 1000, output_tokens: 500, cache_read_tokens: 0, cache_creation_tokens: 0,
-    org: 'default', workflow_ref: null, node_id: null, session_id: null, instance_id: 'inst-02',
+    repo_group: 'default', workflow_ref: null, node_id: null, session_id: null, instance_id: 'inst-02',
     ...over,
   }
 }
@@ -51,9 +51,9 @@ beforeAll(() => {
   initDb(dbPath)
   const db = getDb()
   const t = new Date().toISOString()
-  db.prepare("INSERT INTO workspaces (id, name, path, org, created_at, updated_at) VALUES ('ws-1','WS Alpha','/tmp/1','default',?,?)").run(t, t)
-  db.prepare("INSERT INTO workspaces (id, name, path, org, created_at, updated_at) VALUES ('ws-2','WS Beta','/tmp/2','default',?,?)").run(t, t)
-  db.prepare("INSERT INTO workspaces (id, name, path, org, created_at, updated_at) VALUES ('ws-3','WS Gamma','/tmp/3','default',?,?)").run(t, t)
+  db.prepare("INSERT INTO workspaces (id, name, path, repo_group, created_at, updated_at) VALUES ('ws-1','WS Alpha','/tmp/1','default',?,?)").run(t, t)
+  db.prepare("INSERT INTO workspaces (id, name, path, repo_group, created_at, updated_at) VALUES ('ws-2','WS Beta','/tmp/2','default',?,?)").run(t, t)
+  db.prepare("INSERT INTO workspaces (id, name, path, repo_group, created_at, updated_at) VALUES ('ws-3','WS Gamma','/tmp/3','default',?,?)").run(t, t)
   db.prepare("INSERT INTO sessions (id, org, title, created_at, updated_at) VALUES ('s-1','default','Agent会话一',?,?)").run(t, t)
   db.prepare("INSERT INTO chat_sessions (id, workspace_id, title, created_at, updated_at) VALUES ('cs-1','ws-1','聊天甲',?,?)").run(t, t)
 

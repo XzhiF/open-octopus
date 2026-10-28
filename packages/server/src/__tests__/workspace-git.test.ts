@@ -53,7 +53,7 @@ beforeEach(() => {
 
   wsDir = mkdtempSync(join(tmpdir(), "ws-git-ws-"))
   mkdirSync(join(wsDir, "projects"), { recursive: true })
-  writeFileSync(join(wsDir, "config.json"), JSON.stringify({ name: "test-ws", org: ORG }, null, 2))
+  writeFileSync(join(wsDir, "config.json"), JSON.stringify({ name: "test-ws", repo_group: ORG }, null, 2))
 
   git = new WorkspaceGit()
 })

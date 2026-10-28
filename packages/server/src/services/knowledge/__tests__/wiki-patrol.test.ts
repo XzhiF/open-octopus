@@ -52,7 +52,7 @@ beforeEach(() => {
   db = new Database(":memory:")
   applySchema(db)
   db.prepare(
-    `INSERT INTO workspaces (id, name, org, path, created_at, updated_at) VALUES ('ws-1', 'patrol-ws', 'default', '/tmp/patrol-ws', '2026-10-12 08:00:00', '2026-10-12 08:00:00')`,
+    `INSERT INTO workspaces (id, name, repo_group, path, created_at, updated_at) VALUES ('ws-1', 'patrol-ws', 'default', '/tmp/patrol-ws', '2026-10-12 08:00:00', '2026-10-12 08:00:00')`,
   ).run()
   tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "kc-patrol-"))
   root = path.join(tmpDir, "knowledge")

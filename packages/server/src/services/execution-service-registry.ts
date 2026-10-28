@@ -50,7 +50,7 @@ export function getExecutionService(
     _sse,
     new WorkflowService(),
     new BuiltInWorkflowService(resourceManager),
-    ws.org,
+    ws.repo_group ?? "",
     resolvedPath,
     ws.id,
     _obs ?? undefined,

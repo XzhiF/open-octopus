@@ -89,7 +89,7 @@ beforeEach(() => {
   service = new ObservabilityQueryService(execDao, tokenDao)
 
   // Create workspace
-  db.prepare("INSERT INTO workspaces (id, name, path, org, created_at, updated_at) VALUES ('ws-1', 'Test WS', '/tmp/test', ?, datetime('now'), datetime('now'))").run(ORG)
+  db.prepare("INSERT INTO workspaces (id, name, path, repo_group, created_at, updated_at) VALUES ('ws-1', 'Test WS', '/tmp/test', ?, datetime('now'), datetime('now'))").run(ORG)
 })
 
 // ── classifyError ──────────────────────────────────────────────────────

@@ -85,7 +85,7 @@ export function dispatchChildRun(deps: ChildRunDeps, subunit: SubunitSpec): Chil
   let workspaceId: string
   try {
     const created = deps.workspaceService.createFromSpec({
-      org: subunit.workspace_spec.org || deps.org,
+      repo_group: subunit.workspace_spec.org || deps.org,
       name: workspaceName ?? `${branchPrefix}-${branchSuffix}`,
       // task-board-title 改版: 同主工作区 —— 任务标题映射到描述字段。
       description: taskRow?.name ?? null,

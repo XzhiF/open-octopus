@@ -298,9 +298,9 @@ function seedArchiveFixture(opts: {
     wts[p.name] = wt
     repos.push({ name: p.name, main_path: p.fx.main, worktree_path: wt, branch: BRANCH })
   }
-  fs.writeFileSync(path.join(wsPath, "config.json"), JSON.stringify({ name: `ws-${taskId}`, org: ORG, repos }, null, 2))
+  fs.writeFileSync(path.join(wsPath, "config.json"), JSON.stringify({ name: `ws-${taskId}`, repo_group: ORG, repos }, null, 2))
   db.prepare(
-    "INSERT INTO workspaces (id, name, org, path, source, status, created_at, updated_at) VALUES (?, ?, ?, ?, 'scheduler', 'active', datetime('now'), datetime('now'))",
+    "INSERT INTO workspaces (id, name, repo_group, path, source, status, created_at, updated_at) VALUES (?, ?, ?, ?, 'scheduler', 'active', datetime('now'), datetime('now'))",
   ).run(wsId, `task:${taskId}`, ORG, wsPath)
 
   const home = taskHome.homePath(taskId)
@@ -329,7 +329,7 @@ function seedArchiveFixture(opts: {
   fs.writeFileSync(path.join(specDir, "spec.md"), "# p1\n")
   const now = new Date().toISOString()
   db.prepare(`
-    INSERT INTO tasks (id, org, name, status, source_chat_session_id, task_spec,
+    INSERT INTO tasks (id, repo_group, name, status, source_chat_session_id, task_spec,
       authoring_resources, resources, skills, project_ids, workflow_ref, version,
       deleted_at, created_at, updated_at, completed_at, workspace_id)
     VALUES (?, ?, ?, ?, NULL, ?, '[]', '[]', '[]', ?, NULL, 1, NULL, ?, ?, NULL, ?)
@@ -603,7 +603,7 @@ function seedTwoPhase(opts: {
   const wsPath = path.join(fakeHome, ".octopus", "orgs", ORG, "workspaces", wsId)
   fs.mkdirSync(wsPath, { recursive: true })
   d.prepare(
-    "INSERT INTO workspaces (id, name, org, path, source, status, created_at, updated_at) VALUES (?, ?, ?, ?, 'scheduler', 'active', datetime('now'), datetime('now'))",
+    "INSERT INTO workspaces (id, name, repo_group, path, source, status, created_at, updated_at) VALUES (?, ?, ?, ?, 'scheduler', 'active', datetime('now'), datetime('now'))",
   ).run(wsId, `task:${taskId}`, ORG, wsPath)
   const now = new Date().toISOString()
   const defs = [
@@ -620,7 +620,7 @@ function seedTwoPhase(opts: {
     })),
   }
   d.prepare(`
-    INSERT INTO tasks (id, org, name, status, source_chat_session_id, task_spec,
+    INSERT INTO tasks (id, repo_group, name, status, source_chat_session_id, task_spec,
       authoring_resources, resources, skills, project_ids, workflow_ref, version,
       deleted_at, created_at, updated_at, completed_at, workspace_id)
     VALUES (?, ?, ?, ?, NULL, ?, '[]', '[]', '[]', '[]', NULL, 1, NULL, ?, ?, NULL, ?)

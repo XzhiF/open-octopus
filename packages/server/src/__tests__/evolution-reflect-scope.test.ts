@@ -22,7 +22,7 @@ function makeV2Row(overrides: Partial<ExperienceRowV2> = {}): Omit<ExperienceRow
     skill_name: "harness-test-detector",
     content: "test harness experience",
     source_session_id: null,
-    org: TEST_ORG,
+    repo_group: TEST_ORG,
     created_at: new Date().toISOString(),
     scope: "harness",
     scope_ref: "deterministic_error",
@@ -184,7 +184,7 @@ describe("Ticket 05 — Evolution Reflect + Scope Integration", () => {
       })
 
       // Should have written a reflection experience
-      const reflections = dao.listByScope(TEST_ORG, "harness", { scopeRef: undefined, limit: 100 })
+      const reflections = dao.listByScope("harness", { scopeRef: undefined, limit: 100 })
         .filter(e => {
           try {
             return JSON.parse(e.pattern_tags || "[]").includes("reflection")
@@ -225,7 +225,7 @@ describe("Ticket 05 — Evolution Reflect + Scope Integration", () => {
       })
 
       // Check that experiences with source_type='reflection' exist
-      const allHarness = dao.listByScope(TEST_ORG, "harness")
+      const allHarness = dao.listByScope("harness")
       const reflectionExps = allHarness.filter(e => e.source_type === "reflection")
 
       // If identified, we should have at least one reflection
@@ -246,7 +246,7 @@ describe("Ticket 05 — Evolution Reflect + Scope Integration", () => {
 
       expect(result.identified).toBe(false)
 
-      const allHarness = dao.listByScope(TEST_ORG, "harness")
+      const allHarness = dao.listByScope("harness")
       const reflectionExps = allHarness.filter(e => e.source_type === "reflection")
       expect(reflectionExps).toHaveLength(0)
     })
@@ -311,7 +311,7 @@ describe("Ticket 05 — Evolution Reflect + Scope Integration", () => {
         scope_ref: "timeout_detector",
       }))
 
-      const stats = dao.getSuccessStats(TEST_ORG, "harness")
+      const stats = dao.getSuccessStats("harness")
 
       expect(stats.decisionStats["fix_and_retry"]).toBeDefined()
       expect(stats.decisionStats["fix_and_retry"].rate).toBe(1) // 2/2 = 100%
@@ -386,7 +386,7 @@ describe("Ticket 05 — Evolution Reflect + Scope Integration", () => {
         skill_name: "harness-timeout_detector",
         content: "reflection insight: timeout_cascade + agent_takeover 成功率仅 30%，建议优先 guide_and_retry",
         source_session_id: null,
-        org: TEST_ORG,
+        repo_group: TEST_ORG,
         created_at: new Date().toISOString(),
         scope: "harness",
         scope_ref: "timeout_detector",
@@ -409,7 +409,7 @@ describe("Ticket 05 — Evolution Reflect + Scope Integration", () => {
         skill_name: "harness-deterministic_error",
         content: "reflection: fix_and_retry 对 deterministic_error 成功率 95%，推荐作为首选策略",
         source_session_id: null,
-        org: TEST_ORG,
+        repo_group: TEST_ORG,
         created_at: new Date().toISOString(),
         scope: "harness",
         scope_ref: "deterministic_error",
@@ -504,7 +504,7 @@ describe("Ticket 05 — Evolution Reflect + Scope Integration", () => {
       // 3. If insight was found, it should be written as experience
       if (result.identified && result.candidate) {
         // 4. Verify reflection experiences exist in DB
-        const harnessExps = dao.listByScope(TEST_ORG, "harness")
+        const harnessExps = dao.listByScope("harness")
         const reflectionExps = harnessExps.filter(e => e.source_type === "reflection")
 
         // Should have at least one reflection experience

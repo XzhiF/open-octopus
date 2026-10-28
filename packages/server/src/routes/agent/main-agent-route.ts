@@ -194,7 +194,7 @@ export function createMainAgentRoute(deps: MainAgentRouteDeps): Hono {
   const app = new Hono()
 
   app.post('/chat', async (c) => {
-    const org = c.req.header('X-Octopus-Org') || (c.get('org') as string) || 'default'
+    const org = c.req.header('X-Octopus-Org') || (c.get('org') as string) || '' || 'default'
     const turnStartMs = Date.now()
 
     let body: {
@@ -225,7 +225,6 @@ export function createMainAgentRoute(deps: MainAgentRouteDeps): Hono {
       const now = new Date().toISOString()
       sessionDAO.insertSession({
         id: sessionId,
-        org,
         title: 'Main Agent 会话',
         clone_name: null,
         session_type: 'main',

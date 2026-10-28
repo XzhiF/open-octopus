@@ -59,7 +59,7 @@ async function createTask(name: string): Promise<string> {
   const res = await app.request("/api/tasks", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ org: ORG, task_type: "coding", name }),
+    body: JSON.stringify({ repo_group: ORG, task_type: "coding", name }),
   })
   expect(res.status).toBe(201)
   const body = await res.json() as { id: string }
@@ -78,6 +78,8 @@ beforeAll(() => {
   applySchema(db)
   homeBase = fs.mkdtempSync(path.join(os.tmpdir(), "tdm-home-"))
   wsBase = fs.mkdtempSync(path.join(os.tmpdir(), "tdm-ws-"))
+  // Keep task workspace shells inside the test temp dir (not the real home).
+  process.env.OCTOPUS_HOME = wsBase
   taskHome = new TaskHomeService(homeBase)
   const sse = new SSEService()
   const service = new TasksService(
@@ -91,6 +93,7 @@ beforeAll(() => {
 
 afterAll(() => {
   db.close()
+  delete process.env.OCTOPUS_HOME
   fs.rmSync(homeBase, { recursive: true, force: true })
   fs.rmSync(wsBase, { recursive: true, force: true })
 })
@@ -113,7 +116,7 @@ describe("GET /:id/artifacts/manifest — 分组清单（AC4①/③）", () => {
     writeHome(taskId, `outside.md`, "NOT AN ARTIFACT")
     // 工作区 + 绑定执行（原型组扫描根）
     const now = new Date().toISOString()
-    db.prepare(`INSERT INTO workspaces (id, name, org, path, source, status, created_at, updated_at)
+    db.prepare(`INSERT INTO workspaces (id, name, repo_group, path, source, status, created_at, updated_at)
       VALUES ('ws-tdm-1', 'E2E_TDM ws', ?, ?, 'manual', 'active', ?, ?)`).run(ORG, wsBase, now, now)
     db.prepare(`INSERT INTO executions (id, workspace_id, parent_id, child_index, workflow_ref, workflow_name,
       status, input_values, var_pool, org, created_at, updated_at, task_id, phase_index, round_index)
@@ -175,7 +178,7 @@ describe("GET /:id/artifacts/manifest/content — 现读 + 遍历守卫（AC4②
     writeHome(taskId, ".scratch/demo/spec.md", "# E2E_TDM live content")
     writeHome(taskId, ".scratch/demo/evidence/big.log", "x".repeat(MAX_HOME_FILE_READ_BYTES + 1))
     const now = new Date().toISOString()
-    db.prepare(`INSERT INTO workspaces (id, name, org, path, source, status, created_at, updated_at)
+    db.prepare(`INSERT INTO workspaces (id, name, repo_group, path, source, status, created_at, updated_at)
       VALUES ('ws-tdm-2', 'E2E_TDM ws2', ?, ?, 'manual', 'active', ?, ?)`).run(ORG, wsBase, now, now)
     db.prepare(`INSERT INTO executions (id, workspace_id, parent_id, child_index, workflow_ref, workflow_name,
       status, input_values, var_pool, org, created_at, updated_at, task_id, phase_index, round_index)

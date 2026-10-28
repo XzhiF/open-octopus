@@ -14,7 +14,6 @@ export interface EvolutionEntry {
   summary: string
   diff_path: string | null
   rolled_back: boolean
-  org: string
   timestamp: string
 }
 
@@ -100,7 +99,7 @@ export class EvolutionService {
     org: string,
     query?: { skill_name?: string; limit?: number },
   ): EvolutionEntry[] {
-    const rows = this.dao.listChangelog(org, query)
+    const rows = this.dao.listChangelog(query)
 
     return rows.map((r) => ({
       id: r.id,
@@ -110,7 +109,6 @@ export class EvolutionService {
       summary: r.summary,
       diff_path: r.diff_path,
       rolled_back: r.rolled_back === 1,
-      org: r.org,
       timestamp: r.timestamp,
     }))
   }
@@ -136,7 +134,6 @@ export class EvolutionService {
       level: entry.level,
       summary: entry.summary,
       diff_path: entry.diff_path ?? null,
-      org,
       timestamp,
     })
 
@@ -148,7 +145,6 @@ export class EvolutionService {
       summary: entry.summary,
       diff_path: entry.diff_path ?? null,
       rolled_back: false,
-      org,
       timestamp,
     }
   }
@@ -160,7 +156,7 @@ export class EvolutionService {
     const timestamp = new Date().toISOString()
 
     // Check if entry exists
-    const entry = this.dao.findEvolutionByIdAndOrg(id, org)
+    const entry = this.dao.findEvolutionById(id)
     if (!entry) return false
 
     // Mark as rolled back
@@ -172,7 +168,6 @@ export class EvolutionService {
       change_type: 'rollback',
       level: entry.change_type,
       summary: `Rollback of evolution entry #${id}`,
-      org,
       timestamp,
     })
 
@@ -218,8 +213,8 @@ export class EvolutionService {
     if (input.type === 'execution') {
       // Look for repeated failure patterns in recent experiences
       const recentFailures = scope
-        ? this.dao.findExperiencesWithFailurePatternByScope(org, scope)
-        : this.dao.findExperiencesWithFailurePattern(org)
+        ? this.dao.findExperiencesWithFailurePatternByScope(scope)
+        : this.dao.findExperiencesWithFailurePattern()
 
       if (recentFailures.length > 0) {
         const target = recentFailures[0]
@@ -303,7 +298,7 @@ export class EvolutionService {
         if (result) return result
       } else {
         // Original path: analyze recent work memory for repeated patterns
-        const recentExperiences = this.dao.findRecentExperiencesForReflection(org, 20)
+        const recentExperiences = this.dao.findRecentExperiencesForReflection(20)
 
         if (recentExperiences.length >= 5) {
           // Simple frequency analysis: find most common skill with experiences
@@ -357,14 +352,14 @@ export class EvolutionService {
     reasoning: string
   } | null {
     // Get scope-specific experiences
-    const recentExperiences = this.dao.findRecentExperiencesForReflectionByScope(org, scope, 20)
+    const recentExperiences = this.dao.findRecentExperiencesForReflectionByScope(scope, 20)
 
     if (recentExperiences.length < 3) {
       return null
     }
 
     // Get success stats for this scope
-    const stats = this.dao.getSuccessStats(org, scope)
+    const stats = this.dao.getSuccessStats(scope)
 
     // Analyze: find decisions with low success rates (potential insights)
     const lowSuccessDecisions: Array<{ decision: string; rate: number; total: number }> = []
@@ -504,7 +499,6 @@ export class EvolutionService {
         skill_name: result.candidate.skill_name,
         content,
         source_session_id: null,
-        org,
         created_at: timestamp,
         scope: effectiveScope,
         scope_ref: lowSuccess?.decision ?? null,
@@ -532,7 +526,6 @@ export class EvolutionService {
       skill_name: skillName,
       insight,
       session_id: sessionId,
-      org,
     })
     return { id: result.lastInsertRowid as number }
   }
@@ -550,7 +543,6 @@ export class EvolutionService {
       skill_name: entry.skill_name,
       content: entry.content,
       source_session_id: entry.session_id ?? null,
-      org,
       created_at: timestamp,
     })
 
@@ -580,10 +572,9 @@ export class EvolutionService {
     skill_name: string
     content: string
     source_session_id: string | null
-    org: string
     created_at: string
   }> {
-    return this.dao.listExperiences(org, skillName)
+    return this.dao.listExperiences(skillName)
   }
 
   /**
@@ -594,7 +585,7 @@ export class EvolutionService {
     org: string,
     sessionId?: string,
   ): { processed: number; total: number; results: Array<{ skill_name: string; identified: boolean; level: string; mark_id: number }> } {
-    const marks = this.dao.listUnprocessedMarks(org, 50)
+    const marks = this.dao.listUnprocessedMarks(50)
     if (marks.length === 0) {
       return { processed: 0, total: 0, results: [] }
     }

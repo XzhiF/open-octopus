@@ -132,8 +132,7 @@ const COMPOSITION_WF_REF = "composition-task"
 function makeSubunit(name: string): SubunitSpec {
   return {
     name,
-    workspace_spec: {
-      org: ORG,
+    workspace_spec: { org: ORG,
       branch_prefix: `e2e-tp-${name}`,
       projects: [{ name: "E2E_TP_project", source_path: "", group: "" }],
     },
@@ -189,11 +188,11 @@ describe("composite task dispatch — coordinator arm + child run + parent resum
         const p = path.join(wsDir, id)
         fs.mkdirSync(path.join(p, "workflows"), { recursive: true })
         db.prepare(
-          `INSERT INTO workspaces (id, name, org, status, path, source, task_id, created_at, updated_at)
+          `INSERT INTO workspaces (id, name, repo_group, status, path, source, task_id, created_at, updated_at)
            VALUES (?, ?, ?, 'active', ?, 'task', ?, datetime('now'), datetime('now'))`,
         ).run(id, String(input.name), ORG, p, (input.task_id as string) ?? null)
         stub.wsSpecs.push({ id, ...input })
-        return { id, name: input.name, org: ORG, status: "active", path: p }
+        return { id, name: input.name, repo_group: ORG, status: "active", path: p }
       },
     }
 
@@ -232,7 +231,7 @@ describe("composite task dispatch — coordinator arm + child run + parent resum
       integration_goal: { strategy: "synthesis", prompt: "E2E_TP_synthesis_prompt" },
     } as unknown as TaskSpec
     const row = {
-      id, org: ORG, name: `T_${id}`, status: "ready",
+      id, repo_group: ORG, name: `T_${id}`, status: "ready",
       task_spec: JSON.stringify(spec),
       authoring_resources: "[]", resources: "[]", skills: "[]", project_ids: '["E2E_TP_proj"]',
       workflow_ref: null, version: 1, source_chat_session_id: null,
@@ -248,15 +247,14 @@ describe("composite task dispatch — coordinator arm + child run + parent resum
     return new TaskDispatchService({
       db,
       workspaceId: coordinatorWsId,
-      workspacePath: path.join(wsDir, coordinatorWsId),
-      org: ORG,
+      workspacePath: path.join(wsDir, coordinatorWsId),
       workspaceService: {
         createFromSpec: (input: Record<string, unknown>) => {
           const id = `child-ws-${stub.wsSpecs.length}`
           const p = path.join(wsDir, id)
           fs.mkdirSync(path.join(p, "workflows"), { recursive: true })
           db.prepare(
-            `INSERT INTO workspaces (id, name, org, status, path, source, task_id, created_at, updated_at)
+            `INSERT INTO workspaces (id, name, repo_group, status, path, source, task_id, created_at, updated_at)
              VALUES (?, ?, ?, 'active', ?, 'task', ?, datetime('now'), datetime('now'))`,
           ).run(id, String(input.name), ORG, p, (input.task_id as string) ?? null)
           stub.wsSpecs.push({ id, ...input })

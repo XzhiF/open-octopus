@@ -3,7 +3,7 @@ import Database from "better-sqlite3"
 import fs from "fs"
 import path from "path"
 import os from "os"
-import { applySchema, SCHEMA_VERSION } from "../../schema"
+import { applySchema } from "../../schema"
 import { AcceptanceDAO } from "../acceptance-dao"
 import { ExecutionDAO } from "../execution-dao"
 
@@ -29,28 +29,7 @@ function tableExists(name: string): boolean {
   return !!db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name=?").get(name)
 }
 
-/** v38-era tasks DDL (old 6-state CHECK, no workspace_id) — simulates an existing dev DB. */
-const LEGACY_TASKS_DDL = `
-CREATE TABLE tasks (
-  id TEXT PRIMARY KEY,
-  org TEXT NOT NULL,
-  name TEXT NOT NULL,
-  status TEXT NOT NULL DEFAULT 'draft' CHECK (status IN ('draft','ready','running','done','failed','aborted')),
-  source_chat_session_id TEXT,
-  task_spec TEXT NOT NULL DEFAULT '{}',
-  authoring_resources TEXT NOT NULL DEFAULT '[]',
-  resources TEXT NOT NULL DEFAULT '[]',
-  skills TEXT NOT NULL DEFAULT '[]',
-  project_ids TEXT NOT NULL DEFAULT '[]',
-  workflow_ref TEXT,
-  version INTEGER NOT NULL DEFAULT 1,
-  deleted_at TEXT,
-  created_at TEXT NOT NULL,
-  updated_at TEXT NOT NULL,
-  completed_at TEXT
-)`
-
-describe("02-db-acceptances-columns: schema v40 migration", () => {
+describe("02-db-acceptances-columns: ledger schema", () => {
   describe("fresh DB (schema.sql path)", () => {
     it("creates task_phase_acceptances with spec columns + index", () => {
       applySchema(db)
@@ -64,16 +43,11 @@ describe("02-db-acceptances-columns: schema v40 migration", () => {
       expect(idx.map(i => i.name)).toContain("idx_task_phase_acceptances_task_phase")
     })
 
-    it("executions gains phase_index/round_index; tasks gains workspace_id; version is current", () => {
+    it("executions gains phase_index/round_index; tasks gains workspace_id", () => {
       applySchema(db)
       expect(colNames("executions")).toContain("phase_index")
       expect(colNames("executions")).toContain("round_index")
       expect(colNames("tasks")).toContain("workspace_id")
-      // v40-specific literal retired: user_version must land on the shipped constant
-      // (v41 = ADR-0021 added tasks.trigger_* / executions.task_id after this test).
-      const v = (db.prepare("PRAGMA user_version").get() as { user_version: number }).user_version
-      expect(SCHEMA_VERSION).toBeGreaterThanOrEqual(42)
-      expect(v).toBe(SCHEMA_VERSION)
     })
 
     it("decision CHECK accepts accepted|rejected and rejects anything else", () => {
@@ -93,14 +67,14 @@ describe("02-db-acceptances-columns: schema v40 migration", () => {
       for (const status of ["draft", "ready", "running", "awaiting_review", "archiving", "done", "failed", "aborted"]) {
         expect(() =>
           db.prepare(`
-            INSERT INTO tasks (id, org, name, status, task_spec, authoring_resources, resources, skills, project_ids, version, created_at, updated_at)
+            INSERT INTO tasks (id, repo_group, name, status, task_spec, authoring_resources, resources, skills, project_ids, version, created_at, updated_at)
             VALUES (?, 'xzf', ?, ?, '{}', '[]', '[]', '[]', '[]', 1, ?, ?)
           `).run(`t-${status}`, status, status, now, now),
         ).not.toThrow()
       }
       expect(() =>
         db.prepare(`
-          INSERT INTO tasks (id, org, name, status, task_spec, authoring_resources, resources, skills, project_ids, version, created_at, updated_at)
+          INSERT INTO tasks (id, repo_group, name, status, task_spec, authoring_resources, resources, skills, project_ids, version, created_at, updated_at)
           VALUES ('t-bad', 'xzf', 'bad', 'queued', '{}', '[]', '[]', '[]', '[]', 1, ?, ?)
         `).run(now, now),
       ).toThrow()
@@ -120,43 +94,6 @@ describe("02-db-acceptances-columns: schema v40 migration", () => {
       expect(cnt).toBe(1)
     })
 
-    it("legacy DB (v38-era tasks + executions): adds cols, rebuilds CHECK, preserves rows; second run no-ops", () => {
-      // Simulate a v38-era DB: legacy tasks (old CHECK, no workspace_id) with one row,
-      // legacy executions without phase/round cols.
-      db.exec(LEGACY_TASKS_DDL)
-      const now = new Date().toISOString()
-      db.prepare(`
-        INSERT INTO tasks (id, org, name, status, task_spec, authoring_resources, resources, skills, project_ids, version, created_at, updated_at)
-        VALUES ('legacy-1', 'xzf', 'E2E_TEST_legacy', 'running', '{"goal":"g"}', '[]', '[]', '[]', '[]', 3, ?, ?)
-      `).run(now, now)
-
-      applySchema(db)
-      // New columns present on the migrated tables
-      expect(colNames("tasks")).toContain("workspace_id")
-      expect(colNames("executions")).toContain("phase_index")
-      expect(colNames("executions")).toContain("round_index")
-      // Legacy row preserved through the CHECK rebuild
-      const row = db.prepare("SELECT * FROM tasks WHERE id='legacy-1'").get() as {
-        status: string; version: number; workspace_id: string | null; name: string
-      }
-      expect(row.status).toBe("running")
-      expect(row.version).toBe(3)
-      expect(row.name).toBe("E2E_TEST_legacy")
-      expect(row.workspace_id).toBeNull()
-      // CHECK now allows the K3 states on the rebuilt table
-      expect(() =>
-        db.prepare("UPDATE tasks SET status='awaiting_review' WHERE id='legacy-1'").run(),
-      ).not.toThrow()
-      expect(() =>
-        db.prepare("UPDATE tasks SET status='archiving' WHERE id='legacy-1'").run(),
-      ).not.toThrow()
-
-      // Re-entrant: second + third applySchema must not error or wipe data
-      expect(() => applySchema(db)).not.toThrow()
-      expect(() => applySchema(db)).not.toThrow()
-      const cnt = (db.prepare("SELECT COUNT(*) as cnt FROM tasks WHERE id='legacy-1'").get() as { cnt: number }).cnt
-      expect(cnt).toBe(1)
-    })
   })
 })
 
@@ -240,18 +177,18 @@ describe("ExecutionDAO phase_index/round_index (v40 round identity)", () => {
     applySchema(db)
     execDao = new ExecutionDAO(db)
     db.prepare(
-      "INSERT INTO workspaces (id, name, org, path, created_at, updated_at) VALUES ('ws-1', 'w', 'xzf', '/tmp/w', '2026-01-01', '2026-01-01')",
+      "INSERT INTO workspaces (id, name, repo_group, path, created_at, updated_at) VALUES ('ws-1', 'w', 'xzf', '/tmp/w', '2026-01-01', '2026-01-01')",
     ).run()
   })
 
   it("insertExecution persists phase/round; NULL default for v3/generic rows", () => {
     execDao.insertExecution({
-      id: "exec-p0r1", workspace_id: "ws-1", org: "xzf",
+      id: "exec-p0r1", workspace_id: "ws-1", repo_group: "xzf",
       workflow_ref: "built-in/x", workflow_name: "x",
       phase_index: 0, round_index: 1,
     } as never)
     execDao.insertExecution({
-      id: "exec-legacy", workspace_id: "ws-1", org: "xzf",
+      id: "exec-legacy", workspace_id: "ws-1", repo_group: "xzf",
       workflow_ref: "built-in/y", workflow_name: "y",
     } as never)
 
@@ -265,7 +202,7 @@ describe("ExecutionDAO phase_index/round_index (v40 round identity)", () => {
 
   it("updateExecution allows phase_index/round_index and rejects other unknown cols", () => {
     execDao.insertExecution({
-      id: "exec-upd", workspace_id: "ws-1", org: "xzf",
+      id: "exec-upd", workspace_id: "ws-1", repo_group: "xzf",
       workflow_ref: "built-in/x", workflow_name: "x",
     } as never)
     const r = execDao.updateExecution("exec-upd", { phase_index: 2, round_index: 3 })

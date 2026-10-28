@@ -202,15 +202,15 @@ export class WorkspaceService {
    * workspace row so the Yjs file tree / file APIs work, but it is not
    * scaffolded with projects/workflows/logs/state (the agent dir is shared).
    */
-  ensureMainWorkspace(org: string): WorkspaceRow {
-    const existing = this.dao.findAll(org, "main").find((w) => w.name === "main-agent")
+  ensureMainWorkspace(): WorkspaceRow {
+    const existing = this.dao.findAll(undefined, "main").find((w) => w.name === "main-agent")
     if (existing) return existing
     const id = randomUUID()
     const now = new Date().toISOString()
     this.dao.insert({
       id,
       name: "main-agent",
-      org,
+      repo_group: null,
       description: "Main Agent 工作区（默认 cwd）",
       status: "active",
       path: getAgentDir(),
@@ -227,7 +227,7 @@ export class WorkspaceService {
    * Used by the chat cwd picker when the user selects an arbitrary directory;
    * the Yjs tree / file APIs only need the path + a stable workspace id.
    */
-  attachDirectory(input: { org: string; name?: string; path: string; source?: string }): WorkspaceRow {
+  attachDirectory(input: { name?: string; path: string; source?: string; repo_group?: string | null }): WorkspaceRow {
     // 允许 home 之外的项目目录（如 C:\MiYuan\ai\kpi-10），只挡系统敏感目录。
     // 策略在 path-policy 里按 Windows / macOS / Linux 分别维护。
     const resolved = resolveSelectableDirectory(input.path)
@@ -239,7 +239,7 @@ export class WorkspaceService {
     this.dao.insert({
       id,
       name: `${base}-${id.slice(0, 6)}`,
-      org: input.org,
+      repo_group: input.repo_group ?? null,
       description: "Chat cwd",
       status: "active",
       path: resolved,
@@ -251,7 +251,7 @@ export class WorkspaceService {
     return this.dao.findById(id)!
   }
 
-  create(input: { name: string; org: string; description?: string; path: string; repos?: string[]; branch?: string }): WorkspaceRow & { worktreeStatus?: { created: number; failed: string[] } } {
+  create(input: { name: string; repo_group?: string | null; description?: string; path: string; repos?: string[]; branch?: string }): WorkspaceRow & { worktreeStatus?: { created: number; failed: string[] } } {
     // 禁中文命名 (2026-09-20)：name 直接进目录名 + git 分支名（branchName 兜底），
     // route 层已 400，这里挡住内部新调用方漏网。
     if (!WORKSPACE_NAME_PATTERN.test(input.name)) {
@@ -304,7 +304,7 @@ export class WorkspaceService {
     if (!fs.existsSync(rulesDir)) {
       fs.mkdirSync(rulesDir, { recursive: true })
     }
-    this.scaffold.copyRulesTemplate(rulesDir, input.org)
+    this.scaffold.copyRulesTemplate(rulesDir, input.repo_group ?? "")
 
     // Write config.json (bridge to CLI workspace system)
     this.scaffold.writeConfigJson(resolvedPath, input.name, input.repos ?? [], branchName)
@@ -314,7 +314,7 @@ export class WorkspaceService {
     this.scaffold.copyAgents(resolvedPath)
 
     this.dao.insert({
-      id, name: input.name, org: input.org,
+      id, name: input.name, repo_group: input.repo_group ?? null,
       description: input.description ?? null,
       status: "active", path: input.path,
       archive_status: null,
@@ -327,7 +327,7 @@ export class WorkspaceService {
     // Init worktrees - will overwrite CLAUDE.md with full version on success
     let worktreeStatus: { created: number; failed: string[] } | undefined
     if (input.repos && input.repos.length > 0) {
-      worktreeStatus = this.git.initWorktreesSync(resolvedPath, input.repos, input.org, input.name, branchName)
+      worktreeStatus = this.git.initWorktreesSync(resolvedPath, input.repos, input.repo_group ?? "", input.name, branchName)
     }
 
     const workspace = this.getById(id)!
@@ -339,7 +339,7 @@ export class WorkspaceService {
    * Each scheduler execution creates a fresh workspace with new worktrees.
    */
   createFromSpec(input: {
-    org: string
+    repo_group?: string | null
     name: string
     /** task-board-title 改版: task 触发起工作区时把任务标题写进描述字段。 */
     description?: string | null
@@ -358,7 +358,7 @@ export class WorkspaceService {
     const id = randomUUID()
     const now = new Date().toISOString()
 
-    // Resolve workspace path: ~/.octopus/{org}/workspaces/{name}
+    // Resolve workspace path: ~/.octopus/workspaces/{name}
     // Windows-safe dir (task-ws-name 冒号缺陷修复 2026-09-05): the DISPLAY name
     // (`task:{标题}-MMDD-HHmmss`) legally contains `:` for DB/UI purposes, but
     // it was also used verbatim as the directory name → `mkdir 'task:foo'`
@@ -371,7 +371,8 @@ export class WorkspaceService {
     // 升级为「只留 [A-Za-z0-9_-]」。上游 task-ws-name 已产出纯 ASCII 名，这里是
     // 防御层（老数据/旁路调用兜底）；剥空 → ws-{ts} 保证目录名永远合法非空。
     const dirName = input.name.replace(/[^a-zA-Z0-9_-]/g, "") || `ws-${Date.now()}`
-    const wsDir = path.join(os.homedir(), ".octopus", "orgs", input.org, "workspaces", dirName)
+    const octopusHome = process.env.OCTOPUS_HOME ?? path.join(os.homedir(), ".octopus")
+    const wsDir = path.join(octopusHome, "workspaces", dirName)
     // task-phase-redesign (ticket 05, K12 / 票03暗雷#3): the old behavior was
     // `rmSync(wsDir, recursive)` + rebuild. With the v4 model a workspace is no
     // longer disposable — it is the ONE bound task home (tasks.workspace_id)
@@ -403,7 +404,7 @@ export class WorkspaceService {
     // Copy rules templates
     const rulesDir = path.join(wsDir, ".octopus", "code-dev-copilot-rules")
     fs.mkdirSync(rulesDir, { recursive: true })
-    this.scaffold.copyRulesTemplate(rulesDir, input.org)
+    this.scaffold.copyRulesTemplate(rulesDir, input.repo_group ?? "")
 
     // Copy skills & agents
     this.scaffold.copySkill(wsDir)
@@ -415,7 +416,7 @@ export class WorkspaceService {
     // Write config.json with scheduler-specific fields
     const configData: Record<string, unknown> = {
       name: input.name,
-      org: input.org,
+      repo_group: input.repo_group ?? null,
       source: input.source,
       // ensureWorktreesForReuse reads config.repos back for the self-heal; the two
       // provenance keys stay here so a workspace directory alone can still be traced.
@@ -440,7 +441,7 @@ export class WorkspaceService {
     // Empty source_path is resolved from repos/index.md via resolveRepoPath;
     // resolution failures THROW (G3 fix: no silent skip).
     try {
-      this.git.initWorktreesFromSpec(wsDir, input.projects, input.branch_prefix, input.branch_suffix, input.name, input.org)
+      this.git.initWorktreesFromSpec(wsDir, input.projects, input.branch_prefix, input.branch_suffix, input.name, input.repo_group ?? "")
     } catch (err: unknown) {
       try {
         fs.rmSync(wsDir, { recursive: true, force: true })
@@ -454,7 +455,7 @@ export class WorkspaceService {
 
     // DB INSERT with source tracking (after worktrees — see rollback note above)
     this.dao.insert({
-      id, name: input.name, org: input.org,
+      id, name: input.name, repo_group: input.repo_group ?? null,
       description: input.description ?? null,
       status: "active", path: wsDir,
       source: input.source, source_schedule_id: input.source_schedule_id ?? null,
@@ -502,7 +503,7 @@ export class WorkspaceService {
         ws.path,
         { name: e.name, source_path: e.main_path ?? "", group: e.group },
         e.branch,
-        ws.org,
+        ws.repo_group ?? "",
       )
       rebuilt.push(e.name)
       resolved.push(fresh)
@@ -551,7 +552,7 @@ export class WorkspaceService {
         })
         continue
       }
-      const fresh = this.git.initWorktreeOne(ws.path, project, branchName, ws.org)
+      const fresh = this.git.initWorktreeOne(ws.path, project, branchName, ws.repo_group ?? "")
       created.push(project.name)
       resolved.push(fresh)
     }
@@ -575,21 +576,21 @@ export class WorkspaceService {
     return true
   }
 
-  list(org?: string, source?: 'user' | 'scheduler' | 'all'): WorkspaceRow[] {
-    return this.dao.findAll(org, source)
+  list(repoGroup?: string, source?: 'user' | 'scheduler' | 'all'): WorkspaceRow[] {
+    return this.dao.findAll(repoGroup, source)
   }
 
   getById(id: string): WorkspaceRow | undefined {
     return this.dao.findById(id) ?? undefined
   }
 
-  update(id: string, input: { name?: string; org?: string; description?: string; status?: string }): WorkspaceRow | undefined {
+  update(id: string, input: { name?: string; repo_group?: string | null; description?: string; status?: string }): WorkspaceRow | undefined {
     const existing = this.getById(id)
     if (!existing) return undefined
 
     const fields: Record<string, unknown> = {}
     if (input.name !== undefined) fields.name = input.name
-    if (input.org !== undefined) fields.org = input.org
+    if (input.repo_group !== undefined) fields.repo_group = input.repo_group
     if (input.description !== undefined) fields.description = input.description
     if (input.status !== undefined) fields.status = input.status
 

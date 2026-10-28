@@ -1,6 +1,6 @@
 import { describe, it, expect, afterEach } from "vitest"
 import Database from "better-sqlite3"
-import { applySchema, SCHEMA_VERSION } from "../db/schema"
+import { applySchema } from "../db/schema"
 
 function createTestDb(): Database.Database {
   const db = new Database(":memory:")
@@ -81,7 +81,8 @@ describe("DB Schema", () => {
     // （基线本即红 +2，票08 补正）。票08 清理账 53→54 再 − idx_pending_status
     // − idx_pending_review_source − idx_pending_review_type_status（pending_review 退役）
     // = 102 − 3 = 99。
-    expect(rows.length).toBe(99)
+    // 2026-10-28 org demotion: −15 org indexes, +5 repo_group/domain/scope indexes = 89.
+    expect(rows.length).toBe(89)
   })
 
   it("workspaces table has correct columns", () => {
@@ -89,7 +90,7 @@ describe("DB Schema", () => {
     applySchema(db)
     const cols = db.prepare("PRAGMA table_info(workspaces)").all() as { name: string }[]
     expect(cols.map(c => c.name)).toEqual(expect.arrayContaining([
-      "id", "name", "org", "status", "path", "created_at", "updated_at",
+      "id", "name", "repo_group", "status", "path", "created_at", "updated_at",
       "source", "source_schedule_id",
     ]))
   })
@@ -107,7 +108,7 @@ describe("DB Schema", () => {
       "instance_id", "global_session_id", "retry_count", "pending_hooks",
       "approval_metadata", "resume_attempts", "pipeline_config",
       "chain_retry_count", "preset_inputs",
-      "org", "created_at", "updated_at",
+      "created_at", "updated_at",
     ]))
   })
 
@@ -120,21 +121,12 @@ describe("DB Schema", () => {
     }).toThrow()
   })
 
-  it("sets schema version via user_version PRAGMA", () => {
-    db = createTestDb()
-    applySchema(db)
-    const rows = db.pragma("user_version") as Array<{ user_version: number }>
-    expect(rows[0].user_version).toBe(SCHEMA_VERSION)
-  })
-
   it("is idempotent", () => {
     db = createTestDb()
     applySchema(db)
     applySchema(db)
     const rows = db.prepare("SELECT name FROM sqlite_master WHERE type='table'").all() as { name: string }[]
     expect(rows.length).toBeGreaterThan(0)
-    const versionRows = db.pragma("user_version") as Array<{ user_version: number }>
-    expect(versionRows[0].user_version).toBe(SCHEMA_VERSION)
   })
 
   it("creates orgs table with correct columns", () => {
@@ -240,7 +232,7 @@ describe("Schema v17 — Pipeline support", () => {
     db = createTestDb()
     applySchema(db)
     const wsId = "ws-test"
-    db.prepare("INSERT INTO workspaces (id, name, org, path, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)").run(wsId, "test", "test", "/tmp", "2024-01-01", "2024-01-01")
+    db.prepare("INSERT INTO workspaces (id, name, repo_group, path, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)").run(wsId, "test", "test", "/tmp", "2024-01-01", "2024-01-01")
     const execId = "exec-test"
     db.prepare("INSERT INTO executions (id, workspace_id, workflow_ref, workflow_name, status, org, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)").run(execId, wsId, "test.yaml", "test", "pending", "test", "2024-01-01", "2024-01-01")
     const row = db.prepare("SELECT resume_attempts, pipeline_config FROM executions WHERE id = ?").get(execId) as { resume_attempts: number; pipeline_config: string }

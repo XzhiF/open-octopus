@@ -46,7 +46,6 @@ export interface AgentPaginatedResponse<T> {
 export interface AgentSession {
   id: string
   title: string
-  org: string
   clone_name: string | null
   perspective_clone_name: string | null
   session_type: SessionType
@@ -199,7 +198,6 @@ export interface CloneDef {
  */
 export interface CloneSession {
   id: string
-  org: string
   title: string
   clone_name: string              // Required for clone sessions
   perspective_clone_name: string | null

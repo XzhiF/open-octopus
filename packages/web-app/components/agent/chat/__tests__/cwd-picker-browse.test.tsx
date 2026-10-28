@@ -77,7 +77,7 @@ describe("CwdPicker — 目录浏览器", () => {
     fireEvent.click(screen.getByTestId("cwd-browse-select"))
     await waitFor(() =>
       expect(attachWorkspaceDirectory).toHaveBeenCalledWith({
-        org: "xzf",
+        repo_group: "xzf",
         path: "/home/u/projects",
       }),
     )

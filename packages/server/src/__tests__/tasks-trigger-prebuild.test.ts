@@ -45,7 +45,7 @@ const stub = vi.hoisted(() => ({
   live: new Set<string>(),
   seq: 0,
   db: null as Database.Database | null,
-  org: "prebuild-org",
+  repo_group: "prebuild-org",
 }))
 
 vi.mock("../services/execution-service-registry", () => ({
@@ -161,7 +161,7 @@ function insertTask(
   const now = new Date().toISOString()
   const spec = overrides.task_spec ?? v4Spec()
   db.prepare(
-    `INSERT INTO tasks (id, org, name, status, source_chat_session_id, task_spec,
+    `INSERT INTO tasks (id, repo_group, name, status, source_chat_session_id, task_spec,
       authoring_resources, resources, skills, project_ids, workflow_ref, version,
       deleted_at, created_at, updated_at, completed_at)
      VALUES (?, ?, ?, ?, NULL, ?, '[]', '[]', '[]', ?, ?, 1, NULL, ?, ?, NULL)`,

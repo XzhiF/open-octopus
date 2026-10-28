@@ -39,3 +39,12 @@ export function previewStateLabel(state: string | null | undefined): string {
 export function verifyPillLabel(state: string): string {
   return VERIFY_STATE_LABEL[state] ?? state
 }
+
+/** 接管交付件判据：takeover_at + takeover_delivered_at 双非空。
+ *  两列语义见 ADR-0025/票08 契约；缺键（旧 server）= 否，与 workflow_ref
+ *  向后兼容同律。 */
+export function isTakeoverDeliveredRound(
+  exec: { takeover_at?: string | null; takeover_delivered_at?: string | null } | undefined,
+): boolean {
+  return !!exec && exec.takeover_at != null && exec.takeover_delivered_at != null
+}

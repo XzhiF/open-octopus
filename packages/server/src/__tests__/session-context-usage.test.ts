@@ -44,7 +44,6 @@ function insertLedger(): void {
     output_tokens: 1004,
     cache_read_tokens: 50944,
     cache_creation_tokens: 0,
-    org: ORG,
     workspace_id: null,
     workflow_ref: null,
     node_id: null,
@@ -74,7 +73,7 @@ beforeEach(() => {
   db.prepare('DELETE FROM sessions').run()
   const now = new Date().toISOString()
   sessionDAO.insertSession({
-    id: SESSION, org: ORG, title: 'T', clone_name: null, session_type: 'main',
+    id: SESSION, repo_group: ORG, title: 'T', clone_name: null, session_type: 'main',
     created_at: now, updated_at: now,
   })
 })

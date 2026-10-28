@@ -97,7 +97,6 @@ describe("GET /findings — 列表契约（状态过滤、camelCase 视图、det
     await (app()).request("/patrol", { method: "POST" })
 
     const all = await (await app().request("/findings")).json() as Record<string, unknown>
-    expect(all.org).toBe("global")
     const list = all.findings as Array<Record<string, unknown>>
     expect(list.length).toBeGreaterThan(0)
     const xref = list.find(f => f.kind === "missing-xref")!

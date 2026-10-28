@@ -27,16 +27,14 @@ describe('SchedulerService', () => {
 
   it('creates a workflow job', () => {
     const job = service.createJob({
-      name: 'test-workflow',
-      org: ORG,
+      name: 'test-workflow',
       job_type: 'workflow',
       cron_expression: '0 9 * * *',
       timezone: 'Asia/Shanghai',
       config: {
         schema_version: '2.0',
         type: 'workflow',
-        workspace_spec: {
-          org: ORG,
+        workspace_spec: { org: ORG,
           branch_prefix: 'sched',
           projects: [{ name: 'proj', source_path: '/tmp/proj' }],
         },
@@ -54,8 +52,7 @@ describe('SchedulerService', () => {
 
   it('creates an agent job', () => {
     const job = service.createJob({
-      name: 'test-agent',
-      org: ORG,
+      name: 'test-agent',
       job_type: 'agent',
       cron_expression: '0 9 * * *',
       timezone: 'Asia/Shanghai',
@@ -75,16 +72,14 @@ describe('SchedulerService', () => {
   it('rejects duplicate name in same org', () => {
     expect(() => {
       service.createJob({
-        name: 'test-workflow',
-        org: ORG,
+        name: 'test-workflow',
         job_type: 'workflow',
         cron_expression: '0 10 * * *',
         timezone: 'Asia/Shanghai',
         config: {
           schema_version: '2.0',
           type: 'workflow',
-          workspace_spec: {
-            org: ORG,
+          workspace_spec: { org: ORG,
             branch_prefix: 'sched',
             projects: [{ name: 'proj', source_path: '/tmp/proj' }],
           },
@@ -96,21 +91,21 @@ describe('SchedulerService', () => {
   })
 
   it('lists jobs for org', () => {
-    const result = service.listJobs({ org: ORG })
+    const result = service.listJobs({ repo_group: ORG })
     expect(result.items).toBeDefined()
     expect(Array.isArray(result.items)).toBe(true)
     expect(result.total).toBeGreaterThanOrEqual(2)
   })
 
   it('toggles job enabled status', () => {
-    const result = service.listJobs({ org: ORG })
+    const result = service.listJobs({ repo_group: ORG })
     const job = result.items[0]
     const toggled = service.toggleJob(job.id)
     expect(toggled.enabled).toBe(!job.enabled)
   })
 
   it('updates job with correct version', () => {
-    const result = service.listJobs({ org: ORG })
+    const result = service.listJobs({ repo_group: ORG })
     const job = result.items[0]
     const updated = service.updateJob(job.id, {
       name: job.name,
@@ -122,7 +117,7 @@ describe('SchedulerService', () => {
   })
 
   it('rejects update with stale version (409 Conflict)', () => {
-    const result = service.listJobs({ org: ORG })
+    const result = service.listJobs({ repo_group: ORG })
     const job = result.items[0]
     expect(() => {
       service.updateJob(job.id, {
@@ -135,7 +130,7 @@ describe('SchedulerService', () => {
   })
 
   it('records audit logs for operations', () => {
-    const result = service.listJobs({ org: ORG })
+    const result = service.listJobs({ repo_group: ORG })
     const job = result.items[0]
     const logs = service.getAuditLogs(job.id)
     expect(logs).toBeDefined()
@@ -145,11 +140,11 @@ describe('SchedulerService', () => {
   })
 
   it('soft deletes job', () => {
-    const result = service.listJobs({ org: ORG })
+    const result = service.listJobs({ repo_group: ORG })
     const countBefore = result.total
     const lastJob = result.items[result.items.length - 1]
     service.deleteJob(lastJob.id)
-    const after = service.listJobs({ org: ORG })
+    const after = service.listJobs({ repo_group: ORG })
     expect(after.total).toBe(countBefore - 1)
   })
 })

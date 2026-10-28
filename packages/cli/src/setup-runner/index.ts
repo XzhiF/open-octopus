@@ -239,13 +239,8 @@ export class SetupRunner {
     if (!this.org || !this.orgDir) return
 
     const orgSubdirs = [
-      "env",
-      "mcp",
       "repos",
       "repos/projects",
-      "evolution",
-      "evolution/experiences",
-      "config",
     ]
 
     for (const subdir of orgSubdirs) {
@@ -257,6 +252,19 @@ export class SetupRunner {
         }
         mkdirSync(path, { recursive: true })
         console.log(`  Created ${this.org}/${subdir}/`)
+      }
+    }
+
+    // Agent-global dirs (org demotion: not under the repo registry).
+    for (const subdir of ["mcp", "env", "agent/evolution", "agent/evolution/experiences", "agent/config"]) {
+      const path = join(this.globalDir, subdir)
+      if (!existsSync(path)) {
+        if (this.dryRun) {
+          console.log(`  (dry-run) Will create ~/.octopus/${subdir}/`)
+          continue
+        }
+        mkdirSync(path, { recursive: true })
+        console.log(`  Created ~/.octopus/${subdir}/`)
       }
     }
   }
@@ -353,7 +361,7 @@ export class SetupRunner {
   private handleOrgMcpRegistry(): void {
     if (!this.org || !this.orgDir) return
 
-    const mcpDir = join(this.orgDir, "mcp")
+    const mcpDir = join(this.globalDir, "mcp")
     mkdirSync(mcpDir, { recursive: true })
 
     let presetMcpDir: string | null = null
@@ -410,7 +418,7 @@ export class SetupRunner {
   private handleOrgEnvFiles(): void {
     if (!this.org || !this.orgDir) return
 
-    const envDir = join(this.orgDir, "env")
+    const envDir = join(this.globalDir, "env")
     mkdirSync(envDir, { recursive: true })
 
     let presetEnvDir: string | null = null
@@ -1092,7 +1100,7 @@ export class SetupRunner {
     const sourceSkillsDir = join(this.corePackPath, "skills")
     if (!existsSync(sourceSkillsDir)) return
 
-    const wsRoot = join(this.orgDir, "workspaces")
+    const wsRoot = join(this.globalDir, "workspaces")
     if (!existsSync(wsRoot)) return
 
     // Only sync workspace-specific skills (not all core-pack skills)

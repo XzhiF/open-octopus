@@ -124,7 +124,7 @@ describe("wiki compile service (ticket 01 tracer-bullet)", async () => {
 
     // ── INDEX.md — 票04 v3 分组形状（expected 逐字 prototype Tab② INDEX 样例行式）
     const index = fs.readFileSync(path.join(root, "INDEX.md"), "utf-8")
-    expect(index).toContain("# Octopus Knowledge Wiki — testorg")
+    expect(index).toContain("# Octopus Knowledge Wiki")
     expect(index).toContain("> 导航协议：先读本索引 → 选页整读 → 未命中再 search API。禁止全库遍历。")
     expect(index).toContain("## 必读")
     // D-kc15-2 路径形制（票07 教训承接）：必读行输出 agent Read 可达路径——
@@ -153,7 +153,7 @@ describe("wiki compile service (ticket 01 tracer-bullet)", async () => {
     expect(shown).toContain("LOG.md")
 
     // ── DB 行 + FTS 同步（外部产物，不是内部调用序列）
-    const row = db.prepare("SELECT * FROM wiki_articles WHERE org='testorg' AND id='prj-octopus'").get() as Record<string, unknown>
+    const row = db.prepare("SELECT * FROM wiki_articles WHERE id='prj-octopus'").get() as Record<string, unknown>
     expect(row.domain).toBe("projects")
     expect(row.title).toBe("Octopus 平台工程知识")
     expect(JSON.parse(row.topics as string)).toEqual(["build", "test", "ports", "pitfall"])
@@ -229,7 +229,7 @@ describe("wiki compile service (ticket 01 tracer-bullet)", async () => {
     const updated = SAMPLE_ENTRY.replace("summary: monorepo 构建/测试/端口规则与已知陷阱", "summary: 构建/测试/端口/CI 规则与已知陷阱")
     const res2 = await svc.compileEntry({ content: updated, note: "修订 summary" })
 
-    expect((db.prepare("SELECT COUNT(*) AS n FROM wiki_articles WHERE org='testorg'").get() as { n: number }).n).toBe(1)
+    expect((db.prepare("SELECT COUNT(*) AS n FROM wiki_articles ").get() as { n: number }).n).toBe(1)
     const row = db.prepare("SELECT summary FROM wiki_articles WHERE id='prj-octopus'").get() as { summary: string }
     expect(row.summary).toBe("构建/测试/端口/CI 规则与已知陷阱")
     const index = fs.readFileSync(path.join(root, "INDEX.md"), "utf-8")

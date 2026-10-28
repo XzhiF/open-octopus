@@ -113,12 +113,11 @@ function seedDb(db: Database.Database): WikiArticleDAO {
       stability: "stable", last_compiled: "2026-10-14", sources: JSON.stringify(["doc:fixture"]),
       confidence: 0.8, body, path: relPath,
     })
-    const rid = dao.getRowid(org, id)!
+    const rid = dao.getRowid(id)!
     dao.insertFts({ rowid: rid, id, domain, title, summary: title, topics: JSON.stringify(["fixture"]), body })
   }
   // 漂移现场（对照票面：多行/缺行/org 错/值漂移 + 一行完全匹配验证零重写）：
   put(GLOBAL_WIKI_ORG, "ghost-gone", "concept", "盘上已无此页的幽灵行", "ghostunique05 幽灵正文", "concepts/ghost-gone.md") // 多行 → 删
-  put("xzf-dev", "ent-reconcile-demo", "entity", "旧 org 残行（错 org）", "entunique01 唯一实体标记", "entities/ent-reconcile-demo.md") // org 错 → 删
   put(GLOBAL_WIKI_ORG, "con-reconcile-demo", "concept", "标题已漂移的旧值", "conunique02 唯一概念标记", "concepts/con-reconcile-demo.md") // 值漂移 → 改
   put(GLOBAL_WIKI_ORG, "src-reconcile-demo", "sources", "对账 fixture 来源页", "正文 srcunique04 唯一来源标记", "sources/src-reconcile-demo.md") // domain 旧值 → 改
   // top / case 两页 = 缺行 → 补
@@ -160,27 +159,25 @@ describe("wiki-reconcile（票01 默认库对账）", () => {
 
     // 行数 vs 盘页数（独立真相源：fixture 5 页）
     expect(report.diskPages).toBe(5)
-    expect(report.beforeTotal).toBe(5) // seedDb 人工数：ghost + xzf-dev/ent + con + src + 匹配的 ent = 5 行
+    expect(report.beforeTotal).toBe(4) // seedDb 人工数：ghost + con + src + 匹配的 ent = 4 行
     expect(report.afterTotal).toBe(5)
 
     // 变更清单（逐 id 钉死）
     expect(report.deleted).toEqual([
-      { org: GLOBAL_WIKI_ORG, id: "ghost-gone" },
-      { org: "xzf-dev", id: "ent-reconcile-demo" },
+      { id: "ghost-gone" },
     ])
     expect([...report.inserted].sort()).toEqual(["case-reconcile-demo", "top-reconcile-demo"])
     expect([...report.updated].sort()).toEqual(["con-reconcile-demo", "src-reconcile-demo"])
 
-    // org 全 global + 五类各 1（票面核查口径）
-    const rows = db.prepare("SELECT org, id, domain FROM wiki_articles ORDER BY id").all() as Array<{ org: string; id: string; domain: string }>
+    // 五类各 1（org demotion: no org column）
+    const rows = db.prepare("SELECT id, domain FROM wiki_articles ORDER BY id").all() as Array<{ id: string; domain: string }>
     expect(rows.map(r => r.id)).toEqual([
       "case-reconcile-demo", "con-reconcile-demo", "ent-reconcile-demo", "src-reconcile-demo", "top-reconcile-demo",
     ])
-    expect(rows.every(r => r.org === GLOBAL_WIKI_ORG)).toBe(true)
     expect(report.afterByType).toEqual({ entity: 1, concept: 1, topic: 1, source: 1, case: 1 })
 
     // 漂移行值已收敛到盘（title/domain 独立字面量）
-    const con = db.prepare("SELECT title, domain FROM wiki_articles WHERE org = ? AND id = ?").get(GLOBAL_WIKI_ORG, "con-reconcile-demo") as { title: string; domain: string }
+    const con = db.prepare("SELECT title, domain FROM wiki_articles WHERE id = ?").get("con-reconcile-demo") as { title: string; domain: string }
     expect(con.title).toBe("对账 fixture 概念页")
     expect(con.domain).toBe("concept")
     const src = db.prepare("SELECT domain FROM wiki_articles WHERE id = ?").get("src-reconcile-demo") as { domain: string }
@@ -199,8 +196,8 @@ describe("wiki-reconcile（票01 默认库对账）", () => {
 
     // FTS 与基表一致：幽灵行不再可搜、补行可搜、行数守恒
     const dao = new WikiArticleDAO(db)
-    expect(dao.search(GLOBAL_WIKI_ORG, "ghostunique05")).toEqual([])
-    expect(dao.search(GLOBAL_WIKI_ORG, "topunique03").map(r => r.id)).toEqual(["top-reconcile-demo"])
+    expect(dao.search("ghostunique05")).toEqual([])
+    expect(dao.search("topunique03").map(r => r.id)).toEqual(["top-reconcile-demo"])
     const ftsCount = (db.prepare("SELECT COUNT(*) AS n FROM wiki_fts").get() as { n: number }).n
     expect(ftsCount).toBe(5)
   })

@@ -106,7 +106,6 @@ vi.mock("sonner", () => ({ toast: { success: vi.fn(), error: vi.fn() } }))
 
 import { AcceptanceSurface, type AcceptanceActionApi } from "../acceptance-surface"
 import { FoldProvider } from "../../fold-context"
-import { ImpactApprovalList } from "../impact-approval-list"
 import { TaskApiError } from "@/lib/tasks-api"
 import { TASK_VERIFY_EVENT, TASK_VERIFY_LOG_EVENT } from "@octopus/shared"
 
@@ -679,49 +678,6 @@ describe("AcceptanceSurface — AC1 证据面（A′：进度+决策，token/cos
   })
 })
 
-describe("验货台 v2 — 实物 tab（默认 C 位）", () => {
-  it("开窗即拉 round-diff；stat strip + repo 分组 + 文件行渲染（web 不见 SHA）", async () => {
-    renderModal()
-    await waitFor(() => expect(mockGetRoundDiff).toHaveBeenCalledWith("t1"))
-    const strip = await screen.findByTestId("round-diff-strip")
-    expect(strip.textContent).toContain("2271") // +新增行
-    expect(strip.textContent).toContain("95")
-    expect(screen.getByTestId("round-diff-repo-open-octopus")).toBeTruthy()
-    expect(document.querySelector('[data-acceptance-diff-row="open-octopus:packages/cli/src/utils/usage-writer.ts"]')).toBeTruthy()
-    // 叙述 tab 已退役（2026-09-20 用户裁决）：tab 条只剩 实物/核对 两枚贴纸
-    expect(screen.queryByTestId("acceptance-tab-story")).toBeNull()
-    expect(screen.getByTestId("acceptance-tab-diff")).toBeTruthy()
-    expect(screen.getByTestId("acceptance-tab-matrix")).toBeTruthy()
-    // R1 无「本轮|累计」口径可切（首轮两口径同物）→ 开关不出现
-    expect(screen.queryByTestId("round-diff-scope")).toBeNull()
-  })
-
-  it("文件点开 → 懒拉 patch（getRoundPatch repo+path）行着色渲染；不重复拉", async () => {
-    renderModal()
-    expect(await screen.findByTestId(`acceptance-tab-diff`)).toBeTruthy()
-    // 查询必须在 waitFor 里做 — diff 行随 getRoundDiff 的 promise 落地，
-    // 同步 querySelector 拿到的是加载前的 null（旧弹窗版靠微任务时序侥幸绿）。
-    let fileBtn: HTMLButtonElement | null = null
-    await waitFor(() => {
-      fileBtn = document.querySelector('[data-acceptance-diff-row="open-octopus:packages/server/src/db/schema.ts"]')
-      expect(fileBtn).toBeTruthy()
-    })
-    fireEvent.click(fileBtn!)
-    await waitFor(() => expect(mockGetRoundPatch).toHaveBeenCalledWith("t1", "open-octopus", "packages/server/src/db/schema.ts"))
-    const patch = await screen.findByTestId("round-diff-patch")
-    expect(patch.textContent).toContain("l2-edited")
-    fireEvent.click(fileBtn!) // 收起
-    fireEvent.click(fileBtn!) // 再展开 → 缓存，不再拉
-    await waitFor(() => expect(mockGetRoundPatch).toHaveBeenCalledTimes(1))
-  })
-
-  it("diff 不可得 → 诚实过期卡（不是 500，不是空表）", async () => {
-    mockGetRoundDiff.mockResolvedValue({ available: false, reason: "no_commits", aggregate: { commits: 0, additions: 0, dels: 0, files: 0 }, interventions: null, repos: [{ name: "open-octopus", expired: true, reason: "no_commits", commits: 0, additions: 0, dels: 0, files: 0, truncated: false, groups: [] }] })
-    renderModal()
-    expect(await screen.findByTestId("round-diff-expired")).toBeTruthy()
-  })
-})
-
 describe("验货台 v2 — 当场复检", () => {
   it("未配置命令 → 编辑器入口存在、▶ 不可见；保存走 spec-field(user)", async () => {
     renderModal() // V4_SPEC 无 acceptance_verify
@@ -809,7 +765,6 @@ describe("验货台 v2 — 核对 tab（票×声称×实物 三方对账）", ()
     // 批次清单 → round-report 定位 → 报告拉取：叙述退役后这条链是核对 tab 独占
     await waitFor(() => expect(mockListHomeDir).toHaveBeenCalledWith("t1", BATCH_DIR, { all: true }))
     await waitFor(() => expect(mockGetHomeFile).toHaveBeenCalledWith("t1", `${BATCH_DIR}/round-report.md`))
-    fireEvent.click(await screen.findByTestId("acceptance-tab-matrix"))
     await waitFor(() => expect(mockGetHomeFile).toHaveBeenCalledWith("t1", `${BATCH_DIR}/spec.md`))
     const matrix = await screen.findByTestId("ac-matrix")
     expect(matrix.textContent).toContain("1/2") // 票01 锚定 usage-writer.ts；票02 ghost-file.ts 无实物
@@ -820,7 +775,6 @@ describe("验货台 v2 — 核对 tab（票×声称×实物 三方对账）", ()
   it("diff 不可得 → 判定列全「存疑」+ 警示行", async () => {
     mockGetRoundDiff.mockResolvedValue({ available: false, reason: "no_commits", aggregate: { commits: 0, additions: 0, dels: 0, files: 0 }, interventions: null, repos: [] })
     renderModal()
-    fireEvent.click(await screen.findByTestId("acceptance-tab-matrix"))
     expect(await screen.findByTestId("ac-matrix-diff-missing")).toBeTruthy()
   })
 })
@@ -841,7 +795,6 @@ describe("AcceptanceSurface — 批次定位（specPath 回退 / idle）", () =>
     mockGetBatchTree.mockResolvedValue([])
     renderModalWith(PHASE1_AWAITING, V4_SPEC_ABS)
     await waitFor(() => expect(mockGetBatchTree).toHaveBeenCalledWith("t1"))
-    fireEvent.click(await screen.findByTestId("acceptance-tab-matrix"))
     expect(await screen.findByText(/spec\/报告未就绪/)).toBeTruthy()
     expect(mockListHomeDir).not.toHaveBeenCalled()
   })
@@ -1003,31 +956,6 @@ describe("AcceptanceSurface — 票 04 前序交接提示行（phase-handoff-cha
   })
 })
 
-describe("ImpactApprovalList — D14 批准→spec-field phases 写回（渲染逻辑就绪）", () => {
-  it("空数据源 → v4.1 接缝空态；有数据 → 勾选批准写 phases 并 bump（updateSpecField）", async () => {
-    const { rerender } = render(
-      <ImpactApprovalList taskId="t1" phases={V4_SPEC.phases as never} items={[]} onDone={() => {}} />,
-    )
-    expect(screen.getByTestId("impact-list-empty")).toBeTruthy()
-
-    const items = [{
-      key: "KD-3", phaseIndex: 2, change: "Key Decisions #3 新增 NEW-r2：改用 OTLP 导出",
-      workflowReassess: "round-1 绑的 task-dev 不再覆盖 → 建议 task-fix", nextWorkflowRef: "task-fix",
-    }]
-    rerender(<ImpactApprovalList taskId="t1" phases={V4_SPEC.phases as never} items={items} onDone={() => {}} />)
-    fireEvent.click(screen.getByTestId("impact-item-KD-3").querySelector("input")!)
-    fireEvent.click(screen.getByTestId("impact-approve"))
-    await waitFor(() => expect(mockUpdateSpecField).toHaveBeenCalledTimes(1))
-    const [taskId, field, value, opts] = mockUpdateSpecField.mock.calls[0]
-    expect(taskId).toBe("t1")
-    expect(field).toBe("phases")
-    expect(opts).toEqual({ source: "user" })
-    const phases = value as Array<{ index: number; workflowRef: string }>
-    expect(phases.find((p) => p.index === 2)?.workflowRef).toBe("task-fix") // 受影响 phase 改写
-    expect(phases.find((p) => p.index === 1)?.workflowRef).toBe("task-dev") // 未勾选保持
-  })
-})
-
 // ── PB: 剧本探针就地执行 + 全展开/收起 (v2.2, 用户反馈 2026-09-19) ──────
 const PB_PLAYBOOK = {
   available: true, goal: "g", specRevised: false,
@@ -1163,17 +1091,13 @@ describe("实物 tab 每块折叠（2026-09-20 用户点名：要的是块级，
     fireEvent.click(document.querySelector('[data-fold-toggle="item-verify"]') as HTMLElement)
     await waitFor(() => expect(document.querySelector('[data-fold-box="item-verify"]')?.getAttribute("data-fold-closed")).toBeNull())
   })
-  it("变动块：折上显「N 提交 · +x −y · z 文件」一行结论；预览块独立各折互不影响", async () => {
+  it("预览块可独立折叠；变动块已迁出到变更窗（本面无 item-diff 把手）", async () => {
     const first = renderFolded()
-    let dh: HTMLElement | null = null
-    await waitFor(() => { dh = document.querySelector('[data-fold-toggle="item-diff"]'); expect(dh).toBeTruthy() })
-    fireEvent.click(dh!)
-    expect((document.querySelector('[data-fold-badge="item-diff"]')?.textContent ?? "")).toMatch(/\d+ 提交 · \+\d+ −\d+ · \d+ 文件/)
-    expect(screen.queryByTestId("round-diff-strip")).toBeNull()
-    // 预览块折自己的一份，diff 保持折上状态（块间无串扰）
+    await waitFor(() => expect(screen.getByTestId("verify-panel")).toBeTruthy())
+    // 2026-10-28 M5: the diff no longer renders here.
+    expect(document.querySelector('[data-fold-toggle="item-diff"]')).toBeNull()
     fireEvent.click(document.querySelector('[data-fold-toggle="item-preview"]') as HTMLElement)
     expect((document.querySelector('[data-fold-box="item-preview"]') as HTMLElement).getAttribute("data-fold-closed")).toBe("true")
-    expect(document.querySelector('[data-fold-badge="item-diff"]')).toBeTruthy()
     // 无 provider（面板被独立挂载）→ 零把手护栏（先卸有 provider 的那份，防 DOM 残影）
     const task = makeDetail(PHASE1_AWAITING, V4_SPEC) as unknown as Task
     first.unmount()
@@ -1308,7 +1232,6 @@ describe("验货台 — 修复轮上下文（B 档）", () => {
   it("R2 修复轮：核对 tab 出「打回反馈→本轮回应」；幻影回应标红、文字证据不装", async () => {
     renderModalWith(PHASE_R2_AWAITING)
     await waitFor(() => expect(mockGetHomeFile).toHaveBeenCalledWith("t1", `${BATCH_DIR}/fix-report-r1.md`))
-    fireEvent.click(await screen.findByTestId("acceptance-tab-matrix"))
     const card = await screen.findByTestId("fix-response")
     expect(card.textContent).toContain("幻影回应 1")
     expect(screen.getByTestId("fix-response-row-0").textContent).toContain("有实物")
@@ -1324,18 +1247,9 @@ describe("验货台 — 修复轮上下文（B 档）", () => {
       return { path: p, content: "# spec body" }
     })
     renderModalWith(PHASE_R2_AWAITING)
-    fireEvent.click(await screen.findByTestId("acceptance-tab-matrix"))
     expect(await screen.findByTestId("fix-response-missing")).toBeTruthy()
   })
 
-  it("实物口径切「累计」→ getRoundDiff(t1, cumulative) + 面板标「全 phase 累计」", async () => {
-    renderModalWith(PHASE_R2_AWAITING)
-    const toggle = await screen.findByTestId("round-diff-scope")
-    expect(screen.getByTestId("round-diff-scope-round").getAttribute("aria-selected")).toBe("true")
-    fireEvent.click(screen.getByTestId("round-diff-scope-cumulative"))
-    await waitFor(() => expect(mockGetRoundDiff).toHaveBeenCalledWith("t1", "cumulative"))
-    await waitFor(() => expect(screen.getByTestId("round-diff-scope-label").textContent).toContain("全 phase 累计"))
-  })
 })
 
 // ── 票09 台账预览三列（人工干预 / 快速修改 / 接管标记）──────────────────

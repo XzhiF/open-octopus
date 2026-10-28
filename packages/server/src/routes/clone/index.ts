@@ -44,10 +44,8 @@ import {
 } from '../../services/agent/agent-service'
 import { getBuiltInCloneDir, getCloneDir, getAgentDir } from '../../services/agent/paths'
 import { getProvider } from '@octopus/providers'
-import { isPlaceholderTaskName } from '../../services/tasks/tasks-service'
 import { getMemoryService } from '../../services/agent/memory-service'
 import { deriveSessionTitle } from '../../services/agent/session-title'
-import { autosaveTaskDraft } from './autosave'
 import { finalizePartialMeta } from './stream-partials'
 import { getSpecNotice, clearSpecNotice } from '../../services/tasks/spec-notice-store'
 import { TaskAuthorSessionAugmenter } from '../../services/tasks/task-author-session-augmenter'
@@ -244,7 +242,6 @@ export function createCloneSessionRoutes(deps: CloneSessionRouteDeps): Hono {
 
     sessionDAO.insertSession({
       id: sessionId,
-      org,
       title,
       clone_name: cloneName,
       session_type: 'clone_direct',
@@ -276,7 +273,7 @@ export function createCloneSessionRoutes(deps: CloneSessionRouteDeps): Hono {
     const limit = parseInt(c.req.query('limit') ?? '20', 10)
     const cursor = c.req.query('cursor')
 
-    const result = sessionDAO.findByClone(cloneName, { org, limit, cursor })
+    const result = sessionDAO.findByClone(cloneName, { limit, cursor })
     let items = result.items
     if (taskDAO && items.length > 0) {
       const linked = new Set(
@@ -562,10 +559,9 @@ export function createCloneSessionRoutes(deps: CloneSessionRouteDeps): Hono {
         const projectNames: string[] = ctxRow?.project_ids
           ? JSON.parse(ctxRow.project_ids) as string[]
           : []
-        // Use the task's own org (from DB) for path resolution — NOT the
-        // request header which defaults to "default" when the frontend
-        // doesn't send X-Octopus-Org.
-        const taskOrg = ctxRow?.org ?? org
+        // Use the task's own repo group (from DB) for path resolution — NOT the
+        // request header.
+        const taskOrg = ctxRow?.repo_group ?? org
 
         // ── repo-sync chat 门 (2026-09-08, 特性A) ──────────────────────
         // v4 且有项目：① 无快照（含 server 重启后状态机清空）→ 后台补触发同步；
@@ -887,31 +883,15 @@ export function createCloneSessionRoutes(deps: CloneSessionRouteDeps): Hono {
                 const llmTitle = titleContent.trim().replace(/[.。,，!！?？""]/g, '').slice(0, 30)
                 if (!llmTitle || llmTitle === autoTitle) return
                 sessionDAO.updateSession(sessionId, { title: llmTitle })
-                if (cloneName === 'task-author' && taskDAO) {
-                  const bound = taskDAO.getBySourceChatSession(sessionId)
-                  if (bound && (bound.name === autoTitle || isPlaceholderTaskName(bound.name))) {
-                    taskDAO.updateAutosave(bound.id, llmTitle)
-                  }
-                }
               } catch {
                 /* non-fatal — the deterministic derived title stands */
               }
             })
           }
 
-          // 04 — task-author autosave seam (v2-D6/D11/SG3/SG8).
-          // Fires at turn-end (after auto-title block, before done SSE),
-          // gated by cloneName === 'task-author'. Best-effort — chat reply
-          // unaffected on failure. First turn → create draft row + link
-          // session.scope_id (SG3). Subsequent turns → targeted UPDATE
-          // name+updated_at ONLY (SG8: no version bump, no task_spec touch).
-          if (cloneName === 'task-author' && taskDAO) {
-            const autoTitle = sessionDAO.findById(sessionId)?.title ?? `${cloneName} 会话`
-            autosaveTaskDraft(
-              { taskDAO, sessionDAO },
-              { sessionId, org, autoTitle, placeholderTitle: `${cloneName} 会话` },
-            )
-          }
+          // 04 — task-author autosave seam removed (2026-10-28 task-thread:
+          // tasks are created explicitly from the main chat, never inferred
+          // from a clone session's first turn).
 
           await stream.writeSSE({
             event: 'done',

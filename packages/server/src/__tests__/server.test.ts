@@ -72,7 +72,7 @@ describe("Server API", () => {
   it("POST /api/workspaces creates workspace", async () => {
     const res = await app.request("/api/workspaces", {
       method: "POST",
-      body: JSON.stringify({ name: "test", org: "xzf" }),
+      body: JSON.stringify({ name: "test", repo_group: "xzf" }),
       headers: { "Content-Type": "application/json" },
     })
     expect(res.status).toBe(201)
@@ -86,7 +86,7 @@ describe("Server API", () => {
   it("GET /api/workspaces/:id returns created workspace", async () => {
     const createRes = await app.request("/api/workspaces", {
       method: "POST",
-      body: JSON.stringify({ name: "fetch-test", org: "xzf" }),
+      body: JSON.stringify({ name: "fetch-test", repo_group: "xzf" }),
       headers: { "Content-Type": "application/json" },
     })
     const created = await createRes.json()
@@ -108,7 +108,7 @@ describe("Server API", () => {
   it("PUT /api/workspaces/:id updates workspace", async () => {
     const createRes = await app.request("/api/workspaces", {
       method: "POST",
-      body: JSON.stringify({ name: "update-test", org: "xzf" }),
+      body: JSON.stringify({ name: "update-test", repo_group: "xzf" }),
       headers: { "Content-Type": "application/json" },
     })
     const created = await createRes.json()
@@ -126,7 +126,7 @@ describe("Server API", () => {
   it("DELETE /api/workspaces/:id deletes workspace", async () => {
     const createRes = await app.request("/api/workspaces", {
       method: "POST",
-      body: JSON.stringify({ name: "delete-test", org: "xzf" }),
+      body: JSON.stringify({ name: "delete-test", repo_group: "xzf" }),
       headers: { "Content-Type": "application/json" },
     })
     const created = await createRes.json()
@@ -151,7 +151,7 @@ describe("Server API", () => {
     const res = await app.request("/api/workspaces", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ name: "Test", org: "nonexistent" }),
+      body: JSON.stringify({ name: "Test", repo_group: "nonexistent" }),
     })
     expect(res.status).toBe(400)
     const data = await res.json() as { error: string }
@@ -178,7 +178,7 @@ describe("Server API", () => {
   it("GET /api/workspaces/:id/workflows returns empty list", async () => {
     const createRes = await app.request("/api/workspaces", {
       method: "POST",
-      body: JSON.stringify({ name: "wf-test", org: "xzf" }),
+      body: JSON.stringify({ name: "wf-test", repo_group: "xzf" }),
       headers: { "Content-Type": "application/json" },
     })
     const created = await createRes.json()
@@ -192,7 +192,7 @@ describe("Server API", () => {
   it("POST /api/workspaces/:id/executions creates execution", async () => {
     const createWs = await app.request("/api/workspaces", {
       method: "POST",
-      body: JSON.stringify({ name: "exec-test", org: "xzf" }),
+      body: JSON.stringify({ name: "exec-test", repo_group: "xzf" }),
       headers: { "Content-Type": "application/json" },
     })
     const ws = await createWs.json()
@@ -212,7 +212,7 @@ describe("Server API", () => {
   it("POST /api/workspaces/:id/executions/:eid/retry returns 400 for non-failed execution", async () => {
     const createWs = await app.request("/api/workspaces", {
       method: "POST",
-      body: JSON.stringify({ name: "retry-test", org: "xzf" }),
+      body: JSON.stringify({ name: "retry-test", repo_group: "xzf" }),
       headers: { "Content-Type": "application/json" },
     })
     const ws = await createWs.json()
@@ -236,7 +236,7 @@ describe("Server API", () => {
   it("GET /api/workspaces/:id/executions/:eid/logs returns SSE stream", async () => {
     const createWs = await app.request("/api/workspaces", {
       method: "POST",
-      body: JSON.stringify({ name: "sse-test", org: "xzf" }),
+      body: JSON.stringify({ name: "sse-test", repo_group: "xzf" }),
       headers: { "Content-Type": "application/json" },
     })
     const ws = await createWs.json()
@@ -273,7 +273,7 @@ describe("Server API", () => {
 
   it("POST /api/workspaces/:id/chat/sessions/:sid/messages sends message", async () => {
     const wsService = new WorkspaceService(new WorkspaceDAO(getDb()))
-    const ws = wsService.create({ name: "ws-msg-test", org: "xzf", path: "/tmp/ws-msg-test" })
+    const ws = wsService.create({ name: "ws-msg-test", repo_group: "xzf", path: "/tmp/ws-msg-test" })
 
     const sessionRes = await app.request(`/api/workspaces/${ws.id}/chat/sessions`, {
       method: "POST",

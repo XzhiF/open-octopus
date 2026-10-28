@@ -10,14 +10,11 @@ export function createSafetyRoutes(safetyDAO: SafetyDAO): Hono {
    */
   safety.get('/safety/events', (c) => {
     try {
-      const org = c.req.header('X-Octopus-Org') || (c.get('org') as string)
-      if (!org) {
-        return c.json(createAgentError('ORG_NOT_FOUND', 'Organization not resolved'), 403)
-      }
+      const org = c.req.header('X-Octopus-Org') || (c.get('org') as string) || ''
 
       const limit = Math.min(parseInt(c.req.query('limit') ?? '50', 10), 200)
 
-      const events = safetyDAO.findSafetyEventsWithFilters(org, { limit })
+      const events = safetyDAO.findSafetyEventsWithFilters({ limit })
 
       return c.json({
         items: events.map((e) => ({

@@ -357,7 +357,6 @@ export class HarnessController {
       skill_name: `harness-${report.detector}`,
       content,
       source_session_id: null,
-      org,
       created_at: timestamp,
       scope: "harness",
       scope_ref: report.detector,

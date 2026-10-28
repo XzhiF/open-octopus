@@ -18,11 +18,6 @@ export function createSessionRoutes(sessionDAO: AgentSessionDAO): Hono {
    */
   sessions.post('/sessions', async (c) => {
     try {
-      const org = c.req.header('X-Octopus-Org') || (c.get('org') as string)
-      if (!org) {
-        return c.json(createAgentError('ORG_NOT_FOUND', 'Organization not resolved'), 403)
-      }
-
       let body: { clone_name?: string; cwd?: string; workspace_id?: string; identity_clone?: string } = {}
       try {
         const raw = await c.req.json()
@@ -43,7 +38,7 @@ export function createSessionRoutes(sessionDAO: AgentSessionDAO): Hono {
           else workspaceId = null
         }
         if (!workspaceId && cwd) {
-          const ws = wsService.attachDirectory({ org, path: cwd })
+          const ws = wsService.attachDirectory({ path: cwd })
           workspaceId = ws.id
           cwd = ws.path.replace(/^~/, require('os').homedir())
         }
@@ -55,13 +50,13 @@ export function createSessionRoutes(sessionDAO: AgentSessionDAO): Hono {
           cwd = resolveCloneHomeDir(body.identity_clone)
         }
         if (!workspaceId && !cwd) {
-          const ws = wsService.ensureMainWorkspace(org)
+          const ws = wsService.ensureMainWorkspace()
           workspaceId = ws.id
           cwd = ws.path.replace(/^~/, require('os').homedir())
         }
       }
 
-      const session = getSessionService().createSession(org, {
+      const session = getSessionService().createSession({
         clone_name: body.clone_name,
         cwd,
         workspace_id: workspaceId,
@@ -80,17 +75,12 @@ export function createSessionRoutes(sessionDAO: AgentSessionDAO): Hono {
    */
   sessions.get('/sessions', (c) => {
     try {
-      const org = c.req.header('X-Octopus-Org') || (c.get('org') as string)
-      if (!org) {
-        return c.json(createAgentError('ORG_NOT_FOUND', 'Organization not resolved'), 403)
-      }
-
       const limit = parseInt(c.req.query('limit') ?? '20', 10)
       const cursor = c.req.query('cursor')
       const clone = c.req.query('clone')
       const session_type = c.req.query('session_type')
 
-      const result = getSessionService().listSessions(org, {
+      const result = getSessionService().listSessions({
         limit: Math.min(limit, 100),
         cursor,
         clone,
@@ -111,10 +101,6 @@ export function createSessionRoutes(sessionDAO: AgentSessionDAO): Hono {
    */
   sessions.get('/sessions/running', (c) => {
     try {
-      const org = c.req.header('X-Octopus-Org') || (c.get('org') as string)
-      if (!org) {
-        return c.json(createAgentError('ORG_NOT_FOUND', 'Organization not resolved'), 403)
-      }
       const requested = parseInt(c.req.query('limit') ?? '100', 10)
       const limit = Number.isFinite(requested) ? Math.min(Math.max(requested, 1), 200) : 100
 
@@ -128,7 +114,7 @@ export function createSessionRoutes(sessionDAO: AgentSessionDAO): Hono {
       }> = []
 
       for (const active of listActiveStreams()) {
-        const session = getSessionService().getSession(org, active.sessionId)
+        const session = getSessionService().getSession(active.sessionId)
         if (!session) continue
         items.push({
           id: session.id,
@@ -154,13 +140,8 @@ export function createSessionRoutes(sessionDAO: AgentSessionDAO): Hono {
    */
   sessions.get('/sessions/:id', async (c) => {
     try {
-      const org = c.req.header('X-Octopus-Org') || (c.get('org') as string)
-      if (!org) {
-        return c.json(createAgentError('ORG_NOT_FOUND', 'Organization not resolved'), 403)
-      }
-
       const id = c.req.param('id')
-      const session = getSessionService().getSession(org, id)
+      const session = getSessionService().getSession(id)
       if (!session) {
         return c.json(createAgentError('NOT_FOUND', `Session ${id} not found`), 404)
       }
@@ -235,15 +216,10 @@ export function createSessionRoutes(sessionDAO: AgentSessionDAO): Hono {
    */
   sessions.put('/sessions/:id', async (c) => {
     try {
-      const org = c.req.header('X-Octopus-Org') || (c.get('org') as string)
-      if (!org) {
-        return c.json(createAgentError('ORG_NOT_FOUND', 'Organization not resolved'), 403)
-      }
-
       const id = c.req.param('id')
       const body = await c.req.json<{ title: string }>()
 
-      const updated = getSessionService().updateSession(org, id, { title: body.title })
+      const updated = getSessionService().updateSession(id, { title: body.title })
       if (!updated) {
         return c.json(createAgentError('NOT_FOUND', `Session ${id} not found`), 404)
       }
@@ -263,10 +239,9 @@ export function createSessionRoutes(sessionDAO: AgentSessionDAO): Hono {
    * user message by the chat route (system prompt/tools stay frozen).
    */
   sessions.get('/sessions/:id/role', (c) => {
-    const org = c.req.header('X-Octopus-Org') || (c.get('org') as string)
     const id = c.req.param('id')
     const session = sessionDAO.findById(id)
-    if (!session || session.is_deleted || (org && session.org !== org)) {
+    if (!session || session.is_deleted) {
       return c.json(createAgentError('NOT_FOUND', `Session ${id} not found`), 404)
     }
     const state = new SessionCacheContextDAO(sessionDAO.getDb()).getRoleState(id)
@@ -274,10 +249,9 @@ export function createSessionRoutes(sessionDAO: AgentSessionDAO): Hono {
   })
 
   sessions.put('/sessions/:id/role', async (c) => {
-    const org = c.req.header('X-Octopus-Org') || (c.get('org') as string)
     const id = c.req.param('id')
     const session = sessionDAO.findById(id)
-    if (!session || session.is_deleted || (org && session.org !== org)) {
+    if (!session || session.is_deleted) {
       return c.json(createAgentError('NOT_FOUND', `Session ${id} not found`), 404)
     }
     let body: { expert?: unknown } = {}
@@ -299,13 +273,8 @@ export function createSessionRoutes(sessionDAO: AgentSessionDAO): Hono {
    */
   sessions.delete('/sessions/:id', async (c) => {
     try {
-      const org = c.req.header('X-Octopus-Org') || (c.get('org') as string)
-      if (!org) {
-        return c.json(createAgentError('ORG_NOT_FOUND', 'Organization not resolved'), 403)
-      }
-
       const id = c.req.param('id')
-      const deleted = getSessionService().deleteSession(org, id)
+      const deleted = getSessionService().deleteSession(id)
       if (!deleted) {
         return c.json(createAgentError('NOT_FOUND', `Session ${id} not found`), 404)
       }

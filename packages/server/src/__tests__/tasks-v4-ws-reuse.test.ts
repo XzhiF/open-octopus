@@ -125,7 +125,7 @@ function insertV4Task(status = "ready"): string {
     fs.writeFileSync(path.join(dir, "spec.md"), `# ${p.name}\n`)
   }
   db.prepare(`
-    INSERT INTO tasks (id, org, name, status, source_chat_session_id, task_spec,
+    INSERT INTO tasks (id, repo_group, name, status, source_chat_session_id, task_spec,
       authoring_resources, resources, skills, project_ids, workflow_ref, version,
       deleted_at, created_at, updated_at, completed_at, workspace_id)
     VALUES (?, ?, ?, ?, NULL, ?, '[]', '[]', '[]', '[]', NULL, 1, NULL, ?, ?, NULL, NULL)
@@ -210,8 +210,7 @@ describe("ticket 05 (票03 形状) — v4 workspace reuse + dispatchPhaseRound",
   // ── AC3 — same-name dir is an ERROR, not a silent rmSync rebuild ─────
   describe("AC3: createFromSpec same-name conflict", () => {
     function specInput(name: string) {
-      return {
-        org: ORG,
+      return {
         name,
         projects: [],
         branch_prefix: "taskpool-x",
@@ -437,7 +436,7 @@ describe("ticket 05 (票03 形状) — v4 workspace reuse + dispatchPhaseRound",
       const p = path.join(fakeHome, ".octopus", "orgs", ORG, "workspaces", name)
       fs.mkdirSync(p, { recursive: true })
       db.prepare(
-        "INSERT INTO workspaces (id, name, org, path, source, status, created_at, updated_at) VALUES (?, ?, ?, ?, 'scheduler', 'active', datetime('now'), datetime('now'))",
+        "INSERT INTO workspaces (id, name, repo_group, path, source, status, created_at, updated_at) VALUES (?, ?, ?, ?, 'scheduler', 'active', datetime('now'), datetime('now'))",
       ).run(id, name, ORG, p)
       return p
     }

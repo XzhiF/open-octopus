@@ -31,8 +31,7 @@ function makeTokenDaoMock() {
 function makeMeta() {
   return {
     executionId: "exec-1",
-    nodeId: "node-a",
-    org: "test-org",
+    nodeId: "node-a",
     workspaceId: "ws-1",
     workflowRef: "test.yaml",
   }

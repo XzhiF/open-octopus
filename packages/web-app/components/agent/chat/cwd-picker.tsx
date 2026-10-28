@@ -128,7 +128,7 @@ export function CwdPicker({ mode, org, value, onChange, disabled, hero, defaultL
     if (!browse || !browse.canSelect || busy) return
     setBusy(true)
     try {
-      const ws = await attachWorkspaceDirectory({ org, path: browse.path }) as Workspace
+      const ws = await attachWorkspaceDirectory({ repo_group: org, path: browse.path }) as Workspace
       const base = browse.path.replace(/[\\/]+$/, '').split(/[\\/]/).pop() || browse.path
       onChange({
         kind: 'directory',

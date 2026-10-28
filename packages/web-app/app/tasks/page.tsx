@@ -26,7 +26,6 @@ import { useBillingCurrency } from "@/lib/billing-currency"
 import { clockShort } from "@/components/tasks/run-console/phase-status"
 import { subscribeSSE } from "@/lib/sse-manager"
 import { getServerUrl } from "@/lib/server-config"
-import { TaskModal } from "@/components/tasks/task-modal"
 import { runErrorOf } from "@/components/tasks/execution-summary"
 import { TriggerDialog } from "@/components/tasks/trigger-dialog"
 import {
@@ -118,12 +117,8 @@ export default function TasksPage() {
   // 不改卡片样式/布局（任务板 UI 改版属 Out of Scope）。
   const [searchTerm, setSearchTerm] = useState("")
   const searchQRef = useRef<string | undefined>(undefined)
-  // null task = new-task authoring ([+新建]); a Task = card click.
-  const [modalTask, setModalTask] = useState<TaskView | null>(null)
-  const [modalOpen, setModalOpen] = useState(false)
-  // 票 12 (K14)→ 2026-09-16 改版: 待验收列卡「验收」= 打开任务控制台并落在
-  // 「验货台」tab（独立三栏弹窗 AcceptanceModal 退役）。
-  const [acceptTaskId, setAcceptTaskId] = useState<string | null>(null)
+  // 2026-10-28 task-thread: every task opens its unified chat; the legacy
+  // TaskModal / run-console shell is no longer reachable from the board.
 
   // task-phase-redesign 票 11: v4 卡片的列归属/角标/⏳ 都读 derived
   // （deriveTaskView 唯一真相，票 07 嵌在 GET /:id 上 — list 端点不带）。
@@ -263,15 +258,8 @@ export default function TasksPage() {
     return () => unsub()
   }, [fetchTasks])
 
-  // Keep the open modal's task in sync with the latest fetched row (version/
-  // status) — same pattern as the v1 SchedulerJob sync, now against Task.
   const tasksRef = useRef<TaskView[]>(tasks)
   useEffect(() => { tasksRef.current = tasks }, [tasks])
-  useEffect(() => {
-    if (!modalOpen || !modalTask) return
-    const fresh = tasksRef.current.find((t) => t.id === modalTask.id)
-    if (fresh && fresh !== modalTask) setModalTask(fresh)
-  }, [tasks, modalOpen, modalTask])
 
   const openNew = () => {
     // AI-native: task creation is a chat session, not the legacy template modal.
@@ -285,17 +273,12 @@ export default function TasksPage() {
     window.dispatchEvent(new Event('octopus:focus-desktop'))
     window.dispatchEvent(new CustomEvent('octopus:close-app', { detail: { id: 'tasks' } }))
   }
-  const close = () => { setModalOpen(false); setModalTask(null); setAcceptTaskId(null) }
 
-  // Deep link: /tasks?task=<id> (票03: the scheduler table's 任务 origin badge that
-  // used to emit it is gone with the origin_* columns — the URL itself stays, it is
-  // the board's own shareable handle on a task). Opens that task's modal once the
-  // fetched board contains it; the ref guard means a manual close is not re-opened
-  // by the next 10s poll.
+  // Deep link: /tasks?task=<id> — the board's shareable handle on a task.
   const searchParams = useSearchParams()
   const deepLinkAppliedRef = useRef(false)
   useEffect(() => {
-    if (deepLinkAppliedRef.current || modalOpen || tasks.length === 0) return
+    if (deepLinkAppliedRef.current || tasks.length === 0) return
     const targetId = searchParams.get("task")
     if (!targetId) return
     const match = tasks.find((t) => t.id === targetId)
@@ -303,7 +286,7 @@ export default function TasksPage() {
       deepLinkAppliedRef.current = true
       openCard(match)
     }
-  }, [tasks, modalOpen, searchParams])
+  }, [tasks, searchParams])
 
   // Delete a draft task (soft-delete). Only draft tasks are deletable from
   // the kanban card; non-draft tasks require abort-first (server 409 guard).
@@ -376,23 +359,14 @@ export default function TasksPage() {
       await deleteTask(taskId)
       toast.success("草稿已废弃")
       setDeletingTaskId(null)
-      // Close the modal if the deleted task was open
-      if (modalTask?.id === taskId) close()
       void fetchTasks()
     } catch (err: unknown) {
       toast.error(err instanceof Error ? err.message : "删除失败")
     } finally {
       setDeleteBusy(false)
     }
-  }, [fetchTasks, modalTask])
-
-  // New-task flow: the task-author clone + autosave seam (04) create a draft
-  // (linked via source_chat_session_id); adopt it so [入队] enables without
-  // closing the modal.
-  const handleDraftResolved = useCallback((draft: TaskView) => {
-    setModalTask(draft)
-    void fetchTasks()
   }, [fetchTasks])
+
 
   // 票 11 (K3): v4 列归属用 **derived.taskStatus 优先**（持久 done/failed 镜像
   // 会把待验收任务错归「完成」列 — 票 07 活体交互 #1），再按八桶分组、五列
@@ -548,15 +522,6 @@ export default function TasksPage() {
           </div>
         )}
       </div>
-
-      <TaskModal
-        open={modalOpen}
-        onOpenChange={(o) => { if (!o) close(); else setModalOpen(true) }}
-        task={modalTask}
-        onMutated={fetchTasks}
-        onDraftResolved={handleDraftResolved}
-        startOnAcceptance={acceptTaskId !== null && acceptTaskId === modalTask?.id}
-      />
 
       {/* v39 trigger dialog — armed from ready-column cards (or modal) */}
       <TriggerDialog

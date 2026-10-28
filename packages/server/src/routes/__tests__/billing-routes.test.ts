@@ -245,7 +245,7 @@ describe('改价即回算（NEW-r2 语义翻转：账本不落钱，历史随规
       id: 'live-1', node_execution_id: null, execution_id: null, turn_index: 0, call_index: 0,
       message_id: null, model: 'E2E_TEST_LIVE', stop_reason: null, timestamp: 1_700_000_000_000,
       duration_ms: 100, ttft_ms: null, input_tokens: 1000, output_tokens: 0, cache_read_tokens: 0, cache_creation_tokens: 0,
-      org: 'default', workspace_id: 'ws-live', workflow_ref: null, node_id: null, session_id: null, instance_id: 'inst-live',
+      repo_group: 'default', workspace_id: 'ws-live', workflow_ref: null, node_id: null, session_id: null, instance_id: 'inst-live',
     })
     const created = await jsonReq('POST', '/api/system/billing/prices', {
       vendor: 'E2E_TEST_vendor', model_id: 'E2E_TEST_LIVE', input_unit_price: 1000, output_unit_price: 0,

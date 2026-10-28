@@ -44,7 +44,8 @@ export interface Workspace {
   name: string
   description: string
   status: WorkspaceStatus
-  org: string
+  /** Repo-registry key only (org demotion). */
+  repo_group?: string | null
   projectCount: number
   workflowCount: number
   createdAt: string
@@ -269,7 +270,6 @@ export interface ExecutionTreeNode {
   createdAt: string
   updatedAt: string
   workspaceId: string
-  org: string
   nodeType?: "normal" | "fork"
   branch?: string
   startCommitId?: Record<string, string>

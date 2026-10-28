@@ -135,7 +135,7 @@ function seed(opts: {
   const wsPath = path.join(fakeHome, ".octopus", "orgs", ORG, "workspaces", `${taskId}-ws`)
   fs.mkdirSync(wsPath, { recursive: true })
   db.prepare(
-    "INSERT INTO workspaces (id, name, org, path, source, status, task_id, created_at, updated_at) VALUES (?, ?, ?, ?, 'task', 'active', ?, datetime('now'), datetime('now'))",
+    "INSERT INTO workspaces (id, name, repo_group, path, source, status, task_id, created_at, updated_at) VALUES (?, ?, ?, ?, 'task', 'active', ?, datetime('now'), datetime('now'))",
   ).run(workspaceId, `task:${taskId}`, ORG, wsPath, taskId)
 
   const spec = {
@@ -153,7 +153,7 @@ function seed(opts: {
     })),
   }
   db.prepare(`
-    INSERT INTO tasks (id, org, name, status, source_chat_session_id, task_spec,
+    INSERT INTO tasks (id, repo_group, name, status, source_chat_session_id, task_spec,
       authoring_resources, resources, skills, project_ids, workflow_ref, version,
       deleted_at, created_at, updated_at, completed_at, workspace_id)
     VALUES (?, ?, ?, ?, NULL, ?, '[]', '[]', '[]', '[]', NULL, 1, NULL, ?, ?, NULL, ?)

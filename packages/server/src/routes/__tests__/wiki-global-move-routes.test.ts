@@ -10,7 +10,7 @@ import type { GlobalMoveReport } from "../../services/knowledge/wiki/global-move
 
 const FAKE_REPORT: GlobalMoveReport = {
   dryRun: true,
-  wikiMoves: [{ org: "xzf-dev", from: "a", to: "b", action: "move", commits: 2 }],
+  wikiMoves: [{ repo_group: "xzf-dev", from: "a", to: "b", action: "move", commits: 2 }],
   rekey: { beforeTotal: 3, beforeByOrg: { "xzf-dev": 3 }, projectedTotal: 3, collisions: 0, applied: false },
   preferences: [],
   backupHint: "VACUUM INTO",
@@ -35,7 +35,7 @@ describe("POST /api/knowledge/wiki/global-move (ticket 03 command surface)", () 
     expect(seen).toEqual([false])
     const data = await res.json()
     expect(data.dryRun).toBe(true)
-    expect(data.wikiMoves[0]).toMatchObject({ org: "xzf-dev", action: "move", commits: 2 })
+    expect(data.wikiMoves[0]).toMatchObject({ repo_group: "xzf-dev", action: "move", commits: 2 })
     expect(data.backupHint).toContain("VACUUM INTO")
   })
 

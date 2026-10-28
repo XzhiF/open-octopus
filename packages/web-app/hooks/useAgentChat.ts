@@ -81,7 +81,19 @@ export interface UseAgentChatApiOverride {
   checkRunning?: (id: string) => Promise<{ running: boolean; partial: boolean }>
 }
 
-export function useAgentChat(sessionId: string | null, options?: { onTitleUpdate?: (sessionId: string, title: string) => void; api?: UseAgentChatApiOverride }) {
+export function useAgentChat(sessionId: string | null, options?: {
+  onTitleUpdate?: (sessionId: string, title: string) => void
+  api?: UseAgentChatApiOverride
+  /** Task-thread execution turn landed a [quick-edit] commit. */
+  onQuickEditCommit?: (data: {
+    sessionId?: string
+    taskId?: string
+    repo: string
+    branch: string
+    commit: string
+    message: string
+  }) => void
+}) {
   const [messages, setMessages] = useState<AgentMessage[]>([])
   const [streaming, setStreaming] = useState(false)
   const [streamContent, setStreamContent] = useState('')
@@ -354,6 +366,9 @@ export function useAgentChat(sessionId: string | null, options?: { onTitleUpdate
     const handlers: SSEHandlers = {
       onContextUsage: (data) => {
         setContextUsage(data)
+      },
+      onQuickEditCommit: (data) => {
+        options?.onQuickEditCommit?.(data)
       },
       onTextDelta: (content) => {
         streamContentRef.current += content

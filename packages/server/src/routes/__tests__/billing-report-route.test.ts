@@ -43,7 +43,7 @@ function row(id: string, over: Partial<LlmCallRow> & { model?: string; ts: numbe
     id, node_execution_id: "rt-n1", execution_id: "rt-e1", turn_index: 1, call_index: 0,
     message_id: null, model: MODEL, stop_reason: null, timestamp: ts, duration_ms: 100, ttft_ms: null,
     input_tokens: 0, output_tokens: 0, cache_read_tokens: 0, cache_creation_tokens: 0,
-    org: "default", workspace_id: "ws-rt", workflow_ref: "wf.yaml", node_id: "n1", session_id: "s-rt", instance_id: "i-rt",
+    repo_group: "default", workspace_id: "ws-rt", workflow_ref: "wf.yaml", node_id: "n1", session_id: "s-rt", instance_id: "i-rt",
     source_path: "workflow" as LlmCallSourcePath,
     ...rest,
   }
@@ -56,7 +56,7 @@ beforeAll(() => {
   initDb(dbPath)
   const db = getDb()
   const t = new Date().toISOString()
-  db.prepare("INSERT INTO workspaces (id, name, path, org, created_at, updated_at) VALUES ('ws-rt','RT','/tmp/rt','default',?,?)").run(t, t)
+  db.prepare("INSERT INTO workspaces (id, name, path, repo_group, created_at, updated_at) VALUES ('ws-rt','RT','/tmp/rt','default',?,?)").run(t, t)
   db.prepare(`INSERT INTO executions (id, workspace_id, parent_id, workflow_ref, workflow_name, status, started_at, completed_at, org, created_at, updated_at)
     VALUES ('rt-e1','ws-rt','0','wf.yaml','RT','completed',?,?,?,?,?)`).run(t, t, "default", t, t)
   db.prepare("INSERT INTO node_executions (id, execution_id, node_id, node_type, status, retry_count, duration, started_at, completed_at) VALUES ('rt-n1','rt-e1','n1','agent','completed',0,1,?,?)").run(t, t)

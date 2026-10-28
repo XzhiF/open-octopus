@@ -29,7 +29,7 @@ import {
 
 function makeTask(overrides: Partial<Task> & { id: string }): Task {
   return {
-    org: "default",
+    repo_group: "default",
     name: overrides.id,
     status: "draft",
     task_spec: { goal: "g", ac: ["a"], resources: [], authoring_resources: [], skill_groups: [], decisions: [], ac_confirmed: [] },
@@ -124,14 +124,14 @@ describe("listTasks", () => {
     expect(result.items.map((t) => t.id)).toEqual(["t1", "t2"])
   })
 
-  it("forwards status + org as query params", async () => {
+  it("forwards status + repo_group as query params", async () => {
     mockFetchOnce({ items: [] })
 
-    await listTasks({ status: "draft", org: "acme" })
+    await listTasks({ status: "draft", repo_group: "acme" })
 
     const url = (fetch as unknown as { mock: { calls: [string][] } }).mock.calls[0][0] as string
     expect(url).toContain("status=draft")
-    expect(url).toContain("org=acme")
+    expect(url).toContain("repo_group=acme")
   })
 
   it("omits undefined params", async () => {
@@ -141,7 +141,7 @@ describe("listTasks", () => {
 
     const url = (fetch as unknown as { mock: { calls: [string][] } }).mock.calls[0][0] as string
     expect(url).not.toContain("status=")
-    expect(url).not.toContain("org=")
+    expect(url).not.toContain("repo_group=")
   })
 
   it("throws on HTTP error with body.error message", async () => {
@@ -201,14 +201,14 @@ describe("createTask", () => {
     const created = makeTask({ id: "new", name: "My task" })
     mockFetchOnce(created)
 
-    const result = await createTask({ org: "acme", name: "My task", source_chat_session_id: "sess-1" })
+    const result = await createTask({ repo_group: "acme", name: "My task", source_chat_session_id: "sess-1" })
 
     const [url, init] = (fetch as unknown as { mock: { calls: [string, RequestInit][] } }).mock.calls[0]
     expect(url).toBe("http://localhost:3001/api/tasks")
     expect(init.method).toBe("POST")
     expect(init.headers).toMatchObject({ "Content-Type": "application/json" })
     expect(JSON.parse(init.body as string)).toMatchObject({
-      org: "acme",
+      repo_group: "acme",
       name: "My task",
       source_chat_session_id: "sess-1",
     })
@@ -223,7 +223,7 @@ describe("createTask", () => {
     mockFetchOnce(created)
 
     await createTask({
-      org: "E2E_TD_org",
+      repo_group: "E2E_TD_org",
       name: "v3 task",
       source_chat_session_id: "sess-1",
       task_type: "coding",

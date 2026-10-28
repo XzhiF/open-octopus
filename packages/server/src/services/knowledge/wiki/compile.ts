@@ -308,7 +308,7 @@ export function isHubChild(e: { relPath: string }, allPaths: Set<string>): boole
  */
 export function renderWikiIndex(entries: ScannedEntry[], org: string, optionalEntries: ScannedEntry[] = []): string {
   const lines: string[] = []
-  lines.push(`# Octopus Knowledge Wiki — ${org}`, "")
+  lines.push(`# Octopus Knowledge Wiki`, "")
   lines.push("> 导航协议：先读本索引 → 选页整读 → 未命中再 search API。禁止全库遍历。", "")
 
   lines.push("## 必读")
@@ -425,10 +425,10 @@ export class WikiCompileService {
   private readonly articles: WikiArticleDAO
   private readonly ruleFormJudge?: RuleFormJudge
 
-  constructor(opts: { db: Database.Database; org: string; rootDir?: string; git?: GitRunner; ruleFormJudge?: RuleFormJudge }) {
+  constructor(opts: { db: Database.Database; org?: string; rootDir?: string; git?: GitRunner; ruleFormJudge?: RuleFormJudge }) {
     this.db = opts.db
-    this.org = opts.org
-    this.root = resolveWikiRoot(opts.org, opts.rootDir)
+    this.org = opts.org ?? ''
+    this.root = resolveWikiRoot(this.org, opts.rootDir)
     this.git = opts.git ?? spawnGit(this.root)
     this.articles = new WikiArticleDAO(opts.db)
     this.ruleFormJudge = opts.ruleFormJudge
@@ -486,7 +486,7 @@ export class WikiCompileService {
       if (seen.has(a)) throw new Error(`ANCHOR_CONFLICT: 锚点 '${a}' 在本词条内重复`)
       seen.add(a)
     }
-    const others = this.articles.listOthers(this.org, meta.id)
+    const others = this.articles.listOthers(meta.id)
     for (const other of others) {
       for (const a of extractRuleAnchors(other.body)) {
         if (seen.has(a)) {
@@ -539,8 +539,8 @@ export class WikiCompileService {
     const prevEntry = fs.existsSync(absPath) ? fs.readFileSync(absPath, "utf-8") : null
     const prevIndex = fs.existsSync(indexPath) ? fs.readFileSync(indexPath, "utf-8") : null
     const prevLog = fs.existsSync(logPath) ? fs.readFileSync(logPath, "utf-8") : null
-    const prevRow = this.articles.get(this.org, meta.id)
-    const prevRowid = this.articles.getRowid(this.org, meta.id)
+    const prevRow = this.articles.get(meta.id)
+    const prevRowid = this.articles.getRowid(meta.id)
     const prevFts = prevRowid !== undefined ? this.articles.getFtsByRowid(prevRowid) : undefined
 
     try {
@@ -558,7 +558,6 @@ export class WikiCompileService {
 
       // ── 4. DB 行 + FTS 手工对齐同步（单事务；FTS 失败非致命）──
       const upsert: Omit<WikiArticleRow, "updated_at"> = {
-        org: this.org,
         id: meta.id,
         domain: meta.domain,
         title: meta.title,
@@ -575,7 +574,7 @@ export class WikiCompileService {
       }
       this.db.transaction(() => {
         this.articles.upsert(upsert)
-        const rowid = this.articles.getRowid(this.org, meta.id)!
+        const rowid = this.articles.getRowid(meta.id)!
         try {
           this.articles.deleteFts(rowid)
           this.articles.insertFts({
@@ -693,7 +692,7 @@ export class WikiCompileService {
           if (mine.has(a)) throw new Error(`ANCHOR_CONFLICT: 锚点 '${a}' 在批内双花（${p.relPath} 与 ${q.relPath}）`)
         }
       }
-      for (const other of this.articles.listOthers(this.org, p.meta.id)) {
+      for (const other of this.articles.listOthers(p.meta.id)) {
         if (batchPaths.has(other.path)) continue
         for (const a of extractRuleAnchors(other.body)) {
           if (mine.has(a)) throw new Error(`ANCHOR_CONFLICT: 锚点 '${a}' 已存在于 ${other.path}（DB 快照，锚点全库唯一）`)
@@ -755,10 +754,10 @@ export class WikiCompileService {
     const fileSnapshots = dirty.map(p => ({ absPath: p.absPath, prev: fs.existsSync(p.absPath) ? fs.readFileSync(p.absPath, "utf-8") : null }))
     const dbSnapshots = dirty.map(p => ({
       id: p.meta.id,
-      prevRow: this.articles.get(this.org, p.meta.id),
-      prevRowid: this.articles.getRowid(this.org, p.meta.id),
+      prevRow: this.articles.get(p.meta.id),
+      prevRowid: this.articles.getRowid(p.meta.id),
       prevFts: (() => {
-        const rid = this.articles.getRowid(this.org, p.meta.id)
+        const rid = this.articles.getRowid(p.meta.id)
         return rid !== undefined ? this.articles.getFtsByRowid(rid) : undefined
       })(),
     }))
@@ -786,8 +785,7 @@ export class WikiCompileService {
         const warnings = p.warnings
         this.db.transaction(() => {
           const upsert: Omit<WikiArticleRow, "updated_at"> = {
-            org: this.org,
-            id: p.meta.id,
+                id: p.meta.id,
             domain: p.meta.type,
             title: p.meta.title,
             summary: p.meta.summary,
@@ -801,7 +799,7 @@ export class WikiCompileService {
             links: computeArticleLinks(p.meta.links, p.body),
           }
           this.articles.upsert(upsert)
-          const rowid = this.articles.getRowid(this.org, p.meta.id)!
+          const rowid = this.articles.getRowid(p.meta.id)!
           try {
             this.articles.deleteFts(rowid)
             this.articles.insertFts({
@@ -843,13 +841,13 @@ export class WikiCompileService {
           for (const snap of dbSnapshots) {
             if (snap.prevRow) {
               this.articles.upsert(snap.prevRow)
-              const rid = this.articles.getRowid(this.org, snap.prevRow.id)!
+              const rid = this.articles.getRowid(snap.prevRow.id)!
               this.articles.deleteFts(rid)
               if (snap.prevFts) this.articles.insertFts({ ...snap.prevFts, rowid: rid })
             } else {
-              const rid = this.articles.getRowid(this.org, snap.id)
+              const rid = this.articles.getRowid(snap.id)
               if (rid !== undefined) this.articles.deleteFts(rid)
-              this.articles.delete(this.org, snap.id)
+              this.articles.delete(snap.id)
             }
           }
         })()
@@ -895,7 +893,7 @@ export class WikiCompileService {
       if (seen.has(a)) throw new Error(`ANCHOR_CONFLICT: 锚点 '${a}' 在本判例内重复`)
       seen.add(a)
     }
-    const others = this.articles.listOthers(this.org, c.id)
+    const others = this.articles.listOthers(c.id)
     for (const other of others) {
       for (const a of extractRuleAnchors(other.body)) {
         if (seen.has(a)) throw new Error(`ANCHOR_CONFLICT: 锚点 '${a}' 已存在于 ${other.path}（锚点全库唯一、永不复用）`)
@@ -958,8 +956,8 @@ export class WikiCompileService {
     const prevEntry = fs.existsSync(absPath) ? fs.readFileSync(absPath, "utf-8") : null
     const prevIndex = fs.existsSync(indexPath) ? fs.readFileSync(indexPath, "utf-8") : null
     const prevLog = fs.existsSync(logPath) ? fs.readFileSync(logPath, "utf-8") : null
-    const prevRow = this.articles.get(this.org, c.id)
-    const prevRowid = this.articles.getRowid(this.org, c.id)
+    const prevRow = this.articles.get(c.id)
+    const prevRowid = this.articles.getRowid(c.id)
     const prevFts = prevRowid !== undefined ? this.articles.getFtsByRowid(prevRowid) : undefined
 
     try {
@@ -975,7 +973,6 @@ export class WikiCompileService {
       atomicWrite(logPath, logBase + formatLogRow({ action, entry: relPath, note, source, reviewer }))
 
       const upsert: Omit<WikiArticleRow, "updated_at"> = {
-        org: this.org,
         id: c.id,
         domain: "cases",
         title: view.title,
@@ -991,7 +988,7 @@ export class WikiCompileService {
       }
       this.db.transaction(() => {
         this.articles.upsert(upsert)
-        const rowid = this.articles.getRowid(this.org, c.id)!
+        const rowid = this.articles.getRowid(c.id)!
         try {
           this.articles.deleteFts(rowid)
           this.articles.insertFts({
@@ -1227,7 +1224,7 @@ export class WikiCompileService {
       }
     }
     // 退役区/搬家窗口兜底：DB 快照锚点也在唯一空间内（与 v2 管线同律）
-    for (const other of this.articles.listOthers(this.org, meta.id)) {
+    for (const other of this.articles.listOthers(meta.id)) {
       if (other.path === relPath) continue
       for (const a of extractRuleAnchors(other.body)) {
         if (seen.has(a)) {
@@ -1278,8 +1275,8 @@ export class WikiCompileService {
     const prevEntry = fs.existsSync(absPath) ? fs.readFileSync(absPath, "utf-8") : null
     const prevIndex = fs.existsSync(indexPath) ? fs.readFileSync(indexPath, "utf-8") : null
     const prevLog = fs.existsSync(logPath) ? fs.readFileSync(logPath, "utf-8") : null
-    const prevRow = this.articles.get(this.org, meta.id)
-    const prevRowid = this.articles.getRowid(this.org, meta.id)
+    const prevRow = this.articles.get(meta.id)
+    const prevRowid = this.articles.getRowid(meta.id)
     const prevFts = prevRowid !== undefined ? this.articles.getFtsByRowid(prevRowid) : undefined
 
     try {
@@ -1297,7 +1294,6 @@ export class WikiCompileService {
 
       // ── 4. DB 行 + FTS：domain 列存 v3 type 值（票04 AC6，列名不动）──
       const upsert: Omit<WikiArticleRow, "updated_at"> = {
-        org: this.org,
         id: meta.id,
         domain: meta.type,
         title: meta.title,
@@ -1313,7 +1309,7 @@ export class WikiCompileService {
       }
       this.db.transaction(() => {
         this.articles.upsert(upsert)
-        const rowid = this.articles.getRowid(this.org, meta.id)!
+        const rowid = this.articles.getRowid(meta.id)!
         try {
           this.articles.deleteFts(rowid)
           this.articles.insertFts({
@@ -1367,14 +1363,14 @@ export class WikiCompileService {
         if (prev.prevRow) {
           // 更新被失败：恢复旧行 + 按（可能已变的）新 rowid 重建旧 FTS 行
           this.articles.upsert(prev.prevRow)
-          const rid = this.articles.getRowid(this.org, prev.prevRow.id)!
+          const rid = this.articles.getRowid(prev.prevRow.id)!
           this.articles.deleteFts(rid)
           if (prev.prevFts) this.articles.insertFts({ ...prev.prevFts, rowid: rid })
         } else {
           // 新建被失败：行与 FTS 行都从未应存在，清掉本次写入
-          const rid = this.articles.getRowid(this.org, entryId)
+          const rid = this.articles.getRowid(entryId)
           if (rid !== undefined) this.articles.deleteFts(rid)
-          this.articles.delete(this.org, entryId)
+          this.articles.delete(entryId)
         }
       })()
     } catch { /* best effort — fs 真相已还原，DB 差异留给下次编译同步 */ }

@@ -19,6 +19,7 @@ import type {
   ArtifactIndexEntry,
   AssistWorkflowRun,
   TaskPhaseStatus,
+  LlmUsageSummary,
 } from "@octopus/shared"
 
 // ── Task read-model aliases (ADR-0021 票05) ─────────────────────────
@@ -157,7 +158,8 @@ export interface TaskDerivedView {
 // ============ Input types ============
 
 export interface CreateTaskInput {
-  org: string
+  /** Repo-registry key only (org demotion). */
+  repo_group?: string
   /** 必填（task-board-title 改版）：新建任务时用户输入标题，
    *  服务端拒绝空 name，不再事后由对话/autosave 生成。 */
   name: string
@@ -213,7 +215,8 @@ export interface UpdateTaskInput {
 
 export interface ListTasksParams {
   status?: TaskStatus
-  org?: string
+  /** Repo-registry key filter (org demotion). */
+  repo_group?: string
   /** 票06 (语义摘要进任务板): 服务端关键字搜索 —— 对 name ∨ semantic_summary LIKE 过滤。
    *  空/纯空白由服务端视为不过滤（回归保护）。 */
   q?: string
@@ -274,7 +277,7 @@ function buildUrl(path: string, params?: Record<string, string | undefined>): st
  *  row carrying the 票03 trigger columns + its current instance (`execution`), which
  *  is what the 「已排队」 badge and the 上一轮 status now read. */
 export async function listTasks(params?: ListTasksParams): Promise<{ items: TaskView[] }> {
-  const res = await fetch(buildUrl("", { status: params?.status, org: params?.org, q: params?.q }))
+  const res = await fetch(buildUrl("", { status: params?.status, repo_group: params?.repo_group, q: params?.q }))
   return handleResponse<{ items: TaskView[] }>(res)
 }
 
@@ -627,6 +630,80 @@ export async function postArchiveRetry(taskId: string): Promise<{ ok: boolean; t
     throw new TaskApiError(body.error ?? `HTTP ${res.status}`, res.status)
   }
   return res.json()
+}
+
+// ── 2026-10-28 task-thread: lifecycle usage / archive / reflection ────
+
+export interface TaskUsagePart extends LlmUsageSummary {
+  kind: "chat" | "execution"
+  label: string
+  session_id?: string
+  execution_id?: string
+  phase_index?: number | null
+  round_index?: number | null
+  workflow_ref?: string | null
+}
+
+export interface TaskUsagePayload {
+  task_id: string
+  summary: LlmUsageSummary
+  breakdown: TaskUsagePart[]
+}
+
+export interface ReflectionEntryWire {
+  id: string
+  title: string
+  content: string
+  target?: string
+}
+
+export interface ReflectionDecisionWire {
+  action: "ingest" | "skip"
+  at: string
+  title?: string
+  raw_path?: string
+  compile_task_id?: string
+}
+
+export interface ReflectionStoreWire {
+  task_id: string
+  created_at: string
+  entries: ReflectionEntryWire[]
+  decisions: Record<string, ReflectionDecisionWire>
+}
+
+export interface TaskArchivePayload {
+  task_id: string
+  status: string
+  in_flight: boolean
+  state: unknown | null
+  report_md: string | null
+  reflection: ReflectionStoreWire | null
+}
+
+/** GET /api/tasks/:id/usage — the task's whole-lifecycle ledger. */
+export async function getTaskUsage(taskId: string): Promise<TaskUsagePayload> {
+  const res = await fetch(buildUrl(`/${taskId}/usage`))
+  return handleResponse<TaskUsagePayload>(res)
+}
+
+/** GET /api/tasks/:id/archive — archive window read model. */
+export async function getTaskArchive(taskId: string): Promise<TaskArchivePayload> {
+  const res = await fetch(buildUrl(`/${taskId}/archive`))
+  return handleResponse<TaskArchivePayload>(res)
+}
+
+/** POST /api/tasks/:id/reflection/decision — ingest or skip one proposal. */
+export async function postReflectionDecision(
+  taskId: string,
+  input: { entry_id: string; action: "ingest" | "skip"; title?: string; content?: string },
+): Promise<{ ok: true; store: ReflectionStoreWire; decision: ReflectionDecisionWire }> {
+  const res = await fetch(buildUrl(`/${taskId}/reflection/decision`), {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(input),
+  })
+  return handleResponse(res)
 }
 
 /** POST /api/tasks/:id/spec-field — agent `update_task_spec_field` tool

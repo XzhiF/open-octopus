@@ -118,10 +118,8 @@ export function createArchiveRoutes(
           return
         }
 
-        const org = c.req.query("org") || "default"
         const result = await archiveService.archiveWorkspace(
           id,
-          org,
           {
             installSkills: body.installSkills || [],
             installWorkflows: body.installWorkflows || [],
@@ -219,7 +217,6 @@ export function createArchiveRoutes(
       return c.json({
         draft: {
         workspace_id: draft.workspace_id,
-        org: draft.org,
         analysis_report: JSON.parse(draft.analysis_report),
         experiences: JSON.parse(draft.experiences),
         skills: JSON.parse(draft.skills),

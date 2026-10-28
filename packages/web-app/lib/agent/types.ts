@@ -29,7 +29,6 @@ export interface HealthStatus {
 export interface AgentSession {
   id: string
   title: string
-  org: string
   clone_name: string | null
   perspective_clone_name: string | null
   session_type: SessionType
@@ -90,10 +89,19 @@ export interface AgentMessage {
     kind?: string
     severity?: 'info' | 'warn' | 'critical' | string
     title?: string
+    message?: string | null
     executionId?: string | null
     taskId?: string | null
     nodeId?: string | null
     workspaceId?: string | null
+    /** 2026-10-28 task-thread: task state card. */
+    status?: string | null
+    phaseIndex?: number | null
+    roundIndex?: number | null
+    /** Buttons rendered by the transcript card (ids are the contract). */
+    actions?: Array<{ id: string; label: string }>
+    /** Tool-specific payload (launch proposal / action request / reflection entries). */
+    payload?: Record<string, unknown>
   }
   /** metadata.role_switch — delivered identity switch (v59). Rendered as a
    *  collapsible transcript marker carrying the whole role pack. */

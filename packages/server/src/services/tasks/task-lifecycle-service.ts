@@ -71,6 +71,7 @@ import {
 import { computeTaskWsLaunchParams, isCompositeWorkflowConfig } from "../scheduler/ws-launch"
 import { startChildRun, resumeParentFromChild } from "./task-child-run"
 import { calculateNextExecutions } from "../cron-utils"
+import { getChatEventBridge } from "../activity/chat-event-bridge"
 // The cap constant + the stale threshold are pure numbers (no schedule state); see the
 // boundary rule in __tests__/task-scheduler-boundary.test.ts for what is and is not
 // allowed to cross from the tasks domain.
@@ -421,7 +422,7 @@ export class TaskLifecycleService {
     const plan = buildTaskLaunchConfig(
       spec,
       parseJSON<string[]>(task.project_ids, []),
-      task.org ?? "",
+      task.repo_group ?? "",
       task.workflow_ref ?? undefined,
       parseJSON<string[]>(task.skills, []),
       parseJSON<ResourceRef[]>(task.resources, []),
@@ -628,7 +629,7 @@ export class TaskLifecycleService {
 
     try {
       const created = ws.createFromSpec({
-        org: plan.workspace_spec?.org ?? task.org ?? "",
+        repo_group: plan.workspace_spec?.org ?? task.repo_group ?? "",
         name: workspaceName,
         // task-board-title 改版: 任务标题映射到工作区描述字段。
         description: task.name,
@@ -1088,8 +1089,36 @@ export class TaskLifecycleService {
    *  not that task's scheduled fire, so the schedule must go on firing as armed. */
   armAndLaunch(taskId: string, opts: ArmOptions = {}): string {
     const executionId = this.armTask(taskId, opts)
+    this.bindTaskChatEvents(taskId, executionId)
     this.launchQueued(1)
     return executionId
+  }
+
+  /** 2026-10-28 task-thread: route this round's execution events to the task's
+   *  MAIN chat thread (source_chat_session_id, clone_name IS NULL). Legacy
+   *  task-author clone sessions are deliberately NOT bound — their old chat is
+   *  a different surface. Best-effort: a missing row must never block arming. */
+  private bindTaskChatEvents(taskId: string, executionId: string): void {
+    try {
+      const task = this.taskDAO.getById(taskId)
+      const sessionId = task?.source_chat_session_id
+      if (!task || !sessionId) return
+      const session = this.deps.db.prepare(
+        "SELECT clone_name FROM sessions WHERE id = ?",
+      ).get(sessionId) as { clone_name?: string | null } | undefined
+      if (!session || session.clone_name) return
+      const row = this.deps.db.prepare(
+        "SELECT workspace_id, workflow_ref FROM executions WHERE id = ?",
+      ).get(executionId) as { workspace_id?: string | null; workflow_ref?: string | null } | undefined
+      getChatEventBridge().bindExecution(executionId, {
+        sessionId,
+        org: task.repo_group,
+        workspaceId: row?.workspace_id ?? task.workspace_id ?? null,
+        workflowRef: row?.workflow_ref ?? task.workflow_ref ?? undefined,
+      })
+    } catch {
+      /* non-fatal — event routing is observability, not task state */
+    }
   }
 
   /** Stop a task's live instance(s). Returns how many rows were affected. Queued rows are

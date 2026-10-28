@@ -51,7 +51,6 @@ import { createCompileQueueRoutes } from "./routes/wiki-queue"
 import { CompileQueue } from "./services/knowledge/wiki/compile-queue"
 import { WikiLock } from "./services/knowledge/wiki/wiki-lock"
 import { resolveGlobalWikiRoot, resolveGlobalKnowledgeRoot } from "./services/knowledge/global-paths"
-import { backfillWikiArticleLinks } from "./services/knowledge/wiki/backfill-links"
 import { CuratorCompileService } from "./services/knowledge/wiki/curator"
 import { CuratorTaskService } from "./services/knowledge/wiki/curator-task"
 import { SessionCurationService } from "./services/knowledge/session-curation"
@@ -69,12 +68,6 @@ import { createEffectivenessRoutes } from "./routes/effectiveness"
 import { ArchiveIngestService } from "./services/tasks/archive-ingest-service"
 import { createProductionArchiveSummarizer } from "./services/tasks/archive-ingest-llm"
 import { createWikiRoutes } from "./routes/wiki"
-import { createWikiMigrateRoutes } from "./routes/wiki-migrate"
-import { createWikiGlobalMoveRoutes } from "./routes/wiki-global-move"
-import { WikiGlobalMigrator } from "./services/knowledge/wiki/global-move"
-import { createWikiRedistillRoutes } from "./routes/wiki-redistill"
-import { WikiRedistillMigrator } from "./services/knowledge/wiki/redistill"
-import { InitialCompileMigrator } from "./services/knowledge/wiki/migrate"
 import { createArchiveRoutes } from "./routes/archive"
 import { createResourceRoutes } from "./routes/resource"
 import { getResourceRegistry } from "./services/resource-registry"
@@ -97,8 +90,6 @@ import { eventRoutes } from "./routes/events"
 import scheduleRoutes, { setScheduleService } from "./routes/schedule"
 import { createSchedulerRoutes } from "./routes/scheduler"
 import { createTasksRoutes } from "./routes/tasks"
-import { createTaskChatRoutes } from "./routes/task-chat"
-import { TaskDoerService } from "./services/tasks/task-doer-service"
 import { RoundEvidenceService } from "./services/tasks/round-evidence-service"
 import { TestInstanceRegistry } from "./services/tasks/test-instance-registry"
 import { createWorkflowPresetsRoutes } from "./routes/workflow-presets"
@@ -114,7 +105,7 @@ import { createWorkflowOpsRoutes } from "./routes/workflow-ops"
 import { InteractionService } from "./services/interaction"
 import { SSEService } from "./services/sse"
 import { RepoSyncService } from "./services/tasks/repo-sync-service"
-import { migrateOrgDirs, syncOrgsFromFilesystem } from "./services/org"
+import { syncOrgsFromFilesystem } from "./services/org"
 import { ExecutionService } from "./services/execution"
 import { errorHandler } from "./middleware/error"
 import { agentAuthMiddleware, setAgentAuthOrgDAO } from "./routes/agent/middleware"
@@ -142,6 +133,7 @@ import { DashboardService } from "./services/scheduler/dashboard-service"
 import { ExportService } from "./services/scheduler/export-service"
 import { WorkspaceService } from "./services/workspace"
 import { ChatService } from "./services/chat"
+import { setTaskToolsServiceProvider } from "./services/chat/task-tools"
 import { LeaderboardService } from "./services/leaderboard"
 import { getLogAnalysisService } from "./services/log-analysis"
 import { initSessionService } from "./services/agent/session-service"
@@ -246,14 +238,6 @@ if (db) {
     return row?.path ? path.join(row.path, ".task") : null
   })
 
-  // 反链倒排基础：wiki_articles.links 一次性回灌（仅启动跑，运行时零扫盘——失败非致命）
-  try {
-    const n = backfillWikiArticleLinks(new WikiArticleDAO(db), resolveGlobalWikiRoot())
-    if (n > 0) console.log(`[knowledge] wiki links 回灌 ${n} 行`)
-  } catch (err: unknown) {
-    console.error("[knowledge] wiki links 回灌失败（非致命，下次启动再补）:", err)
-  }
-
   // Create all DAO instances at startup — fail-fast if DAO initialization fails
   try {
     daos = createAllDAOs(db)
@@ -264,8 +248,7 @@ if (db) {
   }
 
   ExecutionService.recoverInterruptedExecutions(db)
-  migrateOrgDirs()
-  syncOrgsFromFilesystem(daos.org)
+  // Register repo groups from ~/.octopus/orgs/*/config.yaml.  syncOrgsFromFilesystem(daos.org)
   const cleanupRetention = setupDataRetention(db)
   // Store cleanup for graceful shutdown
   ;(global as any).__octopus_cleanupRetention = cleanupRetention
@@ -324,14 +307,11 @@ if (!process.env.VITEST && daos) {
   // themselves on first prompt).
   try {
     const db = getDb()
-    const orgRows = db.prepare('SELECT name FROM orgs').all() as Array<{ name: string }>
-    for (const { name } of orgRows) {
-      const main = workspaceService!.ensureMainWorkspace(name)
-      db.prepare(
-        `UPDATE sessions SET workspace_id = ?, cwd = COALESCE(cwd, ?)
-         WHERE org = ? AND workspace_id IS NULL AND clone_name IS NULL`,
-      ).run(main.id, main.path, name)
-    }
+    const main = workspaceService!.ensureMainWorkspace()
+    db.prepare(
+      `UPDATE sessions SET workspace_id = ?, cwd = COALESCE(cwd, ?)
+       WHERE workspace_id IS NULL AND clone_name IS NULL`,
+    ).run(main.id, main.path)
   } catch (err: unknown) {
     console.warn('[server] main workspace backfill failed:', err instanceof Error ? err.message : String(err))
   }
@@ -379,7 +359,6 @@ if (!process.env.VITEST && daos) {
     if (!existingSeed) {
       daos.scheduleConfig.insertSchedule({
         id: 'system:daily-archive',
-        org: 'system',
         name: 'system:daily-archive',
         cron_expression: '0 3 * * *',
         timezone: 'Asia/Shanghai',
@@ -898,28 +877,6 @@ app.route("/api/archive", createArchiveRoutes(stateDir, d.archive, d.archiveDraf
 // 知识中心票03：org 参数容错保留，DB 语义钉 'global'；fs 读搬家窗口兼容（见 routes/wiki.ts）。
 // P4 票07：article 带 effectiveness 实时段（账目 DAO 注入=页元数据 DB 真源面）。
 app.route("/api/knowledge/wiki", createWikiRoutes(d.wikiArticle, { effectiveness: d.knowledgeEffectiveness }))
-// 知识中心票03: wiki 全局化搬家命令（单入口幂等，真数据唯一执行面）。默认 dry-run 列计划，
-// ?apply=true 才动手（顺序：wiki 连 .git 搬家 → DB re-key/FTS 重建 → 偏好归档+知识根迁入）。
-// 真跑前主控按报告 backupHint 先 VACUUM INTO 备份；两步各自 git/备份可回滚。
-app.route("/api/knowledge/wiki", createWikiGlobalMoveRoutes(
-  (apply) => new WikiGlobalMigrator({ db: getDb(), apply }),
-))
-// 知识中心票07: v2→v3 重蒸馏迁移命令（单入口幂等，真数据唯一执行面）。默认 dry-run 列映射计划，
-// ?apply=true 才动手（写 v3 五类页/旧页整迁 _retired/v2/ + LOG 换行格式 + INDEX 重建 + DB re-key，
-// 全部落盘收口为一个 git commit，整体 revert 可还原；重跑 diff 为空）。
-// 前置 = 票03 真搬家已执行（全局根 + org 钉 global）；真跑前主控按报告 backupHint 先 VACUUM INTO 备份。
-// 票06 写串行：apply 经全局 FIFO 队列 kind "redistill" 入队 + wiki 根锁（dry-run 零写盘不入队）。
-app.route("/api/knowledge/wiki", createWikiRedistillRoutes(
-  (apply) => new WikiRedistillMigrator({ db: getDb(), apply, queue: wikiWriteQueue }),
-))
-// LLM-WIKI 票05: 初始编译迁移命令（幂等、可重跑；每源文件一个独立 commit，
-// 全部写入仍经唯一闸门 compileEntry）。glossaryPath 可选覆盖 GLOSSARY-MAP.md 源。
-app.route("/api/knowledge/wiki", createWikiMigrateRoutes(
-  (org, opts) => new InitialCompileMigrator({ db: getDb(), org, glossaryMapPath: opts.glossaryMapPath, ruleFormJudge }),
-))
-// 知识中心票09：LLM-WIKI 票07 蒸馏路由（POST /distill → pending_review wiki-edit 候选）
-// 随审批链全删——候选的落盘面（approveItem→curate）已物理删除，入队即死档。
-// v2→v3 换代由票07 重蒸馏（/wiki/redistill）承接；新素材入库走 /knowledge 投喂编译。
 
 // Resource management — unified resource lifecycle (install/uninstall/verify/audit)
 const resourceRegistry = getResourceRegistry()
@@ -1206,6 +1163,10 @@ if (shouldServe) {
         // 与 workspace 单例（触发执行当场建 workspace+worktree 用）。
         repoSyncService, workspaceService,
       )
+      // 2026-10-28 task-thread: the chat route's `update_task_spec_field` tool
+      // needs the REAL TasksService (validation + version + SSE + home backfill).
+      // The route is mounted before this async block, hence the late binding.
+      setTaskToolsServiceProvider(() => tasksService)
       // 知识中心票10 建链，P3 票02 升级素材包链：task 进入 archiving 态即组包
       // （raw/archives/task-{id}/ 六件+manifest，件级冻结契约同票02）→ 总结读包 →
       // 编译读包（manifest 先行按需下钻）经票06 全局串行队列（kind=archive-compile，
@@ -1243,20 +1204,13 @@ if (shouldServe) {
       // 验货台 (acceptance v2)：实物 round-diff + 当场复检 — 4th optional arg
       // (tests that build the route factory without it get 501 on those 5 endpoints).
       const roundEvidence = new RoundEvidenceService(db, sse, tasksService, workspaceService!, taskHomeService)
-      // taskboard-modal-v2 票01 (ADR-0025, S1): the task-level doer chat seam —
-      // GET/POST /api/tasks/:id/chat (+ the /chat/messages alias from the spec
-      // wording). Separate route factory on the same prefix; all behavior lives in
-      // TaskDoerService (lazy doer session + ws-chat relay + [quick-edit] commits).
-      const taskDoerService = new TaskDoerService({
-        db, sse, tasksService,
-        chatService: chatSvc,
-        workspaceService: wsSvc,
-        taskHomeService,
-      })
-      // 票08: takeover 聚合端点的会话就绪半（5th optional arg —— ensureSession 单源
-      // 仍是 TaskDoerService，这里只是把它接到 tasks 路由上）。
-      app.route('/api/tasks', createTasksRoutes(tasksService, sse, assistService, roundEvidence, taskDoerService))
-      app.route('/api/tasks', createTaskChatRoutes(taskDoerService))
+      // 2026-10-28 task-thread: the task-doer dual chat was retired. Takeover
+      // reuses the task's main thread (source_chat_session_id).
+      app.route('/api/tasks', createTasksRoutes(tasksService, sse, assistService, roundEvidence, async ({ title, text, origin }) => {
+        const res = knowledgeRawIngest.ingestText({ text, title, origin })
+        const compile = ingestCompileTrigger(res.raw.path)
+        return { raw_path: res.raw.path, compile_task_id: compile.taskId }
+      }))
       // task-workflow-presets (T3): preset catalog API
       const workflowPresetsService = new WorkflowPresetsService()
       app.route('/api/workflow-presets', createWorkflowPresetsRoutes(() => workflowPresetsService))

@@ -2,7 +2,6 @@ import type Database from "better-sqlite3"
 
 export interface ArchiveDraftRow {
   workspace_id: string
-  org: string
   analysis_report: string
   experiences: string
   skills: string
@@ -26,16 +25,15 @@ export class ArchiveDraftDAO {
 
   findByWorkspaceId(workspaceId: string): ArchiveDraftRow | undefined {
     return this.stmt(
-      "SELECT workspace_id, org, analysis_report, experiences, skills, stats, workflows, token_stats, agents, created_at, updated_at FROM archive_drafts WHERE workspace_id = ?"
+      "SELECT workspace_id, analysis_report, experiences, skills, stats, workflows, token_stats, agents, created_at, updated_at FROM archive_drafts WHERE workspace_id = ?"
     ).get(workspaceId) as ArchiveDraftRow | undefined
   }
 
   upsert(row: ArchiveDraftRow): void {
     this.stmt(`
-      INSERT INTO archive_drafts (workspace_id, org, analysis_report, experiences, skills, stats, workflows, token_stats, agents, created_at, updated_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'))
+      INSERT INTO archive_drafts (workspace_id, analysis_report, experiences, skills, stats, workflows, token_stats, agents, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'))
       ON CONFLICT(workspace_id) DO UPDATE SET
-        org = excluded.org,
         analysis_report = excluded.analysis_report,
         experiences = excluded.experiences,
         skills = excluded.skills,
@@ -45,7 +43,7 @@ export class ArchiveDraftDAO {
         agents = excluded.agents,
         updated_at = datetime('now')
     `).run(
-      row.workspace_id, row.org, row.analysis_report,
+      row.workspace_id, row.analysis_report,
       row.experiences, row.skills, row.stats,
       row.workflows ?? '[]', row.token_stats ?? '{}', row.agents ?? '[]',
     )

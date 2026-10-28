@@ -102,7 +102,7 @@ async function createV3Task(app: Hono, name: string): Promise<string> {
   const res = await app.request("/api/tasks", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ org: ORG, task_type: "coding", name }),
+    body: JSON.stringify({ repo_group: ORG, task_type: "coding", name }),
   })
   expect(res.status).toBe(201)
   const body = await res.json() as { id: string }

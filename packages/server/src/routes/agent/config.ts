@@ -10,10 +10,7 @@ export function createConfigRoutes(): Hono {
    */
   config.get('/config', (c) => {
     try {
-      const org = c.req.header('X-Octopus-Org') || (c.get('org') as string)
-      if (!org) {
-        return c.json(createAgentError('ORG_NOT_FOUND', 'Organization not resolved'), 403)
-      }
+      const org = c.req.header('X-Octopus-Org') || (c.get('org') as string) || ''
 
       const manager = getConfigManager()
       const result = manager.loadConfig(org)
@@ -33,10 +30,7 @@ export function createConfigRoutes(): Hono {
    */
   config.put('/config', async (c) => {
     try {
-      const org = c.req.header('X-Octopus-Org') || (c.get('org') as string)
-      if (!org) {
-        return c.json(createAgentError('ORG_NOT_FOUND', 'Organization not resolved'), 403)
-      }
+      const org = c.req.header('X-Octopus-Org') || (c.get('org') as string) || ''
 
       const body = await c.req.json<Record<string, unknown>>()
       if (!body || typeof body !== 'object') {

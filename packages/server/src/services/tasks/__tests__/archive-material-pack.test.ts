@@ -70,7 +70,7 @@ function seedV4Task(taskHome: TaskHomeService, opts: {
     ],
   }
   db.prepare(`
-    INSERT INTO tasks (id, org, name, status, source_chat_session_id, task_spec,
+    INSERT INTO tasks (id, repo_group, name, status, source_chat_session_id, task_spec,
       authoring_resources, resources, skills, project_ids, workflow_ref, version,
       deleted_at, created_at, updated_at, completed_at, workspace_id)
     VALUES (?, ?, ?, 'archiving', NULL, ?, '[]', '[]', '[]', '["authsvc"]', NULL, 1, NULL, ?, ?, NULL, NULL)
@@ -328,7 +328,7 @@ function seedExecLog(wsPath: string, execId: string): void {
 
 function seedExecution(f: { taskId: string; wsId: string; wsPath: string; start: string; end: string; execId: string }): void {
   db.prepare(
-    "INSERT INTO workspaces (id, name, org, path, source, status, task_id, created_at, updated_at) VALUES (?, ?, 'aa02-org', ?, 'task', 'archived', ?, datetime('now'), datetime('now'))",
+    "INSERT INTO workspaces (id, name, repo_group, path, source, status, task_id, created_at, updated_at) VALUES (?, ?, 'aa02-org', ?, 'task', 'archived', ?, datetime('now'), datetime('now'))",
   ).run(f.wsId, `task:${f.taskId}`, f.wsPath, f.taskId)
   db.prepare(`
     INSERT INTO executions (id, workspace_id, parent_id, child_index, workflow_ref, workflow_name,
@@ -416,7 +416,7 @@ describe("历史兼容与幂等（S1·票02 第6行）", () => {
       "utf-8",
     )
     db.prepare(`
-      INSERT INTO tasks (id, org, name, status, task_spec, authoring_resources, resources, skills, project_ids, version, created_at, updated_at)
+      INSERT INTO tasks (id, repo_group, name, status, task_spec, authoring_resources, resources, skills, project_ids, version, created_at, updated_at)
       VALUES ('old1', 'aa02-org', '历史任务', 'archiving', '{"format":"v4","goal":"g","ac":[],"phases":[]}', '[]', '[]', '[]', '[]', 1, datetime('now'), datetime('now'))
     `).run()
 

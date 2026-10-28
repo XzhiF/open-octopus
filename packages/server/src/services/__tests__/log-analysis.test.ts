@@ -16,7 +16,7 @@ const ORG = "xzf"
 function seedWorkspace() {
   const now = new Date().toISOString()
   db.prepare(
-    "INSERT INTO workspaces (id, name, org, path, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)"
+    "INSERT INTO workspaces (id, name, repo_group, path, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)"
   ).run(WORKSPACE_ID, "test-ws", ORG, "/tmp/test-ws", now, now)
 }
 
@@ -113,7 +113,7 @@ describe("getHealthSummary", () => {
     const otherWs = "ws-other"
     const now = new Date().toISOString()
     db.prepare(
-      "INSERT INTO workspaces (id, name, org, path, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)"
+      "INSERT INTO workspaces (id, name, repo_group, path, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)"
     ).run(otherWs, "other", ORG, "/tmp/other", now, now)
     seedExecution({ id: "e1", workflowRef: "wf-a", status: "completed" })
     db.prepare(
@@ -296,7 +296,7 @@ describe("getExecutionLogs", () => {
     const wsId = "ws-with-logs"
     const now = new Date().toISOString()
     db.prepare(
-      "INSERT INTO workspaces (id, name, org, path, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)"
+      "INSERT INTO workspaces (id, name, repo_group, path, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)"
     ).run(wsId, "test-ws-with-logs", ORG, testWsPath, now, now)
 
     // Create execution

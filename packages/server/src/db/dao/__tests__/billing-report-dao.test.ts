@@ -40,7 +40,7 @@ function row(id: string, ts: number, over: Partial<LlmCallRow> = {}): LlmCallRow
     id, node_execution_id: "r3-n1", execution_id: "r3-e1", turn_index: 1, call_index: 0,
     message_id: null, model: "E2E_TEST_R3_M", stop_reason: null, timestamp: ts, duration_ms: 100, ttft_ms: null,
     input_tokens: 0, output_tokens: 0, cache_read_tokens: 0, cache_creation_tokens: 0,
-    org: "default", workspace_id: "ws-r3", workflow_ref: "wf.yaml", node_id: "n1", session_id: "s-r3", instance_id: "i-r3",
+    repo_group: "default", workspace_id: "ws-r3", workflow_ref: "wf.yaml", node_id: "n1", session_id: "s-r3", instance_id: "i-r3",
     source_path: "workflow" as LlmCallSourcePath,
     ...over,
   }
@@ -53,7 +53,7 @@ beforeEach(() => {
   applySchema(db)
   dao = new BillingDAO(db)
   const t = new Date().toISOString()
-  db.prepare("INSERT INTO workspaces (id, name, path, org, created_at, updated_at) VALUES ('ws-r3','R3','/tmp/r3','default',?,?)").run(t, t)
+  db.prepare("INSERT INTO workspaces (id, name, path, repo_group, created_at, updated_at) VALUES ('ws-r3','R3','/tmp/r3','default',?,?)").run(t, t)
   db.prepare(`INSERT INTO executions (id, workspace_id, parent_id, workflow_ref, workflow_name, status, started_at, completed_at, org, created_at, updated_at)
     VALUES ('r3-e1','ws-r3','0','wf.yaml','R3','completed',?,?,?,?,?)`).run(t, t, "default", t, t)
   db.prepare("INSERT INTO node_executions (id, execution_id, node_id, node_type, status, retry_count, duration, started_at, completed_at) VALUES ('r3-n1','r3-e1','n1','agent','completed',0,1,?,?)").run(t, t)

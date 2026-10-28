@@ -96,7 +96,7 @@ beforeEach(() => {
   fs.mkdirSync(path.join(TEST_DIR, "agent", "experiences"), { recursive: true })
   const now = new Date().toISOString()
   sessionDAO.insertSession({
-    id: "s-1", org: ORG, title: "T", clone_name: null, session_type: "main",
+    id: "s-1", repo_group: ORG, title: "T", clone_name: null, session_type: "main",
     created_at: now, updated_at: now,
   })
 })
@@ -141,7 +141,6 @@ describe("主对话 ctx / tok 数据链路", () => {
     expect(rows[0]).toMatchObject({
       source_path: "global_chat",
       session_id: "s-1",
-      org: ORG,
       model: MODEL,
       input_tokens: 1000,
       output_tokens: 500,

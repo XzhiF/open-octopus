@@ -67,7 +67,6 @@ export function composeLlmCallRow(input: LlmCallLedgerInput): LlmCallRow {
     output_tokens: input.usage.outputTokens,
     cache_read_tokens: input.usage.cacheReadTokens,
     cache_creation_tokens: input.usage.cacheCreationTokens,
-    org: input.org ?? null,
     workspace_id: input.workspaceId ?? null,
     workflow_ref: input.workflowRef ?? null,
     node_id: input.nodeId ?? null,

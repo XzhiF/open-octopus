@@ -70,7 +70,7 @@ export function ConfigSummaryCard({ job, onToggle }: ConfigSummaryCardProps) {
           />
           <ConfigRow
             label="组织"
-            value={job.org ?? (config as WorkflowConfig).workspace_spec?.org ?? "-"}
+            value={(config as WorkflowConfig).workspace_spec?.org ?? "-"}
           />
           <ConfigRow
             label="Cron"

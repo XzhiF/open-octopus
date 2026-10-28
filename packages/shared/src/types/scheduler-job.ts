@@ -428,7 +428,6 @@ export interface SchedulerJob {
   cron_expression: string | null
   timezone: string
   enabled: boolean
-  org?: string
   config: JobConfig
   parallel_policy: ParallelPolicy
   timeout_seconds: number
@@ -455,7 +454,6 @@ export interface CreateJobInput {
   job_type: JobType
   cron_expression: string | null
   timezone: string
-  org?: string
   config: JobConfig
   parallel_policy?: ParallelPolicy
   timeout_seconds?: number
@@ -480,8 +478,7 @@ export interface ListJobsParams {
   search?: string
   status?: 'enabled' | 'disabled' | 'failed'
   job_type?: JobType
-  org?: string
-  /** Scope the list to one workspace's org (the scheduler page per-workspace view). */
+  /** Scope the list to one workspace (the scheduler page per-workspace view). */
   workspace_id?: string
   sort?: 'next_trigger_at' | 'name' | 'created_at'
   order?: 'asc' | 'desc'

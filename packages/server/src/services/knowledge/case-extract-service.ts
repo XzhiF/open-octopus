@@ -408,8 +408,7 @@ export class CaseExtractService {
   private compiler(): WikiCompileService {
     return new WikiCompileService({
       db: this.db,
-      org: GLOBAL_WIKI_ORG,
-      rootDir: this.wikiRoot,
+            rootDir: this.wikiRoot,
       ...(this.git ? { git: this.git } : {}),
     })
   }

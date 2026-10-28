@@ -33,7 +33,7 @@ describe('SchedulerEngine', () => {
     db = new Database(':memory:')
     applySchema(db)
     db.prepare(`
-      INSERT INTO workspaces (id, name, org, path, created_at, updated_at)
+      INSERT INTO workspaces (id, name, repo_group, path, created_at, updated_at)
       VALUES (?, 'test', 'test', '/tmp', datetime('now'), datetime('now'))
     `).run(wsId)
     // Ensure scheduler_state row exists (some engine methods touch it)

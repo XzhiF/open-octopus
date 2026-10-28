@@ -16,7 +16,7 @@ function seed(dao: WikiArticleDAO, row: {
   id: string; domain: string; title: string; summary: string; body: string; path: string
 }) {
   dao.upsert({
-    org: "global",
+    repo_group: "global",
     id: row.id,
     domain: row.domain,
     title: row.title,
@@ -75,7 +75,6 @@ describe("GET /api/knowledge/wiki/search (ticket 03)", () => {
     expect(res.status).toBe(200)
     const data = await res.json()
 
-    expect(data.org).toBe("global")
     expect(data.query).toBe("Promise")
     expect(data.mode).toBe("fts")
     expect(data.results).toHaveLength(1)

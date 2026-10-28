@@ -140,8 +140,7 @@ describe("分身聊天入账（票02 / US1）", () => {
       session_id: sessionId,
       // v47/票04 KD17「归属维度可得性如实」：聊天行无执行链路 → NULL，不造 FK 目标。
       node_execution_id: null,
-      execution_id: null,
-      org: ORG,
+      execution_id: null,
       model: PRIMARY,
       input_tokens: 1000, output_tokens: 500, cache_read_tokens: 200, cache_creation_tokens: 100,
     })

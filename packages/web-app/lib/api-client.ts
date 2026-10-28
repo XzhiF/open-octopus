@@ -16,11 +16,8 @@ export function apiFetch(url: string, init?: RequestInit): Promise<Response> {
 
 // ============ Workspaces ============
 
-export async function listWorkspaces(org?: string) {
-  const url = org
-    ? `${getServerUrl()}/api/workspaces?org=${encodeURIComponent(org)}`
-    : `${getServerUrl()}/api/workspaces`
-  const res = await apiFetch(url)
+export async function listWorkspaces(_repoGroup?: string) {
+  const res = await apiFetch(`${getServerUrl()}/api/workspaces`)
   return res.json()
 }
 
@@ -30,7 +27,7 @@ export async function getWorkspace(id: string) {
   return res.json()
 }
 
-export async function createWorkspace(data: { name: string; org: string; description?: string; path: string; repos?: string[]; branch?: string }) {
+export async function createWorkspace(data: { name: string; repo_group?: string; description?: string; path: string; repos?: string[]; branch?: string }) {
   const res = await apiFetch(`${getServerUrl()}/api/workspaces`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -40,7 +37,7 @@ export async function createWorkspace(data: { name: string; org: string; descrip
 }
 
 /** Register an existing directory as a chat cwd workspace (no scaffolding). */
-export async function attachWorkspaceDirectory(data: { org: string; path: string; name?: string }) {
+export async function attachWorkspaceDirectory(data: { repo_group?: string | null; path: string; name?: string }) {
   const res = await apiFetch(`${getServerUrl()}/api/workspaces/attach`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -99,16 +96,16 @@ export async function deleteWorkspace(id: string) {
   return handleResponse(res)
 }
 
-export async function fetchImportableWorkspaces(org: string) {
-  const res = await apiFetch(`${getServerUrl()}/api/workspaces/importable?org=${encodeURIComponent(org)}`)
+export async function fetchImportableWorkspaces(_repoGroup?: string) {
+  const res = await apiFetch(`${getServerUrl()}/api/workspaces/importable`)
   return handleResponse(res)
 }
 
-export async function importWorkspace(name: string, org: string) {
+export async function importWorkspace(name: string, repoGroup?: string) {
   const res = await apiFetch(`${getServerUrl()}/api/workspaces/import`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ name, org }),
+    body: JSON.stringify({ name, repo_group: repoGroup }),
   })
   return handleResponse(res)
 }

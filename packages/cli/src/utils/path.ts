@@ -21,24 +21,24 @@ export function resolveProjectDir(): string {
   return process.cwd()
 }
 
-export function resolveSkillDir(org: string, skillName: string): string {
-  return join(resolveOrgDir(org), "skills", skillName)
+export function resolveSkillDir(_org: string, skillName: string): string {
+  return join(resolveGlobalDir(), "agent", "skills", skillName)
 }
 
-export function resolveEnvDir(org: string): string {
-  return join(resolveOrgDir(org), "env")
+export function resolveEnvDir(_org: string): string {
+  return join(resolveGlobalDir(), "env")
 }
 
-export function resolveMcpDir(org: string): string {
-  return join(resolveOrgDir(org), "mcp")
+export function resolveMcpDir(_org: string): string {
+  return join(resolveGlobalDir(), "mcp")
 }
 
 export function resolveReposDir(org: string): string {
   return join(resolveOrgDir(org), "repos")
 }
 
-export function resolveEvolutionDir(org: string): string {
-  return join(resolveOrgDir(org), "evolution")
+export function resolveEvolutionDir(_org: string): string {
+  return join(resolveGlobalDir(), "agent", "evolution")
 }
 
 export function resolveBuiltinWorkflowsDir(): string {

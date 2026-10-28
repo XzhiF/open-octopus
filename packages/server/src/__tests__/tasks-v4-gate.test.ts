@@ -140,10 +140,10 @@ function fakeWorkspaceService() {
       const p = path.join(wsTmpDir, id)
       fs.mkdirSync(path.join(p, "workflows"), { recursive: true })
       db.prepare(
-        `INSERT INTO workspaces (id, name, org, status, path, source, task_id, created_at, updated_at)
+        `INSERT INTO workspaces (id, name, repo_group, status, path, source, task_id, created_at, updated_at)
          VALUES (?, ?, ?, 'active', ?, 'task', ?, datetime('now'), datetime('now'))`,
       ).run(id, String(input.name), ORG, p, (input.task_id as string) ?? null)
-      return { id, name: input.name, org: ORG, status: "active", path: p }
+      return { id, name: input.name, repo_group: ORG, status: "active", path: p }
     },
   }
 }
@@ -176,7 +176,7 @@ function insertTask(spec: Record<string, unknown>, workflowRef: string | null = 
   const id = `e2e-td-v4gate-${nextTaskSeq++}`
   const now = new Date().toISOString()
   db.prepare(`
-    INSERT INTO tasks (id, org, name, status, source_chat_session_id, task_spec,
+    INSERT INTO tasks (id, repo_group, name, status, source_chat_session_id, task_spec,
       authoring_resources, resources, skills, project_ids, workflow_ref, version,
       deleted_at, created_at, updated_at, completed_at)
     VALUES (?, ?, ?, 'draft', NULL, ?, '[]', '[]', '[]', '[]', ?, 1, NULL, ?, ?, NULL)

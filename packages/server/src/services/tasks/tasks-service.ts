@@ -96,6 +96,13 @@ import { seedPhaseToWorkspace, collectFromWorkspace, batchRelPath, resolvePhaseS
 import { specRunbookLevel } from "./runbook-spec"
 // task-phase-redesign (ticket 08): the archiving orchestrator (K11 归并面).
 import { createTaskArchiver, type TaskArchiver, type ArchiveReport } from "./archiving-service"
+import { getChatEventBridge } from "../activity/chat-event-bridge"
+import {
+  readReflectionStore,
+  writeReflectionStore,
+  type ReflectionDecision,
+  type ReflectionStore,
+} from "./reflection-store"
 import { PluginMaterializer } from "./plugin-materializer"
 // 06: re-export so the route's classifyError instanceof check matches throws
 // from TaskHomeService.readArtifactContent without a second class declaration.
@@ -224,6 +231,64 @@ export interface TaskDetailDTO extends TaskDTO {
   derived: TaskView
 }
 
+/** One source row of the task-lifecycle ledger (GET /:id/usage). */
+export interface TaskUsagePart extends LlmUsageSummary {
+  kind: "chat" | "execution"
+  label: string
+  session_id?: string
+  execution_id?: string
+  phase_index?: number | null
+  round_index?: number | null
+  workflow_ref?: string | null
+}
+
+export interface TaskUsageDTO {
+  task_id: string
+  /** Aggregate over every source below (same shape as the chat cost chip). */
+  summary: LlmUsageSummary
+  breakdown: TaskUsagePart[]
+}
+
+/** GET /:id/archive — the archive window's one-shot read model. */
+export interface TaskArchiveDTO {
+  task_id: string
+  status: string
+  /** A run is in this process right now (202 fire-and-forget). */
+  in_flight: boolean
+  /** Parsed `{home}/archive/state.json` (project-granular idempotency ledger). */
+  state: unknown | null
+  /** `{home}/archive/report.md` (capped); null = not written yet. */
+  report_md: string | null
+  /** Reflection proposals + per-entry decisions; null = no reflection yet. */
+  reflection: ReflectionStore | null
+}
+
+export interface ReflectionDecisionInput {
+  entry_id: string
+  action: "ingest" | "skip"
+  /** Edit-before-ingest overrides. */
+  title?: string
+  content?: string
+}
+
+export type ReflectionIngest = (input: {
+  title: string
+  text: string
+  origin: string
+}) => Promise<{ raw_path?: string; compile_task_id?: string }>
+
+export interface ReflectionDecisionResult {
+  ok: true
+  store: ReflectionStore
+  decision: ReflectionDecision
+}
+
+const EMPTY_LLM_USAGE: LlmUsageSummary = {
+  totalCalls: 0,
+  usage: { inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheCreationTokens: 0 },
+  totals: { tokens: 0, cost: { usd: null, complete: false }, cacheHitRate: null },
+}
+
 // ── Acceptance (task-phase-redesign ticket 07 — 验收 Gate K6/K7) ─────
 
 /** Body of POST /api/tasks/:id/acceptance (spec API table). Indices are
@@ -299,7 +364,8 @@ export interface FixRoundResult {
 }
 
 export interface CreateTaskInput {
-  org: string
+  /** Repo-registry key only (org demotion). */
+  repo_group?: string
   name?: string
   source_chat_session_id?: string | null
   // ── task-authoring v3 (ticket 04, D13/D15) ──
@@ -395,7 +461,8 @@ export interface WritePlanIssueInput extends WritePlanInputBase {}
 
 export interface ListTasksParams {
   status?: TaskStatus
-  org?: string
+  /** Repo-registry key filter (org demotion). */
+  repo_group?: string
   /** 票06 (语义摘要进任务板): 服务端关键字搜索——对 name ∨ semantic_summary LIKE 子串
    *  过滤（零新基建、非 FTS）。空/纯空白 = 不过滤（走原列盘路径，回归保护）。 */
   q?: string
@@ -442,7 +509,7 @@ const CANCELLABLE_ROUND_STATUSES = new Set<string>(LIVE_ROUND_STATUSES)
 function toDTO(row: TaskRow): TaskDTO {
   return {
     id: row.id,
-    org: row.org,
+    repo_group: row.repo_group,
     name: row.name,
     status: row.status as TaskStatus,
     task_spec: parseJSON<TaskSpec>(row.task_spec, { goal: "", ac: [] } as unknown as TaskSpec),
@@ -818,12 +885,12 @@ export class TasksService {
   /** Resolve project names to ProjectRef[] with filesystem paths via
    *  WorkspaceGit (repos/index.md lookup). Unresolvable names get
    *  { name, path: undefined } so they still appear in context.md. */
-  private resolveProjectRefs(org: string, names: string[]): ProjectRef[] {
-    if (!org || names.length === 0) return []
+  private resolveProjectRefs(repoGroup: string | null | undefined, names: string[]): ProjectRef[] {
+    if (!repoGroup || names.length === 0) return []
     const git = new WorkspaceGit()
     return names.map((name) => {
       try {
-        const resolved = git.resolveRepoPath(org, name)
+        const resolved = git.resolveRepoPath(repoGroup, name)
         return { name, path: resolved }
       } catch {
         return { name }
@@ -841,7 +908,7 @@ export class TasksService {
    */
   private createTaskWorkspaceShell(input: {
     id: string
-    org: string
+    repo_group?: string | null
     name: string
     taskSpec: Record<string, unknown>
     now: string
@@ -855,7 +922,7 @@ export class TasksService {
     const branchPrefix =
       taskBranchPrefix({ task_spec: spec, created_at: input.now }) ?? `taskpool-${input.id}`
     const created = this.workspaceService.createFromSpec({
-      org: input.org || "default",
+      repo_group: input.repo_group ?? null,
       name: workspaceName,
       description: input.name,
       // Worktrees are materialized at enqueue, not draft time.
@@ -894,10 +961,9 @@ export class TasksService {
     const name = input.name?.trim() || DEFAULT_TASK_NAME
     const isV3 = !!input.task_type
 
-    // 04 (D13): preset.org overrides the top-level org (the template page is the
-    // source of the authoring context). preset.projects → project_ids (the
+    // 04 (D13): preset org is the repo group; preset.projects → project_ids (the
     // top-level project_ids field, SKILL §1, wins when present).
-    const org = input.preset?.org ?? input.org
+    const repoGroup = input.preset?.org ?? input.repo_group ?? null
     const projectIds = input.project_ids ?? input.preset?.projects ?? []
 
     // 04 (D4): task_type + skill_groups live in task_spec, NOT authoring_resources.
@@ -923,7 +989,7 @@ export class TasksService {
 
     this.taskDAO.insert({
       id,
-      org,
+      repo_group: repoGroup,
       name,
       status: "draft",
       source_chat_session_id: input.source_chat_session_id ?? null,
@@ -965,7 +1031,7 @@ export class TasksService {
         }
         if (!boundWorkspaceId && input.cwd && this.workspaceService) {
           try {
-            boundWorkspaceId = this.workspaceService.attachDirectory({ org, path: input.cwd }).id
+            boundWorkspaceId = this.workspaceService.attachDirectory({ repo_group: repoGroup, path: input.cwd }).id
           } catch (err: unknown) {
             console.error(
               "[TasksService] createTask: attach cwd failed (falling back to new workspace):",
@@ -974,7 +1040,7 @@ export class TasksService {
           }
         }
         const workspaceId = boundWorkspaceId ?? this.createTaskWorkspaceShell({
-          id, org, name, taskSpec: taskSpecObj, now,
+          id, repo_group: repoGroup, name, taskSpec: taskSpecObj, now,
         })
         if (workspaceId) {
           this.taskDAO
@@ -1010,17 +1076,17 @@ export class TasksService {
     // matt skill family arrives via the clone plugin layer, ticket 11/K15).
     if (isV3 || isV4) {
       const groups = input.skill_groups ?? []
-      // Pass org + resolved project paths + skill groups to createHome so
+      // Pass repo group + resolved project paths + skill groups to createHome so
       // context.md is populated from the start (not empty until the first
       // chat turn or a subsequent updateTask).
-      const projectRefs = this.resolveProjectRefs(org, projectIds)
-      const home = this.taskHomeService.createHome(id, { org, projects: projectRefs, skillGroups: groups })
+      const projectRefs = this.resolveProjectRefs(repoGroup, projectIds)
+      const home = this.taskHomeService.createHome(id, { repo_group: repoGroup, projects: projectRefs, skillGroups: groups })
       // repo-sync (2026-09-08, 特性A): v4 draft 创建即异步把选中项目的主 clone
       // 强制对齐 origin/<main|master> 最新（镜像语义，fire-and-forget — 绝不影响
       // 本次 HTTP 返回）。用户不变量：agent 分析读的就是这些路径，创建后它们必须
       // 尽快变新；完成/失败经 project_sync SSE 反馈（task-modal toast）。
       if (isV4 && projectIds.length > 0) {
-        this.repoSyncService?.syncProjectsForTask(id, org, projectIds)
+        this.repoSyncService?.syncProjectsForTask(id, repoGroup, projectIds)
       }
       if (groups.length > 0) {
         try {
@@ -1072,6 +1138,75 @@ export class TasksService {
       executions: history.map(badge),
       derived: this.deriveView(row),
     }
+  }
+
+  /**
+   * task-thread redesign (2026-10-28): the task's WHOLE-LIFECYCLE ledger.
+   *
+   * Two sources, merged with the shared summary fold:
+   *   · chat rows = the task's main thread (+ legacy doer session), restricted
+   *     to `execution_id IS NULL` so a clone/interaction row that also carries
+   *     an execution owner is not counted twice;
+   *   · execution rows = every executions row tagged with this task (rounds,
+   *     fix rounds, child arms).
+   *
+   * The breakdown is deliberately row-shaped so the UI can show "主对话 /
+   * P1·R1 / 修复轮" instead of one opaque number. Cost is derived at query time
+   * by llm_calls_costed (price edits re-price history).
+   */
+  taskUsage(id: string): TaskUsageDTO {
+    const row = this.taskDAO.getById(id)
+    if (!row) throw new TaskNotFoundError()
+    const execRows = this.taskDAO.getDb().prepare(
+      `SELECT id, phase_index, round_index, workflow_ref, status, created_at
+         FROM executions WHERE task_id = ? ORDER BY created_at ASC`,
+    ).all(id) as Array<{
+      id: string
+      phase_index: number | null
+      round_index: number | null
+      workflow_ref: string | null
+      status: string
+      created_at: string
+    }>
+    const sessionIds = [row.source_chat_session_id, row.doer_session_id]
+      .filter((s): s is string => !!s)
+    const bySession = this.tokenUsage.aggregateLlmCallsBy(
+      "session_id",
+      sessionIds,
+      ["l.execution_id IS NULL"],
+    )
+    const byExec = this.tokenUsage.aggregateLlmCallsBy(
+      "execution_id",
+      execRows.map((e) => e.id),
+    )
+    const breakdown: TaskUsagePart[] = []
+    for (const sid of sessionIds) {
+      const usage = bySession.get(sid)
+      if (!usage) continue
+      breakdown.push({
+        kind: "chat",
+        label: sid === row.source_chat_session_id ? "主对话" : "旧执行对话",
+        session_id: sid,
+        ...usage,
+      })
+    }
+    for (const e of execRows) {
+      const usage = byExec.get(e.id)
+      if (!usage) continue
+      breakdown.push({
+        kind: "execution",
+        label: e.phase_index != null
+          ? `P${e.phase_index}${e.round_index != null ? ` · R${e.round_index}` : ""}`
+          : "执行",
+        execution_id: e.id,
+        phase_index: e.phase_index,
+        round_index: e.round_index,
+        workflow_ref: e.workflow_ref,
+        ...usage,
+      })
+    }
+    const totals = mergeLlmUsageSummaries(breakdown) ?? EMPTY_LLM_USAGE
+    return { task_id: id, summary: totals, breakdown }
   }
 
   /** task-phase-redesign (ticket 07): gather the three facts deriveTaskView
@@ -1468,12 +1603,12 @@ export class TasksService {
     if (live && live.workflow_ref === "built-in/task-fix") {
       return `task-fix(execution=${live.id})`
     }
-    // ② doer 会话指针 + 会话行存活双检（悬空不造假）。
-    if (row.doer_session_id) {
+    // ② 任务主线程（2026-10-28 task-thread 起唯一写者；旧 doer 会话已退役）。
+    if (row.source_chat_session_id) {
       const session = this.db
-        .prepare("SELECT id FROM chat_sessions WHERE id = ?")
-        .get(row.doer_session_id) as { id: string } | undefined
-      if (session) return `task-doer(session=${row.doer_session_id})`
+        .prepare("SELECT id FROM sessions WHERE id = ?")
+        .get(row.source_chat_session_id) as { id: string } | undefined
+      if (session) return `task-thread(session=${row.source_chat_session_id})`
     }
     // ③ 诚实缺账。
     return "unattributed"
@@ -1575,21 +1710,21 @@ export class TasksService {
     return { ref: resolution.ref, content: resolution.content, source: resolution.source }
   }
 
-  /** GET /api/tasks — list active tasks (kanban), filtered by status and/or org. */
+  /** GET /api/tasks — list active tasks (kanban), filtered by status and/or repo_group. */
   listTasks(params: ListTasksParams = {}): { items: TaskDTO[] } {    let rows: TaskRow[]
     const q = params.q?.trim()
     if (q) {
       // 票06 (语义摘要进任务板): 服务端关键字搜索走 LIKE（name ∨ semantic_summary），
       // 叠加可选 status/org。未归档/无摘要 task 的 semantic_summary 为 NULL——DAO 用
       // IFNULL 兜空串，按 name 仍可命中、不报错（宽容读）。
-      rows = this.taskDAO.searchActive({ status: params.status, org: params.org, q })
-    } else if (params.status && params.org) {
-      // listByStatus doesn't filter by org — filter in memory (small N).
-      rows = this.taskDAO.listByStatus(params.status).filter((r) => r.org === params.org)
+      rows = this.taskDAO.searchActive({ status: params.status, repo_group: params.repo_group, q })
+    } else if (params.status && params.repo_group) {
+      // listByStatus doesn't filter by repo_group — filter in memory (small N).
+      rows = this.taskDAO.listByStatus(params.status).filter((r) => r.repo_group === params.repo_group)
     } else if (params.status) {
       rows = this.taskDAO.listByStatus(params.status)
-    } else if (params.org) {
-      rows = this.taskDAO.listByOrg(params.org)
+    } else if (params.repo_group) {
+      rows = this.taskDAO.listByRepoGroup(params.repo_group)
     } else {
       // No filter — union of all active. listByOrg requires an org, so scan
       // all statuses (the kanban shows draft/ready/running/done/failed/aborted).
@@ -1865,10 +2000,10 @@ export class TasksService {
           // repo-sync (2026-09-08, 特性A): 首次 PUT 锁定 project_ids 也触发镜像
           // 同步（TemplatePicker 之外的选择路径），仅 v4。
           if (ctxSpec?.format === "v4" && changedFields.includes("project_ids") && projectIds.length > 0) {
-            this.repoSyncService?.syncProjectsForTask(id, row.org, projectIds)
+            this.repoSyncService?.syncProjectsForTask(id, row.repo_group, projectIds)
           }
-          const projectRefs = this.resolveProjectRefs(row.org, projectIds)
-          this.taskHomeService.writeContextFile(id, row.org, projectRefs, groups,
+          const projectRefs = this.resolveProjectRefs(row.repo_group, projectIds)
+          this.taskHomeService.writeContextFile(id, row.repo_group, projectRefs, groups,
             this.repoSyncService?.freshnessNotes(id, projectIds))
           // Add context_updated to the notice so the agent knows to re-read
           const existing = getSpecNotice(id) ?? ''
@@ -2033,15 +2168,15 @@ export class TasksService {
       try {
         if (!fs.existsSync(this.taskHomeService.homePath(id))) {
           const backfillProjects = parseJSON<string[]>(updated.project_ids, [])
-          const backfillRefs = this.resolveProjectRefs(updated.org, backfillProjects)
+          const backfillRefs = this.resolveProjectRefs(updated.repo_group, backfillProjects)
           this.taskHomeService.createHome(id, {
-            org: updated.org,
+            repo_group: updated.repo_group,
             projects: backfillRefs,
             skillGroups: [],
           })
           // repo-sync: 无家壳补建时项目已存在 → 同步一并补触发（与 createTask 同语义）。
           if (backfillProjects.length > 0) {
-            this.repoSyncService?.syncProjectsForTask(id, updated.org, backfillProjects)
+            this.repoSyncService?.syncProjectsForTask(id, updated.repo_group, backfillProjects)
           }
         }
       } catch (err: unknown) {
@@ -2069,10 +2204,10 @@ export class TasksService {
           // repo-sync (2026-09-08, 特性A): agent/用户经 spec-field 写 projects →
           // v4 触发镜像同步；本轮写 context.md 时顺带注入已有新鲜度快照。
           if (input.field === "projects" && ctxSpec?.format === "v4" && projectIds.length > 0) {
-            this.repoSyncService?.syncProjectsForTask(id, row.org, projectIds)
+            this.repoSyncService?.syncProjectsForTask(id, row.repo_group, projectIds)
           }
-          const projectRefs = this.resolveProjectRefs(row.org, projectIds)
-          this.taskHomeService.writeContextFile(id, row.org, projectRefs, groups,
+          const projectRefs = this.resolveProjectRefs(row.repo_group, projectIds)
+          this.taskHomeService.writeContextFile(id, row.repo_group, projectRefs, groups,
             this.repoSyncService?.freshnessNotes(id, projectIds))
           if (input.source === "user") {
             const existing = getSpecNotice(id) ?? ''
@@ -2217,7 +2352,7 @@ export class TasksService {
         const git = new WorkspaceGit()
         for (const name of gateProjects) {
           try {
-            git.resolveRepoPath(existing.org ?? "", name)
+            git.resolveRepoPath(existing.repo_group ?? "", name)
           } catch {
             missing.push(`project:${name}`)
           }
@@ -2323,6 +2458,14 @@ export class TasksService {
     const result = this.taskDAO.updateWithVersion(id, { status: "ready" }, existing.version)
     if (result.changes === 0) throw new TaskVersionConflictError()
 
+    // 2026-10-28 task-thread: ready is a direct flip (no lifecycle writer), so
+    // it must publish the transition itself — otherwise the main chat never
+    // gets its 「已入列」 card.
+    this.sse.emit("taskpool", {
+      event: TASK_STATUS_EVENT,
+      data: { task_id: id, status: "ready" },
+    })
+
     const row = this.taskDAO.getById(id)!
     return toDTO(row)
   }
@@ -2371,7 +2514,7 @@ export class TasksService {
     const copyName = baseName.endsWith("(copy)") ? baseName : `${baseName} (copy)`
 
     const created = this.createTask({
-      org: src.org,
+      repo_group: src.repo_group,
       name: copyName,
       task_spec: specForInput,
       ...(taskType ? { task_type: taskType, skill_groups: skillGroups ?? [] } : {}),
@@ -2880,6 +3023,14 @@ export class TasksService {
     // 知识中心票10: 进入 archiving 态的一刻起投喂（与归档编排并行、互不等待；
     // 必须先于 archivingHook 分支的 return，替换内置归档器的宿主同样吃到投喂）。
     this.fireArchiveIngest(taskId)
+    // 2026-10-28 task-thread: one reflection turn in the main chat (proposals →
+    // human decides per entry). Fired before the orchestration so the model can
+    // read the still-present task home / workspace.
+    try {
+      getChatEventBridge().requestArchiveReflection(taskId)
+    } catch {
+      /* observability only — never block archiving */
+    }
     if (this.archivingHook) {
       try {
         const maybe = this.archivingHook(taskId)
@@ -2939,12 +3090,31 @@ export class TasksService {
     this.runningArchives.add(taskId)
     const p = this.getArchiver()
       .archiveTask(taskId)
+      .then((report) => {
+        if (!report.ok) {
+          const failed = report.projects
+            .filter((p) => !p.ok)
+            .map((p) => `${p.project}${p.error ? `：${p.error}` : ""}`)
+            .join("；")
+          try {
+            getChatEventBridge().notifyTaskArchiveFailure(taskId, report.error ?? (failed || undefined))
+          } catch {
+            /* event routing is observability — never block the archive result */
+          }
+        }
+        return report
+      })
       .catch((err: unknown): ArchiveReport => {
         const message = err instanceof Error ? err.message : String(err)
         console.error(
           `[TasksService] archiving run failed for ${taskId} (task parked in 'archiving', retry=POST /:id/archive/retry):`,
           message,
         )
+        try {
+          getChatEventBridge().notifyTaskArchiveFailure(taskId, message)
+        } catch {
+          /* non-fatal */
+        }
         return { taskId, date: "", ok: false, projects: [], unattributedAdrs: [], unattributedNotes: 0, error: message }
       })
       .finally(() => this.runningArchives.delete(taskId))
@@ -2956,6 +3126,75 @@ export class TasksService {
    *  started through this process). Await seam for 202 callers/tests. */
   awaitArchiving(taskId: string): Promise<ArchiveReport> | null {
     return this.archiveRuns.get(taskId) ?? null
+  }
+
+  /** GET /:id/archive — state.json + report.md + in-flight (archive window). */
+  readArchive(taskId: string): TaskArchiveDTO {
+    const row = this.taskDAO.getById(taskId)
+    if (!row) throw new TaskNotFoundError()
+    const home = this.taskHomeService.homePath(taskId)
+    let state: unknown | null = null
+    try {
+      state = JSON.parse(fs.readFileSync(path.join(home, "archive", "state.json"), "utf-8")) as unknown
+    } catch {
+      /* not written yet / corrupt — the window shows "尚无报告" */
+    }
+    let report: string | null = null
+    try {
+      report = fs.readFileSync(path.join(home, "archive", "report.md"), "utf-8").slice(0, 200_000)
+    } catch {
+      /* not written yet */
+    }
+    return {
+      task_id: taskId,
+      status: row.status,
+      in_flight: this.runningArchives.has(taskId),
+      state,
+      report_md: report,
+      reflection: readReflectionStore(home),
+    }
+  }
+
+  /** POST /:id/reflection/decision — ingest or skip ONE knowledge proposal. */
+  async decideReflection(
+    taskId: string,
+    input: ReflectionDecisionInput,
+    ingest?: ReflectionIngest,
+  ): Promise<ReflectionDecisionResult> {
+    const row = this.taskDAO.getById(taskId)
+    if (!row) throw new TaskNotFoundError()
+    const home = this.taskHomeService.homePath(taskId)
+    const store = readReflectionStore(home)
+    if (!store) {
+      throw new TaskStatusConflictError("该任务还没有归档反思建议（需先进入 archiving 并完成一次反思）。")
+    }
+    const entry = store.entries.find((e) => e.id === input.entry_id)
+    if (!entry) throw new TaskNotFoundError("反思条目不存在")
+    const existing = store.decisions[entry.id]
+    // Idempotent replay: same action → return what already happened.
+    if (existing && existing.action === input.action && (input.action === "skip" || existing.raw_path)) {
+      return { ok: true, store, decision: existing }
+    }
+    if (input.action === "ingest" && !ingest) {
+      throw new TaskStatusConflictError("知识投喂通道未就绪，稍后重试。")
+    }
+    const decision: ReflectionDecision = {
+      action: input.action,
+      at: new Date().toISOString(),
+      ...(input.title ? { title: input.title } : {}),
+    }
+    if (input.action === "ingest") {
+      const res = await ingest!({
+        title: input.title?.trim() || entry.title,
+        text: input.content?.trim() || entry.content,
+        origin: `task-reflection:${taskId}:${entry.id}`,
+      })
+      if (res.raw_path) decision.raw_path = res.raw_path
+      if (res.compile_task_id) decision.compile_task_id = res.compile_task_id
+    }
+    store.decisions[entry.id] = decision
+    writeReflectionStore(home, store)
+    return { ok: true, store, decision }
   }
 
   /** POST /api/tasks/:id/archive/retry — project 粒度幂等续跑 (K11/US15).

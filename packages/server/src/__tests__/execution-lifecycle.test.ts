@@ -111,7 +111,7 @@ beforeEach(() => {
   workspaceId = workspaceDbId // DB FK uses UUID
   const now = new Date().toISOString()
   db.prepare(
-    "INSERT INTO workspaces (id, name, org, path, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)",
+    "INSERT INTO workspaces (id, name, repo_group, path, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)",
   ).run(workspaceDbId, "test-ws", ORG, workspacePath, now, now)
 
   sse = new SSEService()

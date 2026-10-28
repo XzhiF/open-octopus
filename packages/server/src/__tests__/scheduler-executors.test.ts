@@ -82,7 +82,7 @@ describe('WorkflowExecutor handleChainComplete (G2 failed writer)', () => {
     db = new Database(':memory:')
     applySchema(db)
     db.pragma('foreign_keys = ON')
-    db.prepare(`INSERT INTO workspaces (id, name, org, path, created_at, updated_at) VALUES (?, 'g2-ws', 'test', '/tmp', datetime('now'), datetime('now'))`).run(wsId)
+    db.prepare(`INSERT INTO workspaces (id, name, repo_group, path, created_at, updated_at) VALUES (?, 'g2-ws', 'test', '/tmp', datetime('now'), datetime('now'))`).run(wsId)
     executor = new WorkflowExecutor(mockSSE, new ScheduleConfigDAO(db), new ScheduleRunDAO(db), new ExecutionDAO(db), mockWorkspaceService)
     mockSSE.emit.mockClear()
   })
@@ -140,7 +140,7 @@ describe('AgentExecutor', () => {
       cron_expression: '0 9 * * *',
       timezone: 'UTC',
       enabled: true,
-      org: 'test',
+      repo_group: 'test',
       config: {
         schema_version: '1.0',
         type: 'agent',
@@ -182,7 +182,7 @@ describe('AgentExecutor', () => {
     db = new Database(':memory:')
     applySchema(db)
     db.prepare(`
-      INSERT INTO workspaces (id, name, org, path, created_at, updated_at)
+      INSERT INTO workspaces (id, name, repo_group, path, created_at, updated_at)
       VALUES (?, 'test', 'test', '/tmp', datetime('now'), datetime('now'))
     `).run(wsId)
     db.prepare(`

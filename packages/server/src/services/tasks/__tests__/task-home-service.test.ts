@@ -58,7 +58,7 @@ describe("TaskHomeService", () => {
       fs.writeFileSync(path.join(projB, ".scratch", "index.md"), "# idx\n")
 
       svc.createHome(id, {
-        org: "xzf",
+        repo_group: "xzf",
         projects: [
           { name: "projA", path: projA },
           { name: "projB", path: projB },
@@ -167,9 +167,9 @@ describe("TaskHomeService", () => {
 
     it("createHome writes context.md with org/projects/skillGroups", () => {
       const id = "t-1c"
-      svc.createHome(id, { org: "xzf", projects: [{ name: "open-octopus", path: "/home/user/octopus" }], skillGroups: ["superpowers-zh"] })
+      svc.createHome(id, { repo_group: "xzf", projects: [{ name: "open-octopus", path: "/home/user/octopus" }], skillGroups: ["superpowers-zh"] })
       const ctx = fs.readFileSync(path.join(svc.homePath(id), "context.md"), "utf-8")
-      expect(ctx).toContain("org: xzf")
+      expect(ctx).toContain("repo_group: xzf")
       expect(ctx).toContain("project: open-octopus")
       expect(ctx).toContain("/home/user/octopus")
       expect(ctx).toContain("locked skill groups: superpowers-zh")
@@ -229,7 +229,7 @@ describe("TaskHomeService", () => {
 
     it("writeContextFile refreshes dynamic state without touching rules", () => {
       const id = "t-1d"
-      svc.createHome(id, { org: "old-org" })
+      svc.createHome(id, { repo_group: "old-org" })
       const ruleBefore = fs.readFileSync(path.join(svc.homePath(id), ".claude", "rules", "task-context.md"), "utf-8")
 
       // Simulate project change

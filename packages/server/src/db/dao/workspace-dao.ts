@@ -11,10 +11,10 @@ export class WorkspaceDAO extends BaseDAO {
     return (this.stmt("SELECT * FROM workspaces WHERE id = ?").get(id) as WorkspaceRow) ?? null
   }
 
-  findAll(org?: string, source?: string, excludeArchived = false): WorkspaceRow[] {
+  findAll(repoGroup?: string, source?: string, excludeArchived = false): WorkspaceRow[] {
     const conditions: string[] = []
     const params: unknown[] = []
-    if (org) { conditions.push("org = ?"); params.push(org) }
+    if (repoGroup) { conditions.push("repo_group = ?"); params.push(repoGroup) }
     if (source && source !== "all") {
       conditions.push("(source = ? OR source IS NULL)")
       params.push(source)
@@ -34,9 +34,9 @@ export class WorkspaceDAO extends BaseDAO {
     },
   ): Database.RunResult {
     return this.stmt(
-      `INSERT INTO workspaces (id, name, org, description, status, path, source, source_schedule_id, task_id, created_at, updated_at)
+      `INSERT INTO workspaces (id, name, repo_group, description, status, path, source, source_schedule_id, task_id, created_at, updated_at)
        VALUES (?, ?, ?, ?, 'active', ?, ?, ?, ?, ?, ?)`
-    ).run(row.id, row.name, row.org, row.description, row.path, row.source ?? "user", row.source_schedule_id ?? null, row.task_id ?? null, row.created_at, row.updated_at)
+    ).run(row.id, row.name, row.repo_group ?? null, row.description, row.path, row.source ?? "user", row.source_schedule_id ?? null, row.task_id ?? null, row.created_at, row.updated_at)
   }
 
   /** The workspace bound to a task (newest first — a task binds one, but a hand-deleted

@@ -135,7 +135,7 @@ export function SchedulerTable({
                 {formatNextTrigger(job.next_trigger_at)}
               </TableCell>
               <TableCell className="text-muted-foreground text-xs">
-                {job.org ?? "-"}
+                {(job.config as { workspace_spec?: { org?: string } }).workspace_spec?.org ?? "-"}
               </TableCell>
               <TableCell>
                 <ActionMenu

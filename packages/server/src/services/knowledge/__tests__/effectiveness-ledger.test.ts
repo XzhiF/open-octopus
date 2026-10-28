@@ -38,7 +38,7 @@ function makeWorkspace(opts: { id: string; execId: string; varPool: string; json
   const wsPath = path.join(tmpRoot, "ws", opts.id)
   fs.mkdirSync(path.join(wsPath, "logs", opts.execId), { recursive: true })
   db.prepare(
-    "INSERT INTO workspaces (id, name, org, path, created_at, updated_at) VALUES (?, ?, 'x', ?, ?, ?)",
+    "INSERT INTO workspaces (id, name, repo_group, path, created_at, updated_at) VALUES (?, ?, 'x', ?, ?, ?)",
   ).run(opts.id, opts.id, wsPath.replace(/\\/g, "/"), "2026-10-01T00:00:00Z", "2026-10-01T00:00:00Z")
   db.prepare(
     `INSERT INTO executions (id, workspace_id, workflow_ref, workflow_name, status, var_pool, org, created_at, updated_at, completed_at)
@@ -184,7 +184,7 @@ describe("EffectivenessLedgerService · 引用记账面（S1）", () => {
     const { EffectivenessLedgerService } = await import("../effectiveness-ledger")
     makeWikiPage("topics/wf-prd-impl.md", TOPIC_PAGE)
     db.prepare(
-      "INSERT INTO workspaces (id, name, org, path, created_at, updated_at) VALUES ('kc19','kc19','x','/nonexistent-dir-xyz','2026-10-01','2026-10-01')",
+      "INSERT INTO workspaces (id, name, repo_group, path, created_at, updated_at) VALUES ('kc19','kc19','x','/nonexistent-dir-xyz','2026-10-01','2026-10-01')",
     ).run()
     db.prepare(
       "INSERT INTO executions (id, workspace_id, workflow_ref, workflow_name, status, var_pool, org, created_at, updated_at) VALUES ('exec-d','kc19','w.yaml','w','completed','{oops','x','2026-10-13T15:46:00Z','2026-10-13T15:49:00Z')",
@@ -342,7 +342,7 @@ describe("EffectivenessLedgerService · blocker↔锚点关联判定（LLM seam�
     const { EffectivenessLedgerService } = await import("../effectiveness-ledger")
     makeWikiPage("topics/wf-prd-impl.md", TOPIC_PAGE)
     // 形一：字符串化数组（archive.ts:58-63 旧消费形制）
-    db.prepare("INSERT INTO workspaces (id, name, org, path, created_at, updated_at) VALUES ('dual','dual','x','/none','2026-10-01','2026-10-01')").run()
+    db.prepare("INSERT INTO workspaces (id, name, repo_group, path, created_at, updated_at) VALUES ('dual','dual','x','/none','2026-10-01','2026-10-01')").run()
     db.prepare(
       `INSERT INTO executions (id, workspace_id, workflow_ref, workflow_name, status, var_pool, org, created_at, updated_at, completed_at)
        VALUES ('exec-dual','dual','w.yaml','w','completed',?,'x','2026-10-13T15:00:00Z','2026-10-13T15:10:00Z','2026-10-13T15:10:00Z')`,

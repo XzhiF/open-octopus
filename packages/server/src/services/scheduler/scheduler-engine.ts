@@ -24,7 +24,6 @@ import { MAX_AGENT_CONCURRENCY, MAX_PARALLEL_WORKSPACES, STALE_CLAIMED_THRESHOLD
 
 interface ScheduleRow {
   id: string
-  org: string
   name: string
   cron_expression: string
   timezone: string
@@ -188,7 +187,7 @@ export class SchedulerEngine {
 
     // Safe mode: skip dispatch and log
     const configManager = getConfigManager()
-    const config = configManager.getConfig(schedule.org)
+    const config = configManager.getConfig('default')
     if (config.safe_mode.enabled) {
       console.log(
         `[SchedulerEngine] Skipping trigger for schedule ${schedule.id}: safe_mode enabled`,
@@ -610,7 +609,7 @@ export class SchedulerEngine {
       config = {
         schema_version: '2.0',
         type: 'workflow',
-        workspace_spec: { org: schedule.org, projects: [] },
+        workspace_spec: { org: '', branch_prefix: '', projects: [] },
         workflow_chain: [],
         max_retain: schedule.max_retain,
       } as import('@octopus/shared').JobConfig
@@ -623,7 +622,6 @@ export class SchedulerEngine {
       cron_expression: schedule.cron_expression,
       timezone: schedule.timezone,
       enabled: schedule.enabled === 1,
-      org: schedule.org || undefined,
       config,
       parallel_policy: schedule.parallel_policy as 'allow' | 'wait' | 'skip',
       timeout_seconds: schedule.timeout_seconds,

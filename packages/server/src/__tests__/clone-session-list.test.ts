@@ -49,7 +49,7 @@ function newDb(): Database.Database {
 function insertTask(db: Database.Database, id: string, sessionId: string, deletedAt: string | null = null): void {
   const now = new Date().toISOString()
   db.prepare(`
-    INSERT INTO tasks (id, org, name, status, source_chat_session_id, task_spec,
+    INSERT INTO tasks (id, repo_group, name, status, source_chat_session_id, task_spec,
       authoring_resources, resources, skills, project_ids, workflow_ref, version,
       deleted_at, created_at, updated_at, completed_at)
     VALUES (?, ?, ?, 'draft', ?, '{}', '[]', '[]', '[]', '[]', NULL, 1, ?, ?, ?, NULL)

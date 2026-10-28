@@ -38,7 +38,7 @@ afterEach(() => {
 function makeTask(id: string, status = "ready"): TaskRow {
   const now = new Date().toISOString()
   const row: TaskRow = {
-    id, org: "xzf", name: `T_${id}`, status,
+    id, repo_group: "xzf", name: `T_${id}`, status,
     task_spec: JSON.stringify({ goal: "g", ac: ["a"] }),
     authoring_resources: "[]", resources: "[]", skills: "[]", project_ids: "[]",
     workflow_ref: null, version: 1, source_chat_session_id: null,
@@ -200,7 +200,7 @@ describe("ux_exec_task_active — one live execution per task", () => {
 
   function seedWorkspace(id: string): void {
     db.prepare(
-      `INSERT INTO workspaces (id, name, org, path, created_at, updated_at)
+      `INSERT INTO workspaces (id, name, repo_group, path, created_at, updated_at)
        VALUES (?,?,?,?,?,?)`,
     ).run(id, `W_${id}`, "xzf", `/tmp/${id}`, now, now)
   }

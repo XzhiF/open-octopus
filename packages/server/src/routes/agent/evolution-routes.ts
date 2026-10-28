@@ -23,8 +23,7 @@ export function createEvolutionRoutes(deps: EvolutionRouteDeps): Hono {
   // F5: User feedback-driven evolution
   app.post('/evolution/feedback', async (c) => {
     try {
-      const org = c.req.header('X-Octopus-Org') || (c.get('org') as string)
-      if (!org) return c.json(createAgentError('ORG_NOT_FOUND', 'Organization not resolved'), 403)
+      const org = c.req.header('X-Octopus-Org') || (c.get('org') as string) || ''
 
       // Safe mode blocks evolution feedback
       const configManager = getConfigManager()
@@ -74,8 +73,7 @@ export function createEvolutionRoutes(deps: EvolutionRouteDeps): Hono {
   // F6: Self-check with evolution integration
   app.post('/self-check/evolve', async (c) => {
     try {
-      const org = c.req.header('X-Octopus-Org') || (c.get('org') as string)
-      if (!org) return c.json(createAgentError('ORG_NOT_FOUND', 'Organization not resolved'), 403)
+      const org = c.req.header('X-Octopus-Org') || (c.get('org') as string) || ''
 
       // Safe mode blocks self-check evolution
       const configManager = getConfigManager()
@@ -107,8 +105,7 @@ export function createEvolutionRoutes(deps: EvolutionRouteDeps): Hono {
   // Evolution changelog
   app.get('/evolution/changelog', (c) => {
     try {
-      const org = c.req.header('X-Octopus-Org') || (c.get('org') as string)
-      if (!org) return c.json(createAgentError('ORG_NOT_FOUND', 'Organization not resolved'), 403)
+      const org = c.req.header('X-Octopus-Org') || (c.get('org') as string) || ''
       const skill_name = c.req.query('skill')
       const limit = parseInt(c.req.query('limit') ?? '50', 10)
       const items = getEvolutionService().listChangelog(org, { skill_name, limit })
@@ -122,8 +119,7 @@ export function createEvolutionRoutes(deps: EvolutionRouteDeps): Hono {
   // Evolution experiences list
   app.get('/evolution/experiences', (c) => {
     try {
-      const org = c.req.header('X-Octopus-Org') || (c.get('org') as string)
-      if (!org) return c.json(createAgentError('ORG_NOT_FOUND', 'Organization not resolved'), 403)
+      const org = c.req.header('X-Octopus-Org') || (c.get('org') as string) || ''
       const skill = c.req.query('skill')
       const q = c.req.query('q')
 
@@ -153,14 +149,13 @@ export function createEvolutionRoutes(deps: EvolutionRouteDeps): Hono {
   // Evolution rollback
   app.post('/evolution/rollback/:id', (c) => {
     try {
-      const org = c.req.header('X-Octopus-Org') || (c.get('org') as string)
-      if (!org) return c.json(createAgentError('ORG_NOT_FOUND', 'Organization not resolved'), 403)
+      const org = c.req.header('X-Octopus-Org') || (c.get('org') as string) || ''
       const id = parseInt(c.req.param('id'), 10)
       if (isNaN(id)) return c.json(createAgentError('INVALID_PARAM', 'Invalid rollback ID'), 400)
 
       // Check if entry exists and get skill_name for .bak check
       const dao = evolutionDAO
-      const entryRow = dao.findEvolutionByIdAndOrg(id, org)
+      const entryRow = dao.findEvolutionById(id)
 
       if (!entryRow) return c.json(createAgentError('NOT_FOUND', `Evolution entry #${id} not found`), 404)
       if (entryRow.rolled_back) return c.json(createAgentError('NOT_FOUND', `Evolution entry #${id} already rolled back`), 404)
@@ -192,8 +187,7 @@ export function createEvolutionRoutes(deps: EvolutionRouteDeps): Hono {
   // Record evolution entry
   app.post('/evolution/record', async (c) => {
     try {
-      const org = c.req.header('X-Octopus-Org') || (c.get('org') as string)
-      if (!org) return c.json(createAgentError('ORG_NOT_FOUND', 'Organization not resolved'), 403)
+      const org = c.req.header('X-Octopus-Org') || (c.get('org') as string) || ''
       const body = await c.req.json<{
         skill_name: string
         change_type: 'minor' | 'major' | 'rollback' | 'revert_builtin'
@@ -221,8 +215,7 @@ export function createEvolutionRoutes(deps: EvolutionRouteDeps): Hono {
   // Record experience entry
   app.post('/evolution/experience', async (c) => {
     try {
-      const org = c.req.header('X-Octopus-Org') || (c.get('org') as string)
-      if (!org) return c.json(createAgentError('ORG_NOT_FOUND', 'Organization not resolved'), 403)
+      const org = c.req.header('X-Octopus-Org') || (c.get('org') as string) || ''
       const body = await c.req.json<{
         skill_name: string
         content: string
@@ -238,7 +231,6 @@ export function createEvolutionRoutes(deps: EvolutionRouteDeps): Hono {
         skill_name: body.skill_name,
         content: body.content,
         source_session_id: body.source_session_id ?? null,
-        org,
         created_at: now,
       })
       return c.json({
@@ -248,7 +240,6 @@ export function createEvolutionRoutes(deps: EvolutionRouteDeps): Hono {
           skill_name: body.skill_name,
           content: body.content,
           source_session_id: body.source_session_id ?? null,
-          org,
           created_at: now,
         },
       })
@@ -261,8 +252,7 @@ export function createEvolutionRoutes(deps: EvolutionRouteDeps): Hono {
   // ── Insight marks: create ──────────────────────────────────────────
   app.post('/evolution/mark-insight', async (c) => {
     try {
-      const org = c.req.header('X-Octopus-Org') || (c.get('org') as string)
-      if (!org) return c.json(createAgentError('ORG_NOT_FOUND', 'Organization not resolved'), 403)
+      const org = c.req.header('X-Octopus-Org') || (c.get('org') as string) || ''
 
       const body = await c.req.json<{
         skill_name: string; insight: string; session_id?: string
@@ -276,7 +266,6 @@ export function createEvolutionRoutes(deps: EvolutionRouteDeps): Hono {
         skill_name: body.skill_name,
         insight: body.insight,
         session_id: body.session_id,
-        org,
       })
 
       return c.json({ ok: true, id: result.lastInsertRowid })
@@ -289,8 +278,7 @@ export function createEvolutionRoutes(deps: EvolutionRouteDeps): Hono {
   // ── Insight marks: batch process ───────────────────────────────────
   app.post('/evolution/process-marks', async (c) => {
     try {
-      const org = c.req.header('X-Octopus-Org') || (c.get('org') as string)
-      if (!org) return c.json(createAgentError('ORG_NOT_FOUND', 'Organization not resolved'), 403)
+      const org = c.req.header('X-Octopus-Org') || (c.get('org') as string) || ''
 
       // Safe mode blocks process-marks
       const configManager = getConfigManager()

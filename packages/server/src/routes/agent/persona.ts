@@ -19,10 +19,7 @@ export function createPersonaRoutes(): Hono {
    */
   persona.get('/config/persona', (c) => {
     try {
-      const org = c.req.header('X-Octopus-Org') || (c.get('org') as string)
-      if (!org) {
-        return c.json(createAgentError('ORG_NOT_FOUND', 'Organization not resolved'), 403)
-      }
+      const org = c.req.header('X-Octopus-Org') || (c.get('org') as string) || ''
 
       const result = getPersonaService().readPersona(org)
       return c.json(result)
@@ -38,10 +35,7 @@ export function createPersonaRoutes(): Hono {
    */
   persona.put('/config/persona', async (c) => {
     try {
-      const org = c.req.header('X-Octopus-Org') || (c.get('org') as string)
-      if (!org) {
-        return c.json(createAgentError('ORG_NOT_FOUND', 'Organization not resolved'), 403)
-      }
+      const org = c.req.header('X-Octopus-Org') || (c.get('org') as string) || ''
 
       const body = await c.req.json<{ content: string }>()
 
@@ -97,10 +91,7 @@ export function createPersonaRoutes(): Hono {
    */
   persona.put('/config/main-preset', async (c) => {
     try {
-      const org = c.req.header('X-Octopus-Org') || (c.get('org') as string)
-      if (!org) {
-        return c.json(createAgentError('ORG_NOT_FOUND', 'Organization not resolved'), 403)
-      }
+      const org = c.req.header('X-Octopus-Org') || (c.get('org') as string) || ''
       const body = await c.req.json<{ preset?: unknown }>().catch(() => ({} as { preset?: unknown }))
       const preset = typeof body.preset === 'string' ? (body.preset as MainAgentPresetId) : null
       if (!preset) {

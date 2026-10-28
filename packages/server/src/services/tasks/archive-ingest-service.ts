@@ -138,7 +138,6 @@ export interface ArchiveIngestOutcome {
 export interface ArchiveSummaryFacts {
   taskId: string
   taskName: string
-  org: string
   date: string
   goal: string
   ac: string[]
@@ -200,7 +199,7 @@ export function buildArchiveSummaryPrompt(f: ArchiveSummaryFacts, pack?: PackSum
 
 - task id: ${f.taskId}
 - 名称: ${f.taskName}
-- org: ${f.org}
+- task: ${f.taskName}
 - 归档日期: ${f.date}
 - goal: ${f.goal}
 - 验收条件 ac:
@@ -475,7 +474,6 @@ export class ArchiveIngestService {
     return {
       taskId: row.id,
       taskName: row.name,
-      org: row.org,
       date: this.now().toISOString().slice(0, 10),
       goal: spec.goal ?? "",
       ac: spec.ac ?? [],

@@ -27,13 +27,12 @@ export class SessionService {
   /**
    * Create a new session.
    */
-  createSession(org: string, opts?: { clone_name?: string; cwd?: string | null; workspace_id?: string | null }): AgentSession {
+  createSession(opts?: { clone_name?: string; cwd?: string | null; workspace_id?: string | null }): AgentSession {
     const id = crypto.randomUUID()
     const now = new Date().toISOString()
 
     this.dao.insertSession({
       id,
-      org,
       title: '新会话',
       clone_name: opts?.clone_name ?? null,
       session_type: opts?.clone_name ? 'clone_direct' : 'main',
@@ -49,13 +48,12 @@ export class SessionService {
   }
 
   /**
-   * List sessions for an org.
+   * List sessions globally.
    */
   listSessions(
-    org: string,
     query?: { clone?: string; session_type?: string; limit?: number; cursor?: string },
   ): AgentPaginatedResponse<AgentSession> {
-    const result = this.dao.findByOrg(org, {
+    const result = this.dao.listSessions({
       clone: query?.clone,
       session_type: query?.session_type,
       limit: query?.limit,
@@ -73,9 +71,9 @@ export class SessionService {
   /**
    * Get a single session with messages.
    */
-  getSession(org: string, id: string): AgentSession | null {
+  getSession(id: string): AgentSession | null {
     const row = this.dao.findSessionById(id)
-    if (!row || row.org !== org || row.is_deleted) return null
+    if (!row || row.is_deleted) return null
     // Detail reads carry the persisted ctx usage so a cold load can paint the
     // composer chip; list reads stay lean (see listSessions).
     return this.rowToSession(row, { withContextUsage: true })
@@ -84,23 +82,23 @@ export class SessionService {
   /**
    * Update session title.
    */
-  updateSession(org: string, id: string, data: { title: string }): boolean {
-    const result = this.dao.updateSessionByOrg(id, org, { title: data.title })
+  updateSession(id: string, data: { title: string }): boolean {
+    const result = this.dao.updateSessionIfActive(id, { title: data.title })
     return result.changes > 0
   }
 
   /**
    * Soft-delete a session.
    */
-  deleteSession(org: string, id: string): boolean {
-    const result = this.dao.softDeleteByOrg(id, org)
+  deleteSession(id: string): boolean {
+    const result = this.dao.softDelete(id)
     return result.changes > 0
   }
 
   /**
    * Get message count for a session.
    */
-  getMessageCount(org: string, sessionId: string): number {
+  getMessageCount(sessionId: string): number {
     return this.dao.countMessages(sessionId)
   }
 
@@ -109,7 +107,6 @@ export class SessionService {
   private rowToSession(row: DBSessionRow, opts?: { withContextUsage?: boolean }): AgentSession {
     return {
       id: row.id,
-      org: row.org,
       title: row.title,
       clone_name: row.clone_name ?? null,
       perspective_clone_name: row.perspective_clone_name ?? null,

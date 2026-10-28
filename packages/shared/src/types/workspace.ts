@@ -6,7 +6,8 @@ export type WorkspaceStatus = z.infer<typeof WorkspaceStatusSchema>
 export const WorkspaceSchema = z.object({
   id: z.string().min(1),
   name: z.string().min(1),
-  org: z.string().min(1),
+  /** Repo-registry key only (org demotion). */
+  repo_group: z.string().nullable().optional(),
   description: z.string().optional(),
   status: WorkspaceStatusSchema.default("active"),
   path: z.string().min(1),
@@ -123,7 +124,6 @@ export const ExecutionSchema = z.object({
   branch: z.string().optional(),
   start_commit_id: z.string().optional(),
   end_commit_id: z.string().optional(),
-  org: z.string().min(1),
   created_at: z.string().min(1),
   updated_at: z.string().min(1),
 })

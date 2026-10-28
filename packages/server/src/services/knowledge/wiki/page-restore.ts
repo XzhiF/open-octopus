@@ -382,7 +382,7 @@ export class PageRestoreTaskService {
       const pageUpsert = pageRowFromDisk(liveAbs, relPath)
       if (pageUpsert) {
         articles.upsert(pageUpsert)
-        const rowid = articles.getRowid(GLOBAL_WIKI_ORG, pageUpsert.id)
+        const rowid = articles.getRowid(pageUpsert.id)
         if (rowid !== undefined) {
           try {
             articles.deleteFts(rowid)
@@ -403,14 +403,14 @@ export class PageRestoreTaskService {
         warnings.push(`回迁页解析异常，DB/FTS 未复登（盘/INDEX/LOG 已成立）：${relPath}`)
       }
       for (const r of restored) {
-        const hostRow = articles.getByPath(GLOBAL_WIKI_ORG, r.relPath)
+        const hostRow = articles.getByPath(r.relPath)
         if (!hostRow) continue // 宿主本就未在册账面（与退役 §5.5 对偶）
         const { updated_at: _ut, ...upsert } = hostRow
         this.db.transaction(() => {
           // 宿主链接面随回补面同步落库（r.next=改写后全文，判据与退役侧对偶）
           const hp = parseWikiFile(r.next)
           articles.upsert({ ...upsert, body: r.newBody, links: hp.kind === "page" ? computeArticleLinks(hp.meta.links, r.newBody) : wikiLinkTargets(r.newBody) })
-          const rowid = articles.getRowid(GLOBAL_WIKI_ORG, hostRow.id)
+          const rowid = articles.getRowid(hostRow.id)
           if (rowid === undefined) return
           try {
             articles.deleteFts(rowid)
@@ -512,8 +512,7 @@ function pageRowFromDisk(abs: string, relPath: string): ArticleUpsertRow | null 
     if (parsed.kind !== "page") return null
     const meta = pageEntryView(parsed.meta)
     return {
-      org: GLOBAL_WIKI_ORG,
-      id: meta.id,
+            id: meta.id,
       domain: parsed.meta.type,
       title: meta.title,
       summary: meta.summary,

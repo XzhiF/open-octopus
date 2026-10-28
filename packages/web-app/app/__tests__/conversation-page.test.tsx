@@ -8,11 +8,10 @@ vi.mock("@/components/agent/chat/ChatTab", () => ({
 import { ConversationHome } from "@/components/agent/chat/ConversationHome"
 
 describe("对话首页", () => {
-  it("只承载统一 ChatTab，不再挂独立任务弹窗", () => {
+  it("只承载统一 ChatTab", () => {
     render(<ConversationHome />)
 
     expect(screen.getByTestId("chat-tab")).toBeDefined()
-    expect(screen.queryByTestId("task-modal")).toBeNull()
     expect(screen.queryByRole("dialog")).toBeNull()
   })
 })

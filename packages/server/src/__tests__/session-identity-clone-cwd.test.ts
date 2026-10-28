@@ -78,7 +78,6 @@ describe("POST /sessions — 分身默认工作区", () => {
     const picked = {
       id: randomUUID(),
       name: "picked-repo",
-      org: ORG,
       description: null,
       status: "active",
       path: path.join(TEST_DIR, "picked-repo"),

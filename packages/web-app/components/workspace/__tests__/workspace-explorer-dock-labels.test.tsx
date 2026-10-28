@@ -43,7 +43,7 @@ beforeEach(() => {
 describe("WorkspaceExplorerDock — 图标下方常驻文字", () => {
   it("默认显示每个入口的文字，且不再依赖 hover tooltip", () => {
     render(
-      <WorkspaceExplorerDock workspaceId="ws-1" task={draftTask} activity={activity} onEnqueue={() => {}} />,
+      <WorkspaceExplorerDock workspaceId="ws-1" task={draftTask} activity={activity} onTaskAction={() => {}} />,
     )
 
     const files = screen.getByTestId("dock-files")
@@ -51,9 +51,9 @@ describe("WorkspaceExplorerDock — 图标下方常驻文字", () => {
     expect(files.getAttribute("title")).toBeNull()
 
     expect(screen.getByTestId("dock-activity").textContent).toContain("活动")
-    expect(screen.getByTestId("task-enqueue").textContent).toContain("入队")
+    expect(screen.getByTestId("task-action-enqueue").textContent).toContain("入列")
     expect(screen.getByText("规格")).toBeTruthy()
-    expect(screen.getByText("专家")).toBeTruthy()
+    expect(screen.getByText("消耗")).toBeTruthy()
 
     // 坞内文字约定：不超过 3 个字符。
     const dock = screen.getByTestId("workspace-explorer-dock")
@@ -64,7 +64,7 @@ describe("WorkspaceExplorerDock — 图标下方常驻文字", () => {
 
   it("关闭偏好后立刻退回图标态，tooltip 补回名称", () => {
     render(
-      <WorkspaceExplorerDock workspaceId="ws-1" task={draftTask} activity={activity} onEnqueue={() => {}} />,
+      <WorkspaceExplorerDock workspaceId="ws-1" task={draftTask} activity={activity} onTaskAction={() => {}} />,
     )
 
     act(() => setDockLabelsVisible(false))
@@ -72,7 +72,7 @@ describe("WorkspaceExplorerDock — 图标下方常驻文字", () => {
     const files = screen.getByTestId("dock-files")
     expect(files.textContent).toBe("")
     expect(files.getAttribute("title")).toBe("文件")
-    expect(screen.queryByText("入队")).toBeNull()
-    expect(screen.getByTestId("task-enqueue").getAttribute("title")).toBe("入队执行")
+    expect(screen.queryByText("入列")).toBeNull()
+    expect(screen.getByTestId("task-action-enqueue").getAttribute("title")).toBe("入列")
   })
 })

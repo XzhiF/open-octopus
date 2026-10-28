@@ -138,7 +138,6 @@ const createJobSchema = z.object({
     (val) => { try { new Intl.DateTimeFormat('en', { timeZone: val }); return true } catch { return false } },
     { message: '无效的 IANA 时区' },
   ).optional().default('Asia/Shanghai'),
-  org: z.string().min(1).max(100).optional(),
   config: z.record(z.unknown()).optional(),
   parallel_policy: z.enum(['allow', 'wait', 'skip']).optional().default('skip'),
   timeout_seconds: z.number().int().min(60).max(86400).optional().default(3600),
@@ -320,17 +319,10 @@ export class SchedulerService {
       queryParams.push(params.job_type)
     }
 
-    // A workspace-scoped view: schedules carry org, not workspace_id, so the filter maps
-    // through the workspace's org. Restored verbatim after the 票03 sweep (the route has
-    // always passed it; ListJobsParams now declares it instead of leaning on a cast).
+    // A workspace-scoped view filters directly by workspace_id.
     if (params.workspace_id) {
-      conditions.push('s.org = (SELECT org FROM workspaces WHERE id = ?)')
+      conditions.push('s.workspace_id = ?')
       queryParams.push(params.workspace_id)
-    }
-
-    if (params.org) {
-      conditions.push('s.org = ?')
-      queryParams.push(params.org)
     }
 
     const sortColumn = params.sort === 'name'
@@ -362,15 +354,9 @@ export class SchedulerService {
     const validatedConfig = validateConfig(validated.job_type, validated.config)
     assertHandlerRegistered(validatedConfig)
 
-    // Derive org: explicit org param, or from workspace_spec in config, or empty
-    const org = validated.org
-      ?? (validatedConfig.type === 'workflow' ? validatedConfig.workspace_spec.org : '')
-
-    // Check name uniqueness within org
-    if (org) {
-      if (this.configDAO.checkNameConflict(org, validated.name)) {
-        throw new SchedulerJobConflictError(`调度名称 "${validated.name}" 已存在`)
-      }
+    // Names are globally unique (org demotion).
+    if (this.configDAO.checkNameConflict(validated.name)) {
+      throw new SchedulerJobConflictError(`调度名称 "${validated.name}" 已存在`)
     }
 
     const cronExpression = validated.cron_expression!
@@ -387,7 +373,7 @@ export class SchedulerService {
 
     this.configDAO.transaction(() => {
       this.configDAO.insertSchedule({
-        id, org, name: validated.name,
+        id, name: validated.name,
         cron_expression: cronExpression, timezone: validated.timezone,
         timeout_seconds: validated.timeout_seconds,
         notify_on_failure: validated.notify_on_failure ? 1 : 0,
@@ -407,7 +393,6 @@ export class SchedulerService {
           job_type: { before: null, after: validated.job_type },
           cron_expression: { before: null, after: cronExpression },
           timezone: { before: null, after: validated.timezone },
-          org: { before: null, after: org },
         },
       })
     })
@@ -462,8 +447,8 @@ export class SchedulerService {
     }
 
     // Check name uniqueness if changing
-    if (validated.name !== undefined && validated.name !== existing.name && existing.org) {
-      if (this.configDAO.checkNameConflict(existing.org, validated.name, id)) {
+    if (validated.name !== undefined && validated.name !== existing.name) {
+      if (this.configDAO.checkNameConflict(validated.name, id)) {
         throw new SchedulerJobConflictError(`调度名称 "${validated.name}" 已存在`)
       }
     }
@@ -937,7 +922,7 @@ export class SchedulerService {
     const config = safeJsonParse<JobConfig>(row.config, {
       schema_version: '2.0',
       type: 'workflow',
-      workspace_spec: { org: row.org, projects: [] },
+      workspace_spec: { org: '', branch_prefix: '', projects: [] },
       workflow_chain: [],
       max_retain: row.max_retain,
     } as JobConfig)
@@ -958,7 +943,6 @@ export class SchedulerService {
       cron_expression: row.cron_expression,
       timezone: row.timezone,
       enabled: row.enabled === 1,
-      org: row.org || undefined,
       config,
       parallel_policy: row.parallel_policy as 'allow' | 'wait' | 'skip',
       timeout_seconds: row.timeout_seconds,

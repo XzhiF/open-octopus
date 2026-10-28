@@ -98,7 +98,7 @@ function seedRow(dao: WikiArticleDAO, id: string, domain: string, title: string,
     topics: '["probe"]', stability: "stable", last_compiled: "2026-10-13",
     sources: '["doc:s1"]', confidence: 0.5, body, path: relPath,
   })
-  const rowid = dao.getRowid(GLOBAL_WIKI_ORG, id)!
+  const rowid = dao.getRowid(id)!
   dao.insertFts({ rowid, id, domain, title, summary: `${title} 摘要`, topics: '["probe"]', body })
 }
 
@@ -222,16 +222,16 @@ describe("PageRetireTaskService — 退役清入链（票04 · 故事26 · D-aa1
 
     // 9. DB/FTS 与盘一致：宿主行正文已无退役引用，且检索面未受损
     const dao = new WikiArticleDAO(db)
-    const rowA = dao.get(GLOBAL_WIKI_ORG, "top-hub-a")
+    const rowA = dao.get("top-hub-a")
     expect(rowA).toBeDefined()
     expect(rowA!.body).not.toContain("con-retire-me")
     expect(rowA!.body).toContain("[已退役]")
-    const ftsA = dao.getFtsByRowid(dao.getRowid(GLOBAL_WIKI_ORG, "top-hub-a")!)
+    const ftsA = dao.getFtsByRowid(dao.getRowid("top-hub-a")!)
     expect(ftsA?.body).toContain("[已退役]") // FTS 面同步到摘链后正文
     // FTS5 unicode61 连续 CJK 为单 token——查询用精确 token 词形（既有测试「概念A」同款口径）
-    expect(dao.search(GLOBAL_WIKI_ORG, "无关页").map(h => h.id)).toContain("con-keep") // 无关页检索面未波及
-    expect(dao.search(GLOBAL_WIKI_ORG, "宿主A").map(h => h.id)).toContain("top-hub-a") // 宿主同步后仍可检索
-    expect(dao.search(GLOBAL_WIKI_ORG, "宿主B").map(h => h.id)).toContain("top-hub-b")
+    expect(dao.search("无关页").map(h => h.id)).toContain("con-keep") // 无关页检索面未波及
+    expect(dao.search("宿主A").map(h => h.id)).toContain("top-hub-a") // 宿主同步后仍可检索
+    expect(dao.search("宿主B").map(h => h.id)).toContain("top-hub-b")
   })
 
   it("replaced_by 指针落地：入参带替换者 ⇒ 退役页 front-matter 写机读行；不带 ⇒ 零噪音", async () => {

@@ -103,7 +103,7 @@ describe("cases in search/article routes (ticket 04, S3)", () => {
     tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "wiki-cases-search-"))
     root = path.join(tmpDir, "wiki")
     ensureWikiSkeleton(root)
-    const svc = new WikiCompileService({ db, org: "global", rootDir: root, git: realGit(root) })
+    const svc = new WikiCompileService({ db, repo_group: "global", rootDir: root, git: realGit(root) })
     await svc.compileEntry({ content: CASE_LOCKFILE, fileName: "2026-06-23-pnpm-lockfile-mismatch.md" })
     await svc.compileEntry({ content: CASE_BODY_ONLY, fileName: "2026-07-02-actuator-stale-detect.md" })
     await svc.compileEntry({ content: CASE_OPEN, fileName: "2026-08-01-pnpm-store-race.md" })

@@ -38,8 +38,7 @@ async function newAwaitingTask(): Promise<string> {
   const res = await app.request("/api/tasks", {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({
-      org: ORG, name: `E2E_TD pb ${seq++}`,
+    body: JSON.stringify({ name: `E2E_TD pb ${seq++}`,
       task_spec: {
         format: "v4", goal: "g", ac: ["a1"],
         phases: [{ index: 1, name: "P1", slug: "p-1", specPath: `./${BATCH_REL}/spec.md`, workflowRef: "task-dev", inputValues: {} }],
@@ -66,7 +65,7 @@ beforeAll(() => {
   db = new Database(":memory:")
   applySchema(db)
   tmp = fs.mkdtempSync(path.join(os.tmpdir(), "td-playbook-"))
-  db.prepare(`INSERT INTO workspaces (id, name, org, path, created_at, updated_at) VALUES (?, 'pb-ws', ?, ?, ?, ?)`)
+  db.prepare(`INSERT INTO workspaces (id, name, repo_group, path, created_at, updated_at) VALUES (?, 'pb-ws', ?, ?, ?, ?)`)
     .run(WS_ID, ORG, path.join(tmp, "ws1"), new Date().toISOString(), new Date().toISOString())
   const sse = new SSEService()
   taskHome = new TaskHomeService(path.join(tmp, "home"))
@@ -109,7 +108,7 @@ describe("GET /:id/playbook", () => {
   it("P3: no awaiting round → 409", async () => {
     const res = await app.request("/api/tasks", {
       method: "POST", headers: { "content-type": "application/json" },
-      body: JSON.stringify({ org: ORG, name: "E2E_TD no-await", task_spec: { format: "v4", goal: "g", ac: ["a"], phases: [{ index: 1, name: "P", slug: "pp", specPath: "./.scratch/20260917/pp/spec.md", workflowRef: "task-dev", inputValues: {} }] } }),
+      body: JSON.stringify({ repo_group: ORG, name: "E2E_TD no-await", task_spec: { format: "v4", goal: "g", ac: ["a"], phases: [{ index: 1, name: "P", slug: "pp", specPath: "./.scratch/20260917/pp/spec.md", workflowRef: "task-dev", inputValues: {} }] } }),
     })
     const draftId = ((await res.json()) as { id: string }).id
     const r = await app.request(`/api/tasks/${draftId}/playbook`)

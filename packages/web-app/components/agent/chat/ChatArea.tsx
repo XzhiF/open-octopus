@@ -13,6 +13,8 @@ import { cn } from '@/lib/utils'
 import { formatTokenCount } from '@/lib/format'
 import { ChatBubble } from './ChatBubble'
 import { SessionCostChip } from './session-cost-chip'
+import { TaskCostChip } from './task-cost-chip'
+import type { TaskUsagePayload } from '@/lib/tasks-api'
 import { TuiLive, TuiMessage } from './TuiTranscript'
 import { ToolCallCard } from './ToolCallCard'
 import { QuestionCard } from '@/components/workspace/chat/question-card'
@@ -91,6 +93,9 @@ interface ChatAreaProps {
   contextUsage?: ContextUsageData | null
   /** 本会话账本用量（v49 token 角标）；null = 无账本/未取到 → 角标不渲染。 */
   sessionUsage?: LlmUsageAggregates | null
+  /** 2026-10-28 task-thread: task-lifecycle ledger. When supplied (even null,
+   *  = loading) the composer shows the TASK chip instead of the session chip. */
+  taskUsage?: TaskUsagePayload | null
   /** Current model name (e.g. 'pro', 'pro-max', 'se'). */
   currentModel?: string
   /** Callback when user switches model. */
@@ -157,7 +162,7 @@ export function ChatArea({
   error, statusMessage, onSend, onStop, onConfirm, hasSession, currentCloneName,
   reviewItems, onReviewAction,
   emptyStateTitle, emptyStateDescription, hideEmptyState,
-  commands, contextUsage, sessionUsage, currentModel, onModelChange,
+  commands, contextUsage, sessionUsage, taskUsage, currentModel, onModelChange,
   showUsagePlaceholders, showComposerAttach,
   effort, onEffortChange, maxContext, onMaxContextChange, modelPresets,
   composerLeading, composerPlaceholder, heroEmpty, composerHeroFooter, identity, workspaceContext,
@@ -902,7 +907,11 @@ export function ChatArea({
                     ) : null}
                   </span>
                   <span className="hidden sm:flex">
-                    <SessionCostChip usage={sessionUsage} contextUsage={contextUsage} placeholder={showUsagePlaceholders} />
+                    {taskUsage !== undefined ? (
+                      <TaskCostChip usage={taskUsage} placeholder={showUsagePlaceholders} />
+                    ) : (
+                      <SessionCostChip usage={sessionUsage} contextUsage={contextUsage} placeholder={showUsagePlaceholders} />
+                    )}
                   </span>
                 </>
               )}
@@ -1065,7 +1074,11 @@ export function ChatArea({
                   <span aria-hidden className="text-[8px]">▾</span>
                 </span>
               ) : null}
-              <SessionCostChip usage={sessionUsage} contextUsage={contextUsage} placeholder={showUsagePlaceholders} />
+              {taskUsage !== undefined ? (
+                      <TaskCostChip usage={taskUsage} placeholder={showUsagePlaceholders} />
+                    ) : (
+                      <SessionCostChip usage={sessionUsage} contextUsage={contextUsage} placeholder={showUsagePlaceholders} />
+                    )}
               <span className="ml-auto flex shrink-0 items-center">
                 {streaming ? (
                   <Button

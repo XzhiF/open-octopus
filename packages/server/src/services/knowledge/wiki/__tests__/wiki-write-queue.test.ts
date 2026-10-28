@@ -318,7 +318,7 @@ function seedFtsRow(dao: WikiArticleDAO, row: { id: string; title: string; summa
     body: row.body,
     path: `concepts/${row.id}.md`,
   })
-  const rowid = dao.getRowid(GLOBAL_WIKI_ORG, row.id)!
+  const rowid = dao.getRowid(row.id)!
   dao.insertFts({ rowid, id: row.id, domain: "concept", title: row.title, summary: row.summary, topics: JSON.stringify([]), body: row.body })
 }
 
@@ -356,7 +356,7 @@ describe("读永不锁 — 编译进行中 tree/页 Read/search 正常（票06 A
     const scanned = scanWikiEntries(wikiRoot)
     expect(scanned.map(e => e.meta.id)).toContain("con-read-me")
     expect(fs.readFileSync(path.join(wikiRoot, "concepts", "con-read-me.md"), "utf-8")).toContain("读路径不参与锁")
-    expect(dao.search(GLOBAL_WIKI_ORG, "serialization").length).toBeGreaterThan(0)
+    expect(dao.search("serialization").length).toBeGreaterThan(0)
 
     // 读发生在「编译进行中」窗口内（任务彼时仍 running——读不排队等写）
     expect(q.get("slow-compile")?.state).toBe("running")

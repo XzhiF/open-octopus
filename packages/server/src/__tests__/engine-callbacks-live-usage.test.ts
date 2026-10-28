@@ -50,7 +50,7 @@ function makeMocks() {
   } as unknown as ObservabilityService
   const ctx = {
     db: {} as any, sse: { emit: sseEmit } as any, workflowService: {} as any,
-    builtInWorkflowService: {} as any, org: "test-org", workspacePath: "/tmp/test", workspaceDbId: "ws-db-1",
+    builtInWorkflowService: {} as any, repo_group: "test-org", workspacePath: "/tmp/test", workspaceDbId: "ws-db-1",
   } as ServiceContext
   return { dao, tokenUsageDao, enginePool, observability, ctx, sseEmit, syncStateJson: vi.fn() }
 }
@@ -59,7 +59,7 @@ function build(mocks: ReturnType<typeof makeMocks>) {
   const builder = new EngineCallbacks({
     ctx: mocks.ctx, dao: mocks.dao, tokenUsageDao: mocks.tokenUsageDao,
     enginePool: mocks.enginePool, observability: mocks.observability,
-    workspaceId: "ws-1", org: "test-org", workspaceDbId: "ws-db-1",
+    workspaceId: "ws-1", repo_group: "test-org", workspaceDbId: "ws-db-1",
     externalCallbacks: new Map(), syncStateJson: mocks.syncStateJson,
   })
   return { builder, cb: builder.buildCallbacks("exec-1") }

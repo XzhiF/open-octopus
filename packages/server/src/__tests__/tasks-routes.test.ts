@@ -69,7 +69,7 @@ function insertTask(
   const id = overrides.id ?? `e2e-td-task-${Math.random().toString(36).slice(2, 8)}`
   const now = new Date().toISOString()
   db.prepare(`
-    INSERT INTO tasks (id, org, name, status, source_chat_session_id, task_spec,
+    INSERT INTO tasks (id, repo_group, name, status, source_chat_session_id, task_spec,
       authoring_resources, resources, skills, project_ids, workflow_ref, version,
       deleted_at, created_at, updated_at, completed_at)
     VALUES (?, ?, ?, ?, NULL, ?, '[]', '[]', ?, ?, NULL, ?, NULL, ?, ?, NULL)
@@ -116,7 +116,7 @@ function seedInstanceRow(
     const exists = db.prepare("SELECT id FROM workspaces WHERE id = ?").get(wsId)
     if (!exists) {
       db.prepare(
-        `INSERT INTO workspaces (id, name, org, status, path, source, task_id, created_at, updated_at)
+        `INSERT INTO workspaces (id, name, repo_group, status, path, source, task_id, created_at, updated_at)
          VALUES (?, ?, ?, 'active', ?, 'task', ?, datetime('now'), datetime('now'))`,
       ).run(wsId, `ws-${taskId}`, ORG, `/tmp/e2e-td-${wsId}`, taskId)
     }
@@ -169,7 +169,7 @@ describe("03: /api/tasks routes + TasksService (integration)", () => {
     const res = await app.request("/api/tasks", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ org: ORG, name: "E2E_TD_crud" }),
+      body: JSON.stringify({ repo_group: ORG, name: "E2E_TD_crud" }),
     })
     expect(res.status).toBe(201)
     const task = await json<{ id: string; status: string; name: string; version: number }>(res)
@@ -182,11 +182,11 @@ describe("03: /api/tasks routes + TasksService (integration)", () => {
   })
 
   it("GET /api/tasks returns the kanban list", async () => {
-    const res = await app.request(`/api/tasks?org=${ORG}`)
+    const res = await app.request(`/api/tasks?repo_group=${ORG}`)
     expect(res.status).toBe(200)
-    const data = await json<{ items: Array<{ status: string; org: string }> }>(res)
+    const data = await json<{ items: Array<{ status: string; repo_group: string }> }>(res)
     expect(data.items.length).toBeGreaterThan(0)
-    expect(data.items.every((t) => t.org === ORG)).toBe(true)
+    expect(data.items.every((t) => t.repo_group === ORG)).toBe(true)
   })
 
   it("GET /api/tasks/:id returns task detail with executions[] (children[] is gone)", async () => {
@@ -222,7 +222,7 @@ describe("03: /api/tasks routes + TasksService (integration)", () => {
     const arm = (n: string, status: string) => {
       const wsId = `e2e-td-child-ws-${n}`
       db.prepare(
-        `INSERT INTO workspaces (id, name, org, status, path, source, task_id, created_at, updated_at)
+        `INSERT INTO workspaces (id, name, repo_group, status, path, source, task_id, created_at, updated_at)
          VALUES (?, ?, ?, 'active', ?, 'task', ?, datetime('now'), datetime('now'))`,
       ).run(wsId, `child-${n}`, ORG, `/tmp/e2e-td-${wsId}`, id)
       db.prepare(
@@ -403,8 +403,7 @@ describe("03: /api/tasks routes + TasksService (integration)", () => {
         subunits: [
           {
             name: "sub-A",
-            workspace_spec: {
-              org: ORG,
+            workspace_spec: { org: ORG,
               branch_prefix: "suba",
               projects: [{ name: "proj-A", source_path: "", group: "" }],
             },
@@ -415,8 +414,7 @@ describe("03: /api/tasks routes + TasksService (integration)", () => {
           },
           {
             name: "sub-B",
-            workspace_spec: {
-              org: ORG,
+            workspace_spec: { org: ORG,
               branch_prefix: "subb",
               projects: [{ name: "proj-B", source_path: "", group: "" }],
             },

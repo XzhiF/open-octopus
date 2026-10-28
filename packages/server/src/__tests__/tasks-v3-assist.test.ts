@@ -98,7 +98,7 @@ function insertTask(
   const id = overrides.id ?? `e2e-td-task-${Math.random().toString(36).slice(2, 8)}`
   const now = new Date().toISOString()
   db.prepare(`
-    INSERT INTO tasks (id, org, name, status, source_chat_session_id, task_spec,
+    INSERT INTO tasks (id, repo_group, name, status, source_chat_session_id, task_spec,
       authoring_resources, resources, skills, project_ids, workflow_ref, version,
       deleted_at, created_at, updated_at, completed_at)
     VALUES (?, ?, ?, 'draft', NULL, ?, '[]', '[]', '[]', ?, NULL, 1, NULL, ?, ?, NULL)
@@ -320,7 +320,7 @@ describe("07: AssistWorkflowService + routes (integration)", () => {
     const wsId = `ws-${Math.random().toString(36).slice(2, 8)}`
     const execId = `exec-${Math.random().toString(36).slice(2, 8)}`
     const now = new Date().toISOString()
-    db.prepare(`INSERT INTO workspaces (id, name, org, description, status, path, created_at, updated_at, source, source_schedule_id)
+    db.prepare(`INSERT INTO workspaces (id, name, repo_group, description, status, path, created_at, updated_at, source, source_schedule_id)
       VALUES (?, ?, ?, '', 'active', ?, ?, ?, 'task-assist', NULL)`).run(wsId, `ws-${wsId}`, ORG, taskHome.homePath(taskId), now, now)
     insertExecutionWithOutput(db, {
       id: execId,
@@ -345,7 +345,7 @@ describe("07: AssistWorkflowService + routes (integration)", () => {
     const wsId = `ws-${Math.random().toString(36).slice(2, 8)}`
     const execId = `exec-${Math.random().toString(36).slice(2, 8)}`
     const now = new Date().toISOString()
-    db.prepare(`INSERT INTO workspaces (id, name, org, description, status, path, created_at, updated_at, source, source_schedule_id)
+    db.prepare(`INSERT INTO workspaces (id, name, repo_group, description, status, path, created_at, updated_at, source, source_schedule_id)
       VALUES (?, ?, ?, '', 'active', ?, ?, ?, 'task-assist', NULL)`).run(wsId, `ws-${wsId}`, ORG, taskHome.homePath(taskId), now, now)
     insertExecutionWithOutput(db, {
       id: execId,
@@ -366,7 +366,7 @@ describe("07: AssistWorkflowService + routes (integration)", () => {
     const wsId = `ws-${Math.random().toString(36).slice(2, 8)}`
     const execId = `exec-${Math.random().toString(36).slice(2, 8)}`
     const now = new Date().toISOString()
-    db.prepare(`INSERT INTO workspaces (id, name, org, description, status, path, created_at, updated_at, source, source_schedule_id)
+    db.prepare(`INSERT INTO workspaces (id, name, repo_group, description, status, path, created_at, updated_at, source, source_schedule_id)
       VALUES (?, ?, ?, '', 'active', ?, ?, ?, 'task-assist', NULL)`).run(wsId, `ws-${wsId}`, ORG, taskHome.homePath(taskId), now, now)
     insertExecutionWithOutput(db, {
       id: execId,
@@ -390,7 +390,7 @@ describe("07: AssistWorkflowService + routes (integration)", () => {
     const now = new Date().toISOString()
     // Create home so logs can be written.
     taskHome.createHome(taskId)
-    db.prepare(`INSERT INTO workspaces (id, name, org, description, status, path, created_at, updated_at, source, source_schedule_id)
+    db.prepare(`INSERT INTO workspaces (id, name, repo_group, description, status, path, created_at, updated_at, source, source_schedule_id)
       VALUES (?, ?, ?, '', 'active', ?, ?, ?, 'task-assist', NULL)`).run(wsId, `ws-${wsId}`, ORG, taskHome.homePath(taskId), now, now)
     insertExecutionWithOutput(db, {
       id: execId,
@@ -423,7 +423,7 @@ describe("07: AssistWorkflowService + routes (integration)", () => {
     const execId = `exec-${Math.random().toString(36).slice(2, 8)}`
     const now = new Date().toISOString()
     taskHome.createHome(taskA)
-    db.prepare(`INSERT INTO workspaces (id, name, org, description, status, path, created_at, updated_at, source, source_schedule_id)
+    db.prepare(`INSERT INTO workspaces (id, name, repo_group, description, status, path, created_at, updated_at, source, source_schedule_id)
       VALUES (?, ?, ?, '', 'active', ?, ?, ?, 'task-assist', NULL)`).run(wsId, `ws-${wsId}`, ORG, taskHome.homePath(taskA), now, now)
     insertExecutionWithOutput(db, { id: execId, workspace_id: wsId, task_id: taskA, template: "moa-requirements-review" })
 

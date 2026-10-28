@@ -47,6 +47,9 @@ vi.mock("@/components/providers/chat-sessions", () => ({
 vi.mock("@/hooks/useSessionUsage", () => ({
   useSessionUsage: () => null,
 }))
+vi.mock("@/hooks/useTaskUsage", () => ({
+  useTaskUsage: () => null,
+}))
 
 const RUNNING_TASK = {
   id: "task-running",
@@ -76,10 +79,6 @@ const tasksBox: { tasks: unknown[]; loading: boolean } = { tasks: [], loading: f
 
 vi.mock("@/hooks/use-chat-tasks", () => ({
   useChatTasks: () => ({ tasks: tasksBox.tasks, loading: tasksBox.loading, refresh: vi.fn() }),
-}))
-
-vi.mock("@/components/chat-workbench/task-workbench", () => ({
-  TaskWorkbench: () => <div data-testid="task-workbench" />,
 }))
 
 vi.mock("@/components/chat-workbench/task-modules-layer", () => ({
@@ -122,7 +121,7 @@ describe("ChatTab — 刷新恢复上次任务", () => {
       expect(item.getAttribute("aria-current")).toBe("page")
       expect(item.getAttribute("data-task-id")).toBe("task-running")
     })
-    expect(screen.getByTestId("task-workbench")).toBeDefined()
+    expect(screen.getByTestId("task-status-strip")).toBeDefined()
   })
 
   it("没有落盘上下文 ⇒ 不自动打开任务", async () => {
@@ -130,7 +129,7 @@ describe("ChatTab — 刷新恢复上次任务", () => {
 
     await waitFor(() => expect(firstTaskItem()).toBeDefined())
     expect(firstTaskItem().getAttribute("aria-current")).toBeNull()
-    expect(screen.queryByTestId("task-workbench")).toBeNull()
+    expect(screen.queryByTestId("task-status-strip")).toBeNull()
   })
 
   it("落盘的任务已不存在（列表里没有 + 直查 404）⇒ 不误开别的任务", async () => {
@@ -139,6 +138,6 @@ describe("ChatTab — 刷新恢复上次任务", () => {
 
     await waitFor(() => expect(firstTaskItem()).toBeDefined())
     expect(firstTaskItem().getAttribute("aria-current")).toBeNull()
-    expect(screen.queryByTestId("task-workbench")).toBeNull()
+    expect(screen.queryByTestId("task-status-strip")).toBeNull()
   })
 })

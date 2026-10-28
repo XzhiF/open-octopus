@@ -318,7 +318,7 @@ describe("stream-resume: finalizeOrphanStreamPartials (startup sweep)", () => {
     const goodId = "E2E_TD_orphan_good"
     const badId = "E2E_TD_orphan_bad"
     sessionDAO.insertSession({
-      id: "E2E_TD_orphan_sess", org: ORG, title: "E2E_TD orphan",
+      id: "E2E_TD_orphan_sess", repo_group: ORG, title: "E2E_TD orphan",
       clone_name: "task-author", session_type: "clone",
       created_at: now, updated_at: now,
     })

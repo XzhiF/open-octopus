@@ -119,7 +119,7 @@ beforeEach(() => {
   installProvider()
   const now = new Date().toISOString()
   sessionDAO.insertSession({
-    id: "s-1", org: ORG, title: "T", clone_name: null, session_type: "main",
+    id: "s-1", repo_group: ORG, title: "T", clone_name: null, session_type: "main",
     created_at: now, updated_at: now,
   })
 })

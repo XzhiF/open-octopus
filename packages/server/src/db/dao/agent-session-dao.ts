@@ -15,12 +15,13 @@ export class AgentSessionDAO extends BaseDAO {
     return (this.stmt("SELECT * FROM sessions WHERE id = ?").get(id) as SessionRow) ?? null
   }
 
-  findByOrg(org: string, filters?: {
+  /** List sessions globally (org demotion: sessions are no longer tenant-scoped). */
+  listSessions(filters?: {
     clone?: string; session_type?: string; limit?: number; cursor?: string
   }): { items: SessionRow[]; has_more: boolean; next_cursor: string | null } {
     const limit = filters?.limit ?? 20
-    let sql = `SELECT * FROM sessions WHERE org = ? AND is_deleted = 0`
-    const params: unknown[] = [org]
+    let sql = `SELECT * FROM sessions WHERE is_deleted = 0`
+    const params: unknown[] = []
     if (filters?.clone) { sql += ` AND clone_name = ?`; params.push(filters.clone) }
     if (filters?.session_type) { sql += ` AND session_type = ?`; params.push(filters.session_type) }
     if (filters?.cursor) { sql += ` AND created_at < ?`; params.push(filters.cursor) }
@@ -39,10 +40,10 @@ export class AgentSessionDAO extends BaseDAO {
     cwd?: string | null; workspace_id?: string | null; context_usage?: string | null
   }): Database.RunResult {
     return this.stmt(`
-      INSERT INTO sessions (id, org, title, clone_name, perspective_clone_name, session_type, is_active, is_deleted, scope_id, provider_session_id, cwd, workspace_id, last_message_at, created_at, updated_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO sessions (id, title, clone_name, perspective_clone_name, session_type, is_active, is_deleted, scope_id, provider_session_id, cwd, workspace_id, last_message_at, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
-      row.id, row.org, row.title, row.clone_name,
+      row.id, row.title, row.clone_name,
       row.perspective_clone_name ?? null, row.session_type,
       row.is_active ?? 1, row.is_deleted ?? 0,
       row.scope_id ?? null, row.provider_session_id ?? null,
@@ -263,10 +264,10 @@ export class AgentSessionDAO extends BaseDAO {
     `).all(sessionId, limit) as Array<{ role: string; content: string }>
   }
 
-  countActiveSessions(org: string): number {
+  countActiveSessions(): number {
     return (this.stmt(
-      "SELECT COUNT(*) as count FROM sessions WHERE is_active = 1 AND is_deleted = 0 AND org = ?"
-    ).get(org) as { count: number }).count
+      "SELECT COUNT(*) as count FROM sessions WHERE is_active = 1 AND is_deleted = 0"
+    ).get() as { count: number }).count
   }
 
   findLatestMessageTimestamp(): { last_at: string | null } | null {
@@ -290,22 +291,15 @@ export class AgentSessionDAO extends BaseDAO {
     }>
   }
 
-  updateSessionByOrg(id: string, org: string, fields: Record<string, unknown>): Database.RunResult {
+  updateSessionIfActive(id: string, fields: Record<string, unknown>): Database.RunResult {
     const sets: string[] = ["updated_at = ?"]
     const vals: unknown[] = [new Date().toISOString()]
     for (const [k, v] of Object.entries(fields)) {
       sets.push(`${k} = ?`)
       vals.push(v)
     }
-    vals.push(id, org)
-    return this.stmt(`UPDATE sessions SET ${sets.join(", ")} WHERE id = ? AND org = ? AND is_deleted = 0`).run(...vals)
-  }
-
-  softDeleteByOrg(id: string, org: string): Database.RunResult {
-    const now = new Date().toISOString()
-    return this.stmt(
-      "UPDATE sessions SET is_deleted = 1, is_active = 0, updated_at = ? WHERE id = ? AND org = ? AND is_deleted = 0"
-    ).run(now, id, org)
+    vals.push(id)
+    return this.stmt(`UPDATE sessions SET ${sets.join(", ")} WHERE id = ? AND is_deleted = 0`).run(...vals)
   }
 
   // ── Clone session methods ────────────────────────────────────────
@@ -359,12 +353,11 @@ export class AgentSessionDAO extends BaseDAO {
 
   /** Find sessions by clone_name */
   findByClone(cloneName: string, filters?: {
-    org?: string; limit?: number; cursor?: string
+    limit?: number; cursor?: string
   }): { items: SessionRow[]; has_more: boolean; next_cursor: string | null } {
     const limit = filters?.limit ?? 20
     let sql = `SELECT * FROM sessions WHERE clone_name = ? AND is_deleted = 0`
     const params: unknown[] = [cloneName]
-    if (filters?.org) { sql += ` AND org = ?`; params.push(filters.org) }
     if (filters?.cursor) { sql += ` AND created_at < ?`; params.push(filters.cursor) }
     sql += ` ORDER BY last_message_at DESC, created_at DESC LIMIT ?`
     params.push(limit + 1)

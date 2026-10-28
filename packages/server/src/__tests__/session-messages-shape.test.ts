@@ -43,7 +43,7 @@ beforeEach(() => {
   db.prepare('DELETE FROM sessions').run()
   const now = new Date().toISOString()
   sessionDAO.insertSession({
-    id: SESSION, org: ORG, title: 'T', clone_name: null, session_type: 'main',
+    id: SESSION, repo_group: ORG, title: 'T', clone_name: null, session_type: 'main',
     created_at: now, updated_at: now,
   })
 })

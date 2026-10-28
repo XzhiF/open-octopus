@@ -46,7 +46,7 @@ function newDb(): Database.Database {
   const db = new Database(':memory:')
   applySchema(db)
   db.prepare(`
-    INSERT INTO workspaces (id, name, org, path, created_at, updated_at)
+    INSERT INTO workspaces (id, name, repo_group, path, created_at, updated_at)
     VALUES ('t5-ws', 't5ws', '${ORG}', '/tmp', datetime('now'), datetime('now'))
   `).run()
   db.prepare(`INSERT OR IGNORE INTO scheduler_state (id, last_heartbeat) VALUES (1, datetime('now'))`).run()
@@ -89,7 +89,7 @@ function insertScheduleExecution(
 function insertScheduleWorkspaceRow(db: Database.Database, id: string, scheduleId: string, status: string): void {
   // schedule_workspaces has FK on workspace_id → workspaces; insert a stub row first
   db.prepare(`
-    INSERT INTO workspaces (id, name, org, path, created_at, updated_at)
+    INSERT INTO workspaces (id, name, repo_group, path, created_at, updated_at)
     VALUES (?, ?, ?, ?, ?, ?)
   `).run(`ws-${id}`, `ws-${id}`, ORG, '/tmp', new Date().toISOString(), new Date().toISOString())
   db.prepare(`

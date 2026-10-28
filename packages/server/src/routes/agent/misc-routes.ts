@@ -41,8 +41,7 @@ export function createMiscRoutes(deps: MiscRouteDeps): Hono {
   // ── Memory — rebuild-fts ─────────────────────────────────────────
   app.post('/memory/rebuild-fts', (c) => {
     try {
-      const org = c.req.header('X-Octopus-Org') || (c.get('org') as string)
-      if (!org) return c.json(createAgentError('ORG_NOT_FOUND', 'Organization not resolved'), 403)
+      const org = c.req.header('X-Octopus-Org') || (c.get('org') as string) || ''
       // FTS rebuild is a no-op for now — memory search uses file-based grep
       return c.json({ ok: true, rebuilt: true, indexed_count: 0 })
     } catch (err: unknown) {
@@ -54,8 +53,7 @@ export function createMiscRoutes(deps: MiscRouteDeps): Hono {
   // ── Memory — archive ─────────────────────────────────────────────
   app.post('/memory/archive', async (c) => {
     try {
-      const org = c.req.header('X-Octopus-Org') || (c.get('org') as string)
-      if (!org) return c.json(createAgentError('ORG_NOT_FOUND', 'Organization not resolved'), 403)
+      const org = c.req.header('X-Octopus-Org') || (c.get('org') as string) || ''
 
       // Check safe mode
       const { getConfigManager } = await import('../../services/agent/config-manager')
@@ -142,8 +140,7 @@ export function createMiscRoutes(deps: MiscRouteDeps): Hono {
   // ── Memory refine (E2E-075, E2E-076) ────────────────────────────
   app.post('/memory/refine', async (c) => {
     try {
-      const org = c.req.header('X-Octopus-Org') || (c.get('org') as string)
-      if (!org) return c.json(createAgentError('ORG_NOT_FOUND', 'Organization not resolved'), 403)
+      const org = c.req.header('X-Octopus-Org') || (c.get('org') as string) || ''
 
       const body = await c.req.json<{ layer?: string; content?: string }>().catch(() => ({}))
       const layer = body.layer ?? 'long-term'
@@ -181,7 +178,7 @@ export function createMiscRoutes(deps: MiscRouteDeps): Hono {
       const error = err instanceof Error ? err : new Error(String(err))
       // Rollback on error (E2E-076)
       try {
-        const org = c.req.header('X-Octopus-Org') || (c.get('org') as string)
+        const org = c.req.header('X-Octopus-Org') || (c.get('org') as string) || ''
         const memoryDir = getAgentMemoryDir()
         const bakFile = path.join(memoryDir, 'long-term.md.bak')
         const longTermFile = path.join(memoryDir, 'long-term.md')
@@ -196,8 +193,7 @@ export function createMiscRoutes(deps: MiscRouteDeps): Hono {
   // ── Debug — log retrieval ──────────────────────────────────────────
   app.get('/debug/log', async (c) => {
     try {
-      const org = c.req.header('X-Octopus-Org') || (c.get('org') as string)
-      if (!org) return c.json(createAgentError('ORG_NOT_FOUND', 'Organization not resolved'), 403)
+      const org = c.req.header('X-Octopus-Org') || (c.get('org') as string) || ''
 
       const limit = Math.min(parseInt(c.req.query('limit') ?? '20', 10), 100)
       const sessionId = c.req.query('session_id') ?? undefined
@@ -220,8 +216,7 @@ export function createMiscRoutes(deps: MiscRouteDeps): Hono {
   // ── Debug — prompt assembly inspection ─────────────────────────────
   app.get('/debug/assemble/:chat_id', async (c) => {
     try {
-      const org = c.req.header('X-Octopus-Org') || (c.get('org') as string)
-      if (!org) return c.json(createAgentError('ORG_NOT_FOUND', 'Organization not resolved'), 403)
+      const org = c.req.header('X-Octopus-Org') || (c.get('org') as string) || ''
 
       const chatId = c.req.param('chat_id')
       const agentService = getAgentService()
@@ -236,8 +231,7 @@ export function createMiscRoutes(deps: MiscRouteDeps): Hono {
   // ── Safety — confirm dangerous operations via SSE integration ──────
   app.post('/safety/confirm', async (c) => {
     try {
-      const org = c.req.header('X-Octopus-Org') || (c.get('org') as string)
-      if (!org) return c.json(createAgentError('ORG_NOT_FOUND', 'Organization not resolved'), 403)
+      const org = c.req.header('X-Octopus-Org') || (c.get('org') as string) || ''
 
       const body = await c.req.json<{
         event_id?: number | string
@@ -265,7 +259,7 @@ export function createMiscRoutes(deps: MiscRouteDeps): Hono {
       const safetyDao = safetyDAO
 
       // Find the safety event
-      const event = safetyDao.findSafetyEventByIdAndOrg(Number(body.event_id), org)
+      const event = safetyDao.findSafetyEventById(Number(body.event_id))
 
       if (!event) {
         return c.json(createAgentError('NOT_FOUND', `Safety event ${body.event_id} not found`), 404)
@@ -290,8 +284,7 @@ export function createMiscRoutes(deps: MiscRouteDeps): Hono {
   // ── Self-check (E2E-055) ────────────────────────────────────────
   app.post('/self-check', (c) => {
     try {
-      const org = c.req.header('X-Octopus-Org') || (c.get('org') as string)
-      if (!org) return c.json(createAgentError('ORG_NOT_FOUND', 'Organization not resolved'), 403)
+      const org = c.req.header('X-Octopus-Org') || (c.get('org') as string) || ''
 
       const dailyDir = getDailyMemoryDir()
       const experiencesDir = getExperiencesDir()
@@ -350,8 +343,7 @@ export function createMiscRoutes(deps: MiscRouteDeps): Hono {
   // ── Notification test ──────────────────────────────────────────
   app.post('/config/test-notification', async (c) => {
     try {
-      const org = c.req.header('X-Octopus-Org') || (c.get('org') as string)
-      if (!org) return c.json(createAgentError('ORG_NOT_FOUND', 'Organization not resolved'), 403)
+      const org = c.req.header('X-Octopus-Org') || (c.get('org') as string) || ''
 
       const { getConfigManager } = await import('../../services/agent/config-manager')
       const configManager = getConfigManager()

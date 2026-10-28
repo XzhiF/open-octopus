@@ -207,7 +207,7 @@ describe("[采纳修订] contradiction / stale — LLM seam 生成修订稿", ()
   it("stale：按上报修订规则行；缺 LLM ⇒ 任务 failed(LLM_UNAVAILABLE) 不静默", async () => {
     writePage("topics/top-ops.md", "top-ops", "topic", ["ops"], [],
       "## 硬约束\n- 修改 shared 后必须先重建再全量构建 <!--#oct-007-->\n")
-    db.prepare(`INSERT INTO workspaces (id, name, org, path, created_at, updated_at) VALUES ('ws-1','w','default','/tmp/w','2026-10-12','2026-10-12')`).run()
+    db.prepare(`INSERT INTO workspaces (id, name, repo_group, path, created_at, updated_at) VALUES ('ws-1','w','default','/tmp/w','2026-10-12','2026-10-12')`).run()
     db.prepare(
       `INSERT INTO executions (id, org, workspace_id, parent_id, workflow_ref, workflow_name, status, node_type, var_pool, created_at, updated_at)
        VALUES ('e-1','default','ws-1','0','wf','wf','completed','normal',?,'2026-10-12','2026-10-12')`,

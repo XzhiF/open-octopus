@@ -27,7 +27,7 @@ beforeEach(() => {
   db = new Database(":memory:")
   applySchema(db)
   const t = now()
-  db.prepare("INSERT INTO workspaces (id, name, path, org, created_at, updated_at) VALUES ('ws-1','WS','/tmp/w','o',?,?)").run(t, t)
+  db.prepare("INSERT INTO workspaces (id, name, path, repo_group, created_at, updated_at) VALUES ('ws-1','WS','/tmp/w','o',?,?)").run(t, t)
   db.prepare("INSERT INTO executions (id, workspace_id, parent_id, workflow_ref, workflow_name, status, started_at, completed_at, org, created_at, updated_at) VALUES ('e-1','ws-1','0','t.yaml','T','completed',?,?,?,?,?)").run(t, t, 'o', t, t)
   db.prepare("INSERT INTO node_executions (id, execution_id, node_id, node_type, status, retry_count, duration, started_at, completed_at) VALUES ('ne-1','e-1','n1','agent','completed',0,1,?,?)").run(t, t)
   dao = new TokenUsageDAO(db)
@@ -44,8 +44,7 @@ const colsOf = (table: string) =>
 function recordCall(id: string, model: string, ts = TS) {
   recordLlmCall({
     id, sourcePath: "workflow", nodeExecutionId: "ne-1", executionId: "e-1",
-    turnIndex: 1, callIndex: 0, model, usage: usage4, timestamp: ts, durationMs: 100,
-    org: "o", workspaceId: "ws-1", workflowRef: "t.yaml", nodeId: "n1",
+    turnIndex: 1, callIndex: 0, model, usage: usage4, timestamp: ts, durationMs: 100, workspaceId: "ws-1", workflowRef: "t.yaml", nodeId: "n1",
   }, dao)
 }
 

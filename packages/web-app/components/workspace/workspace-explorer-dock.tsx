@@ -6,16 +6,20 @@ import {
   Activity,
   Archive,
   Ban,
+  BarChart3,
   Check,
   ClipboardCheck,
+  Clock,
+  Copy,
   FileText,
   FolderTree,
   GitCompare,
+  Package,
   Pause,
   Pencil,
   Play,
+  Square,
   Upload,
-  Users,
   X,
   type LucideIcon,
 } from 'lucide-react'
@@ -43,8 +47,8 @@ export interface WorkspaceExplorerDockProps {
   task?: TaskView | null
   taskWindows?: TaskWindowMap
   onOpenTaskModule?: (module: TaskModule) => void
-  onEnqueue?: () => void
-  enqueueBusy?: boolean
+  /** Task action (trigger/pause/resume/abort/reopen/retry_archive/accept…). */
+  onTaskAction?: (action: string) => void
   activity: ActivitySnapshot
   /** Chat sidebar width (0 when collapsed) — the editor panel sizes around it. */
   sidebarWidth?: number
@@ -85,8 +89,11 @@ const SIDEBAR_DEFAULT_WIDTH = 236
 const MODULE_ROWS: Array<{ id: TaskModule; label: string; icon: typeof FileText }> = [
   { id: 'plan', label: '规格', icon: FileText },
   { id: 'changes', label: '变更', icon: GitCompare },
+  { id: 'run', label: '运行', icon: Play },
   { id: 'acceptance', label: '验收', icon: ClipboardCheck },
-  { id: 'experts', label: '专家', icon: Users },
+  { id: 'usage', label: '消耗', icon: BarChart3 },
+  { id: 'artifacts', label: '产物', icon: Package },
+  { id: 'archive', label: '归档', icon: Archive },
 ]
 
 const TASK_STATUS_META: Record<string, {
@@ -130,8 +137,7 @@ export function WorkspaceExplorerDock({
   task,
   taskWindows,
   onOpenTaskModule,
-  onEnqueue,
-  enqueueBusy,
+  onTaskAction,
   activity,
   sidebarWidth = SIDEBAR_DEFAULT_WIDTH,
   className,
@@ -248,17 +254,65 @@ export function WorkspaceExplorerDock({
 
   if (!workspaceId) return null
   const active = tabs.find((t) => t.path === activePath) ?? null
-  const isDraft = task?.status === 'draft'
-  const nonDraft = !!task && !isDraft
-  const acceptanceStage = task?.status === 'awaiting_review' || task?.status === 'archiving'
-  const visibleModules = MODULE_ROWS.filter((row) => {
-    if (row.id === 'changes') return nonDraft
-    if (row.id === 'acceptance') return acceptanceStage
-    return true
-  })
+  const status = task?.status ?? ''
+  const isDraft = status === 'draft'
+  const hasExecution =
+    !!task?.execution || ['running', 'paused', 'awaiting_review', 'archiving', 'done'].includes(status)
+  const visibleModules = task
+    ? MODULE_ROWS.filter((row) => {
+        switch (row.id) {
+          case 'plan':
+          case 'usage':
+          case 'artifacts':
+            return true
+          case 'changes':
+            return !isDraft
+          case 'run':
+            return hasExecution
+          case 'acceptance':
+            return status === 'awaiting_review' || status === 'archiving'
+          case 'archive':
+            return status === 'archiving' || status === 'done'
+          default:
+            return true
+        }
+      })
+    : []
   const statusMeta = task
     ? (TASK_STATUS_META[task.status] ?? { label: task.status, badge: 'bg-pop-dim text-pop-bg', icon: FileText })
     : null
+  // 10-state action matrix (one primary + secondaries). Actions are delegated
+  // to ChatTab's shared handler — the dock never re-implements a task endpoint.
+  const taskActions: Array<{
+    id: string
+    label: string
+    tone: 'green' | 'amber' | 'ghost'
+    icon: LucideIcon
+  }> =
+    status === 'draft' ? [{ id: 'enqueue', label: '入列', tone: 'green', icon: Upload }]
+      : status === 'ready'
+        ? [
+            { id: 'trigger', label: '触发', tone: 'green', icon: Play },
+            { id: 'schedule', label: '定时', tone: 'ghost', icon: Clock },
+            { id: 'abort', label: '中止', tone: 'ghost', icon: Square },
+          ]
+        : status === 'running'
+          ? [
+              { id: 'pause', label: '暂停', tone: 'ghost', icon: Pause },
+              { id: 'abort', label: '中止', tone: 'ghost', icon: Square },
+            ]
+          : status === 'paused'
+            ? [
+                { id: 'resume', label: '恢复', tone: 'green', icon: Play },
+                { id: 'abort', label: '中止', tone: 'ghost', icon: Square },
+              ]
+            : status === 'awaiting_review'
+              ? [{ id: 'open_acceptance', label: '去验收', tone: 'amber', icon: Check }]
+              : status === 'archiving'
+                ? [{ id: 'retry_archive', label: '重试归档', tone: 'amber', icon: Archive }]
+                : status === 'done'
+                  ? []
+                  : [{ id: 'duplicate', label: '复制', tone: 'ghost', icon: Copy }]
   const phaseLabel =
     task?.execution?.phase_index != null
       ? `P${task.execution.phase_index}${task.execution.round_index != null ? ` · R${task.execution.round_index}` : ''}`
@@ -475,28 +529,35 @@ export function WorkspaceExplorerDock({
           })
         })}
 
-        {task && isDraft && onEnqueue && (
-          <button
-            type="button"
-            data-testid="task-enqueue"
-            disabled={enqueueBusy}
-            aria-label="入队执行"
-            title={showLabels ? undefined : '入队执行'}
-            onClick={onEnqueue}
-            className={cn(
-              'flex shrink-0 flex-col items-center justify-center rounded-[11px] bg-pop-green text-pop-bg transition-opacity hover:opacity-90',
-              showLabels ? 'w-11 gap-[3px] px-0.5 py-1' : 'size-9',
-              enqueueBusy && 'animate-pulse opacity-60',
-            )}
-          >
-            <Upload className={showLabels ? 'size-[17px]' : 'size-[18px]'} strokeWidth={2} />
-            {showLabels && (
-              <span className="max-w-full truncate text-[9px] font-medium leading-none tracking-tight">
-                入队
-              </span>
-            )}
-          </button>
-        )}
+        {task && taskActions.map((action) => {
+          const Icon = action.icon
+          return (
+            <button
+              key={action.id}
+              type="button"
+              data-testid={`task-action-${action.id}`}
+              aria-label={action.label}
+              title={showLabels ? undefined : action.label}
+              onClick={() => onTaskAction?.(action.id)}
+              className={cn(
+                'flex shrink-0 flex-col items-center justify-center rounded-[11px] transition-opacity hover:opacity-90',
+                showLabels ? 'w-11 gap-[3px] px-0.5 py-1' : 'size-9',
+                action.tone === 'green'
+                  ? 'bg-pop-green text-pop-bg'
+                  : action.tone === 'amber'
+                    ? 'bg-pop-amber text-pop-bg'
+                    : 'border border-pop-bd text-pop-dim hover:text-pop-ink',
+              )}
+            >
+              <Icon className={showLabels ? 'size-[17px]' : 'size-[18px]'} strokeWidth={2} />
+              {showLabels && (
+                <span className="max-w-full truncate text-[9px] font-medium leading-none tracking-tight">
+                  {action.label}
+                </span>
+              )}
+            </button>
+          )
+        })}
       </div>
     </>
   )

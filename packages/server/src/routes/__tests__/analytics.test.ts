@@ -15,7 +15,7 @@ beforeAll(() => {
   applySchema(db)
   // Seed workspace
   const now = new Date().toISOString()
-  db.prepare("INSERT INTO workspaces (id, name, org, path, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)")
+  db.prepare("INSERT INTO workspaces (id, name, repo_group, path, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)")
     .run(WS_ID, "test-ws", ORG, "/tmp/test-ws", now, now)
 })
 

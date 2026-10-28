@@ -1,3 +1,4 @@
+import { randomUUID } from "crypto"
 import { isStreamActive } from "../agent/agent-service"
 import { getActivityBus, type ActivityEvent, type ActivityKind, type ActivitySeverity } from "./activity-bus"
 import type { SSEService } from "../sse"
@@ -17,6 +18,81 @@ const WAKE_COALESCE_MS = 5_000
 const MAX_WAKES_PER_EXECUTION = 3
 const STALL_MS = 10 * 60 * 1000
 
+// ── Task status cards (2026-10-28 task-thread) ──────────────────────
+// Every persisted→derived transition gets a transcript card. High-signal
+// transitions additionally wake the agent (one turn), but the card itself is
+// deterministic and costs zero LLM. The web renders `payload.actions` as
+// buttons (M4); the ids are the contract.
+
+export interface TaskCardAction {
+  id: string
+  label: string
+}
+
+const TASK_STATUS_TITLE: Record<string, string> = {
+  draft: "任务已回到草稿",
+  ready: "任务已入列 · 待触发",
+  running: "任务开始执行",
+  paused: "任务已暂停",
+  awaiting_review: "本轮完成 · 待验收",
+  archiving: "末 phase 已通过 · 归档中",
+  done: "任务完成 · 已归档",
+  aborted: "任务已中止",
+  failed: "任务失败",
+}
+
+const TASK_STATUS_SEVERITY: Record<string, ActivitySeverity> = {
+  draft: "info",
+  ready: "info",
+  running: "info",
+  paused: "warn",
+  awaiting_review: "warn",
+  archiving: "warn",
+  done: "info",
+  aborted: "warn",
+  failed: "critical",
+}
+
+const TASK_STATUS_ACTIONS: Record<string, TaskCardAction[]> = {
+  draft: [{ id: "open_spec", label: "打开规格" }],
+  ready: [
+    { id: "trigger", label: "⚡ 立即触发" },
+    { id: "schedule", label: "⏱ 定时触发" },
+    { id: "reopen", label: "↩ 回草稿" },
+  ],
+  running: [
+    { id: "open_run", label: "打开运行窗" },
+    { id: "pause", label: "⏸ 暂停" },
+    { id: "abort", label: "■ 中止" },
+  ],
+  paused: [
+    { id: "resume", label: "▶ 恢复" },
+    { id: "open_run", label: "打开运行窗" },
+    { id: "abort", label: "■ 中止" },
+  ],
+  awaiting_review: [
+    { id: "open_acceptance", label: "✓ 去验收" },
+    { id: "open_changes", label: "打开本轮变更" },
+  ],
+  archiving: [
+    { id: "open_archive", label: "打开归档" },
+    { id: "retry_archive", label: "↻ 重试归档" },
+  ],
+  done: [
+    { id: "open_archive", label: "打开归档报告" },
+    { id: "open_usage", label: "看消耗" },
+    { id: "new_task", label: "开新任务" },
+  ],
+  aborted: [
+    { id: "open_run", label: "打开日志" },
+    { id: "duplicate", label: "⧉ 复制任务" },
+  ],
+  failed: [
+    { id: "open_run", label: "打开日志" },
+    { id: "duplicate", label: "⧉ 复制任务" },
+  ],
+}
+
 /**
  * Routes workflow/task activity to the chat session that owns it.
  *
@@ -32,12 +108,19 @@ class ChatEventBridge {
   private seen = new Set<string>()
   private stallTimers = new Map<string, ReturnType<typeof setTimeout>>()
   private stallWarned = new Set<string>()
-  private pendingWakes = new Map<string, { target: ChatWakeTarget; event: ActivityEvent }>()
+  private pendingWakes = new Map<string, { target: ChatWakeTarget; event: ActivityEvent; ephemeral?: boolean }>()
   private pendingTimers = new Map<string, ReturnType<typeof setTimeout>>()
   private db: SqliteLike | null = null
+  private sse: SSEService | null = null
+  /** taskId → last status we carded, so repeat SSE frames stay one card. */
+  private lastTaskStatus = new Map<string, string>()
 
   attach(db: SqliteLike): void {
     this.db = db
+  }
+
+  attachSse(sse: SSEService): void {
+    this.sse = sse
   }
 
   bindExecution(executionId: string, target: ChatWakeTarget): void {
@@ -179,42 +262,272 @@ class ChatEventBridge {
     const taskId = typeof data.task_id === "string" ? data.task_id : undefined
     if (!taskId || !this.db) return
     const status = String(data.status ?? "")
-    const high =
-      status === "done" ? ("task.completed" as ActivityKind)
-        : status === "failed" || status === "aborted" ? ("task.failed" as ActivityKind)
-          : status === "awaiting_review" ? ("task.review" as ActivityKind)
-            : null
-    if (!high) return
+    if (!status) return
+    // One card per TRANSITION. SSE repeats the current status on several
+    // channels; a second episode of 'running' (next phase) must still card.
+    if (this.lastTaskStatus.get(taskId) === status) return
+    this.lastTaskStatus.set(taskId, status)
 
-    let row: { name?: string; org?: string; source_chat_session_id?: string | null; workspace_id?: string | null } | undefined
+    let row: {
+      name?: string
+      repo_group?: string | null
+      source_chat_session_id?: string | null
+      workspace_id?: string | null
+    } | undefined
     try {
       row = this.db.prepare(
-        "SELECT name, org, source_chat_session_id, workspace_id FROM tasks WHERE id = ?",
+        "SELECT name, repo_group, source_chat_session_id, workspace_id FROM tasks WHERE id = ?",
       ).get(taskId) as typeof row
     } catch {
       return
     }
     if (!row) return
 
-    const key = `task:${taskId}:${status}`
-    if (this.seen.has(key)) return
-    this.seen.add(key)
+    // A task thread is a MAIN session bound to the task. Legacy task-author
+    // clone sessions keep the old high-signal-wake-only behavior.
+    let threadSession: { clone_name: string | null; workspace_id: string | null } | undefined
+    if (row.source_chat_session_id) {
+      try {
+        threadSession = this.db.prepare(
+          "SELECT clone_name, workspace_id FROM sessions WHERE id = ?",
+        ).get(row.source_chat_session_id) as typeof threadSession
+      } catch {
+        /* no sessions table in a stripped test DB — treat as legacy */
+      }
+    }
+    const isThread = !!threadSession && (threadSession.clone_name ?? null) === null
 
-    const title =
-      high === "task.completed" ? `任务完成：${row.name ?? taskId.slice(0, 8)}`
-        : high === "task.review" ? `任务等待验收：${row.name ?? taskId.slice(0, 8)}`
-          : `任务失败：${row.name ?? taskId.slice(0, 8)}`
-    const severity: ActivitySeverity = high === "task.failed" ? "critical" : high === "task.review" ? "warn" : "info"
+    let latest: { id?: string; phase_index?: number | null; round_index?: number | null } | undefined
+    try {
+      latest = this.db.prepare(
+        "SELECT id, phase_index, round_index FROM executions WHERE task_id = ? ORDER BY created_at DESC, rowid DESC LIMIT 1",
+      ).get(taskId) as typeof latest
+    } catch {
+      /* no executions table — fine */
+    }
+
+    const high: ActivityKind | null =
+      status === "done" ? "task.completed"
+        : status === "failed" || status === "aborted" ? "task.failed"
+          : status === "awaiting_review" ? "task.review"
+            : null
+    const kind: ActivityKind = high ?? "task.status"
+    const title = TASK_STATUS_TITLE[status] ?? `任务状态：${status}`
+    const severity: ActivitySeverity = TASK_STATUS_SEVERITY[status] ?? "info"
+    const actions = TASK_STATUS_ACTIONS[status] ?? []
+    const coord = latest?.phase_index != null
+      ? `P${latest.phase_index}${latest.round_index != null ? ` · R${latest.round_index}` : ""}`
+      : "未开始"
+    const detail = `任务：${row.name ?? taskId.slice(0, 8)} · ${coord}`
+    const workspaceId = row.workspace_id ?? threadSession?.workspace_id ?? null
+
     const event = getActivityBus().publish({
-      kind: high,
+      kind,
       severity,
       title,
+      message: detail,
+      workspaceId,
+      taskId,
+      executionId: latest?.id ?? null,
+      sessionId: row.source_chat_session_id ?? null,
+      payload: {
+        status,
+        actions,
+        phaseIndex: latest?.phase_index ?? null,
+        roundIndex: latest?.round_index ?? null,
+      },
+    })
+
+    if (isThread && row.source_chat_session_id) {
+      this.appendTaskCard({
+        sessionId: row.source_chat_session_id,
+        workspaceId,
+        title,
+        detail,
+        event,
+        status,
+        actions,
+      })
+      this.notifySession(row.source_chat_session_id, workspaceId)
+    }
+
+    if (high && row.source_chat_session_id) {
+      void this.wake(
+        { sessionId: row.source_chat_session_id, org: row.repo_group ?? '', workspaceId },
+        event,
+        // The thread already has the deterministic card; the wake turn is the
+        // model seeing the same event without persisting a duplicate message.
+        isThread ? { ephemeral: true } : undefined,
+      )
+    }
+  }
+
+  /** Append-only transcript card (zero LLM). Shape matches the wake route's
+   *  displayType:'event' messages so the web renders one component. */
+  private appendTaskCard(input: {
+    sessionId: string
+    workspaceId: string | null
+    title: string
+    detail: string
+    event: ActivityEvent
+    status: string
+    actions: TaskCardAction[]
+  }): void {
+    if (!this.db) return
+    const now = new Date().toISOString()
+    const activity = {
+      kind: input.event.kind,
+      severity: input.event.severity,
+      title: input.title,
+      message: input.detail,
+      workspaceId: input.workspaceId,
+      taskId: input.event.taskId ?? null,
+      executionId: input.event.executionId ?? null,
+      status: input.status,
+      actions: input.actions,
+    }
+    try {
+      this.db.prepare(
+        "INSERT INTO messages (id, session_id, role, content, metadata, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+      ).run(
+        randomUUID(),
+        input.sessionId,
+        "user",
+        `[任务状态 · ${input.status}] ${input.title}\n${input.detail}`,
+        JSON.stringify({ displayType: "event", activity }),
+        now,
+      )
+      this.db.prepare(
+        "UPDATE sessions SET last_message_at = ?, updated_at = ? WHERE id = ?",
+      ).run(now, now, input.sessionId)
+    } catch (err: unknown) {
+      if (process.env.NODE_ENV !== "test") {
+        console.warn(
+          `[ChatEventBridge] task card insert failed: ${err instanceof Error ? err.message : String(err)}`,
+        )
+      }
+    }
+  }
+
+  /** Archiving start: wake the main thread ONCE for knowledge reflection.
+   *  The status card is already written by handleTaskStatus; this turn only
+   *  asks the model to call propose_wiki_entries (ephemeral, no duplicate card). */
+  requestArchiveReflection(taskId: string): void {
+    if (!this.db) return
+    let row: {
+      name?: string
+      repo_group?: string | null
+      source_chat_session_id?: string | null
+      workspace_id?: string | null
+    } | undefined
+    try {
+      row = this.db.prepare(
+        "SELECT name, repo_group, source_chat_session_id, workspace_id FROM tasks WHERE id = ?",
+      ).get(taskId) as typeof row
+    } catch {
+      return
+    }
+    if (!row?.source_chat_session_id) return
+    let session: { clone_name?: string | null } | undefined
+    try {
+      session = this.db.prepare("SELECT clone_name FROM sessions WHERE id = ?")
+        .get(row.source_chat_session_id) as typeof session
+    } catch {
+      return
+    }
+    if (!session || session.clone_name) return // legacy clone thread — untouched
+
+    const title = "归档反思 · 知识沉淀"
+    const event = getActivityBus().publish({
+      kind: "task.status",
+      severity: "info",
+      title,
+      message: `任务：${row.name ?? taskId.slice(0, 8)} · 末 phase 已通过，归档编排中`,
       workspaceId: row.workspace_id ?? null,
       taskId,
-      sessionId: row.source_chat_session_id ?? null,
+      sessionId: row.source_chat_session_id,
+      payload: { status: "archiving", reflection: true },
     })
-    if (row.source_chat_session_id && row.org) {
-      void this.wake({ sessionId: row.source_chat_session_id, org: row.org, workspaceId: row.workspace_id }, event)
+    const message = [
+      `[归档反思] 任务 ${taskId} 已进入归档阶段。`,
+      "请读 task home、本轮 git 变更与 spec，调用 propose_wiki_entries 给出 2–5 条值得落 wiki 的建议（决策 / 坑 / 术语）。",
+      "不要改代码；落不落由人逐条决定。自动投喂已在后台进行，不必重复它。",
+    ].join("\n")
+    void this.wake(
+      { sessionId: row.source_chat_session_id, org: row.repo_group ?? '', workspaceId: row.workspace_id ?? null },
+      event,
+      { ephemeral: true, message },
+    )
+  }
+
+  /** Tell an open chat to reload its transcript (no wake turn). */
+  private notifySession(sessionId: string, workspaceId: string | null): void {
+    if (!this.sse || !workspaceId) return
+    this.sse.emit(workspaceId, {
+      event: "session_updated",
+      data: { sessionId, wake: false, phase: "event" },
+    })
+  }
+
+  /** Archiving failed but the task is parked in 'archiving' (no task_status
+   *  transition fires). Card + one wake so the main chat can explain/retry. */
+  notifyTaskArchiveFailure(taskId: string, detail?: string): void {
+    if (!this.db) return
+    let row: {
+      name?: string
+      repo_group?: string | null
+      source_chat_session_id?: string | null
+      workspace_id?: string | null
+    } | undefined
+    try {
+      row = this.db.prepare(
+        "SELECT name, repo_group, source_chat_session_id, workspace_id FROM tasks WHERE id = ?",
+      ).get(taskId) as typeof row
+    } catch {
+      return
+    }
+    if (!row?.source_chat_session_id) return
+    let session: { clone_name?: string | null } | undefined
+    try {
+      session = this.db.prepare("SELECT clone_name FROM sessions WHERE id = ?")
+        .get(row.source_chat_session_id) as typeof session
+    } catch {
+      return
+    }
+    if (!session || session.clone_name) return // legacy clone thread — untouched
+
+    const title = "归档停在 archiving"
+    const message = detail ? `失败原因：${detail}` : "有 project 未归档成功，可幂等重试。"
+    const actions: TaskCardAction[] = [
+      { id: "retry_archive", label: "↻ 重试归档" },
+      { id: "open_archive", label: "打开归档" },
+    ]
+    const event = getActivityBus().publish({
+      kind: "task.failed",
+      severity: "warn",
+      title,
+      message,
+      workspaceId: row.workspace_id ?? null,
+      taskId,
+      sessionId: row.source_chat_session_id,
+      payload: { status: "archiving", actions },
+    })
+    this.appendTaskCard({
+      sessionId: row.source_chat_session_id,
+      workspaceId: row.workspace_id ?? null,
+      title,
+      detail: message,
+      event,
+      status: "archiving",
+      actions,
+    })
+    this.notifySession(row.source_chat_session_id, row.workspace_id ?? null)
+    {
+      void this.wake(
+        { sessionId: row.source_chat_session_id, org: row.repo_group ?? '', workspaceId: row.workspace_id ?? null },
+        event,
+        { ephemeral: true },
+      )
     }
   }
 
@@ -254,36 +567,45 @@ class ChatEventBridge {
     if (target) await this.wake(target, event)
   }
 
-  private queueWake(target: ChatWakeTarget, event: ActivityEvent, delayMs = 3_000): void {
-    this.pendingWakes.set(target.sessionId, { target, event })
+  private queueWake(
+    target: ChatWakeTarget,
+    event: ActivityEvent,
+    delayMs = 3_000,
+    opts?: { ephemeral?: boolean },
+  ): void {
+    this.pendingWakes.set(target.sessionId, { target, event, ephemeral: opts?.ephemeral })
     if (this.pendingTimers.has(target.sessionId)) return
     const timer = setTimeout(() => {
       this.pendingTimers.delete(target.sessionId)
       const pending = this.pendingWakes.get(target.sessionId)
       if (!pending) return
       if (isStreamActive(pending.target.sessionId)) {
-        this.queueWake(pending.target, pending.event, delayMs)
+        this.queueWake(pending.target, pending.event, delayMs, { ephemeral: pending.ephemeral })
         return
       }
       this.pendingWakes.delete(pending.target.sessionId)
-      void this.wake(pending.target, pending.event)
+      void this.wake(pending.target, pending.event, { ephemeral: pending.ephemeral })
     }, delayMs)
     if (typeof timer.unref === "function") timer.unref()
     this.pendingTimers.set(target.sessionId, timer)
   }
 
-  private async wake(target: ChatWakeTarget, event: ActivityEvent): Promise<void> {
+  private async wake(
+    target: ChatWakeTarget,
+    event: ActivityEvent,
+    opts?: { ephemeral?: boolean; message?: string },
+  ): Promise<void> {
     if (process.env.OCTOPUS_CHAT_AUTO_WAKE === "0") return
     // The agent may still be finishing the turn that started the workflow —
     // retry after it goes idle instead of dropping the completion event.
     if (isStreamActive(target.sessionId)) {
-      this.queueWake(target, event)
+      this.queueWake(target, event, 3_000, opts)
       return
     }
 
     const last = this.lastWakeAt.get(target.sessionId) ?? 0
     if (Date.now() - last < WAKE_COALESCE_MS) {
-      this.queueWake(target, event)
+      this.queueWake(target, event, 3_000, opts)
       return
     }
 
@@ -299,7 +621,7 @@ class ChatEventBridge {
       event.executionId ? `execution_id：${event.executionId}` : null,
       event.taskId ? `task_id：${event.taskId}` : null,
     ].filter(Boolean).join("\n")
-    const message = [
+    const message = opts?.message ?? [
       `[活动通知 · ${event.kind}] ${event.title}`,
       detail,
       "请判断是否需要处理。需要时调用工作流工具（get_execution / respond_approval / retry_node / cancel_execution），并把结论简短告诉用户。",
@@ -317,6 +639,7 @@ class ChatEventBridge {
         body: JSON.stringify({
           message,
           wake: true,
+          ...(opts?.ephemeral ? { ephemeral: true } : {}),
           activity: {
             kind: event.kind,
             severity: event.severity,
@@ -325,6 +648,8 @@ class ChatEventBridge {
             taskId: event.taskId,
             nodeId: event.nodeId,
             workspaceId: event.workspaceId ?? target.workspaceId ?? null,
+            status: (event.payload as Record<string, unknown> | undefined)?.status ?? null,
+            actions: (event.payload as Record<string, unknown> | undefined)?.actions ?? null,
           },
         }),
       })
@@ -350,10 +675,16 @@ export function getChatEventBridge(): ChatEventBridge {
   return bridge
 }
 
+/** Test seam: drop the singleton so each test starts with fresh in-memory state. */
+export function resetChatEventBridgeForTests(): void {
+  bridge = null
+}
+
 /** Start once at server boot: global SSE fan-in → activity bus + chat wake. */
 export function initChatEventBridge(sse: SSEService, db: SqliteLike): ChatEventBridge {
   const instance = getChatEventBridge()
   instance.attach(db)
+  instance.attachSse(sse)
   sse.subscribeAll((event) => instance.handleSse(event))
   return instance
 }

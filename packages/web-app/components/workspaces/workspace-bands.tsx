@@ -78,7 +78,7 @@ export function WorkspaceBands({ workspaces, onNew, onDelete, onArchive, onViewA
       (ws) =>
         !q ||
         (ws.name ?? "").toLowerCase().includes(q) ||
-        (ws.org ?? "").toLowerCase().includes(q) ||
+        (ws.repo_group ?? "").toLowerCase().includes(q) ||
         (ws.description ?? "").toLowerCase().includes(q),
     )
     return [...list].sort((a, b) => updatedOf(b).localeCompare(updatedOf(a)))
@@ -247,7 +247,7 @@ function BandCard({
             <div className="wsb-live"><i /></div>
             <div className="wsb-live-label">{running} 个工作流正在跑</div>
             <div className="wsb-row">
-              <span className="wsb-k">{ws.org}</span>
+              <span className="wsb-k">{ws.repo_group}</span>
               <span className="wsb-sep">·</span>
               <span>{whenOf(ws)}</span>
               <span style={{ marginLeft: "auto" }}>{enter}</span>
@@ -264,7 +264,7 @@ function BandCard({
             </div>
             <div className="wsb-desc">{ws.description || "—"}</div>
             <div className="wsb-row">
-              <span className="wsb-k">{ws.org}</span>
+              <span className="wsb-k">{ws.repo_group}</span>
               <span className="wsb-sep">·</span>
               <span>{whenOf(ws)}</span>
               <span style={{ marginLeft: "auto" }}>{enter}</span>
@@ -282,7 +282,7 @@ function BandCard({
             <div className="wsb-desc">{ws.description || "—"}</div>
             <div className="wsb-snippet">{ws.path}</div>
             <div className="wsb-row">
-              <span className="wsb-k">{ws.org}</span>
+              <span className="wsb-k">{ws.repo_group}</span>
               <span className="wsb-sep">·</span>
               <span>{whenOf(ws)}</span>
               <span style={{ marginLeft: "auto" }}>{enter}</span>
@@ -299,7 +299,7 @@ function BandCard({
               {isTaskWs(ws) && <span className="wsb-tag">task</span>}
             </div>
             <div className="wsb-row">
-              <span className="wsb-k">{ws.org}</span>
+              <span className="wsb-k">{ws.repo_group}</span>
               <span className="wsb-sep">·</span>
               <span>{whenOf(ws)}</span>
             </div>
@@ -459,7 +459,7 @@ function GenieModal({
         <div className="wsb-genie-head">📁 {ws.name}</div>
         <div className="wsb-genie-body">
           <div className="wsb-kv">
-            <span className="wsb-kv-k">组织</span><span className="wsb-kv-v">{ws.org}</span>
+            <span className="wsb-kv-k">组织</span><span className="wsb-kv-v">{ws.repo_group}</span>
             <span className="wsb-kv-k">状态</span><span className="wsb-kv-v">{BAND_LABEL[band]}</span>
             <span className="wsb-kv-k">类型</span><span className="wsb-kv-v">{isTaskWs(ws) ? "task-mode" : "user"}</span>
             <span className="wsb-kv-k">项目 / 工作流</span><span className="wsb-kv-v">{ws.projectCount ?? 0} / {ws.workflowCount ?? 0}</span>

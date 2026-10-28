@@ -512,7 +512,8 @@ export type AssistWorkflowRun = z.infer<typeof assistWorkflowRunSchema>
  * NOT touch task_spec / resources / version (SG8). */
 export interface Task {
   id: string
-  org: string
+  /** Repo-registry key only (org demotion). NULL = no repos bound. */
+  repo_group: string | null
   name: string
   status: TaskStatus
   /** WHAT the task does (D2). Written via the spec-field tool (agent) or

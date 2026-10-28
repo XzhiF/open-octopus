@@ -84,7 +84,7 @@ function newDb(): Database.Database {
   const db = new Database(':memory:')
   applySchema(db)
   db.prepare(`
-    INSERT INTO workspaces (id, name, org, path, created_at, updated_at)
+    INSERT INTO workspaces (id, name, repo_group, path, created_at, updated_at)
     VALUES ('ws-07', 'ws07', '${ORG}', '/tmp', datetime('now'), datetime('now'))
   `).run()
   db.prepare(`
