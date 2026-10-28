@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import {
   ChevronDown,
   ListTodo,
@@ -142,7 +142,20 @@ export function ChatSidebar({
   const [query, setQuery] = useState('')
   const searchInputRef = useRef<HTMLInputElement>(null)
   // Task-author clone sessions live in the task group, never in the chat list.
-  const visibleSessions = sessions.filter((session) => !session.clone_name)
+  // 2026-10-28: 被任务绑定的主会话也不出现在会话列表 —— 它就是任务线程本体，
+  // 再挂一块"会话"牌子会让人以为是两个对话（切换中间历史"不变化"的困惑来源）。
+  const boundSessionIds = useMemo(
+    () =>
+      new Set(
+        tasks
+          .map((task) => task.source_chat_session_id)
+          .filter((id): id is string => !!id),
+      ),
+    [tasks],
+  )
+  const visibleSessions = sessions.filter(
+    (session) => !session.clone_name && !boundSessionIds.has(session.id),
+  )
 
   useEffect(() => {
     if (searchOpen) searchInputRef.current?.focus()
