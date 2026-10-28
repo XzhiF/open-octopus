@@ -111,9 +111,9 @@ octopus repos update/pull/clone/rebuild-index
 
 ## Agent Skills
 
-- Issue tracker: `.scratch/<feature>/` 目录下的 markdown 文件
+- 任务产物：task home 下 `.scratch/<feature>/` 的 markdown（spec / issues / 报告）
 - Triage labels: needs-triage / needs-info / ready-for-agent / ready-for-human / wontfix
-- Domain docs: root `GLOSSARY-MAP.md` → per-package `GLOSSARY.md`
+- 领域知识以 `~/.octopus/knowledge/wiki` 为准（已不再维护仓库内 GLOSSARY / ADR / feature 档案）
 
 
 ## 可用资源 (Octopus 资源库)

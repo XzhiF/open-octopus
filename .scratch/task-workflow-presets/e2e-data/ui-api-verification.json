@@ -1,6 +1,0 @@
-{
-  "workflow_ref": "built-in/matt-dev-pipeline",
-  "input_values": {
-    "idea": "${goal}"
-  }
-}
