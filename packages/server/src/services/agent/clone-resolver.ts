@@ -69,6 +69,19 @@ export function resolveCloneInfo(name: string): CloneInfo | null {
   return resolveUserCloneInfo(name)
 }
 
+/**
+ * A clone's own home directory — the same directory a clone session runs in
+ * (CloneRuntime.getDefaultCwd()). Used when a chat session should work in the
+ * identity's workspace instead of the Main Agent cwd.
+ * Returns null when the clone is unknown or its directory isn't on disk.
+ */
+export function resolveCloneHomeDir(name: string): string | null {
+  const info = resolveCloneInfo(name)
+  if (!info) return null
+  const dir = info.type === 'built-in' ? getBuiltInCloneDir(name) : getCloneDir(name)
+  return fs.existsSync(dir) ? dir : null
+}
+
 /** Role-card pack: what an identity switch needs to describe itself. */
 export interface CloneRolePack {
   name: string

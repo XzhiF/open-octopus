@@ -5,12 +5,14 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest"
 import { render, screen, fireEvent, waitFor } from "@testing-library/react"
 
-const { sendMessage, listClones, listSkills, setSessionRole, getSessionRole } = vi.hoisted(() => ({
+const { sendMessage, listClones, listSkills, setSessionRole, getSessionRole, recordNewSession } = vi.hoisted(() => ({
   sendMessage: vi.fn(),
   listClones: vi.fn(),
   listSkills: vi.fn(),
   setSessionRole: vi.fn(),
   getSessionRole: vi.fn(),
+  // 建会话时带下去的 cwd 语义（identity_clone / workspace_id）要能被断言。
+  recordNewSession: vi.fn(),
 }))
 
 vi.mock("@/lib/agent/api", () => ({
@@ -68,7 +70,8 @@ vi.mock("@/components/providers/chat-sessions", async () => {
         activeSessionId,
         setActiveSessionId,
         loading: false,
-        createNewSession: async () => {
+        createNewSession: async (opts?: unknown) => {
+          recordNewSession(opts)
           const session = {
             id: "s-new", title: "新对话", org: "xzf", clone_name: null,
             session_type: "main", created_at: "", updated_at: "",
@@ -96,6 +99,7 @@ import { ChatTab } from "../ChatTab"
 
 beforeEach(() => {
   localStorage.clear()
+  recordNewSession.mockReset()
   sendMessage.mockReset()
   setSessionRole.mockReset().mockResolvedValue({ active_expert: null })
   getSessionRole.mockReset().mockResolvedValue({ active_expert: null, active_kind: "expert", expert: null, clone: null })
@@ -133,6 +137,8 @@ describe("ChatTab — 新会话身份先选后生效", () => {
 
     // chip 立刻反映选择（乐观展示）
     expect(screen.getByTestId("tui-hero-identity").textContent).toContain("开发分身")
+    // 默认工作区跟着身份走：chip 不再泛称「选择工作区」，而是该分身的工作区。
+    expect(screen.getByTestId("cwd-chip").textContent).toContain("开发分身 工作区")
 
     // 选中后选择器自己收起。
     await waitFor(() => expect(screen.queryByTestId("hero-identity-panel")).toBeNull())
@@ -146,5 +152,24 @@ describe("ChatTab — 新会话身份先选后生效", () => {
     // 顺序契约：角色卡先落，消息后发
     expect(setSessionRole.mock.invocationCallOrder[0])
       .toBeLessThan(sendMessage.mock.invocationCallOrder[0])
+
+    // 用户没手动挑目录 → 把身份带下去，服务端把 cwd 落在该分身自己的工作区。
+    expect(recordNewSession).toHaveBeenCalledWith({ identity_clone: "dev-clone" })
+  })
+
+  it("没选身份 → 不带 identity_clone，沿用 Main Agent 默认工作区", async () => {
+    render(<ChatTab />)
+    await screen.findByText("开始新的对话")
+
+    // 没碰身份选择器：cwd chip 仍是泛称
+    expect(screen.getByTestId("cwd-chip").textContent).toContain("选择工作区")
+
+    const textarea = screen.getByRole("textbox")
+    fireEvent.change(textarea, { target: { value: "hi" } })
+    fireEvent.keyDown(textarea, { key: "Enter" })
+
+    await waitFor(() => expect(recordNewSession).toHaveBeenCalled())
+    expect(recordNewSession).toHaveBeenCalledWith(undefined)
+    expect(setSessionRole).not.toHaveBeenCalled()
   })
 })

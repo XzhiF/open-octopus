@@ -106,4 +106,51 @@ describe("CwdPicker — 目录浏览器", () => {
     expect(await screen.findByText(/系统敏感目录不能浏览/)).toBeInTheDocument()
     expect(screen.getByTestId("cwd-browse-select")).toBeDisabled()
   })
+
+  it("目录浏览器默认位置比居中再高一档（顶部留白 = 居中时的一半）", async () => {
+    render(
+      <CwdPicker
+        mode="main"
+        org="xzf"
+        value={{ kind: "default", label: "Main Agent 工作区" }}
+        onChange={vi.fn()}
+        hero
+      />,
+    )
+
+    fireEvent.click(screen.getByTestId("cwd-chip"))
+    fireEvent.click(await screen.findByTestId("cwd-browse-open"))
+    await waitFor(() => expect(browseDirectories).toHaveBeenCalled())
+
+    // 全站 Dialog 居中在 top-50%；这里改成 translateY = -(25vh + 25%)，
+    // 于是顶边落在 (视口高 - 弹窗高)/4 —— 与弹窗高度无关。
+    const content = document.querySelector('[data-slot="dialog-content"]')
+    expect(content).toHaveClass("translate-y-[calc(-25vh_-_25%)]")
+  })
+
+  it("选了身份 → 默认档文案跟着身份走", async () => {
+    const onChange = vi.fn()
+    render(
+      <CwdPicker
+        mode="main"
+        org="xzf"
+        value={{ kind: "default", label: "Main Agent 工作区" }}
+        onChange={onChange}
+        hero
+        defaultLabel="开发分身 工作区"
+        defaultHint="该分身自己的目录"
+      />,
+    )
+
+    // 虚线 chip 不再泛称「选择工作区」，直接说明会落在哪。
+    expect(screen.getByTestId("cwd-chip").textContent).toContain("开发分身 工作区")
+
+    fireEvent.click(screen.getByTestId("cwd-chip"))
+    const row = (await screen.findByText("该分身自己的目录")).closest("button")!
+    expect(row).toHaveTextContent("开发分身 工作区")
+
+    // 取默认档 → 存下的 label 也是身份的工作区，不是 Main Agent。
+    fireEvent.click(row)
+    expect(onChange).toHaveBeenCalledWith({ kind: "default", label: "开发分身 工作区" })
+  })
 })

@@ -31,6 +31,10 @@ interface CwdPickerProps {
   /** 空会话第二行的展示形态（2026-10-27 原型 v2）：虚线大 chip，
    *  未选时文案是「选择工作区」而不是默认工作区名。 */
   hero?: boolean
+  /** 默认档文案覆盖：身份选了分身时，默认档 = 该分身自己的工作区，
+   *  不再是 Main Agent 的目录（与服务端 identity_clone 的解析同源）。 */
+  defaultLabel?: string
+  defaultHint?: string
 }
 
 const DEFAULT_LABEL = {
@@ -38,8 +42,14 @@ const DEFAULT_LABEL = {
   task: '新建工作空间',
 }
 
+/** 默认档说明文案（未选身份 / 任务模式）。 */
+const DEFAULT_HINT = {
+  main: '当前主 Agent cwd',
+  task: '第一次发送时创建',
+}
+
 /** cwd chip: main agent defaults to its own cwd; tasks default to a new workspace. */
-export function CwdPicker({ mode, org, value, onChange, disabled, hero }: CwdPickerProps) {
+export function CwdPicker({ mode, org, value, onChange, disabled, hero, defaultLabel, defaultHint }: CwdPickerProps) {
   const [open, setOpen] = useState(false)
   const [dirOpen, setDirOpen] = useState(false)
   const [browse, setBrowse] = useState<BrowseResult | null>(null)
@@ -69,8 +79,17 @@ export function CwdPicker({ mode, org, value, onChange, disabled, hero }: CwdPic
     [workspaces],
   )
 
+  // 默认档（kind='default'）的展示文案：选了身份就跟着身份走。
+  const defaultText = defaultLabel ?? DEFAULT_LABEL[mode]
+  const defaultHintText = defaultHint ?? DEFAULT_HINT[mode]
+  const headerHint = mode === 'task'
+    ? '默认新建工作空间；也可选择已有工作空间或目录。'
+    : defaultLabel
+      ? `默认使用 ${defaultText}；也可选择工作空间或目录。`
+      : '默认使用 Main Agent 当前 cwd；也可选择工作空间或目录。'
+
   const chooseDefault = () => {
-    onChange({ kind: 'default', label: DEFAULT_LABEL[mode] })
+    onChange({ kind: 'default', label: defaultText })
     setOpen(false)
   }
 
@@ -149,7 +168,7 @@ export function CwdPicker({ mode, org, value, onChange, disabled, hero }: CwdPic
           >
             <Folder className="size-3" />
             <span className="max-w-[220px] truncate">
-              {hero && value.kind === 'default' ? '选择工作区' : value.label}
+              {hero && value.kind === 'default' ? (defaultLabel ?? '选择工作区') : value.label}
             </span>
             <ChevronDown className="size-2.5 opacity-60" />
           </button>
@@ -162,9 +181,7 @@ export function CwdPicker({ mode, org, value, onChange, disabled, hero }: CwdPic
         >
           <div className="border-b border-pop-bd/60 px-3 py-2.5">
             <div className="text-[12px] font-bold text-pop-ink">工作目录 / 工作空间</div>
-            <p className="mt-0.5 text-[10px] text-pop-dim">
-              {mode === 'main' ? '默认使用 Main Agent 当前 cwd；也可选择工作空间或目录。' : '默认新建工作空间；也可选择已有工作空间或目录。'}
-            </p>
+            <p className="mt-0.5 text-[10px] text-pop-dim">{headerHint}</p>
           </div>
           <div className="max-h-[320px] overflow-y-auto p-1.5">
             <button
@@ -183,10 +200,8 @@ export function CwdPicker({ mode, org, value, onChange, disabled, hero }: CwdPic
               </span>
               <FolderOpen className="size-3.5 shrink-0 text-pop-cyan" />
               <span className="min-w-0 flex-1">
-                <span className="block text-[12px] text-pop-ink">{DEFAULT_LABEL[mode]}</span>
-                <span className="block text-[10px] text-pop-dim">
-                  {mode === 'main' ? '当前主 Agent cwd' : '第一次发送时创建'}
-                </span>
+                <span className="block text-[12px] text-pop-ink">{defaultText}</span>
+                <span className="block text-[10px] text-pop-dim">{defaultHintText}</span>
               </span>
             </button>
             <button
@@ -238,10 +253,12 @@ export function CwdPicker({ mode, org, value, onChange, disabled, hero }: CwdPic
       </Popover>
 
       <Dialog open={dirOpen} onOpenChange={setDirOpen}>
+        {/* 默认位置比居中再高一档：translateY = -(视口高 + 弹窗高)/4，
+            于是顶部留白正好是居中时的一半（与弹窗高度无关）。 */}
         <DialogContent
           showCloseButton={false}
           aria-describedby={undefined}
-          className="ui-font w-[560px] max-w-[calc(100vw_-_32px)] rounded-2xl border border-white/[0.10] bg-pop-bg p-4"
+          className="ui-font w-[560px] max-w-[calc(100vw_-_32px)] translate-y-[calc(-25vh_-_25%)] rounded-2xl border border-white/[0.10] bg-pop-bg p-4"
         >
           <DialogTitle className="text-[14px] font-semibold text-pop-ink">选择工作目录</DialogTitle>
           <p className="mt-1 text-[11px] text-pop-dim">

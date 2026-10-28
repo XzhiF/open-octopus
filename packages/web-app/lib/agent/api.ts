@@ -70,7 +70,13 @@ async function request<T>(url: string, init?: RequestInit): Promise<T> {
 }
 
 // Sessions
-export function createSession(opts?: { clone_name?: string; cwd?: string; workspace_id?: string }) {
+export function createSession(opts?: {
+  clone_name?: string
+  cwd?: string
+  workspace_id?: string
+  /** 新会话的身份（分身）。未显式挑目录时，服务端把 cwd 落在该分身自己的工作区。 */
+  identity_clone?: string
+}) {
   return request<AgentSession>('/sessions', { method: 'POST', body: JSON.stringify(opts ?? {}) })
 }
 export function listSessions(query?: { clone?: string; limit?: number; cursor?: string }) {

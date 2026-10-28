@@ -6,6 +6,7 @@ import { WorkspaceDAO } from '../../db/dao/workspace-dao'
 import { WorkspaceService } from '../../services/workspace'
 import { SessionCacheContextDAO } from '../../db/dao/session-cache-context-dao'
 import { isCloneRoleTarget, roleResponse } from '../../services/agent/role-response'
+import { resolveCloneHomeDir } from '../../services/agent/clone-resolver'
 import { estimateContextUsageFromLedger } from '../../services/agent/context-usage'
 import { createAgentError, mapErrorToStatus } from './middleware'
 
@@ -22,7 +23,7 @@ export function createSessionRoutes(sessionDAO: AgentSessionDAO): Hono {
         return c.json(createAgentError('ORG_NOT_FOUND', 'Organization not resolved'), 403)
       }
 
-      let body: { clone_name?: string; cwd?: string; workspace_id?: string } = {}
+      let body: { clone_name?: string; cwd?: string; workspace_id?: string; identity_clone?: string } = {}
       try {
         const raw = await c.req.json()
         body = raw ?? {}
@@ -45,6 +46,13 @@ export function createSessionRoutes(sessionDAO: AgentSessionDAO): Hono {
           const ws = wsService.attachDirectory({ org, path: cwd })
           workspaceId = ws.id
           cwd = ws.path.replace(/^~/, require('os').homedir())
+        }
+        // 新会话选了分身但没手动挑目录：落在该分身自己的工作区
+        // （与 clone session 的 getDefaultCwd() 同源），不是 Main Agent 的目录。
+        // ~/.octopus 在目录选择策略的黑名单里（不能注册成 workspace 行），
+        // 所以这里只写 cwd —— chat 路由读 session.cwd 即可。分身未知 → 回落默认。
+        if (!workspaceId && !cwd && body.identity_clone) {
+          cwd = resolveCloneHomeDir(body.identity_clone)
         }
         if (!workspaceId && !cwd) {
           const ws = wsService.ensureMainWorkspace(org)

@@ -129,7 +129,12 @@ export function ChatTab() {
     : undefined
   const workspaceLabel = sessionWorkspace && sessionWorkspace.name !== 'main-agent'
     ? sessionWorkspace.name
-    : null
+    // 分身工作区不落 workspace 行（~/.octopus 归目录选择策略黑名单），所以这里
+    // 按身份显示：会话自带 cwd、没绑过工作区、且带着分身角色卡 → 它跑在该分身
+    // 自己的目录（v58 前的老会话 cwd 为空，不会误报）。
+    : (identity.activeName && identity.label && !activeSession?.workspace_id && activeSession?.cwd
+      ? `${identity.label} 工作区`
+      : null)
 
   const [sidebarWidth, setSidebarWidth] = useState(() => {
     if (typeof window === 'undefined') return SIDEBAR_DEFAULT
@@ -422,8 +427,11 @@ export function ChatTab() {
         // First prompt creates the session (lazy). cwd/workspace is chosen here,
         // not when the empty "+" tab was opened.
         pendingMessageRef.current = { message, subagents: opts?.subagents }
+        // 没手动挑目录时把身份带下去：服务端把 cwd 落在该分身自己的工作区，
+        // 而不是所有分身都挤在 Main Agent 的目录里。
+        const identityClone = pendingIdentityRef.current?.name
         const cwdOpts = mainCwd.kind === 'default'
-          ? undefined
+          ? identityClone ? { identity_clone: identityClone } : undefined
           : { workspace_id: mainCwd.workspaceId, cwd: mainCwd.path }
         createNewSession(cwdOpts)
       }
@@ -946,7 +954,16 @@ export function ChatTab() {
             // 主对话空会话：composer 居中，第二行放工作区 + 身份（2026-10-27 v2）。
             heroEmpty={!authoring && !activeSessionId}
             composerHeroFooter={!authoring && !activeSessionId ? (
-              <CwdPicker mode="main" org={preferredOrg} value={mainCwd} onChange={setMainCwd} hero />
+              <CwdPicker
+                mode="main"
+                org={preferredOrg}
+                value={mainCwd}
+                onChange={setMainCwd}
+                hero
+                // 选了身份 → 默认档不再是 Main Agent，而是该分身自己的工作区。
+                defaultLabel={pendingIdentity ? `${pendingIdentity.label} 工作区` : undefined}
+                defaultHint={pendingIdentity ? '该分身自己的目录' : undefined}
+              />
             ) : undefined}
             workspaceContext={composerWorkspaceContext}
             identity={!authoring ? (
