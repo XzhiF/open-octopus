@@ -5,9 +5,10 @@
 // round auto-bound. Controls reuse the same task actions as the chat cards.
 
 import { useEffect, useState } from 'react'
-import { Pause, Play, Square } from 'lucide-react'
+import { Pause, Play, RotateCcw, Square } from 'lucide-react'
+import { toast } from 'sonner'
 import { getTask, type TaskDetail, type TaskView } from '@/lib/tasks-api'
-import { fetchExecutionDetail } from '@/lib/api-client'
+import { fetchExecutionDetail, rerunExecution } from '@/lib/api-client'
 import type { StepExecution } from '@/lib/types'
 import { WorkflowFlowViewerWithStatus } from '@/components/workspace/workflow-flow-viewer-with-status'
 import { ExecutionLogViewer } from '@/components/workspace/execution-log-viewer'
@@ -41,12 +42,31 @@ export function RunWindow({
     steps: StepExecution[]
   } | null>(null)
   const [error, setError] = useState<string | null>(null)
+  const [rerunning, setRerunning] = useState(false)
 
   const runs = detail?.executions ?? []
   const run = runs.find((r) => LIVE_RUN.has(r.status)) ?? runs[0] ?? null
   const workspaceId = run?.workspace_id ?? null
   const executionId = run?.id ?? null
   const live = !!run && LIVE_RUN.has(run.status)
+
+  // 终态重跑（2026-10-28）：failed/取消/带失败完成 的执行给一个「⚡ 重跑」，
+  // 服务端自动取首个失败节点为恢复点 —— 与对话 Agent 的 rerun_execution 同源。
+  const rerunnable = !!run && !live && ['failed', 'cancelled', 'aborted', 'completed_with_failures'].includes(run.status)
+  const handleRerun = async () => {
+    if (!workspaceId || !executionId || rerunning) return
+    setRerunning(true)
+    try {
+      const result = await rerunExecution(workspaceId, executionId)
+      toast.success(`已重置 ${result.resetNodes.length} 个节点 · 引擎将自 ${result.restoredFrom} 重跑`)
+      const next = await getTask(task.id)
+      setDetail(next)
+    } catch (err: unknown) {
+      toast.error(err instanceof Error ? err.message : '重跑失败')
+    } finally {
+      setRerunning(false)
+    }
+  }
 
   useEffect(() => {
     let alive = true
@@ -124,6 +144,12 @@ export function RunWindow({
             <button type="button" onClick={() => onTaskAction?.('abort')}
               className="inline-flex items-center gap-1 rounded border border-pop-red/35 px-2 py-1 text-[10px] text-pop-red hover:bg-pop-red-soft">
               <Square className="size-3" /> 中止
+            </button>
+          )}
+          {rerunnable && (
+            <button type="button" data-testid="run-rerun" onClick={() => void handleRerun()} disabled={rerunning}
+              className="inline-flex items-center gap-1 rounded border border-pop-green/40 bg-pop-green-soft px-2 py-1 text-[10px] text-pop-green hover:opacity-90 disabled:opacity-50">
+              <RotateCcw className="size-3" /> {rerunning ? '重跑中…' : '⚡ 重跑'}
             </button>
           )}
         </div>

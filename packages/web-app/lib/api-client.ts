@@ -188,6 +188,19 @@ export async function openWorkspaceDirectory(workspaceId: string): Promise<{ ok:
   return handleResponse(res)
 }
 
+/** 终态执行一键重跑：恢复点自动=首个失败节点，节点洗回 pending、执行回 running。
+ *  与 MCP octopus-workflow.rerun_execution 同一服务端实现。 */
+export async function rerunExecution(
+  workspaceId: string,
+  executionId: string,
+): Promise<{ resetNodes: string[]; restoredFrom: string }> {
+  const res = await apiFetch(
+    `${getServerUrl()}/api/workspaces/${workspaceId}/executions/${executionId}/repair/rerun`,
+    { method: "POST" },
+  )
+  return handleResponse(res)
+}
+
 export async function renameFileEntry(workspaceId: string, data: { path: string; newName: string }) {
   const res = await apiFetch(`${getServerUrl()}/api/workspaces/${workspaceId}/files`, {
     method: "PATCH",

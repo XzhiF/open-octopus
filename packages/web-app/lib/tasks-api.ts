@@ -340,8 +340,13 @@ export async function deleteTask(id: string): Promise<{ ok: true }> {
  *  missing[]}`; this function throws a {@link TaskReadyGateError} carrying `.missing`
  *  so the UI can show exactly what to confirm before enqueue (server-side gate
  *  is the backstop for UI temp state lost on modal close). 409 if not draft. */
-export async function readyTask(id: string): Promise<TaskView> {
-  const res = await fetch(`${getServerUrl()}${BASE}/${id}/ready`, { method: "POST" })
+export async function readyTask(id: string, opts?: { silentCard?: boolean }): Promise<TaskView> {
+  const res = await fetch(`${getServerUrl()}${BASE}/${id}/ready`, {
+    method: "POST",
+    ...(opts?.silentCard
+      ? { headers: { "Content-Type": "application/json" }, body: JSON.stringify({ silent_card: true }) }
+      : {}),
+  })
   if (!res.ok) {
     const body = await res.json().catch(() => ({}))
     // D18 gate miss: 409 + missing[] → typed error so the UI shows the gaps.

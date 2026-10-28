@@ -683,7 +683,9 @@ export function ChatTab() {
           updated = await triggerTask(taskId)
           break
         case 'launch_now':
-          await readyTask(taskId)
+          // 「立即执行」：入列与触发是一体的 —— silent_card 让服务端跳过
+          // 「已入列 · 待触发」事件卡，只留「任务开始执行」卡（2026-10-28）。
+          await readyTask(taskId, { silentCard: true })
           updated = await triggerTask(taskId)
           break
         case 'enqueue':
@@ -910,9 +912,14 @@ export function ChatTab() {
     />
   ) : undefined
 
+  // 任务线程 = 草稿期 + 已落盘任务（2026-10-28）：composer 第二行两种状态同构 ——
+  // 不显示工作区名与分身身份（工作区/身份归侧栏任务行与作业坞承载；运行态身份
+  // 由服务端按状态解析，用户选不了也不用选）。
+  const taskThread = draftScope || !!activeTask
+
   // 停靠态主对话：只有「自定义工作区」才留下名字；默认 main-agent 工作区
   // 不渲染任何字（需求 1）。身份由 ＋ 面板接管，不再单占一个文字 chip。
-  const mainLead = !draftScope && activeSessionId && workspaceLabel ? (
+  const mainLead = !taskThread && activeSessionId && workspaceLabel ? (
     <span
       data-session-workspace
       title={`工作区：${workspaceLabel}`}
@@ -1159,7 +1166,7 @@ export function ChatTab() {
               />
             )}
             workspaceContext={composerWorkspaceContext}
-            identity={!draftScope ? (
+            identity={!taskThread ? (
               activeSessionId
                 ? {
                     activeName: identity.activeName,

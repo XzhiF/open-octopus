@@ -1000,9 +1000,11 @@ export function createTasksRoutes(
   // row; 票03: no schedule row is created, the built-in job starts it).
   // 05 (D18): a v3 task whose confirmation gate fails → 409 + missing-items
   // list so the UI can show exactly what to confirm before enqueue (US6).
-  router.post("/:id/ready", (c) => {
+  router.post("/:id/ready", async (c) => {
     try {
-      const task = service.readyTask(c.req.param("id"))
+      // body 可选 {silent_card:true}：launch_now 组合走此路 —— 不发「已入列」卡。
+      const body = await c.req.json<{ silent_card?: boolean }>().catch(() => ({}))
+      const task = service.readyTask(c.req.param("id"), { silentCard: body?.silent_card === true })
       return c.json(task)
     } catch (err: unknown) {
       if (err instanceof TaskReadyGateError) {

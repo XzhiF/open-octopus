@@ -4,6 +4,7 @@ import { BuiltInWorkflowService } from "../builtin-workflow"
 import { WorkflowService } from "../workflow"
 import { getResourceRegistry } from "../resource-registry"
 import { getExecutionService } from "../execution-service-registry"
+import { createRepairServiceForWorkspace } from "../../routes/repair"
 import { getChatEventBridge } from "../activity/chat-event-bridge"
 
 /**
@@ -145,6 +146,19 @@ export function createWorkflowToolServer(
         const registry = resolveExec(workspaceId)
         const exec = await registry.service.retry(execution_id, node_id, undefined, intervention)
         return text({ executionId: exec.id, status: exec.status })
+      },
+    ),
+    tool(
+      "rerun_execution",
+      "Rerun a TERMINAL execution (failed/cancelled/completed) from its first failed node — resets that node and everything downstream to pending, re-arms the execution to running, and the engine picks it up (after a server restart, the recovery manager does). Use this when retry_node refuses because the execution already ended; startup-level failures (engine init) rerun the whole flow from node one. For a single failed node inside a still-running execution, prefer retry_node.",
+      {
+        execution_id: z.string().min(1),
+        reset_var_pool: z.boolean().optional().describe("Also roll the variable pool back to the restore point's checkpoint (default: keep current pool)"),
+      },
+      async ({ execution_id, reset_var_pool }) => {
+        const service = createRepairServiceForWorkspace(workspaceId)
+        if (!service) return text({ error: "repair service unavailable for this workspace" })
+        return text(service.rerun(execution_id, { resetVarPool: reset_var_pool }))
       },
     ),
   ]

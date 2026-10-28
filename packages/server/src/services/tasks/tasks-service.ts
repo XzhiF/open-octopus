@@ -2309,7 +2309,7 @@ export class TasksService {
    * goal/ac/confirmations and the bound workflow_ref. A miss is a 409 with the missing
    * keys, never a half-enqueued task.
    */
-  readyTask(id: string): TaskDTO {
+  readyTask(id: string, opts: { silentCard?: boolean } = {}): TaskDTO {
     const existing = this.taskDAO.getById(id)
     if (!existing) throw new TaskNotFoundError()
     if (existing.status !== "draft") {
@@ -2460,11 +2460,14 @@ export class TasksService {
 
     // 2026-10-28 task-thread: ready is a direct flip (no lifecycle writer), so
     // it must publish the transition itself — otherwise the main chat never
-    // gets its 「已入列」 card.
-    this.sse.emit("taskpool", {
-      event: TASK_STATUS_EVENT,
-      data: { task_id: id, status: "ready" },
-    })
+    // gets its 「已入列」 card. 例外：launch_now（入列且立即触发）时 ready 卡是
+    // 噪音（用户选的就是"马上跑"，running 卡随后就到）→ silentCard 抑制。
+    if (!opts.silentCard) {
+      this.sse.emit("taskpool", {
+        event: TASK_STATUS_EVENT,
+        data: { task_id: id, status: "ready" },
+      })
+    }
 
     const row = this.taskDAO.getById(id)!
     return toDTO(row)

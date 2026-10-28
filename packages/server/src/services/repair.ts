@@ -256,6 +256,55 @@ export class RepairService {
     return { resetNodes: resetNodeIds, restoredFrom: nodeId }
   }
 
+  // ── Rerun（终态重跑：UI「⚡ 重跑」按钮与 octopus-workflow.rerun_execution 的单一实现）──
+  //
+  // 场景：执行已进终态（failed/cancelled/…），retry_node 无路（那是 running 内单节点）。
+  // 恢复点自动 = 拓扑序上第一个 failed 业务节点；纯合成失败（__engine_init__ 秒死，
+  // 业务节点全是连坐 failed）等价于从头重跑。合成节点（不在 YAML 拓扑里，restorePoint
+  // 触达不到）一并洗回 pending，引擎重新初始化。execution 被 restorePoint 拉回
+  // running 后：live 引擎继续消化 pending；进程重启场景由 RecoveryManager 接管。
+  rerun(executionId: string, opts: { resetVarPool?: boolean } = {}): RestorePointResponse {
+    const exec = this.dao.findById(executionId)
+    if (!exec) throw new RepairError("Execution not found", 404)
+    if (exec.status === "running" || exec.status === "pending") {
+      throw new RepairError(
+        `Cannot rerun in status '${exec.status}' — running executions retry single nodes via retry_node/clear-retry`,
+        409,
+      )
+    }
+    const workflowContent = this.getWorkflowContent(executionId)
+    if (!workflowContent) throw new RepairError("Workflow definition not found", 404)
+    const workflow = parseWorkflow(workflowContent)
+    const sorted = this.topologicalSort(workflow.nodes)
+    if (sorted.length === 0) throw new RepairError("Workflow has no nodes", 400)
+
+    const nodeExecutions = this.dao.findNodeExecutions(executionId)
+    const firstFailed = sorted.find(n => {
+      const ne = nodeExecutions.find(x => x.node_id === n.id)
+      return ne?.status === "failed"
+    })
+    const target = firstFailed ?? sorted[0]
+
+    const result = this.restorePoint(executionId, target.id, opts.resetVarPool)
+
+    // 合成节点（engine_init 等）：restorePoint 只扫 YAML 拓扑，这里补洗。
+    const fresh = this.dao.findNodeExecutions(executionId)
+    for (const ne of fresh) {
+      const synthetic = !sorted.some(n => n.id === ne.node_id)
+      if (synthetic && ne.status !== "pending" && ne.status !== "completed") {
+        this.dao.updateNodeExecution(ne.id, {
+          status: "pending",
+          completed_at: null,
+          duration: null,
+          error: null,
+          exit_code: null,
+        })
+        if (!result.resetNodes.includes(ne.node_id)) result.resetNodes.push(ne.node_id)
+      }
+    }
+    return result
+  }
+
   // ── Reload Workflow ──────────────────────────────────────────────
 
   reloadWorkflow(
