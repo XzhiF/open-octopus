@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useState, type ReactNode } from 'react'
 import * as Y from 'yjs'
 import {
   Activity,
@@ -25,7 +25,7 @@ import {
 } from 'lucide-react'
 import { toast } from 'sonner'
 import type { FileNode } from '@/lib/types'
-import { fetchFileContent, saveFileEntry } from '@/lib/api-client'
+import { fetchFileContent, getWorkspace, openWorkspaceDirectory, saveFileEntry } from '@/lib/api-client'
 import { useYDoc, useYMap } from '@/lib/yjs-provider'
 import { SidebarFileTree, ymapToFileNodes } from '@/components/workspace/sidebar-file-tree'
 import { TextEditorTab, getYText } from '@/components/workspace/text-editor-tab'
@@ -50,6 +50,9 @@ export interface WorkspaceExplorerDockProps {
   /** Task action (trigger/pause/resume/abort/reopen/retry_archive/accept…). */
   onTaskAction?: (action: string) => void
   activity: ActivitySnapshot
+  /** ChatTab 注入的任务维度控件（绑定项目 dock 形态，2026-10-28）：渲染在
+   *  任务分隔线之后、模块图标之前。 */
+  taskProject?: ReactNode
   /** Chat sidebar width (0 when collapsed) — the editor panel sizes around it. */
   sidebarWidth?: number
   className?: string
@@ -139,6 +142,7 @@ export function WorkspaceExplorerDock({
   onOpenTaskModule,
   onTaskAction,
   activity,
+  taskProject,
   sidebarWidth = SIDEBAR_DEFAULT_WIDTH,
   className,
 }: WorkspaceExplorerDockProps) {
@@ -147,6 +151,31 @@ export function WorkspaceExplorerDock({
   const [activePath, setActivePath] = useState<string | null>(null)
   const [editorOpen, setEditorOpen] = useState(false)
   const [contents, setContents] = useState<Record<string, string>>({})
+  // 文件面板头部显示工作空间真实路径，点击进入系统文件管理器（2026-10-28）。
+  const [workspacePath, setWorkspacePath] = useState<string | null>(null)
+  useEffect(() => {
+    if (!workspaceId) {
+      setWorkspacePath(null)
+      return
+    }
+    let alive = true
+    getWorkspace(workspaceId)
+      .then((ws) => {
+        if (alive) setWorkspacePath((ws as { path?: string } | undefined)?.path ?? null)
+      })
+      .catch(() => {
+        if (alive) setWorkspacePath(null)
+      })
+    return () => { alive = false }
+  }, [workspaceId])
+  const openDirectory = async () => {
+    if (!workspaceId) return
+    try {
+      await openWorkspaceDirectory(workspaceId)
+    } catch (err: unknown) {
+      toast.error(err instanceof Error ? err.message : '打开目录失败')
+    }
+  }
   // 图标下方的常驻文字（设置 → 外观 可隐藏）。
   const showLabels = useDockLabelsVisible()
   const dockWidth = showLabels ? DOCK_WIDTH_LABEL : DOCK_WIDTH_ICON
@@ -466,7 +495,8 @@ export function WorkspaceExplorerDock({
               files={files}
               doc={doc}
               connected={connected}
-              workspacePath=""
+              workspacePath={workspacePath ?? ''}
+              onOpenDirectory={workspacePath ? () => void openDirectory() : undefined}
               selectedPath={activePath ?? undefined}
               onFileSelect={(file) => void openFile(file)}
             />
@@ -516,6 +546,8 @@ export function WorkspaceExplorerDock({
         })}
 
         {task && <div className="my-0.5 h-px w-6 bg-white/[0.12]" />}
+
+        {taskProject}
 
         {task && visibleModules.map(({ id, label, icon: Icon }) => {
           const record = taskWindows?.[id]

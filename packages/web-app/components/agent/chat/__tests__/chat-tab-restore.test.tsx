@@ -121,7 +121,6 @@ describe("ChatTab — 刷新恢复上次任务", () => {
       expect(item.getAttribute("aria-current")).toBe("page")
       expect(item.getAttribute("data-task-id")).toBe("task-running")
     })
-    expect(screen.getByTestId("task-status-strip")).toBeDefined()
   })
 
   it("没有落盘上下文 ⇒ 不自动打开任务", async () => {
@@ -129,7 +128,6 @@ describe("ChatTab — 刷新恢复上次任务", () => {
 
     await waitFor(() => expect(firstTaskItem()).toBeDefined())
     expect(firstTaskItem().getAttribute("aria-current")).toBeNull()
-    expect(screen.queryByTestId("task-status-strip")).toBeNull()
   })
 
   it("落盘的任务已不存在（列表里没有 + 直查 404）⇒ 不误开别的任务", async () => {
@@ -138,6 +136,5 @@ describe("ChatTab — 刷新恢复上次任务", () => {
 
     await waitFor(() => expect(firstTaskItem()).toBeDefined())
     expect(firstTaskItem().getAttribute("aria-current")).toBeNull()
-    expect(screen.queryByTestId("task-status-strip")).toBeNull()
   })
 })

@@ -180,6 +180,14 @@ export async function refreshFileTree(workspaceId: string) {
   return handleResponse(res)
 }
 
+/** 用系统文件管理器打开工作空间目录（服务端 spawn open/explorer/xdg-open）。 */
+export async function openWorkspaceDirectory(workspaceId: string): Promise<{ ok: boolean; path: string }> {
+  const res = await apiFetch(`${getServerUrl()}/api/workspaces/${workspaceId}/files/open-directory`, {
+    method: "POST",
+  })
+  return handleResponse(res)
+}
+
 export async function renameFileEntry(workspaceId: string, data: { path: string; newName: string }) {
   const res = await apiFetch(`${getServerUrl()}/api/workspaces/${workspaceId}/files`, {
     method: "PATCH",

@@ -8,6 +8,7 @@ import { CloseLightGlyph } from '@/components/ui/close-light'
 import { Button } from '@/components/ui/button'
 import { Dialog, DialogContent, DialogTitle } from '@/components/ui/dialog'
 import { getTask, updateTask, type TaskView } from '@/lib/tasks-api'
+import { useDockLabelsVisible } from '@/hooks/use-dock-labels'
 import { cn } from '@/lib/utils'
 
 interface TaskProjectChipProps {
@@ -16,6 +17,12 @@ interface TaskProjectChipProps {
   /** Draft task id; absent before the first message creates the task. */
   taskId?: string
   disabled?: boolean
+  /** hero 形态（新建开发任务空态第二行，2026-10-28 向新建对话看齐）：
+   *  与 CwdPicker hero 同尺寸的虚线/实线大 chip。 */
+  hero?: boolean
+  /** 作业坞形态（2026-10-28：项目是任务维度资产，落盘后入口挪到 dock）：
+   *  竖排图标钮，与 dock 其他入口同尺寸，带项目数角标。 */
+  dock?: boolean
   /** Registered org names. Repos are read from the selected org's manifest,
    *  so the org itself must be pickable here — otherwise a task created in
    *  the wrong org can never reach another org's repos (bug 2026-10-27). */
@@ -31,11 +38,14 @@ export function TaskProjectChip({
   projectIds,
   taskId,
   disabled,
+  hero,
+  dock,
   orgs,
   onOrgChange,
   onSaved,
 }: TaskProjectChipProps) {
   const [open, setOpen] = useState(false)
+  const showLabels = useDockLabelsVisible()
   const [projects, setProjects] = useState<SelectedProject[]>(
     () => projectIds.map((name) => ({ name, source_path: '', group: '' })),
   )
@@ -83,6 +93,35 @@ export function TaskProjectChip({
 
   return (
     <>
+      {dock ? (
+        <button
+          type="button"
+          data-testid="task-project-chip"
+          data-dock-project
+          disabled={disabled}
+          onClick={() => setOpen(true)}
+          title={projectIds.length > 0 ? projectIds.join(' / ') : '为任务绑定项目'}
+          aria-label="项目"
+          className={cn(
+            'relative flex shrink-0 flex-col items-center justify-center rounded-[11px] transition-all duration-150',
+            showLabels ? 'w-11 gap-[3px] px-0.5 py-1' : 'size-9 hover:scale-105',
+            projectIds.length > 0
+              ? 'bg-white/[0.07] text-pop-ink hover:bg-white/[0.12]'
+              : 'text-pop-dim hover:bg-white/[0.07] hover:text-pop-ink',
+            disabled && 'cursor-default opacity-60',
+          )}
+        >
+          <FolderGit2 className={showLabels ? 'size-[17px]' : 'size-[18px]'} strokeWidth={1.8} />
+          {showLabels && (
+            <span className="max-w-full truncate text-[9px] font-medium leading-none tracking-tight">项目</span>
+          )}
+          {projectIds.length > 0 && (
+            <span className="absolute -right-0.5 -top-0.5 grid min-w-3.5 place-items-center rounded-full bg-pop-cyan px-0.5 font-mono text-[8px] font-bold text-pop-bg">
+              {projectIds.length}
+            </span>
+          )}
+        </button>
+      ) : (
       <button
         type="button"
         data-testid="task-project-chip"
@@ -90,14 +129,27 @@ export function TaskProjectChip({
         onClick={() => setOpen(true)}
         title={projectIds.length > 0 ? projectIds.join(' / ') : '为任务绑定项目'}
         className={cn(
-          'flex h-[22px] shrink-0 items-center gap-1 rounded-[7px] px-1.5 text-[10.5px] transition-colors',
-          projectIds.length > 0 ? 'text-pop-ink/85' : 'text-pop-dim',
-          disabled ? 'cursor-default opacity-60' : 'hover:bg-white/[0.06] hover:text-pop-ink',
+          'flex shrink-0 items-center gap-1 border transition-colors',
+          hero
+            ? cn(
+                'h-[27px] rounded-[8px] px-2.5 text-[11.5px]',
+                projectIds.length > 0
+                  ? 'border-solid border-pop-bd bg-white/[0.03] text-pop-ink'
+                  : 'border-dashed border-pop-bd text-pop-dim',
+                !disabled && 'hover:border-pop-dim hover:text-pop-ink',
+              )
+            : cn(
+                'h-[22px] rounded-[7px] border-transparent px-1.5 text-[10.5px]',
+                projectIds.length > 0 ? 'text-pop-ink/85' : 'text-pop-dim',
+                !disabled && 'hover:bg-white/[0.06] hover:text-pop-ink',
+              ),
+          disabled && 'cursor-default opacity-60',
         )}
       >
         <FolderGit2 className="size-3" strokeWidth={1.7} />
         {label}
       </button>
+      )}
 
       <Dialog open={open} onOpenChange={setOpen}>
         <DialogContent

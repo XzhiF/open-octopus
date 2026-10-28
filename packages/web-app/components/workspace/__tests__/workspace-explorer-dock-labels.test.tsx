@@ -12,6 +12,8 @@ vi.mock("@/lib/yjs-provider", () => ({
 vi.mock("@/lib/api-client", () => ({
   fetchFileContent: vi.fn(),
   saveFileEntry: vi.fn(),
+  getWorkspace: vi.fn().mockResolvedValue(undefined),
+  openWorkspaceDirectory: vi.fn(),
 }))
 
 import { WorkspaceExplorerDock } from "../workspace-explorer-dock"

@@ -18,7 +18,6 @@ import * as agentApi from '@/lib/agent/api'
 import { ChatSidebar } from './chat-sidebar'
 import { CwdPicker, type CwdChoice } from './cwd-picker'
 import { TaskModulesLayer } from '@/components/chat-workbench/task-modules-layer'
-import { TaskStatusStrip } from '@/components/chat-workbench/task-status-strip'
 import { TriggerDialog } from '@/components/tasks/trigger-dialog'
 import type { TaskModule } from '@/components/chat-workbench/task-window-types'
 import { TaskProjectChip } from '@/components/chat-workbench/task-project-chip'
@@ -497,16 +496,17 @@ export function ChatTab() {
         setActiveTask(task)
         void refreshChatTasks()
         void refetchSessions()
-        if (reuseExisting) {
-          // Same session: activeSessionId doesn't change, so the pending-send
-          // effect below would never fire. Send the first message directly.
-          requestAnimationFrame(() => sendMessage(message, {
-            model, effort, maxContext, subagents: opts?.subagents,
-          }))
-        } else {
-          pendingMessageRef.current = { message, subagents: opts?.subagents }
+        if (!reuseExisting) {
           setActiveSessionId(sid)
         }
+        // 统一直发：复用会话时 activeSessionId 本来就等于 sid（deps 不变，
+        // "会话就绪后首发" effect 不重跑）；新建会话时 provider 的
+        // createNewSession 已把 activeSessionId 推到 sid，那次 effect 早于
+        // createTask 落 pendingMessageRef 之前就跑过（空转）。两种情况都必须在
+        // 这里直接发送 —— 2026-10-28 修复「提交任务后 Agent 不回复」。
+        requestAnimationFrame(() => sendMessage(message, {
+          model, effort, maxContext, subagents: opts?.subagents,
+        }))
       } catch (err: unknown) {
         toast.error(err instanceof Error ? err.message : '创建任务失败')
       } finally {
@@ -871,35 +871,43 @@ export function ChatTab() {
     return chatTasks
   }, [chatTasks, activeTask])
 
-  const draftLead = draftScope ? (
-    <span className="flex items-center gap-1.5">
-      <CwdPicker
-        mode="task"
-        org={pendingTaskSession?.org ?? activeTask?.repo_group ?? preferredOrg}
-        value={taskCwd}
-        onChange={setTaskCwd}
-        disabled={!!activeTask}
-      />
-      <TaskProjectChip
-        org={pendingTaskSession?.org ?? activeTask?.repo_group ?? preferredOrg}
-        orgs={appOrgs.map((o) => o.name)}
-        onOrgChange={(next) => {
-          rememberTaskOrg(next)
-          setPendingTaskSession((prev) => (prev ? { ...prev, org: next, projectIds: [] } : prev))
-        }}
-        projectIds={pendingTaskSession?.projectIds ?? activeTask?.project_ids ?? []}
-        taskId={pendingTaskSession ? undefined : activeTask?.id}
-        onSaved={(ids, updated) => {
-          if (pendingTaskSession) {
-            setPendingTaskSession({ ...pendingTaskSession, projectIds: ids })
-          }
-          if (updated) {
-            setActiveTask(updated)
-            void refreshChatTasks()
-          }
-        }}
-      />
-    </span>
+  // 项目绑定入口（2026-10-28 用户定稿：项目是任务维度资产）：
+  //   · pending（任务未落盘）——作业坞尚不存在（无 workspaceId），留在 composer
+  //     hero 第二行/停靠 ctrlbar；
+  //   · 已落盘 —— 挪到作业坞「项目」图标（dockProject），composer 保持纯净。
+  const draftControls = (hero: boolean) => (
+    <TaskProjectChip
+      hero={hero}
+      org={pendingTaskSession?.org ?? preferredOrg}
+      orgs={appOrgs.map((o) => o.name)}
+      onOrgChange={(next) => {
+        rememberTaskOrg(next)
+        setPendingTaskSession((prev) => (prev ? { ...prev, org: next, projectIds: [] } : prev))
+      }}
+      projectIds={pendingTaskSession?.projectIds ?? []}
+      onSaved={(ids) => {
+        if (pendingTaskSession) {
+          setPendingTaskSession({ ...pendingTaskSession, projectIds: ids })
+        }
+      }}
+    />
+  )
+
+  const draftLead = pendingTaskSession ? draftControls(false) : undefined
+
+  const dockProject = activeTask ? (
+    <TaskProjectChip
+      dock
+      org={activeTask.repo_group ?? preferredOrg}
+      projectIds={activeTask.project_ids ?? []}
+      taskId={activeTask.id}
+      onSaved={(_ids, updated) => {
+        if (updated) {
+          setActiveTask(updated)
+          void refreshChatTasks()
+        }
+      }}
+    />
   ) : undefined
 
   // 停靠态主对话：只有「自定义工作区」才留下名字；默认 main-agent 工作区
@@ -914,6 +922,12 @@ export function ChatTab() {
       <span className="max-w-[140px] truncate">{workspaceLabel}</span>
     </span>
   ) : undefined
+
+  // 2026-10-28 新建开发任务向新建对话看齐：pendingTask 空态同样走 hero ——
+  // composer 居中、cwd/项目控件挪到第二行；复用中的会话已有实录、或草稿已
+  // 成行追问时，回落到停靠态。判定与 ChatArea 的 heroMode 对齐（空消息 + 非流式）。
+  const heroActive = (draftScope ? !!pendingTaskSession : !activeSessionId)
+    && !streaming && viewMessages.length === 0
 
   const explorerWorkspaceId =
     activeTask?.workspace_id ??
@@ -1090,7 +1104,8 @@ export function ChatTab() {
           <Menu className="size-3.5" />
         </button>
         <div className="flex min-h-0 flex-1 flex-col">
-          {activeTask && <TaskStatusStrip task={activeTask} />}
+          {/* 顶部状态条已移除（2026-10-28 用户定稿）：状态/身份/工作区信息
+              由侧栏任务行与作业坞承载，对话区保持纯净转录。 */}
           <ChatArea
             messages={viewMessages}
             streaming={streaming}
@@ -1126,11 +1141,12 @@ export function ChatTab() {
             resumeTailing={resumeStreaming}
             emptyStateTitle={draftScope ? '描述要开发的任务' : undefined}
             emptyStateDescription={draftScope ? '第一句话会成为任务草稿的标题，后续对话用于澄清与拆分 Phase。' : undefined}
-            composerLeading={draftScope ? draftLead : mainLead}
+            composerLeading={draftScope && !heroActive ? draftLead : mainLead}
             composerPlaceholder={draftScope ? '描述要开发的任务…　⏎ 发送' : '问主 Agent…　⏎ 发送 · ⇧⏎ 排队 · Alt⏎ 换行'}
-            // 主对话空会话：composer 居中，第二行放工作区 + 身份（2026-10-27 v2）。
-            heroEmpty={!draftScope && !activeSessionId}
-            composerHeroFooter={!draftScope && !activeSessionId ? (
+            // hero：新建对话 = 空主会话；新建开发任务 = 未落盘的 pendingTask（同一套
+            // 居中 composer + 第二行控件，2026-10-28 看齐）。
+            heroEmpty={heroActive}
+            composerHeroFooter={!heroActive ? undefined : draftScope ? draftControls(true) : (
               <CwdPicker
                 mode="main"
                 org={preferredOrg}
@@ -1141,7 +1157,7 @@ export function ChatTab() {
                 defaultLabel={pendingIdentity ? `${pendingIdentity.label} 工作区` : undefined}
                 defaultHint={pendingIdentity ? '该分身自己的目录' : undefined}
               />
-            ) : undefined}
+            )}
             workspaceContext={composerWorkspaceContext}
             identity={!draftScope ? (
               activeSessionId
@@ -1186,6 +1202,7 @@ export function ChatTab() {
         workspaceId={explorerWorkspaceId}
         workspaceName={explorerWorkspaceName}
         task={activeTask}
+        taskProject={dockProject}
         taskWindows={activeTask ? (taskWindows[activeTask.id] ?? {}) : {}}
         onOpenTaskModule={(module) => setTaskModuleRequest({ module, nonce: Date.now() })}
         onTaskAction={(action) => { if (activeTask) void executeTaskAction(activeTask.id, action) }}
