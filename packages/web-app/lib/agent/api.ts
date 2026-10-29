@@ -494,6 +494,22 @@ export function mergeClone(name: string) {
 export function listSkills() {
   return request<{ skills?: SkillInfo[]; items?: SkillInfo[] }>('/skills')
 }
+
+// MCP catalog（＋面板「MCP」类别，只读元数据）
+export interface McpToolMeta {
+  name: string
+  description: string
+}
+export interface McpServerMeta {
+  server: string
+  label: string
+  description: string
+  when: string
+  tools: McpToolMeta[]
+}
+export function listMcpServers() {
+  return request<{ servers?: McpServerMeta[] }>('/mcp/servers')
+}
 export function getSkill(name: string) {
   return request<{ name: string; source: SkillSource; content: string; token_count: number; last_modified: string | null }>(`/skills/${name}`)
 }

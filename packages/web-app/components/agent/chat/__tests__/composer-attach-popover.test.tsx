@@ -1,12 +1,13 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react"
 import { beforeEach, describe, expect, it, vi } from "vitest"
 
-const { listSkills, listClones, listWorkspaceSkills } = vi.hoisted(() => ({
+const { listSkills, listClones, listWorkspaceSkills, listMcpServers } = vi.hoisted(() => ({
   listSkills: vi.fn(),
   listClones: vi.fn(),
   listWorkspaceSkills: vi.fn(),
+  listMcpServers: vi.fn(),
 }))
-vi.mock("@/lib/agent/api", () => ({ listSkills, listClones }))
+vi.mock("@/lib/agent/api", () => ({ listSkills, listClones, listMcpServers }))
 vi.mock("@/lib/api-client", () => ({ listWorkspaceSkills }))
 
 import { ChatArea } from "../ChatArea"
@@ -57,6 +58,27 @@ describe("composer ＋ 面板（技能 / 分身分层）", () => {
       total: 1,
     })
     listWorkspaceSkills.mockReset().mockResolvedValue({ items: [], total: 0 })
+    listMcpServers.mockReset().mockResolvedValue({
+      servers: [
+        {
+          server: "octopus-workflow",
+          label: "工作流驾驶",
+          description: "在当前工作空间里跑/查/停工作流。",
+          when: "会话绑定工作空间时挂载",
+          tools: [
+            { name: "run_workflow", description: "在当前工作空间执行一个工作流，返回执行 id。" },
+            { name: "rerun_execution", description: "终态执行一键重跑：自动取首个失败节点为恢复点。" },
+          ],
+        },
+        {
+          server: "octopus-task",
+          label: "任务线程",
+          description: "任务主对话的状态读写与决策卡。",
+          when: "会话是某任务的主线程时挂载",
+          tools: [{ name: "get_task_status", description: "读取绑定任务的当前状态与可用动作。" }],
+        },
+      ],
+    })
     vi.clearAllMocks()
   })
 
@@ -212,5 +234,37 @@ describe("composer ＋ 面板（技能 / 分身分层）", () => {
     // 基础身份行可直接切回 null（面板切换后保持打开）
     fireEvent.click(await screen.findByTestId("switch-identity-base"))
     expect(onSwitch).toHaveBeenCalledWith(null, null)
+  })
+
+
+  it("MCP 类：先见 server 卡（名字+工具数），点开看工具清单", async () => {
+    render(<ChatArea {...baseProps} />)
+    fireEvent.click(screen.getByTestId("composer-plus"))
+    await waitFor(() => expect(listMcpServers).toHaveBeenCalled())
+
+    fireEvent.click(await screen.findByTestId("attach-tab-mcp"))
+    const wf = await screen.findByTestId("mcp-server-octopus-workflow")
+    expect(wf.textContent).toContain("工作流驾驶")
+    expect(wf.textContent).toContain("octopus-workflow")
+    expect(wf.textContent).toContain("2 工具")
+    // 折叠态：工具名不出现
+    expect(screen.queryByText("rerun_execution")).toBeNull()
+
+    // 点开 → 行内展开工具清单（＋面板自身是弹层，二级用展开而非嵌套 Dialog）
+    fireEvent.click(wf)
+    expect(await screen.findByText("rerun_execution")).toBeInTheDocument()
+    expect(screen.getByText("run_workflow")).toBeInTheDocument()
+    // 另一个 server 仍在列表、未展开
+    expect(screen.getByTestId("mcp-server-octopus-task").textContent).toContain("任务线程")
+  })
+
+  it("MCP 搜索命中工具名时自动展开所属 server", async () => {
+    render(<ChatArea {...baseProps} />)
+    fireEvent.click(screen.getByTestId("composer-plus"))
+    await waitFor(() => expect(listMcpServers).toHaveBeenCalled())
+    fireEvent.click(await screen.findByTestId("attach-tab-mcp"))
+
+    fireEvent.change(screen.getByLabelText("搜索技能 / 分身 / MCP"), { target: { value: "rerun" } })
+    expect(await screen.findByText("rerun_execution")).toBeInTheDocument()
   })
 })

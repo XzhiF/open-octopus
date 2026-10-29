@@ -3,22 +3,23 @@
 // Composer 的「＋」：按类别分层的添加面板。
 //
 // 设计（2026-10-27 分层原型 A 拍板）：
-//   - 类别导航放顶部：技能 / 分身（以后 MCP / Prompt / 文件 直接加一类）。
+//   - 类别导航放顶部：技能 / 分身 / MCP（以后 Prompt / 文件 直接加一类）。
 //     不再把所有条目堆进一个滚动列表。
 //   - 技能类：当前身份自带的 SKILL 固定置顶（只读，随身份生效），
 //     下面才是「全部 SKILL」的挂载列表。
 //   - 分身类：委派（一次性子代理，随下一条消息消费）/ 切换（会话长期身份）
 //     都在这里；hero 新会话不传 identity，只保留委派。
-//
-// 文件上传目前平台没有通道，故不摆假入口。
+//   - MCP 类：会话实际挂载的 in-process 服务（octopus-workflow / octopus-task）
+//     的只读卡：先见 server，点开看它的全部 tools（GET /api/agent/mcp/servers）。
 
 import { useEffect, useRef, useState } from 'react'
-import { Check, Plus, Search, Sparkles, Users, X } from 'lucide-react'
+import { Check, ChevronDown, Plug, Plus, Search, Sparkles, Users, X } from 'lucide-react'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { cn } from '@/lib/utils'
 import { formatTokenCount } from '@/lib/format'
 import * as api from '@/lib/agent/api'
 import { listWorkspaceSkills, type WorkspaceSkillInfo } from '@/lib/api-client'
+import type { McpServerMeta } from '@/lib/agent/api'
 import type { CloneInfo, SkillInfo, SkillSource } from '@/lib/agent/types'
 
 export interface ComposerSkillRef {
@@ -69,7 +70,7 @@ interface ComposerAttachPopoverProps {
   onOpenChange?: (open: boolean) => void
 }
 
-type AttachCategory = 'skill' | 'clone'
+type AttachCategory = 'skill' | 'clone' | 'mcp'
 
 const SOURCE_LABEL: Record<SkillSource, string> = {
   builtin: '内置',
@@ -104,6 +105,9 @@ export function ComposerAttachPopover({
   const [skills, setSkills] = useState<SkillInfo[] | null>(null)
   const [clones, setClones] = useState<CloneInfo[] | null>(null)
   const [workspaceSkills, setWorkspaceSkills] = useState<WorkspaceSkillInfo[] | null>(null)
+  const [mcpServers, setMcpServers] = useState<McpServerMeta[] | null>(null)
+  // 手风琴展开态：＋面板本身就是弹层，二级再开 Dialog 会双焦点打架 —— 用行内展开。
+  const [expandedServer, setExpandedServer] = useState<string | null>(null)
   const [loading, setLoading] = useState(false)
   const [query, setQuery] = useState('')
   const [category, setCategory] = useState<AttachCategory>('skill')
@@ -121,8 +125,8 @@ export function ComposerAttachPopover({
     if (!open || skills || clones) return
     let alive = true
     setLoading(true)
-    Promise.allSettled([api.listSkills(), api.listClones()])
-      .then(([skillRes, cloneRes]) => {
+    Promise.allSettled([api.listSkills(), api.listClones(), api.listMcpServers()])
+      .then(([skillRes, cloneRes, mcpRes]) => {
         if (!alive) return
         // 服务端返回 { items }；老接口曾用 { skills } —— 两者都认（
         // 只读 .skills 会让技能页永远为空，用户只看到分身）。
@@ -134,6 +138,7 @@ export function ComposerAttachPopover({
         setClones(cloneRes.status === 'fulfilled'
           ? cloneRes.value.clones.filter((c) => c.name !== 'main-agent')
           : [])
+        setMcpServers(mcpRes.status === 'fulfilled' ? mcpRes.value.servers ?? [] : [])
       })
       .finally(() => { if (alive) setLoading(false) })
     return () => { alive = false }
@@ -162,6 +167,15 @@ export function ComposerAttachPopover({
   const filteredClones = (clones ?? []).filter(
     (c) => hit(c.display_name) || hit(c.name) || c.skills.some((name) => hit(name)),
   )
+  const filteredMcp = (mcpServers ?? []).filter(
+    (s) =>
+      hit(s.server) || hit(s.label) || hit(s.description) ||
+      s.tools.some((t) => hit(t.name) || hit(t.description)),
+  )
+  // 搜索命中工具时自动展开所属 server（找工具的人不该再点一次）。
+  const isMcpExpanded = (s: McpServerMeta) =>
+    expandedServer === s.server ||
+    (!!needle && s.tools.some((t) => hit(t.name) || hit(t.description)))
 
   // 当前身份自带的 SKILL：只读展示（随身份生效），不参与挂载勾选。
   const activeClone = identityContext
@@ -261,8 +275,8 @@ export function ComposerAttachPopover({
               ref={searchRef}
               value={query}
               onChange={(event) => setQuery(event.target.value)}
-              placeholder="搜索技能 / 分身…"
-              aria-label="搜索技能 / 分身"
+              placeholder="搜索技能 / 分身 / MCP…"
+              aria-label="搜索技能 / 分身 / MCP"
               data-testid="attach-search"
               maxLength={80}
               className="h-[29px] w-full rounded-[8px] border border-white/[0.08] bg-white/[0.04] pl-8 pr-7 text-[11.5px] text-pop-ink outline-none transition-colors placeholder:text-pop-dim/60 focus:border-pop-cyan/40"
@@ -318,6 +332,25 @@ export function ComposerAttachPopover({
             分身
             <span className={cn('font-mono text-[9.5px]', category === 'clone' ? 'text-pop-ink' : 'text-pop-dim')}>
               {filteredClones.length}
+            </span>
+          </button>
+          <button
+            type="button"
+            role="tab"
+            aria-selected={category === 'mcp'}
+            data-testid="attach-tab-mcp"
+            onClick={() => setCategory('mcp')}
+            className={cn(
+              'inline-flex h-[26px] items-center gap-1.5 rounded-[7px] border px-2.5 text-[11px] transition-colors',
+              category === 'mcp'
+                ? 'border-pop-bd bg-white/[0.06] font-bold text-pop-ink'
+                : 'border-transparent text-pop-dim hover:bg-white/[0.04] hover:text-pop-ink',
+            )}
+          >
+            <Plug className="size-3" strokeWidth={1.9} />
+            MCP
+            <span className={cn('font-mono text-[9.5px]', category === 'mcp' ? 'text-pop-ink' : 'text-pop-dim')}>
+              {filteredMcp.length}
             </span>
           </button>
         </div>
@@ -429,7 +462,7 @@ export function ComposerAttachPopover({
                 })
               )}
             </div>
-          ) : (
+          ) : category === 'clone' ? (
             <div data-plus-group="clone" role="tabpanel" aria-label="分身">
               <div className="sticky top-0 z-[1] flex items-baseline gap-2 bg-pop-paper px-2 pb-1 pt-2.5">
                 <span className="text-[9.5px] font-black tracking-[0.08em] text-pop-dim/70">
@@ -541,6 +574,67 @@ export function ComposerAttachPopover({
                         >
                           {isActive ? '切换 ✓' : '切换'}
                         </button>
+                      )}
+                    </div>
+                  )
+                })
+              )}
+            </div>
+          ) : (
+            <div data-plus-group="mcp" role="tabpanel" aria-label="MCP">
+              <div className="sticky top-0 z-[1] flex items-baseline gap-2 bg-pop-paper px-2 pb-1 pt-2.5">
+                <span className="text-[9.5px] font-black tracking-[0.08em] text-pop-dim/70">
+                  MCP 服务 <span className="font-normal">{filteredMcp.length}</span>
+                </span>
+                <span className="ml-auto text-[9.5px] text-pop-dim">内置能力随会话自动挂载 · 点开看工具</span>
+              </div>
+              {loading && !mcpServers ? (
+                <div className="px-2 py-4 text-center text-[11px] text-pop-dim">加载 MCP…</div>
+              ) : filteredMcp.length === 0 ? (
+                <div className="px-2 py-4 text-center text-[11px] text-pop-dim">未找到匹配的服务</div>
+              ) : (
+                filteredMcp.map((s) => {
+                  const openS = isMcpExpanded(s)
+                  return (
+                    <div
+                      key={s.server}
+                      data-mcp-row={s.server}
+                      className="mb-1 overflow-hidden rounded-[9px] border border-pop-bd/50"
+                    >
+                      <button
+                        type="button"
+                        data-testid={`mcp-server-${s.server}`}
+                        aria-expanded={openS}
+                        onClick={() => setExpandedServer(openS && expandedServer === s.server ? null : s.server)}
+                        className="flex w-full items-center gap-2 px-2 py-1.5 text-left transition-colors hover:bg-white/[0.04]"
+                      >
+                        <span className="grid size-[22px] shrink-0 place-items-center rounded-full bg-pop-cyan/15 text-pop-cyan">
+                          <Plug className="size-3" strokeWidth={1.9} />
+                        </span>
+                        <span className="min-w-0 flex-1">
+                          <span className="flex items-center gap-1.5">
+                            <span className="truncate text-[12px] font-bold text-pop-ink">{s.label}</span>
+                            <span className="shrink-0 font-mono text-[9.5px] text-pop-dim">{s.server}</span>
+                            <span className="ml-auto shrink-0 rounded-[5px] border border-pop-bd/60 px-1 py-0.5 font-mono text-[8.5px] text-pop-dim">
+                              {s.tools.length} 工具
+                            </span>
+                          </span>
+                          <span className="block truncate text-[10px] text-pop-dim">{s.when}</span>
+                        </span>
+                        <ChevronDown
+                          className={cn('size-3.5 shrink-0 text-pop-dim transition-transform', openS && 'rotate-180')}
+                        />
+                      </button>
+                      {openS && (
+                        <div data-mcp-tools={s.server} className="space-y-1.5 border-t border-pop-bd/40 bg-white/[0.02] px-2.5 py-2">
+                          <p className="text-[10px] leading-relaxed text-pop-dim/80">{s.description}</p>
+                          {s.tools.map((t) => (
+                            <div key={t.name} className="flex flex-col gap-0.5">
+                              <span className="font-mono text-[10.5px] font-bold text-pop-ink">{t.name}</span>
+                              <span className="text-[10px] leading-snug text-pop-dim">{t.description}</span>
+                            </div>
+                          ))}
+                        </div>
                       )}
                     </div>
                   )

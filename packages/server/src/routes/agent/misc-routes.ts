@@ -21,6 +21,7 @@ import {
   getExperiencesDir,
 } from '../../services/agent/paths'
 import { getAgentService } from '../../services/agent/agent-service'
+import { buildMcpCatalog } from '../../services/chat/mcp-catalog'
 import type { SafetyDAO } from '../../db/dao'
 
 // ── 501 stub for unimplemented routes ────────────────────────
@@ -381,6 +382,13 @@ export function createMiscRoutes(deps: MiscRouteDeps): Hono {
       const error = err instanceof Error ? err : new Error(String(err))
       return c.json(createAgentError('INTERNAL_ERROR', error.message), 500)
     }
+  })
+
+  // ── MCP catalog（＋面板「MCP」类别的只读数据源） ──────────────────
+  // 内置 in-process server 的元数据；与 tools 源码的同步由 mcp-catalog.test 钉住。
+  app.get('/mcp/servers', (c) => {
+    void c
+    return c.json({ servers: buildMcpCatalog() })
   })
 
   return app
