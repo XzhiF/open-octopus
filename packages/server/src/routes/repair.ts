@@ -165,7 +165,7 @@ repairRoutes.post("/rerun", async (c) => {
     const service = getRepairService(c)
     const executionId = getExecutionId(c)
     const body = await c.req.json().catch(() => ({}))
-    const result = service.rerun(executionId, {
+    const result = await service.rerun(executionId, {
       resetVarPool: (body as { reset_var_pool?: boolean })?.reset_var_pool === true,
     })
     return c.json(result)

@@ -512,3 +512,65 @@ describe("RepairService error classification in diagnose", () => {
     expect(err?.category).toBe("permission")
   })
 })
+
+describe("RepairService.rerun", () => {
+  const workflow3 = `apiVersion: octopus/v1
+kind: Workflow
+name: Rerun WF
+nodes:
+  - id: step1
+    type: bash
+    bash: echo 1
+  - id: step2
+    type: bash
+    bash: echo 2
+    depends_on: [step1]
+  - id: step3
+    type: bash
+    bash: echo 3
+    depends_on: [step2]
+`
+
+  function seedRerunExec(id: string, status: string): void {
+    insertExecution(id, wsId, { status })
+    insertNodeExecution(`${id}-step1`, id, "step1", { status: "completed" })
+    insertNodeExecution(`${id}-step2`, id, "step2", { status: "failed", error: "boom" })
+    insertNodeExecution(`${id}-step3`, id, "step3", { status: "failed" })
+    insertNodeExecution(`${id}-__engine_init__`, id, "__engine_init__", { status: "failed" })
+    vi.mocked(mockExecutionService.getWorkflowContent).mockReturnValue(workflow3)
+  }
+
+  it("aborted 轮（reaper 回收过的）：节点全洗 + resume 即时接管，engine_restarted=true", async () => {
+    const resume = vi.fn().mockResolvedValue({ success: true })
+    ;(mockExecutionService as unknown as { resume: unknown }).resume = resume
+    seedRerunExec("exec-rerun-1", "aborted")
+
+    const res = await repairService.rerun("exec-rerun-1")
+
+    expect(res.restoredFrom).toBe("step2")
+    expect(res.resetNodes).toContain("step2")
+    expect(res.resetNodes).toContain("__engine_init__") // 合成节点 restorePoint 触达不到，rerun 补洗
+    expect(resume).toHaveBeenCalledWith("exec-rerun-1")
+    expect(res.engine_restarted).toBe(true)
+    // 接力时刻：resume 接手（mock 未翻状态，真 resume 内部会翻 running）
+    const row = db.prepare("SELECT status FROM executions WHERE id = ?").get("exec-rerun-1") as { status: string }
+    expect(["pending_resume", "running"]).toContain(row.status)
+  })
+
+  it("resume 拒绝 → 退回 running 等重启恢复，engine_restarted=false", async () => {
+    const resume = vi.fn().mockResolvedValue({ success: false, error: "未找到暂停节点" })
+    ;(mockExecutionService as unknown as { resume: unknown }).resume = resume
+    seedRerunExec("exec-rerun-2", "failed")
+
+    const res = await repairService.rerun("exec-rerun-2")
+
+    expect(res.engine_restarted).toBe(false)
+    const row = db.prepare("SELECT status FROM executions WHERE id = ?").get("exec-rerun-2") as { status: string }
+    expect(row.status).toBe("running")
+  })
+
+  it("running 轮拒绝 rerun（那走 retry_node）", async () => {
+    seedRerunExec("exec-rerun-3", "running")
+    await expect(repairService.rerun("exec-rerun-3")).rejects.toThrow(RepairError)
+  })
+})

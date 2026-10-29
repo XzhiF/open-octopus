@@ -158,7 +158,7 @@ export function createWorkflowToolServer(
       async ({ execution_id, reset_var_pool }) => {
         const service = createRepairServiceForWorkspace(workspaceId)
         if (!service) return text({ error: "repair service unavailable for this workspace" })
-        return text(service.rerun(execution_id, { resetVarPool: reset_var_pool }))
+        return text(await service.rerun(execution_id, { resetVarPool: reset_var_pool }))
       },
     ),
   ]

@@ -58,7 +58,11 @@ export function RunWindow({
     setRerunning(true)
     try {
       const result = await rerunExecution(workspaceId, executionId)
-      toast.success(`已重置 ${result.resetNodes.length} 个节点 · 引擎将自 ${result.restoredFrom} 重跑`)
+      toast.success(
+        result.engine_restarted === false
+          ? `已重置 ${result.resetNodes.length} 个节点 · 引擎未在线，将在服务重启后接管`
+          : `已重置 ${result.resetNodes.length} 个节点 · 引擎已自 ${result.restoredFrom} 重新接管`,
+      )
       const next = await getTask(task.id)
       setDetail(next)
     } catch (err: unknown) {

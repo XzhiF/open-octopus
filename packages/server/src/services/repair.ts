@@ -243,7 +243,8 @@ export class RepairService {
     }
 
     // Update execution status back to running if it was failed/completed
-    if (["failed", "completed", "completed_with_failures", "cancelled"].includes(exec.status)) {
+    //（aborted 也在列：reconcile 回收过的行仍应可经 repair 通道复活 2026-10-29）
+    if (["failed", "completed", "completed_with_failures", "cancelled", "aborted"].includes(exec.status)) {
       this.dao.updateExecution(executionId, { status: "running" })
     }
 
@@ -263,7 +264,10 @@ export class RepairService {
   // 业务节点全是连坐 failed）等价于从头重跑。合成节点（不在 YAML 拓扑里，restorePoint
   // 触达不到）一并洗回 pending，引擎重新初始化。execution 被 restorePoint 拉回
   // running 后：live 引擎继续消化 pending；进程重启场景由 RecoveryManager 接管。
-  rerun(executionId: string, opts: { resetVarPool?: boolean } = {}): RestorePointResponse {
+  async rerun(
+    executionId: string,
+    opts: { resetVarPool?: boolean } = {},
+  ): Promise<RestorePointResponse & { engine_restarted: boolean }> {
     const exec = this.dao.findById(executionId)
     if (!exec) throw new RepairError("Execution not found", 404)
     if (exec.status === "running" || exec.status === "pending") {
@@ -302,7 +306,29 @@ export class RepairService {
         if (!result.resetNodes.includes(ne.node_id)) result.resetNodes.push(ne.node_id)
       }
     }
-    return result
+
+    // 引擎即时接管（2026-10-29 修复「重跑没反应」）：restorePoint 只把行翻回
+    // running，靠的是 live 引擎或下次启动的恢复扫描 —— 崩溃/重启过的轮次两者
+    // 皆无，reconcile 的 reaper 会在 10 分钟内按 started_at 陈旧度把它收成
+    // aborted（用户看到的「点了没反应」）。这里走官方 resume 通道：
+    // pending_resume → 节点 triage → reconstructEngine → running，函数内同步
+    // 完成状态接力，异步 reaper 无从插窗。resume 失败则退回 running 等重启
+    // 恢复，并由 engine_restarted=false 告知调用方。
+    let engineRestarted = false
+    try {
+      this.dao.updateExecution(executionId, { status: "pending_resume" })
+      const resumed = await this.executionService.resume(executionId)
+      engineRestarted = !!resumed.success
+      if (!engineRestarted) {
+        this.dao.updateExecution(executionId, { status: "running" })
+        console.warn(`[repair] rerun ${executionId}: resume refused (${resumed.error}) — fallback to running, restart recovery will pick it up`)
+      }
+    } catch (err: unknown) {
+      this.dao.updateExecution(executionId, { status: "running" })
+      console.warn(`[repair] rerun ${executionId}: resume threw (${err instanceof Error ? err.message : err}) — fallback to running`)
+    }
+
+    return { ...result, engine_restarted: engineRestarted }
   }
 
   // ── Reload Workflow ──────────────────────────────────────────────
