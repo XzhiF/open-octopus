@@ -27,6 +27,7 @@ import { OctopusAgentNode } from "./workflow-nodes/octopus-agent-node"
 import { SwarmNode } from "@/components/swarm/organisms/swarm-node"
 import { ConditionEdge } from "./workflow-edges/condition-edge"
 import { WorkflowStepEdge } from "./workflow-edges/workflow-step-edge"
+import { useDagAutoFit, USER_MIN_ZOOM } from "./use-dag-auto-fit"
 
 import { parseYaml } from "@/lib/yaml-utils"
 import { yamlToFlowData } from "@/lib/workflow-parser"
@@ -416,11 +417,9 @@ export function WorkflowFlowViewerWithStatus({
     return { nodes: enrichedNodes, edges: enrichedEdges }
   }, [yamlContent, stepMap, activeStepId, currentStepId, workspaceId, executionId, loopIterationsMap, subWorkflowNodes, polledHeartbeat])
 
-  const onInit = useCallback((instance: unknown) => {
-    setTimeout(() => {
-      (instance as { fitView: (opts?: { padding?: number }) => void }).fitView({ padding: 0.2 })
-    }, 50)
-  }, [])
+  const { containerRef, onInit } = useDagAutoFit<HTMLDivElement>({
+    contentKey: flowData ? flowData.nodes.length : 0,
+  })
 
   // Left-click: only swarm nodes trigger a callback (open swarm dialog)
   const handleNodeClick: NodeMouseHandler<Node> = useCallback((_event, node) => {
@@ -455,7 +454,7 @@ export function WorkflowFlowViewerWithStatus({
   }
 
   return (
-    <div className="h-full w-full" onContextMenu={(e) => e.preventDefault()}>
+    <div ref={containerRef} className="h-full w-full" onContextMenu={(e) => e.preventDefault()}>
       <ReactFlow
         key={`rf-${flowData.nodes.length}`}
         nodes={flowData.nodes}
@@ -469,6 +468,7 @@ export function WorkflowFlowViewerWithStatus({
         onNodeContextMenu={handleNodeContextMenu}
         onInit={onInit}
         fitView
+        minZoom={USER_MIN_ZOOM}
         proOptions={{ hideAttribution: true }}
       >
         <Background color="#32323B" gap={20} size={1} />

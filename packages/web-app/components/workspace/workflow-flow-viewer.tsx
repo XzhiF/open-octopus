@@ -1,6 +1,6 @@
 "use client"
 
-import { useCallback, useMemo } from "react"
+import { useMemo } from "react"
 import {
   ReactFlow,
   Background,
@@ -22,6 +22,7 @@ import { SubWorkflowContainerNode } from "./workflow-nodes/sub-workflow-containe
 import { OctopusAgentNode } from "./workflow-nodes/octopus-agent-node"
 import { SwarmNode } from "@/components/swarm/organisms/swarm-node"
 import { ConditionEdge } from "./workflow-edges/condition-edge"
+import { useDagAutoFit, USER_MIN_ZOOM } from "./use-dag-auto-fit"
 
 interface WorkflowFlowViewerProps {
   nodes: Node[]
@@ -58,11 +59,8 @@ export function WorkflowFlowViewer({ nodes, edges, isEmpty }: WorkflowFlowViewer
     []
   )
 
-  const onInit = useCallback((instance: unknown) => {
-    setTimeout(() => {
-      (instance as { fitView: (opts?: unknown) => void }).fitView({ padding: 0.2 })
-    }, 50)
-  }, [])
+  // 横向主干的图是宽扁形状：pane 被挤矮后旧的 fitView 会把两端裁掉，交给这个 hook 兜底。
+  const { containerRef, onInit } = useDagAutoFit<HTMLDivElement>({ contentKey: nodes.length })
 
   if (isEmpty) {
     return (
@@ -73,7 +71,7 @@ export function WorkflowFlowViewer({ nodes, edges, isEmpty }: WorkflowFlowViewer
   }
 
   return (
-    <div className="h-full w-full">
+    <div ref={containerRef} className="h-full w-full">
       <ReactFlow
         nodes={nodes}
         edges={edges}
@@ -85,6 +83,7 @@ export function WorkflowFlowViewer({ nodes, edges, isEmpty }: WorkflowFlowViewer
         elementsSelectable={false}
         onInit={onInit}
         fitView
+        minZoom={USER_MIN_ZOOM}
         proOptions={{ hideAttribution: true }}
       >
         <Background color="#32323B" gap={20} size={1} />
