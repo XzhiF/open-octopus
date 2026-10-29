@@ -258,7 +258,7 @@ export function useAgentChat(sessionId: string | null, options?: {
     setIsThinking(timeline.length > 0 && timeline[timeline.length - 1].kind === 'thinking')
   }, [])
 
-  const loadMessages = useCallback(async () => {
+  const loadMessages = useCallback(async (opts?: { onlyWhenIdle?: boolean }) => {
     if (!sessionId) return
     const requestedSessionId = sessionId
     try {
@@ -266,6 +266,9 @@ export function useAgentChat(sessionId: string | null, options?: {
       const res = await getSessionFn(sessionId, { limit: 50 })
       // Fast session switches: never let an old response overwrite the new chat.
       if (sessionIdRef.current !== requestedSessionId) return
+      // stop 之后的补拉与紧接着的新一轮发送会竞态：新一轮已经开始时，服务端
+      // 快照比乐观行旧 —— 覆盖会让用户刚发的提示词从实录里消失。
+      if (opts?.onlyWhenIdle && (streamingRef.current || resumeModeRef.current)) return
       const items = res.messages.items
       // While tailing a server-side turn, its streaming partial belongs to the
       // live area (metadata.streaming). Rendering it as history made a switch
@@ -287,8 +290,13 @@ export function useAgentChat(sessionId: string | null, options?: {
       if (partial) {
         hydrateFromPartial(partial)
         setMessages(items.filter((m) => m !== partial))
-      } else {
+      } else if (resumeModeRef.current || streamingRef.current) {
         setMessages(items)
+      } else {
+        // 冷加载：没有任何 stream 在跑，却还挂着 metadata.streaming 的行 =
+        // 上一次中断 / 进程退出留下的残行。落成「已中断」，否则它会以普通
+        // 消息的样子出现，用户看不出那一轮是被打断的（2026-10-29 用户 bug）。
+        setMessages(items.map((m) => (m.streaming ? { ...m, streaming: false, interrupted: true } : m)))
       }
       // ctx chip source of truth on a cold load: the session row carries the
       // last provider-reported usage, so a refresh / server restart / another
@@ -726,7 +734,14 @@ export function useAgentChat(sessionId: string | null, options?: {
     streamThinkingRef.current = ''
     toolCallsRef.current = []
     setStatusMessage('')
-  }, [sessionId, disconnect])
+
+    // 中断的这一轮由 server 落成 interrupted 行（stopChat 等 finalize 完成才
+    // 返回），这里重拉一遍让实录成为权威：本地的 partial 只是即时回显，服务端
+    // 的行到了就整份替换。少了这一步，思考阶段被停（本地还没有任何内容）时这
+    // 一轮看起来完全消失；刷新后也看不到「本轮被截断」（2026-10-29 用户 bug）。
+    // onlyWhenIdle：用户停完立刻又发新提示词时，别拿旧快照覆盖乐观行。
+    void loadMessages({ onlyWhenIdle: true })
+  }, [sessionId, disconnect, loadMessages])
 
   const handleConfirm = useCallback(async (eventId: string, decision: 'accept' | 'reject') => {
     try {

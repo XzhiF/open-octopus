@@ -240,7 +240,12 @@ export function createChatRoutes(deps: ChatRouteDeps): Hono {
     // Stream SSE response
     return streamSSE(c, async (stream) => {
       let aborted = false
-      const abortStream = () => { aborted = true }
+      // 停止按钮要真的掐掉 provider 查询：只置布尔位得等下一个 chunk 才生效，
+      // 模型长时间思考 / 工具调用期间按停止会一直挂着（2026-10-29 用户：
+      // 中断后会话像没了一样）。AbortSignal 直接让 SDK 迭代结束，路由随即
+      // finalize 出「本轮被截断」行。
+      const abortController = new AbortController()
+      const abortStream = () => { aborted = true; abortController.abort() }
       const streamId = registerActiveStream(id, abortStream)
       // Wake turns have no client-owned SSE; tell the open chat to tail the
       // server-side partial (same stream-resume path as reopening a dialog).
@@ -293,6 +298,8 @@ export function createChatRoutes(deps: ChatRouteDeps): Hono {
           plugins: thread?.plugins,
           onBeforeToolCall: thread?.guard,
           onTurnComplete,
+          isAborted: () => aborted,
+          abortSignal: abortController.signal,
           onResult: roleCard
             ? () => {
                 cacheCtx.markRoleDelivered(id, roleState.revision)
@@ -301,14 +308,16 @@ export function createChatRoutes(deps: ChatRouteDeps): Hono {
             : undefined,
         })
 
-        // Step 3: Fallback if Claude SDK unavailable
-        if (!llmResult.generated) {
+        // Step 3: Fallback if Claude SDK unavailable. NEVER after a user stop:
+        // the partial row is already finalized as「本轮被截断」— appending the
+        // canned fallback would replace the user's interrupted turn with noise.
+        if (!llmResult.generated && !aborted) {
           await sendFallbackResponse(body.message!, stream, id, org, sessionDao, undefined)
         }
         // 新建开发任务：首轮结束后让 AI 总结任务标题（名字仍等于这条消息的
         // 确定性截串才替换）。放在主调用之后跑 —— 起名请求若与主流并发，会
         // 和共享 LLMCallTracker 的 message_delta 抢同一批 active call。
-        if (llmResult.generated && thread && !body.wake) {
+        if (llmResult.generated && !aborted && thread && !body.wake) {
           taskThread?.maybeAdoptSmartTaskName(id, body.message)
         }
       } catch (err: unknown) {
@@ -399,6 +408,10 @@ export function createChatRoutes(deps: ChatRouteDeps): Hono {
       onTurnComplete?: () => Promise<void> | void
       /** Called once when the turn produces a result (mark role card delivered). */
       onResult?: () => void
+      /** Stop-button probe: the owning stream's abort flag (checked每 chunk). */
+      isAborted?: () => boolean
+      /** Hard-abort the provider query (stop button) — ends the SDK iterator now. */
+      abortSignal?: AbortSignal
     },
   ): Promise<{ generated: boolean }> {
     const resumeSessionId = extra?.resumeSessionId
@@ -439,9 +452,15 @@ export function createChatRoutes(deps: ChatRouteDeps): Hono {
             tool_calls: tools.length > 0 ? tools : undefined,
           })
         : null
-    // 中途失败 / 没有正文时也要把 partial 收尾，避免永久 streaming。
-    const finalizePartial = () => {
-      if (!partialRowId) return
+    // 中途失败 / 没有正文 / 用户按停止时把 partial 收尾，避免永久 streaming。
+    // interrupted=true 是「停止按钮」的语义：行必须落成「本轮被截断」，否则
+    // 用户中断后重开只看到一条普通消息，好像那一轮没发生过（2026-10-29 用户）。
+    // 首次 flush 之前就被停掉时行还没插过 —— 这里补插，内容一点不丢。
+    const finalizePartial = (interrupted: boolean) => {
+      const hasPayload = !!partialRowId || !!fullContent || !!fullThinking || currentToolCalls.length > 0
+      // 非中断路径（错误收尾）没内容就没有可收的；中断路径必须留痕 —— 模型还没
+      // 吐第一个字就被停时，这一行空的「本轮被截断」就是用户要的中断状态。
+      if (!hasPayload && !interrupted) return
       try {
         const assistantNow = new Date().toISOString()
         const toolCallsJson = serializeTurnExtras(
@@ -451,9 +470,22 @@ export function createChatRoutes(deps: ChatRouteDeps): Hono {
             return terminal ? tc : { ...tc, status: 'fail' }
           }),
         )
-        sessionDao.updateMessage(assistantMsgId, {
-          content: fullContent, tool_calls: toolCallsJson, metadata: timelineMetadata(),
-        })
+        const meta: { timeline?: TurnTimelineEntry[]; interrupted?: boolean } = {}
+        if (turnTimeline.length > 0) meta.timeline = turnTimeline
+        if (interrupted) meta.interrupted = true
+        const metadata = Object.keys(meta).length > 0 ? JSON.stringify(meta) : null
+        if (partialRowId) {
+          sessionDao.updateMessage(assistantMsgId, {
+            content: fullContent, tool_calls: toolCallsJson, metadata,
+          })
+        } else {
+          sessionDao.insertMessage({
+            id: assistantMsgId, session_id: sessionId, role: 'assistant',
+            content: fullContent, tool_calls: toolCallsJson, metadata,
+            created_at: assistantNow,
+          })
+          partialRowId = assistantMsgId
+        }
         sessionDao.updateLastMessageAt(sessionId, assistantNow)
       } catch (err: unknown) {
         console.error(
@@ -510,8 +542,12 @@ export function createChatRoutes(deps: ChatRouteDeps): Hono {
           ...(extra?.mcpServers ? { mcpServers: extra.mcpServers } : {}),
           ...(extra?.plugins ? { plugins: extra.plugins } : {}),
           ...(extra?.onBeforeToolCall ? { onBeforeToolCall: extra.onBeforeToolCall } : {}),
+          ...(extra?.abortSignal ? { abortSignal: extra.abortSignal } : {}),
         })) {
-          if ((stream as any)._aborted) break
+          // 停止按钮（本路由闭包的 aborted）优先；`stream._aborted` 是旧判据，
+          // 但 hono 的 node 适配器不会去置它 —— 只看它等于「按了停止服务端还在
+          // 继续烧 token，直到自己跑完」，partial 也就一直来不及收尾。
+          if (extra?.isAborted?.() || (stream as any)._aborted) break
           switch (chunk.type) {
             case 'text_delta':
               fullContent += chunk.content
@@ -623,7 +659,11 @@ export function createChatRoutes(deps: ChatRouteDeps): Hono {
         )
       }
 
-      if (generated && fullContent) {
+      // 用户按停止 ≠ 失败：输出留成一条「本轮被截断」的实录行（interrupted），
+      // 会话本身照常可续聊。不写 done 帧 —— 客户端已断开，下一次它自己重载。
+      const aborted = extra?.isAborted?.() ?? false
+
+      if (!aborted && generated && fullContent) {
         const assistantNow = new Date().toISOString()
         const toolCallsJson = serializeTurnExtras(fullThinking, currentToolCalls)
         if (partialRowId) {
@@ -650,13 +690,17 @@ export function createChatRoutes(deps: ChatRouteDeps): Hono {
             session_title: sessionDao.findById(sessionId)?.title,
           }),
         })
-      } else if (partialRowId) {
-        finalizePartial()
+      } else if (aborted || partialRowId) {
+        finalizePartial(aborted)
       }
     } catch (err: unknown) {
       const errMsg = err instanceof Error ? err.message : String(err)
-      console.error(`[agent] Claude SDK call failed: ${errMsg}`, err instanceof Error ? err.stack : '')
-      finalizePartial()
+      // 用户按停止触发的 abort 不是故障：不打红日志，只按「中断」收尾。
+      const wasAborted = extra?.isAborted?.() ?? false
+      if (!wasAborted) {
+        console.error(`[agent] Claude SDK call failed: ${errMsg}`, err instanceof Error ? err.stack : '')
+      }
+      finalizePartial(wasAborted)
     }
     return { generated }
   }
