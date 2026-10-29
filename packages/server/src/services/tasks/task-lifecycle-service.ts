@@ -708,6 +708,12 @@ export class TaskLifecycleService {
         // nothing. (Zero real nodes at all stays completed — the rule's length>0 guard.)
         const outcomes = this.execDAO.countRealNodeOutcomes(executionId)
         if (outcomes.completed === 0 && outcomes.skipped > 0) status = "failed"
+        // 2026-10-29 虚假完成补刀（rerun 事故轮）：恢复路径级联把业务节点全打成
+        // cancelled/skipped 后，一个 completed 的 bash 路由节点（spec-resolve）就能
+        // 骗过上一条规则 —— 只要工作流存在业务节点行（agent/子流/swarm/loop/python/
+        // task_dispatch）而其中零个 completed，本轮没有任何真实产出，判 failed。
+        // businessTotal=0（纯 bash 流）不拦：全跑完的纯脚本轮是合法完成。
+        else if (outcomes.businessTotal > 0 && outcomes.businessCompleted === 0) status = "failed"
       }
 
       let ok = status === "completed" || status === "completed_with_failures"

@@ -64,7 +64,7 @@ const WORKFLOW_TOOL_DESC: Record<string, string> = {
   cancel_execution: "取消一次运行中的执行。",
   respond_approval: "回答执行中挂起的审批/交互节点。",
   retry_node: "重跑一次运行中执行里的单个失败节点。",
-  rerun_execution: "终态执行（失败/取消）一键重跑：自动取首个失败节点为恢复点，连同下游洗回 pending，执行拉回 running。",
+  rerun_execution: "终态执行（失败/取消/中止）一键重跑：取首个失败节点为恢复点连同下游洗回 pending，再以全新启动方式重新拉起引擎。",
 }
 
 const TASK_TOOL_DESC: Record<string, string> = {

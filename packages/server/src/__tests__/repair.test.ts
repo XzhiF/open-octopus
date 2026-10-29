@@ -540,9 +540,9 @@ nodes:
     vi.mocked(mockExecutionService.getWorkflowContent).mockReturnValue(workflow3)
   }
 
-  it("aborted 轮（reaper 回收过的）：节点全洗 + resume 即时接管，engine_restarted=true", async () => {
-    const resume = vi.fn().mockResolvedValue({ success: true })
-    ;(mockExecutionService as unknown as { resume: unknown }).resume = resume
+  it("aborted 轮（reaper 回收过的）：节点全洗 + fresh start 接管，engine_restarted=true", async () => {
+    const start = vi.fn().mockResolvedValue({ id: "exec-rerun-1", status: "running" })
+    ;(mockExecutionService as unknown as { start: unknown }).start = start
     seedRerunExec("exec-rerun-1", "aborted")
 
     const res = await repairService.rerun("exec-rerun-1")
@@ -550,16 +550,17 @@ nodes:
     expect(res.restoredFrom).toBe("step2")
     expect(res.resetNodes).toContain("step2")
     expect(res.resetNodes).toContain("__engine_init__") // 合成节点 restorePoint 触达不到，rerun 补洗
-    expect(resume).toHaveBeenCalledWith("exec-rerun-1")
+    expect(start).toHaveBeenCalledWith("exec-rerun-1")
     expect(res.engine_restarted).toBe(true)
-    // 接力时刻：resume 接手（mock 未翻状态，真 resume 内部会翻 running）
-    const row = db.prepare("SELECT status FROM executions WHERE id = ?").get("exec-rerun-1") as { status: string }
-    expect(["pending_resume", "running"]).toContain(row.status)
+    // mock start 不写 DB（真 start 会翻 running+刷新 started_at）；接力起点 = pending
+    const row = db.prepare("SELECT status, started_at FROM executions WHERE id = ?").get("exec-rerun-1") as { status: string; started_at: string | null }
+    expect(["pending", "running"]).toContain(row.status)
+    expect(row.started_at).toBeNull() // 陈旧 started_at 已清，reaper 钟不再指向旧轮
   })
 
-  it("resume 拒绝 → 退回 running 等重启恢复，engine_restarted=false", async () => {
-    const resume = vi.fn().mockResolvedValue({ success: false, error: "未找到暂停节点" })
-    ;(mockExecutionService as unknown as { resume: unknown }).resume = resume
+  it("start 拒绝（并发叶子占用等）→ 退回 running 等重启恢复，engine_restarted=false", async () => {
+    const start = vi.fn().mockRejectedValue(Object.assign(new Error("已有叶子节点正在执行"), { status: 409 }))
+    ;(mockExecutionService as unknown as { start: unknown }).start = start
     seedRerunExec("exec-rerun-2", "failed")
 
     const res = await repairService.rerun("exec-rerun-2")
@@ -570,6 +571,7 @@ nodes:
   })
 
   it("running 轮拒绝 rerun（那走 retry_node）", async () => {
+    ;(mockExecutionService as unknown as { start: unknown }).start = vi.fn()
     seedRerunExec("exec-rerun-3", "running")
     await expect(repairService.rerun("exec-rerun-3")).rejects.toThrow(RepairError)
   })

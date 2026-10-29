@@ -307,25 +307,28 @@ export class RepairService {
       }
     }
 
-    // 引擎即时接管（2026-10-29 修复「重跑没反应」）：restorePoint 只把行翻回
-    // running，靠的是 live 引擎或下次启动的恢复扫描 —— 崩溃/重启过的轮次两者
-    // 皆无，reconcile 的 reaper 会在 10 分钟内按 started_at 陈旧度把它收成
-    // aborted（用户看到的「点了没反应」）。这里走官方 resume 通道：
-    // pending_resume → 节点 triage → reconstructEngine → running，函数内同步
-    // 完成状态接力，异步 reaper 无从插窗。resume 失败则退回 running 等重启
-    // 恢复，并由 engine_restarted=false 告知调用方。
+    // 引擎即时接管（2026-10-29 二次修正，rerun 事故轮 00:24）：曾走 resume 通道，
+    // 但 resume 的语义是「从暂停点续跑」—— triage 会把 rerun 刚洗成 pending 的
+    // 全部节点再刷成 paused，而 reconstructEngine 的 backfill 集合含
+    // paused/cancelled 残行，脏残态被喂回 nodeResults 后依赖级联把主链打成
+    // cancelled，伪完成判定又被单个 bash 路由节点骗过。rerun 的正确语义是
+    // **全新启动**：行重置 pending（started_at/completed_at/progress 清零），
+    // 走和人工触发同一的 start() —— fresh engine、started_at=now，reaper 的
+    // 陈旧度钟也重新起算。start 拒绝（并发叶子占用等）则退回 running 等重启
+    // 恢复，并以 engine_restarted=false 如实告知调用方。
     let engineRestarted = false
     try {
-      this.dao.updateExecution(executionId, { status: "pending_resume" })
-      const resumed = await this.executionService.resume(executionId)
-      engineRestarted = !!resumed.success
-      if (!engineRestarted) {
-        this.dao.updateExecution(executionId, { status: "running" })
-        console.warn(`[repair] rerun ${executionId}: resume refused (${resumed.error}) — fallback to running, restart recovery will pick it up`)
-      }
+      this.dao.updateExecution(executionId, {
+        status: "pending",
+        started_at: null,
+        completed_at: null,
+        progress: 0,
+      })
+      await this.executionService.start(executionId)
+      engineRestarted = true
     } catch (err: unknown) {
       this.dao.updateExecution(executionId, { status: "running" })
-      console.warn(`[repair] rerun ${executionId}: resume threw (${err instanceof Error ? err.message : err}) — fallback to running`)
+      console.warn(`[repair] rerun ${executionId}: start refused (${err instanceof Error ? err.message : err}) — fallback to running, restart recovery will pick it up`)
     }
 
     return { ...result, engine_restarted: engineRestarted }

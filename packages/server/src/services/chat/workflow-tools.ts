@@ -150,7 +150,7 @@ export function createWorkflowToolServer(
     ),
     tool(
       "rerun_execution",
-      "Rerun a TERMINAL execution (failed/cancelled/completed) from its first failed node — resets that node and everything downstream to pending, re-arms the execution to running, and the engine picks it up (after a server restart, the recovery manager does). Use this when retry_node refuses because the execution already ended; startup-level failures (engine init) rerun the whole flow from node one. For a single failed node inside a still-running execution, prefer retry_node.",
+      "Rerun a TERMINAL execution (failed/cancelled/aborted/completed) with a FRESH start: resets the first failed node and everything downstream to pending, clears synthetic nodes, then launches the engine from scratch like a manual trigger (started_at resets, reaper clock restarts). Use this when retry_node refuses because the execution already ended; startup-level failures (engine init) rerun the whole flow from node one. For a single failed node inside a still-running execution, prefer retry_node.",
       {
         execution_id: z.string().min(1),
         reset_var_pool: z.boolean().optional().describe("Also roll the variable pool back to the restore point's checkpoint (default: keep current pool)"),

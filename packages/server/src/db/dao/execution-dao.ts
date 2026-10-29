@@ -1417,15 +1417,23 @@ export class ExecutionDAO extends BaseDAO {
   /** Real (non-pseudo `__*`) node outcomes for an execution — used by the
    *  scheduler chain-completion callback to mirror ExecutionLifecycle's
    *  allSkipped→failed rule while the engine run is still unwinding. */
-  countRealNodeOutcomes(executionId: string): { completed: number; skipped: number } {
+  countRealNodeOutcomes(executionId: string): { completed: number; skipped: number; businessCompleted: number; businessTotal: number } {
     const row = this.stmt(`
       SELECT
         SUM(CASE WHEN status = 'completed' THEN 1 ELSE 0 END) AS completed,
-        SUM(CASE WHEN status = 'skipped'   THEN 1 ELSE 0 END) AS skipped
+        SUM(CASE WHEN status = 'skipped'   THEN 1 ELSE 0 END) AS skipped,
+        SUM(CASE WHEN node_type IN ('agent','dynamic_sub_workflow','swarm','loop','python','task_dispatch') THEN 1 ELSE 0 END) AS business_total,
+        SUM(CASE WHEN node_type IN ('agent','dynamic_sub_workflow','swarm','loop','python','task_dispatch')
+                  AND status = 'completed' THEN 1 ELSE 0 END) AS business_completed
       FROM node_executions
       WHERE execution_id = ? AND substr(node_id, 1, 2) != '__'
-    `).get(executionId) as { completed: number | null; skipped: number | null } | undefined
-    return { completed: row?.completed ?? 0, skipped: row?.skipped ?? 0 }
+    `).get(executionId) as { completed: number | null; skipped: number | null; business_total: number | null; business_completed: number | null } | undefined
+    return {
+      completed: row?.completed ?? 0,
+      skipped: row?.skipped ?? 0,
+      businessCompleted: row?.business_completed ?? 0,
+      businessTotal: row?.business_total ?? 0,
+    }
   }
 
   findFirstNodeError(executionId: string): string | null {
