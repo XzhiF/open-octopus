@@ -808,14 +808,16 @@ export function ChatArea({
                 {/* pt-1.5 与 textarea 的 py-1.5 对齐：两者行高同为 24px，
                     不补 padding 则 ❯ 比首行文字高 6px（items-start 下不居中）。 */}
                 <span aria-hidden className="shrink-0 pt-1.5 font-bold leading-6 text-pop-pink">❯</span>
-                {/* maxRows=3（2026-09-24 用户定稿：初始 1 行、最多长到 3 行，
-                    再超出走内滚）。不写 CSS max-height —— 会钳住 scrollHeight
-                    导致几行就不再长高（原型 v2 实测 bug）。 */}
+                {/* minRows=2 / maxRows=5（2026-10-30 用户定稿：默认两行高，
+                    最长五行，再超出内滚）。行数下限走 rows 属性、上限走 JS ——
+                    不写 CSS min/max-height：max-height 会钳住 scrollHeight，
+                    几行就不再长高（原型 v2 实测 bug）。 */}
                 <AutoResizeTextarea
                   value={input}
                   onChange={(e) => setInput(e.target.value)}
                   onKeyDown={handleTuiKeyDown}
-                  maxRows={3}
+                  minRows={2}
+                  maxRows={5}
                   disabled={!!pendingConfirm}
                   placeholder={
                     queue.length > 0
@@ -824,7 +826,7 @@ export function ChatArea({
                         ? '输入新指令 —— ⏎ 打断接管 · ⇧⏎ 不打断排队'
                         : composerPlaceholder ?? '问 task-author…　⏎ 发送 · ⇧⏎ 排队 · Alt⏎ 换行'
                   }
-                  className="min-h-6 flex-1 rounded-none border-0 bg-transparent px-0 py-1.5 text-[12.5px] text-pop-ink shadow-none placeholder:text-pop-dim focus-visible:ring-0"
+                  className="flex-1 rounded-none border-0 bg-transparent px-0 py-1.5 text-[12.5px] text-pop-ink shadow-none placeholder:text-pop-dim focus-visible:ring-0"
                 />
                 <span className="shrink-0 pt-1">
                   {streaming ? (
@@ -1027,9 +1029,11 @@ export function ChatArea({
                   if (!slashOpen) handleSend()
                 }
               }}
+              minRows={2}
+              maxRows={5}
               placeholder={streaming ? 'Agent 正在回复中...' : composerPlaceholder ?? '输入消息，/ 调用技能，@@ 委托分身，Enter 发送'}
               disabled={streaming || !!pendingConfirm}
-              className="min-h-[40px] max-h-[200px] rounded-none border-0 bg-transparent px-3.5 pb-1 pt-2.5 text-[12.5px] text-pop-ink shadow-none focus-visible:ring-0"
+              className="rounded-none border-0 bg-transparent px-3.5 pb-1 pt-2.5 text-[12.5px] text-pop-ink shadow-none focus-visible:ring-0"
             />
             <div
               data-composer-toolbar

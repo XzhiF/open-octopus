@@ -819,4 +819,22 @@ html *::-webkit-scrollbar-corner { background: transparent; }
   vertical-align: middle;
 }
 
+/* ── ReactFlow 缩放控件配色（DAG 左下 ＋ / − / 适应视图）──
+   病因：xyflow 走浅色主题变量 —— 按钮底 #fefefe，图标色却是
+   --xy-controls-button-color-default: inherit，继承净黑面的 pop-ink 近白，
+   于是白底白图标，肉眼基本看不见（2026-10-30 用户反馈）。
+   这些变量原本定义在 .react-flow 上，这里挂到 .react-flow__controls
+   （两级选择器）提高特异性，不赌 CSS 加载顺序；自定义属性向下继承到按钮。
+   所有 DAG 面共用：运行台 / 工作流详情 / swarm 内层流。 */
+.react-flow .react-flow__controls {
+  --xy-controls-button-background-color: var(--pop-paper);
+  --xy-controls-button-color: var(--pop-dim);
+  --xy-controls-button-background-color-hover: #26262e;
+  --xy-controls-button-color-hover: var(--pop-ink);
+  --xy-controls-button-border-color: var(--pop-bd);
+  --xy-controls-box-shadow: var(--pop-shadow-sm);
+  overflow: hidden;
+  border-radius: 9px;
+}
+
 
