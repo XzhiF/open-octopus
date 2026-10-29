@@ -89,6 +89,22 @@ export function maximizeRect(stage: Size): Rect {
   return { x: 0, y: 0, w: Math.max(1, stage.width), h: Math.max(1, stage.height) }
 }
 
+/** 「真全屏」最大化（2026-10-30 用户：放大后左侧任务栏没被盖住，不算全屏）。
+ *  窗口层的坐标原点在其容器左上角，而作业坞的容器只是侧栏右侧的聊天区 ——
+ *  实测 1512 视口 / header 32 / 侧栏 236：maximizeRect 只铺出 1276 宽，
+ *  左边 236px 的任务栏露在外面。这里按容器左偏移向左出血，铺满整个视口，
+ *  上沿仍停在 header 之下（容器 top 实测正好 = HEADER_HEIGHT，y 不用补偿）。
+ *  负 x 安全：从层到视口根之间的祖先全是 overflow-visible。 */
+export function bleedMaximizeRect(size: Size, leftOffset: number): Rect {
+  const bleed = Math.max(0, leftOffset)
+  return {
+    x: bleed > 0 ? -bleed : 0,
+    y: 0,
+    w: Math.max(1, size.width + bleed),
+    h: Math.max(1, size.height),
+  }
+}
+
 /** 模块窗口打开时以「整个浏览器视口」水平居中的锚点（2026-10-29 用户）。
  *  TaskModulesLayer 的容器是侧栏右侧的聊天区，容器中心比视口中心偏右
  *  （约 sidebar/2），大窗口按容器居中会看起来偏右。这里用容器左偏移把 x

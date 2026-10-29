@@ -3,8 +3,8 @@
 import { useRef, type PointerEvent as ReactPointerEvent, type ReactNode } from 'react'
 import { cn } from '@/lib/utils'
 import {
+  bleedMaximizeRect,
   clampRect,
-  maximizeRect,
   resizeRect,
   type Rect,
   type ResizeDirection,
@@ -19,6 +19,8 @@ interface TaskWindowProps {
   record: TaskWindowRecord
   title: string
   container: Size
+  /** 窗口层容器左边缘在视口里的 x —— 最大化时向左出血盖住任务栏（见 bleedMaximizeRect）。 */
+  bleedLeft?: number
   focused: boolean
   zIndex: number
   onChange: (patch: Partial<TaskWindowRecord>) => void
@@ -32,6 +34,7 @@ export function TaskWindow({
   record,
   title,
   container,
+  bleedLeft = 0,
   focused,
   zIndex,
   onChange,
@@ -39,7 +42,7 @@ export function TaskWindow({
   onFocus,
   children,
 }: TaskWindowProps) {
-  const rect = record.maximized ? maximizeRect(container) : clampRect(record.rect, container)
+  const rect = record.maximized ? bleedMaximizeRect(container, bleedLeft) : clampRect(record.rect, container)
   const positionerRef = useRef<HTMLDivElement>(null)
   const dragLayerRef = useRef<HTMLDivElement>(null)
   const resizeStartRef = useRef<{ rect: Rect; direction: ResizeDirection } | null>(null)

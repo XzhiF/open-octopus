@@ -7,6 +7,7 @@ import {
   TITLE_BAR_HEIGHT,
   cascadeRect,
   centerInViewport,
+  bleedMaximizeRect,
   clampRect,
   maximizeRect,
   missionLayout,
@@ -128,5 +129,36 @@ describe('window-geometry', () => {
       STAGE,
     )
     expect(nine).toHaveLength(9)
+  })
+})
+
+// 2026-10-30 用户：放大 ≠ 真全屏 —— 作业坞的窗口层只在侧栏右侧，
+// 旧 maximizeRect 铺满容器就停住，左边 236px 任务栏露在外面。
+describe('bleedMaximizeRect —— 真全屏（盖住侧栏，只留全局 header）', () => {
+  const VIEWPORT = { width: 1512, height: 950 }
+  const SIDEBAR = 236
+  const stage = stageSize(VIEWPORT)
+  const chatArea = { width: VIEWPORT.width - SIDEBAR, height: stage.height }
+
+  it('按容器左偏移向左出血，宽度补回同一段', () => {
+    const rect = bleedMaximizeRect(chatArea, SIDEBAR)
+    expect(rect.x).toBe(-SIDEBAR)
+    expect(rect.w).toBe(VIEWPORT.width)
+    // 上沿仍停在 header 之下：y 不补偿，高度 = 视口高 - HEADER_HEIGHT
+    expect(rect.y).toBe(0)
+    expect(rect.h).toBe(VIEWPORT.height - HEADER_HEIGHT)
+  })
+
+  it('铺出的右边缘正好落在视口右沿，不越界', () => {
+    const rect = bleedMaximizeRect(chatArea, SIDEBAR)
+    expect(SIDEBAR + rect.x + rect.w).toBe(VIEWPORT.width)
+  })
+
+  it('容器本就从视口左沿开始时，退化成 maximizeRect', () => {
+    expect(bleedMaximizeRect(stage, 0)).toEqual(maximizeRect(stage))
+  })
+
+  it('负偏移（容器被父级推到视口内？）按 0 处理，不让窗口缩回去', () => {
+    expect(bleedMaximizeRect(chatArea, -80)).toEqual(maximizeRect(chatArea))
   })
 })

@@ -51,12 +51,17 @@ export function TaskModulesLayer({
 }: TaskModulesLayerProps) {
   const containerRef = useRef<HTMLDivElement>(null)
   const [size, setSize] = useState<Size>({ width: 0, height: 0 })
+  /** 容器左边缘的视口 x（= 左侧任务栏宽度）；最大化窗口按它向左出血。 */
+  const [containerLeft, setContainerLeft] = useState(0)
   const lastNonceRef = useRef<number | null>(null)
 
   useLayoutEffect(() => {
     const element = containerRef.current
     if (!element) return
-    const update = () => setSize({ width: element.clientWidth, height: element.clientHeight })
+    const update = () => {
+      setSize({ width: element.clientWidth, height: element.clientHeight })
+      setContainerLeft(element.getBoundingClientRect().left)
+    }
     update()
     if (typeof ResizeObserver === 'undefined') return
     const observer = new ResizeObserver(update)
@@ -145,6 +150,7 @@ export function TaskModulesLayer({
             record={record}
             title={`${MODULE_TITLE[module]} · ${task.name}`}
             container={size}
+            bleedLeft={containerLeft}
             focused={focusedModule === module}
             zIndex={20 + record.z}
             onChange={(patch) => updateWindow(module, patch)}

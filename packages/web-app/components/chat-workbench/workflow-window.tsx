@@ -57,7 +57,7 @@ export function WorkflowWindow({ workspaceId, executionId, title, onClose }: Wor
       <DialogContent
         showCloseButton={false}
         aria-describedby={undefined}
-        className="ui-font flex h-[82vh] w-[92vw] max-w-[1200px] flex-col gap-0 overflow-hidden rounded-2xl border border-white/[0.10] bg-pop-bg p-0"
+        className="ui-font flex h-[82vh] w-[92vw] max-w-[1400px] flex-col gap-0 overflow-hidden rounded-2xl border border-white/[0.10] bg-pop-bg p-0 sm:max-w-[1400px]"
       >
         <DialogTitle className="sr-only">{title ?? '工作流执行'}</DialogTitle>
         <div className="flex h-11 shrink-0 items-center gap-2 border-b border-white/[0.06] px-3">
