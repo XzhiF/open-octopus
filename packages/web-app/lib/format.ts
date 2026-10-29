@@ -69,6 +69,23 @@ export function formatDuration(ms: number | null | undefined): string {
   return `${hours}h ${minutes % 60}m`
 }
 
+/**
+ * 秒表格式化（**毫秒入参**，一直往上走的计数器用）：0s / 45s / 26m 21s / 8h 29m 12s。
+ * 与 formatDuration 分档同词，差别只有一处：小时档也保留秒。
+ * 挂在一秒一跳的读数上（如运行窗口总耗时），formatDuration 的「8h 29m」到分钟
+ * 为止 —— 秒表会看着不动，正是要的效果反过来。0 是合法读数（刚起跑），
+ * 与 formatDuration 的「无数据」不同；入参负数/NaN/null → "—"。
+ * 用 floor 不用 round：走表只增不减，四舍五入会倒跳。
+ */
+export function formatStopwatch(ms: number | null | undefined): string {
+  if (ms == null || Number.isNaN(ms) || ms < 0) return "—"
+  const totalSec = Math.floor(ms / 1000)
+  if (totalSec < 60) return `${totalSec}s`
+  const minutes = Math.floor(totalSec / 60)
+  if (minutes < 60) return `${minutes}m ${totalSec % 60}s`
+  return `${Math.floor(minutes / 60)}h ${minutes % 60}m ${totalSec % 60}s`
+}
+
 /** 百分比格式化：入参量纲 0–1（与 cacheHitRate 同轨）；默认 0 位小数，调用点可显式传 digits */
 export function formatPercent(rate: number | null | undefined, digits = 0): string {
   if (rate == null || Number.isNaN(rate)) return "—"

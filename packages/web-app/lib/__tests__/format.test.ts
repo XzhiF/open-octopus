@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest"
-import { formatCost, formatTokenCount, formatDuration, formatPercent, formatBytes } from "../format"
+import { formatCost, formatTokenCount, formatDuration, formatStopwatch, formatPercent, formatBytes } from "../format"
 
 // C4 / ADR-0017：展示层格式化器单源。
 // 表驱动逐例钉死共识边界：三态文案、自适应精度、四档时长、量纲契约。
@@ -104,5 +104,36 @@ describe("formatBytes — 1024 家族", () => {
     [3.2 * 1024 ** 3, "3.2 GB"],
   ])("formatBytes(%s) === %s", (n, expected) => {
     expect(formatBytes(n as number | null)).toBe(expected)
+  })
+})
+
+describe("formatStopwatch — 走表用秒表（小时档保留秒）", () => {
+  it.each([
+    [0, "0s"],                       // 刚起跑是合法读数，不像 formatDuration 那样报 "—"
+    [999, "0s"],
+    [45_000, "45s"],
+    [59_999, "59s"],
+    [60_000, "1m 0s"],
+    [1_560_000, "26m 0s"],
+    [30_552_000, "8h 29m 12s"],
+  ])("formatStopwatch(%s) === %s", (ms, expected) => {
+    expect(formatStopwatch(ms as number)).toBe(expected)
+  })
+
+  it("一秒一格：小时档也跟着秒跳（formatDuration 会看着不动）", () => {
+    const base = 30_552_000
+    expect(formatStopwatch(base + 1000)).toBe("8h 29m 13s")
+    expect(formatStopwatch(base + 60_000)).toBe("8h 30m 12s")
+  })
+
+  it("用 floor：亚秒抖动不倒跳", () => {
+    expect(formatStopwatch(1999)).toBe("1s")
+    expect(formatStopwatch(2000)).toBe("2s")
+  })
+
+  it("null / NaN / 负数 → —", () => {
+    expect(formatStopwatch(null)).toBe("—")
+    expect(formatStopwatch(Number.NaN)).toBe("—")
+    expect(formatStopwatch(-1)).toBe("—")
   })
 })

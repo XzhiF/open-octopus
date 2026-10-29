@@ -1,8 +1,9 @@
 'use client'
 
-// 2026-10-28 task-thread M5: the execution window the old run console hid
-// behind tabs. DAG on the left, live log stream on the right, the current
-// round auto-bound. Controls reuse the same task actions as the chat cards.
+// 2026-10-30 运行台改版：日志从右侧 420px 固定栏搬进「DAG 在上、终端在下」的纵向分栏。
+// 日志改成终端式合流（见 components/workspace/run-log），并发执行时按通道着色、
+// 有并发轨道与通道栏；点 DAG 节点 = 在日志里聚焦该节点，两面共用一个 focus。
+// 控制项沿用任务动作，与对话卡片同源。
 
 import { useEffect, useState } from 'react'
 import { Pause, Play, RotateCcw, Square } from 'lucide-react'
@@ -10,11 +11,37 @@ import { toast } from 'sonner'
 import { getTask, type TaskDetail, type TaskView } from '@/lib/tasks-api'
 import { fetchExecutionDetail, rerunExecution } from '@/lib/api-client'
 import type { StepExecution } from '@/lib/types'
+import { formatStopwatch } from '@/lib/format'
 import { WorkflowFlowViewerWithStatus } from '@/components/workspace/workflow-flow-viewer-with-status'
-import { ExecutionLogViewer } from '@/components/workspace/execution-log-viewer'
+import { RunLogConsole } from '@/components/workspace/run-log/run-log-console'
+import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from '@/components/ui/resizable'
 import { Spinner } from '@/components/ui/spinner'
 
 const LIVE_RUN = new Set(['pending', 'running', 'paused'])
+
+/** 总耗时（毫秒），口径 = 服务端 `started_at` 起算 —— 所以关掉窗口再打开、
+ *  或刷新页面，读数都接着走而不是归零（2026-10-30 用户要求）。
+ *  - 运行中：now - startedAt（调用方每秒喂一个新 now）
+ *  - 已结束：completedAt - startedAt；缺 completedAt（中止/异常收尾）时退到
+ *    最后一个节点的回执时间，再缺就不显示，绝不拿打开窗口的时刻当起点。 */
+export function totalElapsedMs(
+  startedAt: string | null | undefined,
+  completedAt: string | null | undefined,
+  live: boolean,
+  now: number,
+  steps: StepExecution[] = [],
+): number | null {
+  const started = startedAt ? Date.parse(startedAt) : NaN
+  if (Number.isNaN(started)) return null
+  const ended = completedAt ? Date.parse(completedAt) : NaN
+  if (!Number.isNaN(ended)) return Math.max(0, ended - started)
+  if (live) return Math.max(0, now - started)
+  const lastStepEnd = steps.reduce(
+    (acc, s) => Math.max(acc, s.completedAt ? Date.parse(s.completedAt) : 0),
+    0,
+  )
+  return lastStepEnd > started ? lastStepEnd - started : null
+}
 
 const RUN_STATUS_LABEL: Record<string, string> = {
   pending: '排队中',
@@ -40,9 +67,13 @@ export function RunWindow({
     workflowRef: string
     yaml: string
     steps: StepExecution[]
+    startedAt: string | null
+    completedAt: string | null
   } | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [rerunning, setRerunning] = useState(false)
+  /** DAG 与日志共用的聚焦：节点 id（= 事件 nodeId） */
+  const [focus, setFocus] = useState<string | null>(null)
 
   const runs = detail?.executions ?? []
   const run = runs.find((r) => LIVE_RUN.has(r.status)) ?? runs[0] ?? null
@@ -100,6 +131,8 @@ export function RunWindow({
             workflowRef: data.workflow_ref,
             yaml: data.workflow_content ?? '',
             steps: (data.steps ?? []) as StepExecution[],
+            startedAt: data.started_at ?? null,
+            completedAt: data.completed_at ?? null,
           })
         })
         .catch((err: unknown) => {
@@ -110,6 +143,20 @@ export function RunWindow({
     const timer = window.setInterval(load, live ? 3_000 : 15_000)
     return () => { alive = false; window.clearInterval(timer) }
   }, [workspaceId, executionId, live])
+
+  // 换一轮执行就松开聚焦：上一轮的通道 id 不该挂在新轮上
+  useEffect(() => { setFocus(null) }, [executionId])
+
+  // 总耗时走表：只有还活着才每秒推一格。起点是服务端 started_at，
+  // 不是组件挂载时刻 —— 关掉窗口再打开、刷新页面，读数接着走。
+  const [now, setNow] = useState(() => Date.now())
+  useEffect(() => {
+    if (!live) return
+    setNow(Date.now())
+    const timer = window.setInterval(() => setNow(Date.now()), 1000)
+    return () => window.clearInterval(timer)
+  }, [live])
+  const totalMs = exec ? totalElapsedMs(exec.startedAt, exec.completedAt, live, now, exec.steps) : null
 
   if (!run) {
     return (
@@ -130,6 +177,15 @@ export function RunWindow({
         <span className={`rounded-full px-2 py-[3px] font-mono text-[9px] font-black ${live ? 'bg-pop-green text-pop-bg' : 'bg-pop-idle text-pop-dim'}`}>
           {RUN_STATUS_LABEL[run.status] ?? run.status}
         </span>
+        {totalMs !== null && (
+          <span
+            data-testid="run-total"
+            title="总耗时 —— 自服务端 started_at 起算，重开窗口不归零"
+            className={`shrink-0 rounded-full border border-pop-bd/70 px-2 py-[3px] font-mono text-[9px] font-black tabular-nums ${live ? 'text-pop-ink' : 'text-pop-dim'}`}
+          >
+            ⏱ {formatStopwatch(totalMs)}
+          </span>
+        )}
         <span className="truncate font-mono text-[9px] text-pop-dim/70">{executionId}</span>
         <div className="ml-auto flex items-center gap-1">
           {run.status === 'running' && (
@@ -161,8 +217,8 @@ export function RunWindow({
 
       {error && <div className="border-b border-pop-red/30 bg-pop-red-soft px-3 py-1.5 text-[10.5px] text-pop-red">{error}</div>}
 
-      <div className="flex min-h-0 flex-1">
-        <div className="min-w-0 flex-1 overflow-hidden">
+      <ResizablePanelGroup direction="vertical" autoSaveId="octopus.run-window.v1" className="min-h-0 flex-1">
+        <ResizablePanel defaultSize={38} minSize={16} className="min-h-0 overflow-hidden">
           {!exec ? (
             <div className="flex h-full items-center gap-2 p-6 text-[11px] text-pop-dim">
               <Spinner className="size-3.5" /> 读取执行…
@@ -173,17 +229,24 @@ export function RunWindow({
               executionSteps={exec.steps}
               workspaceId={workspaceId!}
               executionId={executionId!}
+              onNodeClick={(stepId) => setFocus((prev) => (prev === stepId ? null : stepId))}
             />
           )}
-        </div>
-        <div className="w-[420px] shrink-0 overflow-hidden border-l border-pop-bd">
-          <ExecutionLogViewer
-            workspaceId={workspaceId!}
-            executionId={executionId!}
-            executionStatus={exec?.status ?? run.status}
-          />
-        </div>
-      </div>
+        </ResizablePanel>
+        <ResizableHandle withHandle className="shrink-0 bg-pop-bd/60" />
+        <ResizablePanel defaultSize={62} minSize={28} className="min-h-0">
+          {workspaceId && executionId && (
+            <RunLogConsole
+              workspaceId={workspaceId}
+              executionId={executionId}
+              executionStatus={exec?.status ?? run.status}
+              steps={exec?.steps ?? []}
+              focus={focus}
+              onFocusChange={setFocus}
+            />
+          )}
+        </ResizablePanel>
+      </ResizablePanelGroup>
     </div>
   )
 }

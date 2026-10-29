@@ -427,8 +427,9 @@ export function WorkflowFlowViewerWithStatus({
     if (node.type === "swarm") {
       onSwarmClick?.(node.id)
     }
-    // Non-swarm nodes: no action on left-click
-  }, [onSwarmClick])
+    // 左键点节点 = 把日志聚焦到该节点的通道（运行台 DAG ↔ 日志联动）
+    onNodeClick?.(node.id)
+  }, [onSwarmClick, onNodeClick])
 
   // Right-click: open context menu for any node
   const handleNodeContextMenu: NodeMouseHandler<Node> = useCallback((event, node) => {
