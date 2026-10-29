@@ -5,7 +5,7 @@ import { Folder, Menu, PanelLeft, Search, SquarePen } from 'lucide-react'
 import { toast } from 'sonner'
 import { useChatSessions } from '@/components/providers/chat-sessions'
 import { useAgentChat, type UseAgentChatApiOverride, type ChatSubagentRef } from '@/hooks/useAgentChat'
-import { useSessionUsage } from '@/hooks/useSessionUsage'
+import { useSessionLedger } from '@/hooks/useSessionLedger'
 import { useTaskUsage } from '@/hooks/useTaskUsage'
 import { useComposerSettings } from '@/hooks/useComposerSettings'
 import { useKcFeed } from '@/hooks/use-kc-feed'
@@ -31,6 +31,7 @@ import {
   postReflectionDecision, type TaskView,
 } from '@/lib/tasks-api'
 import { readRememberedTaskOrg, rememberTaskOrg, resolveTaskOrg } from '@/lib/task-org'
+import { buildTurnStats } from '@/lib/turn-stats'
 import { readLastChatContext, writeLastChatContext } from '@/lib/last-chat-context'
 import { subscribeSSE } from '@/lib/sse-manager'
 import { TASK_EXECUTION_EVENT, TASK_STATUS_EVENT } from '@octopus/shared'
@@ -243,7 +244,9 @@ export function ChatTab() {
     api: mainChatApi,
     onQuickEditCommit: handleQuickEditCommit,
   })
-  const sessionUsage = useSessionUsage(activeSessionId, streaming)
+  // One ledger fetch serves both the composer token chip (aggregates) and the
+  // per-turn timing/token stats in the transcript (calls).
+  const { aggregates: sessionUsage, calls: sessionLedgerCalls } = useSessionLedger(activeSessionId, streaming)
   // Task thread: the composer chip shows the WHOLE task ledger (chat + every
   // round). Refetched on turn end and on task status/version changes.
   const taskUsage = useTaskUsage(
@@ -316,23 +319,32 @@ export function ChatTab() {
   const feed = useKcFeed({})
   const [composerSeed, setComposerSeed] = useState('')
 
+  // Per-turn timing / token stats live on the message objects (not persisted on
+  // the row) so TuiTranscript can render the process meta without new plumbing.
+  const turnStatsByMessage = useMemo(
+    () => buildTurnStats(messages, sessionLedgerCalls),
+    [messages, sessionLedgerCalls],
+  )
+
   const { viewMessages, laneAByMsgId, laneAIds, laneAIngestById } = useMemo(() => {
     const byMsgId = new Map<string, KcCardEvent[]>()
     const ids = new Set<string>()
     const ingestById = new Map<string, KcCardEvent>()
     const vm = messages.map((m): AgentMessage => {
-      if (!m.content || !m.content.includes('kc-card')) return m
+      const stats = turnStatsByMessage.get(m.id)
+      const base: AgentMessage = stats ? { ...m, turnStats: stats } : m
+      if (!m.content || !m.content.includes('kc-card')) return base
       const { events, rest } = parseKcCardBlocks(m.content)
-      if (events.length === 0) return m
+      if (events.length === 0) return base
       byMsgId.set(m.id, events)
       for (const e of events) {
         ids.add(e.id)
         if (e.kind === 'ingest') ingestById.set(e.id, e)
       }
-      return { ...m, content: rest }
+      return { ...base, content: rest }
     })
     return { viewMessages: vm, laneAByMsgId: byMsgId, laneAIds: ids, laneAIngestById: ingestById }
-  }, [messages])
+  }, [messages, turnStatsByMessage])
 
   // Lane B 覆盖层回灌 Lane A 沉淀卡（与 curator-drawer withCardStates 同构的普通会话最小子集：
   // revert 态按 commit 匹配；ingest 重试后的编译镜像按同 id 取 store 新态）
@@ -397,6 +409,19 @@ export function ChatTab() {
 
   // Pending message when auto-creating a session (carries + panel clone consult)
   const pendingMessageRef = useRef<{ message: string; subagents?: ChatSubagentRef[] } | null>(null)
+  // Task-thread first message (bug 2026-10-29): a task's first turn must wait
+  // until the task row exists (server derives the task-author identity from
+  // task state). The plain "session ready → send pending" effect would fire the
+  // moment createNewSession pushes activeSessionId — too early — and the direct
+  // send it tried instead captured a null sessionId (stale closure), so the turn
+  // never left the client. Queue it in state and let the effect below send once
+  // the session is actually the hook's current one.
+  const taskSendPendingRef = useRef(false)
+  const [pendingTaskSend, setPendingTaskSend] = useState<{
+    sessionId: string
+    message: string
+    subagents?: ChatSubagentRef[]
+  } | null>(null)
   // 新会话（hero）里选的身份：还没有 session 可写角色卡，先存在本地，
   // 第一条消息创建会话后立刻写入，再发消息（否则第一轮会用基础身份）。
   const [pendingIdentity, setPendingIdentity] = useState<{ name: string; label: string } | null>(null)
@@ -422,6 +447,9 @@ export function ChatTab() {
   // the first turn, otherwise that turn starts as the base identity.
   useEffect(() => {
     if (!activeSessionId || !pendingMessageRef.current) return
+    // Task first message: the session is up but the task row isn't — hold until
+    // the pendingTaskSend effect below fires (identity must resolve as author).
+    if (taskSendPendingRef.current) return
     const pending = pendingMessageRef.current
     pendingMessageRef.current = null
     const identityToApply = pendingIdentityRef.current
@@ -439,6 +467,20 @@ export function ChatTab() {
       .catch(() => {})
       .finally(fire)
   }, [activeSessionId, sendMessage, model, effort, maxContext])
+
+  // Task first message: fires in the render that already sees the created
+  // session (so `sendMessage` is bound to it), after the hook's session-switch
+  // effect has cleared the old transcript.
+  useEffect(() => {
+    const pending = pendingTaskSend
+    if (!pending || activeSessionId !== pending.sessionId) return
+    taskSendPendingRef.current = false
+    pendingMessageRef.current = null
+    setPendingTaskSend(null)
+    sendMessage(pending.message, {
+      model, effort, maxContext, subagents: pending.subagents,
+    })
+  }, [pendingTaskSend, activeSessionId, sendMessage, model, effort, maxContext])
 
   const handleSendMessage = useCallback((message: string, opts?: { subagents?: ChatSubagentRef[] }) => {
     if (!pendingTaskSession) {
@@ -470,6 +512,10 @@ export function ChatTab() {
       try {
         let sid = session.sessionId
         if (!sid) {
+          // Hold the plain send-effect and the transcript reload: this message
+          // belongs to the task thread and needs the task row in place first.
+          taskSendPendingRef.current = true
+          pendingMessageRef.current = { message, subagents: opts?.subagents }
           const created = await createNewSession(
             taskCwd.kind === 'default'
               ? undefined
@@ -498,16 +544,18 @@ export function ChatTab() {
         void refetchSessions()
         if (!reuseExisting) {
           setActiveSessionId(sid)
+          // Send from the render that has `sid` as the hook's session — the
+          // closure captured here still holds the pre-create null id (2026-10-29
+          // bug: the turn silently never started, only a refresh showed it).
+          setPendingTaskSend({ sessionId: sid, message, subagents: opts?.subagents })
+        } else {
+          requestAnimationFrame(() => sendMessage(message, {
+            model, effort, maxContext, subagents: opts?.subagents,
+          }))
         }
-        // 统一直发：复用会话时 activeSessionId 本来就等于 sid（deps 不变，
-        // "会话就绪后首发" effect 不重跑）；新建会话时 provider 的
-        // createNewSession 已把 activeSessionId 推到 sid，那次 effect 早于
-        // createTask 落 pendingMessageRef 之前就跑过（空转）。两种情况都必须在
-        // 这里直接发送 —— 2026-10-28 修复「提交任务后 Agent 不回复」。
-        requestAnimationFrame(() => sendMessage(message, {
-          model, effort, maxContext, subagents: opts?.subagents,
-        }))
       } catch (err: unknown) {
+        taskSendPendingRef.current = false
+        pendingMessageRef.current = null
         toast.error(err instanceof Error ? err.message : '创建任务失败')
       } finally {
         setCreatingTask(false)
@@ -524,6 +572,8 @@ export function ChatTab() {
 
   const handleSelectSession = (id: string) => {
     restoredChatContextRef.current = true
+    taskSendPendingRef.current = false
+    setPendingTaskSend(null)
     setActiveTask(null)
     setPendingTaskSession(null)
     setTaskModuleRequest(null)
@@ -621,6 +671,8 @@ export function ChatTab() {
   }
 
   const handleCreateSession = () => {
+    taskSendPendingRef.current = false
+    setPendingTaskSend(null)
     setActiveTask(null)
     setPendingTaskSession(null)
     setTaskModuleRequest(null)
@@ -637,6 +689,8 @@ export function ChatTab() {
     // 2026-10-28: creating a task from a free chat BINDS that chat (one main
     // conversation). From inside an existing task we start a fresh thread.
     const reuseSessionId = !activeTask ? activeSessionId : null
+    taskSendPendingRef.current = false
+    setPendingTaskSend(null)
     setActiveTask(null)
     setPendingTaskSession({
       sessionId: reuseSessionId ?? '',

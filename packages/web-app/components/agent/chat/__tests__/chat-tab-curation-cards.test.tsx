@@ -53,6 +53,7 @@ vi.mock("@/components/providers/chat-sessions", () => ({
 vi.mock("@/hooks/useSessionUsage", () => ({
   useSessionUsage: () => null,
 }))
+vi.mock("@/hooks/useSessionLedger", () => ({ useSessionLedger: () => ({ aggregates: null, calls: [] }) }))
 
 vi.mock("@/hooks/use-chat-tasks", () => ({
   useChatTasks: () => ({ tasks: [], loading: false, refresh: vi.fn() }),

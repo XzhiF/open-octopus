@@ -118,6 +118,9 @@ export interface AgentMessage {
   /** True on an assistant row the server is still growing (clone chat
    *  stream-resume partial). Set from metadata; absence = finalized. */
   streaming?: boolean
+  /** Per-turn timing / token stats, attached client-side by ChatTab from the
+   *  session ledger (not persisted on the row). Used by the TUI process meta. */
+  turnStats?: import('../turn-stats').TurnStats
 }
 
 // ===== Memory =====

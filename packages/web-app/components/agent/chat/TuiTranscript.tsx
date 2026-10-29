@@ -7,6 +7,8 @@
 import { useMemo, useState, type ReactNode } from 'react'
 import type { AgentMessage, MessageTimelineEntry, ToolCallRecord } from '@/lib/agent/types'
 import type { StreamTimelineItem } from '@/hooks/useAgentChat'
+import { formatDuration, formatPercent, formatTokenCount } from '@/lib/format'
+import type { TurnStats } from '@/lib/turn-stats'
 
 /** mini-markdown：`**bold**` / `行内 code` / 行首 # 标题 —— 消灭字面星号。 */
 function mdInline(text: string): ReactNode {
@@ -90,17 +92,20 @@ function ToolLine({ tc }: { tc: ToolCallRecord }) {
 }
 
 /** 折叠的过程 meta：thinking / tool 按时间序（timeline 缺失时用字段兜底）。 */
-function TuiMeta({ thinking, toolCalls, timeline }: {
+type MetaRow = { key: string; node: 'think' | 'tool' | 'frag'; text?: string; tc?: ToolCallRecord }
+
+function TuiMeta({ thinking, toolCalls, timeline, stats }: {
   thinking?: string
   toolCalls?: ToolCallRecord[]
   timeline?: MessageTimelineEntry[]
+  stats?: TurnStats
 }) {
   const [open, setOpen] = useState(false)
-  const rows = useMemo(() => {
+  const rows = useMemo<MetaRow[]>(() => {
     // The server column can hand over a non-array (legacy "{}" rows) — treating
     // it as a list here would throw and blank the whole transcript.
     const toolList = Array.isArray(toolCalls) ? toolCalls : []
-    const out: Array<{ key: string; node: 'think' | 'tool' | 'frag'; text?: string; tc?: ToolCallRecord }> = []
+    const out: MetaRow[] = []
     if (timeline?.length) {
       for (const e of timeline) {
         if (e.kind === 'thinking' && e.text) out.push({ key: `th-${out.length}`, node: 'think', text: e.text })
@@ -116,30 +121,122 @@ function TuiMeta({ thinking, toolCalls, timeline }: {
     return out
   }, [thinking, toolCalls, timeline])
 
+  const counts = useMemo(() => {
+    let tools = 0
+    let failed = 0
+    let thinks = 0
+    for (const r of rows) {
+      if (r.node === 'tool') {
+        tools++
+        if (r.tc?.status === 'fail') failed++
+      } else if (r.node === 'think') thinks++
+    }
+    return { tools, failed, thinks }
+  }, [rows])
+
   if (rows.length === 0) return null
+
+  const duration = stats?.durationMs != null && stats.durationMs > 0
+    ? formatDuration(stats.durationMs)
+    : null
+  const tokens = stats && stats.tokens > 0 ? formatTokenCount(stats.tokens) : null
+  const cachePct = stats?.cacheHitRate != null ? formatPercent(stats.cacheHitRate) : null
+  const cacheTitle = stats && cachePct != null
+    ? `缓存读 ${formatTokenCount(stats.cacheReadTokens)} / 写 ${formatTokenCount(stats.cacheCreationTokens)}`
+    : undefined
+
   return (
-    <div className="my-1">
+    <div className="my-1" data-tui-meta-root>
       <button
         type="button"
         onClick={() => setOpen((v) => !v)}
-        className="select-none text-pop-dim transition-colors hover:text-pop-ink"
+        className="flex w-full select-none flex-wrap items-center gap-x-1.5 gap-y-1 rounded-[6px] bg-white/[0.035] px-2 py-[3px] text-left text-pop-dim transition-colors hover:bg-white/[0.06] hover:text-pop-ink"
         data-tui-meta={open ? 'open' : 'closed'}
+        title={
+          'turn = 一条用户消息 + 助手这一整段回复。步数 = 思考段 + 工具调用 + 正文段；时长 / token / 缓存来自会话账本，旧轮没有账本行时只显示步数与次数。'
+        }
       >
-        <span className="text-pop-dim">◌ 过程（时间序）· </span>
-        <span className="text-pop-pink">{rows.length} 步</span>
-        <span className="ml-1">{open ? '▾' : '▸'}</span>
+        <span className="rounded-full bg-pop-pink px-1.5 text-[10px] font-extrabold leading-[15px] tracking-wider text-pop-bg">TURN</span>
+        <span className="font-semibold text-pop-pink">{rows.length} 步</span>
+        {/* 收起态显示全部摘要；展开后只留「TURN · N 步」，数字下移到明细行，避免重复。 */}
+        {!open && duration && (
+          <>
+            <span className="text-pop-dim">·</span>
+            <span className="text-pop-pink tabular-nums" data-tui-duration>
+              {duration}
+            </span>
+          </>
+        )}
+        {!open && (
+          <>
+            <span className="text-pop-dim">·</span>
+            <span className="text-pop-cyan">工具 {counts.tools}</span>
+            <span className="text-pop-dim">·</span>
+            <span className="text-pop-purple">思考 {counts.thinks}</span>
+          </>
+        )}
+        {!open && tokens && (
+          <>
+            <span className="text-pop-dim">·</span>
+            <span className="text-pop-green tabular-nums">{tokens} tok</span>
+          </>
+        )}
+        {!open && cachePct && (
+          <>
+            <span className="text-pop-dim">·</span>
+            <span className="text-pop-amber tabular-nums" title={cacheTitle}>缓存 {cachePct}</span>
+          </>
+        )}
+        <span className="ml-auto pl-2">{open ? '▾' : '▸'}</span>
       </button>
       {open && (
-        <div className="ml-3 mt-1 space-y-0.5 border-l border-pop-bd pl-3">
-          {rows.map((r) =>
-            r.node === 'tool' && r.tc ? (
-              <ToolLine key={r.key} tc={r.tc} />
-            ) : r.node === 'frag' ? (
-              <div key={r.key} className="whitespace-pre-wrap break-words text-pop-dim">✎ {r.text}</div>
-            ) : (
-              <div key={r.key} className="whitespace-pre-wrap break-words text-pop-dim">◌ {r.text}</div>
-            ),
-          )}
+        <div className="mt-1" data-tui-meta-body>
+          {/* 展开态：纯文本统计行 + 原步骤列表。 */}
+          <div className="mb-1 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[10.5px] text-pop-dim" data-tui-stats-line>
+            {duration && (
+              <span className="text-pop-pink tabular-nums" title="本轮耗时（账本首尾 call；旧轮无账本行不显示）">
+                {duration}
+              </span>
+            )}
+            <span className="text-pop-cyan" title="工具调用次数 / 失败次数">
+              工具 {counts.tools}{counts.failed > 0 ? `（失败 ${counts.failed}）` : ''}
+            </span>
+            <span className="text-pop-purple" title="思考段数（timeline 里 thinking 段，不是字数）">
+              思考 {counts.thinks}
+            </span>
+            {stats && stats.tokens > 0 && (
+              <span
+                className="text-pop-green tabular-nums"
+                title={`输入 ${formatTokenCount(stats.inputTokens)} · 输出 ${formatTokenCount(stats.outputTokens)} · 含缓存合计 ${formatTokenCount(stats.tokens)}`}
+              >
+                输入 {formatTokenCount(stats.inputTokens)} · 输出 {formatTokenCount(stats.outputTokens)} · 合计 {formatTokenCount(stats.tokens)} tok
+              </span>
+            )}
+            {cachePct && stats && (
+              <span className="text-pop-amber" title="缓存命中率 = cacheRead ÷ (input + cacheRead + cacheCreation)">
+                缓存命中 {cachePct}（读 {formatTokenCount(stats.cacheReadTokens)} / 写 {formatTokenCount(stats.cacheCreationTokens)}）
+              </span>
+            )}
+            {stats && stats.calls > 1 && (
+              <span title="本轮 llm_calls 行数（重试 = 新行）">{stats.calls} 次请求</span>
+            )}
+            {stats && stats.models.length > 0 && (
+              <span title={stats.models.join(' · ')}>
+                {stats.models[0]}{stats.models.length > 1 ? ` +${stats.models.length - 1}` : ''}
+              </span>
+            )}
+          </div>
+          <div className="ml-3 space-y-0.5 border-l border-pop-bd pl-3">
+            {rows.map((r) =>
+              r.node === 'tool' && r.tc ? (
+                <ToolLine key={r.key} tc={r.tc} />
+              ) : r.node === 'frag' ? (
+                <div key={r.key} className="whitespace-pre-wrap break-words text-pop-dim">✎ {r.text}</div>
+              ) : (
+                <div key={r.key} className="whitespace-pre-wrap break-words text-pop-dim">◌ {r.text}</div>
+              ),
+            )}
+          </div>
         </div>
       )}
     </div>
@@ -326,7 +423,12 @@ export function TuiMessage({ message }: { message: AgentMessage }) {
   const metaCount = (hasTimeline ? timeline!.length : 0) + (message.thinking && !hasTimeline ? 1 : 0)
   return (
     <div data-tui-msg="assistant" data-message-id={message.id}>
-      <TuiMeta thinking={message.thinking} toolCalls={message.tool_calls} timeline={timeline} />
+      <TuiMeta
+        thinking={message.thinking}
+        toolCalls={message.tool_calls}
+        timeline={timeline}
+        stats={message.turnStats}
+      />
       {displayContent
         ? (
           <div className="break-words whitespace-pre-wrap">

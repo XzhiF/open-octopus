@@ -593,6 +593,9 @@ export interface LLMCallData {
   output_tokens: number
   cache_read_tokens: number
   cache_creation_tokens: number
+  /** 账本来源枚举（global_chat / clone_chat / session_compress / workflow…）。
+   *  逐轮统计要剔除后台压缩行，故保留。 */
+  source_path?: string
   cost_usd?: number
 }
 
