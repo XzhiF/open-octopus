@@ -305,6 +305,12 @@ export function createChatRoutes(deps: ChatRouteDeps): Hono {
         if (!llmResult.generated) {
           await sendFallbackResponse(body.message!, stream, id, org, sessionDao, undefined)
         }
+        // 新建开发任务：首轮结束后让 AI 总结任务标题（名字仍等于这条消息的
+        // 确定性截串才替换）。放在主调用之后跑 —— 起名请求若与主流并发，会
+        // 和共享 LLMCallTracker 的 message_delta 抢同一批 active call。
+        if (llmResult.generated && thread && !body.wake) {
+          taskThread?.maybeAdoptSmartTaskName(id, body.message)
+        }
       } catch (err: unknown) {
         const msg = err instanceof Error ? err.message : String(err)
         await stream.writeSSE({ event: 'error', data: JSON.stringify({ code: 'STREAM_ERROR', message: msg }) })
@@ -402,6 +408,22 @@ export function createChatRoutes(deps: ChatRouteDeps): Hono {
     let fullContent = ''
     let fullThinking = ''
     const currentToolCalls: Array<{ id: string; name: string; input?: unknown; result?: unknown; status?: string }> = []
+    // 流式时间线（与客户端 StreamTimelineItem 同形）：thinking/text 段 + 工具 id，
+    // 按到达顺序。写进 partial 的 metadata，切走再切回的会话据此原样重建实时块
+    // （2026-10-29 用户：切回来只见一条「已完成」外观的消息 +「Agent 思考中」）。
+    type TurnTimelineEntry =
+      | { kind: 'thinking'; text: string }
+      | { kind: 'text'; text: string }
+      | { kind: 'tool'; id: string }
+    const turnTimeline: TurnTimelineEntry[] = []
+    const pushTimeline = (entry: TurnTimelineEntry) => {
+      if (entry.kind === 'tool') { turnTimeline.push(entry); return }
+      const last = turnTimeline[turnTimeline.length - 1]
+      if (last && last.kind === entry.kind) last.text += entry.text
+      else turnTimeline.push({ kind: entry.kind, text: entry.text })
+    }
+    const timelineMetadata = () =>
+      turnTimeline.length > 0 ? JSON.stringify({ timeline: turnTimeline }) : null
     // "关闭不丢失"：流式期间增量写同一条 assistant partial（metadata.streaming），
     // 刷新/重开时前端用 running + messages 轮询续看；轮次结束再原地 finalize。
     const assistantMsgId = crypto.randomUUID()
@@ -430,7 +452,7 @@ export function createChatRoutes(deps: ChatRouteDeps): Hono {
           }),
         )
         sessionDao.updateMessage(assistantMsgId, {
-          content: fullContent, tool_calls: toolCallsJson, metadata: null,
+          content: fullContent, tool_calls: toolCallsJson, metadata: timelineMetadata(),
         })
         sessionDao.updateLastMessageAt(sessionId, assistantNow)
       } catch (err: unknown) {
@@ -457,7 +479,10 @@ export function createChatRoutes(deps: ChatRouteDeps): Hono {
           if (!fullContent && !fullThinking && currentToolCalls.length === 0) return
           lastFlushAt = Date.now()
           const toolCallsJson = partialToolCalls()
-          const metadata = JSON.stringify({ streaming: true })
+          const metadata = JSON.stringify({
+            streaming: true,
+            ...(turnTimeline.length > 0 ? { timeline: turnTimeline } : {}),
+          })
           if (!partialRowId) {
             sessionDao.insertMessage({
               id: assistantMsgId, session_id: sessionId, role: 'assistant',
@@ -490,6 +515,7 @@ export function createChatRoutes(deps: ChatRouteDeps): Hono {
           switch (chunk.type) {
             case 'text_delta':
               fullContent += chunk.content
+              pushTimeline({ kind: 'text', text: chunk.content })
               await stream.writeSSE({ event: 'text_delta', data: JSON.stringify({ delta: chunk.content, content: fullContent }) })
               break
             case 'thinking_start':
@@ -497,6 +523,7 @@ export function createChatRoutes(deps: ChatRouteDeps): Hono {
               break
             case 'thinking':
               fullThinking += chunk.content
+              pushTimeline({ kind: 'thinking', text: chunk.content })
               await stream.writeSSE({ event: 'thinking', data: JSON.stringify({ delta: chunk.content }) })
               break
             case 'thinking_done':
@@ -513,6 +540,7 @@ export function createChatRoutes(deps: ChatRouteDeps): Hono {
               break
             case 'tool_call_start':
               currentToolCalls.push({ id: chunk.toolCallId, name: chunk.toolName, status: 'start' })
+              pushTimeline({ kind: 'tool', id: chunk.toolCallId })
               await stream.writeSSE({ event: 'tool_call', data: JSON.stringify({ type: 'start', tool_call_id: chunk.toolCallId, tool_name: chunk.toolName }) })
               break
             case 'tool_call': {
@@ -600,12 +628,13 @@ export function createChatRoutes(deps: ChatRouteDeps): Hono {
         const toolCallsJson = serializeTurnExtras(fullThinking, currentToolCalls)
         if (partialRowId) {
           sessionDao.updateMessage(assistantMsgId, {
-            content: fullContent, tool_calls: toolCallsJson, metadata: null,
+            content: fullContent, tool_calls: toolCallsJson, metadata: timelineMetadata(),
           })
         } else {
           sessionDao.insertMessage({
             id: assistantMsgId, session_id: sessionId, role: 'assistant',
-            content: fullContent, tool_calls: toolCallsJson, created_at: assistantNow,
+            content: fullContent, tool_calls: toolCallsJson, metadata: timelineMetadata(),
+            created_at: assistantNow,
           })
         }
         sessionDao.updateLastMessageAt(sessionId, assistantNow)

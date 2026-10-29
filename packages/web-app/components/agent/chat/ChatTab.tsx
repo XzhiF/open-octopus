@@ -31,6 +31,7 @@ import {
   postReflectionDecision, type TaskView,
 } from '@/lib/tasks-api'
 import { readRememberedTaskOrg, rememberTaskOrg, resolveTaskOrg } from '@/lib/task-org'
+import { NEW_TASK_NAME, taskNameFromMessage } from '@/lib/task-name'
 import { buildTurnStats } from '@/lib/turn-stats'
 import { readLastChatContext, writeLastChatContext } from '@/lib/last-chat-context'
 import { subscribeSSE } from '@/lib/sse-manager'
@@ -42,7 +43,7 @@ import { Input } from '@/components/ui/input'
 import { Button } from '@/components/ui/button'
 import { ConfirmDialog } from '@/components/agent/shared/ConfirmDialog'
 import { ChatArea } from './ChatArea'
-import { ToolCallPanel } from './ToolCallPanel'
+import { ToolCallDialog } from './ToolCallDialog'
 import { KcCard, type KcCardActionCtx } from '@/components/knowledge-center/cards/registry'
 import {
   parseKcCardBlocks,
@@ -70,18 +71,11 @@ interface PendingTaskSession {
   projectIds: string[]
 }
 
-/** Chat-created tasks start unnamed; the task-author autosave adopts the
- *  smart session title after the first turn (same as a main-agent session).
- *  名称带「开发」：任务品类会扩展，task-author 这条是开发任务。 */
-const NEW_TASK_NAME = '新开发任务'
-
-/** First message becomes the task title (same spirit as the old autosave). */
-function taskNameFromMessage(message: string): string {
-  const first = message.split(/\r?\n/)[0].trim()
-  if (!first) return NEW_TASK_NAME
-  return first.length > 40 ? `${first.slice(0, 39)}…` : first
-}
-
+/** First message seeds the task title immediately (the sidebar is never blank);
+ *  the server then replaces it with an AI-summarised title on the first turn —
+ *  only while the name still equals the deterministic derivation, so a user
+ *  rename is never overwritten. 规则与服务端 `derivedTaskNameFromMessage` 同源
+ *  （两侧测试钉同一批样例）。 */
 export function ChatTab() {
   const {
     sessions, activeSessionId, setActiveSessionId,
@@ -238,7 +232,7 @@ export function ChatTab() {
     messages, streaming, streamContent, streamThinking, streamTimeline, isThinking, toolCalls, pendingConfirm,
     error: chatError, statusMessage, contextUsage,
     sendMessage, stopGenerate, handleConfirm, loadMessages,
-    steer, steeringRef, resumeStreaming, checkAndResume,
+    steer, steeringRef, resumeStreaming, checkAndResume, streamingSessionId, turnStartedAt,
   } = useAgentChat(activeSessionId, {
     onTitleUpdate: handleTitleUpdate,
     api: mainChatApi,
@@ -255,22 +249,25 @@ export function ChatTab() {
   )
   // Switching sessions aborts the local SSE, but task-author turns keep
   // generating server-side. Keep the badge for a short grace window while the
-  // 2s running poll catches up.
+  // 2s running poll catches up. Keyed on the OWNING session — on the switch
+  // render `streaming` still belongs to the previous session, so recording
+  // `activeSessionId` lit up whichever task the user clicked (bug 2026-10-29:
+  // 「切换任务里的会话，全部变运行中」).
   const lastStreamingAtRef = useRef<Map<string, number>>(new Map())
   useEffect(() => {
-    if (streaming && activeSessionId) {
-      lastStreamingAtRef.current.set(activeSessionId, Date.now())
+    if (streaming && streamingSessionId) {
+      lastStreamingAtRef.current.set(streamingSessionId, Date.now())
     }
-  }, [streaming, activeSessionId, runningAgents])
+  }, [streaming, streamingSessionId, runningAgents])
   const runningSessionIds = useMemo(() => {
     const ids = new Set(runningAgents.map((agent) => agent.id))
-    if (streaming && activeSessionId) ids.add(activeSessionId)
+    if (streaming && streamingSessionId) ids.add(streamingSessionId)
     const now = Date.now()
     for (const [id, at] of lastStreamingAtRef.current) {
       if (now - at < 6_000) ids.add(id)
     }
     return ids
-  }, [runningAgents, streaming, activeSessionId])
+  }, [runningAgents, streaming, streamingSessionId])
 
   // The task-author autosave renames the draft at turn-end (and the LLM title
   // refinement may land shortly after). Refresh the task list on stream end so
@@ -280,8 +277,9 @@ export function ChatTab() {
     if (wasStreamingRef.current && !streaming) {
       wasStreamingRef.current = false
       void refreshChatTasks()
-      const timer = window.setTimeout(() => void refreshChatTasks(), 1_800)
-      return () => window.clearTimeout(timer)
+      // 任务名的 AI 总结是轮末异步起的（haiku，1–2s 才回）→ 再补一次晚刷新。
+      const timers = [1_800, 6_000].map((ms) => window.setTimeout(() => void refreshChatTasks(), ms))
+      return () => { for (const t of timers) window.clearTimeout(t) }
     }
     wasStreamingRef.current = streaming
   }, [streaming, refreshChatTasks])
@@ -405,6 +403,11 @@ export function ChatTab() {
     : null
 
   const [showToolPanel, setShowToolPanel] = useState(false)
+  // 弹窗打开期间工具列表被清空（切会话/新一轮）→ 顺手复位开关，
+  // 否则下一批工具调用冒出来时弹窗会自己蹦出来抢焦点。
+  useEffect(() => {
+    if (showToolPanel && toolCalls.length === 0) setShowToolPanel(false)
+  }, [showToolPanel, toolCalls.length])
   const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false)
 
   // Pending message when auto-creating a session (carries + panel clone consult)
@@ -1173,6 +1176,7 @@ export function ChatTab() {
             streamContent={streamContent}
             streamThinking={streamThinking}
             streamTimeline={streamTimeline}
+            turnStartedAt={turnStartedAt}
             isThinking={isThinking}
             toolCalls={toolCalls}
             pendingConfirm={pendingConfirm}
@@ -1271,17 +1275,14 @@ export function ChatTab() {
         sidebarWidth={sidebarCollapsed ? 0 : sidebarWidth}
       />
 
-        {/* Tool call panel */}
-        {showToolPanel && toolCalls.length > 0 && (
-          <aside className="hidden w-80 border-l border-agent-divider bg-agent-surface-raised lg:block">
-            <ToolCallPanel
-              toolCalls={toolCalls}
-              onClose={() => setShowToolPanel(false)}
-            />
-          </aside>
-        )}
+        {/* Tool call dialog —— 悬浮按钮唤起的弹窗（原先的右列 tab 会被作业坞挡死） */}
+        <ToolCallDialog
+          open={showToolPanel && toolCalls.length > 0}
+          onOpenChange={setShowToolPanel}
+          toolCalls={toolCalls}
+        />
 
-        {/* Tool panel toggle */}
+        {/* Tool dialog toggle —— 运行中有工具调用时浮在对话区右下角 */}
       {toolCalls.length > 0 && !showToolPanel && (
         <button
           onClick={() => setShowToolPanel(true)}

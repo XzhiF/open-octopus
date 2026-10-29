@@ -227,6 +227,8 @@ function TuiMeta({ thinking, toolCalls, timeline, stats, interrupted }: {
   const cost = stats && stats.costUsd != null
     ? formatCost(stats.costUsd, stats.costComplete, currency)
     : null
+  // 整轮模型都没配价：显示「—」而不是留白（2026-10-29 用户看到「只有 token」以为丢了费用）。
+  const unpriced = !!stats && stats.costUsd == null
   const status = interrupted
     ? { label: '已中断', cls: 'text-pop-red' }
     : { label: '已完成', cls: 'text-pop-green' }
@@ -264,16 +266,19 @@ function TuiMeta({ thinking, toolCalls, timeline, stats, interrupted }: {
             <span className="text-pop-green tabular-nums">{tokens} tok</span>
           </>
         )}
-        {cost && (
+        {stats && (cost || unpriced) && (
           <>
             <span>·</span>
             <span
               className="text-pop-amber tabular-nums"
-              title={stats!.costComplete
-                ? '账本价表估算（币种跟随计费设置）'
-                : '账本价表估算：含未定价模型，≈ = 已知部分和'}
+              title={unpriced
+                ? '该轮模型还没配价（系统 → Token 计费 → 价格配置）；token 照常记账'
+                : stats.costComplete
+                  ? '账本价表估算（币种跟随计费设置）'
+                  : '账本价表估算：含未定价模型，≈ = 已知部分和'}
+              data-tui-cost={unpriced ? 'unpriced' : 'priced'}
             >
-              {cost}
+              {cost ?? '—'}
             </span>
           </>
         )}

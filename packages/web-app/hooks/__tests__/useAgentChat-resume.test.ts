@@ -22,11 +22,11 @@ import type { AgentSSEConnection } from "@/lib/agent/api"
 
 const SESSION_ID = "s-resume-1"
 
-function partialRow(): AgentMessage {
+function partialRow(streaming = true): AgentMessage {
   return {
     id: "a-partial", session_id: SESSION_ID, role: "assistant",
     content: "server-side half", created_at: new Date().toISOString(),
-    is_summary: false, is_compressed: false, is_edited: false, streaming: true,
+    is_summary: false, is_compressed: false, is_edited: false, streaming,
   } as AgentMessage & { streaming: boolean }
 }
 
@@ -34,7 +34,9 @@ function makeHarness(opts?: { running?: boolean }) {
   const state = { running: opts?.running ?? true }
   const getSession = vi.fn(async () => ({
     session: { id: SESSION_ID } as never,
-    messages: { items: [partialRow()], total: 1, has_more: false, next_cursor: null },
+    // The partial is finalized (streaming flag dropped) as soon as the server
+    // turn ends — mirrors the real route's in-place finalize.
+    messages: { items: [partialRow(state.running)], total: 1, has_more: false, next_cursor: null },
   }))
   const chatStream = vi.fn(() => ({
     // Never-resolving reader: simulates a live stream nobody completes in-test.
@@ -61,8 +63,13 @@ describe("useAgentChat stream-resume", () => {
     act(() => { void result.current.sendMessage("重头再发") })
     expect(chatStream).not.toHaveBeenCalled()
 
-    // The polled partial is rendered from the server row, not local state
-    expect(result.current.messages.some((m) => m.id === "a-partial")).toBe(true)
+    // The streamed half lives in the LIVE area (same blocks as a local stream),
+    // not in the transcript list — that's the 2026-10-29 switch-away-and-back
+    // fix: it used to render as a settled message +「Agent 思考中」.
+    await waitFor(() => expect(result.current.streamContent).toBe("server-side half"))
+    expect(result.current.messages.some((m) => m.id === "a-partial")).toBe(false)
+    expect(result.current.streamTimeline?.some((it) => it.kind === "text")).toBe(true)
+    expect(result.current.streamingSessionId).toBe(SESSION_ID)
   })
 
   it("R2: poll observes running=false → exits resume, keeps finalized row", { timeout: 15000 }, async () => {
@@ -144,5 +151,25 @@ describe("useAgentChat stream-resume", () => {
     // Clean exit so the interval doesn't outlive the assertions.
     state.running = false
     await waitFor(() => expect(result.current.streaming).toBe(false), { timeout: 4000 })
+  })
+
+  // 2026-10-29 用户：切换左侧任务会话后「全部都运行中」（实际任务已中止）。
+  // 根因是侧栏按 activeSessionId 记运行态 —— 切换那一帧 streaming 还是旧会话的值。
+  it("R6: switching sessions mid-stream never hands the running owner to the newly active session", async () => {
+    const { api } = makeHarness({ running: false })
+    const { result, rerender } = renderHook(
+      ({ sid }: { sid: string }) => useAgentChat(sid, { api }),
+      { initialProps: { sid: "s-a" } },
+    )
+    await new Promise((r) => setTimeout(r, 20))
+
+    act(() => { void result.current.sendMessage("hello") })
+    expect(result.current.streamingSessionId).toBe("s-a")
+
+    rerender({ sid: "s-b" })
+    // The old stream is torn down; the new session must NEVER be labelled running.
+    expect(result.current.streamingSessionId).not.toBe("s-b")
+    await waitFor(() => expect(result.current.streaming).toBe(false))
+    expect(result.current.streamingSessionId).toBe(null)
   })
 })

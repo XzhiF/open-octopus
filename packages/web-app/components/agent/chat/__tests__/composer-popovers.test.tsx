@@ -89,7 +89,7 @@ describe("composer model / ctx 弹层", () => {
   it("ctx 弹层展示占用明细", () => {
     render(<ChatArea {...baseProps} contextUsage={CTX} />)
 
-    fireEvent.click(screen.getByRole("button", { name: /ctx 84\.0K 42%/ }))
+    fireEvent.click(screen.getByRole("button", { name: /84\.0K \/ 200K · 42\.0%/ }))
 
     expect(screen.getByText("上下文占用")).toBeInTheDocument()
     expect(screen.getByText("系统提示")).toBeInTheDocument()

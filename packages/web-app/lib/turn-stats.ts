@@ -6,11 +6,16 @@
 // 归属规则：
 //   ① 行带 message_id（未来服务端补传后）→ 精确按 message_id 归；
 //   ② 聊天路径目前不传 message_id（recordProviderResultUsage 调用处未给）→
-//      按「用户消息边界」归属：[本条所属用户消息, 下一条用户消息)。
+//      按「真人用户消息边界」归属：[本条所属用户消息, 下一条用户消息)。
 //      ⚠️ 不能用 assistant.created_at 做窗口终点：流式轮次的 assistant 行是
 //      中途 flush 时插入的（created_at ≈ 开流后几秒），账本行的 timestamp 是
 //      结果 chunk 到达时刻，常在它之后。用用户消息切窗才不会被截断。
-//   ③ session_compress 行是后台压缩，不属于任何对话 turn，两者都排除。
+//   ③ 任务事件卡（displayType='event'：任务状态/任务工具通知）role 也是 user，
+//      但它是系统写进对话的行，不是用户发言 —— 当边界用会把上一轮中途才落账
+//      的长调用挤出窗口（真机 2026-10-29：aborted 事件之后整轮无 token/费用）。
+//   ④ 同一个用户窗内可能有多条 assistant（事件卡之后的续写、多段回复）→ 再按
+//      各 assistant 自己的 created_at 切一刀，每条只拿自己那段，否则同轮账被重复算。
+//   ⑤ session_compress 行是后台压缩，不属于任何对话 turn，两者都排除。
 //
 // 时长取账本：max(timestamp) - min(timestamp - duration_ms)，重试产生的新行
 // 自然把跨度拉长；无账本行（旧轮 / 还没落账）→ 不显示时长，不拿首字延迟冒充。
@@ -120,10 +125,10 @@ export function buildTurnStats(
   }
   const ordered = [...usable].sort((a, b) => a.timestamp - b.timestamp)
 
-  // Turn 边界 = 用户消息时刻。assistant 行是中途 flush 插入的，created_at
-  // 不能当终点（见文件头②），只有用户发下一条时才真正切轮。
+  // Turn 边界 = 真人用户消息时刻。assistant 行是中途 flush 插入的，created_at
+  // 不能当终点（见文件头②），只有用户发下一条时才真正切轮；事件卡不算发言（③）。
   const userStarts = messages
-    .filter((m) => m.role === 'user')
+    .filter((m) => m.role === 'user' && m.displayType !== 'event')
     .map((m) => tsOf(m.created_at))
     .filter((t): t is number => t != null)
     .sort((a, b) => a - b)
@@ -140,6 +145,13 @@ export function buildTurnStats(
     return Number.POSITIVE_INFINITY
   }
 
+  // 有过程条目的 assistant 起点：同一用户窗里的分片边界（见文件头④）。
+  const assistantStarts = messages
+    .filter(showsProcess)
+    .map((m) => ({ id: m.id, ts: tsOf(m.created_at) }))
+    .filter((a): a is { id: string; ts: number } => a.ts != null)
+    .sort((a, b) => a.ts - b.ts)
+
   for (const m of messages) {
     if (!showsProcess(m)) continue
     let rows = byMessage.get(m.id) ?? []
@@ -148,7 +160,12 @@ export function buildTurnStats(
       const start = t == null ? null : turnStartOf(t)
       if (start == null) continue
       const end = turnEndOf(start)
-      rows = ordered.filter((c) => c.timestamp >= start && c.timestamp < end)
+      const peers = assistantStarts.filter((a) => a.ts >= start && a.ts < end)
+      const i = peers.findIndex((a) => a.id === m.id)
+      // 首条从用户发言起算（标题生成等前置调用也算进本轮）；其余从各自起点起算。
+      const lo = i > 0 ? peers[i].ts : start
+      const hi = i >= 0 && i + 1 < peers.length ? peers[i + 1].ts : end
+      rows = ordered.filter((c) => c.timestamp >= lo && c.timestamp < hi)
     }
     if (rows.length === 0) continue
     out.set(m.id, statsFromRows(rows))

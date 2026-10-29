@@ -66,7 +66,7 @@ describe("ChatArea hero 空态", () => {
     )
 
     expect(screen.getByText("model")).toBeInTheDocument()
-    expect(screen.queryByText(/ctx --%/)).toBeNull()
+    expect(screen.queryByText(/-- \/ -- · --%/)).toBeNull()
     expect(screen.queryByText("tok --")).toBeNull()
   })
 

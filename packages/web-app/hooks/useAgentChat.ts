@@ -81,6 +81,29 @@ export interface UseAgentChatApiOverride {
   checkRunning?: (id: string) => Promise<{ running: boolean; partial: boolean }>
 }
 
+/** Rebuild the live timeline from a persisted streaming partial (2026-10-29:
+ *  switching away and back mid-turn used to demote the growing reply to a
+ *  settled message and leave only「Agent 思考中」until the turn ended). New
+ *  partials carry `metadata.timeline` (server-side, arrival order); older rows
+ *  fall back to thinking → tools → text. */
+function streamTimelineFromPartial(msg: AgentMessage): StreamTimelineItem[] {
+  const raw = msg.timeline
+  if (raw && raw.length > 0) {
+    return raw.map((entry, index): StreamTimelineItem => {
+      if (entry.kind === 'tool') return { kind: 'tool', id: entry.id ?? `tool-${index}` }
+      if (entry.kind === 'thinking') {
+        return { kind: 'thinking', id: `th-${index}`, text: entry.text ?? '', active: false }
+      }
+      return { kind: 'text', id: `tx-${index}`, text: entry.text ?? '' }
+    })
+  }
+  const items: StreamTimelineItem[] = []
+  if (msg.thinking) items.push({ kind: 'thinking', id: 'th-0', text: msg.thinking, active: false })
+  for (const tc of msg.tool_calls ?? []) items.push({ kind: 'tool', id: tc.id })
+  if (msg.content) items.push({ kind: 'text', id: 'tx-0', text: msg.content })
+  return items
+}
+
 export function useAgentChat(sessionId: string | null, options?: {
   onTitleUpdate?: (sessionId: string, title: string) => void
   api?: UseAgentChatApiOverride
@@ -96,6 +119,16 @@ export function useAgentChat(sessionId: string | null, options?: {
 }) {
   const [messages, setMessages] = useState<AgentMessage[]>([])
   const [streaming, setStreaming] = useState(false)
+  // Session that actually owns the live stream. The sidebar's「运行中」badge must
+  // key off THIS, not the active session: on a switch render `streaming` is still
+  // the old session's value while activeSessionId is already the new one, so
+  // activeSessionId lit up every task the user clicked (bug 2026-10-29).
+  const [streamingSessionId, setStreamingSessionId] = useState<string | null>(null)
+  /** Wall-clock start of the CURRENT turn (ms). A live send uses Date.now();
+   *  a resumed/tailed turn adopts the trigger user message's created_at so the
+   *  composer busy timer keeps counting from the real start instead of
+   *  restarting at 0 on every switch-away-and-back (2026-10-29). */
+  const [turnStartedAt, setTurnStartedAt] = useState<number | null>(null)
   const [streamContent, setStreamContent] = useState('')
   const [streamThinking, setStreamThinking] = useState('')
   const [isThinking, setIsThinking] = useState(false)
@@ -175,6 +208,8 @@ export function useAgentChat(sessionId: string | null, options?: {
     if (streamingSessionRef.current && streamingSessionRef.current !== sessionId) {
       disconnect()
       setStreaming(false)
+      setStreamingSessionId(null)
+      setTurnStartedAt(null)
       streamingRef.current = false
       streamingSessionRef.current = null
       // Leaving a session mid-resume → its poll belongs to the past now.
@@ -204,6 +239,25 @@ export function useAgentChat(sessionId: string | null, options?: {
     }
   }, [sessionId, disconnect])
 
+  /** Feed a live turn's persisted partial into the streaming UI instead of the
+   *  transcript list — the resume path should look exactly like the live block
+   *  the user left behind (growing text, in-flow thinking/tool cards). */
+  const hydrateFromPartial = useCallback((partial: AgentMessage) => {
+    const content = partial.content ?? ''
+    const thinking = partial.thinking ?? ''
+    const tools = partial.tool_calls ?? []
+    const timeline = streamTimelineFromPartial(partial)
+    streamContentRef.current = content
+    streamThinkingRef.current = thinking
+    toolCallsRef.current = tools
+    timelineRef.current = timeline
+    setStreamContent(content)
+    setStreamThinking(thinking)
+    setToolCalls(tools)
+    setStreamTimeline(timeline)
+    setIsThinking(timeline.length > 0 && timeline[timeline.length - 1].kind === 'thinking')
+  }, [])
+
   const loadMessages = useCallback(async () => {
     if (!sessionId) return
     const requestedSessionId = sessionId
@@ -212,7 +266,30 @@ export function useAgentChat(sessionId: string | null, options?: {
       const res = await getSessionFn(sessionId, { limit: 50 })
       // Fast session switches: never let an old response overwrite the new chat.
       if (sessionIdRef.current !== requestedSessionId) return
-      setMessages(res.messages.items)
+      const items = res.messages.items
+      // While tailing a server-side turn, its streaming partial belongs to the
+      // live area (metadata.streaming). Rendering it as history made a switch
+      // mid-turn collapse the output into a settled message with a lone
+      // 「Agent 思考中」underneath (bug 2026-10-29). Stale partials outside a
+      // live tail keep rendering as normal rows.
+      const partial = (resumeModeRef.current || streamingRef.current)
+        ? items.find((m) => m.role === 'assistant' && m.streaming)
+        : undefined
+      if (partial || resumeModeRef.current || streamingRef.current) {
+        // A tailed turn keeps the elapsed timer anchored to its real start:
+        // the last user message (incl. an event card for wake turns) is the
+        // turn's trigger. Without this the busy timer restarted at 0 on every
+        // switch-back (2026-10-29).
+        const lastUser = [...items].reverse().find((m) => m.role === 'user')
+        const startMs = Date.parse(lastUser?.created_at ?? '')
+        if (Number.isFinite(startMs)) setTurnStartedAt((prev) => prev ?? startMs)
+      }
+      if (partial) {
+        hydrateFromPartial(partial)
+        setMessages(items.filter((m) => m !== partial))
+      } else {
+        setMessages(items)
+      }
       // ctx chip source of truth on a cold load: the session row carries the
       // last provider-reported usage, so a refresh / server restart / another
       // browser paints the real percentage instead of `ctx --%` until the next
@@ -223,7 +300,7 @@ export function useAgentChat(sessionId: string | null, options?: {
       if (sessionIdRef.current !== requestedSessionId) return
       setError('Failed to load messages')
     }
-  }, [sessionId, setContextUsage])
+  }, [sessionId, setContextUsage, hydrateFromPartial])
 
   const stopResumePolling = useCallback(() => {
     if (resumePollRef.current) { clearInterval(resumePollRef.current); resumePollRef.current = null }
@@ -247,6 +324,7 @@ export function useAgentChat(sessionId: string | null, options?: {
     streamingSessionRef.current = sid
     streamingRef.current = true
     setStreaming(true) // reuses the send-guard: input disabled + stop button
+    setStreamingSessionId(sid)
 
     const tick = async () => {
       try {
@@ -258,6 +336,8 @@ export function useAgentChat(sessionId: string | null, options?: {
           await loadMessages()
           stopResumePolling()
           setStreaming(false)
+          setStreamingSessionId(null)
+          setTurnStartedAt(null)
           streamingRef.current = false
           streamingSessionRef.current = null
           setStreamContent('')
@@ -339,6 +419,8 @@ export function useAgentChat(sessionId: string | null, options?: {
     }
     setMessages(prev => [...prev, userMsg])
     setStreaming(true)
+    setStreamingSessionId(sessionId)
+    setTurnStartedAt(Date.now())
     streamingRef.current = true
     setStreamContent('')
     setStreamThinking('')
@@ -525,6 +607,8 @@ export function useAgentChat(sessionId: string | null, options?: {
         }
         setMessages(prev => [...prev, assistantMsg])
         setStreaming(false)
+        setStreamingSessionId(null)
+        setTurnStartedAt(null)
         streamingRef.current = false
         streamingSessionRef.current = null
         setStreamContent('')
@@ -553,6 +637,8 @@ export function useAgentChat(sessionId: string | null, options?: {
         }
         setError(data.message)
         setStreaming(false)
+        setStreamingSessionId(null)
+        setTurnStartedAt(null)
         streamingRef.current = false
         streamingSessionRef.current = null
       },
@@ -582,6 +668,8 @@ export function useAgentChat(sessionId: string | null, options?: {
 
     disconnect()
     setStreaming(false)
+    setStreamingSessionId(null)
+    setTurnStartedAt(null)
     streamingRef.current = false
     streamingSessionRef.current = null
 
@@ -705,6 +793,12 @@ export function useAgentChat(sessionId: string | null, options?: {
   return {
     messages,
     streaming,
+    /** Session that owns the live stream (null when idle). Sidebars must use
+     *  this — not the active session — to paint「运行中」. */
+    streamingSessionId,
+    /** Real start of the current turn (ms) — busy timers count from here, so a
+     *  switch-back mid-turn does not restart the clock. */
+    turnStartedAt,
     /** True while tailing a server-side turn after a dialog close
      *  (stream-resume). `streaming` is also true in this mode. */
     resumeStreaming,

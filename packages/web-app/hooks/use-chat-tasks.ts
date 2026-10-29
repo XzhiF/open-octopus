@@ -43,6 +43,9 @@ export function useChatTasks() {
         // Chat is the task's home across its whole lifecycle; legacy drafts
         // without an authoring session still cannot be opened here.
         .filter((task) => task.status !== 'draft' || !!task.source_chat_session_id)
+        // 2026-10-29 用户：侧栏任务按创建时间排，新 → 旧（与看板的时间序解耦，
+        // ISO 字符串可直接字典序比较）。
+        .sort((a, b) => (b.created_at ?? '').localeCompare(a.created_at ?? ''))
       setTasks(chatEligible)
     } catch {
       /* keep the previous list; the board remains the source of truth */

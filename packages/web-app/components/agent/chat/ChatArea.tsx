@@ -13,13 +13,13 @@ import { cn } from '@/lib/utils'
 import { formatTokenCount } from '@/lib/format'
 import { ChatBubble } from './ChatBubble'
 import { SessionCostChip } from './session-cost-chip'
+import { ContextUsageChip, ContextUsagePlaceholder, contextUsageAriaLabel } from './context-usage-chip'
 import { TaskCostChip } from './task-cost-chip'
 import type { TaskUsagePayload } from '@/lib/tasks-api'
 import { TuiLive, TuiMessage } from './TuiTranscript'
 import { ToolCallCard } from './ToolCallCard'
 import { QuestionCard } from '@/components/workspace/chat/question-card'
 import type { ChatMessage } from '@/lib/types'
-import { StreamingIndicator } from './StreamingIndicator'
 import { DangerConfirmCard } from './DangerConfirmCard'
 import { EvolutionConfirmCard } from './EvolutionConfirmCard'
 import { ChatTimeline, type ChatTimelineItem } from './chat-timeline'
@@ -32,6 +32,7 @@ import { ComposerModelPopover } from './composer-model-popover'
 import { ComposerAttachPopover, type ComposerExpertRef, type ComposerSkillRef, type ComposerIdentityControls } from './composer-attach-popover'
 import { ComposerIdentityPicker } from './composer-identity-picker'
 import type { ComposerContext, ComposerEffort, ModelPreset } from '@/lib/agent/composer-settings'
+import { workPhrase, type WorkPhase } from '@/lib/agent/work-phrases'
 
 /** 状态色带皮肤:一态一糖果(静态 class 字面量,Tailwind JIT)。 */
 const RIBBON_THEME: Record<'running' | 'waiting' | 'done' | 'error', {
@@ -54,6 +55,10 @@ interface ChatAreaProps {
    *  streaming renders interleaved (thinking as in-flow cards); when omitted,
    *  the legacy fixed-order layout (thinking top / tools / text) is used. */
   streamTimeline?: StreamTimelineItem[]
+  /** Real start of the current turn (ms, useAgentChat). When present the busy
+   *  timer counts from it — a switch-back mid-turn keeps the true elapsed time
+   *  instead of restarting at 0 (2026-10-29). Absent → local ref fallback. */
+  turnStartedAt?: number | null
   pendingConfirm: {
     event_id: string
     type: 'dangerous_command' | 'evolution_major'
@@ -158,7 +163,7 @@ interface QueuedComposerMessage {
 }
 
 export function ChatArea({
-  messages, streaming, streamContent, streamThinking, isThinking, toolCalls, streamTimeline, pendingConfirm,
+  messages, streaming, streamContent, streamThinking, isThinking, toolCalls, streamTimeline, turnStartedAt, pendingConfirm,
   error, statusMessage, onSend, onStop, onConfirm, hasSession, currentCloneName,
   reviewItems, onReviewAction,
   emptyStateTitle, emptyStateDescription, hideEmptyState,
@@ -376,12 +381,20 @@ export function ChatArea({
     }
   }
 
-  const busyElapsed = streaming ? Math.max(0, (Date.now() - turnStartedAtRef.current) / 1000) : 0
+  const busyStartedAt = turnStartedAt ?? (turnStartedAtRef.current || null)
+  const busyElapsed = streaming && busyStartedAt ? Math.max(0, (Date.now() - busyStartedAt) / 1000) : 0
   const busyPhase = toolCalls.some((tc) => tc.status === 'start' || tc.status === 'running' || tc.status === 'pending')
     ? 'exec' : 'thinking'
+  // 流尾常驻工作行（2026-10-29 用户：输出一开始「Agent 思考中」就消失，干活时
+  // 没有任何持续反馈）。阶段 + 真实耗时，整轮在跑时一直挂着，回合结束才退场；
+  // 文案按阶段轮换诙谐短语（work-phrases），耗时只到秒。
+  const workPhase: WorkPhase = busyPhase === 'exec'
+    ? 'exec'
+    : isThinking ? 'thinking' : streamContent ? 'writing' : 'thinking'
+  const workElapsed = Math.floor(busyElapsed)
   const spinGlyph = TUI_SPIN[Math.floor(busyElapsed * 10) % TUI_SPIN.length]
   const contextUsageTitle = contextUsage
-    ? `上下文占用 · ${formatTokenCount(contextUsage.totalTokens)} / ${formatTokenCount(contextUsage.maxTokens)} · ${contextUsage.percentage.toFixed(1)}%${contextUsage.estimated ? '（估算：据最后一轮 token 账本推算，下一轮对话后校准）' : ''}` // fmt-ok: percentage 量纲为 0–100（SDK context_usage），非 0–1 比率
+    ? `上下文占用 · ${formatTokenCount(contextUsage.totalTokens)} / ${formatTokenCount(contextUsage.maxTokens, 0)} · ${contextUsage.percentage.toFixed(1)}%${contextUsage.estimated ? '（估算：据最后一轮 token 账本推算，下一轮对话后校准）' : ''}` // fmt-ok: percentage 量纲为 0–100（SDK context_usage），非 0–1 比率
     : ''
 
   // ── 用户输入历史（右侧时间线）────────────────────────────────────────
@@ -608,9 +621,16 @@ export function ChatArea({
               <div className="text-xs text-muted-foreground italic">{statusMessage}</div>
             )}
 
-            {/* Streaming indicator — only when no thinking and no content yet */}
-            {streaming && !streamContent && !streamThinking && (
-              <StreamingIndicator />
+            {/* 流尾常驻工作行：思考 / 执行工具 / 输出 全程可见，回合结束才消失。 */}
+            {streaming && tui && (
+              <div
+                className="flex items-center gap-2 py-1 text-[12.5px] text-pop-dim"
+                data-tui-workline={workPhase}
+              >
+                <span className="text-pop-pink" aria-hidden>{spinGlyph}</span>
+                <span className="text-pop-ink/80">{workPhrase(workPhase, workElapsed)}</span>
+                <span className="tabular-nums text-pop-amber">{workElapsed}s</span>{/* fmt-ok: 流尾工作行的整轮计时（整秒），非日期/用量格式化 */}
+              </div>
             )}
 
             {/* AskUserQuestion 回合后卡片（2026-09-09）：流式期间的 QuestionCard
@@ -885,14 +905,16 @@ export function ChatArea({
                             <button
                               type="button"
                               title={contextUsageTitle}
-                              className={cn(
-                                'flex h-[22px] shrink-0 items-center rounded-[7px] border border-transparent px-1.5 text-[11px] transition-colors hover:bg-pop-paper hover:text-pop-ink',
-                                contextExpanded ? 'border-pop-bd bg-pop-paper text-pop-ink' : 'text-pop-ink/90',
-                              )}
+                              aria-label={contextUsageAriaLabel(contextUsage)}
+                              className="shrink-0 rounded-full outline-none focus-visible:ring-1 focus-visible:ring-pop-bd"
                               data-tui-ctx
                             >
-                              {/* 2026-10-29 用户：角标要能直接看到用了多少 —— ctx 80.1K 8% */}
-                              {'ctx '}{formatTokenCount(contextUsage.totalTokens)}{' '}{contextUsage.estimated ? '~' : ''}{contextUsage.percentage.toFixed(0)}%{/* fmt-ok: 终端角标百分比 */}{contextExpanded ? ' ▴' : ' ▾'}
+                              {/* 2026-10-29 用户：`80.1K / 1M · 8.0%`，框住 + 进度样式 */}
+                              <ContextUsageChip
+                                contextUsage={contextUsage}
+                                expanded={contextExpanded}
+                                className={contextExpanded ? 'bg-pop-paper' : undefined}
+                              />
                             </button>
                           </PopoverTrigger>
                           <PopoverContent
@@ -905,7 +927,7 @@ export function ChatArea({
                           </PopoverContent>
                         </Popover>
                     ) : showUsagePlaceholders ? (
-                      <span className="flex h-[22px] shrink-0 items-center px-1.5 text-pop-dim/60" title="暂无上下文用量">ctx --% ▾</span>
+                      <ContextUsagePlaceholder />
                     ) : null}
                   </span>
                   <span className="hidden sm:flex">
@@ -918,11 +940,8 @@ export function ChatArea({
                 </>
               )}
               <span className="ml-auto hidden min-w-0 items-center justify-end gap-2 text-[10.5px] sm:flex">
-                {streaming && (
-                  <span className="shrink-0 text-pop-amber" data-tui-busy>
-                    <span className="text-pop-pink">{spinGlyph}</span> {busyPhase} {busyElapsed.toFixed(1)}s {/* fmt-ok: 终端 busy 行秒数，非全站计时器 */}
-                  </span>
-                )}
+                {/* 2026-10-29 用户：流尾工作行已经在对话里持续报状态/计时，
+                    输入框下方不再重复一条 `⠋ thinking 2.1s`。 */}
                 {queueHint ? (
                   <span className="shrink-0 text-pop-red" data-tui-hint>{queueHint}</span>
                 ) : queue.length > 0 ? (
@@ -1049,13 +1068,14 @@ export function ChatArea({
                     <button
                       type="button"
                       title={contextUsageTitle}
-                      className={cn(
-                        'flex h-[22px] shrink-0 items-center gap-1 rounded-[7px] border border-transparent px-1.5 text-[11px] leading-none text-pop-dim transition-colors hover:bg-pop-paper hover:text-pop-ink',
-                        contextExpanded && 'border-pop-bd bg-pop-paper text-pop-ink',
-                      )}
+                      aria-label={contextUsageAriaLabel(contextUsage)}
+                      className="shrink-0 rounded-full outline-none focus-visible:ring-1 focus-visible:ring-pop-bd"
                     >
-                      <span>{'ctx '}{formatTokenCount(contextUsage.totalTokens)}{' '}{contextUsage.estimated ? '~' : ''}{contextUsage.percentage.toFixed(0)}%{/* fmt-ok: percentage 量纲未经 server 核实（providers wire），待查后收编；角标取整对齐原型 */}</span>
-                      <span aria-hidden className="text-[8px]">{contextExpanded ? '▴' : '▾'}</span>
+                      <ContextUsageChip
+                        contextUsage={contextUsage}
+                        expanded={contextExpanded}
+                        className={contextExpanded ? 'bg-pop-paper' : undefined}
+                      />
                     </button>
                   </PopoverTrigger>
                   <PopoverContent
@@ -1068,13 +1088,7 @@ export function ChatArea({
                   </PopoverContent>
                 </Popover>
               ) : showUsagePlaceholders ? (
-                <span
-                  className="flex h-[22px] shrink-0 items-center gap-1 rounded-[7px] px-1.5 text-[11px] leading-none text-pop-dim/60"
-                  title="暂无上下文用量"
-                >
-                  <span>ctx --%</span>
-                  <span aria-hidden className="text-[8px]">▾</span>
-                </span>
+                <ContextUsagePlaceholder />
               ) : null}
               {taskUsage !== undefined ? (
                       <TaskCostChip usage={taskUsage} placeholder={showUsagePlaceholders} />
@@ -1126,7 +1140,7 @@ function ContextUsagePanel({ contextUsage }: { contextUsage: ContextUsageData })
       <div className="mb-2 flex items-center justify-between gap-2">
         <span className="text-[11px] font-bold text-pop-ink">上下文占用</span>
         <span className="font-mono text-[10px] tabular-nums text-pop-dim">
-          {formatTokenCount(contextUsage.totalTokens)} / {formatTokenCount(contextUsage.maxTokens)} · {contextUsage.percentage.toFixed(1)}%{/* fmt-ok: percentage 量纲为 0–100（SDK context_usage），非 0–1 比率 */}
+          {formatTokenCount(contextUsage.totalTokens)} / {formatTokenCount(contextUsage.maxTokens, 0)} · {contextUsage.percentage.toFixed(1)}%{/* fmt-ok: percentage 量纲为 0–100（SDK context_usage），非 0–1 比率 */}
         </span>
       </div>
       {contextUsage.estimated && (

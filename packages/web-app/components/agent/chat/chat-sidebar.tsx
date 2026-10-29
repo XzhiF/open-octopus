@@ -213,7 +213,7 @@ export function ChatSidebar({
               <ListTodo className="size-3.5 shrink-0 text-pop-dim" strokeWidth={1.8} />
               <span className="flex flex-col">
                 <span className="text-[12.5px] text-pop-ink">新建开发任务</span>
-                <span className="text-[10.5px] text-pop-dim">从任务作者开始，首句即标题</span>
+                <span className="text-[10.5px] text-pop-dim">从任务作者开始，AI 总结标题</span>
               </span>
             </DropdownMenuItem>
           </DropdownMenuContent>

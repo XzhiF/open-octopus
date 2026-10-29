@@ -112,6 +112,15 @@ describe("TuiMessage 过程 meta — 收起态", () => {
     expect(container.textContent).toContain("≈¥0.59")
   })
 
+  it("整轮模型未配价 → 费用位显示「—」并提示去价格配置，token 照常显示", () => {
+    const stats: TurnStats = { ...STATS, costUsd: null, costComplete: false }
+    const { container } = render(<TuiMessage message={assistant(TWELEVE, TOOLS, stats)} />)
+    const cell = container.querySelector('[data-tui-cost="unpriced"]') as HTMLElement
+    expect(cell.textContent).toBe("—")
+    expect(cell.getAttribute("title")).toContain("价格配置")
+    expect(container.textContent).toContain("12.3K tok")
+  })
+
   it("步数再多也只占一行文字（不再渲染点阵/构成条）", () => {
     const many = Array.from({ length: 45 }, (_, i): MessageTimelineEntry => ({ kind: "tool", id: `t${i}` }))
     const tools = Array.from({ length: 45 }, (_, i): ToolCallRecord => ({

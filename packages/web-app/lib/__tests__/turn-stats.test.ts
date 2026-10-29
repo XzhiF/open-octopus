@@ -127,6 +127,42 @@ describe("buildTurnStats — 账本归属", () => {
     expect(stats.get("a-2")!.inputTokens).toBe(500)
   })
 
+  it("任务事件卡（role=user 的 displayType=event）不算用户发言，不切轮", () => {
+    // 真机 2026-10-29：事件卡插在流式调用尚未落账时，旧逻辑把窗口切在事件卡，
+    // 那一轮的账本行（结果 chunk 在事件卡之后才到）整行被挤掉 → 没 token 也没费用。
+    const messages = [
+      msg({ id: "u-1", role: "user", created_at: iso(T0) }),
+      assistantWithProcess(T0 + 5_000),
+      msg({
+        id: "ev-1",
+        role: "user",
+        displayType: "event",
+        content: "[任务状态 · aborted] 任务已中止",
+        created_at: iso(T0 + 95_000),
+      }),
+    ]
+    const calls = [call({ id: "c1", timestamp: T0 + 120_000, duration_ms: 115_000, input_tokens: 700 })]
+    expect(buildTurnStats(messages, calls).get("a-1")!.inputTokens).toBe(700)
+  })
+
+  it("同一用户窗里多条 assistant 按各自起点分账，不重复计算", () => {
+    const messages = [
+      msg({ id: "u-1", role: "user", created_at: iso(T0) }),
+      assistantWithProcess(T0 + 5_000),
+      msg({ id: "ev-1", role: "user", displayType: "event", content: "[任务状态 · running] 任务开始执行", created_at: iso(T0 + 90_000) }),
+      { ...assistantWithProcess(T0 + 100_000), id: "a-2" },
+    ]
+    const calls = [
+      call({ id: "c1", timestamp: T0 + 60_000, duration_ms: 55_000, input_tokens: 1000 }),
+      call({ id: "c2", timestamp: T0 + 120_000, duration_ms: 20_000, input_tokens: 500 }),
+    ]
+    const stats = buildTurnStats(messages, calls)
+    expect(stats.get("a-1")!.inputTokens).toBe(1000)
+    expect(stats.get("a-1")!.calls).toBe(1)
+    expect(stats.get("a-2")!.inputTokens).toBe(500)
+    expect(stats.get("a-2")!.calls).toBe(1)
+  })
+
   it("有 message_id 的行精确归属，优先于时间窗", () => {
     const messages = [
       msg({ id: "u-1", role: "user", created_at: iso(T0) }),

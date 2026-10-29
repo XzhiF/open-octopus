@@ -40,6 +40,7 @@ import { AcceptanceDAO, ExecutionDAO, TaskDAO } from "../../db/dao"
 import type { TaskRow } from "../../db/types"
 import { WorkspaceService } from "../workspace"
 import { getAgentDir, getBuiltInCloneDir } from "../agent/paths"
+import { derivedTaskNameFromMessage, generateTaskTitle } from "./task-title"
 import { buildDoerBatchGuard, buildPathGuard } from "../agent/clone-runtime"
 import { TaskHomeService } from "./task-home-service"
 import { deriveTaskView, type TaskView } from "./derive-task-view"
@@ -92,6 +93,8 @@ export interface TaskThreadDeps {
   acceptanceDAO?: AcceptanceDAO
   workspaceService?: WorkspaceService
   taskHomeService?: TaskHomeService
+  /** 首轮任务起名（默认 haiku；测试注入桩，VITEST 下默认关闭不触网）。 */
+  generateTaskTitle?: (message: string) => Promise<string | null>
 }
 
 const WRITE_TOOLS = new Set(["Write", "Edit", "NotebookEdit"])
@@ -168,6 +171,7 @@ export class TaskThreadService {
   private readonly acceptanceDAO: AcceptanceDAO
   private readonly workspaceService: WorkspaceService
   private readonly taskHomeService: TaskHomeService
+  private readonly titleGenerator: ((message: string) => Promise<string | null>) | null
 
   constructor(deps: TaskThreadDeps) {
     this.taskDAO = deps.taskDAO ?? new TaskDAO(deps.db)
@@ -175,6 +179,8 @@ export class TaskThreadService {
     this.acceptanceDAO = deps.acceptanceDAO ?? new AcceptanceDAO(deps.db)
     this.workspaceService = deps.workspaceService ?? new WorkspaceService()
     this.taskHomeService = deps.taskHomeService ?? new TaskHomeService()
+    // VITEST 默认不触网（chat-route 测试会走这条路径）；测试要覆盖就注入桩。
+    this.titleGenerator = deps.generateTaskTitle ?? (process.env.VITEST ? null : generateTaskTitle)
   }
 
   /** Bind (or rebind) the task's main chat thread. Targeted UPDATE, no version bump. */
@@ -192,6 +198,32 @@ export class TaskThreadService {
     const task = this.taskDAO.getBySourceChatSession(session.id)
     if (!task) return null
     return this.buildProfile(task)
+  }
+
+  /**
+   * 新建任务的首轮：用用户需求总结任务标题（2026-10-29）。
+   *
+   * 只在任务名仍是「那条消息的确定性截串」时替换 —— 也就是客户端刚创建时落的
+   * 自动名。用户手动改过名（或任务后来换了名字）就永不覆盖。异步跑，不阻塞首轮回包；
+   * 失败静默保留截串名。
+   */
+  maybeAdoptSmartTaskName(sessionId: string, message: string): void {
+    const derived = derivedTaskNameFromMessage(message)
+    const task = this.taskDAO.getBySourceChatSession(sessionId)
+    if (!task || task.name !== derived) return
+    const generate = this.titleGenerator
+    if (!generate) return
+    setImmediate(async () => {
+      try {
+        const title = await generate(message)
+        if (!title || title === derived) return
+        const fresh = this.taskDAO.getById(task.id)
+        if (!fresh || fresh.name !== derived) return
+        this.taskDAO.updateAutosave(task.id, title)
+      } catch {
+        /* non-fatal — 截串名继续用 */
+      }
+    })
   }
 
   /** Build a profile for a known task (used by tests and the launch/tool surfaces). */

@@ -212,7 +212,12 @@ describe("主对话 ctx / tok 数据链路", () => {
     const finalRows = db.prepare("SELECT content, metadata FROM messages WHERE role='assistant'").all() as Array<{ content: string; metadata: string | null }>
     expect(finalRows).toHaveLength(1)
     expect(finalRows[0].content).toBe("partial answer")
-    expect(finalRows[0].metadata).toBeNull()
+    // Finalize drops the streaming flag in place. The 2026-10-29 switch-back fix
+    // additionally keeps the arrival-order timeline so a reloaded transcript
+    // renders the same interleaving the live stream showed.
+    const finalMeta = finalRows[0].metadata ? JSON.parse(finalRows[0].metadata) as Record<string, unknown> : null
+    expect(finalMeta?.streaming).toBeUndefined()
+    expect(finalMeta?.timeline).toEqual([{ kind: "text", text: "partial answer" }])
   })
 
   it("turn without thinking/tools persists tool_calls NULL — never the junk \"{}\" that blanks the transcript", async () => {
