@@ -2,7 +2,8 @@
 
 import { memo, useCallback } from "react"
 import type { NodeProps } from "@xyflow/react"
-import { Handle, Position } from "@xyflow/react"
+import { DagSourceHandle, DagTargetHandle } from "@/components/workspace/workflow-nodes/dag-handles"
+import type { DagOrientation } from "@/lib/dag-orientation"
 import { cn } from "@/lib/utils"
 import { Badge } from "@/components/ui/badge"
 import { Network, Users, Gauge, CheckCircle2, XCircle, Loader2, Timer } from "lucide-react"
@@ -28,6 +29,7 @@ export interface SwarmNodeData {
   workspaceId: string
   executionId?: string
   statusOverlay?: { stepStatus?: string; duration?: number; tokenUsages?: TokenUsage[] }
+  dagOrientation?: DagOrientation
   [key: string]: unknown
 }
 
@@ -55,7 +57,7 @@ function SwarmNodeInner({ data: rawData }: NodeProps) {
           !isRunning && !isCompleted && !isFailed && "border-swarm-primary/30",
         )}
       >
-        <Handle type="target" position={Position.Top} className="!bg-muted-foreground" />
+        <DagTargetHandle orientation={data.dagOrientation} />
 
         {/* Header */}
         <div className="flex items-center gap-2 rounded-t-md px-3 py-2 bg-swarm-primary-light">
@@ -110,7 +112,7 @@ function SwarmNodeInner({ data: rawData }: NodeProps) {
           <TokenAggregateLine usage={data.statusOverlay?.tokenUsages} isRunning={isRunning} className="mt-1" />
         </div>
 
-        <Handle type="source" position={Position.Bottom} className="!bg-muted-foreground" />
+        <DagSourceHandle orientation={data.dagOrientation} />
       </div>
     </>
   )

@@ -3,6 +3,7 @@
 import type { Node, NodeProps } from "@xyflow/react"
 import type { StatusOverlay } from "@/lib/types"
 import { StatusShell } from "./status-shell"
+import type { DagOrientation } from "@/lib/dag-orientation"
 import { TypeShell } from "./type-shell"
 import { Badge } from "@/components/ui/badge"
 import { cn } from "@/lib/utils"
@@ -19,6 +20,7 @@ interface WorkflowNodeData {
   loop_body?: Array<Record<string, unknown>>
   cases?: Array<{ when: string; then: string }>
   statusOverlay?: StatusOverlay
+  dagOrientation?: DagOrientation
   isCurrent?: boolean
   isActive?: boolean
   [key: string]: unknown
@@ -36,7 +38,7 @@ export function ApprovalNode({ data, selected }: NodeProps<WorkflowNode>) {
   const riskConfig = riskColors[data.risk_level || "write"]
 
   return (
-    <StatusShell nodeType="approval" statusOverlay={data.statusOverlay} isCurrent={data.isCurrent} isActive={data.isActive} selected={selected}>
+    <StatusShell nodeType="approval" statusOverlay={data.statusOverlay} isCurrent={data.isCurrent} isActive={data.isActive} selected={selected} orientation={data.dagOrientation}>
       <TypeShell nodeType="approval" name={data.name} statusOverlay={data.statusOverlay}>
         {data.risk_level && (
           <Badge variant="outline" className={cn("text-xs mt-1", riskConfig?.color)}>

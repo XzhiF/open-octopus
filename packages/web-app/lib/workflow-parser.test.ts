@@ -214,3 +214,113 @@ describe("yamlToFlowData — goal-mode agent node", () => {
     expect(workerNode?.data.goal).toBeUndefined()
   })
 })
+
+// ─── 横向主干（2026-10-30 用户定稿：阶段从左往右，容器体内仍自上而下）───
+
+function nodeOf(result: { nodes: Node[] }, id: string): Node {
+  const n = result.nodes.find((x) => x.id === id)
+  if (!n) throw new Error(`节点不存在: ${id}`)
+  return n
+}
+
+function buildChainWorkflow(extraDeps: Record<string, string[]> = {}) {
+  const dep = (id: string, fallback: string[]) => extraDeps[id] ?? fallback
+  return {
+    name: "chain-test",
+    nodes: [
+      { id: "a", type: "bash", command: "echo a", description: "A" },
+      { id: "b", type: "bash", command: "echo b", depends_on: dep("b", ["a"]), description: "B" },
+      { id: "c", type: "bash", command: "echo c", depends_on: dep("c", ["b"]), description: "C" },
+    ],
+  }
+}
+
+describe("yamlToFlowData — 横向主干 LR", () => {
+  it("串行阶段从左往右排：x 递增、同一水平线", () => {
+    const result = yamlToFlowData(buildChainWorkflow())!
+    const [a, b, c] = ["a", "b", "c"].map((id) => nodeOf(result, id))
+
+    expect(b.position.x - a.position.x).toBeGreaterThanOrEqual(280) // 节点宽 280 + 列间距
+    expect(c.position.x - b.position.x).toBeGreaterThanOrEqual(280)
+    expect(Math.abs(a.position.y - c.position.y)).toBeLessThanOrEqual(1)
+  })
+
+  it("同层并行分支落在同一列、按行上下分开", () => {
+    const result = yamlToFlowData({
+      name: "fan-out",
+      nodes: [
+        { id: "root", type: "bash", command: "echo root" },
+        { id: "left", type: "bash", command: "echo l", depends_on: ["root"] },
+        { id: "right", type: "bash", command: "echo r", depends_on: ["root"] },
+        { id: "join", type: "bash", command: "echo j", depends_on: ["left", "right"] },
+      ],
+    })!
+    const [left, right] = ["left", "right"].map((id) => nodeOf(result, id))
+
+    expect(Math.abs(left.position.x - right.position.x)).toBeLessThanOrEqual(1)
+    // 分开至少一个节点高度（否则两条并行分支叠在一起）
+    expect(Math.abs(left.position.y - right.position.y)).toBeGreaterThanOrEqual(160)
+    // 汇合点排在两个分支之后
+    expect(nodeOf(result, "join").position.x).toBeGreaterThan(left.position.x)
+  })
+
+  it("主干节点标 LR，loop 体内节点标 TB（挂点方向由它决定）", () => {
+    const result = yamlToFlowData(buildLoopWorkflow())!
+
+    expect(nodeOf(result, "greet").data.dagOrientation).toBe("LR")
+    expect(nodeOf(result, "my-loop").data.dagOrientation).toBe("LR") // 容器外壳属于主干
+    expect(nodeOf(result, "my-loop:inner-a").data.dagOrientation).toBe("TB")
+    expect(nodeOf(result, "my-loop:inner-b").data.dagOrientation).toBe("TB")
+  })
+
+  it("体内节点仍自上而下：inner-b 排在 inner-a 下方、同一列", () => {
+    const result = yamlToFlowData(buildLoopWorkflow())!
+    const a = nodeOf(result, "my-loop:inner-a")
+    const b = nodeOf(result, "my-loop:inner-b")
+
+    expect(b.position.y).toBeGreaterThan(a.position.y)
+    expect(Math.abs(a.position.x - b.position.x)).toBeLessThanOrEqual(1)
+  })
+
+  it("子工作流的孙子节点也标 TB（嵌套走另一条 push 分支）", () => {
+    const result = yamlToFlowData(
+      {
+        name: "nested",
+        nodes: [
+          {
+            id: "outer-loop",
+            type: "loop",
+            max_iterations: 2,
+            description: "Outer",
+            nodes: [
+              { id: "sw", type: "sub_workflow", workflow: "child-flow", description: "Child" },
+            ],
+          },
+        ],
+      },
+      { "child-flow": [{ id: "c1", type: "bash", command: "echo c1", description: "C1" }] },
+    )!
+
+    expect(nodeOf(result, "outer-loop").data.dagOrientation).toBe("LR")
+    expect(nodeOf(result, "outer-loop:sw").data.dagOrientation).toBe("TB")
+    expect(nodeOf(result, "outer-loop:sw:c1").data.dagOrientation).toBe("TB")
+  })
+
+  it("跳边让开方向沿垂直于流向的轴：LR 下纵向挪，不再横向挪", () => {
+    const base = yamlToFlowData(buildChainWorkflow())!
+    // c 同时依赖 a 与 b ⇒ a→c 跨两个 rank，中间节点 b 要被挪出这条边的直线路径
+    const skip = yamlToFlowData(buildChainWorkflow({ c: ["a", "b"] }))!
+
+    expect(nodeOf(skip, "b").position.x).toBe(nodeOf(base, "b").position.x)
+    expect(nodeOf(skip, "b").position.y - nodeOf(skip, "a").position.y).toBeGreaterThanOrEqual(100)
+    expect(Math.abs(nodeOf(base, "b").position.y - nodeOf(base, "a").position.y)).toBeLessThanOrEqual(1)
+  })
+
+  it("列间距给折线留道：相邻两列的空白 ≥ ranksep 档", () => {
+    const result = yamlToFlowData(buildChainWorkflow())!
+    const gap = nodeOf(result, "b").position.x - nodeOf(result, "a").position.x - 280
+
+    expect(gap).toBeGreaterThanOrEqual(100)
+  })
+})
+

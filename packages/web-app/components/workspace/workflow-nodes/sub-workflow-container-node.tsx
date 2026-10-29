@@ -2,7 +2,8 @@
 
 import { Layers, Check, X, Circle, Loader2, ArrowUp, ArrowDown } from "lucide-react"
 import type { NodeProps } from "@xyflow/react"
-import { Handle, Position } from "@xyflow/react"
+import { DagSourceHandle, DagTargetHandle } from "./dag-handles"
+import type { DagOrientation } from "@/lib/dag-orientation"
 import { cn } from "@/lib/utils"
 import { Badge } from "@/components/ui/badge"
 import { formatTokenCount } from "@/lib/format"
@@ -18,6 +19,7 @@ interface SubWorkflowContainerData {
   output_mapping?: Record<string, string>
   on_error?: "fail" | "continue"
   statusOverlay?: StatusOverlay
+  dagOrientation?: DagOrientation
   isCurrent?: boolean
   isActive?: boolean
   /** Child workflow node IDs (resolved from workflow YAML) */
@@ -136,7 +138,7 @@ export function SubWorkflowContainerNode({ data, selected }: NodeProps) {
           showMarchingAnts && "border-running",
         )}
       >
-        <Handle type="target" position={Position.Top} className="!bg-muted-foreground !w-3 !h-3" />
+        <DagTargetHandle orientation={swData.dagOrientation} size="small" />
         {/* Header */}
         <div
           className={cn(
@@ -197,7 +199,7 @@ export function SubWorkflowContainerNode({ data, selected }: NodeProps) {
             </div>
           ) : null}
         </div>
-        <Handle type="source" position={Position.Bottom} className="!bg-muted-foreground !w-3 !h-3" />
+        <DagSourceHandle orientation={swData.dagOrientation} size="small" />
       </div>
     </>
   )
