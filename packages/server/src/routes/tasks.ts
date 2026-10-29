@@ -810,8 +810,10 @@ export function createTasksRoutes(
     }
   })
 
-  // DELETE /:id — soft-delete. 票03: nothing cascades (a task's runs are executions rows);
-  // only a running task is refused, everything else is discardable.
+  // DELETE /:id — soft-delete. 票03: runs stay as executions history; only a running
+  // task is refused, everything else is discardable. 2026-10-29: the task's bound
+  // main-chat thread is soft-deleted together with it (a surviving thread session
+  // would fall through into the ordinary 会话 list — 「删掉的任务跑到会话去了」).
   router.delete("/:id", (c) => {
     try {
       const result = service.deleteTask(c.req.param("id"))

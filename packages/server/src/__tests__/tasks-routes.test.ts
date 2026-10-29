@@ -310,6 +310,47 @@ describe("03: /api/tasks routes + TasksService (integration)", () => {
     expect(taskDAO.getById(id)).toBeNull()
   })
 
+  // 2026-10-29 用户 bug「删掉的任务跑到会话去了」：会话侧栏靠 tasks 绑定把线程
+  // 会话藏起来，任务软删后绑定消失 → 会话掉进普通「会话」列表。任务删除必须
+  // 连线程会话一起软删（行保留，只是 is_deleted=1）。
+  function insertSession(sessionId: string) {
+    const now = new Date().toISOString()
+    db.prepare(
+      `INSERT INTO sessions (id, title, session_type, created_at, updated_at)
+       VALUES (?, 'E2E_TD thread', 'main', ?, ?)`,
+    ).run(sessionId, now, now)
+  }
+
+  function readSession(sessionId: string) {
+    return db.prepare("SELECT is_deleted, is_active FROM sessions WHERE id = ?").get(sessionId) as
+      { is_deleted: number; is_active: number } | undefined
+  }
+
+  it("DELETE soft-deletes the task's bound main-chat thread (no leak into the 会话 list)", async () => {
+    const sessionId = `e2e-td-sess-${Math.random().toString(36).slice(2, 8)}`
+    insertSession(sessionId)
+    const id = insertTask(db, { name: "E2E_TD_del_thread" })
+    db.prepare("UPDATE tasks SET source_chat_session_id = ? WHERE id = ?").run(sessionId, id)
+
+    const res = await app.request(`/api/tasks/${id}`, { method: "DELETE" })
+    expect(res.status).toBe(200)
+    // 会话行保留（历史），但从会话列表消失
+    expect(readSession(sessionId)).toMatchObject({ is_deleted: 1, is_active: 0 })
+  })
+
+  it("DELETE keeps a session still bound to another live task", async () => {
+    const sessionId = `e2e-td-sess-${Math.random().toString(36).slice(2, 8)}`
+    insertSession(sessionId)
+    const doomed = insertTask(db, { name: "E2E_TD_del_shared" })
+    const keeper = insertTask(db, { name: "E2E_TD_keep_shared" })
+    db.prepare("UPDATE tasks SET source_chat_session_id = ? WHERE id = ?").run(sessionId, doomed)
+    db.prepare("UPDATE tasks SET source_chat_session_id = ? WHERE id = ?").run(sessionId, keeper)
+
+    const res = await app.request(`/api/tasks/${doomed}`, { method: "DELETE" })
+    expect(res.status).toBe(200)
+    expect(readSession(sessionId)).toMatchObject({ is_deleted: 0, is_active: 1 })
+  })
+
   // ── AC1: spec-field ─────────────────────────────────────────────────
 
   it("POST /:id/spec-field merges field + bumps version + emits spec_field_update SSE", async () => {

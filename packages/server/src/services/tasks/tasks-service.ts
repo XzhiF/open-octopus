@@ -4002,19 +4002,26 @@ export class TasksService {
     })
   }
 
-  /** DELETE /api/tasks/:id — soft-delete. 票03: there is nothing to cascade — a task's
-   *  runs are executions rows (they stay as history like any other run) and no private
-   *  definition row exists to reap, which is precisely why the orphan reaper could be
-   *  deleted with this ticket. Everything but a RUNNING task is discardable: 'running' is
-   *  the only status that still holds a live engine and a compute slot, so it must be
-   *  aborted first; done/failed/aborted rows are pure history and delete cleanly.
+  /** DELETE /api/tasks/:id — soft-delete. 票03: a task's runs are executions rows (they
+   *  stay as history like any other run) and no private definition row exists to reap,
+   *  which is precisely why the orphan reaper could be deleted with this ticket.
+   *  Everything but a RUNNING task is discardable: 'running' is the only status that
+   *  still holds a live engine and a compute slot, so it must be aborted first;
+   *  done/failed/aborted rows are pure history and delete cleanly.
    *
    *  04 (AC5/ADR-0011/SW-BP14): a DRAFT task's home dir (`~/.octopus/tasks/{id}/`)
    *  is reaped on delete (no orphan dirs). reapHome does NOT follow junctions/
    *  symlinks inside skills/ — a link to a registry skill source must not drag
    *  that source into the void. A non-draft task (ready/done/failed/aborted)
    *  PRESERVES its home (artifacts are the record of what ran; kept until a
-   *  future hard-delete). Idempotent on a missing home (v2 tasks have none). */
+   *  future hard-delete). Idempotent on a missing home (v2 tasks have none).
+   *
+   *  2026-10-29: the task's bound main-chat thread (`source_chat_session_id`, and the
+   *  legacy `doer_session_id`) is soft-deleted with the row. The chat sidebar hides
+   *  task-bound sessions; once the task row is gone the binding is gone too, so a
+   *  surviving session falls through into the ordinary 会话 list (user bug report:
+   *  「删掉的任务跑到会话去了」). The session ROW is kept (is_deleted=1) — history,
+   *  not a live conversation. */
   deleteTask(id: string): { ok: true } {
     const existing = this.taskDAO.getById(id)
     if (!existing) throw new TaskNotFoundError()
@@ -4054,6 +4061,34 @@ export class TasksService {
     // history, like any other run) and there is no private definition row to reap. That
     // absence is why the orphan reaper dies with this ticket.
     this.taskDAO.softDelete(id)
+    // 2026-10-29 用户 bug「删掉的任务跑到会话去了」：任务线程的主会话
+    // （source_chat_session_id 指向的 main session）靠 tasks 绑定关系从侧栏
+    // 「会话」列表里隐去 —— chat-sidebar 的 visibleSessions = 全部会话 − 被任务
+    // 绑定的会话。任务行一软删，绑定消失，这条聊天就掉进普通会话列表，看起来
+    // 像被删的任务换了个身份继续存在。任务线程是任务本体的一部分（one main
+    // thread per task），删除任务 = 线程会话一并软删；doer_session_id 是 M6 前
+    // 的遗留执行线程，同样随任务走（会话行保留，is_deleted=1，历史不丢）。
+    // 仍被另一条活任务绑定的会话不动（getBySourceChatSession 排除已软删行）。
+    if (this.agentSessionDAO) {
+      const stillBound = existing.source_chat_session_id
+        ? this.taskDAO.getBySourceChatSession(existing.source_chat_session_id)
+        : null
+      const sessionIds = new Set<string>()
+      if (existing.source_chat_session_id && !stillBound) {
+        sessionIds.add(existing.source_chat_session_id)
+      }
+      if (existing.doer_session_id) sessionIds.add(existing.doer_session_id)
+      for (const sessionId of sessionIds) {
+        try {
+          this.agentSessionDAO.softDelete(sessionId)
+        } catch (err: unknown) {
+          console.error(
+            `[TasksService] deleteTask: session soft-delete failed for ${sessionId} (non-fatal — task soft-deleted):`,
+            err instanceof Error ? err.message : String(err),
+          )
+        }
+      }
+    }
     return { ok: true }
   }
 }
