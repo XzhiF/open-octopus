@@ -9,6 +9,7 @@ import type { AgentMessage, MessageTimelineEntry, ToolCallRecord } from '@/lib/a
 import type { StreamTimelineItem } from '@/hooks/useAgentChat'
 import { formatCost, formatDuration, formatTokenCount } from '@/lib/format'
 import { useBillingCurrency } from '@/lib/billing-currency'
+import { THINKING_TONE, TOOL_TONE } from '@/lib/agent/chat-colors'
 import type { TurnStats } from '@/lib/turn-stats'
 
 /** mini-markdown：`**bold**` / `行内 code` / 行首 # 标题 —— 消灭字面星号。 */
@@ -142,6 +143,8 @@ function ToolLine({ tc }: { tc: ToolCallRecord }) {
   const [open, setOpen] = useState(false)
   const hasInput = tc.input !== undefined && tc.input !== null && tc.input !== ''
   const hasResult = tc.result !== undefined && tc.result !== null && tc.result !== ''
+  // toolBrief 永远以工具名开头 → 拆开只给工具名上青，参数保持灰。
+  const args = toolBrief(tc).slice(tc.name.length)
   return (
     <div className="text-pop-dim" data-tui-tool={open ? 'open' : 'closed'}>
       <button
@@ -150,8 +153,9 @@ function ToolLine({ tc }: { tc: ToolCallRecord }) {
         className="block w-full select-none text-left transition-colors hover:text-pop-ink"
         title={open ? '收回工具详情' : '展开本工具 input/result 全文'}
       >
-        <span className="text-pop-pink">{open ? '▾ ' : '▸ '}</span>
-        {toolBrief(tc)} <span className={cls}>[{glyph}]</span>
+        <span className={TOOL_TONE.arrow}>{open ? '▾ ' : '▸ '}</span>
+        <span className={TOOL_TONE.name}>{tc.name}</span>{args}{' '}
+        <span className={cls}>[{glyph}]</span>
       </button>
       {open && (
         <div className="ml-3 mt-0.5 space-y-1.5 border-l border-pop-bd pl-2">
@@ -296,7 +300,9 @@ function TuiMeta({ thinking, toolCalls, timeline, stats, interrupted }: {
               ) : r.node === 'frag' ? (
                 <div key={r.key} className="whitespace-pre-wrap break-words text-pop-dim">✎ {r.text}</div>
               ) : (
-                <div key={r.key} className="whitespace-pre-wrap break-words text-pop-dim">◌ {r.text}</div>
+                <div key={r.key} className="whitespace-pre-wrap break-words text-pop-dim">
+                  <span className={THINKING_TONE.glyph} aria-hidden>◌</span> {r.text}
+                </div>
               ),
             )}
           </div>
@@ -525,14 +531,14 @@ function LiveThinking({ item }: { item: Extract<StreamTimelineItem, { kind: 'thi
         data-tui-thinking-expand={open ? 'open' : 'closed'}
         title={open ? '收回 3 行窗口' : '展开本段 thinking 全文'}
       >
-        ◌ thinking
-        {item.active && <span className="ml-1 animate-pulse text-pop-pink">▊</span>}
+        <span className={THINKING_TONE.label}>◌ thinking</span>
+        {item.active && <span className={`ml-1 animate-pulse ${THINKING_TONE.glyph}`}>▊</span>}
         <span className="ml-1 text-[10px]">{open ? '▾ 全文' : '▸ 全文'}</span>
       </button>
       {open ? (
-        <div className="ml-3 max-h-[50vh] overflow-y-auto whitespace-pre-wrap break-words border-l border-pop-bd pl-2">{item.text}</div>
+        <div className={`ml-3 max-h-[50vh] overflow-y-auto whitespace-pre-wrap break-words border-l ${THINKING_TONE.rail} pl-2`}>{item.text}</div>
       ) : (
-        <div className="ml-3 overflow-hidden border-l border-pop-bd pl-2">
+        <div className={`ml-3 overflow-hidden border-l ${THINKING_TONE.railSoft} pl-2`}>
           {win.map((l, i) => (
             <div
               key={i}

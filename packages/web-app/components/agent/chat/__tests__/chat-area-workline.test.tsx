@@ -67,4 +67,16 @@ describe("ChatArea 流尾工作行", () => {
     const { container } = render(<ChatArea {...baseProps} streamContent="完成了" />)
     expect(workline(container)).toBeNull()
   })
+
+  it("工作行 spinner / 秒数跟阶段上色：思考紫 · 执行青 · 输出橙", () => {
+    const thinking = render(<ChatArea {...baseProps} streaming isThinking turnStartedAt={Date.now() - 3000} />)
+    expect(workline(thinking.container)!.querySelector(".text-pop-purple")).toBeTruthy()
+
+    const running: ToolCallRecord[] = [{ id: "t1", name: "Bash", input: {}, status: "running" }]
+    const exec = render(<ChatArea {...baseProps} streaming toolCalls={running} />)
+    expect(workline(exec.container)!.querySelector(".text-pop-cyan")).toBeTruthy()
+
+    const writing = render(<ChatArea {...baseProps} streaming streamContent="正在写代码" />)
+    expect(workline(writing.container)!.querySelector(".text-pop-pink")).toBeTruthy()
+  })
 })

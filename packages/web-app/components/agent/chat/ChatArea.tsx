@@ -33,6 +33,7 @@ import { ComposerAttachPopover, type ComposerExpertRef, type ComposerSkillRef, t
 import { ComposerIdentityPicker } from './composer-identity-picker'
 import type { ComposerContext, ComposerEffort, ModelPreset } from '@/lib/agent/composer-settings'
 import { workPhrase, type WorkPhase } from '@/lib/agent/work-phrases'
+import { WORK_PHASE_TONE } from '@/lib/agent/chat-colors'
 
 /** 状态色带皮肤:一态一糖果(静态 class 字面量,Tailwind JIT)。 */
 const RIBBON_THEME: Record<'running' | 'waiting' | 'done' | 'error', {
@@ -392,6 +393,7 @@ export function ChatArea({
     ? 'exec'
     : isThinking ? 'thinking' : streamContent ? 'writing' : 'thinking'
   const workElapsed = Math.floor(busyElapsed)
+  const workTone = WORK_PHASE_TONE[workPhase]
   const spinGlyph = TUI_SPIN[Math.floor(busyElapsed * 10) % TUI_SPIN.length]
   const contextUsageTitle = contextUsage
     ? `上下文占用 · ${formatTokenCount(contextUsage.totalTokens)} / ${formatTokenCount(contextUsage.maxTokens, 0)} · ${contextUsage.percentage.toFixed(1)}%${contextUsage.estimated ? '（估算：据最后一轮 token 账本推算，下一轮对话后校准）' : ''}` // fmt-ok: percentage 量纲为 0–100（SDK context_usage），非 0–1 比率
@@ -627,9 +629,9 @@ export function ChatArea({
                 className="flex items-center gap-2 py-1 text-[12.5px] text-pop-dim"
                 data-tui-workline={workPhase}
               >
-                <span className="text-pop-pink" aria-hidden>{spinGlyph}</span>
+                <span className={workTone.spin} aria-hidden>{spinGlyph}</span>
                 <span className="text-pop-ink/80">{workPhrase(workPhase, workElapsed)}</span>
-                <span className="tabular-nums text-pop-amber">{workElapsed}s</span>{/* fmt-ok: 流尾工作行的整轮计时（整秒），非日期/用量格式化 */}
+                <span className={`tabular-nums ${workTone.secs}`}>{workElapsed}s</span>{/* fmt-ok: 流尾工作行的整轮计时（整秒），非日期/用量格式化 */}
               </div>
             )}
 

@@ -151,7 +151,7 @@ function CollapsibleMeta({ thinking, toolCalls, timeline }: {
               if (entry.kind === 'thinking') {
                 return (
                   <div key={i}>
-                    <div className="flex items-center gap-1 text-xs font-medium text-muted-foreground mb-1">
+                    <div className="flex items-center gap-1 text-xs font-medium text-pop-purple mb-1">
                       <Brain className="h-3 w-3" /> 思考
                     </div>
                     <pre className="text-xs text-muted-foreground whitespace-pre-wrap font-mono bg-background/30 rounded p-2 max-h-60 overflow-y-auto">
@@ -179,7 +179,7 @@ function CollapsibleMeta({ thinking, toolCalls, timeline }: {
             <>
               {hasThinking && (
                 <div>
-                  <div className="flex items-center gap-1 text-xs font-medium text-muted-foreground mb-1">
+                  <div className="flex items-center gap-1 text-xs font-medium text-pop-purple mb-1">
                     <Brain className="h-3 w-3" /> 思考过程
                   </div>
                   <pre className="text-xs text-muted-foreground whitespace-pre-wrap font-mono bg-background/30 rounded p-2 max-h-60 overflow-y-auto">
@@ -189,7 +189,7 @@ function CollapsibleMeta({ thinking, toolCalls, timeline }: {
               )}
               {toolList.length > 0 && (
                 <div className="space-y-1.5">
-                  <div className="flex items-center gap-1 text-xs font-medium text-muted-foreground">
+                  <div className="flex items-center gap-1 text-xs font-medium text-pop-cyan">
                     <Wrench className="h-3 w-3" /> 工具调用
                   </div>
                   {toolList.map((tc) => (

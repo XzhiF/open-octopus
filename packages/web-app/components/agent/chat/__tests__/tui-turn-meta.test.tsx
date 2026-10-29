@@ -157,6 +157,8 @@ describe("TuiMessage 过程 meta — 展开态", () => {
     expect(body.textContent).not.toContain("12.3K tok")
     // 原步骤列表仍在：工具简报
     expect(body.textContent).toContain("Bash")
+    // 思考步骤的 ◌ 带紫色信号色（2026-10-29 A+B 过程三色）
+    expect(body.querySelector(".text-pop-purple")).toBeTruthy()
     // 展开态同样不出现任何图形化元素
     expect(body.querySelectorAll("[data-tui-bar]").length).toBe(0)
   })
