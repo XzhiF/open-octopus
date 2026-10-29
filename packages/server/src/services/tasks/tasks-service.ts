@@ -638,12 +638,30 @@ function validateServerSpecField(field: ServerSpecField, value: unknown): unknow
 
 // ── 票 11 ▣ 产物页签（artifacts manifest — 只读薄 seam 的磁盘直扫）──────────
 //
-// 分组清单单一真相 = 磁盘（票面五组：需求票面 spec/issues、轮次报告 report、
-// 证据 evidence、验收台账 acceptance-ledger、原型 prototype）。引用串带前缀
-// 门牌：`home:<.scratch/…>` = 任务 home 批次区（读门复用 home-file 白名单同款
-// 守卫），`ws:<仓内相对>` = 任务最近一次绑定执行的工作区根。缺文件/缺目录 =
-// 该组空数组（降级不是错误）；一切越界形状（绝对、盘符、`..`、逃逸 resolve）
+// 2026-10-29 方案2（phase × 轮次）：清单不再按文件名正则拍平成五组，而是
+// **按 phase 批次目录归属**（`specPath` 的 dirname）+ 文件名里的 `-rN` 归轮：
+//   · phases[] = 每个 phase 一批：批次级产物（spec/票/runbook/handoff/…）+
+//     rounds[]（fix-report-r1 / acceptance-ledger-r1 / verify-r1-… 等带轮次的件）；
+//   · unassigned = `.scratch` 下不属于任何 phase 的件（旧布局 / 手工放置）；
+//   · prototype = 工作区原型（保持不变）。
+// 引用串带前缀门牌：`home:<.scratch/…>` = 任务 home 批次区（读门复用 home-file
+// 白名单同款守卫），`ws:<仓内相对>` = 任务最近一次绑定执行的工作区根。缺文件/
+// 缺目录 = 空数组（降级不是错误）；一切越界形状（绝对、盘符、`..`、逃逸 resolve）
 // 在读门 403，`..` 输入缺陷在路由 400。
+
+/** 产物类型（server 单源；前端只渲染徽章，不重分类）。 */
+export type ArtifactKind =
+  | "spec"
+  | "brief"
+  | "ticket"
+  | "runbook"
+  | "report"
+  | "fix"
+  | "feedback"
+  | "handoff"
+  | "ledger"
+  | "evidence"
+  | "prototype"
 
 export interface ArtifactManifestItem {
   name: string
@@ -651,15 +669,73 @@ export interface ArtifactManifestItem {
   path: string
   bytes: number
   mtime: string
+  /** 产物类型（spec / 票 / 报告 / 修复 / 反馈 / 台账 / 证据 / 原型 …）。 */
+  kind: ArtifactKind
 }
 
-export interface ArtifactManifestGroup {
-  key: "spec" | "report" | "evidence" | "ledger" | "prototype"
-  label: string
+/** 一轮的产物（文件名带 `-rN` 且属于轮次类）：fix-report-r1 / verify-r1-… 等。 */
+export interface ArtifactManifestRound {
+  round: number
   items: ArtifactManifestItem[]
 }
 
+/** 一个 phase 的交付面：批次级产物 + 按轮次归组的产物。 */
+export interface ArtifactManifestPhase {
+  /** 1-based，来自 task_spec.phases。 */
+  index: number
+  name: string
+  slug: string
+  /** home 相对 posix 批次目录（`.scratch/<main>/<phase>`）；无合规 specPath = ""。 */
+  dir: string
+  /** deriveTaskView 的 phase 显示态（K3 派生不存，这里只是透传）。 */
+  status: TaskPhaseView["status"]
+  currentRound: number | null
+  acceptedRound: number | null
+  /** 批次级产物：spec / brief / issues / runbook / handoff / 未标轮次的报告与证据。 */
+  items: ArtifactManifestItem[]
+  /** 按轮次归组的产物（升序）。 */
+  rounds: ArtifactManifestRound[]
+}
+
+export interface ArtifactManifestBody {
+  phases: ArtifactManifestPhase[]
+  /** 不属于任何 phase 的 `.scratch` 文件（旧布局 / 手工放置）。 */
+  unassigned: ArtifactManifestItem[]
+  /** 工作区原型（`ws:` 引用）。 */
+  prototype: ArtifactManifestItem[]
+}
+
 const MANIFEST_SCRATCH_PREFIX = ".scratch"
+
+/** 文件名 → 产物类型。判据单源在 server：前端不反推、不重分组。 */
+function artifactKindOf(rel: string, name: string): ArtifactKind {
+  const lower = name.toLowerCase()
+  if (/^spec(-r\d+)?\.md$/.test(lower)) return "spec"
+  if (lower === "brief.md") return "brief"
+  if (/^handoff\.md$/.test(lower)) return "handoff"
+  if (rel.toLowerCase().includes("/issues/") && lower.endsWith(".md")) return "ticket"
+  if (rel.toLowerCase().includes("/runbook/") || lower === "runbook.json") return "runbook"
+  if (/^acceptance-ledger.*\.md$/.test(lower)) return "ledger"
+  if (/^fix-feedback.*\.md$/.test(lower)) return "feedback"
+  if (/^fix-report.*\.md$/.test(lower)) return "fix"
+  if (/^round.*report.*\.md$/.test(lower)) return "report"
+  return "evidence"
+}
+
+/** 文件名里的轮次号：`-r1` / `-r1-` / `-r1.md` 才算；spec-rN 是起草修订，不归轮。 */
+function artifactRoundOf(name: string): number | null {
+  const m = name.match(/(?:^|[-_.])r(\d+)(?:[-_.]|$)/i)
+  return m ? Number(m[1]) : null
+}
+
+/** specPath → home 相对批次目录（dirname）。域外路径（绝对/非 .scratch）→ null。 */
+function manifestPhaseDir(specPath: string): string | null {
+  const posix = specPath.replace(/\\/g, "/").replace(/^\.\//, "").replace(/^\/+/, "")
+  if (!posix.startsWith(`${MANIFEST_SCRATCH_PREFIX}/`)) return null
+  const idx = posix.lastIndexOf("/")
+  if (idx <= MANIFEST_SCRATCH_PREFIX.length) return null
+  return posix.slice(0, idx)
+}
 
 /** 递归收常规文件（跳 dotfile/符号链接/其它 fs 类型），深度与总量封顶。
  *  `relFromRoot` 已含根名（如 ".scratch/x.md" / "public/prototype/y.html"），
@@ -701,16 +777,8 @@ function collectManifestFiles(
   return out
 }
 
-/** 票面五组的归类判据（词形取自运行事实：round-report-rN/fix-report-rN、
- *  acceptance-ledger-rN（round-evidence 写入侧字面）、issues/ 子目录 = 票面）。 */
-function classifyScratchFile(rel: string, name: string): "spec" | "report" | "evidence" | "ledger" {
-  const lower = name.toLowerCase()
-  if (/^acceptance-ledger.*\.md$/.test(lower)) return "ledger"
-  if (/^spec(-.+)?\.md$/.test(lower)) return "spec"
-  if (rel.includes("/issues/") && lower.endsWith(".md")) return "spec"
-  if (/^(round-report|round.*report|fix-report).*\.md$/.test(lower)) return "report"
-  return "evidence"
-}
+/** 票面五组的归类判据已退役（2026-10-29 方案2）：产物按 phase 批次目录 +
+ *  `-rN` 归轮，类型由 {@link artifactKindOf} 单源给出，不再拍平成五组。 */
 
 /** 工作区里的原型目录候选：根 public/prototype、根 prototype、逐仓
  *  packages/<repo>/public/prototype（多仓形态）。 */
@@ -1310,17 +1378,87 @@ export class TasksService {
    *  同子树新叶 `/artifacts/manifest` —— additive，零既有契约改动。
    *  任务不存在 → 404 先于任何 fs 动作；`.scratch` 缺失 / 无绑定工作区 = 对应
    *  组空数组（AC4 优雅降级）。 */
-  artifactManifest(taskId: string): { groups: ArtifactManifestGroup[] } {
+  artifactManifest(taskId: string): ArtifactManifestBody {
     const row = this.taskDAO.getById(taskId)
     if (!row) throw new TaskNotFoundError()
-    const buckets: Record<"spec" | "report" | "evidence" | "ledger", ArtifactManifestItem[]> = {
-      spec: [], report: [], evidence: [], ledger: [],
-    }
+
+    // phase 目录 = specPath 的 dirname；同名/嵌套时按最长前缀归属（多仓/嵌套批次安全）。
+    // row.task_spec 是 JSON 字符串（TaskRow 列形态）—— 与 deriveView 同一份数据。
+    let specPhases: Array<{ index?: number; name: string; slug: string; specPath: string }> = []
+    try {
+      const parsed = (typeof row.task_spec === "string" ? JSON.parse(row.task_spec) : row.task_spec) as { phases?: unknown }
+      if (Array.isArray(parsed?.phases)) {
+        specPhases = parsed.phases as typeof specPhases
+      }
+    } catch { /* 坏 JSON = 无 phase（全部进 unassigned），与磁盘降级同口径 */ }
+    const entries = specPhases.map((phase, i) => {
+      const dir = manifestPhaseDir(phase.specPath)
+      return {
+        phase,
+        index: phase.index ?? i + 1,
+        dir: dir ?? "",
+        dirLower: dir ? dir.toLowerCase() : "",
+      }
+    })
+    const viewByIndex = new Map(this.deriveView(row).phaseViews.map((p) => [p.index, p]))
+
+    type Bucket = { items: ArtifactManifestItem[]; rounds: Map<number, ArtifactManifestItem[]> }
+    const buckets = new Map<number, Bucket>()
+    for (const e of entries) buckets.set(e.index, { items: [], rounds: new Map() })
+    const unassigned: ArtifactManifestItem[] = []
+
     const scratchAbs = path.join(this.taskHomeService.homePath(taskId), MANIFEST_SCRATCH_PREFIX)
     for (const f of collectManifestFiles(scratchAbs, MANIFEST_SCRATCH_PREFIX, { left: 400 })) {
-      buckets[classifyScratchFile(f.rel, f.name)].push({ name: f.name, path: `home:${f.rel}`, bytes: f.bytes, mtime: f.mtime })
+      const item: ArtifactManifestItem = {
+        name: f.name,
+        path: `home:${f.rel}`,
+        bytes: f.bytes,
+        mtime: f.mtime,
+        kind: artifactKindOf(f.rel, f.name),
+      }
+      const relLower = f.rel.toLowerCase()
+      let owner: (typeof entries)[number] | undefined
+      for (const e of entries) {
+        if (!e.dirLower) continue
+        if (relLower.startsWith(`${e.dirLower}/`) && (!owner || e.dirLower.length > owner.dirLower.length)) {
+          owner = e
+        }
+      }
+      if (!owner) {
+        unassigned.push(item)
+        continue
+      }
+      const bucket = buckets.get(owner.index)!
+      // spec-rN 是起草修订（不是轮次），不归轮；round-report.md 没有 -rN 时
+      // artifactRoundOf 自然返回 null → 落批次级（含义 = 最新轮终报）。
+      const round = item.kind === "spec" ? null : artifactRoundOf(item.name)
+      if (round === null) {
+        bucket.items.push(item)
+      } else {
+        const list = bucket.rounds.get(round)
+        if (list) list.push(item)
+        else bucket.rounds.set(round, [item])
+      }
     }
-    for (const list of Object.values(buckets)) list.sort((a, b) => a.path.localeCompare(b.path))
+
+    const byPath = (a: ArtifactManifestItem, b: ArtifactManifestItem) => a.path.localeCompare(b.path)
+    const phases: ArtifactManifestPhase[] = entries.map((e) => {
+      const bucket = buckets.get(e.index)!
+      const view = viewByIndex.get(e.index)
+      return {
+        index: e.index,
+        name: e.phase.name,
+        slug: e.phase.slug,
+        dir: e.dir,
+        status: view?.status ?? "pending",
+        currentRound: view?.currentRound ?? null,
+        acceptedRound: view?.acceptedRound ?? null,
+        items: bucket.items.sort(byPath),
+        rounds: [...bucket.rounds.entries()]
+          .sort(([a], [b]) => a - b)
+          .map(([round, items]) => ({ round, items: items.sort(byPath) })),
+      }
+    })
 
     const prototype: ArtifactManifestItem[] = []
     const wsRoot = this.manifestWorkspaceRoot(taskId)
@@ -1331,21 +1469,13 @@ export class TasksService {
         for (const f of collectManifestFiles(dir, path.relative(wsRoot, dir).split(path.sep).join("/"), cap)) {
           if (seen.has(f.rel)) continue
           seen.add(f.rel)
-          prototype.push({ name: f.name, path: `ws:${f.rel}`, bytes: f.bytes, mtime: f.mtime })
+          prototype.push({ name: f.name, path: `ws:${f.rel}`, bytes: f.bytes, mtime: f.mtime, kind: "prototype" })
         }
       }
-      prototype.sort((a, b) => a.path.localeCompare(b.path))
+      prototype.sort(byPath)
     }
 
-    return {
-      groups: [
-        { key: "spec", label: "📄 需求与票面", items: buckets.spec },
-        { key: "report", label: "🧾 轮次报告", items: buckets.report },
-        { key: "evidence", label: "🔍 证据", items: buckets.evidence },
-        { key: "ledger", label: "📒 验收台账", items: buckets.ledger },
-        { key: "prototype", label: "💡 原型", items: prototype },
-      ],
-    }
+    return { phases, unassigned: unassigned.sort(byPath), prototype }
   }
 
   /** 原型组的扫描根 = 任务最近一次绑定执行的工作区目录。任何一环缺

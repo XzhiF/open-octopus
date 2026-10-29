@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import type { TaskView } from '@/lib/tasks-api'
-import { cascadeRect, type Size } from '@/lib/window-geometry'
+import { cascadeRect, centerInViewport, type Size } from '@/lib/window-geometry'
 import { cn } from '@/lib/utils'
 import { ChangesWindow } from './changes-window'
 import { TaskPlanWindow } from './task-plan-window'
@@ -98,11 +98,19 @@ export function TaskModulesLayer({
             : module === 'usage'
               ? { width: 880, height: 640 }
               : module === 'artifacts'
-                ? { width: 900, height: 640 }
+                ? { width: 1120, height: 720 }
                 : { width: 1100, height: 640 }
+    let rect = cascadeRect(stage, 0, preferred)
+    // 打开位置 = 整个浏览器水平居中（2026-10-29 用户）：容器是侧栏右侧的聊天区，
+    // 按容器居中会整体偏右；把 x 换回视口坐标。拖拽/持久化的位置不受影响。
+    const container = containerRef.current
+    if (container) {
+      const viewportWidth = typeof window === 'undefined' ? stage.width : window.innerWidth
+      rect = centerInViewport(rect, container.getBoundingClientRect().left, viewportWidth)
+    }
     const record: TaskWindowRecord = {
       module,
-      rect: cascadeRect(stage, 0, preferred),
+      rect,
       minimized: false,
       maximized: false,
       restoreRect: null,
@@ -148,7 +156,7 @@ export function TaskModulesLayer({
             {module === 'changes' ? (
               <ChangesWindow task={task} />
             ) : module === 'plan' ? (
-              <TaskPlanWindow task={task} />
+              <TaskPlanWindow task={task} onOpenArtifacts={() => openModuleAt('artifacts')} />
             ) : module === 'run' ? (
               <RunWindow task={task} onTaskAction={onTaskAction} />
             ) : module === 'acceptance' ? (

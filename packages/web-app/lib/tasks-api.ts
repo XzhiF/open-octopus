@@ -785,14 +785,11 @@ export async function getArtifactContent(taskId: string, artifactPath: string): 
   return res.json()
 }
 
-// ── 票 11 ▣ 产物分组清单（⑩真机回补 — 只读薄 seam）──────────────────────
-// GET /:id/artifacts/manifest — 五组磁盘直扫（需求票面/轮次报告/证据/验收台账/
-// 原型）。票面原文路径 /artifacts 已被票 06 产物索引（ArtifactIndexEntry[]，
-// ArtifactsCard 在用）占用，分组清单落同子树新叶。缺目录 = 空组 200 降级。
+// ── 票 11 ▣ 产物清单（2026-10-29 方案2 — phase × 轮次）────────────────────
+// GET /:id/artifacts/manifest — server 按 phase 批次目录 + `-rN` 归组；前端只
+// 渲染（types.ts::ArtifactManifestBody 单源）。缺目录 = 空数组 200 降级。
 // GET /:id/artifacts/manifest/content?path=home:…|ws:… — 预览现读；400（.. 遍历）
 // /403（越界）/404（缺文件）/413（超限）都经 ArtifactContentError 带 status 抛出。
-// wire 形 = lib/types.ts::ArtifactManifestItem/Group/Body 单源（票11 收口⑤ ——
-// 原 tasks-api 与 artifacts-model 两份本地副本塌缩，同 LlmNodeAggregatesWire 惯例）。
 
 export async function getArtifactManifest(taskId: string): Promise<ArtifactManifestBody> {
   const res = await fetch(buildUrl(`/${taskId}/artifacts/manifest`))

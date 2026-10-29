@@ -66,12 +66,29 @@ async function createTask(name: string): Promise<string> {
   return body.id
 }
 
-interface ManifestItem { name: string; path: string; bytes: number; mtime: string }
-interface ManifestGroup { key: string; label: string; items: ManifestItem[] }
-interface ManifestBody { groups: ManifestGroup[] }
+interface ManifestItem { name: string; path: string; bytes: number; mtime: string; kind: string }
+interface ManifestRound { round: number; items: ManifestItem[] }
+interface ManifestPhase {
+  index: number
+  name: string
+  slug: string
+  dir: string
+  status: string
+  currentRound: number | null
+  acceptedRound: number | null
+  items: ManifestItem[]
+  rounds: ManifestRound[]
+}
+interface ManifestBody { phases: ManifestPhase[]; unassigned: ManifestItem[]; prototype: ManifestItem[] }
 
-const group = (body: ManifestBody, key: string): ManifestGroup =>
-  body.groups.find((g) => g.key === key)!
+/** 直接改 tasks.task_spec（JSON 列形态）—— 让 manifest 能按 phase 目录归属。 */
+function setPhases(taskId: string, phases: Array<{ index: number; name: string; slug: string; specPath: string }>): void {
+  db.prepare("UPDATE tasks SET task_spec = ? WHERE id = ?").run(JSON.stringify({
+    format: "v4",
+    slug: "taskboard-demo",
+    phases: phases.map((p) => ({ ...p, workflowRef: "built-in/wf", inputValues: {} })),
+  }), taskId)
+}
 
 beforeAll(() => {
   db = new Database(":memory:")
@@ -98,13 +115,16 @@ afterAll(() => {
   fs.rmSync(wsBase, { recursive: true, force: true })
 })
 
-describe("GET /:id/artifacts/manifest — 分组清单（AC4①/③）", () => {
-  it("五组齐、归类正确、路径引用限定 home:/.scratch 与 ws:", async () => {
+describe("GET /:id/artifacts/manifest — phase × 轮次清单（2026-10-29 方案2）", () => {
+  it("按 phase 目录归属 + -rN 归轮；类型/路径引用限定 home:/.scratch 与 ws:", async () => {
     const taskId = await createTask("E2E_TDM manifest groups")
     const B = `.scratch/taskboard-demo`
+    setPhases(taskId, [{ index: 1, name: "契约与落库", slug: "demo", specPath: `${B}/spec.md` }])
     writeHome(taskId, `${B}/spec.md`, "# E2E_TDM spec")
+    writeHome(taskId, `${B}/spec-r2.md`, "# E2E_TDM spec r2")
     writeHome(taskId, `${B}/issues/01-shell.md`, "ticket 01")
     writeHome(taskId, `${B}/issues/02-tabs.md`, "ticket 02")
+    writeHome(taskId, `${B}/runbook/runbook.json`, `{"up":"x"}`)
     writeHome(taskId, `${B}/round-report-r1.md`, "report claims")
     writeHome(taskId, `${B}/fix-report-r1.md`, "fix report")
     writeHome(taskId, `${B}/acceptance-ledger-r1.md`, "ledger append-only")
@@ -112,6 +132,8 @@ describe("GET /:id/artifacts/manifest — 分组清单（AC4①/③）", () => {
     writeHome(taskId, `${B}/probe/snap.json`, `{"ok":true}`)
     writeHome(taskId, `${B}/run.log`, "exit 0")
     writeHome(taskId, `${B}/.hidden`, "dot noise")
+    // 不属于任何 phase 的旧布局 / 手工放置 → unassigned
+    writeHome(taskId, `.scratch/legacy/old.md`, "legacy")
     // home 根（.scratch 之外）的文件绝不入清单（守卫面）
     writeHome(taskId, `outside.md`, "NOT AN ARTIFACT")
     // 工作区 + 绑定执行（原型组扫描根）
@@ -130,38 +152,62 @@ describe("GET /:id/artifacts/manifest — 分组清单（AC4①/③）", () => {
     const res = await app.request(`/api/tasks/${taskId}/artifacts/manifest`)
     expect(res.status).toBe(200)
     const body = await res.json() as ManifestBody
-    expect(body.groups.map((g) => g.key)).toEqual(["spec", "report", "evidence", "ledger", "prototype"])
+    expect(body.phases).toHaveLength(1)
+    const phase = body.phases[0]
+    expect(phase).toMatchObject({ index: 1, name: "契约与落库", slug: "demo", dir: B })
+    expect(["pending", "running", "awaiting_review", "accepted"]).toContain(phase.status)
 
-    const spec = group(body, "spec")
-    expect(spec.items.map((i) => i.name).sort()).toEqual(["01-shell.md", "02-tabs.md", "spec.md"])
-    for (const item of spec.items) {
-      expect(item.path.startsWith(`home:.scratch/taskboard-demo/`)).toBe(true)
+    // 批次级：spec 两版（不归轮）+ 票 + runbook + 无 -rN 的证据
+    const batch = phase.items.map((i) => i.name).sort()
+    expect(batch).toEqual(["01-shell.md", "02-tabs.md", "run.log", "run.txt", "runbook.json", "snap.json", "spec-r2.md", "spec.md"])
+    expect(phase.items.find((i) => i.name === "spec.md")!.kind).toBe("spec")
+    expect(phase.items.find((i) => i.name === "spec-r2.md")!.kind).toBe("spec")
+    expect(phase.items.find((i) => i.name === "01-shell.md")!.kind).toBe("ticket")
+    expect(phase.items.find((i) => i.name === "runbook.json")!.kind).toBe("runbook")
+
+    // r1：报告 / 修复 / 台账
+    expect(phase.rounds.map((r) => r.round)).toEqual([1])
+    expect(phase.rounds[0].items.map((i) => i.name).sort())
+      .toEqual(["acceptance-ledger-r1.md", "fix-report-r1.md", "round-report-r1.md"])
+    expect(phase.rounds[0].items.find((i) => i.name === "round-report-r1.md")!.kind).toBe("report")
+    expect(phase.rounds[0].items.find((i) => i.name === "fix-report-r1.md")!.kind).toBe("fix")
+    expect(phase.rounds[0].items.find((i) => i.name === "acceptance-ledger-r1.md")!.kind).toBe("ledger")
+
+    for (const item of [...phase.items, ...phase.rounds.flatMap((r) => r.items)]) {
+      expect(item.path.startsWith(`home:${B}/`)).toBe(true)
       expect(item.bytes).toBeGreaterThan(0)
     }
-    expect(group(body, "report").items.map((i) => i.name).sort())
-      .toEqual(["fix-report-r1.md", "round-report-r1.md"])
-    // 轮次报告口径只认 round/fix-report*.md；.log/.txt/.json 属证据族
-    // （ticket 原文 evidence 示例含 pnpm-test.log）。
-    expect(group(body, "evidence").items.map((i) => i.name).sort())
-      .toEqual(["run.log", "run.txt", "snap.json"])
-    expect(group(body, "ledger").items.map((i) => i.name)).toEqual(["acceptance-ledger-r1.md"])
-    expect(group(body, "prototype").items.map((i) => i.name).sort())
-      .toEqual(["other.md", "taskboard-v2.html"])
-    for (const item of group(body, "prototype").items) {
+
+    // 旧布局文件 → 未归属；原型 → ws:
+    expect(body.unassigned.map((i) => i.name)).toEqual(["old.md"])
+    expect(body.prototype.map((i) => i.name).sort()).toEqual(["other.md", "taskboard-v2.html"])
+    for (const item of body.prototype) {
       expect(item.path.startsWith("ws:")).toBe(true)
+      expect(item.kind).toBe("prototype")
     }
     // 噪声与越界面：dotfile / home 根文件 / 非 prototype 仓文件绝迹
-    const allPaths = body.groups.flatMap((g) => g.items.map((i) => i.path))
+    const allPaths = [...phase.items, ...phase.rounds.flatMap((r) => r.items), ...body.unassigned, ...body.prototype].map((i) => i.path)
     expect(allPaths.some((p) => p.includes(".hidden") || p.includes("outside") || p.includes("DS_Store") || p.includes("README"))).toBe(false)
   })
 
-  it("缺文件 = 各空组优雅降级（200 + 五组齐、items 全空）", async () => {
+  it("缺文件 = 空 phases / 空 unassigned / 空 prototype 优雅降级（200 不 404）", async () => {
     const taskId = await createTask("E2E_TDM empty degrade")
     const res = await app.request(`/api/tasks/${taskId}/artifacts/manifest`)
     expect(res.status).toBe(200)
     const body = await res.json() as ManifestBody
-    expect(body.groups.map((g) => g.key)).toEqual(["spec", "report", "evidence", "ledger", "prototype"])
-    for (const g of body.groups) expect(g.items).toEqual([])
+    expect(body.phases).toEqual([])
+    expect(body.unassigned).toEqual([])
+    expect(body.prototype).toEqual([])
+  })
+
+  it("有文件但无 phase 定义 → 全部落 unassigned（旧布局可读）", async () => {
+    const taskId = await createTask("E2E_TDM no phases")
+    writeHome(taskId, ".scratch/some-batch/spec.md", "# legacy")
+    const res = await app.request(`/api/tasks/${taskId}/artifacts/manifest`)
+    expect(res.status).toBe(200)
+    const body = await res.json() as ManifestBody
+    expect(body.phases).toEqual([])
+    expect(body.unassigned.map((i) => i.name)).toEqual(["spec.md"])
   })
 
   it("任务不存在 → 404", async () => {

@@ -6,6 +6,7 @@ import {
   MIN_WINDOW_WIDTH,
   TITLE_BAR_HEIGHT,
   cascadeRect,
+  centerInViewport,
   clampRect,
   maximizeRect,
   missionLayout,
@@ -65,6 +66,16 @@ describe('window-geometry', () => {
     const tiny = cascadeRect({ width: 700, height: 500 }, 0, { width: 1240, height: 760 })
     expect(tiny.w).toBe(700)
     expect(tiny.h).toBe(500)
+  })
+
+  it('centers a module window in the browser viewport (removes container left offset)', () => {
+    const rect = cascadeRect({ width: 1180, height: 800 }, 0, { width: 1120, height: 720 })
+    const centered = centerInViewport(rect, 236, 1600)
+    // 容器坐标 = 视口中心 - 容器左偏移：大窗口不再偏右
+    expect(centered.x).toBe(Math.round((1600 - 1120) / 2 - 236))
+    expect(centered.y).toBe(rect.y)
+    expect(centered.w).toBe(1120)
+    expect(centered.h).toBe(720)
   })
 
   it('resizes from every direction and enforces the minimum size', () => {

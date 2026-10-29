@@ -89,6 +89,14 @@ export function maximizeRect(stage: Size): Rect {
   return { x: 0, y: 0, w: Math.max(1, stage.width), h: Math.max(1, stage.height) }
 }
 
+/** 模块窗口打开时以「整个浏览器视口」水平居中的锚点（2026-10-29 用户）。
+ *  TaskModulesLayer 的容器是侧栏右侧的聊天区，容器中心比视口中心偏右
+ *  （约 sidebar/2），大窗口按容器居中会看起来偏右。这里用容器左偏移把 x
+ *  换回视口坐标；只影响「打开时」的位置，拖拽/已持久化的位置不动。 */
+export function centerInViewport(rect: Rect, containerLeft: number, viewportWidth: number): Rect {
+  return { ...rect, x: Math.round((viewportWidth - rect.w) / 2 - containerLeft) }
+}
+
 export function resizeRect(
   start: Rect,
   direction: ResizeDirection,

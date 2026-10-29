@@ -23,7 +23,7 @@ export function ArtifactsWindow({ taskId, versionKey }: { taskId: string; versio
   }, [taskId, versionKey])
 
   return (
-    <div className="h-full min-h-0 overflow-y-auto" data-testid="artifacts-window">
+    <div className="h-full min-h-0 overflow-hidden" data-testid="artifacts-window">
       <ArtifactsTab taskId={taskId} body={body} loading={loading} />
     </div>
   )

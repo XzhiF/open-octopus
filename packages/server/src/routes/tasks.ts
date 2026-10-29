@@ -443,10 +443,10 @@ export function createTasksRoutes(
     }
   })
 
-  // ── 票 11 ▣ 产物分组清单（⑩真机回补 — 唯一新增薄 seam）────────────────
-  // GET /:id/artifacts/manifest — 五组磁盘直扫（需求票面/报告/证据/台账/原型）。
-  // 票面原文路径 /artifacts 已被票 06 产物索引占用（数组响应不可改形），分组
-  // 清单落同子树新叶；缺目录 = 空组降级 200，任务缺 = 404。
+  // ── 票 11 ▣ 产物清单（2026-10-29 方案2 — phase × 轮次）──────────────────
+  // GET /:id/artifacts/manifest — 按 phase 批次目录归属 + 文件名 `-rN` 归轮；
+  // 系统文件（manifest/context/skills/workflows）不进清单，`.scratch` 之外的
+  // 旧布局文件落 unassigned，工作区原型单列。缺目录 = 空数组降级 200，任务缺 = 404。
   // GET /:id/artifacts/manifest/content?path=home:…|ws:… — 预览现读。`..` 遍历
   // 段 = 输入缺陷 → 400；绝对/未知前缀/白名单区外/逃逸 = 403；缺文件 404；
   // 超读取上限 413（ArtifactAccessError 分类与 home-file 门同款）。

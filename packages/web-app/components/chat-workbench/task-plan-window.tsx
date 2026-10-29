@@ -2,22 +2,22 @@
 
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import type { TaskDetail, TaskView } from '@/lib/tasks-api'
-import { getTask } from '@/lib/tasks-api'
+import { getArtifactManifest, getTask } from '@/lib/tasks-api'
+import type { ArtifactManifestBody } from '@/lib/types'
 import { listBuiltInWorkflows, type BuiltInWorkflowSummary } from '@/lib/workflow-presets-api'
 import { SpecPanel } from '@/components/tasks/authoring/spec-panel'
 import { useBatchTree } from '@/components/tasks/authoring/use-batch-tree'
-import { useHomeTree } from '@/components/tasks/authoring/use-home-tree'
 import { computeSpecRows, type SpecGateHits } from '@/components/tasks/authoring/spec-gate'
 import { Spinner } from '@/components/ui/spinner'
 
 const EMPTY_HITS: SpecGateHits = { phases: [], spec: [], bind: [], inputs: [], repos: [], runbook: [] }
 
-/** Read-only plan/artifacts as a task window (same SpecPanel as the overview). */
-export function TaskPlanWindow({ task }: { task: TaskView }) {
+/** Read-only plan window (spec editing surface); artifacts live in their own window. */
+export function TaskPlanWindow({ task, onOpenArtifacts }: { task: TaskView; onOpenArtifacts?: () => void }) {
   const [detail, setDetail] = useState<TaskDetail | null>(null)
   const [catalog, setCatalog] = useState<BuiltInWorkflowSummary[]>([])
+  const [artifacts, setArtifacts] = useState<ArtifactManifestBody | null>(null)
   const batchTree = useBatchTree(task.id, { versionKey: detail?.version })
-  const home = useHomeTree(task.id, { versionKey: detail?.version })
 
   const refresh = useCallback(async () => {
     try {
@@ -31,6 +31,15 @@ export function TaskPlanWindow({ task }: { task: TaskView }) {
     void refresh()
     listBuiltInWorkflows().then(setCatalog).catch(() => setCatalog([]))
   }, [refresh])
+
+  // 产出摘要只读清单（phase × 轮次）；随任务 version 刷新，不占规格窗口的写路径。
+  useEffect(() => {
+    let alive = true
+    getArtifactManifest(task.id)
+      .then((body) => { if (alive) setArtifacts(body) })
+      .catch(() => { if (alive) setArtifacts(null) })
+    return () => { alive = false }
+  }, [task.id, detail?.version])
 
   const spec = detail?.task_spec
   const rows = useMemo(() => {
@@ -62,7 +71,8 @@ export function TaskPlanWindow({ task }: { task: TaskView }) {
       batchTree={batchTree}
       rows={rows}
       gateHits={EMPTY_HITS}
-      home={home}
+      artifacts={artifacts}
+      onOpenArtifacts={onOpenArtifacts}
       readOnly
     />
   )
