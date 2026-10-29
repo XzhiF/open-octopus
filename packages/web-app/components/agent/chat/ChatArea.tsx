@@ -884,13 +884,15 @@ export function ChatArea({
                           <PopoverTrigger asChild>
                             <button
                               type="button"
+                              title={contextUsageTitle}
                               className={cn(
                                 'flex h-[22px] shrink-0 items-center rounded-[7px] border border-transparent px-1.5 text-[11px] transition-colors hover:bg-pop-paper hover:text-pop-ink',
                                 contextExpanded ? 'border-pop-bd bg-pop-paper text-pop-ink' : 'text-pop-ink/90',
                               )}
                               data-tui-ctx
                             >
-                              {'ctx '}{/* fmt-ok: 终端角标百分比 */}{contextUsage.estimated ? '~' : ''}{contextUsage.percentage.toFixed(0)}%{contextExpanded ? ' ▴' : ' ▾'}
+                              {/* 2026-10-29 用户：角标要能直接看到用了多少 —— ctx 80.1K 8% */}
+                              {'ctx '}{formatTokenCount(contextUsage.totalTokens)}{' '}{contextUsage.estimated ? '~' : ''}{contextUsage.percentage.toFixed(0)}%{/* fmt-ok: 终端角标百分比 */}{contextExpanded ? ' ▴' : ' ▾'}
                             </button>
                           </PopoverTrigger>
                           <PopoverContent
@@ -1052,7 +1054,7 @@ export function ChatArea({
                         contextExpanded && 'border-pop-bd bg-pop-paper text-pop-ink',
                       )}
                     >
-                      <span>{'ctx '}{/* fmt-ok: percentage 量纲未经 server 核实（providers wire），待查后收编；角标取整对齐原型 */}{contextUsage.estimated ? '~' : ''}{contextUsage.percentage.toFixed(0)}%</span>
+                      <span>{'ctx '}{formatTokenCount(contextUsage.totalTokens)}{' '}{contextUsage.estimated ? '~' : ''}{contextUsage.percentage.toFixed(0)}%{/* fmt-ok: percentage 量纲未经 server 核实（providers wire），待查后收编；角标取整对齐原型 */}</span>
                       <span aria-hidden className="text-[8px]">{contextExpanded ? '▴' : '▾'}</span>
                     </button>
                   </PopoverTrigger>

@@ -596,7 +596,8 @@ export interface LLMCallData {
   /** 账本来源枚举（global_chat / clone_chat / session_compress / workflow…）。
    *  逐轮统计要剔除后台压缩行，故保留。 */
   source_path?: string
-  cost_usd?: number
+  /** 派生自 llm_calls_costed 视图；未配价的模型行 = null（三态，不焊 0）。 */
+  cost_usd?: number | null
 }
 
 /** C3 wire：server ledger 的 totals 结构（跨端共享形状）。 */

@@ -33,6 +33,10 @@ export interface TurnStats {
   cacheCreationTokens: number
   /** 0–1；无输入类 token → null（不造假 0%）。 */
   cacheHitRate: number | null
+  /** 本轮估算费用（USD，账本 cost_usd 按行求和）；整轮都没定价 → null。 */
+  costUsd: number | null
+  /** 是否每一行都配到了价；false 时金额带「≈」前缀（已知部分和）。 */
+  costComplete: boolean
   /** 本轮实际命中的模型（去重、保持首次出现顺序；标题生成等辅助轮可能多一个）。 */
   models: string[]
 }
@@ -61,6 +65,8 @@ function statsFromRows(rows: readonly LLMCallData[]): TurnStats {
   let cacheCreationTokens = 0
   let spanStart: number | null = null
   let spanEnd: number | null = null
+  let costUsd: number | null = null
+  let costComplete = true
   const models: string[] = []
   for (const r of rows) {
     inputTokens += r.input_tokens ?? 0
@@ -68,6 +74,12 @@ function statsFromRows(rows: readonly LLMCallData[]): TurnStats {
     cacheReadTokens += r.cache_read_tokens ?? 0
     cacheCreationTokens += r.cache_creation_tokens ?? 0
     if (r.model && !models.includes(r.model)) models.push(r.model)
+    // 账本视图 llm_calls_costed 的派生列：未配价 = null（不焊 0）。
+    if (typeof r.cost_usd === 'number' && Number.isFinite(r.cost_usd)) {
+      costUsd = (costUsd ?? 0) + r.cost_usd
+    } else {
+      costComplete = false
+    }
     const end = r.timestamp
     const start = end - (r.duration_ms ?? 0)
     if (Number.isFinite(start)) spanStart = spanStart == null ? start : Math.min(spanStart, start)
@@ -80,6 +92,8 @@ function statsFromRows(rows: readonly LLMCallData[]): TurnStats {
     tokens: inputTokens + outputTokens + cacheReadTokens + cacheCreationTokens,
     ...usage,
     cacheHitRate: cacheHitRateOf(usage),
+    costUsd,
+    costComplete,
     models,
   }
 }

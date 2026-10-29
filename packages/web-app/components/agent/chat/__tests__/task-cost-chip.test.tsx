@@ -17,6 +17,16 @@ const PAYLOAD: TaskUsagePayload = {
     totalCalls: 40,
     usage: { inputTokens: 50000, outputTokens: 20000, cacheReadTokens: 1600000, cacheCreationTokens: 80000 },
     totals: { tokens: 1750000, cost: { usd: 1.2, complete: true }, cacheHitRate: 0.918 },
+    modelBreakdown: {
+      "claude-opus-5": {
+        calls: 30, inputTokens: 40000, outputTokens: 18000,
+        cacheReadTokens: 1400000, cacheCreationTokens: 70000, costUsd: 1.0,
+      },
+      "claude-haiku-5-5": {
+        calls: 10, inputTokens: 10000, outputTokens: 2000,
+        cacheReadTokens: 200000, cacheCreationTokens: 10000, costUsd: 0.2,
+      },
+    },
   },
   breakdown: [
     {
@@ -49,6 +59,20 @@ describe("TaskCostChip — 台账全集", () => {
   it("来源行自带四项 tooltip（含请求数）", () => {
     openPopover()
     expect(screen.getByTitle(/12 次请求 · 输入 .* \/ 输出 .* \/ 缓存读 .* \/ 缓存写/)).toBeInTheDocument()
+  })
+
+  it("按模型分解（2026-10-29）：模型名 / 次数 / 处理量 / 费用，按处理量降序", () => {
+    openPopover()
+    const block = screen.getByTestId("model-breakdown")
+    expect(block.textContent).toContain("claude-opus-5")
+    expect(block.textContent).toContain("30 次")
+    expect(block.textContent).toContain("claude-haiku-5-5")
+    // opus 处理量更大 → 排在前面
+    expect(block.textContent!.indexOf("claude-opus-5")).toBeLessThan(block.textContent!.indexOf("claude-haiku-5-5"))
+    // 费用跟随计费设置（1.0 USD × 7）
+    expect(block.textContent).toContain("¥7.00")
+    // 触发钮 tooltip 也带模型名
+    expect(document.querySelector('[data-task-cost]')!.getAttribute("title")).toContain("claude-opus-5")
   })
 
   it("零调用不渲染 chip；placeholder 出占位", () => {

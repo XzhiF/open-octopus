@@ -7,7 +7,8 @@
 
 "use client"
 
-import { useEffect, useState } from "react"
+import { useEffect, useMemo, useState } from "react"
+import { ChevronDown, ChevronRight, FileText, Folder, FolderOpen } from "lucide-react"
 import { toast } from "sonner"
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { Spinner } from "@/components/ui/spinner"
@@ -17,6 +18,142 @@ import type { ArtifactManifestBody, ArtifactManifestItem } from "@/lib/types"
 import { previewTruncate } from "./artifacts-model"
 
 const PREVIEW_MAX = 20_000
+
+/** 门牌前缀 → 树根名（home: 任务 home / ws: 工作区）。 */
+const ROOT_LABEL: Record<string, string> = { 'home:': '任务目录', 'ws:': '工作区' }
+
+interface TreeNode {
+  name: string
+  dir: boolean
+  /** 文件才有：原始引用路径（home:… / ws:…）。 */
+  path?: string
+  item?: ArtifactManifestItem
+  children: TreeNode[]
+}
+
+/** 把 `home:.scratch/a/b.md` / `ws:public/x.html` 折成目录树（2026-10-29 用户：
+ *  产物要按目录树/文件展示，而不是平铺清单）。 */
+export function buildArtifactTree(items: readonly ArtifactManifestItem[]): TreeNode[] {
+  const roots: TreeNode[] = []
+  const insert = (nodes: TreeNode[], parts: string[], item: ArtifactManifestItem): void => {
+    const [head, ...rest] = parts
+    if (!head) return
+    const dir = rest.length > 0
+    let node = nodes.find((n) => n.name === head && n.dir === dir)
+    if (!node) {
+      node = { name: head, dir, children: [] }
+      nodes.push(node)
+    }
+    if (!dir) {
+      node.item = item
+      node.path = item.path
+      return
+    }
+    insert(node.children, rest, item)
+  }
+  for (const item of items) {
+    const m = item.path.match(/^([a-z]+:)(.*)$/)
+    const prefix = m ? m[1] : ''
+    const rest = (m ? m[2] : item.path).split(/[\\/]+/).filter(Boolean)
+    insert(roots, [prefix, ...rest], item)
+  }
+  const sort = (nodes: TreeNode[]) => {
+    nodes.sort((a, b) => (a.dir === b.dir ? a.name.localeCompare(b.name) : a.dir ? -1 : 1))
+    for (const n of nodes) sort(n.children)
+  }
+  sort(roots)
+  return roots
+}
+
+function TreeNodes({ nodes, onPreview, onCopy }: {
+  nodes: TreeNode[]
+  onPreview: (item: ArtifactManifestItem) => void
+  onCopy: (item: ArtifactManifestItem) => void
+}) {
+  return (
+    <>
+      {nodes.map((node) => node.dir || !node.item
+        ? <TreeFolder key={`d:${node.name}`} node={node} onPreview={onPreview} onCopy={onCopy} />
+        : <TreeFile key={node.item.path} item={node.item} onPreview={onPreview} onCopy={onCopy} />)}
+    </>
+  )
+}
+
+function TreeFolder({ node, onPreview, onCopy }: {
+  node: TreeNode
+  onPreview: (item: ArtifactManifestItem) => void
+  onCopy: (item: ArtifactManifestItem) => void
+}) {
+  const [open, setOpen] = useState(true)
+  const label = ROOT_LABEL[node.name] ?? node.name
+  return (
+    <div>
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        data-testid="artifact-folder"
+        className="flex w-full items-center gap-1.5 rounded px-1.5 py-1 text-left text-[11.5px] text-pop-dim transition-colors hover:bg-white/[0.04] hover:text-pop-ink"
+        title={node.name}
+      >
+        {open ? <ChevronDown className="size-3 shrink-0" /> : <ChevronRight className="size-3 shrink-0" />}
+        {open
+          ? <FolderOpen className="size-3.5 shrink-0 text-pop-amber" strokeWidth={1.8} />
+          : <Folder className="size-3.5 shrink-0 text-pop-amber" strokeWidth={1.8} />}
+        <span className="truncate font-medium">{label}</span>
+      </button>
+      {open && (
+        <div className="ml-2.5 border-l border-white/[0.07] pl-2">
+          <TreeNodes nodes={node.children} onPreview={onPreview} onCopy={onCopy} />
+        </div>
+      )}
+    </div>
+  )
+}
+
+function TreeFile({ item, onPreview, onCopy }: {
+  item: ArtifactManifestItem
+  onPreview: (item: ArtifactManifestItem) => void
+  onCopy: (item: ArtifactManifestItem) => void
+}) {
+  return (
+    <div
+      data-testid="artifact-row"
+      data-artifact-key={item.path}
+      className="group flex flex-wrap items-center gap-x-2 rounded px-1.5 py-1 text-[11.5px] transition-colors hover:bg-white/[0.04]"
+    >
+      <FileText className="size-3.5 shrink-0 text-pop-dim" strokeWidth={1.7} />
+      <span className="min-w-0 max-w-[300px] truncate font-semibold text-pop-ink/90" title={item.path}>{item.name}</span>
+      <span className="shrink-0 font-mono text-[10px] text-pop-dim">{formatBytes(item.bytes)}</span>
+      <span className="ml-auto flex shrink-0 gap-1">
+        <button
+          onClick={() => onPreview(item)}
+          data-testid="artifact-preview-btn"
+          className="rounded border-[1.5px] border-pop-bd bg-pop-paper px-1.5 py-px font-mono text-[10px] font-black text-pop-dim transition-colors hover:border-pop-bd hover:text-pop-ink"
+          title="对话框现读文本（守卫门：白名单区内、超上限拒读）"
+        >
+          ▶ 预览
+        </button>
+        <button
+          onClick={() => { void onCopy(item) }}
+          data-testid="artifact-copy-btn"
+          className="rounded border-[1.5px] border-pop-bd bg-pop-paper px-1.5 py-px font-mono text-[10px] font-black text-pop-dim transition-colors hover:border-pop-bd hover:text-pop-ink"
+          title="复制产物引用路径"
+        >
+          ⧉ 路径
+        </button>
+      </span>
+    </div>
+  )
+}
+
+function ArtifactTreeSection({ items, onPreview, onCopy }: {
+  items: ArtifactManifestItem[]
+  onPreview: (item: ArtifactManifestItem) => void
+  onCopy: (item: ArtifactManifestItem) => void
+}) {
+  const tree = useMemo(() => buildArtifactTree(items), [items])
+  return <TreeNodes nodes={tree} onPreview={onPreview} onCopy={onCopy} />
+}
 
 export function ArtifactsTab({ taskId, body, loading }: { taskId: string; body: ArtifactManifestBody | null; loading: boolean }) {
   const [preview, setPreview] = useState<ArtifactManifestItem | null>(null)
@@ -54,35 +191,8 @@ export function ArtifactsTab({ taskId, body, loading }: { taskId: string; body: 
         groups.filter((g) => g.items.length > 0).map((g) => (
           <section key={g.key} data-testid={`artifacts-group-${g.key}`}>
             <div className="mb-1 font-mono text-[9.5px] font-black tracking-[.09em] text-pop-dim">{g.label}</div>
-            <div className="space-y-1">
-              {g.items.map((item) => (
-                <div
-                  key={item.path}
-                  data-testid="artifact-row"
-                  data-artifact-key={item.path}
-                  className="flex flex-wrap items-center gap-x-2 rounded-md border border-border bg-pop-idle/40 px-2.5 py-1.5 text-[11.5px]"
-                >
-                  <span className="min-w-0 max-w-[220px] truncate font-semibold" title={item.name}>{item.name}</span>
-                  <span className="min-w-0 max-w-[280px] truncate font-mono text-[10px] text-muted-foreground" title={item.path}>{item.path}</span>
-                  <span className="shrink-0 font-mono text-[10px] text-pop-dim">{formatBytes(item.bytes)}</span>
-                  <button
-                    onClick={() => setPreview(item)}
-                    data-testid="artifact-preview-btn"
-                    className="ml-auto shrink-0 rounded border-[1.5px] border-pop-bd bg-pop-paper px-1.5 py-px font-mono text-[10px] font-black text-pop-dim transition-colors hover:border-pop-bd hover:text-pop-ink"
-                    title="对话框现读文本（守卫门：白名单区内、超上限拒读）"
-                  >
-                    ▶ 预览
-                  </button>
-                  <button
-                    onClick={() => { void copyPath(item) }}
-                    data-testid="artifact-copy-btn"
-                    className="shrink-0 rounded border-[1.5px] border-pop-bd bg-pop-paper px-1.5 py-px font-mono text-[10px] font-black text-pop-dim transition-colors hover:border-pop-bd hover:text-pop-ink"
-                    title="复制产物引用路径"
-                  >
-                    ⧉ 路径
-                  </button>
-                </div>
-              ))}
+            <div className="rounded-md border border-border bg-pop-idle/25 p-1">
+              <ArtifactTreeSection items={g.items} onPreview={setPreview} onCopy={copyPath} />
             </div>
           </section>
         ))

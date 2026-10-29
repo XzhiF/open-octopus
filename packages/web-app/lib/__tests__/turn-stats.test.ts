@@ -68,11 +68,13 @@ describe("buildTurnStats — 账本归属", () => {
         id: "c1", timestamp: T0 + 90_000, duration_ms: 90_000,
         model: "claude-opus-5",
         input_tokens: 1000, output_tokens: 200, cache_read_tokens: 800, cache_creation_tokens: 100,
+        cost_usd: 0.05,
       }),
       call({
         id: "c2", timestamp: T0 + 94_000, duration_ms: 4_000,
         model: "claude-haiku-5-5",
         input_tokens: 100, output_tokens: 50, cache_read_tokens: 950,
+        cost_usd: 0.02,
       }),
     ]
     const stats = buildTurnStats(messages, calls).get("a-1")!
@@ -85,6 +87,28 @@ describe("buildTurnStats — 账本归属", () => {
     expect(stats.tokens).toBe(3200)
     expect(stats.cacheHitRate).toBeCloseTo(1750 / 2950, 5)
     expect(stats.models).toEqual(["claude-opus-5", "claude-haiku-5-5"])
+    // 费用 = 账本行 cost_usd 求和；行都配到价 → complete
+    expect(stats.costUsd).toBeCloseTo(0.07, 10)
+    expect(stats.costComplete).toBe(true)
+  })
+
+  it("费用三态：有未定价行 → 已知部分和 + complete=false；整轮未定价 → null", () => {
+    const messages = [
+      msg({ id: "u-1", role: "user", created_at: iso(T0) }),
+      assistantWithProcess(T0 + 5_000),
+    ]
+    const partial = buildTurnStats(messages, [
+      call({ id: "c1", timestamp: T0 + 90_000, duration_ms: 90_000, cost_usd: 0.05 }),
+      call({ id: "c2", timestamp: T0 + 91_000, duration_ms: 1_000, cost_usd: null }),
+    ]).get("a-1")!
+    expect(partial.costUsd).toBeCloseTo(0.05, 10)
+    expect(partial.costComplete).toBe(false)
+
+    const unpriced = buildTurnStats(messages, [
+      call({ id: "c1", timestamp: T0 + 90_000, duration_ms: 90_000, cost_usd: null }),
+    ]).get("a-1")!
+    expect(unpriced.costUsd).toBeNull()
+    expect(unpriced.costComplete).toBe(false)
   })
 
   it("下一条用户消息切轮：上一轮的账本行不会被下一轮吞掉", () => {

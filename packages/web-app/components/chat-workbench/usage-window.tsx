@@ -8,7 +8,7 @@ import { getTaskUsage, type TaskUsagePayload } from '@/lib/tasks-api'
 import { formatCost, formatPercent, formatTokenCount } from '@/lib/format'
 import { useBillingCurrency } from '@/lib/billing-currency'
 import { Spinner } from '@/components/ui/spinner'
-import { UsageTotalsGrid } from '@/components/agent/chat/usage-totals-grid'
+import { UsageTotalsGrid, ModelBreakdownList } from '@/components/agent/chat/usage-totals-grid'
 
 function partTooltip(part: TaskUsagePayload['breakdown'][number]): string {
   const u = part.usage
@@ -61,6 +61,8 @@ export function UsageWindow({ taskId, versionKey }: { taskId: string; versionKey
       <div className="mb-3">
         <UsageTotalsGrid usage={summary} />
       </div>
+
+      <ModelBreakdownList models={summary.modelBreakdown} className="mb-3 rounded-lg border border-pop-bd/60 bg-pop-paper/40 px-2.5 py-1.5" />
 
       {breakdown.length === 0 ? (
         <div className="rounded-xl border border-dashed border-pop-bd px-4 py-10 text-center text-[11.5px] text-pop-dim">

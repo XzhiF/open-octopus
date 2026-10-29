@@ -55,9 +55,9 @@ describe("ChatArea ctx 估算标记", () => {
     estimated: true,
   }
 
-  it("估算值以 ctx ~N% 呈现，不冒充精确值", () => {
+  it("估算值以 ctx <已用> ~N% 呈现，不冒充精确值", () => {
     const { container } = render(<ChatArea {...baseProps} hasSession contextUsage={estimated} />)
-    expect(container.textContent).toContain("ctx ~50%") // 49.5 取整
+    expect(container.textContent).toContain("ctx 98.9K ~50%") // 49.5 取整；98.9K = totalTokens
   })
 
   it("provider 上报值不带 ~", () => {
@@ -68,7 +68,7 @@ describe("ChatArea ctx 估算标记", () => {
         contextUsage={{ ...estimated, estimated: undefined, percentage: 5, totalTokens: 43960, maxTokens: 967000 }}
       />,
     )
-    expect(container.textContent).toContain("ctx 5%")
+    expect(container.textContent).toContain("ctx 44.0K 5%")
     expect(container.textContent).not.toContain("ctx ~")
   })
 })

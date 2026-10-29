@@ -7,7 +7,8 @@
 import { useMemo, useState, type ReactNode } from 'react'
 import type { AgentMessage, MessageTimelineEntry, ToolCallRecord } from '@/lib/agent/types'
 import type { StreamTimelineItem } from '@/hooks/useAgentChat'
-import { formatDuration, formatPercent, formatTokenCount } from '@/lib/format'
+import { formatCost, formatDuration, formatTokenCount } from '@/lib/format'
+import { useBillingCurrency } from '@/lib/billing-currency'
 import type { TurnStats } from '@/lib/turn-stats'
 
 /** mini-markdown：`**bold**` / `行内 code` / 行首 # 标题 —— 消灭字面星号。 */
@@ -30,16 +31,95 @@ function TuiMark() {
   return <span aria-hidden data-tui-mark className="mr-1.5 align-baseline text-[11px] font-bold text-pop-pink/85">✳</span>
 }
 
-/** 工具行一句话摘要：name + 首个字符串参数（截断）。 */
+/** 工具行整行宽度预算（工具名 + 空格 + 参数）：工具名越长参数预算越小，
+ *  右缘能对齐。2026-10-29 用户：各行长度尽量一致，超了才省略。 */
+const TOOL_BRIEF_MAX = 76
+
+/** 「路径类」参数名：首参不是路径、工具另带路径时（Grep/Glob 的 pattern + path），
+ *  把目录附在简报尾部，否则只看到 pattern 不知道在哪儿搜。 */
+const PATH_KEYS = ['file_path', 'notebook_path', 'path', 'directory', 'dir', 'cwd', 'root']
+
+/** 像路径 = 带反斜杠，或带斜杠且不含空格（排除命令行 / 自然语言）。 */
+function isPathLike(s: string): boolean {
+  return s.includes('\\') || (s.includes('/') && !/\s/.test(s))
+}
+
+/** 头：从盘符开始按整段追加，最多占预算 35%——目录名永远不切断。 */
+function takeHead(parts: string[], cap: number, sep: string): string[] {
+  const head: string[] = []
+  for (const p of parts) {
+    if (head.length >= parts.length - 1) break
+    const next = head.length ? `${head.join(sep)}${sep}${p}` : p
+    if (next.length > cap) break
+    head.push(p)
+  }
+  if (head.length === 0) head.push(parts[0])
+  return head
+}
+
+/** 头 +「…」+ 从尾部尽量多的完整段；一段都放不下时只留文件名尾巴。 */
+function joinBrief(headParts: string[], parts: string[], sep: string, max: number): string {
+  const head = headParts.join(sep)
+  const budget = max - head.length - 2 // 「…」+ 省略号后补的分隔符
+  const tail: string[] = []
+  for (let i = parts.length - 1; i >= headParts.length; i--) {
+    const next = [parts[i], ...tail]
+    if (next.join(sep).length > budget) break
+    tail.unshift(parts[i])
+  }
+  if (tail.length === 0) {
+    // 兜底：连文件名都放不下 → 截掉前缀，保扩展名
+    const name = parts[parts.length - 1]
+    const keep = Math.max(12, max - 2)
+    return `…${sep}${name.length <= keep ? name : name.slice(-keep)}`
+  }
+  return `${head}…${sep}${tail.join(sep)}`
+}
+
+/** 长值简报：路径做「中段省略」——前几级目录 + 末几级目录/文件名都保留，
+ *  中间变「…」；命令类保留开头截断。
+ *  2026-10-29 用户两轮反馈：先别把文件名截掉；再是只剩末两级太短，
+ *  前面要多留路径，各行长度尽量接近。 */
+export function briefValue(value: string, max = 72): string {
+  const oneLine = value.trim().split('\n')[0]
+  if (oneLine.length <= max) return oneLine
+  if (!isPathLike(oneLine)) return `${oneLine.slice(0, max - 1)}…`
+  const sep = oneLine.includes('\\') ? '\\' : '/'
+  const parts = oneLine.split(/[\\/]+/).filter(Boolean)
+  if (parts.length < 2) return `${oneLine.slice(0, max - 1)}…`
+
+  const headCap = Math.max(8, Math.floor(max * 0.35))
+  let headParts = takeHead(parts, headCap, sep)
+  let out = joinBrief(headParts, parts, sep, max)
+  // 尾巴某一段太长、剩余预算吃不下时，退一级头再试（只在不浪费 >16 字符时）。
+  while (headParts.length > 1 && out.length < max - 16) {
+    const shorter = headParts.slice(0, -1)
+    const next = joinBrief(shorter, parts, sep, max)
+    if (next.length <= out.length) break
+    headParts = shorter
+    out = next
+  }
+  return out
+}
+
+/** 工具行一句话简报：工具名 + 主参数 —— 所有工具共用同一套压缩规则（不只 Read）。
+ *  首参不是路径、但工具另带路径时，尾部再附一段目录（预算内才加）。 */
 export function toolBrief(tc: ToolCallRecord): string {
   const inp = tc.input
-  if (inp && typeof inp === 'object') {
-    const first = Object.values(inp as Record<string, unknown>).find((v) => typeof v === 'string')
-    if (typeof first === 'string' && first.trim()) {
-      return `${tc.name} ${first.trim().split('\n')[0].slice(0, 60)}`
-    }
-  }
-  return tc.name
+  if (!inp || typeof inp !== 'object') return tc.name
+  const entries = Object.entries(inp as Record<string, unknown>)
+    .filter(([, v]) => typeof v === 'string' && (v as string).trim()) as [string, string][]
+  if (entries.length === 0) return tc.name
+  const [firstKey, firstValue] = entries[0]
+  const out = `${tc.name} ${briefValue(firstValue, Math.max(28, TOOL_BRIEF_MAX - tc.name.length - 1))}`
+  // 首参本身就是路径参数（Read/Edit/Write 的 file_path）→ 不再附加。
+  // 注意不能用「值像路径」判断：`**/*.tsx` 这类 glob 也带斜杠但没有空格。
+  if (PATH_KEYS.includes(firstKey)) return out
+  const pathEntry = entries.find(([k, v]) => k !== firstKey && PATH_KEYS.includes(k) && isPathLike(v))
+  if (!pathEntry) return out
+  const dirBudget = TOOL_BRIEF_MAX - out.length - 3 // 「 · 」占 3
+  if (dirBudget < 8) return out
+  return `${out} · ${briefValue(pathEntry[1], dirBudget)}`
 }
 
 function toolStatusMark(status: string): { glyph: string; cls: string } {
@@ -94,13 +174,17 @@ function ToolLine({ tc }: { tc: ToolCallRecord }) {
 /** 折叠的过程 meta：thinking / tool 按时间序（timeline 缺失时用字段兜底）。 */
 type MetaRow = { key: string; node: 'think' | 'tool' | 'frag'; text?: string; tc?: ToolCallRecord }
 
-function TuiMeta({ thinking, toolCalls, timeline, stats }: {
+function TuiMeta({ thinking, toolCalls, timeline, stats, interrupted }: {
   thinking?: string
   toolCalls?: ToolCallRecord[]
   timeline?: MessageTimelineEntry[]
   stats?: TurnStats
+  /** 本轮被用户截断 → 状态词换成「已中断」。 */
+  interrupted?: boolean
 }) {
   const [open, setOpen] = useState(false)
+  // 费用按计费设置折算（默认 CNY / 7）：与任务看板、计费页同一枚 formatCost。
+  const currency = useBillingCurrency()
   const rows = useMemo<MetaRow[]>(() => {
     // The server column can hand over a non-array (legacy "{}" rows) — treating
     // it as a list here would throw and blank the whole transcript.
@@ -140,92 +224,66 @@ function TuiMeta({ thinking, toolCalls, timeline, stats }: {
     ? formatDuration(stats.durationMs)
     : null
   const tokens = stats && stats.tokens > 0 ? formatTokenCount(stats.tokens) : null
-  const cachePct = stats?.cacheHitRate != null ? formatPercent(stats.cacheHitRate) : null
-  const cacheTitle = stats && cachePct != null
-    ? `缓存读 ${formatTokenCount(stats.cacheReadTokens)} / 写 ${formatTokenCount(stats.cacheCreationTokens)}`
-    : undefined
+  const cost = stats && stats.costUsd != null
+    ? formatCost(stats.costUsd, stats.costComplete, currency)
+    : null
+  const status = interrupted
+    ? { label: '已中断', cls: 'text-pop-red' }
+    : { label: '已完成', cls: 'text-pop-green' }
 
   return (
     <div className="my-1" data-tui-meta-root>
       <button
         type="button"
         onClick={() => setOpen((v) => !v)}
-        className="flex w-full select-none flex-wrap items-center gap-x-1.5 gap-y-1 rounded-[6px] bg-white/[0.035] px-2 py-[3px] text-left text-pop-dim transition-colors hover:bg-white/[0.06] hover:text-pop-ink"
+        className="flex w-full select-none flex-wrap items-center gap-x-1.5 gap-y-1 py-[2px] text-left text-pop-dim transition-colors hover:text-pop-ink"
         data-tui-meta={open ? 'open' : 'closed'}
         title={
-          'turn = 一条用户消息 + 助手这一整段回复。步数 = 思考段 + 工具调用 + 正文段；时长 / token / 缓存来自会话账本，旧轮没有账本行时只显示步数与次数。'
+          'turn = 一条用户消息 + 助手这一整段回复。步数 = 思考段 + 工具调用 + 正文段；时长 / token / 费用来自会话账本，旧轮没有账本行时只显示步数与次数。'
         }
       >
-        <span className="rounded-full bg-pop-pink px-1.5 text-[10px] font-extrabold leading-[15px] tracking-wider text-pop-bg">TURN</span>
-        <span className="font-semibold text-pop-pink">{rows.length} 步</span>
-        {/* 收起态显示全部摘要；展开后只留「TURN · N 步」，数字下移到明细行，避免重复。 */}
-        {!open && duration && (
+        {/* 收起 / 展开同一行摘要（2026-10-29 用户：展开不要重复上面的信息）。 */}
+        <span className={`font-semibold ${status.cls}`} data-tui-status>{status.label}</span>
+        {duration && (
           <>
-            <span className="text-pop-dim">·</span>
-            <span className="text-pop-pink tabular-nums" data-tui-duration>
-              {duration}
-            </span>
+            <span>·</span>
+            <span className="text-pop-pink tabular-nums" data-tui-duration>{duration}</span>
           </>
         )}
-        {!open && (
+        <span>·</span>
+        <span className="font-semibold text-pop-ink/85">{rows.length} 步</span>
+        <span>·</span>
+        <span className="text-pop-cyan" title={counts.failed > 0 ? `失败 ${counts.failed} 次` : '工具调用次数'}>
+          工具 {counts.tools}
+        </span>
+        <span>·</span>
+        <span className="text-pop-purple">思考 {counts.thinks}</span>
+        {tokens && (
           <>
-            <span className="text-pop-dim">·</span>
-            <span className="text-pop-cyan">工具 {counts.tools}</span>
-            <span className="text-pop-dim">·</span>
-            <span className="text-pop-purple">思考 {counts.thinks}</span>
-          </>
-        )}
-        {!open && tokens && (
-          <>
-            <span className="text-pop-dim">·</span>
+            <span>·</span>
             <span className="text-pop-green tabular-nums">{tokens} tok</span>
           </>
         )}
-        {!open && cachePct && (
+        {cost && (
           <>
-            <span className="text-pop-dim">·</span>
-            <span className="text-pop-amber tabular-nums" title={cacheTitle}>缓存 {cachePct}</span>
+            <span>·</span>
+            <span
+              className="text-pop-amber tabular-nums"
+              title={stats!.costComplete
+                ? '账本价表估算（币种跟随计费设置）'
+                : '账本价表估算：含未定价模型，≈ = 已知部分和'}
+            >
+              {cost}
+            </span>
           </>
         )}
-        <span className="ml-auto pl-2">{open ? '▾' : '▸'}</span>
+        {/* 箭头紧跟最后一个数字（2026-10-29 用户：不要再被推到最右） */}
+        <span aria-hidden>{open ? '▾' : '▸'}</span>
       </button>
       {open && (
         <div className="mt-1" data-tui-meta-body>
-          {/* 展开态：纯文本统计行 + 原步骤列表。 */}
-          <div className="mb-1 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[10.5px] text-pop-dim" data-tui-stats-line>
-            {duration && (
-              <span className="text-pop-pink tabular-nums" title="本轮耗时（账本首尾 call；旧轮无账本行不显示）">
-                {duration}
-              </span>
-            )}
-            <span className="text-pop-cyan" title="工具调用次数 / 失败次数">
-              工具 {counts.tools}{counts.failed > 0 ? `（失败 ${counts.failed}）` : ''}
-            </span>
-            <span className="text-pop-purple" title="思考段数（timeline 里 thinking 段，不是字数）">
-              思考 {counts.thinks}
-            </span>
-            {stats && stats.tokens > 0 && (
-              <span
-                className="text-pop-green tabular-nums"
-                title={`输入 ${formatTokenCount(stats.inputTokens)} · 输出 ${formatTokenCount(stats.outputTokens)} · 含缓存合计 ${formatTokenCount(stats.tokens)}`}
-              >
-                输入 {formatTokenCount(stats.inputTokens)} · 输出 {formatTokenCount(stats.outputTokens)} · 合计 {formatTokenCount(stats.tokens)} tok
-              </span>
-            )}
-            {cachePct && stats && (
-              <span className="text-pop-amber" title="缓存命中率 = cacheRead ÷ (input + cacheRead + cacheCreation)">
-                缓存命中 {cachePct}（读 {formatTokenCount(stats.cacheReadTokens)} / 写 {formatTokenCount(stats.cacheCreationTokens)}）
-              </span>
-            )}
-            {stats && stats.calls > 1 && (
-              <span title="本轮 llm_calls 行数（重试 = 新行）">{stats.calls} 次请求</span>
-            )}
-            {stats && stats.models.length > 0 && (
-              <span title={stats.models.join(' · ')}>
-                {stats.models[0]}{stats.models.length > 1 ? ` +${stats.models.length - 1}` : ''}
-              </span>
-            )}
-          </div>
+          {/* 展开态只有步骤列表（2026-10-29 用户：输入/输出/缓存/模型这些明细不必再显示）。
+              统计信息全在上面那一行，展开不重复。 */}
           <div className="ml-3 space-y-0.5 border-l border-pop-bd pl-3">
             {rows.map((r) =>
               r.node === 'tool' && r.tc ? (
@@ -428,6 +486,7 @@ export function TuiMessage({ message }: { message: AgentMessage }) {
         toolCalls={message.tool_calls}
         timeline={timeline}
         stats={message.turnStats}
+        interrupted={message.interrupted}
       />
       {displayContent
         ? (

@@ -246,13 +246,13 @@ export function ComposerAttachPopover({
         align="start"
         sideOffset={8}
         data-testid="composer-plus-panel"
-        className="w-[392px] max-w-[calc(100vw_-_24px)] overflow-hidden rounded-[14px] border-[1.5px] border-pop-bd bg-pop-paper p-0 shadow-pop"
+        className="flex h-[452px] w-[490px] max-w-[calc(100vw_-_24px)] max-h-[var(--radix-popover-content-available-height,80vh)] flex-col overflow-hidden rounded-[14px] border-[1.5px] border-pop-bd bg-pop-paper p-0 shadow-pop"
         onOpenAutoFocus={(event) => {
           event.preventDefault()
           searchRef.current?.focus()
         }}
       >
-        <div className="flex items-center gap-2 border-b border-pop-bd/60 px-3 py-2.5">
+        <div className="flex shrink-0 items-center gap-2 border-b border-pop-bd/60 px-3 py-2.5">
           <span className="text-[12px] font-bold text-pop-ink">添加</span>
           {identityContext?.label && (
             <span
@@ -265,7 +265,7 @@ export function ComposerAttachPopover({
           <span className="ml-auto font-mono text-[10px] text-pop-dim">Esc</span>
         </div>
 
-        <div className="px-2.5 pb-1 pt-2">
+        <div className="shrink-0 px-2.5 pb-1 pt-2">
           <div className="relative">
             <Search
               className="pointer-events-none absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-pop-dim/70"
@@ -295,7 +295,7 @@ export function ComposerAttachPopover({
         </div>
 
         {/* 类别导航：以后 MCP / Prompt / 文件 直接在这里加一项。 */}
-        <div className="flex gap-1 px-2 pt-2" role="tablist" aria-label="添加类别">
+        <div className="flex shrink-0 gap-1 px-2 pt-2" role="tablist" aria-label="添加类别">
           <button
             type="button"
             role="tab"
@@ -355,7 +355,7 @@ export function ComposerAttachPopover({
           </button>
         </div>
 
-        <div className="mt-1 max-h-[322px] overflow-y-auto px-1.5 pb-1.5" data-plus-list>
+        <div className="mt-1 min-h-0 flex-1 overflow-y-auto px-1.5 pb-1.5" data-plus-list>
           {category === 'skill' ? (
             <div data-plus-group="skill" role="tabpanel" aria-label="技能">
               {/* 身份自带：只读，随身份生效 */}

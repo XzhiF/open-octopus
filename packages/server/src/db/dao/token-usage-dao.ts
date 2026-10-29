@@ -1,7 +1,7 @@
 import type Database from "better-sqlite3"
 import { BaseDAO } from "./base"
 import type { NodeTokenUsageRow, LlmCallRow } from "../types"
-import { LEDGER_SQL, costSummary, normalizeModelId, type TokenUsage, type LedgerTotals, type LedgerCost, type LedgerRow, type LlmUsageRow, type LlmUsageSummary } from "@octopus/shared"
+import { LEDGER_SQL, costSummary, normalizeModelId, type TokenUsage, type LedgerTotals, type LedgerCost, type LedgerRow, type LlmUsageRow, type LlmUsageSummary, type ModelUsageBreakdown } from "@octopus/shared"
 import { type NodeUsageSource } from "./usage-ledger"
 import { pricedCallsSql, PRICED_AGG } from "../price-sql"
 
@@ -331,6 +331,62 @@ export class TokenUsageDAO extends BaseDAO {
           usage,
           totals: { tokens: r.tokens ?? 0, cost: { usd: r.usd ?? null, complete: r.complete === 1 }, cacheHitRate: r.hit },
         })
+      }
+    }
+    return out
+  }
+
+  /**
+   * 「按模型」分解 —— 与 aggregateLlmCallsBy 同一套归属口径（session 侧只认
+   * `execution_id IS NULL`，execution 侧按 execution_id 归属，防双计），
+   * 供任务「消耗」窗口 / composer task chip 的模型行使用。
+   */
+  aggregateLlmCallsByModel(
+    sessionIds: readonly string[],
+    executionIds: readonly string[],
+  ): Record<string, ModelUsageBreakdown> {
+    const sessions = [...new Set(sessionIds)].filter((v) => typeof v === 'string' && v.length > 0)
+    const execs = [...new Set(executionIds)].filter((v) => typeof v === 'string' && v.length > 0)
+    const where: string[] = []
+    const params: unknown[] = []
+    if (sessions.length > 0) {
+      where.push(`(l.session_id IN (${sessions.map(() => '?').join(',')}) AND l.execution_id IS NULL)`)
+      params.push(...sessions)
+    }
+    if (execs.length > 0) {
+      where.push(`l.execution_id IN (${execs.map(() => '?').join(',')})`)
+      params.push(...execs)
+    }
+    if (where.length === 0) return {}
+
+    const { sql, params: pricedParams } = pricedCallsSql([`(${where.join(' OR ')})`], params)
+    const rows = this.db.prepare(`
+      SELECT COALESCE(q.model, 'unknown') AS model,
+             COUNT(*) AS calls,
+             SUM(q.input_tokens) AS i,
+             SUM(q.output_tokens) AS o,
+             SUM(q.cache_read_tokens) AS cr,
+             SUM(q.cache_creation_tokens) AS cc,
+             ${PRICED_AGG.sumCost('q')} AS usd,
+             ${PRICED_AGG.countPriced('q')} AS priced
+      FROM (${sql}) q
+      GROUP BY COALESCE(q.model, 'unknown')
+      ORDER BY COUNT(*) DESC
+    `).all(...pricedParams) as Array<{
+      model: string; calls: number; i: number; o: number; cr: number; cc: number
+      usd: number | null; priced: number
+    }>
+
+    const out: Record<string, ModelUsageBreakdown> = {}
+    for (const r of rows) {
+      out[r.model] = {
+        calls: r.calls,
+        inputTokens: r.i,
+        outputTokens: r.o,
+        cacheReadTokens: r.cr,
+        cacheCreationTokens: r.cc,
+        // 全部行未定价 → null（不焊 0）；部分定价 → 已知部分和。
+        costUsd: r.priced === 0 ? null : (r.usd ?? null),
       }
     }
     return out

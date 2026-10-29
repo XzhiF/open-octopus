@@ -8,7 +8,7 @@ import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover
 import { formatCost, formatPercent, formatTokenCount } from '@/lib/format'
 import { useBillingCurrency } from '@/lib/billing-currency'
 import type { TaskUsagePayload } from '@/lib/tasks-api'
-import { UsageTotalsGrid } from './usage-totals-grid'
+import { UsageTotalsGrid, ModelBreakdownList } from './usage-totals-grid'
 
 const CHIP_CLASS =
   'inline-flex h-[22px] shrink-0 items-center gap-1 rounded-full border px-2 font-mono text-[10.5px] leading-none tabular-nums transition-colors'
@@ -42,13 +42,16 @@ export function TaskCostChip({
   }
 
   const { summary } = usage
+  const models = Object.entries(summary.modelBreakdown ?? {})
+    .sort((a, b) => b[1].calls - a[1].calls)
+    .map(([name]) => name)
   return (
     <Popover>
       <PopoverTrigger asChild>
         <button
           type="button"
           data-task-cost
-          title={`任务周期 token 账 · tok ${formatTokenCount(summary.totals.tokens)} · cache ${formatPercent(summary.totals.cacheHitRate, 1)} · 点击看各轮明细`}
+          title={`任务周期 token 账 · tok ${formatTokenCount(summary.totals.tokens)} · cache ${formatPercent(summary.totals.cacheHitRate, 1)}${models.length > 0 ? ` · 模型 ${models.join(' / ')}` : ''} · 点击看各轮明细`}
           className={`${CHIP_CLASS} border-pop-cyan/40 bg-pop-cyan-soft text-pop-cyan hover:border-pop-cyan/70`}
         >
           <span className="text-pop-dim">task</span>
@@ -67,6 +70,8 @@ export function TaskCostChip({
         <div className="mb-2">
           <UsageTotalsGrid usage={summary} />
         </div>
+        {/* 按模型（2026-10-29 用户：chip 明细要能看到模型） */}
+        <ModelBreakdownList models={summary.modelBreakdown} className="mb-2 border-t border-pop-bd/60 pt-2" />
         <div className="max-h-64 space-y-0.5 overflow-y-auto">
           {usage.breakdown.map((part) => {
             const key = `${part.kind}:${part.session_id ?? part.execution_id ?? part.label}`

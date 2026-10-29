@@ -54,6 +54,7 @@ import {
   TaskSpecFieldError,
   mergeLlmUsageSummaries,
   type LlmUsageSummary,
+  type ModelUsageBreakdown,
 } from "@octopus/shared"
 import {
   TaskDAO,
@@ -244,8 +245,10 @@ export interface TaskUsagePart extends LlmUsageSummary {
 
 export interface TaskUsageDTO {
   task_id: string
-  /** Aggregate over every source below (same shape as the chat cost chip). */
-  summary: LlmUsageSummary
+  /** Aggregate over every source below (same shape as the chat cost chip).
+   *  modelBreakdown（2026-10-29 用户需求）：任务「消耗」窗口 / composer chip
+   *  要显示「这些 token 花在哪些模型上」。 */
+  summary: LlmUsageSummary & { modelBreakdown: Record<string, ModelUsageBreakdown> }
   breakdown: TaskUsagePart[]
 }
 
@@ -1206,7 +1209,12 @@ export class TasksService {
       })
     }
     const totals = mergeLlmUsageSummaries(breakdown) ?? EMPTY_LLM_USAGE
-    return { task_id: id, summary: totals, breakdown }
+    // 模型行与上面的 breakdown 同一组归属谓词（session 侧 execution_id IS NULL）。
+    const modelBreakdown = this.tokenUsage.aggregateLlmCallsByModel(
+      sessionIds,
+      execRows.map((e) => e.id),
+    )
+    return { task_id: id, summary: { ...totals, modelBreakdown }, breakdown }
   }
 
   /** task-phase-redesign (ticket 07): gather the three facts deriveTaskView

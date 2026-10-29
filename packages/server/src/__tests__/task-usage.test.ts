@@ -49,14 +49,16 @@ function insertCall(opts: {
   input: number
   output: number
   cacheRead?: number
+  model?: string
 }): void {
   db.prepare(`
     INSERT INTO llm_calls (id, execution_id, turn_index, call_index, model, timestamp, duration_ms,
       input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens, org, session_id)
-    VALUES (?, ?, 0, 0, 'claude-opus-5', ?, 1, ?, ?, ?, 0, ?, ?)
+    VALUES (?, ?, 0, 0, ?, ?, 1, ?, ?, ?, 0, ?, ?)
   `).run(
     `call-${seq++}`,
     opts.executionId ?? null,
+    opts.model ?? "claude-opus-5",
     Date.now(),
     opts.input,
     opts.output,
@@ -122,12 +124,33 @@ describe("taskUsage", () => {
     expect(usage.summary.usage.outputTokens).toBe(105)
   })
 
+  it("summary 附带按模型分解（2026-10-29）：口径同 breakdown，执行行不会算进会话侧", () => {
+    insertSession("s-model")
+    insertTask("t-model", "s-model", null)
+    insertExec("e-model", "t-model")
+    insertCall({ sessionId: "s-model", input: 100, output: 10, model: "claude-opus-5" })
+    insertCall({ executionId: "e-model", input: 300, output: 30, model: "claude-haiku-5-5" })
+    // 带 execution_id 的会话行：只走 execution 趟，不许再进 session 趟（防双计）
+    insertCall({ executionId: "e-model", sessionId: "s-model", input: 999, output: 99, model: "claude-opus-5" })
+
+    const usage = service.taskUsage("t-model")
+    const models = usage.summary.modelBreakdown
+    expect(Object.keys(models).sort()).toEqual(["claude-haiku-5-5", "claude-opus-5"])
+    expect(models["claude-opus-5"].calls).toBe(2)
+    expect(models["claude-opus-5"].inputTokens).toBe(1099)
+    expect(models["claude-haiku-5-5"].calls).toBe(1)
+    expect(models["claude-haiku-5-5"].outputTokens).toBe(30)
+    // 测试库没有价表 → 未定价 = null（不焊 0）
+    expect(models["claude-opus-5"].costUsd).toBeNull()
+  })
+
   it("empty task → zero totals, empty breakdown", () => {
     insertTask("t-empty", null, null)
     const usage = service.taskUsage("t-empty")
     expect(usage.breakdown).toEqual([])
     expect(usage.summary.totalCalls).toBe(0)
     expect(usage.summary.totals.tokens).toBe(0)
+    expect(usage.summary.modelBreakdown).toEqual({})
   })
 
   it("unknown task → 404-shaped error", () => {

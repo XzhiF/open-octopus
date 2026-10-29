@@ -20,6 +20,7 @@ import type {
   AssistWorkflowRun,
   TaskPhaseStatus,
   LlmUsageSummary,
+  ModelUsageBreakdown,
 } from "@octopus/shared"
 
 // ── Task read-model aliases (ADR-0021 票05) ─────────────────────────
@@ -651,7 +652,8 @@ export interface TaskUsagePart extends LlmUsageSummary {
 
 export interface TaskUsagePayload {
   task_id: string
-  summary: LlmUsageSummary
+  /** 账本合计 + 按模型分解（2026-10-29：任务「消耗」窗口与 composer chip 的模型行）。 */
+  summary: LlmUsageSummary & { modelBreakdown?: Record<string, ModelUsageBreakdown> }
   breakdown: TaskUsagePart[]
 }
 
