@@ -375,6 +375,7 @@ class ChatEventBridge {
   }): void {
     if (!this.db) return
     const now = new Date().toISOString()
+    const payload = (input.event.payload ?? {}) as Record<string, unknown>
     const activity = {
       kind: input.event.kind,
       severity: input.event.severity,
@@ -384,6 +385,9 @@ class ChatEventBridge {
       taskId: input.event.taskId ?? null,
       executionId: input.event.executionId ?? null,
       status: input.status,
+      // 对话里的运行卡要显示「P1 · R1」—— 事件载荷里有，落卡片时别丢。
+      phaseIndex: typeof payload.phaseIndex === 'number' ? payload.phaseIndex : null,
+      roundIndex: typeof payload.roundIndex === 'number' ? payload.roundIndex : null,
       actions: input.actions,
     }
     try {

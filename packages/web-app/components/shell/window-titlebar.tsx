@@ -7,6 +7,8 @@ import { cn } from '@/lib/utils'
 interface WindowTitlebarProps {
   title: string
   focused: boolean
+  /** pop = 全站贴纸窗；paper = 验收窗的亮纸壳。 */
+  tone?: 'pop' | 'paper'
   canDrag: boolean
   onClose: () => void
   onMinimize: () => void
@@ -19,6 +21,7 @@ interface WindowTitlebarProps {
 export function WindowTitlebar({
   title,
   focused,
+  tone = 'pop',
   canDrag,
   onClose,
   onMinimize,
@@ -73,8 +76,16 @@ export function WindowTitlebar({
     <div
       data-window-titlebar
       className={cn(
-        'relative flex h-9 shrink-0 select-none items-center border-b-[1.5px] border-pop-bd',
-        focused ? 'bg-pop-paper' : 'bg-pop-idle/70',
+        'relative flex h-9 shrink-0 select-none items-center border-b-[1.5px]',
+        tone === 'paper'
+          ? cn(
+              'border-[#e3e8df]',
+              focused ? 'bg-[#f9fbf7]' : 'bg-[#f4f7f1]',
+            )
+          : cn(
+              'border-pop-bd',
+              focused ? 'bg-pop-paper' : 'bg-pop-idle/70',
+            ),
         canDrag ? 'cursor-grab active:cursor-grabbing' : 'cursor-default',
       )}
       style={{ touchAction: 'none' }}
@@ -95,7 +106,9 @@ export function WindowTitlebar({
           onClick={onClose}
           className={cn(
             'relative grid size-3 cursor-default place-items-center rounded-full border transition-colors before:absolute before:-inset-1 before:rounded-full before:content-[""]',
-            focused ? 'border-pop-bd/40 bg-pop-red' : 'border-pop-bd bg-pop-idle',
+            tone === 'paper'
+              ? focused ? 'border-[#d98d79] bg-[#e2907c]' : 'border-[#dbe3d8] bg-[#e3e8df]'
+              : focused ? 'border-pop-bd/40 bg-pop-red' : 'border-pop-bd bg-pop-idle',
           )}
         >
           <X className="size-2 text-pop-bg opacity-0 transition-opacity group-hover/lights:opacity-80" />
@@ -107,7 +120,9 @@ export function WindowTitlebar({
           onClick={onMinimize}
           className={cn(
             'relative grid size-3 cursor-default place-items-center rounded-full border transition-colors before:absolute before:-inset-1 before:rounded-full before:content-[""]',
-            focused ? 'border-pop-bd/40 bg-pop-amber' : 'border-pop-bd bg-pop-idle',
+            tone === 'paper'
+              ? focused ? 'border-[#d9bb74] bg-[#e3c47c]' : 'border-[#dbe3d8] bg-[#e3e8df]'
+              : focused ? 'border-pop-bd/40 bg-pop-amber' : 'border-pop-bd bg-pop-idle',
           )}
         >
           <Minus className="size-2 text-pop-bg opacity-0 transition-opacity group-hover/lights:opacity-80" />
@@ -119,7 +134,9 @@ export function WindowTitlebar({
           onClick={onToggleMaximize}
           className={cn(
             'relative grid size-3 cursor-default place-items-center rounded-full border transition-colors before:absolute before:-inset-1 before:rounded-full before:content-[""]',
-            focused ? 'border-pop-bd/40 bg-pop-green' : 'border-pop-bd bg-pop-idle',
+            tone === 'paper'
+              ? focused ? 'border-[#89bc9b] bg-[#94c6a6]' : 'border-[#dbe3d8] bg-[#e3e8df]'
+              : focused ? 'border-pop-bd/40 bg-pop-green' : 'border-pop-bd bg-pop-idle',
           )}
         >
           <Maximize2 className="size-1.5 text-pop-bg opacity-0 transition-opacity group-hover/lights:opacity-80" />
@@ -130,7 +147,9 @@ export function WindowTitlebar({
         <span
           className={cn(
             'max-w-full truncate text-[11px] font-bold',
-            focused ? 'text-pop-ink' : 'text-pop-dim',
+            tone === 'paper'
+              ? focused ? 'text-[#3f544b]' : 'text-[#7b8b82]'
+              : focused ? 'text-pop-ink' : 'text-pop-dim',
           )}
         >
           {title}

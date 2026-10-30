@@ -153,6 +153,7 @@ export function TaskModulesLayer({
             bleedLeft={containerLeft}
             focused={focusedModule === module}
             zIndex={20 + record.z}
+            tone={module === 'acceptance' ? 'paper' : 'pop'}
             onChange={(patch) => updateWindow(module, patch)}
             onClose={() => closeWindow(module)}
             onFocus={() => {

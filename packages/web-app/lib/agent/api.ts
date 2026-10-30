@@ -119,6 +119,21 @@ export function getSession(id: string, query?: { limit?: number; cursor?: string
 export function updateSession(id: string, data: { title: string }) {
   return request<void>(`/sessions/${id}`, { method: 'PATCH', body: JSON.stringify(data) })
 }
+
+/**
+ * 记录人对决策卡的选择（启动方式 / 动作请求 / 反思条目）。
+ * 服务端把 decision 写进该条消息的 metadata.activity —— 卡片据此渲染
+ * 「所选按钮高亮 + 其余只读」，刷新后仍保持。
+ */
+export function recordCardDecision(
+  messageId: string,
+  body: { actionId: string; label?: string; entryId?: string },
+) {
+  return request<{ ok: boolean; activity: Record<string, unknown> }>(
+    `/messages/${encodeURIComponent(messageId)}/decision`,
+    { method: 'POST', body: JSON.stringify(body) },
+  )
+}
 export function deleteSession(id: string) {
   return request<void>(`/sessions/${id}`, { method: 'DELETE' })
 }

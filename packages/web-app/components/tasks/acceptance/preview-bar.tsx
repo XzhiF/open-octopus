@@ -129,7 +129,7 @@ export function PreviewBar({ cfg, runbook, preview, busy, disabledReason, onSave
       <div className="flex flex-wrap items-center gap-2 px-3 py-2">
         {fold && <FoldHandle id="item-preview" closed={closed} onToggle={() => fold.toggle("item-preview", "info")} />}
         <Rocket className="size-3.5 shrink-0 text-pop-dim" />
-        <span className="font-mono text-[9.5px] font-black tracking-[.09em] text-pop-dim">跑起来看</span>
+        <span className="font-mono text-[9.5px] font-black tracking-[.09em] text-pop-dim">试一试</span>
         {mode === "runbook" && (
           <span className="inline-flex items-center gap-1 rounded-full border border-pop-bd bg-pop-bd/10 px-1.5 py-px font-mono text-[9px] font-bold text-pop-dim" data-testid="preview-mode-runbook" title="通用运行手册：up → ready(命令退出码=就绪) → views → down">
             <Layers className="size-2" />runbook{runbook?.views && runbook.views.length > 1 ? ` ×${runbook.views.length}` : ""}

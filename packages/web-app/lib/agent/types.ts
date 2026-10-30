@@ -100,6 +100,11 @@ export interface AgentMessage {
     roundIndex?: number | null
     /** Buttons rendered by the transcript card (ids are the contract). */
     actions?: Array<{ id: string; label: string }>
+    /** 人对决策卡的选择（POST /messages/:id/decision 写回 metadata）：
+     *  有值 = 卡片只读、所选按钮高亮。 */
+    decision?: { id: string; label?: string; at?: string }
+    /** 归档反思卡按条目记录的选择（键 = entry.id）。 */
+    decisions?: Record<string, { id: string; label?: string; at?: string }>
     /** Tool-specific payload (launch proposal / action request / reflection entries). */
     payload?: Record<string, unknown>
   }

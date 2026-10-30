@@ -366,6 +366,8 @@ export function WorkspaceExplorerDock({
       pane?: Pane
       /** 坞内文字（≤3 字约定）；缺省用 label。 */
       shortLabel?: string
+      /** 待你处理（待验收）—— 琥珀注意力态，窗口打开后让位 active。 */
+      attention?: boolean
     },
   ) => (
     <button
@@ -385,7 +387,9 @@ export function WorkspaceExplorerDock({
           ? 'bg-pop-green text-pop-bg hover:opacity-90'
           : opts.active
             ? 'bg-white/[0.12] text-pop-ink'
-            : 'text-pop-dim hover:bg-white/[0.07] hover:text-pop-ink',
+            : opts.attention
+              ? 'bg-pop-amber-soft text-pop-amber ring-1 ring-pop-amber/35 hover:bg-pop-amber-soft/80'
+              : 'text-pop-dim hover:bg-white/[0.07] hover:text-pop-ink',
       )}
     >
       <Icon className={showLabels ? 'size-[17px]' : 'size-[18px]'} strokeWidth={1.8} />
@@ -555,8 +559,10 @@ export function WorkspaceExplorerDock({
           const minimized = !!record?.minimized
           return dockButton(`task:${id}`, label, Icon, {
             active: open,
+            attention: id === 'acceptance' && status === 'awaiting_review' && !open,
             onClick: () => onOpenTaskModule?.(id),
             module: id,
+            testId: id === 'acceptance' ? 'dock-acceptance' : undefined,
             marker: minimized ? 'minimized' : open ? 'open' : undefined,
           })
         })}

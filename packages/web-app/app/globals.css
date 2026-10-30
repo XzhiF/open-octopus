@@ -1,6 +1,7 @@
 @import 'tailwindcss';
 @import 'tw-animate-css';
 @import './ws-bands.css';
+@import './acceptance-paper.css';
 
 @custom-variant dark (&:is(.dark *));
 
@@ -70,6 +71,10 @@
   --pop-yellow-soft: #231E17;
   --pop-purple: #D2A8FF;
   --pop-purple-soft: #221E29;
+  /* 运行中（对话里的运行卡）—— 2026-10-30 用户定稿：紫罗兰，不用蓝色。
+     soft = 主色 14% 压在 bg 上（与其它 soft 同律）。 */
+  --pop-violet: #A78BFA;
+  --pop-violet-soft: #201C2D;
   --pop-green: #7EE787;
   --pop-green-soft: #18211A;
   --pop-amber: #FFC857;
@@ -454,6 +459,8 @@ html *::-webkit-scrollbar-corner { background: transparent; }
   --color-pop-yellow-soft: var(--pop-yellow-soft);
   --color-pop-purple: var(--pop-purple);
   --color-pop-purple-soft: var(--pop-purple-soft);
+  --color-pop-violet: var(--pop-violet);
+  --color-pop-violet-soft: var(--pop-violet-soft);
   --color-pop-green: var(--pop-green);
   --color-pop-green-soft: var(--pop-green-soft);
   --color-pop-amber: var(--pop-amber);

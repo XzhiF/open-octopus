@@ -23,6 +23,8 @@ interface TaskWindowProps {
   bleedLeft?: number
   focused: boolean
   zIndex: number
+  /** 验收窗用 paper：亮纸外壳，与窗内的三步验收台同一张纸。 */
+  tone?: 'pop' | 'paper'
   onChange: (patch: Partial<TaskWindowRecord>) => void
   onClose: () => void
   onFocus: () => void
@@ -37,6 +39,7 @@ export function TaskWindow({
   bleedLeft = 0,
   focused,
   zIndex,
+  tone = 'pop',
   onChange,
   onClose,
   onFocus,
@@ -127,13 +130,23 @@ export function TaskWindow({
       <div ref={dragLayerRef} className="h-full w-full">
         <div
           className={cn(
-            'flex h-full w-full flex-col overflow-hidden rounded-xl border-[1.5px] border-pop-bd bg-pop-paper',
-            focused ? 'shadow-pop-lg' : 'shadow-pop',
+            'flex h-full w-full flex-col overflow-hidden rounded-xl border-[1.5px]',
+            tone === 'paper'
+              ? 'border-[#dfe6dd] bg-[#fdfefb]'
+              : 'border-pop-bd bg-pop-paper',
+            focused
+              ? tone === 'paper'
+                ? 'shadow-[0_42px_100px_-46px_rgba(22,38,31,0.6)]'
+                : 'shadow-pop-lg'
+              : tone === 'paper'
+                ? 'shadow-[0_20px_50px_-40px_rgba(22,38,31,0.45)]'
+                : 'shadow-pop',
           )}
         >
           <WindowTitlebar
             title={title}
             focused={focused}
+            tone={tone}
             canDrag={!record.maximized}
             onClose={onClose}
             onMinimize={() => onChange({ minimized: true })}

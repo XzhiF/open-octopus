@@ -123,7 +123,7 @@ export function VerifyPanel({ cfg, summary, lines, running, busy, disabledReason
         {fold && <FoldHandle id="item-verify" closed={closed} onToggle={() => fold.toggle("item-verify", "info")} />}
         {/* 身份图标 —— 与「跑起来看」的 Rocket 同规格成对（当场复检=现跑核验） */}
         <ShieldCheck className="size-3.5 shrink-0 text-pop-dim" />
-        <span className="shrink-0 font-mono text-[9.5px] font-black tracking-[.09em] text-pop-dim">当场复检</span>
+        <span className="shrink-0 font-mono text-[9.5px] font-black tracking-[.09em] text-pop-dim">自动自检</span>
         <span className={`shrink-0 rounded-full border-[1.5px] border-pop-bd px-2.5 py-px font-mono text-[10px] font-black tabular-nums ${pill.cls}`} data-testid="verify-pill" data-state={pill.st}>
           {pill.t}
         </span>
@@ -144,7 +144,7 @@ export function VerifyPanel({ cfg, summary, lines, running, busy, disabledReason
             </Button>
           ) : cfg && !editing && !closed ? (
             <Button size="sm" className="h-6 border-[1.5px] border-pop-bd bg-pop-green px-3 font-mono text-[10.5px] font-black text-pop-bg shadow-pop-sm pop-press" disabled={busy || !!disabledReason} onClick={onRun} data-testid="verify-run" title={disabledReason ?? "在工作区现场执行，产出带新鲜时间戳的机器裁决"}>
-              <Play className="size-3 mr-1" /> ▶ 复检
+              <Play className="size-3 mr-1" /> ▶ 自检
             </Button>
           ) : !cfg && !editing && !closed ? (
             <Button size="sm" variant="outline" className="h-6 border-[1.5px] border-pop-bd px-2.5 font-mono text-[10px] font-black shadow-pop-sm" onClick={() => { setDraft(""); setCwdDraft(""); setPerRepo(false); setTimeoutDraft("600"); setEditing(true) }} data-testid="verify-edit">

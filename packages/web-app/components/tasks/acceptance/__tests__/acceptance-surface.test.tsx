@@ -823,7 +823,7 @@ describe("AcceptanceSurface — AC2 打回反馈必填 + 单路径提交链（AD
     fireEvent.change(screen.getByTestId("reject-feedback"), { target: { value: "登录跳转丢了 session" } })
     const confirm2 = screen.getByTestId("reject-confirm") as HTMLButtonElement
     expect(confirm2.disabled).toBe(false)
-    expect(confirm2.textContent).toContain("确认打回 · 派 task-fix 开 R2")
+    expect(confirm2.textContent).toContain("确认退回 · 开始修复 R2")
 
     mockPostAcceptance.mockResolvedValueOnce({
       task: makeDetail(PHASE1_AWAITING), acceptance_id: "a-1", next_action: "dispatched",
@@ -1080,7 +1080,7 @@ describe("实物 tab 每块折叠（2026-09-20 用户点名：要的是块级，
     expect(header.children[0].getAttribute("data-fold-toggle")).toBe("item-verify")
     // L1 子序：折叠把手 → 身份图标（2026-09-21 与「跑起来看」Rocket 成对补齐）→ 标题 → 状态胶囊
     expect(header.children[1].tagName).toBe("svg")
-    expect(header.children[2].textContent).toContain("当场复检")
+    expect(header.children[2].textContent).toContain("自动自检")
     expect(header.children[3].getAttribute("data-testid")).toBe("verify-pill")
     expect(screen.queryByTestId("verify-console-toggle")).toBeNull()
     fireEvent.click(vh!)

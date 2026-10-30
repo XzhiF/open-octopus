@@ -288,5 +288,61 @@ export function createSessionRoutes(sessionDAO: AgentSessionDAO): Hono {
   })
 
 
+  /**
+   * POST /messages/:id/decision — 把人对一张决策卡的选择写回该卡的消息 metadata。
+   *
+   * 决策卡（启动方式待选择 / 任务动作请求 / 归档反思条目）本身是 append-only 的
+   * 事件消息；在这里补一个 `activity.decision`（或按条目的 `activity.decisions[entryId]`），
+   * 刷新 / 换设备后卡片仍是「已选 + 只读」，不会又变回可点。
+   * body: { actionId: string, label?: string, entryId?: string }
+   */
+  sessions.post('/messages/:id/decision', async (c) => {
+    const id = c.req.param('id')
+    let body: { actionId?: unknown; label?: unknown; entryId?: unknown } = {}
+    try {
+      body = await c.req.json()
+    } catch {
+      return c.json(createAgentError('INVALID_PARAM', 'Invalid JSON body'), 400)
+    }
+    const actionId = typeof body.actionId === 'string' ? body.actionId.trim() : ''
+    if (!actionId) {
+      return c.json(createAgentError('INVALID_PARAM', 'actionId is required'), 400)
+    }
+    const row = sessionDAO.findMessageById(id)
+    if (!row) {
+      return c.json(createAgentError('NOT_FOUND', `Message ${id} not found`), 404)
+    }
+    let meta: Record<string, unknown> = {}
+    try {
+      const parsed = row.metadata ? JSON.parse(row.metadata) as unknown : null
+      if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+        meta = parsed as Record<string, unknown>
+      }
+    } catch {
+      // 坏 metadata 不阻断写入 —— 决策优先于既有卡片载荷
+    }
+    const activity = (meta.activity && typeof meta.activity === 'object' && !Array.isArray(meta.activity))
+      ? { ...(meta.activity as Record<string, unknown>) }
+      : {}
+    const decision = {
+      id: actionId,
+      label: typeof body.label === 'string' ? body.label : undefined,
+      at: new Date().toISOString(),
+    }
+    const entryId = typeof body.entryId === 'string' && body.entryId ? body.entryId : null
+    if (entryId) {
+      const prev = (activity.decisions && typeof activity.decisions === 'object' && !Array.isArray(activity.decisions))
+        ? (activity.decisions as Record<string, unknown>)
+        : {}
+      activity.decisions = { ...prev, [entryId]: decision }
+    } else {
+      activity.decision = decision
+    }
+    meta.activity = activity
+    if (!meta.displayType) meta.displayType = 'event'
+    sessionDAO.updateMessage(id, { metadata: JSON.stringify(meta) })
+    return c.json({ ok: true, activity })
+  })
+
   return sessions
 }

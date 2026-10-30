@@ -60,6 +60,10 @@ const SIDEBAR_DEFAULT = 236
 const SIDEBAR_MIN = 200
 const SIDEBAR_MAX = 380
 
+/** 决策卡上「选择即写回卡片」的按钮 id。其余按钮（打开规格/运行窗…）只是导航，
+ *  schedule / keep_editing 各自在分支里处理（定时要等对话框真正排上）。 */
+const DECISION_ACTION_IDS = new Set(['launch_now', 'enqueue', 'confirm_action'])
+
 function clampSidebarWidth(width: number): number {
   return Math.min(SIDEBAR_MAX, Math.max(SIDEBAR_MIN, Math.round(width)))
 }
@@ -98,6 +102,7 @@ export function ChatTab() {
     taskId: string
     action: string
     activity?: AgentMessage['activity']
+    messageId?: string
   } | null>(null)
   const [cardBusy, setCardBusy] = useState(false)
   const [mainCwd, setMainCwd] = useState<CwdChoice>({ kind: 'default', label: 'Main Agent 工作区' })
@@ -419,6 +424,8 @@ export function ChatTab() {
   // send it tried instead captured a null sessionId (stale closure), so the turn
   // never left the client. Queue it in state and let the effect below send once
   // the session is actually the hook's current one.
+  // 2026-10-30: 定时触发是从决策卡进来的 —— 对话框真正排上后才把「定时」写回卡片。
+  const pendingScheduleDecisionRef = useRef<{ messageId: string; label?: string } | null>(null)
   const taskSendPendingRef = useRef(false)
   const [pendingTaskSend, setPendingTaskSend] = useState<{
     sessionId: string
@@ -716,20 +723,43 @@ export function ChatTab() {
     void refetchSessions()
   }, [refreshChatTasks, refetchSessions])
 
+  /** 决策卡的选择写回卡片消息（服务端 metadata）——卡片随即「所选高亮 + 只读」。 */
+  const recordDecision = useCallback(async (
+    messageId: string | undefined,
+    actionId: string,
+    extra?: { label?: string; entryId?: string },
+  ) => {
+    if (!messageId) return
+    try {
+      await agentApi.recordCardDecision(messageId, {
+        actionId,
+        ...(extra?.label ? { label: extra.label } : {}),
+        ...(extra?.entryId ? { entryId: extra.entryId } : {}),
+      })
+      // 以服务端为准重拉实录：卡片从可点变成只读，刷新前就已经一致。
+      await loadMessages()
+    } catch {
+      /* 落库失败不阻断动作本身；下次刷新卡片仍是可选态，用户可再点一次 */
+    }
+  }, [loadMessages])
+
   const executeTaskAction = useCallback(async (
     taskId: string,
     actionId: string,
     activity?: AgentMessage['activity'],
+    messageId?: string,
   ) => {
     if (!taskId || cardBusy) return
     const payload = (activity?.payload ?? {}) as Record<string, unknown>
     const action = actionId === 'confirm_action' ? String(payload.action ?? '') : actionId
+    const clickedLabel = (activity?.actions ?? []).find((a) => a.id === actionId)?.label
     if (actionId === 'cancel_action') {
+      void recordDecision(messageId, actionId, { label: clickedLabel })
       toast.message('已取消')
       return
     }
     if (action === 'abort') {
-      setCardConfirm({ taskId, action, activity })
+      setCardConfirm({ taskId, action, activity, messageId })
       return
     }
     setCardBusy(true)
@@ -750,6 +780,10 @@ export function ChatTab() {
           toast.success('已入列 · 等你手动触发')
           break
         case 'schedule':
+          // 定时要走对话框：选择等真正排上之后再写回卡片（取消对话框 = 没决定）。
+          pendingScheduleDecisionRef.current = messageId
+            ? { messageId, label: clickedLabel }
+            : null
           setScheduleTaskId(taskId)
           return
         case 'pause':
@@ -799,10 +833,15 @@ export function ChatTab() {
           void handleCreateTask()
           return
         case 'keep_editing':
+          void recordDecision(messageId, actionId, { label: clickedLabel })
           toast.message('继续改规格')
           return
         default:
           return
+      }
+      // 决策卡上的选择：动作成功后写回卡片 → 所选高亮、其余只读。
+      if (DECISION_ACTION_IDS.has(actionId)) {
+        void recordDecision(messageId, actionId, { label: clickedLabel })
       }
       if (updated) applyTaskResult(updated)
     } catch (err: unknown) {
@@ -815,7 +854,7 @@ export function ChatTab() {
     } finally {
       setCardBusy(false)
     }
-  }, [cardBusy, applyTaskResult, handleCreateTask])
+  }, [cardBusy, applyTaskResult, handleCreateTask, recordDecision])
 
   const confirmDestructiveCardAction = useCallback(async () => {
     if (!cardConfirm || cardBusy) return
@@ -823,6 +862,9 @@ export function ChatTab() {
     try {
       const updated = await abortTask(cardConfirm.taskId)
       applyTaskResult(updated)
+      if (cardConfirm.messageId) {
+        void recordDecision(cardConfirm.messageId, 'confirm_action', { label: '确认执行' })
+      }
       toast.success('已中止任务')
       setCardConfirm(null)
     } catch (err: unknown) {
@@ -830,7 +872,7 @@ export function ChatTab() {
     } finally {
       setCardBusy(false)
     }
-  }, [cardConfirm, cardBusy, applyTaskResult])
+  }, [cardConfirm, cardBusy, applyTaskResult, recordDecision])
 
   useEffect(() => {
     const onAction = (event: Event) => {
@@ -838,19 +880,28 @@ export function ChatTab() {
         taskId?: string | null
         actionId?: string
         activity?: AgentMessage['activity']
+        messageId?: string
       }>).detail
       if (!detail?.taskId || !detail.actionId) return
-      void executeTaskAction(detail.taskId, detail.actionId, detail.activity)
+      void executeTaskAction(detail.taskId, detail.actionId, detail.activity, detail.messageId)
     }
     const onReflection = (event: Event) => {
       const detail = (event as CustomEvent<{
         taskId?: string | null
         entryId?: string
         action?: 'ingest' | 'skip'
+        messageId?: string
       }>).detail
       if (!detail?.taskId || !detail.entryId || !detail.action) return
       void postReflectionDecision(detail.taskId, { entry_id: detail.entryId, action: detail.action })
-        .then(() => toast.success(detail.action === 'ingest' ? '已落 wiki' : '已跳过'))
+        .then(() => {
+          toast.success(detail.action === 'ingest' ? '已落 wiki' : '已跳过')
+          // 逐条写回卡片：这一条的按钮高亮、整条只读。
+          void recordDecision(detail.messageId, detail.action!, {
+            entryId: detail.entryId!,
+            label: detail.action === 'ingest' ? '落 wiki' : '跳过',
+          })
+        })
         .catch((err: unknown) => toast.error(err instanceof Error ? err.message : '沉淀决策失败'))
     }
     window.addEventListener('octopus:task-card-action', onAction)
@@ -859,7 +910,7 @@ export function ChatTab() {
       window.removeEventListener('octopus:task-card-action', onAction)
       window.removeEventListener('octopus:reflection-decision', onReflection)
     }
-  }, [executeTaskAction])
+  }, [executeTaskAction, recordDecision])
 
   // Task status/execution events reload the transcript (silent cards are
   // inserted server-side; draft/ready threads have no workspace SSE channel).
@@ -1347,13 +1398,23 @@ export function ChatTab() {
 
       <TriggerDialog
         open={!!scheduleTaskId}
-        onOpenChange={(open) => { if (!open) setScheduleTaskId(null) }}
+        onOpenChange={(open) => {
+          if (!open) {
+            setScheduleTaskId(null)
+            pendingScheduleDecisionRef.current = null // 关掉对话框 = 没做决定
+          }
+        }}
         task={
           (activeTask && activeTask.id === scheduleTaskId
             ? activeTask
             : chatTasks.find((task) => task.id === scheduleTaskId)) ?? null
         }
         onTriggered={() => {
+          const pending = pendingScheduleDecisionRef.current
+          pendingScheduleDecisionRef.current = null
+          if (pending) {
+            void recordDecision(pending.messageId, 'schedule', { label: pending.label })
+          }
           setScheduleTaskId(null)
           void refreshChatTasks()
           void refetchSessions()

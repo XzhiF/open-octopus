@@ -86,6 +86,20 @@ export function formatStopwatch(ms: number | null | undefined): string {
   return `${Math.floor(minutes / 60)}h ${minutes % 60}m ${totalSec % 60}s`
 }
 
+/**
+ * 运行卡时钟读数：`06:32`（超过 1 小时才带小时位 `1:06:32`）。
+ * 与 formatStopwatch 的区别 = 冒号读数、每秒跳动时不抖宽度（tabular-nums 配合）。
+ */
+export function formatRunClock(ms: number | null | undefined): string {
+  if (ms == null || !Number.isFinite(ms) || ms < 0) return '—'
+  const total = Math.floor(ms / 1000)
+  const h = Math.floor(total / 3600)
+  const m = Math.floor((total % 3600) / 60)
+  const s = total % 60
+  const p = (n: number) => String(n).padStart(2, '0')
+  return h > 0 ? `${h}:${p(m)}:${p(s)}` : `${p(m)}:${p(s)}`
+}
+
 /** 百分比格式化：入参量纲 0–1（与 cacheHitRate 同轨）；默认 0 位小数，调用点可显式传 digits */
 export function formatPercent(rate: number | null | undefined, digits = 0): string {
   if (rate == null || Number.isNaN(rate)) return "—"

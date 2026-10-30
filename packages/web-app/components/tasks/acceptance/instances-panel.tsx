@@ -90,7 +90,7 @@ export function InstancesPanel({ taskId, rev, disabledReason }: InstancesPanelPr
     <div className="rounded-[13px] border-[1.5px] border-pop-bd bg-pop-paper shadow-pop-sm" data-testid="instances-panel">
       <div className="flex flex-wrap items-center gap-2 px-3 py-2">
         <Server className="size-3.5 shrink-0 text-pop-dim" />
-        <span className="font-mono text-[9.5px] font-black tracking-[.09em] text-pop-dim">测试实例</span>
+        <span className="font-mono text-[9.5px] font-black tracking-[.09em] text-pop-dim">运行中的实例</span>
         {total > 0 && (
           <span className="rounded-full bg-pop-green/15 px-1.5 py-px font-mono text-[9px] font-bold text-pop-green">{total} 在跑</span>
         )}

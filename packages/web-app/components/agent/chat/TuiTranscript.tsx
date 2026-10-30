@@ -11,6 +11,7 @@ import { formatCost, formatDuration, formatTokenCount } from '@/lib/format'
 import { useBillingCurrency } from '@/lib/billing-currency'
 import { THINKING_TONE, TOOL_TONE } from '@/lib/agent/chat-colors'
 import type { TurnStats } from '@/lib/turn-stats'
+import { TaskStatusCard } from './task-status-card'
 
 /** mini-markdown：`**bold**` / `行内 code` / 行首 # 标题 —— 消灭字面星号。 */
 function mdInline(text: string): ReactNode {
@@ -317,19 +318,32 @@ function TuiMeta({ thinking, toolCalls, timeline, stats, interrupted }: {
  *  prompt, so the cached prefix stays intact. */
 function ActivityEventCard({ message }: { message: AgentMessage }) {
   const activity = message.activity
+  // 任务状态卡（执行中 / 已暂停 / 收尾）交给运行卡组件：它自己走表、按需轮询
+  // 执行详情，收尾后定格成只读（2026-10-30 用户定稿）。
+  if (activity?.status && activity?.taskId) {
+    return <TaskStatusCard message={message} />
+  }
   const severity = activity?.severity
+  // 决策卡选过就只读：所选按钮高亮，其余禁用；卡片整体降噪（与启动决策一致）。
+  const decision = activity?.decision ?? null
+  const decisions = activity?.decisions ?? {}
+  const decided = !!decision
   const tone =
-    severity === 'critical'
-      ? 'border-pop-red/40 bg-pop-red/[0.06] text-pop-red'
-      : severity === 'warn'
-        ? 'border-pop-amber/40 bg-pop-amber/[0.06] text-pop-amber'
-        : 'border-pop-cyan/35 bg-pop-cyan/[0.05] text-pop-cyan'
+    decided
+      ? 'border-pop-bd/70 bg-white/[0.015] text-pop-dim'
+      : severity === 'critical'
+        ? 'border-pop-red/40 bg-pop-red/[0.06] text-pop-red'
+        : severity === 'warn'
+          ? 'border-pop-amber/40 bg-pop-amber/[0.06] text-pop-amber'
+          : 'border-pop-cyan/35 bg-pop-cyan/[0.05] text-pop-cyan'
   const mark = severity === 'critical' ? '✕' : severity === 'warn' ? '!' : '✓'
   const summary = message.content.split('\n').slice(1).find((line) => line.trim() && !line.startsWith('请判断'))?.trim()
   const canOpenWorkflow = !!activity?.executionId && !!activity?.workspaceId
 
   // 2026-10-28 task-thread: the card's buttons are a protocol, not local logic:
   // ChatTab listens for these and owns the handlers (trigger/accept/archive…).
+  // 2026-10-30: the click also carries the message id so the human's choice can
+  // be persisted back onto this card (read-only afterwards).
   const actions = Array.isArray(activity?.actions) ? activity!.actions! : []
   const entries = (() => {
     const raw = (activity?.payload as { entries?: unknown } | undefined)?.entries
@@ -339,12 +353,12 @@ function ActivityEventCard({ message }: { message: AgentMessage }) {
   })()
   const fireAction = (actionId: string) => {
     window.dispatchEvent(new CustomEvent('octopus:task-card-action', {
-      detail: { taskId: activity?.taskId ?? null, activity, actionId },
+      detail: { taskId: activity?.taskId ?? null, activity, actionId, messageId: message.id },
     }))
   }
   const decideReflection = (entryId: string, action: 'ingest' | 'skip') => {
     window.dispatchEvent(new CustomEvent('octopus:reflection-decision', {
-      detail: { taskId: activity?.taskId ?? null, entryId, action },
+      detail: { taskId: activity?.taskId ?? null, entryId, action, messageId: message.id },
     }))
   }
 
@@ -353,16 +367,22 @@ function ActivityEventCard({ message }: { message: AgentMessage }) {
       data-tui-msg="event"
       data-message-id={message.id}
       data-testid="activity-event-card"
+      data-decision={decided ? 'set' : 'open'}
       className={`rounded-md border px-3 py-2 font-mono text-[11.5px] shadow-[inset_0_0_0_1px_rgba(255,255,255,0.03)] ${tone}`}
     >
       <div className="flex items-center gap-2">
-        <span aria-hidden className="grid size-4 place-items-center rounded-full border border-current text-[9px]">
+        <span className="grid size-4 place-items-center rounded-full border border-current text-[9px]">
           {mark}
         </span>
-        <span className="min-w-0 flex-1 truncate font-semibold">
+        <span className={`min-w-0 flex-1 truncate font-semibold ${decided ? 'text-pop-ink/80' : ''}`}>
           {activity?.title ?? '活动通知'}
         </span>
-        {canOpenWorkflow && (
+        {decided && (
+          <span className="shrink-0 text-[9px] text-pop-dim/70" data-testid="task-card-decision-stamp">
+            已选{decision?.at ? ` · ${new Date(decision.at).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })}` : ''}
+          </span>
+        )}
+        {canOpenWorkflow && !decided && (
           <button
             type="button"
             onClick={() =>
@@ -384,36 +404,57 @@ function ActivityEventCard({ message }: { message: AgentMessage }) {
       {activity?.nodeId && <div className="mt-0.5 pl-6 text-[10px] text-pop-dim">node · {activity.nodeId}</div>}
       {entries.length > 0 && (
         <div className="mt-2 space-y-1 pl-6" data-testid="reflection-entries">
-          {entries.map((entry) => (
-            <div key={entry.id} className="rounded border border-current/20 bg-black/10 px-2 py-1.5">
-              <div className="text-[10.5px] font-semibold text-pop-ink">{entry.title}</div>
-              {entry.target && <div className="text-[9px] text-pop-dim">{entry.target}</div>}
-              <div className="mt-1 flex gap-1">
-                <button type="button" onClick={() => decideReflection(entry.id, 'ingest')}
-                  className="rounded bg-pop-purple px-1.5 py-0.5 text-[9px] font-black text-pop-bg">
-                  落 wiki
-                </button>
-                <button type="button" onClick={() => decideReflection(entry.id, 'skip')}
-                  className="rounded border border-current/30 px-1.5 py-0.5 text-[9px] text-pop-dim hover:text-pop-ink">
-                  跳过
-                </button>
+          {entries.map((entry) => {
+            const pick = decisions[entry.id]
+            return (
+              <div key={entry.id} className="rounded border border-current/20 bg-black/10 px-2 py-1.5">
+                <div className="text-[10.5px] font-semibold text-pop-ink">{entry.title}</div>
+                {entry.target && <div className="text-[9px] text-pop-dim">{entry.target}</div>}
+                <div className="mt-1 flex items-center gap-1">
+                  <button type="button" onClick={() => decideReflection(entry.id, 'ingest')}
+                    disabled={!!pick}
+                    className={`rounded px-1.5 py-0.5 text-[9px] font-black disabled:cursor-default ${
+                      pick?.id === 'ingest'
+                        ? 'border border-pop-green/50 bg-pop-green/10 text-pop-green'
+                        : 'bg-pop-purple text-pop-bg disabled:opacity-30'
+                    }`}>
+                    {pick?.id === 'ingest' ? '✓ 落 wiki' : '落 wiki'}
+                  </button>
+                  <button type="button" onClick={() => decideReflection(entry.id, 'skip')}
+                    disabled={!!pick}
+                    className={`rounded border px-1.5 py-0.5 text-[9px] disabled:cursor-default ${
+                      pick?.id === 'skip'
+                        ? 'border-pop-green/50 bg-pop-green/10 text-pop-green'
+                        : 'border-current/30 text-pop-dim hover:text-pop-ink disabled:opacity-30'
+                    }`}>
+                    {pick?.id === 'skip' ? '✓ 跳过' : '跳过'}
+                  </button>
+                </div>
               </div>
-            </div>
-          ))}
+            )
+          })}
         </div>
       )}
       {actions.length > 0 && (
         <div className="mt-1.5 flex flex-wrap gap-1 pl-6" data-testid="task-card-actions">
-          {actions.map((action) => (
-            <button
-              key={action.id}
-              type="button"
-              onClick={() => fireAction(action.id)}
-              className="rounded border border-current/30 bg-black/10 px-1.5 py-0.5 text-[10px] text-pop-ink transition-colors hover:bg-white/[0.08]"
-            >
-              {action.label}
-            </button>
-          ))}
+          {actions.map((action) => {
+            const chosen = decision?.id === action.id
+            return (
+              <button
+                key={action.id}
+                type="button"
+                disabled={decided}
+                onClick={() => fireAction(action.id)}
+                className={`rounded border px-1.5 py-0.5 text-[10px] transition-colors disabled:cursor-default ${
+                  chosen
+                    ? 'border-pop-green/50 bg-pop-green/10 font-bold text-pop-green'
+                    : 'border-current/30 bg-black/10 text-pop-ink hover:bg-white/[0.08] disabled:opacity-30 disabled:hover:bg-black/10'
+                }`}
+              >
+                {chosen ? '✓ ' : ''}{action.label}
+              </button>
+            )
+          })}
         </div>
       )}
     </div>

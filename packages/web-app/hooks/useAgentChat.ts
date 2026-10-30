@@ -258,7 +258,12 @@ export function useAgentChat(sessionId: string | null, options?: {
     setIsThinking(timeline.length > 0 && timeline[timeline.length - 1].kind === 'thinking')
   }, [])
 
-  const loadMessages = useCallback(async (opts?: { onlyWhenIdle?: boolean }) => {
+  const loadMessages = useCallback(async (opts?: {
+    onlyWhenIdle?: boolean
+    /** 只有快照里已经包含这条（本轮刚收尾的助手行）才替换 —— 否则保留本地
+     *  实录，避免用比本地还旧的快照把刚生成的内容抹掉。 */
+    expectMessageId?: string
+  }) => {
     if (!sessionId) return
     const requestedSessionId = sessionId
     try {
@@ -270,6 +275,7 @@ export function useAgentChat(sessionId: string | null, options?: {
       // 快照比乐观行旧 —— 覆盖会让用户刚发的提示词从实录里消失。
       if (opts?.onlyWhenIdle && (streamingRef.current || resumeModeRef.current)) return
       const items = res.messages.items
+      if (opts?.expectMessageId && !items.some((m) => m.id === opts.expectMessageId)) return
       // While tailing a server-side turn, its streaming partial belongs to the
       // live area (metadata.streaming). Rendering it as history made a switch
       // mid-turn collapse the output into a settled message with a lone
@@ -626,6 +632,14 @@ export function useAgentChat(sessionId: string | null, options?: {
         setStreamTimeline([])
         timelineRef.current = []
         setStatusMessage('')
+        // Server-side event cards appended during this turn (task tools:
+        // launch proposal / action request / reflection…) never ride the SSE
+        // stream — without a re-read the card stays invisible until a manual
+        // reload (用户 bug 2026-10-30：作者说「启动决策卡已发」，对话里却只有文字).
+        // The server commits the assistant row BEFORE `done`, so this snapshot
+        // is the finalized turn. onlyWhenIdle: a prompt sent the instant `done`
+        // lands must not be overwritten by the older snapshot.
+        void loadMessages({ onlyWhenIdle: true, expectMessageId: data.message_id })
         // Propagate auto-generated session title to sidebar
         if (data.session_title) {
           onTitleUpdateRef.current?.(data.session_id, data.session_title)
@@ -653,7 +667,7 @@ export function useAgentChat(sessionId: string | null, options?: {
     }
 
     connect(source, handlers)
-  }, [sessionId, connect, setContextUsage, startResumePolling])
+  }, [sessionId, connect, setContextUsage, startResumePolling, loadMessages])
 
   const stopGenerate = useCallback(async () => {
     if (!sessionId) return
