@@ -22,6 +22,9 @@ export interface ChatSubagentRef {
   label?: string
 }
 
+/** Transcript reload banner text — cleared by any later successful load. */
+const LOAD_MESSAGES_ERROR = 'Failed to load messages'
+
 /** Last known context usage for a session. localStorage (not sessionStorage) so
  *  the value survives tab closes and browser restarts; legacy sessionStorage
  *  entries stay readable AND get promoted to localStorage on first read so a
@@ -266,9 +269,24 @@ export function useAgentChat(sessionId: string | null, options?: {
   }) => {
     if (!sessionId) return
     const requestedSessionId = sessionId
+    const getSessionFn = apiOverrideRef.current?.getSession ?? api.getSession
+    // One silent retry: a lone rejected fetch (keep-alive RST / tailnet blip)
+    // says nothing about the session. 2026-10-30 user bug — answering an
+    // AskUserQuestion card re-pulled the transcript, that single fetch failed,
+    // and a permanent 「Failed to load messages」 banner sat next to the live
+    // question card. 4xx is deterministic, so it skips the retry.
+    const fetchSession = async () => {
+      try {
+        return await getSessionFn(sessionId, { limit: 50 })
+      } catch (err) {
+        const status = (err as { status?: number }).status
+        if (status && status >= 400 && status < 500) throw err
+        await new Promise((resolve) => setTimeout(resolve, 200))
+        return getSessionFn(sessionId, { limit: 50 })
+      }
+    }
     try {
-      const getSessionFn = apiOverrideRef.current?.getSession ?? api.getSession
-      const res = await getSessionFn(sessionId, { limit: 50 })
+      const res = await fetchSession()
       // Fast session switches: never let an old response overwrite the new chat.
       if (sessionIdRef.current !== requestedSessionId) return
       // stop 之后的补拉与紧接着的新一轮发送会竞态：新一轮已经开始时，服务端
@@ -310,9 +328,11 @@ export function useAgentChat(sessionId: string | null, options?: {
       // turn. (The localStorage cache above stays as the instant-paint path.)
       const serverUsage = readServerContextUsage(res)
       if (serverUsage) setContextUsage(serverUsage)
+      // A retry or a later turn's reload succeeding means the banner is stale.
+      setError((prev) => (prev === LOAD_MESSAGES_ERROR ? null : prev))
     } catch {
       if (sessionIdRef.current !== requestedSessionId) return
-      setError('Failed to load messages')
+      setError(LOAD_MESSAGES_ERROR)
     }
   }, [sessionId, setContextUsage, hydrateFromPartial])
 
