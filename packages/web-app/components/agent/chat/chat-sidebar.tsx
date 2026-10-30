@@ -55,7 +55,7 @@ interface ChatSidebarProps {
 }
 
 const ROW =
-  'group flex h-[30px] w-full items-center gap-2.5 rounded-[7px] px-2 text-left text-[13px] leading-none transition-colors duration-100'
+  'group flex h-[30px] w-full cursor-pointer items-center gap-2.5 rounded-[7px] px-2 text-left text-[13px] leading-none transition-colors duration-100'
 
 const STATUS_DOT: Record<string, string> = {
   draft: 'bg-pop-cyan',
@@ -428,7 +428,6 @@ export function ChatSidebar({
                     }}
                     className={cn(
                       ROW,
-                      'cursor-default',
                       active
                         ? 'bg-white/[0.07] text-pop-ink'
                         : 'text-pop-ink/80 hover:bg-white/[0.035] hover:text-pop-ink',
