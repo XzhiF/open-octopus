@@ -7,7 +7,7 @@
 // 复用 ＋ 面板会把「挂 SKILL / 委派」摆到一个尚未开始的会话面前，语义太重。
 
 import { useEffect, useState } from 'react'
-import { Check, Users } from 'lucide-react'
+import { Check, Users, X } from 'lucide-react'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { cn } from '@/lib/utils'
 import * as api from '@/lib/agent/api'
@@ -106,7 +106,7 @@ export function ComposerIdentityPicker({
           data-testid="tui-hero-identity"
           title="选择主 Agent 身份"
           className={cn(
-            'flex h-[27px] items-center gap-1.5 rounded-[8px] border px-2.5 text-[11.5px] transition-colors',
+            'group flex h-[27px] items-center gap-1.5 rounded-[8px] border px-2.5 text-[11.5px] transition-colors',
             activeName
               ? 'border-pop-purple/45 bg-pop-purple-soft text-pop-purple'
               : 'border-dashed border-pop-bd text-pop-dim hover:border-pop-dim hover:text-pop-ink',
@@ -114,6 +114,30 @@ export function ComposerIdentityPicker({
         >
           <Users className="size-3" />
           <span className="max-w-[240px] truncate">{label ?? '基础身份（主 Agent）'}</span>
+          {/* 已选分身时，悬停露 ✕ —— 一键清除回主身份（2026-10-30 用户定稿）。 */}
+          {activeName && (
+            <span
+              role="button"
+              tabIndex={0}
+              aria-label="清除身份，回到主身份"
+              title="清除身份，回到主身份"
+              data-testid="tui-hero-identity-clear"
+              onClick={(e) => {
+                e.stopPropagation()
+                void onSelect(null)
+              }}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' || e.key === ' ') {
+                  e.preventDefault()
+                  e.stopPropagation()
+                  void onSelect(null)
+                }
+              }}
+              className="ml-0.5 grid size-3 place-items-center rounded-full opacity-0 transition-opacity hover:bg-pop-purple/15 group-hover:opacity-100 group-focus-within:opacity-100"
+            >
+              <X className="size-2.5" />
+            </span>
+          )}
           <span aria-hidden className="text-[9px] opacity-70">▾</span>
         </button>
       </PopoverTrigger>

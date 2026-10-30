@@ -44,6 +44,7 @@ import { Input } from '@/components/ui/input'
 import { Button } from '@/components/ui/button'
 import { ConfirmDialog } from '@/components/agent/shared/ConfirmDialog'
 import { ChatArea } from './ChatArea'
+import type { ComposerIdentityDisplay } from './composer-identity-chip'
 import { ToolCallDialog } from './ToolCallDialog'
 import { KcCard, type KcCardActionCtx } from '@/components/knowledge-center/cards/registry'
 import {
@@ -1156,6 +1157,34 @@ export function ChatTab() {
   const heroActive = (draftScope ? !!pendingTaskSession : !activeSessionId)
     && !streaming && viewMessages.length === 0
 
+  // 输入框控件条的「当前身份」贴纸（2026-10-30 用户定稿）：
+  //   · 任务线程：身份由服务端按任务状态派生（草稿=作者 → 执行/验收=执行者 →
+  //     终态=主 Agent），用户不能主动切身份 → 只读（锁形，无 ✕）；
+  //   · 普通会话：显示当前分身身份，悬停 ✕ 清除回主身份；
+  //   · hero 新会话：身份由下方单选选择器承担，不重复挂贴纸。
+  const identityDisplay: ComposerIdentityDisplay | undefined = (() => {
+    if (taskThread) {
+      const status = activeTask?.status
+      if (pendingTaskSession || status === 'draft') {
+        return { label: '作者 · task-author', active: true, readOnly: true, title: '任务对话的身份由任务状态自动派生，不可手动切换' }
+      }
+      if (status === 'done' || status === 'aborted' || status === 'failed') {
+        return { label: '主 Agent', active: false, readOnly: true, title: '任务已结束，对话回到主身份（只读）' }
+      }
+      return { label: '执行者 · task-doer', active: true, readOnly: true, title: '任务对话的身份由任务状态自动派生，不可手动切换' }
+    }
+    // 身份取数窗口内先不渲染，避免先闪一下「主 Agent」再变成分身。
+    if (heroActive || !identity.loaded) return undefined
+    return identity.activeName
+      ? {
+          label: identity.label ?? identity.activeName,
+          active: true,
+          onClear: () => { void identity.switchTo(null) },
+          title: `当前身份：${identity.label ?? identity.activeName}（悬停 ✕ 清除，回到主身份）`,
+        }
+      : { label: '主 Agent', active: false, title: '当前为主身份（主 Agent）' }
+  })()
+
   const explorerWorkspaceId =
     activeTask?.workspace_id ??
     activeSession?.workspace_id ??
@@ -1387,6 +1416,7 @@ export function ChatTab() {
               />
             )}
             workspaceContext={composerWorkspaceContext}
+            identityDisplay={identityDisplay}
             identity={!taskThread ? (
               activeSessionId
                 ? {

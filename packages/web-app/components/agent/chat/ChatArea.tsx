@@ -31,6 +31,7 @@ import { SlashCommandAutocomplete, type SlashCommand } from './SlashCommandAutoc
 import { ComposerModelPopover } from './composer-model-popover'
 import { ComposerAttachPopover, type ComposerExpertRef, type ComposerSkillRef, type ComposerIdentityControls } from './composer-attach-popover'
 import { ComposerIdentityPicker } from './composer-identity-picker'
+import { ComposerIdentityChip, type ComposerIdentityDisplay } from './composer-identity-chip'
 import type { ComposerContext, ComposerEffort, ModelPreset } from '@/lib/agent/composer-settings'
 import { workPhrase, type WorkPhase } from '@/lib/agent/work-phrases'
 import { WORK_PHASE_TONE } from '@/lib/agent/chat-colors'
@@ -128,6 +129,9 @@ interface ChatAreaProps {
   composerHeroFooter?: ReactNode
   /** 会话长期身份（v59 分身）：＋ 按钮展示当前身份，面板里可委派 / 切换。 */
   identity?: ComposerIdentityControls
+  /** 控件条「当前身份」贴纸：任务线程只读，普通会话悬停 ✕ 清除回主身份。
+   *  缺省 = 该宿主不展示身份贴纸（hero 新会话由下方选择器承担）。 */
+  identityDisplay?: ComposerIdentityDisplay
   /** 当前工作区（只读）：＋ 面板置顶它自带的 SKILL（<workspace>/.claude/skills）。 */
   workspaceContext?: { id: string; label: string } | null
   /** TUI（claude-code 终端皮肤）变体 —— 任务草稿工作台 / 对话首页共用（2026-09-24 改版）：
@@ -171,7 +175,7 @@ export function ChatArea({
   commands, contextUsage, sessionUsage, taskUsage, currentModel, onModelChange,
   showUsagePlaceholders, showComposerAttach,
   effort, onEffortChange, maxContext, onMaxContextChange, modelPresets,
-  composerLeading, composerPlaceholder, heroEmpty, composerHeroFooter, identity, workspaceContext,
+  composerLeading, composerPlaceholder, heroEmpty, composerHeroFooter, identity, identityDisplay, workspaceContext,
   tui, onSteer, steerActiveRef, resumeTailing,
   messageExtras, transcriptTail, composerSeed, timelineClearDock,
 }: ChatAreaProps) {
@@ -943,6 +947,9 @@ export function ChatArea({
                   </span>
                 </>
               )}
+              {/* 当前身份贴纸（2026-10-30）：tok / task 之后。任务线程只读，
+                  普通会话悬停 ✕ 清除回主身份；hero 新会话由下方选择器承担。 */}
+              {identityDisplay && <ComposerIdentityChip display={identityDisplay} />}
               <span className="ml-auto hidden min-w-0 items-center justify-end gap-2 text-[10.5px] sm:flex">
                 {/* 2026-10-29 用户：流尾工作行已经在对话里持续报状态/计时，
                     输入框下方不再重复一条 `⠋ thinking 2.1s`。 */}
@@ -1101,6 +1108,7 @@ export function ChatArea({
                     ) : (
                       <SessionCostChip usage={sessionUsage} contextUsage={contextUsage} placeholder={showUsagePlaceholders} />
                     )}
+              {identityDisplay && <ComposerIdentityChip display={identityDisplay} />}
               <span className="ml-auto flex shrink-0 items-center">
                 {streaming ? (
                   <Button

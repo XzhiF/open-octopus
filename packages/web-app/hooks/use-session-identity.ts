@@ -27,12 +27,15 @@ export interface SessionIdentity {
   activeName: string | null
   /** 当前身份的展示名；null = 基础身份。 */
   label: string | null
+  /** 是否已从服务端取到身份（false = 未知；切换会话的取数窗口内别渲染身份贴纸）。 */
+  loaded: boolean
   /** 切换长期身份（null = 恢复基础）。成功返回 true。 */
   switchTo: (cloneName: string | null) => Promise<boolean>
 }
 
 export function useSessionIdentity(scope: IdentityScope): SessionIdentity {
   const [role, setRole] = useState<RoleState | null>(null)
+  const [loaded, setLoaded] = useState(false)
 
   // 依赖只取原始值：调用方每轮都会新建 scope 对象，用对象进 deps 会无限重取。
   const kind = scope.kind
@@ -42,8 +45,10 @@ export function useSessionIdentity(scope: IdentityScope): SessionIdentity {
   const enabled = kind === 'task' ? !!taskId : !!sessionId
 
   const load = useCallback(async () => {
+    setLoaded(false)
     if (!enabled) {
       setRole(null)
+      setLoaded(true)
       return
     }
     try {
@@ -55,6 +60,8 @@ export function useSessionIdentity(scope: IdentityScope): SessionIdentity {
       setRole(next as RoleState)
     } catch {
       setRole(null)
+    } finally {
+      setLoaded(true)
     }
   }, [enabled, kind, taskId, cloneName, sessionId])
 
@@ -82,6 +89,7 @@ export function useSessionIdentity(scope: IdentityScope): SessionIdentity {
   return useMemo(() => ({
     activeName: role?.active_expert ?? null,
     label: role?.clone?.display_name ?? role?.expert?.name ?? null,
+    loaded,
     switchTo,
-  }), [role?.active_expert, role?.clone?.display_name, role?.expert?.name, switchTo])
+  }), [role?.active_expert, role?.clone?.display_name, role?.expert?.name, loaded, switchTo])
 }
