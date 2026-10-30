@@ -403,6 +403,35 @@ describe("TaskHomeService", () => {
       expect(fs.existsSync(svc.homePath("t-nonexistent"))).toBe(false)
     })
 
+    it("ensureRulesFile self-heals a pre-v2 rule (unscoped — blocked workflow sessions)", () => {
+      const id = "t-4b"
+      const home = svc.homePath(id)
+      svc.createHome(id)
+      const rulePath = path.join(home, ".claude", "rules", "task-context.md")
+      // v1 content: no scope note, no version marker — it told EVERY session
+      // under the workspace (workflow exec included) never to touch the repo.
+      fs.writeFileSync(rulePath, "# ⛔ 路径强制规则（最高优先级，不可违反）\n", "utf-8")
+
+      svc.ensureRulesFile(id)
+
+      const healed = fs.readFileSync(rulePath, "utf-8")
+      expect(healed).toContain("task-context-rule: v2")
+      expect(healed).toContain("不受本规则约束")
+      expect(healed).toContain("manifest.json")
+    })
+
+    it("rule scopes itself to the task-home session (does not block workflow execution)", () => {
+      const id = "t-4c"
+      svc.createHome(id)
+      const content = fs.readFileSync(
+        path.join(svc.homePath(id), ".claude", "rules", "task-context.md"),
+        "utf-8",
+      )
+      expect(content).toContain("task-context-rule: v2")
+      expect(content).toContain("工作流执行会话")
+      expect(content).toContain("不受本规则约束")
+    })
+
     it("ensureRulesFile self-heals stale pre-rename rules (spec.json pointer) + renames the legacy snapshot", () => {
       const id = "t-5"
       const home = svc.homePath(id)

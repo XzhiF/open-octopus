@@ -15,12 +15,25 @@ export class AgentSessionDAO extends BaseDAO {
     return (this.stmt("SELECT * FROM sessions WHERE id = ?").get(id) as SessionRow) ?? null
   }
 
-  /** List sessions globally (org demotion: sessions are no longer tenant-scoped). */
+  /** List sessions globally (org demotion: sessions are no longer tenant-scoped).
+   *
+   *  Task-bound sessions (`tasks.source_chat_session_id`) are excluded at the
+   *  SQL level: one task = one main-chat thread, and that thread is reached via
+   *  its task row, not the 会话 list. The web sidebar filters them client-side
+   *  too, but that filter needs the task list — while it is loading, or if its
+   *  fetch fails, every task thread would otherwise "fall into" 会话 (2026-10-30).
+   *  A soft-deleted task releases its session back into the list (same rule as
+   *  the clone-session route). */
   listSessions(filters?: {
     clone?: string; session_type?: string; limit?: number; cursor?: string
   }): { items: SessionRow[]; has_more: boolean; next_cursor: string | null } {
     const limit = filters?.limit ?? 20
-    let sql = `SELECT * FROM sessions WHERE is_deleted = 0`
+    let sql = `SELECT * FROM sessions WHERE is_deleted = 0
+      AND NOT EXISTS (
+        SELECT 1 FROM tasks t
+         WHERE t.source_chat_session_id = sessions.id
+           AND t.deleted_at IS NULL
+      )`
     const params: unknown[] = []
     if (filters?.clone) { sql += ` AND clone_name = ?`; params.push(filters.clone) }
     if (filters?.session_type) { sql += ` AND session_type = ?`; params.push(filters.session_type) }

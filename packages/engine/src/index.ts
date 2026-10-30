@@ -40,7 +40,7 @@ export type {
   ResourceManifestLike, ResourceCheckResultLike, ResourceProvisionResultLike,
 } from "./engine-init"
 
-export { JsonlLogger, sanitizeId, parseLogFilename, MERGED_EVENT_TYPES, mergeAgentEvents } from "./logger"
+export { JsonlLogger, sanitizeId, parseLogFilename, MERGED_EVENT_TYPES, mergeAgentEvents, normalizeMergedEvents, coalesceToolCallEvents, isDisplayableAgentEvent } from "./logger"
 export type { MergedEventType, ParsedLogFilename } from "./logger"
 // Pipeline modules
 export * from "./pipeline"

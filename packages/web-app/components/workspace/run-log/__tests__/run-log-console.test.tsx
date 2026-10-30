@@ -54,7 +54,9 @@ describe("RunLogConsole —— 合流终端", () => {
     expect(lines.map((l) => l.getAttribute("data-channel"))).toEqual([
       "T-1", "T-2", "T-1", "T-2", "T-1", "T-2", "review", "review",
     ])
-    expect(lines[2].textContent).toContain("T-1 先看色板")
+    expect(lines[2].textContent).toContain("思考")
+    fireEvent.click(lines[2])
+    expect(screen.getByText(/T-1 先看色板/)).toBeTruthy()
   })
 
   it("并发计数把 swarm 的三专家拆开显示", () => {

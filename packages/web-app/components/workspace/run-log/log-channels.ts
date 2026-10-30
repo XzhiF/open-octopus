@@ -57,6 +57,13 @@ export interface LogRow {
   role?: string
   /** 行内被截断掉的行数提示 */
   moreLines?: number
+  /** 思考段摘要（字数 · 时长），折叠态显示在标题上 */
+  meta?: string
+  /** 工具调用的结构化载荷 —— 展开面板分别渲染 input / result */
+  toolName?: string
+  toolInput?: string
+  toolResult?: string
+  toolIsError?: boolean
   event: RunEvent
 }
 
@@ -123,8 +130,21 @@ export function channelKeyOf(e: RunEvent): string {
 export function shortTag(node: string, iteration?: number): string {
   const base = node.includes(":") ? node.slice(node.lastIndexOf(":") + 1) : node
   const stripped = base.replace(/-iter\d+$/i, "")
-  const tag = stripped.length > 8 ? `${stripped.slice(0, 7)}…` : stripped
+  const tag = stripped.length > 14 ? `${stripped.slice(0, 13)}…` : stripped
   return iteration != null && iteration > 0 ? `${tag}·${iteration}` : tag
+}
+
+/**
+ * 通道的唯一展示名 —— 同一行/同一栏里永远只出现这一种写法。
+ *   · 有真正的人话名（stepName ≠ node 且 ≠ 短标）→ 用人话名
+ *   · 否则用短标（sub_workflow 只取 `:` 后一段，ticket-dag:ticket-01 → ticket-01）
+ * 完整 node_id 只留给 tooltip / DAG 联动，不再上屏。
+ */
+export function displayNameOf(ch: Pick<LogChannel, "node" | "tag" | "label">): string {
+  if (ch.node === "__engine_init__") return "初始化"
+  const label = ch.label?.trim()
+  if (label && label !== ch.node && label !== ch.tag) return label
+  return ch.tag
 }
 
 const ONE_LINE = /\s*\n\s*/g
@@ -176,6 +196,63 @@ function outputRow(e: RunEvent, content: string, errLevel: LogKind): Pick<LogRow
 
 const END_OK = new Set(["completed", "success", "skipped"])
 
+/** 旧数据里的 tool input 常是 JSON 字符串；先解回对象，语义键提取才不会失效。 */
+function parseToolInput(v: unknown): unknown {
+  if (typeof v !== "string") return v
+  const text = v.trim()
+  if (!text.startsWith("{") && !text.startsWith("[")) return v
+  try { return JSON.parse(text) } catch { return v }
+}
+
+/** 工具入参/结果 → 展开面板里的纯文本。 */
+function payloadText(v: unknown): string | undefined {
+  if (v == null || v === "") return undefined
+  if (typeof v === "string") return v
+  try { return JSON.stringify(v, null, 2) } catch { return String(v) }
+}
+
+function spanDuration(startedAt?: string, completedAt?: string): string | null {
+  if (!startedAt || !completedAt) return null
+  const ms = Date.parse(completedAt) - Date.parse(startedAt)
+  return Number.isFinite(ms) && ms > 0 ? formatDuration(ms) : null
+}
+
+/**
+ * 同一 toolCallId 的碎片合成一条 —— 历史数据里控制事件插在
+ * tool_input / tool_result 之间，把一次调用拆成了两行。服务端已修根，
+ * 这里再兜底一次，保证旧执行、旧缓存也能显示成完整的 `▸ Read path [✓]`。
+ */
+export function coalesceToolCalls(events: RunEvent[]): RunEvent[] {
+  const out: RunEvent[] = []
+  const byId = new Map<string, RunEvent>()
+  for (const e of events) {
+    if (e.event !== "tool_call" || !e.toolCallId) {
+      out.push(e)
+      continue
+    }
+    const key = `${e.nodeId ?? ""}|${e.toolCallId}`
+    const prev = byId.get(key)
+    if (!prev) {
+      const copy = { ...e }
+      byId.set(key, copy)
+      out.push(copy)
+      continue
+    }
+    if ((prev.input == null || prev.input === "") && e.input != null && e.input !== "") prev.input = e.input
+    if (prev.result == null && e.result != null) prev.result = e.result
+    if (e.isError) prev.isError = true
+    if (!prev.toolName && e.toolName) prev.toolName = e.toolName
+    for (const key of ["startedAt", "completedAt"] as const) {
+      if (!e[key]) continue
+      const current = Date.parse(prev[key] ?? "")
+      const next = Date.parse(e[key])
+      if (Number.isNaN(current)) prev[key] = e[key]
+      else if (!Number.isNaN(next) && (key === "startedAt" ? next < current : next > current)) prev[key] = e[key]
+    }
+  }
+  return out
+}
+
 /**
  * 一条事件 → 一行（或 null = 不显示）。
  * branch_start / branch_end 是给 Loop 概览用的元数据；status 是心跳级噪声 —— 都不进流。
@@ -209,7 +286,9 @@ export function rowFromEvent(e: RunEvent, index: number): LogRow | null {
   // ── agent 块状事件（服务端已 compact）──
   if (ev === "thinking_block" || sub === "thinking_block") {
     const content = e.content ?? e.event_data?.content ?? ""
-    return { ...base, kind: "think", level: "info", text: oneLine(content, 160), detail: content, block: true }
+    const duration = spanDuration(e.startedAt, e.completedAt)
+    const meta = `${content.length.toLocaleString()} 字${duration ? ` · ${duration}` : ""}`
+    return { ...base, kind: "think", level: "info", text: `思考 · ${meta}`, detail: content, block: true, meta }
   }
   if (ev === "text_block" || sub === "text_delta") {
     const content = e.content ?? e.event_data?.content ?? ""
@@ -217,7 +296,8 @@ export function rowFromEvent(e: RunEvent, index: number): LogRow | null {
   }
   if (ev === "tool_call") {
     const name = e.toolName || "tool"
-    const arg = compactInput(e.input)
+    const input = parseToolInput(e.input)
+    const arg = compactInput(input)
     const failed = e.isError === true
     return {
       ...base,
@@ -225,6 +305,10 @@ export function rowFromEvent(e: RunEvent, index: number): LogRow | null {
       level: failed ? "error" : "info",
       text: arg ? `${name} ${arg}` : name,
       detail: detailOfTool(e),
+      toolName: name,
+      toolInput: payloadText(input) ?? payloadText(e.event_data?.input),
+      toolResult: payloadText(e.result) ?? payloadText(e.event_data?.content),
+      toolIsError: failed,
     }
   }
   if (ev === "bash_output" || ev === "python_output") {
@@ -238,12 +322,34 @@ export function rowFromEvent(e: RunEvent, index: number): LogRow | null {
     return { ...base, kind: "out", level: "trace", text: oneLine(e.line ?? e.content ?? "", 220) }
   }
   if (ev === "tool_input" || ev === "tool_result") {
-    return { ...base, kind: "tool", level: "info", text: e.toolName ?? sub ?? "tool", detail: detailOfTool(e) }
+    const name = e.toolName ?? e.event_data?.toolName ?? "tool"
+    const isResult = ev === "tool_result"
+    return {
+      ...base,
+      kind: isResult && e.isError ? "err" : "tool",
+      level: isResult && e.isError ? "error" : "info",
+      text: name,
+      detail: detailOfTool(e),
+      toolName: name,
+      toolInput: isResult ? undefined : payloadText(e.input),
+      toolResult: isResult ? payloadText(e.content ?? e.result) : undefined,
+      toolIsError: isResult && e.isError === true,
+    }
   }
   if (ev === "agent_event") {
-    if (sub === "error") return { ...base, kind: "err", level: "error", text: oneLine(e.event_data?.message ?? e.event_data?.content ?? "错误", 200) }
-    if (sub === "thinking" || sub === "thinking_start" || sub === "thinking_done" || sub === "status") return null
-    return { ...base, kind: "log", level: "info", text: oneLine(sub ? `${sub} ${e.content ?? ""}` : (e.content ?? ev), 200) }
+    // 控制事件 / 空外壳：旧读路径会把外层 event_type 当 subtype，这里直接吞掉。
+    if (!sub || sub === "status" || sub === "turn_usage" || sub === "active_goal") return null
+    if (sub === "agent_event") {
+      const legacy = e.content ?? e.event_data?.content
+      return legacy ? { ...base, kind: "log", level: "info", text: oneLine(legacy, 200) } : null
+    }
+    if (sub === "error") {
+      return { ...base, kind: "err", level: "error", text: oneLine(e.event_data?.message ?? e.event_data?.content ?? "错误", 200) }
+    }
+    if (sub === "thinking" || sub === "thinking_start" || sub === "thinking_done") return null
+    const content = e.content ?? e.event_data?.content ?? e.event_data?.message
+    if (!content) return null
+    return { ...base, kind: "log", level: "info", text: oneLine(`${sub} ${content}`, 200) }
   }
 
   // ── 节点自身输出 / 子工作流转发 ──
@@ -325,8 +431,9 @@ export function rowFromEvent(e: RunEvent, index: number): LogRow | null {
 
 export function buildRows(events: RunEvent[]): LogRow[] {
   const rows: LogRow[] = []
-  for (let i = 0; i < events.length; i++) {
-    const row = rowFromEvent(events[i], i)
+  const coalesced = coalesceToolCalls(events)
+  for (let i = 0; i < coalesced.length; i++) {
+    const row = rowFromEvent(coalesced[i], i)
     if (row) rows.push(row)
   }
   // 服务端已按时间排序；这里只做稳定兜底（同刻保持原序）

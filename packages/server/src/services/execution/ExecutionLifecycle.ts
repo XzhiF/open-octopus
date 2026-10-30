@@ -122,7 +122,7 @@ export class ExecutionLifecycle {
       findNodeDef: (nodes, nid) => this.findNodeDef(nodes, nid),
       syncStateJson: () => this.syncStateJson(),
       approve: (id, nid, ans, cmt) => this.approve(id, nid, ans, cmt),
-      recordEndCommits: () => this.recordEndCommits(),
+      recordEndCommits: (autoCommitDirty) => this.recordEndCommits(autoCommitDirty),
       abortAndWait: (ac, eid, t) => this.abortAndWait(ac, eid, t),
     })
 
@@ -539,7 +539,7 @@ export class ExecutionLifecycle {
         }
       }
 
-      const endCommitId = await this.recordEndCommits()
+      const endCommitId = await this.recordEndCommits(Boolean(exec.task_id))
       this.dao.updateExecution(id, { end_commit_id: endCommitId })
 
       // ── Harness status adjustment ──
@@ -636,7 +636,7 @@ export class ExecutionLifecycle {
         }
         this.dao.updateExecution(id, { end_commit_id: startCommitId })
       } else {
-        const endCommitId = await this.recordEndCommits()
+        const endCommitId = await this.recordEndCommits(Boolean(exec.task_id))
         this.dao.updateExecution(id, { end_commit_id: endCommitId })
       }
 
@@ -792,7 +792,7 @@ export class ExecutionLifecycle {
           }
         }
 
-        const endCommitId = await this.recordEndCommits()
+        const endCommitId = await this.recordEndCommits(Boolean(exec.task_id))
         this.dao.updateExecution(id, { end_commit_id: endCommitId })
 
         this.updateStatus(id, result.status, {
@@ -838,7 +838,7 @@ export class ExecutionLifecycle {
         this.dao.updateExecution(id, { end_commit_id: retryStartCommitId || exec.start_commit_id || "{}" })
       } else {
         try {
-          const endCommitId = await this.recordEndCommits()
+          const endCommitId = await this.recordEndCommits(Boolean(exec.task_id))
           this.dao.updateExecution(id, { end_commit_id: endCommitId })
         } catch (commitErr: any) {
           console.error(`[ExecutionLifecycle] recordEndCommits failed for ${id}:`, commitErr.message)
@@ -1468,7 +1468,7 @@ export class ExecutionLifecycle {
         }
 
         try {
-          const endCommitId = await this.recordEndCommits()
+          const endCommitId = await this.recordEndCommits(Boolean(exec.task_id))
           this.dao.updateExecution(execId, { end_commit_id: endCommitId })
         } catch { /* non-fatal */ }
 
@@ -1812,8 +1812,8 @@ export class ExecutionLifecycle {
     return this.gitOps.recordStartCommits()
   }
 
-  private async recordEndCommits(): Promise<string> {
-    return this.gitOps.recordEndCommits()
+  private async recordEndCommits(autoCommitDirty = false): Promise<string> {
+    return this.gitOps.recordEndCommits(autoCommitDirty)
   }
 
   private async rollbackToStart(startCommitId: string): Promise<void> {

@@ -387,6 +387,12 @@ export class TaskLifecycleService {
       )
     }
 
+    // Self-heal the task-home rule BEFORE the round starts: legacy homes carry an
+    // unscoped 「禁止写入项目代码库」 that the SDK's nested-memory loader also feeds
+    // to workflow exec sessions, so ship/code-review refuse to edit or commit and
+    // the round lands zero commits (「变更」empty). No-op once current.
+    this.home.ensureRulesFile(taskId)
+
     // Pre-check for a human-readable refusal; ux_exec_task_active below is the actual
     // serializer (the pre-check cannot close the race, the index can).
     // task-exec-tree (v44): `latest` doubles as the CHAIN TIP — the terminal row this

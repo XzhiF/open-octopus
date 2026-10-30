@@ -275,12 +275,18 @@ export class JsonlLogger {
 export function mergeAgentEvents(entries: any[]): any[] {
     const results: any[] = []
     let block: any = null
+    /** 块内到达的控制事件（active_goal）——等块关闭后再放出去，保持时间序。 */
+    let deferred: any[] = []
 
     const closeBlock = () => {
       if (!block) return
       const { type: _type, ...emitted } = block
       results.push(emitted)
       block = null
+      if (deferred.length) {
+        results.push(...deferred)
+        deferred = []
+      }
     }
 
     for (const entry of entries) {
@@ -315,6 +321,32 @@ export function mergeAgentEvents(entries: any[]): any[] {
       if (topEvent === "agent_event") {
         const ed = entry.event_data
         const subType: string = ed?.type ?? ""
+
+        // 控制事件：状态/计费遥测。它们不是日志内容，也绝不能关闭
+        // 当前文本/工具块 —— 否则一次工具调用会被拆成「入参行 + 结果行」，
+        // 并落库成 content=NULL 的 agent_event 噪声行。
+        if (subType === "status" || subType === "turn_usage" || !subType) {
+          continue
+        }
+
+        // 旧读路径把外层 event_type 当 subtype：无正文就是空壳（跳过），
+        // 有正文则保留成一条普通行，且不打断当前块。
+        if (subType === "agent_event") {
+          const body = entry.content ?? ed?.content
+          if (body) {
+            if (block) deferred.push(entry)
+            else results.push(entry)
+          }
+          continue
+        }
+
+        // 目标推进是真实证据（goal 模式），保留；但同样不能打断当前块，
+        // 先挂起，等块关闭后按原时间序补回。
+        if (subType === "active_goal") {
+          if (block) deferred.push(entry)
+          else results.push(entry)
+          continue
+        }
 
         if (subType === "thinking_start") {
           closeBlock()
@@ -539,5 +571,66 @@ export function mergeAgentEvents(entries: any[]): any[] {
     }
 
     closeBlock()
-    return results
+    if (deferred.length) {
+      results.push(...deferred)
+      deferred = []
+    }
+    return normalizeMergedEvents(results)
+}
+
+/** 无正文的 agent_event 外壳 / 控制事件不进日志流。 */
+export function isDisplayableAgentEvent(entry: any): boolean {
+  if (entry?.event !== "agent_event") return true
+  const data = entry.event_data
+  const subType = data?.type
+  if (!subType || subType === "status" || subType === "turn_usage") return false
+  // 除 type 外至少有一个有内容的字段（active_goal 的 iterations=0 也算）。
+  return Object.entries(data).some(([key, value]) =>
+    key !== "type" && value !== null && value !== undefined && value !== "",
+  )
+}
+
+/**
+ * 把同一 toolCallId 的碎片合成一条工具调用。
+ *
+ * 历史数据里 `status` / `turn_usage` 会插在 tool_input 与 tool_result 之间，
+ * 把工具块提前关闭，于是同一次调用被存成「只有入参」和「只有结果」两行。
+ * 合并器已修根；这里再按 id 兜底一次，旧执行无需迁移也能正确显示。
+ */
+export function coalesceToolCallEvents(events: any[]): any[] {
+  const out: any[] = []
+  const byId = new Map<string, any>()
+  for (const entry of events) {
+    if (!entry || entry.event !== "tool_call" || !entry.toolCallId) {
+      out.push(entry)
+      continue
+    }
+    const key = `${entry.nodeId ?? ""}|${entry.toolCallId}`
+    const existing = byId.get(key)
+    if (!existing) {
+      const copy = { ...entry }
+      byId.set(key, copy)
+      out.push(copy)
+      continue
+    }
+    if ((existing.input == null || existing.input === "") && entry.input != null && entry.input !== "") existing.input = entry.input
+    if (existing.result == null && entry.result != null) existing.result = entry.result
+    if (entry.isError) existing.isError = true
+    if (entry.toolName && !existing.toolName) existing.toolName = entry.toolName
+    for (const key of ["startedAt", "completedAt"] as const) {
+      if (!entry[key]) continue
+      const current = Date.parse(existing[key] ?? "")
+      const next = Date.parse(entry[key])
+      if (Number.isNaN(current)) existing[key] = entry[key]
+      else if (!Number.isNaN(next) && (key === "startedAt" ? next < current : next > current)) {
+        existing[key] = entry[key]
+      }
+    }
+  }
+  return out
+}
+
+/** 合并后的统一收口：丢噪声 + 合工具碎片。 */
+export function normalizeMergedEvents(events: any[]): any[] {
+  return coalesceToolCallEvents(events.filter(isDisplayableAgentEvent))
 }

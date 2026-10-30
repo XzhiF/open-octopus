@@ -20,6 +20,7 @@ import {
   buildRows,
   channelMatchesFocus,
   concurrentStreams,
+  displayNameOf,
   elapsedMs,
   filterRows,
   tail,
@@ -53,7 +54,24 @@ const STATUS_TEXT: Record<LogChannel['status'], string> = {
 }
 
 function indentVar(showTs: boolean): CSSProperties {
-  return { '--log-indent': showTs ? '201px' : '114px' } as CSSProperties
+  return { '--log-indent': showTs ? '212px' : '122px' } as CSSProperties
+}
+
+const RAIL_KEY = 'octopus.runlog.rail.v1'
+const RAIL_DEFAULT = 190
+const RAIL_MIN = 140
+const RAIL_MAX = 420
+
+function readRailWidth(): number {
+  if (typeof window === 'undefined') return RAIL_DEFAULT
+  try {
+    const raw = Number(window.localStorage.getItem(RAIL_KEY))
+    return Number.isFinite(raw) && raw > 0
+      ? Math.min(RAIL_MAX, Math.max(RAIL_MIN, raw))
+      : RAIL_DEFAULT
+  } catch {
+    return RAIL_DEFAULT
+  }
 }
 
 /* ───────────────────────── 小控件 ───────────────────────── */
@@ -106,15 +124,20 @@ function Seg<T extends string>({
 /* ───────────────────────── 通道栏 ───────────────────────── */
 
 function ChannelRail({
-  channels, totalRows, focus, onFocus,
+  channels, totalRows, focus, onFocus, width,
 }: {
   channels: LogChannel[]
   totalRows: number
   focus: string | null
   onFocus: (id: string | null) => void
+  width: number
 }) {
   return (
-    <div className="flex w-[176px] shrink-0 flex-col border-r border-pop-bd bg-pop-bg" data-testid="log-rail">
+    <div
+      className="flex shrink-0 flex-col border-r border-pop-bd bg-pop-bg"
+      style={{ width }}
+      data-testid="log-rail"
+    >
       <div className="flex shrink-0 items-center justify-between border-b border-white/[0.05] px-2.5 py-1.5 text-[8.5px] font-black tracking-[0.14em] text-pop-dim/70">
         <span>通道</span>
         <span className="text-[9px] tracking-normal text-pop-ink">{channels.length}</span>
@@ -128,8 +151,7 @@ function ChannelRail({
             !focus ? 'border-pop-ink bg-white/[0.07] text-pop-ink' : 'border-transparent text-pop-dim hover:bg-white/[0.04] hover:text-pop-ink',
           )}
         >
-          <span className="w-[38px] shrink-0 text-[9.5px] font-black text-pop-ink">ALL</span>
-          <span className="min-w-0 flex-1 truncate">全部通道</span>
+          <span className="min-w-0 flex-1 truncate font-black">全部通道</span>
           <span className="shrink-0 text-[9px] tabular-nums text-pop-dim/70">{totalRows}</span>
         </button>
         {channels.map((c) => {
@@ -152,9 +174,8 @@ function ChannelRail({
                 className={cn('size-1.5 shrink-0 rounded-full', c.status === 'running' && 'animate-pulse')}
                 style={{ background: c.color, opacity: c.status === 'pending' ? 0.3 : 1 }}
               />
-              <span className="w-[38px] shrink-0 truncate text-[9.5px] font-black" style={{ color: c.color }}>{c.tag}</span>
-              <span className="min-w-0 flex-1 truncate">
-                {c.label}
+              <span className="min-w-0 flex-1 truncate font-black" style={{ color: c.color }}>
+                {displayNameOf(c)}
                 {c.roles.length > 1 && c.status === 'running' && (
                   <span className="ml-1 rounded border border-pop-pink/30 bg-pop-pink-soft px-1 text-[8px] font-black text-pop-pink">{c.roles.length} 专家</span>
                 )}
@@ -209,7 +230,7 @@ function ConcurrencyRibbon({
               className="group flex h-[14px] w-full items-center gap-1.5 text-left"
               title={`${c.node} · ${STATUS_TEXT[c.status]} · ${formatDuration(elapsedMs(c, now))}`}
             >
-              <span className="w-[36px] shrink-0 truncate text-[9px] font-black" style={{ color: c.color }}>{c.tag}</span>
+              <span className="w-[76px] shrink-0 truncate text-[9px] font-black" style={{ color: c.color }}>{displayNameOf(c)}</span>
               <span className="relative h-[5px] flex-1 overflow-hidden rounded-full bg-white/[0.05]">
                 <span
                   className={cn('absolute inset-y-0 rounded-full', running ? 'opacity-100' : 'opacity-70')}
@@ -322,8 +343,7 @@ function LogPane({
     >
       <header className="flex h-[26px] shrink-0 items-center gap-1.5 border-b border-white/[0.06] bg-pop-bg px-2 text-[9.5px]">
         <span className={cn('size-1.5 rounded-full', ch.status === 'running' && 'animate-pulse')} style={{ background: ch.color }} />
-        <span className="font-black" style={{ color: ch.color }}>{ch.tag}</span>
-        <span className="min-w-0 flex-1 truncate text-pop-dim">{ch.label}</span>
+        <span className="min-w-0 flex-1 truncate font-black" style={{ color: ch.color }} title={ch.node}>{displayNameOf(ch)}</span>
         <span className="shrink-0 tabular-nums text-pop-dim/70">
           {STATUS_TEXT[ch.status]} · {formatDuration(elapsedMs(ch, now))} · {ch.count} 行
           {ch.roles.length > 1 && ch.status === 'running' ? ` · ${ch.roles.length} 专家` : ''}
@@ -341,7 +361,7 @@ function LogPane({
         ref={ref}
         className="min-h-0 flex-1 overflow-y-auto pb-2"
         // pane 内无时间戳无通道标，展开正文跟着行首缩进
-        style={{ '--log-indent': '36px' } as CSSProperties}
+        style={{ '--log-indent': '118px' } as CSSProperties}
         onScroll={(e) => {
           const el = e.currentTarget
           setFollow(el.scrollHeight - el.scrollTop - el.clientHeight < 24)
@@ -382,6 +402,37 @@ export function RunLogConsole({
   const [expanded, setExpanded] = useState<Set<string>>(() => new Set())
   const [maximized, setMaximized] = useState<string | null>(null)
   const [now, setNow] = useState(() => Date.now())
+  // 通道栏宽度：拖拽调整并持久化；默认 190，范围 140–420。双击复位。
+  const [railW, setRailW] = useState(readRailWidth)
+  const railWRef = useRef(railW)
+
+  const commitRailW = useCallback(() => {
+    try { window.localStorage.setItem(RAIL_KEY, String(railWRef.current)) } catch { /* private mode */ }
+  }, [])
+
+  const startRailDrag = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
+    e.preventDefault()
+    const startX = e.clientX
+    const startW = railWRef.current
+    const move = (ev: PointerEvent) => {
+      const next = Math.max(RAIL_MIN, Math.min(RAIL_MAX, startW + ev.clientX - startX))
+      railWRef.current = next
+      setRailW(next)
+    }
+    const up = () => {
+      window.removeEventListener('pointermove', move)
+      window.removeEventListener('pointerup', up)
+      commitRailW()
+    }
+    window.addEventListener('pointermove', move)
+    window.addEventListener('pointerup', up)
+  }, [commitRailW])
+
+  const resetRailW = useCallback(() => {
+    setRailW(RAIL_DEFAULT)
+    railWRef.current = RAIL_DEFAULT
+    commitRailW()
+  }, [commitRailW])
 
   const live = LIVE_STATUS.has(executionStatus ?? '')
 
@@ -468,7 +519,7 @@ export function RunLogConsole({
             className="inline-flex items-center gap-1 rounded-full border px-2 py-[2px] text-[9px] font-black"
             style={{ color: focusCh.color, borderColor: focusCh.color }}
           >
-            仅 {focusCh.tag} ×
+            仅 {displayNameOf(focusCh)} ×
           </button>
         )}
 
@@ -510,7 +561,20 @@ export function RunLogConsole({
 
       {view === 'stream' ? (
         <div className="flex min-h-0 flex-1">
-          <ChannelRail channels={channels} totalRows={rows.length} focus={focus} onFocus={onFocus} />
+          <ChannelRail channels={channels} totalRows={rows.length} focus={focus} onFocus={onFocus} width={railW} />
+          {/* 通道栏 ↔ 日志的拖拽分隔条：只留一条 1px 竖线，不挂任何居中图标。 */}
+          <div
+            role="separator"
+            aria-orientation="vertical"
+            aria-label="调整通道栏宽度"
+            title="拖拽调整通道栏宽度（双击复位）"
+            data-testid="log-rail-splitter"
+            onPointerDown={startRailDrag}
+            onDoubleClick={resetRailW}
+            className="group relative w-[5px] shrink-0 cursor-col-resize touch-none select-none bg-pop-bg"
+          >
+            <span className="pointer-events-none absolute inset-y-0 left-[2px] w-px bg-pop-bd transition-colors group-hover:bg-pop-pink/60" />
+          </div>
           <div className="flex min-w-0 flex-1 flex-col">
             {showRibbon && <ConcurrencyRibbon channels={channels} now={clock} focus={focus} onFocus={onFocus} live={live} />}
             <LogStream

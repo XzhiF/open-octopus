@@ -5,7 +5,7 @@ import { Activity, Terminal, X } from 'lucide-react'
 import { fetchExecutionDetail } from '@/lib/api-client'
 import type { StepExecution } from '@/lib/types'
 import { WorkflowFlowViewerWithStatus } from '@/components/workspace/workflow-flow-viewer-with-status'
-import { ExecutionLogViewer } from '@/components/workspace/execution-log-viewer'
+import { RunLogConsole } from '@/components/workspace/run-log/run-log-console'
 import { Dialog, DialogContent, DialogTitle } from '@/components/ui/dialog'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { cn } from '@/lib/utils'
@@ -100,10 +100,11 @@ export function WorkflowWindow({ workspaceId, executionId, title, onClose }: Wor
             </div>
           ) : (
             <div className={cn('h-full min-h-0 overflow-hidden')}>
-              <ExecutionLogViewer
+              <RunLogConsole
                 workspaceId={workspaceId}
                 executionId={executionId}
                 executionStatus={detail.status}
+                steps={detail.steps}
               />
             </div>
           )}

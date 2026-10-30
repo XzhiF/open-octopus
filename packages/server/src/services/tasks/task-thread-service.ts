@@ -246,6 +246,12 @@ export class TaskThreadService {
       task.status === "draft" ? "author" : TERMINAL.has(task.status) ? "base" : "doer"
 
     const taskHome = this.taskHomeService.homePath(task.id)
+    // Per-turn backfill: the SDK feeds `.task/.claude/rules/task-context.md` to
+    // EVERY session under the workspace (nested memory) — including workflow
+    // exec agents at the ws root. Homes written before the rule was scoped still
+    // carry an unconditional "禁止写入项目代码库", which makes those agents refuse
+    // to commit and leaves 「变更」empty. No-op once current.
+    this.taskHomeService.ensureRulesFile(task.id)
     const workspace = task.workspace_id ? this.workspaceService.getById(task.workspace_id) : undefined
     const wsPath = workspace ? expandHome(workspace.path) : null
     // ready has no execution workspace yet, so a doer turn can only read for now.

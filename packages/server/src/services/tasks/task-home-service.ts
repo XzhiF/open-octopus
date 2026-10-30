@@ -40,6 +40,13 @@ const ARTIFACTS_JSON = "artifacts.json"
 const WORKFLOWS_DIR = "workflows"
 const RULES_DIR = path.join(".claude", "rules")
 const RULES_FILENAME = "task-context.md"
+// The SDK loads nested `.claude/rules/*.md` as project memory for EVERY session
+// whose cwd is an ancestor of the home — including workflow execution sessions
+// running at the workspace ROOT. v1 stated the constraints unconditionally, so
+// code-review/ship nodes read "禁止写入项目代码库" as applying to them, refused
+// to edit/commit, and the round ended with zero commits → 「变更」empty. v2 scopes
+// the rule to the task-home session and is detected so existing homes self-heal.
+const RULES_CONTENT_VERSION = "task-context-rule: v2"
 const CONTEXT_FILENAME = "context.md"
 // The home manifest: a structured snapshot of task_spec (format / phases 绑定 /
 // decisions / …) — metadata, NOT a spec document. Renamed from spec.json
@@ -503,8 +510,14 @@ export class TaskHomeService {
         'description: "Task workspace path constraints — HIGHEST PRIORITY"',
         'alwaysApply: true',
         '---',
+        `<!-- ${RULES_CONTENT_VERSION} -->`,
         '',
-        '# ⛔ 路径强制规则（最高优先级，不可违反）',
+        '# ⛔ 路径强制规则（仅限任务主页会话）',
+        '',
+        `> **适用范围**：仅当你的**主工作目录**恰为 \`${home}\` 这个任务主页时适用。`,
+        '> 工作流执行会话 / 代码仓会话（主工作目录 = 工作区根目录，代码在 `projects/` 下）',
+        '> **不受本规则约束** —— 不要据此拒绝写入代码仓或提交；执行侧按工作流交付纪律',
+        '> 直接改代码并 commit / push。把本规则套用到执行会话会阻断交付（变更窗将为空）。',
         '',
         `你的工作目录是：${home}`,
         `你的产物目录是：${artifactsDir}`,
@@ -558,7 +571,9 @@ export class TaskHomeService {
     if (fs.existsSync(rulePath)) {
       let stale = false
       try {
-        stale = fs.readFileSync(rulePath, "utf-8").includes(LEGACY_SPEC_FILENAME)
+        const current = fs.readFileSync(rulePath, "utf-8")
+        // Pre-rename homes point at spec.json; pre-v2 homes lack the version marker.
+        stale = current.includes(LEGACY_SPEC_FILENAME) || !current.includes(RULES_CONTENT_VERSION)
       } catch {
         stale = false
       }

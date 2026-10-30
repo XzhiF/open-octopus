@@ -16,6 +16,8 @@ import {
   shortTag,
   tail,
   compactInput,
+  coalesceToolCalls,
+  displayNameOf,
   clockOf,
   type LogRow,
   type RunEvent,
@@ -70,6 +72,23 @@ describe("rowFromEvent —— 事件 → 终端行", () => {
     expect(failed.level).toBe("error")
   })
 
+  it("同一次工具调用被拆成两半时按 toolCallId 兜底合并", () => {
+    const split = [
+      ev({ event: "tool_call", toolCallId: "t1", toolName: "Read", input: { file_path: "a.ts" } }),
+      ev({ event: "tool_call", toolCallId: "t1", toolName: "Read", result: "contents" }),
+    ] as RunEvent[]
+    expect(coalesceToolCalls(split)).toHaveLength(1)
+    const row = plain(rowFromEvent(coalesceToolCalls(split)[0], 0))
+    expect(row.toolInput).toContain("a.ts")
+    expect(row.toolResult).toBe("contents")
+  })
+
+  it("空壳 agent_event / 控制事件不落行", () => {
+    expect(rowFromEvent(ev({ event: "agent_event", event_data: { type: "agent_event" } }), 0)).toBeNull()
+    expect(rowFromEvent(ev({ event: "agent_event", event_data: { type: "turn_usage" } }), 0)).toBeNull()
+    expect(rowFromEvent(ev({ event: "agent_event" }), 0)).toBeNull()
+  })
+
   it("swarm 专家行留在所属节点通道内，靠 role 徽章区分并发", () => {
     const r = plain(rowKind({ event: "expert_message", nodeId: "review", role: "architect", round: 1, content: "建议" }))
     expect(r.chId).toBe("review")
@@ -111,8 +130,15 @@ describe("通道身份", () => {
 
   it("短标：取 scoped 尾段、去掉 -iterN、超长省略，轮次后缀保留", () => {
     expect(shortTag("spec-dag-execute:T-1-iter0")).toBe("T-1")
-    expect(shortTag("spec-resolve")).toBe("spec-re…")
-    expect(shortTag("ticket-dag", 3)).toBe("ticket-…·3")
+    expect(shortTag("spec-resolve")).toBe("spec-resolve")
+    expect(shortTag("ticket-dag", 3)).toBe("ticket-dag·3")
+    expect(shortTag("a-really-long-node-name-here")).toBe("a-really-long…")
+  })
+
+  it("展示名只保留一种写法：有真名用人话名，否则用短标", () => {
+    expect(displayNameOf({ node: "ticket-dag:ticket-01", tag: "ticket-01", label: "ticket-dag:ticket-01" })).toBe("ticket-01")
+    expect(displayNameOf({ node: "T-1", tag: "T-1", label: "T-1 落地" })).toBe("T-1 落地")
+    expect(displayNameOf({ node: "T-1", tag: "T-1", label: "T-1" })).toBe("T-1")
   })
 
   it("同一通道恒定同色，且不会用到错误红", () => {
