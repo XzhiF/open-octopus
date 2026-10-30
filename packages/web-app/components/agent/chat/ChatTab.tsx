@@ -28,14 +28,15 @@ import type { TaskWindowMap } from '@/components/chat-workbench/task-window-type
 import {
   createTask, getTask, readyTask, TaskReadyGateError, updateTask, deleteTask, abortTask,
   triggerTask, pauseTask, resumeTask, reopenTask, duplicateTask, postArchiveRetry,
-  postReflectionDecision, type TaskView,
+  postReflectionDecision, postAcceptance, recordAcceptanceCheck, regenerateAcceptancePlan,
+  type TaskView,
 } from '@/lib/tasks-api'
 import { readRememberedTaskOrg, rememberTaskOrg, resolveTaskOrg } from '@/lib/task-org'
 import { NEW_TASK_NAME, taskNameFromMessage } from '@/lib/task-name'
 import { buildTurnStats } from '@/lib/turn-stats'
 import { readLastChatContext, writeLastChatContext } from '@/lib/last-chat-context'
 import { subscribeSSE } from '@/lib/sse-manager'
-import { TASK_EXECUTION_EVENT, TASK_STATUS_EVENT } from '@octopus/shared'
+import { TASK_ACCEPTANCE_CHECK_EVENT, TASK_EXECUTION_EVENT, TASK_STATUS_EVENT } from '@octopus/shared'
 import { getServerUrl } from '@/lib/server-config'
 import { cn } from '@/lib/utils'
 import { Dialog, DialogContent, DialogTitle } from '@/components/ui/dialog'
@@ -62,7 +63,11 @@ const SIDEBAR_MAX = 380
 
 /** 决策卡上「选择即写回卡片」的按钮 id。其余按钮（打开规格/运行窗…）只是导航，
  *  schedule / keep_editing 各自在分支里处理（定时要等对话框真正排上）。 */
-const DECISION_ACTION_IDS = new Set(['launch_now', 'enqueue', 'confirm_action'])
+const DECISION_ACTION_IDS = new Set([
+  'launch_now', 'enqueue', 'confirm_action',
+  // 2026-10-30 验收引导：逐项判定与升级确认同样写回卡片（只读留痕）。
+  'acceptance_pass', 'acceptance_fail', 'acceptance_skip', 'acceptance_escalate_confirm',
+])
 
 function clampSidebarWidth(width: number): number {
   return Math.min(SIDEBAR_MAX, Math.max(SIDEBAR_MIN, Math.round(width)))
@@ -105,6 +110,18 @@ export function ChatTab() {
     messageId?: string
   } | null>(null)
   const [cardBusy, setCardBusy] = useState(false)
+  // 验收引导（2026-10-30）：✕/⊘ 必须先写原因 —— 卡片上弹一个小输入框。
+  const [acceptNote, setAcceptNote] = useState<{
+    taskId: string
+    itemId: string
+    decision: 'fail' | 'skip'
+    actionId: string
+    messageId?: string
+    label?: string
+    title?: string
+  } | null>(null)
+  const [acceptNoteText, setAcceptNoteText] = useState('')
+  const [acceptNoteBusy, setAcceptNoteBusy] = useState(false)
   const [mainCwd, setMainCwd] = useState<CwdChoice>({ kind: 'default', label: 'Main Agent 工作区' })
   const [taskCwd, setTaskCwd] = useState<CwdChoice>({ kind: 'default', label: '新建工作空间' })
   const [workflowWindow, setWorkflowWindow] = useState<{
@@ -836,6 +853,68 @@ export function ChatTab() {
           void recordDecision(messageId, actionId, { label: clickedLabel })
           toast.message('继续改规格')
           return
+        // ── 验收引导（2026-10-30 AI-native）──────────────────────────────
+        case 'acceptance_pass': {
+          const itemId = String(payload.itemId ?? '')
+          if (!itemId) return
+          await recordAcceptanceCheck(taskId, { item_id: itemId, decision: 'pass' })
+          const title = String(payload.title ?? itemId)
+          toast.success(`已记通过：${title}`)
+          sendMessage(`[验收] ✓ 通过「${title}」—— 继续下一项。`, { model, effort, maxContext })
+          break
+        }
+        case 'acceptance_fail':
+        case 'acceptance_skip': {
+          const itemId = String(payload.itemId ?? '')
+          if (!itemId) return
+          setAcceptNoteText('')
+          setAcceptNote({
+            taskId,
+            itemId,
+            decision: action === 'acceptance_fail' ? 'fail' : 'skip',
+            actionId,
+            messageId,
+            label: clickedLabel,
+            title: typeof payload.title === 'string' ? payload.title : itemId,
+          })
+          return // 等用户在弹框里写原因
+        }
+        case 'acceptance_escalate_confirm': {
+          const feedback = String(payload.feedback ?? '').trim()
+          const phaseIndex = Number(payload.phaseIndex)
+          const roundIndex = Number(payload.roundIndex)
+          if (!feedback || !Number.isFinite(phaseIndex) || !Number.isFinite(roundIndex)) {
+            toast.error('升级信息不完整（缺反馈或轮次坐标）')
+            return
+          }
+          const itemIds = Array.isArray(payload.itemIds) ? payload.itemIds as unknown[] : []
+          const reopen = itemIds
+            .map((id) => String(id).split(':')[1])
+            .filter((t): t is string => !!t && t !== 'spec')
+          const result = await postAcceptance(taskId, {
+            phase_index: phaseIndex,
+            round_index: roundIndex,
+            decision: 'rejected',
+            feedback,
+            ...(reopen.length ? { reopen_tickets: [...new Set(reopen)] } : {}),
+          })
+          void recordDecision(messageId, actionId, { label: clickedLabel })
+          toast.success(
+            result.next_action === 'dispatched'
+              ? `已升级 — 修复轮 Round ${result.dispatch?.round_index ?? '?'} 开跑`
+              : '已打回（反馈已落 fix-feedback）',
+          )
+          updated = result.task
+          break
+        }
+        case 'acceptance_regenerate': {
+          const r = await regenerateAcceptancePlan(taskId)
+          toast[r.ok ? 'success' : 'error'](r.ok ? '已重新生成验收方案' : `重生成被拒：${r.reason ?? '未知原因'}`)
+          return
+        }
+        case 'acceptance_open_window':
+          setTaskModuleRequest({ module: 'acceptance', nonce: Date.now() })
+          return
         default:
           return
       }
@@ -854,7 +933,7 @@ export function ChatTab() {
     } finally {
       setCardBusy(false)
     }
-  }, [cardBusy, applyTaskResult, handleCreateTask, recordDecision])
+  }, [cardBusy, applyTaskResult, handleCreateTask, recordDecision, sendMessage, model, effort, maxContext])
 
   const confirmDestructiveCardAction = useCallback(async () => {
     if (!cardConfirm || cardBusy) return
@@ -873,6 +952,37 @@ export function ChatTab() {
       setCardBusy(false)
     }
   }, [cardConfirm, cardBusy, applyTaskResult, recordDecision])
+
+  /** 验收 ✕/⊘ 的原因确认：写进 checks（进退回反馈 + 下轮 carryover），并让
+   *  Agent 接着引导（小修 / 升级由它按上下文处理）。 */
+  const confirmAcceptNote = useCallback(async () => {
+    if (!acceptNote || acceptNoteBusy) return
+    const note = acceptNoteText.trim()
+    if (!note) return
+    setAcceptNoteBusy(true)
+    try {
+      await recordAcceptanceCheck(acceptNote.taskId, {
+        item_id: acceptNote.itemId,
+        decision: acceptNote.decision,
+        note,
+      })
+      void recordDecision(acceptNote.messageId, acceptNote.actionId, { label: acceptNote.label })
+      const mark = acceptNote.decision === 'fail' ? '✕ 不通过' : '⊘ 跳过'
+      toast.success(`已记录：${mark}「${acceptNote.title}」`)
+      sendMessage(
+        `[验收] ${mark}「${acceptNote.title}」：${note}\n` +
+          '请按验收引导处理：能当场小修（只改直接相关的 ≤2 个文件、不改 spec）就修完重跑证据再确认；'
+          + '超出范围请发起升级（propose_acceptance_escalation）。',
+        { model, effort, maxContext },
+      )
+      setAcceptNote(null)
+      setAcceptNoteText('')
+    } catch (err: unknown) {
+      toast.error(err instanceof Error ? err.message : '核对写入失败')
+    } finally {
+      setAcceptNoteBusy(false)
+    }
+  }, [acceptNote, acceptNoteText, acceptNoteBusy, recordDecision, sendMessage, model, effort, maxContext])
 
   useEffect(() => {
     const onAction = (event: Event) => {
@@ -930,6 +1040,8 @@ export function ChatTab() {
     const offs = [
       subscribeSSE(url, TASK_STATUS_EVENT, onTask),
       subscribeSSE(url, TASK_EXECUTION_EVENT, onTask),
+      // 验收项写入（窗口点 / Agent 按口语记录）→ 重拉实录，让卡片的「已选」立刻对上。
+      subscribeSSE(url, TASK_ACCEPTANCE_CHECK_EVENT, onTask),
     ]
     return () => offs.forEach((off) => off())
   }, [activeTask?.id, loadMessages, refreshChatTasks])
@@ -1395,6 +1507,43 @@ export function ChatTab() {
         loading={cardBusy}
         onConfirm={() => void confirmDestructiveCardAction()}
       />
+
+      {/* 验收 ✕/⊘ 原因（必填）—— 写进 checks，并交给 Agent 继续引导 */}
+      <Dialog open={!!acceptNote} onOpenChange={(open) => { if (!open && !acceptNoteBusy) setAcceptNote(null) }}>
+        <DialogContent
+          showCloseButton={false}
+          aria-describedby={undefined}
+          className="ui-font w-[440px] max-w-[calc(100vw_-_32px)] rounded-2xl border border-white/[0.10] bg-pop-bg p-4"
+        >
+          <DialogTitle className="text-[14px] font-semibold text-pop-ink">
+            {acceptNote?.decision === 'fail' ? '哪里不对？' : '为什么这次可以不验？'}
+            <span className="ml-2 text-[11px] font-normal text-pop-dim">{acceptNote?.title}</span>
+          </DialogTitle>
+          <textarea
+            autoFocus
+            rows={4}
+            value={acceptNoteText}
+            onChange={(e) => setAcceptNoteText(e.target.value)}
+            placeholder={acceptNote?.decision === 'fail'
+              ? '实际现象 / 期望结果 —— 会进退回反馈，并重开对应票'
+              : '再豁免一次需要新原因 —— 下轮仍会问'}
+            className="mt-3 w-full resize-y rounded-lg border border-pop-bd bg-pop-paper px-3 py-2 font-mono text-[11.5px] text-pop-ink outline-none focus:border-pop-pink/60"
+            data-testid="acceptance-note-input"
+          />
+          <div className="mt-4 flex justify-end gap-2">
+            <Button size="sm" variant="ghost" disabled={acceptNoteBusy} onClick={() => setAcceptNote(null)}>取消</Button>
+            <Button
+              size="sm"
+              variant="pop"
+              disabled={!acceptNoteText.trim() || acceptNoteBusy}
+              onClick={() => void confirmAcceptNote()}
+              data-testid="acceptance-note-confirm"
+            >
+              {acceptNoteBusy ? '记录中…' : acceptNote?.decision === 'fail' ? '确认不通过' : '确认跳过'}
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
 
       <TriggerDialog
         open={!!scheduleTaskId}

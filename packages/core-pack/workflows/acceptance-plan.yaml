@@ -1,0 +1,147 @@
+apiVersion: octopus/v1
+kind: Workflow
+
+# ============================================================
+# acceptance-plan — 验收方案预生成（2026-10-30 AI-native 验收）
+#
+# 由 server 的 AcceptancePlanService 在每轮终态（awaiting_review）后自动拉起，
+# **不挂 task_id**（执行行 task_id=null，不进轮次口径），跑在任务自己的执行工作区
+# （allow_existing_root），只读证据、只写方案文件。
+#
+# 输入全部由 server 预计算/注入：
+#   evidence_path  — acceptance-evidence-rN.json（批次文件 + 真实 diff + verify/runbook）
+#   batch_dir      — home 批次目录绝对路径
+#   plan_json_path — 方案正本输出位（home 批次目录内）
+#   plan_md_path   — 人读版输出位
+#
+# Flow:
+#   manifest (bash)  — 证据清单存在性自检（缺 = 当场失败，不烧 agent）
+#     └─ plan (agent) — 读证据 + 按需读文件 → 写方案 JSON/MD
+#          └─ validate (bash) — JSON 存在且可解析；缺 = 失败（server 另做 Zod 校验）
+#
+# 失败语义：任何节点失败 → 执行终态非成功 → server 标 status=failed，
+# GET /:id/playbook 回退旧编译清单，验收不阻塞。
+# ============================================================
+
+name: acceptance-plan
+description: |
+  验收规划 Agent：读本轮证据清单（spec / round-report / 真实 diff / 测试与 verify 配置），
+  产出机器可读验收方案（每项带怎么验 / 证据指针 / 机器建议）。机器只建议，人逐项确认。
+version: 1.0.0
+
+engine: claude
+model: pro-max
+timeout: 1800
+execution_mode: serial
+
+inputs:
+  task_id:
+    description: "任务 ID（证据与输出归属）"
+    required: true
+  task_name:
+    description: "任务名（写进方案抬头）"
+    required: false
+  phase_index:
+    description: "Phase 序号（1 基）"
+    required: true
+  round_index:
+    description: "Round 序号（1 基）"
+    required: true
+  evidence_path:
+    description: "证据清单 JSON 的绝对路径（server 预计算）"
+    required: true
+  batch_dir:
+    description: "home 批次目录绝对路径（spec/票/报告所在）"
+    required: true
+  plan_json_path:
+    description: "验收方案 JSON 输出绝对路径"
+    required: true
+  plan_md_path:
+    description: "验收方案 markdown 输出绝对路径"
+    required: true
+
+nodes:
+  - id: manifest
+    type: bash
+    timeout: 60
+    bash: |
+      echo "=== acceptance-plan P$inputs.phase_index R$inputs.round_index ==="
+      echo "task: $inputs.task_name ($inputs.task_id)"
+      if [ ! -f "$inputs.evidence_path" ]; then
+        echo "EVIDENCE MISSING: $inputs.evidence_path"
+        exit 1
+      fi
+      if [ ! -d "$inputs.batch_dir" ]; then
+        echo "BATCH DIR MISSING: $inputs.batch_dir"
+        exit 1
+      fi
+      echo "--- evidence ---"
+      head -c 6000 "$inputs.evidence_path"
+      echo ""
+      echo "--- batch files ---"
+      ls -la "$inputs.batch_dir" 2>/dev/null | head -40
+
+  - id: plan
+    type: agent
+    depends_on: [manifest]
+    timeout: 1500
+    context: new
+    skills: [octo-acceptance-plan]
+    tools: [Read, Write, Bash, Grep, Glob]
+    prompt: |
+      你是本轮的**验收规划者**。目标不是「判断通过」，而是产出一份人能照着做的验收方案。
+
+      ═══ 输入锚点 ═══
+      - 证据清单（先完整读）：$inputs.evidence_path
+      - 批次目录（spec / 票 / round-report / e2e 票）：$inputs.batch_dir
+      - 任务：$inputs.task_name（task_id=$inputs.task_id）· Phase $inputs.phase_index · Round $inputs.round_index
+      - 方案输出（必须写）：
+        - JSON 正本：$inputs.plan_json_path
+        - 人读版：$inputs.plan_md_path
+
+      ═══ 步骤 ═══
+      1. 读证据清单 JSON，拿到批次文件清单 / 真实 diff / verify / runbook / 各来源路径。
+      2. 读 spec（或 spec-rN.md）与最新的 e2e 票 / e2e-test-plan（存在才读），
+         以及 round-report.md（只当线索）。上轮 acceptance-checks-r{N-1}.md 若有，
+         其中 skip/fail 项本轮优先覆盖。
+      3. 需要确认改动落点时，用只读命令看代码：
+         `git -C . diff --stat`、`git log --oneline -10`、`rg -n "<符号>"`、Read。
+         **不要运行构建 / 测试 / 起服务 / 任何写命令**。
+      4. 按 octo-acceptance-plan skill 的 schema，产出 3–8 条验收项，逐条写：
+         怎么验（howTo）、证据指针（evidenceRefs，路径必须真实存在）、机器建议（machine）。
+      5. 严格按 skill 的 JSON 结构写 $inputs.plan_json_path（只写 JSON 本体，无围栏），
+         写完用 `node -e "JSON.parse(require('fs').readFileSync('<path>','utf8'))"`
+         或 `python -c "import json;json.load(open('<path>',encoding='utf-8'))"` 自检一次。
+      6. 写人读版 $inputs.plan_md_path（每条一节：用户故事 / 通过标准 / 机器建议 /
+         怎么验 / 证据 / 核对点）。
+
+      ═══ 硬纪律 ═══
+      - 绝不编造证据路径、测试数字、命令输出；不确定就删掉路径或改写成人工核对。
+      - 机器建议只是建议，不要写「已通过 / 验收通过」。
+      - 不要修改任何代码或批次文件（只写两个输出文件）。
+      - 找不到「怎么验」时也要给出人工核对步骤，如实写进 machine.why。
+      - 命令会在**任务工作区根**执行（仓库在 projects/<repo>/ 下）：多仓必须自带
+        `cd projects/<repo> && …` 或 `-f projects/<repo>/pom.xml`；`mvn -pl … -am -Dtest=X`
+        记得加 `-Dsurefire.failIfNoSpecifiedTests=false`，否则其它模块无匹配测试会失败。
+
+      输出 vars_update:
+      {"vars_update": {"plan_items": "<条数>", "plan_json": "$inputs.plan_json_path"}}
+
+  - id: validate
+    type: bash
+    depends_on: [plan]
+    timeout: 60
+    bash: |
+      JSON="$inputs.plan_json_path"
+      if [ ! -s "$JSON" ]; then
+        echo "PLAN MISSING OR EMPTY: $JSON"
+        exit 1
+      fi
+      python -c "import json,sys;json.load(open(sys.argv[1],encoding='utf-8'))" "$JSON" 2>/dev/null \
+        || node -e "JSON.parse(require('fs').readFileSync(process.argv[1],'utf8'))" "$JSON" \
+        || { echo "PLAN JSON INVALID: $JSON"; exit 1; }
+      echo "PLAN OK:"
+      head -c 1200 "$JSON"
+      if [ ! -s "$inputs.plan_md_path" ]; then
+        echo "note: plan md missing (server will render a fallback)"
+      fi

@@ -172,6 +172,9 @@ export class TaskLifecycleService {
   private runDAO: ScheduleRunDAO
   private home: TaskHomeService
   private builtIn: BuiltInWorkflowService | null = null
+  /** 验收方案预生成 hook（2026-10-30）—— index.ts 装配，轮终态后 fire-and-forget。
+   *  独立注入而不是直接 import 服务：lifecycle 只认「round 结束了」，不认验收域细节。 */
+  private acceptancePlanHook: ((taskId: string, row: ExecutionRow) => void) | null = null
 
   constructor(private deps: {
     db: Database.Database
@@ -190,8 +193,12 @@ export class TaskLifecycleService {
     this.home = deps.taskHomeService ?? new TaskHomeService()
   }
 
-  // ── ①+②+④ the tick ────────────────────────────────────────────────
+  /** 验收方案预生成：轮终态（awaiting_review）后触发，绝不阻塞 finalize。 */
+  setAcceptancePlanHook(fn: ((taskId: string, row: ExecutionRow) => void) | null): void {
+    this.acceptancePlanHook = fn
+  }
 
+  // ── ①+②+④ the tick ────────────────────────────────────────────────
   /**
    * One round of the built-in job. Ordered deliberately: reconcile BEFORE arming so a
    * round whose engine died releases the task's slot before this tick tries to arm the
@@ -790,6 +797,16 @@ export class TaskLifecycleService {
           ...(errorSummary ? { reason: errorSummary } : {}),
         },
       })
+      // 验收方案预生成（2026-10-30）：round 已终态、待验收入口已发出 —— 交给
+      // 独立规划 Agent 先算出「怎么验」，主 Chat 随后逐步引导。fire-and-forget。
+      if (row.phase_index != null && this.acceptancePlanHook) {
+        try {
+          this.acceptancePlanHook(taskId, row)
+        } catch (err: unknown) {
+          console.error(`[task-lifecycle] acceptance-plan hook failed for ${taskId}:`, errMessage(err))
+        }
+      }
+
       // A slot just freed, so drain the queue now instead of letting the next armed
       // launch wait up to a cron minute. Re-entrancy is safe: claimLaunch is a guarded
       // UPDATE, and finalizeLaunch never throws (the guard is inside this try).

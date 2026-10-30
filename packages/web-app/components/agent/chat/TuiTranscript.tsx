@@ -12,6 +12,7 @@ import { useBillingCurrency } from '@/lib/billing-currency'
 import { THINKING_TONE, TOOL_TONE } from '@/lib/agent/chat-colors'
 import type { TurnStats } from '@/lib/turn-stats'
 import { TaskStatusCard } from './task-status-card'
+import { AcceptanceCheckCard } from './acceptance-check-card'
 
 /** mini-markdown：`**bold**` / `行内 code` / 行首 # 标题 —— 消灭字面星号。 */
 function mdInline(text: string): ReactNode {
@@ -318,9 +319,11 @@ function TuiMeta({ thinking, toolCalls, timeline, stats, interrupted }: {
  *  prompt, so the cached prefix stays intact. */
 function ActivityEventCard({ message }: { message: AgentMessage }) {
   const activity = message.activity
+  // 验收项卡（2026-10-30）：信息完整版 —— 通过标准 / 怎么验 / 机器建议 / 证据。
+  const isAcceptanceCard = !!(activity?.payload as { acceptanceCheck?: boolean } | undefined)?.acceptanceCheck
   // 任务状态卡（执行中 / 已暂停 / 收尾）交给运行卡组件：它自己走表、按需轮询
   // 执行详情，收尾后定格成只读（2026-10-30 用户定稿）。
-  if (activity?.status && activity?.taskId) {
+  if (activity?.status && activity?.taskId && !isAcceptanceCard) {
     return <TaskStatusCard message={message} />
   }
   const severity = activity?.severity
@@ -360,6 +363,10 @@ function ActivityEventCard({ message }: { message: AgentMessage }) {
     window.dispatchEvent(new CustomEvent('octopus:reflection-decision', {
       detail: { taskId: activity?.taskId ?? null, entryId, action, messageId: message.id },
     }))
+  }
+
+  if (isAcceptanceCard) {
+    return <AcceptanceCheckCard message={message} fireAction={fireAction} />
   }
 
   return (

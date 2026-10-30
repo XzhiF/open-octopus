@@ -163,8 +163,13 @@ version: 3.5.2
 
 **验收台预设**（多项目/微服务必做，否则「当场复检」只测一仓、「跑起来看」空）—— 任务建好后 spec-field 写 task 级字段，全 phase 复用：
 
-- `acceptance_verify`：当场复检命令。**多仓任务必须 `per_repo:true`** 且 `command` 写成**仓内相对**（不带 cd/仓名），server 对 `projects/*/` 每仓各跑一次、任一失败即整体 failed。单仓可不填。
-- `acceptance_preview` **或** `acceptance_runbook`：`{command,url}`（单一可运行服务）；多服务 / compose / N×进程 / 远端部署 → `{ up:{command,cwd?}, ready:{command,cwd?}, views:[{label?,url}], down?:{command,cwd?}, timeoutS? }`。`ready` **跑命令看退出码 0 = 就绪**，是唯一就绪判据（端口/日志/Jenkins 状态都压成这条）；工具差异全写进 command，别塞进平台。
+- `acceptance_verify`：当场复检命令，形状 `{command, cwd?, per_repo?, timeoutS?}` —— **字段语义以本节为准，不要去 Grep 平台源码找契约**（org 仓库注册表里的 `open-octopus` 是镜像，可能落后于你在跑的版本）：
+  - `command` 必填（≤4000 字符，Bash / Git-Bash 语义）；`timeoutS` 单位秒，5–1800，缺省 600。
+  - `cwd` **相对任务执行工作区根**（不是 task home，也不是项目仓）；缺省 `.`。执行期工作区布局 = `<ws>/projects/<仓库名>`（每仓一个 worktree）—— 单仓复检通常写 `{"command":"mvn -B test","cwd":"projects/<仓库名>"}`。
+  - `cwd` 逃逸工作区（`..` 或绝对路径）→ 服务端直接 400 拒。
+  - `per_repo: true`：多仓任务**必须**；此时 `cwd` 被忽略 —— server 在 ws 根遍历 `projects/*/` 的 git 仓各跑一次 `command`（仓根为 cwd），`command` 写成**仓内相对**（如 `mvn -B -pl java-common-util -am test`，不带 cd/仓名），任一仓非零即整体 failed；`timeoutS` 视为多仓总预算。
+  - `command` 里禁写引擎模板语法 `$vars.` / `${x|filter}`（会被 BashExecutor 当变量替换）。
+- `acceptance_preview` **或** `acceptance_runbook`：`{command,url}`（单一可运行服务）；多服务 / compose / N×进程 / 远端部署 → `{ up:{command,cwd?}, ready:{command,cwd?}, views:[{label?,url}], down?:{command,cwd?}, timeoutS? }`。`ready` **跑命令看退出码 0 = 就绪**，是唯一就绪判据（端口/日志/Jenkins 状态都压成这条）；工具差异全写进 command，别塞进平台。`up`/`down` 的 `cwd` 同样相对 ws 根；`ready` 探针在 **`up` 的 cwd** 里跑（`ready.cwd` 当前不生效）；`timeoutS` 是 ready 轮询总预算（缺省 120s，5–1800），`up` 进程硬顶 2h（每个验收决定都会自动停它）。
 - **入队硬闸**：`acceptance_runbook`(需 up∧ready) / `acceptance_preview` / `acceptance_verify` 三者全无 → 409 missing 含 `runbook`。unit-only 薄切片配 `acceptance_verify` 即可放行。**别再指望仓内 `.octopus/acceptance/*.sh` 约定脚本兜底**（第③级已摘除）—— 起法必须你显式预设。
 
 **启动 Runbook 记忆（逐项目，问一次管永久）**：预设起法前先查自己的长期记忆块 `## runbook:<项目名>`（自动注入在系统提示里）。**有** → 原样展示四槽 + 确认日期（「本仓记忆存过 <项目> 的起法（confirmed YYYY-MM-DD）：up/ready/views/down，命令可能已过期，本次沿用？」），**用户确认才用**；用户说不对 → 走「无」分支，拿到新答案后**覆盖**该块。**无** → 按上面的字面值问一次（四槽，判不出的槽明确问、别编），确认后三写：① spec-field `acceptance_runbook`（或 `acceptance_preview`）＝验收台权威；② append 自己的 `memory/long-term.md` 标准块（守卫已放行本分身 memory 目录），格式定死供下次解析：`## runbook:<项目名> (confirmed YYYY-MM-DD)` + 一个 json 代码块；③ 批次目录落 `runbook/runbook.json`（随 seed 下行进 ws，供执行侧走查票和人现场手跑，内容与 ① 一致）。多仓任务每仓各查各记，任务级字段是聚合（`up` 逐仓拼或指向根编排脚本、`ready` 全过、`views` 并集）。**端口纪律（最大坑）**：任务在 worktree 跑，服务端口按分支 hash 落 3100–3598（见 `scripts/branch-port.mjs`），**URL 端口禁写死主仓 3000/3001** —— 写成在 worktree 里可算的式子（health 命令自算 hash 端口再探），否则 ready 恒拒连、超时判 failed。

@@ -19,6 +19,9 @@ import { TaskSpecFieldSchema } from "@octopus/shared"
 import type { TaskThreadIdentity, TaskThreadProfile } from "../tasks/task-thread-service"
 import type { ServerSpecField } from "../tasks/tasks-service"
 import { writeReflectionStore, type ReflectionStore } from "../tasks/reflection-store"
+import type { PlanDetail } from "../tasks/acceptance-plan-service"
+import type { ChecksFile, ProbeRunResult } from "../tasks/playbook-types"
+import type { AcceptanceResult } from "../tasks/tasks-service"
 
 export interface TaskToolsService {
   updateSpecField(
@@ -32,6 +35,39 @@ let serviceProvider: (() => TaskToolsService | null) | null = null
 /** index.ts wires the real TasksService once it exists. Tests inject a fake. */
 export function setTaskToolsServiceProvider(fn: (() => TaskToolsService | null) | null): void {
   serviceProvider = fn
+}
+
+// ── 验收引导工具（2026-10-30 AI-native 验收）──────────────────────────
+// 只在该任务的会话处于 acceptanceGuide 时注册。读自由、写（recordCheck）需人
+// 明确表态；升级只出确认卡，不执行。
+
+export interface AcceptanceToolsService {
+  getPlanDetail(taskId: string): PlanDetail
+  recordCheck(taskId: string, input: { itemId: string; decision: "pass" | "fail" | "skip"; note?: string }): {
+    checks: ChecksFile
+  }
+  /** 最终放行 / 退回（与 POST /:id/acceptance 同一套步骤：✗ 硬闸 + 台账 + 重开票）。 */
+  finalizeAcceptance(
+    taskId: string,
+    input: { decision: "accepted" | "rejected"; feedback?: string; reopen_tickets?: string[] },
+  ): Promise<{ result: AcceptanceResult; ledger_written: boolean; undecided: string[] }>
+  runProbe(taskId: string, itemId: string): Promise<ProbeRunResult>
+  startPreview(taskId: string): Promise<{ state: string; url?: string; views?: unknown }>
+  stopPreview(taskId: string): unknown
+}
+
+let acceptanceProvider: (() => AcceptanceToolsService | null) | null = null
+
+export function setAcceptanceToolsProvider(fn: (() => AcceptanceToolsService | null) | null): void {
+  acceptanceProvider = fn
+}
+
+function acceptanceService(): AcceptanceToolsService | null {
+  try {
+    return acceptanceProvider?.() ?? null
+  } catch {
+    return null
+  }
 }
 
 export interface TaskToolAction {
@@ -86,8 +122,48 @@ export function appendTaskToolCard(
   ).run(now, now, sessionId)
 }
 
-const STATUS_ACTIONS: Record<string, TaskToolAction[]> = {
-  draft: [{ id: "open_spec", label: "打开规格" }],
+/**
+ * 用户在**对话里口语表态**（而不是点卡片）时，把最近一张同项验收卡标成「已选」。
+ * 不这样做的话，历史里的卡片会一直显示可点，跟盘上真相（checks 已记录）打架。
+ * 只看最近 50 条含 task.acceptance_check 的消息；写失败不影响核对本身。
+ */
+function markAcceptanceCardDecided(
+  db: Database.Database,
+  sessionId: string,
+  itemId: string,
+  decision: "pass" | "fail" | "skip",
+): void {
+  try {
+    const rows = db.prepare(
+      "SELECT id, metadata FROM messages WHERE session_id = ? AND metadata LIKE ? ORDER BY created_at DESC LIMIT 50",
+    ).all(sessionId, '%"kind":"task.acceptance_check"%') as Array<{ id: string; metadata: string | null }>
+    for (const row of rows) {
+      let meta: Record<string, unknown>
+      try {
+        meta = JSON.parse(row.metadata ?? "{}") as Record<string, unknown>
+      } catch {
+        continue
+      }
+      const act = meta.activity as Record<string, unknown> | undefined
+      if (!act || act.kind !== "task.acceptance_check" || act.decision) continue
+      const p = (act.payload ?? {}) as Record<string, unknown>
+      if (p.itemId !== itemId) continue
+      act.decision = {
+        id: `acceptance_${decision}`,
+        label: decision === "pass" ? "通过" : decision === "fail" ? "不通过" : "跳过",
+        at: new Date().toISOString(),
+        via: "chat",
+      }
+      meta.activity = act
+      db.prepare("UPDATE messages SET metadata = ? WHERE id = ?").run(JSON.stringify(meta), row.id)
+      return
+    }
+  } catch {
+    /* 历史卡片标注是锦上添花 —— 核对写入才是权威 */
+  }
+}
+
+const STATUS_ACTIONS: Record<string, TaskToolAction[]> = {  draft: [{ id: "open_spec", label: "打开规格" }],
   ready: [
     { id: "trigger", label: "⚡ 立即触发" },
     { id: "schedule", label: "⏱ 定时触发" },
@@ -231,6 +307,223 @@ export function createTaskToolServer(input: TaskToolServerInput) {
     actions: STATUS_ACTIONS[task.displayStatus] ?? [],
   })
 
+  const acceptanceTools = profile.acceptanceGuide ? [
+    tool(
+      "get_acceptance_plan",
+      "Read the current round's acceptance plan (items with how-to steps, evidence refs, machine suggestions) plus check progress. Read-only; call it before guiding the human and whenever you need the next undecided item.",
+      {},
+      async () => {
+        const svc = acceptanceService()
+        if (!svc) return text({ ok: false, error: "验收服务未就绪" })
+        try {
+          return text({ ok: true, ...svc.getPlanDetail(task.id) })
+        } catch (err: unknown) {
+          return text({ ok: false, error: err instanceof Error ? err.message : String(err) })
+        }
+      },
+    ),
+    tool(
+      "ask_acceptance_check",
+      "Ask the human to confirm ONE acceptance item. Appends a self-contained card (通过标准 / 怎么验 / 机器建议 / 证据) with 通过 / 不通过 / 跳过. Ask one item at a time; never batch. The human may answer in words instead of clicking — if they say 通过/可以/不行, record it yourself with record_acceptance_check.",
+      {
+        item_id: z.string().min(1).describe("The plan item id (e.g. plan:01-tokenizer:1)"),
+      },
+      async ({ item_id }) => {
+        const svc = acceptanceService()
+        if (!svc) return text({ ok: false, error: "验收服务未就绪" })
+        try {
+          const detail = svc.getPlanDetail(task.id)
+          const item = detail.plan?.items.find((it) => it.id === item_id)
+          if (!item) return text({ ok: false, error: `未知验收项: ${item_id}` })
+          const all = detail.plan?.items ?? []
+          const index = all.findIndex((it) => it.id === item_id) + 1
+          appendTaskToolCard(db, sessionId, {
+            kind: "task.acceptance_check",
+            severity: "info",
+            title: `验收项 ${index}/${all.length} · ${item.title}`,
+            message: [
+              `通过标准：${item.expect}`,
+              item.machine ? `机器建议：${item.machine.verdict.toUpperCase()} — ${item.machine.why}` : "",
+              "也可以直接在对话里说「通过 / 不行，因为… / 跳过」，我会记录。",
+            ].filter(Boolean).join("\n"),
+            taskId: task.id,
+            phaseIndex: task.phaseIndex,
+            roundIndex: task.roundIndex,
+            workspaceId: task.workspaceId,
+            actions: [
+              { id: "acceptance_pass", label: "✓ 通过" },
+              { id: "acceptance_fail", label: "✕ 不通过" },
+              { id: "acceptance_skip", label: "⊘ 跳过" },
+              { id: "acceptance_open_window", label: "打开验收台" },
+            ],
+            payload: {
+              acceptanceCheck: true,
+              itemId: item.id,
+              title: item.title,
+              ticket: item.ticket,
+              index,
+              total: all.length,
+              expect: item.expect,
+              howTo: item.howTo.slice(0, 3).map((h) => ({
+                kind: h.kind, text: h.text, command: h.command, path: h.path,
+              })),
+              machine: item.machine,
+              evidence: item.evidenceRefs.slice(0, 4).map((e) => ({
+                kind: e.kind, label: e.label, missing: !!e.missing,
+              })),
+              phaseIndex: task.phaseIndex,
+              roundIndex: task.roundIndex,
+            },
+          })
+          return text({ ok: true, card: "task.acceptance_check", item_id })
+        } catch (err: unknown) {
+          return text({ ok: false, error: err instanceof Error ? err.message : String(err) })
+        }
+      },
+    ),
+    tool(
+      "record_acceptance_check",
+      "Record the human's explicit decision for ONE item (pass / fail / skip). ONLY call after the human has clearly answered (e.g. clicked the card or said so). fail/skip require a reason. Set confirmed=true to assert you have that explicit answer.",
+      {
+        item_id: z.string().min(1),
+        decision: z.enum(["pass", "fail", "skip"]),
+        note: z.string().max(2000).optional().describe("Required for fail/skip: what went wrong / why skipped"),
+        confirmed: z.boolean().describe("true only when the human explicitly said this — never infer"),
+      },
+      async ({ item_id, decision, note, confirmed }) => {
+        if (!confirmed) {
+          return text({ ok: false, error: "必须等用户明确表态后才能记录（confirmed=true）；不要代替人判断。" })
+        }
+        const svc = acceptanceService()
+        if (!svc) return text({ ok: false, error: "验收服务未就绪" })
+        try {
+          svc.recordCheck(task.id, { itemId: item_id, decision, note })
+          // 口语表态也要让历史卡片对上：最近一张同项卡标「已选」。
+          markAcceptanceCardDecided(db, sessionId, item_id, decision)
+          const detail = svc.getPlanDetail(task.id)
+          return text({ ok: true, item_id, decision, progress: detail.progress })
+        } catch (err: unknown) {
+          return text({ ok: false, error: err instanceof Error ? err.message : String(err) })
+        }
+      },
+    ),
+    tool(
+      "submit_acceptance_decision",
+      "Finalize this round's acceptance decision: accepted = 放行/通过 (advance or archive), rejected = 退回修改 (dispatches the task-fix round). Call ONLY when the human explicitly says so in this chat (e.g. 「全部通过，放行」「可以了，收」「退回，让他改…」). The acceptance window click is their fallback, not a requirement — but never infer consent: no explicit instruction, no call. accepted is refused while any item is ✗. rejected requires feedback, which becomes the fix-round instruction.",
+      {
+        decision: z.enum(["accepted", "rejected"]).describe("accepted = 放行 (advance/archive); rejected = 退回修改 (dispatch task-fix)"),
+        feedback: z.string().max(20000).optional().describe("Required for rejected: what must be fixed (becomes the fix-round instruction)"),
+        reopen_tickets: z
+          .array(z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._-]{0,120}$/))
+          .max(20)
+          .optional()
+          .describe("Optional ticket bases to reopen on reject; derived from ✗ items when omitted"),
+        confirmed: z.boolean().describe("true only when the human explicitly instructed this — never infer"),
+      },
+      async ({ decision, feedback, reopen_tickets, confirmed }) => {
+        if (!confirmed) {
+          return text({ ok: false, error: "必须等用户明确说放行/退回后才能执行（confirmed=true）—— 不要代替人签字。" })
+        }
+        if (decision === "rejected" && !(feedback ?? "").trim()) {
+          return text({ ok: false, error: "退回必须给出反馈（feedback）—— 它会成为修复轮的指令。" })
+        }
+        const svc = acceptanceService()
+        if (!svc) return text({ ok: false, error: "验收服务未就绪" })
+        try {
+          const out = await svc.finalizeAcceptance(task.id, { decision, feedback, reopen_tickets })
+          return text({
+            ok: true,
+            decision,
+            next_action: out.result.next_action,
+            acceptance_id: out.result.acceptance_id,
+            ledger_written: out.ledger_written,
+            // 放行时若仍有未勾项，如实回传 —— 让用户知道这次放行覆盖了什么。
+            undecided: out.undecided,
+          })
+        } catch (err: unknown) {
+          return text({ ok: false, error: err instanceof Error ? err.message : String(err) })
+        }
+      },
+    ),
+    tool(
+      "run_acceptance_probe",
+      "Run the machine evidence command for ONE acceptance item (read-only / re-runnable) inside the task workspace and return exit code + tail. Use it before asking the human, so they see a fresh result.",
+      {
+        item_id: z.string().min(1),
+        timeout_s: z.number().int().min(5).max(600).optional().describe("Optional timeout in seconds (default 300)"),
+      },
+      async ({ item_id }) => {
+        const svc = acceptanceService()
+        if (!svc) return text({ ok: false, error: "验收服务未就绪" })
+        try {
+          const r = await svc.runProbe(task.id, item_id)
+          return text({ ok: true, item_id, ...r })
+        } catch (err: unknown) {
+          return text({ ok: false, error: err instanceof Error ? err.message : String(err) })
+        }
+      },
+    ),
+    tool(
+      "start_acceptance_preview",
+      "Start the task's configured preview runbook so the human can look at the running app. Never auto-runs outside an explicit acceptance step; stop it when done.",
+      {},
+      async () => {
+        const svc = acceptanceService()
+        if (!svc) return text({ ok: false, error: "验收服务未就绪" })
+        try {
+          return text({ ok: true, ...(await svc.startPreview(task.id) as Record<string, unknown>) })
+        } catch (err: unknown) {
+          return text({ ok: false, error: err instanceof Error ? err.message : String(err) })
+        }
+      },
+    ),
+    tool(
+      "stop_acceptance_preview",
+      "Stop the running preview started via start_acceptance_preview (runs the runbook teardown).",
+      {},
+      async () => {
+        const svc = acceptanceService()
+        if (!svc) return text({ ok: false, error: "验收服务未就绪" })
+        try {
+          return text({ ok: true, ...(svc.stopPreview(task.id) as Record<string, unknown>) })
+        } catch (err: unknown) {
+          return text({ ok: false, error: err instanceof Error ? err.message : String(err) })
+        }
+      },
+    ),
+    tool(
+      "propose_acceptance_escalation",
+      "When a problem is beyond a ≤2-file small fix (needs spec change, 3+ files, or repeated failed fixes), ask the human to confirm escalating to the task-fix big-fix workflow. Appends a confirmation card; does NOT execute — the human clicks to dispatch.",
+      {
+        feedback: z.string().min(1).max(4000).describe("What is wrong and why it needs a fix round"),
+        item_ids: z.array(z.string()).max(20).optional().describe("Acceptance items this feedback relates to"),
+      },
+      async ({ feedback, item_ids }) => {
+        appendTaskToolCard(db, sessionId, {
+          kind: "task.acceptance_escalation",
+          severity: "warn",
+          title: "升级为大修复（task-fix）？",
+          message: feedback,
+          taskId: task.id,
+          phaseIndex: task.phaseIndex,
+          roundIndex: task.roundIndex,
+          workspaceId: task.workspaceId,
+          actions: [
+            { id: "acceptance_escalate_confirm", label: "确认升级 · 开修复轮" },
+            { id: "cancel_action", label: "取消" },
+          ],
+          payload: {
+            feedback,
+            itemIds: item_ids ?? [],
+            phaseIndex: task.phaseIndex,
+            roundIndex: task.roundIndex,
+          },
+        })
+        return text({ ok: true, card: "task.acceptance_escalation" })
+      },
+    ),
+  ] : []
+
   const tools = [
     tool(
       "get_task_status",
@@ -335,6 +628,7 @@ export function createTaskToolServer(input: TaskToolServerInput) {
         return text({ ok: true, entries: store.entries.length })
       },
     ),
+    ...acceptanceTools,
   ]
 
   return createSdkMcpServer({

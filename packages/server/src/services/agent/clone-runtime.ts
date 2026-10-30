@@ -762,6 +762,62 @@ export class CloneRuntime {
  *  backticks, `$(…)`) are BLOCKED — conservative hard-guard posture.
  *  Known residual holes (defense-in-depth, not a sandbox): `cd /elsewhere &&
  *  echo x > rel`, and interpreter-internal writes (`python -c open(…)`). */
+// ── 验收引导小修边界（2026-10-30 AI-native 验收）─────────────────────
+
+/**
+ * 验收引导轮的写权护栏：套在 doer 批次护栏之上，额外限制「一次引导最多改
+ * N 个文件」。超出就拒绝并提示升级 task-fix 大修复 —— 人验收时不该被无边界
+ * 的改动牵着走。
+ *
+ * 范围：
+ *  - Write/Edit/NotebookEdit 的 file_path 计入预算（按解析后路径去重）；
+ *  - Bash 写入不计数（残余口子，与 doer 护栏同样的防御深度定位）；
+ *  - `.scratch` 批次目录仍由 buildDoerBatchGuard 拒绝（计划回写走 REST）。
+ *
+ * 预算按「每轮 guard 实例」计：profile 每轮重建 → 预算每轮重置。已知局限：
+ * 跨轮多次小修不累计（后续可用 quick-edit 文件数收紧）。
+ */
+export function buildAcceptanceGuard(
+  wsPath: string,
+  taskId: string,
+  opts: { maxFiles?: number } = {},
+): (toolName: string, input: unknown) => Promise<{ allow: boolean; reason?: string } | undefined> {
+  const base = buildDoerBatchGuard(wsPath, taskId)
+  const maxFiles = Math.max(1, opts.maxFiles ?? 2)
+  const touched = new Set<string>()
+  const fold = (p: string): string => {
+    const abs = path.resolve(p)
+    return process.platform === 'win32' ? abs.toLowerCase() : abs
+  }
+
+  return async (toolName, input): Promise<{ allow: boolean; reason?: string } | undefined> => {
+    const denied = await base(toolName, input)
+    if (denied && denied.allow === false) return denied
+    if (toolName !== 'Write' && toolName !== 'Edit' && toolName !== 'NotebookEdit') return undefined
+    const inp = input as Record<string, unknown> | null
+    const filePath = (inp?.file_path ?? inp?.notebook_path) as string | undefined
+    if (!filePath) return undefined
+    const key = fold(filePath)
+    if (touched.has(key)) return undefined
+    if (touched.size >= maxFiles) {
+      return {
+        allow: false,
+        reason: [
+          `BLOCKED: 验收引导轮的小修边界是每次最多 ${maxFiles} 个文件（本次要改第 ${touched.size + 1} 个）。`,
+          ``,
+          `验收阶段只该做「与未过项直接相关」的小修；更大范围的改动会改变本轮交付物，`,
+          `人还没签字的证据就不再对应当前代码。`,
+          ``,
+          `请调用 propose_acceptance_escalation 把问题交给人确认，升级 task-fix 大修复轮；`,
+          `或者在验收台直接「退回修改」（反馈即修复指令）。`,
+        ].join('\n'),
+      }
+    }
+    touched.add(key)
+    return undefined
+  }
+}
+
 // ── Bash command-guard (the "spec author may not execute" half) ──────
 
 /** The one built-in clone whose job is authoring, not executing. */

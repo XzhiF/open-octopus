@@ -143,6 +143,15 @@ export const TASK_VERIFY_LOG_EVENT = "task_verify_log" as const
  *  GET /:id/preview), the panel only needs state transitions. */
 export const TASK_PREVIEW_EVENT = "task_preview" as const
 
+// ── 验收方案预生成 + 单项勾选 SSE events（2026-10-30 AI-native 验收）──────
+/** 轮末验收规划 Agent 的状态流转：{task_id, phase_index, round_index,
+ *  status:"generating"|"ready"|"failed", error?, source?}. 窗口收到 ready 后
+ *  重拉 GET /:id/playbook（plan 优先，旧清单兜底）。 */
+export const TASK_ACCEPTANCE_PLAN_EVENT = "task_acceptance_plan" as const
+/** 单条核对项写入：{task_id, item_id, decision:"pass"|"fail"|"skip"}.
+ *  验收窗与主 Chat 双向同步的广播（写盘真相仍以 acceptance-checks-rN.md 为准）。 */
+export const TASK_ACCEPTANCE_CHECK_EVENT = "task_acceptance_check" as const
+
 
 // ── Task trigger (ADR-0021 票05 — WHEN a task runs, on the task) ──────
 /** How a task is armed. Replaces the v39 envelope, where this information lived on a

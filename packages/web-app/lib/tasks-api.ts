@@ -1120,10 +1120,27 @@ export async function abortVerify(taskId: string): Promise<VerifySummary> {
 // 的 .md 门(内嵌 json 围栏),与 server renderChecksMd/parseChecksMd 同 codec。
 
 export type PlaybookItemKind = "walk" | "probe" | "claim"
+
+// ── 验收方案（2026-10-30 AI-native）— 镜像 server acceptance-plan-types.ts ──
+export type PlanHowToKind = "run" | "open" | "check"
+export interface PlanHowTo { kind: PlanHowToKind; text: string; command?: string; path?: string; expect?: string }
+export interface PlanEvidenceRef { kind: "diff" | "test" | "report" | "docs" | "preview"; label: string; path?: string; detail?: string; missing?: boolean }
+export interface PlanMachine { verdict: "pass" | "warn" | "human"; why: string; command?: string; recheck?: string }
+export type PlanStatus = "generating" | "ready" | "failed" | "missing"
+export interface PlanSummary { status: PlanStatus; source?: string; generated_at?: string; error?: string; guide_woken_at?: string }
+
 export interface PlaybookItem {
   id: string; op: string; expect: string; evidence?: string; probe?: { command: string }
   /** 配了 runbook 时编译器把起服/就绪/收尾步打标（面板折一行提示、不给执行钮、不进连跑）。 */
   lifecycle?: "start" | "ready" | "teardown"
+  /** 验收方案扩展（编译型清单不带这些键）。 */
+  ticket?: string
+  title?: string
+  story?: string
+  howTo?: PlanHowTo[]
+  criteria?: string[]
+  evidenceRefs?: PlanEvidenceRef[]
+  machine?: PlanMachine
 }
 export interface PlaybookSection { kind: PlaybookItemKind; title: string; source: string; items: PlaybookItem[] }
 export interface PlaybookCarryover { id: string; fromRound: number; decision: "skipped" | "failed"; note?: string; op: string; expect: string }
@@ -1137,6 +1154,9 @@ export interface PlaybookPayload {
   finePrint: Array<{ ticket: string; acs: string[] }>
   carryover: PlaybookCarryover[]
   coverage: { found: string[]; missing: string[] }
+  /** 验收方案状态：ready = 本轮清单来自规划 Agent；否则回退旧编译。 */
+  plan?: PlanSummary
+  planWarnings?: string[]
 }
 
 /** GET /:id/playbook — 派生视图。409 无 awaiting;available:false = 无契约结构。 */
@@ -1314,6 +1334,31 @@ export async function saveChecks(
 ): Promise<void> {
   const data: ChecksFile = { version: "1", task_id: taskId, round_index: roundIndex, checks }
   await putHomeFile(taskId, checksRelPath(batchRelDir, roundIndex), renderChecksMd(data))
+}
+
+// ── 单条核对写入 + 方案重生成（2026-10-30 AI-native 验收）───────────────
+// 验收窗与主 Chat 共用同一个写入口：server 读-合并-写，天然不会互相覆盖。
+
+export async function recordAcceptanceCheck(
+  taskId: string,
+  input: { item_id: string; decision: CheckDecision; note?: string },
+): Promise<{ checks: ChecksFile; itemId: string; decision: CheckDecision }> {
+  const res = await fetch(`${getServerUrl()}${BASE}/${taskId}/acceptance/check`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(input),
+  })
+  const body = await res.json().catch(() => ({}))
+  if (!res.ok) throw new TaskApiError((body as { error?: string }).error ?? `HTTP ${res.status}`, res.status)
+  return body as { checks: ChecksFile; itemId: string; decision: CheckDecision }
+}
+
+/** 重新生成验收方案 —— 本轮已有人工勾选时 server 会拒绝（重生成不得作废人的判定）。 */
+export async function regenerateAcceptancePlan(taskId: string): Promise<{ ok: boolean; reason?: string }> {
+  const res = await fetch(`${getServerUrl()}${BASE}/${taskId}/acceptance/plan/regenerate`, { method: "POST" })
+  const body = await res.json().catch(() => ({}))
+  if (!res.ok) throw new TaskApiError((body as { error?: string }).error ?? `HTTP ${res.status}`, res.status)
+  return body as { ok: boolean; reason?: string }
 }
 
 // ============ Workflow-ref view (task board: click bound workflow → full YAML) ============

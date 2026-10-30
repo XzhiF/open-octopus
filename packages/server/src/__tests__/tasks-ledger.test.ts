@@ -13,7 +13,7 @@ import os from "os"
 import { applySchema } from "../db/schema"
 import { AgentSessionDAO } from "../db/dao"
 import { SSEService } from "../services/sse"
-import { TasksService } from "../services/tasks/tasks-service"
+import { TasksService, TaskStatusConflictError } from "../services/tasks/tasks-service"
 import { createTasksRoutes } from "../routes/tasks"
 import { TaskHomeService } from "../services/tasks/task-home-service"
 import { RoundEvidenceService, type LedgerSnapshot } from "../services/tasks/round-evidence-service"
@@ -216,6 +216,48 @@ describe("S1 acceptance 硬闸", () => {
     })
     expect(r.status).toBe(409)
     expect(((await r.json()) as { error: string }).error).toContain("不匹配")
+  })
+})
+
+// ── 2026-10-30：最终放行/退回的共用入口（窗口与主 Chat 同源）──────
+describe("decideAcceptance (主 Chat 收口)", () => {
+  function decisionRows(taskId: string): number {
+    return (db.prepare("SELECT COUNT(*) AS n FROM task_phase_acceptances WHERE task_id = ?")
+      .get(taskId) as { n: number }).n
+  }
+
+  it("D1: accepted 省略轮次 → 取 awaiting 轮，台账落盘并如实返回未决项", async () => {
+    const taskId = await newAwaiting(true, false)
+    wb(taskId, "e2e-test-plan.md", PLAN)
+    wb(taskId, "acceptance-checks-r1.md", renderChecksMd({ version: "1", round_index: 1, checks: {
+      "walk:plan:1": { decision: "pass", note: "", at: "t" },
+    } }))
+    const out = await evidence.decideAcceptance(taskId, { decision: "accepted" })
+    expect(out.result.next_action).toBe("awaiting_manual_trigger")
+    expect(out.ledger_written).toBe(true)
+    expect(out.undecided).toContain("walk:plan:3")
+    expect(decisionRows(taskId)).toBe(1)
+    expect(has(taskId, "acceptance-ledger-r1.md")).toBe(true)
+  })
+
+  it("D2: 存在 ✗ → 冲突错误（路由映射 409），决策零行、台账不写", async () => {
+    const taskId = await newAwaiting(true, false)
+    wb(taskId, "e2e-test-plan.md", PLAN)
+    wb(taskId, "acceptance-checks-r1.md", renderChecksMd({ version: "1", round_index: 1, checks: {
+      "walk:plan:2": { decision: "fail", note: "按钮 404", at: "t" },
+    } }))
+    await expect(evidence.decideAcceptance(taskId, { decision: "accepted" }))
+      .rejects.toBeInstanceOf(TaskStatusConflictError)
+    expect(decisionRows(taskId)).toBe(0)
+    expect(has(taskId, "acceptance-ledger-r1.md")).toBe(false)
+  })
+
+  it("D3: rejected 缺 feedback → 决策前就拒，不落账", async () => {
+    const taskId = await newAwaiting(true, false)
+    wb(taskId, "e2e-test-plan.md", PLAN)
+    await expect(evidence.decideAcceptance(taskId, { decision: "rejected" }))
+      .rejects.toThrow(/必须给出反馈/)
+    expect(decisionRows(taskId)).toBe(0)
   })
 })
 

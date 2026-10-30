@@ -135,6 +135,16 @@ const probeRunBodySchema = z.object({
   timeoutS: z.number().int().min(5).max(600).optional(),
 })
 
+// 单条核对写入（POST /:id/acceptance/check，2026-10-30 AI-native 验收）：
+// 验收窗与主 Chat 共用一个写入口；fail/skip 的原因必填（进退回反馈与下轮 carryover）。
+const acceptanceCheckBodySchema = z
+  .object({
+    item_id: z.string().min(1).max(200),
+    decision: z.enum(["pass", "fail", "skip"]),
+    note: z.string().max(4000).optional(),
+  })
+  .strict()
+
 // 票08 分支③（改派 task-fix）body —— 指令即修复轮的输入，与打回反馈同额（≤20000）。
 // strict：未知字段 400（与 acceptance 契约同律 —— 路由级聚合端点不吃野键）。
 const fixRoundBodySchema = z
@@ -628,6 +638,38 @@ export function createTasksRoutes(
     }
   })
 
+  // 剧本单条核对写入：读-合并-写，一次只动一个 item（窗口与主 Chat 双向同步；
+  // 旧的整单 PUT home-file 保留给未升级面板）。fail/skip 无原因 → 400。
+  router.post("/:id/acceptance/check", async (c) => {
+    if (!evidence) return c.json({ error: "round evidence not wired" }, 501)
+    const parsed = acceptanceCheckBodySchema.safeParse(await c.req.json().catch(() => null))
+    if (!parsed.success) {
+      return c.json({ error: parsed.error.issues[0]?.message ?? "invalid body" }, 400)
+    }
+    try {
+      return c.json(evidence.recordCheck(c.req.param("id"), {
+        itemId: parsed.data.item_id,
+        decision: parsed.data.decision,
+        note: parsed.data.note,
+      }))
+    } catch (err: unknown) {
+      const { status, message } = classifyError(err)
+      return c.json({ error: message }, status)
+    }
+  })
+
+  // 重新生成验收方案（2026-10-30）：仅当本轮还没有任何人工勾选时允许 ——
+  // 重生成会作废人的判定，服务端硬拒。
+  router.post("/:id/acceptance/plan/regenerate", async (c) => {
+    if (!evidence) return c.json({ error: "round evidence not wired" }, 501)
+    try {
+      return c.json(await evidence.regenerateAcceptancePlan(c.req.param("id")))
+    } catch (err: unknown) {
+      const { status, message } = classifyError(err)
+      return c.json({ error: message }, status)
+    }
+  })
+
   // 剧本探针单发执行：票步里的可执行命令（curl/until 级），同步返回 exit+tail
   // 供面板就地盖章。与复检同纪律——只有人点击才执行；GET /playbook 保持纯读。
   router.post("/:id/playbook/run", async (c) => {
@@ -856,43 +898,23 @@ export function createTasksRoutes(
       // it, the awaiting view is gone), and stop any live preview. The
       // acceptance itself stays authoritative — ledger/reopen side-effects are
       // best-effort (a failed ledger never rolls back a committed decision).
-      const snap = evidence ? await evidence.snapshotEvidence(c.req.param("id")).catch(() => null) : null
-      // 走查 ✗ 服务端硬闸（S1，2026-09-20）：前端 gate.fail>0 的 disabled 只拦
-      // UI 入口，任何非 UI 通道（curl/脚本）都能无痕放行。checks 与写入侧同源
-      // （snapshotEvidence 内 batchRelDir + checksFileName/parseChecksMd），此
-      // 处在决策落账之前重数 ✗：n>0 → 409，不落决策、不写台账、不翻票。
-      // 诚实降级：文件缺失/解析失败/无 ✗/快照拿不到 → 放行（未决软放行本就是
-      // 前端既有语义，绝不误伤）。轮次不匹配时交给 service.acceptance 的 409。
-      if (parsed.decision === "accepted" && snap
-        && snap.phaseIndex === parsed.phase_index && snap.roundIndex === parsed.round_index) {
-        const nFail = Object.values(snap.checks?.checks ?? {}).filter((ck) => ck.decision === "fail").length
-        if (nFail > 0) {
-          return c.json({ error: `走查存在 ${nFail} 项 ✗ —— 服务端硬闸拦截，请改走打回` }, 409)
-        }
-      }
-      const result = await service.acceptance(c.req.param("id"), input)
-      // 台账写入诚实化（S2，2026-09-20）：写没写成功不再只有 console.error 知道 ——
-      // ledger_written 进响应体。判据：accepted = writeLedger 落盘非 null；
-      // rejected = writeLedger 非 null 且 augmentReject 未抛；快照缺失 /
-      // batchRelDir 解析不出 / 写失败 / 抛错 → false。决策本身不回滚（K6）。
-      let ledgerWritten = false
+      // 2026-10-30：这套步骤收进 RoundEvidenceService.decideAcceptance，主 Chat
+      // 的 submit_acceptance_decision 工具走同一入口（人点窗口仍是兜底）。
       if (evidence) {
-        try {
-          evidence.stopPreviewQuiet(c.req.param("id"))
-          if (snap) {
-            if (parsed.decision === "accepted") {
-              ledgerWritten = evidence.writeLedger(snap, "accepted") !== null
-            } else {
-              const led = evidence.writeLedger(snap, "rejected")
-              evidence.augmentReject(snap, parsed.reopen_tickets)
-              ledgerWritten = led !== null
-            }
-          }
-        } catch (err: unknown) {
-          console.error("[tasks] acceptance ledger/reopen side-effect failed (decision already committed):", err)
-        }
+        const { result, ledger_written } = await evidence.decideAcceptance(c.req.param("id"), {
+          phase_index: parsed.phase_index,
+          round_index: parsed.round_index,
+          decision: parsed.decision,
+          ...(parsed.feedback !== undefined ? { feedback: parsed.feedback } : {}),
+          ...(parsed.reopen_tickets !== undefined ? { reopen_tickets: parsed.reopen_tickets } : {}),
+        })
+        // 台账写入诚实化（S2，2026-09-20）：writeLedger 落盘与否进响应体；决策
+        // 本身不回滚（K6）。
+        return c.json({ ...result, ledger_written })
       }
-      return c.json({ ...result, ledger_written: ledgerWritten })
+      // 未装配验货台（旧装配/测试）：决策照常，台账跳过 —— 与原行为一致。
+      const result = await service.acceptance(c.req.param("id"), input)
+      return c.json({ ...result, ledger_written: false })
     } catch (err: unknown) {
       const { status, message } = classifyError(err)
       return c.json({ error: message }, status)

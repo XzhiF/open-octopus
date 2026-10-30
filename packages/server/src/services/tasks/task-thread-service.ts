@@ -41,7 +41,8 @@ import type { TaskRow } from "../../db/types"
 import { WorkspaceService } from "../workspace"
 import { getAgentDir, getBuiltInCloneDir } from "../agent/paths"
 import { derivedTaskNameFromMessage, generateTaskTitle } from "./task-title"
-import { buildDoerBatchGuard, buildPathGuard } from "../agent/clone-runtime"
+import { buildAcceptanceGuard, buildDoerBatchGuard, buildPathGuard } from "../agent/clone-runtime"
+import { acceptancePlanReady } from "./acceptance-plan-service"
 import { TaskHomeService } from "./task-home-service"
 import { deriveTaskView, type TaskView } from "./derive-task-view"
 
@@ -84,6 +85,9 @@ export interface TaskThreadProfile {
   readOnly: boolean
   /** Latest round was stopped by a human and not delivered → [takeover-edit]. */
   takeover: boolean
+  /** 2026-10-30 验收引导态：awaiting_review ∧ 方案已 ready → 本会话负责逐项引导
+   *  人验收；写权收窄为「≤2 文件的小修」，超范围必须升级 task-fix。 */
+  acceptanceGuide: boolean
 }
 
 export interface TaskThreadDeps {
@@ -287,8 +291,10 @@ export class TaskThreadService {
         : existingDir(wsPath ?? "") ?? existingDir(taskHome) ?? getAgentDir()
 
     const plugins = this.buildPlugins(taskHome)
-    const guard = this.buildGuard(identity, { taskHome, wsPath, readOnly, taskId: task.id })
-    const context = this.buildContext(info, { identity, spec, view })
+    const acceptanceGuide =
+      identity === "doer" && !readOnly && info.awaitingReview && !!wsPath && acceptancePlanReady(task.id)
+    const guard = this.buildGuard(identity, { taskHome, wsPath, readOnly, taskId: task.id, acceptanceGuide })
+    const context = this.buildContext(info, { identity, spec, view, acceptanceGuide })
 
     return {
       task: info,
@@ -304,6 +310,7 @@ export class TaskThreadService {
         const latest = executions[0]
         return !!latest && latest.takeover_at != null && latest.takeover_delivered_at == null
       })(),
+      acceptanceGuide,
     }
   }
 
@@ -319,7 +326,7 @@ export class TaskThreadService {
 
   private buildGuard(
     identity: TaskThreadIdentity,
-    input: { taskHome: string; wsPath: string | null; readOnly: boolean; taskId: string },
+    input: { taskHome: string; wsPath: string | null; readOnly: boolean; taskId: string; acceptanceGuide?: boolean },
   ): TaskThreadGuard | undefined {
     if (identity === "author") {
       return buildPathGuard(
@@ -328,6 +335,11 @@ export class TaskThreadService {
       ) as TaskThreadGuard
     }
     if (identity === "doer" && !input.readOnly && input.wsPath) {
+      // 验收引导轮：仍是 doer（可小修），但每次引导最多 2 个写目标 —— 超出就
+      // 提示升级大 fix（task-fix），不让人在验收里被无边界改动牵着走。
+      if (input.acceptanceGuide) {
+        return buildAcceptanceGuard(input.wsPath, input.taskId, { maxFiles: 2 }) as TaskThreadGuard
+      }
       return buildDoerBatchGuard(input.wsPath, input.taskId) as TaskThreadGuard
     }
     return buildReadOnlyGuard()
@@ -339,6 +351,7 @@ export class TaskThreadService {
       identity: TaskThreadIdentity
       spec: { phases?: Array<{ index: number; name: string; workflowRef?: string }> }
       view: TaskView
+      acceptanceGuide?: boolean
     },
   ): string {
     const label = STATUS_LABEL[info.displayStatus] ?? info.displayStatus
@@ -372,14 +385,24 @@ export class TaskThreadService {
       const quickEditLine = info.status === "archiving"
         ? ""
         : "[纪律] 每次有效编辑由 server 自动落 [quick-edit] commit，不要自己 git commit/push。"
+      const guideLines = extra.acceptanceGuide ? [
+        "[验收引导] 本轮已交付，验收方案（acceptance-plan）已生成。你的角色是**引导人验收**，不是自己签字：",
+        "  1. 先调 get_acceptance_plan 读方案与进度（含每项的怎么验/证据/机器建议）。",
+        "  2. 一次只推进**一项**：先用 run_acceptance_probe 跑机器能判的证据（或 start_acceptance_preview 起服务），把结果讲给用户听，然后用消息问「通过 / 不通过 / 跳过」。",
+        "  3. 用户**在对话里明确表态**（「通过」「可以」「不行，因为…」「跳过」）即可直接调 record_acceptance_check（confirmed=true）；不用等用户点卡片 —— 卡片只是快捷方式，点与说都算数。不要代替用户判断、不要批量代勾。",
+        "  4. 用户说不通过 → 当场小修：只改与该问题直接相关的 **≤2 个文件**，不改 spec/票；改完**必须重跑证据**（run_acceptance_probe）并把新结果讲给用户，再问一次是否通过 —— 改完不等于通过，绝不默认勾上。",
+        "  5. 问题超出小修边界（要改 spec、要动 3 个以上文件、或反复修不好）→ 调 propose_acceptance_escalation，让用户确认升级 task-fix 大修复；不要硬改。",
+        "  6. 全部项都有结论后，问用户要不要「放行」或「退回修改」。用户**明确表态**后由你收口：放行 → submit_acceptance_decision(decision=\"accepted\", confirmed=true)；退回 → submit_acceptance_decision(decision=\"rejected\", feedback=用户说的原因, confirmed=true)。人点验收台是兜底，不是必需；但没有明确表态绝不放行、绝不退回，也不要把未勾项当成通过。",
+      ] : []
       return [
         head,
+        ...guideLines,
         "[身份] 任务执行者。接住作者谈好的 spec / 批次 / 运行手册，在执行工作区里按用户指令改代码。",
         `[执行工作区] ${info.wsPath ?? "尚未绑定（等待触发）"}${info.branch ? ` · 分支 ${info.branch}` : ""}`,
         readOnlyLine,
         quickEditLine,
         `[改计划] 改 spec/票只能走计划回写：${planCmd}（批次目录只读，直接改会被硬闸拒绝）。`,
-        "[动作] 触发/暂停/恢复/中止/重试归档请用任务工具 request_task_action（会落确认卡，人点才执行）；验收通过/打回由人在验收窗决策。",
+        "[动作] 触发/暂停/恢复/中止/重试归档请用任务工具 request_task_action（会落确认卡，人点才执行）；验收的通过/打回在用户明确表态后调 submit_acceptance_decision 收口（人点验收台是兜底）。",
         "[状态感知] 任务状态变化会以事件卡出现在本会话；每轮也会刷新上面这行状态。",
       ].filter(Boolean).join("\n")
     }

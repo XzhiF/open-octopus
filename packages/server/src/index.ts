@@ -91,6 +91,11 @@ import scheduleRoutes, { setScheduleService } from "./routes/schedule"
 import { createSchedulerRoutes } from "./routes/scheduler"
 import { createTasksRoutes } from "./routes/tasks"
 import { RoundEvidenceService } from "./services/tasks/round-evidence-service"
+import {
+  AcceptancePlanService,
+  setAcceptancePlanReadyProvider,
+} from "./services/tasks/acceptance-plan-service"
+import { setAcceptanceToolsProvider } from "./services/chat/task-tools"
 import { TestInstanceRegistry } from "./services/tasks/test-instance-registry"
 import { createWorkflowPresetsRoutes } from "./routes/workflow-presets"
 import { createSkillGroupsRoutes } from "./routes/skill-groups"
@@ -1204,6 +1209,33 @@ if (shouldServe) {
       // 验货台 (acceptance v2)：实物 round-diff + 当场复检 — 4th optional arg
       // (tests that build the route factory without it get 501 on those 5 endpoints).
       const roundEvidence = new RoundEvidenceService(db, sse, tasksService, workspaceService!, taskHomeService)
+      // 验收方案预生成（2026-10-30 AI-native 验收）：轮终态后由独立规划 Agent
+      // 产出 acceptance-plan-rN.json；getPlaybook 优先读它，主 Chat 据此逐项引导。
+      const acceptancePlan = new AcceptancePlanService(
+        db, sse, tasksService, workspaceService!, taskHomeService, roundEvidence,
+      )
+      roundEvidence.setAcceptancePlanService(acceptancePlan)
+      tasksService.taskLifecycle.setAcceptancePlanHook((taskId) => {
+        void acceptancePlan.ensureForAwaiting(taskId)
+      })
+      setAcceptancePlanReadyProvider((taskId) => acceptancePlan.isReady(taskId))
+      setAcceptanceToolsProvider(() => ({
+        getPlanDetail: (taskId) => acceptancePlan.getPlanDetail(taskId),
+        recordCheck: (taskId, input) => roundEvidence.recordCheck(taskId, input),
+        // 最终放行/退回：用户明确表态后由主 Chat 收口；人点验收台同为兜底。
+        finalizeAcceptance: (taskId, input) => roundEvidence.decideAcceptance(taskId, input),
+        runProbe: async (taskId, itemId) => {
+          const detail = acceptancePlan.getPlanDetail(taskId)
+          const item = detail.plan?.items.find((it) => it.id === itemId)
+          if (!item) throw new Error(`未知验收项: ${itemId}`)
+          const cmd = item.machine?.command?.trim()
+            || item.howTo.find((h) => h.kind === "run" && h.command?.trim())?.command?.trim()
+          if (!cmd) throw new Error("该项没有可自动执行的机器证据 —— 请按方案里的 howTo 人工核对")
+          return roundEvidence.runProbe(taskId, cmd, 300)
+        },
+        startPreview: (taskId) => roundEvidence.startPreview(taskId),
+        stopPreview: (taskId) => roundEvidence.stopPreview(taskId),
+      }))
       // 2026-10-28 task-thread: the task-doer dual chat was retired. Takeover
       // reuses the task's main thread (source_chat_session_id).
       app.route('/api/tasks', createTasksRoutes(tasksService, sse, assistService, roundEvidence, async ({ title, text, origin }) => {

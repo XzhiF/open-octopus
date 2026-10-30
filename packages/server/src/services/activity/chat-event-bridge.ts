@@ -114,6 +114,8 @@ class ChatEventBridge {
   private sse: SSEService | null = null
   /** taskId → last status we carded, so repeat SSE frames stay one card. */
   private lastTaskStatus = new Map<string, string>()
+  /** 验收引导唤醒去重：task:phase:round → 已唤醒。 */
+  private acceptanceGuided = new Set<string>()
 
   attach(db: SqliteLike): void {
     this.db = db
@@ -462,6 +464,143 @@ class ChatEventBridge {
       event,
       { ephemeral: true, message },
     )
+  }
+
+  /** 验收方案就绪（2026-10-30 AI-native 验收）：投一张消息流卡片 + 唤醒主
+   *  Chat 开始逐项引导。只认主线程会话；legacy clone 不动；同一轮只唤醒一次。
+   *  注意：不改 Chat 顶部栏 —— 引导上下文全部在消息流里表达。 */
+  requestAcceptanceGuide(
+    taskId: string,
+    info: { phaseIndex: number; roundIndex: number; itemCount: number; goal?: string },
+  ): void {
+    if (!this.db) return
+    const key = `${taskId}:${info.phaseIndex}:${info.roundIndex}`
+    if (this.acceptanceGuided.has(key)) return
+    let row: {
+      name?: string
+      repo_group?: string | null
+      source_chat_session_id?: string | null
+      workspace_id?: string | null
+    } | undefined
+    try {
+      row = this.db.prepare(
+        "SELECT name, repo_group, source_chat_session_id, workspace_id FROM tasks WHERE id = ?",
+      ).get(taskId) as typeof row
+    } catch {
+      return
+    }
+    if (!row?.source_chat_session_id) return
+    let session: { clone_name?: string | null } | undefined
+    try {
+      session = this.db.prepare("SELECT clone_name FROM sessions WHERE id = ?")
+        .get(row.source_chat_session_id) as typeof session
+    } catch {
+      return
+    }
+    if (!session || session.clone_name) return // legacy clone thread — untouched
+    this.acceptanceGuided.add(key)
+
+    const title = `验收方案已就绪 · ${info.itemCount} 项`
+    const detail = `任务：${row.name ?? taskId.slice(0, 8)} · P${info.phaseIndex} · R${info.roundIndex}` +
+      (info.goal ? ` · ${info.goal}` : "")
+    const actions: TaskCardAction[] = [{ id: "acceptance_open_window", label: "打开验收台" }]
+    const event = getActivityBus().publish({
+      kind: "task.review",
+      severity: "info",
+      title,
+      message: detail,
+      workspaceId: row.workspace_id ?? null,
+      taskId,
+      sessionId: row.source_chat_session_id,
+      payload: {
+        status: "awaiting_review",
+        actions,
+        phaseIndex: info.phaseIndex,
+        roundIndex: info.roundIndex,
+        acceptancePlan: true,
+        itemCount: info.itemCount,
+      },
+    })
+    this.appendTaskCard({
+      sessionId: row.source_chat_session_id,
+      workspaceId: row.workspace_id ?? null,
+      title,
+      detail,
+      event,
+      status: "awaiting_review",
+      actions,
+    })
+    this.notifySession(row.source_chat_session_id, row.workspace_id ?? null)
+    const message = [
+      `[验收引导] 任务 ${taskId} 本轮（P${info.phaseIndex} R${info.roundIndex}）已交付，验收方案已生成（${info.itemCount} 项）。`,
+      "请调用 get_acceptance_plan 读方案与进度，然后**一次只推进一项**：",
+      "1. 先用 run_acceptance_probe 跑该行的机器证据（需要看页面就 start_acceptance_preview，结束后 stop_acceptance_preview），把结果讲给用户；",
+      "2. 再用消息问「通过 / 不通过 / 跳过」；卡片只是快捷方式，不必强求用户点。",
+      "3. 用户在对话里明确表态后直接调 record_acceptance_check(confirmed=true) —— 不要代替人判断。",
+      "不通过 → 当场小修（只改直接相关的 ≤2 个文件，不改 spec），修完重跑证据再重新确认；",
+      "超出小修边界 → 调 propose_acceptance_escalation 让人确认升级大修复。",
+      "全部项有结论后：用户明确说「放行 / 通过 / 可以了」→ submit_acceptance_decision(decision=\"accepted\", confirmed=true)；",
+      "用户明确说「退回 / 不行，让他改…」→ submit_acceptance_decision(decision=\"rejected\", feedback=他的原话, confirmed=true)。",
+      "人点验收台是兜底，不是必需；但没有明确表态绝不放行、绝不退回，也不要把未勾项当成通过。",
+    ].join("\n")
+    void this.wake(
+      { sessionId: row.source_chat_session_id, org: row.repo_group ?? "", workspaceId: row.workspace_id ?? null },
+      event,
+      { ephemeral: true, message },
+    )
+  }
+
+  /** 方案生成失败：消息流卡片（重试 / 打开验收台），不唤醒（不烧 token）。 */
+  notifyAcceptancePlanFailed(taskId: string, error: string): void {
+    if (!this.db) return
+    let row: {
+      name?: string
+      source_chat_session_id?: string | null
+      workspace_id?: string | null
+    } | undefined
+    try {
+      row = this.db.prepare(
+        "SELECT name, source_chat_session_id, workspace_id FROM tasks WHERE id = ?",
+      ).get(taskId) as typeof row
+    } catch {
+      return
+    }
+    if (!row?.source_chat_session_id) return
+    let session: { clone_name?: string | null } | undefined
+    try {
+      session = this.db.prepare("SELECT clone_name FROM sessions WHERE id = ?")
+        .get(row.source_chat_session_id) as typeof session
+    } catch {
+      return
+    }
+    if (!session || session.clone_name) return
+
+    const actions: TaskCardAction[] = [
+      { id: "acceptance_regenerate", label: "↻ 重新生成方案" },
+      { id: "acceptance_open_window", label: "打开验收台" },
+    ]
+    const title = "验收方案生成失败"
+    const detail = `${error}（验收不阻塞 —— 仍可用旧清单逐项核对）`
+    const event = getActivityBus().publish({
+      kind: "task.review",
+      severity: "warn",
+      title,
+      message: detail,
+      workspaceId: row.workspace_id ?? null,
+      taskId,
+      sessionId: row.source_chat_session_id,
+      payload: { status: "awaiting_review", actions, acceptancePlanFailed: true },
+    })
+    this.appendTaskCard({
+      sessionId: row.source_chat_session_id,
+      workspaceId: row.workspace_id ?? null,
+      title,
+      detail,
+      event,
+      status: "awaiting_review",
+      actions,
+    })
+    this.notifySession(row.source_chat_session_id, row.workspace_id ?? null)
   }
 
   /** Tell an open chat to reload its transcript (no wake turn). */
