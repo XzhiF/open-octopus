@@ -93,7 +93,19 @@ describe("ArtifactViewerDialog — homeEntry 模式（批次证据）", () => {
       <ArtifactViewerDialog taskId="t1" entry={entry as never} onOpenChange={() => {}} />,
     )
     await waitFor(() => expect(mockGetArtifactContent).toHaveBeenCalledWith("t1", "spec.md"))
-    await waitFor(() => expect(document.querySelector("[data-artifact-content]")).toBeTruthy())
+    // 2026-10-30：.md 改走 MarkdownPreview —— entry 模式的取数/footer 契约不变。
+    await waitFor(() => expect(document.querySelector("[data-artifact-markdown]")).toBeTruthy())
     expect(screen.getByText(/在左侧对话里直接说/)).toBeTruthy()
+  })
+
+  it("H5: .md 批次文件 → MarkdownPreview（与产物窗同款排版），不再吐 <pre> 原文", async () => {
+    const path = ".scratch/20260903/scaffold-1/acceptance-ledger-r1.md"
+    mockGetHomeFile.mockResolvedValue({ path, content: "# 验收台账\n\n- [✓] 全部通过" })
+    render(
+      <ArtifactViewerDialog taskId="t1" entry={null} homeEntry={{ path }} onOpenChange={() => {}} />,
+    )
+    const md = await findAttr("[data-artifact-markdown]")
+    expect(md.textContent).toContain("验收台账")
+    expect(document.querySelector("[data-artifact-content]")).toBeNull()
   })
 })

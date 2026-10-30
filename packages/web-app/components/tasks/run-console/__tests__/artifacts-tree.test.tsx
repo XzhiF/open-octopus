@@ -17,6 +17,7 @@ vi.mock("@/lib/tasks-api", () => ({
 
 vi.mock("@/components/resource/MarkdownPreview", () => ({
   MarkdownPreview: ({ content }: { content: string }) => <pre data-testid="md-preview">{content}</pre>,
+  MARKDOWN_TUI_CLASS: "md-tui-stub",
 }))
 
 const item = (kind: ArtifactKind, name: string, path: string): ArtifactManifestItem => ({

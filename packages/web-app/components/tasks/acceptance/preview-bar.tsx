@@ -111,11 +111,13 @@ export function PreviewBar({ cfg, runbook, preview, busy, disabledReason, onSave
   }
 
   const startEdit = () => {
+    if (disabledReason) return
     if (runbook) setRbMode(true)
     setEditing(true)
   }
 
   const save = async (fn: () => Promise<boolean>) => {
+    if (disabledReason) return
     setSaving(true)
     try { if (await fn()) setEditing(false) } finally { setSaving(false) }
   }
@@ -143,16 +145,16 @@ export function PreviewBar({ cfg, runbook, preview, busy, disabledReason, onSave
           </a>
         ))}
         {mode && !editing && (
-          <Button size="sm" variant="ghost" className="ml-auto h-6 px-2 text-[10px]" onClick={startEdit} data-testid="preview-edit">
+          <Button size="sm" variant="ghost" className="ml-auto h-6 px-2 text-[10px]" disabled={!!disabledReason} onClick={startEdit} data-testid="preview-edit">
             编辑
           </Button>
         )}
         {!mode && !editing && (
           <div className="ml-auto flex gap-1">
-            <Button size="sm" variant="ghost" className="h-6 px-2 text-[10px]" onClick={() => { setRbMode(true); setEditing(true) }} data-testid="preview-configure-rb">
+            <Button size="sm" variant="ghost" className="h-6 px-2 text-[10px]" disabled={!!disabledReason} onClick={() => { setRbMode(true); setEditing(true) }} data-testid="preview-configure-rb">
               runbook 方式
             </Button>
-            <Button size="sm" variant="ghost" className="h-6 px-2 text-[10px]" onClick={() => { setRbMode(false); setEditing(true) }} data-testid="preview-configure">
+            <Button size="sm" variant="ghost" className="h-6 px-2 text-[10px]" disabled={!!disabledReason} onClick={() => { setRbMode(false); setEditing(true) }} data-testid="preview-configure">
               配置预览
             </Button>
           </div>
@@ -225,7 +227,7 @@ export function PreviewBar({ cfg, runbook, preview, busy, disabledReason, onSave
               {runbook && (
                 <Button size="sm" variant="ghost" className="h-6 text-[10px]" disabled={saving} onClick={() => void save(() => onSaveRunbook(null))} data-testid="rb-clear">清除</Button>
               )}
-              <Button size="sm" className="h-6 text-[10px]" disabled={saving || !rbValid} onClick={() => void save(() => onSaveRunbook({
+              <Button size="sm" className="h-6 text-[10px]" disabled={saving || !rbValid || !!disabledReason} onClick={() => void save(() => onSaveRunbook({
                 up: { command: upCmd.trim(), ...(upCwd.trim() ? { cwd: upCwd.trim() } : {}) },
                 ready: { command: readyCmd.trim(), ...(readyCwd.trim() ? { cwd: readyCwd.trim() } : {}) },
                 ...(textToViews(viewsText).length ? { views: textToViews(viewsText) } : {}),
@@ -254,7 +256,7 @@ export function PreviewBar({ cfg, runbook, preview, busy, disabledReason, onSave
               </Button>
               <Button size="sm" variant="ghost" className="h-6 text-[10px]" disabled={saving} onClick={() => void seedRbFromPreview()} data-testid="preview-to-rb">runbook 方式 →</Button>
               <Button size="sm" variant="ghost" className="h-6 text-[10px]" disabled={saving} onClick={() => void save(() => onSaveCfg(null))} data-testid="preview-clear">清除</Button>
-              <Button size="sm" className="h-6 text-[10px]" disabled={saving || !cmd.trim() || !/^https?:\/\//i.test(url)} onClick={() => void save(() => onSaveCfg({ command: cmd.trim(), url: url.trim(), ...(cwd.trim() ? { cwd: cwd.trim() } : {}), ...(pattern.trim() ? { readyPattern: pattern.trim() } : {}) }))} data-testid="preview-save">
+              <Button size="sm" className="h-6 text-[10px]" disabled={saving || !cmd.trim() || !/^https?:\/\//i.test(url) || !!disabledReason} onClick={() => void save(() => onSaveCfg({ command: cmd.trim(), url: url.trim(), ...(cwd.trim() ? { cwd: cwd.trim() } : {}), ...(pattern.trim() ? { readyPattern: pattern.trim() } : {}) }))} data-testid="preview-save">
                 保存（随任务持久化）
               </Button>
             </div>

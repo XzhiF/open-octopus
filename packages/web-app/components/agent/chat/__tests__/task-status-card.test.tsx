@@ -75,6 +75,87 @@ describe('TaskStatusCard', () => {
     expect(screen.queryAllByRole('button')).toHaveLength(0)
   })
 
+  it('跑完定格：标题转「本轮执行完成」、圈 ✓、子工作流聚合回父节点', async () => {
+    const started = new Date(Date.now() - 6 * 60_000).toISOString()
+    const completed = new Date(Date.now() - 60_000).toISOString()
+    ;(getTask as Mock).mockResolvedValue({
+      id: 't-done', name: '跑完的任务', status: 'running',
+      executions: [{
+        id: 'e-done', status: 'completed', workflow_ref: 'built-in/matt-spec-dev',
+        name: null, phase_index: 1, round_index: 1, workspace_id: 'w-3',
+        started_at: started, completed_at: completed, created_at: started, error_summary: null,
+      }],
+    })
+    ;(fetchExecutionDetail as Mock).mockResolvedValue({
+      id: 'e-done', status: 'completed', workflow_ref: 'built-in/matt-spec-dev',
+      started_at: started, completed_at: completed,
+      steps: [
+        { stepId: '__engine_init__', stepName: '', status: 'completed', duration: 4 },
+        { stepId: 'spec-resolve', stepName: '', status: 'completed', duration: 1, startedAt: started, completedAt: started },
+        { stepId: 'ticket-dag', stepName: '', status: 'completed', duration: 166, startedAt: started, completedAt: completed },
+        { stepId: 'ticket-dag:ticket-01', stepName: '', status: 'completed', duration: 44 },
+        { stepId: 'ticket-dag:ticket-02', stepName: '', status: 'completed', duration: 44 },
+        { stepId: 'code-review', stepName: '', status: 'completed', duration: 153, startedAt: completed, completedAt: completed },
+        { stepId: 'ship-pr', stepName: '', status: 'skipped', startedAt: completed, completedAt: completed },
+      ],
+    })
+
+    render(<TaskStatusCard message={eventMessage({
+      kind: 'task.status', title: '任务开始执行', status: 'running',
+      taskId: 't-done', executionId: 'e-done', workspaceId: 'w-3',
+      phaseIndex: 1, roundIndex: 1,
+    }, 'm-done')} />)
+
+    // 「开始执行」的标题跟着结束态走，徽章也不再是「已结束」。
+    await waitFor(() => expect(screen.getByText('本轮执行完成')).toBeTruthy())
+    const card = screen.getByTestId('activity-event-card')
+    expect(card.getAttribute('data-card-tone')).toBe('done')
+    expect(screen.getByText('已完成')).toBeTruthy()
+    expect(screen.queryByText('任务开始执行')).toBeNull()
+    // 子工作流聚合：父节点带 2/2，子节点不再单独占位；内部节点隐藏。
+    expect(screen.getByText('ticket-dag')).toBeTruthy()
+    expect(screen.getByText('2/2')).toBeTruthy()
+    expect(screen.queryByText('ticket-dag:ticket-01')).toBeNull()
+    expect(screen.queryByText('__engine_init__')).toBeNull()
+    expect(screen.getByText('code-review')).toBeTruthy()
+    expect(screen.queryAllByRole('button')).toHaveLength(0)
+  })
+
+  it('执行失败：标题「本轮执行失败」、红圈 ✕，失败节点红字', async () => {
+    const started = new Date(Date.now() - 3 * 60_000).toISOString()
+    const completed = new Date(Date.now() - 30_000).toISOString()
+    ;(getTask as Mock).mockResolvedValue({
+      id: 't-fail', name: '失败的任务', status: 'running',
+      executions: [{
+        id: 'e-fail', status: 'failed', workflow_ref: 'built-in/matt-spec-dev',
+        name: null, phase_index: 1, round_index: 1, workspace_id: 'w-4',
+        started_at: started, completed_at: completed, created_at: started, error_summary: null,
+      }],
+    })
+    ;(fetchExecutionDetail as Mock).mockResolvedValue({
+      id: 'e-fail', status: 'failed', workflow_ref: 'built-in/matt-spec-dev',
+      started_at: started, completed_at: completed,
+      steps: [
+        { stepId: 'spec-resolve', stepName: '', status: 'completed', duration: 1, startedAt: started, completedAt: started },
+        { stepId: 'code-review', stepName: '', status: 'failed', startedAt: completed, completedAt: completed },
+        { stepId: 'ship-pr', stepName: '', status: 'pending' },
+      ],
+    })
+
+    render(<TaskStatusCard message={eventMessage({
+      kind: 'task.status', title: '任务开始执行', status: 'running',
+      taskId: 't-fail', executionId: 'e-fail', workspaceId: 'w-4',
+      phaseIndex: 1, roundIndex: 1,
+    }, 'm-fail')} />)
+
+    await waitFor(() => expect(screen.getByText('本轮执行失败')).toBeTruthy())
+    const card = screen.getByTestId('activity-event-card')
+    expect(card.getAttribute('data-card-tone')).toBe('failed')
+    expect(screen.getByText('失败')).toBeTruthy()
+    expect(screen.getByText('code-review')).toBeTruthy()
+    expect(card.textContent).toContain('✕')
+  })
+
   it('本轮完成 · 待验收：收尾只读卡 —— 降噪、无按钮、提示去作业坞', async () => {
     const started = new Date(Date.now() - 10 * 60_000).toISOString()
     const completed = new Date(Date.now() - 4 * 60_000).toISOString()

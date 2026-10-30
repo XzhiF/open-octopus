@@ -1056,8 +1056,22 @@ export interface VerifySummary {
 export type RoundDiffScope = "round" | "cumulative"
 
 /** GET /:id/round-diff — 待验收轮的真实 git 区间统计。409 无 awaiting / 404 无任务。 */
-export async function getRoundDiff(taskId: string, scope: RoundDiffScope = "round"): Promise<RoundDiffPayload> {
-  const res = await fetch(buildUrl(`/${taskId}/round-diff`, scope === "cumulative" ? { scope } : {}))
+/** 显式历史轮坐标（2026-10-30 归档只读回看）：只读端点用；缺省仍是
+ *  awaiting（playbook）/ awaiting·live（round-diff）轮。 */
+export interface RoundTargetQuery {
+  phaseIndex: number
+  roundIndex: number
+}
+
+export async function getRoundDiff(
+  taskId: string,
+  scope: RoundDiffScope = "round",
+  target?: RoundTargetQuery,
+): Promise<RoundDiffPayload> {
+  const res = await fetch(buildUrl(`/${taskId}/round-diff`, {
+    ...(scope === "cumulative" ? { scope } : {}),
+    ...(target ? { phase_index: String(target.phaseIndex), round_index: String(target.roundIndex) } : {}),
+  }))
   if (!res.ok) {
     const body = await res.json().catch(() => ({}))
     throw new TaskApiError(body.error ?? `HTTP ${res.status}`, res.status)
@@ -1160,8 +1174,10 @@ export interface PlaybookPayload {
 }
 
 /** GET /:id/playbook — 派生视图。409 无 awaiting;available:false = 无契约结构。 */
-export async function getPlaybook(taskId: string): Promise<PlaybookPayload> {
-  const res = await fetch(buildUrl(`/${taskId}/playbook`))
+export async function getPlaybook(taskId: string, target?: RoundTargetQuery): Promise<PlaybookPayload> {
+  const res = await fetch(buildUrl(`/${taskId}/playbook`, target
+    ? { phase_index: String(target.phaseIndex), round_index: String(target.roundIndex) }
+    : {}))
   const body = await res.json().catch(() => ({}))
   if (!res.ok) throw new TaskApiError((body as { error?: string }).error ?? `HTTP ${res.status}`, res.status)
   return body as PlaybookPayload

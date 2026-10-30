@@ -89,6 +89,7 @@ vi.mock("@/lib/tasks-api", () => {
 // react-markdown 全家桶对单测是纯负担 — 桩到内容透传（渲染质量归 MarkdownPreview 自己）。
 vi.mock("@/components/resource/MarkdownPreview", () => ({
   MarkdownPreview: ({ content }: { content: string }) => <div data-md-preview>{content}</div>,
+  MARKDOWN_TUI_CLASS: "md-tui-stub",
 }))
 vi.mock("@/lib/observability-api", () => ({ fetchLLMCalls: mockFetchLLMCalls }))
 vi.mock("@/lib/sse-manager", () => ({
@@ -746,7 +747,8 @@ describe("验货台 v2 — 当场复检", () => {
     // verdict 路径可点开 → ArtifactViewerDialog 出全文（叙述 tab 退役后的唯一入口）
     fireEvent.click(screen.getByTestId("verify-verdict-open"))
     await waitFor(() => expect(mockGetHomeFile).toHaveBeenCalledWith("t1", `${BATCH_DIR}/verify-r1-x.md`))
-    await waitFor(() => expect(document.querySelector("[data-artifact-content]")).toBeTruthy())
+    // 2026-10-30：.md 走 MarkdownPreview（与产物窗同款），不再是 <pre> 原文。
+    await waitFor(() => expect(document.querySelector("[data-artifact-markdown]")).toBeTruthy())
   })
 
   it("启动被拒（409 复检进行中）→ toast，不崩", async () => {
@@ -1409,5 +1411,69 @@ describe("票 11 — railless：壳内渲染路径剔内列（独立形态不动
     expect(mockAbortTask).not.toHaveBeenCalled()
     fireEvent.click(screen.getByRole("button", { name: "确认中止" }))
     await waitFor(() => expect(mockAbortTask).toHaveBeenCalledWith("t1"))
+  })
+})
+
+// ═════════════ 2026-10-30 · 归档后只读回看（用户：归档了也要查到我验收了什么）═════════════
+// 复用原来的三步验收界面，只把「待验收轮」换成已验收轮：动作条不渲染、勾选/复检/
+// 预览全部冻结；playbook / round-diff 走显式历史轮坐标。多 phase 时阶段轨道可点切换。
+describe("AcceptanceSurface — 归档后只读回看（复用三步界面）", () => {
+  const phase = (index: number, name: string, slug: string, execId: string): TaskDerivedView["phaseViews"][number] => ({
+    index, name, slug, workflowRef: "task-dev",
+    status: "accepted",
+    rounds: [round(execId, index, 1, "accepted")],
+    currentRound: 1, acceptedRound: 1, awaitingRound: null,
+  })
+  const P1_DONE: TaskDerivedView = {
+    taskStatus: "done", isV4: true, phaseViews: [phase(1, "脚手架", "scaffold-1", "exec-1")],
+  }
+  const P1_P2_DONE: TaskDerivedView = {
+    taskStatus: "done", isV4: true,
+    phaseViews: [phase(1, "脚手架", "scaffold-1", "exec-1"), phase(2, "观测", "metering-2", "exec-2")],
+  }
+
+  it("done 任务：复用三步界面；只读标、无决策按钮；playbook/diff 按已验收轮取数", async () => {
+    const detail = { ...makeDetail(P1_DONE), status: "done" } as unknown as TaskDetail
+    mockGetTask.mockResolvedValue(detail)
+    render(<AcceptanceSurface task={detail as unknown as Task} onMutated={() => {}} />)
+
+    await waitFor(() => expect(mockGetPlaybook).toHaveBeenCalledWith("t1", { phaseIndex: 1, roundIndex: 1 }))
+    expect(mockGetRoundDiff).toHaveBeenCalledWith("t1", "round", { phaseIndex: 1, roundIndex: 1 })
+
+    const modal = await screen.findByTestId("acceptance-modal")
+    expect(modal.getAttribute("data-acceptance-readonly")).toBe("1")
+    expect(await screen.findByText("这轮已通过验收")).toBeTruthy()
+    expect(screen.getByTestId("acceptance-readonly-chip").textContent).toContain("只读")
+    expect(screen.getByTestId("acceptance-readonly-note").textContent).toContain("acceptance-ledger-r1.md")
+    // 原来的三步导轨仍在；决策条整条不渲染。
+    expect(screen.getByTestId("acceptance-step-1")).toBeTruthy()
+    expect(screen.getByTestId("acceptance-step-2")).toBeTruthy()
+    expect(screen.getByTestId("acceptance-step-3")).toBeTruthy()
+    expect(screen.queryByTestId("acceptance-col-actions")).toBeNull()
+    expect(screen.queryByTestId("acceptance-approve")).toBeNull()
+    expect(screen.queryByTestId("acceptance-reject")).toBeNull()
+    expect(screen.queryByTestId("acceptance-abort")).toBeNull()
+    // 勾选面板冻结（disablereason 生效）
+    expect(screen.queryByTestId("acceptance-batch-idle")).toBeNull()
+  })
+
+  it("多 phase：默认停在最后一个已验收 phase，点阶段轨道切回前一个 phase", async () => {
+    const detail = { ...makeDetail(P1_P2_DONE), status: "done" } as unknown as TaskDetail
+    mockGetTask.mockResolvedValue(detail)
+    render(<AcceptanceSurface task={detail as unknown as Task} onMutated={() => {}} />)
+
+    await waitFor(() => expect(mockGetPlaybook).toHaveBeenCalledWith("t1", { phaseIndex: 2, roundIndex: 1 }))
+    expect(screen.getByTestId("acceptance-phase-label").textContent).toContain("Phase 2/2")
+
+    mockGetPlaybook.mockClear()
+    mockGetRoundDiff.mockClear()
+    fireEvent.click(screen.getByTestId("acceptance-phase-1"))
+
+    await waitFor(() => expect(mockGetPlaybook).toHaveBeenCalledWith("t1", { phaseIndex: 1, roundIndex: 1 }))
+    expect(mockGetRoundDiff).toHaveBeenCalledWith("t1", "round", { phaseIndex: 1, roundIndex: 1 })
+    await waitFor(() => expect(screen.getByTestId("acceptance-phase-label").textContent).toContain("Phase 1/2"))
+    // 仍然只读：切换 phase 不会长出决策按钮
+    expect(screen.queryByTestId("acceptance-approve")).toBeNull()
+    expect(screen.queryByTestId("acceptance-col-actions")).toBeNull()
   })
 })

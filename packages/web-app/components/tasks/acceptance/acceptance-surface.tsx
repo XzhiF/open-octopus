@@ -21,6 +21,11 @@
 //
 // 兼容注记：根锚点沿用 data-acceptance-modal / testid acceptance-modal；三列锚点
 // data-acceptance-col-* 原样（railless 形态仍剔除摘要/动作内列）。
+//
+// 归档只读（2026-10-30 用户）：任务 done/archiving 后本面不消失 —— 复用同一套
+// 三步界面回看已验收轮（acceptedRound），动作条整条不渲染、勾选/复检/预览/探针
+// 全部冻结；playbook / round-diff 用 ?phase_index&round_index 读历史轮。多 phase
+// 时顶部阶段轨道可点切换（默认最后一个已验收 phase）。
 
 "use client"
 
@@ -134,6 +139,9 @@ const ROUND_STATE_LABEL: Record<string, string> = {
   pending: "排队中", running: "执行中", succeeded: "执行成功",
   failed: "执行失败", cancelled: "已取消/中止",
 }
+
+/** 空态稳定引用（勿写成内联 []，见 phaseViews memo 的注释）。 */
+const NO_PHASE_VIEWS: TaskPhaseView[] = []
 
 export function AcceptanceSurface({ task, onMutated, onDecided, detailOverride, onRefetch, onActionApi, railless, onOpenChanges }: AcceptanceSurfaceProps) {
   const taskId = task?.id ?? null
@@ -330,37 +338,85 @@ export function AcceptanceSurface({ task, onMutated, onDecided, detailOverride, 
   }, [taskId, refetchDetail])
 
   // ── 派生视图（票 03 唯一真相，只读不重算） ──
-  const phaseViews = detail?.derived?.phaseViews ?? []
-  const awaitingPhase: TaskPhaseView | null = useMemo(
+  // 空态用同一个常量引用：detail 未到时若每次返回新 []，下游 memo 会每次渲染
+  // 都判「变了」（复审 2026-10-30）。
+  const phaseViews = useMemo<TaskPhaseView[]>(
+    () => detail?.derived?.phaseViews ?? NO_PHASE_VIEWS,
+    [detail],
+  )
+  const awaitingPhaseRaw: TaskPhaseView | null = useMemo(
     () => phaseViews.find((p) => p.status === "awaiting_review" && p.awaitingRound !== null) ?? null,
     [phaseViews],
   )
+  // ── 归档后只读回看（2026-10-30 用户）：任务结束后验收窗不消失 —— 复用同一套
+  //    三步界面，只是把「待验收轮」换成已验收轮；动作全部冻结、无决策按钮。
+  //    多 phase 的关键：默认停在最后一个已验收 phase，顶部阶段轨道可点切换，
+  //    每个 phase 各自回看自己的 acceptedRound（各自的 diff / 剧本 / checks）。
+  const acceptedPhases = useMemo(
+    () => phaseViews.filter((p) => p.acceptedRound != null),
+    [phaseViews],
+  )
+  const [readOnlyPhasePick, setReadOnlyPhasePick] = useState<number | null>(null)
+  useEffect(() => { setReadOnlyPhasePick(null) }, [taskId])
+  const readOnlyEligible = ["done", "failed", "aborted", "archiving"].includes(task?.status ?? "")
+  const readOnlyPhase: TaskPhaseView | null = useMemo(() => {
+    if (awaitingPhaseRaw || !readOnlyEligible) return null
+    const picked = readOnlyPhasePick != null
+      ? acceptedPhases.find((p) => p.index === readOnlyPhasePick) ?? null
+      : null
+    return picked ?? acceptedPhases[acceptedPhases.length - 1] ?? null
+  }, [awaitingPhaseRaw, readOnlyEligible, acceptedPhases, readOnlyPhasePick])
+  const readOnly = !awaitingPhaseRaw && !!readOnlyPhase
+  const awaitingPhase: TaskPhaseView | null = awaitingPhaseRaw ?? readOnlyPhase
+  /** 待验收轮 = awaitingRound；归档只读回看 = acceptedRound。 */
+  const reviewRoundIndex = awaitingPhase?.awaitingRound ?? awaitingPhase?.acceptedRound ?? null
   const awaitingRound: TaskRoundView | null = useMemo(() => {
-    if (!awaitingPhase || awaitingPhase.awaitingRound == null) return null
-    return awaitingPhase.rounds.find((r) => r.roundIndex === awaitingPhase.awaitingRound) ?? null
-  }, [awaitingPhase])
+    if (!awaitingPhase || reviewRoundIndex == null) return null
+    return awaitingPhase.rounds.find((r) => r.roundIndex === reviewRoundIndex) ?? null
+  }, [awaitingPhase, reviewRoundIndex])
+  /** 历史轮只读查询坐标（playbook / round-diff 端点的 ?phase_index&round_index）。 */
+  const readOnlyTarget = readOnly && awaitingPhase && reviewRoundIndex != null
+    ? { phaseIndex: awaitingPhase.index, roundIndex: reviewRoundIndex }
+    : undefined
+
+  // 只读切换 phase：复检/预览是 task 级内存会话，不能串台到别的 phase ——
+  // 切 phase 先清空，再由下面的拉取按本轮 exec 重新对上。
+  useEffect(() => {
+    if (!readOnly) return
+    setVerify(null)
+    setVerifyLines([])
+    verifySeenRef.current = 0
+    setPreview(null)
+  }, [readOnly, readOnlyPhasePick])
 
   // ── 验收面 v2.1：剧本编译 + 预览会话恢复 ──
-  // playbook：按 awaiting 轮现拉（服务端派生；409 无 awaiting → null 静默，面板有 idle 态）。
+  // playbook：按 await（或归档只读回看的历史轮）现拉；409/无轮 → null 静默。
   // preview：挂载 GET 一次（SSE 无 replay；external 探活由 server 兜）。execId 换轮即重拉。
   useEffect(() => {
     if (!taskId || !awaitingRound) { setPlaybook(null); return }
     let cancelled = false
-    getPlaybook(taskId)
+    getPlaybook(taskId, readOnlyTarget)
       .then((p) => { if (!cancelled) setPlaybook(p) })
       .catch(() => { if (!cancelled) setPlaybook(null) })
     return () => { cancelled = true }
-  }, [taskId, awaitingRound?.exec.id, playbookNonce])
+    // readOnlyTarget 是每渲染新建的对象 —— 用它的原始值进 deps。
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [taskId, awaitingRound?.exec.id, playbookNonce, readOnlyTarget?.phaseIndex, readOnlyTarget?.roundIndex])
 
   useEffect(() => {
     if (!taskId || !awaitingRound) return
     let cancelled = false
     getPreview(taskId)
-      .then((s) => { if (!cancelled && s) setPreview(s) })
+      .then((s) => {
+        if (cancelled || !s) return
+        // 只读回看：预览会话是 task 级，只认本轮 exec（换 phase 不串台）。
+        if (readOnly && s.execution_id && s.execution_id !== awaitingRound.exec.id) return
+        setPreview(s)
+      })
       .catch(() => { /* not wired / offline */ })
     return () => { cancelled = true }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [taskId, awaitingRound?.exec.id])
+  }, [taskId, awaitingRound?.exec.id, readOnly])
 
   // 本轮 run：executions[] 与本 round 的 exec.id 联查（derived 无 completed_at；票03 起
   // 徽章自带 started_at/completed_at，duration 自己算；票05 起徽章带 error_summary）。
@@ -470,11 +526,13 @@ export function AcceptanceSurface({ task, onMutated, onDecided, detailOverride, 
   useEffect(() => {
     if (!taskId || !awaitingExecId) { setRoundDiff(null); return }
     let cancelled = false
-    getRoundDiff(taskId)
+    getRoundDiff(taskId, "round", readOnlyTarget)
       .then((d) => { if (!cancelled) setRoundDiff(d) })
       .catch(() => { if (!cancelled) setRoundDiff(null) })
     return () => { cancelled = true }
-  }, [taskId, awaitingExecId])
+    // readOnlyTarget 每渲染新建 —— 按原始值进 deps（同 playbook effect）。
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [taskId, awaitingExecId, readOnlyTarget?.phaseIndex, readOnlyTarget?.roundIndex])
 
   // ── 打回→修复 回应对账（B 档）：round R 为修复轮时，批次目录成对存在
   // fix-feedback-r{R-1}.md / fix-report-r{R-1}.md（task-fix SKILL：N=被打回轮，
@@ -502,12 +560,14 @@ export function AcceptanceSurface({ task, onMutated, onDecided, detailOverride, 
     getVerifyStatus(taskId)
       .then((s) => {
         if (cancelled || !s) return
+        // 只读回看：复检会话是 task 级内存，只认本轮 exec（换 phase 不串台）。
+        if (readOnly && s.execution_id && s.execution_id !== awaitingExecId) return
         setVerify(s)
         if (s.tail?.length) setVerifyLines(s.tail)
       })
       .catch(() => { /* 未装配/离线 — 无会话可恢复 */ })
     return () => { cancelled = true }
-  }, [taskId, awaitingExecId])
+  }, [taskId, awaitingExecId, readOnly])
 
   // 核对面的 spec.md：首访懒拉，"" 缓存「不存在」防重拉风暴。once 门走 ref
   // （不进 deps → 不会被 setSpecLoading 自己的重跑掐死,见声明处注释）。
@@ -531,9 +591,12 @@ export function AcceptanceSurface({ task, onMutated, onDecided, detailOverride, 
   const verifyCfg = (detail?.task_spec ?? task?.task_spec)?.acceptance_verify ?? null
   const verifyRunning = verify?.state === "running"
   const wsGone = roundDiff !== null && !roundDiff.available && roundDiff.reason === "no_workspace"
-  const verifyDisabled = wsGone
-    ? "工作区目录已不在 — 当场复检不可用（历史输出/verdict 仍可看）"
+  /** 归档只读：勾选/复检/预览/探针全部冻结（历史数据照常展示）。 */
+  const readOnlyReason = readOnly
+    ? "已归档 · 只读 — 验收已冻结（记录可查，勾选与运行不可再动）"
     : undefined
+  const verifyDisabled = readOnlyReason
+    ?? (wsGone ? "工作区目录已不在 — 当场复检不可用（历史输出/verdict 仍可看）" : undefined)
 
   const handleVerifyRun = useCallback(async () => {
     if (!taskId) return
@@ -660,10 +723,10 @@ export function AcceptanceSurface({ task, onMutated, onDecided, detailOverride, 
 
   // 决策：通过 = 先开 ledger 预览确认弹层（唯一入口，D7/D8），确认后才 postAcceptance。
   const requestAccept = useCallback(() => {
-    if (busy) return
+    if (busy || readOnly) return
     if (gate.fail > 0) { toast.error("存在 ✗ 未过项 —— 通过被拦，请改走打回（反馈已预填）"); return }
     setLedgerOpen(true)
-  }, [busy, gate.fail])
+  }, [busy, readOnly, gate.fail])
 
   const doAccept = useCallback(async () => {
     if (!task || !awaitingPhase || awaitingPhase.awaitingRound == null || busy) return
@@ -710,7 +773,7 @@ export function AcceptanceSurface({ task, onMutated, onDecided, detailOverride, 
   // 票 07：对话页签送回劝退草稿时，草稿直接成文（✗ 票预填让位 —— 未过项仍由
   // augmentReject 在提交侧补齐，两不吞）。
   const openReject = useCallback((draft?: string) => {
-    if (busy) return
+    if (busy || readOnly) return
     const d = typeof draft === "string" ? draft.trim() : ""
     if (d) {
       setFeedback(`（来自快速修改对话的升级建议）\n${d}\n`)
@@ -718,7 +781,7 @@ export function AcceptanceSurface({ task, onMutated, onDecided, detailOverride, 
       setFeedback(`未过（验收台剧本 ✗）：\n${gate.failTickets.map((t) => `- ${t}`).join("\n")}\n\n补充：\n`)
     }
     setRejectOpen(true)
-  }, [busy, feedback, gate.failTickets])
+  }, [busy, readOnly, feedback, gate.failTickets])
 
   const handleReject = useCallback(async () => {
     const trimmed = feedback.trim()
@@ -763,7 +826,7 @@ export function AcceptanceSurface({ task, onMutated, onDecided, detailOverride, 
     }
   }, [task, awaitingPhase, feedback, gate.failTickets, busy, onMutated, refetchDetail, embedded, onRefetch])
 
-  const requestAbort = useCallback(() => { if (!busy) setAbortOpen(true) }, [busy])
+  const requestAbort = useCallback(() => { if (!busy && !readOnly) setAbortOpen(true) }, [busy, readOnly])
 
   // 票 02 统一壳：把决策入口注册给宿主（右栏底部 通过/打回 按钮）。只是句柄注册
   // ——台账预览/反馈弹窗/硬闸拦截/409 恢复全部仍是本面这套函数，行为单源。
@@ -810,28 +873,37 @@ export function AcceptanceSurface({ task, onMutated, onDecided, detailOverride, 
   const selfCheckLabel = verify?.state
     ? verifyStateLabel(verify.state)
     : isTakeoverArtifact ? "未跑（接管件）" : verifyStateLabel(undefined)
-  const bannerTitle = roundOk ? "这轮跑通了，等你确认" : roundFailed ? "这轮没跑成功，先看原因" : "这轮还在收尾"
+  const bannerTitle = readOnly
+    ? "这轮已通过验收"
+    : roundOk ? "这轮跑通了，等你确认" : roundFailed ? "这轮没跑成功，先看原因" : "这轮还在收尾"
   const bannerSub = [
     durationMs != null ? `用时 ${formatDuration(durationMs)}` : null,
     diffStats.commits > 0 ? `${diffStats.commits} 次提交` : null,
     `自动自检 ${selfCheckLabel}`,
   ].filter(Boolean).join(" · ")
-  const bannerChip = roundOk
-    ? { cls: "ok", text: "可验收" }
-    : roundFailed ? { cls: "bad", text: "需处理" } : { cls: "wait", text: "等待中" }
+  const bannerChip = readOnly
+    ? { cls: "ok", text: "已验收 ✓" }
+    : roundOk
+      ? { cls: "ok", text: "可验收" }
+      : roundFailed ? { cls: "bad", text: "需处理" } : { cls: "wait", text: "等待中" }
 
   // 验收方案是否就绪（2026-10-30）：ready → 用 A 方案面板（怎么验 / 证据 / 机器建议）。
   const planReady = playbook?.plan?.status === "ready"
-  const planGuideActive = planReady && !!awaitingPhase
+  const planGuideActive = planReady && !!awaitingPhase && !readOnly
 
   return (
-    <div className="acceptance-paper flex h-full min-h-0 flex-col" data-acceptance-modal data-testid="acceptance-modal">
+    <div
+      className="acceptance-paper flex h-full min-h-0 flex-col"
+      data-acceptance-modal
+      data-acceptance-readonly={readOnly ? "1" : undefined}
+      data-testid="acceptance-modal"
+    >
       {/* ── 顶条：语境 + 阶段迷你轨道（不抢主线，只给方位） ── */}
       <div className="ap-subhead">
         <span className="ap-eyebrow">验收台</span>
         <span className="ap-context">
           {awaitingPhase ? (
-            <>阶段 <b>{awaitingPhase.index}</b> / {total} · 第 {awaitingPhase.awaitingRound} 轮</>
+            <>阶段 <b>{awaitingPhase.index}</b> / {total} · 第 {reviewRoundIndex ?? "—"} 轮{readOnly ? " · 已验收" : ""}</>
           ) : "当前没有待验收的轮次"}
         </span>
         {isTakeoverArtifact && (
@@ -852,7 +924,9 @@ export function AcceptanceSurface({ task, onMutated, onDecided, detailOverride, 
             ⚠ 连接中断 · 数据截至 {sseDownAt}
           </span>
         )}
-        {awaitingPhase && (
+        {readOnly ? (
+          <span className="ap-chip ok" data-testid="acceptance-readonly-chip"><i />只读</span>
+        ) : awaitingPhase && (
           <span className="ap-chip wait"><i />待验收</span>
         )}
         {phaseViews.length > 0 && (
@@ -860,12 +934,29 @@ export function AcceptanceSurface({ task, onMutated, onDecided, detailOverride, 
             {phaseViews.map((p, i) => {
               const done = p.acceptedRound !== null || p.status === "accepted"
               const current = awaitingPhase?.index === p.index
+              // 归档只读：已验收 phase 可点回看（多 phase 时切换数据源）。
+              const pickable = readOnly && p.acceptedRound != null
+              const stepCls = `ap-mini-step ${done ? "done" : ""} ${current ? "current" : ""}`
               return (
                 <span key={p.index} className="contents">
                   {i > 0 && <span className={`ap-mini-line ${done || current ? "done" : ""}`} />}
-                  <span className={`ap-mini-step ${done ? "done" : ""} ${current ? "current" : ""}`}>
-                    <i>{done ? "✓" : p.index}</i><span>{p.name}</span>
-                  </span>
+                  {pickable ? (
+                    <button
+                      type="button"
+                      className={stepCls}
+                      onClick={() => setReadOnlyPhasePick(p.index)}
+                      aria-pressed={current}
+                      title={`回看 Phase ${p.index} 的验收记录`}
+                      data-testid={`acceptance-phase-${p.index}`}
+                      style={{ background: "transparent", border: 0, padding: 0, cursor: "pointer" }}
+                    >
+                      <i>{done ? "✓" : p.index}</i><span>{p.name}</span>
+                    </button>
+                  ) : (
+                    <span className={stepCls}>
+                      <i>{done ? "✓" : p.index}</i><span>{p.name}</span>
+                    </span>
+                  )}
                 </span>
               )
             })}
@@ -901,7 +992,7 @@ export function AcceptanceSurface({ task, onMutated, onDecided, detailOverride, 
               <div className="ap-snap-row">
                 <span>阶段</span>
                 <b data-acceptance-phase-label data-testid="acceptance-phase-label">
-                  {awaitingPhase ? `Phase ${awaitingPhase.index}/${total} · Round ${awaitingPhase.awaitingRound}` : "—"}
+                  {awaitingPhase ? `Phase ${awaitingPhase.index}/${total} · Round ${reviewRoundIndex ?? "—"}` : "—"}
                 </b>
               </div>
               <div className="ap-snap-row">
@@ -1008,7 +1099,7 @@ export function AcceptanceSurface({ task, onMutated, onDecided, detailOverride, 
                   <div className="ap-block">
                     改了什么
                     <span className="aside">按变更量排序</span>
-                    {onOpenChanges && (
+                    {onOpenChanges && !readOnly && (
                       <button type="button" className="ap-block-link" onClick={onOpenChanges} data-testid="acceptance-open-changes">
                         全部变更 →
                       </button>
@@ -1030,9 +1121,15 @@ export function AcceptanceSurface({ task, onMutated, onDecided, detailOverride, 
                         )
                       })}
                       {restFiles.length > 0 && (
-                        <button type="button" className="ap-more" onClick={onOpenChanges} disabled={!onOpenChanges}>
-                          还有 {restFiles.length} 个文件 · +{restAdds} / −{restDels}
-                        </button>
+                        readOnly ? (
+                          <span className="ap-more" data-testid="acceptance-more-files-readonly">
+                            还有 {restFiles.length} 个文件 · +{restAdds} / −{restDels}
+                          </span>
+                        ) : (
+                          <button type="button" className="ap-more" onClick={onOpenChanges} disabled={!onOpenChanges}>
+                            还有 {restFiles.length} 个文件 · +{restAdds} / −{restDels}
+                          </button>
+                        )
                       )}
                     </div>
                   ) : (
@@ -1078,7 +1175,7 @@ export function AcceptanceSurface({ task, onMutated, onDecided, detailOverride, 
                       runbook={runbookCfg}
                       preview={preview}
                       busy={previewBusy}
-                      disabledReason={wsGone ? "工作区目录已不在 — 预览不可用" : undefined}
+                      disabledReason={readOnlyReason ?? (wsGone ? "工作区目录已不在 — 预览不可用" : undefined)}
                       onSaveCfg={handlePreviewSave}
                       onSaveRunbook={handleRunbookSave}
                       onStart={() => void handlePreviewStart()}
@@ -1098,8 +1195,8 @@ export function AcceptanceSurface({ task, onMutated, onDecided, detailOverride, 
                     />
                     <InstancesPanel
                       taskId={taskId ?? ""}
-                      rev={(preview?.state ?? "stopped") + (awaitingPhase?.awaitingRound ?? 0)}
-                      disabledReason={wsGone ? "工作区目录已不在 — 回收不可用" : undefined}
+                      rev={(preview?.state ?? "stopped") + (reviewRoundIndex ?? 0)}
+                      disabledReason={readOnlyReason ?? (wsGone ? "工作区目录已不在 — 回收不可用" : undefined)}
                     />
                   </div>
                   <div className="ap-foot">
@@ -1176,11 +1273,11 @@ export function AcceptanceSurface({ task, onMutated, onDecided, detailOverride, 
                     <AcceptancePlanPanel
                       taskId={taskId ?? ""}
                       batchRelDir={batchDir}
-                      roundIndex={awaitingPhase?.awaitingRound ?? 0}
+                      roundIndex={reviewRoundIndex ?? 0}
                       playbook={playbook}
                       guideActive={planGuideActive}
                       onGate={setGate}
-                      disabledReason={wsGone ? "工作区已清理 — 勾选暂停（历史记录与机器裁决仍在）" : undefined}
+                      disabledReason={readOnlyReason ?? (wsGone ? "工作区已清理 — 勾选暂停（历史记录与机器裁决仍在）" : undefined)}
                       onPlanEvent={() => setPlaybookNonce((v) => v + 1)}
                       registerFlush={registerPlaybookFlush}
                       onSaveStateChange={setChecksSaving}
@@ -1190,10 +1287,10 @@ export function AcceptanceSurface({ task, onMutated, onDecided, detailOverride, 
                     <PlaybookPanel
                       taskId={taskId ?? ""}
                       batchRelDir={batchDir}
-                      roundIndex={awaitingPhase?.awaitingRound ?? 0}
+                      roundIndex={reviewRoundIndex ?? 0}
                       playbook={playbook}
                       onGate={setGate}
-                      disabledReason={wsGone ? "工作区已清理 — 勾选暂停（历史记录与机器裁决仍在）" : undefined}
+                      disabledReason={readOnlyReason ?? (wsGone ? "工作区已清理 — 勾选暂停（历史记录与机器裁决仍在）" : undefined)}
                       saving={checksSaving}
                       onSaveStateChange={setChecksSaving}
                       registerFlush={registerPlaybookFlush}
@@ -1204,14 +1301,22 @@ export function AcceptanceSurface({ task, onMutated, onDecided, detailOverride, 
                 )}
               </div>
 
-              {hasNextPhase && !rejectOpen && awaitingPhase && (
+              {hasNextPhase && !rejectOpen && awaitingPhase && !readOnly && (
                 <p className="ap-handoff mt-2" data-handoff-hint data-testid="handoff-hint">
                   {`本 phase 的 handoff.md 连同已 accepted 共 ${handoffCount} 个前序交接，将自动进入下一 phase 执行会话`}
                 </p>
               )}
-              <div className={cn("ap-meta-line mt-1", !autoOn && "warn")} data-autoadvance-readonly data-testid="autoadvance-readonly">
-                验收通过后自动开跑下一 Phase：<b>{autoOn ? "开" : "关（停在你的 gate）"}</b>
-              </div>
+              {readOnly ? (
+                <p className="ap-meta-line mt-1" data-testid="acceptance-readonly-note">
+                  已通过验收 · 只读 — 决策与勾选已冻结。机器台账
+                  {" "}<code>acceptance-ledger-r{reviewRoundIndex ?? "?"}.md</code>{" "}
+                  在批次目录（作业坞「产物」可查）。
+                </p>
+              ) : (
+                <div className={cn("ap-meta-line mt-1", !autoOn && "warn")} data-autoadvance-readonly data-testid="autoadvance-readonly">
+                  验收通过后自动开跑下一 Phase：<b>{autoOn ? "开" : "关（停在你的 gate）"}</b>
+                </div>
+              )}
 
               {rejectedSeam && (
                 <div className="ap-reject-echo" data-agent-recommend-card data-testid="agent-recommend-card">
@@ -1226,8 +1331,8 @@ export function AcceptanceSurface({ task, onMutated, onDecided, detailOverride, 
             </section>
           </div>
 
-          {/* ── 常驻决策条：只在第三步出现，不遮挡清单 ── */}
-          {!railless && (
+          {/* ── 常驻决策条：只在第三步出现，不遮挡清单；归档只读时整条不渲染 ── */}
+          {!railless && !readOnly && (
             <div
               className={cn("ap-decision", step === 3 && "show")}
               data-acceptance-col-actions data-testid="acceptance-col-actions"

@@ -1,13 +1,14 @@
 'use client'
 
 import { useEffect, useState } from 'react'
-import { Activity, Terminal, X } from 'lucide-react'
+import { Activity, Terminal } from 'lucide-react'
 import { fetchExecutionDetail } from '@/lib/api-client'
 import type { StepExecution } from '@/lib/types'
 import { WorkflowFlowViewerWithStatus } from '@/components/workspace/workflow-flow-viewer-with-status'
 import { RunLogConsole } from '@/components/workspace/run-log/run-log-console'
 import { Dialog, DialogContent, DialogTitle } from '@/components/ui/dialog'
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
+import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
+import { CloseLightGlyph } from '@/components/ui/close-light'
 import { cn } from '@/lib/utils'
 
 interface WorkflowWindowProps {
@@ -27,6 +28,11 @@ export function WorkflowWindow({ workspaceId, executionId, title, onClose }: Wor
   } | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [tab, setTab] = useState<'dag' | 'logs'>('dag')
+  /** DAG 与日志共用的聚焦（节点 id = 日志通道 id）；日志栏点击也回写这里。 */
+  const [focus, setFocus] = useState<string | null>(null)
+
+  // 换一轮执行就松开聚焦：上一轮的通道 id 不该挂在新轮上。
+  useEffect(() => { setFocus(null) }, [executionId])
 
   useEffect(() => {
     let alive = true
@@ -64,10 +70,11 @@ export function WorkflowWindow({ workspaceId, executionId, title, onClose }: Wor
           <button
             type="button"
             aria-label="关闭工作流窗口"
+            title="关闭"
             onClick={onClose}
-            className="grid size-6 place-items-center rounded-full text-pop-dim hover:bg-white/[0.06] hover:text-pop-ink"
+            className="group/light grid size-6 shrink-0 place-items-center rounded-full outline-none transition-transform hover:scale-105 focus-visible:ring-2 focus-visible:ring-pop-yellow"
           >
-            <X className="size-3.5" />
+            <CloseLightGlyph />
           </button>
           <div className="min-w-0">
             <div className="truncate text-[13px] font-semibold text-pop-ink">{title ?? detail?.workflowRef ?? '工作流执行'}</div>
@@ -96,6 +103,7 @@ export function WorkflowWindow({ workspaceId, executionId, title, onClose }: Wor
                 executionSteps={detail.steps}
                 workspaceId={workspaceId}
                 executionId={executionId}
+                onNodeClick={(stepId) => setFocus((prev) => (prev === stepId ? null : stepId))}
               />
             </div>
           ) : (
@@ -105,6 +113,8 @@ export function WorkflowWindow({ workspaceId, executionId, title, onClose }: Wor
                 executionId={executionId}
                 executionStatus={detail.status}
                 steps={detail.steps}
+                focus={focus}
+                onFocusChange={setFocus}
               />
             </div>
           )}

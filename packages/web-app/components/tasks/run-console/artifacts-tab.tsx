@@ -16,7 +16,7 @@ import { useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointer
 import { Copy } from "lucide-react"
 import { toast } from "sonner"
 import { Spinner } from "@/components/ui/spinner"
-import { MarkdownPreview } from "@/components/resource/MarkdownPreview"
+import { MarkdownPreview, MARKDOWN_TUI_CLASS } from "@/components/resource/MarkdownPreview"
 import { readArtifactManifestFile, type ArtifactContent } from "@/lib/tasks-api"
 import { formatBytes } from "@/lib/format"
 import type {
@@ -61,23 +61,8 @@ const PHASE_STATUS: Record<ArtifactManifestPhase["status"], { label: string; cls
   accepted: { label: "已验收 ✓", cls: "border-pop-green/50 text-pop-green" },
 }
 
-/** Markdown 预览的排版（项目未装 typography 插件，用任意变体钉住 TUI 风格）。 */
-const MD_CLASS = [
-  "text-[11.5px] leading-relaxed",
-  "[&_h1]:mb-2 [&_h1]:text-[13px] [&_h1]:font-bold [&_h1]:text-pop-ink",
-  "[&_h2]:mb-1 [&_h2]:mt-3 [&_h2]:text-[12px] [&_h2]:font-bold [&_h2]:text-pop-purple",
-  "[&_h3]:mb-1 [&_h3]:mt-2 [&_h3]:text-[11.5px] [&_h3]:font-bold",
-  "[&_p]:mb-1.5 [&_p]:text-pop-ink/85",
-  "[&_ul]:mb-1.5 [&_ul]:list-disc [&_ul]:pl-5 [&_ol]:mb-1.5 [&_ol]:list-decimal [&_ol]:pl-5",
-  "[&_li]:mb-0.5 [&_li]:text-pop-ink/85",
-  "[&_code]:rounded-[3px] [&_code]:bg-pop-bd/50 [&_code]:px-1 [&_code]:text-pop-green",
-  "[&_pre]:mb-1.5 [&_pre]:overflow-x-auto [&_pre]:rounded-md [&_pre]:border [&_pre]:border-pop-bd [&_pre]:bg-pop-inset [&_pre]:p-2",
-  "[&_table]:mb-2 [&_table]:w-full [&_table]:border-collapse",
-  "[&_th]:border [&_th]:border-pop-bd [&_th]:px-1.5 [&_th]:py-0.5 [&_th]:text-left",
-  "[&_td]:border [&_td]:border-pop-bd [&_td]:px-1.5 [&_td]:py-0.5",
-  "[&_a]:text-pop-cyan [&_a]:underline",
-  "[&_blockquote]:border-l-2 [&_blockquote]:border-pop-bd [&_blockquote]:pl-2 [&_blockquote]:text-pop-dim",
-].join(" ")
+/** Markdown 预览的排版 —— 与验收弹窗共用一份（components/resource/MarkdownPreview）。 */
+const MD_CLASS = MARKDOWN_TUI_CLASS
 
 function fmtMtime(mtime: string): string {
   return mtime ? mtime.slice(5, 16).replace("T", " ") : ""

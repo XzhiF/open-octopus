@@ -299,7 +299,9 @@ export function WorkspaceExplorerDock({
           case 'run':
             return hasExecution
           case 'acceptance':
-            return status === 'awaiting_review' || status === 'archiving'
+            // 2026-10-30 用户：归档后验收台仍要在 —— 只读回看「我签了什么」，
+            // 不用翻聊天记录；done 的窗口内容由 AcceptanceSurface 降级为台账。
+            return status === 'awaiting_review' || status === 'archiving' || status === 'done'
           case 'archive':
             return status === 'archiving' || status === 'done'
           default:

@@ -110,6 +110,11 @@ export class AcceptancePlanService {
     } catch {
       return null
     }
+    return this.planStateFor(taskId, info)
+  }
+
+  /** 任意轮坐标的方案状态（2026-10-30 归档只读回看复用同一读取规则）。 */
+  planStateFor(taskId: string, info: AwaitingRoundInfo): { summary: PlanSummary; plan?: AcceptancePlan } {
     if (!info.batchRelDir) {
       return { summary: { status: "missing", error: "specPath 为绝对路径，没有批次目录可落方案" } }
     }
@@ -134,6 +139,13 @@ export class AcceptancePlanService {
   tryBuildPlaybook(taskId: string): PlaybookPayload | null {
     const st = this.planState(taskId)
     if (!st?.plan) return null
+    return planToPlaybook(st.plan, st.summary)
+  }
+
+  /** 指定轮的同款快路径（历史轮只读回看）。 */
+  tryBuildPlaybookFor(taskId: string, info: AwaitingRoundInfo): PlaybookPayload | null {
+    const st = this.planStateFor(taskId, info)
+    if (!st.plan) return null
     return planToPlaybook(st.plan, st.summary)
   }
 

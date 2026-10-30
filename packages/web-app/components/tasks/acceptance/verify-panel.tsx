@@ -147,7 +147,7 @@ export function VerifyPanel({ cfg, summary, lines, running, busy, disabledReason
               <Play className="size-3 mr-1" /> ▶ 自检
             </Button>
           ) : !cfg && !editing && !closed ? (
-            <Button size="sm" variant="outline" className="h-6 border-[1.5px] border-pop-bd px-2.5 font-mono text-[10px] font-black shadow-pop-sm" onClick={() => { setDraft(""); setCwdDraft(""); setPerRepo(false); setTimeoutDraft("600"); setEditing(true) }} data-testid="verify-edit">
+            <Button size="sm" variant="outline" className="h-6 border-[1.5px] border-pop-bd px-2.5 font-mono text-[10px] font-black shadow-pop-sm" disabled={!!disabledReason} onClick={() => { setDraft(""); setCwdDraft(""); setPerRepo(false); setTimeoutDraft("600"); setEditing(true) }} data-testid="verify-edit">
               配置命令
             </Button>
           ) : null}
@@ -164,7 +164,7 @@ export function VerifyPanel({ cfg, summary, lines, running, busy, disabledReason
           )}
           <span className="shrink-0 text-[10px] tabular-nums text-pop-dim">≤{cfg.timeoutS ?? 600}s</span>
           {!running && (
-            <button className="shrink-0 text-[9.5px] font-black text-pop-cyan underline decoration-dotted underline-offset-2" onClick={() => { setDraft(cfg.command); setCwdDraft(cfg.cwd ?? ""); setPerRepo(!!cfg.per_repo); setTimeoutDraft(String(cfg.timeoutS ?? 600)); setEditing(true) }} data-testid="verify-edit">
+            <button className="shrink-0 text-[9.5px] font-black text-pop-cyan underline decoration-dotted underline-offset-2 disabled:opacity-40" disabled={!!disabledReason} onClick={() => { setDraft(cfg.command); setCwdDraft(cfg.cwd ?? ""); setPerRepo(!!cfg.per_repo); setTimeoutDraft(String(cfg.timeoutS ?? 600)); setEditing(true) }} data-testid="verify-edit">
               编辑
             </button>
           )}
@@ -216,7 +216,7 @@ export function VerifyPanel({ cfg, summary, lines, running, busy, disabledReason
               <Button size="sm" variant="ghost" className="h-6 text-[10px]" disabled={saveBusy} onClick={() => void save(null)} data-testid="verify-clear">
                 清除配置
               </Button>
-              <Button size="sm" className="h-6 text-[10px]" disabled={saveBusy || !draft.trim()} onClick={() => void save({ command: draft.trim(), ...(perRepo ? { per_repo: true } : {}), ...(!perRepo && cwdDraft.trim() ? { cwd: cwdDraft.trim() } : {}), timeoutS: Math.max(5, Math.min(1800, Number(timeoutDraft) || 600)) })} data-testid="verify-save">
+              <Button size="sm" className="h-6 text-[10px]" disabled={saveBusy || !draft.trim() || !!disabledReason} onClick={() => void save({ command: draft.trim(), ...(perRepo ? { per_repo: true } : {}), ...(!perRepo && cwdDraft.trim() ? { cwd: cwdDraft.trim() } : {}), timeoutS: Math.max(5, Math.min(1800, Number(timeoutDraft) || 600)) })} data-testid="verify-save">
                 保存（随任务持久化）
               </Button>
             </div>

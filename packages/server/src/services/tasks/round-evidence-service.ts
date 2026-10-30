@@ -60,12 +60,19 @@ import type { TaskPhaseView } from "./derive-task-view"
 import { compilePlaybook, parseChecksMd, renderChecksMd, checksFileName, ticketBaseFromItemId } from "./playbook-compile"
 import { runbookFromSpec } from "./runbook-spec"
 import type { PlaybookPayload, ChecksFile, ProbeRunResult, ProbeState, CheckDecision } from "./playbook-types"
-import type { AcceptancePlanService } from "./acceptance-plan-service"
+import type { AcceptancePlanService, AwaitingRoundInfo } from "./acceptance-plan-service"
 import { TestInstanceRegistry, type InstanceSource, type TestInstanceEntry } from "./test-instance-registry"
 import { hostProtectedPorts, hostProtectedPids } from "./host-guard"
 import { findPidOnPort, waitForPort, portFromUrl, processAncestry } from "../../port-utils"
 
 export type { PlaybookPayload, PlaybookSection, PlaybookItem, PlaybookCarryover, PlaybookBudget, ChecksFile, CheckEntry, ProbeRunResult, ProbeState } from "./playbook-types"
+
+/** 显式轮次坐标（2026-10-30 归档只读回看）：给 GET /playbook、/round-diff
+ *  指定历史轮；缺省仍是 awaiting 轮，现行为逐字不变。 */
+export interface RoundTarget {
+  phaseIndex: number
+  roundIndex: number
+}
 
 // ── payload shapes (mirror: web lib/tasks-api.ts) ─────────────────────
 
@@ -286,6 +293,23 @@ export class RoundEvidenceService {
     return this.resolveAwaiting(taskId)
   }
 
+  /** 任意历史轮坐标（归档后只读回看的供货口）：exec 行 + 批次目录。
+   *  与 awaiting 判据无关 —— 只要 (phase, round) 有执行行就给；未知任务先 404，
+   *  轮行缺失 409。写面（决策/勾选/复检/预览）仍恒严 awaiting，不走这里。 */
+  roundInfo(taskId: string, phaseIndex: number, roundIndex: number): AwaitingRoundInfo {
+    const detail = this.tasksService.getTask(taskId) // 404 first
+    const execRow = this.execDao.findTaskRound(taskId, phaseIndex, roundIndex)
+    if (!execRow) {
+      throw new TaskStatusConflictError(`Phase ${phaseIndex} Round ${roundIndex} 的执行行不存在`)
+    }
+    return {
+      execRow,
+      phaseIndex,
+      roundIndex,
+      batchRelDir: this.batchRelDirOf(detail.task_spec as TaskSpec, phaseIndex),
+    }
+  }
+
   /** 重新生成验收方案（未装配方案服务 = 特性关）。 */
   async regenerateAcceptancePlan(taskId: string): Promise<{ ok: boolean; reason?: string }> {
     if (!this.planService) {
@@ -362,8 +386,17 @@ export class RoundEvidenceService {
    *  map 里没有键 → 走下方 `!start` 分支，expired("no_commits") 照旧。
    *  票03（taskboard-modal-v2「≡ 变更」）：无 awaiting 时解析到任务当前 live 轮，
    *  end 锚 = 各仓当前 HEAD —— 端点/payload 形状逐字不变，仅供货窗口扩大。 */
-  async getRoundDiff(taskId: string, scope: RoundDiffScope = "round"): Promise<RoundDiffPayload> {
-    const { execRow, phaseIndex, roundIndex, live: isLive } = this.resolveRoundForDiff(taskId)
+  async getRoundDiff(
+    taskId: string,
+    scope: RoundDiffScope = "round",
+    target?: RoundTarget,
+  ): Promise<RoundDiffPayload> {
+    const { execRow, phaseIndex, roundIndex, live: isLive } = target
+      ? (() => {
+          const info = this.roundInfo(taskId, target.phaseIndex, target.roundIndex)
+          return { execRow: info.execRow, phaseIndex: info.phaseIndex, roundIndex: info.roundIndex, live: false }
+        })()
+      : this.resolveRoundForDiff(taskId)
     let starts = parseCommitMap(execRow.start_commit_id)
     if (scope === "cumulative" && phaseIndex != null) {
       const first = this.execDao.findTaskPhaseFirstRound(taskId, phaseIndex)
@@ -802,15 +835,22 @@ export class RoundEvidenceService {
   /** GET /:id/playbook — compile the awaiting round's契约 files into a walk/
    *  probe/claim checklist (ADR-0022). Pure read + {@link compilePlaybook};
    *  missing sources degrade into coverage.missing, never throw (200 with
-   *  available:false). resolveAwaiting 409s first (no awaiting → 409). */
-  getPlaybook(taskId: string): PlaybookPayload {
-    const { roundIndex, batchRelDir } = this.resolveAwaiting(taskId)
+   *  available:false). resolveAwaiting 409s first (no awaiting → 409).
+   *
+   *  2026-10-30：可传 `target` 读**历史轮**（归档后只读回看用）。历史轮只读
+   *  盘上已落方案/契约，绝不懒触发规划 Agent 重新生成。 */
+  getPlaybook(taskId: string, target?: RoundTarget): PlaybookPayload {
+    const info = target
+      ? this.roundInfo(taskId, target.phaseIndex, target.roundIndex)
+      : this.resolveAwaiting(taskId)
+    const { roundIndex, batchRelDir } = info
     // 验收方案优先（2026-10-30）：规划 Agent 已产出的方案就是本轮清单正本。
-    const planned = this.planService?.tryBuildPlaybook(taskId) ?? null
+    const planned = this.planService?.tryBuildPlaybookFor(taskId, info) ?? null
     if (planned) return planned
     // 没有方案：旧编译兜底，同时懒触发一次生成（幂等，失败不影响本次读取）。
-    if (this.planService) void this.planService.ensureForAwaiting(taskId)
-    const plan = this.planService?.planState(taskId)?.summary ?? { status: "missing" as const }
+    // 历史轮不触发 —— 归档后不需要（也不该）再跑规划 Agent。
+    if (!target && this.planService) void this.planService.ensureForAwaiting(taskId)
+    const plan = this.planService?.planStateFor(taskId, info)?.summary ?? { status: "missing" as const }
     // ③ 管道步过滤前提（判据两级，2026-09-22）：本任务有没有「跑起来看」可用
     // （runbook 两级任一命中）。有 → 起服/就绪/收尾类票步折给预览按钮；
     // 无 → 它们留在剧本里可跑（否则没人起服务）。

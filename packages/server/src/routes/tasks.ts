@@ -145,6 +145,23 @@ const acceptanceCheckBodySchema = z
   })
   .strict()
 
+/** ?phase_index=&round_index= —— 归档后只读回看指定历史轮（2026-10-30）。
+ *  两者必须成对给出且为正整数；缺省 = 现行为（playbook 取 awaiting 轮、
+ *  diff 取 awaiting/live 轮）。只读端点用，写面永远不看这两个参数。 */
+function parseRoundTargetQuery(
+  phaseRaw: string | undefined,
+  roundRaw: string | undefined,
+): { phaseIndex: number; roundIndex: number } | undefined | "invalid" {
+  if (phaseRaw == null && roundRaw == null) return undefined
+  if (phaseRaw == null || roundRaw == null) return "invalid"
+  const phaseIndex = Number(phaseRaw)
+  const roundIndex = Number(roundRaw)
+  if (!Number.isInteger(phaseIndex) || phaseIndex < 1 || !Number.isInteger(roundIndex) || roundIndex < 1) {
+    return "invalid"
+  }
+  return { phaseIndex, roundIndex }
+}
+
 // 票08 分支③（改派 task-fix）body —— 指令即修复轮的输入，与打回反馈同额（≤20000）。
 // strict：未知字段 400（与 acceptance 契约同律 —— 路由级聚合端点不吃野键）。
 const fixRoundBodySchema = z
@@ -602,8 +619,12 @@ export function createTasksRoutes(
   router.get("/:id/round-diff", async (c) => {
     if (!evidence) return c.json({ error: "round evidence not wired" }, 501)
     const scope = c.req.query("scope") === "cumulative" ? "cumulative" : "round"
+    const target = parseRoundTargetQuery(c.req.query("phase_index"), c.req.query("round_index"))
+    if (target === "invalid") {
+      return c.json({ error: "phase_index / round_index 必须成对给出且为正整数" }, 400)
+    }
     try {
-      return c.json(await evidence.getRoundDiff(c.req.param("id"), scope))
+      return c.json(await evidence.getRoundDiff(c.req.param("id"), scope, target))
     } catch (err: unknown) {
       const { status, message } = classifyError(err)
       return c.json({ error: message }, status)
@@ -630,8 +651,12 @@ export function createTasksRoutes(
   // 纯读 + 编译，绝不 spawn；缺料 → available:false 仍 200。无 awaiting → 409。
   router.get("/:id/playbook", (c) => {
     if (!evidence) return c.json({ error: "round evidence not wired" }, 501)
+    const target = parseRoundTargetQuery(c.req.query("phase_index"), c.req.query("round_index"))
+    if (target === "invalid") {
+      return c.json({ error: "phase_index / round_index 必须成对给出且为正整数" }, 400)
+    }
     try {
-      return c.json(evidence.getPlaybook(c.req.param("id")))
+      return c.json(evidence.getPlaybook(c.req.param("id"), target))
     } catch (err: unknown) {
       const { status, message } = classifyError(err)
       return c.json({ error: message }, status)

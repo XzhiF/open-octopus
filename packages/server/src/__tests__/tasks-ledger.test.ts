@@ -263,3 +263,41 @@ describe("decideAcceptance (主 Chat 收口)", () => {
 
 // keep type import referenced (guards against accidental unused-import churn)
 export type _Snap = LedgerSnapshot
+
+// ── 2026-10-30：归档只读回看 —— 显式历史轮坐标 ────────────────────────
+// 验收台在 done 之后复用原三步界面，playbook / round-diff 需要按已验收轮取数，
+// 而不是 awaiting 轮。这里钉住：显式 (phase, round) 可读；缺省仍 409（现行为不变）；
+// 参数必须成对且为正整数；不存在的轮 → 409。
+describe("历史轮只读坐标（归档回看）", () => {
+  it("R1: playbook / round-diff 可指定 (phase, round)；缺省/非法参数语义不变", async () => {
+    const taskId = await newAwaiting()
+    wb(taskId, "e2e-test-plan.md", PLAN)
+    // 先落一条 accepted：任务离开 awaiting 态（归档后的真实前提）。
+    db.prepare(`INSERT INTO task_phase_acceptances (id, task_id, phase_index, round_index, decision, feedback, decided_at) VALUES (?,?,?,?,?,?,?)`)
+      .run(`acc-${seq}`, taskId, 1, 1, "accepted", null, new Date().toISOString())
+
+    // 非 awaiting 任务（已验收）带历史坐标 → 200（读盘上契约编译）
+    const p = await app.request(`/api/tasks/${taskId}/playbook?phase_index=1&round_index=1`)
+    expect(p.status).toBe(200)
+    const pb = (await p.json()) as { sections: unknown[] }
+    expect(pb.sections.length).toBeGreaterThan(0)
+
+    // 缺省（不给坐标）仍走 awaiting 判据 → 409，现行为逐字不变
+    expect((await app.request(`/api/tasks/${taskId}/playbook`)).status).toBe(409)
+    // 参数必须成对 → 400
+    expect((await app.request(`/api/tasks/${taskId}/playbook?phase_index=1`)).status).toBe(400)
+    expect((await app.request(`/api/tasks/${taskId}/playbook?round_index=1`)).status).toBe(400)
+    // 不存在的轮 → 409（不是空 200）
+    expect((await app.request(`/api/tasks/${taskId}/playbook?phase_index=1&round_index=9`)).status).toBe(409)
+
+    // 历史轮 diff：即使 commit map 为空也应是 200 + available:false（而非缺 awaiting 的 409）
+    const d = await app.request(`/api/tasks/${taskId}/round-diff?phase_index=1&round_index=1`)
+    expect(d.status).toBe(200)
+    const body = (await d.json()) as { available: boolean; phaseIndex: number; roundIndex: number }
+    expect(body.available).toBe(false)
+    expect(body.phaseIndex).toBe(1)
+    expect(body.roundIndex).toBe(1)
+    // 缺省仍 409（当前无 awaiting / live 轮）
+    expect((await app.request(`/api/tasks/${taskId}/round-diff`)).status).toBe(409)
+  })
+})

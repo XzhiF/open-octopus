@@ -30,6 +30,7 @@ import {
   TaskApiError,
   MAX_HOME_FILE_READ_BYTES,
 } from "@/lib/tasks-api"
+import { MarkdownPreview, MARKDOWN_TUI_CLASS } from "@/components/resource/MarkdownPreview"
 
 /** A file in the task home's batch area (`.scratch/**`) — the v4 acceptance
  *  evidence viewer payload. Paths are home-relative posix straight from
@@ -106,6 +107,12 @@ export function ArtifactViewerDialog({ taskId, entry, homeEntry, onOpenChange }:
       ? { lines: state.content.split("\n").length, chars: state.content.length }
       : null
 
+  // 2026-10-30 用户：验收台点开的 .md 以前是一坨 <pre>，和产物窗完全不同观感。
+  // .md/.markdown 走同款 MarkdownPreview（与产物窗共用 MARKDOWN_TUI_CLASS）；
+  // 其它扩展名保持等宽原文（日志、json、patch 等 Markdown 化反而误读）。
+  const viewingPath = homeEntry?.path ?? entry?.path ?? ""
+  const isMarkdown = /\.(md|markdown)$/i.test(viewingPath)
+
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent
@@ -173,6 +180,10 @@ export function ArtifactViewerDialog({ taskId, entry, homeEntry, onOpenChange }:
               ) : (
                 <div className="text-pop-red">{state.message || "加载产物内容失败"}</div>
               )}
+            </div>
+          ) : isMarkdown ? (
+            <div className="p-4" data-artifact-markdown>
+              <MarkdownPreview content={state.content} className={MARKDOWN_TUI_CLASS} />
             </div>
           ) : (
             <pre className="p-4 text-[11px] leading-relaxed whitespace-pre-wrap font-mono break-words" data-artifact-content>
