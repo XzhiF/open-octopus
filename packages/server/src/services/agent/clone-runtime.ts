@@ -351,6 +351,9 @@ export class CloneRuntime {
       yield* stream
       return
     } catch (err) {
+      // 用户主动中断（AbortSignal）不是 resume 故障：绝不能降级重试 ——
+      // drain 截止后的硬 abort 会以异常收尾，重试等于背着用户重跑一整轮。
+      if (abortSignal?.aborted) return
       // Resume failure → retry without resume
       if (providerSessionId) {
         console.warn(`[CloneRuntime] Resume failed for ${this.cloneDef.name}, retrying without resume:`,
@@ -429,6 +432,9 @@ export class CloneRuntime {
         append: cloneSystemPrompt,
       },
       abortSignal,
+      // 聊天入口：停止时走 Query.interrupt()，被中断轮仍产出带用量的 result
+      // （2026-10-31）。非聊天调用方不开这个开关，维持单消息模式。
+      interruptible: true,
       model: modelOverride ?? this.cloneDef.config.model,
       ...(effort ? { effort } : {}),
       agents: subagents,

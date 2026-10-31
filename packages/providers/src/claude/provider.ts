@@ -1,6 +1,6 @@
-import { query, type Options, type AgentDefinition, type CanUseTool } from '@anthropic-ai/claude-agent-sdk'
+import { query, type Options, type AgentDefinition, type CanUseTool, type SDKUserMessage } from '@anthropic-ai/claude-agent-sdk'
 import type { IAgentProvider, SendQueryOptions, MessageChunk, OctopusAgentDef, GoalTerminalReason } from '../types'
-import type { ModelUsage, TokenUsageDelta } from '@octopus/shared'
+import type { ModelUsage, TokenUsage, TokenUsageDelta } from '@octopus/shared'
 import { mergeModelUsages } from '@octopus/shared'
 import { LLMCallTracker } from '../llm-call-tracker'
 import { getPluginSdkConfigs, loadModelAliasConfig, resolveModelAlias } from '@octopus/shared'
@@ -226,10 +226,21 @@ interface SDKResultErrorLike {
   num_turns?: number
   total_cost_usd?: number
   session_id?: string
+  terminal_reason?: string
   errors?: string[]
 }
 
-function buildResultErrorChunk(rm: SDKResultErrorLike): MessageChunk {
+/** Interruptible stop: after `Query.interrupt()` the CLI still emits the
+ *  interrupted turn's result (with usage for completed model calls). If that
+ *  result has not arrived by this deadline the stop degrades to a hard abort.
+ *  Kept below the server's STOP_SETTLE_MS (3000ms) so the stop endpoint never
+ *  times out waiting for the drain. */
+const INTERRUPT_DRAIN_MS = 2_000
+
+function buildResultErrorChunk(
+  rm: SDKResultErrorLike,
+  extra?: { usage?: TokenUsage; modelUsages?: ModelUsage[] },
+): MessageChunk {
   return {
     type: 'error',
     code: rm.subtype,
@@ -238,6 +249,11 @@ function buildResultErrorChunk(rm: SDKResultErrorLike): MessageChunk {
     costUsd: rm.total_cost_usd,
     sessionId: rm.session_id,
     terminalReason: goalTerminalReason(rm.subtype),
+    sdkTerminalReason: rm.terminal_reason,
+    // Interrupted / limited turns still carry real totals for every model call
+    // that DID complete — dropping them is how chat stops used to lose usage.
+    usage: extra?.usage,
+    modelUsages: extra?.modelUsages,
   }
 }
 
@@ -331,6 +347,11 @@ export class ClaudeSDKProvider implements IAgentProvider {
       return { behavior: 'allow' as const, updatedInput: input, toolUseID: cbOptions.toolUseID }
     }
 
+    // Streaming input mode is what makes Query.interrupt() legal (the SDK only
+    // supports real-time interruption there). Off for every non-chat caller.
+    const interruptible = options?.interruptible === true
+    const sdkAbort = new AbortController()
+
     const sdkOptions: Options = {
       cwd,
       model: modelName,
@@ -361,359 +382,423 @@ export class ClaudeSDKProvider implements IAgentProvider {
       maxBudgetUsd: options?.maxBudgetUsd,
       ...(typeof options?.effort === 'string' ? { effort: options.effort as Options['effort'] } : {}),
       canUseTool,
-      ...(options?.abortSignal ? { abortController: new AbortController() } : {}),
+      ...(interruptible || options?.abortSignal ? { abortController: sdkAbort } : {}),
       ...(resumeSessionId ? { resume: resumeSessionId } : {}),
     }
 
-    if (options?.abortSignal) {
-      options.abortSignal.addEventListener('abort', () => {
-        sdkOptions.abortController?.abort()
-      }, { once: true })
+    // Streaming input mode keeps the query alive after its turn; the input
+    // generator must stay open until we are done with it. Ending it early makes
+    // the SDK close the query ("Query closed before response received").
+    let releaseInput: (() => void) | undefined
+    let promptInput: string | AsyncIterable<SDKUserMessage> = prompt
+    if (interruptible) {
+      const inputDone = new Promise<void>((resolve) => { releaseInput = resolve })
+      promptInput = (async function* () {
+        yield {
+          type: 'user',
+          message: { role: 'user', content: prompt },
+          parent_tool_use_id: null,
+        } as SDKUserMessage
+        await inputDone
+      })()
     }
 
     // Store query reference so we can call getContextUsage() (control request)
     // after message_start. The Query object is an AsyncGenerator with extra
-    // methods (getContextUsage, setModel, etc.) — only available during the
-    // active stream.
-    const q = query({ prompt, options: sdkOptions })
+    // methods (getContextUsage, interrupt, setModel, etc.) — only available
+    // during the active stream.
+    const q = query({ prompt: promptInput, options: sdkOptions })
+
+    // Stop button. Interruptible queries ask the CLI to end the current turn
+    // gracefully: the interrupted turn still emits its result, whose usage /
+    // modelUsage carry every model call that DID complete (verified against the
+    // real SDK 2026-10-31). A hard abort — the pre-existing behavior — kills the
+    // subprocess before any result, which is why interrupted turns used to lose
+    // all of their tokens. The deadline degrades to a hard abort if the CLI
+    // never answers.
+    let drainTimer: ReturnType<typeof setTimeout> | undefined
+    const onAbort = () => {
+      if (!interruptible) {
+        sdkAbort.abort()
+        return
+      }
+      // q.interrupt() 可能在 query 已关闭时同步抛错 —— 退化为硬 abort。
+      try {
+        void Promise.resolve(q.interrupt()).catch(() => { sdkAbort.abort() })
+      } catch {
+        sdkAbort.abort()
+      }
+      drainTimer = setTimeout(() => {
+        try { sdkAbort.abort() } catch { /* already closed */ }
+      }, INTERRUPT_DRAIN_MS)
+      ;(drainTimer as unknown as { unref?: () => void }).unref?.()
+    }
+    if (options?.abortSignal) {
+      if (options.abortSignal.aborted) onAbort()
+      else options.abortSignal.addEventListener('abort', onAbort, { once: true })
+    }
     let contextUsageEmitted = false
     // Per-session (per sendQuery) running count of stop-hook-feedback blocks,
     // 1-based — feeds ActiveGoalChunk.iterations; set_at = first-seen time.
     let goalIterations = 0
     let goalSetAt: number | undefined
 
-    for await (const event of q) {
+    let sawResult = false
+    try {
+      for await (const event of q) {
 
-      if (timingOn) {
-        if (!tFirstEvent) {
-          tFirstEvent = Date.now()
-          const ev = event as { type?: string; subtype?: string }
-          firstEventDesc = `${ev.type ?? "?"}${ev.subtype ? ":" + ev.subtype : ""}`
+        if (timingOn) {
+          if (!tFirstEvent) {
+            tFirstEvent = Date.now()
+            const ev = event as { type?: string; subtype?: string }
+            firstEventDesc = `${ev.type ?? "?"}${ev.subtype ? ":" + ev.subtype : ""}`
+          }
+          const ev2 = event as { type?: string; subtype?: string }
+          if (ev2.type === 'system' && ev2.subtype === 'init') tInit = Date.now()
         }
-        const ev2 = event as { type?: string; subtype?: string }
-        if (ev2.type === 'system' && ev2.subtype === 'init') tInit = Date.now()
-      }
 
-      while (toolResultQueue.length > 0) {
-        const tr = toolResultQueue.shift()!
-        yield {
-          type: 'tool_result',
-          toolCallId: tr.toolCallId ?? tr.toolName,
-          toolName: tr.toolName,
-          content: tr.content,
-          isError: tr.isError,
-        }
-      }
-
-      while (pendingQuestions.length > 0) {
-        const pq = pendingQuestions.shift()!
-        yield {
-          type: 'ask_user_question',
-          toolCallId: pq.toolCallId,
-          questions: pq.questions,
-        }
-      }
-
-      while (pendingCompletions.length > 0) {
-        const pc = pendingCompletions.shift()!
-        yield {
-          type: 'complete_interaction',
-          toolCallId: pc.toolCallId,
-          summary: pc.summary,
-          vars_update: pc.vars_update,
-        }
-      }
-
-      if (event.type === 'stream_event') {
-        const e = (event as unknown as { event: SDKStreamEvent }).event
-
-        if (e.type === 'message_start') {
-          if (timingOn && !tFirstMsgStart) tFirstMsgStart = Date.now()
-          currentMessageId = e.message?.id ?? `msg-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`
-          blockTypes.clear()
-          // ★ 关键：用 SDK 返回的真实 model ID（e.message.model，例如 'claude-sonnet-4-5-20250827'），
-          // 而非请求时的短别名（'sonnet'），保证和 result.modelUsage 的 key 能对上。
-          // 不在 stream 阶段读 input_tokens：message_start.usage.input_tokens 包含 cache-reused tokens，
-          // 会放大 5-10 倍。权威数据来自 result.modelUsage，由 calibrateFromModelUsage 填充。
-          const actualModel = e.message?.model ?? modelName
-          this._llmTracker.onMessageStart(currentMessageId, actualModel)
-          yield { type: 'message_start', messageId: currentMessageId }
-
-          // Fetch context window usage breakdown from the SDK (control request).
-          // Only do this once per stream to avoid repeated calls on multi-turn
-          // tool-use loops (message_start fires for each assistant message).
-          if (!contextUsageEmitted) {
-            contextUsageEmitted = true
-            try {
-              const ctxUsage = await q.getContextUsage()
-              yield { type: 'context_usage', data: ctxUsage }
-            } catch {
-              // getContextUsage may fail if the SDK subprocess doesn't support
-              // it or the transport isn't streaming mode — non-fatal, skip.
-            }
+        while (toolResultQueue.length > 0) {
+          const tr = toolResultQueue.shift()!
+          yield {
+            type: 'tool_result',
+            toolCallId: tr.toolCallId ?? tr.toolName,
+            toolName: tr.toolName,
+            content: tr.content,
+            isError: tr.isError,
           }
         }
 
-        else if (e.type === 'content_block_start') {
-          const block = e.content_block!
-          blockTypes.set(e.index!, block.type as 'thinking' | 'text' | 'tool_use')
-
-          if (block.type === 'text') {
-            // text block start — content is empty, wait for text_delta
-          } else if (block.type === 'thinking') {
-            this._llmTracker.onThinkingDelta()
-            yield { type: 'thinking_start', messageId: currentMessageId }
-            if (block.thinking) {
-              yield { type: 'thinking', content: block.thinking, messageId: currentMessageId }
-            }
-          } else if (block.type === 'tool_use') {
-            yield {
-              type: 'tool_call_start',
-              toolCallId: block.id!,
-              toolName: block.name!,
-              messageId: currentMessageId,
-            }
-            pendingToolCalls.set(e.index!, {
-              id: block.id!,
-              name: block.name!,
-              partialJson: '',
-            })
+        while (pendingQuestions.length > 0) {
+          const pq = pendingQuestions.shift()!
+          yield {
+            type: 'ask_user_question',
+            toolCallId: pq.toolCallId,
+            questions: pq.questions,
           }
         }
 
-        else if (e.type === 'content_block_delta') {
-          const delta = e.delta!
-          if (delta.type === 'text_delta') {
-            this._llmTracker.onTextDelta()
-            yield { type: 'text_delta', content: delta.text!, messageId: currentMessageId }
-          } else if (delta.type === 'thinking_delta') {
-            this._llmTracker.onThinkingDelta()
-            yield { type: 'thinking', content: delta.thinking!, messageId: currentMessageId }
-          } else if (delta.type === 'signature_delta') {
-            // ignore — thinking block signature, not readable
-          } else if (delta.type === 'input_json_delta') {
-            const pending = pendingToolCalls.get(e.index!)
-            if (pending) {
-              pending.partialJson += delta.partial_json ?? ''
-            }
+        while (pendingCompletions.length > 0) {
+          const pc = pendingCompletions.shift()!
+          yield {
+            type: 'complete_interaction',
+            toolCallId: pc.toolCallId,
+            summary: pc.summary,
+            vars_update: pc.vars_update,
           }
         }
 
-        else if (e.type === 'content_block_stop') {
-          const blockType = blockTypes.get(e.index!)
+        if (event.type === 'stream_event') {
+          const e = (event as unknown as { event: SDKStreamEvent }).event
 
-          if (blockType === 'thinking') {
-            yield { type: 'thinking_done', messageId: currentMessageId }
-          } else if (blockType === 'text') {
-            yield { type: 'text_done', messageId: currentMessageId }
-          } else if (blockType === 'tool_use') {
-            const pending = pendingToolCalls.get(e.index!)
-            if (pending) {
-              let toolInput: unknown = {}
+          if (e.type === 'message_start') {
+            if (timingOn && !tFirstMsgStart) tFirstMsgStart = Date.now()
+            currentMessageId = e.message?.id ?? `msg-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`
+            blockTypes.clear()
+            // ★ 关键：用 SDK 返回的真实 model ID（e.message.model，例如 'claude-sonnet-4-5-20250827'），
+            // 而非请求时的短别名（'sonnet'），保证和 result.modelUsage 的 key 能对上。
+            // 不在 stream 阶段读 input_tokens：message_start.usage.input_tokens 包含 cache-reused tokens，
+            // 会放大 5-10 倍。权威数据来自 result.modelUsage，由 calibrateFromModelUsage 填充。
+            const actualModel = e.message?.model ?? modelName
+            this._llmTracker.onMessageStart(currentMessageId, actualModel)
+            yield { type: 'message_start', messageId: currentMessageId }
+
+            // Fetch context window usage breakdown from the SDK (control request).
+            // Only do this once per stream to avoid repeated calls on multi-turn
+            // tool-use loops (message_start fires for each assistant message).
+            if (!contextUsageEmitted) {
+              contextUsageEmitted = true
               try {
-                toolInput = JSON.parse(pending.partialJson)
+                const ctxUsage = await q.getContextUsage()
+                yield { type: 'context_usage', data: ctxUsage }
               } catch {
-                toolInput = pending.partialJson || {}
+                // getContextUsage may fail if the SDK subprocess doesn't support
+                // it or the transport isn't streaming mode — non-fatal, skip.
               }
+            }
+          }
+
+          else if (e.type === 'content_block_start') {
+            const block = e.content_block!
+            blockTypes.set(e.index!, block.type as 'thinking' | 'text' | 'tool_use')
+
+            if (block.type === 'text') {
+              // text block start — content is empty, wait for text_delta
+            } else if (block.type === 'thinking') {
+              this._llmTracker.onThinkingDelta()
+              yield { type: 'thinking_start', messageId: currentMessageId }
+              if (block.thinking) {
+                yield { type: 'thinking', content: block.thinking, messageId: currentMessageId }
+              }
+            } else if (block.type === 'tool_use') {
               yield {
-                type: 'tool_call',
-                toolCallId: pending.id,
-                toolName: pending.name,
-                toolInput,
+                type: 'tool_call_start',
+                toolCallId: block.id!,
+                toolName: block.name!,
                 messageId: currentMessageId,
               }
-              pendingToolCalls.delete(e.index!)
+              pendingToolCalls.set(e.index!, {
+                id: block.id!,
+                name: block.name!,
+                partialJson: '',
+              })
             }
           }
-        }
 
-        else if (e.type === 'message_delta') {
-          // message_delta.usage 携带本条消息的累计终值。实测（SDK 0.3.235）：
-          // Σ per-turn == result.usage 逐字段相等，是运行中唯一可靠的 token 来源。
-          // 直连 Anthropic 时可能只有 output_tokens，input/cache 按端点缺失 → defensive 读取。
-          const rawU = e.usage
-          const numOrUndef = (v: unknown) => (typeof v === 'number' && Number.isFinite(v) ? v : undefined)
-          const usage: TokenUsageDelta | undefined = rawU
-            ? {
-                inputTokens: numOrUndef(rawU.input_tokens),
-                outputTokens: numOrUndef(rawU.output_tokens),
-                cacheReadTokens: numOrUndef(rawU.cache_read_input_tokens),
-                cacheCreationTokens: numOrUndef(rawU.cache_creation_input_tokens),
+          else if (e.type === 'content_block_delta') {
+            const delta = e.delta!
+            if (delta.type === 'text_delta') {
+              this._llmTracker.onTextDelta()
+              yield { type: 'text_delta', content: delta.text!, messageId: currentMessageId }
+            } else if (delta.type === 'thinking_delta') {
+              this._llmTracker.onThinkingDelta()
+              yield { type: 'thinking', content: delta.thinking!, messageId: currentMessageId }
+            } else if (delta.type === 'signature_delta') {
+              // ignore — thinking block signature, not readable
+            } else if (delta.type === 'input_json_delta') {
+              const pending = pendingToolCalls.get(e.index!)
+              if (pending) {
+                pending.partialJson += delta.partial_json ?? ''
               }
-            : undefined
-          this._llmTracker.onMessageDelta(e.delta?.stop_reason ?? '', usage)
-          yield {
-            type: 'message_delta',
-            stopReason: e.delta?.stop_reason ?? '',
-            outputTokens: usage?.outputTokens,
-            usage,
-            messageId: currentMessageId,
+            }
           }
-        }
 
-        else if (e.type === 'message_stop') {
-          this._llmTracker.onMessageStop(currentMessageId)
-          yield { type: 'message_stop', messageId: currentMessageId }
-        }
-      }
+          else if (e.type === 'content_block_stop') {
+            const blockType = blockTypes.get(e.index!)
 
-      else if (event.type === 'assistant') {
-        // Do NOT use assistant event usage for token tracking —
-        // input_tokens includes cache-reused tokens that inflate totals.
-        // result.modelUsage has definitive totals.
-      }
-
-      else if (event.type === 'user') {
-        // Headless LIVE path for /goal evidence: the evaluator's not-met
-        // (block) verdict surfaces only as a synthetic isMeta user message
-        // "Stop hook feedback:\n[<condition>]: <reason>". Map it to the same
-        // ActiveGoalChunk shape as the forward-compat StdoutMessage branch
-        // below; anything else (plain text, tool_result, unparsable) keeps the
-        // old drop-and-continue behavior.
-        const feedback = parseStopHookFeedback(event)
-        if (feedback) {
-          goalIterations += 1
-          if (goalSetAt === undefined) goalSetAt = Date.now()
-          yield {
-            type: 'active_goal',
-            condition: feedback.condition,
-            iterations: goalIterations,
-            last_reason: feedback.reason,
-            set_at: goalSetAt,
+            if (blockType === 'thinking') {
+              yield { type: 'thinking_done', messageId: currentMessageId }
+            } else if (blockType === 'text') {
+              yield { type: 'text_done', messageId: currentMessageId }
+            } else if (blockType === 'tool_use') {
+              const pending = pendingToolCalls.get(e.index!)
+              if (pending) {
+                let toolInput: unknown = {}
+                try {
+                  toolInput = JSON.parse(pending.partialJson)
+                } catch {
+                  toolInput = pending.partialJson || {}
+                }
+                yield {
+                  type: 'tool_call',
+                  toolCallId: pending.id,
+                  toolName: pending.name,
+                  toolInput,
+                  messageId: currentMessageId,
+                }
+                pendingToolCalls.delete(e.index!)
+              }
+            }
           }
-        }
-        continue
-      }
 
-      else if (event.type === 'tool_progress') {
-        const tp = event as { tool_use_id: string; elapsed_time_seconds: number }
-        yield {
-          type: 'tool_progress',
-          toolCallId: tp.tool_use_id,
-          elapsedSeconds: tp.elapsed_time_seconds,
-        }
-      }
-
-      else if (event.type === 'tool_use_summary') {
-        const ts = event as { summary: string; preceding_tool_use_ids: string[] }
-        yield {
-          type: 'tool_summary',
-          summary: ts.summary,
-          toolCallIds: ts.preceding_tool_use_ids,
-        }
-      }
-
-      else if (event.type === 'system') {
-        const sm = event as { subtype: string; status?: 'compacting' | 'requesting' | null; content?: string }
-        if (sm.subtype === 'status') {
-          yield { type: 'status', status: sm.status ?? null }
-        } else if (sm.subtype === 'compact_boundary') {
-          yield { type: 'status', status: 'compacting' }
-        } else if (sm.subtype === 'local_command_output') {
-          yield { type: 'local_command_output', content: sm.content ?? '' }
-        }
-      }
-
-      else if ((event as { type: string }).type === 'active_goal') {
-        // FORWARD-COMPAT only: SDKActiveGoalMessage is a member of the
-        // internal StdoutMessage union (sdk.d.ts:7764) and sdk.mjs readMessages
-        // has an enqueue branch, but claude CLI 2.1.250's stdout write predicate
-        // unconditionally EXCLUDES type 'active_goal' — headless never emits it
-        // (ticket-03 root cause, binary-verified; --include-hook-events /
-        // --include-partial-messages do not help). The LIVE path under the
-        // current CLI is the stop-hook-feedback mapping in the `user` branch.
-        // Keep this branch for future CLIs that restore the message.
-        // `value` is null when the goal is cleared (evaluator reported met):
-        // pass condition: null.
-        const ag = event as unknown as { value: { condition: string; iterations: number; set_at: number; tokens_at_start: number; last_reason?: string } | null }
-        if (ag.value === null) {
-          yield { type: 'active_goal', condition: null, iterations: 0 }
-        } else {
-          yield {
-            type: 'active_goal',
-            condition: ag.value.condition,
-            iterations: ag.value.iterations,
-            last_reason: ag.value.last_reason,
-            set_at: ag.value.set_at,
-          }
-        }
-      }
-
-      else if (event.type === 'result') {
-        if (timingOn) {
-          console.log(`[exec-timing] provider-query ${JSON.stringify({
-            tag: options?.timingTag ?? "",
-            model: modelName,
-            resumed: !!resumeSessionId,
-            t_entry: tEntry,
-            first_event: firstEventDesc,
-            boot_ms: tFirstEvent ? tFirstEvent - tEntry : undefined,
-            init_ms: tInit ? tInit - tEntry : undefined,
-            first_msg_ms: tFirstMsgStart ? tFirstMsgStart - tEntry : undefined,
-            result_ms: Date.now() - tEntry,
-          })}`)
-        }
-        const rm = event as { subtype: string; session_id?: string; result?: string; num_turns?: number; usage?: { input_tokens?: number; output_tokens?: number; cache_read_input_tokens?: number; cache_creation_input_tokens?: number }; total_cost_usd?: number; errors?: string[]; modelUsage?: Record<string, { inputTokens?: number; outputTokens?: number; cacheReadInputTokens?: number; cacheCreationInputTokens?: number; costUSD?: number }> }
-        // result.modelUsage is the ONLY authoritative source of per-model token totals.
-        // SDK snake/原始 key → 规范 ModelUsage 的转换只发生在这里（seam adapter）。
-        if (rm.modelUsage && Object.keys(rm.modelUsage).length > 0) {
-          const modelUsages: ModelUsage[] = Object.entries(rm.modelUsage).map(([model, mu]) => ({
-            model,
-            inputTokens: mu.inputTokens ?? 0,
-            outputTokens: mu.outputTokens ?? 0,
-            cacheReadTokens: mu.cacheReadInputTokens ?? 0,
-            cacheCreationTokens: mu.cacheCreationInputTokens ?? 0,
-            // C2：SDK 对不认识的模型（代理 qwen 等）给 costUSD=0 —— 0 是假实测，
-            // seam 处归一为 undefined（未定价），把估算机会让给 shared 价表
-            costUsd: mu.costUSD || undefined,
-          }))
-          // Calibrate tracker's completed calls with authoritative token data
-          this._llmTracker.calibrateFromModelUsage(modelUsages)
-          if (rm.subtype === 'success') {
+          else if (e.type === 'message_delta') {
+            // message_delta.usage 携带本条消息的累计终值。实测（SDK 0.3.235）：
+            // Σ per-turn == result.usage 逐字段相等，是运行中唯一可靠的 token 来源。
+            // 直连 Anthropic 时可能只有 output_tokens，input/cache 按端点缺失 → defensive 读取。
+            const rawU = e.usage
+            const numOrUndef = (v: unknown) => (typeof v === 'number' && Number.isFinite(v) ? v : undefined)
+            const usage: TokenUsageDelta | undefined = rawU
+              ? {
+                  inputTokens: numOrUndef(rawU.input_tokens),
+                  outputTokens: numOrUndef(rawU.output_tokens),
+                  cacheReadTokens: numOrUndef(rawU.cache_read_input_tokens),
+                  cacheCreationTokens: numOrUndef(rawU.cache_creation_input_tokens),
+                }
+              : undefined
+            this._llmTracker.onMessageDelta(e.delta?.stop_reason ?? '', usage)
             yield {
-              type: 'result',
-              content: rm.result,
-              sessionId: rm.session_id,
-              // 规范口径：纯值四字段合计（不再把 cache 折进 input）
-              usage: mergeModelUsages(modelUsages),
-              // 0 = SDK 不认识该模型（代理/未定价）→ 归一为未定价，非 $0 实测
-              costUsd: rm.total_cost_usd || undefined,
-              numTurns: rm.num_turns,
-              modelUsages,
+              type: 'message_delta',
+              stopReason: e.delta?.stop_reason ?? '',
+              outputTokens: usage?.outputTokens,
+              usage,
+              messageId: currentMessageId,
+            }
+          }
+
+          else if (e.type === 'message_stop') {
+            this._llmTracker.onMessageStop(currentMessageId)
+            yield { type: 'message_stop', messageId: currentMessageId }
+          }
+        }
+
+        else if (event.type === 'assistant') {
+          // Do NOT use assistant event usage for token tracking —
+          // input_tokens includes cache-reused tokens that inflate totals.
+          // result.modelUsage has definitive totals.
+        }
+
+        else if (event.type === 'user') {
+          // Headless LIVE path for /goal evidence: the evaluator's not-met
+          // (block) verdict surfaces only as a synthetic isMeta user message
+          // "Stop hook feedback:\n[<condition>]: <reason>". Map it to the same
+          // ActiveGoalChunk shape as the forward-compat StdoutMessage branch
+          // below; anything else (plain text, tool_result, unparsable) keeps the
+          // old drop-and-continue behavior.
+          const feedback = parseStopHookFeedback(event)
+          if (feedback) {
+            goalIterations += 1
+            if (goalSetAt === undefined) goalSetAt = Date.now()
+            yield {
+              type: 'active_goal',
+              condition: feedback.condition,
+              iterations: goalIterations,
+              last_reason: feedback.reason,
+              set_at: goalSetAt,
+            }
+          }
+          continue
+        }
+
+        else if (event.type === 'tool_progress') {
+          const tp = event as { tool_use_id: string; elapsed_time_seconds: number }
+          yield {
+            type: 'tool_progress',
+            toolCallId: tp.tool_use_id,
+            elapsedSeconds: tp.elapsed_time_seconds,
+          }
+        }
+
+        else if (event.type === 'tool_use_summary') {
+          const ts = event as { summary: string; preceding_tool_use_ids: string[] }
+          yield {
+            type: 'tool_summary',
+            summary: ts.summary,
+            toolCallIds: ts.preceding_tool_use_ids,
+          }
+        }
+
+        else if (event.type === 'system') {
+          const sm = event as { subtype: string; status?: 'compacting' | 'requesting' | null; content?: string }
+          if (sm.subtype === 'status') {
+            yield { type: 'status', status: sm.status ?? null }
+          } else if (sm.subtype === 'compact_boundary') {
+            yield { type: 'status', status: 'compacting' }
+          } else if (sm.subtype === 'local_command_output') {
+            yield { type: 'local_command_output', content: sm.content ?? '' }
+          }
+        }
+
+        else if ((event as { type: string }).type === 'active_goal') {
+          // FORWARD-COMPAT only: SDKActiveGoalMessage is a member of the
+          // internal StdoutMessage union (sdk.d.ts:7764) and sdk.mjs readMessages
+          // has an enqueue branch, but claude CLI 2.1.250's stdout write predicate
+          // unconditionally EXCLUDES type 'active_goal' — headless never emits it
+          // (ticket-03 root cause, binary-verified; --include-hook-events /
+          // --include-partial-messages do not help). The LIVE path under the
+          // current CLI is the stop-hook-feedback mapping in the `user` branch.
+          // Keep this branch for future CLIs that restore the message.
+          // `value` is null when the goal is cleared (evaluator reported met):
+          // pass condition: null.
+          const ag = event as unknown as { value: { condition: string; iterations: number; set_at: number; tokens_at_start: number; last_reason?: string } | null }
+          if (ag.value === null) {
+            yield { type: 'active_goal', condition: null, iterations: 0 }
+          } else {
+            yield {
+              type: 'active_goal',
+              condition: ag.value.condition,
+              iterations: ag.value.iterations,
+              last_reason: ag.value.last_reason,
+              set_at: ag.value.set_at,
+            }
+          }
+        }
+
+        else if (event.type === 'result') {
+          if (timingOn) {
+            console.log(`[exec-timing] provider-query ${JSON.stringify({
+              tag: options?.timingTag ?? "",
+              model: modelName,
+              resumed: !!resumeSessionId,
+              t_entry: tEntry,
+              first_event: firstEventDesc,
+              boot_ms: tFirstEvent ? tFirstEvent - tEntry : undefined,
+              init_ms: tInit ? tInit - tEntry : undefined,
+              first_msg_ms: tFirstMsgStart ? tFirstMsgStart - tEntry : undefined,
+              result_ms: Date.now() - tEntry,
+            })}`)
+          }
+          const rm = event as { subtype: string; session_id?: string; result?: string; num_turns?: number; usage?: { input_tokens?: number; output_tokens?: number; cache_read_input_tokens?: number; cache_creation_input_tokens?: number }; total_cost_usd?: number; errors?: string[]; modelUsage?: Record<string, { inputTokens?: number; outputTokens?: number; cacheReadInputTokens?: number; cacheCreationInputTokens?: number; costUSD?: number }> }
+          // result.modelUsage is the ONLY authoritative source of per-model token totals.
+          // SDK snake/原始 key → 规范 ModelUsage 的转换只发生在这里（seam adapter）。
+          if (rm.modelUsage && Object.keys(rm.modelUsage).length > 0) {
+            const modelUsages: ModelUsage[] = Object.entries(rm.modelUsage).map(([model, mu]) => ({
+              model,
+              inputTokens: mu.inputTokens ?? 0,
+              outputTokens: mu.outputTokens ?? 0,
+              cacheReadTokens: mu.cacheReadInputTokens ?? 0,
+              cacheCreationTokens: mu.cacheCreationInputTokens ?? 0,
+              // C2：SDK 对不认识的模型（代理 qwen 等）给 costUSD=0 —— 0 是假实测，
+              // seam 处归一为 undefined（未定价），把估算机会让给 shared 价表
+              costUsd: mu.costUSD || undefined,
+            }))
+            // Calibrate tracker's completed calls with authoritative token data
+            this._llmTracker.calibrateFromModelUsage(modelUsages)
+            if (rm.subtype === 'success') {
+              yield {
+                type: 'result',
+                content: rm.result,
+                sessionId: rm.session_id,
+                // 规范口径：纯值四字段合计（不再把 cache 折进 input）
+                usage: mergeModelUsages(modelUsages),
+                // 0 = SDK 不认识该模型（代理/未定价）→ 归一为未定价，非 $0 实测
+                costUsd: rm.total_cost_usd || undefined,
+                numTurns: rm.num_turns,
+                modelUsages,
+              }
+            } else {
+              yield buildResultErrorChunk(rm, {
+                usage: mergeModelUsages(modelUsages),
+                modelUsages,
+              })
             }
           } else {
-            yield buildResultErrorChunk(rm)
-          }
-        } else {
-          // Fallback: no modelUsage — use legacy single-model usage from result
-          const fallbackModelUsage: ModelUsage = {
-            model: modelName,
-            inputTokens: rm.usage?.input_tokens ?? 0,
-            outputTokens: rm.usage?.output_tokens ?? 0,
-            cacheReadTokens: rm.usage?.cache_read_input_tokens ?? 0,
-            cacheCreationTokens: rm.usage?.cache_creation_input_tokens ?? 0,
-          }
-          const hasAny = fallbackModelUsage.outputTokens > 0 || fallbackModelUsage.cacheReadTokens > 0 || fallbackModelUsage.cacheCreationTokens > 0
-          if (hasAny) {
-            this._llmTracker.calibrateFromModelUsage([fallbackModelUsage])
-          }
-          if (rm.subtype === 'success') {
-            yield {
-              type: 'result',
-              content: rm.result,
-              sessionId: rm.session_id,
-              usage: fallbackModelUsage,
-              costUsd: rm.total_cost_usd,
-              numTurns: rm.num_turns,
-              modelUsages: (fallbackModelUsage.inputTokens > 0 || fallbackModelUsage.outputTokens > 0)
-                ? [fallbackModelUsage]
-                : [],
+            // Fallback: no modelUsage — use legacy single-model usage from result
+            const fallbackModelUsage: ModelUsage = {
+              model: modelName,
+              inputTokens: rm.usage?.input_tokens ?? 0,
+              outputTokens: rm.usage?.output_tokens ?? 0,
+              cacheReadTokens: rm.usage?.cache_read_input_tokens ?? 0,
+              cacheCreationTokens: rm.usage?.cache_creation_input_tokens ?? 0,
             }
-          } else {
-            yield buildResultErrorChunk(rm)
+            const hasAny = fallbackModelUsage.outputTokens > 0 || fallbackModelUsage.cacheReadTokens > 0 || fallbackModelUsage.cacheCreationTokens > 0
+            if (hasAny) {
+              this._llmTracker.calibrateFromModelUsage([fallbackModelUsage])
+            }
+            if (rm.subtype === 'success') {
+              yield {
+                type: 'result',
+                content: rm.result,
+                sessionId: rm.session_id,
+                usage: fallbackModelUsage,
+                costUsd: rm.total_cost_usd,
+                numTurns: rm.num_turns,
+                modelUsages: (fallbackModelUsage.inputTokens > 0 || fallbackModelUsage.outputTokens > 0)
+                  ? [fallbackModelUsage]
+                  : [],
+              }
+            } else {
+              yield buildResultErrorChunk(rm, {
+                usage: fallbackModelUsage,
+                modelUsages: (fallbackModelUsage.inputTokens > 0 || fallbackModelUsage.outputTokens > 0)
+                  ? [fallbackModelUsage]
+                  : [],
+              })
+            }
           }
+          sawResult = true
+          // A streaming-input query stays alive after its turn (the session is
+          // persistent) — end our consumption here so the caller's loop closes.
+          break
         }
       }
+    } catch (err) {
+      // The SDK throws after yielding an error result (single-message mode)
+      // and after a clean interrupt once the input stream closes. The result
+      // chunk was already forwarded — only rethrow when none was seen.
+      if (!sawResult) throw err
+    } finally {
+      options?.abortSignal?.removeEventListener('abort', onAbort)
+      if (drainTimer) clearTimeout(drainTimer)
+      releaseInput?.()
     }
 
     while (toolResultQueue.length > 0) {

@@ -3,6 +3,7 @@ import fs from 'fs'
 import path from 'path'
 import os from 'os'
 import { CloneRuntime } from '../clone-runtime'
+import * as providers from '@octopus/providers'
 import type { CloneDef } from '@octopus/shared'
 
 // ── Test helpers ──────────────────────────────────────────────────
@@ -39,6 +40,7 @@ describe('CloneRuntime', () => {
   })
 
   afterEach(() => {
+    vi.restoreAllMocks()
     delete process.env.OCTOPUS_HOME
     try {
       fs.rmSync(TEST_DIR, { recursive: true, force: true })
@@ -741,6 +743,31 @@ describe('CloneRuntime', () => {
       const content = fs.readFileSync(filePath, 'utf-8')
       expect(content).toContain('First entry')
       expect(content).toContain('Second entry')
+    })
+  })
+
+  describe('chat — stop abort', () => {
+    it('用户主动中断（abortSignal）不降级重试：不会重跑一整轮', async () => {
+      const ac = new AbortController()
+      let sendCalls = 0
+      vi.spyOn(providers, 'getProvider').mockImplementation((() => ({
+        sendQuery: async function* () {
+          sendCalls += 1
+          // drain 截止后的硬 abort：SDK 以异常收尾，且 signal 已置位。
+          ac.abort()
+          throw new Error('Operation aborted')
+        },
+      })) as never)
+
+      const runtime = new CloneRuntime(createTestCloneDef(), 'test-org')
+      const chunks: unknown[] = []
+      // providerSessionId 非空 ⇒ 旧逻辑会在任何异常后「无 resume 重试」。
+      for await (const c of runtime.chat('hi', 'sess-1', 'resume-1', TEST_DIR, undefined, undefined, ac.signal)) {
+        chunks.push(c)
+      }
+
+      expect(sendCalls).toBe(1)
+      expect(chunks).toHaveLength(0)
     })
   })
 })

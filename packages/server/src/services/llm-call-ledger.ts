@@ -100,6 +100,9 @@ export interface ProviderResultUsageInput {
   /** 本轮流开始时刻（ms），用于 duration_ms。 */
   startedAtMs: number
   turnIndex?: number
+  /** 账本行的调用级 stop_reason。缺省 'end_turn'（成功收尾）。中断轮传
+   *  'interrupted'（见 ledgerStopReason），让报表能区分「跑完的」与「被打断的」。 */
+  stopReason?: string
   /** provider result chunk 的 per-model 用量（优先）。 */
   modelUsages?: readonly { model?: string | null; inputTokens?: number; outputTokens?: number; cacheReadTokens?: number; cacheCreationTokens?: number }[] | null
   /** chunk 总量（modelUsages 缺失时兜底单行）。 */
@@ -110,6 +113,34 @@ export interface ProviderResultUsageInput {
 
 const sumTokens = (u?: { inputTokens?: number; outputTokens?: number; cacheReadTokens?: number; cacheCreationTokens?: number } | null): number =>
   (u?.inputTokens ?? 0) + (u?.outputTokens ?? 0) + (u?.cacheReadTokens ?? 0) + (u?.cacheCreationTokens ?? 0)
+
+/**
+ * SDK result 的 terminal_reason → 账本调用级 stop_reason。
+ *
+ * 只写「调用为什么结束」这一层，不写 message 级 stop_reason（如 'tool_use'）：
+ * token-usage-dao 的 tool_ratio 统计按 `stop_reason = 'tool_use'` 计数，混入
+ * 会污染该指标。成功轮 → 'end_turn'；中断轮 → 'interrupted'（SDK 的
+ * aborted_streaming / aborted_tools 两种都归一）。
+ */
+export function ledgerStopReason(terminalReason?: string | null): string {
+  switch (terminalReason) {
+    case undefined:
+    case null:
+    case '':
+    case 'completed':
+      return 'end_turn'
+    case 'aborted_streaming':
+    case 'aborted_tools':
+      return 'interrupted'
+    case 'max_turns':
+      return 'max_turns'
+    case 'max_budget_usd':
+    case 'budget_exhausted':
+      return 'max_budget'
+    default:
+      return terminalReason
+  }
+}
 
 /**
  * 聊天路径（clone_chat / global_chat / session_compress）result chunk 的统一入账：
@@ -139,7 +170,7 @@ export function recordProviderResultUsage(input: ProviderResultUsageInput, token
         callIndex: i,
         messageId: input.messageId ?? null,
         model: e.model,
-        stopReason: 'end_turn',
+        stopReason: input.stopReason ?? 'end_turn',
         timestamp: nowMs,
         durationMs: nowMs - input.startedAtMs,
         usage: {

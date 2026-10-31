@@ -33,6 +33,22 @@ export interface SendQueryOptions {
   model?: string
   systemPrompt?: SystemPromptInput
   abortSignal?: AbortSignal
+  /**
+   * Run the query in SDK **streaming input mode** so a stop can use
+   * `Query.interrupt()` instead of a hard `abortController.abort()`.
+   *
+   * Why it matters (2026-10-31, verified against the real SDK): a hard abort
+   * kills the CLI subprocess and the iterator throws — NO `result` message is
+   * emitted, so the turn's token usage is unrecoverable. A clean interrupt
+   * still yields the interrupted turn's `SDKResultMessage` (subtype
+   * `error_during_execution`) whose `usage`/`modelUsage` carry the real totals
+   * for every model call completed so far (the in-flight call itself is not
+   * billable-measurable and reports zero).
+   *
+   * Off by default: non-chat callers (engine nodes, compression, scheduler)
+   * keep the existing single-message behavior.
+   */
+  interruptible?: boolean
   /** Free-form tag (usually the workflow node id) echoed into [exec-timing]
    *  logs when OCTOPUS_EXEC_TIMING=1. No behavioral effect. */
   timingTag?: string
@@ -127,7 +143,23 @@ export type MessageChunk =
   | { type: 'status'; status: 'compacting' | 'requesting' | null; varsUpdate?: Record<string, unknown> }
   | { type: 'context_usage'; data: ContextUsageData }
   | { type: 'result'; content?: string; sessionId?: string; usage?: TokenUsage; costUsd?: number; numTurns?: number; modelUsages?: ModelUsage[] }
-  | { type: 'error'; code: string; message: string; numTurns?: number; costUsd?: number; sessionId?: string; terminalReason?: GoalTerminalReason }
+  | {
+      type: 'error'
+      code: string
+      message: string
+      numTurns?: number
+      costUsd?: number
+      sessionId?: string
+      /** Goal-fuse vocabulary consumed by the engine (max_turns / max_budget_usd). */
+      terminalReason?: GoalTerminalReason
+      /** Raw SDK `terminal_reason` (e.g. 'aborted_tools', 'completed') — used by
+       *  the ledger to label interrupted calls. */
+      sdkTerminalReason?: string
+      /** Result-level totals. Non-success results still carry real usage when the
+       *  turn is interrupted after completed model calls — never drop them. */
+      usage?: TokenUsage
+      modelUsages?: ModelUsage[]
+    }
   | ActiveGoalChunk
 
 /** Context window usage breakdown — sourced from Claude Agent SDK's
