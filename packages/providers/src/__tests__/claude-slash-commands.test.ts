@@ -73,6 +73,58 @@ describe('ClaudeSDKProvider slash commands', () => {
     })
   })
 
+  it('system:init 同时透传完整 init 快照（tools / MCP / skills / plugins）', async () => {
+    mockQuery.mockImplementation(() => makeQuery((async function* () {
+      yield {
+        type: 'system',
+        subtype: 'init',
+        session_id: 'sdk-1',
+        claude_code_version: '2.1.250',
+        model: 'claude-test',
+        cwd: '/tmp/ws',
+        permissionMode: 'default',
+        output_style: 'default',
+        apiKeySource: 'none',
+        effort: 'high',
+        tools: ['Read', 'Bash'],
+        mcp_servers: [{ name: 'octopus-workflow', status: 'connected' }],
+        agents: ['workspace'],
+        skills: ['octo-ui-review'],
+        plugins: [{ name: 'task-author', path: '/tmp/task-author', version: '1.0.0' }],
+        slash_commands: ['compact'],
+        capabilities: ['interrupt_receipt_v1'],
+      }
+      yield RESULT
+    })()))
+
+    const chunks = await drain(new ClaudeSDKProvider().sendQuery('hi', '/tmp'))
+    const init = chunks.find((c) => c.type === 'system_init')
+    expect(init).toEqual({
+      type: 'system_init',
+      data: {
+        claudeCodeVersion: '2.1.250',
+        model: 'claude-test',
+        cwd: '/tmp/ws',
+        permissionMode: 'default',
+        outputStyle: 'default',
+        apiKeySource: 'none',
+        effort: 'high',
+        tools: ['Read', 'Bash'],
+        mcpServers: [{ name: 'octopus-workflow', status: 'connected' }],
+        agents: ['workspace'],
+        skills: ['octo-ui-review'],
+        plugins: [{ name: 'task-author', path: '/tmp/task-author', version: '1.0.0' }],
+        slashCommands: ['compact'],
+        capabilities: ['interrupt_receipt_v1'],
+        betas: [],
+      },
+    })
+    // existing command-menu chunk still works
+    expect(chunks.find((c) => c.type === 'slash_commands')).toEqual({
+      type: 'slash_commands', commands: ['compact'],
+    })
+  })
+
   it('无流式增量的 assistant 正文补发一次（/context 场景）', async () => {
     mockQuery.mockImplementation(() => makeQuery((async function* () {
       yield {

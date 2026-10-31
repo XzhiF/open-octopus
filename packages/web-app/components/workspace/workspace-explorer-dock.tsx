@@ -7,6 +7,7 @@ import {
   Archive,
   Ban,
   BarChart3,
+  Bug,
   Check,
   ClipboardCheck,
   Clock,
@@ -26,6 +27,7 @@ import {
 import { toast } from 'sonner'
 import type { FileNode } from '@/lib/types'
 import { fetchFileContent, getWorkspace, openWorkspaceDirectory, saveFileEntry } from '@/lib/api-client'
+import { listSessionDebugTurns } from '@/lib/agent/debug-api'
 import { useYDoc, useYMap } from '@/lib/yjs-provider'
 import { SidebarFileTree, ymapToFileNodes } from '@/components/workspace/sidebar-file-tree'
 import { TextEditorTab, getYText } from '@/components/workspace/text-editor-tab'
@@ -49,6 +51,13 @@ export interface WorkspaceExplorerDockProps {
   /** 常驻「消耗」按钮的窗口状态（任务账本或会话账本，同一扇窗）。 */
   usageWindow?: TaskWindowRecord | null
   onOpenUsage?: () => void
+  /** 常驻「调试」按钮的窗口状态（per-turn SDK inspector）。 */
+  debugWindow?: TaskWindowRecord | null
+  onOpenDebug?: () => void
+  /** 当前聊天会话 —— 调试徽标（异常轮数）取数。 */
+  debugSessionId?: string | null
+  /** 消息数 / 流式状态变化时刷新调试徽标。 */
+  debugRefreshKey?: string | number
   onOpenTaskModule?: (module: TaskModule) => void
   /** Task action (trigger/pause/resume/abort/reopen/retry_archive/accept…). */
   onTaskAction?: (action: string) => void
@@ -144,6 +153,10 @@ export function WorkspaceExplorerDock({
   taskWindows,
   usageWindow,
   onOpenUsage,
+  debugWindow,
+  onOpenDebug,
+  debugSessionId,
+  debugRefreshKey,
   onOpenTaskModule,
   onTaskAction,
   activity,
@@ -156,6 +169,7 @@ export function WorkspaceExplorerDock({
   const [activePath, setActivePath] = useState<string | null>(null)
   const [editorOpen, setEditorOpen] = useState(false)
   const [contents, setContents] = useState<Record<string, string>>({})
+  const [debugAnomalies, setDebugAnomalies] = useState(0)
   // 文件面板头部显示工作空间真实路径，点击进入系统文件管理器（2026-10-28）。
   const [workspacePath, setWorkspacePath] = useState<string | null>(null)
   useEffect(() => {
@@ -173,6 +187,24 @@ export function WorkspaceExplorerDock({
       })
     return () => { alive = false }
   }, [workspaceId])
+  // 「调试」徽标 = 已记录的异常轮数（interrupted / error）。Best-effort: a
+  // failed fetch must never block the dock; the window itself shows the error.
+  useEffect(() => {
+    if (!debugSessionId || typeof listSessionDebugTurns !== 'function') {
+      setDebugAnomalies(0)
+      return
+    }
+    let alive = true
+    listSessionDebugTurns(debugSessionId)
+      .then((res) => {
+        if (!alive) return
+        setDebugAnomalies(
+          (res.turns ?? []).filter((t) => t.status === 'error' || t.status === 'interrupted').length,
+        )
+      })
+      .catch(() => { if (alive) setDebugAnomalies(0) })
+    return () => { alive = false }
+  }, [debugSessionId, debugRefreshKey])
   const openDirectory = async () => {
     if (!workspaceId) return
     try {
@@ -286,7 +318,8 @@ export function WorkspaceExplorerDock({
     }
   }
 
-  if (!workspaceId) return null
+  // 2026-11-01 dock 常驻：纯会话（没有 workspace）也挂坞，文件 / 活动降级为
+  // 不可用，消耗 / 调试照常。否则「调试只放坞」在无工作区会话里没有入口。
   const active = tabs.find((t) => t.path === activePath) ?? null
   const status = task?.status ?? ''
   const isDraft = status === 'draft'
@@ -365,6 +398,8 @@ export function WorkspaceExplorerDock({
   // 跟任务阶段无关 —— 任务窗与会话窗共用同一个模块 id。
   const usageOpen = !!usageWindow && !usageWindow.minimized
   const usageMinimized = !!usageWindow?.minimized
+  const debugOpen = !!debugWindow && !debugWindow.minimized
+  const debugMinimized = !!debugWindow?.minimized
 
   const dockButton = (
     key: string,
@@ -383,6 +418,12 @@ export function WorkspaceExplorerDock({
       shortLabel?: string
       /** 待你处理（待验收）—— 琥珀注意力态，窗口打开后让位 active。 */
       attention?: boolean
+      /** 没有工作区时（纯会话）文件 / 活动不可用。 */
+      disabled?: boolean
+      /** 徽标底色：默认青（活动）；调试用琥珀（异常）。 */
+      badgeTone?: 'cyan' | 'amber'
+      /** 绿点：该入口正在记录（调试）。 */
+      recording?: boolean
     },
   ) => (
     <button
@@ -392,19 +433,23 @@ export function WorkspaceExplorerDock({
       data-dock-module={opts.module}
       data-dock-pane={opts.pane}
       aria-pressed={opts.active}
+      aria-disabled={opts.disabled || undefined}
       aria-label={label}
-      title={showLabels ? undefined : label}
+      title={showLabels ? (opts.disabled ? `${label}（当前会话没有工作区）` : undefined) : label}
       onClick={opts.onClick}
+      disabled={opts.disabled}
       className={cn(
         'relative flex shrink-0 flex-col items-center justify-center rounded-[11px] transition-all duration-150',
         showLabels ? 'w-11 gap-[3px] px-0.5 py-1' : 'size-9 hover:scale-105',
-        opts.primary
-          ? 'bg-pop-green text-pop-bg hover:opacity-90'
-          : opts.active
-            ? 'bg-white/[0.12] text-pop-ink'
-            : opts.attention
-              ? 'bg-pop-amber-soft text-pop-amber ring-1 ring-pop-amber/35 hover:bg-pop-amber-soft/80'
-              : 'text-pop-dim hover:bg-white/[0.07] hover:text-pop-ink',
+        opts.disabled
+          ? 'cursor-not-allowed text-pop-dim/35'
+          : opts.primary
+            ? 'bg-pop-green text-pop-bg hover:opacity-90'
+            : opts.active
+              ? 'bg-white/[0.12] text-pop-ink'
+              : opts.attention
+                ? 'bg-pop-amber-soft text-pop-amber ring-1 ring-pop-amber/35 hover:bg-pop-amber-soft/80'
+                : 'text-pop-dim hover:bg-white/[0.07] hover:text-pop-ink',
       )}
     >
       <Icon className={showLabels ? 'size-[17px]' : 'size-[18px]'} strokeWidth={1.8} />
@@ -414,9 +459,17 @@ export function WorkspaceExplorerDock({
         </span>
       )}
       {!!opts.badge && opts.badge > 0 && (
-        <span className="absolute -right-0.5 -top-0.5 grid min-w-3.5 place-items-center rounded-full bg-pop-cyan px-0.5 font-mono text-[8px] font-bold text-pop-bg">
+        <span
+          className={cn(
+            'absolute -right-0.5 -top-0.5 grid min-w-3.5 place-items-center rounded-full px-0.5 font-mono text-[8px] font-bold text-pop-bg',
+            opts.badgeTone === 'amber' ? 'bg-pop-amber' : 'bg-pop-cyan',
+          )}
+        >
           {opts.badge}
         </span>
+      )}
+      {opts.recording && (
+        <span className="absolute left-1 top-1 size-1 rounded-full bg-pop-green shadow-[0_0_6px_var(--pop-green)]" />
       )}
       {opts.marker === 'open' && (
         <span className={cn('absolute size-1 rounded-full bg-pop-yellow', showLabels ? 'bottom-0.5 right-1' : '-bottom-0.5')} />
@@ -554,6 +607,7 @@ export function WorkspaceExplorerDock({
           onClick: () => togglePane('files'),
           pane: 'files',
           testId: 'dock-files',
+          disabled: !workspaceId,
         })}
         {dockButton('pane:activity', '后台活动', Activity, {
           active: pane === 'activity',
@@ -562,12 +616,23 @@ export function WorkspaceExplorerDock({
           badge: activity.count,
           testId: 'dock-activity',
           shortLabel: '活动',
+          disabled: !workspaceId,
         })}
         {dockButton('usage', '消耗', BarChart3, {
           active: usageOpen,
           onClick: () => onOpenUsage?.(),
           testId: 'dock-usage',
           marker: usageMinimized ? 'minimized' : usageOpen ? 'open' : undefined,
+        })}
+        {/* 调试 = 唯一入口：作业坞常驻，不依赖某条消息。 */}
+        {dockButton('debug', '调试', Bug, {
+          active: debugOpen,
+          onClick: () => onOpenDebug?.(),
+          testId: 'dock-debug',
+          badge: debugAnomalies,
+          badgeTone: 'amber',
+          recording: !!debugSessionId,
+          marker: debugMinimized ? 'minimized' : debugOpen ? 'open' : undefined,
         })}
 
         {task && <div className="my-0.5 h-px w-6 bg-white/[0.12]" />}

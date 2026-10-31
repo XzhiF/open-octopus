@@ -1,5 +1,5 @@
 import { query, type Options, type AgentDefinition, type CanUseTool, type SDKUserMessage } from '@anthropic-ai/claude-agent-sdk'
-import type { IAgentProvider, SendQueryOptions, MessageChunk, OctopusAgentDef, GoalTerminalReason } from '../types'
+import type { IAgentProvider, SendQueryOptions, MessageChunk, OctopusAgentDef, GoalTerminalReason, SystemInitData } from '../types'
 import type { ModelUsage, TokenUsage, TokenUsageDelta } from '@octopus/shared'
 import { mergeModelUsages } from '@octopus/shared'
 import { LLMCallTracker } from '../llm-call-tracker'
@@ -698,8 +698,22 @@ export class ClaudeSDKProvider implements IAgentProvider {
             subtype: string
             status?: 'compacting' | 'requesting' | null
             content?: string
+            claude_code_version?: string
+            model?: string
+            cwd?: string
+            permissionMode?: string
+            output_style?: string
+            apiKeySource?: string
+            effort?: string | null
+            tools?: string[]
+            mcp_servers?: { name: string; status: string }[]
+            agents?: string[]
+            skills?: string[]
+            plugins?: { name: string; path: string; version?: string }[]
             slash_commands?: string[]
             terminal_slash_commands?: string[]
+            capabilities?: string[]
+            betas?: string[]
           }
           if (sm.subtype === 'status') {
             yield { type: 'status', status: sm.status ?? null }
@@ -707,14 +721,37 @@ export class ClaudeSDKProvider implements IAgentProvider {
             yield { type: 'status', status: 'compacting' }
           } else if (sm.subtype === 'local_command_output') {
             yield { type: 'local_command_output', content: sm.content ?? '' }
-          } else if (sm.subtype === 'init' && Array.isArray(sm.slash_commands)) {
-            // The advertised set is CLI/skills-dependent — hosts replace their
-            // cached list with this. Terminal-bound commands (exit, statusline…)
-            // are useless in a headless host and are dropped here.
-            const terminal = new Set(sm.terminal_slash_commands ?? [])
-            yield {
-              type: 'slash_commands',
-              commands: sm.slash_commands.filter((name) => !terminal.has(name)),
+          } else if (sm.subtype === 'init') {
+            // Full init snapshot first: the debug inspector needs what the CLI
+            // actually loaded (tools / MCP status / skills / plugins /
+            // permission mode), not just the command menu.
+            const init: SystemInitData = {
+              claudeCodeVersion: sm.claude_code_version,
+              model: sm.model,
+              cwd: sm.cwd,
+              permissionMode: sm.permissionMode,
+              outputStyle: sm.output_style,
+              apiKeySource: sm.apiKeySource,
+              effort: sm.effort ?? null,
+              tools: Array.isArray(sm.tools) ? sm.tools : [],
+              mcpServers: Array.isArray(sm.mcp_servers) ? sm.mcp_servers : [],
+              agents: Array.isArray(sm.agents) ? sm.agents : [],
+              skills: Array.isArray(sm.skills) ? sm.skills : [],
+              plugins: Array.isArray(sm.plugins) ? sm.plugins : [],
+              slashCommands: Array.isArray(sm.slash_commands) ? sm.slash_commands : [],
+              capabilities: Array.isArray(sm.capabilities) ? sm.capabilities : [],
+              betas: Array.isArray(sm.betas) ? sm.betas : [],
+            }
+            yield { type: 'system_init', data: init }
+            if (Array.isArray(sm.slash_commands)) {
+              // The advertised set is CLI/skills-dependent — hosts replace their
+              // cached list with this. Terminal-bound commands (exit, statusline…)
+              // are useless in a headless host and are dropped here.
+              const terminal = new Set(sm.terminal_slash_commands ?? [])
+              yield {
+                type: 'slash_commands',
+                commands: sm.slash_commands.filter((name) => !terminal.has(name)),
+              }
             }
           }
         }

@@ -24,11 +24,14 @@ import { isResumeFailureMessage, migrateProviderTranscript, usableResumeId } fro
 import type { AgentSessionDAO, SafetyDAO, ScheduleConfigDAO } from '../../db/dao'
 import { SessionCacheContextDAO } from '../../db/dao/session-cache-context-dao'
 import { resolveSessionExpertRoster } from '../../services/agent/session-expert-roster'
-import { parseCloneMentions, resolveCloneSubagents } from '../../services/agent/clone-resolver'
+import { parseCloneMentions, resolveCloneInfo, resolveCloneSubagents } from '../../services/agent/clone-resolver'
 import { pendingRoleCard } from '../../services/agent/role-card'
 import { appendRoleSwitchEvent, roleSwitchEventPayload } from '../../services/agent/role-switch-event'
 import { withTransientReminder } from '../../services/agent/prompt-reminder'
 import { recordProviderResultUsage, ledgerStopReason } from '../../services/llm-call-ledger'
+import { SessionTurnDebugDAO, hashPrompt } from '../../db/dao'
+import { TurnDebugRecorder, type TurnDebugIdentity } from '../../services/agent/turn-debug-recorder'
+import { expertName } from '@octopus/shared'
 import { createWorkflowToolServer } from '../../services/chat/workflow-tools'
 import { createTaskToolServer } from '../../services/chat/task-tools'
 import { getSlashCommands, rememberSlashCommands } from '../../services/chat/slash-commands'
@@ -48,6 +51,41 @@ export interface ChatRouteDeps {
   sse?: import('../../services/sse').SSEService
   /** 2026-10-28 task-thread: one main chat per task, identity by task state. */
   taskThread?: TaskThreadService
+}
+
+/** Debug inspector identity for this turn (base / legacy expert / clone). */
+function turnDebugIdentity(
+  session: { clone_name?: string | null },
+  roleState: { activeExpert: string | null; activeKind: 'expert' | 'clone'; revision: number },
+): TurnDebugIdentity {
+  if (roleState.activeExpert) {
+    if (roleState.activeKind === 'clone') {
+      const info = resolveCloneInfo(roleState.activeExpert)
+      return {
+        id: roleState.activeExpert,
+        kind: 'clone',
+        name: info?.display_name ?? roleState.activeExpert,
+        revision: roleState.revision,
+        skills: info?.skills,
+        memoryScope: info?.memory_scope,
+      }
+    }
+    return {
+      id: roleState.activeExpert,
+      kind: 'expert',
+      name: expertName(roleState.activeExpert),
+      revision: roleState.revision,
+    }
+  }
+  const baseClone = session.clone_name ? resolveCloneInfo(session.clone_name) : null
+  return {
+    id: session.clone_name ?? null,
+    kind: baseClone ? 'clone' : 'base',
+    name: baseClone?.display_name ?? session.clone_name ?? '主 Agent',
+    revision: roleState.revision,
+    skills: baseClone?.skills,
+    memoryScope: baseClone?.memory_scope,
+  }
 }
 
 export function createChatRoutes(deps: ChatRouteDeps): Hono {
@@ -302,6 +340,45 @@ export function createChatRoutes(deps: ChatRouteDeps): Hono {
         }
 
         // Step 2: Try Claude SDK integration (orchestration now handled by Main Agent route)
+        // Per-turn debug snapshot (dock 「调试」). Created only after the
+        // compression gate, so a turn that never reaches the provider leaves no
+        // misleading "running" row. Server-originated wake turns are skipped:
+        // they have no user prompt to inspect and would collide with a user
+        // turn's transcript number. Best-effort by construction.
+        const turnDebugDao = new SessionTurnDebugDAO(sessionDao.getDb())
+        const turnDebug = body.ephemeral
+          ? undefined
+          : new TurnDebugRecorder({
+              dao: turnDebugDao,
+              sessionId: id,
+              // Transcript turn number; `max` keeps the debug sequence monotonic
+              // even if messages were compressed/deleted between turns.
+              turnIndex: Math.max(sessionDao.countUserTurns(id), turnDebugDao.nextTurnIndex(id)),
+              userMessageId: userMsgId,
+              identity: turnDebugIdentity(session, roleState),
+              roleCard,
+              roleRevision: roleState.revision,
+              model: model ?? null,
+              effort: effort ?? null,
+              cwd: effectiveCwd,
+              providerMessage,
+              systemPrompt,
+              systemPromptHash: hashPrompt(systemPrompt),
+              sdkOptions: {
+                systemPrompt: { type: 'preset', preset: 'claude_code', appendChars: systemPrompt.length },
+                model: model ?? null,
+                effort: effort ?? null,
+                resume: resumeSessionId ?? null,
+                cwd: effectiveCwd,
+                agents: Object.keys(agents ?? {}),
+                mcpServers: Object.keys(mcpServers ?? {}),
+                plugins: thread?.plugins ?? [],
+                interruptible: true,
+                settingSources: ['project', 'user'],
+                allowDangerouslySkipPermissions: true,
+                transientReminder: !!turnReminder,
+              },
+            })
         const llmResult = await tryClaudeSDK(body.message!, systemPrompt, stream, id, org, sessionDao, undefined, undefined, model, effort, {
           resumeSessionId,
           providerMessage,
@@ -311,6 +388,7 @@ export function createChatRoutes(deps: ChatRouteDeps): Hono {
           plugins: thread?.plugins,
           onBeforeToolCall: thread?.guard,
           onTurnComplete,
+          turnDebug,
           isAborted: () => aborted,
           abortSignal: abortController.signal,
           onResult: roleCard
@@ -421,6 +499,8 @@ export function createChatRoutes(deps: ChatRouteDeps): Hono {
       onTurnComplete?: () => Promise<void> | void
       /** Called once when the turn produces a result (mark role card delivered). */
       onResult?: () => void
+      /** Dock 「调试」 recorder — observes the provider stream + finalizes the row. */
+      turnDebug?: TurnDebugRecorder
       /** Stop-button probe: the owning stream's abort flag (checked每 chunk). */
       isAborted?: () => boolean
       /** Hard-abort the provider query (stop button) — ends the SDK iterator now. */
@@ -429,6 +509,7 @@ export function createChatRoutes(deps: ChatRouteDeps): Hono {
   ): Promise<{ generated: boolean }> {
     const resumeSessionId = extra?.resumeSessionId
     const providerMessage = extra?.providerMessage ?? message
+    const turnDebug = extra?.turnDebug
     let resultNotified = false
     let generated = false
     // 用户已按停止：停止后只继续消费账本所需的 result/error（见 consume）。
@@ -571,6 +652,7 @@ export function createChatRoutes(deps: ChatRouteDeps): Hono {
           if (!stopped && (extra?.isAborted?.() || (stream as any)._aborted)) stopped = true
           // 停止后只关心 result / error（账本数据源），其余 chunk 一律丢弃。
           if (stopped && chunk.type !== 'result' && chunk.type !== 'error') continue
+          turnDebug?.observe(chunk)
           switch (chunk.type) {
             case 'text_delta':
               fullContent += chunk.content
@@ -749,6 +831,7 @@ export function createChatRoutes(deps: ChatRouteDeps): Hono {
         }
         sessionDao.updateLastMessageAt(sessionId, assistantNow)
 
+        turnDebug?.finish({ status: 'ok', assistantMessageId: assistantMsgId })
         autoGenerateTitle(sessionId, org, message, sessionDao)
         recordDebugLog(assistantMsgId, sessionId, assistantNow, fullContent.length, 'chat', orchestrationResult, orchestrationFullResult, org)
 
@@ -765,6 +848,7 @@ export function createChatRoutes(deps: ChatRouteDeps): Hono {
         // that only produced thinking). Still close the SSE turn: a missing
         // `done` used to leave the composer spinning until a manual reload.
         if (partialRowId) finalizePartial(false)
+        turnDebug?.finish({ status: 'ok', assistantMessageId: partialRowId })
         await stream.writeSSE({
           event: 'done',
           data: JSON.stringify({
@@ -775,6 +859,19 @@ export function createChatRoutes(deps: ChatRouteDeps): Hono {
         })
       } else if (aborted || partialRowId) {
         finalizePartial(aborted)
+        turnDebug?.finish({
+          status: aborted ? 'interrupted' : 'error',
+          assistantMessageId: partialRowId,
+        })
+      } else {
+        // Provider yielded nothing at all (no result, no text, no error) — the
+        // chat route falls back to a canned reply, but the debug row must not
+        // stay「running」forever.
+        turnDebug?.finish({
+          status: 'error',
+          assistantMessageId: partialRowId,
+          error: 'provider produced no result',
+        })
       }
     } catch (err: unknown) {
       const errMsg = err instanceof Error ? err.message : String(err)
@@ -784,6 +881,11 @@ export function createChatRoutes(deps: ChatRouteDeps): Hono {
         console.error(`[agent] Claude SDK call failed: ${errMsg}`, err instanceof Error ? err.stack : '')
       }
       finalizePartial(wasAborted)
+      turnDebug?.finish({
+        status: wasAborted ? 'interrupted' : 'error',
+        assistantMessageId: partialRowId,
+        error: errMsg,
+      })
     }
     return { generated }
   }

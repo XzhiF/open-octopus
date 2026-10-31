@@ -1452,6 +1452,8 @@ export function ChatTab() {
         <TaskModulesLayer
           task={activeTask}
           sessionId={activeTask ? null : activeSessionId}
+          chatSessionId={activeSessionId}
+          debugRefreshKey={`${messages.length}:${streaming ? '1' : '0'}`}
           sessionTitle={activeSession?.title ?? null}
           windows={activeTask ? (taskWindows[activeTask.id] ?? {}) : sessionUsageWindows}
           onTaskAction={activeTask ? (action) => { void executeTaskAction(activeTask.id, action) } : undefined}
@@ -1479,6 +1481,10 @@ export function ChatTab() {
         taskWindows={activeTask ? (taskWindows[activeTask.id] ?? {}) : {}}
         usageWindow={activeTask ? (taskWindows[activeTask.id]?.usage ?? null) : (sessionUsageWindows.usage ?? null)}
         onOpenUsage={() => setTaskModuleRequest({ module: 'usage', nonce: Date.now() })}
+        debugWindow={activeTask ? (taskWindows[activeTask.id]?.debug ?? null) : (sessionUsageWindows.debug ?? null)}
+        onOpenDebug={() => setTaskModuleRequest({ module: 'debug', nonce: Date.now() })}
+        debugSessionId={activeSessionId}
+        debugRefreshKey={`${messages.length}:${streaming ? '1' : '0'}`}
         onOpenTaskModule={(module) => setTaskModuleRequest({ module, nonce: Date.now() })}
         onTaskAction={(action) => { if (activeTask) void executeTaskAction(activeTask.id, action) }}
         activity={activitySnapshot}

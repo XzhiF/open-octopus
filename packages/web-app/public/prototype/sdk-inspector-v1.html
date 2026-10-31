@@ -1,0 +1,1936 @@
+<!DOCTYPE html>
+<!--
+  PROTOTYPE v2 — Agent 调用检查器（SDK 调试）· 可删，勿当生产代码读
+
+  决定（2026-11-01）：入口只放作业坞「调试」；对话区保持纯净转录，
+  不再给每条回复挂「调用」链接。
+
+  本轮优化重点：20–30+ 轮怎么办
+    · 默认选最新一轮，轮次列表最新在前；
+    · 顶部轮次尺：32 个 tick 一屏定位身份色块与异常；
+    · 列表默认只展开最近 10 轮，更早的折叠；
+    · 过滤：全部 / 身份切换 / 异常；
+    · 从尺子/岗位包链接跳到旧轮时自动展开并滚动到该行。
+
+  跑法：http://localhost:3000/prototype/sdk-inspector-v1.html
+        （或直接双击本文件；零依赖、纯静态、假数据）
+-->
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>PROTOTYPE · Agent 调用检查器</title>
+<style>
+:root{
+  --bg:#0A0A0C; --paper:#1C1C22; --idle:#131318; --inset:#020202;
+  --ink:#F5F5F2; --dim:#9698A3; --bd:#32323B;
+  --pink:#FF855C; --pink-soft:#2A1B19;
+  --purple:#D2A8FF; --purple-soft:#221E29;
+  --cyan:#4FD1D9; --cyan-soft:#151F21;
+  --green:#7EE787; --green-soft:#18211A;
+  --amber:#FFC857; --amber-soft:#231E17;
+  --red:#FF5C5C; --navy:#4C79BF; --navy-soft:#181F2D;
+  --mono:"SF Mono","JetBrains Mono",Menlo,Consolas,ui-monospace,monospace;
+  --ui:-apple-system,BlinkMacSystemFont,"SF Pro Text","PingFang SC","Helvetica Neue",sans-serif;
+  --shadow:0 10px 32px rgba(0,0,0,.5);
+}
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{height:100%}
+body{
+  background:var(--bg); color:var(--ink); font-family:var(--mono);
+  font-size:12.5px; line-height:1.55; overflow:hidden;
+  -webkit-font-smoothing:antialiased;
+}
+button{font:inherit;color:inherit;background:none;border:0;cursor:pointer}
+code,pre{font-family:var(--mono)}
+::-webkit-scrollbar{width:8px;height:8px}
+::-webkit-scrollbar-thumb{background:#2c2c34;border-radius:99px}
+::-webkit-scrollbar-track{background:transparent}
+
+/* ══════════════ 原型控制条（不属于产品 UI） ══════════════ */
+.pt-bar{
+  height:54px; display:flex; align-items:center; gap:18px; padding:0 16px;
+  border-bottom:1px solid #26262e; background:#111114; z-index:300; position:relative;
+}
+.pt-brand{display:flex;align-items:center;gap:8px;font-weight:700;letter-spacing:.02em}
+.pt-brand .logo{color:var(--pink);font-size:15px}
+.pt-brand .vb{font-size:9px;font-weight:700;letter-spacing:.12em;color:#111;background:var(--purple);border-radius:3px;padding:1px 5px}
+.pt-lab{font-size:10px;color:var(--dim);letter-spacing:.06em}
+.seg{display:flex;border:1px solid var(--bd);border-radius:7px;overflow:hidden;background:var(--inset)}
+.seg button{padding:4px 10px;font-size:11px;color:var(--dim);border-right:1px solid var(--bd)}
+.seg button:last-child{border-right:0}
+.seg button.on{background:var(--purple-soft);color:var(--purple);box-shadow:inset 0 -2px 0 var(--purple)}
+.seg button:hover:not(.on){color:var(--ink)}
+.pt-group{display:flex;align-items:center;gap:7px}
+.pt-spacer{flex:1}
+.rec{display:flex;align-items:center;gap:6px;padding:0;font-size:10.5px;color:var(--dim);cursor:pointer;user-select:none}
+.rec:hover{color:var(--ink)}
+.rec .dot{width:7px;height:7px;border-radius:50%;background:var(--green);box-shadow:0 0 8px var(--green)}
+body[data-record="off"] .rec .dot{background:var(--dim);box-shadow:none}
+.rec b{color:var(--green);font-size:10px}
+body[data-record="off"] .rec b{color:var(--dim)}
+.pt-help{border:1px solid var(--bd);border-radius:7px;padding:4px 10px;font-size:11px;color:var(--dim)}
+.pt-help:hover{color:var(--ink);border-color:var(--dim)}
+.pt-fixed{font-size:11px;color:var(--purple);border:1px solid rgba(210,168,255,.35);background:var(--purple-soft);border-radius:6px;padding:3px 9px}
+
+/* ══════════════ 应用舞台 ══════════════ */
+.stage{
+  position:relative; height:calc(100vh - 54px);
+  display:grid; grid-template-columns:236px minmax(0,1fr) 64px;
+  overflow:hidden;
+}
+.sidebar{background:var(--idle);border-right:1px solid #232329;display:flex;flex-direction:column;min-height:0}
+.sb-head{padding:14px 14px 10px;display:flex;align-items:center;gap:8px}
+.sb-head .ttl{font-size:11px;font-weight:700;letter-spacing:.05em;color:var(--dim)}
+.sb-new{margin-left:auto;width:22px;height:22px;border:1px solid var(--bd);border-radius:6px;color:var(--dim);display:grid;place-items:center;font-size:13px}
+.sb-sec{padding:10px 8px 4px;font-size:9px;letter-spacing:.1em;color:#6c6e78;font-weight:700}
+.sb-item{display:flex;align-items:center;gap:8px;margin:1px 6px;padding:6px 8px;border-radius:7px;color:#bcbec7;font-size:11.5px;cursor:pointer}
+.sb-item:hover{background:#1b1b21}
+.sb-item.on{background:#221e29;color:var(--ink);box-shadow:inset 2px 0 0 var(--purple)}
+.sb-item .glyph{color:#6f7280;font-size:10px;width:12px;text-align:center}
+.sb-item.on .glyph{color:var(--purple)}
+.sb-item .nm{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.sb-item .tag{font-size:8.5px;color:#6f7280}
+.sb-item .live{width:6px;height:6px;border-radius:50%;background:var(--green)}
+.sb-div{height:1px;background:#232329;margin:8px 12px}
+.sb-foot{margin-top:auto;padding:10px 14px;border-top:1px solid #232329;display:flex;gap:8px;align-items:center;color:#6f7280;font-size:10px}
+.sb-foot .avatar{width:22px;height:22px;border-radius:50%;background:var(--purple-soft);color:var(--purple);display:grid;place-items:center;font-size:9px;font-weight:700}
+
+/* ── chat ── */
+.chat{display:flex;flex-direction:column;min-width:0;min-height:0;position:relative}
+.chat-top{height:44px;flex-shrink:0;display:flex;align-items:center;gap:9px;padding:0 20px;border-bottom:1px solid #1f1f26}
+.chat-top .t{font-size:12px;font-weight:700;color:var(--ink/90);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.chat-top .sub{font-size:10px;color:#6f7280;white-space:nowrap}
+.chip{display:inline-flex;align-items:center;gap:4px;height:20px;padding:0 7px;border-radius:5px;border:1px solid var(--bd);font-size:10px;color:var(--dim);white-space:nowrap}
+.chip.purple{border-color:rgba(210,168,255,.45);background:var(--purple-soft);color:var(--purple)}
+.chip.green{border-color:rgba(126,231,135,.35);background:var(--green-soft);color:var(--green)}
+.chip.cyan{border-color:rgba(79,209,217,.35);background:var(--cyan-soft);color:var(--cyan)}
+.chat-top .right{margin-left:auto;display:flex;align-items:center;gap:6px}
+
+.transcript{flex:1;min-height:0;overflow-y:auto;padding:18px 24px 6px}
+.transcript-in{max-width:900px;margin:0 auto}
+.tui-turn{margin-bottom:10px}
+.tui-user{display:flex;gap:9px;padding:3px 0;color:var(--ink)}
+.tui-user .prompt{color:var(--pink);font-weight:700;flex-shrink:0}
+.tui-msg{padding:2px 0 4px 0;border-left:2px solid transparent;border-radius:2px;transition:border-color .15s,background .15s}
+.tui-msg.is-selected{border-left-color:var(--purple);background:linear-gradient(90deg,rgba(210,168,255,.055),transparent 55%)}
+.tui-head{display:flex;align-items:baseline;gap:7px}
+.tui-head .mark{color:var(--pink);font-size:11px}
+.tui-head .who{font-size:11px;color:var(--dim)}
+.tui-body{white-space:pre-wrap;word-break:break-word;color:#d8d9de;padding:2px 0 0 18px}
+.tui-body b{color:var(--pink)}
+.tui-body code{background:#26262d;color:var(--green);border-radius:3px;padding:0 4px}
+.meta-row{display:flex;align-items:center;flex-wrap:wrap;gap:5px;margin:4px 0 0 18px;font-size:10.5px;color:#757784}
+.meta-row .st-ok{color:var(--green);font-weight:700}
+.meta-row .st-warn{color:var(--amber);font-weight:700}
+.meta-row .dur{color:var(--pink)}
+.meta-row .tok{color:var(--green)}
+.meta-row .cost{color:var(--amber)}
+.meta-row .call-link{margin-left:4px;font-size:10px;color:#8d7fa4;border:1px solid rgba(210,168,255,.25);border-radius:4px;padding:0 5px;height:17px;line-height:15px}
+.meta-row .call-link:hover{color:var(--purple);border-color:var(--purple);background:var(--purple-soft)}
+.role-switch{display:flex;align-items:center;gap:7px;flex-wrap:wrap;margin:2px 0 8px 18px;padding:5px 9px;border:1px dashed rgba(210,168,255,.38);border-radius:7px;background:rgba(210,168,255,.045);color:#b9a8d4;font-size:10.5px}
+.role-switch .glyph{color:var(--purple);font-weight:700}
+.role-switch b{color:var(--purple)}
+.role-switch .dim{color:#7d7f8a}
+.role-switch button{margin-left:auto;font-size:9.5px;color:var(--purple);border:1px solid rgba(210,168,255,.3);border-radius:4px;padding:1px 6px}
+.role-switch button:hover{background:var(--purple-soft)}
+.transcript-fold{display:flex;align-items:center;gap:8px;margin:10px 0 12px 18px;color:#63656f;font-size:9px}
+.transcript-fold:before,.transcript-fold:after{content:"";flex:1;height:1px;background:#26262e}
+
+/* composer */
+.composer{flex-shrink:0;padding:8px 20px 14px;background:linear-gradient(180deg,transparent,#0a0a0c 22%)}
+.composer-in{max-width:900px;margin:0 auto;border:1.5px solid var(--bd);border-radius:12px;background:var(--inset);overflow:hidden}
+.composer-chips{display:flex;align-items:center;gap:5px;padding:6px 8px 0}
+.composer-chips .grow{flex:1}
+.composer-line{display:flex;align-items:center;gap:7px;padding:7px 10px 4px}
+.composer-line .pr{color:var(--pink);font-weight:700}
+.composer-line input{flex:1;background:none;border:0;outline:none;color:var(--ink);font:inherit;font-size:12.5px}
+.composer-line input::placeholder{color:#5f616c}
+.composer-tools{display:flex;align-items:center;gap:8px;padding:2px 10px 7px;color:#6f7280;font-size:10px}
+.composer-tools .spacer{flex:1}
+.composer-tools .send{color:var(--pink);border:1px solid rgba(255,133,92,.4);background:var(--pink-soft);border-radius:5px;padding:1px 8px}
+
+/* ── dock ── */
+.dock{
+  border-left:1px solid #232329;background:rgba(28,28,34,.55);backdrop-filter:blur(12px);
+  display:flex;flex-direction:column;align-items:center;gap:6px;padding:10px 6px;
+}
+.dock-btn{
+  width:44px;height:42px;border-radius:10px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;
+  color:#8e909b;font-size:9px;line-height:1;position:relative;border:1px solid transparent;
+}
+.dock-btn:hover{background:rgba(255,255,255,.06);color:var(--ink)}
+.dock-btn.on{background:rgba(210,168,255,.13);color:var(--purple);border-color:rgba(210,168,255,.3)}
+.dock-btn .ic{font-size:16px;line-height:1}
+.dock-btn .dot{position:absolute;top:5px;left:5px;width:5px;height:5px;border-radius:50%;background:var(--amber)}
+.dock-btn .badge{
+  position:absolute;top:3px;right:3px;min-width:12px;height:12px;border-radius:99px;
+  background:var(--amber);color:#141414;font-size:8px;font-weight:800;
+  display:grid;place-items:center;padding:0 3px;line-height:1;
+}
+body[data-record="off"] .dock-btn .badge{display:none}
+.dock-div{width:26px;height:1px;background:rgba(255,255,255,.12);margin:4px 0}
+.dock-btn.rec-on .dot{background:var(--green);box-shadow:0 0 6px var(--green)}
+body[data-record="off"] .dock-btn.rec-on .dot{background:#5f616c;box-shadow:none}
+body[data-scenario="free"] .task-only{display:none}
+
+/* ══════════════ 检查器（作业坞浮窗，唯一落位） ══════════════ */
+.inspector{
+  position:absolute;z-index:60;display:flex;flex-direction:column;
+  left:calc(236px + (100% - 300px) / 2);top:50%;transform:translate(-50%,-50%);
+  width:min(1100px,calc(100% - 340px));height:min(760px,calc(100% - 64px));
+  background:var(--paper);border:1.5px solid var(--bd);border-radius:12px;
+  box-shadow:0 18px 56px rgba(0,0,0,.6);overflow:hidden;min-height:0;
+}
+.inspector[hidden]{display:none}
+
+.ins-head{
+  height:44px;flex-shrink:0;display:flex;align-items:center;gap:8px;padding:0 12px;
+  border-bottom:1px solid #2a2a32;background:linear-gradient(180deg,#232329,#1e1e24);
+}
+.ins-head .lights{display:flex;gap:4px;margin-right:2px}
+.ins-head .lights i{width:8px;height:8px;border-radius:50%;background:#3a3a44;display:block}
+.ins-head .lights i:nth-child(1){background:#5c3a39}
+.ins-head .lights i:nth-child(2){background:#5c503a}
+.ins-head .lights i:nth-child(3){background:#3a5c43}
+.ins-title{font-size:11.5px;font-weight:700;letter-spacing:.03em;display:flex;align-items:center;gap:6px}
+.ins-title .glyph{color:var(--purple)}
+.ins-chip{font-size:9.5px;color:var(--purple);border:1px solid rgba(210,168,255,.35);background:var(--purple-soft);border-radius:4px;padding:0 5px}
+.ins-sub{font-size:9.5px;color:#6f7280;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.ins-actions{margin-left:auto;display:flex;align-items:center;gap:4px}
+.ins-actions button{width:24px;height:24px;border-radius:6px;color:var(--dim);display:grid;place-items:center;font-size:12px}
+.ins-actions button:hover{background:rgba(255,255,255,.07);color:var(--ink)}
+.ins-actions .txt{width:auto;padding:0 7px;font-size:10px}
+
+/* 轨迹头：统计 + 轮次尺 */
+.traj-head{flex-shrink:0;display:flex;align-items:stretch;border-bottom:1px solid #26262e;background:#1a1a20;min-height:58px}
+.traj-sum{width:214px;flex-shrink:0;padding:7px 10px;border-right:1px solid #26262e;display:flex;flex-direction:column;justify-content:center;gap:2px}
+.traj-sum .k{font-size:8px;letter-spacing:.1em;color:#5f616c;font-weight:700}
+.traj-sum .r1{display:flex;align-items:baseline;gap:6px;font-size:10px;color:#8b8d98}
+.traj-sum .r1 b{font-size:12px;color:var(--ink)}
+.traj-sum .r1 .cost{margin-left:auto;color:var(--amber);font-weight:700}
+.traj-sum .r2{font-size:8.5px;color:#63656f}
+.traj-sum .r2 .s{color:var(--purple)}
+.traj-sum .r2 .a{color:var(--amber)}
+.ruler-wrap{flex:1;min-width:0;padding:7px 12px 6px;display:flex;flex-direction:column;gap:4px}
+.ruler{display:flex;align-items:flex-end;gap:1px;height:26px}
+.rk{position:relative;flex:1;min-width:3px;height:14px;border-radius:2px 2px 1px 1px;background:var(--c,#3a3a44);opacity:.68;transition:.12s;padding:0}
+.rk:hover{opacity:1;transform:scaleY(1.12)}
+.rk.sw{height:19px;opacity:.9}
+.rk.bad{box-shadow:inset 0 -3px 0 var(--amber)}
+.rk.err{box-shadow:inset 0 -3px 0 var(--red)}
+.rk.on{outline:1px solid var(--ink);outline-offset:1px;opacity:1;height:24px}
+.ruler-axis{display:flex;justify-content:space-between;align-items:center;font-size:8px;color:#5f616c;font-family:var(--mono)}
+.ruler-legend{display:flex;gap:8px;font-size:8px;color:#63656f;flex-wrap:wrap}
+.ruler-legend span{display:flex;align-items:center;gap:3px}
+.ruler-legend i{width:6px;height:6px;border-radius:1px;display:inline-block}
+
+.ins-body{display:flex;min-height:0;flex:1}
+.turnlist{
+  width:214px;flex-shrink:0;border-right:1px solid #26262e;background:#18181d;
+  display:flex;flex-direction:column;min-height:0;
+}
+.tl-tools{flex-shrink:0;padding:7px 8px 5px;border-bottom:1px solid #232329}
+.tl-tools .row{display:flex;align-items:center;gap:4px}
+.tl-cap{font-size:8.5px;letter-spacing:.08em;color:#63656f;font-weight:700}
+.latest-btn{margin-left:auto;font-size:8.5px;color:var(--purple);border:1px solid rgba(210,168,255,.3);border-radius:4px;padding:0 5px;height:16px;line-height:14px}
+.latest-btn:hover{background:var(--purple-soft)}
+.filters{display:flex;gap:3px;padding:5px 8px;flex-shrink:0;border-bottom:1px solid #232329}
+.filters button{font-size:8.5px;color:#7f818c;border:1px solid #2d2d36;border-radius:4px;padding:0 5px;height:17px;white-space:nowrap}
+.filters button:hover{color:var(--ink)}
+.filters button.on{color:var(--purple);border-color:rgba(210,168,255,.35);background:var(--purple-soft)}
+.tl-scroll{flex:1;min-height:0;overflow-y:auto;padding:5px 6px}
+.tl-row{
+  width:100%;text-align:left;display:block;padding:5px 6px;border-radius:6px;border:1px solid transparent;margin-bottom:1px;
+}
+.tl-row:hover{background:#1f1f26}
+.tl-row.on{background:var(--purple-soft);border-color:rgba(210,168,255,.28)}
+.tl-row .r1{display:flex;align-items:center;gap:4px}
+.tl-row .tid{font-size:10px;font-weight:700;color:var(--dim)}
+.tl-row.on .tid{color:var(--purple)}
+.tl-row .idn{font-size:9px;color:#8b8d98;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.tl-row .st{font-size:8.5px}
+.tl-row .time{margin-left:auto;font-size:8px;color:#5f616c}
+.tl-row .newtag{font-size:7.5px;color:var(--green);border:1px solid rgba(126,231,135,.3);border-radius:3px;padding:0 3px}
+.tl-row .r2{display:flex;align-items:center;gap:5px;margin-top:1px;font-size:8.5px;color:#63656f}
+.tl-row .r2 .dur{color:#8b8d98}
+.tl-row .r2 .warn{color:var(--amber)}
+.tl-row .r2 .err{color:var(--red)}
+.more-btn{
+  flex-shrink:0;margin:4px 7px 7px;padding:4px 6px;border:1px dashed #3a3a44;border-radius:6px;
+  font-size:8.5px;color:#8b8d98;text-align:center;
+}
+.more-btn:hover{color:var(--ink);border-color:var(--dim)}
+
+.ins-main{flex:1;display:flex;flex-direction:column;min-width:0;min-height:0}
+.tabs{display:flex;align-items:stretch;height:37px;flex-shrink:0;border-bottom:1px solid #26262e;padding:0 8px;overflow-x:auto}
+.tab{padding:0 10px;font-size:10.5px;color:#7f818c;border-bottom:2px solid transparent;display:flex;align-items:center;gap:5px;white-space:nowrap}
+.tab:hover{color:var(--ink)}
+.tab.on{color:var(--ink);border-bottom-color:var(--purple)}
+.tab .n{font-size:8.5px;color:var(--purple);background:var(--purple-soft);border-radius:99px;padding:0 4px}
+.pane{flex:1;min-height:0;overflow-y:auto;padding:12px 14px 22px}
+
+/* pane 通用 */
+.sec{display:flex;align-items:center;gap:6px;margin:2px 0 7px;font-size:9.5px;font-weight:700;letter-spacing:.08em;color:#7f818c}
+.sec .line{flex:1;height:1px;background:#2a2a32}
+.sec .lnk{font-weight:400;letter-spacing:0;color:var(--purple);font-size:9.5px}
+.note{font-size:9.5px;color:#6f7280;line-height:1.55;margin:5px 0 0}
+.note b{color:#a9abb5;font-weight:700}
+.callout{margin-top:9px;padding:7px 9px;border-left:2px solid var(--purple);background:rgba(210,168,255,.05);border-radius:0 6px 6px 0;font-size:9.5px;line-height:1.6;color:#a9abb5}
+.callout b{color:var(--purple);font-weight:700}
+.callout.warn{border-left-color:var(--amber);background:rgba(255,200,87,.05)}
+.callout.warn b{color:var(--amber)}
+
+.ov-hero{display:flex;align-items:center;gap:8px;margin-bottom:10px}
+.ov-hero .who{font-size:13px;font-weight:700}
+.ov-hero .glyph{color:var(--purple)}
+.ov-note{font-size:10px;color:#9a9ca6;line-height:1.55;margin-bottom:10px;padding:6px 9px;background:#18181d;border:1px solid #26262e;border-radius:6px}
+.stat-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:6px;margin-bottom:10px}
+.stat{border:1px solid #2a2a32;border-radius:8px;padding:7px 8px;background:#18181d;min-width:0}
+.stat .k{font-size:8.5px;letter-spacing:.07em;color:#6f7280;font-weight:700}
+.stat .v{font-size:15px;font-weight:700;margin-top:2px;line-height:1.15;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.stat .s{font-size:8.5px;color:#6f7280;margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.stat.pink .v{color:var(--pink)} .stat.green .v{color:var(--green)}
+.stat.amber .v{color:var(--amber)} .stat.cyan .v{color:var(--cyan)} .stat.purple .v{color:var(--purple)}
+.kv{border:1px solid #2a2a32;border-radius:8px;overflow:hidden;margin-bottom:10px}
+.kv-row{display:flex;gap:10px;padding:5px 8px;border-bottom:1px solid #26262e;font-size:10px}
+.kv-row:last-child{border-bottom:0}
+.kv-row .k{width:112px;flex-shrink:0;color:#6f7280}
+.kv-row .val{flex:1;min-width:0;color:#c7c8cf;word-break:break-all}
+.kv-row .val code{color:var(--cyan);font-size:9.5px}
+.chips{display:flex;flex-wrap:wrap;gap:4px;margin-bottom:10px}
+.tag{display:inline-flex;align-items:center;gap:3px;border:1px solid #30303a;background:#19191f;border-radius:4px;padding:0 6px;height:18px;font-size:9px;color:#8b8d98}
+.tag.p{border-color:rgba(210,168,255,.35);background:var(--purple-soft);color:var(--purple)}
+.tag.g{border-color:rgba(126,231,135,.3);background:var(--green-soft);color:var(--green)}
+.tag.a{border-color:rgba(255,200,87,.3);background:var(--amber-soft);color:var(--amber)}
+.tag.r{border-color:rgba(255,92,92,.3);background:rgba(255,92,92,.08);color:var(--red)}
+.bar{height:6px;border-radius:99px;background:#26262e;overflow:hidden;display:flex}
+.bar i{display:block;height:100%}
+.bar-cap{display:flex;justify-content:space-between;font-size:8.5px;color:#6f7280;margin-top:3px}
+.legend{display:flex;flex-wrap:wrap;gap:7px;margin-top:5px;font-size:8.5px;color:#6f7280}
+.legend span{display:inline-flex;align-items:center;gap:3px}
+.legend i{width:6px;height:6px;border-radius:2px;display:inline-block}
+
+pre.code{
+  background:var(--inset);border:1px solid #26262e;border-radius:7px;padding:8px 10px;
+  font-size:9.5px;line-height:1.6;color:#c7c8cf;white-space:pre-wrap;word-break:break-word;
+  max-height:220px;overflow:auto;
+}
+pre.code .c{color:#6f7280}
+pre.code .k{color:var(--purple)}
+pre.code .s{color:var(--green)}
+pre.code .n{color:var(--cyan)}
+
+.mini-seg{display:inline-flex;border:1px solid #30303a;border-radius:5px;overflow:hidden;background:var(--inset);margin-left:auto}
+.mini-seg button{padding:1px 7px;font-size:9px;color:#7f818c;border-right:1px solid #30303a}
+.mini-seg button:last-child{border-right:0}
+.mini-seg button.on{background:var(--purple-soft);color:var(--purple)}
+.mini-seg button:hover:not(.on){color:var(--ink)}
+
+.seg-list{border:1px solid #2a2a32;border-radius:8px;overflow:hidden;margin-bottom:8px}
+.seg-row{border-bottom:1px solid #26262e;background:#18181d}
+.seg-row:last-child{border-bottom:0}
+.seg-row summary{list-style:none;display:flex;align-items:center;gap:6px;padding:5px 8px;cursor:pointer;font-size:10px}
+.seg-row summary::-webkit-details-marker{display:none}
+.seg-row summary:hover{background:#1e1e25}
+.seg-row .nm{color:#d3d4da;font-weight:700;min-width:104px}
+.seg-row .src{font-size:8.5px;color:#6f7280;border:1px solid #2e2e38;border-radius:3px;padding:0 4px}
+.seg-row .barwrap{flex:1;min-width:40px;max-width:100px}
+.seg-row .bar{height:4px}
+.seg-row .tk{width:64px;text-align:right;color:#8b8d98;font-size:9px}
+.seg-row .bud{width:58px;text-align:right;color:#63656f;font-size:8.5px}
+.seg-row .badge{font-size:8px;color:var(--amber);border:1px solid rgba(255,200,87,.3);background:var(--amber-soft);border-radius:3px;padding:0 3px}
+.seg-row .arrow{color:#63656f;font-size:9px;margin-left:2px}
+.seg-row[open] .arrow{transform:rotate(90deg)}
+.seg-body{padding:2px 10px 8px 14px;border-left:1px solid #2e2e38;margin:0 8px 0 8px}
+.seg-body pre{font-size:9px;line-height:1.6;color:#9fa1ab;white-space:pre-wrap;max-height:180px;overflow:auto;background:var(--inset);border-radius:5px;padding:6px 8px}
+.freeze{display:flex;align-items:center;gap:6px;flex-wrap:wrap;padding:6px 8px;background:rgba(210,168,255,.045);border:1px dashed rgba(210,168,255,.3);border-radius:7px;margin-bottom:8px;font-size:9px;color:#a9abb5}
+.freeze b{color:var(--purple)}
+.freeze code{color:var(--cyan);font-size:9px}
+.freeze .ok{margin-left:auto;color:var(--green);font-size:8.5px}
+
+.runtime-table{width:100%;border-collapse:collapse;font-size:9.5px;margin-top:4px}
+.runtime-table td{padding:3px 4px;border-bottom:1px solid #232329}
+.runtime-table td:last-child{text-align:right;color:#a9abb5;font-variant-numeric:tabular-nums}
+.runtime-table .sw{width:7px;height:7px;border-radius:2px;display:inline-block;margin-right:5px}
+.runtime-table tr:last-child td{border-bottom:0}
+details.plain{border:1px solid #2a2a32;border-radius:8px;background:#18181d;margin-bottom:8px}
+details.plain>summary{list-style:none;padding:6px 8px;font-size:9.5px;color:#9a9ca6;cursor:pointer;display:flex;align-items:center;gap:5px}
+details.plain>summary::-webkit-details-marker{display:none}
+details.plain>summary:hover{color:var(--ink)}
+details.plain>summary .arw{color:#63656f;font-size:9px}
+details.plain[open]>summary .arw{transform:rotate(90deg)}
+details.plain .inner{padding:0 8px 8px}
+
+/* identity */
+.switch-banner{display:flex;align-items:center;gap:8px;padding:8px 10px;border:1px solid rgba(210,168,255,.35);background:linear-gradient(90deg,rgba(210,168,255,.09),rgba(210,168,255,.02));border-radius:8px;margin-bottom:10px}
+.switch-banner .from{color:#9a9ca6}
+.switch-banner .arr{color:var(--purple);font-weight:700}
+.switch-banner .to{color:var(--purple);font-weight:700}
+.switch-banner .rev{margin-left:auto;font-size:8.5px;color:#8b8d98;border:1px solid #34343e;border-radius:4px;padding:0 5px}
+.diff{width:100%;border-collapse:collapse;font-size:9.5px;margin-bottom:9px}
+.diff th{text-align:left;font-size:8.5px;letter-spacing:.06em;color:#6f7280;padding:4px 6px;border-bottom:1px solid #2a2a32}
+.diff td{padding:5px 6px;border-bottom:1px solid #232329;vertical-align:top}
+.diff td:first-child{width:96px;color:#6f7280}
+.diff td.before{color:#8b8d98;width:34%}
+.diff td.after{color:#d3d4da;width:38%}
+.diff .add{color:var(--green)}
+.diff .same{color:#6f7280}
+.role-card pre{max-height:260px}
+.empty{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:8px;padding:34px 10px;text-align:center;color:#6f7280;font-size:10px}
+.empty .big{font-size:20px;color:#4a4b55}
+
+/* sdk */
+.opt-list{border:1px solid #2a2a32;border-radius:8px;overflow:hidden;margin-bottom:9px}
+.opt-row{display:flex;gap:8px;padding:4px 8px;border-bottom:1px solid #232329;font-size:9.5px}
+.opt-row:last-child{border-bottom:0}
+.opt-row .k{width:118px;flex-shrink:0;color:var(--cyan)}
+.opt-row .v{flex:1;min-width:0;color:#c7c8cf;word-break:break-all}
+.opt-row .v .muted{color:#63656f}
+.two-col{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+@media (max-width:760px){.two-col{grid-template-columns:1fr}}
+.tool-table{width:100%;border-collapse:collapse;font-size:9px}
+.tool-table td{padding:3px 4px;border-bottom:1px solid #232329}
+.tool-table td:last-child{text-align:right;color:#8b8d98;font-variant-numeric:tabular-nums;white-space:nowrap}
+.tool-table .nm{color:#c7c8cf}
+.tool-table .sv{color:#6f7280;font-size:8px}
+.tool-table tr:last-child td{border-bottom:0}
+.mini-bar{height:3px;border-radius:99px;background:#26262e;overflow:hidden;margin-top:2px}
+.mini-bar i{display:block;height:100%;background:var(--cyan)}
+.skill-list{display:flex;flex-wrap:wrap;gap:4px;margin-top:4px}
+
+/* timeline */
+.tl-head{display:flex;gap:8px;align-items:center;margin-bottom:8px;font-size:9.5px;color:#8b8d98}
+.tl-head b{color:var(--pink)}
+.tl-head .sp{flex:1}
+.tl{position:relative;margin-left:7px;padding-left:14px;border-left:1px solid #2e2e38}
+.tl-ev{position:relative;padding:3px 0 5px}
+.tl-ev::before{content:"";position:absolute;left:-19px;top:8px;width:7px;height:7px;border-radius:50%;background:#3a3a44;border:1px solid #4a4a56}
+.tl-ev.init::before{background:var(--cyan);border-color:var(--cyan)}
+.tl-ev.llm::before{background:var(--pink);border-color:var(--pink)}
+.tl-ev.tool::before{background:var(--amber);border-color:var(--amber)}
+.tl-ev.res::before{background:var(--green);border-color:var(--green)}
+.tl-ev.err::before{background:var(--red);border-color:var(--red)}
+.tl-ev .r1{display:flex;align-items:baseline;gap:7px;font-size:9.5px}
+.tl-ev .off{width:50px;flex-shrink:0;text-align:right;color:#63656f;font-variant-numeric:tabular-nums}
+.tl-ev .lbl{font-weight:700;color:#d3d4da}
+.tl-ev .det{color:#7f818c;font-size:9px;margin-left:auto;text-align:right}
+.tl-ev .sub{margin-left:57px;font-size:8.5px;color:#63656f;white-space:pre-wrap;word-break:break-word}
+
+/* toast */
+.toast{position:fixed;left:50%;bottom:24px;transform:translateX(-50%) translateY(12px);opacity:0;pointer-events:none;background:#232329;border:1px solid #3a3a44;border-radius:7px;padding:5px 12px;font-size:10px;color:var(--ink);z-index:999;transition:.18s}
+.toast.show{opacity:1;transform:translateX(-50%) translateY(0)}
+
+/* ══════════════ 设计说明 ══════════════ */
+.notes{
+  position:fixed;top:54px;right:0;bottom:0;width:500px;max-width:calc(100vw - 24px);z-index:500;
+  background:#141418;border-left:1.5px solid #34343e;box-shadow:-20px 0 60px rgba(0,0,0,.55);
+  overflow-y:auto;padding:18px 20px 40px;font-family:var(--ui);font-size:12px;line-height:1.7;color:#c7c8cf;
+}
+.notes[hidden]{display:none}
+.notes h2{font-family:var(--mono);font-size:12px;letter-spacing:.06em;color:var(--purple);margin:18px 0 8px;display:flex;align-items:center;gap:8px}
+.notes h2:first-child{margin-top:0}
+.notes h2 .n{font-size:9px;background:var(--purple-soft);border:1px solid rgba(210,168,255,.3);border-radius:3px;padding:0 5px}
+.notes h3{font-family:var(--mono);font-size:11px;color:var(--ink);margin:12px 0 4px}
+.notes p{margin:5px 0;color:#a9abb5}
+.notes b{color:var(--ink)}
+.notes code{background:#232329;border-radius:3px;padding:0 4px;font-size:10.5px;color:var(--green)}
+.notes ul{margin:5px 0 5px 18px}
+.notes li{margin:3px 0;color:#a9abb5}
+.notes .lead{font-size:13px;color:var(--ink);line-height:1.65}
+.notes .lead em{color:var(--purple);font-style:normal;font-weight:700}
+.cmp{width:100%;border-collapse:collapse;font-size:10.5px;margin:8px 0;font-family:var(--mono)}
+.cmp th,.cmp td{border:1px solid #2e2e38;padding:5px 7px;text-align:left;vertical-align:top}
+.cmp th{background:#1c1c22;color:#8b8d98;font-size:9.5px;font-weight:700}
+.cmp td:first-child{color:#8b8d98;white-space:nowrap}
+.cmp .win{color:var(--green)}
+.cmp .lose{color:var(--red)}
+.notes .pill{display:inline-block;border:1px solid rgba(210,168,255,.35);background:var(--purple-soft);color:var(--purple);border-radius:4px;padding:0 6px;font-family:var(--mono);font-size:9.5px;margin-right:4px}
+.notes .gap{background:rgba(255,200,87,.05);border-left:2px solid var(--amber);padding:8px 10px;border-radius:0 6px 6px 0;margin:8px 0}
+.notes .gap b{color:var(--amber)}
+.notes .q{border:1px solid #30303a;border-radius:7px;padding:8px 10px;margin:6px 0;background:#18181d}
+.notes .q b{color:var(--cyan)}
+.close-notes{position:sticky;top:0;float:right;width:26px;height:26px;border:1px solid #3a3a44;border-radius:6px;color:#8b8d98;background:#1c1c22;z-index:2}
+.close-notes:hover{color:var(--ink)}
+.anno{display:none;width:14px;height:14px;border-radius:50%;background:var(--purple);color:#0A0A0C;font-size:8.5px;font-weight:800;align-items:center;justify-content:center;font-family:var(--mono);flex-shrink:0}
+body.anno-on .anno{display:inline-flex}
+body[data-scenario="free"] .task-only{display:none!important}
+</style>
+</head>
+<body data-scenario="task" data-record="on" class="anno-on">
+<!-- ══════════════ 原型控制条 ══════════════ -->
+<header class="pt-bar">
+  <div class="pt-brand"><span class="logo">✳</span> octopus <span class="vb">PROTOTYPE</span></div>
+
+  <div class="pt-group">
+    <span class="pt-lab">入口</span>
+    <span class="pt-fixed">只放作业坞 · 调试</span>
+  </div>
+
+  <div class="pt-group">
+    <span class="pt-lab">场景</span>
+    <div class="seg" id="scenario-seg">
+      <button data-scenario="task" class="on">任务线程</button>
+      <button data-scenario="free">纯会话</button>
+    </div>
+  </div>
+
+  <div class="pt-group">
+    <span class="pt-lab">轨迹规模</span>
+    <div class="seg" id="scale-seg">
+      <button data-scale="12">12 轮</button>
+      <button data-scale="32" class="on">32 轮</button>
+      <button data-scale="80">80 轮</button>
+    </div>
+  </div>
+
+  <div class="pt-spacer"></div>
+  <button class="rec" id="rec-toggle" title="演示：关闭后不新增记录，历史轮仍可查看">
+    <span class="dot"></span> 调试记录 <b id="rec-label">ON</b>
+  </button>
+  <button class="pt-help" id="anno-btn" title="显示/隐藏设计标注">标注</button>
+  <button class="pt-help" id="notes-btn">设计说明 ⌘/</button>
+</header>
+
+<!-- ══════════════ 应用舞台 ══════════════ -->
+<div class="stage" id="stage">
+
+  <!-- 侧栏 -->
+  <aside class="sidebar">
+    <div class="sb-head">
+      <span class="ttl">会话</span>
+      <button class="sb-new" title="新会话">＋</button>
+    </div>
+    <div class="sb-sec">进行中</div>
+    <div class="sb-item on">
+      <span class="glyph">✳</span><span class="nm">SDK 调用面板 · 前端组件落地</span><span class="live"></span>
+    </div>
+    <div class="sb-item">
+      <span class="glyph">▣</span><span class="nm">任务页交互走查</span><span class="tag">T-014</span>
+    </div>
+    <div class="sb-item">
+      <span class="glyph">▣</span><span class="nm">知识库索引重建</span><span class="tag">T-011</span>
+    </div>
+    <div class="sb-sec">最近</div>
+    <div class="sb-item"><span class="glyph">❯</span><span class="nm">moa 多专家评审跑一轮</span></div>
+    <div class="sb-item"><span class="glyph">❯</span><span class="nm">把归档清理脚本补上测试</span></div>
+    <div class="sb-item"><span class="glyph">❯</span><span class="nm">讲解一下 swarm dispatch</span></div>
+    <div class="sb-div"></div>
+    <div class="sb-item"><span class="glyph">◈</span><span class="nm">前端专家</span><span class="tag">分身</span></div>
+    <div class="sb-item"><span class="glyph">◈</span><span class="nm">代码评审员</span><span class="tag">分身</span></div>
+    <div class="sb-foot">
+      <span class="avatar">ZF</span>
+      <span>open-octopus</span>
+      <span style="margin-left:auto;color:#5f616c">⌘K</span>
+    </div>
+  </aside>
+
+  <!-- 对话 -->
+  <main class="chat" id="chat-col">
+    <div class="chat-top">
+      <span class="t">侧栏组件落地 · 评审收尾</span>
+      <span class="chip purple task-only">▣ T-20261031-014</span>
+      <span class="chip green">● 记录中</span>
+      <div class="right">
+        <span class="chip task-only">规格</span>
+        <span class="chip">上下文 19.2%</span>
+      </div>
+    </div>
+
+    <div class="transcript" id="transcript">
+      <div class="transcript-in">
+
+        <!-- T1 -->
+        <div class="tui-turn">
+          <div class="tui-user"><span class="prompt">❯</span><span>你先把任务页的交互跑一遍，看看哪里卡。</span></div>
+          <div class="tui-msg">
+            <div class="tui-head"><span class="mark">✳</span><span class="who">主 Agent · T1</span></div>
+            <div class="tui-body">跑完了。任务页有三处卡点：<b>①</b> 验收台的阶段切换会整页重挂载；<b>②</b> 变更窗的 diff 在 300 文件以上时首屏 2.4s；<b>③</b> 侧栏在窗口缩放时有 1 帧跳变。先修哪个？</div>
+            <div class="meta-row">
+              <span class="st-ok">已完成</span><span>·</span><span class="dur">8.4s</span><span>·</span>
+              <span>9 步</span><span>·</span><span>工具 1</span><span>·</span><span class="tok">5.4k tok</span><span>·</span>
+              <span class="cost">$0.028</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- 身份切换标记 T2 -->
+        <div class="role-switch">
+          <span class="glyph">⇄</span>
+          <span>已切换身份 · <b>前端专家</b></span>
+          <span class="dim">T2 起生效 · 岗位包 2,180 tok</span>
+          <button data-open-turn="T2" data-tab="identity">在调试中查看岗位包</button>
+        </div>
+
+        <!-- T2 -->
+        <div class="tui-turn">
+          <div class="tui-user"><span class="prompt">❯</span><span>把这套设计稿落成组件吧，先做侧栏，再接到任务页。</span></div>
+          <div class="tui-msg">
+            <div class="tui-head"><span class="mark">✳</span><span class="who">前端专家 · T2</span></div>
+            <div class="tui-body">先落侧栏。按现有 pop-* 令牌拆成三层：<code>SidebarShell</code>（几何/滚动）→ <code>SessionList</code>（数据/虚拟化）→ <code>SessionRow</code>（状态）。任务页接入时只替换列表容器，不动行组件。</div>
+            <div class="meta-row">
+              <span class="st-ok">已完成</span><span>·</span><span class="dur">26.1s</span><span>·</span>
+              <span>37 步</span><span>·</span><span>工具 3</span><span>·</span><span class="tok">12.9k tok</span><span>·</span>
+              <span class="cost">$0.083</span>
+            </div>
+          </div>
+        </div>
+
+        <div class="transcript-fold" id="transcript-fold">T3–T27 共 25 轮已折叠 · 完整轨迹见右侧作业坞「调试」</div>
+
+        <!-- 身份切换标记 T28 -->
+        <div class="role-switch">
+          <span class="glyph">⇄</span>
+          <span>已切换身份 · <b>代码评审员</b></span>
+          <span class="dim" id="reviewer-switch-when">T28 起生效 · 岗位包 1,640 tok</span>
+          <button id="reviewer-switch-link" data-open-turn="T28" data-tab="identity">在调试中查看岗位包</button>
+        </div>
+
+        <!-- T28 -->
+        <div class="tui-turn">
+          <div class="tui-user"><span class="prompt">❯</span><span>评审一下侧栏接入，重点看焦点顺序。</span></div>
+          <div class="tui-msg">
+            <div class="tui-head"><span class="mark">✳</span><span class="who" id="reviewer-who">代码评审员 · T28</span></div>
+            <div class="tui-body">先看焦点：侧栏打开时焦点落到第一行，关闭后回不到触发按钮；任务页的滚动容器还多套了一层。两条阻塞，先修。</div>
+            <div class="meta-row">
+              <span class="st-ok">已完成</span><span>·</span><span class="dur">18.2s</span><span>·</span>
+              <span>21 步</span><span>·</span><span>工具 2</span><span>·</span><span class="tok">8.4k tok</span><span>·</span>
+              <span class="cost">$0.052</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- T31 -->
+        <div class="tui-turn">
+          <div class="tui-user"><span class="prompt">❯</span><span>跑一下 a11y 测试，把阻塞项列出来。</span></div>
+          <div class="tui-msg">
+            <div class="tui-head"><span class="mark">✳</span><span class="who" id="reviewer-mid-who">代码评审员 · T31</span></div>
+            <div class="tui-body">测试 3 通过 2 失败；失败项都是焦点回收。已把阻塞项写成三条，另有一条建议项（暗色对比度 4.1:1）。</div>
+            <div class="meta-row">
+              <span class="st-ok">已完成</span><span>·</span><span class="dur">12.4s</span><span>·</span>
+              <span>16 步</span><span>·</span><span>工具 3</span><span>·</span><span class="tok">7.1k tok</span><span>·</span>
+              <span class="cost">$0.044</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- T32 -->
+        <div class="tui-turn">
+          <div class="tui-user"><span class="prompt">❯</span><span>按这个结论收尾，把阻塞项写成三条。</span></div>
+          <div class="tui-msg">
+            <div class="tui-head"><span class="mark">✳</span><span class="who" id="reviewer-last-who">代码评审员 · T32</span></div>
+            <div class="tui-body">收尾完成：<b>①</b> 焦点回收；<b>②</b> 滚动容器去嵌套；<b>③</b> 暗色对比度补到 4.5:1。改动已落盘，测试全绿。</div>
+            <div class="meta-row">
+              <span class="st-ok">已完成</span><span>·</span><span class="dur">9.8s</span><span>·</span>
+              <span>12 步</span><span>·</span><span>工具 2</span><span>·</span><span class="tok">6.2k tok</span><span>·</span>
+              <span class="cost">$0.038</span>
+              <span style="margin-left:auto;color:#6f6550">最新一轮 · 右侧调试默认打开</span>
+            </div>
+          </div>
+        </div>
+
+      </div>
+    </div>
+
+    <div class="composer">
+      <div class="composer-in">
+        <div class="composer-chips">
+          <span class="chip purple">◈ 代码评审员</span>
+          <span class="chip">pro · high</span>
+          <span class="chip">200K</span>
+          <span class="chip cyan">ctx 19.2%</span>
+          <span class="grow"></span>
+          <span class="chip" style="border-style:dashed">调试在右侧坞 →</span>
+        </div>
+        <div class="composer-line">
+          <span class="pr">❯</span>
+          <input placeholder="问代码评审员…　⏎ 发送 · ⇧⏎ 排队 · Alt⏎ 换行  ·  调试入口：作业坞「调试」">
+        </div>
+        <div class="composer-tools">
+          <span>＋ 挂载</span><span>@ 委派</span><span>/ 技能</span>
+          <span class="spacer"></span>
+          <span>⏎ 发送</span><span class="send">➤</span>
+        </div>
+      </div>
+    </div>
+  </main>
+
+  <!-- 作业坞 -->
+  <nav class="dock" aria-label="作业坞">
+    <button class="dock-btn" title="文件"><span class="ic">▤</span><span>文件</span></button>
+    <button class="dock-btn" title="后台活动"><span class="ic">◌</span><span>活动</span></button>
+    <button class="dock-btn" title="消耗"><span class="ic">▥</span><span>消耗</span></button>
+    <button class="dock-btn rec-on" id="dock-debug" title="调用检查器（跨轮轨迹）">
+      <span class="ic">⌘</span><span>调试</span><span class="dot"></span>
+      <span class="badge" id="dock-debug-badge">4</span>
+      <span class="anno" style="position:absolute;top:-7px;left:-10px" title="唯一入口：作业坞常驻，不依赖某条消息">③</span>
+    </button>
+    <div class="dock-div"></div>
+    <button class="dock-btn task-only" title="规格"><span class="ic">▯</span><span>规格</span></button>
+    <button class="dock-btn task-only" title="变更"><span class="ic">±</span><span>变更</span></button>
+    <button class="dock-btn task-only" title="运行"><span class="ic">▷</span><span>运行</span></button>
+    <button class="dock-btn task-only" title="验收"><span class="ic">✓</span><span>验收</span></button>
+    <button class="dock-btn task-only" title="产物"><span class="ic">▢</span><span>产物</span></button>
+    <button class="dock-btn task-only" title="归档"><span class="ic">⌸</span><span>归档</span></button>
+  </nav>
+
+  <!-- 检查器：作业坞浮窗（唯一落位） -->
+  <section class="inspector" id="inspector" aria-label="Agent 调用检查器">
+    <header class="ins-head">
+      <div class="lights"><i></i><i></i><i></i></div>
+      <div class="ins-title"><span class="glyph">⌘</span> 调用检查器 <span class="ins-chip" id="ins-turn-chip">T32</span></div>
+      <span class="ins-sub" id="ins-sub">已记录 · 9.8s · $0.038</span>
+      <div class="ins-actions">
+        <button class="txt" id="ins-prev" title="更早一轮">‹</button>
+        <button class="txt" id="ins-next" title="更新一轮">›</button>
+        <button id="ins-copy" title="复制本轮快照 JSON">{ }</button>
+        <button id="ins-close" title="关闭">✕</button>
+      </div>
+    </header>
+
+    <div class="traj-head">
+      <div class="traj-sum" id="traj-sum"></div>
+      <div class="ruler-wrap">
+        <div class="ruler" id="ruler"></div>
+        <div class="ruler-axis">
+          <span id="ruler-left">T1</span>
+          <span class="ruler-legend">
+            <span><i style="background:var(--pink)"></i>主 Agent</span>
+            <span><i style="background:var(--purple)"></i>前端专家</span>
+            <span><i style="background:var(--cyan)"></i>代码评审员</span>
+            <span><i style="background:var(--amber)"></i>异常</span>
+          </span>
+          <span id="ruler-right">T32</span>
+        </div>
+      </div>
+    </div>
+
+    <div class="ins-body">
+      <aside class="turnlist">
+        <div class="tl-tools">
+          <div class="row">
+            <span class="tl-cap" id="tl-cap">轮次 · 最新在前</span>
+            <span class="anno" title="默认先看到最新一轮；列表按轮次倒序">①</span>
+            <button class="latest-btn" id="latest-btn">↑ 最新</button>
+          </div>
+        </div>
+        <div class="filters" id="filters">
+          <button data-filter="all" class="on">全部</button>
+          <button data-filter="switch">切换</button>
+          <button data-filter="anomaly">异常</button>
+          <span class="anno" title="20–30 轮以上时，用过滤代替翻找；默认只展开最近 10 轮">②</span>
+        </div>
+        <div class="tl-scroll" id="turnlist"></div>
+        <button class="more-btn" id="more-btn" hidden></button>
+      </aside>
+      <div class="ins-main">
+        <nav class="tabs" id="tabs">
+          <button class="tab on" data-tab="overview">概览</button>
+          <button class="tab" data-tab="prompt">Prompt</button>
+          <button class="tab" data-tab="identity">身份 <span class="n" id="identity-dot" hidden>!</span></button>
+          <button class="tab" data-tab="sdk">SDK</button>
+          <button class="tab" data-tab="timeline">时间线</button>
+        </nav>
+        <div class="pane" id="pane"></div>
+      </div>
+    </div>
+  </section>
+</div>
+
+<!-- ══════════════ 设计说明 ══════════════ -->
+<aside class="notes" id="notes" hidden>
+  <button class="close-notes" id="notes-close" title="关闭">✕</button>
+
+  <h2><span class="n">决定</span> 只放作业坞「调试」</h2>
+  <p class="lead">对话区保持纯净转录，不加入口；调试是窗口级工具，和「消耗 / 运行」同层。</p>
+  <p>入口 = 作业坞的第四格（文件 / 活动 / 消耗 / <b>调试</b>）。琥珀徽标显示异常轮数，绿点表示正在记录，<code>⌘⇧D</code> 作为键盘兜底。</p>
+
+  <h2><span class="n">01</span> 多轮：先看到最新，再按需往回</h2>
+  <ul>
+    <li><b>默认最新</b>：打开窗口直接落在 T32（最新一轮），列表倒序；12 / 32 / 80 轮都一样。</li>
+    <li><b>轮次尺</b>：顶部一根 tick 代表一轮，颜色 = 身份（主 Agent 粉 / 前端专家紫 / 代码评审员青），底部横线 = 异常；点任意 tick 直达该轮，旧轮自动展开并滚到该行。80 轮仍能一屏放下。</li>
+    <li><b>折叠</b>：默认只展开最近 10 轮；更早的收成「显示更早的 22 轮」。过滤态显示全部匹配项，不做二次折叠。</li>
+    <li><b>过滤</b>：全部 / 切换 / 异常，带实时计数；切换过滤时若当前轮不匹配，自动跳到第一个匹配轮。</li>
+    <li><b>回顶</b>：列表右上「↑ 最新」一键回到最新轮；滚到旧轮后不用手动找。</li>
+    <li><b>密度</b>：两行约 36px，一屏约 13 行；≤100 轮不需要虚拟列表，再大再上窗口化。</li>
+  </ul>
+  <p style="color:#6f7280;font-family:var(--mono);font-size:9.5px">顶部控制条可直接切 12 / 32 / 80 轮验证；轮次尺与列表同步。</p>
+
+  <h2><span class="n">02</span> 五个页签各回答什么</h2>
+  <ul>
+    <li><b>概览</b>：这一轮值不值得细看——耗时、首 token、token 拆分、成本、上下文占比、停止原因、身份 revision。</li>
+    <li><b>Prompt</b>：用户消息「原始 vs 实际发送」；system prompt = SDK preset（claude_code，不可见全文）+ append 片段栈；每段预算/截断/冻结快照；SDK 运行时回报的分段 token。</li>
+    <li><b>身份</b>：切换前后 diff（persona / SKILL / memory / cwd / agents / MCP）、role revision、岗位包全文；解释「为什么 system prompt 没变」。</li>
+    <li><b>SDK</b>：实际 <code>sendQuery</code> options 快照、agents 名册、MCP server/tools、system tools、skills、slash commands、raw JSON。</li>
+    <li><b>时间线</b>：subprocess 启动 → init → message_start → 工具 → result，每步毫秒偏移；中止轮标 <code>interrupt()</code> 与带用量的 error result。</li>
+  </ul>
+
+  <h2><span class="n">03</span> 为什么只放坞是成立的</h2>
+  <ul>
+    <li>对话区是转录，不该承担窗口级工具；坞已有「消耗 / 运行」这类读数，调试与它们同层。</li>
+    <li>没有逐消息角标，消息 meta 行保持原样，转录更安静。</li>
+    <li>深链仍保留：身份切换卡上的「在调试中查看岗位包」把窗口定位到对应轮的<b>身份</b>页签；它不是调试入口，只是上下文跳转。</li>
+  </ul>
+  <p style="color:#6f7280;font-family:var(--mono);font-size:9.5px">实现落点：<code>TaskModule</code> 增加 <code>'debug'</code>，复用 <code>TaskWindow</code> 的拖动 / 最小化 / 几何持久化；本原型只画内容层。</p>
+  <div class="gap">
+    <b>落实现前必须解决：</b>现有 <code>WorkspaceExplorerDock</code> 在 <code>!workspaceId</code> 时直接 <code>return null</code>，纯会话会没有坞、也就没有调试入口。两个选项：① 坞在纯会话也挂载（只显示 文件 / 活动 / 消耗 / 调试）；② 保留 <code>⌘⇧D</code> 与窗口菜单的兜底入口。原型按 ① 展示。
+  </div>
+
+  <h2><span class="n">04</span> 后端：已经有的，和缺的</h2>
+  <h3>已具备</h3>
+  <ul>
+    <li><code>session_prompt_snapshots</code> 存了本会话冻结的 <code>system_prompt</code> + hash。</li>
+    <li>SDK 每轮 <code>getContextUsage()</code> 已返回 <code>systemPromptSections / systemTools / mcpTools / agents / memoryFiles / slashCommands</code>。</li>
+    <li><code>role-switch</code> 消息 metadata 里有 <code>role_revision</code> 和整张岗位包 <code>card</code>。</li>
+    <li><code>llm_calls</code> 账本有逐轮用量与 stopReason，可还原 token / 成本 / 中断。</li>
+  </ul>
+  <div class="gap">
+    <b>缺口</b><br>
+    ① <code>GET /api/agent/debug/assemble/:chat_id</code> 现在是占位实现：忽略 chat_id、重拼通用片段、<code>system_prompt</code> 返回空串；要改成按 session 读冻结快照。<br>
+    ② 实际发送的 provider message 没有持久化：<code>withTransientReminder()</code> 拼上角色卡/委派提醒后只进 SDK；需要按轮落 <code>providerMessage</code> + options。<br>
+    ③ SDK <code>system:init</code> 多数字段被丢弃（provider 只消费 <code>slash_commands</code>）：工具、MCP 状态、permissionMode、skills 要抓下来。<br>
+    ④ <code>sessions.context_usage</code> 是单列覆盖写，只能看最新轮；逐轮上下文要在新表/JSONL 里存快照。
+  </div>
+
+  <h2><span class="n">05</span> 降噪与保留</h2>
+  <ul>
+    <li>默认记录跟随设置；原型用顶部 REC 开关演示。关闭后不新增快照，历史轮仍可看。</li>
+    <li>Prompt 全文默认折叠；敏感值打码（API key / token / 绝对路径可脱敏），复制只走本地剪贴板。</li>
+    <li>建议保留：7 天 / 每会话最近 50 轮，可导出 JSON；Prompt 全文单独开关。</li>
+    <li>80 轮的压力点不在列表渲染，而在落盘：JSONL 按轮追加，列表接口只读摘要（id / 时间 / 身份 / 状态 / 用量），详情按轮懒加载，别把整包 prompt 塞进列表。</li>
+  </ul>
+
+  <h2><span class="n">06</span> 待拍板</h2>
+  <div class="q"><b>Q1 · 入口位置</b><br>已定：只放作业坞「调试」。对话区不加入口。</div>
+  <div class="q"><b>Q2 · 纯会话无坞的兜底</b><br>坞常驻（推荐，只挂 4 个基础图标），还是只保留 <code>⌘⇧D</code>？这决定纯会话能不能发现调试。</div>
+  <div class="q"><b>Q3 · 记录默认与保留</b><br>默认开还是默认关？保留 7 天 / 50 轮是否够？Prompt 全文是否默认脱敏？</div>
+  <div class="q"><b>Q4 · 异常轮要不要主动提醒</b><br>原型用坞图标上的徽标计数，不弹窗；是否需要在任务线程里把异常轮提到顶部？</div>
+
+  <h2><span class="n">07</span> 参考：DeepSeek Harness 生态怎么拆</h2>
+  <p>DSH 本体（<code>deepseek-ai/deepseek-harness</code>）是 developer preview，官方文档没有单列「prompt 检查器 / Trajectory」页面；真正可参考的是社区插件把这件事拆成了四层：</p>
+  <ul>
+    <li><b>请求载荷</b> — <code>dsh-payload-capture</code> 把上游模型 API 的 payload 落盘，专门调试「请求怎么拼出来的」。</li>
+    <li><b>上下文账本</b> — <code>dsh-context</code> 按请求拆 System Prompt / tool schemas / messages / injections / replies / tool results 的 token，并标记 compaction、pruning、cache hit。</li>
+    <li><b>调用轨迹</b> — LoongSuite / 腾讯云 Agent Observability 把 Agent Turn、模型调用、工具执行、Token 使用转成 OpenTelemetry GenAI trace。</li>
+    <li><b>会话回放</b> — <code>token-monitor</code> 按回合展示 Prompt、工具记录与 token；<code>dsh-session-surgeon</code> 检查/导出/修复会话。</li>
+  </ul>
+  <p>这四层正好对应本原型的 <b>Prompt / 概览 / 时间线 / 作业坞轨迹</b>；我们额外补的一层是<strong>身份角色卡与 system prompt 冻结快照</strong>——这是 Octopus 的多分身架构特有的，DSH 生态里没有对应物。</p>
+  <p style="color:#6f7280;font-family:var(--mono);font-size:9.5px">来源：github.com/deepseek-ai/deepseek-harness · github.com/bowenliang123/dsh-context · github.com/Moeblack/dsh-payload-capture · github.com/loongsuite/dsh-plugin · github.com/TencentCloud/tencentcloud-agentobs-sdk-dsh · github.com/Javis603/token-monitor</p>
+</aside>
+
+<div class="toast" id="toast"></div>
+<script>
+/* ══════════════════════════════════════════════════════════════
+   假数据：一轮 = 一次 provider.sendQuery 调用（用户消息 → result）
+   ══════════════════════════════════════════════════════════════ */
+
+const ROLE_CARD = `# 岗位包 · 前端专家
+
+你负责 Octopus web-app 的界面实现。所有产出以「可维护、可测试、可回滚」为先。
+
+## 工作方式
+1. 先读现有组件、测试与设计令牌（pop-*），不要另起一套视觉。
+2. 变更前先确认边界：几何 / 数据 / 状态三层分别落在哪个文件。
+3. 至少补一条测试：渲染、交互或无障碍，按改动面选。
+4. 跑 lint + 相关测试，再报告「改了什么 / 怎么验 / 还剩什么」。
+
+## 约束
+- 不引入新的全局状态库；复用现有 hooks。
+- 对话区保持纯净转录，操作入口优先放进作业坞。
+- 交付前用真实浏览器走一遍，不只看单测。`
+
+const ROLE_CARD_REVIEWER = `# 岗位包 · 代码评审员
+
+你负责在变更落盘前做独立复核。只认证据，不认「应该没问题」。
+
+## 关注顺序
+1. 行为回归：旧路径是否仍然可用，空态 / 运行态 / 中止态都走到。
+2. 无障碍：焦点顺序、焦点回收、ARIA 名称、暗色对比度 ≥ 4.5:1。
+3. 测试证据：不是「有测试」，而是失败过、现在通过的那条断言。
+
+## 输出
+- 阻塞项（必须修）/ 建议项（可延后）分开写。
+- 每条阻塞项给出复现路径与验证方式。
+- 没跑过的检查明确说没跑，不用推测代替证据。`
+
+const PERSONA = `# 前端专家
+
+你是一个偏工程化的前端专家：先看结构再写代码，先复用再新增。
+你偏好小步提交、可逆改动，以及能让下一个人读懂的命名。
+
+## 语气
+- 直接说结论，再给依据；不铺垫。
+- 不确定就说不确定，并给出验证方式。`
+
+const MEMORY = `# 分身长期记忆
+
+- 2026-10-29：pop-* 设计令牌是唯一视觉源；任务窗与作业坞共用。
+- 2026-10-28：对话区已移除顶部状态条，身份/状态由侧栏任务行与坞承载。
+- 2026-10-27：TUI transcript 的 meta 行是轮次统计的唯一出口。
+- 2026-10-24：web-app 的测试跑法：pnpm --filter @octopus/web-app test。
+- 2026-10-21：窗口几何持久化在 localStorage['octopus.desktop.v1']。`
+
+const DAILY = `# 今日工作记忆
+
+- 正在做侧栏组件落地：SidebarShell → SessionList → SessionRow 三层。
+- 用户明确：虚拟化先不做，但接口要留出来。
+- 任务页接入只替换列表容器，不动行组件。`
+
+const SKILLS = `## octo-ui-review（SKILL）
+
+审查前端改动：令牌一致性、层级/间距、暗色对比度、键盘可达性。
+输出：阻塞项 / 建议项 / 可忽略项 三段。
+
+## octo-a11y（SKILL）
+
+检查焦点顺序、ARIA 名称、色弱可辨性；对每个交互控件给出键盘路径。`
+
+const CONTEXT = `# 工作区规则
+
+- 仓库：open-octopus · 分支 feat-new-ui-20261022
+- 运行：pnpm dev（server 3001 / web 3000）
+- 测试：pnpm --filter @octopus/web-app test
+- 设计令牌：app/globals.css 的 --pop-*；禁止硬编码色值。`
+
+const CORE = `你是 Octopus 主 Agent 在当前任务线程中的执行身份。
+保持对话连续；跨轮状态放作业坞，不往系统提示里堆临时状态。`
+
+const SEGMENTS = [
+  { name:'core_identity', src:'core',         priority:0, tokens:312,  budget:null, degraded:false, content:CORE },
+  { name:'persona',       src:'persona',      priority:1, tokens:1284, budget:null, degraded:false, content:PERSONA },
+  { name:'memory',        src:'memory',       priority:2, tokens:1496, budget:1500, degraded:true,  content:MEMORY },
+  { name:'daily_memory',  src:'daily_memory', priority:3, tokens:502,  budget:500,  degraded:true,  content:DAILY },
+  { name:'skills',        src:'skills',       priority:4, tokens:1842, budget:2000, degraded:false, content:SKILLS },
+  { name:'context',       src:'context',      priority:5, tokens:468,  budget:500,  degraded:false, content:CONTEXT },
+]
+
+const SNAPSHOT_HASH = '9f3c2a7e'
+const SNAPSHOT_AT = 'T1 · 21:04:12'
+
+/** SDK getContextUsage() 实际回报的分段（每轮一份）。 */
+function runtimeSections(used) {
+  const base = [
+    { name:'System prompt',   tokens:6150,  color:'var(--purple)' },
+    { name:'Tool definitions',tokens:14220, color:'var(--cyan)' },
+    { name:'MCP tools',       tokens:1840,  color:'var(--green)' },
+    { name:'Agents',          tokens:920,   color:'var(--amber)' },
+    { name:'Memory files',    tokens:1196,  color:'var(--pink)' },
+  ]
+  const sum = base.reduce((n, x) => n + x.tokens, 0)
+  return [
+    ...base,
+    { name:'Messages', tokens: used - sum, color:'var(--navy)' },
+    { name:'Free space', tokens: 200000 - used, color:'#3a3a44' },
+  ]
+}
+
+const SYSTEM_TOOLS = [
+  ['Bash', 1840], ['Edit', 1940], ['Read', 1260], ['Write', 1120],
+  ['Grep', 460], ['Glob', 420], ['WebFetch', 620], ['TodoWrite', 380],
+  ['Task', 540], ['Agent', 520],
+]
+const MCP_TOOLS = [
+  ['octopus-workflow', 'workflow_list', 180], ['octopus-workflow', 'workflow_run', 240],
+  ['octopus-workflow', 'workflow_status', 210], ['octopus-workflow', 'workflow_cancel', 150],
+  ['octopus-workflow', 'workflow_approve', 190], ['octopus-workflow', 'workflow_retry', 160],
+  ['octopus-task', 'task_read_spec', 240], ['octopus-task', 'task_read_plan', 190],
+  ['octopus-task', 'task_confirm', 160], ['octopus-task', 'task_evidence', 120],
+]
+const AGENTS = [
+  ['main-agent', 180], ['fe-expert', 220], ['ui-reviewer', 150],
+  ['task-author', 140], ['task-doer', 130], ['reviewer', 100],
+]
+
+function baseOptions(over) {
+  const base = {
+    cwd: '/Users/xzf/.octopus/tasks/T-20261031-014/ws',
+    model: 'claude-sonnet-4-5-20250827',
+    effort: 'high',
+    systemPrompt: 'preset: claude_code + append（5,904 tok）',
+    resume: 'f3a9c1e2-7a20-4c1e-9f2d-0b6c…',
+    interruptible: 'true（流式输入，停止走 interrupt）',
+    settingSources: 'project, user',
+    allowDangerouslySkipPermissions: 'true',
+    agents: '7 个（main-agent, fe-expert, ui-reviewer, task-author, task-doer, reviewer, …）',
+    mcpServers: 'octopus-workflow（6 tools）· octopus-task（4 tools）',
+    plugins: '2 个（task-author, task-doer）',
+    hooks: '3 个（PreToolUse / PostToolUse / Stop）',
+    maxTurns: '—',
+    maxBudgetUsd: '—',
+  }
+  for (const [k, v] of Object.entries(over || {})) {
+    if (v !== undefined) base[k] = v
+  }
+  return base
+}
+
+const SWITCH_FE = {
+  from: '主 Agent', to: '前端专家', revision: 3, cardTokens: 2180,
+  clone: 'fe-expert', card: ROLE_CARD,
+  diff: [
+    ['persona', '主 Agent 默认人格', 'clones/fe-expert/persona.md', true],
+    ['SKILL', '—', 'octo-ui-review · octo-a11y', true],
+    ['长期记忆', '主 Agent 记忆', '分身记忆 · 1,496 tok', true],
+    ['模型', 'pro · high', 'pro · high（未变）', false],
+    ['cwd', '~/.octopus/agent', '<task-home>/ws（transcript 已迁移）', true],
+    ['agents', '6 个', '7 个（+ fe-expert）', true],
+    ['MCP', 'octopus-workflow', 'octopus-workflow · octopus-task', false],
+    ['岗位包', '—', '2,180 tok · 仅本轮送达', true],
+  ],
+}
+
+const SWITCH_REVIEWER = {
+  from: '前端专家', to: '代码评审员', revision: 4, cardTokens: 1640,
+  clone: 'code-reviewer', card: ROLE_CARD_REVIEWER,
+  diff: [
+    ['persona', 'clones/fe-expert/persona.md', 'clones/code-reviewer/persona.md', true],
+    ['SKILL', 'octo-ui-review · octo-a11y', 'octo-code-review · octo-a11y', true],
+    ['长期记忆', '分身记忆 · 1,496 tok', '评审记忆 · 980 tok', true],
+    ['模型', 'pro · high', 'pro · high（未变）', false],
+    ['cwd', '<task-home>/ws', '<task-home>/ws（未变）', false],
+    ['agents', '7 个', '8 个（+ code-reviewer）', true],
+    ['MCP', 'octopus-workflow · octopus-task', 'octopus-workflow · octopus-task（未变）', false],
+    ['岗位包', '—', '1,640 tok · 仅本轮送达', true],
+  ],
+}
+
+const USER_PROMPTS = [
+  '侧栏空态再收一下，别用占位图。',
+  '跑一下相关测试，挂了就修。',
+  '任务页接入时注意别嵌套滚动容器。',
+  '把 a11y 的焦点顺序也过一遍。',
+  '这段逻辑抽成 hook，别塞在组件里。',
+  '检查暗色下的对比度。',
+  '先别动视觉，先修布局跳动。',
+  '把这轮改动总结成三条。',
+  '继续，把阻塞项列出来。',
+  '侧栏的快捷键再对一遍。',
+]
+
+const pad2 = (n) => String(n).padStart(2, '0')
+const comma = (n) => n.toLocaleString('en-US')
+const money = (n) => `$${n.toFixed(3)}`
+
+function timeAt(i) {
+  const t = new Date(2026, 9, 31, 21, 4, 12)
+  t.setSeconds(t.getSeconds() + (i - 1) * 95)
+  return `${pad2(t.getHours())}:${pad2(t.getMinutes())}:${pad2(t.getSeconds())}`
+}
+
+function makeUsage(used, i) {
+  const input = Math.round(used * 0.30) + (i * 211 % 1600)
+  const cacheRead = Math.round(input * (0.60 + (i % 5) * 0.03))
+  const cacheWrite = 240 + (i * 137 % 1100)
+  const output = 280 + (i * 211 % 820)
+  const fresh = Math.max(0, input - cacheRead - cacheWrite)
+  const cost = +(((fresh * 3 + cacheRead * 0.3 + cacheWrite * 3.75 + output * 15) / 1e6)).toFixed(3)
+  return { input, output, cacheRead, cacheWrite, cost }
+}
+
+function makeEvents(t, i) {
+  const pct = ((t.context.used / t.context.max) * 100).toFixed(1)
+  const events = [
+    { off: 0, type: 'init', label: 'turn_started', det: 'interruptible · streaming input', sub: '' },
+    ...(t.hasSwitch ? [{
+      off: 12, type: 'init', label: 'role_card_attached', det: `${comma(t.switch.cardTokens)} tok`,
+      sub: '岗位包进入 provider message（不写库、不进 system prompt）',
+    }] : []),
+    { off: 24, type: 'init', label: 'prompt_snapshot_reused', det: 'hash 9f3c2a7e', sub: '冻结于 T1 · 身份切换不重建' },
+    { off: t.init, type: 'init', label: 'sdk:init', det: '61 tools · 2 MCP', sub: 'subprocess boot + settings/plugins' },
+    { off: Math.max(t.init + 60, t.ttft - 22), type: 'llm', label: 'message_start', det: 'claude-sonnet-4-5-20250827', sub: '实际模型来自 SDK message.model' },
+    { off: t.ttft, type: 'llm', label: 'context_usage', det: `${comma(t.context.used)} / 200,000 · ${pct}%`, sub: 'getContextUsage() 分段' },
+  ]
+  const tools = [['Read', 'SessionRow.tsx'], ['Edit', 'focus-return.ts'], ['Bash', 'pnpm test']]
+  const toolCount = 2 + (i % 2)
+  let off = t.ttft + 700
+  for (let k = 0; k < toolCount; k++) {
+    events.push({ off, type: 'tool', label: `tool_use · ${tools[k % 3][0]}`, det: tools[k % 3][1], sub: '' })
+    off += 920
+    events.push({
+      off, type: 'tool', label: `tool_result · ${tools[k % 3][0]}`,
+      det: k === 0 ? '4.1k chars' : k === 1 ? '+24 / −9' : 'exit 0', sub: '',
+    })
+    off += 780
+  }
+  if (t.status === 'warn') {
+    events.push({ off: t.duration - 500, type: 'err', label: 'interrupt()', det: 'user stop', sub: '流式输入下 Query.interrupt()；2s drain 截止' })
+    events.push({
+      off: t.duration, type: 'err', label: 'result · interrupted', det: `error · ${money(t.usage.cost)}`,
+      sub: `带已完成模型调用的真实 usage：${comma(t.usage.input)} / ${comma(t.usage.output)}`,
+    })
+  } else if (t.status === 'error') {
+    events.push({ off: t.duration, type: 'err', label: 'result · error', det: 'API error', sub: '账本仍保留已完成调用的用量' })
+  } else {
+    events.push({
+      off: t.duration, type: 'res', label: 'result', det: `end_turn · ${money(t.usage.cost)}`,
+      sub: `usage ${comma(t.usage.input)} / ${comma(t.usage.output)}`,
+    })
+  }
+  return events
+}
+
+function buildTurns(n) {
+  const switchAt = Math.max(6, n - 4)
+  const anomalySet = new Set([3, 7, 17, 23, 41, 59, 77].filter(x => x <= n))
+  const turns = []
+  let ctx = 26400
+
+  for (let i = 1; i <= n; i++) {
+    ctx += 640 + (i * 613 % 1100)
+    if (i % 9 === 0) ctx -= 6200
+    ctx = Math.max(26000, Math.min(120000, ctx))
+
+    const isReviewer = i >= switchAt
+    const identity = i === 1 ? '主 Agent' : isReviewer ? '代码评审员' : '前端专家'
+    const kind = i === 1 ? 'base' : 'clone'
+    const switchBase = i === 2 ? SWITCH_FE : i === switchAt ? SWITCH_REVIEWER : null
+    const status = anomalySet.has(i) ? (i === 17 || i === 41 || i === 77 ? 'error' : 'warn') : 'ok'
+    const stop = status === 'warn' ? 'interrupted' : status === 'error' ? 'error' : 'end_turn'
+
+    let used = ctx
+    if (i === 1) used = 26400
+    if (i === 2) used = 38412
+    if (i === 3) used = 43800
+    if (i === n) used = 38412
+
+    let duration = 6000 + (i * 977 % 22000)
+    let ttft = 700 + (i * 617 % 900)
+    let init = 520 + (i * 331 % 420)
+    if (i === 1) { duration = 8400; ttft = 1100; init = 780 }
+    if (i === 2) { duration = 26100; ttft = 1402; init = 940 }
+    if (i === 3) { duration = 11700; ttft = 980; init = 720 }
+    if (i === switchAt) { duration = 18200; ttft = 1000; init = 720 }
+    if (i === n - 1) { duration = 12400; ttft = 900; init = 680 }
+    if (i === n) { duration = 9800; ttft = 860; init = 700 }
+
+    let usage = makeUsage(used, i)
+    if (i === 1) usage = { input: 4980, output: 412, cacheRead: 2100, cacheWrite: 640, cost: 0.028 }
+    if (i === 2) usage = { input: 11743, output: 1118, cacheRead: 9120, cacheWrite: 1402, cost: 0.083 }
+    if (i === 3) usage = { input: 8200, output: 680, cacheRead: 6200, cacheWrite: 420, cost: 0.041 }
+    if (i === switchAt) usage = { input: 7800, output: 600, cacheRead: 5900, cacheWrite: 400, cost: 0.052 }
+    if (i === n - 1) usage = { input: 6520, output: 580, cacheRead: 4800, cacheWrite: 420, cost: 0.044 }
+    if (i === n) usage = { input: 5700, output: 500, cacheRead: 4400, cacheWrite: 320, cost: 0.038 }
+
+    const time = i === 1 ? '21:04:12' : i === 2 ? '21:05:41' : timeAt(i)
+    const switchObj = switchBase ? { ...switchBase, at: time } : null
+    const hasSwitch = !!switchObj
+    const roleRevision = i === 1 ? 2 : isReviewer ? 4 : 3
+
+    let raw = i === 1
+      ? '你先把任务页的交互跑一遍，看看哪里卡。'
+      : i === 2
+        ? '把这套设计稿落成组件吧，先做侧栏，再接到任务页。'
+        : i === 3
+          ? '等一下，侧栏的虚拟化先别做，数据量还没到。'
+          : i === switchAt
+            ? '评审一下侧栏接入，重点看焦点顺序。'
+            : i === n - 1
+              ? '跑一下 a11y 测试，把阻塞项列出来。'
+              : i === n
+                ? '按这个结论收尾，把阻塞项写成三条。'
+                : USER_PROMPTS[(i - 4) % USER_PROMPTS.length]
+    let sent = raw + `\n\n[任务上下文]\n当前任务：侧栏组件落地 · 执行身份：${isReviewer ? 'code-reviewer' : i === 1 ? 'main-agent' : 'fe-expert'}`
+    if (hasSwitch) sent = raw + '\n\n[角色卡 · 本轮生效]\n' + switchObj.card
+
+    const flags = []
+    if (i === 1) flags.push('首轮', '快照建立')
+    if (hasSwitch) flags.push('身份切换', '只送达一次')
+    if (status === 'warn') flags.push('已中止', '中断仍记账')
+    if (status === 'error') flags.push('API 错误', '仍记账')
+    if (i % 9 === 0) flags.push('自动压缩')
+    if (i === n) flags.push('最新')
+    flags.push(`${2 + (i % 2)} 工具`, 'MCP 2')
+
+    let summary = status === 'error'
+      ? '本轮以 error 收尾；账本仍保留已完成模型调用产生的用量。'
+      : status === 'warn'
+        ? '用户按了停止；interrupt() 后仍拿到带用量的 error result，本轮不会漏账。'
+        : isReviewer
+          ? '代码评审员复核侧栏接入：焦点顺序与滚动容器是重点。'
+          : '按当前身份推进侧栏组件；改动已落到工作区。'
+    if (i === 1) summary = '首轮建立了本会话的 system prompt 快照；之后所有轮次复用同一份，身份切换不会重建它。'
+    if (i === 2) summary = '身份切到「前端专家」：岗位包作为本轮 user 消息的 transient reminder 送达，system prompt 仍是 T1 的快照。'
+    if (i === 3) summary = '用户按了停止；interrupt() 后 SDK 仍返回一条带真实用量的 error result，所以这一轮不会漏账。'
+    if (i === switchAt) summary = '身份切到「代码评审员」：岗位包本轮送达一次，system prompt 仍是 T1 的冻结快照。'
+    if (i === n - 1) summary = 'a11y 测试跑完：3 通过 2 失败，失败项都是焦点回收。'
+    if (i === n) summary = '最新一轮：按评审结论收尾——焦点回收、滚动容器去嵌套、暗色对比度补到 4.5:1；测试全绿。'
+
+    const options = baseOptions({
+      resume: i === 1 ? '—（首轮）' : undefined,
+      agents: i === 1 ? '6 个（尚无 fe-expert）' : isReviewer ? '8 个（+ code-reviewer）' : undefined,
+      plugins: i === 1 ? '—（尚未进入任务线程）' : undefined,
+    })
+
+    let events = makeEvents({
+      id: `T${i}`, duration, ttft, init, context: { used, max: 200000 },
+      usage, hasSwitch, switch: switchObj, status,
+    }, i)
+    if (i === 1) events = [
+      { off: 0, type: 'init', label: 'turn_started', det: 'streaming input', sub: 'interruptible = true' },
+      { off: 18, type: 'init', label: 'prompt_snapshot_created', det: 'hash 9f3c2a7e', sub: '本会话第一次拼装 system prompt，落库冻结' },
+      { off: 780, type: 'init', label: 'sdk:init', det: 'subprocess boot', sub: 'settings / plugins / skills 装载完成' },
+      { off: 1100, type: 'llm', label: 'message_start', det: 'claude-sonnet-4-5-20250827', sub: '实际模型来自 SDK message.model' },
+      { off: 1120, type: 'llm', label: 'context_usage', det: '26,400 / 200,000 · 13.2%', sub: 'getContextUsage() 首次回报' },
+      { off: 2200, type: 'tool', label: 'tool_use · Glob', det: '任务页相关文件', sub: 'packages/web-app/components/tasks/**' },
+      { off: 3100, type: 'tool', label: 'tool_result · Glob', det: '42 files', sub: '' },
+      { off: 8400, type: 'res', label: 'result', det: 'end_turn · $0.028', sub: 'usage 4,980 / 412' },
+    ]
+    if (i === 2) events = [
+      { off: 0, type: 'init', label: 'turn_started', det: 'interruptible · streaming input', sub: '' },
+      { off: 12, type: 'init', label: 'role_card_attached', det: '2,180 tok', sub: '岗位包进入 provider message（不写库、不进 system prompt）' },
+      { off: 38, type: 'init', label: 'prompt_snapshot_reused', det: 'hash 9f3c2a7e', sub: '冻结于 T1 · 21:04:12；身份切换不重建' },
+      { off: 940, type: 'init', label: 'sdk:init', det: '61 tools · 2 MCP', sub: 'subprocess boot + settings/plugins；init 字段多数当前被丢弃' },
+      { off: 1382, type: 'llm', label: 'message_start', det: 'claude-sonnet-4-5-20250827', sub: '实际模型来自 SDK message.model' },
+      { off: 1402, type: 'llm', label: 'context_usage', det: '38,412 / 200,000 · 19.2%', sub: 'systemPromptSections / systemTools / mcpTools / agents 一并返回' },
+      { off: 2104, type: 'llm', label: 'thinking_start', det: '', sub: '' },
+      { off: 4880, type: 'tool', label: 'tool_use · Read', det: 'SessionRow.tsx', sub: 'packages/web-app/components/chat/SessionRow.tsx' },
+      { off: 5920, type: 'tool', label: 'tool_result · Read', det: '4.1k chars', sub: '' },
+      { off: 7410, type: 'tool', label: 'tool_use · Edit', det: 'SessionRow.tsx', sub: '提取行组件，去掉容器耦合' },
+      { off: 9030, type: 'tool', label: 'tool_result · Edit', det: '+84 / −21', sub: '' },
+      { off: 10220, type: 'tool', label: 'tool_use · Bash', det: 'pnpm test -- SessionRow', sub: '' },
+      { off: 13550, type: 'tool', label: 'tool_result · Bash', det: 'exit 0', sub: '3 passed' },
+      { off: 14120, type: 'llm', label: 'message_delta', det: '1,118 out', sub: '' },
+      { off: 26083, type: 'res', label: 'result', det: 'end_turn · $0.083', sub: 'usage 11,743 / 1,118 · cache read 9,120' },
+    ]
+    if (i === 3) events = [
+      { off: 0, type: 'init', label: 'turn_started', det: 'interruptible · streaming input', sub: '' },
+      { off: 22, type: 'init', label: 'prompt_snapshot_reused', det: 'hash 9f3c2a7e', sub: '' },
+      { off: 720, type: 'init', label: 'sdk:init', det: '61 tools · 2 MCP', sub: '' },
+      { off: 980, type: 'llm', label: 'message_start', det: 'claude-sonnet-4-5-20250827', sub: '' },
+      { off: 1000, type: 'llm', label: 'context_usage', det: '43,800 / 200,000 · 21.9%', sub: '' },
+      { off: 2100, type: 'tool', label: 'tool_use · Read', det: 'SessionList.tsx', sub: '' },
+      { off: 2900, type: 'tool', label: 'tool_result · Read', det: '2.3k chars', sub: '' },
+      { off: 4300, type: 'tool', label: 'tool_use · Edit', det: 'SessionList.tsx', sub: '抽出 useVirtualList 接口但不实现' },
+      { off: 5200, type: 'tool', label: 'tool_result · Edit', det: '+31 / −4', sub: '' },
+      { off: 11200, type: 'err', label: 'interrupt()', det: 'user stop', sub: '流式输入下 Query.interrupt()；2s drain 截止' },
+      { off: 11700, type: 'err', label: 'result · interrupted', det: 'error · $0.041', sub: '带已完成模型调用的真实 usage：8,200 / 680' },
+    ]
+    if (i === n && n !== 3) events = [
+      { off: 0, type: 'init', label: 'turn_started', det: 'interruptible · streaming input', sub: '' },
+      { off: 22, type: 'init', label: 'prompt_snapshot_reused', det: 'hash 9f3c2a7e', sub: '冻结于 T1 · 身份切换不重建' },
+      { off: 700, type: 'init', label: 'sdk:init', det: '61 tools · 2 MCP', sub: '' },
+      { off: 840, type: 'llm', label: 'message_start', det: 'claude-sonnet-4-5-20250827', sub: '' },
+      { off: 860, type: 'llm', label: 'context_usage', det: '38,412 / 200,000 · 19.2%', sub: '' },
+      { off: 1600, type: 'tool', label: 'tool_use · Read', det: 'focus-return.ts', sub: '' },
+      { off: 2400, type: 'tool', label: 'tool_result · Read', det: '1.1k chars', sub: '' },
+      { off: 3300, type: 'tool', label: 'tool_use · Edit', det: 'focus-return.ts', sub: '关闭后把焦点还给触发按钮' },
+      { off: 4300, type: 'tool', label: 'tool_result · Edit', det: '+18 / −6', sub: '' },
+      { off: 6100, type: 'llm', label: 'message_delta', det: '500 out', sub: '' },
+      { off: 9800, type: 'res', label: 'result', det: 'end_turn · $0.038', sub: 'usage 5,700 / 500' },
+    ]
+
+    turns.push({
+      id: `T${i}`, idx: i, time, identity, kind, roleRevision,
+      hasSwitch, switch: switchObj,
+      duration, ttft, init,
+      usage, context: { used, max: 200000 },
+      stop, status, flags, summary,
+      user: { raw, sent },
+      segments: SEGMENTS,
+      runtime: runtimeSections(used),
+      options, events,
+      userView: 'raw',
+    })
+  }
+
+  return turns
+}
+/* ══════════════════════════════════════════════════════════════
+   渲染 & 交互
+   ══════════════════════════════════════════════════════════════ */
+
+const $  = (s, r = document) => r.querySelector(s)
+const $$ = (s, r = document) => Array.from(r.querySelectorAll(s))
+const state = {
+  turn: null, tab: 'overview', scenario: 'task', open: true, userView: 'raw',
+  filter: 'all', expanded: false, pendingScroll: false, scale: 32,
+}
+let TURNS = buildTurns(state.scale)
+state.turn = `T${TURNS.length}`
+
+const esc = (s) => String(s).replace(/[&<>"']/g, c => ({ '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;' }[c]))
+const fmtTok = (n) => n >= 1000 ? `${(n / 1000).toFixed(1)}k` : String(n)
+const fmtExact = (n) => n.toLocaleString('en-US')
+const fmtDur = (ms) => ms >= 1000 ? `${(ms / 1000).toFixed(1)}s` : `${ms}ms`
+const fmtOff = (ms) => ms >= 1000 ? `+${(ms / 1000).toFixed(2)}s` : `+${ms}ms`
+const fmtCost = (n) => `$${n.toFixed(3)}`
+const totalTok = (t) => t.usage.input + t.usage.output
+const current = () => TURNS.find(t => t.id === state.turn) || TURNS[TURNS.length - 1]
+
+const ID_COLOR = {
+  '主 Agent': 'var(--pink)',
+  '前端专家': 'var(--purple)',
+  '代码评审员': 'var(--cyan)',
+}
+
+function statusMeta(s) {
+  if (s === 'error') return { label: '出错', glyph: '✕', color: 'var(--red)', cls: 'err' }
+  if (s === 'warn') return { label: '已中止', glyph: '!', color: 'var(--amber)', cls: 'warn' }
+  return { label: '已完成', glyph: '✓', color: 'var(--green)', cls: '' }
+}
+
+function filteredTurns() {
+  const desc = TURNS.slice().sort((a, b) => b.idx - a.idx)
+  if (state.filter === 'switch') return desc.filter(x => x.hasSwitch)
+  if (state.filter === 'anomaly') return desc.filter(x => x.status !== 'ok')
+  return desc
+}
+
+function renderTrajHead(t) {
+  const totalCost = TURNS.reduce((n, x) => n + x.usage.cost, 0)
+  const switches = TURNS.filter(x => x.hasSwitch).length
+  const anomalies = TURNS.filter(x => x.status !== 'ok').length
+  const latest = TURNS[TURNS.length - 1]
+  $('#traj-sum').innerHTML = `
+    <span class="k">SESSION TRAJECTORY</span>
+    <span class="r1"><b>${TURNS.length}</b><span>轮</span><span class="cost">${fmtCost(totalCost)}</span></span>
+    <span class="r2"><span class="s">${switches} 次切换</span> · <span class="a">${anomalies} 异常</span> · 最新 ${latest.id}</span>
+  `
+  $('#ruler').innerHTML = TURNS.map(x => {
+    const cls = [
+      'rk',
+      x.hasSwitch ? 'sw' : '',
+      x.status === 'warn' ? 'bad' : x.status === 'error' ? 'err' : '',
+      x.id === t.id ? 'on' : '',
+    ].filter(Boolean).join(' ')
+    const tip = `${x.id} · ${x.identity} · ${fmtDur(x.duration)} · ${fmtCost(x.usage.cost)}${x.hasSwitch ? ' · 身份切换' : ''}${x.status !== 'ok' ? ' · ' + statusMeta(x.status).label : ''}`
+    return `<button class="${cls}" data-turn-row="${x.id}" style="--c:${ID_COLOR[x.identity] || 'var(--dim)'}" title="${tip}"></button>`
+  }).join('')
+  $('#ruler-left').textContent = TURNS[0].id
+  $('#ruler-right').textContent = latest.id
+}
+
+function renderTurnList(t) {
+  const all = filteredTurns()
+  const collapsed = state.filter === 'all' && !state.expanded && all.length > 10
+  const visible = collapsed ? all.slice(0, 10) : all
+
+  $('#turnlist').innerHTML = visible.length === 0
+    ? '<div class="empty" style="padding:24px 8px">该过滤下没有轮次</div>'
+    : visible.map(x => {
+      const m = statusMeta(x.status)
+      const latest = x.idx === TURNS.length
+      return `<button class="tl-row ${x.id === t.id ? 'on' : ''}" data-turn-row="${x.id}">
+        <div class="r1">
+          <span class="tid">${x.id}</span>
+          <span class="idn">${x.identity}</span>
+          ${latest ? '<span class="newtag">最新</span>' : ''}
+          <span class="st" style="color:${m.color}">${m.glyph}</span>
+          <span class="time">${x.time.slice(0, 5)}</span>
+        </div>
+        <div class="r2">
+          <span class="dur">${fmtDur(x.duration)}</span>
+          <span>${fmtTok(totalTok(x))} tok</span>
+          <span>${fmtCost(x.usage.cost)}</span>
+          ${x.hasSwitch ? '<span class="warn">⇄ 身份切换</span>' : ''}
+        </div>
+      </button>`
+    }).join('')
+
+  $('#tl-cap').textContent = state.filter === 'switch'
+    ? '身份切换 · 最新在前'
+    : state.filter === 'anomaly'
+      ? '异常轮 · 最新在前'
+      : '轮次 · 最新在前'
+
+  const counts = {
+    all: TURNS.length,
+    switch: TURNS.filter(x => x.hasSwitch).length,
+    anomaly: TURNS.filter(x => x.status !== 'ok').length,
+  }
+  const labels = { all: '全部', switch: '切换', anomaly: '异常' }
+  $$('#filters button[data-filter]').forEach(b => {
+    b.textContent = `${labels[b.dataset.filter]} ${counts[b.dataset.filter]}`
+    b.classList.toggle('on', b.dataset.filter === state.filter)
+  })
+
+  const more = $('#more-btn')
+  const canMore = state.filter === 'all' && all.length > 10
+  more.hidden = !canMore
+  if (canMore) {
+    more.textContent = state.expanded
+      ? '收起，只看最近 10 轮'
+      : `显示更早的 ${all.length - 10} 轮`
+  }
+
+  if (state.pendingScroll) {
+    requestAnimationFrame(() => {
+      const row = $('#turnlist .tl-row.on')
+      if (row) row.scrollIntoView({ block: 'nearest' })
+      state.pendingScroll = false
+    })
+  }
+}
+
+function render() {
+  const t = current()
+
+  renderTrajHead(t)
+  renderTurnList(t)
+
+  const m = statusMeta(t.status)
+  $('#ins-turn-chip').textContent = t.id
+  $('#ins-sub').textContent = `${m.label} · ${fmtDur(t.duration)} · ${fmtCost(t.usage.cost)} · ${t.identity}`
+  $('#identity-dot').hidden = !t.hasSwitch
+  $('#ins-prev').style.opacity = t.idx === 1 ? .35 : 1
+  $('#ins-next').style.opacity = t.idx === TURNS.length ? .35 : 1
+
+  $$('.tab').forEach(b => b.classList.toggle('on', b.dataset.tab === state.tab))
+  $('#pane').innerHTML = ({
+    overview: renderOverview,
+    prompt: renderPrompt,
+    identity: renderIdentity,
+    sdk: renderSdk,
+    timeline: renderTimeline,
+  })[state.tab](t)
+  $('#pane').scrollTop = 0
+
+  const anomalies = TURNS.filter(x => x.status !== 'ok').length
+  const badge = $('#dock-debug-badge')
+  badge.textContent = anomalies
+  badge.hidden = anomalies === 0
+}
+
+function renderOverview(t) {
+  const u = t.usage
+  const total = totalTok(t)
+  const fresh = Math.max(0, u.input - u.cacheRead - u.cacheWrite)
+  const seg = [
+    ['缓存读', u.cacheRead, 'var(--green)'],
+    ['缓存写', u.cacheWrite, 'var(--purple)'],
+    ['新增输入', fresh, 'var(--cyan)'],
+    ['输出', u.output, 'var(--pink)'],
+  ]
+  const pct = (n) => `${Math.max(0.6, (n / total) * 100)}%`
+  const ctxPct = ((t.context.used / t.context.max) * 100).toFixed(1)
+
+  const m = statusMeta(t.status)
+  return `
+    <div class="ov-hero">
+      <span class="glyph">${t.kind === 'clone' ? '◈' : '✳'}</span>
+      <span class="who">${t.identity}</span>
+      <span class="tag ${m.cls === 'err' ? 'r' : m.cls === 'warn' ? 'a' : 'g'}">${m.label}</span>
+      ${t.hasSwitch ? '<span class="tag p">⇄ 本轮切换身份</span>' : ''}
+      <span class="tag">${t.time}</span>
+      ${t.idx === TURNS.length ? '<span class="tag g">最新一轮</span>' : ''}
+    </div>
+    <div class="ov-note">${t.summary}</div>
+
+    <div class="stat-grid">
+      <div class="stat pink"><div class="k">耗时</div><div class="v">${fmtDur(t.duration)}</div><div class="s">首 token ${fmtDur(t.ttft)}</div></div>
+      <div class="stat green"><div class="k">本轮用量</div><div class="v">${fmtTok(total)}</div><div class="s">入 ${fmtExact(u.input)} · 出 ${fmtExact(u.output)}</div></div>
+      <div class="stat amber"><div class="k">账本成本</div><div class="v">${fmtCost(u.cost)}</div><div class="s">含缓存读/写</div></div>
+      <div class="stat cyan"><div class="k">上下文</div><div class="v">${ctxPct}%</div><div class="s">${fmtExact(t.context.used)} / 200,000</div></div>
+    </div>
+
+    <div class="kv">
+      <div class="kv-row"><span class="k">模型 / effort</span><span class="val"><code>pro</code> → ${t.options.model} · effort ${t.options.effort}</span></div>
+      <div class="kv-row"><span class="k">停止原因</span><span class="val">${t.stop === 'interrupted' ? 'interrupted（用户按停止）' : t.stop === 'error' ? 'error（API 错误，账本仍保留用量）' : 'end_turn'}</span></div>
+      <div class="kv-row"><span class="k">首 token</span><span class="val">${fmtDur(t.ttft)} <span style="color:#63656f">（其中 SDK 启动 ${fmtDur(t.init)}）</span></span></div>
+      <div class="kv-row"><span class="k">provider resume</span><span class="val"><code>${t.options.resume}</code></span></div>
+      <div class="kv-row"><span class="k">system prompt</span><span class="val">append 快照 <code>${SNAPSHOT_HASH}</code> · 冻结于 ${SNAPSHOT_AT}</span></div>
+      <div class="kv-row"><span class="k">身份 revision</span><span class="val">${t.kind === 'base' ? '—（基础身份）' : `role_revision ${t.roleRevision} · ${t.hasSwitch ? '本轮送达' : '已送达'}`}</span></div>
+    </div>
+
+    <div class="sec"><span>TOKEN 拆分</span><span class="line"></span><span class="lnk">${fmtExact(total)} tok</span></div>
+    <div class="bar" style="height:10px">
+      ${seg.map(([n, v, c]) => `<i title="${n} ${fmtExact(v)}" style="width:${pct(v)};background:${c}"></i>`).join('')}
+    </div>
+    <div class="legend">
+      ${seg.map(([n, v, c]) => `<span><i style="background:${c}"></i>${n} ${fmtExact(v)}</span>`).join('')}
+    </div>
+
+    <div class="sec" style="margin-top:14px"><span>上下文占用</span><span class="line"></span><span class="lnk">${ctxPct}%</span></div>
+    <div class="bar"><i style="width:${ctxPct}%;background:var(--cyan)"></i></div>
+    <div class="bar-cap"><span>0</span><span>${fmtExact(t.context.used)} / ${fmtExact(t.context.max)}</span></div>
+
+    <div class="chips" style="margin-top:10px">
+      ${t.flags.map(f => `<span class="tag ${f.includes('切换') ? 'p' : f.includes('中止') || f.includes('截断') || f.includes('错误') ? 'a' : f === '最新' ? 'g' : ''}">${f}</span>`).join('')}
+    </div>
+    <div class="callout"><b>看哪：</b>本轮 token 大头是 ${fmtTok(u.cacheRead + u.cacheWrite)} 的缓存读写；${t.hasSwitch ? `身份切换没有抬高 system prompt，成本增量主要来自岗位包（${fmtExact(t.switch.cardTokens)} tok）与工具往返。` : '身份没有变化，成本主要来自上下文重放与工具往返。'}</div>
+    ${t.status === 'error' ? '<div class="callout warn"><b>错误轮：</b>result 以 error 收尾，但已完成模型调用的 token / 成本仍要进账本；调试页不能只显示「失败」。</div>' : ''}
+  `
+}
+
+function renderPrompt(t) {
+  const total = t.segments.reduce((n, s) => n + s.tokens, 0)
+  const max = 2000
+  const sent = state.userView === 'sent'
+  const runtimeTotal = t.runtime.filter(x => x.name !== 'Free space').reduce((n, x) => n + x.tokens, 0)
+
+  return `
+    <div class="sec"><span>用户消息</span><span class="line"></span>
+      <span class="mini-seg">
+        <button data-user-view="raw" class="${sent ? '' : 'on'}">原始</button>
+        <button data-user-view="sent" class="${sent ? 'on' : ''}">实际发送</button>
+      </span>
+    </div>
+    <pre class="code">${esc(sent ? t.user.sent : t.user.raw)}</pre>
+    <p class="note">${sent
+      ? '<b>实际发送</b> = 原始消息 + 本轮 transient reminder（角色卡 / 委派提醒 / 任务上下文）。角色卡只进这一轮，不写库、不进 system prompt。'
+      : '库里只存原始消息；勾到「实际发送」才能看到模型真正收到的 user turn。'}</p>
+
+    <div class="sec" style="margin-top:14px"><span>SYSTEM PROMPT</span><span class="line"></span><span class="lnk">append ${fmtExact(total)} tok</span></div>
+    <div class="freeze">
+      <span>append 快照</span><b><code>${SNAPSHOT_HASH}</code></b><span>冻结于 ${SNAPSHOT_AT}</span>
+      <span class="ok">✓ 本轮未重建</span>
+      <span class="anno" title="为什么强调冻结：provider 按前缀缓存；每次重拼 system prompt 会让整个 transcript 缓存失效">④</span>
+    </div>
+
+    <div class="seg-list">
+      ${t.segments.map(s => {
+        const w = Math.min(100, (s.tokens / max) * 100)
+        const color = s.degraded ? 'var(--amber)' : 'var(--purple)'
+        return `<details class="seg-row">
+          <summary>
+            <span class="arrow">▸</span>
+            <span class="nm">${s.name}</span>
+            <span class="src">${s.src}</span>
+            <span class="barwrap"><span class="bar"><i style="width:${w}%;background:${color}"></i></span></span>
+            <span class="tk">${fmtExact(s.tokens)}</span>
+            <span class="bud">${s.budget ? `/ ${fmtExact(s.budget)}` : '—'}</span>
+            ${s.degraded ? '<span class="badge">已截断</span>' : ''}
+          </summary>
+          <div class="seg-body"><pre>${esc(s.content)}</pre></div>
+        </details>`
+      }).join('')}
+    </div>
+    <p class="note">优先级：core 0 → persona 1 → memory 2 → daily_memory 3 → skills 4 → context 5。超出预算时从低优先级段截断（本会话 memory / daily 各被截 4 / 2 tok）。</p>
+
+    <div class="callout warn"><b>两层不要混淆：</b>这里是我们拼的 <code>append</code>；SDK 还会套上 <code>{ type:'preset', preset:'claude_code' }</code>，preset 全文不对外返回。下面「SDK 运行时报告」才是模型实际看到的合计。</div>
+
+    <div class="sec" style="margin-top:14px"><span>SDK 运行时报告</span><span class="line"></span><span class="lnk">已占用 ${fmtExact(runtimeTotal)} tok</span></div>
+    <details class="plain" open>
+      <summary><span class="arw">▸</span> getContextUsage() 分段 · ${t.id} · ${t.time}</summary>
+      <div class="inner">
+        <table class="runtime-table">
+          ${t.runtime.map(x => `<tr>
+            <td><span class="sw" style="background:${x.color}"></span>${x.name}</td>
+            <td>${fmtExact(x.tokens)}</td>
+          </tr>`).join('')}
+        </table>
+        <div class="bar" style="margin-top:6px">
+          ${t.runtime.filter(x => x.name !== 'Free space' && x.name !== 'Messages').map(x =>
+            `<i title="${x.name} ${fmtExact(x.tokens)}" style="width:${(x.tokens / 200000) * 100}%;background:${x.color}"></i>`).join('')}
+        </div>
+        <p class="note">我们拼的 append ${fmtExact(total)} tok ≠ SDK 报的 System prompt ${fmtExact(6150)} tok：差值来自 preset 包装、记忆文件重排与 SDK 自己的分段口径。</p>
+      </div>
+    </details>
+
+    <p class="note" style="margin-top:8px">当前 <code>/api/agent/debug/assemble/:chat_id</code> 是占位实现（忽略 chat_id、重拼通用片段、system_prompt 返回空串）；本页要真跑，需按 session 读冻结快照 + 落每轮 provider message。</p>
+  `
+}
+
+function renderIdentity(t) {
+  const last = TURNS
+    .filter(x => x.hasSwitch && x.idx < t.idx)
+    .sort((a, b) => b.idx - a.idx)[0]
+
+  if (!t.switch) {
+    const isClone = t.kind === 'clone'
+    const clone = last?.clone ?? 'fe-expert'
+    const cardTokens = last?.cardTokens ?? 2180
+    const skills = t.identity === '代码评审员'
+      ? 'octo-code-review · octo-a11y'
+      : 'octo-ui-review · octo-a11y'
+    return `
+      <div class="empty">
+        <span class="big">⇄</span>
+        <span>本轮没有身份切换</span>
+        <span>当前身份：<b style="color:var(--purple)">${t.identity}</b>${isClone ? ` · role_revision ${t.roleRevision}` : ' · 基础身份'}</span>
+      </div>
+      ${isClone ? `
+        <div class="callout"><b>最近一次切换：</b>${last.id} · ${last.at}（${last.from} → ${last.to}）。岗位包只在那轮注入过一次，本轮继续沿用，不重复发送。
+          <button class="call-link" style="margin-left:6px" data-open-turn="${last.id}" data-tab="identity">回到 ${last.id} 查看 diff</button>
+        </div>
+        <div class="sec" style="margin-top:12px"><span>当前身份包</span><span class="line"></span></div>
+        <div class="kv">
+          <div class="kv-row"><span class="k">clone</span><span class="val"><code>${clone}</code> · ${t.identity}</span></div>
+          <div class="kv-row"><span class="k">persona</span><span class="val">clones/${clone}/persona.md</span></div>
+          <div class="kv-row"><span class="k">SKILL</span><span class="val">${skills}</span></div>
+          <div class="kv-row"><span class="k">岗位包</span><span class="val">已送达（${last.id}）· ${fmtExact(cardTokens)} tok · 本轮不重发</span></div>
+        </div>` : `
+        <div class="callout"><b>基础身份：</b>没有挂分身；system prompt 只含主 Agent 的 persona / memory / skills。</div>`}
+    `
+  }
+
+  const sw = t.switch
+  return `
+    <div class="switch-banner">
+      <span class="from">${sw.from}</span><span class="arr">→</span><span class="to">${sw.to}</span>
+      <span style="color:#7f818c;font-size:9.5px">clone <code style="color:var(--cyan)">${sw.clone}</code></span>
+      <span class="rev">role_revision ${sw.revision}</span>
+    </div>
+    <div class="chips">
+      <span class="tag p">自本轮起生效 · ${sw.at}</span>
+      <span class="tag">岗位包 ${fmtExact(sw.cardTokens)} tok</span>
+      <span class="tag a">只送达一次</span>
+    </div>
+
+    <table class="diff">
+      <tr><th>维度</th><th>切换前（${sw.from}）</th><th>切换后（${sw.to}）</th></tr>
+      ${sw.diff.map(([k, a, b, changed]) => `<tr>
+        <td>${esc(k)}</td>
+        <td class="before">${esc(a)}</td>
+        <td class="after ${changed ? 'add' : 'same'}">${esc(b)}</td>
+      </tr>`).join('')}
+    </table>
+
+    <div class="callout"><b>为什么 system prompt 没变：</b>provider 按前缀缓存；system prompt 一旦重建，整个 transcript 缓存失效。所以身份切换不重拼 prompt，而是把完整岗位包作为<strong>本轮 user 消息的 transient reminder</strong> 送达，并在 result 后把 revision 标记为 delivered。</div>
+
+    <div class="sec" style="margin-top:12px"><span>本轮送达的岗位包</span><span class="line"></span><span class="lnk">${fmtExact(sw.cardTokens)} tok · 折叠</span></div>
+    <details class="plain role-card">
+      <summary><span class="arw">▸</span> 展开岗位包全文（与 provider message 中一致）</summary>
+      <div class="inner"><pre class="code">${esc(sw.card)}</pre></div>
+    </details>
+
+    <p class="note">下一轮起：身份保持，岗位包不再重复注入。若用户再切到第三个分身，revision +1，并重新送达一次新的岗位包。</p>
+  `
+}
+
+function renderSdk(t) {
+  const opts = Object.entries(t.options)
+  const raw = {
+    cwd: t.options.cwd,
+    model: t.options.model,
+    effort: t.options.effort,
+    systemPrompt: { type:'preset', preset:'claude_code', append:'<5,904 tok snapshot>' },
+    resume: t.options.resume,
+    agents: '7 entries',
+    mcpServers: ['octopus-workflow', 'octopus-task'],
+    plugins: [{ type:'local', path:'…/task-author' }, { type:'local', path:'…/task-doer' }],
+    interruptible: true,
+    settingSources: ['project', 'user'],
+    allowDangerouslySkipPermissions: true,
+  }
+
+  return `
+    <div class="sec"><span>sendQuery options</span><span class="line"></span><span class="lnk">${t.id} 快照</span></div>
+    <div class="opt-list">
+      ${opts.map(([k, v]) => `<div class="opt-row"><span class="k">${k}</span><span class="v">${esc(v)}</span></div>`).join('')}
+    </div>
+
+    <details class="plain">
+      <summary><span class="arw">▸</span> raw JSON（实际调用参数）</summary>
+      <div class="inner"><pre class="code">${esc(JSON.stringify(raw, null, 2))}</pre></div>
+    </details>
+
+    <div class="sec" style="margin-top:12px"><span>装载面</span><span class="line"></span><span class="lnk">61 tools · 2 MCP</span></div>
+    <div class="two-col">
+      <div>
+        <div class="note" style="margin:0 0 3px">SYSTEM TOOLS · 14,220 tok</div>
+        <table class="tool-table">
+          ${SYSTEM_TOOLS.map(([n, v]) => `<tr><td class="nm">${n}<div class="mini-bar"><i style="width:${(v / 1940) * 100}%"></i></div></td><td>${fmtExact(v)}</td></tr>`).join('')}
+          <tr><td class="sv">其余 36 个工具</td><td>5,120</td></tr>
+        </table>
+      </div>
+      <div>
+        <div class="note" style="margin:0 0 3px">MCP TOOLS · 1,840 tok</div>
+        <table class="tool-table">
+          ${MCP_TOOLS.map(([sv, n, v]) => `<tr><td class="nm">${n}<div class="sv">${sv}</div></td><td>${fmtExact(v)}</td></tr>`).join('')}
+        </table>
+      </div>
+    </div>
+
+    <div class="sec" style="margin-top:12px"><span>AGENTS / SKILLS / SLASH</span><span class="line"></span></div>
+    <div class="two-col">
+      <div>
+        <div class="note" style="margin:0 0 3px">AGENTS · 7 个 · 920 tok</div>
+        <table class="tool-table">
+          ${AGENTS.map(([n, v]) => `<tr><td class="nm">${n}</td><td>${fmtExact(v)}</td></tr>`).join('')}
+          <tr><td class="sv">… 另 1 个（delegate）</td><td>—</td></tr>
+        </table>
+      </div>
+      <div>
+        <div class="note" style="margin:0 0 3px">SKILLS · 2 个 · 1,842 tok</div>
+        <div class="skill-list"><span class="tag p">octo-ui-review</span><span class="tag p">octo-a11y</span></div>
+        <div class="note" style="margin:9px 0 3px">SLASH COMMANDS · 6 个</div>
+        <div class="skill-list">
+          ${['/compact','/context','/usage','/review','/test','/help'].map(x => `<span class="tag">${x}</span>`).join('')}
+        </div>
+      </div>
+    </div>
+
+    <div class="callout warn"><b>SDK init 是主缺口：</b>provider 目前只消费 <code>system:init</code> 的 <code>slash_commands</code>；工具清单、MCP 连接状态、permissionMode、output style、skills 多数被丢弃。要做这个页签，先把 init 事件整包留下（脱敏后按轮存）。</div>
+  `
+}
+
+function renderTimeline(t) {
+  const initPct = Math.round((t.init / t.ttft) * 100)
+  const stopColor = t.status === 'warn' ? 'var(--amber)' : t.status === 'error' ? 'var(--red)' : 'var(--green)'
+  return `
+    <div class="tl-head">
+      <span>首响应 <b>${fmtDur(t.ttft)}</b></span>
+      <span>·</span>
+      <span>总 <b>${fmtDur(t.duration)}</b></span>
+      <span>·</span>
+      <span>${t.events.length} 事件</span>
+      <span class="sp"></span>
+      <span style="color:${stopColor}">${t.stop}</span>
+    </div>
+    <div class="tl">
+      ${t.events.map(e => `<div class="tl-ev ${e.type}">
+        <div class="r1">
+          <span class="off">${fmtOff(e.off)}</span>
+          <span class="lbl">${e.label}</span>
+          <span class="det">${e.det || ''}</span>
+        </div>
+        ${e.sub ? `<div class="sub">${e.sub}</div>` : ''}
+      </div>`).join('')}
+    </div>
+    <div class="callout"><b>首 token ${fmtDur(t.ttft)} 里，SDK 启动占 ${fmtDur(t.init)}（${initPct}%）。</b>这部分是子进程 boot + settings/plugins/skills 装载 + resume transcript，不是模型推理；把它单独标出来，才知道该优化哪一段。</div>
+    ${t.status === 'warn' ? `<div class="callout warn"><b>中止轮也记账：</b>interrupt() 后 SDK 仍产出一条带 usage 的 error result；本页把它和正常 end_turn 分开标色，但 token / 成本照常进账本。</div>` : ''}
+    ${t.status === 'error' ? `<div class="callout warn"><b>错误轮也记账：</b>error result 里可能已经包含若干次完成的模型调用；调试页把「调用失败」与「没有产生用量」分开，避免账本被误读。</div>` : ''}
+  `
+}
+
+function setOpen(open) {
+  state.open = open
+  $('#inspector').hidden = !open
+  $('#dock-debug').classList.toggle('on', open)
+}
+
+function openInspector(turnId, tab) {
+  if (turnId) {
+    if (!TURNS.some(x => x.id === turnId)) {
+      toast(`当前 ${TURNS.length} 轮规模里没有 ${turnId}`)
+      return
+    }
+    state.turn = turnId
+    state.filter = 'all'
+    const x = TURNS.find(y => y.id === turnId)
+    if (x.idx < TURNS.length - 9) state.expanded = true
+  }
+  if (tab) state.tab = tab
+  state.open = true
+  state.pendingScroll = true
+  state.userView = 'raw'
+  setOpen(true)
+  render()
+}
+
+function selectTurn(id, tab) {
+  if (!TURNS.some(t => t.id === id)) return
+  const x = TURNS.find(t => t.id === id)
+  state.turn = id
+  if (tab) state.tab = tab
+  state.userView = 'raw'
+  const matches = state.filter === 'switch'
+    ? x.hasSwitch
+    : state.filter === 'anomaly'
+      ? x.status !== 'ok'
+      : true
+  if (!matches) state.filter = 'all'
+  if (x.idx < TURNS.length - 9 && state.filter === 'all') state.expanded = true
+  state.pendingScroll = true
+  state.open = true
+  setOpen(true)
+  render()
+}
+
+function syncTranscript(n) {
+  const switchAt = Math.max(6, n - 4)
+  const fold = $('#transcript-fold')
+  if (fold) fold.textContent = `T3–T${switchAt - 1} 共 ${switchAt - 3} 轮已折叠 · 完整轨迹见右侧作业坞「调试」`
+  const when = $('#reviewer-switch-when')
+  if (when) when.textContent = `T${switchAt} 起生效 · 岗位包 1,640 tok`
+  const link = $('#reviewer-switch-link')
+  if (link) link.dataset.openTurn = `T${switchAt}`
+  const who = $('#reviewer-who')
+  if (who) who.textContent = `代码评审员 · T${switchAt}`
+  const mid = $('#reviewer-mid-who')
+  if (mid) mid.textContent = `代码评审员 · T${Math.max(switchAt + 1, n - 1)}`
+  const last = $('#reviewer-last-who')
+  if (last) last.textContent = `代码评审员 · T${n}`
+}
+
+function setScale(n) {
+  state.scale = n
+  TURNS = buildTurns(n)
+  state.turn = `T${TURNS.length}`
+  state.tab = 'overview'
+  state.filter = 'all'
+  state.expanded = false
+  state.pendingScroll = true
+  state.userView = 'raw'
+  $$('#scale-seg button').forEach(b => b.classList.toggle('on', Number(b.dataset.scale) === n))
+  syncTranscript(n)
+  state.open = true
+  setOpen(true)
+  render()
+}
+
+function setScenario(s) {
+  state.scenario = s
+  document.body.dataset.scenario = s
+  $$('#scenario-seg button').forEach(b => b.classList.toggle('on', b.dataset.scenario === s))
+  const title = s === 'task' ? '侧栏组件落地 · 评审收尾' : '侧栏组件 · 评审收尾'
+  $('.chat-top .t').textContent = title
+  const input = $('.composer-line input')
+  input.placeholder = s === 'task'
+    ? '问代码评审员…　⏎ 发送 · ⇧⏎ 排队 · Alt⏎ 换行  ·  调试入口：作业坞「调试」'
+    : '和代码评审员聊…　⏎ 发送 · ⇧⏎ 排队  ·  调试入口：作业坞「调试」'
+}
+
+function toast(msg) {
+  const el = $('#toast')
+  el.textContent = msg
+  el.classList.add('show')
+  clearTimeout(toast._timer)
+  toast._timer = setTimeout(() => el.classList.remove('show'), 1500)
+}
+
+function copyText(text, okMsg) {
+  const fallback = () => {
+    try {
+      const ta = document.createElement('textarea')
+      ta.value = text
+      ta.style.cssText = 'position:fixed;left:-9999px;top:0;opacity:0'
+      document.body.appendChild(ta)
+      ta.select()
+      document.execCommand('copy')
+      ta.remove()
+      toast(okMsg)
+    } catch {
+      toast('剪贴板不可用（原型环境）')
+    }
+  }
+  const p = navigator.clipboard?.writeText(text)
+  if (p) p.then(() => toast(okMsg)).catch(fallback)
+  else fallback()
+}
+
+/* ── 事件委托 ─────────────────────────────────────────────── */
+document.addEventListener('click', (e) => {
+  const el = e.target.closest('button, [data-open-turn], [data-turn-row]')
+  if (!el) return
+
+  if (el.dataset.scale) { setScale(Number(el.dataset.scale)); return }
+  if (el.dataset.scenario) { setScenario(el.dataset.scenario); return }
+
+  if (el.dataset.openTurn) {
+    openInspector(el.dataset.openTurn, el.dataset.tab || 'overview')
+    return
+  }
+  if (el.dataset.turnRow) {
+    selectTurn(el.dataset.turnRow)
+    return
+  }
+  if (el.dataset.filter) {
+    state.filter = el.dataset.filter
+    state.expanded = false
+    const matches = filteredTurns()
+    if (matches.length && !matches.some(x => x.id === state.turn)) {
+      state.turn = matches[0].id
+      state.pendingScroll = true
+    }
+    render()
+    return
+  }
+  if (el.dataset.tab) {
+    state.tab = el.dataset.tab
+    render()
+    return
+  }
+  if (el.dataset.userView) {
+    state.userView = el.dataset.userView
+    $('#pane').innerHTML = renderPrompt(current())
+    $('#pane').scrollTop = 0
+    return
+  }
+
+  switch (el.id) {
+    case 'dock-debug': {
+      setOpen(!state.open)
+      if (state.open) render()
+      break
+    }
+    case 'ins-close':
+      setOpen(false)
+      break
+    case 'latest-btn': {
+      const latest = TURNS[TURNS.length - 1]
+      state.filter = 'all'
+      state.expanded = false
+      state.turn = latest.id
+      state.userView = 'raw'
+      state.pendingScroll = true
+      setOpen(true)
+      render()
+      break
+    }
+    case 'more-btn': {
+      state.expanded = !state.expanded
+      if (!state.expanded && current().idx < TURNS.length - 9) {
+        state.turn = `T${TURNS.length}`
+        state.pendingScroll = true
+      }
+      render()
+      break
+    }
+    case 'ins-prev': {
+      const t = current()
+      if (t.idx > 1) selectTurn(TURNS[t.idx - 2].id)
+      break
+    }
+    case 'ins-next': {
+      const t = current()
+      if (t.idx < TURNS.length) selectTurn(TURNS[t.idx].id)
+      break
+    }
+    case 'ins-copy': {
+      const t = current()
+      const snapshot = {
+        turn: t.id, session: 's-demo', time: t.time,
+        identity: t.identity, role_revision: t.roleRevision,
+        user: t.user, system_prompt_snapshot: SNAPSHOT_HASH,
+        segments: t.segments.map(s => ({ name: s.name, tokens: s.tokens, degraded: s.degraded })),
+        options: t.options, usage: t.usage, context: t.context,
+        stop: t.stop, events: t.events,
+      }
+      copyText(JSON.stringify(snapshot, null, 2), `已复制 ${t.id} 调用快照 JSON`)
+      break
+    }
+    case 'notes-btn':
+      $('#notes').hidden = !$('#notes').hidden
+      break
+    case 'notes-close':
+      $('#notes').hidden = true
+      break
+    case 'anno-btn':
+      document.body.classList.toggle('anno-on')
+      break
+    case 'rec-toggle': {
+      const on = document.body.dataset.record === 'on'
+      document.body.dataset.record = on ? 'off' : 'on'
+      $('#rec-label').textContent = on ? 'OFF' : 'ON'
+      toast(on ? '调试记录已暂停：历史轮仍可查看，新轮不再落快照' : '调试记录已开启：每轮落 provider message + options 快照')
+      break
+    }
+  }
+})
+
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape') {
+    if (!$('#notes').hidden) { $('#notes').hidden = true; return }
+    if (state.open) setOpen(false)
+    return
+  }
+  if (e.metaKey && e.key === '/') {
+    e.preventDefault()
+    $('#notes').hidden = !$('#notes').hidden
+  }
+  if (e.metaKey && e.shiftKey && (e.key === 'D' || e.key === 'd')) {
+    e.preventDefault()
+    setOpen(!state.open)
+    if (state.open) render()
+  }
+})
+
+/* ── 启动 ───────────────────────────────────────────────── */
+syncTranscript(state.scale)
+setOpen(true)
+render()
+</script>
+</body>
+</html>

@@ -103,6 +103,18 @@ export class AgentSessionDAO extends BaseDAO {
 
   // ── messages ────────────────────────────────────────────────────
 
+  /** Number of persisted user turns (excludes role-switch/system rows and
+   *  server-originated event cards). The debug inspector uses it so `T{n}`
+   *  matches the transcript's turn number instead of a recorder-local count. */
+  countUserTurns(sessionId: string): number {
+    const row = this.stmt(`
+      SELECT COUNT(*) AS n FROM messages
+       WHERE session_id = ? AND role = 'user'
+         AND (metadata IS NULL OR metadata NOT LIKE '%"displayType":"event"%')
+    `).get(sessionId) as { n: number }
+    return row.n
+  }
+
   findMessagesBySession(sessionId: string, filters?: {
     limit?: number; cursor?: string
   }): { items: MessageRow[]; has_more: boolean; next_cursor: string | null } {
