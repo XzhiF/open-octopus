@@ -301,3 +301,37 @@ describe("历史轮只读坐标（归档回看）", () => {
     expect((await app.request(`/api/tasks/${taskId}/round-diff`)).status).toBe(409)
   })
 })
+
+describe("两层验收：机器证据不可勾选（2026-10-31）", () => {
+  it("rejects recordCheck on an evidence id, accepts a case id", async () => {
+    const taskId = await newAwaiting()
+    const plan = {
+      version: "2",
+      task_id: taskId,
+      phase_index: 1,
+      round_index: 1,
+      generated_at: new Date().toISOString(),
+      planner: "acceptance-planner",
+      goal: "g",
+      cases: [{
+        id: "case:1", title: "场景", story: "", expect: "ok", tickets: [],
+        steps: [{ kind: "observe", text: "看一眼" }], evidenceRefs: [],
+      }],
+      checks: [{ id: "check:unit", title: "单测", tickets: [], covers: [], evidenceRefs: [] }],
+      coverage: { stories: [], acs: [], found: [], missing: [] },
+      warnings: [],
+    }
+    evidence.setAcceptancePlanService({
+      planState: () => ({ summary: { status: "ready" }, plan }),
+    } as never)
+    try {
+      expect(() => evidence.recordCheck(taskId, { itemId: "check:unit", decision: "pass" }))
+        .toThrow(/机器证据/)
+      const ok = evidence.recordCheck(taskId, { itemId: "case:1", decision: "pass" })
+      expect(ok.checks.checks["case:1"].decision).toBe("pass")
+      expect(ok.checks.checks["check:unit"]).toBeUndefined()
+    } finally {
+      evidence.setAcceptancePlanService(null)
+    }
+  })
+})

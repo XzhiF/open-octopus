@@ -34,7 +34,7 @@ import type { RoundEvidenceService } from "./round-evidence-service"
 import type { ChecksFile, PlaybookPayload } from "./playbook-types"
 import { checksFileName, parseChecksMd } from "./playbook-compile"
 import {
-  AcceptancePlanSchema,
+  parseAcceptancePlan,
   planEvidenceName,
   planJsonName,
   planMdName,
@@ -74,6 +74,8 @@ export interface PlanDetail {
   plan: AcceptancePlan | null
   checks: ChecksFile | null
   progress: PlanProgress | null
+  /** 机器证据概要（只读提示，不参与判定）。 */
+  evidence: { total: number; missing: number }
   paths: { json: string | null; md: string | null }
   /** server 校验发现的矛盾项（给人看的诚实提示）。 */
   warnings: string[]
@@ -166,11 +168,20 @@ export class AcceptancePlanService {
     const checks = info.batchRelDir ? this.readChecks(taskId, info.batchRelDir, info.roundIndex) : null
     const plan = st.plan ?? null
     const progress = plan ? computeProgress(plan, checks) : null
+    const evidence = plan
+      ? {
+          total: plan.checks.length,
+          missing:
+            plan.checks.reduce((n, ck) => n + ck.evidenceRefs.filter((e) => e.missing).length, 0) +
+            plan.cases.reduce((n, c) => n + c.evidenceRefs.filter((e) => e.missing).length, 0),
+        }
+      : { total: 0, missing: 0 }
     return {
       status: st.summary,
       plan,
       checks,
       progress,
+      evidence,
       paths: info.batchRelDir
         ? {
             json: `${info.batchRelDir}/${planJsonName(info.roundIndex)}`,
@@ -201,6 +212,15 @@ export class AcceptancePlanService {
   }
 
   private readPlanFile(taskId: string, batchRelDir: string, roundIndex: number): AcceptancePlan | null {
+    return this.readPlanParsed(taskId, batchRelDir, roundIndex)?.plan ?? null
+  }
+
+  /** v1/v2 统一入口：v1 在内存里转成 v2（文件不改写，审计仍读原稿）。 */
+  private readPlanParsed(
+    taskId: string,
+    batchRelDir: string,
+    roundIndex: number,
+  ): { plan: AcceptancePlan; parseWarnings: string[] } | null {
     let raw: string
     try {
       raw = readFileSync(this.planAbsPath(taskId, batchRelDir, planJsonName(roundIndex)), "utf-8")
@@ -213,8 +233,7 @@ export class AcceptancePlanService {
     } catch {
       return null
     }
-    const res = AcceptancePlanSchema.safeParse(parsed)
-    return res.success ? res.data : null
+    return parseAcceptancePlan(parsed)
   }
 
   // ── ensure / generate ──────────────────────────────────────────────
@@ -365,12 +384,12 @@ export class AcceptancePlanService {
     const { batchRelDir, roundIndex, phaseIndex } = info
     if (!batchRelDir) return
     try {
-      const raw = this.readPlanFile(taskId, batchRelDir, roundIndex)
-      if (!raw) {
+      const parsed = this.readPlanParsed(taskId, batchRelDir, roundIndex)
+      if (!parsed) {
         this.markFailed(taskId, batchRelDir, roundIndex, phaseIndex, "规划 Agent 未产出合法方案文件（acceptance-plan-rN.json 缺失或不合规）", executionId)
         return
       }
-      const plan = this.normalizePlan(taskId, raw, info)
+      const plan = this.normalizePlan(taskId, parsed, info)
       const jsonAbs = this.planAbsPath(taskId, batchRelDir, planJsonName(roundIndex))
       writeFileSync(jsonAbs, JSON.stringify(plan, null, 2), "utf-8")
       const mdAbs = this.planAbsPath(taskId, batchRelDir, planMdName(roundIndex))
@@ -389,7 +408,8 @@ export class AcceptancePlanService {
         getChatEventBridge().requestAcceptanceGuide(taskId, {
           phaseIndex,
           roundIndex,
-          itemCount: plan.items.length,
+          caseCount: plan.cases.length,
+          checkCount: plan.checks.length,
           goal: plan.goal || undefined,
         })
       } catch {
@@ -427,39 +447,105 @@ export class AcceptancePlanService {
 
   // ── normalization / evidence ───────────────────────────────────────
 
-  /** 规范化 + 诚实校验：id 前缀/去重、evidence 路径存在性、覆盖来源。 */
-  private normalizePlan(taskId: string, plan: AcceptancePlan, info: AwaitingRoundInfo): AcceptancePlan {
-    const warnings = [...plan.warnings]
+  /** 规范化 + 诚实校验：id 去重、evidence 路径存在性、覆盖登记一致性。
+   *  人层与机器证据各自校验；两层 id 全局唯一（checks 文件是同一个键空间）。 */
+  private normalizePlan(
+    taskId: string,
+    parsed: { plan: AcceptancePlan; parseWarnings: string[] },
+    info: AwaitingRoundInfo,
+  ): AcceptancePlan {
+    const plan = parsed.plan
+    const warnings = [...parsed.parseWarnings, ...plan.warnings]
     const home = this.taskHome.homePath(taskId)
     const seen = new Set<string>()
-    const items = plan.items.map((it, i) => {
-      let id = it.id.trim()
-      if (!/^plan:/.test(id)) id = `plan:${it.ticket}:${i + 1}`
-      while (seen.has(id)) id = `${id}-${i + 1}`
+
+    const normalizeId = (raw: string, fallbackPrefix: string, n: number): string => {
+      let id = raw.trim() || `${fallbackPrefix}:${n}`
+      if (seen.has(id)) {
+        let k = 2
+        while (seen.has(`${id}-${k}`)) k++
+        warnings.push(`方案存在重复 id「${id}」，已规范为「${id}-${k}」`)
+        id = `${id}-${k}`
+      }
       seen.add(id)
-      const evidenceRefs = it.evidenceRefs.map((e) => {
+      return id
+    }
+    const normalizeRefs = (title: string, refs: AcceptancePlan["cases"][number]["evidenceRefs"]) =>
+      refs.map((e) => {
         if (!e.path) return e
         const p = e.path.trim()
         if (!p) return e
         const abs = path.isAbsolute(p) ? p : path.join(home, p.replace(/\\/g, "/"))
         const ok = existsSync(abs)
         if (!ok && !e.missing) {
-          warnings.push(`「${it.title}」的证据 ${e.label} 路径不存在：${p}`)
+          warnings.push(`「${title}」的证据 ${e.label} 路径不存在：${p}`)
           return { ...e, missing: true }
         }
         return e
       })
-      return { ...it, id, evidenceRefs }
+    const cleanList = (xs: string[]): string[] => [...new Set(xs.map((x) => x.trim()).filter(Boolean))]
+
+    const cases = plan.cases.map((c, i) => ({
+      ...c,
+      id: normalizeId(c.id, "case", i + 1),
+      tickets: cleanList(c.tickets),
+      evidenceRefs: normalizeRefs(c.title, c.evidenceRefs),
+    }))
+    const checks = plan.checks.map((ck, i) => ({
+      ...ck,
+      id: normalizeId(ck.id, "check", i + 1),
+      tickets: cleanList(ck.tickets),
+      covers: cleanList(ck.covers),
+      evidenceRefs: normalizeRefs(ck.title, ck.evidenceRefs),
+    }))
+
+    const caseIds = new Set(cases.map((c) => c.id))
+    const checkIds = new Set(checks.map((ck) => ck.id))
+    let stories = plan.coverage.stories.filter((s) => {
+      if (caseIds.has(s.case_id)) return true
+      warnings.push(`覆盖登记引用了不存在的场景：${s.case_id}`)
+      return false
     })
+    let acs = plan.coverage.acs
+      .map((a) => ({ ...a, check_ids: a.check_ids.filter((id) => checkIds.has(id)) }))
+      .filter((a) => {
+        if (a.check_ids.length) return true
+        warnings.push(`覆盖登记「${a.ac}」没有引用任何机器证据`)
+        return false
+      })
+    // 覆盖能从显式字段推出来就补全（不是编造）：场景带 story、证据带 covers。
+    if (!stories.length) {
+      stories = cases.filter((c) => c.story.trim()).map((c) => ({ story: c.story, case_id: c.id }))
+    }
+    if (!acs.length) {
+      const byAc = new Map<string, string[]>()
+      for (const ck of checks) {
+        for (const ac of ck.covers) {
+          if (!byAc.has(ac)) byAc.set(ac, [])
+          byAc.get(ac)!.push(ck.id)
+        }
+      }
+      acs = [...byAc].map(([ac, ids]) => ({ ac, check_ids: [...new Set(ids)] }))
+    }
+    if (checks.length && !acs.length) {
+      warnings.push("机器证据未写明覆盖的 AC（covers 为空）—— 人只需要看场景，但覆盖是否齐全无法核对")
+    }
+    const unmappedStories = cases.filter((c) => c.story.trim() && !stories.some((s) => s.case_id === c.id))
+    if (unmappedStories.length) {
+      warnings.push(`有 ${unmappedStories.length} 条场景未登记故事覆盖（coverage.stories）`)
+    }
+
     const generatedAt = plan.generated_at || new Date().toISOString()
     return {
       ...plan,
-      version: "1",
+      version: "2",
       task_id: taskId,
       phase_index: info.phaseIndex,
       round_index: info.roundIndex,
       generated_at: Number.isNaN(Date.parse(generatedAt)) ? new Date().toISOString() : generatedAt,
-      items,
+      cases,
+      checks,
+      coverage: { ...plan.coverage, stories, acs },
       warnings,
     }
   }
@@ -604,25 +690,26 @@ export function acceptancePlanReady(taskId: string): boolean {
   }
 }
 
-export function computeProgress(plan: AcceptancePlan, checks: ChecksFile | null): PlanProgress {  const map = checks?.checks ?? {}
+export function computeProgress(plan: AcceptancePlan, checks: ChecksFile | null): PlanProgress {
+  const map = checks?.checks ?? {}
   let pass = 0
   let fail = 0
   let skip = 0
-  for (const it of plan.items) {
-    const d = map[it.id]?.decision
+  for (const c of plan.cases) {
+    const d = map[c.id]?.decision
     if (d === "pass") pass++
     else if (d === "fail") fail++
     else if (d === "skip") skip++
   }
   const decided = pass + fail + skip
-  const next = plan.items.find((it) => !map[it.id]) ?? null
+  const next = plan.cases.find((c) => !map[c.id]) ?? null
   return {
-    total: plan.items.length,
+    total: plan.cases.length,
     pass,
     fail,
     skip,
     decided,
-    undecided: plan.items.length - decided,
+    undecided: plan.cases.length - decided,
     next_item_id: next?.id ?? null,
   }
 }

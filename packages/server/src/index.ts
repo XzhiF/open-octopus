@@ -1239,11 +1239,13 @@ if (shouldServe) {
         finalizeAcceptance: (taskId, input) => roundEvidence.decideAcceptance(taskId, input),
         runProbe: async (taskId, itemId) => {
           const detail = acceptancePlan.getPlanDetail(taskId)
-          const item = detail.plan?.items.find((it) => it.id === itemId)
-          if (!item) throw new Error(`未知验收项: ${itemId}`)
-          const cmd = item.machine?.command?.trim()
-            || item.howTo.find((h) => h.kind === "run" && h.command?.trim())?.command?.trim()
-          if (!cmd) throw new Error("该项没有可自动执行的机器证据 —— 请按方案里的 howTo 人工核对")
+          const plan = detail.plan
+          const check = plan?.checks.find((it) => it.id === itemId)
+          const kase = plan?.cases.find((it) => it.id === itemId)
+          if (!check && !kase) throw new Error(`未知验收项: ${itemId}`)
+          const cmd = check?.recheck?.trim()
+            || kase?.steps.find((s) => s.command?.trim())?.command?.trim()
+          if (!cmd) throw new Error("该项没有可自动执行的重跑命令 —— 请按场景步骤人工操作（机器证据不需要逐条重跑）")
           return roundEvidence.runProbe(taskId, cmd, 300)
         },
         startPreview: (taskId) => roundEvidence.startPreview(taskId),

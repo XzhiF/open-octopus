@@ -352,7 +352,7 @@ export function createTaskToolServer(input: TaskToolServerInput) {
   const acceptanceTools = profile.acceptanceGuide ? [
     tool(
       "get_acceptance_plan",
-      "Read the current round's acceptance plan (items with how-to steps, evidence refs, machine suggestions), check progress, and the post-round site (postRound: commits after the last round's end anchor + uncommitted files). Read-only; call it before guiding the human, before the final decision, and whenever you need the next undecided item.",
+      "Read the current round's acceptance plan: `cases` are the 1–3 human scenarios (open → do → observe) you walk the human through; `checks` are machine evidence already recorded this round — report them in one line, never ask the human to confirm them one by one. Also returns progress (over cases), evidence summary (total/missing), and the post-round site (postRound: commits after the last round's end anchor + uncommitted files). Read-only.",
       {},
       async () => {
         const svc = acceptanceService()
@@ -373,26 +373,27 @@ export function createTaskToolServer(input: TaskToolServerInput) {
     ),
     tool(
       "ask_acceptance_check",
-      "Ask the human to confirm ONE acceptance item. Appends a self-contained card (通过标准 / 怎么验 / 机器建议 / 证据) with 通过 / 不通过 / 跳过. Ask one item at a time; never batch. The human may answer in words instead of clicking — if they say 通过/可以/不行, record it yourself with record_acceptance_check.",
+      "Ask the human to confirm ONE human scenario (`case`). Appends a self-contained card (场景步骤 / 通过标准 / 证据) with 通过 / 不通过 / 跳过. Ask one case at a time; never batch. Machine evidence (`checks`) must NOT be asked this way — summarize it in one line instead. The human may answer in words instead of clicking — if they say 通过/可以/不行, record it yourself with record_acceptance_check.",
       {
-        item_id: z.string().min(1).describe("The plan item id (e.g. plan:01-tokenizer:1)"),
+        item_id: z.string().min(1).describe("The plan case id (e.g. case:1)"),
       },
       async ({ item_id }) => {
         const svc = acceptanceService()
         if (!svc) return text({ ok: false, error: "验收服务未就绪" })
         try {
           const detail = svc.getPlanDetail(task.id)
-          const item = detail.plan?.items.find((it) => it.id === item_id)
-          if (!item) return text({ ok: false, error: `未知验收项: ${item_id}` })
-          const all = detail.plan?.items ?? []
+          const item = detail.plan?.cases.find((it) => it.id === item_id)
+          if (!item) return text({ ok: false, error: `未知验收场景: ${item_id}（机器证据项不需要人工确认）` })
+          const all = detail.plan?.cases ?? []
           const index = all.findIndex((it) => it.id === item_id) + 1
           appendTaskToolCard(db, sessionId, {
             kind: "task.acceptance_check",
             severity: "info",
-            title: `验收项 ${index}/${all.length} · ${item.title}`,
+            title: `验收场景 ${index}/${all.length} · ${item.title}`,
             message: [
+              item.story ? `场景：${item.story}` : "",
+              item.setup ? `起点：${item.setup}` : "",
               `通过标准：${item.expect}`,
-              item.machine ? `机器建议：${item.machine.verdict.toUpperCase()} — ${item.machine.why}` : "",
               "也可以直接在对话里说「通过 / 不行，因为… / 跳过」，我会记录。",
             ].filter(Boolean).join("\n"),
             taskId: task.id,
@@ -409,14 +410,16 @@ export function createTaskToolServer(input: TaskToolServerInput) {
               acceptanceCheck: true,
               itemId: item.id,
               title: item.title,
-              ticket: item.ticket,
+              story: item.story,
+              setup: item.setup,
+              ticket: item.tickets[0],
+              tickets: item.tickets,
               index,
               total: all.length,
               expect: item.expect,
-              howTo: item.howTo.slice(0, 3).map((h) => ({
-                kind: h.kind, text: h.text, command: h.command, path: h.path,
+              steps: item.steps.map((s) => ({
+                kind: s.kind, text: s.text, target: s.target, value: s.value, expect: s.expect,
               })),
-              machine: item.machine,
               evidence: item.evidenceRefs.slice(0, 4).map((e) => ({
                 kind: e.kind, label: e.label, missing: !!e.missing,
               })),
@@ -432,9 +435,9 @@ export function createTaskToolServer(input: TaskToolServerInput) {
     ),
     tool(
       "record_acceptance_check",
-      "Record the human's explicit decision for ONE item (pass / fail / skip). ONLY call after the human has clearly answered (e.g. clicked the card or said so). fail/skip require a reason. Set confirmed=true to assert you have that explicit answer.",
+      "Record the human's explicit decision for ONE acceptance scenario (`case`). ONLY call after the human has clearly answered (clicked the card or said so). fail/skip require a reason. Machine evidence (`checks`) is never signed. Set confirmed=true to assert you have that explicit answer.",
       {
-        item_id: z.string().min(1),
+        item_id: z.string().min(1).describe("The plan case id (e.g. case:1)"),
         decision: z.enum(["pass", "fail", "skip"]),
         note: z.string().max(2000).optional().describe("Required for fail/skip: what went wrong / why skipped"),
         confirmed: z.boolean().describe("true only when the human explicitly said this — never infer"),
@@ -496,7 +499,7 @@ export function createTaskToolServer(input: TaskToolServerInput) {
     ),
     tool(
       "run_acceptance_probe",
-      "Run the machine evidence command for ONE acceptance item (read-only / re-runnable) inside the task workspace and return exit code + tail. Use it before asking the human, so they see a fresh result.",
+      "Run the on-demand recheck command for ONE plan entry (a machine evidence `check`, or a legacy scenario step that carries a command) inside the task workspace, returning exit code + tail. Only run when the human asks for a fresh result — never auto-run or batch-run the evidence table (e2e / slow commands especially). Read-only / re-runnable.",
       {
         item_id: z.string().min(1),
         timeout_s: z.number().int().min(5).max(600).optional().describe("Optional timeout in seconds (default 300)"),

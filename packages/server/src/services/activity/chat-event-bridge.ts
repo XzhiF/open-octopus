@@ -585,12 +585,16 @@ class ChatEventBridge {
     }
   }
 
-  /** 验收方案就绪（2026-10-30 AI-native 验收）：投一张消息流卡片 + 唤醒主
-   *  Chat 开始逐项引导。只认主线程会话；legacy clone 不动；同一轮只唤醒一次。
-   *  注意：不改 Chat 顶部栏 —— 引导上下文全部在消息流里表达。 */
+  /** 验收方案就绪（2026-10-30 AI-native 验收；2026-10-31 两层化）：投一张
+   *  消息流卡片 + 唤醒主 Chat 开始逐场景引导。只认主线程会话；legacy clone
+   *  不动；同一轮只唤醒一次。注意：不改 Chat 顶部栏 —— 引导上下文全部在
+   *  消息流里表达。
+   *
+   *  两层纪律：人只验 cases（1–3 条场景），checks 是本轮已有机器证据 —— 开场
+   *  一句话播报，不逐条跑、不逐项问。 */
   requestAcceptanceGuide(
     taskId: string,
-    info: { phaseIndex: number; roundIndex: number; itemCount: number; goal?: string },
+    info: { phaseIndex: number; roundIndex: number; caseCount: number; checkCount: number; goal?: string },
   ): void {
     if (!this.db) return
     const key = `${taskId}:${info.phaseIndex}:${info.roundIndex}`
@@ -619,8 +623,9 @@ class ChatEventBridge {
     if (!session || session.clone_name) return // legacy clone thread — untouched
     this.acceptanceGuided.add(key)
 
-    const title = `验收方案已就绪 · ${info.itemCount} 项`
+    const title = `验收方案已就绪 · ${info.caseCount} 个场景`
     const detail = `任务：${row.name ?? taskId.slice(0, 8)} · P${info.phaseIndex} · R${info.roundIndex}` +
+      (info.checkCount ? ` · 机器证据 ${info.checkCount} 项` : "") +
       (info.goal ? ` · ${info.goal}` : "")
     const actions: TaskCardAction[] = [{ id: "acceptance_open_window", label: "打开验收台" }]
     const event = getActivityBus().publish({
@@ -637,7 +642,9 @@ class ChatEventBridge {
         phaseIndex: info.phaseIndex,
         roundIndex: info.roundIndex,
         acceptancePlan: true,
-        itemCount: info.itemCount,
+        caseCount: info.caseCount,
+        checkCount: info.checkCount,
+        itemCount: info.caseCount,
       },
     })
     this.appendTaskCard({
@@ -651,16 +658,17 @@ class ChatEventBridge {
     })
     this.notifySession(row.source_chat_session_id, row.workspace_id ?? null)
     const message = [
-      `[验收引导] 任务 ${taskId} 本轮（P${info.phaseIndex} R${info.roundIndex}）已交付，验收方案已生成（${info.itemCount} 项）。`,
-      "请调用 get_acceptance_plan 读方案与进度，然后**一次只推进一项**：",
-      "1. 先用 run_acceptance_probe 跑该行的机器证据（需要看页面就 start_acceptance_preview，结束后 stop_acceptance_preview），把结果讲给用户；",
-      "2. 再用消息问「通过 / 不通过 / 跳过」；卡片只是快捷方式，不必强求用户点。",
-      "3. 用户在对话里明确表态后直接调 record_acceptance_check(confirmed=true) —— 不要代替人判断。",
-      "不通过 → 当场小修（只改直接相关的 ≤2 个文件，不改 spec），修完重跑证据再重新确认；",
+      `[验收引导] 任务 ${taskId} 本轮（P${info.phaseIndex} R${info.roundIndex}）已交付，验收方案已生成：人验收 ${info.caseCount} 条场景、机器证据 ${info.checkCount} 项。`,
+      "1. 调 get_acceptance_plan：`cases` 是要人验的场景（打开 → 操作 → 看什么），`checks` 是本轮已经验证过的机器证据。",
+      "2. 开场用**一句话**播报机器证据（共几项、缺几件），然后**只走场景** —— 不要逐条跑证据、不要逐项问证据；e2e/慢命令尤其不要主动重跑。",
+      "3. 一次只推进一条场景：按 steps 讲清「打开哪 → 做什么 → 看到什么」；用户要看页面就 start_acceptance_preview（结束 stop_acceptance_preview）。",
+      "4. 只有用户点名「这条再跑一下」时，才对该机器证据项调 run_acceptance_probe；结果讲给用户，但不要让它变成人工勾选项。",
+      "5. 用户明确表态后直接调 record_acceptance_check(confirmed=true)（只对 cases）；不要代替人判断。",
+      "不通过 → 当场小修（只改直接相关的 ≤2 个文件，不改 spec），改完按场景重看再确认；",
       "超出小修边界 → 调 propose_acceptance_escalation 让人确认升级大修复。",
-      "全部项有结论后：用户明确说「放行 / 通过 / 可以了」→ submit_acceptance_decision(decision=\"accepted\", confirmed=true)；",
+      "场景都有结论后：用户明确说「放行 / 通过 / 可以了」→ submit_acceptance_decision(decision=\"accepted\", confirmed=true)；",
       "用户明确说「退回 / 不行，让他改…」→ submit_acceptance_decision(decision=\"rejected\", feedback=他的原话, confirmed=true)。",
-      "人点验收台是兜底，不是必需；但没有明确表态绝不放行、绝不退回，也不要把未勾项当成通过。",
+      "人点验收台是兜底，不是必需；但没有明确表态绝不放行、绝不退回，也不要把未勾场景当成通过。",
     ].join("\n")
     void this.wake(
       { sessionId: row.source_chat_session_id, org: row.repo_group ?? "", workspaceId: row.workspace_id ?? null },

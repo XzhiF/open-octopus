@@ -950,8 +950,12 @@ export class RoundEvidenceService {
       throw new TaskSpecFieldError("未通过 / 跳过必须写原因（会进退回反馈与下一轮 carryover）")
     }
     // 有方案时校验 item 存在 —— 防止模型/脚本凭空造 id 写脏台账。
+    // 2026-10-31 两层化：只有人验收场景（cases）可勾选；机器证据（checks）不签。
     const plan = this.planService?.planState(taskId)?.plan ?? null
-    if (plan && !plan.items.some((it) => it.id === itemId)) {
+    if (plan && !plan.cases.some((it) => it.id === itemId)) {
+      if (plan.checks.some((it) => it.id === itemId)) {
+        throw new TaskSpecFieldError(`「${itemId}」是机器证据项，不需要人工勾选 —— 人只需要确认场景用例`)
+      }
       throw new TaskSpecFieldError(`未知验收项: ${itemId}`)
     }
     const rel = `${batchRelDir}/${checksFileName(roundIndex)}`
@@ -1011,7 +1015,12 @@ export class RoundEvidenceService {
       input.decision === "accepted" && snap &&
       snap.phaseIndex === phaseIndex && snap.roundIndex === roundIndex
     ) {
-      const nFail = Object.values(snap.checks?.checks ?? {}).filter((ck) => ck.decision === "fail").length
+      // 只有人验收场景能触发 ✗ 硬闸；机器证据不参与判定（旧 v1 checks 可能残留其 id）。
+      const humanIds = new Set(
+        snap.playbook.sections.flatMap((s) => s.items).filter((it) => it.tier !== "check").map((it) => it.id),
+      )
+      const nFail = Object.entries(snap.checks?.checks ?? {})
+        .filter(([id, ck]) => ck.decision === "fail" && humanIds.has(id)).length
       if (nFail > 0) {
         throw new TaskStatusConflictError(`走查存在 ${nFail} 项 ✗ —— 服务端硬闸拦截，请改走打回`)
       }
@@ -1041,8 +1050,9 @@ export class RoundEvidenceService {
         err instanceof Error ? err.message : err,
       )
     }
-    // 未决项如实回给主 Chat：放行时若还有没勾的项，用户有权知道。
-    const items = snap?.playbook.sections.flatMap((s) => s.items) ?? []
+    // 未决项如实回给主 Chat：放行时若还有没勾的场景，用户有权知道。
+    // 机器证据（tier=check）不参与人工判定 —— 只统计人验收场景。
+    const items = (snap?.playbook.sections.flatMap((s) => s.items) ?? []).filter((it) => it.tier !== "check")
     const decided = new Set(
       Object.entries(snap?.checks?.checks ?? {})
         .filter(([, c]) => c.decision === "pass" || c.decision === "skip")
@@ -1568,15 +1578,22 @@ export class RoundEvidenceService {
   augmentReject(snap: LedgerSnapshot, reopenTickets?: string[]): { reopened: string[] } {
     const reopened: string[] = []
     if (!snap.batchRelDir) return { reopened }
-    const fails = (snap.checks ? Object.entries(snap.checks.checks).filter(([, c]) => c.decision === "fail") : []) as Array<[string, { note: string }]>
-    // 验收方案项（2026-10-30）：id 形如 plan:<ticket>:n，票名在 item.ticket 上
-    // —— 编译型 id 仍走 ticketBaseFromItemId。
+    // 验收方案项（2026-10-31 两层化）：场景 id 形如 case:n，关联票在 item.tickets
+    // （一个场景可对应多张票）；编译型 id 仍走 ticketBaseFromItemId。
     const flat = snap.playbook.sections.flatMap((s) => s.items)
-    const ticketOf = (id: string): string | null => {
+    const humanIds = new Set(flat.filter((it) => it.tier !== "check").map((it) => it.id))
+    // 只有人验收场景的 ✗ 才进反馈/重开票；机器证据不参与判定。
+    const fails = (snap.checks
+      ? Object.entries(snap.checks.checks).filter(([id, c]) => c.decision === "fail" && humanIds.has(id))
+      : []) as Array<[string, { note: string }]>
+    const ticketsOf = (id: string): string[] => {
       const base = ticketBaseFromItemId(id)
-      if (base) return base
       const it = flat.find((x) => x.id === id)
-      return it?.ticket && it.ticket !== "spec" ? it.ticket : null
+      return [...new Set([
+        ...(base ? [base] : []),
+        ...(it?.tickets ?? []),
+        ...(it?.ticket && it.ticket !== "spec" ? [it.ticket] : []),
+      ])]
     }
     // 1. append 未过项 section to fix-feedback (file written by tasks-service).
     if (fails.length) {
@@ -1585,7 +1602,8 @@ export class RoundEvidenceService {
         `\n\n## 未过项(验收台剧本 ✗)\n\n` +
         fails.map(([id, c]) => {
           const it = flat.find((x) => x.id === id)
-          return `- [${ticketOf(id) ?? id}] ${it?.op ?? id}\n  - 预期: ${it?.expect ?? "—"}\n  - 现象: ${c.note || "(未填)"}`
+          const tickets = ticketsOf(id)
+          return `- [${tickets.join(", ") || id}] ${it?.op ?? id}\n  - 预期: ${it?.expect ?? "—"}\n  - 现象: ${c.note || "(未填)"}`
         }).join("\n") + "\n"
       try {
         const cur = this.taskHome.readHomeFile(snap.taskId, fbRel).content
@@ -1596,7 +1614,7 @@ export class RoundEvidenceService {
     }
     // 2. flip tickets done→reopened (from fail ids ∪ body override).
     const want = new Set<string>([
-      ...fails.map(([id]) => ticketOf(id)).filter((x): x is string => !!x),
+      ...fails.flatMap(([id]) => ticketsOf(id)),
       ...(reopenTickets ?? []),
     ])
     if (want.size) {
@@ -1838,12 +1856,16 @@ function buildLedgerMd(snap: LedgerSnapshot, decision: "accepted" | "rejected"):
   const now = new Date().toISOString()
   const d = snap.diff
   const agg = d.aggregate
-  const totalSteps = snap.playbook.sections.reduce((n, sec) => n + sec.items.length, 0)
   const checks = snap.checks?.checks ?? {}
-  const decided = Object.keys(checks).length
-  const nPass = Object.values(checks).filter((c) => c.decision === "pass").length
-  const nFail = Object.values(checks).filter((c) => c.decision === "fail").length
-  const nSkip = Object.values(checks).filter((c) => c.decision === "skip").length
+  const allItems = snap.playbook.sections.flatMap((sec) => sec.items)
+  // 2026-10-31 两层：人验收场景才计入勾选统计；机器证据单独成节（只读）。
+  const humanItems = allItems.filter((it) => it.tier !== "check")
+  const evidenceItems = allItems.filter((it) => it.tier === "check")
+  const totalSteps = humanItems.length
+  const decided = humanItems.filter((it) => checks[it.id]).length
+  const nPass = humanItems.filter((it) => checks[it.id]?.decision === "pass").length
+  const nFail = humanItems.filter((it) => checks[it.id]?.decision === "fail").length
+  const nSkip = humanItems.filter((it) => checks[it.id]?.decision === "skip").length
   const undecided = Math.max(0, totalSteps - decided)
   const verifyLine = snap.verify
     ? `- 自动复检: \`${snap.verify.command}\` → **${snap.verify.state.toUpperCase()}**` +
@@ -1853,14 +1875,19 @@ function buildLedgerMd(snap: LedgerSnapshot, decision: "accepted" | "rejected"):
     ? `- 跑起来看: \`${snap.preview.command ?? ""}\` @ ${snap.preview.url} → ${snap.preview.state.toUpperCase()}` +
         `${snap.preview.external ? "(外部进程)" : ""} · 决策时自动停止`
     : "- 跑起来看: 未使用"
-  const stepLines = snap.playbook.sections.flatMap((sec) =>
-    sec.items.map((it) => {
-      const c = checks[it.id]
-      const mark = !c ? "·" : c.decision === "pass" ? "✓" : c.decision === "fail" ? "✗" : "⊘"
-      const note = c?.note ? ` — ${c.note}` : ""
-      return `  - [${mark}] ${it.op}${c && c.decision !== "pass" ? ` (预期: ${it.expect})${note}` : ""}`
-    }),
-  )
+  const stepLines = humanItems.map((it) => {
+    const c = checks[it.id]
+    const mark = !c ? "·" : c.decision === "pass" ? "✓" : c.decision === "fail" ? "✗" : "⊘"
+    const note = c?.note ? ` — ${c.note}` : ""
+    return `  - [${mark}] ${it.op}${c && c.decision !== "pass" ? ` (预期: ${it.expect})${note}` : ""}`
+  })
+  const evidenceLines = evidenceItems.map((it) => {
+    const refs = it.evidenceRefs ?? []
+    const missing = refs.filter((e) => e.missing).length
+    const status = refs.length === 0 ? "无证据指针" : missing > 0 ? `缺 ${missing} 件证据` : `${refs.length} 件证据齐全`
+    const covers = it.evidence ? ` · ${it.evidence}` : ""
+    return `  - ${it.op}${covers} — ${status}`
+  })
   const stamp = decision === "accepted" ? "✅ 通过" : "↩ 打回"
   // 接管件的复检真结果优先：verify 有终态（非 running）才算「跑过」。
   const verifyReal = !!snap.verify && snap.verify.state !== "running"
@@ -1889,9 +1916,15 @@ function buildLedgerMd(snap: LedgerSnapshot, decision: "accepted" | "rejected"):
     previewLine,
     "",
     "## 人工走查",
-    `- 计 ${totalSteps} 步：✓${nPass} · ✗${nFail} · ⊘${nSkip} · 未决 ${undecided}${snap.playbook.budget.degraded ? "（编译降档）" : ""}`,
-    ...(stepLines.length ? stepLines : ["  - （无编译步）"]),
+    `- 计 ${totalSteps} 条场景：✓${nPass} · ✗${nFail} · ⊘${nSkip} · 未决 ${undecided}${snap.playbook.budget.degraded ? "（编译降档）" : ""}`,
+    ...(stepLines.length ? stepLines : ["  - （无场景）"]),
     ...(nSkip ? ["", `> ⊘ 跳过项将进入下一轮 carryover（${snap.batchRelDir ? checksFileName(snap.roundIndex + 1) : "?"} 前置），补验或再豁免需新原因。`] : []),
+    ...(evidenceItems.length ? [
+      "",
+      "## 机器证据（本轮已有验证，不要求逐项签）",
+      `- 共 ${evidenceItems.length} 项`,
+      ...evidenceLines,
+    ] : []),
     "",
     "## 决策",
     `- ${stamp} · 触发人 = 验收面板 · autoAdvance/派发由 tasks-service 账本另记`,

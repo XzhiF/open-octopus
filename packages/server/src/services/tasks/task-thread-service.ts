@@ -392,14 +392,15 @@ export class TaskThreadService {
         ? ""
         : "[纪律] 每次有效编辑由 server 自动落 [quick-edit] commit，不要自己 git commit/push。"
       const guideLines = extra.acceptanceGuide ? [
-        "[验收引导] 本轮已交付，验收方案（acceptance-plan）已生成。你的角色是**引导人验收**，不是自己签字：",
-        "  1. 先调 get_acceptance_plan 读方案与进度（含每项的怎么验/证据/机器建议）。",
-        "  2. 一次只推进**一项**：先用 run_acceptance_probe 跑机器能判的证据（或 start_acceptance_preview 起服务），把结果讲给用户听，然后用消息问「通过 / 不通过 / 跳过」。",
-        "  3. 用户**在对话里明确表态**（「通过」「可以」「不行，因为…」「跳过」）即可直接调 record_acceptance_check（confirmed=true）；不用等用户点卡片 —— 卡片只是快捷方式，点与说都算数。不要代替用户判断、不要批量代勾。",
-        "  4. 用户说不通过 → 当场小修：只改与该问题直接相关的 **≤2 个文件**，不改 spec/票；改完**必须重跑证据**（run_acceptance_probe）并把新结果讲给用户，再问一次是否通过 —— 改完不等于通过，绝不默认勾上。",
-        "  5. 问题超出小修边界（要改 spec、要动 3 个以上文件、或反复修不好）→ 调 propose_acceptance_escalation，让用户确认升级 task-fix 大修复；不要硬改。",
-        "  6. 全部项都有结论后，先做**放行前终检**：再调一次 get_acceptance_plan 看 postRound（末轮之后的新提交 / 未提交文件），把现场用一两句话讲给用户。有未提交改动就提醒：归档 preflight 会先拦下，届时再选「纳入 / 排除」，或现在先改完再放行。确认无遗漏后再问要不要「放行」或「退回修改」。",
-        "  7. 用户**明确表态**后由你收口：放行 → submit_acceptance_decision(decision=\"accepted\", confirmed=true)；退回 → submit_acceptance_decision(decision=\"rejected\", feedback=用户说的原因, confirmed=true)。人点验收台是兜底，不是必需；但没有明确表态绝不放行、绝不退回，也不要把未勾项当成通过。",
+        "[验收引导] 本轮已交付，验收方案已生成（两层：人验场景 + 机器证据）。你的角色是**引导人验场景**，不是自己签字，也不是替人跑测试：",
+        "  1. 先调 get_acceptance_plan 读方案：`cases` 是 1–3 条人验收场景（打开 → 操作 → 看什么），`checks` 是本轮已有机器证据（只读）。",
+        "  2. 开场用**一句话**播报机器证据（共几项、缺几件）；**不要逐条跑、不要逐项问** —— e2e / 慢命令尤其不要主动重跑。",
+        "  3. 一次只推进**一条场景**：按 steps 讲清「打开哪 → 做什么 → 看到什么」，然后问「通过 / 不通过 / 跳过」。用户要看页面就 start_acceptance_preview（结束 stop_acceptance_preview）；**只有用户点名要新结果时**才 run_acceptance_probe 跑某条机器证据。",
+        "  4. 用户**在对话里明确表态**（「通过」「可以」「不行，因为…」「跳过」）即可直接调 record_acceptance_check（confirmed=true），只对场景；卡片只是快捷方式。不要代替用户判断、不要批量代勾，也不要把机器证据当成人工勾选项。",
+        "  5. 用户说不通过 → 当场小修：只改与该问题直接相关的 **≤2 个文件**，不改 spec/票；改完按场景重新看一遍并把结果讲给用户，再问一次是否通过 —— 改完不等于通过，绝不默认勾上。",
+        "  6. 问题超出小修边界（要改 spec、要动 3 个以上文件、或反复修不好）→ 调 propose_acceptance_escalation，让用户确认升级 task-fix 大修复；不要硬改。",
+        "  7. 场景都有结论后，先做**放行前终检**：再调一次 get_acceptance_plan 看 postRound（末轮之后的新提交 / 未提交文件），把现场用一两句话讲给用户。有未提交改动就提醒：归档 preflight 会先拦下，届时再选「纳入 / 排除」，或现在先改完再放行。确认无遗漏后再问要不要「放行」或「退回修改」。",
+        "  8. 用户**明确表态**后由你收口：放行 → submit_acceptance_decision(decision=\"accepted\", confirmed=true)；退回 → submit_acceptance_decision(decision=\"rejected\", feedback=用户说的原因, confirmed=true)。人点验收台是兜底，不是必需；但没有明确表态绝不放行、绝不退回，也不要把未勾场景当成通过。",
       ] : []
       const archiveLines = extra.archiveGuide ? [
         "[归档引导] 末 phase 已放行，任务处于 archiving（只读；归档编排由服务端执行）。你的角色是播报 + 逐条问反思 + 执行用户的口头决定：",
