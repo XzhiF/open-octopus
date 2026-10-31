@@ -55,7 +55,6 @@ export interface ReconcileReport {
 function desiredRow(org: string, wikiRoot: string, e: ScannedEntry): WikiArticleUpsert {
   const { body } = parseWikiFile(fs.readFileSync(path.join(wikiRoot, e.relPath), "utf-8"))
   return {
-    org,
     id: e.meta.id,
     domain: e.type,
     title: e.meta.title,
@@ -109,8 +108,8 @@ export function reconcileWikiIndex(db: Database.Database, opts: ReconcileOptions
   }
 
   const beforeRows = db
-    .prepare("SELECT org, id, domain, title, summary, topics, stability, last_compiled, sources, confidence, body, path, links FROM wiki_articles ORDER BY org, id")
-    .all() as Array<WikiArticleUpsert & { org: string; links: string | null }>
+    .prepare("SELECT id, domain, title, summary, topics, stability, last_compiled, sources, confidence, body, path, links FROM wiki_articles ORDER BY id")
+    .all() as Array<WikiArticleUpsert & { links: string | null }>
   const beforeTotal = beforeRows.length
 
   // 空盘护栏：wiki 根解析错了（0 页）而库有行 ⇒ 拒跑（防把生产索引当漂移删光）
@@ -121,22 +120,22 @@ export function reconcileWikiIndex(db: Database.Database, opts: ReconcileOptions
   }
 
   const dao = new WikiArticleDAO(db)
-  const deleted: Array<{ org: string; id: string }> = []
+  const deleted: Array<{ id: string }> = []
   const inserted: string[] = []
   const updated: string[] = []
 
   db.transaction(() => {
-    // ① 删多余：不在盘的行 + org≠global 的残行（含同名残行）
+    // ① 删多余：不在盘的行
     for (const row of beforeRows) {
-      if (row.org === org && liveById.has(row.id)) continue
-      db.prepare("DELETE FROM wiki_articles WHERE org = ? AND id = ?").run(row.org, row.id)
-      deleted.push({ org: row.org, id: row.id })
+      if (liveById.has(row.id)) continue
+      db.prepare("DELETE FROM wiki_articles WHERE id = ?").run(row.id)
+      deleted.push({ id: row.id })
     }
     // ② 补缺失 + 改漂移：与盘一致的行不重写（updated_at 不动 = 幂等零变更根基）
     const COLS = ["domain", "title", "summary", "topics", "stability", "last_compiled", "sources", "confidence", "body", "path"] as const
     for (const e of liveById.values()) {
       const desired = desiredRow(org, wikiRoot, e)
-      const cur = beforeRows.find(r => r.org === org && r.id === e.meta.id)
+      const cur = beforeRows.find(r => r.id === e.meta.id)
       // links 列对比归一（盘侧数组 ↔ 库侧 JSON 串；未迁移行 NULL ≡ 盘无链 '[]' 不算漂移，
       // 只有「盘有链而库缺/异」才显形为漂移 ⇒ 重写自愈；防把匹配行虚报 updated）
       const linksDrift = !!cur && (cur.links ?? "[]") !== JSON.stringify(desired.links ?? [])

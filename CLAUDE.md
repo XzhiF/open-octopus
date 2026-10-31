@@ -13,7 +13,8 @@ octopus/
 │   ├── cli/         ← octopus (Commander.js CLI)
 │   ├── engine/      ← @octopus/engine (7 executors + SQLite + JSONL)
 │   ├── server/      ← @octopus/server (Hono REST API + SSE + WebSocket)
-│   ├── web-app/     ← @octopus/web-app (Next.js 前端)
+│   ├── web-app/     ← @octopus/web-app (Vite SPA 前端 · React Router)
+│   ├── desktop/     ← @octopus/desktop (Electron 桌面宿主 · Node sidecar)
 │   └── core-pack/   ← @octopus/core-pack (skills/agents/workflows)
 ├── scripts/         ← dev.mjs, prod.mjs, branch-port.mjs
 ├── pnpm-workspace.yaml
@@ -28,6 +29,14 @@ cli ← shared+engine+core-pack    engine ← shared+providers
 server ← shared+engine+core-pack+providers
 web-app ← shared (类型)          core-pack ← (纯数据)
 ```
+
+## Web 桌面壳
+
+- 对话是桌面底层；9 个应用以单实例浮动窗口打开（`lib/desktop-windows.tsx`），详情在所属窗口内钻取。
+- 全局 URL = 焦点目标的完整路由；切焦点 `replace`，窗口内导航 `push`；深链打开归属窗口。
+- 每个窗口/桌面层有独立导航作用域；全局快捷键先过 `useIsActiveRoute`，隐藏窗口另由 capture 门禁兜底。
+- 窗口几何/顺序/最小化状态持久化在 `localStorage['octopus.desktop.v1']`；窗口总览实时缩放已挂载窗口 DOM。
+- 运行中 agent = `GET /api/agent/sessions/running`（服务端内存流），在 header 从右往左排列。
 
 ## Workflow Engine
 
@@ -44,7 +53,7 @@ Swarm 子模式: review(1轮审查) · debate(N轮讨论+共识检测) · dispat
 |------|--------|-----|-----|
 | dev (主仓库) | 3001 | 3000 | `~/.octopus/db/octopus.db` |
 | dev (worktree) | 3100-3598 | +1 | `octopus-{branch}.db` |
-| prod | 3099 | 3098 | `octopus-prod.db` |
+| prod | 3099 | 3099（server 同源托管 SPA） | `octopus-prod.db` |
 
 ## 开发与测试
 
@@ -54,8 +63,10 @@ pnpm build            # 构建所有包
 pnpm dev              # 主仓库开发 (server:3001 web:3000)
 pnpm dev --isolated   # 隔离模式
 pnpm dev --port 3101,3100    # 指定端口 (web 在前, server 在后)
-pnpm prod             # 生产模式 (server:3099 web:3098)
-pnpm prod --port 3098,3099   # 指定端口 (web 在前, server 在后)
+pnpm prod             # 生产模式 (server:3099，UI + API 同源)
+pnpm desktop:dev      # 桌面 dev（需先 pnpm dev；Electron 连 localhost:3000）
+pnpm desktop:pack     # 生成 Electron .app（macOS arm64，未签名，见 packages/desktop/README.md）
+pnpm prod --port 3099        # 指定生产端口（server 同源）
 pnpm port             # 查看端口分配
 pnpm test             # Vitest 测试
 pnpm test:watch       # 监听模式
@@ -69,7 +80,8 @@ pnpm kill:port <n>    # 杀占用指定端口的进程（worktree 拆机，详�
 |------|--------|
 | `PORT` | 3001 (主仓库) / hash (worktree) |
 | `OCTOPUS_DB_PATH` | `~/.octopus/db/octopus.db` |
-| `NEXT_PUBLIC_SERVER_URL` | `http://localhost:3001` |
+| `SERVER_URL` | dev 下由 `scripts/dev.mjs` 注入 Vite；prod 同源可省略 |
+| `OCTOPUS_WEB_DIR` | prod 的 Vite `dist/` 目录（server 静态托管 + SPA fallback） |
 
 ### Worktree 并行开发
 
@@ -99,9 +111,9 @@ octopus repos update/pull/clone/rebuild-index
 
 ## Agent Skills
 
-- Issue tracker: `.scratch/<feature>/` 目录下的 markdown 文件
+- 任务产物：task home 下 `.scratch/<feature>/` 的 markdown（spec / issues / 报告）
 - Triage labels: needs-triage / needs-info / ready-for-agent / ready-for-human / wontfix
-- Domain docs: root `GLOSSARY-MAP.md` → per-package `GLOSSARY.md`
+- 领域知识以 `~/.octopus/knowledge/wiki` 为准（已不再维护仓库内 GLOSSARY / ADR / feature 档案）
 
 
 ## 可用资源 (Octopus 资源库)

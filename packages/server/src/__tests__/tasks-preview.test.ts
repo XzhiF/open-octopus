@@ -53,7 +53,7 @@ function alivePat(pat: string): string {
 async function newAwaitingTask(): Promise<string> {
   const r = await app.request("/api/tasks", {
     method: "POST", headers: { "content-type": "application/json" },
-    body: JSON.stringify({ org: ORG, name: `E2E_TD pv ${seq++}`, task_spec: {
+    body: JSON.stringify({ repo_group: ORG, name: `E2E_TD pv ${seq++}`, task_spec: {
       format: "v4", goal: "g", ac: ["a"],
       phases: [{ index: 1, name: "P1", slug: "p-1", specPath: `./${BATCH_REL}/spec.md`, workflowRef: "task-dev", inputValues: {} }],
     } }),
@@ -93,7 +93,7 @@ beforeAll(() => {
   applySchema(db)
   tmp = fs.mkdtempSync(path.join(os.tmpdir(), "td-preview-"))
   fs.mkdirSync(path.join(tmp, "ws1"), { recursive: true })
-  db.prepare(`INSERT INTO workspaces (id, name, org, path, created_at, updated_at) VALUES (?,?,?,?,?,?)`)
+  db.prepare(`INSERT INTO workspaces (id, name, repo_group, path, created_at, updated_at) VALUES (?,?,?,?,?,?)`)
     .run(WS_ID, "pv-ws", ORG, path.join(tmp, "ws1"), new Date().toISOString(), new Date().toISOString())
   const sse = new SSEService()
   unSub = sse.subscribe("taskpool", (e) => { if (e.event === TASK_PREVIEW_EVENT) sseEvents.push((e.data as { state: string }).state) })

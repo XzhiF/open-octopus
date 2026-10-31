@@ -80,16 +80,15 @@ export class Installer {
     const orgDir = resolveOrgDir(this.org)
 
     const orgSubdirs = [
-      "env",
-      "mcp",
       "repos",
       "repos/projects",
-      "evolution",
-      "evolution/experiences",
-      "config",
     ]
     for (const subdir of orgSubdirs) {
       mkdirSync(join(orgDir, subdir), { recursive: true })
+    }
+    // Agent-global dirs (org demotion: not under the repo registry).
+    for (const subdir of ["mcp", "env", "agent/evolution", "agent/evolution/experiences", "agent/config"]) {
+      mkdirSync(join(globalDir, subdir), { recursive: true })
     }
 
     const globalConfigPath = join(globalDir, "global_config.yaml")
@@ -173,8 +172,7 @@ export class Installer {
   }
 
   private registerMcp(): void {
-    const orgDir = resolveOrgDir(this.org)
-    const mcpDir = join(orgDir, "mcp")
+    const mcpDir = join(resolveGlobalDir(), "mcp")
     mkdirSync(mcpDir, { recursive: true })
 
     const presetsDir = join(this.corePackPath, "presets")

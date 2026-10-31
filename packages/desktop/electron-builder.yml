@@ -1,0 +1,33 @@
+appId: com.octopus.desktop
+productName: Octopus
+directories:
+  output: release
+  buildResources: build
+files:
+  - dist/**/*
+  - package.json
+extraResources:
+  - from: resources/runtime
+    to: runtime
+  - from: resources/web
+    to: web
+  - from: resources/server
+    to: server
+  - from: resources/packages/core-pack
+    to: packages/core-pack
+asar: true
+npmRebuild: false
+publish: null
+mac:
+  category: public.app-category.developer-tools
+  identity: null
+  target:
+    - target: dir
+      arch:
+        - arm64
+win:
+  target:
+    - target: dir
+linux:
+  target:
+    - target: dir

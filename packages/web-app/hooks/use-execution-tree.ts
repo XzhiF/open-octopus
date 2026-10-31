@@ -154,7 +154,6 @@ function apiNodeToTreeNode(raw: Record<string, unknown>): ExecutionTreeNode {
     createdAt: raw.created_at as string ?? new Date().toISOString(),
     updatedAt: raw.updated_at as string ?? new Date().toISOString(),
     workspaceId: raw.workspace_id as string,
-    org: raw.org as string ?? 'xzf',
     nodeType: raw.node_type as "normal" | "fork",
     branch: raw.branch as string | undefined,
     startCommitId: raw.start_commit_id as Record<string, string> | undefined,

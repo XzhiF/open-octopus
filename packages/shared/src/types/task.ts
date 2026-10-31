@@ -36,6 +36,14 @@ import type { LlmUsageSummary } from "../ledger"
 //  a pause is the RUN, which keeps the execution layer unaware of tasks — not every
 //  workflow has one bound (解耦 requirement).
 //
+//  archive-consent (2026-10-31): adds 'awaiting_archive' — another derived-only value.
+//  It means "末 phase 已通过验收，归档尚未启动": the persisted row stays 'ready' and
+//  deriveTaskView reports awaiting_archive until the human explicitly starts archive.
+//  Archive orchestration (git merge/push/PR + knowledge ingest) must not run just
+//  because a PR-delivered task was accepted — the PR may never merge. Like 'paused',
+//  it is deliberately absent from the DB CHECK: persisting it by mistake should fail
+//  loudly rather than create a second source of truth.
+//
 //  Listed here, NOT in the DB CHECK (schema.sql tasks.status): the CHECK's meaning is
 //  "values allowed to be persisted", and a mis-write of a paused task row should fail
 //  loudly rather than quietly become a second source of truth. Widening the enum is what
@@ -48,6 +56,7 @@ export const TaskStatusSchema = z.enum([
   "running",
   "paused",
   "awaiting_review",
+  "awaiting_archive",
   "archiving",
   "done",
   "failed",
@@ -142,6 +151,15 @@ export const TASK_VERIFY_LOG_EVENT = "task_verify_log" as const
  *  exit_code?}. No log stream — preview output stays server-side (tail in
  *  GET /:id/preview), the panel only needs state transitions. */
 export const TASK_PREVIEW_EVENT = "task_preview" as const
+
+// ── 验收方案预生成 + 单项勾选 SSE events（2026-10-30 AI-native 验收）──────
+/** 轮末验收规划 Agent 的状态流转：{task_id, phase_index, round_index,
+ *  status:"generating"|"ready"|"failed", error?, source?}. 窗口收到 ready 后
+ *  重拉 GET /:id/playbook（plan 优先，旧清单兜底）。 */
+export const TASK_ACCEPTANCE_PLAN_EVENT = "task_acceptance_plan" as const
+/** 单条核对项写入：{task_id, item_id, decision:"pass"|"fail"|"skip"}.
+ *  验收窗与主 Chat 双向同步的广播（写盘真相仍以 acceptance-checks-rN.md 为准）。 */
+export const TASK_ACCEPTANCE_CHECK_EVENT = "task_acceptance_check" as const
 
 
 // ── Task trigger (ADR-0021 票05 — WHEN a task runs, on the task) ──────
@@ -512,7 +530,8 @@ export type AssistWorkflowRun = z.infer<typeof assistWorkflowRunSchema>
  * NOT touch task_spec / resources / version (SG8). */
 export interface Task {
   id: string
-  org: string
+  /** Repo-registry key only (org demotion). NULL = no repos bound. */
+  repo_group: string | null
   name: string
   status: TaskStatus
   /** WHAT the task does (D2). Written via the spec-field tool (agent) or
@@ -524,6 +543,8 @@ export interface Task {
   resources: ResourceRef[]
   skills: string[]
   project_ids: string[]
+  /** v58: bound workspace (draft shell / reused cwd workspace). */
+  workspace_id?: string | null
   workflow_ref?: string
   version: number
   /** sessions.scope_id retargets to tasks.id (SG3); this is the back-ref. */

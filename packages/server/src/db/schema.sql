@@ -14,7 +14,9 @@ PRAGMA foreign_keys = ON;
 CREATE TABLE IF NOT EXISTS workspaces (
   id TEXT PRIMARY KEY,
   name TEXT NOT NULL,
-  org TEXT NOT NULL,
+  -- org demotion (2026-10-28): repo_group is a repo-registry key only.
+  -- NULL = no repo group (plain directory / main-agent workspace).
+  repo_group TEXT,
   description TEXT,
   status TEXT DEFAULT 'active',
   path TEXT NOT NULL,
@@ -84,7 +86,6 @@ CREATE TABLE IF NOT EXISTS executions (
   started_at TEXT,
   completed_at TEXT,
   duration INTEGER,
-  org TEXT NOT NULL,
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL,
   FOREIGN KEY (workspace_id) REFERENCES workspaces(id)
@@ -149,6 +150,46 @@ CREATE TABLE IF NOT EXISTS chat_sessions (
   updated_at TEXT NOT NULL,
   provider TEXT DEFAULT 'claude',
   provider_session_id TEXT
+);
+
+-- 6b. Session prompt cache stability (schema v56)
+-- The provider cache is prefix-based: tools → system → messages. Any change
+-- before the history invalidates the whole cached prefix. A session therefore
+-- freezes its system prompt (persona + memory snapshot) and its expert roster
+-- on first use, so resumed turns keep the exact same prefix. Volatile facts
+-- (task status / spec notices / authoring resources) travel as a trailing
+-- <system-reminder> on the user message, never as a system-prompt mutation.
+CREATE TABLE IF NOT EXISTS session_prompt_snapshots (
+  session_id    TEXT PRIMARY KEY,
+  system_prompt TEXT NOT NULL,
+  prompt_hash   TEXT NOT NULL,
+  created_at    TEXT NOT NULL,
+  updated_at    TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS session_expert_rosters (
+  session_id TEXT PRIMARY KEY,
+  experts    TEXT NOT NULL DEFAULT '[]',
+  updated_at TEXT NOT NULL
+);
+
+-- 6c. Session role state (schema v57; expert_kind v59)
+-- A session's active identity is a *role switch* delivered as an append-only
+-- role card on the user message, NOT a system-prompt mutation. revision bumps
+-- on every switch; delivered_revision tracks whether the current card is
+-- already in the provider transcript. This keeps tools/system/agents stable
+-- so the prompt-cache prefix survives every switch.
+-- v59: expert_kind distinguishes the identity source ('expert' = legacy
+-- agency roster, 'clone' = system/user clone). Identity switching targets
+-- clones now; legacy rows keep 'expert' so their already-delivered cards
+-- stay interpretable.
+CREATE TABLE IF NOT EXISTS session_role_states (
+  session_id         TEXT PRIMARY KEY,
+  active_expert      TEXT,
+  expert_kind        TEXT NOT NULL DEFAULT 'expert',
+  revision           INTEGER NOT NULL DEFAULT 0,
+  delivered_revision INTEGER NOT NULL DEFAULT 0,
+  updated_at         TEXT NOT NULL
 );
 
 -- 7. Chat Messages
@@ -228,7 +269,6 @@ CREATE TABLE IF NOT EXISTS llm_calls (
   cache_creation_tokens INTEGER NOT NULL DEFAULT 0,
   -- billing NEW-r2：钱不落账本 —— 快照列(cost_usd/cost_native/cost_currency/
   -- price_status)整体移除，费用一律查询时按 billing_price_config 窗口现算。
-  org                   TEXT,
   workspace_id          TEXT,
   workflow_ref          TEXT,
   node_id               TEXT,
@@ -301,7 +341,6 @@ CREATE TABLE IF NOT EXISTS pipeline_state (
 -- its own risk surface, and nothing task-shaped reads them any more.
 CREATE TABLE IF NOT EXISTS schedules (
   id TEXT PRIMARY KEY,
-  org TEXT NOT NULL DEFAULT '',
   name TEXT NOT NULL,
   cron_expression TEXT,
   timezone TEXT NOT NULL DEFAULT 'Asia/Shanghai',
@@ -485,7 +524,6 @@ CREATE INDEX IF NOT EXISTS idx_exec_pending_claimable ON executions(created_at)
 -- back-ref lives on tasks.source_chat_session_id.
 CREATE TABLE IF NOT EXISTS sessions (
   id TEXT PRIMARY KEY,
-  org TEXT NOT NULL,
   title TEXT NOT NULL DEFAULT '新会话',
   clone_name TEXT,
   perspective_clone_name TEXT,
@@ -494,6 +532,11 @@ CREATE TABLE IF NOT EXISTS sessions (
   is_deleted INTEGER NOT NULL DEFAULT 0,
   scope_id TEXT,
   provider_session_id TEXT,
+  cwd TEXT,
+  workspace_id TEXT,
+  -- Last provider-reported context usage (JSON, SDK context_usage payload).
+  -- Turn-granular; persisted so the composer ctx chip paints on a cold load.
+  context_usage TEXT,
   last_message_at TEXT,
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL
@@ -518,7 +561,9 @@ CREATE TABLE IF NOT EXISTS sessions (
 -- + binds, later rounds reuse (票 05 dispatchPhaseRound).
 CREATE TABLE IF NOT EXISTS tasks (
   id TEXT PRIMARY KEY,
-  org TEXT NOT NULL,
+  -- org demotion (2026-10-28): repo_group is a repo-registry key only —
+  -- used to resolve project_ids → local repo paths. NULL = no repos bound.
+  repo_group TEXT,
   name TEXT NOT NULL,
   status TEXT NOT NULL DEFAULT 'draft' CHECK (status IN ('draft','ready','running','awaiting_review','archiving','done','failed','aborted')),
   source_chat_session_id TEXT,
@@ -616,7 +661,6 @@ CREATE TABLE IF NOT EXISTS messages (
 -- 23. Clones
 CREATE TABLE IF NOT EXISTS clones (
   name TEXT PRIMARY KEY,
-  org TEXT NOT NULL,
   type TEXT NOT NULL DEFAULT 'user',
   status TEXT NOT NULL DEFAULT 'active',
   persona TEXT NOT NULL,
@@ -637,7 +681,6 @@ CREATE TABLE IF NOT EXISTS evolution_log (
   summary TEXT NOT NULL,
   diff_path TEXT,
   rolled_back INTEGER NOT NULL DEFAULT 0,
-  org TEXT NOT NULL,
   timestamp TEXT NOT NULL
 );
 
@@ -647,7 +690,6 @@ CREATE TABLE IF NOT EXISTS experiences (
   skill_name TEXT NOT NULL,
   content TEXT NOT NULL,
   source_session_id TEXT,
-  org TEXT NOT NULL,
   created_at TEXT NOT NULL,
   scope TEXT NOT NULL DEFAULT 'agent',
   scope_ref TEXT DEFAULT NULL,
@@ -666,7 +708,6 @@ CREATE TABLE IF NOT EXISTS safety_events (
   decision TEXT NOT NULL,
   actor TEXT NOT NULL,
   context TEXT,
-  org TEXT NOT NULL,
   timestamp TEXT NOT NULL
 );
 
@@ -677,7 +718,6 @@ CREATE TABLE IF NOT EXISTS reports (
   date TEXT NOT NULL,
   file_path TEXT NOT NULL,
   status TEXT NOT NULL DEFAULT 'ok',
-  org TEXT NOT NULL,
   created_at TEXT NOT NULL
 );
 
@@ -693,7 +733,6 @@ CREATE TABLE IF NOT EXISTS scheduled_job_executions (
   report_summary TEXT,
   error_message TEXT,
   trigger_type TEXT NOT NULL DEFAULT 'cron',
-  org TEXT NOT NULL,
   metadata TEXT
 );
 
@@ -791,8 +830,8 @@ CREATE INDEX IF NOT EXISTS idx_summaries_created ON execution_summaries(created_
 CREATE INDEX IF NOT EXISTS idx_pipeline_state_status ON pipeline_state(chain_status);
 CREATE INDEX IF NOT EXISTS idx_executions_chain_retry ON executions(chain_retry_count);
 
--- Schedules indexes
-CREATE UNIQUE INDEX IF NOT EXISTS idx_schedules_org_name ON schedules(org, name) WHERE deleted_at IS NULL;
+-- Schedules indexes (org demotion: names are globally unique)
+CREATE UNIQUE INDEX IF NOT EXISTS idx_schedules_name ON schedules(name) WHERE deleted_at IS NULL;
 CREATE INDEX IF NOT EXISTS idx_schedules_enabled ON schedules(enabled, deleted_at);
 CREATE INDEX IF NOT EXISTS idx_schedules_next_trigger ON schedules(next_trigger_at) WHERE enabled = 1 AND deleted_at IS NULL;
 CREATE INDEX IF NOT EXISTS idx_schedules_job_type ON schedules(job_type);
@@ -825,17 +864,16 @@ CREATE INDEX IF NOT EXISTS idx_sched_ws_workspace ON schedule_workspaces(workspa
 -- Indexes — Agent Tables
 -- =============================================================================
 
-CREATE INDEX IF NOT EXISTS idx_sessions_org ON sessions(org);
 CREATE INDEX IF NOT EXISTS idx_sessions_clone ON sessions(clone_name);
 CREATE INDEX IF NOT EXISTS idx_sessions_active ON sessions(is_active) WHERE is_deleted = 0;
 CREATE INDEX IF NOT EXISTS idx_sessions_last_message ON sessions(last_message_at DESC) WHERE is_deleted = 0;
 CREATE INDEX IF NOT EXISTS idx_sessions_scope ON sessions(scope_id) WHERE scope_id IS NOT NULL;
 
--- Tasks indexes (schema v38)
--- kanban listByStatus + listByOrg (active = deleted_at IS NULL)
+-- Tasks indexes (schema v38; org demotion: repo_group is a repo-registry key only)
+-- kanban listByStatus + repo_group filter (active = deleted_at IS NULL)
 CREATE INDEX IF NOT EXISTS idx_tasks_status ON tasks(status) WHERE deleted_at IS NULL;
-CREATE INDEX IF NOT EXISTS idx_tasks_org_status ON tasks(org, status) WHERE deleted_at IS NULL;
-CREATE INDEX IF NOT EXISTS idx_tasks_org ON tasks(org) WHERE deleted_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_tasks_repo_group_status ON tasks(repo_group, status) WHERE deleted_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_tasks_repo_group ON tasks(repo_group) WHERE deleted_at IS NULL;
 -- autosave seam lookup (find the draft task bound to a chat session)
 CREATE INDEX IF NOT EXISTS idx_tasks_source_chat_session ON tasks(source_chat_session_id) WHERE source_chat_session_id IS NOT NULL AND deleted_at IS NULL;
 -- board recency sort
@@ -847,26 +885,20 @@ CREATE INDEX IF NOT EXISTS idx_tasks_due ON tasks(next_fire_at)
     AND next_fire_at IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_messages_session ON messages(session_id, created_at);
 CREATE INDEX IF NOT EXISTS idx_messages_summary ON messages(is_summary) WHERE is_summary = 1;
-CREATE INDEX IF NOT EXISTS idx_clones_org ON clones(org);
 CREATE INDEX IF NOT EXISTS idx_clones_status ON clones(status);
 CREATE INDEX IF NOT EXISTS idx_evolution_skill ON evolution_log(skill_name);
-CREATE INDEX IF NOT EXISTS idx_evolution_org ON evolution_log(org);
 CREATE INDEX IF NOT EXISTS idx_evolution_timestamp ON evolution_log(timestamp DESC);
 CREATE INDEX IF NOT EXISTS idx_experiences_skill ON experiences(skill_name);
-CREATE INDEX IF NOT EXISTS idx_experiences_org ON experiences(org);
 -- Experiences v2 indexes (schema version 35)
 CREATE INDEX IF NOT EXISTS idx_experiences_scope ON experiences(scope);
 CREATE INDEX IF NOT EXISTS idx_experiences_scope_ref ON experiences(scope, scope_ref);
 CREATE INDEX IF NOT EXISTS idx_experiences_source_type ON experiences(source_type);
 CREATE INDEX IF NOT EXISTS idx_experiences_execution_id ON experiences(execution_id);
-CREATE INDEX IF NOT EXISTS idx_experiences_org_scope_time ON experiences(org, scope, created_at DESC);
-CREATE INDEX IF NOT EXISTS idx_safety_events_org ON safety_events(org);
+CREATE INDEX IF NOT EXISTS idx_experiences_scope_time ON experiences(scope, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_safety_events_type ON safety_events(type);
 CREATE INDEX IF NOT EXISTS idx_safety_events_timestamp ON safety_events(timestamp DESC);
-CREATE INDEX IF NOT EXISTS idx_reports_org ON reports(org);
 CREATE INDEX IF NOT EXISTS idx_reports_task ON reports(task_name);
 CREATE INDEX IF NOT EXISTS idx_reports_date ON reports(date DESC);
-CREATE INDEX IF NOT EXISTS idx_sje_org ON scheduled_job_executions(org);
 CREATE INDEX IF NOT EXISTS idx_sje_job ON scheduled_job_executions(job_name);
 CREATE INDEX IF NOT EXISTS idx_sje_started ON scheduled_job_executions(started_at DESC);
 CREATE INDEX IF NOT EXISTS idx_sje_status ON scheduled_job_executions(status);
@@ -900,12 +932,10 @@ CREATE TABLE IF NOT EXISTS insight_marks (
   skill_name TEXT NOT NULL,
   insight TEXT NOT NULL,
   session_id TEXT,
-  org TEXT NOT NULL,
   marked_at TEXT NOT NULL DEFAULT (datetime('now')),
   processed INTEGER NOT NULL DEFAULT 0
 );
 
-CREATE INDEX IF NOT EXISTS idx_insight_marks_org ON insight_marks(org);
 CREATE INDEX IF NOT EXISTS idx_insight_marks_processed ON insight_marks(processed);
 CREATE INDEX IF NOT EXISTS idx_insight_marks_marked_at ON insight_marks(marked_at DESC);
 
@@ -1071,12 +1101,10 @@ CREATE TABLE IF NOT EXISTS effectiveness_cursors (
 -- =============================================================================
 
 -- SQLite is index/追踪 only — the wiki git repo under
--- ~/.octopus/orgs/<org>/knowledge/wiki/ remains the source of truth (D3).
--- Composite PK (org, id): entry ids are minted per-org (原型 Tab③ sketch
--- carries the org column); same id may exist in different orgs.
+-- ~/.octopus/knowledge/wiki/ is the source of truth.
+-- org demotion (2026-10-28): wiki is global — id is the primary key.
 CREATE TABLE IF NOT EXISTS wiki_articles (
-  org TEXT NOT NULL,
-  id TEXT NOT NULL,
+  id TEXT NOT NULL PRIMARY KEY,
   domain TEXT NOT NULL,
   title TEXT NOT NULL,
   summary TEXT NOT NULL DEFAULT '',
@@ -1088,11 +1116,10 @@ CREATE TABLE IF NOT EXISTS wiki_articles (
   body TEXT NOT NULL DEFAULT '',
   path TEXT NOT NULL DEFAULT '',
   links TEXT,
-  updated_at TEXT NOT NULL DEFAULT (datetime('now')),
-  PRIMARY KEY (org, id)
+  updated_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
-CREATE INDEX IF NOT EXISTS idx_wiki_articles_org_domain ON wiki_articles(org, domain);
+CREATE INDEX IF NOT EXISTS idx_wiki_articles_domain ON wiki_articles(domain);
 
 -- FTS5, external-content-less mode (no content= param — experiences_fts 先例,
 -- header comment L740): rowid alignment with wiki_articles is maintained
@@ -1138,7 +1165,6 @@ CREATE INDEX IF NOT EXISTS idx_findings_kind_status ON findings(kind, status);
 CREATE TABLE IF NOT EXISTS execution_archive (
   execution_id TEXT PRIMARY KEY,
   workspace_id TEXT NOT NULL,
-  org TEXT NOT NULL,
   workflow_name TEXT,
   total_cost REAL DEFAULT 0,
   total_duration_ms INTEGER DEFAULT 0,
@@ -1154,14 +1180,12 @@ CREATE TABLE IF NOT EXISTS execution_archive (
 );
 
 CREATE INDEX IF NOT EXISTS idx_execution_archive_workspace ON execution_archive(workspace_id);
-CREATE INDEX IF NOT EXISTS idx_execution_archive_org ON execution_archive(org);
 CREATE INDEX IF NOT EXISTS idx_execution_archive_archived ON execution_archive(archived_at);
 CREATE INDEX IF NOT EXISTS idx_execution_archive_workflow ON execution_archive(workflow_name);
 
 -- workspace_archive: permanent storage for deleted workspace metadata snapshots
 CREATE TABLE IF NOT EXISTS workspace_archive (
   workspace_id TEXT PRIMARY KEY,
-  org TEXT NOT NULL,
   name TEXT NOT NULL,
   description TEXT,
   source TEXT,
@@ -1179,13 +1203,11 @@ CREATE TABLE IF NOT EXISTS workspace_archive (
   file_deleted INTEGER DEFAULT 0
 );
 
-CREATE INDEX IF NOT EXISTS idx_workspace_archive_org ON workspace_archive(org);
 CREATE INDEX IF NOT EXISTS idx_workspace_archive_archived ON workspace_archive(archived_at);
 
 -- archive_drafts: cached analysis results to avoid repeated LLM calls
 CREATE TABLE IF NOT EXISTS archive_drafts (
   workspace_id TEXT PRIMARY KEY,
-  org TEXT NOT NULL,
   analysis_report TEXT NOT NULL,
   experiences TEXT NOT NULL DEFAULT '[]',
   skills TEXT NOT NULL DEFAULT '[]',

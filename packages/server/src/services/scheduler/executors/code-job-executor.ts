@@ -65,7 +65,6 @@ export class CodeJobExecutor implements Executor {
       const ctx: CodeJobContext = {
         scheduleId: job.id,
         jobName: job.name,
-        org: job.org ?? '',
         fireId: executionId,
         args: config.args ?? {},
         signal: controller.signal,

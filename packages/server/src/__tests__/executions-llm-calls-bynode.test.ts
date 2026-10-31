@@ -38,7 +38,7 @@ function newDb(): Database.Database {
 function seedWs(db: Database.Database, id = "ws-1") {
   const now = new Date().toISOString()
   db.prepare(
-    `INSERT INTO workspaces (id, name, org, path, source, status, created_at, updated_at)
+    `INSERT INTO workspaces (id, name, repo_group, path, source, status, created_at, updated_at)
      VALUES (?, ?, ?, '/tmp/bynode', 'manual', 'active', ?, ?)`,
   ).run(id, `ws-${id}`, ORG, now, now)
 }
@@ -77,7 +77,6 @@ function call(over: Partial<LlmCallRow> & { id: string }): LlmCallRow {
     output_tokens: 200,
     cache_read_tokens: 8000,
     cache_creation_tokens: 500,
-    org: ORG,
     workspace_id: "ws-1",
     workflow_ref: null,
     node_id: null,

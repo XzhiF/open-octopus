@@ -4,6 +4,7 @@ import { FileService } from "../services/file-service"
 import os from "os"
 import fs from "fs"
 import path from "path"
+import { spawn } from "child_process"
 import * as Y from "yjs"
 
 export function createFileRoutes(workspaceDAO: WorkspaceDAO): Hono {
@@ -15,6 +16,25 @@ export function createFileRoutes(workspaceDAO: WorkspaceDAO): Hono {
     if (!wsPath) return null
     return new FileService(wsPath.replace(/^~/, os.homedir()))
   }
+
+  // 打开工作空间目录（系统文件管理器）。路径取自 DB（workspace DAO），不是用户
+  // 输入；open/explorer/xdg-open 按平台分流，detached 后即返回。
+  fileRoutes.post("/open-directory", async (c) => {
+    const id = c.req.param("id")
+    const wsPath = id ? workspaceDAO.findPathById(id) : undefined
+    if (!wsPath) return c.json({ error: "Workspace not found" }, 404)
+    const resolved = wsPath.replace(/^~/, os.homedir())
+    if (!fs.existsSync(resolved)) return c.json({ error: "目录不存在" }, 404)
+    const cmd = process.platform === "win32" ? "explorer" : process.platform === "darwin" ? "open" : "xdg-open"
+    try {
+      const child = spawn(cmd, [resolved], { detached: true, stdio: "ignore" })
+      child.on("error", () => {})
+      child.unref()
+      return c.json({ ok: true, path: resolved })
+    } catch (err: any) {
+      return c.json({ error: err?.message ?? "打开失败" }, 500)
+    }
+  })
 
   fileRoutes.post("/", async (c) => {
     const fsvc = getFileService(c)

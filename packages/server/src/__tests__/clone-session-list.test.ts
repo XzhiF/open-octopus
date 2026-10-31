@@ -49,7 +49,7 @@ function newDb(): Database.Database {
 function insertTask(db: Database.Database, id: string, sessionId: string, deletedAt: string | null = null): void {
   const now = new Date().toISOString()
   db.prepare(`
-    INSERT INTO tasks (id, org, name, status, source_chat_session_id, task_spec,
+    INSERT INTO tasks (id, repo_group, name, status, source_chat_session_id, task_spec,
       authoring_resources, resources, skills, project_ids, workflow_ref, version,
       deleted_at, created_at, updated_at, completed_at)
     VALUES (?, ?, ?, 'draft', ?, '{}', '[]', '[]', '[]', '[]', NULL, 1, ?, ?, ?, NULL)
@@ -79,11 +79,12 @@ describe("clone session list — task-owned session filter", () => {
   let db: Database.Database
   let app: Hono
   let taskDAO: TaskDAO
+  let sessionDAO: AgentSessionDAO
 
   beforeAll(() => {
     process.env.OCTOPUS_HOME = `/tmp/octopus-csl-test-${Date.now()}`
     db = newDb()
-    const sessionDAO = new AgentSessionDAO(db)
+    sessionDAO = new AgentSessionDAO(db)
     taskDAO = new TaskDAO(db)
     app = new Hono()
     app.route("/api/clones", createCloneSessionRoutes({ sessionDAO, taskDAO }))
@@ -92,6 +93,34 @@ describe("clone session list — task-owned session filter", () => {
   afterAll(() => {
     db.close()
     delete process.env.OCTOPUS_HOME
+  })
+
+  it("session detail serves the persisted context_usage (parsed); the list omits it", async () => {
+    const sid = await createSession(app)
+    sessionDAO.updateContextUsage(
+      sid,
+      JSON.stringify({
+        categories: [{ name: "System prompt", tokens: 1000, color: "#888" }],
+        totalTokens: 1000,
+        maxTokens: 200000,
+        rawMaxTokens: 200000,
+        percentage: 0.5,
+        model: "pro",
+      }),
+    )
+
+    const detail = await app.request(`/api/clones/task-author/sessions/${sid}`, {
+      headers: { "X-Octopus-Org": ORG },
+    })
+    expect(detail.status).toBe(200)
+    const body = (await detail.json()) as { session: { context_usage?: { percentage?: number } | null } }
+    expect(body.session.context_usage?.percentage).toBe(0.5)
+
+    const list = await app.request("/api/clones/task-author/sessions?limit=50", {
+      headers: { "X-Octopus-Org": ORG },
+    })
+    const listBody = (await list.json()) as { sessions: Array<Record<string, unknown>> }
+    expect(listBody.sessions.find((s) => s.id === sid)?.context_usage).toBeUndefined()
   })
 
   it("excludes task-bound sessions, keeps direct sessions, releases soft-deleted ones", async () => {

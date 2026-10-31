@@ -180,7 +180,7 @@ describe("PageRestoreTaskService — 恢复通道（票09 · spec 故事17）", 
     expect(log).toContain("回迁")
 
     // 5. DB/FTS 复登（在册面回账）
-    const row = h.db.prepare("SELECT id, path FROM wiki_articles WHERE org = ? AND id = ?").get("global", "top-zombie") as { id: string; path: string } | undefined
+    const row = h.db.prepare("SELECT id, path FROM wiki_articles WHERE id = ?").get("top-zombie") as { id: string; path: string } | undefined
     expect(row?.path).toBe("topics/top-zombie.md")
     // FTS 复登可命中（unicode61 制式：CJK 连串成整词，取正文完整词元——page-retire 同先例）
     const fts = h.db.prepare("SELECT rowid FROM wiki_fts WHERE wiki_fts MATCH ?").all("僵尸纪律一条")

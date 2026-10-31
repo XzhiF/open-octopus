@@ -158,6 +158,22 @@ repairRoutes.post("/restore-point", async (c) => {
   }
 })
 
+// ── POST /rerun — 终态执行一键重跑（UI「⚡ 重跑」与 MCP rerun_execution 同源）──
+
+repairRoutes.post("/rerun", async (c) => {
+  try {
+    const service = getRepairService(c)
+    const executionId = getExecutionId(c)
+    const body = await c.req.json().catch(() => ({}))
+    const result = await service.rerun(executionId, {
+      resetVarPool: (body as { reset_var_pool?: boolean })?.reset_var_pool === true,
+    })
+    return c.json(result)
+  } catch (err: unknown) {
+    return handleRepairError(err)
+  }
+})
+
 // ── POST /reload-workflow ──────────────────────────────────────────
 
 repairRoutes.post("/reload-workflow", async (c) => {

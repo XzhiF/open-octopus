@@ -69,7 +69,7 @@ function insertTask(
   const id = overrides.id ?? `e2e-td-task-${Math.random().toString(36).slice(2, 8)}`
   const now = new Date().toISOString()
   db.prepare(`
-    INSERT INTO tasks (id, org, name, status, source_chat_session_id, task_spec,
+    INSERT INTO tasks (id, repo_group, name, status, source_chat_session_id, task_spec,
       authoring_resources, resources, skills, project_ids, workflow_ref, version,
       deleted_at, created_at, updated_at, completed_at)
     VALUES (?, ?, ?, ?, NULL, ?, '[]', '[]', ?, ?, NULL, ?, NULL, ?, ?, NULL)
@@ -116,7 +116,7 @@ function seedInstanceRow(
     const exists = db.prepare("SELECT id FROM workspaces WHERE id = ?").get(wsId)
     if (!exists) {
       db.prepare(
-        `INSERT INTO workspaces (id, name, org, status, path, source, task_id, created_at, updated_at)
+        `INSERT INTO workspaces (id, name, repo_group, status, path, source, task_id, created_at, updated_at)
          VALUES (?, ?, ?, 'active', ?, 'task', ?, datetime('now'), datetime('now'))`,
       ).run(wsId, `ws-${taskId}`, ORG, `/tmp/e2e-td-${wsId}`, taskId)
     }
@@ -169,7 +169,7 @@ describe("03: /api/tasks routes + TasksService (integration)", () => {
     const res = await app.request("/api/tasks", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ org: ORG, name: "E2E_TD_crud" }),
+      body: JSON.stringify({ repo_group: ORG, name: "E2E_TD_crud" }),
     })
     expect(res.status).toBe(201)
     const task = await json<{ id: string; status: string; name: string; version: number }>(res)
@@ -182,11 +182,11 @@ describe("03: /api/tasks routes + TasksService (integration)", () => {
   })
 
   it("GET /api/tasks returns the kanban list", async () => {
-    const res = await app.request(`/api/tasks?org=${ORG}`)
+    const res = await app.request(`/api/tasks?repo_group=${ORG}`)
     expect(res.status).toBe(200)
-    const data = await json<{ items: Array<{ status: string; org: string }> }>(res)
+    const data = await json<{ items: Array<{ status: string; repo_group: string }> }>(res)
     expect(data.items.length).toBeGreaterThan(0)
-    expect(data.items.every((t) => t.org === ORG)).toBe(true)
+    expect(data.items.every((t) => t.repo_group === ORG)).toBe(true)
   })
 
   it("GET /api/tasks/:id returns task detail with executions[] (children[] is gone)", async () => {
@@ -222,7 +222,7 @@ describe("03: /api/tasks routes + TasksService (integration)", () => {
     const arm = (n: string, status: string) => {
       const wsId = `e2e-td-child-ws-${n}`
       db.prepare(
-        `INSERT INTO workspaces (id, name, org, status, path, source, task_id, created_at, updated_at)
+        `INSERT INTO workspaces (id, name, repo_group, status, path, source, task_id, created_at, updated_at)
          VALUES (?, ?, ?, 'active', ?, 'task', ?, datetime('now'), datetime('now'))`,
       ).run(wsId, `child-${n}`, ORG, `/tmp/e2e-td-${wsId}`, id)
       db.prepare(
@@ -308,6 +308,47 @@ describe("03: /api/tasks routes + TasksService (integration)", () => {
     expect(res.status).toBe(200)
     // getById excludes soft-deleted
     expect(taskDAO.getById(id)).toBeNull()
+  })
+
+  // 2026-10-29 用户 bug「删掉的任务跑到会话去了」：会话侧栏靠 tasks 绑定把线程
+  // 会话藏起来，任务软删后绑定消失 → 会话掉进普通「会话」列表。任务删除必须
+  // 连线程会话一起软删（行保留，只是 is_deleted=1）。
+  function insertSession(sessionId: string) {
+    const now = new Date().toISOString()
+    db.prepare(
+      `INSERT INTO sessions (id, title, session_type, created_at, updated_at)
+       VALUES (?, 'E2E_TD thread', 'main', ?, ?)`,
+    ).run(sessionId, now, now)
+  }
+
+  function readSession(sessionId: string) {
+    return db.prepare("SELECT is_deleted, is_active FROM sessions WHERE id = ?").get(sessionId) as
+      { is_deleted: number; is_active: number } | undefined
+  }
+
+  it("DELETE soft-deletes the task's bound main-chat thread (no leak into the 会话 list)", async () => {
+    const sessionId = `e2e-td-sess-${Math.random().toString(36).slice(2, 8)}`
+    insertSession(sessionId)
+    const id = insertTask(db, { name: "E2E_TD_del_thread" })
+    db.prepare("UPDATE tasks SET source_chat_session_id = ? WHERE id = ?").run(sessionId, id)
+
+    const res = await app.request(`/api/tasks/${id}`, { method: "DELETE" })
+    expect(res.status).toBe(200)
+    // 会话行保留（历史），但从会话列表消失
+    expect(readSession(sessionId)).toMatchObject({ is_deleted: 1, is_active: 0 })
+  })
+
+  it("DELETE keeps a session still bound to another live task", async () => {
+    const sessionId = `e2e-td-sess-${Math.random().toString(36).slice(2, 8)}`
+    insertSession(sessionId)
+    const doomed = insertTask(db, { name: "E2E_TD_del_shared" })
+    const keeper = insertTask(db, { name: "E2E_TD_keep_shared" })
+    db.prepare("UPDATE tasks SET source_chat_session_id = ? WHERE id = ?").run(sessionId, doomed)
+    db.prepare("UPDATE tasks SET source_chat_session_id = ? WHERE id = ?").run(sessionId, keeper)
+
+    const res = await app.request(`/api/tasks/${doomed}`, { method: "DELETE" })
+    expect(res.status).toBe(200)
+    expect(readSession(sessionId)).toMatchObject({ is_deleted: 0, is_active: 1 })
   })
 
   // ── AC1: spec-field ─────────────────────────────────────────────────
@@ -403,8 +444,7 @@ describe("03: /api/tasks routes + TasksService (integration)", () => {
         subunits: [
           {
             name: "sub-A",
-            workspace_spec: {
-              org: ORG,
+            workspace_spec: { org: ORG,
               branch_prefix: "suba",
               projects: [{ name: "proj-A", source_path: "", group: "" }],
             },
@@ -415,8 +455,7 @@ describe("03: /api/tasks routes + TasksService (integration)", () => {
           },
           {
             name: "sub-B",
-            workspace_spec: {
-              org: ORG,
+            workspace_spec: { org: ORG,
               branch_prefix: "subb",
               projects: [{ name: "proj-B", source_path: "", group: "" }],
             },

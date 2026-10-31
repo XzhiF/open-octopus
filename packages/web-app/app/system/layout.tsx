@@ -1,7 +1,7 @@
 "use client"
 
-import Link from "next/link"
-import { usePathname } from "next/navigation"
+import Link from "@/lib/app-navigation"
+import { usePathname } from "@/lib/app-navigation"
 import { cn } from "@/lib/utils"
 import { Boxes, Database, ShieldCheck, ReceiptText } from "lucide-react"
 

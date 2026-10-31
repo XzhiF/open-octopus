@@ -1,13 +1,11 @@
 "use client"
 
-import { useState, useCallback, useEffect } from "react"
-import dynamic from "next/dynamic"
+import { Suspense, lazy, useState, useCallback, useEffect } from "react"
 import { Panel, PanelGroup, PanelResizeHandle } from "react-resizable-panels"
 import { WorkflowFlowViewer } from "./workflow-flow-viewer"
 
-const WorkflowYamlEditor = dynamic(
-  () => import("./workflow-yaml-editor").then((m) => ({ default: m.WorkflowYamlEditor })),
-  { ssr: false, loading: () => <div className="h-full w-full animate-pulse bg-muted" /> }
+const WorkflowYamlEditor = lazy(() =>
+  import("./workflow-yaml-editor").then((m) => ({ default: m.WorkflowYamlEditor })),
 )
 import { parseYaml } from "@/lib/yaml-utils"
 import { yamlToFlowData } from "@/lib/workflow-parser"
@@ -91,7 +89,9 @@ export function WorkflowEditorTab({ filePath, initialContent, onContentChange, o
   return (
     <PanelGroup direction="horizontal" className="h-full">
       <Panel defaultSize={60} minSize={30}>
-        <WorkflowYamlEditor value={yamlContent} onChange={handleYamlChange} onSave={handleSave} />
+        <Suspense fallback={<div className="h-full w-full animate-pulse bg-muted" />}>
+          <WorkflowYamlEditor value={yamlContent} onChange={handleYamlChange} onSave={handleSave} />
+        </Suspense>
       </Panel>
       <PanelResizeHandle className="w-1 bg-border/40 hover:bg-border transition-colors" />
       <Panel defaultSize={40} minSize={20}>

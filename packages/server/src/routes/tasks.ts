@@ -27,6 +27,7 @@ import {
   type UpdateTaskInput,
   type UpdateSpecFieldInput,
   type ServerSpecField,
+  type ReflectionIngest,
 } from "../services/tasks/tasks-service"
 import { AssistWorkflowService, AssistWorkflowError } from "../services/tasks/assist-workflow-service"
 import { SSEService } from "../services/sse"
@@ -37,9 +38,6 @@ import {
 } from "@octopus/shared"
 import type { RoundEvidenceService } from "../services/tasks/round-evidence-service"
 import { InstanceGateError } from "../services/tasks/round-evidence-service"
-// taskboard-modal-v2 票08: takeover 聚合端点复用 01 的 doer 会话就绪（type-only，
-// 与 routes/task-chat.ts 同一实例由 index.ts 注入）。
-import type { TaskDoerService } from "../services/tasks/task-doer-service"
 
 // ── Error Classification ────────────────────────────────────────────
 
@@ -131,11 +129,38 @@ const homeFileBodySchema = z.object({
   content: z.string().max(512_000),
 })
 
-// 剧本探针单发执行体（POST /:id/playbook/run）——command 来自编译票步,人点才跑。
+// 方案探针单发执行体（POST /:id/playbook/run）——command 来自验收方案的按需复核项,人点才跑。
 const probeRunBodySchema = z.object({
   command: z.string().min(1).max(4000),
   timeoutS: z.number().int().min(5).max(600).optional(),
 })
+
+// 单条核对写入（POST /:id/acceptance/check，2026-10-30 AI-native 验收）：
+// 验收窗与主 Chat 共用一个写入口；fail/skip 的原因必填（进退回反馈与下轮 carryover）。
+const acceptanceCheckBodySchema = z
+  .object({
+    item_id: z.string().min(1).max(200),
+    decision: z.enum(["pass", "fail", "skip"]),
+    note: z.string().max(4000).optional(),
+  })
+  .strict()
+
+/** ?phase_index=&round_index= —— 归档后只读回看指定历史轮（2026-10-30）。
+ *  两者必须成对给出且为正整数；缺省 = 现行为（playbook 取 awaiting 轮、
+ *  diff 取 awaiting/live 轮）。只读端点用，写面永远不看这两个参数。 */
+function parseRoundTargetQuery(
+  phaseRaw: string | undefined,
+  roundRaw: string | undefined,
+): { phaseIndex: number; roundIndex: number } | undefined | "invalid" {
+  if (phaseRaw == null && roundRaw == null) return undefined
+  if (phaseRaw == null || roundRaw == null) return "invalid"
+  const phaseIndex = Number(phaseRaw)
+  const roundIndex = Number(roundRaw)
+  if (!Number.isInteger(phaseIndex) || phaseIndex < 1 || !Number.isInteger(roundIndex) || roundIndex < 1) {
+    return "invalid"
+  }
+  return { phaseIndex, roundIndex }
+}
 
 // 票08 分支③（改派 task-fix）body —— 指令即修复轮的输入，与打回反馈同额（≤20000）。
 // strict：未知字段 400（与 acceptance 契约同律 —— 路由级聚合端点不吃野键）。
@@ -195,10 +220,9 @@ export function createTasksRoutes(
   sse: SSEService,
   assistService?: AssistWorkflowService,
   evidence?: RoundEvidenceService,
-  // taskboard-modal-v2 票08: takeover 聚合端点的会话就绪一步（01 的 ensureSession）。
-  // tail-appended optional —— 未接线（老测试/嵌入方）takeover 仍停流+落标记，
-  // session 如实 null。
-  doer?: TaskDoerService,
+  // 2026-10-28 task-thread: reflection decision → knowledge ingest. Optional:
+  // absent = ingest action returns 409 (skip still works).
+  reflectionIngest?: ReflectionIngest,
 ): Hono {
   const router = new Hono()
   // SSE route — MUST be registered BEFORE /:id below. Hono v4 matches
@@ -262,7 +286,12 @@ export function createTasksRoutes(
         return c.json({ error: "name is required: 任务标题必须非空" }, 400)
       }
       const input: CreateTaskInput = {
-        org: typeof body.org === "string" ? body.org : "default",
+        repo_group:
+          typeof body.repo_group === "string"
+            ? body.repo_group
+            : typeof body.org === "string"
+              ? body.org
+              : undefined,
         name: body.name,
         source_chat_session_id:
           typeof body.source_chat_session_id === "string"
@@ -296,6 +325,8 @@ export function createTasksRoutes(
       // 契约修复: v4 create-time fields (route idioms mirror PUT :313-317).
       if (body.task_spec !== undefined) input.task_spec = body.task_spec
       if (body.project_ids !== undefined) input.project_ids = z.array(z.string()).parse(body.project_ids)
+      if (typeof body.workspace_id === "string" && body.workspace_id.length > 0) input.workspace_id = body.workspace_id
+      if (typeof body.cwd === "string" && body.cwd.length > 0) input.cwd = body.cwd
       if (body.skills !== undefined) input.skills = z.array(z.string()).parse(body.skills)
       if (body.resources !== undefined) input.resources = z.array(resourceRefSchema).parse(body.resources)
       if (body.authoring_resources !== undefined) input.authoring_resources = z.array(resourceRefSchema).parse(body.authoring_resources)
@@ -307,16 +338,16 @@ export function createTasksRoutes(
     }
   })
 
-  // GET / — list (kanban); ?status=&org=&q=
+  // GET / — list (kanban); ?status=&repo_group=&q=
   router.get("/", (c) => {
     try {
       const statusParam = c.req.query("status") as TaskStatus | undefined
-      const orgParam = c.req.query("org")
+      const repoGroupParam = c.req.query("repo_group") ?? c.req.query("org") ?? undefined
       // 票06 (语义摘要进任务板): q = 服务端关键字搜索（name ∨ semantic_summary LIKE）。
       const qParam = c.req.query("q")
       const result = service.listTasks({
         status: statusParam,
-        org: orgParam,
+        repo_group: repoGroupParam,
         q: qParam,
       })
       return c.json(result)
@@ -349,6 +380,57 @@ export function createTasksRoutes(
       const id = c.req.param("id")
       const rows = service.listRunHistory(id, limit)
       return c.json({ items: rows, total: rows.length })
+    } catch (err: unknown) {
+      const { status, message } = classifyError(err)
+      return c.json({ error: message }, status)
+    }
+  })
+
+  // GET /:id/usage — task-lifecycle ledger: the main thread's chat rows plus
+  // EVERY execution row tagged with this task. Double-count guard lives in
+  // TasksService.taskUsage (session pass = execution_id IS NULL).
+  router.get("/:id/usage", (c) => {
+    try {
+      return c.json(service.taskUsage(c.req.param("id")))
+    } catch (err: unknown) {
+      const { status, message } = classifyError(err)
+      return c.json({ error: message }, status)
+    }
+  })
+
+  // GET /:id/archive — archive-window read model (state.json + report.md +
+  // whether a run is in flight). Reading is safe in every status.
+  router.get("/:id/archive", (c) => {
+    try {
+      return c.json(service.readArchive(c.req.param("id")))
+    } catch (err: unknown) {
+      const { status, message } = classifyError(err)
+      return c.json({ error: message }, status)
+    }
+  })
+
+  // POST /:id/reflection/decision — per-entry knowledge decision (ingest/skip).
+  // Ingest goes through the same RawIngestService + compile queue as the
+  // knowledge center's POST /api/knowledge/ingest.
+  router.post("/:id/reflection/decision", async (c) => {
+    let raw: unknown
+    try {
+      raw = await c.req.json()
+    } catch {
+      return c.json({ error: "Invalid JSON body" }, 400)
+    }
+    const parsed = z.object({
+      entry_id: z.string().min(1),
+      action: z.enum(["ingest", "skip"]),
+      title: z.string().max(200).optional(),
+      content: z.string().max(50_000).optional(),
+    }).strict().safeParse(raw)
+    if (!parsed.success) {
+      return c.json({ error: "invalid body", issues: parsed.error.issues }, 400)
+    }
+    try {
+      const result = await service.decideReflection(c.req.param("id"), parsed.data, reflectionIngest)
+      return c.json(result)
     } catch (err: unknown) {
       const { status, message } = classifyError(err)
       return c.json({ error: message }, status)
@@ -388,10 +470,10 @@ export function createTasksRoutes(
     }
   })
 
-  // ── 票 11 ▣ 产物分组清单（⑩真机回补 — 唯一新增薄 seam）────────────────
-  // GET /:id/artifacts/manifest — 五组磁盘直扫（需求票面/报告/证据/台账/原型）。
-  // 票面原文路径 /artifacts 已被票 06 产物索引占用（数组响应不可改形），分组
-  // 清单落同子树新叶；缺目录 = 空组降级 200，任务缺 = 404。
+  // ── 票 11 ▣ 产物清单（2026-10-29 方案2 — phase × 轮次）──────────────────
+  // GET /:id/artifacts/manifest — 按 phase 批次目录归属 + 文件名 `-rN` 归轮；
+  // 系统文件（manifest/context/skills/workflows）不进清单，`.scratch` 之外的
+  // 旧布局文件落 unassigned，工作区原型单列。缺目录 = 空数组降级 200，任务缺 = 404。
   // GET /:id/artifacts/manifest/content?path=home:…|ws:… — 预览现读。`..` 遍历
   // 段 = 输入缺陷 → 400；绝对/未知前缀/白名单区外/逃逸 = 403；缺文件 404；
   // 超读取上限 413（ArtifactAccessError 分类与 home-file 门同款）。
@@ -527,7 +609,9 @@ export function createTasksRoutes(
 
   // ── 验货台 (acceptance v2)：实物 round-diff + 当场复检 ──────────────────
   // 服务端按 task id 解析轮次（web 永不见 SHA）：awaiting 优先；票03 起 diff 两端点
-  // 无 awaiting 时回落当前 live 轮（end 锚=仓 HEAD），执行中「≡ 变更」即可供货。
+  // 无 awaiting 时回落当前 live 轮（end 锚=仓 HEAD），执行中「≡ 变更」即可供货；
+  // 2026-10-31 起再回落最后一个已验收轮（end 锚=存下的快照）—— done / archiving /
+  // awaiting_archive 的变更窗继续出示实物，不再只剩 idle 面。
   // 无 evidence 注入（如未装配的测试 app）→ 501 而非崩溃。verify 端点的错误都经
   // classifyError：未配置命令 400 / 无 awaiting·在跑·ws 没了 409 / 未知任务 404。
   // 实物 diff。S3（2026-09-20）起支持 ?scope=cumulative：本 phase 首轮 exec 的
@@ -537,8 +621,12 @@ export function createTasksRoutes(
   router.get("/:id/round-diff", async (c) => {
     if (!evidence) return c.json({ error: "round evidence not wired" }, 501)
     const scope = c.req.query("scope") === "cumulative" ? "cumulative" : "round"
+    const target = parseRoundTargetQuery(c.req.query("phase_index"), c.req.query("round_index"))
+    if (target === "invalid") {
+      return c.json({ error: "phase_index / round_index 必须成对给出且为正整数" }, 400)
+    }
     try {
-      return c.json(await evidence.getRoundDiff(c.req.param("id"), scope))
+      return c.json(await evidence.getRoundDiff(c.req.param("id"), scope, target))
     } catch (err: unknown) {
       const { status, message } = classifyError(err)
       return c.json({ error: message }, status)
@@ -553,27 +641,64 @@ export function createTasksRoutes(
       return c.json({ error: "Query params 'repo' and 'path' are required" }, 400)
     }
     try {
-      return c.json(await evidence.getFilePatch(c.req.param("id"), repo, filePath))
+      const scope = c.req.query("scope") === "cumulative" ? "cumulative" : "round"
+      return c.json(await evidence.getFilePatch(c.req.param("id"), repo, filePath, scope))
     } catch (err: unknown) {
       const { status, message } = classifyError(err)
       return c.json({ error: message }, status)
     }
   })
 
-  // 验收剧本：把 awaiting 轮的契约文件编译成走查清单（派生视图，不入库）。
-  // 纯读 + 编译，绝不 spawn；缺料 → available:false 仍 200。无 awaiting → 409。
+  // 验收清单：读取 awaiting 轮（或指定历史轮）的验收方案（派生视图，不入库）。
+  // 纯读，绝不 spawn；方案未 ready → 空清单 + plan 状态仍 200。无 awaiting → 409。
   router.get("/:id/playbook", (c) => {
     if (!evidence) return c.json({ error: "round evidence not wired" }, 501)
+    const target = parseRoundTargetQuery(c.req.query("phase_index"), c.req.query("round_index"))
+    if (target === "invalid") {
+      return c.json({ error: "phase_index / round_index 必须成对给出且为正整数" }, 400)
+    }
     try {
-      return c.json(evidence.getPlaybook(c.req.param("id")))
+      return c.json(evidence.getPlaybook(c.req.param("id"), target))
     } catch (err: unknown) {
       const { status, message } = classifyError(err)
       return c.json({ error: message }, status)
     }
   })
 
-  // 剧本探针单发执行：票步里的可执行命令（curl/until 级），同步返回 exit+tail
-  // 供面板就地盖章。与复检同纪律——只有人点击才执行；GET /playbook 保持纯读。
+  // 剧本单条核对写入：读-合并-写，一次只动一个 item（窗口与主 Chat 双向同步；
+  // 旧的整单 PUT home-file 保留给未升级面板）。fail/skip 无原因 → 400。
+  router.post("/:id/acceptance/check", async (c) => {
+    if (!evidence) return c.json({ error: "round evidence not wired" }, 501)
+    const parsed = acceptanceCheckBodySchema.safeParse(await c.req.json().catch(() => null))
+    if (!parsed.success) {
+      return c.json({ error: parsed.error.issues[0]?.message ?? "invalid body" }, 400)
+    }
+    try {
+      return c.json(evidence.recordCheck(c.req.param("id"), {
+        itemId: parsed.data.item_id,
+        decision: parsed.data.decision,
+        note: parsed.data.note,
+      }))
+    } catch (err: unknown) {
+      const { status, message } = classifyError(err)
+      return c.json({ error: message }, status)
+    }
+  })
+
+  // 重新生成验收方案（2026-10-30）：仅当本轮还没有任何人工勾选时允许 ——
+  // 重生成会作废人的判定，服务端硬拒。
+  router.post("/:id/acceptance/plan/regenerate", async (c) => {
+    if (!evidence) return c.json({ error: "round evidence not wired" }, 501)
+    try {
+      return c.json(await evidence.regenerateAcceptancePlan(c.req.param("id")))
+    } catch (err: unknown) {
+      const { status, message } = classifyError(err)
+      return c.json({ error: message }, status)
+    }
+  })
+
+  // 方案探针单发执行：方案项里的复核命令（curl/until 级），同步返回 exit+tail
+  // 供面板就地展示。与复检同纪律——只有人点击才执行；GET /playbook 保持纯读。
   router.post("/:id/playbook/run", async (c) => {
     if (!evidence) return c.json({ error: "round evidence not wired" }, 501)
     const parsed = probeRunBodySchema.safeParse(await c.req.json().catch(() => null))
@@ -754,8 +879,10 @@ export function createTasksRoutes(
     }
   })
 
-  // DELETE /:id — soft-delete. 票03: nothing cascades (a task's runs are executions rows);
-  // only a running task is refused, everything else is discardable.
+  // DELETE /:id — soft-delete. 票03: runs stay as executions history; only a running
+  // task is refused, everything else is discardable. 2026-10-29: the task's bound
+  // main-chat thread is soft-deleted together with it (a surviving thread session
+  // would fall through into the ordinary 会话 list — 「删掉的任务跑到会话去了」).
   router.delete("/:id", (c) => {
     try {
       const result = service.deleteTask(c.req.param("id"))
@@ -773,7 +900,9 @@ export function createTasksRoutes(
   // 对象：未知字段（含已删除的 next_flow，ADR-0024）一律 400:
   //   accepted ∧ i<n ∧ autoAdvance → 下一 phase round 1 开跑 (next_action
   //     'dispatched'); autoAdvance=false → 'awaiting_manual_trigger' (人工起)
-  //   accepted ∧ i=n               → 持久态 'archiving' (票 08 编排到 done)
+  //   accepted ∧ i=n               → 持久态 'ready' + 派生 'awaiting_archive'
+  //                                    （归档不自动开始：只有人明确说「归档」、
+  //                                    走 POST /:id/archive/start 才进 archiving）
   //   rejected (feedback 必填=修复指令) → fix-feedback-r{N}.md 进批次目录 + 同
   //     phase 新 round 恒派 built-in/task-fix 修复轮（ADR-0024 打回单路径：
   //     server override + 合成输入；绑定流再执行只剩 authoring 侧改 spec 重入队）
@@ -798,43 +927,37 @@ export function createTasksRoutes(
       // it, the awaiting view is gone), and stop any live preview. The
       // acceptance itself stays authoritative — ledger/reopen side-effects are
       // best-effort (a failed ledger never rolls back a committed decision).
-      const snap = evidence ? await evidence.snapshotEvidence(c.req.param("id")).catch(() => null) : null
-      // 走查 ✗ 服务端硬闸（S1，2026-09-20）：前端 gate.fail>0 的 disabled 只拦
-      // UI 入口，任何非 UI 通道（curl/脚本）都能无痕放行。checks 与写入侧同源
-      // （snapshotEvidence 内 batchRelDir + checksFileName/parseChecksMd），此
-      // 处在决策落账之前重数 ✗：n>0 → 409，不落决策、不写台账、不翻票。
-      // 诚实降级：文件缺失/解析失败/无 ✗/快照拿不到 → 放行（未决软放行本就是
-      // 前端既有语义，绝不误伤）。轮次不匹配时交给 service.acceptance 的 409。
-      if (parsed.decision === "accepted" && snap
-        && snap.phaseIndex === parsed.phase_index && snap.roundIndex === parsed.round_index) {
-        const nFail = Object.values(snap.checks?.checks ?? {}).filter((ck) => ck.decision === "fail").length
-        if (nFail > 0) {
-          return c.json({ error: `走查存在 ${nFail} 项 ✗ —— 服务端硬闸拦截，请改走打回` }, 409)
-        }
-      }
-      const result = await service.acceptance(c.req.param("id"), input)
-      // 台账写入诚实化（S2，2026-09-20）：写没写成功不再只有 console.error 知道 ——
-      // ledger_written 进响应体。判据：accepted = writeLedger 落盘非 null；
-      // rejected = writeLedger 非 null 且 augmentReject 未抛；快照缺失 /
-      // batchRelDir 解析不出 / 写失败 / 抛错 → false。决策本身不回滚（K6）。
-      let ledgerWritten = false
+      // 2026-10-30：这套步骤收进 RoundEvidenceService.decideAcceptance，主 Chat
+      // 的 submit_acceptance_decision 工具走同一入口（人点窗口仍是兜底）。
       if (evidence) {
-        try {
-          evidence.stopPreviewQuiet(c.req.param("id"))
-          if (snap) {
-            if (parsed.decision === "accepted") {
-              ledgerWritten = evidence.writeLedger(snap, "accepted") !== null
-            } else {
-              const led = evidence.writeLedger(snap, "rejected")
-              evidence.augmentReject(snap, parsed.reopen_tickets)
-              ledgerWritten = led !== null
-            }
-          }
-        } catch (err: unknown) {
-          console.error("[tasks] acceptance ledger/reopen side-effect failed (decision already committed):", err)
-        }
+        const { result, ledger_written } = await evidence.decideAcceptance(c.req.param("id"), {
+          phase_index: parsed.phase_index,
+          round_index: parsed.round_index,
+          decision: parsed.decision,
+          ...(parsed.feedback !== undefined ? { feedback: parsed.feedback } : {}),
+          ...(parsed.reopen_tickets !== undefined ? { reopen_tickets: parsed.reopen_tickets } : {}),
+        })
+        // 台账写入诚实化（S2，2026-09-20）：writeLedger 落盘与否进响应体；决策
+        // 本身不回滚（K6）。
+        return c.json({ ...result, ledger_written })
       }
-      return c.json({ ...result, ledger_written: ledgerWritten })
+      // 未装配验货台（旧装配/测试）：决策照常，台账跳过 —— 与原行为一致。
+      const result = await service.acceptance(c.req.param("id"), input)
+      return c.json({ ...result, ledger_written: false })
+    } catch (err: unknown) {
+      const { status, message } = classifyError(err)
+      return c.json({ error: message }, status)
+    }
+  })
+
+  // POST /:id/archive/start — 人对「现在归档」的明确同意（2026-10-31 验收/归档
+  // 解耦）。ONLY 派生 awaiting_archive（末 phase 已通过、归档尚未启动）可进入
+  // archiving；重复调用/非待归档 409，未知 404。202: 编排异步（done 由服务端
+  // 在全部 project 成功后写入）。正常入口是主 Chat 的 start_archive 工具。
+  router.post("/:id/archive/start", (c) => {
+    try {
+      const task = service.startArchive(c.req.param("id"))
+      return c.json({ ok: true, task_id: task.id, status: task.status }, 202)
     } catch (err: unknown) {
       const { status, message } = classifyError(err)
       return c.json({ error: message }, status)
@@ -944,9 +1067,11 @@ export function createTasksRoutes(
   // row; 票03: no schedule row is created, the built-in job starts it).
   // 05 (D18): a v3 task whose confirmation gate fails → 409 + missing-items
   // list so the UI can show exactly what to confirm before enqueue (US6).
-  router.post("/:id/ready", (c) => {
+  router.post("/:id/ready", async (c) => {
     try {
-      const task = service.readyTask(c.req.param("id"))
+      // body 可选 {silent_card:true}：launch_now 组合走此路 —— 不发「已入列」卡。
+      const body = await c.req.json<{ silent_card?: boolean }>().catch(() => ({}))
+      const task = service.readyTask(c.req.param("id"), { silentCard: body?.silent_card === true })
       return c.json(task)
     } catch (err: unknown) {
       if (err instanceof TaskReadyGateError) {
@@ -1130,19 +1255,16 @@ export function createTasksRoutes(
   router.post("/:id/takeover", async (c) => {
     try {
       const result = await service.takeoverTask(c.req.param("id"))
-      // 会话就绪是聚合的第三步，但停流已是既成事实 —— ensureSession 的拒绝
-      // （理论上不该发生：running+绑定 ws 是 01 闸门的放行态）不伪装成「接管失败」，
-      // 而是 200 + session_error 如实透出（UI 侧可在对话页重试懒建）。
-      let session: { session_id: string; workspace_id: string; created: boolean } | null = null
-      let sessionError: string | null = null
-      if (doer) {
-        try {
-          const s = doer.ensureSession(result.task.id)
-          session = { session_id: s.sessionId, workspace_id: s.workspaceId, created: s.created }
-        } catch (err: unknown) {
-          sessionError = err instanceof Error ? err.message : String(err)
-        }
-      }
+      // 2026-10-28 task-thread: takeover talks into the task's MAIN thread.
+      const sessionId = result.task.source_chat_session_id
+      const session = sessionId
+        ? {
+            session_id: sessionId,
+            workspace_id: result.task.workspace_id ?? '',
+            created: false,
+          }
+        : null
+      const sessionError = session ? null : '任务没有主对话会话'
       return c.json({
         task: result.task,
         takeover: result.takeover,
@@ -1235,5 +1357,23 @@ export function createTasksRoutes(
   })
 
 
+  return router
+}
+
+/**
+ * 会话消耗账本（2026-10-31）：挂在 `/api/sessions` 下，`GET /:id/usage`。
+ * 独立于任务路由导出 —— 路径属于会话域，数据来自 TasksService（会话聊天行 +
+ * 本会话发起的全部工作流）。
+ */
+export function createSessionUsageRoutes(service: TasksService): Hono {
+  const router = new Hono()
+  router.get("/:id/usage", (c) => {
+    try {
+      return c.json(service.sessionUsage(c.req.param("id")))
+    } catch (err: unknown) {
+      const { status, message } = classifyError(err)
+      return c.json({ error: message }, status)
+    }
+  })
   return router
 }

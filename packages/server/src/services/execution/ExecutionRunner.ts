@@ -23,7 +23,8 @@ export interface RunnerDeps {
   findNodeDef: (nodes: any[], nodeId: string) => any | null
   syncStateJson: () => void
   approve: (id: string, nodeId: string, answer: string, comment?: string) => Promise<any>
-  recordEndCommits: () => Promise<string>
+  /** autoCommitDirty = task rounds (see GitOperations.recordEndCommits). */
+  recordEndCommits: (autoCommitDirty?: boolean) => Promise<string>
   abortAndWait: (abortController: AbortController, executionId?: string, timeoutMs?: number) => Promise<void>
 }
 
@@ -161,7 +162,7 @@ export class ExecutionRunner {
         }
       }
 
-      const endCommitId = await this.deps.recordEndCommits()
+      const endCommitId = await this.deps.recordEndCommits(Boolean(currentExec?.task_id))
       dao.updateExecution(executionId, { end_commit_id: endCommitId })
 
       this.deps.updateStatus(executionId, result.status, {
@@ -232,7 +233,7 @@ export class ExecutionRunner {
         enginePool.remove(executionId)
       }
 
-      const endCommitId = await this.deps.recordEndCommits()
+      const endCommitId = await this.deps.recordEndCommits(Boolean(dao.findById(executionId)?.task_id))
       dao.updateExecution(executionId, { end_commit_id: endCommitId })
 
       const finalStatus = result.status === "failed" ? "failed" : "rejected"

@@ -2,7 +2,7 @@ import { test, expect } from "@playwright/test"
 
 test.describe("Dashboard Leaderboard", () => {
   test.beforeEach(async ({ page }) => {
-    await page.goto("/")
+    await page.goto("/dashboard")
     await page.waitForLoadState("networkidle")
   })
 
@@ -48,7 +48,7 @@ test.describe("Dashboard Leaderboard", () => {
   })
 
   test("可访问性（axe-core）", async ({ page }) => {
-    await page.goto("/")
+    await page.goto("/dashboard")
     await page.waitForLoadState("domcontentloaded")
 
     await page.addScriptTag({ path: require.resolve("axe-core/axe.min.js") })

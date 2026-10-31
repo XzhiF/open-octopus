@@ -1,7 +1,7 @@
 "use client"
 
-import { useState, useEffect, useCallback, useRef } from "react"
-import { useSearchParams } from "next/navigation"
+import { useState, useEffect, useLayoutEffect, useCallback, useRef } from "react"
+import { useSearchParams } from "@/lib/app-navigation"
 import { RefreshCw, Plus, Trash2, Copy, Inbox } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import {
@@ -26,7 +26,6 @@ import { useBillingCurrency } from "@/lib/billing-currency"
 import { clockShort } from "@/components/tasks/run-console/phase-status"
 import { subscribeSSE } from "@/lib/sse-manager"
 import { getServerUrl } from "@/lib/server-config"
-import { TaskModal } from "@/components/tasks/task-modal"
 import { runErrorOf } from "@/components/tasks/execution-summary"
 import { TriggerDialog } from "@/components/tasks/trigger-dialog"
 import {
@@ -80,6 +79,14 @@ const COLUMN_THEME: Record<TaskBoardColumnId, {
     dot: "bg-pop-yellow text-pop-yellow",
     pill: "bg-pop-bg text-pop-yellow",
   },
+  awaiting_archive: {
+    lane: "bg-pop-pink-soft/35",
+    head: "bg-pop-pink-soft",
+    headBd: "border-b-pop-pink/45",
+    label: "text-pop-pink",
+    dot: "bg-pop-pink text-pop-pink",
+    pill: "bg-pop-bg text-pop-pink",
+  },
   done: {
     lane: "bg-pop-green-soft/35",
     head: "bg-pop-green-soft",
@@ -100,6 +107,7 @@ const CARD_THEME: Record<Task["status"], string> = {
   paused: "bg-pop-amber-soft",
   archiving: "bg-pop-yellow-soft",
   awaiting_review: "bg-pop-yellow-soft",
+  awaiting_archive: "bg-pop-pink-soft",
   done: "bg-pop-green-soft",
   failed: "bg-pop-pink-soft",
   aborted: "bg-pop-idle",
@@ -118,12 +126,8 @@ export default function TasksPage() {
   // 不改卡片样式/布局（任务板 UI 改版属 Out of Scope）。
   const [searchTerm, setSearchTerm] = useState("")
   const searchQRef = useRef<string | undefined>(undefined)
-  // null task = new-task authoring ([+新建]); a Task = card click.
-  const [modalTask, setModalTask] = useState<TaskView | null>(null)
-  const [modalOpen, setModalOpen] = useState(false)
-  // 票 12 (K14)→ 2026-09-16 改版: 待验收列卡「验收」= 打开任务控制台并落在
-  // 「验货台」tab（独立三栏弹窗 AcceptanceModal 退役）。
-  const [acceptTaskId, setAcceptTaskId] = useState<string | null>(null)
+  // 2026-10-28 task-thread: every task opens its unified chat; the legacy
+  // TaskModal / run-console shell is no longer reachable from the board.
 
   // task-phase-redesign 票 11: v4 卡片的列归属/角标/⏳ 都读 derived
   // （deriveTaskView 唯一真相，票 07 嵌在 GET /:id 上 — list 端点不带）。
@@ -263,29 +267,27 @@ export default function TasksPage() {
     return () => unsub()
   }, [fetchTasks])
 
-  // Keep the open modal's task in sync with the latest fetched row (version/
-  // status) — same pattern as the v1 SchedulerJob sync, now against Task.
   const tasksRef = useRef<TaskView[]>(tasks)
   useEffect(() => { tasksRef.current = tasks }, [tasks])
-  useEffect(() => {
-    if (!modalOpen || !modalTask) return
-    const fresh = tasksRef.current.find((t) => t.id === modalTask.id)
-    if (fresh && fresh !== modalTask) setModalTask(fresh)
-  }, [tasks, modalOpen, modalTask])
 
-  const openNew = () => { setModalTask(null); setModalOpen(true) }
-  const openCard = (task: TaskView) => { setModalTask(task); setModalOpen(true) }
-  const close = () => { setModalOpen(false); setModalTask(null); setAcceptTaskId(null) }
+  const openNew = () => {
+    // AI-native: task creation is a chat session, not the legacy template modal.
+    window.dispatchEvent(new Event('octopus:new-task'))
+    window.dispatchEvent(new Event('octopus:focus-desktop'))
+    window.dispatchEvent(new CustomEvent('octopus:close-app', { detail: { id: 'tasks' } }))
+  }
+  const openCard = (task: TaskView, view?: 'acceptance') => {
+    // Every task status opens its unified chat; the board is only an overview.
+    window.dispatchEvent(new CustomEvent('octopus:open-task', { detail: { taskId: task.id, view } }))
+    window.dispatchEvent(new Event('octopus:focus-desktop'))
+    window.dispatchEvent(new CustomEvent('octopus:close-app', { detail: { id: 'tasks' } }))
+  }
 
-  // Deep link: /tasks?task=<id> (票03: the scheduler table's 任务 origin badge that
-  // used to emit it is gone with the origin_* columns — the URL itself stays, it is
-  // the board's own shareable handle on a task). Opens that task's modal once the
-  // fetched board contains it; the ref guard means a manual close is not re-opened
-  // by the next 10s poll.
+  // Deep link: /tasks?task=<id> — the board's shareable handle on a task.
   const searchParams = useSearchParams()
   const deepLinkAppliedRef = useRef(false)
   useEffect(() => {
-    if (deepLinkAppliedRef.current || modalOpen || tasks.length === 0) return
+    if (deepLinkAppliedRef.current || tasks.length === 0) return
     const targetId = searchParams.get("task")
     if (!targetId) return
     const match = tasks.find((t) => t.id === targetId)
@@ -293,7 +295,7 @@ export default function TasksPage() {
       deepLinkAppliedRef.current = true
       openCard(match)
     }
-  }, [tasks, modalOpen, searchParams])
+  }, [tasks, searchParams])
 
   // Delete a draft task (soft-delete). Only draft tasks are deletable from
   // the kanban card; non-draft tasks require abort-first (server 409 guard).
@@ -366,23 +368,14 @@ export default function TasksPage() {
       await deleteTask(taskId)
       toast.success("草稿已废弃")
       setDeletingTaskId(null)
-      // Close the modal if the deleted task was open
-      if (modalTask?.id === taskId) close()
       void fetchTasks()
     } catch (err: unknown) {
       toast.error(err instanceof Error ? err.message : "删除失败")
     } finally {
       setDeleteBusy(false)
     }
-  }, [fetchTasks, modalTask])
-
-  // New-task flow: the task-author clone + autosave seam (04) create a draft
-  // (linked via source_chat_session_id); adopt it so [入队] enables without
-  // closing the modal.
-  const handleDraftResolved = useCallback((draft: TaskView) => {
-    setModalTask(draft)
-    void fetchTasks()
   }, [fetchTasks])
+
 
   // 票 11 (K3): v4 列归属用 **derived.taskStatus 优先**（持久 done/failed 镜像
   // 会把待验收任务错归「完成」列 — 票 07 活体交互 #1），再按八桶分组、五列
@@ -399,22 +392,47 @@ export default function TasksPage() {
   /** 列成本统计（v49）：草稿列也算 —— 草稿的钱挂在作者会话上，读模型已带 ai_usage。 */
   const boardUsage = sumTaskUsage(displayTasks)
 
+  // 看板按「容器实际宽度」重排：桌面窗口默认约 1037px，五列会挤到 1240 横向滚动；
+  // 这里以看板自身宽度（而非视口）决定列数，窗口拖动/缩放时自动重排。
+  const boardRef = useRef<HTMLDivElement>(null)
+  const [boardWidth, setBoardWidth] = useState(0)
+  useLayoutEffect(() => {
+    const element = boardRef.current
+    if (!element) return
+    const update = () => setBoardWidth(element.clientWidth)
+    update()
+    if (typeof ResizeObserver === 'undefined') return
+    const observer = new ResizeObserver(update)
+    observer.observe(element)
+    return () => observer.disconnect()
+  }, [error])
+  const boardLayout: 'six' | 'five' | 'three' | 'two' | 'one' =
+    boardWidth >= 1380 ? 'six' : boardWidth >= 1200 ? 'five' : boardWidth >= 780 ? 'three' : boardWidth >= 520 ? 'two' : 'one'
+  const boardLayoutClass =
+    boardLayout === 'six' || boardLayout === 'five'
+      ? 'flex h-full gap-3'
+      : boardLayout === 'three'
+        ? 'grid grid-cols-3 content-start gap-3'
+        : boardLayout === 'two'
+          ? 'grid grid-cols-2 content-start gap-3'
+          : 'grid grid-cols-1 content-start gap-3'
+
   return (
     <div className="pop-confetti flex flex-1 min-h-0 flex-col text-pop-ink">
       <div className="flex flex-col h-full min-w-0">
-        <header className="flex items-center gap-3 px-6 py-3 border-b-[1.5px] border-pop-bd bg-pop-paper">
-          <h1 className="text-lg font-black tracking-tight before:text-pop-pink before:content-['❯_']">任务看板</h1>
-          <span className="rounded-full border border-pop-bd bg-pop-idle px-2 py-0.5 text-xs font-black tabular-nums text-pop-dim">{tasks.length} 个任务</span>
+        <header className="flex flex-wrap items-center gap-2 border-b-[1.5px] border-pop-bd bg-pop-paper px-4 py-2.5 sm:gap-3 sm:px-6 sm:py-3">
+          <h1 className="shrink-0 whitespace-nowrap text-lg font-black tracking-tight before:text-pop-pink before:content-['❯_']">任务看板</h1>
+          <span className="shrink-0 rounded-full border border-pop-bd bg-pop-idle px-2 py-0.5 text-xs font-black tabular-nums text-pop-dim">{tasks.length} 个任务</span>
           {boardUsage && (
             <span
               data-board-usage
               title={`Σ ${formatTokenCount(boardUsage.totals.tokens)} tok · ${boardUsage.totalCalls} 次请求 · 缓存命中 ${formatPercent(boardUsage.totals.cacheHitRate, 1)}（含草稿作者会话）`}
-              className="rounded-full border border-pop-bd bg-pop-idle px-2 py-0.5 text-xs font-black tabular-nums text-pop-yellow"
+              className="shrink-0 rounded-full border border-pop-bd bg-pop-idle px-2 py-0.5 text-xs font-black tabular-nums text-pop-yellow"
             >
               {formatCost(boardUsage.totals.cost.usd, boardUsage.totals.cost.complete, currency)}
             </span>
           )}
-          <div className="ml-auto flex gap-2">
+          <div className="ml-auto flex w-full flex-wrap items-center gap-2 sm:w-auto">
             {/* 票06: 最小搜索框——输入即透传 q 给服务端（name ∨ semantic_summary LIKE）。 */}
             <input
               data-testid="task-search"
@@ -428,7 +446,7 @@ export default function TasksPage() {
               }}
               placeholder="搜索任务 / 语义摘要…"
               aria-label="搜索任务"
-              className="h-8 w-52 rounded-md border-[1.5px] border-pop-bd bg-pop-paper px-2 text-xs font-bold text-pop-ink outline-none focus:border-pop-pink"
+              className="h-9 min-w-0 flex-1 rounded-md border-[1.5px] border-pop-bd bg-pop-paper px-2 text-xs font-bold text-pop-ink outline-none focus:border-pop-pink sm:w-52 sm:flex-none"
             />
             <Button variant="pop-quiet" size="sm" onClick={fetchTasks} disabled={loading}>
               <RefreshCw className="size-4" />
@@ -436,7 +454,7 @@ export default function TasksPage() {
             </Button>
             <Button variant="pop" size="sm" onClick={openNew} data-task-new>
               <Plus className="size-4" />
-              新建任务
+              新建开发任务
             </Button>
           </div>
         </header>
@@ -446,10 +464,14 @@ export default function TasksPage() {
             {error}
           </div>
         ) : (
-          <div className="flex-1 min-h-0 overflow-auto p-4">
-            {/* 泳道等分占满：min-w-[1240px] 保 5 道最低可读宽（窄屏出横向滚动），
-                各列 flex-1 basis-0 均分 —— 宽屏不再留右侧死空间。 */}
-            <div className="flex h-full min-w-[1240px] gap-3">
+          <div
+            ref={boardRef}
+            className="flex-1 min-h-0 overflow-y-auto p-4"
+            data-testid="task-board-scroll"
+          >
+            {/* 按容器宽度重排：≥1240 五列；780–1239 三列；520–779 两列；更窄单列。
+                多列放不下时换行纵向排布，任何宽度都不出现横向滚动。 */}
+            <div className={boardLayoutClass}>
               {TASK_COLUMNS.map((col) => {
                 const colTasks = tasksForColumn(grouped, col.id)
                 const theme = COLUMN_THEME[col.id]
@@ -459,7 +481,7 @@ export default function TasksPage() {
                   key={col.id}
                   data-task-column={col.id}
                   aria-label={col.label}
-                  className={`flex min-w-0 flex-1 basis-0 flex-col overflow-hidden rounded-xl border-[1.5px] border-pop-bd shadow-pop-sm ${theme.lane}`}
+                  className={`flex min-w-0 flex-col overflow-hidden rounded-xl border-[1.5px] border-pop-bd shadow-pop-sm ${boardLayout === 'five' || boardLayout === 'six' ? 'flex-1 basis-0' : ''} ${theme.lane}`}
                 >
                   <header className={`flex items-center gap-2 border-b-[1.5px] border-dashed px-3 py-2 text-xs font-black ${theme.head} ${theme.headBd}`}>
                     <span className={`size-2 shrink-0 rounded-full shadow-[0_0_8px_currentColor] ${theme.dot}`} aria-hidden />
@@ -486,7 +508,7 @@ export default function TasksPage() {
                         onClick={() => openCard(task)}
                         onDeleteRequest={(t) => setDeletingTaskId(t.id)}
                         onTriggerRequest={(t) => setTriggerTaskId(t.id)}
-                        onAcceptRequest={(t) => { setAcceptTaskId(t.id); openCard(t) }}
+                        onAcceptRequest={(t) => openCard(t, 'acceptance')}
                         onAdvanceRequest={(t) => void handleAdvance(t)}
                         onArchiveRetryRequest={(t) => void handleArchiveRetry(t)}
                         onDuplicateRequest={(t) => void handleDuplicate(t)}
@@ -509,15 +531,6 @@ export default function TasksPage() {
           </div>
         )}
       </div>
-
-      <TaskModal
-        open={modalOpen}
-        onOpenChange={(o) => { if (!o) close(); else setModalOpen(true) }}
-        task={modalTask}
-        onMutated={fetchTasks}
-        onDraftResolved={handleDraftResolved}
-        startOnAcceptance={acceptTaskId !== null && acceptTaskId === modalTask?.id}
-      />
 
       {/* v39 trigger dialog — armed from ready-column cards (or modal) */}
       <TriggerDialog
@@ -597,6 +610,8 @@ function TaskCard({ task, derived, budgetMs, colAccent, onClick, onDeleteRequest
   const isReady = task.status === "ready"
   // 票 11: 待验收卡琥珀高亮 (K3/US8)。
   const isAwaitingReview = task.status === "awaiting_review"
+  // archive-consent: 待归档 = 末 phase 已验收、归档未启动（等人说「归档」）。
+  const isAwaitingArchive = task.status === "awaiting_archive"
   // v4 角标 `Phase i/n · Round m`（computePhaseBadge：current=第一个非 accepted
   // 的 phase 位置；round=awaitingRound ?? currentRound）。
   const badge = computePhaseBadge(derived)
@@ -614,6 +629,7 @@ function TaskCard({ task, derived, budgetMs, colAccent, onClick, onDeleteRequest
       data-task-id={task.id}
       data-task-status={task.status}
       {...(isAwaitingReview ? { "data-task-awaiting-review": "true" } : {})}
+      {...(isAwaitingArchive ? { "data-task-awaiting-archive": "true" } : {})}
       onClick={onClick}
       role="button"
       tabIndex={0}
@@ -660,6 +676,16 @@ function TaskCard({ task, derived, budgetMs, colAccent, onClick, onDeleteRequest
               ⚠ 归档中
             </span>
           )}
+          {/* archive-consent: 已验收但归档未启动 —— 等人明确说「归档」。 */}
+          {isAwaitingArchive && (
+            <span
+              data-task-awaiting-archive-badge
+              className="text-[10px] font-black px-1.5 py-0.5 rounded-full border border-pop-bd bg-pop-bg/70 text-pop-pink"
+              title="末 phase 已通过；在任务对话里说「归档」后才开始归档（可中止）"
+            >
+              📦 待归档
+            </span>
+          )}
           {/* 票 11 AC4: ⏳ 超预算（advisory；阈值 NEXT_PUBLIC_PHASE_BUDGET_MS ?? 1.5h） */}
           {overBudget && (
             <span
@@ -699,6 +725,16 @@ function TaskCard({ task, derived, budgetMs, colAccent, onClick, onDeleteRequest
             >
               {task.status === "failed" ? "失败" : "已中止"}
             </span>
+          )}
+          {isAwaitingArchive && (
+            <button
+              data-task-archive-consent-btn
+              onClick={(e) => { e.stopPropagation(); onClick() }}
+              className={`${ACT_CHIP} border-pop-pink/60 bg-pop-pink-soft text-pop-pink hover:brightness-125`}
+              title="去任务对话里说「归档」；只有你明确同意后才开始 git 同步 / ADR 归并 / 知识沉淀"
+            >
+              去对话归档
+            </button>
           )}
           {/* 票 12 (K14/US9): 待验收卡「验收」→ 三栏证据面 modal
               （原型定稿：一张卡只有一个 accent 主行动 = 验收，其余是 dim 次级片） */}

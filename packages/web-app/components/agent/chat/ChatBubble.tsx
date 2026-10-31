@@ -5,6 +5,7 @@ import type { AgentMessage, MessageTimelineEntry, ToolCallRecord } from '@/lib/a
 import { cn } from '@/lib/utils'
 import { Bot, User, Brain, Wrench, ChevronRight, Square } from 'lucide-react'
 import { ToolCallCard } from './ToolCallCard'
+import { RoleSwitchCard } from './TuiTranscript'
 
 interface ChatBubbleProps {
   message: AgentMessage
@@ -27,11 +28,32 @@ export function ChatBubble({ message }: ChatBubbleProps) {
     return last?.text ?? message.content
   }, [hasTimeline, timeline, message.content])
 
+  // Identity-switch marker rides its own compact card (whole pack collapsible).
+  if (message.roleSwitch) {
+    return <RoleSwitchCard payload={message.roleSwitch} />
+  }
+
+  // User turns use the shared terminal echo style (same as TuiTranscript):
+  // left-aligned full width, pop-paper + inset hairline, pink ❯ prefix.
+  if (isUser) {
+    return (
+      <div
+        className="scroll-mt-6 rounded-md bg-pop-paper px-3 py-1.5 shadow-[inset_0_0_0_1px_var(--pop-bd)]"
+        data-tui-msg="user"
+        data-message-id={message.id}
+      >
+        <span className="font-bold text-pop-pink">❯ </span>
+        <span className="break-words whitespace-pre-wrap">{message.content}</span>
+      </div>
+    )
+  }
+
   return (
     <div
       className={cn('flex gap-2.5', isUser ? 'flex-row-reverse' : 'flex-row')}
       role={isUser ? undefined : 'log'}
       aria-live={isUser ? undefined : 'polite'}
+      data-message-id={message.id}
     >
       {/* Avatar — 🎪 糖豆头像(黑边 + 小硬影) */}
       <div className={cn(
@@ -87,7 +109,10 @@ function CollapsibleMeta({ thinking, toolCalls, timeline }: {
   timeline?: MessageTimelineEntry[]
 }) {
   const [open, setOpen] = useState(false)
-  const tcCount = toolCalls?.length ?? 0
+  // The server column can hand over a non-array (legacy "{}" rows); treat it
+  // as empty rather than letting `.find`/`.map` throw mid-render.
+  const toolList = Array.isArray(toolCalls) ? toolCalls : []
+  const tcCount = toolList.length
   const hasThinking = !!thinking
   const hasTimeline = !!timeline && timeline.length > 0
 
@@ -126,7 +151,7 @@ function CollapsibleMeta({ thinking, toolCalls, timeline }: {
               if (entry.kind === 'thinking') {
                 return (
                   <div key={i}>
-                    <div className="flex items-center gap-1 text-xs font-medium text-muted-foreground mb-1">
+                    <div className="flex items-center gap-1 text-xs font-medium text-pop-purple mb-1">
                       <Brain className="h-3 w-3" /> 思考
                     </div>
                     <pre className="text-xs text-muted-foreground whitespace-pre-wrap font-mono bg-background/30 rounded p-2 max-h-60 overflow-y-auto">
@@ -136,7 +161,7 @@ function CollapsibleMeta({ thinking, toolCalls, timeline }: {
                 )
               }
               if (entry.kind === 'tool') {
-                const tc = toolCalls?.find((t) => t.id === entry.id)
+                const tc = toolList.find((t) => t.id === entry.id)
                 return tc ? <ToolCallCard key={i} toolCall={tc} /> : null
               }
               // text fragment (skip the final one — it's the bubble body)
@@ -154,7 +179,7 @@ function CollapsibleMeta({ thinking, toolCalls, timeline }: {
             <>
               {hasThinking && (
                 <div>
-                  <div className="flex items-center gap-1 text-xs font-medium text-muted-foreground mb-1">
+                  <div className="flex items-center gap-1 text-xs font-medium text-pop-purple mb-1">
                     <Brain className="h-3 w-3" /> 思考过程
                   </div>
                   <pre className="text-xs text-muted-foreground whitespace-pre-wrap font-mono bg-background/30 rounded p-2 max-h-60 overflow-y-auto">
@@ -162,12 +187,12 @@ function CollapsibleMeta({ thinking, toolCalls, timeline }: {
                   </pre>
                 </div>
               )}
-              {toolCalls && toolCalls.length > 0 && (
+              {toolList.length > 0 && (
                 <div className="space-y-1.5">
-                  <div className="flex items-center gap-1 text-xs font-medium text-muted-foreground">
+                  <div className="flex items-center gap-1 text-xs font-medium text-pop-cyan">
                     <Wrench className="h-3 w-3" /> 工具调用
                   </div>
-                  {toolCalls.map((tc) => (
+                  {toolList.map((tc) => (
                     <ToolCallCard key={tc.id} toolCall={tc} />
                   ))}
                 </div>

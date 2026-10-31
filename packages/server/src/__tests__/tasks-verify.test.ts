@@ -41,8 +41,7 @@ async function newAwaitingTask(workspaceId = WS_ID): Promise<string> {
   const res = await app.request("/api/tasks", {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({
-      org: ORG,
+    body: JSON.stringify({
       name: `E2E_TD vf ${seq++}`,
       task_spec: {
         format: "v4", goal: "g", ac: ["a1"],
@@ -96,7 +95,7 @@ beforeAll(() => {
   wsDir = path.join(tmp, "ws1", "projects")
   fs.mkdirSync(wsDir, { recursive: true })
   db.prepare(`
-    INSERT INTO workspaces (id, name, org, path, created_at, updated_at)
+    INSERT INTO workspaces (id, name, repo_group, path, created_at, updated_at)
     VALUES (?, 'vf-ws', ?, ?, ?, ?)
   `).run(WS_ID, ORG, path.join(tmp, "ws1"), new Date().toISOString(), new Date().toISOString())
 
@@ -200,7 +199,7 @@ describe("verify — 门链与终态", () => {
     const ghostWs = "ws-vf-ghost"
     const now = new Date().toISOString()
     db.prepare(`
-      INSERT INTO workspaces (id, name, org, path, created_at, updated_at)
+      INSERT INTO workspaces (id, name, repo_group, path, created_at, updated_at)
       VALUES (?, 'ghost', ?, ?, ?, ?)
     `).run(ghostWs, ORG, path.join(tmp, "gone"), now, now)
     const taskId = await newAwaitingTask(ghostWs)

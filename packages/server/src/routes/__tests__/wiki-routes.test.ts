@@ -14,7 +14,7 @@ const ORG = "xzf-dev" // 票03 起 org 参数仅容错保留；DB seed 用钉死
 
 function seedRow(dao: WikiArticleDAO, row: { id: string; domain: string; title: string; summary: string; body: string; path: string; topics?: string[]; confidence?: number }) {
   dao.upsert({
-    org: "global",
+    repo_group: "global",
     id: row.id,
     domain: row.domain,
     title: row.title,
@@ -64,7 +64,6 @@ describe("wiki routes (ticket 01: tree + article, read-only)", () => {
       expect(res.status).toBe(200)
       const data = await res.json()
 
-      expect(data.org).toBe("global")
       // 域树：按 WIKI_DOMAINS 顺序只列非空域
       expect(data.domains).toEqual([
         {
@@ -98,8 +97,6 @@ describe("wiki routes (ticket 01: tree + article, read-only)", () => {
       // 参数容错：无 org / 旧客户端 org=xzf-dev / 任意 org —— 语义恒全局、返回同一批行
       const a = await (await app.request("/tree")).json()
       const b = await (await app.request(`/tree?org=${ORG}`)).json()
-      expect(a.org).toBe("global")
-      expect(b.org).toBe("global")
       expect(a.domains).toEqual(b.domains)
       expect(a.stats.entries).toBe(2)
 
@@ -107,7 +104,6 @@ describe("wiki routes (ticket 01: tree + article, read-only)", () => {
       applySchema(fresh)
       const empty = createWikiRoutes(new WikiArticleDAO(fresh))
       const c = await (await empty.request("/tree")).json()
-      expect(c.org).toBe("global")
       expect(c.domains).toEqual([])
       expect(c.stats).toMatchObject({ entries: 0, cases: 0, rules: 0 })
       fresh.close()

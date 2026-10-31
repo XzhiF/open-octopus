@@ -11,12 +11,12 @@ export class SafetyDAO extends BaseDAO {
 
   // ── safety_events ───────────────────────────────────────────────
 
-  findSafetyEvents(org: string, filters?: {
+  findSafetyEvents(filters?: {
     type?: string; actor?: string; limit?: number
   }): SafetyEventRow[] {
     const limit = Math.min(filters?.limit ?? 50, 200)
-    let sql = `SELECT * FROM safety_events WHERE org = ?`
-    const params: unknown[] = [org]
+    let sql = `SELECT * FROM safety_events WHERE 1=1`
+    const params: unknown[] = []
     if (filters?.type) { sql += ` AND type = ?`; params.push(filters.type) }
     if (filters?.actor) { sql += ` AND actor = ?`; params.push(filters.actor) }
     sql += ` ORDER BY timestamp DESC LIMIT ?`
@@ -30,9 +30,9 @@ export class SafetyDAO extends BaseDAO {
 
   insertSafetyEvent(row: Omit<SafetyEventRow, "id">): Database.RunResult {
     return this.stmt(`
-      INSERT INTO safety_events (type, operation, decision, actor, context, org, timestamp)
-      VALUES (?, ?, ?, ?, ?, ?, ?)
-    `).run(row.type, row.operation, row.decision, row.actor, row.context ?? null, row.org, row.timestamp)
+      INSERT INTO safety_events (type, operation, decision, actor, context, timestamp)
+      VALUES (?, ?, ?, ?, ?, ?)
+    `).run(row.type, row.operation, row.decision, row.actor, row.context ?? null, row.timestamp)
   }
 
   updateDecision(id: number, decision: string): Database.RunResult {
@@ -45,11 +45,11 @@ export class SafetyDAO extends BaseDAO {
     return (this.stmt("SELECT * FROM reports WHERE id = ?").get(id) as ReportRow) ?? null
   }
 
-  listReportsByOrg(org: string, filters?: {
+  listReports(filters?: {
     task_name?: string; date?: string
   }): ReportRow[] {
-    let sql = `SELECT * FROM reports WHERE org = ?`
-    const params: unknown[] = [org]
+    let sql = `SELECT * FROM reports WHERE 1=1`
+    const params: unknown[] = []
     if (filters?.task_name) { sql += ` AND task_name = ?`; params.push(filters.task_name) }
     if (filters?.date) { sql += ` AND date = ?`; params.push(filters.date) }
     sql += ` ORDER BY date DESC`
@@ -58,9 +58,9 @@ export class SafetyDAO extends BaseDAO {
 
   insertReport(row: ReportRow): Database.RunResult {
     return this.stmt(`
-      INSERT INTO reports (id, task_name, date, file_path, status, org, created_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?)
-    `).run(row.id, row.task_name, row.date, row.file_path, row.status, row.org, row.created_at)
+      INSERT INTO reports (id, task_name, date, file_path, status, created_at)
+      VALUES (?, ?, ?, ?, ?, ?)
+    `).run(row.id, row.task_name, row.date, row.file_path, row.status, row.created_at)
   }
 
   updateReport(id: string, fields: Partial<ReportRow>): Database.RunResult {
@@ -96,11 +96,11 @@ export class SafetyDAO extends BaseDAO {
     return (this.stmt("SELECT * FROM scheduled_job_executions WHERE id = ?").get(id) as ScheduledJobExecutionRow) ?? null
   }
 
-  listJobExecutionsByOrg(org: string, filters?: {
+  listJobExecutions(filters?: {
     job_name?: string; status?: string; limit?: number
   }): ScheduledJobExecutionRow[] {
-    let sql = `SELECT * FROM scheduled_job_executions WHERE org = ?`
-    const params: unknown[] = [org]
+    let sql = `SELECT * FROM scheduled_job_executions WHERE 1=1`
+    const params: unknown[] = []
     if (filters?.job_name) { sql += ` AND job_name = ?`; params.push(filters.job_name) }
     if (filters?.status) { sql += ` AND status = ?`; params.push(filters.status) }
     sql += ` ORDER BY started_at DESC`
@@ -109,20 +109,20 @@ export class SafetyDAO extends BaseDAO {
     return this.stmt(sql).all(...params) as ScheduledJobExecutionRow[]
   }
 
-  findRunningJobExecution(jobName: string, org: string): ScheduledJobExecutionRow | null {
+  findRunningJobExecution(jobName: string): ScheduledJobExecutionRow | null {
     return (this.stmt(
-      "SELECT * FROM scheduled_job_executions WHERE job_name = ? AND org = ? AND status = 'running' LIMIT 1"
-    ).get(jobName, org) as ScheduledJobExecutionRow) ?? null
+      "SELECT * FROM scheduled_job_executions WHERE job_name = ? AND status = 'running' LIMIT 1"
+    ).get(jobName) as ScheduledJobExecutionRow) ?? null
   }
 
   insertJobExecution(row: ScheduledJobExecutionRow): Database.RunResult {
     return this.stmt(`
-      INSERT INTO scheduled_job_executions (id, job_name, status, started_at, finished_at, duration_ms, report_path, report_summary, error_message, trigger_type, org, metadata)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO scheduled_job_executions (id, job_name, status, started_at, finished_at, duration_ms, report_path, report_summary, error_message, trigger_type, metadata)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       row.id, row.job_name, row.status, row.started_at, row.finished_at,
       row.duration_ms, row.report_path, row.report_summary, row.error_message,
-      row.trigger_type, row.org, row.metadata,
+      row.trigger_type, row.metadata,
     )
   }
 
@@ -145,12 +145,12 @@ export class SafetyDAO extends BaseDAO {
     return this.stmt("UPDATE safety_events SET decision = ? WHERE id = ?").run(decision, eventId)
   }
 
-  findSafetyEventsWithFilters(org: string, filters?: {
+  findSafetyEventsWithFilters(filters?: {
     type?: string; actor?: string; limit?: number
   }): SafetyEventRow[] {
     const limit = Math.min(filters?.limit ?? 50, 200)
-    let sql = "SELECT * FROM safety_events WHERE org = ?"
-    const params: unknown[] = [org]
+    let sql = "SELECT * FROM safety_events WHERE 1=1"
+    const params: unknown[] = []
     if (filters?.type) { sql += " AND type = ?"; params.push(filters.type) }
     if (filters?.actor) { sql += " AND actor = ?"; params.push(filters.actor) }
     sql += " ORDER BY timestamp DESC LIMIT ?"
@@ -161,17 +161,11 @@ export class SafetyDAO extends BaseDAO {
   // ── Additional methods for agent route migrations ─────────────────
 
   insertSafetyEventFull(row: {
-    type: string; actor: string; operation: string; decision: string; org: string; timestamp: string
+    type: string; actor: string; operation: string; decision: string; timestamp: string
   }): Database.RunResult {
     return this.stmt(`
-      INSERT INTO safety_events (type, actor, operation, decision, org, timestamp)
-      VALUES (?, ?, ?, ?, ?, ?)
-    `).run(row.type, row.actor, row.operation, row.decision, row.org, row.timestamp)
-  }
-
-  findSafetyEventByIdAndOrg(id: number, org: string): { id: number; type: string; decision: string; org: string } | null {
-    return (this.stmt(
-      "SELECT id, type, decision, org FROM safety_events WHERE id = ? AND org = ?"
-    ).get(id, org) as { id: number; type: string; decision: string; org: string }) ?? null
+      INSERT INTO safety_events (type, actor, operation, decision, timestamp)
+      VALUES (?, ?, ?, ?, ?)
+    `).run(row.type, row.actor, row.operation, row.decision, row.timestamp)
   }
 }

@@ -44,7 +44,7 @@ function row(id: string, over: Partial<LlmCallRow> & { model: string | null; tim
     id, node_execution_id: null, execution_id: null, turn_index: 1, call_index: 0,
     message_id: null, stop_reason: null, duration_ms: 100, ttft_ms: null,
     input_tokens: 1000, output_tokens: 500, cache_read_tokens: 0, cache_creation_tokens: 0,
-    workspace_id: null, org: 'default', workflow_ref: null, node_id: null, session_id: null, instance_id: 'inst-04',
+    workspace_id: null, repo_group: 'default', workflow_ref: null, node_id: null, session_id: null, instance_id: 'inst-04',
     ...over,
   }
 }
@@ -54,7 +54,7 @@ beforeAll(() => {
   initDb(dbPath)
   const db = getDb()
   const t = new Date().toISOString()
-  db.prepare("INSERT INTO workspaces (id, name, path, org, created_at, updated_at) VALUES ('ws-drill-1','Drill One','/tmp/d1','default',?,?)").run(t, t)
+  db.prepare("INSERT INTO workspaces (id, name, path, repo_group, created_at, updated_at) VALUES ('ws-drill-1','Drill One','/tmp/d1','default',?,?)").run(t, t)
   db.prepare("INSERT INTO sessions (id, org, title, created_at, updated_at) VALUES ('sess-drill-a','default','下钻会话A',?,?)").run(t, t)
 
   // DM1/DM2 兜底价：input 1000/1M、其余 0 → 每行（input=1000）派生 1 USD；DM3 不配价。

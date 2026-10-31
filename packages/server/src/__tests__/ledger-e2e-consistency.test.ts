@@ -32,7 +32,7 @@ beforeEach(() => {
   dao = new TokenUsageDAO(db)
   billing = new BillingDAO(db)
   const t = new Date().toISOString()
-  db.prepare("INSERT INTO workspaces (id, name, path, org, created_at, updated_at) VALUES ('ws-1','WS','/tmp/x','o',?,?)").run(t, t)
+  db.prepare("INSERT INTO workspaces (id, name, path, repo_group, created_at, updated_at) VALUES ('ws-1','WS','/tmp/x','o',?,?)").run(t, t)
   db.prepare(`INSERT INTO executions (id, workspace_id, parent_id, workflow_ref, workflow_name, status, started_at, completed_at, org, created_at, updated_at)
     VALUES ('e-1','ws-1','0','t.yaml','T','completed',?,?, 'o',?,?)`).run(t, t, t, t)
   for (const m of ["claude-sonnet-4-20250514", "claude-sonnet-4-5-20250827"]) {
@@ -58,7 +58,7 @@ function addNode(neId: string, nodeId: string, rows: Array<{ model: string; in: 
       turnIndex: i + 1, callIndex: 0, model: r.model,
       usage: { inputTokens: r.in, outputTokens: r.out, cacheReadTokens: r.cr, cacheCreationTokens: r.cc },
       timestamp: 1700000000000 + i, durationMs: 100,
-      org: 'o', workspaceId: 'ws-1', workflowRef: 't.yaml', nodeId,
+      repo_group: 'o', workspaceId: 'ws-1', workflowRef: 't.yaml', nodeId,
     }, dao)
   })
 }

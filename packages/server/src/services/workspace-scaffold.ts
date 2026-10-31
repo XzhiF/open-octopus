@@ -191,7 +191,7 @@ export class WorkspaceScaffold {
   copyRulesTemplate(rulesDir: string, org: string): void {
     const sources = [
       path.join(process.cwd(), ".octopus", "code-dev-copilot-rules"),
-      path.join(os.homedir(), ".octopus", "orgs", org, "code-dev-copilot-rules"),
+      path.join(os.homedir(), ".octopus", "code-dev-copilot-rules"),
       ...this.getCorePackRulesCandidates(),
     ]
     for (const srcDir of sources) {

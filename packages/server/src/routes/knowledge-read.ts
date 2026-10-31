@@ -126,7 +126,7 @@ export function createKnowledgeReadRoutes(deps: KnowledgeReadDeps, opts?: Knowle
   // GET /api/knowledge/raw — raw 源列表（path/bytes/hash/origin，只读；票02 冻结头为真源）
   routes.get("/raw", (c) => {
     try {
-      return c.json({ org: GLOBAL_WIKI_ORG, sources: listRawSources(knowledgeRootOf()) })
+      return c.json({ sources: listRawSources(knowledgeRootOf()) })
     } catch (err) {
       return fail(c, err, "knowledge-read.raw.list")
     }
@@ -147,7 +147,7 @@ export function createKnowledgeReadRoutes(deps: KnowledgeReadDeps, opts?: Knowle
         throw new IngestError("INVALID_PARAM", `undecodable path: ${rawRel}`, 400)
       }
       const source = readRawSource(knowledgeRootOf(), rel)
-      return c.json({ org: GLOBAL_WIKI_ORG, ...source })
+      return c.json({ ...source })
     } catch (err) {
       return fail(c, err, "knowledge-read.raw.file")
     }
@@ -159,7 +159,7 @@ export function createKnowledgeReadRoutes(deps: KnowledgeReadDeps, opts?: Knowle
   routes.get("/fs", (c) => {
     try {
       const { tree, truncated, total } = listKnowledgeFsTree(knowledgeRootOf())
-      return c.json({ org: GLOBAL_WIKI_ORG, root: "knowledge", tree, truncated, total })
+      return c.json({ root: "knowledge", tree, truncated, total })
     } catch (err) {
       return fail(c, err, "knowledge-read.fs.tree")
     }
@@ -172,7 +172,7 @@ export function createKnowledgeReadRoutes(deps: KnowledgeReadDeps, opts?: Knowle
       const rel = c.req.query("path") ?? ""
       if (!rel) throw new IngestError("INVALID_PARAM", "query parameter path is required", 400)
       const doc = readKnowledgeFile(knowledgeRootOf(), rel)
-      return c.json({ org: GLOBAL_WIKI_ORG, ...doc })
+      return c.json({ ...doc })
     } catch (err) {
       return fail(c, err, "knowledge-read.fs.file")
     }
@@ -190,7 +190,7 @@ export function createKnowledgeReadRoutes(deps: KnowledgeReadDeps, opts?: Knowle
       }
       const op = c.req.query("op")
       if (op) lines = lines.filter(l => l.op === op)
-      return c.json({ org: GLOBAL_WIKI_ORG, lines })
+      return c.json({ lines })
     } catch (err) {
       const { body, status } = errorResponse(err, "knowledge-read.log")
       return c.json(body, status)
@@ -204,7 +204,7 @@ export function createKnowledgeReadRoutes(deps: KnowledgeReadDeps, opts?: Knowle
   routes.get("/health", (c) => {
     try {
       const now = opts?.now?.() ?? new Date()
-      const rows = deps.articles.listByOrg(GLOBAL_WIKI_ORG)
+      const rows = deps.articles.listAll()
 
       const byType: Record<WikiPageType, number> = { entity: 0, concept: 0, topic: 0, source: 0, case: 0 }
       let lastCompiled = ""
@@ -226,8 +226,7 @@ export function createKnowledgeReadRoutes(deps: KnowledgeReadDeps, opts?: Knowle
       }
 
       return c.json({
-        org: GLOBAL_WIKI_ORG,
-        pages: { total: rows.length, ...byType },
+                pages: { total: rows.length, ...byType },
         rawSources: sources.length,
         ingestedThisWeek,
         openFindings: opts?.getOpenFindings?.() ?? 0, // 票13 巡检/编译 findings 真值（只换值不换形）

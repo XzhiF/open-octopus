@@ -38,6 +38,7 @@ export interface AgentPaginatedResponse<T> {
   items: T[]
   next_cursor?: string | null
   total: number
+  has_more?: boolean
 }
 
 // ===== Sessions =====
@@ -45,7 +46,6 @@ export interface AgentPaginatedResponse<T> {
 export interface AgentSession {
   id: string
   title: string
-  org: string
   clone_name: string | null
   perspective_clone_name: string | null
   session_type: SessionType
@@ -53,6 +53,38 @@ export interface AgentSession {
   updated_at: string
   last_message_at: string | null
   is_active: boolean
+  /** v58: chat cwd (workspace path or selected directory). */
+  cwd?: string | null
+  /** v58: bound workspace id (main-agent / user / task). */
+  workspace_id?: string | null
+  /** Last provider-reported context-window usage (SDK `context_usage` payload).
+   *  Turn-granular data the client cannot recompute, persisted so the composer's
+   *  ctx chip survives page reloads, server restarts and browser-profile changes
+   *  without waiting for the next turn. Only the session-detail endpoint fills
+   *  it; list endpoints strip it to keep the sidebar payload small. */
+  context_usage?: AgentContextUsage | null
+}
+
+/** Mirror of `@octopus/providers` ContextUsageData — kept structural so the
+ *  shared package stays provider-free. */
+export interface AgentContextUsage {
+  categories: { name: string; tokens: number; color: string; isDeferred?: boolean }[]
+  totalTokens: number
+  maxTokens: number
+  rawMaxTokens: number
+  percentage: number
+  model: string
+  memoryFiles?: { path: string; type: string; tokens: number }[]
+  mcpTools?: { name: string; serverName: string; tokens: number; isLoaded?: boolean }[]
+  systemPromptSections?: { name: string; tokens: number }[]
+  systemTools?: { name: string; tokens: number }[]
+  agents?: { agentType: string; source: string; tokens: number }[]
+  slashCommands?: { totalCommands: number; includedCommands: number; tokens: number }
+  /** True when the value was derived from the turn token ledger because the
+   *  provider's own report was never persisted (turns that predate the
+   *  `sessions.context_usage` column). Never stored back — the next real turn
+   *  replaces it with the provider's exact numbers. */
+  estimated?: boolean
 }
 
 export interface AgentMessage {
@@ -61,6 +93,8 @@ export interface AgentMessage {
   role: 'user' | 'assistant' | 'system' | 'tool'
   content: string
   tool_calls?: ToolCallRecord[]
+  /** Raw metadata JSON (displayType/timeline/activity wake payload/streaming). */
+  metadata?: string | null
   created_at: string
   is_summary: boolean
   is_compressed: boolean
@@ -164,7 +198,6 @@ export interface CloneDef {
  */
 export interface CloneSession {
   id: string
-  org: string
   title: string
   clone_name: string              // Required for clone sessions
   perspective_clone_name: string | null

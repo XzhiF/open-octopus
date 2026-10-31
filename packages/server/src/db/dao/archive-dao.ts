@@ -14,12 +14,12 @@ export class ArchiveDAO extends BaseDAO {
   insertExecutionArchive(row: ExecutionArchiveRow): { inserted: boolean } {
     const result = this.stmt(`
       INSERT OR IGNORE INTO execution_archive
-        (execution_id, workspace_id, org, workflow_name, total_cost, total_duration_ms,
+        (execution_id, workspace_id, workflow_name, total_cost, total_duration_ms,
          node_count, success_rate, token_breakdown, model_breakdown, node_summary,
          chain_info, status, archived_at, metadata)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
-      row.execution_id, row.workspace_id, row.org, row.workflow_name,
+      row.execution_id, row.workspace_id, row.workflow_name,
       row.total_cost, row.total_duration_ms, row.node_count, row.success_rate,
       row.token_breakdown, row.model_breakdown, row.node_summary,
       row.chain_info, row.status, row.archived_at, row.metadata,
@@ -54,12 +54,12 @@ export class ArchiveDAO extends BaseDAO {
   insertWorkspaceArchive(row: WorkspaceArchiveRow): void {
     this.stmt(`
       INSERT OR IGNORE INTO workspace_archive
-        (workspace_id, org, name, description, source, execution_count,
+        (workspace_id, name, description, source, execution_count,
          total_cost, total_duration_ms, created_at, archived_at, metadata,
          extracted_experiences, extracted_skills, extracted_workflows, extracted_agents, analysis_report, file_deleted)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
-      row.workspace_id, row.org, row.name, row.description, row.source,
+      row.workspace_id, row.name, row.description, row.source,
       row.execution_count, row.total_cost, row.total_duration_ms,
       row.created_at, row.archived_at, row.metadata,
       row.extracted_experiences ?? 0, row.extracted_skills ?? 0, row.extracted_workflows ?? 0,
@@ -72,11 +72,11 @@ export class ArchiveDAO extends BaseDAO {
     return (this.stmt("SELECT * FROM workspace_archive WHERE workspace_id = ?").get(workspaceId) as WorkspaceArchiveRow) ?? null
   }
 
-  listArchivedWorkspaces(org: string, page = 1, pageSize = 20): PaginatedResult<WorkspaceArchiveRow> {
+  listArchivedWorkspaces(page = 1, pageSize = 20): PaginatedResult<WorkspaceArchiveRow> {
     return this.paginate<WorkspaceArchiveRow>(
-      "SELECT * FROM workspace_archive WHERE org = ? ORDER BY archived_at DESC LIMIT ? OFFSET ?",
-      "SELECT COUNT(*) as cnt FROM workspace_archive WHERE org = ?",
-      [org],
+      "SELECT * FROM workspace_archive ORDER BY archived_at DESC LIMIT ? OFFSET ?",
+      "SELECT COUNT(*) as cnt FROM workspace_archive",
+      [],
       page,
       pageSize,
     )
@@ -84,10 +84,9 @@ export class ArchiveDAO extends BaseDAO {
 
   // ── Dashboard aggregation queries ───────────────────────────────────
 
-  getStats(org?: string, workspaceId?: string): ArchiveStats {
+  getStats(workspaceId?: string): ArchiveStats {
     const conditions: string[] = []
     const params: unknown[] = []
-    if (org) { conditions.push("org = ?"); params.push(org) }
     if (workspaceId) { conditions.push("workspace_id = ?"); params.push(workspaceId) }
     const where = conditions.length > 0 ? `WHERE ${conditions.join(" AND ")}` : ""
 
@@ -101,20 +100,18 @@ export class ArchiveDAO extends BaseDAO {
       FROM execution_archive ${where}
     `).get(...params) as Omit<ArchiveStats, 'archived_workspaces' | 'archived_workspace_cost'>
 
-    const wsWhere = org ? "WHERE org = ?" : ""
-    const wsParams = org ? [org] : []
     const wsStats = this.stmt(`
       SELECT COUNT(*) as archived_workspaces, ${LEDGER_SQL.sumCostOf('total_cost')} as archived_workspace_cost
-      FROM workspace_archive ${wsWhere}
-    `).get(...wsParams) as { archived_workspaces: number; archived_workspace_cost: number | null }
+      FROM workspace_archive
+    `).get() as { archived_workspaces: number; archived_workspace_cost: number | null }
 
     return { ...execStats, ...wsStats }
   }
 
-  getCostTrends(org: string, period: '7d' | '30d' | '90d', workflowName?: string): CostTrend[] {
+  getCostTrends(period: '7d' | '30d' | '90d', workflowName?: string): CostTrend[] {
     const days = period === '7d' ? 7 : period === '30d' ? 30 : 90
-    const conditions = ["org = ?", `archived_at >= datetime('now', '-${days} days')`]
-    const params: unknown[] = [org]
+    const conditions = [`archived_at >= datetime('now', '-${days} days')`]
+    const params: unknown[] = []
     if (workflowName) { conditions.push("workflow_name = ?"); params.push(workflowName) }
     const where = `WHERE ${conditions.join(" AND ")}`
 
@@ -126,10 +123,7 @@ export class ArchiveDAO extends BaseDAO {
     `).all(...params) as CostTrend[]
   }
 
-  getWorkflowStats(org?: string): WorkflowStat[] {
-    const where = org ? "WHERE org = ?" : ""
-    const params = org ? [org] : []
-
+  getWorkflowStats(): WorkflowStat[] {
     return this.stmt(`
       SELECT
         workflow_name,
@@ -137,29 +131,28 @@ export class ArchiveDAO extends BaseDAO {
         COALESCE(AVG(success_rate), 0) as success_rate,
         COALESCE(AVG(total_duration_ms), 0) as avg_duration_ms,
         AVG(total_cost) as avg_cost
-      FROM execution_archive ${where}
+      FROM execution_archive
       GROUP BY workflow_name
       ORDER BY execution_count DESC
-    `).all(...params) as WorkflowStat[]
+    `).all() as WorkflowStat[]
   }
 
-  getLeaderboard(org: string, metric: 'cost' | 'duration' | 'frequency', limit: number): LeaderboardEntry[] {
+  getLeaderboard(metric: 'cost' | 'duration' | 'frequency', limit: number): LeaderboardEntry[] {
     const metricExpr = metric === 'cost' ? 'SUM(total_cost)' : metric === 'duration' ? 'AVG(total_duration_ms)' : 'COUNT(*)'
     return this.stmt(`
       SELECT workflow_name, ${metricExpr} as metric_value, COUNT(*) as execution_count
       FROM execution_archive
-      WHERE org = ?
       GROUP BY workflow_name
       ORDER BY metric_value DESC
       LIMIT ?
-    `).all(org, limit) as LeaderboardEntry[]
+    `).all(limit) as LeaderboardEntry[]
   }
 
-  getWorkspaceArchiveStats(org: string): { total_workspaces: number; total_execution_count: number; total_cost: number | null } {
+  getWorkspaceArchiveStats(): { total_workspaces: number; total_execution_count: number; total_cost: number | null } {
     return this.stmt(`
       SELECT COUNT(*) as total_workspaces, COALESCE(SUM(execution_count), 0) as total_execution_count, ${LEDGER_SQL.sumCostOf('total_cost')} as total_cost
-      FROM workspace_archive WHERE org = ?
-    `).get(org) as { total_workspaces: number; total_execution_count: number; total_cost: number | null }
+      FROM workspace_archive
+    `).get() as { total_workspaces: number; total_execution_count: number; total_cost: number | null }
   }
 
   // ── Archive V2: Extraction tracking ─────────────────────────────
@@ -181,16 +174,10 @@ export class ArchiveDAO extends BaseDAO {
   }
 
   getArchivedWorkspaces(
-    org?: string,
     filter?: { name?: string }
   ): WorkspaceArchiveRow[] {
     const conditions: string[] = []
     const params: unknown[] = []
-
-    if (org) {
-      conditions.push("org = ?")
-      params.push(org)
-    }
 
     if (filter?.name) {
       conditions.push("name LIKE ?")

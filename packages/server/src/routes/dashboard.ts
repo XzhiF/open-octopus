@@ -120,6 +120,21 @@ export function createDashboardRoutes(
     return c.json(workflows)
   })
 
+  // Prompt-cache hit rate by source path (main chat / task chat / workflow).
+  // Cache stability is a first-class product metric: a system-prompt change
+  // makes every resumed turn recompute the whole transcript.
+  dashboardRoutes.get("/cache", (c) => {
+    const rawDays = parseInt(c.req.query("days") ?? "7", 10)
+    const days = Number.isNaN(rawDays) ? 7 : Math.min(90, Math.max(1, rawDays))
+    const sinceMs = Date.now() - days * 24 * 60 * 60 * 1000
+    const sources = tokenUsageDAO.cacheStatsBySource(sinceMs)
+    return c.json({
+      window_days: days,
+      since: new Date(sinceMs).toISOString(),
+      sources,
+    })
+  })
+
   dashboardRoutes.get("/leaderboard", (c) => {
     const limitParam = c.req.query("limit")
     const parsed = limitParam ? parseInt(limitParam, 10) : 6

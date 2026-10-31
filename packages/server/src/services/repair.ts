@@ -243,7 +243,8 @@ export class RepairService {
     }
 
     // Update execution status back to running if it was failed/completed
-    if (["failed", "completed", "completed_with_failures", "cancelled"].includes(exec.status)) {
+    //（aborted 也在列：reconcile 回收过的行仍应可经 repair 通道复活 2026-10-29）
+    if (["failed", "completed", "completed_with_failures", "cancelled", "aborted"].includes(exec.status)) {
       this.dao.updateExecution(executionId, { status: "running" })
     }
 
@@ -254,6 +255,83 @@ export class RepairService {
     })
 
     return { resetNodes: resetNodeIds, restoredFrom: nodeId }
+  }
+
+  // ── Rerun（终态重跑：UI「⚡ 重跑」按钮与 octopus-workflow.rerun_execution 的单一实现）──
+  //
+  // 场景：执行已进终态（failed/cancelled/…），retry_node 无路（那是 running 内单节点）。
+  // 恢复点自动 = 拓扑序上第一个 failed 业务节点；纯合成失败（__engine_init__ 秒死，
+  // 业务节点全是连坐 failed）等价于从头重跑。合成节点（不在 YAML 拓扑里，restorePoint
+  // 触达不到）一并洗回 pending，引擎重新初始化。execution 被 restorePoint 拉回
+  // running 后：live 引擎继续消化 pending；进程重启场景由 RecoveryManager 接管。
+  async rerun(
+    executionId: string,
+    opts: { resetVarPool?: boolean } = {},
+  ): Promise<RestorePointResponse & { engine_restarted: boolean }> {
+    const exec = this.dao.findById(executionId)
+    if (!exec) throw new RepairError("Execution not found", 404)
+    if (exec.status === "running" || exec.status === "pending") {
+      throw new RepairError(
+        `Cannot rerun in status '${exec.status}' — running executions retry single nodes via retry_node/clear-retry`,
+        409,
+      )
+    }
+    const workflowContent = this.getWorkflowContent(executionId)
+    if (!workflowContent) throw new RepairError("Workflow definition not found", 404)
+    const workflow = parseWorkflow(workflowContent)
+    const sorted = this.topologicalSort(workflow.nodes)
+    if (sorted.length === 0) throw new RepairError("Workflow has no nodes", 400)
+
+    const nodeExecutions = this.dao.findNodeExecutions(executionId)
+    const firstFailed = sorted.find(n => {
+      const ne = nodeExecutions.find(x => x.node_id === n.id)
+      return ne?.status === "failed"
+    })
+    const target = firstFailed ?? sorted[0]
+
+    const result = this.restorePoint(executionId, target.id, opts.resetVarPool)
+
+    // 合成节点（engine_init 等）：restorePoint 只扫 YAML 拓扑，这里补洗。
+    const fresh = this.dao.findNodeExecutions(executionId)
+    for (const ne of fresh) {
+      const synthetic = !sorted.some(n => n.id === ne.node_id)
+      if (synthetic && ne.status !== "pending" && ne.status !== "completed") {
+        this.dao.updateNodeExecution(ne.id, {
+          status: "pending",
+          completed_at: null,
+          duration: null,
+          error: null,
+          exit_code: null,
+        })
+        if (!result.resetNodes.includes(ne.node_id)) result.resetNodes.push(ne.node_id)
+      }
+    }
+
+    // 引擎即时接管（2026-10-29 二次修正，rerun 事故轮 00:24）：曾走 resume 通道，
+    // 但 resume 的语义是「从暂停点续跑」—— triage 会把 rerun 刚洗成 pending 的
+    // 全部节点再刷成 paused，而 reconstructEngine 的 backfill 集合含
+    // paused/cancelled 残行，脏残态被喂回 nodeResults 后依赖级联把主链打成
+    // cancelled，伪完成判定又被单个 bash 路由节点骗过。rerun 的正确语义是
+    // **全新启动**：行重置 pending（started_at/completed_at/progress 清零），
+    // 走和人工触发同一的 start() —— fresh engine、started_at=now，reaper 的
+    // 陈旧度钟也重新起算。start 拒绝（并发叶子占用等）则退回 running 等重启
+    // 恢复，并以 engine_restarted=false 如实告知调用方。
+    let engineRestarted = false
+    try {
+      this.dao.updateExecution(executionId, {
+        status: "pending",
+        started_at: null,
+        completed_at: null,
+        progress: 0,
+      })
+      await this.executionService.start(executionId)
+      engineRestarted = true
+    } catch (err: unknown) {
+      this.dao.updateExecution(executionId, { status: "running" })
+      console.warn(`[repair] rerun ${executionId}: start refused (${err instanceof Error ? err.message : err}) — fallback to running, restart recovery will pick it up`)
+    }
+
+    return { ...result, engine_restarted: engineRestarted }
   }
 
   // ── Reload Workflow ──────────────────────────────────────────────

@@ -50,7 +50,7 @@ describe("Chat Route with LLM", () => {
     const wsService = new WorkspaceService(new WorkspaceDAO(getDb()))
     existingWsIds = new Set(wsService.list().map(ws => ws.id))
 
-    const ws = wsService.create({ name: "chat-test", org: "xzf", path: "/tmp/octopus-chat-test" })
+    const ws = wsService.create({ name: "chat-test", repo_group: "xzf", path: "/tmp/octopus-chat-test" })
     workspaceId = ws.id
 
     const chatService = new ChatService(new ChatDAO(getDb()), new SSEService())

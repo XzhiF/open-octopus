@@ -1,6 +1,13 @@
 import { Hono } from 'hono'
 import { getSessionService } from '../../services/agent/session-service'
+import { listActiveStreams } from '../../services/agent/agent-service'
 import { AgentSessionDAO } from '../../db/dao'
+import { WorkspaceDAO } from '../../db/dao/workspace-dao'
+import { WorkspaceService } from '../../services/workspace'
+import { SessionCacheContextDAO } from '../../db/dao/session-cache-context-dao'
+import { isCloneRoleTarget, roleResponse } from '../../services/agent/role-response'
+import { resolveCloneHomeDir } from '../../services/agent/clone-resolver'
+import { estimateContextUsageFromLedger } from '../../services/agent/context-usage'
 import { createAgentError, mapErrorToStatus } from './middleware'
 
 export function createSessionRoutes(sessionDAO: AgentSessionDAO): Hono {
@@ -11,12 +18,7 @@ export function createSessionRoutes(sessionDAO: AgentSessionDAO): Hono {
    */
   sessions.post('/sessions', async (c) => {
     try {
-      const org = c.req.header('X-Octopus-Org') || (c.get('org') as string)
-      if (!org) {
-        return c.json(createAgentError('ORG_NOT_FOUND', 'Organization not resolved'), 403)
-      }
-
-      let body: { clone_name?: string } = {}
+      let body: { clone_name?: string; cwd?: string; workspace_id?: string; identity_clone?: string } = {}
       try {
         const raw = await c.req.json()
         body = raw ?? {}
@@ -24,8 +26,40 @@ export function createSessionRoutes(sessionDAO: AgentSessionDAO): Hono {
         // Empty body is fine
       }
 
-      const session = getSessionService().createSession(org, {
+      // v58 lazy cwd/workspace binding: main sessions default to the persistent
+      // main-agent workspace; an explicit workspace or directory wins.
+      let cwd = body.cwd ?? null
+      let workspaceId = body.workspace_id ?? null
+      if (!body.clone_name) {
+        const wsService = new WorkspaceService(new WorkspaceDAO(sessionDAO.getDb()))
+        if (workspaceId) {
+          const ws = wsService.getById(workspaceId)
+          if (ws) cwd = ws.path.replace(/^~/, require('os').homedir())
+          else workspaceId = null
+        }
+        if (!workspaceId && cwd) {
+          const ws = wsService.attachDirectory({ path: cwd })
+          workspaceId = ws.id
+          cwd = ws.path.replace(/^~/, require('os').homedir())
+        }
+        // 新会话选了分身但没手动挑目录：落在该分身自己的工作区
+        // （与 clone session 的 getDefaultCwd() 同源），不是 Main Agent 的目录。
+        // ~/.octopus 在目录选择策略的黑名单里（不能注册成 workspace 行），
+        // 所以这里只写 cwd —— chat 路由读 session.cwd 即可。分身未知 → 回落默认。
+        if (!workspaceId && !cwd && body.identity_clone) {
+          cwd = resolveCloneHomeDir(body.identity_clone)
+        }
+        if (!workspaceId && !cwd) {
+          const ws = wsService.ensureMainWorkspace()
+          workspaceId = ws.id
+          cwd = ws.path.replace(/^~/, require('os').homedir())
+        }
+      }
+
+      const session = getSessionService().createSession({
         clone_name: body.clone_name,
+        cwd,
+        workspace_id: workspaceId,
       })
 
       return c.json(session, 201)
@@ -41,17 +75,12 @@ export function createSessionRoutes(sessionDAO: AgentSessionDAO): Hono {
    */
   sessions.get('/sessions', (c) => {
     try {
-      const org = c.req.header('X-Octopus-Org') || (c.get('org') as string)
-      if (!org) {
-        return c.json(createAgentError('ORG_NOT_FOUND', 'Organization not resolved'), 403)
-      }
-
       const limit = parseInt(c.req.query('limit') ?? '20', 10)
       const cursor = c.req.query('cursor')
       const clone = c.req.query('clone')
       const session_type = c.req.query('session_type')
 
-      const result = getSessionService().listSessions(org, {
+      const result = getSessionService().listSessions({
         limit: Math.min(limit, 100),
         cursor,
         clone,
@@ -67,17 +96,52 @@ export function createSessionRoutes(sessionDAO: AgentSessionDAO): Hono {
   })
 
   /**
+   * GET /sessions/running — Sessions with an in-memory generation stream.
+   * Literal route, must be registered before `GET /sessions/:id`.
+   */
+  sessions.get('/sessions/running', (c) => {
+    try {
+      const requested = parseInt(c.req.query('limit') ?? '100', 10)
+      const limit = Number.isFinite(requested) ? Math.min(Math.max(requested, 1), 200) : 100
+
+      const items: Array<{
+        id: string
+        title: string
+        clone_name: string | null
+        session_type: string
+        started_at: string
+        stream_count: number
+      }> = []
+
+      for (const active of listActiveStreams()) {
+        const session = getSessionService().getSession(active.sessionId)
+        if (!session) continue
+        items.push({
+          id: session.id,
+          title: session.title,
+          clone_name: session.clone_name ?? null,
+          session_type: session.session_type,
+          started_at: new Date(active.startedAt).toISOString(),
+          stream_count: active.streamCount,
+        })
+        if (items.length >= limit) break
+      }
+
+      return c.json({ items })
+    } catch (err: unknown) {
+      const error = err instanceof Error ? err : new Error(String(err))
+      const code = (error as { code?: string }).code ?? 'INTERNAL_ERROR'
+      return c.json(createAgentError(code, error.message), mapErrorToStatus(code))
+    }
+  })
+
+  /**
    * GET /sessions/:id — Get session details
    */
   sessions.get('/sessions/:id', async (c) => {
     try {
-      const org = c.req.header('X-Octopus-Org') || (c.get('org') as string)
-      if (!org) {
-        return c.json(createAgentError('ORG_NOT_FOUND', 'Organization not resolved'), 403)
-      }
-
       const id = c.req.param('id')
-      const session = getSessionService().getSession(org, id)
+      const session = getSessionService().getSession(id)
       if (!session) {
         return c.json(createAgentError('NOT_FOUND', `Session ${id} not found`), 404)
       }
@@ -89,23 +153,22 @@ export function createSessionRoutes(sessionDAO: AgentSessionDAO): Hono {
       const msgRows = sessionDAO.findMessagesBySessionWithCursor(id, limit + 1, cursor)
       const hasMore = msgRows.length > limit
       const messages = (hasMore ? msgRows.slice(0, limit) : msgRows).reverse().map((r) => {
-        // Parse tool_calls column — may be new format { thinking, tool_calls } or old format (plain array)
-        let toolCalls = null
+        // Parse the tool_calls column — wrapper { thinking?, tool_calls? } for
+        // turns with extras, legacy plain array otherwise. Anything that is not
+        // an array is handed out as null: the transcript UI iterates this
+        // field, and a stray object (older writers serialized an empty wrapper
+        // as "{}") blanks the whole app on mount.
+        let toolCalls: unknown[] | null = null
         let thinking: string | undefined
         if (r.tool_calls) {
           try {
-            const parsed = JSON.parse(r.tool_calls)
-            if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
-              // New format: { thinking?: string, tool_calls: [...] }
-              if ('thinking' in parsed || 'tool_calls' in parsed) {
-                thinking = parsed.thinking ?? undefined
-                toolCalls = parsed.tool_calls ?? null
-              } else {
-                // Old format: plain array
-                toolCalls = parsed
-              }
-            } else {
+            const parsed = JSON.parse(r.tool_calls) as unknown
+            if (Array.isArray(parsed)) {
               toolCalls = parsed
+            } else if (parsed && typeof parsed === 'object') {
+              const wrapper = parsed as { thinking?: unknown; tool_calls?: unknown }
+              thinking = typeof wrapper.thinking === 'string' ? wrapper.thinking : undefined
+              toolCalls = Array.isArray(wrapper.tool_calls) ? wrapper.tool_calls : null
             }
           } catch {
             toolCalls = null
@@ -122,11 +185,18 @@ export function createSessionRoutes(sessionDAO: AgentSessionDAO): Hono {
           is_summary: r.is_summary === 1,
           is_compressed: r.is_compressed === 1,
           created_at: r.created_at,
+          metadata: r.metadata ?? null,
         }
       })
 
       return c.json({
         ...session,
+        // The provider's own report when this session has run a turn since the
+        // column existed; otherwise a read-only estimate from the token ledger
+        // so ANY browser paints a number instead of `ctx --%`. The estimate is
+        // never written back — the next turn replaces it with exact numbers.
+        context_usage: session.context_usage
+          ?? estimateContextUsageFromLedger(sessionDAO.getDb(), id),
         messages: {
           items: messages,
           total: messages.length,
@@ -146,15 +216,10 @@ export function createSessionRoutes(sessionDAO: AgentSessionDAO): Hono {
    */
   sessions.put('/sessions/:id', async (c) => {
     try {
-      const org = c.req.header('X-Octopus-Org') || (c.get('org') as string)
-      if (!org) {
-        return c.json(createAgentError('ORG_NOT_FOUND', 'Organization not resolved'), 403)
-      }
-
       const id = c.req.param('id')
       const body = await c.req.json<{ title: string }>()
 
-      const updated = getSessionService().updateSession(org, id, { title: body.title })
+      const updated = getSessionService().updateSession(id, { title: body.title })
       if (!updated) {
         return c.json(createAgentError('NOT_FOUND', `Session ${id} not found`), 404)
       }
@@ -168,17 +233,48 @@ export function createSessionRoutes(sessionDAO: AgentSessionDAO): Hono {
   })
 
   /**
+   * GET /sessions/:id/role — current expert identity for this session.
+   * PUT /sessions/:id/role — switch identity (body { expert: string | null }).
+   * Identity is persisted here; the actual role card is appended to the next
+   * user message by the chat route (system prompt/tools stay frozen).
+   */
+  sessions.get('/sessions/:id/role', (c) => {
+    const id = c.req.param('id')
+    const session = sessionDAO.findById(id)
+    if (!session || session.is_deleted) {
+      return c.json(createAgentError('NOT_FOUND', `Session ${id} not found`), 404)
+    }
+    const state = new SessionCacheContextDAO(sessionDAO.getDb()).getRoleState(id)
+    return c.json(roleResponse(id, state))
+  })
+
+  sessions.put('/sessions/:id/role', async (c) => {
+    const id = c.req.param('id')
+    const session = sessionDAO.findById(id)
+    if (!session || session.is_deleted) {
+      return c.json(createAgentError('NOT_FOUND', `Session ${id} not found`), 404)
+    }
+    let body: { expert?: unknown } = {}
+    try {
+      body = await c.req.json<{ expert?: unknown }>()
+    } catch {
+      return c.json(createAgentError('INVALID_PARAM', 'Invalid JSON body'), 400)
+    }
+    const expert = body.expert == null ? null : String(body.expert)
+    if (expert && !isCloneRoleTarget(expert)) {
+      return c.json(createAgentError('INVALID_PARAM', `Unknown clone: ${expert}`), 400)
+    }
+    const state = new SessionCacheContextDAO(sessionDAO.getDb()).setActiveExpert(id, expert, 'clone')
+    return c.json(roleResponse(id, state))
+  })
+
+  /**
    * DELETE /sessions/:id — Delete session
    */
   sessions.delete('/sessions/:id', async (c) => {
     try {
-      const org = c.req.header('X-Octopus-Org') || (c.get('org') as string)
-      if (!org) {
-        return c.json(createAgentError('ORG_NOT_FOUND', 'Organization not resolved'), 403)
-      }
-
       const id = c.req.param('id')
-      const deleted = getSessionService().deleteSession(org, id)
+      const deleted = getSessionService().deleteSession(id)
       if (!deleted) {
         return c.json(createAgentError('NOT_FOUND', `Session ${id} not found`), 404)
       }
@@ -191,6 +287,62 @@ export function createSessionRoutes(sessionDAO: AgentSessionDAO): Hono {
     }
   })
 
+
+  /**
+   * POST /messages/:id/decision — 把人对一张决策卡的选择写回该卡的消息 metadata。
+   *
+   * 决策卡（启动方式待选择 / 任务动作请求 / 归档反思条目）本身是 append-only 的
+   * 事件消息；在这里补一个 `activity.decision`（或按条目的 `activity.decisions[entryId]`），
+   * 刷新 / 换设备后卡片仍是「已选 + 只读」，不会又变回可点。
+   * body: { actionId: string, label?: string, entryId?: string }
+   */
+  sessions.post('/messages/:id/decision', async (c) => {
+    const id = c.req.param('id')
+    let body: { actionId?: unknown; label?: unknown; entryId?: unknown } = {}
+    try {
+      body = await c.req.json()
+    } catch {
+      return c.json(createAgentError('INVALID_PARAM', 'Invalid JSON body'), 400)
+    }
+    const actionId = typeof body.actionId === 'string' ? body.actionId.trim() : ''
+    if (!actionId) {
+      return c.json(createAgentError('INVALID_PARAM', 'actionId is required'), 400)
+    }
+    const row = sessionDAO.findMessageById(id)
+    if (!row) {
+      return c.json(createAgentError('NOT_FOUND', `Message ${id} not found`), 404)
+    }
+    let meta: Record<string, unknown> = {}
+    try {
+      const parsed = row.metadata ? JSON.parse(row.metadata) as unknown : null
+      if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+        meta = parsed as Record<string, unknown>
+      }
+    } catch {
+      // 坏 metadata 不阻断写入 —— 决策优先于既有卡片载荷
+    }
+    const activity = (meta.activity && typeof meta.activity === 'object' && !Array.isArray(meta.activity))
+      ? { ...(meta.activity as Record<string, unknown>) }
+      : {}
+    const decision = {
+      id: actionId,
+      label: typeof body.label === 'string' ? body.label : undefined,
+      at: new Date().toISOString(),
+    }
+    const entryId = typeof body.entryId === 'string' && body.entryId ? body.entryId : null
+    if (entryId) {
+      const prev = (activity.decisions && typeof activity.decisions === 'object' && !Array.isArray(activity.decisions))
+        ? (activity.decisions as Record<string, unknown>)
+        : {}
+      activity.decisions = { ...prev, [entryId]: decision }
+    } else {
+      activity.decision = decision
+    }
+    meta.activity = activity
+    if (!meta.displayType) meta.displayType = 'event'
+    sessionDAO.updateMessage(id, { metadata: JSON.stringify(meta) })
+    return c.json({ ok: true, activity })
+  })
 
   return sessions
 }

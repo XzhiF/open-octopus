@@ -17,10 +17,27 @@ export interface PlaybookItem {
   evidence?: string
   /** probe items carry the literal command (面板 [▶执行] 就地跑; v2.2 已接线). */
   probe?: { command: string }
-  /** 生命周期命令(起服/就绪轮询/收尾)。票已配 runbook 时由编译器打标——
-   *  面板折成一行提示、不给执行钮、不进连跑(「跑起来看」统一负责起停);
-   *  无 runbook 时不打标,它们仍是可跑步(不然没人起服务)。 */
+  /** 生命周期命令(起服/就绪轮询/收尾)。历史编译清单的遗留字段；
+   *  验收方案（v2）不再产出它，保留只为旧 payload 解码不漂移。 */
   lifecycle?: "start" | "ready" | "teardown"
+  /** ── 验收方案扩展（2026-10-31 两层化；缺 tier 时按场景处理）── */
+  /** case=人验收场景（可判定）；check=机器证据（只读，不判定）。 */
+  tier?: "case" | "check"
+  title?: string
+  story?: string
+  /** 人层场景起点（不写命令）。 */
+  setup?: string
+  /** 人层场景步骤（open / do / observe）。 */
+  steps?: import("./acceptance-plan-types").PlanStep[]
+  tickets?: string[]
+  /** 机器证据的按需复核命令（不自动跑）。 */
+  recheck?: string
+  // —— 旧 v1 方案字段（历史消息兼容；新方案不再写入）——
+  ticket?: string
+  howTo?: import("./acceptance-plan-types").PlanHowTo[]
+  criteria?: string[]
+  evidenceRefs?: import("./acceptance-plan-types").PlanEvidenceRef[]
+  machine?: import("./acceptance-plan-types").PlanMachine
 }
 
 export interface PlaybookSection {
@@ -58,7 +75,18 @@ export interface PlaybookPayload {
   /** ticket-name → full AC list (rendered collapsed; NOT checkable here). */
   finePrint: Array<{ ticket: string; acs: string[] }>
   carryover: PlaybookCarryover[]
-  coverage: { found: string[]; missing: string[] }
+  coverage: {
+    found: string[]
+    missing: string[]
+    /** v2 方案：故事 → 场景、AC → 机器证据的覆盖登记。 */
+    stories?: Array<{ story: string; case_id: string }>
+    acs?: Array<{ ac: string; check_ids: string[] }>
+  }
+  /** 验收方案状态（2026-10-30）：ready = 本轮清单来自规划 Agent；
+   *  generating/failed/missing = 无清单，窗口显示方案状态卡（无场景硬闸）。 */
+  plan?: import("./acceptance-plan-types").PlanSummary
+  /** 方案生成时 server 校验发现的诚实缺口（缺证据路径等）。 */
+  planWarnings?: string[]
 }
 
 // ── on-disk checks file (acceptance-checks-r{N}.json) ────────────────

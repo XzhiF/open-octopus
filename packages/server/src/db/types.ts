@@ -8,7 +8,8 @@ import type { LlmCallSourcePath } from "@octopus/shared"
 export interface WorkspaceRow {
   id: string
   name: string
-  org: string
+  /** Repo-registry key only (org demotion). NULL = no repo group bound. */
+  repo_group: string | null
   description: string | null
   status: string
   path: string
@@ -72,7 +73,6 @@ export interface ExecutionRow {
   started_at: string | null
   completed_at: string | null
   duration: number | null
-  org: string
   created_at: string
   updated_at: string
 }
@@ -170,7 +170,6 @@ export interface LlmCallRow {
   cache_creation_tokens: number
   // v48: cost_usd/cost_native/cost_currency/price_status 快照列已删除 ——
   // 钱不落账本，一切费用都是查询时按 billing_price_config 窗口匹配的派生值。
-  org: string | null
   workspace_id: string | null
   workflow_ref: string | null
   node_id: string | null
@@ -258,7 +257,6 @@ export interface OrgRow {
 
 export interface ScheduleRow {
   id: string
-  org: string
   name: string
   cron_expression: string | null
   timezone: string
@@ -367,7 +365,8 @@ export interface ScheduleWorkspaceRow {
  *  ONLY name+updated_at and never touches task_spec/resources/version (SG8). */
 export interface TaskRow {
   id: string
-  org: string
+  /** Repo-registry key only (org demotion). NULL = no repos bound. */
+  repo_group: string | null
   name: string
   /** v40 (K3): 'draft' | 'ready' | 'running' | 'awaiting_review' | 'archiving' |
    *  'done' | 'aborted' (v4) + 'failed' (v3 legacy rows only — CHECK keeps it). */
@@ -400,6 +399,9 @@ export interface TaskRow {
    *  chat session (→chat_sessions.id, workspace-chat channel, cwd = the bound
    *  workspace). Lazy-created + idempotent via GET/POST /api/tasks/:id/chat;
    *  persists across Rounds (一面两会话的「做」面 — 「谈」面是 source_chat_session_id). */
+  /** LEGACY (retired 2026-10-28 task-thread): the old task-doer chat pointer.
+   *  No longer written — the task's ONE main chat is `source_chat_session_id`
+   *  and its identity switches in place. Kept for old rows / usage joins. */
   doer_session_id: string | null
   /** 归档资产化 P3 票06 (语义摘要进任务板): 归档总结生成链写入的多面摘要（干了什么/
    *  关键决策/产出指针），任务板搜索 LIKE 命中 name ∨ semantic_summary。ADDITIVE 列
@@ -447,7 +449,6 @@ export interface TaskPhaseAcceptanceRow {
 
 export interface SessionRow {
   id: string
-  org: string
   title: string
   clone_name: string | null
   perspective_clone_name: string | null
@@ -456,6 +457,12 @@ export interface SessionRow {
   is_deleted: number
   scope_id: string | null
   provider_session_id: string | null
+  /** v58: chat cwd (workspace path or arbitrary directory chosen on first prompt). */
+  cwd: string | null
+  /** v58: bound workspace (main-agent / user / task workspace). */
+  workspace_id: string | null
+  /** Last provider-reported context-window usage (JSON) — see AgentSession.context_usage. */
+  context_usage: string | null
   last_message_at: string | null
   created_at: string
   updated_at: string
@@ -478,7 +485,6 @@ export interface MessageRow {
 
 export interface CloneRow {
   name: string
-  org: string
   type: string           // 'built-in' | 'user'
   status: string
   persona: string
@@ -498,7 +504,6 @@ export interface EvolutionLogRow {
   summary: string
   diff_path: string | null
   rolled_back: number
-  org: string
   timestamp: string
 }
 
@@ -507,7 +512,6 @@ export interface ExperienceRow {
   skill_name: string
   content: string
   source_session_id: string | null
-  org: string
   created_at: string
 }
 
@@ -537,7 +541,6 @@ export interface InsightMarkRow {
   skill_name: string
   insight: string
   session_id: string | null
-  org: string
   marked_at: string
   processed: number
 }
@@ -549,7 +552,6 @@ export interface SafetyEventRow {
   decision: string
   actor: string
   context: string | null
-  org: string
   timestamp: string
 }
 
@@ -559,7 +561,6 @@ export interface ReportRow {
   date: string
   file_path: string
   status: string
-  org: string
   created_at: string
 }
 
@@ -574,7 +575,6 @@ export interface ScheduledJobExecutionRow {
   report_summary: string | null
   error_message: string | null
   trigger_type: string
-  org: string
   metadata: string | null
 }
 
@@ -623,7 +623,6 @@ export interface AgentVersionRow {
 export interface ExecutionArchiveRow {
   execution_id: string
   workspace_id: string
-  org: string
   workflow_name: string | null
   /** C3: ledger 三态 —— NULL = 归档时全部未定价（REAL DEFAULT 0 可空，存量 0 不回填） */
   total_cost: number | null
@@ -641,7 +640,6 @@ export interface ExecutionArchiveRow {
 
 export interface WorkspaceArchiveRow {
   workspace_id: string
-  org: string
   name: string
   description: string | null
   source: string | null

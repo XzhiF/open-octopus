@@ -30,7 +30,7 @@ async function newV4Task(): Promise<string> {
   const res = await app.request("/api/tasks", {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ org: ORG, name: `E2E_TD ht ${seq++}`, task_spec: { format: "v4" } }),
+    body: JSON.stringify({ repo_group: ORG, name: `E2E_TD ht ${seq++}`, task_spec: { format: "v4" } }),
   })
   expect(res.status).toBe(201)
   return ((await res.json()) as { id: string }).id

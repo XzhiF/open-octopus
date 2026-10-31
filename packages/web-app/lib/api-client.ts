@@ -16,11 +16,8 @@ export function apiFetch(url: string, init?: RequestInit): Promise<Response> {
 
 // ============ Workspaces ============
 
-export async function listWorkspaces(org?: string) {
-  const url = org
-    ? `${getServerUrl()}/api/workspaces?org=${encodeURIComponent(org)}`
-    : `${getServerUrl()}/api/workspaces`
-  const res = await apiFetch(url)
+export async function listWorkspaces(_repoGroup?: string) {
+  const res = await apiFetch(`${getServerUrl()}/api/workspaces`)
   return res.json()
 }
 
@@ -30,11 +27,66 @@ export async function getWorkspace(id: string) {
   return res.json()
 }
 
-export async function createWorkspace(data: { name: string; org: string; description?: string; path: string; repos?: string[]; branch?: string }) {
+export async function createWorkspace(data: { name: string; repo_group?: string; description?: string; path: string; repos?: string[]; branch?: string }) {
   const res = await apiFetch(`${getServerUrl()}/api/workspaces`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(data),
+  })
+  return handleResponse(res)
+}
+
+/** Register an existing directory as a chat cwd workspace (no scaffolding). */
+export async function attachWorkspaceDirectory(data: { repo_group?: string | null; path: string; name?: string }) {
+  const res = await apiFetch(`${getServerUrl()}/api/workspaces/attach`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(data),
+  })
+  return handleResponse(res)
+}
+
+export interface BrowseRoot {
+  name: string
+  path: string
+}
+
+export interface BrowseEntry {
+  name: string
+  path: string
+}
+
+export interface BrowseResult {
+  path: string
+  parent: string | null
+  home: string
+  roots: BrowseRoot[]
+  dirs: BrowseEntry[]
+  /** 当前目录能否直接选作 cwd（盘根 / 根目录为 false）。 */
+  canSelect: boolean
+}
+
+/** 目录浏览器：非系统敏感目录才可列出/可选。缺省从用户 home 开始。 */
+export async function browseDirectories(path?: string): Promise<BrowseResult> {
+  const qs = path ? `?path=${encodeURIComponent(path)}` : ""
+  const res = await apiFetch(`${getServerUrl()}/api/agent/fs/browse${qs}`, {
+    headers: { Authorization: "Bearer agent" },
+  })
+  return handleResponse<BrowseResult>(res)
+}
+
+export interface WorkspaceSkillInfo {
+  name: string
+  source: "workspace"
+  token_count: number
+  file_size: number
+  last_modified: string | null
+}
+
+/** 工作区自带的 SKILL（<workspace>/.claude/skills）。 */
+export async function listWorkspaceSkills(id: string): Promise<{ items: WorkspaceSkillInfo[]; total: number }> {
+  const res = await apiFetch(`${getServerUrl()}/api/workspaces/${encodeURIComponent(id)}/skills`, {
+    headers: { Authorization: "Bearer agent" },
   })
   return handleResponse(res)
 }
@@ -44,16 +96,16 @@ export async function deleteWorkspace(id: string) {
   return handleResponse(res)
 }
 
-export async function fetchImportableWorkspaces(org: string) {
-  const res = await apiFetch(`${getServerUrl()}/api/workspaces/importable?org=${encodeURIComponent(org)}`)
+export async function fetchImportableWorkspaces(_repoGroup?: string) {
+  const res = await apiFetch(`${getServerUrl()}/api/workspaces/importable`)
   return handleResponse(res)
 }
 
-export async function importWorkspace(name: string, org: string) {
+export async function importWorkspace(name: string, repoGroup?: string) {
   const res = await apiFetch(`${getServerUrl()}/api/workspaces/import`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ name, org }),
+    body: JSON.stringify({ name, repo_group: repoGroup }),
   })
   return handleResponse(res)
 }
@@ -125,6 +177,28 @@ export async function refreshFileTree(workspaceId: string) {
   const res = await apiFetch(`${getServerUrl()}/api/workspaces/${workspaceId}/files/refresh`, {
     method: "POST",
   })
+  return handleResponse(res)
+}
+
+/** 用系统文件管理器打开工作空间目录（服务端 spawn open/explorer/xdg-open）。 */
+export async function openWorkspaceDirectory(workspaceId: string): Promise<{ ok: boolean; path: string }> {
+  const res = await apiFetch(`${getServerUrl()}/api/workspaces/${workspaceId}/files/open-directory`, {
+    method: "POST",
+  })
+  return handleResponse(res)
+}
+
+/** 终态执行一键重跑：恢复点自动=首个失败节点，节点洗回 pending、执行回 running，
+ *  并即时通过 resume 通道重建引擎接管（engine_restarted=false 时退回等重启恢复）。
+ *  与 MCP octopus-workflow.rerun_execution 同一服务端实现。 */
+export async function rerunExecution(
+  workspaceId: string,
+  executionId: string,
+): Promise<{ resetNodes: string[]; restoredFrom: string; engine_restarted?: boolean }> {
+  const res = await apiFetch(
+    `${getServerUrl()}/api/workspaces/${workspaceId}/executions/${executionId}/repair/rerun`,
+    { method: "POST" },
+  )
   return handleResponse(res)
 }
 
@@ -261,6 +335,28 @@ export async function fetchRunningQueue() {
   return res.json()
 }
 
+export interface ActivityEventRow {
+  id: string
+  kind: string
+  severity: 'info' | 'warn' | 'critical'
+  title: string
+  message?: string
+  workspaceId?: string | null
+  executionId?: string | null
+  taskId?: string | null
+  sessionId?: string | null
+  nodeId?: string | null
+  createdAt: string
+}
+
+export async function fetchActivity(workspaceId?: string | null, limit = 20): Promise<ActivityEventRow[]> {
+  const params = new URLSearchParams({ limit: String(limit) })
+  if (workspaceId) params.set('workspace_id', workspaceId)
+  const res = await apiFetch(`${getServerUrl()}/api/activity?${params}`)
+  const body = await res.json()
+  return Array.isArray(body?.events) ? body.events : []
+}
+
 export async function fetchLeaderboard(limit: number = 6): Promise<LeaderboardResponse> {
   const res = await apiFetch(
     `${getServerUrl()}/api/dashboard/leaderboard?limit=${limit}`,
@@ -276,6 +372,26 @@ export async function fetchRecentExecutions() {
 export async function fetchWorkflowHealth() {
   const res = await apiFetch(`${getServerUrl()}/api/dashboard/workflow-health`)
   return res.json()
+}
+
+export interface CacheSourceStat {
+  sourcePath: string
+  calls: number
+  inputTokens: number
+  cacheReadTokens: number
+  cacheCreationTokens: number
+  hitRate: number | null
+}
+
+export interface CacheStatsResponse {
+  window_days: number
+  since: string
+  sources: CacheSourceStat[]
+}
+
+export async function fetchCacheStats(days = 7): Promise<CacheStatsResponse> {
+  const res = await apiFetch(`${getServerUrl()}/api/dashboard/cache?days=${days}`)
+  return handleResponse(res)
 }
 
 // ============ Chat ============

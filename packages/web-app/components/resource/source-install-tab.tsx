@@ -1,7 +1,6 @@
 "use client"
 
 import { useState, useEffect, useCallback } from "react"
-import { useRouter } from "next/navigation"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
 import { Card } from "@/components/ui/card"
@@ -21,7 +20,6 @@ import { toast } from "sonner"
 type SourceTab = "builtin" | "git" | "local"
 
 function RefInstallForm({ placeholder, tabLabel }: { placeholder: string; tabLabel: string }) {
-  const router = useRouter()
   const [ref, setRef] = useState("")
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -34,7 +32,6 @@ function RefInstallForm({ placeholder, tabLabel }: { placeholder: string; tabLab
       await installResource(ref.trim())
       toast.success(`${tabLabel}资源 ${ref.trim()} 安装成功`)
       setRef("")
-      router.refresh()
     } catch (err) {
       setError(err instanceof Error ? err.message : "安装失败")
     } finally {

@@ -111,7 +111,7 @@ beforeEach(() => {
   workspaceId = workspaceDbId // DB FK uses UUID
   const now = new Date().toISOString()
   db.prepare(
-    "INSERT INTO workspaces (id, name, org, path, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)",
+    "INSERT INTO workspaces (id, name, repo_group, path, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)",
   ).run(workspaceDbId, "test-ws", ORG, workspacePath, now, now)
 
   sse = new SSEService()
@@ -171,6 +171,16 @@ describe("ExecutionLifecycle.create", () => {
     lifecycle.create(workspaceId, { workflow_ref: "test.yaml" }, ORG)
     expect(() => lifecycle.create(workspaceId, { workflow_ref: "test.yaml" }, ORG))
       .toThrow(/already has a root/)
+  })
+
+  it("allows a new root after the previous root is terminal", () => {
+    // The invariant is "not two live runs at once" — completed/failed history
+    // must not lock the workspace forever (chat run_workflow re-runs).
+    const first = lifecycle.create(workspaceId, { workflow_ref: "test.yaml" }, ORG)
+    db.prepare("UPDATE executions SET status = 'completed' WHERE id = ?").run(first.id)
+    const second = lifecycle.create(workspaceId, { workflow_ref: "test.yaml" }, ORG)
+    expect(second.parent_id).toBe("0")
+    expect(second.id).not.toBe(first.id)
   })
 
   // ── ADR-0021 票03 — the seam the whole design rests on, tested UNSUBSTUBBED ──

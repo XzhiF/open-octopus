@@ -53,8 +53,8 @@ export function populateFromDisk(dirPath: string, tree: Y.Map<unknown>): void {
   const files: fs.Dirent[] = []
 
   for (const entry of entries) {
-    // Skip dot dirs except .claude/.octopus/.scratch (but skip their large content later)
-    if (entry.name.startsWith(".") && entry.name !== ".claude" && entry.name !== ".octopus" && entry.name !== ".scratch") continue
+    // Skip dot dirs except .claude/.octopus/.scratch/.task (but skip their large content later)
+    if (entry.name.startsWith(".") && entry.name !== ".claude" && entry.name !== ".octopus" && entry.name !== ".scratch" && entry.name !== ".task") continue
     // Skip known heavy directories entirely
     if (entry.isDirectory() && SKIP_DIRS.has(entry.name)) continue
     if (entry.isDirectory()) dirs.push(entry)
@@ -197,7 +197,7 @@ export function startWatch(workspaceId: string, workspacePath: string, doc: Y.Do
   })
 
   const watcher = watch(workspacePath, {
-    ignored: /(^|[\/\\])(\.(?!claude|octopus|scratch)|node_modules|target|dist|build|\.next|\.nuxt|\.output|\.cache|coverage|__pycache__|vendor|bower_components|\.worktrees)|\.(class|jar|war|ear|o|so|dll|exe|pyc|rbc|beam|node|wasm)$/,
+    ignored: /(^|[\/\\])(\.(?!claude|octopus|scratch|task)|node_modules|target|dist|build|\.next|\.nuxt|\.output|\.cache|coverage|__pycache__|vendor|bower_components|\.worktrees)|\.(class|jar|war|ear|o|so|dll|exe|pyc|rbc|beam|node|wasm)$/,
     persistent: true,
     ignoreInitial: true,
     depth: 22,

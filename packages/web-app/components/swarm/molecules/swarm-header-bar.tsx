@@ -5,9 +5,10 @@ import { formatPercent } from "@/lib/format"
 import { Badge } from "@/components/ui/badge"
 import { MetricCard } from "../atoms/metric-card"
 import { SwarmBadge } from "../atoms/swarm-badge"
-import { Users, Repeat2, Gauge, Coins, X } from "lucide-react"
+import { Users, Repeat2, Gauge, Coins } from "lucide-react"
 import type { SwarmMode, SwarmStatus } from "@/lib/swarm-types"
 import { DialogClose } from "@/components/ui/dialog"
+import { CloseLightGlyph, closeLightButtonBase } from "@/components/ui/close-light"
 
 export interface SwarmHeaderBarProps {
   nodeName: string
@@ -36,6 +37,9 @@ export function SwarmHeaderBar({
   return (
     <div className="space-y-3">
       <div className="flex items-center gap-3">
+        <DialogClose aria-label="关闭" className={cn(closeLightButtonBase, 'shrink-0')}>
+          <CloseLightGlyph />
+        </DialogClose>
         <h2 className="text-lg font-semibold truncate flex-1">{nodeName}</h2>
         {mode && <SwarmBadge mode={mode} />}
         {isReplay && (
@@ -46,10 +50,6 @@ export function SwarmHeaderBar({
         {isRunning && (
           <div className="h-2 w-2 rounded-full bg-swarm-expert-running animate-swarm-pulse" />
         )}
-        <DialogClose className="shrink-0 rounded-sm opacity-70 hover:opacity-100 transition-opacity">
-          <X className="h-4 w-4" />
-          <span className="sr-only">关闭</span>
-        </DialogClose>
       </div>
 
       <div className={cn(

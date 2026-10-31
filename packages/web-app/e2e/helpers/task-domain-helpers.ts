@@ -1291,14 +1291,15 @@ export async function waitForNoLiveTaskRoot(
 }
 
 /**
- * The kanban column a persisted status is shown in. 票11's board is FIVE columns
- * (`draft / ready / running / awaiting_review / done`): `archiving` folds into 执行中 and
- * the v3 terminal states `failed` / `aborted` fold into 完成 — a card that is failed has NO
- * `[data-task-column="failed"]` to look for. Kept as the test's own expectation (the mirror
- * of `lib/task-board.ts`'s STATUS_TO_COLUMN) on purpose: a spec that imported the product map
- * could not catch the product map being wrong.
+ * The kanban column a persisted status is shown in. The board is SIX columns
+ * (`draft / ready / running / awaiting_review / awaiting_archive / done`): `archiving`
+ * folds into 执行中 and the v3 terminal states `failed` / `aborted` fold into 完成 — a card
+ * that is failed has NO `[data-task-column="failed"]` to look for. `awaiting_archive`
+ * (archive-consent 2026-10-31) has its own column ("待归档"). Kept as the test's own
+ * expectation (the mirror of `lib/task-board.ts`'s STATUS_TO_COLUMN) on purpose: a spec
+ * that imported the product map could not catch the product map being wrong.
  */
-export function boardColumnFor(status: string): "draft" | "ready" | "running" | "awaiting_review" | "done" {
+export function boardColumnFor(status: string): "draft" | "ready" | "running" | "awaiting_review" | "awaiting_archive" | "done" {
   switch (status) {
     case "draft":
       return "draft"
@@ -1309,6 +1310,8 @@ export function boardColumnFor(status: string): "draft" | "ready" | "running" | 
       return "running"
     case "awaiting_review":
       return "awaiting_review"
+    case "awaiting_archive":
+      return "awaiting_archive"
     default:
       // done / failed / aborted — 终态同归「完成」列，卡片自己的状态行区分（票 11 AC2）。
       return "done"

@@ -1,6 +1,6 @@
 "use client"
 
-import Link from "next/link"
+import Link from "@/lib/app-navigation"
 import { FileX } from "lucide-react"
 import { Button } from "@/components/ui/button"
 

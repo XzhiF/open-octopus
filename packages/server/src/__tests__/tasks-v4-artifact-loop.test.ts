@@ -49,7 +49,7 @@ const stub = vi.hoisted(() => ({
   live: new Set<string>(),
   seq: 0,
   db: null as Database.Database | null,
-  org: "e2e-al",
+  repo_group: "e2e-al",
 }))
 
 vi.mock("../services/execution-service-registry", () => ({
@@ -132,7 +132,7 @@ function insertV4Task(taskId: string, slugs: string[]): string {
     inputValues: {},
   }))
   db.prepare(
-    `INSERT INTO tasks (id, org, name, status, source_chat_session_id, task_spec,
+    `INSERT INTO tasks (id, repo_group, name, status, source_chat_session_id, task_spec,
       authoring_resources, resources, skills, project_ids, workflow_ref, version,
       deleted_at, created_at, updated_at, completed_at, workspace_id)
      VALUES (?, ?, ?, 'ready', NULL, ?, '[]', '[]', '[]', '[]', NULL, 1, NULL, ?, ?, NULL, NULL)`,

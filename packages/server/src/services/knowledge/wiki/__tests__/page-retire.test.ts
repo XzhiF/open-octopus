@@ -89,7 +89,7 @@ describe("PageRetireTaskService — 页退役真跑（票08 · 故事32）", () 
       sources: '["doc:s1"]', confidence: 0.5, body: "\n## 规则节\n- 退役探针纪律一 <!--#oct-042-->\n",
       path: "concepts/con-kc15-widget-a.md",
     })
-    const rowid = dao.getRowid(GLOBAL_WIKI_ORG, "con-kc15-widget-a")
+    const rowid = dao.getRowid("con-kc15-widget-a")
     if (rowid !== undefined) {
       dao.insertFts({
         rowid, id: "con-kc15-widget-a", domain: "concept",

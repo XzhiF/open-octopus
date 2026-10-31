@@ -1,46 +1,47 @@
 // packages/web-app/components/tasks/acceptance/acceptance-surface.tsx
 //
-// 验货台 —— 执行控制台的「验货台」tab（2026-09-16 改版：从独立三栏弹窗
-// AcceptanceModal 收编为 tab，父窗（TaskModal 执行控制台）自带拖拽/缩放/
-// 全屏，弹窗层数 3→2，原弹窗宽度截断与多层 modal 交互死锁一并消除）。
+// 验收台（2026-10-30 v3 · 原型 acceptance-scene-v2 落地）—— 从「一面板的证据」
+// 改成「跟着走的三步」：
 //
-//   ┌ 主面（左，吃满剩余宽）：实物 | 核对 两 sub-tab（叙述 tab 已于 2026-09-20
-//   │     用户裁决删除：round-report 已被核对三方对账消费，批次目录直读无验收增量；
-//   │     verdict 文件入口收进复检块，点开走 ArtifactViewerDialog）
-//   │     实物 = 待验收轮 start..end 的真实 git diff（RoundEvidenceService 服务端
-//   │     解析,web 不见 SHA）+ 当场复检（acceptance_verify 命令在活工作区现跑,
-//   │     task_verify/_log SSE 流式,PASS/FAIL 盖章,verdict .md 落批次目录,
-//   │     结束后台保留可见、可折叠）;
-//   │     核对 = spec 票 × 报告声称 × diff 实物路径三方对账（lib/acceptance-matrix,
-//   │     纯解析零 AI; round-report.md 拉取定位仍走批次目录 listHomeDir）
-//   └ 右侧栏（360px，摘要上/动作下各自滚动）：执行摘要（round 用时/失败原因/
-//         token/cost — AggInline 紧凑口径）+ 动作区（验收通过/打回[反馈必填]/
-//         中止 + autoAdvance 只读态）
+//   ┌ 左导轨：1 看结果 → 2 试一试 → 3 拍个板 + 本轮快照 + 把关提示
+//   ├ 步骤 1：结论横幅（成/败/进行中）+ 改动统计 + 报告自述 + 文件级变更 +
+//   │          核对证据（spec × 报告 × 实物，AcMatrixPanel）
+//   ├ 步骤 2：试一试（PreviewBar）+ 自动自检（VerifyPanel）+ 运行中的实例
+//   ├ 步骤 3：验收方案（AcceptancePlanPanel；无 ready 方案 → PlanStatusCard）
+//   │          + autoAdvance 提示 + 退回回显
+//   └ 常驻决策条（仅第 3 步）：✕ 硬闸拦截 / 退回修改 / 验收通过；中止仍走二次确认
 //
-// 数据权威 = GET /:id 的 derived（票 03/07 唯一真相；票 11 已镜像类型）——
-// 本组件只读 phaseViews，MUST NOT 重实现派生矩阵。提交走票 11 交付的
-// postAcceptance（409=他处已决/态变 → 重拉 derived 刷新盘面；400=表单缺陷）。
-// 决策生效（通过/中止）后 onDecided → 控制台切回「执行控制台」tab；打回
-// 不切（回显卡 + 影响清单留在原地）。
+// 三步面板常驻挂载、CSS 显隐 —— 勾选/预览/复检的会话态跨步不丢，既有 e2e
+// testid（acceptance-modal / col-* / approve / reject / plan-* …）全部保留。
+// 视觉：2026-10-30 起跟随全站净黑终端 TUI（app/acceptance-paper.css）—— 不再
+// 是深色工作区里的一张亮纸，窗口壳与内部结构同一套 pop 暗色 token。
 //
-// 兼容注记：根锚点沿用 data-acceptance-modal / testid acceptance-modal（e2e
-// task-phase-acceptance / lifecycle 的 `[data-acceptance-modal]` 选择器直接
-// 命中内嵌面），三列锚点 data-acceptance-col-* 原样。
+// 数据权威 = GET /:id 的 derived（票 03/07 唯一真相）—— 本组件只读 phaseViews，
+// MUST NOT 重实现派生矩阵。提交走 postAcceptance（409=他处已决/态变 → 重拉；
+// 400=表单缺陷）；通过 = 先开验收记录预览（ledger dialog）再提交。
+//
+// 兼容注记：根锚点沿用 data-acceptance-modal / testid acceptance-modal；三列锚点
+// data-acceptance-col-* 原样（railless 形态仍剔除摘要/动作内列）。
+//
+// 归档只读（2026-10-30 用户）：任务 done/archiving 后本面不消失 —— 复用同一套
+// 三步界面回看已验收轮（acceptedRound），动作条整条不渲染、勾选/复检/预览/探针
+// 全部冻结；playbook / round-diff 用 ?phase_index&round_index 读历史轮。多 phase
+// 时顶部阶段轨道可点切换（默认最后一个已验收 phase）。
 
 "use client"
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
-import { Badge } from "@/components/ui/badge"
 import { Spinner } from "@/components/ui/spinner"
 import { Textarea } from "@/components/ui/textarea"
 import { Button } from "@/components/ui/button"
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog"
-import { Ban, Bot, CheckCircle2, FileText, Undo2 } from "lucide-react"
+import { ArrowRight, Ban, Bot, CheckCircle2, ChevronLeft, Undo2 } from "lucide-react"
 import { toast } from "sonner"
 import type { Task, AcceptanceVerify, AcceptancePreview, AcceptanceRunbook } from "@octopus/shared"
 import {
   PHASE_STATUS_UPDATE_EVENT, TASK_ARTIFACTS_UPDATE_EVENT, TASK_STATUS_EVENT,
   TASK_VERIFY_EVENT, TASK_VERIFY_LOG_EVENT, TASK_PREVIEW_EVENT,
+  TASK_ACCEPTANCE_PLAN_EVENT,
 } from "@octopus/shared"
 import {
   abortTask,
@@ -62,7 +63,6 @@ import {
   stopPreview,
   type HomeFileListingEntry,
   type RoundDiffPayload,
-  type RoundDiffScope,
   type VerifySummary,
   type VerifyState,
   type PlaybookPayload,
@@ -72,24 +72,27 @@ import {
   type TaskRoundView,
 } from "@/lib/tasks-api"
 import { formatDuration } from "@/lib/format"
+import { cn } from "@/lib/utils"
 import { subscribeSSE, subscribeSSEStatus } from "@/lib/sse-manager"
 import { getServerUrl } from "@/lib/server-config"
 import { ArtifactViewerDialog, type HomeViewEntry } from "../authoring/artifact-viewer-dialog"
 import { batchDirOf } from "../authoring/phase-spec-dialog"
 import { isRelativeScratchSpec } from "../authoring/use-batch-tree"
-// 票08 接管件判据单源（与对话页 hint 同一函数 —— 两本账不各写各的）。
-import { isTakeoverDeliveredRound } from "../run-console/chat/chat-model"
+// 票08 接管件判据单源。
+import { isTakeoverDeliveredRound } from "./acceptance-labels"
 // 票09 台账预览统计口径复用 03 的 files-tab-model（scopeTotals 单源，勿另算）。
 import { scopeTotals } from "../files-tab/files-tab-model"
-import { RoundDiffPanel } from "./round-diff-panel"
 import { VerifyPanel } from "./verify-panel"
 import { PreviewBar } from "./preview-bar"
 import { InstancesPanel } from "./instances-panel"
-import { PlaybookPanel } from "./playbook-panel"
+import { PlanStatusCard } from "./plan-status-card"
+import { AcceptancePlanPanel } from "./acceptance-plan-panel"
 import { AcMatrixPanel } from "./ac-matrix-panel"
 import { runErrorOf } from "../execution-summary"
 import { verifyStateLabel, previewStateLabel } from "./acceptance-labels"
 import { ConfirmDialog } from "@/components/scheduler/confirm-dialog"
+
+const EMPTY_GATE = { pass: 0, fail: 0, skip: 0, undecided: 0, total: 0, failTickets: [] as string[] }
 
 // ── Props ────────────────────────────────────────────────────────────
 
@@ -129,6 +132,9 @@ export interface AcceptanceSurfaceProps {
    *  内列）—— 决策/中止入口唯一化到壳右栏（经 onActionApi 句柄，行为单源）。
    *  独立挂载（缺省 false）形态零变化。 */
   railless?: boolean
+  /** 2026-10-28 M5: the acceptance window no longer renders a diff; this
+   *  focuses the dedicated changes window in round scope. */
+  onOpenChanges?: () => void
 }
 
 const ROUND_STATE_LABEL: Record<string, string> = {
@@ -136,7 +142,10 @@ const ROUND_STATE_LABEL: Record<string, string> = {
   failed: "执行失败", cancelled: "已取消/中止",
 }
 
-export function AcceptanceSurface({ task, onMutated, onDecided, detailOverride, onRefetch, onActionApi, railless }: AcceptanceSurfaceProps) {
+/** 空态稳定引用（勿写成内联 []，见 phaseViews memo 的注释）。 */
+const NO_PHASE_VIEWS: TaskPhaseView[] = []
+
+export function AcceptanceSurface({ task, onMutated, onDecided, detailOverride, onRefetch, onActionApi, railless, onOpenChanges }: AcceptanceSurfaceProps) {
   const taskId = task?.id ?? null
   const embedded = detailOverride !== undefined
   const [internalDetail, setInternalDetail] = useState<TaskDetail | null>(null)
@@ -149,6 +158,10 @@ export function AcceptanceSurface({ task, onMutated, onDecided, detailOverride, 
   const [roundReport, setRoundReport] = useState<string | null>(null)
 
   // 打回子块（右列展开）+ 提交后的去向回显（ADR-0024 单路径：恒派 task-fix）。
+  // 2026-10-30 验收台 v3（原型 v2 落地）：三步走 —— 看结果 / 试一试 / 拍个板。
+  // 所有步骤面板常驻挂载（CSS 显隐）—— 勾选/预览/复检的会话状态跨步不丢，
+  // 也保证既有 testid 在任意步骤都能被定位。
+  const [step, setStep] = useState(1)
   const [rejectOpen, setRejectOpen] = useState(false)
   const [feedback, setFeedback] = useState("")
   const [busy, setBusy] = useState<"accept" | "reject" | "abort" | null>(null)
@@ -157,12 +170,10 @@ export function AcceptanceSurface({ task, onMutated, onDecided, detailOverride, 
   // getBatchTree 按 slug 取 latest_mtime 最新 dir（specPath 优先,正常 v4 恒命中）。
   const [fallbackDir, setFallbackDir] = useState<string | null>(null)
   // ── 验货台 (acceptance v2) 状态 ──
-  // subTab：实物(默认=C位) | 核对；roundDiff=真实提交区间；verify=当场复检。
-  const [midTab, setMidTab] = useState<"diff" | "matrix">("diff")
+  // 2026-10-28 M5: the diff moved to its own window; this surface keeps the
+  // roundDiff DATA (the AC matrix cross-checks report claims against it) but
+  // no longer renders a 实物 tab.
   const [roundDiff, setRoundDiff] = useState<RoundDiffPayload | null>(null)
-  const [diffLoading, setDiffLoading] = useState(false)
-  const [diffError, setDiffError] = useState<string | null>(null)
-  const [diffReload, setDiffReload] = useState(0) // 实物面板「重试」
   const [specMd, setSpecMd] = useState<string | null>(null) // 核对 tab 懒拉;"" = 不存在
   const [specLoading, setSpecLoading] = useState(false)
   // 懒拉 once 门（改版修正）：旧实现把 specLoading 放进 effect deps，
@@ -176,9 +187,11 @@ export function AcceptanceSurface({ task, onMutated, onDecided, detailOverride, 
   // GET /:id/verify?since=n 的游标，只补缺口不重搬全量（server S5）。
   const verifySeenRef = useRef(0)
   const [verifyBusy, setVerifyBusy] = useState(false)
-  // ── 验收面 v2.1 状态：剧本 + 预览 + 决策确认层 ──
+  // ── 验收面 v2.1 状态：方案清单 + 预览 + 决策确认层 ──
   const [playbook, setPlaybook] = useState<PlaybookPayload | null>(null)
-  const [gate, setGate] = useState<{ pass: number; fail: number; skip: number; undecided: number; total: number; failTickets: string[] }>({ pass: 0, fail: 0, skip: 0, undecided: 0, total: 0, failTickets: [] })
+  /** 方案生成完成 / SSE 到达 → 加一，触发重拉 playbook（plan 优先）。 */
+  const [playbookNonce, setPlaybookNonce] = useState(0)
+  const [gate, setGate] = useState(EMPTY_GATE)
   const [checksSaving, setChecksSaving] = useState(false)
   const [preview, setPreview] = useState<PreviewSummary | null>(null)
   const [previewBusy, setPreviewBusy] = useState(false)
@@ -200,18 +213,14 @@ export function AcceptanceSurface({ task, onMutated, onDecided, detailOverride, 
   useEffect(() => {
     if (!taskId) return
     if (!embedded) setInternalDetail(null)
+    setStep(1)
     setRejectOpen(false)
     setFeedback("")
     setRejectedSeam(null)
     setFiles(null)
     setRoundReport(null)
     setFallbackDir(null)
-    setMidTab("diff")
     setRoundDiff(null)
-    setDiffError(null)
-    setDiffScope("round")
-    setCumDiff(null)
-    setCumError(null)
     setFixReportMd(null)
     setSpecMd(null)
     specFetchedForRef.current = null
@@ -219,7 +228,7 @@ export function AcceptanceSurface({ task, onMutated, onDecided, detailOverride, 
     setVerifyLines([])
     verifySeenRef.current = 0
     setPlaybook(null)
-    setGate({ pass: 0, fail: 0, skip: 0, undecided: 0, total: 0, failTickets: [] })
+    setGate(EMPTY_GATE)
     setPreview(null)
     setLedgerOpen(false)
     setAbortOpen(false)
@@ -243,6 +252,11 @@ export function AcceptanceSurface({ task, onMutated, onDecided, detailOverride, 
     const unPhase = embedded ? () => {} : subscribeSSE(url, PHASE_STATUS_UPDATE_EVENT, (e) => { if (mine(e)) refetchDetail() })
     const unStatus = embedded ? () => {} : subscribeSSE(url, TASK_STATUS_EVENT, (e) => { if (mine(e)) refetchDetail() })
     const unArts = subscribeSSE(url, TASK_ARTIFACTS_UPDATE_EVENT, (e) => { if (mine(e)) setBatchReload((v) => v + 1) })
+    // 验收方案生成状态（2026-10-30）：ready/failed 都重拉 playbook —— ready 时
+    // 第三步切换到方案面板，failed 时显示诚实降级条。面板未挂载时也靠这里。
+    const unPlan = subscribeSSE(url, TASK_ACCEPTANCE_PLAN_EVENT, (e) => {
+      if (mine(e)) setPlaybookNonce((v) => v + 1)
+    })
     // 验货台复检：逐行进控制台（client cap 2000；重连由 GET /:id/verify tail 兜底），
     // 终态合并进 summary（stamp/verdict 指针都读 summary.state，不另设标志位）。
     const unVLog = subscribeSSE(url, TASK_VERIFY_LOG_EVENT, (e) => {
@@ -272,7 +286,7 @@ export function AcceptanceSurface({ task, onMutated, onDecided, detailOverride, 
         setPreview((prev) => (prev ? { ...prev, ...d } : prev))
       } catch { /* drop */ }
     })
-    return () => { unPhase(); unStatus(); unArts(); unVLog(); unVerify(); unPreview() }
+    return () => { unPhase(); unStatus(); unArts(); unVLog(); unVerify(); unPreview(); unPlan() }
   }, [taskId, refetchDetail])
 
   // ── 连接可见性（2026-09-20：断线静默失真比缺功能更致命）──
@@ -326,37 +340,85 @@ export function AcceptanceSurface({ task, onMutated, onDecided, detailOverride, 
   }, [taskId, refetchDetail])
 
   // ── 派生视图（票 03 唯一真相，只读不重算） ──
-  const phaseViews = detail?.derived?.phaseViews ?? []
-  const awaitingPhase: TaskPhaseView | null = useMemo(
+  // 空态用同一个常量引用：detail 未到时若每次返回新 []，下游 memo 会每次渲染
+  // 都判「变了」（复审 2026-10-30）。
+  const phaseViews = useMemo<TaskPhaseView[]>(
+    () => detail?.derived?.phaseViews ?? NO_PHASE_VIEWS,
+    [detail],
+  )
+  const awaitingPhaseRaw: TaskPhaseView | null = useMemo(
     () => phaseViews.find((p) => p.status === "awaiting_review" && p.awaitingRound !== null) ?? null,
     [phaseViews],
   )
+  // ── 归档后只读回看（2026-10-30 用户）：任务结束后验收窗不消失 —— 复用同一套
+  //    三步界面，只是把「待验收轮」换成已验收轮；动作全部冻结、无决策按钮。
+  //    多 phase 的关键：默认停在最后一个已验收 phase，顶部阶段轨道可点切换，
+  //    每个 phase 各自回看自己的 acceptedRound（各自的 diff / 剧本 / checks）。
+  const acceptedPhases = useMemo(
+    () => phaseViews.filter((p) => p.acceptedRound != null),
+    [phaseViews],
+  )
+  const [readOnlyPhasePick, setReadOnlyPhasePick] = useState<number | null>(null)
+  useEffect(() => { setReadOnlyPhasePick(null) }, [taskId])
+  const readOnlyEligible = ["done", "failed", "aborted", "archiving", "awaiting_archive"].includes(task?.status ?? "")
+  const readOnlyPhase: TaskPhaseView | null = useMemo(() => {
+    if (awaitingPhaseRaw || !readOnlyEligible) return null
+    const picked = readOnlyPhasePick != null
+      ? acceptedPhases.find((p) => p.index === readOnlyPhasePick) ?? null
+      : null
+    return picked ?? acceptedPhases[acceptedPhases.length - 1] ?? null
+  }, [awaitingPhaseRaw, readOnlyEligible, acceptedPhases, readOnlyPhasePick])
+  const readOnly = !awaitingPhaseRaw && !!readOnlyPhase
+  const awaitingPhase: TaskPhaseView | null = awaitingPhaseRaw ?? readOnlyPhase
+  /** 待验收轮 = awaitingRound；归档只读回看 = acceptedRound。 */
+  const reviewRoundIndex = awaitingPhase?.awaitingRound ?? awaitingPhase?.acceptedRound ?? null
   const awaitingRound: TaskRoundView | null = useMemo(() => {
-    if (!awaitingPhase || awaitingPhase.awaitingRound == null) return null
-    return awaitingPhase.rounds.find((r) => r.roundIndex === awaitingPhase.awaitingRound) ?? null
-  }, [awaitingPhase])
+    if (!awaitingPhase || reviewRoundIndex == null) return null
+    return awaitingPhase.rounds.find((r) => r.roundIndex === reviewRoundIndex) ?? null
+  }, [awaitingPhase, reviewRoundIndex])
+  /** 历史轮只读查询坐标（playbook / round-diff 端点的 ?phase_index&round_index）。 */
+  const readOnlyTarget = readOnly && awaitingPhase && reviewRoundIndex != null
+    ? { phaseIndex: awaitingPhase.index, roundIndex: reviewRoundIndex }
+    : undefined
+
+  // 只读切换 phase：复检/预览是 task 级内存会话，不能串台到别的 phase ——
+  // 切 phase 先清空，再由下面的拉取按本轮 exec 重新对上。
+  useEffect(() => {
+    if (!readOnly) return
+    setVerify(null)
+    setVerifyLines([])
+    verifySeenRef.current = 0
+    setPreview(null)
+  }, [readOnly, readOnlyPhasePick])
 
   // ── 验收面 v2.1：剧本编译 + 预览会话恢复 ──
-  // playbook：按 awaiting 轮现拉（服务端派生；409 无 awaiting → null 静默，面板有 idle 态）。
+  // playbook：按 await（或归档只读回看的历史轮）现拉；409/无轮 → null 静默。
   // preview：挂载 GET 一次（SSE 无 replay；external 探活由 server 兜）。execId 换轮即重拉。
   useEffect(() => {
     if (!taskId || !awaitingRound) { setPlaybook(null); return }
     let cancelled = false
-    getPlaybook(taskId)
+    getPlaybook(taskId, readOnlyTarget)
       .then((p) => { if (!cancelled) setPlaybook(p) })
       .catch(() => { if (!cancelled) setPlaybook(null) })
     return () => { cancelled = true }
-  }, [taskId, awaitingRound?.exec.id])
+    // readOnlyTarget 是每渲染新建的对象 —— 用它的原始值进 deps。
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [taskId, awaitingRound?.exec.id, playbookNonce, readOnlyTarget?.phaseIndex, readOnlyTarget?.roundIndex])
 
   useEffect(() => {
     if (!taskId || !awaitingRound) return
     let cancelled = false
     getPreview(taskId)
-      .then((s) => { if (!cancelled && s) setPreview(s) })
+      .then((s) => {
+        if (cancelled || !s) return
+        // 只读回看：预览会话是 task 级，只认本轮 exec（换 phase 不串台）。
+        if (readOnly && s.execution_id && s.execution_id !== awaitingRound.exec.id) return
+        setPreview(s)
+      })
       .catch(() => { /* not wired / offline */ })
     return () => { cancelled = true }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [taskId, awaitingRound?.exec.id])
+  }, [taskId, awaitingRound?.exec.id, readOnly])
 
   // 本轮 run：executions[] 与本 round 的 exec.id 联查（derived 无 completed_at；票03 起
   // 徽章自带 started_at/completed_at，duration 自己算；票05 起徽章带 error_summary）。
@@ -384,6 +446,23 @@ export function AcceptanceSurface({ task, onMutated, onDecided, detailOverride, 
 
   // 票09 台账预览统计口径 = 03 files-tab-model::scopeTotals 单源（勿另算，与走查页同源）。
   const diffStats = useMemo(() => scopeTotals(roundDiff), [roundDiff])
+
+  // 步骤 1「改了什么」：按 churn 排序的实文件行（只取前 6，其余折成一行计数）。
+  // 数据源与变更窗/台账同源（RoundDiffPayload），不另算口径。
+  const diffFiles = useMemo(() => {
+    if (!roundDiff?.available) return [] as Array<{ path: string; adds: number; dels: number; repo: string }>
+    return roundDiff.repos
+      .filter((r) => !r.expired)
+      .flatMap((r) => r.groups.flatMap((g) => g.files.map((f) => ({ path: f.path, adds: f.adds, dels: f.dels, repo: r.name }))))
+      .sort((a, b) => b.adds + b.dels - (a.adds + a.dels))
+  }, [roundDiff])
+  const topFiles = diffFiles.slice(0, 6)
+  const restFiles = diffFiles.slice(6)
+  const restAdds = restFiles.reduce((n, f) => n + f.adds, 0)
+  const restDels = restFiles.reduce((n, f) => n + f.dels, 0)
+  // 「它做了什么」的直读源 = 本轮 round-report 的「主要改动」子弹列表
+  // （agent 自述，逐条可回溯；没有就退回阶段目标，绝不编摘要）。
+  const reportHighlights = useMemo(() => extractReportHighlights(roundReport), [roundReport])
 
   // ── 中列证据面：本 phase 批次目录直读（盘上真相,登记语义已退役） ──────────
   // 定位：specPath 优先（server 权威 phaseSpecDir = dirname(specPath),同语义零
@@ -447,43 +526,15 @@ export function AcceptanceSurface({ task, onMutated, onDecided, detailOverride, 
   // null —— 面板本身有 idle 态）。exec id 变化（换轮/重开）即重拉。
   const awaitingExecId = awaitingRound?.exec.id ?? ""
   useEffect(() => {
-    if (!taskId || !awaitingExecId) { setRoundDiff(null); setDiffError(null); return }
+    if (!taskId || !awaitingExecId) { setRoundDiff(null); return }
     let cancelled = false
-    setDiffLoading(true)
-    setDiffError(null)
-    getRoundDiff(taskId)
+    getRoundDiff(taskId, "round", readOnlyTarget)
       .then((d) => { if (!cancelled) setRoundDiff(d) })
-      .catch((err: unknown) => {
-        if (cancelled) return
-        setRoundDiff(null)
-        setDiffError(err instanceof Error ? err.message : "实物 diff 读取失败")
-      })
-      .finally(() => { if (!cancelled) setDiffLoading(false) })
+      .catch(() => { if (!cancelled) setRoundDiff(null) })
     return () => { cancelled = true }
-  }, [taskId, awaitingExecId, diffReload])
-
-  // ── 实物口径（B 档 / server S3）：本轮 = 本次执行增量；累计 = 本 phase 全轮 ──
-  // 修复轮旧病：人只看到 delta，放行对象却是整个 phase 终态。cumulative 按需拉、
-  // 换轮/重试即清仓；round-1 时两口径同物，开关不出现。
-  const [diffScope, setDiffScope] = useState<RoundDiffScope>("round")
-  const [cumDiff, setCumDiff] = useState<RoundDiffPayload | null>(null)
-  const [cumLoading, setCumLoading] = useState(false)
-  const [cumError, setCumError] = useState<string | null>(null)
-  useEffect(() => {
-    if (!taskId || !awaitingExecId || diffScope !== "cumulative") return
-    let cancelled = false
-    setCumLoading(true)
-    setCumError(null)
-    getRoundDiff(taskId, "cumulative")
-      .then((d) => { if (!cancelled) setCumDiff(d) })
-      .catch((err: unknown) => {
-        if (cancelled) return
-        setCumDiff(null)
-        setCumError(err instanceof Error ? err.message : "累计 diff 读取失败")
-      })
-      .finally(() => { if (!cancelled) setCumLoading(false) })
-    return () => { cancelled = true }
-  }, [taskId, awaitingExecId, diffScope, diffReload])
+    // readOnlyTarget 每渲染新建 —— 按原始值进 deps（同 playbook effect）。
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [taskId, awaitingExecId, readOnlyTarget?.phaseIndex, readOnlyTarget?.roundIndex])
 
   // ── 打回→修复 回应对账（B 档）：round R 为修复轮时，批次目录成对存在
   // fix-feedback-r{R-1}.md / fix-report-r{R-1}.md（task-fix SKILL：N=被打回轮，
@@ -511,17 +562,19 @@ export function AcceptanceSurface({ task, onMutated, onDecided, detailOverride, 
     getVerifyStatus(taskId)
       .then((s) => {
         if (cancelled || !s) return
+        // 只读回看：复检会话是 task 级内存，只认本轮 exec（换 phase 不串台）。
+        if (readOnly && s.execution_id && s.execution_id !== awaitingExecId) return
         setVerify(s)
         if (s.tail?.length) setVerifyLines(s.tail)
       })
       .catch(() => { /* 未装配/离线 — 无会话可恢复 */ })
     return () => { cancelled = true }
-  }, [taskId, awaitingExecId])
+  }, [taskId, awaitingExecId, readOnly])
 
-  // 核对 tab 的 spec.md：首访懒拉，"" 缓存「不存在」防重拉风暴。once 门走 ref
+  // 核对面的 spec.md：首访懒拉，"" 缓存「不存在」防重拉风暴。once 门走 ref
   // （不进 deps → 不会被 setSpecLoading 自己的重跑掐死,见声明处注释）。
   useEffect(() => {
-    if (!taskId || !batchDir || midTab !== "matrix") return
+    if (!taskId || !batchDir) return
     if (specFetchedForRef.current === `${taskId}:${batchDir}`) return
     specFetchedForRef.current = `${taskId}:${batchDir}`
     let cancelled = false
@@ -535,14 +588,20 @@ export function AcceptanceSurface({ task, onMutated, onDecided, detailOverride, 
       })
       .finally(() => { if (!cancelled) setSpecLoading(false) })
     return () => { cancelled = true }
-  }, [taskId, batchDir, midTab])
+  }, [taskId, batchDir])
 
   const verifyCfg = (detail?.task_spec ?? task?.task_spec)?.acceptance_verify ?? null
   const verifyRunning = verify?.state === "running"
   const wsGone = roundDiff !== null && !roundDiff.available && roundDiff.reason === "no_workspace"
-  const verifyDisabled = wsGone
-    ? "工作区目录已不在 — 当场复检不可用（历史输出/verdict 仍可看）"
+  /** 归档只读：勾选/复检/预览/探针全部冻结（历史数据照常展示）。
+   *  待归档（已验收、归档未启动）同属只读，但原因不同 —— 验收已冻结，等归档。 */
+  const readOnlyReason = readOnly
+    ? task?.status === "awaiting_archive"
+      ? "待归档 · 只读 — 归档尚未启动（验收已冻结，可在对话里说「归档」）"
+      : "已归档 · 只读 — 验收已冻结（记录可查，勾选与运行不可再动）"
     : undefined
+  const verifyDisabled = readOnlyReason
+    ?? (wsGone ? "工作区目录已不在 — 当场复检不可用（历史输出/verdict 仍可看）" : undefined)
 
   const handleVerifyRun = useCallback(async () => {
     if (!taskId) return
@@ -669,10 +728,10 @@ export function AcceptanceSurface({ task, onMutated, onDecided, detailOverride, 
 
   // 决策：通过 = 先开 ledger 预览确认弹层（唯一入口，D7/D8），确认后才 postAcceptance。
   const requestAccept = useCallback(() => {
-    if (busy) return
+    if (busy || readOnly) return
     if (gate.fail > 0) { toast.error("存在 ✗ 未过项 —— 通过被拦，请改走打回（反馈已预填）"); return }
     setLedgerOpen(true)
-  }, [busy, gate.fail])
+  }, [busy, readOnly, gate.fail])
 
   const doAccept = useCallback(async () => {
     if (!task || !awaitingPhase || awaitingPhase.awaitingRound == null || busy) return
@@ -691,6 +750,9 @@ export function AcceptanceSurface({ task, onMutated, onDecided, detailOverride, 
       // 批次目录时不再谎报「台账已写」—— 由响应体 ledger_written 承载真相（票 07 契约扩展）。
       const ledgerNote = result.ledger_written === false ? "⚠ 台账写入失败，请手动补记批次目录" : "台账已写"
       switch (result.next_action) {
+        case "awaiting_archive":
+          toast.success(`末 Phase 已通过 — ${ledgerNote}，任务停在「待归档」；在对话里说「归档」后才开始归档`)
+          break
         case "archiving":
           toast.success(`末 Phase 已通过 — ${ledgerNote}，归档编排中（全绿才 done）`)
           break
@@ -719,7 +781,7 @@ export function AcceptanceSurface({ task, onMutated, onDecided, detailOverride, 
   // 票 07：对话页签送回劝退草稿时，草稿直接成文（✗ 票预填让位 —— 未过项仍由
   // augmentReject 在提交侧补齐，两不吞）。
   const openReject = useCallback((draft?: string) => {
-    if (busy) return
+    if (busy || readOnly) return
     const d = typeof draft === "string" ? draft.trim() : ""
     if (d) {
       setFeedback(`（来自快速修改对话的升级建议）\n${d}\n`)
@@ -727,7 +789,7 @@ export function AcceptanceSurface({ task, onMutated, onDecided, detailOverride, 
       setFeedback(`未过（验收台剧本 ✗）：\n${gate.failTickets.map((t) => `- ${t}`).join("\n")}\n\n补充：\n`)
     }
     setRejectOpen(true)
-  }, [busy, feedback, gate.failTickets])
+  }, [busy, readOnly, feedback, gate.failTickets])
 
   const handleReject = useCallback(async () => {
     const trimmed = feedback.trim()
@@ -772,7 +834,7 @@ export function AcceptanceSurface({ task, onMutated, onDecided, detailOverride, 
     }
   }, [task, awaitingPhase, feedback, gate.failTickets, busy, onMutated, refetchDetail, embedded, onRefetch])
 
-  const requestAbort = useCallback(() => { if (!busy) setAbortOpen(true) }, [busy])
+  const requestAbort = useCallback(() => { if (!busy && !readOnly) setAbortOpen(true) }, [busy, readOnly])
 
   // 票 02 统一壳：把决策入口注册给宿主（右栏底部 通过/打回 按钮）。只是句柄注册
   // ——台账预览/反馈弹窗/硬闸拦截/409 恢复全部仍是本面这套函数，行为单源。
@@ -811,255 +873,330 @@ export function AcceptanceSurface({ task, onMutated, onDecided, detailOverride, 
 
   const total = phaseViews.length
 
+  const nextPhaseIndex = awaitingPhase
+    ? phaseViews[phaseViews.findIndex((p) => p.index === awaitingPhase.index) + 1]?.index ?? "?"
+    : null
+  const roundOk = awaitingRound?.state === "succeeded"
+  const roundFailed = awaitingRound?.state === "failed"
+  const selfCheckLabel = verify?.state
+    ? verifyStateLabel(verify.state)
+    : isTakeoverArtifact ? "未跑（接管件）" : verifyStateLabel(undefined)
+  const bannerTitle = readOnly
+    ? "这轮已通过验收"
+    : roundOk ? "这轮跑通了，等你确认" : roundFailed ? "这轮没跑成功，先看原因" : "这轮还在收尾"
+  const bannerSub = [
+    durationMs != null ? `用时 ${formatDuration(durationMs)}` : null,
+    diffStats.commits > 0 ? `${diffStats.commits} 次提交` : null,
+    `自动自检 ${selfCheckLabel}`,
+  ].filter(Boolean).join(" · ")
+  const bannerChip = readOnly
+    ? { cls: "ok", text: "已验收 ✓" }
+    : roundOk
+      ? { cls: "ok", text: "可验收" }
+      : roundFailed ? { cls: "bad", text: "需处理" } : { cls: "wait", text: "等待中" }
+
+  // 验收清单的唯一来源是验收方案（2026-10-31 删除旧编译清单）：
+  // ready 且真有清单 → AcceptancePlanPanel；否则只显示方案状态卡。
+  const planReady = playbook?.plan?.status === "ready" && !!playbook.available
+  const planGuideActive = planReady && !!awaitingPhase && !readOnly
+
+  // 方案从 ready 变为不可用（失败 / 重生成 / 换轮）时清掉残留 gate ——
+  // 否则上一份方案的 ✗ 会继续拦「通过」，而界面上已经没有可判定的清单。
+  useEffect(() => {
+    if (planReady) return
+    setGate(EMPTY_GATE)
+    setChecksSaving(false)
+  }, [planReady, playbook?.plan?.status, playbook?.plan?.generated_at, taskId, reviewRoundIndex])
+
   return (
-    <div className="flex h-full min-h-0 flex-col" data-acceptance-modal data-testid="acceptance-modal">
-      {/* 顶条（原弹窗 DialogHeader 的下沉替身）：语境 + 一句宪法。 */}
-      <div className="flex shrink-0 flex-wrap items-center gap-2 border-b border-pop-bd bg-pop-paper px-4 py-1.5">
-        <span className="text-[13px] font-black">验收 · 验货台</span>
-        {awaitingPhase && (
-          <span className="text-xs text-muted-foreground tabular-nums" data-acceptance-phase-label data-testid="acceptance-phase-label">
-            {`Phase ${awaitingPhase.index}/${total} · Round ${awaitingPhase.awaitingRound}`}
-          </span>
-        )}
-        {/* 票08 接管件 chip：人工停流→对话交付而来的一轮 —— 如实标出，不加闸。 */}
+    <div
+      className="acceptance-paper flex h-full min-h-0 flex-col"
+      data-acceptance-modal
+      data-acceptance-readonly={readOnly ? "1" : undefined}
+      data-testid="acceptance-modal"
+    >
+      {/* ── 顶条：语境 + 阶段迷你轨道（不抢主线，只给方位） ── */}
+      <div className="ap-subhead">
+        <span className="ap-eyebrow">验收台</span>
+        <span className="ap-context">
+          {awaitingPhase ? (
+            <>阶段 <b>{awaitingPhase.index}</b> / {total} · 第 {reviewRoundIndex ?? "—"} 轮{readOnly ? " · 已验收" : ""}</>
+          ) : "当前没有待验收的轮次"}
+        </span>
         {isTakeoverArtifact && (
           <span
             data-testid="acceptance-takeover-chip"
-            className="shrink-0 rounded-full border-[1.5px] border-pop-pink/55 bg-pop-pink-soft px-2 py-px font-mono text-[9.5px] font-black text-pop-pink"
-            title="本 Round 由人工接管交付：绑定流已停，自动复检未跑 —— 把关 = 人工走查 + 跑起来看（ADR-0025）"
+            className="ap-chip wait"
+            title="本 Round 由人工接管交付：绑定流已停，自动复检未跑 —— 把关 = 人工核对 + 试一试（ADR-0025）"
           >
             ✋ 接管件 · 自动复检未跑
           </span>
         )}
-        {task && <Badge variant="outline" className="max-w-[260px] truncate text-[10px]">{task.name}</Badge>}
         {sseDown && (
           <span
-            className="rounded-full border-[1.5px] border-pop-red bg-pop-pink-soft px-2 py-px font-mono text-[9.5px] font-black text-pop-red"
+            className="ap-chip bad"
             data-sse-down data-testid="acceptance-sse-down"
             title="实时连接中断 —— 盘面停在断线时刻的快照，恢复后自动补拉"
           >
             ⚠ 连接中断 · 数据截至 {sseDownAt}
           </span>
         )}
-        <span className="ml-auto hidden text-[10px] text-muted-foreground sm:block">
-          实物 · 核对 | 右侧摘要 + 动作 — 验收 = 验货，不是读汇报
-        </span>
+        {readOnly ? (
+          <span className="ap-chip ok" data-testid="acceptance-readonly-chip"><i />只读</span>
+        ) : awaitingPhase && (
+          <span className="ap-chip wait"><i />待验收</span>
+        )}
+        {phaseViews.length > 0 && (
+          <div className="ap-mini" aria-label="阶段进度">
+            {phaseViews.map((p, i) => {
+              const done = p.acceptedRound !== null || p.status === "accepted"
+              const current = awaitingPhase?.index === p.index
+              // 归档只读：已验收 phase 可点回看（多 phase 时切换数据源）。
+              const pickable = readOnly && p.acceptedRound != null
+              const stepCls = `ap-mini-step ${done ? "done" : ""} ${current ? "current" : ""}`
+              return (
+                <span key={p.index} className="contents">
+                  {i > 0 && <span className={`ap-mini-line ${done || current ? "done" : ""}`} />}
+                  {pickable ? (
+                    <button
+                      type="button"
+                      className={stepCls}
+                      onClick={() => setReadOnlyPhasePick(p.index)}
+                      aria-pressed={current}
+                      title={`回看 Phase ${p.index} 的验收记录`}
+                      data-testid={`acceptance-phase-${p.index}`}
+                      style={{ background: "transparent", border: 0, padding: 0, cursor: "pointer" }}
+                    >
+                      <i>{done ? "✓" : p.index}</i><span>{p.name}</span>
+                    </button>
+                  ) : (
+                    <span className={stepCls}>
+                      <i>{done ? "✓" : p.index}</i><span>{p.name}</span>
+                    </span>
+                  )}
+                </span>
+              )
+            })}
+          </div>
+        )}
       </div>
 
-      {/* 右栏单滚动容器（v2.5，用户：「动作区还有个上下的滚动条。单独的。很恶心」）：
-          摘要 + 动作合进同一个滚动壳 —— 内容装得下就零滚动条；DOM 序 右栏→主面，
-          flex+order 还原视觉（主面左、右栏 360px）。max-lg 纵排 col-reverse（主面上）。 */}
-      <div className="flex min-h-0 flex-1 max-lg:flex-col-reverse max-lg:overflow-y-auto">
-        {/* ── 右栏（A′，v2.1）：验收进度 + 决策（唯一入口）。token/cost 已迁出。
-            票11 ⑩回补：壳内「走查」页签渲染路径 railless=true 整列撤场 ——
-            通过/打回/中止 由壳右栏经 onActionApi 句柄触发（行为单源不复制）。 ── */}
+      <div className="ap-layout">
+        {/* ── 左导轨：三步 + 本轮快照 + 把关提示 ── */}
         {!railless && (
-        <div className="order-2 flex w-[240px] shrink-0 flex-col overflow-y-auto border-l border-border max-lg:order-none max-lg:w-full max-lg:overflow-visible max-lg:border-l-0 max-lg:border-b">
-        <div className="space-y-2 p-3 pb-2" data-acceptance-col-summary data-testid="acceptance-col-summary">
-          <div className="font-mono text-[9.5px] font-black tracking-[.09em] text-pop-dim">验收进度</div>
-          {!detail ? (
-            <div className="flex items-center gap-2 text-xs text-muted-foreground"><Spinner className="size-3" /> 读取派生视图…</div>
-          ) : !awaitingRound ? (
-            <p className="text-[11px] text-muted-foreground" data-acceptance-no-round>
-              {rejectedSeam ? `本 Phase 已打回（Round ${rejectedSeam.roundIndex}）— 修复轮在跑。` : "当前无待验收 round。"}
-            </p>
-          ) : (
-            <div className="space-y-1 text-[11px]">
-              <div className="flex items-baseline justify-between gap-2">
-                <span className="shrink-0 text-muted-foreground">Phase</span>
-                <span className="min-w-0 truncate text-right font-medium" title={`${awaitingPhase?.index}/${total} ${awaitingPhase?.name}`}>{awaitingPhase?.index}/{total}</span>
+          <aside className="ap-rail" aria-label="验收步骤">
+            <div className="ap-rail-title">跟着走，三步</div>
+            {[
+              { n: 1, t: "看结果", d: "改了什么，稳不稳" },
+              { n: 2, t: "试一试", d: "自己跑一遍" },
+              { n: 3, t: "拍个板", d: "通过，或说哪不对" },
+            ].map((s) => (
+              <button
+                key={s.n}
+                type="button"
+                className={cn("ap-step", step === s.n && "active", step > s.n && "done")}
+                onClick={() => setStep(s.n)}
+                aria-current={step === s.n ? "step" : undefined}
+                data-testid={`acceptance-step-${s.n}`}
+              >
+                <span className="ap-step-num">{step > s.n ? "✓" : s.n}</span>
+                <span className="ap-step-text"><b>{s.t}</b><small>{s.d}</small></span>
+              </button>
+            ))}
+
+            <div className="ap-snapshot" data-acceptance-col-summary data-testid="acceptance-col-summary">
+              <div className="ap-snap-title">本轮快照</div>
+              <div className="ap-snap-row">
+                <span>阶段</span>
+                <b data-acceptance-phase-label data-testid="acceptance-phase-label">
+                  {awaitingPhase ? `Phase ${awaitingPhase.index}/${total} · Round ${reviewRoundIndex ?? "—"}` : "—"}
+                </b>
               </div>
-              <div className="flex items-baseline justify-between gap-2">
-                <span className="text-muted-foreground">执行结果</span>
-                <span
-                  data-acceptance-round-state={awaitingRound.state} data-testid="acceptance-round-state"
-                  className={awaitingRound.state === "succeeded" ? "text-pop-green" : awaitingRound.state === "failed" ? "text-pop-amber" : "text-muted-foreground"}
+              <div className="ap-snap-row">
+                <span>执行结果</span>
+                <b
+                  data-acceptance-round-state={awaitingRound?.state} data-testid="acceptance-round-state"
+                  className={roundOk ? "good" : roundFailed ? "bad" : undefined}
                 >
-                  {ROUND_STATE_LABEL[awaitingRound.state] ?? awaitingRound.state}
-                </span>
+                  {awaitingRound ? ROUND_STATE_LABEL[awaitingRound.state] ?? awaitingRound.state : "—"}
+                </b>
               </div>
               {roundError && (
-                <div className="text-pop-amber break-words text-[10.5px]" data-acceptance-round-error data-testid="acceptance-round-error">{roundError}</div>
-              )}
-              <div className="flex items-baseline justify-between gap-2">
-                <span className="text-muted-foreground">用时</span>
-                <span className="tabular-nums" data-acceptance-duration data-testid="acceptance-duration">{durationMs != null ? formatDuration(durationMs) : "—"}</span>
-              </div>
-              <hr className="border-border" />
-              {playbook?.available ? (
-                <>
-                  <div className="flex items-baseline justify-between gap-2" data-testid="rail-walk-count">
-                    <span className="text-muted-foreground">走查</span>
-                    <b className="tabular-nums">
-                      <span className="text-pop-green">{gate.pass}</span>/<span className="text-pop-dim">{gate.total}</span>✓
-                      {gate.fail > 0 && <span className="text-pop-red"> · ✗{gate.fail}</span>}
-                      {gate.undecided > 0 && <span className="text-muted-foreground"> · 未决{gate.undecided}</span>}
-                    </b>
-                  </div>
-                  <div className="flex items-baseline justify-between gap-2">
-                    <span className="text-muted-foreground">跳过</span>
-                    <span className="tabular-nums text-pop-amber">⊘{gate.skip} → 下轮</span>
-                  </div>
-                </>
-              ) : (
-                <div className="text-[10px] text-muted-foreground">本轮无编译剧本（见实物/核对佐证）</div>
-              )}
-              <div className="flex items-baseline justify-between gap-2">
-                <span className="text-muted-foreground">自动复检</span>
-                {/* 票08：接管件从未跑过自动复检（绑定流已停、无修复轮回归 —— ADR-0025）。
-                    如实写明；人若手动跑了当场复检则显示真结果（verify 状态优先，逐字现行为）。 */}
-                <span className={
-                  verify?.state === "passed" ? "text-pop-green"
-                    : verify?.state === "running" ? "text-pop-amber"
-                    : verify?.state ? "text-pop-red"
-                    : isTakeoverArtifact ? "font-black text-pop-yellow" : "text-muted-foreground"
-                }>
-                  {verify?.state ? verifyStateLabel(verify.state) : isTakeoverArtifact ? "未跑（接管件）" : verifyStateLabel(undefined)}
-                </span>
-              </div>
-              <div className="flex items-baseline justify-between gap-2">
-                <span className="text-muted-foreground">预览</span>
-                <span className={preview?.state === "ready" ? "text-pop-green" : preview?.state === "starting" ? "text-pop-amber" : "text-muted-foreground"}>{previewStateLabel(preview?.state)}</span>
-              </div>
-            </div>
-          )}
-        </div>
-
-        {/* ── 右侧栏下：动作区 ── */}
-        <div className="border-t border-border p-4 pt-3 space-y-3" data-acceptance-col-actions data-testid="acceptance-col-actions">
-          <div className="text-xs font-semibold text-muted-foreground">动作区</div>
-
-          {awaitingPhase ? (
-            <>
-              {hasNextPhase && !rejectOpen && (
-                <p className="text-[10px] text-muted-foreground" data-handoff-hint data-testid="handoff-hint">
-                  {`本 phase 的 handoff.md 连同已 accepted 共 ${handoffCount} 个前序交接，将自动进入下一 phase 执行会话`}
-                </p>
-              )}
-              <Button
-                className="h-auto w-full py-1.5 whitespace-normal text-center leading-snug"
-                size="sm"
-                disabled={busy !== null || gate.fail > 0 || checksSaving}
-                title={checksSaving ? "走查勾选保存中 — 稍候再提交（防止台账少记最后一笔）" : undefined}
-                onClick={requestAccept}
-                data-acceptance-approve data-testid="acceptance-approve"
-              >
-                {busy === "accept" ? <Spinner className="size-4 mr-1" /> : <CheckCircle2 className="size-4 mr-1" />}
-                验收通过{awaitingPhase.index === total ? "（进入归档）" : `（放行 Phase ${phaseViews[phaseViews.findIndex(p => p.index === awaitingPhase.index) + 1]?.index ?? "?"}）`}
-              </Button>
-              {gate.fail > 0 && (
-                <p className="text-[10px] text-pop-red" data-testid="acceptance-approve-blocked">✗ 未过 {gate.fail} 项 —— 通过被拦，请打回（反馈预填 + 票重开）</p>
-              )}
-
-              <Button
-                variant="outline"
-                className="h-auto w-full py-1.5 whitespace-normal text-center leading-snug"
-                size="sm"
-                disabled={busy !== null}
-                onClick={() => openReject()}
-                data-acceptance-reject data-testid="acceptance-reject"
-              >
-                <Undo2 className="size-4 mr-1" /> 打回（写反馈）
-              </Button>
-
-              {/* 打回表单 v2.4：右列内联展开 → 独立弹窗（见文末 Dialog）。 */}
-
-              <div className="space-y-1.5 border-t pt-2">
-                <div className="flex items-baseline justify-between gap-2 text-[11px]" data-autoadvance-readonly data-testid="autoadvance-readonly">
-                  <span className="text-muted-foreground">验收通过后自动开跑下一 Phase</span>
-                  <span className={autoOn ? "text-pop-green" : "text-pop-amber"}>{autoOn ? "开" : "关（停在你的 gate）"}</span>
+                <div className="ap-snap-row" data-acceptance-round-error data-testid="acceptance-round-error">
+                  <span>失败原因</span><b className="bad">{roundError}</b>
                 </div>
-                <p className="text-[10px] text-muted-foreground">此项在草稿期设定，验收阶段只读 —— 决定「通过」后下一 Phase 是自动开跑还是停在你手上</p>
+              )}
+              <div className="ap-snap-row">
+                <span>用时</span>
+                <b data-acceptance-duration data-testid="acceptance-duration">{durationMs != null ? formatDuration(durationMs) : "—"}</b>
               </div>
-
-              <Button
-                variant="destructive"
-                size="sm"
-                className="h-auto w-full py-1.5 whitespace-normal text-center leading-snug"
-                disabled={busy !== null}
-                onClick={requestAbort}
-                data-acceptance-abort data-testid="acceptance-abort"
-              >
-                {busy === "abort" ? <Spinner className="size-4 mr-1" /> : <Ban className="size-4 mr-1" />}
-                中止
-              </Button>
-            </>
-          ) : (
-            <p className="text-xs text-muted-foreground" data-acceptance-idle>
-              {rejectedSeam ? "已打回 — 修复轮在跑（下方为去向回显）。" : "当前无待验收 round — 状态由 SSE 实时刷新。"}
-            </p>
-          )}
-
-          {/* ── 打回提交后：本轮去向回显（ADR-0024 单路径 —— 恒 task-fix 修复轮） ── */}
-          {rejectedSeam && (
-            <div className="space-y-1 rounded-md border border-border bg-muted/30 p-2.5" data-agent-recommend-card data-testid="agent-recommend-card">
-              <div className="flex items-center gap-1.5 text-[11px] font-semibold">
-                <Bot className="size-3.5" /> 已打回 Round {rejectedSeam.roundIndex} — 已派 task-fix 修复轮
+              <div className="ap-snap-row">
+                <span>场景</span>
+                <b data-testid="rail-walk-count">
+                  {planReady ? (
+                    <>
+                      <span className="good">{gate.pass}</span>/{gate.total}✓
+                      {gate.fail > 0 && <span className="bad"> · ✗{gate.fail}</span>}
+                      {gate.undecided > 0 && <span> · 未决 {gate.undecided}</span>}
+                    </>
+                  ) : playbook ? "无方案" : "—"}
+                </b>
               </div>
-              <p className="text-[10px] text-muted-foreground">
-                反馈 {rejectedSeam.feedback.length} 字已落 fix-feedback-r{rejectedSeam.roundIndex}.md，
-                即 task-fix 修复指令（解析→开发/修复→回归→补产物→自动回待验收）。
-                覆盖仅作用本轮 — phase 绑定不变（K16）。
-              </p>
+              <div className="ap-snap-row">
+                <span>自动自检</span>
+                <b className={verify?.state === "passed" ? "good" : verify?.state === "running" ? "warn" : verify?.state ? "bad" : isTakeoverArtifact ? "warn" : undefined}>
+                  {selfCheckLabel}
+                </b>
+              </div>
+              <div className="ap-snap-row">
+                <span>预览</span>
+                <b className={preview?.state === "ready" ? "good" : preview?.state === "starting" ? "warn" : undefined}>
+                  {previewStateLabel(preview?.state)}
+                </b>
+              </div>
             </div>
-          )}
 
-          {/* D14 影响清单（v4.1 接缝）已摘除：server 无 spec-r2 影响分析 API，
-              items 恒空 —— 每次打回都亮一张「未上线」告示，只制造「这里坏了？」的
-              疑惑。ImpactApprovalList 组件与单测保留，API 落地当天在 rejectedSeam 下接回。 */}
-        </div>
-        </div>
+            <div className="ap-tip">
+              <b>你在把关什么？</b>
+              确认这轮达到了阶段目标，也没有弄坏已有的东西。细节可以展开，但不必全看。
+            </div>
+          </aside>
         )}
 
-        {/* ── 主面：验货台（实物 | 核对）── */}
-        <div className="order-1 flex min-h-0 min-w-0 flex-1 flex-col max-lg:order-none max-lg:min-h-[70vh] max-lg:border-b max-lg:border-border" data-acceptance-col-artifacts data-testid="acceptance-col-artifacts">
-          {!awaitingPhase ? (
-            <div className="space-y-2 p-4">
-              <div className="flex items-center gap-2 text-xs font-semibold text-muted-foreground">
-                <FileText className="size-3.5" /> 验货台
-              </div>
-              <p className="text-[11px] text-muted-foreground" data-acceptance-batch-idle data-testid="acceptance-batch-idle">
-                当前无待验收 round — 验收时在此验货（实物 diff / 当场复检 / 票对账）。
-              </p>
-            </div>
-          ) : (
-            <>
-              {/* sub-tab 条：两枚 chunky 贴纸，选中的黄底压黑边（波普） */}
-              <div className="flex shrink-0 items-center gap-1.5 border-b-[1.5px] border-pop-bd bg-pop-paper px-3 py-2">
-                {([
-                  ["diff", "实物", roundDiff?.available ? String(roundDiff.aggregate.files) : ""],
-                  ["matrix", "核对", ""],
-                ] as const).map(([id, label, count]) => (
-                  <button
-                    key={id}
-                    onClick={() => setMidTab(id)}
-                    aria-selected={midTab === id}
-                    className={`rounded-full border-[1.5px] px-3 py-0.5 font-mono text-[10.5px] font-black tracking-[.06em] transition-transform ${
-                      midTab === id
-                        ? "border-pop-bd bg-pop-yellow text-pop-bg shadow-pop-sm"
-                        : "border-pop-bd text-pop-dim hover:border-pop-bd/60"
-                    }`}
-                    data-acceptance-midtab={id} data-testid={`acceptance-tab-${id}`}
-                  >
-                    {label}{count && <span className="ml-1 tabular-nums opacity-70">{count}</span>}
-                  </button>
-                ))}
+        {/* ── 主内容：三步面板 + 常驻决策条 ── */}
+        <div className="ap-main" data-acceptance-col-artifacts data-testid="acceptance-col-artifacts">
+          <div className="ap-scroll">
+            {/* 步骤 1 · 看结果 */}
+            <section className={cn("ap-panel", step === 1 && "active")} data-step="1" aria-label="看结果">
+              {!awaitingPhase ? (
+                <div className="ap-empty" data-acceptance-batch-idle data-testid="acceptance-batch-idle">
+                  当前无待验收 round — 验收时在这里看结果、跑一遍、做决定。
+                </div>
+              ) : (
+                <>
+                  <div className="ap-panel-eyebrow"><span className="line" />本轮结果</div>
+                  <div className="ap-banner">
+                    <span className={cn("ap-ring", roundOk ? undefined : roundFailed ? "bad" : "wait")}>
+                      {roundOk ? "✓" : roundFailed ? "✕" : "…"}
+                    </span>
+                    <div>
+                      <h3>{bannerTitle}</h3>
+                      <p>{bannerSub}</p>
+                    </div>
+                    <span className={cn("ap-chip", bannerChip.cls)}><i />{bannerChip.text}</span>
+                  </div>
 
-              </div>
+                  <div className="ap-stats">
+                    <div className="ap-stat"><div className="n">{diffStats.files}</div><div className="l">改动文件</div></div>
+                    <div className="ap-stat"><div className="n add">+{diffStats.additions}</div><div className="l">新增行</div></div>
+                    <div className="ap-stat"><div className="n del">−{diffStats.dels}</div><div className="l">删除行</div></div>
+                    <div className="ap-stat"><div className="n">{durationMs != null ? formatDuration(durationMs) : "—"}</div><div className="l">执行用时</div></div>
+                  </div>
 
-              <div className="min-h-0 flex-1 space-y-3 overflow-y-auto p-3">
-                {midTab === "diff" && (
-                  <>
-                    <RoundDiffPanel
-                      taskId={taskId ?? ""}
-                      diff={diffScope === "round" ? roundDiff : cumDiff}
-                      loading={diffScope === "round" ? diffLoading : cumLoading}
-                      error={diffScope === "round" ? diffError : cumError}
-                      onRetry={() => setDiffReload((v) => v + 1)}
-                      scope={diffScope}
-                      onScopeChange={setDiffScope}
-                      canCumulative={fixPairRound >= 1}
-                      roundIndex={awaitingRound?.roundIndex ?? null}
+                  {reportHighlights.length > 0 ? (
+                    <>
+                      <div className="ap-block">它做了什么<span className="aside">来自本轮报告</span></div>
+                      <div className="ap-summary">
+                        {reportHighlights.map((t, i) => (
+                          <div key={i} className="ap-summary-item">
+                            <span className="ap-summary-idx">{i + 1}</span><span>{t}</span>
+                          </div>
+                        ))}
+                      </div>
+                    </>
+                  ) : playbook?.goal ? (
+                    <>
+                      <div className="ap-block">本阶段目标<span className="aside">来自阶段验收标准</span></div>
+                      <div className="ap-summary">
+                        <div className="ap-summary-item"><span className="ap-summary-idx">1</span><span>{playbook.goal}</span></div>
+                      </div>
+                    </>
+                  ) : null}
+
+                  <div className="ap-block">
+                    改了什么
+                    <span className="aside">按变更量排序</span>
+                    {onOpenChanges && !readOnly && (
+                      <button type="button" className="ap-block-link" onClick={onOpenChanges} data-testid="acceptance-open-changes">
+                        全部变更 →
+                      </button>
+                    )}
+                  </div>
+                  {topFiles.length > 0 ? (
+                    <div className="ap-changes">
+                      {topFiles.map((f) => {
+                        const totalChurn = f.adds + f.dels
+                        const addPct = totalChurn === 0 ? 100 : Math.round((f.adds / totalChurn) * 100)
+                        return (
+                          <div key={`${f.repo}/${f.path}`} className="ap-change">
+                            <span className="ap-fname" title={`${f.repo}/${f.path}`}>
+                              {f.path}<span className="ap-frepo">{f.repo}</span>
+                            </span>
+                            <span className="ap-bar"><i className="a" style={{ width: `${addPct}%` }} /><i className="d" style={{ width: `${100 - addPct}%` }} /></span>
+                            <span className="ap-counts"><span className="a">+{f.adds}</span> <span className="d">−{f.dels}</span></span>
+                          </div>
+                        )
+                      })}
+                      {restFiles.length > 0 && (
+                        readOnly ? (
+                          <span className="ap-more" data-testid="acceptance-more-files-readonly">
+                            还有 {restFiles.length} 个文件 · +{restAdds} / −{restDels}
+                          </span>
+                        ) : (
+                          <button type="button" className="ap-more" onClick={onOpenChanges} disabled={!onOpenChanges}>
+                            还有 {restFiles.length} 个文件 · +{restAdds} / −{restDels}
+                          </button>
+                        )
+                      )}
+                    </div>
+                  ) : (
+                    <div className="ap-empty">
+                      {roundDiff && !roundDiff.available
+                        ? "本轮没有可展示的文件级变更（diff 不可得或工作区已清理）。"
+                        : "本轮没有文件级变更。"}
+                    </div>
+                  )}
+
+                  <div className="ap-block">核对证据<span className="aside">规格 × 报告 × 实物，自动对账</span></div>
+                  <AcMatrixPanel
+                    specMd={specMd === "" ? null : specMd}
+                    specLoading={specLoading}
+                    reportMd={roundReport}
+                    diff={roundDiff}
+                    fixReportMd={fixReportMd}
+                    hasFixFeedback={!!fixFeedbackFile}
+                  />
+
+                  <div className="ap-foot">
+                    <span className="ap-foot-note">看不懂代码也没关系 —— 下一步直接跑一遍。</span>
+                    <span className="ap-spacer" />
+                    <button type="button" className="ap-btn ap-btn-primary" onClick={() => setStep(2)} data-testid="acceptance-next-2">
+                      下一步：试一试 <ArrowRight className="size-3.5" />
+                    </button>
+                  </div>
+                </>
+              )}
+            </section>
+
+            {/* 步骤 2 · 试一试 */}
+            <section className={cn("ap-panel", step === 2 && "active")} data-step="2" aria-label="试一试">
+              <div className="ap-panel-eyebrow"><span className="line" />自己跑一遍</div>
+              <h2 className="ap-heading">试试看，不用只信文字</h2>
+              <p className="ap-sub">预览连的是本轮的工作区。起服务、点一遍，再跑一次自动自检。</p>
+
+              {awaitingPhase ? (
+                <>
+                  <div className="mt-3 space-y-3">
+                    <PreviewBar
+                      cfg={previewCfg}
+                      runbook={runbookCfg}
+                      preview={preview}
+                      busy={previewBusy}
+                      disabledReason={readOnlyReason ?? (wsGone ? "工作区目录已不在 — 预览不可用" : undefined)}
+                      onSaveCfg={handlePreviewSave}
+                      onSaveRunbook={handleRunbookSave}
+                      onStart={() => void handlePreviewStart()}
+                      onStop={() => void handlePreviewStop()}
                     />
                     <VerifyPanel
                       cfg={verifyCfg}
@@ -1073,71 +1210,216 @@ export function AcceptanceSurface({ task, onMutated, onDecided, detailOverride, 
                       onRun={() => void handleVerifyRun()}
                       onAbort={() => void handleVerifyAbort()}
                     />
-                    <PreviewBar
-                      cfg={previewCfg}
-                      runbook={runbookCfg}
-                      preview={preview}
-                      busy={previewBusy}
-                      disabledReason={wsGone ? "工作区目录已不在 — 预览不可用" : undefined}
-                      onSaveCfg={handlePreviewSave}
-                      onSaveRunbook={handleRunbookSave}
-                      onStart={() => void handlePreviewStart()}
-                      onStop={() => void handlePreviewStop()}
-                    />
                     <InstancesPanel
                       taskId={taskId ?? ""}
-                      rev={(preview?.state ?? "stopped") + (awaitingPhase?.awaitingRound ?? 0)}
-                      disabledReason={wsGone ? "工作区目录已不在 — 回收不可用" : undefined}
+                      rev={(preview?.state ?? "stopped") + (reviewRoundIndex ?? 0)}
+                      disabledReason={readOnlyReason ?? (wsGone ? "工作区目录已不在 — 回收不可用" : undefined)}
                     />
-                    {playbook && (
-                      <PlaybookPanel
-                        taskId={taskId ?? ""}
-                        batchRelDir={batchDir}
-                        roundIndex={awaitingPhase?.awaitingRound ?? 0}
-                        playbook={playbook}
-                        onGate={setGate}
-                        disabledReason={wsGone ? "工作区已清理 — 勾选暂停（历史台账/verdict 仍在）" : undefined}
-                        saving={checksSaving}
-                        onSaveStateChange={setChecksSaving}
-                        registerFlush={registerPlaybookFlush}
-                      />
-                    )}
-                  </>
-                )}
-                {midTab === "matrix" && (
-                  <AcMatrixPanel
-                    specMd={specMd === "" ? null : specMd}
-                    specLoading={specLoading}
-                    reportMd={roundReport}
-                    diff={roundDiff}
-                    fixReportMd={fixReportMd}
-                    hasFixFeedback={!!fixFeedbackFile}
-                  />
+                  </div>
+                  <div className="ap-foot">
+                    <button type="button" className="ap-btn ap-btn-ghost" onClick={() => setStep(1)}>
+                      <ChevronLeft className="size-3.5" /> 上一步
+                    </button>
+                    <span className="ap-foot-note">没跑起来？先看日志再决定，不必硬凑。</span>
+                    <span className="ap-spacer" />
+                    <button type="button" className="ap-btn ap-btn-primary" onClick={() => setStep(3)} data-testid="acceptance-next-3">
+                      都看过了，去拍板 <ArrowRight className="size-3.5" />
+                    </button>
+                  </div>
+                </>
+              ) : (
+                <div className="ap-empty mt-3">当前没有待验收的轮次，暂时不用试。</div>
+              )}
+            </section>
+
+            {/* 步骤 3 · 拍个板 */}
+            <section className={cn("ap-panel", step === 3 && "active")} data-step="3" aria-label="拍个板">
+              <div className="ap-panel-eyebrow"><span className="line" />最后，拍个板</div>
+              <h2 className="ap-heading">逐项过一遍，然后做决定</h2>
+              <p className="ap-sub">
+                {planReady
+                  ? "验收方案由独立的规划 Agent 按本轮证据生成 —— 每项都写明怎么验、证据在哪、机器建议。主对话里的 Agent 也可以一步步带你走。"
+                  : readOnly
+                    ? "本轮没有可回看的验收方案 —— 历史轮以台账为准。"
+                    : "本轮没有可直接勾选的验收方案 —— 你仍可以直接通过或退回；没有场景清单时不设硬闸。"}
+              </p>
+
+              {planReady ? (
+                <div className="ap-check-note">
+                  <span className="q">i</span>
+                  <span>
+                    机器只给建议，<b>最终由你逐项确认</b>。出现任何一项 <b>✕ 未通过</b>，通过按钮会被拦下 —— 这是有意的。
+                    跳过项会写进记录，带到下一轮补验。
+                  </span>
+                </div>
+              ) : readOnly ? (
+                <div className="ap-check-note" data-testid="plan-status-note">
+                  <span className="q">i</span>
+                  <span>归档回看只展示本轮已有证据；验收结论以台账为准。</span>
+                </div>
+              ) : (
+                <div className="ap-check-note" data-testid="plan-status-note">
+                  <span className="q">i</span>
+                  <span>
+                    没有场景清单时不设硬闸 —— 请以「看结果 / 试一试」和本轮证据自行判断。
+                    {playbook?.plan?.status === "failed" ? " 方案生成失败，可重新生成，或直接拍板。" : ""}
+                  </span>
+                </div>
+              )}
+
+              <div className="mt-3 space-y-3">
+                {playbook ? (
+                  planReady ? (
+                    <AcceptancePlanPanel
+                      taskId={taskId ?? ""}
+                      batchRelDir={batchDir}
+                      roundIndex={reviewRoundIndex ?? 0}
+                      playbook={playbook}
+                      guideActive={planGuideActive}
+                      onGate={setGate}
+                      disabledReason={readOnlyReason ?? (wsGone ? "工作区已清理 — 勾选暂停（历史记录与机器裁决仍在）" : undefined)}
+                      onPlanEvent={() => setPlaybookNonce((v) => v + 1)}
+                      registerFlush={registerPlaybookFlush}
+                      onSaveStateChange={setChecksSaving}
+                      onOpenFile={(p) => setHomeViewing({ path: p })}
+                    />
+                  ) : (
+                    <PlanStatusCard
+                      taskId={taskId ?? ""}
+                      roundIndex={reviewRoundIndex ?? 0}
+                      status={playbook.plan?.status ?? "missing"}
+                      error={playbook.plan?.error}
+                      readOnly={readOnly}
+                      onRegenerated={() => setPlaybookNonce((v) => v + 1)}
+                    />
+                  )
+                ) : (
+                  <div className="ap-empty">正在读取验收方案…</div>
                 )}
               </div>
-            </>
+
+              {hasNextPhase && !rejectOpen && awaitingPhase && !readOnly && (
+                <p className="ap-handoff mt-2" data-handoff-hint data-testid="handoff-hint">
+                  {`本 phase 的 handoff.md 连同已 accepted 共 ${handoffCount} 个前序交接，将自动进入下一 phase 执行会话`}
+                </p>
+              )}
+              {readOnly ? (
+                <p className="ap-meta-line mt-1" data-testid="acceptance-readonly-note">
+                  {task?.status === "awaiting_archive"
+                    ? (
+                      <>
+                        待归档 · 只读 — 归档尚未启动，决策与勾选已冻结；回主 Chat 说「归档」后才执行。
+                        机器台账{" "}<code>acceptance-ledger-r{reviewRoundIndex ?? "?"}.md</code>{" "}
+                        在批次目录（作业坞「产物」可查）。
+                      </>
+                    )
+                    : (
+                      <>
+                        已通过验收 · 只读 — 决策与勾选已冻结。机器台账
+                        {" "}<code>acceptance-ledger-r{reviewRoundIndex ?? "?"}.md</code>{" "}
+                        在批次目录（作业坞「产物」可查）。
+                      </>
+                    )}
+                </p>
+              ) : (
+                <div className={cn("ap-meta-line mt-1", !autoOn && "warn")} data-autoadvance-readonly data-testid="autoadvance-readonly">
+                  验收通过后自动开跑下一 Phase：<b>{autoOn ? "开" : "关（停在你的 gate）"}</b>
+                </div>
+              )}
+
+              {rejectedSeam && (
+                <div className="ap-reject-echo" data-agent-recommend-card data-testid="agent-recommend-card">
+                  <b><Bot className="mr-1 inline size-3" />已退回 Round {rejectedSeam.roundIndex} — 已派 task-fix 修复轮</b>
+                  <p>
+                    反馈 {rejectedSeam.feedback.length} 字已落 fix-feedback-r{rejectedSeam.roundIndex}.md，
+                    即 task-fix 修复指令（解析→开发/修复→回归→补产物→自动回待验收）。
+                    覆盖仅作用本轮 — phase 绑定不变（K16）。
+                  </p>
+                </div>
+              )}
+            </section>
+          </div>
+
+          {/* ── 常驻决策条：只在第三步出现，不遮挡清单；归档只读时整条不渲染 ── */}
+          {!railless && !readOnly && (
+            <div
+              className={cn("ap-decision", step === 3 && "show")}
+              data-acceptance-col-actions data-testid="acceptance-col-actions"
+            >
+              {awaitingPhase ? (
+                <>
+                  {planReady ? (
+                    <>
+                      <span className="ap-decision-text">
+                        <b>{gate.pass}</b> 项通过
+                        {gate.skip > 0 && <> · <span className="skip">{gate.skip} 项跳过</span></>}
+                        {gate.fail > 0 && <> · <span className="bad">{gate.fail} 项未通过</span></>}
+                        {" "}/ 共 {gate.total} 项
+                      </span>
+                      <span className={cn("ap-guard", gate.fail > 0 && "show")} data-testid="acceptance-approve-blocked">
+                        ✕ 未过 {gate.fail} 项 —— 通过被拦，请退回修改（反馈已预填）
+                      </span>
+                    </>
+                  ) : (
+                    <>
+                      <span className="ap-decision-text">本轮没有场景清单</span>
+                      <span className="ap-guard show" data-testid="acceptance-no-plan-warning">
+                        ⚠ 无场景硬闸 —— 本轮没有验收方案，未通过项不会拦下通过；可直接通过或退回
+                      </span>
+                    </>
+                  )}
+                  <span className="ap-decision-actions">
+                    <button
+                      type="button" className="ap-btn ap-btn-ghost" disabled={busy !== null}
+                      onClick={requestAbort}
+                      data-acceptance-abort data-testid="acceptance-abort"
+                    >
+                      {busy === "abort" ? <Spinner className="size-3.5" /> : <Ban className="size-3.5" />} 中止
+                    </button>
+                    <button
+                      type="button" className="ap-btn ap-btn-ghost" disabled={busy !== null}
+                      onClick={() => openReject()}
+                      data-acceptance-reject data-testid="acceptance-reject"
+                    >
+                      <Undo2 className="size-3.5" /> 退回修改
+                    </button>
+                    <button
+                      type="button"
+                      className="ap-btn ap-btn-primary"
+                      disabled={busy !== null || gate.fail > 0 || checksSaving}
+                      title={checksSaving ? "核对勾选保存中 — 稍候再提交（防止记录少记最后一笔）" : undefined}
+                      onClick={requestAccept}
+                      data-acceptance-approve data-testid="acceptance-approve"
+                    >
+                      {busy === "accept" ? <Spinner className="size-3.5" /> : <CheckCircle2 className="size-3.5" />}
+                      {awaitingPhase.index === total ? "通过，等待归档" : `通过，进入阶段 ${nextPhaseIndex}`}
+                    </button>
+                  </span>
+                </>
+              ) : (
+                <p className="text-[11px] text-muted-foreground" data-acceptance-idle>
+                  {rejectedSeam ? "已退回 — 修复轮在跑（上方为去向回显）。" : "当前无待验收 round — 状态由 SSE 实时刷新。"}
+                </p>
+              )}
+            </div>
           )}
         </div>
-
-
       </div>
 
-      {/* 打回反馈弹窗（v2.4 用户裁决：右列内联展开别扭 → 独立弹窗输入；
-          皮肤 = 全站贴纸 Dialog，与任务草稿窗同风格。ADR-0024 打回单路径：
-          无路由二选一 —— 反馈即 task-fix 修复指令，确认即派修复轮。 */}
+      {/* 退回反馈弹窗：反馈即修复指令（ADR-0024 单路径）。 */}
       <Dialog
         open={rejectOpen}
         onOpenChange={(o) => { if (!o && busy !== "reject") setRejectOpen(false) }}
       >
-        <DialogContent className="sm:max-w-[540px]" data-reject-dialog data-testid="reject-dialog">
+        <DialogContent className="acceptance-sheet sm:max-w-[540px]" data-reject-dialog data-testid="reject-dialog">
           <DialogHeader>
             <DialogTitle className="text-[15px]">
-              {`打回 Phase ${awaitingPhase?.index ?? "?"} · Round ${awaitingPhase?.awaitingRound ?? "?"} — 写反馈`}
+              {`退回 阶段 ${awaitingPhase?.index ?? "?"} · 第 ${awaitingPhase?.awaitingRound ?? "?"} 轮 — 说清哪里不对`}
             </DialogTitle>
           </DialogHeader>
           <div className="space-y-3" data-reject-panel>
             <label className="text-[11px] font-medium text-pop-ink">
-              打回反馈（必填 — 落 fix-feedback-r{awaitingPhase?.awaitingRound}.md，即修复指令）
+              反馈（必填 — 落 fix-feedback-r{awaitingPhase?.awaitingRound}.md，即修复轮的指令）
             </label>
             <Textarea
               rows={6}
@@ -1160,45 +1442,42 @@ export function AcceptanceSurface({ task, onMutated, onDecided, detailOverride, 
                 data-reject-confirm data-testid="reject-confirm"
               >
                 {busy === "reject" ? <Spinner className="size-3 mr-1" /> : null}
-                确认打回 · 派 task-fix 开 R{awaitingPhase?.awaitingRound != null ? awaitingPhase.awaitingRound + 1 : "?"}
+                确认退回 · 开始修复 R{awaitingPhase?.awaitingRound != null ? awaitingPhase.awaitingRound + 1 : "?"}
               </Button>
             </div>
           </div>
         </DialogContent>
       </Dialog>
 
-      {/* 通过 · 台账预览确认（D8：这一眼就是最终产物，确认即机写不可改） */}
+      {/* 通过 · 验收记录预览（确认即机写，不可改） */}
       <Dialog open={ledgerOpen} onOpenChange={(o) => { if (!o && busy !== "accept") setLedgerOpen(false) }}>
-        <DialogContent className="sm:max-w-[560px]" data-testid="ledger-dialog">
+        <DialogContent className="acceptance-sheet sm:max-w-[560px]" data-testid="ledger-dialog">
           <DialogHeader>
             <DialogTitle className="text-[15px]">
               {gate.undecided > 0
-                ? `有 ${gate.undecided} 项走查未决 —— 确认跳过并放行？`
-                : `全 ${gate.pass} 项走查 ✓ —— 确认验收通过？`}
+                ? `有 ${gate.undecided} 条场景未决 —— 确认跳过并放行？`
+                : `全 ${gate.pass} 条场景通过 —— 确认验收通过？`}
             </DialogTitle>
           </DialogHeader>
           <div className="space-y-2 text-[11.5px]">
             {playbook?.goal && <p className="font-semibold text-pop-ink">{playbook.goal}</p>}
             <div className="rounded-md border border-pop-bd bg-pop-idle/30 p-2 font-mono text-[10.5px] leading-relaxed">
               <div>实物 · {roundDiff?.available ? `${diffStats.commits} commits · +${diffStats.additions}/−${diffStats.dels} · ${diffStats.files} 文件` : "无有效 diff"}</div>
-              {/* 票09 三本账三源，与走查页/台账逐字同源：数字取自 getRoundDiff 附带
-                  的 manualInterventions/quickEdits/takeover（server ledger 写面吃同一
-                  payload），实物统计走 scopeTotals 单源，绝不另算口径。 */}
               <div data-testid="ledger-preview-intervention">人工干预 · ×{roundDiff?.manualInterventions?.length ?? 0}（agent_events · harness 干预另计 {diffStats.interventions ?? "—"}）</div>
               <div data-testid="ledger-preview-quick-edit">快速修改 · ×{roundDiff?.quickEdits?.length ?? 0}（[quick-edit] 提交）{roundDiff?.quickEdits?.length ? ` · ${new Set(roundDiff.quickEdits.flatMap((e) => e.files)).size} 文件` : ""}</div>
               <div data-testid="ledger-preview-takeover">接管标记 · {isTakeoverArtifact ? (verify?.state ? "人工交付（接管件）· 复检真结果为准" : "人工交付 · 自动复检未跑（接管件）") : "无（绑定流机器轮）"}</div>
-              <div>自动复检 · {verify?.state ? `${verify.state}${verify.exit_code != null ? ` (exit ${verify.exit_code})` : ""}` : isTakeoverArtifact ? "未跑（接管件）" : "未跑（≠失败）"}</div>
-              <div>跑起来看 · {preview && preview.state !== "stopped" ? `${previewStateLabel(preview.state)}${preview.url ? ` @ ${preview.url}` : ""}（决策时自动停止）` : "未使用"}</div>
-              <div>人工走查 · ✓{gate.pass} · ✗{gate.fail} · ⊘{gate.skip} · 未决{gate.undecided} / 计{gate.total}</div>
+              <div>自动自检 · {verify?.state ? `${verify.state}${verify.exit_code != null ? ` (exit ${verify.exit_code})` : ""}` : isTakeoverArtifact ? "未跑（接管件）" : "未跑（≠失败）"}</div>
+              <div>试一试 · {preview && preview.state !== "stopped" ? `${previewStateLabel(preview.state)}${preview.url ? ` @ ${preview.url}` : ""}（决策时自动停止）` : "未使用"}</div>
+              <div>人验场景 · ✓{gate.pass} · ✗{gate.fail} · ⊘{gate.skip} · 未决{gate.undecided} / 计{gate.total}</div>
             </div>
-            {gate.skip > 0 && <p className="text-[10.5px] text-pop-amber">⊘ 跳过项将进入下一轮 carryover 首段（补验或再豁免），并写入台账。</p>}
-            {gate.undecided > 0 && <p className="text-[10.5px] text-muted-foreground">未决项会以「未勾选」记入台账 —— 永久留痕。</p>}
+            {gate.skip > 0 && <p className="text-[10.5px] text-pop-amber">⊘ 跳过项将进入下一轮 carryover 首段（补验或再豁免），并写入验收记录。</p>}
+            {gate.undecided > 0 && <p className="text-[10.5px] text-muted-foreground">未决项会以「未勾选」记入验收记录 —— 永久留痕。</p>}
             <p className="text-[10px] text-muted-foreground">确认后 server 机写 acceptance-ledger-r{awaitingPhase?.awaitingRound}.md 进批次目录（审计留痕，不可改）。</p>
           </div>
           <div className="flex justify-end gap-2">
             <Button variant="ghost" size="sm" className="h-7 text-xs" onClick={() => setLedgerOpen(false)}>再看看</Button>
             <Button size="sm" className="h-auto py-1.5 text-xs whitespace-normal leading-snug" disabled={busy !== null} onClick={() => void doAccept()} data-testid="ledger-confirm">
-              {busy === "accept" ? <Spinner className="size-3 mr-1" /> : null}确认通过 · 写台账
+              {busy === "accept" ? <Spinner className="size-3 mr-1" /> : null}确认通过 · 写验收记录
             </Button>
           </div>
         </DialogContent>
@@ -1224,4 +1503,18 @@ export function AcceptanceSurface({ task, onMutated, onDecided, detailOverride, 
       />
     </div>
   )
+}
+
+/** round-report 的「主要改动 / 变更摘要」子弹列表 → 步骤 1 的摘要行。
+ *  只读报告原文，不调 AI、不臆造。 */
+function extractReportHighlights(md: string | null): string[] {
+  if (!md) return []
+  const heading = /^##\s*(?:主要改动|改动摘要|变更摘要|Changes?)\s*$/im.exec(md)
+  if (!heading) return []
+  const section = md.slice(heading.index + heading[0].length).split(/^##\s/m)[0] ?? ""
+  return section
+    .split(/\r?\n/)
+    .map((line) => /^\s*[-*]\s+(.+)$/.exec(line)?.[1]?.trim() ?? "")
+    .filter(Boolean)
+    .slice(0, 4)
 }

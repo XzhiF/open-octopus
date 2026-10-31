@@ -1,8 +1,9 @@
 "use client"
 
-import { Handle, Position } from "@xyflow/react"
 import { cn } from "@/lib/utils"
 import { nodeIconConfigs } from "./node-icon-config"
+import { DagSourceHandle, DagTargetHandle } from "./dag-handles"
+import type { DagOrientation } from "@/lib/dag-orientation"
 import type { StatusOverlay, StepExecutionStatus } from "@/lib/types"
 
 interface StatusShellProps {
@@ -11,6 +12,8 @@ interface StatusShellProps {
   isCurrent?: boolean
   isActive?: boolean
   selected?: boolean
+  /** 该节点在画布上的流向：LR = 左进右出（主干），TB = 上进下出（容器体内）。 */
+  orientation?: DagOrientation
   extraHandles?: React.ReactNode
   children: React.ReactNode
 }
@@ -33,6 +36,7 @@ export function StatusShell({
   isCurrent = false,
   isActive = false,
   selected = false,
+  orientation,
   extraHandles,
   children,
 }: StatusShellProps) {
@@ -81,10 +85,10 @@ export function StatusShell({
           }
         }
       `}</style>
-      <Handle type="target" position={Position.Top} className="!bg-muted-foreground" />
+      <DagTargetHandle orientation={orientation} />
       {extraHandles}
       {children}
-      <Handle type="source" position={Position.Bottom} className="!bg-muted-foreground" />
+      <DagSourceHandle orientation={orientation} />
     </div>
   )
 }

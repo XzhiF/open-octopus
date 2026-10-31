@@ -489,7 +489,7 @@ describe("ArchiveIngestService detectSkillDrafts 接位（S1·票04 链序/失�
     const db = new Database(":memory:")
     applySchema(db)
     db.prepare(`
-      INSERT INTO tasks (id, org, name, status, task_spec, authoring_resources, resources, skills, project_ids, version, created_at, updated_at)
+      INSERT INTO tasks (id, repo_group, name, status, task_spec, authoring_resources, resources, skills, project_ids, version, created_at, updated_at)
       VALUES ('aa04-hook', 'aa04', 'hook 任务', 'archiving', '{"format":"v4","goal":"g","ac":[],"phases":[],"decisions":[]}', '[]', '[]', '[]', '[]', 1, datetime('now'), datetime('now'))
     `).run()
     const q = new CompileQueue()

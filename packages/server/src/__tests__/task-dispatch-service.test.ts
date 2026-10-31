@@ -111,8 +111,7 @@ const WORKSPACE_PATH = path.join(os.tmpdir(), `e2e-tp-tds-${Date.now()}`)
 function makeSubunit(name = "E2E_TP_subunit_a"): SubunitSpec {
   return {
     name,
-    workspace_spec: {
-      org: ORG,
+    workspace_spec: { org: ORG,
       branch_prefix: `e2e-tp-sub`,
       projects: [{ name: "E2E_TP_project", source_path: "", group: "" }],
     },
@@ -142,21 +141,20 @@ describe("TaskDispatchService — child run + parent-resume correlation (票03/�
 
     const now = new Date().toISOString()
     db.prepare(
-      "INSERT INTO workspaces (id, name, org, path, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)",
+      "INSERT INTO workspaces (id, name, repo_group, path, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)",
     ).run(WORKSPACE_ID, "e2e-tp-coordinator", ORG, WORKSPACE_PATH, now, now)
 
     service = new TaskDispatchService({
       db,
       workspaceId: WORKSPACE_ID,
-      workspacePath: WORKSPACE_PATH,
-      org: ORG,
+      workspacePath: WORKSPACE_PATH,
       // Only createFromSpec is reached on the dispatch path; hand back a fresh,
       // registered child workspace so the registry stub resolves it.
       workspaceService: {
         createFromSpec: (input: Record<string, unknown>) => {
           const id = `ws-child-${wsSeq++}`
           db.prepare(
-            "INSERT INTO workspaces (id, name, org, path, created_at, updated_at) VALUES (?, ?, ?, ?, datetime('now'), datetime('now'))",
+            "INSERT INTO workspaces (id, name, repo_group, path, created_at, updated_at) VALUES (?, ?, ?, ?, datetime('now'), datetime('now'))",
           ).run(id, String(input.name ?? id), ORG, path.join(os.tmpdir(), `e2e-tp-child-${id}`))
           return { id }
         },
@@ -242,8 +240,7 @@ describe("TaskDispatchService — child run + parent-resume correlation (票03/�
     const restarted = new TaskDispatchService({
       db,
       workspaceId: WORKSPACE_ID,
-      workspacePath: WORKSPACE_PATH,
-      org: ORG,
+      workspacePath: WORKSPACE_PATH,
       workspaceService: { createFromSpec: vi.fn() } as never,
       sse: new SSEService(),
     })
@@ -286,7 +283,7 @@ describe("TaskDispatchService — child run + parent-resume correlation (票03/�
     ).run(childId, "ws-child-x", ORG, now, now)
     // The child's workspace row must resolve for the resume path to reach the parent.
     db.prepare(
-      "INSERT INTO workspaces (id, name, org, path, created_at, updated_at) VALUES ('ws-child-x', 'c', ?, '/tmp/x', datetime('now'), datetime('now'))",
+      "INSERT INTO workspaces (id, name, repo_group, path, created_at, updated_at) VALUES ('ws-child-x', 'c', ?, '/tmp/x', datetime('now'), datetime('now'))",
     ).run(ORG)
 
     // No outputOverride → resumeParentFromChild reads the child's var_pool. Empty pool
@@ -326,7 +323,7 @@ describe("TaskDispatchService — child run + parent-resume correlation (票03/�
        VALUES (?, ?, 'exec-parent-6', 'w', 'w', ?, 'completed', '{"result":"x"}', ?, ?, 'task-parent-6')`,
     ).run(childId, "ws-child-6", ORG, now, now)
     db.prepare(
-      "INSERT INTO workspaces (id, name, org, path, created_at, updated_at) VALUES ('ws-child-6', 'c', ?, '/tmp/x6', datetime('now'), datetime('now'))",
+      "INSERT INTO workspaces (id, name, repo_group, path, created_at, updated_at) VALUES ('ws-child-6', 'c', ?, '/tmp/x6', datetime('now'), datetime('now'))",
     ).run(ORG)
 
     const { resumeParentFromChild } = await import("../services/tasks/task-child-run")

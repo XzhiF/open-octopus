@@ -63,6 +63,9 @@ function cleanupLegacyAgentDb(): void {
 
 export function initDb(dbPath?: string): Database.Database {
   const resolved = getDbPath(dbPath)
+  if (resolved !== ":memory:") {
+    fs.mkdirSync(path.dirname(resolved), { recursive: true })
+  }
   db = new Database(resolved)
   db.pragma("journal_mode = WAL")
   // WAL + synchronous=NORMAL: commits skip the per-commit fsync (the big win for

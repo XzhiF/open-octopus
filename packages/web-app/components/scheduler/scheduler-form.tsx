@@ -146,7 +146,7 @@ export function SchedulerForm({
         name: editingJob.name,
         cron_expression: editingJob.cron_expression,
         timezone: editingJob.timezone,
-        org: editingJob.org ?? "",
+        org: (editingJob.config as { workspace_spec?: { org?: string } }).workspace_spec?.org ?? "",
         parallel_policy: editingJob.parallel_policy,
         description: editingJob.description ?? "",
       }

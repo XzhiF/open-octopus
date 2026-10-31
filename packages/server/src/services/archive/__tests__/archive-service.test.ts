@@ -8,7 +8,7 @@ import { ArchiveService, ArchivePartialFailure } from "../archive-service"
 
 function seedWorkspace(db: Database.Database, id: string, name = "test-ws") {
   db.prepare(`
-    INSERT INTO workspaces (id, name, org, description, status, path, source, source_schedule_id, created_at, updated_at)
+    INSERT INTO workspaces (id, name, repo_group, description, status, path, source, source_schedule_id, created_at, updated_at)
     VALUES (?, ?, 'test-org', null, 'active', '/tmp/test', 'user', null, datetime('now'), datetime('now'))
   `).run(id, name)
 }

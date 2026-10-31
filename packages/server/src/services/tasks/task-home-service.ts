@@ -40,6 +40,13 @@ const ARTIFACTS_JSON = "artifacts.json"
 const WORKFLOWS_DIR = "workflows"
 const RULES_DIR = path.join(".claude", "rules")
 const RULES_FILENAME = "task-context.md"
+// The SDK loads nested `.claude/rules/*.md` as project memory for EVERY session
+// whose cwd is an ancestor of the home — including workflow execution sessions
+// running at the workspace ROOT. v1 stated the constraints unconditionally, so
+// code-review/ship nodes read "禁止写入项目代码库" as applying to them, refused
+// to edit/commit, and the round ended with zero commits → 「变更」empty. v2 scopes
+// the rule to the task-home session and is detected so existing homes self-heal.
+const RULES_CONTENT_VERSION = "task-context-rule: v2"
 const CONTEXT_FILENAME = "context.md"
 // The home manifest: a structured snapshot of task_spec (format / phases 绑定 /
 // decisions / …) — metadata, NOT a spec document. Renamed from spec.json
@@ -200,16 +207,35 @@ export function resolveWithinRoot(rootAbs: string, relRaw: string, what: string)
  *  authoritative one. */
 export const MAX_HOME_FILE_READ_BYTES = 512_000
 
+/**
+ * One-workspace model: a task's planning home lives at
+ * `~/.octopus/orgs/{org}/workspaces/{task-ws}/.task`, resolved from the task
+ * row's workspace_id. The bootstrap installs this resolver; tests that inject
+ * a temp baseDir keep the legacy deterministic `{base}/tasks/{id}` path.
+ */
+let taskHomeResolver: ((taskId: string) => string | null) | null = null
+
+export function setTaskHomeResolver(resolver: ((taskId: string) => string | null) | null): void {
+  taskHomeResolver = resolver
+}
+
 export class TaskHomeService {
   private readonly baseDir: string
+  private readonly injectedBaseDir: boolean
 
   constructor(baseDir?: string) {
     this.baseDir = baseDir ?? path.join(os.homedir(), ".octopus")
+    this.injectedBaseDir = !!baseDir
   }
 
-  /** Pure derivation of the task home path from the id. NO fs side effect, NO
-   *  DB field (ADR-0011). `homePath(id) === base/tasks/id`. */
+  /** Task home path. Production: the workspace's `.task` directory (resolved
+   *  from tasks.workspace_id). Tests with an injected baseDir: the legacy
+   *  `{base}/tasks/{id}` path. */
   homePath(taskId: string): string {
+    if (!this.injectedBaseDir && taskHomeResolver) {
+      const resolved = taskHomeResolver(taskId)
+      if (resolved) return resolved
+    }
     return path.join(this.baseDir, "tasks", taskId)
   }
 
@@ -299,7 +325,7 @@ export class TaskHomeService {
    *      under `.scratch/…` and manifest's phases[].specPath points at them.)
    *    - System prompt = **no dynamic context** — only static persona + skill
    *      content. Prompt cache stays stable across turns. */
-  createHome(taskId: string, opts: { org?: string; projects?: ProjectRef[]; skillGroups?: string[] } = {}): string {
+  createHome(taskId: string, opts: { repo_group?: string | null; projects?: ProjectRef[]; skillGroups?: string[] } = {}): string {
     const home = this.homePath(taskId)
     fs.mkdirSync(path.join(home, SKILLS_DIR), { recursive: true })
     fs.mkdirSync(path.join(home, ARTIFACTS_DIR), { recursive: true })
@@ -309,7 +335,7 @@ export class TaskHomeService {
     fs.mkdirSync(path.join(home, WORKFLOWS_DIR), { recursive: true })
     fs.mkdirSync(path.join(home, RULES_DIR), { recursive: true })
     this.writeTaskContextRule(taskId)
-    this.writeContextFile(taskId, opts.org, opts.projects, opts.skillGroups)
+    this.writeContextFile(taskId, opts.repo_group, opts.projects, opts.skillGroups)
     this.writeManifestFile(taskId, { version: 1, spec: {}, updated_at: new Date().toISOString() })
     return home
   }
@@ -325,7 +351,7 @@ export class TaskHomeService {
    *  「先确认已 pull 到最新 main/master 再分析」即读这行成立。 */
   writeContextFile(
     taskId: string,
-    org?: string,
+    repoGroup?: string | null,
     projects?: ProjectRef[],
     skillGroups?: string[],
     syncNotes?: Record<string, string>,
@@ -334,7 +360,7 @@ export class TaskHomeService {
     const filePath = path.join(home, CONTEXT_FILENAME)
     try {
       const lines = ['# Workspace Context', '']
-      if (org) lines.push(`- org: ${org}`)
+      if (repoGroup) lines.push(`- repo_group: ${repoGroup}`)
       lines.push(`- cwd: ${home}`)
       if (projects && projects.length > 0) {
         for (const p of projects) {
@@ -461,12 +487,12 @@ export class TaskHomeService {
 
   /** Ensure `context.md` exists. No-op when the file is already present.
    *  Called from the chat route so existing task homes get backfilled. */
-  ensureContextFile(taskId: string, org?: string, projects?: ProjectRef[], skillGroups?: string[]): void {
+  ensureContextFile(taskId: string, repoGroup?: string | null, projects?: ProjectRef[], skillGroups?: string[]): void {
     const home = this.homePath(taskId)
     if (!fs.existsSync(home)) return
     const filePath = path.join(home, CONTEXT_FILENAME)
     if (fs.existsSync(filePath)) return
-    this.writeContextFile(taskId, org, projects, skillGroups)
+    this.writeContextFile(taskId, repoGroup, projects, skillGroups)
   }
 
   /** Write `.claude/rules/task-context.md` — static path constraints + a
@@ -484,8 +510,14 @@ export class TaskHomeService {
         'description: "Task workspace path constraints — HIGHEST PRIORITY"',
         'alwaysApply: true',
         '---',
+        `<!-- ${RULES_CONTENT_VERSION} -->`,
         '',
-        '# ⛔ 路径强制规则（最高优先级，不可违反）',
+        '# ⛔ 路径强制规则（仅限任务主页会话）',
+        '',
+        `> **适用范围**：仅当你的**主工作目录**恰为 \`${home}\` 这个任务主页时适用。`,
+        '> 工作流执行会话 / 代码仓会话（主工作目录 = 工作区根目录，代码在 `projects/` 下）',
+        '> **不受本规则约束** —— 不要据此拒绝写入代码仓或提交；执行侧按工作流交付纪律',
+        '> 直接改代码并 commit / push。把本规则套用到执行会话会阻断交付（变更窗将为空）。',
         '',
         `你的工作目录是：${home}`,
         `你的产物目录是：${artifactsDir}`,
@@ -539,7 +571,9 @@ export class TaskHomeService {
     if (fs.existsSync(rulePath)) {
       let stale = false
       try {
-        stale = fs.readFileSync(rulePath, "utf-8").includes(LEGACY_SPEC_FILENAME)
+        const current = fs.readFileSync(rulePath, "utf-8")
+        // Pre-rename homes point at spec.json; pre-v2 homes lack the version marker.
+        stale = current.includes(LEGACY_SPEC_FILENAME) || !current.includes(RULES_CONTENT_VERSION)
       } catch {
         stale = false
       }

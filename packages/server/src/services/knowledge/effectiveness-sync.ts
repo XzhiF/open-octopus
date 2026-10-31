@@ -132,8 +132,7 @@ export class EffectivenessSyncService {
       // 幂等判脏（差 last_compiled 外零 diff ⇒ no-op）全随既有纪律，本执行体零自拼 fs 写。
       const compiler = new WikiCompileService({
         db: this.db,
-        org: GLOBAL_WIKI_ORG,
-        rootDir: this.wikiRoot,
+                rootDir: this.wikiRoot,
         ...(this.git ? { git: this.git } : {}),
       })
       const res = await compiler.compilePages(inputs, {

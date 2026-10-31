@@ -58,7 +58,7 @@ describe("TaskHomeService", () => {
       fs.writeFileSync(path.join(projB, ".scratch", "index.md"), "# idx\n")
 
       svc.createHome(id, {
-        org: "xzf",
+        repo_group: "xzf",
         projects: [
           { name: "projA", path: projA },
           { name: "projB", path: projB },
@@ -167,9 +167,9 @@ describe("TaskHomeService", () => {
 
     it("createHome writes context.md with org/projects/skillGroups", () => {
       const id = "t-1c"
-      svc.createHome(id, { org: "xzf", projects: [{ name: "open-octopus", path: "/home/user/octopus" }], skillGroups: ["superpowers-zh"] })
+      svc.createHome(id, { repo_group: "xzf", projects: [{ name: "open-octopus", path: "/home/user/octopus" }], skillGroups: ["superpowers-zh"] })
       const ctx = fs.readFileSync(path.join(svc.homePath(id), "context.md"), "utf-8")
-      expect(ctx).toContain("org: xzf")
+      expect(ctx).toContain("repo_group: xzf")
       expect(ctx).toContain("project: open-octopus")
       expect(ctx).toContain("/home/user/octopus")
       expect(ctx).toContain("locked skill groups: superpowers-zh")
@@ -229,7 +229,7 @@ describe("TaskHomeService", () => {
 
     it("writeContextFile refreshes dynamic state without touching rules", () => {
       const id = "t-1d"
-      svc.createHome(id, { org: "old-org" })
+      svc.createHome(id, { repo_group: "old-org" })
       const ruleBefore = fs.readFileSync(path.join(svc.homePath(id), ".claude", "rules", "task-context.md"), "utf-8")
 
       // Simulate project change
@@ -401,6 +401,35 @@ describe("TaskHomeService", () => {
       // Should not throw, should not create anything
       svc.ensureRulesFile("t-nonexistent")
       expect(fs.existsSync(svc.homePath("t-nonexistent"))).toBe(false)
+    })
+
+    it("ensureRulesFile self-heals a pre-v2 rule (unscoped — blocked workflow sessions)", () => {
+      const id = "t-4b"
+      const home = svc.homePath(id)
+      svc.createHome(id)
+      const rulePath = path.join(home, ".claude", "rules", "task-context.md")
+      // v1 content: no scope note, no version marker — it told EVERY session
+      // under the workspace (workflow exec included) never to touch the repo.
+      fs.writeFileSync(rulePath, "# ⛔ 路径强制规则（最高优先级，不可违反）\n", "utf-8")
+
+      svc.ensureRulesFile(id)
+
+      const healed = fs.readFileSync(rulePath, "utf-8")
+      expect(healed).toContain("task-context-rule: v2")
+      expect(healed).toContain("不受本规则约束")
+      expect(healed).toContain("manifest.json")
+    })
+
+    it("rule scopes itself to the task-home session (does not block workflow execution)", () => {
+      const id = "t-4c"
+      svc.createHome(id)
+      const content = fs.readFileSync(
+        path.join(svc.homePath(id), ".claude", "rules", "task-context.md"),
+        "utf-8",
+      )
+      expect(content).toContain("task-context-rule: v2")
+      expect(content).toContain("工作流执行会话")
+      expect(content).toContain("不受本规则约束")
     })
 
     it("ensureRulesFile self-heals stale pre-rename rules (spec.json pointer) + renames the legacy snapshot", () => {

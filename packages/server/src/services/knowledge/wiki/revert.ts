@@ -283,7 +283,7 @@ export class RevertTaskService {
           const row = entryRowFromDisk(abs, t.path)
           if (!row) continue
           articles.upsert(row)
-          const rowid = articles.getRowid(GLOBAL_WIKI_ORG, row.id)
+          const rowid = articles.getRowid(row.id)
           if (rowid !== undefined) {
             try {
               articles.deleteFts(rowid)
@@ -301,15 +301,15 @@ export class RevertTaskService {
             }
           }
         } else {
-          const found = articles.getByPath(GLOBAL_WIKI_ORG, t.path)
+          const found = articles.getByPath(t.path)
           if (found) {
-            const rowid = articles.getRowid(GLOBAL_WIKI_ORG, found.id)
+            const rowid = articles.getRowid(found.id)
             if (rowid !== undefined) {
               try { articles.deleteFts(rowid) } catch (err) {
                 ftsWarnings.push(`FTS 删除失败（非致命）: ${err instanceof Error ? err.message : String(err)}`)
               }
             }
-            articles.delete(GLOBAL_WIKI_ORG, found.id)
+            articles.delete(found.id)
           }
         }
       }
@@ -365,8 +365,7 @@ function entryRowFromDisk(abs: string, relPath: string): ArticleUpsertRow | null
     const meta = parsed.kind === "page" ? pageEntryView(parsed.meta) : parsed.kind === "case" ? caseEntryView(parsed.meta, today()) : parsed.meta
     const domain = parsed.kind === "case" ? "case" : pageTypeOf(parsed.kind === "page" ? parsed.meta : meta)
     return {
-      org: GLOBAL_WIKI_ORG,
-      id: meta.id,
+            id: meta.id,
       domain,
       title: meta.title,
       summary: meta.summary,

@@ -23,8 +23,7 @@ import type { TaskSpec, SubunitSpec } from "@octopus/shared"
 function makeSubunit(name: string): SubunitSpec {
   return {
     name,
-    workspace_spec: {
-      org: "E2E_TD_org",
+    workspace_spec: { org: "E2E_TD_org",
       branch_prefix: `e2e-td-${name}`,
       projects: [{ name: `E2E_TD_proj_${name}`, source_path: "", group: "" }],
     },

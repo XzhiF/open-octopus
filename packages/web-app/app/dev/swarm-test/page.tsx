@@ -46,9 +46,9 @@ const mockConsensus: ConsensusDataPoint[] = [
 
 const mockTaskBreakdown: TaskBreakdown = {
   experts: [
-    { role: "backend-architect", level: 0, dependsOn: [], subtask: "Design system architecture" },
-    { role: "security-engineer", level: 1, dependsOn: ["backend-architect"], subtask: "Security review" },
-    { role: "code-reviewer", level: 1, dependsOn: ["backend-architect"], subtask: "Code quality review" },
+    { role: "backend-architect", level: 0, dependsOn: [] },
+    { role: "security-engineer", level: 1, dependsOn: ["backend-architect"] },
+    { role: "code-reviewer", level: 1, dependsOn: ["backend-architect"] },
   ],
   dag: {
     levels: [["backend-architect"], ["security-engineer", "code-reviewer"]],
@@ -161,7 +161,7 @@ export default function SwarmTestPage() {
         {/* ExpertListTab */}
         <div className="border rounded-md p-4" data-testid="expert-list">
           <h3 className="text-sm font-medium mb-2">Experts Tab</h3>
-          <ExpertListTab experts={mockExperts} />
+          <ExpertListTab experts={mockExperts} routerDecision={null} />
         </div>
 
         {/* MessageTimelineTab */}

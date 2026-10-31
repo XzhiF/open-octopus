@@ -34,7 +34,7 @@ describe("replaceMergedEvents — llm_calls 窗口盖轮次", () => {
     db = new Database(":memory:")
     applySchema(db)
     const t = new Date().toISOString()
-    db.prepare("INSERT INTO workspaces (id,name,path,org,created_at,updated_at) VALUES ('ws','W','/p','o',?,?)").run(t, t)
+    db.prepare("INSERT INTO workspaces (id,name,path,repo_group,created_at,updated_at) VALUES ('ws','W','/p','o',?,?)").run(t, t)
     db.prepare("INSERT INTO executions (id,workspace_id,parent_id,workflow_ref,workflow_name,status,org,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?)").run(EXE, "ws", "0", "w.yaml", "w", "completed", "o", t, t)
     db.prepare("INSERT INTO node_executions (id,execution_id,node_id,node_type,status,started_at) VALUES (?,?,?,?,?,?)").run(NE, EXE, NODE, "agent", "completed", t)
     // 3 个真实回合

@@ -7,6 +7,7 @@ import fs from "fs"
 import os from "os"
 import path from "path"
 import { createYjsWebSocketServer, setYjsWorkspaceDAO } from "./routes/yjs-ws"
+import { createWebStaticHandler } from "./web/static"
 import { initDb, getDb, getDbPath } from "./db/connection"
 import { applySchema } from "./db/schema"
 import {
@@ -50,7 +51,6 @@ import { createCompileQueueRoutes } from "./routes/wiki-queue"
 import { CompileQueue } from "./services/knowledge/wiki/compile-queue"
 import { WikiLock } from "./services/knowledge/wiki/wiki-lock"
 import { resolveGlobalWikiRoot, resolveGlobalKnowledgeRoot } from "./services/knowledge/global-paths"
-import { backfillWikiArticleLinks } from "./services/knowledge/wiki/backfill-links"
 import { CuratorCompileService } from "./services/knowledge/wiki/curator"
 import { CuratorTaskService } from "./services/knowledge/wiki/curator-task"
 import { SessionCurationService } from "./services/knowledge/session-curation"
@@ -65,15 +65,10 @@ import { FindingOpsService } from "./services/knowledge/findings"
 import { BackfillService } from "./services/knowledge/backfill"
 import { createFindingsRoutes } from "./routes/findings"
 import { createEffectivenessRoutes } from "./routes/effectiveness"
-import { ArchiveIngestService } from "./services/tasks/archive-ingest-service"
+import { ArchiveIngestService, archiveCompileTaskId } from "./services/tasks/archive-ingest-service"
+import { readPackManifest } from "./services/knowledge/material-pack"
 import { createProductionArchiveSummarizer } from "./services/tasks/archive-ingest-llm"
 import { createWikiRoutes } from "./routes/wiki"
-import { createWikiMigrateRoutes } from "./routes/wiki-migrate"
-import { createWikiGlobalMoveRoutes } from "./routes/wiki-global-move"
-import { WikiGlobalMigrator } from "./services/knowledge/wiki/global-move"
-import { createWikiRedistillRoutes } from "./routes/wiki-redistill"
-import { WikiRedistillMigrator } from "./services/knowledge/wiki/redistill"
-import { InitialCompileMigrator } from "./services/knowledge/wiki/migrate"
 import { createArchiveRoutes } from "./routes/archive"
 import { createResourceRoutes } from "./routes/resource"
 import { getResourceRegistry } from "./services/resource-registry"
@@ -85,6 +80,7 @@ import { createWorkflowRoutes } from "./routes/workflow"
 import executionRoutes, { setExecutionDependencies } from "./routes/execution"
 import harnessRoutes, { setHarnessDependencies } from "./routes/harness"
 import { createDashboardRoutes } from "./routes/dashboard"
+import { createActivityRoutes } from "./routes/activity"
 import { chatRoutes } from "./routes/chat"
 import { globalChatRoutes } from "./routes/global-chat"
 import { createFileRoutes } from "./routes/file-routes"
@@ -94,10 +90,13 @@ import { createAnalyticsLogRoutes, createAnalyticsRoutes } from "./routes/analyt
 import { eventRoutes } from "./routes/events"
 import scheduleRoutes, { setScheduleService } from "./routes/schedule"
 import { createSchedulerRoutes } from "./routes/scheduler"
-import { createTasksRoutes } from "./routes/tasks"
-import { createTaskChatRoutes } from "./routes/task-chat"
-import { TaskDoerService } from "./services/tasks/task-doer-service"
+import { createTasksRoutes, createSessionUsageRoutes } from "./routes/tasks"
 import { RoundEvidenceService } from "./services/tasks/round-evidence-service"
+import {
+  AcceptancePlanService,
+  setAcceptancePlanReadyProvider,
+} from "./services/tasks/acceptance-plan-service"
+import { setAcceptanceToolsProvider, setArchiveToolsProvider } from "./services/chat/task-tools"
 import { TestInstanceRegistry } from "./services/tasks/test-instance-registry"
 import { createWorkflowPresetsRoutes } from "./routes/workflow-presets"
 import { createSkillGroupsRoutes } from "./routes/skill-groups"
@@ -112,7 +111,7 @@ import { createWorkflowOpsRoutes } from "./routes/workflow-ops"
 import { InteractionService } from "./services/interaction"
 import { SSEService } from "./services/sse"
 import { RepoSyncService } from "./services/tasks/repo-sync-service"
-import { migrateOrgDirs, syncOrgsFromFilesystem } from "./services/org"
+import { syncOrgsFromFilesystem } from "./services/org"
 import { ExecutionService } from "./services/execution"
 import { errorHandler } from "./middleware/error"
 import { agentAuthMiddleware, setAgentAuthOrgDAO } from "./routes/agent/middleware"
@@ -121,11 +120,12 @@ import { registerProvider, ClaudeSDKProvider, PiAgentProvider } from "@octopus/p
 import { isPortInUse, findPidOnPort, killPid, waitForPort } from "./port-utils"
 import { globalErrorTracker, setupDataRetention } from "./services/error-tracker"
 import { initExecutionServiceRegistry, getExecutionService } from "./services/execution-service-registry"
+import { initChatEventBridge } from "./services/activity/chat-event-bridge"
 import { WorkspaceScheduleService } from "./services/schedule"
 import { SchedulerService } from "./services/scheduler/scheduler-service"
 import { SchedulerEngine } from "./services/scheduler/scheduler-engine"
 import { TasksService } from "./services/tasks/tasks-service"
-import { TaskHomeService } from "./services/tasks/task-home-service"
+import { TaskHomeService, setTaskHomeResolver } from "./services/tasks/task-home-service"
 import { PluginMaterializer } from "./services/tasks/plugin-materializer"
 import { AssistWorkflowService } from "./services/tasks/assist-workflow-service"
 import { WorkflowPresetsService } from "./services/workflow-presets-service"
@@ -139,9 +139,10 @@ import { DashboardService } from "./services/scheduler/dashboard-service"
 import { ExportService } from "./services/scheduler/export-service"
 import { WorkspaceService } from "./services/workspace"
 import { ChatService } from "./services/chat"
+import { setTaskToolsServiceProvider } from "./services/chat/task-tools"
 import { LeaderboardService } from "./services/leaderboard"
 import { getLogAnalysisService } from "./services/log-analysis"
-import { initSessionService } from "./services/agent/session-service"
+import { initSessionService, getSessionService } from "./services/agent/session-service"
 import { initMemoryService } from "./services/agent/memory-service"
 import { initEvolutionService } from "./services/agent/evolution-service"
 import { initRecoveryService } from "./services/agent/recovery-service"
@@ -229,13 +230,19 @@ let daos: AllDAOs | null = null
 if (db) {
   applySchema(db)
 
-  // 反链倒排基础：wiki_articles.links 一次性回灌（仅启动跑，运行时零扫盘——失败非致命）
-  try {
-    const n = backfillWikiArticleLinks(new WikiArticleDAO(db), resolveGlobalWikiRoot())
-    if (n > 0) console.log(`[knowledge] wiki links 回灌 ${n} 行`)
-  } catch (err: unknown) {
-    console.error("[knowledge] wiki links 回灌失败（非致命，下次启动再补）:", err)
-  }
+  // One-workspace model: a task's planning home is `<workspace>/.task`.
+  // Resolve it from the task's bound workspace so every TaskHomeService call
+  // (clone cwd, artifacts, gates, archiving) sees the same single space.
+  setTaskHomeResolver((taskId) => {
+    const row = db
+      .prepare(
+        `SELECT w.path AS path FROM tasks t
+         JOIN workspaces w ON w.id = t.workspace_id
+         WHERE t.id = ?`,
+      )
+      .get(taskId) as { path?: string } | undefined
+    return row?.path ? path.join(row.path, ".task") : null
+  })
 
   // Create all DAO instances at startup — fail-fast if DAO initialization fails
   try {
@@ -247,8 +254,7 @@ if (db) {
   }
 
   ExecutionService.recoverInterruptedExecutions(db)
-  migrateOrgDirs()
-  syncOrgsFromFilesystem(daos.org)
+  // Register repo groups from ~/.octopus/orgs/*/config.yaml.  syncOrgsFromFilesystem(daos.org)
   const cleanupRetention = setupDataRetention(db)
   // Store cleanup for graceful shutdown
   ;(global as any).__octopus_cleanupRetention = cleanupRetention
@@ -283,10 +289,12 @@ if (!process.env.VITEST && daos) {
   observability = new ObservabilityService(daos.execution, daos.tokenUsage, new PrivacyFilter())
   setExecutionDependencies(sse, observability, daos.execution, daos.tokenUsage)
   setHarnessDependencies(daos.harness)
-  initExecutionServiceRegistry(daos.execution as any, sse, observability, {
+  initExecutionServiceRegistry(getDb(), sse, observability, {
     executionDAO: daos.execution,
     workspaceDAO: daos.workspace,
   })
+  // Activity bus + chat wake: one global SSE fan-in for workflow/task events.
+  initChatEventBridge(sse, getDb())
   registerProvider('claude', () => new ClaudeSDKProvider())
 
   // Pi Provider registration — always available (lazy-loaded, SDK imported on first query)
@@ -299,6 +307,20 @@ if (!process.env.VITEST && daos) {
   initRecoveryService(daos.agentSession, daos.execution)
   initSessionCompressService(daos.agentSession, daos.tokenUsage)
   initAgentService(daos.agentSession, daos.safety)
+
+  // v58: bind legacy main sessions to their main-agent workspace so the cwd
+  // chip and resident explorer have a workspace from boot (new sessions bind
+  // themselves on first prompt).
+  try {
+    const db = getDb()
+    const main = workspaceService!.ensureMainWorkspace()
+    db.prepare(
+      `UPDATE sessions SET workspace_id = ?, cwd = COALESCE(cwd, ?)
+       WHERE workspace_id IS NULL AND clone_name IS NULL`,
+    ).run(main.id, main.path)
+  } catch (err: unknown) {
+    console.warn('[server] main workspace backfill failed:', err instanceof Error ? err.message : String(err))
+  }
 
   // "关闭不丢失" stream-resume: sweep orphan streaming partials left by a
   // crash/restart mid-turn (finalize them as interrupted). Runs before any
@@ -343,7 +365,6 @@ if (!process.env.VITEST && daos) {
     if (!existingSeed) {
       daos.scheduleConfig.insertSchedule({
         id: 'system:daily-archive',
-        org: 'system',
         name: 'system:daily-archive',
         cron_expression: '0 3 * * *',
         timezone: 'Asia/Shanghai',
@@ -510,6 +531,7 @@ app.route("/api/workspaces/:id/executions", executionRoutes)
 app.route("/api/workspaces/:id/harness", harnessRoutes)
 app.route("/api/workspaces/:id/analytics", createAnalyticsLogRoutes(d.workspace, getLogAnalysisService({ tokenDao: d.tokenUsage, execDao: d.execution }) ?? new (require('./services/log-analysis').LogAnalysisService)(d.tokenUsage, d.execution)))
 app.route("/api/dashboard", createDashboardRoutes(wsSvc, lbSvc, d.execution, d.tokenUsage, d.archive))
+app.route("/api/activity", createActivityRoutes())
 app.route("/api/workspaces/:id/chat", chatRoutes(sse, chatSvc, wsSvc))
 app.route("/api/chat/global", globalChatRoutes(sse, chatSvc, d.tokenUsage))
 app.route("/api/workspaces/:id/interactions", createInteractionRoutes(interactionSvc, d.workspace, d.execution))
@@ -529,6 +551,7 @@ app.route("/api/agent", createAgentRoutes({
   schedulerService: schedSvc,
   // billing-coverage-2 票03: Main Agent 统一入口/委托链入账。
   tokenUsageDao: d.tokenUsage,
+  sse,
   // 票10 投喂泛化: 知识策展执行面（ingest_to_wiki 工具）。闭包惰性解析
   // sessionCurationService（声明在下方 wiki 装配段——票14 惰性纪律同轨：
   // 请求时才求值，不受挂载先于构造的 TDZ 影响）。
@@ -860,28 +883,6 @@ app.route("/api/archive", createArchiveRoutes(stateDir, d.archive, d.archiveDraf
 // 知识中心票03：org 参数容错保留，DB 语义钉 'global'；fs 读搬家窗口兼容（见 routes/wiki.ts）。
 // P4 票07：article 带 effectiveness 实时段（账目 DAO 注入=页元数据 DB 真源面）。
 app.route("/api/knowledge/wiki", createWikiRoutes(d.wikiArticle, { effectiveness: d.knowledgeEffectiveness }))
-// 知识中心票03: wiki 全局化搬家命令（单入口幂等，真数据唯一执行面）。默认 dry-run 列计划，
-// ?apply=true 才动手（顺序：wiki 连 .git 搬家 → DB re-key/FTS 重建 → 偏好归档+知识根迁入）。
-// 真跑前主控按报告 backupHint 先 VACUUM INTO 备份；两步各自 git/备份可回滚。
-app.route("/api/knowledge/wiki", createWikiGlobalMoveRoutes(
-  (apply) => new WikiGlobalMigrator({ db: getDb(), apply }),
-))
-// 知识中心票07: v2→v3 重蒸馏迁移命令（单入口幂等，真数据唯一执行面）。默认 dry-run 列映射计划，
-// ?apply=true 才动手（写 v3 五类页/旧页整迁 _retired/v2/ + LOG 换行格式 + INDEX 重建 + DB re-key，
-// 全部落盘收口为一个 git commit，整体 revert 可还原；重跑 diff 为空）。
-// 前置 = 票03 真搬家已执行（全局根 + org 钉 global）；真跑前主控按报告 backupHint 先 VACUUM INTO 备份。
-// 票06 写串行：apply 经全局 FIFO 队列 kind "redistill" 入队 + wiki 根锁（dry-run 零写盘不入队）。
-app.route("/api/knowledge/wiki", createWikiRedistillRoutes(
-  (apply) => new WikiRedistillMigrator({ db: getDb(), apply, queue: wikiWriteQueue }),
-))
-// LLM-WIKI 票05: 初始编译迁移命令（幂等、可重跑；每源文件一个独立 commit，
-// 全部写入仍经唯一闸门 compileEntry）。glossaryPath 可选覆盖 GLOSSARY-MAP.md 源。
-app.route("/api/knowledge/wiki", createWikiMigrateRoutes(
-  (org, opts) => new InitialCompileMigrator({ db: getDb(), org, glossaryMapPath: opts.glossaryMapPath, ruleFormJudge }),
-))
-// 知识中心票09：LLM-WIKI 票07 蒸馏路由（POST /distill → pending_review wiki-edit 候选）
-// 随审批链全删——候选的落盘面（approveItem→curate）已物理删除，入队即死档。
-// v2→v3 换代由票07 重蒸馏（/wiki/redistill）承接；新素材入库走 /knowledge 投喂编译。
 
 // Resource management — unified resource lifecycle (install/uninstall/verify/audit)
 const resourceRegistry = getResourceRegistry()
@@ -892,6 +893,8 @@ try { getAgentService().setSchedulerService(schedSvc) } catch {}
 
 // ── Actuator: operational diagnostics endpoints ──────────────────
 let actuatorService: ActuatorService | null = null
+/** Set after every service route is mounted; desktop sidecar polls this. */
+let routesReady = false
 try {
   const serverStartedAt = new Date(Date.now() - process.uptime() * 1000)
   const serverBranch = process.env.OCTOPUS_BRANCH ?? null
@@ -951,6 +954,11 @@ try {
 // ── System management: model config + connectivity test ─────────────
 app.route("/api/system", createSystemRoutes())
 
+// ── Desktop sidecar readiness (routes mounted after listen) ──────────
+app.get("/api/actuator/ready", (c) =>
+  routesReady ? c.json({ status: "UP" }) : c.json({ status: "STARTING" }, 503),
+)
+
 // ── Repos management: read manifest data for org ─────────────────────
 app.route("/api/repos", createReposRoutes())
 
@@ -968,8 +976,13 @@ if (shouldServe) {
 
   const portArg = process.argv.find(a => a.startsWith("--port="))
   const port = parseInt(portArg?.split("=")[1] ?? process.env.PORT ?? "3001", 10)
+  const host = process.env.OCTOPUS_HOST ?? "0.0.0.0"
+
+  const webStatic = createWebStaticHandler(process.env.OCTOPUS_WEB_DIR)
 
   const server = http.createServer(async (req, res) => {
+    if (webStatic?.(req, res)) return
+
     const host = req.headers.host ?? "localhost"
     const proto = req.headers["x-forwarded-proto"] ?? "http"
     const url = `${proto}://${host}${req.url}`
@@ -1055,7 +1068,7 @@ if (shouldServe) {
     server.keepAliveTimeout = 70_000
     server.headersTimeout = 75_000
 
-    server.listen(port, "0.0.0.0", () => {
+    server.listen(port, host, () => {
       const localIP = (() => {
         for (const ifaces of Object.values(os.networkInterfaces())) {
           for (const iface of ifaces || []) {
@@ -1064,8 +1077,9 @@ if (shouldServe) {
         }
         return "localhost"
       })()
-      console.log(`Octopus Server running on http://0.0.0.0:${port} (LAN: http://${localIP}:${port}) (PID: ${process.pid})`)
-      console.log(`WebSocket ready on ws://0.0.0.0:${port}`)
+      const lan = host === "0.0.0.0" ? ` (LAN: http://${localIP}:${port})` : ""
+      console.log(`Octopus Server running on http://${host}:${port}${lan} (PID: ${process.pid})`)
+      console.log(`WebSocket ready on ws://${host}:${port}`)
       console.log(`Log file: ${getLogFilePath()}`)
       logInfo(`Server started`, {
         pid: process.pid,
@@ -1155,6 +1169,10 @@ if (shouldServe) {
         // 与 workspace 单例（触发执行当场建 workspace+worktree 用）。
         repoSyncService, workspaceService,
       )
+      // 2026-10-28 task-thread: the chat route's `update_task_spec_field` tool
+      // needs the REAL TasksService (validation + version + SSE + home backfill).
+      // The route is mounted before this async block, hence the late binding.
+      setTaskToolsServiceProvider(() => tasksService)
       // 知识中心票10 建链，P3 票02 升级素材包链：task 进入 archiving 态即组包
       // （raw/archives/task-{id}/ 六件+manifest，件级冻结契约同票02）→ 总结读包 →
       // 编译读包（manifest 先行按需下钻）经票06 全局串行队列（kind=archive-compile，
@@ -1188,24 +1206,108 @@ if (shouldServe) {
       tasksService.setArchiveIngestHook((taskId) => {
         void archiveIngest.ingestTask(taskId)
       })
+      // 2026-10-31 AI-native 归档：归档总框 / 归档台读「知识包件数 + 编译状态」。
+      // 只读快照，不触发任何写入；未投喂（无 manifest 且未入队）→ null。
+      tasksService.setArchiveKnowledgeHook((taskId) => {
+        const manifest = readPackManifest(resolveGlobalKnowledgeRoot(), taskId)
+        const queueView = wikiWriteQueue.get(archiveCompileTaskId(taskId))
+        if (!manifest && !queueView) return null
+        return {
+          pack_items: manifest ? manifest.items.filter((item) => !item.excluded).length : 0,
+          items: manifest
+            ? manifest.items.map((item) => ({
+                kind: item.kind,
+                name: item.name,
+                bytes: item.bytes,
+                excluded: item.excluded === true,
+                path: item.path,
+              }))
+            : [],
+          compile_state: queueView?.state ?? null,
+          compile_position: queueView?.position ?? null,
+        }
+      })
       const assistService = new AssistWorkflowService(db, sse)
       // 验货台 (acceptance v2)：实物 round-diff + 当场复检 — 4th optional arg
       // (tests that build the route factory without it get 501 on those 5 endpoints).
       const roundEvidence = new RoundEvidenceService(db, sse, tasksService, workspaceService!, taskHomeService)
-      // taskboard-modal-v2 票01 (ADR-0025, S1): the task-level doer chat seam —
-      // GET/POST /api/tasks/:id/chat (+ the /chat/messages alias from the spec
-      // wording). Separate route factory on the same prefix; all behavior lives in
-      // TaskDoerService (lazy doer session + ws-chat relay + [quick-edit] commits).
-      const taskDoerService = new TaskDoerService({
-        db, sse, tasksService,
-        chatService: chatSvc,
-        workspaceService: wsSvc,
-        taskHomeService,
+      // 验收方案预生成（2026-10-30 AI-native 验收）：轮终态后由独立规划 Agent
+      // 产出 acceptance-plan-rN.json；getPlaybook 优先读它，主 Chat 据此逐项引导。
+      const acceptancePlan = new AcceptancePlanService(
+        db, sse, tasksService, workspaceService!, taskHomeService, roundEvidence,
+      )
+      roundEvidence.setAcceptancePlanService(acceptancePlan)
+      tasksService.taskLifecycle.setAcceptancePlanHook((taskId) => {
+        void acceptancePlan.ensureForAwaiting(taskId)
       })
-      // 票08: takeover 聚合端点的会话就绪半（5th optional arg —— ensureSession 单源
-      // 仍是 TaskDoerService，这里只是把它接到 tasks 路由上）。
-      app.route('/api/tasks', createTasksRoutes(tasksService, sse, assistService, roundEvidence, taskDoerService))
-      app.route('/api/tasks', createTaskChatRoutes(taskDoerService))
+      setAcceptancePlanReadyProvider((taskId) => acceptancePlan.isReady(taskId))
+      setAcceptanceToolsProvider(() => ({
+        getPlanDetail: (taskId) => acceptancePlan.getPlanDetail(taskId),
+        recordCheck: (taskId, input) => roundEvidence.recordCheck(taskId, input),
+        // 最终放行/退回：用户明确表态后由主 Chat 收口；人点验收台同为兜底。
+        finalizeAcceptance: (taskId, input) => roundEvidence.decideAcceptance(taskId, input),
+        runProbe: async (taskId, itemId) => {
+          const detail = acceptancePlan.getPlanDetail(taskId)
+          const plan = detail.plan
+          const check = plan?.checks.find((it) => it.id === itemId)
+          const kase = plan?.cases.find((it) => it.id === itemId)
+          if (!check && !kase) throw new Error(`未知验收项: ${itemId}`)
+          const cmd = check?.recheck?.trim()
+            || kase?.steps.find((s) => s.command?.trim())?.command?.trim()
+          if (!cmd) throw new Error("该项没有可自动执行的重跑命令 —— 请按场景步骤人工操作（机器证据不需要逐条重跑）")
+          return roundEvidence.runProbe(taskId, cmd, 300)
+        },
+        startPreview: (taskId) => roundEvidence.startPreview(taskId),
+        stopPreview: (taskId) => roundEvidence.stopPreview(taskId),
+        getPostRoundDelta: (taskId) => roundEvidence.getPostRoundDelta(taskId),
+      }))
+      // 2026-10-31 AI-native 归档：主 Chat 的口头决定（落/跳过/重试）直接执行。
+      // ingest 通道与 POST /:id/reflection/decision 同一条（raw 冻结 + 编译入队）。
+      const reflectionIngest = async ({ title, text, origin }: { title: string; text: string; origin: string }) => {
+        const res = knowledgeRawIngest.ingestText({ text, title, origin })
+        const compile = ingestCompileTrigger(res.raw.path)
+        return { raw_path: res.raw.path, compile_task_id: compile.taskId }
+      }
+      setArchiveToolsProvider(() => ({
+        readArchive: (taskId) => tasksService.readArchive(taskId),
+        startArchive: (taskId) => tasksService.startArchive(taskId),
+        decideReflection: (taskId, input) => tasksService.decideReflection(taskId, input, reflectionIngest),
+        retryArchive: (taskId) => tasksService.retryArchive(taskId),
+        resolveArchiveDelta: (taskId, action) => tasksService.resolveArchiveDelta(taskId, action),
+        recordAmendment: (taskId, input) =>
+          tasksService.appendArchiveAmendment(taskId, input, reflectionIngest),
+        // 2026-10-31 跟进任务：复制 spec/产物 + 新主会话 + 绑定；旧任务保持 done 不可变。
+        openFollowupTask: (taskId) => {
+          const src = tasksService.getTask(taskId)
+          const created = tasksService.duplicateTask(taskId, { ready: false })
+          const session = getSessionService().createSession({
+            cwd: null,
+            workspace_id: null,
+          })
+          try {
+            d.agentSession.updateSession(session.id, {
+              title: `${created.task.name} · 跟进`,
+              scope_id: created.task.id,
+            })
+          } catch {
+            /* title/scope 只是显示与索引优化，失败不阻断 */
+          }
+          d.task.bindSourceChatSession(created.task.id, session.id)
+          return {
+            task_id: created.task.id,
+            session_id: session.id,
+            name: created.task.name || src.name,
+          }
+        },
+        // 2026-10-31 归档后清理：白名单之外的 ignored 路径由 Agent 兜底逐条删。
+        cleanArchiveLeftovers: (taskId, project, paths) =>
+          tasksService.cleanArchiveLeftovers(taskId, project, paths),
+      }))
+      // 2026-10-28 task-thread: the task-doer dual chat was retired. Takeover
+      // reuses the task's main thread (source_chat_session_id).
+      app.route('/api/tasks', createTasksRoutes(tasksService, sse, assistService, roundEvidence, reflectionIngest))
+      // 2026-10-31 消耗窗通用化：/api/sessions/:id/usage（会话聊天行 + 本会话发起的全部工作流）。
+      app.route('/api/sessions', createSessionUsageRoutes(tasksService))
       // task-workflow-presets (T3): preset catalog API
       const workflowPresetsService = new WorkflowPresetsService()
       app.route('/api/workflow-presets', createWorkflowPresetsRoutes(() => workflowPresetsService))
@@ -1294,6 +1396,8 @@ if (shouldServe) {
         // Surface this clearly so users don't see perpetual 'triggered' rows.
         console.warn('[scheduler] scheduler feature flag OFF — jobs will not execute (CRUD API still available)')
       }
+
+      routesReady = true
     })
 
     // Graceful shutdown on Ctrl+C / SIGTERM
@@ -1315,6 +1419,11 @@ if (shouldServe) {
         } catch {}
         process.exit(0)
       })
+      // SSE/WS clients keep server.close() pending; give normal requests a beat,
+      // then tear down idle/held connections so DB close + process exit can run.
+      setTimeout(() => {
+        try { server.closeAllConnections() } catch {}
+      }, 250).unref()
       // Force exit after 3s if graceful shutdown stalls
       setTimeout(() => {
         console.error(`[server] Graceful shutdown timed out, forcing exit.`)

@@ -32,7 +32,7 @@ function newDb(): Database.Database {
 function seedWs(db: Database.Database, id = "ws-1") {
   const now = new Date().toISOString()
   db.prepare(
-    `INSERT INTO workspaces (id, name, org, path, source, status, created_at, updated_at)
+    `INSERT INTO workspaces (id, name, repo_group, path, source, status, created_at, updated_at)
      VALUES (?, ?, ?, '/tmp/session-usage', 'manual', 'active', ?, ?)`,
   ).run(id, `ws-${id}`, ORG, now, now)
 }
@@ -48,7 +48,7 @@ function seedSession(db: Database.Database, id: string) {
 function seedTask(db: Database.Database, id: string, status: string, sessionId: string | null) {
   const now = new Date().toISOString()
   db.prepare(`
-    INSERT INTO tasks (id, org, name, status, source_chat_session_id, task_spec,
+    INSERT INTO tasks (id, repo_group, name, status, source_chat_session_id, task_spec,
       authoring_resources, resources, skills, project_ids, workflow_ref, version,
       deleted_at, created_at, updated_at, completed_at, workspace_id)
     VALUES (?, ?, ?, ?, ?, '{"goal":"g","ac":[]}', '[]', '[]', '[]', '[]', NULL, 1, NULL, ?, ?, NULL, NULL)
@@ -91,7 +91,6 @@ function call(over: Partial<LlmCallRow> & { id: string }): LlmCallRow {
     output_tokens: 200,
     cache_read_tokens: 8000,
     cache_creation_tokens: 500,
-    org: ORG,
     workspace_id: "ws-1",
     workflow_ref: null,
     node_id: null,

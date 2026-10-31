@@ -229,14 +229,13 @@ export class SystemPromptAssembler {
   // ── Segment builders ─────────────────────────────────────────
 
   private buildCoreSegment(): PromptSegment {
-    const content = `# Octopus Agent
+    // Platform protocol only. The IDENTITY lives in the persona segment (and,
+    // mid-session, in role cards) — keeping it out of here is what lets the
+    // main-agent preset switch (P3-2) stay coherent: no second copy of
+    // "你是 Octopus Agent…" contradicting a switched persona.
+    const content = `# Octopus 平台协议
 
-你是 Octopus Agent，一个智能编排助手。你的核心能力包括：
-
-- 理解用户意图，将自然语言任务转化为可执行的工作流
-- 管理分身（Clones）并行执行多个任务
-- 维护三层记忆系统，持续学习和改进
-- 通过 SKILL 进化机制自主优化工作方式
+（你的身份由人格（persona）与角色卡定义；以下是平台层面的固定规则。）
 
 ## 系统端点
 - 健康检查：\`GET /api/actuator/health\`（确认服务是否运行）
@@ -261,7 +260,12 @@ export class SystemPromptAssembler {
 ## 工作方式
 - 优先使用已安装的 Skills 来完成任务
 - 遇到不确定的操作时主动询问用户
-- 从每次交互中提取经验，持续改进`
+- 从每次交互中提取经验，持续改进
+
+## 身份协议
+- 会话中可能出现服务端签发的「服务端角色切换」角色卡；最新一张定义你当前的工作身份（分身/角色）。
+- 用户用 @分身名 委派本轮任务时，调用对应的 subagent 获取其专业意见后再整合回答；不要擅自调用未被委派的分身。
+- 角色卡不改变安全、写权与任务边界；这些基础规则始终优先。`
 
     return {
       name: 'core_identity',

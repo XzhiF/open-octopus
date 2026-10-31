@@ -7,7 +7,7 @@ import { render, waitFor, fireEvent } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 import { SpecPanel } from "../spec-panel"
 import type { Task, TaskSpec, TaskPhase } from "@octopus/shared"
-import { updateTask, getTask, getHomeContent } from "@/lib/tasks-api"
+import { updateTask, getTask } from "@/lib/tasks-api"
 import {
   listBuiltInWorkflows,
   listWorkflowPresets,
@@ -16,7 +16,7 @@ import {
   type WorkflowPreset,
 } from "@/lib/workflow-presets-api"
 import type { BatchTreeState } from "../use-batch-tree"
-import type { HomeTreeState } from "../use-home-tree"
+import type { ArtifactKind, ArtifactManifestBody } from "@/lib/types"
 
 // jsdom 无 EventSource（「▸ 更多」弹窗里的 OutputViewer 订阅 SSE 用）
 if (!globalThis.EventSource) {
@@ -124,7 +124,7 @@ function makePhase(i: number, overrides: Partial<TaskPhase> = {}): TaskPhase {
 
 const emptyTree: BatchTreeState = { batches: [], loading: false, error: null, refresh: () => {} } as BatchTreeState
 
-const emptyHome: HomeTreeState = { dir: "/home/.octopus/tasks/test-task", entries: [], loading: false, error: null, refresh: () => {} }
+const EMPTY_ARTIFACTS: ArtifactManifestBody = { phases: [], unassigned: [], prototype: [] }
 
 const allOk = {
   rowPhases: true, rowSpec: true, rowBind: true, rowInputs: true, rowRepos: true,
@@ -134,9 +134,18 @@ const allOk = {
 }
 const noHits: Record<"phases" | "runbook" | "spec" | "bind" | "inputs" | "repos", string[]> = { phases: [], spec: [], bind: [], inputs: [], repos: [], runbook: [] }
 
-function renderPanel(task: Task, rows = allOk, gateHits = noHits, home = emptyHome) {
+function renderPanel(
+  task: Task,
+  rows = allOk,
+  gateHits = noHits,
+  artifacts: ArtifactManifestBody | null = EMPTY_ARTIFACTS,
+  onOpenArtifacts?: () => void,
+) {
   return render(
-    <SpecPanel task={task} onMutated={() => {}} batchTree={emptyTree} rows={rows} gateHits={gateHits} home={home} />,
+    <SpecPanel
+      task={task} onMutated={() => {}} batchTree={emptyTree} rows={rows} gateHits={gateHits}
+      artifacts={artifacts} onOpenArtifacts={onOpenArtifacts}
+    />,
   )
 }
 
@@ -276,47 +285,73 @@ describe("SpecPanel — 入队清单（原型 .chk 行）", () => {
   })
 })
 
-describe("SpecPanel — 输出区任务 home 磁盘直扫树", () => {
-  const dir = (p: string) => ({ path: p, type: "dir" as const, bytes: 0, mtime: "2026-09-24T10:00:00Z" })
-  const file = (p: string, bytes = 12) => ({ path: p, type: "file" as const, bytes, mtime: "2026-09-24T10:00:00Z" })
+describe("SpecPanel — 产出摘要（2026-10-29 方案2）", () => {
+  const item = (kind: ArtifactKind, name: string) => ({
+    name,
+    path: `home:.scratch/demo/slug-1/${name}`,
+    bytes: 10,
+    mtime: "2026-10-29T14:02:00Z",
+    kind,
+  })
+  const MANIFEST: ArtifactManifestBody = {
+    phases: [{
+      index: 1,
+      name: "阶段1",
+      slug: "slug-1",
+      dir: ".scratch/demo/slug-1",
+      status: "accepted",
+      currentRound: 2,
+      acceptedRound: 2,
+      items: [
+        item("spec", "spec.md"),
+        item("ticket", "01.md"),
+        item("ticket", "02.md"),
+        item("ticket", "03.md"),
+        item("report", "round-report.md"),
+      ],
+      rounds: [{ round: 1, items: [item("fix", "fix-report-r1.md"), item("evidence", "verify-r1.md")] }],
+    }],
+    unassigned: [],
+    prototype: [],
+  }
 
-  it("头部显示完整路径；空目录占位；有文件 → 树行（目录折叠 + 文件点击开只读弹窗）", async () => {
-    const user = userEvent.setup()
-    const t = makeTask({ task_spec: { format: "v4", phases: [makePhase(1)] } as unknown as TaskSpec })
-    const { unmount } = renderPanel(t)
-    expect(q("[data-home-dir]")!.textContent).toContain("/home/.octopus/tasks/test-task")
-    expect(q("[data-artifacts-empty]")).toBeTruthy()
-    unmount()
-
-    const home: HomeTreeState = {
-      dir: "/home/.octopus/tasks/test-task",
-      entries: [dir("artifacts/"), dir("artifacts/reports/"), file("artifacts/reports/a.md"), file("context.md"), dir("empty-dir/")],
-      loading: false, error: null, refresh: () => {},
-    }
-    renderPanel(t, allOk, noHits, home)
-    expect(q("[data-artifacts-tree]")).toBeTruthy()
-    expect(q('[data-artifacts-dir="artifacts/"]')).toBeTruthy()
-    expect(q('[data-artifacts-dir="empty-dir/"]')).toBeTruthy() // 空目录如实显示
-    expect(q('[data-artifacts-file="context.md"]')).toBeTruthy()
-    // 折叠 artifacts/ → 子孙行消失
-    fireEventClick(q('[data-artifacts-dir="artifacts/"]')!)
-    expect(q('[data-artifacts-file="context.md"]')).toBeTruthy() // 折叠只影响子树
-    fireEventClick(q('[data-artifacts-dir="artifacts/"]')!)
-    // 点文件 → 只读弹窗读磁盘正文
-    await user.click(q('[data-artifacts-file="context.md"]')!)
-    await waitFor(() => expect(document.body.textContent).toContain("磁盘正文"))
-    expect(getHomeContent).toHaveBeenCalledWith("test-task", "context.md")
+  it("每 phase 一行：spec ✓ / 票 / 报告 / 证据 / 最新轮 / 验收态（不再渲染任何文件树）", () => {
+    renderPanel(makeTask({ task_spec: { format: "v4", phases: [makePhase(1)] } as unknown as TaskSpec }), allOk, noHits, MANIFEST)
+    const row = q('[data-phase-summary="1"]')!
+    expect(row.textContent).toContain("P1 阶段1")
+    expect(row.textContent).toContain("spec ✓")
+    expect(row.textContent).toContain("票 3")
+    expect(row.textContent).toContain("报告 2")
+    expect(row.textContent).toContain("证据 1")
+    expect(row.textContent).toContain("r1")
+    expect(row.textContent).toContain("已验收")
+    // 输出区磁盘树已退役
+    expect(q("[data-spec-outview]")).toBeNull()
+    expect(q("[data-artifacts-tree]")).toBeNull()
   })
 
-  it("error 态显示错误文案，[↻] 走 refresh()", () => {
-    let refreshed = 0
-    const home: HomeTreeState = { dir: "/x", entries: [], loading: false, error: "disk scan failed", refresh: () => { refreshed++ } }
-    renderPanel(makeTask({ task_spec: { format: "v4", phases: [] } as unknown as TaskSpec }), allOk, noHits, home)
-    expect(q("[data-artifacts-error]")!.textContent).toContain("disk scan failed")
-    fireEventClick(q("[data-artifacts-refresh]")!)
-    expect(refreshed).toBe(1)
+  it("清单未到 → 「产物读取中…」", () => {
+    renderPanel(makeTask({ task_spec: { format: "v4", phases: [makePhase(1)] } as unknown as TaskSpec }), allOk, noHits, null)
+    expect(q('[data-phase-summary="1"]')!.textContent).toContain("产物读取中")
   })
 
+  it("无 phase → 占位文案", () => {
+    renderPanel(makeTask({ task_spec: { format: "v4", phases: [] } as unknown as TaskSpec }))
+    expect(q("[data-spec-output-summary]")!.textContent).toContain("尚无 phase")
+  })
+
+  it("「打开产物 →」走窗口层回调", () => {
+    const open = vi.fn()
+    renderPanel(
+      makeTask({ task_spec: { format: "v4", phases: [makePhase(1)] } as unknown as TaskSpec }),
+      allOk, noHits, MANIFEST, open,
+    )
+    fireEventClick(q("[data-artifacts-open]")!)
+    expect(open).toHaveBeenCalledOnce()
+  })
+})
+
+describe("SpecPanel — phase 卡 spec 入口", () => {
   it("phase 卡 spec.md bullet 按钮 → spec 编辑器（404 空态骨架按钮），不触发卡片编辑", async () => {
     renderPanel(makeTask({ task_spec: { format: "v4", phases: [makePhase(1)] } as unknown as TaskSpec }))
     fireEventClick(q('[data-phase-spec-button="1"]')!)
@@ -327,7 +362,7 @@ describe("SpecPanel — 输出区任务 home 磁盘直扫树", () => {
 
 // ── 票 09 · 单源换装：readOnly 只读镜像 ────────────────────────────────
 // 真相源 = 原型 taskboard-v2.html readySpecHtml（「草稿期 SpecPanel 只读镜像」+
-// 只读徽标；phase 瓦片静态、清单全 ✓、批次树照常点开只读查看弹窗）。
+// 只读徽标；phase 瓦片静态、清单全 ✓、产出摘要照常）。
 // 本组钉「写动作不渲染」的组件级契约：**草稿任务 + autoRow 在场**也不漏控件 ——
 // 隐藏由 readOnly 入参把关，不由 status 顺带。
 describe("SpecPanel — readOnly 只读镜像（票09 单源换装）", () => {
@@ -337,14 +372,17 @@ describe("SpecPanel — readOnly 只读镜像（票09 单源换装）", () => {
       验收通过后自动开跑下一 Phase（auto_advance）
     </label>
   )
-  const dir = (p: string) => ({ path: p, type: "dir" as const, bytes: 0, mtime: "2026-09-24T10:00:00Z" })
-  const file = (p: string, bytes = 12) => ({ path: p, type: "file" as const, bytes, mtime: "2026-09-24T10:00:00Z" })
 
-  function renderReadOnly(task: Task, home?: HomeTreeState, onMutated = () => {}) {
+  function renderReadOnly(
+    task: Task,
+    artifacts: ArtifactManifestBody | null = null,
+    onMutated = () => {},
+    onOpenArtifacts?: () => void,
+  ) {
     return render(
       <SpecPanel
         task={task} onMutated={onMutated} batchTree={emptyTree} rows={allOk} gateHits={noHits}
-        home={home ?? emptyHome} autoRow={AUTO_ROW} readOnly
+        artifacts={artifacts} onOpenArtifacts={onOpenArtifacts} autoRow={AUTO_ROW} readOnly
       />,
     )
   }
@@ -369,27 +407,31 @@ describe("SpecPanel — readOnly 只读镜像（票09 单源换装）", () => {
     expect(spy).not.toHaveBeenCalled()
   })
 
-  it("readOnly：清单照常渲染 ✓ 行；批次树照常可点，文件开 HomeFileViewerDialog 只读查看", async () => {
-    const user = userEvent.setup()
-    const home: HomeTreeState = {
-      dir: "/home/.octopus/tasks/test-task",
-      entries: [dir("artifacts/"), file("artifacts/a.md"), file("context.md")],
-      loading: false, error: null, refresh: () => {},
+  it("readOnly：清单与产出摘要照常渲染，「打开产物」回调可用", () => {
+    const open = vi.fn()
+    const manifest: ArtifactManifestBody = {
+      phases: [{
+        index: 1, name: "阶段1", slug: "slug-1", dir: ".scratch/demo/slug-1",
+        status: "accepted", currentRound: null, acceptedRound: null, items: [], rounds: [],
+      }],
+      unassigned: [], prototype: [],
     }
-    renderReadOnly(makeTask({ status: "ready", task_spec: { format: "v4", phases: [makePhase(1)] } as unknown as TaskSpec }), home)
+    renderReadOnly(
+      makeTask({ status: "ready", task_spec: { format: "v4", phases: [makePhase(1)] } as unknown as TaskSpec }),
+      manifest, undefined, open,
+    )
     expect(q('[data-checklist-v4="phases"]')!.textContent).toContain("✓")
     expect(q('[data-checklist-v4="repos"]')!.textContent).toContain("✓")
-    expect(q('[data-artifacts-file="context.md"]')).toBeTruthy()
-    await user.click(q('[data-artifacts-file="context.md"]')!)
-    await waitFor(() => expect(document.body.textContent).toContain("磁盘正文"))
-    expect(getHomeContent).toHaveBeenCalledWith("test-task", "context.md")
+    expect(q('[data-phase-summary="1"]')).toBeTruthy()
+    fireEventClick(q("[data-artifacts-open]")!)
+    expect(open).toHaveBeenCalledOnce()
   })
 
   it("缺省（不传 readOnly）草稿态逐字不变：＋添加/编辑入口/开关（传入时）都在场", () => {
     render(
       <SpecPanel
         task={makeTask({ task_spec: { format: "v4", phases: [makePhase(1)] } as unknown as TaskSpec })}
-        onMutated={() => {}} batchTree={emptyTree} rows={allOk} gateHits={noHits} home={emptyHome} autoRow={AUTO_ROW}
+        onMutated={() => {}} batchTree={emptyTree} rows={allOk} gateHits={noHits} autoRow={AUTO_ROW}
       />,
     )
     expect(q("[data-phase-add-open]")).toBeTruthy()

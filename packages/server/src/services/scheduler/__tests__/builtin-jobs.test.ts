@@ -66,7 +66,6 @@ describe("seedBuiltinCodeJobs", () => {
     expect(res.repaired).toEqual([])
     const r = row(builtinJobId(TASK_LIFECYCLE_HANDLER))!
     expect(r.job_type).toBe("job")
-    expect(r.org).toBe("xzf")
     expect(configOf(builtinJobId(TASK_LIFECYCLE_HANDLER)).handler).toBe(TASK_LIFECYCLE_HANDLER)
     expect(BUILTIN_CODE_JOBS.length).toBeGreaterThan(0)
   })
@@ -192,7 +191,7 @@ describe("the built-in task-lifecycle handler", () => {
 
   it("the fallback says plainly that nothing is wired, rather than silently doing nothing", async () => {
     const outcome = await unboundTaskLifecycleHandler({
-      scheduleId: "s", jobName: "n", org: "", fireId: "f", args: {},
+      scheduleId: "s", jobName: "n", repo_group: "", fireId: "f", args: {},
       signal: new AbortController().signal, startedAtMs: Date.now(),
     })
     expect(outcome?.summary).toContain("未接线")

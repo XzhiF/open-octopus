@@ -17,14 +17,7 @@ vi.mock("@/lib/server-config", () => ({
   getServerUrl: () => "http://localhost:3001",
 }))
 
-// Mock next/navigation useRouter
 const mockPush = vi.fn()
-vi.mock("next/navigation", () => ({
-  useRouter: () => ({ push: mockPush }),
-  useParams: () => ({}),
-  useSearchParams: () => new URLSearchParams(),
-}))
-
 // Mock chatbot's fetch calls
 const mockFetch = vi.fn()
 vi.stubGlobal("fetch", mockFetch)
@@ -213,12 +206,10 @@ describe("HarnessFloatingPanel", () => {
     fireEvent.mouseDown(collapsed, { clientX: 100, clientY: 100 })
     fireEvent.mouseUp(collapsed, { clientX: 100, clientY: 100 })
 
-    // Expanded panel should show tabs
+    // Expanded panel should show tabs（当前形制：Workflow / Harness 两页签）
     await waitFor(() => {
       expect(screen.getByText("Workflow")).toBeDefined()
       expect(screen.getByText("Harness")).toBeDefined()
-      expect(screen.getByText("Events")).toBeDefined()
-      expect(screen.getByText("Chatbot")).toBeDefined()
     })
   })
 

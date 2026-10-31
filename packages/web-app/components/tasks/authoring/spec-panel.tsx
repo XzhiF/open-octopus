@@ -1,14 +1,13 @@
 // packages/web-app/components/tasks/authoring/spec-panel.tsx
 //
-// 草稿工作台右栏 = 原型 chat-tui.html #outcol 的 1:1 落地（2026-09-24
-// 「spec panel 完全按原型」拍板）：
+// 草稿工作台「规格」窗口（2026-10-29 方案2）：
 //
 //   h4 phases ＋添加          ← 卡片 .ph（badge + 名称 + · spec 目录 · 绑定），
 //                               点击 = 缩放弹窗编辑（无留空占位、无内联表单）
 //   h4 入队清单               ← .chk ✓/✗ 行（server gateV4Phases 同源数据）
-//   h4 输出区 [↻]             ← 任务 home（~/.octopus/tasks/<id>）磁盘直扫目录树
-//                               （2026-09-24 拍板：完整路径 + 目录如实显示，
-//                               「更多」弹窗退役）；点击文件 = 只读查看弹窗。
+//   h4 产出摘要 [打开产物 →]  ← 每个 phase 一行：spec / 票数 / 最新轮 / 验收态
+//
+// 「输出区」已退役：规格是写配置的面，结果面统一归「产物」窗口（phase × 轮次）。
 //
 // phases 写回仍走 withPhases（S5 纪律：fresh version + 整数组 PUT）。
 
@@ -24,9 +23,9 @@ import type { Task, TaskPhase } from "@octopus/shared"
 import { listWorkflowPresets, type WorkflowPreset } from "@/lib/workflow-presets-api"
 import { PhaseSpecDialog, normalizeRel } from "./phase-spec-dialog"
 import { WorkflowBindingDialog } from "./phase-binding-dialog"
-import { HomeFileViewerDialog, type HomeFileViewerTarget } from "./home-file-viewer-dialog"
 import { findSpecEntry, isRelativeScratchSpec, type BatchTreeState } from "./use-batch-tree"
-import type { HomeTreeState } from "./use-home-tree"
+import { expertLabel } from "@/lib/expert-roles"
+import type { ArtifactManifestBody, ArtifactManifestPhase } from "@/lib/types"
 import {
   DEFAULT_NEW_WORKFLOW,
   SLUG_RE,
@@ -60,21 +59,49 @@ export interface SpecPanelProps {
   batchTree: BatchTreeState
   rows: SpecPanelRows
   gateHits: Record<"phases" | "spec" | "bind" | "inputs" | "repos" | "runbook", string[]>
-  /** 任务 home 磁盘直扫树（父级持有刷新通路：R1 写侦测/轮次兜底/SSE/[↻]）。 */
-  home: HomeTreeState
+  /** 产物清单（父级拉取；只用于「产出摘要」的件数/轮次/验收态）。 */
+  artifacts?: ArtifactManifestBody | null
+  /** 「打开产物 →」= 由窗口层切到产物模块（外部窗口没有该入口时留空）。 */
+  onOpenArtifacts?: () => void
   /** autoAdvance 开关行（父级持有写回逻辑，按原型 dim 风格传入）。 */
   autoRow?: ReactNode
   /** 票09 单源换装（原型⓬ readySpecHtml「草稿期 SpecPanel 只读镜像」）：
    *  true = 全部写动作**不渲染** —— ＋添加 / 点卡编辑 / spec·绑定入口 /
    *  auto_advance 开关行（autoRow 传入也隐）；onMutated 在场但无处可触发。
-   *  只读查看面照常：批次树文件点击开 HomeFileViewerDialog、[↻] 磁盘重扫
-   *  （纯读端点）、清单 ✓/✗ 如实渲染。缺省 false = 草稿工作台逐字不变。 */
+   *  只读查看面照常：清单 ✓/✗ 如实渲染、产出摘要与「打开产物」可用。
+   *  缺省 false = 草稿工作台逐字不变。 */
   readOnly?: boolean
+}
+
+const PHASE_SUMMARY_STATUS: Record<ArtifactManifestPhase["status"], { label: string; cls: string }> = {
+  pending: { label: "待执行", cls: "text-pop-dim" },
+  running: { label: "运行中", cls: "text-pop-cyan" },
+  awaiting_review: { label: "待验收", cls: "text-pop-amber" },
+  accepted: { label: "已验收", cls: "text-pop-green" },
+}
+
+/** 一个 phase 的产出摘要（spec ✓ / 票数 / 最新轮 / 验收态）。 */
+function phaseSummary(phase: ArtifactManifestPhase): Array<{ text: string; cls?: string }> {
+  const all = [...phase.items, ...phase.rounds.flatMap((r) => r.items)]
+  const hasSpec = all.some((i) => i.kind === "spec")
+  const tickets = all.filter((i) => i.kind === "ticket").length
+  const reports = all.filter((i) => i.kind === "report" || i.kind === "fix").length
+  const evidence = all.filter((i) => i.kind === "evidence").length
+  const latest = phase.rounds.length > 0 ? `r${phase.rounds[phase.rounds.length - 1].round}` : null
+  const status = PHASE_SUMMARY_STATUS[phase.status] ?? PHASE_SUMMARY_STATUS.pending
+  return [
+    { text: hasSpec ? "spec ✓" : "spec —", cls: hasSpec ? "text-pop-green" : "text-pop-dim" },
+    { text: `票 ${tickets}` },
+    { text: `报告 ${reports}` },
+    { text: `证据 ${evidence}` },
+    { text: latest ?? "未开轮" },
+    { text: status.label, cls: status.cls },
+  ]
 }
 
 const dirOf = (p: string): string => normalizeRel(p).replace(/\/[^/]*$/, "/")
 
-export function SpecPanel({ task, onMutated, batchTree, rows, gateHits, home, autoRow, readOnly }: SpecPanelProps) {
+export function SpecPanel({ task, onMutated, batchTree, rows, gateHits, artifacts, onOpenArtifacts, autoRow, readOnly }: SpecPanelProps) {
   const spec = task.task_spec
   const phases = spec.phases ?? []
   const isDraft = task.status === "draft"
@@ -83,7 +110,6 @@ export function SpecPanel({ task, onMutated, batchTree, rows, gateHits, home, au
   const [formAnchor, setFormAnchor] = useState<Element | null>(null)
   const [specTarget, setSpecTarget] = useState<TaskPhase | null>(null)
   const [bindIdx, setBindIdx] = useState<number | null>(null)
-  const [viewing, setViewing] = useState<HomeFileViewerTarget | null>(null)
   const [busy, setBusy] = useState(false)
 
   // 结构动作串行闸（连点不叠 PUT）。
@@ -180,7 +206,17 @@ export function SpecPanel({ task, onMutated, batchTree, rows, gateHits, home, au
     },
     { id: "inputs", ok: rows.rowInputs, hits: gateHits.inputs, label: "inputs 齐", value: "必填非空/占位符" },
     { id: "runbook", ok: rows.rowRunbook, hits: gateHits.runbook, label: "runbook 内容", value: "起停 up∧ready ∨ preview ∨ verify" },
-    { id: "repos", ok: rows.rowRepos, hits: gateHits.repos, label: "项目仓库", value: `${task.org || "—"} · ${(task.project_ids ?? []).length} 项目` },
+    {
+      id: "repos",
+      ok: rows.rowRepos,
+      hits: gateHits.repos.length > 0
+        ? gateHits.repos
+        : rows.rowRepos
+          ? []
+          : ["未绑定项目：执行前需要至少选择一个项目（执行环境要挂 worktree）"],
+      label: "项目仓库",
+      value: `${task.repo_group || "—"} · ${(task.project_ids ?? []).length} 项目`,
+    },
   ] as const
 
   return (
@@ -253,6 +289,11 @@ export function SpecPanel({ task, onMutated, batchTree, rows, gateHits, home, au
                   </li>
                 </>
               )}
+              {(p.experts?.length ?? 0) > 0 && (
+                <li className="text-pop-purple">
+                  · 专家 {p.experts!.map((id) => expertLabel(id)).join(" / ")}
+                </li>
+              )}
             </ul>
           </>
         )
@@ -312,38 +353,42 @@ export function SpecPanel({ task, onMutated, batchTree, rows, gateHits, home, au
         {!readOnly && autoRow && <div className="mx-3.5 my-1 text-[11px] text-pop-dim" data-autoadvance-row>{autoRow}</div>}
       </div>
 
-      {/* ── 输出区 = 任务 home 磁盘直扫树 ──
-          [↻] 是纯读重扫（GET home-tree），readOnly 态保留；写动作另有闸。 */}
+      {/* ── 产出摘要 = 每 phase 一行（2026-10-29 方案2）──
+          规格是写配置的面；文件树、轮次细节统一归「产物」窗口。 */}
       <h4 className="flex items-center px-3.5 pb-1.5 pt-3 text-[10px] uppercase tracking-[.08em] font-normal text-pop-dim">
-        输出区
-        <button
-          type="button"
-          data-artifacts-refresh
-          onClick={() => home.refresh()}
-          className="ml-auto rounded border border-pop-bd px-2 text-[12px] normal-case tracking-normal text-pop-dim transition-colors hover:border-pop-pink hover:text-pop-pink"
-          title="重扫磁盘"
-        >
-          ↻
-        </button>
+        产出摘要
+        {onOpenArtifacts && (
+          <button
+            type="button"
+            data-artifacts-open
+            onClick={onOpenArtifacts}
+            className="ml-auto rounded border border-pop-bd px-2 text-[12px] normal-case tracking-normal text-pop-dim transition-colors hover:border-pop-pink hover:text-pop-pink"
+            title="打开产物窗口（按 phase × 轮次）"
+          >
+            打开产物 →
+          </button>
+        )}
       </h4>
-      <div
-        className="mx-3.5 mb-3 min-h-[90px] shrink-0 rounded-md border border-dashed border-pop-bd p-2.5 font-mono text-[11.5px] text-pop-dim"
-        data-spec-outview
-      >
-        <div className="break-all text-[10px] leading-4 text-pop-dim" data-home-dir>
-          {home.dir ?? "…/tasks/…"}
-        </div>
-        {home.error && (
-          <span data-artifacts-error className="text-pop-red">{home.error}</span>
-        )}
-        {!home.error && home.loading && home.entries.length === 0 && (
-          <span className="inline-flex items-center gap-1.5"><Spinner className="size-3" /> 扫描中…</span>
-        )}
-        {!home.error && !home.loading && home.entries.length === 0 && (
-          <span data-artifacts-empty>（空目录）</span>
-        )}
-        {home.entries.length > 0 && (
-          <HomeTree entries={home.entries} onOpen={setViewing} />
+      <div className="mx-3.5 mb-3 rounded-md border border-pop-bd bg-pop-paper px-2.5 py-2" data-spec-output-summary>
+        {phases.length === 0 ? (
+          <p className="text-[11px] text-pop-dim">尚无 phase —— 产出摘要随 phase 出现。</p>
+        ) : (
+          phases.map((p) => {
+            const summary = artifacts?.phases.find((a) => a.index === p.index) ?? null
+            const cells = summary ? phaseSummary(summary) : null
+            return (
+              <div key={p.index} className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5 py-0.5 text-[11px]" data-phase-summary={p.index}>
+                <span className="shrink-0 font-semibold text-pop-ink">P{p.index} {p.name}</span>
+                {cells ? (
+                  cells.map((cell, i) => (
+                    <span key={i} className={cell.cls ?? "text-pop-dim"}>{cell.text}</span>
+                  ))
+                ) : (
+                  <span className="text-pop-dim">{artifacts ? "暂无产物" : "产物读取中…"}</span>
+                )}
+              </div>
+            )
+          })
         )}
       </div>
 
@@ -379,137 +424,6 @@ export function SpecPanel({ task, onMutated, batchTree, rows, gateHits, home, au
           onOpenChange={(o) => { if (!o) setSpecTarget(null) }}
         />
       )}
-
-      {viewing && (
-        <HomeFileViewerDialog
-          taskId={task.id}
-          target={viewing}
-          onOpenChange={(o) => { if (!o) setViewing(null) }}
-        />
-      )}
-    </div>
-  )
-}
-
-// ── 任务 home 磁盘直扫树 ──────────────────────────────────────────────
-// 数据 = GET /:id/home-tree（原始递归列表：path 为 home 相对 posix，目录带尾
-// "/"，空目录也在列）。服务端已按层排序（目录在前 + 名字）、DFS 序父先于子 ——
-// 前端保序挂树即可。点击文件 = 只读查看弹窗。
-
-interface HNode {
-  name: string
-  path: string
-  type: "dir" | "file"
-  bytes: number
-  mtime: string
-  children: HNode[]
-}
-
-function buildHomeTree(entries: Array<{ path: string; type: "dir" | "file"; bytes: number; mtime: string }>): HNode[] {
-  const roots: HNode[] = []
-  const dirs = new Map<string, HNode>()
-  for (const e of entries) {
-    const isDir = e.type === "dir"
-    // 目录 path 带尾 "/" —— 先剥掉再取段名/父前缀，否则名字为空。
-    const clean = isDir ? e.path.replace(/\/$/, "") : e.path
-    const idx = clean.lastIndexOf("/")
-    const node: HNode = {
-      name: idx >= 0 ? clean.slice(idx + 1) : clean,
-      path: e.path,
-      type: e.type,
-      bytes: e.bytes,
-      mtime: e.mtime,
-      children: [],
-    }
-    const parentPrefix = idx >= 0 ? clean.slice(0, idx + 1) : ""
-    const parent = parentPrefix ? dirs.get(parentPrefix) : undefined
-    if (parent) parent.children.push(node)
-    else roots.push(node)
-    if (isDir) dirs.set(e.path, node)
-  }
-  return roots
-}
-
-function HomeTreeRec({ nodes, prefix, collapsed, onToggle, onOpen }: {
-  nodes: HNode[]
-  prefix: string
-  collapsed: Set<string>
-  onToggle: (path: string) => void
-  onOpen: (n: HNode) => void
-}) {
-  return (
-    <>
-      {nodes.map((n, i) => {
-        const isLast = i === nodes.length - 1
-        const guide = isLast ? "└─ " : "├─ "
-        const childPrefix = isLast ? "   " : "│  "
-        if (n.type === "dir") {
-          const closed = collapsed.has(n.path)
-          return (
-            <div key={n.path}>
-              <button
-                type="button"
-                data-artifacts-dir={n.path}
-                onClick={() => onToggle(n.path)}
-                title={n.path}
-                className="block w-full truncate border-0 bg-transparent p-0 text-left text-pop-ink hover:text-pop-pink"
-              >
-                <span className="text-pop-dim">{prefix}{guide}</span>{closed ? "▸ " : "▾ "}{n.name}/
-              </button>
-              {!closed && (
-                <HomeTreeRec
-                  nodes={n.children}
-                  prefix={`${prefix}${childPrefix}`}
-                  collapsed={collapsed}
-                  onToggle={onToggle}
-                  onOpen={onOpen}
-                />
-              )}
-            </div>
-          )
-        }
-        return (
-          <div key={n.path}>
-            <button
-              type="button"
-              data-artifacts-file={n.path}
-              onClick={() => onOpen(n)}
-              title={n.path}
-              className="block w-full truncate border-0 bg-transparent p-0 text-left hover:underline"
-            >
-              <span className="text-pop-dim">{prefix}{guide}</span>
-              <span className="text-pop-green">{n.name}</span>
-              <span className="ml-1.5 text-[10px] text-pop-dim">{n.mtime.slice(5, 16).replace("T", " ")}{n.bytes > 0 ? ` · ${n.bytes}B` : ""}</span>
-            </button>
-          </div>
-        )
-      })}
-    </>
-  )
-}
-
-function HomeTree({ entries, onOpen }: {
-  entries: Array<{ path: string; type: "dir" | "file"; bytes: number; mtime: string }>
-  onOpen: (t: HomeFileViewerTarget) => void
-}) {
-  const [collapsed, setCollapsed] = useState<Set<string>>(new Set())
-  const roots = useMemo(() => buildHomeTree(entries), [entries])
-  const toggle = (p: string) =>
-    setCollapsed((prev) => {
-      const next = new Set(prev)
-      if (next.has(p)) next.delete(p)
-      else next.add(p)
-      return next
-    })
-  return (
-    <div data-artifacts-tree className="leading-[1.7]">
-      <HomeTreeRec
-        nodes={roots}
-        prefix=""
-        collapsed={collapsed}
-        onToggle={toggle}
-        onOpen={(n) => onOpen({ path: n.path, bytes: n.bytes })}
-      />
     </div>
   )
 }

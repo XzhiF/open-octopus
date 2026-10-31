@@ -2,7 +2,8 @@
 
 import { Repeat, Check, X, Circle, Loader2, ArrowUp, ArrowDown } from "lucide-react"
 import type { NodeProps } from "@xyflow/react"
-import { Handle, Position } from "@xyflow/react"
+import { DagSourceHandle, DagTargetHandle } from "./dag-handles"
+import type { DagOrientation } from "@/lib/dag-orientation"
 import { cn } from "@/lib/utils"
 import { Badge } from "@/components/ui/badge"
 import { formatTokenCount } from "@/lib/format"
@@ -17,6 +18,7 @@ interface LoopContainerData {
   innerNodeIds?: string[]
   loopIterations?: LoopIterationSummary
   statusOverlay?: StatusOverlay
+  dagOrientation?: DagOrientation
   isCurrent?: boolean
   isActive?: boolean
   [key: string]: unknown
@@ -159,7 +161,7 @@ export function LoopContainerNode({ data, selected }: NodeProps) {
           showMarchingAnts && "border-running",
         )}
       >
-      <Handle type="target" position={Position.Top} className="!bg-muted-foreground !w-3 !h-3" />
+      <DagTargetHandle orientation={loopData.dagOrientation} size="small" />
       {/* Header */}
       <div
         className={cn(
@@ -196,7 +198,7 @@ export function LoopContainerNode({ data, selected }: NodeProps) {
 
       {/* Body — React Flow renders child nodes here via parentId */}
       <div className="p-2 min-h-[80px]" />
-      <Handle type="source" position={Position.Bottom} className="!bg-muted-foreground !w-3 !h-3" />
+      <DagSourceHandle orientation={loopData.dagOrientation} size="small" />
     </div>
     </>
   )

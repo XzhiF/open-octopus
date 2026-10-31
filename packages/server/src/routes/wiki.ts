@@ -219,7 +219,7 @@ export function createWikiRoutes(
     try {
       const legacyOrg = c.req.query("org") || undefined
       const wikiRoot = resolveWikiRootCompat(legacyOrg, opts?.rootDir, opts?.octopusHome)
-      const rows = articles.listByOrg(GLOBAL_WIKI_ORG)
+      const rows = articles.listAll()
 
       const stats = {
         entries: rows.filter(r => r.domain !== "cases").length,
@@ -266,7 +266,7 @@ export function createWikiRoutes(
 
       // 「待审核」统计已随审批废除摘除（spec 故事 10；票11 裁定④/票09 应清而未清，
       // code-review P3 收口）——tree 响应不再含 pendingReview 字样，契约负断言见 wiki-routes.test.ts。
-      return c.json({ org: GLOBAL_WIKI_ORG, domains, stats, log: readWikiLog(wikiRoot), index: readWikiIndex(wikiRoot) })
+      return c.json({ domains, stats, log: readWikiLog(wikiRoot), index: readWikiIndex(wikiRoot) })
     } catch (err) {
       const { body, status } = errorResponse(err, "wiki.tree")
       return c.json(body, status)
@@ -284,14 +284,13 @@ export function createWikiRoutes(
     try {
       const legacyOrg = c.req.query("org") || undefined
       const wikiRoot = resolveWikiRootCompat(legacyOrg, opts?.rootDir, opts?.octopusHome)
-      const row = articles.get(GLOBAL_WIKI_ORG, id)
+      const row = articles.get(id)
       if (!row) {
         return c.json({ error: { code: "NOT_FOUND", message: "Wiki entry not found" } }, 404)
       }
       const anchors = extractRuleAnchors(row.body)
       return c.json({
         id: row.id,
-        org: row.org,
         domain: row.domain,
         title: row.title,
         summary: row.summary,
@@ -337,17 +336,17 @@ export function createWikiRoutes(
       let mode: "fts" | "like" = "fts"
       let hits: ReturnType<WikiArticleDAO["search"]> = []
       try {
-        hits = articles.search(GLOBAL_WIKI_ORG, q, topK, domain)
+        hits = articles.search(q, topK, domain)
       } catch {
         hits = []
       }
       if (hits.length === 0) {
-        hits = articles.searchLike(GLOBAL_WIKI_ORG, q, topK, domain)
+        hits = articles.searchLike(q, topK, domain)
         mode = "like"
       }
 
       const results = hits.map(r => {
-        const full = articles.get(GLOBAL_WIKI_ORG, r.id)
+        const full = articles.get(r.id)
         const { snippet, anchors } = locateQueryHits(full?.body ?? "", q)
         const caseFields = r.domain === "cases" ? caseFieldsFor(wikiRoot, r.path) : null
         return {
@@ -365,7 +364,7 @@ export function createWikiRoutes(
       }
       for (const r of results) delete (r as { _score?: number })._score
 
-      return c.json({ org: GLOBAL_WIKI_ORG, query: q, mode, results })
+      return c.json({ query: q, mode, results })
     } catch (err) {
       const { body, status } = errorResponse(err, "wiki.search")
       return c.json(body, status)

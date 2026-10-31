@@ -142,6 +142,10 @@ export const taskPhaseSchema = z.object({
   specPath: z.string().min(1),
   workflowRef: WorkflowRef.zodSchema(),
   inputValues: z.record(z.string().min(1), z.string().min(1).max(2048)).default({}),
+  /** Fixed expert roster for this phase (clone names). The task-author proposes
+   *  it in draft; it is displayed in the task chat and injected as the phase's
+   *  expert context at execution. Locked at enqueue. */
+  experts: z.array(z.string().min(1).max(100)).max(12).optional(),
   // @deprecated（2026-10-10 ADR-0028：入队闸⑤「人工确认绑定」废除 —— 绑定存在
   // 且可解析即视为已确认）。字段保留 optional 仅为 wire 兼容（老任务行/老请求带
   // 本字段仍可解析）；server 不再检查其值，web 也不再读写。
@@ -157,7 +161,8 @@ export const taskPhaseSchema = z.object({
  *  defaults to 600 server-side, hard-capped at 1800. Edge: the bash runner
  *  substitutes literal `$vars.` / `${x|filter}` sequences — avoid them in
  *  commands. A spec-field (whitelisted) so it is bindable/patchable at
- *  awaiting_review time (v4 spec stays editable until done/aborted/archiving). */
+ *  awaiting_review time (v4 spec stays editable until done/aborted/archiving, or
+ *  the derived awaiting_archive park after final acceptance). */
 export const acceptanceVerifySchema = z.object({
   command: z.string().min(1).max(4000),
   cwd: z.string().max(500).optional(),
@@ -424,7 +429,6 @@ export interface SchedulerJob {
   cron_expression: string | null
   timezone: string
   enabled: boolean
-  org?: string
   config: JobConfig
   parallel_policy: ParallelPolicy
   timeout_seconds: number
@@ -451,7 +455,6 @@ export interface CreateJobInput {
   job_type: JobType
   cron_expression: string | null
   timezone: string
-  org?: string
   config: JobConfig
   parallel_policy?: ParallelPolicy
   timeout_seconds?: number
@@ -476,8 +479,7 @@ export interface ListJobsParams {
   search?: string
   status?: 'enabled' | 'disabled' | 'failed'
   job_type?: JobType
-  org?: string
-  /** Scope the list to one workspace's org (the scheduler page per-workspace view). */
+  /** Scope the list to one workspace (the scheduler page per-workspace view). */
   workspace_id?: string
   sort?: 'next_trigger_at' | 'name' | 'created_at'
   order?: 'asc' | 'desc'

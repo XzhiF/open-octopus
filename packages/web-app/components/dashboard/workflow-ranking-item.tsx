@@ -1,7 +1,7 @@
 "use client"
 
 import { useState } from "react"
-import Link from "next/link"
+import Link from "@/lib/app-navigation"
 import { formatTokenCount, formatCost } from "@/lib/format"
 import { LEADERBOARD_MAX_VISIBLE_MODELS } from "@/lib/constants"
 import type { ExecutionRanking } from "@/lib/types"

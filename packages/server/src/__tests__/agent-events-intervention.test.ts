@@ -42,7 +42,7 @@ beforeEach(() => {
   setExecutionDependencies(new SSEService(), new ObservabilityService(db, new PrivacyFilter(), dao), dao, new TokenUsageDAO(db))
 
   db.prepare(
-    `INSERT INTO workspaces (id, name, org, path, source, status, created_at, updated_at)
+    `INSERT INTO workspaces (id, name, repo_group, path, source, status, created_at, updated_at)
      VALUES (?, 'ws-iv', 'org-iv', '/tmp/ws-iv', 'task', 'active', datetime('now'), datetime('now'))`,
   ).run(WS)
   db.prepare(

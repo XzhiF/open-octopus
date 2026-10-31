@@ -75,7 +75,7 @@ describe("EvolutionDAO.listByExecutionId", () => {
       skill_name: "harness-det1",
       content: "intervention 1",
       source_session_id: null,
-      org: "default",
+      repo_group: "default",
       created_at: "2024-01-01T00:00:00Z",
       scope: "harness",
       scope_ref: "deterministic_error",
@@ -89,7 +89,7 @@ describe("EvolutionDAO.listByExecutionId", () => {
       skill_name: "harness-det1",
       content: "intervention 2",
       source_session_id: null,
-      org: "default",
+      repo_group: "default",
       created_at: "2024-01-01T00:00:01Z",
       scope: "harness",
       scope_ref: "deterministic_error",
@@ -104,7 +104,7 @@ describe("EvolutionDAO.listByExecutionId", () => {
       skill_name: "harness-det1",
       content: "other exec",
       source_session_id: null,
-      org: "default",
+      repo_group: "default",
       created_at: "2024-01-01T00:00:02Z",
       scope: "harness",
       scope_ref: "deterministic_error",
@@ -130,7 +130,7 @@ describe("EvolutionDAO.listByExecutionId", () => {
       skill_name: "harness-det1",
       content: "pending one",
       source_session_id: null,
-      org: "default",
+      repo_group: "default",
       created_at: "2024-01-01T00:00:00Z",
       scope: "harness",
       scope_ref: "deterministic_error",
@@ -144,7 +144,7 @@ describe("EvolutionDAO.listByExecutionId", () => {
       skill_name: "harness-det1",
       content: "success one",
       source_session_id: null,
-      org: "default",
+      repo_group: "default",
       created_at: "2024-01-01T00:00:01Z",
       scope: "harness",
       scope_ref: "deterministic_error",
@@ -328,7 +328,7 @@ describe("Cold start protection (AC-6)", () => {
         skill_name: `harness-det-${i}`,
         content: `intervention ${i}`,
         source_session_id: null,
-        org: "default",
+        repo_group: "default",
         created_at: "2024-01-01T00:00:00Z",
         scope: "harness",
         scope_ref: "deterministic_error",
@@ -340,7 +340,7 @@ describe("Cold start protection (AC-6)", () => {
       })
     }
 
-    const stats = dao.getSuccessStats("default", "harness", "deterministic_error")
+    const stats = dao.getSuccessStats("harness", "deterministic_error")
     const totalDataPoints = Object.values(stats.decisionStats).reduce((sum, s) => sum + s.total, 0)
 
     expect(totalDataPoints).toBe(3)
@@ -358,7 +358,7 @@ describe("Cold start protection (AC-6)", () => {
         skill_name: `harness-det-${i}`,
         content: `intervention ${i}`,
         source_session_id: null,
-        org: "default",
+        repo_group: "default",
         created_at: "2024-01-01T00:00:00Z",
         scope: "harness",
         scope_ref: "deterministic_error",
@@ -370,7 +370,7 @@ describe("Cold start protection (AC-6)", () => {
       })
     }
 
-    const stats = dao.getSuccessStats("default", "harness", "deterministic_error")
+    const stats = dao.getSuccessStats("harness", "deterministic_error")
     const totalDataPoints = Object.values(stats.decisionStats).reduce((sum, s) => sum + s.total, 0)
 
     expect(totalDataPoints).toBe(6)

@@ -1,5 +1,6 @@
 import type { Node, Edge } from "@xyflow/react"
 import dagre from "@dagrejs/dagre"
+import type { DagOrientation } from "./dag-orientation"
 
 interface WorkflowNode {
   id: string
@@ -41,6 +42,19 @@ function getNodeDimensions(node: WorkflowNode): { width: number; height: number 
   }
 }
 
+// ─── 主干布局：横向 —— 阶段从左往右（2026-10-30 用户定稿）───
+// 方向字面量与 lib/dag-orientation 同源：dagre 的 rankdir 决定流向，流向又被写进
+// 每个节点的 data.dagOrientation，节点组件据此决定进出边挂哪条边。
+const TOP_LAYOUT_RANKDIR: DagOrientation = "LR"
+const TOP_LAYOUT_PADDING = 50
+// LR 下 ranksep = 沿流向的列间距（要给 smoothstep 的折线留道），
+// nodesep = 同层并行分支的行间距（节点高 160~200，64 已足够分开两条分支）。
+const TOP_LAYOUT_RANKSEP = 120
+const TOP_LAYOUT_NODESEP = 64
+// 跨多 rank 的跳边（skip edge）会直穿中间 rank 的节点身体 —— 把中间节点沿
+// **垂直于流向**的轴挪开：TB 时横向挪，LR 时纵向挪。
+const SKIP_EDGE_SIDE_OFFSET = 150
+
 /**
  * Compute rank per node (longest path from any root).
  * Used to detect skip edges — edges that span more than one rank.
@@ -81,17 +95,18 @@ function computeRanks(workflowNodes: WorkflowNode[]): Record<string, number> {
 
 /**
  * Use dagre for DAG layout — minimizes edge crossings automatically.
- * After dagre computes positions, skip-edge intermediate nodes are offset right
- * so long-range edges don't pass through node bodies.
+ * After dagre computes positions, skip-edge intermediate nodes are offset along
+ * the axis perpendicular to the flow so long-range edges don't pass through node
+ * bodies.
  */
 function dagreLayout(
   workflowNodes: WorkflowNode[],
   edges: Edge[],
-  options?: { rankdir?: "TB" | "LR"; padding?: number; nodesep?: number; ranksep?: number },
+  options?: { rankdir?: DagOrientation; padding?: number; nodesep?: number; ranksep?: number },
   dimensionOverrides?: Map<string, { width: number; height: number }>
 ): Record<string, { x: number; y: number }> {
   const {
-    rankdir = "TB",
+    rankdir = TOP_LAYOUT_RANKDIR,
     padding = 50,
     nodesep = 100,
     ranksep = 70,
@@ -138,7 +153,10 @@ function dagreLayout(
     }
   }
 
-  // Detect skip edges and offset intermediate nodes right
+  // Detect skip edges and offset intermediate nodes off the edge's straight path
+  const sideOffset = rankdir === "LR"
+    ? { x: 0, y: SKIP_EDGE_SIDE_OFFSET }   // 流向水平 → 中间节点向下让开
+    : { x: SKIP_EDGE_SIDE_OFFSET, y: 0 }   // 流向垂直 → 中间节点向右让开
   for (const edge of edges) {
     const srcRank = nodeRank.get(edge.source)
     const tgtRank = nodeRank.get(edge.target)
@@ -147,7 +165,8 @@ function dagreLayout(
 
     for (const [id, data] of positions) {
       if (data.rank > srcRank && data.rank < tgtRank) {
-        data.x += 150
+        data.x += sideOffset.x
+        data.y += sideOffset.y
       }
     }
   }
@@ -201,7 +220,10 @@ export function yamlToFlowData(
   }
 
   // ─── Inner dagre layout constants ───
-  const INNER_LAYOUT_RANKDIR = "TB" as const
+  // 容器体内**保持纵向**，与横向主干刻意相反：一个装了 10 张 ticket 的子工作流若也
+  // 走 LR，容器盒子会被撑成 ~3000px 宽，反过来把主干挤没；纵向把体内压成主干上的
+  // 一列，宽高都留在可读区间。理由见 lib/dag-orientation 顶部注释。
+  const INNER_LAYOUT_RANKDIR: DagOrientation = "TB"
   const INNER_LAYOUT_PADDING = 20
   const INNER_LAYOUT_NODESEP = 40
   const INNER_LAYOUT_RANKSEP = 60
@@ -394,7 +416,13 @@ export function yamlToFlowData(
   }
 
   // ─── Top-level dagre layout with ACTUAL container dimensions ───
-  const topPositions = dagreLayout(topWorkflowNodes, outerEdges, undefined, containerSizes)
+  // 横向主干：A → B → C 从左往右排，同一层的并行分支按行上下铺开。
+  const topPositions = dagreLayout(topWorkflowNodes, outerEdges, {
+    rankdir: TOP_LAYOUT_RANKDIR,
+    padding: TOP_LAYOUT_PADDING,
+    nodesep: TOP_LAYOUT_NODESEP,
+    ranksep: TOP_LAYOUT_RANKSEP,
+  }, containerSizes)
 
   // ─── Build inner nodes at ABSOLUTE positions (no parentId) ───
   const allInnerNodes: Node[] = []
@@ -434,6 +462,8 @@ export function yamlToFlowData(
         data: {
           id: innerWfNode.id,
           type: nodeType,
+          // 体内节点纵向：进出边挂顶/底边（容器外壳本身是主干的一部分，走 LR）
+          dagOrientation: INNER_LAYOUT_RANKDIR,
           name: origNode?.description || origId,
           command: origNode?.command,
           script: origNode?.script,
@@ -476,6 +506,7 @@ export function yamlToFlowData(
             data: {
               id: childWfNode.id,
               type: childWfNode.type,
+              dagOrientation: INNER_LAYOUT_RANKDIR,
               name: childOrigId,
               command: childWfNode.command,
               script: childWfNode.script,
@@ -518,6 +549,8 @@ export function yamlToFlowData(
       data: {
         id: node.id,
         type: containerType,
+        // 主干节点横向：进出边挂左/右边（容器体内自己是例外，见上面 INNER_LAYOUT_RANKDIR）
+        dagOrientation: TOP_LAYOUT_RANKDIR,
         name: node.description || node.id,
         command: node.command,
         script: node.script,

@@ -2,9 +2,10 @@
 
 import * as React from 'react'
 import * as SheetPrimitive from '@radix-ui/react-dialog'
-import { XIcon } from 'lucide-react'
 
 import { cn } from '@/lib/utils'
+import { CloseLightGlyph, closeLightButtonClass } from '@/components/ui/close-light'
+import { DialogResizeHandles } from '@/components/ui/dialog-resize'
 
 function Sheet({ ...props }: React.ComponentProps<typeof SheetPrimitive.Root>) {
   return <SheetPrimitive.Root data-slot="sheet" {...props} />
@@ -49,9 +50,11 @@ function SheetContent({
   className,
   children,
   side = 'right',
+  showCloseButton = true,
   ...props
 }: React.ComponentProps<typeof SheetPrimitive.Content> & {
   side?: 'top' | 'right' | 'bottom' | 'left'
+  showCloseButton?: boolean
 }) {
   return (
     <SheetPortal>
@@ -74,11 +77,15 @@ function SheetContent({
         {...props}
       >
         {children}
-        {/* 关闭方糖：与 dialog.tsx / terminal 导航条完全同款（19px 红实心）。 */}
-        <SheetPrimitive.Close className="pop-press absolute top-4 right-4 grid size-[19px] place-items-center rounded-[7px] border-[1.5px] border-pop-bd bg-pop-red text-destructive-foreground shadow-pop-sm transition-colors hover:bg-pop-red/90 focus:outline-hidden disabled:pointer-events-none [&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg]:size-3">
-          <XIcon />
-          <span className="sr-only">Close</span>
-        </SheetPrimitive.Close>
+        {showCloseButton && (
+          <SheetPrimitive.Close
+            aria-label="关闭"
+            className={closeLightButtonClass}
+          >
+            <CloseLightGlyph />
+          </SheetPrimitive.Close>
+        )}
+        <DialogResizeHandles className="pointer-events-none absolute inset-0 z-20" />
       </SheetPrimitive.Content>
     </SheetPortal>
   )
@@ -88,7 +95,7 @@ function SheetHeader({ className, ...props }: React.ComponentProps<'div'>) {
   return (
     <div
       data-slot="sheet-header"
-      className={cn('flex flex-col gap-1.5 p-4', className)}
+      className={cn('flex flex-col gap-1.5 p-4 pl-12', className)}
       {...props}
     />
   )

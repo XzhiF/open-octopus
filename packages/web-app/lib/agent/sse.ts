@@ -15,6 +15,15 @@ export interface SSEHandlers {
   onStatus?: (data: Extract<AgentSSEEvent, { event: 'status' }>['data']) => void
   onConfirm?: (data: Extract<AgentSSEEvent, { event: 'confirm' }>['data']) => void
   onContextUsage?: (data: import('@/lib/agent/types').ContextUsageData) => void
+  /** 2026-10-28 task-thread: a task turn landed a [quick-edit] commit. */
+  onQuickEditCommit?: (data: {
+    sessionId?: string
+    taskId?: string
+    repo: string
+    branch: string
+    commit: string
+    message: string
+  }) => void
   onDone?: (data: Extract<AgentSSEEvent, { event: 'done' }>['data']) => void
   onError?: (data: Extract<AgentSSEEvent, { event: 'error' }>['data']) => void
 }
@@ -101,6 +110,9 @@ export function useSSEConnection() {
                   break
                 case 'confirm':
                   handlers.onConfirm?.(data)
+                  break
+                case 'quick_edit_commit':
+                  handlers.onQuickEditCommit?.(data)
                   break
                 case 'done':
                   handlers.onDone?.(data)

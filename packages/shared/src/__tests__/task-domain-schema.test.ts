@@ -48,8 +48,11 @@ const EXPECTED_TASK_STATUSES = [
   // task-pause: derived-only — no writer ever persists it on a task row (the truth is
   // executions.status='paused'), which is why it is absent from the schema-v40 DB CHECK
   // mirrored above. 'awaiting_review' is the other such value.
+  // archive-consent (2026-10-31): 'awaiting_archive' is derived-only too — the row stays
+  // 'ready' until the human explicitly starts archive; the DB CHECK deliberately omits it.
   "paused",
   "awaiting_review",
+  "awaiting_archive",
   "archiving",
   "done",
   "failed",
@@ -118,6 +121,8 @@ describe("AC1 — TaskStatus + TriggerMode enums", () => {
     // task-phase-redesign v4 (ticket 07) — the two acceptance-lifecycle states.
     expectTypeOf<"awaiting_review">().toMatchTypeOf<TaskStatus>()
     expectTypeOf<"archiving">().toMatchTypeOf<TaskStatus>()
+    // archive-consent (2026-10-31) — derived-only park state between the two.
+    expectTypeOf<"awaiting_archive">().toMatchTypeOf<TaskStatus>()
   })
 
   // Widening guarantee (ticket 07 底线): adding the v4 states must NOT remove

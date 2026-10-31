@@ -44,7 +44,8 @@ export interface Workspace {
   name: string
   description: string
   status: WorkspaceStatus
-  org: string
+  /** Repo-registry key only (org demotion). */
+  repo_group?: string | null
   projectCount: number
   workflowCount: number
   createdAt: string
@@ -269,7 +270,6 @@ export interface ExecutionTreeNode {
   createdAt: string
   updatedAt: string
   workspaceId: string
-  org: string
   nodeType?: "normal" | "fork"
   branch?: string
   startCommitId?: Record<string, string>
@@ -593,7 +593,11 @@ export interface LLMCallData {
   output_tokens: number
   cache_read_tokens: number
   cache_creation_tokens: number
-  cost_usd?: number
+  /** 账本来源枚举（global_chat / clone_chat / session_compress / workflow…）。
+   *  逐轮统计要剔除后台压缩行，故保留。 */
+  source_path?: string
+  /** 派生自 llm_calls_costed 视图；未配价的模型行 = null（三态，不焊 0）。 */
+  cost_usd?: number | null
 }
 
 /** C3 wire：server ledger 的 totals 结构（跨端共享形状）。 */
@@ -634,13 +638,26 @@ export interface LLMCallAggregates {
 
 // ============ 产物分组清单 wire（票 11 ▣）============
 //
-// server GET /api/tasks/:id/artifacts/manifest 定形（五组 + 归类判据单源在
-// TasksService.artifactManifest，前端不重分组）。票11 双轴 review 收口⑤：原
-// lib/tasks-api.ts 与 run-console/artifacts-model.ts 各存一份 —— 并入本文件
-// 单源，两处按 LlmNodeAggregatesWire 同惯例引用。
+// server GET /api/tasks/:id/artifacts/manifest 定形（2026-10-29 方案2）：
+// **按 phase 批次目录 + 文件名 `-rN` 归轮**，类型由 server 单源给出（前端只渲染
+// 徽章，不重分类）。旧「五组平铺」已退役。
 //
 // 读门错误形（GET /:id/artifacts/manifest/content）400/403/404/413 经
 // ArtifactContentError 带 status 抛出 —— 见 lib/tasks-api.ts。
+
+/** 产物类型（与 server ArtifactKind 同源）。 */
+export type ArtifactKind =
+  | "spec"
+  | "brief"
+  | "ticket"
+  | "runbook"
+  | "report"
+  | "fix"
+  | "feedback"
+  | "handoff"
+  | "ledger"
+  | "evidence"
+  | "prototype"
 
 export interface ArtifactManifestItem {
   name: string
@@ -648,16 +665,36 @@ export interface ArtifactManifestItem {
   path: string
   bytes: number
   mtime: string
+  kind: ArtifactKind
 }
 
-export interface ArtifactManifestGroup {
-  key: string
-  label: string
+/** 一轮的产物（文件名带 `-rN` 且属于轮次类）。 */
+export interface ArtifactManifestRound {
+  round: number
   items: ArtifactManifestItem[]
 }
 
+/** 一个 phase 的交付面：批次级产物 + 按轮次归组的产物。 */
+export interface ArtifactManifestPhase {
+  index: number
+  name: string
+  slug: string
+  /** home 相对 posix 批次目录（`.scratch/<main>/<phase>`）；无合规 specPath = ""。 */
+  dir: string
+  /** deriveTaskView 的 phase 显示态（服务端透传，前端不重推导）。 */
+  status: "pending" | "running" | "awaiting_review" | "accepted"
+  currentRound: number | null
+  acceptedRound: number | null
+  items: ArtifactManifestItem[]
+  rounds: ArtifactManifestRound[]
+}
+
 export interface ArtifactManifestBody {
-  groups: ArtifactManifestGroup[]
+  phases: ArtifactManifestPhase[]
+  /** 不属于任何 phase 的 `.scratch` 文件（旧布局 / 手工放置）。 */
+  unassigned: ArtifactManifestItem[]
+  /** 工作区原型（`ws:` 引用）。 */
+  prototype: ArtifactManifestItem[]
 }
 
 // ============ Analytics ============

@@ -14,10 +14,7 @@ export function createMemoryRoutes(): Hono {
    */
   memory.get('/memory/search', (c) => {
     try {
-      const org = c.req.header('X-Octopus-Org') || (c.get('org') as string)
-      if (!org) {
-        return c.json(createAgentError('ORG_NOT_FOUND', 'Organization not resolved'), 403)
-      }
+      const org = c.req.header('X-Octopus-Org') || (c.get('org') as string) || ''
 
       const query = c.req.query('q')
       if (!query) {
@@ -53,10 +50,7 @@ export function createMemoryRoutes(): Hono {
    */
   memory.get('/memory/:layer', (c) => {
     try {
-      const org = c.req.header('X-Octopus-Org') || (c.get('org') as string)
-      if (!org) {
-        return c.json(createAgentError('ORG_NOT_FOUND', 'Organization not resolved'), 403)
-      }
+      const org = c.req.header('X-Octopus-Org') || (c.get('org') as string) || ''
 
       const layer = c.req.param('layer') as MemoryLayer
       if (!VALID_LAYERS.includes(layer)) {
@@ -86,10 +80,7 @@ export function createMemoryRoutes(): Hono {
    */
   memory.post('/memory', async (c) => {
     try {
-      const org = c.req.header('X-Octopus-Org') || (c.get('org') as string)
-      if (!org) {
-        return c.json(createAgentError('ORG_NOT_FOUND', 'Organization not resolved'), 403)
-      }
+      const org = c.req.header('X-Octopus-Org') || (c.get('org') as string) || ''
 
       // Safe mode blocks all memory writes
       const configManager = getConfigManager()

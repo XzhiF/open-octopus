@@ -146,7 +146,7 @@ export class AssistWorkflowService {
     this.workspaceDAO.insert({
       id: workspaceId,
       name: `task-assist-${taskId.slice(0, 8)}-${template}`,
-      org: task.org,
+      repo_group: task.repo_group,
       description: `Assist workflow (${template}) for task ${taskId}`,
       status: "active",
       path: homePath,

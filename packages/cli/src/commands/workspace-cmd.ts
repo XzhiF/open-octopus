@@ -36,9 +36,9 @@ workspaceCmd.command("create <name>")
     const org = options.org ?? process.env.OCTOPUS_ORG ?? "default"
     const body = {
       name,
-      org,
+      repo_group: options.org,
       description: options.description,
-      path: `~/.octopus/orgs/${org}/workspaces/${name}`,
+      path: `~/.octopus/workspaces/${name}`,
     }
     try {
       const res = await fetch(`${getServerUrl()}/api/workspaces`, {

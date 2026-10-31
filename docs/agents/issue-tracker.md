@@ -1,6 +1,6 @@
 # Issue tracker: Local Markdown
 
-Issues and specs for this repo live as markdown files in `.scratch/`.
+Workflow tasks keep their issues and specs as markdown files in each task home's `.scratch/` directory. The repo root no longer keeps a `.scratch/` archive.
 
 ## Conventions
 

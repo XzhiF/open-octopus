@@ -3,6 +3,7 @@
 import { useState, useCallback, useEffect } from 'react'
 import { Save, Eye, Edit3, Sparkles, AlertTriangle } from 'lucide-react'
 import { Button } from '@/components/ui/button'
+import { CloseLightGlyph, closeLightButtonClass } from '@/components/ui/close-light'
 import { Textarea } from '@/components/ui/textarea'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Badge } from '@/components/ui/badge'
@@ -216,8 +217,16 @@ export function LongTermEditor({ content, loading }: LongTermEditorProps) {
       {/* Memory conflict dialog (TC-023: M-MEM-CONFLICT) */}
       {conflictData && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
-          <div className="rounded-lg border border-agent-error/30 bg-agent-surface p-6 max-w-md w-full mx-4 shadow-xl">
-            <div className="flex items-center gap-2 mb-4">
+          <div className="relative max-h-[calc(100dvh-2rem)] w-full max-w-md overflow-y-auto rounded-lg border border-agent-error/30 bg-agent-surface p-6 mx-4 shadow-xl">
+            <button
+              type="button"
+              aria-label="关闭"
+              onClick={() => setConflictData(null)}
+              className={closeLightButtonClass}
+            >
+              <CloseLightGlyph />
+            </button>
+            <div className="mb-4 flex items-center gap-2 pl-10">
               <AlertTriangle className="h-5 w-5 text-agent-error" />
               <h3 className="text-lg font-semibold text-agent-error">记忆冲突</h3>
             </div>

@@ -3,6 +3,7 @@
 import type { Node, NodeProps } from "@xyflow/react"
 import type { StatusOverlay } from "@/lib/types"
 import { StatusShell } from "./status-shell"
+import type { DagOrientation } from "@/lib/dag-orientation"
 import { TypeShell } from "./type-shell"
 import { MessageCircle } from "lucide-react"
 
@@ -12,6 +13,7 @@ interface WorkflowNodeData {
   name: string
   interaction_max_rounds?: number
   statusOverlay?: StatusOverlay
+  dagOrientation?: DagOrientation
   isCurrent?: boolean
   isActive?: boolean
   [key: string]: unknown
@@ -21,7 +23,7 @@ type WorkflowNode = Node<WorkflowNodeData>
 
 export function InteractionNode({ data, selected }: NodeProps<WorkflowNode>) {
   return (
-    <StatusShell nodeType="interaction" statusOverlay={data.statusOverlay} isCurrent={data.isCurrent} isActive={data.isActive} selected={selected}>
+    <StatusShell nodeType="interaction" statusOverlay={data.statusOverlay} isCurrent={data.isCurrent} isActive={data.isActive} selected={selected} orientation={data.dagOrientation}>
       <TypeShell nodeType="interaction" name={data.name} statusOverlay={data.statusOverlay}>
         <div className="flex items-center gap-1.5 mt-1">
           <MessageCircle className="h-3.5 w-3.5 text-pop-purple" />

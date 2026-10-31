@@ -26,6 +26,7 @@ import {
   Loader2,
   Copy,
   Pencil,
+  ExternalLink,
 } from "lucide-react"
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu"
 import { isWorkflowYaml } from "@/lib/yaml-utils"
@@ -44,6 +45,8 @@ interface SidebarFileTreeProps {
   doc?: Y.Doc | null
   connected?: boolean
   workspacePath?: string
+  /** 提供时在头部渲染「工作空间路径」行，点击 = 打开系统文件管理器。 */
+  onOpenDirectory?: () => void
   onFileSelect?: (file: FileNode) => void
   selectedPath?: string
   onOpenAsWorkflow?: (file: FileNode) => void
@@ -110,7 +113,7 @@ function filterTree(nodes: FileNode[], query: string): FileNode[] {
   return nodes.map(filterNode).filter((n): n is FileNode => n !== null)
 }
 
-function ymapToFileNodes(map: Y.Map<unknown>, parentPath: string): FileNode[] {
+export function ymapToFileNodes(map: Y.Map<unknown>, parentPath: string): FileNode[] {
   const nodes: FileNode[] = []
   const dirEntries: [string, Y.Map<unknown>][] = []
   const fileEntries: [string, Y.Map<unknown>][] = []
@@ -448,7 +451,7 @@ function FileTreeNode({
   )
 }
 
-export function SidebarFileTree({ files, doc, connected, workspacePath, onFileSelect, selectedPath, onOpenAsWorkflow, onOpenAsText, onOpenAsImage, fileContents, onCreateEntryConfirm, onDeleteConfirm, onRenameConfirm, onExpand, onRefresh, externalChanges }: SidebarFileTreeProps) {
+export function SidebarFileTree({ files, doc, connected, workspacePath, onOpenDirectory, onFileSelect, selectedPath, onOpenAsWorkflow, onOpenAsText, onOpenAsImage, fileContents, onCreateEntryConfirm, onDeleteConfirm, onRenameConfirm, onExpand, onRefresh, externalChanges }: SidebarFileTreeProps) {
   const [creatingInDir, setCreatingInDir] = useState<{ parentPath: string; type: "file" | "directory" } | null>(null)
   const [renamingNode, setRenamingNode] = useState<{ node: FileNode } | null>(null)
   const [searchQuery, setSearchQuery] = useState("")
@@ -522,6 +525,25 @@ export function SidebarFileTree({ files, doc, connected, workspacePath, onFileSe
           </Button>
         </div>
       </div>
+
+      {/* 工作空间路径行（2026-10-28）：整行可点，打开系统文件管理器。 */}
+      {workspacePath && (
+        <button
+          type="button"
+          data-testid="filetree-open-dir"
+          title={onOpenDirectory ? `打开目录：${workspacePath}` : workspacePath}
+          onClick={onOpenDirectory}
+          disabled={!onOpenDirectory}
+          className={cn(
+            "flex h-7 w-full shrink-0 items-center gap-1.5 border-b border-border px-3 text-left text-[10px] text-muted-foreground",
+            onOpenDirectory && "transition-colors hover:bg-accent hover:text-foreground",
+          )}
+        >
+          <FolderOpen className="h-3 w-3 shrink-0 text-pop-amber" />
+          <span className="min-w-0 flex-1 truncate font-mono">{workspacePath}</span>
+          {onOpenDirectory && <ExternalLink className="h-3 w-3 shrink-0 opacity-60" />}
+        </button>
+      )}
 
       {useYjsMode && connected === false && (
         <div className="flex items-center justify-center gap-2 border-b border-border py-2 text-xs text-muted-foreground">

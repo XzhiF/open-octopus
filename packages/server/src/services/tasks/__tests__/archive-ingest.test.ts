@@ -105,11 +105,11 @@ function seedV4Task(taskHome: TaskHomeService, opts: SeedOpts = {}): { taskId: s
     const wsPath = path.join(tmpRoot, "ws", workspaceId)
     fs.mkdirSync(wsPath, { recursive: true })
     db.prepare(
-      "INSERT INTO workspaces (id, name, org, path, source, status, task_id, created_at, updated_at) VALUES (?, ?, ?, ?, 'task', 'active', ?, datetime('now'), datetime('now'))",
+      "INSERT INTO workspaces (id, name, repo_group, path, source, status, task_id, created_at, updated_at) VALUES (?, ?, ?, ?, 'task', 'active', ?, datetime('now'), datetime('now'))",
     ).run(workspaceId, `task:${taskId}`, "kc10-org", wsPath, taskId)
   }
   db.prepare(`
-    INSERT INTO tasks (id, org, name, status, source_chat_session_id, task_spec,
+    INSERT INTO tasks (id, repo_group, name, status, source_chat_session_id, task_spec,
       authoring_resources, resources, skills, project_ids, workflow_ref, version,
       deleted_at, created_at, updated_at, completed_at, workspace_id)
     VALUES (?, ?, ?, ?, NULL, ?, '[]', '[]', '[]', '["authsvc"]', NULL, 1, NULL, ?, ?, NULL, ?)
@@ -419,7 +419,7 @@ describe("总结 prompt 捕获（AC1 四段素材）", () => {
     const { service, taskHome, calls } = makeDeps()
     await expect(service.ingestTask("kc10-does-not-exist")).resolves.toMatchObject({ status: "skipped", reason: "TASK_NOT_FOUND" })
     db.prepare(`
-      INSERT INTO tasks (id, org, name, status, task_spec, authoring_resources, resources, skills, project_ids, version, created_at, updated_at)
+      INSERT INTO tasks (id, repo_group, name, status, task_spec, authoring_resources, resources, skills, project_ids, version, created_at, updated_at)
       VALUES ('kc10-v3-task', 'kc10-org', 'legacy v3', 'archiving', '{"goal":"x","ac":[]}', '[]', '[]', '[]', '[]', 1, datetime('now'), datetime('now'))
     `).run()
     await expect(service.ingestTask("kc10-v3-task")).resolves.toMatchObject({ status: "skipped", reason: "NOT_V4" })
@@ -486,7 +486,7 @@ describe("archiving 态自动触发投喂（beginArchiving 挂载点）", () => 
       { status: string; completed_at: string | null }
   }
 
-  it("末 phase accepted → 投喂钩子与归档钩子都触发；真投喂落 raw + 入队；状态停 archiving（done 仍只归归档编排）", async () => {
+  it("末 phase accepted → 停在待归档（不投喂）；显式 startArchive 后投喂钩子与归档钩子都触发；真投喂落 raw + 入队；状态停 archiving（done 仍只归归档编排）", async () => {
     const taskHome = new TaskHomeService(path.join(tmpRoot, "homes"))
     const { taskId } = seedV4Task(taskHome, {
       phases: [{ index: 1, name: "唯一 phase", slug: "only" }],
@@ -507,7 +507,11 @@ describe("archiving 态自动触发投喂（beginArchiving 挂载点）", () => 
     const res = await acceptLastPhase(app, taskId, 1)
     expect(res.status, await res.clone().text()).toBe(200)
     const body = (await res.json()) as { next_action: string }
-    expect(body.next_action).toBe("archiving")
+    expect(body.next_action).toBe("awaiting_archive")
+    expect(archiveCalls).toEqual([])
+    expect(taskStatusRow(taskId).status).toBe("ready")
+    // 人明确说「归档」后才进入 beginArchiving 挂载点。
+    svc.startArchive(taskId)
     expect(archiveCalls).toEqual([taskId])
     expect(taskStatusRow(taskId).status).toBe("archiving")
     // 投喂在 enter-archiving 一刻起跑（异步：等队列汇合点确认全链落定）
@@ -529,6 +533,7 @@ describe("archiving 态自动触发投喂（beginArchiving 挂载点）", () => 
     const s1 = flowSetup(() => { throw new Error("ingest boom") })
     const r1 = await acceptLastPhase(s1.app, t1.taskId, 1)
     expect(r1.status).toBe(200)
+    s1.svc.startArchive(t1.taskId)
     expect(s1.archiveCalls).toEqual([t1.taskId])
     expect(taskStatusRow(t1.taskId).status).toBe("archiving")
 
@@ -539,6 +544,7 @@ describe("archiving 态自动触发投喂（beginArchiving 挂载点）", () => 
     const s2 = flowSetup(async () => { await Promise.resolve(); throw new Error("ingest async boom") })
     const r2 = await acceptLastPhase(s2.app, t2.taskId, 1)
     expect(r2.status).toBe(200)
+    s2.svc.startArchive(t2.taskId)
     expect(s2.archiveCalls).toEqual([t2.taskId])
     expect(taskStatusRow(t2.taskId).status).toBe("archiving")
     await new Promise((r) => setTimeout(r, 30)) // 让 rejection 回调落地（若有未捕获会炸测试）
@@ -557,6 +563,8 @@ describe("archiving 态自动触发投喂（beginArchiving 挂载点）", () => 
     app.route("/api/tasks", createTasksRoutes(svc, sse))
     const res = await acceptLastPhase(app, taskId, 1)
     expect(res.status, await res.clone().text()).toBe(200)
+    expect(archiveCalls).toEqual([])
+    svc.startArchive(taskId)
     expect(archiveCalls).toEqual([taskId])
     expect(taskStatusRow(taskId).status).toBe("archiving")
   })

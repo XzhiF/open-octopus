@@ -168,11 +168,8 @@ export class WorkspaceScheduleService {
   create(workspaceId: string, data: z.input<typeof createScheduleSchema>): ScheduleView {
     const validated = createScheduleSchema.parse(data)
 
-    // Look up org from workspace for v23 org-scoped uniqueness
-    const org = this.configDAO.findWorkspaceOrg(workspaceId) ?? ''
-
-    // Check unique name within org (excluding soft-deleted)
-    if (this.configDAO.checkNameConflict(org, validated.name)) {
+    // Names are globally unique (org demotion).
+    if (this.configDAO.checkNameConflict(validated.name)) {
       throw new ScheduleConflictError(`调度名称 "${validated.name}" 已存在`)
     }
 
@@ -187,7 +184,7 @@ export class WorkspaceScheduleService {
 
       // Insert schedule
       this.configDAO.insertWorkspaceSchedule({
-        id, org, workspace_id: workspaceId, name: validated.name,
+        id, workspace_id: workspaceId, name: validated.name,
         workflow_ref: validated.workflow_ref,
         cron_expression: validated.cron_expression, timezone: validated.timezone,
         input_values: inputValues,
@@ -682,9 +679,8 @@ export class WorkspaceScheduleService {
   private ensureContainerExecution(workspaceId: string, workflowRef: string): string {
     const containerId = randomUUID()
     const now = new Date().toISOString()
-    const org = this.configDAO.findWorkspaceOrg(workspaceId) ?? "unknown"
 
-    this.execDAO.insertContainerExecution(containerId, workspaceId, workflowRef, org, now)
+    this.execDAO.insertContainerExecution(containerId, workspaceId, workflowRef, '', now)
 
     return containerId
   }

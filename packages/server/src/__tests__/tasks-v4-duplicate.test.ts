@@ -61,7 +61,7 @@ function insertTask(spec: Record<string, unknown>): string {
   const id = `e2e-td-v4dup-${nextTaskSeq++}`
   const now = new Date().toISOString()
   db.prepare(`
-    INSERT INTO tasks (id, org, name, status, source_chat_session_id, task_spec,
+    INSERT INTO tasks (id, repo_group, name, status, source_chat_session_id, task_spec,
       authoring_resources, resources, skills, project_ids, workflow_ref, version,
       deleted_at, created_at, updated_at, completed_at)
     VALUES (?, ?, ?, 'draft', NULL, ?, '[]', '[]', '[]', '[]', NULL, 1, NULL, ?, ?, NULL)
@@ -193,7 +193,7 @@ describe("happy path — ready 源整单复制，副本直达待执行", () => {
     const { id } = insertValidV4Task()
     const now = new Date().toISOString()
     db.prepare(`
-      INSERT INTO workspaces (id, name, org, status, path, source, task_id, created_at, updated_at)
+      INSERT INTO workspaces (id, name, repo_group, status, path, source, task_id, created_at, updated_at)
       VALUES ('e2e-td-dup-ws', 'e2e-td-dup-ws', ?, 'active', ?, 'task', ?, ?, ?)
     `).run(ORG, path.join(tmpDir, "ws-e2e-td-dup"), id, now, now)
     db.prepare(`

@@ -92,7 +92,7 @@ async function seedAwaitingRound(opts: {
   const specPath = `./${BATCH_REL}/spec.md`
   const r = await app.request("/api/tasks", {
     method: "POST", headers: { "content-type": "application/json" },
-    body: JSON.stringify({ org: ORG, name: `E2E_TD lcol ${seq++}`, task_spec: {
+    body: JSON.stringify({ repo_group: ORG, name: `E2E_TD lcol ${seq++}`, task_spec: {
       format: "v4", goal: "g", ac: ["a"], autoAdvance: false,
       phases: [{ index: 1, name: "P1", slug: "p-1", specPath, workflowRef: "task-dev", inputValues: {} }],
     } }),
@@ -142,7 +142,7 @@ beforeAll(() => {
   tmp = fs.mkdtempSync(path.join(os.tmpdir(), "td-lcol-"))
   wsDir = path.join(tmp, "ws1")
   fs.mkdirSync(wsDir, { recursive: true })
-  db.prepare(`INSERT INTO workspaces (id,name,org,path,created_at,updated_at) VALUES (?,?,?,?,?,?)`)
+  db.prepare(`INSERT INTO workspaces (id,name,repo_group,path,created_at,updated_at) VALUES (?,?,?,?,?,?)`)
     .run(WS_ID, "lcol-ws", ORG, wsDir, new Date().toISOString(), new Date().toISOString())
   const sse = new SSEService()
   taskHome = new TaskHomeService(path.join(tmp, "home"))

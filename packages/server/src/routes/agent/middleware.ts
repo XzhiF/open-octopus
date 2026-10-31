@@ -107,21 +107,6 @@ export async function agentAuthMiddleware(c: Context, next: Next): Promise<void>
     return
   }
 
-  // Validate org existence when X-Octopus-Org header is provided
-  const orgHeader = c.req.header('X-Octopus-Org')
-  if (orgHeader && orgHeader.trim() !== '') {
-    try {
-      if (_orgDAO && !_orgDAO.exists(orgHeader)) {
-        c.res = c.json(createAgentError('ORG_NOT_FOUND', `Organization "${orgHeader}" not found`), 403)
-        return
-      }
-    } catch (err: unknown) {
-      // Fail closed: return 503 when DB check fails (do not silently allow)
-      const msg = err instanceof Error ? err.message : String(err)
-      c.res = c.json(createAgentError('SUBSYSTEM_UNAVAILABLE', `Organization validation failed: ${msg}`), 503)
-      return
-    }
-  }
 
   await next()
 }

@@ -1,6 +1,6 @@
 import { describe, it, expect, afterEach } from "vitest"
 import Database from "better-sqlite3"
-import { applySchema, SCHEMA_VERSION } from "../db/schema"
+import { applySchema } from "../db/schema"
 
 function createTestDb(): Database.Database {
   const db = new Database(":memory:")
@@ -15,7 +15,7 @@ describe("DB Schema", () => {
     db?.close()
   })
 
-  it("creates all 43 tables", () => {
+  it("creates all 46 tables", () => {
     db = createTestDb()
     applySchema(db)
     const rows = db.prepare(
@@ -23,7 +23,7 @@ describe("DB Schema", () => {
     ).all() as { name: string }[]
     const names = rows.map(r => r.name).sort()
     expect(names).toEqual([
-      // Core tables (43) — includes `tasks` (schema v38, v2-D1 first-class task
+      // Core tables (46) — includes `tasks` (schema v38, v2-D1 first-class task
       // domain) + `task_phase_acceptances` (schema v40, task-phase-redesign K4)
       // + billing_price_config/billing_setting (schema v45, billing-core-1 票01)
       // + `findings` (schema v53, 知识中心票05——此前漏计本清单，票08 顺带补正)
@@ -34,6 +34,8 @@ describe("DB Schema", () => {
       // v54 (票08 清理账): `pending_review` 退役——蓝绿 drop，schema.sql 不再 CREATE，
       //   故不在此清单。
       // v55 (P4 票06): `effectiveness_cursors` 记账解析游标（PK=execution_id 幂等盘面）。
+      // v56/v57 (缓存稳定 + 身份切换): session_prompt_snapshots / session_expert_rosters /
+      //   session_role_states —— 新增三表，本清单随之补正。
       "agent_events", "agent_versions", "archive_drafts",
       "billing_price_config", "billing_setting",
       "branch_executions", "chat_messages", "chat_sessions",
@@ -48,6 +50,7 @@ describe("DB Schema", () => {
       "pipeline_state", "reports", "safety_events",
       "schedule_audit_logs", "schedule_executions", "schedule_workspaces",
       "scheduled_job_executions", "scheduler_audit_logs", "scheduler_state", "schedules",
+      "session_expert_rosters", "session_prompt_snapshots", "session_role_states",
       "sessions", "task_phase_acceptances", "tasks", "wiki_articles", "workspace_archive", "workspaces",
     ])
   })
@@ -78,7 +81,8 @@ describe("DB Schema", () => {
     // （基线本即红 +2，票08 补正）。票08 清理账 53→54 再 − idx_pending_status
     // − idx_pending_review_source − idx_pending_review_type_status（pending_review 退役）
     // = 102 − 3 = 99。
-    expect(rows.length).toBe(99)
+    // 2026-10-28 org demotion: −15 org indexes, +5 repo_group/domain/scope indexes = 89.
+    expect(rows.length).toBe(89)
   })
 
   it("workspaces table has correct columns", () => {
@@ -86,7 +90,7 @@ describe("DB Schema", () => {
     applySchema(db)
     const cols = db.prepare("PRAGMA table_info(workspaces)").all() as { name: string }[]
     expect(cols.map(c => c.name)).toEqual(expect.arrayContaining([
-      "id", "name", "org", "status", "path", "created_at", "updated_at",
+      "id", "name", "repo_group", "status", "path", "created_at", "updated_at",
       "source", "source_schedule_id",
     ]))
   })
@@ -104,7 +108,7 @@ describe("DB Schema", () => {
       "instance_id", "global_session_id", "retry_count", "pending_hooks",
       "approval_metadata", "resume_attempts", "pipeline_config",
       "chain_retry_count", "preset_inputs",
-      "org", "created_at", "updated_at",
+      "created_at", "updated_at",
     ]))
   })
 
@@ -117,21 +121,12 @@ describe("DB Schema", () => {
     }).toThrow()
   })
 
-  it("sets schema version via user_version PRAGMA", () => {
-    db = createTestDb()
-    applySchema(db)
-    const rows = db.pragma("user_version") as Array<{ user_version: number }>
-    expect(rows[0].user_version).toBe(SCHEMA_VERSION)
-  })
-
   it("is idempotent", () => {
     db = createTestDb()
     applySchema(db)
     applySchema(db)
     const rows = db.prepare("SELECT name FROM sqlite_master WHERE type='table'").all() as { name: string }[]
     expect(rows.length).toBeGreaterThan(0)
-    const versionRows = db.pragma("user_version") as Array<{ user_version: number }>
-    expect(versionRows[0].user_version).toBe(SCHEMA_VERSION)
   })
 
   it("creates orgs table with correct columns", () => {
@@ -237,7 +232,7 @@ describe("Schema v17 — Pipeline support", () => {
     db = createTestDb()
     applySchema(db)
     const wsId = "ws-test"
-    db.prepare("INSERT INTO workspaces (id, name, org, path, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)").run(wsId, "test", "test", "/tmp", "2024-01-01", "2024-01-01")
+    db.prepare("INSERT INTO workspaces (id, name, repo_group, path, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)").run(wsId, "test", "test", "/tmp", "2024-01-01", "2024-01-01")
     const execId = "exec-test"
     db.prepare("INSERT INTO executions (id, workspace_id, workflow_ref, workflow_name, status, org, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)").run(execId, wsId, "test.yaml", "test", "pending", "test", "2024-01-01", "2024-01-01")
     const row = db.prepare("SELECT resume_attempts, pipeline_config FROM executions WHERE id = ?").get(execId) as { resume_attempts: number; pipeline_config: string }

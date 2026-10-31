@@ -218,30 +218,38 @@ export function HarnessChatbot({ workspaceId, executionId, isRunning, currentNod
             输入干预指令，发送给正在执行的节点
           </div>
         )}
-        {messages.map((msg) => (
-          <div
-            key={msg.id}
-            className={`flex gap-2 text-xs ${msg.role === "user" ? "justify-end" : "justify-start"}`}
-          >
-            {msg.role === "system" && (
-              <ShieldCheck className="h-4 w-4 text-pop-purple shrink-0 mt-0.5" />
-            )}
-            <div
-              className={`max-w-[80%] rounded-[10px] border-2 border-pop-bd shadow-pop-sm px-2.5 py-1.5 ${
-                msg.role === "user"
-                  ? "bg-pop-cyan text-pop-bg"
-                  : msg.status === "error"
+        {messages.map((msg) => {
+          if (msg.role === "user") {
+            return (
+              <div
+                key={msg.id}
+                className="rounded-md bg-pop-paper px-2.5 py-1.5 text-xs shadow-[inset_0_0_0_1px_var(--pop-bd)]"
+              >
+                <span className="font-bold text-pop-pink">❯ </span>
+                <span className="whitespace-pre-wrap break-words">{msg.content}</span>
+                {msg.status === "sending" && (
+                  <Loader2 className="h-3 w-3 animate-spin inline-block ml-1" />
+                )}
+              </div>
+            )
+          }
+          return (
+            <div key={msg.id} className="flex gap-2 text-xs justify-start">
+              {msg.role === "system" && (
+                <ShieldCheck className="h-4 w-4 text-pop-purple shrink-0 mt-0.5" />
+              )}
+              <div
+                className={`max-w-[80%] rounded-[10px] border-2 border-pop-bd shadow-pop-sm px-2.5 py-1.5 ${
+                  msg.status === "error"
                     ? "bg-pop-pink-soft text-pop-red"
                     : "bg-pop-paper text-pop-ink"
-              }`}
-            >
-              <p className="whitespace-pre-wrap break-words">{msg.content}</p>
-              {msg.role === "user" && msg.status === "sending" && (
-                <Loader2 className="h-3 w-3 animate-spin inline-block ml-1" />
-              )}
+                }`}
+              >
+                <p className="whitespace-pre-wrap break-words">{msg.content}</p>
+              </div>
             </div>
-          </div>
-        ))}
+          )
+        })}
         {delegating && (
           <div className="flex items-center gap-2 text-xs text-pop-purple py-1">
             <Loader2 className="h-3 w-3 animate-spin" />

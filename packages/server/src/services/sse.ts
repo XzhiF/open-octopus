@@ -17,6 +17,7 @@ export const SILENT_EVENTS = new Set([
 
 export class SSEService {
   private listeners = new Map<string, Set<Listener>>()
+  private globalListeners = new Set<Listener>()
   private ringBuffer: SSEEvent[] = []
   private readonly maxBufferSize = 500
 
@@ -34,7 +35,18 @@ export class SSEService {
     }
   }
 
+  /** Observe every workspace channel (activity bus, wake bridge). The event
+   *  carries no workspace key, so listeners that need routing keep their own
+   *  association (executionId → session) rather than binding per workspace. */
+  subscribeAll(listener: Listener): () => void {
+    this.globalListeners.add(listener)
+    return () => { this.globalListeners.delete(listener) }
+  }
+
   emit(workspaceId: string, event: SSEEvent): void {
+    for (const listener of this.globalListeners) {
+      try { listener(event) } catch (e) { console.error(`[sse] global listener error:`, e) }
+    }
     const set = this.listeners.get(workspaceId)
     if (!SILENT_EVENTS.has(event.event)) {
       console.log(`[sse] emit event=${event.event} listeners=${set?.size ?? 0}`)

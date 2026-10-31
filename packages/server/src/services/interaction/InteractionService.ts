@@ -262,10 +262,7 @@ export class InteractionService {
       const rawModel = nodeDef.model ?? nodeDef.interaction_agent?.model ?? workflow.model
       result.engine = engine
       if (rawModel) {
-        const orgDir = exec.org
-          ? join(process.env.HOME ?? "~", ".octopus", "orgs", exec.org)
-          : undefined
-        const cfg = loadModelAliasConfig(orgDir ? { orgDir } : undefined)
+        const cfg = loadModelAliasConfig()
         result.model = resolveModelAlias(rawModel, engine, cfg) ?? rawModel
       }
 

@@ -28,7 +28,7 @@ describe("ExecutionService pipeline integration", () => {
       const wsId = randomUUID()
       const now = new Date().toISOString()
       db.prepare(
-        "INSERT INTO workspaces (id, name, org, path, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)"
+        "INSERT INTO workspaces (id, name, repo_group, path, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)"
       ).run(wsId, "test-ws", "test-org", "/tmp/test-ws", now, now)
 
       const execId = randomUUID()
@@ -51,7 +51,7 @@ describe("ExecutionService pipeline integration", () => {
       const wsId = randomUUID()
       const now = new Date().toISOString()
       db.prepare(
-        "INSERT INTO workspaces (id, name, org, path, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)"
+        "INSERT INTO workspaces (id, name, repo_group, path, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)"
       ).run(wsId, "test-ws", "test-org", "/tmp/test-ws", now, now)
 
       const execId = randomUUID()
@@ -74,7 +74,7 @@ describe("ExecutionService pipeline integration", () => {
       const wsId = randomUUID()
       const now = new Date().toISOString()
       db.prepare(
-        "INSERT INTO workspaces (id, name, org, path, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)"
+        "INSERT INTO workspaces (id, name, repo_group, path, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)"
       ).run(wsId, "test-ws", "test-org", "/tmp/test-ws", now, now)
 
       const execId = randomUUID()

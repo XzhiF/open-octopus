@@ -46,7 +46,7 @@ const mockBuiltInWorkflowService: BuiltInWorkflowService = {
 function insertWorkspace(id: string): void {
   const now = new Date().toISOString()
   db.prepare(
-    "INSERT INTO workspaces (id, name, org, path, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)"
+    "INSERT INTO workspaces (id, name, repo_group, path, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)"
   ).run(id, "test-ws", "test-org", "/tmp/test-ws", now, now)
 }
 
@@ -510,5 +510,69 @@ describe("RepairService error classification in diagnose", () => {
     const report = repairService.diagnose(execId)
     const err = report.recentErrors.find(e => e.nodeId === "step1")
     expect(err?.category).toBe("permission")
+  })
+})
+
+describe("RepairService.rerun", () => {
+  const workflow3 = `apiVersion: octopus/v1
+kind: Workflow
+name: Rerun WF
+nodes:
+  - id: step1
+    type: bash
+    bash: echo 1
+  - id: step2
+    type: bash
+    bash: echo 2
+    depends_on: [step1]
+  - id: step3
+    type: bash
+    bash: echo 3
+    depends_on: [step2]
+`
+
+  function seedRerunExec(id: string, status: string): void {
+    insertExecution(id, wsId, { status })
+    insertNodeExecution(`${id}-step1`, id, "step1", { status: "completed" })
+    insertNodeExecution(`${id}-step2`, id, "step2", { status: "failed", error: "boom" })
+    insertNodeExecution(`${id}-step3`, id, "step3", { status: "failed" })
+    insertNodeExecution(`${id}-__engine_init__`, id, "__engine_init__", { status: "failed" })
+    vi.mocked(mockExecutionService.getWorkflowContent).mockReturnValue(workflow3)
+  }
+
+  it("aborted 轮（reaper 回收过的）：节点全洗 + fresh start 接管，engine_restarted=true", async () => {
+    const start = vi.fn().mockResolvedValue({ id: "exec-rerun-1", status: "running" })
+    ;(mockExecutionService as unknown as { start: unknown }).start = start
+    seedRerunExec("exec-rerun-1", "aborted")
+
+    const res = await repairService.rerun("exec-rerun-1")
+
+    expect(res.restoredFrom).toBe("step2")
+    expect(res.resetNodes).toContain("step2")
+    expect(res.resetNodes).toContain("__engine_init__") // 合成节点 restorePoint 触达不到，rerun 补洗
+    expect(start).toHaveBeenCalledWith("exec-rerun-1")
+    expect(res.engine_restarted).toBe(true)
+    // mock start 不写 DB（真 start 会翻 running+刷新 started_at）；接力起点 = pending
+    const row = db.prepare("SELECT status, started_at FROM executions WHERE id = ?").get("exec-rerun-1") as { status: string; started_at: string | null }
+    expect(["pending", "running"]).toContain(row.status)
+    expect(row.started_at).toBeNull() // 陈旧 started_at 已清，reaper 钟不再指向旧轮
+  })
+
+  it("start 拒绝（并发叶子占用等）→ 退回 running 等重启恢复，engine_restarted=false", async () => {
+    const start = vi.fn().mockRejectedValue(Object.assign(new Error("已有叶子节点正在执行"), { status: 409 }))
+    ;(mockExecutionService as unknown as { start: unknown }).start = start
+    seedRerunExec("exec-rerun-2", "failed")
+
+    const res = await repairService.rerun("exec-rerun-2")
+
+    expect(res.engine_restarted).toBe(false)
+    const row = db.prepare("SELECT status FROM executions WHERE id = ?").get("exec-rerun-2") as { status: string }
+    expect(row.status).toBe("running")
+  })
+
+  it("running 轮拒绝 rerun（那走 retry_node）", async () => {
+    ;(mockExecutionService as unknown as { start: unknown }).start = vi.fn()
+    seedRerunExec("exec-rerun-3", "running")
+    await expect(repairService.rerun("exec-rerun-3")).rejects.toThrow(RepairError)
   })
 })

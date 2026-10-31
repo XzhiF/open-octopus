@@ -71,6 +71,7 @@ import {
 import { computeTaskWsLaunchParams, isCompositeWorkflowConfig } from "../scheduler/ws-launch"
 import { startChildRun, resumeParentFromChild } from "./task-child-run"
 import { calculateNextExecutions } from "../cron-utils"
+import { getChatEventBridge } from "../activity/chat-event-bridge"
 // The cap constant + the stale threshold are pure numbers (no schedule state); see the
 // boundary rule in __tests__/task-scheduler-boundary.test.ts for what is and is not
 // allowed to cross from the tasks domain.
@@ -171,6 +172,9 @@ export class TaskLifecycleService {
   private runDAO: ScheduleRunDAO
   private home: TaskHomeService
   private builtIn: BuiltInWorkflowService | null = null
+  /** 验收方案预生成 hook（2026-10-30）—— index.ts 装配，轮终态后 fire-and-forget。
+   *  独立注入而不是直接 import 服务：lifecycle 只认「round 结束了」，不认验收域细节。 */
+  private acceptancePlanHook: ((taskId: string, row: ExecutionRow) => void) | null = null
 
   constructor(private deps: {
     db: Database.Database
@@ -189,8 +193,12 @@ export class TaskLifecycleService {
     this.home = deps.taskHomeService ?? new TaskHomeService()
   }
 
-  // ── ①+②+④ the tick ────────────────────────────────────────────────
+  /** 验收方案预生成：轮终态（awaiting_review）后触发，绝不阻塞 finalize。 */
+  setAcceptancePlanHook(fn: ((taskId: string, row: ExecutionRow) => void) | null): void {
+    this.acceptancePlanHook = fn
+  }
 
+  // ── ①+②+④ the tick ────────────────────────────────────────────────
   /**
    * One round of the built-in job. Ordered deliberately: reconcile BEFORE arming so a
    * round whose engine died releases the task's slot before this tick tries to arm the
@@ -386,6 +394,12 @@ export class TaskLifecycleService {
       )
     }
 
+    // Self-heal the task-home rule BEFORE the round starts: legacy homes carry an
+    // unscoped 「禁止写入项目代码库」 that the SDK's nested-memory loader also feeds
+    // to workflow exec sessions, so ship/code-review refuse to edit or commit and
+    // the round lands zero commits (「变更」empty). No-op once current.
+    this.home.ensureRulesFile(taskId)
+
     // Pre-check for a human-readable refusal; ux_exec_task_active below is the actual
     // serializer (the pre-check cannot close the race, the index can).
     // task-exec-tree (v44): `latest` doubles as the CHAIN TIP — the terminal row this
@@ -421,7 +435,7 @@ export class TaskLifecycleService {
     const plan = buildTaskLaunchConfig(
       spec,
       parseJSON<string[]>(task.project_ids, []),
-      task.org ?? "",
+      task.repo_group ?? "",
       task.workflow_ref ?? undefined,
       parseJSON<string[]>(task.skills, []),
       parseJSON<ResourceRef[]>(task.resources, []),
@@ -579,10 +593,33 @@ export class TaskLifecycleService {
     const ws = this.deps.workspaceService
     if (!ws) throw new TaskLifecycleError("workspace", "WorkspaceService 未注入，无法准备工作区")
 
+    const composite = isCompositeWorkflowConfig(plan)
+    const { branchPrefix, branchSuffix, workspaceName } = computeTaskWsLaunchParams({
+      instanceKey: task.id,
+      naming: "task",
+      config: plan,
+      taskRow: task,
+    })
+    const projects = (plan.workspace_spec?.projects ?? []).filter(
+      (p) => p.name && p.name !== "default",
+    )
+
     const bound = task.workspace_id ? ws.getById(task.workspace_id) : undefined
     if (bound) {
       try {
-        ws.ensureWorktreesForReuse(bound)
+        // One-workspace model: the shell was created at draft time; project
+        // worktrees are attached here, at enqueue/trigger time.
+        if (typeof ws.ensureWorktreesForProjects === "function") {
+          ws.ensureWorktreesForProjects(
+            bound,
+            composite ? [] : projects,
+            branchPrefix,
+            branchSuffix,
+          )
+        } else {
+          // Test doubles / older injected services only implement self-heal.
+          ws.ensureWorktreesForReuse(bound)
+        }
         return bound.id
       } catch (err: unknown) {
         // A bound row that cannot self-heal is not "reuse and continue" — the run would
@@ -603,19 +640,9 @@ export class TaskLifecycleService {
       )
     }
 
-    const composite = isCompositeWorkflowConfig(plan)
-    const { branchPrefix, branchSuffix, workspaceName } = computeTaskWsLaunchParams({
-      instanceKey: task.id,
-      naming: "task",
-      config: plan,
-      taskRow: task,
-    })
-    const projects = (plan.workspace_spec?.projects ?? []).filter(
-      (p) => p.name && p.name !== "default",
-    )
     try {
       const created = ws.createFromSpec({
-        org: plan.workspace_spec?.org ?? task.org ?? "",
+        repo_group: plan.workspace_spec?.org ?? task.repo_group ?? "",
         name: workspaceName,
         // task-board-title 改版: 任务标题映射到工作区描述字段。
         description: task.name,
@@ -694,6 +721,12 @@ export class TaskLifecycleService {
         // nothing. (Zero real nodes at all stays completed — the rule's length>0 guard.)
         const outcomes = this.execDAO.countRealNodeOutcomes(executionId)
         if (outcomes.completed === 0 && outcomes.skipped > 0) status = "failed"
+        // 2026-10-29 虚假完成补刀（rerun 事故轮）：恢复路径级联把业务节点全打成
+        // cancelled/skipped 后，一个 completed 的 bash 路由节点（spec-resolve）就能
+        // 骗过上一条规则 —— 只要工作流存在业务节点行（agent/子流/swarm/loop/python/
+        // task_dispatch）而其中零个 completed，本轮没有任何真实产出，判 failed。
+        // businessTotal=0（纯 bash 流）不拦：全跑完的纯脚本轮是合法完成。
+        else if (outcomes.businessTotal > 0 && outcomes.businessCompleted === 0) status = "failed"
       }
 
       let ok = status === "completed" || status === "completed_with_failures"
@@ -764,6 +797,16 @@ export class TaskLifecycleService {
           ...(errorSummary ? { reason: errorSummary } : {}),
         },
       })
+      // 验收方案预生成（2026-10-30）：round 已终态、待验收入口已发出 —— 交给
+      // 独立规划 Agent 先算出「怎么验」，主 Chat 随后逐步引导。fire-and-forget。
+      if (row.phase_index != null && this.acceptancePlanHook) {
+        try {
+          this.acceptancePlanHook(taskId, row)
+        } catch (err: unknown) {
+          console.error(`[task-lifecycle] acceptance-plan hook failed for ${taskId}:`, errMessage(err))
+        }
+      }
+
       // A slot just freed, so drain the queue now instead of letting the next armed
       // launch wait up to a cron minute. Re-entrancy is safe: claimLaunch is a guarded
       // UPDATE, and finalizeLaunch never throws (the guard is inside this try).
@@ -1075,8 +1118,36 @@ export class TaskLifecycleService {
    *  not that task's scheduled fire, so the schedule must go on firing as armed. */
   armAndLaunch(taskId: string, opts: ArmOptions = {}): string {
     const executionId = this.armTask(taskId, opts)
+    this.bindTaskChatEvents(taskId, executionId)
     this.launchQueued(1)
     return executionId
+  }
+
+  /** 2026-10-28 task-thread: route this round's execution events to the task's
+   *  MAIN chat thread (source_chat_session_id, clone_name IS NULL). Legacy
+   *  task-author clone sessions are deliberately NOT bound — their old chat is
+   *  a different surface. Best-effort: a missing row must never block arming. */
+  private bindTaskChatEvents(taskId: string, executionId: string): void {
+    try {
+      const task = this.taskDAO.getById(taskId)
+      const sessionId = task?.source_chat_session_id
+      if (!task || !sessionId) return
+      const session = this.deps.db.prepare(
+        "SELECT clone_name FROM sessions WHERE id = ?",
+      ).get(sessionId) as { clone_name?: string | null } | undefined
+      if (!session || session.clone_name) return
+      const row = this.deps.db.prepare(
+        "SELECT workspace_id, workflow_ref FROM executions WHERE id = ?",
+      ).get(executionId) as { workspace_id?: string | null; workflow_ref?: string | null } | undefined
+      getChatEventBridge().bindExecution(executionId, {
+        sessionId,
+        org: task.repo_group,
+        workspaceId: row?.workspace_id ?? task.workspace_id ?? null,
+        workflowRef: row?.workflow_ref ?? task.workflow_ref ?? undefined,
+      })
+    } catch {
+      /* non-fatal — event routing is observability, not task state */
+    }
   }
 
   /** Stop a task's live instance(s). Returns how many rows were affected. Queued rows are

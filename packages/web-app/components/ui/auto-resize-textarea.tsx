@@ -3,16 +3,20 @@
 import { useCallback, useEffect, useRef } from "react"
 import { cn } from "@/lib/utils"
 
+const MIN_ROWS = 1
 const MAX_ROWS = 4
 const LINE_HEIGHT = 24
 
 interface AutoResizeTextareaProps extends Omit<React.ComponentProps<"textarea">, "rows"> {
+  /** 静止高度（默认 1 行）：输入框空着也占 minRows 行，避免单行框一打字就跳高。 */
+  minRows?: number
   maxRows?: number
 }
 
 export function AutoResizeTextarea({
   className,
   value,
+  minRows = MIN_ROWS,
   maxRows = MAX_ROWS,
   ...props
 }: AutoResizeTextareaProps) {
@@ -26,11 +30,12 @@ export function AutoResizeTextarea({
     // 实际只露出 ~2.5 行就开始内滚。
     const cs = getComputedStyle(el)
     const padY = (parseFloat(cs.paddingTop) || 0) + (parseFloat(cs.paddingBottom) || 0)
+    const minHeight = minRows * LINE_HEIGHT + padY
     const maxHeight = maxRows * LINE_HEIGHT + padY
-    const newHeight = Math.min(el.scrollHeight, maxHeight)
+    const newHeight = Math.min(Math.max(el.scrollHeight, minHeight), maxHeight)
     el.style.height = `${newHeight}px`
     el.style.overflowY = el.scrollHeight > maxHeight ? "auto" : "hidden"
-  }, [maxRows])
+  }, [minRows, maxRows])
 
   // Adjust on mount and whenever value changes
   useEffect(() => {
@@ -45,7 +50,7 @@ export function AutoResizeTextarea({
   return (
     <textarea
       ref={textareaRef}
-      rows={1}
+      rows={minRows}
       value={value}
       onChange={handleInput}
       className={cn(

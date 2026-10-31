@@ -23,11 +23,11 @@ export class TaskDAO extends BaseDAO {
   constructor(db: Database.Database) { super(db) }
 
   /** Insert a new task row. JSON columns default to their empty shapes. */
-  insert(row: Partial<TaskRow> & { id: string; org: string; name: string }): Database.RunResult {
+  insert(row: Partial<TaskRow> & { id: string; repo_group?: string | null; name: string }): Database.RunResult {
     const now = new Date().toISOString()
     return this.stmt(`
       INSERT INTO tasks (
-        id, org, name, status, source_chat_session_id,
+        id, repo_group, name, status, source_chat_session_id,
         task_spec, authoring_resources, resources, skills, project_ids,
         workflow_ref, version, deleted_at, created_at, updated_at, completed_at,
         workspace_id, semantic_summary,
@@ -35,7 +35,7 @@ export class TaskDAO extends BaseDAO {
         trigger_enabled, next_fire_at, last_fired_at
       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
-      row.id, row.org, row.name,
+      row.id, row.repo_group ?? null, row.name,
       row.status ?? "draft",
       row.source_chat_session_id ?? null,
       row.task_spec ?? "{}",
@@ -134,6 +134,19 @@ export class TaskDAO extends BaseDAO {
   }
 
   /**
+   * 2026-10-28 task-thread redesign: bind/replace the task's MAIN chat thread
+   * (`source_chat_session_id`). Same targeted-UPDATE discipline as
+   * updateAutosave/bindDoerSession — no version bump (binding a thread is not
+   * a spec edit and must not 409 a concurrent spec-field write).
+   */
+  bindSourceChatSession(id: string, sessionId: string | null): boolean {
+    const now = new Date().toISOString()
+    return this.stmt(
+      "UPDATE tasks SET source_chat_session_id = ?, updated_at = ? WHERE id = ? AND deleted_at IS NULL",
+    ).run(sessionId, now, id).changes > 0
+  }
+
+  /**
    * schema v50 (ADR-0025, taskboard-modal-v2 票01): bind the task's single
    * task-doer chat session. Targeted UPDATE like updateAutosave — does NOT bump
    * version: opening a chat is not a spec edit and must not 409 against a
@@ -167,23 +180,23 @@ export class TaskDAO extends BaseDAO {
     ).all(status) as TaskRow[]
   }
 
-  /** List active tasks for an org (kanban board), most recently updated first. */
-  listByOrg(org: string): TaskRow[] {
+  /** List active tasks for a repo group (kanban board), most recently updated first. */
+  listByRepoGroup(repoGroup: string): TaskRow[] {
     return this.stmt(
-      "SELECT * FROM tasks WHERE org = ? AND deleted_at IS NULL ORDER BY updated_at DESC, id DESC",
-    ).all(org) as TaskRow[]
+      "SELECT * FROM tasks WHERE repo_group = ? AND deleted_at IS NULL ORDER BY updated_at DESC, id DESC",
+    ).all(repoGroup) as TaskRow[]
   }
 
   /**
    * 归档资产化 P3 票06 (语义摘要进任务板): 服务端 LIKE 搜索（零新基建、非 FTS——LIKE 即
-   * 现状最小档）。对 name ∨ semantic_summary 子串匹配，叠加可选 status/org。
+   * 现状最小档）。对 name ∨ semantic_summary 子串匹配，叠加可选 status/repo_group。
    *  - 未归档/无摘要 task：semantic_summary 为 NULL，IFNULL 兜成 '' 不参与匹配、不报错
    *    （宽容读，历史已归档 task 天然不进「按摘要」的结果但按 name 仍可命中）。
    *  - 排序 updated_at DESC（搜索结果「最近改动优先」；空 q 由调用方走原 listTasks 路径，
    *    本方法仅在 q 非空时被调用）。
    *  转义 % / _ / \ 防用户串里的通配符误命中（ESCAPE '\'）。
    */
-  searchActive(opts: { status?: string; org?: string; q: string }): TaskRow[] {
+  searchActive(opts: { status?: string; repo_group?: string; q: string }): TaskRow[] {
     const like = `%${escapeLikeParam(opts.q)}%`
     const clauses: string[] = [
       "deleted_at IS NULL",
@@ -191,7 +204,7 @@ export class TaskDAO extends BaseDAO {
     ]
     const vals: unknown[] = [like, like]
     if (opts.status) { clauses.push("status = ?"); vals.push(opts.status) }
-    if (opts.org) { clauses.push("org = ?"); vals.push(opts.org) }
+    if (opts.repo_group) { clauses.push("repo_group = ?"); vals.push(opts.repo_group) }
     return this.stmt(
       `SELECT * FROM tasks WHERE ${clauses.join(" AND ")} ORDER BY updated_at DESC, id DESC`,
     ).all(...vals) as TaskRow[]

@@ -66,7 +66,7 @@ import {
   PREV_DEFAULT_V2_WORKFLOW_PRESETS_YAML,
   PRESETS_VERSION,
 } from '../workflow-presets-seed'
-import { BUILTIN_CLONES } from '../builtin-clones'
+import { BUILTIN_CLONES, builtinPersonaHash } from '../builtin-clones'
 
 // Minimal CloneDAO stand-in — DB registration is not under test here.
 const fakeDAO = {
@@ -533,5 +533,99 @@ describe('persona.md ↔ builtin-clones.ts consistency', () => {
     const fork = fs.readFileSync(path.join(realFork, 'persona.md'), 'utf-8').replace(/\r\n/g, '\n')
     const def = BUILTIN_CLONES.find((c) => c.name === 'task-author')!
     expect(def.persona.replace(/\r\n/g, '\n')).toBe(fork)
+  })
+})
+
+describe('CloneInitService — built-in persona template migration (v59)', () => {
+  // The 12-line thin stub shipped before the five-section 岗位包 rewrite.
+  // Kept here verbatim so the ledger-hash path is tested against the REAL
+  // outgoing template, not a synthetic one.
+  const PREV_WORKSPACE_PERSONA = [
+    '# Workspace 分身',
+    '',
+    '你是 Workspace 分身，一个全栈开发助手。',
+    '',
+    '## 核心能力',
+    '- 理解代码库结构，协助开发任务',
+    '- 读取和修改项目文件',
+    '- 运行构建、测试和部署命令',
+    '- 代码审查和优化建议',
+    '',
+    '## 工作原则',
+    '- 安全第一：危险操作必须确认',
+    '- 文件操作限定在工作空间内',
+    '- 解释你的决策过程',
+    '- 遵循项目的编码规范和架构风格',
+    '',
+  ].join('\n')
+
+  beforeEach(() => {
+    fs.rmSync(MOCK_HOME, { recursive: true, force: true })
+  })
+
+  const workspaceDir = () => path.join(MOCK_HOME, 'agent', 'built-in', 'workspace')
+  const workspacePersona = () => path.join(workspaceDir(), 'persona.md')
+  const workspaceConfig = () => path.join(workspaceDir(), 'config.json')
+
+  it('refreshes an untouched previous template (ledger hash) and stamps the config', () => {
+    fs.mkdirSync(workspaceDir(), { recursive: true })
+    fs.writeFileSync(workspacePersona(), PREV_WORKSPACE_PERSONA, 'utf-8')
+
+    const result = new CloneInitService().initBuiltInClones('test-org', fakeDAO)
+
+    expect(result.filesRefreshed).toContain('built-in/workspace/persona.md')
+    const def = BUILTIN_CLONES.find((c) => c.name === 'workspace')!
+    expect(fs.readFileSync(workspacePersona(), 'utf-8')).toBe(def.persona)
+    expect(fs.readFileSync(workspacePersona(), 'utf-8')).toContain('## 工作流强制项')
+    const config = JSON.parse(fs.readFileSync(workspaceConfig(), 'utf-8')) as { persona_template_hash: string }
+    expect(config.persona_template_hash).toBe(builtinPersonaHash(def))
+  })
+
+  it('refreshes a tracked-untouched file when the template changed (stamp path)', () => {
+    fs.mkdirSync(workspaceDir(), { recursive: true })
+    const stale = '# 旧模板\n\n旧内容\n'
+    fs.writeFileSync(workspacePersona(), stale, 'utf-8')
+    fs.writeFileSync(
+      workspaceConfig(),
+      JSON.stringify({ name: 'workspace', persona_template_hash: builtinPersonaHash({ persona: stale }) }),
+      'utf-8',
+    )
+
+    const result = new CloneInitService().initBuiltInClones('test-org', fakeDAO)
+    expect(result.filesRefreshed).toContain('built-in/workspace/persona.md')
+  })
+
+  it('preserves a hand-edited persona and warns once', () => {
+    fs.mkdirSync(workspaceDir(), { recursive: true })
+    fs.writeFileSync(workspacePersona(), '# 我自己的岗位包\n', 'utf-8')
+    fs.writeFileSync(
+      workspaceConfig(),
+      JSON.stringify({ persona_template_hash: 'deadbeef-not-matching' }),
+      'utf-8',
+    )
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+
+    const service = new CloneInitService()
+    const result = service.initBuiltInClones('test-org', fakeDAO)
+
+    expect(result.filesSkipped).toContain('built-in/workspace/persona.md')
+    expect(fs.readFileSync(workspacePersona(), 'utf-8')).toBe('# 我自己的岗位包\n')
+    const warns = warn.mock.calls.filter((c) => String(c[0]).includes('user-modified'))
+    expect(warns).toHaveLength(1)
+    warn.mockRestore()
+  })
+
+  it('is idempotent: a current template is left untouched without warn', () => {
+    fs.mkdirSync(workspaceDir(), { recursive: true })
+    const def = BUILTIN_CLONES.find((c) => c.name === 'workspace')!
+    fs.writeFileSync(workspacePersona(), def.persona, 'utf-8')
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+
+    const result = new CloneInitService().initBuiltInClones('test-org', fakeDAO)
+
+    expect(result.filesSkipped).toContain('built-in/workspace/persona.md')
+    expect(result.filesRefreshed).not.toContain('built-in/workspace/persona.md')
+    expect(warn.mock.calls.filter((c) => String(c[0]).includes('user-modified'))).toHaveLength(0)
+    warn.mockRestore()
   })
 })

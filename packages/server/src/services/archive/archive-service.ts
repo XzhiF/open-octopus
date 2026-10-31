@@ -106,7 +106,6 @@ export class ArchiveService {
     return {
       execution_id: exec.id,
       workspace_id: exec.workspace_id,
-      org: exec.org,
       workflow_name: exec.workflow_name,
       total_cost: totalCost,
       total_duration_ms: exec.duration ?? 0,
@@ -165,7 +164,6 @@ export class ArchiveService {
         // Phase 3: workspace metadata snapshot
         const wsRow: WorkspaceArchiveRow = {
           workspace_id: ws.id,
-          org: ws.org,
           name: ws.name,
           description: ws.description,
           source: ws.source,
@@ -368,7 +366,6 @@ export class ArchiveService {
 
   async archiveWorkspace(
     workspaceId: string,
-    org: string,
     options: {
       installSkills: Array<{ name: string; group: string; path?: string; content?: string }>
       installWorkflows?: Array<{ name: string; group: string; path?: string; content?: string }>
@@ -432,7 +429,6 @@ export class ArchiveService {
 
       const workspaceArchiveRow: WorkspaceArchiveRow = {
         workspace_id: workspaceId,
-        org: workspace.org,
         name: workspace.name,
         description: workspace.description,
         source: workspace.source,

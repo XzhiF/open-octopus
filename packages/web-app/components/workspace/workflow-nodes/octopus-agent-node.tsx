@@ -3,6 +3,7 @@
 import type { Node, NodeProps } from "@xyflow/react"
 import type { StatusOverlay } from "@/lib/types"
 import { StatusShell } from "./status-shell"
+import type { DagOrientation } from "@/lib/dag-orientation"
 import { TypeShell } from "./type-shell"
 import { Badge } from "@/components/ui/badge"
 import { Progress } from "@/components/ui/progress"
@@ -27,6 +28,7 @@ interface OctopusAgentNodeData {
       current_activity?: string
     }
   }
+  dagOrientation?: DagOrientation
   isCurrent?: boolean
   isActive?: boolean
   [key: string]: unknown
@@ -45,6 +47,7 @@ export function OctopusAgentNode({ data, selected }: NodeProps<OctopusAgentNode>
       isCurrent={data.isCurrent}
       isActive={data.isActive}
       selected={selected}
+      orientation={data.dagOrientation}
     >
       <TypeShell nodeType="octopus_agent" name={data.name} statusOverlay={data.statusOverlay}>
         <div className="space-y-2">

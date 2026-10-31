@@ -197,7 +197,7 @@ export function InteractionModal({
         className="sm:max-w-5xl flex flex-col h-[95vh] max-h-[95vh] overflow-hidden gap-0 p-0"
         onPointerDownOutside={(e) => e.preventDefault()}
       >
-        <DialogHeader className="flex-shrink-0 px-6 pt-4 pb-2">
+        <DialogHeader className="flex-shrink-0 pl-12 pr-6 pt-4 pb-2">
           <div className="flex items-center justify-between pr-8">
             <DialogTitle className="flex items-center gap-2">
               <MessageCircle className="h-5 w-5 text-pop-purple" />

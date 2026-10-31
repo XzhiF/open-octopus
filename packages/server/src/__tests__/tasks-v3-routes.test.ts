@@ -77,13 +77,13 @@ function installSkill(
 }
 
 /** Insert a sessions row directly (bypass the DAO) to seed a source_chat_session_id. */
-function insertSession(db: Database.Database, sessionId: string, org: string): void {
+function insertSession(db: Database.Database, sessionId: string, repo_group: string): void {
   const now = new Date().toISOString()
   db.prepare(`
     INSERT INTO sessions (id, org, title, clone_name, perspective_clone_name, session_type,
       is_active, is_deleted, scope_id, provider_session_id, last_message_at, created_at, updated_at)
     VALUES (?, ?, ?, NULL, NULL, ?, 1, 0, NULL, NULL, NULL, ?, ?)
-  `).run(sessionId, org, "E2E_TD session", "task-author", now, now)
+  `).run(sessionId, repo_group, "E2E_TD session", "task-author", now, now)
 }
 
 function readTaskSpec(db: Database.Database, id: string): Record<string, unknown> {
@@ -198,7 +198,6 @@ describe("04: task create extension + skill-groups route (integration)", () => {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        org: ORG,
         source_chat_session_id: sessionId,
         task_type: "coding",
         skill_groups: ["e2e-td-grp1", "e2e-td-grp2"],
@@ -210,12 +209,12 @@ describe("04: task create extension + skill-groups route (integration)", () => {
     const task = await json<{
       id: string
       status: string
-      org: string
+      repo_group: string
       project_ids: string[]
       task_spec: { task_type?: string; skill_groups?: string[] }
     }>(res)
     expect(task.status).toBe("draft")
-    expect(task.org).toBe(ORG)
+    expect(task.repo_group).toBe(ORG)
     expect(task.project_ids).toEqual(["proj-alpha"])
     // Response task_spec carries the v3 fields.
     expect(task.task_spec.task_type).toBe("coding")
@@ -248,7 +247,6 @@ describe("04: task create extension + skill-groups route (integration)", () => {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        org: ORG,
         task_type: "generic",
         skill_groups: ["default"],
         name: "E2E_TD v3 default-only",
@@ -275,7 +273,6 @@ describe("04: task create extension + skill-groups route (integration)", () => {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        org: ORG,
         source_chat_session_id: sessionId,
         task_type: "coding",
         skill_groups: ["e2e-td-grp1"],
@@ -303,7 +300,6 @@ describe("04: task create extension + skill-groups route (integration)", () => {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        org: ORG,
         task_type: "coding",
         skill_groups: ["e2e-td-grp1"],
         name: "E2E_TD lock-sg",
@@ -325,7 +321,6 @@ describe("04: task create extension + skill-groups route (integration)", () => {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        org: ORG,
         task_type: "coding",
         skill_groups: ["e2e-td-grp1"],
         name: "E2E_TD lock-tt",
@@ -347,7 +342,6 @@ describe("04: task create extension + skill-groups route (integration)", () => {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        org: ORG,
         task_type: "coding",
         skill_groups: ["e2e-td-grp1", "e2e-td-grp2"],
         name: "E2E_TD merge",
@@ -373,7 +367,6 @@ describe("04: task create extension + skill-groups route (integration)", () => {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        org: ORG,
         task_type: "coding",
         skill_groups: ["e2e-td-grp1"],
         name: "E2E_TD same-values",
@@ -398,7 +391,6 @@ describe("04: task create extension + skill-groups route (integration)", () => {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        org: ORG,
         task_type: "coding",
         skill_groups: ["e2e-td-grp1"],
         name: "E2E_TD rename-me",
@@ -423,7 +415,6 @@ describe("04: task create extension + skill-groups route (integration)", () => {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        org: ORG,
         task_type: "coding",
         skill_groups: ["e2e-td-grp1"],
         name: "E2E_TD reap-draft",
@@ -444,7 +435,6 @@ describe("04: task create extension + skill-groups route (integration)", () => {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        org: ORG,
         task_type: "coding",
         skill_groups: ["e2e-td-grp1"],
         name: "E2E_TD ready-then-del",
@@ -499,7 +489,6 @@ describe("04: task create extension + skill-groups route (integration)", () => {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        org: ORG,
         task_type: "coding",
         skill_groups: ["e2e-td-grp1", "e2e-td-grp2"],
         name: "E2E_TD no-double-inject",
@@ -522,7 +511,6 @@ describe("04: task create extension + skill-groups route (integration)", () => {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        org: ORG,
         source_chat_session_id: sessionId,
         name: "E2E_TD before-rename",
       }),
@@ -551,7 +539,7 @@ describe("04: task create extension + skill-groups route (integration)", () => {
     const res = await app.request("/api/tasks", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ org: ORG, name: "E2E_TD unbound" }),
+      body: JSON.stringify({ repo_group: ORG, name: "E2E_TD unbound" }),
     })
     expect(res.status).toBe(201)
     const task = await json<{ id: string; version: number }>(res)
@@ -570,7 +558,7 @@ describe("04: task create extension + skill-groups route (integration)", () => {
     const res = await app.request("/api/tasks", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ org: ORG, task_type: "coding", name: "E2E_TD specjson" }),
+      body: JSON.stringify({ repo_group: ORG, task_type: "coding", name: "E2E_TD specjson" }),
     })
     expect(res.status).toBe(201)
     const task = await json<{ id: string }>(res)
@@ -606,7 +594,7 @@ describe("04: task create extension + skill-groups route (integration)", () => {
     const res = await app.request("/api/tasks", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ org: ORG, task_type: "coding", name: "E2E_TD put-spec" }),
+      body: JSON.stringify({ repo_group: ORG, task_type: "coding", name: "E2E_TD put-spec" }),
     })
     const task = await json<{ id: string; version: number }>(res)
     const putRes = await app.request(`/api/tasks/${task.id}`, {
@@ -627,7 +615,7 @@ describe("04: task create extension + skill-groups route (integration)", () => {
     const v2 = await app.request("/api/tasks", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ org: ORG, name: "E2E_TD v2" }),
+      body: JSON.stringify({ repo_group: ORG, name: "E2E_TD v2" }),
     })
     const v2Task = await json<{ id: string; version: number }>(v2)
     const v2Put = await app.request(`/api/tasks/${v2Task.id}`, {

@@ -1,7 +1,7 @@
 "use client"
 
 import { useState, useCallback, useEffect, useRef } from "react"
-import { useSearchParams, useRouter } from "next/navigation"
+import { useSearchParams, useRouter } from "@/lib/app-navigation"
 import {
   listJobs,
   toggleJob as apiToggleJob,

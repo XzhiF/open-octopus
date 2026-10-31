@@ -58,7 +58,7 @@ function job(overrides: Partial<SchedulerJob> = {}): SchedulerJob {
     cron_expression: "* * * * *",
     timezone: "Asia/Shanghai",
     enabled: true,
-    org: "xzf",
+    repo_group: "xzf",
     config: { schema_version: "1.0", type: "job", handler: "noop", args: {} } as unknown as SchedulerJob["config"],
     parallel_policy: "skip",
     timeout_seconds: 3600,
@@ -147,7 +147,6 @@ describe("CodeJobExecutor — happy path", () => {
     expect(seen).toHaveLength(1)
     expect(seen[0].scheduleId).toBe("sch-1")
     expect(seen[0].fireId).toBe(fireId)
-    expect(seen[0].org).toBe("xzf")
     expect(seen[0].args).toEqual({ batchSize: 50 })
     expect(seen[0].signal.aborted).toBe(false)
 

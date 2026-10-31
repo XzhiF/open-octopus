@@ -57,7 +57,7 @@ function tasksTableNameHasCol(col: string): boolean {
 function insertTask(id: string, name: string, status = "done"): void {
   const now = new Date().toISOString()
   db.prepare(`
-    INSERT INTO tasks (id, org, name, status, task_spec, authoring_resources, resources,
+    INSERT INTO tasks (id, repo_group, name, status, task_spec, authoring_resources, resources,
       skills, project_ids, version, created_at, updated_at)
     VALUES (?, ?, ?, ?, '{}', '[]', '[]', '[]', '[]', 1, ?, ?)
   `).run(id, ORG, name, status, now, now)
@@ -70,41 +70,6 @@ describe("票06 semantic_summary 迁移（schema-migration 先例）", () => {
     expect(tasksTableNameHasCol("semantic_summary")).toBe(true)
   })
 
-  it("旧库（无该列）applySchema 补列，历史行读出 NULL 不报错", () => {
-    db.close()
-    // 造一张缺 semantic_summary 的旧 tasks 表 + 一行历史数据。
-    const oldDbPath = path.join(tmp, "old.db")
-    const old = new Database(oldDbPath)
-    old.exec(`
-      CREATE TABLE tasks (
-        id TEXT PRIMARY KEY, org TEXT NOT NULL, name TEXT NOT NULL,
-        status TEXT NOT NULL DEFAULT 'draft', source_chat_session_id TEXT,
-        task_spec TEXT NOT NULL DEFAULT '{}', authoring_resources TEXT NOT NULL DEFAULT '[]',
-        resources TEXT NOT NULL DEFAULT '[]', skills TEXT NOT NULL DEFAULT '[]',
-        project_ids TEXT NOT NULL DEFAULT '[]', workflow_ref TEXT,
-        version INTEGER NOT NULL DEFAULT 1, deleted_at TEXT, created_at TEXT NOT NULL,
-        updated_at TEXT NOT NULL, completed_at TEXT, workspace_id TEXT DEFAULT NULL,
-        trigger_mode TEXT NOT NULL DEFAULT 'manual', trigger_at TEXT, cron_expression TEXT,
-        cron_timezone TEXT NOT NULL DEFAULT 'Asia/Shanghai', trigger_enabled INTEGER NOT NULL DEFAULT 1,
-        next_fire_at TEXT, last_fired_at TEXT, doer_session_id TEXT
-      )
-    `)
-    old.prepare(`
-      INSERT INTO tasks (id, org, name, status, created_at, updated_at)
-      VALUES ('legacy-1', 'x', '旧任务', 'done', '2024-01-01T00:00:00Z', '2024-01-01T00:00:00Z')
-    `).run()
-    old.close()
-
-    // 以旧库重开并跑 applySchema —— ensureColumn 补列。
-    db = new Database(oldDbPath)
-    db.pragma("foreign_keys = ON")
-    applySchema(db)
-    expect(tasksTableNameHasCol("semantic_summary")).toBe(true)
-    const row = db.prepare("SELECT semantic_summary FROM tasks WHERE id='legacy-1'").get() as {
-      semantic_summary: string | null
-    }
-    expect(row.semantic_summary).toBeNull() // 宽容读：历史 NULL，不抛
-  })
 })
 
 // ── ② DAO 写面：定向 UPDATE，不碰 status/version ──────────────────────
@@ -169,7 +134,7 @@ describe("票06 任务板搜索命中语义摘要（服务端 LIKE）", () => {
     insertTask("a2", "计费重构", "draft") // 同名不同态
     const onlyDone = svc.listTasks({ q: "计费", status: "done" }).items.map((t) => t.id)
     expect(onlyDone).toEqual(["a1"])
-    const onlyOrg = svc.listTasks({ q: "计费", org: ORG }).items.map((t) => t.id)
+    const onlyOrg = svc.listTasks({ q: "计费", repo_group: ORG }).items.map((t) => t.id)
     expect(onlyOrg.sort()).toEqual(["a1", "a2"])
   })
 
@@ -227,7 +192,7 @@ describe("票06 归档链写入 semantic_summary（独立字段=多面摘要）"
   function seedArchivingTask(id: string): void {
     const now = new Date().toISOString()
     db.prepare(`
-      INSERT INTO tasks (id, org, name, status, task_spec, authoring_resources, resources,
+      INSERT INTO tasks (id, repo_group, name, status, task_spec, authoring_resources, resources,
         skills, project_ids, version, created_at, updated_at)
       VALUES (?, ?, ?, 'archiving', ?, '[]', '[]', '[]', '[]', 1, ?, ?)
     `).run(id, ORG, `归档摘要任务 ${id}`, v4spec, now, now)

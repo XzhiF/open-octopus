@@ -3,24 +3,35 @@
 import { useState } from "react"
 import { cn } from "@/lib/utils"
 import { X } from "lucide-react"
-import { SettingsSidebar } from "@/components/settings/settings-sidebar"
+import { SettingsSidebar, settingsMenuItems } from "@/components/settings/settings-sidebar"
 
 interface SettingsTab {
   id: string
   label: string
 }
 
-export default function SettingsLayout({ children }: { children: React.ReactNode }) {
-  const [activeMenuItem, setActiveMenuItem] = useState("log-analysis")
+function tabLabel(id: string): string {
+  return settingsMenuItems.find((item) => item.id === id)?.label ?? id
+}
+
+export default function SettingsLayout({
+  children,
+  panels,
+}: {
+  children?: React.ReactNode
+  /** id → panel. Falls back to `children` when a section has no entry. */
+  panels?: Record<string, React.ReactNode>
+}) {
+  const [activeMenuItem, setActiveMenuItem] = useState("appearance")
   const [tabs, setTabs] = useState<SettingsTab[]>([
-    { id: "log-analysis", label: "日志分析" },
+    { id: "appearance", label: tabLabel("appearance") },
   ])
-  const [activeTabId, setActiveTabId] = useState("log-analysis")
+  const [activeTabId, setActiveTabId] = useState("appearance")
 
   const handleMenuItemClick = (menuId: string) => {
     const existing = tabs.find(t => t.id === menuId)
     if (!existing) {
-      setTabs(prev => [...prev, { id: menuId, label: "日志分析" }])
+      setTabs(prev => [...prev, { id: menuId, label: tabLabel(menuId) }])
     }
     setActiveMenuItem(menuId)
     setActiveTabId(menuId)
@@ -83,7 +94,7 @@ export default function SettingsLayout({ children }: { children: React.ReactNode
 
         {/* Tab content */}
         <div className="flex-1 overflow-hidden">
-          {children}
+          {panels ? panels[activeTabId] ?? children : children}
         </div>
       </div>
     </div>

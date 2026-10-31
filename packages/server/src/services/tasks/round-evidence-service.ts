@@ -40,6 +40,7 @@ import {
   TASK_VERIFY_LOG_EVENT,
   TASK_PREVIEW_EVENT,
   TASK_ARTIFACTS_UPDATE_EVENT,
+  TASK_ACCEPTANCE_CHECK_EVENT,
   TaskSpecFieldError,
   type AcceptanceVerify,
   type AcceptanceRunbook,
@@ -53,17 +54,27 @@ import { gitOps, type DiffFileEntry } from "../git-ops"
 import type { SSEService } from "../sse"
 import type { WorkspaceService } from "../workspace"
 import { TaskStatusConflictError } from "./tasks-service"
-import type { TasksService } from "./tasks-service"
+import type { AcceptanceResult, TasksService } from "./tasks-service"
 import type { TaskHomeService } from "./task-home-service"
 import type { TaskPhaseView } from "./derive-task-view"
-import { compilePlaybook, parseChecksMd, renderChecksMd, checksFileName, ticketBaseFromItemId } from "./playbook-compile"
+import { parseChecksMd, renderChecksMd, checksFileName, ticketBaseFromItemId } from "./checks-codec"
 import { runbookFromSpec } from "./runbook-spec"
-import type { PlaybookPayload, ChecksFile, ProbeRunResult, ProbeState } from "./playbook-types"
+import type { PlaybookPayload, ChecksFile, ProbeRunResult, ProbeState, CheckDecision } from "./playbook-types"
+import type { AcceptancePlanService, AwaitingRoundInfo } from "./acceptance-plan-service"
+import { emptyPlaybookPayload, planToPlaybook } from "./acceptance-plan-types"
 import { TestInstanceRegistry, type InstanceSource, type TestInstanceEntry } from "./test-instance-registry"
 import { hostProtectedPorts, hostProtectedPids } from "./host-guard"
 import { findPidOnPort, waitForPort, portFromUrl, processAncestry } from "../../port-utils"
+import { inspectProjectDelta, type ProjectDelta } from "./archive-delta"
 
 export type { PlaybookPayload, PlaybookSection, PlaybookItem, PlaybookCarryover, PlaybookBudget, ChecksFile, CheckEntry, ProbeRunResult, ProbeState } from "./playbook-types"
+
+/** 显式轮次坐标（2026-10-30 归档只读回看）：给 GET /playbook、/round-diff
+ *  指定历史轮；缺省仍是 awaiting 轮，现行为逐字不变。 */
+export interface RoundTarget {
+  phaseIndex: number
+  roundIndex: number
+}
 
 // ── payload shapes (mirror: web lib/tasks-api.ts) ─────────────────────
 
@@ -121,6 +132,11 @@ export interface RoundDiffPayload {
   /** executions.harness_summary.totalInterventions — 「干预 K」 tile; null = no harness data. */
   interventions: number | null
   repos: RepoDiff[]
+  /** 所锚定的轮次坐标（2026-10-28）：web 用 roundIndex === 1 判定
+   *  「本 phase 首轮 ⇒ 累计 = 本轮」，据此禁用累计开关。旧 server 无键 =
+   *  undefined（web 保持开关可用，诚实降级）。 */
+  phaseIndex?: number | null
+  roundIndex?: number
   /** 票09 三本账三源 —— 与 ledger 文件同 payload（buildLedgerMd 吃这份，web
    *  决策前预览也吃这份）。均可选：旧 server 无键 = 未统计，UI/台账出「—」/0。 */
   /** 人工干预逐条摘要（agent_events 权威，独立于上面的 harness interventions）。 */
@@ -232,6 +248,8 @@ export interface LedgerSnapshot {
   verify: VerifySummary | null
   preview: PreviewSummary | null
   checks: ChecksFile | null
+  /** 2026-10-31 放行前后现场：末轮 end → 决策时 HEAD 的提交 + 未提交文件。 */
+  postRound?: ProjectDelta[]
 }
 
 /** One in-memory verify session per task (running or most recent terminal). */
@@ -250,6 +268,8 @@ export class RoundEvidenceService {
   private readonly execDao: ExecutionDAO
   private readonly sessions = new Map<string, VerifySession>()
   private readonly previewSessions = new Map<string, PreviewSession>()
+  /** 验收方案（2026-10-30）：index.ts 构造后回填 —— 避免 getPlaybook 构造期循环依赖。 */
+  private planService: AcceptancePlanService | null = null
 
   constructor(
     db: Database.Database,
@@ -260,6 +280,46 @@ export class RoundEvidenceService {
     readonly instances: TestInstanceRegistry = new TestInstanceRegistry(),
   ) {
     this.execDao = new ExecutionDAO(db)
+  }
+
+  /** index.ts 装配：验收方案服务（生成/读取/单条检查写入共享同一份批次文件）。 */
+  setAcceptancePlanService(service: AcceptancePlanService | null): void {
+    this.planService = service
+  }
+
+  /** 公开的 awaiting 轮坐标读取（AcceptancePlanService 复用同一份判据）。 */
+  awaitingRoundInfo(taskId: string): {
+    execRow: ExecutionRow
+    phaseIndex: number
+    roundIndex: number
+    batchRelDir: string | null
+  } {
+    return this.resolveAwaiting(taskId)
+  }
+
+  /** 任意历史轮坐标（归档后只读回看的供货口）：exec 行 + 批次目录。
+   *  与 awaiting 判据无关 —— 只要 (phase, round) 有执行行就给；未知任务先 404，
+   *  轮行缺失 409。写面（决策/勾选/复检/预览）仍恒严 awaiting，不走这里。 */
+  roundInfo(taskId: string, phaseIndex: number, roundIndex: number): AwaitingRoundInfo {
+    const detail = this.tasksService.getTask(taskId) // 404 first
+    const execRow = this.execDao.findTaskRound(taskId, phaseIndex, roundIndex)
+    if (!execRow) {
+      throw new TaskStatusConflictError(`Phase ${phaseIndex} Round ${roundIndex} 的执行行不存在`)
+    }
+    return {
+      execRow,
+      phaseIndex,
+      roundIndex,
+      batchRelDir: this.batchRelDirOf(detail.task_spec as TaskSpec, phaseIndex),
+    }
+  }
+
+  /** 重新生成验收方案（未装配方案服务 = 特性关）。 */
+  async regenerateAcceptancePlan(taskId: string): Promise<{ ok: boolean; reason?: string }> {
+    if (!this.planService) {
+      return { ok: false, reason: "验收方案服务未装配（OCTOPUS_ACCEPTANCE_PLAN=off 或旧 server）" }
+    }
+    return this.planService.regenerate(taskId)
   }
 
   // ── awaiting-round resolution（验货面的供货闸；diff 两端点票03 起另走
@@ -281,6 +341,25 @@ export class RoundEvidenceService {
     const execId = awaiting?.rounds.find((r) => r.roundIndex === roundIndex)?.exec.id
     if (!awaiting || roundIndex == null || !execId) return null
     return { phaseIndex: awaiting.index, roundIndex, execId }
+  }
+
+  /** 归档后回看（2026-10-31）：**最后一个已验收轮**的坐标 —— awaiting / live /
+   *  停流接管都不在场时，diff 端点由它供货（done / archiving / awaiting_archive
+   *  以及「中段 phase 已验收、等下一轮」的任务，变更窗都还能出示实物）。
+   *  与 pickAwaitingSelection 同源（derived.phaseViews），按 spec 顺序取最后一个
+   *  acceptedRound 非空的 phase。null = 没有可锚定的已验收轮（调用方照原 409）。 */
+  private pickAcceptedSelection(detail: ReturnType<TasksService["getTask"]>): {
+    phaseIndex: number
+    roundIndex: number
+    execId: string
+  } | null {
+    const accepted = detail.derived.phaseViews.filter((p) => p.acceptedRound != null)
+    const last = accepted[accepted.length - 1]
+    const roundIndex = last?.acceptedRound ?? null
+    if (!last || roundIndex == null) return null
+    const execId = last.rounds.find((r) => r.roundIndex === roundIndex)?.exec.id
+    if (!execId) return null
+    return { phaseIndex: last.index, roundIndex, execId }
   }
 
   /** The derived view (tasks-service.getTask → derived.phaseViews) picks the
@@ -330,8 +409,17 @@ export class RoundEvidenceService {
    *  map 里没有键 → 走下方 `!start` 分支，expired("no_commits") 照旧。
    *  票03（taskboard-modal-v2「≡ 变更」）：无 awaiting 时解析到任务当前 live 轮，
    *  end 锚 = 各仓当前 HEAD —— 端点/payload 形状逐字不变，仅供货窗口扩大。 */
-  async getRoundDiff(taskId: string, scope: RoundDiffScope = "round"): Promise<RoundDiffPayload> {
-    const { execRow, phaseIndex, live: isLive } = this.resolveRoundForDiff(taskId)
+  async getRoundDiff(
+    taskId: string,
+    scope: RoundDiffScope = "round",
+    target?: RoundTarget,
+  ): Promise<RoundDiffPayload> {
+    const { execRow, phaseIndex, roundIndex, live: isLive } = target
+      ? (() => {
+          const info = this.roundInfo(taskId, target.phaseIndex, target.roundIndex)
+          return { execRow: info.execRow, phaseIndex: info.phaseIndex, roundIndex: info.roundIndex, live: false }
+        })()
+      : this.resolveRoundForDiff(taskId)
     let starts = parseCommitMap(execRow.start_commit_id)
     if (scope === "cumulative" && phaseIndex != null) {
       const first = this.execDao.findTaskPhaseFirstRound(taskId, phaseIndex)
@@ -351,6 +439,7 @@ export class RoundEvidenceService {
         available: false, reason: "no_commits",
         aggregate: { commits: 0, additions: 0, dels: 0, files: 0 },
         interventions, repos: [],
+        phaseIndex, roundIndex,
         manualInterventions: this.collectInterventions(execRow.id),
         quickEdits: [],
         takeover,
@@ -405,10 +494,23 @@ export class RoundEvidenceService {
       aggregate,
       interventions,
       repos,
+      phaseIndex, roundIndex,
       manualInterventions: this.collectInterventions(execRow.id),
       quickEdits,
       takeover,
     }
+  }
+
+  /** 2026-10-31 放行前终检：末轮 end → 当前 HEAD 的提交 + dirty 文件。
+   *  只读；严格锚定 awaiting 轮（resolveAwaiting 409 优先）。 */
+  getPostRoundDelta(taskId: string): ProjectDelta[] {
+    const { execRow } = this.resolveAwaiting(taskId)
+    const ends = parseCommitMap(execRow.end_commit_id)
+    const ws = this.workspaceService.getById(execRow.workspace_id)
+    const wsPath = ws?.path ?? null
+    const detail = this.tasksService.getTask(taskId) as unknown as { project_ids?: string[] }
+    const projectNames = [...new Set([...Object.keys(ends), ...(detail.project_ids ?? [])])]
+    return projectNames.map((p) => inspectProjectDelta(p, wsPath, ends[p] ?? null))
   }
 
   /** 票09「人工干预」列的读取（06 权威 SQL 的行级形态）：执行下所有
@@ -500,10 +602,24 @@ export class RoundEvidenceService {
 
   /** Lazy single-file patch (实物 tab row click). Ownership falls out of
    *  resolveRoundForDiff (exec belongs to this task); repo must exist in the
-   *  map. 票03: live 轮的端锚同样取当前 HEAD，与 getRoundDiff 同闸同口径。 */
-  async getFilePatch(taskId: string, repo: string, filePath: string): Promise<{ patch: string; truncated: boolean }> {
-    const { execRow, live } = this.resolveRoundForDiff(taskId)
-    const starts = parseCommitMap(execRow.start_commit_id)
+   *  map. 票03: live 轮的端锚同样取当前 HEAD，与 getRoundDiff 同闸同口径。
+   *  2026-10-31 归档回看：解析落到已验收轮时，patch 与列表同一 start..end
+   *  （冻结快照），并非按当前 HEAD 重算。 */
+  async getFilePatch(
+    taskId: string,
+    repo: string,
+    filePath: string,
+    scope: RoundDiffScope = "round",
+  ): Promise<{ patch: string; truncated: boolean }> {
+    const { execRow, phaseIndex, live } = this.resolveRoundForDiff(taskId)
+    let starts = parseCommitMap(execRow.start_commit_id)
+    // 与 getRoundDiff 同一条口径：累计 patch 的起点换成同 phase 首轮 start 锚，
+    // 否则「累计列表里点开只改了旧轮的文件」会 409 / 只出本轮 delta（2026-10-28）。
+    if (scope === "cumulative" && phaseIndex != null) {
+      const first = this.execDao.findTaskPhaseFirstRound(taskId, phaseIndex)
+      const firstStarts = parseCommitMap(first?.start_commit_id)
+      if (Object.keys(firstStarts).length > 0) starts = firstStarts
+    }
     const storedEnds = parseCommitMap(execRow.end_commit_id)
     const start = starts[repo]
     if (!start || (!live && !storedEnds[repo])) {
@@ -529,9 +645,12 @@ export class RoundEvidenceService {
    *  票08 补第三级：live 也没有时认**停流未交付的接管轮**（takeover_at 有、
    *  delivered 无）—— 机器轮已停但轮还在人手里跑（对话快改持续落 commit，
    *  AC3「接管对话内改动实时进 ≡ 变更」），与 live 同口径 end 锚 = 当前 HEAD。
-   *  错误语义不变：未知任务 404（getTask 先抛）；awaiting/live/takeover 皆无 →
-   *  原 409 如实上抛。票10 review-8：awaiting 判据走显式选取探针
-   *  （{@link pickAwaitingSelection}），不再靠 resolveAwaiting 抛异常当控制流。 */
+   *  2026-10-31 补第四级：以上皆无时认**最后一个已验收轮**（derived phaseViews
+   *  的 acceptedRound）—— end 锚 = 存下的快照，不随 HEAD 漂移；done / archiving /
+   *  awaiting_archive 的变更窗据此继续出示实物（归档后不再只剩走查/台账）。
+   *  错误语义不变：未知任务 404（getTask 先抛）；四类轮皆无 → 409 如实上抛。
+   *  票10 review-8：awaiting 判据走显式选取探针（{@link pickAwaitingSelection}），
+   *  不再靠 resolveAwaiting 抛异常当控制流。 */
   private resolveRoundForDiff(taskId: string): {
     execRow: ExecutionRow
     phaseIndex: number | null
@@ -545,17 +664,22 @@ export class RoundEvidenceService {
       if (awaitingRow && awaitingRow.task_id === taskId) {
         return { execRow: awaitingRow, phaseIndex: sel.phaseIndex, roundIndex: sel.roundIndex, live: false }
       }
-      // 病态边（派生认 awaiting 但执行行没了/归属不符）：旧语义 = 先试 live/接管
-      // 回落，皆无才抛「执行行缺失」原文。
-      const fb = this.execDao.findLiveRoundForTask(taskId) ?? this.execDao.findTakeoverRoundForTask(taskId)
-      if (!fb) throw new TaskStatusConflictError(`待验收轮 ${sel.execId} 的执行行缺失`)
-      return { execRow: fb, phaseIndex: fb.phase_index, roundIndex: fb.round_index ?? 1, live: true }
+      // 病态边（派生认 awaiting 但执行行没了/归属不符）：继续走 live / 接管 /
+      // 已验收回落，四类皆无才抛「执行行缺失」原文。
     }
     const execRow = this.execDao.findLiveRoundForTask(taskId) ?? this.execDao.findTakeoverRoundForTask(taskId)
-    if (!execRow) {
-      throw new TaskStatusConflictError("当前无待验收 round — 验货台只对 awaiting_review 的轮次供货")
+    if (execRow) {
+      return { execRow, phaseIndex: execRow.phase_index, roundIndex: execRow.round_index ?? 1, live: true }
     }
-    return { execRow, phaseIndex: execRow.phase_index, roundIndex: execRow.round_index ?? 1, live: true }
+    const acc = this.pickAcceptedSelection(detail)
+    if (acc) {
+      const accRow = this.execDao.findById(acc.execId)
+      if (accRow && accRow.task_id === taskId) {
+        return { execRow: accRow, phaseIndex: acc.phaseIndex, roundIndex: acc.roundIndex, live: false }
+      }
+    }
+    if (sel) throw new TaskStatusConflictError(`待验收轮 ${sel.execId} 的执行行缺失`)
+    throw new TaskStatusConflictError("当前没有可出示的轮次 — 无待验收 / 在跑 / 接管中的轮，也没有已验收轮")
   }
 
   /** live 端锚：仓当前 HEAD；目录坏/空仓（rev-parse 抛）→ null，调用方按
@@ -751,80 +875,164 @@ export class RoundEvidenceService {
     return { ...session.summary }
   }
 
-  // ── 验收剧本 (acceptance playbook) ─────────────────────────────────────
+  // ── 验收清单 (acceptance playbook) ─────────────────────────────────────
 
-  /** GET /:id/playbook — compile the awaiting round's契约 files into a walk/
-   *  probe/claim checklist (ADR-0022). Pure read + {@link compilePlaybook};
-   *  missing sources degrade into coverage.missing, never throw (200 with
-   *  available:false). resolveAwaiting 409s first (no awaiting → 409). */
-  getPlaybook(taskId: string): PlaybookPayload {
+  /** GET /:id/playbook — 本轮验收清单的**唯一来源**是验收方案
+   *  （acceptance-plan-rN.json，2026-10-30 AI-native；2026-10-31 两层化）。
+   *  旧契约文件编译器已删除：没有 ready 方案时返回空清单 + 方案状态，
+   *  验收台据此显示状态卡（无场景硬闸，仍可直接通过/退回）。
+   *  resolveAwaiting 409s first (no awaiting → 409)。
+   *
+   *  可传 `target` 读**历史轮**（归档后只读回看用）。历史轮只读盘上已落方案，
+   *  绝不懒触发规划 Agent 重新生成。 */
+  getPlaybook(taskId: string, target?: RoundTarget): PlaybookPayload {
+    const info = target
+      ? this.roundInfo(taskId, target.phaseIndex, target.roundIndex)
+      : this.resolveAwaiting(taskId)
+    // 方案优先（2026-10-30）：规划 Agent 已产出的方案就是本轮清单正本。
+    const st = this.planService?.planStateFor(taskId, info) ?? null
+    if (st?.plan) return planToPlaybook(st.plan, st.summary)
+    // 没有 ready 方案：懒触发一次生成（幂等，失败不影响本次读取）。
+    // 历史轮不触发 —— 归档后不需要（也不该）再跑规划 Agent。
+    if (!target && this.planService) void this.planService.ensureForAwaiting(taskId)
+    return emptyPlaybookPayload(st?.summary ?? { status: "missing" })
+  }
+
+  // ── 单条核对写入（2026-10-30 AI-native：窗口/主 Chat 共用一个写入口）─────
+  //
+  // 旧面板用整单 debounce 覆盖；主 Chat 逐项确认时整单覆盖会互相踩踏。这里改
+  // 读-合并-写：一次只动一个 item，天然同步。fail/skip 必填 note（进退回反馈与
+  // 下一轮 carryover 的是这句原因）。
+
+  recordCheck(
+    taskId: string,
+    input: { itemId: string; decision: CheckDecision; note?: string },
+  ): { checks: ChecksFile; itemId: string; decision: CheckDecision } {
     const { roundIndex, batchRelDir } = this.resolveAwaiting(taskId)
-    // ③ 管道步过滤前提（判据两级，2026-09-22）：本任务有没有「跑起来看」可用
-    // （runbook 两级任一命中）。有 → 起服/就绪/收尾类票步折给预览按钮；
-    // 无 → 它们留在剧本里可跑（否则没人起服务）。
-    const hasRunbook = !!this.resolveRunbook(taskId)
-    if (!batchRelDir) {
-      // absolute specPath bypass — no batch dir to read, honest empty state.
-      return compilePlaybook({ roundIndex, hasRunbook })
+    if (!batchRelDir) throw new TaskSpecFieldError("没有批次目录 — 核对勾选无处落盘")
+    const itemId = input.itemId?.trim()
+    if (!itemId) throw new TaskSpecFieldError("itemId 不能为空")
+    const note = (input.note ?? "").trim()
+    if (input.decision !== "pass" && !note) {
+      throw new TaskSpecFieldError("未通过 / 跳过必须写原因（会进退回反馈与下一轮 carryover）")
     }
-    let listing: Array<{ path: string }> = []
+    // 有方案时校验 item 存在 —— 防止模型/脚本凭空造 id 写脏台账。
+    // 2026-10-31 两层化：只有人验收场景（cases）可勾选；机器证据（checks）不签。
+    const plan = this.planService?.planState(taskId)?.plan ?? null
+    if (plan && !plan.cases.some((it) => it.id === itemId)) {
+      if (plan.checks.some((it) => it.id === itemId)) {
+        throw new TaskSpecFieldError(`「${itemId}」是机器证据项，不需要人工勾选 —— 人只需要确认场景用例`)
+      }
+      throw new TaskSpecFieldError(`未知验收项: ${itemId}`)
+    }
+    const rel = `${batchRelDir}/${checksFileName(roundIndex)}`
+    let data: ChecksFile = { version: "1", task_id: taskId, round_index: roundIndex, checks: {} }
     try {
-      listing = this.taskHome.listHomeDir(taskId, batchRelDir, true)
+      const parsed = parseChecksMd(this.taskHome.readHomeFile(taskId, rel).content)
+      if (parsed) data = parsed
     } catch {
-      listing = [] // batch dir not on disk yet
+      /* 首笔勾选 —— 文件还没写过 */
     }
-    const byBase = (re: RegExp): string | null => {
-      const hit = listing.find((e) => re.test(e.path.split("/").pop() ?? ""))
-      return hit ? hit.path : null
-    }
-    const read = (relPath: string | null): string | null => {
-      if (!relPath) return null
-      try {
-        return this.taskHome.readHomeFile(taskId, relPath).content
-      } catch {
-        return null // NOT_FOUND/race — treat as missing source
-      }
-    }
-    // latest NN-e2e-*.md (highest leading number), if any.
-    const e2ePaths = listing
-      .filter((e) => /(^|\/)\d[\d.-]*e2e[^/]*\.md$/i.test(e.path))
-      .map((e) => e.path)
-      .sort((a, b) => (parseInt(a.match(/\d+/)?.[0] ?? "0", 10) - parseInt(b.match(/\d+/)?.[0] ?? "0", 10)))
-    const e2ePath = e2ePaths[e2ePaths.length - 1] ?? null
-    // prior round's checks file (acceptance-checks-r{N}.md, N < roundIndex, max).
-    const prevPath = listing
-      .map((e) => e.path)
-      .map((p) => {
-        const m = /acceptance-checks-r(\d+)\.md$/.exec(p)
-        return m && Number(m[1]) < roundIndex ? { p, r: Number(m[1]) } : null
-      })
-      .filter((x): x is { p: string; r: number } => x !== null)
-      .sort((a, b) => b.r - a.r)[0] ?? null
-    let prevChecks: { round: number; data: ChecksFile } | null = null
-    if (prevPath) {
-      const raw = read(prevPath.p)
-      if (raw) {
-        const data = parseChecksMd(raw)
-        if (data) prevChecks = { round: prevPath.r, data }
-      }
-    }
-    return compilePlaybook({
-      roundIndex,
-      hasRunbook,
-      specMd: read(byBase(/^spec\.md$/i) ?? byBase(/spec.*\.md$/i)),
-      e2eTicket: e2ePath
-        ? { name: e2ePath.split("/").pop() ?? "e2e.md", content: read(e2ePath) ?? "" }
-        : null,
-      e2eTestPlan: read(byBase(/^e2e-test-plan\.md$/i)),
-      roundReport: read(byBase(/^round-report\.md$/i) ?? byBase(/round.*report.*\.md$/i)),
-      prevChecks,
+    data.version = "1"
+    data.task_id = taskId
+    data.round_index = roundIndex
+    data.checks[itemId] = { decision: input.decision, note, at: new Date().toISOString() }
+    this.writeEvidenceFile(taskId, rel, renderChecksMd(data))
+    this.sse.emit("taskpool", {
+      event: TASK_ACCEPTANCE_CHECK_EVENT,
+      data: { task_id: taskId, item_id: itemId, decision: input.decision },
     })
+    return { checks: data, itemId, decision: input.decision }
+  }
+
+  // ── 最终放行 / 退回：窗口与主 Chat 共用的决策入口（2026-10-30）───────
+  //
+  // 人点验收台是兜底，不是唯一通道：用户在对话里明确说「放行 / 退回」后，
+  // Agent 调 submit_acceptance_decision，走的正是 POST /:id/acceptance 的
+  // 同一套步骤 —— 冻结证据 → ✗ 硬闸 → 决策 → 台账/重开票。工具层的
+  // confirmed 校验负责「没明确表态不许动」，这里只做状态闸与副作用。
+
+  async decideAcceptance(
+    taskId: string,
+    input: {
+      decision: "accepted" | "rejected"
+      feedback?: string
+      reopen_tickets?: string[]
+      /** HTTP 契约显式给轮次；主 Chat 工具省略时取当前 awaiting 轮。 */
+      phase_index?: number
+      round_index?: number
+    },
+  ): Promise<{ result: AcceptanceResult; ledger_written: boolean; undecided: string[] }> {
+    const feedback = (input.feedback ?? "").trim()
+    if (input.decision === "rejected" && !feedback) {
+      // 与路由 zod 同律：反馈就是 task-fix 修复轮的指令，空指令 = 无修复轮可派。
+      throw new TaskSpecFieldError("打回必须给出反馈（feedback）—— 它就是修复轮的指令")
+    }
+    let phaseIndex = input.phase_index
+    let roundIndex = input.round_index
+    if (phaseIndex == null || roundIndex == null) {
+      const cur = this.resolveAwaiting(taskId)
+      phaseIndex = cur.phaseIndex
+      roundIndex = cur.roundIndex
+    }
+    // 决策落地后 awaiting 视图就没了 —— 证据必须在决策【之前】冻结。
+    const snap = await this.snapshotEvidence(taskId).catch(() => null)
+    // 走查 ✗ 服务端硬闸（与路由同一判据，快照必须真是本次要裁决的轮）。
+    if (
+      input.decision === "accepted" && snap &&
+      snap.phaseIndex === phaseIndex && snap.roundIndex === roundIndex
+    ) {
+      // 只有人验收场景能触发 ✗ 硬闸；机器证据不参与判定（旧 v1 checks 可能残留其 id）。
+      const humanIds = new Set(
+        snap.playbook.sections.flatMap((s) => s.items).filter((it) => it.tier !== "check").map((it) => it.id),
+      )
+      const nFail = Object.entries(snap.checks?.checks ?? {})
+        .filter(([id, ck]) => ck.decision === "fail" && humanIds.has(id)).length
+      if (nFail > 0) {
+        throw new TaskStatusConflictError(`走查存在 ${nFail} 项 ✗ —— 服务端硬闸拦截，请改走打回`)
+      }
+    }
+    const result = await this.tasksService.acceptance(taskId, {
+      phase_index: phaseIndex,
+      round_index: roundIndex,
+      decision: input.decision,
+      ...(input.decision === "rejected" ? { feedback } : {}),
+    })
+    // 台账/重开票 best-effort：决策已提交，副作用失败绝不回滚（K6）。
+    let ledgerWritten = false
+    try {
+      this.stopPreviewQuiet(taskId)
+      if (snap) {
+        if (input.decision === "accepted") {
+          ledgerWritten = this.writeLedger(snap, "accepted") !== null
+        } else {
+          const led = this.writeLedger(snap, "rejected")
+          this.augmentReject(snap, input.reopen_tickets)
+          ledgerWritten = led !== null
+        }
+      }
+    } catch (err: unknown) {
+      console.error(
+        "[tasks] acceptance ledger/reopen side-effect failed (decision already committed):",
+        err instanceof Error ? err.message : err,
+      )
+    }
+    // 未决项如实回给主 Chat：放行时若还有没勾的场景，用户有权知道。
+    // 机器证据（tier=check）不参与人工判定 —— 只统计人验收场景。
+    const items = (snap?.playbook.sections.flatMap((s) => s.items) ?? []).filter((it) => it.tier !== "check")
+    const decided = new Set(
+      Object.entries(snap?.checks?.checks ?? {})
+        .filter(([, c]) => c.decision === "pass" || c.decision === "skip")
+        .map(([id]) => id),
+    )
+    const undecided = items.map((it) => it.id).filter((id) => !decided.has(id))
+    return { result, ledger_written: ledgerWritten, undecided }
   }
 
   // ── 剧本探针单发执行 (playbook probe run) ─────────────────────────────
   //
-  // 验收剧本里 probe 步（编译自票内命令）的 [▶ 执行]：在活工作区根**同步**跑
-  // 一条命令，秒级返回 exit+tail 给面板就地盖章。信任边界与复检完全一致——
+  // 验收方案里机器证据的「跑一下」：在活工作区根**同步**跑复核命令，
+  // 秒级返回 exit+tail 给面板就地展示。信任边界与复检完全一致——
   // 命令来自票内人可阅文本、只有人点按钮才 spawn、绝不自动绝不批量；harness
   // 别名限制保留（探针职责是断言不是收尸，不像 runbook down 需要绕桩）。
   // 唯一加工：尾随 `&` 的拉起式命令包成 nohup + 输出丢弃——否则后台子进程
@@ -1312,6 +1520,7 @@ export class RoundEvidenceService {
       taskId, phaseIndex, roundIndex, batchRelDir,
       phaseName: ((detail.task_spec as TaskSpec | undefined)?.phases?.[phaseIndex - 1]?.name) ?? `Phase ${phaseIndex}`,
       diff, playbook, verify, preview, checks,
+      postRound: this.getPostRoundDelta(taskId),
     }
   }
 
@@ -1336,16 +1545,32 @@ export class RoundEvidenceService {
   augmentReject(snap: LedgerSnapshot, reopenTickets?: string[]): { reopened: string[] } {
     const reopened: string[] = []
     if (!snap.batchRelDir) return { reopened }
-    const fails = (snap.checks ? Object.entries(snap.checks.checks).filter(([, c]) => c.decision === "fail") : []) as Array<[string, { note: string }]>
+    // 验收方案项（2026-10-31 两层化）：场景 id 形如 case:n，关联票在 item.tickets
+    // （一个场景可对应多张票）；编译型 id 仍走 ticketBaseFromItemId。
+    const flat = snap.playbook.sections.flatMap((s) => s.items)
+    const humanIds = new Set(flat.filter((it) => it.tier !== "check").map((it) => it.id))
+    // 只有人验收场景的 ✗ 才进反馈/重开票；机器证据不参与判定。
+    const fails = (snap.checks
+      ? Object.entries(snap.checks.checks).filter(([id, c]) => c.decision === "fail" && humanIds.has(id))
+      : []) as Array<[string, { note: string }]>
+    const ticketsOf = (id: string): string[] => {
+      const base = ticketBaseFromItemId(id)
+      const it = flat.find((x) => x.id === id)
+      return [...new Set([
+        ...(base ? [base] : []),
+        ...(it?.tickets ?? []),
+        ...(it?.ticket && it.ticket !== "spec" ? [it.ticket] : []),
+      ])]
+    }
     // 1. append 未过项 section to fix-feedback (file written by tasks-service).
     if (fails.length) {
       const fbRel = `${snap.batchRelDir}/fix-feedback-r${snap.roundIndex}.md`
-      const flat = snap.playbook.sections.flatMap((s) => s.items)
       const sec =
         `\n\n## 未过项(验收台剧本 ✗)\n\n` +
         fails.map(([id, c]) => {
           const it = flat.find((x) => x.id === id)
-          return `- [${ticketBaseFromItemId(id) ?? id}] ${it?.op ?? id}\n  - 预期: ${it?.expect ?? "—"}\n  - 现象: ${c.note || "(未填)"}`
+          const tickets = ticketsOf(id)
+          return `- [${tickets.join(", ") || id}] ${it?.op ?? id}\n  - 预期: ${it?.expect ?? "—"}\n  - 现象: ${c.note || "(未填)"}`
         }).join("\n") + "\n"
       try {
         const cur = this.taskHome.readHomeFile(snap.taskId, fbRel).content
@@ -1356,7 +1581,7 @@ export class RoundEvidenceService {
     }
     // 2. flip tickets done→reopened (from fail ids ∪ body override).
     const want = new Set<string>([
-      ...fails.map(([id]) => ticketBaseFromItemId(id)).filter((x): x is string => !!x),
+      ...fails.flatMap(([id]) => ticketsOf(id)),
       ...(reopenTickets ?? []),
     ])
     if (want.size) {
@@ -1492,6 +1717,28 @@ export function buildTakeoverSection(mark: LedgerTakeoverMark | null | undefined
   return ["## 人工接管", `- ${head}`, `  - takeover_at ${mark.at}${mark.deliveredAt ? ` · delivered_at ${mark.deliveredAt}` : ""}`, ""]
 }
 
+/** 决策时现场（2026-10-31 放行终检）：末轮 end 之后的新提交 / 未提交文件。
+ *  验收台账与归档报告共用同一份口径（archive-delta）。 */
+export function buildPostRoundSection(rows: ProjectDelta[]): string[] {
+  if (rows.length === 0) return ["## 决策时现场（末轮之后）", "- （无执行区间 / 无法读取）", ""]
+  const commits = rows.reduce((n, r) => n + r.commits, 0)
+  const dirty = rows.reduce((n, r) => n + r.dirty_files.length, 0)
+  const lines = [
+    "## 决策时现场（末轮之后）",
+    `- 末轮后新增提交 ${commits} · 未提交文件 ${dirty}`,
+  ]
+  for (const r of rows) {
+    lines.push(
+      `  - ${r.project}: ${r.commits} commits · ${r.dirty_files.length} dirty` +
+        `${r.error ? ` · ⚠ ${r.error}` : ""}`,
+    )
+    for (const s of r.subjects.slice(0, 5)) lines.push(`    - ${s}`)
+    for (const f of r.dirty_files.slice(0, 5)) lines.push(`    - 未提交: \`${f}\``)
+  }
+  lines.push("")
+  return lines
+}
+
 
 function expiredRepo(name: string, reason: "no_workspace" | "no_commits" | "worktree_gone"): RepoDiff {
   return { name, expired: true, reason, commits: 0, additions: 0, dels: 0, files: 0, truncated: false, groups: [] }
@@ -1576,12 +1823,16 @@ function buildLedgerMd(snap: LedgerSnapshot, decision: "accepted" | "rejected"):
   const now = new Date().toISOString()
   const d = snap.diff
   const agg = d.aggregate
-  const totalSteps = snap.playbook.sections.reduce((n, sec) => n + sec.items.length, 0)
   const checks = snap.checks?.checks ?? {}
-  const decided = Object.keys(checks).length
-  const nPass = Object.values(checks).filter((c) => c.decision === "pass").length
-  const nFail = Object.values(checks).filter((c) => c.decision === "fail").length
-  const nSkip = Object.values(checks).filter((c) => c.decision === "skip").length
+  const allItems = snap.playbook.sections.flatMap((sec) => sec.items)
+  // 2026-10-31 两层：人验收场景才计入勾选统计；机器证据单独成节（只读）。
+  const humanItems = allItems.filter((it) => it.tier !== "check")
+  const evidenceItems = allItems.filter((it) => it.tier === "check")
+  const totalSteps = humanItems.length
+  const decided = humanItems.filter((it) => checks[it.id]).length
+  const nPass = humanItems.filter((it) => checks[it.id]?.decision === "pass").length
+  const nFail = humanItems.filter((it) => checks[it.id]?.decision === "fail").length
+  const nSkip = humanItems.filter((it) => checks[it.id]?.decision === "skip").length
   const undecided = Math.max(0, totalSteps - decided)
   const verifyLine = snap.verify
     ? `- 自动复检: \`${snap.verify.command}\` → **${snap.verify.state.toUpperCase()}**` +
@@ -1591,14 +1842,19 @@ function buildLedgerMd(snap: LedgerSnapshot, decision: "accepted" | "rejected"):
     ? `- 跑起来看: \`${snap.preview.command ?? ""}\` @ ${snap.preview.url} → ${snap.preview.state.toUpperCase()}` +
         `${snap.preview.external ? "(外部进程)" : ""} · 决策时自动停止`
     : "- 跑起来看: 未使用"
-  const stepLines = snap.playbook.sections.flatMap((sec) =>
-    sec.items.map((it) => {
-      const c = checks[it.id]
-      const mark = !c ? "·" : c.decision === "pass" ? "✓" : c.decision === "fail" ? "✗" : "⊘"
-      const note = c?.note ? ` — ${c.note}` : ""
-      return `  - [${mark}] ${it.op}${c && c.decision !== "pass" ? ` (预期: ${it.expect})${note}` : ""}`
-    }),
-  )
+  const stepLines = humanItems.map((it) => {
+    const c = checks[it.id]
+    const mark = !c ? "·" : c.decision === "pass" ? "✓" : c.decision === "fail" ? "✗" : "⊘"
+    const note = c?.note ? ` — ${c.note}` : ""
+    return `  - [${mark}] ${it.op}${c && c.decision !== "pass" ? ` (预期: ${it.expect})${note}` : ""}`
+  })
+  const evidenceLines = evidenceItems.map((it) => {
+    const refs = it.evidenceRefs ?? []
+    const missing = refs.filter((e) => e.missing).length
+    const status = refs.length === 0 ? "无证据指针" : missing > 0 ? `缺 ${missing} 件证据` : `${refs.length} 件证据齐全`
+    const covers = it.evidence ? ` · ${it.evidence}` : ""
+    return `  - ${it.op}${covers} — ${status}`
+  })
   const stamp = decision === "accepted" ? "✅ 通过" : "↩ 打回"
   // 接管件的复检真结果优先：verify 有终态（非 running）才算「跑过」。
   const verifyReal = !!snap.verify && snap.verify.state !== "running"
@@ -1616,6 +1872,7 @@ function buildLedgerMd(snap: LedgerSnapshot, decision: "accepted" | "rejected"):
       ? `- ${d.repos.filter((r) => !r.expired).length}/${d.repos.length} repos 有效 · ${agg.commits} commits · +${agg.additions}/−${agg.dels} · ${agg.files} 文件 · 干预 ${d.interventions ?? "—"}`
       : `- 无有效实物 diff（${d.reason ?? "证据过期"}）— 复检历史与 verdict 文件仍可参考`,
     "",
+    ...buildPostRoundSection(snap.postRound ?? []),
     ...interventionSec,
     ...quickEditSec,
     ...takeoverSec,
@@ -1626,9 +1883,19 @@ function buildLedgerMd(snap: LedgerSnapshot, decision: "accepted" | "rejected"):
     previewLine,
     "",
     "## 人工走查",
-    `- 计 ${totalSteps} 步：✓${nPass} · ✗${nFail} · ⊘${nSkip} · 未决 ${undecided}${snap.playbook.budget.degraded ? "（编译降档）" : ""}`,
-    ...(stepLines.length ? stepLines : ["  - （无编译步）"]),
+    ...(totalSteps === 0
+      ? ["- 本轮没有验收方案（无场景）"]
+      : [
+          `- 计 ${totalSteps} 条场景：✓${nPass} · ✗${nFail} · ⊘${nSkip} · 未决 ${undecided}${snap.playbook.budget.degraded ? "（编译降档）" : ""}`,
+          ...stepLines,
+        ]),
     ...(nSkip ? ["", `> ⊘ 跳过项将进入下一轮 carryover（${snap.batchRelDir ? checksFileName(snap.roundIndex + 1) : "?"} 前置），补验或再豁免需新原因。`] : []),
+    ...(evidenceItems.length ? [
+      "",
+      "## 机器证据（本轮已有验证，不要求逐项签）",
+      `- 共 ${evidenceItems.length} 项`,
+      ...evidenceLines,
+    ] : []),
     "",
     "## 决策",
     `- ${stamp} · 触发人 = 验收面板 · autoAdvance/派发由 tasks-service 账本另记`,

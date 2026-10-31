@@ -5,8 +5,9 @@
 .archon/.env
 # gstack QA tool artifacts — NEVER commit
 .gstack/
-# WorkBuddy 工作数据(记忆/技能/临时验证) — NEVER commit
+# WorkBuddy 工作数据(记忆/技能/临时验证) / local agent scratch — NEVER commit
 .workbuddy/
+.scratch/
 
 # docs
 docs/superpowers/
@@ -64,3 +65,7 @@ e2e-screenshots/
 infra/.env
 .claude/sessions/
 packages/*/dist-scripts/
+
+# desktop build artifacts
+packages/desktop/resources/
+packages/desktop/release/

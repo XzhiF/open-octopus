@@ -20,7 +20,7 @@ export const PHASE_STATUS_LABEL: Record<string, string> = {
 /** 状态词 → 任务状态 pill（导航条），与旧 ModalHeader STATUS_LABEL 同词。 */
 export const TASK_STATUS_LABEL: Record<string, string> = {
   draft: "草稿", ready: "待执行", running: "执行中", paused: "已暂停",
-  awaiting_review: "待验收", archiving: "归档中",
+  awaiting_review: "待验收", awaiting_archive: "待归档", archiving: "归档中",
   done: "已完成", failed: "失败", aborted: "已中止",
 }
 
@@ -34,6 +34,7 @@ export const TASK_PILL: Record<string, string> = {
   // 暂停不 pulse：它没有在动，闪烁会谎报「还在跑」。
   paused: "border-pop-bd bg-pop-idle text-pop-dim",
   awaiting_review: "border-pop-yellow/45 bg-pop-yellow-soft text-pop-yellow",
+  awaiting_archive: "border-pop-pink/45 bg-pop-pink-soft text-pop-pink",
   archiving: "border-pop-amber/45 bg-pop-amber-soft text-pop-amber",
   done: "border-pop-green/45 bg-pop-green-soft text-pop-green",
   failed: "border-pop-red/45 bg-pop-pink-soft text-pop-red",

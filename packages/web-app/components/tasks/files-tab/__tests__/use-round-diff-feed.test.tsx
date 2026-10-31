@@ -81,17 +81,28 @@ describe("useRoundDiffFeed", () => {
     unmount()
   })
 
-  it("409（无轮可供）→ error 面 + 保留旧数据不闪空；恢复后回绿", async () => {
+  it("409（无轮可供）→ error 面 + errorStatus 带出（壳据此落 idle）；保留旧数据不闪空；恢复后回绿", async () => {
     const { result, unmount } = renderHook(() => useRoundDiffFeed("t1", true, 0))
     await settle()
     const firstData = result.current.data
-    mockGetRoundDiff.mockRejectedValueOnce(Object.assign(new Error("当前无待验收 round — 验货台只对 awaiting_review 的轮次供货"), { status: 409 }))
+    mockGetRoundDiff.mockRejectedValueOnce(Object.assign(new Error("当前没有可出示的轮次"), { status: 409 }))
     await settle(10_000) // 轮询撞上 409
-    expect(result.current.error).toContain("当前无待验收 round")
+    expect(result.current.error).toContain("当前没有可出示的轮次")
+    expect(result.current.errorStatus).toBe(409)
     expect(result.current.data).toEqual(firstData) // 诚实降级：不清屏
     await settle(10_000) // 下一拍恢复
     expect(result.current.error).toBeNull()
+    expect(result.current.errorStatus).toBeNull()
     expect(result.current.data!.aggregate.commits).toBe(1)
+    unmount()
+  })
+
+  it("poll=false（末态回看）→ 只首发一次，兜底轮询不再打端点", async () => {
+    const { result, unmount } = renderHook(() => useRoundDiffFeed("t1", true, 0, false))
+    await settle()
+    expect(result.current.data).not.toBeNull()
+    await settle(30_000)
+    expect(mockGetRoundDiff).toHaveBeenCalledTimes(1)
     unmount()
   })
 
@@ -100,9 +111,11 @@ describe("useRoundDiffFeed", () => {
     const { result, unmount } = renderHook(() => useRoundDiffFeed("t1", true, 0))
     await settle()
     expect(result.current.error).toContain("网络断了")
+    expect(result.current.errorStatus).toBe(500)
     act(() => { result.current.retry() }) // 首发失败刚落地 <1500ms —— retry 不受节流
     await settle()
     expect(result.current.error).toBeNull()
+    expect(result.current.errorStatus).toBeNull()
     expect(mockGetRoundDiff).toHaveBeenCalledTimes(2)
     unmount()
   })

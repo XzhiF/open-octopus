@@ -226,7 +226,7 @@ describe("08 AC2: composite arm — buildCompositeInputValues preserves task_art
           const p = path.join(wsDir, id)
           fs.mkdirSync(path.join(p, "workflows"), { recursive: true })
           db.prepare(
-            `INSERT INTO workspaces (id, name, org, status, path, source, task_id, created_at, updated_at)
+            `INSERT INTO workspaces (id, name, repo_group, status, path, source, task_id, created_at, updated_at)
              VALUES (?, ?, ?, 'active', ?, 'task', ?, datetime('now'), datetime('now'))`,
           ).run(id, String(input.name), ORG, p, (input.task_id as string) ?? null)
           return { id }
@@ -260,7 +260,7 @@ describe("08 AC2: composite arm — buildCompositeInputValues preserves task_art
   function insertCompositeTask(id: string, subunits: SubunitSpec[]): void {
     const now = new Date().toISOString()
     tasks.insert({
-      id, org: ORG, name: `T_${id}`, status: "ready",
+      id, repo_group: ORG, name: `T_${id}`, status: "ready",
       task_spec: JSON.stringify({
         goal: "E2E_TD_08_goal", ac: ["ac1"], task_type: "coding", subunits,
         integration_goal: { strategy: "synthesis", prompt: "E2E_TD_08_synth" },
@@ -536,7 +536,7 @@ describe("08 injection-seam: readyTask creates no envelope; armTask uses the inj
         const p = path.join(os.tmpdir(), `octopus-seam-ws-${id}`)
         fs.mkdirSync(path.join(p, "workflows"), { recursive: true })
         db.prepare(
-          `INSERT INTO workspaces (id, name, org, status, path, source, task_id, created_at, updated_at)
+          `INSERT INTO workspaces (id, name, repo_group, status, path, source, task_id, created_at, updated_at)
            VALUES (?, ?, ?, 'active', ?, 'task', ?, datetime('now'), datetime('now'))`,
         ).run(id, String(input.name), ORG, p, (input.task_id as string) ?? null)
         return { id }
@@ -563,7 +563,7 @@ describe("08 injection-seam: readyTask creates no envelope; armTask uses the inj
   function insertDraftTask(id: string, spec: Record<string, unknown>, workflowRef: string | null = null): void {
     const now = new Date().toISOString()
     db.prepare(`
-      INSERT INTO tasks (id, org, name, status, source_chat_session_id, task_spec,
+      INSERT INTO tasks (id, repo_group, name, status, source_chat_session_id, task_spec,
         authoring_resources, resources, skills, project_ids, workflow_ref, version,
         deleted_at, created_at, updated_at, completed_at)
       VALUES (?, ?, ?, 'draft', NULL, ?, '[]', '[]', '[]', '[]', ?, 1, NULL, ?, ?, NULL)

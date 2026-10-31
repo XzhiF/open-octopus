@@ -45,6 +45,8 @@ export interface SendQueryOptions {
   skills?: string[]
   tools?: string[]
   agents?: Record<string, OctopusAgentDef>
+  /** In-process MCP servers (e.g. octopus workflow control tools). */
+  mcpServers?: Record<string, unknown>
   plugins?: Array<{ type: 'local'; path: string }>
   disablePlugins?: string[]
   disallowedTools?: string[]

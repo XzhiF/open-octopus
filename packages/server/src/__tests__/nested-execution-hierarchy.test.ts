@@ -19,14 +19,14 @@ describe("Nested execution hierarchy — DB columns", () => {
     dao = new ExecutionDAO(db)
     // Create workspace first (FK constraint)
     db.prepare(`
-      INSERT INTO workspaces (id, name, org, path, created_at, updated_at)
+      INSERT INTO workspaces (id, name, repo_group, path, created_at, updated_at)
       VALUES ('ws-1', 'Test Workspace', 'default', '/tmp/test', datetime('now'), datetime('now'))
     `).run()
     // Create parent execution
     dao.insertExecution({
       id: execId,
       workspace_id: "ws-1",
-      org: "default",
+      repo_group: "default",
       workflow_ref: "test-wf",
       workflow_name: "Test Workflow",
       status: "running",

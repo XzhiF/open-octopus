@@ -12,8 +12,10 @@
 import { SSEService } from "./sse"
 import { ChatService } from "./chat"
 import { getProvider } from "@octopus/providers"
+import type { OctopusAgentDef } from "@octopus/providers"
 import type { TokenUsage } from "@octopus/shared"
 import { getAgentDir } from "./agent/paths"
+import { withTransientReminder } from "./agent/prompt-reminder"
 
 /** The slice of hono's SSEStreamingApi the turn engine needs (streamSSE's
  *  callback argument structurally satisfies it). */
@@ -34,8 +36,16 @@ export interface ChatTurnParams {
   cwd: string
   provider?: string
   providerSessionId?: string | null
-  /** preset 'claude_code' + this append (persona / memory / task context). */
+  /** preset 'claude_code' + this append (persona / memory snapshot). */
   systemPromptAppend?: string
+  /**
+   * Per-turn context that must NOT mutate the system prompt (task status,
+   * phase/round, spec notices, role cards…). Appended to the provider prompt
+   * as a trailing <system-reminder>; the stored user message stays raw.
+   */
+  promptReminder?: string
+  /** Stable SDK agents map (expert roster) — never changes per turn. */
+  agents?: Record<string, OctopusAgentDef>
   /**
    * Optional tool interceptor handed straight to the provider (the same option
    * CloneRuntime passes for task-author sessions — see
@@ -108,10 +118,12 @@ export async function runChatTurn(params: ChatTurnParams): Promise<ChatTurnOutco
   })
 
   try {
-    const chunkStream = agent.sendQuery(content, cwd, params.providerSessionId ?? undefined, {
+    const prompt = withTransientReminder(content, params.promptReminder)
+    const chunkStream = agent.sendQuery(prompt, cwd, params.providerSessionId ?? undefined, {
       systemPrompt: { type: "preset", preset: "claude_code", append: params.systemPromptAppend },
       abortSignal: abortController.signal,
       plugins: [{ type: "local", path: getAgentDir() }],
+      ...(params.agents ? { agents: params.agents } : {}),
       // undefined unless the caller armed a hook (doer 票04) — provider treats
       // a missing hook exactly as before.
       onBeforeToolCall: params.onBeforeToolCall,

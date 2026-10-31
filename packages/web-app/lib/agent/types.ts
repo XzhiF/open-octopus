@@ -29,7 +29,6 @@ export interface HealthStatus {
 export interface AgentSession {
   id: string
   title: string
-  org: string
   clone_name: string | null
   perspective_clone_name: string | null
   session_type: SessionType
@@ -39,6 +38,13 @@ export interface AgentSession {
   is_active: boolean
   /** 会话挂靠语义（clone 通道：'knowledge'=知识中心；服务端行带此列，知识抽屉历史筛选用） */
   scope_id?: string | null
+  /** v58: chat cwd + bound workspace. */
+  cwd?: string | null
+  workspace_id?: string | null
+  /** Server-persisted last context usage (Session column). Only the
+   *  session-detail endpoint fills it — it is the cold-load source for the
+   *  composer's ctx chip (refresh / server restart / another browser). */
+  context_usage?: ContextUsageData | null
 }
 
 export interface ToolCallRecord {
@@ -76,12 +82,50 @@ export interface AgentMessage {
   is_summary: boolean
   is_compressed: boolean
   is_edited: boolean
+  /** metadata.displayType — e.g. 'event' for server-originated activity cards. */
+  displayType?: string
+  /** metadata.activity — payload of a server-originated activity event. */
+  activity?: {
+    kind?: string
+    severity?: 'info' | 'warn' | 'critical' | string
+    title?: string
+    message?: string | null
+    executionId?: string | null
+    taskId?: string | null
+    nodeId?: string | null
+    workspaceId?: string | null
+    /** 2026-10-28 task-thread: task state card. */
+    status?: string | null
+    phaseIndex?: number | null
+    roundIndex?: number | null
+    /** Buttons rendered by the transcript card (ids are the contract). */
+    actions?: Array<{ id: string; label: string }>
+    /** 人对决策卡的选择（POST /messages/:id/decision 写回 metadata）：
+     *  有值 = 卡片只读、所选按钮高亮。 */
+    decision?: { id: string; label?: string; at?: string }
+    /** 归档反思卡按条目记录的选择（键 = entry.id）。 */
+    decisions?: Record<string, { id: string; label?: string; at?: string }>
+    /** Tool-specific payload (launch proposal / action request / reflection entries). */
+    payload?: Record<string, unknown>
+  }
+  /** metadata.role_switch — delivered identity switch (v59). Rendered as a
+   *  collapsible transcript marker carrying the whole role pack. */
+  roleSwitch?: {
+    kind: 'clone' | 'reset'
+    id: string | null
+    displayName: string | null
+    revision: number
+    card: string
+  }
   /** True when the user interrupted (stopped) this response mid-stream.
    *  The message contains whatever the agent produced before the abort. */
   interrupted?: boolean
   /** True on an assistant row the server is still growing (clone chat
    *  stream-resume partial). Set from metadata; absence = finalized. */
   streaming?: boolean
+  /** Per-turn timing / token stats, attached client-side by ChatTab from the
+   *  session ledger (not persisted on the row). Used by the TUI process meta. */
+  turnStats?: import('../turn-stats').TurnStats
 }
 
 // ===== Memory =====
@@ -273,6 +317,10 @@ export interface ContextUsageData {
   systemTools?: { name: string; tokens: number }[]
   agents?: { agentType: string; source: string; tokens: number }[]
   slashCommands?: { totalCommands: number; includedCommands: number; tokens: number }
+  /** Server-derived fallback for sessions whose provider report was never
+   *  persisted (turns before the ctx column existed). Rendered as `ctx ~N%`
+   *  and replaced by exact numbers on the next turn. */
+  estimated?: boolean
 }
 
 // ===== SSE Events =====

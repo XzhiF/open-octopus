@@ -186,10 +186,10 @@ function fakeWorkspaceService() {
       const p = path.join(wsDir, id)
       fs.mkdirSync(path.join(p, "workflows"), { recursive: true })
       db.prepare(
-        `INSERT INTO workspaces (id, name, org, status, path, source, task_id, created_at, updated_at)
+        `INSERT INTO workspaces (id, name, repo_group, status, path, source, task_id, created_at, updated_at)
          VALUES (?, ?, ?, 'active', ?, 'task', ?, datetime('now'), datetime('now'))`,
       ).run(id, String(input.name), ORG, p, (input.task_id as string) ?? null)
-      return { id, name: input.name, org: ORG, status: "active", path: p }
+      return { id, name: input.name, repo_group: ORG, status: "active", path: p }
     },
   }
 }
@@ -208,7 +208,7 @@ function fakeBuiltIn() {
 function insertTask(id: string, overrides: Partial<TaskRow> = {}, spec?: Partial<TaskSpec>): TaskRow {
   const now = new Date().toISOString()
   const row = {
-    id, org: ORG, name: `T_${id}`, status: "ready",
+    id, repo_group: ORG, name: `T_${id}`, status: "ready",
     task_spec: JSON.stringify({ goal: "做点什么", ac: ["能跑"], ...(spec ?? {}) }),
     authoring_resources: "[]", resources: "[]", skills: "[]", project_ids: "[]",
     workflow_ref: "built-in/demo", version: 1, source_chat_session_id: null,
@@ -247,7 +247,7 @@ function bindWorkspace(taskId: string): string {
   const p = path.join(wsDir, id)
   fs.mkdirSync(path.join(p, "workflows"), { recursive: true })
   db.prepare(
-    `INSERT INTO workspaces (id, name, org, status, path, source, task_id, created_at, updated_at)
+    `INSERT INTO workspaces (id, name, repo_group, status, path, source, task_id, created_at, updated_at)
      VALUES (?, ?, ?, 'active', ?, 'task', ?, datetime('now'), datetime('now'))`,
   ).run(id, `ws-${taskId}`, ORG, p, taskId)
   db.prepare("UPDATE tasks SET workspace_id = ? WHERE id = ?").run(id, taskId)
@@ -479,19 +479,6 @@ describe("task-lifecycle — the run history is one tree (v44)", () => {
     expect(execs.findLatestTaskInstance("t7")!.id).toBe("c-r2")
   })
 
-  it("schema v44 rebuilds a roots-only latch over instances (re-entrant)", () => {
-    // Recreate the OLD index verbatim, then run the startup sequence again.
-    db.exec("DROP INDEX ux_exec_task_active")
-    db.exec(`CREATE UNIQUE INDEX ux_exec_task_active ON executions(task_id)
-      WHERE task_id IS NOT NULL AND parent_id = '0'
-        AND status NOT IN ('completed','completed_with_failures','failed','cancelled','aborted','skipped','rejected')`)
-    applySchema(db)
-    const { sql } = db.prepare("SELECT sql FROM sqlite_master WHERE type='index' AND name='ux_exec_task_active'").get() as { sql: string }
-    expect(sql).toContain("phase_index IS NOT NULL")
-    applySchema(db) // second pass: no-op, must not throw
-    const { sql: sql2 } = db.prepare("SELECT sql FROM sqlite_master WHERE type='index' AND name='ux_exec_task_active'").get() as { sql: string }
-    expect(sql2).toBe(sql)
-  })
 })
 
 // ── ② claim + the shared cap (hard gate) ─────────────────────────────

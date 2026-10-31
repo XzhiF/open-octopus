@@ -189,7 +189,7 @@ function seedAwaitingReview(opts: {
   const wsPath = path.join(fakeHome, ".octopus", "orgs", ORG, "workspaces", `${taskId}-ws`)
   fs.mkdirSync(wsPath, { recursive: true })
   db.prepare(
-    "INSERT INTO workspaces (id, name, org, path, source, status, task_id, created_at, updated_at) VALUES (?, ?, ?, ?, 'task', 'active', ?, datetime('now'), datetime('now'))",
+    "INSERT INTO workspaces (id, name, repo_group, path, source, status, task_id, created_at, updated_at) VALUES (?, ?, ?, ?, 'task', 'active', ?, datetime('now'), datetime('now'))",
   ).run(workspaceId, `task:${taskId}`, ORG, wsPath, taskId)
 
   const spec = {
@@ -207,7 +207,7 @@ function seedAwaitingReview(opts: {
     })),
   }
   db.prepare(`
-    INSERT INTO tasks (id, org, name, status, source_chat_session_id, task_spec,
+    INSERT INTO tasks (id, repo_group, name, status, source_chat_session_id, task_spec,
       authoring_resources, resources, skills, project_ids, workflow_ref, version,
       deleted_at, created_at, updated_at, completed_at, workspace_id)
     VALUES (?, ?, ?, ?, NULL, ?, '[]', '[]', '[]', '[]', NULL, 1, NULL, ?, ?, NULL, ?)
@@ -421,7 +421,7 @@ describe("AC1 — accepted: ledger + advance", () => {
     expect(taskRow(db, taskId).status).toBe("aborted")
   })
 
-  it("last-phase accepted → persisted archiving + 票 08 hook, no dispatch, no auto-done", async () => {
+  it("last-phase accepted → parked awaiting_archive (ready), archiving needs explicit startArchive", async () => {
     let hookTaskId: string | null = null
     service.setArchivingHook((id) => { hookTaskId = id })
     const { taskId } = seedAwaitingReview({ phases: [TWO_PHASES[0]] })
@@ -430,23 +430,74 @@ describe("AC1 — accepted: ledger + advance", () => {
     expect(res.status, await res.clone().text()).toBe(200)
     const body = (await res.json()) as { next_action: string; task: { derived: { taskStatus: string } } }
 
-    expect(body.next_action).toBe("archiving")
+    // archive-consent: 验收不再自动归档 —— 停在待归档, 等人在对话里说「归档」。
+    expect(body.next_action).toBe("awaiting_archive")
     expect(stubService.create).not.toHaveBeenCalled()
     const row = taskRow(db, taskId)
-    expect(row.status).toBe("archiving")
-    // archiving is NOT terminal — completed_at stays NULL (done is 票 08's writer).
+    expect(row.status).toBe("ready")
+    // 归档未启动 → completed_at 仍 NULL, 归档钩子零调用。
     expect(row.completed_at).toBeNull()
-    expect(hookTaskId).toBe(taskId)
-    expect(body.task.derived.taskStatus).toBe("archiving")
+    expect(hookTaskId).toBeNull()
+    expect(body.task.derived.taskStatus).toBe("awaiting_archive")
     expect(sseOf(PHASE_STATUS_UPDATE_EVENT)).toEqual([
       { event: PHASE_STATUS_UPDATE_EVENT, data: { task_id: taskId, phase_index: 1, status: "accepted", round_index: 1 } },
     ])
-    expect(sseOf(TASK_STATUS_EVENT).at(-1)).toMatchObject({ data: { status: "archiving" } })
+    expect(sseOf(TASK_STATUS_EVENT).at(-1)).toMatchObject({ data: { status: "awaiting_archive" } })
+    // silent ready write: 不出现会误导触发/回草稿的 ready 帧。
+    expect(sseOf(TASK_STATUS_EVENT).some((f) => (f.data as { status?: string }).status === "ready")).toBe(false)
     // Ledger still exactly one row.
     expect(ledgerRows(db, taskId)).toHaveLength(1)
     // 票03: enqueueing/accepting never touches the scheduler's tables — a task has no
     // definition row of its own any more.
     expect((db.prepare("SELECT COUNT(*) c FROM schedules").get() as { c: number }).c).toBe(0)
+
+    // 人明确说「归档」→ startArchive 才翻 archiving 并触发票 08 钩子。
+    const started = service.startArchive(taskId)
+    expect(started.status).toBe("archiving")
+    expect(taskRow(db, taskId).status).toBe("archiving")
+    expect(hookTaskId).toBe(taskId)
+    expect(service.getTask(taskId).derived?.taskStatus).toBe("archiving")
+    // 双击保护：已 archiving → 409。
+    expect(() => service.startArchive(taskId)).toThrow()
+  })
+
+  it("POST /:id/archive/start: 202 from parked; double start/non-parked 409; unknown 404", async () => {
+    const { taskId } = seedAwaitingReview({ phases: [TWO_PHASES[0]] })
+    await postAcceptance(taskId, { phase_index: 1, round_index: 1, decision: "accepted" })
+    service.setArchivingHook(() => {})
+
+    const started = await app.request(`/api/tasks/${taskId}/archive/start`, { method: "POST" })
+    expect(started.status, await started.clone().text()).toBe(202)
+    expect(((await started.json()) as { status: string }).status).toBe("archiving")
+
+    const again = await app.request(`/api/tasks/${taskId}/archive/start`, { method: "POST" })
+    expect(again.status).toBe(409)
+
+    const { taskId: draftId } = seedAwaitingReview({ status: "draft", phases: [TWO_PHASES[0]] })
+    const notParked = await app.request(`/api/tasks/${draftId}/archive/start`, { method: "POST" })
+    expect(notParked.status).toBe(409)
+
+    const missing = await app.request(`/api/tasks/no-such-task/archive/start`, { method: "POST" })
+    expect(missing.status).toBe(404)
+  })
+
+  it("parked awaiting_archive blocks trigger / reopen / cron / spec edits; abort remains the exit", async () => {
+    const { taskId } = seedAwaitingReview({ phases: [TWO_PHASES[0]] })
+    await postAcceptance(taskId, { phase_index: 1, round_index: 1, decision: "accepted" })
+    expect(taskRow(db, taskId).status).toBe("ready")
+    expect(service.getTask(taskId).derived?.taskStatus).toBe("awaiting_archive")
+
+    await expect(service.triggerTask(taskId)).rejects.toThrow(/待归档/)
+    expect(() => service.reopenTask(taskId)).toThrow(/待归档/)
+    expect(() => service.setCronTrigger(taskId, "0 9 * * *")).toThrow(/待归档/)
+    // persisted ready 但验收已冻结：spec 字段写入必须 409。
+    expect(() =>
+      service.updateSpecField(taskId, { field: "goal", value: "改目标", source: "agent" }),
+    ).toThrow(/Cannot edit spec/)
+
+    // 中止是停放态的唯一退出通道之一（另一条是 startArchive）。
+    expect(service.abortTask(taskId).status).toBe("aborted")
+    expect(taskRow(db, taskId).status).toBe("aborted")
   })
 })
 
@@ -632,7 +683,7 @@ describe("AC4 — guards (409/404/400)", () => {
     const now = new Date().toISOString()
     const id = `e2e-ac-v3-${taskSeq++}`
     db.prepare(`
-      INSERT INTO tasks (id, org, name, status, source_chat_session_id, task_spec,
+      INSERT INTO tasks (id, repo_group, name, status, source_chat_session_id, task_spec,
         authoring_resources, resources, skills, project_ids, workflow_ref, version,
         deleted_at, created_at, updated_at, completed_at)
       VALUES (?, ?, ?, 'running', NULL, ?, '[]', '[]', '[]', '[]', NULL, 1, NULL, ?, ?, NULL)
@@ -708,7 +759,7 @@ describe("derived view on GET /:id + board visibility", () => {
     const now = new Date().toISOString()
     const id = `e2e-ac-v3view-${taskSeq++}`
     db.prepare(`
-      INSERT INTO tasks (id, org, name, status, source_chat_session_id, task_spec,
+      INSERT INTO tasks (id, repo_group, name, status, source_chat_session_id, task_spec,
         authoring_resources, resources, skills, project_ids, workflow_ref, version,
         deleted_at, created_at, updated_at, completed_at)
       VALUES (?, ?, ?, 'failed', NULL, ?, '[]', '[]', '[]', '[]', NULL, 1, NULL, ?, ?, NULL)
@@ -720,10 +771,10 @@ describe("derived view on GET /:id + board visibility", () => {
   it("the unfiltered board scan surfaces v4-only statuses (awaiting_review / archiving)", () => {
     const { taskId } = seedAwaitingReview({ status: "awaiting_review" })
     const { taskId: archivingId } = seedAwaitingReview({ status: "archiving", phases: [TWO_PHASES[0]] })
-    const items = service.listTasks({ org: ORG }).items.map((t) => t.id)
+    const items = service.listTasks({ repo_group: ORG }).items.map((t) => t.id)
     expect(items).toContain(taskId)
     expect(items).toContain(archivingId)
-    expect(service.listTasks({ status: "archiving", org: ORG }).items.map((t) => t.id)).toEqual([archivingId])
+    expect(service.listTasks({ status: "archiving", repo_group: ORG }).items.map((t) => t.id)).toEqual([archivingId])
   })
 })
 
@@ -732,7 +783,7 @@ describe("AC5 — spec-field field=phases (whole-array PUT + optimistic lock)", 
     const now = new Date().toISOString()
     const id = `e2e-ac-draft-${taskSeq++}`
     db.prepare(`
-      INSERT INTO tasks (id, org, name, status, source_chat_session_id, task_spec,
+      INSERT INTO tasks (id, repo_group, name, status, source_chat_session_id, task_spec,
         authoring_resources, resources, skills, project_ids, workflow_ref, version,
         deleted_at, created_at, updated_at, completed_at)
       VALUES (?, ?, ?, 'draft', NULL, ?, '[]', '[]', '[]', '[]', NULL, 1, NULL, ?, ?, NULL)
@@ -906,7 +957,7 @@ describe("review M2 — K16 v4 spec edit window (running editable, terminal froz
   it("v3 running: still frozen (K13 byte-stable)", async () => {
     const now = new Date().toISOString()
     db.prepare(`
-      INSERT INTO tasks (id, org, name, status, source_chat_session_id, task_spec,
+      INSERT INTO tasks (id, repo_group, name, status, source_chat_session_id, task_spec,
         authoring_resources, resources, skills, project_ids, workflow_ref, version,
         deleted_at, created_at, updated_at, completed_at, workspace_id)
       VALUES (?, ?, 'E2E_AC v3-edit', 'running', NULL, ?, '[]', '[]', '[]', '[]', NULL, 1, NULL, ?, ?, NULL, NULL)

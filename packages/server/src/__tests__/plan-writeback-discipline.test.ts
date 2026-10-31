@@ -32,7 +32,7 @@ function repoRoot(): string {
     path.resolve(process.cwd(), "..", ".."),
   ]
   for (const c of candidates) {
-    if (fs.existsSync(path.join(c, "GLOSSARY-MAP.md"))) return c
+    if (fs.existsSync(path.join(c, "pnpm-workspace.yaml"))) return c
   }
   return candidates[0]
 }

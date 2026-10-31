@@ -30,7 +30,7 @@ function row(id: string, model: string, ts: number, ws: string, input_tokens: nu
     id, node_execution_id: 'e1-n1', execution_id: 'e-1', turn_index: 1, call_index: 0,
     message_id: null, model, stop_reason: null, timestamp: ts, duration_ms: 100, ttft_ms: null,
     input_tokens, output_tokens: 500, cache_read_tokens: 200, cache_creation_tokens: 100,
-    org: 'default', workspace_id: ws, workflow_ref: 'wf.yaml', node_id: 'n1', session_id: 's-1', instance_id: 'inst-1',
+    repo_group: 'default', workspace_id: ws, workflow_ref: 'wf.yaml', node_id: 'n1', session_id: 's-1', instance_id: 'inst-1',
   }
 }
 
@@ -39,8 +39,8 @@ beforeAll(() => {
   initDb(dbPath)
   const db = getDb()
   const t = new Date().toISOString()
-  db.prepare("INSERT INTO workspaces (id, name, path, org, created_at, updated_at) VALUES ('ws-1','WS1','/tmp/1','default',?,?)").run(t, t)
-  db.prepare("INSERT INTO workspaces (id, name, path, org, created_at, updated_at) VALUES ('ws-2','WS2','/tmp/2','default',?,?)").run(t, t)
+  db.prepare("INSERT INTO workspaces (id, name, path, repo_group, created_at, updated_at) VALUES ('ws-1','WS1','/tmp/1','default',?,?)").run(t, t)
+  db.prepare("INSERT INTO workspaces (id, name, path, repo_group, created_at, updated_at) VALUES ('ws-2','WS2','/tmp/2','default',?,?)").run(t, t)
   db.prepare(`INSERT INTO executions (id, workspace_id, parent_id, workflow_ref, workflow_name, status, started_at, completed_at, org, created_at, updated_at)
     VALUES ('e-1','ws-1','0','wf.yaml','WF','completed',?,?,?,?,?)`).run(t, t, 'default', t, t)
   db.prepare("INSERT INTO node_executions (id, execution_id, node_id, node_type, status, retry_count, duration, started_at, completed_at) VALUES ('e1-n1','e-1','n1','agent','completed',0,1,?,?)").run(t, t)

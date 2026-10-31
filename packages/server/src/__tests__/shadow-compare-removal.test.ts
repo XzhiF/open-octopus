@@ -39,7 +39,7 @@ beforeEach(() => {
   stubService.getStateJson.mockReturnValue(undefined)
 
   db.prepare(
-    `INSERT INTO workspaces (id, name, org, path, source, status, created_at, updated_at)
+    `INSERT INTO workspaces (id, name, repo_group, path, source, status, created_at, updated_at)
      VALUES (?, 'ws-shadow-rmv', 'org-shadow-rmv', '/tmp/ws-shadow-rmv', 'task', 'active', datetime('now'), datetime('now'))`,
   ).run(WS)
 

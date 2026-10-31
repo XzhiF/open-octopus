@@ -123,7 +123,7 @@ export function VerifyPanel({ cfg, summary, lines, running, busy, disabledReason
         {fold && <FoldHandle id="item-verify" closed={closed} onToggle={() => fold.toggle("item-verify", "info")} />}
         {/* 身份图标 —— 与「跑起来看」的 Rocket 同规格成对（当场复检=现跑核验） */}
         <ShieldCheck className="size-3.5 shrink-0 text-pop-dim" />
-        <span className="shrink-0 font-mono text-[9.5px] font-black tracking-[.09em] text-pop-dim">当场复检</span>
+        <span className="shrink-0 font-mono text-[9.5px] font-black tracking-[.09em] text-pop-dim">自动自检</span>
         <span className={`shrink-0 rounded-full border-[1.5px] border-pop-bd px-2.5 py-px font-mono text-[10px] font-black tabular-nums ${pill.cls}`} data-testid="verify-pill" data-state={pill.st}>
           {pill.t}
         </span>
@@ -144,10 +144,10 @@ export function VerifyPanel({ cfg, summary, lines, running, busy, disabledReason
             </Button>
           ) : cfg && !editing && !closed ? (
             <Button size="sm" className="h-6 border-[1.5px] border-pop-bd bg-pop-green px-3 font-mono text-[10.5px] font-black text-pop-bg shadow-pop-sm pop-press" disabled={busy || !!disabledReason} onClick={onRun} data-testid="verify-run" title={disabledReason ?? "在工作区现场执行，产出带新鲜时间戳的机器裁决"}>
-              <Play className="size-3 mr-1" /> ▶ 复检
+              <Play className="size-3 mr-1" /> ▶ 自检
             </Button>
           ) : !cfg && !editing && !closed ? (
-            <Button size="sm" variant="outline" className="h-6 border-[1.5px] border-pop-bd px-2.5 font-mono text-[10px] font-black shadow-pop-sm" onClick={() => { setDraft(""); setCwdDraft(""); setPerRepo(false); setTimeoutDraft("600"); setEditing(true) }} data-testid="verify-edit">
+            <Button size="sm" variant="outline" className="h-6 border-[1.5px] border-pop-bd px-2.5 font-mono text-[10px] font-black shadow-pop-sm" disabled={!!disabledReason} onClick={() => { setDraft(""); setCwdDraft(""); setPerRepo(false); setTimeoutDraft("600"); setEditing(true) }} data-testid="verify-edit">
               配置命令
             </Button>
           ) : null}
@@ -164,7 +164,7 @@ export function VerifyPanel({ cfg, summary, lines, running, busy, disabledReason
           )}
           <span className="shrink-0 text-[10px] tabular-nums text-pop-dim">≤{cfg.timeoutS ?? 600}s</span>
           {!running && (
-            <button className="shrink-0 text-[9.5px] font-black text-pop-cyan underline decoration-dotted underline-offset-2" onClick={() => { setDraft(cfg.command); setCwdDraft(cfg.cwd ?? ""); setPerRepo(!!cfg.per_repo); setTimeoutDraft(String(cfg.timeoutS ?? 600)); setEditing(true) }} data-testid="verify-edit">
+            <button className="shrink-0 text-[9.5px] font-black text-pop-cyan underline decoration-dotted underline-offset-2 disabled:opacity-40" disabled={!!disabledReason} onClick={() => { setDraft(cfg.command); setCwdDraft(cfg.cwd ?? ""); setPerRepo(!!cfg.per_repo); setTimeoutDraft(String(cfg.timeoutS ?? 600)); setEditing(true) }} data-testid="verify-edit">
               编辑
             </button>
           )}
@@ -216,7 +216,7 @@ export function VerifyPanel({ cfg, summary, lines, running, busy, disabledReason
               <Button size="sm" variant="ghost" className="h-6 text-[10px]" disabled={saveBusy} onClick={() => void save(null)} data-testid="verify-clear">
                 清除配置
               </Button>
-              <Button size="sm" className="h-6 text-[10px]" disabled={saveBusy || !draft.trim()} onClick={() => void save({ command: draft.trim(), ...(perRepo ? { per_repo: true } : {}), ...(!perRepo && cwdDraft.trim() ? { cwd: cwdDraft.trim() } : {}), timeoutS: Math.max(5, Math.min(1800, Number(timeoutDraft) || 600)) })} data-testid="verify-save">
+              <Button size="sm" className="h-6 text-[10px]" disabled={saveBusy || !draft.trim() || !!disabledReason} onClick={() => void save({ command: draft.trim(), ...(perRepo ? { per_repo: true } : {}), ...(!perRepo && cwdDraft.trim() ? { cwd: cwdDraft.trim() } : {}), timeoutS: Math.max(5, Math.min(1800, Number(timeoutDraft) || 600)) })} data-testid="verify-save">
                 保存（随任务持久化）
               </Button>
             </div>

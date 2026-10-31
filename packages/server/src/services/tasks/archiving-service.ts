@@ -34,10 +34,16 @@
 
 import fs from "fs"
 import path from "path"
-import { spawnSync } from "child_process"
 import type Database from "better-sqlite3"
 import { TaskDAO } from "../../db/dao"
 import type { TaskHomeService } from "./task-home-service"
+import {
+  defaultRun,
+  dirtyFingerprint,
+  inspectTaskDelta,
+  type CommandRunner,
+  type ProjectDelta,
+} from "./archive-delta"
 
 // ── Pure helpers (unit-tested, no fs) ────────────────────────────────
 
@@ -368,13 +374,7 @@ export function planGlossaryAppend(targetMd: string | null, entries: TermEntry[]
 
 // ── Orchestration ────────────────────────────────────────────────────
 
-export interface CommandResult {
-  code: number
-  stdout: string
-  stderr: string
-}
-/** Injectable command runner (production = spawnSync; tests = real git). */
-export type CommandRunner = (cmd: string, args: string[], cwd: string) => CommandResult
+export type { CommandRunner } from "./archive-delta"
 
 export interface PrContext {
   project: string
@@ -405,6 +405,15 @@ export interface ProjectArchiveResult {
   error?: string
 }
 
+export interface ArchivePreflight {
+  blocked: true
+  /** project names with uncommitted files. */
+  dirty_projects: string[]
+  message: string
+}
+
+export type ArchiveDeltaDecision = "include" | "exclude"
+
 export interface ArchiveReport {
   taskId: string
   date: string
@@ -415,6 +424,13 @@ export interface ArchiveReport {
   /** note sections whose heading matched no project. */
   unattributedNotes: number
   error?: string
+  /** 2026-10-31 放行后现场：末轮 end → 归档时 HEAD 的提交 + dirty 文件。
+   *  旧任务/无法读取时缺省，读侧按空数组处理。 */
+  delta?: ProjectDelta[]
+  /** 有未提交改动且还没决策时非空 —— 归档被 preflight 拦下（任务停 archiving）。 */
+  preflight?: ArchivePreflight | null
+  /** 本轮生效的 delta 决策（include/exclude）；无 dirty = null。 */
+  delta_decision?: ArchiveDeltaDecision | null
 }
 
 export interface ArchivingDeps {
@@ -422,23 +438,12 @@ export interface ArchivingDeps {
   taskHomeService: TaskHomeService
   /** tasks-service.endArchiving — the ONLY writer of 'done' (K3). */
   onComplete: (taskId: string) => void
+  /** Preflight passed (clean worktree or a human delta decision) — built-in
+   *  host uses this to start knowledge ingest (it must see the final HEAD). */
+  onPreflightPassed?: (taskId: string) => void
   now?: () => Date
   pr?: PrHandler
   run?: CommandRunner
-}
-
-const defaultRun: CommandRunner = (cmd, args, cwd) => {
-  const r = spawnSync(cmd, args, {
-    cwd,
-    timeout: 120000,
-    encoding: "utf-8",
-    env: { ...process.env, GIT_TERMINAL_PROMPT: "0" },
-  })
-  return {
-    code: r.status ?? -1,
-    stdout: (r.stdout ?? "").toString(),
-    stderr: (r.stderr ?? "").toString() + (r.error ? ` ${r.error.message}` : ""),
-  }
 }
 
 /** Default PR handler (no existing gh/PR code in the repo — 票 08 grep).
@@ -587,6 +592,49 @@ export function createTaskArchiver(deps: ArchivingDeps): TaskArchiver {
       fs.mkdirSync(stateDir, { recursive: true })
       fs.writeFileSync(stateFile, JSON.stringify(state, null, 2), "utf-8")
     }
+    // 2026-10-31 AI-native 归档：结构化报告单独落盘（report.json），
+    // 供主 Chat 的归档总框与只读归档台读取失败原因 / 冲突 / PR 去向，
+    // 不必解析 report.md。写失败只影响诊断面，绝不影响 done 判定。
+    const saveReport = (report: ArchiveReport): void => {
+      try {
+        fs.mkdirSync(stateDir, { recursive: true })
+        fs.writeFileSync(path.join(stateDir, "report.json"), JSON.stringify(report, null, 2), "utf-8")
+      } catch (err: unknown) {
+        console.error("[Archiving] writing archive report.json failed (non-fatal):", err instanceof Error ? err.message : String(err))
+      }
+    }
+    const saveReportMd = (report: ArchiveReport, map: Record<string, AdrDoc[]>): void => {
+      try {
+        fs.mkdirSync(stateDir, { recursive: true })
+        fs.writeFileSync(
+          path.join(stateDir, "report.md"),
+          buildOverallReportMd(row.name, report, map, report.unattributedAdrs),
+          "utf-8",
+        )
+      } catch (err: unknown) {
+        console.error(`[Archiving] writing archive report failed (non-fatal):`, err instanceof Error ? err.message : String(err))
+      }
+    }
+    // 2026-10-31：人已对「放行后 dirty 现场」做过纳入/排除决定时，决策文件
+    // 按 dirty 指纹生效 —— 之后又出现新文件就重新问，不沿用旧决定。
+    const decisionFile = path.join(stateDir, "delta-decision.json")
+    const readDeltaDecision = (): { action: ArchiveDeltaDecision; fingerprint: string } | null => {
+      try {
+        const parsed = JSON.parse(fs.readFileSync(decisionFile, "utf-8")) as {
+          action?: unknown
+          fingerprint?: unknown
+        }
+        if (
+          (parsed.action === "include" || parsed.action === "exclude") &&
+          typeof parsed.fingerprint === "string"
+        ) {
+          return { action: parsed.action, fingerprint: parsed.fingerprint }
+        }
+      } catch {
+        /* no decision yet */
+      }
+      return null
+    }
 
     // ── 归并面采集 (home) ───────────────────────────────────────────
     const adrRoot = path.join(home, "docs", "adr")
@@ -618,17 +666,113 @@ export function createTaskArchiver(deps: ArchivingDeps): TaskArchiver {
       unattributedNotes = attr.unattributed.length
     }
 
-    const emptyReport = (error: string): ArchiveReport => ({
-      taskId, date: state.date, ok: false, projects: projectNames.map((p) => ({
-        project: p, ok: false, adrMerged: 0, adrSkipped: [], termsAppended: 0, termConflicts: [], commit: null, pushed: false, pr: null, error,
-      })), unattributedAdrs, unattributedNotes, error,
-    })
+    const emptyReport = (error: string): ArchiveReport => {
+      const report: ArchiveReport = {
+        taskId, date: state.date, ok: false, projects: projectNames.map((p) => ({
+          project: p, ok: false, adrMerged: 0, adrSkipped: [], termsAppended: 0, termConflicts: [], commit: null, pushed: false, pr: null, error,
+        })), unattributedAdrs, unattributedNotes, error,
+      }
+      saveReport(report)
+      return report
+    }
 
     const workspaceId = row.workspace_id
     if (!workspaceId) return emptyReport("任务未绑定 workspace — 归档目标 worktree 不可定位")
     const ws = deps.db.prepare("SELECT path FROM workspaces WHERE id = ?").get(workspaceId) as { path: string } | undefined
     if (!ws || !fs.existsSync(ws.path)) return emptyReport(`任务绑定的 workspace 路径不可用: ${ws?.path ?? workspaceId}`)
     const wsPath = ws.path
+
+    // ── 放行后现场 preflight (2026-10-31) ───────────────────────────
+    // 末轮 end 之后人可能又改了文件：commit 过的会随分支 push，未提交的旧口径
+    // 完全看不见（归档仍能报绿）。这里在动任何 project 之前先查：
+    //   1. dirty 且没有匹配的 include/exclude 决定 → 停 archiving，交主 Chat 问人；
+    //   2. include → 先把 dirty 落一个归档 delta commit，再继续归并；
+    //   3. exclude → 记录文件清单后继续（人明确选择不带）。
+    let delta = inspectTaskDelta(deps.db, taskId, { run })
+    const dirty = delta.filter((d) => d.dirty_files.length > 0)
+    let deltaDecision: ArchiveDeltaDecision | null = null
+    if (dirty.length > 0) {
+      const stored = readDeltaDecision()
+      if (stored && stored.fingerprint === dirtyFingerprint(delta)) {
+        deltaDecision = stored.action
+      } else {
+        const message =
+          `工作区还有未提交改动（${dirty.map((d) => `${d.project}: ${d.dirty_files.length} 个文件`).join("；")}）` +
+          "—— 请选择「纳入归档」或「排除并记录」后再归档"
+        const report: ArchiveReport = {
+          taskId,
+          date: state.date,
+          ok: false,
+          projects: projectNames.map((p) => ({
+            project: p, ok: false, adrMerged: 0, adrSkipped: [], termsAppended: 0,
+            termConflicts: [], commit: null, pushed: false, pr: null,
+            error: dirty.some((d) => d.project === p) ? "工作区有未提交改动 — 待纳入/排除" : "归档未开始（preflight 拦截）",
+          })),
+          unattributedAdrs,
+          unattributedNotes,
+          delta,
+          preflight: { blocked: true, dirty_projects: dirty.map((d) => d.project), message },
+          delta_decision: null,
+          error: message,
+        }
+        saveReport(report)
+        saveReportMd(report, adrByProject)
+        return report
+      }
+    }
+
+    if (deltaDecision === "include") {
+      const commitErrors: Record<string, string> = {}
+      for (const d of dirty) {
+        if (!d.dir) {
+          commitErrors[d.project] = d.error ?? "worktree 不可用"
+          continue
+        }
+        const add = run("git", ["add", "-A"], d.dir)
+        if (add.code !== 0) {
+          commitErrors[d.project] = `git add 失败: ${add.stderr.trim() || add.code}`
+          continue
+        }
+        const commit = run(
+          "git",
+          ["commit", "-m", `chore(archive): include post-acceptance delta (task ${taskId})`],
+          d.dir,
+        )
+        if (commit.code !== 0) {
+          commitErrors[d.project] = `git commit 失败: ${commit.stderr.trim() || commit.stdout.trim()}`
+        }
+      }
+      delta = inspectTaskDelta(deps.db, taskId, { run })
+      if (Object.keys(commitErrors).length > 0) {
+        const message = `放行后改动纳入失败：${Object.entries(commitErrors).map(([p, e]) => `${p}: ${e}`).join("；")}`
+        const report: ArchiveReport = {
+          taskId,
+          date: state.date,
+          ok: false,
+          projects: projectNames.map((p) => ({
+            project: p, ok: false, adrMerged: 0, adrSkipped: [], termsAppended: 0,
+            termConflicts: [], commit: null, pushed: false, pr: null,
+            error: commitErrors[p] ?? "归档未开始（delta 提交失败）",
+          })),
+          unattributedAdrs,
+          unattributedNotes,
+          delta,
+          delta_decision: "include",
+          error: message,
+        }
+        saveReport(report)
+        saveReportMd(report, adrByProject)
+        return report
+      }
+    }
+
+    // Preflight passed — built-in host starts knowledge ingest here (it must
+    // see the post-delta HEAD). Non-fatal: ingest never blocks archiving.
+    try {
+      deps.onPreflightPassed?.(taskId)
+    } catch (err: unknown) {
+      console.error("[Archiving] onPreflightPassed hook failed (non-fatal):", err instanceof Error ? err.message : String(err))
+    }
 
     // ── per-project merge (sequential; 每步成功后 state 落盘) ───────
     const results: ProjectArchiveResult[] = []
@@ -724,17 +868,19 @@ export function createTaskArchiver(deps: ArchivingDeps): TaskArchiver {
     }
 
     const ok = results.every((r) => r.ok)
-    const report: ArchiveReport = { taskId, date: state.date, ok, projects: results, unattributedAdrs, unattributedNotes }
-    try {
-      fs.mkdirSync(stateDir, { recursive: true })
-      fs.writeFileSync(
-        path.join(stateDir, "report.md"),
-        buildOverallReportMd(row.name, report, adrByProject, unattributedAdrs),
-        "utf-8",
-      )
-    } catch (err: unknown) {
-      console.error(`[Archiving] writing archive report failed (non-fatal):`, err instanceof Error ? err.message : String(err))
+    const report: ArchiveReport = {
+      taskId,
+      date: state.date,
+      ok,
+      projects: results,
+      unattributedAdrs,
+      unattributedNotes,
+      delta,
+      preflight: null,
+      delta_decision: deltaDecision,
     }
+    saveReport(report)
+    saveReportMd(report, adrByProject)
     if (ok) deps.onComplete(taskId)
     return report
   }
@@ -786,7 +932,7 @@ function buildOverallReportMd(
     "",
     "## 项目",
     "",
-    "| project | ok | ADR | 术语 | 冲突 | commit | push | PR |",
+    "| project | ok | ADR | 术语 | 冲突 | commit | push | 归档PR |",
     "|---|---|---|---|---|---|---|---|",
   ]
   for (const p of report.projects) {
@@ -796,6 +942,36 @@ function buildOverallReportMd(
     if (p.error) lines.push("", `> ❗ ${p.project}: ${p.error}`, "")
     for (const c of p.termConflicts) {
       lines.push("", `> 术语冲突 **${c.term}** — 任务侧「${c.incoming}」 vs 仓库「${c.existing}」（未写入，待 PR review 裁决）`)
+    }
+  }
+  lines.push(
+    "",
+    "> `归档PR` = 归档 commit 的落地去向：`merged-into-open` 并入该分支已有的开放 PR（通常是代码交付 PR）；`created` 新开归档专用 PR；`skipped` 无 GitHub 远端，以分支 push 落地；`none` 无新内容。**代码交付 PR** 链接以批次目录 `round-report.md` 为准（不在此表）。",
+  )
+  // 放行后现场（2026-10-31）：末轮 end 之后又发生的改动必须显形。
+  if (report.preflight) {
+    lines.push("", "## ⚠ 归档前拦截（preflight）", "", `- ${report.preflight.message}`, "")
+    for (const p of report.preflight.dirty_projects) {
+      const d = report.delta?.find((x) => x.project === p)
+      if (!d) continue
+      lines.push(`- **${p}**（${d.dirty_files.length} 个未提交文件）`)
+      for (const f of d.dirty_files.slice(0, 30)) lines.push(`  - \`${f}\``)
+      if (d.dirty_files.length > 30) lines.push(`  - …（其余 ${d.dirty_files.length - 30} 个见 report.json）`)
+    }
+  }
+  if (report.delta && report.delta.length > 0) {
+    lines.push("", "## 放行后现场", "", `- delta 决策：${report.delta_decision ?? "无未提交改动（不需要决策）"}`, "")
+    for (const d of report.delta) {
+      const bits = [
+        `${d.commits} 个末轮后提交`,
+        d.dirty_files.length > 0 ? `${d.dirty_files.length} 个未提交文件` : "工作区干净",
+      ]
+      lines.push(`- **${d.project}**: ${bits.join(" · ")}`)
+      if (d.from) lines.push(`  - 区间: ${d.from.slice(0, 8)}..${(d.head ?? "?").slice(0, 8)}`)
+      for (const s of d.subjects.slice(0, 10)) lines.push(`  - ${s}`)
+      if (d.subjects.length > 10) lines.push(`  - …（其余 ${d.subjects.length - 10} 条见 report.json）`)
+      for (const f of d.dirty_files.slice(0, 10)) lines.push(`  - 未提交: \`${f}\``)
+      if (d.dirty_files.length > 10) lines.push(`  - 未提交 …（其余 ${d.dirty_files.length - 10} 个见 report.json）`)
     }
   }
   if (unattributedAdrs.length > 0) {

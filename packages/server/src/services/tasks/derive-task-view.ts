@@ -16,19 +16,24 @@
 //     'awaiting_review' ("失败不是红死状态而是待处理", US8).
 //   • 'draft' is not in the v4 output enum (the board's 草稿 column reads the
 //     persisted status; the derived view describes the execution contract).
-//   • 'paused' is the ONLY output value with no persisted counterpart: the truth
+//   • 'paused' is the FIRST output value with no persisted counterpart: the truth
 //     lives on executions.status='paused' (ExecutionLifecycle.pause), and nothing
 //     ever writes a paused task row. The host of a pause is the RUN, not the task
 //     — that is what keeps the execution layer unaware of tasks, since not every
 //     workflow has one bound.
+//   • 'awaiting_archive' is the second: last phase accepted but archive not yet
+//     started (acceptance parks the row as 'ready'). Only a persisted 'archiving'
+//     row means 票 08 has actually started; everything else waits for the human's
+//     explicit 「归档」. Acceptance is not archive consent.
 //   • persisted 'aborted'/'done' outrank everything (task status only mirrors
 //     human decisions — abort beats an in-flight exec, abort beats a pause, done
 //     beats archiving).
 //   • suspension outranks 'archiving'/'awaiting_review' but not 'running': those
 //     two are states that can still make progress, so a brake must beat them, or
 //     the card would sit in 待验收 with its accept button lit.
-//   • last phase accepted → 'archiving' (K6; 票 08 flips the ledger to done
-//     once git succeeds, which is why 'done' can only come from the row).
+//   • last phase accepted and row already 'archiving' → 'archiving' (票 08 flips
+//     the ledger to done once git succeeds, which is why 'done' can only come from
+//     the row). Accepted with any other persisted status → 'awaiting_archive'.
 //   • Non-v4 (v3/generic/composite) tasks pass through untouched:
 //     isV4=false, phaseViews=[], taskStatus mirrors task.status verbatim
 //     ('failed' stays legal there — K13 旧链零破坏).
@@ -63,6 +68,7 @@ export type DerivedTaskStatus =
   | "running"
   | "paused"
   | "awaiting_review"
+  | "awaiting_archive"
   | "archiving"
   | "done"
   | "aborted"
@@ -396,7 +402,10 @@ export function deriveTaskView(
     // 让它们赢会让卡片停在待验收列、验收按钮照旧亮着, 与「暂停期间不可验收」冲突.
     taskStatus = "paused"
   } else if (last !== null && last.status === "accepted") {
-    taskStatus = "archiving" // K6: 末验收 → archiving
+    // 末 phase 已通过：归档只有在 beginArchiving 把行写成 archiving 后才算开始。
+    // 其余持久态（acceptance 停放写的 ready，或崩溃遗留的 running）一律停在人的
+    // 「归档确认」门前 —— 验收 ≠ 归档（2026-10-31 archive-consent）。
+    taskStatus = task.status === "archiving" ? "archiving" : "awaiting_archive"
   } else if (phaseViews.some((p) => p.status === "awaiting_review")) {
     taskStatus = "awaiting_review"
   } else {

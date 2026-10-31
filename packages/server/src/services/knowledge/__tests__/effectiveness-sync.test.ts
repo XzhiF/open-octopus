@@ -133,7 +133,7 @@ describe("夜巡批量刷 confidence 快照（票07 AC2）", () => {
     expect(log).toMatch(/^## \[2026-10-15\] sync \| .*confidence/m)
 
     // DB 面：wiki_articles 快照列跟新（compilePages 同事务）；effectiveness 行级列滚动
-    expect(new WikiArticleDAO(db).get(GLOBAL_WIKI_ORG, "top-a")!.confidence).toBe(0.375)
+    expect(new WikiArticleDAO(db).get("top-a")!.confidence).toBe(0.375)
     expect(ledger.getByRuleId("oct-001")!.confidence).toBe(0)
     expect(ledger.getByRuleId("oct-002")!.confidence).toBe(0.75)
     // 样本不足行（con-b samples 2）保持行初值 0.5 不动

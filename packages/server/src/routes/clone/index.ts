@@ -24,9 +24,9 @@ import crypto from 'crypto'
 import fs from 'fs'
 import path from 'path'
 import type { CloneDef } from '@octopus/shared'
+import { parseComposerContext, parseComposerEffort, resolveChatModel } from '../agent/composer-options'
 import type { AgentSessionDAO, TaskDAO } from '../../db/dao'
 import { CloneRuntime } from '../../services/agent/clone-runtime'
-import { resolveExpertSubagents } from '../../services/agent/expert-registry'
 import { isBuiltinClone } from '../../services/agent/builtin-clones'
 import { WorkspaceGit } from '../../services/workspace-git'
 import type { ProjectRef } from '../../services/tasks/task-home-service'
@@ -42,9 +42,10 @@ import {
   unregisterActiveStream,
   isStreamActive,
 } from '../../services/agent/agent-service'
-import { getBuiltInCloneDir, getCloneDir } from '../../services/agent/paths'
+import { getBuiltInCloneDir, getCloneDir, getAgentDir } from '../../services/agent/paths'
+import { getProvider } from '@octopus/providers'
 import { getMemoryService } from '../../services/agent/memory-service'
-import { autosaveTaskDraft } from './autosave'
+import { deriveSessionTitle } from '../../services/agent/session-title'
 import { finalizePartialMeta } from './stream-partials'
 import { getSpecNotice, clearSpecNotice } from '../../services/tasks/spec-notice-store'
 import { TaskAuthorSessionAugmenter } from '../../services/tasks/task-author-session-augmenter'
@@ -56,6 +57,15 @@ import { getResourceRegistry } from '../../services/resource-registry'
 import { recordProviderResultUsage } from '../../services/llm-call-ledger'
 import type { TokenUsageDAO } from '../../db/dao/token-usage-dao'
 import type { ResourceRef } from '@octopus/shared'
+import { SessionCacheContextDAO } from '../../db/dao/session-cache-context-dao'
+import { resolveSessionExpertRoster } from '../../services/agent/session-expert-roster'
+import { parseCloneMentions, resolveCloneSubagents } from '../../services/agent/clone-resolver'
+import { pendingRoleCard } from '../../services/agent/role-card'
+import { appendRoleSwitchEvent, roleSwitchEventPayload } from '../../services/agent/role-switch-event'
+import { isCloneRoleTarget, roleResponse } from '../../services/agent/role-response'
+import { usableResumeId } from '../../services/agent/resume'
+import { parseContextUsage } from '../../services/agent/session-service'
+import { estimateContextUsageFromLedger } from '../../services/agent/context-usage'
 
 // ── Route deps ─────────────────────────────────────────────────────
 
@@ -232,7 +242,6 @@ export function createCloneSessionRoutes(deps: CloneSessionRouteDeps): Hono {
 
     sessionDAO.insertSession({
       id: sessionId,
-      org,
       title,
       clone_name: cloneName,
       session_type: 'clone_direct',
@@ -240,6 +249,8 @@ export function createCloneSessionRoutes(deps: CloneSessionRouteDeps): Hono {
       created_at: now,
       updated_at: now,
     })
+
+    // The clone roster seeds on the first chat turn (see chat route above).
 
     const session = sessionDAO.findById(sessionId)
     return c.json({
@@ -262,7 +273,7 @@ export function createCloneSessionRoutes(deps: CloneSessionRouteDeps): Hono {
     const limit = parseInt(c.req.query('limit') ?? '20', 10)
     const cursor = c.req.query('cursor')
 
-    const result = sessionDAO.findByClone(cloneName, { org, limit, cursor })
+    const result = sessionDAO.findByClone(cloneName, { limit, cursor })
     let items = result.items
     if (taskDAO && items.length > 0) {
       const linked = new Set(
@@ -271,7 +282,9 @@ export function createCloneSessionRoutes(deps: CloneSessionRouteDeps): Hono {
       if (linked.size > 0) items = items.filter((s) => !linked.has(s.id))
     }
     return c.json({
-      sessions: items,
+      // Lists stay lean: the persisted ctx payload is only served by the
+      // session-detail endpoint, which is where the composer reads it from.
+      sessions: items.map(({ context_usage: _contextUsage, ...rest }) => rest),
       has_more: result.has_more,
       next_cursor: result.next_cursor,
     })
@@ -294,6 +307,11 @@ export function createCloneSessionRoutes(deps: CloneSessionRouteDeps): Hono {
       session: {
         ...session,
         clone_name: session.clone_name,
+        // Raw row carries the JSON string — hand the parsed payload to the
+        // composer so a cold load can paint the ctx chip. No provider report
+        // yet (turn predates the column) → ledger estimate, never stored back.
+        context_usage: parseContextUsage(session.context_usage)
+          ?? estimateContextUsageFromLedger(sessionDAO.getDb(), sessionId),
       },
       messages: messagesResult.items,
       has_more: messagesResult.has_more,
@@ -327,7 +345,13 @@ export function createCloneSessionRoutes(deps: CloneSessionRouteDeps): Hono {
     const sessionId = c.req.param('id')
     const org = c.req.header('X-Octopus-Org') || (c.get('org') as string) || 'default'
 
-    let body: { message?: string; model?: string; subagents?: Array<{ id: string; label?: string }> }
+    let body: {
+      message?: string
+      model?: string
+      effort?: string
+      maxContext?: string
+      subagents?: Array<{ id: string; label?: string }>
+    }
     try {
       body = await c.req.json()
     } catch {
@@ -338,16 +362,38 @@ export function createCloneSessionRoutes(deps: CloneSessionRouteDeps): Hono {
       return c.json({ error: { code: 'INVALID_PARAM', message: 'message is required' } }, 400)
     }
 
-    // Single-expert consultation: optional subagent refs → SDK agent defs
-    // registered for THIS turn only (the main agent invokes them via its
-    // Agent tool, then they vanish on the next turn).
-    const subagents = resolveExpertSubagents(body.subagents ?? [])
+    const effort = parseComposerEffort(body.effort)
+    const model = resolveChatModel(body.model, parseComposerContext(body.maxContext), org)
 
     // Verify session exists and belongs to clone
     const session = sessionDAO.findById(sessionId)
     if (!session || session.is_deleted || session.clone_name !== cloneName) {
       return c.json({ error: { code: 'NOT_FOUND', message: `Session ${sessionId} not found` } }, 404)
     }
+
+    // Stable consultable roster (cache discipline). Chat sessions register the
+    // whole clone roster once, so consulting a different clone changes only the
+    // user message — the SDK `agents` metadata (part of the cached prefix)
+    // stays byte-identical across turns.
+    const cacheCtx = new SessionCacheContextDAO(sessionDAO.getDb())
+    const consults = [
+      ...parseCloneMentions(body.message),
+      ...(body.subagents ?? []).map((ref) => ({ name: ref.id, displayName: ref.label ?? ref.id })),
+    ].filter((c, i, all) => c.name !== cloneName && all.findIndex((x) => x.name === c.name) === i)
+    const expertRoster = resolveSessionExpertRoster(cacheCtx, {
+      sessionId,
+      requested: consults.map((c) => c.name),
+    })
+    const subagents = resolveCloneSubagents(expertRoster)
+
+    // Identity switch + @ delegation ride the user message; system prompt stays
+    // frozen (see role-card.ts / prompt-reminder.ts).
+    const roleState = cacheCtx.getRoleState(sessionId)
+    const roleCard = pendingRoleCard(roleState)
+    const mentionReminder = consults.length > 0
+      ? `用户本轮委派了以下分身：${consults.map((c) => c.displayName).join('、')}。请调用对应的 subagent 获取其专业意见，再整合成最终回答；不要简单拼接。`
+      : undefined
+    const turnReminder = [roleCard, mentionReminder].filter(Boolean).join('\n\n') || undefined
 
     // Resolve clone definition from filesystem
     const cloneDef = resolveCloneDefFromFs(cloneName)
@@ -385,18 +431,18 @@ export function createCloneSessionRoutes(deps: CloneSessionRouteDeps): Hono {
     // dir, not the clone's own dir). Resolved after noticeTaskId + homeService
     // below; falls back to the clone's own dir when no task home exists.
     const defaultCwd = runtime.getDefaultCwd()
-    const providerSessionId = session.provider_session_id ?? null
+    const storedProviderSessionId = session.provider_session_id ?? null
 
     // 05 — reverse context msg (SPIKE S1, v2-D7). If the user saved a draft
     // (PUT /api/tasks) since the last turn, TasksService.updateTask set a
     // transient, in-memory notice keyed by task_id. Resolve the task bound
     // to this session (same lookup the autosave seam uses) and read the
     // pending notice. Passed to CloneRuntime.chat below as `specUpdateNotice`
-    // → sendWithProvider appends it to the system-prompt `append` string
-    // (assembleContext is fresh per turn, clone-runtime.ts:261, so this
-    // re-delivers only while the notice stays pending). Cleared AFTER the
-    // stream (below) so a mid-stream error / abort re-delivers next turn
-    // (at-least-once; the notice is an idempotent nudge, not a state change).
+    // → sendWithProvider attaches it to the USER MESSAGE as a trailing
+    // <system-reminder> (cache discipline: the system prompt stays frozen).
+    // Cleared AFTER the stream (below) so a mid-stream error / abort
+    // re-delivers next turn (at-least-once; the notice is an idempotent nudge,
+    // not a state change).
     // Gated by task-author + taskDAO: only task-author sessions carry spec
     // notices, and taskDAO is optional (wired only with the autosave seam).
     // This is a DIFFERENT location from 04's turn-end autosave block
@@ -418,10 +464,9 @@ export function createCloneSessionRoutes(deps: CloneSessionRouteDeps): Hono {
     // TaskAuthorSessionAugmenter (ResourceManager → readFile →
     // enhancePromptWithSkills — SG11 resurrects the dead code), and passes
     // the content string to runtime.chat as `authoringResourcesContent`.
-    // sendWithProvider appends it to systemPrompt.append ALONGSIDE
-    // specUpdateNotice (clone-runtime.ts:346-348 — same concat seam 05 uses).
-    // assembleContext is fresh per turn, so the latest authoring_resources[]
-    // is re-read every turn (Mechanism B). Only skill-type refs are injected
+    // sendWithProvider attaches it to the user message alongside
+    // specUpdateNotice (trailing <system-reminder>) — never to the system
+    // prompt, whose prefix must stay cached. Only skill-type refs are injected
     // (agent/command/rule are workspace-scope → workflow.requires via SG7).
     // Gated by task-author + taskDAO (same gate as specUpdateNotice); absent
     // taskDAO (older test paths) → no injection (unchanged behavior).
@@ -477,6 +522,21 @@ export function createCloneSessionRoutes(deps: CloneSessionRouteDeps): Hono {
     // skill-relative paths (e.g. writing-plans → docs/superpowers/plans/...)
     // resolve inside the task dir rather than the clone's own dir.
     const cwd = taskHomePath || defaultCwd
+    // Resume only when the SDK transcript still exists; a restored DB with a
+    // dangling pointer would otherwise fail every turn (CloneRuntime retries
+    // without resume, but we also clear the dead pointer here).
+    const providerSessionId = usableResumeId(cwd, storedProviderSessionId) ?? null
+    if (storedProviderSessionId && !providerSessionId) {
+      sessionDAO.clearProviderSession(sessionId)
+      cacheCtx.resetRoleDelivery(sessionId)
+    }
+    // Frozen clone profile: persona + memory snapshot, captured on first use.
+    // Transient notices/resources no longer live here (they ride the user
+    // message), so resumed turns keep an identical cached prefix.
+    const stableSystemPrompt = cacheCtx.getOrCreatePromptSnapshot(
+      sessionId,
+      () => (typeof runtime.assembleContext === 'function' ? runtime.assembleContext() : ''),
+    ).systemPrompt
 
     // 05 → context.md (v3 task-authoring, cache-friendly redesign):
     // Dynamic workspace state (org, projects, skill groups) lives in
@@ -499,10 +559,9 @@ export function createCloneSessionRoutes(deps: CloneSessionRouteDeps): Hono {
         const projectNames: string[] = ctxRow?.project_ids
           ? JSON.parse(ctxRow.project_ids) as string[]
           : []
-        // Use the task's own org (from DB) for path resolution — NOT the
-        // request header which defaults to "default" when the frontend
-        // doesn't send X-Octopus-Org.
-        const taskOrg = ctxRow?.org ?? org
+        // Use the task's own repo group (from DB) for path resolution — NOT the
+        // request header.
+        const taskOrg = ctxRow?.repo_group ?? org
 
         // ── repo-sync chat 门 (2026-09-08, 特性A) ──────────────────────
         // v4 且有项目：① 无快照（含 server 重启后状态机清空）→ 后台补触发同步；
@@ -600,7 +659,7 @@ export function createCloneSessionRoutes(deps: CloneSessionRouteDeps): Hono {
           }
         }
 
-        for await (const chunk of runtime.chat(body.message!, sessionId, providerSessionId, cwd, specUpdateNotice, authoringResourcesContent, undefined, taskHomePath, body.model, subagents)) {
+        for await (const chunk of runtime.chat(body.message!, sessionId, providerSessionId, cwd, specUpdateNotice, authoringResourcesContent, undefined, taskHomePath, model, subagents, effort, stableSystemPrompt, turnReminder)) {
           // ONLY the explicit stop endpoint may interrupt the turn.
           // Deliberately NOT checking stream.aborted here: hono's node
           // server sets it when the CLIENT disconnects (closing the dialog),
@@ -632,6 +691,9 @@ export function createCloneSessionRoutes(deps: CloneSessionRouteDeps): Hono {
               await stream.writeSSE({ event: 'thinking_done', data: '{}' })
               break
             case 'context_usage':
+              // Persist + forward: the browser-side cache dies with the profile,
+              // so the session row is the only source a cold load can paint from.
+              try { sessionDAO.updateContextUsage(sessionId, JSON.stringify(chunk.data)) } catch { /* telemetry — never break the turn */ }
               await stream.writeSSE({ event: 'context_usage', data: JSON.stringify(chunk.data) })
               break
             case 'tool_call_start':
@@ -684,7 +746,7 @@ export function createCloneSessionRoutes(deps: CloneSessionRouteDeps): Hono {
                   startedAtMs: turnStartMs,
                   modelUsages: chunk.modelUsages,
                   usage: chunk.usage,
-                  fallbackModel: (typeof body.model === 'string' && body.model) || cloneDef.config?.model || null,
+                  fallbackModel: model ?? cloneDef.config?.model ?? null,
                 }, tokenUsageDao)
               }
               break
@@ -780,6 +842,12 @@ export function createCloneSessionRoutes(deps: CloneSessionRouteDeps): Hono {
           if (resultSessionId) {
             sessionDAO.updateProviderSession(sessionId, resultSessionId)
           }
+          // The role card (if any) is now in the provider transcript; do not
+          // replay it next turn (that would only add tokens, not help).
+          if (roleCard) {
+            cacheCtx.markRoleDelivered(sessionId, roleState.revision)
+            appendRoleSwitchEvent(sessionDAO.getDb(), sessionId, roleSwitchEventPayload(roleState, roleCard))
+          }
 
           // Auto-generate title on first message (title still placeholder).
           // Runs even when a task is bound to the session: the session title
@@ -790,23 +858,40 @@ export function createCloneSessionRoutes(deps: CloneSessionRouteDeps): Hono {
           // 2026-08-21 + refinement). A header rename syncs the session title
           // to the new name, so the placeholder check below skips re-deriving.
           if (session.title === `${cloneName} 会话` || session.title === '新会话') {
-            const autoTitle = body.message!.slice(0, 20).replace(/\n/g, ' ').trim() || `${cloneName} 会话`
+            const autoTitle = deriveSessionTitle(body.message!)
             sessionDAO.updateSession(sessionId, { title: autoTitle })
+
+            // Same fire-and-forget LLM refinement as the main agent session.
+            // When this is a task-author session, also refresh the bound
+            // task's name while it still holds the derived title (never a
+            // user rename).
+            setImmediate(async () => {
+              if (process.env.VITEST) return
+              try {
+                const provider = getProvider('claude')
+                const cwd = getAgentDir()
+                let titleContent = ''
+                const prompt = `Generate a concise session title (max 20 chars, Chinese preferred) from: "${body.message!.replace(/\n/g, ' ').slice(0, 200)}". Reply with ONLY the title.`
+                for await (const chunk of provider.sendQuery(
+                  prompt,
+                  cwd,
+                  undefined,
+                  { model: 'haiku' },
+                )) {
+                  if (chunk.type === 'text_delta') titleContent += chunk.content
+                }
+                const llmTitle = titleContent.trim().replace(/[.。,，!！?？""]/g, '').slice(0, 30)
+                if (!llmTitle || llmTitle === autoTitle) return
+                sessionDAO.updateSession(sessionId, { title: llmTitle })
+              } catch {
+                /* non-fatal — the deterministic derived title stands */
+              }
+            })
           }
 
-          // 04 — task-author autosave seam (v2-D6/D11/SG3/SG8).
-          // Fires at turn-end (after auto-title block, before done SSE),
-          // gated by cloneName === 'task-author'. Best-effort — chat reply
-          // unaffected on failure. First turn → create draft row + link
-          // session.scope_id (SG3). Subsequent turns → targeted UPDATE
-          // name+updated_at ONLY (SG8: no version bump, no task_spec touch).
-          if (cloneName === 'task-author' && taskDAO) {
-            const autoTitle = sessionDAO.findById(sessionId)?.title ?? `${cloneName} 会话`
-            autosaveTaskDraft(
-              { taskDAO, sessionDAO },
-              { sessionId, org, autoTitle, placeholderTitle: `${cloneName} 会话` },
-            )
-          }
+          // 04 — task-author autosave seam removed (2026-10-28 task-thread:
+          // tasks are created explicitly from the main chat, never inferred
+          // from a clone session's first turn).
 
           await stream.writeSSE({
             event: 'done',
@@ -814,7 +899,7 @@ export function createCloneSessionRoutes(deps: CloneSessionRouteDeps): Hono {
               session_id: sessionId,
               message_id: assistantMsgId,
               session_title: sessionDAO.findById(sessionId)?.title,
-              model: body.model ?? cloneDef.config.model ?? undefined,
+              model: model ?? cloneDef.config.model ?? undefined,
             }),
           })
         }
@@ -835,6 +920,41 @@ export function createCloneSessionRoutes(deps: CloneSessionRouteDeps): Hono {
         unregisterActiveStream(sessionId, streamId)
       }
     })
+  })
+
+  // ── Session role (expert identity) ───────────────────────────────
+  // Identity is persisted per session; the role card is appended to the next
+  // user message by the chat route (system prompt/tools stay frozen).
+  app.get('/:name/sessions/:id/role', (c) => {
+    const cloneName = c.req.param('name')
+    const sessionId = c.req.param('id')
+    const session = sessionDAO.findById(sessionId)
+    if (!session || session.is_deleted || session.clone_name !== cloneName) {
+      return c.json({ error: { code: 'NOT_FOUND', message: `Session ${sessionId} not found` } }, 404)
+    }
+    const state = new SessionCacheContextDAO(sessionDAO.getDb()).getRoleState(sessionId)
+    return c.json(roleResponse(sessionId, state))
+  })
+
+  app.put('/:name/sessions/:id/role', async (c) => {
+    const cloneName = c.req.param('name')
+    const sessionId = c.req.param('id')
+    const session = sessionDAO.findById(sessionId)
+    if (!session || session.is_deleted || session.clone_name !== cloneName) {
+      return c.json({ error: { code: 'NOT_FOUND', message: `Session ${sessionId} not found` } }, 404)
+    }
+    let body: { expert?: unknown } = {}
+    try {
+      body = await c.req.json<{ expert?: unknown }>()
+    } catch {
+      return c.json({ error: { code: 'INVALID_PARAM', message: 'Invalid JSON body' } }, 400)
+    }
+    const expert = body.expert == null ? null : String(body.expert)
+    if (expert && !isCloneRoleTarget(expert)) {
+      return c.json({ error: { code: 'INVALID_PARAM', message: `Unknown clone: ${expert}` } }, 400)
+    }
+    const state = new SessionCacheContextDAO(sessionDAO.getDb()).setActiveExpert(sessionId, expert, 'clone')
+    return c.json(roleResponse(sessionId, state))
   })
 
   // ── Stop generation ──────────────────────────────────────────────

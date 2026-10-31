@@ -1,4 +1,5 @@
 export { ClaudeSDKProvider } from './claude/provider'
+export { createSdkMcpServer, tool } from '@anthropic-ai/claude-agent-sdk'
 export type { IAgentProvider, SendQueryOptions, MessageChunk, SystemPromptInput, SystemPromptPreset, ContextUsageData, GoalTerminalReason, ActiveGoalChunk } from './types'
 export { registerProvider, getProvider, getProviderAsync, listProviders, resetProviderInstances } from './registry'
 export { LLMCallTracker } from './llm-call-tracker'

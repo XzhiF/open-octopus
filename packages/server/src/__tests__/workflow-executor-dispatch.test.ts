@@ -167,7 +167,7 @@ describe("票03 — TaskLifecycleService.prepareWorkspace: composite → coordin
   function taskRow(id: string): TaskRow {
     const now = new Date().toISOString()
     db.prepare(
-      `INSERT INTO tasks (id, org, name, status, task_spec, authoring_resources, resources, skills,
+      `INSERT INTO tasks (id, repo_group, name, status, task_spec, authoring_resources, resources, skills,
         project_ids, workflow_ref, version, created_at, updated_at)
        VALUES (?, ?, ?, 'ready', '{}', '[]', '[]', '[]', '[]', 'w', 1, ?, ?)`,
     ).run(id, ORG, `T_${id}`, now, now)
@@ -235,7 +235,7 @@ describe("WorkflowExecutor.execute — generic cron dispatch (票03)", () => {
     applySchema(db)
     db.pragma("foreign_keys = OFF")
     db.prepare(
-      `INSERT INTO workspaces (id, name, org, path, created_at, updated_at)
+      `INSERT INTO workspaces (id, name, repo_group, path, created_at, updated_at)
        VALUES (?, 'E2E_TD_ws', ?, '/tmp/e2e-td', datetime('now'), datetime('now'))`,
     ).run(wsId, ORG)
     createFromSpecMock = vi.fn(() => ({ id: "ws-new-1" }))
@@ -271,7 +271,7 @@ describe("WorkflowExecutor.execute — generic cron dispatch (票03)", () => {
     ).run(execId, schedId)
     const job = {
       id: schedId, name: "E2E_TD_task", job_type: "workflow", cron_expression: "0 9 * * *", timezone: "UTC",
-      enabled: true, org: ORG, config, parallel_policy: "skip", timeout_seconds: 3600, notify_on_failure: false,
+      enabled: true, repo_group: ORG, config, parallel_policy: "skip", timeout_seconds: 3600, notify_on_failure: false,
       version: 1, consecutive_failures: 0, next_trigger_at: null, deleted_at: null,
       created_at: now, updated_at: now, status: "running", claimed_at: now,
     } as unknown as SchedulerJob

@@ -1,7 +1,7 @@
 import type Database from "better-sqlite3"
 import { BaseDAO } from "./base"
 import type { NodeTokenUsageRow, LlmCallRow } from "../types"
-import { LEDGER_SQL, costSummary, normalizeModelId, type TokenUsage, type LedgerTotals, type LedgerCost, type LedgerRow, type LlmUsageRow, type LlmUsageSummary } from "@octopus/shared"
+import { LEDGER_SQL, costSummary, normalizeModelId, type TokenUsage, type LedgerTotals, type LedgerCost, type LedgerRow, type LlmUsageRow, type LlmUsageSummary, type ModelUsageBreakdown } from "@octopus/shared"
 import { type NodeUsageSource } from "./usage-ledger"
 import { pricedCallsSql, PRICED_AGG } from "../price-sql"
 
@@ -229,8 +229,45 @@ export class TokenUsageDAO extends BaseDAO {
     }
   }
 
-  /** 工作区时间窗内的费用（NEW-r2：源 = llm_calls 派生，与报表同一张账）。 */
-  costForWorkspaceSince(workspaceId: string, createdSinceIso: string): LedgerCost {
+  /**
+   * Prompt-cache hit rate by source_path over a time window (schema v56
+   * stability work). Single source of truth for the metric: LEDGER_SQL
+   * (ADR-0027 — cache writes belong in the denominator).
+   */
+  cacheStatsBySource(sinceMs: number): Array<{
+    sourcePath: string
+    calls: number
+    inputTokens: number
+    cacheReadTokens: number
+    cacheCreationTokens: number
+    hitRate: number | null
+  }> {
+    const rows = this.stmt(`
+      SELECT COALESCE(source_path, 'unknown') AS source_path,
+             COUNT(*) AS calls,
+             COALESCE(SUM(input_tokens), 0) AS input_tokens,
+             COALESCE(SUM(cache_read_tokens), 0) AS cache_read_tokens,
+             COALESCE(SUM(cache_creation_tokens), 0) AS cache_creation_tokens,
+             ${LEDGER_SQL.cacheHitRate()} AS hit_rate
+      FROM llm_calls
+      WHERE timestamp >= ?
+      GROUP BY COALESCE(source_path, 'unknown')
+      ORDER BY source_path
+    `).all(sinceMs) as Array<{
+      source_path: string; calls: number; input_tokens: number
+      cache_read_tokens: number; cache_creation_tokens: number; hit_rate: number | null
+    }>
+    return rows.map((r) => ({
+      sourcePath: r.source_path,
+      calls: r.calls,
+      inputTokens: r.input_tokens,
+      cacheReadTokens: r.cache_read_tokens,
+      cacheCreationTokens: r.cache_creation_tokens,
+      hitRate: r.hit_rate,
+    }))
+  }
+
+  /** 工作区时间窗内的费用（NEW-r2：源 = llm_calls 派生，与报表同一张账）。 */  costForWorkspaceSince(workspaceId: string, createdSinceIso: string): LedgerCost {
     const sinceMs = Date.parse(createdSinceIso)
     const where = ["l.workspace_id = ?"]
     const params: unknown[] = [workspaceId]
@@ -299,6 +336,62 @@ export class TokenUsageDAO extends BaseDAO {
     return out
   }
 
+  /**
+   * 「按模型」分解 —— 与 aggregateLlmCallsBy 同一套归属口径（session 侧只认
+   * `execution_id IS NULL`，execution 侧按 execution_id 归属，防双计），
+   * 供任务「消耗」窗口 / composer task chip 的模型行使用。
+   */
+  aggregateLlmCallsByModel(
+    sessionIds: readonly string[],
+    executionIds: readonly string[],
+  ): Record<string, ModelUsageBreakdown> {
+    const sessions = [...new Set(sessionIds)].filter((v) => typeof v === 'string' && v.length > 0)
+    const execs = [...new Set(executionIds)].filter((v) => typeof v === 'string' && v.length > 0)
+    const where: string[] = []
+    const params: unknown[] = []
+    if (sessions.length > 0) {
+      where.push(`(l.session_id IN (${sessions.map(() => '?').join(',')}) AND l.execution_id IS NULL)`)
+      params.push(...sessions)
+    }
+    if (execs.length > 0) {
+      where.push(`l.execution_id IN (${execs.map(() => '?').join(',')})`)
+      params.push(...execs)
+    }
+    if (where.length === 0) return {}
+
+    const { sql, params: pricedParams } = pricedCallsSql([`(${where.join(' OR ')})`], params)
+    const rows = this.db.prepare(`
+      SELECT COALESCE(q.model, 'unknown') AS model,
+             COUNT(*) AS calls,
+             SUM(q.input_tokens) AS i,
+             SUM(q.output_tokens) AS o,
+             SUM(q.cache_read_tokens) AS cr,
+             SUM(q.cache_creation_tokens) AS cc,
+             ${PRICED_AGG.sumCost('q')} AS usd,
+             ${PRICED_AGG.countPriced('q')} AS priced
+      FROM (${sql}) q
+      GROUP BY COALESCE(q.model, 'unknown')
+      ORDER BY COUNT(*) DESC
+    `).all(...pricedParams) as Array<{
+      model: string; calls: number; i: number; o: number; cr: number; cc: number
+      usd: number | null; priced: number
+    }>
+
+    const out: Record<string, ModelUsageBreakdown> = {}
+    for (const r of rows) {
+      out[r.model] = {
+        calls: r.calls,
+        inputTokens: r.i,
+        outputTokens: r.o,
+        cacheReadTokens: r.cr,
+        cacheCreationTokens: r.cc,
+        // 全部行未定价 → null（不焊 0）；部分定价 → 已知部分和。
+        costUsd: r.priced === 0 ? null : (r.usd ?? null),
+      }
+    }
+    return out
+  }
+
   /** 单节点（node_id 语义）的逐 call 费用行 → LedgerRow（JS 镜像公式消费方，NEW-r2：源 = llm_calls 派生）。 */
   findLedgerRowsByNodeId(executionId: string, nodeId: string): LedgerRow[] {
     const rows = this.stmt(`
@@ -329,14 +422,14 @@ export class TokenUsageDAO extends BaseDAO {
         id, node_execution_id, execution_id, turn_index, call_index, message_id,
         model, stop_reason, timestamp, duration_ms, ttft_ms,
         input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens,
-        org, workspace_id, workflow_ref, node_id, session_id, instance_id, source_path
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        workspace_id, workflow_ref, node_id, session_id, instance_id, source_path
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       row.id, row.node_execution_id, row.execution_id, row.turn_index, row.call_index,
       row.message_id, row.model, row.stop_reason, row.timestamp, row.duration_ms,
       row.ttft_ms, row.input_tokens, row.output_tokens, row.cache_read_tokens,
       row.cache_creation_tokens,
-      row.org, row.workspace_id, row.workflow_ref, row.node_id, row.session_id, row.instance_id,
+      row.workspace_id, row.workflow_ref, row.node_id, row.session_id, row.instance_id,
       row.source_path ?? null,
     )
   }
@@ -392,12 +485,12 @@ export class TokenUsageDAO extends BaseDAO {
         id, node_execution_id, execution_id, turn_index, call_index, message_id,
         model, stop_reason, timestamp, duration_ms, ttft_ms,
         input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens,
-        org, workspace_id, workflow_ref, node_id, session_id, instance_id, source_path
+        workspace_id, workflow_ref, node_id, session_id, instance_id, source_path
       ) VALUES (
         @id, @node_execution_id, @execution_id, @turn_index, @call_index,
         @message_id, @model, @stop_reason, @timestamp, @duration_ms, @ttft_ms,
         @input_tokens, @output_tokens, @cache_read_tokens, @cache_creation_tokens,
-        @org, @workspace_id, @workflow_ref, @node_id, @session_id, @instance_id, @source_path
+        @workspace_id, @workflow_ref, @node_id, @session_id, @instance_id, @source_path
       )
     `)
     this.transaction(() => {

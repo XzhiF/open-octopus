@@ -9,12 +9,14 @@
 import { describe, it, expect } from "vitest"
 import {
   buildInterventionSection,
+  buildPostRoundSection,
   buildQuickEditSection,
   buildTakeoverSection,
   type LedgerInterventionEntry,
   type LedgerQuickEditEntry,
   type LedgerTakeoverMark,
 } from "../services/tasks/round-evidence-service"
+import type { ProjectDelta } from "../services/tasks/archive-delta"
 
 const iv = (over: Partial<LedgerInterventionEntry> = {}): LedgerInterventionEntry => ({
   node: "实现节点",
@@ -98,5 +100,30 @@ describe("buildTakeoverSection — 接管标记列（takeover_* 权威 · 复检
   it("停流未交付（有 at 无 delivered）→ 标进行中，不落「交付」语义", () => {
     const md = buildTakeoverSection(tk({ deliveredAt: null }), false).join("\n")
     expect(md).toContain("进行中")
+  })
+})
+
+describe("buildPostRoundSection — 决策时现场（末轮之后）", () => {
+  const pd = (over: Partial<ProjectDelta> = {}): ProjectDelta => ({
+    project: "repo-a",
+    dir: "C:/tmp/wt",
+    from: "aaaaaaaa",
+    head: "bbbbbbbb",
+    commits: 2,
+    subjects: ["[quick-edit] 收紧校验", "chore: 收尾"],
+    dirty_files: ["M src/a.ts"],
+    ...over,
+  })
+
+  it("列出末轮后提交与未提交文件", () => {
+    const md = buildPostRoundSection([pd()]).join("\n")
+    expect(md).toContain("## 决策时现场（末轮之后）")
+    expect(md).toContain("末轮后新增提交 2 · 未提交文件 1")
+    expect(md).toContain("[quick-edit] 收紧校验")
+    expect(md).toContain("未提交: `M src/a.ts`")
+  })
+
+  it("无现场时诚实写明，不伪造 0", () => {
+    expect(buildPostRoundSection([]).join("\n")).toContain("无执行区间")
   })
 })

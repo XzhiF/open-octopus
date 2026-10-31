@@ -11,7 +11,7 @@ interface AgentEmptyStateProps {
 
 export function AgentEmptyState({ icon: Icon, title, description, actionLabel, onAction }: AgentEmptyStateProps) {
   return (
-    <div className="flex flex-col items-center justify-center py-16 px-4 text-center" role="status" aria-live="polite">
+    <div className="flex flex-1 min-h-0 flex-col items-center justify-center py-16 px-4 text-center" role="status" aria-live="polite">
       <div className="flex h-16 w-16 items-center justify-center rounded-2xl bg-agent-primary-light mb-4">
         <Icon className="h-8 w-8 text-agent-primary" />
       </div>

@@ -3,6 +3,7 @@
 import type { Node, NodeProps } from "@xyflow/react"
 import type { StatusOverlay } from "@/lib/types"
 import { StatusShell } from "./status-shell"
+import type { DagOrientation } from "@/lib/dag-orientation"
 import { TypeShell } from "./type-shell"
 
 interface WorkflowNodeData {
@@ -17,6 +18,7 @@ interface WorkflowNodeData {
   loop_body?: Array<Record<string, unknown>>
   cases?: Array<{ when: string; then: string }>
   statusOverlay?: StatusOverlay
+  dagOrientation?: DagOrientation
   isCurrent?: boolean
   isActive?: boolean
   [key: string]: unknown
@@ -26,7 +28,7 @@ type WorkflowNode = Node<WorkflowNodeData>
 
 export function LoopNode({ data, selected }: NodeProps<WorkflowNode>) {
   return (
-    <StatusShell nodeType="loop" statusOverlay={data.statusOverlay} isCurrent={data.isCurrent} isActive={data.isActive} selected={selected}>
+    <StatusShell nodeType="loop" statusOverlay={data.statusOverlay} isCurrent={data.isCurrent} isActive={data.isActive} selected={selected} orientation={data.dagOrientation}>
       <TypeShell nodeType="loop" name={data.name} statusOverlay={data.statusOverlay}>
         {data.iterations && (
           <p className="text-xs text-muted-foreground">

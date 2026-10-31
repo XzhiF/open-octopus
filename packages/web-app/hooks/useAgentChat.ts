@@ -2,6 +2,7 @@
 
 import { useState, useCallback, useRef, useEffect } from 'react'
 import type { AgentMessage, ToolCallRecord, ContextUsageData } from '@/lib/agent/types'
+import type { ComposerContext, ComposerEffort } from '@/lib/agent/composer-settings'
 import * as api from '@/lib/agent/api'
 import { useSSEConnection, type SSEHandlers } from '@/lib/agent/sse'
 
@@ -21,6 +22,44 @@ export interface ChatSubagentRef {
   label?: string
 }
 
+/** Transcript reload banner text — cleared by any later successful load. */
+const LOAD_MESSAGES_ERROR = 'Failed to load messages'
+
+/** Last known context usage for a session. localStorage (not sessionStorage) so
+ *  the value survives tab closes and browser restarts; legacy sessionStorage
+ *  entries stay readable AND get promoted to localStorage on first read so a
+ *  pre-existing value becomes durable without waiting for the next turn. */
+function readCachedContextUsage(sessionId: string): ContextUsageData | null {
+  try {
+    const key = `context-usage:${sessionId}`
+    const saved = localStorage.getItem(key) ?? sessionStorage.getItem(key)
+    if (!saved) return null
+    if (!localStorage.getItem(key)) localStorage.setItem(key, saved)
+    return JSON.parse(saved)
+  } catch {
+    return null
+  }
+}
+
+/** Pull the persisted context usage out of a session-detail response. The main
+ *  route returns the session fields flat (`{...session, messages}`), the clone
+ *  route nests them under `session` — accept both, and tolerate a raw JSON
+ *  string (older clone responses) so the chip never depends on one shape. */
+function readServerContextUsage(res: unknown): ContextUsageData | null {
+  if (!res || typeof res !== 'object') return null
+  const r = res as { context_usage?: unknown; session?: { context_usage?: unknown } | null }
+  const raw = r.context_usage ?? r.session?.context_usage
+  let value: unknown = raw
+  if (typeof raw === 'string') {
+    try { value = JSON.parse(raw) } catch { return null }
+  }
+  if (!value || typeof value !== 'object') return null
+  const usage = value as Partial<ContextUsageData>
+  return typeof usage.percentage === 'number' && typeof usage.totalTokens === 'number'
+    ? (usage as ContextUsageData)
+    : null
+}
+
 export interface UseAgentChatApiOverride {
   /** Load session messages. Returns { messages: PaginatedResponse<AgentMessage> } */
   getSession?: (id: string, query?: { limit?: number; cursor?: string }) => Promise<{
@@ -28,7 +67,13 @@ export interface UseAgentChatApiOverride {
     messages: import('@/lib/agent/types').PaginatedResponse<import('@/lib/agent/types').AgentMessage>
   }>
   /** Create SSE stream for chat. Returns { reader, abort } */
-  chatStream?: (id: string, message: string, opts?: { debug?: boolean; delegate_to?: string; model?: string; subagents?: ChatSubagentRef[] }) => import('@/lib/agent/api').AgentSSEConnection
+  chatStream?: (id: string, message: string, opts?: {
+    debug?: boolean
+    model?: string
+    effort?: ComposerEffort
+    maxContext?: ComposerContext
+    subagents?: ChatSubagentRef[]
+  }) => import('@/lib/agent/api').AgentSSEConnection
   /** Stop an in-progress chat stream */
   stopChat?: (id: string) => Promise<unknown>
   /** Probe whether the session has an in-flight server-side turn (clone chat
@@ -39,9 +84,54 @@ export interface UseAgentChatApiOverride {
   checkRunning?: (id: string) => Promise<{ running: boolean; partial: boolean }>
 }
 
-export function useAgentChat(sessionId: string | null, options?: { onTitleUpdate?: (sessionId: string, title: string) => void; api?: UseAgentChatApiOverride }) {
+/** Rebuild the live timeline from a persisted streaming partial (2026-10-29:
+ *  switching away and back mid-turn used to demote the growing reply to a
+ *  settled message and leave only「Agent 思考中」until the turn ended). New
+ *  partials carry `metadata.timeline` (server-side, arrival order); older rows
+ *  fall back to thinking → tools → text. */
+function streamTimelineFromPartial(msg: AgentMessage): StreamTimelineItem[] {
+  const raw = msg.timeline
+  if (raw && raw.length > 0) {
+    return raw.map((entry, index): StreamTimelineItem => {
+      if (entry.kind === 'tool') return { kind: 'tool', id: entry.id ?? `tool-${index}` }
+      if (entry.kind === 'thinking') {
+        return { kind: 'thinking', id: `th-${index}`, text: entry.text ?? '', active: false }
+      }
+      return { kind: 'text', id: `tx-${index}`, text: entry.text ?? '' }
+    })
+  }
+  const items: StreamTimelineItem[] = []
+  if (msg.thinking) items.push({ kind: 'thinking', id: 'th-0', text: msg.thinking, active: false })
+  for (const tc of msg.tool_calls ?? []) items.push({ kind: 'tool', id: tc.id })
+  if (msg.content) items.push({ kind: 'text', id: 'tx-0', text: msg.content })
+  return items
+}
+
+export function useAgentChat(sessionId: string | null, options?: {
+  onTitleUpdate?: (sessionId: string, title: string) => void
+  api?: UseAgentChatApiOverride
+  /** Task-thread execution turn landed a [quick-edit] commit. */
+  onQuickEditCommit?: (data: {
+    sessionId?: string
+    taskId?: string
+    repo: string
+    branch: string
+    commit: string
+    message: string
+  }) => void
+}) {
   const [messages, setMessages] = useState<AgentMessage[]>([])
   const [streaming, setStreaming] = useState(false)
+  // Session that actually owns the live stream. The sidebar's「运行中」badge must
+  // key off THIS, not the active session: on a switch render `streaming` is still
+  // the old session's value while activeSessionId is already the new one, so
+  // activeSessionId lit up every task the user clicked (bug 2026-10-29).
+  const [streamingSessionId, setStreamingSessionId] = useState<string | null>(null)
+  /** Wall-clock start of the CURRENT turn (ms). A live send uses Date.now();
+   *  a resumed/tailed turn adopts the trigger user message's created_at so the
+   *  composer busy timer keeps counting from the real start instead of
+   *  restarting at 0 on every switch-away-and-back (2026-10-29). */
+  const [turnStartedAt, setTurnStartedAt] = useState<number | null>(null)
   const [streamContent, setStreamContent] = useState('')
   const [streamThinking, setStreamThinking] = useState('')
   const [isThinking, setIsThinking] = useState(false)
@@ -59,21 +149,20 @@ export function useAgentChat(sessionId: string | null, options?: { onTitleUpdate
   const [statusMessage, setStatusMessage] = useState('')
   // Context window usage breakdown (from SDK getContextUsage via SSE context_usage event).
   // Updated at the start of each assistant turn (after message_start).
-  // Persisted in sessionStorage keyed by sessionId so reopening the dialog
-  // restores the last known token count without needing to send a message.
+  // Persisted in localStorage keyed by sessionId: the server does not store this
+  // value, so the cache is the only source on a cold load — it must survive tab
+  // closes and browser restarts, not just in-tab reloads (sessionStorage would
+  // be wiped by a tab close and the status bar would fall back to ctx --%).
   const [contextUsage, setContextUsageRaw] = useState<ContextUsageData | null>(() => {
     if (!sessionId) return null
-    try {
-      const saved = sessionStorage.getItem(`context-usage:${sessionId}`)
-      return saved ? JSON.parse(saved) : null
-    } catch { return null }
+    return readCachedContextUsage(sessionId)
   })
   const setContextUsage = useCallback((data: ContextUsageData | null) => {
     setContextUsageRaw(data)
     if (sessionId && data) {
-      try { sessionStorage.setItem(`context-usage:${sessionId}`, JSON.stringify(data)) } catch { /* quota */ }
+      try { localStorage.setItem(`context-usage:${sessionId}`, JSON.stringify(data)) } catch { /* quota */ }
     } else if (sessionId && !data) {
-      try { sessionStorage.removeItem(`context-usage:${sessionId}`) } catch { /* ignore */ }
+      try { localStorage.removeItem(`context-usage:${sessionId}`) } catch { /* ignore */ }
     }
   }, [sessionId])
   const { connect, disconnect } = useSSEConnection()
@@ -98,6 +187,9 @@ export function useAgentChat(sessionId: string | null, options?: { onTitleUpdate
   // Ref-based API overrides (avoids recreating callbacks when overrides change identity)
   const apiOverrideRef = useRef(options?.api)
   apiOverrideRef.current = options?.api
+  // Current session for stale-response guards.
+  const sessionIdRef = useRef(sessionId)
+  sessionIdRef.current = sessionId
 
   // Abort any in-flight stream when session changes
   useEffect(() => {
@@ -113,12 +205,14 @@ export function useAgentChat(sessionId: string | null, options?: { onTitleUpdate
   }, [disconnect])
 
   // When sessionId changes while streaming, abort the old stream.
-  // Also restore contextUsage from sessionStorage for the new session (so the
+  // Also restore contextUsage from the cache for the new session (so the
   // status bar shows the last known token count without a fresh message).
   useEffect(() => {
     if (streamingSessionRef.current && streamingSessionRef.current !== sessionId) {
       disconnect()
       setStreaming(false)
+      setStreamingSessionId(null)
+      setTurnStartedAt(null)
       streamingRef.current = false
       streamingSessionRef.current = null
       // Leaving a session mid-resume → its poll belongs to the past now.
@@ -126,27 +220,121 @@ export function useAgentChat(sessionId: string | null, options?: { onTitleUpdate
       resumeModeRef.current = false
       setResumeStreaming(false)
     }
+    // Never carry another session's transcript/error into this one. The caller
+    // reloads the active session right after the switch.
+    setMessages([])
+    setError(null)
+    setStatusMessage('')
+    setStreamContent('')
+    setStreamThinking('')
+    setIsThinking(false)
+    setToolCalls([])
+    setStreamTimeline([])
+    streamContentRef.current = ''
+    streamThinkingRef.current = ''
+    toolCallsRef.current = []
+    timelineRef.current = []
     // Restore contextUsage for the new session (or null if no cached value).
     if (sessionId) {
-      try {
-        const saved = sessionStorage.getItem(`context-usage:${sessionId}`)
-        setContextUsageRaw(saved ? JSON.parse(saved) : null)
-      } catch { setContextUsageRaw(null) }
+      setContextUsageRaw(readCachedContextUsage(sessionId))
     } else {
       setContextUsageRaw(null)
     }
   }, [sessionId, disconnect])
 
-  const loadMessages = useCallback(async () => {
+  /** Feed a live turn's persisted partial into the streaming UI instead of the
+   *  transcript list — the resume path should look exactly like the live block
+   *  the user left behind (growing text, in-flow thinking/tool cards). */
+  const hydrateFromPartial = useCallback((partial: AgentMessage) => {
+    const content = partial.content ?? ''
+    const thinking = partial.thinking ?? ''
+    const tools = partial.tool_calls ?? []
+    const timeline = streamTimelineFromPartial(partial)
+    streamContentRef.current = content
+    streamThinkingRef.current = thinking
+    toolCallsRef.current = tools
+    timelineRef.current = timeline
+    setStreamContent(content)
+    setStreamThinking(thinking)
+    setToolCalls(tools)
+    setStreamTimeline(timeline)
+    setIsThinking(timeline.length > 0 && timeline[timeline.length - 1].kind === 'thinking')
+  }, [])
+
+  const loadMessages = useCallback(async (opts?: {
+    onlyWhenIdle?: boolean
+    /** 只有快照里已经包含这条（本轮刚收尾的助手行）才替换 —— 否则保留本地
+     *  实录，避免用比本地还旧的快照把刚生成的内容抹掉。 */
+    expectMessageId?: string
+  }) => {
     if (!sessionId) return
-    try {
-      const getSessionFn = apiOverrideRef.current?.getSession ?? api.getSession
-      const res = await getSessionFn(sessionId, { limit: 50 })
-      setMessages(res.messages.items)
-    } catch {
-      setError('Failed to load messages')
+    const requestedSessionId = sessionId
+    const getSessionFn = apiOverrideRef.current?.getSession ?? api.getSession
+    // One silent retry: a lone rejected fetch (keep-alive RST / tailnet blip)
+    // says nothing about the session. 2026-10-30 user bug — answering an
+    // AskUserQuestion card re-pulled the transcript, that single fetch failed,
+    // and a permanent 「Failed to load messages」 banner sat next to the live
+    // question card. 4xx is deterministic, so it skips the retry.
+    const fetchSession = async () => {
+      try {
+        return await getSessionFn(sessionId, { limit: 50 })
+      } catch (err) {
+        const status = (err as { status?: number }).status
+        if (status && status >= 400 && status < 500) throw err
+        await new Promise((resolve) => setTimeout(resolve, 200))
+        return getSessionFn(sessionId, { limit: 50 })
+      }
     }
-  }, [sessionId])
+    try {
+      const res = await fetchSession()
+      // Fast session switches: never let an old response overwrite the new chat.
+      if (sessionIdRef.current !== requestedSessionId) return
+      // stop 之后的补拉与紧接着的新一轮发送会竞态：新一轮已经开始时，服务端
+      // 快照比乐观行旧 —— 覆盖会让用户刚发的提示词从实录里消失。
+      if (opts?.onlyWhenIdle && (streamingRef.current || resumeModeRef.current)) return
+      const items = res.messages.items
+      if (opts?.expectMessageId && !items.some((m) => m.id === opts.expectMessageId)) return
+      // While tailing a server-side turn, its streaming partial belongs to the
+      // live area (metadata.streaming). Rendering it as history made a switch
+      // mid-turn collapse the output into a settled message with a lone
+      // 「Agent 思考中」underneath (bug 2026-10-29). Stale partials outside a
+      // live tail keep rendering as normal rows.
+      const partial = (resumeModeRef.current || streamingRef.current)
+        ? items.find((m) => m.role === 'assistant' && m.streaming)
+        : undefined
+      if (partial || resumeModeRef.current || streamingRef.current) {
+        // A tailed turn keeps the elapsed timer anchored to its real start:
+        // the last user message (incl. an event card for wake turns) is the
+        // turn's trigger. Without this the busy timer restarted at 0 on every
+        // switch-back (2026-10-29).
+        const lastUser = [...items].reverse().find((m) => m.role === 'user')
+        const startMs = Date.parse(lastUser?.created_at ?? '')
+        if (Number.isFinite(startMs)) setTurnStartedAt((prev) => prev ?? startMs)
+      }
+      if (partial) {
+        hydrateFromPartial(partial)
+        setMessages(items.filter((m) => m !== partial))
+      } else if (resumeModeRef.current || streamingRef.current) {
+        setMessages(items)
+      } else {
+        // 冷加载：没有任何 stream 在跑，却还挂着 metadata.streaming 的行 =
+        // 上一次中断 / 进程退出留下的残行。落成「已中断」，否则它会以普通
+        // 消息的样子出现，用户看不出那一轮是被打断的（2026-10-29 用户 bug）。
+        setMessages(items.map((m) => (m.streaming ? { ...m, streaming: false, interrupted: true } : m)))
+      }
+      // ctx chip source of truth on a cold load: the session row carries the
+      // last provider-reported usage, so a refresh / server restart / another
+      // browser paints the real percentage instead of `ctx --%` until the next
+      // turn. (The localStorage cache above stays as the instant-paint path.)
+      const serverUsage = readServerContextUsage(res)
+      if (serverUsage) setContextUsage(serverUsage)
+      // A retry or a later turn's reload succeeding means the banner is stale.
+      setError((prev) => (prev === LOAD_MESSAGES_ERROR ? null : prev))
+    } catch {
+      if (sessionIdRef.current !== requestedSessionId) return
+      setError(LOAD_MESSAGES_ERROR)
+    }
+  }, [sessionId, setContextUsage, hydrateFromPartial])
 
   const stopResumePolling = useCallback(() => {
     if (resumePollRef.current) { clearInterval(resumePollRef.current); resumePollRef.current = null }
@@ -170,6 +358,7 @@ export function useAgentChat(sessionId: string | null, options?: { onTitleUpdate
     streamingSessionRef.current = sid
     streamingRef.current = true
     setStreaming(true) // reuses the send-guard: input disabled + stop button
+    setStreamingSessionId(sid)
 
     const tick = async () => {
       try {
@@ -181,6 +370,8 @@ export function useAgentChat(sessionId: string | null, options?: { onTitleUpdate
           await loadMessages()
           stopResumePolling()
           setStreaming(false)
+          setStreamingSessionId(null)
+          setTurnStartedAt(null)
           streamingRef.current = false
           streamingSessionRef.current = null
           setStreamContent('')
@@ -199,6 +390,24 @@ export function useAgentChat(sessionId: string | null, options?: { onTitleUpdate
     resumePollRef.current = setInterval(tick, 1500)
   }, [loadMessages, stopResumePolling])
 
+  // Wake path: a server-originated turn (workflow event → ChatEventBridge)
+  // starts without a local SSE. Probe once and tail it when it is live.
+  const checkAndResume = useCallback(async (sid: string): Promise<boolean> => {
+    const fn = apiOverrideRef.current?.checkRunning
+    if (!fn) return false
+    if (streamingSessionRef.current === sid) return true
+    try {
+      const r = await fn(sid)
+      if (r.running) {
+        startResumePolling(sid)
+        return true
+      }
+    } catch {
+      /* server offline — nothing to tail */
+    }
+    return false
+  }, [startResumePolling])
+
   // On (re)mount / session switch: if a turn is still generating server-side
   // and this instance doesn't own the live stream, resume automatically.
   useEffect(() => {
@@ -212,7 +421,12 @@ export function useAgentChat(sessionId: string | null, options?: { onTitleUpdate
     return () => { alive = false }
   }, [sessionId, startResumePolling])
 
-  const sendMessage = useCallback(async (message: string, opts?: { delegate_to?: string; model?: string; subagents?: ChatSubagentRef[] }) => {
+  const sendMessage = useCallback(async (message: string, opts?: {
+    model?: string
+    effort?: ComposerEffort
+    maxContext?: ComposerContext
+    subagents?: ChatSubagentRef[]
+  }) => {
     if (!sessionId || !message.trim()) return
     // Guard: block if already streaming
     if (streamingRef.current) return
@@ -239,6 +453,8 @@ export function useAgentChat(sessionId: string | null, options?: { onTitleUpdate
     }
     setMessages(prev => [...prev, userMsg])
     setStreaming(true)
+    setStreamingSessionId(sessionId)
+    setTurnStartedAt(Date.now())
     streamingRef.current = true
     setStreamContent('')
     setStreamThinking('')
@@ -257,14 +473,18 @@ export function useAgentChat(sessionId: string | null, options?: { onTitleUpdate
 
     const chatStreamFn = apiOverrideRef.current?.chatStream ?? api.chatStream
     const source = chatStreamFn(sessionId, message, {
-      delegate_to: opts?.delegate_to,
       model: opts?.model,
+      effort: opts?.effort,
+      maxContext: opts?.maxContext,
       subagents: opts?.subagents,
     })
 
     const handlers: SSEHandlers = {
       onContextUsage: (data) => {
         setContextUsage(data)
+      },
+      onQuickEditCommit: (data) => {
+        options?.onQuickEditCommit?.(data)
       },
       onTextDelta: (content) => {
         streamContentRef.current += content
@@ -421,6 +641,8 @@ export function useAgentChat(sessionId: string | null, options?: { onTitleUpdate
         }
         setMessages(prev => [...prev, assistantMsg])
         setStreaming(false)
+        setStreamingSessionId(null)
+        setTurnStartedAt(null)
         streamingRef.current = false
         streamingSessionRef.current = null
         setStreamContent('')
@@ -430,6 +652,14 @@ export function useAgentChat(sessionId: string | null, options?: { onTitleUpdate
         setStreamTimeline([])
         timelineRef.current = []
         setStatusMessage('')
+        // Server-side event cards appended during this turn (task tools:
+        // launch proposal / action request / reflection…) never ride the SSE
+        // stream — without a re-read the card stays invisible until a manual
+        // reload (用户 bug 2026-10-30：作者说「启动决策卡已发」，对话里却只有文字).
+        // The server commits the assistant row BEFORE `done`, so this snapshot
+        // is the finalized turn. onlyWhenIdle: a prompt sent the instant `done`
+        // lands must not be overwritten by the older snapshot.
+        void loadMessages({ onlyWhenIdle: true, expectMessageId: data.message_id })
         // Propagate auto-generated session title to sidebar
         if (data.session_title) {
           onTitleUpdateRef.current?.(data.session_id, data.session_title)
@@ -449,13 +679,15 @@ export function useAgentChat(sessionId: string | null, options?: { onTitleUpdate
         }
         setError(data.message)
         setStreaming(false)
+        setStreamingSessionId(null)
+        setTurnStartedAt(null)
         streamingRef.current = false
         streamingSessionRef.current = null
       },
     }
 
     connect(source, handlers)
-  }, [sessionId, connect, setContextUsage, startResumePolling])
+  }, [sessionId, connect, setContextUsage, startResumePolling, loadMessages])
 
   const stopGenerate = useCallback(async () => {
     if (!sessionId) return
@@ -478,6 +710,8 @@ export function useAgentChat(sessionId: string | null, options?: { onTitleUpdate
 
     disconnect()
     setStreaming(false)
+    setStreamingSessionId(null)
+    setTurnStartedAt(null)
     streamingRef.current = false
     streamingSessionRef.current = null
 
@@ -534,7 +768,14 @@ export function useAgentChat(sessionId: string | null, options?: { onTitleUpdate
     streamThinkingRef.current = ''
     toolCallsRef.current = []
     setStatusMessage('')
-  }, [sessionId, disconnect])
+
+    // 中断的这一轮由 server 落成 interrupted 行（stopChat 等 finalize 完成才
+    // 返回），这里重拉一遍让实录成为权威：本地的 partial 只是即时回显，服务端
+    // 的行到了就整份替换。少了这一步，思考阶段被停（本地还没有任何内容）时这
+    // 一轮看起来完全消失；刷新后也看不到「本轮被截断」（2026-10-29 用户 bug）。
+    // onlyWhenIdle：用户停完立刻又发新提示词时，别拿旧快照覆盖乐观行。
+    void loadMessages({ onlyWhenIdle: true })
+  }, [sessionId, disconnect, loadMessages])
 
   const handleConfirm = useCallback(async (eventId: string, decision: 'accept' | 'reject') => {
     try {
@@ -570,7 +811,12 @@ export function useAgentChat(sessionId: string | null, options?: { onTitleUpdate
   // steer 重试环据此重发。
   const steerLostRef = useRef(false)
 
-  const steer = useCallback(async (message: string, opts?: { delegate_to?: string; model?: string; subagents?: ChatSubagentRef[] }) => {
+  const steer = useCallback(async (message: string, opts?: {
+    model?: string
+    effort?: ComposerEffort
+    maxContext?: ComposerContext
+    subagents?: ChatSubagentRef[]
+  }) => {
     if (!sessionId || !message.trim()) return
     steeringRef.current = true
     try {
@@ -596,6 +842,12 @@ export function useAgentChat(sessionId: string | null, options?: { onTitleUpdate
   return {
     messages,
     streaming,
+    /** Session that owns the live stream (null when idle). Sidebars must use
+     *  this — not the active session — to paint「运行中」. */
+    streamingSessionId,
+    /** Real start of the current turn (ms) — busy timers count from here, so a
+     *  switch-back mid-turn does not restart the clock. */
+    turnStartedAt,
     /** True while tailing a server-side turn after a dialog close
      *  (stream-resume). `streaming` is also true in this mode. */
     resumeStreaming,
@@ -615,5 +867,6 @@ export function useAgentChat(sessionId: string | null, options?: { onTitleUpdate
     steeringRef,
     handleConfirm,
     loadMessages,
+    checkAndResume,
   }
 }

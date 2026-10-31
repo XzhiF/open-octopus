@@ -196,8 +196,7 @@ describe('T-3: 到点触发 → 执行', () => {
         name: 't3-manual',
         job_type: 'workflow',
         cron_expression: '0 9 * * *',
-        timezone: 'Asia/Shanghai',
-        org: ORG,
+        timezone: 'Asia/Shanghai',
         config: JSON.parse(WORKFLOW_CONFIG),
       }),
     })

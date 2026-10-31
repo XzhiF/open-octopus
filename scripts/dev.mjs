@@ -437,12 +437,12 @@ async function main() {
     return
   }
 
-  // Start Web-app
+  // Start Web-app (Vite dev server)
   const webAppDir = path.join(repoRoot, "packages", "web-app")
-  const nextBin = path.join(webAppDir, "node_modules", "next", "dist", "bin", "next")
+  const viteBin = path.join(webAppDir, "node_modules", "vite", "bin", "vite.js")
   startProcess(
     process.execPath,
-    [nextBin, "dev", "-p", String(webPort)],
+    [viteBin, "--port", String(webPort), "--strictPort"],
     {
       SERVER_URL: `http://${localIP}:${serverPort}`,
     },

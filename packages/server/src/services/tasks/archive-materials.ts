@@ -22,8 +22,9 @@ import { AcceptanceDAO } from "../../db/dao"
 import type { gitOps } from "../git-ops"
 import type { TaskHomeService } from "./task-home-service"
 import type { MaterialItemKind } from "../knowledge/material-pack"
+import { resolveProjectDir } from "./archive-delta"
 
-type GitLike = Pick<typeof gitOps, "diffStat" | "diffPatchFor" | "countCommits">
+type GitLike = Pick<typeof gitOps, "diffStat" | "diffPatchFor" | "countCommits" | "getHeadCommit" | "logSubjects">
 
 export interface ExtractedMaterial {
   fileName: string
@@ -255,11 +256,29 @@ async function extractPrDiff(deps: ArchiveMaterialDeps, taskId: string, branch: 
   let any = false
   for (const name of names) {
     const start = starts[name]
-    const end = ends[name]
-    if (!start || !end) { lines.push(`- ${name}：锚不齐（start=${start ?? "—"} end=${end ?? "—"}），跳过`); continue }
-    const dir = wsPath ? path.join(wsPath, "projects", name) : null
-    if (!dir || !fs.existsSync(path.join(dir, ".git"))) {
-      lines.push(`- ${name}：worktree 不在盘${dir ? `（${dir}）` : ""}，区间锚=${start.slice(0, 7)}..${end.slice(0, 7)}（全量回源 git）`)
+    const anchorEnd = ends[name]
+    if (!start) {
+      lines.push(`- ${name}：缺 start 锚（不属于本任务累计区间），跳过`)
+      continue
+    }
+    const resolved = resolveProjectDir(wsPath, name)
+    const dir = resolved.dir
+    if (!dir) {
+      const endLabel = anchorEnd ? anchorEnd.slice(0, 7) : "?"
+      lines.push(`- ${name}：worktree 不在盘（${resolved.error ?? ""}），区间锚=${start.slice(0, 7)}..${endLabel}（全量回源 git）`)
+      continue
+    }
+    // 2026-10-31 收尾：归档时 HEAD 才是真实终点 —— 末轮 end 之后的小修
+    // （验收引导/收尾提交）也要进知识素材。
+    let head: string | null = null
+    try {
+      head = await git.getHeadCommit(dir)
+    } catch {
+      head = null
+    }
+    const end = head ?? anchorEnd
+    if (!end) {
+      lines.push(`- ${name}：无可用 end 锚（末轮未记录且 HEAD 不可读），跳过`)
       continue
     }
     any = true
@@ -267,6 +286,12 @@ async function extractPrDiff(deps: ArchiveMaterialDeps, taskId: string, branch: 
     lines.push(`## 仓 ${name}（${start}..${end}）`)
     lines.push("")
     try {
+      if (anchorEnd && head && anchorEnd !== head) {
+        const postCount = await git.countCommits(dir, anchorEnd, head)
+        const postSubjects = await git.logSubjects(dir, anchorEnd, head)
+        lines.push(`- 放行后新增提交: ${postCount}（末轮 end ${anchorEnd.slice(0, 7)} → 归档时 HEAD ${head.slice(0, 7)}）`)
+        for (const s of postSubjects) lines.push(`  - ${s}`)
+      }
       const commits = await git.countCommits(dir, start, end)
       const stat = await git.diffStat(dir, start, end)
       let adds = 0
@@ -282,11 +307,11 @@ async function extractPrDiff(deps: ArchiveMaterialDeps, taskId: string, branch: 
       for (const f of top) {
         try {
           const { patch } = await git.diffPatchFor(dir, start, end, f.path)
-          const head = patch.split("\n").slice(0, DIFF_HUNK_LINE_CAP).join("\n")
+          const headPatch = patch.split("\n").slice(0, DIFF_HUNK_LINE_CAP).join("\n")
           lines.push("")
           lines.push(`### hunk: ${f.path}`)
           lines.push("```diff")
-          lines.push(head)
+          lines.push(headPatch)
           lines.push("```")
         } catch { /* 单文件 patch 失败不影响 stat 面 */ }
       }

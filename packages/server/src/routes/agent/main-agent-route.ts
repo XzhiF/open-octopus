@@ -1,9 +1,10 @@
 // packages/server/src/routes/agent/main-agent-route.ts
 //
 // Main Agent unified entry route — POST /api/agent/chat
-// Supports:
-//   1. LLM routing with tool-based delegation (default)
-//   2. Deterministic @@mention delegation via delegate_to field
+// LLM routing with tool-based delegation (delegate_to_* tools). The old
+// deterministic user-side delegation (body.delegate_to, @@mention handoff)
+// was retired in v59 — 分身 now switches identity (chip) or is consulted as a
+// one-turn subagent; this endpoint ignores a stray delegate_to field.
 //
 import { Hono } from 'hono'
 import { streamSSE } from 'hono/streaming'
@@ -11,9 +12,13 @@ import type { SSEStreamingApi } from 'hono/streaming'
 import crypto from 'crypto'
 import type { MessageChunk } from '@octopus/providers'
 import { getProvider } from '@octopus/providers'
+import type { EffortLevel } from '@octopus/shared'
+import { parseComposerContext, parseComposerEffort, resolveChatModel } from './composer-options'
 import type { AgentSessionDAO } from '../../db/dao'
+import { SessionCacheContextDAO } from '../../db/dao/session-cache-context-dao'
 import { CloneRuntime } from '../../services/agent/clone-runtime'
 import { SystemPromptAssembler } from '../../services/agent/system-prompt-assembler'
+import { isResumeFailureMessage, usableResumeId } from '../../services/agent/resume'
 import { registerActiveStream, unregisterActiveStream } from '../../services/agent/agent-service'
 import { getAgentDir, getBuiltInCloneDir, getCloneDir, getAgentSkillsDir, backupFile } from '../../services/agent/paths'
 import { getEvolutionService } from '../../services/agent/evolution-service'
@@ -151,6 +156,7 @@ export function shouldForwardEvent(type: string): boolean {
     'tool_call_start',
     'tool_call',
     'tool_result',
+    'context_usage',
     'error',
   ].includes(type)
 }
@@ -172,6 +178,8 @@ function forwardableSSEEvent(chunk: MessageChunk, accumulatedContent: string, so
       return { event: 'tool_call', data: JSON.stringify({ type: 'input', tool_call_id: chunk.toolCallId, tool_name: chunk.toolName, input: chunk.toolInput }) }
     case 'tool_result':
       return { event: 'tool_result', data: JSON.stringify({ tool_call_id: chunk.toolCallId, tool_name: chunk.toolName, content: chunk.content, is_error: chunk.isError }) }
+    case 'context_usage':
+      return { event: 'context_usage', data: JSON.stringify(chunk.data) }
     case 'error':
       return { event: 'error', data: JSON.stringify({ code: chunk.code, message: chunk.message }) }
     default:
@@ -186,10 +194,16 @@ export function createMainAgentRoute(deps: MainAgentRouteDeps): Hono {
   const app = new Hono()
 
   app.post('/chat', async (c) => {
-    const org = c.req.header('X-Octopus-Org') || (c.get('org') as string) || 'default'
+    const org = c.req.header('X-Octopus-Org') || (c.get('org') as string) || '' || 'default'
     const turnStartMs = Date.now()
 
-    let body: { message?: string; session_id?: string; delegate_to?: string }
+    let body: {
+      message?: string
+      session_id?: string
+      model?: string
+      effort?: string
+      maxContext?: string
+    }
     try {
       body = await c.req.json()
     } catch {
@@ -200,14 +214,17 @@ export function createMainAgentRoute(deps: MainAgentRouteDeps): Hono {
       return c.json({ error: { code: 'INVALID_PARAM', message: 'message is required' } }, 400)
     }
 
+    const effort = parseComposerEffort(body.effort)
+    const model = resolveChatModel(body.model, parseComposerContext(body.maxContext), org)
+
     // Resolve or create session
     let sessionId = body.session_id
+    let resumeSessionId: string | undefined
     if (!sessionId) {
       sessionId = crypto.randomUUID()
       const now = new Date().toISOString()
       sessionDAO.insertSession({
         id: sessionId,
-        org,
         title: 'Main Agent 会话',
         clone_name: null,
         session_type: 'main',
@@ -218,6 +235,10 @@ export function createMainAgentRoute(deps: MainAgentRouteDeps): Hono {
       const existing = sessionDAO.findById(sessionId)
       if (!existing || existing.is_deleted) {
         return c.json({ error: { code: 'NOT_FOUND', message: `Session ${sessionId} not found` } }, 404)
+      }
+      resumeSessionId = usableResumeId(getAgentDir(), existing.provider_session_id)
+      if (existing.provider_session_id && !resumeSessionId) {
+        sessionDAO.clearProviderSession(sessionId)
       }
     }
 
@@ -231,119 +252,18 @@ export function createMainAgentRoute(deps: MainAgentRouteDeps): Hono {
     sessionDAO.updateLastMessageAt(sessionId, now)
 
     // ══════════════════════════════════════════════════════════════
-    // Deterministic delegation (@@mention)
-    // ══════════════════════════════════════════════════════════════
-    if (body.delegate_to) {
-      const targetClone = body.delegate_to
-
-      // Self-reference check: if session belongs to same clone, treat as normal message
-      const session = sessionDAO.findById(sessionId)
-      if (session?.clone_name === targetClone) {
-        // Self-reference → fall through to normal LLM routing
-      } else {
-        // Resolve clone from filesystem
-        const cloneDef = resolveCloneDefFromFs(targetClone)
-        if (!cloneDef) {
-          return streamSSE(c, async (stream) => {
-            await stream.writeSSE({
-              event: 'error',
-              data: JSON.stringify({ code: 'CLONE_NOT_FOUND', message: `Clone "${targetClone}" not found` }),
-            })
-          })
-        }
-
-        return streamSSE(c, async (stream) => {
-          const abortStream = () => {}
-          const streamId = registerActiveStream(sessionId!, abortStream)
-
-          try {
-            // Signal delegation start
-            await stream.writeSSE({
-              event: 'delegation_start',
-              data: JSON.stringify({ clone_name: targetClone, display_name: cloneDef.displayName }),
-            })
-
-            const runtime = new CloneRuntime(cloneDef, org)
-            const cwd = runtime.getDefaultCwd()
-            let fullContent = ''
-
-            for await (const chunk of runtime.chat(body.message!, sessionId!, null, cwd)) {
-              if ((stream as any)._aborted) break
-
-              if (chunk.type === 'text_delta') fullContent += chunk.content
-              // billing-coverage-2 票03 (KD23)：@@mention 委托 —— 实际 provider 调用发生在
-              // 分身侧（CloneRuntime 流），一行 clone_chat 归本会话、node_id=分身名；
-              // Main Agent 本路径不发起路由调用 → 不多记 global_chat 行，绝不双计。
-              if (tokenUsageDao && chunk.type === 'result') {
-                recordProviderResultUsage({
-                  sourcePath: 'clone_chat',
-                  nodeExecutionId: null,
-                  executionId: null,
-                  sessionId: sessionId!,
-                  org,
-                  nodeId: targetClone,
-                  startedAtMs: turnStartMs,
-                  modelUsages: chunk.modelUsages,
-                  usage: chunk.usage,
-                }, tokenUsageDao)
-              }
-              const sseEvent = forwardableSSEEvent(chunk, fullContent, targetClone)
-              if (sseEvent) await stream.writeSSE(sseEvent)
-            }
-
-            // Signal delegation end
-            await stream.writeSSE({
-              event: 'delegation_end',
-              data: JSON.stringify({ clone_name: targetClone }),
-            })
-
-            // Store assistant message with source metadata
-            if (fullContent) {
-              const assistantMsgId = crypto.randomUUID()
-              const assistantNow = new Date().toISOString()
-              const metadata = JSON.stringify({ source: targetClone, delegation: true })
-
-              sessionDAO.insertMessage({
-                id: assistantMsgId, session_id: sessionId!, role: 'assistant',
-                content: fullContent, metadata, created_at: assistantNow,
-              })
-              sessionDAO.updateLastMessageAt(sessionId!, assistantNow)
-
-              await stream.writeSSE({
-                event: 'done',
-                data: JSON.stringify({
-                  session_id: sessionId,
-                  message_id: assistantMsgId,
-                  session_title: sessionDAO.findById(sessionId!)?.title,
-                }),
-              })
-
-              // P4: Auto-trigger process-marks after delegation response
-              try {
-                const evolutionService = getEvolutionService()
-                evolutionService.processUnprocessedMarks(org, sessionId!)
-              } catch {
-                // process-marks failure is non-fatal
-              }
-            }
-          } catch (err: unknown) {
-            const msg = err instanceof Error ? err.message : String(err)
-            await stream.writeSSE({
-              event: 'error',
-              data: JSON.stringify({ code: 'DELEGATION_ERROR', message: `Delegation to ${targetClone} failed: ${msg}` }),
-            })
-          } finally {
-            unregisterActiveStream(sessionId!, streamId)
-          }
-        })
-      }
-    }
-
-    // ══════════════════════════════════════════════════════════════
     // Normal LLM routing (with optional tool-based delegation)
     // ══════════════════════════════════════════════════════════════
     const assembler = new SystemPromptAssembler(org)
-    const baseSystemPrompt = assembler.assemble()
+    // Frozen per session: re-reading persona/memory each turn changes the
+    // cached prefix and forces a full transcript recompute. New sessions pick
+    // up the latest files; existing ones stay byte-identical.
+    // (Test doubles may not expose getDb — they keep the per-turn assembly.)
+    const cacheDb = typeof sessionDAO.getDb === 'function' ? sessionDAO.getDb() : null
+    const cacheCtx = cacheDb ? new SessionCacheContextDAO(cacheDb) : null
+    const baseSystemPrompt = cacheCtx
+      ? cacheCtx.getOrCreatePromptSnapshot(sessionId!, () => assembler.assemble()).systemPrompt
+      : assembler.assemble()
     const curationSegment = curation ? `\n\n${CURATION_TOOLS_PROMPT}` : ''
     const systemPrompt = `${baseSystemPrompt}\n\n${DELEGATION_TOOLS_PROMPT}${curationSegment}\n\n${EVOLUTION_TOOLS_PROMPT}\n\n${RECORD_DAILY_TOOLS_PROMPT}`
 
@@ -356,8 +276,10 @@ export function createMainAgentRoute(deps: MainAgentRouteDeps): Hono {
         const provider = getProvider('claude')
         const cwd = getAgentDir()
 
-        const chunks = provider.sendQuery(body.message!, cwd, undefined, {
+        const chunks = provider.sendQuery(body.message!, cwd, resumeSessionId, {
           systemPrompt: { type: 'preset', preset: 'claude_code', append: systemPrompt },
+          ...(model ? { model } : {}),
+          ...(effort ? { effort } : {}),
         })
 
         let fullContent = ''
@@ -388,6 +310,14 @@ export function createMainAgentRoute(deps: MainAgentRouteDeps): Hono {
               break
             case 'thinking_done':
               await stream.writeSSE({ event: 'thinking_done', data: '{}' })
+              break
+            case 'context_usage':
+              // Persist alongside the SSE forward so the ctx chip survives a
+              // cold load (refresh / server restart / another browser).
+              if (sessionId) {
+                try { sessionDAO.updateContextUsage(sessionId, JSON.stringify(chunk.data)) } catch { /* telemetry — never break the turn */ }
+              }
+              await stream.writeSSE({ event: 'context_usage', data: JSON.stringify(chunk.data) })
               break
             case 'tool_call_start':
               toolCalls.push({ id: chunk.toolCallId, name: chunk.toolName, status: 'start' })
@@ -439,6 +369,8 @@ export function createMainAgentRoute(deps: MainAgentRouteDeps): Hono {
               await stream.writeSSE({ event: 'status', data: JSON.stringify({ status: chunk.status }) })
               break
             case 'result':
+              // Persist the SDK session id for the next turn's native resume.
+              if (chunk.sessionId) sessionDAO.updateProviderSession(sessionId!, chunk.sessionId)
               // billing-coverage-2 票03 (US2)：Main Agent 路由轮自身是一次真实 provider
               // 调用 → 单独入账 global_chat（一 chunk 一行，重试=新调用=新行，KD23）。
               if (tokenUsageDao) {
@@ -455,6 +387,11 @@ export function createMainAgentRoute(deps: MainAgentRouteDeps): Hono {
               }
               break
             case 'error':
+              // Stale resume: drop the pointer so the next turn starts clean
+              // instead of failing forever. Only before any output.
+              if (resumeSessionId && !fullContent && isResumeFailureMessage(chunk.message)) {
+                sessionDAO.clearProviderSession(sessionId!)
+              }
               await stream.writeSSE({ event: 'error', data: JSON.stringify({ code: chunk.code, message: chunk.message }) })
               break
           }
@@ -463,7 +400,7 @@ export function createMainAgentRoute(deps: MainAgentRouteDeps): Hono {
         // If delegation was detected, execute via CloneRuntime
         if (delegationDetected && !aborted) {
           await executeDelegation(
-            delegationDetected, sessionId!, org, stream, tokenUsageDao, turnStartMs,
+            delegationDetected, sessionId!, org, stream, tokenUsageDao, turnStartMs, model, effort,
           )
         }
 
@@ -875,6 +812,8 @@ async function executeDelegation(
   stream: SSEStreamingApi,
   tokenUsageDao?: TokenUsageDAO,
   startedAtMs = Date.now(),
+  model?: string,
+  effort?: EffortLevel,
 ): Promise<void> {
   const cloneName = delegation.cloneName
 
@@ -903,7 +842,10 @@ async function executeDelegation(
 
   try {
     let delegateContent = ''
-    for await (const chunk of runtime.chat(delegation.task, sessionId, null, cwd)) {
+    for await (const chunk of runtime.chat(
+      delegation.task, sessionId, null, cwd,
+      undefined, undefined, undefined, undefined, model, undefined, effort,
+    )) {
       if (chunk.type === 'text_delta') delegateContent += chunk.content
       // billing-coverage-2 票03 (KD23)：工具化委托 —— 分身应答轮是另一次真实 provider
       // 调用 → 一行 clone_chat（node_id=分身名）；与路由轮的 global_chat 行各归各的调用。

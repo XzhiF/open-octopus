@@ -25,8 +25,7 @@ let capturedSendQueryOpts: {
 const sampleWorkflowConfig = {
   schema_version: '2.0',
   type: 'workflow',
-  workspace_spec: {
-    org: 'xzf',
+  workspace_spec: { org: 'xzf',
     branch_prefix: 'log-cleanup',
     projects: [{ name: 'open-octopus', source_path: '', group: '' }],
   },
@@ -126,7 +125,7 @@ describe('T-2: POST /api/workspaces/:id/chat/sessions/:sid/messages with purpose
     const wsService = new WorkspaceService(new WorkspaceDAO(getDb()))
     existingWsIds = new Set(wsService.list().map(ws => ws.id))
 
-    const ws = wsService.create({ name: "t2-chatpanel-test", org: "xzf", path: "/tmp/octopus-t2-test" })
+    const ws = wsService.create({ name: "t2-chatpanel-test", repo_group: "xzf", path: "/tmp/octopus-t2-test" })
     workspaceId = ws.id
 
     const chatService = new ChatService(new ChatDAO(getDb()), new SSEService())

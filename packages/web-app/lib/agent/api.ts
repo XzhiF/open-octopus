@@ -9,6 +9,7 @@ import type {
   SafetyEvent, DebugLogEntry,
   AgentVersionInfo, VersionListResponse, VersionDiffResponse, RollbackResponse,
 } from './types'
+import type { ComposerContext, ComposerEffort } from './composer-settings'
 import { getServerUrl } from '@/lib/server-config'
 
 /**
@@ -36,6 +37,9 @@ function parseMessageMetadata(msg: any): AgentMessage {
       timeline: meta.timeline ?? normalized.timeline,
       interrupted: meta.interrupted ?? normalized.interrupted,
       streaming: meta.streaming ?? normalized.streaming,
+      displayType: meta.displayType ?? normalized.displayType,
+      activity: meta.activity ?? normalized.activity,
+      roleSwitch: meta.role_switch ?? normalized.roleSwitch,
     }
   } catch {
     return normalized
@@ -66,7 +70,13 @@ async function request<T>(url: string, init?: RequestInit): Promise<T> {
 }
 
 // Sessions
-export function createSession(opts?: { clone_name?: string }) {
+export function createSession(opts?: {
+  clone_name?: string
+  cwd?: string
+  workspace_id?: string
+  /** 新会话的身份（分身）。未显式挑目录时，服务端把 cwd 落在该分身自己的工作区。 */
+  identity_clone?: string
+}) {
   return request<AgentSession>('/sessions', { method: 'POST', body: JSON.stringify(opts ?? {}) })
 }
 export function listSessions(query?: { clone?: string; limit?: number; cursor?: string }) {
@@ -77,15 +87,52 @@ export function listSessions(query?: { clone?: string; limit?: number; cursor?: 
   const qs = params.toString()
   return request<PaginatedResponse<AgentSession>>(`/sessions${qs ? `?${qs}` : ''}`)
 }
+export function getSessionRunning(id: string) {
+  return request<{ running: boolean; partial: boolean }>(`/sessions/${id}/running`)
+}
+export interface RunningAgentSession {
+  id: string
+  title: string
+  clone_name: string | null
+  session_type: string
+  started_at: string
+  stream_count: number
+}
+export function listRunningSessions(limit = 50) {
+  return request<{ items: RunningAgentSession[] }>(`/sessions/running?limit=${limit}`)
+}
 export function getSession(id: string, query?: { limit?: number; cursor?: string }) {
   const params = new URLSearchParams()
   if (query?.limit) params.set('limit', String(query.limit))
   if (query?.cursor) params.set('cursor', query.cursor)
   const qs = params.toString()
-  return request<{ session: AgentSession; messages: PaginatedResponse<AgentMessage> }>(`/sessions/${id}${qs ? `?${qs}` : ''}`)
+  return request<{ session: AgentSession; messages: PaginatedResponse<AgentMessage> }>(
+    `/sessions/${id}${qs ? `?${qs}` : ''}`,
+  ).then((raw) => ({
+    ...raw,
+    messages: {
+      ...raw.messages,
+      items: (raw.messages.items ?? []).map(parseMessageMetadata),
+    },
+  }))
 }
 export function updateSession(id: string, data: { title: string }) {
   return request<void>(`/sessions/${id}`, { method: 'PATCH', body: JSON.stringify(data) })
+}
+
+/**
+ * 记录人对决策卡的选择（启动方式 / 动作请求 / 反思条目）。
+ * 服务端把 decision 写进该条消息的 metadata.activity —— 卡片据此渲染
+ * 「所选按钮高亮 + 其余只读」，刷新后仍保持。
+ */
+export function recordCardDecision(
+  messageId: string,
+  body: { actionId: string; label?: string; entryId?: string },
+) {
+  return request<{ ok: boolean; activity: Record<string, unknown> }>(
+    `/messages/${encodeURIComponent(messageId)}/decision`,
+    { method: 'POST', body: JSON.stringify(body) },
+  )
 }
 export function deleteSession(id: string) {
   return request<void>(`/sessions/${id}`, { method: 'DELETE' })
@@ -94,23 +141,62 @@ export function stopChat(id: string) {
   return request<void>(`/sessions/${id}/stop`, { method: 'POST' })
 }
 
+// Session identity (role switch). The role card is delivered on the next chat
+// turn; system prompt/tools stay frozen. v59: identities are clones — `expert`
+// only resolves for legacy rows (agency era).
+export interface SessionRoleClone {
+  id: string
+  display_name: string
+  type: 'built-in' | 'user'
+  skills: string[]
+  memory_scope: 'shared' | 'isolated'
+  status: 'active' | 'idle' | 'executing'
+}
+
+export interface SessionRoleState {
+  session_id: string
+  active_expert: string | null
+  active_kind: 'expert' | 'clone'
+  expert: { id: string; name: string; label: string; desc: string } | null
+  clone: SessionRoleClone | null
+  revision: number
+  delivered_revision: number
+}
+
+export function getSessionRole(id: string) {
+  return request<SessionRoleState>(`/sessions/${id}/role`)
+}
+
+export function setSessionRole(id: string, expert: string | null) {
+  return request<SessionRoleState>(`/sessions/${id}/role`, {
+    method: 'PUT',
+    body: JSON.stringify({ expert }),
+  })
+}
+
 // Chat SSE (POST + ReadableStream, compatible with contract POST method)
 export interface AgentSSEConnection {
   reader: ReadableStreamDefaultReader<Uint8Array>
   abort: () => void
 }
 
-export function chatStream(id: string, message: string, opts?: { debug?: boolean; delegate_to?: string }): AgentSSEConnection {
+export function chatStream(id: string, message: string, opts?: {
+  debug?: boolean
+  model?: string
+  effort?: ComposerEffort
+  maxContext?: ComposerContext
+  subagents?: Array<{ id: string; label?: string }>
+}): AgentSSEConnection {
   const controller = new AbortController()
-  // When delegate_to is present, use main agent chat endpoint
-  const url = opts?.delegate_to
-    ? `${BASE()}/chat`
-    : `${BASE()}/sessions/${id}/chat`
+  const url = `${BASE()}/sessions/${id}/chat`
   const body = JSON.stringify({
     message,
     debug: opts?.debug,
     session_id: id,
-    delegate_to: opts?.delegate_to,
+    ...(opts?.model ? { model: opts.model } : {}),
+    ...(opts?.effort ? { effort: opts.effort } : {}),
+    ...(opts?.subagents && opts.subagents.length > 0 ? { subagents: opts.subagents } : {}),
+    ...(opts?.maxContext ? { maxContext: opts.maxContext } : {}),
   })
 
   const streamPromise = fetch(url, {
@@ -280,13 +366,20 @@ export function cloneChatStream(
   cloneName: string,
   sessionId: string,
   message: string,
-  opts?: { model?: string; subagents?: Array<{ id: string; label?: string }> },
+  opts?: {
+    model?: string
+    effort?: ComposerEffort
+    maxContext?: ComposerContext
+    subagents?: Array<{ id: string; label?: string }>
+  },
 ): AgentSSEConnection {
   const controller = new AbortController()
   const url = `${CLONE_BASE()}/${cloneName}/sessions/${sessionId}/chat`
   const body = JSON.stringify({
     message,
     ...(opts?.model ? { model: opts.model } : {}),
+    ...(opts?.effort ? { effort: opts.effort } : {}),
+    ...(opts?.maxContext ? { maxContext: opts.maxContext } : {}),
     ...(opts?.subagents && opts.subagents.length > 0 ? { subagents: opts.subagents } : {}),
   })
 
@@ -338,6 +431,18 @@ export function cloneChatStream(
 export function stopCloneChat(cloneName: string, sessionId: string) {
   return cloneRequest<{ success: boolean }>(`/${cloneName}/sessions/${sessionId}/stop`, {
     method: 'POST',
+  })
+}
+
+// Clone-session expert identity (task-author chat etc.).
+export function getCloneSessionRole(cloneName: string, sessionId: string) {
+  return cloneRequest<SessionRoleState>(`/${cloneName}/sessions/${sessionId}/role`)
+}
+
+export function setCloneSessionRole(cloneName: string, sessionId: string, expert: string | null) {
+  return cloneRequest<SessionRoleState>(`/${cloneName}/sessions/${sessionId}/role`, {
+    method: 'PUT',
+    body: JSON.stringify({ expert }),
   })
 }
 
@@ -403,6 +508,22 @@ export function mergeClone(name: string) {
 // Skills
 export function listSkills() {
   return request<{ skills?: SkillInfo[]; items?: SkillInfo[] }>('/skills')
+}
+
+// MCP catalog（＋面板「MCP」类别，只读元数据）
+export interface McpToolMeta {
+  name: string
+  description: string
+}
+export interface McpServerMeta {
+  server: string
+  label: string
+  description: string
+  when: string
+  tools: McpToolMeta[]
+}
+export function listMcpServers() {
+  return request<{ servers?: McpServerMeta[] }>('/mcp/servers')
 }
 export function getSkill(name: string) {
   return request<{ name: string; source: SkillSource; content: string; token_count: number; last_modified: string | null }>(`/skills/${name}`)

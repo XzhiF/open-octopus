@@ -14,6 +14,7 @@
 
 import * as DialogPrimitive from '@radix-ui/react-dialog'
 import { useEffect, useRef, useState, type CSSProperties, type ReactNode } from 'react'
+import { CloseLightGlyph, closeLightButtonClass } from '@/components/ui/close-light'
 
 interface ZoomDialogProps {
   open: boolean
@@ -66,6 +67,9 @@ export function ZoomDialog({ open, onClose, anchor, title, children, width = 440
 
   const style: CSSProperties = {
     width,
+    maxWidth: 'calc(100vw - 2rem)',
+    maxHeight: 'calc(100dvh - 2rem)',
+    overflowY: 'auto',
     transform: phase === 'open' ? CENTERED : collapsedTf,
     opacity: phase === 'open' ? 1 : 0,
     transition:
@@ -91,7 +95,10 @@ export function ZoomDialog({ open, onClose, anchor, title, children, width = 440
           className="fixed left-[50%] top-[50%] z-[70] rounded-xl border border-pop-bd bg-pop-paper p-4 shadow-pop-lg outline-none"
           style={style}
         >
-          <DialogPrimitive.Title className="mb-3 text-[13px] font-bold text-pop-pink">{title}</DialogPrimitive.Title>
+          <DialogPrimitive.Close aria-label="关闭" className={closeLightButtonClass}>
+            <CloseLightGlyph />
+          </DialogPrimitive.Close>
+          <DialogPrimitive.Title className="mb-3 pl-10 text-[13px] font-bold text-pop-pink">{title}</DialogPrimitive.Title>
           {children}
         </DialogPrimitive.Content>
       </DialogPrimitive.Portal>

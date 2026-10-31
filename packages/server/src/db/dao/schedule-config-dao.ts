@@ -62,7 +62,7 @@ export class ScheduleConfigDAO extends BaseDAO {
   }
 
   listGlobal(params?: {
-    search?: string; status?: string; job_type?: string; org?: string;
+    search?: string; status?: string; job_type?: string;
     workspace_id?: string; sort?: string; order?: string;
     page?: number; limit?: number;
   }): { data: ScheduleRow[]; total: number; page: number; pageSize: number } {
@@ -73,8 +73,7 @@ export class ScheduleConfigDAO extends BaseDAO {
     else if (params?.status === "disabled") { conditions.push("s.enabled = 0") }
     else if (params?.status === "failed") { conditions.push("s.enabled = 1 AND s.consecutive_failures > 0") }
     if (params?.job_type) { conditions.push("s.job_type = ?"); queryParams.push(params.job_type) }
-    if (params?.org) { conditions.push("s.org = ?"); queryParams.push(params.org) }
-    if (params?.workspace_id) { conditions.push("s.org = (SELECT org FROM workspaces WHERE id = ?)"); queryParams.push(params.workspace_id) }
+    if (params?.workspace_id) { conditions.push("s.workspace_id = ?"); queryParams.push(params.workspace_id) }
 
     const where = conditions.join(" AND ")
     const page = params?.page ?? 1
@@ -87,21 +86,21 @@ export class ScheduleConfigDAO extends BaseDAO {
     return this.paginate<ScheduleRow>(dataSql, countSql, queryParams, page, limit)
   }
 
-  checkNameConflict(org: string, name: string, excludeId?: string): boolean {
+  checkNameConflict(name: string, excludeId?: string): boolean {
     if (excludeId) {
       const row = this.stmt(
-        "SELECT id FROM schedules WHERE org = ? AND name = ? AND id != ? AND deleted_at IS NULL"
-      ).get(org, name, excludeId) as { id: string } | undefined
+        "SELECT id FROM schedules WHERE name = ? AND id != ? AND deleted_at IS NULL"
+      ).get(name, excludeId) as { id: string } | undefined
       return !!row
     }
     const row = this.stmt(
-      "SELECT id FROM schedules WHERE org = ? AND name = ? AND deleted_at IS NULL"
-    ).get(org, name) as { id: string } | undefined
+      "SELECT id FROM schedules WHERE name = ? AND deleted_at IS NULL"
+    ).get(name) as { id: string } | undefined
     return !!row
   }
 
   insertSchedule(row: Partial<ScheduleRow> & {
-    id: string; org: string; name: string;
+    id: string; name: string;
     cron_expression: string | null; timezone: string;
   }): Database.RunResult {
     const now = new Date().toISOString()
@@ -111,15 +110,15 @@ export class ScheduleConfigDAO extends BaseDAO {
     // children) no longer create schedule rows at all, so there is nothing to pass.
     return this.stmt(`
       INSERT INTO schedules (
-        id, org, name, cron_expression, timezone, workspace_id, workflow_ref,
+        id, name, cron_expression, timezone, workspace_id, workflow_ref,
         input_values, enabled, timeout_seconds, notify_on_failure,
         notify_channel, notify_target, container_execution_id,
         next_trigger_at, created_at, updated_at,
         job_type, config, parallel_policy, description, version, consecutive_failures, max_retain,
         status, claimed_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
-      row.id, row.org, row.name, row.cron_expression, row.timezone,
+      row.id, row.name, row.cron_expression, row.timezone,
       row.workspace_id ?? null, row.workflow_ref ?? null,
       row.input_values ?? "{}", row.enabled ?? 1,
       row.timeout_seconds ?? 3600, row.notify_on_failure ?? 0,
@@ -263,11 +262,6 @@ export class ScheduleConfigDAO extends BaseDAO {
 
   // ── Workspace-scoped queries (for V1 WorkspaceScheduleService) ──
 
-  findWorkspaceOrg(workspaceId: string): string | null {
-    const row = this.stmt("SELECT org FROM workspaces WHERE id = ?").get(workspaceId) as { org: string } | undefined
-    return row?.org ?? null
-  }
-
   findScheduleByWorkspace(id: string, workspaceId: string): ScheduleRow | null {
     return (this.stmt("SELECT * FROM schedules WHERE id = ? AND workspace_id = ?").get(id, workspaceId) as ScheduleRow) ?? null
   }
@@ -277,7 +271,7 @@ export class ScheduleConfigDAO extends BaseDAO {
   }
 
   insertWorkspaceSchedule(row: {
-    id: string; org: string; workspace_id: string; name: string; workflow_ref: string;
+    id: string; workspace_id: string; name: string; workflow_ref: string;
     cron_expression: string; timezone: string; input_values: string;
     timeout_seconds: number; notify_on_failure: number;
     notify_channel: string | null; notify_target: string | null;
@@ -286,13 +280,13 @@ export class ScheduleConfigDAO extends BaseDAO {
   }): Database.RunResult {
     return this.stmt(`
       INSERT INTO schedules (
-        id, org, workspace_id, name, workflow_ref, cron_expression, timezone,
+        id, workspace_id, name, workflow_ref, cron_expression, timezone,
         input_values, enabled, timeout_seconds, notify_on_failure,
         notify_channel, notify_target, container_execution_id,
         next_trigger_at, created_at, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?, ?)
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
-      row.id, row.org, row.workspace_id, row.name, row.workflow_ref,
+      row.id, row.workspace_id, row.name, row.workflow_ref,
       row.cron_expression, row.timezone, row.input_values,
       row.timeout_seconds, row.notify_on_failure,
       row.notify_channel, row.notify_target, row.container_execution_id,
@@ -554,26 +548,26 @@ export class ScheduleConfigDAO extends BaseDAO {
 
   // ── Agent route queries ────────────────────────────────────────────
 
-  insertAgentSchedule(id: string, org: string, name: string, cronExpression: string, jobType: string, config: string, now: string): Database.RunResult {
+  insertAgentSchedule(id: string, name: string, cronExpression: string, jobType: string, config: string, now: string): Database.RunResult {
     return this.stmt(`
-      INSERT INTO schedules (id, org, name, cron_expression, timezone, enabled, job_type, config, created_at, updated_at)
-      VALUES (?, ?, ?, ?, ?, 1, ?, ?, ?, ?)
-    `).run(id, org, name, cronExpression, 'Asia/Shanghai', jobType, config, now, now)
+      INSERT INTO schedules (id, name, cron_expression, timezone, enabled, job_type, config, created_at, updated_at)
+      VALUES (?, ?, ?, ?, 1, ?, ?, ?, ?)
+    `).run(id, name, cronExpression, 'Asia/Shanghai', jobType, config, now, now)
   }
 
-  listSchedulesByOrg(org: string): Array<{ id: string; name: string; cron_expression: string; enabled: number }> {
+  listSchedules(): Array<{ id: string; name: string; cron_expression: string; enabled: number }> {
     try {
       return this.stmt(
-        'SELECT id, name, cron_expression, enabled FROM schedules WHERE org = ? AND deleted_at IS NULL ORDER BY created_at DESC'
-      ).all(org) as Array<{ id: string; name: string; cron_expression: string; enabled: number }>
+        'SELECT id, name, cron_expression, enabled FROM schedules WHERE deleted_at IS NULL ORDER BY created_at DESC'
+      ).all() as Array<{ id: string; name: string; cron_expression: string; enabled: number }>
     } catch {
       return []
     }
   }
 
-  findScheduleConfigByIdAndOrg(id: string, org: string): { name: string; config: string } | null {
+  findScheduleConfigById(id: string): { name: string; config: string } | null {
     try {
-      return (this.stmt('SELECT name, config FROM schedules WHERE id = ? AND org = ?').get(id, org) as { name: string; config: string }) ?? null
+      return (this.stmt('SELECT name, config FROM schedules WHERE id = ?').get(id) as { name: string; config: string }) ?? null
     } catch {
       return null
     }

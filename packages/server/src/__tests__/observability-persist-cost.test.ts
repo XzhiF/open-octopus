@@ -23,7 +23,7 @@ let db: Database.Database
 let dao: TokenUsageDAO
 let svc: ObservabilityService
 
-const META = { executionId: "e1", nodeId: "n1", org: "test-org", workspaceId: "ws-1", workflowRef: "t.yaml" }
+const META = { executionId: "e1", nodeId: "n1", repo_group: "test-org", workspaceId: "ws-1", workflowRef: "t.yaml" }
 
 function record(over: Partial<LLMCallRecord>): LLMCallRecord {
   return {
@@ -38,7 +38,7 @@ beforeEach(() => {
   applySchema(db)
   dao = new TokenUsageDAO(db)
   const now = new Date().toISOString()
-  db.prepare("INSERT INTO workspaces (id, name, path, org, created_at, updated_at) VALUES ('ws-1', 'Test WS', '/tmp/test', 'test-org', datetime('now'), datetime('now'))").run()
+  db.prepare("INSERT INTO workspaces (id, name, path, repo_group, created_at, updated_at) VALUES ('ws-1', 'Test WS', '/tmp/test', 'test-org', datetime('now'), datetime('now'))").run()
   db.prepare(`
     INSERT INTO executions (id, workspace_id, parent_id, workflow_ref, workflow_name, status, started_at, completed_at, org, created_at, updated_at)
     VALUES ('e1', 'ws-1', '0', 't.yaml', 'T', 'completed', ?, ?, 'test-org', ?, ?)

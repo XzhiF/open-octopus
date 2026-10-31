@@ -19,7 +19,6 @@ export interface CodeJobContext {
   /** The schedule row being fired. */
   scheduleId: string
   jobName: string
-  org: string
   /** `schedule_executions.id` for THIS fire — the correlation key for anything recorded. */
   fireId: string
   /** Opaque per-handler config from the schedule's `config.args`. */

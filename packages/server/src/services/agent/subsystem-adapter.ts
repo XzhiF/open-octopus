@@ -235,7 +235,7 @@ export class SubsystemAdapter {
    * Query MCP Registry for available services.
    */
   queryMCPRegistry(): MCPService[] {
-    const mcpDir = path.join(this.orgDir, 'mcp')
+    const mcpDir = path.join(os.homedir(), '.octopus', 'mcp')
     if (!fs.existsSync(mcpDir)) return []
 
     try {
@@ -255,7 +255,7 @@ export class SubsystemAdapter {
   }
 
   private checkMCPRegistryAvailable(): boolean {
-    const mcpDir = path.join(this.orgDir, 'mcp')
+    const mcpDir = path.join(os.homedir(), '.octopus', 'mcp')
     return fs.existsSync(mcpDir)
   }
 
@@ -296,8 +296,8 @@ export class SubsystemAdapter {
    * Check if the Evolution System is available.
    */
   private checkEvolutionSystemAvailable(): boolean {
-    const evolutionDir = path.join(this.orgDir, 'evolution')
-    return fs.existsSync(evolutionDir) || fs.existsSync(path.join(getAgentDir(), 'evolution'))
+    const evolutionDir = path.join(getAgentDir(), 'evolution')
+    return fs.existsSync(evolutionDir)
   }
 
   /**

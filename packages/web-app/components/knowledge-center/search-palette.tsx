@@ -1,6 +1,8 @@
 "use client"
 
 import { useCallback, useEffect, useRef, useState } from "react"
+import { useIsActiveRoute } from "@/lib/app-navigation"
+import { CloseLightGlyph, closeLightButtonClass } from "@/components/ui/close-light"
 import { searchKc, type KcSearchHit, type KcTree, type KcTreeEntry } from "@/lib/knowledge/knowledge-center-api"
 
 /**
@@ -21,6 +23,7 @@ interface KcSearchPaletteProps {
 }
 
 export function KcSearchPalette({ open, onClose, tree, onHit }: KcSearchPaletteProps) {
+  const isActive = useIsActiveRoute()
   const [q, setQ] = useState("")
   const [hits, setHits] = useState<KcSearchHit[] | null>(null)
   const [mode, setMode] = useState<"fts" | "like">("fts")
@@ -30,12 +33,12 @@ export function KcSearchPalette({ open, onClose, tree, onHit }: KcSearchPaletteP
 
   // Esc 关闭；打开即聚焦
   useEffect(() => {
-    if (!open) return
+    if (!open || !isActive) return
     inputRef.current?.focus()
     const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") onClose() }
     window.addEventListener("keydown", onKey)
     return () => window.removeEventListener("keydown", onKey)
-  }, [open, onClose])
+  }, [open, onClose, isActive])
 
   const runSearch = useCallback((query: string) => {
     setSearching(true)
@@ -73,7 +76,15 @@ export function KcSearchPalette({ open, onClose, tree, onHit }: KcSearchPaletteP
       className="fixed inset-0 z-[70] flex items-start justify-center bg-pop-bg/80 p-8"
       onClick={e => { if (e.target === e.currentTarget) onClose() }}
     >
-      <div className="mt-16 w-full max-w-2xl rounded-xl border-[1.5px] border-pop-bd bg-pop-paper shadow-xl">
+      <div className="relative mt-16 flex max-h-[calc(100dvh-10rem)] w-full max-w-2xl flex-col overflow-hidden rounded-xl border-[1.5px] border-pop-bd bg-pop-paper shadow-xl">
+        <button
+          type="button"
+          aria-label="关闭"
+          onClick={onClose}
+          className={closeLightButtonClass}
+        >
+          <CloseLightGlyph />
+        </button>
         <input
           ref={inputRef}
           value={q}
@@ -81,7 +92,7 @@ export function KcSearchPalette({ open, onClose, tree, onHit }: KcSearchPaletteP
           placeholder="检索页面名/别名/锚点/全文（FTS5）… 如: Promise 超时"
           aria-label="检索页面名与全文"
           data-testid="kc-palette-input"
-          className="h-11 w-full rounded-t-xl border-b-[1.5px] border-pop-bd bg-pop-inset px-4 text-sm text-pop-ink placeholder:text-pop-dim focus:outline-none"
+          className="h-11 w-full shrink-0 rounded-t-xl border-b-[1.5px] border-pop-bd bg-pop-inset pl-12 pr-4 text-sm text-pop-ink placeholder:text-pop-dim focus:outline-none"
         />
 
         {searchError && (
@@ -90,7 +101,7 @@ export function KcSearchPalette({ open, onClose, tree, onHit }: KcSearchPaletteP
           </div>
         )}
 
-        <div className="max-h-[60vh] overflow-y-auto p-3">
+        <div className="min-h-0 flex-1 overflow-y-auto p-3">
           {lower.length === 0 && (
             <div className="px-2 py-6 text-center text-xs text-pop-dim">输入即检索：页面名本地匹配 + FTS5 全文（LIKE 降级在服务端）</div>
           )}

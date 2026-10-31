@@ -90,7 +90,6 @@ export function useSchedulerSubmit({
               job_type: "workflow",
               cron_expression: data.cron_expression,
               timezone: data.timezone,
-              org: data.org || config.workspace_spec?.org,
               config,
               parallel_policy: (data.parallel_policy ?? "skip") as ParallelPolicy,
               description: data.description || undefined,

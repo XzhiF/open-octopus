@@ -9,7 +9,6 @@ import { escapeLikeParam } from "../like-escape"
  */
 
 export interface WikiArticleRow {
-  org: string
   id: string
   domain: string
   title: string
@@ -27,7 +26,6 @@ export interface WikiArticleRow {
 }
 
 export interface WikiArticleUpsert {
-  org: string
   id: string
   domain: string
   title: string
@@ -64,9 +62,9 @@ export class WikiArticleDAO extends BaseDAO {
     // 新行 insert 落 NULL，由启动 backfillWikiArticleLinks 一次补齐）
     const links = Array.isArray(row.links) ? JSON.stringify(row.links) : (row.links ?? null)
     this.stmt(`
-      INSERT INTO wiki_articles (org, id, domain, title, summary, topics, stability, last_compiled, sources, confidence, body, path, links)
-      VALUES (@org, @id, @domain, @title, @summary, @topics, @stability, @last_compiled, @sources, @confidence, @body, @path, @links)
-      ON CONFLICT(org, id) DO UPDATE SET
+      INSERT INTO wiki_articles (id, domain, title, summary, topics, stability, last_compiled, sources, confidence, body, path, links)
+      VALUES (@id, @domain, @title, @summary, @topics, @stability, @last_compiled, @sources, @confidence, @body, @path, @links)
+      ON CONFLICT(id) DO UPDATE SET
         domain=@domain, title=@title, summary=@summary, topics=@topics,
         stability=@stability, last_compiled=@last_compiled, sources=@sources,
         confidence=@confidence, body=@body, path=@path, links=COALESCE(@links, links),
@@ -74,38 +72,38 @@ export class WikiArticleDAO extends BaseDAO {
     `).run({ ...row, links })
   }
 
-  get(org: string, id: string): WikiArticleRow | undefined {
-    return this.stmt("SELECT * FROM wiki_articles WHERE org = ? AND id = ?").get(org, id) as WikiArticleRow | undefined
+  get(id: string): WikiArticleRow | undefined {
+    return this.stmt("SELECT * FROM wiki_articles WHERE id = ?").get(id) as WikiArticleRow | undefined
   }
 
   /**
-   * 按 org+path 定位整行（aa-fix 项③：page-retire/page-restore/revert 三通道原各持
+   * 按 path 定位整行（aa-fix 项③：page-retire/page-restore/revert 三通道原各持
    * 裸 SQL 副本——SELECT * 与 SELECT id 两制式一并收编 DAO 单源；SELECT-id 消费方
    * 取 .id 行为逐字等价）。
    */
-  getByPath(org: string, path: string): WikiArticleRow | undefined {
-    return this.stmt("SELECT * FROM wiki_articles WHERE org = ? AND path = ?").get(org, path) as WikiArticleRow | undefined
+  getByPath(path: string): WikiArticleRow | undefined {
+    return this.stmt("SELECT * FROM wiki_articles WHERE path = ?").get(path) as WikiArticleRow | undefined
   }
 
-  listByOrg(org: string): WikiArticleRow[] {
-    return this.stmt("SELECT * FROM wiki_articles WHERE org = ? ORDER BY domain, path").all(org) as WikiArticleRow[]
+  listAll(): WikiArticleRow[] {
+    return this.stmt("SELECT * FROM wiki_articles ORDER BY domain, path").all() as WikiArticleRow[]
   }
 
-  /** Anchor-uniqueness scan input: all other entries' bodies/paths in this org. */
-  listOthers(org: string, excludeId: string): Array<{ id: string; path: string; body: string }> {
+  /** Anchor-uniqueness scan input: all other entries' bodies/paths. */
+  listOthers(excludeId: string): Array<{ id: string; path: string; body: string }> {
     return this.stmt(
-      "SELECT id, path, body FROM wiki_articles WHERE org = ? AND id != ?",
-    ).all(org, excludeId) as Array<{ id: string; path: string; body: string }>
+      "SELECT id, path, body FROM wiki_articles WHERE id != ?",
+    ).all(excludeId) as Array<{ id: string; path: string; body: string }>
   }
 
   /** sqlite rowid of the base-table row (drives manual FTS rowid alignment). */
-  getRowid(org: string, id: string): number | undefined {
-    const r = this.stmt("SELECT rowid AS rid FROM wiki_articles WHERE org = ? AND id = ?").get(org, id) as { rid: number } | undefined
+  getRowid(id: string): number | undefined {
+    const r = this.stmt("SELECT rowid AS rid FROM wiki_articles WHERE id = ?").get(id) as { rid: number } | undefined
     return r?.rid
   }
 
-  delete(org: string, id: string): void {
-    this.stmt("DELETE FROM wiki_articles WHERE org = ? AND id = ?").run(org, id)
+  delete(id: string): void {
+    this.stmt("DELETE FROM wiki_articles WHERE id = ?").run(id)
   }
 
   // ── FTS manual sync (called by the compile service inside try/catch — non-fatal) ──
@@ -127,27 +125,27 @@ export class WikiArticleDAO extends BaseDAO {
 
   /** Full-text hit → base row (FTS5 MATCH 主检索，search API/票03 复用此入口).
    *  注意：FTS5 的 MATCH 左侧必须是真实表名（别名 f MATCH 会报 no such column）。 */
-  search(org: string, query: string, limit = 10, domain?: string): Array<Pick<WikiArticleRow, "id" | "domain" | "title" | "summary" | "path">> {
+  search(query: string, limit = 10, domain?: string): Array<Pick<WikiArticleRow, "id" | "domain" | "title" | "summary" | "path">> {
     return this.stmt(`
       SELECT a.id, a.domain, a.title, a.summary, a.path
       FROM wiki_fts JOIN wiki_articles a ON a.rowid = wiki_fts.rowid
-      WHERE wiki_fts MATCH ? AND a.org = ? AND (? IS NULL OR a.domain = ?)
+      WHERE wiki_fts MATCH ? AND (? IS NULL OR a.domain = ?)
       LIMIT ?
-    `).all(query, org, domain ?? null, domain ?? null, limit) as Array<Pick<WikiArticleRow, "id" | "domain" | "title" | "summary" | "path">>
+    `).all(query, domain ?? null, domain ?? null, limit) as Array<Pick<WikiArticleRow, "id" | "domain" | "title" | "summary" | "path">>
   }
 
   /** LIKE 降级检索（票03）：FTS5 零命中或 MATCH 抛错时使用——CJK 子串在
    *  unicode61 下不是独立 token，session_memory_fts/evolution-dao 同款先例。
    *  %_\\ 转义按 LIKE 语义（escape '\'），title/summary/body 三列子串命中。 */
-  searchLike(org: string, query: string, limit = 10, domain?: string): Array<Pick<WikiArticleRow, "id" | "domain" | "title" | "summary" | "path">> {
+  searchLike(query: string, limit = 10, domain?: string): Array<Pick<WikiArticleRow, "id" | "domain" | "title" | "summary" | "path">> {
     const escaped = escapeLikeParam(query)
     return this.stmt(`
       SELECT id, domain, title, summary, path
       FROM wiki_articles
-      WHERE org = ? AND (? IS NULL OR domain = ?)
+      WHERE (? IS NULL OR domain = ?)
         AND (title LIKE ? ESCAPE '\\' OR summary LIKE ? ESCAPE '\\' OR body LIKE ? ESCAPE '\\')
       ORDER BY domain, path
       LIMIT ?
-    `).all(org, domain ?? null, domain ?? null, `%${escaped}%`, `%${escaped}%`, `%${escaped}%`, limit) as Array<Pick<WikiArticleRow, "id" | "domain" | "title" | "summary" | "path">>
+    `).all(domain ?? null, domain ?? null, `%${escaped}%`, `%${escaped}%`, `%${escaped}%`, limit) as Array<Pick<WikiArticleRow, "id" | "domain" | "title" | "summary" | "path">>
   }
 }

@@ -60,31 +60,45 @@ interface StreamEntry {
   streamId: string
   abort: () => void
   startedAt: number
+  /** Resolves when the owning route finalized its partial row (its `finally`). */
+  done: Promise<void>
+  finish: () => void
 }
 
 const activeStreams = new Map<string, Map<string, StreamEntry>>()
 let streamCounter = 0
 
+/** How long stopChat waits for the route to finalize the interrupted partial.
+ *  Bounded so a wedged provider cannot hang the stop endpoint (the client-side
+ *  reload normalizes any still-streaming row to「已中断」anyway). */
+const STOP_SETTLE_MS = 3_000
+
 export function registerActiveStream(sessionId: string, abort: () => void): string {
   const streamId = `${sessionId}:${++streamCounter}`
+  let finish!: () => void
+  const done = new Promise<void>((resolve) => { finish = resolve })
   let sessionStreams = activeStreams.get(sessionId)
   if (!sessionStreams) {
     sessionStreams = new Map()
     activeStreams.set(sessionId, sessionStreams)
   }
-  sessionStreams.set(streamId, { streamId, abort, startedAt: Date.now() })
+  sessionStreams.set(streamId, { streamId, abort, startedAt: Date.now(), done, finish })
   return streamId
 }
 
 export function unregisterActiveStream(sessionId: string, streamId?: string): void {
   if (!streamId) {
     // Legacy: remove all streams for session (backward compat)
+    const all = activeStreams.get(sessionId)
     activeStreams.delete(sessionId)
+    all?.forEach((entry) => entry.finish())
     return
   }
   const sessionStreams = activeStreams.get(sessionId)
   if (sessionStreams) {
+    const entry = sessionStreams.get(streamId)
     sessionStreams.delete(streamId)
+    entry?.finish()
     if (sessionStreams.size === 0) {
       activeStreams.delete(sessionId)
     }
@@ -94,6 +108,26 @@ export function unregisterActiveStream(sessionId: string, streamId?: string): vo
 export function isStreamActive(sessionId: string): boolean {
   const sessionStreams = activeStreams.get(sessionId)
   return sessionStreams !== undefined && sessionStreams.size > 0
+}
+
+export interface ActiveStreamInfo {
+  sessionId: string
+  startedAt: number
+  streamCount: number
+}
+
+/** Sessions with at least one in-memory generation stream, newest first. */
+export function listActiveStreams(): ActiveStreamInfo[] {
+  const result: ActiveStreamInfo[] = []
+  for (const [sessionId, streams] of activeStreams) {
+    if (streams.size === 0) continue
+    let startedAt = Number.POSITIVE_INFINITY
+    for (const entry of streams.values()) {
+      startedAt = Math.min(startedAt, entry.startedAt)
+    }
+    result.push({ sessionId, startedAt, streamCount: streams.size })
+  }
+  return result.sort((a, b) => b.startedAt - a.startedAt)
 }
 
 // ── AgentService ─────────────────────────────────────────────────
@@ -148,12 +182,15 @@ export class AgentService {
     const messages = slicedRows.reverse().map((r) => ({
       id: r.id,
       session_id: r.session_id,
-      role: r.role,
+      role: r.role as AgentMessage['role'],
       content: r.content,
       tool_calls: r.tool_calls ? JSON.parse(r.tool_calls) : null,
       is_summary: r.is_summary === 1,
       is_compressed: r.is_compressed === 1,
+      is_edited: false,
       created_at: r.created_at,
+      // Server-originated event cards (activity wake) live in metadata.
+      metadata: r.metadata ?? null,
     }))
 
     return {
@@ -186,14 +223,37 @@ export class AgentService {
     sessionId: string,
   ): Promise<{ partial_content_preserved: boolean }> {
     const sessionStreams = activeStreams.get(sessionId)
-    if (sessionStreams && sessionStreams.size > 0) {
-      for (const entry of sessionStreams.values()) {
-        entry.abort()
-      }
-      activeStreams.delete(sessionId)
-      return { partial_content_preserved: true }
+    if (!sessionStreams || sessionStreams.size === 0) {
+      return { partial_content_preserved: false }
     }
-    return { partial_content_preserved: false }
+    const entries = [...sessionStreams.values()]
+    for (const entry of entries) {
+      entry.abort()
+    }
+    // We do NOT delete the registry here: the owning route's `finally` is the
+    // single unregister point, and it runs only AFTER the partial row has been
+    // finalized (interrupted: true). Waiting for it means the client can reload
+    // the transcript the moment stop returns — otherwise the reload races the
+    // finalize and the interrupted output "disappears" (user bug 2026-10-29).
+    let timer: ReturnType<typeof setTimeout> | undefined
+    let timedOut = false
+    try {
+      await Promise.race([
+        Promise.all(entries.map((entry) => entry.done)),
+        new Promise<void>((resolve) => {
+          timer = setTimeout(() => { timedOut = true; resolve() }, STOP_SETTLE_MS)
+          ;(timer as unknown as { unref?: () => void }).unref?.()
+        }),
+      ])
+    } finally {
+      if (timer) clearTimeout(timer)
+    }
+    if (timedOut) {
+      // A wedged provider never finalized — clear the running badge anyway so
+      // the session does not sit at「运行中」forever.
+      for (const entry of entries) unregisterActiveStream(sessionId, entry.streamId)
+    }
+    return { partial_content_preserved: true }
   }
 
   // ── Memory ────────────────────────────────────────────────────
@@ -453,7 +513,7 @@ export class AgentService {
 
   async getTasks(org: string, history?: boolean): Promise<{ active: TaskInfo[]; scheduled: ScheduledJob[] }> {
     if (!this.schedulerService) return { active: [], scheduled: [] }
-    const result = this.schedulerService.listJobs({ org })
+    const result = this.schedulerService.listJobs({})
     return { active: [], scheduled: result.items as unknown as ScheduledJob[] }
   }
 

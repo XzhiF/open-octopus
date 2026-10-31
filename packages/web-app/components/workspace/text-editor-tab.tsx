@@ -6,6 +6,7 @@ import { configureMonaco } from "@/lib/monaco-config"
 import Editor, { type OnMount } from "@monaco-editor/react"
 import type { editor } from "monaco-editor"
 import { getLanguageFromExtension } from "@/lib/yaml-utils"
+import { useIsActiveRoute } from "@/lib/app-navigation"
 
 interface TextEditorTabProps {
   filePath: string
@@ -49,6 +50,7 @@ export function TextEditorTab({
   onViewConflict,
   forceContentVersion,
 }: TextEditorTabProps) {
+  const isActive = useIsActiveRoute()
   const language = getLanguageFromExtension(extension)
   const [content, setContent] = useState(initialContent)
   const editorRef = useRef<editor.IStandaloneCodeEditor | null>(null)
@@ -84,6 +86,7 @@ export function TextEditorTab({
   // Global Cmd+S / Ctrl+S handler — intercepts at capture phase so the
   // browser's native "Save Page" dialog does not steal the event on macOS.
   useEffect(() => {
+    if (!isActive) return
     const handler = (e: KeyboardEvent) => {
       if ((e.metaKey || e.ctrlKey) && e.key === "s") {
         e.preventDefault()
@@ -94,7 +97,7 @@ export function TextEditorTab({
     }
     window.addEventListener("keydown", handler, { capture: true })
     return () => window.removeEventListener("keydown", handler, { capture: true })
-  }, [filePath])
+  }, [filePath, isActive])
 
   const handleMount: OnMount = async (editor, monaco) => {
     editorRef.current = editor

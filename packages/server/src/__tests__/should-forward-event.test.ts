@@ -12,6 +12,7 @@ describe('shouldForwardEvent', () => {
     'tool_call_start',
     'tool_call',
     'tool_result',
+    'context_usage',
     'error',
   ]
 

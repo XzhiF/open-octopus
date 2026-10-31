@@ -67,7 +67,7 @@ async function newAwaitingTask(branch?: string): Promise<string> {
   if (branch) spec.branch = branch
   const r = await app.request("/api/tasks", {
     method: "POST", headers: { "content-type": "application/json" },
-    body: JSON.stringify({ org: ORG, name: `E2E_TD inst ${seq++}`, task_spec: spec }),
+    body: JSON.stringify({ repo_group: ORG, name: `E2E_TD inst ${seq++}`, task_spec: spec }),
   })
   const id = ((await r.json()) as { id: string }).id
   const now = new Date().toISOString()
@@ -82,7 +82,7 @@ beforeAll(() => {
   applySchema(db)
   tmp = fs.mkdtempSync(path.join(os.tmpdir(), "td-instances-"))
   fs.mkdirSync(path.join(tmp, "ws1"), { recursive: true })
-  db.prepare(`INSERT INTO workspaces (id, name, org, path, created_at, updated_at) VALUES (?,?,?,?,?,?)`)
+  db.prepare(`INSERT INTO workspaces (id, name, repo_group, path, created_at, updated_at) VALUES (?,?,?,?,?,?)`)
     .run(WS_ID, "in-ws", ORG, path.join(tmp, "ws1"), new Date().toISOString(), new Date().toISOString())
   const sse = new SSEService()
   const taskHome = new TaskHomeService(path.join(tmp, "home"))

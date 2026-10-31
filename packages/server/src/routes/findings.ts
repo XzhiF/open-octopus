@@ -91,7 +91,7 @@ export function createFindingsRoutes(api: FindingsRoutesApi): Hono {
       }
       status = statusParam as FindingStatus
     }
-    return c.json({ org: GLOBAL_WIKI_ORG, findings: api.ops.list(status).map(findingView) })
+    return c.json({ findings: api.ops.list(status).map(findingView) })
   })
 
   routes.post("/findings/:id/adopt", async (c) => {

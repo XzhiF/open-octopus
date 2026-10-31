@@ -29,8 +29,8 @@ const syncCalls: string[] = []
 
 function makeStub(): RepoSyncService {
   return {
-    syncProjectsForTask: (taskId: string, org: string | undefined, names: string[]) => {
-      syncCalls.push(`${taskId}|${org}|${names.join(",")}`)
+    syncProjectsForTask: (taskId: string, repo_group: string | undefined, names: string[]) => {
+      syncCalls.push(`${taskId}|${repo_group}|${names.join(",")}`)
     },
     // PUT 路径在触发同步的同一毫秒读 notes → 返回一条 syncing 标注验证注入面。
     freshnessNotes: (_taskId: string, names: string[]) =>
@@ -71,8 +71,7 @@ afterAll(() => {
 
 describe("v4 写路径 → 镜像同步触发", () => {
   it("POST 直建 v4 带 project_ids → syncProjectsForTask(taskId, org, names)", async () => {
-    const { status, json } = await postJson("/api/tasks", {
-      org: ORG, name: "E2E_TD psync-create", task_spec: { format: "v4" }, project_ids: ["p-alpha"],
+    const { status, json } = await postJson("/api/tasks", { repo_group: ORG, name: "E2E_TD psync-create", task_spec: { format: "v4" }, project_ids: ["p-alpha"],
     })
     expect(status).toBe(201)
     expect(syncCalls).toContain(`${json.id}|${ORG}|p-alpha`)
@@ -80,8 +79,7 @@ describe("v4 写路径 → 镜像同步触发", () => {
 
   it("v3（task_type）带 project_ids → 不触发（闸门）", async () => {
     syncCalls.length = 0
-    const { status, json } = await postJson("/api/tasks", {
-      org: ORG, name: "E2E_TD psync-v3", task_type: "generic", preset: { org: ORG, projects: ["p-v3"] },
+    const { status, json } = await postJson("/api/tasks", { repo_group: ORG, name: "E2E_TD psync-v3", task_type: "generic", preset: { org: ORG, projects: ["p-v3"] },
     })
     expect(status).toBe(201)
     expect(syncCalls).toEqual([])
@@ -90,7 +88,7 @@ describe("v4 写路径 → 镜像同步触发", () => {
 
   it("PUT project_ids（v4 首锁路径）→ 触发 + context.md 带新鲜度行", async () => {
     syncCalls.length = 0
-    const created = await postJson("/api/tasks", { org: ORG, name: "E2E_TD put", task_spec: { format: "v4" } })
+    const created = await postJson("/api/tasks", { repo_group: ORG, name: "E2E_TD put", task_spec: { format: "v4" } })
     expect(created.status).toBe(201)
     expect(syncCalls).toEqual([]) // 建时无项目 → 不触发
 
@@ -108,13 +106,13 @@ describe("v4 写路径 → 镜像同步触发", () => {
 
   it("spec-field projects（v4）→ 触发；同请求 v3 行 → 不触发", async () => {
     syncCalls.length = 0
-    const v4 = await postJson("/api/tasks", { org: ORG, name: "E2E_TD sf-v4", task_spec: { format: "v4" } })
+    const v4 = await postJson("/api/tasks", { repo_group: ORG, name: "E2E_TD sf-v4", task_spec: { format: "v4" } })
     const sf = await postJson(`/api/tasks/${v4.json.id}/spec-field`, { field: "projects", value: ["p-sf"] })
     expect(sf.status).toBe(200)
     expect(syncCalls).toContain(`${v4.json.id}|${ORG}|p-sf`)
 
     syncCalls.length = 0
-    const v3 = await postJson("/api/tasks", { org: ORG, name: "E2E_TD sf-v3", task_type: "generic" })
+    const v3 = await postJson("/api/tasks", { repo_group: ORG, name: "E2E_TD sf-v3", task_type: "generic" })
     const sf3 = await postJson(`/api/tasks/${v3.json.id}/spec-field`, { field: "projects", value: ["p-x"] })
     expect(sf3.status).toBe(200)
     expect(syncCalls).toEqual([])

@@ -8,7 +8,7 @@
 // 命中率口径别混：cache% = 账本 totals.cacheHitRate（读÷(读+写+新输入)），
 // ctx% = SDK context_usage 窗口占用 —— 语义不同，不是同一数的两个显示。
 
-import Link from 'next/link'
+import Link from "@/lib/app-navigation"
 import { formatCost, formatPercent, formatTokenCount } from '@/lib/format'
 import { useBillingCurrency } from '@/lib/billing-currency'
 import type { LlmUsageAggregates } from '@octopus/shared'

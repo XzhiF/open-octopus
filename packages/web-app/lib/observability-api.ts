@@ -35,7 +35,8 @@ export async function fetchSessionLLMCalls(
   sessionId: string,
 ): Promise<{ data: LLMCallData[]; aggregates: LlmUsageAggregates }> {
   const url = new URL(`${getServerUrl()}/api/sessions/${sessionId}/llm-calls`)
-  const res = await fetch(url.toString())
+  // 轮次收尾后必然重拉：禁用 HTTP 缓存，避免拿回会话创建时的空账响应。
+  const res = await fetch(url.toString(), { cache: "no-store" })
   if (!res.ok) {
     return {
       data: [],

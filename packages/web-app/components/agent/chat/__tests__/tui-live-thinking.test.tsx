@@ -45,6 +45,14 @@ describe("TuiLive thinking 展开全文", () => {
     expect(container.textContent).not.toContain("A1") // t2 仍窗口（末3行=A3/A4/A5）
     expect(container.textContent).toContain("A5")
   })
+
+  it("过程三色：thinking 标签与竖线紫、正文仍灰（2026-10-29 A+B）", () => {
+    const { container } = render(<TuiLive items={[item]} toolCalls={[]} />)
+    const root = container.querySelector("[data-tui-thinking]") as HTMLElement
+    expect(root.className).toContain("text-pop-dim")
+    expect(root.querySelector(".text-pop-purple")?.textContent).toContain("thinking")
+    expect(root.querySelector('[class*="border-pop-purple"]')).toBeTruthy()
+  })
 })
 
 describe("TuiLive 工具行展开 input/result", () => {
@@ -79,5 +87,14 @@ describe("TuiLive 工具行展开 input/result", () => {
     fireEvent.click(container.querySelector('[data-tui-tool="closed"] button') as HTMLElement)
     expect(container.textContent).toContain('"file_path": "/x"')
     expect(container.textContent).not.toContain("result")
+  })
+
+  it("工具行：箭头与工具名青色，参数保持灰（2026-10-29 A+B）", () => {
+    const { container } = render(<TuiLive items={[{ kind: "tool", id: "k1" }]} toolCalls={[tc]} />)
+    const cyan = [...container.querySelectorAll(".text-pop-cyan")].map((el) => el.textContent)
+    expect(cyan).toContain("Bash")
+    expect(cyan.some((t) => t?.includes("▸"))).toBe(true)
+    // 参数不整行上色：行根仍是灰
+    expect((container.querySelector("[data-tui-tool]") as HTMLElement).className).toContain("text-pop-dim")
   })
 })

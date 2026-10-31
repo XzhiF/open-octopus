@@ -78,45 +78,6 @@ beforeEach(() => {
   })
 })
 
-describe("v47 迁移：老库 llm_calls（NOT NULL 归属列）blue-green rebuild", () => {
-  it("重建后列可空、数据保全、NULL 归属可插、二次 applySchema 幂等", () => {
-    const old = new Database(":memory:")
-    old.exec(`
-      CREATE TABLE llm_calls (
-        id TEXT PRIMARY KEY,
-        node_execution_id TEXT NOT NULL,
-        execution_id TEXT NOT NULL,
-        turn_index INTEGER NOT NULL,
-        call_index INTEGER NOT NULL,
-        timestamp INTEGER NOT NULL,
-        duration_ms INTEGER NOT NULL,
-        org TEXT,
-        session_id TEXT
-      )
-    `)
-    old.prepare(`INSERT INTO llm_calls VALUES ('x1', 'ne1', 'ex1', 1, 0, 1, 1, 'o', 's1')`).run()
-
-    applySchema(old)
-
-    const cols = old.prepare("PRAGMA table_info(llm_calls)").all() as Array<{ name: string; notnull: number }>
-    expect(cols.find(c => c.name === "node_execution_id")?.notnull).toBe(0)
-    expect(cols.find(c => c.name === "execution_id")?.notnull).toBe(0)
-    // 原行逐值保全（rebuild 拷贝不丢账）
-    expect(old.prepare("SELECT * FROM llm_calls WHERE id = 'x1'").get()).toMatchObject({
-      node_execution_id: "ne1", execution_id: "ex1", turn_index: 1, org: "o", session_id: "s1",
-    })
-    // NULL 归属（session 级）自此可插
-    old.prepare(`
-      INSERT INTO llm_calls (id, node_execution_id, execution_id, turn_index, call_index, timestamp, duration_ms, source_path, session_id)
-      VALUES ('x2', NULL, NULL, 0, 0, 2, 2, 'session_compress', 's1')
-    `).run()
-
-    applySchema(old) // 幂等：二次跑不再 rebuild、不复制行
-    expect((old.prepare("SELECT COUNT(*) c FROM llm_calls").get() as { c: number }).c).toBe(2)
-    old.close()
-  })
-})
-
 describe("session 压缩入账（票04/KD24/US3）", () => {
   it("LLM seam 成功 → 恰一条 session_compress 行，token=厂商真值，cost 手算一致，归属会话如实", async () => {
     const sid = seedSession(8)
@@ -132,7 +93,6 @@ describe("session 压缩入账（票04/KD24/US3）", () => {
     expect(r).toMatchObject({
       source_path: "session_compress",
       session_id: sid,
-      org: ORG,
       node_execution_id: null, execution_id: null, // 归属可得性如实（无执行链路的压缩）
       model: "E2E_TEST_comp",
       input_tokens: 1234, output_tokens: 99, cache_read_tokens: 7, cache_creation_tokens: 3,

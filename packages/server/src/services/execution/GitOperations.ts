@@ -8,12 +8,12 @@ import { gitOps } from "../git-ops"
 export class GitOperations {
   constructor(private workspacePath: string) {}
 
-  async ensureCleanWorkspace(): Promise<Record<string, string>> {
+  async ensureCleanWorkspace(message = "chore: fork前自动提交"): Promise<Record<string, string>> {
     const commits: Record<string, string> = {}
     await gitOps.allProjectsAction(this.workspacePath, async (projectPath, projectName) => {
       const hasChanges = await gitOps.hasUncommittedChanges(projectPath)
       if (hasChanges) {
-        const sha = await gitOps.autoCommit(projectPath, "chore: fork前自动提交")
+        const sha = await gitOps.autoCommit(projectPath, message)
         commits[projectName] = sha
       }
     })
@@ -41,7 +41,26 @@ export class GitOperations {
     return JSON.stringify(commits)
   }
 
-  async recordEndCommits(): Promise<string> {
+  /** Snapshot HEAD per repo as the round's end anchor.
+   *
+   *  `autoCommitDirty` (task rounds) first lands any leftover dirty work in the
+   *  repo(s): the acceptance evidence window (`GET /round-diff`) is a START..END
+   *  *commit* range, so a tree left dirty at terminal time sits outside it —
+   *  「变更」shows nothing and the ledger has no 实物 even though the round did
+   *  the work. The workflow's own ship node normally commits; when it refuses
+   *  or is absent this is the safety net. Non-task executions keep the old
+   *  behaviour (end anchor = whatever git HEAD already is). */
+  async recordEndCommits(autoCommitDirty = false): Promise<string> {
+    if (autoCommitDirty) {
+      try {
+        await this.ensureCleanWorkspace("chore(task): 落盘本轮遗留改动（验收证据快照）")
+      } catch (err: unknown) {
+        console.warn(
+          "[execution] 落盘本轮遗留改动失败（非致命，继续取 end 锚）:",
+          err instanceof Error ? err.message : String(err),
+        )
+      }
+    }
     return this.recordStartCommits()
   }
 

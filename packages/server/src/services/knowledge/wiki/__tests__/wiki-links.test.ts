@@ -82,15 +82,15 @@ describe("①lint 纯函数：链接目标面", () => {
 describe("②DAO 收口：links 列形态", () => {
   it("数组入 ⇒ JSON 串出；缺省 ⇒ 保留在库值（COALESCE，防清单外通道清列）；串入（快照重放形）⇒ 原样透传", () => {
     articles.upsert(upsertRow({ id: "a1", links: ["x", "y"] }))
-    expect(articles.get(GLOBAL_WIKI_ORG, "a1")!.links).toBe('["x","y"]')
+    expect(articles.get("a1")!.links).toBe('["x","y"]')
     // 不带 links 的再次 upsert（body 漂移通道形）⇒ links 不被清零
     articles.upsert(upsertRow({ id: "a1", body: "改后正文" }))
-    expect(articles.get(GLOBAL_WIKI_ORG, "a1")!.links).toBe('["x","y"]')
+    expect(articles.get("a1")!.links).toBe('["x","y"]')
     // 新行缺省 ⇒ NULL（诚实未回灌形，交给启动 backfill/下次编译）
     articles.upsert(upsertRow({ id: "a2" }))
-    expect(articles.get(GLOBAL_WIKI_ORG, "a2")!.links).toBeNull()
+    expect(articles.get("a2")!.links).toBeNull()
     articles.upsert(upsertRow({ id: "a3", links: '["z"]' }))
-    expect(articles.get(GLOBAL_WIKI_ORG, "a3")!.links).toBe('["z"]')
+    expect(articles.get("a3")!.links).toBe('["z"]')
   })
 })
 
@@ -103,7 +103,7 @@ describe("③启动回灌：NULL 历史行补齐", () => {
     db.prepare("UPDATE wiki_articles SET links=NULL WHERE id='old'").run()
 
     expect(backfillWikiArticleLinks(articles, wikiRoot)).toBe(1)
-    expect(JSON.parse(articles.get(GLOBAL_WIKI_ORG, "old")!.links!)).toEqual(["body-link", "disk-link"])
+    expect(JSON.parse(articles.get("old")!.links!)).toEqual(["body-link", "disk-link"])
     // 幂等：links 已非 NULL，第二跑零行
     expect(backfillWikiArticleLinks(articles, wikiRoot)).toBe(0)
   })
@@ -111,7 +111,7 @@ describe("③启动回灌：NULL 历史行补齐", () => {
     articles.upsert(upsertRow({ id: "ghost", path: "concepts/ghost.md", body: "见 [[x]]。", links: "[]" }))
     db.prepare("UPDATE wiki_articles SET links=NULL WHERE id='ghost'").run()
     expect(backfillWikiArticleLinks(articles, wikiRoot)).toBe(1)
-    expect(JSON.parse(articles.get(GLOBAL_WIKI_ORG, "ghost")!.links!)).toEqual(["x"])
+    expect(JSON.parse(articles.get("ghost")!.links!)).toEqual(["x"])
   })
 })
 

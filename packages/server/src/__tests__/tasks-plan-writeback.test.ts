@@ -46,8 +46,7 @@ async function seedTask(status: string): Promise<string> {
   const r = await app.request("/api/tasks", {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({
-      org: ORG,
+    body: JSON.stringify({
       name: `PWB-02 ${seq++}`,
       task_spec: {
         format: "v4", goal: "g", ac: ["a"], autoAdvance: false,
@@ -96,7 +95,7 @@ beforeAll(() => {
   applySchema(db)
   tmp = fs.mkdtempSync(path.join(os.tmpdir(), "pwb-02-"))
   const now = new Date().toISOString()
-  db.prepare(`INSERT INTO workspaces (id, name, org, path, created_at, updated_at) VALUES (?,?,?,?,?,?)`)
+  db.prepare(`INSERT INTO workspaces (id, name, repo_group, path, created_at, updated_at) VALUES (?,?,?,?,?,?)`)
     .run("ws-pwb-02", "pwb-ws", ORG, tmp, now, now)
   const sse = new SSEService()
   taskHome = new TaskHomeService(path.join(tmp, "home"))
@@ -263,11 +262,11 @@ describe("票02 AC5 — 变更记录累积不覆盖（史书不是最新一页�
 })
 
 describe("票02 AC6 — actor 由 server 按 DB 推定，body 自报身份不采信", () => {
-  function bindDoer(taskId: string, sessionId: string): void {
+  function bindThread(taskId: string, sessionId: string): void {
     const now = new Date().toISOString()
-    db.prepare(`INSERT INTO chat_sessions (id, workspace_id, title, is_active, created_at, updated_at)
-      VALUES (?, 'ws-pwb-02', ?, 1, ?, ?)`).run(sessionId, `task-doer · ${taskId}`, now, now)
-    db.prepare(`UPDATE tasks SET doer_session_id = ? WHERE id = ?`).run(sessionId, taskId)
+    db.prepare(`INSERT INTO sessions (id, org, title, clone_name, session_type, is_active, is_deleted, created_at, updated_at)
+      VALUES (?, ?, ?, NULL, 'main', 1, 0, ?, ?)`).run(sessionId, ORG, `task-thread · ${taskId}`, now, now)
+    db.prepare(`UPDATE tasks SET source_chat_session_id = ? WHERE id = ?`).run(sessionId, taskId)
   }
   function seedExec(taskId: string, opts: { workflowRef: string; status: string; execId: string }): void {
     const now = new Date().toISOString()
@@ -277,13 +276,13 @@ describe("票02 AC6 — actor 由 server 按 DB 推定，body 自报身份不采
       .run(opts.execId, ORG, opts.workflowRef, opts.status, taskId, now, now)
   }
 
-  it("doer 会话绑定 → actor = task-doer(session=…)（响应与变更行同源）", async () => {
+  it("主对话绑定 → actor = task-thread(session=…)（响应与变更行同源）", async () => {
     const id = await seedTask("awaiting_review")
-    bindDoer(id, "sess-doer-1")
+    bindThread(id, "sess-doer-1")
     const res = await postPlan(id, { batch: BATCH1, file: "spec.md", content: "c\n", reason: "r", source: "s" })
     expect(res.status).toBe(200)
-    expect(((await res.json()) as { actor: string }).actor).toBe("task-doer(session=sess-doer-1)")
-    expect(readHome(id, `${BATCH1}/spec.md`)).toContain("· task-doer(session=sess-doer-1) ·")
+    expect(((await res.json()) as { actor: string }).actor).toBe("task-thread(session=sess-doer-1)")
+    expect(readHome(id, `${BATCH1}/spec.md`)).toContain("· task-thread(session=sess-doer-1) ·")
   })
 
   it("body 自报身份字段 → 400 响亮拒收（.strict()，不静默忽略也不采信）", async () => {
@@ -294,9 +293,9 @@ describe("票02 AC6 — actor 由 server 按 DB 推定，body 自报身份不采
     expect(res.status).toBe(400)
   })
 
-  it("拍板规则钉：fixing 两态并存（活跃 task-fix 执行 + doer 会话均在场）→ 归 task-fix 不双计", async () => {
+  it("拍板规则钉：fixing 两态并存（活跃 task-fix 执行 + 主对话均在场）→ 归 task-fix 不双计", async () => {
     const id = await seedTask("running") // fixing 的落库态恒 running（派生态）
-    bindDoer(id, "sess-doer-2")
+    bindThread(id, "sess-doer-2")
     seedExec(id, { workflowRef: "built-in/task-fix", status: "running", execId: "exec-fix-1" })
     const res = await postPlan(id, { batch: BATCH1, file: "spec.md", content: "c\n", reason: "反馈指向规格即改", source: "修复轮 r2" })
     expect(res.status).toBe(200)
@@ -306,17 +305,21 @@ describe("票02 AC6 — actor 由 server 按 DB 推定，body 自报身份不采
     expect(line).not.toContain("sess-doer-2")
   })
 
-  it("活跃执行非 task-fix（绑定流在跑）→ 不抢归属，仍归 doer 会话", async () => {
+  it("活跃执行非 task-fix（绑定流在跑）→ 不抢归属，仍归主对话", async () => {
     const id = await seedTask("running")
-    bindDoer(id, "sess-doer-3")
+    bindThread(id, "sess-doer-3")
     seedExec(id, { workflowRef: "task-dev", status: "running", execId: "exec-main-1" })
     const res = await postPlan(id, { batch: BATCH1, file: "spec.md", content: "c\n", reason: "r", source: "s" })
-    expect(((await res.json()) as { actor: string }).actor).toBe("task-doer(session=sess-doer-3)")
+    expect(((await res.json()) as { actor: string }).actor).toBe("task-thread(session=sess-doer-3)")
   })
 
-  it("doer 指针悬空（会话行已不存在）→ unattributed（宁缺不伪）", async () => {
+  it("主线程指针悬空（会话行已不存在）→ unattributed（宁缺不伪）", async () => {
     const id = await seedTask("running")
-    db.prepare(`UPDATE tasks SET doer_session_id = 'sess-gone' WHERE id = ?`).run(id)
+    // Dangling pointer: the FK would stop this in normal writes; a restored DB
+    // can still carry it, so the resolver must stay honest.
+    db.pragma("foreign_keys = OFF")
+    db.prepare(`UPDATE tasks SET source_chat_session_id = 'sess-gone' WHERE id = ?`).run(id)
+    db.pragma("foreign_keys = ON")
     const res = await postPlan(id, { batch: BATCH1, file: "spec.md", content: "c\n", reason: "r", source: "s" })
     expect(((await res.json()) as { actor: string }).actor).toBe("unattributed")
   })
@@ -485,11 +488,11 @@ describe("票03 AC3 — 票侧不 append 变更记录；改既有票走同端点
 describe("票03 AC4 — 与 02 同语义逐条独立成测（状态闸/越界 403/reason 400/后续批次/actor 推定）", () => {
   // 全部断言打在 /plan/issues 自己的 HTTP 码与盘上票文件上 —— 不引用 02 的用例，
   // 就算 /plan 整个删掉这些测试也各自成立（票面：不许靠代码复用顺带绿）。
-  function bindDoer(taskId: string, sessionId: string): void {
+  function bindThread(taskId: string, sessionId: string): void {
     const now = new Date().toISOString()
-    db.prepare(`INSERT INTO chat_sessions (id, workspace_id, title, is_active, created_at, updated_at)
-      VALUES (?, 'ws-pwb-02', ?, 1, ?, ?)`).run(sessionId, `task-doer · ${taskId}`, now, now)
-    db.prepare(`UPDATE tasks SET doer_session_id = ? WHERE id = ?`).run(sessionId, taskId)
+    db.prepare(`INSERT INTO sessions (id, org, title, clone_name, session_type, is_active, is_deleted, created_at, updated_at)
+      VALUES (?, ?, ?, NULL, 'main', 1, 0, ?, ?)`).run(sessionId, ORG, `task-thread · ${taskId}`, now, now)
+    db.prepare(`UPDATE tasks SET source_chat_session_id = ? WHERE id = ?`).run(sessionId, taskId)
   }
   function seedExec(taskId: string, opts: { workflowRef: string; status: string; execId: string }): void {
     const now = new Date().toISOString()
@@ -572,19 +575,19 @@ describe("票03 AC4 — 与 02 同语义逐条独立成测（状态闸/越界 40
     expect(fs.existsSync(path.join(taskHome.homePath(id), BATCH1, "spec.md"))).toBe(false)
   })
 
-  it("doer 会话在场 → 票侧响应 actor = task-doer(session=…)", async () => {
+  it("主对话在场 → 票侧响应 actor = task-thread(session=…)", async () => {
     const id = await seedTask("awaiting_review")
-    bindDoer(id, "t3-sess-doer-1")
+    bindThread(id, "t3-sess-doer-1")
     const res = await postPlanIssues(id, {
       batch: BATCH1, file: "issues/attributed.md", content: OK_TICKET, reason: "r", source: "s",
     })
     expect(res.status).toBe(200)
-    expect(((await res.json()) as { actor: string }).actor).toBe("task-doer(session=t3-sess-doer-1)")
+    expect(((await res.json()) as { actor: string }).actor).toBe("task-thread(session=t3-sess-doer-1)")
   })
 
   it("活跃 task-fix 执行与 doer 会话并存 → 归 task-fix 不双计（与 02 同优先级规则，票侧独立钉）", async () => {
     const id = await seedTask("running")
-    bindDoer(id, "t3-sess-doer-2")
+    bindThread(id, "t3-sess-doer-2")
     seedExec(id, { workflowRef: "built-in/task-fix", status: "running", execId: "t3-exec-fix-1" })
     const res = await postPlanIssues(id, {
       batch: BATCH1, file: "issues/fix-round-ticket.md", content: OK_TICKET, reason: "反馈指向新范围", source: "修复轮 r2",

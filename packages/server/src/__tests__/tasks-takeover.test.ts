@@ -29,12 +29,10 @@ import { Hono } from "hono"
 import { applySchema } from "../db/schema"
 import { SSEService } from "../services/sse"
 import { TasksService } from "../services/tasks/tasks-service"
-import { TaskDoerService } from "../services/tasks/task-doer-service"
 import { TaskHomeService } from "../services/tasks/task-home-service"
 import { RoundEvidenceService } from "../services/tasks/round-evidence-service"
-import { ChatService } from "../services/chat"
 import { WorkspaceService } from "../services/workspace"
-import { ChatDAO, WorkspaceDAO } from "../db/dao"
+import { WorkspaceDAO } from "../db/dao"
 import { createTasksRoutes } from "../routes/tasks"
 import { TASK_EXECUTION_EVENT } from "@octopus/shared"
 
@@ -137,6 +135,11 @@ function seed(opts: {
     { index: 2, name: "Phase 2", slug: "p2", workflowRef: "built-in/flow-p2" },
   ]
   const now = new Date().toISOString()
+  const sessionId = `e2e-tk-session-${taskSeq}`
+  db.prepare(`
+    INSERT INTO sessions (id, org, title, clone_name, session_type, is_active, is_deleted, created_at, updated_at)
+    VALUES (?, ?, 'thread', NULL, 'main', 1, 0, ?, ?)
+  `).run(sessionId, ORG, now, now)
 
   const home = taskHome.homePath(taskId)
   for (const p of phases) {
@@ -149,7 +152,7 @@ function seed(opts: {
   const wsPath = path.join(fakeHome, ".octopus", "orgs", ORG, "workspaces", `${taskId}-ws`)
   fs.mkdirSync(path.join(wsPath, "projects"), { recursive: true })
   db.prepare(
-    "INSERT INTO workspaces (id, name, org, path, source, status, task_id, created_at, updated_at) VALUES (?, ?, ?, ?, 'task', 'active', ?, datetime('now'), datetime('now'))",
+    "INSERT INTO workspaces (id, name, repo_group, path, source, status, task_id, created_at, updated_at) VALUES (?, ?, ?, ?, 'task', 'active', ?, datetime('now'), datetime('now'))",
   ).run(workspaceId, `task:${taskId}`, ORG, wsPath, taskId)
 
   const spec = {
@@ -164,11 +167,11 @@ function seed(opts: {
     })),
   }
   db.prepare(`
-    INSERT INTO tasks (id, org, name, status, source_chat_session_id, task_spec,
+    INSERT INTO tasks (id, repo_group, name, status, source_chat_session_id, task_spec,
       authoring_resources, resources, skills, project_ids, workflow_ref, version,
       deleted_at, created_at, updated_at, completed_at, workspace_id)
-    VALUES (?, ?, ?, ?, NULL, ?, '[]', '[]', '[]', '[]', NULL, 1, NULL, ?, ?, NULL, ?)
-  `).run(taskId, ORG, `E2E_TK ${taskId}`, opts.taskStatus ?? "running", JSON.stringify(spec), now, now, workspaceId)
+    VALUES (?, ?, ?, ?, ?, ?, '[]', '[]', '[]', '[]', NULL, 1, NULL, ?, ?, NULL, ?)
+  `).run(taskId, ORG, `E2E_TK ${taskId}`, opts.taskStatus ?? "running", sessionId, JSON.stringify(spec), now, now, workspaceId)
 
   const execIds: Record<string, string> = {}
   for (const r of opts.rounds ?? [{ phase: 1, round: 1, status: "running" }]) {
@@ -207,7 +210,6 @@ function ledgerRows(taskId: string): Array<Record<string, unknown>> {
 let db: Database.Database
 let sse: SSEService
 let service: TasksService
-let doer: TaskDoerService
 let app: Hono
 let taskHome: TaskHomeService
 let sseEvents: Array<{ event: string; data: Record<string, unknown> }>
@@ -241,13 +243,8 @@ beforeEach(() => {
   service = new TasksService(
     db, sse, undefined, taskHome, undefined, builtInStub, null, wsSvc,
   )
-  doer = new TaskDoerService({
-    db, sse, tasksService: service,
-    chatService: new ChatService(new ChatDAO(db), sse),
-    workspaceService: wsSvc, taskHomeService: taskHome,
-  })
   const evidence = new RoundEvidenceService(db, sse, service, wsSvc, taskHome)
-  app = new Hono().route("/api/tasks", createTasksRoutes(service, sse, undefined, evidence, doer))
+  app = new Hono().route("/api/tasks", createTasksRoutes(service, sse, undefined, evidence))
 })
 
 afterEach(() => {
@@ -262,7 +259,7 @@ afterEach(() => {
 // ── AC1 ② takeover：abort + 标记 + 会话，原子且不留 paused 半程 ──────────
 
 describe("POST /:id/takeover — 停流·人工接管（ADR-0025）", () => {
-  it("成功：绑定执行 cancelled（⏹ 现场保留）、takeover_at 落行、任务态仍 running、派生 takeover、doer 会话就绪", async () => {
+  it("成功：绑定执行 cancelled（⏹ 现场保留）、takeover_at 落行、任务态仍 running、派生 takeover、主对话就绪", async () => {
     const { taskId, execIds } = seed({ rounds: [{ phase: 1, round: 1, status: "running" }] })
     const execId = execIds["1:1"]
 
@@ -283,12 +280,11 @@ describe("POST /:id/takeover — 停流·人工接管（ADR-0025）", () => {
     // 交付前 Gate 不开：待验收轮不存在。
     expect(derived(taskId).phaseViews[0].awaitingRound).toBeNull()
 
-    // doer 会话就绪（01 的 ensureSession；「做」面指针落 tasks 行）。
-    expect(body.session.session_id).toBeTruthy()
+    // 2026-10-28: takeover works in the task's MAIN thread (the doer chat is gone).
+    expect(body.session.session_id).toBe(taskRow(taskId).source_chat_session_id)
     expect(body.takeover.execution_id).toBe(execId)
     expect(body.takeover.phase_index).toBe(1)
     expect(body.takeover.round_index).toBe(1)
-    expect(taskRow(taskId).doer_session_id).toBe(body.session.session_id)
 
     // 执行级 SSE 一帧（看板/壳折叠用）；无 task_status 帧（持久态未变）。
     const execs = sseEvents.filter((e) => e.event === TASK_EXECUTION_EVENT)

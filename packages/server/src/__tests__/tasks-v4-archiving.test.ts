@@ -298,9 +298,9 @@ function seedArchiveFixture(opts: {
     wts[p.name] = wt
     repos.push({ name: p.name, main_path: p.fx.main, worktree_path: wt, branch: BRANCH })
   }
-  fs.writeFileSync(path.join(wsPath, "config.json"), JSON.stringify({ name: `ws-${taskId}`, org: ORG, repos }, null, 2))
+  fs.writeFileSync(path.join(wsPath, "config.json"), JSON.stringify({ name: `ws-${taskId}`, repo_group: ORG, repos }, null, 2))
   db.prepare(
-    "INSERT INTO workspaces (id, name, org, path, source, status, created_at, updated_at) VALUES (?, ?, ?, ?, 'scheduler', 'active', datetime('now'), datetime('now'))",
+    "INSERT INTO workspaces (id, name, repo_group, path, source, status, created_at, updated_at) VALUES (?, ?, ?, ?, 'scheduler', 'active', datetime('now'), datetime('now'))",
   ).run(wsId, `task:${taskId}`, ORG, wsPath)
 
   const home = taskHome.homePath(taskId)
@@ -329,7 +329,7 @@ function seedArchiveFixture(opts: {
   fs.writeFileSync(path.join(specDir, "spec.md"), "# p1\n")
   const now = new Date().toISOString()
   db.prepare(`
-    INSERT INTO tasks (id, org, name, status, source_chat_session_id, task_spec,
+    INSERT INTO tasks (id, repo_group, name, status, source_chat_session_id, task_spec,
       authoring_resources, resources, skills, project_ids, workflow_ref, version,
       deleted_at, created_at, updated_at, completed_at, workspace_id)
     VALUES (?, ?, ?, ?, NULL, ?, '[]', '[]', '[]', ?, NULL, 1, NULL, ?, ?, NULL, ?)
@@ -451,6 +451,11 @@ describe("AC1 — ADR 顺延 (git fixture: 目标已有 0003)", () => {
     expect(archiveCommitSubjects(wt)[0]).toMatch(/^chore\(archive\): E2E_AR .+ syncback \d{8}$/)
     expect(archiveCommitSubjects(repoA.bare, BRANCH).length).toBeGreaterThan(0)
     expect(fs.existsSync(path.join(taskHome.homePath(taskId), "archive", "report.md"))).toBe(true)
+    // 2026-10-31 AI-native 归档：结构化 report.json（主 Chat 总框 / 只读归档台读它）
+    const reportJson = JSON.parse(fs.readFileSync(path.join(taskHome.homePath(taskId), "archive", "report.json"), "utf-8"))
+    expect(reportJson.ok).toBe(true)
+    expect(reportJson.projects[0].project).toBe("repo-a")
+    expect(reportJson.projects[0].pushed).toBe(true)
   })
 })
 
@@ -481,8 +486,8 @@ describe("AC2 — 术语 append-only + 冲突只报不写", () => {
   })
 })
 
-describe("AC3 — 双 project：各自归档 commit/push → done（末 phase accepted 全链路）", () => {
-  it("acceptance(末 phase) 自动编排：两仓库各 1 归档 commit、push 成功、task done；未归属 ADR 进报告不阻塞", async () => {
+describe("AC3 — 双 project：各自归档 commit/push → done（末 phase accepted + 显式归档）", () => {
+  it("acceptance(末 phase) 停在待归档；显式 startArchive 后两仓库各 1 归档 commit、push 成功、task done；未归属 ADR 进报告不阻塞", async () => {
     const repoB = makeProjectRepo("repo-b", { adrs: ["0001-x.md"] })
     const { taskId, wts } = seedArchiveFixture({
       mode: "awaiting",
@@ -505,7 +510,11 @@ describe("AC3 — 双 project：各自归档 commit/push → done（末 phase ac
       body: JSON.stringify({ phase_index: 1, round_index: 1, decision: "accepted" }),
     })
     expect(res.status, await res.clone().text()).toBe(200)
-    expect(((await res.json()) as { next_action: string }).next_action).toBe("archiving")
+    // archive-consent: 验收只停车，不自动归档。
+    expect(((await res.json()) as { next_action: string }).next_action).toBe("awaiting_archive")
+    expect(taskRowOf(taskId).status).toBe("ready")
+    service.startArchive(taskId)
+    expect(taskRowOf(taskId).status).toBe("archiving")
 
     const report = await runToReport(taskId)
     expect(report.ok).toBe(true)
@@ -556,6 +565,10 @@ describe("AC4 — push 失败停 archiving；retry project 粒度幂等续跑", 
     const state = JSON.parse(fs.readFileSync(path.join(home, "archive", "state.json"), "utf-8"))
     expect(state.projects["repo-a"].status).toBe("done")
     expect(state.projects["repo-b"]).toBeUndefined()
+    // 失败也要落结构化报告：总框/归档台从 report.json 读失败 project 与原因
+    const failedReport = JSON.parse(fs.readFileSync(path.join(home, "archive", "report.json"), "utf-8"))
+    expect(failedReport.ok).toBe(false)
+    expect(failedReport.projects.find((p: { project: string }) => p.project === "repo-b").error).toMatch(/push origin .+ failed/)
 
     const retry = await postRetry(taskId)
     expect(retry.status).toBe(202)
@@ -577,6 +590,64 @@ describe("AC4 — push 失败停 archiving；retry project 粒度幂等续跑", 
     expect(res.status).toBe(409)
     const missing = await postRetry("e2e-ar-nope")
     expect(missing.status).toBe(404)
+  })
+})
+
+// ── 2026-10-31 收尾：放行后现场 preflight ─────────────────────────────
+
+describe("放行后现场 preflight（2026-10-31）", () => {
+  function seedDirty() {
+    const fixture = seedArchiveFixture({ homeAdrs: [] })
+    const wt = fixture.wts["repo-a"]!
+    fs.writeFileSync(path.join(wt, "late-fix.txt"), "post-acceptance fix\n")
+    return { ...fixture, wt }
+  }
+
+  it("dirty worktree blocks the archive, records preflight, and leaves the task in archiving", async () => {
+    const { taskId, wt } = seedDirty()
+    service.retryArchive(taskId)
+    const report = await runToReport(taskId)
+    expect(report.ok).toBe(false)
+    expect(report.preflight?.blocked).toBe(true)
+    expect(report.preflight?.dirty_projects).toEqual(["repo-a"])
+    expect(report.delta?.[0]?.dirty_files.some((f) => f.includes("late-fix.txt"))).toBe(true)
+    expect(report.delta_decision).toBeNull()
+    expect(taskRowOf(taskId).status).toBe("archiving")
+    expect(commitCount(wt, /syncback/)).toBe(0)
+  })
+
+  it("include commits the post-acceptance delta, then archives → done", async () => {
+    const { taskId, wt } = seedDirty()
+    service.resolveArchiveDelta(taskId, "include")
+    const report = await runToReport(taskId)
+    expect(report.ok).toBe(true)
+    expect(report.delta_decision).toBe("include")
+    expect(report.delta?.[0]?.dirty_files ?? []).toEqual([])
+    expect(taskRowOf(taskId).status).toBe("done")
+    const subjects = archiveCommitSubjects(wt)
+    expect(subjects.some((s) => s.startsWith("chore(archive): include post-acceptance delta"))).toBe(true)
+    expect(git(["status", "--porcelain"], wt).trim()).toBe("")
+  })
+
+  it("exclude records the file list and archives without the dirty change → done", async () => {
+    const { taskId, wt } = seedDirty()
+    service.resolveArchiveDelta(taskId, "exclude")
+    const report = await runToReport(taskId)
+    expect(report.ok).toBe(true)
+    expect(report.delta_decision).toBe("exclude")
+    expect(report.delta?.[0]?.dirty_files.some((f) => f.includes("late-fix.txt"))).toBe(true)
+    expect(taskRowOf(taskId).status).toBe("done")
+    expect(archiveCommitSubjects(wt).some((s) => s.startsWith("chore(archive): include post-acceptance delta"))).toBe(false)
+    expect(git(["status", "--porcelain"], wt)).toContain("late-fix.txt")
+  })
+
+  it("clean worktree archives immediately and reports the post-round delta", async () => {
+    const { taskId } = seedArchiveFixture({ homeAdrs: [] })
+    service.retryArchive(taskId)
+    const report = await runToReport(taskId)
+    expect(report.ok).toBe(true)
+    expect(report.preflight).toBeNull()
+    expect(report.delta?.[0]).toMatchObject({ project: "repo-a", dirty_files: [] })
   })
 })
 
@@ -603,7 +674,7 @@ function seedTwoPhase(opts: {
   const wsPath = path.join(fakeHome, ".octopus", "orgs", ORG, "workspaces", wsId)
   fs.mkdirSync(wsPath, { recursive: true })
   d.prepare(
-    "INSERT INTO workspaces (id, name, org, path, source, status, created_at, updated_at) VALUES (?, ?, ?, ?, 'scheduler', 'active', datetime('now'), datetime('now'))",
+    "INSERT INTO workspaces (id, name, repo_group, path, source, status, created_at, updated_at) VALUES (?, ?, ?, ?, 'scheduler', 'active', datetime('now'), datetime('now'))",
   ).run(wsId, `task:${taskId}`, ORG, wsPath)
   const now = new Date().toISOString()
   const defs = [
@@ -620,7 +691,7 @@ function seedTwoPhase(opts: {
     })),
   }
   d.prepare(`
-    INSERT INTO tasks (id, org, name, status, source_chat_session_id, task_spec,
+    INSERT INTO tasks (id, repo_group, name, status, source_chat_session_id, task_spec,
       authoring_resources, resources, skills, project_ids, workflow_ref, version,
       deleted_at, created_at, updated_at, completed_at, workspace_id)
     VALUES (?, ?, ?, ?, NULL, ?, '[]', '[]', '[]', '[]', NULL, 1, NULL, ?, ?, NULL, ?)

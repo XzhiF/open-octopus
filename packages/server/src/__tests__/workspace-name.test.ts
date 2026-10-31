@@ -9,6 +9,9 @@
 // 这一层（用不存在的 org 触发下一道 400）；成功链路归 dev 手测。
 import { describe, it, expect, beforeAll, afterAll } from "vitest"
 import Database from "better-sqlite3"
+import fs from "node:fs"
+import os from "node:os"
+import path from "node:path"
 import { Hono } from "hono"
 import { applySchema } from "../db/schema"
 import { OrgDAO, WorkspaceDAO } from "../db/dao"
@@ -17,6 +20,8 @@ import { createWorkspaceRoutes } from "../routes/workspace"
 import { WorkspaceNameSchema, WORKSPACE_NAME_PATTERN } from "@octopus/shared"
 
 const ORG = "e2e-td-wsname"
+const { tmpdir } = os
+const { join } = path
 
 let db: Database.Database
 let app: Hono
@@ -53,7 +58,7 @@ describe("POST /api/workspaces — 手动创建", () => {
     const res = await app.request("/api/workspaces", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ name: "我的工作区", org: ORG }),
+      body: JSON.stringify({ name: "我的工作区", repo_group: ORG }),
     })
     expect(res.status).toBe(400)
     const body = (await res.json()) as { error: string }
@@ -64,20 +69,20 @@ describe("POST /api/workspaces — 手动创建", () => {
     const res = await app.request("/api/workspaces", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ name: "task: my ws", org: ORG }),
+      body: JSON.stringify({ name: "task: my ws", repo_group: ORG }),
     })
     expect(res.status).toBe(400)
   })
 
-  it("合法名通过校验（下一道 org 检查才拦下 —— 证明 name gate 已放行，且不留磁盘痕迹）", async () => {
+  it("合法名通过 name gate（org 检查已移除）", async () => {
+    const dir = join(tmpdir(), `wsname-${Date.now()}`)
     const res = await app.request("/api/workspaces", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ name: "ok_ws-1", org: "e2e-td-wsname-nope" }),
+      body: JSON.stringify({ name: "ok_ws-1", repo_group: "e2e-td-wsname-nope", path: dir }),
     })
-    expect(res.status).toBe(400)
-    const body = (await res.json()) as { error: string }
-    expect(body.error).toContain("Org")
+    expect(res.status).toBe(201)
+    fs.rmSync(dir, { recursive: true, force: true })
   })
 })
 
@@ -86,7 +91,7 @@ describe("POST /api/workspaces/import + PUT /:id — import 与改名同规矩",
     const res = await app.request("/api/workspaces/import", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ name: "存量中文", org: ORG }),
+      body: JSON.stringify({ name: "存量中文", repo_group: ORG }),
     })
     expect(res.status).toBe(400)
   })
@@ -113,7 +118,7 @@ describe("POST /api/workspaces/import + PUT /:id — import 与改名同规矩",
 describe("WorkspaceService.create — 内部保险（防绕过 route 的新调用方）", () => {
   it("中文名直接进 service → throw，且在触盘之前", () => {
     expect(() =>
-      service.create({ name: "中文名", org: ORG, path: "/tmp/does-not-matter-e2e-td" }),
+      service.create({ name: "中文名", repo_group: ORG, path: "/tmp/does-not-matter-e2e-td" }),
     ).toThrow(/名称非法/)
   })
 })

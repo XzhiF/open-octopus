@@ -53,7 +53,7 @@ describe("夜巡 parseLedger 腿（既有作业扩步骤，不新建作业）", 
       `---\nid: wf-a\ntype: topic\ntitle: A\nsummary: s\ntopics: [a]\n---\n## 硬约束\n- 先 test 再 build <!--#oct-001-->\n`,
       "utf-8",
     )
-    db.prepare("INSERT INTO workspaces (id,name,org,path,created_at,updated_at) VALUES ('w1','w1','x',?, '2026-10-01','2026-10-01')")
+    db.prepare("INSERT INTO workspaces (id,name,repo_group,path,created_at,updated_at) VALUES ('w1','w1','x',?, '2026-10-01','2026-10-01')")
       .run(path.join(tmpRoot, "ws1"))
     db.prepare("INSERT INTO executions (id,workspace_id,workflow_ref,workflow_name,status,var_pool,org,created_at,updated_at,completed_at) VALUES ('e1','w1','w','w','completed',?,'x','2026-10-13T00:00:00Z','2026-10-13T00:01:00Z','2026-10-13T00:01:00Z')")
       .run(JSON.stringify({ wiki_refs: ["wf-a#oct-001"] }))
@@ -111,7 +111,7 @@ describe("夜巡 syncConfidence 腿（票07 既有挂载点扩步骤，parseLedg
       `---\nid: wf-s\ntype: topic\ntitle: S\nsummary: s\ntopics: [s]\nlast_compiled: 2026-10-12\nsources: []\n---\n## 硬约束\n- 先红后绿 <!--#oct-010-->\n`,
       "utf-8",
     )
-    db.prepare("INSERT INTO workspaces (id,name,org,path,created_at,updated_at) VALUES ('w2','w2','x',?, '2026-10-01','2026-10-01')")
+    db.prepare("INSERT INTO workspaces (id,name,repo_group,path,created_at,updated_at) VALUES ('w2','w2','x',?, '2026-10-01','2026-10-01')")
       .run(path.join(tmpRoot, "ws2"))
     db.prepare("INSERT INTO executions (id,workspace_id,workflow_ref,workflow_name,status,var_pool,org,created_at,updated_at,completed_at) VALUES ('e2','w2','w','w','completed',?,'x','2026-10-13T00:00:00Z','2026-10-13T00:01:00Z','2026-10-13T00:01:00Z')")
       .run(JSON.stringify({ wiki_refs: ["wf-s#oct-010"] }))

@@ -32,8 +32,7 @@ export function createSkillRoutes(_deps: SkillRouteDeps = {}): Hono {
   // ── Skills list ─────────────────────────────────────────────────
   app.get('/skills', (c) => {
     try {
-      const org = c.req.header('X-Octopus-Org') || (c.get('org') as string)
-      if (!org) return c.json(createAgentError('ORG_NOT_FOUND', 'Organization not resolved'), 403)
+      const org = c.req.header('X-Octopus-Org') || (c.get('org') as string) || ''
 
       const skillsDir = getAgentSkillsDir()
       const items: Array<{ name: string; source: string; has_backup: boolean; token_count: number; file_size: number; last_modified: string | null }> = []
@@ -92,8 +91,7 @@ export function createSkillRoutes(_deps: SkillRouteDeps = {}): Hono {
   // ── Skills — get by name ─────────────────────────────────────────
   app.get('/skills/:name', (c) => {
     try {
-      const org = c.req.header('X-Octopus-Org') || (c.get('org') as string)
-      if (!org) return c.json(createAgentError('ORG_NOT_FOUND', 'Organization not resolved'), 403)
+      const org = c.req.header('X-Octopus-Org') || (c.get('org') as string) || ''
       const name = c.req.param('name')
       if (!validateNameParam(name)) return c.json(createAgentError('INVALID_PARAM', 'Invalid name parameter'), 400)
 
@@ -127,8 +125,7 @@ export function createSkillRoutes(_deps: SkillRouteDeps = {}): Hono {
   // ── Skills — diff against builtin ────────────────────────────────
   app.get('/skills/:name/diff-builtin', (c) => {
     try {
-      const org = c.req.header('X-Octopus-Org') || (c.get('org') as string)
-      if (!org) return c.json(createAgentError('ORG_NOT_FOUND', 'Organization not resolved'), 403)
+      const org = c.req.header('X-Octopus-Org') || (c.get('org') as string) || ''
       const name = c.req.param('name')
       if (!validateNameParam(name)) return c.json(createAgentError('INVALID_PARAM', 'Invalid name parameter'), 400)
       const builtinPath = path.join(process.cwd(), 'packages', 'core-pack', 'skills', name, 'SKILL.md')
@@ -188,8 +185,7 @@ export function createSkillRoutes(_deps: SkillRouteDeps = {}): Hono {
   // ── Skills — save/update content ──────────────────────────────────
   app.put('/skills/:name', async (c) => {
     try {
-      const org = c.req.header('X-Octopus-Org') || (c.get('org') as string)
-      if (!org) return c.json(createAgentError('ORG_NOT_FOUND', 'Organization not resolved'), 403)
+      const org = c.req.header('X-Octopus-Org') || (c.get('org') as string) || ''
       const name = c.req.param('name')
       if (!validateNameParam(name)) return c.json(createAgentError('INVALID_PARAM', 'Invalid name parameter'), 400)
 
@@ -224,8 +220,7 @@ export function createSkillRoutes(_deps: SkillRouteDeps = {}): Hono {
   // ── Skills — delete local version (revert to builtin) ────────────
   app.delete('/skills/:name/local', (c) => {
     try {
-      const org = c.req.header('X-Octopus-Org') || (c.get('org') as string)
-      if (!org) return c.json(createAgentError('ORG_NOT_FOUND', 'Organization not resolved'), 403)
+      const org = c.req.header('X-Octopus-Org') || (c.get('org') as string) || ''
       const name = c.req.param('name')
       if (!validateNameParam(name)) return c.json(createAgentError('INVALID_PARAM', 'Invalid name parameter'), 400)
       const bakPath = path.join(getAgentSkillsDir(), name, 'SKILL.md.bak')

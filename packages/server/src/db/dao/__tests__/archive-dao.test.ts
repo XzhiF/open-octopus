@@ -8,7 +8,7 @@ function makeExecRow(overrides: Partial<ExecutionArchiveRow> = {}): ExecutionArc
   return {
     execution_id: "exec-1",
     workspace_id: "ws-1",
-    org: "xzf",
+    repo_group: "xzf",
     workflow_name: "test-flow",
     total_cost: 0.05,
     total_duration_ms: 5000,
@@ -28,7 +28,7 @@ function makeExecRow(overrides: Partial<ExecutionArchiveRow> = {}): ExecutionArc
 function makeWsRow(overrides: Partial<WorkspaceArchiveRow> = {}): WorkspaceArchiveRow {
   return {
     workspace_id: "ws-1",
-    org: "xzf",
+    repo_group: "xzf",
     name: "test-workspace",
     description: null,
     source: null,
@@ -117,7 +117,7 @@ describe("ArchiveDAO", () => {
     dao.insertExecutionArchive(makeExecRow({ execution_id: "e2", total_cost: 0.3, total_duration_ms: 3000, success_rate: 0.5 }))
     dao.insertWorkspaceArchive(makeWsRow({ workspace_id: "ws-a", total_cost: 2.0 }))
 
-    const stats = dao.getStats("xzf")
+    const stats = dao.getStats()
     expect(stats.total_executions).toBe(2)
     expect(stats.total_cost).toBeCloseTo(0.4)
     expect(stats.avg_duration_ms).toBe(2000)
@@ -131,7 +131,7 @@ describe("ArchiveDAO", () => {
     dao.insertExecutionArchive(makeExecRow({ execution_id: "e1", workspace_id: "ws-a", total_cost: 0.1 }))
     dao.insertExecutionArchive(makeExecRow({ execution_id: "e2", workspace_id: "ws-b", total_cost: 0.9 }))
 
-    const stats = dao.getStats(undefined, "ws-a")
+    const stats = dao.getStats("ws-a")
     expect(stats.total_executions).toBe(1)
     expect(stats.total_cost).toBeCloseTo(0.1)
   })
@@ -145,7 +145,7 @@ describe("ArchiveDAO", () => {
     dao.insertExecutionArchive(makeExecRow({ execution_id: "e1", archived_at: now, total_cost: 0.5 }))
     dao.insertExecutionArchive(makeExecRow({ execution_id: "e2", archived_at: old, total_cost: 99 }))
 
-    const trends = dao.getCostTrends("xzf", "90d")
+    const trends = dao.getCostTrends("90d")
     expect(trends.length).toBeGreaterThanOrEqual(1)
     // Only the recent row should appear
     const totalCost = trends.reduce((sum, t) => sum + (t.cost ?? 0), 0) // C3: 趋势点可 null（当日未定价）
@@ -159,7 +159,7 @@ describe("ArchiveDAO", () => {
     dao.insertExecutionArchive(makeExecRow({ execution_id: "e2", workflow_name: "expensive", total_cost: 1.0 }))
     dao.insertExecutionArchive(makeExecRow({ execution_id: "e3", workflow_name: "mid", total_cost: 0.5 }))
 
-    const board = dao.getLeaderboard("xzf", "cost", 10)
+    const board = dao.getLeaderboard("cost", 10)
     expect(board.length).toBe(3)
     expect(board[0].workflow_name).toBe("expensive")
     expect(board[0].metric_value).toBeCloseTo(1.0)
@@ -171,7 +171,7 @@ describe("ArchiveDAO", () => {
     dao.insertExecutionArchive(makeExecRow({ execution_id: "e2", workflow_name: "frequent" }))
     dao.insertExecutionArchive(makeExecRow({ execution_id: "e3", workflow_name: "frequent" }))
 
-    const board = dao.getLeaderboard("xzf", "frequency", 10)
+    const board = dao.getLeaderboard("frequency", 10)
     expect(board[0].workflow_name).toBe("frequent")
     expect(board[0].metric_value).toBe(2)
   })
@@ -196,7 +196,7 @@ describe("ArchiveDAO", () => {
     dao.insertExecutionArchive(makeExecRow({ execution_id: "e2", workflow_name: "a", total_cost: 2.0 }))
     dao.insertExecutionArchive(makeExecRow({ execution_id: "e3", workflow_name: "b", total_cost: 0.5 }))
 
-    const stats = dao.getWorkflowStats("xzf")
+    const stats = dao.getWorkflowStats()
     expect(stats.length).toBe(2)
     expect(stats[0].workflow_name).toBe("a") // higher count first
     expect(stats[0].execution_count).toBe(2)
@@ -209,7 +209,7 @@ describe("ArchiveDAO", () => {
     dao.insertWorkspaceArchive(makeWsRow({ workspace_id: "ws-1", execution_count: 5, total_cost: 1.0 }))
     dao.insertWorkspaceArchive(makeWsRow({ workspace_id: "ws-2", execution_count: 3, total_cost: 0.5 }))
 
-    const stats = dao.getWorkspaceArchiveStats("xzf")
+    const stats = dao.getWorkspaceArchiveStats()
     expect(stats.total_workspaces).toBe(2)
     expect(stats.total_execution_count).toBe(8)
     expect(stats.total_cost).toBeCloseTo(1.5)

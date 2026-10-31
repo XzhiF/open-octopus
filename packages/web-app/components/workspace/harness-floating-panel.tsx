@@ -22,8 +22,8 @@ interface HarnessFloatingPanelProps {
 }
 
 // Default positions (absolute left/top)
-const COLLAPSED_DEFAULT = { left: -1, top: 56 } // -1 = computed on mount
-const EXPANDED_DEFAULT = { left: -1, top: 56 }
+const COLLAPSED_DEFAULT = { left: -1, top: 40 } // -1 = computed on mount
+const EXPANDED_DEFAULT = { left: -1, top: 40 }
 const DRAG_THRESHOLD = 4 // px — below this, treat as click
 
 // ============ Collapsed Panel ============
@@ -624,9 +624,9 @@ export function HarnessFloatingPanel({
       const chatColLeft = window.innerWidth * 0.70
       const chatColWidth = window.innerWidth * 0.30
       const panelWidth = Math.max(chatColWidth - 8, 320)
-      const panelHeight = Math.max(window.innerHeight - 52, 400)
+      const panelHeight = Math.max(window.innerHeight - 50, 400)
       setSize({ width: panelWidth, height: panelHeight })
-      setPos({ left: chatColLeft + 4, top: 48 })
+      setPos({ left: chatColLeft + 4, top: 40 })
     }
   }, [pos])
 

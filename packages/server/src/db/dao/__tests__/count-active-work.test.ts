@@ -28,7 +28,7 @@ beforeEach(() => {
   applySchema(db)
   dao = new ScheduleRunDAO(db)
   db.prepare(
-    `INSERT INTO workspaces (id, name, org, path, created_at, updated_at)
+    `INSERT INTO workspaces (id, name, repo_group, path, created_at, updated_at)
      VALUES ('ws-1','W1','xzf','/tmp/ws1','now','now')`,
   ).run()
 })

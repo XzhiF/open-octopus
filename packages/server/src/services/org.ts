@@ -3,71 +3,8 @@ import fs from "fs"
 import path from "path"
 import os from "os"
 import { load as parseYaml } from "js-yaml"
-import { copyDirSync } from "@octopus/shared"
 import { OrgDAO } from "../db/dao"
 import type { OrgRow } from "../db/types"
-
-/** Reserved global directories that are NOT org dirs */
-const GLOBAL_DIRS = new Set([
-  'agent', 'orgs', 'db', 'logs', 'debug', 'ports', 'prod',
-  'workflows', 'hermes-notify', 'bug-patterns', 'bug-report',
-  'regression-baseline', 'worktrees',
-])
-
-/**
- * Migrate org directories from ~/.octopus/{org}/ to ~/.octopus/orgs/{org}/
- * Idempotent — skips if already migrated.
- */
-export function migrateOrgDirs(): number {
-  const base = path.join(os.homedir(), '.octopus')
-  const orgsBase = path.join(base, 'orgs')
-
-  // Create orgs dir if missing
-  if (!fs.existsSync(orgsBase)) {
-    fs.mkdirSync(orgsBase, { recursive: true })
-  }
-
-  let migrated = 0
-  const entries = fs.readdirSync(base, { withFileTypes: true })
-
-  for (const entry of entries) {
-    if (!entry.isDirectory()) continue
-    if (entry.name.startsWith('.')) continue
-    if (GLOBAL_DIRS.has(entry.name)) continue
-
-    const oldDir = path.join(base, entry.name)
-    const configPath = path.join(oldDir, 'config.yaml')
-
-    // Only migrate directories with a config.yaml (i.e., actual org dirs)
-    if (!fs.existsSync(configPath)) continue
-
-    const newDir = path.join(orgsBase, entry.name)
-
-    // Already migrated
-    if (fs.existsSync(newDir)) continue
-
-    try {
-      fs.renameSync(oldDir, newDir)
-      migrated++
-      console.log(`[orgs] Migrated ${entry.name} → orgs/${entry.name}`)
-    } catch {
-      // renameSync may fail across drives — fallback to copy + remove
-      // copyDirSync (not fs.cpSync): cpSync aborts the process on non-ASCII
-      // dest under Node v24/Windows, and an org dir name may be non-ASCII.
-      // Bonus: a throw here leaves the source intact (no rmSync of user data).
-      try {
-        copyDirSync(oldDir, newDir)
-        fs.rmSync(oldDir, { recursive: true, force: true })
-        migrated++
-        console.log(`[orgs] Migrated (copy) ${entry.name} → orgs/${entry.name}`)
-      } catch (err: any) {
-        console.warn(`[orgs] Failed to migrate ${entry.name}: ${err.message}`)
-      }
-    }
-  }
-
-  return migrated
-}
 
 export function syncOrgsFromFilesystem(dao: OrgDAO, baseDir?: string): number {
   return syncOrgsFromFilesystemWithDao(dao, baseDir)

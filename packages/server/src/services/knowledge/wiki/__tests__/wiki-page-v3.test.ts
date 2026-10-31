@@ -175,7 +175,7 @@ describe("v3 页格式基座 — 票04 S1（expected 逐字 prototype Tab②）"
     expect(back.body).toContain("## 概述")
 
     // DAO/FTS 类型值面：domain 列存 v3 type 值（列名不动）
-    const row = db.prepare("SELECT * FROM wiki_articles WHERE org='testorg' AND id='ent-open-octopus'").get() as Record<string, unknown>
+    const row = db.prepare("SELECT * FROM wiki_articles WHERE id='ent-open-octopus'").get() as Record<string, unknown>
     expect(row.domain).toBe("entity")
     expect(row.title).toBe("Open Octopus（平台 monorepo）")
     expect(row.path).toBe("entities/open-octopus.md")

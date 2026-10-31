@@ -1,8 +1,8 @@
 "use client"
 
 import { useEffect, useState, useCallback } from "react"
-import { useParams } from "next/navigation"
-import Link from "next/link"
+import { useParams, useRouter } from "@/lib/app-navigation"
+import Link from "@/lib/app-navigation"
 import {
   ArrowLeft,
   Pencil,
@@ -35,6 +35,7 @@ import { NotFoundPage } from "@/components/scheduler/not-found-page"
 
 export default function JobDetailPage() {
   const params = useParams()
+  const router = useRouter()
   const jobId = params.id as string
 
   const { job, setJob, loading, error, fetchJob } = useSchedulerJob()
@@ -105,13 +106,13 @@ export default function JobDetailPage() {
     try {
       await deleteJob(job.id)
       toast.success("调度任务已删除")
-      window.location.href = "/scheduler"
+      router.replace("/scheduler")
     } catch (err: unknown) {
       toast.error("删除失败", {
         description: err instanceof Error ? err.message : "未知错误",
       })
     }
-  }, [job])
+  }, [job, router])
 
   const handleEditSuccess = useCallback(() => {
     fetchJob(jobId)

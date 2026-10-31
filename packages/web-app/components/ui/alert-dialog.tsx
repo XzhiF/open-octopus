@@ -5,6 +5,8 @@ import * as AlertDialogPrimitive from '@radix-ui/react-alert-dialog'
 
 import { cn } from '@/lib/utils'
 import { buttonVariants } from '@/components/ui/button'
+import { CloseLightGlyph, closeLightButtonClass } from '@/components/ui/close-light'
+import { DialogResizeHandles } from '@/components/ui/dialog-resize'
 
 function AlertDialog({
   ...props
@@ -47,20 +49,37 @@ function AlertDialogOverlay({
 
 function AlertDialogContent({
   className,
+  children,
+  showCloseButton = true,
   ...props
-}: React.ComponentProps<typeof AlertDialogPrimitive.Content>) {
+}: React.ComponentProps<typeof AlertDialogPrimitive.Content> & {
+  showCloseButton?: boolean
+}) {
   return (
     <AlertDialogPortal>
       <AlertDialogOverlay />
       <AlertDialogPrimitive.Content
         data-slot="alert-dialog-content"
         className={cn(
-          // 🎪 与 Dialog 同一贴纸框(含 overflow-hidden 裁圆角,防子元素直角外溢)
-          'bg-pop-paper text-pop-ink data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95 fixed top-[50%] left-[50%] z-50 grid w-full max-w-[calc(100%-2rem)] translate-x-[-50%] translate-y-[-50%] gap-4 overflow-hidden rounded-2xl border-[1.5px] border-pop-bd p-6 shadow-pop-lg duration-200 sm:max-w-lg',
+          // 🎪 与 Dialog 同一贴纸框；关闭灯在左上，超长时整框滚动。
+          'bg-pop-paper text-pop-ink data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95 fixed top-[50%] left-[50%] z-50 grid w-full max-w-[calc(100%-2rem)] max-h-[calc(100dvh-2rem)] translate-x-[-50%] translate-y-[-50%] gap-4 overflow-x-hidden overflow-y-auto rounded-2xl border-[1.5px] border-pop-bd px-6 pb-6 shadow-pop-lg duration-200 sm:max-w-lg',
+          showCloseButton ? 'pt-10' : 'pt-6',
           className,
         )}
         {...props}
-      />
+      >
+        {children}
+        {showCloseButton && (
+          <AlertDialogPrimitive.Cancel
+            data-slot="alert-dialog-close"
+            aria-label="关闭"
+            className={closeLightButtonClass}
+          >
+            <CloseLightGlyph />
+          </AlertDialogPrimitive.Cancel>
+        )}
+        <DialogResizeHandles className="pointer-events-none absolute inset-0 z-20" />
+      </AlertDialogPrimitive.Content>
     </AlertDialogPortal>
   )
 }

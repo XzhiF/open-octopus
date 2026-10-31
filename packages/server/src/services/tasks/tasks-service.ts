@@ -54,6 +54,7 @@ import {
   TaskSpecFieldError,
   mergeLlmUsageSummaries,
   type LlmUsageSummary,
+  type ModelUsageBreakdown,
 } from "@octopus/shared"
 import {
   TaskDAO,
@@ -74,6 +75,7 @@ import {
 } from "./task-materialize"
 // trigger-prebuild (2026-09-08): 与 WorkflowExecutor 共享的命名/复合判定纯函数。
 import { isCompositeWorkflowConfig } from "../scheduler/ws-launch"
+import { taskBranchPrefix, taskWorkspaceName } from "../scheduler/task-ws-name"
 import { TaskLifecycleService, TaskLifecycleError, type ArmOptions } from "./task-lifecycle-service"
 // task-phase-redesign (ticket 05): STATIC registry access for dispatchPhaseRound.
 // Cycle-free: execution-service-registry's closure (execution/workspace/workflow/
@@ -95,6 +97,23 @@ import { seedPhaseToWorkspace, collectFromWorkspace, batchRelPath, resolvePhaseS
 import { specRunbookLevel } from "./runbook-spec"
 // task-phase-redesign (ticket 08): the archiving orchestrator (K11 归并面).
 import { createTaskArchiver, type TaskArchiver, type ArchiveReport } from "./archiving-service"
+import {
+  createArchiveCleaner,
+  type ArchiveCleanupReport,
+  type CleanupLeftoversResult,
+  type TaskArchiveCleaner,
+} from "./archive-cleanup-service"
+import {
+  dirtyFingerprint,
+  inspectTaskDelta,
+} from "./archive-delta"
+import { getChatEventBridge } from "../activity/chat-event-bridge"
+import {
+  readReflectionStore,
+  writeReflectionStore,
+  type ReflectionDecision,
+  type ReflectionStore,
+} from "./reflection-store"
 import { PluginMaterializer } from "./plugin-materializer"
 // 06: re-export so the route's classifyError instanceof check matches throws
 // from TaskHomeService.readArtifactContent without a second class declaration.
@@ -117,6 +136,14 @@ import { resolveInputValues, parseWorkflowInputDefs } from "../scheduler/templat
  *  while the name equals this. A user rename (header/POST) makes the name
  *  user-owned and freezes it against autosave. */
 export const DEFAULT_TASK_NAME = "Untitled task"
+/** Chat-created tasks start with this placeholder so the task-author autosave
+ *  can adopt the smart session title after the first turn (same behavior as a
+ *  main-agent session). Treated as non-user-owned. */
+export const TASK_PLACEHOLDER_NAME = "新任务"
+
+export function isPlaceholderTaskName(name: string): boolean {
+  return name === DEFAULT_TASK_NAME || name === TASK_PLACEHOLDER_NAME
+}
 import {
   setSpecNotice,
   getSpecNotice,
@@ -215,6 +242,237 @@ export interface TaskDetailDTO extends TaskDTO {
   derived: TaskView
 }
 
+/** One source row of the task-lifecycle ledger (GET /:id/usage). */
+export interface TaskUsagePart extends LlmUsageSummary {
+  kind: "chat" | "execution"
+  label: string
+  session_id?: string
+  execution_id?: string
+  phase_index?: number | null
+  round_index?: number | null
+  workflow_ref?: string | null
+  /** 该轮实跑区间（2026-10-31 消耗窗「总耗时」）。chat 行没有起止事实 → 不出现。 */
+  started_at?: string | null
+  completed_at?: string | null
+  /** 该轮内 agent 节点 duration 之和（ms）；没有节点数据时不出现（不造 0）。 */
+  agent_duration_ms?: number
+  /** 该轮实跑时长（ms，与 timing.duration_ms 同一谓词）；未起跑/暂停的轮不出现。 */
+  duration_ms?: number
+  /** 这行是不是任务的一「轮」（根执行 / 带 phase 的实例）。fan-out arm 与自己那轮
+   *  的时间区间重叠，按轮时间条只画 instance 行，避免把同一段时间画两遍。 */
+  instance?: boolean
+}
+
+/** 任务耗时的两个口径（2026-10-31 消耗窗「总耗时」卡）：
+ *  · duration_ms = Σ 执行轮实跑段 —— 与看板 ⏱ / 验收窗「实际用时」同源（run_stats），
+ *    排队与待验收等待不算；
+ *  · agent_duration_ms = Σ node_type='agent' 的节点 duration —— 这是**工时**不是墙钟，
+ *    并行/重试会叠加，可能接近或超过 duration_ms，展示端按 100% 截断。 */
+export interface TaskTimingSummary {
+  /** 计入实跑段的行数（同一谓词下的 run_stats.count）。 */
+  count: number
+  duration_ms: number
+  agent_duration_ms: number
+}
+
+export interface TaskUsageDTO {
+  task_id: string
+  /** Aggregate over every source below (same shape as the chat cost chip).
+   *  modelBreakdown（2026-10-29 用户需求）：任务「消耗」窗口 / composer chip
+   *  要显示「这些 token 花在哪些模型上」。 */
+  summary: LlmUsageSummary & { modelBreakdown: Record<string, ModelUsageBreakdown> }
+  breakdown: TaskUsagePart[]
+  /** 一轮都没跑过时 count=0、两个时长都是 0（窗口整卡隐藏）。 */
+  timing: TaskTimingSummary
+}
+
+/** 会话账本里的一个工作流（= 本会话发起的 task 的一次或多次执行轮）。 */
+export interface SessionUsageWorkflow {
+  task_id: string
+  name: string
+  status: string
+  /** 各轮实跑段之和（与任务窗 timing.duration_ms 同源）。 */
+  duration_ms: number
+  tokens: number
+  total_calls: number
+  cost: { usd: number | null; complete: boolean }
+}
+
+/** 会话耗时的两个口径（2026-10-31 消耗窗·会话版）：
+ *  · conversation_ms = 本会话聊天调用时间区间的并集（重复上报 / 并行只算一次）；
+ *  · workflow_ms = 本会话发起的全部任务实跑段之和；
+ *  · duration_ms = 两者相加（重叠不扣减，口径在窗口 tooltip 里说明）；
+ *  · agent_duration_ms = 聊天调用时长合计 + 各工作流 agent 节点时长 —— 工时不是墙钟，
+ *    可能大于 duration_ms，展示端显示倍数。 */
+export interface SessionTimingSummary {
+  conversation_ms: number
+  workflow_ms: number
+  duration_ms: number
+  agent_duration_ms: number
+}
+
+export interface SessionUsageDTO {
+  session_id: string
+  /** 会话自己的聊天行（execution_id IS NULL）+ 全部关联工作流的执行行。 */
+  summary: LlmUsageSummary & { modelBreakdown: Record<string, ModelUsageBreakdown> }
+  timing: SessionTimingSummary
+  /** 只列真正跑过的工作流（有执行轮）；草稿/未触发任务不占列表。 */
+  workflows: SessionUsageWorkflow[]
+}
+
+/** 素材包单件视图（manifest 投影；归档台「已冻结素材件」展开用）。 */
+export interface TaskArchiveKnowledgeItem {
+  kind: string
+  name: string
+  bytes: number
+  excluded: boolean
+  /** 知识根相对 POSIX 路径（对质 / 追溯）。 */
+  path: string
+}
+
+/** 知识中心投稿快照（2026-10-31 AI-native 归档总框）：素材包件数 + 编译队列状态。
+ *  由 index.ts 的 archiveKnowledgeHook 装配（pack manifest + wikiWriteQueue），
+ *  TasksService 自身不依赖知识中心模块。 */
+export interface TaskArchiveKnowledge {
+  /** 素材包已冻结的活跃件数（excluded 不计）。 */
+  pack_items: number
+  /** 包内全部件（含已剔除；件数只算未剔除）。未装配 manifest 的宿主可省略。 */
+  items?: TaskArchiveKnowledgeItem[]
+  /** 编译队列状态 queued / running / committed / failed；null = 未入队。 */
+  compile_state: string | null
+  /** 排队位次（仅 queued 有值）。 */
+  compile_position: number | null
+}
+
+/** GET /:id/archive — the archive window's one-shot read model. */
+export interface TaskArchiveDTO {
+  task_id: string
+  status: string
+  /** A run is in this process right now (202 fire-and-forget). */
+  in_flight: boolean
+  /** 任务的 project_ids —— 归档总框「git 同步 x/y」的分母。 */
+  projects: string[]
+  /** Parsed `{home}/archive/state.json` (project-granular idempotency ledger). */
+  state: unknown | null
+  /** Parsed `{home}/archive/report.json` (structured run report — failures,
+   *  conflicts, PR destinations). null = 还没有完整跑过一轮。 */
+  report: ArchiveReport | null
+  /** `{home}/archive/report.md` (capped); null = not written yet. */
+  report_md: string | null
+  /** Reflection proposals + per-entry decisions; null = no reflection yet. */
+  reflection: ReflectionStore | null
+  /** 知识素材包 / 编译状态；null = 尚未投喂或未装配。 */
+  knowledge: TaskArchiveKnowledge | null
+  /** done 之后的只增不改增补记录（2026-10-31）。 */
+  amendments: ArchiveAmendment[]
+  /** done 后构建产物清理结果（`{home}/archive/cleanup.json`）；null = 尚未开始。 */
+  cleanup: ArchiveCleanupReport | null
+  /** 本进程里清理是否正在跑（进程重启遗留的 running 报告据此显示为「中断」）。 */
+  cleanup_in_flight: boolean
+}
+
+/** 归档增补：done 之后人要求补充/修正归档内容时追加，绝不改写原报告。 */
+export interface ArchiveAmendment {
+  id: string
+  at: string
+  reason: string
+  content: string
+  target?: string
+  /** 同时落 wiki 时的回执（raw 冻结 + 编译入队）。 */
+  ingest?: { raw_path?: string; compile_task_id?: string } | null
+}
+
+export interface ArchiveAmendmentInput {
+  reason: string
+  content: string
+  title?: string
+  target?: string
+  /** true = 同时把这条增补送进知识中心（raw + 编译队列）。 */
+  ingest?: boolean
+}
+
+export interface ReflectionDecisionInput {
+  entry_id: string
+  action: "ingest" | "skip"
+  /** Edit-before-ingest overrides. */
+  title?: string
+  content?: string
+}
+
+/** 2026-10-31 收尾：放行后未提交改动的处置。 */
+export type ArchiveDeltaAction = "include" | "exclude"
+export interface ArchiveDeltaResult {
+  ok: true
+  decision: ArchiveDeltaAction
+  dirty_projects: string[]
+}
+
+export type ReflectionIngest = (input: {
+  title: string
+  text: string
+  origin: string
+}) => Promise<{ raw_path?: string; compile_task_id?: string }>
+
+/**
+ * 一组时间区间的并集长度（ms）—— 会话「对话」耗时口径：同一轮里重复上报 /
+ * 并行的模型行会在时间轴上叠在一起，求和会虚高，并集才是在说话的真实时长。
+ * 非法区间（end ≤ start / 非有限值）直接跳过。
+ */
+function unionSpanMs(spans: ReadonlyArray<{ start: number; end: number }>): number {
+  const valid = spans
+    .filter((s) => Number.isFinite(s.start) && Number.isFinite(s.end) && s.end > s.start)
+    .sort((a, b) => a.start - b.start)
+  let total = 0
+  let curStart = 0
+  let curEnd = -Infinity
+  for (const s of valid) {
+    if (s.start > curEnd) {
+      if (curEnd > curStart) total += curEnd - curStart
+      curStart = s.start
+      curEnd = s.end
+    } else if (s.end > curEnd) {
+      curEnd = s.end
+    }
+  }
+  if (curEnd > curStart) total += curEnd - curStart
+  return total
+}
+
+/** `{home}/archive/amendments.jsonl` 读侧（坏行跳过，最多 200 条）。 */
+function readArchiveAmendments(home: string): ArchiveAmendment[] {
+  const file = path.join(home, "archive", "amendments.jsonl")
+  try {
+    const rows = fs.readFileSync(file, "utf-8")
+      .replace(/\r\n/g, "\n")
+      .split("\n")
+      .filter((l) => l.trim())
+    const out: ArchiveAmendment[] = []
+    for (const line of rows) {
+      try {
+        const parsed = JSON.parse(line) as ArchiveAmendment
+        if (parsed && typeof parsed.id === "string" && typeof parsed.content === "string") out.push(parsed)
+      } catch {
+        /* corrupt line — skip */
+      }
+    }
+    return out.slice(-200)
+  } catch {
+    return []
+  }
+}
+
+export interface ReflectionDecisionResult {
+  ok: true
+  store: ReflectionStore
+  decision: ReflectionDecision
+}
+
+const EMPTY_LLM_USAGE: LlmUsageSummary = {
+  totalCalls: 0,
+  usage: { inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheCreationTokens: 0 },
+  totals: { tokens: 0, cost: { usd: null, complete: false }, cacheHitRate: null },
+}
+
 // ── Acceptance (task-phase-redesign ticket 07 — 验收 Gate K6/K7) ─────
 
 /** Body of POST /api/tasks/:id/acceptance (spec API table). Indices are
@@ -236,7 +494,7 @@ export interface AcceptanceInput {
  *  - "archiving"                last phase accepted — the task is in 归档 (票 08)
  *  - "awaiting_manual_trigger"  accepted with autoAdvance=false — parked at the
  *                               human gate (K6/US11), nothing was started. */
-export type AcceptanceNextAction = "dispatched" | "archiving" | "awaiting_manual_trigger"
+export type AcceptanceNextAction = "dispatched" | "awaiting_archive" | "archiving" | "awaiting_manual_trigger"
 
 /** Round identity that {@link TasksService.acceptance} actually dispatched
  *  (present iff next_action === "dispatched"). */
@@ -290,7 +548,8 @@ export interface FixRoundResult {
 }
 
 export interface CreateTaskInput {
-  org: string
+  /** Repo-registry key only (org demotion). */
+  repo_group?: string
   name?: string
   source_chat_session_id?: string | null
   // ── task-authoring v3 (ticket 04, D13/D15) ──
@@ -319,6 +578,10 @@ export interface CreateTaskInput {
   /** Top-level project ids (SKILL §1 recipe). When present wins over
    *  preset.projects; both land in the tasks.project_ids column. */
   project_ids?: string[]
+  /** v58: reuse an existing workspace for this task (chat cwd picker). */
+  workspace_id?: string
+  /** v58: attach an arbitrary directory as the task workspace. */
+  cwd?: string
   /** Creation-time column bindings (SKILL §1 sends these explicitly; the route
    *  parses with zod like the PUT path). Absent → DAO defaults ("[]"). */
   skills?: string[]
@@ -382,7 +645,8 @@ export interface WritePlanIssueInput extends WritePlanInputBase {}
 
 export interface ListTasksParams {
   status?: TaskStatus
-  org?: string
+  /** Repo-registry key filter (org demotion). */
+  repo_group?: string
   /** 票06 (语义摘要进任务板): 服务端关键字搜索——对 name ∨ semantic_summary LIKE 子串
    *  过滤（零新基建、非 FTS）。空/纯空白 = 不过滤（走原列盘路径，回归保护）。 */
   q?: string
@@ -429,7 +693,7 @@ const CANCELLABLE_ROUND_STATUSES = new Set<string>(LIVE_ROUND_STATUSES)
 function toDTO(row: TaskRow): TaskDTO {
   return {
     id: row.id,
-    org: row.org,
+    repo_group: row.repo_group,
     name: row.name,
     status: row.status as TaskStatus,
     task_spec: parseJSON<TaskSpec>(row.task_spec, { goal: "", ac: [] } as unknown as TaskSpec),
@@ -437,7 +701,8 @@ function toDTO(row: TaskRow): TaskDTO {
     resources: parseJSON<ResourceRef[]>(row.resources, []),
     skills: parseJSON<string[]>(row.skills, []),
     project_ids: parseJSON<string[]>(row.project_ids, []),
-    workflow_ref: row.workflow_ref,
+    workspace_id: row.workspace_id,
+    workflow_ref: row.workflow_ref ?? undefined,
     version: row.version,
     source_chat_session_id: row.source_chat_session_id,
     // ADR-0025 票01: the doer session pointer.
@@ -487,7 +752,7 @@ function toExecutionBadge(row: ExecutionRow, children?: ExecutionRow[]): TaskExe
   return {
     id: row.id,
     status: row.status,
-    workflow_ref: row.workflow_ref,
+    workflow_ref: row.workflow_ref ?? undefined,
     // The subunit's label (a child run's name IS which arm it is) — 票05's replacement
     // for reading `schedules.origin_role`.
     name: row.name ?? null,
@@ -554,12 +819,30 @@ function validateServerSpecField(field: ServerSpecField, value: unknown): unknow
 
 // ── 票 11 ▣ 产物页签（artifacts manifest — 只读薄 seam 的磁盘直扫）──────────
 //
-// 分组清单单一真相 = 磁盘（票面五组：需求票面 spec/issues、轮次报告 report、
-// 证据 evidence、验收台账 acceptance-ledger、原型 prototype）。引用串带前缀
-// 门牌：`home:<.scratch/…>` = 任务 home 批次区（读门复用 home-file 白名单同款
-// 守卫），`ws:<仓内相对>` = 任务最近一次绑定执行的工作区根。缺文件/缺目录 =
-// 该组空数组（降级不是错误）；一切越界形状（绝对、盘符、`..`、逃逸 resolve）
+// 2026-10-29 方案2（phase × 轮次）：清单不再按文件名正则拍平成五组，而是
+// **按 phase 批次目录归属**（`specPath` 的 dirname）+ 文件名里的 `-rN` 归轮：
+//   · phases[] = 每个 phase 一批：批次级产物（spec/票/runbook/handoff/…）+
+//     rounds[]（fix-report-r1 / acceptance-ledger-r1 / verify-r1-… 等带轮次的件）；
+//   · unassigned = `.scratch` 下不属于任何 phase 的件（旧布局 / 手工放置）；
+//   · prototype = 工作区原型（保持不变）。
+// 引用串带前缀门牌：`home:<.scratch/…>` = 任务 home 批次区（读门复用 home-file
+// 白名单同款守卫），`ws:<仓内相对>` = 任务最近一次绑定执行的工作区根。缺文件/
+// 缺目录 = 空数组（降级不是错误）；一切越界形状（绝对、盘符、`..`、逃逸 resolve）
 // 在读门 403，`..` 输入缺陷在路由 400。
+
+/** 产物类型（server 单源；前端只渲染徽章，不重分类）。 */
+export type ArtifactKind =
+  | "spec"
+  | "brief"
+  | "ticket"
+  | "runbook"
+  | "report"
+  | "fix"
+  | "feedback"
+  | "handoff"
+  | "ledger"
+  | "evidence"
+  | "prototype"
 
 export interface ArtifactManifestItem {
   name: string
@@ -567,15 +850,73 @@ export interface ArtifactManifestItem {
   path: string
   bytes: number
   mtime: string
+  /** 产物类型（spec / 票 / 报告 / 修复 / 反馈 / 台账 / 证据 / 原型 …）。 */
+  kind: ArtifactKind
 }
 
-export interface ArtifactManifestGroup {
-  key: "spec" | "report" | "evidence" | "ledger" | "prototype"
-  label: string
+/** 一轮的产物（文件名带 `-rN` 且属于轮次类）：fix-report-r1 / verify-r1-… 等。 */
+export interface ArtifactManifestRound {
+  round: number
   items: ArtifactManifestItem[]
 }
 
+/** 一个 phase 的交付面：批次级产物 + 按轮次归组的产物。 */
+export interface ArtifactManifestPhase {
+  /** 1-based，来自 task_spec.phases。 */
+  index: number
+  name: string
+  slug: string
+  /** home 相对 posix 批次目录（`.scratch/<main>/<phase>`）；无合规 specPath = ""。 */
+  dir: string
+  /** deriveTaskView 的 phase 显示态（K3 派生不存，这里只是透传）。 */
+  status: TaskPhaseView["status"]
+  currentRound: number | null
+  acceptedRound: number | null
+  /** 批次级产物：spec / brief / issues / runbook / handoff / 未标轮次的报告与证据。 */
+  items: ArtifactManifestItem[]
+  /** 按轮次归组的产物（升序）。 */
+  rounds: ArtifactManifestRound[]
+}
+
+export interface ArtifactManifestBody {
+  phases: ArtifactManifestPhase[]
+  /** 不属于任何 phase 的 `.scratch` 文件（旧布局 / 手工放置）。 */
+  unassigned: ArtifactManifestItem[]
+  /** 工作区原型（`ws:` 引用）。 */
+  prototype: ArtifactManifestItem[]
+}
+
 const MANIFEST_SCRATCH_PREFIX = ".scratch"
+
+/** 文件名 → 产物类型。判据单源在 server：前端不反推、不重分组。 */
+function artifactKindOf(rel: string, name: string): ArtifactKind {
+  const lower = name.toLowerCase()
+  if (/^spec(-r\d+)?\.md$/.test(lower)) return "spec"
+  if (lower === "brief.md") return "brief"
+  if (/^handoff\.md$/.test(lower)) return "handoff"
+  if (rel.toLowerCase().includes("/issues/") && lower.endsWith(".md")) return "ticket"
+  if (rel.toLowerCase().includes("/runbook/") || lower === "runbook.json") return "runbook"
+  if (/^acceptance-ledger.*\.md$/.test(lower)) return "ledger"
+  if (/^fix-feedback.*\.md$/.test(lower)) return "feedback"
+  if (/^fix-report.*\.md$/.test(lower)) return "fix"
+  if (/^round.*report.*\.md$/.test(lower)) return "report"
+  return "evidence"
+}
+
+/** 文件名里的轮次号：`-r1` / `-r1-` / `-r1.md` 才算；spec-rN 是起草修订，不归轮。 */
+function artifactRoundOf(name: string): number | null {
+  const m = name.match(/(?:^|[-_.])r(\d+)(?:[-_.]|$)/i)
+  return m ? Number(m[1]) : null
+}
+
+/** specPath → home 相对批次目录（dirname）。域外路径（绝对/非 .scratch）→ null。 */
+function manifestPhaseDir(specPath: string): string | null {
+  const posix = specPath.replace(/\\/g, "/").replace(/^\.\//, "").replace(/^\/+/, "")
+  if (!posix.startsWith(`${MANIFEST_SCRATCH_PREFIX}/`)) return null
+  const idx = posix.lastIndexOf("/")
+  if (idx <= MANIFEST_SCRATCH_PREFIX.length) return null
+  return posix.slice(0, idx)
+}
 
 /** 递归收常规文件（跳 dotfile/符号链接/其它 fs 类型），深度与总量封顶。
  *  `relFromRoot` 已含根名（如 ".scratch/x.md" / "public/prototype/y.html"），
@@ -617,16 +958,8 @@ function collectManifestFiles(
   return out
 }
 
-/** 票面五组的归类判据（词形取自运行事实：round-report-rN/fix-report-rN、
- *  acceptance-ledger-rN（round-evidence 写入侧字面）、issues/ 子目录 = 票面）。 */
-function classifyScratchFile(rel: string, name: string): "spec" | "report" | "evidence" | "ledger" {
-  const lower = name.toLowerCase()
-  if (/^acceptance-ledger.*\.md$/.test(lower)) return "ledger"
-  if (/^spec(-.+)?\.md$/.test(lower)) return "spec"
-  if (rel.includes("/issues/") && lower.endsWith(".md")) return "spec"
-  if (/^(round-report|round.*report|fix-report).*\.md$/.test(lower)) return "report"
-  return "evidence"
-}
+/** 票面五组的归类判据已退役（2026-10-29 方案2）：产物按 phase 批次目录 +
+ *  `-rN` 归轮，类型由 {@link artifactKindOf} 单源给出，不再拍平成五组。 */
 
 /** 工作区里的原型目录候选：根 public/prototype、根 prototype、逐仓
  *  packages/<repo>/public/prototype（多仓形态）。 */
@@ -710,6 +1043,14 @@ export class TasksService {
 
   setArchiveIngestHook(fn: (taskId: string) => void | Promise<void>): void {
     this.archiveIngestHook = fn
+  }
+
+  /** 2026-10-31 AI-native 归档：知识素材包 / 编译状态的只读快照（index.ts 装配，
+   *  TasksService 不依赖知识中心模块）。未装配 → readArchive.knowledge = null。 */
+  private archiveKnowledgeHook?: (taskId: string) => TaskArchiveKnowledge | null
+
+  setArchiveKnowledgeHook(fn: ((taskId: string) => TaskArchiveKnowledge | null) | null): void {
+    this.archiveKnowledgeHook = fn ?? undefined
   }
 
   /** 票10 fire-and-forget：失败语义 = 跳过投喂，归档照常（AC2「失败不阻塞 done」）。 */
@@ -804,12 +1145,12 @@ export class TasksService {
   /** Resolve project names to ProjectRef[] with filesystem paths via
    *  WorkspaceGit (repos/index.md lookup). Unresolvable names get
    *  { name, path: undefined } so they still appear in context.md. */
-  private resolveProjectRefs(org: string, names: string[]): ProjectRef[] {
-    if (!org || names.length === 0) return []
+  private resolveProjectRefs(repoGroup: string | null | undefined, names: string[]): ProjectRef[] {
+    if (!repoGroup || names.length === 0) return []
     const git = new WorkspaceGit()
     return names.map((name) => {
       try {
-        const resolved = git.resolveRepoPath(org, name)
+        const resolved = git.resolveRepoPath(repoGroup, name)
         return { name, path: resolved }
       } catch {
         return { name }
@@ -818,6 +1159,42 @@ export class TasksService {
   }
 
   // ── Create ────────────────────────────────────────────────────────
+
+  /**
+   * One-workspace model: a draft's workspace is created up front as a shell
+   * (no project worktrees). Worktrees are added at enqueue time; the task home
+   * lives at `<workspace>/.task`. Returns null when no workspace service is
+   * injected (unit tests keep the legacy deterministic home).
+   */
+  private createTaskWorkspaceShell(input: {
+    id: string
+    repo_group?: string | null
+    name: string
+    taskSpec: Record<string, unknown>
+    now: string
+  }): string | null {
+    if (!this.workspaceService || typeof this.workspaceService.createFromSpec !== "function") return null
+    const spec = JSON.stringify(input.taskSpec)
+    const baseName =
+      taskWorkspaceName({ name: input.name, task_spec: spec }) ?? `task-${input.id.slice(0, 8)}`
+    // Short id suffix keeps same-title/same-second tasks from colliding.
+    const workspaceName = `${baseName}-${input.id.slice(0, 6)}`
+    const branchPrefix =
+      taskBranchPrefix({ task_spec: spec, created_at: input.now }) ?? `taskpool-${input.id}`
+    const created = this.workspaceService.createFromSpec({
+      repo_group: input.repo_group ?? null,
+      name: workspaceName,
+      description: input.name,
+      // Worktrees are materialized at enqueue, not draft time.
+      projects: [],
+      branch_prefix: branchPrefix,
+      branch_suffix: input.id.slice(0, 8),
+      source: "task",
+      task_id: input.id,
+      workflow_chain: [],
+    })
+    return created.id
+  }
 
   /** POST /api/tasks — explicit draft creation. The autosave seam (04) may
    *  also create a draft implicitly; both paths converge here. SG3: if a
@@ -844,10 +1221,9 @@ export class TasksService {
     const name = input.name?.trim() || DEFAULT_TASK_NAME
     const isV3 = !!input.task_type
 
-    // 04 (D13): preset.org overrides the top-level org (the template page is the
-    // source of the authoring context). preset.projects → project_ids (the
+    // 04 (D13): preset org is the repo group; preset.projects → project_ids (the
     // top-level project_ids field, SKILL §1, wins when present).
-    const org = input.preset?.org ?? input.org
+    const repoGroup = input.preset?.org ?? input.repo_group ?? null
     const projectIds = input.project_ids ?? input.preset?.projects ?? []
 
     // 04 (D4): task_type + skill_groups live in task_spec, NOT authoring_resources.
@@ -873,7 +1249,7 @@ export class TasksService {
 
     this.taskDAO.insert({
       id,
-      org,
+      repo_group: repoGroup,
       name,
       status: "draft",
       source_chat_session_id: input.source_chat_session_id ?? null,
@@ -901,6 +1277,54 @@ export class TasksService {
       }
     }
 
+    // ── One-workspace model ─────────────────────────────────────────
+    // A draft owns its workspace from the start (shell only, no worktrees).
+    // Binding it BEFORE createHome lets the TaskHomeService resolver place the
+    // planning home at `<workspace>/.task` instead of ~/.octopus/tasks/{id}.
+    if (isV3 || isV4) {
+      try {
+        // v58: an explicit workspace/directory wins over the default shell.
+        let boundWorkspaceId: string | null = null
+        if (input.workspace_id && this.workspaceService && typeof this.workspaceService.getById === "function") {
+          const explicit = this.workspaceService.getById(input.workspace_id)
+          if (explicit) boundWorkspaceId = explicit.id
+        }
+        if (!boundWorkspaceId && input.cwd && this.workspaceService) {
+          try {
+            boundWorkspaceId = this.workspaceService.attachDirectory({ repo_group: repoGroup, path: input.cwd }).id
+          } catch (err: unknown) {
+            console.error(
+              "[TasksService] createTask: attach cwd failed (falling back to new workspace):",
+              err instanceof Error ? err.message : String(err),
+            )
+          }
+        }
+        const workspaceId = boundWorkspaceId ?? this.createTaskWorkspaceShell({
+          id, repo_group: repoGroup, name, taskSpec: taskSpecObj, now,
+        })
+        if (workspaceId) {
+          this.taskDAO
+            .getDb()
+            .prepare("UPDATE tasks SET workspace_id = ?, updated_at = ? WHERE id = ?")
+            .run(workspaceId, now, id)
+          // v58: the task-author chat runs in the task workspace; bind the
+          // session so the UI cwd chip / file explorer have a workspace.
+          if (input.source_chat_session_id) {
+            const ws = this.workspaceService?.getById(workspaceId)
+            if (ws) {
+              this.taskDAO.getDb()
+                .prepare("UPDATE sessions SET workspace_id = ?, cwd = COALESCE(NULLIF(cwd, ''), ?) WHERE id = ?")
+                .run(ws.id, ws.path, input.source_chat_session_id)
+            }
+          }
+        }
+      } catch (err: unknown) {
+        // Don't leave a half-created task row without its workspace.
+        this.taskDAO.softDelete(id)
+        throw err
+      }
+    }
+
     // 04 (ADR-0010/D1): v3 task → create home + materialize skill groups into
     // {home}/skills/ as junctions/symlinks (or copy fallback). The "default"
     // group is an empty marker (D17) — the materializer skips it, so no skills
@@ -912,17 +1336,17 @@ export class TasksService {
     // matt skill family arrives via the clone plugin layer, ticket 11/K15).
     if (isV3 || isV4) {
       const groups = input.skill_groups ?? []
-      // Pass org + resolved project paths + skill groups to createHome so
+      // Pass repo group + resolved project paths + skill groups to createHome so
       // context.md is populated from the start (not empty until the first
       // chat turn or a subsequent updateTask).
-      const projectRefs = this.resolveProjectRefs(org, projectIds)
-      const home = this.taskHomeService.createHome(id, { org, projects: projectRefs, skillGroups: groups })
+      const projectRefs = this.resolveProjectRefs(repoGroup, projectIds)
+      const home = this.taskHomeService.createHome(id, { repo_group: repoGroup, projects: projectRefs, skillGroups: groups })
       // repo-sync (2026-09-08, 特性A): v4 draft 创建即异步把选中项目的主 clone
       // 强制对齐 origin/<main|master> 最新（镜像语义，fire-and-forget — 绝不影响
       // 本次 HTTP 返回）。用户不变量：agent 分析读的就是这些路径，创建后它们必须
       // 尽快变新；完成/失败经 project_sync SSE 反馈（task-modal toast）。
       if (isV4 && projectIds.length > 0) {
-        this.repoSyncService?.syncProjectsForTask(id, org, projectIds)
+        this.repoSyncService?.syncProjectsForTask(id, repoGroup, projectIds)
       }
       if (groups.length > 0) {
         try {
@@ -974,6 +1398,209 @@ export class TasksService {
       executions: history.map(badge),
       derived: this.deriveView(row),
     }
+  }
+
+  /**
+   * task-thread redesign (2026-10-28): the task's WHOLE-LIFECYCLE ledger.
+   *
+   * Two sources, merged with the shared summary fold:
+   *   · chat rows = the task's main thread (+ legacy doer session), restricted
+   *     to `execution_id IS NULL` so a clone/interaction row that also carries
+   *     an execution owner is not counted twice;
+   *   · execution rows = every executions row tagged with this task (rounds,
+   *     fix rounds, child arms).
+   *
+   * The breakdown is deliberately row-shaped so the UI can show "主对话 /
+   * P1·R1 / 修复轮" instead of one opaque number. Cost is derived at query time
+   * by llm_calls_costed (price edits re-price history).
+   */
+  taskUsage(id: string): TaskUsageDTO {
+    const row = this.taskDAO.getById(id)
+    if (!row) throw new TaskNotFoundError()
+    const execRows = this.taskDAO.getDb().prepare(
+      `SELECT id, phase_index, round_index, workflow_ref, status, created_at, started_at, completed_at, parent_id
+         FROM executions WHERE task_id = ? ORDER BY created_at ASC`,
+    ).all(id) as Array<{
+      id: string
+      phase_index: number | null
+      round_index: number | null
+      workflow_ref: string | null
+      status: string
+      created_at: string
+      started_at: string | null
+      completed_at: string | null
+      parent_id: string
+    }>
+    const sessionIds = [row.source_chat_session_id, row.doer_session_id]
+      .filter((s): s is string => !!s)
+    const bySession = this.tokenUsage.aggregateLlmCallsBy(
+      "session_id",
+      sessionIds,
+      ["l.execution_id IS NULL"],
+    )
+    const byExec = this.tokenUsage.aggregateLlmCallsBy(
+      "execution_id",
+      execRows.map((e) => e.id),
+    )
+    // 2026-10-31 消耗窗「总耗时」：agent 工时按轮取一次 map，逐行挂到 breakdown 上。
+    const agentByExec = this.agentDurationByExecution(id)
+    const now = Date.now()
+    const breakdown: TaskUsagePart[] = []
+    for (const sid of sessionIds) {
+      const usage = bySession.get(sid)
+      if (!usage) continue
+      breakdown.push({
+        kind: "chat",
+        label: sid === row.source_chat_session_id ? "主对话" : "旧执行对话",
+        session_id: sid,
+        ...usage,
+      })
+    }
+    for (const e of execRows) {
+      const usage = byExec.get(e.id)
+      if (!usage) continue
+      const part: TaskUsagePart = {
+        kind: "execution",
+        label: e.phase_index != null
+          ? `P${e.phase_index}${e.round_index != null ? ` · R${e.round_index}` : ""}`
+          : "执行",
+        execution_id: e.id,
+        phase_index: e.phase_index,
+        round_index: e.round_index,
+        workflow_ref: e.workflow_ref,
+        started_at: e.started_at,
+        completed_at: e.completed_at,
+        instance: e.parent_id === "0" || e.phase_index != null,
+        ...usage,
+      }
+      const agentMs = agentByExec.get(e.id)
+      if (agentMs != null) part.agent_duration_ms = agentMs
+      const span = this.countedRunSpan(e, now)
+      if (span) part.duration_ms = span.end - span.start
+      breakdown.push(part)
+    }
+    // 汇总口径只认 run_stats 的同一批实例行 —— fan-out arm 的时间已经在根轮的
+    // 跨度里，再叠一遍总耗时就和看板 ⏱ 对不上了。
+    const timings = this.lifecycle.runTimings([id])
+    const stats = this.runStatsFrom(timings).get(id)
+    // 工时口径 = 该任务下全部 agent 节点（含 fan-out arm / 未跑完的轮）——用户要的
+    // 是「所有 agent 执行的耗时」。它与墙钟本来就不同步（并行、暂停），
+    // 展示端按 100% 截断，「其余 = 总耗时 − 工时」只在工时更小时显示。
+    const agentDurationMs = [...agentByExec.values()].reduce((sum, ms) => sum + ms, 0)
+    const timing: TaskTimingSummary = {
+      count: stats?.count ?? 0,
+      duration_ms: stats?.duration_ms ?? 0,
+      agent_duration_ms: agentDurationMs,
+    }
+    const totals = mergeLlmUsageSummaries(breakdown) ?? EMPTY_LLM_USAGE
+    // 模型行与上面的 breakdown 同一组归属谓词（session 侧 execution_id IS NULL）。
+    const modelBreakdown = this.tokenUsage.aggregateLlmCallsByModel(
+      sessionIds,
+      execRows.map((e) => e.id),
+    )
+    return { task_id: id, summary: { ...totals, modelBreakdown }, breakdown, timing }
+  }
+
+  /**
+   * 会话账本（2026-10-31 消耗窗·会话版）：普通对话也要能看到消耗，且会话里
+   * 跑过的 N 个工作流全部并入同一本账。
+   *
+   *   · 对话行 = 本会话的聊天调用，只认 `execution_id IS NULL`（与 taskUsage /
+   *     aiUsageFor 同一条防双计护栏：clone/interaction 行可能同时带执行归属）；
+   *   · 工作流行 = `tasks.source_chat_session_id = sessionId` 的全部任务，按
+   *     executions.task_id 归集 —— 与任务窗 `/usage` 的 execution 段同源；
+   *   · 对话时长 = 各调用 [timestamp, timestamp+duration_ms] 的并集（同一轮里
+   *     重复上报 / 并行的模型行只算一次）；工作流时长 = 各任务 run_stats 实跑段。
+   *
+   * 费用/模型口径与任务窗一致：全部现算（llm_calls_costed），不落快照。
+   */
+  sessionUsage(sessionId: string): SessionUsageDTO {
+    const links = this.taskDAO.getLinksBySourceChatSessions([sessionId])
+    const taskIds = links.map((l) => l.task_id)
+    const timings = this.lifecycle.runTimings(taskIds)
+    const stats = this.runStatsFrom(timings)
+    const execIdsByTask = new Map<string, string[]>()
+    for (const t of timings) {
+      const list = execIdsByTask.get(t.task_id)
+      if (list) list.push(t.id)
+      else execIdsByTask.set(t.task_id, [t.id])
+    }
+    const execIds = timings.map((t) => t.id)
+
+    // 对话段：区间并集 = 真实在说话的时间；调用时长合计 = 工时口径（含重复上报行，
+    // 与账本 totalCalls 一致，不在这里做去重 —— 去重只属于「对话时长」这一列）。
+    const chatCalls = this.tokenUsage
+      .findLlmCallsBySession(sessionId)
+      .filter((call) => call.execution_id == null)
+    const conversationMs = unionSpanMs(
+      chatCalls.map((call) => ({
+        start: call.timestamp,
+        end: call.timestamp + Math.max(0, call.duration_ms ?? 0),
+      })),
+    )
+    const chatCallMs = chatCalls.reduce((sum, call) => sum + Math.max(0, call.duration_ms ?? 0), 0)
+
+    const bySession = this.tokenUsage.aggregateLlmCallsBy(
+      "session_id",
+      [sessionId],
+      ["l.execution_id IS NULL"],
+    )
+    const byExec = this.tokenUsage.aggregateLlmCallsBy("execution_id", execIds)
+
+    const workflows: SessionUsageWorkflow[] = []
+    let workflowMs = 0
+    let agentMs = 0
+    for (const link of links) {
+      const taskExecIds = execIdsByTask.get(link.task_id) ?? []
+      // 草稿 / 未触发的工作流没有执行轮：不占列表（它的起草对话已计入对话段）。
+      if (taskExecIds.length === 0) continue
+      const merged =
+        mergeLlmUsageSummaries(taskExecIds.map((id) => byExec.get(id))) ?? EMPTY_LLM_USAGE
+      const runStats = stats.get(link.task_id)
+      const durationMs = runStats?.duration_ms ?? 0
+      workflows.push({
+        task_id: link.task_id,
+        name: link.name,
+        status: link.status,
+        duration_ms: durationMs,
+        tokens: merged.totals.tokens,
+        total_calls: merged.totalCalls,
+        cost: merged.totals.cost,
+      })
+      workflowMs += durationMs
+      for (const ms of this.agentDurationByExecution(link.task_id).values()) agentMs += ms
+    }
+    workflows.sort((a, b) => b.duration_ms - a.duration_ms)
+
+    const summary =
+      mergeLlmUsageSummaries([bySession.get(sessionId), ...execIds.map((id) => byExec.get(id))]) ??
+      EMPTY_LLM_USAGE
+    const modelBreakdown = this.tokenUsage.aggregateLlmCallsByModel([sessionId], execIds)
+    return {
+      session_id: sessionId,
+      summary: { ...summary, modelBreakdown },
+      timing: {
+        conversation_ms: conversationMs,
+        workflow_ms: workflowMs,
+        duration_ms: conversationMs + workflowMs,
+        agent_duration_ms: chatCallMs + agentMs,
+      },
+      workflows,
+    }
+  }
+
+  /** 每轮 agent 节点工时（ms）：node_type='agent' 的 duration 之和，按 execution 分组。
+   *  同一次执行里的 loop/swarm 子节点、重试都在这张表上叠加 —— 这正是「工时」与
+   *  墙钟的区别，展示端自己说明口径，不要在这里做去重。 */
+  private agentDurationByExecution(taskId: string): Map<string, number> {
+    const rows = this.taskDAO.getDb().prepare(
+      `SELECT ne.execution_id AS execution_id, SUM(ne.duration) AS ms
+         FROM node_executions ne
+         JOIN executions e ON e.id = ne.execution_id
+        WHERE e.task_id = ? AND ne.node_type = 'agent' AND ne.duration IS NOT NULL
+        GROUP BY ne.execution_id`,
+    ).all(taskId) as Array<{ execution_id: string; ms: number }>
+    return new Map(rows.map((r) => [r.execution_id, r.ms]))
   }
 
   /** task-phase-redesign (ticket 07): gather the three facts deriveTaskView
@@ -1069,17 +1696,87 @@ export class TasksService {
    *  同子树新叶 `/artifacts/manifest` —— additive，零既有契约改动。
    *  任务不存在 → 404 先于任何 fs 动作；`.scratch` 缺失 / 无绑定工作区 = 对应
    *  组空数组（AC4 优雅降级）。 */
-  artifactManifest(taskId: string): { groups: ArtifactManifestGroup[] } {
+  artifactManifest(taskId: string): ArtifactManifestBody {
     const row = this.taskDAO.getById(taskId)
     if (!row) throw new TaskNotFoundError()
-    const buckets: Record<"spec" | "report" | "evidence" | "ledger", ArtifactManifestItem[]> = {
-      spec: [], report: [], evidence: [], ledger: [],
-    }
+
+    // phase 目录 = specPath 的 dirname；同名/嵌套时按最长前缀归属（多仓/嵌套批次安全）。
+    // row.task_spec 是 JSON 字符串（TaskRow 列形态）—— 与 deriveView 同一份数据。
+    let specPhases: Array<{ index?: number; name: string; slug: string; specPath: string }> = []
+    try {
+      const parsed = (typeof row.task_spec === "string" ? JSON.parse(row.task_spec) : row.task_spec) as { phases?: unknown }
+      if (Array.isArray(parsed?.phases)) {
+        specPhases = parsed.phases as typeof specPhases
+      }
+    } catch { /* 坏 JSON = 无 phase（全部进 unassigned），与磁盘降级同口径 */ }
+    const entries = specPhases.map((phase, i) => {
+      const dir = manifestPhaseDir(phase.specPath)
+      return {
+        phase,
+        index: phase.index ?? i + 1,
+        dir: dir ?? "",
+        dirLower: dir ? dir.toLowerCase() : "",
+      }
+    })
+    const viewByIndex = new Map(this.deriveView(row).phaseViews.map((p) => [p.index, p]))
+
+    type Bucket = { items: ArtifactManifestItem[]; rounds: Map<number, ArtifactManifestItem[]> }
+    const buckets = new Map<number, Bucket>()
+    for (const e of entries) buckets.set(e.index, { items: [], rounds: new Map() })
+    const unassigned: ArtifactManifestItem[] = []
+
     const scratchAbs = path.join(this.taskHomeService.homePath(taskId), MANIFEST_SCRATCH_PREFIX)
     for (const f of collectManifestFiles(scratchAbs, MANIFEST_SCRATCH_PREFIX, { left: 400 })) {
-      buckets[classifyScratchFile(f.rel, f.name)].push({ name: f.name, path: `home:${f.rel}`, bytes: f.bytes, mtime: f.mtime })
+      const item: ArtifactManifestItem = {
+        name: f.name,
+        path: `home:${f.rel}`,
+        bytes: f.bytes,
+        mtime: f.mtime,
+        kind: artifactKindOf(f.rel, f.name),
+      }
+      const relLower = f.rel.toLowerCase()
+      let owner: (typeof entries)[number] | undefined
+      for (const e of entries) {
+        if (!e.dirLower) continue
+        if (relLower.startsWith(`${e.dirLower}/`) && (!owner || e.dirLower.length > owner.dirLower.length)) {
+          owner = e
+        }
+      }
+      if (!owner) {
+        unassigned.push(item)
+        continue
+      }
+      const bucket = buckets.get(owner.index)!
+      // spec-rN 是起草修订（不是轮次），不归轮；round-report.md 没有 -rN 时
+      // artifactRoundOf 自然返回 null → 落批次级（含义 = 最新轮终报）。
+      const round = item.kind === "spec" ? null : artifactRoundOf(item.name)
+      if (round === null) {
+        bucket.items.push(item)
+      } else {
+        const list = bucket.rounds.get(round)
+        if (list) list.push(item)
+        else bucket.rounds.set(round, [item])
+      }
     }
-    for (const list of Object.values(buckets)) list.sort((a, b) => a.path.localeCompare(b.path))
+
+    const byPath = (a: ArtifactManifestItem, b: ArtifactManifestItem) => a.path.localeCompare(b.path)
+    const phases: ArtifactManifestPhase[] = entries.map((e) => {
+      const bucket = buckets.get(e.index)!
+      const view = viewByIndex.get(e.index)
+      return {
+        index: e.index,
+        name: e.phase.name,
+        slug: e.phase.slug,
+        dir: e.dir,
+        status: view?.status ?? "pending",
+        currentRound: view?.currentRound ?? null,
+        acceptedRound: view?.acceptedRound ?? null,
+        items: bucket.items.sort(byPath),
+        rounds: [...bucket.rounds.entries()]
+          .sort(([a], [b]) => a - b)
+          .map(([round, items]) => ({ round, items: items.sort(byPath) })),
+      }
+    })
 
     const prototype: ArtifactManifestItem[] = []
     const wsRoot = this.manifestWorkspaceRoot(taskId)
@@ -1090,21 +1787,13 @@ export class TasksService {
         for (const f of collectManifestFiles(dir, path.relative(wsRoot, dir).split(path.sep).join("/"), cap)) {
           if (seen.has(f.rel)) continue
           seen.add(f.rel)
-          prototype.push({ name: f.name, path: `ws:${f.rel}`, bytes: f.bytes, mtime: f.mtime })
+          prototype.push({ name: f.name, path: `ws:${f.rel}`, bytes: f.bytes, mtime: f.mtime, kind: "prototype" })
         }
       }
-      prototype.sort((a, b) => a.path.localeCompare(b.path))
+      prototype.sort(byPath)
     }
 
-    return {
-      groups: [
-        { key: "spec", label: "📄 需求与票面", items: buckets.spec },
-        { key: "report", label: "🧾 轮次报告", items: buckets.report },
-        { key: "evidence", label: "🔍 证据", items: buckets.evidence },
-        { key: "ledger", label: "📒 验收台账", items: buckets.ledger },
-        { key: "prototype", label: "💡 原型", items: prototype },
-      ],
-    }
+    return { phases, unassigned: unassigned.sort(byPath), prototype }
   }
 
   /** 原型组的扫描根 = 任务最近一次绑定执行的工作区目录。任何一环缺
@@ -1370,12 +2059,12 @@ export class TasksService {
     if (live && live.workflow_ref === "built-in/task-fix") {
       return `task-fix(execution=${live.id})`
     }
-    // ② doer 会话指针 + 会话行存活双检（悬空不造假）。
-    if (row.doer_session_id) {
+    // ② 任务主线程（2026-10-28 task-thread 起唯一写者；旧 doer 会话已退役）。
+    if (row.source_chat_session_id) {
       const session = this.db
-        .prepare("SELECT id FROM chat_sessions WHERE id = ?")
-        .get(row.doer_session_id) as { id: string } | undefined
-      if (session) return `task-doer(session=${row.doer_session_id})`
+        .prepare("SELECT id FROM sessions WHERE id = ?")
+        .get(row.source_chat_session_id) as { id: string } | undefined
+      if (session) return `task-thread(session=${row.source_chat_session_id})`
     }
     // ③ 诚实缺账。
     return "unattributed"
@@ -1477,21 +2166,21 @@ export class TasksService {
     return { ref: resolution.ref, content: resolution.content, source: resolution.source }
   }
 
-  /** GET /api/tasks — list active tasks (kanban), filtered by status and/or org. */
+  /** GET /api/tasks — list active tasks (kanban), filtered by status and/or repo_group. */
   listTasks(params: ListTasksParams = {}): { items: TaskDTO[] } {    let rows: TaskRow[]
     const q = params.q?.trim()
     if (q) {
       // 票06 (语义摘要进任务板): 服务端关键字搜索走 LIKE（name ∨ semantic_summary），
       // 叠加可选 status/org。未归档/无摘要 task 的 semantic_summary 为 NULL——DAO 用
       // IFNULL 兜空串，按 name 仍可命中、不报错（宽容读）。
-      rows = this.taskDAO.searchActive({ status: params.status, org: params.org, q })
-    } else if (params.status && params.org) {
-      // listByStatus doesn't filter by org — filter in memory (small N).
-      rows = this.taskDAO.listByStatus(params.status).filter((r) => r.org === params.org)
+      rows = this.taskDAO.searchActive({ status: params.status, repo_group: params.repo_group, q })
+    } else if (params.status && params.repo_group) {
+      // listByStatus doesn't filter by repo_group — filter in memory (small N).
+      rows = this.taskDAO.listByStatus(params.status).filter((r) => r.repo_group === params.repo_group)
     } else if (params.status) {
       rows = this.taskDAO.listByStatus(params.status)
-    } else if (params.org) {
-      rows = this.taskDAO.listByOrg(params.org)
+    } else if (params.repo_group) {
+      rows = this.taskDAO.listByRepoGroup(params.repo_group)
     } else {
       // No filter — union of all active. listByOrg requires an org, so scan
       // all statuses (the kanban shows draft/ready/running/done/failed/aborted).
@@ -1587,21 +2276,33 @@ export class TasksService {
     return this.runStatsFrom(this.lifecycle.runTimings(taskIds))
   }
 
+  /** 「实跑」段的判定：有 started_at，且有可计终点 —— completed_at，或仍在跑
+   *  （计到 now）。pending / paused 行不计：排队与暂停本就不是工时。
+   *  run_stats 与 /usage 的 timing 共用这一处，别在调用点重写。 */
+  private countedRunSpan(
+    t: { status: string; started_at: string | null; completed_at: string | null },
+    now: number,
+  ): { start: number; end: number } | null {
+    if (!t.started_at) return null
+    const start = Date.parse(t.started_at)
+    if (Number.isNaN(start)) return null
+    let end = t.completed_at ? Date.parse(t.completed_at) : NaN
+    if (Number.isNaN(end) && t.status === "running") end = now
+    if (Number.isNaN(end) || end <= start) return null
+    return { start, end }
+  }
+
   private runStatsFrom(
     timings: readonly { task_id: string; status: string; started_at: string | null; completed_at: string | null }[],
   ): Map<string, TaskRunStats> {
     const now = Date.now()
     const out = new Map<string, TaskRunStats>()
     for (const t of timings) {
-      if (!t.started_at) continue
-      const start = Date.parse(t.started_at)
-      if (Number.isNaN(start)) continue
-      let end = t.completed_at ? Date.parse(t.completed_at) : NaN
-      if (Number.isNaN(end) && t.status === "running") end = now
-      if (Number.isNaN(end) || end <= start) continue
+      const span = this.countedRunSpan(t, now)
+      if (!span) continue
       const s = out.get(t.task_id) ?? { count: 0, duration_ms: 0 }
       s.count += 1
-      s.duration_ms += end - start
+      s.duration_ms += span.end - span.start
       out.set(t.task_id, s)
     }
     return out
@@ -1767,10 +2468,10 @@ export class TasksService {
           // repo-sync (2026-09-08, 特性A): 首次 PUT 锁定 project_ids 也触发镜像
           // 同步（TemplatePicker 之外的选择路径），仅 v4。
           if (ctxSpec?.format === "v4" && changedFields.includes("project_ids") && projectIds.length > 0) {
-            this.repoSyncService?.syncProjectsForTask(id, row.org, projectIds)
+            this.repoSyncService?.syncProjectsForTask(id, row.repo_group, projectIds)
           }
-          const projectRefs = this.resolveProjectRefs(row.org, projectIds)
-          this.taskHomeService.writeContextFile(id, row.org, projectRefs, groups,
+          const projectRefs = this.resolveProjectRefs(row.repo_group, projectIds)
+          this.taskHomeService.writeContextFile(id, row.repo_group, projectRefs, groups,
             this.repoSyncService?.freshnessNotes(id, projectIds))
           // Add context_updated to the notice so the agent knows to re-read
           const existing = getSpecNotice(id) ?? ''
@@ -1935,15 +2636,15 @@ export class TasksService {
       try {
         if (!fs.existsSync(this.taskHomeService.homePath(id))) {
           const backfillProjects = parseJSON<string[]>(updated.project_ids, [])
-          const backfillRefs = this.resolveProjectRefs(updated.org, backfillProjects)
+          const backfillRefs = this.resolveProjectRefs(updated.repo_group, backfillProjects)
           this.taskHomeService.createHome(id, {
-            org: updated.org,
+            repo_group: updated.repo_group,
             projects: backfillRefs,
             skillGroups: [],
           })
           // repo-sync: 无家壳补建时项目已存在 → 同步一并补触发（与 createTask 同语义）。
           if (backfillProjects.length > 0) {
-            this.repoSyncService?.syncProjectsForTask(id, updated.org, backfillProjects)
+            this.repoSyncService?.syncProjectsForTask(id, updated.repo_group, backfillProjects)
           }
         }
       } catch (err: unknown) {
@@ -1971,10 +2672,10 @@ export class TasksService {
           // repo-sync (2026-09-08, 特性A): agent/用户经 spec-field 写 projects →
           // v4 触发镜像同步；本轮写 context.md 时顺带注入已有新鲜度快照。
           if (input.field === "projects" && ctxSpec?.format === "v4" && projectIds.length > 0) {
-            this.repoSyncService?.syncProjectsForTask(id, row.org, projectIds)
+            this.repoSyncService?.syncProjectsForTask(id, row.repo_group, projectIds)
           }
-          const projectRefs = this.resolveProjectRefs(row.org, projectIds)
-          this.taskHomeService.writeContextFile(id, row.org, projectRefs, groups,
+          const projectRefs = this.resolveProjectRefs(row.repo_group, projectIds)
+          this.taskHomeService.writeContextFile(id, row.repo_group, projectRefs, groups,
             this.repoSyncService?.freshnessNotes(id, projectIds))
           if (input.source === "user") {
             const existing = getSpecNotice(id) ?? ''
@@ -2076,7 +2777,7 @@ export class TasksService {
    * goal/ac/confirmations and the bound workflow_ref. A miss is a 409 with the missing
    * keys, never a half-enqueued task.
    */
-  readyTask(id: string): TaskDTO {
+  readyTask(id: string, opts: { silentCard?: boolean } = {}): TaskDTO {
     const existing = this.taskDAO.getById(id)
     if (!existing) throw new TaskNotFoundError()
     if (existing.status !== "draft") {
@@ -2107,11 +2808,19 @@ export class TasksService {
       // 第 5 行 ✗），而不是等触发执行/runner claim 才炸。project_ids 为空
       // → vacuous 通过（composite 子单元各自带项目在 dispatch 校验）。
       const gateProjects = parseJSON<string[]>(existing.project_ids, [])
+      const gateComposite =
+        Array.isArray(taskSpec.subunits) && taskSpec.subunits.length >= 2
+      // One-workspace model: a workspace-backed simple task must bind at least
+      // one project, otherwise enqueue would create no worktree. Legacy /
+      // test-only tasks without a bound workspace keep the old vacuous pass.
+      if (gateProjects.length === 0 && !gateComposite && existing.workspace_id) {
+        missing.push("project-binding")
+      }
       if (gateProjects.length > 0) {
         const git = new WorkspaceGit()
         for (const name of gateProjects) {
           try {
-            git.resolveRepoPath(existing.org ?? "", name)
+            git.resolveRepoPath(existing.repo_group ?? "", name)
           } catch {
             missing.push(`project:${name}`)
           }
@@ -2217,6 +2926,17 @@ export class TasksService {
     const result = this.taskDAO.updateWithVersion(id, { status: "ready" }, existing.version)
     if (result.changes === 0) throw new TaskVersionConflictError()
 
+    // 2026-10-28 task-thread: ready is a direct flip (no lifecycle writer), so
+    // it must publish the transition itself — otherwise the main chat never
+    // gets its 「已入列」 card. 例外：launch_now（入列且立即触发）时 ready 卡是
+    // 噪音（用户选的就是"马上跑"，running 卡随后就到）→ silentCard 抑制。
+    if (!opts.silentCard) {
+      this.sse.emit("taskpool", {
+        event: TASK_STATUS_EVENT,
+        data: { task_id: id, status: "ready" },
+      })
+    }
+
     const row = this.taskDAO.getById(id)!
     return toDTO(row)
   }
@@ -2265,7 +2985,7 @@ export class TasksService {
     const copyName = baseName.endsWith("(copy)") ? baseName : `${baseName} (copy)`
 
     const created = this.createTask({
-      org: src.org,
+      repo_group: src.repo_group,
       name: copyName,
       task_spec: specForInput,
       ...(taskType ? { task_type: taskType, skill_groups: skillGroups ?? [] } : {}),
@@ -2352,6 +3072,12 @@ export class TasksService {
         `Cannot reopen a task in status '${existing.status}' (only ready→draft)`,
       )
     }
+    // archive-consent: 停放态持久行也是 ready —— 但末 phase 已验收，不能回草稿。
+    if (this.deriveView(existing).taskStatus === "awaiting_archive") {
+      throw new TaskStatusConflictError(
+        "任务末 phase 已通过、停在「待归档」—— 只能归档或中止，不能退回草稿",
+      )
+    }
 
     const inst = this.lifecycle.currentInstance(id)
     if (inst && !TERMINAL_INSTANCES.has(inst.status)) {
@@ -2401,6 +3127,12 @@ export class TasksService {
     if (existing.status !== "ready") {
       throw new TaskStatusConflictError(
         `只有已入队(ready)的任务可以触发 (当前状态: '${existing.status}')`,
+      )
+    }
+    // archive-consent: 停放态持久行也是 ready —— 不能重新触发跑下一轮。
+    if (this.deriveView(existing).taskStatus === "awaiting_archive") {
+      throw new TaskStatusConflictError(
+        "任务末 phase 已通过、停在「待归档」—— 请先归档或中止，不能重新触发",
       )
     }
 
@@ -2494,6 +3226,12 @@ export class TasksService {
   setCronTrigger(id: string, cron: string | null, timezone?: string): void {
     const existing = this.taskDAO.getById(id)
     if (!existing) throw new TaskNotFoundError()
+    // archive-consent: 停放态持久行是 ready；不允许再武装 cron 把已验收任务跑起来。
+    if (this.deriveView(existing).taskStatus === "awaiting_archive") {
+      throw new TaskStatusConflictError(
+        "任务停在「待归档」—— 请先归档或中止，不能设置定时触发",
+      )
+    }
     if (cron === null || cron.trim() === "") {
       this.taskDAO.disarmTrigger(id)
       this.sse.emit("taskpool", {
@@ -2616,7 +3354,9 @@ export class TasksService {
    *
    *  Effects (K6/K7), all after the ledger append:
    *    accepted ∧ i<n ∧ autoAdvance(默认开) → dispatchPhaseRound(i+1, 1)
-   *    accepted ∧ i=n                        → persisted 'archiving' + 票 08 hook
+   *    accepted ∧ i=n                        → persisted 'ready' + derived
+   *                                            awaiting_archive + consent guide
+   *                                            (归档只由 startArchive 启动)
    *    accepted ∧ autoAdvance=false          → nothing starts (awaiting_manual_trigger)
    *    rejected                              → `fix-feedback-r{N}.md` written into
    *                                            the phase's batch dir (home) +
@@ -2736,8 +3476,23 @@ export class TasksService {
       // accepted — 人的放行先落帧（UI 立刻把该 phase 变绿）。
       this.emitPhaseStatus(taskId, pv.index, "accepted", input.round_index)
       if (isLast) {
-        next_action = "archiving"
-        this.beginArchiving(taskId)
+        // archive-consent (2026-10-31): 验收 ≠ 归档。末 phase 通过后只停在人的
+        // 「待归档」门前，不自动开始归档（交付可能是长期不合并的 PR，归档会
+        // commit/push/写 wiki）。持久行落回 ready（合法、可中止），派生视图显示
+        // awaiting_archive；只有显式 startArchive 才进入 archiving。
+        next_action = "awaiting_archive"
+        this.taskDAO.disarmTrigger(taskId)
+        // silent：不发通用「ready · 待触发」帧，避免 UI 闪一张会误导触发/回草稿的卡。
+        this.setPersistedTaskStatus(taskId, "ready", { silent: true })
+        this.sse.emit("taskpool", {
+          event: TASK_STATUS_EVENT,
+          data: { task_id: taskId, status: "awaiting_archive" },
+        })
+        try {
+          getChatEventBridge().requestArchiveConsentGuide(taskId)
+        } catch {
+          /* observability only — never block acceptance */
+        }
       } else if (nextPhaseIndex !== null && spec.autoAdvance !== false) {
         // 阶段衔接信道 (ticket 01): 刚 accepted 的本 phase 也在前序集内
         // (deriveView 重读账本) — 下 phase 首轮开跑即带 handoff 路径。
@@ -2771,10 +3526,17 @@ export class TasksService {
    *  retryable via POST /:id/archive/retry (K3/US15). */
   private beginArchiving(taskId: string): void {
     this.setPersistedTaskStatus(taskId, "archiving")
-    // 知识中心票10: 进入 archiving 态的一刻起投喂（与归档编排并行、互不等待；
-    // 必须先于 archivingHook 分支的 return，替换内置归档器的宿主同样吃到投喂）。
-    this.fireArchiveIngest(taskId)
+    // 2026-10-31 AI-native 归档：主 Chat 只留一个归档总框 + 口述引导/执行。
+    // Fired before the orchestration so the model can read the still-present
+    // task home / workspace.
+    try {
+      getChatEventBridge().requestArchiveGuide(taskId)
+    } catch {
+      /* observability only — never block archiving */
+    }
     if (this.archivingHook) {
+      // 知识中心票10: 宿主替换内置归档器时仍先投喂（与归档编排并行、互不等待）。
+      this.fireArchiveIngest(taskId)
       try {
         const maybe = this.archivingHook(taskId)
         if (maybe && typeof (maybe as Promise<void>).then === "function") {
@@ -2793,6 +3555,7 @@ export class TasksService {
       }
       return
     }
+    // 内置归档器：投喂由 archiver 的 onPreflightPassed 触发（delta 决策之后）。
     void this.startArchiveRun(taskId)
   }
 
@@ -2806,6 +3569,13 @@ export class TasksService {
    *  would otherwise race the same worktrees). Set while a run is in flight. */
   private runningArchives = new Set<string>()
 
+  // ── 归档后构建产物清理 (2026-10-31) ────────────────────────────────
+  private cleaner: TaskArchiveCleaner | null = null
+  /** taskId → 本次进程里最近一次清理（测试/观测的 join 点）。 */
+  private cleanupRuns = new Map<string, Promise<ArchiveCleanupReport>>()
+  /** 正在清理的 task（双击/工具重入保护）。 */
+  private runningCleanups = new Set<string>()
+
   /** 票 08: the built-in archiver, lazily assembled against THIS service's
    *  db handle + task-home dir (endArchiving is injected as the sole 'done'
    *  writer — the archiver itself never touches tasks.status). */
@@ -2815,9 +3585,75 @@ export class TasksService {
         db: this.db,
         taskHomeService: this.taskHomeService,
         onComplete: (taskId) => this.endArchiving(taskId),
+        // 2026-10-31 收尾：知识投喂必须发生在 delta preflight 之后 —— 素材的
+        // PR diff 终点要用「纳入后」的 HEAD，否则放行后小修仍会漏出知识包。
+        onPreflightPassed: (taskId) => this.fireArchiveIngest(taskId),
       })
     }
     return this.archiver
+  }
+
+  /** 2026-10-31: 归档 done 后的构建产物清理器（懒装配，复用同一 db + task home）。 */
+  private getCleaner(): TaskArchiveCleaner {
+    if (!this.cleaner) {
+      this.cleaner = createArchiveCleaner({
+        db: this.db,
+        taskHomeService: this.taskHomeService,
+      })
+    }
+    return this.cleaner
+  }
+
+  /**
+   * done 后自动清理各 project worktree 的构建产物（node_modules / target /
+   * dist / classes / jar …）。fire-and-forget 安全：失败只在 cleanup.json 与
+   * 日志里体现，绝不影响 done。重复调用复用同一次 in-flight run。
+   */
+  startArchiveCleanup(taskId: string): Promise<ArchiveCleanupReport> {
+    const inFlight = this.cleanupRuns.get(taskId)
+    if (this.runningCleanups.has(taskId) && inFlight) return inFlight
+    this.runningCleanups.add(taskId)
+    const p = this.getCleaner()
+      .cleanupTask(taskId)
+      .catch((err: unknown): ArchiveCleanupReport => {
+        const message = err instanceof Error ? err.message : String(err)
+        console.error(`[TasksService] archive cleanup failed for ${taskId} (non-fatal):`, message)
+        return {
+          taskId,
+          startedAt: new Date().toISOString(),
+          finishedAt: new Date().toISOString(),
+          status: "failed",
+          total_freed_bytes: 0,
+          projects: [],
+          error: message,
+        }
+      })
+      .finally(() => this.runningCleanups.delete(taskId))
+    this.cleanupRuns.set(taskId, p)
+    return p
+  }
+
+  /** Agent 兜底：人明确点名的 ignored 路径（leftovers / 自动清扫失败项）逐个删。
+   *  仅 done 任务；安全校验与自动清扫同一套（ignore / 无跟踪 / 非受保护）。 */
+  async cleanArchiveLeftovers(
+    taskId: string,
+    project: string,
+    paths: string[],
+  ): Promise<{ report: ArchiveCleanupReport; results: CleanupLeftoversResult[] }> {
+    const row = this.taskDAO.getById(taskId)
+    if (!row) throw new TaskNotFoundError()
+    if (row.status !== "done") {
+      throw new TaskStatusConflictError(
+        `构建产物清理只在任务完成(done)后可用（当前状态: '${row.status}'）`,
+      )
+    }
+    if (this.runningCleanups.has(taskId)) {
+      throw new TaskStatusConflictError("构建产物清理正在运行，等本轮结束后再清理剩余")
+    }
+    if (!Array.isArray(paths) || paths.length === 0) {
+      throw new TaskStatusConflictError("paths 不能为空 —— 先列出要清理的 ignored 路径")
+    }
+    return this.getCleaner().cleanLeftovers(taskId, project, paths)
   }
 
   /** Start one orchestration run. archiveTask resolves with the report
@@ -2833,12 +3669,39 @@ export class TasksService {
     this.runningArchives.add(taskId)
     const p = this.getArchiver()
       .archiveTask(taskId)
+      .then((report) => {
+        if (!report.ok) {
+          if (report.preflight) {
+            try {
+              getChatEventBridge().notifyArchiveDeltaRequired(taskId, report.preflight)
+            } catch {
+              /* observability only */
+            }
+            return report
+          }
+          const failed = report.projects
+            .filter((p) => !p.ok)
+            .map((p) => `${p.project}${p.error ? `：${p.error}` : ""}`)
+            .join("；")
+          try {
+            getChatEventBridge().notifyTaskArchiveFailure(taskId, report.error ?? (failed || undefined))
+          } catch {
+            /* event routing is observability — never block the archive result */
+          }
+        }
+        return report
+      })
       .catch((err: unknown): ArchiveReport => {
         const message = err instanceof Error ? err.message : String(err)
         console.error(
           `[TasksService] archiving run failed for ${taskId} (task parked in 'archiving', retry=POST /:id/archive/retry):`,
           message,
         )
+        try {
+          getChatEventBridge().notifyTaskArchiveFailure(taskId, message)
+        } catch {
+          /* non-fatal */
+        }
         return { taskId, date: "", ok: false, projects: [], unattributedAdrs: [], unattributedNotes: 0, error: message }
       })
       .finally(() => this.runningArchives.delete(taskId))
@@ -2850,6 +3713,165 @@ export class TasksService {
    *  started through this process). Await seam for 202 callers/tests. */
   awaitArchiving(taskId: string): Promise<ArchiveReport> | null {
     return this.archiveRuns.get(taskId) ?? null
+  }
+
+  /** GET /:id/archive — state.json + report.json/report.md + reflection +
+   *  knowledge snapshot + in-flight (archive window / 归档总框). */
+  readArchive(taskId: string): TaskArchiveDTO {
+    const row = this.taskDAO.getById(taskId)
+    if (!row) throw new TaskNotFoundError()
+    const home = this.taskHomeService.homePath(taskId)
+    let state: unknown | null = null
+    try {
+      state = JSON.parse(fs.readFileSync(path.join(home, "archive", "state.json"), "utf-8")) as unknown
+    } catch {
+      /* not written yet / corrupt — the window shows "尚无报告" */
+    }
+    let report: ArchiveReport | null = null
+    try {
+      report = JSON.parse(fs.readFileSync(path.join(home, "archive", "report.json"), "utf-8")) as ArchiveReport
+    } catch {
+      /* 还没有完整跑过一轮（或旧任务只有 report.md） */
+    }
+    let reportMd: string | null = null
+    try {
+      reportMd = fs.readFileSync(path.join(home, "archive", "report.md"), "utf-8").slice(0, 200_000)
+    } catch {
+      /* not written yet */
+    }
+    let knowledge: TaskArchiveKnowledge | null = null
+    try {
+      knowledge = this.archiveKnowledgeHook?.(taskId) ?? null
+    } catch {
+      /* 知识中心不可用不影响归档读模型 */
+    }
+    let cleanup: ArchiveCleanupReport | null = null
+    try {
+      cleanup = JSON.parse(
+        fs.readFileSync(path.join(home, "archive", "cleanup.json"), "utf-8"),
+      ) as ArchiveCleanupReport
+    } catch {
+      /* 还没开始清理 / 旧任务 */
+    }
+    return {
+      task_id: taskId,
+      status: row.status,
+      in_flight: this.runningArchives.has(taskId),
+      projects: parseJSON<string[]>(row.project_ids, []),
+      state,
+      report,
+      report_md: reportMd,
+      reflection: readReflectionStore(home),
+      knowledge,
+      amendments: readArchiveAmendments(home),
+      cleanup,
+      cleanup_in_flight: this.runningCleanups.has(taskId),
+    }
+  }
+
+  /** done 之后的归档增补（append-only）。不做任何代码/spec 写入 —— 那是跟进任务的职责。 */
+  async appendArchiveAmendment(
+    taskId: string,
+    input: ArchiveAmendmentInput,
+    ingest?: ReflectionIngest,
+  ): Promise<{ ok: true; amendment: ArchiveAmendment; amendments: ArchiveAmendment[] }> {
+    const row = this.taskDAO.getById(taskId)
+    if (!row) throw new TaskNotFoundError()
+    if (row.status !== "done") {
+      throw new TaskStatusConflictError(
+        `归档增补只在任务完成(done)后可用（当前状态: '${row.status}'）。要再开发请开跟进任务。`,
+      )
+    }
+    const reason = (input.reason ?? "").trim()
+    const content = (input.content ?? "").trim()
+    if (!reason) throw new TaskStatusConflictError("归档增补必须写 reason（为什么补）")
+    if (!content) throw new TaskStatusConflictError("归档增补必须写 content（补什么）")
+    const home = this.taskHomeService.homePath(taskId)
+    const dir = path.join(home, "archive")
+    const amendment: ArchiveAmendment = {
+      id: randomUUID(),
+      at: new Date().toISOString(),
+      reason,
+      content,
+      ...(input.target?.trim() ? { target: input.target.trim() } : {}),
+      ingest: null,
+    }
+    if (input.ingest) {
+      if (!ingest) throw new TaskStatusConflictError("知识投喂通道未就绪，稍后重试。")
+      const res = await ingest({
+        title: input.title?.trim() || reason,
+        text: `> 修订自归档任务 ${taskId}（${reason}）\n\n${content}`,
+        origin: `task-amendment:${taskId}:${amendment.id}`,
+      })
+      amendment.ingest = { ...res }
+    }
+    fs.mkdirSync(dir, { recursive: true })
+    fs.appendFileSync(path.join(dir, "amendments.jsonl"), `${JSON.stringify(amendment)}\n`, "utf-8")
+    return { ok: true, amendment, amendments: readArchiveAmendments(home) }
+  }
+
+  /** POST /:id/reflection/decision — ingest or skip ONE knowledge proposal. */
+  async decideReflection(
+    taskId: string,
+    input: ReflectionDecisionInput,
+    ingest?: ReflectionIngest,
+  ): Promise<ReflectionDecisionResult> {
+    const row = this.taskDAO.getById(taskId)
+    if (!row) throw new TaskNotFoundError()
+    const home = this.taskHomeService.homePath(taskId)
+    const store = readReflectionStore(home)
+    if (!store) {
+      throw new TaskStatusConflictError("该任务还没有归档反思建议（需先进入 archiving 并完成一次反思）。")
+    }
+    const entry = store.entries.find((e) => e.id === input.entry_id)
+    if (!entry) throw new TaskNotFoundError("反思条目不存在")
+    const existing = store.decisions[entry.id]
+    // Idempotent replay: same action → return what already happened.
+    if (existing && existing.action === input.action && (input.action === "skip" || existing.raw_path)) {
+      return { ok: true, store, decision: existing }
+    }
+    if (input.action === "ingest" && !ingest) {
+      throw new TaskStatusConflictError("知识投喂通道未就绪，稍后重试。")
+    }
+    const decision: ReflectionDecision = {
+      action: input.action,
+      at: new Date().toISOString(),
+      ...(input.title ? { title: input.title } : {}),
+    }
+    if (input.action === "ingest") {
+      const res = await ingest!({
+        title: input.title?.trim() || entry.title,
+        text: input.content?.trim() || entry.content,
+        origin: `task-reflection:${taskId}:${entry.id}`,
+      })
+      if (res.raw_path) decision.raw_path = res.raw_path
+      if (res.compile_task_id) decision.compile_task_id = res.compile_task_id
+    }
+    store.decisions[entry.id] = decision
+    writeReflectionStore(home, store)
+    return { ok: true, store, decision }
+  }
+
+  /** POST /api/tasks/:id/archive/start — 人对「现在归档」的明确同意。
+   *  只有派生 awaiting_archive（末 phase 已通过、归档尚未启动）能进入 archiving。
+   *  校验用派生态而非持久 ready：崩溃遗留的 persisted running + 末轮 accepted 仍可
+   *  归档，不会卡死。这是 beginArchiving 现在唯一的调用方；同步翻 archiving 本身
+   *  就是双击保护（第二次派生已变 archiving → 409）。 */
+  startArchive(taskId: string): TaskDTO {
+    const row = this.taskDAO.getById(taskId)
+    if (!row) throw new TaskNotFoundError()
+    const spec = parseJSON<{ format?: string }>(row.task_spec, {})
+    if (spec.format !== "v4") {
+      throw new TaskStatusConflictError("归档启动仅适用于 v4 任务（task_spec.format === 'v4'）")
+    }
+    const view = this.deriveView(row)
+    if (view.taskStatus !== "awaiting_archive") {
+      throw new TaskStatusConflictError(
+        `只有停在「待归档」的任务可以开始归档（当前派生态: '${view.taskStatus}'）`,
+      )
+    }
+    this.beginArchiving(taskId)
+    return toDTO(this.taskDAO.getById(taskId) ?? row)
   }
 
   /** POST /api/tasks/:id/archive/retry — project 粒度幂等续跑 (K11/US15).
@@ -2874,6 +3896,45 @@ export class TasksService {
     return toDTO(fresh)
   }
 
+  /** 2026-10-31 收尾：人对「放行后未提交改动」的明确选择。
+   *  include = 先把 dirty 落一个归档 delta commit 再继续；exclude = 记录后继续。
+   *  决策按 dirty 指纹落盘，归档器重跑时同指纹才沿用；新文件会重新问人。 */
+  resolveArchiveDelta(taskId: string, action: ArchiveDeltaAction): ArchiveDeltaResult {
+    const row = this.taskDAO.getById(taskId)
+    if (!row) throw new TaskNotFoundError()
+    if (row.status !== "archiving") {
+      throw new TaskStatusConflictError(
+        `只有归档中(archiving)的任务可以决定放行后改动 (当前状态: '${row.status}')`,
+      )
+    }
+    const spec = parseJSON<{ format?: string }>(row.task_spec, {})
+    if (spec.format !== "v4") {
+      throw new TaskStatusConflictError("放行后改动决策仅适用于 v4 任务")
+    }
+    if (this.runningArchives.has(taskId)) {
+      throw new TaskStatusConflictError("归档编排正在运行，等本轮 preflight 结束后再决定")
+    }
+    const delta = inspectTaskDelta(this.db, taskId)
+    const dirty = delta.filter((d) => d.dirty_files.length > 0)
+    if (dirty.length === 0) {
+      throw new TaskStatusConflictError("工作区已干净（没有未提交改动）—— 直接重试归档即可")
+    }
+    const home = this.taskHomeService.homePath(taskId)
+    const dir = path.join(home, "archive")
+    fs.mkdirSync(dir, { recursive: true })
+    fs.writeFileSync(
+      path.join(dir, "delta-decision.json"),
+      JSON.stringify(
+        { action, fingerprint: dirtyFingerprint(delta), at: new Date().toISOString() },
+        null,
+        2,
+      ),
+      "utf-8",
+    )
+    void this.startArchiveRun(taskId)
+    return { ok: true, decision: action, dirty_projects: dirty.map((d) => d.project) }
+  }
+
   /** 票 08: ALL projects green → 'done' (the task's only archive-completion
    *  writer; K3 归档全绿才算 done). Sets completed_at and emits task_status
    *  so the board card leaves 「归档中」. Belt: only fires from 'archiving' —
@@ -2890,6 +3951,15 @@ export class TasksService {
       event: TASK_STATUS_EVENT,
       data: { task_id: taskId, status: "done" },
     })
+    // 2026-10-31: done 之后补一步 — 自动清理各 project worktree 的构建产物。
+    // fire-and-forget；失败只落 cleanup.json / 日志，不影响 done。
+    void this.startArchiveCleanup(taskId)
+    // 2026-10-31 AI-native 归档：done 后一次播报（未决反思只提醒，不再逐条追问）。
+    try {
+      getChatEventBridge().requestArchiveDoneGuide(taskId)
+    } catch {
+      /* observability only — never block done */
+    }
     console.log(`[TasksService] task ${taskId} archived → done (ws retention exemption lifted)`)
   }
 
@@ -3047,10 +4117,18 @@ export class TasksService {
    *  (round-2 spec, propagation writes per D14, autoAdvance toggle) is part of
    *  the flow, and an edit during a running round takes effect at the NEXT
    *  seed (K16: 隔离即冻结 — seed is a one-way snapshot, no lock needed).
-   *  Frozen only at human-decided terminal states: done / aborted / archiving
-   *  (归档中 spec 已定稿，改动应走 archive/retry 后的另案). */
+   *  Frozen only at human-decided terminal states: done / aborted / archiving,
+   *  and at the derived awaiting_archive park (末 phase 已验收、归档未启动 ——
+   *  验收已冻结，改动应走归档后的跟进任务). */
   private isSpecEditable(existing: TaskRow): boolean {
-    if (existing.status === "draft" || existing.status === "ready") return true
+    if (existing.status === "draft") return true
+    if (existing.status === "ready") {
+      // 停放态持久行仍是 ready；派生 awaiting_archive 必须继续冻结。
+      if (isV4TaskSpec(existing.task_spec) && this.deriveView(existing).taskStatus === "awaiting_archive") {
+        return false
+      }
+      return true
+    }
     if (!isV4TaskSpec(existing.task_spec)) return false
     return (
       existing.status !== "done" &&
@@ -3063,7 +4141,11 @@ export class TasksService {
    *  spec edits — same discipline as the job's own status mirrors (票03).
    *  Idempotent fast-path: same value → no UPDATE, no SSE (no board flicker on
    *  re-derivation of an unchanged state). */
-  private setPersistedTaskStatus(taskId: string, status: TaskStatus): void {
+  private setPersistedTaskStatus(
+    taskId: string,
+    status: TaskStatus,
+    opts: { silent?: boolean } = {},
+  ): void {
     const row = this.taskDAO.getById(taskId)
     if (!row || row.status === status) return
     const nowIso = new Date().toISOString()
@@ -3073,6 +4155,8 @@ export class TasksService {
         "UPDATE tasks SET status = ?, updated_at = ?, completed_at = NULL WHERE id = ? AND deleted_at IS NULL",
       )
       .run(status, nowIso, taskId)
+    // silent = 状态行落库但对外只发派生事件（acceptance 停车用 awaiting_archive）。
+    if (opts.silent) return
     this.sse.emit("taskpool", {
       event: TASK_STATUS_EVENT,
       data: { task_id: taskId, status },
@@ -3516,19 +4600,26 @@ export class TasksService {
     })
   }
 
-  /** DELETE /api/tasks/:id — soft-delete. 票03: there is nothing to cascade — a task's
-   *  runs are executions rows (they stay as history like any other run) and no private
-   *  definition row exists to reap, which is precisely why the orphan reaper could be
-   *  deleted with this ticket. Everything but a RUNNING task is discardable: 'running' is
-   *  the only status that still holds a live engine and a compute slot, so it must be
-   *  aborted first; done/failed/aborted rows are pure history and delete cleanly.
+  /** DELETE /api/tasks/:id — soft-delete. 票03: a task's runs are executions rows (they
+   *  stay as history like any other run) and no private definition row exists to reap,
+   *  which is precisely why the orphan reaper could be deleted with this ticket.
+   *  Everything but a RUNNING task is discardable: 'running' is the only status that
+   *  still holds a live engine and a compute slot, so it must be aborted first;
+   *  done/failed/aborted rows are pure history and delete cleanly.
    *
    *  04 (AC5/ADR-0011/SW-BP14): a DRAFT task's home dir (`~/.octopus/tasks/{id}/`)
    *  is reaped on delete (no orphan dirs). reapHome does NOT follow junctions/
    *  symlinks inside skills/ — a link to a registry skill source must not drag
    *  that source into the void. A non-draft task (ready/done/failed/aborted)
    *  PRESERVES its home (artifacts are the record of what ran; kept until a
-   *  future hard-delete). Idempotent on a missing home (v2 tasks have none). */
+   *  future hard-delete). Idempotent on a missing home (v2 tasks have none).
+   *
+   *  2026-10-29: the task's bound main-chat thread (`source_chat_session_id`, and the
+   *  legacy `doer_session_id`) is soft-deleted with the row. The chat sidebar hides
+   *  task-bound sessions; once the task row is gone the binding is gone too, so a
+   *  surviving session falls through into the ordinary 会话 list (user bug report:
+   *  「删掉的任务跑到会话去了」). The session ROW is kept (is_deleted=1) — history,
+   *  not a live conversation. */
   deleteTask(id: string): { ok: true } {
     const existing = this.taskDAO.getById(id)
     if (!existing) throw new TaskNotFoundError()
@@ -3549,11 +4640,53 @@ export class TasksService {
           err instanceof Error ? err.message : String(err),
         )
       }
+      // One-workspace model: a draft's shell workspace has no history — remove
+      // it together with the planning home.
+      if (existing.workspace_id) {
+        try {
+          if (typeof this.workspaceService?.deleteShell === "function") {
+            this.workspaceService.deleteShell(existing.workspace_id)
+          }
+        } catch (err: unknown) {
+          console.error(
+            `[TasksService] deleteTask: deleteShell failed for ${existing.workspace_id} (non-fatal):`,
+            err instanceof Error ? err.message : String(err),
+          )
+        }
+      }
     }
     // 票03: nothing to cascade — a task's runs are executions rows (they outlive it as
     // history, like any other run) and there is no private definition row to reap. That
     // absence is why the orphan reaper dies with this ticket.
     this.taskDAO.softDelete(id)
+    // 2026-10-29 用户 bug「删掉的任务跑到会话去了」：任务线程的主会话
+    // （source_chat_session_id 指向的 main session）靠 tasks 绑定关系从侧栏
+    // 「会话」列表里隐去 —— chat-sidebar 的 visibleSessions = 全部会话 − 被任务
+    // 绑定的会话。任务行一软删，绑定消失，这条聊天就掉进普通会话列表，看起来
+    // 像被删的任务换了个身份继续存在。任务线程是任务本体的一部分（one main
+    // thread per task），删除任务 = 线程会话一并软删；doer_session_id 是 M6 前
+    // 的遗留执行线程，同样随任务走（会话行保留，is_deleted=1，历史不丢）。
+    // 仍被另一条活任务绑定的会话不动（getBySourceChatSession 排除已软删行）。
+    if (this.agentSessionDAO) {
+      const stillBound = existing.source_chat_session_id
+        ? this.taskDAO.getBySourceChatSession(existing.source_chat_session_id)
+        : null
+      const sessionIds = new Set<string>()
+      if (existing.source_chat_session_id && !stillBound) {
+        sessionIds.add(existing.source_chat_session_id)
+      }
+      if (existing.doer_session_id) sessionIds.add(existing.doer_session_id)
+      for (const sessionId of sessionIds) {
+        try {
+          this.agentSessionDAO.softDelete(sessionId)
+        } catch (err: unknown) {
+          console.error(
+            `[TasksService] deleteTask: session soft-delete failed for ${sessionId} (non-fatal — task soft-deleted):`,
+            err instanceof Error ? err.message : String(err),
+          )
+        }
+      }
+    }
     return { ok: true }
   }
 }

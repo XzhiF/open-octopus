@@ -84,7 +84,7 @@ let taskDAO: TaskDAO
 function insertTask(id: string, sessionId: string, spec: Record<string, unknown>, projectIds: string[]): void {
   const now = new Date().toISOString()
   db.prepare(
-    `INSERT INTO tasks (id, org, name, status, task_spec, authoring_resources, resources,
+    `INSERT INTO tasks (id, repo_group, name, status, task_spec, authoring_resources, resources,
       skills, project_ids, version, created_at, updated_at, source_chat_session_id)
      VALUES (?, ?, 'E2E_TD gate', 'draft', ?, '[]', '[]', '[]', ?, 1, ?, ?, ?)`,
   ).run(id, ORG, JSON.stringify(spec), JSON.stringify(projectIds), now, now, sessionId)

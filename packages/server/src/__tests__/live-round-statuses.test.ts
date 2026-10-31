@@ -22,7 +22,7 @@ beforeAll(() => {
   db = new Database(":memory:")
   applySchema(db)
   dao = new ExecutionDAO(db)
-  db.prepare(`INSERT INTO workspaces (id,name,org,path,created_at,updated_at) VALUES (?,?,?,?,?,?)`)
+  db.prepare(`INSERT INTO workspaces (id,name,repo_group,path,created_at,updated_at) VALUES (?,?,?,?,?,?)`)
     .run("ws-live-1", "live-ws", "e2e-live", "C:/x", new Date().toISOString(), new Date().toISOString())
 })
 afterAll(() => { db.close() })

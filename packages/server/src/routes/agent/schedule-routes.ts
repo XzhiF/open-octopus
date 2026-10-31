@@ -20,8 +20,7 @@ export function createScheduleRoutes(deps: ScheduleRouteDeps): Hono {
   // M3: Cron job registration
   app.post('/schedules/register', async (c) => {
     try {
-      const org = c.req.header('X-Octopus-Org') || (c.get('org') as string)
-      if (!org) return c.json(createAgentError('ORG_NOT_FOUND', 'Organization not resolved'), 403)
+      const org = c.req.header('X-Octopus-Org') || (c.get('org') as string) || ''
 
       const body = await c.req.json<{
         name?: string; cron?: string; prompt?: string; description?: string
@@ -64,14 +63,13 @@ export function createScheduleRoutes(deps: ScheduleRouteDeps): Hono {
   // M3: Cron job manual execution
   app.post('/schedules/:id/execute', async (c) => {
     try {
-      const org = c.req.header('X-Octopus-Org') || (c.get('org') as string)
-      if (!org) return c.json(createAgentError('ORG_NOT_FOUND', 'Organization not resolved'), 403)
+      const org = c.req.header('X-Octopus-Org') || (c.get('org') as string) || ''
       const id = c.req.param('id')
 
 
       let schedule: { name: string; config: string } | undefined
       try {
-        schedule = scheduleConfigDAO.findScheduleConfigByIdAndOrg(id, org) ?? undefined
+        schedule = scheduleConfigDAO.findScheduleConfigById(id) ?? undefined
       } catch { /* fallback */ }
 
       const adapter = getSchedulerAdapter(org)

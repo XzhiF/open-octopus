@@ -113,7 +113,6 @@ export function seedBuiltinCodeJobs(dao: ScheduleConfigDAO, org = ""): SeedResul
     if (!existing) {
       dao.insertSchedule({
         id,
-        org,
         name: job.name,
         cron_expression: job.cronExpression,
         timezone: job.timezone,

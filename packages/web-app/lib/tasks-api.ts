@@ -19,6 +19,8 @@ import type {
   ArtifactIndexEntry,
   AssistWorkflowRun,
   TaskPhaseStatus,
+  LlmUsageSummary,
+  ModelUsageBreakdown,
 } from "@octopus/shared"
 
 // ── Task read-model aliases (ADR-0021 票05) ─────────────────────────
@@ -83,6 +85,7 @@ export type DerivedTaskStatus =
   | "running"
   | "paused"
   | "awaiting_review"
+  | "awaiting_archive"
   | "archiving"
   | "done"
   | "aborted"
@@ -157,7 +160,8 @@ export interface TaskDerivedView {
 // ============ Input types ============
 
 export interface CreateTaskInput {
-  org: string
+  /** Repo-registry key only (org demotion). */
+  repo_group?: string
   /** 必填（task-board-title 改版）：新建任务时用户输入标题，
    *  服务端拒绝空 name，不再事后由对话/autosave 生成。 */
   name: string
@@ -188,6 +192,10 @@ export interface CreateTaskInput {
   task_spec?: Partial<TaskSpec>
   /** Top-level project ids (wins over preset.projects; both → project_ids col). */
   project_ids?: string[]
+  /** v58: reuse an existing workspace (chat cwd picker). */
+  workspace_id?: string
+  /** v58: attach an arbitrary directory as the task workspace. */
+  cwd?: string
   skills?: string[]
   resources?: ResourceRef[]
   authoring_resources?: ResourceRef[]
@@ -209,7 +217,8 @@ export interface UpdateTaskInput {
 
 export interface ListTasksParams {
   status?: TaskStatus
-  org?: string
+  /** Repo-registry key filter (org demotion). */
+  repo_group?: string
   /** 票06 (语义摘要进任务板): 服务端关键字搜索 —— 对 name ∨ semantic_summary LIKE 过滤。
    *  空/纯空白由服务端视为不过滤（回归保护）。 */
   q?: string
@@ -270,7 +279,7 @@ function buildUrl(path: string, params?: Record<string, string | undefined>): st
  *  row carrying the 票03 trigger columns + its current instance (`execution`), which
  *  is what the 「已排队」 badge and the 上一轮 status now read. */
 export async function listTasks(params?: ListTasksParams): Promise<{ items: TaskView[] }> {
-  const res = await fetch(buildUrl("", { status: params?.status, org: params?.org, q: params?.q }))
+  const res = await fetch(buildUrl("", { status: params?.status, repo_group: params?.repo_group, q: params?.q }))
   return handleResponse<{ items: TaskView[] }>(res)
 }
 
@@ -333,8 +342,13 @@ export async function deleteTask(id: string): Promise<{ ok: true }> {
  *  missing[]}`; this function throws a {@link TaskReadyGateError} carrying `.missing`
  *  so the UI can show exactly what to confirm before enqueue (server-side gate
  *  is the backstop for UI temp state lost on modal close). 409 if not draft. */
-export async function readyTask(id: string): Promise<TaskView> {
-  const res = await fetch(`${getServerUrl()}${BASE}/${id}/ready`, { method: "POST" })
+export async function readyTask(id: string, opts?: { silentCard?: boolean }): Promise<TaskView> {
+  const res = await fetch(`${getServerUrl()}${BASE}/${id}/ready`, {
+    method: "POST",
+    ...(opts?.silentCard
+      ? { headers: { "Content-Type": "application/json" }, body: JSON.stringify({ silent_card: true }) }
+      : {}),
+  })
   if (!res.ok) {
     const body = await res.json().catch(() => ({}))
     // D18 gate miss: 409 + missing[] → typed error so the UI shows the gaps.
@@ -493,10 +507,12 @@ export interface AcceptanceInput {
 
 /** What the caller must do next (票 07):
  *  - "dispatched"               a new round is already running (advance or retry)
- *  - "archiving"                last phase accepted — the task is in 归档 (票 08)
+ *  - "awaiting_archive"         last phase accepted — archive is NOT started; the
+ *                               human must say 「归档」 (2026-10-31 archive-consent)
+ *  - "archiving"                legacy server: last phase accepted auto-started archive
  *  - "awaiting_manual_trigger"  accepted with autoAdvance=false — parked at the
  *                               human gate (K6/US11), nothing was started. */
-export type AcceptanceNextAction = "dispatched" | "archiving" | "awaiting_manual_trigger"
+export type AcceptanceNextAction = "dispatched" | "awaiting_archive" | "archiving" | "awaiting_manual_trigger"
 
 /** Round identity the server actually dispatched (present iff
  *  next_action === "dispatched"). 票03: `schedule_id` left with the envelope row —
@@ -625,6 +641,280 @@ export async function postArchiveRetry(taskId: string): Promise<{ ok: boolean; t
   return res.json()
 }
 
+/** POST /api/tasks/:id/archive/start — 人明确说「归档」后启动归档（仅待归档态，
+ *  202 异步；完成以 task_status SSE 'done' 为准）。正常路径由主 Chat 的
+ *  start_archive 工具调用；前端不提供直接按钮。 */
+export async function postArchiveStart(taskId: string): Promise<{ ok: boolean; task_id: string; status: string }> {
+  const res = await fetch(buildUrl(`/${taskId}/archive/start`), { method: "POST" })
+  if (!res.ok) {
+    const body = (await res.json().catch(() => ({}))) as { error?: string }
+    throw new TaskApiError(body.error ?? `HTTP ${res.status}`, res.status)
+  }
+  return res.json()
+}
+
+// ── 2026-10-28 task-thread: lifecycle usage / archive / reflection ────
+
+export interface TaskUsagePart extends LlmUsageSummary {
+  kind: "chat" | "execution"
+  label: string
+  session_id?: string
+  execution_id?: string
+  phase_index?: number | null
+  round_index?: number | null
+  workflow_ref?: string | null
+  /** 该轮实跑区间（消耗窗「按轮」时间条 + 明细时长列）。chat 行没有起止事实 → 不出现。 */
+  started_at?: string | null
+  completed_at?: string | null
+  /** 该轮内 agent 节点 duration 之和（ms，工时口径：并行/重试会叠加）。 */
+  agent_duration_ms?: number
+  /** 该轮实跑时长（ms，与 timing.duration_ms 同一谓词；未起跑/暂停的轮不出现）。 */
+  duration_ms?: number
+  /** 这行是不是任务的一「轮」（根执行 / 带 phase 的实例）。fan-out arm 与所属轮
+   *  的时间区间重叠，按轮时间条只画 instance 行。旧服务端不带 → 视为 true。 */
+  instance?: boolean
+}
+
+/** 任务耗时汇总（GET /:id/usage → timing，2026-10-31 消耗窗「总耗时」卡）。
+ *  duration_ms 与看板 ⏱ / 验收窗「实际用时」同源（run_stats）；
+ *  agent_duration_ms 是 agent 节点工时，可能接近或超过 duration_ms。 */
+export interface TaskTimingSummary {
+  /** 计入实跑段的轮数。 */
+  count: number
+  duration_ms: number
+  agent_duration_ms: number
+}
+
+export interface TaskUsagePayload {
+  task_id: string
+  /** 账本合计 + 按模型分解（2026-10-29：任务「消耗」窗口与 composer chip 的模型行）。 */
+  summary: LlmUsageSummary & { modelBreakdown?: Record<string, ModelUsageBreakdown> }
+  breakdown: TaskUsagePart[]
+  /** 一轮都没跑过时 count=0（窗口整卡隐藏）。旧服务端可能不带 → 按无耗时处理。 */
+  timing?: TaskTimingSummary
+}
+
+/** GET /api/sessions/:id/usage — 会话账本（2026-10-31 消耗窗·会话版）。
+ *  与任务账本同形（summary），多一份 timing 口径和本会话跑过的工作流列表。 */
+export interface SessionUsageWorkflowWire {
+  task_id: string
+  name: string
+  status: string
+  duration_ms: number
+  tokens: number
+  total_calls: number
+  cost: { usd: number | null; complete: boolean }
+}
+
+export interface SessionTimingSummaryWire {
+  /** 对话调用时间区间并集 —— 重复上报 / 并行只算一次。 */
+  conversation_ms: number
+  /** 本会话发起的全部任务实跑段之和。 */
+  workflow_ms: number
+  /** conversation_ms + workflow_ms（重叠不扣减）。 */
+  duration_ms: number
+  /** 对话调用时长合计 + 各工作流 agent 节点时长（工时，可能 > duration_ms）。 */
+  agent_duration_ms: number
+}
+
+export interface SessionUsagePayload {
+  session_id: string
+  summary: LlmUsageSummary & { modelBreakdown?: Record<string, ModelUsageBreakdown> }
+  timing: SessionTimingSummaryWire
+  workflows: SessionUsageWorkflowWire[]
+}
+
+export async function getSessionUsage(sessionId: string): Promise<SessionUsagePayload> {
+  const res = await fetch(`${getServerUrl()}/api/sessions/${encodeURIComponent(sessionId)}/usage`, {
+    cache: 'no-store',
+  })
+  return handleResponse<SessionUsagePayload>(res)
+}
+
+export interface ReflectionEntryWire {
+  id: string
+  title: string
+  content: string
+  target?: string
+}
+
+export interface ReflectionDecisionWire {
+  action: "ingest" | "skip"
+  at: string
+  title?: string
+  raw_path?: string
+  compile_task_id?: string
+}
+
+export interface ReflectionStoreWire {
+  task_id: string
+  created_at: string
+  entries: ReflectionEntryWire[]
+  decisions: Record<string, ReflectionDecisionWire>
+}
+
+export interface ArchiveTermConflictWire {
+  term: string
+  incoming: string
+  existing: string
+}
+
+/** 单个 project 的归档结果（archive/report.json，2026-10-31）。 */
+export interface ArchiveProjectReportWire {
+  project: string
+  ok: boolean
+  skippedByState?: boolean
+  adrMerged: number
+  adrSkipped: string[]
+  termsAppended: number
+  termConflicts: ArchiveTermConflictWire[]
+  commit: string | null
+  pushed: boolean
+  pr?: { action: string; url?: string; note?: string } | null
+  error?: string
+}
+
+/** 末轮 end → 归档时 HEAD 的现场（2026-10-31 收尾）。 */
+export interface ArchiveDeltaWire {
+  project: string
+  dir: string | null
+  from: string | null
+  head: string | null
+  commits: number
+  subjects: string[]
+  dirty_files: string[]
+  error?: string
+}
+
+export interface ArchivePreflightWire {
+  blocked: true
+  dirty_projects: string[]
+  message: string
+}
+
+export interface ArchiveReportWire {
+  taskId: string
+  date: string
+  ok: boolean
+  projects: ArchiveProjectReportWire[]
+  unattributedAdrs: string[]
+  unattributedNotes: number
+  error?: string
+  delta?: ArchiveDeltaWire[]
+  preflight?: ArchivePreflightWire | null
+  delta_decision?: 'include' | 'exclude' | null
+}
+
+/** done 之后的只增不改增补记录。 */
+export interface ArchiveAmendmentWire {
+  id: string
+  at: string
+  reason: string
+  content: string
+  target?: string
+  ingest?: { raw_path?: string; compile_task_id?: string } | null
+}
+
+/** 素材包单件（manifest 投影）。 */
+export interface ArchiveKnowledgeItemWire {
+  kind: string
+  name: string
+  bytes: number
+  excluded: boolean
+  path: string
+}
+
+/** 归档素材包 / 编译状态（知识中心只读快照）。 */
+export interface ArchiveKnowledgeWire {
+  pack_items: number
+  /** 包内全部件（含已剔除）；旧服务端可能不返回。 */
+  items?: ArchiveKnowledgeItemWire[]
+  compile_state: string | null
+  compile_position: number | null
+}
+
+/** done 后构建产物清理（archive/cleanup.json，2026-10-31）。 */
+export interface ArchiveCleanupRemovedWire {
+  path: string
+  kind: 'dir' | 'file'
+  bytes: number
+}
+
+export interface ArchiveCleanupLeftoverWire {
+  path: string
+  kind: 'dir' | 'file'
+  /** null = 目录过大，计量超预算。 */
+  bytes: number | null
+}
+
+export interface ArchiveCleanupProjectWire {
+  project: string
+  dir: string | null
+  ok: boolean
+  removed_count: number
+  removed?: ArchiveCleanupRemovedWire[]
+  freed_bytes: number
+  skipped?: Array<{ path: string; reason: string }>
+  failed?: Array<{ path: string; message: string }>
+  leftovers?: ArchiveCleanupLeftoverWire[]
+  leftover_count: number
+  error?: string
+}
+
+export interface ArchiveCleanupReportWire {
+  taskId: string
+  startedAt: string
+  finishedAt: string | null
+  status: 'running' | 'done' | 'partial' | 'failed'
+  total_freed_bytes: number
+  projects: ArchiveCleanupProjectWire[]
+  error?: string
+}
+
+export interface TaskArchivePayload {
+  task_id: string
+  status: string
+  in_flight: boolean
+  /** 任务 project_ids（总框「git 同步 x/y」的分母）。 */
+  projects: string[]
+  state: unknown | null
+  /** 结构化归档报告；null = 还没有完整跑过一轮。 */
+  report: ArchiveReportWire | null
+  report_md: string | null
+  reflection: ReflectionStoreWire | null
+  knowledge: ArchiveKnowledgeWire | null
+  amendments: ArchiveAmendmentWire[]
+  /** done 后构建产物清理；null = 尚未开始 / 旧任务。 */
+  cleanup: ArchiveCleanupReportWire | null
+  /** 本进程里清理是否在跑（running + false = 中断）。 */
+  cleanup_in_flight: boolean
+}
+
+/** GET /api/tasks/:id/usage — the task's whole-lifecycle ledger. */
+export async function getTaskUsage(taskId: string): Promise<TaskUsagePayload> {
+  const res = await fetch(buildUrl(`/${taskId}/usage`))
+  return handleResponse<TaskUsagePayload>(res)
+}
+
+/** GET /api/tasks/:id/archive — archive window read model. */
+export async function getTaskArchive(taskId: string): Promise<TaskArchivePayload> {
+  const res = await fetch(buildUrl(`/${taskId}/archive`))
+  return handleResponse<TaskArchivePayload>(res)
+}
+
+/** POST /api/tasks/:id/reflection/decision — ingest or skip one proposal. */
+export async function postReflectionDecision(
+  taskId: string,
+  input: { entry_id: string; action: "ingest" | "skip"; title?: string; content?: string },
+): Promise<{ ok: true; store: ReflectionStoreWire; decision: ReflectionDecisionWire }> {
+  const res = await fetch(buildUrl(`/${taskId}/reflection/decision`), {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(input),
+  })
+  return handleResponse(res)
+}
+
 /** POST /api/tasks/:id/spec-field — agent `update_task_spec_field` tool
  *  endpoint, AND the v3 user-direct-edit path. Merges a single field into the
  *  right column, bumps version, emits `spec_field_update` SSE so the SpecPanel
@@ -697,14 +987,11 @@ export async function getArtifactContent(taskId: string, artifactPath: string): 
   return res.json()
 }
 
-// ── 票 11 ▣ 产物分组清单（⑩真机回补 — 只读薄 seam）──────────────────────
-// GET /:id/artifacts/manifest — 五组磁盘直扫（需求票面/轮次报告/证据/验收台账/
-// 原型）。票面原文路径 /artifacts 已被票 06 产物索引（ArtifactIndexEntry[]，
-// ArtifactsCard 在用）占用，分组清单落同子树新叶。缺目录 = 空组 200 降级。
+// ── 票 11 ▣ 产物清单（2026-10-29 方案2 — phase × 轮次）────────────────────
+// GET /:id/artifacts/manifest — server 按 phase 批次目录 + `-rN` 归组；前端只
+// 渲染（types.ts::ArtifactManifestBody 单源）。缺目录 = 空数组 200 降级。
 // GET /:id/artifacts/manifest/content?path=home:…|ws:… — 预览现读；400（.. 遍历）
 // /403（越界）/404（缺文件）/413（超限）都经 ArtifactContentError 带 status 抛出。
-// wire 形 = lib/types.ts::ArtifactManifestItem/Group/Body 单源（票11 收口⑤ ——
-// 原 tasks-api 与 artifacts-model 两份本地副本塌缩，同 LlmNodeAggregatesWire 惯例）。
 
 export async function getArtifactManifest(taskId: string): Promise<ArtifactManifestBody> {
   const res = await fetch(buildUrl(`/${taskId}/artifacts/manifest`))
@@ -933,6 +1220,11 @@ export interface RoundDiffPayload {
   /** harness 干预次数（executions.harness_summary）；null = 无数据。 */
   interventions: number | null
   repos: RepoDiff[]
+  /** 所锚定的轮次坐标（server 2026-10-28 起带上）：roundIndex === 1 表示
+   *  本 phase 首轮 ⇒ 累计与本轮同区间，UI 据此禁用累计开关。旧 server 无键
+   *  = undefined（保持开关可用，诚实降级）。 */
+  phaseIndex?: number | null
+  roundIndex?: number
   /** 票09 —— 决策后台账预览 + server ledger 同吃这份 payload。旧 server 无键时
    *  undefined（UI 如实归零/显示无），与 0 是两回事但此处统一按「无」渲染。 */
   manualInterventions?: LedgerInterventionEntry[]
@@ -965,9 +1257,25 @@ export interface VerifySummary {
  *  cumulative = 本 phase 首轮 start..本轮 end（修复轮看得到全 phase 终态）。 */
 export type RoundDiffScope = "round" | "cumulative"
 
-/** GET /:id/round-diff — 待验收轮的真实 git 区间统计。409 无 awaiting / 404 无任务。 */
-export async function getRoundDiff(taskId: string, scope: RoundDiffScope = "round"): Promise<RoundDiffPayload> {
-  const res = await fetch(buildUrl(`/${taskId}/round-diff`, scope === "cumulative" ? { scope } : {}))
+/** GET /:id/round-diff — 实物 git 区间统计。服务端解析顺序：awaiting 轮 →
+ *  live 轮 → 停流接管轮 → 最近已验收轮（2026-10-31 归档回看）。
+ *  409 无任何可出示的轮 / 404 无任务。 */
+/** 显式历史轮坐标（2026-10-30 归档只读回看）：只读端点用；缺省仍是
+ *  awaiting（playbook）/ awaiting·live（round-diff）轮。 */
+export interface RoundTargetQuery {
+  phaseIndex: number
+  roundIndex: number
+}
+
+export async function getRoundDiff(
+  taskId: string,
+  scope: RoundDiffScope = "round",
+  target?: RoundTargetQuery,
+): Promise<RoundDiffPayload> {
+  const res = await fetch(buildUrl(`/${taskId}/round-diff`, {
+    ...(scope === "cumulative" ? { scope } : {}),
+    ...(target ? { phase_index: String(target.phaseIndex), round_index: String(target.roundIndex) } : {}),
+  }))
   if (!res.ok) {
     const body = await res.json().catch(() => ({}))
     throw new TaskApiError(body.error ?? `HTTP ${res.status}`, res.status)
@@ -975,13 +1283,20 @@ export async function getRoundDiff(taskId: string, scope: RoundDiffScope = "roun
   return res.json()
 }
 
-/** GET /:id/round-diff/patch?repo=&path= — 单文件 unified patch（懒拉，512K 截断）。 */
+/** GET /:id/round-diff/patch?repo=&path=[&scope=] — 单文件 unified patch（懒拉，
+ *  512K 截断）。scope=cumulative → 起点换成同 phase 首轮 start 锚，与累计列表同区间。 */
 export async function getRoundPatch(
   taskId: string,
   repo: string,
   filePath: string,
+  scope: RoundDiffScope = "round",
 ): Promise<{ patch: string; truncated: boolean }> {
-  const res = await fetch(buildUrl(`/${taskId}/round-diff/patch`, { repo, path: filePath }))
+  const res = await fetch(
+    buildUrl(
+      `/${taskId}/round-diff/patch`,
+      scope === "cumulative" ? { repo, path: filePath, scope } : { repo, path: filePath },
+    ),
+  )
   if (!res.ok) {
     const body = await res.json().catch(() => ({}))
     throw new TaskApiError(body.error ?? `HTTP ${res.status}`, res.status)
@@ -1023,10 +1338,46 @@ export async function abortVerify(taskId: string): Promise<VerifySummary> {
 // 的 .md 门(内嵌 json 围栏),与 server renderChecksMd/parseChecksMd 同 codec。
 
 export type PlaybookItemKind = "walk" | "probe" | "claim"
+
+// ── 验收方案（2026-10-30 AI-native；2026-10-31 两层化）— 镜像 server ──
+export type PlanHowToKind = "run" | "open" | "check"
+export interface PlanHowTo { kind: PlanHowToKind; text: string; command?: string; path?: string; expect?: string }
+export type PlanStepKind = "open" | "do" | "observe"
+export interface PlanStep {
+  kind: PlanStepKind
+  text: string
+  target?: string
+  value?: string
+  expect?: string
+  /** 仅旧方案兼容：原 run 步保留的命令。 */
+  command?: string
+}
+export interface PlanEvidenceRef { kind: "diff" | "test" | "report" | "docs" | "preview"; label: string; path?: string; detail?: string; missing?: boolean }
+export interface PlanMachine { verdict: "pass" | "warn" | "human"; why: string; command?: string; recheck?: string }
+export type PlanStatus = "generating" | "ready" | "failed" | "missing"
+export interface PlanSummary { status: PlanStatus; source?: string; generated_at?: string; error?: string; guide_woken_at?: string }
+
 export interface PlaybookItem {
   id: string; op: string; expect: string; evidence?: string; probe?: { command: string }
   /** 配了 runbook 时编译器把起服/就绪/收尾步打标（面板折一行提示、不给执行钮、不进连跑）。 */
   lifecycle?: "start" | "ready" | "teardown"
+  /** ── 验收方案扩展（2026-10-31 两层化；编译型清单不带这些键）── */
+  /** case=人验收场景（可判定）；check=机器证据（只读，不判定）。 */
+  tier?: "case" | "check"
+  title?: string
+  story?: string
+  /** 人层场景起点（不写命令）。 */
+  setup?: string
+  steps?: PlanStep[]
+  tickets?: string[]
+  /** 机器证据的按需复核命令（不自动跑）。 */
+  recheck?: string
+  // —— 旧 v1 方案字段（历史消息/旧编译清单兼容）——
+  ticket?: string
+  howTo?: PlanHowTo[]
+  criteria?: string[]
+  evidenceRefs?: PlanEvidenceRef[]
+  machine?: PlanMachine
 }
 export interface PlaybookSection { kind: PlaybookItemKind; title: string; source: string; items: PlaybookItem[] }
 export interface PlaybookCarryover { id: string; fromRound: number; decision: "skipped" | "failed"; note?: string; op: string; expect: string }
@@ -1039,12 +1390,22 @@ export interface PlaybookPayload {
   sections: PlaybookSection[]
   finePrint: Array<{ ticket: string; acs: string[] }>
   carryover: PlaybookCarryover[]
-  coverage: { found: string[]; missing: string[] }
+  coverage: {
+    found: string[]
+    missing: string[]
+    stories?: Array<{ story: string; case_id: string }>
+    acs?: Array<{ ac: string; check_ids: string[] }>
+  }
+  /** 验收方案状态：ready = 本轮清单来自规划 Agent；否则回退旧编译。 */
+  plan?: PlanSummary
+  planWarnings?: string[]
 }
 
 /** GET /:id/playbook — 派生视图。409 无 awaiting;available:false = 无契约结构。 */
-export async function getPlaybook(taskId: string): Promise<PlaybookPayload> {
-  const res = await fetch(buildUrl(`/${taskId}/playbook`))
+export async function getPlaybook(taskId: string, target?: RoundTargetQuery): Promise<PlaybookPayload> {
+  const res = await fetch(buildUrl(`/${taskId}/playbook`, target
+    ? { phase_index: String(target.phaseIndex), round_index: String(target.roundIndex) }
+    : {}))
   const body = await res.json().catch(() => ({}))
   if (!res.ok) throw new TaskApiError((body as { error?: string }).error ?? `HTTP ${res.status}`, res.status)
   return body as PlaybookPayload
@@ -1187,18 +1548,6 @@ export function parseChecksMd(md: string): ChecksFile | null {
     return null
   }
 }
-export function renderChecksMd(data: ChecksFile): string {
-  return [
-    `# 走查勾选 · Round ${data.round_index ?? "?"}`,
-    "",
-    "> 机器读写:验收台勾选 → 本文件;ledger 聚合、下轮 carryover 都吃它。JSON 体可手改。",
-    "",
-    "```json",
-    JSON.stringify(data, null, 2),
-    "```",
-    "",
-  ].join("\n")
-}
 export const checksRelPath = (batchRelDir: string, roundIndex: number): string =>
   `${batchRelDir}/${checksFileName(roundIndex)}`
 
@@ -1211,12 +1560,30 @@ export async function readChecks(taskId: string, batchRelDir: string, roundIndex
     return { version: "1", round_index: roundIndex, checks: {} }
   }
 }
-/** 写某轮 checks(整文件覆盖,panel 是唯一作者;round-trip 幂等)。 */
-export async function saveChecks(
-  taskId: string, batchRelDir: string, roundIndex: number, checks: Record<string, CheckEntry>,
-): Promise<void> {
-  const data: ChecksFile = { version: "1", task_id: taskId, round_index: roundIndex, checks }
-  await putHomeFile(taskId, checksRelPath(batchRelDir, roundIndex), renderChecksMd(data))
+
+// ── 单条核对写入 + 方案重生成（2026-10-30 AI-native 验收）───────────────
+// 验收窗与主 Chat 共用同一个写入口：server 读-合并-写，天然不会互相覆盖。
+
+export async function recordAcceptanceCheck(
+  taskId: string,
+  input: { item_id: string; decision: CheckDecision; note?: string },
+): Promise<{ checks: ChecksFile; itemId: string; decision: CheckDecision }> {
+  const res = await fetch(`${getServerUrl()}${BASE}/${taskId}/acceptance/check`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(input),
+  })
+  const body = await res.json().catch(() => ({}))
+  if (!res.ok) throw new TaskApiError((body as { error?: string }).error ?? `HTTP ${res.status}`, res.status)
+  return body as { checks: ChecksFile; itemId: string; decision: CheckDecision }
+}
+
+/** 重新生成验收方案 —— 本轮已有人工勾选时 server 会拒绝（重生成不得作废人的判定）。 */
+export async function regenerateAcceptancePlan(taskId: string): Promise<{ ok: boolean; reason?: string }> {
+  const res = await fetch(`${getServerUrl()}${BASE}/${taskId}/acceptance/plan/regenerate`, { method: "POST" })
+  const body = await res.json().catch(() => ({}))
+  if (!res.ok) throw new TaskApiError((body as { error?: string }).error ?? `HTTP ${res.status}`, res.status)
+  return body as { ok: boolean; reason?: string }
 }
 
 // ============ Workflow-ref view (task board: click bound workflow → full YAML) ============
@@ -1343,6 +1710,39 @@ export interface TaskDoerChatBinding {
 export async function getTaskChatBinding(taskId: string): Promise<TaskDoerChatBinding> {
   const res = await fetch(buildUrl(`/${taskId}/chat`))
   return handleResponse<TaskDoerChatBinding>(res)
+}
+
+/** Identity of the task's doer chat (role switch, not @ dispatch).
+ *  v59: identities are clones; `expert` only resolves for legacy rows. */
+export interface TaskChatRoleState {
+  session_id: string
+  active_expert: string | null
+  active_kind: 'expert' | 'clone'
+  expert: { id: string; name: string; label: string; desc: string } | null
+  clone: {
+    id: string
+    display_name: string
+    type: 'built-in' | 'user'
+    skills: string[]
+    memory_scope: 'shared' | 'isolated'
+    status: 'active' | 'idle' | 'executing'
+  } | null
+  revision: number
+  delivered_revision: number
+}
+
+export async function getTaskChatRole(taskId: string): Promise<TaskChatRoleState> {
+  const res = await fetch(buildUrl(`/${taskId}/chat/role`))
+  return handleResponse<TaskChatRoleState>(res)
+}
+
+export async function setTaskChatRole(taskId: string, expert: string | null): Promise<TaskChatRoleState> {
+  const res = await fetch(buildUrl(`/${taskId}/chat/role`), {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ expert }),
+  })
+  return handleResponse<TaskChatRoleState>(res)
 }
 
 /** 会话历史（ws-chat GET 的 raw 行 → ChatMessage，映射单源 fromDBMessage）。 */

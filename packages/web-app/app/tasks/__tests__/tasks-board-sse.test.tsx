@@ -22,12 +22,7 @@ const { toastMock } = vi.hoisted(() => ({
   toastMock: { success: vi.fn(), error: vi.fn(), loading: vi.fn() },
 }))
 vi.mock("sonner", () => ({ toast: toastMock }))
-vi.mock("next/navigation", () => ({
-  useSearchParams: () => new URLSearchParams(""),
-}))
-
 // 弹窗/对话框组件与本页 SSE 断言无关，桩掉免拖入 Radix/ReactFlow 全家桶。
-vi.mock("@/components/tasks/task-modal", () => ({ TaskModal: () => null }))
 vi.mock("@/components/tasks/trigger-dialog", () => ({ TriggerDialog: () => null }))
 // 验货台三栏弹窗已退役为控制台 tab（2026-09-16）— AcceptanceModal mock 移除。
 

@@ -3,6 +3,7 @@
 import type { Node, NodeProps } from "@xyflow/react"
 import type { StatusOverlay } from "@/lib/types"
 import { StatusShell } from "./status-shell"
+import type { DagOrientation } from "@/lib/dag-orientation"
 import { TypeShell } from "./type-shell"
 import { Target } from "lucide-react"
 
@@ -20,6 +21,7 @@ interface WorkflowNodeData {
   loop_body?: Array<Record<string, unknown>>
   cases?: Array<{ when: string; then: string }>
   statusOverlay?: StatusOverlay
+  dagOrientation?: DagOrientation
   isCurrent?: boolean
   isActive?: boolean
   [key: string]: unknown
@@ -34,7 +36,7 @@ export function AgentNode({ data, selected }: NodeProps<WorkflowNode>) {
   // prompt-function agent node.
   const hasGoal = !!data.goal?.trim()
   return (
-    <StatusShell nodeType="agent" statusOverlay={data.statusOverlay} isCurrent={data.isCurrent} isActive={data.isActive} selected={selected}>
+    <StatusShell nodeType="agent" statusOverlay={data.statusOverlay} isCurrent={data.isCurrent} isActive={data.isActive} selected={selected} orientation={data.dagOrientation}>
       <TypeShell nodeType="agent" name={data.name} statusOverlay={data.statusOverlay}>
         {!hasGoal && data.prompt && (
           <p className="text-xs text-muted-foreground line-clamp-2">{data.prompt}</p>

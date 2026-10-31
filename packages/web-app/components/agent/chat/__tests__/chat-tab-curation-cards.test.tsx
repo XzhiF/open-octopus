@@ -5,8 +5,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest"
 import { render, screen, fireEvent, waitFor } from "@testing-library/react"
 
-vi.mock("next/navigation", () => ({ usePathname: () => "/agent", useRouter: () => ({ push: vi.fn() }) }))
-
 const chatBox: {
   messages: Array<{ id: string; session_id: string; role: "user" | "assistant"; content: string; created_at: string; is_summary: boolean; is_compressed: boolean; is_edited: boolean }>
   sent: string[]
@@ -35,8 +33,8 @@ vi.mock("@/hooks/useAgentChat", () => ({
   }),
 }))
 
-vi.mock("@/hooks/useAgentSessions", () => ({
-  useAgentSessions: () => ({
+vi.mock("@/components/providers/chat-sessions", () => ({
+  useChatSessions: () => ({
     sessions: [{
       id: "s1", title: "投喂讨论", org: "global", clone_name: null,
       perspective_clone_name: null, session_type: "main", created_at: "2026-10-15T08:00:00Z",
@@ -54,6 +52,11 @@ vi.mock("@/hooks/useAgentSessions", () => ({
 
 vi.mock("@/hooks/useSessionUsage", () => ({
   useSessionUsage: () => null,
+}))
+vi.mock("@/hooks/useSessionLedger", () => ({ useSessionLedger: () => ({ aggregates: null, calls: [] }) }))
+
+vi.mock("@/hooks/use-chat-tasks", () => ({
+  useChatTasks: () => ({ tasks: [], loading: false, refresh: vi.fn() }),
 }))
 
 import { ChatTab } from "../ChatTab"

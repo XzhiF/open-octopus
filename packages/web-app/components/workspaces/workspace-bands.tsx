@@ -4,8 +4,10 @@
 // 布局样式在 app/ws-bands.css（.wsb-*）。
 
 import { useEffect, useMemo, useState } from "react"
-import Link from "next/link"
+import Link from "@/lib/app-navigation"
+import { useIsActiveRoute } from "@/lib/app-navigation"
 import { Search } from "lucide-react"
+import { CloseLightGlyph } from "@/components/ui/close-light"
 import type { Workspace } from "@/lib/types"
 import { formatRelativeTime } from "@/lib/format"
 
@@ -62,6 +64,7 @@ interface GenieTarget {
 }
 
 export function WorkspaceBands({ workspaces, onNew, onDelete, onArchive, onViewArchive }: WorkspaceBandsProps) {
+  const isActive = useIsActiveRoute()
   const [search, setSearch] = useState("")
   const [collapsed, setCollapsed] = useState<Record<BandKey, boolean>>(
     () => Object.fromEntries(BANDS.map((b) => [b.key, !!b.defaultCollapsed])) as Record<BandKey, boolean>,
@@ -75,7 +78,7 @@ export function WorkspaceBands({ workspaces, onNew, onDelete, onArchive, onViewA
       (ws) =>
         !q ||
         (ws.name ?? "").toLowerCase().includes(q) ||
-        (ws.org ?? "").toLowerCase().includes(q) ||
+        (ws.repo_group ?? "").toLowerCase().includes(q) ||
         (ws.description ?? "").toLowerCase().includes(q),
     )
     return [...list].sort((a, b) => updatedOf(b).localeCompare(updatedOf(a)))
@@ -244,7 +247,7 @@ function BandCard({
             <div className="wsb-live"><i /></div>
             <div className="wsb-live-label">{running} 个工作流正在跑</div>
             <div className="wsb-row">
-              <span className="wsb-k">{ws.org}</span>
+              <span className="wsb-k">{ws.repo_group}</span>
               <span className="wsb-sep">·</span>
               <span>{whenOf(ws)}</span>
               <span style={{ marginLeft: "auto" }}>{enter}</span>
@@ -261,7 +264,7 @@ function BandCard({
             </div>
             <div className="wsb-desc">{ws.description || "—"}</div>
             <div className="wsb-row">
-              <span className="wsb-k">{ws.org}</span>
+              <span className="wsb-k">{ws.repo_group}</span>
               <span className="wsb-sep">·</span>
               <span>{whenOf(ws)}</span>
               <span style={{ marginLeft: "auto" }}>{enter}</span>
@@ -279,7 +282,7 @@ function BandCard({
             <div className="wsb-desc">{ws.description || "—"}</div>
             <div className="wsb-snippet">{ws.path}</div>
             <div className="wsb-row">
-              <span className="wsb-k">{ws.org}</span>
+              <span className="wsb-k">{ws.repo_group}</span>
               <span className="wsb-sep">·</span>
               <span>{whenOf(ws)}</span>
               <span style={{ marginLeft: "auto" }}>{enter}</span>
@@ -296,7 +299,7 @@ function BandCard({
               {isTaskWs(ws) && <span className="wsb-tag">task</span>}
             </div>
             <div className="wsb-row">
-              <span className="wsb-k">{ws.org}</span>
+              <span className="wsb-k">{ws.repo_group}</span>
               <span className="wsb-sep">·</span>
               <span>{whenOf(ws)}</span>
             </div>
@@ -419,11 +422,12 @@ function GenieModal({
   }
 
   useEffect(() => {
+    if (!isActive) return
     const h = (e: KeyboardEvent) => { if (e.key === "Escape") close() }
     window.addEventListener("keydown", h)
     return () => window.removeEventListener("keydown", h)
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [])
+  }, [isActive])
 
   const band = bandOf(ws)
   const shown = entered && !closing
@@ -449,11 +453,13 @@ function GenieModal({
           opacity: shown ? 1 : 0,
         }}
       >
-        <button type="button" className="wsb-genie-close" onClick={close} aria-label="关闭">×</button>
+        <button type="button" className="wsb-genie-close group/light" onClick={close} aria-label="关闭">
+          <CloseLightGlyph />
+        </button>
         <div className="wsb-genie-head">📁 {ws.name}</div>
         <div className="wsb-genie-body">
           <div className="wsb-kv">
-            <span className="wsb-kv-k">组织</span><span className="wsb-kv-v">{ws.org}</span>
+            <span className="wsb-kv-k">组织</span><span className="wsb-kv-v">{ws.repo_group}</span>
             <span className="wsb-kv-k">状态</span><span className="wsb-kv-v">{BAND_LABEL[band]}</span>
             <span className="wsb-kv-k">类型</span><span className="wsb-kv-v">{isTaskWs(ws) ? "task-mode" : "user"}</span>
             <span className="wsb-kv-k">项目 / 工作流</span><span className="wsb-kv-v">{ws.projectCount ?? 0} / {ws.workflowCount ?? 0}</span>

@@ -11,10 +11,10 @@ export class EvolutionDAO extends BaseDAO {
 
   // ── evolution_log ───────────────────────────────────────────────
 
-  listChangelog(org: string, filters?: { skill_name?: string; limit?: number }): EvolutionLogRow[] {
+  listChangelog(filters?: { skill_name?: string; limit?: number }): EvolutionLogRow[] {
     const limit = Math.min(filters?.limit ?? 50, 200)
-    let sql = `SELECT * FROM evolution_log WHERE org = ?`
-    const params: unknown[] = [org]
+    let sql = `SELECT * FROM evolution_log WHERE 1=1`
+    const params: unknown[] = []
     if (filters?.skill_name) { sql += ` AND skill_name = ?`; params.push(filters.skill_name) }
     sql += ` ORDER BY timestamp DESC LIMIT ?`
     params.push(limit)
@@ -25,17 +25,13 @@ export class EvolutionDAO extends BaseDAO {
     return (this.stmt("SELECT * FROM evolution_log WHERE id = ?").get(id) as EvolutionLogRow) ?? null
   }
 
-  findEvolutionByIdAndOrg(id: number, org: string): EvolutionLogRow | null {
-    return (this.stmt("SELECT * FROM evolution_log WHERE id = ? AND org = ?").get(id, org) as EvolutionLogRow) ?? null
-  }
-
   insertEvolution(row: Omit<EvolutionLogRow, "id" | "rolled_back"> & { rolled_back?: number }): Database.RunResult {
     return this.stmt(`
-      INSERT INTO evolution_log (skill_name, change_type, level, summary, diff_path, rolled_back, org, timestamp)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO evolution_log (skill_name, change_type, level, summary, diff_path, rolled_back, timestamp)
+      VALUES (?, ?, ?, ?, ?, ?, ?)
     `).run(
       row.skill_name, row.change_type, row.level, row.summary,
-      row.diff_path ?? null, row.rolled_back ?? 0, row.org, row.timestamp,
+      row.diff_path ?? null, row.rolled_back ?? 0, row.timestamp,
     )
   }
 
@@ -45,36 +41,36 @@ export class EvolutionDAO extends BaseDAO {
 
   // ── experiences ─────────────────────────────────────────────────
 
-  listExperiences(org: string, skillName?: string): ExperienceRow[] {
-    let sql = `SELECT * FROM experiences WHERE org = ?`
-    const params: unknown[] = [org]
+  listExperiences(skillName?: string): ExperienceRow[] {
+    let sql = `SELECT * FROM experiences WHERE 1=1`
+    const params: unknown[] = []
     if (skillName) { sql += ` AND skill_name = ?`; params.push(skillName) }
     sql += ` ORDER BY created_at DESC`
     return this.stmt(sql).all(...params) as ExperienceRow[]
   }
 
-  findRecentExperiences(org: string, daysAgo: number = 7, limit: number = 20): ExperienceRow[] {
+  findRecentExperiences(daysAgo: number = 7, limit: number = 20): ExperienceRow[] {
     return this.stmt(`
       SELECT * FROM experiences
-      WHERE org = ? AND created_at > datetime('now', '-' || ? || ' days')
+      WHERE created_at > datetime('now', '-' || ? || ' days')
       ORDER BY created_at DESC LIMIT ?
-    `).all(org, daysAgo, limit) as ExperienceRow[]
+    `).all(daysAgo, limit) as ExperienceRow[]
   }
 
-  findExperiencesWithFailurePattern(org: string): Array<{ count: number; skill_name: string }> {
+  findExperiencesWithFailurePattern(): Array<{ count: number; skill_name: string }> {
     return this.stmt(`
       SELECT COUNT(*) as count, skill_name FROM experiences
-      WHERE org = ? AND created_at > datetime('now', '-7 days')
+      WHERE created_at > datetime('now', '-7 days')
       AND (content LIKE '%失败%' OR content LIKE '%error%' OR content LIKE '%failed%')
       GROUP BY skill_name HAVING count >= 3
-    `).all(org) as Array<{ count: number; skill_name: string }>
+    `).all() as Array<{ count: number; skill_name: string }>
   }
 
   insertExperience(row: Omit<ExperienceRow, "id">): Database.RunResult {
     const result = this.stmt(`
-      INSERT INTO experiences (skill_name, content, source_session_id, org, created_at)
-      VALUES (?, ?, ?, ?, ?)
-    `).run(row.skill_name, row.content, row.source_session_id ?? null, row.org, row.created_at)
+      INSERT INTO experiences (skill_name, content, source_session_id, created_at)
+      VALUES (?, ?, ?, ?)
+    `).run(row.skill_name, row.content, row.source_session_id ?? null, row.created_at)
 
     // Also insert into FTS index (non-fatal on failure)
     try {
@@ -105,17 +101,13 @@ export class EvolutionDAO extends BaseDAO {
 
   // ── Additional methods for evolution-service migration ─────────────
 
-  findEvolutionByIdAndOrgChecked(id: number, org: string): EvolutionLogRow | null {
-    return (this.stmt("SELECT * FROM evolution_log WHERE id = ? AND org = ?").get(id, org) as EvolutionLogRow) ?? null
-  }
-
-  findRecentExperiencesForReflection(org: string, limit: number = 20): ExperienceRow[] {
+  findRecentExperiencesForReflection(limit: number = 20): ExperienceRow[] {
     return this.stmt(`
       SELECT skill_name, content FROM experiences
-      WHERE org = ? AND created_at > datetime('now', '-7 days')
+      WHERE created_at > datetime('now', '-7 days')
       ORDER BY created_at DESC
       LIMIT ?
-    `).all(org, limit) as ExperienceRow[]
+    `).all(limit) as ExperienceRow[]
   }
 
   /**
@@ -123,39 +115,37 @@ export class EvolutionDAO extends BaseDAO {
    * Returns V2 rows so pattern_tags and outcome are available for analysis.
    */
   findRecentExperiencesForReflectionByScope(
-    org: string,
     scope: string,
     limit: number = 20,
   ): ExperienceRowV2[] {
     return this.stmt(`
       SELECT * FROM experiences
-      WHERE org = ? AND scope = ? AND created_at > datetime('now', '-7 days')
+      WHERE scope = ? AND created_at > datetime('now', '-7 days')
       ORDER BY created_at DESC
       LIMIT ?
-    `).all(org, scope, limit) as ExperienceRowV2[]
+    `).all(scope, limit) as ExperienceRowV2[]
   }
 
   /**
    * Find experiences with failure patterns filtered by scope.
    */
   findExperiencesWithFailurePatternByScope(
-    org: string,
     scope: string,
   ): Array<{ count: number; skill_name: string; scope_ref: string | null }> {
     return this.stmt(`
       SELECT COUNT(*) as count, skill_name, scope_ref
       FROM experiences
-      WHERE org = ? AND scope = ? AND created_at > datetime('now', '-7 days')
+      WHERE scope = ? AND created_at > datetime('now', '-7 days')
       AND (content LIKE '%失败%' OR content LIKE '%error%' OR content LIKE '%failed%')
       GROUP BY skill_name, scope_ref HAVING count >= 3
-    `).all(org, scope) as Array<{ count: number; skill_name: string; scope_ref: string | null }>
+    `).all(scope) as Array<{ count: number; skill_name: string; scope_ref: string | null }>
   }
 
   insertExperienceWithFts(row: Omit<ExperienceRow, "id">): Database.RunResult {
     const result = this.stmt(`
-      INSERT INTO experiences (skill_name, content, source_session_id, org, created_at)
-      VALUES (?, ?, ?, ?, ?)
-    `).run(row.skill_name, row.content, row.source_session_id ?? null, row.org, row.created_at)
+      INSERT INTO experiences (skill_name, content, source_session_id, created_at)
+      VALUES (?, ?, ?, ?)
+    `).run(row.skill_name, row.content, row.source_session_id ?? null, row.created_at)
 
     try {
       this.stmt(`
@@ -174,11 +164,11 @@ export class EvolutionDAO extends BaseDAO {
    */
   insertExperienceV2(row: Omit<ExperienceRowV2, "id">): Database.RunResult {
     const result = this.stmt(`
-      INSERT INTO experiences (skill_name, content, source_session_id, org, created_at,
+      INSERT INTO experiences (skill_name, content, source_session_id, created_at,
         scope, scope_ref, pattern_tags, outcome, source_type, execution_id, node_id)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
-      row.skill_name, row.content, row.source_session_id ?? null, row.org, row.created_at,
+      row.skill_name, row.content, row.source_session_id ?? null, row.created_at,
       row.scope, row.scope_ref ?? null, row.pattern_tags, row.outcome ?? null,
       row.source_type, row.execution_id ?? null, row.node_id ?? null,
     )
@@ -203,13 +193,12 @@ export class EvolutionDAO extends BaseDAO {
    * List experiences filtered by scope, with optional scope_ref and limit.
    */
   listByScope(
-    org: string,
     scope: string,
     opts?: { scopeRef?: string; limit?: number },
   ): ExperienceRowV2[] {
     const limit = Math.min(opts?.limit ?? 50, 200)
-    let sql = `SELECT * FROM experiences WHERE org = ? AND scope = ?`
-    const params: unknown[] = [org, scope]
+    let sql = `SELECT * FROM experiences WHERE scope = ?`
+    const params: unknown[] = [scope]
     if (opts?.scopeRef) {
       sql += ` AND scope_ref = ?`
       params.push(opts.scopeRef)
@@ -314,15 +303,14 @@ export class EvolutionDAO extends BaseDAO {
    * Only includes decisions/patterns with ≥1 resolved outcome.
    */
   getSuccessStats(
-    org: string,
     scope: string,
     scopeRef?: string,
   ): {
     decisionStats: Record<string, { success: number; failed: number; pending: number; total: number; rate: number }>
     patternStats: Record<string, { success: number; failed: number; pending: number; total: number; rate: number }>
   } {
-    let sql = `SELECT pattern_tags, outcome FROM experiences WHERE org = ? AND scope = ?`
-    const params: unknown[] = [org, scope]
+    let sql = `SELECT pattern_tags, outcome FROM experiences WHERE scope = ?`
+    const params: unknown[] = [scope]
     if (scopeRef) {
       sql += ` AND scope_ref = ?`
       params.push(scopeRef)
@@ -403,31 +391,31 @@ export class EvolutionDAO extends BaseDAO {
 
   // ── insight_marks ──────────────────────────────────────────────────
 
-  insertMark(row: { skill_name: string; insight: string; session_id?: string; org: string }): Database.RunResult {
+  insertMark(row: { skill_name: string; insight: string; session_id?: string }): Database.RunResult {
     const now = new Date().toISOString()
     return this.stmt(`
-      INSERT INTO insight_marks (skill_name, insight, session_id, org, marked_at, processed)
-      VALUES (?, ?, ?, ?, ?, 0)
-    `).run(row.skill_name, row.insight, row.session_id ?? null, row.org, now)
+      INSERT INTO insight_marks (skill_name, insight, session_id, marked_at, processed)
+      VALUES (?, ?, ?, ?, 0)
+    `).run(row.skill_name, row.insight, row.session_id ?? null, now)
   }
 
-  listUnprocessedMarks(org: string, limit: number = 50): InsightMarkRow[] {
+  listUnprocessedMarks(limit: number = 50): InsightMarkRow[] {
     return this.stmt(`
       SELECT * FROM insight_marks
-      WHERE org = ? AND processed = 0
+      WHERE processed = 0
       ORDER BY marked_at ASC
       LIMIT ?
-    `).all(org, limit) as InsightMarkRow[]
+    `).all(limit) as InsightMarkRow[]
   }
 
   markProcessed(id: number): Database.RunResult {
     return this.stmt("UPDATE insight_marks SET processed = 1 WHERE id = ?").run(id)
   }
 
-  listAllMarks(org: string, filters?: { processed?: number; limit?: number }): InsightMarkRow[] {
+  listAllMarks(filters?: { processed?: number; limit?: number }): InsightMarkRow[] {
     const limit = Math.min(filters?.limit ?? 50, 200)
-    let sql = `SELECT * FROM insight_marks WHERE org = ?`
-    const params: unknown[] = [org]
+    let sql = `SELECT * FROM insight_marks WHERE 1=1`
+    const params: unknown[] = []
     if (filters?.processed !== undefined) {
       sql += ` AND processed = ?`
       params.push(filters.processed)

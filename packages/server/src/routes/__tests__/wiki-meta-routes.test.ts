@@ -28,7 +28,7 @@ describe("wiki read-only meta routes (ticket 03 UI 数据面)", () => {
     applySchema(db)
     dao = new WikiArticleDAO(db)
     dao.upsert({
-      org: "global", id: "prj-octopus", domain: "projects", title: "Octopus 平台工程知识",
+      repo_group: "global", id: "prj-octopus", domain: "projects", title: "Octopus 平台工程知识",
       summary: "monorepo 构建/测试/端口规则与已知陷阱", topics: "[]", stability: "stable",
       last_compiled: "2026-10-12", sources: JSON.stringify(["doc:docs/agents/windows-bash.md"]),
       confidence: 0.86, body: "- Promise 超时规则 <!--#oct-007-->\n", path: "projects/prj-octopus.md",
