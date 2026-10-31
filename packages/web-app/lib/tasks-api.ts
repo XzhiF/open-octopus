@@ -679,13 +679,56 @@ export interface ReflectionStoreWire {
   decisions: Record<string, ReflectionDecisionWire>
 }
 
+export interface ArchiveTermConflictWire {
+  term: string
+  incoming: string
+  existing: string
+}
+
+/** 单个 project 的归档结果（archive/report.json，2026-10-31）。 */
+export interface ArchiveProjectReportWire {
+  project: string
+  ok: boolean
+  skippedByState?: boolean
+  adrMerged: number
+  adrSkipped: string[]
+  termsAppended: number
+  termConflicts: ArchiveTermConflictWire[]
+  commit: string | null
+  pushed: boolean
+  pr?: { action: string; url?: string; note?: string } | null
+  error?: string
+}
+
+export interface ArchiveReportWire {
+  taskId: string
+  date: string
+  ok: boolean
+  projects: ArchiveProjectReportWire[]
+  unattributedAdrs: string[]
+  unattributedNotes: number
+  error?: string
+}
+
+/** 归档素材包 / 编译状态（知识中心只读快照）。 */
+export interface ArchiveKnowledgeWire {
+  pack_items: number
+  compile_state: string | null
+  compile_position: number | null
+}
+
 export interface TaskArchivePayload {
   task_id: string
   status: string
   in_flight: boolean
+  /** 任务 project_ids（总框「git 同步 x/y」的分母）。 */
+  projects: string[]
   state: unknown | null
+  /** 结构化归档报告；null = 还没有完整跑过一轮。 */
+  report: ArchiveReportWire | null
   report_md: string | null
   reflection: ReflectionStoreWire | null
+  knowledge: ArchiveKnowledgeWire | null
 }
 
 /** GET /api/tasks/:id/usage — the task's whole-lifecycle ledger. */

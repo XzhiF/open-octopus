@@ -1,15 +1,15 @@
 'use client'
 
-// 2026-10-28 task-thread M5: the archive window — per-project results, the
-// report, the knowledge reflection decisions, and the idempotent retry.
-// The conversation stays in the main chat; this is a dedicated surface.
+// 归档台（2026-10-31 AI-native 归档 · v2 定稿）—— 只读明细面。
+//
+// 这里只展示事实：project 同步结果、术语冲突、反思决策、知识包 / 编译状态、
+// 归档报告。所有操作（落 wiki / 跳过 / 重试）都回主 Chat 用自然语言完成，
+// 所以本窗口没有任何按钮 —— 页脚写死「只读明细 · 操作在对话里完成」。
 
 import { useCallback, useEffect, useState } from 'react'
-import { toast } from 'sonner'
 import {
   getTaskArchive,
-  postArchiveRetry,
-  postReflectionDecision,
+  type ArchiveProjectReportWire,
   type TaskArchivePayload,
   type TaskView,
 } from '@/lib/tasks-api'
@@ -21,10 +21,56 @@ interface ProjectState {
   completedAt?: string
 }
 
-export function ArchiveWindow({ task, onMutated }: { task: TaskView; onMutated?: () => void }) {
+interface ProjectRow {
+  project: string
+  /** null = 报告还没有这个 project 的记录 */
+  ok: boolean | null
+  adrMerged: number | null
+  termsAppended: number | null
+  conflicts: number | null
+  commit: string | null
+  pushed: boolean | null
+  pr: ArchiveProjectReportWire['pr']
+  error?: string
+  skippedByState?: boolean
+}
+
+const COMPILE_LABEL: Record<string, string> = {
+  queued: '排队中',
+  running: '编译中',
+  committed: '已编译',
+  failed: '编译失败',
+}
+
+function buildRows(archive: TaskArchivePayload): ProjectRow[] {
+  const projects = (archive.state as { projects?: Record<string, ProjectState> } | null)?.projects ?? {}
+  const reportByProject = new Map((archive.report?.projects ?? []).map((p) => [p.project, p]))
+  const names = [...new Set([...archive.projects, ...Object.keys(projects), ...reportByProject.keys()])]
+  return names.map((name) => {
+    const p = reportByProject.get(name)
+    const state = projects[name]
+    return {
+      project: name,
+      ok: p ? p.ok : state?.status === 'done' ? true : null,
+      adrMerged: p ? p.adrMerged : null,
+      termsAppended: p ? p.termsAppended : null,
+      conflicts: p ? p.termConflicts.length : null,
+      commit: p?.commit ?? state?.commit ?? null,
+      pushed: p ? p.pushed : state?.status === 'done' ? true : null,
+      pr: p?.pr ?? null,
+      error: p?.error,
+      skippedByState: p?.skippedByState,
+    }
+  })
+}
+
+function ProjectCell({ value }: { value: string | number | null }) {
+  return <span className="font-mono tabular-nums">{value == null ? '—' : value}</span>
+}
+
+export function ArchiveWindow({ task }: { task: TaskView; onMutated?: () => void }) {
   const [archive, setArchive] = useState<TaskArchivePayload | null>(null)
   const [error, setError] = useState<string | null>(null)
-  const [busy, setBusy] = useState<string | null>(null)
 
   const load = useCallback(() => {
     return getTaskArchive(task.id)
@@ -35,38 +81,11 @@ export function ArchiveWindow({ task, onMutated }: { task: TaskView; onMutated?:
   useEffect(() => {
     let alive = true
     void load()
-    const timer = window.setInterval(() => { if (alive) void load() }, archive?.in_flight || task.status === 'archiving' ? 4_000 : 20_000)
+    const timer = window.setInterval(() => {
+      if (alive) void load()
+    }, archive?.in_flight || task.status === 'archiving' ? 4_000 : 20_000)
     return () => { alive = false; window.clearInterval(timer) }
   }, [load, archive?.in_flight, task.status])
-
-  const decide = async (entryId: string, action: 'ingest' | 'skip') => {
-    if (busy) return
-    setBusy(entryId)
-    try {
-      const res = await postReflectionDecision(task.id, { entry_id: entryId, action })
-      setArchive((prev) => (prev ? { ...prev, reflection: res.store } : prev))
-      toast.success(action === 'ingest' ? '已落 wiki（编译已入队）' : '已跳过')
-    } catch (err: unknown) {
-      toast.error(err instanceof Error ? err.message : '沉淀决策失败')
-    } finally {
-      setBusy(null)
-    }
-  }
-
-  const retry = async () => {
-    if (busy) return
-    setBusy('retry')
-    try {
-      await postArchiveRetry(task.id)
-      toast.success('归档续跑已触发')
-      await load()
-      onMutated?.()
-    } catch (err: unknown) {
-      toast.error(err instanceof Error ? err.message : '重试归档失败')
-    } finally {
-      setBusy(null)
-    }
-  }
 
   if (error) {
     return <div className="p-4 text-[11.5px] text-pop-red" data-testid="archive-window-error">{error}</div>
@@ -79,102 +98,171 @@ export function ArchiveWindow({ task, onMutated }: { task: TaskView; onMutated?:
     )
   }
 
-  const projects = (archive.state as { projects?: Record<string, ProjectState> } | null)?.projects ?? {}
-  const projectRows = Object.entries(projects)
+  const rows = buildRows(archive)
   const reflection = archive.reflection
+  const decided = reflection ? Object.keys(reflection.decisions).length : 0
+  const entries = reflection?.entries ?? []
+  const conflicts = rows.reduce((n, row) => n + (row.conflicts ?? 0), 0)
   const archiving = task.status === 'archiving'
+  const done = task.status === 'done'
+  const stateDate = (archive.state as { date?: string } | null)?.date
+  const compile = archive.knowledge?.compile_state
+  const compileLabel = compile
+    ? (COMPILE_LABEL[compile] ?? compile)
+    : archive.knowledge && archive.knowledge.pack_items > 0
+      ? '已冻结'
+      : '—'
 
   return (
     <div className="h-full min-h-0 overflow-y-auto p-4" data-testid="archive-window">
       <div className="mb-3 flex flex-wrap items-center gap-2">
         <span className="font-mono text-[9.5px] font-black tracking-[.08em] text-pop-dim">ARCHIVE · 归档</span>
-        <span className={`rounded-full px-2 py-[3px] font-mono text-[9.5px] font-black ${archiving ? 'bg-pop-amber-soft text-pop-amber animate-pulse' : 'bg-pop-green-soft text-pop-green'}`}>
-          {archive.in_flight ? '编排中' : archiving ? '停在 archiving' : '已完成'}
+        <span className={`rounded-full px-2 py-[3px] font-mono text-[9.5px] font-black ${
+          done
+            ? 'bg-pop-green-soft text-pop-green'
+            : archiving
+              ? 'bg-pop-amber-soft text-pop-amber'
+              : 'bg-pop-green-soft text-pop-green'
+        }`}>
+          {done ? '已完成' : archive.in_flight ? '编排中' : archiving ? '停在 archiving' : archive.status}
         </span>
-        <span className="font-mono text-[9px] text-pop-dim">{archive.state ? `date ${(archive.state as { date?: string }).date ?? '—'}` : '尚无 state.json'}</span>
-        {archiving && (
-          <button
-            type="button"
-            onClick={() => void retry()}
-            disabled={busy !== null}
-            data-testid="archive-retry"
-            className="ml-auto rounded border border-pop-amber/50 bg-pop-amber-soft px-2 py-1 text-[10px] font-black text-pop-amber hover:opacity-90 disabled:opacity-50"
-          >
-            ↻ 重试归档
-          </button>
-        )}
+        <span className="font-mono text-[9px] text-pop-dim">
+          {stateDate ? `date ${stateDate}` : '尚无 state.json'}
+          {rows.length > 0 ? ` · ${rows.length} project` : ''}
+        </span>
+        <span className="ml-auto font-mono text-[9px] text-pop-dim/70" data-testid="archive-readonly-note">
+          只读明细 · 操作在对话里完成
+        </span>
       </div>
 
-      <div className="grid gap-3 lg:grid-cols-[1.2fr_1fr]">
-        <section className="rounded-xl border-[1.5px] border-pop-bd bg-pop-paper/50 p-3">
-          <h3 className="mb-2 font-mono text-[9px] font-black tracking-[.08em] text-pop-dim">PROJECT 结果</h3>
-          {projectRows.length === 0 ? (
-            <p className="py-4 text-center text-[11px] text-pop-dim">还没有 project 完成归档。</p>
-          ) : (
-            <table className="w-full text-[10.5px]">
-              <thead>
-                <tr className="text-left font-mono text-[8.5px] uppercase tracking-[.06em] text-pop-dim">
-                  <th className="pb-1">project</th><th className="pb-1">commit</th><th className="pb-1">完成</th><th className="pb-1">状态</th>
+      <section className="rounded-xl border-[1.5px] border-pop-bd bg-pop-paper/50 p-3">
+        <h3 className="mb-2 font-mono text-[9px] font-black tracking-[.08em] text-pop-dim">PROJECT 同步结果</h3>
+        {rows.length === 0 ? (
+          <p className="py-4 text-center text-[11px] text-pop-dim">还没有可展示的 project。</p>
+        ) : (
+          <table className="w-full text-[10.5px]">
+            <thead>
+              <tr className="text-left font-mono text-[8.5px] uppercase tracking-[.06em] text-pop-dim">
+                <th className="pb-1">project</th>
+                <th className="pb-1">ADR</th>
+                <th className="pb-1">术语</th>
+                <th className="pb-1">冲突</th>
+                <th className="pb-1">commit</th>
+                <th className="pb-1">push</th>
+                <th className="pb-1">归档 PR</th>
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map((row) => (
+                <tr key={row.project} data-testid="archive-project-row" className="border-t border-pop-bd/50 align-top">
+                  <td className="py-1.5 font-bold text-pop-ink">
+                    {row.project}
+                    {row.skippedByState && <span className="ml-1 font-mono text-[8.5px] text-pop-dim">state-skip</span>}
+                    {row.error && (
+                      <div className="mt-0.5 max-w-[280px] whitespace-pre-wrap break-words font-mono text-[9px] font-normal text-pop-red">
+                        {row.error}
+                      </div>
+                    )}
+                  </td>
+                  <td className="py-1.5 text-pop-ink/75"><ProjectCell value={row.adrMerged} /></td>
+                  <td className="py-1.5 text-pop-ink/75"><ProjectCell value={row.termsAppended} /></td>
+                  <td className={`py-1.5 ${ (row.conflicts ?? 0) > 0 ? 'text-pop-amber' : 'text-pop-dim'}`}>
+                    <ProjectCell value={row.conflicts} />
+                  </td>
+                  <td className="py-1.5 font-mono text-pop-cyan">{row.commit ? row.commit.slice(0, 8) : '—'}</td>
+                  <td className={`py-1.5 ${row.pushed === null ? 'text-pop-dim' : row.pushed ? 'text-pop-green' : 'text-pop-red'}`}>
+                    {row.pushed === null ? '—' : row.pushed ? '✓' : '✗'}
+                  </td>
+                  <td className="py-1.5 text-[9.5px] text-pop-dim">
+                    {row.pr
+                      ? row.pr.url
+                        ? <a className="text-pop-cyan underline decoration-pop-cyan/30" href={row.pr.url} target="_blank" rel="noreferrer">{row.pr.action}</a>
+                        : row.pr.action
+                      : '—'}
+                  </td>
                 </tr>
-              </thead>
-              <tbody>
-                {projectRows.map(([name, p]) => (
-                  <tr key={name} className="border-t border-pop-bd/50">
-                    <td className="py-1.5 font-bold text-pop-ink">{name}</td>
-                    <td className="py-1.5 font-mono text-pop-cyan">{p.commit ? p.commit.slice(0, 8) : '—'}</td>
-                    <td className="py-1.5 font-mono text-[9px] text-pop-dim">{p.completedAt ? new Date(p.completedAt).toLocaleString() : '—'}</td>
-                    <td className="py-1.5 text-pop-green">✓</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          )}
-          <p className="mt-2 text-[9.5px] leading-relaxed text-pop-dim/80">
-            全绿才 done；任一 project 失败会停在 archiving，重试按 project 幂等续跑。系统自动投喂已在归档开始时触发（知识中心）。
-          </p>
-        </section>
+              ))}
+            </tbody>
+          </table>
+        )}
+        <p className="mt-2 text-[9.5px] leading-relaxed text-pop-dim/80">
+          全绿才 done；任一 project 失败会停在 archiving，说「重试」由主 Chat 按 project 幂等续跑。
+        </p>
+      </section>
 
+      <div className="mt-3 grid gap-3 lg:grid-cols-2">
         <section className="rounded-xl border-[1.5px] border-pop-bd bg-pop-paper/50 p-3">
-          <h3 className="mb-2 font-mono text-[9px] font-black tracking-[.08em] text-pop-dim">反思 · 沉淀建议</h3>
-          {!reflection || reflection.entries.length === 0 ? (
-            <p className="py-4 text-center text-[11px] text-pop-dim">还没有反思建议。主 chat 会在进入归档时给出。</p>
+          <h3 className="mb-2 font-mono text-[9px] font-black tracking-[.08em] text-pop-dim">
+            反思 · 沉淀决策 <span className="text-pop-dim/60">({decided}/{entries.length})</span>
+          </h3>
+          {entries.length === 0 ? (
+            <p className="py-3 text-center text-[11px] text-pop-dim">还没有反思建议。主 Chat 会在归档开始时逐条问。</p>
           ) : (
             <div className="space-y-1.5">
-              {reflection.entries.map((entry) => {
-                const decision = reflection.decisions[entry.id]
+              {entries.map((entry) => {
+                const decision = reflection?.decisions[entry.id]
                 return (
-                  <div key={entry.id} className="rounded-lg border border-pop-purple/25 bg-pop-purple-soft/20 px-2 py-1.5">
-                    <div className="text-[10.5px] font-bold text-pop-ink">{entry.title}</div>
-                    {entry.target && <div className="font-mono text-[9px] text-pop-purple">{entry.target}</div>}
-                    <div className="mt-1 flex items-center gap-1">
-                      {decision ? (
-                        <span className={`font-mono text-[9px] font-black ${decision.action === 'ingest' ? 'text-pop-green' : 'text-pop-dim'}`}>
-                          {decision.action === 'ingest' ? '已落 wiki' : '已跳过'}
-                          {decision.raw_path ? <span className="ml-1 text-pop-dim/60">{decision.raw_path}</span> : null}
-                        </span>
-                      ) : (
-                        <>
-                          <button type="button" disabled={busy !== null} onClick={() => void decide(entry.id, 'ingest')}
-                            className="rounded bg-pop-purple px-1.5 py-0.5 text-[9px] font-black text-pop-bg disabled:opacity-50">
-                            落 wiki
-                          </button>
-                          <button type="button" disabled={busy !== null} onClick={() => void decide(entry.id, 'skip')}
-                            className="rounded border border-pop-bd px-1.5 py-0.5 text-[9px] text-pop-dim hover:text-pop-ink disabled:opacity-50">
-                            跳过
-                          </button>
-                        </>
-                      )}
+                  <div key={entry.id} data-testid="archive-reflection-entry" className="rounded-lg border border-pop-purple/25 bg-pop-purple-soft/20 px-2 py-1.5">
+                    <div className="flex items-start gap-2">
+                      <span className="min-w-0 flex-1 text-[10.5px] font-bold text-pop-ink">{entry.title}</span>
+                      <span className={`shrink-0 font-mono text-[9px] font-black ${
+                        !decision ? 'text-pop-dim' : decision.action === 'ingest' ? 'text-pop-green' : 'text-pop-dim/80'
+                      }`}>
+                        {!decision ? '未决' : decision.action === 'ingest' ? '已落 wiki' : '已跳过'}
+                      </span>
                     </div>
+                    {entry.target && <div className="font-mono text-[9px] text-pop-purple">{entry.target}</div>}
+                    {decision?.raw_path && <div className="mt-0.5 font-mono text-[8.5px] text-pop-dim/70">{decision.raw_path}</div>}
                   </div>
                 )
               })}
             </div>
           )}
+          {entries.length > 0 && decided < entries.length && (
+            <p className="mt-2 text-[9.5px] text-pop-dim/80">未决条目在主 Chat 里说「落 / 跳过」即可。</p>
+          )}
+        </section>
+
+        <section className="rounded-xl border-[1.5px] border-pop-bd bg-pop-paper/50 p-3">
+          <h3 className="mb-2 font-mono text-[9px] font-black tracking-[.08em] text-pop-dim">知识素材包</h3>
+          {!archive.knowledge ? (
+            <p className="py-3 text-center text-[11px] text-pop-dim">投喂尚未开始（或知识中心不可用）。</p>
+          ) : (
+            <div className="space-y-1.5 text-[10.5px]">
+              <div className="flex items-center justify-between rounded-lg border border-pop-bd/50 bg-black/10 px-2 py-1.5">
+                <span className="text-pop-dim">已冻结素材件</span>
+                <span className="font-mono font-black text-pop-ink">{archive.knowledge.pack_items}</span>
+              </div>
+              <div className="flex items-center justify-between rounded-lg border border-pop-bd/50 bg-black/10 px-2 py-1.5">
+                <span className="text-pop-dim">编译</span>
+                <span className={`font-mono font-black ${
+                  compile === 'failed' ? 'text-pop-red' : compile === 'committed' ? 'text-pop-green' : 'text-pop-amber'
+                }`}>
+                  {compileLabel}
+                  {compile === 'queued' && archive.knowledge.compile_position != null
+                    ? ` #${archive.knowledge.compile_position}`
+                    : ''}
+                </span>
+              </div>
+            </div>
+          )}
+          <p className="mt-2 text-[9.5px] leading-relaxed text-pop-dim/80">
+            素材包包含台账 / 打回 / 执行摘录 / diff / 产物 / ADR+notes / 总结共七件，编译进 wiki 由知识中心串行队列执行。
+          </p>
         </section>
       </div>
 
       <section className="mt-3 rounded-xl border-[1.5px] border-pop-bd bg-pop-bg p-3">
-        <h3 className="mb-2 font-mono text-[9px] font-black tracking-[.08em] text-pop-dim">归档报告 · archive/report.md</h3>
+        <h3 className="mb-2 flex items-center gap-2 font-mono text-[9px] font-black tracking-[.08em] text-pop-dim">
+          归档报告 · archive/report.md
+          <span className="text-[9px] font-normal text-pop-dim/60">
+            {archive.report
+              ? conflicts > 0
+                ? `${conflicts} 处术语冲突等 PR review`
+                : '无冲突'
+              : '报告尚未生成'}
+          </span>
+        </h3>
         {archive.report_md ? (
           <pre className="max-h-[40vh] overflow-auto whitespace-pre-wrap break-words font-mono text-[10px] leading-relaxed text-pop-dim">{archive.report_md}</pre>
         ) : (

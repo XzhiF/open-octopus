@@ -13,6 +13,7 @@ import { THINKING_TONE, TOOL_TONE } from '@/lib/agent/chat-colors'
 import type { TurnStats } from '@/lib/turn-stats'
 import { TaskStatusCard } from './task-status-card'
 import { AcceptanceCheckCard } from './acceptance-check-card'
+import { ArchiveSummaryCard } from './archive-summary-card'
 
 /** mini-markdown：`**bold**` / `行内 code` / 行首 # 标题 —— 消灭字面星号。 */
 function mdInline(text: string): ReactNode {
@@ -321,6 +322,11 @@ function ActivityEventCard({ message }: { message: AgentMessage }) {
   const activity = message.activity
   // 验收项卡（2026-10-30）：信息完整版 —— 通过标准 / 怎么验 / 机器建议 / 证据。
   const isAcceptanceCard = !!(activity?.payload as { acceptanceCheck?: boolean } | undefined)?.acceptanceCheck
+  // 归档总框（2026-10-31）：对话里唯一的归档卡；明细进作业坞只读窗口。
+  const isArchiveSummary = !!(activity?.payload as { archiveSummary?: boolean } | undefined)?.archiveSummary
+  if (isArchiveSummary) {
+    return <ArchiveSummaryCard message={message} />
+  }
   // 任务状态卡（执行中 / 已暂停 / 收尾）交给运行卡组件：它自己走表、按需轮询
   // 执行详情，收尾后定格成只读（2026-10-30 用户定稿）。
   if (activity?.status && activity?.taskId && !isAcceptanceCard) {
@@ -329,7 +335,6 @@ function ActivityEventCard({ message }: { message: AgentMessage }) {
   const severity = activity?.severity
   // 决策卡选过就只读：所选按钮高亮，其余禁用；卡片整体降噪（与启动决策一致）。
   const decision = activity?.decision ?? null
-  const decisions = activity?.decisions ?? {}
   const decided = !!decision
   const tone =
     decided
@@ -357,11 +362,6 @@ function ActivityEventCard({ message }: { message: AgentMessage }) {
   const fireAction = (actionId: string) => {
     window.dispatchEvent(new CustomEvent('octopus:task-card-action', {
       detail: { taskId: activity?.taskId ?? null, activity, actionId, messageId: message.id },
-    }))
-  }
-  const decideReflection = (entryId: string, action: 'ingest' | 'skip') => {
-    window.dispatchEvent(new CustomEvent('octopus:reflection-decision', {
-      detail: { taskId: activity?.taskId ?? null, entryId, action, messageId: message.id },
     }))
   }
 
@@ -412,30 +412,13 @@ function ActivityEventCard({ message }: { message: AgentMessage }) {
       {entries.length > 0 && (
         <div className="mt-2 space-y-1 pl-6" data-testid="reflection-entries">
           {entries.map((entry) => {
-            const pick = decisions[entry.id]
+            const pick = activity?.decisions?.[entry.id]
             return (
               <div key={entry.id} className="rounded border border-current/20 bg-black/10 px-2 py-1.5">
                 <div className="text-[10.5px] font-semibold text-pop-ink">{entry.title}</div>
                 {entry.target && <div className="text-[9px] text-pop-dim">{entry.target}</div>}
-                <div className="mt-1 flex items-center gap-1">
-                  <button type="button" onClick={() => decideReflection(entry.id, 'ingest')}
-                    disabled={!!pick}
-                    className={`rounded px-1.5 py-0.5 text-[9px] font-black disabled:cursor-default ${
-                      pick?.id === 'ingest'
-                        ? 'border border-pop-green/50 bg-pop-green/10 text-pop-green'
-                        : 'bg-pop-purple text-pop-bg disabled:opacity-30'
-                    }`}>
-                    {pick?.id === 'ingest' ? '✓ 落 wiki' : '落 wiki'}
-                  </button>
-                  <button type="button" onClick={() => decideReflection(entry.id, 'skip')}
-                    disabled={!!pick}
-                    className={`rounded border px-1.5 py-0.5 text-[9px] disabled:cursor-default ${
-                      pick?.id === 'skip'
-                        ? 'border-pop-green/50 bg-pop-green/10 text-pop-green'
-                        : 'border-current/30 text-pop-dim hover:text-pop-ink disabled:opacity-30'
-                    }`}>
-                    {pick?.id === 'skip' ? '✓ 跳过' : '跳过'}
-                  </button>
+                <div className={`mt-0.5 text-[9px] font-bold ${pick ? 'text-pop-green' : 'text-pop-dim/70'}`}>
+                  {pick?.id === 'ingest' ? '✓ 已落 wiki' : pick?.id === 'skip' ? '✓ 已跳过' : '未决 · 在对话里说「落 / 跳过」'}
                 </div>
               </div>
             )

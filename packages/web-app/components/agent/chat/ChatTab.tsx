@@ -28,7 +28,7 @@ import type { TaskWindowMap } from '@/components/chat-workbench/task-window-type
 import {
   createTask, getTask, readyTask, TaskReadyGateError, updateTask, deleteTask, abortTask,
   triggerTask, pauseTask, resumeTask, reopenTask, duplicateTask, postArchiveRetry,
-  postReflectionDecision, postAcceptance, recordAcceptanceCheck, regenerateAcceptancePlan,
+  postAcceptance, recordAcceptanceCheck, regenerateAcceptancePlan,
   type TaskView,
 } from '@/lib/tasks-api'
 import { readRememberedTaskOrg, rememberTaskOrg, resolveTaskOrg } from '@/lib/task-org'
@@ -996,32 +996,11 @@ export function ChatTab() {
       if (!detail?.taskId || !detail.actionId) return
       void executeTaskAction(detail.taskId, detail.actionId, detail.activity, detail.messageId)
     }
-    const onReflection = (event: Event) => {
-      const detail = (event as CustomEvent<{
-        taskId?: string | null
-        entryId?: string
-        action?: 'ingest' | 'skip'
-        messageId?: string
-      }>).detail
-      if (!detail?.taskId || !detail.entryId || !detail.action) return
-      void postReflectionDecision(detail.taskId, { entry_id: detail.entryId, action: detail.action })
-        .then(() => {
-          toast.success(detail.action === 'ingest' ? '已落 wiki' : '已跳过')
-          // 逐条写回卡片：这一条的按钮高亮、整条只读。
-          void recordDecision(detail.messageId, detail.action!, {
-            entryId: detail.entryId!,
-            label: detail.action === 'ingest' ? '落 wiki' : '跳过',
-          })
-        })
-        .catch((err: unknown) => toast.error(err instanceof Error ? err.message : '沉淀决策失败'))
-    }
     window.addEventListener('octopus:task-card-action', onAction)
-    window.addEventListener('octopus:reflection-decision', onReflection)
     return () => {
       window.removeEventListener('octopus:task-card-action', onAction)
-      window.removeEventListener('octopus:reflection-decision', onReflection)
     }
-  }, [executeTaskAction, recordDecision])
+  }, [executeTaskAction])
 
   // Task status/execution events reload the transcript (silent cards are
   // inserted server-side; draft/ready threads have no workspace SSE channel).
