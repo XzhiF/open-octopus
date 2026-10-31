@@ -24,7 +24,7 @@ kind: Workflow
 #          └─ validate (bash) — JSON 存在且可解析；缺 = 失败（server 另做 Zod 校验）
 #
 # 失败语义：任何节点失败 → 执行终态非成功 → server 标 status=failed，
-# GET /:id/playbook 回退旧编译清单，验收不阻塞。
+# GET /:id/playbook 返回空清单 + 方案状态；验收台显示状态卡（可直接拍板，不阻塞）。
 # ============================================================
 
 name: acceptance-plan
@@ -116,13 +116,15 @@ nodes:
          · cases = 人验收场景，**1–3 条**：从 phase 的故事与验收物来，不从票 AC 平铺。
            每条是一条完整动作流（open → do → observe），写清「打开哪 / 做什么 / 看到什么」；
            不写测试命令、不写 AC 编号；简单工具任务只写 1 条；纯后端用 REPL/脚本/curl 也算场景。
+           **每条场景步骤 ≤8 步**（硬上限 16）：同类操作合并，别把每个输入值拆成一对步。
          · checks = 本轮已有机器证据，≤20 项：按来源组织（一套单测 = 1 项，一个 e2e = 1 项），
            写 covers（覆盖哪些 AC）、tickets、真实存在的 evidenceRefs、可选 recheck 命令。
            不写通过结论，不要求人逐项签。
          · 同一件事不能既进 cases 又进 checks；**测试通过永远不是人验场景**。
       5. 严格按 octo-acceptance-plan skill 的 JSON 结构（version=2）写 $inputs.plan_json_path
          （只写 JSON 本体，无围栏），写完用 `node -e "JSON.parse(require('fs').readFileSync('<path>','utf8'))"`
-         或 `python -c "import json;json.load(open('<path>',encoding='utf-8'))"` 自检一次。
+         或 `python -c "import json;json.load(open('<path>',encoding='utf-8'))"` 自检一次；
+         再数一遍条数：cases 1–3、每条 steps ≤8、checks ≤20（硬上限 10 / 16 / 50，超了整份方案作废）。
       6. 写人读版 $inputs.plan_md_path：先「你要验的」再「本轮验证了什么」。
 
       ═══ 硬纪律 ═══

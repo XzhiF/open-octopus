@@ -22,7 +22,6 @@ import { TASK_ACCEPTANCE_CHECK_EVENT, TASK_ACCEPTANCE_PLAN_EVENT } from "@octopu
 import {
   readChecks,
   recordAcceptanceCheck,
-  regenerateAcceptancePlan,
   runProbe,
   type CheckDecision,
   type CheckEntry,
@@ -88,7 +87,7 @@ export function AcceptancePlanPanel({
   onPlanEvent, registerFlush, onSaveStateChange, onOpenFile,
 }: AcceptancePlanPanelProps) {
   const items = useMemo(() => playbook.sections.flatMap((s) => s.items), [playbook])
-  /** 人验收场景（可判定）。编译型清单没有 tier —— 一律按场景处理。 */
+  /** 人验收场景（可判定）。缺 tier（历史 payload）时按场景处理。 */
   const cases = useMemo(() => items.filter((it) => it.tier !== "check"), [items])
   /** 机器证据（只读）。 */
   const evidence = useMemo(() => items.filter((it) => it.tier === "check"), [items])
@@ -353,29 +352,6 @@ export function AcceptancePlanPanel({
       {(playbook.planWarnings ?? []).length > 0 && (
         <div className="ap-coverage mt-2" data-testid="plan-warnings">
           方案提示：{playbook.planWarnings!.join(" · ")}
-        </div>
-      )}
-      {plan?.status === "failed" && (
-        <div className="ap-check-note warn mt-2" data-testid="plan-failed">
-          <span className="q">!</span>
-          <span>
-            验收方案生成失败{plan.error ? `（${plan.error}）` : ""} —— 已回退旧清单，验收不受影响。
-            <button
-              type="button"
-              className="ap-block-link"
-              data-testid="plan-regenerate"
-              onClick={() => {
-                void regenerateAcceptancePlan(taskId)
-                  .then((r) => {
-                    if (!r.ok) toast.error(`重生成被拒：${r.reason ?? "未知原因"}`)
-                    else { toast.success("已重新发起方案生成"); onPlanEvent?.() }
-                  })
-                  .catch((err: unknown) => toast.error(err instanceof Error ? err.message : "重生成失败"))
-              }}
-            >
-              ↻ 重新生成
-            </button>
-          </span>
         </div>
       )}
     </div>

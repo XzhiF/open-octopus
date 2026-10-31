@@ -707,7 +707,7 @@ class ChatEventBridge {
       { id: "acceptance_open_window", label: "打开验收台" },
     ]
     const title = "验收方案生成失败"
-    const detail = `${error}（验收不阻塞 —— 仍可用旧清单逐项核对）`
+    const detail = `${error}（验收不阻塞 —— 打开验收台可直接通过或退回，无场景硬闸）`
     const event = getActivityBus().publish({
       kind: "task.review",
       severity: "warn",

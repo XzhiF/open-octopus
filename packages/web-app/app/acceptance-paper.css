@@ -284,7 +284,7 @@
 .ap-foot-note { color: var(--ap-muted); font-size: 9.5px; }
 .ap-spacer { flex: 1; }
 
-/* ── 核对清单（PlaybookPanel 复用） ───────────────────────────────── */
+/* ── 验收卡片（方案面板 / 状态卡复用） ───────────────────────────── */
 .ap-card { border: 1.5px solid var(--ap-line); border-radius: 12px; background: var(--ap-card); overflow: hidden; }
 .ap-card-head { display: flex; align-items: center; gap: 8px; padding: 9px 12px; border-bottom: 1.5px solid var(--ap-line); background: var(--pop-idle); }
 .ap-card-body { padding: 12px; }
@@ -293,70 +293,17 @@
 .ap-card-count b { color: var(--ap-moss); font-weight: 900; }
 .ap-card-count .bad { color: var(--ap-coral); }
 .ap-card-count .skip { color: var(--ap-amber); }
-.ap-card-action { border: 0; background: none; color: var(--ap-muted); font-size: 9.5px; font-weight: 800; padding: 2px 6px; border-radius: 6px; cursor: pointer; }
-.ap-card-action:hover { background: var(--pop-green-soft); color: var(--ap-moss); }
 
 .ap-check-note { display: flex; align-items: flex-start; gap: 8px; margin-top: 12px; padding: 9px 11px; border-radius: 9px; background: var(--pop-cyan-soft); border: 1.5px solid color-mix(in srgb, var(--pop-cyan) 28%, var(--ap-line)); color: var(--ap-ink-2); font-size: 10px; line-height: 1.65; }
 .ap-check-note .q { width: 15px; height: 15px; border-radius: 50%; background: var(--pop-bg); color: var(--pop-cyan); border: 1.5px solid color-mix(in srgb, var(--pop-cyan) 40%, var(--ap-line)); display: grid; place-items: center; font-size: 9px; font-weight: 900; flex: none; margin-top: 1px; }
 .ap-check-note b { color: var(--ap-coral); }
 
-.ap-check-group { margin-top: 14px; }
-.ap-check-group:first-child { margin-top: 0; }
-.ap-check-group-title { display: flex; align-items: center; gap: 7px; font-size: 8.8px; letter-spacing: 0.12em; text-transform: uppercase; color: var(--ap-muted-2); font-weight: 900; padding-bottom: 4px; }
-.ap-check-group-title .gline { flex: 1; height: 1px; background: var(--ap-line); }
-.ap-check-group-title span:last-child { letter-spacing: 0; text-transform: none; font-weight: 500; }
-
-.ap-check-item { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; padding: 7px 8px; border: 1.5px solid transparent; border-radius: 8px; transition: 0.15s; }
-.ap-check-item:hover { background: color-mix(in srgb, var(--pop-ink) 5%, transparent); border-color: color-mix(in srgb, var(--pop-bd) 55%, transparent); }
-.ap-check-item[data-state="fail"] { background: color-mix(in srgb, var(--pop-red) 8%, transparent); border-color: color-mix(in srgb, var(--pop-red) 30%, var(--ap-line)); }
-.ap-check-main { display: flex; align-items: flex-start; gap: 9px; flex: 1; min-width: 180px; border: 0; background: none; text-align: left; padding: 0; cursor: pointer; }
-.ap-check-circle { width: 19px; height: 19px; border-radius: 50%; flex: none; margin-top: 1px; border: 1.5px solid var(--ap-line-2); background: var(--pop-bg); color: transparent; display: grid; place-items: center; font-size: 10px; font-weight: 900; transition: 0.18s; }
-.ap-check-text { min-width: 0; }
-.ap-check-text b { display: block; font-size: 11px; font-weight: 600; line-height: 1.5; color: var(--ap-ink-2); }
-.ap-check-text small { display: block; margin-top: 1px; color: var(--ap-muted); font-size: 9.5px; line-height: 1.5; }
-.ap-check-item[data-state="pass"] .ap-check-circle { background: var(--ap-mint); border-color: color-mix(in srgb, var(--pop-green) 50%, var(--ap-line)); color: var(--ap-moss); }
-.ap-check-item[data-state="fail"] .ap-check-circle { background: var(--ap-coral-soft); border-color: color-mix(in srgb, var(--pop-red) 55%, var(--ap-line)); color: var(--ap-coral); }
-.ap-check-item[data-state="fail"] .ap-check-text b { color: var(--ap-coral); }
-.ap-check-item[data-state="skip"] .ap-check-circle { background: var(--ap-amber-soft); border-color: color-mix(in srgb, var(--pop-amber) 50%, var(--ap-line)); color: var(--ap-amber); }
-
-.ap-check-actions { display: flex; align-items: center; gap: 4px; margin-left: auto; flex: none; }
-.ap-decide { height: 22px; min-width: 25px; padding: 0 6px; border-radius: 5px; border: 1.5px solid var(--ap-line-2); background: transparent; color: var(--ap-muted); font-size: 10px; font-weight: 900; cursor: pointer; transition: 0.15s; }
-.ap-decide:hover:not(:disabled) { border-color: var(--ap-accent); color: var(--ap-accent); }
-.ap-decide:disabled { opacity: 0.4; cursor: not-allowed; }
-.ap-decide[data-active="true"][data-d="pass"] { background: var(--ap-mint); border-color: color-mix(in srgb, var(--pop-green) 55%, var(--ap-line)); color: var(--ap-moss); }
-.ap-decide[data-active="true"][data-d="fail"] { background: var(--ap-coral-soft); border-color: color-mix(in srgb, var(--pop-red) 55%, var(--ap-line)); color: var(--ap-coral); }
-.ap-decide[data-active="true"][data-d="skip"] { background: var(--ap-amber-soft); border-color: color-mix(in srgb, var(--pop-amber) 55%, var(--ap-line)); color: var(--ap-amber); }
-
-.ap-check-detail { flex-basis: 100%; padding: 2px 0 2px 28px; }
-.ap-expect { padding: 4px 8px; border-left: 3px solid var(--ap-amber); background: var(--ap-amber-soft); font-size: 10.5px; color: var(--ap-ink); line-height: 1.6; }
-.ap-expect b { color: var(--ap-ink); }
-.ap-expect .dim { color: var(--ap-muted); }
-.ap-consequence { margin-top: 5px; padding: 4px 8px; border-left: 3px solid var(--ap-line-2); font-size: 10px; line-height: 1.55; }
-.ap-consequence.pass { border-color: var(--ap-moss); color: var(--ap-moss); }
-.ap-consequence.fail { border-color: var(--ap-coral); color: var(--ap-coral); }
-.ap-consequence.skip { border-color: var(--ap-amber); color: var(--ap-amber); }
 .ap-note-input { margin-top: 5px; width: 100%; border: 1.5px dashed var(--ap-line-2); border-radius: 6px; background: var(--pop-inset); padding: 5px 7px; font-family: var(--ap-mono); font-size: 10px; color: var(--ap-ink); resize: vertical; }
 .ap-note-input:focus { outline: 2px solid color-mix(in srgb, var(--pop-pink) 30%, transparent); border-color: var(--ap-accent); }
 .ap-command { display: block; margin-top: 5px; padding: 4px 7px; border-radius: 5px; border: 1.5px solid var(--ap-line); background: var(--pop-inset); font-family: var(--ap-mono); font-size: 9.5px; color: var(--ap-ink-2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.ap-probe-tail { margin-top: 5px; max-height: 140px; overflow: auto; border-radius: 6px; background: var(--pop-inset); color: var(--ap-moss); padding: 6px 8px; font-family: var(--ap-mono); font-size: 9px; line-height: 1.6; border: 1.5px solid var(--ap-line); }
-.ap-probe-stamp { flex: none; border: 1.5px solid currentColor; border-radius: 4px; padding: 0 5px; font-family: var(--ap-mono); font-size: 8.5px; font-weight: 900; background: transparent; }
-.ap-probe-stamp.pass { color: var(--ap-moss); }
-.ap-probe-stamp.fail { color: var(--ap-coral); }
 
 .ap-coverage { font-family: var(--ap-mono); font-size: 8.5px; color: var(--ap-muted-2); line-height: 1.7; }
-.ap-fine { margin-top: 8px; border: 1.5px dashed var(--ap-line); border-radius: 8px; }
-.ap-fine-toggle { display: flex; width: 100%; align-items: center; gap: 6px; padding: 6px 9px; border: 0; background: none; font-size: 10px; font-weight: 800; color: var(--ap-muted); cursor: pointer; text-align: left; }
-.ap-fine-toggle:hover { color: var(--ap-ink-2); }
-.ap-fine-body { border-top: 1.5px solid var(--ap-line); padding: 8px 10px; columns: 2; column-gap: 18px; font-family: var(--ap-mono); font-size: 9.5px; color: var(--ap-muted); }
 
-/* 上轮未结 */
-.ap-carryover { margin-top: 10px; border: 1.5px solid color-mix(in srgb, var(--pop-amber) 35%, var(--ap-line)); background: color-mix(in srgb, var(--pop-amber) 8%, var(--pop-bg)); border-radius: 9px; padding: 9px 10px; }
-.ap-carryover-title { font-size: 9px; font-weight: 900; letter-spacing: 0.1em; text-transform: uppercase; color: var(--ap-amber); margin-bottom: 6px; }
-.ap-carryover-item { padding: 6px 0; border-top: 1px solid color-mix(in srgb, var(--pop-bd) 55%, transparent); }
-.ap-carryover-item:first-of-type { border-top: 0; padding-top: 0; }
-.ap-carryover-item .op { font-size: 11px; font-weight: 700; color: var(--ap-ink-2); }
-.ap-carryover-item .meta { margin-left: auto; font-family: var(--ap-mono); font-size: 8.5px; color: var(--ap-muted); }
-.ap-carryover-expect { margin-top: 3px; border-left: 3px solid var(--ap-amber); background: var(--ap-amber-soft); padding: 3px 7px; font-size: 10px; color: var(--ap-ink); }
 
 /* ── 决策条 ───────────────────────────────────────────────────────── */
 .ap-decision {
@@ -597,8 +544,6 @@
   .ap-decision { flex-wrap: wrap; gap: 8px; padding: 9px 12px; }
   .ap-decision-actions { width: 100%; margin-left: 0; }
   .ap-decision-actions .ap-btn { flex: 1; }
-  .ap-check-item { align-items: flex-start; }
-  .ap-check-actions { margin-left: 27px; }
 }
 
 @media (prefers-reduced-motion: reduce) {

@@ -11,7 +11,9 @@ import {
   AcceptancePlanSchema,
   LegacyAcceptancePlanSchema,
   convertLegacyPlan,
+  emptyPlaybookPayload,
   parseAcceptancePlan,
+  planBudgetWarnings,
   planToPlaybook,
   renderPlanMd,
   type AcceptancePlan,
@@ -110,16 +112,38 @@ describe("AcceptancePlanSchema (v2)", () => {
     expect(AcceptancePlanSchema.safeParse(validPlan()).success).toBe(true)
   })
 
+  it("accepts an over-budget case (9 steps) but flags it as a warning, not a rejection", () => {
+    // 2026-10-31 事故回归：9 步的 REPL 场景撞上 steps.max(8)，整份方案被判死。
+    const plan = validPlan()
+    plan.cases[0].steps = Array.from({ length: 9 }, (_, i) => ({
+      kind: "do" as const,
+      text: `第 ${i + 1} 步`,
+    }))
+    expect(AcceptancePlanSchema.safeParse(plan).success).toBe(true)
+    const warnings = planBudgetWarnings(plan)
+    expect(warnings.some((w) => w.includes("9 步"))).toBe(true)
+  })
+
+  it("still rejects a pathological step count (hard guard, not the budget)", () => {
+    const plan = validPlan()
+    plan.cases[0].steps = Array.from({ length: 17 }, (_, i) => ({
+      kind: "do" as const,
+      text: `第 ${i + 1} 步`,
+    }))
+    expect(AcceptancePlanSchema.safeParse(plan).success).toBe(false)
+  })
+
   it("rejects a case without steps (a scenario must be doable)", () => {
     const plan = validPlan()
     plan.cases[0].steps = []
     expect(AcceptancePlanSchema.safeParse(plan).success).toBe(false)
   })
 
-  it("rejects more than 3 human cases (the whole point of the cap)", () => {
+  it("accepts more than 3 human cases but flags the budget (rejecting would fall back to the flat legacy list)", () => {
     const plan = validPlan()
     plan.cases = Array.from({ length: 4 }, (_, i) => ({ ...plan.cases[0], id: `case:${i + 1}` }))
-    expect(AcceptancePlanSchema.safeParse(plan).success).toBe(false)
+    expect(AcceptancePlanSchema.safeParse(plan).success).toBe(true)
+    expect(planBudgetWarnings(plan)[0]).toContain("超过建议上限 3 条")
   })
 
   it("rejects zero human cases (pure tools still need one 'use it once' scenario)", () => {
@@ -131,21 +155,31 @@ describe("AcceptancePlanSchema (v2)", () => {
   it("rejects the old v1 shape", () => {
     expect(AcceptancePlanSchema.safeParse(legacyPlan()).success).toBe(false)
   })
+
+  it("reports field-level issues when a v2 plan is invalid", () => {
+    const plan = validPlan()
+    plan.cases[0].steps = []
+    const res = parseAcceptancePlan(plan)
+    expect(res.ok).toBe(false)
+    if (res.ok) return
+    expect(res.issues.join("\n")).toContain("cases.0.steps")
+  })
 })
 
 describe("legacy v1 compatibility", () => {
   it("parses v1 and splits pass items into checks, the rest into cases", () => {
     expect(LegacyAcceptancePlanSchema.safeParse(legacyPlan()).success).toBe(true)
     const parsed = parseAcceptancePlan(legacyPlan())
-    expect(parsed).not.toBeNull()
-    const plan = parsed!.plan
+    expect(parsed.ok).toBe(true)
+    if (!parsed.ok) return
+    const plan = parsed.plan
     expect(plan.version).toBe("2")
     // id 原样保留 —— 旧 checks 文件里的历史勾选仍对得上
     expect(plan.checks.map((c) => c.id)).toEqual(["plan:01-tokenizer:1"])
     expect(plan.cases.map((c) => c.id)).toEqual(["plan:02-ui:1"])
     expect(plan.checks[0].recheck).toContain("mvn")
     expect(plan.cases[0].steps[0]).toMatchObject({ kind: "observe", text: "人工核对高亮" })
-    expect(parsed!.warnings[0]).toContain("旧版验收方案")
+    expect(parsed.warnings[0]).toContain("旧版验收方案")
   })
 
   it("never returns a zero-case plan when every legacy item was machine-pass", () => {
@@ -154,6 +188,19 @@ describe("legacy v1 compatibility", () => {
     const { plan } = convertLegacyPlan(legacy)
     expect(plan.cases).toHaveLength(1)
     expect(plan.cases[0].id).toBe("case:legacy-review")
+  })
+})
+
+describe("emptyPlaybookPayload", () => {
+  it("keeps the payload shape with no items and passes the plan status through", () => {
+    const p = emptyPlaybookPayload({ status: "failed", error: "boom" })
+    expect(p.available).toBe(false)
+    expect(p.sections).toEqual([])
+    expect(p.finePrint).toEqual([])
+    expect(p.carryover).toEqual([])
+    expect(p.budget).toEqual({ steps: 0, estMin: 0, over: false, degraded: false })
+    expect(p.coverage).toEqual({ found: [], missing: [] })
+    expect(p.plan).toMatchObject({ status: "failed", error: "boom" })
   })
 })
 

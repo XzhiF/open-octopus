@@ -129,7 +129,7 @@ const homeFileBodySchema = z.object({
   content: z.string().max(512_000),
 })
 
-// 剧本探针单发执行体（POST /:id/playbook/run）——command 来自编译票步,人点才跑。
+// 方案探针单发执行体（POST /:id/playbook/run）——command 来自验收方案的按需复核项,人点才跑。
 const probeRunBodySchema = z.object({
   command: z.string().min(1).max(4000),
   timeoutS: z.number().int().min(5).max(600).optional(),
@@ -647,8 +647,8 @@ export function createTasksRoutes(
     }
   })
 
-  // 验收剧本：把 awaiting 轮的契约文件编译成走查清单（派生视图，不入库）。
-  // 纯读 + 编译，绝不 spawn；缺料 → available:false 仍 200。无 awaiting → 409。
+  // 验收清单：读取 awaiting 轮（或指定历史轮）的验收方案（派生视图，不入库）。
+  // 纯读，绝不 spawn；方案未 ready → 空清单 + plan 状态仍 200。无 awaiting → 409。
   router.get("/:id/playbook", (c) => {
     if (!evidence) return c.json({ error: "round evidence not wired" }, 501)
     const target = parseRoundTargetQuery(c.req.query("phase_index"), c.req.query("round_index"))
@@ -695,8 +695,8 @@ export function createTasksRoutes(
     }
   })
 
-  // 剧本探针单发执行：票步里的可执行命令（curl/until 级），同步返回 exit+tail
-  // 供面板就地盖章。与复检同纪律——只有人点击才执行；GET /playbook 保持纯读。
+  // 方案探针单发执行：方案项里的复核命令（curl/until 级），同步返回 exit+tail
+  // 供面板就地展示。与复检同纪律——只有人点击才执行；GET /playbook 保持纯读。
   router.post("/:id/playbook/run", async (c) => {
     if (!evidence) return c.json({ error: "round evidence not wired" }, 501)
     const parsed = probeRunBodySchema.safeParse(await c.req.json().catch(() => null))

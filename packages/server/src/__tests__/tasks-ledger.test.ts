@@ -17,7 +17,8 @@ import { TasksService, TaskStatusConflictError } from "../services/tasks/tasks-s
 import { createTasksRoutes } from "../routes/tasks"
 import { TaskHomeService } from "../services/tasks/task-home-service"
 import { RoundEvidenceService, type LedgerSnapshot } from "../services/tasks/round-evidence-service"
-import { renderChecksMd } from "../services/tasks/playbook-compile"
+import { renderChecksMd } from "../services/tasks/checks-codec"
+import { AcceptancePlanService } from "../services/tasks/acceptance-plan-service"
 
 const ORG = "e2e-td-ledger"
 const WS_ID = "ws-lg-1"
@@ -27,6 +28,7 @@ let app: Hono
 let tmp: string
 let taskHome: TaskHomeService
 let evidence: RoundEvidenceService
+let planService: AcceptancePlanService
 let seq = 0
 
 function wb(taskId: string, rel: string, content: string): void {
@@ -39,6 +41,42 @@ function rb(taskId: string, rel: string): string {
 }
 function has(taskId: string, rel: string): boolean {
   return fs.existsSync(path.join(taskHome.homePath(taskId), BATCH_REL, rel))
+}
+
+/** 2026-10-31：清单只来自验收方案 —— 每个用例先落一份 ready 方案。 */
+function writeReadyPlan(
+  taskId: string,
+  cases: Array<{ id: string; tickets?: string[] }>,
+  opts: { goal?: string; round?: number; evidenceCheck?: boolean } = {},
+): void {
+  const round = opts.round ?? 1
+  const plan = {
+    version: "2",
+    task_id: taskId,
+    phase_index: 1,
+    round_index: round,
+    generated_at: new Date().toISOString(),
+    planner: "acceptance-planner",
+    goal: opts.goal ?? "g",
+    cases: cases.map((c) => ({
+      id: c.id,
+      title: `场景 ${c.id}`,
+      story: "",
+      steps: [{ kind: "observe", text: "看一眼结果" }],
+      expect: "看到预期结果",
+      tickets: c.tickets ?? [],
+      evidenceRefs: [],
+    })),
+    checks: opts.evidenceCheck
+      ? [{ id: "check:unit", title: "单测", tickets: [], covers: ["AC1"], evidenceRefs: [] }]
+      : [],
+    coverage: { stories: [], acs: [], found: [], missing: [] },
+    warnings: [],
+  }
+  wb(taskId, `acceptance-plan-r${round}.json`, JSON.stringify(plan, null, 2))
+  wb(taskId, `acceptance-plan-r${round}.status.json`, JSON.stringify({
+    status: "ready", finished_at: new Date().toISOString(), plan_path: `${BATCH_REL}/acceptance-plan-r${round}.json`,
+  }))
 }
 
 async function newAwaiting(twoPhase = false, autoAdvance?: boolean): Promise<string> {
@@ -78,18 +116,25 @@ beforeAll(() => {
   const ts = new TasksService(db, sse, new AgentSessionDAO(db), taskHome, undefined, { get: () => null } as never)
   const wss = { getById: (id: string) => (id === WS_ID ? { id, path: path.join(tmp, "ws1") } : undefined) } as never
   evidence = new RoundEvidenceService(db, sse, ts, wss, taskHome)
+  planService = new AcceptancePlanService(db, sse, ts, wss, taskHome, evidence)
+  evidence.setAcceptancePlanService(planService)
   app = new Hono(); app.route("/api/tasks", createTasksRoutes(ts, sse, undefined, evidence))
+  // 测试不触发规划 Agent（方案文件由用例自己落盘）
+  process.env.OCTOPUS_ACCEPTANCE_PLAN = "off"
 })
-afterAll(() => { db.close(); fs.rmSync(tmp, { recursive: true, force: true }) })
+afterAll(() => {
+  delete process.env.OCTOPUS_ACCEPTANCE_PLAN
+  db.close()
+  fs.rmSync(tmp, { recursive: true, force: true })
+})
 
 describe("T04 ledger + reopen", () => {
   it("L1: writeLedger(accepted) 聚合四事实落 .md", async () => {
     const taskId = await newAwaiting()
-    wb(taskId, "e2e-test-plan.md", PLAN)
-    wb(taskId, "round-report.md", "# R1\n\n## 票执行摘要\n全链打通\n")
+    writeReadyPlan(taskId, [{ id: "case:1" }, { id: "case:2" }, { id: "case:3" }], { goal: "全链打通" })
     wb(taskId, "acceptance-checks-r1.md", renderChecksMd({ version: "1", round_index: 1, checks: {
-      "walk:plan:1": { decision: "pass", note: "", at: "t" },
-      "walk:plan:2": { decision: "skip", note: "环境未就绪", at: "t" },
+      "case:1": { decision: "pass", note: "", at: "t" },
+      "case:2": { decision: "skip", note: "环境未就绪", at: "t" },
     } }))
     const snap = await evidence.snapshotEvidence(taskId)
     expect(snap.roundIndex).toBe(1)
@@ -106,9 +151,10 @@ describe("T04 ledger + reopen", () => {
 
   it("L2: augmentReject 追加未过项到 fix-feedback + 翻票 done→reopened", async () => {
     const taskId = await newAwaiting()
+    writeReadyPlan(taskId, [{ id: "case:1", tickets: ["11-e2e-story"] }])
     wb(taskId, "issues/11-e2e-story.md", "# 11 — story\n\n## What to build\n端到端走查关键 UI 路径\n\n## Status\ndone\n\n## Acceptance Criteria\n- [x] AC1: a\n\n## Verification Method\n**Verification type**: browser E2E\n\n**Verification steps**:\n```bash\npnpm playwright test\n```\n\n**Pass criteria**: all PASS\n")
     wb(taskId, "acceptance-checks-r1.md", renderChecksMd({ version: "1", round_index: 1, checks: {
-      "walk:11-e2e-story:0": { decision: "fail", note: "按钮点不动", at: "t" },
+      "case:1": { decision: "fail", note: "按钮点不动", at: "t" },
     } }))
     // fix-feedback-r1.md is written by service.acceptance in the real flow; stub it here.
     wb(taskId, "fix-feedback-r1.md", "# 打回反馈 · Round 1\n\n## 反馈\n\n按钮点不动\n")
@@ -126,7 +172,10 @@ describe("T04 ledger + reopen", () => {
 
   it("L3: route accepted(两-phase/autoAdvance=false)→ ledger 落盘 + 决策仍成功", async () => {
     const taskId = await newAwaiting(true, false)
-    wb(taskId, "e2e-test-plan.md", PLAN)
+    writeReadyPlan(taskId, [{ id: "case:1" }])
+    wb(taskId, "acceptance-checks-r1.md", renderChecksMd({ version: "1", round_index: 1, checks: {
+      "case:1": { decision: "pass", note: "", at: "t" },
+    } }))
     const r = await app.request(`/api/tasks/${taskId}/acceptance`, {
       method: "POST", headers: { "content-type": "application/json" },
       body: JSON.stringify({ phase_index: 1, round_index: 1, decision: "accepted" }),
@@ -165,11 +214,11 @@ describe("S1 acceptance 硬闸", () => {
 
   it("G1: checks 有 ✗ → 409 硬闸，决策表零行、台账不写", async () => {
     const taskId = await newAwaiting(true, false)
-    wb(taskId, "e2e-test-plan.md", PLAN)
+    writeReadyPlan(taskId, [{ id: "case:1" }, { id: "case:2" }, { id: "case:3" }])
     wb(taskId, "acceptance-checks-r1.md", renderChecksMd({ version: "1", round_index: 1, checks: {
-      "walk:plan:1": { decision: "pass", note: "", at: "t" },
-      "walk:plan:2": { decision: "fail", note: "按钮 404", at: "t" },
-      "walk:plan:3": { decision: "fail", note: "台账没落", at: "t" },
+      "case:1": { decision: "pass", note: "", at: "t" },
+      "case:2": { decision: "fail", note: "按钮 404", at: "t" },
+      "case:3": { decision: "fail", note: "台账没落", at: "t" },
     } }))
     const r = await postAccepted(taskId)
     expect(r.status).toBe(409)
@@ -180,10 +229,10 @@ describe("S1 acceptance 硬闸", () => {
 
   it("G2: 全 ✓ → 放行，决策生效且 ledger_written:true", async () => {
     const taskId = await newAwaiting(true, false)
-    wb(taskId, "e2e-test-plan.md", PLAN)
+    writeReadyPlan(taskId, [{ id: "case:1" }, { id: "case:2" }])
     wb(taskId, "acceptance-checks-r1.md", renderChecksMd({ version: "1", round_index: 1, checks: {
-      "walk:plan:1": { decision: "pass", note: "", at: "t" },
-      "walk:plan:2": { decision: "pass", note: "", at: "t" },
+      "case:1": { decision: "pass", note: "", at: "t" },
+      "case:2": { decision: "pass", note: "", at: "t" },
     } }))
     const r = await postAccepted(taskId)
     expect(r.status).toBe(200)
@@ -193,20 +242,18 @@ describe("S1 acceptance 硬闸", () => {
 
   it("G3: 无 checks 文件 / 文件解析失败 → 放行（诚实降级，绝不误伤）", async () => {
     const noFile = await newAwaiting(true, false)
-    wb(noFile, "e2e-test-plan.md", PLAN)
     expect((await postAccepted(noFile)).status).toBe(200)
 
     const corrupt = await newAwaiting(true, false)
-    wb(corrupt, "e2e-test-plan.md", PLAN)
     wb(corrupt, "acceptance-checks-r1.md", "# 手改坏掉的\n```json\n{not-json\n```\n")
     expect((await postAccepted(corrupt)).status).toBe(200)
   })
 
   it("G4: 只 ⊘（无 ✗）→ 不触发硬闸；轮次不匹配的 accepted 仍由 service 409", async () => {
     const taskId = await newAwaiting(true, false)
-    wb(taskId, "e2e-test-plan.md", PLAN)
+    writeReadyPlan(taskId, [{ id: "case:1" }])
     wb(taskId, "acceptance-checks-r1.md", renderChecksMd({ version: "1", round_index: 1, checks: {
-      "walk:plan:1": { decision: "skip", note: "环境未就绪", at: "t" },
+      "case:1": { decision: "skip", note: "环境未就绪", at: "t" },
     } }))
     expect((await postAccepted(taskId)).status).toBe(200)
     // round_index 对不上 awaiting 轮 → 硬闸不抢话，service 的 409 语义原样返回
@@ -228,23 +275,23 @@ describe("decideAcceptance (主 Chat 收口)", () => {
 
   it("D1: accepted 省略轮次 → 取 awaiting 轮，台账落盘并如实返回未决项", async () => {
     const taskId = await newAwaiting(true, false)
-    wb(taskId, "e2e-test-plan.md", PLAN)
+    writeReadyPlan(taskId, [{ id: "case:1" }, { id: "case:2" }, { id: "case:3" }])
     wb(taskId, "acceptance-checks-r1.md", renderChecksMd({ version: "1", round_index: 1, checks: {
-      "walk:plan:1": { decision: "pass", note: "", at: "t" },
+      "case:1": { decision: "pass", note: "", at: "t" },
     } }))
     const out = await evidence.decideAcceptance(taskId, { decision: "accepted" })
     expect(out.result.next_action).toBe("awaiting_manual_trigger")
     expect(out.ledger_written).toBe(true)
-    expect(out.undecided).toContain("walk:plan:3")
+    expect(out.undecided).toContain("case:3")
     expect(decisionRows(taskId)).toBe(1)
     expect(has(taskId, "acceptance-ledger-r1.md")).toBe(true)
   })
 
   it("D2: 存在 ✗ → 冲突错误（路由映射 409），决策零行、台账不写", async () => {
     const taskId = await newAwaiting(true, false)
-    wb(taskId, "e2e-test-plan.md", PLAN)
+    writeReadyPlan(taskId, [{ id: "case:1" }, { id: "case:2" }])
     wb(taskId, "acceptance-checks-r1.md", renderChecksMd({ version: "1", round_index: 1, checks: {
-      "walk:plan:2": { decision: "fail", note: "按钮 404", at: "t" },
+      "case:2": { decision: "fail", note: "按钮 404", at: "t" },
     } }))
     await expect(evidence.decideAcceptance(taskId, { decision: "accepted" }))
       .rejects.toBeInstanceOf(TaskStatusConflictError)
@@ -254,7 +301,6 @@ describe("decideAcceptance (主 Chat 收口)", () => {
 
   it("D3: rejected 缺 feedback → 决策前就拒，不落账", async () => {
     const taskId = await newAwaiting(true, false)
-    wb(taskId, "e2e-test-plan.md", PLAN)
     await expect(evidence.decideAcceptance(taskId, { decision: "rejected" }))
       .rejects.toThrow(/必须给出反馈/)
     expect(decisionRows(taskId)).toBe(0)
@@ -271,7 +317,7 @@ export type _Snap = LedgerSnapshot
 describe("历史轮只读坐标（归档回看）", () => {
   it("R1: playbook / round-diff 可指定 (phase, round)；缺省/非法参数语义不变", async () => {
     const taskId = await newAwaiting()
-    wb(taskId, "e2e-test-plan.md", PLAN)
+    writeReadyPlan(taskId, [{ id: "case:1" }])
     // 先落一条 accepted：任务离开 awaiting 态（归档后的真实前提）。
     db.prepare(`INSERT INTO task_phase_acceptances (id, task_id, phase_index, round_index, decision, feedback, decided_at) VALUES (?,?,?,?,?,?,?)`)
       .run(`acc-${seq}`, taskId, 1, 1, "accepted", null, new Date().toISOString())
@@ -305,33 +351,11 @@ describe("历史轮只读坐标（归档回看）", () => {
 describe("两层验收：机器证据不可勾选（2026-10-31）", () => {
   it("rejects recordCheck on an evidence id, accepts a case id", async () => {
     const taskId = await newAwaiting()
-    const plan = {
-      version: "2",
-      task_id: taskId,
-      phase_index: 1,
-      round_index: 1,
-      generated_at: new Date().toISOString(),
-      planner: "acceptance-planner",
-      goal: "g",
-      cases: [{
-        id: "case:1", title: "场景", story: "", expect: "ok", tickets: [],
-        steps: [{ kind: "observe", text: "看一眼" }], evidenceRefs: [],
-      }],
-      checks: [{ id: "check:unit", title: "单测", tickets: [], covers: [], evidenceRefs: [] }],
-      coverage: { stories: [], acs: [], found: [], missing: [] },
-      warnings: [],
-    }
-    evidence.setAcceptancePlanService({
-      planState: () => ({ summary: { status: "ready" }, plan }),
-    } as never)
-    try {
-      expect(() => evidence.recordCheck(taskId, { itemId: "check:unit", decision: "pass" }))
-        .toThrow(/机器证据/)
-      const ok = evidence.recordCheck(taskId, { itemId: "case:1", decision: "pass" })
-      expect(ok.checks.checks["case:1"].decision).toBe("pass")
-      expect(ok.checks.checks["check:unit"]).toBeUndefined()
-    } finally {
-      evidence.setAcceptancePlanService(null)
-    }
+    writeReadyPlan(taskId, [{ id: "case:1" }], { evidenceCheck: true })
+    expect(() => evidence.recordCheck(taskId, { itemId: "check:unit", decision: "pass" }))
+      .toThrow(/机器证据/)
+    const ok = evidence.recordCheck(taskId, { itemId: "case:1", decision: "pass" })
+    expect(ok.checks.checks["case:1"].decision).toBe("pass")
+    expect(ok.checks.checks["check:unit"]).toBeUndefined()
   })
 })

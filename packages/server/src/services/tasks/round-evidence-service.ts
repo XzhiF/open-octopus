@@ -57,10 +57,11 @@ import { TaskStatusConflictError } from "./tasks-service"
 import type { AcceptanceResult, TasksService } from "./tasks-service"
 import type { TaskHomeService } from "./task-home-service"
 import type { TaskPhaseView } from "./derive-task-view"
-import { compilePlaybook, parseChecksMd, renderChecksMd, checksFileName, ticketBaseFromItemId } from "./playbook-compile"
+import { parseChecksMd, renderChecksMd, checksFileName, ticketBaseFromItemId } from "./checks-codec"
 import { runbookFromSpec } from "./runbook-spec"
 import type { PlaybookPayload, ChecksFile, ProbeRunResult, ProbeState, CheckDecision } from "./playbook-types"
 import type { AcceptancePlanService, AwaitingRoundInfo } from "./acceptance-plan-service"
+import { emptyPlaybookPayload, planToPlaybook } from "./acceptance-plan-types"
 import { TestInstanceRegistry, type InstanceSource, type TestInstanceEntry } from "./test-instance-registry"
 import { hostProtectedPorts, hostProtectedPids } from "./host-guard"
 import { findPidOnPort, waitForPort, portFromUrl, processAncestry } from "../../port-utils"
@@ -845,90 +846,27 @@ export class RoundEvidenceService {
     return { ...session.summary }
   }
 
-  // ── 验收剧本 (acceptance playbook) ─────────────────────────────────────
+  // ── 验收清单 (acceptance playbook) ─────────────────────────────────────
 
-  /** GET /:id/playbook — compile the awaiting round's契约 files into a walk/
-   *  probe/claim checklist (ADR-0022). Pure read + {@link compilePlaybook};
-   *  missing sources degrade into coverage.missing, never throw (200 with
-   *  available:false). resolveAwaiting 409s first (no awaiting → 409).
+  /** GET /:id/playbook — 本轮验收清单的**唯一来源**是验收方案
+   *  （acceptance-plan-rN.json，2026-10-30 AI-native；2026-10-31 两层化）。
+   *  旧契约文件编译器已删除：没有 ready 方案时返回空清单 + 方案状态，
+   *  验收台据此显示状态卡（无场景硬闸，仍可直接通过/退回）。
+   *  resolveAwaiting 409s first (no awaiting → 409)。
    *
-   *  2026-10-30：可传 `target` 读**历史轮**（归档后只读回看用）。历史轮只读
-   *  盘上已落方案/契约，绝不懒触发规划 Agent 重新生成。 */
+   *  可传 `target` 读**历史轮**（归档后只读回看用）。历史轮只读盘上已落方案，
+   *  绝不懒触发规划 Agent 重新生成。 */
   getPlaybook(taskId: string, target?: RoundTarget): PlaybookPayload {
     const info = target
       ? this.roundInfo(taskId, target.phaseIndex, target.roundIndex)
       : this.resolveAwaiting(taskId)
-    const { roundIndex, batchRelDir } = info
-    // 验收方案优先（2026-10-30）：规划 Agent 已产出的方案就是本轮清单正本。
-    const planned = this.planService?.tryBuildPlaybookFor(taskId, info) ?? null
-    if (planned) return planned
-    // 没有方案：旧编译兜底，同时懒触发一次生成（幂等，失败不影响本次读取）。
+    // 方案优先（2026-10-30）：规划 Agent 已产出的方案就是本轮清单正本。
+    const st = this.planService?.planStateFor(taskId, info) ?? null
+    if (st?.plan) return planToPlaybook(st.plan, st.summary)
+    // 没有 ready 方案：懒触发一次生成（幂等，失败不影响本次读取）。
     // 历史轮不触发 —— 归档后不需要（也不该）再跑规划 Agent。
     if (!target && this.planService) void this.planService.ensureForAwaiting(taskId)
-    const plan = this.planService?.planStateFor(taskId, info)?.summary ?? { status: "missing" as const }
-    // ③ 管道步过滤前提（判据两级，2026-09-22）：本任务有没有「跑起来看」可用
-    // （runbook 两级任一命中）。有 → 起服/就绪/收尾类票步折给预览按钮；
-    // 无 → 它们留在剧本里可跑（否则没人起服务）。
-    const hasRunbook = !!this.resolveRunbook(taskId)
-    if (!batchRelDir) {
-      // absolute specPath bypass — no batch dir to read, honest empty state.
-      return { ...compilePlaybook({ roundIndex, hasRunbook }), plan }
-    }
-    let listing: Array<{ path: string }> = []
-    try {
-      listing = this.taskHome.listHomeDir(taskId, batchRelDir, true)
-    } catch {
-      listing = [] // batch dir not on disk yet
-    }
-    const byBase = (re: RegExp): string | null => {
-      const hit = listing.find((e) => re.test(e.path.split("/").pop() ?? ""))
-      return hit ? hit.path : null
-    }
-    const read = (relPath: string | null): string | null => {
-      if (!relPath) return null
-      try {
-        return this.taskHome.readHomeFile(taskId, relPath).content
-      } catch {
-        return null // NOT_FOUND/race — treat as missing source
-      }
-    }
-    // latest NN-e2e-*.md (highest leading number), if any.
-    const e2ePaths = listing
-      .filter((e) => /(^|\/)\d[\d.-]*e2e[^/]*\.md$/i.test(e.path))
-      .map((e) => e.path)
-      .sort((a, b) => (parseInt(a.match(/\d+/)?.[0] ?? "0", 10) - parseInt(b.match(/\d+/)?.[0] ?? "0", 10)))
-    const e2ePath = e2ePaths[e2ePaths.length - 1] ?? null
-    // prior round's checks file (acceptance-checks-r{N}.md, N < roundIndex, max).
-    const prevPath = listing
-      .map((e) => e.path)
-      .map((p) => {
-        const m = /acceptance-checks-r(\d+)\.md$/.exec(p)
-        return m && Number(m[1]) < roundIndex ? { p, r: Number(m[1]) } : null
-      })
-      .filter((x): x is { p: string; r: number } => x !== null)
-      .sort((a, b) => b.r - a.r)[0] ?? null
-    let prevChecks: { round: number; data: ChecksFile } | null = null
-    if (prevPath) {
-      const raw = read(prevPath.p)
-      if (raw) {
-        const data = parseChecksMd(raw)
-        if (data) prevChecks = { round: prevPath.r, data }
-      }
-    }
-    return {
-      ...compilePlaybook({
-        roundIndex,
-        hasRunbook,
-        specMd: read(byBase(/^spec\.md$/i) ?? byBase(/spec.*\.md$/i)),
-        e2eTicket: e2ePath
-          ? { name: e2ePath.split("/").pop() ?? "e2e.md", content: read(e2ePath) ?? "" }
-          : null,
-        e2eTestPlan: read(byBase(/^e2e-test-plan\.md$/i)),
-        roundReport: read(byBase(/^round-report\.md$/i) ?? byBase(/round.*report.*\.md$/i)),
-        prevChecks,
-      }),
-      plan,
-    }
+    return emptyPlaybookPayload(st?.summary ?? { status: "missing" })
   }
 
   // ── 单条核对写入（2026-10-30 AI-native：窗口/主 Chat 共用一个写入口）─────
@@ -1064,8 +1002,8 @@ export class RoundEvidenceService {
 
   // ── 剧本探针单发执行 (playbook probe run) ─────────────────────────────
   //
-  // 验收剧本里 probe 步（编译自票内命令）的 [▶ 执行]：在活工作区根**同步**跑
-  // 一条命令，秒级返回 exit+tail 给面板就地盖章。信任边界与复检完全一致——
+  // 验收方案里机器证据的「跑一下」：在活工作区根**同步**跑复核命令，
+  // 秒级返回 exit+tail 给面板就地展示。信任边界与复检完全一致——
   // 命令来自票内人可阅文本、只有人点按钮才 spawn、绝不自动绝不批量；harness
   // 别名限制保留（探针职责是断言不是收尸，不像 runbook down 需要绕桩）。
   // 唯一加工：尾随 `&` 的拉起式命令包成 nohup + 输出丢弃——否则后台子进程
@@ -1916,8 +1854,12 @@ function buildLedgerMd(snap: LedgerSnapshot, decision: "accepted" | "rejected"):
     previewLine,
     "",
     "## 人工走查",
-    `- 计 ${totalSteps} 条场景：✓${nPass} · ✗${nFail} · ⊘${nSkip} · 未决 ${undecided}${snap.playbook.budget.degraded ? "（编译降档）" : ""}`,
-    ...(stepLines.length ? stepLines : ["  - （无场景）"]),
+    ...(totalSteps === 0
+      ? ["- 本轮没有验收方案（无场景）"]
+      : [
+          `- 计 ${totalSteps} 条场景：✓${nPass} · ✗${nFail} · ⊘${nSkip} · 未决 ${undecided}${snap.playbook.budget.degraded ? "（编译降档）" : ""}`,
+          ...stepLines,
+        ]),
     ...(nSkip ? ["", `> ⊘ 跳过项将进入下一轮 carryover（${snap.batchRelDir ? checksFileName(snap.roundIndex + 1) : "?"} 前置），补验或再豁免需新原因。`] : []),
     ...(evidenceItems.length ? [
       "",

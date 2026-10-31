@@ -7,11 +7,12 @@
 //   ├ 步骤 1：结论横幅（成/败/进行中）+ 改动统计 + 报告自述 + 文件级变更 +
 //   │          核对证据（spec × 报告 × 实物，AcMatrixPanel）
 //   ├ 步骤 2：试一试（PreviewBar）+ 自动自检（VerifyPanel）+ 运行中的实例
-//   ├ 步骤 3：核对清单（PlaybookPanel）+ autoAdvance 提示 + 退回回显
+//   ├ 步骤 3：验收方案（AcceptancePlanPanel；无 ready 方案 → PlanStatusCard）
+//   │          + autoAdvance 提示 + 退回回显
 //   └ 常驻决策条（仅第 3 步）：✕ 硬闸拦截 / 退回修改 / 验收通过；中止仍走二次确认
 //
 // 三步面板常驻挂载、CSS 显隐 —— 勾选/预览/复检的会话态跨步不丢，既有 e2e
-// testid（acceptance-modal / col-* / approve / reject / playbook-* …）全部保留。
+// testid（acceptance-modal / col-* / approve / reject / plan-* …）全部保留。
 // 视觉：2026-10-30 起跟随全站净黑终端 TUI（app/acceptance-paper.css）—— 不再
 // 是深色工作区里的一张亮纸，窗口壳与内部结构同一套 pop 暗色 token。
 //
@@ -60,7 +61,6 @@ import {
   startPreview,
   getPreview,
   stopPreview,
-  regenerateAcceptancePlan,
   type HomeFileListingEntry,
   type RoundDiffPayload,
   type VerifySummary,
@@ -85,12 +85,14 @@ import { scopeTotals } from "../files-tab/files-tab-model"
 import { VerifyPanel } from "./verify-panel"
 import { PreviewBar } from "./preview-bar"
 import { InstancesPanel } from "./instances-panel"
-import { PlaybookPanel } from "./playbook-panel"
+import { PlanStatusCard } from "./plan-status-card"
 import { AcceptancePlanPanel } from "./acceptance-plan-panel"
 import { AcMatrixPanel } from "./ac-matrix-panel"
 import { runErrorOf } from "../execution-summary"
 import { verifyStateLabel, previewStateLabel } from "./acceptance-labels"
 import { ConfirmDialog } from "@/components/scheduler/confirm-dialog"
+
+const EMPTY_GATE = { pass: 0, fail: 0, skip: 0, undecided: 0, total: 0, failTickets: [] as string[] }
 
 // ── Props ────────────────────────────────────────────────────────────
 
@@ -185,11 +187,11 @@ export function AcceptanceSurface({ task, onMutated, onDecided, detailOverride, 
   // GET /:id/verify?since=n 的游标，只补缺口不重搬全量（server S5）。
   const verifySeenRef = useRef(0)
   const [verifyBusy, setVerifyBusy] = useState(false)
-  // ── 验收面 v2.1 状态：剧本 + 预览 + 决策确认层 ──
+  // ── 验收面 v2.1 状态：方案清单 + 预览 + 决策确认层 ──
   const [playbook, setPlaybook] = useState<PlaybookPayload | null>(null)
   /** 方案生成完成 / SSE 到达 → 加一，触发重拉 playbook（plan 优先）。 */
   const [playbookNonce, setPlaybookNonce] = useState(0)
-  const [gate, setGate] = useState<{ pass: number; fail: number; skip: number; undecided: number; total: number; failTickets: string[] }>({ pass: 0, fail: 0, skip: 0, undecided: 0, total: 0, failTickets: [] })
+  const [gate, setGate] = useState(EMPTY_GATE)
   const [checksSaving, setChecksSaving] = useState(false)
   const [preview, setPreview] = useState<PreviewSummary | null>(null)
   const [previewBusy, setPreviewBusy] = useState(false)
@@ -226,7 +228,7 @@ export function AcceptanceSurface({ task, onMutated, onDecided, detailOverride, 
     setVerifyLines([])
     verifySeenRef.current = 0
     setPlaybook(null)
-    setGate({ pass: 0, fail: 0, skip: 0, undecided: 0, total: 0, failTickets: [] })
+    setGate(EMPTY_GATE)
     setPreview(null)
     setLedgerOpen(false)
     setAbortOpen(false)
@@ -887,9 +889,18 @@ export function AcceptanceSurface({ task, onMutated, onDecided, detailOverride, 
       ? { cls: "ok", text: "可验收" }
       : roundFailed ? { cls: "bad", text: "需处理" } : { cls: "wait", text: "等待中" }
 
-  // 验收方案是否就绪（2026-10-30）：ready → 用 A 方案面板（怎么验 / 证据 / 机器建议）。
-  const planReady = playbook?.plan?.status === "ready"
+  // 验收清单的唯一来源是验收方案（2026-10-31 删除旧编译清单）：
+  // ready 且真有清单 → AcceptancePlanPanel；否则只显示方案状态卡。
+  const planReady = playbook?.plan?.status === "ready" && !!playbook.available
   const planGuideActive = planReady && !!awaitingPhase && !readOnly
+
+  // 方案从 ready 变为不可用（失败 / 重生成 / 换轮）时清掉残留 gate ——
+  // 否则上一份方案的 ✗ 会继续拦「通过」，而界面上已经没有可判定的清单。
+  useEffect(() => {
+    if (planReady) return
+    setGate(EMPTY_GATE)
+    setChecksSaving(false)
+  }, [planReady, playbook?.plan?.status, playbook?.plan?.generated_at, taskId, reviewRoundIndex])
 
   return (
     <div
@@ -1016,13 +1027,13 @@ export function AcceptanceSurface({ task, onMutated, onDecided, detailOverride, 
               <div className="ap-snap-row">
                 <span>场景</span>
                 <b data-testid="rail-walk-count">
-                  {playbook?.available ? (
+                  {planReady ? (
                     <>
                       <span className="good">{gate.pass}</span>/{gate.total}✓
                       {gate.fail > 0 && <span className="bad"> · ✗{gate.fail}</span>}
                       {gate.undecided > 0 && <span> · 未决 {gate.undecided}</span>}
                     </>
-                  ) : "—"}
+                  ) : playbook ? "无方案" : "—"}
                 </b>
               </div>
               <div className="ap-snap-row">
@@ -1222,52 +1233,35 @@ export function AcceptanceSurface({ task, onMutated, onDecided, detailOverride, 
               <p className="ap-sub">
                 {planReady
                   ? "验收方案由独立的规划 Agent 按本轮证据生成 —— 每项都写明怎么验、证据在哪、机器建议。主对话里的 Agent 也可以一步步带你走。"
-                  : "清单是根据本阶段的验收标准自动生成的。点一下可以在「通过 / 未通过 / 跳过」之间切换。"}
+                  : readOnly
+                    ? "本轮没有可回看的验收方案 —— 历史轮以台账为准。"
+                    : "本轮没有可直接勾选的验收方案 —— 你仍可以直接通过或退回；没有场景清单时不设硬闸。"}
               </p>
 
-              <div className="ap-check-note">
-                <span className="q">i</span>
-                <span>
-                  机器只给建议，<b>最终由你逐项确认</b>。出现任何一项 <b>✕ 未通过</b>，通过按钮会被拦下 —— 这是有意的。
-                  跳过项会写进记录，带到下一轮补验。
-                </span>
-              </div>
+              {planReady ? (
+                <div className="ap-check-note">
+                  <span className="q">i</span>
+                  <span>
+                    机器只给建议，<b>最终由你逐项确认</b>。出现任何一项 <b>✕ 未通过</b>，通过按钮会被拦下 —— 这是有意的。
+                    跳过项会写进记录，带到下一轮补验。
+                  </span>
+                </div>
+              ) : readOnly ? (
+                <div className="ap-check-note" data-testid="plan-status-note">
+                  <span className="q">i</span>
+                  <span>归档回看只展示本轮已有证据；验收结论以台账为准。</span>
+                </div>
+              ) : (
+                <div className="ap-check-note" data-testid="plan-status-note">
+                  <span className="q">i</span>
+                  <span>
+                    没有场景清单时不设硬闸 —— 请以「看结果 / 试一试」和本轮证据自行判断。
+                    {playbook?.plan?.status === "failed" ? " 方案生成失败，可重新生成，或直接拍板。" : ""}
+                  </span>
+                </div>
+              )}
 
               <div className="mt-3 space-y-3">
-                {playbook && !planReady && (
-                  <div
-                    className={cn("ap-check-note", playbook.plan?.status === "failed" && "warn")}
-                    data-testid="plan-status-note"
-                    data-plan-status={playbook.plan?.status ?? "missing"}
-                  >
-                    <span className="q">{playbook.plan?.status === "failed" ? "!" : "i"}</span>
-                    <span>
-                      {playbook.plan?.status === "generating"
-                        ? "验收方案正在生成（规划 Agent 在读本轮证据）—— 完成后本清单会自动切换为「怎么验 / 证据 / 机器建议」。"
-                        : playbook.plan?.status === "failed"
-                          ? `验收方案生成失败${playbook.plan.error ? `（${playbook.plan.error}）` : ""} —— 已回退旧清单，验收不受影响。`
-                          : "本轮没有预生成验收方案 —— 下面是按契约文件编译的清单。"}
-                      {playbook.plan?.status === "failed" && (
-                        <button
-                          type="button"
-                          className="ap-block-link"
-                          data-testid="plan-regenerate"
-                          onClick={() => {
-                            void regenerateAcceptancePlan(taskId ?? "")
-                              .then((r) => {
-                                if (!r.ok) { toast.error(`重生成被拒：${r.reason ?? "未知原因"}`); return }
-                                toast.success("已重新发起方案生成")
-                                setPlaybookNonce((v) => v + 1)
-                              })
-                              .catch((err: unknown) => toast.error(err instanceof Error ? err.message : "重生成失败"))
-                          }}
-                        >
-                          ↻ 重新生成
-                        </button>
-                      )}
-                    </span>
-                  </div>
-                )}
                 {playbook ? (
                   planReady ? (
                     <AcceptancePlanPanel
@@ -1284,16 +1278,13 @@ export function AcceptanceSurface({ task, onMutated, onDecided, detailOverride, 
                       onOpenFile={(p) => setHomeViewing({ path: p })}
                     />
                   ) : (
-                    <PlaybookPanel
+                    <PlanStatusCard
                       taskId={taskId ?? ""}
-                      batchRelDir={batchDir}
                       roundIndex={reviewRoundIndex ?? 0}
-                      playbook={playbook}
-                      onGate={setGate}
-                      disabledReason={readOnlyReason ?? (wsGone ? "工作区已清理 — 勾选暂停（历史记录与机器裁决仍在）" : undefined)}
-                      saving={checksSaving}
-                      onSaveStateChange={setChecksSaving}
-                      registerFlush={registerPlaybookFlush}
+                      status={playbook.plan?.status ?? "missing"}
+                      error={playbook.plan?.error}
+                      readOnly={readOnly}
+                      onRegenerated={() => setPlaybookNonce((v) => v + 1)}
                     />
                   )
                 ) : (
@@ -1339,15 +1330,26 @@ export function AcceptanceSurface({ task, onMutated, onDecided, detailOverride, 
             >
               {awaitingPhase ? (
                 <>
-                  <span className="ap-decision-text">
-                    <b>{gate.pass}</b> 项通过
-                    {gate.skip > 0 && <> · <span className="skip">{gate.skip} 项跳过</span></>}
-                    {gate.fail > 0 && <> · <span className="bad">{gate.fail} 项未通过</span></>}
-                    {" "}/ 共 {gate.total} 项
-                  </span>
-                  <span className={cn("ap-guard", gate.fail > 0 && "show")} data-testid="acceptance-approve-blocked">
-                    ✕ 未过 {gate.fail} 项 —— 通过被拦，请退回修改（反馈已预填）
-                  </span>
+                  {planReady ? (
+                    <>
+                      <span className="ap-decision-text">
+                        <b>{gate.pass}</b> 项通过
+                        {gate.skip > 0 && <> · <span className="skip">{gate.skip} 项跳过</span></>}
+                        {gate.fail > 0 && <> · <span className="bad">{gate.fail} 项未通过</span></>}
+                        {" "}/ 共 {gate.total} 项
+                      </span>
+                      <span className={cn("ap-guard", gate.fail > 0 && "show")} data-testid="acceptance-approve-blocked">
+                        ✕ 未过 {gate.fail} 项 —— 通过被拦，请退回修改（反馈已预填）
+                      </span>
+                    </>
+                  ) : (
+                    <>
+                      <span className="ap-decision-text">本轮没有场景清单</span>
+                      <span className="ap-guard show" data-testid="acceptance-no-plan-warning">
+                        ⚠ 无场景硬闸 —— 本轮没有验收方案，未通过项不会拦下通过；可直接通过或退回
+                      </span>
+                    </>
+                  )}
                   <span className="ap-decision-actions">
                     <button
                       type="button" className="ap-btn ap-btn-ghost" disabled={busy !== null}

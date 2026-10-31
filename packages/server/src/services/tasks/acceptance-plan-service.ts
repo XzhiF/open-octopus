@@ -14,7 +14,8 @@
 //   · 不污染轮次口径：规划执行行 task_id = null（listTaskInstances 只认 task_id），
 //     复用任务自己的执行工作区（allow_existing_root），跑完不留工作区垃圾。
 //   · 幂等：按 task+phase+round 去重；ready 不再生成；generating 在飞不重入。
-//   · 诚实降级：Agent 失败 / 方案非法 → status=failed + SSE，getPlaybook 回退旧编译，
+//   · 诚实降级：Agent 失败 / 方案非法 → status=failed + SSE；getPlaybook 返回
+//     空清单 + 方案状态，验收台显示状态卡并允许直接拍板（无场景硬闸），
 //     绝不阻塞验收。kill switch: OCTOPUS_ACCEPTANCE_PLAN=off。
 //   · 人只签字：方案里的 machine 只是建议，最终决策仍在验收台/台账。
 
@@ -31,15 +32,15 @@ import { getChatEventBridge } from "../activity/chat-event-bridge"
 import type { TasksService } from "./tasks-service"
 import type { TaskHomeService } from "./task-home-service"
 import type { RoundEvidenceService } from "./round-evidence-service"
-import type { ChecksFile, PlaybookPayload } from "./playbook-types"
-import { checksFileName, parseChecksMd } from "./playbook-compile"
+import type { ChecksFile } from "./playbook-types"
+import { checksFileName, parseChecksMd } from "./checks-codec"
 import {
   parseAcceptancePlan,
+  planBudgetWarnings,
   planEvidenceName,
   planJsonName,
   planMdName,
   planStatusName,
-  planToPlaybook,
   renderPlanMd,
   type AcceptanceEvidenceManifest,
   type AcceptancePlan,
@@ -79,6 +80,19 @@ export interface PlanDetail {
   paths: { json: string | null; md: string | null }
   /** server 校验发现的矛盾项（给人看的诚实提示）。 */
   warnings: string[]
+}
+
+type PlanReadResult =
+  | { ok: true; plan: AcceptancePlan; warnings: string[] }
+  | { ok: false; kind: "missing" | "json" | "schema"; issues: string[] }
+
+/** 失败原因的人话版本（落 status.error / 面板横幅 / Chat 通知都用这句）。 */
+function readFailureText(read: Extract<PlanReadResult, { ok: false }>): string {
+  if (read.kind === "missing") return "方案文件不存在（规划 Agent 没有写盘）"
+  const detail = read.issues.join("；")
+  const clipped = detail.length > 400 ? `${detail.slice(0, 400)}…` : detail
+  if (read.kind === "json") return `方案文件不是合法 JSON：${clipped}`
+  return `方案文件不符合 v2 契约：${clipped}`
 }
 
 export class AcceptancePlanService {
@@ -128,28 +142,17 @@ export class AcceptancePlanService {
       ...(status?.plan_path ? { source: status.plan_path } : {}),
     }
     if ((status?.status ?? "missing") === "ready") {
-      const plan = this.readPlanFile(taskId, info.batchRelDir, info.roundIndex)
-      if (!plan) {
-        return { summary: { ...summary, status: "failed", error: "方案文件缺失或未通过校验" } }
+      const read = this.readPlanParsed(taskId, info.batchRelDir, info.roundIndex)
+      if (!read.ok) {
+        return { summary: { ...summary, status: "failed", error: readFailureText(read) } }
       }
-      return { summary, plan }
+      return { summary, plan: read.plan }
     }
     return { summary }
   }
 
-  /** getPlaybook 的快路径：plan ready → 直接给映射后的 PlaybookPayload，否则 null。 */
-  tryBuildPlaybook(taskId: string): PlaybookPayload | null {
-    const st = this.planState(taskId)
-    if (!st?.plan) return null
-    return planToPlaybook(st.plan, st.summary)
-  }
-
-  /** 指定轮的同款快路径（历史轮只读回看）。 */
-  tryBuildPlaybookFor(taskId: string, info: AwaitingRoundInfo): PlaybookPayload | null {
-    const st = this.planStateFor(taskId, info)
-    if (!st.plan) return null
-    return planToPlaybook(st.plan, st.summary)
-  }
+  /** getPlaybook 的快路径由 RoundEvidenceService 直接调用 planStateFor +
+   *  planToPlaybook（2026-10-31：旧编译清单已删除，不再有 tryBuildPlaybook 中间层）。 */
 
   /** TaskThreadService 用的轻量谓词：本轮方案是否已 ready（决定是否进入引导态）。 */
   isReady(taskId: string): boolean {
@@ -211,29 +214,34 @@ export class AcceptancePlanService {
     }
   }
 
-  private readPlanFile(taskId: string, batchRelDir: string, roundIndex: number): AcceptancePlan | null {
-    return this.readPlanParsed(taskId, batchRelDir, roundIndex)?.plan ?? null
-  }
-
-  /** v1/v2 统一入口：v1 在内存里转成 v2（文件不改写，审计仍读原稿）。 */
+  /** v1/v2 统一入口：v1 在内存里转成 v2（文件不改写，审计仍读原稿）。
+   *  失败时带原因（缺失 / JSON 解析失败 / 契约不合规 + 字段级问题），
+   *  让验收台说人话，而不是统一报「缺失或不合规」。 */
   private readPlanParsed(
     taskId: string,
     batchRelDir: string,
     roundIndex: number,
-  ): { plan: AcceptancePlan; parseWarnings: string[] } | null {
+  ): PlanReadResult {
     let raw: string
     try {
       raw = readFileSync(this.planAbsPath(taskId, batchRelDir, planJsonName(roundIndex)), "utf-8")
     } catch {
-      return null
+      return { ok: false, kind: "missing", issues: [] }
     }
     let parsed: unknown
     try {
       parsed = JSON.parse(stripFence(raw))
-    } catch {
-      return null
+    } catch (err: unknown) {
+      return {
+        ok: false,
+        kind: "json",
+        issues: [err instanceof Error ? err.message : String(err)],
+      }
     }
-    return parseAcceptancePlan(parsed)
+    const res = parseAcceptancePlan(parsed)
+    return res.ok
+      ? { ok: true, plan: res.plan, warnings: res.warnings }
+      : { ok: false, kind: "schema", issues: res.issues }
   }
 
   // ── ensure / generate ──────────────────────────────────────────────
@@ -302,7 +310,7 @@ export class AcceptancePlanService {
     try {
       const ws = this.workspaceService.getById(execRow.workspace_id)
       if (!ws || !existsSync(ws.path)) {
-        throw new Error("任务工作区已不在 —— 验收方案无法取证（可用旧清单人工验收）")
+        throw new Error("任务工作区已不在 —— 验收方案无法取证（验收台仍可直接通过或退回）")
       }
       const task = this.tasksService.getTask(taskId)
       const spec = (task.task_spec ?? {}) as TaskSpec
@@ -385,8 +393,19 @@ export class AcceptancePlanService {
     if (!batchRelDir) return
     try {
       const parsed = this.readPlanParsed(taskId, batchRelDir, roundIndex)
-      if (!parsed) {
-        this.markFailed(taskId, batchRelDir, roundIndex, phaseIndex, "规划 Agent 未产出合法方案文件（acceptance-plan-rN.json 缺失或不合规）", executionId)
+      if (!parsed.ok) {
+        const reason = readFailureText(parsed)
+        console.error(
+          `[acceptance-plan] invalid plan for task ${taskId} p${phaseIndex} r${roundIndex} (${parsed.kind}): ${reason}`,
+        )
+        this.markFailed(
+          taskId,
+          batchRelDir,
+          roundIndex,
+          phaseIndex,
+          `规划 Agent 未产出合法方案文件：${reason}`,
+          executionId,
+        )
         return
       }
       const plan = this.normalizePlan(taskId, parsed, info)
@@ -451,11 +470,11 @@ export class AcceptancePlanService {
    *  人层与机器证据各自校验；两层 id 全局唯一（checks 文件是同一个键空间）。 */
   private normalizePlan(
     taskId: string,
-    parsed: { plan: AcceptancePlan; parseWarnings: string[] },
+    parsed: Extract<PlanReadResult, { ok: true }>,
     info: AwaitingRoundInfo,
   ): AcceptancePlan {
     const plan = parsed.plan
-    const warnings = [...parsed.parseWarnings, ...plan.warnings]
+    const warnings = [...parsed.warnings, ...plan.warnings, ...planBudgetWarnings(plan)]
     const home = this.taskHome.homePath(taskId)
     const seen = new Set<string>()
 

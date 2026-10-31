@@ -14,7 +14,8 @@ const {
   mockFetchLLMCalls, mockUpdateSpecField,
   mockListHomeDir, mockGetHomeFile, mockGetBatchTree,
   mockGetRoundDiff, mockGetRoundPatch, mockStartVerify, mockGetVerifyStatus, mockAbortVerify,
-  mockGetPlaybook, mockStartPreview, mockGetPreview, mockStopPreview, mockSaveChecks, mockPutHomeFile, mockReadChecks,
+  mockGetPlaybook, mockStartPreview, mockGetPreview, mockStopPreview, mockRecordAcceptanceCheck, mockRegenerateAcceptancePlan,
+  mockPutHomeFile, mockReadChecks,
   mockRunProbe,
   sseHandlers,
   sseStatusCbs,
@@ -36,7 +37,8 @@ const {
   mockStartPreview: vi.fn(),
   mockGetPreview: vi.fn(),
   mockStopPreview: vi.fn(),
-  mockSaveChecks: vi.fn(),
+  mockRecordAcceptanceCheck: vi.fn(),
+  mockRegenerateAcceptancePlan: vi.fn(),
   mockReadChecks: vi.fn(),
   mockPutHomeFile: vi.fn(),
   mockRunProbe: vi.fn(),
@@ -78,12 +80,12 @@ vi.mock("@/lib/tasks-api", () => {
     stopPreview: mockStopPreview,
     putHomeFile: mockPutHomeFile,
     readChecks: mockReadChecks,
-    saveChecks: mockSaveChecks,
+    recordAcceptanceCheck: mockRecordAcceptanceCheck,
+    regenerateAcceptancePlan: mockRegenerateAcceptancePlan,
     runProbe: mockRunProbe,
     checksFileName: (n: number) => `acceptance-checks-r${n}.md`,
     checksRelPath: (d: string, n: number) => `${d}/acceptance-checks-r${n}.md`,
     parseChecksMd: () => null,
-    renderChecksMd: () => "",
   }
 })
 // react-markdown 全家桶对单测是纯负担 — 桩到内容透传（渲染质量归 MarkdownPreview 自己）。
@@ -108,7 +110,7 @@ vi.mock("sonner", () => ({ toast: { success: vi.fn(), error: vi.fn() } }))
 import { AcceptanceSurface, type AcceptanceActionApi } from "../acceptance-surface"
 import { FoldProvider } from "../../fold-context"
 import { TaskApiError } from "@/lib/tasks-api"
-import { TASK_VERIFY_EVENT, TASK_VERIFY_LOG_EVENT } from "@octopus/shared"
+import { TASK_ACCEPTANCE_PLAN_EVENT, TASK_VERIFY_EVENT, TASK_VERIFY_LOG_EVENT } from "@octopus/shared"
 
 // ── fixtures（票 07 GET /:id 契约形状） ──────────────────────────────
 
@@ -384,16 +386,23 @@ beforeEach(() => {
   })
   mockGetVerifyStatus.mockResolvedValue(null)
   mockAbortVerify.mockResolvedValue({ state: "running" })
-  // 验收面 v2.1 默认：无剧本（面板显降级空态，不打扰既有断言）+ 无预览会话。
+  // 验收面 2026-10-31 默认：没有 ready 方案 → 第三步只显示方案状态卡。
   mockGetPlaybook.mockResolvedValue({
     available: false, goal: "", specRevised: false,
     budget: { steps: 0, estMin: 0, over: false, degraded: false },
     sections: [], finePrint: [], carryover: [], coverage: { found: [], missing: [] },
+    plan: { status: "missing" },
   })
   mockGetPreview.mockResolvedValue(null)
   mockStartPreview.mockResolvedValue({ task_id: "t1", url: "http://localhost:8080/", state: "starting" })
   mockStopPreview.mockResolvedValue({ task_id: "t1", url: "http://localhost:8080/", state: "stopped" })
-  mockSaveChecks.mockResolvedValue(undefined)
+  mockRecordAcceptanceCheck.mockImplementation(async (_taskId: string, input: { item_id: string; decision: string; note?: string }) => ({
+    checks: {
+      version: "1", round_index: 1,
+      checks: { [input.item_id]: { decision: input.decision, note: input.note ?? "", at: "2026-10-31T00:00:00Z" } },
+    },
+  }))
+  mockRegenerateAcceptancePlan.mockResolvedValue({ ok: true })
   mockReadChecks.mockResolvedValue({ version: "1", checks: {} })
   mockRunProbe.mockResolvedValue({ state: "passed", exit_code: 0, duration_ms: 900, tail: ["ok"] })
 })
@@ -410,6 +419,28 @@ function renderModalWith(derived: TaskDerivedView, spec: TaskSpec = V4_SPEC) {
   const task = makeDetail(derived, spec) as unknown as Task
   return render(<AcceptanceSurface task={task} onMutated={() => {}} />)
 }
+
+/** 2026-10-31：ready 方案 → 两段清单（场景可判定 + 机器证据只读）。 */
+const PLAN_PLAYBOOK = {
+  available: true, goal: "g", specRevised: false,
+  budget: { steps: 1, estMin: 2, over: false, degraded: false },
+  sections: [
+    { kind: "walk" as const, title: "你要验的", source: "acceptance-plan-r1.json", items: [{
+      id: "case:1", op: "用一次本轮交付", title: "用一次本轮交付", tier: "case" as const,
+      expect: "看到预期结果", story: "US1", tickets: ["02-e2e-status"],
+      steps: [{ kind: "observe" as const, text: "看一眼结果", expect: "有结果" }], evidenceRefs: [],
+    }] },
+    { kind: "claim" as const, title: "本轮验证了什么", source: "acceptance-plan-r1.json", items: [{
+      id: "check:unit", op: "单测", title: "单测", tier: "check" as const,
+      expect: "覆盖 AC1", criteria: ["AC1"], evidenceRefs: [],
+    }] },
+  ],
+  finePrint: [], carryover: [], coverage: { found: [], missing: [] },
+  plan: { status: "ready" as const, generated_at: "2026-10-31T00:00:00Z" },
+}
+
+/** 同一条 plan 的右栏详情会调用 readChecks；默认空盘。 */
+const emptyChecks = { version: "1" as const, checks: {} }
 
 describe("AcceptanceSurface — AC1 证据面（A′：进度+决策，token/cost 已迁出）", () => {
   it("三栏齐现；右栏=round 状态/用时/复检态；AC6：验货台不再拉 fetchLLMCalls、无 token/cost", async () => {
@@ -429,33 +460,27 @@ describe("AcceptanceSurface — AC1 证据面（A′：进度+决策，token/cos
     expect(screen.getByText("未跑")).toBeTruthy()
   })
 
-  it("T06 剧本渲染：available:true → 主角卡 + 步 + ✓✗⊘ 三钮", async () => {
-    mockGetPlaybook.mockResolvedValue({
-      available: true, goal: "走通剧本", specRevised: false,
-      budget: { steps: 1, estMin: 2, over: false, degraded: false },
-      sections: [{ kind: "walk", title: "E2E 测试计划", source: "e2e-test-plan.md",
-        items: [{ id: "walk:plan:1", op: "打开验收台", expect: "剧本 ≥3 步", evidence: "有预期句" }] }],
-      finePrint: [], carryover: [], coverage: { found: ["e2e-test-plan.md"], missing: [] },
-    })
+  it("T06 方案渲染：ready → AcceptancePlanPanel（场景可判定 + 机器证据只读），没有旧清单", async () => {
+    mockGetPlaybook.mockResolvedValue(PLAN_PLAYBOOK)
     renderModal()
-    const panel = await screen.findByTestId("playbook-panel")
-    expect(panel.textContent).toContain("打开验收台")
-    expect(panel.textContent).toContain("剧本 ≥3 步")
-    expect(screen.getByTestId("step-walk:plan:1")).toBeTruthy()
-    expect(screen.getAllByTestId("decide-pass").length).toBeGreaterThan(0)
+    const panel = await screen.findByTestId("acceptance-plan-panel")
+    await screen.findByTestId("plan-decide")
+    expect(panel.textContent).toContain("用一次本轮交付")
+    expect(panel.textContent).toContain("本轮验证了什么")
+    expect(panel.textContent).toContain("机器证据 · 只读")
+    expect(screen.getByTestId("plan-item-case:1")).toBeTruthy()
+    expect(screen.getByTestId("plan-decide")).toBeTruthy()
+    expect(screen.queryByTestId("playbook-panel")).toBeNull()
     expect(screen.getByTestId("preview-bar")).toBeTruthy()
   })
 
-  it("T09 决策闭环：标 ✗ → 验收通过 disabled + 拦截提示；台账弹层出现", async () => {
-    mockGetPlaybook.mockResolvedValue({
-      available: true, goal: "g", specRevised: false,
-      budget: { steps: 1, estMin: 2, over: false, degraded: false },
-      sections: [{ kind: "walk", title: "T", source: "e2e-test-plan.md", items: [{ id: "walk:plan:1", op: "op", expect: "exp" }] }],
-      finePrint: [], carryover: [], coverage: { found: [], missing: [] },
-    })
+  it("T09 决策闭环：场景标 ✗ → 验收通过 disabled + 拦截提示", async () => {
+    mockGetPlaybook.mockResolvedValue(PLAN_PLAYBOOK)
     renderModal()
-    await screen.findByTestId("playbook-panel")
-    fireEvent.click(screen.getByTestId("decide-fail"))
+    await screen.findByTestId("acceptance-plan-panel")
+    fireEvent.click(await screen.findByTestId("plan-fail"))
+    fireEvent.change(screen.getByTestId("plan-note"), { target: { value: "结果不对" } })
+    fireEvent.click(screen.getByTestId("plan-note-confirm"))
     // fail → gate.fail>0 → approve disabled + 提示
     await waitFor(() => expect((screen.getByTestId("acceptance-approve") as HTMLButtonElement).disabled).toBe(true))
     expect(screen.getByTestId("acceptance-approve-blocked")).toBeTruthy()
@@ -472,40 +497,20 @@ describe("AcceptanceSurface — AC1 证据面（A′：进度+决策，token/cos
     await waitFor(() => expect(mockStartPreview).toHaveBeenCalledWith("t1"))
   })
 
-  it("T06 AC2 勾选合批写回：300ms 内连点两步 → saveChecks 仅一次（payload 含两步）", async () => {
-    mockGetPlaybook.mockResolvedValue({
-      available: true, goal: "g", specRevised: false,
-      budget: { steps: 2, estMin: 4, over: false, degraded: false },
-      sections: [{ kind: "walk", title: "T", source: "e2e-test-plan.md", items: [
-        { id: "walk:plan:1", op: "op1", expect: "e1" }, { id: "walk:02-e2e-status:0", op: "op2", expect: "e2" }] }],
-      finePrint: [], carryover: [], coverage: { found: [], missing: [] },
-    })
+  it("T06 AC2 单条判定：点 ✓ 立即写 recordAcceptanceCheck（不再整单 debounce）", async () => {
+    mockGetPlaybook.mockResolvedValue(PLAN_PLAYBOOK)
     renderModal()
-    await screen.findByTestId("playbook-panel")
-    // 排空：前序用例（标 ✗）遗留的 debounce 定时器可能在本窗口落地
-    await new Promise((r) => setTimeout(r, 400))
-    mockSaveChecks.mockClear()
-    // 两次点击都落在 300ms debounce 窗口内 → 合批一次写回
-    fireEvent.click(screen.getAllByTestId("decide-pass")[0])
-    fireEvent.click(screen.getAllByTestId("decide-pass")[1])
-    await new Promise((r) => setTimeout(r, 450))
-    expect(mockSaveChecks).toHaveBeenCalledTimes(1)
-    const [taskId, dir, round, payload] = mockSaveChecks.mock.calls[0] as [string, string, number, Record<string, { decision: string }>]
-    expect(taskId).toBe("t1")
-    expect(round).toBe(1)
-    expect(Object.keys(payload).sort()).toEqual(["walk:02-e2e-status:0", "walk:plan:1"])
-    expect(Object.values(payload).every((c) => c.decision === "pass")).toBe(true)
-    void dir
+    await screen.findByTestId("acceptance-plan-panel")
+    fireEvent.click(await screen.findByTestId("plan-pass"))
+    await waitFor(() => expect(mockRecordAcceptanceCheck).toHaveBeenCalledWith("t1", {
+      item_id: "case:1", decision: "pass", note: undefined,
+    }))
+    await waitFor(() => expect((screen.getByTestId("acceptance-approve") as HTMLButtonElement).disabled).toBe(false))
   })
 
-  it("T06 AC2 刷新回填：readChecks 命中 pass → 右栏走查计数回填 1/1", async () => {
-    mockGetPlaybook.mockResolvedValue({
-      available: true, goal: "g", specRevised: false,
-      budget: { steps: 1, estMin: 2, over: false, degraded: false },
-      sections: [{ kind: "walk", title: "T", source: "e2e-test-plan.md", items: [{ id: "walk:plan:1", op: "op", expect: "e" }] }],
-      finePrint: [], carryover: [], coverage: { found: [], missing: [] },
-    })
-    mockReadChecks.mockResolvedValue({ version: "1", checks: { "walk:plan:1": { decision: "pass", note: "", at: "t" } } })
+  it("T06 AC2 刷新回填：readChecks 命中 scene pass → 左导轨计数回填 1/1", async () => {
+    mockGetPlaybook.mockResolvedValue(PLAN_PLAYBOOK)
+    mockReadChecks.mockResolvedValue({ version: "1", checks: { "case:1": { decision: "pass", note: "", at: "t" } } })
     renderModal()
     const rail = await screen.findByTestId("rail-walk-count")
     // 默认 readChecks={} → 0/1；此处命中盘上 pass → gate.pass=1（未决归零，DOM 无「未决 N>0」）
@@ -532,20 +537,18 @@ describe("AcceptanceSurface — AC1 证据面（A′：进度+决策，token/cos
     expect(screen.getByTestId("preview-editor")).toBeTruthy()
   })
 
-  it("T06 AC3 降级：available:false → 降级卡点名缺源 + 「配置命令」指引，不白屏", async () => {
-    mockGetPlaybook.mockResolvedValue({
-      available: false, goal: "", specRevised: false,
-      budget: { steps: 0, estMin: 0, over: false, degraded: false },
-      sections: [], finePrint: [], carryover: [],
-      coverage: { found: [], missing: ["e2e-test-plan.md", "tickets"] },
-    })
+  it("T06 AC3 无方案：只显示状态卡 + 无场景硬闸警告，通过仍可用", async () => {
     renderModal()
-    const card = await screen.findByTestId("playbook-empty")
-    expect(card.textContent).toContain("e2e-test-plan.md") // 点名缺哪份契约源（诚实降级）
-    expect(card.textContent).toContain("配置命令") // 给出路，不是死路
-    // 不白屏：模态与决策面照常在场
+    const card = await screen.findByTestId("plan-status-card")
+    expect(card.getAttribute("data-plan-status")).toBe("missing")
+    expect(card.textContent).toContain("本轮没有验收方案")
+    expect(card.textContent).toContain("没有场景清单时不设硬闸")
+    expect(screen.getByTestId("acceptance-no-plan-warning").textContent).toContain("无场景硬闸")
+    expect(screen.queryByTestId("playbook-panel")).toBeNull()
+    expect(screen.queryByTestId("acceptance-plan-panel")).toBeNull()
+    // 不白屏：模态与决策面照常在场，通过按钮可用
     expect(screen.getByTestId("acceptance-modal")).toBeTruthy()
-    expect(screen.getByTestId("acceptance-approve")).toBeTruthy()
+    expect((screen.getByTestId("acceptance-approve") as HTMLButtonElement).disabled).toBe(false)
   })
 
   it("T07 AC1 ready 态：↗ href=预览 URL；停止钮 → stopPreview(t1)", async () => {
@@ -646,20 +649,14 @@ describe("AcceptanceSurface — AC1 证据面（A′：进度+决策，token/cos
     )
   })
 
-  it("T09 AC2 ✗ 闭环：打回提交 body 携带 reopen_tickets（票名基去兜底）", async () => {
-    mockGetPlaybook.mockResolvedValue({
-      available: true, goal: "g", specRevised: false,
-      budget: { steps: 2, estMin: 4, over: false, degraded: false },
-      sections: [{ kind: "walk", title: "T", source: "s.md", items: [
-        { id: "walk:plan:1", op: "plan 兜底步", expect: "e" }, { id: "walk:02-e2e-status:0", op: "票步", expect: "e" }] }],
-      finePrint: [], carryover: [], coverage: { found: [], missing: [] },
-    })
+  it("T09 AC2 ✗ 闭环：场景关联票 → 打回 body 携带 reopen_tickets", async () => {
+    mockGetPlaybook.mockResolvedValue(PLAN_PLAYBOOK)
     mockPostAcceptance.mockResolvedValue({ task: {}, dispatch: null })
     renderModal()
-    await screen.findByTestId("playbook-panel")
-    // 只标 ✗ 票步（plan 兜底不算真票，不该进 reopen）
-    const ticketStep = await screen.findByTestId("step-walk:02-e2e-status:0")
-    fireEvent.click(ticketStep.querySelector('[data-testid="decide-fail"]')!)
+    await screen.findByTestId("acceptance-plan-panel")
+    fireEvent.click(await screen.findByTestId("plan-fail"))
+    fireEvent.change(screen.getByTestId("plan-note"), { target: { value: "端点缺字段" } })
+    fireEvent.click(screen.getByTestId("plan-note-confirm"))
     await waitFor(() => expect((screen.getByTestId("acceptance-approve") as HTMLButtonElement).disabled).toBe(true))
     fireEvent.click(screen.getByTestId("acceptance-reject"))
     fireEvent.change(screen.getByTestId("reject-feedback"), { target: { value: "端点缺字段" } })
@@ -958,114 +955,6 @@ describe("AcceptanceSurface — 票 04 前序交接提示行（phase-handoff-cha
   })
 })
 
-// ── PB: 剧本探针就地执行 + 全展开/收起 (v2.2, 用户反馈 2026-09-19) ──────
-const PB_PLAYBOOK = {
-  available: true, goal: "g", specRevised: false,
-  budget: { steps: 2, estMin: 3, over: false, degraded: false },
-  sections: [{ kind: "probe" as const, title: "03-e2e", source: "issues/03-e2e.md", items: [
-    { id: "probe:03-e2e:1", op: "执行真值探针", expect: "data == true", probe: { command: "curl -sf localhost:18082/demo/luhn?no=x" } },
-    { id: "probe:03-e2e:2", op: "执行假值探针", expect: "data == false", probe: { command: "curl -sf localhost:18082/demo/luhn?no=y" } },
-  ] }],
-  finePrint: [], carryover: [], coverage: { found: ["issues/03-e2e.md"], missing: [] },
-}
-
-describe("PB — 剧本探针执行与展开", () => {
-  it("PB1: probe 步有 [▶执行]；exit 0 → 自动✓ + 🔬note + EXIT 章 + probe 持久化", async () => {
-    mockGetPlaybook.mockResolvedValue(PB_PLAYBOOK)
-    renderModal()
-    await screen.findByTestId("playbook-panel")
-    expect(screen.getByTestId("probe-run-probe:03-e2e:1")).toBeTruthy()
-    fireEvent.click(screen.getByTestId("probe-run-probe:03-e2e:1"))
-    await waitFor(() => expect(mockRunProbe).toHaveBeenCalledWith("t1", "curl -sf localhost:18082/demo/luhn?no=x"))
-    expect(screen.getByTestId("probe-stamp-probe:03-e2e:1").textContent).toContain("EXIT 0")
-    await new Promise((r) => setTimeout(r, 450))
-    const payload = mockSaveChecks.mock.calls.at(-1)?.[3] as Record<string, { decision: string; note: string; probe?: unknown }>
-    expect(payload["probe:03-e2e:1"].decision).toBe("pass")
-    expect(payload["probe:03-e2e:1"].note).toContain("🔬 探针 exit 0")
-    expect(payload["probe:03-e2e:1"].probe).toMatchObject({ state: "passed", exit_code: 0 })
-  })
-
-  it("PB2: exit≠0 → 自动✗（硬闸拦通过）+ 现象行进备注；人工改判 ✓ 可放行", async () => {
-    mockGetPlaybook.mockResolvedValue(PB_PLAYBOOK)
-    mockRunProbe.mockResolvedValueOnce({ state: "failed", exit_code: 22, duration_ms: 300, tail: ["[stderr] curl: (22) The requested URL returned error: 500"] })
-    renderModal()
-    await screen.findByTestId("playbook-panel")
-    fireEvent.click(screen.getByTestId("probe-run-probe:03-e2e:2"))
-    await new Promise((r) => setTimeout(r, 450))
-    const payload = mockSaveChecks.mock.calls.at(-1)?.[3] as Record<string, { decision: string; note: string }>
-    expect(payload["probe:03-e2e:2"].decision).toBe("fail")
-    expect(payload["probe:03-e2e:2"].note).toContain("exit 22")
-    expect(payload["probe:03-e2e:2"].note).toContain("curl: (22)")
-    await waitFor(() => expect((screen.getByTestId("acceptance-approve") as HTMLButtonElement).disabled).toBe(true))
-    // 人工改判：✗→✓ 解除硬闸（机器章可被人的最终判断覆盖）
-    fireEvent.click(screen.getAllByTestId("step-probe:03-e2e:2").at(-1)!.querySelector("[data-testid=decide-pass]")!)
-    await waitFor(() => expect((screen.getByTestId("acceptance-approve") as HTMLButtonElement).disabled).toBe(false))
-  })
-
-  it("PB3: 收起全部 → 预期明细隐藏但勾选可用；再展开回原样", async () => {
-    mockGetPlaybook.mockResolvedValue({
-      available: true, goal: "g", specRevised: false,
-      budget: { steps: 1, estMin: 2, over: false, degraded: false },
-      sections: [{ kind: "probe" as const, title: "T", source: "s", items: [
-        { id: "probe:01:1", op: "打开页面", expect: "剧本明细只在展开时可见", probe: { command: "true" } }] }],
-      finePrint: [], carryover: [], coverage: { found: [], missing: [] },
-    })
-    renderModal()
-    const panel = await screen.findByTestId("playbook-panel")
-    expect(panel.textContent).toContain("剧本明细只在展开时可见")
-    fireEvent.click(screen.getByTestId("playbook-toggle-all"))
-    await waitFor(() => expect(screen.getByTestId("playbook-toggle-all").textContent).toBe("展开全部"))
-    expect(panel.textContent).not.toContain("剧本明细只在展开时可见")
-    expect(panel.textContent).toContain("打开页面") // 标题仍在
-    expect(screen.getByTestId("decide-pass")).toBeTruthy() // 收起态照样能勾
-    fireEvent.click(screen.getByTestId("playbook-toggle-all"))
-    await waitFor(() => expect(panel.textContent).toContain("剧本明细只在展开时可见"))
-  })
-})
-
-// ── PB4/PB5: 连跑全部 + lifecycle 折叠 (② + ③) ──────────────────────
-const RUNALL_PB = {
-  available: true, goal: "g", specRevised: false,
-  budget: { steps: 4, estMin: 3, over: false, degraded: false },
-  sections: [{ kind: "probe" as const, title: "03-e2e", source: "issues/03-e2e.md", items: [
-    { id: "probe:x:1", op: "断言真值", expect: "true", probe: { command: "curl a" } },
-    { id: "probe:x:2", op: "起服务", expect: "up", probe: { command: "java -jar app &" }, lifecycle: "start" },
-    { id: "probe:x:3", op: "断言假值", expect: "false", probe: { command: "curl b" } },
-    { id: "probe:x:4", op: "不该跑到", expect: "x", probe: { command: "curl c" } },
-  ] }],
-  finePrint: [], carryover: [], coverage: { found: ["issues/03-e2e.md"], missing: [] },
-}
-
-describe("PB4/PB5 — 连跑全部与 lifecycle 折叠", () => {
-  it("PB5: 起了 runbook 的 lifecycle 步 → Wrench 提示、无 ▶执行、连跑计数只数断言步", async () => {
-    mockGetPlaybook.mockResolvedValue(RUNALL_PB)
-    renderModal()
-    await screen.findByTestId("playbook-panel")
-    expect(screen.getByTestId("probe-lifecycle-probe:x:2")).toBeTruthy()
-    expect(screen.queryByTestId("probe-run-probe:x:2")).toBeNull()
-    // 连跑钮只数非 lifecycle 的 3 条断言步
-    expect(screen.getByTestId("playbook-run-all").textContent).toContain("3")
-  })
-
-  it("PB4: ▶连跑按序跑断言步(跳过 lifecycle)、遇首个✗即停、尾部不空跑", async () => {
-    mockGetPlaybook.mockResolvedValue(RUNALL_PB)
-    const calls: string[] = []
-    mockRunProbe.mockImplementation(async (_t: string, cmd: string) => {
-      calls.push(cmd)
-      if (cmd === "curl b") return { state: "failed", exit_code: 22, duration_ms: 5, tail: ["boom 500"] }
-      return { state: "passed", exit_code: 0, duration_ms: 3, tail: ["ok"] }
-    })
-    renderModal()
-    await screen.findByTestId("playbook-panel")
-    fireEvent.click(screen.getByTestId("playbook-run-all"))
-    await waitFor(() => expect(calls).toEqual(["curl a", "curl b"])) // lifecycle 未进、c 未跑
-    // a 章 passed、b 章 failed 并触发硬闸停在此
-    expect(screen.getByTestId("probe-stamp-probe:x:1").textContent).toContain("EXIT 0")
-    await waitFor(() => expect((screen.getByTestId("acceptance-approve") as HTMLButtonElement).disabled).toBe(true))
-  })
-})
-
-
 describe("实物 tab 每块折叠（2026-09-20 用户点名：要的是块级，不是大折叠）", () => {
   function renderFolded() {
     mockGetTask.mockResolvedValue(makeDetail(PHASE1_AWAITING, V4_SPEC))
@@ -1177,34 +1066,35 @@ describe("验货台 — 实况可信与决策诚实（A/C 档）", () => {
     await waitFor(() => expect(mockGetTask.mock.calls.length).toBeGreaterThanOrEqual(2))
   })
 
-  it("勾选 debounce 窗内：通过 disabled + 原因 title；打回不拦但提交即 flush（竞态闸）", async () => {
-    mockGetPlaybook.mockResolvedValue({
-      available: true, goal: "g", specRevised: false,
-      budget: { steps: 1, estMin: 2, over: false, degraded: false },
-      sections: [{ kind: "walk", title: "T", source: "e2e-test-plan.md", items: [{ id: "walk:plan:1", op: "op", expect: "e" }] }],
-      finePrint: [], carryover: [], coverage: { found: [], missing: [] },
-    })
+  it("无方案：通过不被拦，点开台账确认弹层照常工作", async () => {
     renderModal()
-    await screen.findByTestId("playbook-panel")
-    await new Promise((r) => setTimeout(r, 400)) // 排空前序用例遗留的 debounce 定时器
-    mockSaveChecks.mockClear()
-    fireEvent.click(screen.getByTestId("decide-pass"))
+    await screen.findByTestId("plan-status-card")
     const approve = screen.getByTestId("acceptance-approve") as HTMLButtonElement
-    expect(approve.disabled).toBe(true)
-    expect(approve.title).toContain("保存中")
-    // 打回按钮不拦：弹窗照常开，提交时 flush 让最后一笔先落盘再 POST
-    fireEvent.click(screen.getByTestId("acceptance-reject"))
-    fireEvent.change(screen.getByTestId("reject-feedback"), { target: { value: "顺手 flush" } })
-    mockPostAcceptance.mockResolvedValueOnce({
-      task: makeDetail(PHASE1_AWAITING), acceptance_id: "a-f", next_action: "dispatched",
-      dispatch: { execution_id: "exec-2", workspace_id: "ws-1", phase_index: 1, round_index: 2 },
+    expect(approve.disabled).toBe(false)
+    fireEvent.click(approve)
+    expect(await screen.findByTestId("ledger-confirm")).toBeTruthy()
+    expect(screen.getByTestId("acceptance-no-plan-warning")).toBeTruthy()
+  })
+
+  it("ready(✗) → 方案消失：残留 gate 清空，通过恢复可用", async () => {
+    mockGetPlaybook.mockResolvedValue(PLAN_PLAYBOOK)
+    renderModal()
+    await screen.findByTestId("acceptance-plan-panel")
+    fireEvent.click(await screen.findByTestId("plan-fail"))
+    fireEvent.change(screen.getByTestId("plan-note"), { target: { value: "先失败" } })
+    fireEvent.click(screen.getByTestId("plan-note-confirm"))
+    await waitFor(() => expect((screen.getByTestId("acceptance-approve") as HTMLButtonElement).disabled).toBe(true))
+
+    mockGetPlaybook.mockResolvedValue({
+      available: false, goal: "", specRevised: false,
+      budget: { steps: 0, estMin: 0, over: false, degraded: false },
+      sections: [], finePrint: [], carryover: [], coverage: { found: [], missing: [] },
+      plan: { status: "failed", error: "boom" },
     })
-    fireEvent.click(screen.getByTestId("reject-confirm"))
-    await waitFor(() => expect(mockSaveChecks).toHaveBeenCalledWith("t1", BATCH_DIR, 1, {
-      "walk:plan:1": expect.objectContaining({ decision: "pass" }),
-    }))
-    await waitFor(() => expect(mockPostAcceptance).toHaveBeenCalled())
+    fireSse(TASK_ACCEPTANCE_PLAN_EVENT, { task_id: "t1", status: "failed" })
+    await screen.findByTestId("plan-status-card")
     await waitFor(() => expect((screen.getByTestId("acceptance-approve") as HTMLButtonElement).disabled).toBe(false))
+    expect(screen.getByTestId("acceptance-no-plan-warning")).toBeTruthy()
   })
 
   it("SSE 断线 → 顶条横幅「数据截至」；重连 → since 游标补缺口，横幅退场", async () => {
@@ -1455,6 +1345,20 @@ describe("AcceptanceSurface — 归档后只读回看（复用三步界面）", 
     expect(screen.queryByTestId("acceptance-abort")).toBeNull()
     // 勾选面板冻结（disablereason 生效）
     expect(screen.queryByTestId("acceptance-batch-idle")).toBeNull()
+  })
+
+  it("归档轮无方案 → 只读状态卡，无清单、无重生成", async () => {
+    const detail = { ...makeDetail(P1_DONE), status: "done" } as unknown as TaskDetail
+    mockGetTask.mockResolvedValue(detail)
+    render(<AcceptanceSurface task={detail as unknown as Task} onMutated={() => {}} />)
+    const card = await screen.findByTestId("plan-status-card")
+    expect(card.getAttribute("data-plan-status")).toBe("archived")
+    expect(card.textContent).toContain("没有可回看的验收方案")
+    expect(card.textContent).toContain("acceptance-ledger-r1.md")
+    expect(card.textContent).toContain("无方案")
+    expect(screen.queryByTestId("plan-regenerate")).toBeNull()
+    expect(screen.queryByTestId("acceptance-plan-panel")).toBeNull()
+    expect(screen.queryByTestId("playbook-panel")).toBeNull()
   })
 
   it("多 phase：默认停在最后一个已验收 phase，点阶段轨道切回前一个 phase", async () => {

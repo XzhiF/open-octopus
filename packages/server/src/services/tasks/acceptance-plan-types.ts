@@ -28,10 +28,20 @@ export const planMdName = (roundIndex: number): string => `acceptance-plan-r${ro
 export const planStatusName = (roundIndex: number): string => `acceptance-plan-r${roundIndex}.status.json`
 export const planEvidenceName = (roundIndex: number): string => `acceptance-evidence-r${roundIndex}.json`
 
-/** 人层场景上限（一个 phase = 一个故事；场景按故事切，不按功能点切）。 */
+/** 人层场景建议上限（一个 phase = 一个故事；场景按故事切，不按功能点切）。 */
 export const PLAN_CASE_BUDGET = 3
+/** 单条场景步骤建议上限（超过只警告，不判方案不合规）。 */
+export const PLAN_STEP_BUDGET = 8
 /** 机器证据上限（按证据来源组织：单测/集成/契约/e2e/verify…）。 */
 export const PLAN_CHECK_BUDGET = 20
+
+// 硬护栏只挡病态文件，不是预算的执行者。2026-10-31 事故：一条 9 步的场景
+// （REPL 里把手机号/邮箱/昵称/边界都试一遍）撞上 steps.max(8)，Zod 直接判死整份
+// 方案，验收台退回旧编译清单 —— 预算越界不该让一份可用方案作废。
+// 预算（cases 3 / steps 8 / checks 20）改为 normalizePlan 里的**警告**。
+export const PLAN_STEP_HARD_LIMIT = 16
+export const PLAN_CASE_HARD_LIMIT = 10
+export const PLAN_CHECK_HARD_LIMIT = 50
 
 // ── v2 wire contract (2026-10-31) ─────────────────────────────────────
 
@@ -73,7 +83,7 @@ export const PlanCaseSchema = z.object({
   story: z.string().default(""),
   /** 起点（如「用 runbook 起服务」「已有样例数据」）；不写命令。 */
   setup: z.string().optional(),
-  steps: z.array(PlanStepSchema).min(1).max(8),
+  steps: z.array(PlanStepSchema).min(1).max(PLAN_STEP_HARD_LIMIT),
   /** 这一条场景「通过」的判定标准（一句人话）。 */
   expect: z.string().min(1),
   /** 关联票名基（打回时 reopen）。一个场景可对应多张票。 */
@@ -113,10 +123,11 @@ export const AcceptancePlanSchema = z.object({
   generated_at: z.string().min(1),
   planner: z.string().default("acceptance-planner"),
   goal: z.string().default(""),
-  /** 人验收：1–3 条场景（纯工具任务也至少 1 条「用一次」）。 */
-  cases: z.array(PlanCaseSchema).min(1).max(PLAN_CASE_BUDGET),
-  /** 机器证据：不要求人逐项确认。 */
-  checks: z.array(PlanCheckSchema).max(PLAN_CHECK_BUDGET).default([]),
+  /** 人验收：1–3 条场景（纯工具任务也至少 1 条「用一次」）。3 是预算，
+   *  超了由 planBudgetWarnings 提示；硬护栏只挡病态文件。 */
+  cases: z.array(PlanCaseSchema).min(1).max(PLAN_CASE_HARD_LIMIT),
+  /** 机器证据：不要求人逐项确认；20 同理是预算，不是拒收线。 */
+  checks: z.array(PlanCheckSchema).max(PLAN_CHECK_HARD_LIMIT).default([]),
   coverage: PlanCoverageSchema,
   /** server 侧校验发现的诚实缺口（缺证据路径 / 覆盖不全 …）。 */
   warnings: z.array(z.string()).default([]),
@@ -175,14 +186,48 @@ export const LegacyAcceptancePlanSchema = z.object({
 })
 export type LegacyAcceptancePlan = z.infer<typeof LegacyAcceptancePlanSchema>
 
+export type PlanParseResult =
+  | { ok: true; plan: AcceptancePlan; warnings: string[] }
+  | { ok: false; issues: string[] }
+
 /** Read either contract version and normalize to v2 (v1 is converted in memory).
- *  Never rewrites the file; the original v1 plan stays readable for audit. */
-export function parseAcceptancePlan(raw: unknown): { plan: AcceptancePlan; warnings: string[] } | null {
+ *  Never rewrites the file; the original v1 plan stays readable for audit.
+ *  不合规时把 Zod 的字段级原因带回给调用方 —— 只写「缺失或不合规」会让人
+ *  无从下手（2026-10-31：实际原因是 cases.1.steps 超过上限）。 */
+export function parseAcceptancePlan(raw: unknown): PlanParseResult {
   const v2 = AcceptancePlanSchema.safeParse(raw)
-  if (v2.success) return { plan: v2.data, warnings: [] }
+  if (v2.success) return { ok: true, plan: v2.data, warnings: [] }
   const v1 = LegacyAcceptancePlanSchema.safeParse(raw)
-  if (!v1.success) return null
-  return convertLegacyPlan(v1.data)
+  if (!v1.success) {
+    // 声明自己是 v1 的文件按 v1 报错，否则按 v2（主契约）报错。
+    const isLegacy = (raw as { version?: unknown } | null)?.version === "1"
+    return { ok: false, issues: formatZodIssues(isLegacy ? v1.error : v2.error) }
+  }
+  return { ok: true, ...convertLegacyPlan(v1.data) }
+}
+
+/** 预算提示（不是拒收理由）：面板会把 warnings 显示在方案提示里。 */
+export function planBudgetWarnings(plan: Pick<AcceptancePlan, "cases" | "checks">): string[] {
+  const out: string[] = []
+  if (plan.cases.length > PLAN_CASE_BUDGET) {
+    out.push(`人验场景 ${plan.cases.length} 条，超过建议上限 ${PLAN_CASE_BUDGET} 条 —— 场景宜按故事收敛`)
+  }
+  for (const c of plan.cases) {
+    if (c.steps.length > PLAN_STEP_BUDGET) {
+      out.push(`场景「${c.title}」有 ${c.steps.length} 步，建议合并到 ${PLAN_STEP_BUDGET} 步以内`)
+    }
+  }
+  if (plan.checks.length > PLAN_CHECK_BUDGET) {
+    out.push(`机器证据 ${plan.checks.length} 项，超过建议上限 ${PLAN_CHECK_BUDGET} 项 —— 按来源合并`)
+  }
+  return out
+}
+
+function formatZodIssues(err: import("zod").ZodError): string[] {
+  return err.issues.slice(0, 12).map((i) => {
+    const where = i.path.length ? i.path.join(".") : "(root)"
+    return `${where}: ${i.message}`
+  })
 }
 
 /** v1 → v2: `machine.verdict === "pass"` 的项归为机器证据，其余归为人场景。
@@ -395,6 +440,22 @@ export function planToPlaybook(
     coverage: plan.coverage,
     plan: status,
     planWarnings: plan.warnings,
+  }
+}
+
+/** 没有 ready 方案时的空清单（2026-10-31）：getPlaybook 的唯一降级形态。
+ *  保留完整 payload 形状，web 据 plan.status 显示状态卡；不伪装成“有清单”。 */
+export function emptyPlaybookPayload(status: PlanSummary): PlaybookPayload {
+  return {
+    available: false,
+    goal: "",
+    specRevised: false,
+    budget: { steps: 0, estMin: 0, over: false, degraded: false },
+    sections: [],
+    finePrint: [],
+    carryover: [],
+    coverage: { found: [], missing: [] },
+    plan: status,
   }
 }
 

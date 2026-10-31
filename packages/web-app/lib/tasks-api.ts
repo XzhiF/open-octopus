@@ -1419,18 +1419,6 @@ export function parseChecksMd(md: string): ChecksFile | null {
     return null
   }
 }
-export function renderChecksMd(data: ChecksFile): string {
-  return [
-    `# 走查勾选 · Round ${data.round_index ?? "?"}`,
-    "",
-    "> 机器读写:验收台勾选 → 本文件;ledger 聚合、下轮 carryover 都吃它。JSON 体可手改。",
-    "",
-    "```json",
-    JSON.stringify(data, null, 2),
-    "```",
-    "",
-  ].join("\n")
-}
 export const checksRelPath = (batchRelDir: string, roundIndex: number): string =>
   `${batchRelDir}/${checksFileName(roundIndex)}`
 
@@ -1442,13 +1430,6 @@ export async function readChecks(taskId: string, batchRelDir: string, roundIndex
   } catch {
     return { version: "1", round_index: roundIndex, checks: {} }
   }
-}
-/** 写某轮 checks(整文件覆盖,panel 是唯一作者;round-trip 幂等)。 */
-export async function saveChecks(
-  taskId: string, batchRelDir: string, roundIndex: number, checks: Record<string, CheckEntry>,
-): Promise<void> {
-  const data: ChecksFile = { version: "1", task_id: taskId, round_index: roundIndex, checks }
-  await putHomeFile(taskId, checksRelPath(batchRelDir, roundIndex), renderChecksMd(data))
 }
 
 // ── 单条核对写入 + 方案重生成（2026-10-30 AI-native 验收）───────────────
