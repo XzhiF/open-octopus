@@ -343,6 +343,25 @@ export class RoundEvidenceService {
     return { phaseIndex: awaiting.index, roundIndex, execId }
   }
 
+  /** 归档后回看（2026-10-31）：**最后一个已验收轮**的坐标 —— awaiting / live /
+   *  停流接管都不在场时，diff 端点由它供货（done / archiving / awaiting_archive
+   *  以及「中段 phase 已验收、等下一轮」的任务，变更窗都还能出示实物）。
+   *  与 pickAwaitingSelection 同源（derived.phaseViews），按 spec 顺序取最后一个
+   *  acceptedRound 非空的 phase。null = 没有可锚定的已验收轮（调用方照原 409）。 */
+  private pickAcceptedSelection(detail: ReturnType<TasksService["getTask"]>): {
+    phaseIndex: number
+    roundIndex: number
+    execId: string
+  } | null {
+    const accepted = detail.derived.phaseViews.filter((p) => p.acceptedRound != null)
+    const last = accepted[accepted.length - 1]
+    const roundIndex = last?.acceptedRound ?? null
+    if (!last || roundIndex == null) return null
+    const execId = last.rounds.find((r) => r.roundIndex === roundIndex)?.exec.id
+    if (!execId) return null
+    return { phaseIndex: last.index, roundIndex, execId }
+  }
+
   /** The derived view (tasks-service.getTask → derived.phaseViews) picks the
    *  awaiting phase/round — 票03 single-authority, re-read here, never
    *  recomputed. TaskNotFoundError → 404; TaskStatusConflictError → 409. */
@@ -583,7 +602,9 @@ export class RoundEvidenceService {
 
   /** Lazy single-file patch (实物 tab row click). Ownership falls out of
    *  resolveRoundForDiff (exec belongs to this task); repo must exist in the
-   *  map. 票03: live 轮的端锚同样取当前 HEAD，与 getRoundDiff 同闸同口径。 */
+   *  map. 票03: live 轮的端锚同样取当前 HEAD，与 getRoundDiff 同闸同口径。
+   *  2026-10-31 归档回看：解析落到已验收轮时，patch 与列表同一 start..end
+   *  （冻结快照），并非按当前 HEAD 重算。 */
   async getFilePatch(
     taskId: string,
     repo: string,
@@ -624,9 +645,12 @@ export class RoundEvidenceService {
    *  票08 补第三级：live 也没有时认**停流未交付的接管轮**（takeover_at 有、
    *  delivered 无）—— 机器轮已停但轮还在人手里跑（对话快改持续落 commit，
    *  AC3「接管对话内改动实时进 ≡ 变更」），与 live 同口径 end 锚 = 当前 HEAD。
-   *  错误语义不变：未知任务 404（getTask 先抛）；awaiting/live/takeover 皆无 →
-   *  原 409 如实上抛。票10 review-8：awaiting 判据走显式选取探针
-   *  （{@link pickAwaitingSelection}），不再靠 resolveAwaiting 抛异常当控制流。 */
+   *  2026-10-31 补第四级：以上皆无时认**最后一个已验收轮**（derived phaseViews
+   *  的 acceptedRound）—— end 锚 = 存下的快照，不随 HEAD 漂移；done / archiving /
+   *  awaiting_archive 的变更窗据此继续出示实物（归档后不再只剩走查/台账）。
+   *  错误语义不变：未知任务 404（getTask 先抛）；四类轮皆无 → 409 如实上抛。
+   *  票10 review-8：awaiting 判据走显式选取探针（{@link pickAwaitingSelection}），
+   *  不再靠 resolveAwaiting 抛异常当控制流。 */
   private resolveRoundForDiff(taskId: string): {
     execRow: ExecutionRow
     phaseIndex: number | null
@@ -640,17 +664,22 @@ export class RoundEvidenceService {
       if (awaitingRow && awaitingRow.task_id === taskId) {
         return { execRow: awaitingRow, phaseIndex: sel.phaseIndex, roundIndex: sel.roundIndex, live: false }
       }
-      // 病态边（派生认 awaiting 但执行行没了/归属不符）：旧语义 = 先试 live/接管
-      // 回落，皆无才抛「执行行缺失」原文。
-      const fb = this.execDao.findLiveRoundForTask(taskId) ?? this.execDao.findTakeoverRoundForTask(taskId)
-      if (!fb) throw new TaskStatusConflictError(`待验收轮 ${sel.execId} 的执行行缺失`)
-      return { execRow: fb, phaseIndex: fb.phase_index, roundIndex: fb.round_index ?? 1, live: true }
+      // 病态边（派生认 awaiting 但执行行没了/归属不符）：继续走 live / 接管 /
+      // 已验收回落，四类皆无才抛「执行行缺失」原文。
     }
     const execRow = this.execDao.findLiveRoundForTask(taskId) ?? this.execDao.findTakeoverRoundForTask(taskId)
-    if (!execRow) {
-      throw new TaskStatusConflictError("当前无待验收 round — 验货台只对 awaiting_review 的轮次供货")
+    if (execRow) {
+      return { execRow, phaseIndex: execRow.phase_index, roundIndex: execRow.round_index ?? 1, live: true }
     }
-    return { execRow, phaseIndex: execRow.phase_index, roundIndex: execRow.round_index ?? 1, live: true }
+    const acc = this.pickAcceptedSelection(detail)
+    if (acc) {
+      const accRow = this.execDao.findById(acc.execId)
+      if (accRow && accRow.task_id === taskId) {
+        return { execRow: accRow, phaseIndex: acc.phaseIndex, roundIndex: acc.roundIndex, live: false }
+      }
+    }
+    if (sel) throw new TaskStatusConflictError(`待验收轮 ${sel.execId} 的执行行缺失`)
+    throw new TaskStatusConflictError("当前没有可出示的轮次 — 无待验收 / 在跑 / 接管中的轮，也没有已验收轮")
   }
 
   /** live 端锚：仓当前 HEAD；目录坏/空仓（rev-parse 抛）→ null，调用方按

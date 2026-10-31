@@ -63,9 +63,11 @@ describe("刷新节流 — spec 故事9：事件触发 + ≤10s 兜底轮询", (
     expect(throttleWaitMs(2000, 0, 1500)).toBe(0)
   })
 
-  it("可供货态 = running/paused/awaiting_review；ready/终态不拉（409 面上无货）", () => {
-    for (const s of ["running", "paused", "awaiting_review"]) expect(canServeRoundDiff(s)).toBe(true)
-    for (const s of ["draft", "ready", "archiving", "done", "failed", "aborted"]) expect(canServeRoundDiff(s)).toBe(false)
+  it("除 draft 外都值得试一次：末态回到已验收轮；draft 不拉（无轮）", () => {
+    for (const s of ["running", "paused", "awaiting_review", "ready", "awaiting_archive", "archiving", "done", "failed", "aborted"]) {
+      expect(canServeRoundDiff(s)).toBe(true)
+    }
+    expect(canServeRoundDiff("draft")).toBe(false)
   })
 })
 

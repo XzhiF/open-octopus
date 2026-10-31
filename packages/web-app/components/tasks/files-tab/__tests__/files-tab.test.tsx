@@ -184,7 +184,7 @@ describe("FilesTab — 统计条与目录树", () => {
     expect(await screen.findByTestId("files-tab-empty-live")).toBeTruthy()
   })
 
-  it("不可供货态（如 ready/终态）：如实说明，不发请求", () => {
+  it("draft：如实说明，不发请求", () => {
     render(<Host serving={false} />)
     expect(screen.getByTestId("files-tab-idle")).toBeTruthy()
     expect(mockGetRoundDiff).not.toHaveBeenCalled()
@@ -452,7 +452,16 @@ describe("FilesTab — 票07 reveal：对话页签「查看 diff」跳链", () =
 })
 
 describe("FilesTab — 降级面", () => {
-  it("首发失败 → 错误面 + 重试钮；重试成功出内容", async () => {
+  it("409「还没有任何轮」→ idle 面而不是错误面（末态回看的常态）", async () => {
+    mockGetRoundDiff.mockRejectedValueOnce(
+      Object.assign(new Error("当前没有可出示的轮次"), { status: 409 }),
+    )
+    render(<Host />)
+    expect(await screen.findByTestId("files-tab-idle")).toBeTruthy()
+    expect(screen.queryByTestId("files-tab-error")).toBeNull()
+  })
+
+  it("首发失败（非 409）→ 错误面 + 重试钮；重试成功出内容", async () => {
     mockGetRoundDiff.mockRejectedValueOnce(Object.assign(new Error("diff 读取失败"), { status: 500 }))
     render(<Host />)
     const errBox = await screen.findByTestId("files-tab-error")

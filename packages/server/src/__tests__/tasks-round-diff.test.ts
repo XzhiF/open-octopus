@@ -44,7 +44,7 @@ async function newBareTask(): Promise<string> {
   const res = await app.request("/api/tasks", {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({
+    body: JSON.stringify({
       name: `E2E_TD rd ${seq++}`,
       task_spec: {
         format: "v4",
@@ -415,5 +415,72 @@ describe("round-diff — 票03 执行中轮 live 供货", () => {
     const d = await diffOf(taskId)
     expect(d.available).toBe(true)
     expect(d.aggregate.commits).toBe(2)
+  })
+})
+
+// ── 2026-10-31：归档回看 —— 已验收轮在无 awaiting / live 时继续供货 ──────────
+// 变更窗不该在 done / archiving / awaiting_archive 退化成 idle：端点按
+// awaiting → live → 停流接管 → **最近已验收轮** 解析，end 锚 = 存下的快照，
+// 不随 HEAD 漂移（放行后的新提交归归档 delta，不混进本轮实物）。
+describe("round-diff — 已验收轮回落供货（归档后回看）", () => {
+  const accept = (taskId: string, phaseIndex: number, roundIndex: number) => {
+    db.prepare(`
+      INSERT INTO task_phase_acceptances (id, task_id, phase_index, round_index, decision, feedback, decided_at)
+      VALUES (?,?,?,?,?,?,?)
+    `).run(`acc-rd-${seq++}`, taskId, phaseIndex, roundIndex, "accepted", null, new Date().toISOString())
+  }
+
+  it("A1: 已验收轮 → 按存下的 start..end 供货；end 之后的新提交不进；patch 同锚", async () => {
+    const [k0, k1] = freshRepo("arc1")
+    const [taskId] = await newAwaitingTask({ start: { arc1: k0 }, end: { arc1: k1 } })
+    accept(taskId, 1, 1)
+    commitMore("arc1", "post.txt", "p\n") // 放行后的新提交（归档 delta 的地盘）
+    const d = await diffOf(taskId)
+    expect(d.available).toBe(true)
+    expect(d.phaseIndex).toBe(1)
+    expect(d.roundIndex).toBe(1)
+    expect(d.aggregate.commits).toBe(1) // k0..k1 冻结锚，不跟随 HEAD
+    const paths = d.repos.find((r) => r.name === "arc1")!.groups.flatMap((g) => g.files.map((f) => f.path))
+    expect(paths).toContain("r1.txt")
+    expect(paths).not.toContain("post.txt")
+    // cumulative 同锚（本 phase 首轮 start .. 已验收轮 end）
+    const cum = (await (await app.request(`/api/tasks/${taskId}/round-diff?scope=cumulative`)).json()) as RoundDiffPayload
+    expect(cum.aggregate.commits).toBe(1)
+    // patch 与列表同区间（不是按 HEAD 重算）
+    const pr = await app.request(`/api/tasks/${taskId}/round-diff/patch?repo=arc1&path=r1.txt`)
+    expect(pr.status).toBe(200)
+    expect(((await pr.json()) as { patch: string }).patch).toContain("+1a")
+  })
+
+  it("A2: 多 phase 都验收过 → 锚最后一个已验收 phase 的那一轮", async () => {
+    const [k0, k1, k2] = freshRepo("arc2")
+    const phases = [
+      { index: 1, name: "P1", slug: "p-1", specPath: "./.scratch/20261031/p-1/spec.md", workflowRef: "task-dev", inputValues: {} },
+      { index: 2, name: "P2", slug: "p-2", specPath: "./.scratch/20261031/p-2/spec.md", workflowRef: "task-dev", inputValues: {} },
+    ]
+    const res = await app.request("/api/tasks", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ name: `E2E_TD arc2 ${seq++}`, task_spec: { format: "v4", goal: "g", ac: ["a"], phases } }),
+    })
+    expect(res.status).toBe(201)
+    const taskId = ((await res.json()) as { id: string }).id
+    const now = new Date().toISOString()
+    const insert = db.prepare(`
+      INSERT INTO executions (id, workspace_id, org, workflow_ref, workflow_name, status,
+        task_id, phase_index, round_index, start_commit_id, end_commit_id,
+        started_at, completed_at, created_at, updated_at)
+      VALUES (?, ?, ?, 'task-dev', 'rd', 'completed', ?, ?, 1, ?, ?, ?, ?, ?, ?)
+    `)
+    insert.run(`exec-arc2-p1-${seq}`, WS_ID, ORG, taskId, 1, JSON.stringify({ arc2: k0 }), JSON.stringify({ arc2: k1 }), now, now, now, now)
+    insert.run(`exec-arc2-p2-${seq}`, WS_ID, ORG, taskId, 2, JSON.stringify({ arc2: k1 }), JSON.stringify({ arc2: k2 }), now, now, now, now)
+    accept(taskId, 1, 1)
+    accept(taskId, 2, 1)
+    const d = await diffOf(taskId)
+    expect(d.phaseIndex).toBe(2)
+    expect(d.roundIndex).toBe(1)
+    expect(d.aggregate.commits).toBe(1) // P2 那一轮 k1..k2
+    const paths = d.repos.find((r) => r.name === "arc2")!.groups.flatMap((g) => g.files.map((f) => f.path))
+    expect(paths).toEqual(["r2.txt"])
   })
 })

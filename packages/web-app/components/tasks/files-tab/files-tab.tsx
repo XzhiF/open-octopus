@@ -14,6 +14,10 @@
 // 文件也能出 patch，不再 409。
 // 票 07 契约：`rowDecor`（💬chat 徽标渲染位）+ `toolbarExtra`（chat 计数 chip 位），
 // reveal（工具卡「查看 diff」跳链）→ 自动开 tab + 树行青闪。
+//
+// 2026-10-31 归档回看：末态（done / archiving / awaiting_archive）不再 idle ——
+// 服务端回落最近已验收轮（start..end = 存下的快照锚），本页只读回看；工具栏
+// P/R chip 标出锚定的轮次。真没有轮时服务端 409 → 仍落 idle（不是错误面）。
 
 "use client"
 
@@ -41,7 +45,7 @@ export interface FilesTabProps {
   taskId: string
   /** 壳的单源 round 载荷（含节流轮询/事件触发节拍 —— 头栏 commits 也吃它）。 */
   feed: RoundDiffFeed
-  /** 当前状态可供货吗（running/paused/awaiting_review；其余如实空置）。 */
+  /** 值得拉 diff 吗（draft 之外都试一次；服务端 409 = 真没有轮 → 仍落 idle 面）。 */
   serving: boolean
   /** live 态（显示「≤10s 自动同步」指示 + 零提交预告）。 */
   isLive: boolean
@@ -585,7 +589,8 @@ export function FilesTab({ taskId, feed, serving, isLive, costText, rowDecor, to
 
   return (
     <div className="flex min-h-0 flex-1 flex-col" data-testid="files-tab">
-      {/* 工具行：口径段 · 同步指示 · 07 徽标位 · 数据源诚实标注 */}
+      {/* 工具行：口径段 · 锚定轮次 · 统计数字 · 同步指示 · 07 徽标位 · 数据源诚实标注
+          （2026-10-31 用户：统计不再单占一行，与「累计 = 本轮」/P·R 同位） */}
       <div className="flex shrink-0 flex-wrap items-center gap-2 border-b-[1.5px] border-pop-bd bg-pop-paper px-3 py-2 font-mono text-[10px]" data-testid="files-tab-toolbar">
         <span className="flex overflow-hidden rounded-full border-[1.5px] border-pop-bd font-mono text-[9.5px] font-black" data-testid="files-tab-scope">
           {(["round", "cumulative"] as const).map((s) => (
@@ -617,6 +622,39 @@ export function FilesTab({ taskId, feed, serving, isLive, costText, rowDecor, to
             本 phase 首轮 · 累计 = 本轮
           </span>
         )}
+        {diff?.phaseIndex != null && diff.roundIndex != null && (
+          <span
+            className="rounded-[6px] border border-pop-bd bg-pop-paper px-1.5 py-px text-[9.5px] text-pop-dim"
+            data-testid="files-tab-anchor"
+            title={
+              isLive
+                ? "在跑轮：end 锚 = 各仓当前 HEAD"
+                : "待验收 / 已验收轮：start..end 是存下的快照锚，不随 HEAD 漂移"
+            }
+          >
+            P{diff.phaseIndex} · R{diff.roundIndex}
+          </span>
+        )}
+        {serving && diff && diff.available && (
+          <span
+            className="flex flex-wrap items-center gap-x-3 gap-y-1 text-pop-dim"
+            data-testid="round-diff-strip"
+          >
+            <span><b className="font-black text-pop-ink">{stats.commits}</b> 提交</span>
+            <span><b className="font-black text-pop-cyan">{stats.files}</b> 文件</span>
+            <span className="text-pop-green">+{stats.additions}</span>
+            <span className="text-pop-red">−{stats.dels}</span>
+            <span>harness 干预</span>
+            <b className={stats.interventions ? "text-pop-amber" : "text-pop-dim"}>{stats.interventions ?? "—"}</b>
+            {costText != null && (<><span>成本</span><b className="text-pop-yellow">{costText}</b></>)}
+            {diff.repos.some((r) => r.expired) && (
+              <span className="text-pop-amber" data-testid="round-diff-partial-expired">
+                ⏳ {diff.repos.filter((r) => r.expired).length} 仓实物已过期（不计入统计）
+              </span>
+            )}
+            {diff.repos.some((r) => r.truncated) && <span>文件数超展示上限 — 汇总为截断前值</span>}
+          </span>
+        )}
         {serving && isLive && (
           <span className="flex items-center gap-1 text-pop-cyan" title="SSE 事件触发 + 节流轮询；兜底 ≤10s 一拍（spec 故事9）" data-testid="files-tab-sync">
             <i className="block size-[6px] animate-pulse rounded-full bg-pop-cyan" />≤10s 自动同步
@@ -626,25 +664,6 @@ export function FilesTab({ taskId, feed, serving, isLive, costText, rowDecor, to
         <span className="ml-auto text-pop-dim">数据源 GET /api/tasks/:id/round-diff —— 与走查面同源</span>
       </div>
 
-      {/* 统计条：与列表同源（scopeTotals）—— 数字随口径切换 */}
-      {serving && diff && diff.available && (
-        <div className="flex shrink-0 flex-wrap items-center gap-x-3 gap-y-1 border-b border-pop-bd/60 bg-pop-paper/60 px-3 py-1.5 font-mono text-[10px] text-pop-dim" data-testid="round-diff-strip">
-          <span><b className="font-black text-pop-ink">{stats.commits}</b> 提交</span>
-          <span><b className="font-black text-pop-cyan">{stats.files}</b> 文件</span>
-          <span className="text-pop-green">+{stats.additions}</span>
-          <span className="text-pop-red">−{stats.dels}</span>
-          <span>harness 干预</span>
-          <b className={stats.interventions ? "text-pop-amber" : "text-pop-dim"}>{stats.interventions ?? "—"}</b>
-          {costText != null && (<><span>成本</span><b className="text-pop-yellow">{costText}</b></>)}
-          {diff.repos.some((r) => r.expired) && (
-            <span className="text-pop-amber" data-testid="round-diff-partial-expired">
-              ⏳ {diff.repos.filter((r) => r.expired).length} 仓实物已过期（不计入统计）
-            </span>
-          )}
-          {diff.repos.some((r) => r.truncated) && <span>文件数超展示上限 — 汇总为截断前值</span>}
-        </div>
-      )}
-
       {error && diff && (
         <div className="shrink-0 border-b border-pop-bd bg-pop-amber-soft px-3 py-1.5 font-mono text-[10px] font-black text-pop-amber" data-testid="files-tab-stale">
           ⚠ 刷新失败：{error} —— 下方沿上一帧快照
@@ -652,11 +671,11 @@ export function FilesTab({ taskId, feed, serving, isLive, costText, rowDecor, to
       )}
 
       <div className="min-h-0 flex-1">
-        {!serving ? (
+        {!serving || (feed.errorStatus === 409 && !diff) ? (
           <div className="p-3">
             <div className={EMPTY_SHELL} data-testid="files-tab-idle">
-              实物 diff 只在<b className="text-pop-ink">执行中与待验收</b>供货 —— 当前没有可出示的轮次。<br />
-              轮次开跑（或产出入待验收）后本页自动出数；归档终态后回看走「✓ 走查 / 台账」。
+              实物 diff 在<b className="text-pop-ink">执行中、待验收、已验收</b>三态都供货 —— 当前没有可出示的轮次。<br />
+              轮次开跑（或产出入待验收）后本页自动出数；已验收 / 归档 / 完成的任务在这里回看那一轮的实物区间。
             </div>
           </div>
         ) : loading && !diff ? (

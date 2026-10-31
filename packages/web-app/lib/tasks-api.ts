@@ -1156,7 +1156,9 @@ export interface VerifySummary {
  *  cumulative = 本 phase 首轮 start..本轮 end（修复轮看得到全 phase 终态）。 */
 export type RoundDiffScope = "round" | "cumulative"
 
-/** GET /:id/round-diff — 待验收轮的真实 git 区间统计。409 无 awaiting / 404 无任务。 */
+/** GET /:id/round-diff — 实物 git 区间统计。服务端解析顺序：awaiting 轮 →
+ *  live 轮 → 停流接管轮 → 最近已验收轮（2026-10-31 归档回看）。
+ *  409 无任何可出示的轮 / 404 无任务。 */
 /** 显式历史轮坐标（2026-10-30 归档只读回看）：只读端点用；缺省仍是
  *  awaiting（playbook）/ awaiting·live（round-diff）轮。 */
 export interface RoundTargetQuery {

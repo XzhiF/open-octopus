@@ -312,8 +312,9 @@ export type _Snap = LedgerSnapshot
 
 // ── 2026-10-30：归档只读回看 —— 显式历史轮坐标 ────────────────────────
 // 验收台在 done 之后复用原三步界面，playbook / round-diff 需要按已验收轮取数，
-// 而不是 awaiting 轮。这里钉住：显式 (phase, round) 可读；缺省仍 409（现行为不变）；
-// 参数必须成对且为正整数；不存在的轮 → 409。
+// 而不是 awaiting 轮。这里钉住：显式 (phase, round) 可读；参数必须成对且为正整数；
+// 不存在的轮 → 409。缺省语义 2026-10-31 分化：playbook 恒严 awaiting（409），
+// round-diff 回落最近已验收轮（变更窗归档回看，见下方 R1 末段）。
 describe("历史轮只读坐标（归档回看）", () => {
   it("R1: playbook / round-diff 可指定 (phase, round)；缺省/非法参数语义不变", async () => {
     const taskId = await newAwaiting()
@@ -343,8 +344,13 @@ describe("历史轮只读坐标（归档回看）", () => {
     expect(body.available).toBe(false)
     expect(body.phaseIndex).toBe(1)
     expect(body.roundIndex).toBe(1)
-    // 缺省仍 409（当前无 awaiting / live 轮）
-    expect((await app.request(`/api/tasks/${taskId}/round-diff`)).status).toBe(409)
+    // 2026-10-31 改判：缺省 round-diff 在无 awaiting / live 轮时回落**最近已验收轮**
+    // （归档后变更窗回看）。playbook 仍恒严 awaiting（上一行 409 不变）。
+    const d0 = await app.request(`/api/tasks/${taskId}/round-diff`)
+    expect(d0.status).toBe(200)
+    const body0 = (await d0.json()) as { phaseIndex: number; roundIndex: number }
+    expect(body0.phaseIndex).toBe(1)
+    expect(body0.roundIndex).toBe(1)
   })
 })
 

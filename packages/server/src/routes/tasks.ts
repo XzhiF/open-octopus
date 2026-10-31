@@ -609,7 +609,9 @@ export function createTasksRoutes(
 
   // ── 验货台 (acceptance v2)：实物 round-diff + 当场复检 ──────────────────
   // 服务端按 task id 解析轮次（web 永不见 SHA）：awaiting 优先；票03 起 diff 两端点
-  // 无 awaiting 时回落当前 live 轮（end 锚=仓 HEAD），执行中「≡ 变更」即可供货。
+  // 无 awaiting 时回落当前 live 轮（end 锚=仓 HEAD），执行中「≡ 变更」即可供货；
+  // 2026-10-31 起再回落最后一个已验收轮（end 锚=存下的快照）—— done / archiving /
+  // awaiting_archive 的变更窗继续出示实物，不再只剩 idle 面。
   // 无 evidence 注入（如未装配的测试 app）→ 501 而非崩溃。verify 端点的错误都经
   // classifyError：未配置命令 400 / 无 awaiting·在跑·ws 没了 409 / 未知任务 404。
   // 实物 diff。S3（2026-09-20）起支持 ?scope=cumulative：本 phase 首轮 exec 的

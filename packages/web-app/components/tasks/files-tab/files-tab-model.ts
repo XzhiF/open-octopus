@@ -55,9 +55,13 @@ export function throttleWaitMs(now: number, lastAt: number, minGapMs: number): n
   return Math.max(0, minGapMs - (now - lastAt))
 }
 
-/** 壳的哪些状态值得拉 diff（服务端口径：awaiting 轮 ∨ live 轮；其余 409 面上无货）。 */
+/** 壳的哪些状态值得拉 diff（服务端口径：awaiting 轮 ∨ live 轮 ∨ 最近已验收轮）。
+ *  2026-10-31：末态不再退化成 idle —— done / archiving / awaiting_archive / failed /
+ *  aborted 与「中段 phase 已验收等下一轮」的 ready 都由服务端回落到已验收轮（冻结
+ *  快照）。draft 恒空置；其余状态即使真的没有轮（服务端 409），也由 FilesTab 落
+ *  idle 面而不是错误面 —— 前端不替服务端猜有没有已验收轮。 */
 export function canServeRoundDiff(status: string): boolean {
-  return status === "running" || status === "paused" || status === "awaiting_review"
+  return status !== "draft"
 }
 
 /** 文件行绿红比例条：adds 占比（0~1）；零变更兜底全绿（原型 dbar 的 pct 口径）。 */
