@@ -54,7 +54,7 @@ import { TaskHomeService } from '../../services/tasks/task-home-service'
 // （既有 clone 测试零改动）。
 import type { RepoSyncService } from '../../services/tasks/repo-sync-service'
 import { getResourceRegistry } from '../../services/resource-registry'
-import { recordProviderResultUsage } from '../../services/llm-call-ledger'
+import { recordProviderResultUsage, ledgerStopReason } from '../../services/llm-call-ledger'
 import type { TokenUsageDAO } from '../../db/dao/token-usage-dao'
 import type { ResourceRef } from '@octopus/shared'
 import { SessionCacheContextDAO } from '../../db/dao/session-cache-context-dao'
@@ -593,7 +593,11 @@ export function createCloneSessionRoutes(deps: CloneSessionRouteDeps): Hono {
 
     return streamSSE(c, async (stream) => {
       let aborted = false
-      const abortStream = () => { aborted = true }
+      // 显式停止才中断（客户端断开 ≠ 停止，见下方循环注释）。中断必须走
+      // AbortSignal → provider 的 Query.interrupt()，被中断轮才会产出带真实
+      // 用量的 result；只置布尔位会让 provider 生成器被 break 直接关闭。
+      const abortController = new AbortController()
+      const abortStream = () => { aborted = true; abortController.abort() }
       const streamId = registerActiveStream(sessionId, abortStream)
 
       // "关闭不丢失" stream-resume — the assistant row id is generated up
@@ -659,13 +663,14 @@ export function createCloneSessionRoutes(deps: CloneSessionRouteDeps): Hono {
           }
         }
 
-        for await (const chunk of runtime.chat(body.message!, sessionId, providerSessionId, cwd, specUpdateNotice, authoringResourcesContent, undefined, taskHomePath, model, subagents, effort, stableSystemPrompt, turnReminder)) {
+        for await (const chunk of runtime.chat(body.message!, sessionId, providerSessionId, cwd, specUpdateNotice, authoringResourcesContent, abortController.signal, taskHomePath, model, subagents, effort, stableSystemPrompt, turnReminder)) {
           // ONLY the explicit stop endpoint may interrupt the turn.
           // Deliberately NOT checking stream.aborted here: hono's node
           // server sets it when the CLIENT disconnects (closing the dialog),
           // and by design that must not kill generation — the turn runs to
           // completion and persists (disconnect ≠ stop). Do not "fix" this.
-          if (aborted) break
+          // 停止后只继续消费 result/error（账本数据源），其余 chunk 丢弃。
+          if (aborted && chunk.type !== 'result' && chunk.type !== 'error') continue
 
           switch (chunk.type) {
             case 'text_delta': {
@@ -752,10 +757,31 @@ export function createCloneSessionRoutes(deps: CloneSessionRouteDeps): Hono {
               break
             }
             case 'error':
-              await stream.writeSSE({ event: 'error', data: JSON.stringify({ code: chunk.code, message: chunk.message }) })
+              // 中断 / 限额轮的 result 用 error chunk 送达，同样可能带真实用量
+              // （error_during_execution / error_max_*）—— 一并入账，零值不造数。
+              if (tokenUsageDao && (chunk.usage || chunk.modelUsages)) {
+                recordProviderResultUsage({
+                  sourcePath: 'clone_chat',
+                  nodeExecutionId: null,
+                  executionId: null,
+                  sessionId,
+                  messageId: assistantMsgId,
+                  org,
+                  nodeId: cloneName,
+                  startedAtMs: turnStartMs,
+                  modelUsages: chunk.modelUsages,
+                  usage: chunk.usage,
+                  fallbackModel: model ?? cloneDef.config?.model ?? null,
+                  stopReason: ledgerStopReason(chunk.sdkTerminalReason),
+                }, tokenUsageDao)
+              }
+              // 用户已停止：客户端断开，别再写尾帧。
+              if (!aborted) {
+                await stream.writeSSE({ event: 'error', data: JSON.stringify({ code: chunk.code, message: chunk.message }) })
+              }
               break
           }
-          maybeFlushPartial()
+          if (!aborted) maybeFlushPartial()
         }
 
         // 05 — the provider has now received the system-prompt append

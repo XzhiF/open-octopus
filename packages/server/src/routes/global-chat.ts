@@ -9,7 +9,7 @@ import { getBuiltinCloneDef } from "../services/agent/builtin-clones"
 import { getAgentDir, getBuiltInCloneDir } from "../services/agent/paths"
 import fs from "fs"
 import path from "path"
-import { recordProviderResultUsage } from "../services/llm-call-ledger"
+import { recordProviderResultUsage, ledgerStopReason } from "../services/llm-call-ledger"
 import type { TokenUsageDAO } from "../db/dao/token-usage-dao"
 
 // ── System prompt: loaded from octo-scheduler SKILL.md ─────────────
@@ -162,6 +162,8 @@ export function globalChatRoutes(sseService: SSEService, chatService: ChatServic
         const chunkStream = agent.sendQuery(body.content, cwd, session.providerSessionId ?? undefined, {
           systemPrompt: { type: 'preset', preset: 'claude_code', append: schedulerClonePrompt },
           abortSignal: abortController.signal,
+          // 断开/停止走 Query.interrupt()，被中断轮仍产出带用量的 result。
+          interruptible: true,
           plugins: [
             { type: 'local', path: getAgentDir() },
             { type: 'local', path: getBuiltInCloneDir('scheduler') },
@@ -169,7 +171,8 @@ export function globalChatRoutes(sseService: SSEService, chatService: ChatServic
         })
 
         for await (const chunk of chunkStream) {
-          if (aborted) break
+          // 停止后只继续消费 result/error（账本数据源），其余 chunk 丢弃。
+          if (aborted && chunk.type !== 'result' && chunk.type !== 'error') continue
 
           if (chunk.type === 'local_command_output') {
             fullText += chunk.content
@@ -307,6 +310,22 @@ export function globalChatRoutes(sseService: SSEService, chatService: ChatServic
             }
           }
 
+          // 中断 / 限额轮的 result 以 error chunk 送达，可能带真实用量 —— 入账。
+          if (chunk.type === 'error' && tokenUsageDao && (chunk.usage || chunk.modelUsages)) {
+            recordProviderResultUsage({
+              sourcePath: 'global_chat',
+              nodeExecutionId: null,
+              executionId: null,
+              sessionId,
+              org: c.req.header('X-Octopus-Org') ?? null,
+              workspaceId: session.workspaceId ?? null,
+              startedAtMs: turnStartMs,
+              modelUsages: chunk.modelUsages,
+              usage: chunk.usage,
+              stopReason: ledgerStopReason(chunk.sdkTerminalReason),
+            }, tokenUsageDao)
+          }
+
           const sseExtras: Record<string, unknown> = {}
           if (chunk.type === 'tool_result') {
             const entry = toolCallMap.get(chunk.toolCallId)
@@ -327,10 +346,12 @@ export function globalChatRoutes(sseService: SSEService, chatService: ChatServic
             sseData.content = fullText
           }
 
-          await stream.writeSSE({
-            event: chunk.type,
-            data: JSON.stringify(sseData),
-          })
+          if (!aborted) {
+            await stream.writeSSE({
+              event: chunk.type,
+              data: JSON.stringify(sseData),
+            })
+          }
         }
 
         // Persist full response text with metadata

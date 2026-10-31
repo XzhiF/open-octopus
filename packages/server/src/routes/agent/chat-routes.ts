@@ -28,7 +28,7 @@ import { parseCloneMentions, resolveCloneSubagents } from '../../services/agent/
 import { pendingRoleCard } from '../../services/agent/role-card'
 import { appendRoleSwitchEvent, roleSwitchEventPayload } from '../../services/agent/role-switch-event'
 import { withTransientReminder } from '../../services/agent/prompt-reminder'
-import { recordProviderResultUsage } from '../../services/llm-call-ledger'
+import { recordProviderResultUsage, ledgerStopReason } from '../../services/llm-call-ledger'
 import { createWorkflowToolServer } from '../../services/chat/workflow-tools'
 import { createTaskToolServer } from '../../services/chat/task-tools'
 import type { TokenUsageDAO } from '../../db/dao/token-usage-dao'
@@ -418,6 +418,8 @@ export function createChatRoutes(deps: ChatRouteDeps): Hono {
     const providerMessage = extra?.providerMessage ?? message
     let resultNotified = false
     let generated = false
+    // 用户已按停止：停止后只继续消费账本所需的 result/error（见 consume）。
+    let stopped = false
     let fullContent = ''
     let fullThinking = ''
     const currentToolCalls: Array<{ id: string; name: string; input?: unknown; result?: unknown; status?: string }> = []
@@ -533,6 +535,10 @@ export function createChatRoutes(deps: ChatRouteDeps): Hono {
         }
       }
 
+      // 中断收尾（2026-10-31）：停止后不再推流、不再追加正文（partial 冻结在
+      // 停止点），但必须继续消费 provider 的收尾 result —— 流式输入 +
+      // `Query.interrupt()` 下，被中断轮仍会产出一条 error result，里面带着
+      // 已完成模型调用的真实 usage；break 掉消费循环会让它永远到不了账本。
       const consume = async (resume: string | undefined) => {
         for await (const chunk of provider.sendQuery(providerMessage, cwd, resume, {
           systemPrompt: { type: 'preset', preset: 'claude_code', append: systemPrompt },
@@ -542,12 +548,16 @@ export function createChatRoutes(deps: ChatRouteDeps): Hono {
           ...(extra?.mcpServers ? { mcpServers: extra.mcpServers } : {}),
           ...(extra?.plugins ? { plugins: extra.plugins } : {}),
           ...(extra?.onBeforeToolCall ? { onBeforeToolCall: extra.onBeforeToolCall } : {}),
+          // 流式输入模式：停止按钮用 interrupt() 而非硬杀，换取带用量的 result。
+          interruptible: true,
           ...(extra?.abortSignal ? { abortSignal: extra.abortSignal } : {}),
         })) {
           // 停止按钮（本路由闭包的 aborted）优先；`stream._aborted` 是旧判据，
           // 但 hono 的 node 适配器不会去置它 —— 只看它等于「按了停止服务端还在
           // 继续烧 token，直到自己跑完」，partial 也就一直来不及收尾。
-          if (extra?.isAborted?.() || (stream as any)._aborted) break
+          if (!stopped && (extra?.isAborted?.() || (stream as any)._aborted)) stopped = true
+          // 停止后只关心 result / error（账本数据源），其余 chunk 一律丢弃。
+          if (stopped && chunk.type !== 'result' && chunk.type !== 'error') continue
           switch (chunk.type) {
             case 'text_delta':
               fullContent += chunk.content
@@ -619,16 +629,36 @@ export function createChatRoutes(deps: ChatRouteDeps): Hono {
               }
               break
             case 'error':
+              // 中断 / 限额轮同样可能带真实用量：SDK 的 error_during_execution
+              // （aborted_streaming / aborted_tools）与 error_max_* result 都带
+              // usage / modelUsage，是中断后唯一能拿回的账。零值不造数由
+              // recordProviderResultUsage 自己过滤。
+              if (tokenUsageDao && (chunk.usage || chunk.modelUsages)) {
+                recordProviderResultUsage({
+                  sourcePath: 'global_chat',
+                  nodeExecutionId: null,
+                  executionId: null,
+                  sessionId,
+                  org,
+                  startedAtMs: turnStartedAtMs,
+                  modelUsages: chunk.modelUsages,
+                  usage: chunk.usage,
+                  stopReason: ledgerStopReason(chunk.sdkTerminalReason),
+                }, tokenUsageDao)
+              }
               // A stale resume id must not kill the turn — retry once without
               // resume before surfacing the error (clone chat has the same
               // degradation; see CloneRuntime.chat).
               if (resume && !generated && !fullContent && isResumeFailure(chunk.message)) {
                 throw RESUME_FAILED
               }
-              await stream.writeSSE({ event: 'error', data: JSON.stringify({ code: chunk.code, message: chunk.message }) })
+              // 用户已按停止：客户端早断开，别再写尾帧。
+              if (!stopped) {
+                await stream.writeSSE({ event: 'error', data: JSON.stringify({ code: chunk.code, message: chunk.message }) })
+              }
               break
           }
-          maybeFlushPartial()
+          if (!stopped) maybeFlushPartial()
         }
       }
 
@@ -661,7 +691,7 @@ export function createChatRoutes(deps: ChatRouteDeps): Hono {
 
       // 用户按停止 ≠ 失败：输出留成一条「本轮被截断」的实录行（interrupted），
       // 会话本身照常可续聊。不写 done 帧 —— 客户端已断开，下一次它自己重载。
-      const aborted = extra?.isAborted?.() ?? false
+      const aborted = stopped || (extra?.isAborted?.() ?? false)
 
       if (!aborted && generated && fullContent) {
         const assistantNow = new Date().toISOString()
@@ -696,7 +726,7 @@ export function createChatRoutes(deps: ChatRouteDeps): Hono {
     } catch (err: unknown) {
       const errMsg = err instanceof Error ? err.message : String(err)
       // 用户按停止触发的 abort 不是故障：不打红日志，只按「中断」收尾。
-      const wasAborted = extra?.isAborted?.() ?? false
+      const wasAborted = stopped || (extra?.isAborted?.() ?? false)
       if (!wasAborted) {
         console.error(`[agent] Claude SDK call failed: ${errMsg}`, err instanceof Error ? err.stack : '')
       }

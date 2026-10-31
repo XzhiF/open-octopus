@@ -40,15 +40,24 @@ let behaviors: Array<"hang" | "finish">
 
 function installProvider() {
   vi.spyOn(providers, "getProvider").mockImplementation((() => ({
-    sendQuery: async function* () {
+    sendQuery: async function* (
+      _prompt: string,
+      _cwd: string,
+      _resume: string | undefined,
+      options?: { abortSignal?: AbortSignal },
+    ) {
       const mode = behaviors.shift() ?? "finish"
       if (mode === "hang") {
         yield { type: "text_delta", content: "半句输出" }
-        // 没有 abort 检查的话这个循环永不结束 —— 停止路径靠路由的 isAborted break。
-        while (true) {
+        // 2026-10-31：停止路径 = abortSignal → provider 收尾（真实 provider 走
+        // Query.interrupt() 并吐带用量的 error result）。这里模拟「停止后
+        // 生成器结束」；路由会继续消费到结束再收尾。
+        while (!options?.abortSignal?.aborted) {
           await new Promise((r) => setTimeout(r, 15))
+          if (options?.abortSignal?.aborted) break
           yield { type: "text_delta", content: "…" }
         }
+        return
       }
       yield { type: "text_delta", content: "好的，继续。" }
       yield { type: "result", content: "好的，继续。", sessionId: "sdk-int-1" }

@@ -26,7 +26,7 @@ import { getMemoryService } from '../../services/agent/memory-service'
 import { resolveCloneInfo } from '../../services/agent/clone-resolver'
 import { isBuiltinClone } from '../../services/agent/builtin-clones'
 import type { CloneDef } from '@octopus/shared'
-import { recordProviderResultUsage } from '../../services/llm-call-ledger'
+import { recordProviderResultUsage, ledgerStopReason } from '../../services/llm-call-ledger'
 import type { TokenUsageDAO } from '../../db/dao/token-usage-dao'
 import { IngestError } from '../../services/knowledge/raw'
 import type { CurationInput, CurationReceipt } from '../../services/knowledge/session-curation'
@@ -269,7 +269,11 @@ export function createMainAgentRoute(deps: MainAgentRouteDeps): Hono {
 
     return streamSSE(c, async (stream) => {
       let aborted = false
-      const abortStream = () => { aborted = true }
+      // 停止 / 客户端断开 → provider 走 Query.interrupt()，被中断轮仍会产出
+      // 带真实用量的 result（2026-10-31）；只置布尔位则生成器被 break 关闭，
+      // 中断轮的 token 永远丢。
+      const abortController = new AbortController()
+      const abortStream = () => { aborted = true; abortController.abort() }
       const streamId = registerActiveStream(sessionId!, abortStream)
 
       try {
@@ -280,6 +284,8 @@ export function createMainAgentRoute(deps: MainAgentRouteDeps): Hono {
           systemPrompt: { type: 'preset', preset: 'claude_code', append: systemPrompt },
           ...(model ? { model } : {}),
           ...(effort ? { effort } : {}),
+          abortSignal: abortController.signal,
+          interruptible: true,
         })
 
         let fullContent = ''
@@ -294,7 +300,9 @@ export function createMainAgentRoute(deps: MainAgentRouteDeps): Hono {
         }> = []
 
         for await (const chunk of chunks) {
-          if (aborted || (stream as any)._aborted) break
+          // 客户端断开也算停止：中断后只继续消费 result/error（账本数据源）。
+          if (!aborted && (stream as any)._aborted) { aborted = true; abortController.abort() }
+          if (aborted && chunk.type !== 'result' && chunk.type !== 'error') continue
 
           switch (chunk.type) {
             case 'text_delta':
@@ -387,12 +395,29 @@ export function createMainAgentRoute(deps: MainAgentRouteDeps): Hono {
               }
               break
             case 'error':
+              // 中断 / 限额轮带的真实用量同样入账（零值不造数由 helper 过滤）。
+              if (tokenUsageDao && (chunk.usage || chunk.modelUsages)) {
+                recordProviderResultUsage({
+                  sourcePath: 'global_chat',
+                  nodeExecutionId: null,
+                  executionId: null,
+                  sessionId: sessionId!,
+                  org,
+                  startedAtMs: turnStartMs,
+                  modelUsages: chunk.modelUsages,
+                  usage: chunk.usage,
+                  stopReason: ledgerStopReason(chunk.sdkTerminalReason),
+                }, tokenUsageDao)
+              }
               // Stale resume: drop the pointer so the next turn starts clean
               // instead of failing forever. Only before any output.
               if (resumeSessionId && !fullContent && isResumeFailureMessage(chunk.message)) {
                 sessionDAO.clearProviderSession(sessionId!)
               }
-              await stream.writeSSE({ event: 'error', data: JSON.stringify({ code: chunk.code, message: chunk.message }) })
+              // 已停止：客户端断开，别再写尾帧。
+              if (!aborted) {
+                await stream.writeSSE({ event: 'error', data: JSON.stringify({ code: chunk.code, message: chunk.message }) })
+              }
               break
           }
         }
@@ -462,7 +487,10 @@ export function createMainAgentRoute(deps: MainAgentRouteDeps): Hono {
         }
       } catch (err: unknown) {
         const msg = err instanceof Error ? err.message : String(err)
-        await stream.writeSSE({ event: 'error', data: JSON.stringify({ code: 'STREAM_ERROR', message: msg }) })
+        // 用户停止触发的硬 abort 不是故障：客户端已断开，不再写尾帧。
+        if (!aborted) {
+          await stream.writeSSE({ event: 'error', data: JSON.stringify({ code: 'STREAM_ERROR', message: msg }) })
+        }
       } finally {
         unregisterActiveStream(sessionId!, streamId)
       }
