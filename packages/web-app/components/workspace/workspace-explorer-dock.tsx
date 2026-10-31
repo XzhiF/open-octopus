@@ -33,7 +33,7 @@ import { CloseLightGlyph } from '@/components/ui/close-light'
 import { DialogResizeHandles } from '@/components/ui/dialog-resize'
 import { useEscapeClose } from '@/lib/escape-stack'
 import type { TaskView } from '@/lib/tasks-api'
-import type { TaskModule, TaskWindowMap } from '@/components/chat-workbench/task-window-types'
+import type { TaskModule, TaskWindowMap, TaskWindowRecord } from '@/components/chat-workbench/task-window-types'
 import {
   InspectorActivityPanel,
   type ActivitySnapshot,
@@ -46,6 +46,9 @@ export interface WorkspaceExplorerDockProps {
   workspaceName?: string
   task?: TaskView | null
   taskWindows?: TaskWindowMap
+  /** 常驻「消耗」按钮的窗口状态（任务账本或会话账本，同一扇窗）。 */
+  usageWindow?: TaskWindowRecord | null
+  onOpenUsage?: () => void
   onOpenTaskModule?: (module: TaskModule) => void
   /** Task action (trigger/pause/resume/abort/reopen/retry_archive/accept…). */
   onTaskAction?: (action: string) => void
@@ -94,7 +97,6 @@ const MODULE_ROWS: Array<{ id: TaskModule; label: string; icon: typeof FileText 
   { id: 'changes', label: '变更', icon: GitCompare },
   { id: 'run', label: '运行', icon: Play },
   { id: 'acceptance', label: '验收', icon: ClipboardCheck },
-  { id: 'usage', label: '消耗', icon: BarChart3 },
   { id: 'artifacts', label: '产物', icon: Package },
   { id: 'archive', label: '归档', icon: Archive },
 ]
@@ -140,6 +142,8 @@ export function WorkspaceExplorerDock({
   workspaceName,
   task,
   taskWindows,
+  usageWindow,
+  onOpenUsage,
   onOpenTaskModule,
   onTaskAction,
   activity,
@@ -292,7 +296,6 @@ export function WorkspaceExplorerDock({
     ? MODULE_ROWS.filter((row) => {
         switch (row.id) {
           case 'plan':
-          case 'usage':
           case 'artifacts':
             return true
           case 'changes':
@@ -358,6 +361,10 @@ export function WorkspaceExplorerDock({
     ? [statusMeta.label, phaseLabel, task?.name].filter(Boolean).join(' · ')
     : undefined
   const StatusIcon = statusMeta?.icon ?? null
+  // 常驻「消耗」按钮（2026-10-31）：文件 / 活动 / 消耗都是随时想看的读数，
+  // 跟任务阶段无关 —— 任务窗与会话窗共用同一个模块 id。
+  const usageOpen = !!usageWindow && !usageWindow.minimized
+  const usageMinimized = !!usageWindow?.minimized
 
   const dockButton = (
     key: string,
@@ -555,6 +562,12 @@ export function WorkspaceExplorerDock({
           badge: activity.count,
           testId: 'dock-activity',
           shortLabel: '活动',
+        })}
+        {dockButton('usage', '消耗', BarChart3, {
+          active: usageOpen,
+          onClick: () => onOpenUsage?.(),
+          testId: 'dock-usage',
+          marker: usageMinimized ? 'minimized' : usageOpen ? 'open' : undefined,
         })}
 
         {task && <div className="my-0.5 h-px w-6 bg-white/[0.12]" />}

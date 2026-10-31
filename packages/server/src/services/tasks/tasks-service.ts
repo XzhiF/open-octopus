@@ -245,6 +245,28 @@ export interface TaskUsagePart extends LlmUsageSummary {
   phase_index?: number | null
   round_index?: number | null
   workflow_ref?: string | null
+  /** 该轮实跑区间（2026-10-31 消耗窗「总耗时」）。chat 行没有起止事实 → 不出现。 */
+  started_at?: string | null
+  completed_at?: string | null
+  /** 该轮内 agent 节点 duration 之和（ms）；没有节点数据时不出现（不造 0）。 */
+  agent_duration_ms?: number
+  /** 该轮实跑时长（ms，与 timing.duration_ms 同一谓词）；未起跑/暂停的轮不出现。 */
+  duration_ms?: number
+  /** 这行是不是任务的一「轮」（根执行 / 带 phase 的实例）。fan-out arm 与自己那轮
+   *  的时间区间重叠，按轮时间条只画 instance 行，避免把同一段时间画两遍。 */
+  instance?: boolean
+}
+
+/** 任务耗时的两个口径（2026-10-31 消耗窗「总耗时」卡）：
+ *  · duration_ms = Σ 执行轮实跑段 —— 与看板 ⏱ / 验收窗「实际用时」同源（run_stats），
+ *    排队与待验收等待不算；
+ *  · agent_duration_ms = Σ node_type='agent' 的节点 duration —— 这是**工时**不是墙钟，
+ *    并行/重试会叠加，可能接近或超过 duration_ms，展示端按 100% 截断。 */
+export interface TaskTimingSummary {
+  /** 计入实跑段的行数（同一谓词下的 run_stats.count）。 */
+  count: number
+  duration_ms: number
+  agent_duration_ms: number
 }
 
 export interface TaskUsageDTO {
@@ -254,6 +276,42 @@ export interface TaskUsageDTO {
    *  要显示「这些 token 花在哪些模型上」。 */
   summary: LlmUsageSummary & { modelBreakdown: Record<string, ModelUsageBreakdown> }
   breakdown: TaskUsagePart[]
+  /** 一轮都没跑过时 count=0、两个时长都是 0（窗口整卡隐藏）。 */
+  timing: TaskTimingSummary
+}
+
+/** 会话账本里的一个工作流（= 本会话发起的 task 的一次或多次执行轮）。 */
+export interface SessionUsageWorkflow {
+  task_id: string
+  name: string
+  status: string
+  /** 各轮实跑段之和（与任务窗 timing.duration_ms 同源）。 */
+  duration_ms: number
+  tokens: number
+  total_calls: number
+  cost: { usd: number | null; complete: boolean }
+}
+
+/** 会话耗时的两个口径（2026-10-31 消耗窗·会话版）：
+ *  · conversation_ms = 本会话聊天调用时间区间的并集（重复上报 / 并行只算一次）；
+ *  · workflow_ms = 本会话发起的全部任务实跑段之和；
+ *  · duration_ms = 两者相加（重叠不扣减，口径在窗口 tooltip 里说明）；
+ *  · agent_duration_ms = 聊天调用时长合计 + 各工作流 agent 节点时长 —— 工时不是墙钟，
+ *    可能大于 duration_ms，展示端显示倍数。 */
+export interface SessionTimingSummary {
+  conversation_ms: number
+  workflow_ms: number
+  duration_ms: number
+  agent_duration_ms: number
+}
+
+export interface SessionUsageDTO {
+  session_id: string
+  /** 会话自己的聊天行（execution_id IS NULL）+ 全部关联工作流的执行行。 */
+  summary: LlmUsageSummary & { modelBreakdown: Record<string, ModelUsageBreakdown> }
+  timing: SessionTimingSummary
+  /** 只列真正跑过的工作流（有执行轮）；草稿/未触发任务不占列表。 */
+  workflows: SessionUsageWorkflow[]
 }
 
 /** 素材包单件视图（manifest 投影；归档台「已冻结素材件」展开用）。 */
@@ -344,6 +402,31 @@ export type ReflectionIngest = (input: {
   text: string
   origin: string
 }) => Promise<{ raw_path?: string; compile_task_id?: string }>
+
+/**
+ * 一组时间区间的并集长度（ms）—— 会话「对话」耗时口径：同一轮里重复上报 /
+ * 并行的模型行会在时间轴上叠在一起，求和会虚高，并集才是在说话的真实时长。
+ * 非法区间（end ≤ start / 非有限值）直接跳过。
+ */
+function unionSpanMs(spans: ReadonlyArray<{ start: number; end: number }>): number {
+  const valid = spans
+    .filter((s) => Number.isFinite(s.start) && Number.isFinite(s.end) && s.end > s.start)
+    .sort((a, b) => a.start - b.start)
+  let total = 0
+  let curStart = 0
+  let curEnd = -Infinity
+  for (const s of valid) {
+    if (s.start > curEnd) {
+      if (curEnd > curStart) total += curEnd - curStart
+      curStart = s.start
+      curEnd = s.end
+    } else if (s.end > curEnd) {
+      curEnd = s.end
+    }
+  }
+  if (curEnd > curStart) total += curEnd - curStart
+  return total
+}
 
 /** `{home}/archive/amendments.jsonl` 读侧（坏行跳过，最多 200 条）。 */
 function readArchiveAmendments(home: string): ArchiveAmendment[] {
@@ -1325,7 +1408,7 @@ export class TasksService {
     const row = this.taskDAO.getById(id)
     if (!row) throw new TaskNotFoundError()
     const execRows = this.taskDAO.getDb().prepare(
-      `SELECT id, phase_index, round_index, workflow_ref, status, created_at
+      `SELECT id, phase_index, round_index, workflow_ref, status, created_at, started_at, completed_at, parent_id
          FROM executions WHERE task_id = ? ORDER BY created_at ASC`,
     ).all(id) as Array<{
       id: string
@@ -1334,6 +1417,9 @@ export class TasksService {
       workflow_ref: string | null
       status: string
       created_at: string
+      started_at: string | null
+      completed_at: string | null
+      parent_id: string
     }>
     const sessionIds = [row.source_chat_session_id, row.doer_session_id]
       .filter((s): s is string => !!s)
@@ -1346,6 +1432,9 @@ export class TasksService {
       "execution_id",
       execRows.map((e) => e.id),
     )
+    // 2026-10-31 消耗窗「总耗时」：agent 工时按轮取一次 map，逐行挂到 breakdown 上。
+    const agentByExec = this.agentDurationByExecution(id)
+    const now = Date.now()
     const breakdown: TaskUsagePart[] = []
     for (const sid of sessionIds) {
       const usage = bySession.get(sid)
@@ -1360,7 +1449,7 @@ export class TasksService {
     for (const e of execRows) {
       const usage = byExec.get(e.id)
       if (!usage) continue
-      breakdown.push({
+      const part: TaskUsagePart = {
         kind: "execution",
         label: e.phase_index != null
           ? `P${e.phase_index}${e.round_index != null ? ` · R${e.round_index}` : ""}`
@@ -1369,8 +1458,29 @@ export class TasksService {
         phase_index: e.phase_index,
         round_index: e.round_index,
         workflow_ref: e.workflow_ref,
+        started_at: e.started_at,
+        completed_at: e.completed_at,
+        instance: e.parent_id === "0" || e.phase_index != null,
         ...usage,
-      })
+      }
+      const agentMs = agentByExec.get(e.id)
+      if (agentMs != null) part.agent_duration_ms = agentMs
+      const span = this.countedRunSpan(e, now)
+      if (span) part.duration_ms = span.end - span.start
+      breakdown.push(part)
+    }
+    // 汇总口径只认 run_stats 的同一批实例行 —— fan-out arm 的时间已经在根轮的
+    // 跨度里，再叠一遍总耗时就和看板 ⏱ 对不上了。
+    const timings = this.lifecycle.runTimings([id])
+    const stats = this.runStatsFrom(timings).get(id)
+    // 工时口径 = 该任务下全部 agent 节点（含 fan-out arm / 未跑完的轮）——用户要的
+    // 是「所有 agent 执行的耗时」。它与墙钟本来就不同步（并行、暂停），
+    // 展示端按 100% 截断，「其余 = 总耗时 − 工时」只在工时更小时显示。
+    const agentDurationMs = [...agentByExec.values()].reduce((sum, ms) => sum + ms, 0)
+    const timing: TaskTimingSummary = {
+      count: stats?.count ?? 0,
+      duration_ms: stats?.duration_ms ?? 0,
+      agent_duration_ms: agentDurationMs,
     }
     const totals = mergeLlmUsageSummaries(breakdown) ?? EMPTY_LLM_USAGE
     // 模型行与上面的 breakdown 同一组归属谓词（session 侧 execution_id IS NULL）。
@@ -1378,7 +1488,109 @@ export class TasksService {
       sessionIds,
       execRows.map((e) => e.id),
     )
-    return { task_id: id, summary: { ...totals, modelBreakdown }, breakdown }
+    return { task_id: id, summary: { ...totals, modelBreakdown }, breakdown, timing }
+  }
+
+  /**
+   * 会话账本（2026-10-31 消耗窗·会话版）：普通对话也要能看到消耗，且会话里
+   * 跑过的 N 个工作流全部并入同一本账。
+   *
+   *   · 对话行 = 本会话的聊天调用，只认 `execution_id IS NULL`（与 taskUsage /
+   *     aiUsageFor 同一条防双计护栏：clone/interaction 行可能同时带执行归属）；
+   *   · 工作流行 = `tasks.source_chat_session_id = sessionId` 的全部任务，按
+   *     executions.task_id 归集 —— 与任务窗 `/usage` 的 execution 段同源；
+   *   · 对话时长 = 各调用 [timestamp, timestamp+duration_ms] 的并集（同一轮里
+   *     重复上报 / 并行的模型行只算一次）；工作流时长 = 各任务 run_stats 实跑段。
+   *
+   * 费用/模型口径与任务窗一致：全部现算（llm_calls_costed），不落快照。
+   */
+  sessionUsage(sessionId: string): SessionUsageDTO {
+    const links = this.taskDAO.getLinksBySourceChatSessions([sessionId])
+    const taskIds = links.map((l) => l.task_id)
+    const timings = this.lifecycle.runTimings(taskIds)
+    const stats = this.runStatsFrom(timings)
+    const execIdsByTask = new Map<string, string[]>()
+    for (const t of timings) {
+      const list = execIdsByTask.get(t.task_id)
+      if (list) list.push(t.id)
+      else execIdsByTask.set(t.task_id, [t.id])
+    }
+    const execIds = timings.map((t) => t.id)
+
+    // 对话段：区间并集 = 真实在说话的时间；调用时长合计 = 工时口径（含重复上报行，
+    // 与账本 totalCalls 一致，不在这里做去重 —— 去重只属于「对话时长」这一列）。
+    const chatCalls = this.tokenUsage
+      .findLlmCallsBySession(sessionId)
+      .filter((call) => call.execution_id == null)
+    const conversationMs = unionSpanMs(
+      chatCalls.map((call) => ({
+        start: call.timestamp,
+        end: call.timestamp + Math.max(0, call.duration_ms ?? 0),
+      })),
+    )
+    const chatCallMs = chatCalls.reduce((sum, call) => sum + Math.max(0, call.duration_ms ?? 0), 0)
+
+    const bySession = this.tokenUsage.aggregateLlmCallsBy(
+      "session_id",
+      [sessionId],
+      ["l.execution_id IS NULL"],
+    )
+    const byExec = this.tokenUsage.aggregateLlmCallsBy("execution_id", execIds)
+
+    const workflows: SessionUsageWorkflow[] = []
+    let workflowMs = 0
+    let agentMs = 0
+    for (const link of links) {
+      const taskExecIds = execIdsByTask.get(link.task_id) ?? []
+      // 草稿 / 未触发的工作流没有执行轮：不占列表（它的起草对话已计入对话段）。
+      if (taskExecIds.length === 0) continue
+      const merged =
+        mergeLlmUsageSummaries(taskExecIds.map((id) => byExec.get(id))) ?? EMPTY_LLM_USAGE
+      const runStats = stats.get(link.task_id)
+      const durationMs = runStats?.duration_ms ?? 0
+      workflows.push({
+        task_id: link.task_id,
+        name: link.name,
+        status: link.status,
+        duration_ms: durationMs,
+        tokens: merged.totals.tokens,
+        total_calls: merged.totalCalls,
+        cost: merged.totals.cost,
+      })
+      workflowMs += durationMs
+      for (const ms of this.agentDurationByExecution(link.task_id).values()) agentMs += ms
+    }
+    workflows.sort((a, b) => b.duration_ms - a.duration_ms)
+
+    const summary =
+      mergeLlmUsageSummaries([bySession.get(sessionId), ...execIds.map((id) => byExec.get(id))]) ??
+      EMPTY_LLM_USAGE
+    const modelBreakdown = this.tokenUsage.aggregateLlmCallsByModel([sessionId], execIds)
+    return {
+      session_id: sessionId,
+      summary: { ...summary, modelBreakdown },
+      timing: {
+        conversation_ms: conversationMs,
+        workflow_ms: workflowMs,
+        duration_ms: conversationMs + workflowMs,
+        agent_duration_ms: chatCallMs + agentMs,
+      },
+      workflows,
+    }
+  }
+
+  /** 每轮 agent 节点工时（ms）：node_type='agent' 的 duration 之和，按 execution 分组。
+   *  同一次执行里的 loop/swarm 子节点、重试都在这张表上叠加 —— 这正是「工时」与
+   *  墙钟的区别，展示端自己说明口径，不要在这里做去重。 */
+  private agentDurationByExecution(taskId: string): Map<string, number> {
+    const rows = this.taskDAO.getDb().prepare(
+      `SELECT ne.execution_id AS execution_id, SUM(ne.duration) AS ms
+         FROM node_executions ne
+         JOIN executions e ON e.id = ne.execution_id
+        WHERE e.task_id = ? AND ne.node_type = 'agent' AND ne.duration IS NOT NULL
+        GROUP BY ne.execution_id`,
+    ).all(taskId) as Array<{ execution_id: string; ms: number }>
+    return new Map(rows.map((r) => [r.execution_id, r.ms]))
   }
 
   /** task-phase-redesign (ticket 07): gather the three facts deriveTaskView
@@ -2054,21 +2266,33 @@ export class TasksService {
     return this.runStatsFrom(this.lifecycle.runTimings(taskIds))
   }
 
+  /** 「实跑」段的判定：有 started_at，且有可计终点 —— completed_at，或仍在跑
+   *  （计到 now）。pending / paused 行不计：排队与暂停本就不是工时。
+   *  run_stats 与 /usage 的 timing 共用这一处，别在调用点重写。 */
+  private countedRunSpan(
+    t: { status: string; started_at: string | null; completed_at: string | null },
+    now: number,
+  ): { start: number; end: number } | null {
+    if (!t.started_at) return null
+    const start = Date.parse(t.started_at)
+    if (Number.isNaN(start)) return null
+    let end = t.completed_at ? Date.parse(t.completed_at) : NaN
+    if (Number.isNaN(end) && t.status === "running") end = now
+    if (Number.isNaN(end) || end <= start) return null
+    return { start, end }
+  }
+
   private runStatsFrom(
     timings: readonly { task_id: string; status: string; started_at: string | null; completed_at: string | null }[],
   ): Map<string, TaskRunStats> {
     const now = Date.now()
     const out = new Map<string, TaskRunStats>()
     for (const t of timings) {
-      if (!t.started_at) continue
-      const start = Date.parse(t.started_at)
-      if (Number.isNaN(start)) continue
-      let end = t.completed_at ? Date.parse(t.completed_at) : NaN
-      if (Number.isNaN(end) && t.status === "running") end = now
-      if (Number.isNaN(end) || end <= start) continue
+      const span = this.countedRunSpan(t, now)
+      if (!span) continue
       const s = out.get(t.task_id) ?? { count: 0, duration_ms: 0 }
       s.count += 1
-      s.duration_ms += end - start
+      s.duration_ms += span.end - span.start
       out.set(t.task_id, s)
     }
     return out

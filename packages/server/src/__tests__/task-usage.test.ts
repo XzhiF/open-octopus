@@ -15,6 +15,7 @@ import { TaskHomeService } from "../services/tasks/task-home-service"
 
 const ORG = "e2e-task-usage"
 const NOW = new Date().toISOString()
+const MIN = 60_000
 
 let db: Database.Database
 let tmp: string
@@ -40,6 +41,44 @@ function insertExec(id: string, taskId: string): void {
       task_id, phase_index, round_index, start_commit_id, end_commit_id, started_at, created_at, updated_at)
     VALUES (?, 'ws-u', ?, 'built-in/matt-spec-dev', 'dev', 'completed', ?, 1, 1, '{}', '{}', ?, ?, ?)
   `).run(id, ORG, taskId, NOW, NOW, NOW)
+}
+
+/** Timed execution row — timing 用例要真实的 started_at / completed_at。 */
+function insertTimedExec(opts: {
+  id: string
+  taskId: string
+  startedAt: string | null
+  completedAt: string | null
+  status?: string
+  phase?: number | null
+  round?: number | null
+  parentId?: string
+}): void {
+  db.prepare(`
+    INSERT INTO executions (id, workspace_id, parent_id, org, workflow_ref, workflow_name, status,
+      task_id, phase_index, round_index, start_commit_id, end_commit_id, started_at, completed_at, created_at, updated_at)
+    VALUES (?, 'ws-u', ?, ?, 'built-in/task-dev', 'dev', ?, ?, ?, ?, '{}', '{}', ?, ?, ?, ?)
+  `).run(
+    opts.id,
+    opts.parentId ?? "0",
+    ORG,
+    opts.status ?? "completed",
+    opts.taskId,
+    opts.phase === undefined ? 1 : opts.phase,
+    opts.round === undefined ? 1 : opts.round,
+    opts.startedAt,
+    opts.completedAt,
+    NOW,
+    NOW,
+  )
+}
+
+function insertNode(execId: string, nodeId: string, durationMs: number, type = "agent"): void {
+  db.prepare(`
+    INSERT INTO node_executions (id, execution_id, node_id, node_type, status, retry_count,
+      duration, started_at, completed_at)
+    VALUES (?, ?, ?, ?, 'completed', 0, ?, ?, ?)
+  `).run(`${execId}-${nodeId}`, execId, nodeId, type, durationMs, NOW, NOW)
 }
 
 let seq = 0
@@ -151,10 +190,107 @@ describe("taskUsage", () => {
     expect(usage.summary.totalCalls).toBe(0)
     expect(usage.summary.totals.tokens).toBe(0)
     expect(usage.summary.modelBreakdown).toEqual({})
+    expect(usage.timing).toEqual({ count: 0, duration_ms: 0, agent_duration_ms: 0 })
   })
 
   it("unknown task → 404-shaped error", () => {
     expect(() => service.taskUsage("nope")).toThrow()
+  })
+})
+
+describe("taskUsage · timing（消耗窗总耗时）", () => {
+  it("Σ 实跑段与 agent 工时；每轮挂 duration / agent_duration_ms，bash 节点不算 agent", () => {
+    insertTask("t-time", null, null)
+    insertTimedExec({
+      id: "e-time1", taskId: "t-time",
+      startedAt: "2026-10-31T09:00:00.000Z", completedAt: "2026-10-31T10:00:00.000Z",
+      phase: 1, round: 1,
+    })
+    insertTimedExec({
+      id: "e-time2", taskId: "t-time",
+      startedAt: "2026-10-31T10:20:00.000Z", completedAt: "2026-10-31T10:32:00.000Z",
+      phase: 1, round: 2,
+    })
+    insertNode("e-time1", "a1", 20 * MIN)
+    insertNode("e-time1", "a2", 25 * MIN)
+    insertNode("e-time2", "a3", 10 * MIN)
+    insertNode("e-time2", "b1", 5 * MIN, "bash") // 非 agent 不进工时
+    insertCall({ executionId: "e-time1", input: 10, output: 1 })
+    insertCall({ executionId: "e-time2", input: 10, output: 1 })
+
+    const usage = service.taskUsage("t-time")
+    expect(usage.timing.count).toBe(2)
+    expect(usage.timing.duration_ms).toBe(72 * MIN)
+    expect(usage.timing.agent_duration_ms).toBe(55 * MIN)
+    const p1 = usage.breakdown.find((p) => p.execution_id === "e-time1")!
+    expect(p1.duration_ms).toBe(60 * MIN)
+    expect(p1.agent_duration_ms).toBe(45 * MIN)
+    const p2 = usage.breakdown.find((p) => p.execution_id === "e-time2")!
+    expect(p2.duration_ms).toBe(12 * MIN)
+    expect(p2.agent_duration_ms).toBe(10 * MIN)
+  })
+
+  it("运行中的轮计到本刻；暂停的轮不进总耗时（工时仍按实际发生计）", () => {
+    insertTask("t-live", null, null)
+    insertTimedExec({
+      id: "e-live", taskId: "t-live",
+      startedAt: new Date(Date.now() - 5 * MIN).toISOString(), completedAt: null,
+      status: "running", phase: 1, round: 1,
+    })
+    insertNode("e-live", "a1", 4 * MIN)
+    insertCall({ executionId: "e-live", input: 10, output: 1 })
+
+    const live = service.taskUsage("t-live").timing
+    expect(live.count).toBe(1)
+    expect(live.duration_ms).toBeGreaterThanOrEqual(5 * MIN)
+    expect(live.duration_ms).toBeLessThan(6 * MIN)
+    expect(live.agent_duration_ms).toBe(4 * MIN)
+
+    // ux_exec_task_active 只允许一个非终态实例 —— 暂停轮放另一条任务上验。
+    insertTask("t-paused", null, null)
+    insertTimedExec({
+      id: "e-paused", taskId: "t-paused",
+      startedAt: new Date(Date.now() - 60 * MIN).toISOString(), completedAt: null,
+      status: "paused", phase: 1, round: 1,
+    })
+    insertNode("e-paused", "a2", 30 * MIN)
+    insertCall({ executionId: "e-paused", input: 10, output: 1 })
+
+    const paused = service.taskUsage("t-paused").timing
+    expect(paused.count).toBe(0) // 暂停期不算墙钟
+    expect(paused.duration_ms).toBe(0)
+    expect(paused.agent_duration_ms).toBe(30 * MIN) // 但 agent 确实跑了 30 分钟
+  })
+
+  it("fan-out arm 有自己的时长行，但不叠进总耗时；主对话没有起止不计时长", () => {
+    insertTask("t-arm", "s-main", null)
+    insertTimedExec({
+      id: "e-root", taskId: "t-arm",
+      startedAt: "2026-10-31T09:00:00.000Z", completedAt: "2026-10-31T09:30:00.000Z",
+      phase: 1, round: 1,
+    })
+    insertTimedExec({
+      id: "e-arm", taskId: "t-arm", parentId: "e-root", phase: null, round: null,
+      startedAt: "2026-10-31T09:05:00.000Z", completedAt: "2026-10-31T09:15:00.000Z",
+    })
+    insertNode("e-root", "a1", 20 * MIN)
+    insertNode("e-arm", "a2", 9 * MIN)
+    insertCall({ sessionId: "s-main", input: 10, output: 1 })
+    insertCall({ executionId: "e-root", input: 10, output: 1 })
+    insertCall({ executionId: "e-arm", input: 10, output: 1 })
+
+    const usage = service.taskUsage("t-arm")
+    expect(usage.timing.count).toBe(1) // arm 的跨度在根轮里，不再叠一次
+    expect(usage.timing.duration_ms).toBe(30 * MIN)
+    // 工时口径不过滤 arm：并行子单元的 agent 时间也是「干了多少活」
+    expect(usage.timing.agent_duration_ms).toBe(29 * MIN)
+
+    const arm = usage.breakdown.find((p) => p.execution_id === "e-arm")!
+    expect(arm.duration_ms).toBe(10 * MIN)
+    expect(arm.agent_duration_ms).toBe(9 * MIN)
+    const chat = usage.breakdown.find((p) => p.kind === "chat")!
+    expect(chat.duration_ms).toBeUndefined()
+    expect(chat.agent_duration_ms).toBeUndefined()
   })
 })
 

@@ -98,6 +98,9 @@ export function ChatTab() {
   const [creatingTask, setCreatingTask] = useState(false)
   const [taskModuleRequest, setTaskModuleRequest] = useState<{ module: TaskModule; nonce: number } | null>(null)
   const [taskWindows, setTaskWindows] = useState<Record<string, TaskWindowMap>>({})
+  // 2026-10-31 消耗窗通用化：纯会话（无任务）也有一扇消耗窗，窗口 id 与任务窗
+  // 共用 'usage'，但几何状态独立（不跟着任务切换复用/串位）。
+  const [sessionUsageWindows, setSessionUsageWindows] = useState<TaskWindowMap>({})
   const [renameTarget, setRenameTarget] = useState<TaskView | null>(null)
   const [renameValue, setRenameValue] = useState('')
   const [taskBusy, setTaskBusy] = useState(false)
@@ -623,6 +626,18 @@ export function ChatTab() {
     setActiveSessionId(task.source_chat_session_id)
     writeLastChatContext({ kind: 'task', taskId: task.id })
   }, [setActiveSessionId])
+
+  /** 会话消耗窗里的工作流行 → 打开对应任务（列表里没有就现取一次）。 */
+  const openLinkedTask = useCallback((taskId: string) => {
+    const known = chatTasks.find((task) => task.id === taskId)
+    if (known) {
+      handleSelectTask(known)
+      return
+    }
+    getTask(taskId)
+      .then((task) => handleSelectTask(task))
+      .catch(() => { toast.error('该任务已不存在') })
+  }, [chatTasks, handleSelectTask])
 
   // Refresh restore: land back on the task the user was working in (a running
   // task must not hide behind a second click). Sessions are restored inside
@@ -1427,22 +1442,28 @@ export function ChatTab() {
           />
         </div>
 
-        {/* One main chat for every task state. Task modules float over it. */}
-        {activeTask && (
-          <TaskModulesLayer
-            task={activeTask}
-            windows={taskWindows[activeTask.id] ?? {}}
-            onTaskAction={(action) => { void executeTaskAction(activeTask.id, action) }}
-            onWindowsChange={(next) =>
+        {/* One main chat for every task state. Task modules float over it.
+            2026-10-31 消耗窗通用化：这一层在没有任务时也挂载，只承载会话账本。 */}
+        <TaskModulesLayer
+          task={activeTask}
+          sessionId={activeTask ? null : activeSessionId}
+          sessionTitle={activeSession?.title ?? null}
+          windows={activeTask ? (taskWindows[activeTask.id] ?? {}) : sessionUsageWindows}
+          onTaskAction={activeTask ? (action) => { void executeTaskAction(activeTask.id, action) } : undefined}
+          onWindowsChange={(next) => {
+            if (activeTask) {
               setTaskWindows((prev) => ({ ...prev, [activeTask.id]: next }))
+            } else {
+              setSessionUsageWindows(next)
             }
-            onMutated={() => {
-              void refreshChatTasks()
-              void refetchSessions()
-            }}
-            openModule={taskModuleRequest}
-          />
-        )}
+          }}
+          onMutated={() => {
+            void refreshChatTasks()
+            void refetchSessions()
+          }}
+          openModule={taskModuleRequest}
+          onOpenLinkedTask={openLinkedTask}
+        />
       </div>
 
       <WorkspaceExplorerDock
@@ -1451,6 +1472,8 @@ export function ChatTab() {
         task={activeTask}
         taskProject={dockProject}
         taskWindows={activeTask ? (taskWindows[activeTask.id] ?? {}) : {}}
+        usageWindow={activeTask ? (taskWindows[activeTask.id]?.usage ?? null) : (sessionUsageWindows.usage ?? null)}
+        onOpenUsage={() => setTaskModuleRequest({ module: 'usage', nonce: Date.now() })}
         onOpenTaskModule={(module) => setTaskModuleRequest({ module, nonce: Date.now() })}
         onTaskAction={(action) => { if (activeTask) void executeTaskAction(activeTask.id, action) }}
         activity={activitySnapshot}

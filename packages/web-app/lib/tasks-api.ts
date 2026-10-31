@@ -663,6 +663,26 @@ export interface TaskUsagePart extends LlmUsageSummary {
   phase_index?: number | null
   round_index?: number | null
   workflow_ref?: string | null
+  /** 该轮实跑区间（消耗窗「按轮」时间条 + 明细时长列）。chat 行没有起止事实 → 不出现。 */
+  started_at?: string | null
+  completed_at?: string | null
+  /** 该轮内 agent 节点 duration 之和（ms，工时口径：并行/重试会叠加）。 */
+  agent_duration_ms?: number
+  /** 该轮实跑时长（ms，与 timing.duration_ms 同一谓词；未起跑/暂停的轮不出现）。 */
+  duration_ms?: number
+  /** 这行是不是任务的一「轮」（根执行 / 带 phase 的实例）。fan-out arm 与所属轮
+   *  的时间区间重叠，按轮时间条只画 instance 行。旧服务端不带 → 视为 true。 */
+  instance?: boolean
+}
+
+/** 任务耗时汇总（GET /:id/usage → timing，2026-10-31 消耗窗「总耗时」卡）。
+ *  duration_ms 与看板 ⏱ / 验收窗「实际用时」同源（run_stats）；
+ *  agent_duration_ms 是 agent 节点工时，可能接近或超过 duration_ms。 */
+export interface TaskTimingSummary {
+  /** 计入实跑段的轮数。 */
+  count: number
+  duration_ms: number
+  agent_duration_ms: number
 }
 
 export interface TaskUsagePayload {
@@ -670,6 +690,45 @@ export interface TaskUsagePayload {
   /** 账本合计 + 按模型分解（2026-10-29：任务「消耗」窗口与 composer chip 的模型行）。 */
   summary: LlmUsageSummary & { modelBreakdown?: Record<string, ModelUsageBreakdown> }
   breakdown: TaskUsagePart[]
+  /** 一轮都没跑过时 count=0（窗口整卡隐藏）。旧服务端可能不带 → 按无耗时处理。 */
+  timing?: TaskTimingSummary
+}
+
+/** GET /api/sessions/:id/usage — 会话账本（2026-10-31 消耗窗·会话版）。
+ *  与任务账本同形（summary），多一份 timing 口径和本会话跑过的工作流列表。 */
+export interface SessionUsageWorkflowWire {
+  task_id: string
+  name: string
+  status: string
+  duration_ms: number
+  tokens: number
+  total_calls: number
+  cost: { usd: number | null; complete: boolean }
+}
+
+export interface SessionTimingSummaryWire {
+  /** 对话调用时间区间并集 —— 重复上报 / 并行只算一次。 */
+  conversation_ms: number
+  /** 本会话发起的全部任务实跑段之和。 */
+  workflow_ms: number
+  /** conversation_ms + workflow_ms（重叠不扣减）。 */
+  duration_ms: number
+  /** 对话调用时长合计 + 各工作流 agent 节点时长（工时，可能 > duration_ms）。 */
+  agent_duration_ms: number
+}
+
+export interface SessionUsagePayload {
+  session_id: string
+  summary: LlmUsageSummary & { modelBreakdown?: Record<string, ModelUsageBreakdown> }
+  timing: SessionTimingSummaryWire
+  workflows: SessionUsageWorkflowWire[]
+}
+
+export async function getSessionUsage(sessionId: string): Promise<SessionUsagePayload> {
+  const res = await fetch(`${getServerUrl()}/api/sessions/${encodeURIComponent(sessionId)}/usage`, {
+    cache: 'no-store',
+  })
+  return handleResponse<SessionUsagePayload>(res)
 }
 
 export interface ReflectionEntryWire {

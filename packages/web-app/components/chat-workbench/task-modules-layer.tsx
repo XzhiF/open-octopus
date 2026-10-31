@@ -10,6 +10,7 @@ import { TaskWindow } from './task-window'
 import { RunWindow } from './run-window'
 import { AcceptanceWindow } from './acceptance-window'
 import { UsageWindow } from './usage-window'
+import { SessionUsageWindow } from './session-usage-window'
 import { ArtifactsWindow } from './artifacts-window'
 import { ArchiveWindow } from './archive-window'
 import type { TaskModule, TaskWindowMap, TaskWindowRecord } from './task-window-types'
@@ -25,7 +26,16 @@ const MODULE_TITLE: Record<TaskModule, string> = {
 }
 
 interface TaskModulesLayerProps {
-  task: TaskView
+  /**
+   * 任务模块层。2026-10-31 消耗窗通用化后，这一层在「任务 / 纯会话」两种
+   * 上下文都挂载：有 task 时按任务账本渲染全部模块；没有 task 时只承载
+   * 「消耗」（会话账本 + 本会话跑过的工作流）。
+   */
+  task: TaskView | null
+  /** 当前会话（task 为空时使用）—— 消耗窗的会话账本取数。 */
+  sessionId?: string | null
+  /** 会话窗标题（无 task 时 `消耗 · <会话标题>`）。 */
+  sessionTitle?: string | null
   windows: TaskWindowMap
   onWindowsChange: (next: TaskWindowMap) => void
   onMutated?: () => void
@@ -33,6 +43,8 @@ interface TaskModulesLayerProps {
   onTaskAction?: (action: string) => void
   /** External request (inspector / board acceptance) to open a module once. */
   openModule?: { module: TaskModule; nonce: number } | null
+  /** 会话账本里点工作流行 → 打开对应任务。 */
+  onOpenLinkedTask?: (taskId: string) => void
   className?: string
 }
 
@@ -42,11 +54,14 @@ interface TaskModulesLayerProps {
  */
 export function TaskModulesLayer({
   task,
+  sessionId,
+  sessionTitle,
   windows,
   onWindowsChange,
   onMutated,
   onTaskAction,
   openModule,
+  onOpenLinkedTask,
   className,
 }: TaskModulesLayerProps) {
   const containerRef = useRef<HTMLDivElement>(null)
@@ -148,7 +163,7 @@ export function TaskModulesLayer({
           <TaskWindow
             key={module}
             record={record}
-            title={`${MODULE_TITLE[module]} · ${task.name}`}
+            title={`${MODULE_TITLE[module]} · ${task?.name ?? sessionTitle ?? '会话'}`}
             container={size}
             bleedLeft={containerLeft}
             focused={focusedModule === module}
@@ -159,7 +174,17 @@ export function TaskModulesLayer({
               if (focusedModule !== module) updateWindow(module, { z: maxZ + 1 })
             }}
           >
-            {module === 'changes' ? (
+            {module === 'usage' ? (
+              task ? (
+                <UsageWindow taskId={task.id} versionKey={task.version} />
+              ) : sessionId ? (
+                <SessionUsageWindow sessionId={sessionId} onOpenTask={onOpenLinkedTask} />
+              ) : (
+                <div className="flex h-full items-center justify-center p-6 text-[11px] text-pop-dim">
+                  还没有会话。
+                </div>
+              )
+            ) : !task ? null : module === 'changes' ? (
               <ChangesWindow task={task} />
             ) : module === 'plan' ? (
               <TaskPlanWindow task={task} onOpenArtifacts={() => openModuleAt('artifacts')} />
@@ -171,8 +196,6 @@ export function TaskModulesLayer({
                 onMutated={onMutated ?? (() => {})}
                 onOpenChanges={() => openModuleAt('changes')}
               />
-            ) : module === 'usage' ? (
-              <UsageWindow taskId={task.id} versionKey={task.version} />
             ) : module === 'artifacts' ? (
               <ArtifactsWindow taskId={task.id} versionKey={task.version} />
             ) : (

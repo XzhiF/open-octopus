@@ -90,7 +90,7 @@ import { createAnalyticsLogRoutes, createAnalyticsRoutes } from "./routes/analyt
 import { eventRoutes } from "./routes/events"
 import scheduleRoutes, { setScheduleService } from "./routes/schedule"
 import { createSchedulerRoutes } from "./routes/scheduler"
-import { createTasksRoutes } from "./routes/tasks"
+import { createTasksRoutes, createSessionUsageRoutes } from "./routes/tasks"
 import { RoundEvidenceService } from "./services/tasks/round-evidence-service"
 import {
   AcceptancePlanService,
@@ -1303,6 +1303,8 @@ if (shouldServe) {
       // 2026-10-28 task-thread: the task-doer dual chat was retired. Takeover
       // reuses the task's main thread (source_chat_session_id).
       app.route('/api/tasks', createTasksRoutes(tasksService, sse, assistService, roundEvidence, reflectionIngest))
+      // 2026-10-31 消耗窗通用化：/api/sessions/:id/usage（会话聊天行 + 本会话发起的全部工作流）。
+      app.route('/api/sessions', createSessionUsageRoutes(tasksService))
       // task-workflow-presets (T3): preset catalog API
       const workflowPresetsService = new WorkflowPresetsService()
       app.route('/api/workflow-presets', createWorkflowPresetsRoutes(() => workflowPresetsService))

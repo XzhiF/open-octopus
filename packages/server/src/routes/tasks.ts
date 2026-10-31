@@ -1359,3 +1359,21 @@ export function createTasksRoutes(
 
   return router
 }
+
+/**
+ * 会话消耗账本（2026-10-31）：挂在 `/api/sessions` 下，`GET /:id/usage`。
+ * 独立于任务路由导出 —— 路径属于会话域，数据来自 TasksService（会话聊天行 +
+ * 本会话发起的全部工作流）。
+ */
+export function createSessionUsageRoutes(service: TasksService): Hono {
+  const router = new Hono()
+  router.get("/:id/usage", (c) => {
+    try {
+      return c.json(service.sessionUsage(c.req.param("id")))
+    } catch (err: unknown) {
+      const { status, message } = classifyError(err)
+      return c.json({ error: message }, status)
+    }
+  })
+  return router
+}

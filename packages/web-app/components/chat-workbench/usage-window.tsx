@@ -5,10 +5,11 @@
 
 import { useEffect, useState } from 'react'
 import { getTaskUsage, type TaskUsagePayload } from '@/lib/tasks-api'
-import { formatCost, formatPercent, formatTokenCount } from '@/lib/format'
+import { formatCost, formatDuration, formatPercent, formatTokenCount } from '@/lib/format'
 import { useBillingCurrency } from '@/lib/billing-currency'
 import { Spinner } from '@/components/ui/spinner'
 import { UsageTotalsGrid, ModelBreakdownList } from '@/components/agent/chat/usage-totals-grid'
+import { UsageTimingCard } from './usage-timing-card'
 
 function partTooltip(part: TaskUsagePayload['breakdown'][number]): string {
   const u = part.usage
@@ -43,8 +44,11 @@ export function UsageWindow({ taskId, versionKey }: { taskId: string; versionKey
     )
   }
 
-  const { summary, breakdown } = usage
+  const { summary, breakdown, timing } = usage
   const max = Math.max(1, ...breakdown.map((p) => p.totals.tokens))
+  const timedRounds = breakdown.filter(
+    (p) => p.kind === 'execution' && p.instance !== false && (p.duration_ms ?? 0) > 0,
+  )
 
   return (
     <div className="h-full min-h-0 overflow-y-auto p-4" data-testid="usage-window">
@@ -57,6 +61,8 @@ export function UsageWindow({ taskId, versionKey }: { taskId: string; versionKey
           {summary.totalCalls} 次请求 · cache {formatPercent(summary.totals.cacheHitRate, 1)}
         </span>
       </div>
+
+      {timing && <UsageTimingCard timing={timing} rounds={timedRounds} />}
 
       <div className="mb-3">
         <UsageTotalsGrid usage={summary} />
@@ -97,6 +103,17 @@ export function UsageWindow({ taskId, versionKey }: { taskId: string; versionKey
                 <div className="w-24 text-right font-mono text-[10.5px] tabular-nums text-pop-ink">
                   {formatTokenCount(part.totals.tokens)}
                 </div>
+                <div
+                  data-testid="usage-part-duration"
+                  className={
+                    part.duration_ms
+                      ? 'w-16 text-right font-mono text-[10.5px] tabular-nums text-pop-amber'
+                      : 'w-16 text-right font-mono text-[10.5px] tabular-nums text-pop-dim/50'
+                  }
+                  title={part.kind === 'chat' ? '主对话没有起止事实，不计时长' : undefined}
+                >
+                  {part.duration_ms ? formatDuration(part.duration_ms) : '—'}
+                </div>
                 <div className="w-20 text-right font-mono text-[9.5px] tabular-nums text-pop-dim">
                   {formatCost(part.totals.cost.usd, part.totals.cost.complete, currency)}
                 </div>
@@ -110,11 +127,11 @@ export function UsageWindow({ taskId, versionKey }: { taskId: string; versionKey
         <span className="text-[12px] font-black text-pop-ink">合计</span>
         <span className="font-mono text-[12px] font-black text-pop-ink">{formatTokenCount(summary.totals.tokens)} tok</span>
         <span className="ml-auto font-mono text-[10px] text-pop-dim">
-          cache {formatPercent(summary.totals.cacheHitRate, 1)} · {formatCost(summary.totals.cost.usd, summary.totals.cost.complete, currency)}
+          {timing && timing.duration_ms > 0 ? `⏱ ${formatDuration(timing.duration_ms)} · ` : ''}cache {formatPercent(summary.totals.cacheHitRate, 1)} · {formatCost(summary.totals.cost.usd, summary.totals.cost.complete, currency)}
         </span>
       </div>
       <p className="mt-2 text-[10px] leading-relaxed text-pop-dim/80">
-        口径：任务主对话（含作者/执行者身份）+ 该任务全部执行轮（含修复轮/子执行）；带 execution_id 的账只走执行趟，会话趟只认 execution_id 为空的行，防双计。
+        口径：任务主对话（含作者/执行者身份）+ 该任务全部执行轮（含修复轮/子执行）；带 execution_id 的账只走执行趟，会话趟只认 execution_id 为空的行，防双计。总耗时 = 各轮 started_at→completed_at 之和（进行中的轮计到本刻），不含排队与待验收等待。
       </p>
     </div>
   )
