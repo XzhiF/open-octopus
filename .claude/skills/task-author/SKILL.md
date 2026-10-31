@@ -129,7 +129,7 @@ version: 3.5.2
 
 1. **产**：`ship-pr` 每轮在批次目录产/覆写 `handoff.md` —— 面向下游执行会话的精选短页（≠ 面向验收人的 round-report.md），头块（phase 名与 batch slug · 终态轮次 rN · PR 链接 · 批次路径）+ 三段 `## Protected Decisions`（本 phase 定死、下游不得回退）/ `## Confirmed Interfaces`（可直接复用的接口/表/组件/命令 —— 给路径不给描述）/ `## Gap Targets`（如实遗留）。流内纪律：每轮整页重写禁追加、一屏内、细节引 round-report.md 不复制、只写 ws。
 2. **注入**：phase accepted → 下一 phase 首轮开轮（autoAdvance 与看板手动推进同行为），把全部已 accepted 前序 `handoff.md` 的 **home 绝对路径**（存在性过滤、index 升序、换行连接；全空则键不出现）注入该轮 input_values。同 phase 打回 rerun/fix 不注入（那轮已有 feedback 信道）。
-3. **消费**：`spec-resolve` 逐行探测路径 → `$vars.prev_handoffs` / `prev_handoff_count` → spec-review / 票 DAG / ship 提示词要求先读前序交接：不回退 Protected Decisions、Confirmed Interfaces 直接复用现物、Gap Targets 承接或显式关闭。
+3. **消费**：`spec-resolve` 逐行探测路径 → `$vars.prev_handoffs` / `prev_handoff_count` → 票 DAG 的每票节点与 ship 提示词要求先读前序交接：不回退 Protected Decisions、Confirmed Interfaces 直接复用现物、Gap Targets 承接或显式关闭。
 
 **边界（推荐绑定时必须向用户讲清）**：消费只对 matt-spec-dev（或按同契约自建、显式读 `prev_handoff_paths` 并产 handoff.md 的流）成立 —— **绑别的流时注入键无人消费，信道静默失效且不报错**，损失要说在前头。ship 崩溃 ⇒ 该 phase 无 handoff.md ⇒ 下 phase 信道静默缺一角（存在性过滤吞掉，不烧派发），验收人靠批次清单可见缺失。**末 phase 无 handoff.md 是规定动作**（ADR-0019 §1：没有下游读者），不是缺角。存量任务（本特性前已 accepted 的 phase）没有就是现状，不迁移。
 
@@ -142,7 +142,7 @@ version: 3.5.2
 3. **上界 = 一次讲得完，phase 层不设时间硬顶**：上界由叙事钉 —— 交付物内聚成一个故事、一次坐得下验收。讲不成故事 → 合；故事大到一次验不完 → 故事本身不成立，拆故事或问用户砍范围，**不掰成几个时间块小 phase**。运行期超时仅出 ⏳ advisory 徽标（D18），不自动中断 —— 防线全在拆分期判据。
 4. **时间预算降到票层**：**≤1h/票**（走查票可 1.5h）是票粒度纪律（装进一个 context window），票按 DAG 并行但 **深度 ≤2 是硬纪律**（时长由关键路径决定，见 author-verified-tickets ②）。phase ≠ 大票：票层容量尺不构成 phase 判据，「按小时数拆 phase」是把两层混谈。
 5. **两段式对话预算 —— 拆相轮只谈结构**：工作总览② = 结构 grilling，10~15 轮封顶，问题对象只有故事边界/验收物/依赖/票量/范围剪裁；**禁下钻 phase 内部**，表结构、API 字段、组件切分留给批准后的④内容轮。fog-or-ticket：此刻能精确成问的才在拆相轮问，只能感到形状的留给对应 phase 轮。15 轮收不敛或故事 >7 个 = 上面一层出问题 → 转 wayfinder 或需求再澄清，不在本层继续拆细。
-6. **写全 + 不画雾**：phase i 的交付物是 i+1 的输入，拆分卡「依赖前序」列显式写依赖**什么**；无相互依赖也保持可独立验收的顺序叙事。入队前所有 phase 的 spec **全部写全**，但后段**不画雾**：故事/范围/验收物写实，依赖前序的接口细节**一律不抄不猜** —— 写「依赖 phase <i> 的 Confirmed Interfaces（运行时衔接信道读取）」；凡以自己的前提为前序决策处，写「见 phase i KD#n」行引用，散文转述是退役写法。**毕业** = 前序 accepted 后、本 phase 开轮前由 spec-review 自动对位前序 handoff.md，对位修订即本 phase 执行版（collect 回流 home）；起草侧不预写执行细节，也不另发明一轮「毕业重写」。
+6. **写全 + 不画雾**：phase i 的交付物是 i+1 的输入，拆分卡「依赖前序」列显式写依赖**什么**；无相互依赖也保持可独立验收的顺序叙事。入队前所有 phase 的 spec **全部写全**，但后段**不画雾**：故事/范围/验收物写实，依赖前序的接口细节**一律不抄不猜** —— 写「依赖 phase <i> 的 Confirmed Interfaces（运行时衔接信道读取）」；凡以自己的前提为前序决策处，写「见 phase i KD#n」行引用，散文转述是退役写法。**毕业** = 前序 accepted 后、本 phase 开轮时由衔接信道自动对位：spec-resolve 探测前序 handoff.md → 票节点实现时就位（复用 Confirmed Interfaces、不回退 Protected Decisions），规格随 collect 回流 home —— **不另设「毕业重写」轮**；起草侧不预写执行细节。
 7. **Key Decisions 纪律（K8）**：每 phase 的 spec.md 必含 `## Key Decisions` 表（`| # | Decision | Conclusion | Reason |`）。rN 修订**保持表行与编号稳定**：改行内结论、不删行不改号，新增行标 `NEW-rN` —— 决策传播比对的是**表格行 diff** 而非散文，编号一乱影响清单就失效。K8 表同时是**对下游的唯一预告账本**：各 phase 的 Key Decisions 草稿态 = 候选 Protected Decisions，ship 的 handoff.md 是其运行态精选，一本账两态，不另立第三账（拆分卡不加「传给下游」列、spec 不加 For Downstream 节）。切账分界：本 task 生命周期内可逆的决策只进 K8 表；满足三判据（难以逆转／无上下文会惊讶／真实权衡）且活过本 task 的进 `docs/adr/`。
 8. **非故事工作的安放**：spike／「技术铺路」**不立 phase**（纯调研无产品验收物，纯重构单列会重新合法化水平切分）。最高风险前置进 phase1 选题；大重构/依赖升级并入首个需要它的故事 phase，作 prefactor 票；拆相期该答而答不了的判断题立 `<artifacts.dir>/decisions/` 决策票，拆卡批准前解掉。
 
