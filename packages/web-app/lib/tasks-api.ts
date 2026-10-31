@@ -833,6 +833,44 @@ export interface ArchiveKnowledgeWire {
   compile_position: number | null
 }
 
+/** done 后构建产物清理（archive/cleanup.json，2026-10-31）。 */
+export interface ArchiveCleanupRemovedWire {
+  path: string
+  kind: 'dir' | 'file'
+  bytes: number
+}
+
+export interface ArchiveCleanupLeftoverWire {
+  path: string
+  kind: 'dir' | 'file'
+  /** null = 目录过大，计量超预算。 */
+  bytes: number | null
+}
+
+export interface ArchiveCleanupProjectWire {
+  project: string
+  dir: string | null
+  ok: boolean
+  removed_count: number
+  removed?: ArchiveCleanupRemovedWire[]
+  freed_bytes: number
+  skipped?: Array<{ path: string; reason: string }>
+  failed?: Array<{ path: string; message: string }>
+  leftovers?: ArchiveCleanupLeftoverWire[]
+  leftover_count: number
+  error?: string
+}
+
+export interface ArchiveCleanupReportWire {
+  taskId: string
+  startedAt: string
+  finishedAt: string | null
+  status: 'running' | 'done' | 'partial' | 'failed'
+  total_freed_bytes: number
+  projects: ArchiveCleanupProjectWire[]
+  error?: string
+}
+
 export interface TaskArchivePayload {
   task_id: string
   status: string
@@ -846,6 +884,10 @@ export interface TaskArchivePayload {
   reflection: ReflectionStoreWire | null
   knowledge: ArchiveKnowledgeWire | null
   amendments: ArchiveAmendmentWire[]
+  /** done 后构建产物清理；null = 尚未开始 / 旧任务。 */
+  cleanup: ArchiveCleanupReportWire | null
+  /** 本进程里清理是否在跑（running + false = 中断）。 */
+  cleanup_in_flight: boolean
 }
 
 /** GET /api/tasks/:id/usage — the task's whole-lifecycle ledger. */

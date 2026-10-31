@@ -98,6 +98,12 @@ import { specRunbookLevel } from "./runbook-spec"
 // task-phase-redesign (ticket 08): the archiving orchestrator (K11 归并面).
 import { createTaskArchiver, type TaskArchiver, type ArchiveReport } from "./archiving-service"
 import {
+  createArchiveCleaner,
+  type ArchiveCleanupReport,
+  type CleanupLeftoversResult,
+  type TaskArchiveCleaner,
+} from "./archive-cleanup-service"
+import {
   dirtyFingerprint,
   inspectTaskDelta,
 } from "./archive-delta"
@@ -359,6 +365,10 @@ export interface TaskArchiveDTO {
   knowledge: TaskArchiveKnowledge | null
   /** done 之后的只增不改增补记录（2026-10-31）。 */
   amendments: ArchiveAmendment[]
+  /** done 后构建产物清理结果（`{home}/archive/cleanup.json`）；null = 尚未开始。 */
+  cleanup: ArchiveCleanupReport | null
+  /** 本进程里清理是否正在跑（进程重启遗留的 running 报告据此显示为「中断」）。 */
+  cleanup_in_flight: boolean
 }
 
 /** 归档增补：done 之后人要求补充/修正归档内容时追加，绝不改写原报告。 */
@@ -3559,6 +3569,13 @@ export class TasksService {
    *  would otherwise race the same worktrees). Set while a run is in flight. */
   private runningArchives = new Set<string>()
 
+  // ── 归档后构建产物清理 (2026-10-31) ────────────────────────────────
+  private cleaner: TaskArchiveCleaner | null = null
+  /** taskId → 本次进程里最近一次清理（测试/观测的 join 点）。 */
+  private cleanupRuns = new Map<string, Promise<ArchiveCleanupReport>>()
+  /** 正在清理的 task（双击/工具重入保护）。 */
+  private runningCleanups = new Set<string>()
+
   /** 票 08: the built-in archiver, lazily assembled against THIS service's
    *  db handle + task-home dir (endArchiving is injected as the sole 'done'
    *  writer — the archiver itself never touches tasks.status). */
@@ -3574,6 +3591,69 @@ export class TasksService {
       })
     }
     return this.archiver
+  }
+
+  /** 2026-10-31: 归档 done 后的构建产物清理器（懒装配，复用同一 db + task home）。 */
+  private getCleaner(): TaskArchiveCleaner {
+    if (!this.cleaner) {
+      this.cleaner = createArchiveCleaner({
+        db: this.db,
+        taskHomeService: this.taskHomeService,
+      })
+    }
+    return this.cleaner
+  }
+
+  /**
+   * done 后自动清理各 project worktree 的构建产物（node_modules / target /
+   * dist / classes / jar …）。fire-and-forget 安全：失败只在 cleanup.json 与
+   * 日志里体现，绝不影响 done。重复调用复用同一次 in-flight run。
+   */
+  startArchiveCleanup(taskId: string): Promise<ArchiveCleanupReport> {
+    const inFlight = this.cleanupRuns.get(taskId)
+    if (this.runningCleanups.has(taskId) && inFlight) return inFlight
+    this.runningCleanups.add(taskId)
+    const p = this.getCleaner()
+      .cleanupTask(taskId)
+      .catch((err: unknown): ArchiveCleanupReport => {
+        const message = err instanceof Error ? err.message : String(err)
+        console.error(`[TasksService] archive cleanup failed for ${taskId} (non-fatal):`, message)
+        return {
+          taskId,
+          startedAt: new Date().toISOString(),
+          finishedAt: new Date().toISOString(),
+          status: "failed",
+          total_freed_bytes: 0,
+          projects: [],
+          error: message,
+        }
+      })
+      .finally(() => this.runningCleanups.delete(taskId))
+    this.cleanupRuns.set(taskId, p)
+    return p
+  }
+
+  /** Agent 兜底：人明确点名的 ignored 路径（leftovers / 自动清扫失败项）逐个删。
+   *  仅 done 任务；安全校验与自动清扫同一套（ignore / 无跟踪 / 非受保护）。 */
+  async cleanArchiveLeftovers(
+    taskId: string,
+    project: string,
+    paths: string[],
+  ): Promise<{ report: ArchiveCleanupReport; results: CleanupLeftoversResult[] }> {
+    const row = this.taskDAO.getById(taskId)
+    if (!row) throw new TaskNotFoundError()
+    if (row.status !== "done") {
+      throw new TaskStatusConflictError(
+        `构建产物清理只在任务完成(done)后可用（当前状态: '${row.status}'）`,
+      )
+    }
+    if (this.runningCleanups.has(taskId)) {
+      throw new TaskStatusConflictError("构建产物清理正在运行，等本轮结束后再清理剩余")
+    }
+    if (!Array.isArray(paths) || paths.length === 0) {
+      throw new TaskStatusConflictError("paths 不能为空 —— 先列出要清理的 ignored 路径")
+    }
+    return this.getCleaner().cleanLeftovers(taskId, project, paths)
   }
 
   /** Start one orchestration run. archiveTask resolves with the report
@@ -3665,6 +3745,14 @@ export class TasksService {
     } catch {
       /* 知识中心不可用不影响归档读模型 */
     }
+    let cleanup: ArchiveCleanupReport | null = null
+    try {
+      cleanup = JSON.parse(
+        fs.readFileSync(path.join(home, "archive", "cleanup.json"), "utf-8"),
+      ) as ArchiveCleanupReport
+    } catch {
+      /* 还没开始清理 / 旧任务 */
+    }
     return {
       task_id: taskId,
       status: row.status,
@@ -3676,6 +3764,8 @@ export class TasksService {
       reflection: readReflectionStore(home),
       knowledge,
       amendments: readArchiveAmendments(home),
+      cleanup,
+      cleanup_in_flight: this.runningCleanups.has(taskId),
     }
   }
 
@@ -3861,6 +3951,9 @@ export class TasksService {
       event: TASK_STATUS_EVENT,
       data: { task_id: taskId, status: "done" },
     })
+    // 2026-10-31: done 之后补一步 — 自动清理各 project worktree 的构建产物。
+    // fire-and-forget；失败只落 cleanup.json / 日志，不影响 done。
+    void this.startArchiveCleanup(taskId)
     // 2026-10-31 AI-native 归档：done 后一次播报（未决反思只提醒，不再逐条追问）。
     try {
       getChatEventBridge().requestArchiveDoneGuide(taskId)

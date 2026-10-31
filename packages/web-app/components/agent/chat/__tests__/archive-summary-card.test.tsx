@@ -57,6 +57,8 @@ function payload(overrides: Partial<TaskArchivePayload> = {}): TaskArchivePayloa
     },
     knowledge: { pack_items: 7, compile_state: 'queued', compile_position: 2 },
     amendments: [],
+    cleanup: null,
+    cleanup_in_flight: false,
     ...overrides,
   }
 }

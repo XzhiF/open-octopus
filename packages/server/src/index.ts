@@ -1299,6 +1299,9 @@ if (shouldServe) {
             name: created.task.name || src.name,
           }
         },
+        // 2026-10-31 归档后清理：白名单之外的 ignored 路径由 Agent 兜底逐条删。
+        cleanArchiveLeftovers: (taskId, project, paths) =>
+          tasksService.cleanArchiveLeftovers(taskId, project, paths),
       }))
       // 2026-10-28 task-thread: the task-doer dual chat was retired. Takeover
       // reuses the task's main thread (source_chat_session_id).

@@ -642,6 +642,8 @@ class ChatEventBridge {
     const message = [
       `[归档完成] 任务 ${taskId} 的全部 project 已归档成功，服务端已把任务状态写为 done。`,
       "请用一两句向用户播报：同步了哪些 project、术语冲突是否已在 PR 等 review；不要贴表格。",
+      "服务端已在后台自动清理各 project worktree 的构建产物（node_modules / target / dist / classes / jar 等；只删 git 忽略且无跟踪文件的目录）。调 get_archive_state 看 cleanup：已完成就顺带播报释放了多少、还剩几个 ignored 目录；仍在 running 就说「后台清理中」。",
+      "若用户明确要求清理剩余 ignored 目录：先把 cleanup.projects[].leftovers 的路径列给人确认，再调 clean_archive_leftovers(confirmed=true)；服务端会再次校验，不要自己决定删哪些。",
       "如果还有未决的反思条目，只提醒一次（例如「还有 N 条没决定，要落/跳过随时说」），不要逐条再问。",
       "若用户想补充/修正归档内容：用 record_archive_amendment(confirmed=true) 追加只增不改的记录；若用户想再改代码/继续开发：用 open_followup_task(confirmed=true) 开跟进任务，旧任务保持 done 不可变。",
     ].join("\n")

@@ -44,6 +44,14 @@ const COMPILE_LABEL: Record<string, string> = {
   failed: '编译失败',
 }
 
+/** done 后构建产物清理状态（running + 非 in_flight = 进程中断）。 */
+const CLEANUP_LABEL: Record<string, string> = {
+  running: '清理中',
+  done: '已清理',
+  partial: '部分失败',
+  failed: '失败',
+}
+
 function formatBytes(n: number): string {
   if (n < 1024) return `${n} B`
   if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`
@@ -93,9 +101,9 @@ export function ArchiveWindow({ task }: { task: TaskView; onMutated?: () => void
     void load()
     const timer = window.setInterval(() => {
       if (alive) void load()
-    }, archive?.in_flight || task.status === 'archiving' ? 4_000 : 20_000)
+    }, archive?.in_flight || task.status === 'archiving' || archive?.cleanup_in_flight ? 4_000 : 20_000)
     return () => { alive = false; window.clearInterval(timer) }
-  }, [load, archive?.in_flight, task.status])
+  }, [load, archive?.in_flight, archive?.cleanup_in_flight, task.status])
 
   if (error) {
     return <div className="p-4 text-[11.5px] text-pop-red" data-testid="archive-window-error">{error}</div>
@@ -127,6 +135,15 @@ export function ArchiveWindow({ task }: { task: TaskView; onMutated?: () => void
     : archive.knowledge && archive.knowledge.pack_items > 0
       ? '已冻结'
       : '—'
+  const cleanup = archive.cleanup
+  const cleanupRunning = cleanup?.status === 'running'
+  // 进程重启后 cleanup.json 可能停在 running —— 只有本进程在跑才算「清理中」。
+  const cleanupInterrupted = cleanupRunning && !archive.cleanup_in_flight
+  const cleanupLabel = cleanup
+    ? cleanupInterrupted
+      ? '中断'
+      : (CLEANUP_LABEL[cleanup.status] ?? cleanup.status)
+    : '未清理'
 
   return (
     <div className="h-full min-h-0 overflow-y-auto p-4" data-testid="archive-window">
@@ -235,6 +252,110 @@ export function ArchiveWindow({ task }: { task: TaskView; onMutated?: () => void
           全绿才 done；任一 project 失败会停在 archiving，说「重试」由主 Chat 按 project 幂等续跑。
         </p>
       </section>
+
+      {(cleanup || done) && (
+        <section
+          data-testid="archive-cleanup"
+          className="mt-3 rounded-xl border-[1.5px] border-pop-bd bg-pop-paper/50 p-3"
+        >
+          <h3 className="mb-2 flex flex-wrap items-center gap-2 font-mono text-[9px] font-black tracking-[.08em] text-pop-dim">
+            构建产物清理
+            <span
+              data-testid="archive-cleanup-status"
+              className={`rounded-full px-1.5 py-[1px] font-mono text-[8.5px] font-black ${
+                !cleanup
+                  ? 'bg-pop-amber-soft text-pop-amber'
+                  : cleanupInterrupted || cleanup.status === 'failed'
+                    ? 'bg-pop-red-soft text-pop-red'
+                    : cleanup.status === 'partial' || cleanupRunning
+                      ? 'bg-pop-amber-soft text-pop-amber'
+                      : 'bg-pop-green-soft text-pop-green'
+              }`}
+            >
+              {cleanupLabel}
+            </span>
+            {cleanup && (
+              <span className="ml-auto font-mono text-[9px] font-normal text-pop-dim">
+                释放 {formatBytes(cleanup.total_freed_bytes)}
+              </span>
+            )}
+          </h3>
+          {!cleanup ? (
+            <p className="py-2 text-[10.5px] text-pop-dim">
+              还没有清理记录（旧任务或服务端尚未开始）。归档完成后会自动清理各 project worktree 的构建产物。
+            </p>
+          ) : (
+            <>
+              {cleanup.error && (
+                <p className="mb-1.5 whitespace-pre-wrap break-words font-mono text-[9px] text-pop-red">
+                  {cleanup.error}
+                </p>
+              )}
+              {cleanup.projects.length === 0 ? (
+                <p className="py-2 text-[10.5px] text-pop-dim">没有可清理的 project。</p>
+              ) : (
+                <div className="space-y-1.5">
+                  {cleanup.projects.map((p) => (
+                    <div
+                      key={p.project}
+                      data-testid="archive-cleanup-row"
+                      className="rounded-lg border border-pop-bd/50 bg-black/10 px-2 py-1.5"
+                    >
+                      <div className="flex flex-wrap items-center gap-2">
+                        <span className="text-[10.5px] font-bold text-pop-ink">{p.project}</span>
+                        <span className="font-mono text-[9px] text-pop-dim">
+                          删除 {p.removed_count} 项 · 释放 {formatBytes(p.freed_bytes)}
+                        </span>
+                        {p.leftover_count > 0 && (
+                          <span className={`font-mono text-[9px] ${cleanupRunning ? 'text-pop-dim' : 'text-pop-amber'}`}>
+                            剩余 ignored {p.leftover_count} 项
+                          </span>
+                        )}
+                        {!p.ok && (
+                          <span className="ml-auto font-mono text-[8.5px] font-black text-pop-red">未完成</span>
+                        )}
+                      </div>
+                      {p.error && (
+                        <div className="mt-0.5 whitespace-pre-wrap break-words font-mono text-[9px] text-pop-red">
+                          {p.error}
+                        </div>
+                      )}
+                      {(p.failed?.length ?? 0) > 0 && (
+                        <ul className="mt-1 space-y-0.5">
+                          {p.failed!.slice(0, 3).map((f) => (
+                            <li key={f.path} className="truncate font-mono text-[9px] text-pop-red/90">
+                              删除失败 · {f.path} — {f.message}
+                            </li>
+                          ))}
+                        </ul>
+                      )}
+                      {(p.leftovers?.length ?? 0) > 0 && (
+                        <ul className="mt-1 space-y-0.5">
+                          {p.leftovers!.slice(0, 4).map((l) => (
+                            <li key={l.path} className="truncate font-mono text-[9px] text-pop-dim">
+                              {l.path}
+                              {l.bytes != null ? ` · ${formatBytes(l.bytes)}` : ''}
+                            </li>
+                          ))}
+                          {(p.leftover_count ?? 0) > 4 && (
+                            <li className="font-mono text-[8.5px] text-pop-dim/60">
+                              …（其余 {p.leftover_count - 4} 项见主 Chat 的 get_archive_state）
+                            </li>
+                          )}
+                        </ul>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              )}
+              <p className="mt-2 text-[9.5px] leading-relaxed text-pop-dim/80">
+                只删 git 忽略且内部无跟踪文件的构建产物（node_modules / target / dist / classes / jar …）；
+                白名单之外、仍被忽略的目录只列清单。要清剩余 → 回主 Chat 说「清理剩余」，由 Agent 核对后逐条删除。
+              </p>
+            </>
+          )}
+        </section>
+      )}
 
       {(archive.report?.delta?.length ?? 0) > 0 && (
         <section

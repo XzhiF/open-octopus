@@ -98,6 +98,12 @@ export interface ArchiveToolsService {
   ): Promise<{ ok: true; amendment: unknown; amendments: unknown[] }>
   /** done 之后开跟进任务（复制 spec + 新主会话 + 绑定）。 */
   openFollowupTask(taskId: string): { task_id: string; session_id: string; name: string }
+  /** done 后清理白名单之外的 ignored 路径（Agent 兜底，服务端再次校验）。 */
+  cleanArchiveLeftovers(
+    taskId: string,
+    project: string,
+    paths: string[],
+  ): Promise<unknown>
 }
 
 let archiveProvider: (() => ArchiveToolsService | null) | null = null
@@ -633,7 +639,7 @@ export function createTaskToolServer(input: TaskToolServerInput) {
   const archiveTools = (task.status === "archiving" || task.status === "done") ? [
     tool(
       "get_archive_state",
-      "Read the archive read-model: task status, in-flight, per-project ids, state.json (completed projects + commits), report.json (failures / term conflicts / PR destinations), reflection entries + decisions, and knowledge pack/compile status. Use this before summarizing archive progress or asking the human about reflection entries. Read-only.",
+      "Read the archive read-model: task status, in-flight, per-project ids, state.json (completed projects + commits), report.json (failures / term conflicts / PR destinations), reflection entries + decisions, knowledge pack/compile status, and post-done build-artifact cleanup (cleanup: freed bytes, removed counts, leftover ignored paths). Use this before summarizing archive progress, asking the human about reflection entries, or when the human asks what was cleaned / what ignored paths remain. Read-only.",
       {},
       async () => {
         const svc = archiveService()
@@ -648,8 +654,24 @@ export function createTaskToolServer(input: TaskToolServerInput) {
               entries?: Array<{ id: string; title: string; target?: string; content?: string }>
               decisions?: Record<string, unknown>
             } | null
+            cleanup?: {
+              status?: string
+              total_freed_bytes?: number
+              error?: string
+              projects?: Array<{
+                project: string
+                ok: boolean
+                removed_count?: number
+                freed_bytes?: number
+                leftover_count?: number
+                leftovers?: Array<{ path: string; kind: string; bytes: number | null }>
+                skipped?: Array<{ path: string; reason: string }>
+                failed?: Array<{ path: string; message: string }>
+                error?: string
+              }>
+            } | null
           }
-          const { report_md: reportMd, reflection, ...rest } = dto
+          const { report_md: reportMd, reflection, cleanup, ...rest } = dto
           const compactReflection = reflection
             ? {
                 entries: (reflection.entries ?? []).map((e) => ({
@@ -661,10 +683,32 @@ export function createTaskToolServer(input: TaskToolServerInput) {
                 decisions: reflection.decisions ?? {},
               }
             : null
+          // cleanup 明细可能很长（逐 project 的 removed 数组）—— 对话里只留
+          // 计数 / 释放量 / leftover 清单（Agent 兜底要删的正是这些路径）。
+          const compactCleanup = cleanup
+            ? {
+                status: cleanup.status ?? null,
+                total_freed_bytes: cleanup.total_freed_bytes ?? 0,
+                ...(cleanup.error ? { error: cleanup.error } : {}),
+                projects: (cleanup.projects ?? []).map((p) => ({
+                  project: p.project,
+                  ok: p.ok,
+                  removed_count: p.removed_count ?? 0,
+                  freed_bytes: p.freed_bytes ?? 0,
+                  leftover_count: p.leftover_count ?? 0,
+                  // leftover 清单本身就是 Agent 兜底要删的路径，不截断（报告侧已上限 100）。
+                  leftovers: p.leftovers ?? [],
+                  skipped: (p.skipped ?? []).slice(0, 20),
+                  failed: (p.failed ?? []).slice(0, 20),
+                  ...(p.error ? { error: p.error } : {}),
+                })),
+              }
+            : null
           return text({
             ok: true,
             ...rest,
             reflection: compactReflection,
+            cleanup: compactCleanup,
             ...(reportMd ? { report_md_chars: reportMd.length, report_md_hint: "全文在 task home 的 archive/report.md（需要时用 Read 打开）" } : {}),
           })
         } catch (err: unknown) {
@@ -829,6 +873,46 @@ export function createTaskToolServer(input: TaskToolServerInput) {
             payload: { followupTaskId: out.task_id, followupSessionId: out.session_id },
           })
           return text({ ok: true, task_id: out.task_id, session_id: out.session_id, name: out.name })
+        } catch (err: unknown) {
+          return text({ ok: false, error: err instanceof Error ? err.message : String(err) })
+        }
+      },
+    ),
+    tool(
+      "clean_archive_leftovers",
+      "Done only. Delete specific git-ignored paths left in an archived task's project worktree (Agent fallback for build artifacts the automatic sweep did not remove, e.g. unusual languages). Call ONLY after the human explicitly asked to clean the listed leftovers AND confirmed the exact paths in this chat — list them first, then call with confirmed=true. Paths come from get_archive_state's cleanup.projects[].leftovers (worktree-relative). The server re-verifies every path: must be git-ignored, inside the worktree, contain no tracked or untracked-non-ignored files; protected paths (.env / keys / .claude / .git) are refused. Never decide to delete on your own.",
+      {
+        project: z.string().min(1).describe("Project name, as shown in cleanup.projects[].project"),
+        paths: z
+          .array(z.string().min(1))
+          .min(1)
+          .max(50)
+          .describe("Worktree-relative paths from cleanup leftovers (e.g. '.idea/', 'cache/')"),
+        confirmed: z
+          .boolean()
+          .describe("true only when the human explicitly confirmed these exact paths — never infer"),
+      },
+      async ({ project, paths, confirmed }) => {
+        if (!confirmed) {
+          return text({
+            ok: false,
+            error: "必须先把路径列给人并得到明确同意后才能清理（confirmed=true）—— 不要自己决定。",
+          })
+        }
+        if (task.status !== "done") {
+          return text({ ok: false, error: `构建产物清理只在任务完成(done)后可用（当前 ${task.status}）。` })
+        }
+        const svc = archiveService()
+        if (!svc) return text({ ok: false, error: "归档服务未就绪" })
+        try {
+          const out = (await svc.cleanArchiveLeftovers(task.id, project, paths)) as {
+            report: { total_freed_bytes: number }
+            results: Array<{ path: string; ok: boolean; bytes?: number; reason?: string }>
+          }
+          return text({
+            ...out,
+            hint: "只删通过了 git 忽略/跟踪校验的路径；total_freed_bytes 为累计释放量。",
+          })
         } catch (err: unknown) {
           return text({ ok: false, error: err instanceof Error ? err.message : String(err) })
         }

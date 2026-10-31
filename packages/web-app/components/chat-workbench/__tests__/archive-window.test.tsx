@@ -68,6 +68,8 @@ function payload(overrides: Partial<TaskArchivePayload> = {}): TaskArchivePayloa
       compile_position: null,
     },
     amendments: [],
+    cleanup: null,
+    cleanup_in_flight: false,
     ...overrides,
   }
 }
@@ -188,5 +190,61 @@ describe("ArchiveWindow — 只读明细", () => {
     expect(screen.getByText("补收尾决策")).toBeTruthy()
     expect(screen.getByText("上线后补灰度开关。")).toBeTruthy()
     expect(screen.queryByRole("button", { name: /重试|落 wiki|跳过/ })).toBeNull()
+  })
+
+  it("renders the post-done build-artifact cleanup (freed bytes + leftovers), read-only", async () => {
+    mockGetTaskArchive.mockResolvedValue(payload({
+      status: "done",
+      cleanup: {
+        taskId: "t1",
+        startedAt: "2026-10-31T12:00:00.000Z",
+        finishedAt: "2026-10-31T12:00:08.000Z",
+        status: "done",
+        total_freed_bytes: 2500 * 1024,
+        projects: [
+          {
+            project: "api",
+            dir: "C:/wt/api",
+            ok: true,
+            removed_count: 2,
+            removed: [{ path: "node_modules", kind: "dir", bytes: 2400 * 1024 }],
+            freed_bytes: 2500 * 1024,
+            leftover_count: 3,
+            leftovers: [{ path: ".idea", kind: "dir", bytes: 1024 }],
+          },
+        ],
+      },
+      cleanup_in_flight: false,
+    }))
+    render(<ArchiveWindow task={task("done")} />)
+
+    expect(await screen.findByTestId("archive-cleanup")).toBeTruthy()
+    expect(screen.getByTestId("archive-cleanup-status").textContent).toBe("已清理")
+    const rows = screen.getAllByTestId("archive-cleanup-row")
+    expect(rows).toHaveLength(1)
+    expect(rows[0].textContent).toContain("删除 2 项")
+    expect(rows[0].textContent).toContain("剩余 ignored 3 项")
+    expect(rows[0].textContent).toContain(".idea")
+    expect(screen.getAllByText(/释放 2\.4 MB/).length).toBeGreaterThan(0)
+    expect(screen.getByText(/清理剩余/)).toBeTruthy()
+    expect(screen.queryByRole("button", { name: /清理|删除/ })).toBeNull()
+  })
+
+  it("marks a running cleanup as interrupted when the process is no longer in flight", async () => {
+    mockGetTaskArchive.mockResolvedValue(payload({
+      status: "done",
+      cleanup: {
+        taskId: "t1",
+        startedAt: "2026-10-31T12:00:00.000Z",
+        finishedAt: null,
+        status: "running",
+        total_freed_bytes: 1024,
+        projects: [],
+      },
+      cleanup_in_flight: false,
+    }))
+    render(<ArchiveWindow task={task("done")} />)
+    expect((await screen.findByTestId("archive-cleanup-status")).textContent).toBe("中断")
+    expect(screen.getByTestId("archive-cleanup").textContent).toContain("没有可清理的 project")
   })
 })
