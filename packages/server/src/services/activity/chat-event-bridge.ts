@@ -491,6 +491,7 @@ class ChatEventBridge {
       "然后用一两句人话告诉用户现在到哪一步、你在等什么；**不要贴表格**，明细让用户点总框里的「打开归档台看明细」。",
       "接着调用 propose_wiki_entries 产出 2–5 条沉淀建议（不要贴卡片），再**一次只问一条**：直接问「要不要落 wiki」。",
       "用户说「落 / 跳过 / 都跳过 / 都落」→ 逐条调用 record_reflection_decision(confirmed=true) 执行并回执；不要代替人决定。",
+      "若 preflight 被未提交改动拦下（get_archive_state 里 preflight / delta 非空）：用一两句话问用户「纳入归档」还是「排除并记录」，明确表态后调 resolve_archive_delta(decision, confirmed=true)；不要自己决定。",
       "若某个 project 归档失败：说清失败原因；用户明确说「重试」→ retry_archive(confirmed=true)。",
       "不要声称任务已完成 —— done 由服务端在全部 project 的 git 同步成功后才写入，届时会通知你。",
     ].join("\n")
@@ -557,6 +558,7 @@ class ChatEventBridge {
       `[归档完成] 任务 ${taskId} 的全部 project 已归档成功，服务端已把任务状态写为 done。`,
       "请用一两句向用户播报：同步了哪些 project、术语冲突是否已在 PR 等 review；不要贴表格。",
       "如果还有未决的反思条目，只提醒一次（例如「还有 N 条没决定，要落/跳过随时说」），不要逐条再问。",
+      "若用户想补充/修正归档内容：用 record_archive_amendment(confirmed=true) 追加只增不改的记录；若用户想再改代码/继续开发：用 open_followup_task(confirmed=true) 开跟进任务，旧任务保持 done 不可变。",
     ].join("\n")
     void this.wake(
       { sessionId: row.source_chat_session_id, org: row.repo_group ?? '', workspaceId: row.workspace_id ?? null },
@@ -733,6 +735,60 @@ class ChatEventBridge {
    *  transition fires). 2026-10-31 AI-native: NO extra card and no retry button —
    *  the archive summary card reflects the failure live; this only wakes the
    *  main chat to explain it and offer 「重试」 in plain words. */
+  /** 归档 preflight 被未提交改动拦下（2026-10-31 收尾）：唤醒主 Chat 问人
+   *  「纳入归档 / 排除并记录」，不自己决定。 */
+  notifyArchiveDeltaRequired(
+    taskId: string,
+    preflight: { dirty_projects: string[]; message: string },
+  ): void {
+    if (!this.db) return
+    let row: {
+      name?: string
+      repo_group?: string | null
+      source_chat_session_id?: string | null
+      workspace_id?: string | null
+    } | undefined
+    try {
+      row = this.db.prepare(
+        "SELECT name, repo_group, source_chat_session_id, workspace_id FROM tasks WHERE id = ?",
+      ).get(taskId) as typeof row
+    } catch {
+      return
+    }
+    if (!row?.source_chat_session_id) return
+    let session: { clone_name?: string | null } | undefined
+    try {
+      session = this.db.prepare("SELECT clone_name FROM sessions WHERE id = ?")
+        .get(row.source_chat_session_id) as typeof session
+    } catch {
+      return
+    }
+    if (!session || session.clone_name) return // legacy clone thread — untouched
+
+    const event = getActivityBus().publish({
+      kind: "task.status",
+      severity: "warn",
+      title: "归档前需要决定：未提交改动",
+      message: preflight.message,
+      workspaceId: row.workspace_id ?? null,
+      taskId,
+      sessionId: row.source_chat_session_id,
+      payload: { status: "archiving", archiveSummary: true, preflight: true },
+    })
+    const wakeMessage = [
+      `[归档 preflight] 任务 ${taskId} 的归档被未提交改动拦下了，任务停在 archiving。`,
+      preflight.message,
+      "请先调用 get_archive_state 查看 delta（每个 project 的未提交文件 / 末轮后提交）。",
+      "然后用一两句话问用户：这些改动要「纳入归档」还是「排除并记录」；不要替用户决定。",
+      "用户明确说「纳入」或「排除」后，调用 resolve_archive_delta(decision, confirmed=true) 执行；完成后仍以服务端 task_status 为准，不要提前说 done。",
+    ].join("\n")
+    void this.wake(
+      { sessionId: row.source_chat_session_id, org: row.repo_group ?? '', workspaceId: row.workspace_id ?? null },
+      event,
+      { ephemeral: true, message: wakeMessage },
+    )
+  }
+
   notifyTaskArchiveFailure(taskId: string, detail?: string): void {
     if (!this.db) return
     let row: {

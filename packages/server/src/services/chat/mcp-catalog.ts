@@ -46,6 +46,9 @@ const TASK_TOOL_NAMES = [
   "get_archive_state",
   "record_reflection_decision",
   "retry_archive",
+  "resolve_archive_delta",
+  "record_archive_amendment",
+  "open_followup_task",
 ] as const
 
 export function buildMcpCatalog(): McpServerMeta[] {
@@ -95,4 +98,7 @@ const TASK_TOOL_DESC: Record<string, string> = {
   get_archive_state: "读取归档只读读模型：git 同步、失败、术语冲突、反思决策、知识包编译状态。",
   record_reflection_decision: "人明确说落/跳过之后，记录一条归档反思决策并执行入队。",
   retry_archive: "人明确说重试之后，触发 project 粒度幂等续跑。",
+  resolve_archive_delta: "人明确选择纳入/排除后，处置放行后的未提交改动并继续归档。",
+  record_archive_amendment: "归档完成后，人要求补充/修正归档内容时追加一条只增不改的增补记录。",
+  open_followup_task: "归档完成后，开一个承接上下文的跟进任务继续开发。",
 }

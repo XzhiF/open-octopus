@@ -398,7 +398,8 @@ export class TaskThreadService {
         "  3. 用户**在对话里明确表态**（「通过」「可以」「不行，因为…」「跳过」）即可直接调 record_acceptance_check（confirmed=true）；不用等用户点卡片 —— 卡片只是快捷方式，点与说都算数。不要代替用户判断、不要批量代勾。",
         "  4. 用户说不通过 → 当场小修：只改与该问题直接相关的 **≤2 个文件**，不改 spec/票；改完**必须重跑证据**（run_acceptance_probe）并把新结果讲给用户，再问一次是否通过 —— 改完不等于通过，绝不默认勾上。",
         "  5. 问题超出小修边界（要改 spec、要动 3 个以上文件、或反复修不好）→ 调 propose_acceptance_escalation，让用户确认升级 task-fix 大修复；不要硬改。",
-        "  6. 全部项都有结论后，问用户要不要「放行」或「退回修改」。用户**明确表态**后由你收口：放行 → submit_acceptance_decision(decision=\"accepted\", confirmed=true)；退回 → submit_acceptance_decision(decision=\"rejected\", feedback=用户说的原因, confirmed=true)。人点验收台是兜底，不是必需；但没有明确表态绝不放行、绝不退回，也不要把未勾项当成通过。",
+        "  6. 全部项都有结论后，先做**放行前终检**：再调一次 get_acceptance_plan 看 postRound（末轮之后的新提交 / 未提交文件），把现场用一两句话讲给用户。有未提交改动就提醒：归档 preflight 会先拦下，届时再选「纳入 / 排除」，或现在先改完再放行。确认无遗漏后再问要不要「放行」或「退回修改」。",
+        "  7. 用户**明确表态**后由你收口：放行 → submit_acceptance_decision(decision=\"accepted\", confirmed=true)；退回 → submit_acceptance_decision(decision=\"rejected\", feedback=用户说的原因, confirmed=true)。人点验收台是兜底，不是必需；但没有明确表态绝不放行、绝不退回，也不要把未勾项当成通过。",
       ] : []
       const archiveLines = extra.archiveGuide ? [
         "[归档引导] 末 phase 已放行，任务处于 archiving（只读；归档编排由服务端执行）。你的角色是播报 + 逐条问反思 + 执行用户的口头决定：",
@@ -407,7 +408,8 @@ export class TaskThreadService {
         "  3. 调 propose_wiki_entries 给出 2–5 条建议（它不再落卡片），然后**一次只问一条**：要不要落 wiki。",
         "  4. 用户说「落 / 跳过 / 都跳过 / 都落」→ 逐条 record_reflection_decision(confirmed=true) 执行并回执；不要代替人决定。",
         "  5. 归档失败：说清是哪个 project、什么原因；用户明确说「重试」→ retry_archive(confirmed=true)。",
-        "  6. 不要声称已完成 —— done 由服务端在全部 project 的 git 同步成功后才写入。",
+        "  6. 若 preflight 提示有未提交改动：问用户「纳入归档」还是「排除并记录」，明确表态后调 resolve_archive_delta(decision, confirmed=true)；不要自己决定。",
+        "  7. 不要声称已完成 —— done 由服务端在全部 project 的 git 同步成功后才写入。",
       ] : []
       return [
         head,
@@ -428,7 +430,8 @@ export class TaskThreadService {
       "[身份] 只读回顾。任务已结束/归档，不再改代码或规格。",
       `[任务 home] ${info.taskHome}${info.wsPath ? ` · 执行工作区 ${info.wsPath}` : ""}`,
       "[归档复盘] 可用 get_archive_state 复述归档结果、冲突与反思；未决反思可按用户明确表态继续 record_reflection_decision 落/跳过。",
-      "[可做] 复盘、解释归档结果/冲突、查产物与用量；要再开发请开新任务或复制任务。",
+      "[归档增补] 用户要补充/修正归档内容时，用 record_archive_amendment(confirmed=true) 追加只增不改的记录（可选同时落 wiki）；不要改写原报告。",
+      "[跟进任务] 用户要再改代码/继续开发时，用 open_followup_task(confirmed=true) 开一个继承 spec 的新任务；旧任务保持 done 不可变，不要在这里写代码。",
     ].join("\n")
   }
 }

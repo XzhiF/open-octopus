@@ -589,6 +589,64 @@ describe("AC4 — push 失败停 archiving；retry project 粒度幂等续跑", 
   })
 })
 
+// ── 2026-10-31 收尾：放行后现场 preflight ─────────────────────────────
+
+describe("放行后现场 preflight（2026-10-31）", () => {
+  function seedDirty() {
+    const fixture = seedArchiveFixture({ homeAdrs: [] })
+    const wt = fixture.wts["repo-a"]!
+    fs.writeFileSync(path.join(wt, "late-fix.txt"), "post-acceptance fix\n")
+    return { ...fixture, wt }
+  }
+
+  it("dirty worktree blocks the archive, records preflight, and leaves the task in archiving", async () => {
+    const { taskId, wt } = seedDirty()
+    service.retryArchive(taskId)
+    const report = await runToReport(taskId)
+    expect(report.ok).toBe(false)
+    expect(report.preflight?.blocked).toBe(true)
+    expect(report.preflight?.dirty_projects).toEqual(["repo-a"])
+    expect(report.delta?.[0]?.dirty_files.some((f) => f.includes("late-fix.txt"))).toBe(true)
+    expect(report.delta_decision).toBeNull()
+    expect(taskRowOf(taskId).status).toBe("archiving")
+    expect(commitCount(wt, /syncback/)).toBe(0)
+  })
+
+  it("include commits the post-acceptance delta, then archives → done", async () => {
+    const { taskId, wt } = seedDirty()
+    service.resolveArchiveDelta(taskId, "include")
+    const report = await runToReport(taskId)
+    expect(report.ok).toBe(true)
+    expect(report.delta_decision).toBe("include")
+    expect(report.delta?.[0]?.dirty_files ?? []).toEqual([])
+    expect(taskRowOf(taskId).status).toBe("done")
+    const subjects = archiveCommitSubjects(wt)
+    expect(subjects.some((s) => s.startsWith("chore(archive): include post-acceptance delta"))).toBe(true)
+    expect(git(["status", "--porcelain"], wt).trim()).toBe("")
+  })
+
+  it("exclude records the file list and archives without the dirty change → done", async () => {
+    const { taskId, wt } = seedDirty()
+    service.resolveArchiveDelta(taskId, "exclude")
+    const report = await runToReport(taskId)
+    expect(report.ok).toBe(true)
+    expect(report.delta_decision).toBe("exclude")
+    expect(report.delta?.[0]?.dirty_files.some((f) => f.includes("late-fix.txt"))).toBe(true)
+    expect(taskRowOf(taskId).status).toBe("done")
+    expect(archiveCommitSubjects(wt).some((s) => s.startsWith("chore(archive): include post-acceptance delta"))).toBe(false)
+    expect(git(["status", "--porcelain"], wt)).toContain("late-fix.txt")
+  })
+
+  it("clean worktree archives immediately and reports the post-round delta", async () => {
+    const { taskId } = seedArchiveFixture({ homeAdrs: [] })
+    service.retryArchive(taskId)
+    const report = await runToReport(taskId)
+    expect(report.ok).toBe(true)
+    expect(report.preflight).toBeNull()
+    expect(report.delta?.[0]).toMatchObject({ project: "repo-a", dirty_files: [] })
+  })
+})
+
 // AC5（「done 解除 retention 豁免」）随票03 删除：那个豁免谓词（未归档的任务 ws 不
 // 可回收）已经没有对应代码了 —— 任务 ws 带 workspaces.task_id、根本不进
 // schedule_workspaces，retention 的候选集结构上够不到它（workflow-executor.ts:743）。

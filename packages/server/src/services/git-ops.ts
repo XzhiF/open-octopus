@@ -289,6 +289,21 @@ export class GitOps {
     }
   }
 
+  /** Commit subjects in (from..to] — capped, newest first. Used by the
+   *  post-acceptance delta section (2026-10-31). */
+  async logSubjects(projectPath: string, from: string, to: string, cap = 20): Promise<string[]> {
+    try {
+      const { stdout } = await runGit(projectPath, ["log", "--format=%s", `${from}..${to}`])
+      return stdout
+        .split("\n")
+        .map((l) => l.trim())
+        .filter(Boolean)
+        .slice(0, cap)
+    } catch {
+      return []
+    }
+  }
+
   /** Diffstat of start..end: `-M` rename detection, `-z` machine-safe parse.
    *  name-status drives entry arity/order; numstat is consumed positionally
    *  against it (both list the same files in the same order for one command).

@@ -64,6 +64,7 @@ import type { AcceptancePlanService, AwaitingRoundInfo } from "./acceptance-plan
 import { TestInstanceRegistry, type InstanceSource, type TestInstanceEntry } from "./test-instance-registry"
 import { hostProtectedPorts, hostProtectedPids } from "./host-guard"
 import { findPidOnPort, waitForPort, portFromUrl, processAncestry } from "../../port-utils"
+import { inspectProjectDelta, type ProjectDelta } from "./archive-delta"
 
 export type { PlaybookPayload, PlaybookSection, PlaybookItem, PlaybookCarryover, PlaybookBudget, ChecksFile, CheckEntry, ProbeRunResult, ProbeState } from "./playbook-types"
 
@@ -246,6 +247,8 @@ export interface LedgerSnapshot {
   verify: VerifySummary | null
   preview: PreviewSummary | null
   checks: ChecksFile | null
+  /** 2026-10-31 放行前后现场：末轮 end → 决策时 HEAD 的提交 + 未提交文件。 */
+  postRound?: ProjectDelta[]
 }
 
 /** One in-memory verify session per task (running or most recent terminal). */
@@ -476,6 +479,18 @@ export class RoundEvidenceService {
       quickEdits,
       takeover,
     }
+  }
+
+  /** 2026-10-31 放行前终检：末轮 end → 当前 HEAD 的提交 + dirty 文件。
+   *  只读；严格锚定 awaiting 轮（resolveAwaiting 409 优先）。 */
+  getPostRoundDelta(taskId: string): ProjectDelta[] {
+    const { execRow } = this.resolveAwaiting(taskId)
+    const ends = parseCommitMap(execRow.end_commit_id)
+    const ws = this.workspaceService.getById(execRow.workspace_id)
+    const wsPath = ws?.path ?? null
+    const detail = this.tasksService.getTask(taskId) as unknown as { project_ids?: string[] }
+    const projectNames = [...new Set([...Object.keys(ends), ...(detail.project_ids ?? [])])]
+    return projectNames.map((p) => inspectProjectDelta(p, wsPath, ends[p] ?? null))
   }
 
   /** 票09「人工干预」列的读取（06 权威 SQL 的行级形态）：执行下所有
@@ -1528,6 +1543,7 @@ export class RoundEvidenceService {
       taskId, phaseIndex, roundIndex, batchRelDir,
       phaseName: ((detail.task_spec as TaskSpec | undefined)?.phases?.[phaseIndex - 1]?.name) ?? `Phase ${phaseIndex}`,
       diff, playbook, verify, preview, checks,
+      postRound: this.getPostRoundDelta(taskId),
     }
   }
 
@@ -1716,6 +1732,28 @@ export function buildTakeoverSection(mark: LedgerTakeoverMark | null | undefined
   return ["## 人工接管", `- ${head}`, `  - takeover_at ${mark.at}${mark.deliveredAt ? ` · delivered_at ${mark.deliveredAt}` : ""}`, ""]
 }
 
+/** 决策时现场（2026-10-31 放行终检）：末轮 end 之后的新提交 / 未提交文件。
+ *  验收台账与归档报告共用同一份口径（archive-delta）。 */
+export function buildPostRoundSection(rows: ProjectDelta[]): string[] {
+  if (rows.length === 0) return ["## 决策时现场（末轮之后）", "- （无执行区间 / 无法读取）", ""]
+  const commits = rows.reduce((n, r) => n + r.commits, 0)
+  const dirty = rows.reduce((n, r) => n + r.dirty_files.length, 0)
+  const lines = [
+    "## 决策时现场（末轮之后）",
+    `- 末轮后新增提交 ${commits} · 未提交文件 ${dirty}`,
+  ]
+  for (const r of rows) {
+    lines.push(
+      `  - ${r.project}: ${r.commits} commits · ${r.dirty_files.length} dirty` +
+        `${r.error ? ` · ⚠ ${r.error}` : ""}`,
+    )
+    for (const s of r.subjects.slice(0, 5)) lines.push(`    - ${s}`)
+    for (const f of r.dirty_files.slice(0, 5)) lines.push(`    - 未提交: \`${f}\``)
+  }
+  lines.push("")
+  return lines
+}
+
 
 function expiredRepo(name: string, reason: "no_workspace" | "no_commits" | "worktree_gone"): RepoDiff {
   return { name, expired: true, reason, commits: 0, additions: 0, dels: 0, files: 0, truncated: false, groups: [] }
@@ -1840,6 +1878,7 @@ function buildLedgerMd(snap: LedgerSnapshot, decision: "accepted" | "rejected"):
       ? `- ${d.repos.filter((r) => !r.expired).length}/${d.repos.length} repos 有效 · ${agg.commits} commits · +${agg.additions}/−${agg.dels} · ${agg.files} 文件 · 干预 ${d.interventions ?? "—"}`
       : `- 无有效实物 diff（${d.reason ?? "证据过期"}）— 复检历史与 verdict 文件仍可参考`,
     "",
+    ...buildPostRoundSection(snap.postRound ?? []),
     ...interventionSec,
     ...quickEditSec,
     ...takeoverSec,

@@ -149,3 +149,50 @@ describe("reflection store + decisions", () => {
     await expect(service.decideReflection("t-missing", { entry_id: "refl-1", action: "ingest" })).rejects.toThrow()
   })
 })
+
+describe("archive amendments (2026-10-31)", () => {
+  it("append-only: writes JSONL, reads back in the archive model, and can ingest to wiki", async () => {
+    insertTask("t-amend")
+    db.prepare("UPDATE tasks SET status='done' WHERE id='t-amend'").run()
+    const calls: Array<{ title: string; text: string; origin: string }> = []
+    const out = await service.appendArchiveAmendment(
+      "t-amend",
+      {
+        reason: "补一条收尾决策",
+        content: "上线后再补一个灰度开关。",
+        target: "ADR · 灰度",
+        ingest: true,
+      },
+      async (input) => {
+        calls.push(input)
+        return { raw_path: "raw/inbox/amend.md", compile_task_id: "q-amend" }
+      },
+    )
+    expect(out.amendment.reason).toBe("补一条收尾决策")
+    expect(out.amendment.ingest).toEqual({ raw_path: "raw/inbox/amend.md", compile_task_id: "q-amend" })
+    const lines = fs.readFileSync(path.join(home, "archive", "amendments.jsonl"), "utf-8").trim().split("\n")
+    expect(lines).toHaveLength(1)
+    expect(calls[0]).toMatchObject({
+      title: "补一条收尾决策",
+      text: "> 修订自归档任务 t-amend（补一条收尾决策）\n\n上线后再补一个灰度开关。",
+      origin: `task-amendment:t-amend:${out.amendment.id}`,
+    })
+    const archive = service.readArchive("t-amend")
+    expect(archive.amendments).toHaveLength(1)
+    expect(archive.amendments[0].target).toBe("ADR · 灰度")
+  })
+
+  it("rejects before done and requires reason/content", async () => {
+    insertTask("t-amend-open")
+    await expect(
+      service.appendArchiveAmendment("t-amend-open", { reason: "r", content: "c" }),
+    ).rejects.toThrow()
+    db.prepare("UPDATE tasks SET status='done' WHERE id='t-amend-open'").run()
+    await expect(
+      service.appendArchiveAmendment("t-amend-open", { reason: "", content: "c" }),
+    ).rejects.toThrow()
+    await expect(
+      service.appendArchiveAmendment("t-amend-open", { reason: "r", content: "" }),
+    ).rejects.toThrow()
+  })
+})

@@ -142,7 +142,7 @@ import { ChatService } from "./services/chat"
 import { setTaskToolsServiceProvider } from "./services/chat/task-tools"
 import { LeaderboardService } from "./services/leaderboard"
 import { getLogAnalysisService } from "./services/log-analysis"
-import { initSessionService } from "./services/agent/session-service"
+import { initSessionService, getSessionService } from "./services/agent/session-service"
 import { initMemoryService } from "./services/agent/memory-service"
 import { initEvolutionService } from "./services/agent/evolution-service"
 import { initRecoveryService } from "./services/agent/recovery-service"
@@ -1248,6 +1248,7 @@ if (shouldServe) {
         },
         startPreview: (taskId) => roundEvidence.startPreview(taskId),
         stopPreview: (taskId) => roundEvidence.stopPreview(taskId),
+        getPostRoundDelta: (taskId) => roundEvidence.getPostRoundDelta(taskId),
       }))
       // 2026-10-31 AI-native 归档：主 Chat 的口头决定（落/跳过/重试）直接执行。
       // ingest 通道与 POST /:id/reflection/decision 同一条（raw 冻结 + 编译入队）。
@@ -1260,6 +1261,32 @@ if (shouldServe) {
         readArchive: (taskId) => tasksService.readArchive(taskId),
         decideReflection: (taskId, input) => tasksService.decideReflection(taskId, input, reflectionIngest),
         retryArchive: (taskId) => tasksService.retryArchive(taskId),
+        resolveArchiveDelta: (taskId, action) => tasksService.resolveArchiveDelta(taskId, action),
+        recordAmendment: (taskId, input) =>
+          tasksService.appendArchiveAmendment(taskId, input, reflectionIngest),
+        // 2026-10-31 跟进任务：复制 spec/产物 + 新主会话 + 绑定；旧任务保持 done 不可变。
+        openFollowupTask: (taskId) => {
+          const src = tasksService.getTask(taskId)
+          const created = tasksService.duplicateTask(taskId, { ready: false })
+          const session = getSessionService().createSession({
+            cwd: null,
+            workspace_id: null,
+          })
+          try {
+            d.agentSession.updateSession(session.id, {
+              title: `${created.task.name} · 跟进`,
+              scope_id: created.task.id,
+            })
+          } catch {
+            /* title/scope 只是显示与索引优化，失败不阻断 */
+          }
+          d.task.bindSourceChatSession(created.task.id, session.id)
+          return {
+            task_id: created.task.id,
+            session_id: session.id,
+            name: created.task.name || src.name,
+          }
+        },
       }))
       // 2026-10-28 task-thread: the task-doer dual chat was retired. Takeover
       // reuses the task's main thread (source_chat_session_id).

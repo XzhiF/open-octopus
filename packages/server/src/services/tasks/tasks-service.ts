@@ -97,6 +97,10 @@ import { seedPhaseToWorkspace, collectFromWorkspace, batchRelPath, resolvePhaseS
 import { specRunbookLevel } from "./runbook-spec"
 // task-phase-redesign (ticket 08): the archiving orchestrator (K11 归并面).
 import { createTaskArchiver, type TaskArchiver, type ArchiveReport } from "./archiving-service"
+import {
+  dirtyFingerprint,
+  inspectTaskDelta,
+} from "./archive-delta"
 import { getChatEventBridge } from "../activity/chat-event-bridge"
 import {
   readReflectionStore,
@@ -283,6 +287,28 @@ export interface TaskArchiveDTO {
   reflection: ReflectionStore | null
   /** 知识素材包 / 编译状态；null = 尚未投喂或未装配。 */
   knowledge: TaskArchiveKnowledge | null
+  /** done 之后的只增不改增补记录（2026-10-31）。 */
+  amendments: ArchiveAmendment[]
+}
+
+/** 归档增补：done 之后人要求补充/修正归档内容时追加，绝不改写原报告。 */
+export interface ArchiveAmendment {
+  id: string
+  at: string
+  reason: string
+  content: string
+  target?: string
+  /** 同时落 wiki 时的回执（raw 冻结 + 编译入队）。 */
+  ingest?: { raw_path?: string; compile_task_id?: string } | null
+}
+
+export interface ArchiveAmendmentInput {
+  reason: string
+  content: string
+  title?: string
+  target?: string
+  /** true = 同时把这条增补送进知识中心（raw + 编译队列）。 */
+  ingest?: boolean
 }
 
 export interface ReflectionDecisionInput {
@@ -293,11 +319,42 @@ export interface ReflectionDecisionInput {
   content?: string
 }
 
+/** 2026-10-31 收尾：放行后未提交改动的处置。 */
+export type ArchiveDeltaAction = "include" | "exclude"
+export interface ArchiveDeltaResult {
+  ok: true
+  decision: ArchiveDeltaAction
+  dirty_projects: string[]
+}
+
 export type ReflectionIngest = (input: {
   title: string
   text: string
   origin: string
 }) => Promise<{ raw_path?: string; compile_task_id?: string }>
+
+/** `{home}/archive/amendments.jsonl` 读侧（坏行跳过，最多 200 条）。 */
+function readArchiveAmendments(home: string): ArchiveAmendment[] {
+  const file = path.join(home, "archive", "amendments.jsonl")
+  try {
+    const rows = fs.readFileSync(file, "utf-8")
+      .replace(/\r\n/g, "\n")
+      .split("\n")
+      .filter((l) => l.trim())
+    const out: ArchiveAmendment[] = []
+    for (const line of rows) {
+      try {
+        const parsed = JSON.parse(line) as ArchiveAmendment
+        if (parsed && typeof parsed.id === "string" && typeof parsed.content === "string") out.push(parsed)
+      } catch {
+        /* corrupt line — skip */
+      }
+    }
+    return out.slice(-200)
+  } catch {
+    return []
+  }
+}
 
 export interface ReflectionDecisionResult {
   ok: true
@@ -3188,9 +3245,6 @@ export class TasksService {
    *  retryable via POST /:id/archive/retry (K3/US15). */
   private beginArchiving(taskId: string): void {
     this.setPersistedTaskStatus(taskId, "archiving")
-    // 知识中心票10: 进入 archiving 态的一刻起投喂（与归档编排并行、互不等待；
-    // 必须先于 archivingHook 分支的 return，替换内置归档器的宿主同样吃到投喂）。
-    this.fireArchiveIngest(taskId)
     // 2026-10-31 AI-native 归档：主 Chat 只留一个归档总框 + 口述引导/执行。
     // Fired before the orchestration so the model can read the still-present
     // task home / workspace.
@@ -3200,6 +3254,8 @@ export class TasksService {
       /* observability only — never block archiving */
     }
     if (this.archivingHook) {
+      // 知识中心票10: 宿主替换内置归档器时仍先投喂（与归档编排并行、互不等待）。
+      this.fireArchiveIngest(taskId)
       try {
         const maybe = this.archivingHook(taskId)
         if (maybe && typeof (maybe as Promise<void>).then === "function") {
@@ -3218,6 +3274,7 @@ export class TasksService {
       }
       return
     }
+    // 内置归档器：投喂由 archiver 的 onPreflightPassed 触发（delta 决策之后）。
     void this.startArchiveRun(taskId)
   }
 
@@ -3240,6 +3297,9 @@ export class TasksService {
         db: this.db,
         taskHomeService: this.taskHomeService,
         onComplete: (taskId) => this.endArchiving(taskId),
+        // 2026-10-31 收尾：知识投喂必须发生在 delta preflight 之后 —— 素材的
+        // PR diff 终点要用「纳入后」的 HEAD，否则放行后小修仍会漏出知识包。
+        onPreflightPassed: (taskId) => this.fireArchiveIngest(taskId),
       })
     }
     return this.archiver
@@ -3260,6 +3320,14 @@ export class TasksService {
       .archiveTask(taskId)
       .then((report) => {
         if (!report.ok) {
+          if (report.preflight) {
+            try {
+              getChatEventBridge().notifyArchiveDeltaRequired(taskId, report.preflight)
+            } catch {
+              /* observability only */
+            }
+            return report
+          }
           const failed = report.projects
             .filter((p) => !p.ok)
             .map((p) => `${p.project}${p.error ? `：${p.error}` : ""}`)
@@ -3336,7 +3404,49 @@ export class TasksService {
       report_md: reportMd,
       reflection: readReflectionStore(home),
       knowledge,
+      amendments: readArchiveAmendments(home),
     }
+  }
+
+  /** done 之后的归档增补（append-only）。不做任何代码/spec 写入 —— 那是跟进任务的职责。 */
+  async appendArchiveAmendment(
+    taskId: string,
+    input: ArchiveAmendmentInput,
+    ingest?: ReflectionIngest,
+  ): Promise<{ ok: true; amendment: ArchiveAmendment; amendments: ArchiveAmendment[] }> {
+    const row = this.taskDAO.getById(taskId)
+    if (!row) throw new TaskNotFoundError()
+    if (row.status !== "done") {
+      throw new TaskStatusConflictError(
+        `归档增补只在任务完成(done)后可用（当前状态: '${row.status}'）。要再开发请开跟进任务。`,
+      )
+    }
+    const reason = (input.reason ?? "").trim()
+    const content = (input.content ?? "").trim()
+    if (!reason) throw new TaskStatusConflictError("归档增补必须写 reason（为什么补）")
+    if (!content) throw new TaskStatusConflictError("归档增补必须写 content（补什么）")
+    const home = this.taskHomeService.homePath(taskId)
+    const dir = path.join(home, "archive")
+    const amendment: ArchiveAmendment = {
+      id: randomUUID(),
+      at: new Date().toISOString(),
+      reason,
+      content,
+      ...(input.target?.trim() ? { target: input.target.trim() } : {}),
+      ingest: null,
+    }
+    if (input.ingest) {
+      if (!ingest) throw new TaskStatusConflictError("知识投喂通道未就绪，稍后重试。")
+      const res = await ingest({
+        title: input.title?.trim() || reason,
+        text: `> 修订自归档任务 ${taskId}（${reason}）\n\n${content}`,
+        origin: `task-amendment:${taskId}:${amendment.id}`,
+      })
+      amendment.ingest = { ...res }
+    }
+    fs.mkdirSync(dir, { recursive: true })
+    fs.appendFileSync(path.join(dir, "amendments.jsonl"), `${JSON.stringify(amendment)}\n`, "utf-8")
+    return { ok: true, amendment, amendments: readArchiveAmendments(home) }
   }
 
   /** POST /:id/reflection/decision — ingest or skip ONE knowledge proposal. */
@@ -3401,6 +3511,45 @@ export class TasksService {
     void this.startArchiveRun(taskId)
     const fresh = this.taskDAO.getById(taskId) ?? row
     return toDTO(fresh)
+  }
+
+  /** 2026-10-31 收尾：人对「放行后未提交改动」的明确选择。
+   *  include = 先把 dirty 落一个归档 delta commit 再继续；exclude = 记录后继续。
+   *  决策按 dirty 指纹落盘，归档器重跑时同指纹才沿用；新文件会重新问人。 */
+  resolveArchiveDelta(taskId: string, action: ArchiveDeltaAction): ArchiveDeltaResult {
+    const row = this.taskDAO.getById(taskId)
+    if (!row) throw new TaskNotFoundError()
+    if (row.status !== "archiving") {
+      throw new TaskStatusConflictError(
+        `只有归档中(archiving)的任务可以决定放行后改动 (当前状态: '${row.status}')`,
+      )
+    }
+    const spec = parseJSON<{ format?: string }>(row.task_spec, {})
+    if (spec.format !== "v4") {
+      throw new TaskStatusConflictError("放行后改动决策仅适用于 v4 任务")
+    }
+    if (this.runningArchives.has(taskId)) {
+      throw new TaskStatusConflictError("归档编排正在运行，等本轮 preflight 结束后再决定")
+    }
+    const delta = inspectTaskDelta(this.db, taskId)
+    const dirty = delta.filter((d) => d.dirty_files.length > 0)
+    if (dirty.length === 0) {
+      throw new TaskStatusConflictError("工作区已干净（没有未提交改动）—— 直接重试归档即可")
+    }
+    const home = this.taskHomeService.homePath(taskId)
+    const dir = path.join(home, "archive")
+    fs.mkdirSync(dir, { recursive: true })
+    fs.writeFileSync(
+      path.join(dir, "delta-decision.json"),
+      JSON.stringify(
+        { action, fingerprint: dirtyFingerprint(delta), at: new Date().toISOString() },
+        null,
+        2,
+      ),
+      "utf-8",
+    )
+    void this.startArchiveRun(taskId)
+    return { ok: true, decision: action, dirty_projects: dirty.map((d) => d.project) }
   }
 
   /** 票 08: ALL projects green → 'done' (the task's only archive-completion

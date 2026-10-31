@@ -22,6 +22,7 @@ import { writeReflectionStore, type ReflectionStore } from "../tasks/reflection-
 import type { PlanDetail } from "../tasks/acceptance-plan-service"
 import type { ChecksFile, ProbeRunResult } from "../tasks/playbook-types"
 import type { AcceptanceResult } from "../tasks/tasks-service"
+import type { ProjectDelta } from "../tasks/archive-delta"
 
 export interface TaskToolsService {
   updateSpecField(
@@ -54,6 +55,8 @@ export interface AcceptanceToolsService {
   runProbe(taskId: string, itemId: string): Promise<ProbeRunResult>
   startPreview(taskId: string): Promise<{ state: string; url?: string; views?: unknown }>
   stopPreview(taskId: string): unknown
+  /** 放行前终检：末轮 end → 当前 HEAD 的提交 + dirty 文件（只读）。 */
+  getPostRoundDelta(taskId: string): ProjectDelta[]
 }
 
 let acceptanceProvider: (() => AcceptanceToolsService | null) | null = null
@@ -82,6 +85,17 @@ export interface ArchiveToolsService {
     input: { entry_id: string; action: "ingest" | "skip"; title?: string; content?: string },
   ): Promise<{ ok: true; store: ReflectionStore; decision: unknown }>
   retryArchive(taskId: string): unknown
+  resolveArchiveDelta(
+    taskId: string,
+    action: "include" | "exclude",
+  ): { ok: true; decision: "include" | "exclude"; dirty_projects: string[] }
+  /** done 之后的只增不改增补（可选同时落 wiki）。 */
+  recordAmendment(
+    taskId: string,
+    input: { reason: string; content: string; title?: string; target?: string; ingest?: boolean },
+  ): Promise<{ ok: true; amendment: unknown; amendments: unknown[] }>
+  /** done 之后开跟进任务（复制 spec + 新主会话 + 绑定）。 */
+  openFollowupTask(taskId: string): { task_id: string; session_id: string; name: string }
 }
 
 let archiveProvider: (() => ArchiveToolsService | null) | null = null
@@ -338,13 +352,20 @@ export function createTaskToolServer(input: TaskToolServerInput) {
   const acceptanceTools = profile.acceptanceGuide ? [
     tool(
       "get_acceptance_plan",
-      "Read the current round's acceptance plan (items with how-to steps, evidence refs, machine suggestions) plus check progress. Read-only; call it before guiding the human and whenever you need the next undecided item.",
+      "Read the current round's acceptance plan (items with how-to steps, evidence refs, machine suggestions), check progress, and the post-round site (postRound: commits after the last round's end anchor + uncommitted files). Read-only; call it before guiding the human, before the final decision, and whenever you need the next undecided item.",
       {},
       async () => {
         const svc = acceptanceService()
         if (!svc) return text({ ok: false, error: "验收服务未就绪" })
         try {
-          return text({ ok: true, ...svc.getPlanDetail(task.id) })
+          const detail = svc.getPlanDetail(task.id)
+          let postRound: ProjectDelta[] = []
+          try {
+            postRound = svc.getPostRoundDelta(task.id)
+          } catch {
+            postRound = []
+          }
+          return text({ ok: true, ...detail, postRound })
         } catch (err: unknown) {
           return text({ ok: false, error: err instanceof Error ? err.message : String(err) })
         }
@@ -659,6 +680,105 @@ export function createTaskToolServer(input: TaskToolServerInput) {
         }
       },
     ),
+    tool(
+      "resolve_archive_delta",
+      "Resolve the archive preflight block for uncommitted worktree changes AFTER the human explicitly chose: include (commit them into the archive) or exclude (record the file list and archive without them). Set confirmed=true to assert the human said so. Only valid while the task is parked in archiving.",
+      {
+        decision: z.enum(["include", "exclude"]).describe("include = 纳入归档；exclude = 排除并记录"),
+        confirmed: z.boolean().describe("true only when the human explicitly chose include/exclude — never infer"),
+      },
+      async ({ decision, confirmed }) => {
+        if (!confirmed) {
+          return text({ ok: false, error: "必须等用户明确说「纳入 / 排除」后才能执行（confirmed=true）—— 不要代替人决定。" })
+        }
+        if (task.status !== "archiving") {
+          return text({ ok: false, error: `只有归档中(archiving)的任务可以决定放行后改动（当前 ${task.status}）。` })
+        }
+        const svc = archiveService()
+        if (!svc) return text({ ok: false, error: "归档服务未就绪" })
+        try {
+          const out = svc.resolveArchiveDelta(task.id, decision)
+          return text({
+            ok: true,
+            decision: out.decision,
+            dirty_projects: out.dirty_projects,
+            hint: "续跑已触发；完成以服务端 task_status = done 为准。",
+          })
+        } catch (err: unknown) {
+          return text({ ok: false, error: err instanceof Error ? err.message : String(err) })
+        }
+      },
+    ),
+    ...(task.status === "done" ? [
+    tool(
+      "record_archive_amendment",
+      "Done only. Append an amendment to the closed archive AFTER the human explicitly asks to add/correct a note, decision, or glossary/ADR-style content. Append-only: never rewrites report.json/state.json. Set confirmed=true only when the human clearly asked. For code changes, use open_followup_task instead.",
+      {
+        reason: z.string().min(1).max(500).describe("Why this amendment is being added"),
+        content: z.string().min(1).max(20_000).describe("The amendment body"),
+        title: z.string().max(200).optional().describe("Optional title (used when ingest=true)"),
+        target: z.string().max(200).optional().describe("Destination hint, e.g. 'GLOSSARY · term X' or 'ADR · follow-up'"),
+        ingest: z.boolean().optional().describe("true = also send this amendment to the knowledge center (raw + compile queue)"),
+        confirmed: z.boolean().describe("true only when the human explicitly asked for this amendment"),
+      },
+      async ({ reason, content, title, target, ingest, confirmed }) => {
+        if (!confirmed) {
+          return text({ ok: false, error: "必须等用户明确要求补充/修正归档内容后才能记录（confirmed=true）。" })
+        }
+        if (task.status !== "done") {
+          return text({ ok: false, error: `归档增补只在任务完成(done)后可用（当前 ${task.status}）。` })
+        }
+        const svc = archiveService()
+        if (!svc) return text({ ok: false, error: "归档服务未就绪" })
+        try {
+          const out = await svc.recordAmendment(task.id, {
+            reason,
+            content,
+            ...(title ? { title } : {}),
+            ...(target ? { target } : {}),
+            ...(ingest ? { ingest: true } : {}),
+          })
+          return text({ ok: true, amendment: out.amendment, total: out.amendments.length })
+        } catch (err: unknown) {
+          return text({ ok: false, error: err instanceof Error ? err.message : String(err) })
+        }
+      },
+    ),
+    tool(
+      "open_followup_task",
+      "Done only. Create a follow-up draft task that inherits this task's spec/artifacts and gets a fresh bound main chat, AFTER the human explicitly confirms they want to keep working. The closed task stays untouched. Set confirmed=true only when the human asked for a follow-up.",
+      {
+        note: z.string().max(1000).optional().describe("Optional context to carry into the follow-up (shown on the card)"),
+        confirmed: z.boolean().describe("true only when the human explicitly asked to continue in a follow-up task"),
+      },
+      async ({ note, confirmed }) => {
+        if (!confirmed) {
+          return text({ ok: false, error: "必须等用户明确说「开跟进任务 / 继续改」后才能创建（confirmed=true）。" })
+        }
+        if (task.status !== "done") {
+          return text({ ok: false, error: `跟进任务只在归档完成(done)后创建（当前 ${task.status}）。` })
+        }
+        const svc = archiveService()
+        if (!svc) return text({ ok: false, error: "归档服务未就绪" })
+        try {
+          const out = svc.openFollowupTask(task.id)
+          appendTaskToolCard(db, sessionId, {
+            kind: "task.followup",
+            severity: "info",
+            title: "跟进任务已创建",
+            message: note?.trim() || `${out.name} · 继承上一任务的 spec，旧归档保持不变`,
+            taskId: task.id,
+            workspaceId: task.workspaceId,
+            actions: [{ id: "open_task", label: "打开跟进任务" }],
+            payload: { followupTaskId: out.task_id, followupSessionId: out.session_id },
+          })
+          return text({ ok: true, task_id: out.task_id, session_id: out.session_id, name: out.name })
+        } catch (err: unknown) {
+          return text({ ok: false, error: err instanceof Error ? err.message : String(err) })
+        }
+      },
+    ),
+    ] : []),
   ] : []
 
   const tools = [

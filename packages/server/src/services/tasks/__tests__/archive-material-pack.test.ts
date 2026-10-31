@@ -384,6 +384,33 @@ describe("摘录纪律（S1·票02 第2行/故事7）", () => {
     expect(payload).toContain("feat-login-session-20261013") // 分支指针
   })
 
+  it("PR diff 终点用归档时 HEAD：末轮后的小修也进素材（2026-10-31 收尾）", async () => {
+    const { service } = makeDeps()
+    const { taskId } = seedV4Task(new TaskHomeService(path.join(tmpRoot, "homes")))
+    const wsPath = path.join(tmpRoot, "ws", "w2b")
+    const repoDir = path.join(wsPath, "projects", "authsvc")
+    const { start, end } = makeGitRepo(repoDir)
+    // 末轮之后又提交了一次（模拟验收引导/收尾小修）
+    const git = (...args: string[]) =>
+      execFileSync("git", ["-c", "user.name=aa02", "-c", "user.email=aa02@test", ...args], { cwd: repoDir, encoding: "utf-8" })
+    fs.writeFileSync(path.join(repoDir, "late-fix.ts"), "export const late = true\n", "utf-8")
+    git("add", "-A")
+    git("commit", "-m", "fix: 放行后收尾")
+    const lateHead = git("rev-parse", "HEAD").trim()
+    seedExecution({ taskId, wsId: "aa02-ws-2b", wsPath, start, end, execId: "aa02-exec-2b" })
+
+    await service.ingestTask(taskId)
+    const manifest = readManifest(taskId)
+    const diffItem = manifest.items.find((i: any) => i.kind === "pr-diff")
+    const payload = itemPayload(path.join(knowledgeRoot, diffItem.path))
+
+    expect(lateHead).not.toBe(end)
+    expect(payload).toContain(`## 仓 authsvc（${start}..${lateHead}）`)
+    expect(payload).toContain("放行后新增提交: 1")
+    expect(payload).toContain("fix: 放行后收尾")
+    expect(payload).toContain("late-fix.ts")
+  })
+
   it("matt 产物件 = 仓库内路径指针（.scratch 逐件列名+大小，正文不拷；已随 phase PR 持久）", async () => {
     const taskHome = new TaskHomeService(path.join(tmpRoot, "homes"))
     const { service } = makeDeps()
