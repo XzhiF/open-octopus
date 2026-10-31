@@ -829,6 +829,16 @@ export function ChatTab() {
           updated = result.task
           break
         }
+        case 'open_task': {
+          // 跟进任务卡：服务端已创建任务+会话，这里直接切过去。
+          const nextTaskId = String(payload.followupTaskId ?? '')
+          if (!nextTaskId) return
+          const nextTask = await getTask(nextTaskId)
+          void refreshChatTasks()
+          void refetchSessions()
+          handleSelectTask(nextTask)
+          return
+        }
         case 'open_spec':
           setTaskModuleRequest({ module: 'plan', nonce: Date.now() })
           return
@@ -934,7 +944,7 @@ export function ChatTab() {
     } finally {
       setCardBusy(false)
     }
-  }, [cardBusy, applyTaskResult, handleCreateTask, recordDecision, sendMessage, model, effort, maxContext])
+  }, [cardBusy, applyTaskResult, handleCreateTask, handleSelectTask, refreshChatTasks, refetchSessions, recordDecision, sendMessage, model, effort, maxContext])
 
   const confirmDestructiveCardAction = useCallback(async () => {
     if (!cardConfirm || cardBusy) return

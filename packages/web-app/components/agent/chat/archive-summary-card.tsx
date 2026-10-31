@@ -37,13 +37,15 @@ function derive(data: TaskArchivePayload) {
     ? data.report.projects.reduce((n, p) => n + (p.termConflicts?.length ?? 0), 0)
     : null
   const failures = data.report?.projects.filter((p) => !p.ok) ?? []
+  const preflight = data.report?.preflight ?? null
+  const deltaCommits = (data.report?.delta ?? []).reduce((n, d) => n + (d.commits ?? 0), 0)
   const knowledge = data.knowledge
   const compile = knowledge?.compile_state
     ? (COMPILE_LABEL[knowledge.compile_state] ?? knowledge.compile_state)
     : knowledge && knowledge.pack_items > 0
       ? '已冻结'
       : '—'
-  return { state, doneProjects, total, entries, decided, conflicts, failures, compile, knowledge }
+  return { state, doneProjects, total, entries, decided, conflicts, failures, compile, knowledge, preflight, deltaCommits }
 }
 
 export function ArchiveSummaryCard({ message }: { message: AgentMessage }) {
@@ -88,7 +90,7 @@ export function ArchiveSummaryCard({ message }: { message: AgentMessage }) {
     )
   }
 
-  const { state, doneProjects, total, entries, decided, conflicts, failures, compile, knowledge } = derive(data)
+  const { state, doneProjects, total, entries, decided, conflicts, failures, compile, knowledge, preflight, deltaCommits } = derive(data)
   const done = data.status === 'done'
   const inFlight = data.in_flight
   const stopped = !done && data.status === 'archiving' && !inFlight && !!data.report && !data.report.ok
@@ -102,10 +104,14 @@ export function ArchiveSummaryCard({ message }: { message: AgentMessage }) {
   const note = (() => {
     if (done) {
       const tail = conflicts ? `；${conflicts} 处术语冲突已在归档 PR 等 review` : ''
-      return `归档完成，任务已 done${tail}。`
+      const delta = deltaCommits > 0 ? `；放行后 ${deltaCommits} 个提交已纳入` : ''
+      return `归档完成，任务已 done${delta}${tail}。`
     }
     // 重试在飞时，旧的失败报告已经不是现状 —— 先报进度。
     if (inFlight) return `正在同步到 ${total || '若干'} 个 project…`
+    if (preflight) {
+      return `停在归档：${preflight.dirty_projects.join('、')} 还有未提交改动——对我说「纳入」或「排除」。`
+    }
     if (failures.length > 0) {
       const first = failures[0]
       return `停在归档：${first.project} — ${first.error ?? '未完成'}（对我说「重试」，我补推。）`

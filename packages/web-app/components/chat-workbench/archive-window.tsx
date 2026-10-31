@@ -135,6 +135,26 @@ export function ArchiveWindow({ task }: { task: TaskView; onMutated?: () => void
         </span>
       </div>
 
+      {archive.report?.preflight && (
+        <section
+          data-testid="archive-preflight"
+          className="mb-3 rounded-xl border-[1.5px] border-pop-red/35 bg-pop-red/[0.04] p-3"
+        >
+          <h3 className="mb-1.5 font-mono text-[9px] font-black tracking-[.08em] text-pop-red">
+            归档前拦截 · 有未提交改动
+          </h3>
+          <p className="text-[10.5px] leading-relaxed text-pop-ink/85">{archive.report.preflight.message}</p>
+          <div className="mt-1 flex flex-wrap gap-1.5">
+            {archive.report.preflight.dirty_projects.map((p) => (
+              <span key={p} className="rounded-full border border-pop-red/30 bg-pop-red/10 px-1.5 py-[1px] font-mono text-[9px] text-pop-red">
+                {p}
+              </span>
+            ))}
+          </div>
+          <p className="mt-1.5 text-[9.5px] text-pop-dim">在主 Chat 里说「纳入」或「排除」，由 Agent 执行；窗口只读。</p>
+        </section>
+      )}
+
       <section className="rounded-xl border-[1.5px] border-pop-bd bg-pop-paper/50 p-3">
         <h3 className="mb-2 font-mono text-[9px] font-black tracking-[.08em] text-pop-dim">PROJECT 同步结果</h3>
         {rows.length === 0 ? (
@@ -189,6 +209,58 @@ export function ArchiveWindow({ task }: { task: TaskView; onMutated?: () => void
           全绿才 done；任一 project 失败会停在 archiving，说「重试」由主 Chat 按 project 幂等续跑。
         </p>
       </section>
+
+      {(archive.report?.delta?.length ?? 0) > 0 && (
+        <section
+          data-testid="archive-delta"
+          className="mt-3 rounded-xl border-[1.5px] border-pop-bd bg-pop-paper/50 p-3"
+        >
+          <h3 className="mb-2 flex items-center gap-2 font-mono text-[9px] font-black tracking-[.08em] text-pop-dim">
+            放行后现场
+            <span className="font-normal text-pop-dim/60">
+              {archive.report?.delta_decision
+                ? `决策：${archive.report.delta_decision === 'include' ? '纳入归档' : '排除并记录'}`
+                : '无未提交改动'}
+            </span>
+          </h3>
+          <div className="space-y-1.5">
+            {(archive.report?.delta ?? []).map((d) => (
+              <div
+                key={d.project}
+                data-testid="archive-delta-row"
+                className="rounded-lg border border-pop-bd/50 bg-black/10 px-2 py-1.5"
+              >
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="text-[10.5px] font-bold text-pop-ink">{d.project}</span>
+                  <span className="font-mono text-[9px] text-pop-dim">{d.commits} 个末轮后提交</span>
+                  <span className={`font-mono text-[9px] ${d.dirty_files.length > 0 ? 'text-pop-amber' : 'text-pop-green'}`}>
+                    {d.dirty_files.length > 0 ? `${d.dirty_files.length} 个未提交` : '工作区干净'}
+                  </span>
+                  {d.from && (
+                    <span className="ml-auto font-mono text-[8.5px] text-pop-dim/60">
+                      {d.from.slice(0, 8)}..{(d.head ?? '?').slice(0, 8)}
+                    </span>
+                  )}
+                </div>
+                {d.subjects.length > 0 && (
+                  <ul className="mt-1 space-y-0.5">
+                    {d.subjects.slice(0, 6).map((s, i) => (
+                      <li key={`${d.project}-${i}`} className="truncate font-mono text-[9px] text-pop-dim">{s}</li>
+                    ))}
+                  </ul>
+                )}
+                {d.dirty_files.length > 0 && (
+                  <ul className="mt-1 space-y-0.5">
+                    {d.dirty_files.slice(0, 6).map((f) => (
+                      <li key={f} className="truncate font-mono text-[9px] text-pop-amber/90">未提交 · {f}</li>
+                    ))}
+                  </ul>
+                )}
+              </div>
+            ))}
+          </div>
+        </section>
+      )}
 
       <div className="mt-3 grid gap-3 lg:grid-cols-2">
         <section className="rounded-xl border-[1.5px] border-pop-bd bg-pop-paper/50 p-3">
@@ -269,6 +341,41 @@ export function ArchiveWindow({ task }: { task: TaskView; onMutated?: () => void
           <p className="text-[10.5px] text-pop-dim">报告尚未生成。</p>
         )}
       </section>
+
+      {(archive.amendments?.length ?? 0) > 0 && (
+        <section
+          data-testid="archive-amendments"
+          className="mt-3 rounded-xl border-[1.5px] border-pop-purple/25 bg-pop-purple-soft/15 p-3"
+        >
+          <h3 className="mb-2 font-mono text-[9px] font-black tracking-[.08em] text-pop-purple">
+            归档增补 <span className="font-normal text-pop-dim/60">({archive.amendments.length}) · 只增不改</span>
+          </h3>
+          <div className="space-y-1.5">
+            {archive.amendments.map((a) => (
+              <div
+                key={a.id}
+                data-testid="archive-amendment-entry"
+                className="rounded-lg border border-pop-purple/20 bg-black/10 px-2 py-1.5"
+              >
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="text-[10.5px] font-bold text-pop-ink">{a.reason}</span>
+                  {a.target && <span className="font-mono text-[9px] text-pop-purple">{a.target}</span>}
+                  {a.ingest && <span className="font-mono text-[8.5px] text-pop-green">已送知识中心</span>}
+                  <span className="ml-auto font-mono text-[8.5px] text-pop-dim/60">
+                    {a.at.replace('T', ' ').slice(0, 16)}
+                  </span>
+                </div>
+                <p className="mt-0.5 whitespace-pre-wrap break-words text-[10px] leading-relaxed text-pop-dim">
+                  {a.content}
+                </p>
+                {a.ingest?.raw_path && (
+                  <div className="mt-0.5 font-mono text-[8.5px] text-pop-dim/70">{a.ingest.raw_path}</div>
+                )}
+              </div>
+            ))}
+          </div>
+        </section>
+      )}
     </div>
   )
 }

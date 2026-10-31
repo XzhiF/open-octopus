@@ -56,6 +56,7 @@ function payload(overrides: Partial<TaskArchivePayload> = {}): TaskArchivePayloa
       decisions: {},
     },
     knowledge: { pack_items: 7, compile_state: 'queued', compile_position: 2 },
+    amendments: [],
     ...overrides,
   }
 }
@@ -108,6 +109,25 @@ describe('ArchiveSummaryCard', () => {
     // 总计、卡面只有链接，没有决定按钮
     expect(screen.getByText('1/2')).toBeTruthy()
     expect(screen.queryByRole('button', { name: /落 wiki|跳过|重试/ })).toBeNull()
+  })
+
+  it('asks the human to include/exclude when preflight blocks on dirty worktrees', async () => {
+    mockGetTaskArchive.mockResolvedValue(payload({
+      in_flight: false,
+      report: {
+        taskId: 't-1', date: '20261031', ok: false,
+        projects: [
+          { project: 'api', ok: false, adrMerged: 0, adrSkipped: [], termsAppended: 0, termConflicts: [], commit: null, pushed: false, pr: null, error: '工作区有未提交改动 — 待纳入/排除' },
+        ],
+        unattributedAdrs: [], unattributedNotes: 0,
+        preflight: { blocked: true, dirty_projects: ['api'], message: '工作区还有未提交改动' },
+        delta: [{ project: 'api', dir: 'C:/wt', from: 'a', head: 'b', commits: 1, subjects: ['x'], dirty_files: ['M a.ts'] }],
+        delta_decision: null,
+      },
+    }))
+    render(<ArchiveSummaryCard message={message()} />)
+    expect(await screen.findByText(/api 还有未提交改动/)).toBeTruthy()
+    expect(screen.getByText(/对我说「纳入」或「排除」/)).toBeTruthy()
   })
 
   it('settles on done and reports term conflicts waiting for PR review', async () => {

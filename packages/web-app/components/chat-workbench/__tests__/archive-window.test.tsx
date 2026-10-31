@@ -53,6 +53,7 @@ function payload(overrides: Partial<TaskArchivePayload> = {}): TaskArchivePayloa
       decisions: { "refl-1": { action: "ingest", at: new Date().toISOString(), raw_path: "raw/inbox/a.md" } },
     },
     knowledge: { pack_items: 7, compile_state: "committed", compile_position: null },
+    amendments: [],
     ...overrides,
   }
 }
@@ -79,6 +80,42 @@ describe("ArchiveWindow — 只读明细", () => {
     expect(screen.getByText("已编译")).toBeTruthy()
 
     // 只读：整窗没有任何按钮（重试/落 wiki/跳过都回主 Chat）
+    expect(screen.queryAllByRole("button")).toHaveLength(0)
+  })
+
+  it("shows the preflight block, the post-round delta and append-only amendments", async () => {
+    mockGetTaskArchive.mockResolvedValue(payload({
+      status: "archiving",
+      in_flight: false,
+      report: {
+        taskId: "t1",
+        date: "20261031",
+        ok: false,
+        projects: [
+          { project: "api", ok: false, adrMerged: 0, adrSkipped: [], termsAppended: 0, termConflicts: [], commit: null, pushed: false, pr: null, error: "工作区有未提交改动 — 待纳入/排除" },
+        ],
+        unattributedAdrs: [],
+        unattributedNotes: 0,
+        preflight: { blocked: true, dirty_projects: ["api"], message: "工作区还有未提交改动（api: 2 个文件）" },
+        delta: [
+          { project: "api", dir: "C:/wt/api", from: "aaaaaaaa", head: "bbbbbbbb", commits: 2, subjects: ["[quick-edit] 收口"], dirty_files: ["M src/a.ts"] },
+        ],
+        delta_decision: null,
+      },
+      amendments: [
+        { id: "am-1", at: "2026-10-31T12:00:00.000Z", reason: "补收尾决策", content: "上线后补灰度开关。", target: "ADR · 灰度", ingest: { raw_path: "raw/inbox/a.md" } },
+      ],
+    }))
+    render(<ArchiveWindow task={task("archiving")} />)
+
+    expect(await screen.findByTestId("archive-preflight")).toBeTruthy()
+    expect(screen.getByText(/api: 2 个文件/)).toBeTruthy()
+    expect(screen.getByTestId("archive-delta")).toBeTruthy()
+    expect(screen.getByText("[quick-edit] 收口")).toBeTruthy()
+    expect(screen.getByText("未提交 · M src/a.ts")).toBeTruthy()
+    expect(screen.getByTestId("archive-amendments")).toBeTruthy()
+    expect(screen.getByText("补收尾决策")).toBeTruthy()
+    expect(screen.getByText("上线后补灰度开关。")).toBeTruthy()
     expect(screen.queryAllByRole("button")).toHaveLength(0)
   })
 })

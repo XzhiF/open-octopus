@@ -700,6 +700,24 @@ export interface ArchiveProjectReportWire {
   error?: string
 }
 
+/** 末轮 end → 归档时 HEAD 的现场（2026-10-31 收尾）。 */
+export interface ArchiveDeltaWire {
+  project: string
+  dir: string | null
+  from: string | null
+  head: string | null
+  commits: number
+  subjects: string[]
+  dirty_files: string[]
+  error?: string
+}
+
+export interface ArchivePreflightWire {
+  blocked: true
+  dirty_projects: string[]
+  message: string
+}
+
 export interface ArchiveReportWire {
   taskId: string
   date: string
@@ -708,6 +726,19 @@ export interface ArchiveReportWire {
   unattributedAdrs: string[]
   unattributedNotes: number
   error?: string
+  delta?: ArchiveDeltaWire[]
+  preflight?: ArchivePreflightWire | null
+  delta_decision?: 'include' | 'exclude' | null
+}
+
+/** done 之后的只增不改增补记录。 */
+export interface ArchiveAmendmentWire {
+  id: string
+  at: string
+  reason: string
+  content: string
+  target?: string
+  ingest?: { raw_path?: string; compile_task_id?: string } | null
 }
 
 /** 归档素材包 / 编译状态（知识中心只读快照）。 */
@@ -729,6 +760,7 @@ export interface TaskArchivePayload {
   report_md: string | null
   reflection: ReflectionStoreWire | null
   knowledge: ArchiveKnowledgeWire | null
+  amendments: ArchiveAmendmentWire[]
 }
 
 /** GET /api/tasks/:id/usage — the task's whole-lifecycle ledger. */
