@@ -90,6 +90,10 @@ export function listSessions(query?: { clone?: string; limit?: number; cursor?: 
 export function getSessionRunning(id: string) {
   return request<{ running: boolean; partial: boolean }>(`/sessions/${id}/running`)
 }
+/** Slash commands the CLI advertised for this session (empty until a turn ran). */
+export function getSessionSlashCommands(id: string) {
+  return request<{ commands: string[] }>(`/sessions/${id}/slash-commands`)
+}
 export interface RunningAgentSession {
   id: string
   title: string

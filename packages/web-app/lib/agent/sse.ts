@@ -15,6 +15,8 @@ export interface SSEHandlers {
   onStatus?: (data: Extract<AgentSSEEvent, { event: 'status' }>['data']) => void
   onConfirm?: (data: Extract<AgentSSEEvent, { event: 'confirm' }>['data']) => void
   onContextUsage?: (data: import('@/lib/agent/types').ContextUsageData) => void
+  /** Slash commands advertised by the CLI — replace the composer's list. */
+  onSlashCommands?: (data: Extract<AgentSSEEvent, { event: 'slash_commands' }>['data']) => void
   /** 2026-10-28 task-thread: a task turn landed a [quick-edit] commit. */
   onQuickEditCommit?: (data: {
     sessionId?: string
@@ -98,6 +100,9 @@ export function useSSEConnection() {
                   break
                 case 'context_usage':
                   handlers.onContextUsage?.(data)
+                  break
+                case 'slash_commands':
+                  handlers.onSlashCommands?.(data)
                   break
                 case 'tool_call':
                   handlers.onToolCall?.(data)

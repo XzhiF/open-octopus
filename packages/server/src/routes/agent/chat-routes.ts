@@ -31,6 +31,7 @@ import { withTransientReminder } from '../../services/agent/prompt-reminder'
 import { recordProviderResultUsage, ledgerStopReason } from '../../services/llm-call-ledger'
 import { createWorkflowToolServer } from '../../services/chat/workflow-tools'
 import { createTaskToolServer } from '../../services/chat/task-tools'
+import { getSlashCommands, rememberSlashCommands } from '../../services/chat/slash-commands'
 import type { TokenUsageDAO } from '../../db/dao/token-usage-dao'
 import type { EffortLevel } from '@octopus/shared'
 import { parseComposerContext, parseComposerEffort, resolveChatModel } from './composer-options'
@@ -66,6 +67,18 @@ export function createChatRoutes(deps: ChatRouteDeps): Hono {
       running: isStreamActive(id),
       partial: sessionDao.hasStreamingMessage(id),
     })
+  })
+
+  // ── Slash commands advertised by the CLI for this session ─────────
+  // Populated from `system:init` on every turn. Empty means "not seen yet in
+  // this server process" — the composer then falls back to its known list.
+  app.get('/sessions/:id/slash-commands', (c) => {
+    const id = c.req.param('id')
+    const session = sessionDao.findById(id)
+    if (!session || session.is_deleted) {
+      return c.json(createAgentError('NOT_FOUND', `Session ${id} not found`), 404)
+    }
+    return c.json({ commands: getSlashCommands(id) })
   })
 
   // ── Chat SSE streaming ─────────────────────────────────────────────
@@ -604,8 +617,35 @@ export function createChatRoutes(deps: ChatRouteDeps): Hono {
             case 'status':
               await stream.writeSSE({ event: 'status', data: JSON.stringify({ status: chunk.status }) })
               break
+            case 'slash_commands':
+              // CLI-advertised command set for this session (skills/plugins
+              // included). Cache it for reloads and paint the composer menu.
+              rememberSlashCommands(sessionId, chunk.commands)
+              await stream.writeSSE({ event: 'slash_commands', data: JSON.stringify({ sessionId, commands: chunk.commands }) })
+              break
+            case 'local_command_output':
+              // Some CLI versions surface local-command text here instead of an
+              // assistant message. Either way it is the turn's reply.
+              fullContent += chunk.content
+              pushTimeline({ kind: 'text', text: chunk.content })
+              await stream.writeSSE({ event: 'text_delta', data: JSON.stringify({ delta: chunk.content, content: fullContent }) })
+              break
+            case 'conversation_reset':
+              // `/clear` semantics A: forget the provider transcript only. The
+              // chat transcript and DB rows stay untouched; the next result
+              // carries the fresh SDK session id and re-points the session.
+              sessionDao.clearProviderSession(sessionId)
+              break
             case 'result':
               generated = true
+              // Locally-executed slash commands (/context, /compact, …) answer
+              // through result.content only — no stream deltas exist. Without
+              // this fallback the reply is dropped and the turn never finishes.
+              if (!stopped && chunk.content && !fullContent) {
+                fullContent = chunk.content
+                pushTimeline({ kind: 'text', text: chunk.content })
+                await stream.writeSSE({ event: 'text_delta', data: JSON.stringify({ delta: chunk.content, content: fullContent }) })
+              }
               // Native resume: persist the SDK session id so the next turn (and
               // its prompt cache prefix) continues instead of starting cold.
               if (chunk.sessionId) sessionDao.updateProviderSession(sessionId, chunk.sessionId)
@@ -716,6 +756,19 @@ export function createChatRoutes(deps: ChatRouteDeps): Hono {
           event: 'done',
           data: JSON.stringify({
             session_id: sessionId, message_id: assistantMsgId,
+            orchestration: orchestrationResult,
+            session_title: sessionDao.findById(sessionId)?.title,
+          }),
+        })
+      } else if (!aborted && generated) {
+        // Generated but nothing displayable (/clear, an empty /compact, a turn
+        // that only produced thinking). Still close the SSE turn: a missing
+        // `done` used to leave the composer spinning until a manual reload.
+        if (partialRowId) finalizePartial(false)
+        await stream.writeSSE({
+          event: 'done',
+          data: JSON.stringify({
+            session_id: sessionId,
             orchestration: orchestrationResult,
             session_title: sessionDao.findById(sessionId)?.title,
           }),

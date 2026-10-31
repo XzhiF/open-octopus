@@ -438,6 +438,13 @@ export class ClaudeSDKProvider implements IAgentProvider {
       else options.abortSignal.addEventListener('abort', onAbort, { once: true })
     }
     let contextUsageEmitted = false
+    // Slash commands (/context, /compact, /usage …) are executed by the CLI
+    // itself: they arrive as a complete `assistant` message + `result` and
+    // carry NO stream_event deltas (verified against SDK 0.3.235). Track which
+    // message ids actually streamed so the assistant-event fallback below only
+    // fires for that non-streaming case and never duplicates normal text.
+    const streamedTextMessageIds = new Set<string>()
+    const emittedAssistantFallbackIds = new Set<string>()
     // Per-session (per sendQuery) running count of stop-hook-feedback blocks,
     // 1-based — feeds ActiveGoalChunk.iterations; set_at = first-seen time.
     let goalIterations = 0
@@ -547,6 +554,7 @@ export class ClaudeSDKProvider implements IAgentProvider {
           else if (e.type === 'content_block_delta') {
             const delta = e.delta!
             if (delta.type === 'text_delta') {
+              streamedTextMessageIds.add(currentMessageId)
               this._llmTracker.onTextDelta()
               yield { type: 'text_delta', content: delta.text!, messageId: currentMessageId }
             } else if (delta.type === 'thinking_delta') {
@@ -624,6 +632,25 @@ export class ClaudeSDKProvider implements IAgentProvider {
           // Do NOT use assistant event usage for token tracking —
           // input_tokens includes cache-reused tokens that inflate totals.
           // result.modelUsage has definitive totals.
+          //
+          // Text fallback for locally-executed slash commands: the CLI answers
+          // /context, /compact, /usage … with a complete assistant message and
+          // no stream deltas at all, so the streaming path above stays silent.
+          // Emit that text once, only when this message never streamed.
+          const am = event as {
+            message?: { id?: string; content?: Array<{ type?: string; text?: string }> }
+          }
+          const msgId = am.message?.id ?? `slash-${Date.now()}`
+          const text = Array.isArray(am.message?.content)
+            ? am.message.content
+                .filter((b) => b.type === 'text' && typeof b.text === 'string')
+                .map((b) => b.text!)
+                .join('')
+            : ''
+          if (text && !streamedTextMessageIds.has(msgId) && !emittedAssistantFallbackIds.has(msgId)) {
+            emittedAssistantFallbackIds.add(msgId)
+            yield { type: 'text_delta', content: text, messageId: msgId }
+          }
         }
 
         else if (event.type === 'user') {
@@ -667,14 +694,36 @@ export class ClaudeSDKProvider implements IAgentProvider {
         }
 
         else if (event.type === 'system') {
-          const sm = event as { subtype: string; status?: 'compacting' | 'requesting' | null; content?: string }
+          const sm = event as {
+            subtype: string
+            status?: 'compacting' | 'requesting' | null
+            content?: string
+            slash_commands?: string[]
+            terminal_slash_commands?: string[]
+          }
           if (sm.subtype === 'status') {
             yield { type: 'status', status: sm.status ?? null }
           } else if (sm.subtype === 'compact_boundary') {
             yield { type: 'status', status: 'compacting' }
           } else if (sm.subtype === 'local_command_output') {
             yield { type: 'local_command_output', content: sm.content ?? '' }
+          } else if (sm.subtype === 'init' && Array.isArray(sm.slash_commands)) {
+            // The advertised set is CLI/skills-dependent — hosts replace their
+            // cached list with this. Terminal-bound commands (exit, statusline…)
+            // are useless in a headless host and are dropped here.
+            const terminal = new Set(sm.terminal_slash_commands ?? [])
+            yield {
+              type: 'slash_commands',
+              commands: sm.slash_commands.filter((name) => !terminal.has(name)),
+            }
           }
+        }
+
+        else if ((event as { type: string }).type === 'conversation_reset') {
+          // `/clear`: the CLI dropped its transcript and restarted the session.
+          // Host-side history is ours to keep (semantics A) — the chunk only
+          // tells the host to forget the provider session pointer.
+          yield { type: 'conversation_reset' }
         }
 
         else if ((event as { type: string }).type === 'active_goal') {

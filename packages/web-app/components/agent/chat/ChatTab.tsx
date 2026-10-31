@@ -5,6 +5,7 @@ import { Folder, Menu, PanelLeft, Search, SquarePen } from 'lucide-react'
 import { toast } from 'sonner'
 import { useChatSessions } from '@/components/providers/chat-sessions'
 import { useAgentChat, type UseAgentChatApiOverride, type ChatSubagentRef } from '@/hooks/useAgentChat'
+import { buildSlashCommands } from './SlashCommandAutocomplete'
 import { useSessionLedger } from '@/hooks/useSessionLedger'
 import { useTaskUsage } from '@/hooks/useTaskUsage'
 import { useComposerSettings } from '@/hooks/useComposerSettings'
@@ -256,7 +257,7 @@ export function ChatTab() {
 
   const {
     messages, streaming, streamContent, streamThinking, streamTimeline, isThinking, toolCalls, pendingConfirm,
-    error: chatError, statusMessage, contextUsage,
+    error: chatError, statusMessage, contextUsage, slashCommands,
     sendMessage, stopGenerate, handleConfirm, loadMessages,
     steer, steeringRef, resumeStreaming, checkAndResume, streamingSessionId, turnStartedAt,
   } = useAgentChat(activeSessionId, {
@@ -264,6 +265,9 @@ export function ChatTab() {
     api: mainChatApi,
     onQuickEditCommit: handleQuickEditCommit,
   })
+  // Composer `/` menu — the CLI's advertised set (skills included), rebuilt
+  // into grouped rows. Empty until the first turn of this server process.
+  const slashCommandList = useMemo(() => buildSlashCommands(slashCommands), [slashCommands])
   // One ledger fetch serves both the composer token chip (aggregates) and the
   // per-turn timing/token stats in the transcript (calls).
   const { aggregates: sessionUsage, calls: sessionLedgerCalls } = useSessionLedger(activeSessionId, streaming)
@@ -1378,6 +1382,7 @@ export function ChatTab() {
             pendingConfirm={pendingConfirm}
             error={chatError}
             statusMessage={statusMessage}
+            commands={slashCommandList}
             onSend={handleSendMessage}
             onStop={stopGenerate}
             onConfirm={handleConfirm}
