@@ -188,4 +188,26 @@ describe('TaskStatusCard', () => {
     expect(screen.getByText(/用时 06:00/)).toBeTruthy()
     expect(screen.queryAllByRole('button')).toHaveLength(0)
   })
+
+  it('末 phase 通过 · 待归档：收尾只读卡，提示在对话里说「归档」', async () => {
+    ;(getTask as Mock).mockResolvedValue({
+      id: 't-park',
+      name: '待归档任务',
+      status: 'awaiting_archive',
+      executions: [],
+    })
+
+    render(<TaskStatusCard message={eventMessage({
+      kind: 'task.status', title: '末 phase 已通过 · 待归档', status: 'awaiting_archive',
+      taskId: 't-park',
+      message: '任务：待归档任务 · 归档尚未启动',
+    }, 'm-park')} />)
+
+    await waitFor(() => expect(screen.getByText(/在主 Chat 说「归档」开始归档/)).toBeTruthy())
+    const card = screen.getByTestId('activity-event-card')
+    expect(card.getAttribute('data-card-tone')).toBe('settled')
+    expect(card.textContent).toContain('待归档')
+    expect(card.textContent).toContain('暂不归档')
+    expect(screen.queryAllByRole('button')).toHaveLength(0)
+  })
 })

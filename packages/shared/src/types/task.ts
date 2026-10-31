@@ -36,6 +36,14 @@ import type { LlmUsageSummary } from "../ledger"
 //  a pause is the RUN, which keeps the execution layer unaware of tasks — not every
 //  workflow has one bound (解耦 requirement).
 //
+//  archive-consent (2026-10-31): adds 'awaiting_archive' — another derived-only value.
+//  It means "末 phase 已通过验收，归档尚未启动": the persisted row stays 'ready' and
+//  deriveTaskView reports awaiting_archive until the human explicitly starts archive.
+//  Archive orchestration (git merge/push/PR + knowledge ingest) must not run just
+//  because a PR-delivered task was accepted — the PR may never merge. Like 'paused',
+//  it is deliberately absent from the DB CHECK: persisting it by mistake should fail
+//  loudly rather than create a second source of truth.
+//
 //  Listed here, NOT in the DB CHECK (schema.sql tasks.status): the CHECK's meaning is
 //  "values allowed to be persisted", and a mis-write of a paused task row should fail
 //  loudly rather than quietly become a second source of truth. Widening the enum is what
@@ -48,6 +56,7 @@ export const TaskStatusSchema = z.enum([
   "running",
   "paused",
   "awaiting_review",
+  "awaiting_archive",
   "archiving",
   "done",
   "failed",

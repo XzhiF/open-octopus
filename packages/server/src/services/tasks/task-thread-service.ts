@@ -91,6 +91,9 @@ export interface TaskThreadProfile {
   /** 2026-10-31 AI-native 归档：archiving 态 → 主 Chat 负责播报进度、逐条问反思、
    *  在用户明确表态后执行落/跳过/重试；对话里只留一张归档总框。 */
   archiveGuide: boolean
+  /** 2026-10-31 archive-consent：末 phase 已验收、归档尚未启动 —— 主 Chat 只问
+   *  一次「现在归档吗？」，用户明确说「归档」后才 allowed 调 start_archive。 */
+  archiveConsent: boolean
 }
 
 export interface TaskThreadDeps {
@@ -114,6 +117,7 @@ const STATUS_LABEL: Record<string, string> = {
   running: "运行中",
   paused: "已暂停",
   awaiting_review: "待验收",
+  awaiting_archive: "待归档",
   archiving: "归档中",
   done: "已完成",
   aborted: "已中止",
@@ -261,9 +265,11 @@ export class TaskThreadService {
     this.taskHomeService.ensureRulesFile(task.id)
     const workspace = task.workspace_id ? this.workspaceService.getById(task.workspace_id) : undefined
     const wsPath = workspace ? expandHome(workspace.path) : null
+    // archive-consent: 末 phase 已验收、归档未启动 —— 只读；只能确认归档或中止。
+    const awaitingArchive = view.taskStatus === "awaiting_archive"
     // ready has no execution workspace yet, so a doer turn can only read for now.
     const readOnly =
-      identity === "base" || task.status === "archiving" || (identity === "doer" && !wsPath)
+      identity === "base" || task.status === "archiving" || awaitingArchive || (identity === "doer" && !wsPath)
 
     const awaitingPhase = view.phaseViews.find((p) => p.status === "awaiting_review")
     const activePhase =
@@ -297,8 +303,9 @@ export class TaskThreadService {
     const acceptanceGuide =
       identity === "doer" && !readOnly && info.awaitingReview && !!wsPath && acceptancePlanReady(task.id)
     const archiveGuide = identity === "doer" && info.status === "archiving"
+    const archiveConsent = identity === "doer" && awaitingArchive
     const guard = this.buildGuard(identity, { taskHome, wsPath, readOnly, taskId: task.id, acceptanceGuide })
-    const context = this.buildContext(info, { identity, spec, view, acceptanceGuide, archiveGuide })
+    const context = this.buildContext(info, { identity, spec, view, acceptanceGuide, archiveGuide, archiveConsent })
 
     return {
       task: info,
@@ -316,6 +323,7 @@ export class TaskThreadService {
       })(),
       acceptanceGuide,
       archiveGuide,
+      archiveConsent,
     }
   }
 
@@ -358,6 +366,7 @@ export class TaskThreadService {
       view: TaskView
       acceptanceGuide?: boolean
       archiveGuide?: boolean
+      archiveConsent?: boolean
     },
   ): string {
     const label = STATUS_LABEL[info.displayStatus] ?? info.displayStatus
@@ -385,10 +394,13 @@ export class TaskThreadService {
 
     if (extra.identity === "doer") {
       const planCmd = `POST /api/tasks/${info.id}/plan`
-      const readOnlyLine = info.status === "archiving"
-        ? "[只读] 归档编排进行中：不要改代码或规格。可以读 task home / archive/report.md，回答归档结果、冲突与重试问题。"
-        : "[写权] 只写执行工作区的 projects/**；工作区批次目录 .scratch 是计划副本，只读。"
-      const quickEditLine = info.status === "archiving"
+      const frozen = info.displayStatus === "archiving" || info.displayStatus === "awaiting_archive"
+      const readOnlyLine = info.displayStatus === "awaiting_archive"
+        ? "[只读] 末 phase 已验收，任务停在待归档：不要改代码或规格；只能确认是否归档或中止。"
+        : info.displayStatus === "archiving"
+          ? "[只读] 归档编排进行中：不要改代码或规格。可以读 task home / archive/report.md，回答归档结果、冲突与重试问题。"
+          : "[写权] 只写执行工作区的 projects/**；工作区批次目录 .scratch 是计划副本，只读。"
+      const quickEditLine = frozen
         ? ""
         : "[纪律] 每次有效编辑由 server 自动落 [quick-edit] commit，不要自己 git commit/push。"
       const guideLines = extra.acceptanceGuide ? [
@@ -412,10 +424,20 @@ export class TaskThreadService {
         "  6. 若 preflight 提示有未提交改动：问用户「纳入归档」还是「排除并记录」，明确表态后调 resolve_archive_delta(decision, confirmed=true)；不要自己决定。",
         "  7. 不要声称已完成 —— done 由服务端在全部 project 的 git 同步成功后才写入。",
       ] : []
+      const consentLines = extra.archiveConsent ? [
+        "[归档确认] 末 phase 已通过，任务停在「待归档」(awaiting_archive)，归档尚未启动。",
+        "  1. 用一两句话告诉用户本轮交付已完成；然后只问一次：「现在归档吗？」",
+        "  2. 归档会执行 git 同步 / ADR+术语合并 / commit+push+PR / 知识沉淀；交付 PR 可能长期不合并，任务可以一直停在待归档。",
+        "  3. 用户明确说「归档 / 开始归档 / 现在归档」→ 调用 start_archive(confirmed=true)；不要自己开始归档。",
+        "  4. 用户说「暂不归档 / 先等等」→ 什么都不做，告诉用户任务保持待归档，随时说「归档」即可。",
+        "  5. 用户说「中止 / 不做了」→ request_task_action(action=\"abort\", reason=...)，仍需人点确认卡。",
+        "  6. 不要声称 done —— done 由服务端在全部 project 的 git 同步成功后才写入。",
+      ] : []
       return [
         head,
         ...guideLines,
         ...archiveLines,
+        ...consentLines,
         "[身份] 任务执行者。接住作者谈好的 spec / 批次 / 运行手册，在执行工作区里按用户指令改代码。",
         `[执行工作区] ${info.wsPath ?? "尚未绑定（等待触发）"}${info.branch ? ` · 分支 ${info.branch}` : ""}`,
         readOnlyLine,

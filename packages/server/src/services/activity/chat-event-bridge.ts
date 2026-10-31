@@ -35,6 +35,7 @@ const TASK_STATUS_TITLE: Record<string, string> = {
   running: "任务开始执行",
   paused: "任务已暂停",
   awaiting_review: "本轮完成 · 待验收",
+  awaiting_archive: "末 phase 已通过 · 待归档",
   archiving: "末 phase 已通过 · 归档中",
   done: "任务完成 · 已归档",
   aborted: "任务已中止",
@@ -47,6 +48,7 @@ const TASK_STATUS_SEVERITY: Record<string, ActivitySeverity> = {
   running: "info",
   paused: "warn",
   awaiting_review: "warn",
+  awaiting_archive: "warn",
   archiving: "warn",
   done: "info",
   aborted: "warn",
@@ -73,6 +75,10 @@ const TASK_STATUS_ACTIONS: Record<string, TaskCardAction[]> = {
   awaiting_review: [
     { id: "open_acceptance", label: "✓ 去验收" },
     { id: "open_changes", label: "打开本轮变更" },
+  ],
+  awaiting_archive: [
+    { id: "open_acceptance", label: "回看验收" },
+    { id: "abort", label: "■ 中止" },
   ],
   archiving: [
     { id: "open_archive", label: "打开归档" },
@@ -118,6 +124,8 @@ class ChatEventBridge {
   private acceptanceGuided = new Set<string>()
   /** 归档引导唤醒去重（taskId → 已开始引导）。 */
   private archiveGuided = new Set<string>()
+  /** 归档确认（验收后停在待归档）唤醒去重（taskId → 已问过）。 */
+  private archiveConsentGuided = new Set<string>()
   /** 归档完成播报去重（taskId → 已播报）。 */
   private archiveDoneGuided = new Set<string>()
 
@@ -347,7 +355,9 @@ class ChatEventBridge {
     // 2026-10-31 AI-native 归档：archiving / done 不再追加通用状态卡，也不会
     // 在这里唤醒 —— 入口是 beginArchiving 的总框引导与 endArchiving 的完成播报。
     // 否则一张任务会出现「归档中 + 归档总框 + 已完成」三张卡，与「只留一个总框」冲突。
-    const archiveHandled = isThread && (status === "archiving" || status === "done")
+    // awaiting_archive 同样让位给 requestArchiveConsentGuide 的专用确认卡/唤醒。
+    const archiveHandled = isThread &&
+      (status === "archiving" || status === "done" || status === "awaiting_archive")
 
     if (isThread && row.source_chat_session_id && !archiveHandled) {
       this.appendTaskCard({
@@ -425,6 +435,81 @@ class ChatEventBridge {
         )
       }
     }
+  }
+
+  /** 归档前的明确同意（2026-10-31 archive-consent）：末 phase 已通过但归档
+   *  尚未启动。只插一张「待归档」卡、只唤醒一次，让主 Chat 问「现在归档吗？」；
+   *  用户明确说「归档」后才允许 start_archive。 */
+  requestArchiveConsentGuide(taskId: string): void {
+    if (!this.db) return
+    if (this.archiveConsentGuided.has(taskId)) return
+    let row: {
+      name?: string
+      repo_group?: string | null
+      source_chat_session_id?: string | null
+      workspace_id?: string | null
+    } | undefined
+    try {
+      row = this.db.prepare(
+        "SELECT name, repo_group, source_chat_session_id, workspace_id FROM tasks WHERE id = ?",
+      ).get(taskId) as typeof row
+    } catch {
+      return
+    }
+    if (!row?.source_chat_session_id) return
+    let session: { clone_name?: string | null } | undefined
+    try {
+      session = this.db.prepare("SELECT clone_name FROM sessions WHERE id = ?")
+        .get(row.source_chat_session_id) as typeof session
+    } catch {
+      return
+    }
+    if (!session || session.clone_name) return // legacy clone thread — untouched
+    this.archiveConsentGuided.add(taskId)
+
+    const actions: TaskCardAction[] = [
+      { id: "open_acceptance", label: "回看验收" },
+      { id: "abort", label: "■ 中止" },
+    ]
+    const title = "末 phase 已通过 · 待归档"
+    const detail = `任务：${row.name ?? taskId.slice(0, 8)} · 归档尚未启动`
+    const event = getActivityBus().publish({
+      kind: "task.status",
+      severity: "warn",
+      title,
+      message: detail,
+      workspaceId: row.workspace_id ?? null,
+      taskId,
+      sessionId: row.source_chat_session_id,
+      payload: { status: "awaiting_archive", archiveConsent: true, actions },
+    })
+    if (!this.hasArchiveConsentCard(row.source_chat_session_id, taskId)) {
+      this.appendTaskCard({
+        sessionId: row.source_chat_session_id,
+        workspaceId: row.workspace_id ?? null,
+        title,
+        detail,
+        event,
+        status: "awaiting_archive",
+        actions,
+      })
+      this.notifySession(row.source_chat_session_id, row.workspace_id ?? null)
+    }
+
+    const message = [
+      `[归档确认] 任务 ${taskId} 的末 phase 已通过，任务停在「待归档」(awaiting_archive) —— 归档尚未启动。`,
+      "先用一两句话告诉用户本轮交付已完成，然后只问一次：「现在归档吗？」",
+      "说明归档会做：git 同步 / ADR + 术语合并 / commit+push+PR / 知识沉淀。交付 PR 可能长期不合并，所以任务可以一直停在待归档，不着急。",
+      "用户明确说「归档 / 开始归档 / 现在归档」→ 调用 start_archive(confirmed=true)；不要自己开始归档，不要代替用户决定。",
+      "用户说「暂不归档 / 先等等」→ 什么都不做，回一句「好，任务保持待归档，随时说归档」。",
+      "用户说「中止 / 不做了」→ request_task_action(action=\"abort\", reason=...)，仍需人点确认卡。",
+      "不要声称 done —— done 由服务端在全部 project 的 git 同步成功后才写入。",
+    ].join("\n")
+    void this.wake(
+      { sessionId: row.source_chat_session_id, org: row.repo_group ?? '', workspaceId: row.workspace_id ?? null },
+      event,
+      { ephemeral: true, message },
+    )
   }
 
   /** Archiving start (2026-10-31 AI-native 归档): append the ONE archive summary
@@ -579,6 +664,24 @@ class ChatEventBridge {
         activity?: { taskId?: string | null; payload?: { archiveSummary?: boolean } }
       }
       return !!meta.activity?.payload?.archiveSummary && meta.activity.taskId === taskId
+    } catch {
+      /* no messages table in stripped tests */
+      return false
+    }
+  }
+
+  /** 同任务是否已有「待归档」确认卡（重进/重启不重复插）。 */
+  private hasArchiveConsentCard(sessionId: string, taskId: string): boolean {
+    if (!this.db) return false
+    try {
+      const row = this.db.prepare(
+        "SELECT metadata FROM messages WHERE session_id = ? AND metadata LIKE ? ORDER BY created_at DESC LIMIT 1",
+      ).get(sessionId, '%"archiveConsent":true%') as { metadata?: string | null } | undefined
+      if (!row?.metadata) return false
+      const meta = JSON.parse(row.metadata) as {
+        activity?: { taskId?: string | null; payload?: { archiveConsent?: boolean } }
+      }
+      return !!meta.activity?.payload?.archiveConsent && meta.activity.taskId === taskId
     } catch {
       /* no messages table in stripped tests */
       return false

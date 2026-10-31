@@ -151,6 +151,7 @@ const STATUS_LABEL: Record<string, string> = {
 /** 收尾卡的提示（操作入口说明——不是按钮）。 */
 const SETTLED_HINT: Record<string, string> = {
   awaiting_review: '在作业坞「验收」处理',
+  awaiting_archive: '在主 Chat 说「归档」开始归档；说「暂不归档」保持待归档；也可说「中止」',
   archiving: '归档进行中 · 报告在作业坞「产物」',
   done: '归档报告在作业坞「产物」',
   aborted: '日志在作业坞「运行」',

@@ -41,28 +41,29 @@ function makeTask(partial: Partial<Task> & { id: string }): Task {
   } as Task
 }
 
-// ── 五列结构 (K3 / AC2) ─────────────────────────────────────────────
+// ── 六列结构 (K3 / AC2 + archive-consent) ────────────────────────────
 
-describe("TASK_COLUMNS (票 11 五列)", () => {
-  it("exposes the five v4 kanban columns in lifecycle order", () => {
+describe("TASK_COLUMNS (票 11 六列)", () => {
+  it("exposes the six v4 kanban columns in lifecycle order", () => {
     const ids = TASK_COLUMNS.map((c) => c.id)
-    expect(ids).toEqual(["draft", "ready", "running", "awaiting_review", "done"])
+    expect(ids).toEqual(["draft", "ready", "running", "awaiting_review", "awaiting_archive", "done"])
   })
 
-  it("labels each column in the spec lifecycle order (草稿/待执行/执行中/待验收/完成)", () => {
+  it("labels each column in the spec lifecycle order (草稿/待执行/执行中/待验收/待归档/完成)", () => {
     const labels = TASK_COLUMNS.map((c) => c.label)
-    expect(labels).toEqual(["草稿", "待执行", "执行中", "待验收", "完成"])
+    expect(labels).toEqual(["草稿", "待执行", "执行中", "待验收", "待归档", "完成"])
   })
 
   it("STATUS_TO_COLUMN is exhaustive over TaskStatusSchema (the 票 07 widening point)", () => {
     const all: TaskBoardStatus[] = [
-      "draft", "ready", "running", "paused", "awaiting_review", "archiving",
+      "draft", "ready", "running", "paused", "awaiting_review", "awaiting_archive", "archiving",
       "done", "failed", "aborted",
     ]
     expect(Object.keys(STATUS_TO_COLUMN).sort()).toEqual([...all].sort())
-    // 票 11 归属决策：awaiting_review→待验收列；archiving→执行中列；
-    // failed/aborted（仅 v3 可持久，K13）→完成（终态）列。
+    // 票 11 归属决策：awaiting_review→待验收列；awaiting_archive→待归档列；
+    // archiving→执行中列；failed/aborted（仅 v3 可持久，K13）→完成（终态）列。
     expect(STATUS_TO_COLUMN.awaiting_review).toBe("awaiting_review")
+    expect(STATUS_TO_COLUMN.awaiting_archive).toBe("awaiting_archive")
     expect(STATUS_TO_COLUMN.archiving).toBe("running")
     // task-pause：暂停折进「执行中」列（⏸ 徽标区分），不新开一列 —— 暂停的轮仍占
     // latch 与并发名额，语义上还是「在跑」的那张卡。
@@ -82,11 +83,11 @@ describe("TASK_COLUMNS (票 11 五列)", () => {
 // ── groupTasksByStatus + tasksForColumn ─────────────────────────────
 
 describe("groupTasksByStatus", () => {
-  it("returns all 9 buckets even when input is empty (反假跑, Record<TaskStatus> 穷尽)", () => {
+  it("returns all 10 buckets even when input is empty (反假跑, Record<TaskStatus> 穷尽)", () => {
     const grouped = groupTasksByStatus([])
     const bucketKeys = Object.keys(grouped).sort()
     const expected: TaskBoardStatus[] = [
-      "draft", "ready", "running", "paused", "awaiting_review", "archiving",
+      "draft", "ready", "running", "paused", "awaiting_review", "awaiting_archive", "archiving",
       "done", "failed", "aborted",
     ]
     expect(bucketKeys).toEqual([...expected].sort())
@@ -99,6 +100,7 @@ describe("groupTasksByStatus", () => {
       makeTask({ id: "b", status: "ready" }),
       makeTask({ id: "c", status: "running" }),
       makeTask({ id: "ar", status: "awaiting_review" }),
+      makeTask({ id: "aa", status: "awaiting_archive" }),
       makeTask({ id: "av", status: "archiving" }),
     ]
     const grouped = groupTasksByStatus(tasks)
@@ -106,6 +108,7 @@ describe("groupTasksByStatus", () => {
     expect(grouped.ready.map((t) => t.id)).toEqual(["b"])
     expect(grouped.running.map((t) => t.id)).toEqual(["c"])
     expect(grouped.awaiting_review.map((t) => t.id)).toEqual(["ar"])
+    expect(grouped.awaiting_archive.map((t) => t.id)).toEqual(["aa"])
     expect(grouped.archiving.map((t) => t.id)).toEqual(["av"])
     expect(grouped.done).toEqual([])
   })
@@ -125,10 +128,12 @@ describe("groupTasksByStatus", () => {
       makeTask({ id: "ab", status: "aborted" }),
       makeTask({ id: "d", status: "done" }),
       makeTask({ id: "ar", status: "awaiting_review" }),
+      makeTask({ id: "aa", status: "awaiting_archive" }),
     ])
     expect(tasksForColumn(grouped, "running").map((t) => t.id)).toEqual(["r1", "av"])
     expect(tasksForColumn(grouped, "done").map((t) => t.id)).toEqual(["d", "f", "ab"])
     expect(tasksForColumn(grouped, "awaiting_review").map((t) => t.id)).toEqual(["ar"])
+    expect(tasksForColumn(grouped, "awaiting_archive").map((t) => t.id)).toEqual(["aa"])
   })
 })
 

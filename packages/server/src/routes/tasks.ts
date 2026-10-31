@@ -898,7 +898,9 @@ export function createTasksRoutes(
   // 对象：未知字段（含已删除的 next_flow，ADR-0024）一律 400:
   //   accepted ∧ i<n ∧ autoAdvance → 下一 phase round 1 开跑 (next_action
   //     'dispatched'); autoAdvance=false → 'awaiting_manual_trigger' (人工起)
-  //   accepted ∧ i=n               → 持久态 'archiving' (票 08 编排到 done)
+  //   accepted ∧ i=n               → 持久态 'ready' + 派生 'awaiting_archive'
+  //                                    （归档不自动开始：只有人明确说「归档」、
+  //                                    走 POST /:id/archive/start 才进 archiving）
   //   rejected (feedback 必填=修复指令) → fix-feedback-r{N}.md 进批次目录 + 同
   //     phase 新 round 恒派 built-in/task-fix 修复轮（ADR-0024 打回单路径：
   //     server override + 合成输入；绑定流再执行只剩 authoring 侧改 spec 重入队）
@@ -940,6 +942,20 @@ export function createTasksRoutes(
       // 未装配验货台（旧装配/测试）：决策照常，台账跳过 —— 与原行为一致。
       const result = await service.acceptance(c.req.param("id"), input)
       return c.json({ ...result, ledger_written: false })
+    } catch (err: unknown) {
+      const { status, message } = classifyError(err)
+      return c.json({ error: message }, status)
+    }
+  })
+
+  // POST /:id/archive/start — 人对「现在归档」的明确同意（2026-10-31 验收/归档
+  // 解耦）。ONLY 派生 awaiting_archive（末 phase 已通过、归档尚未启动）可进入
+  // archiving；重复调用/非待归档 409，未知 404。202: 编排异步（done 由服务端
+  // 在全部 project 成功后写入）。正常入口是主 Chat 的 start_archive 工具。
+  router.post("/:id/archive/start", (c) => {
+    try {
+      const task = service.startArchive(c.req.param("id"))
+      return c.json({ ok: true, task_id: task.id, status: task.status }, 202)
     } catch (err: unknown) {
       const { status, message } = classifyError(err)
       return c.json({ error: message }, status)

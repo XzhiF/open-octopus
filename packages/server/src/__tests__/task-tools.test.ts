@@ -9,6 +9,7 @@ import {
   buildActionRequestCard,
   buildLaunchProposalCard,
   canRunTaskAction,
+  canStartArchive,
 } from "../services/chat/task-tools"
 import type { TaskThreadProfile } from "../services/tasks/task-thread-service"
 
@@ -25,6 +26,7 @@ function profile(overrides: Partial<TaskThreadProfile["task"]> = {}, identity: T
     takeover: false,
     acceptanceGuide: false,
     archiveGuide: false,
+    archiveConsent: false,
     task: {
       id: "t-1",
       name: "昵称敏感词过滤组件",
@@ -53,9 +55,20 @@ describe("canRunTaskAction", () => {
 
     expect(canRunTaskAction("doer", "ready", "pause").ok).toBe(false)
     expect(canRunTaskAction("doer", "awaiting_review", "abort").ok).toBe(false)
+    expect(canRunTaskAction("doer", "awaiting_archive", "abort").ok).toBe(true)
     expect(canRunTaskAction("author", "running", "pause").ok).toBe(false)
     expect(canRunTaskAction("base", "running", "pause").ok).toBe(false)
     expect(canRunTaskAction("doer", "archiving", "pause").ok).toBe(false)
+  })
+})
+
+describe("canStartArchive — 归档前的明确同意门", () => {
+  it("only doer + awaiting_archive + confirmed=true may start archive", () => {
+    expect(canStartArchive("doer", "awaiting_archive", true).ok).toBe(true)
+    expect(canStartArchive("doer", "awaiting_archive", false).reason).toContain("必须等用户明确说")
+    expect(canStartArchive("author", "awaiting_archive", true).reason).toContain("执行者")
+    expect(canStartArchive("doer", "archiving", true).reason).toContain("待归档")
+    expect(canStartArchive("doer", "ready", true).ok).toBe(false)
   })
 })
 

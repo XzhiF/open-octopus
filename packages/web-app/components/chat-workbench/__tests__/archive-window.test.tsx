@@ -4,11 +4,15 @@
 // 按钮，操作全部回主 Chat。
 
 import { describe, it, expect, vi, beforeEach } from "vitest"
-import { render, screen } from "@testing-library/react"
+import { render, screen, fireEvent, waitFor, within } from "@testing-library/react"
 import type { TaskArchivePayload, TaskView } from "@/lib/tasks-api"
 
-const { mockGetTaskArchive } = vi.hoisted(() => ({ mockGetTaskArchive: vi.fn() }))
+const { mockGetTaskArchive, mockGetKcFsFile } = vi.hoisted(() => ({
+  mockGetTaskArchive: vi.fn(),
+  mockGetKcFsFile: vi.fn(),
+}))
 vi.mock("@/lib/tasks-api", () => ({ getTaskArchive: mockGetTaskArchive }))
+vi.mock("@/lib/knowledge/knowledge-center-api", () => ({ getKcFsFile: mockGetKcFsFile }))
 
 import { ArchiveWindow } from "../archive-window"
 
@@ -52,7 +56,17 @@ function payload(overrides: Partial<TaskArchivePayload> = {}): TaskArchivePayloa
       ],
       decisions: { "refl-1": { action: "ingest", at: new Date().toISOString(), raw_path: "raw/inbox/a.md" } },
     },
-    knowledge: { pack_items: 7, compile_state: "committed", compile_position: null },
+    knowledge: {
+      pack_items: 7,
+      items: [
+        { kind: "acceptance-ledger", name: "验收台账", bytes: 197, excluded: false, path: "raw/archives/task-t1/01-acceptance-ledger.md" },
+        { kind: "pr-diff", name: "PR diff（stat + 关键 hunk）", bytes: 14739, excluded: false, path: "raw/archives/task-t1/04-pr-diff.md" },
+        { kind: "archive-summary", name: "归档总结", bytes: 8384, excluded: false, path: "raw/archives/task-t1/07-archive-summary.md" },
+        { kind: "matt-artifacts", name: "matt 产物指针", bytes: 2392, excluded: true, path: "raw/archives/task-t1/05-matt-artifacts.md" },
+      ],
+      compile_state: "committed",
+      compile_position: null,
+    },
     amendments: [],
     ...overrides,
   }
@@ -60,6 +74,10 @@ function payload(overrides: Partial<TaskArchivePayload> = {}): TaskArchivePayloa
 
 beforeEach(() => {
   mockGetTaskArchive.mockReset()
+  mockGetKcFsFile.mockReset()
+  mockGetKcFsFile.mockResolvedValue({
+    content: '---\norigin: "db:x"\ntitle: "验收台账"\n---\n# 验收台账\n\nphase 1 round 1: accepted',
+  })
 })
 
 describe("ArchiveWindow — 只读明细", () => {
@@ -79,8 +97,61 @@ describe("ArchiveWindow — 只读明细", () => {
     expect(screen.getByText("未决")).toBeTruthy()
     expect(screen.getByText("已编译")).toBeTruthy()
 
-    // 只读：整窗没有任何按钮（重试/落 wiki/跳过都回主 Chat）
-    expect(screen.queryAllByRole("button")).toHaveLength(0)
+    // 已冻结素材件可展开看「哪几件」：件名 / 类 / 大小 / 剔除态
+    expect(screen.getByTestId("archive-pack-items")).toBeTruthy()
+    expect(screen.getAllByTestId("archive-pack-item")).toHaveLength(4)
+    expect(screen.getByText("验收台账")).toBeTruthy()
+    expect(screen.getByText("PR diff（stat + 关键 hunk）")).toBeTruthy()
+    expect(screen.getByText("14.4 KB")).toBeTruthy()
+    expect(screen.getByText("已剔除")).toBeTruthy()
+    expect(screen.getByText(/另 1 件已剔除/)).toBeTruthy()
+
+    // 只读：没有重试/落 wiki/跳过等动作按钮；件行本身是可打开预览的只读入口
+    expect(screen.queryByRole("button", { name: /重试|落 wiki|跳过/ })).toBeNull()
+    expect(screen.getAllByTestId("archive-pack-item")).toHaveLength(4)
+  })
+
+  it("opens a read-only preview dialog for a frozen material item", async () => {
+    mockGetTaskArchive.mockResolvedValue(payload())
+    render(<ArchiveWindow task={task("archiving")} />)
+
+    const entries = await screen.findAllByTestId("archive-pack-item")
+    expect(mockGetKcFsFile).not.toHaveBeenCalled()
+    fireEvent.click(entries[0])
+
+    await waitFor(() =>
+      expect(mockGetKcFsFile).toHaveBeenCalledWith("raw/archives/task-t1/01-acceptance-ledger.md"),
+    )
+    const dialog = await screen.findByTestId("archive-pack-dialog")
+    expect(within(dialog).getByTestId("archive-pack-markdown")).toBeTruthy()
+    expect(within(dialog).getByText(/phase 1 round 1: accepted/)).toBeTruthy()
+    // front-matter 五件套不混进正文
+    expect(dialog.textContent).not.toContain("origin:")
+  })
+
+  it("renders .json material items with token highlighting", async () => {
+    mockGetTaskArchive.mockResolvedValue(payload({
+      knowledge: {
+        pack_items: 1,
+        items: [{ kind: "manifest", name: "manifest.json", bytes: 18, excluded: false, path: "raw/archives/task-t1/manifest.json" }],
+        compile_state: null,
+        compile_position: null,
+      },
+    }))
+    mockGetKcFsFile.mockResolvedValueOnce({ content: '{"v":1,"items":[]}' })
+    render(<ArchiveWindow task={task("archiving")} />)
+
+    fireEvent.click(await screen.findByTestId("archive-pack-item"))
+    const json = await screen.findByTestId("archive-pack-json")
+    expect(json.querySelector('[data-json-token="key"]')?.textContent).toBe('"v"')
+    expect(json.querySelector('[data-json-token="number"]')?.textContent).toBe("1")
+  })
+
+  it("awaiting_archive shows a not-started banner instead of pretending to archive", async () => {
+    mockGetTaskArchive.mockResolvedValue(payload({ status: "ready", report: null, state: null }))
+    render(<ArchiveWindow task={task("awaiting_archive")} />)
+    expect(await screen.findByTestId("archive-not-started")).toBeTruthy()
+    expect(screen.getByTestId("archive-window").textContent).toContain("待归档 · 未启动")
   })
 
   it("shows the preflight block, the post-round delta and append-only amendments", async () => {
@@ -116,6 +187,6 @@ describe("ArchiveWindow — 只读明细", () => {
     expect(screen.getByTestId("archive-amendments")).toBeTruthy()
     expect(screen.getByText("补收尾决策")).toBeTruthy()
     expect(screen.getByText("上线后补灰度开关。")).toBeTruthy()
-    expect(screen.queryAllByRole("button")).toHaveLength(0)
+    expect(screen.queryByRole("button", { name: /重试|落 wiki|跳过/ })).toBeNull()
   })
 })

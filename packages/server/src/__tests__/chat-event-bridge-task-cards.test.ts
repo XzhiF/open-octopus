@@ -158,12 +158,39 @@ describe("task status cards", () => {
     expect(fetchMock).not.toHaveBeenCalled()
   })
 
-  it("archiving / done are left to the AI-native archive summary (no generic card, no wake)", () => {
+  it("archiving / done / awaiting_archive are left to the AI-native archive guides (no generic card, no wake)", () => {
     const bridge = getChatEventBridge()
+    db.prepare("UPDATE tasks SET status='ready' WHERE id='t-thread'").run()
+    bridge.handleSse({ event: "task_status", data: { task_id: "t-thread", status: "awaiting_archive" } })
     bridge.handleSse({ event: "task_status", data: { task_id: "t-thread", status: "archiving" } })
     bridge.handleSse({ event: "task_status", data: { task_id: "t-thread", status: "done" } })
     expect(cards("s-main")).toHaveLength(0)
     expect(fetchMock).not.toHaveBeenCalled()
+  })
+})
+
+describe("archive consent guide (2026-10-31 验收≠归档)", () => {
+  it("awaiting_archive appends exactly ONE consent card and wakes once", () => {
+    db.prepare("UPDATE tasks SET status='ready' WHERE id='t-thread'").run()
+    const bridge = getChatEventBridge()
+    bridge.requestArchiveConsentGuide("t-thread")
+    bridge.requestArchiveConsentGuide("t-thread")
+    const rows = cards("s-main")
+    expect(rows).toHaveLength(1)
+    const act = activity("s-main") as {
+      status?: string
+      payload?: { archiveConsent?: boolean }
+      actions?: Array<{ id: string }>
+    }
+    expect(act.status).toBe("awaiting_archive")
+    expect(act.payload?.archiveConsent).toBe(true)
+    expect(act.actions?.map((a) => a.id)).toEqual(["open_acceptance", "abort"])
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+    const body = JSON.parse(String((fetchMock.mock.calls[0][1] as { body: string }).body)) as Record<string, unknown>
+    expect(body.ephemeral).toBe(true)
+    expect(String(body.message)).toContain("现在归档吗")
+    expect(String(body.message)).toContain("start_archive")
+    expect(String(body.message)).toContain("暂不归档")
   })
 })
 

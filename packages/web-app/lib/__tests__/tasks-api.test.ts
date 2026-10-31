@@ -12,6 +12,7 @@ import {
   deleteTask,
   readyTask,
   abortTask,
+  postArchiveStart,
   pauseTask,
   resumeTask,
   updateSpecField,
@@ -351,6 +352,24 @@ describe("abortTask", () => {
     expect(url).toBe("http://localhost:3001/api/tasks/t1/abort")
     expect(init.method).toBe("POST")
     expect(result.status).toBe("aborted")
+  })
+})
+
+describe("postArchiveStart", () => {
+  it("POSTs /api/tasks/:id/archive/start and returns the 202 receipt", async () => {
+    mockFetchOnce({ ok: true, task_id: "t1", status: "archiving" })
+    const result = await postArchiveStart("t1")
+    const [url, init] = (fetch as unknown as { mock: { calls: [string, RequestInit][] } }).mock.calls[0]
+    expect(url).toBe("http://localhost:3001/api/tasks/t1/archive/start")
+    expect(init.method).toBe("POST")
+    expect(result).toMatchObject({ ok: true, task_id: "t1", status: "archiving" })
+  })
+
+  it("surfaces a server error as TaskApiError", async () => {
+    mockFetchOnce({ error: "只有停在「待归档」的任务可以开始归档" }, { ok: false, status: 409 })
+    const err = await postArchiveStart("t1").catch((e: unknown) => e)
+    expect(err).toBeInstanceOf(TaskApiError)
+    expect((err as TaskApiError).status).toBe(409)
   })
 })
 

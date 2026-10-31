@@ -80,6 +80,8 @@ function acceptanceService(): AcceptanceToolsService | null {
 
 export interface ArchiveToolsService {
   readArchive(taskId: string): unknown
+  /** 人明确说「归档」后启动归档编排（待归档 → archiving）。 */
+  startArchive(taskId: string): unknown
   decideReflection(
     taskId: string,
     input: { entry_id: string; action: "ingest" | "skip"; title?: string; content?: string },
@@ -224,6 +226,10 @@ const STATUS_ACTIONS: Record<string, TaskToolAction[]> = {  draft: [{ id: "open_
     { id: "open_acceptance", label: "✓ 去验收" },
     { id: "open_changes", label: "打开本轮变更" },
   ],
+  awaiting_archive: [
+    { id: "open_acceptance", label: "回看验收" },
+    { id: "abort", label: "■ 中止" },
+  ],
   archiving: [
     { id: "open_archive", label: "打开归档" },
     { id: "retry_archive", label: "↻ 重试归档" },
@@ -260,12 +266,29 @@ export function canRunTaskAction(
   const allowed =
     action === "pause" ? displayStatus === "running"
       : action === "resume" ? displayStatus === "paused"
-        : action === "abort" ? ["ready", "running", "paused"].includes(displayStatus)
+        : action === "abort" ? ["ready", "running", "paused", "awaiting_archive"].includes(displayStatus)
           : action === "trigger" ? displayStatus === "ready"
             : action === "retry_archive" ? displayStatus === "archiving"
               : action === "inject" ? ["running", "paused"].includes(displayStatus)
                 : false
   return allowed ? { ok: true } : { ok: false, reason: `当前状态 ${displayStatus} 不允许 ${action}。` }
+}
+
+/** 归档前的明确同意门（2026-10-31 archive-consent）：末 phase 已验收、归档未启动时，
+ *  只有人明确说「归档」才允许 start_archive。纯函数，供工具与测试共用。 */
+export function canStartArchive(
+  identity: TaskThreadIdentity,
+  displayStatus: string,
+  confirmed: boolean,
+): { ok: boolean; reason?: string } {
+  if (!confirmed) {
+    return { ok: false, reason: "必须等用户明确说「归档 / 现在归档」后才能开始归档（confirmed=true）—— 不要替用户决定。" }
+  }
+  if (identity !== "doer") return { ok: false, reason: "当前身份不是执行者，不能开始归档。" }
+  if (displayStatus !== "awaiting_archive") {
+    return { ok: false, reason: `只有停在「待归档」(awaiting_archive) 的任务可以开始归档（当前 ${displayStatus}）。` }
+  }
+  return { ok: true }
 }
 
 export function buildLaunchProposalCard(profile: TaskThreadProfile, note?: string): TaskToolCard {
@@ -461,7 +484,7 @@ export function createTaskToolServer(input: TaskToolServerInput) {
     ),
     tool(
       "submit_acceptance_decision",
-      "Finalize this round's acceptance decision: accepted = 放行/通过 (advance or archive), rejected = 退回修改 (dispatches the task-fix round). Call ONLY when the human explicitly says so in this chat (e.g. 「全部通过，放行」「可以了，收」「退回，让他改…」). The acceptance window click is their fallback, not a requirement — but never infer consent: no explicit instruction, no call. accepted is refused while any item is ✗. rejected requires feedback, which becomes the fix-round instruction.",
+      "Finalize this round's acceptance decision: accepted = 放行/通过 (advance, or on the LAST phase park at awaiting_archive — archive does NOT start automatically), rejected = 退回修改 (dispatches the task-fix round). Call ONLY when the human explicitly says so in this chat (e.g. 「全部通过，放行」「可以了，收」「退回，让他改…」). The acceptance window click is their fallback, not a requirement — but never infer consent: no explicit instruction, no call. accepted is refused while any item is ✗. rejected requires feedback, which becomes the fix-round instruction.",
       {
         decision: z.enum(["accepted", "rejected"]).describe("accepted = 放行 (advance/archive); rejected = 退回修改 (dispatch task-fix)"),
         feedback: z.string().max(20000).optional().describe("Required for rejected: what must be fixed (becomes the fix-round instruction)"),
@@ -491,6 +514,9 @@ export function createTaskToolServer(input: TaskToolServerInput) {
             ledger_written: out.ledger_written,
             // 放行时若仍有未勾项，如实回传 —— 让用户知道这次放行覆盖了什么。
             undecided: out.undecided,
+            ...(out.result.next_action === "awaiting_archive"
+              ? { hint: "末 phase 已放行；归档尚未开始 —— 下一步请用户明确说「归档」后再调 start_archive。不要自动归档。" }
+              : {}),
           })
         } catch (err: unknown) {
           return text({ ok: false, error: err instanceof Error ? err.message : String(err) })
@@ -572,6 +598,33 @@ export function createTaskToolServer(input: TaskToolServerInput) {
           },
         })
         return text({ ok: true, card: "task.acceptance_escalation" })
+      },
+    ),
+  ] : []
+
+  // 归档前的明确同意（2026-10-31 archive-consent）：只在待归档态注册。
+  const archiveConsentTools = profile.archiveConsent ? [
+    tool(
+      "start_archive",
+      "Start archive orchestration ONLY after the human explicitly says 「归档 / 开始归档 / 现在归档」 in this chat. Set confirmed=true to assert that. Valid only while the task is awaiting_archive (last phase passed but archive not started). Starts git sync / ADR+glossary merge / commit+push+PR / knowledge ingest. Completion is server-side task_status = done — never claim it yourself. If the human says 暂不归档, do not call.",
+      {
+        confirmed: z.boolean().describe("true only when the human explicitly said 归档 — never infer"),
+      },
+      async ({ confirmed }) => {
+        const gate = canStartArchive(profile.identity, task.displayStatus, confirmed)
+        if (!gate.ok) return text({ ok: false, error: gate.reason })
+        const svc = archiveService()
+        if (!svc) return text({ ok: false, error: "归档服务未就绪" })
+        try {
+          svc.startArchive(task.id)
+          return text({
+            ok: true,
+            started: true,
+            hint: "归档已启动；接下来按归档引导播报，done 以服务端 task_status 为准。",
+          })
+        } catch (err: unknown) {
+          return text({ ok: false, error: err instanceof Error ? err.message : String(err) })
+        }
       },
     ),
   ] : []
@@ -882,6 +935,7 @@ export function createTaskToolServer(input: TaskToolServerInput) {
       },
     ),
     ...acceptanceTools,
+    ...archiveConsentTools,
     ...archiveTools,
   ]
 

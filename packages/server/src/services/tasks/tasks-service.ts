@@ -256,12 +256,24 @@ export interface TaskUsageDTO {
   breakdown: TaskUsagePart[]
 }
 
+/** 素材包单件视图（manifest 投影；归档台「已冻结素材件」展开用）。 */
+export interface TaskArchiveKnowledgeItem {
+  kind: string
+  name: string
+  bytes: number
+  excluded: boolean
+  /** 知识根相对 POSIX 路径（对质 / 追溯）。 */
+  path: string
+}
+
 /** 知识中心投稿快照（2026-10-31 AI-native 归档总框）：素材包件数 + 编译队列状态。
  *  由 index.ts 的 archiveKnowledgeHook 装配（pack manifest + wikiWriteQueue），
  *  TasksService 自身不依赖知识中心模块。 */
 export interface TaskArchiveKnowledge {
   /** 素材包已冻结的活跃件数（excluded 不计）。 */
   pack_items: number
+  /** 包内全部件（含已剔除；件数只算未剔除）。未装配 manifest 的宿主可省略。 */
+  items?: TaskArchiveKnowledgeItem[]
   /** 编译队列状态 queued / running / committed / failed；null = 未入队。 */
   compile_state: string | null
   /** 排队位次（仅 queued 有值）。 */
@@ -389,7 +401,7 @@ export interface AcceptanceInput {
  *  - "archiving"                last phase accepted — the task is in 归档 (票 08)
  *  - "awaiting_manual_trigger"  accepted with autoAdvance=false — parked at the
  *                               human gate (K6/US11), nothing was started. */
-export type AcceptanceNextAction = "dispatched" | "archiving" | "awaiting_manual_trigger"
+export type AcceptanceNextAction = "dispatched" | "awaiting_archive" | "archiving" | "awaiting_manual_trigger"
 
 /** Round identity that {@link TasksService.acceptance} actually dispatched
  *  (present iff next_action === "dispatched"). */
@@ -2826,6 +2838,12 @@ export class TasksService {
         `Cannot reopen a task in status '${existing.status}' (only ready→draft)`,
       )
     }
+    // archive-consent: 停放态持久行也是 ready —— 但末 phase 已验收，不能回草稿。
+    if (this.deriveView(existing).taskStatus === "awaiting_archive") {
+      throw new TaskStatusConflictError(
+        "任务末 phase 已通过、停在「待归档」—— 只能归档或中止，不能退回草稿",
+      )
+    }
 
     const inst = this.lifecycle.currentInstance(id)
     if (inst && !TERMINAL_INSTANCES.has(inst.status)) {
@@ -2875,6 +2893,12 @@ export class TasksService {
     if (existing.status !== "ready") {
       throw new TaskStatusConflictError(
         `只有已入队(ready)的任务可以触发 (当前状态: '${existing.status}')`,
+      )
+    }
+    // archive-consent: 停放态持久行也是 ready —— 不能重新触发跑下一轮。
+    if (this.deriveView(existing).taskStatus === "awaiting_archive") {
+      throw new TaskStatusConflictError(
+        "任务末 phase 已通过、停在「待归档」—— 请先归档或中止，不能重新触发",
       )
     }
 
@@ -2968,6 +2992,12 @@ export class TasksService {
   setCronTrigger(id: string, cron: string | null, timezone?: string): void {
     const existing = this.taskDAO.getById(id)
     if (!existing) throw new TaskNotFoundError()
+    // archive-consent: 停放态持久行是 ready；不允许再武装 cron 把已验收任务跑起来。
+    if (this.deriveView(existing).taskStatus === "awaiting_archive") {
+      throw new TaskStatusConflictError(
+        "任务停在「待归档」—— 请先归档或中止，不能设置定时触发",
+      )
+    }
     if (cron === null || cron.trim() === "") {
       this.taskDAO.disarmTrigger(id)
       this.sse.emit("taskpool", {
@@ -3090,7 +3120,9 @@ export class TasksService {
    *
    *  Effects (K6/K7), all after the ledger append:
    *    accepted ∧ i<n ∧ autoAdvance(默认开) → dispatchPhaseRound(i+1, 1)
-   *    accepted ∧ i=n                        → persisted 'archiving' + 票 08 hook
+   *    accepted ∧ i=n                        → persisted 'ready' + derived
+   *                                            awaiting_archive + consent guide
+   *                                            (归档只由 startArchive 启动)
    *    accepted ∧ autoAdvance=false          → nothing starts (awaiting_manual_trigger)
    *    rejected                              → `fix-feedback-r{N}.md` written into
    *                                            the phase's batch dir (home) +
@@ -3210,8 +3242,23 @@ export class TasksService {
       // accepted — 人的放行先落帧（UI 立刻把该 phase 变绿）。
       this.emitPhaseStatus(taskId, pv.index, "accepted", input.round_index)
       if (isLast) {
-        next_action = "archiving"
-        this.beginArchiving(taskId)
+        // archive-consent (2026-10-31): 验收 ≠ 归档。末 phase 通过后只停在人的
+        // 「待归档」门前，不自动开始归档（交付可能是长期不合并的 PR，归档会
+        // commit/push/写 wiki）。持久行落回 ready（合法、可中止），派生视图显示
+        // awaiting_archive；只有显式 startArchive 才进入 archiving。
+        next_action = "awaiting_archive"
+        this.taskDAO.disarmTrigger(taskId)
+        // silent：不发通用「ready · 待触发」帧，避免 UI 闪一张会误导触发/回草稿的卡。
+        this.setPersistedTaskStatus(taskId, "ready", { silent: true })
+        this.sse.emit("taskpool", {
+          event: TASK_STATUS_EVENT,
+          data: { task_id: taskId, status: "awaiting_archive" },
+        })
+        try {
+          getChatEventBridge().requestArchiveConsentGuide(taskId)
+        } catch {
+          /* observability only — never block acceptance */
+        }
       } else if (nextPhaseIndex !== null && spec.autoAdvance !== false) {
         // 阶段衔接信道 (ticket 01): 刚 accepted 的本 phase 也在前序集内
         // (deriveView 重读账本) — 下 phase 首轮开跑即带 handoff 路径。
@@ -3491,6 +3538,28 @@ export class TasksService {
     return { ok: true, store, decision }
   }
 
+  /** POST /api/tasks/:id/archive/start — 人对「现在归档」的明确同意。
+   *  只有派生 awaiting_archive（末 phase 已通过、归档尚未启动）能进入 archiving。
+   *  校验用派生态而非持久 ready：崩溃遗留的 persisted running + 末轮 accepted 仍可
+   *  归档，不会卡死。这是 beginArchiving 现在唯一的调用方；同步翻 archiving 本身
+   *  就是双击保护（第二次派生已变 archiving → 409）。 */
+  startArchive(taskId: string): TaskDTO {
+    const row = this.taskDAO.getById(taskId)
+    if (!row) throw new TaskNotFoundError()
+    const spec = parseJSON<{ format?: string }>(row.task_spec, {})
+    if (spec.format !== "v4") {
+      throw new TaskStatusConflictError("归档启动仅适用于 v4 任务（task_spec.format === 'v4'）")
+    }
+    const view = this.deriveView(row)
+    if (view.taskStatus !== "awaiting_archive") {
+      throw new TaskStatusConflictError(
+        `只有停在「待归档」的任务可以开始归档（当前派生态: '${view.taskStatus}'）`,
+      )
+    }
+    this.beginArchiving(taskId)
+    return toDTO(this.taskDAO.getById(taskId) ?? row)
+  }
+
   /** POST /api/tasks/:id/archive/retry — project 粒度幂等续跑 (K11/US15).
    *  ONLY the persisted 'archiving' state is retryable (409 otherwise; 404
    *  unknown). Validates synchronously, then fires the run WITHOUT awaiting
@@ -3731,10 +3800,18 @@ export class TasksService {
    *  (round-2 spec, propagation writes per D14, autoAdvance toggle) is part of
    *  the flow, and an edit during a running round takes effect at the NEXT
    *  seed (K16: 隔离即冻结 — seed is a one-way snapshot, no lock needed).
-   *  Frozen only at human-decided terminal states: done / aborted / archiving
-   *  (归档中 spec 已定稿，改动应走 archive/retry 后的另案). */
+   *  Frozen only at human-decided terminal states: done / aborted / archiving,
+   *  and at the derived awaiting_archive park (末 phase 已验收、归档未启动 ——
+   *  验收已冻结，改动应走归档后的跟进任务). */
   private isSpecEditable(existing: TaskRow): boolean {
-    if (existing.status === "draft" || existing.status === "ready") return true
+    if (existing.status === "draft") return true
+    if (existing.status === "ready") {
+      // 停放态持久行仍是 ready；派生 awaiting_archive 必须继续冻结。
+      if (isV4TaskSpec(existing.task_spec) && this.deriveView(existing).taskStatus === "awaiting_archive") {
+        return false
+      }
+      return true
+    }
     if (!isV4TaskSpec(existing.task_spec)) return false
     return (
       existing.status !== "done" &&
@@ -3747,7 +3824,11 @@ export class TasksService {
    *  spec edits — same discipline as the job's own status mirrors (票03).
    *  Idempotent fast-path: same value → no UPDATE, no SSE (no board flicker on
    *  re-derivation of an unchanged state). */
-  private setPersistedTaskStatus(taskId: string, status: TaskStatus): void {
+  private setPersistedTaskStatus(
+    taskId: string,
+    status: TaskStatus,
+    opts: { silent?: boolean } = {},
+  ): void {
     const row = this.taskDAO.getById(taskId)
     if (!row || row.status === status) return
     const nowIso = new Date().toISOString()
@@ -3757,6 +3838,8 @@ export class TasksService {
         "UPDATE tasks SET status = ?, updated_at = ?, completed_at = NULL WHERE id = ? AND deleted_at IS NULL",
       )
       .run(status, nowIso, taskId)
+    // silent = 状态行落库但对外只发派生事件（acceptance 停车用 awaiting_archive）。
+    if (opts.silent) return
     this.sse.emit("taskpool", {
       event: TASK_STATUS_EVENT,
       data: { task_id: taskId, status },

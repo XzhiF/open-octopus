@@ -1214,6 +1214,15 @@ if (shouldServe) {
         if (!manifest && !queueView) return null
         return {
           pack_items: manifest ? manifest.items.filter((item) => !item.excluded).length : 0,
+          items: manifest
+            ? manifest.items.map((item) => ({
+                kind: item.kind,
+                name: item.name,
+                bytes: item.bytes,
+                excluded: item.excluded === true,
+                path: item.path,
+              }))
+            : [],
           compile_state: queueView?.state ?? null,
           compile_position: queueView?.position ?? null,
         }
@@ -1261,6 +1270,7 @@ if (shouldServe) {
       }
       setArchiveToolsProvider(() => ({
         readArchive: (taskId) => tasksService.readArchive(taskId),
+        startArchive: (taskId) => tasksService.startArchive(taskId),
         decideReflection: (taskId, input) => tasksService.decideReflection(taskId, input, reflectionIngest),
         retryArchive: (taskId) => tasksService.retryArchive(taskId),
         resolveArchiveDelta: (taskId, action) => tasksService.resolveArchiveDelta(taskId, action),

@@ -505,7 +505,7 @@ describe("AC5 — v3 任务零影响（回归）", () => {
     service.setArchivingHook(() => {})
     const res = await postAcceptance(taskId, { phase_index: 1, round_index: 1, decision: "accepted" })
     expect(res.status, await res.clone().text()).toBe(200)
-    expect(((await res.json()) as { next_action: string }).next_action).toBe("archiving")
+    expect(((await res.json()) as { next_action: string }).next_action).toBe("awaiting_archive")
     // 末 phase accepted → 不开新轮 ⇒ 最新行仍是那轮终态行，键不泄漏。
     expect(stubService.create).not.toHaveBeenCalled()
     expect("prev_handoff_paths" in launchedIV(taskId)).toBe(false)

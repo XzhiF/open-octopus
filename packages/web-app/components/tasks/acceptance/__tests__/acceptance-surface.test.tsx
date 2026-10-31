@@ -950,7 +950,7 @@ describe("AcceptanceSurface — 票 04 前序交接提示行（phase-handoff-cha
     renderModalWith(LAST_PHASE_AWAITING)
     expect(await screen.findByTestId("acceptance-approve")).toBeTruthy()
     // 末 phase 的确认按钮 = 归档语义（守卫：awaiting 确实解析到了最后一栏）
-    expect(screen.getByTestId("acceptance-approve").textContent).toContain("进入归档")
+    expect(screen.getByTestId("acceptance-approve").textContent).toContain("等待归档")
     expect(screen.queryByTestId("handoff-hint")).toBeNull()
   })
 })
@@ -1321,6 +1321,23 @@ describe("AcceptanceSurface — 归档后只读回看（复用三步界面）", 
     taskStatus: "done", isV4: true,
     phaseViews: [phase(1, "脚手架", "scaffold-1", "exec-1"), phase(2, "观测", "metering-2", "exec-2")],
   }
+  const P1_PARKED: TaskDerivedView = {
+    taskStatus: "awaiting_archive", isV4: true, phaseViews: [phase(1, "脚手架", "scaffold-1", "exec-1")],
+  }
+
+  it("awaiting_archive 任务：复用只读回看，标「待归档」，无决策按钮", async () => {
+    const detail = { ...makeDetail(P1_PARKED), status: "awaiting_archive" } as unknown as TaskDetail
+    mockGetTask.mockResolvedValue(detail)
+    render(<AcceptanceSurface task={detail as unknown as Task} onMutated={() => {}} />)
+
+    const modal = await screen.findByTestId("acceptance-modal")
+    expect(modal.getAttribute("data-acceptance-readonly")).toBe("1")
+    expect(screen.getByTestId("acceptance-readonly-chip").textContent).toContain("只读")
+    expect(screen.getByTestId("acceptance-readonly-note").textContent).toContain("待归档")
+    expect(screen.queryByTestId("acceptance-approve")).toBeNull()
+    expect(screen.queryByTestId("acceptance-reject")).toBeNull()
+    expect(screen.queryByTestId("acceptance-abort")).toBeNull()
+  })
 
   it("done 任务：复用三步界面；只读标、无决策按钮；playbook/diff 按已验收轮取数", async () => {
     const detail = { ...makeDetail(P1_DONE), status: "done" } as unknown as TaskDetail

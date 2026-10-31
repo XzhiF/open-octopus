@@ -486,8 +486,8 @@ describe("AC2 — 术语 append-only + 冲突只报不写", () => {
   })
 })
 
-describe("AC3 — 双 project：各自归档 commit/push → done（末 phase accepted 全链路）", () => {
-  it("acceptance(末 phase) 自动编排：两仓库各 1 归档 commit、push 成功、task done；未归属 ADR 进报告不阻塞", async () => {
+describe("AC3 — 双 project：各自归档 commit/push → done（末 phase accepted + 显式归档）", () => {
+  it("acceptance(末 phase) 停在待归档；显式 startArchive 后两仓库各 1 归档 commit、push 成功、task done；未归属 ADR 进报告不阻塞", async () => {
     const repoB = makeProjectRepo("repo-b", { adrs: ["0001-x.md"] })
     const { taskId, wts } = seedArchiveFixture({
       mode: "awaiting",
@@ -510,7 +510,11 @@ describe("AC3 — 双 project：各自归档 commit/push → done（末 phase ac
       body: JSON.stringify({ phase_index: 1, round_index: 1, decision: "accepted" }),
     })
     expect(res.status, await res.clone().text()).toBe(200)
-    expect(((await res.json()) as { next_action: string }).next_action).toBe("archiving")
+    // archive-consent: 验收只停车，不自动归档。
+    expect(((await res.json()) as { next_action: string }).next_action).toBe("awaiting_archive")
+    expect(taskRowOf(taskId).status).toBe("ready")
+    service.startArchive(taskId)
+    expect(taskRowOf(taskId).status).toBe("archiving")
 
     const report = await runToReport(taskId)
     expect(report.ok).toBe(true)

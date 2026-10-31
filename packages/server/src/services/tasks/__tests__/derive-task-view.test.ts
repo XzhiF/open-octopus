@@ -83,14 +83,15 @@ function acc(
   }
 }
 
-/** Derived 7-value enum (AC2) — asserted toContain for EVERY matrix row.
- *  'paused' joined in the task-pause work: it is the ONLY value here that no persisted
- *  task row can carry (the truth is executions.status='paused'). */
+/** Derived 8-value enum (AC2) — asserted toContain for EVERY matrix row.
+ *  'paused' and 'awaiting_archive' are the values no persisted task row can carry
+ *  (paused lives on executions.status; awaiting_archive keeps the row at 'ready'). */
 const V4_TASK_STATUSES: DerivedTaskStatus[] = [
   "ready",
   "running",
   "paused",
   "awaiting_review",
+  "awaiting_archive",
   "archiving",
   "done",
   "aborted",
@@ -256,8 +257,8 @@ const MATRIX: MatrixCase[] = [
     expectPhaseStatuses: ["accepted", "accepted", "awaiting_review"],
   },
   {
-    name: "P3 accepted (末 phase) → archiving (K6)",
-    persisted: "awaiting_review",
+    name: "P3 accepted (末 phase) · persisted ready → awaiting_archive (验收≠归档)",
+    persisted: "ready",
     execs: [
       [1, 1, "completed"],
       [2, 1, "completed"],
@@ -268,7 +269,7 @@ const MATRIX: MatrixCase[] = [
       [2, 1, "accepted"],
       [3, 1, "accepted"],
     ],
-    expectTask: "archiving",
+    expectTask: "awaiting_archive",
     expectPhaseStatuses: ["accepted", "accepted", "accepted"],
   },
   {
@@ -315,11 +316,11 @@ const MATRIX: MatrixCase[] = [
     expectPhaseStatuses: ["paused", "pending", "pending"],
   },
   {
-    name: "P1 accepted 覆盖同轮暂停 (人的放行 > 踩刹车) → archiving",
+    name: "P1 accepted 覆盖同轮暂停 (人的放行 > 踩刹车) → awaiting_archive",
     persisted: "running",
     execs: [[1, 1, "paused"]],
     accs: [[1, 1, "accepted"]],
-    expectTask: "archiving",
+    expectTask: "awaiting_archive",
     expectPhaseStatuses: ["accepted"],
   },
   {
@@ -506,7 +507,8 @@ describe("phase view 内容 (rounds / acceptedRound / currentRound)", () => {
     ]
     const v2 = deriveTaskView(task(v4Spec(1), "running"), [ex(1, 1, "completed"), ex(1, 2, "completed")], dupAccs)
     expect(v2.phaseViews[0].acceptedRound).toBe(2)
-    expect(v2.taskStatus).toBe("archiving")
+    // 未启动归档（persisted running）→ 停在待归档，而不是自以为在归档。
+    expect(v2.taskStatus).toBe("awaiting_archive")
   })
 
   it("round_index NULL 的畸形 v4 exec: 不成 round, 但非终态仍保持 running", () => {
@@ -520,7 +522,7 @@ describe("phase view 内容 (rounds / acceptedRound / currentRound)", () => {
     expect(view.phaseViews[0].acceptedRound).toBe(1)
     expect(view.phaseViews[0].status).toBe("accepted")
     expect(view.phaseViews[0].rounds).toEqual([])
-    expect(view.taskStatus).toBe("archiving")
+    expect(view.taskStatus).toBe("awaiting_archive")
   })
 })
 
@@ -645,8 +647,8 @@ describe("暂停态 — 不变量与刻意的取舍", () => {
         acc(2, 1, "accepted"),
       ],
     )
-    // 末 phase 已 accepted → 该归档, 不该被一个已经不存在的 phase 的暂停轮扣住。
-    expect(view.taskStatus).toBe("archiving")
+    // 末 phase 已 accepted → 停在待归档, 不该被一个已经不存在的 phase 的暂停轮扣住。
+    expect(view.taskStatus).toBe("awaiting_archive")
     expect(view.phaseViews.every((p) => p.status === "accepted")).toBe(true)
   })
 })

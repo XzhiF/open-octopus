@@ -9,11 +9,13 @@
 import { useCallback, useEffect, useState } from 'react'
 import {
   getTaskArchive,
+  type ArchiveKnowledgeItemWire,
   type ArchiveProjectReportWire,
   type TaskArchivePayload,
   type TaskView,
 } from '@/lib/tasks-api'
 import { Spinner } from '@/components/ui/spinner'
+import { ArchivePackDialog } from './archive-pack-dialog'
 
 interface ProjectState {
   status?: string
@@ -40,6 +42,12 @@ const COMPILE_LABEL: Record<string, string> = {
   running: '编译中',
   committed: '已编译',
   failed: '编译失败',
+}
+
+function formatBytes(n: number): string {
+  if (n < 1024) return `${n} B`
+  if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`
+  return `${(n / 1024 / 1024).toFixed(1)} MB`
 }
 
 function buildRows(archive: TaskArchivePayload): ProjectRow[] {
@@ -71,6 +79,8 @@ function ProjectCell({ value }: { value: string | number | null }) {
 export function ArchiveWindow({ task }: { task: TaskView; onMutated?: () => void }) {
   const [archive, setArchive] = useState<TaskArchivePayload | null>(null)
   const [error, setError] = useState<string | null>(null)
+  /** 点开的冻结素材件（null = 预览弹窗关闭）。 */
+  const [viewingPackItem, setViewingPackItem] = useState<ArchiveKnowledgeItemWire | null>(null)
 
   const load = useCallback(() => {
     return getTaskArchive(task.id)
@@ -105,8 +115,13 @@ export function ArchiveWindow({ task }: { task: TaskView; onMutated?: () => void
   const conflicts = rows.reduce((n, row) => n + (row.conflicts ?? 0), 0)
   const archiving = task.status === 'archiving'
   const done = task.status === 'done'
+  // archive-consent: 末 phase 已验收、归档尚未启动 —— 窗口可能被深链/旧窗口打开，
+  // 必须如实说「未启动」，不能冒充「编排中」。
+  const awaitingArchive = task.status === 'awaiting_archive'
   const stateDate = (archive.state as { date?: string } | null)?.date
   const compile = archive.knowledge?.compile_state
+  const packItems = archive.knowledge?.items ?? []
+  const excludedPackItems = packItems.filter((item) => item.excluded).length
   const compileLabel = compile
     ? (COMPILE_LABEL[compile] ?? compile)
     : archive.knowledge && archive.knowledge.pack_items > 0
@@ -122,9 +137,11 @@ export function ArchiveWindow({ task }: { task: TaskView; onMutated?: () => void
             ? 'bg-pop-green-soft text-pop-green'
             : archiving
               ? 'bg-pop-amber-soft text-pop-amber'
-              : 'bg-pop-green-soft text-pop-green'
+              : awaitingArchive
+                ? 'bg-pop-pink-soft text-pop-pink'
+                : 'bg-pop-green-soft text-pop-green'
         }`}>
-          {done ? '已完成' : archive.in_flight ? '编排中' : archiving ? '停在 archiving' : archive.status}
+          {done ? '已完成' : archive.in_flight ? '编排中' : archiving ? '停在 archiving' : awaitingArchive ? '待归档 · 未启动' : archive.status}
         </span>
         <span className="font-mono text-[9px] text-pop-dim">
           {stateDate ? `date ${stateDate}` : '尚无 state.json'}
@@ -134,6 +151,15 @@ export function ArchiveWindow({ task }: { task: TaskView; onMutated?: () => void
           只读明细 · 操作在对话里完成
         </span>
       </div>
+
+      {awaitingArchive && (
+        <div
+          data-testid="archive-not-started"
+          className="mb-3 rounded-xl border-[1.5px] border-pop-pink/35 bg-pop-pink/[0.04] px-3 py-2 text-[10.5px] text-pop-ink/85"
+        >
+          末 phase 已验收，但归档尚未启动 —— 回主 Chat 说「归档」后才执行 git 同步 / ADR·术语合并 / 知识沉淀。
+        </div>
+      )}
 
       {archive.report?.preflight && (
         <section
@@ -302,9 +328,50 @@ export function ArchiveWindow({ task }: { task: TaskView; onMutated?: () => void
           ) : (
             <div className="space-y-1.5 text-[10.5px]">
               <div className="flex items-center justify-between rounded-lg border border-pop-bd/50 bg-black/10 px-2 py-1.5">
-                <span className="text-pop-dim">已冻结素材件</span>
+                <span className="text-pop-dim">
+                  已冻结素材件
+                  {excludedPackItems > 0 && (
+                    <span className="ml-1 font-mono text-[8.5px] text-pop-dim/60">（另 {excludedPackItems} 件已剔除）</span>
+                  )}
+                </span>
                 <span className="font-mono font-black text-pop-ink">{archive.knowledge.pack_items}</span>
               </div>
+              {packItems.length > 0 && (
+                <ul
+                  data-testid="archive-pack-items"
+                  className="space-y-0.5 rounded-lg border border-pop-bd/50 bg-black/10 px-1.5 py-1"
+                >
+                  {packItems.map((item) => (
+                    <li key={item.path}>
+                      <button
+                        type="button"
+                        title={item.path}
+                        data-testid="archive-pack-item"
+                        onClick={() => setViewingPackItem(item)}
+                        className={[
+                          'flex w-full items-center gap-2 px-0.5 py-[1px] text-left transition-colors hover:bg-white/[0.06]',
+                          item.excluded ? 'opacity-50' : '',
+                        ].join(' ')}
+                      >
+                        <span className={`shrink-0 font-mono text-[8.5px] ${item.excluded ? 'text-pop-dim line-through' : 'text-pop-cyan'}`}>
+                          {item.kind}
+                        </span>
+                        <span className={`min-w-0 flex-1 truncate ${item.excluded ? 'text-pop-dim line-through' : 'text-pop-ink/85'}`}>
+                          {item.name}
+                        </span>
+                        {item.excluded && (
+                          <span className="shrink-0 font-mono text-[8.5px] font-black text-pop-amber">已剔除</span>
+                        )}
+                        <span className="shrink-0 font-mono text-[8.5px] tabular-nums text-pop-dim/70">{formatBytes(item.bytes)}</span>
+                        <span className="shrink-0 font-mono text-[8.5px] text-pop-dim/40">▸</span>
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              )}
+              {packItems.length > 0 && (
+                <p className="px-0.5 text-[8.5px] text-pop-dim/60">点任意件打开只读预览（.md 渲染 / .json 高亮）。</p>
+              )}
               <div className="flex items-center justify-between rounded-lg border border-pop-bd/50 bg-black/10 px-2 py-1.5">
                 <span className="text-pop-dim">编译</span>
                 <span className={`font-mono font-black ${
@@ -319,7 +386,8 @@ export function ArchiveWindow({ task }: { task: TaskView; onMutated?: () => void
             </div>
           )}
           <p className="mt-2 text-[9.5px] leading-relaxed text-pop-dim/80">
-            素材包包含台账 / 打回 / 执行摘录 / diff / 产物 / ADR+notes / 总结共七件，编译进 wiki 由知识中心串行队列执行。
+            素材包 = 验收台账 / phase 打回记录 / 执行 JSONL 摘录 / PR diff / matt 产物指针 / ADR·notes，
+            外加归档总结；件数只算未剔除的件，编译进 wiki 由知识中心串行队列执行。
           </p>
         </section>
       </div>
@@ -376,6 +444,11 @@ export function ArchiveWindow({ task }: { task: TaskView; onMutated?: () => void
           </div>
         </section>
       )}
+
+      <ArchivePackDialog
+        item={viewingPackItem}
+        onOpenChange={(open) => { if (!open) setViewingPackItem(null) }}
+      />
     </div>
   )
 }

@@ -110,6 +110,7 @@ const TASK_STATUS_META: Record<string, {
   running: { label: '运行中', badge: 'bg-pop-green text-pop-bg', icon: Play, pulse: true },
   paused: { label: '已暂停', badge: 'bg-pop-amber text-pop-bg', icon: Pause },
   awaiting_review: { label: '待验收', badge: 'bg-pop-amber text-pop-bg', icon: ClipboardCheck },
+  awaiting_archive: { label: '待归档', badge: 'bg-pop-pink text-pop-bg', icon: Archive },
   archiving: { label: '归档中', badge: 'bg-pop-amber text-pop-bg', icon: Archive },
   done: { label: '已完成', badge: 'bg-pop-green text-pop-bg', icon: Check },
   failed: { label: '失败', badge: 'bg-pop-red text-pop-bg', icon: X },
@@ -286,7 +287,7 @@ export function WorkspaceExplorerDock({
   const status = task?.status ?? ''
   const isDraft = status === 'draft'
   const hasExecution =
-    !!task?.execution || ['running', 'paused', 'awaiting_review', 'archiving', 'done'].includes(status)
+    !!task?.execution || ['running', 'paused', 'awaiting_review', 'awaiting_archive', 'archiving', 'done'].includes(status)
   const visibleModules = task
     ? MODULE_ROWS.filter((row) => {
         switch (row.id) {
@@ -301,7 +302,7 @@ export function WorkspaceExplorerDock({
           case 'acceptance':
             // 2026-10-30 用户：归档后验收台仍要在 —— 只读回看「我签了什么」，
             // 不用翻聊天记录；done 的窗口内容由 AcceptanceSurface 降级为台账。
-            return status === 'awaiting_review' || status === 'archiving' || status === 'done'
+            return status === 'awaiting_review' || status === 'awaiting_archive' || status === 'archiving' || status === 'done'
           case 'archive':
             return status === 'archiving' || status === 'done'
           default:
@@ -339,7 +340,12 @@ export function WorkspaceExplorerDock({
               ]
             : status === 'awaiting_review'
               ? [{ id: 'open_acceptance', label: '去验收', tone: 'amber', icon: Check }]
-              : status === 'archiving'
+              : status === 'awaiting_archive'
+                ? [
+                    { id: 'open_acceptance', label: '回看验收', tone: 'amber', icon: ClipboardCheck },
+                    { id: 'abort', label: '中止', tone: 'ghost', icon: Square },
+                  ]
+                : status === 'archiving'
                 ? [{ id: 'retry_archive', label: '重试归档', tone: 'amber', icon: Archive }]
                 : status === 'done'
                   ? []

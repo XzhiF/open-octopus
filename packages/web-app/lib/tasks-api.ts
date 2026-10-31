@@ -85,6 +85,7 @@ export type DerivedTaskStatus =
   | "running"
   | "paused"
   | "awaiting_review"
+  | "awaiting_archive"
   | "archiving"
   | "done"
   | "aborted"
@@ -506,10 +507,12 @@ export interface AcceptanceInput {
 
 /** What the caller must do next (票 07):
  *  - "dispatched"               a new round is already running (advance or retry)
- *  - "archiving"                last phase accepted — the task is in 归档 (票 08)
+ *  - "awaiting_archive"         last phase accepted — archive is NOT started; the
+ *                               human must say 「归档」 (2026-10-31 archive-consent)
+ *  - "archiving"                legacy server: last phase accepted auto-started archive
  *  - "awaiting_manual_trigger"  accepted with autoAdvance=false — parked at the
  *                               human gate (K6/US11), nothing was started. */
-export type AcceptanceNextAction = "dispatched" | "archiving" | "awaiting_manual_trigger"
+export type AcceptanceNextAction = "dispatched" | "awaiting_archive" | "archiving" | "awaiting_manual_trigger"
 
 /** Round identity the server actually dispatched (present iff
  *  next_action === "dispatched"). 票03: `schedule_id` left with the envelope row —
@@ -638,6 +641,18 @@ export async function postArchiveRetry(taskId: string): Promise<{ ok: boolean; t
   return res.json()
 }
 
+/** POST /api/tasks/:id/archive/start — 人明确说「归档」后启动归档（仅待归档态，
+ *  202 异步；完成以 task_status SSE 'done' 为准）。正常路径由主 Chat 的
+ *  start_archive 工具调用；前端不提供直接按钮。 */
+export async function postArchiveStart(taskId: string): Promise<{ ok: boolean; task_id: string; status: string }> {
+  const res = await fetch(buildUrl(`/${taskId}/archive/start`), { method: "POST" })
+  if (!res.ok) {
+    const body = (await res.json().catch(() => ({}))) as { error?: string }
+    throw new TaskApiError(body.error ?? `HTTP ${res.status}`, res.status)
+  }
+  return res.json()
+}
+
 // ── 2026-10-28 task-thread: lifecycle usage / archive / reflection ────
 
 export interface TaskUsagePart extends LlmUsageSummary {
@@ -741,9 +756,20 @@ export interface ArchiveAmendmentWire {
   ingest?: { raw_path?: string; compile_task_id?: string } | null
 }
 
+/** 素材包单件（manifest 投影）。 */
+export interface ArchiveKnowledgeItemWire {
+  kind: string
+  name: string
+  bytes: number
+  excluded: boolean
+  path: string
+}
+
 /** 归档素材包 / 编译状态（知识中心只读快照）。 */
 export interface ArchiveKnowledgeWire {
   pack_items: number
+  /** 包内全部件（含已剔除）；旧服务端可能不返回。 */
+  items?: ArchiveKnowledgeItemWire[]
   compile_state: string | null
   compile_position: number | null
 }

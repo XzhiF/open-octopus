@@ -64,6 +64,13 @@ function insertExec(taskId: string, opts: { status: string; phase?: number; roun
   )
 }
 
+function insertAcceptance(taskId: string, phase = 1, round = 1): void {
+  db.prepare(`
+    INSERT INTO task_phase_acceptances (id, task_id, phase_index, round_index, decision, feedback, decided_at)
+    VALUES (?, ?, ?, ?, 'accepted', NULL, ?)
+  `).run(`acc-${seq++}`, taskId, phase, round, NOW)
+}
+
 beforeAll(() => {
   db = new Database(":memory:")
   applySchema(db)
@@ -160,6 +167,25 @@ describe("TaskThreadService — identity / cwd / guard", () => {
     expect(profile.identity).toBe("doer")
     expect(profile.context).toContain("待验收")
     expect(profile.context).toContain("submit_acceptance_decision")
+  })
+
+  it("persisted ready + last accepted → awaiting_archive: doer, read-only, consent guide", async () => {
+    insertSession("s-park", null)
+    const taskId = insertTask({ status: "ready", sessionId: "s-park", workspaceId: "ws-thread" })
+    insertExec(taskId, { status: "completed" })
+    insertAcceptance(taskId)
+    const profile = service.resolveForSession({ id: "s-park", clone_name: null })!
+    expect(profile.task.displayStatus).toBe("awaiting_archive")
+    expect(profile.identity).toBe("doer")
+    expect(profile.readOnly).toBe(true)
+    expect(profile.autoCommit).toBe(false)
+    expect(profile.archiveConsent).toBe(true)
+    expect(profile.archiveGuide).toBe(false)
+    expect(profile.context).toContain("待归档")
+    expect(profile.context).toContain("start_archive")
+    expect(profile.context).toContain("暂不归档")
+    const denied = await profile.guard!("Write", { file_path: path.join(wsDir, "projects", "app", "x.ts") })
+    expect(denied?.allow).toBe(false)
   })
 
   it("archiving → doer but read-only (archive owns git)", async () => {

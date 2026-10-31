@@ -79,6 +79,14 @@ const COLUMN_THEME: Record<TaskBoardColumnId, {
     dot: "bg-pop-yellow text-pop-yellow",
     pill: "bg-pop-bg text-pop-yellow",
   },
+  awaiting_archive: {
+    lane: "bg-pop-pink-soft/35",
+    head: "bg-pop-pink-soft",
+    headBd: "border-b-pop-pink/45",
+    label: "text-pop-pink",
+    dot: "bg-pop-pink text-pop-pink",
+    pill: "bg-pop-bg text-pop-pink",
+  },
   done: {
     lane: "bg-pop-green-soft/35",
     head: "bg-pop-green-soft",
@@ -99,6 +107,7 @@ const CARD_THEME: Record<Task["status"], string> = {
   paused: "bg-pop-amber-soft",
   archiving: "bg-pop-yellow-soft",
   awaiting_review: "bg-pop-yellow-soft",
+  awaiting_archive: "bg-pop-pink-soft",
   done: "bg-pop-green-soft",
   failed: "bg-pop-pink-soft",
   aborted: "bg-pop-idle",
@@ -397,10 +406,10 @@ export default function TasksPage() {
     observer.observe(element)
     return () => observer.disconnect()
   }, [error])
-  const boardLayout: 'five' | 'three' | 'two' | 'one' =
-    boardWidth >= 1200 ? 'five' : boardWidth >= 780 ? 'three' : boardWidth >= 520 ? 'two' : 'one'
+  const boardLayout: 'six' | 'five' | 'three' | 'two' | 'one' =
+    boardWidth >= 1380 ? 'six' : boardWidth >= 1200 ? 'five' : boardWidth >= 780 ? 'three' : boardWidth >= 520 ? 'two' : 'one'
   const boardLayoutClass =
-    boardLayout === 'five'
+    boardLayout === 'six' || boardLayout === 'five'
       ? 'flex h-full gap-3'
       : boardLayout === 'three'
         ? 'grid grid-cols-3 content-start gap-3'
@@ -472,7 +481,7 @@ export default function TasksPage() {
                   key={col.id}
                   data-task-column={col.id}
                   aria-label={col.label}
-                  className={`flex min-w-0 flex-col overflow-hidden rounded-xl border-[1.5px] border-pop-bd shadow-pop-sm ${boardLayout === 'five' ? 'flex-1 basis-0' : ''} ${theme.lane}`}
+                  className={`flex min-w-0 flex-col overflow-hidden rounded-xl border-[1.5px] border-pop-bd shadow-pop-sm ${boardLayout === 'five' || boardLayout === 'six' ? 'flex-1 basis-0' : ''} ${theme.lane}`}
                 >
                   <header className={`flex items-center gap-2 border-b-[1.5px] border-dashed px-3 py-2 text-xs font-black ${theme.head} ${theme.headBd}`}>
                     <span className={`size-2 shrink-0 rounded-full shadow-[0_0_8px_currentColor] ${theme.dot}`} aria-hidden />
@@ -601,6 +610,8 @@ function TaskCard({ task, derived, budgetMs, colAccent, onClick, onDeleteRequest
   const isReady = task.status === "ready"
   // 票 11: 待验收卡琥珀高亮 (K3/US8)。
   const isAwaitingReview = task.status === "awaiting_review"
+  // archive-consent: 待归档 = 末 phase 已验收、归档未启动（等人说「归档」）。
+  const isAwaitingArchive = task.status === "awaiting_archive"
   // v4 角标 `Phase i/n · Round m`（computePhaseBadge：current=第一个非 accepted
   // 的 phase 位置；round=awaitingRound ?? currentRound）。
   const badge = computePhaseBadge(derived)
@@ -618,6 +629,7 @@ function TaskCard({ task, derived, budgetMs, colAccent, onClick, onDeleteRequest
       data-task-id={task.id}
       data-task-status={task.status}
       {...(isAwaitingReview ? { "data-task-awaiting-review": "true" } : {})}
+      {...(isAwaitingArchive ? { "data-task-awaiting-archive": "true" } : {})}
       onClick={onClick}
       role="button"
       tabIndex={0}
@@ -664,6 +676,16 @@ function TaskCard({ task, derived, budgetMs, colAccent, onClick, onDeleteRequest
               ⚠ 归档中
             </span>
           )}
+          {/* archive-consent: 已验收但归档未启动 —— 等人明确说「归档」。 */}
+          {isAwaitingArchive && (
+            <span
+              data-task-awaiting-archive-badge
+              className="text-[10px] font-black px-1.5 py-0.5 rounded-full border border-pop-bd bg-pop-bg/70 text-pop-pink"
+              title="末 phase 已通过；在任务对话里说「归档」后才开始归档（可中止）"
+            >
+              📦 待归档
+            </span>
+          )}
           {/* 票 11 AC4: ⏳ 超预算（advisory；阈值 NEXT_PUBLIC_PHASE_BUDGET_MS ?? 1.5h） */}
           {overBudget && (
             <span
@@ -703,6 +725,16 @@ function TaskCard({ task, derived, budgetMs, colAccent, onClick, onDeleteRequest
             >
               {task.status === "failed" ? "失败" : "已中止"}
             </span>
+          )}
+          {isAwaitingArchive && (
+            <button
+              data-task-archive-consent-btn
+              onClick={(e) => { e.stopPropagation(); onClick() }}
+              className={`${ACT_CHIP} border-pop-pink/60 bg-pop-pink-soft text-pop-pink hover:brightness-125`}
+              title="去任务对话里说「归档」；只有你明确同意后才开始 git 同步 / ADR 归并 / 知识沉淀"
+            >
+              去对话归档
+            </button>
           )}
           {/* 票 12 (K14/US9): 待验收卡「验收」→ 三栏证据面 modal
               （原型定稿：一张卡只有一个 accent 主行动 = 验收，其余是 dim 次级片） */}

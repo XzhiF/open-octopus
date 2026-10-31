@@ -360,7 +360,7 @@ export function AcceptanceSurface({ task, onMutated, onDecided, detailOverride, 
   )
   const [readOnlyPhasePick, setReadOnlyPhasePick] = useState<number | null>(null)
   useEffect(() => { setReadOnlyPhasePick(null) }, [taskId])
-  const readOnlyEligible = ["done", "failed", "aborted", "archiving"].includes(task?.status ?? "")
+  const readOnlyEligible = ["done", "failed", "aborted", "archiving", "awaiting_archive"].includes(task?.status ?? "")
   const readOnlyPhase: TaskPhaseView | null = useMemo(() => {
     if (awaitingPhaseRaw || !readOnlyEligible) return null
     const picked = readOnlyPhasePick != null
@@ -593,9 +593,12 @@ export function AcceptanceSurface({ task, onMutated, onDecided, detailOverride, 
   const verifyCfg = (detail?.task_spec ?? task?.task_spec)?.acceptance_verify ?? null
   const verifyRunning = verify?.state === "running"
   const wsGone = roundDiff !== null && !roundDiff.available && roundDiff.reason === "no_workspace"
-  /** 归档只读：勾选/复检/预览/探针全部冻结（历史数据照常展示）。 */
+  /** 归档只读：勾选/复检/预览/探针全部冻结（历史数据照常展示）。
+   *  待归档（已验收、归档未启动）同属只读，但原因不同 —— 验收已冻结，等归档。 */
   const readOnlyReason = readOnly
-    ? "已归档 · 只读 — 验收已冻结（记录可查，勾选与运行不可再动）"
+    ? task?.status === "awaiting_archive"
+      ? "待归档 · 只读 — 归档尚未启动（验收已冻结，可在对话里说「归档」）"
+      : "已归档 · 只读 — 验收已冻结（记录可查，勾选与运行不可再动）"
     : undefined
   const verifyDisabled = readOnlyReason
     ?? (wsGone ? "工作区目录已不在 — 当场复检不可用（历史输出/verdict 仍可看）" : undefined)
@@ -747,6 +750,9 @@ export function AcceptanceSurface({ task, onMutated, onDecided, detailOverride, 
       // 批次目录时不再谎报「台账已写」—— 由响应体 ledger_written 承载真相（票 07 契约扩展）。
       const ledgerNote = result.ledger_written === false ? "⚠ 台账写入失败，请手动补记批次目录" : "台账已写"
       switch (result.next_action) {
+        case "awaiting_archive":
+          toast.success(`末 Phase 已通过 — ${ledgerNote}，任务停在「待归档」；在对话里说「归档」后才开始归档`)
+          break
         case "archiving":
           toast.success(`末 Phase 已通过 — ${ledgerNote}，归档编排中（全绿才 done）`)
           break
@@ -1299,9 +1305,21 @@ export function AcceptanceSurface({ task, onMutated, onDecided, detailOverride, 
               )}
               {readOnly ? (
                 <p className="ap-meta-line mt-1" data-testid="acceptance-readonly-note">
-                  已通过验收 · 只读 — 决策与勾选已冻结。机器台账
-                  {" "}<code>acceptance-ledger-r{reviewRoundIndex ?? "?"}.md</code>{" "}
-                  在批次目录（作业坞「产物」可查）。
+                  {task?.status === "awaiting_archive"
+                    ? (
+                      <>
+                        待归档 · 只读 — 归档尚未启动，决策与勾选已冻结；回主 Chat 说「归档」后才执行。
+                        机器台账{" "}<code>acceptance-ledger-r{reviewRoundIndex ?? "?"}.md</code>{" "}
+                        在批次目录（作业坞「产物」可查）。
+                      </>
+                    )
+                    : (
+                      <>
+                        已通过验收 · 只读 — 决策与勾选已冻结。机器台账
+                        {" "}<code>acceptance-ledger-r{reviewRoundIndex ?? "?"}.md</code>{" "}
+                        在批次目录（作业坞「产物」可查）。
+                      </>
+                    )}
                 </p>
               ) : (
                 <div className={cn("ap-meta-line mt-1", !autoOn && "warn")} data-autoadvance-readonly data-testid="autoadvance-readonly">
@@ -1374,7 +1392,7 @@ export function AcceptanceSurface({ task, onMutated, onDecided, detailOverride, 
                       data-acceptance-approve data-testid="acceptance-approve"
                     >
                       {busy === "accept" ? <Spinner className="size-3.5" /> : <CheckCircle2 className="size-3.5" />}
-                      {awaitingPhase.index === total ? "通过，进入归档" : `通过，进入阶段 ${nextPhaseIndex}`}
+                      {awaitingPhase.index === total ? "通过，等待归档" : `通过，进入阶段 ${nextPhaseIndex}`}
                     </button>
                   </span>
                 </>

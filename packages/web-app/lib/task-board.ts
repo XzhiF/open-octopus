@@ -3,8 +3,8 @@
 // /tasks kanban columns + grouping for the first-class `tasks` domain (v2-D1,
 // SG14 — read `Task`, NOT `SchedulerJob`).
 //
-// task-phase-redesign v4 (票 11, K3/US7/US8): the board is now the FIVE-column
-// lifecycle 草稿/待执行/执行中/待验收/完成:
+// task-phase-redesign v4 (票 11, K3/US7/US8): the board is now the SIX-column
+// lifecycle 草稿/待执行/执行中/待验收/待归档/完成:
 //   draft            → 草稿
 //   ready            → 待执行
 //   running+archiving→ 执行中 (archiving 卡片加 ⚠归档中 徽标 — K6 末验收态仍是
@@ -12,6 +12,8 @@
 //   paused           → 执行中 (⏸已暂停 徽标 — 暂停的轮仍占 latch 与并发名额，
 //                       折列而非新开一列)
 //   awaiting_review  → 待验收 (琥珀高亮 — US8「失败不是红死状态而是待处理」)
+//   awaiting_archive → 待归档 (2026-10-31 archive-consent：末 phase 已通过、
+//                       归档尚未启动 — 等人在对话里说「归档」，不占并发也不自动跑)
 //   done+failed+aborted → 完成 (终态列；failed/aborted 仅 v3 可持久 (K13)，
 //                       卡片状态行自证真实终态)
 //
@@ -19,7 +21,7 @@
 // 指出首 phase round 终态会把**持久** tasks.status 镜像写成 done/failed，若按
 // 持久态归列，待验收任务会错进「完成」列。派生不存 = 无镜像竞态 (K3)。
 //
-// `groupTasksByStatus` still buckets by the RAW status (8 exhaustive buckets —
+// `groupTasksByStatus` still buckets by the RAW status (10 exhaustive buckets —
 // the Record<TaskStatus, …> exhaustiveness point that forces new states to be
 // handled, 票 07 发现的 web typecheck 红线); the column layer folds buckets.
 
@@ -38,6 +40,7 @@ export type TaskBoardColumnId =
   | "ready"
   | "running"
   | "awaiting_review"
+  | "awaiting_archive"
   | "done"
 
 export interface TaskBoardColumn {
@@ -45,7 +48,7 @@ export interface TaskBoardColumn {
   label: string
 }
 
-/** Five columns in lifecycle order (草稿→待执行→执行中→待验收→完成).
+/** Six columns in lifecycle order (草稿→待执行→执行中→待验收→待归档→完成).
  *  皮肤不在这一层：列头/泳道与卡片染色（COLUMN_THEME / CARD_THEME）住在渲染层
  *  `app/tasks/page.tsx` —— Tailwind 静态 class 字面量必须留在被 JIT 扫描的组件文件里；
  *  本模块只管列归属、角标与预算判据。 */
@@ -54,6 +57,7 @@ export const TASK_COLUMNS: readonly TaskBoardColumn[] = [
   { id: "ready", label: "待执行" },
   { id: "running", label: "执行中" },
   { id: "awaiting_review", label: "待验收" },
+  { id: "awaiting_archive", label: "待归档" },
   { id: "done", label: "完成" },
 ] as const
 
@@ -70,6 +74,7 @@ export const STATUS_TO_COLUMN: Record<TaskStatus, TaskBoardColumnId> = {
   paused: "running",
   archiving: "running", // 归档中留在执行中列 (⚠徽标由卡片渲染)
   awaiting_review: "awaiting_review",
+  awaiting_archive: "awaiting_archive", // 待归档独立列：已验收、等人说「归档」
   done: "done",
   failed: "done", // v3-only 终态归「完成」(terminal) 列，卡片状态行自证
   aborted: "done", // 同上
@@ -81,6 +86,7 @@ export const COLUMN_STATUSES: Record<TaskBoardColumnId, readonly TaskStatus[]> =
   ready: ["ready"],
   running: ["running", "paused", "archiving"],
   awaiting_review: ["awaiting_review"],
+  awaiting_archive: ["awaiting_archive"],
   done: ["done", "failed", "aborted"],
 }
 
@@ -104,7 +110,7 @@ export function sortByCreatedDesc<T extends Task>(tasks: T[]): T[] {
   })
 }
 
-/** Group tasks into the 8 lifecycle buckets (raw persisted status). Tasks whose
+/** Group tasks into the 10 lifecycle buckets (raw persisted status). Tasks whose
  *  status is not a known column (defensive against future enum additions /
  *  legacy rows) are dropped rather than crashing the kanban. Does NOT mutate
  *  the input array. Callers pass EFFECTIVE statuses (see `effectiveStatusOf`). */
@@ -115,6 +121,7 @@ export function groupTasksByStatus<T extends Task>(tasks: T[]): TasksByStatus<T>
     running: [],
     paused: [],
     awaiting_review: [],
+    awaiting_archive: [],
     archiving: [],
     done: [],
     failed: [],

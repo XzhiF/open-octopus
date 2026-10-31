@@ -161,7 +161,8 @@ export const taskPhaseSchema = z.object({
  *  defaults to 600 server-side, hard-capped at 1800. Edge: the bash runner
  *  substitutes literal `$vars.` / `${x|filter}` sequences — avoid them in
  *  commands. A spec-field (whitelisted) so it is bindable/patchable at
- *  awaiting_review time (v4 spec stays editable until done/aborted/archiving). */
+ *  awaiting_review time (v4 spec stays editable until done/aborted/archiving, or
+ *  the derived awaiting_archive park after final acceptance). */
 export const acceptanceVerifySchema = z.object({
   command: z.string().min(1).max(4000),
   cwd: z.string().max(500).optional(),
