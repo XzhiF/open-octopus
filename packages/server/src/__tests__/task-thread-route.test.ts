@@ -237,7 +237,7 @@ describe("task-thread chat route", () => {
     const res = await chat("s-await", "这轮怎么样？")
     await res.text()
     expect(calls[0].prompt).toContain("待验收")
-    expect(calls[0].prompt).toContain("验收通过/打回由人")
+    expect(calls[0].prompt).toContain("submit_acceptance_decision")
   })
 
   it("legacy clone session bound to a task is NOT a thread (no plugins/guard/context)", async () => {

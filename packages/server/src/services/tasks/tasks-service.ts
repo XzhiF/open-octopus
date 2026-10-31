@@ -252,18 +252,37 @@ export interface TaskUsageDTO {
   breakdown: TaskUsagePart[]
 }
 
+/** 知识中心投稿快照（2026-10-31 AI-native 归档总框）：素材包件数 + 编译队列状态。
+ *  由 index.ts 的 archiveKnowledgeHook 装配（pack manifest + wikiWriteQueue），
+ *  TasksService 自身不依赖知识中心模块。 */
+export interface TaskArchiveKnowledge {
+  /** 素材包已冻结的活跃件数（excluded 不计）。 */
+  pack_items: number
+  /** 编译队列状态 queued / running / committed / failed；null = 未入队。 */
+  compile_state: string | null
+  /** 排队位次（仅 queued 有值）。 */
+  compile_position: number | null
+}
+
 /** GET /:id/archive — the archive window's one-shot read model. */
 export interface TaskArchiveDTO {
   task_id: string
   status: string
   /** A run is in this process right now (202 fire-and-forget). */
   in_flight: boolean
+  /** 任务的 project_ids —— 归档总框「git 同步 x/y」的分母。 */
+  projects: string[]
   /** Parsed `{home}/archive/state.json` (project-granular idempotency ledger). */
   state: unknown | null
+  /** Parsed `{home}/archive/report.json` (structured run report — failures,
+   *  conflicts, PR destinations). null = 还没有完整跑过一轮。 */
+  report: ArchiveReport | null
   /** `{home}/archive/report.md` (capped); null = not written yet. */
   report_md: string | null
   /** Reflection proposals + per-entry decisions; null = no reflection yet. */
   reflection: ReflectionStore | null
+  /** 知识素材包 / 编译状态；null = 尚未投喂或未装配。 */
+  knowledge: TaskArchiveKnowledge | null
 }
 
 export interface ReflectionDecisionInput {
@@ -862,6 +881,14 @@ export class TasksService {
 
   setArchiveIngestHook(fn: (taskId: string) => void | Promise<void>): void {
     this.archiveIngestHook = fn
+  }
+
+  /** 2026-10-31 AI-native 归档：知识素材包 / 编译状态的只读快照（index.ts 装配，
+   *  TasksService 不依赖知识中心模块）。未装配 → readArchive.knowledge = null。 */
+  private archiveKnowledgeHook?: (taskId: string) => TaskArchiveKnowledge | null
+
+  setArchiveKnowledgeHook(fn: ((taskId: string) => TaskArchiveKnowledge | null) | null): void {
+    this.archiveKnowledgeHook = fn ?? undefined
   }
 
   /** 票10 fire-and-forget：失败语义 = 跳过投喂，归档照常（AC2「失败不阻塞 done」）。 */
@@ -3164,11 +3191,11 @@ export class TasksService {
     // 知识中心票10: 进入 archiving 态的一刻起投喂（与归档编排并行、互不等待；
     // 必须先于 archivingHook 分支的 return，替换内置归档器的宿主同样吃到投喂）。
     this.fireArchiveIngest(taskId)
-    // 2026-10-28 task-thread: one reflection turn in the main chat (proposals →
-    // human decides per entry). Fired before the orchestration so the model can
-    // read the still-present task home / workspace.
+    // 2026-10-31 AI-native 归档：主 Chat 只留一个归档总框 + 口述引导/执行。
+    // Fired before the orchestration so the model can read the still-present
+    // task home / workspace.
     try {
-      getChatEventBridge().requestArchiveReflection(taskId)
+      getChatEventBridge().requestArchiveGuide(taskId)
     } catch {
       /* observability only — never block archiving */
     }
@@ -3269,7 +3296,8 @@ export class TasksService {
     return this.archiveRuns.get(taskId) ?? null
   }
 
-  /** GET /:id/archive — state.json + report.md + in-flight (archive window). */
+  /** GET /:id/archive — state.json + report.json/report.md + reflection +
+   *  knowledge snapshot + in-flight (archive window / 归档总框). */
   readArchive(taskId: string): TaskArchiveDTO {
     const row = this.taskDAO.getById(taskId)
     if (!row) throw new TaskNotFoundError()
@@ -3280,19 +3308,34 @@ export class TasksService {
     } catch {
       /* not written yet / corrupt — the window shows "尚无报告" */
     }
-    let report: string | null = null
+    let report: ArchiveReport | null = null
     try {
-      report = fs.readFileSync(path.join(home, "archive", "report.md"), "utf-8").slice(0, 200_000)
+      report = JSON.parse(fs.readFileSync(path.join(home, "archive", "report.json"), "utf-8")) as ArchiveReport
+    } catch {
+      /* 还没有完整跑过一轮（或旧任务只有 report.md） */
+    }
+    let reportMd: string | null = null
+    try {
+      reportMd = fs.readFileSync(path.join(home, "archive", "report.md"), "utf-8").slice(0, 200_000)
     } catch {
       /* not written yet */
+    }
+    let knowledge: TaskArchiveKnowledge | null = null
+    try {
+      knowledge = this.archiveKnowledgeHook?.(taskId) ?? null
+    } catch {
+      /* 知识中心不可用不影响归档读模型 */
     }
     return {
       task_id: taskId,
       status: row.status,
       in_flight: this.runningArchives.has(taskId),
+      projects: parseJSON<string[]>(row.project_ids, []),
       state,
-      report_md: report,
+      report,
+      report_md: reportMd,
       reflection: readReflectionStore(home),
+      knowledge,
     }
   }
 
@@ -3376,6 +3419,12 @@ export class TasksService {
       event: TASK_STATUS_EVENT,
       data: { task_id: taskId, status: "done" },
     })
+    // 2026-10-31 AI-native 归档：done 后一次播报（未决反思只提醒，不再逐条追问）。
+    try {
+      getChatEventBridge().requestArchiveDoneGuide(taskId)
+    } catch {
+      /* observability only — never block done */
+    }
     console.log(`[TasksService] task ${taskId} archived → done (ws retention exemption lifted)`)
   }
 

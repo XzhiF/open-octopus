@@ -88,6 +88,9 @@ export interface TaskThreadProfile {
   /** 2026-10-30 验收引导态：awaiting_review ∧ 方案已 ready → 本会话负责逐项引导
    *  人验收；写权收窄为「≤2 文件的小修」，超范围必须升级 task-fix。 */
   acceptanceGuide: boolean
+  /** 2026-10-31 AI-native 归档：archiving 态 → 主 Chat 负责播报进度、逐条问反思、
+   *  在用户明确表态后执行落/跳过/重试；对话里只留一张归档总框。 */
+  archiveGuide: boolean
 }
 
 export interface TaskThreadDeps {
@@ -293,8 +296,9 @@ export class TaskThreadService {
     const plugins = this.buildPlugins(taskHome)
     const acceptanceGuide =
       identity === "doer" && !readOnly && info.awaitingReview && !!wsPath && acceptancePlanReady(task.id)
+    const archiveGuide = identity === "doer" && info.status === "archiving"
     const guard = this.buildGuard(identity, { taskHome, wsPath, readOnly, taskId: task.id, acceptanceGuide })
-    const context = this.buildContext(info, { identity, spec, view, acceptanceGuide })
+    const context = this.buildContext(info, { identity, spec, view, acceptanceGuide, archiveGuide })
 
     return {
       task: info,
@@ -311,6 +315,7 @@ export class TaskThreadService {
         return !!latest && latest.takeover_at != null && latest.takeover_delivered_at == null
       })(),
       acceptanceGuide,
+      archiveGuide,
     }
   }
 
@@ -352,6 +357,7 @@ export class TaskThreadService {
       spec: { phases?: Array<{ index: number; name: string; workflowRef?: string }> }
       view: TaskView
       acceptanceGuide?: boolean
+      archiveGuide?: boolean
     },
   ): string {
     const label = STATUS_LABEL[info.displayStatus] ?? info.displayStatus
@@ -394,9 +400,19 @@ export class TaskThreadService {
         "  5. 问题超出小修边界（要改 spec、要动 3 个以上文件、或反复修不好）→ 调 propose_acceptance_escalation，让用户确认升级 task-fix 大修复；不要硬改。",
         "  6. 全部项都有结论后，问用户要不要「放行」或「退回修改」。用户**明确表态**后由你收口：放行 → submit_acceptance_decision(decision=\"accepted\", confirmed=true)；退回 → submit_acceptance_decision(decision=\"rejected\", feedback=用户说的原因, confirmed=true)。人点验收台是兜底，不是必需；但没有明确表态绝不放行、绝不退回，也不要把未勾项当成通过。",
       ] : []
+      const archiveLines = extra.archiveGuide ? [
+        "[归档引导] 末 phase 已放行，任务处于 archiving（只读；归档编排由服务端执行）。你的角色是播报 + 逐条问反思 + 执行用户的口头决定：",
+        "  1. 先调 get_archive_state 读 git 同步 / project 失败 / 术语冲突 / 反思 / 知识包状态。",
+        "  2. 用一两句人话播报进度和你在等什么；不要贴表格或逐项清单 —— 明细让用户点总框里的「打开归档台看明细」。",
+        "  3. 调 propose_wiki_entries 给出 2–5 条建议（它不再落卡片），然后**一次只问一条**：要不要落 wiki。",
+        "  4. 用户说「落 / 跳过 / 都跳过 / 都落」→ 逐条 record_reflection_decision(confirmed=true) 执行并回执；不要代替人决定。",
+        "  5. 归档失败：说清是哪个 project、什么原因；用户明确说「重试」→ retry_archive(confirmed=true)。",
+        "  6. 不要声称已完成 —— done 由服务端在全部 project 的 git 同步成功后才写入。",
+      ] : []
       return [
         head,
         ...guideLines,
+        ...archiveLines,
         "[身份] 任务执行者。接住作者谈好的 spec / 批次 / 运行手册，在执行工作区里按用户指令改代码。",
         `[执行工作区] ${info.wsPath ?? "尚未绑定（等待触发）"}${info.branch ? ` · 分支 ${info.branch}` : ""}`,
         readOnlyLine,
@@ -411,6 +427,7 @@ export class TaskThreadService {
       head,
       "[身份] 只读回顾。任务已结束/归档，不再改代码或规格。",
       `[任务 home] ${info.taskHome}${info.wsPath ? ` · 执行工作区 ${info.wsPath}` : ""}`,
+      "[归档复盘] 可用 get_archive_state 复述归档结果、冲突与反思；未决反思可按用户明确表态继续 record_reflection_decision 落/跳过。",
       "[可做] 复盘、解释归档结果/冲突、查产物与用量；要再开发请开新任务或复制任务。",
     ].join("\n")
   }

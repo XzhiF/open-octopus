@@ -451,6 +451,11 @@ describe("AC1 — ADR 顺延 (git fixture: 目标已有 0003)", () => {
     expect(archiveCommitSubjects(wt)[0]).toMatch(/^chore\(archive\): E2E_AR .+ syncback \d{8}$/)
     expect(archiveCommitSubjects(repoA.bare, BRANCH).length).toBeGreaterThan(0)
     expect(fs.existsSync(path.join(taskHome.homePath(taskId), "archive", "report.md"))).toBe(true)
+    // 2026-10-31 AI-native 归档：结构化 report.json（主 Chat 总框 / 只读归档台读它）
+    const reportJson = JSON.parse(fs.readFileSync(path.join(taskHome.homePath(taskId), "archive", "report.json"), "utf-8"))
+    expect(reportJson.ok).toBe(true)
+    expect(reportJson.projects[0].project).toBe("repo-a")
+    expect(reportJson.projects[0].pushed).toBe(true)
   })
 })
 
@@ -556,6 +561,10 @@ describe("AC4 — push 失败停 archiving；retry project 粒度幂等续跑", 
     const state = JSON.parse(fs.readFileSync(path.join(home, "archive", "state.json"), "utf-8"))
     expect(state.projects["repo-a"].status).toBe("done")
     expect(state.projects["repo-b"]).toBeUndefined()
+    // 失败也要落结构化报告：总框/归档台从 report.json 读失败 project 与原因
+    const failedReport = JSON.parse(fs.readFileSync(path.join(home, "archive", "report.json"), "utf-8"))
+    expect(failedReport.ok).toBe(false)
+    expect(failedReport.projects.find((p: { project: string }) => p.project === "repo-b").error).toMatch(/push origin .+ failed/)
 
     const retry = await postRetry(taskId)
     expect(retry.status).toBe(202)

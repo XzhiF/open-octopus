@@ -587,6 +587,17 @@ export function createTaskArchiver(deps: ArchivingDeps): TaskArchiver {
       fs.mkdirSync(stateDir, { recursive: true })
       fs.writeFileSync(stateFile, JSON.stringify(state, null, 2), "utf-8")
     }
+    // 2026-10-31 AI-native 归档：结构化报告单独落盘（report.json），
+    // 供主 Chat 的归档总框与只读归档台读取失败原因 / 冲突 / PR 去向，
+    // 不必解析 report.md。写失败只影响诊断面，绝不影响 done 判定。
+    const saveReport = (report: ArchiveReport): void => {
+      try {
+        fs.mkdirSync(stateDir, { recursive: true })
+        fs.writeFileSync(path.join(stateDir, "report.json"), JSON.stringify(report, null, 2), "utf-8")
+      } catch (err: unknown) {
+        console.error("[Archiving] writing archive report.json failed (non-fatal):", err instanceof Error ? err.message : String(err))
+      }
+    }
 
     // ── 归并面采集 (home) ───────────────────────────────────────────
     const adrRoot = path.join(home, "docs", "adr")
@@ -618,11 +629,15 @@ export function createTaskArchiver(deps: ArchivingDeps): TaskArchiver {
       unattributedNotes = attr.unattributed.length
     }
 
-    const emptyReport = (error: string): ArchiveReport => ({
-      taskId, date: state.date, ok: false, projects: projectNames.map((p) => ({
-        project: p, ok: false, adrMerged: 0, adrSkipped: [], termsAppended: 0, termConflicts: [], commit: null, pushed: false, pr: null, error,
-      })), unattributedAdrs, unattributedNotes, error,
-    })
+    const emptyReport = (error: string): ArchiveReport => {
+      const report: ArchiveReport = {
+        taskId, date: state.date, ok: false, projects: projectNames.map((p) => ({
+          project: p, ok: false, adrMerged: 0, adrSkipped: [], termsAppended: 0, termConflicts: [], commit: null, pushed: false, pr: null, error,
+        })), unattributedAdrs, unattributedNotes, error,
+      }
+      saveReport(report)
+      return report
+    }
 
     const workspaceId = row.workspace_id
     if (!workspaceId) return emptyReport("任务未绑定 workspace — 归档目标 worktree 不可定位")
@@ -725,6 +740,7 @@ export function createTaskArchiver(deps: ArchivingDeps): TaskArchiver {
 
     const ok = results.every((r) => r.ok)
     const report: ArchiveReport = { taskId, date: state.date, ok, projects: results, unattributedAdrs, unattributedNotes }
+    saveReport(report)
     try {
       fs.mkdirSync(stateDir, { recursive: true })
       fs.writeFileSync(

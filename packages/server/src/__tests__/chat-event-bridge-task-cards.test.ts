@@ -153,9 +153,63 @@ describe("task status cards", () => {
   it("OCTOPUS_CHAT_AUTO_WAKE=0 still cards (deterministic layer is not disabled)", () => {
     process.env.OCTOPUS_CHAT_AUTO_WAKE = "0"
     const bridge = getChatEventBridge()
-    bridge.handleSse({ event: "task_status", data: { task_id: "t-thread", status: "done" } })
+    bridge.handleSse({ event: "task_status", data: { task_id: "t-thread", status: "aborted" } })
     expect(cards("s-main")).toHaveLength(1)
     expect(fetchMock).not.toHaveBeenCalled()
+  })
+
+  it("archiving / done are left to the AI-native archive summary (no generic card, no wake)", () => {
+    const bridge = getChatEventBridge()
+    bridge.handleSse({ event: "task_status", data: { task_id: "t-thread", status: "archiving" } })
+    bridge.handleSse({ event: "task_status", data: { task_id: "t-thread", status: "done" } })
+    expect(cards("s-main")).toHaveLength(0)
+    expect(fetchMock).not.toHaveBeenCalled()
+  })
+})
+
+describe("archive guide (2026-10-31 AI-native)", () => {
+  it("archiving start appends exactly ONE summary card and wakes once", () => {
+    db.prepare("UPDATE tasks SET status='archiving' WHERE id='t-thread'").run()
+    const bridge = getChatEventBridge()
+    bridge.requestArchiveGuide("t-thread")
+    bridge.requestArchiveGuide("t-thread")
+    const rows = cards("s-main")
+    expect(rows).toHaveLength(1)
+    const act = activity("s-main") as { status?: string; payload?: { archiveSummary?: boolean }; actions?: Array<{ id: string }> }
+    expect(act.status).toBe("archiving")
+    expect(act.payload?.archiveSummary).toBe(true)
+    expect(act.actions?.map((a) => a.id)).toEqual(["open_archive"])
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+    const body = JSON.parse(String((fetchMock.mock.calls[0][1] as { body: string }).body)) as Record<string, unknown>
+    expect(body.ephemeral).toBe(true)
+    expect(String(body.message)).toContain("get_archive_state")
+    expect(String(body.message)).toContain("record_reflection_decision")
+  })
+
+  it("done guide appends a fallback summary card once (process restarted mid-archive)", () => {
+    db.prepare("UPDATE tasks SET status='done' WHERE id='t-thread'").run()
+    const bridge = getChatEventBridge()
+    bridge.requestArchiveDoneGuide("t-thread")
+    bridge.requestArchiveDoneGuide("t-thread")
+    const rows = cards("s-main")
+    expect(rows).toHaveLength(1)
+    const act = activity("s-main") as { status?: string; payload?: { archiveSummary?: boolean } }
+    expect(act.status).toBe("done")
+    expect(act.payload?.archiveSummary).toBe(true)
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+    const body = JSON.parse(String((fetchMock.mock.calls[0][1] as { body: string }).body)) as Record<string, unknown>
+    expect(String(body.message)).toContain("归档完成")
+  })
+
+  it("done guide does not add a second card when the archiving summary already exists", () => {
+    db.prepare("UPDATE tasks SET status='archiving' WHERE id='t-thread'").run()
+    const bridge = getChatEventBridge()
+    bridge.requestArchiveGuide("t-thread")
+    db.prepare("UPDATE tasks SET status='done' WHERE id='t-thread'").run()
+    bridge.requestArchiveDoneGuide("t-thread")
+    expect(cards("s-main")).toHaveLength(1)
+    // 第一次唤醒已发生；done 播报在 5s 合并窗内被排队（fetch 不立即增加）。
+    expect(fetchMock).toHaveBeenCalledTimes(1)
   })
 })
 

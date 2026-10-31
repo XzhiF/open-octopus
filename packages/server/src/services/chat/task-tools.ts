@@ -70,6 +70,34 @@ function acceptanceService(): AcceptanceToolsService | null {
   }
 }
 
+// ── 归档引导工具（2026-10-31 AI-native 归档）─────────────────────────
+// Chat 里只留一张「归档总框」；git 进度 / 术语冲突 / 反思 / 知识包都从
+// get_archive_state 读。人的口头决定（落 / 跳过 / 重试）由 Agent 在
+// confirmed=true 后**直接执行**并回执 —— 不再铺按钮矩阵或确认卡。
+
+export interface ArchiveToolsService {
+  readArchive(taskId: string): unknown
+  decideReflection(
+    taskId: string,
+    input: { entry_id: string; action: "ingest" | "skip"; title?: string; content?: string },
+  ): Promise<{ ok: true; store: ReflectionStore; decision: unknown }>
+  retryArchive(taskId: string): unknown
+}
+
+let archiveProvider: (() => ArchiveToolsService | null) | null = null
+
+export function setArchiveToolsProvider(fn: (() => ArchiveToolsService | null) | null): void {
+  archiveProvider = fn
+}
+
+function archiveService(): ArchiveToolsService | null {
+  try {
+    return archiveProvider?.() ?? null
+  } catch {
+    return null
+  }
+}
+
 export interface TaskToolAction {
   id: string
   label: string
@@ -524,6 +552,115 @@ export function createTaskToolServer(input: TaskToolServerInput) {
     ),
   ] : []
 
+  // 归档阶段（archiving / done）才注册：读自由；口头决定经 confirmed=true 直接执行。
+  const archiveTools = (task.status === "archiving" || task.status === "done") ? [
+    tool(
+      "get_archive_state",
+      "Read the archive read-model: task status, in-flight, per-project ids, state.json (completed projects + commits), report.json (failures / term conflicts / PR destinations), reflection entries + decisions, and knowledge pack/compile status. Use this before summarizing archive progress or asking the human about reflection entries. Read-only.",
+      {},
+      async () => {
+        const svc = archiveService()
+        if (!svc) return text({ ok: false, error: "归档服务未就绪" })
+        try {
+          // 读模型给的是事实，不是全文：report.md 可能 200KB、反思正文可能 5×20KB，
+          // 直接塞进对话会烧掉大量 token。这里只保留指针/摘要；需要全文时模型可
+          // 用 Read 打开 task home 里的 archive/report.md。
+          const dto = svc.readArchive(task.id) as Record<string, unknown> & {
+            report_md?: string | null
+            reflection?: {
+              entries?: Array<{ id: string; title: string; target?: string; content?: string }>
+              decisions?: Record<string, unknown>
+            } | null
+          }
+          const { report_md: reportMd, reflection, ...rest } = dto
+          const compactReflection = reflection
+            ? {
+                entries: (reflection.entries ?? []).map((e) => ({
+                  id: e.id,
+                  title: e.title,
+                  ...(e.target ? { target: e.target } : {}),
+                  preview: (e.content ?? "").slice(0, 400),
+                })),
+                decisions: reflection.decisions ?? {},
+              }
+            : null
+          return text({
+            ok: true,
+            ...rest,
+            reflection: compactReflection,
+            ...(reportMd ? { report_md_chars: reportMd.length, report_md_hint: "全文在 task home 的 archive/report.md（需要时用 Read 打开）" } : {}),
+          })
+        } catch (err: unknown) {
+          return text({ ok: false, error: err instanceof Error ? err.message : String(err) })
+        }
+      },
+    ),
+    tool(
+      "record_reflection_decision",
+      "Record the human's explicit decision for ONE archive reflection entry: ingest (落 wiki) or skip. Call ONLY after the human clearly said so in this chat (e.g. 「落」「跳过」「剩下的都跳过」); set confirmed=true to assert that. Do NOT infer consent and do NOT batch on your own — when the user says 「都跳过」, call once per remaining entry or state how many you are skipping.",
+      {
+        entry_id: z.string().min(1).describe("Reflection entry id from get_archive_state (e.g. refl-1)"),
+        action: z.enum(["ingest", "skip"]),
+        title: z.string().max(200).optional().describe("Optional edited title before ingest"),
+        content: z.string().max(50_000).optional().describe("Optional edited body before ingest"),
+        confirmed: z.boolean().describe("true only when the human explicitly said this — never infer"),
+      },
+      async ({ entry_id, action, title, content, confirmed }) => {
+        if (!confirmed) {
+          return text({ ok: false, error: "必须等用户明确说「落 / 跳过」后才能记录（confirmed=true）—— 不要代替人决定。" })
+        }
+        if (task.status !== "archiving" && task.status !== "done") {
+          return text({ ok: false, error: "反思决策只在归档阶段（archiving / done）可用。" })
+        }
+        const svc = archiveService()
+        if (!svc) return text({ ok: false, error: "归档服务未就绪" })
+        try {
+          const out = await svc.decideReflection(task.id, {
+            entry_id,
+            action,
+            ...(title ? { title } : {}),
+            ...(content ? { content } : {}),
+          })
+          const remaining = out.store.entries.filter((e) => !out.store.decisions[e.id]).length
+          return text({
+            ok: true,
+            entry_id,
+            action,
+            decision: out.decision,
+            remaining,
+            decided: Object.keys(out.store.decisions).length,
+            total: out.store.entries.length,
+          })
+        } catch (err: unknown) {
+          return text({ ok: false, error: err instanceof Error ? err.message : String(err) })
+        }
+      },
+    ),
+    tool(
+      "retry_archive",
+      "Retry the archive orchestration (project-granular, idempotent) AFTER the human explicitly said 「重试」 in this chat. Set confirmed=true to assert that. Only valid while the task is parked in archiving; completion (done) is written by the server when every project is green — never claim it yourself.",
+      {
+        confirmed: z.boolean().describe("true only when the human explicitly asked to retry — never infer"),
+      },
+      async ({ confirmed }) => {
+        if (!confirmed) {
+          return text({ ok: false, error: "必须等用户明确说「重试」后才能执行（confirmed=true）—— 不要自己重试。" })
+        }
+        if (task.status !== "archiving") {
+          return text({ ok: false, error: `只有停在 archiving 的任务可以重试（当前 ${task.status}）。` })
+        }
+        const svc = archiveService()
+        if (!svc) return text({ ok: false, error: "归档服务未就绪" })
+        try {
+          svc.retryArchive(task.id)
+          return text({ ok: true, started: true, hint: "续跑已触发；完成以服务端 task_status = done 为准。" })
+        } catch (err: unknown) {
+          return text({ ok: false, error: err instanceof Error ? err.message : String(err) })
+        }
+      },
+    ),
+  ] : []
+
   const tools = [
     tool(
       "get_task_status",
@@ -583,7 +720,7 @@ export function createTaskToolServer(input: TaskToolServerInput) {
     ),
     tool(
       "propose_wiki_entries",
-      "Archiving only (reflection turn). Propose 2–5 concise knowledge entries worth preserving in the wiki (decisions, pitfalls, glossary terms). The human decides per entry whether to ingest or skip; this does NOT write the wiki by itself.",
+      "Archiving only (reflection turn). Propose 2–5 concise knowledge entries worth preserving in the wiki (decisions, pitfalls, glossary terms). Writes the proposals to the task home; it does NOT write the wiki and does NOT append a card. After calling it, ask the human in plain chat — one entry at a time — whether to 落 wiki or skip; the human decides per entry.",
       {
         entries: z.array(
           z.object({
@@ -613,22 +750,16 @@ export function createTaskToolServer(input: TaskToolServerInput) {
         } catch (err: unknown) {
           return text({ ok: false, error: `反思结果落盘失败：${err instanceof Error ? err.message : String(err)}` })
         }
-        appendTaskToolCard(db, sessionId, {
-          kind: "task.reflection",
-          severity: "info",
-          title: `归档反思 · ${store.entries.length} 条沉淀建议`,
-          message: "逐条选择：落 wiki / 跳过。系统自动投喂仍在后台进行。",
-          taskId: task.id,
-          phaseIndex: task.phaseIndex,
-          roundIndex: task.roundIndex,
-          workspaceId: task.workspaceId,
-          actions: [],
-          payload: { entries: store.entries, autoIngest: true },
+        // 2026-10-31 AI-native：不再往对话里塞逐条按钮卡 —— 总框 + 口述引导。
+        return text({
+          ok: true,
+          entries: store.entries.map((e) => ({ id: e.id, title: e.title, ...(e.target ? { target: e.target } : {}) })),
+          next: "逐条用消息问用户：落 wiki 还是跳过（一次一条）。",
         })
-        return text({ ok: true, entries: store.entries.length })
       },
     ),
     ...acceptanceTools,
+    ...archiveTools,
   ]
 
   return createSdkMcpServer({

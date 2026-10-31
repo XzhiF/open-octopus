@@ -24,6 +24,7 @@ function profile(overrides: Partial<TaskThreadProfile["task"]> = {}, identity: T
     readOnly: false,
     takeover: false,
     acceptanceGuide: false,
+    archiveGuide: false,
     task: {
       id: "t-1",
       name: "昵称敏感词过滤组件",

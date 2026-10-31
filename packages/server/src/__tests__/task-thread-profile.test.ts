@@ -159,7 +159,7 @@ describe("TaskThreadService — identity / cwd / guard", () => {
     expect(profile.task.awaitingReview).toBe(true)
     expect(profile.identity).toBe("doer")
     expect(profile.context).toContain("待验收")
-    expect(profile.context).toContain("验收通过/打回由人")
+    expect(profile.context).toContain("submit_acceptance_decision")
   })
 
   it("archiving → doer but read-only (archive owns git)", async () => {
@@ -169,6 +169,10 @@ describe("TaskThreadService — identity / cwd / guard", () => {
     expect(profile.identity).toBe("doer")
     expect(profile.readOnly).toBe(true)
     expect(profile.autoCommit).toBe(false)
+    // 2026-10-31 AI-native 归档：主 Chat 拿到归档引导上下文（播报 + 逐条问反思 + 口头执行）
+    expect(profile.archiveGuide).toBe(true)
+    expect(profile.context).toContain("归档引导")
+    expect(profile.context).toContain("get_archive_state")
     const denied = await profile.guard!("Write", { file_path: path.join(wsDir, "projects", "app", "x.ts") })
     expect(denied?.allow).toBe(false)
     // reflection still needs read-only shell

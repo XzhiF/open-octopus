@@ -73,6 +73,41 @@ describe("reflection store + decisions", () => {
     expect(archive.reflection?.decisions).toEqual({})
   })
 
+  it("archive read model exposes project ids + structured report + knowledge snapshot", () => {
+    insertTask("t-model")
+    db.prepare("UPDATE tasks SET project_ids = ? WHERE id = ?").run(JSON.stringify(["api", "web"]), "t-model")
+    const archiveDir = path.join(home, "archive")
+    fs.mkdirSync(archiveDir, { recursive: true })
+    fs.writeFileSync(path.join(archiveDir, "report.json"), JSON.stringify({
+      taskId: "t-model",
+      date: "20261031",
+      ok: false,
+      projects: [
+        {
+          project: "api", ok: true, adrMerged: 1, adrSkipped: [], termsAppended: 0,
+          termConflicts: [], commit: "abc", pushed: true, pr: { action: "created" },
+        },
+        {
+          project: "web", ok: false, adrMerged: 0, adrSkipped: [], termsAppended: 0,
+          termConflicts: [], commit: null, pushed: false, pr: null,
+          error: "git push origin feat/x failed: protected branch",
+        },
+      ],
+      unattributedAdrs: [],
+      unattributedNotes: 0,
+    }), "utf-8")
+    service.setArchiveKnowledgeHook(() => ({ pack_items: 7, compile_state: "running", compile_position: null }))
+    try {
+      const archive = service.readArchive("t-model")
+      expect(archive.projects).toEqual(["api", "web"])
+      expect(archive.report?.ok).toBe(false)
+      expect(archive.report?.projects[1].error).toContain("protected branch")
+      expect(archive.knowledge).toEqual({ pack_items: 7, compile_state: "running", compile_position: null })
+    } finally {
+      service.setArchiveKnowledgeHook(null)
+    }
+  })
+
   it("skip is recorded and idempotent", async () => {
     insertTask("t-skip")
     seedReflection()

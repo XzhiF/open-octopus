@@ -65,7 +65,8 @@ import { FindingOpsService } from "./services/knowledge/findings"
 import { BackfillService } from "./services/knowledge/backfill"
 import { createFindingsRoutes } from "./routes/findings"
 import { createEffectivenessRoutes } from "./routes/effectiveness"
-import { ArchiveIngestService } from "./services/tasks/archive-ingest-service"
+import { ArchiveIngestService, archiveCompileTaskId } from "./services/tasks/archive-ingest-service"
+import { readPackManifest } from "./services/knowledge/material-pack"
 import { createProductionArchiveSummarizer } from "./services/tasks/archive-ingest-llm"
 import { createWikiRoutes } from "./routes/wiki"
 import { createArchiveRoutes } from "./routes/archive"
@@ -95,7 +96,7 @@ import {
   AcceptancePlanService,
   setAcceptancePlanReadyProvider,
 } from "./services/tasks/acceptance-plan-service"
-import { setAcceptanceToolsProvider } from "./services/chat/task-tools"
+import { setAcceptanceToolsProvider, setArchiveToolsProvider } from "./services/chat/task-tools"
 import { TestInstanceRegistry } from "./services/tasks/test-instance-registry"
 import { createWorkflowPresetsRoutes } from "./routes/workflow-presets"
 import { createSkillGroupsRoutes } from "./routes/skill-groups"
@@ -1205,6 +1206,18 @@ if (shouldServe) {
       tasksService.setArchiveIngestHook((taskId) => {
         void archiveIngest.ingestTask(taskId)
       })
+      // 2026-10-31 AI-native 归档：归档总框 / 归档台读「知识包件数 + 编译状态」。
+      // 只读快照，不触发任何写入；未投喂（无 manifest 且未入队）→ null。
+      tasksService.setArchiveKnowledgeHook((taskId) => {
+        const manifest = readPackManifest(resolveGlobalKnowledgeRoot(), taskId)
+        const queueView = wikiWriteQueue.get(archiveCompileTaskId(taskId))
+        if (!manifest && !queueView) return null
+        return {
+          pack_items: manifest ? manifest.items.filter((item) => !item.excluded).length : 0,
+          compile_state: queueView?.state ?? null,
+          compile_position: queueView?.position ?? null,
+        }
+      })
       const assistService = new AssistWorkflowService(db, sse)
       // 验货台 (acceptance v2)：实物 round-diff + 当场复检 — 4th optional arg
       // (tests that build the route factory without it get 501 on those 5 endpoints).
@@ -1236,13 +1249,21 @@ if (shouldServe) {
         startPreview: (taskId) => roundEvidence.startPreview(taskId),
         stopPreview: (taskId) => roundEvidence.stopPreview(taskId),
       }))
-      // 2026-10-28 task-thread: the task-doer dual chat was retired. Takeover
-      // reuses the task's main thread (source_chat_session_id).
-      app.route('/api/tasks', createTasksRoutes(tasksService, sse, assistService, roundEvidence, async ({ title, text, origin }) => {
+      // 2026-10-31 AI-native 归档：主 Chat 的口头决定（落/跳过/重试）直接执行。
+      // ingest 通道与 POST /:id/reflection/decision 同一条（raw 冻结 + 编译入队）。
+      const reflectionIngest = async ({ title, text, origin }: { title: string; text: string; origin: string }) => {
         const res = knowledgeRawIngest.ingestText({ text, title, origin })
         const compile = ingestCompileTrigger(res.raw.path)
         return { raw_path: res.raw.path, compile_task_id: compile.taskId }
+      }
+      setArchiveToolsProvider(() => ({
+        readArchive: (taskId) => tasksService.readArchive(taskId),
+        decideReflection: (taskId, input) => tasksService.decideReflection(taskId, input, reflectionIngest),
+        retryArchive: (taskId) => tasksService.retryArchive(taskId),
       }))
+      // 2026-10-28 task-thread: the task-doer dual chat was retired. Takeover
+      // reuses the task's main thread (source_chat_session_id).
+      app.route('/api/tasks', createTasksRoutes(tasksService, sse, assistService, roundEvidence, reflectionIngest))
       // task-workflow-presets (T3): preset catalog API
       const workflowPresetsService = new WorkflowPresetsService()
       app.route('/api/workflow-presets', createWorkflowPresetsRoutes(() => workflowPresetsService))

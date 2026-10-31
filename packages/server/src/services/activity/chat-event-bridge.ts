@@ -116,6 +116,10 @@ class ChatEventBridge {
   private lastTaskStatus = new Map<string, string>()
   /** 验收引导唤醒去重：task:phase:round → 已唤醒。 */
   private acceptanceGuided = new Set<string>()
+  /** 归档引导唤醒去重（taskId → 已开始引导）。 */
+  private archiveGuided = new Set<string>()
+  /** 归档完成播报去重（taskId → 已播报）。 */
+  private archiveDoneGuided = new Set<string>()
 
   attach(db: SqliteLike): void {
     this.db = db
@@ -340,7 +344,12 @@ class ChatEventBridge {
       },
     })
 
-    if (isThread && row.source_chat_session_id) {
+    // 2026-10-31 AI-native 归档：archiving / done 不再追加通用状态卡，也不会
+    // 在这里唤醒 —— 入口是 beginArchiving 的总框引导与 endArchiving 的完成播报。
+    // 否则一张任务会出现「归档中 + 归档总框 + 已完成」三张卡，与「只留一个总框」冲突。
+    const archiveHandled = isThread && (status === "archiving" || status === "done")
+
+    if (isThread && row.source_chat_session_id && !archiveHandled) {
       this.appendTaskCard({
         sessionId: row.source_chat_session_id,
         workspaceId,
@@ -353,7 +362,7 @@ class ChatEventBridge {
       this.notifySession(row.source_chat_session_id, workspaceId)
     }
 
-    if (high && row.source_chat_session_id) {
+    if (high && row.source_chat_session_id && !archiveHandled) {
       void this.wake(
         { sessionId: row.source_chat_session_id, org: row.repo_group ?? '', workspaceId },
         event,
@@ -391,6 +400,9 @@ class ChatEventBridge {
       phaseIndex: typeof payload.phaseIndex === 'number' ? payload.phaseIndex : null,
       roundIndex: typeof payload.roundIndex === 'number' ? payload.roundIndex : null,
       actions: input.actions,
+      // 2026-10-31 归档总框：卡片类型标记随载荷落到消息 metadata（web 依此
+      // 渲染唯一的 ArchiveSummaryCard，而不是通用状态卡）。
+      ...(Object.keys(payload).length > 0 ? { payload } : {}),
     }
     try {
       this.db.prepare(
@@ -415,11 +427,13 @@ class ChatEventBridge {
     }
   }
 
-  /** Archiving start: wake the main thread ONCE for knowledge reflection.
-   *  The status card is already written by handleTaskStatus; this turn only
-   *  asks the model to call propose_wiki_entries (ephemeral, no duplicate card). */
-  requestArchiveReflection(taskId: string): void {
+  /** Archiving start (2026-10-31 AI-native 归档): append the ONE archive summary
+   *  card (idempotent per task) and wake the main thread ONCE to guide.
+   *  The summary card itself is live (the web polls GET /:id/archive); this
+   *  method never appends per-project / reflection / retry cards. */
+  requestArchiveGuide(taskId: string): void {
     if (!this.db) return
+    if (this.archiveGuided.has(taskId)) return
     let row: {
       name?: string
       repo_group?: string | null
@@ -442,28 +456,131 @@ class ChatEventBridge {
       return
     }
     if (!session || session.clone_name) return // legacy clone thread — untouched
+    this.archiveGuided.add(taskId)
 
-    const title = "归档反思 · 知识沉淀"
+    const actions: TaskCardAction[] = [{ id: "open_archive", label: "打开归档台看明细" }]
+    const title = "归档 · 总览"
+    const detail = `任务：${row.name ?? taskId.slice(0, 8)} · 末 phase 已通过`
     const event = getActivityBus().publish({
       kind: "task.status",
       severity: "info",
       title,
-      message: `任务：${row.name ?? taskId.slice(0, 8)} · 末 phase 已通过，归档编排中`,
+      message: detail,
       workspaceId: row.workspace_id ?? null,
       taskId,
       sessionId: row.source_chat_session_id,
-      payload: { status: "archiving", reflection: true },
+      payload: { status: "archiving", archiveSummary: true, actions },
     })
+    // 一张总框卡：重进归档（同任务二次归档）不重复插。
+    if (!this.hasArchiveSummaryCard(row.source_chat_session_id, taskId)) {
+      this.appendTaskCard({
+        sessionId: row.source_chat_session_id,
+        workspaceId: row.workspace_id ?? null,
+        title,
+        detail,
+        event,
+        status: "archiving",
+        actions,
+      })
+      this.notifySession(row.source_chat_session_id, row.workspace_id ?? null)
+    }
+
     const message = [
-      `[归档反思] 任务 ${taskId} 已进入归档阶段。`,
-      "请读 task home、本轮 git 变更与 spec，调用 propose_wiki_entries 给出 2–5 条值得落 wiki 的建议（决策 / 坑 / 术语）。",
-      "不要改代码；落不落由人逐条决定。自动投喂已在后台进行，不必重复它。",
+      `[归档引导] 任务 ${taskId} 的末 phase 已放行，任务进入归档阶段（archiving）。`,
+      "第一步：调用 get_archive_state 读 git 同步进度 / 术语冲突 / 反思建议 / 知识包编译状态。",
+      "然后用一两句人话告诉用户现在到哪一步、你在等什么；**不要贴表格**，明细让用户点总框里的「打开归档台看明细」。",
+      "接着调用 propose_wiki_entries 产出 2–5 条沉淀建议（不要贴卡片），再**一次只问一条**：直接问「要不要落 wiki」。",
+      "用户说「落 / 跳过 / 都跳过 / 都落」→ 逐条调用 record_reflection_decision(confirmed=true) 执行并回执；不要代替人决定。",
+      "若某个 project 归档失败：说清失败原因；用户明确说「重试」→ retry_archive(confirmed=true)。",
+      "不要声称任务已完成 —— done 由服务端在全部 project 的 git 同步成功后才写入，届时会通知你。",
     ].join("\n")
     void this.wake(
       { sessionId: row.source_chat_session_id, org: row.repo_group ?? '', workspaceId: row.workspace_id ?? null },
       event,
       { ephemeral: true, message },
     )
+  }
+
+  /** 归档完成（endArchiving → done）：一次播报，不再逐条追问未决反思。 */
+  requestArchiveDoneGuide(taskId: string): void {
+    if (!this.db) return
+    if (this.archiveDoneGuided.has(taskId)) return
+    let row: {
+      name?: string
+      repo_group?: string | null
+      source_chat_session_id?: string | null
+      workspace_id?: string | null
+    } | undefined
+    try {
+      row = this.db.prepare(
+        "SELECT name, repo_group, source_chat_session_id, workspace_id FROM tasks WHERE id = ?",
+      ).get(taskId) as typeof row
+    } catch {
+      return
+    }
+    if (!row?.source_chat_session_id) return
+    let session: { clone_name?: string | null } | undefined
+    try {
+      session = this.db.prepare("SELECT clone_name FROM sessions WHERE id = ?")
+        .get(row.source_chat_session_id) as typeof session
+    } catch {
+      return
+    }
+    if (!session || session.clone_name) return // legacy clone thread — untouched
+    this.archiveDoneGuided.add(taskId)
+
+    const event = getActivityBus().publish({
+      kind: "task.completed",
+      severity: "info",
+      title: "归档完成",
+      message: `任务：${row.name ?? taskId.slice(0, 8)} · 全部 project 已同步`,
+      workspaceId: row.workspace_id ?? null,
+      taskId,
+      sessionId: row.source_chat_session_id,
+      payload: { status: "done", archiveSummary: true, actions: [{ id: "open_archive", label: "打开归档台看明细" }] },
+    })
+    // 兜底：进程在 archiving 中途重启过（没走 requestArchiveGuide）时，done 也要
+    // 保证对话里有一张总框 —— 否则用户只看到一条播报、没有可回看的归档卡。
+    if (!this.hasArchiveSummaryCard(row.source_chat_session_id, taskId)) {
+      this.appendTaskCard({
+        sessionId: row.source_chat_session_id,
+        workspaceId: row.workspace_id ?? null,
+        title: "归档 · 总览",
+        detail: `任务：${row.name ?? taskId.slice(0, 8)} · 已完成`,
+        event,
+        status: "done",
+        actions: [{ id: "open_archive", label: "打开归档台看明细" }],
+      })
+      this.notifySession(row.source_chat_session_id, row.workspace_id ?? null)
+    }
+    const message = [
+      `[归档完成] 任务 ${taskId} 的全部 project 已归档成功，服务端已把任务状态写为 done。`,
+      "请用一两句向用户播报：同步了哪些 project、术语冲突是否已在 PR 等 review；不要贴表格。",
+      "如果还有未决的反思条目，只提醒一次（例如「还有 N 条没决定，要落/跳过随时说」），不要逐条再问。",
+    ].join("\n")
+    void this.wake(
+      { sessionId: row.source_chat_session_id, org: row.repo_group ?? '', workspaceId: row.workspace_id ?? null },
+      event,
+      { ephemeral: true, message },
+    )
+  }
+
+  /** 同任务是否已有归档总框卡（重进归档不重复插；会话与任务 1:1，取最近一张即可）。 */
+  private hasArchiveSummaryCard(sessionId: string, taskId: string): boolean {
+    if (!this.db) return false
+    try {
+      const row = this.db.prepare(
+        "SELECT metadata FROM messages WHERE session_id = ? AND metadata LIKE ? ORDER BY created_at DESC LIMIT 1",
+      ).get(sessionId, '%"archiveSummary":true%') as { metadata?: string | null } | undefined
+      if (!row?.metadata) return false
+      const meta = JSON.parse(row.metadata) as {
+        activity?: { taskId?: string | null; payload?: { archiveSummary?: boolean } }
+      }
+      return !!meta.activity?.payload?.archiveSummary && meta.activity.taskId === taskId
+    } catch {
+      /* no messages table in stripped tests */
+      return false
+    }
   }
 
   /** 验收方案就绪（2026-10-30 AI-native 验收）：投一张消息流卡片 + 唤醒主
@@ -613,7 +730,9 @@ class ChatEventBridge {
   }
 
   /** Archiving failed but the task is parked in 'archiving' (no task_status
-   *  transition fires). Card + one wake so the main chat can explain/retry. */
+   *  transition fires). 2026-10-31 AI-native: NO extra card and no retry button —
+   *  the archive summary card reflects the failure live; this only wakes the
+   *  main chat to explain it and offer 「重试」 in plain words. */
   notifyTaskArchiveFailure(taskId: string, detail?: string): void {
     if (!this.db) return
     let row: {
@@ -639,39 +758,28 @@ class ChatEventBridge {
     }
     if (!session || session.clone_name) return // legacy clone thread — untouched
 
-    const title = "归档停在 archiving"
     const message = detail ? `失败原因：${detail}` : "有 project 未归档成功，可幂等重试。"
-    const actions: TaskCardAction[] = [
-      { id: "retry_archive", label: "↻ 重试归档" },
-      { id: "open_archive", label: "打开归档" },
-    ]
     const event = getActivityBus().publish({
       kind: "task.failed",
       severity: "warn",
-      title,
+      title: "归档停在 archiving",
       message,
       workspaceId: row.workspace_id ?? null,
       taskId,
       sessionId: row.source_chat_session_id,
-      payload: { status: "archiving", actions },
+      payload: { status: "archiving" },
     })
-    this.appendTaskCard({
-      sessionId: row.source_chat_session_id,
-      workspaceId: row.workspace_id ?? null,
-      title,
-      detail: message,
+    const wakeMessage = [
+      `[归档失败] 任务 ${taskId} 的归档编排没有全部成功，任务停在 archiving。`,
+      message,
+      "请调用 get_archive_state 看清是哪个 project、什么原因，用一两句话告诉用户。",
+      "只有用户明确说「重试」时才调用 retry_archive(confirmed=true)；不要说已重试，也不要自己重试。",
+    ].join("\n")
+    void this.wake(
+      { sessionId: row.source_chat_session_id, org: row.repo_group ?? '', workspaceId: row.workspace_id ?? null },
       event,
-      status: "archiving",
-      actions,
-    })
-    this.notifySession(row.source_chat_session_id, row.workspace_id ?? null)
-    {
-      void this.wake(
-        { sessionId: row.source_chat_session_id, org: row.repo_group ?? '', workspaceId: row.workspace_id ?? null },
-        event,
-        { ephemeral: true },
-      )
-    }
+      { ephemeral: true, message: wakeMessage },
+    )
   }
 
   private emitOnce(executionId: string, suffix: string, input: Omit<ActivityEvent, "id" | "createdAt">): void {
