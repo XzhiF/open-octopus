@@ -1,19 +1,19 @@
-// packages/web-app/components/tasks/acceptance/acceptance-plan-panel.tsx
+"use client"
+
+// 验收方案面板（2026-10-30 AI-native 验收；2026-10-31 两层化）：
 //
-// 验收方案面板（2026-10-30 AI-native 验收 · 原型 A「证据随行」）：
-//
-//   ┌ 左：核对清单（第 x 项 · 标题 · 通过标准摘要 · 证据件数 · 机器建议）
-//   └ 右：选中项的证据台 ——
-//        标题 / 用户故事 / 「这条要求什么」/「怎么验」（逐步就地跑或打开文件）/
-//        运行结果终端 / 「证据」行（可打开批次文件）/ 核对点 / 底部结论条
+//   ┌ 左：两层清单
+//   │   · 你要验的（cases，1–3 条场景）—— 可判定，逐条给结论
+//   │   · 本轮验证了什么（checks，机器证据）—— 只读，不要求逐项签
+//   └ 右：选中项详情
+//        场景：故事 / 起点 / 通过标准 / 步骤（打开 → 操作 → 看什么）/ 证据 / 结论
+//        证据：覆盖的 AC / 证据件 / 按需复核命令（只按用户点名重跑）
 //
 // 数据来自 GET /:id/playbook（plan ready 时 server 用 acceptance-plan-rN.json
 // 映射而来）。判定写入走 POST /:id/acceptance/check 单条写入口 —— 与主 Chat
 // 引导共用一份盘上真相；TASK_ACCEPTANCE_CHECK_EVENT 到达即重读，双向同步。
 //
-// 纪律：机器只建议，人逐项确认；✕/⊘ 必须写原因；绝不批量代勾。
-
-"use client"
+// 纪律：人只签场景；机器证据只读。✕/⊘ 必须写原因；绝不批量代勾。
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { Check, FileText, Play, X } from "lucide-react"
@@ -27,7 +27,7 @@ import {
   type CheckDecision,
   type CheckEntry,
   type PlanEvidenceRef,
-  type PlanHowTo,
+  type PlanStep,
   type PlaybookItem,
   type PlaybookPayload,
   type ProbeRunResult,
@@ -62,19 +62,25 @@ interface AcceptancePlanPanelProps {
   onOpenFile?: (homeRelPath: string) => void
 }
 
-const VERDICT: Record<string, { label: string; cls: string; short: string }> = {
-  pass: { label: "机器建议通过", short: "有证据", cls: "pass" },
-  warn: { label: "机器建议先跑/留意", short: "建议先跑", cls: "warn" },
-  human: { label: "需人工判断", short: "需你判断", cls: "human" },
-}
-
 const EVIDENCE_ICON: Record<string, string> = {
   diff: "±", test: "▷", report: "¶", docs: "•", preview: "▶",
 }
 
+const STEP_LABEL: Record<PlanStep["kind"], string> = {
+  open: "打开",
+  do: "操作",
+  observe: "看",
+}
+
+type ProbeNow = { result: ProbeRunResult; command: string }
+
 /** home 内可打开的路径（.scratch/**）；绝对工作区路径只展示不开。 */
 function isHomeRel(p?: string): boolean {
   return !!p && p.replace(/\\/g, "/").startsWith(".scratch/")
+}
+
+function isHttpUrl(p?: string): boolean {
+  return !!p && /^https?:\/\//i.test(p)
 }
 
 export function AcceptancePlanPanel({
@@ -82,30 +88,38 @@ export function AcceptancePlanPanel({
   onPlanEvent, registerFlush, onSaveStateChange, onOpenFile,
 }: AcceptancePlanPanelProps) {
   const items = useMemo(() => playbook.sections.flatMap((s) => s.items), [playbook])
+  /** 人验收场景（可判定）。编译型清单没有 tier —— 一律按场景处理。 */
+  const cases = useMemo(() => items.filter((it) => it.tier !== "check"), [items])
+  /** 机器证据（只读）。 */
+  const evidence = useMemo(() => items.filter((it) => it.tier === "check"), [items])
+
   const [checks, setChecks] = useState<Record<string, CheckEntry>>({})
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [busyId, setBusyId] = useState<string | null>(null)
   const [runningProbe, setRunningProbe] = useState<string | null>(null)
-  const [probeNow, setProbeNow] = useState<Record<string, ProbeRunResult>>({})
+  const [probeNow, setProbeNow] = useState<Record<string, ProbeNow>>({})
   const checksRef = useRef<Record<string, CheckEntry>>({})
   const dirtyRef = useRef(false)
 
   const summarize = useCallback((next: Record<string, CheckEntry>): PlanGate => {
     let pass = 0, fail = 0, skip = 0
     const failTickets = new Set<string>()
-    for (const it of items) {
+    for (const it of cases) {
       const d = next[it.id]?.decision
       if (d === "pass") pass++
-      else if (d === "fail") { fail++; if (it.ticket && it.ticket !== "spec") failTickets.add(it.ticket) }
-      else if (d === "skip") skip++
+      else if (d === "fail") {
+        fail++
+        const tickets = it.tickets?.length ? it.tickets : it.ticket ? [it.ticket] : []
+        for (const t of tickets) if (t !== "spec") failTickets.add(t)
+      } else if (d === "skip") skip++
     }
     return {
       pass, fail, skip,
-      undecided: Math.max(0, items.length - pass - fail - skip),
-      total: items.length,
+      undecided: Math.max(0, cases.length - pass - fail - skip),
+      total: cases.length,
       failTickets: [...failTickets],
     }
-  }, [items])
+  }, [cases])
 
   const applyChecks = useCallback((next: Record<string, CheckEntry>) => {
     checksRef.current = next
@@ -149,18 +163,21 @@ export function AcceptancePlanPanel({
     return () => registerFlush?.(null)
   }, [registerFlush])
 
-  // 默认选中：第一项未决；全决则第一项。
+  // 默认选中：第一条未决场景；全决则第一条场景；没有场景再看第一条证据。
   useEffect(() => {
     if (selectedId && items.some((it) => it.id === selectedId)) return
-    const firstUndecided = items.find((it) => !checks[it.id])
-    setSelectedId((firstUndecided ?? items[0])?.id ?? null)
-  }, [items, checks, selectedId])
+    const firstUndecided = cases.find((it) => !checks[it.id])
+    setSelectedId((firstUndecided ?? cases[0] ?? evidence[0])?.id ?? null)
+  }, [items, cases, evidence, checks, selectedId])
 
   const selected = items.find((it) => it.id === selectedId) ?? null
-  const selectedIndex = selected ? items.findIndex((it) => it.id === selected.id) : -1
+  const selectedIsCase = !!selected && selected.tier !== "check"
+  const caseIndex = selectedIsCase ? cases.findIndex((it) => it.id === selected!.id) : -1
+  const evidenceIndex = selected && !selectedIsCase ? evidence.findIndex((it) => it.id === selected.id) : -1
 
   const decide = useCallback(async (item: PlaybookItem, decision: CheckDecision, note?: string) => {
     if (disabledReason || busyId) return
+    if (item.tier === "check") return
     if (decision !== "pass" && !(note ?? "").trim()) return
     setBusyId(item.id)
     onSaveStateChange?.(true)
@@ -168,7 +185,7 @@ export function AcceptancePlanPanel({
     try {
       const res = await recordAcceptanceCheck(taskId, { item_id: item.id, decision, note: note?.trim() })
       applyChecks(res.checks.checks ?? {})
-      const next = items.find((it) => it.id !== item.id && !(res.checks.checks ?? {})[it.id])
+      const next = cases.find((it) => it.id !== item.id && !(res.checks.checks ?? {})[it.id])
       if (next) setSelectedId(next.id)
     } catch (err: unknown) {
       toast.error(err instanceof Error ? err.message : "核对写入失败")
@@ -176,16 +193,15 @@ export function AcceptancePlanPanel({
       setBusyId(null)
       onSaveStateChange?.(false)
     }
-  }, [taskId, items, disabledReason, busyId, applyChecks, onSaveStateChange])
+  }, [taskId, cases, disabledReason, busyId, applyChecks, onSaveStateChange])
 
-  const run = useCallback(async (item: PlaybookItem) => {
-    const cmd = item.machine?.command?.trim()
-      || item.howTo?.find((h) => h.kind === "run" && h.command?.trim())?.command?.trim()
+  const run = useCallback(async (item: PlaybookItem, command?: string) => {
+    const cmd = (command ?? probeCommand(item) ?? "").trim()
     if (!cmd || runningProbe || disabledReason) return
     setRunningProbe(item.id)
     try {
       const r = await runProbe(taskId, cmd, 300)
-      setProbeNow((m) => ({ ...m, [item.id]: r }))
+      setProbeNow((m) => ({ ...m, [item.id]: { result: r, command: cmd } }))
     } catch (err: unknown) {
       toast.error(err instanceof Error ? err.message : "机器证据执行失败")
     } finally {
@@ -204,26 +220,32 @@ export function AcceptancePlanPanel({
   return (
     <div className="ap-plan" data-testid="acceptance-plan-panel" data-plan-status={plan?.status ?? "missing"}>
       <div className="ap-plan-grid">
-        {/* ── 左：核对清单 ── */}
+        {/* ── 左：两层清单 ── */}
         <section className="ap-card ap-plan-list-card">
           <div className="ap-card-head">
-            <span className="ap-card-title">核对 · 验收项</span>
+            <span className="ap-card-title">验收 · 场景</span>
             <span className="ap-card-count">
               <b>{gate.pass}</b>/{gate.total}✓
               {gate.skip > 0 && <> · ⊘{gate.skip}</>}
               {gate.fail > 0 && <> · <span className="bad">✕{gate.fail}</span></>}
+              {evidence.length > 0 && <span className="quiet"> · 证据 {evidence.length}</span>}
             </span>
           </div>
           <div className="ap-plan-list">
-            {items.map((it, i) => {
+            <div className="ap-plan-group" data-testid="plan-group-cases">
+              你要验的 <span className="n">{cases.length}</span>
+              <span className="hint">场景 · 逐条判定</span>
+            </div>
+            {cases.map((it) => {
               const d = checks[it.id]?.decision
-              const mv = it.machine ? VERDICT[it.machine.verdict] ?? VERDICT.human : null
               const evCount = it.evidenceRefs?.length ?? 0
+              const steps = it.steps?.length ?? it.howTo?.length ?? 0
               return (
                 <button
                   key={it.id}
                   type="button"
                   className="ap-plan-item"
+                  data-tier="case"
                   data-active={it.id === selectedId}
                   data-state={d ?? ""}
                   onClick={() => setSelectedId(it.id)}
@@ -234,24 +256,61 @@ export function AcceptancePlanPanel({
                     <b>{it.title ?? it.op}</b>
                     <small>{it.expect}</small>
                     <span className="ap-plan-badges">
+                      {steps > 0 && <span className="tag">{steps} 步</span>}
                       {evCount > 0 && <span className="tag">{evCount} 件证据</span>}
-                      {mv && <span className={`tag ${mv.cls}`}>{mv.short}</span>}
-                      {it.ticket && <span className="tag quiet">{it.ticket}</span>}
+                      {it.tickets?.length ? <span className="tag quiet">{it.tickets.join(" · ")}</span>
+                        : it.ticket ? <span className="tag quiet">{it.ticket}</span> : null}
                     </span>
                   </span>
                 </button>
               )
             })}
+
+            {evidence.length > 0 && (
+              <>
+                <div className="ap-plan-group" data-testid="plan-group-evidence">
+                  本轮验证了什么 <span className="n">{evidence.length}</span>
+                  <span className="hint">机器证据 · 只读</span>
+                </div>
+                {evidence.map((it) => {
+                  const refs = it.evidenceRefs ?? []
+                  const missing = refs.filter((e) => e.missing).length
+                  return (
+                    <button
+                      key={it.id}
+                      type="button"
+                      className="ap-plan-item"
+                      data-tier="check"
+                      data-active={it.id === selectedId}
+                      onClick={() => setSelectedId(it.id)}
+                      data-testid={`plan-item-${it.id}`}
+                    >
+                      <span className="ap-plan-idx">▣</span>
+                      <span className="ap-plan-item-text">
+                        <b>{it.title ?? it.op}</b>
+                        <small>{it.evidence ?? it.expect}</small>
+                        <span className="ap-plan-badges">
+                          <span className={`tag ${missing ? "a" : "quiet"}`}>
+                            {missing ? `缺 ${missing} 件证据` : `${refs.length} 件证据`}
+                          </span>
+                          {it.tickets?.length ? <span className="tag quiet">{it.tickets.join(" · ")}</span> : null}
+                        </span>
+                      </span>
+                    </button>
+                  )
+                })}
+              </>
+            )}
           </div>
           <div className="ap-plan-list-foot">
-            点任一条在右边看证据与验法 · 已完成 {decided}/{gate.total}
+            人只验场景 · 已判定 {decided}/{gate.total}
             {guideActive && (
               <button
                 type="button"
                 className="ap-block-link"
                 onClick={() => window.dispatchEvent(new Event("octopus:focus-desktop"))}
                 data-testid="plan-guide-chip"
-                title="回到主对话，让 Agent 带你逐项走"
+                title="回到主对话，让 Agent 带你逐条走场景"
               >
                 主对话引导中 →
               </button>
@@ -259,95 +318,35 @@ export function AcceptancePlanPanel({
           </div>
         </section>
 
-        {/* ── 右：证据台 ── */}
+        {/* ── 右：详情台 ── */}
         <section className="ap-card ap-plan-work" data-testid="plan-detail">
-          {selected && (
-            <>
-              <div className="ap-plan-work-head">
-                <span className="ap-eyebrow">第 {selectedIndex + 1} 项 / 共 {items.length} 项</span>
-                {selected.machine && (
-                  <span className={`ap-plan-verdict ${VERDICT[selected.machine.verdict]?.cls ?? "human"}`} title={selected.machine.why}>
-                    机器 · {VERDICT[selected.machine.verdict]?.short ?? "需你判断"}
-                  </span>
-                )}
-                <span className="ap-spacer" />
-                {selected.ticket && <span className="ap-plan-ticket">{selected.ticket} 交付</span>}
-              </div>
-
-              <div className="ap-plan-work-body">
-                <h2 className="ap-plan-title">{selected.title ?? selected.op}</h2>
-                {selected.story && <p className="ap-plan-lead">{selected.story}</p>}
-
-                <div className="ap-plan-sect-t">这条要求什么</div>
-                <blockquote className="ap-plan-quote">{selected.expect}</blockquote>
-
-                <div className="ap-plan-sect-t">怎么验 <span className="aside">每步都能就地做</span></div>
-                <ol className="ap-plan-steps">
-                  {(selected.howTo ?? []).map((h, i) => (
-                    <StepRow
-                      key={i}
-                      index={i}
-                      step={h}
-                      disabled={!!disabledReason}
-                      running={runningProbe === selected.id}
-                      ranAlready={!!probeNow[selected.id]}
-                      onRun={() => void run(selected)}
-                      onOpen={onOpenFile}
-                    />
-                  ))}
-                </ol>
-
-                {probeNow[selected.id] && <ProbeTerminal result={probeNow[selected.id]} command={probeCommand(selected)} />}
-
-                <div className="ap-plan-sect-t">
-                  证据 <span className="aside">{selected.evidenceRefs?.length ?? 0} 件 · 均可点开</span>
-                </div>
-                <div className="ap-plan-ev-list">
-                  {(selected.evidenceRefs ?? []).map((e, i) => (
-                    <EvidenceRow key={i} ev={e} onOpen={onOpenFile} />
-                  ))}
-                  {!(selected.evidenceRefs ?? []).length && (
-                    <div className="ap-empty">这一项没有登记证据 —— 按上面的「怎么验」走一遍，再下结论。</div>
-                  )}
-                </div>
-
-                {(selected.criteria ?? []).length > 0 && (
-                  <>
-                    <div className="ap-plan-sect-t">核对点</div>
-                    <ul className="ap-plan-criteria">
-                      {(selected.criteria ?? []).map((c, i) => <li key={i}>{c}</li>)}
-                    </ul>
-                  </>
-                )}
-
-                {selected.machine && (
-                  <div className={`ap-plan-machine ${VERDICT[selected.machine.verdict]?.cls ?? "human"}`} data-testid="plan-machine">
-                    <span className="ap-plan-machine-tag">{VERDICT[selected.machine.verdict]?.label ?? "机器建议"}</span>
-                    <span>{selected.machine.why}</span>
-                    {probeCommand(selected) && (
-                      <button
-                        type="button"
-                        className="ap-btn ap-btn-sm ap-btn-ghost"
-                        disabled={!!disabledReason || runningProbe === selected.id}
-                        onClick={() => void run(selected)}
-                        data-testid="plan-run-probe"
-                      >
-                        {runningProbe === selected.id ? "⏳ 跑…" : <><Play className="size-2.5" /> 跑一下</>}
-                      </button>
-                    )}
-                  </div>
-                )}
-              </div>
-
-              <VerdictBar
-                entry={checks[selected.id]}
-                disabled={!!disabledReason || busyId === selected.id}
-                undecided={gate.undecided}
-                total={gate.total}
-                onDecide={(d, note) => void decide(selected, d, note)}
-              />
-            </>
-          )}
+          {selected && (selectedIsCase ? (
+            <CaseDetail
+              item={selected}
+              caseIndex={caseIndex}
+              caseTotal={cases.length}
+              entry={checks[selected.id]}
+              probe={probeNow[selected.id]}
+              running={runningProbe === selected.id}
+              disabledReason={disabledReason}
+              busy={busyId === selected.id}
+              undecided={gate.undecided}
+              onRun={(cmd) => void run(selected, cmd)}
+              onOpenFile={onOpenFile}
+              onDecide={(d, note) => void decide(selected, d, note)}
+            />
+          ) : (
+            <EvidenceDetail
+              item={selected}
+              evidenceIndex={evidenceIndex}
+              evidenceTotal={evidence.length}
+              probe={probeNow[selected.id]}
+              running={runningProbe === selected.id}
+              disabledReason={disabledReason}
+              onRun={() => void run(selected)}
+              onOpenFile={onOpenFile}
+            />
+          ))}
         </section>
       </div>
 
@@ -383,8 +382,190 @@ export function AcceptancePlanPanel({
   )
 }
 
+// ── 场景详情 ─────────────────────────────────────────────────────────
+
+function CaseDetail({
+  item, caseIndex, caseTotal, entry, probe, running, disabledReason, busy, undecided,
+  onRun, onOpenFile, onDecide,
+}: {
+  item: PlaybookItem
+  caseIndex: number
+  caseTotal: number
+  entry?: CheckEntry
+  probe?: ProbeNow
+  running: boolean
+  disabledReason?: string
+  busy: boolean
+  undecided: number
+  onRun: (command?: string) => void
+  onOpenFile?: (p: string) => void
+  onDecide: (d: CheckDecision, note?: string) => void
+}) {
+  const steps = item.steps ?? []
+  return (
+    <>
+      <div className="ap-plan-work-head">
+        <span className="ap-eyebrow">场景 {caseIndex + 1} / {caseTotal}</span>
+        <span className="ap-plan-verdict human">人验收</span>
+        <span className="ap-spacer" />
+        {item.tickets?.length ? <span className="ap-plan-ticket">{item.tickets.join(" · ")} 交付</span> : null}
+      </div>
+
+      <div className="ap-plan-work-body">
+        <h2 className="ap-plan-title">{item.title ?? item.op}</h2>
+        {item.story && <p className="ap-plan-lead">{item.story}</p>}
+
+        <div className="ap-plan-sect-t">这条要求什么</div>
+        <blockquote className="ap-plan-quote">{item.expect}</blockquote>
+
+        {item.setup && (
+          <>
+            <div className="ap-plan-sect-t">起点</div>
+            <p className="ap-plan-lead">{item.setup}</p>
+          </>
+        )}
+
+        <div className="ap-plan-sect-t">怎么验 <span className="aside">按顺序做一遍</span></div>
+        {steps.length > 0 ? (
+          <ol className="ap-plan-steps">
+            {steps.map((step, i) => (
+              <StepRow
+                key={i}
+                index={i}
+                step={step}
+                disabled={!!disabledReason}
+                running={running}
+                ranAlready={!!probe}
+                onRun={onRun}
+                onOpen={onOpenFile}
+              />
+            ))}
+          </ol>
+        ) : (
+          <ol className="ap-plan-steps">
+            {(item.howTo ?? []).map((h, i) => (
+              <li key={i} className="ap-plan-step">
+                <span className="ap-plan-step-n">{i + 1}</span>
+                <span className="ap-plan-step-main">
+                  <b>{h.text}</b>
+                  {(h.command || h.path) && (
+                    <code className="ap-command" title={h.command ?? h.path}>{h.command ?? h.path}</code>
+                  )}
+                  {h.expect && <small>预期：{h.expect}</small>}
+                </span>
+                <span className="ap-plan-step-act" />
+              </li>
+            ))}
+          </ol>
+        )}
+
+        {probe && <ProbeTerminal result={probe.result} command={probe.command} />}
+
+        <div className="ap-plan-sect-t">
+          证据 <span className="aside">{item.evidenceRefs?.length ?? 0} 件 · 均可点开</span>
+        </div>
+        <div className="ap-plan-ev-list">
+          {(item.evidenceRefs ?? []).map((e, i) => (
+            <EvidenceRow key={i} ev={e} onOpen={onOpenFile} />
+          ))}
+          {!(item.evidenceRefs ?? []).length && (
+            <div className="ap-empty">这一条没有登记证据 —— 按上面的步骤走一遍再下结论。</div>
+          )}
+        </div>
+      </div>
+
+      <VerdictBar
+        entry={entry}
+        disabled={!!disabledReason || busy}
+        undecided={undecided}
+        total={caseTotal}
+        onDecide={onDecide}
+      />
+    </>
+  )
+}
+
+// ── 机器证据详情（只读） ─────────────────────────────────────────────
+
+function EvidenceDetail({
+  item, evidenceIndex, evidenceTotal, probe, running, disabledReason, onRun, onOpenFile,
+}: {
+  item: PlaybookItem
+  evidenceIndex: number
+  evidenceTotal: number
+  probe?: ProbeNow
+  running: boolean
+  disabledReason?: string
+  onRun: () => void
+  onOpenFile?: (p: string) => void
+}) {
+  const cmd = probeCommand(item)
+  return (
+    <>
+      <div className="ap-plan-work-head">
+        <span className="ap-eyebrow">机器证据 {evidenceIndex + 1} / {evidenceTotal}</span>
+        <span className="ap-plan-verdict pass">只读</span>
+        <span className="ap-spacer" />
+        {item.tickets?.length ? <span className="ap-plan-ticket">{item.tickets.join(" · ")}</span> : null}
+      </div>
+
+      <div className="ap-plan-work-body">
+        <h2 className="ap-plan-title">{item.title ?? item.op}</h2>
+        <p className="ap-plan-lead">这是本轮已经记录过的验证，不需要你逐项确认；需要新结果时可以点名重跑。</p>
+
+        <div className="ap-plan-sect-t">覆盖</div>
+        {(item.criteria ?? []).length > 0 ? (
+          <ul className="ap-plan-criteria">
+            {(item.criteria ?? []).map((c, i) => <li key={i}>{c}</li>)}
+          </ul>
+        ) : (
+          <blockquote className="ap-plan-quote">{item.expect}</blockquote>
+        )}
+
+        <div className="ap-plan-sect-t">
+          证据 <span className="aside">{item.evidenceRefs?.length ?? 0} 件 · 均可点开</span>
+        </div>
+        <div className="ap-plan-ev-list">
+          {(item.evidenceRefs ?? []).map((e, i) => (
+            <EvidenceRow key={i} ev={e} onOpen={onOpenFile} />
+          ))}
+          {!(item.evidenceRefs ?? []).length && (
+            <div className="ap-empty">这一项没有登记证据指针 —— 它只是覆盖声明，按需复核。</div>
+          )}
+        </div>
+
+        {cmd && (
+          <>
+            <div className="ap-plan-sect-t">按需复核 <span className="aside">只在你点名时执行</span></div>
+            <div className="ap-plan-machine pass" data-testid="plan-check-run">
+              <span className="ap-plan-machine-tag">复核命令</span>
+              <code className="ap-command" title={cmd}>{cmd}</code>
+              <button
+                type="button"
+                className="ap-btn ap-btn-sm ap-btn-ghost"
+                disabled={!!disabledReason || running}
+                onClick={onRun}
+                data-testid="plan-run-probe"
+              >
+                {running ? "⏳ 跑…" : <><Play className="size-2.5" /> 跑一下</>}
+              </button>
+            </div>
+          </>
+        )}
+
+        {probe && <ProbeTerminal result={probe.result} command={probe.command} />}
+      </div>
+    </>
+  )
+}
+
+// ── 小件 ─────────────────────────────────────────────────────────────
+
 function probeCommand(item: PlaybookItem): string | null {
-  return item.machine?.command?.trim()
+  return item.recheck?.trim()
+    || item.probe?.command?.trim()
+    || item.steps?.find((s) => s.command?.trim())?.command?.trim()
+    || item.machine?.command?.trim()
     || item.howTo?.find((h) => h.kind === "run" && h.command?.trim())?.command?.trim()
     || null
 }
@@ -393,33 +574,39 @@ function StepRow({
   index, step, disabled, running, ranAlready, onRun, onOpen,
 }: {
   index: number
-  step: PlanHowTo
+  step: PlanStep
   disabled: boolean
   running: boolean
   ranAlready: boolean
-  onRun: () => void
+  onRun: (command?: string) => void
   onOpen?: (p: string) => void
 }) {
-  const canOpen = isHomeRel(step.path) && !!onOpen
+  const canOpenFile = isHomeRel(step.target) && !!onOpen
+  const isUrl = isHttpUrl(step.target)
+  const command = step.command?.trim()
   return (
-    <li className="ap-plan-step">
+    <li className="ap-plan-step" data-step-kind={step.kind}>
       <span className="ap-plan-step-n">{index + 1}</span>
       <span className="ap-plan-step-main">
+        <span className="ap-plan-step-kind">{STEP_LABEL[step.kind] ?? step.kind}</span>
         <b>{step.text}</b>
-        {(step.command || step.path) && (
-          <code className="ap-command" title={step.command ?? step.path}>{step.command ?? step.path}</code>
-        )}
+        {step.value && <code className="ap-command" title={step.value}>{step.value}</code>}
+        {step.target && <code className="ap-command" title={step.target}>{step.target}</code>}
         {step.expect && <small>预期：{step.expect}</small>}
       </span>
       <span className="ap-plan-step-act">
-        {step.kind === "run" && step.command ? (
-          <button type="button" className="ap-btn ap-btn-sm ap-btn-primary" disabled={disabled || running} onClick={onRun}>
+        {command ? (
+          <button type="button" className="ap-btn ap-btn-sm ap-btn-primary" disabled={disabled || running} onClick={() => onRun(command)}>
             {running ? "⏳ 运行中" : ranAlready ? "✓ 再跑" : <><Play className="size-2.5" /> 运行</>}
           </button>
-        ) : canOpen ? (
-          <button type="button" className="ap-btn ap-btn-sm ap-btn-ghost" onClick={() => onOpen!(step.path!)}>
+        ) : canOpenFile ? (
+          <button type="button" className="ap-btn ap-btn-sm ap-btn-ghost" onClick={() => onOpen!(step.target!)}>
             打开文件
           </button>
+        ) : isUrl ? (
+          <a className="ap-btn ap-btn-sm ap-btn-ghost" href={step.target} target="_blank" rel="noreferrer">
+            打开
+          </a>
         ) : null}
       </span>
     </li>
@@ -453,7 +640,7 @@ function ProbeTerminal({ result, command }: { result: ProbeRunResult; command: s
         {result.state === "passed" ? <Check className="size-3" /> : <X className="size-3" />}
         运行结果 · {result.state === "passed" ? "exit 0" : result.state === "timeout" ? "超时" : `exit ${result.exit_code ?? "?"}`}
         <span> · {Math.round(result.duration_ms / 100) / 10}s</span>
-        <span className="ap-plan-term-hint">机器只建议，结论由你定</span>
+        <span className="ap-plan-term-hint">机器证据只读；结论仍由场景决定</span>
       </div>
       {command && <div className="ap-plan-term-cmd">$ {command}</div>}
       {result.tail.length > 0 && <pre className="ap-plan-term-tail">{result.tail.slice(-18).join("\n")}</pre>}
@@ -485,7 +672,7 @@ function VerdictBar({
       ? "会进入下一轮 carryover，最终轮未决要披露"
       : d === "pass"
         ? "记入验收记录 ✓ 节"
-        : `未判 — 全部 ${total} 项有结论（或明确跳过）才能通过${undecided > 0 ? `（还差 ${undecided} 项）` : ""}`
+        : `未判 — ${total} 条场景都有结论（或明确跳过）才能通过${undecided > 0 ? `（还差 ${undecided} 条）` : ""}`
 
   return (
     <div className="ap-plan-verdict-bar" data-testid="plan-decide">
@@ -520,7 +707,8 @@ function VerdictBar({
             data-testid="plan-note"
           />
           <button
-            type="button" className="ap-btn ap-btn-sm ap-btn-coral"
+            type="button"
+            className="ap-btn ap-btn-sm ap-btn-coral"
             disabled={disabled || !note.trim()}
             onClick={() => { onDecide(pending, note); setPending(null) }}
             data-testid="plan-note-confirm"

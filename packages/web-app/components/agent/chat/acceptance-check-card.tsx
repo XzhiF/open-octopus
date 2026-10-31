@@ -19,6 +19,13 @@ interface AcceptanceHowTo {
   command?: string
   path?: string
 }
+interface AcceptanceStep {
+  kind: 'open' | 'do' | 'observe'
+  text: string
+  target?: string
+  value?: string
+  expect?: string
+}
 interface AcceptanceMachine {
   verdict: 'pass' | 'warn' | 'human'
   why: string
@@ -34,13 +41,19 @@ interface AcceptancePayload {
   itemId?: string
   title?: string
   ticket?: string
+  tickets?: string[]
+  story?: string
+  setup?: string
   index?: number
   total?: number
   expect?: string
+  steps?: AcceptanceStep[]
   howTo?: AcceptanceHowTo[]
   machine?: AcceptanceMachine
   evidence?: AcceptanceEvidence[]
 }
+
+const STEP_LABEL: Record<string, string> = { open: '打开', do: '操作', observe: '看' }
 
 const VERDICT: Record<string, { label: string; cls: string }> = {
   pass: { label: '机器建议通过', cls: 'text-pop-green border-pop-green/40 bg-pop-green/[0.08]' },
@@ -63,8 +76,10 @@ export function AcceptanceCheckCard({
   const decided = !!decision
   const actions = Array.isArray(activity?.actions) ? activity!.actions! : []
   const m = p.machine ? VERDICT[p.machine.verdict] ?? VERDICT.human : null
+  const steps = (p.steps ?? []).slice(0, 8)
   const howTo = (p.howTo ?? []).slice(0, 3)
   const evidence = (p.evidence ?? []).slice(0, 4)
+  const isScenario = steps.length > 0
 
   return (
     <div
@@ -85,9 +100,13 @@ export function AcceptanceCheckCard({
           {decided ? '✓' : '?'}
         </span>
         <span className="min-w-0 flex-1 truncate font-semibold text-pop-ink/85">
-          验收项 {p.index != null && p.total != null ? `${p.index}/${p.total}` : ''} · {p.title ?? activity?.title ?? '验收项'}
+          {isScenario ? '验收场景' : '验收项'} {p.index != null && p.total != null ? `${p.index}/${p.total}` : ''} · {p.title ?? activity?.title ?? '验收项'}
         </span>
-        {p.ticket && <span className="shrink-0 rounded border border-pop-bd/70 px-1.5 py-[1px] text-[9px] text-pop-dim">{p.ticket}</span>}
+        {(p.tickets?.length || p.ticket) && (
+          <span className="shrink-0 rounded border border-pop-bd/70 px-1.5 py-[1px] text-[9px] text-pop-dim">
+            {(p.tickets?.length ? p.tickets.join(' · ') : p.ticket)}
+          </span>
+        )}
         {decided && (
           <span className="shrink-0 text-[9px] text-pop-dim/70" data-testid="acceptance-card-decision">
             已选 · {decision?.label ?? decision?.id}
@@ -96,6 +115,13 @@ export function AcceptanceCheckCard({
         )}
       </div>
 
+      {isScenario && (p.story || p.setup) && (
+        <div className="mt-1.5 space-y-0.5 pl-6">
+          {p.story && <div className="text-[10.5px] text-pop-ink/70">{p.story}</div>}
+          {p.setup && <div className="text-[9.5px] text-pop-dim">起点：{p.setup}</div>}
+        </div>
+      )}
+
       {p.expect && (
         <div className="mt-1.5 pl-6">
           <div className="text-[9px] font-black tracking-wide text-pop-dim/80">通过标准</div>
@@ -103,7 +129,30 @@ export function AcceptanceCheckCard({
         </div>
       )}
 
-      {howTo.length > 0 && (
+      {steps.length > 0 && (
+        <div className="mt-1.5 pl-6">
+          <div className="text-[9px] font-black tracking-wide text-pop-dim/80">怎么验</div>
+          <ol className="mt-0.5 space-y-0.5">
+            {steps.map((s, i) => (
+              <li key={i} className="flex items-start gap-1.5 text-[10.5px] text-pop-ink/70">
+                <span className="mt-[1px] shrink-0 text-[9px] text-pop-dim">{i + 1}.</span>
+                <span className="min-w-0">
+                  <span className="mr-1 rounded border border-pop-bd/60 px-1 text-[8.5px] text-pop-dim">{STEP_LABEL[s.kind] ?? s.kind}</span>
+                  {s.text}
+                  {(s.value || s.target) && (
+                    <code className="ml-1 break-all rounded bg-black/25 px-1 text-[9.5px] text-pop-cyan/80" title={s.value ?? s.target}>
+                      {(s.value ?? s.target)!.length > 60 ? `${(s.value ?? s.target)!.slice(0, 60)}…` : (s.value ?? s.target)}
+                    </code>
+                  )}
+                  {s.expect && <span className="ml-1 text-[9px] text-pop-dim">（预期：{s.expect}）</span>}
+                </span>
+              </li>
+            ))}
+          </ol>
+        </div>
+      )}
+
+      {steps.length === 0 && howTo.length > 0 && (
         <div className="mt-1.5 pl-6">
           <div className="text-[9px] font-black tracking-wide text-pop-dim/80">怎么验</div>
           <ol className="mt-0.5 space-y-0.5">

@@ -426,6 +426,24 @@
 .ap-plan-badges .tag.a { color: var(--ap-amber); border-color: color-mix(in srgb, var(--pop-amber) 36%, var(--ap-line)); background: var(--ap-amber-soft); }
 .ap-plan-badges .tag.p { color: var(--ap-link); border-color: color-mix(in srgb, var(--pop-cyan) 32%, var(--ap-line)); background: var(--pop-cyan-soft); }
 .ap-plan-badges .tag.quiet { color: var(--ap-muted-2); border-style: dashed; }
+
+/* 两层分组（2026-10-31）：人验场景 / 机器证据 */
+.ap-plan-group {
+  display: flex; align-items: center; gap: 6px;
+  padding: 8px 10px 5px; border-top: 1px solid color-mix(in srgb, var(--ap-line) 55%, transparent);
+  font-size: 9px; font-weight: 900; letter-spacing: 0.04em; color: var(--ap-ink-2);
+}
+.ap-plan-group:first-child { border-top: 0; }
+.ap-plan-group .n {
+  font-family: var(--ap-mono); font-size: 8.5px; font-weight: 900; color: var(--ap-muted);
+  border: 1px solid var(--ap-line); border-radius: 999px; padding: 0 5px;
+}
+.ap-plan-group .hint { margin-left: auto; font-size: 8.5px; font-weight: 500; letter-spacing: 0; color: var(--ap-muted-2); }
+.ap-plan-item[data-tier="check"] .ap-plan-idx {
+  border-style: dashed; border-radius: 5px; color: var(--ap-muted-2);
+}
+.ap-plan-item[data-tier="check"] .ap-plan-item-text b { font-weight: 700; color: var(--ap-muted); }
+.ap-plan-item[data-tier="check"][data-active="true"] .ap-plan-item-text b { color: var(--ap-ink-2); }
 .ap-plan-list-foot {
   flex: none; padding: 8px 10px; border-top: 1.5px solid var(--ap-line);
   font-size: 9px; line-height: 1.6; color: var(--ap-muted);
@@ -469,6 +487,13 @@
 }
 .ap-plan-step-main { min-width: 0; flex: 1; display: flex; flex-direction: column; gap: 3px; font-size: 10.5px; color: var(--ap-ink-2); line-height: 1.6; }
 .ap-plan-step-main b { font-weight: 800; }
+.ap-plan-step-kind {
+  align-self: flex-start; font-size: 8px; font-weight: 900; line-height: 1.5; padding: 0 4px;
+  border: 1px solid var(--ap-line); border-radius: 4px; color: var(--ap-muted);
+}
+.ap-plan-step[data-step-kind="observe"] .ap-plan-step-kind {
+  color: var(--ap-link); border-color: color-mix(in srgb, var(--pop-cyan) 32%, var(--ap-line)); background: var(--pop-cyan-soft);
+}
 .ap-plan-step-main .ap-command { margin-top: 1px; }
 .ap-plan-step-main small { font-size: 9px; color: var(--ap-muted); }
 .ap-plan-step-act { flex: none; display: flex; align-items: center; }

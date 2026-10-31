@@ -1210,9 +1210,19 @@ export async function abortVerify(taskId: string): Promise<VerifySummary> {
 
 export type PlaybookItemKind = "walk" | "probe" | "claim"
 
-// ── 验收方案（2026-10-30 AI-native）— 镜像 server acceptance-plan-types.ts ──
+// ── 验收方案（2026-10-30 AI-native；2026-10-31 两层化）— 镜像 server ──
 export type PlanHowToKind = "run" | "open" | "check"
 export interface PlanHowTo { kind: PlanHowToKind; text: string; command?: string; path?: string; expect?: string }
+export type PlanStepKind = "open" | "do" | "observe"
+export interface PlanStep {
+  kind: PlanStepKind
+  text: string
+  target?: string
+  value?: string
+  expect?: string
+  /** 仅旧方案兼容：原 run 步保留的命令。 */
+  command?: string
+}
 export interface PlanEvidenceRef { kind: "diff" | "test" | "report" | "docs" | "preview"; label: string; path?: string; detail?: string; missing?: boolean }
 export interface PlanMachine { verdict: "pass" | "warn" | "human"; why: string; command?: string; recheck?: string }
 export type PlanStatus = "generating" | "ready" | "failed" | "missing"
@@ -1222,10 +1232,19 @@ export interface PlaybookItem {
   id: string; op: string; expect: string; evidence?: string; probe?: { command: string }
   /** 配了 runbook 时编译器把起服/就绪/收尾步打标（面板折一行提示、不给执行钮、不进连跑）。 */
   lifecycle?: "start" | "ready" | "teardown"
-  /** 验收方案扩展（编译型清单不带这些键）。 */
-  ticket?: string
+  /** ── 验收方案扩展（2026-10-31 两层化；编译型清单不带这些键）── */
+  /** case=人验收场景（可判定）；check=机器证据（只读，不判定）。 */
+  tier?: "case" | "check"
   title?: string
   story?: string
+  /** 人层场景起点（不写命令）。 */
+  setup?: string
+  steps?: PlanStep[]
+  tickets?: string[]
+  /** 机器证据的按需复核命令（不自动跑）。 */
+  recheck?: string
+  // —— 旧 v1 方案字段（历史消息/旧编译清单兼容）——
+  ticket?: string
   howTo?: PlanHowTo[]
   criteria?: string[]
   evidenceRefs?: PlanEvidenceRef[]
@@ -1242,7 +1261,12 @@ export interface PlaybookPayload {
   sections: PlaybookSection[]
   finePrint: Array<{ ticket: string; acs: string[] }>
   carryover: PlaybookCarryover[]
-  coverage: { found: string[]; missing: string[] }
+  coverage: {
+    found: string[]
+    missing: string[]
+    stories?: Array<{ story: string; case_id: string }>
+    acs?: Array<{ ac: string; check_ids: string[] }>
+  }
   /** 验收方案状态：ready = 本轮清单来自规划 Agent；否则回退旧编译。 */
   plan?: PlanSummary
   planWarnings?: string[]

@@ -1014,7 +1014,7 @@ export function AcceptanceSurface({ task, onMutated, onDecided, detailOverride, 
                 <b data-acceptance-duration data-testid="acceptance-duration">{durationMs != null ? formatDuration(durationMs) : "—"}</b>
               </div>
               <div className="ap-snap-row">
-                <span>核对</span>
+                <span>场景</span>
                 <b data-testid="rail-walk-count">
                   {playbook?.available ? (
                     <>
@@ -1297,7 +1297,7 @@ export function AcceptanceSurface({ task, onMutated, onDecided, detailOverride, 
                     />
                   )
                 ) : (
-                  <div className="ap-empty">正在读取核对清单…</div>
+                  <div className="ap-empty">正在读取验收方案…</div>
                 )}
               </div>
 
@@ -1435,8 +1435,8 @@ export function AcceptanceSurface({ task, onMutated, onDecided, detailOverride, 
           <DialogHeader>
             <DialogTitle className="text-[15px]">
               {gate.undecided > 0
-                ? `有 ${gate.undecided} 项核对未决 —— 确认跳过并放行？`
-                : `全 ${gate.pass} 项核对通过 —— 确认验收通过？`}
+                ? `有 ${gate.undecided} 条场景未决 —— 确认跳过并放行？`
+                : `全 ${gate.pass} 条场景通过 —— 确认验收通过？`}
             </DialogTitle>
           </DialogHeader>
           <div className="space-y-2 text-[11.5px]">
@@ -1448,7 +1448,7 @@ export function AcceptanceSurface({ task, onMutated, onDecided, detailOverride, 
               <div data-testid="ledger-preview-takeover">接管标记 · {isTakeoverArtifact ? (verify?.state ? "人工交付（接管件）· 复检真结果为准" : "人工交付 · 自动复检未跑（接管件）") : "无（绑定流机器轮）"}</div>
               <div>自动自检 · {verify?.state ? `${verify.state}${verify.exit_code != null ? ` (exit ${verify.exit_code})` : ""}` : isTakeoverArtifact ? "未跑（接管件）" : "未跑（≠失败）"}</div>
               <div>试一试 · {preview && preview.state !== "stopped" ? `${previewStateLabel(preview.state)}${preview.url ? ` @ ${preview.url}` : ""}（决策时自动停止）` : "未使用"}</div>
-              <div>人工核对 · ✓{gate.pass} · ✗{gate.fail} · ⊘{gate.skip} · 未决{gate.undecided} / 计{gate.total}</div>
+              <div>人验场景 · ✓{gate.pass} · ✗{gate.fail} · ⊘{gate.skip} · 未决{gate.undecided} / 计{gate.total}</div>
             </div>
             {gate.skip > 0 && <p className="text-[10.5px] text-pop-amber">⊘ 跳过项将进入下一轮 carryover 首段（补验或再豁免），并写入验收记录。</p>}
             {gate.undecided > 0 && <p className="text-[10.5px] text-muted-foreground">未决项会以「未勾选」记入验收记录 —— 永久留痕。</p>}
