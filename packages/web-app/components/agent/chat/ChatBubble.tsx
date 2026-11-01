@@ -98,6 +98,21 @@ export function ChatBubble({ message }: ChatBubbleProps) {
             <span className="text-xs text-agent-warn">回复已被用户中断</span>
           </div>
         )}
+
+        {/* Persisted turn failure (P0-3): survives reload instead of living
+            only in the transient `error` banner. */}
+        {message.error && (
+          <div
+            className="flex flex-wrap items-center gap-1.5 mt-2 pt-2 border-t border-dashed border-pop-red/40"
+            data-chat-error={message.error.code}
+          >
+            <span className="text-xs font-bold text-pop-red">本轮运行失败</span>
+            <span className="text-xs text-pop-red/90 break-words">{message.error.message}</span>
+            <code className="rounded bg-pop-pink-soft px-1 py-0.5 text-[10px] font-mono text-pop-red">
+              {message.error.code}
+            </code>
+          </div>
+        )}
       </div>
     </div>
   )

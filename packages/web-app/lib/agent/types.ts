@@ -120,6 +120,15 @@ export interface AgentMessage {
   /** True when the user interrupted (stopped) this response mid-stream.
    *  The message contains whatever the agent produced before the abort. */
   interrupted?: boolean
+  /** Terminal failure persisted on the turn's row (metadata.error). A turn
+   *  that failed before producing text still leaves one of these, so the
+   *  failure survives a reload instead of living only in React state. */
+  error?: {
+    code: string
+    message: string
+    /** Advisory for a future retry layer. */
+    retryable?: boolean
+  }
   /** True on an assistant row the server is still growing (clone chat
    *  stream-resume partial). Set from metadata; absence = finalized. */
   streaming?: boolean
@@ -335,6 +344,8 @@ export type AgentSSEEvent =
   | { event: 'slash_commands'; data: { sessionId?: string; commands: string[] } }
   | { event: 'done'; data: { session_id: string; message_id?: string; session_title?: string; token_usage?: { input: number; output: number }; model?: string } }
   | { event: 'error'; data: { code: string; message: string } }
+  /** Keep-alive frame: refreshes the client's stall watchdog. */
+  | { event: 'heartbeat'; data: { ts?: string } }
 
 // ===== Agent Versions =====
 export type VersionStage = 'alpha' | 'beta' | 'rc' | 'stable'

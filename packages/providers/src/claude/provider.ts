@@ -3,6 +3,13 @@ import type { IAgentProvider, SendQueryOptions, MessageChunk, OctopusAgentDef, G
 import type { ModelUsage, TokenUsage, TokenUsageDelta } from '@octopus/shared'
 import { mergeModelUsages } from '@octopus/shared'
 import { LLMCallTracker } from '../llm-call-tracker'
+import {
+  DEFAULT_FIRST_EVENT_TIMEOUT_MS,
+  DEFAULT_STREAM_IDLE_TIMEOUT_MS,
+  IdleTimeoutError,
+  guardIdle,
+  withSoftTimeout,
+} from '../idle-watchdog'
 import { getPluginSdkConfigs, loadModelAliasConfig, resolveModelAlias } from '@octopus/shared'
 import fs from 'fs'
 import path from 'path'
@@ -450,9 +457,22 @@ export class ClaudeSDKProvider implements IAgentProvider {
     let goalIterations = 0
     let goalSetAt: number | undefined
 
+    // P0-2 (2026-11-01): race every SDK demand against an idle deadline.
+    // A wedged subprocess or a stalled transport can stop producing without
+    // ever throwing; without this the chat SSE stays open forever and the
+    // composer spins with no way back. The watchdog aborts the query first,
+    // then we surface a structured IDLE_TIMEOUT chunk below.
+    const guarded = guardIdle(q, {
+      firstEventMs: options?.firstEventTimeoutMs ?? DEFAULT_FIRST_EVENT_TIMEOUT_MS,
+      idleMs: options?.streamIdleTimeoutMs ?? DEFAULT_STREAM_IDLE_TIMEOUT_MS,
+      onTimeout: () => {
+        try { sdkAbort.abort() } catch { /* already closed */ }
+      },
+    })
+
     let sawResult = false
     try {
-      for await (const event of q) {
+      for await (const event of guarded) {
 
         if (timingOn) {
           if (!tFirstEvent) {
@@ -515,7 +535,9 @@ export class ClaudeSDKProvider implements IAgentProvider {
             if (!contextUsageEmitted) {
               contextUsageEmitted = true
               try {
-                const ctxUsage = await q.getContextUsage()
+                // Control request, outside the event stream — a hung transport
+                // must not block the turn past the watchdog (P0-2).
+                const ctxUsage = await withSoftTimeout(q.getContextUsage(), 5_000, 'CONTEXT_USAGE_TIMEOUT')
                 yield { type: 'context_usage', data: ctxUsage }
               } catch {
                 // getContextUsage may fail if the SDK subprocess doesn't support
@@ -877,6 +899,18 @@ export class ClaudeSDKProvider implements IAgentProvider {
         }
       }
     } catch (err) {
+      // P0-2: the watchdog already aborted the query. Surface a structured
+      // chunk (not a throw) so the chat route can settle the turn with an
+      // error frame and a persisted error row instead of dropping the socket.
+      if (err instanceof IdleTimeoutError) {
+        yield {
+          type: 'error',
+          code: err.code,
+          message: err.message,
+          sdkTerminalReason: 'idle_timeout',
+        }
+        return
+      }
       // The SDK throws after yielding an error result (single-message mode)
       // and after a clean interrupt once the input stream closes. The result
       // chunk was already forwarded — only rethrow when none was seen.

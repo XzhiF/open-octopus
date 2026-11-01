@@ -543,6 +543,11 @@ export function TuiMessage({ message }: { message: AgentMessage }) {
       {message.interrupted && (
         <div className="text-pop-red" data-tui-interrupted>（本轮被截断）</div>
       )}
+      {message.error && (
+        <div className="text-pop-red" data-tui-error={message.error.code}>
+          （本轮运行失败 [{message.error.code}] {message.error.message}）
+        </div>
+      )}
     </div>
   )
 }

@@ -34,6 +34,17 @@ export interface SendQueryOptions {
   systemPrompt?: SystemPromptInput
   abortSignal?: AbortSignal
   /**
+   * Deadline for the SDK to produce its first stream event. When it elapses the
+   * query is aborted and an `IDLE_TIMEOUT` error chunk is yielded instead of
+   * hanging the turn forever. Default 90s (see idle-watchdog.ts).
+   */
+  firstEventTimeoutMs?: number
+  /**
+   * Max silence between two SDK events once the stream is live. Default 300s.
+   * Same recovery path as `firstEventTimeoutMs`.
+   */
+  streamIdleTimeoutMs?: number
+  /**
    * Run the query in SDK **streaming input mode** so a stop can use
    * `Query.interrupt()` instead of a hard `abortController.abort()`.
    *

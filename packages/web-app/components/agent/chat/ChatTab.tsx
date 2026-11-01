@@ -264,6 +264,9 @@ export function ChatTab() {
     onTitleUpdate: handleTitleUpdate,
     api: mainChatApi,
     onQuickEditCommit: handleQuickEditCommit,
+    // The main chat route emits a heartbeat every 15s, so 60s of complete
+    // silence means the socket is dead — settle instead of spinning forever.
+    stallMs: 60_000,
   })
   // Composer `/` menu — the CLI's advertised set (skills included), rebuilt
   // into grouped rows. Empty until the first turn of this server process.

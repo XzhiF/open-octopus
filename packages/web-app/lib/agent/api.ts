@@ -17,7 +17,7 @@ import { getServerUrl } from '@/lib/server-config'
  * to top-level properties. The backend stores these as a JSON string
  * in the metadata column: { thinking?: string, tool_calls?: ToolCallRecord[] }
  */
-function parseMessageMetadata(msg: any): AgentMessage {
+export function parseMessageMetadata(msg: any): AgentMessage {
   // Normalize boolean fields from SQLite (stored as 0/1 integers) to real
   // booleans. Without this, `{0}` could leak into JSX if any code path
   // accidentally renders a numeric field — React renders `0` as visible text.
@@ -37,6 +37,7 @@ function parseMessageMetadata(msg: any): AgentMessage {
       timeline: meta.timeline ?? normalized.timeline,
       interrupted: meta.interrupted ?? normalized.interrupted,
       streaming: meta.streaming ?? normalized.streaming,
+      error: meta.error ?? normalized.error,
       displayType: meta.displayType ?? normalized.displayType,
       activity: meta.activity ?? normalized.activity,
       roleSwitch: meta.role_switch ?? normalized.roleSwitch,

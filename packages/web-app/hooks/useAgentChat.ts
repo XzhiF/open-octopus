@@ -112,6 +112,9 @@ function streamTimelineFromPartial(msg: AgentMessage): StreamTimelineItem[] {
 export function useAgentChat(sessionId: string | null, options?: {
   onTitleUpdate?: (sessionId: string, title: string) => void
   api?: UseAgentChatApiOverride
+  /** Silence budget for the SSE transport. Pass a smaller value only for
+   *  channels that emit server heartbeats (main chat: 15s). Default 5min. */
+  stallMs?: number
   /** Task-thread execution turn landed a [quick-edit] commit. */
   onQuickEditCommit?: (data: {
     sessionId?: string
@@ -170,7 +173,7 @@ export function useAgentChat(sessionId: string | null, options?: {
       try { localStorage.removeItem(`context-usage:${sessionId}`) } catch { /* ignore */ }
     }
   }, [sessionId])
-  const { connect, disconnect } = useSSEConnection()
+  const { connect, disconnect } = useSSEConnection(options?.stallMs ? { stallMs: options.stallMs } : undefined)
   const streamContentRef = useRef('')
   const streamThinkingRef = useRef('')
   const toolCallsRef = useRef<ToolCallRecord[]>([])
@@ -718,6 +721,17 @@ export function useAgentChat(sessionId: string | null, options?: {
         setTurnStartedAt(null)
         streamingRef.current = false
         streamingSessionRef.current = null
+        // Transport died without a terminal frame: the server may still have
+        // finalized a partial row before the socket dropped. Re-read once so a
+        // reload-after-crash shows whatever was actually produced (and the
+        // persisted error row, when the server survived long enough to write it).
+        if (data.code === 'STREAM_EOF' || data.code === 'STREAM_STALL') {
+          // A failed reload must not replace the more specific transport error
+          // with the generic 「Failed to load messages」 banner.
+          void loadMessages({ onlyWhenIdle: true }).then(() => {
+            setError((prev) => (prev === LOAD_MESSAGES_ERROR ? data.message : prev))
+          })
+        }
       },
     }
 
