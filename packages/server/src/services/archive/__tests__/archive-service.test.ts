@@ -30,17 +30,26 @@ function seedNodeExecution(db: Database.Database, id: string, execId: string, st
 function seedLlmCall(db: Database.Database, execId: string, nodeExecId: string, model = "sonnet") {
   const id = `llm-${nodeExecId}-${model}`
   db.prepare(`
-    INSERT INTO llm_calls (id, node_execution_id, execution_id, turn_index, call_index, timestamp, duration_ms, model, input_tokens, output_tokens, cost_usd, cache_read_tokens, cache_creation_tokens)
-    VALUES (?, ?, ?, 0, 0, 1000, 500, ?, 100, 50, 0.01, 20, 10)
+    INSERT INTO llm_calls (id, node_execution_id, execution_id, turn_index, call_index, timestamp, duration_ms, model, input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens)
+    VALUES (?, ?, ?, 0, 0, 1000, 500, ?, 100, 50, 20, 10)
   `).run(id, nodeExecId, execId, model)
 }
 
 function seedTokenUsage(db: Database.Database, nodeExecId: string, model = "sonnet") {
   const id = `tu-${nodeExecId}-${model}`
   db.prepare(`
-    INSERT INTO node_token_usages (id, node_execution_id, model, input_tokens, output_tokens, cost_usd, cache_read_tokens, cache_creation_tokens, created_at)
-    VALUES (?, ?, ?, 100, 50, 0.01, 20, 10, datetime('now'))
+    INSERT INTO node_token_usages (id, node_execution_id, model, input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens, created_at)
+    VALUES (?, ?, ?, 100, 50, 20, 10, datetime('now'))
   `).run(id, nodeExecId, model)
+}
+
+/** USD 兜底价：input 100/1M → seedLlmCall 的 100 input tokens = $0.01/次。 */
+function seedPrice(db: Database.Database, model: string) {
+  db.prepare(`
+    INSERT INTO billing_price_config (id, vendor, model_id, input_unit_price, output_unit_price,
+      cache_write_unit_price, cache_read_unit_price, currency, valid_from, valid_to, created_at, updated_at)
+    VALUES (?, 'test', ?, 100, 0, 0, 0, 'USD', NULL, NULL, 't', 't')
+  `).run(`price-${model}`, model)
 }
 
 describe("ArchiveService", () => {
@@ -74,7 +83,9 @@ describe("ArchiveService", () => {
       seedLlmCall(db, "exec-1", "ne-1", "sonnet")
       seedLlmCall(db, "exec-1", "ne-2", "opus")
       seedTokenUsage(db, "ne-1", "sonnet")
-      seedTokenUsage(db, "ne-2", "opus") // C3: 归档 cost 单源 ntu —— 账本行配齐（线上 engine 双写语义）
+      seedTokenUsage(db, "ne-2", "opus") // C3: tokens 单源 ntu —— 账本行配齐（线上 engine 双写语义）
+      seedPrice(db, "sonnet")            // NEW-r2: cost 从 llm_calls 按价表现算
+      seedPrice(db, "opus")
 
       const result = await service.archiveExecution("exec-1")
       expect(result.archived).toBe(true)
@@ -84,11 +95,28 @@ describe("ArchiveService", () => {
       expect(row!.workspace_id).toBe("ws-1")
       expect(row!.node_count).toBe(2)
       expect(row!.success_rate).toBe(0.5)
-      expect(row!.total_cost).toBeCloseTo(0.02)
+      expect(row!.total_cost).toBeCloseTo(0.02) // 100 input tokens × $100/1M × 2 模型
 
       const modelBreakdown = JSON.parse(row!.model_breakdown!)
       expect(modelBreakdown["sonnet"]).toBeDefined()
       expect(modelBreakdown["opus"]).toBeDefined()
+      expect(modelBreakdown["sonnet"]).toMatchObject({ calls: 1, tokens: 180 })
+      expect(modelBreakdown["sonnet"].cost).toBeCloseTo(0.01)
+    })
+
+    it("keeps cost NULL when no price row matches (unpriced 不焊 0)", async () => {
+      seedWorkspace(db, "ws-1")
+      seedExecution(db, "exec-1", "ws-1")
+      seedNodeExecution(db, "ne-1", "exec-1")
+      seedLlmCall(db, "exec-1", "ne-1", "sonnet")
+      seedTokenUsage(db, "ne-1", "sonnet")
+
+      const result = await service.archiveExecution("exec-1")
+      expect(result.archived).toBe(true)
+
+      const row = archiveDAO.findByExecutionId("exec-1")
+      expect(row!.total_cost).toBeNull()
+      expect(JSON.parse(row!.model_breakdown!)["sonnet"].cost).toBeNull()
     })
 
     it("returns not_found for nonexistent execution", async () => {
@@ -152,7 +180,7 @@ describe("ArchiveService", () => {
       seedNodeExecution(db, "ne-1", "exec-1")
       seedLlmCall(db, "exec-1", "ne-1")
 
-      const result = await service.archiveWorkspace("ws-1", "test-org", {
+      const result = await service.archiveWorkspace("ws-1", {
         installSkills: [],
       })
       expect(result.success).toBe(true)
@@ -173,7 +201,7 @@ describe("ArchiveService", () => {
     })
 
     it("returns not found for nonexistent workspace", async () => {
-      const result = await service.archiveWorkspace("no-such-ws", "test-org", {
+      const result = await service.archiveWorkspace("no-such-ws", {
         installSkills: [],
       })
       expect(result.success).toBe(false)
@@ -184,7 +212,7 @@ describe("ArchiveService", () => {
     it("handles empty workspace (no executions)", async () => {
       seedWorkspace(db, "ws-1")
 
-      const result = await service.archiveWorkspace("ws-1", "test-org", {
+      const result = await service.archiveWorkspace("ws-1", {
         installSkills: [],
       })
       expect(result.success).toBe(true)
@@ -196,20 +224,17 @@ describe("ArchiveService", () => {
       expect(wsArchive!.total_cost).toBe(0)
     })
 
-    it("sets archive_status to 'archive_failed' on failure rollback", async () => {
+    it("sets archive_status to 'archive_failed' when the records-only archive fails", async () => {
       seedWorkspace(db, "ws-1")
       seedExecution(db, "exec-1", "ws-1")
 
       // Corrupt: delete the workspace_archive table to force insert failure
       db.exec("DROP TABLE IF EXISTS workspace_archive")
 
-      const result = await service.archiveWorkspace("ws-1", "test-org", {
-        installSkills: [],
-      })
+      await expect(service.archiveWorkspaceRecords("ws-1", workspaceDAO)).rejects.toThrow()
 
-      // Should fail but not throw
-      expect(result.success).toBe(false)
-      expect(result.error).toBeDefined()
+      const ws = workspaceDAO.findById("ws-1")
+      expect(ws!.archive_status).toBe("archive_failed")
     })
 
     it("rolls back on partial failure (ArchivePartialFailure)", async () => {
@@ -229,12 +254,9 @@ describe("ArchiveService", () => {
 
       const failService = new ArchiveService(archiveDAO, failingExecDAO, db)
 
-      const result = await failService.archiveWorkspace("ws-1", "test-org", {
-        installSkills: [],
-      })
-
-      // Should fail but not throw
-      expect(result.success).toBe(false)
+      await expect(
+        failService.archiveWorkspaceRecords("ws-1", workspaceDAO),
+      ).rejects.toBeInstanceOf(ArchivePartialFailure)
 
       // Transaction rolled back — no archive rows
       expect(archiveDAO.findByExecutionId("exec-1")).toBeNull()

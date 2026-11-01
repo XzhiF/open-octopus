@@ -158,7 +158,6 @@ import { createSystemRoutes } from "./routes/system"
 import { createReposRoutes } from "./routes/repos"
 import { getRecoveryService } from "./services/agent/recovery-service"
 import { initArchiveService } from "./services/archive/archive-service"
-import { getDomainEventBus } from "./services/agent/domain-event-bus"
 
 // Install global error handlers early — catches uncaughtException / unhandledRejection
 if (!process.env.VITEST) {
@@ -356,57 +355,21 @@ if (!process.env.VITEST && daos) {
   }
 
   // Initialize archive service singleton
-  initArchiveService(daos.archive, daos.execution, db, getDomainEventBus())
+  initArchiveService(daos.archive, daos.execution, db)
 
-  // ── Scheduler seed: auto-create system:daily-archive task ────────────
-  // Idempotent — only inserts if no schedule named 'system:daily-archive' exists.
+  // ── Legacy cleanup: retire system:daily-archive ─────────────────────
+  // Daily-memory maintenance (archive + refine) is gone — memory is bounded at
+  // write time instead. Soft-delete the job seeded by older builds; idempotent
+  // and log-only (findByName already excludes soft-deleted rows).
   try {
-    const existingSeed = daos.scheduleConfig.findByName('system:daily-archive')
-    if (!existingSeed) {
-      daos.scheduleConfig.insertSchedule({
-        id: 'system:daily-archive',
-        name: 'system:daily-archive',
-        cron_expression: '0 3 * * *',
-        timezone: 'Asia/Shanghai',
-        job_type: 'agent',
-        config: JSON.stringify({
-          prompt: 'Archive yesterday daily memory and refine long-term memory',
-        }),
-        enabled: 1,
-        description: 'System-seeded daily archive task (auto-created on server startup)',
-      })
-      console.log('[server] Scheduler seed: system:daily-archive task created')
+    const legacyJob = daos.scheduleConfig.findByName('system:daily-archive')
+    if (legacyJob) {
+      daos.scheduleConfig.softDelete(legacyJob.id)
+      console.log('[server] Scheduler cleanup: retired system:daily-archive task')
     }
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : String(err)
-    console.warn(`[server] Scheduler seed failed: ${msg}`)
-  }
-
-  // One-time migration: if config.yaml has archive_cron_hour != 3 (default),
-  // update the system:daily-archive cron expression
-  try {
-    const fs = require('fs')
-    const yaml = require('js-yaml')
-    const { getAgentConfigPath } = require('./services/agent/paths')
-    const configPath = getAgentConfigPath()
-    if (fs.existsSync(configPath)) {
-      const raw = yaml.load(fs.readFileSync(configPath, 'utf-8'), { schema: yaml.JSON_SCHEMA }) as any
-      const archiveHour = raw?.memory?.archive_cron_hour
-      if (archiveHour !== undefined && archiveHour !== 3) {
-        const existingJob = daos.scheduleConfig.findByName('system:daily-archive')
-        if (existingJob) {
-          const newCron = `0 ${archiveHour} * * *`
-          daos.scheduleConfig.updateSchedule(existingJob.id, {
-            cron_expression: newCron,
-            version: existingJob.version + 1,
-          })
-          console.log(`[migration] Updated system:daily-archive cron to "${newCron}" from config.yaml archive_cron_hour`)
-        }
-      }
-    }
-  } catch (err: unknown) {
-    const msg = err instanceof Error ? err.message : String(err)
-    console.warn(`[server] archive_cron_hour migration failed: ${msg}`)
+    console.warn(`[server] system:daily-archive cleanup failed: ${msg}`)
   }
 
   // Set DAOs for middleware and yjs-ws
@@ -518,7 +481,7 @@ if (!daos) {
     try { initAgentVersionService(d.agentVersion) } catch { /* ignore */ }
     setAgentAuthOrgDAO(d.org)
     setYjsWorkspaceDAO(d.workspace)
-    try { initArchiveService(d.archive, d.execution, getDb(), getDomainEventBus()) } catch { /* db not ready yet */ }
+    try { initArchiveService(d.archive, d.execution, getDb()) } catch { /* db not ready yet */ }
     try { setHarnessDependencies(d.harness) } catch { /* db not ready yet */ }
   } catch { /* ignore */ }
 }

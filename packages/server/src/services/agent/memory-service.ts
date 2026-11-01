@@ -3,6 +3,7 @@ import path from 'path'
 import crypto from 'crypto'
 import type { MemoryContent, MemorySearchResult } from '@octopus/shared'
 import { getAgentDir, getDailyMemoryDir, getLongTermMemoryPath, getAgentMemoryDir } from './paths'
+import { getConfigManager } from './config-manager'
 import { AgentSessionDAO } from '../../db/dao'
 
 // ── Types ──────────────────────────────────────────────────────
@@ -55,6 +56,23 @@ export class MemoryService {
     const filePath = this.getMemoryPath(layer)
     const dir = path.dirname(filePath)
     if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true })
+
+    // Write-time budget: long-term memory is injected into every system prompt,
+    // so an over-budget save is rejected instead of silently inflating every
+    // future request. daily/session are not injected as a whole → unbudgeted.
+    if (layer === 'long-term') {
+      const maxTokens = this.getLongTermMaxTokens(org)
+      const tokenCount = this.estimateTokens(content)
+      if (tokenCount > maxTokens) {
+        const err = new Error(
+          `长期记忆 ${tokenCount} tokens 超出预算 ${maxTokens}（memory.long_term_max_tokens），请先精简再保存`,
+        ) as Error & { code: string; token_count: number; max_tokens: number }
+        err.code = 'MEMORY_BUDGET_EXCEEDED'
+        err.token_count = tokenCount
+        err.max_tokens = maxTokens
+        throw err
+      }
+    }
 
     // Conflict detection: check if file was modified since client last read it
     if (expectedLastModified && fs.existsSync(filePath)) {
@@ -610,6 +628,15 @@ export class MemoryService {
       }
       case 'session':
         return path.join(getAgentMemoryDir(), 'session-memory.md')
+    }
+  }
+
+  private getLongTermMaxTokens(org: string): number {
+    try {
+      return getConfigManager().getConfig(org).memory.long_term_max_tokens
+    } catch {
+      // Unreadable config must not unlock unlimited growth; fall back to the default.
+      return 1500
     }
   }
 

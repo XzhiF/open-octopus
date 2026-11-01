@@ -3,7 +3,7 @@ import { LEDGER_SQL, costSummary } from "@octopus/shared"
 import type { ArchiveDAO } from "../../db/dao/archive-dao"
 import type { ExecutionDAO } from "../../db/dao/execution-dao"
 import { WorkspaceDAO } from "../../db/dao/workspace-dao"
-import type { DomainEventBus } from "../agent/domain-event-bus"
+import { pricedCallsSql, PRICED_AGG } from "../../db/price-sql"
 import type { ExecutionArchiveRow, WorkspaceArchiveRow, ExecutionRow } from "../../db/types"
 import { logError, logInfo } from "../../file-logger"
 import type { StepEmitter } from "./step-emitter"
@@ -21,7 +21,6 @@ export class ArchiveService {
     private archiveDAO: ArchiveDAO,
     private executionDAO: ExecutionDAO,
     private db: Database.Database,
-    private domainEventBus?: DomainEventBus,
   ) {}
 
   // ── P1.1: archiveExecution ──────────────────────────────────────────
@@ -58,8 +57,9 @@ export class ArchiveService {
       "SELECT COUNT(*) as cnt FROM node_executions WHERE execution_id = ? AND status = 'completed'",
     ).get(executionId) as { cnt: number }).cnt
 
-    // C3/Q8-1: 归档单源 = node_token_usages 账本（旧 tokens 取 ntu 而 cost 取
-    // llm_calls 的交叉口径废除）；calls 是明细计数，仍归 llm_calls 管辖。
+    // C3/Q8-1: token 单源 = node_token_usages 账本；calls 是明细计数，归 llm_calls 管辖。
+    // NEW-r2: 钱不落账本 —— cost 从 llm_calls_costed 视图按价表窗口派生（与 billing 报表
+    // 同源同规则），归档时算好并冻结：cascadeDelete 会把源账本行一并删除，事后不可重算。
     const tokenAgg = this.db.prepare(`
       SELECT
         COALESCE(SUM(input_tokens), 0) as input,
@@ -70,28 +70,39 @@ export class ArchiveService {
       WHERE node_execution_id IN (SELECT id FROM node_executions WHERE execution_id = ?)
     `).get(executionId) as Record<string, number>
 
-    const modelRows = this.db.prepare(`
+    const tokenRows = this.db.prepare(`
       SELECT ntu.model as model,
-             ${LEDGER_SQL.sumTokens('ntu.')} as tokens,
-             ${LEDGER_SQL.sumCost('ntu.')} as cost
+             ${LEDGER_SQL.sumTokens('ntu.')} as tokens
       FROM node_token_usages ntu
       JOIN node_executions ne ON ntu.node_execution_id = ne.id
       WHERE ne.execution_id = ?
       GROUP BY ntu.model
-    `).all(executionId) as Array<{ model: string | null; tokens: number; cost: number | null }>
+    `).all(executionId) as Array<{ model: string | null; tokens: number }>
 
-    const callCounts = new Map<string, number>((this.db.prepare(`
-      SELECT model, COUNT(*) as calls FROM llm_calls WHERE execution_id = ? GROUP BY model
-    `).all(executionId) as Array<{ model: string | null; calls: number }>)
-      .map(r => [r.model ?? "unknown", r.calls] as [string, number]))
+    const { sql: costSql, params: costParams } = pricedCallsSql(["l.execution_id = ?"], [executionId])
+    const costRows = this.db.prepare(`
+      SELECT q.model as model,
+             COUNT(*) as calls,
+             ${PRICED_AGG.sumCost('q')} as cost
+      FROM (${costSql}) q
+      GROUP BY q.model
+    `).all(...costParams) as Array<{ model: string | null; calls: number; cost: number | null }>
 
     const modelBreakdown: Record<string, { calls: number; tokens: number; cost: number | null }> = {}
-    for (const row of modelRows) {
+    for (const row of tokenRows) {
       const key = row.model ?? "unknown"
-      modelBreakdown[key] = { calls: callCounts.get(key) ?? 0, tokens: row.tokens, cost: row.cost }
+      modelBreakdown[key] = { calls: 0, tokens: row.tokens, cost: null }
     }
-    // 全未定价 → NULL（不再 COALESCE 焊 0）；部分定价 → 已知和
-    const totalCost = costSummary(modelRows.map(r => r.cost)).usd
+    // 只在 llm_calls 出现的模型也补一行（tokens=0），保证 breakdown 与 total_cost 自洽
+    for (const row of costRows) {
+      const key = row.model ?? "unknown"
+      const entry = modelBreakdown[key] ?? { calls: 0, tokens: 0, cost: null }
+      entry.calls = row.calls
+      entry.cost = row.cost
+      modelBreakdown[key] = entry
+    }
+    // 全未定价 → NULL（不焊 0）；部分定价 → 已知和
+    const totalCost = costSummary(costRows.map(r => r.cost)).usd
 
     const nodeSummary = this.db.prepare(`
       SELECT node_id, node_type, status, duration
@@ -124,9 +135,15 @@ export class ArchiveService {
     }
   }
 
-  // ── P1.2: archiveWorkspace (two-phase) ──────────────────────────────
+  // ── P1.2: archiveWorkspaceRecords (two-phase, transactional) ─────────
+  //
+  // Records-only archive used by delete / archive-retry flows: archives every
+  // execution + the workspace snapshot in ONE transaction, then marks the
+  // workspace archived. No file deletion, no resource install — that is the
+  // full `archiveWorkspace` flow below. (Was a duplicate `archiveWorkspace`
+  // definition; last-one-wins made this one unreachable.)
 
-  async archiveWorkspace(
+  async archiveWorkspaceRecords(
     workspaceId: string,
     workspaceDAO: WorkspaceDAO,
   ): Promise<{ archived: boolean; execution_count: number }> {
@@ -162,15 +179,17 @@ export class ArchiveService {
         }
 
         // Phase 3: workspace metadata snapshot
+        // 零执行 → 0（确知没花钱）；有执行但全未定价 → NULL（不焊 0）
+        const costAgg = this.db.prepare(
+          `SELECT COUNT(*) as cnt, ${LEDGER_SQL.sumCostOf('total_cost')} as total FROM execution_archive WHERE workspace_id = ?`,
+        ).get(workspaceId) as { cnt: number; total: number | null }
         const wsRow: WorkspaceArchiveRow = {
           workspace_id: ws.id,
           name: ws.name,
           description: ws.description,
           source: ws.source,
           execution_count: execRows.length,
-          total_cost: (this.db.prepare(
-            `SELECT ${LEDGER_SQL.sumCostOf('total_cost')} as total FROM execution_archive WHERE workspace_id = ?`,
-          ).get(workspaceId) as { total: number | null }).total,
+          total_cost: costAgg.cnt === 0 ? 0 : costAgg.total,
           total_duration_ms: execRows.length > 0 ? (this.db.prepare(
             "SELECT COALESCE(SUM(total_duration_ms), 0) as total FROM execution_archive WHERE workspace_id = ?",
           ).get(workspaceId) as { total: number }).total : 0,
@@ -204,155 +223,6 @@ export class ArchiveService {
       }
       throw err
     }
-  }
-
-  // ── P2.2: archiveMemoryBatch ─────────────────────────────────────
-
-  async archiveMemoryBatch(
-    org: string,
-    config: { session_retention_days: number; long_term_refine_trigger_days: number },
-  ): Promise<{ archived_count: number }> {
-    let archivedCount = 0
-
-    // 1. Archive daily memory files older than retention days
-    try {
-      // Dynamic imports to avoid circular deps and heavy transitive loads
-      const { getAgentService } = await import('../agent/agent-service')
-      const { getDailyMemoryDir } = await import('../agent/paths')
-      const fs = await import('fs')
-
-      const agentService = getAgentService()
-      const dailyDir = getDailyMemoryDir()
-
-      if (fs.existsSync(dailyDir)) {
-        const files = fs.readdirSync(dailyDir).filter((f: string) => f.endsWith('.md'))
-        const retentionCutoff = new Date()
-        retentionCutoff.setDate(retentionCutoff.getDate() - config.session_retention_days)
-
-        for (const file of files) {
-          const dateMatch = file.match(/^(\d{4}-\d{2}-\d{2})\.md$/)
-          if (!dateMatch) continue
-          const fileDate = new Date(dateMatch[1])
-          if (fileDate >= retentionCutoff) continue
-
-          try {
-            await agentService.archiveMemory(org, dateMatch[1])
-            archivedCount++
-            this.emitArchived(dateMatch[1], 'daily_memory', new Date().toISOString())
-          } catch (err) {
-            logError('failed to archive daily memory', err, { org, date: dateMatch[1] })
-          }
-        }
-      }
-    } catch (err) {
-      logError('archiveMemoryBatch daily scan failed', err, { org })
-      throw err
-    }
-
-    // 2. Check long-term memory refine trigger (main agent)
-    try {
-      const { getMemoryService } = await import('../agent/memory-service')
-      const { getLongTermMemoryPath } = await import('../agent/paths')
-      const fs = await import('fs')
-
-      const ltPath = getLongTermMemoryPath()
-      if (fs.existsSync(ltPath)) {
-        const stat = fs.statSync(ltPath)
-        const daysSinceModified = (Date.now() - stat.mtimeMs) / (1000 * 60 * 60 * 24)
-        if (daysSinceModified >= config.long_term_refine_trigger_days) {
-          try {
-            const memoryService = getMemoryService()
-            memoryService.refineLongTerm(org)
-          } catch (err) {
-            logError('long-term refine failed', err, { org })
-          }
-        }
-      }
-    } catch (err) {
-      logError('long-term refine check failed', err, { org })
-      throw err
-    }
-
-    // 3. Scan and archive clone directories (CMA-04)
-    try {
-      const { getClonesDir, getBuiltInClonesDir } = await import('../agent/paths')
-      const { getMemoryService } = await import('../agent/memory-service')
-      const fs = await import('fs')
-      const path = await import('path')
-
-      const cloneBaseDirs = [getClonesDir(), getBuiltInClonesDir()]
-
-      for (const baseDir of cloneBaseDirs) {
-        if (!fs.existsSync(baseDir)) continue
-
-        let clones: string[]
-        try {
-          clones = fs.readdirSync(baseDir, { withFileTypes: true })
-            .filter((d: { isDirectory: () => boolean }) => d.isDirectory())
-            .map((d: { name: string }) => d.name)
-        } catch {
-          continue
-        }
-
-        for (const cloneName of clones) {
-          const cloneDir = path.join(baseDir, cloneName)
-          const cloneDailyDir = path.join(cloneDir, 'memory', 'daily')
-
-          // Archive clone daily files
-          if (fs.existsSync(cloneDailyDir)) {
-            let files: string[]
-            try {
-              files = fs.readdirSync(cloneDailyDir).filter((f: string) => f.endsWith('.md'))
-            } catch {
-              continue
-            }
-
-            const retentionCutoff = new Date()
-            retentionCutoff.setDate(retentionCutoff.getDate() - config.session_retention_days)
-
-            for (const file of files) {
-              const dateMatch = file.match(/^(\d{4}-\d{2}-\d{2})\.md$/)
-              if (!dateMatch) continue
-              const fileDate = new Date(dateMatch[1])
-              if (fileDate >= retentionCutoff) continue
-
-              try {
-                const archiveDir = path.join(cloneDailyDir, 'archive')
-                if (!fs.existsSync(archiveDir)) fs.mkdirSync(archiveDir, { recursive: true })
-                fs.renameSync(
-                  path.join(cloneDailyDir, file),
-                  path.join(archiveDir, file),
-                )
-                archivedCount++
-                this.emitArchived(`${cloneName}-${dateMatch[1]}`, 'clone_daily_memory', new Date().toISOString())
-              } catch (err) {
-                logError('failed to archive clone daily memory', err, { org, clone: cloneName, date: dateMatch[1] })
-              }
-            }
-          }
-
-          // Trigger refine for clone long-term memory
-          const cloneLtPath = path.join(cloneDir, 'memory', 'long-term.md')
-          if (fs.existsSync(cloneLtPath)) {
-            try {
-              const stat = fs.statSync(cloneLtPath)
-              const daysSinceModified = (Date.now() - stat.mtimeMs) / (1000 * 60 * 60 * 24)
-              if (daysSinceModified >= config.long_term_refine_trigger_days) {
-                const memoryService = getMemoryService()
-                memoryService.refineLongTerm(org, cloneDir)
-              }
-            } catch (err) {
-              logError('clone long-term refine failed', err, { org, clone: cloneName })
-            }
-          }
-        }
-      }
-    } catch (err) {
-      logError('archiveMemoryBatch clone scan failed', err, { org })
-      // Non-fatal: clone scan failure doesn't block main agent archive
-    }
-
-    return { archived_count: archivedCount }
   }
 
   // ── P2.4: archiveWorkspace (full archive with knowledge loop) ────
@@ -427,13 +297,21 @@ export class ArchiveService {
         workflow_count: 0,
       }
 
+      // 工作区总费用 = 已冻结的 execution_archive 汇总（与 dashboard 的 archivedCost 同源）。
+      // 客户端 stats.total_cost 不再作为存储值 —— 两侧口径不一（或为 0）会让
+      // 「live + archived」双计/漏计。零执行 → 0；有执行但全未定价 → NULL。
+      const costAgg = this.db.prepare(
+        `SELECT COUNT(*) as cnt, ${LEDGER_SQL.sumCostOf('total_cost')} as total FROM execution_archive WHERE workspace_id = ?`,
+      ).get(workspaceId) as { cnt: number; total: number | null }
+      const archivedTotalCost = costAgg.cnt === 0 ? 0 : costAgg.total
+
       const workspaceArchiveRow: WorkspaceArchiveRow = {
         workspace_id: workspaceId,
         name: workspace.name,
         description: workspace.description,
         source: workspace.source,
         execution_count: stats.execution_count,
-        total_cost: stats.total_cost,
+        total_cost: archivedTotalCost,
         total_duration_ms: stats.total_duration_ms,
         created_at: workspace.created_at,
         archived_at: new Date().toISOString(),
@@ -771,19 +649,6 @@ export class ArchiveService {
       }
     }
   }
-
-  // ── P2.3: emitArchived ───────────────────────────────────────────
-
-  private emitArchived(memoryId: string, memoryType: string, archivedAt: string): void {
-    if (!this.domainEventBus) return
-    this.domainEventBus.emit('memory.archived', {
-      memory_id: memoryId,
-      memory_type: memoryType,
-      archived_at: archivedAt,
-    }, { source: 'archive-service' }).catch(err => {
-      logError('emit memory.archived failed', err, { memoryId })
-    })
-  }
 }
 
 // ── Singleton ───────────────────────────────────────────────────────
@@ -794,9 +659,8 @@ export function initArchiveService(
   dao: ArchiveDAO,
   execDAO: ExecutionDAO,
   db: Database.Database,
-  bus?: DomainEventBus,
 ): ArchiveService {
-  _instance = new ArchiveService(dao, execDAO, db, bus)
+  _instance = new ArchiveService(dao, execDAO, db)
   return _instance
 }
 

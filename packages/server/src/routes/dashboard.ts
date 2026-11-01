@@ -27,7 +27,8 @@ export function createDashboardRoutes(
 
     const execRow = execDAO.getDashboardStats()
     // C3: 全局费用走 ledger 规范 —— LedgerCost 三态（全未定价=null，部分=已知和+false）
-    const liveCost = tokenUsageDAO.totalCost()
+    // 归档执行不计入 live（下面 archivedCost 单独汇总），否则 all_time_cost 双计
+    const liveCost = tokenUsageDAO.liveTotalCost()
 
     // Get archived workspace stats
     let archivedWorkspaces = 0

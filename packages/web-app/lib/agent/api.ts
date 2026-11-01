@@ -60,9 +60,14 @@ async function request<T>(url: string, init?: RequestInit): Promise<T> {
   })
   if (!res.ok) {
     const body = await res.json().catch(() => ({ error: { code: 'UNKNOWN', message: res.statusText } }))
-    const err = new Error(body.error?.message ?? res.statusText) as Error & { code?: string; status?: number }
+    const err = new Error(body.error?.message ?? res.statusText) as Error & {
+      code?: string
+      status?: number
+      details?: unknown
+    }
     err.code = body.error?.code
     err.status = res.status
+    err.details = body.error?.details
     throw err
   }
   if (res.status === 204 || res.headers.get('content-length') === '0') return undefined as T

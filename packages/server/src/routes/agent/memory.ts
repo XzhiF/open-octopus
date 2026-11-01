@@ -128,6 +128,15 @@ export function createMemoryRoutes(): Hono {
             409,
           )
         }
+        if (errCode === 'MEMORY_BUDGET_EXCEEDED') {
+          return c.json(
+            createAgentError('MEMORY_BUDGET_EXCEEDED', wErr.message, {
+              token_count: (wErr as { token_count?: number }).token_count,
+              max_tokens: (wErr as { max_tokens?: number }).max_tokens,
+            }),
+            413,
+          )
+        }
         throw writeErr
       }
     } catch (err: unknown) {

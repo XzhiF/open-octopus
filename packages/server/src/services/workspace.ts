@@ -608,7 +608,7 @@ export class WorkspaceService {
     const archiveSvc = getArchiveService()
     if (archiveSvc) {
       try {
-        await archiveSvc.archiveWorkspace(id, this.dao)
+        await archiveSvc.archiveWorkspaceRecords(id, this.dao)
       } catch (err) {
         logError("workspace archive during delete failed", err, { workspaceId: id })
         // Don't cascade delete if archive failed — data preservation
