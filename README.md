@@ -196,7 +196,7 @@ Host Safety 侧另有 ToolInterceptor 拦截危险工具调用，配合进程组
 |------|------|--------|-----|--------|------|
 | **dev (主仓库)** | `pnpm dev` | 3001 | 3000 | `octopus.db` | 日常开发 |
 | **dev (worktree)** | `pnpm dev` | hash | +1 | `octopus-{branch}.db` | 并行分支 |
-| **prod** | `pnpm prod` | 3099 | 3099（同源 UI） | `octopus-prod.db` | 用 Octopus 迭代自身 |
+| **prod** | `pnpm prod` | 3000 | 3000（同源 UI） | `octopus-prod.db` | 用 Octopus 迭代自身（与 dev 的 Web 同端口，二者不同开） |
 
 每个工作空间 = 独立 git worktree + pipeline.yaml + skills/agents 配置 + Checkpoint + 日志。可手动创建，也可由 Scheduler 每次从 ProjectSpec 重建干净环境，并自动生成指令文件与预置资源。
 
@@ -223,7 +223,7 @@ Host Safety 侧另有 ToolInterceptor 拦截危险工具调用，配合进程组
 pnpm install                # 安装依赖
 pnpm build                  # 构建所有包
 pnpm dev                    # 启动开发环境（自动识别主仓库 / worktree）
-pnpm prod                   # 生产模式（完全隔离）
+pnpm prod                   # 生产模式（直接跑仓库 dist，3000 同源 UI）
 pnpm port                   # 查看端口分配
 pnpm test                   # 运行测试 (Vitest)
 ```

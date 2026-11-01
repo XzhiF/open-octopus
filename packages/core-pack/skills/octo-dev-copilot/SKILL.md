@@ -114,7 +114,7 @@ octopus-mcp-cli {server名} {tool名} '{params}' --env {env} --org {org}
 ### 6. 多实例隔离（dev.mjs）
 
 主仓库 / worktree / prod 三种模式自动隔离：
-- 端口隔离 — 主仓库 3001/3000，worktree hash 端口，prod 3099/3098
+- 端口分配 — 主仓库 3001/3000，worktree hash 端口，prod 3000（同源 UI，不能与主仓库同时开）
 - 数据库隔离 — `octopus.db` / `octopus-{branch}.db` / `octopus-prod.db`
 - 进程隔离 — 各模式独立进程，互不干扰
 

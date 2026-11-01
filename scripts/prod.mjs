@@ -1,48 +1,45 @@
 #!/usr/bin/env node
 /**
- * Production startup script — runs Octopus from a stable build copy.
+ * Production startup script — build once, then run from the repo's own dist/.
  *
  * Usage:
- *   pnpm prod                    # build → copy to stable dir → run
- *   pnpm prod --skip-build       # skip build, use existing stable copy
- *   pnpm prod --port 3098,3099   # explicit ports (UI is served on the server port)
+ *   pnpm prod                   # build → start (built SPA served same-origin)
+ *   pnpm prod --skip-build      # start without rebuilding (reuse existing dist/)
+ *   pnpm prod --port 3000       # override the server port
+ *   pnpm prod --port 3098,3099  # legacy "<web>,<server>" pair; UI follows <server>
+ *   pnpm prod -k                # force-kill whatever holds the port
  *
- * Port allocation (fully isolated from dev):
- *   dev (main):     Server 3001, Web 3000, DB octopus.db
- *   dev (worktree): Server 3100-3598 (hash), Web +1, DB octopus-{branch}.db
- *   prod:           Server 3099 (UI + API), DB octopus-prod.db
+ * Port:
+ *   prod uses dev's UI port (3000) and hosts the built SPA + API on it
+ *   (OCTOPUS_WEB_DIR), so UI + API share one port. Dev instead runs Vite on
+ *   3000 + server on 3001, so dev and prod cannot run at the same time.
+ *
+ * Nothing is copied into ~/.octopus anymore — the server runs straight out of
+ * packages/ * /dist. Only the DB stays there:
+ *   ~/.octopus/db/octopus-prod.db (kept apart from dev's octopus.db)
  *
  * Resilience:
  *   - Server auto-restarts on unexpected exit (up to MAX_RESTARTS in window)
  *   - PID lock file prevents multiple prod.mjs instances
  *   - Detailed exit logging (code, signal) for debugging crashes
- *
- * How it works:
- *   1. pnpm build (compile all packages, including Vite web dist)
- *   2. Copy dist/ outputs to ~/.octopus/prod/{package}/dist/
- *   3. Start server from stable copy with OCTOPUS_DB_PATH=octopus-prod.db
- *      and OCTOPUS_WEB_DIR=packages/web-app/dist (same-origin UI)
- *   Source code changes won't affect the running instance.
  */
 
 import { spawn, execSync } from "child_process"
 import fs from "fs"
 import path from "path"
 import os from "os"
+import net from "net"
 import { parsePortPair } from "./port-arg.mjs"
 
 const repoRoot = process.cwd()
-const PROD_DIR = path.join(os.homedir(), ".octopus", "prod")
 
-// prod 独占端口，完全独立于 dev (3001/3000) 和 worktree (3100-3598)
-// 可用 --port <web>,<server> 覆盖
-let SERVER_PORT = 3099
-// Kept for CLI compatibility with the old web/server pair; the SPA is same-origin on SERVER_PORT.
-let WEB_PORT = 3098
+// Same port as dev's UI (3000) — the built SPA is same-origin, so one port serves both.
+// Override with --port.
+let SERVER_PORT = 3000
 const DB_PATH = path.join(os.homedir(), ".octopus", "db", "octopus-prod.db")
 
 // PID lock file — prevents multiple prod.mjs instances
-const PID_FILE = path.join(PROD_DIR, "prod.pid")
+const PID_FILE = path.join(os.homedir(), ".octopus", "prod.pid")
 
 // Auto-restart configuration
 const MAX_RESTARTS = 5          // max restarts within the window
@@ -94,94 +91,16 @@ function buildProject() {
   }
 }
 
-// ─── Copy to stable directory ────────────────────────────────────
+// ─── Port helpers ────────────────────────────────────────────────
 
-function copyDist() {
-  console.log("[prod] Copying to stable directory...")
-
-  const packages = ["shared", "providers", "engine", "server", "cli", "web-app", "core-pack"]
-
-  for (const pkg of packages) {
-    const srcDist = path.join(repoRoot, "packages", pkg, "dist")
-    const destDist = path.join(PROD_DIR, "packages", pkg, "dist")
-
-    if (!fs.existsSync(srcDist)) {
-      console.log(`[prod]   skip ${pkg} (no dist/)`)
-      continue
-    }
-
-    fs.rmSync(destDist, { recursive: true, force: true })
-    fs.mkdirSync(destDist, { recursive: true })
-    copyDirSync(srcDist, destDist)
-    console.log(`[prod]   copied ${pkg}/dist/`)
-  }
-
-  // Symlink root node_modules
-  const srcNodeModules = path.join(repoRoot, "node_modules")
-  const destNodeModules = path.join(PROD_DIR, "node_modules")
-  if (fs.existsSync(srcNodeModules)) {
-    fs.rmSync(destNodeModules, { recursive: true, force: true })
-    fs.symlinkSync(srcNodeModules, destNodeModules, "junction")
-    console.log("[prod]   linked node_modules/")
-  }
-
-  // Symlink each package's node_modules (pnpm puts deps here, not just root)
-  for (const pkg of packages) {
-    const srcNm = path.join(repoRoot, "packages", pkg, "node_modules")
-    const destNm = path.join(PROD_DIR, "packages", pkg, "node_modules")
-    if (fs.existsSync(srcNm)) {
-      fs.rmSync(destNm, { recursive: true, force: true })
-      fs.mkdirSync(path.dirname(destNm), { recursive: true })
-      fs.symlinkSync(srcNm, destNm, "junction")
-      console.log(`[prod]   linked packages/${pkg}/node_modules/`)
-    }
-  }
-
-  // Copy package.json files (needed for module resolution)
-  fs.copyFileSync(
-    path.join(repoRoot, "package.json"),
-    path.join(PROD_DIR, "package.json")
-  )
-  for (const pkg of packages) {
-    const srcPkg = path.join(repoRoot, "packages", pkg, "package.json")
-    const destPkg = path.join(PROD_DIR, "packages", pkg, "package.json")
-    if (fs.existsSync(srcPkg)) {
-      fs.mkdirSync(path.dirname(destPkg), { recursive: true })
-      fs.copyFileSync(srcPkg, destPkg)
-    }
-  }
-
-  // Copy core-pack data directories
-  const corePackSrc = path.join(repoRoot, "packages", "core-pack")
-  const corePackDest = path.join(PROD_DIR, "packages", "core-pack")
-  for (const dir of ["skills", "agents", "presets", "config", "templates"]) {
-    const src = path.join(corePackSrc, dir)
-    const dest = path.join(corePackDest, dir)
-    if (fs.existsSync(src)) {
-      fs.rmSync(dest, { recursive: true, force: true })
-      copyDirSync(src, dest)
-      console.log(`[prod]   copied core-pack/${dir}/`)
-    }
-  }
-
-  console.log(`[prod] Stable copy ready at ${PROD_DIR}`)
+function isPortInUse(port) {
+  return new Promise((resolve) => {
+    const server = net.createServer()
+    server.once("error", () => resolve(true))
+    server.once("listening", () => server.close(() => resolve(false)))
+    server.listen(port)
+  })
 }
-
-function copyDirSync(src, dest) {
-  fs.mkdirSync(dest, { recursive: true })
-  const entries = fs.readdirSync(src, { withFileTypes: true })
-  for (const entry of entries) {
-    const srcPath = path.join(src, entry.name)
-    const destPath = path.join(dest, entry.name)
-    if (entry.isDirectory()) {
-      copyDirSync(srcPath, destPath)
-    } else {
-      fs.copyFileSync(srcPath, destPath)
-    }
-  }
-}
-
-// ─── Kill stale processes ────────────────────────────────────────
 
 function killPort(port) {
   try {
@@ -208,6 +127,15 @@ function killPort(port) {
       if (pids.length > 0) console.log(`[prod] Killed ${pids.length} stale process(es) on port ${port}`)
     }
   } catch {}
+}
+
+async function waitForPortFree(port, timeoutMs = 5000) {
+  const start = Date.now()
+  while (Date.now() - start < timeoutMs) {
+    if (!(await isPortInUse(port))) return true
+    await new Promise(r => setTimeout(r, 200))
+  }
+  return false
 }
 
 // ─── Process management with auto-restart ────────────────────────
@@ -264,8 +192,7 @@ function startProcess(cmd, args, env, label, cwd) {
       if (shuttingDown) return
 
       // Kill stale process on the port before restarting
-      if (label === "server") killPort(SERVER_PORT)
-      if (label === "web") killPort(WEB_PORT)
+      killPort(SERVER_PORT)
 
       const newChild = startProcess(
         entry?.cmd ?? cmd,
@@ -278,15 +205,13 @@ function startProcess(cmd, args, env, label, cwd) {
       const newEntry = children.get(label)
       if (newEntry) newEntry.restartTimes = restartTimes
 
-      if (label === "server") {
-        waitForServer(SERVER_PORT).then((health) => {
-          if (health) {
-            console.log(`[prod] ✓ server recovered (PID: ${health.pid})`)
-          } else {
-            console.error(`[prod] ✗ server failed to recover within 15s`)
-          }
-        })
-      }
+      waitForServer(SERVER_PORT).then((health) => {
+        if (health) {
+          console.log(`[prod] ✓ server recovered (PID: ${health.pid})`)
+        } else {
+          console.error(`[prod] ✗ server failed to recover within 15s`)
+        }
+      })
     }, RESTART_DELAY_MS)
   })
 
@@ -344,18 +269,22 @@ async function waitForServer(port, timeoutMs = 15000) {
 
 async function main() {
   const skipBuild = process.argv.includes("--skip-build")
+  const killExisting = process.argv.includes("--kill") || process.argv.includes("-k")
 
-  // --port <web>,<server> — explicit pair (web first)
+  // --port <N> or --port <web>,<server> (legacy pair, UI follows <server>)
   const portIdx = process.argv.indexOf("--port")
   if (portIdx !== -1) {
     const portArg = process.argv[portIdx + 1]
     const pair = parsePortPair(portArg)
-    if (!pair) {
-      console.error(`[prod] --port expects "<web>,<server>" (e.g. --port 3098,3099), got "${portArg ?? ""}"`)
+    const single = typeof portArg === "string" && /^\d+$/.test(portArg) ? Number(portArg) : null
+    if (pair) {
+      SERVER_PORT = pair.server
+    } else if (single !== null && single >= 1 && single <= 65535) {
+      SERVER_PORT = single
+    } else {
+      console.error(`[prod] --port expects "<N>" or "<web>,<server>" (e.g. --port 3000), got "${portArg ?? ""}"`)
       process.exit(1)
     }
-    WEB_PORT = pair.web
-    SERVER_PORT = pair.server
   }
 
   const getLocalIP = () => {
@@ -372,7 +301,6 @@ async function main() {
   console.log("[prod] ═══════════════════════════════════════")
   console.log("[prod] Octopus Production Mode")
   console.log("[prod] ═══════════════════════════════════════")
-  console.log(`[prod] Stable dir: ${PROD_DIR}`)
   console.log(`[prod] UI + API:   http://localhost:${SERVER_PORT} (LAN: http://${localIP}:${SERVER_PORT})`)
   console.log(`[prod] DB:         ${DB_PATH}`)
   console.log(`[prod] PID:        ${process.pid}`)
@@ -389,8 +317,19 @@ async function main() {
     console.log("[prod] Skipping build (--skip-build)")
   }
 
-  // Step 2: Copy to stable directory
-  copyDist()
+  // Step 2: Verify build outputs in the repo
+  const serverEntry = path.join(repoRoot, "packages", "server", "dist", "index.js")
+  if (!fs.existsSync(serverEntry)) {
+    console.error(`[prod] Server build not found at ${serverEntry} — run pnpm build first`)
+    cleanup(1)
+    return
+  }
+  const webDistPath = path.join(repoRoot, "packages", "web-app", "dist")
+  if (!fs.existsSync(path.join(webDistPath, "index.html"))) {
+    console.error(`[prod] Web build not found at ${webDistPath}/index.html — run pnpm build first`)
+    cleanup(1)
+    return
+  }
 
   // Step 3: Ensure prod DB exists (copy from main DB if first time)
   const dbDir = path.dirname(DB_PATH)
@@ -407,21 +346,24 @@ async function main() {
     console.log(`[prod] DB: reusing octopus-prod.db`)
   }
 
-  // Step 4: Kill stale processes on prod server port only
-  killPort(SERVER_PORT)
-
-  // Step 5: Start server from stable copy (it hosts the Vite SPA too)
-  const serverDistPath = path.join(PROD_DIR, "packages", "server", "dist", "index.js")
-  if (!fs.existsSync(serverDistPath)) {
-    console.error(`[prod] Server not found at ${serverDistPath}`)
-    process.exit(1)
+  // Step 4: Free the port — dev uses the same one, so never kill it implicitly
+  if (await isPortInUse(SERVER_PORT)) {
+    if (killExisting) {
+      killPort(SERVER_PORT)
+      if (!(await waitForPortFree(SERVER_PORT))) {
+        console.error(`[prod] Port ${SERVER_PORT} is still in use after kill`)
+        cleanup(1)
+        return
+      }
+    } else {
+      console.error(`[prod] ✗ Port ${SERVER_PORT} is already in use (dev running?).`)
+      console.error(`[prod]   Stop it first, or run \`pnpm prod -k\` to force-kill it.`)
+      cleanup(1)
+      return
+    }
   }
-  const webDistPath = path.join(PROD_DIR, "packages", "web-app", "dist")
-  if (!fs.existsSync(path.join(webDistPath, "index.html"))) {
-    console.error(`[prod] Web build not found at ${webDistPath}/index.html`)
-    process.exit(1)
-  }
 
+  // Step 5: Start server from the repo — it hosts the Vite SPA too
   const serverEnv = {
     PORT: String(SERVER_PORT),
     OCTOPUS_DB_PATH: DB_PATH,
@@ -429,13 +371,13 @@ async function main() {
     OCTOPUS_WEB_DIR: webDistPath,
   }
 
-  console.log("\n[prod] Starting server (UI + API) from stable copy...")
+  console.log("\n[prod] Starting server (UI + API)...")
   startProcess(
     process.execPath,
-    [serverDistPath],
+    [serverEntry],
     serverEnv,
     "server",
-    PROD_DIR
+    repoRoot
   )
 
   // Step 6: Wait for server health
@@ -448,7 +390,7 @@ async function main() {
 
   console.log(`\n[prod] ✓ UI/API: http://${localIP}:${SERVER_PORT} (PID: ${health.pid})`)
   console.log(`[prod] ✓ db:     ${DB_PATH}`)
-  console.log(`\n[prod] Source code changes will NOT affect the running server.`)
+  console.log(`\n[prod] Running from ${path.join(repoRoot, "packages")} — no stable copy, nothing written to ~/.octopus/prod.`)
   console.log(`[prod] If server crashes, it will auto-restart (up to ${MAX_RESTARTS} times).`)
   console.log(`[prod] To update: Ctrl+C → pnpm prod`)
   console.log(`[prod] Ready. Press Ctrl+C to stop.\n`)

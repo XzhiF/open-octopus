@@ -67,7 +67,6 @@ const FRONTMATTER_DISPLAY: Record<string, { label: string; icon: typeof Tag; col
 const sourceLabels: Record<string, { label: string; className: string }> = {
   local_evolved: { label: '进化版', className: 'bg-agent-accent-light text-agent-accent border-agent-accent/20' },
   builtin: { label: '内置版', className: 'bg-muted text-muted-foreground' },
-  prod: { label: '生产版', className: 'bg-agent-success-light text-agent-success-foreground border-agent-success/20' },
 }
 
 /** Renders frontmatter as a styled metadata card + remaining markdown */

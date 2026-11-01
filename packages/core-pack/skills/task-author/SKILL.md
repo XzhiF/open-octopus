@@ -33,7 +33,7 @@ version: 3.5.2
 
 ## 前置条件
 
-1. Octopus Server 在跑：主仓库 `3001`、worktree hash 端口（`pnpm port`）、prod `3099`。基础 URL `http://localhost:$PORT/api/tasks`。
+1. Octopus Server 在跑：主仓库 `3001`、worktree hash 端口（`pnpm port`）、prod `3000`（同源 UI）。基础 URL `http://localhost:$PORT/api/tasks`。
 2. 你的 cwd **恒为 task home**（生产 = 任务绑定 workspace 根下的 `.task/`，即 `{workspace.path}/.task`）—— 所有相对路径（含 matt 技能的 `<artifacts.dir>`）天然落在 home 内，Batch 目录直接写 `./.scratch/...`。
 3. 多项目路径**不假定 cwd**：只信 `context.md` 的 project 行。
 

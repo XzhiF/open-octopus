@@ -75,7 +75,6 @@ type AttachCategory = 'skill' | 'clone' | 'mcp'
 const SOURCE_LABEL: Record<SkillSource, string> = {
   builtin: '内置',
   local_evolved: '本地进化',
-  prod: '生产',
 }
 
 const CLONE_STATUS: Record<CloneInfo['status'], { dot: string; label: string }> = {

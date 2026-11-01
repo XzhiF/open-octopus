@@ -53,7 +53,7 @@ Swarm 子模式: review(1轮审查) · debate(N轮讨论+共识检测) · dispat
 |------|--------|-----|-----|
 | dev (主仓库) | 3001 | 3000 | `~/.octopus/db/octopus.db` |
 | dev (worktree) | 3100-3598 | +1 | `octopus-{branch}.db` |
-| prod | 3099 | 3099（server 同源托管 SPA） | `octopus-prod.db` |
+| prod | 3000（与 dev 的 Web 同端口，不可同时开） | 3000（server 同源托管 SPA） | `octopus-prod.db` |
 
 ## 开发与测试
 
@@ -63,10 +63,10 @@ pnpm build            # 构建所有包
 pnpm dev              # 主仓库开发 (server:3001 web:3000)
 pnpm dev --isolated   # 隔离模式
 pnpm dev --port 3101,3100    # 指定端口 (web 在前, server 在后)
-pnpm prod             # 生产模式 (server:3099，UI + API 同源)
+pnpm prod             # 生产模式 (server:3000，UI + API 同源，直接跑仓库 dist)
 pnpm desktop:dev      # 桌面 dev（需先 pnpm dev；Electron 连 localhost:3000）
 pnpm desktop:pack     # 生成 Electron .app（macOS arm64，未签名，见 packages/desktop/README.md）
-pnpm prod --port 3099        # 指定生产端口（server 同源）
+pnpm prod --port 8080        # 指定生产端口（同源）
 pnpm port             # 查看端口分配
 pnpm test             # Vitest 测试
 pnpm test:watch       # 监听模式

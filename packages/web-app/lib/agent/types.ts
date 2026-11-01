@@ -6,7 +6,7 @@ export type EvolutionChangeType = 'minor' | 'major' | 'rollback' | 'revert_built
 export type SafetyEventType = 'dangerous_command' | 'boundary_violation' | 'safe_mode_toggle'
 export type SafetyDecision = 'intercept' | 'confirm_accept' | 'confirm_reject'
 export type ReportStatus = 'ok' | 'missing' | 'rebuilt'
-export type SkillSource = 'local_evolved' | 'builtin' | 'prod'
+export type SkillSource = 'local_evolved' | 'builtin'
 
 // ===== Pagination =====
 export interface PaginatedResponse<T> {
