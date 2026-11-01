@@ -31,27 +31,56 @@ export interface SlashCommand {
   kind?: 'builtin' | 'skill'
 }
 
-/** 内置命令表 —— v4 草稿任务不再有 skill_groups 锁定，技能命令可为空，
- *  但内置命令恒可用（原型 chat-draft-v4.html 拍板）。命令集对齐 Claude
- *  Agent SDK 的斜杠命令（服务端 chat 透传，SDK 侧执行）。 */
-export const BUILTIN_SLASH_COMMANDS: SlashCommand[] = [
-  { name: 'compact', description: '压缩会话上下文，保留关键事实', kind: 'builtin' },
-  { name: 'context', description: '查看当前上下文窗口占用与构成', kind: 'builtin' },
-  { name: 'usage', description: '本轮 token / 费用用量统计', kind: 'builtin' },
-  { name: 'cost', description: '查看累计花费', kind: 'builtin' },
-  { name: 'status', description: '查看会话与模型运行状态', kind: 'builtin' },
-  { name: 'config', description: '查看/调整运行时配置', kind: 'builtin' },
-  { name: 'model', description: '切换本轮使用的模型', kind: 'builtin' },
-  { name: 'memory', description: '查看/整理 agent 长期记忆', kind: 'builtin' },
-  { name: 'resume', description: '恢复历史会话', kind: 'builtin' },
-  { name: 'rewind', description: '回退到上一个检查点', kind: 'builtin' },
-  { name: 'init', description: '初始化项目上下文（CLAUDE.md）', kind: 'builtin' },
-  { name: 'review', description: '代码审查当前改动', kind: 'builtin' },
-  { name: 'doctor', description: '诊断环境与配置问题', kind: 'builtin' },
-  { name: 'help', description: '查看可用命令', kind: 'builtin' },
-  { name: 'clear', description: '清空当前会话', kind: 'builtin' },
-  { name: 'stop', description: '打断当前生成', kind: 'builtin' },
-]
+/** 命令描述表 —— 只覆盖 CLI 真正在 headless 可用的内置命令。
+ *  列表本身不再硬编码：`system:init.slash_commands` 会告诉我们这个会话
+ *  （含 plugins/skills）到底有哪些命令。这张表只负责给已知命令配中文说明，
+ *  不在表里的名字一律按「技能命令」展示。 */
+export const COMMAND_DESCRIPTIONS: Record<string, string> = {
+  compact: '压缩会话上下文，保留关键事实',
+  context: '查看当前上下文窗口占用与构成',
+  usage: '查看 CLI 用量统计（非应用账本）',
+  cost: '查看 CLI 累计花费（非应用账本）',
+  config: '查看/调整运行时配置',
+  model: '切换本轮使用的模型',
+  clear: '清空 SDK 上下文（聊天记录保留）',
+  init: '初始化项目上下文（CLAUDE.md）',
+  doctor: '诊断环境与配置问题',
+  mcp: '查看 MCP 服务与工具',
+  effort: '调整推理强度',
+  fast: '切换快速模式',
+  autocompact: '查看/调整自动压缩',
+  recap: '回顾会话要点',
+  insights: '查看使用洞察',
+  goal: '设置收敛目标',
+  rename: '重命名会话',
+  'security-review': '安全审查当前改动',
+}
+
+/** 首次发出消息之前的兜底菜单。CLI 实际命令集在 `system:init` 之后由
+ *  `buildSlashCommands()` 替换；这里只列 headless 确认可用的内置命令。 */
+export const FALLBACK_SLASH_COMMANDS: SlashCommand[] = Object.entries(COMMAND_DESCRIPTIONS)
+  .map(([name, description]) => ({ name, description, kind: 'builtin' as const }))
+
+/** CLI init 命令名 → 下拉行。已知命令归内置组（按兜底表顺序），其余视为技能。 */
+export function buildSlashCommands(names?: readonly string[] | null): SlashCommand[] {
+  const cleaned = (names ?? []).filter((name) => !!name && !name.startsWith('__'))
+  if (cleaned.length === 0) return FALLBACK_SLASH_COMMANDS
+
+  const seen = new Set<string>()
+  const builtins: SlashCommand[] = []
+  const skills: SlashCommand[] = []
+  for (const name of cleaned) {
+    if (seen.has(name)) continue
+    seen.add(name)
+    const description = COMMAND_DESCRIPTIONS[name]
+    if (description) builtins.push({ name, description, kind: 'builtin' })
+    else skills.push({ name, kind: 'skill' })
+  }
+  const order = new Map(FALLBACK_SLASH_COMMANDS.map((cmd, i) => [cmd.name, i]))
+  builtins.sort((a, b) => (order.get(a.name) ?? 999) - (order.get(b.name) ?? 999))
+  skills.sort((a, b) => a.name.localeCompare(b.name))
+  return [...builtins, ...skills]
+}
 
 interface SlashCommandAutocompleteProps {
   /** Current input value (the full textarea text). */

@@ -7,10 +7,9 @@ kind: Workflow
 # 与 matt-dev-pipeline 的分工：那条流从 idea 出发（swarm 研究 + interaction
 # 澄清 + 现场生成 spec）；本流**只消费已冻结的 Batch 目录**（task-author 起草、
 # 用户拆分确认过），零澄清、零 spec 再生成：
-#   spec-resolve (bash — 确定性核对 + spec 定位 + 反馈/前序交接探测，不烧 agent token)
+#   spec-resolve (bash — 确定性核对 + 票目录静态自检 + spec 定位 + 前序交接探测，不烧 agent token)
 #     ├─ ok=false → fail-fast (bash — 当场失败并说明原因)
-#     └─ ok=true  → spec-review (agent — 仅反馈轮：在 ws 就地审查更新 spec.md)
-#                  → ticket-dag  (dynamic_sub_workflow — 功能票 DAG；跳过 NN-e2e 票)
+#     └─ ok=true  → ticket-dag  (dynamic_sub_workflow — 功能票 DAG；跳过 NN-e2e 票)
 #                  → code-review (判→批修→一测；终检在此)
 #                  → e2e-verify  (agent — 仅 has_e2e：对最终 HEAD 走查，review 之后)
 #                  → ship-pr (Git PR)
@@ -35,10 +34,13 @@ kind: Workflow
 # 主链 code-review/e2e-verify/ship-pr 亦各自新会话、以文件为真相 —— TTFT 全程快，
 # 慢的一直是逐字生成。
 #
-# spec 权威（ADR-0018）：入队后批次目录的最终权威在 **ws 侧** —— 打回反馈指向
-# 规格本身问题时，本流的 spec-review 段在 ws 里就地更新 spec.md（决策表行/编号
-# 稳定纪律不变），终态由 server collect 回流 home（home=终态镜像 + 下轮 seed 源）。
-# spec-rN.md 仅属起草窗口；本流取「最大 spec-rN.md，否则 spec.md」为底本。
+# spec 权威（ADR-0018）：入队后批次目录的最终权威在 **ws 侧**；spec-rN.md 仅属
+# 起草窗口；本流取「最大 spec-rN.md，否则 spec.md」为底本。
+#
+# 打回不经本流（ADR-0024 打回单路径）：人打回时 server 恒派 built-in/task-fix 修复轮，
+# 绑定流不重跑；指向规格本身的反馈由修复轮经计划回写 REST 通道改 spec 并留痕（ADR-0026）。
+# 本流因此零 spec 再维护 —— 空转轮（票全 done/skip → planner 产 0 节点 DAG）由
+# spec-resolve 的票目录自检当场分流；规格级返工的正路 = task-author 改 spec 后重新入队。
 #
 # 人 gate = 看板验收（K6）：本流内部零 approval/interaction 节点。
 # ============================================================
@@ -46,8 +48,8 @@ kind: Workflow
 name: matt-spec-dev
 description: |
   规格直执行流：读 phase Batch 目录（spec.md + issues/，seed 下行后的 ws 同构位）
-  直接执行 —— 票 DAG 实现 → 集成门禁 → Code Review → ship 出 PR；打回轮先就地
-  审查更新 spec 再执行。零需求澄清、零 spec 再生成。
+  直接执行 —— 票 DAG 实现 → Code Review → ship 出 PR。零需求澄清、零 spec 再生成；
+  验收打回走 task-fix 修复轮（ADR-0024），不经本流。
 version: 1.0.0
 
 # --- 全局配置 ---
@@ -82,8 +84,6 @@ variables:
   batch_ok: ""
   batch_reason: ""
   spec_file: ""
-  has_feedback: "false"
-  latest_feedback: ""
   review_budget: ""
   branch: ""
   repos: ""
@@ -148,15 +148,6 @@ hooks:
         body: "📁 $inputs.batch_dir\n✅ PR: $vars.pr_url\n🔧 review: $vars.review_status"
 
   on_node_success:
-    - id: notify-spec-review
-      type: notify
-      nodes: [spec-review]
-      channel: xzf_hermes
-      template:
-        severity: info
-        title: "📝 spec 已就地修订"
-        body: "📁 $inputs.batch_dir | 反馈: $vars.latest_feedback"
-
     - id: notify-dag
       type: notify
       nodes: [ticket-dag]
@@ -269,11 +260,25 @@ nodes:
       # 8-17 回合，定长者对复杂批必爆(三单 r1 的 max_turns=8 实证)；跨仓终检按 reactor 序
       # 每仓多跑一轮 mvn，故再并入仓数。实际预算在下方仓枚举算出 RC 后再定。
 
-      # 未消化反馈探测：存在 fix-feedback-rN.md → 本轮先过 spec-review 再审段
-      FB=""; HAS_FB="false"
+      # 票目录静态自检：待执行票 = Status 首词不是 done/skip 者 —— 与 ticket-dag 的跳过判据
+      # 同词表（planner 只为非 done/skip 建节点），词表正源 = task-author SKILL
+      # （ready-for-agent / in-progress / done / skip / ready-for-human）；解析先剥 markdown
+      # 装饰（* ` "），读不到 Status 一律按待执行计 —— 宁可多跑一轮，不误杀。全 done/skip =
+      # 空转轮：planner 产 0 节点 DAG，整轮零产出却收尾（2026-09-16 三单 r2 实证），此处
+      # 当场分流比让 LLM 规划出空图再撞下去便宜。
+      PENDING=0
       if [ -z "$REASON" ]; then
-        FB=$(ls "$BATCH"/fix-feedback-r*.md 2>/dev/null | sed -E 's/.*-r([0-9]+)\.md$/\1/' | sort -n | tail -1)
-        if [ -n "$FB" ]; then HAS_FB="true"; FB="$BATCH/fix-feedback-r$FB.md"; fi
+        for F in "$BATCH"/issues/*.md; do
+          [ -f "$F" ] || continue
+          ST=$(grep -m1 -i 'Status:' "$F" 2>/dev/null | sed -E 's/[*"`]//g; s/^[^:]*:[[:space:]]*//' | tr -d '\r' | tr '[:upper:]' '[:lower:]' | cut -d' ' -f1)
+          case "$ST" in
+            done|skip) ;;
+            *) PENDING=$((PENDING+1)) ;;
+          esac
+        done
+        if [ "$PENDING" = "0" ]; then
+          REASON="no pending ticket under $BATCH/issues/ (all $TICKETS are done/skip) — 打回请走 task-fix 修复轮；规格级返工由 task-author 改 spec 后重新入队"
+        fi
       fi
 
       # 前序交接探测（phase-handoff-chaining K3）：prev_handoff_paths = 看板 accept→
@@ -324,8 +329,8 @@ nodes:
       fi
 
       if [ "$PREV_COUNT" -gt 0 ]; then echo "PREV HANDOFFS: count=$PREV_COUNT (前序交接在场 — 下游先读)"; fi
-      echo "PRECHECK OK: spec=$SPEC tickets=$TICKETS repos=$RC has_e2e=$HAS_E2E feedback=$HAS_FB branch=$BR"
-      printf '{"vars_update": {"batch_ok": "true", "batch_reason": "", "spec_file": "%s", "has_feedback": "%s", "latest_feedback": "%s", "review_budget": "%s", "branch": "%s", "repos": "%s", "repo_count": "%s", "has_e2e": "%s", "e2e_ticket": "%s", "ticket_count": "%s", "prev_handoffs": "%s", "prev_handoff_count": "%s"}}\n' "$SPEC" "$HAS_FB" "$FB" "$REVIEW_BUDGET" "$BR" "$REPOS_JSON" "$RC" "$HAS_E2E" "$E2E_FILE" "$TICKETS" "$PREV_JSON" "$PREV_COUNT"
+      echo "PRECHECK OK: spec=$SPEC tickets=$TICKETS pending=$PENDING repos=$RC has_e2e=$HAS_E2E branch=$BR"
+      printf '{"vars_update": {"batch_ok": "true", "batch_reason": "", "spec_file": "%s", "review_budget": "%s", "branch": "%s", "repos": "%s", "repo_count": "%s", "has_e2e": "%s", "e2e_ticket": "%s", "ticket_count": "%s", "prev_handoffs": "%s", "prev_handoff_count": "%s"}}\n' "$SPEC" "$REVIEW_BUDGET" "$BR" "$REPOS_JSON" "$RC" "$HAS_E2E" "$E2E_FILE" "$TICKETS" "$PREV_JSON" "$PREV_COUNT"
 
   - id: fail-fast
     type: bash
@@ -337,62 +342,19 @@ nodes:
       exit 1
 
   # ------------------------------------------------------------
-  # Stage 0.5: spec 就地再审（仅打回反馈轮 — ADR-0018 ws 权威段）
-  # ------------------------------------------------------------
-
-  - id: spec-review
-    type: agent
-    depends_on: [spec-resolve]
-    execute_when: '$vars.has_feedback == "true"'
-    timeout: 1800
-    prompt: |
-      ═══ Spec 就地再审（ws 权威 — ADR-0018）═══
-      本 round 因验收打回而重跑。反馈与批次目录都在 ws 侧，你是 spec 的最终维护者。
-
-      ═══ 读取 ═══
-      - 反馈（逐条）: $vars.latest_feedback
-      - spec 底本: $vars.spec_file
-      - 票: $inputs.batch_dir/issues/
-      - 前序交接（若列出的先读；空则本 phase 无前序）: $vars.prev_handoffs
-        —— 就地修订 spec 时不得回退其 Protected Decisions，接口引用优先复用其
-        Confirmed Interfaces 指向的现物。
-
-      ═══ 执行纪律 ═══
-      1. 逐条判断反馈性质：实现缺陷（spec 不变，票不变）/ 规格错误（spec 需改）/
-         范围补充（spec + 票都要改）。
-      2. 规格有误或需补充 → **就地更新 $inputs.batch_dir/spec.md**（ws 内，终态）：
-         - Key Decisions 表：行与编号保持稳定，改判行在 Conclusion 追加
-           `NEW-r<本轮>` 标记 — 不删旧行、不重排编号。
-         - User Stories / Verification 随之修订。
-         - 若底本是 spec-rN.md（起草窗口遗留），把其内容并入 spec.md 后一切以
-           spec.md 为准（spec-rN.md 留作历史，不再更新）。
-      3. 票的增删改**原位增量**（不重写整目录）：新票顺延编号，末张保持
-         `NN-e2e-*` 验收票；被反馈作废的票标 Status: skip（不物理删）。
-         **重开纪律**：反馈涉及的、已标 `Status: done` 的票 → 把 Status 改回
-         `ready`（实现缺陷=原票重开；规格错误=原票重开+按新 spec 改票文）。
-         不回开 = 下游 planner 只见 done 票 → 0 节点 DAG → 整轮空转失败
-         （2026-09-16 三单 r2 实证）。与反馈无关的 done 票保持不动。
-      4. 修订点记入 $inputs.batch_dir/round-report.md 的「## Spec 修订」节
-         （反馈条目 → 是否改 spec → 改了什么），供验收人对照。
-      5. 只动本批次目录，不碰 projects/ 代码（实现是 Stage 1 的事）。
-
-      （本节点不产 vars_update —— 它报过的 spec_reviewed 无声明也无消费方，
-       2026-09-17 清除。节点的完成状态由引擎记录，下游用不着额外信号。）
-
-  # ------------------------------------------------------------
   # Stage 1: 票 DAG 执行（dynamic_sub_workflow — LLM 规划，引擎并发）
   # ------------------------------------------------------------
 
   - id: ticket-dag
     type: dynamic_sub_workflow
-    depends_on: [spec-review]
+    depends_on: [spec-resolve]
     workflow: ticket-dag
     on_error: continue
     prompt: |
       你是 DAG 规划器。读取 issues 目录中的所有 ticket，构建执行 DAG。
 
       Issues 目录: $inputs.batch_dir/issues/
-      Spec 文件: $vars.spec_file（spec-review 跑过时以 $inputs.batch_dir/spec.md 为准）
+      Spec 文件: $vars.spec_file
 
       ═══ 步骤 ═══
       1. 列出 issues/ 中所有 .md 文件
@@ -560,8 +522,7 @@ nodes:
         + code-review.md 的结论行。此后除落笔与 git 操作外不再探索。
 
       ═══ 产物契约（下游消费者是正则解析器，节名/表头一字不能改）═══
-      1. $inputs.batch_dir/round-report.md（spec-review 已写「Spec 修订」节的，
-         在其后追加，不覆盖）必须依次含四节，节名逐字:
+      1. $inputs.batch_dir/round-report.md 必须依次含四节，节名逐字:
            ## 票执行摘要      表格: | 票 | 状态 | 判据结果 |（每票一行，含 skip）
            ## Code Review 结论 findings/fixed/noted，对照 code-review.md
               （review_status 为空/failed —— 评审熔断或出错 → 本节如实写

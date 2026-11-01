@@ -192,6 +192,49 @@ CREATE TABLE IF NOT EXISTS session_role_states (
   updated_at         TEXT NOT NULL
 );
 
+-- 6d. Per-turn debug snapshots (schema v60)
+-- The dock's 「调试」 inspector needs what was ACTUALLY handed to the SDK for
+-- each turn — the raw user message and the provider message after the role
+-- card / transient reminders were appended, the frozen system-prompt append,
+-- the sendQuery options, the SDK `system:init` snapshot and getContextUsage().
+-- None of that is reconstructible after the fact (the provider transcript is
+-- opaque and `sessions.context_usage` is a single overwritten column), so it is
+-- written once per turn. Large fields are capped + secret-redacted at capture.
+CREATE TABLE IF NOT EXISTS session_turn_debug (
+  id                     TEXT PRIMARY KEY,
+  session_id             TEXT NOT NULL,
+  turn_index             INTEGER NOT NULL,
+  user_message_id        TEXT,
+  assistant_message_id   TEXT,
+  started_at             TEXT NOT NULL,
+  ended_at               TEXT,
+  status                 TEXT NOT NULL DEFAULT 'running',
+  model                  TEXT,
+  effort                 TEXT,
+  cwd                    TEXT,
+  identity               TEXT,
+  role_revision          INTEGER NOT NULL DEFAULT 0,
+  role_card              TEXT,
+  provider_message       TEXT,
+  system_prompt          TEXT,
+  system_prompt_hash     TEXT,
+  sdk_options            TEXT,
+  context_usage          TEXT,
+  system_init            TEXT,
+  usage                  TEXT,
+  ttft_ms                INTEGER,
+  duration_ms            INTEGER,
+  error                  TEXT,
+  events                 TEXT,
+  created_at             TEXT NOT NULL,
+  updated_at             TEXT NOT NULL,
+  UNIQUE(session_id, turn_index),
+  FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_session_turn_debug_session
+  ON session_turn_debug(session_id, turn_index DESC);
+
 -- 7. Chat Messages
 CREATE TABLE IF NOT EXISTS chat_messages (
   id TEXT PRIMARY KEY,

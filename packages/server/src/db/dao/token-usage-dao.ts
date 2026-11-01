@@ -172,6 +172,15 @@ export class TokenUsageDAO extends BaseDAO {
     ).all(sessionId) as LlmCallCostedRow[]
   }
 
+  /** Ledger rows for one turn (the debug inspector's cost / model breakdown). */
+  findLlmCallsBySessionWindow(sessionId: string, fromMs: number, toMs: number): LlmCallCostedRow[] {
+    return this.stmt(
+      `SELECT * FROM llm_calls_costed
+        WHERE session_id = ? AND timestamp >= ? AND timestamp <= ?
+        ORDER BY timestamp, id`,
+    ).all(sessionId, fromMs, toMs) as LlmCallCostedRow[]
+  }
+
   /**
    * 执行级总量 —— token 总量仍以 ntu 为账（运行中逐轮累加，与 steps/REST 终态同源，
    * C3/Q4 的「运行中↔完成跳变根除」结论不变）；NEW-r2 起 **cost 改从 llm_calls

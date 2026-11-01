@@ -24,7 +24,7 @@ import { getMemoryService } from './memory-service'
 import { getEvolutionService } from './evolution-service'
 import { getSubsystemAdapter } from './subsystem-adapter'
 import { getConfigManager } from './config-manager'
-import { AgentSessionDAO, SafetyDAO } from '../../db/dao'
+import { AgentSessionDAO, SafetyDAO, SessionCacheContextDAO } from '../../db/dao'
 import { SchedulerService } from '../scheduler/scheduler-service'
 import { getRecoveryService } from './recovery-service'
 import { logError } from '../../file-logger'
@@ -801,6 +801,12 @@ export class AgentService {
     const maxTokens = 8000
     const truncatedSegments = assembler.truncateToBudget(rawSegments, maxTokens)
 
+    // The provider's prefix cache makes the system prompt session-frozen. Use
+    // the frozen snapshot when the id is a real session: re-assembling the
+    // current files would answer a different question than "what was sent".
+    const snapshot = new SessionCacheContextDAO(this.sessionDao.getDb()).getPromptSnapshot(chatId)
+    const session = this.sessionDao.findById(chatId)
+
     // Build a lookup of truncated segments by name for comparison
     const truncatedByName = new Map<string, { tokenEstimate: number }>()
     for (const seg of truncatedSegments) {
@@ -833,9 +839,9 @@ export class AgentService {
     return {
       chat_id: chatId,
       id: chatId,
-      session_id: '',
+      session_id: session?.id ?? '',
       timestamp: new Date().toISOString(),
-      system_prompt: '',
+      system_prompt: snapshot?.systemPrompt ?? '',
       segments,
       total_tokens: rawSegments.reduce((sum, seg) => sum + seg.tokenEstimate, 0),
       skill_sources: {},

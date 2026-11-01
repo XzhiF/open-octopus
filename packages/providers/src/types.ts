@@ -140,6 +140,17 @@ export type MessageChunk =
   | { type: 'ask_user_question'; toolCallId: string; questions: unknown }
   | { type: 'complete_interaction'; toolCallId: string; summary: string; vars_update?: Record<string, any> }
   | { type: 'local_command_output'; content: string }
+  /** Slash commands the CLI advertises for this session (`system:init`). The
+   *  headless command set depends on discovered skills/plugins, so it is only
+   *  knowable at runtime — hosts should replace their cached list with this. */
+  | { type: 'slash_commands'; commands: string[] }
+  /** Full SDK `system:init` snapshot (what the CLI actually loaded). The host
+   *  keeps it for the debug inspector: tools / MCP status / skills / plugins /
+   *  permission mode are otherwise invisible after the turn. */
+  | { type: 'system_init'; data: SystemInitData }
+  /** `/clear`: the CLI reset its conversation. Only the provider transcript
+   *  is gone — host-side history (DB/messages) is the host's own. */
+  | { type: 'conversation_reset' }
   | { type: 'status'; status: 'compacting' | 'requesting' | null; varsUpdate?: Record<string, unknown> }
   | { type: 'context_usage'; data: ContextUsageData }
   | { type: 'result'; content?: string; sessionId?: string; usage?: TokenUsage; costUsd?: number; numTurns?: number; modelUsages?: ModelUsage[] }
@@ -178,6 +189,26 @@ export interface ContextUsageData {
   systemTools?: { name: string; tokens: number }[]
   agents?: { agentType: string; source: string; tokens: number }[]
   slashCommands?: { totalCommands: number; includedCommands: number; tokens: number }
+}
+
+/** Normalized SDK `system:init` payload. Field names mirror the SDK's snake_case
+ *  event; unknown fields are intentionally not carried. */
+export interface SystemInitData {
+  claudeCodeVersion?: string
+  model?: string
+  cwd?: string
+  permissionMode?: string
+  outputStyle?: string
+  apiKeySource?: string
+  effort?: string | null
+  tools: string[]
+  mcpServers: { name: string; status: string }[]
+  agents: string[]
+  skills: string[]
+  plugins: { name: string; path: string; version?: string }[]
+  slashCommands: string[]
+  capabilities?: string[]
+  betas?: string[]
 }
 
 export interface IAgentProvider {

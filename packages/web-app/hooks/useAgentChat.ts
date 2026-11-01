@@ -76,6 +76,8 @@ export interface UseAgentChatApiOverride {
   }) => import('@/lib/agent/api').AgentSSEConnection
   /** Stop an in-progress chat stream */
   stopChat?: (id: string) => Promise<unknown>
+  /** CLI-advertised slash commands for the session (composer `/` menu). */
+  getSlashCommands?: (id: string) => Promise<{ commands: string[] }>
   /** Probe whether the session has an in-flight server-side turn (clone chat
    *  stream-resume). When present, the hook auto-resumes on mount: reopening
    *  a dialog that was closed mid-generation shows the growing reply (via
@@ -147,6 +149,9 @@ export function useAgentChat(sessionId: string | null, options?: {
   } | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [statusMessage, setStatusMessage] = useState('')
+  /** Slash commands the CLI advertises for this session (`system:init`). The
+   *  set is skills/plugins-dependent, so it cannot be hardcoded in the UI. */
+  const [slashCommands, setSlashCommands] = useState<string[]>([])
   // Context window usage breakdown (from SDK getContextUsage via SSE context_usage event).
   // Updated at the start of each assistant turn (after message_start).
   // Persisted in localStorage keyed by sessionId: the server does not store this
@@ -240,7 +245,30 @@ export function useAgentChat(sessionId: string | null, options?: {
     } else {
       setContextUsageRaw(null)
     }
+    setSlashCommands([])
   }, [sessionId, disconnect])
+
+  // Slash commands are discovered by the CLI per session; repaint the composer
+  // menu on a cold open from the server's cache (empty until a turn ran in this
+  // server process — the UI then falls back to its known list).
+  useEffect(() => {
+    if (!sessionId) return
+    let fetchCommands: ((id: string) => Promise<{ commands: string[] }>) | undefined
+    try {
+      // Partial module mocks (tests / clone hosts) may not export this — a
+      // missing lookup must not crash the effect; the next init event still
+      // repaints the menu.
+      fetchCommands = apiOverrideRef.current?.getSlashCommands ?? api.getSessionSlashCommands
+    } catch {
+      return
+    }
+    if (!fetchCommands) return
+    let alive = true
+    fetchCommands(sessionId)
+      .then((res) => { if (alive) setSlashCommands(res.commands ?? []) })
+      .catch(() => { /* best-effort: the next turn's init event repaints it */ })
+    return () => { alive = false }
+  }, [sessionId])
 
   /** Feed a live turn's persisted partial into the streaming UI instead of the
    *  transcript list — the resume path should look exactly like the live block
@@ -483,6 +511,9 @@ export function useAgentChat(sessionId: string | null, options?: {
       onContextUsage: (data) => {
         setContextUsage(data)
       },
+      onSlashCommands: (data) => {
+        setSlashCommands(data.commands ?? [])
+      },
       onQuickEditCommit: (data) => {
         options?.onQuickEditCommit?.(data)
       },
@@ -627,7 +658,7 @@ export function useAgentChat(sessionId: string | null, options?: {
                 : { kind: it.kind, text: it.text })
           : undefined
         const assistantMsg: AgentMessage = {
-          id: data.message_id,
+          id: data.message_id ?? `done-${Date.now()}`,
           session_id: data.session_id,
           role: 'assistant',
           content: streamContentRef.current,
@@ -639,7 +670,11 @@ export function useAgentChat(sessionId: string | null, options?: {
           is_compressed: false,
           is_edited: false,
         }
-        setMessages(prev => [...prev, assistantMsg])
+        // Local slash commands can finish with no displayable text (/clear, an
+        // empty /compact). The server sends `done` without a message_id; appending
+        // an empty bubble here would be noise — just settle the turn.
+        const hasPayload = !!streamContentRef.current || !!streamThinkingRef.current || !!finalToolCalls?.length
+        if (hasPayload) setMessages(prev => [...prev, assistantMsg])
         setStreaming(false)
         setStreamingSessionId(null)
         setTurnStartedAt(null)
@@ -859,6 +894,8 @@ export function useAgentChat(sessionId: string | null, options?: {
     pendingConfirm,
     error,
     statusMessage,
+    /** Slash commands advertised by the CLI for the active session. */
+    slashCommands,
     contextUsage,
     sendMessage,
     stopGenerate,

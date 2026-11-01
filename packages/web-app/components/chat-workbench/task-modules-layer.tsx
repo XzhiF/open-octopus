@@ -11,6 +11,7 @@ import { RunWindow } from './run-window'
 import { AcceptanceWindow } from './acceptance-window'
 import { UsageWindow } from './usage-window'
 import { SessionUsageWindow } from './session-usage-window'
+import { DebugInspectorWindow } from './debug-inspector-window'
 import { ArtifactsWindow } from './artifacts-window'
 import { ArchiveWindow } from './archive-window'
 import type { TaskModule, TaskWindowMap, TaskWindowRecord } from './task-window-types'
@@ -21,6 +22,7 @@ const MODULE_TITLE: Record<TaskModule, string> = {
   run: '运行',
   acceptance: '验收',
   usage: '消耗',
+  debug: '调试',
   artifacts: '产物',
   archive: '归档',
 }
@@ -34,6 +36,10 @@ interface TaskModulesLayerProps {
   task: TaskView | null
   /** 当前会话（task 为空时使用）—— 消耗窗的会话账本取数。 */
   sessionId?: string | null
+  /** 当前聊天会话 —— 「调试」窗在任何上下文（任务 / 纯会话）都用它取数。 */
+  chatSessionId?: string | null
+  /** 消息数 / 流式状态变化时刷新「调试」窗与徽标。 */
+  debugRefreshKey?: string | number
   /** 会话窗标题（无 task 时 `消耗 · <会话标题>`）。 */
   sessionTitle?: string | null
   windows: TaskWindowMap
@@ -55,6 +61,8 @@ interface TaskModulesLayerProps {
 export function TaskModulesLayer({
   task,
   sessionId,
+  chatSessionId,
+  debugRefreshKey,
   sessionTitle,
   windows,
   onWindowsChange,
@@ -117,9 +125,11 @@ export function TaskModulesLayer({
             ? { width: 1040, height: 700 }
             : module === 'usage'
               ? { width: 880, height: 640 }
-              : module === 'artifacts'
-                ? { width: 1120, height: 720 }
-                : { width: 1100, height: 640 }
+              : module === 'debug'
+                ? { width: 1120, height: 760 }
+                : module === 'artifacts'
+                  ? { width: 1120, height: 720 }
+                  : { width: 1100, height: 640 }
     let rect = cascadeRect(stage, 0, preferred)
     // 打开位置 = 整个浏览器水平居中（2026-10-29 用户）：容器是侧栏右侧的聊天区，
     // 按容器居中会整体偏右；把 x 换回视口坐标。拖拽/持久化的位置不受影响。
@@ -184,6 +194,8 @@ export function TaskModulesLayer({
                   还没有会话。
                 </div>
               )
+            ) : module === 'debug' ? (
+              <DebugInspectorWindow sessionId={chatSessionId ?? sessionId ?? null} refreshKey={debugRefreshKey} />
             ) : !task ? null : module === 'changes' ? (
               <ChangesWindow task={task} />
             ) : module === 'plan' ? (

@@ -36,6 +36,7 @@ describe("DB Schema", () => {
       // v55 (P4 票06): `effectiveness_cursors` 记账解析游标（PK=execution_id 幂等盘面）。
       // v56/v57 (缓存稳定 + 身份切换): session_prompt_snapshots / session_expert_rosters /
       //   session_role_states —— 新增三表，本清单随之补正。
+      // v60 (dock 调试): session_turn_debug —— 每轮实际交给 SDK 的快照。
       "agent_events", "agent_versions", "archive_drafts",
       "billing_price_config", "billing_setting",
       "branch_executions", "chat_messages", "chat_sessions",
@@ -51,6 +52,7 @@ describe("DB Schema", () => {
       "schedule_audit_logs", "schedule_executions", "schedule_workspaces",
       "scheduled_job_executions", "scheduler_audit_logs", "scheduler_state", "schedules",
       "session_expert_rosters", "session_prompt_snapshots", "session_role_states",
+      "session_turn_debug",
       "sessions", "task_phase_acceptances", "tasks", "wiki_articles", "workspace_archive", "workspaces",
     ])
   })
@@ -82,7 +84,8 @@ describe("DB Schema", () => {
     // − idx_pending_review_source − idx_pending_review_type_status（pending_review 退役）
     // = 102 − 3 = 99。
     // 2026-10-28 org demotion: −15 org indexes, +5 repo_group/domain/scope indexes = 89.
-    expect(rows.length).toBe(89)
+    // + schema v60 (dock 调试): idx_session_turn_debug_session = 90.
+    expect(rows.length).toBe(90)
   })
 
   it("workspaces table has correct columns", () => {

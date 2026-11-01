@@ -331,7 +331,9 @@ export type AgentSSEEvent =
   | { event: 'status'; data: { phase: string; message: string } }
   | { event: 'confirm'; data: { event_id: string; type: 'dangerous_command' | 'evolution_major'; operation: string; detail: string } }
   | { event: 'context_usage'; data: ContextUsageData }
-  | { event: 'done'; data: { session_id: string; message_id: string; session_title?: string; token_usage?: { input: number; output: number }; model?: string } }
+  /** CLI-advertised slash commands for this session (`system:init`). */
+  | { event: 'slash_commands'; data: { sessionId?: string; commands: string[] } }
+  | { event: 'done'; data: { session_id: string; message_id?: string; session_title?: string; token_usage?: { input: number; output: number }; model?: string } }
   | { event: 'error'; data: { code: string; message: string } }
 
 // ===== Agent Versions =====

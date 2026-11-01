@@ -19,6 +19,7 @@ import { createEvolutionRoutes } from './evolution-routes'
 import { createSkillRoutes } from './skill-routes'
 import { createScheduleRoutes } from './schedule-routes'
 import { createMiscRoutes } from './misc-routes'
+import { createDebugRoutes } from './debug-routes'
 import { createFsRoutes } from './fs-routes'
 import { WorkspaceDAO, AgentSessionDAO, EvolutionDAO, SafetyDAO, ScheduleConfigDAO, ExecutionDAO, CloneDAO } from '../../db/dao'
 import { SchedulerService } from '../../services/scheduler/scheduler-service'
@@ -65,6 +66,7 @@ export function createAgentRoutes(deps: AgentRouteDeps): Hono {
   agent.route('/', createSkillRoutes())
   agent.route('/', createEvolutionRoutes({ evolutionDAO }))
   agent.route('/', createMiscRoutes({ safetyDAO }))
+  agent.route('/', createDebugRoutes({ sessionDAO, tokenUsageDAO: tokenUsageDao }))
   agent.route('/', createFsRoutes())
 
   // Existing sub-modules

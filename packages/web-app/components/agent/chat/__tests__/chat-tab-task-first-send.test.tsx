@@ -29,6 +29,7 @@ vi.mock("@/lib/agent/api", () => ({
   deleteSession: vi.fn(),
   getSession,
   getSessionRunning: vi.fn().mockResolvedValue({ running: false }),
+  getSessionSlashCommands: vi.fn().mockResolvedValue({ commands: [] }),
   chatStream,
   stopChat: vi.fn().mockResolvedValue({ success: true }),
   createCloneSession: vi.fn(),

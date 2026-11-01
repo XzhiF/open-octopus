@@ -27,6 +27,7 @@ import { resolveCloneInfo } from '../../services/agent/clone-resolver'
 import { isBuiltinClone } from '../../services/agent/builtin-clones'
 import type { CloneDef } from '@octopus/shared'
 import { recordProviderResultUsage, ledgerStopReason } from '../../services/llm-call-ledger'
+import { rememberSlashCommands } from '../../services/chat/slash-commands'
 import type { TokenUsageDAO } from '../../db/dao/token-usage-dao'
 import { IngestError } from '../../services/knowledge/raw'
 import type { CurationInput, CurationReceipt } from '../../services/knowledge/session-curation'
@@ -290,6 +291,7 @@ export function createMainAgentRoute(deps: MainAgentRouteDeps): Hono {
 
         let fullContent = ''
         let fullThinking = ''
+        let generated = false
         let delegationDetected: { cloneName: string; task: string } | null = null
         const evolutionToolCalls: Array<{ id: string; name: string; input?: Record<string, unknown> }> = []
         const memoryToolCalls: Array<{ id: string; name: string; input?: Record<string, unknown> }> = []
@@ -376,7 +378,27 @@ export function createMainAgentRoute(deps: MainAgentRouteDeps): Hono {
             case 'status':
               await stream.writeSSE({ event: 'status', data: JSON.stringify({ status: chunk.status }) })
               break
+            case 'slash_commands':
+              // CLI-advertised command set (skills/plugins included) — cache for
+              // the composer menu; the main chat route serves it back on reload.
+              rememberSlashCommands(sessionId!, chunk.commands)
+              await stream.writeSSE({ event: 'slash_commands', data: JSON.stringify({ sessionId, commands: chunk.commands }) })
+              break
+            case 'local_command_output':
+              fullContent += chunk.content
+              await stream.writeSSE({ event: 'text_delta', data: JSON.stringify({ delta: chunk.content, content: fullContent }) })
+              break
+            case 'conversation_reset':
+              // `/clear` semantics A: drop the provider pointer only; DB history stays.
+              sessionDAO.clearProviderSession(sessionId!)
+              break
             case 'result':
+              generated = true
+              // Locally-executed slash commands answer via result.content only.
+              if (!aborted && chunk.content && !fullContent) {
+                fullContent = chunk.content
+                await stream.writeSSE({ event: 'text_delta', data: JSON.stringify({ delta: chunk.content, content: fullContent }) })
+              }
               // Persist the SDK session id for the next turn's native resume.
               if (chunk.sessionId) sessionDAO.updateProviderSession(sessionId!, chunk.sessionId)
               // billing-coverage-2 票03 (US2)：Main Agent 路由轮自身是一次真实 provider
@@ -484,6 +506,16 @@ export function createMainAgentRoute(deps: MainAgentRouteDeps): Hono {
           } catch {
             // process-marks failure is non-fatal — don't disrupt the response
           }
+        } else if (generated && !aborted) {
+          // Generated but nothing displayable (/clear, empty /compact) — still
+          // close the SSE turn so the composer does not spin forever.
+          await stream.writeSSE({
+            event: 'done',
+            data: JSON.stringify({
+              session_id: sessionId,
+              session_title: sessionDAO.findById(sessionId!)?.title,
+            }),
+          })
         }
       } catch (err: unknown) {
         const msg = err instanceof Error ? err.message : String(err)

@@ -1,7 +1,7 @@
 // 作业坞（任务浮窗右侧竖栏）文字标签：默认常驻显示在图标下方，
 // 设置 → 外观 关闭后只留图标（但仍保留 aria-label / title 提示）。
 
-import { act, render, screen } from "@testing-library/react"
+import { act, fireEvent, render, screen } from "@testing-library/react"
 import { beforeEach, describe, expect, it, vi } from "vitest"
 import type { TaskView } from "@/lib/tasks-api"
 
@@ -14,6 +14,9 @@ vi.mock("@/lib/api-client", () => ({
   saveFileEntry: vi.fn(),
   getWorkspace: vi.fn().mockResolvedValue(undefined),
   openWorkspaceDirectory: vi.fn(),
+}))
+vi.mock("@/lib/agent/debug-api", () => ({
+  listSessionDebugTurns: vi.fn().mockResolvedValue({ session_id: "s-1", total: 0, turns: [] }),
 }))
 
 import { WorkspaceExplorerDock } from "../workspace-explorer-dock"
@@ -76,5 +79,29 @@ describe("WorkspaceExplorerDock — 图标下方常驻文字", () => {
     expect(files.getAttribute("title")).toBe("文件")
     expect(screen.queryByText("入列")).toBeNull()
     expect(screen.getByTestId("task-action-enqueue").getAttribute("title")).toBe("入列")
+  })
+
+  it("纯会话（无 workspace）也挂坞：文件 / 活动禁用，消耗 / 调试可用", async () => {
+    const onOpenDebug = vi.fn()
+    await act(async () => {
+      render(
+        <WorkspaceExplorerDock
+          workspaceId={null}
+          activity={activity}
+          onOpenDebug={onOpenDebug}
+        />,
+      )
+    })
+
+    expect(screen.getByTestId("workspace-explorer-dock")).toBeTruthy()
+    expect((screen.getByTestId("dock-files") as HTMLButtonElement).disabled).toBe(true)
+    expect((screen.getByTestId("dock-activity") as HTMLButtonElement).disabled).toBe(true)
+    expect((screen.getByTestId("dock-usage") as HTMLButtonElement).disabled).toBe(false)
+    const debug = screen.getByTestId("dock-debug") as HTMLButtonElement
+    expect(debug.disabled).toBe(false)
+    expect(debug.textContent).toContain("调试")
+
+    fireEvent.click(debug)
+    expect(onOpenDebug).toHaveBeenCalledTimes(1)
   })
 })
