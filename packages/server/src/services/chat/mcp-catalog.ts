@@ -1,7 +1,7 @@
 // 内置 in-process MCP server 的只读元数据 —— 聊天 ＋ 面板「MCP」类别的数据源。
 //
-// 与 workflow-tools.ts / task-tools.ts 的 tool() 定义保持同步：名字集合由
-// mcp-catalog.test.ts 对源码做集合断言（加/删/改名不更新这里 → 测试红）。
+// 与 workflow-tools.ts / task-tools.ts / memory-tools.ts 的 tool() 定义保持同步：
+// 名字集合由 mcp-catalog.test.ts 对源码做集合断言（加/删/改名不更新这里 → 测试红）。
 // 描述是人话摘要（不是给模型的 prompt），允许与 tool description 措辞不同。
 
 export interface McpToolMeta {
@@ -49,8 +49,11 @@ const TASK_TOOL_NAMES = [
   "retry_archive",
   "resolve_archive_delta",
   "record_archive_amendment",
+  "clean_archive_leftovers",
   "open_followup_task",
 ] as const
+
+const MEMORY_TOOL_NAMES = ["record_daily", "remember"] as const
 
 export function buildMcpCatalog(): McpServerMeta[] {
   return [
@@ -68,7 +71,19 @@ export function buildMcpCatalog(): McpServerMeta[] {
       when: "会话是某任务的主线程时挂载",
       tools: TASK_TOOL_NAMES.map((name) => ({ name, description: TASK_TOOL_DESC[name] })),
     },
+    {
+      server: "octopus-memory",
+      label: "记忆",
+      description: "写主 Agent 记忆：当日工作记忆自主记录；长期记忆仅在用户本轮明确要求或同意后追加（分节、有 token 预算）。",
+      when: "自由主对话挂载（任务线程除外）",
+      tools: MEMORY_TOOL_NAMES.map((name) => ({ name, description: MEMORY_TOOL_DESC[name] })),
+    },
   ]
+}
+
+const MEMORY_TOOL_DESC: Record<string, string> = {
+  record_daily: "把值得留到以后的工作发现写进当天工作记忆，同时生成一条可搜索摘要。",
+  remember: "把持久事实追加进长期记忆的指定分节；用户本轮没有要求时只返回「先问用户」，不会落盘。",
 }
 
 const WORKFLOW_TOOL_DESC: Record<string, string> = {
@@ -102,5 +117,6 @@ const TASK_TOOL_DESC: Record<string, string> = {
   retry_archive: "人明确说重试之后，触发 project 粒度幂等续跑。",
   resolve_archive_delta: "人明确选择纳入/排除后，处置放行后的未提交改动并继续归档。",
   record_archive_amendment: "归档完成后，人要求补充/修正归档内容时追加一条只增不改的增补记录。",
+  clean_archive_leftovers: "归档完成后，人明确确认具体路径后删除项目工作区里残留的 git-ignored 构建产物（服务端逐条复验）。",
   open_followup_task: "归档完成后，开一个承接上下文的跟进任务继续开发。",
 }

@@ -34,6 +34,7 @@ import { TurnDebugRecorder, type TurnDebugIdentity } from '../../services/agent/
 import { expertName } from '@octopus/shared'
 import { createWorkflowToolServer } from '../../services/chat/workflow-tools'
 import { createTaskToolServer } from '../../services/chat/task-tools'
+import { createMemoryToolServer, resolveLongTermConsent } from '../../services/chat/memory-tools'
 import { getSlashCommands, rememberSlashCommands } from '../../services/chat/slash-commands'
 import type { TokenUsageDAO } from '../../db/dao/token-usage-dao'
 import type { EffortLevel } from '@octopus/shared'
@@ -282,6 +283,17 @@ export function createChatRoutes(deps: ChatRouteDeps): Hono {
         profile: thread,
         identity: thread.identity,
       })
+    }
+    // Memory tools are for the free main chat only. Task threads are identity-
+    // driven and their write surface is owned by the path guard — a doer turn
+    // must not write task-local detail into the main agent's memory. The tool
+    // list stays constant for free chats; only remember's consent verdict
+    // changes per turn (cached prompt prefix stays intact).
+    if (!thread) {
+      toolServers['octopus-memory'] = createMemoryToolServer(
+        { sessionId: id, org },
+        { longTermConsent: resolveLongTermConsent(body.message ?? '') },
+      )
     }
     const mcpServers = Object.keys(toolServers).length > 0 ? toolServers : undefined
 

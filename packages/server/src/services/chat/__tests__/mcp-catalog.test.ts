@@ -1,4 +1,4 @@
-// 防漂移：mcp-catalog 的工具名单必须与两个 tools 源文件里 tool("name", ...)
+// 防漂移：mcp-catalog 的工具名单必须与 tools 源文件里 tool("name", ...)
 // 的集合完全一致。加/删/改工具时不更新 catalog → 这里红。
 import { readFileSync } from "fs"
 import { join } from "path"
@@ -29,6 +29,12 @@ describe("mcp-catalog ↔ tools 源码 集合一致", () => {
   it("octopus-task 工具集合 = task-tools.ts", () => {
     expect([...(byServer.get("octopus-task") ?? [])].sort()).toEqual(
       [...toolNamesIn("task-tools.ts")].sort(),
+    )
+  })
+
+  it("octopus-memory 工具集合 = memory-tools.ts", () => {
+    expect([...(byServer.get("octopus-memory") ?? [])].sort()).toEqual(
+      [...toolNamesIn("memory-tools.ts")].sort(),
     )
   })
 

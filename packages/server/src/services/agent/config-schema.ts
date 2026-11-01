@@ -77,6 +77,8 @@ export const agentConfigSchema = z.object({
     session_retention_days: z.number().int().min(30).max(365).default(90),
     long_term_refine_trigger_days: z.number().int().min(1).max(30).default(7),
     session_compress_threshold_messages: z.number().int().min(10).max(500).default(50),
+    /** Long-term memory is injected into every system prompt — agent appends are budgeted. */
+    long_term_max_tokens: z.number().int().min(200).max(20000).default(1500),
   }).default({}),
   knowledge: KnowledgeConfigSchema.optional(),
   safe_mode: z.object({

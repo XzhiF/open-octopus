@@ -14,6 +14,14 @@ export interface MemoryWriteResult {
   token_count: number
 }
 
+export interface LongTermAppendResult {
+  ok: true
+  section: string
+  duplicate?: boolean
+  token_count: number
+  max_tokens: number
+}
+
 // ── MemoryService ─────────────────────────────────────────────
 
 export class MemoryService {
@@ -142,6 +150,56 @@ export class MemoryService {
     fs.writeFileSync(filePath, appended, 'utf-8')
 
     return { ok: true, token_count: this.estimateTokens(appended) }
+  }
+
+  /**
+   * Append one entry to long-term memory under a `## section`.
+   *
+   * Long-term memory is injected into every system prompt, so the append is
+   * budgeted (agent path only — the human-facing full-file write stays as is).
+   * The rest of the file is preserved byte-for-byte: only the target section is
+   * touched. An exact duplicate entry is a no-op (`duplicate: true`).
+   *
+   * Throws an Error with `code = 'MEMORY_BUDGET_EXCEEDED'` (plus token_count /
+   * max_tokens) when the write would push the file over budget — nothing is
+   * written in that case.
+   */
+  appendLongTerm(org: string, entry: string, section: string, maxTokens: number): LongTermAppendResult {
+    const filePath = this.getMemoryPath('long-term')
+    const dir = path.dirname(filePath)
+    if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true })
+
+    const existing = fs.existsSync(filePath) ? fs.readFileSync(filePath, 'utf-8') : '# 长期记忆\n'
+
+    if (this.hasDuplicateEntry(existing, entry)) {
+      return {
+        ok: true,
+        section,
+        duplicate: true,
+        token_count: this.estimateTokens(existing),
+        max_tokens: maxTokens,
+      }
+    }
+
+    const next = this.insertIntoSection(existing, section, this.formatLongTermEntry(entry))
+    const tokenCount = this.estimateTokens(next)
+    if (tokenCount > maxTokens) {
+      const err = new Error(
+        `long-term memory would reach ${tokenCount} tokens (max ${maxTokens}); ask the user to tidy or archive before adding more.`,
+      ) as Error & { code: string; token_count: number; max_tokens: number }
+      err.code = 'MEMORY_BUDGET_EXCEEDED'
+      err.token_count = tokenCount
+      err.max_tokens = maxTokens
+      throw err
+    }
+
+    // Backup before modifying (same discipline as refineLongTerm).
+    if (fs.existsSync(filePath)) {
+      fs.writeFileSync(`${filePath}.bak`, existing, 'utf-8')
+    }
+    fs.writeFileSync(filePath, next, 'utf-8')
+
+    return { ok: true, section, token_count: tokenCount, max_tokens: maxTokens }
   }
 
   /**
@@ -449,6 +507,59 @@ export class MemoryService {
   }
 
   // ── Private helpers ─────────────────────────────────────────
+
+  /** One long-term entry → markdown bullet (continuation lines indented). */
+  private formatLongTermEntry(entry: string): string {
+    return entry
+      .replace(/\r\n/g, '\n')
+      .split('\n')
+      .map((line, i) => (i === 0 ? `- ${line.trim()}` : line.trim() === '' ? '' : `  ${line.trim()}`))
+      .join('\n')
+  }
+
+  /** Case/whitespace-insensitive duplicate check against existing single-line bullets. */
+  private hasDuplicateEntry(existing: string, entry: string): boolean {
+    const target = this.normalizeForCompare(entry)
+    if (!target) return false
+    return existing.split('\n').some((line) => {
+      const normalized = this.normalizeForCompare(line.replace(/^\s*[-*+]\s+/, ''))
+      return normalized === target
+    })
+  }
+
+  private normalizeForCompare(text: string): string {
+    return text.replace(/\s+/g, ' ').trim().toLowerCase()
+  }
+
+  /**
+   * Insert a block at the end of `## <section>`; create the section at EOF when
+   * missing. Everything outside the target section is left untouched.
+   */
+  private insertIntoSection(content: string, section: string, block: string): string {
+    const header = `## ${section}`
+    const lines = content.replace(/\r\n/g, '\n').split('\n')
+    const start = lines.findIndex((line) => line.trim() === header)
+
+    if (start === -1) {
+      const base = content.replace(/\s+$/, '')
+      return `${base}${base ? '\n\n' : ''}${header}\n${block}\n`
+    }
+
+    let end = lines.length
+    for (let i = start + 1; i < lines.length; i++) {
+      if (lines[i].startsWith('## ')) {
+        end = i
+        break
+      }
+    }
+
+    const head = lines.slice(0, end)
+    while (head.length > 0 && head[head.length - 1].trim() === '') head.pop()
+    const tail = lines.slice(end)
+    const merged = [...head, block]
+    if (tail.length > 0) merged.push('', ...tail)
+    return merged.join('\n')
+  }
 
   private parseMarkdownSections(content: string): Array<{ header: string; name: string; lines: string[] }> {
     const sections: Array<{ header: string; name: string; lines: string[] }> = []
