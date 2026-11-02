@@ -127,9 +127,6 @@ export const SPEC_FIELD_UPDATE_EVENT = "spec_field_update" as const
  *  mechanism, D19): signals the task's artifact index may have changed so
  *  the OutputViewer re-fetches GET /api/tasks/:id/artifacts. No polling. */
 export const TASK_ARTIFACTS_UPDATE_EVENT = "task_artifacts_update" as const
-/** Emitted on the "taskpool" channel when an assist-workflow run changes
- *  phase (start/complete/error). Payload: {task_id, run_id, phase}. */
-export const ASSIST_RUN_UPDATE_EVENT = "assist_run_update" as const
 
 // ── 验收面 v2「验货台」SSE events ───────────────────────────────────────
 /** Lifecycle of the acceptance-time re-verification run (one per task; the
@@ -436,7 +433,7 @@ export function validateSpecFieldValue(field: TaskSpecField, value: unknown): un
   }
 }
 
-// ── task-authoring v3: artifact index + assist-workflow run types (ticket 01) ─
+// ── task-authoring v3: artifact index types (ticket 01) ──────────────
 /** One row of a task's artifacts.json index (ADR-0011, D5). The index is the
  *  single source of truth for "what did this task produce". `external: true`
  *  ⇒ `path` is an ABSOLUTE path at the artifact's native location (registered,
@@ -451,41 +448,6 @@ export const artifactIndexEntrySchema = z.object({
   updated_at: z.string().min(1),
 })
 export type ArtifactIndexEntry = z.infer<typeof artifactIndexEntrySchema>
-
-/** One timestamped line of an assist-workflow run's process log (D19, US10). */
-export const assistWorkflowLogSchema = z.object({
-  t: z.string().min(1),
-  icon: z.string(),
-  text: z.string(),
-})
-
-/** Structured MoA aggregator output (D10, US11). Parsed from the aggregator
- *  node's JSON; when parsing fails the run carries `output_raw` +
- *  `output_parse_error` instead (SW-BP10). */
-export const assistWorkflowOutputSchema = z.object({
-  ac_candidates: z.array(z.string()).default([]),
-  suggestions: z.array(z.string()).default([]),
-  risks: z.array(z.string()).default([]),
-})
-
-/** The lifecycle + output shape of one assist-workflow run (D9/D16/D19).
- *  `status` is a permissive string here — the execution-lifecycle vocabulary is
- *  owned by the server/ticket-07 run service; shared only carries the contract
- *  shape (the GET /assist-workflows/:runId response, spec line 126). `logs`
- *  come from the execution's node log; `output*` are the aggregator-parse
- *  triplet with the SW-BP10 fallback. */
-export const assistWorkflowRunSchema = z.object({
-  run_id: z.string().min(1),
-  execution_id: z.string().min(1),
-  workspace_id: z.string().min(1),
-  template: z.string().min(1),
-  status: z.string(),
-  logs: z.array(assistWorkflowLogSchema),
-  output: assistWorkflowOutputSchema.optional(),
-  output_raw: z.string().optional(),
-  output_parse_error: z.boolean().optional(),
-})
-export type AssistWorkflowRun = z.infer<typeof assistWorkflowRunSchema>
 
 // ── Task row (first-class tasks table; v2-D1, S2 polymorphic origin) ─
 /** A first-class task row.

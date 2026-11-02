@@ -17,7 +17,6 @@ import type {
   TaskSpec,
   ResourceRef,
   ArtifactIndexEntry,
-  AssistWorkflowRun,
   TaskPhaseStatus,
   LlmUsageSummary,
   ModelUsageBreakdown,
@@ -1620,70 +1619,6 @@ export async function getWorkflowRefView(taskId: string): Promise<WorkflowRefVie
   return res.json()
 }
 
-// ============ Assist workflows (ticket 07 routes — US9/10/11/D9) ============
-
-/** The 3 built-in assist-workflow template ids (AC3 whitelist). Mirrors the
- *  server's `ASSIST_WORKFLOW_TEMPLATES` constant. The MoA trigger button uses
- *  `moa-requirements-review` (primary). */
-export const ASSIST_WORKFLOW_TEMPLATES = [
-  "moa-requirements-review",
-  "spec-review-swarm",
-  "clarify-debate",
-] as const
-export type AssistWorkflowTemplate = (typeof ASSIST_WORKFLOW_TEMPLATES)[number]
-
-export interface AssistWorkflowTriggerResult {
-  run_id: string
-  execution_id: string
-  workspace_id: string
-  template: string
-}
-
-/** POST /api/tasks/:id/assist-workflows — trigger a built-in assist-workflow run
- *  (US9). Body: `{ template, input? }`. Non-whitelist template → 400. The run
- *  executes in the background; the response returns immediately with the run id.
- *  Progress/completion arrive via `assist_run_update` SSE (D19). On completion,
- *  a markdown artifact is written to the task's artifacts/ dir.
- *
- *  v2 (dynamic MoA/Debate): template = "dynamic-moa-analysis", input carries
- *  mode, experts[{agent, engine, model}], aggregator?, rounds?, userInput. */
-export async function triggerAssistWorkflow(
-  taskId: string,
-  template: string,
-  input?: {
-    goal?: string
-    ac?: string[]
-    projects?: string[]
-    userInput?: string
-    /** "moa" (parallel + aggregate) or "debate" (multi-round argue). */
-    mode?: "moa" | "debate"
-    /** Expert rows: each = { agent id, engine, model }. Min 2. */
-    experts?: Array<{ agent: string; engine: string; model: string }>
-    /** Aggregator model config (MoA mode only). */
-    aggregator?: { engine?: string; model: string }
-    /** Max debate rounds (Debate mode only, default 3). */
-    rounds?: number
-  },
-): Promise<AssistWorkflowTriggerResult> {
-  const body: Record<string, unknown> = { template }
-  if (input) body.input = input
-  const res = await fetch(buildUrl(`/${taskId}/assist-workflows`), {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body),
-  })
-  return handleResponse<AssistWorkflowTriggerResult>(res)
-}
-
-/** GET /api/tasks/:id/assist-workflows/:runId — run status + process logs +
- *  structured output (US10/US11). Parse failure → `output_raw` +
- *  `output_parse_error=true` on the 200 response (SW-BP10), never an error
- *  status. Missing/mismatched run → throws (404). */
-export async function getAssistWorkflowRun(taskId: string, runId: string): Promise<AssistWorkflowRun> {
-  const res = await fetch(buildUrl(`/${taskId}/assist-workflows/${runId}`))
-  return handleResponse<AssistWorkflowRun>(res)
-}
-
 // ============ 任务对话 S1（票01 端点契约 · 票07 消费面）────────────────
 //
 // GET /:id/chat = 懒建/取得任务唯一 task-doer 会话（tasks.doer_session_id，
@@ -1769,7 +1704,6 @@ export type {
   TaskSpecField,
   TriggerMode,
   ArtifactIndexEntry,
-  AssistWorkflowRun,
   TaskPhase,
   TaskPhaseStatus,
 } from "@octopus/shared"

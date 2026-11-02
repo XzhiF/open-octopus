@@ -29,7 +29,6 @@ import {
   type ServerSpecField,
   type ReflectionIngest,
 } from "../services/tasks/tasks-service"
-import { AssistWorkflowService, AssistWorkflowError } from "../services/tasks/assist-workflow-service"
 import { SSEService } from "../services/sse"
 import { TaskHomeService, MANIFEST_FILENAME, LEGACY_SPEC_FILENAME } from "../services/tasks/task-home-service"
 import {
@@ -66,15 +65,6 @@ function classifyError(err: unknown): { status: number; message: string } {
       case "FORBIDDEN": return { status: 403, message: err.message }
       case "NOT_FOUND": return { status: 404, message: err.message }
       case "TOO_LARGE": return { status: 413, message: err.message }
-    }
-  }
-  // 07: assist-workflow template/run classification.
-  if (err instanceof AssistWorkflowError) {
-    switch (err.code) {
-      case "INVALID_TEMPLATE": return { status: 400, message: err.message }
-      case "TASK_NOT_FOUND": return { status: 404, message: err.message }
-      case "RUN_NOT_FOUND": return { status: 404, message: err.message }
-      case "RUN_MISMATCH": return { status: 403, message: err.message }
     }
   }
   const msg = err instanceof Error ? err.message : String(err)
@@ -218,7 +208,6 @@ const planIssuesBodySchema = planWriteBodySchema.superRefine((b, ctx) => {
 export function createTasksRoutes(
   service: TasksService,
   sse: SSEService,
-  assistService?: AssistWorkflowService,
   evidence?: RoundEvidenceService,
   // 2026-10-28 task-thread: reflection decision → knowledge ingest. Optional:
   // absent = ingest action returns 409 (skip still works).
@@ -1303,38 +1292,6 @@ export function createTasksRoutes(
       const parsed = fixRoundBodySchema.parse(body)
       const result = await service.fixRound(c.req.param("id"), parsed.instruction)
       return c.json(result)
-    } catch (err: unknown) {
-      const { status, message } = classifyError(err)
-      return c.json({ error: message }, status)
-    }
-  })
-
-  // ── Assist workflows (ticket 07 — US9/10/11) ────────────────────
-  // POST /:id/assist-workflows — trigger a built-in assist-workflow run
-  // (AC3). Body: { template, input? }. Returns { run_id, execution_id,
-  // workspace_id, template }. Non-whitelist template → 400.
-  router.post("/:id/assist-workflows", async (c) => {
-    if (!assistService) return c.json({ error: "Assist workflow service not configured" }, 503)
-    const body = await safeJson(c)
-    if (!body) return c.json({ error: "Invalid or missing JSON body" }, 400)
-    const template = typeof body.template === "string" ? body.template : ""
-    try {
-      const result = assistService.trigger(c.req.param("id"), template, body.input as never)
-      return c.json(result, 200)
-    } catch (err: unknown) {
-      const { status, message } = classifyError(err)
-      return c.json({ error: message }, status)
-    }
-  })
-
-  // GET /:id/assist-workflows/:runId — run status + process logs + structured
-  // output (AC4). Parse failure → output_raw + output_parse_error (SW-BP10),
-  // surfaced as fields on the 200 response, not an error status.
-  router.get("/:id/assist-workflows/:runId", (c) => {
-    if (!assistService) return c.json({ error: "Assist workflow service not configured" }, 503)
-    try {
-      const run = assistService.getRun(c.req.param("id"), c.req.param("runId"))
-      return c.json(run)
     } catch (err: unknown) {
       const { status, message } = classifyError(err)
       return c.json({ error: message }, status)

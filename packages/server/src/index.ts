@@ -127,7 +127,6 @@ import { SchedulerEngine } from "./services/scheduler/scheduler-engine"
 import { TasksService } from "./services/tasks/tasks-service"
 import { TaskHomeService, setTaskHomeResolver } from "./services/tasks/task-home-service"
 import { PluginMaterializer } from "./services/tasks/plugin-materializer"
-import { AssistWorkflowService } from "./services/tasks/assist-workflow-service"
 import { WorkflowPresetsService } from "./services/workflow-presets-service"
 import { BuiltInWorkflowService } from "./services/builtin-workflow"
 import { WorkflowExecutor } from "./services/scheduler/executors/workflow-executor"
@@ -1118,8 +1117,6 @@ if (shouldServe) {
       // materializer wraps the global ResourceManager singleton (registry is the
       // source of truth for skill groups, D3). /api/skill-groups is the
       // template-page data source (registry skill aggregation + default marker).
-      // 07: assist-workflow routes (POST/GET /:id/assist-workflows) — service
-      // owns temp-workspace creation + execution trigger + output parsing.
       const taskHomeService = new TaskHomeService()
       const pluginMaterializer = new PluginMaterializer(resourceRegistry.get())
       // task-workflow-handoff (ADR-0013): BuiltInWorkflowService for the
@@ -1190,7 +1187,6 @@ if (shouldServe) {
           compile_position: queueView?.position ?? null,
         }
       })
-      const assistService = new AssistWorkflowService(db, sse)
       // 验货台 (acceptance v2)：实物 round-diff + 当场复检 — 4th optional arg
       // (tests that build the route factory without it get 501 on those 5 endpoints).
       const roundEvidence = new RoundEvidenceService(db, sse, tasksService, workspaceService!, taskHomeService)
@@ -1268,7 +1264,7 @@ if (shouldServe) {
       }))
       // 2026-10-28 task-thread: the task-doer dual chat was retired. Takeover
       // reuses the task's main thread (source_chat_session_id).
-      app.route('/api/tasks', createTasksRoutes(tasksService, sse, assistService, roundEvidence, reflectionIngest))
+      app.route('/api/tasks', createTasksRoutes(tasksService, sse, roundEvidence, reflectionIngest))
       // 2026-10-31 消耗窗通用化：/api/sessions/:id/usage（会话聊天行 + 本会话发起的全部工作流）。
       app.route('/api/sessions', createSessionUsageRoutes(tasksService))
       // task-workflow-presets (T3): preset catalog API

@@ -231,7 +231,6 @@ const SHARED_TASKPOOL_EVENTS = [
   "task_trigger_failed",
   "spec_field_update",
   "task_artifacts_update",
-  "assist_run_update",
   "phase_status_update",
   "project_sync",
 ] as const

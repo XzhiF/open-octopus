@@ -244,7 +244,7 @@ beforeEach(() => {
     db, sse, undefined, taskHome, undefined, builtInStub, null, wsSvc,
   )
   const evidence = new RoundEvidenceService(db, sse, service, wsSvc, taskHome)
-  app = new Hono().route("/api/tasks", createTasksRoutes(service, sse, undefined, evidence))
+  app = new Hono().route("/api/tasks", createTasksRoutes(service, sse, evidence))
 })
 
 afterEach(() => {

@@ -90,7 +90,7 @@ beforeAll(() => {
   const wss = { getById: (id: string) => (id === WS_ID ? { id, path: path.join(tmp, "ws1") } : undefined) } as never
   instances = new TestInstanceRegistry(path.join(tmp, "instances"), path.join(tmp, "ports"))
   const ev = new RoundEvidenceService(db, sse, ts, wss, taskHome, instances)
-  app = new Hono(); app.route("/api/tasks", createTasksRoutes(ts, sse, undefined, ev))
+  app = new Hono(); app.route("/api/tasks", createTasksRoutes(ts, sse, ev))
 })
 
 afterAll(() => {

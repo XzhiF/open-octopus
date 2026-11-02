@@ -144,12 +144,12 @@ function probeProjectConventions(projectPath: string): { line: string; allMissin
 
 /** Thrown by {@link TaskHomeService.readArtifactContent} when a requested path
  *  fails the whitelist (`FORBIDDEN` → HTTP 403) or passes the whitelist but the
- *  file is missing on disk (`NOT_FOUND` → HTTP 404). Mirrors the
- *  `AssistWorkflowError` code-field pattern so the route's `classifyError` maps
- *  codes to statuses without instanceof chains per code.
+ *  file is missing on disk (`NOT_FOUND` → HTTP 404). Carries a `code` field so
+ *  the route's `classifyError` maps codes to statuses without instanceof chains
+ *  per code.
  *
  *  Why the whitelist lives here (not the route): the route must stay a thin
- *  delegate (mirrors the assist-workflow route pair). The whitelist is a
+ *  delegate. The whitelist is a
  *  filesystem concern — it needs the task's artifacts/ dir (pure derivation
  *  here) and the index (read here) to decide "is this path ours to serve". */
 export class ArtifactAccessError extends Error {

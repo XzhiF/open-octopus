@@ -8,10 +8,8 @@ import {
   validateSpecFieldValue,
   TaskSpecFieldError,
   artifactIndexEntrySchema,
-  assistWorkflowRunSchema,
   type TaskSpecField,
   type ArtifactIndexEntry,
-  type AssistWorkflowRun,
 } from "../types/task"
 
 // ── AC1: taskSpecSchema gains task_type / skill_groups / decisions /
@@ -127,8 +125,8 @@ describe("AC2 — TaskSpecFieldSchema + validateSpecFieldValue decisions branch"
   })
 })
 
-// ── AC3: ArtifactIndexEntry + AssistWorkflowRun types ─────────────────
-describe("AC3 — ArtifactIndexEntry + AssistWorkflowRun types", () => {
+// ── AC3: ArtifactIndexEntry type ─────────────────────────────────────
+describe("AC3 — ArtifactIndexEntry type", () => {
   it("artifactIndexEntrySchema parses a valid internal entry", () => {
     const r = artifactIndexEntrySchema.safeParse({
       path: "spec.md",
@@ -169,49 +167,4 @@ describe("AC3 — ArtifactIndexEntry + AssistWorkflowRun types", () => {
     expectTypeOf<ArtifactIndexEntry["updated_at"]>().toEqualTypeOf<string>()
   })
 
-  it("assistWorkflowRunSchema parses a run without optional output fields", () => {
-    const r = assistWorkflowRunSchema.safeParse({
-      run_id: "r1",
-      execution_id: "e1",
-      workspace_id: "w1",
-      template: "moa-requirements-review",
-      status: "running",
-      logs: [{ t: "2026-08-18T00:00:00.000Z", icon: "▶", text: "started" }],
-    })
-    expect(r.success).toBe(true)
-    if (r.success) {
-      expect(r.data.run_id).toBe("r1")
-      expect(r.data.output).toBeUndefined()
-      expect(r.data.output_raw).toBeUndefined()
-      expect(r.data.output_parse_error).toBeUndefined()
-    }
-  })
-
-  it("assistWorkflowRunSchema parses a completed run with structured output", () => {
-    const r = assistWorkflowRunSchema.safeParse({
-      run_id: "r2",
-      execution_id: "e2",
-      workspace_id: "w2",
-      template: "spec-review-swarm",
-      status: "success",
-      logs: [{ t: "2026-08-18T00:00:00.000Z", icon: "✓", text: "done" }],
-      output: { ac_candidates: ["ac1"], suggestions: ["s1"], risks: ["r1"] },
-    })
-    expect(r.success).toBe(true)
-    if (r.success) {
-      expect(r.data.output?.ac_candidates).toEqual(["ac1"])
-    }
-  })
-
-  it("AssistWorkflowRun type carries the spec shape (type-level)", () => {
-    expectTypeOf<AssistWorkflowRun["run_id"]>().toEqualTypeOf<string>()
-    expectTypeOf<AssistWorkflowRun["execution_id"]>().toEqualTypeOf<string>()
-    expectTypeOf<AssistWorkflowRun["workspace_id"]>().toEqualTypeOf<string>()
-    expectTypeOf<AssistWorkflowRun["template"]>().toEqualTypeOf<string>()
-    expectTypeOf<AssistWorkflowRun["status"]>().toEqualTypeOf<string>()
-    expectTypeOf<AssistWorkflowRun["logs"]>().toEqualTypeOf<
-      { t: string; icon: string; text: string }[]
-    >()
-    expectTypeOf<AssistWorkflowRun["output_parse_error"]>().toEqualTypeOf<boolean | undefined>()
-  })
 })

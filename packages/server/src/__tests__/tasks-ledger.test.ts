@@ -118,7 +118,7 @@ beforeAll(() => {
   evidence = new RoundEvidenceService(db, sse, ts, wss, taskHome)
   planService = new AcceptancePlanService(db, sse, ts, wss, taskHome, evidence)
   evidence.setAcceptancePlanService(planService)
-  app = new Hono(); app.route("/api/tasks", createTasksRoutes(ts, sse, undefined, evidence))
+  app = new Hono(); app.route("/api/tasks", createTasksRoutes(ts, sse, evidence))
   // 测试不触发规划 Agent（方案文件由用例自己落盘）
   process.env.OCTOPUS_ACCEPTANCE_PLAN = "off"
 })
