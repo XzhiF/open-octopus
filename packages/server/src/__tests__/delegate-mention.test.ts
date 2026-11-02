@@ -123,4 +123,33 @@ describe('delegate_to 退役（legacy main-agent endpoint）', () => {
 
     expect(res.status).toBe(400)
   })
+
+  it('AskUserQuestion 交互接管：legacy /chat 同样传 interactionSession', async () => {
+    const providers = await import('@octopus/providers')
+    let seen: Record<string, unknown> | undefined
+    vi.spyOn(providers, 'getProvider').mockImplementation((() => ({
+      sendQuery: async function* (
+        _prompt: string,
+        _cwd: string,
+        _resume: string | undefined,
+        options: Record<string, unknown>,
+      ) {
+        seen = options
+        yield { type: 'text_delta', content: 'ok' }
+        yield { type: 'result', content: 'ok', sessionId: 'sdk-1' }
+      },
+    })) as never)
+
+    const res = await app.request('/chat', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ message: '帮我看看登录功能' }),
+    })
+
+    expect(res.status).toBe(200)
+    await res.text()
+    // 缺这个开关时 SDK 会 headless 执行 AskUserQuestion 并回空 answers，
+    // 模型把「用户没回答」当默认继续跑完（2026-11-02 登录任务事故）。
+    expect(seen?.interactionSession).toBe(true)
+  })
 })

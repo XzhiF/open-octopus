@@ -727,6 +727,12 @@ export function createChatRoutes(deps: ChatRouteDeps): Hono {
           ...(extra?.onBeforeToolCall ? { onBeforeToolCall: extra.onBeforeToolCall } : {}),
           // 流式输入模式：停止按钮用 interrupt() 而非硬杀，换取带用量的 result。
           interruptible: true,
+          // AskUserQuestion 交互接管（2026-11-02）：与 clone-runtime 同构。
+          // 10-28 任务线程把 task-author 搬进主对话后这里漏了开关 —— SDK 在
+          // headless 下直接「执行」AskUserQuestion 并回空 answers，模型把
+          // 「用户没回答」当默认继续跑完。deny 后模型收轮，等用户答完以下一条
+          // user 消息 resume 续流。
+          interactionSession: true,
           ...(extra?.abortSignal ? { abortSignal: extra.abortSignal } : {}),
         })) {
           // 停止按钮（本路由闭包的 aborted）优先；`stream._aborted` 是旧判据，
@@ -773,6 +779,12 @@ export function createChatRoutes(deps: ChatRouteDeps): Hono {
               await stream.writeSSE({ event: 'tool_call', data: JSON.stringify({ type: 'input', tool_call_id: chunk.toolCallId, tool_name: chunk.toolName, input: chunk.toolInput }) })
               break
             }
+            case 'ask_user_question':
+              // interactionSession deny 后的显式问题标记（2026-11-02）：
+              // 与 clone / main-agent 路由同构，前端据此补全 AskUserQuestion
+              // toolCall，回合结束后渲染可回答的问题卡。
+              await stream.writeSSE({ event: 'ask_user_question', data: JSON.stringify({ tool_call_id: chunk.toolCallId, questions: chunk.questions }) })
+              break
             case 'tool_result': {
               const tc = currentToolCalls.find(t => t.id === chunk.toolCallId)
               if (tc) { tc.result = chunk.content; tc.status = chunk.isError ? 'fail' : 'result' }

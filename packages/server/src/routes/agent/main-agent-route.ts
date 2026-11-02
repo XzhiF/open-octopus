@@ -287,6 +287,9 @@ export function createMainAgentRoute(deps: MainAgentRouteDeps): Hono {
           ...(effort ? { effort } : {}),
           abortSignal: abortController.signal,
           interruptible: true,
+          // AskUserQuestion 交互接管（2026-11-02）：与 clone / 主对话路由同构。
+          // 缺这个开关时 SDK 会 headless 执行工具并回空 answers，模型继续跑完。
+          interactionSession: true,
         })
 
         let fullContent = ''

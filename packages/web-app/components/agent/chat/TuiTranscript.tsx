@@ -7,6 +7,7 @@
 import { useMemo, useState, type ReactNode } from 'react'
 import type { AgentMessage, MessageTimelineEntry, ToolCallRecord } from '@/lib/agent/types'
 import type { StreamTimelineItem } from '@/hooks/useAgentChat'
+import { displayContentFor, endsOnAsk } from '@/lib/agent/display-content'
 import { formatCost, formatDuration, formatTokenCount } from '@/lib/format'
 import { useBillingCurrency } from '@/lib/billing-currency'
 import { THINKING_TONE, TOOL_TONE } from '@/lib/agent/chat-colors'
@@ -182,13 +183,15 @@ function ToolLine({ tc }: { tc: ToolCallRecord }) {
 /** 折叠的过程 meta：thinking / tool 按时间序（timeline 缺失时用字段兜底）。 */
 type MetaRow = { key: string; node: 'think' | 'tool' | 'frag'; text?: string; tc?: ToolCallRecord }
 
-function TuiMeta({ thinking, toolCalls, timeline, stats, interrupted }: {
+function TuiMeta({ thinking, toolCalls, timeline, stats, interrupted, hideTextFrags }: {
   thinking?: string
   toolCalls?: ToolCallRecord[]
   timeline?: MessageTimelineEntry[]
   stats?: TurnStats
   /** 本轮被用户截断 → 状态词换成「已中断」。 */
   interrupted?: boolean
+  /** 正文段已在 body 全量显示（ask 回合）→ meta 展开时不再重复。 */
+  hideTextFrags?: boolean
 }) {
   const [open, setOpen] = useState(false)
   // 费用按计费设置折算（默认 CNY / 7）：与任务看板、计费页同一枚 formatCost。
@@ -298,8 +301,10 @@ function TuiMeta({ thinking, toolCalls, timeline, stats, interrupted }: {
           {/* 展开态只有步骤列表（2026-10-29 用户：输入/输出/缓存/模型这些明细不必再显示）。
               统计信息全在上面那一行，展开不重复。 */}
           <div className="ml-3 space-y-0.5 border-l border-pop-bd pl-3">
-            {rows.map((r) =>
-              r.node === 'tool' && r.tc ? (
+            {rows.map((r) => {
+              // 正文段已全量进 body（ask 回合）：展开 meta 不再重复。
+              if (r.node === 'frag' && hideTextFrags) return null
+              return r.node === 'tool' && r.tc ? (
                 <ToolLine key={r.key} tc={r.tc} />
               ) : r.node === 'frag' ? (
                 <div key={r.key} className="whitespace-pre-wrap break-words text-pop-dim">✎ {r.text}</div>
@@ -307,8 +312,8 @@ function TuiMeta({ thinking, toolCalls, timeline, stats, interrupted }: {
                 <div key={r.key} className="whitespace-pre-wrap break-words text-pop-dim">
                   <span className={THINKING_TONE.glyph} aria-hidden>◌</span> {r.text}
                 </div>
-              ),
-            )}
+              )
+            })}
           </div>
         </div>
       )}
@@ -495,15 +500,13 @@ export function TuiMessage({ message }: { message: AgentMessage }) {
   const hasTimeline = !!timeline && timeline.length > 0
 
   // 与 ChatBubble 同语义：有 timeline 时正文只显最后一段 text，其余收进 meta。
+  // 例外：AskUserQuestion 收尾的回合按时间序显示全部正文段（问题前的正文也要
+  // 留下，2026-11-02 用户反馈「本来显示，问题卡一出来就没了」）。
   // Hooks must run before the early returns below — a message that flips between
   // roleSwitch / event / normal types across renders would otherwise change the
   // hook order (React: "Rendered fewer hooks than expected").
-  const displayContent = useMemo(() => {
-    if (!hasTimeline) return message.content
-    const texts = timeline!.filter((e) => e.kind === 'text' && e.text)
-    const last = texts[texts.length - 1]
-    return last?.text ?? message.content
-  }, [hasTimeline, timeline, message.content])
+  const askTurn = endsOnAsk(message)
+  const displayContent = useMemo(() => displayContentFor(message), [message])
 
   if (message.roleSwitch) {
     return <RoleSwitchCard payload={message.roleSwitch} />
@@ -535,6 +538,7 @@ export function TuiMessage({ message }: { message: AgentMessage }) {
         timeline={timeline}
         stats={message.turnStats}
         interrupted={message.interrupted}
+        hideTextFrags={askTurn}
       />
       {displayContent
         ? (
