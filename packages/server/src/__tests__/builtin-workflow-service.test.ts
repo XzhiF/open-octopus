@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest"
 import { BuiltInWorkflowService } from "../services/builtin-workflow"
 import type { ResourceManager, ResourceEntry } from "@octopus/shared"
 
-const VALID_WF = "apiVersion: octopus/v1\nkind: Workflow\nname: deploy\ninputs:\n  environment: { description: 'deploy env', required: true, default: dev }\nnodes:\n  - id: step1\n    type: bash\n    bash: echo deploy"
+const VALID_WF = "apiVersion: octopus/v1\nkind: Workflow\nname: deploy\nversion: 1.2.3\nstage: release\ninputs:\n  environment: { description: 'deploy env', required: true, default: dev }\nnodes:\n  - id: step1\n    type: bash\n    bash: echo deploy"
 
 describe("BuiltInWorkflowService", () => {
   let mockResourceManager: Partial<ResourceManager>
@@ -41,6 +41,32 @@ describe("BuiltInWorkflowService", () => {
     expect(list).toHaveLength(1)
     expect(list[0].ref).toBe("built-in/deploy")
     expect(list[0].name).toBe("deploy")
+    expect(list[0].version).toBe("1.2.3")
+    expect(list[0].stage).toBe("release")
+
+    vi.restoreAllMocks()
+  })
+
+  it("defaults missing stage to snapshot", () => {
+    const mockEntry: Partial<ResourceEntry> = {
+      name: "dev-flow",
+      type: "workflow",
+      group: "built-in",
+      installed: true,
+      installPath: "/fake/path/workflows/dev-flow",
+    }
+    mockResourceManager.list = vi.fn().mockReturnValue({ resources: [mockEntry], total: 1 })
+
+    const fs = require("fs")
+    vi.spyOn(fs, "existsSync").mockReturnValue(true)
+    vi.spyOn(fs, "readdirSync").mockReturnValue(["dev-flow.yaml"])
+    vi.spyOn(fs, "readFileSync").mockReturnValue(VALID_WF.replace("stage: release\n", ""))
+
+    const service = new BuiltInWorkflowService(mockResourceManager as ResourceManager)
+    const list = service.list()
+
+    expect(list[0].stage).toBe("snapshot")
+    expect(list[0].version).toBe("1.2.3")
 
     vi.restoreAllMocks()
   })

@@ -14,9 +14,8 @@
 // What this file used to do instead: readyTask pre-created a private `schedules` row
 // per task (the "envelope" — origin_type='task', parked status='draft') and triggering
 // meant flipping that row; its config doubled as the frozen phase binding AND the
-// "which round runs now" cursor; composite subunits were child schedules created at
-// runtime. That is the coupling this ticket removes, and why 周期触发 was structurally
-// impossible: a task could only run when its envelope said so.
+// "which round runs now" cursor. That is the coupling this ticket removes, and why
+// 周期触发 was structurally impossible: a task could only run when its envelope said so.
 //
 // Concurrency: spec-field / PUT use TaskDAO.updateWithVersion (optimistic
 // locking, 409 on stale version → agent re-GET + retry, v2-D12). The autosave
@@ -33,7 +32,6 @@ import {
   type TaskStatus,
   type TaskSpecField,
   type ResourceRef,
-  type SubunitSpec,
   type ArtifactIndexEntry,
   SPEC_FIELD_UPDATE_EVENT,
   TASK_ARTIFACTS_UPDATE_EVENT,
@@ -73,8 +71,7 @@ import {
   resolveV4Phases,
   type TaskV4PhaseConfig,
 } from "./task-materialize"
-// trigger-prebuild (2026-09-08): 与 WorkflowExecutor 共享的命名/复合判定纯函数。
-import { isCompositeWorkflowConfig } from "../scheduler/ws-launch"
+// trigger-prebuild (2026-09-08): 与 WorkflowExecutor 共享的命名纯函数。
 import { taskBranchPrefix, taskWorkspaceName } from "../scheduler/task-ws-name"
 import { TaskLifecycleService, TaskLifecycleError, type ArmOptions } from "./task-lifecycle-service"
 // task-phase-redesign (ticket 05): STATIC registry access for dispatchPhaseRound.
@@ -743,18 +740,12 @@ function errorSummaryOf(row: ExecutionRow): string | null {
 }
 
 /** The task's current instance, projected for the DTO. Kept as a pure function of the
- *  row so list and detail cannot drift into two different badge shapes.
- *
- *  `children` is passed only by the read models that loaded the fan-out (detail / run
- *  history) — the board's badge deliberately carries none, and `undefined` vs `[]` says
- *  which of the two loaded, so the UI never renders "no subunits" for a list row. */
-function toExecutionBadge(row: ExecutionRow, children?: ExecutionRow[]): TaskExecutionBadge {
+ *  row so list and detail cannot drift into two different badge shapes. */
+function toExecutionBadge(row: ExecutionRow): TaskExecutionBadge {
   return {
     id: row.id,
     status: row.status,
     workflow_ref: row.workflow_ref ?? undefined,
-    // The subunit's label (a child run's name IS which arm it is) — 票05's replacement
-    // for reading `schedules.origin_role`.
     name: row.name ?? null,
     phase_index: row.phase_index ?? null,
     round_index: row.round_index ?? null,
@@ -767,20 +758,7 @@ function toExecutionBadge(row: ExecutionRow, children?: ExecutionRow[]): TaskExe
     // 台账列都读这两列（可选字段 —— 旧服务器行无键时消费端按未接管处理）。
     takeover_at: row.takeover_at ?? null,
     takeover_delivered_at: row.takeover_delivered_at ?? null,
-    ...(children ? { children: children.map((c) => toExecutionBadge(c)) } : {}),
   }
-}
-
-/** Group a task's child runs under the root that dispatched them (one pass, so the read
- *  model stays one query for the fan-out instead of one per root). */
-function groupChildren(children: ExecutionRow[]): Map<string, ExecutionRow[]> {
-  const by = new Map<string, ExecutionRow[]>()
-  for (const c of children) {
-    const list = by.get(c.parent_id)
-    if (list) list.push(c)
-    else by.set(c.parent_id, [c])
-  }
-  return by
 }
 
 /** Server-side spec-field set: the shared bindable fields (9 as of v3, +11 with
@@ -1112,8 +1090,8 @@ export class TasksService {
     })
   }
 
-  /** ADR-0021: the launch machinery, exposed for the acceptance route + 票04's composite
-   *  child pickup. Everything task-shaped that RUNS goes through this one object. */
+  /** ADR-0021: the launch machinery, exposed for the acceptance route.
+   *  Everything task-shaped that RUNS goes through this one object. */
   get taskLifecycle(): TaskLifecycleService {
     return this.lifecycle
   }
@@ -1380,8 +1358,7 @@ export class TasksService {
     const row = this.taskDAO.getById(id)
     if (!row) throw new TaskNotFoundError()
     const history = this.lifecycle.history(id)
-    const byParent = groupChildren(this.lifecycle.childRuns(id))
-    const badge = (root: ExecutionRow) => toExecutionBadge(root, byParent.get(root.id) ?? [])
+    const badge = (root: ExecutionRow) => toExecutionBadge(root)
     const aiUsage = this.aiUsageFor([{
       id,
       authorSessionId: row.source_chat_session_id,
@@ -1636,7 +1613,7 @@ export class TasksService {
 
   /**
    * GET /api/tasks/:id/executions — the task's run history, newest first (票03/票05).
-   * One row per run (a v4 round, or the composite coordinator), with the (phase, round)
+   * One row per run (a v4 round), with the (phase, round)
    * coordinates the acceptance ledger reads and the workspace to deep-link into. This
    * replaced children[], which listed the envelope rows standing for the same runs.
    *
@@ -1649,13 +1626,12 @@ export class TasksService {
     const row = this.taskDAO.getById(id)
     if (!row) throw new TaskNotFoundError()
     const history = this.lifecycle.history(id, limit)
-    const byParent = groupChildren(this.lifecycle.childRuns(id))
     const currentId = history.length > 0 ? history[0].id : null
     // `error_summary` is on the badge now (票05): the board's badge and the history list
     // are the same projection of the same row, and an error field that only the history
     // endpoint had is how the board ended up showing red with nothing to say about it.
     return history.map((e) => ({
-      ...toExecutionBadge(e, byParent.get(e.id) ?? []),
+      ...toExecutionBadge(e),
       current: e.id === currentId,
     }))
   }
@@ -2541,8 +2517,6 @@ export class TasksService {
     switch (input.field) {
       case "goal":
       case "ac":
-      case "subunits":
-      case "integration_goal":
       case "decisions":
       case "goal_confirmed":
       case "ac_confirmed":
@@ -2552,7 +2526,7 @@ export class TasksService {
       case "slug":
       case "branch":
         // Merge into task_spec JSON (all v3 confirmation/decision fields +
-        // the original goal/ac/subunits/integration_goal live in task_spec).
+        // goal/ac live in task_spec).
         // acceptance_verify: validator returns undefined on null-clear →
         // JSON.stringify drops the key (见 shared validator)。
         // slug/branch（2026-09-22）：shared enum 早已可绑但这里没有 case ——
@@ -2806,14 +2780,12 @@ export class TasksService {
       // repos/index.md 解析到本地 clone —— 这是 trigger 预建 worktree 的
       // 前置条件；解析不动的项目在入队时就以 `project:<name>` 挡住（清单
       // 第 5 行 ✗），而不是等触发执行/runner claim 才炸。project_ids 为空
-      // → vacuous 通过（composite 子单元各自带项目在 dispatch 校验）。
+      // → vacuous 通过。
       const gateProjects = parseJSON<string[]>(existing.project_ids, [])
-      const gateComposite =
-        Array.isArray(taskSpec.subunits) && taskSpec.subunits.length >= 2
       // One-workspace model: a workspace-backed simple task must bind at least
       // one project, otherwise enqueue would create no worktree. Legacy /
       // test-only tasks without a bound workspace keep the old vacuous pass.
-      if (gateProjects.length === 0 && !gateComposite && existing.workspace_id) {
+      if (gateProjects.length === 0 && existing.workspace_id) {
         missing.push("project-binding")
       }
       if (gateProjects.length > 0) {
@@ -2861,48 +2833,41 @@ export class TasksService {
       const acConfirmed = taskSpec.ac_confirmed ?? []
       const unconfirmedAc = (taskSpec.ac ?? []).filter((a) => !acConfirmed.includes(a))
       if (unconfirmedAc.length > 0) missing.push("ac_confirmed")
-      // 08 (gate, 2026-08-23 — option A): a SIMPLE v3 task (subunits < 2)
-      // materializes workflow_chain[0].workflow_ref straight from tasks.workflow_ref
-      // via materializeTaskSpecToConfig (`workflow_ref ?? ''` — scheduler-service.ts:
-      // 239). An empty ref fails at RUNTIME with "Workflow not found: " (EngineFactory
-      // resolveWorkflowWithSnapshot has no default fallback) AFTER the runner has
+      // 08 (gate, 2026-08-23 — option A): a v3 task materializes
+      // workflow_chain[0].workflow_ref straight from tasks.workflow_ref. An empty
+      // ref fails at RUNTIME with "Workflow not found: " AFTER the runner has
       // claimed the schedule + provisioned a workspace + created an execution — a
       // doomed task that burns a claim slot. Gate it here so enqueue is REJECTED
-      // up-front with a clear missing-items message ("先绑定工作流再入队"). Composite
-      // tasks (subunits >= 2) materialize to the BUILT-IN 'composition-task' ref and
-      // need no task-level workflow_ref — excluded from this check.
+      // up-front with a clear missing-items message ("先绑定工作流再入队").
       //
       // task-workflow-handoff (ADR-0013, S3): gate upgrade from "non-empty" to
       // "resolvable against the resolution set" (installed built-ins ∪ task-home
       // workflows/). A non-empty but UNRESOLVABLE ref is treated the same as
       // empty — added to missing. The resolver is the same one bind-fail-fast
       // uses (single source of truth, three call sites).
-      const subunits = taskSpec.subunits ?? []
-      if (subunits.length < 2) {
-        const ref = existing.workflow_ref?.trim() ?? ""
-        // Single resolve (review fix 2026-08-27): the old code walked the ref
-        // twice (isWorkflowRefResolvable + resolveWorkflowRef). One call — null
-        // ⇒ unresolvable (→ missing workflow_ref); hit ⇒ content for the
-        // required-inputs check.
-        const resolution = ref ? resolveWorkflowRef(ref, this.resolverDeps(id)) : null
-        if (!resolution) {
-          missing.push("workflow_ref")
-        } else {
-          // task-workflow-presets (T5): required inputs check against the
-          // RESOLVED input_values (after ${goal}/${ac} substitution). Keys whose
-          // value has an unknown/empty placeholder also surface as missing
-          // (input:<name>), never a 500.
-          const inputDefs = parseWorkflowInputDefs(resolution.content)
-          const { values, unresolved } = resolveInputValues(
-            taskSpec.input_values,
-            taskSpec.goal,
-            taskSpec.ac,
-          )
-          for (const key of unresolved) missing.push(`input:${key}`)
-          for (const def of inputDefs) {
-            if (def.required && !values[def.name]?.trim()) {
-              missing.push(`input:${def.name}`)
-            }
+      const ref = existing.workflow_ref?.trim() ?? ""
+      // Single resolve (review fix 2026-08-27): the old code walked the ref
+      // twice (isWorkflowRefResolvable + resolveWorkflowRef). One call — null
+      // ⇒ unresolvable (→ missing workflow_ref); hit ⇒ content for the
+      // required-inputs check.
+      const resolution = ref ? resolveWorkflowRef(ref, this.resolverDeps(id)) : null
+      if (!resolution) {
+        missing.push("workflow_ref")
+      } else {
+        // task-workflow-presets (T5): required inputs check against the
+        // RESOLVED input_values (after ${goal}/${ac} substitution). Keys whose
+        // value has an unknown/empty placeholder also surface as missing
+        // (input:<name>), never a 500.
+        const inputDefs = parseWorkflowInputDefs(resolution.content)
+        const { values, unresolved } = resolveInputValues(
+          taskSpec.input_values,
+          taskSpec.goal,
+          taskSpec.ac,
+        )
+        for (const key of unresolved) missing.push(`input:${key}`)
+        for (const def of inputDefs) {
+          if (def.required && !values[def.name]?.trim()) {
+            missing.push(`input:${def.name}`)
           }
         }
       }
@@ -3306,8 +3271,8 @@ export class TasksService {
    * delegation and 首触/后续轮 are finally the same code path (they used to differ in
    * exactly the ways that caused bugs: crash re-claim, collect, retention exemption).
    *
-   * Kept as a named method because the acceptance/advance paths and 票04's composite
-   * resume all call it, and its error contract is theirs: TaskLifecycleError → 409.
+   * Kept as a named method because the acceptance/advance paths and the re-dispatch
+   * callers all use it, and its error contract is theirs: TaskLifecycleError → 409.
    */
   async dispatchPhaseRound(
     taskId: string,

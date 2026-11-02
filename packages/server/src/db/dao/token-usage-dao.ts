@@ -670,9 +670,9 @@ export class TokenUsageDAO extends BaseDAO {
 
   // ── Health & monitoring queries ──────────────────────────────────────
   //
-  // 「parent_id = '0'」 here always meant 「count launched instances, not composite
-  // arms」. Since task-exec-tree (v44) a v4 round carries a parent (its lineage), so
-  // the honest predicate is (parent = '0' OR phase-tagged) — the latch's predicate.
+  // 「parent_id = '0'」 here always meant 「count launched instances」. Since
+  // task-exec-tree (v44) a v4 round carries a parent (its lineage), so the honest
+  // predicate is (parent = '0' OR phase-tagged) — the latch's predicate.
 
   getHealthStats(workspaceId: string, days: number): { total: number; success_count: number; failure_count: number; avg_duration: number | null; total_cost: number | null; cost_complete: boolean } {
     const statsRow = this.stmt(`

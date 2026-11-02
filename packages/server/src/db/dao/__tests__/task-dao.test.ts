@@ -141,13 +141,13 @@ describe("02-db-schema: tasks table + schedules-as-definition (v42)", () => {
       const result = taskDao.updateWithVersion("task-upd", {
         status: "ready",
         name: "E2E_TD_upd-renamed",
-        workflow_ref: "built-in/composition-task",
+        workflow_ref: "built-in/matt-spec-dev",
       }, 1)
       expect(result.changes).toBe(1)
       const got = taskDao.getById("task-upd")
       expect(got!.status).toBe("ready")
       expect(got!.name).toBe("E2E_TD_upd-renamed")
-      expect(got!.workflow_ref).toBe("built-in/composition-task")
+      expect(got!.workflow_ref).toBe("built-in/matt-spec-dev")
       expect(got!.version).toBe(2)
     })
 

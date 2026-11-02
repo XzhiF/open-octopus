@@ -25,6 +25,8 @@ apiVersion: octopus/v1
 kind: Workflow
 name: moa-requirements-review
 description: "MoA 需求评审：多专家并行评审 goal/ac，聚合为三段式 JSON 产出"
+version: 1.0.0
+stage: release
 
 variables:
   goal: ""

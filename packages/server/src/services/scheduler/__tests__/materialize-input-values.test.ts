@@ -76,38 +76,4 @@ describe("materializeTaskSpecToConfig — input_values resolution (T4)", () => {
     )
     expect(config.workflow_chain[0].input_values.key).toBe("")
   })
-
-  it("composite task does not include user input_values in chain", () => {
-    const spec: TaskSpec = {
-      ...baseSpec,
-      input_values: { requirement: "${goal}" },
-      subunits: [
-        {
-          name: "sub1",
-          workspace_spec: { org: "test", branch_prefix: "test", projects: [{ name: "p", source_path: "", group: "" }] },
-          workflow_ref: "flow1",
-          input_values: {},
-          skills: [],
-          resources: [],
-        },
-        {
-          name: "sub2",
-          workspace_spec: { org: "test", branch_prefix: "test", projects: [{ name: "p", source_path: "", group: "" }] },
-          workflow_ref: "flow2",
-          input_values: {},
-          skills: [],
-          resources: [],
-        },
-      ],
-    }
-    const config = materializeTaskSpecToConfig(
-      spec, ["proj1"], "test-org",
-    )
-    // Composite uses composition-task ref, not user's workflow
-    expect(config.workflow_chain[0].workflow_ref).toBe("composition-task")
-    const inputs = config.workflow_chain[0].input_values as Record<string, string>
-    // Composite doesn't carry user input_values (they belong to subunits)
-    expect(inputs.requirement).toBeUndefined()
-    expect(inputs.subunit_count).toBe(2)
-  })
 })

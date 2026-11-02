@@ -37,6 +37,7 @@ description: |
   通道改 spec 并留痕，本轮不完/超范围开票 ready-for-agent 留档，超结构边界落范围变更票
   ready-for-human）。产出 fix-report-rN.md（反馈逐条 → 修复动作 → 验证证据）写回同 Batch 目录。
 version: 1.0.0
+stage: release
 
 # --- 全局配置 ---
 engine: claude

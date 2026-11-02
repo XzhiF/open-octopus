@@ -13,14 +13,9 @@ import type { Executor, ExecutionResult } from './executor-interface'
 import { ScheduleConfigDAO, ScheduleRunDAO, ExecutionDAO } from '../../../db/dao'
 import { TaskHomeService } from '../../tasks/task-home-service'
 import { seedPhaseToWorkspace, collectFromWorkspace, batchRelPath, resolvePhaseSpecDir, emitPhaseAwaitingReview } from '../../tasks/task-artifact-sync'
-// Ticket 08 (ADR-0009): the orchestration-strategy seam owns the composition
-// workflow ref + the composite threshold as the single source of truth (via
-// ws-launch's isCompositeWorkflowConfig). The executor's isCompositeTask below
-// is the POST-materialization config-shape detector (a different layer — it
-// sees the materialized WorkflowConfig, not the original TaskSpec).
-// trigger-prebuild (2026-09-08): 命名块与 composite 判定收敛到 ws-launch —
+// trigger-prebuild (2026-09-08): 命名块收敛到 ws-launch —
 // triggerTask 预建与 executor 首建共用，同名同支是复用命中的前提。
-import { computeTaskWsLaunchParams, isCompositeWorkflowConfig } from '../ws-launch'
+import { computeTaskWsLaunchParams } from '../ws-launch'
 // ADR-0013 S2a: the home→ws workflow copy helper now lives in the task domain (票03) —
 // one implementation, shared with the task-lifecycle job that replaced this path.
 import { copyTaskWorkflowsToWs } from '../../tasks/task-artifact-sync'
@@ -28,18 +23,6 @@ import { copyTaskWorkflowsToWs } from '../../tasks/task-artifact-sync'
 // OCTOPUS_SCHEDULER_MAX_PARALLEL into a local copy of the constant).
 import { MAX_PARALLEL_WORKSPACES } from '../concurrency'
 
-
-/**
- * Ticket 04 (composite dispatch): the workflow_ref of the composition-task template
- * (core-pack/workflows/composition-task.yaml, name: composition-task). A composite
- * task's config carries workflow_chain[0].workflow_ref === this AND task_spec.subunits
- * — when dispatched, the coordinator-ws runs this workflow, whose Loop + task_dispatch
- * nodes (03's bridge) fan out N child schedules and a trailing moa aggregates them.
- *
- * Ticket 08 (ADR-0009): the constant now lives in the orchestration-strategy seam
- * (single source of truth, shared with DefaultOrchestrationStrategy +
- * scheduler-service). Imported above; no local duplicate.
- */
 
 interface ScheduleRow {
   id: string
@@ -157,14 +140,9 @@ export class WorkflowExecutor implements Executor {
       }
     }
 
-    // Ticket 04 (composite dispatch) + Ticket 08 (ADR-0009): the isComposite
-    // decision bifurcates execute() into two dispatch paths:
-    //
-    // 4b. ADR-0021 票03: the composite/coordinator branch lived here because a composite
-    // TASK was materialized into a schedule row. Tasks are no longer schedules, so this
+    // 4b. ADR-0021 票03: a TASK is no longer materialized into a schedule row, so this
     // executor runs only what the job definition says: config.workflow_chain[0] on a
-    // freshly built workspace. Composite fan-out is the task domain's business (and 票04
-    // moves it onto child executions).
+    // freshly built workspace.
     // 5. Branch suffix + ws naming — verbatim 抽入 ws-launch 共享纯函数
     // (trigger-prebuild 2026-09-08): triggerTask 的「同步预建」与这里的首建
     // 必须产出同名同支（预建→executor 复用命中），两份命名逻辑合一防漂移。
@@ -453,11 +431,10 @@ export class WorkflowExecutor implements Executor {
       // Chain fully complete → finalize schedule_execution + schedule + workspace
       this.runDAO.markExecutionCompleteWithDuration(opts.schedExecId, 'completed', durationMs)
 
-      // 票03: the requirement branch is gone — flipping a schedule's done/failed status,
-      // aggregating composite child failures out of child schedules, and mirroring onto
-      // tasks.status all existed because a schedule row stood in for a task run. A job
-      // fire's terminal state is the schedule_executions row written just above; whose
-      // task (if any) a run served is no longer this file's business.
+      // 票03: the requirement branch is gone — flipping a schedule's done/failed status
+      // and mirroring onto tasks.status all existed because a schedule row stood in for a
+      // task run. A job fire's terminal state is the schedule_executions row written just
+      // above; whose task (if any) a run served is no longer this file's business.
 
       // Update schedule_workspace
       this.configDAO.updateScheduleWorkspaceStatus(opts.schedWsId, {
@@ -508,115 +485,15 @@ export class WorkflowExecutor implements Executor {
       }
     }
 
-    // G1: if this schedule was dispatched by a task_dispatch node (composite task),
-    // resume the PARENT composition-wf's task_dispatch node with the child's output.
-    // Distinct concern from the same-ws chain above — handled by a separate method
-    // so the chain logic stays untouched (05's failure writer above is unaffected).
-    // This path fires when the child was claimed+run by the scheduler-engine (e.g.
-    // a child queued at the concurrency cap, later claimed). The under-cap path
-    // runs the child directly via TaskDispatchService, which registers its own
-    // onComplete and resumes the parent without going through WorkflowExecutor.
-    this.maybeResumeParentTaskDispatch(opts, lastExecutionId)
-
     // task-phase-redesign (ticket 06, K9): v4 collect 上行 — BEFORE retention
     // (which may reclaim the ws once the task hits 'done'), recover whatever the
     // execution side changed in the batch dir back into the task home and emit
-    // task_artifacts_update. Gated on the phase/round TAG (④/K4), so v3,
-    // generic and composite chains (never tagged) byte-for-byte skip this.
+    // task_artifacts_update. Gated on the phase/round TAG (④/K4), so v3 and
+    // generic chains (never tagged) byte-for-byte skip this.
     // 票03: v4 collect 上行 moved into the task-lifecycle job — it needs the task home,
     // the phase binding and the artifact index, none of which a cron job has.
     // Enforce retention policy
     this.enforceRetention(opts.scheduleId, opts.maxRetain)
-  }
-
-  // ── Composite helpers: removed with 票03 (ADR-0021) ─────────────────────
-  //
-  // isCompositeTask / isCompositeSchedule / buildCompositeInputValues /
-  // resolveTaskSpecFromOrigin existed to run a composite TASK out of a schedule row:
-  // detecting the coordinator by workflow_ref, reading subunits back out of the tasks
-  // table through schedules.origin_id, and synthesizing the composition workflow's
-  // inputs. None of that is a scheduler's business — the materialization now lives in
-  // services/tasks/task-materialize.ts, next to the job that consumes it.
-  //
-  // What stays below is the generic half: a `task_dispatch` node inside ANY workflow
-  // fans out child work and resumes on its completion. 票04 replaces those child
-  // schedule rows with child executions.
-
-  // ── G1 task_dispatch parent-resume ─────────────────────────────────
-
-  /** True if this schedule was dispatched by a task_dispatch node (carries the
-   *  parent_task_dispatch marker in its config — written by TaskDispatchService). */
-  private hasParentTaskDispatchMarker(schedule: ScheduleRow): boolean {
-    try {
-      const config = JSON.parse(schedule.config) as { parent_task_dispatch?: unknown }
-      return config?.parent_task_dispatch != null
-    } catch {
-      return false
-    }
-  }
-
-  /**
-   * Resume the parent composition-wf's task_dispatch node when a child schedule
-   * dispatched by task_dispatch completes. Reads the child's var_pool snapshot
-   * (sub-workflow precedent: output_mapping reads child pool vars) and calls the
-   * parent workspace's ExecutionService.resumeTaskDispatch → engine.retryFrom
-   * with taskDispatchChildOutput. The parent correlation (execution_id + node_id)
-   * is read from the child schedule's persisted config marker (restart-safe).
-   */
-  private maybeResumeParentTaskDispatch(
-    opts: { schedule: ScheduleRow; scheduleId: string },
-    lastExecutionId: string,
-  ): void {
-    if (!this.hasParentTaskDispatchMarker(opts.schedule)) return
-
-    let marker: { execution_id: string; node_id: string } | undefined
-    try {
-      const config = JSON.parse(opts.schedule.config) as {
-        parent_task_dispatch?: { execution_id: string; node_id: string }
-      }
-      marker = config?.parent_task_dispatch
-    } catch {
-      // config parse error already handled by hasParentTaskDispatchMarker
-    }
-    if (!marker) return
-
-    // Read the child's var_pool snapshot (the deepest execution in the chain).
-    const childExec = this.execDAO.findById(lastExecutionId)
-    const varPoolRaw = childExec?.var_pool ?? "{}"
-    let childOutput: Record<string, unknown>
-    try {
-      childOutput = JSON.parse(varPoolRaw) as Record<string, unknown>
-    } catch {
-      childOutput = {}
-    }
-
-    // Locate the PARENT composition-wf execution + its workspace's ExecutionService.
-    // The parent lives in the coordinator workspace (distinct from this child's ws).
-    const parentExec = this.execDAO.findById(marker.execution_id)
-    if (!parentExec) {
-      console.error(
-        `[WorkflowExecutor] task_dispatch resume: parent execution ${marker.execution_id} not found`,
-      )
-      return
-    }
-    const parentRegistry = getExecutionService(parentExec.workspace_id)
-    if (!parentRegistry) {
-      console.error(
-        `[WorkflowExecutor] task_dispatch resume: ExecutionService unavailable for parent workspace ${parentExec.workspace_id}`,
-      )
-      return
-    }
-
-    // A failed child still resumes the parent with an empty/partial output so the
-    // composition-wf's failure strategy can decide (mirror TaskDispatchService).
-    parentRegistry.service
-      .resumeTaskDispatch(marker.execution_id, marker.node_id, childOutput)
-      .catch((err: unknown) => {
-        console.error(
-          `[WorkflowExecutor] task_dispatch resume failed for parent ${marker!.execution_id}:`,
-          err instanceof Error ? err.message : String(err),
-        )
-      })
   }
 
   // ── Chain continuation helpers (#4 story-walker) ──────────────────

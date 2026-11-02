@@ -8,10 +8,8 @@
 // workspace 展示名，否则预建的 ws 永远不被 executor 复用（多 ws-per-task
 // 漂移回归）。命名规则一旦改动，两个调用方经由本文件原子地一起变。
 //
-// 纪律：本文件只放纯函数（无 IO / 无 git / 无 DB）；executor 与
-// task-dispatch-service 的本地 formatBranchSuffix 副本已收敛于此。
+// 纪律：本文件只放纯函数（无 IO / 无 git / 无 DB）；历史分支尾缀的本地副本已收敛于此。
 
-import { COMPOSITION_WF_REF } from "./orchestration-strategy"
 import { taskBranchPrefix, taskWorkspaceName } from "./task-ws-name"
 
 /** `YYYYMMDDHHmmss-<rand4>` 分支/目录唯一性尾缀。executor 与 task-dispatch
@@ -25,24 +23,6 @@ export function formatBranchSuffix(date: Date): string {
   const s = String(date.getSeconds()).padStart(2, "0")
   const rand = Math.random().toString(36).substring(2, 6)
   return `${y}${mo}${d}${h}${mi}${s}-${rand}`
-}
-
-/** 结构最小面 — WorkflowConfig 可赋值；trigger 侧从信封 config JSON 也喂得进。 */
-export interface CompositeProbe {
-  task_spec?: { subunits?: unknown[] }
-  workflow_chain?: Array<{ workflow_ref?: string | undefined }>
-}
-
-/** POST-materialization 复合判定（WorkflowExecutor.isCompositeTask 的规则的
- *  verbatim 迁移）：subunits≥2 或 chain[0] 指向 composition wf。与
- *  orchestration-strategy 共享 COMPOSITION_WF_REF 常量，两层永不漂移。 */
-export function isCompositeWorkflowConfig(config: CompositeProbe): boolean {
-  if ((config.task_spec?.subunits?.length ?? 0) >= 2) return true
-  const ref = config.workflow_chain?.[0]?.workflow_ref
-  if (typeof ref === "string") {
-    return ref === COMPOSITION_WF_REF || ref.endsWith(`/${COMPOSITION_WF_REF}`)
-  }
-  return false
 }
 
 /** Naming block (workflow-executor.ts:222-237 的 verbatim 语义迁移).
@@ -60,7 +40,7 @@ export function computeTaskWsLaunchParams(a: {
   /** Stable per-run-series identifier: task id for a task launch, schedule id for a job. */
   instanceKey: string
   naming: "task" | "cron"
-  config: { workspace_spec: { branch_prefix: string } } & CompositeProbe
+  config: { workspace_spec: { branch_prefix: string } }
   taskRow: { name: string | null; task_spec: string | null | unknown; created_at?: string | null } | null
   date?: Date
 }): { branchPrefix: string; branchSuffix: string; workspaceName: string } {

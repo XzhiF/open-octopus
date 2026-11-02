@@ -201,10 +201,9 @@ export interface TaskDbRow {
  * used to say so).
  *
  * Shape of the domain, so a spec can tell the three things apart without a second query:
- *   - `parent_id === '0'` → a ROOT: one v4 phase round, or one composite coordinator turn.
- *   - `parent_id !== '0'` → a composite fan-out arm; its identity is `parent_id` (the
- *     dispatching run) + `name` (the subunit's name, written by dispatchChildRun). This
- *     pair is what replaced `origin_role='subunit'`.
+ *   - `parent_id === '0'` → a ROOT: one v4 phase round.
+ *   - `parent_id !== '0'` → a chained v4 round (parent_id = its lineage) or a
+ *     sub-workflow child execution.
  *   - `status === 'pending'` → armed and queued behind the shared concurrency gate
  *     (「排队中」); `'running'` → executing (「执行中」); a terminal status → a finished run.
  *     The two are DIFFERENT moments now — under the envelope they were the same one, which
@@ -218,7 +217,7 @@ export interface TaskExecutionRow {
   status: string
   workflow_ref: string
   workflow_name: string
-  /** The subunit's name on an arm (票05); NULL on a root. */
+  /** The run's display name; NULL when unset. */
   name: string | null
   phase_index: number | null
   round_index: number | null
@@ -261,14 +260,13 @@ export function readTaskRow(taskId: string): TaskDbRow | null {
 }
 
 /**
- * Every `executions` row that serves this task — roots and composite arms alike
- * (ADR-0021 票03). Replaces `readSchedulesByOrigin`, which selected
+ * Every `executions` row that serves this task (ADR-0021 票03). Replaces
+ * `readSchedulesByOrigin`, which selected
  * `schedules.origin_type/origin_id/origin_role`: schema v42 dropped those columns, so a
  * task owns no row in the scheduler's table at all.
  *
  * Ordered by creation (rowid breaks same-second ties), so `[0]` is the first round;
- * callers split roots (`parent_id === '0'`) from arms (`parent_id !== '0'`, `name` = the
- * subunit).
+ * callers split roots (`parent_id === '0'`) from chained rounds (`parent_id !== '0'`).
  */
 export function readTaskExecutions(taskId: string): TaskExecutionRow[] {
   const db = openTaskDb()
@@ -282,7 +280,7 @@ export function readTaskExecutions(taskId: string): TaskExecutionRow[] {
   }
 }
 
-/** The task's ROOT instances only (one v4 phase round / one composite turn per row),
+/** The task's ROOT instances only (one v4 phase round per row),
  *  newest first — the same predicate + order the `execution` badge and 「执行历史」 use, so
  *  "exactly one live root" is checkable against what the API calls the current instance. */
 export function readTaskRootExecutions(taskId: string): TaskExecutionRow[] {
@@ -431,8 +429,7 @@ export function assertTaskMatchesDb(
  * column is shared's, so `trigger_*` / `execution` cannot drift from the server again
  * (that drift is what 票05's 「已彻底删除的 shared 符号」 list exists to catch);
  * `task_spec` stays `unknown` because each spec reads back the fixture it wrote (v4 phase
- * lists, composite subunit arrays) and a typed union there turns every assertion into a
- * cast fight.
+ * lists) and a typed union there turns every assertion into a cast fight.
  */
 export interface TaskDTO extends Omit<Task, "task_spec"> {
   task_spec: unknown
@@ -440,9 +437,8 @@ export interface TaskDTO extends Omit<Task, "task_spec"> {
 
 /**
  * GET /api/tasks/:id — the task + its run history. `children[]` (the envelope rows that
- * used to stand for the same runs) is gone: `executions[]` lists the ROOT runs, newest
- * first, each carrying its composite arms under `children`; `execution` is the badge of
- * the newest root — the one row the board shows.
+ * used to stand for the same runs) is gone: `executions[]` lists the runs, newest
+ * first; `execution` is the badge of the newest instance — the one row the board shows.
  */
 export interface TaskDetailDTO extends TaskDTO {
   executions: TaskExecutionBadge[]
@@ -962,9 +958,9 @@ export async function deleteTask(taskId: string): Promise<{ ok: true }> {
   }
 }
 
-/** GET /api/tasks/:id/executions — the run history the 「执行历史」 panel reads: roots
- *  newest first, each badge carrying `current` (the row the board shows as `execution`)
- *  and its composite `children`. Replaced the envelope's children[]. */
+/** GET /api/tasks/:id/executions — the run history the 「执行历史」 panel reads: newest
+ *  first, each badge carrying `current` (the row the board shows as `execution`).
+ *  Replaced the envelope's children[]. */
 export async function listTaskExecutions(
   taskId: string,
   limit?: number,

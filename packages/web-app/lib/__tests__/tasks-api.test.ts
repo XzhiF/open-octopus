@@ -52,8 +52,7 @@ function makeTask(overrides: Partial<Task> & { id: string }): Task {
 /** One root execution of the task — the SHARED `TaskExecutionBadge` (票05: the wire
  *  shape has exactly one source; lib/tasks-api re-exports it, no local mirror). The
  *  run-history row that replaced `children[]` in 票03, now carrying 票05's `name`
- *  (subunit arm label) / `error_summary` (why a red run is red) / `children?`
- *  (composite fan-out, loaded on detail/history only). */
+ *  / `error_summary` (why a red run is red). */
 function makeBadge(overrides: Partial<TaskExecutionBadge> & { id: string }): TaskExecutionBadge {
   return {
     status: "running",

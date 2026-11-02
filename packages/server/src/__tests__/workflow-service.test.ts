@@ -102,4 +102,21 @@ describe("WorkflowService filtering", () => {
     const list = service.list(WORKSPACE_DIR) as WorkflowInfo[]
     expect(list[0].inputs).toBeUndefined()
   })
+
+  it("returns version and release stage when declared", () => {
+    fs.writeFileSync(
+      path.join(WORKSPACE_DIR, "workflows", "released.yaml"),
+      `${MINIMAL_WF}\nversion: 2.1.0\nstage: release`,
+    )
+    const list = service.list(WORKSPACE_DIR) as WorkflowInfo[]
+    expect(list[0].version).toBe("2.1.0")
+    expect(list[0].stage).toBe("release")
+  })
+
+  it("defaults missing stage to snapshot", () => {
+    fs.writeFileSync(path.join(WORKSPACE_DIR, "workflows", "dev.yaml"), MINIMAL_WF)
+    const list = service.list(WORKSPACE_DIR) as WorkflowInfo[]
+    expect(list[0].stage).toBe("snapshot")
+    expect(list[0].version).toBeUndefined()
+  })
 })

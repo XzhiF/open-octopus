@@ -6,6 +6,7 @@ import { getResourceRegistry } from "../resource-registry"
 import { getExecutionService } from "../execution-service-registry"
 import { createRepairServiceForWorkspace } from "../../routes/repair"
 import { getChatEventBridge } from "../activity/chat-event-bridge"
+import { selectReleasedWorkflows } from "./workflow-release"
 
 /**
  * In-process MCP tools that let a chat agent run and inspect workflows in its
@@ -28,7 +29,21 @@ export function createWorkflowToolServer(
     const registry = resolveExec(workspaceId)
     const local = workflowService.list(registry.wsPath)
     const builtIn = new BuiltInWorkflowService(getResourceRegistry().get()).list()
-    return [...local.map((w) => ({ ...w, scope: "workspace" })), ...builtIn.map((w) => ({ ...w, scope: "built-in" }))]
+    return selectReleasedWorkflows(local, builtIn)
+  }
+
+  /**
+   * Resolve a ref the same way execution does (workspace first, then built-in)
+   * and report whether it is not a released workflow. Unresolvable refs are left
+   * to ExecutionService so the real "not found" error surfaces unchanged.
+   */
+  const isSnapshotRef = (ref: string): boolean => {
+    const registry = resolveExec(workspaceId)
+    const local = workflowService.get(registry.wsPath, ref)
+    if (local) return (local.parsed.stage ?? "snapshot") !== "release"
+    const builtIn = new BuiltInWorkflowService(getResourceRegistry().get()).get(ref)
+    if (builtIn) return (builtIn.parsed.stage ?? "snapshot") !== "release"
+    return false
   }
 
   const text = (data: unknown) => ({
@@ -38,18 +53,23 @@ export function createWorkflowToolServer(
   const tools = [
     tool(
       "list_workflows",
-      "List workflows available in the current chat workspace (workspace + built-in).",
+      "List released workflows available in the current chat workspace (workspace + built-in). Snapshots (unreleased/dev) are hidden. Each item carries its numeric version when declared.",
       {},
       async () => text(await listWorkflows()),
     ),
     tool(
       "run_workflow",
-      "Run a workflow in the current chat workspace and return its execution id. Workflow execution is automatic (no confirmation step).",
+      "Run a released workflow in the current chat workspace and return its execution id. Workflow execution is automatic (no confirmation step). Snapshot workflows cannot be run from the main chat.",
       {
-        workflow_ref: z.string().min(1).describe("Workflow ref from list_workflows (e.g. built-in/task-dev or a workspace yaml)"),
+        workflow_ref: z.string().min(1).describe("Workflow ref from list_workflows (e.g. built-in/matt-spec-dev or a workspace yaml)"),
         input_values: z.record(z.string()).optional().describe("Workflow inputs (key/value strings)"),
       },
       async ({ workflow_ref, input_values }) => {
+        if (isSnapshotRef(workflow_ref)) {
+          return text({
+            error: `workflow "${workflow_ref}" is a snapshot, not a release — the main chat only runs released workflows. Ask a human to release it (set "stage: release" and a numeric "version" in its YAML) first.`,
+          })
+        }
         const registry = resolveExec(workspaceId)
         const exec = registry.service.create(workspaceId, {
           workflow_ref,

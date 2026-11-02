@@ -108,7 +108,6 @@ core-pack ← cli / server
 | **swarm** | 多智能体协作（5 种策略） |
 | **sub_workflow** | 嵌套子工作流 |
 | **dynamic_sub_workflow** | LLM 运行时动态生成子 DAG |
-| **task_dispatch** | 组合任务派发，向 Task Board 投递子任务 |
 
 依赖自动推导为 DAG 并行调度；生命周期钩子在失败 / 预算超限时唤起 Agent 自动处置；资源声明式预装，工作流即装即用。
 
@@ -279,7 +278,7 @@ Resource
 
 Agent as First-class Node
   └→ octopus_agent 节点让平台 Agent 直接进工作流：自带工具、记忆与资源；
-     interaction / task_dispatch 打通人机与任务派发，Chat 双向驱动执行
+     interaction 打通人机交互，Chat 双向驱动执行
 
 Knowledge 经验库
   └→ 以条目为单位的轻量沉淀：抽取 → 审核 → 冲突消解 → 注入 → 效果回流，

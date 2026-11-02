@@ -107,7 +107,6 @@ core-pack ← cli / server
 | **swarm** | Multi-agent collaboration (5 strategies) |
 | **sub_workflow** | Nested sub-workflow |
 | **dynamic_sub_workflow** | LLM generates a sub-DAG at runtime |
-| **task_dispatch** | Composite task dispatch — files sub-tasks back into the Task Board |
 
 Dependencies are auto-derived into a parallel DAG; lifecycle hooks wake an agent to handle failures or budget overruns; resources are declared and pre-installed so a workflow is ready the moment it runs.
 
@@ -279,7 +278,7 @@ Resource
 
 Agent as First-class Node
   └→ The octopus_agent node puts platform agents directly inside workflows, tools,
-     memory, and resources included; interaction and task_dispatch wire up the
+     memory, and resources included; interaction wires up the
      human loop and task delegation, with chat driving execution both ways
 
 Knowledge Store

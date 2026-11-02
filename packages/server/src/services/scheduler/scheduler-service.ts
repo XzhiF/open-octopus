@@ -89,37 +89,11 @@ export class SchedulerBuiltinJobProtectedError extends Error {
 // Re-export for convenience
 export { ConfigValidationError }
 
-// ── JobDetail (composite view, ticket 10) ─────────────────────────────
+// ── JobDetail = SchedulerJob ─────────────────────────────────────────
+// The retired children[]/dag[] view is gone; a task's runs live on GET
+// /api/tasks/:id. The alias stays because getJob/abortJob are typed with it.
 
-export interface JobDetailDagNode {
-  id: string
-  type: 'subunit' | 'integration'
-  label: string
-  workflow_ref?: string
-}
-
-export interface JobDetailDagEdge {
-  from: string
-  to: string
-}
-
-export interface JobDetailDag {
-  nodes: JobDetailDagNode[]
-  edges: JobDetailDagEdge[]
-}
-
-export interface JobDetailChild {
-  schedule_id: string
-  name: string
-  status: string
-  workflow_ref: string
-  subunit_name: string
-}
-
-export type JobDetail = SchedulerJob & {
-  children?: JobDetailChild[]
-  dag?: JobDetailDag
-}
+export type JobDetail = SchedulerJob
 
 // ── Zod Validation Schemas ───────────────────────────────────────────
 

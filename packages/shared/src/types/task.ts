@@ -2,8 +2,6 @@ import { z } from "zod"
 import {
   type ResourceRef,
   type TaskSpec,
-  subunitSpecSchema,
-  integrationGoalSchema,
   resourceRefSchema,
   taskPhaseSchema,
   acceptanceVerifySchema,
@@ -66,7 +64,7 @@ export type TaskStatus = z.infer<typeof TaskStatusSchema>
 
 // ── TaskSpecField (v2-D12 — the 8 agent-settable fields; v3 adds decisions) ─
 /** Fields the `update_task_spec_field` tool / `spec_field_update` SSE carry.
- *  goal/ac/subunits/integration_goal live inside task_spec; skills/projects map
+ *  goal/ac live inside task_spec; skills/projects map
  *  to the tasks.skills / tasks.project_ids columns; resources/authoring_resources
  *  map to the tasks.resources / tasks.authoring_resources columns. The server
  *  routes each field to the right column/blob on write.
@@ -92,8 +90,6 @@ export const TaskSpecFieldSchema = z.enum([
   "skills",
   "goal",
   "ac",
-  "subunits",
-  "integration_goal",
   "resources",
   "authoring_resources",
   "decisions",
@@ -186,9 +182,7 @@ export interface TaskExecutionBadge {
   id: string
   status: string
   workflow_ref: string
-  /** The run's display name (composite subunit label = the subunit's workflow name).
-   *  This replaces `schedules.origin_role='subunit'` as the thing that told the UI
-   *  "this row is one fan-out arm of the parent": which arm it is comes from the row. */
+  /** The run's display name. */
   name: string | null
   phase_index: number | null
   round_index: number | null
@@ -208,14 +202,9 @@ export interface TaskExecutionBadge {
    *  可选字段：旧服务器行无键 = 从未被接管（与 workflow_ref 的向后兼容同律）。 */
   takeover_at?: string | null
   takeover_delivered_at?: string | null
-  /** Composite fan-out: this root's child runs (empty for a simple task; omitted where
-   *  the read model did not load them — the board's badge carries no children, the
-   *  detail/history does). */
-  children?: TaskExecutionBadge[]
 }
 
-/** Σ actual run time over the task's instance executions (rounds / composite roots —
- *  fan-out arms are inside their root's span and never double-counted). Queued waits
+/** Σ actual run time over the task's instance executions (rounds). Queued waits
  *  and 待验收 idle are NOT in here; a still-running round counts up to query time.
  *  Populated by the read model (GET /api/tasks, GET /:id). */
 export interface TaskRunStats {
@@ -240,11 +229,6 @@ export const taskExecutionSsePayloadSchema = z.object({
   status: z.string().min(1),
   phase_index: z.number().int().nullable().optional(),
   round_index: z.number().int().nullable().optional(),
-  /** Set when this run is one arm of a composite fan-out: the dispatching run, and which
-   *  subunit it is. The child's identity is `parent_id` + `name` on the row — this is the
-   *  same pair on the wire, so the timeline can place an arm without re-fetching. */
-  parent_id: z.string().min(1).optional(),
-  subunit: z.string().min(1).optional(),
   /** Present on the failure/reap paths only: the same one-liner the badge shows. */
   reason: z.string().optional(),
 })
@@ -411,13 +395,6 @@ export function validateSpecFieldValue(field: TaskSpecField, value: unknown): un
         throw new TaskSpecFieldError("field 'branch' must match ^[a-zA-Z0-9_-]{2,60}$")
       }
       return value
-    case "subunits":
-      if (!Array.isArray(value)) {
-        throw new TaskSpecFieldError("field 'subunits' must be an array")
-      }
-      return value.map((v) => subunitSpecSchema.parse(v))
-    case "integration_goal":
-      return integrationGoalSchema.parse(value)
     case "acceptance_verify":
       // 验收面 v2: null clears the field — undefined rides into the spec merge
       // and JSON.stringify drops the key (storing `null` would poison every

@@ -293,8 +293,6 @@ describe("TaskHomeService", () => {
           ac: [],
           goal_confirmed: false,
           ac_confirmed: [],
-          subunits: [],
-          integration_goal: "",
           input_values: {},
           workflow_ref: "",
           task_type: "coding",
@@ -307,7 +305,7 @@ describe("TaskHomeService", () => {
       const snap = JSON.parse(fs.readFileSync(path.join(svc.homePath(id), "manifest.json"), "utf-8")) as {
         spec: Record<string, unknown>
       }
-      for (const k of ["goal", "ac", "goal_confirmed", "ac_confirmed", "subunits", "integration_goal", "input_values", "workflow_ref", "task_type"]) {
+      for (const k of ["goal", "ac", "goal_confirmed", "ac_confirmed", "input_values", "workflow_ref", "task_type"]) {
         expect(snap.spec).not.toHaveProperty(k)
       }
       expect(snap.spec.format).toBe("v4")

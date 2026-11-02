@@ -25,22 +25,11 @@ export interface InteractionMetadata {
   initialPrompt?: string
 }
 
-/** Metadata returned when a task_dispatch node pauses to await a child schedule (G1).
- *  The server correlates the completion callback via childHandle.child_id
- *  and resumes the parent by re-invoking the engine with a childOutput payload. */
-export interface TaskDispatchMetadata {
-  nodeId: string
-  /** Opaque handle to the dispatched child schedule (shared type). */
-  childHandle: { child_id: string; workspace_id?: string }
-  /** Name of the subunit that was dispatched (observability). */
-  subunitName?: string
-}
-
 export interface NodeExecutionResult {
   lastOutput?: string
   exitCode?: number
   outputs: Record<string, any>
-  status: "pending" | "running" | "completed" | "failed" | "skipped" | "skipped_failed" | "cancelled" | "paused" | "rejected" | "pending_approval" | "pending_interaction" | "pending_task_dispatch"
+  status: "pending" | "running" | "completed" | "failed" | "skipped" | "skipped_failed" | "cancelled" | "paused" | "rejected" | "pending_approval" | "pending_interaction"
   durationMs: number
   logLines: string[]
   error?: string
@@ -57,7 +46,6 @@ export interface NodeExecutionResult {
   events?: AgentEvent[]
   approvalMetadata?: ApprovalMetadata
   interactionMetadata?: InteractionMetadata
-  taskDispatchMetadata?: TaskDispatchMetadata
   /** Completed inner node results from the iteration that hit pending_approval. Used for resume. */
   innerNodeResults?: Record<string, NodeExecutionResult>
   /** True when node was skipped because execute_when evaluated to false.

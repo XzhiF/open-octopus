@@ -604,8 +604,6 @@ function advancePhaseOf(derived: TaskDerivedView | undefined): number | null {
 }
 
 function TaskCard({ task, derived, budgetMs, colAccent, onClick, onDeleteRequest, onTriggerRequest, onAcceptRequest, onAdvanceRequest, onArchiveRetryRequest, onDuplicateRequest }: TaskCardProps) {
-  // SG9: composite requires subunits.length >= 2.
-  const composite = !!task.task_spec.subunits && task.task_spec.subunits.length >= 2
   const isDraft = task.status === "draft"
   const isReady = task.status === "ready"
   // 票 11: 待验收卡琥珀高亮 (K3/US8)。
@@ -641,7 +639,6 @@ function TaskCard({ task, derived, budgetMs, colAccent, onClick, onDeleteRequest
       <div className="flex items-center justify-between gap-2">
         <h3 className="font-black truncate text-pop-ink">{task.name}</h3>
         <div className="flex items-center gap-1 shrink-0">
-          {composite ? <span className="text-[10px] font-black px-1.5 py-0.5 rounded-full border border-pop-pink/40 bg-pop-bg/70 text-pop-pink">复合</span> : null}
           {/* 票 11: v4 phase 角标（US7） */}
           {badge && (
             <span

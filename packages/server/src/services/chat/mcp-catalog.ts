@@ -87,8 +87,8 @@ const MEMORY_TOOL_DESC: Record<string, string> = {
 }
 
 const WORKFLOW_TOOL_DESC: Record<string, string> = {
-  list_workflows: "列出当前工作空间可用的工作流（工作区级 + 内置）。",
-  run_workflow: "在当前工作空间执行一个工作流，返回执行 id（自动开跑，不等确认）。",
+  list_workflows: "列出当前工作空间可用的【已发布】工作流（工作区级 + 内置，含数字版本号）；快照/未发布工作流对主对话隐藏。",
+  run_workflow: "在当前工作空间执行一个【已发布】工作流，返回执行 id（自动开跑，不等确认）；快照工作流会被拒绝。",
   list_executions: "列出当前工作空间最近的执行记录。",
   get_execution: "查看某次执行的状态与全部节点明细。",
   cancel_execution: "取消一次运行中的执行。",

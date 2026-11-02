@@ -13,6 +13,8 @@ apiVersion: octopus/v1
 kind: Workflow
 name: clarify-debate
 description: "澄清辩论（debate 模式）：多专家多轮辩论 goal 歧义，host 汇总为三段式 JSON"
+version: 1.0.0
+stage: release
 
 variables:
   goal: ""

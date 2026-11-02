@@ -64,8 +64,6 @@ export const V3_ONLY_SPEC_KEYS: readonly string[] = [
   "ac",
   "goal_confirmed",
   "ac_confirmed",
-  "subunits",
-  "integration_goal",
   "input_values",
   "workflow_ref",
   "task_type",

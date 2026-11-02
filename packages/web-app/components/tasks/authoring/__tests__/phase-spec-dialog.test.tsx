@@ -26,7 +26,7 @@ function makePhase(overrides: Partial<TaskPhase> = {}): TaskPhase {
   return {
     index: 1, name: "P1", slug: "p1",
     specPath: "./.scratch/20260905/p1/spec.md",
-    workflowRef: "built-in/matt-dev-pipeline",
+    workflowRef: "built-in/matt-spec-dev",
     inputValues: {},
     ...overrides,
   } as TaskPhase

@@ -63,7 +63,7 @@ export function isV4TaskSpec(taskSpecJson: string | null | undefined): boolean {
  *  + TasksService.finalizePhaseRoundExecution) — review ④: the inline
  *  `JSON.parse(config).phases?.find(p => p.index === …)?.specDir` was duplicated
  *  across the two files with independently re-declared envelope types.
- *  Returns undefined on any shape mismatch (v3/generic/composite rows). */
+ *  Returns undefined on any shape mismatch (v3/generic rows). */
 export function resolvePhaseSpecDir(configJson: string, phaseIndex: number): string | undefined {
   if (!configJson) return undefined
   try {

@@ -3,7 +3,6 @@ import { NotifyTemplateSchema, NotifyRetrySchema, NotifyProviderConfigSchema, Ch
 import type { NotifyTemplate, NotifyRetryConfig } from "./notify"
 import { ExpertDefSchema, OutputFormatSchema, validateSwarmConstraints } from "./swarm"
 import type { ExpertDef } from "./swarm"
-import { subunitSpecSchema, type SubunitSpec } from "./scheduler-job"
 import { parseTokenAmount } from "../parse-token-amount"
 
 /**
@@ -195,7 +194,7 @@ export const InteractionAgentSchema = z.object({
 
 export interface NodeDef {
   id: string
-  type: "bash" | "python" | "agent" | "condition" | "approval" | "loop" | "swarm" | "interaction" | "sub_workflow" | "dynamic_sub_workflow" | "octopus_agent" | "task_dispatch"
+  type: "bash" | "python" | "agent" | "condition" | "approval" | "loop" | "swarm" | "interaction" | "sub_workflow" | "dynamic_sub_workflow" | "octopus_agent"
   model?: string
   engine?: string
   timeout?: number
@@ -306,17 +305,6 @@ export interface NodeDef {
   output_mapping?: Record<string, string>
   on_error?: "fail" | "continue"
 
-  // task_dispatch — fan-out a child schedule for composite tasks (G1 pause-resume).
-  // input_mapping/output_mapping are reused from sub_workflow above. The parent
-  // composition-wf node pauses (reusing interaction/approval infra) until the child
-  // schedule completes; child output flows back via output_mapping into
-  // $<taskDispatchId>.output.<key> for downstream aggregation nodes.
-  // subunit is a string reference (e.g. "$iteration.subunit") resolved by the
-  // executor to a SubunitSpec from the composition loop / task_spec.subunits.
-  subunit?: string
-  workflow_ref?: string
-  await?: boolean
-
   // octopus_agent
   version?: string
   min_stage?: "alpha" | "beta" | "rc" | "stable"
@@ -341,7 +329,7 @@ export interface NodeDef {
 export const NodeSchema: z.ZodType<NodeDef> = z.lazy(() =>
   z.object({
     id: z.string(),
-    type: z.enum(["bash", "python", "agent", "condition", "approval", "loop", "swarm", "interaction", "sub_workflow", "dynamic_sub_workflow", "octopus_agent", "task_dispatch"]),
+    type: z.enum(["bash", "python", "agent", "condition", "approval", "loop", "swarm", "interaction", "sub_workflow", "dynamic_sub_workflow", "octopus_agent"]),
     model: z.string().optional(),
     engine: z.string().optional(),
     timeout: z.number().int().positive().optional(),
@@ -434,13 +422,6 @@ export const NodeSchema: z.ZodType<NodeDef> = z.lazy(() =>
     output_mapping: z.record(z.string(), z.string()).optional(),
     on_error: z.enum(["fail", "continue"]).optional(),
 
-    // task_dispatch (G1) — subunit is a string reference resolved at runtime
-    // from a composition loop iteration (e.g. "$iteration.subunit") to a
-    // SubunitSpec from task_spec.subunits.
-    subunit: z.string().optional(),
-    workflow_ref: z.string().optional(),
-    await: z.boolean().optional(),
-
     // octopus_agent
     version: z.string().optional(),
     min_stage: z.enum(["alpha", "beta", "rc", "stable"]).optional(),
@@ -503,11 +484,25 @@ export const WorkflowInputSchema = z.object({
   default: z.string().default(""),
 })
 
+/** Release stage. `release` = published, discoverable by the main chat;
+ *  `snapshot` = dev/in-progress, hidden from chat discovery. */
+export const WorkflowStageSchema = z.enum(["release", "snapshot"])
+export type WorkflowStage = z.infer<typeof WorkflowStageSchema>
+
 export const WorkflowSchema = z.object({
   apiVersion: z.string().regex(/^octopus\/v\d+$/, "apiVersion must match octopus/v{number}"),
   kind: z.literal("Workflow"),
   name: z.string(),
   description: z.string().optional(),
+  // Release metadata (workflow versioning): `version` is the displayed numeric
+  // release version; `stage` gates main-chat discovery. Both optional so old
+  // YAML files and programmatic WorkflowDef literals keep compiling —
+  // consumers resolve `stage ?? "snapshot"` (fail-closed).
+  version: z
+    .union([z.string(), z.number()])
+    .optional()
+    .transform((v) => (v === undefined ? undefined : String(v))),
+  stage: WorkflowStageSchema.optional(),
   model: z.string().optional(),
   engine: z.string().optional(),
   timeout: z.number().int().positive().optional(),

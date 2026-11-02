@@ -598,3 +598,38 @@ nodes:
     })
   })
 })
+
+describe("Workflow release metadata", () => {
+  const base = (extra: string) => `
+apiVersion: octopus/v1
+kind: Workflow
+name: versioned
+${extra}
+nodes:
+  - id: step1
+    type: bash
+    bash: echo hello
+`
+
+  it("parses version and stage", () => {
+    const wf = parseWorkflow(base("version: 1.2.3\nstage: release"))
+    expect(wf.version).toBe("1.2.3")
+    expect(wf.stage).toBe("release")
+  })
+
+  it("normalizes numeric versions to strings", () => {
+    const wf = parseWorkflow(base("version: 2\nstage: snapshot"))
+    expect(wf.version).toBe("2")
+    expect(wf.stage).toBe("snapshot")
+  })
+
+  it("leaves both fields undefined when absent (consumers default to snapshot)", () => {
+    const wf = parseWorkflow(base(""))
+    expect(wf.version).toBeUndefined()
+    expect(wf.stage).toBeUndefined()
+  })
+
+  it("rejects an unknown stage", () => {
+    expect(() => parseWorkflow(base("stage: prod"))).toThrow(/stage/)
+  })
+})

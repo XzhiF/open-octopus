@@ -383,8 +383,8 @@ describe("05: spec-field source + confirmation persistence + ready gate (integra
     expect((await json<{ status: string }>(res)).status).toBe("ready")
   })
 
-  it("AC3f: ready on v3 SIMPLE task with all confirmed but NO workflow_ref → 409 + missing contains 'workflow_ref'", async () => {
-    // Option-A gate (2026-08-23): a simple v3 task (subunits < 2) materializes
+  it("AC3f: ready on v3 task with all confirmed but NO workflow_ref → 409 + missing contains 'workflow_ref'", async () => {
+    // Option-A gate (2026-08-23): a v3 task materializes
     // workflow_chain[0].workflow_ref from tasks.workflow_ref; an empty ref fails at
     // runtime ("Workflow not found"), so enqueue must be rejected up-front.
     const id = insertTask(db, {
@@ -407,35 +407,6 @@ describe("05: spec-field source + confirmation persistence + ready gate (integra
     // Task stays draft (not a partial flip)
     const row = db.prepare("SELECT status FROM tasks WHERE id = ?").get(id) as { status: string }
     expect(row.status).toBe("draft")
-  })
-
-  it("AC3g: ready on v3 COMPOSITE task (2+ subunits) with no task-level workflow_ref → 200 (built-in composition-task)", async () => {
-    // Composite materializes to the built-in 'composition-task' ref, so a
-    // task-level workflow_ref is NOT required by the option-A gate.
-    const id = insertTask(db, {
-      name: "E2E_TD_gate_comp",
-      task_spec: {
-        goal: "E2E_TD goal",
-        ac: ["E2E_TD ac1"],
-        task_type: "coding",
-        goal_confirmed: true,
-        ac_confirmed: ["E2E_TD ac1"],
-        subunits: [
-          {
-            name: "su-a", workspace_spec: { org: ORG, branch_prefix: "aa", projects: [] },
-            workflow_ref: "wf-a", input_values: {}, skills: [], resources: [],
-          },
-          {
-            name: "su-b", workspace_spec: { org: ORG, branch_prefix: "bb", projects: [] },
-            workflow_ref: "wf-b", input_values: {}, skills: [], resources: [],
-          },
-        ],
-      },
-      // workflow_ref (task-level) intentionally NULL — composite doesn't need it
-    })
-    const res = await app.request(`/api/tasks/${id}/ready`, { method: "POST" })
-    expect(res.status).toBe(200)
-    expect((await json<{ status: string }>(res)).status).toBe("ready")
   })
 
   it("AC4: confirming goal_confirmed/ac_confirmed via spec-field survives a fresh GET (DB-backed, not UI temp)", async () => {

@@ -52,7 +52,6 @@ export function TaskPlanWindow({ task, onOpenArtifacts }: { task: TaskView; onOp
       batchLoading: batchTree.loading,
       batchError: batchTree.error,
       projectCount: (task.project_ids ?? []).length,
-      composite: Array.isArray(spec.subunits) && spec.subunits.length >= 2,
     })
   }, [spec, catalog, batchTree.batches, batchTree.loading, batchTree.error, task.project_ids])
 

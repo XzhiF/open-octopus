@@ -371,7 +371,7 @@ export function createTasksRoutes(
   // ── Run history (票03/票05 — ADR-0021) ──────────────────────────────
   // GET /:id/executions — this task's runs, newest first. The board's 执行历史 and the
   // 弹窗 drill-down read this instead of the retired envelope's children[]: one row per
-  // run (v4 round / composite dispatch), with the phase/round coordinates the acceptance
+  // run (v4 round), with the phase/round coordinates the acceptance
   // ledger uses and the workspace to deep-link into.
   router.get("/:id/executions", (c) => {
     try {

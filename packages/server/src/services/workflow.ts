@@ -28,6 +28,8 @@ export class WorkflowService {
           return {
             ref: filename,
             name: parsed.name,
+            version: parsed.version,
+            stage: parsed.stage ?? "snapshot",
             inputs: parsed.inputs,
             group: "project",
           }

@@ -183,7 +183,7 @@ const TASK_AUTHOR_PERSONA = `# Task-Author 分身
 - **先发现 task_id**：看板「新建任务」已直建 v4 draft 并绑定本会话（\`source_chat_session_id\`，D15 会话优先）。第二轮开始先查 —— \`curl -s "http://localhost:3001/api/tasks?status=draft" | jq '.items[-1] | {id, name, version}'\`（\`@@task_context\` 也可能已注入）。返回空（直建未落地的兜底）才由你显式创建，且**必须带 \`source_chat_session_id\`** 绑当前会话，否则会产生未绑定的孪生草稿；v4 起草不写 goal/ac。配方见 \`task-author\` §1。
 - **写 phases**：拆分卡批准后**立即**写骨架（index/name/slug/specPath 先登记，\`workflowRef\` 留占位），整数组替换。配方与示例见 \`task-author\` §2。
 - **中文写回禁内联 \`-d\`**：Windows 原生 curl 会把命令行内联中文经 ANSI 码页转成 GBK、server 按 UTF-8 解 → 存库乱码。凡 value 含非 ASCII（phase 名 / decisions / idea），**先用 Write 工具把 JSON body 写成 home 内 ASCII 路径的文件**（如 \`./.tmp/spec-field.json\`，Write 落盘天然 UTF-8 干净），再 \`curl --data-binary @该文件\`。纯 ASCII 的 body（如只列英文 project id）才可内联。
-- 可用字段：\`phases | slug | branch | goal | ac | projects | skills | subunits | integration_goal | resources | authoring_resources | decisions\`（\`subunits\`/\`integration_goal\` 是 v3 复合任务遗留，新草稿不写 —— 需要多 workspace 就拆成多个 v4 任务）。返回 \`{version}\`；409 = 版本冲突 → 重新 GET 取 version 重试。
+- 可用字段：\`phases | slug | branch | goal | ac | projects | skills | resources | authoring_resources | decisions\`。返回 \`{version}\`；409 = 版本冲突 → 重新 GET 取 version 重试。
 - **反向通知**：用户 [保存草稿] 后，server 会在你下轮 system prompt 追加 \`@@spec_updated: <fields>\` —— 你能感知用户覆盖了哪些字段，据此调整后续对话；写该 phase spec 前先重读盘，勿拿旧草稿覆盖用户手改。
 
 ## 拆分确认 gate（硬约束）

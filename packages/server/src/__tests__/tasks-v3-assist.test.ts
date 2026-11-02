@@ -6,7 +6,7 @@
 // Real DB (applySchema) + real DAOs + real TaskHomeService (temp home). The
 // ExecutionService is mocked (getExecutionService → spy) so the engine doesn't
 // really run an LLM — this test asserts the SERVER-side trigger/materialization
-// + output parsing, mirroring composite-dispatch.test.ts / tasks-v3-dispatch.
+// + output parsing, mirroring tasks-v3-dispatch.
 // AC4's log/output reading is exercised by directly inserting node_executions
 // rows (the same shape the real engine's onNodeEnd writes) + JSONL log files.
 //
@@ -37,7 +37,7 @@ import { AgentSessionDAO } from "../db/dao"
 
 const ORG = "e2e-td-07"
 
-// ── Mock getExecutionService (mirrors composite-dispatch.test.ts) ──────
+// ── Mock getExecutionService (mirrors the task dispatch tests) ──────
 // The engine isn't really run; create/start/registerExternalCallbacks are
 // spies so we can assert the trigger materializes the right calls. The
 // onComplete callback is captured so AC6's reap can be driven explicitly.
@@ -84,8 +84,7 @@ function newDb(): Database.Database {
   // applySchema re-enables FKs (legacy migration side-effect), so turn them OFF
   // AFTER schema application. The trigger path inserts a real executions row
   // referencing the temp workspace; reaping the workspace row while the
-  // execution still references it would otherwise trip FK RESTRICT (mirrors
-  // 06-schedules-origin-materialize.test.ts:133 + composite-dispatch.test.ts).
+  // execution still references it would otherwise trip FK RESTRICT.
   db.pragma("foreign_keys = OFF")
   return db
 }

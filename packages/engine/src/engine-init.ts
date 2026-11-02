@@ -61,7 +61,7 @@ export interface EngineInitOptions {
   logger?: JsonlLogger
   /**
    * 07 (SG7): config.requires from the schedule's WorkflowConfig (propagated
-   * by materializeTaskSpecToConfig from tasks.resources[] + subunit.resources[]).
+   * by materializeTaskSpecToConfig from tasks.resources[]).
    * UNION-merged with workflow.requires for provisioning — does NOT override
    * workflow-defined requires; duplicates across both sources are deduped.
    * Optional: existing call sites (no schedule config) omit it and behavior

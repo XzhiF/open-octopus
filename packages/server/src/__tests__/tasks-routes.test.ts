@@ -5,8 +5,7 @@
 // Verifies:
 //   AC1: /api/tasks CRUD + spec-field + ready + abort endpoints work
 //   AC2 (票03 改写): ready 是**纯状态动作** —— 过闸 + draft→ready，不建任何
-//        schedules 信封行（simple/composite 都一样；composite 的子单元是运行时
-//        的 executions 行，见 ADR-0021 §11，不是入队时的协调者行）。
+//        schedules 信封行。
 //   AC4 (票03 改写): abort → 该任务的实例行被停 + tasks.status=aborted + SSE，
 //        且不碰 schedule 表。
 //
@@ -203,7 +202,6 @@ describe("03: /api/tasks routes + TasksService (integration)", () => {
     }>(res)
     expect(detail.id).toBe(id)
     // 运行历史直连 executions.task_id —— 不再经信封 + schedule_executions 两跳。
-    expect(detail.children).toBeUndefined()
     expect(detail.executions).toHaveLength(1)
     expect(detail.executions[0].status).toBe("completed")
     expect(detail.execution).toMatchObject({ status: "completed" })
@@ -211,35 +209,17 @@ describe("03: /api/tasks routes + TasksService (integration)", () => {
   })
 
   // ── 票05 (ADR-0021): the run read model — fan-out labels + a red run's reason ──
-  it("detail + history project the composite fan-out and the failure reason (票05 read model)", async () => {
+  it("detail + history project the failure reason (票05 read model)", async () => {
     const id = insertTask(db, { name: "E2E_TD_readmodel" })
     const rootId = seedInstanceRow(db, id, "failed")
     // The reason a failure writer leaves on the row (var_pool.error) — setLaunchStatus /
     // retireLaunch both write this key, which is what error_summary reads.
     db.prepare("UPDATE executions SET var_pool = ?, name = ? WHERE id = ?")
       .run(JSON.stringify({ error: "启动失败: worktree 不可用" }), "coordinator", rootId)
-    // Two subunit arms: child executions of the root, task-bound, each with its own ws.
-    const arm = (n: string, status: string) => {
-      const wsId = `e2e-td-child-ws-${n}`
-      db.prepare(
-        `INSERT INTO workspaces (id, name, repo_group, status, path, source, task_id, created_at, updated_at)
-         VALUES (?, ?, ?, 'active', ?, 'task', ?, datetime('now'), datetime('now'))`,
-      ).run(wsId, `child-${n}`, ORG, `/tmp/e2e-td-${wsId}`, id)
-      db.prepare(
-        `INSERT INTO executions (id, workspace_id, parent_id, child_index, workflow_ref, workflow_name,
-           name, status, org, created_at, updated_at, task_id)
-         VALUES (?, ?, ?, ?, 'wf/x', 'x', ?, ?, ?, datetime('now'), datetime('now'), ?)`,
-      ).run(`e2e-td-child-${n}`, wsId, rootId, Number(n), `subunit-${n}`, status, ORG, id)
-    }
-    arm("0", "completed")
-    arm("1", "failed")
 
     const res = await app.request(`/api/tasks/${id}`)
     const detail = await json<{
-      executions: Array<{
-        id: string; status: string; name: string | null; error_summary: string | null
-        children?: Array<{ id: string; name: string | null }>
-      }>
+      executions: Array<{ id: string; status: string; name: string | null; error_summary: string | null }>
       trigger_enabled: boolean
       trigger_mode: string
     }>(res)
@@ -248,9 +228,7 @@ describe("03: /api/tasks routes + TasksService (integration)", () => {
     const root = detail.executions.find((e) => e.id === rootId)!
     // error_summary: the badge's one-liner, previously only on the history endpoint.
     expect(root.error_summary).toBe("启动失败: worktree 不可用")
-    // The fan-out is nested under the round that dispatched it, labelled by `name` —
-    // 票04's row shape plus this field is what replaced schedules.origin_role='subunit'.
-    expect(root.children?.map((c) => c.name).sort()).toEqual(["subunit-0", "subunit-1"])
+    expect(root.name).toBe("coordinator")
     // Wire types the envelope forced into strings: the switch is a boolean, the mode an
     // enum member, both read off the task's own columns.
     expect(typeof detail.trigger_enabled).toBe("boolean")
@@ -260,12 +238,11 @@ describe("03: /api/tasks routes + TasksService (integration)", () => {
     // cannot show something the history tab contradicts.
     const hist = await json<{
       executions?: never
-      items: Array<{ id: string; current: boolean; error_summary: string | null; children?: unknown[] }>
+      items: Array<{ id: string; current: boolean; error_summary: string | null }>
     }>(await app.request(`/api/tasks/${id}/executions`))
     const histRoot = hist.items.find((e) => e.id === rootId)!
     expect(histRoot.error_summary).toBe(root.error_summary)
     expect(histRoot.current).toBe(true)
-    expect(histRoot.children).toHaveLength(2)
   })
 
   it("a green run never surfaces a stale error key (error_summary is terminal-failure only)", async () => {
@@ -433,48 +410,6 @@ describe("03: /api/tasks routes + TasksService (integration)", () => {
       next_fire_at: string | null
     }
     expect(trig).toEqual({ trigger_mode: "manual", next_fire_at: null })
-  })
-
-  it("POST /:id/ready (composite, 2+ subunits) → 同样零信封（子单元是运行时执行行）", async () => {
-    const id = insertTask(db, {
-      name: "E2E_TD_ready_composite",
-      task_spec: JSON.stringify({
-        goal: "composite task",
-        ac: ["ac1"],
-        subunits: [
-          {
-            name: "sub-A",
-            workspace_spec: { org: ORG,
-              branch_prefix: "suba",
-              projects: [{ name: "proj-A", source_path: "", group: "" }],
-            },
-            workflow_ref: "built-in/sub-a.yaml",
-            input_values: {},
-            skills: [],
-            resources: [],
-          },
-          {
-            name: "sub-B",
-            workspace_spec: { org: ORG,
-              branch_prefix: "subb",
-              projects: [{ name: "proj-B", source_path: "", group: "" }],
-            },
-            workflow_ref: "built-in/sub-b.yaml",
-            input_values: {},
-            skills: [],
-            resources: [],
-          },
-        ],
-      }),
-      project_ids: JSON.stringify(["proj-A"]),
-    })
-    const res = await app.request(`/api/tasks/${id}/ready`, { method: "POST" })
-    expect(res.status).toBe(200)
-    // 旧版这里断言「1 个 coordinator 信封行」——composite 的协调者是**一轮执行**
-    // （executions 行，chain[0]=composition wf），子单元是它的 child 行（§11），
-    // 都发生在领取之后，入队一行都不写。
-    expect(scheduleTableCounts(db)).toEqual({ schedules: 0, executions: 0, workspaces: 0 })
-    expect(db.prepare("SELECT COUNT(*) c FROM executions WHERE task_id=?").get(id)).toEqual({ c: 0 })
   })
 
   it("POST /:id/ready rejects non-draft with 409", async () => {

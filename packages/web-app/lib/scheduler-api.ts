@@ -55,43 +55,8 @@ export type {
 }
 
 // ============ JobDetail ============
-// GET /jobs/:id returns a plain SchedulerJob (ticket 10/13 used to hang a composite
-// children[]/dag[] off it, read out of the per-task envelope rows; ADR-0021 票03
-// deleted SchedulerService.findCompositeChildren/buildDagFromTaskSpec, and a task's
-// runs now live on GET /api/tasks/:id instead. The alias stays because getJob/abortJob
-// are typed with it and because the two composite view-models below are still the
-// shapes components/tasks/composite-dag.tsx renders — it builds them client-side from
-// task_spec.subunits.
-
-export interface JobDetailDagNode {
-  id: string
-  type: "subunit" | "integration"
-  label: string
-  workflow_ref?: string
-}
-
-export interface JobDetailDagEdge {
-  from: string
-  to: string
-}
-
-export interface JobDetailDag {
-  nodes: JobDetailDagNode[]
-  edges: JobDetailDagEdge[]
-}
-
-/** One run row in the composite drill-down (a task execution badge projected onto
- *  the DAG's child axis). `run_id` was `schedule_id` while children were envelope
- *  rows; it is now the execution id, and 票05 put the subunit label ON the badge
- *  (`TaskExecutionBadge.name`, written at dispatch), so `subunit_name` reads that
- *  first — the workflow_ref→spec match is only the name-less fallback now. */
-export interface JobDetailChild {
-  run_id: string
-  name: string
-  status: string
-  workflow_ref: string
-  subunit_name: string
-}
+// GET /jobs/:id returns a plain SchedulerJob. A task's runs live on
+// GET /api/tasks/:id; the old composite children[]/dag[] view was retired.
 
 /** The built-in code-job rows (the `job`-type system duties, e.g. 系统 · 任务生命周期)
  *  carry a DETERMINISTIC id — `builtin-<handler>` — which is the server's seed key

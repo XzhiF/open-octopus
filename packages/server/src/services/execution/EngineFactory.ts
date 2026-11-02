@@ -6,7 +6,7 @@ import { AgentVersionDAO } from "../../db/dao/agent-version-dao"
 import type { EngineCallbacks } from "@octopus/engine"
 import { WorkflowEngine } from "@octopus/engine"
 import { CrossExecResolver, collectNodeEngines, parseWorkflow, WorkflowRef, VersionResolver } from "@octopus/shared"
-import type { WorkflowDef, AgentVersionInfo, TaskDispatchPort } from "@octopus/shared"
+import type { WorkflowDef, AgentVersionInfo } from "@octopus/shared"
 import { getProvider } from "@octopus/providers"
 import { selectAndInstallAgents } from "../resource-agent-service"
 import { buildPhaseExpertContext, injectPhaseExpertContext } from "../tasks/phase-expert-context"
@@ -14,25 +14,11 @@ import { existsSync, readFileSync } from "fs"
 import { join } from "path"
 
 export class EngineFactory implements IEngineFactory {
-  // G1: server-provided TaskDispatchPort, injected into every engine via
-  // engine.setTaskDispatchPort (createSessionFn precedent). Optional — a missing
-  // injection surfaces as a deterministic task_dispatch node failure, not a crash.
-  private taskDispatchPort?: TaskDispatchPort
-
   constructor(
     private ctx: ServiceContext,
     private dao: ExecutionDAO,
     private workspacePath: string,
   ) {}
-
-  /**
-   * Set the TaskDispatchPort (G1) — wired by ExecutionLifecycle once it has
-   * constructed the TaskDispatchService for this workspace. Every engine built
-   * afterwards (createEngine/reconstructEngine) gets the port via setTaskDispatchPort.
-   */
-  setTaskDispatchPort(port: TaskDispatchPort): void {
-    this.taskDispatchPort = port
-  }
 
   /**
    * Resolve workflow with snapshot priority.
@@ -163,12 +149,6 @@ export class EngineFactory implements IEngineFactory {
       // agent_versions table may not exist yet (pre-migration) — create empty resolver as fallback
       console.warn(`[EngineFactory] VersionResolver fallback (empty): ${err instanceof Error ? err.message : err}`)
       engine.setVersionResolver(new VersionResolver([]))
-    }
-
-    // G1: inject the TaskDispatchPort so task_dispatch nodes can fan out child
-    // schedules. No-op if unset (engine handles undefined port as a node failure).
-    if (this.taskDispatchPort) {
-      engine.setTaskDispatchPort(this.taskDispatchPort)
     }
 
     return engine

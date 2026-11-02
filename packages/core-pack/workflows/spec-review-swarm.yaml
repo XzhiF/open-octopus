@@ -15,6 +15,8 @@ apiVersion: octopus/v1
 kind: Workflow
 name: spec-review-swarm
 description: "Spec 评审（review 模式）：多专家就现有 goal/ac 给意见，host 汇总为三段式 JSON"
+version: 1.0.0
+stage: release
 
 variables:
   goal: ""

@@ -115,7 +115,7 @@ function d0(iso: string): string {
   return new Date(iso).toLocaleString("zh-CN", { month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" })
 }
 
-// ── Inline trigger/cancel actions (shared by SimpleExecutionMode + CompositeMode) ──
+// ── Inline trigger/cancel actions ──
 
 /** Renders per task state (v39, 票03 语义):
  *  · ready + 无游标        → 「触发」 button (opens TriggerDialog)

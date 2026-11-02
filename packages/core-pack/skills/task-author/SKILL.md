@@ -10,7 +10,7 @@ version: 3.5.2
 
 把用户的模糊需求转成 **v4 task_spec**：可拆成多个 Phase 的任务契约，经 [拆分确认] → [逐 phase 绑定] → 用户 [入队]，看板按 phase 逐轮调度，每 phase 末一道**人工验收 Gate**。
 
-> 本技能**不再起草 v3**（goal/ac 双确认 + skill_groups + preset 选流）；存量 v3/generic/composite 走旧链（K13 停用不物理删）。你产出的一律 `task_spec.format = "v4"`。
+> 本技能**不再起草 v3**（goal/ac 双确认 + skill_groups + preset 选流）；存量 v3/generic 走旧链（K13 停用不物理删）。你产出的一律 `task_spec.format = "v4"`。
 
 ## 契约：WHAT 固定、两端自由
 
@@ -230,7 +230,7 @@ curl -s -X POST "http://localhost:$PORT/api/tasks/$TASK_ID/spec-field" \
 | `resources` / `authoring_resources` | ResourceRef[] | 执行期 requires / 起草期注入（见「资源加载」） |
 | `acceptance_verify` / `acceptance_preview` / `acceptance_runbook` | 见「验收台预设」 | task 级，全 phase 复用 |
 
-返回 `{version}`；409 = 用户刚 [保存草稿] → 重新 `GET /api/tasks/:id` 取 version 重试。`workflowRef` 可解析集 = 已安装内置（`group/name`，如 `built-in/task-fix`）∪ task home `workflows/` 文件名，**不接受**全局 `~/.octopus/workflows/`；绑定时自查，ready gate 由 server 复核（不可解析 → `phase:<i>:workflow-ref`）。旧字段 `goal`/`ac`/`workflow_ref`/`subunits`/`integration_goal`/`skills` 是 v3 面，v4 起草一律不写。
+返回 `{version}`；409 = 用户刚 [保存草稿] → 重新 `GET /api/tasks/:id` 取 version 重试。`workflowRef` 可解析集 = 已安装内置（`group/name`，如 `built-in/task-fix`）∪ task home `workflows/` 文件名，**不接受**全局 `~/.octopus/workflows/`；绑定时自查，ready gate 由 server 复核（不可解析 → `phase:<i>:workflow-ref`）。旧字段 `goal`/`ac`/`workflow_ref`/`skills` 是 v3 面，v4 起草一律不写。
 
 ### 3. 编辑 draft（PUT，整-spec 乐观锁）
 

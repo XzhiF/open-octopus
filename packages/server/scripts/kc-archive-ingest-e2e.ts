@@ -84,8 +84,8 @@ function seedHonestTask(db: Database.Database, taskHome: TaskHomeService): strin
     decisions: ["D1: 服务端 session 而非 JWT（见 ADR 0001）"],
     branch: "feat-kc10-e2e-20261013",
     phases: [
-      { index: 1, name: "session 化改造", slug: "sess", specPath: "./.scratch/kc10-e2e/sess/spec.md", workflowRef: "built-in/task-dev", inputValues: {} },
-      { index: 2, name: "强制下线与回归", slug: "kick", specPath: "./.scratch/kc10-e2e/kick/spec.md", workflowRef: "built-in/task-dev", inputValues: {} },
+      { index: 1, name: "session 化改造", slug: "sess", specPath: "./.scratch/kc10-e2e/sess/spec.md", workflowRef: "built-in/matt-spec-dev", inputValues: {} },
+      { index: 2, name: "强制下线与回归", slug: "kick", specPath: "./.scratch/kc10-e2e/kick/spec.md", workflowRef: "built-in/matt-spec-dev", inputValues: {} },
     ],
   }
   db.prepare(`

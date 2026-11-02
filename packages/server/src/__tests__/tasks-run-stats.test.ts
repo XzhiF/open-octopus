@@ -2,7 +2,7 @@
 //
 // run_stats —— 看板卡 ⏱ 与验收窗 rail「实际用时」的读模型聚合：逐条 instance 执行
 // (root ∪ v4 chained round) 的 started→completed 实跑段求和；running 行计到读取刻。
-// 排队 (started NULL)、暂停未闭、composite fan-out 臂（parent 行，root 跨度已含它）
+// 排队 (started NULL)、暂停未闭、父行（root 跨度已含其子行）
 // 都不进和。墙钟口径（created→now 把待验收挂的那一夜算成跑时）已废 —— 见 TaskRunStats。
 
 import { describe, it, expect, beforeEach } from "vitest"
@@ -91,8 +91,6 @@ describe("run_stats — 实跑用时聚合", () => {
     seedExec(db, "e4", { ws: "ws-1", task: "t-a", status: "cancelled", started: null, completed: new Date(base - 2 * HOUR) })
     // 终态但缺 completed 戳（历史脏行）：running 以外不补 now → 不计
     seedExec(db, "e5", { ws: "ws-1", task: "t-a", status: "cancelled", started: base - 50 * MIN, completed: null })
-    // composite 子臂：parent 置位 + phase NULL → 跨度已含在 root 里，不双计
-    seedExec(db, "e6", { ws: "ws-1", task: "t-a", status: "completed", started: base - 3 * HOUR, completed: base - 170 * MIN, parent: "e1", phaseIndex: null })
 
     const item = service.listTasks().items.find((t) => t.id === "t-a")!
     expect(item.run_stats?.count).toBe(3)

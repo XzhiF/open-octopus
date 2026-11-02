@@ -39,10 +39,7 @@ import type {
 // is not importable from web:
 //   - `derived` on the detail payload (mirror of @octopus/server
 //     derive-task-view.ts — see TaskDerivedView below), and
-//   - `executions[]` on the detail payload (GET /:id run history; each badge may
-//     carry its composite fan-out in `children` — the board's list badge does
-//     NOT load children, so `children === undefined` means "not loaded", never
-//     "no subunits").
+//   - `executions[]` on the detail payload (GET /:id run history).
 // `TaskView` stays as the board-row name (the list/summary endpoints answer it);
 // `TaskDetail` is that plus the two fields above.
 
@@ -53,9 +50,7 @@ export type TaskView = Task
 
 /** TaskDetail = TaskView + run history + derived (v4 视图). */
 export type TaskDetail = TaskView & {
-  /** Every ROOT execution of this task, newest first (empty for a draft).
-   *  Composite SUBUNIT runs hang off their root's `children` (票05: detail and
-   *  /executions load the fan-out; the board badge does not). */
+  /** Every instance execution of this task, newest first (empty for a draft). */
   executions: TaskExecutionBadge[]
   derived?: TaskDerivedView
 }

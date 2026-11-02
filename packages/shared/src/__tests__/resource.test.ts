@@ -519,6 +519,12 @@ describe("ResourceManager", () => {
     fs.mkdirSync(agentsDir, { recursive: true })
     fs.writeFileSync(path.join(agentsDir, "test-agent.md"), "# Test Agent", "utf-8")
 
+    // Workflows are .yaml files; `<name>.test.yaml` fixtures must not be catalogued
+    const workflowsDir = path.join(corePackDir, "workflows")
+    fs.mkdirSync(workflowsDir, { recursive: true })
+    fs.writeFileSync(path.join(workflowsDir, "test-flow.yaml"), "apiVersion: octopus/v1\nkind: Workflow\nname: test-flow\nnodes: []", "utf-8")
+    fs.writeFileSync(path.join(workflowsDir, "test-flow.test.yaml"), "scenarios: []", "utf-8")
+
     manager = new ResourceManager({
       basePath: tmpDir,
       corePackBase: corePackDir,
@@ -541,6 +547,9 @@ describe("ResourceManager", () => {
     expect(catalog.length).toBeGreaterThanOrEqual(2)
     expect(catalog.find((e) => e.name === "test-skill" && e.type === "skill")).toBeDefined()
     expect(catalog.find((e) => e.name === "test-agent" && e.type === "agent")).toBeDefined()
+    expect(catalog.find((e) => e.name === "test-flow" && e.type === "workflow")).toBeDefined()
+    // Simulator fixtures are not workflows — never installed as resources.
+    expect(catalog.find((e) => e.name === "test-flow.test")).toBeUndefined()
   })
 
   it("install builtin skill", async () => {
