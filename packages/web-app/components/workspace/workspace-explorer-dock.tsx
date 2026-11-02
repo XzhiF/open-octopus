@@ -26,7 +26,14 @@ import {
 } from 'lucide-react'
 import { toast } from 'sonner'
 import type { FileNode } from '@/lib/types'
-import { fetchFileContent, getWorkspace, openWorkspaceDirectory, saveFileEntry } from '@/lib/api-client'
+import {
+  fetchFileContent,
+  fetchWorkspaceRuns,
+  getWorkspace,
+  openWorkspaceDirectory,
+  saveFileEntry,
+  type WorkspaceRun,
+} from '@/lib/api-client'
 import { listSessionDebugTurns } from '@/lib/agent/debug-api'
 import { useYDoc, useYMap } from '@/lib/yjs-provider'
 import { SidebarFileTree, ymapToFileNodes } from '@/components/workspace/sidebar-file-tree'
@@ -40,6 +47,7 @@ import {
   InspectorActivityPanel,
   type ActivitySnapshot,
 } from '@/components/chat-workbench/inspector-activity'
+import { RunPicker, isLiveRun } from '@/components/chat-workbench/run-picker'
 import { cn } from '@/lib/utils'
 import { useDockLabelsVisible } from '@/hooks/use-dock-labels'
 
@@ -59,6 +67,8 @@ export interface WorkspaceExplorerDockProps {
   /** 消息数 / 流式状态变化时刷新调试徽标。 */
   debugRefreshKey?: string | number
   onOpenTaskModule?: (module: TaskModule) => void
+  /** 运行列表里点了一条 → 打开指定执行的运行窗（ChatTab 负责开窗）。 */
+  onOpenRun?: (run: WorkspaceRun) => void
   /** Task action (trigger/pause/resume/abort/reopen/retry_archive/accept…). */
   onTaskAction?: (action: string) => void
   activity: ActivitySnapshot
@@ -76,7 +86,7 @@ interface EditorFile {
   extension?: string
 }
 
-type Pane = 'files' | 'activity'
+type Pane = 'files' | 'activity' | 'run'
 
 const TEXT_EXT = new Set([
   'ts', 'tsx', 'js', 'jsx', 'json', 'yaml', 'yml', 'md', 'txt', 'css', 'scss',
@@ -97,6 +107,7 @@ const EDITOR_MIN_WIDTH = 320
 const DOCK_WIDTH_ICON = 48
 const DOCK_WIDTH_LABEL = 59
 const PANE_WIDTH = 300
+const RUN_PANE_WIDTH = 384
 const GAP = 8
 const FLOAT_MARGIN = 12
 const SIDEBAR_DEFAULT_WIDTH = 236
@@ -158,6 +169,7 @@ export function WorkspaceExplorerDock({
   debugSessionId,
   debugRefreshKey,
   onOpenTaskModule,
+  onOpenRun,
   onTaskAction,
   activity,
   taskProject,
@@ -170,6 +182,26 @@ export function WorkspaceExplorerDock({
   const [editorOpen, setEditorOpen] = useState(false)
   const [contents, setContents] = useState<Record<string, string>>({})
   const [debugAnomalies, setDebugAnomalies] = useState(0)
+  // 运行面板的数据源（2026-11-02）：一次轮询同时供「进行中」列表与坞徽标。
+  // 只读 DB 读模型（重启后仍在），与活动面板的全局队列互不从属。
+  const [runs, setRuns] = useState<WorkspaceRun[]>([])
+  useEffect(() => {
+    if (!workspaceId) {
+      setRuns([])
+      return
+    }
+    let alive = true
+    const load = async () => {
+      try {
+        const res = await fetchWorkspaceRuns(workspaceId)
+        if (alive) setRuns(Array.isArray(res?.runs) ? res.runs : [])
+      } catch { /* 服务端离线：保留上一份快照 */ }
+    }
+    void load()
+    const timer = window.setInterval(load, 3_000)
+    return () => { alive = false; window.clearInterval(timer) }
+  }, [workspaceId])
+  const liveRunCount = useMemo(() => runs.filter(isLiveRun).length, [runs])
   // 文件面板头部显示工作空间真实路径，点击进入系统文件管理器（2026-10-28）。
   const [workspacePath, setWorkspacePath] = useState<string | null>(null)
   useEffect(() => {
@@ -261,7 +293,7 @@ export function WorkspaceExplorerDock({
     return () => window.removeEventListener('resize', onResize)
   }, [])
 
-  const editorRight = FLOAT_MARGIN + dockWidth + GAP + (pane ? PANE_WIDTH : 0)
+  const editorRight = FLOAT_MARGIN + dockWidth + GAP + (pane ? (pane === 'run' ? RUN_PANE_WIDTH : PANE_WIDTH) : 0)
   const availableWidth = Math.max(
     EDITOR_MIN_WIDTH,
     viewportWidth - (viewportWidth >= 768 ? sidebarWidth : 0) - editorRight - 24,
@@ -420,8 +452,8 @@ export function WorkspaceExplorerDock({
       attention?: boolean
       /** 没有工作区时（纯会话）文件 / 活动不可用。 */
       disabled?: boolean
-      /** 徽标底色：默认青（活动）；调试用琥珀（异常）。 */
-      badgeTone?: 'cyan' | 'amber'
+      /** 徽标底色：默认青（活动）；调试用琥珀（异常）；运行中运行数用绿。 */
+      badgeTone?: 'cyan' | 'amber' | 'green'
       /** 绿点：该入口正在记录（调试）。 */
       recording?: boolean
     },
@@ -462,7 +494,7 @@ export function WorkspaceExplorerDock({
         <span
           className={cn(
             'absolute -right-0.5 -top-0.5 grid min-w-3.5 place-items-center rounded-full px-0.5 font-mono text-[8px] font-bold text-pop-bg',
-            opts.badgeTone === 'amber' ? 'bg-pop-amber' : 'bg-pop-cyan',
+            opts.badgeTone === 'amber' ? 'bg-pop-amber' : opts.badgeTone === 'green' ? 'bg-pop-green' : 'bg-pop-cyan',
           )}
         >
           {opts.badge}
@@ -558,7 +590,7 @@ export function WorkspaceExplorerDock({
           className="absolute top-14 z-30 hidden flex-col overflow-hidden rounded-2xl border border-white/[0.08] bg-pop-paper/95 shadow-pop-lg backdrop-blur-xl lg:flex"
           style={{
             right: FLOAT_MARGIN + dockWidth + GAP,
-            width: PANE_WIDTH,
+            width: pane === 'run' ? RUN_PANE_WIDTH : PANE_WIDTH,
             height: 'min(700px, calc(100% - 160px))',
           }}
         >
@@ -571,6 +603,16 @@ export function WorkspaceExplorerDock({
               onOpenDirectory={workspacePath ? () => void openDirectory() : undefined}
               selectedPath={activePath ?? undefined}
               onFileSelect={(file) => void openFile(file)}
+            />
+          ) : pane === 'run' ? (
+            <RunPicker
+              workspaceId={workspaceId}
+              runs={runs}
+              activeRunId={taskWindows?.run?.runTarget?.executionId ?? null}
+              onPick={(run) => {
+                setPane(null)
+                onOpenRun?.(run)
+              }}
             />
           ) : (
             <InspectorActivityPanel workspaceId={workspaceId} snapshot={activity} />
@@ -643,6 +685,20 @@ export function WorkspaceExplorerDock({
           const record = taskWindows?.[id]
           const open = !!record && !record.minimized
           const minimized = !!record?.minimized
+          // 运行入口是「列表」而不是「直接开窗」：先看这份空间一共有几次运行，
+          // 系统工作流（验收规划）与任务轮次都在同一个列表里。
+          if (id === 'run') {
+            return dockButton('pane:run', label, Icon, {
+              active: pane === 'run' || open,
+              onClick: () => togglePane('run'),
+              module: id,
+              pane: 'run',
+              testId: 'dock-run',
+              badge: liveRunCount,
+              badgeTone: 'green',
+              marker: minimized ? 'minimized' : open ? 'open' : undefined,
+            })
+          }
           return dockButton(`task:${id}`, label, Icon, {
             active: open,
             attention: id === 'acceptance' && status === 'awaiting_review' && !open,

@@ -364,6 +364,22 @@ export class AcceptancePlanService {
           round_index: roundIndex,
         }),
       })
+      // 主 Chat 的「工作流运行」卡（2026-11-02）：执行层状态，卡本身零 LLM，
+      // 终态由前端轮询执行详情得到。落卡失败不阻塞规划。
+      try {
+        getChatEventBridge().requestWorkflowRunCard({
+          taskId,
+          executionId: execution.id,
+          workspaceId: execRow.workspace_id,
+          workflowRef: ACCEPTANCE_PLAN_WORKFLOW_REF,
+          workflowName: "验收规划",
+          system: true,
+          phaseIndex,
+          roundIndex,
+        })
+      } catch {
+        /* best-effort */
+      }
       registry.service.registerExternalCallbacks(
         {
           onComplete: ((_args?: unknown) => {

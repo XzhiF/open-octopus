@@ -12,6 +12,7 @@ import { useBillingCurrency } from '@/lib/billing-currency'
 import { THINKING_TONE, TOOL_TONE } from '@/lib/agent/chat-colors'
 import type { TurnStats } from '@/lib/turn-stats'
 import { TaskStatusCard } from './task-status-card'
+import { WorkflowRunCard } from './workflow-run-card'
 import { AcceptanceCheckCard } from './acceptance-check-card'
 import { ArchiveSummaryCard } from './archive-summary-card'
 
@@ -320,6 +321,11 @@ function TuiMeta({ thinking, toolCalls, timeline, stats, interrupted }: {
  *  prompt, so the cached prefix stays intact. */
 function ActivityEventCard({ message }: { message: AgentMessage }) {
   const activity = message.activity
+  // 通用工作流运行卡（2026-11-02）：执行层（含 task_id=NULL 的系统运行），
+  // 必须在 TaskStatusCard 分支之前 —— 它同样带 activity.status/taskId。
+  if ((activity?.payload as { workflowRun?: boolean } | undefined)?.workflowRun) {
+    return <WorkflowRunCard message={message} />
+  }
   // 验收项卡（2026-10-30）：信息完整版 —— 通过标准 / 怎么验 / 机器建议 / 证据。
   const isAcceptanceCard = !!(activity?.payload as { acceptanceCheck?: boolean } | undefined)?.acceptanceCheck
   // 归档总框（2026-10-31）：对话里唯一的归档卡；明细进作业坞只读窗口。

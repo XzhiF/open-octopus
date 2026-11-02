@@ -265,6 +265,38 @@ export async function fetchExecutionDetail(workspaceId: string, executionId: str
   return handleResponse(res)
 }
 
+/** 作业坞「运行」面板的一行（GET /api/workspaces/:id/workflows/runs）。 */
+export interface WorkspaceRun {
+  id: string
+  workspaceId: string
+  workflowRef: string
+  workflowName: string
+  name: string | null
+  status: string
+  triggeredBy: string
+  /** 验收规划等系统执行行 task_id=NULL，坐标由 pipeline_config 补。 */
+  taskId: string | null
+  phaseIndex: number | null
+  roundIndex: number | null
+  /** 系统运行 —— 不计入轮次口径。 */
+  isSystem: boolean
+  createdAt: string
+  startedAt: string | null
+  completedAt: string | null
+  duration: number | null
+}
+
+/** 本工作区顶层运行（roots + v4 链式轮次；运行中在前）。只读。 */
+export async function fetchWorkspaceRuns(
+  workspaceId: string,
+  limit = 50,
+): Promise<{ runs: WorkspaceRun[] }> {
+  const res = await apiFetch(
+    `${getServerUrl()}/api/workspaces/${workspaceId}/workflows/runs?limit=${limit}`,
+  )
+  return handleResponse(res)
+}
+
 export async function createExecution(workspaceId: string, data: {
   workflow_ref: string
   name?: string

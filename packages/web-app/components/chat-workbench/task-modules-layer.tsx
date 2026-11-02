@@ -14,7 +14,7 @@ import { SessionUsageWindow } from './session-usage-window'
 import { DebugInspectorWindow } from './debug-inspector-window'
 import { ArtifactsWindow } from './artifacts-window'
 import { ArchiveWindow } from './archive-window'
-import type { TaskModule, TaskWindowMap, TaskWindowRecord } from './task-window-types'
+import type { TaskModule, TaskWindowMap, TaskWindowRecord, RunTarget } from './task-window-types'
 
 const MODULE_TITLE: Record<TaskModule, string> = {
   plan: '规格',
@@ -47,8 +47,8 @@ interface TaskModulesLayerProps {
   onMutated?: () => void
   /** Shared task action handler (chip / card / window controls). */
   onTaskAction?: (action: string) => void
-  /** External request (inspector / board acceptance) to open a module once. */
-  openModule?: { module: TaskModule; nonce: number } | null
+  /** External request (inspector / board acceptance / 作业坞运行列表) to open a module once. */
+  openModule?: { module: TaskModule; nonce: number; runTarget?: RunTarget | null } | null
   /** 会话账本里点工作流行 → 打开对应任务。 */
   onOpenLinkedTask?: (taskId: string) => void
   className?: string
@@ -105,14 +105,16 @@ export function TaskModulesLayer({
     onWindowsChange({ ...windows, [module]: { ...current, ...patch } })
   }
 
-  const openModuleAt = useCallback((module: TaskModule) => {
+  const openModuleAt = useCallback((module: TaskModule, runTarget: RunTarget | null = null) => {
     const current = windows[module]
     if (current) {
-      if (current.minimized) {
-        updateWindow(module, { minimized: false, z: maxZ + 1 })
-      } else {
-        updateWindow(module, { z: maxZ + 1 })
+      // 运行窗已经开着：只换目标执行并提到最前，不重建窗口（拖拽/尺寸保留）。
+      const patch: Partial<TaskWindowRecord> = {
+        ...(current.minimized ? { minimized: false } : {}),
+        z: maxZ + 1,
       }
+      if (module === 'run') patch.runTarget = runTarget
+      updateWindow(module, patch)
       return
     }
     const stage = size.width > 0 ? size : { width: 900, height: 600 }
@@ -145,6 +147,7 @@ export function TaskModulesLayer({
       maximized: false,
       restoreRect: null,
       z: maxZ + 1,
+      ...(module === 'run' ? { runTarget } : {}),
     }
     onWindowsChange({ ...windows, [module]: record })
   }, [windows, onWindowsChange, maxZ, size])
@@ -152,7 +155,7 @@ export function TaskModulesLayer({
   useEffect(() => {
     if (!openModule || lastNonceRef.current === openModule.nonce) return
     lastNonceRef.current = openModule.nonce
-    openModuleAt(openModule.module)
+    openModuleAt(openModule.module, openModule.runTarget ?? null)
   }, [openModule, openModuleAt])
 
   const closeWindow = (module: TaskModule) => {
@@ -173,7 +176,11 @@ export function TaskModulesLayer({
           <TaskWindow
             key={module}
             record={record}
-            title={`${MODULE_TITLE[module]} · ${task?.name ?? sessionTitle ?? '会话'}`}
+            title={
+              module === 'run' && record.runTarget
+                ? `${MODULE_TITLE[module]} · ${record.runTarget.title}`
+                : `${MODULE_TITLE[module]} · ${task?.name ?? sessionTitle ?? '会话'}`
+            }
             container={size}
             bleedLeft={containerLeft}
             focused={focusedModule === module}
@@ -201,7 +208,7 @@ export function TaskModulesLayer({
             ) : module === 'plan' ? (
               <TaskPlanWindow task={task} onOpenArtifacts={() => openModuleAt('artifacts')} />
             ) : module === 'run' ? (
-              <RunWindow task={task} onTaskAction={onTaskAction} />
+              <RunWindow task={task} runTarget={record.runTarget ?? null} onTaskAction={onTaskAction} />
             ) : module === 'acceptance' ? (
               <AcceptanceWindow
                 task={task}

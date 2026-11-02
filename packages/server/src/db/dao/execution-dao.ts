@@ -20,6 +20,37 @@ export class ExecutionDAO extends BaseDAO {
     return this.stmt("SELECT * FROM executions WHERE workspace_id = ? ORDER BY created_at DESC").all(workspaceId) as ExecutionRow[]
   }
 
+  /** 作业坞「运行」面板的数据源（2026-11-02）：本工作区**顶层运行**，运行中在前。
+   *
+   *  顶层口径与 task instance 读模型同律 —— `parent_id='0' OR parent_id IS NULL
+   *  OR phase_index IS NOT NULL`：
+   *   · v4 链式轮次（parent_id 指向前一轮、phase_index 有值）→ 保留；
+   *   · 验收规划（parent_id='0'、phase_index/task_id 为 NULL）→ 保留；
+   *   · 链式子步骤 / 子工作流（parent_id != '0' 且无 phase）→ 排除。
+   *  `node_type='scheduler-root'` 是调度器的空容器行（真运行挂成它的子执行），
+   *  列出来只会是一行没有节点的「已完成」噪音 —— 排除。
+   *
+   *  排序：进行中排前面（运行中 → 排队 → 暂停/等人），其余按 created_at 倒序。 */
+  listWorkspaceRuns(workspaceId: string, limit = 50): ExecutionRow[] {
+    return this.stmt(`
+      SELECT * FROM executions
+      WHERE workspace_id = ?
+        AND (parent_id = '0' OR parent_id IS NULL OR phase_index IS NOT NULL)
+        AND (node_type IS NULL OR node_type != 'scheduler-root')
+      ORDER BY CASE status
+                 WHEN 'running' THEN 0
+                 WHEN 'pending' THEN 1
+                 WHEN 'paused' THEN 2
+                 WHEN 'pending_approval' THEN 3
+                 WHEN 'pending_interaction' THEN 4
+                 WHEN 'pending_resume' THEN 5
+                 ELSE 6
+               END,
+               created_at DESC, rowid DESC
+      LIMIT ?
+    `).all(workspaceId, limit) as ExecutionRow[]
+  }
+
   findChildren(parentId: string): ExecutionRow[] {
     return this.stmt("SELECT * FROM executions WHERE parent_id = ? ORDER BY child_index").all(parentId) as ExecutionRow[]
   }

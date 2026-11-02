@@ -122,6 +122,8 @@ class ChatEventBridge {
   private lastTaskStatus = new Map<string, string>()
   /** 验收引导唤醒去重：task:phase:round → 已唤醒。 */
   private acceptanceGuided = new Set<string>()
+  /** 通用工作流运行卡去重：executionId → 已落卡（一次执行一张，原地走生命周期）。 */
+  private workflowRunCarded = new Set<string>()
   /** 归档引导唤醒去重（taskId → 已开始引导）。 */
   private archiveGuided = new Set<string>()
   /** 归档确认（验收后停在待归档）唤醒去重（taskId → 已问过）。 */
@@ -393,6 +395,8 @@ class ChatEventBridge {
     event: ActivityEvent
     status: string
     actions: TaskCardAction[]
+    /** 消息正文前缀（默认「任务状态」；系统工作流用「工作流运行」）。 */
+    contentPrefix?: string
   }): void {
     if (!this.db) return
     const now = new Date().toISOString()
@@ -421,7 +425,7 @@ class ChatEventBridge {
         randomUUID(),
         input.sessionId,
         "user",
-        `[任务状态 · ${input.status}] ${input.title}\n${input.detail}`,
+        `[${input.contentPrefix ?? "任务状态"} · ${input.status}] ${input.title}\n${input.detail}`,
         JSON.stringify({ displayType: "event", activity }),
         now,
       )
@@ -688,6 +692,88 @@ class ChatEventBridge {
       /* no messages table in stripped tests */
       return false
     }
+  }
+
+  /** 通用「工作流运行」卡（2026-11-02）：任何执行开跑时在任务线程落一张卡，
+   *  前端同一张卡原地轮询执行详情，走「运行中 → 已完成 / 失败」。
+   *
+   *  与任务状态卡的区别：这是**执行层**（可以是一个 task_id=NULL 的系统运行，
+   *  如验收规划），所以 payload 带 `workflowRun:true`，TuiTranscript 据此分发给
+   *  WorkflowRunCard 而不是 TaskStatusCard。
+   *
+   *  零 LLM：只落卡 + 通知会话刷新，不唤醒主 Chat（终态由前端轮询得到）。
+   *  一执行一张：按 executionId 去重。 */
+  requestWorkflowRunCard(input: {
+    taskId: string
+    executionId: string
+    workspaceId: string
+    workflowRef: string
+    workflowName: string
+    system: boolean
+    phaseIndex?: number | null
+    roundIndex?: number | null
+  }): void {
+    if (!this.db) return
+    if (this.workflowRunCarded.has(input.executionId)) return
+    let row: {
+      name?: string
+      source_chat_session_id?: string | null
+      workspace_id?: string | null
+    } | undefined
+    try {
+      row = this.db.prepare(
+        "SELECT name, source_chat_session_id, workspace_id FROM tasks WHERE id = ?",
+      ).get(input.taskId) as typeof row
+    } catch {
+      return
+    }
+    if (!row?.source_chat_session_id) return
+    let session: { clone_name?: string | null } | undefined
+    try {
+      session = this.db.prepare("SELECT clone_name FROM sessions WHERE id = ?")
+        .get(row.source_chat_session_id) as typeof session
+    } catch {
+      return
+    }
+    if (!session || session.clone_name) return // legacy clone thread — untouched
+    this.workflowRunCarded.add(input.executionId)
+
+    const coord = input.phaseIndex != null
+      ? `P${input.phaseIndex}${input.roundIndex != null ? ` · R${input.roundIndex}` : ""}`
+      : ""
+    const detail = [input.workflowRef, coord].filter(Boolean).join(" · ")
+    const title = `工作流运行 · ${input.workflowName}`
+    const workspaceId = input.workspaceId || row.workspace_id || null
+    const event = getActivityBus().publish({
+      kind: "workflow.started",
+      severity: "info",
+      title,
+      message: detail,
+      workspaceId,
+      taskId: input.taskId,
+      executionId: input.executionId,
+      sessionId: row.source_chat_session_id,
+      payload: {
+        status: "running",
+        workflowRun: true,
+        system: input.system,
+        workflowRef: input.workflowRef,
+        workflowName: input.workflowName,
+        phaseIndex: input.phaseIndex ?? null,
+        roundIndex: input.roundIndex ?? null,
+      },
+    })
+    this.appendTaskCard({
+      sessionId: row.source_chat_session_id,
+      workspaceId,
+      title,
+      detail,
+      event,
+      status: "running",
+      actions: [],
+      contentPrefix: "工作流运行",
+    })
+    this.notifySession(row.source_chat_session_id, workspaceId)
   }
 
   /** 验收方案就绪（2026-10-30 AI-native 验收；2026-10-31 两层化）：投一张

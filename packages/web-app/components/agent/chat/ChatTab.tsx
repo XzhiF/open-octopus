@@ -20,12 +20,12 @@ import { ChatSidebar } from './chat-sidebar'
 import { CwdPicker, type CwdChoice } from './cwd-picker'
 import { TaskModulesLayer } from '@/components/chat-workbench/task-modules-layer'
 import { TriggerDialog } from '@/components/tasks/trigger-dialog'
-import type { TaskModule } from '@/components/chat-workbench/task-window-types'
+import type { RunTarget, TaskModule, TaskWindowMap } from '@/components/chat-workbench/task-window-types'
 import { TaskProjectChip } from '@/components/chat-workbench/task-project-chip'
 import { WorkspaceExplorerDock } from '@/components/workspace/workspace-explorer-dock'
 import { useActivitySnapshot } from '@/components/chat-workbench/inspector-activity'
 import { WorkflowWindow } from '@/components/chat-workbench/workflow-window'
-import type { TaskWindowMap } from '@/components/chat-workbench/task-window-types'
+import { runTitle } from '@/components/chat-workbench/run-picker'
 import {
   createTask, getTask, readyTask, TaskReadyGateError, updateTask, deleteTask, abortTask,
   triggerTask, pauseTask, resumeTask, reopenTask, duplicateTask, postArchiveRetry,
@@ -97,7 +97,7 @@ export function ChatTab() {
   const [activeTask, setActiveTask] = useState<TaskView | null>(null)
   const [pendingTaskSession, setPendingTaskSession] = useState<PendingTaskSession | null>(null)
   const [creatingTask, setCreatingTask] = useState(false)
-  const [taskModuleRequest, setTaskModuleRequest] = useState<{ module: TaskModule; nonce: number } | null>(null)
+  const [taskModuleRequest, setTaskModuleRequest] = useState<{ module: TaskModule; nonce: number; runTarget?: RunTarget | null } | null>(null)
   const [taskWindows, setTaskWindows] = useState<Record<string, TaskWindowMap>>({})
   // 2026-10-31 消耗窗通用化：纯会话（无任务）也有一扇消耗窗，窗口 id 与任务窗
   // 共用 'usage'，但几何状态独立（不跟着任务切换复用/串位）。
@@ -1489,6 +1489,23 @@ export function ChatTab() {
         debugSessionId={activeSessionId}
         debugRefreshKey={`${messages.length}:${streaming ? '1' : '0'}`}
         onOpenTaskModule={(module) => setTaskModuleRequest({ module, nonce: Date.now() })}
+        onOpenRun={(run) => {
+          // 作业坞运行列表 → 指定执行（可能是验收规划这种 task_id=NULL 的系统运行）。
+          setTaskModuleRequest({
+            module: 'run',
+            nonce: Date.now(),
+            runTarget: {
+              executionId: run.id,
+              workspaceId: run.workspaceId,
+              title: runTitle(run),
+              workflowRef: run.workflowRef,
+              phaseIndex: run.phaseIndex,
+              roundIndex: run.roundIndex,
+              status: run.status,
+              system: run.isSystem,
+            },
+          })
+        }}
         onTaskAction={(action) => { if (activeTask) void executeTaskAction(activeTask.id, action) }}
         activity={activitySnapshot}
         sidebarWidth={sidebarCollapsed ? 0 : sidebarWidth}
