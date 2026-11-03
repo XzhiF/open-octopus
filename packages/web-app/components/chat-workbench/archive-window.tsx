@@ -21,6 +21,7 @@ import {
   type TaskView,
 } from '@/lib/tasks-api'
 import { Spinner } from '@/components/ui/spinner'
+import { formatDuration } from '@/lib/format'
 import { ArchivePackDialog } from './archive-pack-dialog'
 
 interface ProjectState {
@@ -102,14 +103,6 @@ function formatClock(iso?: string | null): string {
   const d = new Date(iso)
   if (Number.isNaN(d.getTime())) return '—'
   return d.toLocaleTimeString('zh-CN', { hour12: false })
-}
-
-function formatDuration(ms: number | null): string {
-  if (ms == null || !Number.isFinite(ms) || ms < 0) return '—'
-  const totalSec = Math.floor(ms / 1000)
-  const m = Math.floor(totalSec / 60)
-  const s = totalSec % 60
-  return m > 0 ? `${m}m${String(s).padStart(2, '0')}s` : `${s}s`
 }
 
 function diffMs(start?: string | null, end?: string | null): number | null {

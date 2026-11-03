@@ -336,6 +336,19 @@ export interface TaskArchiveKnowledgeItem {
   path: string
 }
 
+/** 本次归档编译产生的开放矛盾（wiki finding 只读投影；裁决在主对话里完成）。 */
+export interface TaskArchiveFinding {
+  id: string
+  kind: string
+  status: string
+  title: string
+  detail: unknown
+  pages: string[]
+  rawRef: string
+  source: string
+  createdAt: string
+}
+
 /** 知识中心投稿快照（2026-10-31 AI-native 归档总框）：素材包件数 + 编译队列状态。
  *  由 index.ts 的 archiveKnowledgeHook 装配（pack manifest + wikiWriteQueue），
  *  TasksService 自身不依赖知识中心模块。 */
@@ -366,6 +379,9 @@ export interface TaskArchiveKnowledge {
   /** 判例入档回执（archive/case-result.json）：新建 / 并档 / 失败。
    *  缺省 = 本次无判例入档（或旧任务）。 */
   case_results?: ArchiveCaseResult[]
+  /** 本次编译产生的开放矛盾（未决才列）。缺省 = 无冲突或已全部裁决。
+   *  归档 Agent 在对话里逐条问「采纳修订 / 忽略 / 讨论」。 */
+  findings?: TaskArchiveFinding[]
 }
 
 /** GET /:id/archive — the archive window's one-shot read model. */

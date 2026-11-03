@@ -72,6 +72,12 @@ export interface SessionCurationDeps {
   announce: CurationAnnouncer
   /** 队列位次快照（生产 = wikiWriteQueue.get(taskId)?.position；缺省 null=位次未知） */
   positionOf?: (taskId: string) => number | null | undefined
+  /**
+   * 编译产物里的未决矛盾 → finding 卡事件（2026-11-03 只读知识库改版）。
+   * 只返回仍 open 的 finding；卡片随终态 diff 卡一起回流发起会话，
+   * 人在主对话里采纳/忽略（知识库窗口不再承载 finding 收件箱）。
+   */
+  findingsFor?: (findingIds: string[]) => KcCardEvent[]
   now?: () => Date
 }
 
@@ -80,6 +86,7 @@ export class SessionCurationService {
   private readonly trigger: CurationTrigger
   private readonly announce: CurationAnnouncer
   private readonly positionOf?: (taskId: string) => number | null | undefined
+  private readonly findingsFor?: (findingIds: string[]) => KcCardEvent[]
   private readonly now: () => Date
 
   constructor(deps: SessionCurationDeps) {
@@ -87,6 +94,7 @@ export class SessionCurationService {
     this.trigger = deps.trigger
     this.announce = deps.announce
     this.positionOf = deps.positionOf
+    this.findingsFor = deps.findingsFor
     this.now = deps.now ?? (() => new Date())
   }
 
@@ -175,7 +183,9 @@ export class SessionCurationService {
   /**
    * 编译终态回流（CuratorTaskService.attachSettledListener 消费）：
    * 仅带 sessionId 上下文的任务回写 Lane A 终态 diff 卡（同 id 重发=判例/final
-   * 终态卡先例）；其余来源零动作。异常吞进 stderr——钩子炸不得改编译任务态。
+   * 终态卡先例）；committed 时把本次产生的未决 finding 一并回传到发起会话——
+   * 冲突决策留在主对话，知识库窗口不再有收件箱。其余来源零动作。异常吞进
+   * stderr——钩子炸不得改编译任务态。
    */
   onCompileSettled(rec: CompileTaskRecord): void {
     if (!rec.sessionId) return
@@ -193,12 +203,15 @@ export class SessionCurationService {
       ftsOk: rec.result ? rec.result.warnings.length === 0 : undefined,
       ...(rec.error ? { error: rec.error } : {}),
     }
+    const findingEvents = rec.status === "committed" && (rec.result?.findingIds?.length ?? 0) > 0
+      ? this.findingsFor?.(rec.result!.findingIds) ?? []
+      : []
     const header = rec.status === "committed"
-      ? `⚙️ 会话投喂编译已提交 ${shortHash(rec.result?.commit ?? null)}（新 ${rec.result?.created ?? 0} 页 / 触及 ${rec.result?.touched.length ?? 0} 页 · 卡上可回滚）`
+      ? `⚙️ 会话投喂编译已提交 ${shortHash(rec.result?.commit ?? null)}（新 ${rec.result?.created ?? 0} 页 / 触及 ${rec.result?.touched.length ?? 0} 页 · 卡上可回滚${findingEvents.length > 0 ? ` · ${findingEvents.length} 处冲突待你在对话里裁决` : ""}）`
       : `✕ 会话投喂编译失败：${rec.error?.code ?? "COMPILE_FAILED"}（重试=卡上重试编译钮，同 ingest-compile 队列通道）`
     const event: KcCardEvent = { id: `dif-${rec.id}`, kind: "compile-diff", ts: this.now().toISOString(), data }
     try {
-      this.announce(rec.sessionId, header, [event])
+      this.announce(rec.sessionId, header, [event, ...findingEvents])
     } catch (err) {
       process.stderr.write(`[session-curation] settled announce failed: ${err instanceof Error ? err.message : String(err)}\n`)
     }

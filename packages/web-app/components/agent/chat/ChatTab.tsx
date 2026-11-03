@@ -10,6 +10,7 @@ import { useSessionLedger } from '@/hooks/useSessionLedger'
 import { useTaskUsage } from '@/hooks/useTaskUsage'
 import { useComposerSettings } from '@/hooks/useComposerSettings'
 import { useKcFeed } from '@/hooks/use-kc-feed'
+import { useKcFindings } from '@/hooks/use-kc-findings'
 import { useChatTasks } from '@/hooks/use-chat-tasks'
 import { useRunningAgents } from '@/hooks/use-running-agents'
 import { useOrgs } from '@/hooks/useOrgs'
@@ -52,6 +53,7 @@ import {
   parseKcCardBlocks,
   type KcCardEvent,
   type KcCompileDiffCardData,
+  type KcFindingCardData,
   type KcIngestCardData,
 } from '@/lib/knowledge-center/card-protocol'
 import type { AgentMessage } from '@/lib/agent/types'
@@ -352,6 +354,9 @@ export function ChatTab() {
   // Lane B 覆盖层 store 直接复用 useKcFeed（开放点裁定：钮点击即时态由既有 hook
   // 承载，不新建基建）。动作钮链与知识中心同一套 REST（revert/retry=上下文无关）。
   const feed = useKcFeed({})
+  // 2026-11-03：知识库窗口只读后，编译出的 conflict finding 卡回流到发起会话。
+  // 这里只借 useKcFindings 的 adopt/ignore + 轮询态，不拉全库收件箱（autoLoad:false）。
+  const findingOps = useKcFindings({ autoLoad: false })
   const [composerSeed, setComposerSeed] = useState('')
 
   // Per-turn timing / token stats live on the message objects (not persisted on
@@ -395,12 +400,26 @@ export function ChatTab() {
       if (!lc) return e
       return { ...e, data: { ...(e.data as KcIngestCardData), compile: lc } }
     }
+    if (e.kind === 'finding') {
+      const d = e.data as KcFindingCardData
+      const status = findingOps.findingStatus[d.findingId]
+      const fix = findingOps.fixStates[d.findingId]
+      if (!status && !fix) return e
+      return {
+        ...e,
+        data: {
+          ...d,
+          ...(status ? { status } : {}),
+          ...(fix ? { fix } : {}),
+        },
+      }
+    }
     return e
-  }, [feed.revertStates, feed.cards])
+  }, [feed.revertStates, feed.cards, findingOps.findingStatus, findingOps.fixStates])
 
   const ctx: KcCardActionCtx = useMemo(() => ({
     // 普通会话无 KC 右栏布局：开页/看 raw 类布局动作降级为无操作（回流链只产
-    // ingest/compile-diff/source-summary 三类卡；其余动作钮在本宿主不可达）。
+    // ingest/compile-diff/source-summary/finding 等卡；其余动作钮在本宿主不可达）。
     openPage: () => {},
     openFullPage: () => {},
     openRaw: () => {},
@@ -412,13 +431,13 @@ export function ChatTab() {
       void feed.retryCompile(cardId, rawPath)
     },
     sayToCurator: text => setComposerSeed(text),
-    adoptFinding: () => {},
-    ignoreFinding: () => {},
+    adoptFinding: (findingId: string) => { void findingOps.adopt(findingId) },
+    ignoreFinding: (findingId: string) => { void findingOps.ignore(findingId) },
     backfillWiki: () => {},
     dismissBackfill: () => {},
     recompilePack: () => {},
     retireCase: () => {},
-  }), [feed.revert, feed.retryCompile, feed.restore, laneAIngestById])
+  }), [feed.revert, feed.retryCompile, feed.restore, laneAIngestById, findingOps.adopt, findingOps.ignore])
 
   // 尾挂 = Lane B 新卡（重试新任务等），同 id Lane A 优先（协议两车道契约）
   const tailEvents = useMemo(

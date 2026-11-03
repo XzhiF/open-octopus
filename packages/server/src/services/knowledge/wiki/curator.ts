@@ -589,7 +589,7 @@ export class CuratorCompileService {
       const rawRef = `sha256 ${raw.hash.slice(0, 12)}…（对质指针见本页 front-matter sources）`
       oldWork.body = appendContradictionMarker(
         oldWork.body,
-        `> 【${findingId}】与 [[${c.new_page}]]（${newWork.relPath}）冲突：旧断言「${c.old_claim}」↔ 新源断言「${c.new_claim}」。旧断言保留未覆盖——裁决（采纳修订/忽略/讨论）在知识中心对话进行；对质源 ${rawRef}`,
+        `> 【${findingId}】与 [[${c.new_page}]]（${newWork.relPath}）冲突：旧断言「${c.old_claim}」↔ 新源断言「${c.new_claim}」。旧断言保留未覆盖——裁决（采纳修订/忽略/讨论）在主对话进行；对质源 ${rawRef}`,
       )
       newWork.body = appendContradictionMarker(
         newWork.body,

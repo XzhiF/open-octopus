@@ -576,8 +576,9 @@ class ChatEventBridge {
 
     const message = [
       `[归档引导] 任务 ${taskId} 的末 phase 已放行，任务进入归档阶段（archiving）。`,
-      "第一步：调用 get_archive_state 读 git 同步进度 / 术语冲突 / 反思建议 / 知识包编译状态。",
+      "第一步：调用 get_archive_state 读 git 同步进度 / 术语冲突 / 反思建议 / 知识包编译状态 / knowledge.findings（本次编译出的未决矛盾）。",
       "然后用一两句人话告诉用户现在到哪一步、你在等什么；**不要贴表格**，明细让用户点总框里的「打开归档台看明细」。",
+      "若 knowledge.findings 非空：一次只问一条，说明旧断言 vs 新断言、涉及哪两页，问「采纳修订 / 忽略 / 讨论」；用户明确表态后调 resolve_wiki_finding(finding_id, action, confirmed=true) 并回执，不要替人决定、不要批量。",
       "接着调用 propose_wiki_entries 产出 2–5 条沉淀建议（不要贴卡片），再**一次只问一条**：直接问「要不要落 wiki」。",
       "用户说「落 / 跳过 / 都跳过 / 都落」→ 逐条调用 record_reflection_decision(confirmed=true) 执行并回执；不要代替人决定。",
       "若 preflight 被未提交改动拦下（get_archive_state 里 preflight / delta 非空）：用一两句话问用户「纳入归档」还是「排除并记录」，明确表态后调 resolve_archive_delta(decision, confirmed=true)；不要自己决定。",

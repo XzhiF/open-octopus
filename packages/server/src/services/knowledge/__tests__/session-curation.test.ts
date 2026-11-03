@@ -82,7 +82,11 @@ let curation: SessionCurationService
 let curatorTasks: CuratorTaskService
 let spy: SpyQueue
 
-function wire(opts: { compileRun?: (rawPath: string) => Promise<CuratorCompileResult>; announceThrows?: boolean } = {}) {
+function wire(opts: {
+  compileRun?: (rawPath: string) => Promise<CuratorCompileResult>
+  announceThrows?: boolean
+  findingsFor?: (findingIds: string[]) => KcCardEvent[]
+} = {}) {
   spy = new SpyQueue()
   curatorTasks = new CuratorTaskService({
     root, // tmpdir 知识根覆盖缝（绝不打真默认库/真知识根——phase-brief 纪律）
@@ -104,6 +108,7 @@ function wire(opts: { compileRun?: (rawPath: string) => Promise<CuratorCompileRe
       return { posted: true }
     },
     positionOf: () => 1,
+    ...(opts.findingsFor ? { findingsFor: opts.findingsFor } : {}),
   })
   curatorTasks.attachSettledListener(rec => curation.onCompileSettled(rec))
 }
@@ -195,6 +200,45 @@ describe("curate：url 形态——复用既有抓取/编译链 + 卡片回流�
       ftsOk: true,
     })
     expect(announces[1].header).toContain("已提交")
+  })
+
+  it("编译终态带 finding ⇒ 冲突卡随 diff 卡回流发起会话（裁决留在主对话）", async () => {
+    stubHtmlFetch()
+    wire({
+      compileRun: async () => ({
+        ...COMPILE_OK,
+        contradictions: 1,
+        findingIds: ["fnd-abc123"],
+      }),
+      findingsFor: (ids) => ids.map(id => ({
+        id,
+        kind: "finding",
+        ts: NOW.toISOString(),
+        data: {
+          findingId: id,
+          kind: "contradiction",
+          title: "矛盾：旧口径 ↔ 新口径",
+          claims: { old: "固定窗口", new: "滑动窗口" },
+          pages: ["topics/gateway.md"],
+          rawRef: COMPILE_OK.rawPath,
+          source: "compile",
+          status: "open",
+        },
+      })),
+    })
+
+    const receipt = await curation.curate({ sessionId: SESSION, mode: "text", text: "一段值得沉淀的长文本素材。" })
+    await spy.drain()
+
+    const settled = announces[1].events
+    expect(settled).toHaveLength(2)
+    expect(settled[0].id).toBe(`dif-${receipt.compileTask?.taskId}`)
+    expect(settled[1]).toMatchObject({
+      id: "fnd-abc123",
+      kind: "finding",
+      data: { status: "open", findingId: "fnd-abc123" },
+    })
+    expect(announces[1].header).toContain("1 处冲突待你在对话里裁决")
   })
 
   it("编译终态 failed ⇒ 错误码显形终态卡（不伪造 committed）", async () => {

@@ -176,6 +176,37 @@ describe("reflection store + decisions", () => {
     }
   })
 
+  it("archive read model exposes open wiki findings for the archive chat", () => {
+    insertTask("t-find")
+    service.setArchiveKnowledgeHook(() => ({
+      pack_items: 7,
+      compile_state: "committed",
+      compile_position: null,
+      findings: [{
+        id: "fnd-1",
+        kind: "contradiction",
+        status: "open",
+        title: "矛盾：固定窗口 ↔ 滑动窗口",
+        detail: { old_claim: "固定窗口", new_claim: "滑动窗口" },
+        pages: ["topics/gateway.md"],
+        rawRef: "raw/archives/task-t-find/07-archive-summary.md",
+        source: "compile",
+        createdAt: "2026-11-03T06:48:00.000Z",
+      }],
+    }))
+    try {
+      const archive = service.readArchive("t-find")
+      expect(archive.knowledge?.findings).toHaveLength(1)
+      expect(archive.knowledge?.findings?.[0]).toMatchObject({
+        id: "fnd-1",
+        status: "open",
+        pages: ["topics/gateway.md"],
+      })
+    } finally {
+      service.setArchiveKnowledgeHook(null)
+    }
+  })
+
   it("skip is recorded and idempotent", async () => {
     insertTask("t-skip")
     seedReflection()

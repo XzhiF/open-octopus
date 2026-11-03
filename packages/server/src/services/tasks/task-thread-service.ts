@@ -415,14 +415,15 @@ export class TaskThreadService {
         "  8. 用户**明确表态**后由你收口：放行 → submit_acceptance_decision(decision=\"accepted\", confirmed=true)；退回 → submit_acceptance_decision(decision=\"rejected\", feedback=用户说的原因, confirmed=true)。人点验收台是兜底，不是必需；但没有明确表态绝不放行、绝不退回，也不要把未勾场景当成通过。",
       ] : []
       const archiveLines = extra.archiveGuide ? [
-        "[归档引导] 末 phase 已放行，任务处于 archiving（只读；归档编排由服务端执行）。你的角色是播报 + 逐条问反思 + 执行用户的口头决定：",
-        "  1. 先调 get_archive_state 读 git 同步 / project 失败 / 术语冲突 / 反思 / 知识包状态。",
+        "[归档引导] 末 phase 已放行，任务处于 archiving（只读；归档编排由服务端执行）。你的角色是播报 + 逐条问反思与 wiki 冲突 + 执行用户的口头决定：",
+        "  1. 先调 get_archive_state 读 git 同步 / project 失败 / 术语冲突 / 反思 / 知识包状态 / knowledge.findings（本次编译出的未决矛盾）。",
         "  2. 用一两句人话播报进度和你在等什么；不要贴表格或逐项清单 —— 明细让用户点总框里的「打开归档台看明细」。",
-        "  3. 调 propose_wiki_entries 给出 2–5 条建议（它不再落卡片），然后**一次只问一条**：要不要落 wiki。",
-        "  4. 用户说「落 / 跳过 / 都跳过 / 都落」→ 逐条 record_reflection_decision(confirmed=true) 执行并回执；不要代替人决定。",
-        "  5. 归档失败：说清是哪个 project、什么原因；用户明确说「重试」→ retry_archive(confirmed=true)。",
-        "  6. 若 preflight 提示有未提交改动：问用户「纳入归档」还是「排除并记录」，明确表态后调 resolve_archive_delta(decision, confirmed=true)；不要自己决定。",
-        "  7. 不要声称已完成 —— done 由服务端在全部 project 的 git 同步成功后才写入。",
+        "  3. 若 knowledge.findings 非空：一次只问一条，说明「旧断言 vs 新断言、涉及哪两页」，问「采纳修订 / 忽略 / 讨论」。用户明确表态后调 resolve_wiki_finding(finding_id, action, confirmed=true) 并回执；不要替人决定，不要批量。",
+        "  4. 调 propose_wiki_entries 给出 2–5 条建议（它不再落卡片），然后**一次只问一条**：要不要落 wiki。",
+        "  5. 用户说「落 / 跳过 / 都跳过 / 都落」→ 逐条 record_reflection_decision(confirmed=true) 执行并回执；不要代替人决定。",
+        "  6. 归档失败：说清是哪个 project、什么原因；用户明确说「重试」→ retry_archive(confirmed=true)。",
+        "  7. 若 preflight 提示有未提交改动：问用户「纳入归档」还是「排除并记录」，明确表态后调 resolve_archive_delta(decision, confirmed=true)；不要自己决定。",
+        "  8. 不要声称已完成 —— done 由服务端在全部 project 的 git 同步成功后才写入。",
       ] : []
       const consentLines = extra.archiveConsent ? [
         "[归档确认] 末 phase 已通过，任务停在「待归档」(awaiting_archive)，归档尚未启动。",
@@ -452,7 +453,7 @@ export class TaskThreadService {
       head,
       "[身份] 只读回顾。任务已结束/归档，不再改代码或规格。",
       `[任务 home] ${info.taskHome}${info.wsPath ? ` · 执行工作区 ${info.wsPath}` : ""}`,
-      "[归档复盘] 可用 get_archive_state 复述归档结果、冲突与反思；未决反思可按用户明确表态继续 record_reflection_decision 落/跳过。",
+      "[归档复盘] 可用 get_archive_state 复述归档结果、冲突与反思；knowledge.findings 是本次编译出的未决矛盾，用户明确表态后可逐条 resolve_wiki_finding；未决反思可按用户明确表态继续 record_reflection_decision 落/跳过。",
       "[归档增补] 用户要补充/修正归档内容时，用 record_archive_amendment(confirmed=true) 追加只增不改的记录（可选同时落 wiki）；不要改写原报告。",
       "[跟进任务] 用户要再改代码/继续开发时，用 open_followup_task(confirmed=true) 开一个继承 spec 的新任务；旧任务保持 done 不可变，不要在这里写代码。",
     ].join("\n")

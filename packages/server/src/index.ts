@@ -60,14 +60,15 @@ import { EffectivenessLedgerService } from "./services/knowledge/effectiveness-l
 import { EffectivenessSyncService } from "./services/knowledge/effectiveness-sync"
 import { avgMeasuredConfidence } from "./services/knowledge/effectiveness-confidence"
 import { createProductionKnowledgeLLM } from "./services/knowledge/llm"
-import { knowledgePatrolHandlerFor, createKnowledgeSessionReporter, appendKnowledgeSessionCards, appendCardsToSession } from "./services/knowledge/patrol-job"
+import { knowledgePatrolHandlerFor, createKnowledgeSessionReporter, appendKnowledgeSessionCards, appendCardsToSession, findingCardData } from "./services/knowledge/patrol-job"
 import { FindingOpsService } from "./services/knowledge/findings"
 import { BackfillService } from "./services/knowledge/backfill"
-import { createFindingsRoutes } from "./routes/findings"
+import { createFindingsRoutes, findingView } from "./routes/findings"
 import { createEffectivenessRoutes } from "./routes/effectiveness"
 import { ArchiveIngestService, archiveCompileTaskId } from "./services/tasks/archive-ingest-service"
 import { packDirRel, readPackManifest, PACK_ITEM_PROMPT_CAP_BYTES } from "./services/knowledge/material-pack"
 import {
+  readArchiveWikiResult,
   toArchiveWikiFailure,
   toArchiveWikiResult,
   writeArchiveWikiResult,
@@ -104,7 +105,7 @@ import {
   AcceptancePlanService,
   setAcceptancePlanReadyProvider,
 } from "./services/tasks/acceptance-plan-service"
-import { setAcceptanceToolsProvider, setArchiveToolsProvider, setTaskLaunchToolsProvider } from "./services/chat/task-tools"
+import { setAcceptanceToolsProvider, setArchiveToolsProvider, setTaskLaunchToolsProvider, setWikiFindingToolsProvider } from "./services/chat/task-tools"
 import { TestInstanceRegistry } from "./services/tasks/test-instance-registry"
 import { createWorkflowPresetsRoutes } from "./routes/workflow-presets"
 import { createSkillGroupsRoutes } from "./routes/skill-groups"
@@ -132,7 +133,7 @@ import { initChatEventBridge } from "./services/activity/chat-event-bridge"
 import { WorkspaceScheduleService } from "./services/schedule"
 import { SchedulerService } from "./services/scheduler/scheduler-service"
 import { SchedulerEngine } from "./services/scheduler/scheduler-engine"
-import { TasksService } from "./services/tasks/tasks-service"
+import { TasksService, type TaskArchiveFinding } from "./services/tasks/tasks-service"
 import { TaskHomeService, setTaskHomeResolver } from "./services/tasks/task-home-service"
 import { PluginMaterializer } from "./services/tasks/plugin-materializer"
 import { WorkflowPresetsService } from "./services/workflow-presets-service"
@@ -525,7 +526,31 @@ app.route("/api/agent", createAgentRoutes({
   // 票10 投喂泛化: 知识策展执行面（ingest_to_wiki 工具）。闭包惰性解析
   // sessionCurationService（声明在下方 wiki 装配段——票14 惰性纪律同轨：
   // 请求时才求值，不受挂载先于构造的 TDZ 影响）。
-  curation: { curate: (input) => sessionCurationService.curate(input) },
+  curation: {
+    curate: (input) => sessionCurationService.curate(input),
+    // 2026-11-03 只读知识库：冲突裁决回主对话 —— 与 finding 卡三钮同一 FindingOpsService。
+    listFindings: () => getFindingOps().list("open").map((row) => {
+      const view = findingView(row) as Record<string, unknown>
+      const detail = (view.detail ?? {}) as Record<string, unknown>
+      return {
+        id: String(view.id),
+        kind: String(view.kind),
+        title: String(view.title),
+        status: String(view.status),
+        ...(typeof detail.old_claim === "string" ? { oldClaim: detail.old_claim } : {}),
+        ...(typeof detail.new_claim === "string" ? { newClaim: detail.new_claim } : {}),
+        pages: Array.isArray(view.pages) ? view.pages.map(String) : [],
+      }
+    }),
+    resolveFinding: (findingId, action) => {
+      const ops = getFindingOps()
+      if (action === "adopt") {
+        const rec = ops.adopt(findingId)
+        return { findingId, status: rec.status, taskId: rec.id }
+      }
+      return { findingId, status: ops.ignore(findingId).status }
+    },
+  },
 }))
 
 // Clone session routes — direct entry for Web UI pages
@@ -580,6 +605,37 @@ const wikiWriteQueue = new CompileQueue({
 // 「wiki 落了什么」；队列是进程内的，回执才是跨重启的真相面。写回执失败只 stderr，
 // 绝不改写编译结果本身。
 const archiveTaskHomes = new TaskHomeService()
+/**
+ * 归档编译出的冲突回流任务主对话（2026-11-03 只读知识库改版）：
+ * 知识库窗口不再列 findings；新矛盾以 finding 卡追加到发起任务的主 Chat，
+ * 人在同一条对话里采纳/忽略/讨论。只播新插入的（created_at === updated_at），
+ * 重编译刷新证据不重复打扰；无会话/无新 finding 静默。
+ */
+const postArchiveFindingsToTaskChat = (taskId: string, findingIds: string[]): void => {
+  if (findingIds.length === 0) return
+  try {
+    const sessionId = d.task.getById(taskId)?.source_chat_session_id ?? null
+    if (!sessionId) return
+    const ops = getFindingOps()
+    const rows = findingIds
+      .map((id) => ops.get(id))
+      .filter((row): row is NonNullable<typeof row> => !!row && row.status === "open" && row.created_at === row.updated_at)
+    if (rows.length === 0) return
+    appendCardsToSession(
+      getDb(),
+      sessionId,
+      `⚠️ 归档编译发现 ${rows.length} 处需要你决定的冲突（回「采纳修订 / 忽略 / 讨论」，我执行前会确认）：`,
+      rows.map((row) => ({
+        id: row.id,
+        kind: "finding" as const,
+        ts: new Date().toISOString(),
+        data: findingCardData(row),
+      })),
+    )
+  } catch (err) {
+    process.stderr.write(`[archive-compile] finding cards post failed for ${taskId}: ${err instanceof Error ? err.message : String(err)}\n`)
+  }
+}
 const runArchiveCompile = async (taskId: string, opts?: { focus?: string }): Promise<CuratorCompileResultLike> => {
   const startedAt = new Date().toISOString()
   const persist = (result: ArchiveWikiResult): void => {
@@ -593,6 +649,7 @@ const runArchiveCompile = async (taskId: string, opts?: { focus?: string }): Pro
     const curator = new CuratorCompileService({ db: getDb(), llm: createProductionCuratorLLM() })
     const result = await curator.compilePack(taskId, opts ?? {})
     persist(toArchiveWikiResult(result, startedAt, new Date().toISOString()))
+    postArchiveFindingsToTaskChat(taskId, result.findingIds)
     return result
   } catch (err) {
     persist(toArchiveWikiFailure(err, startedAt, new Date().toISOString()))
@@ -648,6 +705,16 @@ const sessionCurationService = new SessionCurationService({
   // db 面请求时才取（票14 惰性纪律）；无会话/已删 ⇒ 原语诚实降级
   announce: (sessionId, header, events) => appendCardsToSession(getDb(), sessionId, header, events),
   positionOf: taskId => wikiWriteQueue.get(taskId)?.position ?? null,
+  // 编译产生的未决矛盾回流发起会话（2026-11-03）：只列仍 open 的 finding，
+  // 人在这条对话里采纳/忽略；知识库窗口只读。
+  findingsFor: (findingIds) => {
+    const ops = getFindingOps()
+    const ts = new Date().toISOString()
+    return findingIds
+      .map((id) => ops.get(id))
+      .filter((row): row is NonNullable<typeof row> => !!row && row.status === "open")
+      .map((row) => ({ id: row.id, kind: "finding" as const, ts, data: findingCardData(row) }))
+  },
 })
 curatorTasks.attachSettledListener(rec => sessionCurationService.onCompileSettled(rec))
 // 知识中心票05：编译任务 API（POST /compile 显式触发 + GET /compile/task/:id 状态可查）。
@@ -1175,6 +1242,12 @@ if (shouldServe) {
         readyTask: (id, opts) => tasksService.readyTask(id, opts),
         triggerTask: (id) => tasksService.triggerTaskWithPrebuild(id),
       }))
+      // 2026-11-03 只读知识库：wiki 冲突裁决回主 Chat —— 人明确说「采纳/忽略」后，
+      // 归档对话里的 Agent 经 resolve_wiki_finding 直连同一 FindingOpsService。
+      setWikiFindingToolsProvider(() => ({
+        adopt: (id) => getFindingOps().adopt(id),
+        ignore: (id) => getFindingOps().ignore(id),
+      }))
       // 知识中心票10 建链，P3 票02 升级素材包链：task 进入 archiving 态即组包
       // （raw/archives/task-{id}/ 六件+manifest，件级冻结契约同票02）→ 总结读包 →
       // 编译读包（manifest 先行按需下钻）经票06 全局串行队列（kind=archive-compile，
@@ -1216,7 +1289,16 @@ if (shouldServe) {
           .list()
           .filter((v) => v.id === queuePrefix || v.id.startsWith(`${queuePrefix}-rc`))
           .at(-1)
-        if (!manifest && !queueView) return null
+        // 编译回执里的 finding_ids 是本次任务的真相面；只列仍 open 的，
+        // 归档 Agent 在对话里逐条问（知识库窗口已不承载 finding）。
+        const receipt = readArchiveWikiResult(archiveTaskHomes.homePath(taskId))
+        const openFindings = receipt?.finding_ids?.length
+          ? receipt.finding_ids
+              .map((id) => getFindingOps().get(id))
+              .filter((row): row is NonNullable<typeof row> => !!row && row.status === "open")
+              .map((row) => findingView(row) as unknown as TaskArchiveFinding)
+          : []
+        if (!manifest && !queueView && openFindings.length === 0) return null
         return {
           pack_items: manifest ? manifest.items.filter((item) => !item.excluded).length : 0,
           items: manifest
@@ -1237,6 +1319,7 @@ if (shouldServe) {
           compile_started_at: queueView?.startedAt ?? null,
           compile_finished_at: queueView?.finishedAt ?? null,
           compile_error: queueView?.error ?? null,
+          ...(openFindings.length > 0 ? { findings: openFindings } : {}),
         }
       })
       // 验货台 (acceptance v2)：实物 round-diff + 当场复检 — 4th optional arg

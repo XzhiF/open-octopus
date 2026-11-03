@@ -120,6 +120,30 @@ function archiveService(): ArchiveToolsService | null {
   }
 }
 
+// ── wiki finding 裁决工具（2026-11-03 只读知识库）────────────────────
+// 知识库窗口不再列 finding；编译出的矛盾以 finding 卡回流主 Chat。
+// 人明确说「采纳修订 / 忽略」后，Agent 经此工具直接执行（与 finding 卡三钮
+// 同一服务端通道），不再有第二个收件箱。
+
+export interface WikiFindingToolsService {
+  adopt(findingId: string): { id: string; findingId: string; status: string }
+  ignore(findingId: string): { id: string; status: string }
+}
+
+let wikiFindingProvider: (() => WikiFindingToolsService | null) | null = null
+
+export function setWikiFindingToolsProvider(fn: (() => WikiFindingToolsService | null) | null): void {
+  wikiFindingProvider = fn
+}
+
+function wikiFindingService(): WikiFindingToolsService | null {
+  try {
+    return wikiFindingProvider?.() ?? null
+  } catch {
+    return null
+  }
+}
+
 // ── 启动 / 入列执行工具（2026-11-03）────────────────────────────────
 // 用户在对话里**明确说**「立即执行 / 入列 / 开跑」后，主 Chat 直接执行，
 // 不再要求回看板点启动卡；没有明确表态时仍只能 propose_launch 出卡。
@@ -831,6 +855,42 @@ export function createTaskToolServer(input: TaskToolServerInput) {
             decided: Object.keys(out.store.decisions).length,
             total: out.store.entries.length,
           })
+        } catch (err: unknown) {
+          return text({ ok: false, error: err instanceof Error ? err.message : String(err) })
+        }
+      },
+    ),
+    tool(
+      "resolve_wiki_finding",
+      "Resolve ONE open wiki contradiction/finding from get_archive_state.knowledge.findings: action='adopt' rewrites the affected pages via the global compile queue (the server generates the revision; it does NOT hand-edit files), action='ignore' records the decision and stops re-reporting. Call ONLY after the human explicitly said 采纳 / 修订 / 采纳修订 or 忽略 / 不处理 in this chat; set confirmed=true to assert that. Do not batch or infer consent; discuss first if the human is unsure.",
+      {
+        finding_id: z.string().min(1).describe("Finding id from get_archive_state.knowledge.findings (e.g. fnd-...)"),
+        action: z.enum(["adopt", "ignore"]).describe("adopt = 采纳修订（编译改写涉事页）；ignore = 忽略并记录在案"),
+        confirmed: z.boolean().describe("true only when the human explicitly said adopt/ignore — never infer"),
+      },
+      async ({ finding_id, action, confirmed }) => {
+        if (!confirmed) {
+          return text({ ok: false, error: "必须等用户明确说「采纳修订 / 忽略」后才能执行（confirmed=true）—— 不要代替人决定。" })
+        }
+        if (task.status !== "archiving" && task.status !== "done") {
+          return text({ ok: false, error: "wiki finding 裁决只在归档阶段（archiving / done）可用。" })
+        }
+        const svc = wikiFindingService()
+        if (!svc) return text({ ok: false, error: "wiki finding 服务未就绪" })
+        try {
+          if (action === "adopt") {
+            const rec = svc.adopt(finding_id)
+            return text({
+              ok: true,
+              finding_id,
+              action,
+              task_id: rec.id,
+              status: rec.status,
+              hint: "修订已入全局编译队列；完成后 finding 卡会自动转为 resolved。",
+            })
+          }
+          const row = svc.ignore(finding_id)
+          return text({ ok: true, finding_id, action, status: row.status, hint: "已记录在案，不再重复提醒。" })
         } catch (err: unknown) {
           return text({ ok: false, error: err instanceof Error ? err.message : String(err) })
         }

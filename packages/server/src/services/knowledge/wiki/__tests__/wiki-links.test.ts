@@ -8,18 +8,16 @@ import { applySchema } from "../../../../db/schema"
 import { WikiArticleDAO } from "../../../../db/dao/wiki-article-dao"
 import { GLOBAL_WIKI_ORG } from "../../global-paths"
 import { computeArticleLinks, wikiLinkTargets } from "../lint"
-import { backfillWikiArticleLinks } from "../backfill-links"
 import { WikiCompileService } from "../compile"
 import { createWikiRoutes } from "../../../../routes/wiki"
 import type { GitRunner } from "../wiki-git"
 
 /**
  * 反链倒排基础 — wiki_articles.links 行为测试（知识中心改版·右栏反链）。
- * 钉四层：
+ * 钉三层：
  *   ①lint 纯函数：正文 [[…]] 目标提取（#/| 变体、去重保序）与 front-matter 合并形；
  *   ②DAO 收口：upsert 数组序列化 / 快照串透传 / 缺省 '[]'；
- *   ③回灌：NULL 行盘真源优先（front-matter ∪ 正文），盘缺回退正文面，幂等；
- *   ④tree 端点：entry.links / entry.backlinks（linkPointsToPage 判据单源）/ 顶层 index。
+ *   ③tree 端点：entry.links / entry.backlinks（linkPointsToPage 判据单源）/ 顶层 index。
  * 真 fs（tmpdir 知识根）+ in-memory DB + 真 git（compilePages 通道）。
  */
 
@@ -94,28 +92,7 @@ describe("②DAO 收口：links 列形态", () => {
   })
 })
 
-describe("③启动回灌：NULL 历史行补齐", () => {
-  it("盘真源优先：front-matter ∪ 正文 [[…]]；跑后不再入扫描面（幂等）", () => {
-    fs.mkdirSync(path.join(wikiRoot, "concepts"), { recursive: true })
-    fs.writeFileSync(path.join(wikiRoot, "concepts", "old.md"),
-      page("old", ["disk-link"], "正文再指 [[body-link]]。"), "utf-8")
-    articles.upsert(upsertRow({ id: "old", path: "concepts/old.md", links: "[]" }))
-    db.prepare("UPDATE wiki_articles SET links=NULL WHERE id='old'").run()
-
-    expect(backfillWikiArticleLinks(articles, wikiRoot)).toBe(1)
-    expect(JSON.parse(articles.get("old")!.links!)).toEqual(["body-link", "disk-link"])
-    // 幂等：links 已非 NULL，第二跑零行
-    expect(backfillWikiArticleLinks(articles, wikiRoot)).toBe(0)
-  })
-  it("盘缺文件：回退 DB body 的 [[…]] 面，不炸不丢行", () => {
-    articles.upsert(upsertRow({ id: "ghost", path: "concepts/ghost.md", body: "见 [[x]]。", links: "[]" }))
-    db.prepare("UPDATE wiki_articles SET links=NULL WHERE id='ghost'").run()
-    expect(backfillWikiArticleLinks(articles, wikiRoot)).toBe(1)
-    expect(JSON.parse(articles.get("ghost")!.links!)).toEqual(["x"])
-  })
-})
-
-describe("④tree 端点：links/backlinks/index 进读面", () => {
+describe("③tree 端点：links/backlinks/index 进读面", () => {
   it("编译三页 ⇒ ref 页链两靶；tree 出 entry.links、目标 entry.backlinks=[con-ref]、顶层 index 文本", async () => {
     const svc = new WikiCompileService({ db, org: GLOBAL_WIKI_ORG, rootDir: wikiRoot, git: realGit(wikiRoot) })
     await svc.compilePages([
