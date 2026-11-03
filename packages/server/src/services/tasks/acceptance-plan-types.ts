@@ -64,8 +64,14 @@ export const PlanStepSchema = z.object({
 })
 export type PlanStep = z.infer<typeof PlanStepSchema>
 
+/** evidenceRefs[].kind 的合法枚举（唯一真相）。Agent 侧 prompt / skill 必须
+ *  同步列全；写错由 coerceEvidenceKinds 兜底，不判死整份方案。 */
+export const EVIDENCE_REF_KINDS = ["diff", "test", "report", "docs", "preview"] as const
+export type EvidenceRefKind = (typeof EVIDENCE_REF_KINDS)[number]
+const EVIDENCE_KIND_SET = new Set<string>(EVIDENCE_REF_KINDS)
+
 export const PlanEvidenceRefSchema = z.object({
-  kind: z.enum(["diff", "test", "report", "docs", "preview"]),
+  kind: z.enum(EVIDENCE_REF_KINDS),
   label: z.string().min(1),
   path: z.string().optional(),
   detail: z.string().optional(),
@@ -73,6 +79,74 @@ export const PlanEvidenceRefSchema = z.object({
   missing: z.boolean().optional(),
 })
 export type PlanEvidenceRef = z.infer<typeof PlanEvidenceRefSchema>
+
+/** kind 缺失或非法时按证据路径推断一个合法分类。
+ *  只改分类，不动 label / path —— 这是容错，不是编造证据。 */
+export function inferEvidenceKind(pathLike?: string): EvidenceRefKind {
+  const p = (pathLike ?? "").trim().toLowerCase()
+  if (!p) return "report"
+  if (/\.(diff|patch)$/.test(p)) return "diff"
+  if (/(^|[\\/])(diff|diffs|patch|patches)([\\/]|$)/.test(p)) return "diff"
+  if (/\.(png|jpe?g|webp|gif|svg|mp4|webm|mov)$/.test(p)) return "preview"
+  const base = p.split(/[\\/]/).pop() ?? p
+  // 只把测试**代码**（含测试后缀的源码扩展名）判为 test；spec.md 这类文档走 docs。
+  if (/(test|spec)s?\.(java|kt|cs|ts|tsx|js|jsx|mjs|cjs|py|go|rb|php|rs|swift|scala|groovy)$/.test(base)) {
+    return "test"
+  }
+  if (/\.(log|txt|out|ndjson)$/.test(base)) return "report"
+  if (/\.(md|markdown|mdx)$/.test(base)) return "docs"
+  return "report"
+}
+
+/** 把 Agent 写错的 evidenceRefs[].kind（如 "e2e"）规范化为合法枚举。
+ *
+ *  为什么放宽（2026-11-02 事故）：一份 2 场景 / 11 条证据的完整方案，只因 12 处
+ *  kind 写了 "e2e" 就被 Zod 判死，验收台退回「生成失败」。kind 只是证据分类标签
+ *  （web 只按 label/path 渲染），不该让整份可用方案作废 —— 与「预算越界只警告」
+ *  同一原则。规范化结果全部记进 warnings，面板仍能看到原始笔误。 */
+export function coerceEvidenceKinds(raw: unknown): { value: unknown; warnings: string[] } {
+  const warnings: string[] = []
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return { value: raw, warnings }
+  const root = raw as Record<string, unknown>
+
+  let changed = false
+  const normalizeList = (key: "cases" | "checks" | "items"): unknown => {
+    const list = root[key]
+    if (!Array.isArray(list)) return list
+    let listChanged = false
+    const next = list.map((item) => {
+      if (!item || typeof item !== "object" || Array.isArray(item)) return item
+      const obj = item as Record<string, unknown>
+      if (!Array.isArray(obj.evidenceRefs)) return obj
+      let refsChanged = false
+      const refs = obj.evidenceRefs.map((ref) => {
+        if (!ref || typeof ref !== "object" || Array.isArray(ref)) return ref
+        const r = ref as Record<string, unknown>
+        if (typeof r.kind === "string" && EVIDENCE_KIND_SET.has(r.kind)) return r
+        const label = typeof r.label === "string" && r.label.trim() ? r.label : "未命名证据"
+        const inferred = inferEvidenceKind(typeof r.path === "string" ? r.path : undefined)
+        const rawKind = typeof r.kind === "string" && r.kind.trim() ? r.kind : "(空)"
+        warnings.push(
+          `证据「${label}」的 kind「${rawKind}」不是合法值（${EVIDENCE_REF_KINDS.join(" | ")}），已按路径推断为「${inferred}」`,
+        )
+        refsChanged = true
+        return { ...r, kind: inferred }
+      })
+      if (!refsChanged) return obj
+      listChanged = true
+      return { ...obj, evidenceRefs: refs }
+    })
+    if (!listChanged) return list
+    changed = true
+    return next
+  }
+
+  const cases = normalizeList("cases")
+  const checks = normalizeList("checks")
+  const items = normalizeList("items") // v1 兼容（在飞轮次可能还是旧稿）
+  if (!changed) return { value: raw, warnings }
+  return { value: { ...root, cases, checks, items }, warnings }
+}
 
 /** 人验收：一条完整场景。 */
 export const PlanCaseSchema = z.object({
@@ -195,15 +269,17 @@ export type PlanParseResult =
  *  不合规时把 Zod 的字段级原因带回给调用方 —— 只写「缺失或不合规」会让人
  *  无从下手（2026-10-31：实际原因是 cases.1.steps 超过上限）。 */
 export function parseAcceptancePlan(raw: unknown): PlanParseResult {
-  const v2 = AcceptancePlanSchema.safeParse(raw)
-  if (v2.success) return { ok: true, plan: v2.data, warnings: [] }
-  const v1 = LegacyAcceptancePlanSchema.safeParse(raw)
+  // kind 笔误先规范化（带 warning），再走契约校验 —— 分类错误不判死方案。
+  const coerced = coerceEvidenceKinds(raw)
+  const v2 = AcceptancePlanSchema.safeParse(coerced.value)
+  if (v2.success) return { ok: true, plan: v2.data, warnings: coerced.warnings }
+  const v1 = LegacyAcceptancePlanSchema.safeParse(coerced.value)
   if (!v1.success) {
     // 声明自己是 v1 的文件按 v1 报错，否则按 v2（主契约）报错。
-    const isLegacy = (raw as { version?: unknown } | null)?.version === "1"
+    const isLegacy = (coerced.value as { version?: unknown } | null)?.version === "1"
     return { ok: false, issues: formatZodIssues(isLegacy ? v1.error : v2.error) }
   }
-  return { ok: true, ...convertLegacyPlan(v1.data) }
+  return { ok: true, ...convertLegacyPlan(v1.data, coerced.warnings) }
 }
 
 /** 预算提示（不是拒收理由）：面板会把 warnings 显示在方案提示里。 */
@@ -232,7 +308,10 @@ function formatZodIssues(err: import("zod").ZodError): string[] {
 
 /** v1 → v2: `machine.verdict === "pass"` 的项归为机器证据，其余归为人场景。
  *  id 原样保留 —— 已有 checks 文件里的历史勾选仍对得上（旧方案在飞轮次）。 */
-export function convertLegacyPlan(v1: LegacyAcceptancePlan): { plan: AcceptancePlan; warnings: string[] } {
+export function convertLegacyPlan(
+  v1: LegacyAcceptancePlan,
+  extraWarnings: string[] = [],
+): { plan: AcceptancePlan; warnings: string[] } {
   const cases: PlanCase[] = []
   const checks: PlanCheck[] = []
   for (const it of v1.items) {
@@ -279,6 +358,7 @@ export function convertLegacyPlan(v1: LegacyAcceptancePlan): { plan: AcceptanceP
     })
   }
   const warnings = [
+    ...extraWarnings,
     ...v1.warnings,
     "旧版验收方案（v1）已按机器建议分层：pass 项转为机器证据，其余转为人验收场景",
   ]

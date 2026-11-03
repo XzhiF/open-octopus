@@ -8,7 +8,7 @@ import fs from "fs"
 import os from "os"
 import path from "path"
 import { applySchema } from "../db/schema"
-import { AgentSessionDAO } from "../db/dao"
+import { AgentSessionDAO, ExecutionLinkDAO } from "../db/dao"
 import { SSEService } from "../services/sse"
 import { TasksService } from "../services/tasks/tasks-service"
 import { TaskHomeService } from "../services/tasks/task-home-service"
@@ -46,22 +46,24 @@ function insertExec(id: string, taskId: string): void {
 /** Timed execution row — timing 用例要真实的 started_at / completed_at。 */
 function insertTimedExec(opts: {
   id: string
-  taskId: string
+  taskId: string | null
   startedAt: string | null
   completedAt: string | null
   status?: string
   phase?: number | null
   round?: number | null
   parentId?: string
+  workflowRef?: string
 }): void {
   db.prepare(`
     INSERT INTO executions (id, workspace_id, parent_id, org, workflow_ref, workflow_name, status,
       task_id, phase_index, round_index, start_commit_id, end_commit_id, started_at, completed_at, created_at, updated_at)
-    VALUES (?, 'ws-u', ?, ?, 'built-in/task-dev', 'dev', ?, ?, ?, ?, '{}', '{}', ?, ?, ?, ?)
+    VALUES (?, 'ws-u', ?, ?, ?, 'dev', ?, ?, ?, ?, '{}', '{}', ?, ?, ?, ?)
   `).run(
     opts.id,
     opts.parentId ?? "0",
     ORG,
+    opts.workflowRef ?? "built-in/task-dev",
     opts.status ?? "completed",
     opts.taskId,
     opts.phase === undefined ? 1 : opts.phase,
@@ -191,6 +193,46 @@ describe("taskUsage", () => {
     expect(usage.summary.totals.tokens).toBe(0)
     expect(usage.summary.modelBreakdown).toEqual({})
     expect(usage.timing).toEqual({ count: 0, duration_ms: 0, agent_duration_ms: 0 })
+  })
+
+  // 2026-11-03 事故回归：验收规划执行 task_id=NULL，归属只落 execution_links。
+  // 它要进账本合计，但不能算作任务的一「轮」（不叠总耗时）。
+  it("辅助执行（验收规划）经 execution_links 进账，但不占轮次口径", () => {
+    insertTask("t-aux", null, null)
+    insertTimedExec({
+      id: "e-round", taskId: "t-aux",
+      startedAt: "2026-11-03T09:00:00.000Z", completedAt: "2026-11-03T09:30:00.000Z",
+    })
+    insertTimedExec({
+      id: "e-plan", taskId: null, phase: null, round: null,
+      workflowRef: "built-in/acceptance-plan",
+      startedAt: "2026-11-03T09:31:00.000Z", completedAt: "2026-11-03T09:34:00.000Z",
+    })
+    new ExecutionLinkDAO(db).link({
+      executionId: "e-plan", taskId: "t-aux", kind: "task_aux", phaseIndex: 1, roundIndex: 1,
+    })
+    insertNode("e-round", "a1", 20 * MIN)
+    insertNode("e-plan", "plan", 2 * MIN)
+    insertCall({ executionId: "e-round", input: 100, output: 10 })
+    insertCall({ executionId: "e-plan", input: 45, output: 20 })
+
+    const usage = service.taskUsage("t-aux")
+    const round = usage.breakdown.find((p) => p.execution_id === "e-round")!
+    const plan = usage.breakdown.find((p) => p.execution_id === "e-plan")!
+    expect(plan.label).toBe("验收规划")
+    expect(plan.workflow_ref).toBe("built-in/acceptance-plan")
+    expect(plan.instance).toBe(false)
+    expect(plan.duration_ms).toBe(3 * MIN)
+    expect(plan.agent_duration_ms).toBe(2 * MIN)
+    expect(round.label).toBe("P1 · R1")
+    expect(round.instance).toBe(true)
+
+    expect(usage.summary.totalCalls).toBe(2)
+    expect(usage.summary.usage.inputTokens).toBe(145)
+    // 轮次口径不受辅助执行影响；agent 工时含辅助执行的 agent 节点。
+    expect(usage.timing.count).toBe(1)
+    expect(usage.timing.duration_ms).toBe(30 * MIN)
+    expect(usage.timing.agent_duration_ms).toBe(22 * MIN)
   })
 
   it("unknown task → 404-shaped error", () => {

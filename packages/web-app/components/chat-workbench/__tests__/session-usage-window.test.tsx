@@ -84,6 +84,36 @@ describe('SessionUsageWindow', () => {
     expect(onOpenTask).toHaveBeenCalledWith('t1')
   })
 
+  it('点主对话直接跑的工作流行 → 打开这条执行的运行窗', async () => {
+    getSessionUsageMock.mockResolvedValue({
+      ...payload,
+      workflows: [
+        {
+          task_id: null,
+          execution_id: 'e-chat',
+          workspace_id: 'ws-1',
+          name: '快速检查',
+          status: 'running',
+          duration_ms: MIN,
+          tokens: 10,
+          total_calls: 1,
+          cost: { usd: 0.01, complete: true },
+        },
+      ],
+    } as SessionUsagePayload)
+    const onOpenTask = vi.fn()
+    const onOpenExecution = vi.fn()
+    render(
+      <SessionUsageWindow sessionId="s1" onOpenTask={onOpenTask} onOpenExecution={onOpenExecution} />,
+    )
+
+    fireEvent.click(await screen.findByTestId('session-usage-workflow'))
+    expect(onOpenExecution).toHaveBeenCalledWith(
+      expect.objectContaining({ task_id: null, execution_id: 'e-chat', workspace_id: 'ws-1' }),
+    )
+    expect(onOpenTask).not.toHaveBeenCalled()
+  })
+
   it('多重工作流各有色条与图例', async () => {
     getSessionUsageMock.mockResolvedValue({
       ...payload,

@@ -75,6 +75,11 @@ export function createWorkflowToolServer(
           workflow_ref,
           input_values: input_values ?? {},
           triggered_by: "chat",
+          // 消耗口径（2026-11-03）：主对话直接跑的工作流不属于任何任务，创建时
+          // 带上 origin，ExecutionLifecycle 会在同一处落 execution_links —— 会话
+          // 账本据此把它算进「这个 chat 关联的工作流」。将来其他 chat 代跑路径
+          // 同样传 origin，不需要各自记得补登记。
+          ...(owner ? { origin: { sessionId: owner.sessionId, kind: "chat_run" as const } } : {}),
         })
         if (owner) {
           getChatEventBridge().bindExecution(exec.id, {

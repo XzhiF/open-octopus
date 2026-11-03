@@ -59,6 +59,7 @@ import {
   AgentSessionDAO,
   AcceptanceDAO,
   TokenUsageDAO,
+  ExecutionLinkDAO,
 } from "../../db/dao"
 import type { TaskRow, ExecutionRow } from "../../db/types"
 import type { SSEService } from "../sse"
@@ -283,12 +284,18 @@ export interface TaskUsageDTO {
   timing: TaskTimingSummary
 }
 
-/** 会话账本里的一个工作流（= 本会话发起的 task 的一次或多次执行轮）。 */
+/** 会话账本里的一个工作流（= 本会话发起的 task 的一次或多次执行轮，
+ *  或主对话里直接拉起、不属于任何任务的单个执行）。 */
 export interface SessionUsageWorkflow {
-  task_id: string
+  /** 任务工作流行带任务 id；主对话直接跑的工作流没有任务 → null。 */
+  task_id: string | null
+  /** 非任务工作流的执行 id（task 行为 undefined）。 */
+  execution_id?: string | null
+  /** 非任务工作流所在工作区（打开运行窗要）；任务行不重复给。 */
+  workspace_id?: string | null
   name: string
   status: string
-  /** 各轮实跑段之和（与任务窗 timing.duration_ms 同源）。 */
+  /** 各轮实跑段之和 + 辅助执行实跑段（与任务窗 timing 同源；chat_run 为自身跨度）。 */
   duration_ms: number
   tokens: number
   total_calls: number
@@ -433,6 +440,13 @@ function unionSpanMs(spans: ReadonlyArray<{ start: number; end: number }>): numb
   }
   if (curEnd > curStart) total += curEnd - curStart
   return total
+}
+
+/** 辅助执行在账本里的名字 —— 已知内置流给人话，未知的去掉 built-in/ 前缀回落到 ref。 */
+function auxExecutionLabel(workflowRef: string | null): string {
+  if (!workflowRef) return "系统流程"
+  if (workflowRef === "built-in/acceptance-plan") return "验收规划"
+  return workflowRef.replace(/^built-in\//, "")
 }
 
 /** `{home}/archive/amendments.jsonl` 读侧（坏行跳过，最多 200 条）。 */
@@ -969,6 +983,9 @@ export class TasksService {
   private taskDAO: TaskDAO
   /** v49: 账本用量只读口（看板逐任务花费）。同一 handle，DAO-per-handle 惯例。 */
   private tokenUsage: TokenUsageDAO
+  /** 2026-11-03 消耗口径：执行 → 任务/会话的持久归属（无 task_id 的辅助执行、
+   *  主对话直接跑的工作流靠它进账本）。 */
+  private execLinks: ExecutionLinkDAO
   /** ADR-0021 票03: the ONLY way this domain starts, stops or watches a run. Built on
    *  the same handle as everything else here (no new ctor param — SW-BP15), and it is
    *  the task-domain half of the built-in job: the scheduler reaches the same object
@@ -1073,6 +1090,15 @@ export class TasksService {
     this.db = db
     this.taskDAO = new TaskDAO(db)
     this.tokenUsage = new TokenUsageDAO(db)
+    this.execLinks = new ExecutionLinkDAO(db)
+    // 存量验收规划执行回填归属（幂等；坐标从 input_values 读，pipeline_config
+    // 会在 start 时被引擎整体覆盖，不可依赖）。服务单例构造一次，代价可忽略。
+    try {
+      this.execLinks.backfillAcceptancePlanLinks()
+    } catch (err: unknown) {
+      console.error("[TasksService] execution_links backfill failed (non-fatal):",
+        err instanceof Error ? err.message : String(err))
+    }
     this.agentSessionDAO = agentSessionDAO ?? null
     this.sse = sse
     this.taskHomeService = taskHomeService ?? new TaskHomeService()
@@ -1359,10 +1385,12 @@ export class TasksService {
     if (!row) throw new TaskNotFoundError()
     const history = this.lifecycle.history(id)
     const badge = (root: ExecutionRow) => toExecutionBadge(root)
+    // 辅助执行（验收规划）也算任务花费 —— 它没有 task_id，靠 execution_links 归集。
+    const auxExecIds = this.execLinks.executionIdsByTask([id]).get(id) ?? []
     const aiUsage = this.aiUsageFor([{
       id,
       authorSessionId: row.source_chat_session_id,
-      executionIds: history.map((h) => h.id),
+      executionIds: [...history.map((h) => h.id), ...auxExecIds],
     }]).get(id)
     const dto: TaskDTO = {
       ...toDTO(row),
@@ -1394,20 +1422,10 @@ export class TasksService {
   taskUsage(id: string): TaskUsageDTO {
     const row = this.taskDAO.getById(id)
     if (!row) throw new TaskNotFoundError()
-    const execRows = this.taskDAO.getDb().prepare(
-      `SELECT id, phase_index, round_index, workflow_ref, status, created_at, started_at, completed_at, parent_id
-         FROM executions WHERE task_id = ? ORDER BY created_at ASC`,
-    ).all(id) as Array<{
-      id: string
-      phase_index: number | null
-      round_index: number | null
-      workflow_ref: string | null
-      status: string
-      created_at: string
-      started_at: string | null
-      completed_at: string | null
-      parent_id: string
-    }>
+    // 任务自己的轮（executions.task_id 命中）∪ 登记到该任务的辅助执行（验收规划等）。
+    // 辅助执行插行时 task_id 故意为 NULL —— 挂了会撞 ux_exec_task_active 单实例闸、
+    // 并混进看板/run_stats 的「轮」口径；归属只在 execution_links（2026-11-03）。
+    const execRows = this.execLinks.listTaskUsageExecutions(id)
     const sessionIds = [row.source_chat_session_id, row.doer_session_id]
       .filter((s): s is string => !!s)
     const bySession = this.tokenUsage.aggregateLlmCallsBy(
@@ -1419,8 +1437,8 @@ export class TasksService {
       "execution_id",
       execRows.map((e) => e.id),
     )
-    // 2026-10-31 消耗窗「总耗时」：agent 工时按轮取一次 map，逐行挂到 breakdown 上。
-    const agentByExec = this.agentDurationByExecution(id)
+    // 2026-10-31 消耗窗「总耗时」：agent 工时按执行取一次 map，逐行挂到 breakdown 上。
+    const agentByExec = this.agentDurationByExecutions(execRows.map((e) => e.id))
     const now = Date.now()
     const breakdown: TaskUsagePart[] = []
     for (const sid of sessionIds) {
@@ -1436,18 +1454,20 @@ export class TasksService {
     for (const e of execRows) {
       const usage = byExec.get(e.id)
       if (!usage) continue
+      // 行上没有 task_id = 经 execution_links 归来的辅助执行（不是任务的一轮）。
+      const aux = e.task_id == null
       const part: TaskUsagePart = {
         kind: "execution",
         label: e.phase_index != null
           ? `P${e.phase_index}${e.round_index != null ? ` · R${e.round_index}` : ""}`
-          : "执行",
+          : aux ? auxExecutionLabel(e.workflow_ref) : "执行",
         execution_id: e.id,
         phase_index: e.phase_index,
         round_index: e.round_index,
         workflow_ref: e.workflow_ref,
         started_at: e.started_at,
         completed_at: e.completed_at,
-        instance: e.parent_id === "0" || e.phase_index != null,
+        instance: !aux && (e.parent_id === "0" || e.phase_index != null),
         ...usage,
       }
       const agentMs = agentByExec.get(e.id)
@@ -1485,9 +1505,12 @@ export class TasksService {
    *   · 对话行 = 本会话的聊天调用，只认 `execution_id IS NULL`（与 taskUsage /
    *     aiUsageFor 同一条防双计护栏：clone/interaction 行可能同时带执行归属）；
    *   · 工作流行 = `tasks.source_chat_session_id = sessionId` 的全部任务，按
-   *     executions.task_id 归集 —— 与任务窗 `/usage` 的 execution 段同源；
+   *     executions.task_id ∪ execution_links(task_aux) 归集 —— 与任务窗 `/usage`
+   *     的 execution 段同源（验收规划这类辅助执行也进账）；
+   *   · 主对话里直接跑的工作流（execution_links.kind = chat_run）不属于任何任务，
+   *     按执行单列一行；
    *   · 对话时长 = 各调用 [timestamp, timestamp+duration_ms] 的并集（同一轮里
-   *     重复上报 / 并行的模型行只算一次）；工作流时长 = 各任务 run_stats 实跑段。
+   *     重复上报 / 并行的模型行只算一次）；工作流时长 = 任务实跑段 + 辅助执行实跑段。
    *
    * 费用/模型口径与任务窗一致：全部现算（llm_calls_costed），不落快照。
    */
@@ -1496,13 +1519,32 @@ export class TasksService {
     const taskIds = links.map((l) => l.task_id)
     const timings = this.lifecycle.runTimings(taskIds)
     const stats = this.runStatsFrom(timings)
-    const execIdsByTask = new Map<string, string[]>()
+    const roundExecIdsByTask = new Map<string, string[]>()
     for (const t of timings) {
-      const list = execIdsByTask.get(t.task_id)
+      const list = roundExecIdsByTask.get(t.task_id)
       if (list) list.push(t.id)
-      else execIdsByTask.set(t.task_id, [t.id])
+      else roundExecIdsByTask.set(t.task_id, [t.id])
     }
-    const execIds = timings.map((t) => t.id)
+
+    // execution_links（2026-11-03）：验收规划等辅助执行归到任务；主对话直接拉起的
+    // 工作流没有任务，单列。两类在会话账本里都要算。
+    const linkedExecs = this.execLinks.listLinkedExecutionsBySession(sessionId)
+    const linkedById = new Map(linkedExecs.map((e) => [e.id, e]))
+    const auxExecIdsByTask = new Map<string, string[]>()
+    const chatRunExecs: typeof linkedExecs = []
+    for (const e of linkedExecs) {
+      if (e.task_id) {
+        const list = auxExecIdsByTask.get(e.task_id)
+        if (list) list.push(e.id)
+        else auxExecIdsByTask.set(e.task_id, [e.id])
+      } else {
+        chatRunExecs.push(e)
+      }
+    }
+    // 轮 ∪ 关联执行：summary / 模型分解 / 工时都按这一个集合算，防漏也防重。
+    const execIds = [...new Set([...timings.map((t) => t.id), ...linkedExecs.map((e) => e.id)])]
+    const agentByExec = this.agentDurationByExecutions(execIds)
+    const now = Date.now()
 
     // 对话段：区间并集 = 真实在说话的时间；调用时长合计 = 工时口径（含重复上报行，
     // 与账本 totalCalls 一致，不在这里做去重 —— 去重只属于「对话时长」这一列）。
@@ -1528,13 +1570,20 @@ export class TasksService {
     let workflowMs = 0
     let agentMs = 0
     for (const link of links) {
-      const taskExecIds = execIdsByTask.get(link.task_id) ?? []
+      const roundIds = roundExecIdsByTask.get(link.task_id) ?? []
+      const auxIds = auxExecIdsByTask.get(link.task_id) ?? []
+      const taskExecIds = [...roundIds, ...auxIds]
       // 草稿 / 未触发的工作流没有执行轮：不占列表（它的起草对话已计入对话段）。
       if (taskExecIds.length === 0) continue
       const merged =
         mergeLlmUsageSummaries(taskExecIds.map((id) => byExec.get(id))) ?? EMPTY_LLM_USAGE
-      const runStats = stats.get(link.task_id)
-      const durationMs = runStats?.duration_ms ?? 0
+      let durationMs = stats.get(link.task_id)?.duration_ms ?? 0
+      // 辅助执行不在 run_stats（那不是任务的一轮），按它自己的实跑段补进来。
+      for (const id of auxIds) {
+        const row = linkedById.get(id)
+        const span = row ? this.countedRunSpan(row, now) : null
+        if (span) durationMs += span.end - span.start
+      }
       workflows.push({
         task_id: link.task_id,
         name: link.name,
@@ -1545,7 +1594,25 @@ export class TasksService {
         cost: merged.totals.cost,
       })
       workflowMs += durationMs
-      for (const ms of this.agentDurationByExecution(link.task_id).values()) agentMs += ms
+      for (const id of taskExecIds) agentMs += agentByExec.get(id) ?? 0
+    }
+    for (const e of chatRunExecs) {
+      const usage = byExec.get(e.id) ?? EMPTY_LLM_USAGE
+      const span = this.countedRunSpan(e, now)
+      const durationMs = span ? span.end - span.start : 0
+      workflows.push({
+        task_id: null,
+        execution_id: e.id,
+        workspace_id: e.workspace_id,
+        name: e.name || e.workflow_ref,
+        status: e.status,
+        duration_ms: durationMs,
+        tokens: usage.totals.tokens,
+        total_calls: usage.totalCalls,
+        cost: usage.totals.cost,
+      })
+      workflowMs += durationMs
+      agentMs += agentByExec.get(e.id) ?? 0
     }
     workflows.sort((a, b) => b.duration_ms - a.duration_ms)
 
@@ -1569,15 +1636,22 @@ export class TasksService {
   /** 每轮 agent 节点工时（ms）：node_type='agent' 的 duration 之和，按 execution 分组。
    *  同一次执行里的 loop/swarm 子节点、重试都在这张表上叠加 —— 这正是「工时」与
    *  墙钟的区别，展示端自己说明口径，不要在这里做去重。 */
-  private agentDurationByExecution(taskId: string): Map<string, number> {
-    const rows = this.taskDAO.getDb().prepare(
-      `SELECT ne.execution_id AS execution_id, SUM(ne.duration) AS ms
-         FROM node_executions ne
-         JOIN executions e ON e.id = ne.execution_id
-        WHERE e.task_id = ? AND ne.node_type = 'agent' AND ne.duration IS NOT NULL
-        GROUP BY ne.execution_id`,
-    ).all(taskId) as Array<{ execution_id: string; ms: number }>
-    return new Map(rows.map((r) => [r.execution_id, r.ms]))
+  private agentDurationByExecutions(execIds: readonly string[]): Map<string, number> {
+    const out = new Map<string, number>()
+    const uniq = [...new Set(execIds)].filter((v) => typeof v === "string" && v.length > 0)
+    const CHUNK = 400
+    for (let i = 0; i < uniq.length; i += CHUNK) {
+      const slice = uniq.slice(i, i + CHUNK)
+      const marks = slice.map(() => "?").join(",")
+      const rows = this.db.prepare(
+        `SELECT execution_id, SUM(duration) AS ms
+           FROM node_executions
+          WHERE execution_id IN (${marks}) AND node_type = 'agent' AND duration IS NOT NULL
+          GROUP BY execution_id`,
+      ).all(...slice) as Array<{ execution_id: string; ms: number }>
+      for (const r of rows) out.set(r.execution_id, r.ms)
+    }
+    return out
   }
 
   /** task-phase-redesign (ticket 07): gather the three facts deriveTaskView
@@ -2194,11 +2268,13 @@ export class TasksService {
       if (list) list.push(t.id)
       else execIdsByTask.set(t.task_id, [t.id])
     }
+    // 辅助执行（验收规划）没有 task_id，按 execution_links 并入该任务的账。
+    const auxExecIdsByTask = this.execLinks.executionIdsByTask(ids)
     const usage = this.aiUsageFor(
       rows.map((r) => ({
         id: r.id,
         authorSessionId: r.source_chat_session_id,
-        executionIds: execIdsByTask.get(r.id) ?? [],
+        executionIds: [...(execIdsByTask.get(r.id) ?? []), ...(auxExecIdsByTask.get(r.id) ?? [])],
       })),
     )
     return dtos.map((d) => {

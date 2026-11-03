@@ -74,6 +74,60 @@ describe('ClaudeSDKProvider', () => {
     ])
   })
 
+  // 2026-11-03 事故回归：streaming input 下 CLI 会为内部排队消息（后台任务通知）
+  // 先吐一个 num_turns=0、无正文、无 usage 的 result。把它当收轮会让宿主提前断开，
+  // 真正的模型轮次（回复 + 工具调用）全部丢失。
+  it('empty result ack (num_turns=0) does not end the turn — the real turn is still consumed', async () => {
+    mockQuery.mockReturnValue(
+      (async function* () {
+        yield { type: 'result', subtype: 'success', num_turns: 0, session_id: 'sess-1' }
+        yield {
+          type: 'stream_event',
+          event: { type: 'message_start', message: { id: 'msg-real' } },
+        }
+        yield {
+          type: 'stream_event',
+          event: {
+            type: 'content_block_start',
+            index: 0,
+            content_block: { type: 'text', text: '' },
+          },
+        }
+        yield {
+          type: 'stream_event',
+          event: {
+            type: 'content_block_delta',
+            index: 0,
+            delta: { type: 'text_delta', text: '真正的回复' },
+          },
+        }
+        yield {
+          type: 'stream_event',
+          event: { type: 'content_block_stop', index: 0 },
+        }
+        yield {
+          type: 'result',
+          subtype: 'success',
+          session_id: 'sess-1',
+          num_turns: 1,
+          usage: { input_tokens: 5, output_tokens: 2 },
+        }
+      })()
+    )
+
+    const chunks: MessageChunk[] = []
+    for await (const chunk of provider.sendQuery('通过', '/tmp', 'prev-session')) {
+      chunks.push(chunk)
+    }
+
+    const results = chunks.filter(c => c.type === 'result')
+    expect(results).toHaveLength(1)
+    expect((results[0] as { numTurns?: number }).numTurns).toBe(1)
+    expect(
+      chunks.some(c => c.type === 'text_delta' && (c as { content?: string }).content === '真正的回复'),
+    ).toBe(true)
+  })
+
   it('streams tool call start and tool call chunks', async () => {
     mockQuery.mockReturnValue(
       (async function* () {

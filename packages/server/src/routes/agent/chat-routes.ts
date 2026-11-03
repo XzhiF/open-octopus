@@ -970,6 +970,14 @@ export function createChatRoutes(deps: ChatRouteDeps): Hono {
       if (generated) {
         // Generated but nothing displayable (/clear, an empty /compact, a turn
         // that only produced thinking). The route still closes with `done`.
+        // 完全空的一轮（无正文 / 思考 / 工具调用）通常是 provider 流对端提前断开
+        // —— 2026-11-03 后台任务通知的空 result 事故就是这样静默停住。留一条
+        // 告警便于下次定位；不改变行为（本地命令仍可走这条路径）。
+        if (!fullContent && !fullThinking && currentToolCalls.length === 0 && !stopped) {
+          console.warn(
+            `[agent-chat] empty turn settled with no output (session ${sessionId}) — provider stream may have detached early`,
+          )
+        }
         if (partialRowId) finalizePartial(false)
         turnDebug?.finish({ status: 'ok', assistantMessageId: partialRowId })
         return {

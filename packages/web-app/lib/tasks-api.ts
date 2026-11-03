@@ -691,7 +691,12 @@ export interface TaskUsagePayload {
 /** GET /api/sessions/:id/usage — 会话账本（2026-10-31 消耗窗·会话版）。
  *  与任务账本同形（summary），多一份 timing 口径和本会话跑过的工作流列表。 */
 export interface SessionUsageWorkflowWire {
-  task_id: string
+  /** 任务行带 task_id；主对话里直接跑的工作流没有任务 → null。 */
+  task_id: string | null
+  /** 非任务工作流的执行 id（任务行不带）。 */
+  execution_id?: string | null
+  /** 非任务工作流所在工作区（点行打开运行窗用；任务行不带）。 */
+  workspace_id?: string | null
   name: string
   status: string
   duration_ms: number

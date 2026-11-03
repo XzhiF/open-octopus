@@ -264,6 +264,42 @@ function buildResultErrorChunk(
   }
 }
 
+/** Streaming-input 模式下 CLI 会为**内部排队消息**（后台任务通知、队列确认等）
+ *  先吐一个空 result：`num_turns=0`、无正文、无 usage。它不是宿主本轮用户消息
+ *  的终点 —— 真正处理用户消息的模型轮次在这之后才开始。
+ *
+ *  2026-11-03 事故：用户在验收里说「通过」，上一轮留下的后台任务通知先产生空
+ *  result，provider 当成收轮立即断开；真正的模型轮次（含 record_acceptance_check
+ *  调用与回复）继续在 CLI 里跑完，但宿主已不再消费 —— 回复丢失、工具被自动拒绝、
+ *  token 也没进账本。只有真正跑过模型轮的 result 才收轮。 */
+interface EmptyResultAckLike {
+  subtype: string
+  result?: string
+  num_turns?: number
+  usage?: {
+    input_tokens?: number
+    output_tokens?: number
+    cache_read_input_tokens?: number
+    cache_creation_input_tokens?: number
+  }
+  modelUsage?: Record<string, unknown>
+}
+
+function isEmptyResultAck(rm: EmptyResultAckLike): boolean {
+  if (rm.subtype !== 'success') return false
+  // num_turns 缺失时不认 —— 旧 CLI/本地命令可能不填，按原来的收轮语义走。
+  if (rm.num_turns !== 0) return false
+  if (typeof rm.result === 'string' && rm.result.trim().length > 0) return false
+  if (rm.modelUsage && Object.keys(rm.modelUsage).length > 0) return false
+  const u = rm.usage ?? {}
+  const tokens =
+    (u.input_tokens ?? 0) +
+    (u.output_tokens ?? 0) +
+    (u.cache_read_input_tokens ?? 0) +
+    (u.cache_creation_input_tokens ?? 0)
+  return tokens === 0
+}
+
 export class ClaudeSDKProvider implements IAgentProvider {
   private _llmTracker = new LLMCallTracker()
 
@@ -825,6 +861,16 @@ export class ClaudeSDKProvider implements IAgentProvider {
             })}`)
           }
           const rm = event as { subtype: string; session_id?: string; result?: string; num_turns?: number; usage?: { input_tokens?: number; output_tokens?: number; cache_read_input_tokens?: number; cache_creation_input_tokens?: number }; total_cost_usd?: number; errors?: string[]; modelUsage?: Record<string, { inputTokens?: number; outputTokens?: number; cacheReadInputTokens?: number; cacheCreationInputTokens?: number; costUSD?: number }> }
+          // 空 result = CLI 在确认内部排队消息，不是本轮终点：继续消费，等真正
+          // 跑过模型轮的 result（见 isEmptyResultAck 上的事故说明）。空闲看门狗
+          // 仍兜底真正挂死的流。
+          if (isEmptyResultAck(rm)) {
+            console.warn(
+              `[claude-provider] empty result ack (num_turns=0) — keep consuming` +
+                (resumeSessionId ? ` · resume ${resumeSessionId.slice(0, 8)}` : ''),
+            )
+            continue
+          }
           // result.modelUsage is the ONLY authoritative source of per-model token totals.
           // SDK snake/原始 key → 规范 ModelUsage 的转换只发生在这里（seam adapter）。
           if (rm.modelUsage && Object.keys(rm.modelUsage).length > 0) {

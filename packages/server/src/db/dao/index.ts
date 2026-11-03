@@ -4,6 +4,8 @@
 export { BaseDAO } from "./base"
 export { WorkspaceDAO } from "./workspace-dao"
 export { ExecutionDAO } from "./execution-dao"
+export { ExecutionLinkDAO } from "./execution-link-dao"
+export type { ExecutionLinkRow, ExecutionLinkKind, ExecutionOriginInput, LinkedExecutionRow, TaskUsageExecutionRow } from "./execution-link-dao"
 export { TokenUsageDAO, toLedgerRows } from "./token-usage-dao"
 export { ScheduleConfigDAO } from "./schedule-config-dao"
 export { ScheduleRunDAO } from "./schedule-run-dao"

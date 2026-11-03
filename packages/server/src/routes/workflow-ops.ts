@@ -2,6 +2,7 @@ import { Hono } from "hono"
 import { getService } from "../services/execution-service-registry"
 import type { WorkspaceDAO } from "../db/dao/workspace-dao"
 import type { ExecutionDAO } from "../db/dao/execution-dao"
+import { ExecutionLinkDAO, type ExecutionLinkRow } from "../db/dao/execution-link-dao"
 import type { ExecutionRow } from "../db/types"
 
 /** 触发者 = 系统工作流（不是人、不是任务轮次）。验收规划是第一个成员。 */
@@ -16,7 +17,7 @@ export interface WorkspaceRunWire {
   name: string | null
   status: string
   triggeredBy: string
-  /** 执行行上没有 task_id 时从 pipeline_config 补（验收规划行故意 task_id=NULL）。 */
+  /** 任务归属：执行行自带 task_id（轮），或 execution_links 登记（辅助执行）。 */
   taskId: string | null
   phaseIndex: number | null
   roundIndex: number | null
@@ -29,24 +30,10 @@ export interface WorkspaceRunWire {
   duration: number | null
 }
 
-function parsePipelineConfig(raw: string | null | undefined): Record<string, unknown> {
-  if (!raw) return {}
-  try {
-    const parsed = JSON.parse(raw) as unknown
-    return parsed && typeof parsed === "object" ? (parsed as Record<string, unknown>) : {}
-  } catch {
-    return {}
-  }
-}
-
-function asNumber(value: unknown): number | null {
-  return typeof value === "number" && Number.isFinite(value) ? value : null
-}
-
-function toWorkspaceRun(row: ExecutionRow): WorkspaceRunWire {
-  // 验收规划执行行 task_id / phase_index / round_index 均为 NULL（不进轮次口径），
-  // 坐标只在 pipeline_config 里 —— 列表要显示 P1·R1 就从这里补。
-  const config = parsePipelineConfig(row.pipeline_config)
+function toWorkspaceRun(row: ExecutionRow, link?: ExecutionLinkRow): WorkspaceRunWire {
+  // 验收规划执行行 task_id / phase_index / round_index 均为 NULL（不进轮次口径）。
+  // 坐标只认 execution_links（2026-11-03 起的持久归属）—— pipeline_config 会在
+  // start 时被引擎整体覆盖，不是归属源。
   const startedAt = row.started_at ?? null
   const completedAt = row.completed_at ?? null
   const startedMs = startedAt ? Date.parse(startedAt) : NaN
@@ -65,9 +52,9 @@ function toWorkspaceRun(row: ExecutionRow): WorkspaceRunWire {
     name: row.name ?? null,
     status: row.status,
     triggeredBy,
-    taskId: row.task_id ?? (typeof config.task_id === "string" ? config.task_id : null),
-    phaseIndex: row.phase_index ?? asNumber(config.phase_index),
-    roundIndex: row.round_index ?? asNumber(config.round_index),
+    taskId: row.task_id ?? link?.task_id ?? null,
+    phaseIndex: row.phase_index ?? link?.phase_index ?? null,
+    roundIndex: row.round_index ?? link?.round_index ?? null,
     isSystem: SYSTEM_TRIGGERED_BY.has(triggeredBy),
     createdAt: row.created_at,
     startedAt,
@@ -78,6 +65,7 @@ function toWorkspaceRun(row: ExecutionRow): WorkspaceRunWire {
 
 export function createWorkflowOpsRoutes(_workspaceDao: WorkspaceDAO, execDao: ExecutionDAO): Hono {
   const router = new Hono()
+  const execLinks = new ExecutionLinkDAO(execDao.getDb())
 
   // GET /runs — 本工作区顶层运行列表（作业坞运行面板）。只读，不触发执行。
   // 与 /executions 的区别：/executions 走内存 registry 的全量行（含链式子步骤），
@@ -86,8 +74,9 @@ export function createWorkflowOpsRoutes(_workspaceDao: WorkspaceDAO, execDao: Ex
     const workspaceId = c.req.param("id")
     const rawLimit = Number(c.req.query("limit") ?? 50)
     const limit = Number.isFinite(rawLimit) ? Math.min(Math.max(Math.trunc(rawLimit), 1), 200) : 50
-    const runs = execDao.listWorkspaceRuns(workspaceId, limit).map(toWorkspaceRun)
-    return c.json({ runs })
+    const runs = execDao.listWorkspaceRuns(workspaceId, limit)
+    const links = execLinks.findByExecutionIds(runs.map((r) => r.id))
+    return c.json({ runs: runs.map((r) => toWorkspaceRun(r, links.get(r.id))) })
   })
 
   // GET /executions — List executions with optional status filter

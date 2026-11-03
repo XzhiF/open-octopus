@@ -86,7 +86,7 @@ import { globalChatRoutes } from "./routes/global-chat"
 import { createFileRoutes } from "./routes/file-routes"
 import { createOrgRoutes } from "./routes/org"
 import { createBuiltInWorkflowRoutes } from "./routes/builtin-workflow"
-import { createAnalyticsLogRoutes, createAnalyticsRoutes } from "./routes/analytics"
+import { createAnalyticsLogRoutes, createAnalyticsRoutes, setSessionLedgerSummaryProvider } from "./routes/analytics"
 import { eventRoutes } from "./routes/events"
 import scheduleRoutes, { setScheduleService } from "./routes/schedule"
 import { createSchedulerRoutes } from "./routes/scheduler"
@@ -1133,6 +1133,10 @@ if (shouldServe) {
       // needs the REAL TasksService (validation + version + SSE + home backfill).
       // The route is mounted before this async block, hence the late binding.
       setTaskToolsServiceProvider(() => tasksService)
+      // 2026-11-03 消耗口径（全局）：composer 的「本会话 token 账」= 这个 chat
+      // 关联的全部工作流执行（任务轮 + 辅助执行 + 主对话直接跑的工作流），
+      // 不再只是聊天行。路由先于 TasksService 装配，故晚绑定。
+      setSessionLedgerSummaryProvider((sessionId) => tasksService.sessionUsage(sessionId).summary)
       // 2026-11-03: 用户在对话里明确说「立即执行 / 入列 / 开跑」后，主 Chat 直接
       // 执行启动动作（与看板点卡同一组合），不再被卡在「只能提议」。
       setTaskLaunchToolsProvider(() => ({
@@ -1199,7 +1203,7 @@ if (shouldServe) {
       // 验收方案预生成（2026-10-30 AI-native 验收）：轮终态后由独立规划 Agent
       // 产出 acceptance-plan-rN.json；getPlaybook 优先读它，主 Chat 据此逐项引导。
       const acceptancePlan = new AcceptancePlanService(
-        db, sse, tasksService, workspaceService!, taskHomeService, roundEvidence,
+        sse, tasksService, workspaceService!, taskHomeService, roundEvidence,
       )
       roundEvidence.setAcceptancePlanService(acceptancePlan)
       tasksService.taskLifecycle.setAcceptancePlanHook((taskId) => {

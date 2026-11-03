@@ -40,7 +40,7 @@ describe("DB Schema", () => {
       "agent_events", "agent_versions", "archive_drafts",
       "billing_price_config", "billing_setting",
       "branch_executions", "chat_messages", "chat_sessions",
-      "clones", "effectiveness_cursors", "evolution_log", "execution_archive", "execution_summaries", "executions", "experiences",
+      "clones", "effectiveness_cursors", "evolution_log", "execution_archive", "execution_links", "execution_summaries", "executions", "experiences",
       "findings",
       "harness_config", "harness_events",
       "insight_marks", "interaction_messages",
@@ -85,7 +85,8 @@ describe("DB Schema", () => {
     // = 102 − 3 = 99。
     // 2026-10-28 org demotion: −15 org indexes, +5 repo_group/domain/scope indexes = 89.
     // + schema v60 (dock 调试): idx_session_turn_debug_session = 90.
-    expect(rows.length).toBe(90)
+    // + 2026-11-03 消耗口径: execution_links 的 session/task 两条归属索引 = 92.
+    expect(rows.length).toBe(92)
   })
 
   it("workspaces table has correct columns", () => {

@@ -3,11 +3,12 @@ import { Hono } from "hono"
 import Database from "better-sqlite3"
 import { applySchema } from "../../db/schema"
 import { ExecutionDAO } from "../../db/dao/execution-dao"
+import { ExecutionLinkDAO } from "../../db/dao/execution-link-dao"
 import { createWorkflowOpsRoutes, type WorkspaceRunWire } from "../workflow-ops"
 
 /**
  * GET /api/workspaces/:id/workflows/runs —— 作业坞运行面板的只读列表。
- * 验收规划行 task_id=NULL，坐标从 pipeline_config 补；isSystem 由 triggered_by 判。
+ * 验收规划行 task_id=NULL，坐标从 execution_links 补；isSystem 由 triggered_by 判。
  */
 
 describe("workflow-ops · GET /runs", () => {
@@ -33,7 +34,7 @@ describe("workflow-ops · GET /runs", () => {
     db?.close()
   })
 
-  it("返回顶层运行行，验收规划带 system 标记与 pipeline_config 坐标", async () => {
+  it("返回顶层运行行，验收规划带 system 标记与 execution_links 坐标", async () => {
     dao.insertExecution({
       id: "plan-exec",
       workspace_id: "ws-1",
@@ -45,15 +46,15 @@ describe("workflow-ops · GET /runs", () => {
       task_id: null,
       started_at: "2026-11-01T10:00:00.000Z",
     })
-    // pipeline_config 只走 updateExecution（insertExecution 不含该列）——与
-    // AcceptancePlanService.generate 的写法一致。
-    dao.updateExecution("plan-exec", {
-      pipeline_config: JSON.stringify({
-        acceptance_plan: true,
-        task_id: "t-123",
-        phase_index: 1,
-        round_index: 1,
-      }),
+    // 归属与坐标只认 execution_links（2026-11-03）——与 AcceptancePlanService
+    // 创建时传 origin 的写法一致。
+    new ExecutionLinkDAO(db).link({
+      executionId: "plan-exec",
+      sessionId: "s-main",
+      taskId: "t-123",
+      kind: "task_aux",
+      phaseIndex: 1,
+      roundIndex: 1,
     })
 
     const res = await app.request("/api/workspaces/ws-1/workflows/runs")
@@ -73,6 +74,24 @@ describe("workflow-ops · GET /runs", () => {
       isSystem: true,
       startedAt: "2026-11-01T10:00:00.000Z",
     })
+  })
+
+  it("pipeline_config 上的旧验收标记不再当归属源（引擎会覆盖它）", async () => {
+    dao.insertExecution({
+      id: "plan-legacy",
+      workspace_id: "ws-1",
+      workflow_ref: "built-in/acceptance-plan",
+      status: "completed",
+      triggered_by: "acceptance-plan",
+      task_id: null,
+    })
+    dao.updateExecution("plan-legacy", {
+      pipeline_config: JSON.stringify({ acceptance_plan: true, task_id: "t-123", phase_index: 1, round_index: 1 }),
+    })
+
+    const res = await app.request("/api/workspaces/ws-1/workflows/runs")
+    const body = (await res.json()) as { runs: WorkspaceRunWire[] }
+    expect(body.runs[0]).toMatchObject({ id: "plan-legacy", taskId: null, phaseIndex: null, roundIndex: null })
   })
 
   it("任务轮次不标 system；缺 duration 时由起止时间补毫秒差", async () => {

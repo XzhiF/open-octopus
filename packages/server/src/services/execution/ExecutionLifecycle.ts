@@ -1,5 +1,7 @@
 // packages/server/src/services/execution/ExecutionLifecycle.ts
 import type { ExecutionDAO } from "../../db/dao/execution-dao"
+import { ExecutionLinkDAO } from "../../db/dao/execution-link-dao"
+import type { ExecutionOriginInput } from "../../db/dao/execution-link-dao"
 import { TokenUsageDAO } from "../../db/dao/token-usage-dao"
 import type { ExecutionRow, NodeExecutionRow } from "../../db/types"
 import type Database from "better-sqlite3"
@@ -1507,6 +1509,9 @@ export class ExecutionLifecycle {
       // ADR-0021 票03 — task launch identity (see the facade's create for why it is
       // written at insert rather than updated afterwards).
       task_id?: string | null; phase_index?: number | null; round_index?: number | null;
+      /** 2026-11-03 消耗口径：无 task_id 的执行带上归属（会话 / 任务辅助），
+       *  创建时一并写 execution_links —— 账本归集只认这一处，调用方不必再补写。 */
+      origin?: ExecutionOriginInput;
     },
     org: string,
   ): ExecutionRow {
@@ -1554,6 +1559,19 @@ export class ExecutionLifecycle {
       round_index: input.round_index ?? null,
       created_at: now, updated_at: now,
     })
+
+    // 2026-11-03 消耗口径：无 task_id 的执行（主对话代跑 / 任务辅助流）把归属与
+    // 执行行同一次落库，账本才有得归集。失败只记日志 —— 归集少一笔不该阻断执行。
+    if (input.origin) {
+      try {
+        new ExecutionLinkDAO(this.dao.getDb()).link({ executionId: id, ...input.origin })
+      } catch (err: unknown) {
+        console.error(
+          `[ExecutionLifecycle] execution link failed for ${id} (non-fatal):`,
+          err instanceof Error ? err.message : String(err),
+        )
+      }
+    }
 
     const exec = this.dao.findById(id)!
     this.sse.emit(workspaceId, { event: "execution_created", data: { executionId: id, treeNodeId: id } })

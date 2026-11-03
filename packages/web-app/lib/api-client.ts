@@ -274,7 +274,7 @@ export interface WorkspaceRun {
   name: string | null
   status: string
   triggeredBy: string
-  /** 验收规划等系统执行行 task_id=NULL，坐标由 pipeline_config 补。 */
+  /** 验收规划等系统执行行 task_id=NULL，坐标由 execution_links 补。 */
   taskId: string | null
   phaseIndex: number | null
   roundIndex: number | null

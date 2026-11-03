@@ -195,7 +195,20 @@ export function TaskModulesLayer({
               task ? (
                 <UsageWindow taskId={task.id} versionKey={task.version} />
               ) : sessionId ? (
-                <SessionUsageWindow sessionId={sessionId} onOpenTask={onOpenLinkedTask} />
+                <SessionUsageWindow
+                  sessionId={sessionId}
+                  onOpenTask={onOpenLinkedTask}
+                  // 主对话直接跑的工作流没有任务：点行打开这条执行的运行窗。
+                  onOpenExecution={(wf) => {
+                    if (!wf.execution_id || !wf.workspace_id) return
+                    openModuleAt('run', {
+                      executionId: wf.execution_id,
+                      workspaceId: wf.workspace_id,
+                      title: wf.name,
+                      status: wf.status,
+                    })
+                  }}
+                />
               ) : (
                 <div className="flex h-full items-center justify-center p-6 text-[11px] text-pop-dim">
                   还没有会话。
@@ -203,12 +216,13 @@ export function TaskModulesLayer({
               )
             ) : module === 'debug' ? (
               <DebugInspectorWindow sessionId={chatSessionId ?? sessionId ?? null} refreshKey={debugRefreshKey} />
+            ) : module === 'run' ? (
+              // 运行窗不依赖任务：自由对话里从作业坞/消耗窗点进来的指定执行也要能看。
+              <RunWindow task={task} runTarget={record.runTarget ?? null} onTaskAction={onTaskAction} />
             ) : !task ? null : module === 'changes' ? (
               <ChangesWindow task={task} />
             ) : module === 'plan' ? (
               <TaskPlanWindow task={task} onOpenArtifacts={() => openModuleAt('artifacts')} />
-            ) : module === 'run' ? (
-              <RunWindow task={task} runTarget={record.runTarget ?? null} onTaskAction={onTaskAction} />
             ) : module === 'acceptance' ? (
               <AcceptanceWindow
                 task={task}

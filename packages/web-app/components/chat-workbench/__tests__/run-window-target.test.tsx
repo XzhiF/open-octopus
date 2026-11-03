@@ -69,6 +69,13 @@ describe('运行窗口 · 指定执行（作业坞运行列表）', () => {
     expect(screen.getByText('built-in/acceptance-plan')).toBeTruthy()
   })
 
+  it('自由对话（没有任务）也能打开指定执行的运行窗', async () => {
+    await mount({ task: null })
+    expect(getTask).not.toHaveBeenCalled()
+    expect(fetchExecutionDetail).toHaveBeenCalledWith('ws-1', 'plan-exec')
+    expect(screen.getByTestId('run-window')).toBeTruthy()
+  })
+
   it('指定执行不给「重跑」（系统运行重跑会被误解成业务重跑）', async () => {
     vi.mocked(fetchExecutionDetail).mockResolvedValue(
       execWire({ status: 'failed' }) as never,

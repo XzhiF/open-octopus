@@ -7,6 +7,7 @@ import { BuiltInWorkflowService } from "./builtin-workflow"
 import { ObservabilityService } from "./observability"
 import { PrivacyFilter } from "./privacy-filter"
 import { ExecutionDAO } from "../db/dao/execution-dao"
+import type { ExecutionOriginInput } from "../db/dao/execution-link-dao"
 import { ExecutionLifecycle } from "./execution/ExecutionLifecycle"
 import { RecoveryManager } from "./execution/RecoveryManager"
 import { globalErrorTracker } from "./error-tracker"
@@ -112,6 +113,10 @@ export class ExecutionService {
     // ux_exec_task_active does not apply to it — the latch only protects rows that
     // already carry task_id, so the arming side must never insert it in two steps.
     task_id?: string | null; phase_index?: number | null; round_index?: number | null;
+    // 2026-11-03 消耗口径：本次执行归属的会话/任务。**没有 task_id 的执行必须带**
+    // （为主对话代跑的 run_workflow、任务的系统辅助执行…），否则账本收不到它。
+    // ExecutionLifecycle.create 落库时一并写 execution_links，调用方无需再记第二件事。
+    origin?: ExecutionOriginInput;
   }): ExecutionRow {
     return this.lifecycle.create(workspaceId, input, this.org) as ExecutionRow
   }

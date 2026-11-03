@@ -210,4 +210,27 @@ describe('TaskStatusCard', () => {
     expect(card.textContent).toContain('暂不归档')
     expect(screen.queryAllByRole('button')).toHaveLength(0)
   })
+
+  it('验收方案生成失败：同一张收尾卡，打 ✕ / 红色，不打绿勾', async () => {
+    ;(getTask as Mock).mockResolvedValue({
+      id: 't-plan',
+      name: '验收任务',
+      status: 'awaiting_review',
+      executions: [],
+    })
+
+    render(<TaskStatusCard message={eventMessage({
+      kind: 'task.review', title: '验收方案生成失败', status: 'awaiting_review',
+      taskId: 't-plan',
+      message: '规划 Agent 未产出合法方案文件：cases.0.evidenceRefs.2.kind 非法（验收不阻塞）',
+      payload: { status: 'awaiting_review', acceptancePlanFailed: true },
+    }, 'm-plan-fail')} />)
+
+    await waitFor(() => expect(screen.getByText('验收方案生成失败')).toBeTruthy())
+    const card = screen.getByTestId('activity-event-card')
+    expect(card.getAttribute('data-card-tone')).toBe('failed')
+    expect(card.textContent).toContain('✕')
+    expect(card.textContent).not.toContain('✓')
+    expect(screen.getByText(/cases\.0\.evidenceRefs\.2\.kind 非法/)).toBeTruthy()
+  })
 })

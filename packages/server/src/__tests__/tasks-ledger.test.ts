@@ -116,7 +116,7 @@ beforeAll(() => {
   const ts = new TasksService(db, sse, new AgentSessionDAO(db), taskHome, undefined, { get: () => null } as never)
   const wss = { getById: (id: string) => (id === WS_ID ? { id, path: path.join(tmp, "ws1") } : undefined) } as never
   evidence = new RoundEvidenceService(db, sse, ts, wss, taskHome)
-  planService = new AcceptancePlanService(db, sse, ts, wss, taskHome, evidence)
+  planService = new AcceptancePlanService(sse, ts, wss, taskHome, evidence)
   evidence.setAcceptancePlanService(planService)
   app = new Hono(); app.route("/api/tasks", createTasksRoutes(ts, sse, evidence))
   // 测试不触发规划 Agent（方案文件由用例自己落盘）

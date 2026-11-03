@@ -17,13 +17,14 @@
 //   · 诚实降级：Agent 失败 / 方案非法 → status=failed + SSE；getPlaybook 返回
 //     空清单 + 方案状态，验收台显示状态卡并允许直接拍板（无场景硬闸），
 //     绝不阻塞验收。kill switch: OCTOPUS_ACCEPTANCE_PLAN=off。
+//   · 自愈（2026-11-02）：契约校验前先规范化 evidenceRefs.kind（分类笔误不作废
+//     方案）；已 failed 但按当前契约能解析的存量文件，在 ensure 时补落 ready，
+//     不必人点「重新生成」。规划工作流本身也带 plan→validate 修复环（≤3 轮）。
 //   · 人只签字：方案里的 machine 只是建议，最终决策仍在验收台/台账。
 
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "fs"
 import path from "path"
-import type Database from "better-sqlite3"
 import { TASK_ACCEPTANCE_PLAN_EVENT, type AcceptanceRunbook, type AcceptanceVerify, type TaskSpec } from "@octopus/shared"
-import { ExecutionDAO } from "../../db/dao"
 import type { ExecutionRow } from "../../db/types"
 import type { SSEService } from "../sse"
 import type { WorkspaceService } from "../workspace"
@@ -92,23 +93,19 @@ function readFailureText(read: Extract<PlanReadResult, { ok: false }>): string {
   const detail = read.issues.join("；")
   const clipped = detail.length > 400 ? `${detail.slice(0, 400)}…` : detail
   if (read.kind === "json") return `方案文件不是合法 JSON：${clipped}`
-  return `方案文件不符合 v2 契约：${clipped}`
+  return `方案文件不符合 v2 契约（${read.issues.length} 处）：${clipped}`
 }
 
 export class AcceptancePlanService {
-  private readonly execDao: ExecutionDAO
   private readonly inFlight = new Map<string, Promise<void>>()
 
   constructor(
-    db: Database.Database,
     private readonly sse: SSEService,
     private readonly tasksService: TasksService,
     private readonly workspaceService: WorkspaceService,
     private readonly taskHome: TaskHomeService,
     private readonly roundEvidence: RoundEvidenceService,
-  ) {
-    this.execDao = new ExecutionDAO(db)
-  }
+  ) {}
 
   // ── kill switch ────────────────────────────────────────────────────
 
@@ -269,7 +266,15 @@ export class AcceptancePlanService {
     const status = this.readStatusFile(taskId, batchRelDir, roundIndex)
     if (!opts.force) {
       if (status?.status === "ready") return
-      if (status?.status === "failed") return // 失败不自动重试（人点重新生成才走 regenerate）
+      if (status?.status === "failed") {
+        // 存量自愈（2026-11-02）：失败可能只是旧校验过严（如 evidenceRefs.kind
+        // 写成 "e2e"）。方案文件若按当前契约已能解析，直接补落 ready，省掉一次
+        // 1–2 分钟的重新生成；解析不了就保持 failed，不重复发失败事件。
+        if (this.readPlanParsed(taskId, batchRelDir, roundIndex).ok) {
+          await this.finalize(taskId, info, status.execution_id ?? "")
+        }
+        return
+      }
       if (status?.status === "generating" && this.isFresh(status.started_at)) return
     }
 
@@ -355,14 +360,17 @@ export class AcceptancePlanService {
         // 不挂 task_id —— round 口径（listTaskInstances）完全不认它。
         task_id: null,
         allow_existing_root: true,
-      })
-      this.execDao.updateExecution(execution.id, {
-        pipeline_config: JSON.stringify({
-          acceptance_plan: true,
-          task_id: taskId,
-          phase_index: phaseIndex,
-          round_index: roundIndex,
-        }),
+        // 消耗口径（2026-11-03）：规划执行没有 task_id，归属随创建一并落
+        // execution_links —— 任务账本按 task_id、会话账本按 session_id 归集，
+        // 规划 Agent 的 token 才会进这个 chat 的账。坐标也只认这张表：
+        // pipeline_config 会在 start 时被引擎整体覆盖，不能当归属源。
+        origin: {
+          sessionId: task.source_chat_session_id ?? null,
+          taskId,
+          kind: "task_aux",
+          phaseIndex,
+          roundIndex,
+        },
       })
       // 主 Chat 的「工作流运行」卡（2026-11-02）：执行层状态，卡本身零 LLM，
       // 终态由前端轮询执行详情得到。落卡失败不阻塞规划。

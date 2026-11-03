@@ -20,8 +20,18 @@ kind: Workflow
 #
 # Flow:
 #   manifest (bash)  — 证据清单存在性自检（缺 = 当场失败，不烧 agent）
-#     └─ plan (agent) — 读证据 + 按需读文件 → 写方案 JSON/MD
-#          └─ validate (bash) — JSON 存在且可解析；缺 = 失败（server 另做 Zod 校验）
+#     └─ plan-loop (loop, ≤3 次)
+#          ├─ plan (agent)     — 读证据 + 按需读文件 → 写方案 JSON/MD
+#          │                      重试轮先读 .errors.txt，只修被拒的字段
+#          └─ validate (bash)  — 按 v2 契约机器校验（含 evidenceRefs.kind 枚举）
+#                                 不合法 → 写 .errors.txt + vars.plan_valid=invalid → 下一轮
+#     └─ gate (bash) — 三轮后仍不合法 → 执行失败（server 标 status=failed，带字段级原因）
+#
+# 为什么带修复环（2026-11-02 事故）：验收规划 Agent 把 12 处 evidenceRefs.kind 写成
+# "e2e"（契约只认 diff|test|report|docs|preview），validate 只验了 JSON 语法，
+# 执行绿着跑完，到 server finalize 才被 Zod 判死，整份 2 场景 / 11 证据的方案作废。
+# 现在机器校验前移到工作流内，并把字段级原因喂回 Agent 让它自己改，最多 3 次；
+# server 侧另有 kind 规范化兜底（分类笔误不再作废方案）。
 #
 # 失败语义：任何节点失败 → 执行终态非成功 → server 标 status=failed，
 # GET /:id/playbook 返回空清单 + 方案状态；验收台显示状态卡（可直接拍板，不阻塞）。
@@ -86,76 +96,174 @@ nodes:
       echo ""
       echo "--- batch files ---"
       ls -la "$inputs.batch_dir" 2>/dev/null | head -40
+      # 每次生成都从干净状态开始：清掉上一次（可能已过期）的字段级错误清单。
+      rm -f "$inputs.batch_dir/acceptance-plan-r$inputs.round_index.errors.txt"
 
-  - id: plan
-    type: agent
+  # 修复环：plan → validate。validate 通过即 break；不通过把字段级原因写盘，
+  # 下一轮 plan 先读它、只修被拒字段。最多 3 轮（约等于 1 次正常生成 + 2 次修补）。
+  - id: plan-loop
+    type: loop
     depends_on: [manifest]
-    timeout: 1500
-    context: new
-    skills: [octo-acceptance-plan]
-    tools: [Read, Write, Bash, Grep, Glob]
-    prompt: |
-      你是本轮的**验收规划者**。目标不是「判断通过」，而是产出一份人能照着做的验收方案。
+    max_iterations: 3
+    # 用非数字哨兵：引擎的 loop-fallback 会把「数字字符串」条件变量自动 +1，
+    # plan 节点跑完还没轮到 validate 就可能误 break（"0"→"1"）。
+    break_when: '$vars.plan_valid == "valid"'
+    nodes:
+      - id: plan
+        type: agent
+        timeout: 1500
+        context: new
+        skills: [octo-acceptance-plan]
+        tools: [Read, Write, Bash, Grep, Glob]
+        prompt: |
+          你是本轮的**验收规划者**。目标不是「判断通过」，而是产出一份人能照着做的验收方案。
 
-      ═══ 输入锚点 ═══
-      - 证据清单（先完整读）：$inputs.evidence_path
-      - 批次目录（spec / 票 / round-report / e2e 票）：$inputs.batch_dir
-      - 任务：$inputs.task_name（task_id=$inputs.task_id）· Phase $inputs.phase_index · Round $inputs.round_index
-      - 方案输出（必须写）：
-        - JSON 正本：$inputs.plan_json_path
-        - 人读版：$inputs.plan_md_path
+          ═══ 输入锚点 ═══
+          - 证据清单（先完整读）：$inputs.evidence_path
+          - 批次目录（spec / 票 / round-report / e2e 票）：$inputs.batch_dir
+          - 任务：$inputs.task_name（task_id=$inputs.task_id）· Phase $inputs.phase_index · Round $inputs.round_index
+          - 方案输出（必须写）：
+            - JSON 正本：$inputs.plan_json_path
+            - 人读版：$inputs.plan_md_path
 
-      ═══ 步骤 ═══
-      1. 读证据清单 JSON，拿到批次文件清单 / 真实 diff / verify / runbook / 各来源路径。
-      2. 读 spec（或 spec-rN.md）与最新的 e2e 票 / e2e-test-plan（存在才读），
-         以及 round-report.md（只当线索）。上轮 acceptance-checks-r{N-1}.md 若有，
-         其中 skip/fail 项本轮优先覆盖。
-      3. 需要确认改动落点时，用只读命令看代码：
-         `git -C . diff --stat`、`git log --oneline -10`、`rg -n "<符号>"`、Read。
-         **不要运行构建 / 测试 / 起服务 / 任何写命令**。
-      4. **先分层，再写条目**（这是本方案的核心）：
-         · cases = 人验收场景，**1–3 条**：从 phase 的故事与验收物来，不从票 AC 平铺。
-           每条是一条完整动作流（open → do → observe），写清「打开哪 / 做什么 / 看到什么」；
-           不写测试命令、不写 AC 编号；简单工具任务只写 1 条；纯后端用 REPL/脚本/curl 也算场景。
-           **每条场景步骤 ≤8 步**（硬上限 16）：同类操作合并，别把每个输入值拆成一对步。
-         · checks = 本轮已有机器证据，≤20 项：按来源组织（一套单测 = 1 项，一个 e2e = 1 项），
-           写 covers（覆盖哪些 AC）、tickets、真实存在的 evidenceRefs、可选 recheck 命令。
-           不写通过结论，不要求人逐项签。
-         · 同一件事不能既进 cases 又进 checks；**测试通过永远不是人验场景**。
-      5. 严格按 octo-acceptance-plan skill 的 JSON 结构（version=2）写 $inputs.plan_json_path
-         （只写 JSON 本体，无围栏），写完用 `node -e "JSON.parse(require('fs').readFileSync('<path>','utf8'))"`
-         或 `python -c "import json;json.load(open('<path>',encoding='utf-8'))"` 自检一次；
-         再数一遍条数：cases 1–3、每条 steps ≤8、checks ≤20（硬上限 10 / 16 / 50，超了整份方案作废）。
-      6. 写人读版 $inputs.plan_md_path：先「你要验的」再「本轮验证了什么」。
+          ═══ 步骤 ═══
+          0. **先看有没有上一版被拒的原因**：如果 $inputs.batch_dir/acceptance-plan-r$inputs.round_index.errors.txt
+             存在，先完整读它 —— 那是机器契约校验拒绝上一版方案的**字段级清单**。
+             只修清单里点名的字段，其余内容保持不动，然后重新写回 $inputs.plan_json_path；
+             不要从头重写整份方案。
+          1. 读证据清单 JSON，拿到批次文件清单 / 真实 diff / verify / runbook / 各来源路径。
+          2. 读 spec（或 spec-rN.md）与最新的 e2e 票 / e2e-test-plan（存在才读），
+             以及 round-report.md（只当线索）。上轮 acceptance-checks-r{N-1}.md 若有，
+             其中 skip/fail 项本轮优先覆盖。
+          3. 需要确认改动落点时，用只读命令看代码：
+             `git -C . diff --stat`、`git log --oneline -10`、`rg -n "<符号>"`、Read。
+             **不要运行构建 / 测试 / 起服务 / 任何写命令**。
+          4. **先分层，再写条目**（这是本方案的核心）：
+             · cases = 人验收场景，**1–3 条**：从 phase 的故事与验收物来，不从票 AC 平铺。
+               每条是一条完整动作流（open → do → observe），写清「打开哪 / 做什么 / 看到什么」；
+               不写测试命令、不写 AC 编号；简单工具任务只写 1 条；纯后端用 REPL/脚本/curl 也算场景。
+               **每条场景步骤 ≤8 步**（硬上限 16）：同类操作合并，别把每个输入值拆成一对步。
+             · checks = 本轮已有机器证据，≤20 项：按来源组织（一套单测 = 1 项，一个 e2e = 1 项），
+               写 covers（覆盖哪些 AC）、tickets、真实存在的 evidenceRefs、可选 recheck 命令。
+               不写通过结论，不要求人逐项签。
+             · 同一件事不能既进 cases 又进 checks；**测试通过永远不是人验场景**。
+          5. 严格按 octo-acceptance-plan skill 的 JSON 结构（version=2）写 $inputs.plan_json_path
+             （只写 JSON 本体，无围栏），写完用 `node -e "JSON.parse(require('fs').readFileSync('<path>','utf8'))"`
+             或 `python -c "import json;json.load(open('<path>',encoding='utf-8'))"` 自检一次；
+             再按 skill 的字段清单逐项核对一遍，尤其是：
+             · `evidenceRefs[].kind` 只能是 `diff | test | report | docs | preview` 五选一 ——
+               e2e 走查日志 / 脚本 / server.log 用 `report`，票与 spec 用 `docs`，截图用 `preview`；
+               写别的值（比如 "e2e"）会被机器校验拒绝。
+             · cases 1–3、每条 steps ≤8、checks ≤20（硬上限 10 / 16 / 50，超了整份方案作废）。
+          6. 写人读版 $inputs.plan_md_path：先「你要验的」再「本轮验证了什么」。
 
-      ═══ 硬纪律 ═══
-      - 人层只留精华场景；宁可少而准，绝不把单测 / 集成 / e2e / AC 拆成一条条人验项。
-      - 绝不编造证据路径、测试数字、命令输出；不确定就删掉路径或改写成场景观察点。
-      - checks 只记本轮真实发生过的验证；没验的写进 coverage.missing，不要假装验过。
-      - 不要修改任何代码或批次文件（只写两个输出文件）。
-      - coverage 必须登记：每个用户故事 → case，每个 AC → check；漏了如实写 missing。
-      - recheck 命令会在**任务工作区根**执行（仓库在 projects/<repo>/ 下）：多仓必须自带
-        `cd projects/<repo> && …` 或 `-f projects/<repo>/pom.xml`；`mvn -pl … -am -Dtest=X`
-        记得加 `-Dsurefire.failIfNoSpecifiedTests=false`，否则其它模块无匹配测试会失败。
+          ═══ 硬纪律 ═══
+          - 人层只留精华场景；宁可少而准，绝不把单测 / 集成 / e2e / AC 拆成一条条人验项。
+          - 绝不编造证据路径、测试数字、命令输出；不确定就删掉路径或改写成场景观察点。
+          - checks 只记本轮真实发生过的验证；没验的写进 coverage.missing，不要假装验过。
+          - 不要修改任何代码或批次文件（只写两个输出文件）。
+          - coverage 必须登记：每个用户故事 → case，每个 AC → check；漏了如实写 missing。
+          - recheck 命令会在**任务工作区根**执行（仓库在 projects/<repo>/ 下）：多仓必须自带
+            `cd projects/<repo> && …` 或 `-f projects/<repo>/pom.xml`；`mvn -pl … -am -Dtest=X`
+            记得加 `-Dsurefire.failIfNoSpecifiedTests=false`，否则其它模块无匹配测试会失败。
 
-      输出 vars_update:
-      {"vars_update": {"plan_cases": "<场景条数>", "plan_checks": "<证据项数>", "plan_json": "$inputs.plan_json_path"}}
+          输出 vars_update:
+          {"vars_update": {"plan_cases": "<场景条数>", "plan_checks": "<证据项数>", "plan_json": "$inputs.plan_json_path"}}
 
-  - id: validate
+      # 契约校验（与 server 的 v2 Zod 契约同构）：不合法 → 写字段级原因、plan_valid=invalid，
+      # 本轮**不失败**，交给下一轮 plan 自己修。JSON 语法错误也归到这里。
+      - id: validate
+        type: bash
+        timeout: 60
+        bash: |
+          JSON="$inputs.plan_json_path"
+          ERRORS="$inputs.batch_dir/acceptance-plan-r$inputs.round_index.errors.txt"
+          if [ ! -s "$JSON" ]; then
+            echo "PLAN MISSING OR EMPTY: $JSON" > "$ERRORS"
+            echo "PLAN INVALID — missing or empty"
+            echo '{"vars_update":{"plan_valid":"invalid"}}'
+            exit 0
+          fi
+          node -e '
+          const fs = require("fs")
+          const out = []
+          const push = (where, msg) => out.push(where + ": " + msg)
+          const isObj = (v) => v && typeof v === "object" && !Array.isArray(v)
+          let p
+          try { p = JSON.parse(fs.readFileSync(process.argv[1], "utf8")) }
+          catch (e) { console.error("JSON PARSE ERROR: " + (e && e.message ? e.message : String(e))); process.exit(1) }
+          const KINDS = ["diff", "test", "report", "docs", "preview"]
+          const STEPS = ["open", "do", "observe"]
+          const list = (v) => Array.isArray(v) ? v : []
+          if (!isObj(p)) { console.error("ROOT: 必须是 JSON 对象"); process.exit(1) }
+          if (p.version !== "2") push("version", "必须是字符串 \"2\"")
+          if (typeof p.task_id !== "string" || !p.task_id.trim()) push("task_id", "必填")
+          if (!Number.isInteger(p.phase_index) || p.phase_index < 1) push("phase_index", "必须是正整数")
+          if (!Number.isInteger(p.round_index) || p.round_index < 1) push("round_index", "必须是正整数")
+          if (typeof p.generated_at !== "string" || !p.generated_at) push("generated_at", "必填")
+          const checkRefs = (where, refs) => list(refs).forEach((e, j) => {
+            const w = where + ".evidenceRefs." + j
+            if (!isObj(e)) { push(w, "必须是对象"); return }
+            if (KINDS.indexOf(e.kind) < 0) push(w + ".kind", "必须是 diff|test|report|docs|preview，收到 " + JSON.stringify(e.kind))
+            if (typeof e.label !== "string" || !e.label.trim()) push(w + ".label", "必填")
+          })
+          const cases = list(p.cases)
+          if (!cases.length) push("cases", "至少 1 条")
+          if (cases.length > 10) push("cases", "上限 10 条，当前 " + cases.length)
+          cases.forEach((c, i) => {
+            const w = "cases." + i
+            if (!isObj(c)) { push(w, "必须是对象"); return }
+            if (typeof c.id !== "string" || !c.id.trim()) push(w + ".id", "必填")
+            if (typeof c.title !== "string" || !c.title.trim()) push(w + ".title", "必填")
+            if (typeof c.expect !== "string" || !c.expect.trim()) push(w + ".expect", "必填")
+            const steps = list(c.steps)
+            if (!steps.length) push(w + ".steps", "至少 1 步")
+            if (steps.length > 16) push(w + ".steps", "上限 16 步，当前 " + steps.length)
+            steps.forEach((s, j) => {
+              const sw = w + ".steps." + j
+              if (!isObj(s)) { push(sw, "必须是对象"); return }
+              if (STEPS.indexOf(s.kind) < 0) push(sw + ".kind", "必须是 open|do|observe，收到 " + JSON.stringify(s.kind))
+              if (typeof s.text !== "string" || !s.text.trim()) push(sw + ".text", "必填")
+            })
+            checkRefs(w, c.evidenceRefs)
+          })
+          const checks = list(p.checks)
+          if (checks.length > 50) push("checks", "上限 50 项，当前 " + checks.length)
+          checks.forEach((c, i) => {
+            const w = "checks." + i
+            if (!isObj(c)) { push(w, "必须是对象"); return }
+            if (typeof c.id !== "string" || !c.id.trim()) push(w + ".id", "必填")
+            if (typeof c.title !== "string" || !c.title.trim()) push(w + ".title", "必填")
+            checkRefs(w, c.evidenceRefs)
+          })
+          if (out.length) { console.error(out.join("\n")); process.exit(1) }
+          console.log("PLAN OK")
+          ' "$JSON" > "$ERRORS" 2>&1
+          RC=$?
+          if [ "$RC" -ne 0 ]; then
+            echo "PLAN INVALID — 已把字段级原因写回 $ERRORS，交给下一轮修复："
+            head -c 4000 "$ERRORS"
+            echo ""
+            echo '{"vars_update":{"plan_valid":"invalid"}}'
+            exit 0
+          fi
+          cat "$ERRORS"
+          rm -f "$ERRORS"
+          if [ ! -s "$inputs.plan_md_path" ]; then
+            echo "note: plan md missing (server will render a fallback)"
+          fi
+          echo '{"vars_update":{"plan_valid":"valid"}}'
+
+  # 三轮修复仍不合法 → 让执行真的失败（主 Chat 的运行卡与方案状态从此一致）。
+  - id: gate
     type: bash
-    depends_on: [plan]
-    timeout: 60
+    depends_on: [plan-loop]
+    timeout: 30
     bash: |
-      JSON="$inputs.plan_json_path"
-      if [ ! -s "$JSON" ]; then
-        echo "PLAN MISSING OR EMPTY: $JSON"
+      if [ "$vars.plan_valid" != "valid" ]; then
+        echo "PLAN STILL INVALID AFTER REPAIR LOOP"
+        ERRORS="$inputs.batch_dir/acceptance-plan-r$inputs.round_index.errors.txt"
+        [ -f "$ERRORS" ] && head -c 4000 "$ERRORS"
         exit 1
       fi
-      python -c "import json,sys;json.load(open(sys.argv[1],encoding='utf-8'))" "$JSON" 2>/dev/null \
-        || node -e "JSON.parse(require('fs').readFileSync(process.argv[1],'utf8'))" "$JSON" \
-        || { echo "PLAN JSON INVALID: $JSON"; exit 1; }
-      echo "PLAN OK:"
-      head -c 1200 "$JSON"
-      if [ ! -s "$inputs.plan_md_path" ]; then
-        echo "note: plan md missing (server will render a fallback)"
-      fi
+      echo "PLAN VALID"

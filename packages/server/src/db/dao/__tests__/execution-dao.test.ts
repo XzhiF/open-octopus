@@ -51,7 +51,6 @@ describe("ExecutionDAO.listWorkspaceRuns — 工作区顶层运行", () => {
       parent_id: "0",
       task_id: null,
       triggered_by: "acceptance-plan",
-      pipeline_config: JSON.stringify({ acceptance_plan: true, task_id: "t-1", phase_index: 1, round_index: 2 }),
     })
 
     const runs = dao.listWorkspaceRuns("ws-1")

@@ -91,6 +91,24 @@ CREATE TABLE IF NOT EXISTS executions (
   FOREIGN KEY (workspace_id) REFERENCES workspaces(id)
 );
 
+-- 2b. Execution ⇄ 归属会话/任务（2026-11-03 消耗口径）
+-- 任务轮靠 executions.task_id 归集，但两类执行拿不到 task_id：
+--   · 系统辅助执行（验收规划）—— 挂 task_id 会撞 ux_exec_task_active 单实例闸、
+--     并混进看板/run_stats 的「轮」口径，所以插行时故意留 NULL；
+--   · 主对话里用 run_workflow 直接跑的工作流 —— 本就没有任务。
+-- 关联落这张表，任务账本 / 会话账本按它归集；execution_id 唯一，重复登记只更新。
+CREATE TABLE IF NOT EXISTS execution_links (
+  execution_id TEXT PRIMARY KEY,
+  session_id TEXT,
+  task_id TEXT,
+  kind TEXT NOT NULL,
+  phase_index INTEGER,
+  round_index INTEGER,
+  created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_execution_links_session ON execution_links(session_id);
+CREATE INDEX IF NOT EXISTS idx_execution_links_task ON execution_links(task_id);
+
 -- 3. Node Executions
 CREATE TABLE IF NOT EXISTS node_executions (
   id TEXT PRIMARY KEY,

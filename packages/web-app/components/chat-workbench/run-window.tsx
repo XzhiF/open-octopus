@@ -60,7 +60,8 @@ export function RunWindow({
   runTarget,
   onTaskAction,
 }: {
-  task: TaskView
+  /** 有任务 = 任务当前一轮；自由对话里打开作业坞指定的执行时没有任务。 */
+  task: TaskView | null
   /** 作业坞运行列表点进来的指定执行；缺省 = 任务当前一轮（原行为不变）。 */
   runTarget?: RunTarget | null
   onTaskAction?: (action: string) => void
@@ -89,6 +90,8 @@ export function RunWindow({
   const phaseIndex = runTarget?.phaseIndex ?? taskRun?.phase_index ?? null
   const roundIndex = runTarget?.roundIndex ?? taskRun?.round_index ?? null
   const workflowRef = exec?.workflowRef ?? runTarget?.workflowRef ?? taskRun?.workflow_ref ?? null
+  /** 任务 id 单独提出来做 effect 依赖：task 对象每次渲染可能是新引用。 */
+  const taskId = task?.id ?? null
 
   // 终态重跑（2026-10-28）：failed/取消/带失败完成 的执行给一个「⚡ 重跑」，
   // 服务端自动取首个失败节点为恢复点 —— 与对话 Agent 的 rerun_execution 同源。
@@ -96,7 +99,7 @@ export function RunWindow({
   const rerunnable = !runTarget && !!taskRun && !live &&
     ['failed', 'cancelled', 'aborted', 'completed_with_failures'].includes(taskRun.status)
   const handleRerun = async () => {
-    if (!workspaceId || !executionId || rerunning) return
+    if (!task || !workspaceId || !executionId || rerunning) return
     setRerunning(true)
     try {
       const result = await rerunExecution(workspaceId, executionId)
@@ -130,21 +133,21 @@ export function RunWindow({
 
   useEffect(() => {
     // 指定执行不依赖任务当前轮：列表里可能是 task_id=NULL 的系统运行，
-    // getTask 看不到它，轮询只会白跑。
-    if (runTarget) {
+    // getTask 看不到它，轮询只会白跑。自由对话里根本没有任务。
+    if (runTarget || !taskId) {
       setDetail(null)
       return
     }
     let alive = true
     const load = () => {
-      getTask(task.id)
+      getTask(taskId)
         .then((next) => { if (alive) setDetail(next) })
         .catch(() => { /* keep the snapshot */ })
     }
     load()
     const timer = window.setInterval(load, live ? 3_000 : 15_000)
     return () => { alive = false; window.clearInterval(timer) }
-  }, [task.id, live, runTarget])
+  }, [taskId, live, runTarget])
 
   // 换一条执行：先清掉上一份 DAG/日志快照，避免新 target 加载前短暂串台。
   useEffect(() => { setExec(null) }, [workspaceId, executionId])
