@@ -10,7 +10,7 @@ import { Button } from '@/components/ui/button'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { toast } from 'sonner'
 import { cn } from '@/lib/utils'
-import { formatTokenCount } from '@/lib/format'
+import { formatStopwatch, formatTokenCount } from '@/lib/format'
 import { ChatBubble } from './ChatBubble'
 import { SessionCostChip } from './session-cost-chip'
 import { ContextUsageChip, ContextUsagePlaceholder, contextUsageAriaLabel } from './context-usage-chip'
@@ -392,7 +392,7 @@ export function ChatArea({
     ? 'exec' : 'thinking'
   // 流尾常驻工作行（2026-10-29 用户：输出一开始「Agent 思考中」就消失，干活时
   // 没有任何持续反馈）。阶段 + 真实耗时，整轮在跑时一直挂着，回合结束才退场；
-  // 文案按阶段轮换诙谐短语（work-phrases），耗时只到秒。
+  // 文案按阶段轮换诙谐短语（work-phrases），耗时按 h/m/s 展示（h 封顶、超 24h 继续累计）。
   const workPhase: WorkPhase = busyPhase === 'exec'
     ? 'exec'
     : isThinking ? 'thinking' : streamContent ? 'writing' : 'thinking'
@@ -634,8 +634,8 @@ export function ChatArea({
                 data-tui-workline={workPhase}
               >
                 <span className={workTone.spin} aria-hidden>{spinGlyph}</span>
-                <span className="text-pop-ink/80">{workPhrase(workPhase, workElapsed)}</span>
-                <span className={`tabular-nums ${workTone.secs}`}>{workElapsed}s</span>{/* fmt-ok: 流尾工作行的整轮计时（整秒），非日期/用量格式化 */}
+                <span className="text-pop-ink/80">{workPhrase(workPhase, workElapsed, busyStartedAt ?? 0)}</span>
+                <span className={`tabular-nums ${workTone.secs}`}>{formatStopwatch(workElapsed * 1000)}</span>
               </div>
             )}
 
