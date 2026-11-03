@@ -28,7 +28,7 @@ version: 3.5.2
 ③ 拆分确认 gate      多 phase 时一表批问 —— 批准后先 spec-field 写 slug + phases 骨架，再产 spec；批准前不写 phases、不绑工作流
 ④ 逐 phase 产 spec   每 phase 走 matt 族内容轮，产 spec.md + issues/ 进 ./.scratch/<main-slug>/<sub-slug>/
 ⑤ 逐 phase 绑定      GET /api/workflow-presets → 推荐 + 骨架预填 input_values → 用户确认 → spec-field field=phases
-⑥ 交付              自查 v4 gate 齐备 → 把 TASK_ID 给用户，等 [入队]
+⑥ 交付              自查 v4 gate 齐备 → 把 TASK_ID 给用户；等 [入队] 或用户明确说「立即执行 / 入列」→ launch_task / enqueue_task
 ```
 
 ## 前置条件
@@ -243,7 +243,9 @@ curl -s -X PUT "http://localhost:$PORT/api/tasks/$TASK_ID" \
 
 增量绑字段优先 §2；PUT 主要用来写 `autoAdvance`（spec-field 无此键；缺省=默认开，显式 `false` 才让每个 phase 停在人工 gate）与多字段一次性整-spec 保存。缺 If-Match → 428，冲突 → 409。v4 创建锁：PUT 不得去 `format` 旗标，省略 `phases` 时 server 保留现值。
 
-### 4. 入队 gate —— **用户**点 [入队] 才触发
+### 4. 入队 gate —— 用户点 [入队]，或在对话里明确让你执行
+
+主 Chat 里用户明确说「入列」→ `enqueue_task(confirmed=true)`；说「立即执行 / 现在开跑」→ `launch_task(confirmed=true)`（等价于点卡）。没有明确表态时只能用 `propose_launch` 出启动卡，不要自行执行。
 
 ```bash
 curl -s -X POST "http://localhost:$PORT/api/tasks/$TASK_ID/ready" | jq .

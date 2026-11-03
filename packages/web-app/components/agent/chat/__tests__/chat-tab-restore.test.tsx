@@ -30,11 +30,16 @@ vi.mock("@/hooks/useAgentChat", () => ({
   }),
 }))
 
+const sessionsBox: { sessions: unknown[]; activeSessionId: string | null } = {
+  sessions: [],
+  activeSessionId: null,
+}
+
 vi.mock("@/components/providers/chat-sessions", () => ({
   useChatSessions: () => ({
-    sessions: [],
-    activeSessionId: null,
-    setActiveSessionId: vi.fn(),
+    sessions: sessionsBox.sessions,
+    activeSessionId: sessionsBox.activeSessionId,
+    setActiveSessionId: (id: string | null) => { sessionsBox.activeSessionId = id },
     loading: false,
     createNewSession: vi.fn(),
     renameSession: vi.fn(),
@@ -43,6 +48,9 @@ vi.mock("@/components/providers/chat-sessions", () => ({
     refetch: vi.fn(),
   }),
 }))
+
+const sse = vi.hoisted(() => ({ subscribeSSE: vi.fn(() => () => {}) }))
+vi.mock("@/lib/sse-manager", () => ({ subscribeSSE: sse.subscribeSSE }))
 
 vi.mock("@/hooks/useSessionUsage", () => ({
   useSessionUsage: () => null,
@@ -57,6 +65,7 @@ const RUNNING_TASK = {
   org: "xzf",
   name: "运行中的任务",
   status: "running",
+  workspace_id: "ws-task",
   task_spec: { format: "v4" },
   authoring_resources: [],
   resources: [],
@@ -91,6 +100,9 @@ import { writeLastChatContext } from "@/lib/last-chat-context"
 
 beforeEach(() => {
   localStorage.clear()
+  sessionsBox.sessions = []
+  sessionsBox.activeSessionId = null
+  sse.subscribeSSE.mockClear()
   tasksBox.tasks = [RUNNING_TASK]
   tasksBox.loading = false
   vi.stubGlobal("fetch", vi.fn(async (url: unknown) => {
@@ -137,5 +149,21 @@ describe("ChatTab — 刷新恢复上次任务", () => {
 
     await waitFor(() => expect(firstTaskItem()).toBeDefined())
     expect(firstTaskItem().getAttribute("aria-current")).toBeNull()
+  })
+
+  it("任务线程订阅 session_updated 用 activeTask.workspace_id（任务会话不在会话列表里）", async () => {
+    // Task threads are excluded from the session list, so `activeSession` is
+    // undefined; before the fix the chat never subscribed and server-appended
+    // cards only showed after F5 (2026-11-02 user bug).
+    writeLastChatContext({ kind: "task", taskId: "task-running" })
+    render(<ChatTab />)
+
+    await waitFor(() =>
+      expect(sse.subscribeSSE).toHaveBeenCalledWith(
+        expect.stringContaining("/api/workspaces/ws-task/events"),
+        "session_updated",
+        expect.any(Function),
+      ),
+    )
   })
 })

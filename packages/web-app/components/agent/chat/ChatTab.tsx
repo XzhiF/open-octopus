@@ -326,11 +326,15 @@ export function ChatTab() {
     if (!fresh) return
     const sameProjects =
       (fresh.project_ids ?? []).join(',') === (activeTask.project_ids ?? []).join(',')
+    // workspace_id drives the session_updated subscription (task threads have no
+    // session row to fall back on) — refresh it even when nothing else changed.
+    const sameWorkspace = (fresh.workspace_id ?? null) === (activeTask.workspace_id ?? null)
     if (
       fresh.name !== activeTask.name ||
       fresh.status !== activeTask.status ||
       fresh.version !== activeTask.version ||
-      !sameProjects
+      !sameProjects ||
+      !sameWorkspace
     ) {
       setActiveTask(fresh)
     }
@@ -1221,7 +1225,12 @@ export function ChatTab() {
 
   // Server-originated wake turns (workflow/task events → ChatEventBridge) have
   // no client SSE. The workspace channel tells the open chat to tail them.
-  const activeWorkspaceId = activeSession?.workspace_id ?? null
+  // Task threads are excluded from the session list (one task = one main thread,
+  // reached via the task row), so `activeSession` is undefined there — fall back
+  // to the task's workspace. Without it the chat never subscribes to
+  // `session_updated`, and server-appended cards (run / completion / acceptance
+  // failure) only appear after F5 (2026-11-02 user bug).
+  const activeWorkspaceId = activeTask?.workspace_id ?? activeSession?.workspace_id ?? null
   useEffect(() => {
     if (!activeWorkspaceId || !activeSessionId) return
     const off = subscribeSSE(

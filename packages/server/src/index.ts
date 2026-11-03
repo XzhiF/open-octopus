@@ -96,7 +96,7 @@ import {
   AcceptancePlanService,
   setAcceptancePlanReadyProvider,
 } from "./services/tasks/acceptance-plan-service"
-import { setAcceptanceToolsProvider, setArchiveToolsProvider } from "./services/chat/task-tools"
+import { setAcceptanceToolsProvider, setArchiveToolsProvider, setTaskLaunchToolsProvider } from "./services/chat/task-tools"
 import { TestInstanceRegistry } from "./services/tasks/test-instance-registry"
 import { createWorkflowPresetsRoutes } from "./routes/workflow-presets"
 import { createSkillGroupsRoutes } from "./routes/skill-groups"
@@ -1133,6 +1133,12 @@ if (shouldServe) {
       // needs the REAL TasksService (validation + version + SSE + home backfill).
       // The route is mounted before this async block, hence the late binding.
       setTaskToolsServiceProvider(() => tasksService)
+      // 2026-11-03: 用户在对话里明确说「立即执行 / 入列 / 开跑」后，主 Chat 直接
+      // 执行启动动作（与看板点卡同一组合），不再被卡在「只能提议」。
+      setTaskLaunchToolsProvider(() => ({
+        readyTask: (id, opts) => tasksService.readyTask(id, opts),
+        triggerTask: (id) => tasksService.triggerTaskWithPrebuild(id),
+      }))
       // 知识中心票10 建链，P3 票02 升级素材包链：task 进入 archiving 态即组包
       // （raw/archives/task-{id}/ 六件+manifest，件级冻结契约同票02）→ 总结读包 →
       // 编译读包（manifest 先行按需下钻）经票06 全局串行队列（kind=archive-compile，
