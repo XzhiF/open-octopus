@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach } from "vitest"
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest"
 import Database from "better-sqlite3"
 import { applySchema } from "../../../db/schema"
 import { getChatEventBridge, resetChatEventBridgeForTests } from "../chat-event-bridge"
@@ -103,5 +103,54 @@ describe("ChatEventBridge.requestWorkflowRunCard", () => {
     insertTask(db, "t-2", null)
     getChatEventBridge().requestWorkflowRunCard({ ...PLAN_CARD, taskId: "t-2", executionId: "plan-exec-2" })
     expect(cards(db, "s-main")).toHaveLength(0)
+  })
+})
+
+describe("ChatEventBridge.requestAcceptanceGuide", () => {
+  let db: Database.Database
+  let originalFetch: typeof fetch
+  let originalWake: string | undefined
+
+  beforeEach(() => {
+    db = new Database(":memory:")
+    applySchema(db)
+    resetChatEventBridgeForTests()
+    getChatEventBridge().attach(db)
+    insertSession(db, "s-main", null)
+    insertTask(db, "t-1", "s-main")
+    originalFetch = global.fetch
+    originalWake = process.env.OCTOPUS_CHAT_AUTO_WAKE
+    delete process.env.OCTOPUS_CHAT_AUTO_WAKE
+  })
+
+  afterEach(() => {
+    global.fetch = originalFetch
+    if (originalWake === undefined) delete process.env.OCTOPUS_CHAT_AUTO_WAKE
+    else process.env.OCTOPUS_CHAT_AUTO_WAKE = originalWake
+    db?.close()
+    resetChatEventBridgeForTests()
+  })
+
+  // 2026-11-03：验收确认从文字提问变成了 AskUserQuestion 选项卡（8f0c0ee1 把
+  // 主对话的 ask_user_question 事件接通后可见）。选项卡会打断逐场景引导，所以
+  // 引导消息必须明确要求用对话正文提问。
+  it("引导消息要求用对话正文提问，明确禁用 AskUserQuestion", async () => {
+    const bodies: Array<Record<string, unknown>> = []
+    global.fetch = vi.fn(async (_url: string, init?: RequestInit) => {
+      bodies.push(JSON.parse(String(init?.body)) as Record<string, unknown>)
+      return { ok: true, body: null } as unknown as Response
+    }) as unknown as typeof fetch
+
+    getChatEventBridge().requestAcceptanceGuide("t-1", {
+      phaseIndex: 1,
+      roundIndex: 2,
+      caseCount: 2,
+      checkCount: 3,
+    })
+
+    await vi.waitFor(() => expect(bodies).toHaveLength(1))
+    const message = String(bodies[0].message)
+    expect(message).toContain("不要调用 AskUserQuestion")
+    expect(message).toContain("get_acceptance_plan")
   })
 })

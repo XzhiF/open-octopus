@@ -66,7 +66,15 @@ import { BackfillService } from "./services/knowledge/backfill"
 import { createFindingsRoutes } from "./routes/findings"
 import { createEffectivenessRoutes } from "./routes/effectiveness"
 import { ArchiveIngestService, archiveCompileTaskId } from "./services/tasks/archive-ingest-service"
-import { readPackManifest } from "./services/knowledge/material-pack"
+import { packDirRel, readPackManifest, PACK_ITEM_PROMPT_CAP_BYTES } from "./services/knowledge/material-pack"
+import {
+  toArchiveWikiFailure,
+  toArchiveWikiResult,
+  writeArchiveWikiResult,
+  type ArchiveWikiResult,
+  type CuratorCompileResultLike,
+} from "./services/tasks/archive-wiki-result"
+import { upsertArchiveCaseResult } from "./services/tasks/archive-case-result"
 import { createProductionArchiveSummarizer } from "./services/tasks/archive-ingest-llm"
 import { createWikiRoutes } from "./routes/wiki"
 import { createArchiveRoutes } from "./routes/archive"
@@ -567,6 +575,30 @@ const ruleFormJudge = createProductionRuleFormJudge()
 const wikiWriteQueue = new CompileQueue({
   lock: new WikiLock({ wikiRoot: () => resolveGlobalWikiRoot() }),
 })
+// 归档素材包编译的统一执行体（初次投喂 compilePack 与 POST /pack/:id/recompile 同源）：
+// 编译结果 / 失败面落 {task home}/archive/wiki-result.json，归档窗口据此展示
+// 「wiki 落了什么」；队列是进程内的，回执才是跨重启的真相面。写回执失败只 stderr，
+// 绝不改写编译结果本身。
+const archiveTaskHomes = new TaskHomeService()
+const runArchiveCompile = async (taskId: string, opts?: { focus?: string }): Promise<CuratorCompileResultLike> => {
+  const startedAt = new Date().toISOString()
+  const persist = (result: ArchiveWikiResult): void => {
+    try {
+      writeArchiveWikiResult(archiveTaskHomes.homePath(taskId), result)
+    } catch (err) {
+      process.stderr.write(`[archive-compile] wiki-result write failed for ${taskId}: ${err instanceof Error ? err.message : String(err)}\n`)
+    }
+  }
+  try {
+    const curator = new CuratorCompileService({ db: getDb(), llm: createProductionCuratorLLM() })
+    const result = await curator.compilePack(taskId, opts ?? {})
+    persist(toArchiveWikiResult(result, startedAt, new Date().toISOString()))
+    return result
+  } catch (err) {
+    persist(toArchiveWikiFailure(err, startedAt, new Date().toISOString()))
+    throw err
+  }
+}
 const curatorTasks = new CuratorTaskService({
   queue: wikiWriteQueue,
   run: async (rawPath) => {
@@ -626,10 +658,7 @@ app.route("/api/knowledge/wiki", createWikiCompileRoutes(curatorTasks))
 const packOps = new MaterialPackOpsService({
   root: resolveGlobalKnowledgeRoot(),
   queue: wikiWriteQueue,
-  compilePack: async (taskId, opts) => {
-    const curator = new CuratorCompileService({ db: getDb(), llm: createProductionCuratorLLM() })
-    return curator.compilePack(taskId, opts ?? {})
-  },
+  compilePack: (taskId, opts) => runArchiveCompile(taskId, opts),
 })
 app.route("/api/knowledge/wiki", createWikiPackRoutes(packOps))
 // P3 票03：判例自动提取+入档。CaseExtractService（惰性 db 构造，getFindingOps 同轨）：
@@ -650,6 +679,9 @@ const getCaseExtract = () => (caseExtractInstance ??= new CaseExtractService({
       [event],
     )
   },
+  // 归档窗口「知识落点」要展示判例新建/并档/失败 —— 结果只有队列执行体里才知道，
+  // 落任务 home 的 archive/case-result.json（写失败只 stderr，不毁入档）。
+  recordCaseResult: (taskId, result) => upsertArchiveCaseResult(archiveTaskHomes.homePath(taskId), result),
 }))
 app.route("/api/knowledge/wiki", createWikiCaseRoutes({
   retireCase: (caseId) => getCaseExtract().retireCase(caseId),
@@ -1156,10 +1188,7 @@ if (shouldServe) {
         taskHomeService,
         rawIngest: new RawIngestService(),
         queue: wikiWriteQueue,
-        compilePack: async (taskId, opts) => {
-          const curator = new CuratorCompileService({ db: getDb(), llm: createProductionCuratorLLM() })
-          return curator.compilePack(taskId, opts ?? {})
-        },
+        compilePack: (taskId, opts) => runArchiveCompile(taskId, opts),
         summarize: createProductionArchiveSummarizer(),
         extractCases: (taskId) => getCaseExtract().extractAndEnqueue(taskId),
         // P3 票04：第⑤步之后跑 a+c 两路草案检测（纯 fs 落 drafts 区，零入队；失败吞）。
@@ -1180,7 +1209,13 @@ if (shouldServe) {
       // 只读快照，不触发任何写入；未投喂（无 manifest 且未入队）→ null。
       tasksService.setArchiveKnowledgeHook((taskId) => {
         const manifest = readPackManifest(resolveGlobalKnowledgeRoot(), taskId)
-        const queueView = wikiWriteQueue.get(archiveCompileTaskId(taskId))
+        // 初次编译 id=arc-{taskId}，重编译 id=arc-{taskId}-rcN —— 取该包最近一次入队，
+        // 重编译期间窗口才能看到「排队中 / 编译中」。
+        const queuePrefix = archiveCompileTaskId(taskId)
+        const queueView = wikiWriteQueue
+          .list()
+          .filter((v) => v.id === queuePrefix || v.id.startsWith(`${queuePrefix}-rc`))
+          .at(-1)
         if (!manifest && !queueView) return null
         return {
           pack_items: manifest ? manifest.items.filter((item) => !item.excluded).length : 0,
@@ -1193,8 +1228,15 @@ if (shouldServe) {
                 path: item.path,
               }))
             : [],
+          pack_path: manifest ? packDirRel(taskId) : null,
+          pack_created_at: manifest?.createdAt ?? null,
+          pack_item_cap: PACK_ITEM_PROMPT_CAP_BYTES,
           compile_state: queueView?.state ?? null,
           compile_position: queueView?.position ?? null,
+          compile_queued_at: queueView?.queuedAt ?? null,
+          compile_started_at: queueView?.startedAt ?? null,
+          compile_finished_at: queueView?.finishedAt ?? null,
+          compile_error: queueView?.error ?? null,
         }
       })
       // 验货台 (acceptance v2)：实物 round-diff + 当场复检 — 4th optional arg

@@ -95,6 +95,8 @@ import { seedPhaseToWorkspace, collectFromWorkspace, batchRelPath, resolvePhaseS
 import { specRunbookLevel } from "./runbook-spec"
 // task-phase-redesign (ticket 08): the archiving orchestrator (K11 归并面).
 import { createTaskArchiver, type TaskArchiver, type ArchiveReport } from "./archiving-service"
+import { readArchiveWikiResult, type ArchiveWikiResult } from "./archive-wiki-result"
+import { readArchiveCaseResults, type ArchiveCaseResult } from "./archive-case-result"
 import {
   createArchiveCleaner,
   type ArchiveCleanupReport,
@@ -342,10 +344,28 @@ export interface TaskArchiveKnowledge {
   pack_items: number
   /** 包内全部件（含已剔除；件数只算未剔除）。未装配 manifest 的宿主可省略。 */
   items?: TaskArchiveKnowledgeItem[]
+  /** 包目录（知识根相对 POSIX，如 `raw/archives/task-{id}`）；旧宿主可省略。 */
+  pack_path?: string | null
+  /** 素材包冻结时间（manifest.createdAt）——归档窗口时间线用。 */
+  pack_created_at?: string | null
+  /** 非焦点件进编译 prompt 的单件字节预算（UI「载入 / 仅指针」徽章按此估算）。 */
+  pack_item_cap?: number | null
   /** 编译队列状态 queued / running / committed / failed；null = 未入队。 */
   compile_state: string | null
   /** 排队位次（仅 queued 有值）。 */
   compile_position: number | null
+  /** 队列时间戳（进程内队列快照；重启后缺席，改看 wiki_result）。 */
+  compile_queued_at?: string | null
+  compile_started_at?: string | null
+  compile_finished_at?: string | null
+  /** 队列失败错误面（稳定 code/message）。 */
+  compile_error?: { code: string; message: string } | null
+  /** 持久编译回执（archive/wiki-result.json）——「归档在 wiki 里落了什么」的真相面。
+   *  null/缺省 = 尚未编译完成或旧任务没有此文件。 */
+  wiki_result?: ArchiveWikiResult | null
+  /** 判例入档回执（archive/case-result.json）：新建 / 并档 / 失败。
+   *  缺省 = 本次无判例入档（或旧任务）。 */
+  case_results?: ArchiveCaseResult[]
 }
 
 /** GET /:id/archive — the archive window's one-shot read model. */
@@ -3785,6 +3805,14 @@ export class TasksService {
       knowledge = this.archiveKnowledgeHook?.(taskId) ?? null
     } catch {
       /* 知识中心不可用不影响归档读模型 */
+    }
+    // 编译回执是任务 home 里的事实（队列是进程内的）——挂到知识快照上，
+    // 服务重启后窗口仍能看到「落了哪几页」。没有回执时不加字段（旧读模型逐字不变）。
+    if (knowledge) {
+      const wikiResult = readArchiveWikiResult(home)
+      if (wikiResult) knowledge.wiki_result = wikiResult
+      const caseResults = readArchiveCaseResults(home)
+      if (caseResults.length > 0) knowledge.case_results = caseResults
     }
     let cleanup: ArchiveCleanupReport | null = null
     try {

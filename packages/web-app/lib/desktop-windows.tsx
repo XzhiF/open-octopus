@@ -694,3 +694,8 @@ export function useDesktopWindows(): DesktopWindowsContextValue {
   if (!context) throw new Error('useDesktopWindows must be used inside DesktopWindowsProvider')
   return context
 }
+
+/** 可选桌面临界：组件单测可脱离 Provider 渲染；生产装配态与 useDesktopWindows 同源。 */
+export function useOptionalDesktopWindows(): DesktopWindowsContextValue | null {
+  return useContext(DesktopWindowsContext)
+}

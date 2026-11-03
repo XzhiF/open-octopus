@@ -108,6 +108,74 @@ describe("reflection store + decisions", () => {
     }
   })
 
+  it("archive read model attaches the persisted wiki compile receipt (archive/wiki-result.json)", () => {
+    insertTask("t-wiki")
+    const archiveDir = path.join(home, "archive")
+    fs.mkdirSync(archiveDir, { recursive: true })
+    fs.writeFileSync(path.join(archiveDir, "wiki-result.json"), JSON.stringify({
+      status: "committed",
+      started_at: "2026-11-03T06:46:31.000Z",
+      finished_at: "2026-11-03T06:48:42.000Z",
+      commit: "5a5a669",
+      changed: true,
+      deduped: false,
+      created: 2,
+      updated: 1,
+      contradictions: 1,
+      finding_ids: ["fnd-1"],
+      touched: [
+        { path: "entities/ent-a.md", type: "entity", created: false },
+        { path: "topics/top-b.md", type: "topic", created: true },
+      ],
+      warnings: [],
+    }), "utf-8")
+    service.setArchiveKnowledgeHook(() => ({ pack_items: 7, compile_state: null, compile_position: null }))
+    try {
+      const archive = service.readArchive("t-wiki")
+      expect(archive.knowledge?.wiki_result).toMatchObject({
+        status: "committed",
+        commit: "5a5a669",
+        created: 2,
+        updated: 1,
+        contradictions: 1,
+        finding_ids: ["fnd-1"],
+      })
+      expect(archive.knowledge?.wiki_result?.touched).toHaveLength(2)
+    } finally {
+      service.setArchiveKnowledgeHook(null)
+    }
+  })
+
+  it("archive read model attaches persisted case archive results (archive/case-result.json)", () => {
+    insertTask("t-case")
+    const archiveDir = path.join(home, "archive")
+    fs.mkdirSync(archiveDir, { recursive: true })
+    fs.writeFileSync(path.join(archiveDir, "case-result.json"), JSON.stringify([
+      {
+        queue_task_id: "caw-t-case-01",
+        action: "merged",
+        symptom: "登录接口 500：cookie 未清",
+        case_path: "cases/2026-10-27-case-acc38e5918.md",
+        occurrences_before: 1,
+        occurrences_after: 2,
+        finished_at: "2026-11-03T06:49:00.000Z",
+      },
+    ]), "utf-8")
+    service.setArchiveKnowledgeHook(() => ({ pack_items: 7, compile_state: null, compile_position: null }))
+    try {
+      const archive = service.readArchive("t-case")
+      expect(archive.knowledge?.case_results).toHaveLength(1)
+      expect(archive.knowledge?.case_results?.[0]).toMatchObject({
+        action: "merged",
+        case_path: "cases/2026-10-27-case-acc38e5918.md",
+        occurrences_before: 1,
+        occurrences_after: 2,
+      })
+    } finally {
+      service.setArchiveKnowledgeHook(null)
+    }
+  })
+
   it("skip is recorded and idempotent", async () => {
     insertTask("t-skip")
     seedReflection()

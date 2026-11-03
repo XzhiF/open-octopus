@@ -823,13 +823,64 @@ export interface ArchiveKnowledgeItemWire {
   path: string
 }
 
+/** 归档 wiki 编译触及页（`archive/wiki-result.json` 投影）。 */
+export interface ArchiveWikiTouchedPageWire {
+  path: string
+  type: string
+  created: boolean
+}
+
+/** 归档 wiki 编译回执（2026-11-03 归档台 v2「知识落点」真相面）。 */
+export interface ArchiveWikiResultWire {
+  status: 'committed' | 'failed'
+  started_at: string
+  finished_at: string
+  commit: string | null
+  changed: boolean
+  deduped: boolean
+  created: number
+  updated: number
+  contradictions: number
+  finding_ids: string[]
+  touched: ArchiveWikiTouchedPageWire[]
+  warnings: string[]
+  error?: { code: string; message: string }
+}
+
+/** 归档判例入档回执（`archive/case-result.json`；新建 / 并档 / 失败）。 */
+export interface ArchiveCaseResultWire {
+  queue_task_id: string
+  action: 'created' | 'merged' | 'failed'
+  symptom: string
+  case_path: string | null
+  occurrences_before: number | null
+  occurrences_after: number | null
+  finished_at: string
+  error?: { code: string; message: string }
+}
+
 /** 归档素材包 / 编译状态（知识中心只读快照）。 */
 export interface ArchiveKnowledgeWire {
   pack_items: number
   /** 包内全部件（含已剔除）；旧服务端可能不返回。 */
   items?: ArchiveKnowledgeItemWire[]
+  /** 包目录（知识根相对 POSIX）；旧服务端可能不返回。 */
+  pack_path?: string | null
+  /** 素材包冻结时间（manifest.createdAt）。 */
+  pack_created_at?: string | null
+  /** 非焦点件进编译 prompt 的单件字节预算（UI 徽章估算用）。 */
+  pack_item_cap?: number | null
   compile_state: string | null
   compile_position: number | null
+  /** 队列时间戳（进程内快照；服务重启后缺席，改看 wiki_result）。 */
+  compile_queued_at?: string | null
+  compile_started_at?: string | null
+  compile_finished_at?: string | null
+  compile_error?: { code: string; message: string } | null
+  /** 持久编译回执；null/缺省 = 尚未编译完成或旧任务。 */
+  wiki_result?: ArchiveWikiResultWire | null
+  /** 判例入档回执；缺省 = 本次无判例入档（或旧任务）。 */
+  case_results?: ArchiveCaseResultWire[]
 }
 
 /** done 后构建产物清理（archive/cleanup.json，2026-10-31）。 */

@@ -4,6 +4,7 @@ import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react
 import type { TaskView } from '@/lib/tasks-api'
 import { cascadeRect, centerInViewport, type Size } from '@/lib/window-geometry'
 import { cn } from '@/lib/utils'
+import { useOptionalDesktopWindows } from '@/lib/desktop-windows'
 import { ChangesWindow } from './changes-window'
 import { TaskPlanWindow } from './task-plan-window'
 import { TaskWindow } from './task-window'
@@ -72,6 +73,7 @@ export function TaskModulesLayer({
   onOpenLinkedTask,
   className,
 }: TaskModulesLayerProps) {
+  const desktop = useOptionalDesktopWindows()
   const containerRef = useRef<HTMLDivElement>(null)
   const [size, setSize] = useState<Size>({ width: 0, height: 0 })
   /** 容器左边缘的视口 x（= 左侧任务栏宽度）；最大化窗口按它向左出血。 */
@@ -232,7 +234,7 @@ export function TaskModulesLayer({
             ) : module === 'artifacts' ? (
               <ArtifactsWindow taskId={task.id} versionKey={task.version} />
             ) : (
-              <ArchiveWindow task={task} onMutated={onMutated} />
+              <ArchiveWindow task={task} onMutated={onMutated} onOpenKnowledge={desktop ? () => desktop.openApp('knowledge') : undefined} />
             )}
           </TaskWindow>
         )

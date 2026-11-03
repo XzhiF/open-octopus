@@ -50,6 +50,22 @@ const DIFF_FILE_ROWS_CAP = 40
 const DIFF_HUNK_FILES = 3
 const DIFF_HUNK_LINE_CAP = 60
 
+/**
+ * 关键 hunk 的低价值路径：锁文件 / 压缩产物 / sourcemap / 构建目录。
+ * stat 面仍如实列行（一眼可见改了哪些文件），但 hunk 正文不占预算——
+ * 大改依赖时锁文件常是变更量 top1，把 3 个 hunk 名额挤掉真正的源码改动；
+ * 全量 diff 永远可回源 git（区间锚原样列出）。
+ */
+const LOW_VALUE_DIFF_FILE_RE =
+  /(^|\/)(pnpm-lock\.yaml|package-lock\.json|npm-shrinkwrap\.json|yarn\.lock|bun\.lockb?|Cargo\.lock|poetry\.lock|Pipfile\.lock|composer\.lock|Gemfile\.lock|go\.sum|.+\.min\.(js|css)|.+\.map)$/i
+const LOW_VALUE_DIFF_DIR_RE =
+  /(^|\/)(node_modules|dist|build|target|out|coverage|\.next|\.nuxt|\.output|classes)\//i
+
+export function isLowValueDiffPath(filePath: string): boolean {
+  const p = filePath.replace(/\\/g, "/")
+  return LOW_VALUE_DIFF_FILE_RE.test(p) || LOW_VALUE_DIFF_DIR_RE.test(p)
+}
+
 // ── 件规格（编号序 = 包内文件序；archive-ingest 与测试按值消费）────────
 
 export const MATERIAL_FILE_NAMES: Record<MaterialItemKind, string> = {
@@ -302,8 +318,16 @@ async function extractPrDiff(deps: ArchiveMaterialDeps, taskId: string, branch: 
         lines.push(`  - ${f.status} ${f.path} +${f.adds}/-${f.dels}`)
       }
       if (stat.files.length > DIFF_FILE_ROWS_CAP) lines.push(`  - …（其余 ${stat.files.length - DIFF_FILE_ROWS_CAP} 文件看 stat 汇总）`)
-      // 关键 hunk：变更量 top 文件的 patch 头部
-      const top = stat.files.filter(f => !f.binary).sort((a, b) => (b.adds + b.dels) - (a.adds + a.dels)).slice(0, DIFF_HUNK_FILES)
+      // 关键 hunk：变更量 top 文件（锁文件 / 压缩产物 / 构建目录不占 hunk 名额）
+      const hunkCandidates = stat.files.filter(f => !f.binary)
+      const top = hunkCandidates
+        .filter(f => !isLowValueDiffPath(f.path))
+        .sort((a, b) => (b.adds + b.dels) - (a.adds + a.dels))
+        .slice(0, DIFF_HUNK_FILES)
+      const skippedLowValue = hunkCandidates.filter(f => isLowValueDiffPath(f.path)).length
+      if (skippedLowValue > 0) {
+        lines.push(`- 关键 hunk 已排除锁文件 / 压缩产物 / 构建目录 ${skippedLowValue} 个（stat 行保留，全量回源 git）`)
+      }
       for (const f of top) {
         try {
           const { patch } = await git.diffPatchFor(dir, start, end, f.path)

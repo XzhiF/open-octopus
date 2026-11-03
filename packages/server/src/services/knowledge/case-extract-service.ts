@@ -139,6 +139,22 @@ export interface CaseExtractOutcome {
   queueTaskIds?: string[]
 }
 
+/**
+ * 判例入档回执（2026-11-03 归档台 v2）——队列执行体里才知道是「新建 / 并档 /
+ * 失败」，这里把结果交给 recordCaseResult 落任务 home，归档窗口据此展示。
+ * 形状与 server `services/tasks/archive-case-result.ts` 的 ArchiveCaseResult 逐字一致。
+ */
+export interface CaseArchiveRecord {
+  queue_task_id: string
+  action: "created" | "merged" | "failed"
+  symptom: string
+  case_path: string | null
+  occurrences_before: number | null
+  occurrences_after: number | null
+  finished_at: string
+  error?: { code: string; message: string }
+}
+
 // ── Deps ─────────────────────────────────────────────────────────────
 
 export interface CaseExtractDeps {
@@ -151,6 +167,8 @@ export interface CaseExtractDeps {
   extract: LLMCall
   /** 判例卡 Lane A 生产者（index.ts 接 appendKnowledgeSessionCards；缺省不产卡，抛错吞 stderr） */
   announceCase?: (event: KcCardEvent) => void
+  /** 归档窗口回执（index.ts 接 upsertArchiveCaseResult；缺省不记录）。 */
+  recordCaseResult?: (taskId: string, result: CaseArchiveRecord) => void
   git?: GitRunner
   now?: () => Date
 }
@@ -245,6 +263,7 @@ export class CaseExtractService {
   private readonly queue: WriteQueue
   private readonly extract: LLMCall
   private readonly announceCase?: (event: KcCardEvent) => void
+  private readonly recordCaseResultFn?: (taskId: string, result: CaseArchiveRecord) => void
   private readonly git?: GitRunner
   private readonly now: () => Date
   private seq = 0
@@ -256,6 +275,7 @@ export class CaseExtractService {
     this.queue = deps.queue
     this.extract = deps.extract
     this.announceCase = deps.announceCase
+    this.recordCaseResultFn = deps.recordCaseResult
     this.git = deps.git
     this.now = deps.now ?? (() => new Date())
   }
@@ -341,44 +361,95 @@ export class CaseExtractService {
 
   /** 入档执行体（持串行位）：同症状命中→occurrences+1；未命中→新判例。成功 committed 后才 emit 判例卡（先存后知）。 */
   private async archiveDraft(queueTaskId: string, taskId: string, draft: CaseDraft): Promise<void> {
-    const compiler = this.compiler()
-    const cases = scanWikiEntries(this.wikiRoot)
-      .filter(e => e.case !== undefined && e.relPath.startsWith("cases/"))
-      .sort((a, b) => a.relPath.localeCompare(b.relPath)) // 确定性决胜序（同分取先位）
+    try {
+      const compiler = this.compiler()
+      const cases = scanWikiEntries(this.wikiRoot)
+        .filter(e => e.case !== undefined && e.relPath.startsWith("cases/"))
+        .sort((a, b) => a.relPath.localeCompare(b.relPath)) // 确定性决胜序（同分取先位）
 
-    const hit = findSimilarSymptom(cases.map(e => e.case!.symptom), draft.symptom)
-    if (hit !== undefined) {
-      const target = cases[hit.index]!
-      await this.applyCaseUpdate(
-        queueTaskId,
-        target.relPath,
-        { occurrences: target.case!.occurrences + 1 },
-        `判例并档 occurrence ${target.case!.occurrences + 1}（源 task-${taskId}）`,
-      )
-      return
-    }
+      const hit = findSimilarSymptom(cases.map(e => e.case!.symptom), draft.symptom)
+      if (hit !== undefined) {
+        const target = cases[hit.index]!
+        const before = target.case!.occurrences
+        await this.applyCaseUpdate(
+          queueTaskId,
+          target.relPath,
+          { occurrences: before + 1 },
+          `判例并档 occurrence ${before + 1}（源 task-${taskId}）`,
+        )
+        this.recordCaseResult(taskId, {
+          queue_task_id: queueTaskId,
+          action: "merged",
+          symptom: draft.symptom,
+          case_path: target.relPath,
+          occurrences_before: before,
+          occurrences_after: before + 1,
+          finished_at: this.now().toISOString(),
+        })
+        return
+      }
 
-    const date = this.now().toISOString().slice(0, 10)
-    const id = `case-${sha10(draft.symptom)}`
-    const meta: WikiCaseFrontmatter = {
-      id,
-      domain: "cases",
-      symptom: draft.symptom,
-      tags: draft.tags,
-      severity: draft.severity,
-      occurrences: 1,
-      source: draft.source,
-      status: "open",
+      const date = this.now().toISOString().slice(0, 10)
+      const id = `case-${sha10(draft.symptom)}`
+      const meta: WikiCaseFrontmatter = {
+        id,
+        domain: "cases",
+        symptom: draft.symptom,
+        tags: draft.tags,
+        severity: draft.severity,
+        occurrences: 1,
+        source: draft.source,
+        status: "open",
+      }
+      const body = caseBodyFromSections(draft.sections)
+      const res = await compiler.compileEntry({
+        content: serializeCaseMarkdown(meta, body),
+        fileName: `${date}-${id}.md`,
+        source: `task:${taskId}`,
+        reviewer: "auto-extract",
+        note: `判例自动提取（task-${taskId}）`,
+      })
+      this.recordCaseResult(taskId, {
+        queue_task_id: queueTaskId,
+        action: "created",
+        symptom: draft.symptom,
+        case_path: res.path,
+        occurrences_before: 0,
+        occurrences_after: 1,
+        finished_at: this.now().toISOString(),
+      })
+      this.announce(queueTaskId, meta, draft.sections, res.path, taskId, "created")
+    } catch (err) {
+      // 队列会把任务标 failed 并回滚；先把失败面记进归档回执（写失败只 stderr）。
+      this.recordCaseResult(taskId, {
+        queue_task_id: queueTaskId,
+        action: "failed",
+        symptom: draft.symptom,
+        case_path: null,
+        occurrences_before: null,
+        occurrences_after: null,
+        finished_at: this.now().toISOString(),
+        error: this.errorFace(err),
+      })
+      throw err
     }
-    const body = caseBodyFromSections(draft.sections)
-    const res = await compiler.compileEntry({
-      content: serializeCaseMarkdown(meta, body),
-      fileName: `${date}-${id}.md`,
-      source: `task:${taskId}`,
-      reviewer: "auto-extract",
-      note: `判例自动提取（task-${taskId}）`,
-    })
-    this.announce(queueTaskId, meta, draft.sections, res.path, taskId, "created")
+  }
+
+  /** 归档回执（缺省 seam = 不记录）；一切异常吞 stderr，绝不毁判例入档。 */
+  private recordCaseResult(taskId: string, result: CaseArchiveRecord): void {
+    if (!this.recordCaseResultFn) return
+    try {
+      this.recordCaseResultFn(taskId, result)
+    } catch (err) {
+      process.stderr.write(`[case-extract] record case result failed for ${taskId}: ${err instanceof Error ? err.message : String(err)}\n`)
+    }
+  }
+
+  private errorFace(err: unknown): { code: string; message: string } {
+    const anyErr = err as { code?: unknown; message?: unknown }
+    const code = typeof anyErr?.code === "string" ? anyErr.code : "CASE_ARCHIVE_FAILED"
+    const raw = err instanceof Error ? err.message : String(err)
+    return { code, message: raw.startsWith(`${code}: `) ? raw.slice(code.length + 2) : raw }
   }
 
   /** 可变面更新（occurrences/退役共用）：读盘现文→只动 status/occurrences/rule_ref→重编译（正文 append-only 原样）。 */

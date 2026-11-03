@@ -852,7 +852,7 @@ class ChatEventBridge {
       `[验收引导] 任务 ${taskId} 本轮（P${info.phaseIndex} R${info.roundIndex}）已交付，验收方案已生成：人验收 ${info.caseCount} 条场景、机器证据 ${info.checkCount} 项。`,
       "1. 调 get_acceptance_plan：`cases` 是要人验的场景（打开 → 操作 → 看什么），`checks` 是本轮已经验证过的机器证据。",
       "2. 开场用**一句话**播报机器证据（共几项、缺几件），然后**只走场景** —— 不要逐条跑证据、不要逐项问证据；e2e/慢命令尤其不要主动重跑。",
-      "3. 一次只推进一条场景：按 steps 讲清「打开哪 → 做什么 → 看到什么」；用户要看页面就 start_acceptance_preview（结束 stop_acceptance_preview）。",
+      "3. 一次只推进一条场景：按 steps 讲清「打开哪 → 做什么 → 看到什么」；提问一律用对话正文，不要调用 AskUserQuestion（选项卡会打断逐条引导）；用户要看页面就 start_acceptance_preview（结束 stop_acceptance_preview）。",
       "4. 只有用户点名「这条再跑一下」时，才对该机器证据项调 run_acceptance_probe；结果讲给用户，但不要让它变成人工勾选项。",
       "5. 用户明确表态后直接调 record_acceptance_check(confirmed=true)（只对 cases）；不要代替人判断。",
       "不通过 → 当场小修（只改直接相关的 ≤2 个文件，不改 spec），改完按场景重看再确认；",
