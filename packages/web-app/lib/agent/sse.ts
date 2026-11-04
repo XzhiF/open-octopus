@@ -2,7 +2,7 @@
 
 import { useCallback, useRef, useEffect } from 'react'
 import type { AgentSSEEvent } from './types'
-import type { AgentSSEConnection } from './api'
+import type { AgentSSEConnection, BackgroundTaskInfo } from './api'
 
 export interface SSEHandlers {
   onTextDelta?: (content: string) => void
@@ -13,6 +13,10 @@ export interface SSEHandlers {
   /** AskUserQuestion 显式标记（server interactionSession 拦截后发出）。 */
   onAskUserQuestion?: (data: Extract<AgentSSEEvent, { event: 'ask_user_question' }>['data']) => void
   onStatus?: (data: Extract<AgentSSEEvent, { event: 'status' }>['data']) => void
+  /** 后台任务电平（REPLACE 语义）：非空 = 本轮正在等后台任务。 */
+  onBackgroundTasks?: (data: { tasks: BackgroundTaskInfo[] }) => void
+  /** 后台任务唤醒的续轮开始（首轮 result 后又来一段正文）。 */
+  onAssistantContinue?: (data: { separator?: string }) => void
   onConfirm?: (data: Extract<AgentSSEEvent, { event: 'confirm' }>['data']) => void
   onContextUsage?: (data: import('@/lib/agent/types').ContextUsageData) => void
   /** Slash commands advertised by the CLI — replace the composer's list. */
@@ -159,6 +163,12 @@ export function useSSEConnection(options?: SSEConnectionOptions) {
                   break
                 case 'status':
                   handlers.onStatus?.(data)
+                  break
+                case 'background_tasks':
+                  handlers.onBackgroundTasks?.(data)
+                  break
+                case 'assistant_continue':
+                  handlers.onAssistantContinue?.(data)
                   break
                 case 'confirm':
                   handlers.onConfirm?.(data)

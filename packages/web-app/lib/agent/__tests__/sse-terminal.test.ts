@@ -121,4 +121,23 @@ describe('useSSEConnection terminal guarantee', () => {
     expect(handlers.onHeartbeat).toHaveBeenCalled()
     expect(handlers.onError).not.toHaveBeenCalled()
   })
+
+  // 2026-11-04：后台任务电平帧 → useAgentChat 的「后台运行中」工作行。
+  it('parses background_tasks level frames', async () => {
+    const tasks = [{ id: 'bg-1', description: 'mvn spring-boot:run', taskType: 'local_bash' }]
+    const handlers = { onError: vi.fn(), onDone: vi.fn(), onBackgroundTasks: vi.fn() }
+    const { result } = renderHook(() => useSSEConnection({ stallMs: 5_000, watchdogIntervalMs: 50 }))
+    const conn = makeConnection()
+
+    act(() => { result.current.connect(conn.connection, handlers) })
+    act(() => {
+      conn.push(`event: background_tasks\ndata: ${JSON.stringify({ tasks })}\n\n`)
+    })
+
+    await waitFor(() => expect(handlers.onBackgroundTasks).toHaveBeenCalledWith({ tasks }))
+
+    act(() => { conn.push(`event: done\ndata: ${JSON.stringify({ session_id: 's-1' })}\n\n`) })
+    await waitFor(() => expect(handlers.onDone).toHaveBeenCalledTimes(1))
+    expect(handlers.onError).not.toHaveBeenCalled()
+  })
 })

@@ -1,7 +1,9 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
+  getActiveStreamBackgroundTasks,
   listActiveStreams,
   registerActiveStream,
+  setActiveStreamBackgroundTasks,
   unregisterActiveStream,
 } from '../services/agent/agent-service'
 
@@ -37,5 +39,32 @@ describe('listActiveStreams', () => {
     expect(listActiveStreams().some((item) => item.sessionId === `${PREFIX}c`)).toBe(true)
     unregisterActiveStream(`${PREFIX}c`, stream)
     expect(listActiveStreams().some((item) => item.sessionId === `${PREFIX}c`)).toBe(false)
+  })
+
+  // 2026-11-04：后台任务电平进注册表，header / running 探测才能说清「在跑什么」。
+  it('carries background tasks on the session and clears them on demand', () => {
+    const stream = registerActiveStream(`${PREFIX}d`, () => {})
+    try {
+      setActiveStreamBackgroundTasks(`${PREFIX}d`, [
+        { id: 'bg-1', description: 'mvn spring-boot:run', taskType: 'local_bash' },
+      ])
+      expect(getActiveStreamBackgroundTasks(`${PREFIX}d`)).toEqual([
+        { id: 'bg-1', description: 'mvn spring-boot:run', taskType: 'local_bash' },
+      ])
+      const item = listActiveStreams().find((s) => s.sessionId === `${PREFIX}d`)
+      expect(item?.backgroundTasks).toEqual([
+        { id: 'bg-1', description: 'mvn spring-boot:run', taskType: 'local_bash' },
+      ])
+
+      // REPLACE 语义：空数组 / null 都清空
+      setActiveStreamBackgroundTasks(`${PREFIX}d`, [])
+      expect(getActiveStreamBackgroundTasks(`${PREFIX}d`)).toEqual([])
+      setActiveStreamBackgroundTasks(`${PREFIX}d`, [{ id: 'bg-2', description: 'another' }])
+      setActiveStreamBackgroundTasks(`${PREFIX}d`, null)
+      expect(getActiveStreamBackgroundTasks(`${PREFIX}d`)).toEqual([])
+    } finally {
+      setActiveStreamBackgroundTasks(`${PREFIX}d`, null)
+      unregisterActiveStream(`${PREFIX}d`, stream)
+    }
   })
 })

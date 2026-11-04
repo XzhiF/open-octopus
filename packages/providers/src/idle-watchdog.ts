@@ -46,8 +46,13 @@ export class IdleTimeoutError extends Error {
 export interface GuardIdleOptions {
   /** Deadline for the first event. */
   firstEventMs: number
-  /** Deadline between two events once the first one arrived. */
-  idleMs: number
+  /**
+   * Deadline between two events once the first one arrived. A function is
+   * evaluated before every wait: the provider lifts the deadline to its
+   * background-wait budget while a `run_in_background` task legitimately keeps
+   * the stream silent (a Maven build is not a wedged transport).
+   */
+  idleMs: number | (() => number)
   /** Called synchronously before the error is thrown — abort the transport here. */
   onTimeout?: (error: IdleTimeoutError) => void
 }
@@ -91,14 +96,22 @@ export async function* guardIdle<T>(
   options: GuardIdleOptions,
 ): AsyncGenerator<T> {
   assertPositive(options.firstEventMs, 'firstEventMs')
-  assertPositive(options.idleMs, 'idleMs')
+  if (typeof options.idleMs === 'number') assertPositive(options.idleMs, 'idleMs')
+
+  const idleBudget = (): number => {
+    const ms = typeof options.idleMs === 'function' ? options.idleMs() : options.idleMs
+    assertPositive(ms, 'idleMs')
+    return ms
+  }
 
   const iterator = source[Symbol.asyncIterator]()
   let waitingForFirst = true
 
   try {
     for (;;) {
-      const budget = waitingForFirst ? options.firstEventMs : options.idleMs
+      // A function form is re-read on every demand so the provider can switch
+      // budgets mid-stream (background task started/finished).
+      const budget = waitingForFirst ? options.firstEventMs : idleBudget()
       const result = await nextWithTimeout(iterator, budget)
 
       if (result === TIMEOUT) {

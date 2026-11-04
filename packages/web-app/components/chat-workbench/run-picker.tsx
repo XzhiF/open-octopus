@@ -11,6 +11,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { AlertTriangle, CheckCircle2, ChevronRight, CircleDashed } from 'lucide-react'
 import type { WorkspaceRun } from '@/lib/api-client'
 import { formatStopwatch } from '@/lib/format'
+import { SYSTEM_WORKFLOW_LABEL } from '@/lib/run-labels'
 import { cn } from '@/lib/utils'
 
 /** 还没走到终态的执行状态（与 dashboard queue 同律）。 */
@@ -19,11 +20,6 @@ const LIVE_STATUS = new Set([
 ])
 
 export const isLiveRun = (run: WorkspaceRun): boolean => LIVE_STATUS.has(run.status)
-
-/** 系统工作流的人话名字：执行行的 workflow_name 是 ref 的 slug，不是给人看的。 */
-const SYSTEM_WORKFLOW_LABEL: Record<string, string> = {
-  'built-in/acceptance-plan': '验收规划',
-}
 
 const STATUS_LABEL: Record<string, string> = {
   running: '运行中',

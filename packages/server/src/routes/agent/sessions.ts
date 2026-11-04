@@ -111,6 +111,8 @@ export function createSessionRoutes(sessionDAO: AgentSessionDAO): Hono {
         session_type: string
         started_at: string
         stream_count: number
+        /** 正在等的后台任务（header chip 的「在跑什么」）。 */
+        background_tasks: Array<{ id: string; description: string; taskType?: string }>
       }> = []
 
       for (const active of listActiveStreams()) {
@@ -123,6 +125,7 @@ export function createSessionRoutes(sessionDAO: AgentSessionDAO): Hono {
           session_type: session.session_type,
           started_at: new Date(active.startedAt).toISOString(),
           stream_count: active.streamCount,
+          background_tasks: active.backgroundTasks,
         })
         if (items.length >= limit) break
       }

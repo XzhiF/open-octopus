@@ -17,7 +17,7 @@ import { createTurnStream, DEFAULT_HEARTBEAT_MS } from '../../services/agent/tur
 import { SystemPromptAssembler } from '../../services/agent/system-prompt-assembler'
 import { getNotificationService } from '../../services/agent/notification-service'
 import { getSessionCompressService } from '../../services/agent/session-compress-service'
-import { getAgentService, isStreamActive, registerActiveStream, unregisterActiveStream } from '../../services/agent/agent-service'
+import { getAgentService, getActiveStreamBackgroundTasks, isStreamActive, registerActiveStream, setActiveStreamBackgroundTasks, unregisterActiveStream } from '../../services/agent/agent-service'
 import { getSafetyInterceptor } from '../../services/agent/safety-interceptor'
 import { getAgentDir, getDailyMemoryDir, getExperiencesDir, getDebugTracesDir } from '../../services/agent/paths'
 import { deriveSessionTitle } from '../../services/agent/session-title'
@@ -146,6 +146,8 @@ export function createChatRoutes(deps: ChatRouteDeps): Hono {
     return c.json({
       running: isStreamActive(id),
       partial: sessionDao.hasStreamingMessage(id),
+      // resume 回来时补显示「等待后台」——SSE 不重连也能看到在跑什么。
+      background_tasks: getActiveStreamBackgroundTasks(id),
     })
   })
 
@@ -487,6 +489,7 @@ export function createChatRoutes(deps: ChatRouteDeps): Hono {
         console.error('[agent-chat] turn failed before settlement:', msg)
         await turn.terminate('error', { session_id: id, code: 'STREAM_ERROR', message: msg })
       } finally {
+        setActiveStreamBackgroundTasks(id, null)
         unregisterActiveStream(id, streamId)
         notifyWake('done')
         // Closes after the terminal frame has been flushed (terminate awaits
@@ -587,6 +590,10 @@ export function createChatRoutes(deps: ChatRouteDeps): Hono {
     const turnDebug = extra?.turnDebug
     let resultNotified = false
     let generated = false
+    /** 首轮 result 之后又来了一条 assistant message = 后台任务唤醒的续轮。 */
+    let continuationMarked = false
+    /** 当前 assistant message 是否已经流过正文（result 只在没流过时补内容）。 */
+    let streamedSinceMessageStart = false
     /** First provider/stream failure. Set once — later chunks are ignored. */
     let failure: TurnErrorInfo | undefined
     // 用户已按停止：停止后只继续消费账本所需的 result/error（见 consume）。
@@ -727,6 +734,10 @@ export function createChatRoutes(deps: ChatRouteDeps): Hono {
           ...(extra?.onBeforeToolCall ? { onBeforeToolCall: extra.onBeforeToolCall } : {}),
           // 流式输入模式：停止按钮用 interrupt() 而非硬杀，换取带用量的 result。
           interruptible: true,
+          // 2026-11-04：`run_in_background` 的 Bash 在首轮 result 后仍在跑；
+          // 不继续消费的话 query 会被关掉，后台任务完成后的唤醒永远到不了
+          // （用户表现为「Agent 说稍后汇报，然后会话死掉」）。
+          awaitBackgroundTasks: true,
           // AskUserQuestion 交互接管（2026-11-02）：与 clone-runtime 同构。
           // 10-28 任务线程把 task-author 搬进主对话后这里漏了开关 —— SDK 在
           // headless 下直接「执行」AskUserQuestion 并回空 answers，模型把
@@ -743,7 +754,19 @@ export function createChatRoutes(deps: ChatRouteDeps): Hono {
           if (stopped && chunk.type !== 'result' && chunk.type !== 'error') continue
           turnDebug?.observe(chunk)
           switch (chunk.type) {
+            case 'message_start':
+              // 后台任务唤醒的续轮（2026-11-04）：首轮已经出过正文时，两段之间
+              // 补一个空行，避免「服务启动中服务就绪…」粘成一句。
+              if (generated && !continuationMarked) {
+                continuationMarked = true
+                const separator = fullContent ? '\n\n' : ''
+                fullContent += separator
+                await stream.writeSSE({ event: 'assistant_continue', data: JSON.stringify({ separator }) })
+              }
+              streamedSinceMessageStart = false
+              break
             case 'text_delta':
+              streamedSinceMessageStart = true
               fullContent += chunk.content
               pushTimeline({ kind: 'text', text: chunk.content })
               await stream.writeSSE({ event: 'text_delta', data: JSON.stringify({ delta: chunk.content, content: fullContent }) })
@@ -794,6 +817,12 @@ export function createChatRoutes(deps: ChatRouteDeps): Hono {
             case 'status':
               await stream.writeSSE({ event: 'status', data: JSON.stringify({ status: chunk.status }) })
               break
+            case 'background_tasks':
+              // 后台任务电平：注册表供 header / running 探测，SSE 供对话内
+              // 的「后台运行中：…」工作行。空数组 = 后台已清空、CLI 即将唤醒。
+              setActiveStreamBackgroundTasks(sessionId, chunk.tasks)
+              await stream.writeSSE({ event: 'background_tasks', data: JSON.stringify({ tasks: chunk.tasks }) })
+              break
             case 'slash_commands':
               // CLI-advertised command set for this session (skills/plugins
               // included). Cache it for reloads and paint the composer menu.
@@ -803,6 +832,7 @@ export function createChatRoutes(deps: ChatRouteDeps): Hono {
             case 'local_command_output':
               // Some CLI versions surface local-command text here instead of an
               // assistant message. Either way it is the turn's reply.
+              streamedSinceMessageStart = true
               fullContent += chunk.content
               pushTimeline({ kind: 'text', text: chunk.content })
               await stream.writeSSE({ event: 'text_delta', data: JSON.stringify({ delta: chunk.content, content: fullContent }) })
@@ -818,10 +848,13 @@ export function createChatRoutes(deps: ChatRouteDeps): Hono {
               // Locally-executed slash commands (/context, /compact, …) answer
               // through result.content only — no stream deltas exist. Without
               // this fallback the reply is dropped and the turn never finishes.
-              if (!stopped && chunk.content && !fullContent) {
-                fullContent = chunk.content
-                pushTimeline({ kind: 'text', text: chunk.content })
-                await stream.writeSSE({ event: 'text_delta', data: JSON.stringify({ delta: chunk.content, content: fullContent }) })
+              // 后台唤醒的续轮同理：这一段没流过正文时补上（含空行分隔）。
+              if (!stopped && chunk.content && !streamedSinceMessageStart) {
+                const separator = fullContent ? '\n\n' : ''
+                const appended = separator + chunk.content
+                fullContent += appended
+                pushTimeline({ kind: 'text', text: appended })
+                await stream.writeSSE({ event: 'text_delta', data: JSON.stringify({ delta: appended, content: fullContent }) })
               }
               // Native resume: persist the SDK session id so the next turn (and
               // its prompt cache prefix) continues instead of starting cold.

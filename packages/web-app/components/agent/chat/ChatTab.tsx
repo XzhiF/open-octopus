@@ -259,7 +259,7 @@ export function ChatTab() {
 
   const {
     messages, streaming, streamContent, streamThinking, streamTimeline, isThinking, toolCalls, pendingConfirm,
-    error: chatError, statusMessage, contextUsage, slashCommands,
+    error: chatError, statusMessage, backgroundTasks, contextUsage, slashCommands,
     sendMessage, stopGenerate, handleConfirm, loadMessages,
     steer, steeringRef, resumeStreaming, checkAndResume, streamingSessionId, turnStartedAt,
   } = useAgentChat(activeSessionId, {
@@ -1413,6 +1413,7 @@ export function ChatTab() {
             pendingConfirm={pendingConfirm}
             error={chatError}
             statusMessage={statusMessage}
+            backgroundTasks={backgroundTasks}
             commands={slashCommandList}
             onSend={handleSendMessage}
             onStop={stopGenerate}

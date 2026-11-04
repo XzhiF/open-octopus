@@ -7,6 +7,22 @@ import type {
   AgentEventRow, ExecutionSummaryRow, PipelineStateRow, PaginatedResult,
 } from "../types"
 
+/** header 运行指示的一行：执行行 + 任务名（tasks 表可缺省）。 */
+export interface LiveRunRow {
+  id: string
+  workspace_id: string
+  workflow_ref: string
+  workflow_name: string | null
+  name: string | null
+  status: string
+  task_id: string | null
+  phase_index: number | null
+  round_index: number | null
+  started_at: string | null
+  created_at: string
+  task_name: string | null
+}
+
 export class ExecutionDAO extends BaseDAO {
   constructor(db: Database.Database) { super(db) }
 
@@ -49,6 +65,28 @@ export class ExecutionDAO extends BaseDAO {
                created_at DESC, rowid DESC
       LIMIT ?
     `).all(workspaceId, limit) as ExecutionRow[]
+  }
+
+  /** header「运行中工作流」指示（2026-11-04）：跨工作区的顶层运行行。
+   *
+   *  header 的「运行中 Agent」此前只认 chat 流；工作流 Agent 节点不注册流，
+   *  所以任务/工作流在跑时右上角什么都没有。这里按 listWorkspaceRuns 的顶层
+   *  谓词取全库 `running` 行，并 LEFT JOIN tasks 带出任务名（系统运行
+   *  task_id=NULL，由路由层按 execution_links 补坐标）。
+   *  排队 / 暂停 / 待审批不亮 —— 指示的含义就是「正在跑」。 */
+  listLiveRuns(limit = 50): LiveRunRow[] {
+    return this.stmt(`
+      SELECT e.id, e.workspace_id, e.workflow_ref, e.workflow_name, e.name, e.status,
+             e.task_id, e.phase_index, e.round_index, e.started_at, e.created_at,
+             t.name AS task_name
+      FROM executions e
+      LEFT JOIN tasks t ON t.id = e.task_id
+      WHERE e.status = 'running'
+        AND (e.parent_id = '0' OR e.parent_id IS NULL OR e.phase_index IS NOT NULL)
+        AND (e.node_type IS NULL OR e.node_type != 'scheduler-root')
+      ORDER BY e.started_at DESC, e.created_at DESC, e.rowid DESC
+      LIMIT ?
+    `).all(limit) as LiveRunRow[]
   }
 
   findChildren(parentId: string): ExecutionRow[] {

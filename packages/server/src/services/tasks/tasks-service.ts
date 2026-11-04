@@ -3547,7 +3547,7 @@ export class TasksService {
         round_index: nextRound,
       }
       next_action = "dispatched"
-      this.setPersistedTaskStatus(taskId, "running")
+      this.setPersistedTaskStatus(taskId, "running", { force: true })
       this.emitPhaseStatus(taskId, pv.index, "running", nextRound)
     } else {
       // accepted — 人的放行先落帧（UI 立刻把该 phase 变绿）。
@@ -3582,7 +3582,7 @@ export class TasksService {
           round_index: 1,
         }
         next_action = "dispatched"
-        this.setPersistedTaskStatus(taskId, "running")
+        this.setPersistedTaskStatus(taskId, "running", { force: true })
         this.emitPhaseStatus(taskId, nextPhaseIndex, "running", 1)
       } else {
         // K6/US11: 每个 phase 都停在人的 gate，下一 phase 等人工起。
@@ -4085,7 +4085,7 @@ export class TasksService {
     // 阶段衔接信道 (ticket 01): 手动推进与 autoAdvance 同注入 (AC4)。
     const prevHandoffPaths = this.collectPrevHandoffPaths(row, target.index)
     const d = await this.dispatchPhaseRound(taskId, target.index, 1, undefined, { prevHandoffPaths })
-    this.setPersistedTaskStatus(taskId, "running")
+    this.setPersistedTaskStatus(taskId, "running", { force: true })
     this.emitPhaseStatus(taskId, target.index, "running", 1)
     return {
       task: this.getTask(taskId),
@@ -4225,14 +4225,21 @@ export class TasksService {
   /** System-event status write (no version bump — the optimistic lock tracks
    *  spec edits — same discipline as the job's own status mirrors (票03).
    *  Idempotent fast-path: same value → no UPDATE, no SSE (no board flicker on
-   *  re-derivation of an unchanged state). */
+   *  re-derivation of an unchanged state).
+   *
+   *  `force` = 持久行没变，但确实开了新的一轮执行（v4 任务验收后行一直是
+   *  'running'，下一 phase / 修复轮不会产生 ready→running 的真实变迁）。此时
+   *  仍要发一帧 task_status —— ChatEventBridge 按「状态变化」去重，它等的就是
+   *  这个 episode 边界；不发的话 chat 里只有首轮有「任务开始执行」卡。 */
   private setPersistedTaskStatus(
     taskId: string,
     status: TaskStatus,
-    opts: { silent?: boolean } = {},
+    opts: { silent?: boolean; force?: boolean } = {},
   ): void {
     const row = this.taskDAO.getById(taskId)
-    if (!row || row.status === status) return
+    if (!row) return
+    const changed = row.status !== status
+    if (!changed && !opts.force) return
     const nowIso = new Date().toISOString()
     this.taskDAO
       .getDb()
@@ -4602,7 +4609,7 @@ export class TasksService {
     }
 
     const d = await this.dispatchFixRound(id, pv, nextRound, instruction)
-    this.setPersistedTaskStatus(id, "running")
+    this.setPersistedTaskStatus(id, "running", { force: true })
     this.emitPhaseStatus(id, pv.index, "running", nextRound)
     return {
       task: this.getTask(id),

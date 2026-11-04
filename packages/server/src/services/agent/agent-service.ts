@@ -17,6 +17,8 @@ import type {
   HealthStatus,
 } from '@octopus/shared'
 
+import type { BackgroundTaskInfo } from '@octopus/providers'
+
 import { getSessionService } from './session-service'
 import { getMemoryService } from './memory-service'
 import { getEvolutionService } from './evolution-service'
@@ -55,6 +57,10 @@ interface StreamEntry {
   streamId: string
   abort: () => void
   startedAt: number
+  /** Live `run_in_background` tasks (provider `background_tasks` chunk).
+   *  Non-empty = the turn is paused waiting for one, which is exactly what the
+   *  header「运行中」chip should say (2026-11-04). */
+  backgroundTasks: BackgroundTaskInfo[]
   /** Resolves when the owning route finalized its partial row (its `finally`). */
   done: Promise<void>
   finish: () => void
@@ -77,8 +83,51 @@ export function registerActiveStream(sessionId: string, abort: () => void): stri
     sessionStreams = new Map()
     activeStreams.set(sessionId, sessionStreams)
   }
-  sessionStreams.set(streamId, { streamId, abort, startedAt: Date.now(), done, finish })
+  sessionStreams.set(streamId, {
+    streamId,
+    abort,
+    startedAt: Date.now(),
+    backgroundTasks: [],
+    done,
+    finish,
+  })
   return streamId
+}
+
+/**
+ * 更新会话的「后台任务」电平（0..n 条）。provider 的 `background_tasks` chunk
+ * 是 REPLACE 语义，这里同样整体替换；空数组/tasks=null 表示后台已清空。
+ */
+export function setActiveStreamBackgroundTasks(
+  sessionId: string,
+  tasks: BackgroundTaskInfo[] | null,
+): void {
+  const sessionStreams = activeStreams.get(sessionId)
+  if (!sessionStreams) return
+  const next = Array.isArray(tasks) ? tasks.map((t) => ({ ...t })) : []
+  for (const entry of sessionStreams.values()) {
+    entry.backgroundTasks = next.map((t) => ({ ...t }))
+  }
+}
+
+/** 该会话当前所有流上的后台任务（去重，按出现顺序）。 */
+export function getActiveStreamBackgroundTasks(sessionId: string): BackgroundTaskInfo[] {
+  const sessionStreams = activeStreams.get(sessionId)
+  if (!sessionStreams) return []
+  return mergeBackgroundTasks(sessionStreams.values())
+}
+
+function mergeBackgroundTasks(entries: Iterable<StreamEntry>): BackgroundTaskInfo[] {
+  const seen = new Set<string>()
+  const out: BackgroundTaskInfo[] = []
+  for (const entry of entries) {
+    for (const task of entry.backgroundTasks) {
+      if (seen.has(task.id)) continue
+      seen.add(task.id)
+      out.push({ ...task })
+    }
+  }
+  return out
 }
 
 export function unregisterActiveStream(sessionId: string, streamId?: string): void {
@@ -109,6 +158,8 @@ export interface ActiveStreamInfo {
   sessionId: string
   startedAt: number
   streamCount: number
+  /** 正在等的后台任务（空数组 = 只在生成，没有后台等待）。 */
+  backgroundTasks: BackgroundTaskInfo[]
 }
 
 /** Sessions with at least one in-memory generation stream, newest first. */
@@ -120,7 +171,12 @@ export function listActiveStreams(): ActiveStreamInfo[] {
     for (const entry of streams.values()) {
       startedAt = Math.min(startedAt, entry.startedAt)
     }
-    result.push({ sessionId, startedAt, streamCount: streams.size })
+    result.push({
+      sessionId,
+      startedAt,
+      streamCount: streams.size,
+      backgroundTasks: mergeBackgroundTasks(streams.values()),
+    })
   }
   return result.sort((a, b) => b.startedAt - a.startedAt)
 }

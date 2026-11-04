@@ -21,6 +21,7 @@ import { createScheduleRoutes } from './schedule-routes'
 import { createMiscRoutes } from './misc-routes'
 import { createDebugRoutes } from './debug-routes'
 import { createFsRoutes } from './fs-routes'
+import { createRunningRoutes } from './running'
 import { WorkspaceDAO, AgentSessionDAO, EvolutionDAO, SafetyDAO, ScheduleConfigDAO, ExecutionDAO, CloneDAO } from '../../db/dao'
 import { SchedulerService } from '../../services/scheduler/scheduler-service'
 import type { TokenUsageDAO } from '../../db/dao/token-usage-dao'
@@ -68,6 +69,8 @@ export function createAgentRoutes(deps: AgentRouteDeps): Hono {
   agent.route('/', createMiscRoutes({ safetyDAO }))
   agent.route('/', createDebugRoutes({ sessionDAO, tokenUsageDAO: tokenUsageDao }))
   agent.route('/', createFsRoutes())
+  // header 运行指示：工作流执行行（chat 流仍走 /sessions/running）。
+  agent.route('/', createRunningRoutes(deps.executionDAO))
 
   // Existing sub-modules
   agent.route('/', createPersonaRoutes())

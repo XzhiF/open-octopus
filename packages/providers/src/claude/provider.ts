@@ -1,5 +1,5 @@
 import { query, type Options, type AgentDefinition, type CanUseTool, type SDKUserMessage } from '@anthropic-ai/claude-agent-sdk'
-import type { IAgentProvider, SendQueryOptions, MessageChunk, OctopusAgentDef, GoalTerminalReason, SystemInitData } from '../types'
+import type { IAgentProvider, SendQueryOptions, MessageChunk, OctopusAgentDef, GoalTerminalReason, SystemInitData, BackgroundTaskInfo } from '../types'
 import type { ModelUsage, TokenUsage, TokenUsageDelta } from '@octopus/shared'
 import { mergeModelUsages } from '@octopus/shared'
 import { LLMCallTracker } from '../llm-call-tracker'
@@ -244,6 +244,11 @@ interface SDKResultErrorLike {
  *  times out waiting for the drain. */
 const INTERRUPT_DRAIN_MS = 2_000
 
+/** 等 `run_in_background` 任务的看门狗预算。普通流的 300s 静默预算会把
+ *  Maven / docker 构建误判成死流；后台任务在跑时改用这个（默认 60 分钟，
+ *  仍留一个上限，避免 CLI 真挂死时会话永远不回来）。 */
+const DEFAULT_BACKGROUND_WAIT_TIMEOUT_MS = 60 * 60_000
+
 function buildResultErrorChunk(
   rm: SDKResultErrorLike,
   extra?: { usage?: TokenUsage; modelUsages?: ModelUsage[] },
@@ -342,6 +347,11 @@ export class ClaudeSDKProvider implements IAgentProvider {
     let currentMessageId = ""
     const blockTypes = new Map<number, 'thinking' | 'text' | 'tool_use'>()
     const pendingToolCalls = new Map<number, PendingToolCall>()
+    // 后台任务电平（2026-11-04）：`run_in_background` 的 Bash / 子代理在首轮
+    // result 之后仍在跑。SDK 会在它们结束时自动唤醒模型再跑一轮 —— 前提是宿主
+    // 继续消费 query（`awaitBackgroundTasks`）。description 同时给 header/chat
+    // 显示「在跑什么」。
+    const backgroundTasks = new Map<string, BackgroundTaskInfo>()
     const modelName = this.resolveModelName(options?.model)
     this._llmTracker.reset()
 
@@ -465,6 +475,17 @@ export class ClaudeSDKProvider implements IAgentProvider {
         sdkAbort.abort()
         return
       }
+      // 「停止」= 整轮结束：先把后台任务收掉。只 interrupt 当前模型轮的话，
+      // 后台 shell 还能继续跑，跑完还会唤醒会话（2026-11-04）。
+      for (const task of backgroundTasks.values()) {
+        try {
+          if (typeof q.stopTask === 'function') {
+            void Promise.resolve(q.stopTask(task.id)).catch(() => {})
+          }
+        } catch {
+          // Best-effort — the interrupt below still settles the turn.
+        }
+      }
       // q.interrupt() 可能在 query 已关闭时同步抛错 —— 退化为硬 abort。
       try {
         void Promise.resolve(q.interrupt()).catch(() => { sdkAbort.abort() })
@@ -500,7 +521,11 @@ export class ClaudeSDKProvider implements IAgentProvider {
     // then we surface a structured IDLE_TIMEOUT chunk below.
     const guarded = guardIdle(q, {
       firstEventMs: options?.firstEventTimeoutMs ?? DEFAULT_FIRST_EVENT_TIMEOUT_MS,
-      idleMs: options?.streamIdleTimeoutMs ?? DEFAULT_STREAM_IDLE_TIMEOUT_MS,
+      // 后台任务在跑时的静默是合法的（Maven/docker 构建）：用后台等待预算，
+      // 普通流仍用 300s。函数形式每次等待前重读，任务结束立刻收回普通预算。
+      idleMs: () => backgroundTasks.size > 0
+        ? (options?.backgroundWaitTimeoutMs ?? DEFAULT_BACKGROUND_WAIT_TIMEOUT_MS)
+        : (options?.streamIdleTimeoutMs ?? DEFAULT_STREAM_IDLE_TIMEOUT_MS),
       onTimeout: () => {
         try { sdkAbort.abort() } catch { /* already closed */ }
       },
@@ -772,9 +797,49 @@ export class ClaudeSDKProvider implements IAgentProvider {
             terminal_slash_commands?: string[]
             capabilities?: string[]
             betas?: string[]
+            /** background_tasks_changed：电平信号，REPLACE 语义。 */
+            tasks?: Array<{ task_id?: string; task_type?: string; description?: string }>
+            /** task_started / task_updated / task_notification 的边沿字段。 */
+            task_id?: string
+            description?: string
+            task_type?: string
+            patch?: { status?: 'pending' | 'running' | 'completed' | 'failed' | 'killed' | 'paused' }
           }
           if (sm.subtype === 'status') {
             yield { type: 'status', status: sm.status ?? null }
+          } else if (sm.subtype === 'background_tasks_changed') {
+            // 电平信号：用 payload 整体替换。空数组 = 后台任务全部结束，
+            // 紧接着 CLI 会唤醒模型跑第二轮。
+            backgroundTasks.clear()
+            for (const t of sm.tasks ?? []) {
+              if (!t.task_id) continue
+              backgroundTasks.set(t.task_id, {
+                id: t.task_id,
+                description: t.description?.trim() || t.task_id,
+                taskType: t.task_type,
+              })
+            }
+            yield { type: 'background_tasks', tasks: [...backgroundTasks.values()] }
+          } else if (sm.subtype === 'task_started') {
+            // 边沿信号；通常 level 已先到，只有描述变化时才再发一次。
+            if (sm.task_id) {
+              const description = sm.description?.trim() || sm.task_id
+              const prev = backgroundTasks.get(sm.task_id)
+              if (!prev || prev.description !== description) {
+                backgroundTasks.set(sm.task_id, { id: sm.task_id, description, taskType: sm.task_type })
+                yield { type: 'background_tasks', tasks: [...backgroundTasks.values()] }
+              }
+            }
+          } else if (sm.subtype === 'task_updated') {
+            const status = sm.patch?.status
+            const terminal = status === 'completed' || status === 'failed' || status === 'killed'
+            if (terminal && sm.task_id && backgroundTasks.delete(sm.task_id)) {
+              yield { type: 'background_tasks', tasks: [...backgroundTasks.values()] }
+            }
+          } else if (sm.subtype === 'task_notification') {
+            if (sm.task_id && backgroundTasks.delete(sm.task_id)) {
+              yield { type: 'background_tasks', tasks: [...backgroundTasks.values()] }
+            }
           } else if (sm.subtype === 'compact_boundary') {
             yield { type: 'status', status: 'compacting' }
           } else if (sm.subtype === 'local_command_output') {
@@ -941,6 +1006,15 @@ export class ClaudeSDKProvider implements IAgentProvider {
           sawResult = true
           // A streaming-input query stays alive after its turn (the session is
           // persistent) — end our consumption here so the caller's loop closes.
+          //
+          // 2026-11-04 事故：chat 用 Bash `run_in_background` 起服务就绪轮询，
+          // 模型收轮说「就绪后我直接跑」，宿主却在首轮 result 处 break →
+          // releaseInput() 关掉输入流 → CLI 退出 → 后台任务和它的唤醒一起消失，
+          // 用户必须再发一条消息。开着 awaitBackgroundTasks 且有后台任务时
+          // 继续消费：SDK 在任务结束时会自己唤醒模型，后续轮次走同一迭代器。
+          if (options?.awaitBackgroundTasks && interruptible && backgroundTasks.size > 0) {
+            continue
+          }
           break
         }
       }

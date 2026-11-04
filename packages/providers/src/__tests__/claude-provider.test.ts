@@ -322,3 +322,144 @@ describe('ClaudeSDKProvider', () => {
     process.env.CLAUDE_USE_GLOBAL_AUTH = origGlobalAuth
   })
 })
+
+// 2026-11-04 事故回归：chat 用 Bash `run_in_background` 起服务就绪轮询，模型
+// 收轮说「就绪后我直接跑」，宿主却在首轮 result 处 break → query 被关掉 →
+// 后台任务完成后的唤醒永远到不了，用户必须再发一条消息才「激活」会话。
+function makeControlledQuery(
+  gen: AsyncGenerator<unknown>,
+  controls?: { stopTask?: (taskId: string) => Promise<void> },
+) {
+  const q = gen as AsyncGenerator<unknown> & {
+    interrupt: () => Promise<void>
+    stopTask: (taskId: string) => Promise<void>
+  }
+  q.interrupt = async () => {}
+  q.stopTask = controls?.stopTask ?? (async () => {})
+  return q
+}
+
+const bgChanged = (tasks: Array<{ task_id: string; task_type?: string; description?: string }>) => ({
+  type: 'system',
+  subtype: 'background_tasks_changed',
+  tasks,
+})
+
+const textTurn = (id: string, text: string) => [
+  { type: 'stream_event', event: { type: 'message_start', message: { id } } },
+  { type: 'stream_event', event: { type: 'content_block_start', index: 0, content_block: { type: 'text', text: '' } } },
+  { type: 'stream_event', event: { type: 'content_block_delta', index: 0, delta: { type: 'text_delta', text } } },
+  { type: 'stream_event', event: { type: 'content_block_stop', index: 0 } },
+]
+
+describe('ClaudeSDKProvider — background tasks', () => {
+  let provider: ClaudeSDKProvider
+
+  beforeEach(() => {
+    provider = new ClaudeSDKProvider()
+    mockQuery.mockReset()
+  })
+
+  it('awaitBackgroundTasks 持续消费：首个 result 后等到后台任务结束并接住唤醒轮', async () => {
+    mockQuery.mockReturnValue(
+      makeControlledQuery(
+        makeMessageChunks([
+          bgChanged([{ task_id: 'bg-1', task_type: 'local_bash', description: 'sleep 20 && echo done' }]),
+          ...textTurn('m-1', '服务启动中'),
+          {
+            type: 'result', subtype: 'success', session_id: 's-1', num_turns: 2,
+            result: '服务启动中', usage: { input_tokens: 10, output_tokens: 5 },
+          },
+          // 后台任务结束 → CLI 唤醒模型跑第二轮
+          bgChanged([]),
+          { type: 'system', subtype: 'task_notification', task_id: 'bg-1', status: 'completed', summary: 'done' },
+          ...textTurn('m-2', '服务就绪，开始跑场景 1'),
+          {
+            type: 'result', subtype: 'success', session_id: 's-1', num_turns: 1,
+            result: '服务就绪，开始跑场景 1', usage: { input_tokens: 20, output_tokens: 8 },
+          },
+        ]),
+      ),
+    )
+
+    const chunks: MessageChunk[] = []
+    for await (const chunk of provider.sendQuery('起服务', '/tmp', undefined, {
+      interruptible: true,
+      awaitBackgroundTasks: true,
+    })) {
+      chunks.push(chunk)
+    }
+
+    const bg = chunks.filter((c) => c.type === 'background_tasks') as Array<{
+      type: 'background_tasks'
+      tasks: Array<{ id: string; description: string }>
+    }>
+    expect(bg).toHaveLength(2)
+    expect(bg[0].tasks[0]).toMatchObject({ id: 'bg-1', description: 'sleep 20 && echo done' })
+    expect(bg[1].tasks).toEqual([])
+
+    expect(
+      chunks.filter((c) => c.type === 'text_delta').map((c) => (c as { content: string }).content),
+    ).toEqual(['服务启动中', '服务就绪，开始跑场景 1'])
+    expect(chunks.filter((c) => c.type === 'result')).toHaveLength(2)
+  })
+
+  it('未开 awaitBackgroundTasks 时仍在首个 result 收轮（workflow/engine 行为不变）', async () => {
+    mockQuery.mockReturnValue(
+      makeControlledQuery(
+        makeMessageChunks([
+          bgChanged([{ task_id: 'bg-1', task_type: 'local_bash', description: 'sleep 20' }]),
+          ...textTurn('m-1', '服务启动中'),
+          {
+            type: 'result', subtype: 'success', session_id: 's-1', num_turns: 2,
+            result: '服务启动中', usage: { input_tokens: 10, output_tokens: 5 },
+          },
+          ...textTurn('m-2', '这轮不该被消费'),
+          {
+            type: 'result', subtype: 'success', session_id: 's-1', num_turns: 1,
+            result: '这轮不该被消费', usage: { input_tokens: 1, output_tokens: 1 },
+          },
+        ]),
+      ),
+    )
+
+    const chunks: MessageChunk[] = []
+    for await (const chunk of provider.sendQuery('起服务', '/tmp', undefined, {
+      interruptible: true,
+    })) {
+      chunks.push(chunk)
+    }
+
+    expect(
+      chunks.filter((c) => c.type === 'text_delta').map((c) => (c as { content: string }).content),
+    ).toEqual(['服务启动中'])
+    expect(chunks.filter((c) => c.type === 'result')).toHaveLength(1)
+  })
+
+  it('abort 时先 stopTask 收掉后台任务，再中断当前轮', async () => {
+    const stopTask = vi.fn(async () => {})
+    const abort = new AbortController()
+    mockQuery.mockReturnValue(
+      makeControlledQuery(
+        makeMessageChunks([
+          bgChanged([{ task_id: 'bg-1', task_type: 'local_bash', description: 'sleep 999' }]),
+          {
+            type: 'result', subtype: 'success', session_id: 's-1', num_turns: 1,
+            result: '等待中', usage: { input_tokens: 1, output_tokens: 1 },
+          },
+        ]),
+        { stopTask },
+      ),
+    )
+
+    for await (const chunk of provider.sendQuery('hi', '/tmp', undefined, {
+      interruptible: true,
+      awaitBackgroundTasks: true,
+      abortSignal: abort.signal,
+    })) {
+      if (chunk.type === 'background_tasks' && chunk.tasks.length > 0) abort.abort()
+    }
+
+    expect(stopTask).toHaveBeenCalledWith('bg-1')
+  })
+})

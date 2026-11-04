@@ -153,4 +153,70 @@ describe('ClaudeSDKProvider idle watchdog', () => {
     expect(chunks.map((c) => c.type)).toContain('text_delta')
     expect(chunks.at(-1)?.type).toBe('result')
   })
+
+  // 2026-11-04：后台任务在跑时的静默不是死流（Maven/docker 构建可能几分钟）。
+  // 看门狗预算按「有后台任务 → backgroundWaitTimeoutMs」动态切换。
+  it('后台任务等待期间不触发普通静默预算', async () => {
+    mockQuery.mockImplementation(() => makeQuery((async function* () {
+      yield {
+        type: 'system',
+        subtype: 'background_tasks_changed',
+        tasks: [{ task_id: 'bg-1', task_type: 'local_bash', description: 'mvn build' }],
+      }
+      yield {
+        type: 'result', subtype: 'success', session_id: 's-1', num_turns: 1,
+        result: '构建中', usage: { input_tokens: 1, output_tokens: 1 },
+      }
+      // 远超 30ms 的普通预算，但在后台等待预算之内
+      await new Promise((resolve) => setTimeout(resolve, 120))
+      yield { type: 'system', subtype: 'background_tasks_changed', tasks: [] }
+      yield {
+        type: 'result', subtype: 'success', session_id: 's-1', num_turns: 1,
+        result: '构建完成', usage: { input_tokens: 2, output_tokens: 2 },
+      }
+    })()))
+
+    const provider = new ClaudeSDKProvider()
+    const chunks = await drain(provider.sendQuery('hi', '/tmp', undefined, {
+      interruptible: true,
+      awaitBackgroundTasks: true,
+      firstEventTimeoutMs: 1_000,
+      streamIdleTimeoutMs: 30,
+      backgroundWaitTimeoutMs: 2_000,
+    }))
+
+    expect(chunks.some((c) => c.type === 'error' && c.code === 'IDLE_TIMEOUT')).toBe(false)
+    expect(chunks.filter((c) => c.type === 'result')).toHaveLength(2)
+  })
+
+  it('后台等待也有上限：超过 backgroundWaitTimeoutMs 仍报 IDLE_TIMEOUT', async () => {
+    mockQuery.mockImplementation(() => makeQuery((async function* () {
+      yield {
+        type: 'system',
+        subtype: 'background_tasks_changed',
+        tasks: [{ task_id: 'bg-1', task_type: 'local_bash', description: 'mvn build' }],
+      }
+      yield {
+        type: 'result', subtype: 'success', session_id: 's-1', num_turns: 1,
+        result: '构建中', usage: { input_tokens: 1, output_tokens: 1 },
+      }
+      await new Promise(() => {})
+    })()))
+
+    const provider = new ClaudeSDKProvider()
+    const chunks = await drain(provider.sendQuery('hi', '/tmp', undefined, {
+      interruptible: true,
+      awaitBackgroundTasks: true,
+      firstEventTimeoutMs: 1_000,
+      streamIdleTimeoutMs: 20,
+      backgroundWaitTimeoutMs: 40,
+    }))
+
+    const last = chunks.at(-1)
+    expect(last?.type).toBe('error')
+    if (last?.type === 'error') {
+      expect(last.code).toBe('IDLE_TIMEOUT')
+      expect(last.message).toContain('40ms')
+    }
+  })
 })

@@ -104,3 +104,86 @@ describe("ExecutionDAO.listWorkspaceRuns — 工作区顶层运行", () => {
     expect(dao.listWorkspaceRuns("ws-2").map((r) => r.id)).toEqual(["other"])
   })
 })
+
+/**
+ * listLiveRuns —— header「运行中工作流」指示（2026-11-04）。
+ *
+ * 跨工作区、只要顶层 `running` 行；排队/暂停不亮。LEFT JOIN tasks 带任务名，
+ * 验收规划这类系统运行 task_id=NULL（坐标由路由层按 execution_links 补）。
+ */
+describe("ExecutionDAO.listLiveRuns — 跨工作区运行中执行", () => {
+  let db: Database.Database
+  let dao: ExecutionDAO
+
+  beforeEach(() => {
+    db = new Database(":memory:")
+    applySchema(db)
+    dao = new ExecutionDAO(db)
+    seedWorkspace(db, "ws-1")
+    seedWorkspace(db, "ws-2")
+  })
+
+  afterEach(() => {
+    db?.close()
+  })
+
+  const seed = (overrides: Partial<Parameters<ExecutionDAO["insertExecution"]>[0]> = {}) => {
+    const id = overrides.id ?? `exec-${Math.random().toString(36).slice(2, 10)}`
+    dao.insertExecution({
+      id,
+      workspace_id: "ws-1",
+      workflow_ref: "built-in/demo",
+      workflow_name: "demo",
+      ...overrides,
+    })
+    return id
+  }
+
+  const seedTask = (id: string, name: string) => {
+    const now = new Date().toISOString()
+    db.prepare(
+      "INSERT INTO tasks (id, name, status, created_at, updated_at) VALUES (?, ?, 'running', ?, ?)",
+    ).run(id, name, now, now)
+  }
+
+  it("跨工作区收集 running 顶层行，带出任务名", () => {
+    seedTask("t-1", "MySQL 落库")
+    seed({
+      id: "round", workspace_id: "ws-2", status: "running", task_id: "t-1",
+      phase_index: 2, round_index: 1, started_at: "2026-11-04T01:36:16.000Z",
+    })
+
+    const runs = dao.listLiveRuns()
+    expect(runs).toHaveLength(1)
+    expect(runs[0]).toMatchObject({
+      id: "round",
+      workspace_id: "ws-2",
+      task_id: "t-1",
+      task_name: "MySQL 落库",
+      phase_index: 2,
+      round_index: 1,
+    })
+  })
+
+  it("排除排队/暂停/终态、子步骤与调度器空容器", () => {
+    seed({ id: "live", status: "running" })
+    seed({ id: "queued", status: "pending" })
+    seed({ id: "paused", status: "paused" })
+    seed({ id: "done", status: "completed" })
+    seed({ id: "child-step", parent_id: "live", status: "running" })
+    seed({ id: "container", node_type: "scheduler-root", status: "running" })
+
+    expect(dao.listLiveRuns().map((r) => r.id)).toEqual(["live"])
+  })
+
+  it("验收规划系统运行（task_id=NULL）在列，任务名为空", () => {
+    seed({
+      id: "plan", status: "running", triggered_by: "acceptance-plan",
+      workflow_ref: "built-in/acceptance-plan", workflow_name: "acceptance-plan",
+      task_id: null, started_at: "2026-11-04T02:00:00.000Z",
+    })
+
+    const [run] = dao.listLiveRuns()
+    expect(run).toMatchObject({ id: "plan", task_id: null, task_name: null })
+  })
+})
