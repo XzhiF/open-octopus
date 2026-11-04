@@ -1,9 +1,11 @@
-import { priceFor, estimateCost } from '@octopus/shared'
 import type { ModelUsage, TokenUsage, TokenUsageDelta } from '@octopus/shared'
 
 /**
  * 单次 LLM call 记录。token 字段继承全站规范形状 TokenUsage
  * （纯值口径：inputTokens 不含 cache，见 shared/types/usage.ts）。
+ *
+ * 不记录费用：NEW-r2 起钱不落账本，费用一律查询时按 billing_price_config
+ * 现算（server/db/price-sql.ts）。SDK 自带 costUSD 只走 result chunk，不进此记录。
  */
 export interface LLMCallRecord extends TokenUsage {
   turnIndex: number
@@ -13,7 +15,6 @@ export interface LLMCallRecord extends TokenUsage {
   timestamp: number
   durationMs: number
   ttftMs?: number
-  costUsd?: number
 }
 
 interface ActiveCall {
@@ -151,7 +152,7 @@ export class LLMCallTracker {
 
   /**
    * 用 result 事件的权威 modelUsage（全站规范形状 ModelUsage[]，由 provider
-   * 在 SDK seam 完成 snake→规范转换后传入）覆盖 completedCalls 的 token / cost 字段。
+   * 在 SDK seam 完成 snake→规范转换后传入）覆盖 completedCalls 的 token 字段。
    *
    * 分配策略：
    *   - 按模型分组（模型名先 normalizeModelName，与 stream 阶段记录的 key 对齐）
@@ -180,9 +181,6 @@ export class LLMCallTracker {
       const authOutput = usage.outputTokens ?? 0
       const authCacheRead = usage.cacheReadTokens ?? 0
       const authCacheCreation = usage.cacheCreationTokens ?? 0
-      // SDK 给了 costUSD 就用（0 视为未定价，seam 已归一 undefined）；
-      // 否则查 shared 价表估算（models.yaml 补价通道）。未定价 → null → 不编数。
-      const authCost = usage.costUsd ?? estimateCost(usage, priceFor(model))
 
       // 每个 token 字段独立做「保留实测 + 残差分配」：
       //   - residual = authTotal − Σ(measured)；≤0 时信任实测，不倒扣
@@ -193,24 +191,6 @@ export class LLMCallTracker {
       distributeResidual(calls, authOutput, c => c.outputTokens, (c, v) => { c.outputTokens = v })
       distributeResidual(calls, authCacheRead, c => c.cacheReadTokens, (c, v) => { c.cacheReadTokens = v })
       distributeResidual(calls, authCacheCreation, c => c.cacheCreationTokens, (c, v) => { c.cacheCreationTokens = v })
-
-      // costUsd 无 per-turn 实测来源（价格表不完整），仍按均匀分配到全部 records。
-      // 未定价（authCost === null）时跳过分配：records 保持未知，下游写 NULL。
-      const n = calls.length
-      if (authCost !== null) {
-        // costUsd 用整数皮科单位（1e12）分配，避免浮点精度问题
-        // 1e12 足以覆盖 $0.000001 ~ $10000 的典型 cost 范围，
-        // 且乘以 1e12 后仍在 Number.MAX_SAFE_INTEGER 范围内
-        const costPicous = Math.round(authCost * 1e12)
-        const perCostPicous = Math.floor(costPicous / n)
-
-        for (let i = 0; i < n; i++) {
-          const isLast = i === n - 1
-          calls[i].costUsd = isLast
-            ? (costPicous - perCostPicous * (n - 1)) / 1e12
-            : perCostPicous / 1e12
-        }
-      }
     }
   }
 

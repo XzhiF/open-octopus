@@ -6,31 +6,23 @@
  * Note: provider.ts should NOT directly import @earendil-works/* (TC-044).
  */
 
-import { priceFor } from '@octopus/shared'
-
 let piModule: typeof import('@earendil-works/pi-coding-agent') | null = null
 
 /**
- * pi 注册表的 cost 单位是 USD/MTok（与 shared pricing 同单位，免换算）。
- * 全 0 价（EXTRA_PROVIDERS 硬编码 / models.yaml 没填）→ 尝试从 shared 价表补
- * （内置 Claude 档 + models.yaml overlay）；仍查不到保持 0 —— pi SDK 会算出
- * 0 成本，token-aggregator 处按未定价归一为 undefined（C2）。
- * shared 的 cacheCreation 对应 pi 侧的 cacheWrite 命名。
+ * pi 注册表的 cost 单位是 USD/MTok。只透传 models.yaml 填的价 ——
+ * 全 0 价就是「未定价」，pi SDK 算出的 0 成本由 token-aggregator 归一为
+ * undefined（C2：宁可未定价，不静默猜价）。账本费用与这里无关，由
+ * server 的 billing_price_config 查询时派生。
  */
 function resolvePiCost(
   cost: { input?: number; output?: number; cacheRead?: number; cacheWrite?: number } | undefined,
-  modelId: string,
 ): { input: number; output: number; cacheRead: number; cacheWrite: number } {
-  const direct = {
+  return {
     input: cost?.input ?? 0,
     output: cost?.output ?? 0,
     cacheRead: cost?.cacheRead ?? 0,
     cacheWrite: cost?.cacheWrite ?? 0,
   }
-  if (direct.input || direct.output || direct.cacheRead || direct.cacheWrite) return direct
-  const tier = priceFor(modelId)
-  if (!tier) return direct
-  return { input: tier.input, output: tier.output, cacheRead: tier.cacheRead, cacheWrite: tier.cacheCreation }
 }
 
 async function getPiModule() {
@@ -218,7 +210,7 @@ function registerProvidersFromEnv(
       if (extra) {
         registry.registerProvider(providerName, {
           ...extra,
-          models: extra.models.map(mm => ({ ...mm, cost: resolvePiCost(mm.cost, mm.id) })),
+          models: extra.models.map(mm => ({ ...mm, cost: resolvePiCost(mm.cost) })),
           apiKey,
         })
       } else {
@@ -249,7 +241,7 @@ function registerProvidersFromEnv(
             api,
             reasoning: m.reasoning ?? false,
             input: ['text'] as ('text' | 'image')[],
-            cost: resolvePiCost(m.cost, m.id),
+            cost: resolvePiCost(m.cost),
             contextWindow: m.context_window ?? 32768,
             maxTokens: m.max_tokens ?? 8192,
           })),
@@ -295,7 +287,7 @@ export function ensureCustomProvidersRegistered(
           api,
           reasoning: m.reasoning ?? false,
           input: ['text'] as ('text' | 'image')[],
-          cost: resolvePiCost(m.cost, m.id),
+          cost: resolvePiCost(m.cost),
           contextWindow: m.context_window ?? 32768,
           maxTokens: m.max_tokens ?? 8192,
         })),

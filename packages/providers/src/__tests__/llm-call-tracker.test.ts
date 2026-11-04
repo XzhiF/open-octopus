@@ -1,11 +1,6 @@
-import { describe, it, expect, beforeEach, afterEach } from "vitest"
+import { describe, it, expect } from "vitest"
 import { LLMCallTracker } from "../llm-call-tracker"
 import type { ModelUsage } from "@octopus/shared"
-import { __setPricingOverlayForTest, __resetPricingOverlayForTest } from "@octopus/shared"
-
-// 钉住 pricing overlay：只用 BUILTIN_PRICING，测试不读真实 ~/.octopus/models.yaml
-beforeEach(() => __setPricingOverlayForTest({}))
-afterEach(() => __resetPricingOverlayForTest())
 
 /**
  * LLMCallTracker 单元测试
@@ -37,10 +32,9 @@ function makeModelUsage(
   inputTokens: number,
   outputTokens: number,
   cacheReadTokens = 0,
-  cacheCreationTokens = 0,
-  costUsd?: number
+  cacheCreationTokens = 0
 ): ModelUsage[] {
-  return [mu(model, inputTokens, outputTokens, { cacheReadTokens, cacheCreationTokens, costUsd })]
+  return [mu(model, inputTokens, outputTokens, { cacheReadTokens, cacheCreationTokens })]
 }
 
 /**
@@ -134,18 +128,9 @@ describe("LLMCallTracker", () => {
       expect(calls.map(c => c.outputTokens)).toEqual([70, 30])
       expect(calls.map(c => c.inputTokens)).toEqual([50, 50])
     })
-
-    it("costUsd：无实测时仍均匀分配且严格和等于 authCost", () => {
-      const tracker = new LLMCallTracker()
-      simulateOneCall(tracker, "m", "a")
-      simulateOneCall(tracker, "m", "b")
-      tracker.calibrateFromModelUsage(makeModelUsage("m", 10, 20, 0, 0, 0.3))
-      const calls = tracker.getLLMCalls()
-      expect(calls[0].costUsd! + calls[1].costUsd!).toBeCloseTo(0.3, 10)
-    })
   })
   describe("stream 阶段不记录 token（所有 token 字段应为 0）", () => {
-    it("单个 call 的 inputTokens / outputTokens / cache 在 stream 阶段保持 0，cost 未知", () => {
+    it("单个 call 的 inputTokens / outputTokens / cache 在 stream 阶段保持 0", () => {
       const tracker = new LLMCallTracker()
       simulateOneCall(tracker, "claude-sonnet-4-5-20250827", "msg-1")
 
@@ -155,8 +140,6 @@ describe("LLMCallTracker", () => {
       expect(calls[0].outputTokens).toBe(0)
       expect(calls[0].cacheReadTokens).toBe(0)
       expect(calls[0].cacheCreationTokens).toBe(0)
-      // C2：初值不再伪装成 0，未知就是未知（0 会在下游 ?? 兜底中被当成实测）
-      expect(calls[0].costUsd).toBeUndefined()
     })
 
     it("result 事件不到达时 (Case F)：getLLMCalls 返回全 0 的 records", () => {
@@ -170,7 +153,6 @@ describe("LLMCallTracker", () => {
       for (const call of calls) {
         expect(call.inputTokens).toBe(0)
         expect(call.outputTokens).toBe(0)
-        expect(call.costUsd).toBeUndefined()
       }
     })
   })
@@ -181,7 +163,7 @@ describe("LLMCallTracker", () => {
       simulateOneCall(tracker, "claude-sonnet-4-5-20250827", "msg-1")
 
       tracker.calibrateFromModelUsage(
-        makeModelUsage("claude-sonnet-4-5-20250827", 1000, 500, 200, 100, 0.05)
+        makeModelUsage("claude-sonnet-4-5-20250827", 1000, 500, 200, 100)
       )
 
       const calls = tracker.getLLMCalls()
@@ -190,7 +172,6 @@ describe("LLMCallTracker", () => {
       expect(calls[0].outputTokens).toBe(500)
       expect(calls[0].cacheReadTokens).toBe(200)
       expect(calls[0].cacheCreationTokens).toBe(100)
-      expect(calls[0].costUsd).toBeCloseTo(0.05, 6)
     })
 
     it("Case B: 1 模型 3 calls，均匀分配，余数丢到最后一个 call", () => {
@@ -287,36 +268,6 @@ describe("LLMCallTracker", () => {
       expect(calls[0].outputTokens).toBe(500)
     })
 
-    it("无 costUSD 时按 pricing 自动算", () => {
-      const tracker = new LLMCallTracker()
-      simulateOneCall(tracker, "claude-sonnet-4-5-20250827", "msg-1")
-
-      // 不传 costUSD，让 tracker 按 shared BUILTIN_PRICING（USD/MTok）自动估算
-      // sonnet: input 3, output 15, cacheRead 0.30, cacheCreation 3.75 (per MTok)
-      // 1000 * 3/1e6 + 500 * 15/1e6 + 200 * 0.30/1e6 + 100 * 3.75/1e6 = 0.010935
-      tracker.calibrateFromModelUsage(
-        makeModelUsage("claude-sonnet-4-5-20250827", 1000, 500, 200, 100)
-      )
-
-      const calls = tracker.getLLMCalls()
-      expect(calls).toHaveLength(1)
-      expect(calls[0].costUsd).toBeCloseTo(0.010935, 6)
-    })
-
-    it("未定价模型（qwen 等）无 costUSD → cost 保持未知，绝不再按 default=sonnet 假计费", () => {
-      const tracker = new LLMCallTracker()
-      simulateOneCall(tracker, "qwen3.7-max", "msg-1")
-
-      // token 权威值照常 calibrate（不变式不受 pricing 影响）
-      tracker.calibrateFromModelUsage(makeModelUsage("qwen3.7-max", 1000, 500))
-
-      const calls = tracker.getLLMCalls()
-      expect(calls[0].inputTokens).toBe(1000)
-      expect(calls[0].outputTokens).toBe(500)
-      // cost：priceFor miss → estimateCost null → 跳过分配 = undefined（落库 NULL）
-      expect(calls[0].costUsd).toBeUndefined()
-    })
-
     it("calibrate 可多次调用，后调覆盖前调", () => {
       const tracker = new LLMCallTracker()
       simulateOneCall(tracker, "claude-sonnet-4-5-20250827", "msg-1")
@@ -348,30 +299,6 @@ describe("LLMCallTracker", () => {
       expect(calls[0].outputTokens).toBe(0)
     })
 
-    it("Case B 扩展：多 call 的 costUsd 均匀分配，总和严格等于 authCost", () => {
-      const tracker = new LLMCallTracker()
-      simulateOneCall(tracker, "claude-sonnet-4-5-20250827", "msg-1")
-      simulateOneCall(tracker, "claude-sonnet-4-5-20250827", "msg-2")
-      simulateOneCall(tracker, "claude-sonnet-4-5-20250827", "msg-3")
-
-      const authCost = 0.123456789
-      tracker.calibrateFromModelUsage([
-        mu("claude-sonnet-4-5-20250827", 1000, 500, { costUsd: authCost }),
-      ])
-
-      const calls = tracker.getLLMCalls()
-      expect(calls).toHaveLength(3)
-
-      // 每个 call 的 costUsd 都存在
-      for (const call of calls) {
-        expect(typeof call.costUsd).toBe("number")
-        expect(call.costUsd).toBeGreaterThan(0)
-      }
-
-      // 总和严格等于 authCost（允许 IEEE 754 浮点 1e-12 级误差）
-      const totalCost = calls.reduce((s, c) => s + (c.costUsd ?? 0), 0)
-      expect(totalCost).toBeCloseTo(authCost, 10)
-    })
   })
 
   describe("元数据字段（不受 calibrate 影响）", () => {
@@ -436,7 +363,7 @@ describe("LLMCallTracker", () => {
 
       // modelUsage key 带 ANSI bold 转义码 '\x1b[1m'
       tracker.calibrateFromModelUsage([
-        mu("qwen3.7-max\x1b[1m", 1000, 5536, { costUsd: 0.5 }),
+        mu("qwen3.7-max\x1b[1m", 1000, 5536),
       ])
 
       const calls = tracker.getLLMCalls()
@@ -444,7 +371,6 @@ describe("LLMCallTracker", () => {
       expect(calls[0].model).toBe("qwen3.7-max")  // 存的是 clean name
       expect(calls[0].inputTokens).toBe(1000)       // ← 能正确分配
       expect(calls[0].outputTokens).toBe(5536)
-      expect(calls[0].costUsd).toBeCloseTo(0.5, 6)
     })
 
     it("modelUsage 的 key 带 literal 变体后缀（如 Qwen 的 [1m]）时仍能匹配", () => {
@@ -456,7 +382,7 @@ describe("LLMCallTracker", () => {
       simulateOneCall(tracker, "qwen3.7-max", "msg-1")
 
       tracker.calibrateFromModelUsage([
-        mu("qwen3.7-max[1m]", 30, 5536, { costUsd: 0.49497675 }),
+        mu("qwen3.7-max[1m]", 30, 5536),
       ])
 
       const calls = tracker.getLLMCalls()
@@ -464,7 +390,6 @@ describe("LLMCallTracker", () => {
       expect(calls[0].model).toBe("qwen3.7-max")
       expect(calls[0].inputTokens).toBe(30)
       expect(calls[0].outputTokens).toBe(5536)
-      expect(calls[0].costUsd).toBeCloseTo(0.49497675, 6)
     })
 
     it("变体后缀只剥离末尾的、符合 [数字m/k] 模式的片段", () => {
