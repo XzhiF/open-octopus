@@ -1,11 +1,15 @@
 import { describe, it, expect, vi, afterEach } from 'vitest'
-import { cleanup, render, screen } from '@testing-library/react'
+import { cleanup, fireEvent, render, screen } from '@testing-library/react'
 import type { SubagentRunDetail } from '@/lib/agent/api'
 import { SubagentWindow } from '../subagent-window'
 
 const mockGetSessionSubagent = vi.fn()
 vi.mock('@/lib/agent/api', () => ({
   getSessionSubagent: (...args: unknown[]) => mockGetSessionSubagent(...args),
+}))
+// 费用展示币种默认 CNY / 7 —— 与计费设置兜底一致。
+vi.mock('@/lib/billing-currency', () => ({
+  useBillingCurrency: () => ({ currency: 'CNY', rate: 7 }),
 }))
 
 const detail = (overrides: Partial<SubagentRunDetail> = {}): SubagentRunDetail => ({
@@ -27,6 +31,8 @@ const detail = (overrides: Partial<SubagentRunDetail> = {}): SubagentRunDetail =
   tool_uses: 1,
   duration_ms: 2_600,
   step_count: 4,
+  cost_usd: 0.0111,
+  cost_complete: 1,
   steps: [
     { kind: 'thinking', text: '先看鉴权入口' },
     { kind: 'tool_use', toolName: 'Grep', toolUseId: 't1', input: { pattern: 'auth' } },
@@ -42,25 +48,40 @@ afterEach(() => {
 })
 
 describe('SubagentWindow — 子代理详情', () => {
-  it('渲染指令 prompt、操作日志、最终汇报与 token 汇总', async () => {
+  it('TUI 过程行：工具默认收起、点开原地展开；指令/汇报/费用齐全', async () => {
     mockGetSessionSubagent.mockResolvedValue({ run: detail() })
     render(<SubagentWindow sessionId="sess-1" agentId="agent-1" />)
 
     expect(await screen.findByText('主 Agent 的指令')).toBeTruthy()
     expect(screen.getByText('审查登录模块的鉴权边界')).toBeTruthy()
-    // thinking / 工具调用 / 工具结果 / 文本
+    // thinking / 工具调用 / 文本都在（thinking 只是视觉上 3 行窗）
     expect(screen.getByText('先看鉴权入口')).toBeTruthy()
     expect(screen.getByText('Grep')).toBeTruthy()
-    expect(screen.getByText('src/auth.ts')).toBeTruthy()
     expect(screen.getByText('鉴权边界没问题')).toBeTruthy()
+    // 工具结果默认不发到 DOM 里 —— 点开工具行才展开（无内滚）。
+    expect(screen.queryByText('src/auth.ts')).toBeNull()
+    fireEvent.click(screen.getByText('Grep'))
+    expect(screen.getByText('src/auth.ts')).toBeTruthy()
     // 最终汇报
     expect(screen.getByText('最终汇报')).toBeTruthy()
     expect(screen.getByText('鉴权边界正常')).toBeTruthy()
-    // token 脚注（输入 + 输出 = 1.5K）
+    // token 脚注 + 费用（default CNY ×7）
     expect(document.body.textContent).toContain('输入 1.2K')
     expect(document.body.textContent).toContain('合计 1.5K tok')
+    expect(screen.getByTestId('subagent-cost').textContent).toContain('费用 ¥0.08')
 
     expect(mockGetSessionSubagent).toHaveBeenCalledWith('sess-1', 'agent-1')
+  })
+
+  it('未定价 / 无用量时费用显示「—」而不是假 0', async () => {
+    mockGetSessionSubagent.mockResolvedValue({
+      run: detail({ model: 'no-such-model', cost_usd: null, cost_complete: 0 }),
+    })
+    render(<SubagentWindow sessionId="sess-1" agentId="agent-1" />)
+
+    const cost = await screen.findByTestId('subagent-cost')
+    expect(cost.textContent).toContain('费用 —')
+    expect(cost.getAttribute('data-priced')).toBe('no')
   })
 
   it('没有选中子代理时给出引导语', () => {

@@ -153,6 +153,10 @@ export interface SubagentRunSummary {
   tool_uses: number
   duration_ms: number | null
   step_count: number
+  /** 读时派生（不入库）：USD 估算费用；null = 无用量 / 未配价。 */
+  cost_usd: number | null
+  /** 1 = 模型已配价；0 = 未定价（formatCost 渲染「—」）。 */
+  cost_complete: number
 }
 
 export interface SubagentRunDetail extends SubagentRunSummary {

@@ -117,8 +117,43 @@ describe("SubagentRunService", () => {
       output_tokens: 74,
       cache_read_tokens: 22_016,
       model: "deepseek-v4-flash[1m]",
+      // 未配价的模型 → 费用留空，不假造 0。
+      cost_usd: null,
+      cost_complete: 0,
     })
     expect(mockGetSubagentMessages).toHaveBeenCalledWith("sdk-1", "agent-1", { dir: "/work" })
+  })
+
+  it("derives cost from the billing price table at read time (nothing persisted)", async () => {
+    // 价行与主 chat 账本同源：billing_price_config（USD 3 / 15 / 0.30 / 3.75 per MTok）。
+    const now = new Date().toISOString()
+    db.prepare(`INSERT INTO billing_price_config (
+      id, vendor, model_id, input_unit_price, output_unit_price,
+      cache_write_unit_price, cache_read_unit_price, currency, created_at, updated_at
+    ) VALUES ('price-1', 'test', 'claude-sonnet-4-20250514', 3, 15, 3.75, 0.30, 'USD', ?, ?)`).run(now, now)
+
+    mockGetSubagentMessages.mockResolvedValue([
+      { message: { model: "claude-sonnet-4-20250514", usage: {
+        input_tokens: 1_000, output_tokens: 500, cache_read_input_tokens: 2_000, cache_creation_input_tokens: 0,
+      } } },
+    ])
+    const service = new SubagentRunService(db)
+    service.applyEvent(SESSION, {
+      id: "agent-cost", phase: "started", description: "定价子代理", sdkSessionId: "sdk-1",
+    }, { cwd: "/work" })
+
+    await vi.waitFor(() => {
+      const row = service.find(SESSION, "agent-cost")!
+      if (row.input_tokens !== 1_000) throw new Error("usage not refreshed yet")
+    })
+
+    // (1000×3 + 500×15 + 2000×0.30) / 1e6 = 0.0111 USD。
+    const row = service.find(SESSION, "agent-cost")!
+    expect(row.cost_usd).toBeCloseTo(0.0111, 6)
+    expect(row.cost_complete).toBe(1)
+    // 费用只派生不落库 —— 表里没有 cost 列。
+    const cols = db.prepare("PRAGMA table_info(subagent_runs)").all() as Array<{ name: string }>
+    expect(cols.some((c) => c.name.startsWith("cost"))).toBe(false)
   })
 
   it("ignores runs belonging to another session", () => {

@@ -22,6 +22,8 @@ const run = (overrides: Partial<SubagentRunSummary> = {}): SubagentRunSummary =>
   tool_uses: 3,
   duration_ms: null,
   step_count: 5,
+  cost_usd: null,
+  cost_complete: 0,
   ...overrides,
 })
 

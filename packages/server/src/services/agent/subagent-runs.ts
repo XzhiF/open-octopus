@@ -1,6 +1,7 @@
 import type Database from "better-sqlite3"
 import { getSubagentMessages } from '@octopus/providers'
 import type { SubagentEvent, SubagentLogBlock } from '@octopus/providers'
+import { pricePreviewSql } from '../../db/price-sql'
 import { SubagentRunDAO, type SubagentRunRow, type SubagentRunSummaryRow } from '../../db/dao'
 
 /** 单个日志块 / 一次运行的存储上限 —— transcript 可能极长，作业坞只要「看得到」。 */
@@ -9,6 +10,13 @@ const MAX_STEPS = 400
 
 export type SubagentRunView = SubagentRunSummaryRow & {
   steps?: SubagentLogBlock[]
+  /**
+   * 读时派生、**不落库**（与主 chat 同构：账本存 token，费用查询时按价表算）。
+   * 子代理只有一个模型时 = 全部 token × 该模型单价；null = 无用量或未定价。
+   */
+  cost_usd: number | null
+  /** 1 = 模型已配价；0 = 未定价（formatCost 会渲染成「—」）。 */
+  cost_complete: number
 }
 
 interface SubagentRunContext {
@@ -31,6 +39,18 @@ function parseSteps(raw: string | null | undefined): SubagentLogBlock[] {
   } catch {
     return []
   }
+}
+
+/**
+ * 费用读时派生（不入库）：与主 chat 账本**同一张价表、同一段 SQL** ——
+ * `billing_price_config` 窗口匹配 + `pricePreviewSql`（price-sql 的公式零复制）。
+ * 无用量（运行中尚未回填）→ null，避免先闪一个假的 ¥0；模型没配价 → null。
+ * 聚合 token 用一个时间点（结束/开始）匹配价窗：单次子代理作业跨价窗改价极罕见。
+ */
+function parseEpoch(iso: string | null | undefined): number {
+  if (!iso) return Date.now()
+  const t = Date.parse(iso)
+  return Number.isFinite(t) ? t : Date.now()
 }
 
 function sumTranscriptUsage(messages: unknown[]): {
@@ -69,6 +89,7 @@ function sumTranscriptUsage(messages: unknown[]): {
  *   的逐条 usage —— 这里在读取时按需汇总回填。
  */
 export class SubagentRunService {
+  private db: Database.Database
   private dao: SubagentRunDAO
   /** 同一子代理的 transcript 汇总节流（读取轮询 2s 一次，不必每次读盘）。 */
   private lastRefreshAt = new Map<string, number>()
@@ -78,7 +99,32 @@ export class SubagentRunService {
   private reconcileTimers = new Map<string, ReturnType<typeof setTimeout>[]>()
 
   constructor(db: Database.Database) {
+    this.db = db
     this.dao = new SubagentRunDAO(db)
+  }
+
+  /**
+   * 行上的聚合 token → USD 费用（展示值，不落库）。
+   * 走 price-sql 的试算 SQL：价表窗口、币种折算与账本视图是同一套公式。
+   */
+  private deriveCost(row: SubagentRunSummaryRow): { cost_usd: number | null; cost_complete: number } {
+    const total = row.input_tokens + row.output_tokens + row.cache_read_tokens + row.cache_creation_tokens
+    if (total <= 0 || !row.model) return { cost_usd: null, cost_complete: 0 }
+    try {
+      const priced = this.db.prepare(pricePreviewSql()).get({
+        model: row.model,
+        timestamp: parseEpoch(row.ended_at ?? row.started_at),
+        inputTokens: row.input_tokens,
+        outputTokens: row.output_tokens,
+        cacheCreationTokens: row.cache_creation_tokens,
+        cacheReadTokens: row.cache_read_tokens,
+      }) as { cost_usd: number | null } | undefined
+      const cost = priced?.cost_usd ?? null
+      return { cost_usd: cost, cost_complete: cost == null ? 0 : 1 }
+    } catch {
+      // 价表不可用（老库/测试库缺表）→ 按未定价处理，不影响作业记录本身。
+      return { cost_usd: null, cost_complete: 0 }
+    }
   }
 
   applyEvent(sessionId: string, event: SubagentEvent, ctx: SubagentRunContext = {}): void {
@@ -158,19 +204,19 @@ export class SubagentRunService {
     }
   }
 
-  list(sessionId: string): SubagentRunSummaryRow[] {
+  list(sessionId: string): SubagentRunView[] {
     const rows = this.dao.listBySession(sessionId)
     for (const row of rows) {
       if (this.needsUsage(row)) void this.refreshUsage(row.id)
     }
-    return rows
+    return rows.map((row) => ({ ...row, ...this.deriveCost(row) }))
   }
 
   find(sessionId: string, id: string): SubagentRunView | null {
     const row = this.dao.findById(id)
     if (!row || row.session_id !== sessionId) return null
     if (this.needsUsage(row)) void this.refreshUsage(id, row.status !== 'running')
-    return { ...row, steps: parseSteps(row.steps) }
+    return { ...row, steps: parseSteps(row.steps), ...this.deriveCost(row) }
   }
 
   /** 完成后的延迟对账：3s / 10s 各读一次 transcript，覆盖「写入滞后」。 */
