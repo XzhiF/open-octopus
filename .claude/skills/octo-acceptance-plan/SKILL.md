@@ -69,6 +69,21 @@ phase 本身就是一个完整故事（task-author 已按故事切 phase）。�
 - `recheck` 可写一条复核命令，**仅当用户点名时**才会被执行；写之前先推演它在工作区根能否跑通。
 - 不要写 verdict / 通过结论 —— 证据表不是判决书，人也无需逐项签。
 
+### evidenceRefs.kind 枚举（机器校验）
+
+`kind` 只能是下面五个值之一。写别的值（例如把 e2e 走查写成 `"e2e"`）会被工作流的契约
+校验拒绝，方案退回下一轮重写。
+
+| kind | 用于 |
+|---|---|
+| `diff` | 代码改动：源文件、补丁 |
+| `test` | 测试代码、测试报告 |
+| `report` | 运行日志、走查记录、命令输出（e2e 走查日志 / 脚本放这里） |
+| `docs` | 票、spec、说明文档 |
+| `preview` | 截图、录屏等可预览产物 |
+
+不确定时用 `report`。分类只影响展示标签，但**非法值会被机器校验挡住**。
+
 ### coverage（防漏）
 
 - `coverage.stories`：每个 spec 用户故事 → 哪条 case。
@@ -138,7 +153,8 @@ phase 本身就是一个完整故事（task-author 已按故事切 phase）。�
       "tickets": ["01-phrase-matcher"],
       "covers": ["短语整体命中", "大小写不敏感", "不匹配返回空"],
       "evidenceRefs": [
-        { "kind": "test", "label": "PhraseMatcherTest", "path": ".scratch/<batch>/round-report.md" }
+        { "kind": "test", "label": "PhraseMatcherTest", "path": ".scratch/<batch>/round-report.md" },
+        { "kind": "report", "label": "e2e 走查日志", "path": ".scratch/<batch>/e2e-data/api-walkthrough.log" }
       ],
       "recheck": "cd projects/api && mvn -B -pl java-common-util test"
     }
@@ -163,5 +179,6 @@ phase 本身就是一个完整故事（task-author 已按故事切 phase）。�
 - [ ] `checks` 每一项都是本轮真实发生过的验证，按来源组织，不按 AC 拆。
 - [ ] 每个 spec 用户故事都有 case；每个 AC 都被 check 覆盖；覆盖不上写进 `coverage.missing`。
 - [ ] 所有 evidenceRefs.path 都真实存在（不确定就删掉）。
+- [ ] 所有 `evidenceRefs[].kind` 都在 `diff | test | report | docs | preview` 里（e2e 走查日志/脚本用 `report`）。
 - [ ] 没有编造数字 / 输出 / 文件名。
 - [ ] JSON 可被 `JSON.parse` 解析（写完用 `node -e` 或 `python -c` 自检一次）。

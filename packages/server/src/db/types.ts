@@ -18,8 +18,7 @@ export interface WorkspaceRow {
   source: string
   source_schedule_id: string | null
   /** v41 (ADR-0021): direct task ownership — which task this workspace serves.
-   *  Replaces the `source_schedule_id → schedules.origin_id` reverse lookup composite
-   *  used to walk to find the parent task. */
+   *  Replaces the old `source_schedule_id → schedules.origin_id` reverse lookup. */
   task_id: string | null
   archive_status: string | null
 }

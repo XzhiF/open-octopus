@@ -7,11 +7,15 @@
 //   · 人读版渲染与进度统计（只算场景）。
 
 import { describe, it, expect } from "vitest"
+import { readFileSync } from "fs"
+import { parseWorkflow } from "@octopus/shared"
 import {
   AcceptancePlanSchema,
   LegacyAcceptancePlanSchema,
+  coerceEvidenceKinds,
   convertLegacyPlan,
   emptyPlaybookPayload,
+  inferEvidenceKind,
   parseAcceptancePlan,
   planBudgetWarnings,
   planToPlaybook,
@@ -163,6 +167,84 @@ describe("AcceptancePlanSchema (v2)", () => {
     expect(res.ok).toBe(false)
     if (res.ok) return
     expect(res.issues.join("\n")).toContain("cases.0.steps")
+  })
+})
+
+describe("evidenceRefs.kind 容错（2026-11-02 事故）", () => {
+  it("非法 kind（e2e）按路径推断为合法分类，整份方案不再作废", () => {
+    const plan = validPlan() as unknown as Record<string, unknown>
+    const cases = plan.cases as Array<{ evidenceRefs: unknown[] }>
+    cases[0].evidenceRefs = [
+      { kind: "e2e", label: "走查日志", path: ".scratch/b/e2e-data/api-walkthrough.log" },
+      { kind: "e2e", label: "走查脚本", path: ".scratch/b/e2e-data/e2e-scripts/walkthrough.sh" },
+      { kind: "e2e", label: "e2e 票", path: ".scratch/b/issues/04-e2e.md" },
+    ]
+    const res = parseAcceptancePlan(plan)
+    expect(res.ok).toBe(true)
+    if (!res.ok) return
+    expect(res.plan.cases[0].evidenceRefs.map((e) => e.kind)).toEqual(["report", "report", "docs"])
+    expect(res.warnings).toHaveLength(3)
+    expect(res.warnings[0]).toContain("e2e")
+  })
+
+  it("没有路径时回退到 report；合法输入原样返回", () => {
+    const { value, warnings } = coerceEvidenceKinds({
+      cases: [{ evidenceRefs: [{ kind: "test", label: "ok" }, { kind: "screenshot", label: "no path" }] }],
+      checks: [{ evidenceRefs: [{ kind: "", label: "empty" }] }],
+    })
+    const v = value as {
+      cases: Array<{ evidenceRefs: Array<{ kind: string }> }>
+      checks: Array<{ evidenceRefs: Array<{ kind: string }> }>
+    }
+    expect(v.cases[0].evidenceRefs.map((e) => e.kind)).toEqual(["test", "report"])
+    expect(v.checks[0].evidenceRefs[0].kind).toBe("report")
+    expect(warnings).toHaveLength(2)
+
+    const raw = { cases: [{ evidenceRefs: [{ kind: "diff", label: "ok" }] }] }
+    const untouched = coerceEvidenceKinds(raw)
+    expect(untouched.warnings).toEqual([])
+    expect(untouched.value).toBe(raw)
+  })
+
+  it("kind 推断：diff / test / preview / docs / report", () => {
+    expect(inferEvidenceKind("changes.diff")).toBe("diff")
+    expect(inferEvidenceKind("src/FooTest.java")).toBe("test")
+    expect(inferEvidenceKind("docs/foo.test.ts")).toBe("test")
+    expect(inferEvidenceKind("shots/login.png")).toBe("preview")
+    expect(inferEvidenceKind("spec.md")).toBe("docs")
+    expect(inferEvidenceKind("e2e-data/server.log")).toBe("report")
+    expect(inferEvidenceKind("src/Foo.java")).toBe("report")
+    expect(inferEvidenceKind(undefined)).toBe("report")
+  })
+
+  it("规范化不会掩盖真正的契约错误", () => {
+    const plan = validPlan()
+    plan.cases[0].steps = []
+    expect(parseAcceptancePlan(plan).ok).toBe(false)
+  })
+})
+
+describe("acceptance-plan workflow — 修复环", () => {
+  it("plan 与 validate 包在 ≤3 轮 loop 里；校验失败交给下一轮修，而不是判死执行", () => {
+    const yaml = readFileSync(
+      new URL("../../../../../core-pack/workflows/acceptance-plan.yaml", import.meta.url),
+      "utf8",
+    )
+    const wf = parseWorkflow(yaml)
+    const loop = wf.nodes.find((n) => n.id === "plan-loop")
+    expect(loop?.type).toBe("loop")
+    expect(loop?.max_iterations).toBe(3)
+    expect(loop?.break_when).toContain("plan_valid")
+    expect(loop?.nodes?.map((n) => n.id)).toEqual(["plan", "validate"])
+
+    const validate = loop?.nodes?.find((n) => n.id === "validate")
+    expect(validate?.type).toBe("bash")
+    expect(validate?.bash).toContain('"plan_valid":"invalid"')
+    expect(validate?.bash).toContain("KINDS") // 枚举校验前移到工作流内
+    expect(validate?.bash).toContain("exit 0") // 单轮不合法不直接失败，靠 vars 驱动重试
+
+    // 三轮仍不合法才由 gate 让执行失败 —— 运行卡状态与方案状态一致
+    expect(wf.nodes.find((n) => n.id === "gate")?.depends_on).toEqual(["plan-loop"])
   })
 })
 

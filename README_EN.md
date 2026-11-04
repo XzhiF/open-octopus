@@ -107,7 +107,6 @@ core-pack ← cli / server
 | **swarm** | Multi-agent collaboration (5 strategies) |
 | **sub_workflow** | Nested sub-workflow |
 | **dynamic_sub_workflow** | LLM generates a sub-DAG at runtime |
-| **task_dispatch** | Composite task dispatch — files sub-tasks back into the Task Board |
 
 Dependencies are auto-derived into a parallel DAG; lifecycle hooks wake an agent to handle failures or budget overruns; resources are declared and pre-installed so a workflow is ready the moment it runs.
 
@@ -195,7 +194,7 @@ Three fully isolated run modes that can be up at the same time:
 |------|---------|--------|-----|----------|----------|
 | **dev (main repo)** | `pnpm dev` | 3001 | 3000 | `octopus.db` | Daily development |
 | **dev (worktree)** | `pnpm dev` | hash | +1 | `octopus-{branch}.db` | Parallel branches |
-| **prod** | `pnpm prod` | 3099 | 3099 (same-origin UI) | `octopus-prod.db` | Use Octopus to iterate on itself |
+| **prod** | `pnpm prod` | 3000 | 3000 (same-origin UI) | `octopus-prod.db` | Use Octopus to iterate on itself (same port as dev's web — run only one at a time) |
 
 Each workspace = its own git worktree + pipeline.yaml + skills/agents config + Checkpoint + logs. Create one manually, or let the Scheduler rebuild a clean environment from the ProjectSpec every time, auto-generating instruction files and preset resources.
 
@@ -222,7 +221,7 @@ Each workspace = its own git worktree + pipeline.yaml + skills/agents config + C
 pnpm install                # Install dependencies
 pnpm build                  # Build all packages
 pnpm dev                    # Start dev environment (auto-detects main repo/worktree)
-pnpm prod                   # Production mode (fully isolated)
+pnpm prod                   # Production mode (runs repo dist, same-origin UI on 3000)
 pnpm port                   # View port allocation
 pnpm test                   # Run tests (Vitest)
 ```
@@ -279,7 +278,7 @@ Resource
 
 Agent as First-class Node
   └→ The octopus_agent node puts platform agents directly inside workflows, tools,
-     memory, and resources included; interaction and task_dispatch wire up the
+     memory, and resources included; interaction wires up the
      human loop and task delegation, with chat driving execution both ways
 
 Knowledge Store

@@ -122,6 +122,8 @@ class ChatEventBridge {
   private lastTaskStatus = new Map<string, string>()
   /** 验收引导唤醒去重：task:phase:round → 已唤醒。 */
   private acceptanceGuided = new Set<string>()
+  /** 通用工作流运行卡去重：executionId → 已落卡（一次执行一张，原地走生命周期）。 */
+  private workflowRunCarded = new Set<string>()
   /** 归档引导唤醒去重（taskId → 已开始引导）。 */
   private archiveGuided = new Set<string>()
   /** 归档确认（验收后停在待归档）唤醒去重（taskId → 已问过）。 */
@@ -393,6 +395,8 @@ class ChatEventBridge {
     event: ActivityEvent
     status: string
     actions: TaskCardAction[]
+    /** 消息正文前缀（默认「任务状态」；系统工作流用「工作流运行」）。 */
+    contentPrefix?: string
   }): void {
     if (!this.db) return
     const now = new Date().toISOString()
@@ -421,7 +425,7 @@ class ChatEventBridge {
         randomUUID(),
         input.sessionId,
         "user",
-        `[任务状态 · ${input.status}] ${input.title}\n${input.detail}`,
+        `[${input.contentPrefix ?? "任务状态"} · ${input.status}] ${input.title}\n${input.detail}`,
         JSON.stringify({ displayType: "event", activity }),
         now,
       )
@@ -572,8 +576,9 @@ class ChatEventBridge {
 
     const message = [
       `[归档引导] 任务 ${taskId} 的末 phase 已放行，任务进入归档阶段（archiving）。`,
-      "第一步：调用 get_archive_state 读 git 同步进度 / 术语冲突 / 反思建议 / 知识包编译状态。",
+      "第一步：调用 get_archive_state 读 git 同步进度 / 术语冲突 / 反思建议 / 知识包编译状态 / knowledge.findings（本次编译出的未决矛盾）。",
       "然后用一两句人话告诉用户现在到哪一步、你在等什么；**不要贴表格**，明细让用户点总框里的「打开归档台看明细」。",
+      "若 knowledge.findings 非空：一次只问一条，说明旧断言 vs 新断言、涉及哪两页，问「采纳修订 / 忽略 / 讨论」；用户明确表态后调 resolve_wiki_finding(finding_id, action, confirmed=true) 并回执，不要替人决定、不要批量。",
       "接着调用 propose_wiki_entries 产出 2–5 条沉淀建议（不要贴卡片），再**一次只问一条**：直接问「要不要落 wiki」。",
       "用户说「落 / 跳过 / 都跳过 / 都落」→ 逐条调用 record_reflection_decision(confirmed=true) 执行并回执；不要代替人决定。",
       "若 preflight 被未提交改动拦下（get_archive_state 里 preflight / delta 非空）：用一两句话问用户「纳入归档」还是「排除并记录」，明确表态后调 resolve_archive_delta(decision, confirmed=true)；不要自己决定。",
@@ -690,6 +695,88 @@ class ChatEventBridge {
     }
   }
 
+  /** 通用「工作流运行」卡（2026-11-02）：任何执行开跑时在任务线程落一张卡，
+   *  前端同一张卡原地轮询执行详情，走「运行中 → 已完成 / 失败」。
+   *
+   *  与任务状态卡的区别：这是**执行层**（可以是一个 task_id=NULL 的系统运行，
+   *  如验收规划），所以 payload 带 `workflowRun:true`，TuiTranscript 据此分发给
+   *  WorkflowRunCard 而不是 TaskStatusCard。
+   *
+   *  零 LLM：只落卡 + 通知会话刷新，不唤醒主 Chat（终态由前端轮询得到）。
+   *  一执行一张：按 executionId 去重。 */
+  requestWorkflowRunCard(input: {
+    taskId: string
+    executionId: string
+    workspaceId: string
+    workflowRef: string
+    workflowName: string
+    system: boolean
+    phaseIndex?: number | null
+    roundIndex?: number | null
+  }): void {
+    if (!this.db) return
+    if (this.workflowRunCarded.has(input.executionId)) return
+    let row: {
+      name?: string
+      source_chat_session_id?: string | null
+      workspace_id?: string | null
+    } | undefined
+    try {
+      row = this.db.prepare(
+        "SELECT name, source_chat_session_id, workspace_id FROM tasks WHERE id = ?",
+      ).get(input.taskId) as typeof row
+    } catch {
+      return
+    }
+    if (!row?.source_chat_session_id) return
+    let session: { clone_name?: string | null } | undefined
+    try {
+      session = this.db.prepare("SELECT clone_name FROM sessions WHERE id = ?")
+        .get(row.source_chat_session_id) as typeof session
+    } catch {
+      return
+    }
+    if (!session || session.clone_name) return // legacy clone thread — untouched
+    this.workflowRunCarded.add(input.executionId)
+
+    const coord = input.phaseIndex != null
+      ? `P${input.phaseIndex}${input.roundIndex != null ? ` · R${input.roundIndex}` : ""}`
+      : ""
+    const detail = [input.workflowRef, coord].filter(Boolean).join(" · ")
+    const title = `工作流运行 · ${input.workflowName}`
+    const workspaceId = input.workspaceId || row.workspace_id || null
+    const event = getActivityBus().publish({
+      kind: "workflow.started",
+      severity: "info",
+      title,
+      message: detail,
+      workspaceId,
+      taskId: input.taskId,
+      executionId: input.executionId,
+      sessionId: row.source_chat_session_id,
+      payload: {
+        status: "running",
+        workflowRun: true,
+        system: input.system,
+        workflowRef: input.workflowRef,
+        workflowName: input.workflowName,
+        phaseIndex: input.phaseIndex ?? null,
+        roundIndex: input.roundIndex ?? null,
+      },
+    })
+    this.appendTaskCard({
+      sessionId: row.source_chat_session_id,
+      workspaceId,
+      title,
+      detail,
+      event,
+      status: "running",
+      actions: [],
+      contentPrefix: "工作流运行",
+    })
+    this.notifySession(row.source_chat_session_id, workspaceId)
+  }
+
   /** 验收方案就绪（2026-10-30 AI-native 验收；2026-10-31 两层化）：投一张
    *  消息流卡片 + 唤醒主 Chat 开始逐场景引导。只认主线程会话；legacy clone
    *  不动；同一轮只唤醒一次。注意：不改 Chat 顶部栏 —— 引导上下文全部在
@@ -766,7 +853,7 @@ class ChatEventBridge {
       `[验收引导] 任务 ${taskId} 本轮（P${info.phaseIndex} R${info.roundIndex}）已交付，验收方案已生成：人验收 ${info.caseCount} 条场景、机器证据 ${info.checkCount} 项。`,
       "1. 调 get_acceptance_plan：`cases` 是要人验的场景（打开 → 操作 → 看什么），`checks` 是本轮已经验证过的机器证据。",
       "2. 开场用**一句话**播报机器证据（共几项、缺几件），然后**只走场景** —— 不要逐条跑证据、不要逐项问证据；e2e/慢命令尤其不要主动重跑。",
-      "3. 一次只推进一条场景：按 steps 讲清「打开哪 → 做什么 → 看到什么」；用户要看页面就 start_acceptance_preview（结束 stop_acceptance_preview）。",
+      "3. 一次只推进一条场景：按 steps 讲清「打开哪 → 做什么 → 看到什么」；提问一律用对话正文，不要调用 AskUserQuestion（选项卡会打断逐条引导）；用户要看页面就 start_acceptance_preview（结束 stop_acceptance_preview）。",
       "4. 只有用户点名「这条再跑一下」时，才对该机器证据项调 run_acceptance_probe；结果讲给用户，但不要让它变成人工勾选项。",
       "5. 用户明确表态后直接调 record_acceptance_check(confirmed=true)（只对 cases）；不要代替人判断。",
       "不通过 → 当场小修（只改直接相关的 ≤2 个文件，不改 spec），改完按场景重看再确认；",

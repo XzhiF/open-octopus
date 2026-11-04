@@ -34,6 +34,17 @@ export interface SendQueryOptions {
   systemPrompt?: SystemPromptInput
   abortSignal?: AbortSignal
   /**
+   * Deadline for the SDK to produce its first stream event. When it elapses the
+   * query is aborted and an `IDLE_TIMEOUT` error chunk is yielded instead of
+   * hanging the turn forever. Default 90s (see idle-watchdog.ts).
+   */
+  firstEventTimeoutMs?: number
+  /**
+   * Max silence between two SDK events once the stream is live. Default 300s.
+   * Same recovery path as `firstEventTimeoutMs`.
+   */
+  streamIdleTimeoutMs?: number
+  /**
    * Run the query in SDK **streaming input mode** so a stop can use
    * `Query.interrupt()` instead of a hard `abortController.abort()`.
    *
@@ -49,6 +60,14 @@ export interface SendQueryOptions {
    * keep the existing single-message behavior.
    */
   interruptible?: boolean
+  /**
+   * 首轮结束时若仍有后台任务（Bash `run_in_background` 等），不关闭 query，
+   * 继续消费 —— SDK 会在后台任务结束时自动唤醒模型跑第二轮。只有长期在线的
+   * chat 会话该打开；workflow / engine / clone 仍按首轮 result 收轮。
+   */
+  awaitBackgroundTasks?: boolean
+  /** 等后台任务时的看门狗预算（默认 60min）；普通流的 300s 会误杀长构建。 */
+  backgroundWaitTimeoutMs?: number
   /** Free-form tag (usually the workflow node id) echoed into [exec-timing]
    *  logs when OCTOPUS_EXEC_TIMING=1. No behavioral effect. */
   timingTag?: string
@@ -120,6 +139,16 @@ export interface ActiveGoalChunk {
   set_at?: number
 }
 
+/**
+ * 会话里正在跑的后台任务（SDK `system:background_tasks_changed` / `task_started`）。
+ * `description` 就是用户在「后台运行中」里该看到的「在跑什么」。
+ */
+export interface BackgroundTaskInfo {
+  id: string
+  description: string
+  taskType?: string
+}
+
 // message_delta 的 per-turn 实测用量与 SSE delta 均使用 shared 的 TokenUsageDelta，
 // providers 不再本地定义任何 token 形状（C1 · D3 不留 alias）。
 
@@ -152,6 +181,8 @@ export type MessageChunk =
    *  is gone — host-side history (DB/messages) is the host's own. */
   | { type: 'conversation_reset' }
   | { type: 'status'; status: 'compacting' | 'requesting' | null; varsUpdate?: Record<string, unknown> }
+  /** 后台任务集合变化（电平信号，REPLACE 语义）：空数组 = 已无后台任务。 */
+  | { type: 'background_tasks'; tasks: BackgroundTaskInfo[] }
   | { type: 'context_usage'; data: ContextUsageData }
   | { type: 'result'; content?: string; sessionId?: string; usage?: TokenUsage; costUsd?: number; numTurns?: number; modelUsages?: ModelUsage[] }
   | {

@@ -31,7 +31,10 @@ describe("formatCost — 三态 + 自适应精度", () => {
   it("display=CNY → 按汇率折算换 ¥，三态与自适应精度不变", () => {
     const cny = { currency: "CNY" as const, rate: 7 }
     expect(formatCost(0.4583, true, cny)).toBe("¥3.21")
-    expect(formatCost(0.03, true, cny)).toBe("¥0.21")      // CNY 恒 2 位（最小实用单位是分）
+    expect(formatCost(0.03, true, cny)).toBe("¥0.21")      // 常规金额 2 位（最小实用单位是分）
+    // 不足一分：非零金额不能舍成 ¥0.00（2026-11-04 中断轮 94k tok ≈ ¥0.0035）
+    expect(formatCost(0.000506, true, cny)).toBe("¥0.0035")
+    expect(formatCost(0.001, true, cny)).toBe("¥0.0070")
     expect(formatCost(12.8, true, cny)).toBe("¥89.60")
     expect(formatCost(0.4583, false, cny)).toBe("≈¥3.21") // 部分定价仍带 ≈
     expect(formatCost(0, true, cny)).toBe("¥0")

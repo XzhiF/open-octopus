@@ -63,13 +63,11 @@ import {
 } from "./task-artifact-sync"
 import {
   buildTaskLaunchConfig,
-  buildCompositeInputValues,
   resolveV4Phases,
   resolveTaskLaunchStep,
   type TaskV4PhaseConfig,
 } from "./task-materialize"
-import { computeTaskWsLaunchParams, isCompositeWorkflowConfig } from "../scheduler/ws-launch"
-import { startChildRun, resumeParentFromChild } from "./task-child-run"
+import { computeTaskWsLaunchParams } from "../scheduler/ws-launch"
 import { calculateNextExecutions } from "../cron-utils"
 import { getChatEventBridge } from "../activity/chat-event-bridge"
 // The cap constant + the stale threshold are pure numbers (no schedule state); see the
@@ -105,17 +103,6 @@ export interface ArmOptions {
   prevHandoffPaths?: string[]
   /** Who asked, for the execution's `triggered_by` audit column. */
   triggeredBy?: string
-}
-
-/**
- * The subunit-ARM predicate (v44, task-exec-tree). Before rounds chained, `parent_id != '0'`
- * alone separated a composite arm from a task instance. It no longer can: a v4 round carries
- * parent_id as its LINEAGE (它挂在上一轮下), not as a dispatch relationship. The arm is
- * precisely a parented row that is NOT phase-tagged — the round tag is what says 「this row
- * is an instance of the task」 even when the tree puts it under another instance.
- */
-export function isSubunitArmRow(row: { parent_id?: string | null; phase_index?: number | null }): boolean {
-  return !!row.parent_id && row.parent_id !== "0" && row.phase_index == null
 }
 
 export interface TickMetrics {
@@ -263,20 +250,7 @@ export class TaskLifecycleService {
       const leaseAt = new Date().toISOString()
       if (this.execDAO.claimLaunch(row.id, leaseAt).changes === 0) continue
       try {
-        // A composite child needs the PARENT-resume wiring, not the task finalize — the
-        // parent is what decides what a finished subunit means. Claimed here rather than
-        // in TaskDispatchService so an over-cap child has exactly one owner.
-        // v44 note: a chained round also carries parent_id (its lineage), so the arm test
-        // is parent-set AND untagged — a phase-tagged row is an INSTANCE and starts through
-        // the task path no matter where it hangs in the tree.
-        if (isSubunitArmRow(row)) {
-          const iv = parseJSON<Record<string, string>>(row.input_values, {})
-          // alreadyClaimed=true: this loop moved the row pending→running just above,
-          // under the guarded claim that keeps two owners from both starting it.
-          if (!startChildRun(this.deps.db, row.id, row.workspace_id, iv, leaseAt)) continue
-        } else {
-          this.startRow(row, leaseAt)
-        }
+        this.startRow(row, leaseAt)
         launched++
       } catch (err: unknown) {
         const message = err instanceof Error ? err.message : String(err)
@@ -444,8 +418,7 @@ export class TaskLifecycleService {
       v4Phases,
     )
 
-    const isComposite = isCompositeWorkflowConfig(plan)
-    const wantsPhase = spec.format === "v4" && !isComposite
+    const wantsPhase = spec.format === "v4"
     // A phase index must exist BEFORE the step is resolved. resolveTaskLaunchStep
     // falls back to the generic chain[0] branch when it finds no such phase, which
     // would launch phase 1's workflow UNTAGGED — the row would hold the latch forever
@@ -469,19 +442,14 @@ export class TaskLifecycleService {
       inputOverride: opts.inputOverride,
       prevHandoffPaths: opts.prevHandoffPaths,
       // 验收台预设回填信道（TASK_ID_KEY/OCTOPUS_API_KEY）— 与 index.ts 同源取
-      // 自身端口（dev 3001 / worktree hash / prod 3099 皆对）。
+      // 自身端口（dev 3001 / prod 3000 / worktree hash 皆对）。
       taskId,
       serverUrl: `http://127.0.0.1:${(process.env.PORT ?? "3001").trim()}`,
     })
     if (!step.workflowRef) {
       throw new TaskLifecycleError("no-workflow", "任务未绑定可执行的工作流（workflow_ref 为空）")
     }
-    const inputValues: Record<string, string> = isComposite
-      ? {
-          ...(buildCompositeInputValues(spec, plan) as Record<string, string>),
-          ...step.inputValues,
-        }
-      : step.inputValues
+    const inputValues: Record<string, string> = step.inputValues
 
     const workspaceId = this.prepareWorkspace(task, plan)
     const registry = getExecutionService(workspaceId)
@@ -521,11 +489,10 @@ export class TaskLifecycleService {
     // task-exec-tree (v44): a TAGGED v4 round hangs under the task's previous instance so
     // the whole run history reads as ONE tree in the ws view (外层看是一棵树). `latest`
     // passed the in-flight guard above, so it is terminal — the chain grows one node per
-    // round. Untagged launches (v3, composite coordinators) stay roots: their parent_id is
-    // still the arm-vs-instance discriminator and the root is what their latch counts.
-    // The same-ws check is a real constraint, not paranoia: create() refuses a parent
-    // from another workspace, so when prepareWorkspace had to rebuild the ws the tree
-    // restarts at a fresh root there instead of arming into a hard failure.
+    // round. Untagged launches (v3/generic) stay roots. The same-ws check is a real
+    // constraint, not paranoia: create() refuses a parent from another workspace, so
+    // when prepareWorkspace had to rebuild the ws the tree restarts at a fresh root
+    // there instead of arming into a hard failure.
     const chainParentId =
       step.phaseIndex != null && latest && latest.workspace_id === workspaceId
         ? latest.id
@@ -593,7 +560,6 @@ export class TaskLifecycleService {
     const ws = this.deps.workspaceService
     if (!ws) throw new TaskLifecycleError("workspace", "WorkspaceService 未注入，无法准备工作区")
 
-    const composite = isCompositeWorkflowConfig(plan)
     const { branchPrefix, branchSuffix, workspaceName } = computeTaskWsLaunchParams({
       instanceKey: task.id,
       naming: "task",
@@ -612,7 +578,7 @@ export class TaskLifecycleService {
         if (typeof ws.ensureWorktreesForProjects === "function") {
           ws.ensureWorktreesForProjects(
             bound,
-            composite ? [] : projects,
+            projects,
             branchPrefix,
             branchSuffix,
           )
@@ -646,9 +612,7 @@ export class TaskLifecycleService {
         name: workspaceName,
         // task-board-title 改版: 任务标题映射到工作区描述字段。
         description: task.name,
-        // A coordinator workspace has NO projects by design (spec D4) — it only runs the
-        // composition workflow, which fans out per-subunit workspaces itself.
-        projects: composite ? [] : projects,
+        projects,
         branch_prefix: branchPrefix,
         branch_suffix: branchSuffix,
         source: "task",
@@ -668,7 +632,7 @@ export class TaskLifecycleService {
         .prepare("UPDATE workspaces SET task_id = ? WHERE id = ?")
         .run(task.id, created.id)
       console.log(
-        `[task-lifecycle] workspace ${created.id} (${workspaceName}) built for task ${task.id} — ${composite ? "coordinator" : `${projects.length} worktree(s)`}`,
+        `[task-lifecycle] workspace ${created.id} (${workspaceName}) built for task ${task.id} — ${projects.length} worktree(s)`,
       )
       return created.id
     } catch (err: unknown) {
@@ -697,10 +661,6 @@ export class TaskLifecycleService {
       // never dispatch behind a live instance of the same task.
       if (isWaiting(row.status)) return
       const taskId = row.task_id
-      // A composite child is not a round: its outcome belongs to the parent's waiting
-      // node, and it must never drive the task card or open 待验收. (v44: a chained round
-      // is an instance too — the tag, not the parent, decides.)
-      const isChild = isSubunitArmRow(row)
       // Status resolution (goal-task-dev status-mirror lesson, verbatim ordering):
       // the persisted row wins when it already holds a FINAL status — it is written
       // after ExecutionLifecycle's allSkipped→failed adjustment and covers resume
@@ -723,33 +683,15 @@ export class TaskLifecycleService {
         if (outcomes.completed === 0 && outcomes.skipped > 0) status = "failed"
         // 2026-10-29 虚假完成补刀（rerun 事故轮）：恢复路径级联把业务节点全打成
         // cancelled/skipped 后，一个 completed 的 bash 路由节点（spec-resolve）就能
-        // 骗过上一条规则 —— 只要工作流存在业务节点行（agent/子流/swarm/loop/python/
-        // task_dispatch）而其中零个 completed，本轮没有任何真实产出，判 failed。
+        // 骗过上一条规则 —— 只要工作流存在业务节点行（agent/子流/swarm/loop/python）
+        // 而其中零个 completed，本轮没有任何真实产出，判 failed。
         // businessTotal=0（纯 bash 流）不拦：全跑完的纯脚本轮是合法完成。
         else if (outcomes.businessTotal > 0 && outcomes.businessCompleted === 0) status = "failed"
       }
 
-      let ok = status === "completed" || status === "completed_with_failures"
-      // 票04 (父失败聚合, 取代 WorkflowExecutor 的 findFailedChildSchedules): composite
-      // coordinator 自己的 workflow 即使有子失败也照样 completed —— 失败子单元会以 EMPTY
-      // 输出回填 task_dispatch 节点,Loop 只管往下走。不在这里聚合,半个任务都没跑完的任务
-      // 会显示「完成」。只查根(子没有子),且读子行自己的终态,重启后仍然成立。
-      let failedChildren = 0
-      if (ok && !isChild) {
-        failedChildren = this.execDAO.findChildren(executionId).filter((c) =>
-          ["failed", "aborted", "cancelled", "rejected"].includes(c.status),
-        ).length
-        if (failedChildren > 0) {
-          ok = false
-          status = "failed"
-          console.log(
-            `[task-lifecycle] task ${taskId}: ${executionId} 聚合 ${failedChildren} 条失败子执行 → failed`,
-          )
-        }
-      }
-      // A red run carries its reason on the row (var_pool.error), which is what the
+      const ok = status === "completed" || status === "completed_with_failures"      // A red run carries its reason on the row (var_pool.error), which is what the
       // badge's error_summary reads — see failureReason.
-      const errorSummary = ok ? null : this.failureReason(row, executionId, failedChildren)
+      const errorSummary = ok ? null : this.failureReason(row, executionId)
       this.execDAO.setLaunchStatus(executionId, status, {
         completedAt: new Date().toISOString(),
         duration: row.started_at ? Date.now() - dbTimeMs(row.started_at) : undefined,
@@ -761,14 +703,6 @@ export class TaskLifecycleService {
 
       // task-phase-redesign (K9) collect 上行 — BEFORE any retention could reclaim the
       // ws: recover what the execution side changed in the batch dir back into the home.
-      if (isChild) {
-        // A child's outcome belongs to its parent's waiting node, not to the task card:
-        // mirroring tasks.status or opening 待验收 for a subunit would be nonsense (in a
-        // composite the COORDINATOR is the round; the children are its internals).
-        resumeParentFromChild(this.deps.db, executionId).catch((err: unknown) =>
-          console.error(`[task-lifecycle] child resume after finalize failed for ${executionId}:`, errMessage(err)))
-        return
-      }
       if (row.phase_index != null) {
         this.collectRound(row, taskId)
         // P3: terminal = the round awaits its human decision. Emit regardless of whether
@@ -938,80 +872,8 @@ export class TaskLifecycleService {
       resynced++
     }
 
-    resynced += this.recoverStuckDispatchParents()
-
     return { resynced, reaped }
   }
-
-  /**
-   * A composite parent paused on `pending_task_dispatch` whose children are ALL settled
-   * is a lost wake-up: the child's completion callback fires exactly once, in the child's
-   * process-time, and if it throws — or the child was finalized through the job's own
-   * claim path and the wiring missed — the parent sits waiting for a waiter that is gone.
-   * RecoveryManager does not cover it: it restarts *interrupted* engines, and a paused
-   * parent is not interrupted, it is waiting.
-   *
-   * 票03's row shape is what makes this repairable at all: the parent→child link is a
-   * queryable `parent_id` instead of a marker buried in a schedule config, so the
-   * reconciliation pass can ask the only question that matters — "is anybody still owed
-   * to this paused node?" — and answer no. Idempotent: `resumeTaskDispatch` on a node
-   * that already moved on is a no-op.
-   *
-   * Two deliberate non-cases:
-   *   - a child still live or waiting (parked behind the cap, or itself awaiting
-   *     approval) — declaring the fan-out over mid-flight would resume the parent with
-   *     the wrong subunit's output;
-   *   - a parent whose ENGINE is also gone. Nothing can receive the resume, so pretending
-   *     otherwise would report a recovery that did not happen. That row belongs to the
-   *     strand reap above, which ends it once it is past the stale threshold.
-   */
-  private recoverStuckDispatchParents(): number {
-    let recovered = 0
-    const paused = this.taskDAO
-      .getDb()
-      .prepare(
-        `SELECT id, workspace_id FROM executions
-         WHERE task_id IS NOT NULL AND status = 'pending_task_dispatch'`,
-      )
-      .all() as Array<{ id: string; workspace_id: string }>
-    for (const parent of paused) {
-      try {
-        const children = this.execDAO.findChildren(parent.id)
-        if (children.length === 0) continue // never dispatched anything — nothing lost
-        const unsettled = children.filter((c) => !isTerminal(c.status))
-        if (unsettled.length > 0) continue
-        const node = this.execDAO.findWaitingDispatchNode(parent.id)
-        if (!node) continue
-        // Re-forward the LAST settled child's output: the composition Loop consumes one
-        // subunit per node visit, and the node that paused is waiting for exactly one.
-        const last = children[children.length - 1]
-        let output: Record<string, unknown> = {}
-        try {
-          output = JSON.parse(last.var_pool ?? "{}") as Record<string, unknown>
-        } catch {
-          output = {}
-        }
-        const registry = this.safeRegistry(parent.workspace_id)
-        // Only a parent with an engine still in THIS process can take the resume.
-        if (!registry?.service.hasLiveEngine?.(parent.id)) continue
-        // Counted on ISSUE, not on completion: the metric answers "how many stuck parents
-        // did this round touch", and the resume resolves on the microtask queue after
-        // tick() has already returned. Counting inside .then() would report 0 forever.
-        recovered++
-        console.log(
-          `[task-lifecycle] recovered lost wake-up: parent ${parent.id} node ${node.node_id} after ${children.length} settled child run(s)`,
-        )
-        void registry.service
-          .resumeTaskDispatch(parent.id, node.node_id, output)
-          .catch((err: unknown) =>
-            console.error(`[task-lifecycle] parent recovery resume failed for ${parent.id}:`, errMessage(err)))
-      } catch (err: unknown) {
-        console.error(`[task-lifecycle] dispatch-parent scan failed for ${parent.id}:`, errMessage(err))
-      }
-    }
-    return recovered
-  }
-
 
   // ── cron cursor ────────────────────────────────────────────────────
 
@@ -1231,23 +1093,14 @@ export class TaskLifecycleService {
 
   /**
    * One line for a red run, in preference order: the reason the job itself already wrote
-   * on the row (retire, start failure, reap), then why the 票04 aggregation turned a green
-   * coordinator red, then the engine's failed node. NULL when nothing knows — the node
-   * list is where the detail page looks, and inventing a generic string here would put
-   * words on the badge that nothing can unsay later.
+   * on the row (retire, start failure, reap), then the engine's failed node. NULL when
+   * nothing knows — the node list is where the detail page looks, and inventing a generic
+   * string here would put words on the badge that nothing can unsay later.
    */
-  private failureReason(row: ExecutionRow, executionId: string, failedChildren: number): string | null {
+  private failureReason(row: ExecutionRow, executionId: string): string | null {
     const stored = parseJSON<Record<string, unknown>>(row.var_pool, {}).error
     if (typeof stored === "string" && stored.trim()) return stored
-    if (failedChildren > 0) return `${failedChildren} 个子单元执行失败`
     return this.execDAO.findFirstNodeErrorByStatus(executionId, "failed")?.error ?? null
-  }
-
-  /** The task's subunit runs (composite fan-out), for the detail/history read model.
-   *  This is where 票05 sends the UI instead of the envelope's `origin_role='subunit'`
-   *  rows: the arms of a fan-out are child executions of the round that dispatched them. */
-  childRuns(taskId: string): ExecutionRow[] {
-    return this.execDAO.listTaskChildRuns(taskId)
   }
 
   /** The board's badge source: the newest instance of each task, one query. */

@@ -1,14 +1,12 @@
 // packages/server/src/services/agent/expert-registry.ts
 //
-// Resolves expert role ids (the ids in the MoA dialog's AVAILABLE_ROLES, e.g.
-// "engineering-rapid-prototyper") into Claude Agent SDK subagent definitions
-// (OctopusAgentDef). Used by the single-expert consultation flow: the clone
-// chat route registers the selected expert as an `agents` option on the
-// current turn so the task-author main agent can invoke it via the Agent tool.
+// Resolves expert role ids (e.g. "engineering-rapid-prototyper") into Claude
+// Agent SDK subagent definitions (OctopusAgentDef). Used by the single-expert
+// consultation flow: the clone chat route registers the selected expert as an
+// `agents` option on the current turn so the task-author main agent can invoke
+// it via the Agent tool.
 //
-// The path-resolution logic mirrors assist-workflow-service.resolveAgentPath
-// (agency-agents-zh → core-pack). Kept here standalone so the MoA workflow
-// path is untouched; a future pass can consolidate both.
+// Path resolution: agency-agents-zh → core-pack.
 
 import { readFileSync, existsSync } from "fs"
 import path from "path"
@@ -97,7 +95,7 @@ export function resolveExpertSubagents(
   return Object.keys(out).length > 0 ? out : undefined
 }
 
-/** Locate an expert's .md file, mirroring assist-workflow-service.resolveAgentPath. */
+/** Locate an expert's .md file (agency-agents-zh → core-pack). */
 function resolveAgentPath(agentId: string): string | null {
   const agentFile = path.join(AGENTS_BASE, agentId, `${agentId}.md`)
   if (existsSync(agentFile)) return agentFile

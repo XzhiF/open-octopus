@@ -9,8 +9,9 @@ import { useEffect, useState } from 'react'
 import { Pause, Play, RotateCcw, Square } from 'lucide-react'
 import { toast } from 'sonner'
 import { getTask, type TaskDetail, type TaskView } from '@/lib/tasks-api'
-import { fetchExecutionDetail, rerunExecution } from '@/lib/api-client'
+import { cancelExecution, fetchExecutionDetail, rerunExecution } from '@/lib/api-client'
 import type { StepExecution } from '@/lib/types'
+import type { RunTarget } from './task-window-types'
 import { formatStopwatch } from '@/lib/format'
 import { WorkflowFlowViewerWithStatus } from '@/components/workspace/workflow-flow-viewer-with-status'
 import { RunLogConsole } from '@/components/workspace/run-log/run-log-console'
@@ -56,9 +57,13 @@ const RUN_STATUS_LABEL: Record<string, string> = {
 
 export function RunWindow({
   task,
+  runTarget,
   onTaskAction,
 }: {
-  task: TaskView
+  /** 有任务 = 任务当前一轮；自由对话里打开作业坞指定的执行时没有任务。 */
+  task: TaskView | null
+  /** 作业坞运行列表点进来的指定执行；缺省 = 任务当前一轮（原行为不变）。 */
+  runTarget?: RunTarget | null
   onTaskAction?: (action: string) => void
 }) {
   const [detail, setDetail] = useState<TaskDetail | null>(null)
@@ -72,20 +77,29 @@ export function RunWindow({
   } | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [rerunning, setRerunning] = useState(false)
+  const [aborting, setAborting] = useState(false)
   /** DAG 与日志共用的聚焦：节点 id（= 事件 nodeId） */
   const [focus, setFocus] = useState<string | null>(null)
 
-  const runs = detail?.executions ?? []
-  const run = runs.find((r) => LIVE_RUN.has(r.status)) ?? runs[0] ?? null
-  const workspaceId = run?.workspace_id ?? null
-  const executionId = run?.id ?? null
-  const live = !!run && LIVE_RUN.has(run.status)
+  const runs = runTarget ? [] : detail?.executions ?? []
+  const taskRun = runs.find((r) => LIVE_RUN.has(r.status)) ?? runs[0] ?? null
+  const workspaceId = runTarget?.workspaceId ?? taskRun?.workspace_id ?? null
+  const executionId = runTarget?.executionId ?? taskRun?.id ?? null
+  const status = exec?.status ?? runTarget?.status ?? taskRun?.status ?? ''
+  const live = !!status && LIVE_RUN.has(status)
+  const phaseIndex = runTarget?.phaseIndex ?? taskRun?.phase_index ?? null
+  const roundIndex = runTarget?.roundIndex ?? taskRun?.round_index ?? null
+  const workflowRef = exec?.workflowRef ?? runTarget?.workflowRef ?? taskRun?.workflow_ref ?? null
+  /** 任务 id 单独提出来做 effect 依赖：task 对象每次渲染可能是新引用。 */
+  const taskId = task?.id ?? null
 
   // 终态重跑（2026-10-28）：failed/取消/带失败完成 的执行给一个「⚡ 重跑」，
   // 服务端自动取首个失败节点为恢复点 —— 与对话 Agent 的 rerun_execution 同源。
-  const rerunnable = !!run && !live && ['failed', 'cancelled', 'aborted', 'completed_with_failures'].includes(run.status)
+  // 作业坞点进来的指定执行不给重跑（系统运行重跑会误解成业务重跑）。
+  const rerunnable = !runTarget && !!taskRun && !live &&
+    ['failed', 'cancelled', 'aborted', 'completed_with_failures'].includes(taskRun.status)
   const handleRerun = async () => {
-    if (!workspaceId || !executionId || rerunning) return
+    if (!task || !workspaceId || !executionId || rerunning) return
     setRerunning(true)
     try {
       const result = await rerunExecution(workspaceId, executionId)
@@ -103,17 +117,40 @@ export function RunWindow({
     }
   }
 
+  /** 指定执行（可能是 task_id=NULL 的验收规划）：中止走执行接口，不走任务动作。 */
+  const handleAbortTarget = async () => {
+    if (!workspaceId || !executionId || aborting) return
+    setAborting(true)
+    try {
+      await cancelExecution(workspaceId, executionId)
+      toast.success('已中止执行')
+    } catch (err: unknown) {
+      toast.error(err instanceof Error ? err.message : '中止失败')
+    } finally {
+      setAborting(false)
+    }
+  }
+
   useEffect(() => {
+    // 指定执行不依赖任务当前轮：列表里可能是 task_id=NULL 的系统运行，
+    // getTask 看不到它，轮询只会白跑。自由对话里根本没有任务。
+    if (runTarget || !taskId) {
+      setDetail(null)
+      return
+    }
     let alive = true
     const load = () => {
-      getTask(task.id)
+      getTask(taskId)
         .then((next) => { if (alive) setDetail(next) })
         .catch(() => { /* keep the snapshot */ })
     }
     load()
     const timer = window.setInterval(load, live ? 3_000 : 15_000)
     return () => { alive = false; window.clearInterval(timer) }
-  }, [task.id, live])
+  }, [taskId, live, runTarget])
+
+  // 换一条执行：先清掉上一份 DAG/日志快照，避免新 target 加载前短暂串台。
+  useEffect(() => { setExec(null) }, [workspaceId, executionId])
 
   useEffect(() => {
     if (!workspaceId || !executionId) {
@@ -158,7 +195,7 @@ export function RunWindow({
   }, [live])
   const totalMs = exec ? totalElapsedMs(exec.startedAt, exec.completedAt, live, now, exec.steps) : null
 
-  if (!run) {
+  if (!executionId) {
     return (
       <div className="flex h-full items-center justify-center p-6 text-[11.5px] text-pop-dim" data-testid="run-window-empty">
         还没有执行轮。触发任务后，这里会显示 DAG 与日志。
@@ -170,12 +207,17 @@ export function RunWindow({
     <div className="flex h-full min-h-0 flex-col bg-pop-bg" data-testid="run-window">
       <div className="flex flex-wrap items-center gap-2 border-b border-pop-bd bg-pop-paper/50 px-3 py-2">
         <span className="font-mono text-[10px] font-black text-pop-ink">
-          {run.phase_index != null ? `P${run.phase_index}` : '执行'}
-          {run.round_index != null ? ` · R${run.round_index}` : ''}
+          {phaseIndex != null ? `P${phaseIndex}` : '执行'}
+          {roundIndex != null ? ` · R${roundIndex}` : ''}
         </span>
-        <span className="truncate font-mono text-[10px] text-pop-dim">{run.workflow_ref ?? exec?.workflowRef ?? '—'}</span>
+        <span className="truncate font-mono text-[10px] text-pop-dim">{workflowRef ?? '—'}</span>
+        {runTarget?.system && (
+          <span className="shrink-0 rounded border border-pop-cyan/35 bg-pop-cyan/[0.06] px-1.5 py-[1px] font-mono text-[9px] font-bold text-pop-cyan">
+            系统
+          </span>
+        )}
         <span className={`rounded-full px-2 py-[3px] font-mono text-[9px] font-black ${live ? 'bg-pop-green text-pop-bg' : 'bg-pop-idle text-pop-dim'}`}>
-          {RUN_STATUS_LABEL[run.status] ?? run.status}
+          {RUN_STATUS_LABEL[status] ?? status}
         </span>
         {totalMs !== null && (
           <span
@@ -188,22 +230,29 @@ export function RunWindow({
         )}
         <span className="truncate font-mono text-[9px] text-pop-dim/70">{executionId}</span>
         <div className="ml-auto flex items-center gap-1">
-          {run.status === 'running' && (
+          {!runTarget && status === 'running' && (
             <button type="button" onClick={() => onTaskAction?.('pause')}
               className="inline-flex items-center gap-1 rounded border border-pop-bd px-2 py-1 text-[10px] text-pop-ink hover:bg-white/[0.06]">
               <Pause className="size-3" /> 暂停
             </button>
           )}
-          {run.status === 'paused' && (
+          {!runTarget && status === 'paused' && (
             <button type="button" onClick={() => onTaskAction?.('resume')}
               className="inline-flex items-center gap-1 rounded border border-pop-green/40 bg-pop-green-soft px-2 py-1 text-[10px] text-pop-green hover:opacity-90">
               <Play className="size-3" /> 恢复
             </button>
           )}
-          {(run.status === 'running' || run.status === 'paused') && (
-            <button type="button" onClick={() => onTaskAction?.('abort')}
-              className="inline-flex items-center gap-1 rounded border border-pop-red/35 px-2 py-1 text-[10px] text-pop-red hover:bg-pop-red-soft">
-              <Square className="size-3" /> 中止
+          {(status === 'running' || status === 'paused') && (
+            <button
+              type="button"
+              data-testid="run-abort"
+              disabled={aborting}
+              onClick={() => {
+                if (runTarget) void handleAbortTarget()
+                else onTaskAction?.('abort')
+              }}
+              className="inline-flex items-center gap-1 rounded border border-pop-red/35 px-2 py-1 text-[10px] text-pop-red hover:bg-pop-red-soft disabled:opacity-50">
+              <Square className="size-3" /> {aborting ? '中止中…' : '中止'}
             </button>
           )}
           {rerunnable && (
@@ -239,7 +288,7 @@ export function RunWindow({
             <RunLogConsole
               workspaceId={workspaceId}
               executionId={executionId}
-              executionStatus={exec?.status ?? run.status}
+              executionStatus={status}
               steps={exec?.steps ?? []}
               focus={focus}
               onFocusChange={setFocus}

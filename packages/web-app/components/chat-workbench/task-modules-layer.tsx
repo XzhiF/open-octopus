@@ -4,6 +4,7 @@ import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react
 import type { TaskView } from '@/lib/tasks-api'
 import { cascadeRect, centerInViewport, type Size } from '@/lib/window-geometry'
 import { cn } from '@/lib/utils'
+import { useOptionalDesktopWindows } from '@/lib/desktop-windows'
 import { ChangesWindow } from './changes-window'
 import { TaskPlanWindow } from './task-plan-window'
 import { TaskWindow } from './task-window'
@@ -14,7 +15,7 @@ import { SessionUsageWindow } from './session-usage-window'
 import { DebugInspectorWindow } from './debug-inspector-window'
 import { ArtifactsWindow } from './artifacts-window'
 import { ArchiveWindow } from './archive-window'
-import type { TaskModule, TaskWindowMap, TaskWindowRecord } from './task-window-types'
+import type { TaskModule, TaskWindowMap, TaskWindowRecord, RunTarget } from './task-window-types'
 
 const MODULE_TITLE: Record<TaskModule, string> = {
   plan: '规格',
@@ -47,8 +48,8 @@ interface TaskModulesLayerProps {
   onMutated?: () => void
   /** Shared task action handler (chip / card / window controls). */
   onTaskAction?: (action: string) => void
-  /** External request (inspector / board acceptance) to open a module once. */
-  openModule?: { module: TaskModule; nonce: number } | null
+  /** External request (inspector / board acceptance / 作业坞运行列表) to open a module once. */
+  openModule?: { module: TaskModule; nonce: number; runTarget?: RunTarget | null } | null
   /** 会话账本里点工作流行 → 打开对应任务。 */
   onOpenLinkedTask?: (taskId: string) => void
   className?: string
@@ -72,6 +73,7 @@ export function TaskModulesLayer({
   onOpenLinkedTask,
   className,
 }: TaskModulesLayerProps) {
+  const desktop = useOptionalDesktopWindows()
   const containerRef = useRef<HTMLDivElement>(null)
   const [size, setSize] = useState<Size>({ width: 0, height: 0 })
   /** 容器左边缘的视口 x（= 左侧任务栏宽度）；最大化窗口按它向左出血。 */
@@ -105,14 +107,16 @@ export function TaskModulesLayer({
     onWindowsChange({ ...windows, [module]: { ...current, ...patch } })
   }
 
-  const openModuleAt = useCallback((module: TaskModule) => {
+  const openModuleAt = useCallback((module: TaskModule, runTarget: RunTarget | null = null) => {
     const current = windows[module]
     if (current) {
-      if (current.minimized) {
-        updateWindow(module, { minimized: false, z: maxZ + 1 })
-      } else {
-        updateWindow(module, { z: maxZ + 1 })
+      // 运行窗已经开着：只换目标执行并提到最前，不重建窗口（拖拽/尺寸保留）。
+      const patch: Partial<TaskWindowRecord> = {
+        ...(current.minimized ? { minimized: false } : {}),
+        z: maxZ + 1,
       }
+      if (module === 'run') patch.runTarget = runTarget
+      updateWindow(module, patch)
       return
     }
     const stage = size.width > 0 ? size : { width: 900, height: 600 }
@@ -145,6 +149,7 @@ export function TaskModulesLayer({
       maximized: false,
       restoreRect: null,
       z: maxZ + 1,
+      ...(module === 'run' ? { runTarget } : {}),
     }
     onWindowsChange({ ...windows, [module]: record })
   }, [windows, onWindowsChange, maxZ, size])
@@ -152,7 +157,7 @@ export function TaskModulesLayer({
   useEffect(() => {
     if (!openModule || lastNonceRef.current === openModule.nonce) return
     lastNonceRef.current = openModule.nonce
-    openModuleAt(openModule.module)
+    openModuleAt(openModule.module, openModule.runTarget ?? null)
   }, [openModule, openModuleAt])
 
   const closeWindow = (module: TaskModule) => {
@@ -173,7 +178,11 @@ export function TaskModulesLayer({
           <TaskWindow
             key={module}
             record={record}
-            title={`${MODULE_TITLE[module]} · ${task?.name ?? sessionTitle ?? '会话'}`}
+            title={
+              module === 'run' && record.runTarget
+                ? `${MODULE_TITLE[module]} · ${record.runTarget.title}`
+                : `${MODULE_TITLE[module]} · ${task?.name ?? sessionTitle ?? '会话'}`
+            }
             container={size}
             bleedLeft={containerLeft}
             focused={focusedModule === module}
@@ -188,7 +197,20 @@ export function TaskModulesLayer({
               task ? (
                 <UsageWindow taskId={task.id} versionKey={task.version} />
               ) : sessionId ? (
-                <SessionUsageWindow sessionId={sessionId} onOpenTask={onOpenLinkedTask} />
+                <SessionUsageWindow
+                  sessionId={sessionId}
+                  onOpenTask={onOpenLinkedTask}
+                  // 主对话直接跑的工作流没有任务：点行打开这条执行的运行窗。
+                  onOpenExecution={(wf) => {
+                    if (!wf.execution_id || !wf.workspace_id) return
+                    openModuleAt('run', {
+                      executionId: wf.execution_id,
+                      workspaceId: wf.workspace_id,
+                      title: wf.name,
+                      status: wf.status,
+                    })
+                  }}
+                />
               ) : (
                 <div className="flex h-full items-center justify-center p-6 text-[11px] text-pop-dim">
                   还没有会话。
@@ -196,12 +218,13 @@ export function TaskModulesLayer({
               )
             ) : module === 'debug' ? (
               <DebugInspectorWindow sessionId={chatSessionId ?? sessionId ?? null} refreshKey={debugRefreshKey} />
+            ) : module === 'run' ? (
+              // 运行窗不依赖任务：自由对话里从作业坞/消耗窗点进来的指定执行也要能看。
+              <RunWindow task={task} runTarget={record.runTarget ?? null} onTaskAction={onTaskAction} />
             ) : !task ? null : module === 'changes' ? (
               <ChangesWindow task={task} />
             ) : module === 'plan' ? (
               <TaskPlanWindow task={task} onOpenArtifacts={() => openModuleAt('artifacts')} />
-            ) : module === 'run' ? (
-              <RunWindow task={task} onTaskAction={onTaskAction} />
             ) : module === 'acceptance' ? (
               <AcceptanceWindow
                 task={task}
@@ -211,7 +234,7 @@ export function TaskModulesLayer({
             ) : module === 'artifacts' ? (
               <ArtifactsWindow taskId={task.id} versionKey={task.version} />
             ) : (
-              <ArchiveWindow task={task} onMutated={onMutated} />
+              <ArchiveWindow task={task} onMutated={onMutated} onOpenKnowledge={desktop ? () => desktop.openApp('knowledge') : undefined} />
             )}
           </TaskWindow>
         )

@@ -113,6 +113,21 @@ const INGEST_FAILED_EV: KcCardEvent = {
   },
 }
 const UNKNOWN_EV: KcCardEvent = { id: "xyz-1", kind: "totally-new-kind", ts: "2026-10-15T09:00:00Z", data: { whatever: true } }
+const FINDING_EV: KcCardEvent = {
+  id: "fnd-1",
+  kind: "finding",
+  ts: "2026-10-15T09:00:03Z",
+  data: {
+    findingId: "fnd-1",
+    kind: "contradiction",
+    title: "矛盾：固定窗口 ↔ 滑动窗口",
+    claims: { old: "固定窗口 60s", new: "滑动窗口 100ms" },
+    pages: ["topics/gateway.md"],
+    rawRef: RAW_PATH,
+    source: "compile",
+    status: "open",
+  },
+}
 
 const MSG = (id: string, role: "user" | "assistant", content: string) => ({
   id, session_id: "s1", role, content, created_at: "2026-10-15T09:00:02Z",
@@ -157,6 +172,18 @@ function makeStub() {
     if (u.includes("/wiki/compile")) return json({ taskId: "crt-rerun-1", status: "queued" })
     if (u.includes("/wiki/queue/task/")) {
       return json({ task: { id: "q", opKind: "revert", state: "committed", position: null, queuedAt: "2026-10-15T09:01:00Z" } })
+    }
+    if (u.includes("/knowledge/findings/fix/task/")) {
+      return json({ task: {
+        id: "fft-1", findingId: "fnd-1", status: "committed",
+        result: { commit: COMMIT, changed: true, touched: [], warnings: [] },
+      } })
+    }
+    if (u.includes("/knowledge/findings/") && u.includes("/adopt")) {
+      return json({ findingId: "fnd-1", taskId: "fft-1", status: "queued" })
+    }
+    if (u.includes("/knowledge/findings/") && u.includes("/ignore")) {
+      return json({ findingId: "fnd-1", status: "ignored" })
     }
     return json({})
   }))
@@ -237,6 +264,23 @@ describe("票10 S4：普通会话跨会话卡片渲染（注册表复用，零�
       expect(screen.getByTestId("kc-card-compile-diff")).toBeTruthy()
     }, { timeout: 8000 })
   })
+
+  it("finding 卡回流主对话：点「采纳修订」⇒ POST adopt ⇒ 轮询 committed 后卡转已修订", async () => {
+    chatBox.messages = [MSG("m1", "assistant", `⚠️ 归档编译发现 1 处冲突\n\n${serializeKcCardBlock(FINDING_EV)}`)]
+    render(<ChatTab />)
+    const card = await screen.findByTestId("kc-card-finding")
+    expect(card.textContent).toContain("固定窗口 60s")
+    expect(card.textContent).toContain("滑动窗口 100ms")
+    expect(card.textContent).toContain("待裁决")
+
+    fireEvent.click(screen.getByTestId("kc-finding-adopt"))
+    await waitFor(() => {
+      expect(calls.some(c => c.method === "POST" && c.url.includes("/knowledge/findings/fnd-1/adopt"))).toBe(true)
+    })
+    await waitFor(() => {
+      expect(screen.getByTestId("kc-card-finding").textContent).toContain("已修订")
+    }, { timeout: 8000 })
+  }, 15000)
 
   it("无卡消息零变化：普通文本会话不引入任何卡面（误吞防护渲染面）", async () => {
     chatBox.messages = [MSG("m1", "user", "今天天气如何？"), MSG("m2", "assistant", "我不确定。")]

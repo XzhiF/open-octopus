@@ -160,6 +160,45 @@ describe('斜杠命令 — 本地命令输出必须可见且收尾', () => {
     expect(assistantRows()).toHaveLength(0)
   })
 
+  it('/compact：压缩回执与 ctx 刷新同一轮送达并落库', async () => {
+    const CTX = {
+      categories: [],
+      totalTokens: 24290,
+      maxTokens: 1_000_000,
+      rawMaxTokens: 1_000_000,
+      percentage: 2.4,
+      model: 'claude-test',
+    }
+    script.push([
+      { type: 'status', status: 'compacting' },
+      { type: 'context_usage', data: CTX },
+      { type: 'local_command_output', content: '上下文已压缩：24,960 → 1,021 tokens' },
+      successResult('', 'sdk-compact'),
+    ])
+
+    const res = await chat('/compact')
+    const body = await res.text()
+
+    // ctx 角标本轮就更新（不需要用户再发一条消息）。
+    expect(body).toContain('event: context_usage')
+    // 回执作为本轮正文下发并落库，刷新后仍可见。
+    expect(body).toContain('event: text_delta')
+    expect(body).toContain('上下文已压缩')
+    expect(body).toContain('event: done')
+
+    const rows = assistantRows()
+    expect(rows).toHaveLength(1)
+    expect(rows[0].content).toBe('上下文已压缩：24,960 → 1,021 tokens')
+
+    const row = db.prepare('SELECT context_usage FROM sessions WHERE id = ?').get(SESSION) as {
+      context_usage: string | null
+    }
+    expect(JSON.parse(row.context_usage ?? 'null')).toMatchObject({
+      totalTokens: 24290,
+      percentage: 2.4,
+    })
+  })
+
   it('/clear：只清 provider 会话指针，聊天记录与 DB 行原样保留', async () => {
     // 先有一条真实转写，usableResumeId 才不会在请求入口就清掉指针。
     const transcriptDir = path.join(CLAUDE_DIR, 'projects', projectDirKey(AGENT_DIR))

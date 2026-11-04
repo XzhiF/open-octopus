@@ -79,4 +79,42 @@ describe("ChatArea 流尾工作行", () => {
     const writing = render(<ChatArea {...baseProps} streaming streamContent="正在写代码" />)
     expect(workline(writing.container)!.querySelector(".text-pop-pink")).toBeTruthy()
   })
+
+  // 2026-11-04：agent 收轮等后台 shell（run_in_background）时，工作行要说清
+  // 在跑什么，而不是继续轮换「掐指一算」。
+  it("等待后台任务：工作行显示「后台运行中：<description>」并保留计时", () => {
+    const { container } = render(
+      <ChatArea
+        {...baseProps}
+        streaming
+        turnStartedAt={Date.now() - 3000}
+        backgroundTasks={[
+          { id: "bg-1", description: "until curl -sf http://localhost:8080/api/users", taskType: "local_bash" },
+        ]}
+      />,
+    )
+    const line = workline(container)!
+    expect(line.getAttribute("data-tui-workline")).toBe("background")
+    expect(line.textContent).toContain("后台运行中：until curl -sf http://localhost:8080/api/users")
+    expect(line.textContent).toMatch(/[0-9]+s/)
+  })
+
+  it("多条后台任务最多显示两条，其余折成 +N", () => {
+    const { container } = render(
+      <ChatArea
+        {...baseProps}
+        streaming
+        backgroundTasks={[
+          { id: "bg-1", description: "mvn install" },
+          { id: "bg-2", description: "docker compose up" },
+          { id: "bg-3", description: "curl ready" },
+        ]}
+      />,
+    )
+    const line = workline(container)!
+    expect(line.textContent).toContain("mvn install")
+    expect(line.textContent).toContain("docker compose up")
+    expect(line.textContent).toContain("+1")
+    expect(line.getAttribute("title")).toBe("mvn install / docker compose up / curl ready")
+  })
 })

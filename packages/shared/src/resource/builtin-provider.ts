@@ -197,6 +197,9 @@ export class BuiltinProvider {
     for (const item of items) {
       if (!item.isFile()) continue
       if (!item.name.endsWith(".yaml") && !item.name.endsWith(".yml")) continue
+      // Simulator fixtures (`<workflow>.test.yaml`) live next to their workflow
+      // but are not workflows themselves — never register/install them.
+      if (item.name.endsWith(".test.yaml") || item.name.endsWith(".test.yml")) continue
       const name = item.name.replace(/\.ya?ml$/, "")
       entries.push({
         name,

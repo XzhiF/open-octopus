@@ -16,7 +16,7 @@ version: 1.0.0
 2. 确定 Server 端口：
    - 主仓库：默认 `3001`
    - Worktree：hash 端口，运行 `pnpm port` 查看
-   - Prod 模式：`3099`
+   - Prod 模式：`3000`（与主仓库 Web 同端口，UI/API 同源）
 3. 基础 URL：`http://localhost:<PORT>/api/workspaces/<workspaceId>/executions/<executionId>/repair`
 4. 需要有效的 `executionId`（从前端、actuator、或 `octopus workflow list` 获取）
 

@@ -20,7 +20,11 @@ interface WindowResizeHandlesProps {
   onEnd: (dx: number, dy: number) => void
 }
 
-export function WindowResizeHandles({ onStart, onMove, onEnd }: WindowResizeHandlesProps) {
+export function WindowResizeHandles({
+  onStart,
+  onMove,
+  onEnd,
+}: WindowResizeHandlesProps) {
   const startRef = useRef<{ x: number; y: number; pointerId: number } | null>(null)
   const offsetRef = useRef({ dx: 0, dy: 0 })
 

@@ -92,8 +92,8 @@ export const WAITING_EXECUTION_STATUSES: readonly string[] = [
  * still stop it. 'pending' (armed but queued behind the concurrency cap, nothing
  * started, no commit anchor) is deliberately NOT here: cancel refuses it and a
  * diff over it would be a lie. Complement of {@link TERMINAL_EXECUTION_STATUSES}
- * minus 'pending' — 'aborted'/'pending_task_dispatch' follow the terminal/other
- * axes exactly as documented there.
+ * minus 'pending' — 'aborted' follows the terminal/other axes exactly as documented
+ * there.
  */
 export const LIVE_ROUND_STATUSES: readonly string[] = [
   "running", "paused", "pending_approval", "pending_interaction", "pending_resume",

@@ -36,9 +36,23 @@ import path from 'path'
 
 // ── Route deps ─────────────────────────────────────────────────────
 
-/** 票10 策展执行 seam（生产 = SessionCurationService；测试 = 捕获）。 */
+/** 票10 策展执行 seam（生产 = SessionCurationService；测试 = 捕获）。
+ *  2026-11-03：知识库窗口改只读后，wiki 冲突也在主对话里裁决——
+ *  list/resolve 复用同一 FindingOpsService（与 finding 卡三钮同一通道）。 */
+export interface WikiFindingSummary {
+  id: string
+  kind: string
+  title: string
+  status: string
+  oldClaim?: string
+  newClaim?: string
+  pages: string[]
+}
+
 export interface MainAgentCurationSurface {
   curate(input: CurationInput): Promise<CurationReceipt>
+  listFindings?(): WikiFindingSummary[]
+  resolveFinding?(findingId: string, action: "adopt" | "ignore"): { findingId: string; status: string; taskId?: string }
 }
 
 export interface MainAgentRouteDeps {
@@ -69,16 +83,23 @@ When a task clearly falls into one of these domains, delegate it. Otherwise, res
 // 票10 投喂泛化：策展工具契约段（与 orchestrator SKILL.md「knowledge_curation」分支的
 // ingest_to_wiki 同名单源）。仅当 curation 接线时注入——未接线不注册（死工具零教学）。
 const CURATION_TOOLS_PROMPT = `
-## Knowledge Curation Tool (feed-to-wiki)
+## Knowledge Curation Tools (feed-to-wiki + conflict decisions)
 
 - **ingest_to_wiki**: Freeze a URL / pasted long text / local file into the knowledge wiki
   (fetch → raw immutable → compile via the global serial queue — the same pipeline as
   POST /api/knowledge/ingest). Input: { mode: 'url'|'text'|'file', url?, text?, path?, title? }
-- Use it ONLY when the user explicitly asks to feed content into the wiki
+- **list_wiki_findings**: List open contradictions produced by wiki compiles
+  (each has id, title, old claim / new claim, pages). Use when the user asks
+  「wiki 有什么冲突 / 待裁决」 or after a compile reported conflicts.
+- **resolve_wiki_finding**: Resolve ONE open finding after the user explicitly says
+  「采纳 / 修订 / 采纳修订」or「忽略 / 不处理」. Input: { finding_id, action: 'adopt'|'ignore' }.
+  adopt rewrites the affected pages through the compile queue; ignore records the decision.
+  Never infer consent and never batch.
+- Use ingest_to_wiki ONLY when the user explicitly asks to feed content into the wiki
   (投喂动词 + URL/长文本/路径 伴随——see octo-agent-orchestrator "knowledge_curation" intent).
-- After the call, the ingest card and compile-diff cards are automatically appended to this
-  session (Lane A) — briefly confirm the receipt to the user; do NOT paste raw JSON or
-  re-implement the pipeline yourself.
+- After ingest, the ingest card and compile-diff cards are automatically appended to this
+  session (Lane A), and so are any conflicts (finding cards). Briefly confirm the receipt;
+  do NOT paste raw JSON or re-implement the pipeline yourself.
 `
 
 const EVOLUTION_TOOLS_PROMPT = `
@@ -287,6 +308,9 @@ export function createMainAgentRoute(deps: MainAgentRouteDeps): Hono {
           ...(effort ? { effort } : {}),
           abortSignal: abortController.signal,
           interruptible: true,
+          // AskUserQuestion 交互接管（2026-11-02）：与 clone / 主对话路由同构。
+          // 缺这个开关时 SDK 会 headless 执行工具并回空 answers，模型继续跑完。
+          interactionSession: true,
         })
 
         let fullContent = ''
@@ -534,14 +558,17 @@ export function createMainAgentRoute(deps: MainAgentRouteDeps): Hono {
 
 const EVOLUTION_TOOL_NAMES = ['mark_insight', 'evolve_skill', 'create_experience', 'merge_skills', 'note_skill_issue']
 const MEMORY_TOOL_NAMES = ['record_daily']
-const CURATION_TOOL_NAMES = ['ingest_to_wiki']
+const CURATION_TOOL_NAMES = ['ingest_to_wiki', 'list_wiki_findings', 'resolve_wiki_finding']
 
-// ── Curation tool execution（票10 投喂泛化）────────────────────────
+// ── Curation tool execution（票10 投喂泛化 + 2026-11-03 冲突裁决回主对话）──
 
 /**
- * ingest_to_wiki 执行体：sessionId = 服务端解析的**发起会话**（一等参数流入投喂链，
- * 模型无法伪造回流落点）；执行穿打注入的 curation seam（生产 = SessionCurationService
- * → RawIngestService + CuratorTaskService/全局队列 + Lane A 回流——零第二套抓取/编译）。
+ * 策展工具执行体：
+ * - ingest_to_wiki：sessionId = 服务端解析的**发起会话**（模型无法伪造回流落点），
+ *   穿打注入的 curation seam（生产 = SessionCurationService → RawIngestService +
+ *   CuratorTaskService/全局队列 + Lane A 回流——零第二套抓取/编译）。
+ * - list_wiki_findings / resolve_wiki_finding：同一 FindingOpsService，冲突决策
+ *   留在主对话；知识库窗口已不再承载 finding 收件箱。
  * IngestError/CuratorError 原样映射进 tool_result 错误码面（零吞错，ingest.ts 码集同律）。
  */
 async function executeCurationTools(
@@ -555,8 +582,45 @@ async function executeCurationTools(
     let content = ''
     let isError = false
     if (!curation) {
-      content = 'Error: knowledge curation is not wired on this server (ingest_to_wiki unavailable)'
+      content = `Error: knowledge curation is not wired on this server (${tc.name} unavailable)`
       isError = true
+    } else if (tc.name === 'list_wiki_findings') {
+      try {
+        const findings = curation.listFindings?.() ?? []
+        content = findings.length === 0
+          ? '当前没有开放的 wiki 冲突。'
+          : `开放 wiki 冲突 ${findings.length} 条：\n` + findings.map((f) => {
+              const claims = f.oldClaim && f.newClaim ? `（旧：${f.oldClaim} / 新：${f.newClaim}）` : ''
+              return `- ${f.id} · ${f.kind} · ${f.title}${claims} · 页：${f.pages.join('、') || '—'}`
+            }).join('\n') + '\n\n用户明确说采纳/忽略后，逐条调用 resolve_wiki_finding。'
+      } catch (err) {
+        content = `Failed: FINDINGS_ERROR — ${err instanceof Error ? err.message : String(err)}`
+        isError = true
+      }
+    } else if (tc.name === 'resolve_wiki_finding') {
+      const input = tc.input ?? {}
+      const findingId = str(input.finding_id)
+      const action = str(input.action)
+      if (!findingId) {
+        content = 'Error: finding_id is required'
+        isError = true
+      } else if (action !== 'adopt' && action !== 'ignore') {
+        content = "Error: action must be one of: \"adopt\", \"ignore\""
+        isError = true
+      } else if (!curation.resolveFinding) {
+        content = 'Error: finding resolution is not wired on this server'
+        isError = true
+      } else {
+        try {
+          const rec = curation.resolveFinding(findingId, action)
+          content = action === 'adopt'
+            ? `已采纳修订：${findingId}，修订任务 ${rec.taskId ?? '—'} 已入全局编译队列（${rec.status}）。完成后 finding 卡会转为 resolved。`
+            : `已忽略：${findingId}（记录在案，不再重复提醒）。`
+        } catch (err) {
+          content = `Failed: FINDINGS_ERROR — ${err instanceof Error ? err.message : String(err)}`
+          isError = true
+        }
+      }
     } else {
       const input = tc.input ?? {}
       const mode = str(input.mode)

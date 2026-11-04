@@ -25,13 +25,16 @@ const WORKFLOW_BARS = [
 const STATUS_META: Record<string, { label: string; cls: string }> = {
   draft: { label: '草稿', cls: 'border-pop-bd text-pop-dim bg-pop-paper' },
   ready: { label: '待执行', cls: 'border-pop-cyan/35 text-pop-cyan bg-pop-cyan-soft' },
+  pending: { label: '待执行', cls: 'border-pop-cyan/35 text-pop-cyan bg-pop-cyan-soft' },
   running: { label: '运行中', cls: 'border-pop-green/35 text-pop-green bg-pop-green-soft' },
   paused: { label: '已暂停', cls: 'border-pop-amber/30 text-pop-amber bg-pop-amber-soft' },
   awaiting_review: { label: '待验收', cls: 'border-pop-amber/30 text-pop-amber bg-pop-amber-soft' },
   awaiting_archive: { label: '待归档', cls: 'border-pop-pink/30 text-pop-pink bg-pop-pink-soft' },
   archiving: { label: '归档中', cls: 'border-pop-amber/30 text-pop-amber bg-pop-amber-soft' },
+  completed: { label: '已完成', cls: 'border-pop-green/35 text-pop-green bg-pop-green-soft' },
   done: { label: '已完成', cls: 'border-pop-green/35 text-pop-green bg-pop-green-soft' },
   failed: { label: '失败', cls: 'border-pop-red/35 text-pop-red bg-pop-red/10' },
+  cancelled: { label: '已取消', cls: 'border-pop-amber/30 text-pop-amber bg-pop-amber-soft' },
   aborted: { label: '中止', cls: 'border-pop-amber/30 text-pop-amber bg-pop-amber-soft' },
 }
 
@@ -41,10 +44,15 @@ const CALIBER = (
   <>
     <b>口径</b><br />
     对话 = 本会话聊天调用（execution_id 为空），按调用时间区间并集计，重复上报只算一次。<br />
-    工作流 = 本会话发起的每一个任务（tasks.source_chat_session_id = 本会话）全部执行轮的实跑段之和；排队 / 待验收不计。<br />
+    工作流 = 本会话发起的每一个任务（tasks.source_chat_session_id = 本会话）全部执行轮的实跑段之和，加上验收规划这类系统辅助执行；主对话里直接跑的工作流也单列在内。排队 / 待验收不计。<br />
     总耗时 = 对话 + 工作流（两段重叠不扣减）。智能体工时 = 对话调用时长合计 + 各工作流 agent 节点时长，可大于总耗时，显示倍数。
   </>
 )
+
+/** 会话账本行的稳定 key：任务行认 task_id，主对话直接跑的工作流认 execution_id。 */
+function workflowKey(wf: SessionUsageWorkflowWire, index: number): string {
+  return wf.task_id ?? (wf.execution_id ? `exec:${wf.execution_id}` : `wf:${index}`)
+}
 
 function tokenCell(label: string, value: number, swatch: string) {
   return (
@@ -61,10 +69,13 @@ function tokenCell(label: string, value: number, swatch: string) {
 export function SessionUsageWindow({
   sessionId,
   onOpenTask,
+  onOpenExecution,
 }: {
   sessionId: string
-  /** 点工作流行 → 跳到对应任务（缺省时行不可点）。 */
+  /** 点任务工作流行 → 跳到对应任务（缺省时行不可点）。 */
   onOpenTask?: (taskId: string) => void
+  /** 点主对话直接跑的工作流行 → 打开这条执行的运行窗（缺省时行不可点）。 */
+  onOpenExecution?: (workflow: SessionUsageWorkflowWire) => void
 }) {
   const [usage, setUsage] = useState<SessionUsagePayload | null>(null)
   const [error, setError] = useState<string | null>(null)
@@ -195,7 +206,7 @@ export function SessionUsageWindow({
             <i className="block h-full bg-pop-cyan" style={{ width: `${(conversation / total) * 100}%` }} />
             {workflows.map((wf, index) => (
               <i
-                key={wf.task_id}
+                key={workflowKey(wf, index)}
                 title={`${wf.name} · ${formatDuration(wf.duration_ms)}`}
                 className={cn('block h-full', WORKFLOW_BARS[index % WORKFLOW_BARS.length])}
                 style={{ width: `${(wf.duration_ms / total) * 100}%` }}
@@ -208,7 +219,7 @@ export function SessionUsageWindow({
               对话 <b className="font-black tabular-nums text-pop-ink">{formatDuration(conversation)}</b>
             </span>
             {workflows.map((wf, index) => (
-              <span key={`legend:${wf.task_id}`} className="max-w-[240px] truncate">
+              <span key={`legend:${workflowKey(wf, index)}`} className="max-w-[240px] truncate">
                 <i
                   className={cn(
                     'mr-1.5 inline-block size-2 rounded-sm align-middle',
@@ -242,11 +253,12 @@ export function SessionUsageWindow({
           </div>
           {workflows.map((wf, index) => (
             <WorkflowRow
-              key={wf.task_id}
+              key={workflowKey(wf, index)}
               workflow={wf}
               color={WORKFLOW_BARS[index % WORKFLOW_BARS.length]}
               currency={currency}
-              onOpen={onOpenTask}
+              onOpenTask={onOpenTask}
+              onOpenExecution={onOpenExecution}
             />
           ))}
         </div>
@@ -273,14 +285,20 @@ function WorkflowRow({
   workflow,
   color,
   currency,
-  onOpen,
+  onOpenTask,
+  onOpenExecution,
 }: {
   workflow: SessionUsageWorkflowWire
   color: string
   currency: CostDisplay
-  onOpen?: (taskId: string) => void
+  onOpenTask?: (taskId: string) => void
+  onOpenExecution?: (workflow: SessionUsageWorkflowWire) => void
 }) {
   const meta = STATUS_META[workflow.status] ?? STATUS_FALLBACK
+  // 任务行 → 打开任务；主对话直接跑的工作流 → 打开这条执行的运行窗。
+  const openTask = workflow.task_id && onOpenTask ? onOpenTask : null
+  const openExecution =
+    !workflow.task_id && workflow.execution_id && onOpenExecution ? onOpenExecution : null
   const content = (
     <>
       <i className={cn('size-2 shrink-0 rounded-sm', color)} />
@@ -294,22 +312,26 @@ function WorkflowRow({
       <span className="w-14 shrink-0 text-right font-mono text-[9.5px] tabular-nums text-pop-dim">
         {formatCost(workflow.cost.usd, workflow.cost.complete, currency)}
       </span>
-      <span className="w-3 shrink-0 text-right text-[10px] text-pop-dim">{onOpen ? '›' : ''}</span>
+      <span className="w-3 shrink-0 text-right text-[10px] text-pop-dim">{openTask || openExecution ? '›' : ''}</span>
     </>
   )
-  if (!onOpen) {
+  if (!openTask && !openExecution) {
     return (
       <div className="flex items-center gap-2.5 border-t border-pop-bd/45 px-2.5 py-1.5" data-testid="session-usage-workflow">
         {content}
       </div>
     )
   }
+  const handleOpen = () => {
+    if (openTask) openTask(workflow.task_id as string)
+    else openExecution?.(workflow)
+  }
   return (
     <button
       type="button"
       data-testid="session-usage-workflow"
       title={`打开 ${workflow.name}`}
-      onClick={() => onOpen(workflow.task_id)}
+      onClick={handleOpen}
       className="flex w-full items-center gap-2.5 border-t border-pop-bd/45 px-2.5 py-1.5 text-left transition-colors hover:bg-white/[0.04]"
     >
       {content}

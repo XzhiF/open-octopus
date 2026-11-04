@@ -10,7 +10,7 @@ import { Button } from '@/components/ui/button'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { toast } from 'sonner'
 import { cn } from '@/lib/utils'
-import { formatTokenCount } from '@/lib/format'
+import { formatStopwatch, formatTokenCount } from '@/lib/format'
 import { ChatBubble } from './ChatBubble'
 import { SessionCostChip } from './session-cost-chip'
 import { ContextUsageChip, ContextUsagePlaceholder, contextUsageAriaLabel } from './context-usage-chip'
@@ -69,6 +69,9 @@ interface ChatAreaProps {
   } | null
   error: string | null
   statusMessage: string
+  /** 正在等的后台任务（provider `background_tasks` 电平，2026-11-04）。
+   *  非空时流尾工作行换成「后台运行中：<description>」。 */
+  backgroundTasks?: Array<{ id: string; description: string; taskType?: string }>
   onSend: (message: string, opts?: { subagents?: ChatSubagentRef[] }) => void
   onStop: () => void
   onConfirm: (eventId: string, decision: 'accept' | 'reject') => void
@@ -169,7 +172,7 @@ interface QueuedComposerMessage {
 
 export function ChatArea({
   messages, streaming, streamContent, streamThinking, isThinking, toolCalls, streamTimeline, turnStartedAt, pendingConfirm,
-  error, statusMessage, onSend, onStop, onConfirm, hasSession, currentCloneName,
+  error, statusMessage, backgroundTasks, onSend, onStop, onConfirm, hasSession, currentCloneName,
   reviewItems, onReviewAction,
   emptyStateTitle, emptyStateDescription, hideEmptyState,
   commands, contextUsage, sessionUsage, taskUsage, currentModel, onModelChange,
@@ -392,13 +395,21 @@ export function ChatArea({
     ? 'exec' : 'thinking'
   // 流尾常驻工作行（2026-10-29 用户：输出一开始「Agent 思考中」就消失，干活时
   // 没有任何持续反馈）。阶段 + 真实耗时，整轮在跑时一直挂着，回合结束才退场；
-  // 文案按阶段轮换诙谐短语（work-phrases），耗时只到秒。
+  // 文案按阶段轮换诙谐短语（work-phrases），耗时按 h/m/s 展示（h 封顶、超 24h 继续累计）。
   const workPhase: WorkPhase = busyPhase === 'exec'
     ? 'exec'
     : isThinking ? 'thinking' : streamContent ? 'writing' : 'thinking'
   const workElapsed = Math.floor(busyElapsed)
   const workTone = WORK_PHASE_TONE[workPhase]
   const spinGlyph = TUI_SPIN[Math.floor(busyElapsed * 10) % TUI_SPIN.length]
+  // 「等待后台」优先于普通工作行：用户要看到的是后台 shell 在跑什么，
+  // 而不是又一句「掐指一算」（2026-11-04）。
+  const bgTasks = backgroundTasks ?? []
+  const backgroundWait = streaming && bgTasks.length > 0
+  const backgroundTitle = bgTasks.map((task) => task.description).join(' / ')
+  const backgroundLabel = bgTasks.length <= 2
+    ? backgroundTitle
+    : `${bgTasks.slice(0, 2).map((task) => task.description).join(' / ')} +${bgTasks.length - 2}`
   const contextUsageTitle = contextUsage
     ? `上下文占用 · ${formatTokenCount(contextUsage.totalTokens)} / ${formatTokenCount(contextUsage.maxTokens, 0)} · ${contextUsage.percentage.toFixed(1)}%${contextUsage.estimated ? '（估算：据最后一轮 token 账本推算，下一轮对话后校准）' : ''}` // fmt-ok: percentage 量纲为 0–100（SDK context_usage），非 0–1 比率
     : ''
@@ -628,16 +639,26 @@ export function ChatArea({
             )}
 
             {/* 流尾常驻工作行：思考 / 执行工具 / 输出 全程可见，回合结束才消失。 */}
-            {streaming && tui && (
+            {streaming && tui && (backgroundWait ? (
+              <div
+                className="flex items-center gap-2 py-1 text-[12.5px] text-pop-dim"
+                data-tui-workline="background"
+                title={backgroundTitle}
+              >
+                <span className={workTone.spin} aria-hidden>{spinGlyph}</span>
+                <span className="truncate text-pop-ink/80">后台运行中：{backgroundLabel}</span>
+                <span className={`tabular-nums ${workTone.secs}`}>{formatStopwatch(workElapsed * 1000)}</span>
+              </div>
+            ) : (
               <div
                 className="flex items-center gap-2 py-1 text-[12.5px] text-pop-dim"
                 data-tui-workline={workPhase}
               >
                 <span className={workTone.spin} aria-hidden>{spinGlyph}</span>
-                <span className="text-pop-ink/80">{workPhrase(workPhase, workElapsed)}</span>
-                <span className={`tabular-nums ${workTone.secs}`}>{workElapsed}s</span>{/* fmt-ok: 流尾工作行的整轮计时（整秒），非日期/用量格式化 */}
+                <span className="text-pop-ink/80">{workPhrase(workPhase, workElapsed, busyStartedAt ?? 0)}</span>
+                <span className={`tabular-nums ${workTone.secs}`}>{formatStopwatch(workElapsed * 1000)}</span>
               </div>
-            )}
+            ))}
 
             {/* AskUserQuestion 回合后卡片（2026-09-09）：流式期间的 QuestionCard
                 disabled 且 done 即随 timeline 卸载 —— 回合结束（provider 以

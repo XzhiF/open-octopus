@@ -24,8 +24,8 @@
  *
  * Build safety:
  *   Building only writes to packages/.../dist/ in the source tree.
- *   Prod instances run from ~/.octopus/prod/ (stable copy), so dev builds
- *   never affect running prod services.
+ *   Prod (`pnpm prod`) runs from those same dist/ outputs on port 3000, so dev
+ *   and prod cannot run at the same time — stop one before starting the other.
  *
  * Bypasses pnpm predev hooks by directly spawning node/next processes.
  */

@@ -10,6 +10,7 @@ import { useSessionLedger } from '@/hooks/useSessionLedger'
 import { useTaskUsage } from '@/hooks/useTaskUsage'
 import { useComposerSettings } from '@/hooks/useComposerSettings'
 import { useKcFeed } from '@/hooks/use-kc-feed'
+import { useKcFindings } from '@/hooks/use-kc-findings'
 import { useChatTasks } from '@/hooks/use-chat-tasks'
 import { useRunningAgents } from '@/hooks/use-running-agents'
 import { useOrgs } from '@/hooks/useOrgs'
@@ -20,12 +21,12 @@ import { ChatSidebar } from './chat-sidebar'
 import { CwdPicker, type CwdChoice } from './cwd-picker'
 import { TaskModulesLayer } from '@/components/chat-workbench/task-modules-layer'
 import { TriggerDialog } from '@/components/tasks/trigger-dialog'
-import type { TaskModule } from '@/components/chat-workbench/task-window-types'
+import type { RunTarget, TaskModule, TaskWindowMap } from '@/components/chat-workbench/task-window-types'
 import { TaskProjectChip } from '@/components/chat-workbench/task-project-chip'
 import { WorkspaceExplorerDock } from '@/components/workspace/workspace-explorer-dock'
 import { useActivitySnapshot } from '@/components/chat-workbench/inspector-activity'
 import { WorkflowWindow } from '@/components/chat-workbench/workflow-window'
-import type { TaskWindowMap } from '@/components/chat-workbench/task-window-types'
+import { runTitle } from '@/components/chat-workbench/run-picker'
 import {
   createTask, getTask, readyTask, TaskReadyGateError, updateTask, deleteTask, abortTask,
   triggerTask, pauseTask, resumeTask, reopenTask, duplicateTask, postArchiveRetry,
@@ -52,6 +53,7 @@ import {
   parseKcCardBlocks,
   type KcCardEvent,
   type KcCompileDiffCardData,
+  type KcFindingCardData,
   type KcIngestCardData,
 } from '@/lib/knowledge-center/card-protocol'
 import type { AgentMessage } from '@/lib/agent/types'
@@ -97,7 +99,7 @@ export function ChatTab() {
   const [activeTask, setActiveTask] = useState<TaskView | null>(null)
   const [pendingTaskSession, setPendingTaskSession] = useState<PendingTaskSession | null>(null)
   const [creatingTask, setCreatingTask] = useState(false)
-  const [taskModuleRequest, setTaskModuleRequest] = useState<{ module: TaskModule; nonce: number } | null>(null)
+  const [taskModuleRequest, setTaskModuleRequest] = useState<{ module: TaskModule; nonce: number; runTarget?: RunTarget | null } | null>(null)
   const [taskWindows, setTaskWindows] = useState<Record<string, TaskWindowMap>>({})
   // 2026-10-31 消耗窗通用化：纯会话（无任务）也有一扇消耗窗，窗口 id 与任务窗
   // 共用 'usage'，但几何状态独立（不跟着任务切换复用/串位）。
@@ -257,13 +259,16 @@ export function ChatTab() {
 
   const {
     messages, streaming, streamContent, streamThinking, streamTimeline, isThinking, toolCalls, pendingConfirm,
-    error: chatError, statusMessage, contextUsage, slashCommands,
+    error: chatError, statusMessage, backgroundTasks, contextUsage, slashCommands,
     sendMessage, stopGenerate, handleConfirm, loadMessages,
     steer, steeringRef, resumeStreaming, checkAndResume, streamingSessionId, turnStartedAt,
   } = useAgentChat(activeSessionId, {
     onTitleUpdate: handleTitleUpdate,
     api: mainChatApi,
     onQuickEditCommit: handleQuickEditCommit,
+    // The main chat route emits a heartbeat every 15s, so 60s of complete
+    // silence means the socket is dead — settle instead of spinning forever.
+    stallMs: 60_000,
   })
   // Composer `/` menu — the CLI's advertised set (skills included), rebuilt
   // into grouped rows. Empty until the first turn of this server process.
@@ -323,11 +328,15 @@ export function ChatTab() {
     if (!fresh) return
     const sameProjects =
       (fresh.project_ids ?? []).join(',') === (activeTask.project_ids ?? []).join(',')
+    // workspace_id drives the session_updated subscription (task threads have no
+    // session row to fall back on) — refresh it even when nothing else changed.
+    const sameWorkspace = (fresh.workspace_id ?? null) === (activeTask.workspace_id ?? null)
     if (
       fresh.name !== activeTask.name ||
       fresh.status !== activeTask.status ||
       fresh.version !== activeTask.version ||
-      !sameProjects
+      !sameProjects ||
+      !sameWorkspace
     ) {
       setActiveTask(fresh)
     }
@@ -345,6 +354,9 @@ export function ChatTab() {
   // Lane B 覆盖层 store 直接复用 useKcFeed（开放点裁定：钮点击即时态由既有 hook
   // 承载，不新建基建）。动作钮链与知识中心同一套 REST（revert/retry=上下文无关）。
   const feed = useKcFeed({})
+  // 2026-11-03：知识库窗口只读后，编译出的 conflict finding 卡回流到发起会话。
+  // 这里只借 useKcFindings 的 adopt/ignore + 轮询态，不拉全库收件箱（autoLoad:false）。
+  const findingOps = useKcFindings({ autoLoad: false })
   const [composerSeed, setComposerSeed] = useState('')
 
   // Per-turn timing / token stats live on the message objects (not persisted on
@@ -388,12 +400,26 @@ export function ChatTab() {
       if (!lc) return e
       return { ...e, data: { ...(e.data as KcIngestCardData), compile: lc } }
     }
+    if (e.kind === 'finding') {
+      const d = e.data as KcFindingCardData
+      const status = findingOps.findingStatus[d.findingId]
+      const fix = findingOps.fixStates[d.findingId]
+      if (!status && !fix) return e
+      return {
+        ...e,
+        data: {
+          ...d,
+          ...(status ? { status } : {}),
+          ...(fix ? { fix } : {}),
+        },
+      }
+    }
     return e
-  }, [feed.revertStates, feed.cards])
+  }, [feed.revertStates, feed.cards, findingOps.findingStatus, findingOps.fixStates])
 
   const ctx: KcCardActionCtx = useMemo(() => ({
     // 普通会话无 KC 右栏布局：开页/看 raw 类布局动作降级为无操作（回流链只产
-    // ingest/compile-diff/source-summary 三类卡；其余动作钮在本宿主不可达）。
+    // ingest/compile-diff/source-summary/finding 等卡；其余动作钮在本宿主不可达）。
     openPage: () => {},
     openFullPage: () => {},
     openRaw: () => {},
@@ -405,13 +431,13 @@ export function ChatTab() {
       void feed.retryCompile(cardId, rawPath)
     },
     sayToCurator: text => setComposerSeed(text),
-    adoptFinding: () => {},
-    ignoreFinding: () => {},
+    adoptFinding: (findingId: string) => { void findingOps.adopt(findingId) },
+    ignoreFinding: (findingId: string) => { void findingOps.ignore(findingId) },
     backfillWiki: () => {},
     dismissBackfill: () => {},
     recompilePack: () => {},
     retireCase: () => {},
-  }), [feed.revert, feed.retryCompile, feed.restore, laneAIngestById])
+  }), [feed.revert, feed.retryCompile, feed.restore, laneAIngestById, findingOps.adopt, findingOps.ignore])
 
   // 尾挂 = Lane B 新卡（重试新任务等），同 id Lane A 优先（协议两车道契约）
   const tailEvents = useMemo(
@@ -1218,7 +1244,12 @@ export function ChatTab() {
 
   // Server-originated wake turns (workflow/task events → ChatEventBridge) have
   // no client SSE. The workspace channel tells the open chat to tail them.
-  const activeWorkspaceId = activeSession?.workspace_id ?? null
+  // Task threads are excluded from the session list (one task = one main thread,
+  // reached via the task row), so `activeSession` is undefined there — fall back
+  // to the task's workspace. Without it the chat never subscribes to
+  // `session_updated`, and server-appended cards (run / completion / acceptance
+  // failure) only appear after F5 (2026-11-02 user bug).
+  const activeWorkspaceId = activeTask?.workspace_id ?? activeSession?.workspace_id ?? null
   useEffect(() => {
     if (!activeWorkspaceId || !activeSessionId) return
     const off = subscribeSSE(
@@ -1382,6 +1413,7 @@ export function ChatTab() {
             pendingConfirm={pendingConfirm}
             error={chatError}
             statusMessage={statusMessage}
+            backgroundTasks={backgroundTasks}
             commands={slashCommandList}
             onSend={handleSendMessage}
             onStop={stopGenerate}
@@ -1486,6 +1518,23 @@ export function ChatTab() {
         debugSessionId={activeSessionId}
         debugRefreshKey={`${messages.length}:${streaming ? '1' : '0'}`}
         onOpenTaskModule={(module) => setTaskModuleRequest({ module, nonce: Date.now() })}
+        onOpenRun={(run) => {
+          // 作业坞运行列表 → 指定执行（可能是验收规划这种 task_id=NULL 的系统运行）。
+          setTaskModuleRequest({
+            module: 'run',
+            nonce: Date.now(),
+            runTarget: {
+              executionId: run.id,
+              workspaceId: run.workspaceId,
+              title: runTitle(run),
+              workflowRef: run.workflowRef,
+              phaseIndex: run.phaseIndex,
+              roundIndex: run.roundIndex,
+              status: run.status,
+              system: run.isSystem,
+            },
+          })
+        }}
         onTaskAction={(action) => { if (activeTask) void executeTaskAction(activeTask.id, action) }}
         activity={activitySnapshot}
         sidebarWidth={sidebarCollapsed ? 0 : sidebarWidth}

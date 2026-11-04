@@ -120,6 +120,109 @@ function archiveService(): ArchiveToolsService | null {
   }
 }
 
+// ── wiki finding 裁决工具（2026-11-03 只读知识库）────────────────────
+// 知识库窗口不再列 finding；编译出的矛盾以 finding 卡回流主 Chat。
+// 人明确说「采纳修订 / 忽略」后，Agent 经此工具直接执行（与 finding 卡三钮
+// 同一服务端通道），不再有第二个收件箱。
+
+export interface WikiFindingToolsService {
+  adopt(findingId: string): { id: string; findingId: string; status: string }
+  ignore(findingId: string): { id: string; status: string }
+}
+
+let wikiFindingProvider: (() => WikiFindingToolsService | null) | null = null
+
+export function setWikiFindingToolsProvider(fn: (() => WikiFindingToolsService | null) | null): void {
+  wikiFindingProvider = fn
+}
+
+function wikiFindingService(): WikiFindingToolsService | null {
+  try {
+    return wikiFindingProvider?.() ?? null
+  } catch {
+    return null
+  }
+}
+
+// ── 启动 / 入列执行工具（2026-11-03）────────────────────────────────
+// 用户在对话里**明确说**「立即执行 / 入列 / 开跑」后，主 Chat 直接执行，
+// 不再要求回看板点启动卡；没有明确表态时仍只能 propose_launch 出卡。
+// 执行顺序与看板一致：立即执行 = 静默 ready → trigger；入列 = ready。
+
+export type LaunchActionId = "launch_now" | "enqueue" | "trigger"
+
+export interface TaskLaunchToolsService {
+  readyTask(taskId: string, opts?: { silentCard?: boolean }): unknown
+  triggerTask(taskId: string): Promise<unknown>
+}
+
+let launchProvider: (() => TaskLaunchToolsService | null) | null = null
+
+export function setTaskLaunchToolsProvider(fn: (() => TaskLaunchToolsService | null) | null): void {
+  launchProvider = fn
+}
+
+function launchService(): TaskLaunchToolsService | null {
+  try {
+    return launchProvider?.() ?? null
+  } catch {
+    return null
+  }
+}
+
+/** Pure gate shared by the tools and tests. */
+export function canExecuteLaunch(
+  identity: TaskThreadIdentity,
+  displayStatus: string,
+  action: LaunchActionId,
+  confirmed: boolean,
+): { ok: boolean; reason?: string } {
+  if (!confirmed) {
+    return {
+      ok: false,
+      reason: "必须等用户在本轮对话里明确说「立即执行 / 入列 / 开跑」后才能执行（confirmed=true）—— 不要替用户决定。",
+    }
+  }
+  if (action === "trigger") {
+    if (identity !== "doer") return { ok: false, reason: "只有执行者身份可以触发已入列任务。" }
+    if (displayStatus !== "ready") return { ok: false, reason: `只有已入列(ready)任务可以触发（当前 ${displayStatus}）。` }
+    return { ok: true }
+  }
+  if (identity !== "author") return { ok: false, reason: "只有任务作者身份可以启动或入列。" }
+  if (displayStatus !== "draft") {
+    return {
+      ok: false,
+      reason: `只有草稿(draft)任务可以${action === "enqueue" ? "入列" : "立即执行"}（当前 ${displayStatus}）。`,
+    }
+  }
+  return { ok: true }
+}
+
+/** Execute the launch sequence through the late-bound TasksService. */
+export async function executeLaunchAction(
+  svc: TaskLaunchToolsService,
+  taskId: string,
+  action: LaunchActionId,
+): Promise<{ ok: true; task: unknown } | { ok: false; error: string; missing?: unknown }> {
+  try {
+    if (action === "enqueue") return { ok: true, task: svc.readyTask(taskId) }
+    if (action === "launch_now") {
+      // Same combo as the board's 「立即执行」: silent ready first, so no
+      // intermediate 「已入列」card is emitted, then trigger immediately.
+      svc.readyTask(taskId, { silentCard: true })
+      return { ok: true, task: await svc.triggerTask(taskId) }
+    }
+    return { ok: true, task: await svc.triggerTask(taskId) }
+  } catch (err: unknown) {
+    const missing = (err as { missing?: unknown }).missing
+    return {
+      ok: false,
+      error: err instanceof Error ? err.message : String(err),
+      ...(missing !== undefined ? { missing } : {}),
+    }
+  }
+}
+
 export interface TaskToolAction {
   id: string
   label: string
@@ -758,6 +861,42 @@ export function createTaskToolServer(input: TaskToolServerInput) {
       },
     ),
     tool(
+      "resolve_wiki_finding",
+      "Resolve ONE open wiki contradiction/finding from get_archive_state.knowledge.findings: action='adopt' rewrites the affected pages via the global compile queue (the server generates the revision; it does NOT hand-edit files), action='ignore' records the decision and stops re-reporting. Call ONLY after the human explicitly said 采纳 / 修订 / 采纳修订 or 忽略 / 不处理 in this chat; set confirmed=true to assert that. Do not batch or infer consent; discuss first if the human is unsure.",
+      {
+        finding_id: z.string().min(1).describe("Finding id from get_archive_state.knowledge.findings (e.g. fnd-...)"),
+        action: z.enum(["adopt", "ignore"]).describe("adopt = 采纳修订（编译改写涉事页）；ignore = 忽略并记录在案"),
+        confirmed: z.boolean().describe("true only when the human explicitly said adopt/ignore — never infer"),
+      },
+      async ({ finding_id, action, confirmed }) => {
+        if (!confirmed) {
+          return text({ ok: false, error: "必须等用户明确说「采纳修订 / 忽略」后才能执行（confirmed=true）—— 不要代替人决定。" })
+        }
+        if (task.status !== "archiving" && task.status !== "done") {
+          return text({ ok: false, error: "wiki finding 裁决只在归档阶段（archiving / done）可用。" })
+        }
+        const svc = wikiFindingService()
+        if (!svc) return text({ ok: false, error: "wiki finding 服务未就绪" })
+        try {
+          if (action === "adopt") {
+            const rec = svc.adopt(finding_id)
+            return text({
+              ok: true,
+              finding_id,
+              action,
+              task_id: rec.id,
+              status: rec.status,
+              hint: "修订已入全局编译队列；完成后 finding 卡会自动转为 resolved。",
+            })
+          }
+          const row = svc.ignore(finding_id)
+          return text({ ok: true, finding_id, action, status: row.status, hint: "已记录在案，不再重复提醒。" })
+        } catch (err: unknown) {
+          return text({ ok: false, error: err instanceof Error ? err.message : String(err) })
+        }
+      },
+    ),
+    tool(
       "retry_archive",
       "Retry the archive orchestration (project-granular, idempotent) AFTER the human explicitly said 「重试」 in this chat. Set confirmed=true to assert that. Only valid while the task is parked in archiving; completion (done) is written by the server when every project is green — never claim it yourself.",
       {
@@ -953,7 +1092,7 @@ export function createTaskToolServer(input: TaskToolServerInput) {
     ),
     tool(
       "propose_launch",
-      "Author identity only. Show the user the three launch choices (run now / enqueue and wait / schedule). This appends a decision card; it does NOT start anything.",
+      "Author identity only. Show the user the three launch choices (run now / enqueue and wait / schedule). This appends a decision card; it does NOT start anything. When the human explicitly tells you in chat to launch or enqueue, call launch_task / enqueue_task(confirmed=true) instead.",
       { note: z.string().max(500).optional().describe("Optional one-line summary shown on the card") },
       async ({ note }) => {
         if (identity !== "author") {
@@ -961,6 +1100,69 @@ export function createTaskToolServer(input: TaskToolServerInput) {
         }
         appendTaskToolCard(db, sessionId, buildLaunchProposalCard(profile, note))
         return text({ ok: true, card: "task.launch_proposal" })
+      },
+    ),
+    tool(
+      "launch_task",
+      "Author identity only. Actually start the draft task now (ready → trigger in one step). Call ONLY when the human explicitly said 立即执行 / 开始跑 / 现在就做 in THIS chat, and pass confirmed=true. If they have not decided, use propose_launch instead. This starts the bound workflow for real.",
+      {
+        confirmed: z.boolean().describe("true only when the human explicitly said 立即执行/开始跑 in this chat — never infer"),
+      },
+      async ({ confirmed }) => {
+        const gate = canExecuteLaunch(identity, task.displayStatus, "launch_now", confirmed)
+        if (!gate.ok) return text({ ok: false, error: gate.reason })
+        const svc = launchService()
+        if (!svc) return text({ ok: false, error: "任务服务未就绪" })
+        const out = await executeLaunchAction(svc, task.id, "launch_now")
+        if (!out.ok) return text(out)
+        return text({
+          ok: true,
+          action: "launch_now",
+          task: out.task,
+          next: "任务已开始执行；状态卡会自动出现在本会话，不需要用户再点卡片。",
+        })
+      },
+    ),
+    tool(
+      "enqueue_task",
+      "Author identity only. Enqueue the draft task (draft → ready) and wait for a manual trigger. Call ONLY when the human explicitly said 入列 / 排队 / 先入队 in THIS chat, and pass confirmed=true. If they have not decided, use propose_launch instead.",
+      {
+        confirmed: z.boolean().describe("true only when the human explicitly said 入列/排队 in this chat — never infer"),
+      },
+      async ({ confirmed }) => {
+        const gate = canExecuteLaunch(identity, task.displayStatus, "enqueue", confirmed)
+        if (!gate.ok) return text({ ok: false, error: gate.reason })
+        const svc = launchService()
+        if (!svc) return text({ ok: false, error: "任务服务未就绪" })
+        const out = await executeLaunchAction(svc, task.id, "enqueue")
+        if (!out.ok) return text(out)
+        return text({
+          ok: true,
+          action: "enqueue",
+          task: out.task,
+          next: "任务已入列（ready），等用户手动触发；用户说「开跑」时再调 trigger_task。",
+        })
+      },
+    ),
+    tool(
+      "trigger_task",
+      "Doer identity only. Trigger an already-enqueued (ready) task immediately. Call ONLY when the human explicitly said 触发 / 开跑 / 现在执行 in THIS chat, and pass confirmed=true. If they have not decided, use request_task_action(action=\"trigger\") to show a confirmation card instead.",
+      {
+        confirmed: z.boolean().describe("true only when the human explicitly said 触发/开跑 in this chat — never infer"),
+      },
+      async ({ confirmed }) => {
+        const gate = canExecuteLaunch(identity, task.displayStatus, "trigger", confirmed)
+        if (!gate.ok) return text({ ok: false, error: gate.reason })
+        const svc = launchService()
+        if (!svc) return text({ ok: false, error: "任务服务未就绪" })
+        const out = await executeLaunchAction(svc, task.id, "trigger")
+        if (!out.ok) return text(out)
+        return text({
+          ok: true,
+          action: "trigger",
+          task: out.task,
+          next: "任务已开始执行；状态卡会自动出现在本会话。",
+        })
       },
     ),
     tool(
@@ -1027,7 +1229,7 @@ export function createTaskToolServer(input: TaskToolServerInput) {
     name: "octopus-task",
     version: "1.0.0",
     instructions:
-      "These tools operate on the task bound to this chat. Read status freely. Spec writes are author-only. Actions (pause/resume/abort/trigger/retry_archive/inject) only append a confirmation card — the human decides; never claim the action already happened.",
+      "These tools operate on the task bound to this chat. Read status freely. Spec writes are author-only. Launch/enqueue/trigger EXECUTE for real when the human explicitly asked in this chat and you pass confirmed=true (draft: launch_task / enqueue_task; ready: trigger_task); if they have not decided, use propose_launch / request_task_action to show a card. Other actions only append a confirmation card — the human decides; never claim an action happened without a tool result.",
     tools,
     alwaysLoad: true,
   })

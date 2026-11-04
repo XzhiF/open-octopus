@@ -1,6 +1,15 @@
 export { ClaudeSDKProvider } from './claude/provider'
+export {
+  guardIdle,
+  withSoftTimeout,
+  IdleTimeoutError,
+  IDLE_TIMEOUT_CODE,
+  DEFAULT_FIRST_EVENT_TIMEOUT_MS,
+  DEFAULT_STREAM_IDLE_TIMEOUT_MS,
+} from './idle-watchdog'
+export type { GuardIdleOptions } from './idle-watchdog'
 export { createSdkMcpServer, tool } from '@anthropic-ai/claude-agent-sdk'
-export type { IAgentProvider, SendQueryOptions, MessageChunk, SystemPromptInput, SystemPromptPreset, ContextUsageData, GoalTerminalReason, ActiveGoalChunk } from './types'
+export type { IAgentProvider, SendQueryOptions, MessageChunk, SystemPromptInput, SystemPromptPreset, ContextUsageData, GoalTerminalReason, ActiveGoalChunk, BackgroundTaskInfo } from './types'
 export { registerProvider, getProvider, getProviderAsync, listProviders, resetProviderInstances } from './registry'
 export { LLMCallTracker } from './llm-call-tracker'
 export type { LLMCallRecord } from './llm-call-tracker'

@@ -8,8 +8,11 @@ import {
   appendTaskToolCard,
   buildActionRequestCard,
   buildLaunchProposalCard,
+  canExecuteLaunch,
   canRunTaskAction,
   canStartArchive,
+  executeLaunchAction,
+  type TaskLaunchToolsService,
 } from "../services/chat/task-tools"
 import type { TaskThreadProfile } from "../services/tasks/task-thread-service"
 
@@ -69,6 +72,76 @@ describe("canStartArchive — 归档前的明确同意门", () => {
     expect(canStartArchive("author", "awaiting_archive", true).reason).toContain("执行者")
     expect(canStartArchive("doer", "archiving", true).reason).toContain("待归档")
     expect(canStartArchive("doer", "ready", true).ok).toBe(false)
+  })
+})
+
+describe("canExecuteLaunch — 对话里的明确启动指令", () => {
+  it("author + draft + confirmed 才允许 launch_now / enqueue", () => {
+    expect(canExecuteLaunch("author", "draft", "launch_now", true).ok).toBe(true)
+    expect(canExecuteLaunch("author", "draft", "enqueue", true).ok).toBe(true)
+    expect(canExecuteLaunch("author", "draft", "launch_now", false).reason).toContain("必须等用户")
+    expect(canExecuteLaunch("doer", "draft", "launch_now", true).reason).toContain("作者")
+    expect(canExecuteLaunch("author", "running", "launch_now", true).reason).toContain("draft")
+    expect(canExecuteLaunch("author", "ready", "enqueue", true).reason).toContain("draft")
+  })
+
+  it("trigger 只给 doer + ready + confirmed", () => {
+    expect(canExecuteLaunch("doer", "ready", "trigger", true).ok).toBe(true)
+    expect(canExecuteLaunch("author", "ready", "trigger", true).reason).toContain("执行者")
+    expect(canExecuteLaunch("doer", "draft", "trigger", true).reason).toContain("ready")
+    expect(canExecuteLaunch("doer", "ready", "trigger", false).reason).toContain("必须等用户")
+  })
+})
+
+describe("executeLaunchAction — 与看板同一执行组合", () => {
+  function fakeService(): {
+    svc: TaskLaunchToolsService
+    calls: Array<{ method: string; opts?: { silentCard?: boolean } }>
+  } {
+    const calls: Array<{ method: string; opts?: { silentCard?: boolean } }> = []
+    return {
+      calls,
+      svc: {
+        readyTask: (_id, opts) => {
+          calls.push({ method: "ready", opts })
+          return { status: "ready" }
+        },
+        triggerTask: async () => {
+          calls.push({ method: "trigger" })
+          return { status: "running" }
+        },
+      },
+    }
+  }
+
+  it("launch_now = 静默 ready → trigger", async () => {
+    const { svc, calls } = fakeService()
+    const out = await executeLaunchAction(svc, "t-1", "launch_now")
+    expect(out).toMatchObject({ ok: true, task: { status: "running" } })
+    expect(calls).toEqual([{ method: "ready", opts: { silentCard: true } }, { method: "trigger" }])
+  })
+
+  it("enqueue 只 ready（保留「已入列」卡）", async () => {
+    const { svc, calls } = fakeService()
+    await executeLaunchAction(svc, "t-1", "enqueue")
+    expect(calls).toEqual([{ method: "ready", opts: undefined }])
+  })
+
+  it("trigger 只触发；ready gate 失败原样带回 missing", async () => {
+    const { svc, calls } = fakeService()
+    await executeLaunchAction(svc, "t-1", "trigger")
+    expect(calls).toEqual([{ method: "trigger" }])
+
+    const failing: TaskLaunchToolsService = {
+      readyTask: () => {
+        const err = new Error("Task not ready: missing runbook") as Error & { missing: string[] }
+        err.missing = ["runbook"]
+        throw err
+      },
+      triggerTask: async () => ({}),
+    }
+    const out = await executeLaunchAction(failing, "t-1", "launch_now")
+    expect(out).toMatchObject({ ok: false, error: "Task not ready: missing runbook", missing: ["runbook"] })
   })
 })
 

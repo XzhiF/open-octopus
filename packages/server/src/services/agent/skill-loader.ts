@@ -1,11 +1,10 @@
 import fs from 'fs'
 import path from 'path'
-import os from 'os'
 import { getAgentSkillsDir } from './paths'
 
 // ── Types ──────────────────────────────────────────────────────
 
-export type SkillSource = 'local_evolved' | 'builtin' | 'prod'
+export type SkillSource = 'local_evolved' | 'builtin'
 
 export interface LoadedSkill {
   name: string
@@ -26,13 +25,14 @@ export interface SkillSummary {
 // ── SkillLoader ────────────────────────────────────────────────
 
 /**
- * Three-tier skill loading service (P2.8).
+ * Two-tier skill loading service (P2.8).
  *
  * Priority order:
  *   1. Local evolved — `~/.octopus/{org}/agent/skills/{name}/SKILL.md`
  *      (has `.bak` file = evolved from builtin)
  *   2. Core-pack builtin — `packages/core-pack/skills/{name}/SKILL.md`
- *   3. Prod copy — `~/.octopus/prod/packages/core-pack/skills/{name}/SKILL.md`
+ *
+ * Prod runs from the repo's own dist/, so the builtin tier is always present.
  *
  * Used by SystemPromptAssembler, skill routes, and evolution diff.
  */
@@ -40,18 +40,16 @@ export class SkillLoader {
   private org: string
   private agentSkillsDir: string
   private builtinSkillsDir: string
-  private prodSkillsDir: string
 
   constructor(org: string) {
     this.org = org
     this.agentSkillsDir = getAgentSkillsDir()
     this.builtinSkillsDir = path.join(process.cwd(), 'packages', 'core-pack', 'skills')
-    this.prodSkillsDir = path.join(os.homedir(), '.octopus', 'prod', 'packages', 'core-pack', 'skills')
   }
 
   /**
-   * Load a single skill by name, resolving through the three-tier priority.
-   * Returns null if skill not found in any tier.
+   * Load a single skill by name, resolving through the two-tier priority.
+   * Returns null if skill not found in either tier.
    */
   loadSkill(name: string): LoadedSkill | null {
     // Tier 1: Local evolved (highest priority)
@@ -83,20 +81,6 @@ export class SkillLoader {
       }
     }
 
-    // Tier 3: Prod copy (lowest priority)
-    const prodPath = path.join(this.prodSkillsDir, name, 'SKILL.md')
-    if (fs.existsSync(prodPath)) {
-      const content = fs.readFileSync(prodPath, 'utf-8')
-      return {
-        name,
-        content,
-        source: 'prod',
-        file_path: prodPath,
-        has_backup: false,
-        description: this.extractDescription(content),
-      }
-    }
-
     return null
   }
 
@@ -107,13 +91,10 @@ export class SkillLoader {
   listSkills(): SkillSummary[] {
     const skillMap = new Map<string, SkillSummary>()
 
-    // Scan Tier 3 first (lowest priority — overwritten by higher tiers)
-    this.scanDirectory(this.prodSkillsDir, 'prod', skillMap)
-
-    // Scan Tier 2 (builtin — overwrites prod)
+    // Scan builtin first (lowest priority — overwritten by local evolved)
     this.scanDirectory(this.builtinSkillsDir, 'builtin', skillMap)
 
-    // Scan Tier 1 (local evolved — overwrites all)
+    // Scan local evolved (overwrites builtin)
     if (fs.existsSync(this.agentSkillsDir)) {
       try {
         const entries = fs.readdirSync(this.agentSkillsDir, { withFileTypes: true })
@@ -152,9 +133,6 @@ export class SkillLoader {
 
     const builtinPath = path.join(this.builtinSkillsDir, name, 'SKILL.md')
     if (fs.existsSync(builtinPath)) return 'builtin'
-
-    const prodPath = path.join(this.prodSkillsDir, name, 'SKILL.md')
-    if (fs.existsSync(prodPath)) return 'prod'
 
     return null
   }

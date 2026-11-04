@@ -29,4 +29,23 @@ describe("workPhrases", () => {
     expect(workPhrase("exec", -3)).toBe(WORK_PHRASES.exec[0])
     expect(workPhrase("writing", 7.9)).toBe(WORK_PHRASES.writing[1])
   })
+
+  it("同 seed 顺序稳定，不同 seed 每轮开头会变（整轮洗牌，不逐秒随机）", () => {
+    // 同一轮内同一时刻多次取 → 完全一致（渲染多少次都不闪烁）
+    expect(workPhrase("thinking", 9, 12345)).toBe(workPhrase("thinking", 9, 12345))
+    // 同一 seed 的整圈是原列表的一个排列：不重不漏
+    const list = WORK_PHRASES.thinking
+    const cycle = new Set(
+      list.map((_, i) => workPhrase("thinking", i * WORK_PHRASE_ROTATE_SECONDS, 12345)),
+    )
+    expect(cycle.size).toBe(list.length)
+    // 不同轮起点（seed）→ 开头不总是同一句
+    const starts = new Set([1000, 2000, 3000, 4000, 5000].map((seed) => workPhrase("thinking", 0, seed)))
+    expect(starts.size).toBeGreaterThan(1)
+  })
+
+  it("不传 seed 时保持原数组顺序（兼容调用方与旧行为）", () => {
+    expect(workPhrase("thinking", 0)).toBe(WORK_PHRASES.thinking[0])
+    expect(workPhrase("thinking", WORK_PHRASE_ROTATE_SECONDS * 2)).toBe(WORK_PHRASES.thinking[2])
+  })
 })

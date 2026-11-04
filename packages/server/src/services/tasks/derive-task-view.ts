@@ -34,7 +34,7 @@
 //   • last phase accepted and row already 'archiving' → 'archiving' (票 08 flips
 //     the ledger to done once git succeeds, which is why 'done' can only come from
 //     the row). Accepted with any other persisted status → 'awaiting_archive'.
-//   • Non-v4 (v3/generic/composite) tasks pass through untouched:
+//   • Non-v4 (v3/generic) tasks pass through untouched:
 //     isV4=false, phaseViews=[], taskStatus mirrors task.status verbatim
 //     ('failed' stays legal there — K13 旧链零破坏).
 //
@@ -357,7 +357,7 @@ export function deriveTaskView(
 ): TaskView {
   const spec = parseV4Spec(task.task_spec)
   if (!spec) {
-    // v3 / generic / composite / corrupt spec → verbatim mirror (K13).
+    // v3 / generic / corrupt spec → verbatim mirror (K13).
     return { taskStatus: task.status as TaskStatus, isV4: false, phaseViews: [] }
   }
 

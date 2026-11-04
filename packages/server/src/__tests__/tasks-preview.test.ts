@@ -103,7 +103,7 @@ beforeAll(() => {
   // 实例注册表指到 tmp —— 测试绝不写真实 ~/.octopus。
   instances = new TestInstanceRegistry(path.join(tmp, "instances"), path.join(tmp, "ports"))
   const ev = new RoundEvidenceService(db, sse, ts, wss, taskHome, instances)
-  app = new Hono(); app.route("/api/tasks", createTasksRoutes(ts, sse, undefined, ev))
+  app = new Hono(); app.route("/api/tasks", createTasksRoutes(ts, sse, ev))
 })
 afterAll(async () => {
   unSub?.(); db.close()

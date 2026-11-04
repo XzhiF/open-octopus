@@ -384,6 +384,44 @@ describe("摘录纪律（S1·票02 第2行/故事7）", () => {
     expect(payload).toContain("feat-login-session-20261013") // 分支指针
   })
 
+  it("PR diff 关键 hunk 排除锁文件 / 压缩产物 / 构建目录：名额留给源码，stat 行保留 + 显形说明", async () => {
+    const { service } = makeDeps()
+    const { taskId } = seedV4Task(new TaskHomeService(path.join(tmpRoot, "homes")))
+    const wsPath = path.join(tmpRoot, "ws", "w2c")
+    const repoDir = path.join(wsPath, "projects", "authsvc")
+    fs.mkdirSync(repoDir, { recursive: true })
+    const git = (...args: string[]) =>
+      execFileSync("git", ["-c", "user.name=aa02", "-c", "user.email=aa02@test", ...args], { cwd: repoDir, encoding: "utf-8" })
+    git("init", "-b", "main")
+    fs.writeFileSync(path.join(repoDir, "login.ts"), "export function login() { return old }\n", "utf-8")
+    fs.writeFileSync(path.join(repoDir, "pnpm-lock.yaml"), "lockfileVersion: 9\n", "utf-8")
+    git("add", "-A")
+    git("commit", "-m", "init")
+    const start = git("rev-parse", "HEAD").trim()
+
+    // 锁文件是变更量 top1（1000 行），源码改动只有几行 —— hunk 名额必须留给源码
+    const lockLines = ["lockfileVersion: 9", "packages:", ...Array.from({ length: 1000 }, (_, i) => `  pkg-${i}: { version: 1.0.${i} }`)]
+    fs.writeFileSync(path.join(repoDir, "pnpm-lock.yaml"), `${lockLines.join("\n")}\n`, "utf-8")
+    fs.writeFileSync(path.join(repoDir, "login.ts"), "export function login(user: string) {\n  return createSession(user)\n}\n", "utf-8")
+    git("add", "-A")
+    git("commit", "-m", "feat: session 制登录")
+    const end = git("rev-parse", "HEAD").trim()
+    seedExecution({ taskId, wsId: "aa02-ws-2c", wsPath, start, end, execId: "aa02-exec-2c" })
+
+    await service.ingestTask(taskId)
+    const manifest = readManifest(taskId)
+    const diffItem = manifest.items.find((i: any) => i.kind === "pr-diff")
+    const payload = itemPayload(path.join(knowledgeRoot, diffItem.path))
+
+    // stat 面如实保留（一眼可见改了哪些文件）
+    expect(payload).toContain("pnpm-lock.yaml")
+    expect(payload).toContain("- 关键 hunk 已排除锁文件 / 压缩产物 / 构建目录 1 个")
+    // hunk 正文不占预算，源码 hunk 在场
+    expect(payload).not.toContain("### hunk: pnpm-lock.yaml")
+    expect(payload).toContain("### hunk: login.ts")
+    expect(payload).toContain("+  return createSession(user)")
+  })
+
   it("PR diff 终点用归档时 HEAD：末轮后的小修也进素材（2026-10-31 收尾）", async () => {
     const { service } = makeDeps()
     const { taskId } = seedV4Task(new TaskHomeService(path.join(tmpRoot, "homes")))

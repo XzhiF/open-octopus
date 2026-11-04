@@ -387,7 +387,7 @@ export class TaskThreadService {
         `[任务 home] ${info.taskHome}`,
         `[phases] ${phaseLines}`,
         "[写规格] 优先用任务工具 update_task_spec_field（或 POST /api/tasks/:id/spec-field），不要整段覆盖 phases。",
-        "[收尾] 规格齐后用任务工具 propose_launch，让用户在「立即执行 / 入列待触发 / 定时触发」中选一个；不要自行触发。",
+        "[收尾] 规格齐后默认用任务工具 propose_launch 让用户在「立即执行 / 入列待触发 / 定时触发」中选；**用户在本轮对话里明确说「立即执行 / 入列 / 现在开跑」时**，直接调 launch_task / enqueue_task（confirmed=true）执行，不要让他再去点卡片（这条覆盖旧角色卡里「只等用户点 [入队]」的说法）。没有用户明确表态时不要自行触发。",
         "[状态感知] 入列/触发/验收等状态变化会以事件卡出现在本会话；每轮也会刷新上面这行状态。",
       ].join("\n")
     }
@@ -407,7 +407,7 @@ export class TaskThreadService {
         "[验收引导] 本轮已交付，验收方案已生成（两层：人验场景 + 机器证据）。你的角色是**引导人验场景**，不是自己签字，也不是替人跑测试：",
         "  1. 先调 get_acceptance_plan 读方案：`cases` 是 1–3 条人验收场景（打开 → 操作 → 看什么），`checks` 是本轮已有机器证据（只读）。",
         "  2. 开场用**一句话**播报机器证据（共几项、缺几件）；**不要逐条跑、不要逐项问** —— e2e / 慢命令尤其不要主动重跑。",
-        "  3. 一次只推进**一条场景**：按 steps 讲清「打开哪 → 做什么 → 看到什么」，然后问「通过 / 不通过 / 跳过」。用户要看页面就 start_acceptance_preview（结束 stop_acceptance_preview）；**只有用户点名要新结果时**才 run_acceptance_probe 跑某条机器证据。",
+        "  3. 一次只推进**一条场景**：按 steps 讲清「打开哪 → 做什么 → 看到什么」，然后问「通过 / 不通过 / 跳过」。**提问一律用对话正文，不要调用 AskUserQuestion**（选项卡会打断逐条引导；验收卡只是快捷方式）。用户要看页面就 start_acceptance_preview（结束 stop_acceptance_preview）；**只有用户点名要新结果时**才 run_acceptance_probe 跑某条机器证据。",
         "  4. 用户**在对话里明确表态**（「通过」「可以」「不行，因为…」「跳过」）即可直接调 record_acceptance_check（confirmed=true），只对场景；卡片只是快捷方式。不要代替用户判断、不要批量代勾，也不要把机器证据当成人工勾选项。",
         "  5. 用户说不通过 → 当场小修：只改与该问题直接相关的 **≤2 个文件**，不改 spec/票；改完按场景重新看一遍并把结果讲给用户，再问一次是否通过 —— 改完不等于通过，绝不默认勾上。",
         "  6. 问题超出小修边界（要改 spec、要动 3 个以上文件、或反复修不好）→ 调 propose_acceptance_escalation，让用户确认升级 task-fix 大修复；不要硬改。",
@@ -415,14 +415,15 @@ export class TaskThreadService {
         "  8. 用户**明确表态**后由你收口：放行 → submit_acceptance_decision(decision=\"accepted\", confirmed=true)；退回 → submit_acceptance_decision(decision=\"rejected\", feedback=用户说的原因, confirmed=true)。人点验收台是兜底，不是必需；但没有明确表态绝不放行、绝不退回，也不要把未勾场景当成通过。",
       ] : []
       const archiveLines = extra.archiveGuide ? [
-        "[归档引导] 末 phase 已放行，任务处于 archiving（只读；归档编排由服务端执行）。你的角色是播报 + 逐条问反思 + 执行用户的口头决定：",
-        "  1. 先调 get_archive_state 读 git 同步 / project 失败 / 术语冲突 / 反思 / 知识包状态。",
+        "[归档引导] 末 phase 已放行，任务处于 archiving（只读；归档编排由服务端执行）。你的角色是播报 + 逐条问反思与 wiki 冲突 + 执行用户的口头决定：",
+        "  1. 先调 get_archive_state 读 git 同步 / project 失败 / 术语冲突 / 反思 / 知识包状态 / knowledge.findings（本次编译出的未决矛盾）。",
         "  2. 用一两句人话播报进度和你在等什么；不要贴表格或逐项清单 —— 明细让用户点总框里的「打开归档台看明细」。",
-        "  3. 调 propose_wiki_entries 给出 2–5 条建议（它不再落卡片），然后**一次只问一条**：要不要落 wiki。",
-        "  4. 用户说「落 / 跳过 / 都跳过 / 都落」→ 逐条 record_reflection_decision(confirmed=true) 执行并回执；不要代替人决定。",
-        "  5. 归档失败：说清是哪个 project、什么原因；用户明确说「重试」→ retry_archive(confirmed=true)。",
-        "  6. 若 preflight 提示有未提交改动：问用户「纳入归档」还是「排除并记录」，明确表态后调 resolve_archive_delta(decision, confirmed=true)；不要自己决定。",
-        "  7. 不要声称已完成 —— done 由服务端在全部 project 的 git 同步成功后才写入。",
+        "  3. 若 knowledge.findings 非空：一次只问一条，说明「旧断言 vs 新断言、涉及哪两页」，问「采纳修订 / 忽略 / 讨论」。用户明确表态后调 resolve_wiki_finding(finding_id, action, confirmed=true) 并回执；不要替人决定，不要批量。",
+        "  4. 调 propose_wiki_entries 给出 2–5 条建议（它不再落卡片），然后**一次只问一条**：要不要落 wiki。",
+        "  5. 用户说「落 / 跳过 / 都跳过 / 都落」→ 逐条 record_reflection_decision(confirmed=true) 执行并回执；不要代替人决定。",
+        "  6. 归档失败：说清是哪个 project、什么原因；用户明确说「重试」→ retry_archive(confirmed=true)。",
+        "  7. 若 preflight 提示有未提交改动：问用户「纳入归档」还是「排除并记录」，明确表态后调 resolve_archive_delta(decision, confirmed=true)；不要自己决定。",
+        "  8. 不要声称已完成 —— done 由服务端在全部 project 的 git 同步成功后才写入。",
       ] : []
       const consentLines = extra.archiveConsent ? [
         "[归档确认] 末 phase 已通过，任务停在「待归档」(awaiting_archive)，归档尚未启动。",
@@ -443,7 +444,7 @@ export class TaskThreadService {
         readOnlyLine,
         quickEditLine,
         `[改计划] 改 spec/票只能走计划回写：${planCmd}（批次目录只读，直接改会被硬闸拒绝）。`,
-        "[动作] 触发/暂停/恢复/中止/重试归档请用任务工具 request_task_action（会落确认卡，人点才执行）；验收的通过/打回在用户明确表态后调 submit_acceptance_decision 收口（人点验收台是兜底）。",
+        "[动作] 触发/暂停/恢复/中止/重试归档默认用任务工具 request_task_action（会落确认卡，人点才执行）；**用户在本轮明确说「开跑 / 触发 / 现在执行」且任务已入列(ready)时**，直接调 trigger_task(confirmed=true) 执行。验收的通过/打回在用户明确表态后调 submit_acceptance_decision 收口（人点验收台是兜底）。",
         "[状态感知] 任务状态变化会以事件卡出现在本会话；每轮也会刷新上面这行状态。",
       ].filter(Boolean).join("\n")
     }
@@ -452,7 +453,7 @@ export class TaskThreadService {
       head,
       "[身份] 只读回顾。任务已结束/归档，不再改代码或规格。",
       `[任务 home] ${info.taskHome}${info.wsPath ? ` · 执行工作区 ${info.wsPath}` : ""}`,
-      "[归档复盘] 可用 get_archive_state 复述归档结果、冲突与反思；未决反思可按用户明确表态继续 record_reflection_decision 落/跳过。",
+      "[归档复盘] 可用 get_archive_state 复述归档结果、冲突与反思；knowledge.findings 是本次编译出的未决矛盾，用户明确表态后可逐条 resolve_wiki_finding；未决反思可按用户明确表态继续 record_reflection_decision 落/跳过。",
       "[归档增补] 用户要补充/修正归档内容时，用 record_archive_amendment(confirmed=true) 追加只增不改的记录（可选同时落 wiki）；不要改写原报告。",
       "[跟进任务] 用户要再改代码/继续开发时，用 open_followup_task(confirmed=true) 开一个继承 spec 的新任务；旧任务保持 done 不可变，不要在这里写代码。",
     ].join("\n")

@@ -51,6 +51,7 @@ description: |
   直接执行 —— 票 DAG 实现 → Code Review → ship 出 PR。零需求澄清、零 spec 再生成；
   验收打回走 task-fix 修复轮（ADR-0024），不经本流。
 version: 1.0.0
+stage: release
 
 # --- 全局配置 ---
 engine: claude

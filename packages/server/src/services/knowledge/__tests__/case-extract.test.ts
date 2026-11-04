@@ -18,7 +18,7 @@ import path from "path"
 import { applySchema } from "../../../db/schema"
 import { CompileQueue } from "../wiki/compile-queue"
 import { freezePackItem, writePackManifest } from "../material-pack"
-import { CaseExtractService, type CaseExtractDeps, buildCaseExtractPrompt, CASE_EXTRACT_QUEUE_ID_PREFIX } from "../case-extract-service"
+import { CaseExtractService, type CaseExtractDeps, type CaseArchiveRecord, buildCaseExtractPrompt, CASE_EXTRACT_QUEUE_ID_PREFIX } from "../case-extract-service"
 
 // ── Harness ───────────────────────────────────────────────────────────
 
@@ -93,18 +93,20 @@ const DRAFT_JSON = JSON.stringify({
   ],
 })
 
-function makeService(overrides: Partial<CaseExtractDeps> = {}): { service: CaseExtractService; prompts: string[]; cards: any[] } {
+function makeService(overrides: Partial<CaseExtractDeps> = {}): { service: CaseExtractService; prompts: string[]; cards: any[]; records: CaseArchiveRecord[] } {
   const prompts: string[] = []
   const cards: any[] = []
+  const records: CaseArchiveRecord[] = []
   const service = new CaseExtractService({
     db,
     root: knowledgeRoot,
     queue,
     extract: async (p) => { prompts.push(p); return DRAFT_JSON },
     announceCase: (ev) => { cards.push(ev) },
+    recordCaseResult: (_taskId, result) => { records.push(result) },
     ...overrides,
   })
-  return { service, prompts, cards }
+  return { service, prompts, cards, records }
 }
 
 async function settle(expectStates: string): Promise<void> {
@@ -125,7 +127,7 @@ describe("判例自动提取→case-archive 入档全链（S1·票03）", () => 
       { fileName: "02-phase-rejections.md", kind: "phase-rejections", payload: PHASE_REJECTIONS },
       { fileName: "03-exec-jsonl-excerpt.md", kind: "exec-jsonl-excerpt", payload: JSONL_EXCERPT },
     ])
-    const { service } = makeService()
+    const { service, records } = makeService()
 
     const outcome = await service.extractAndEnqueue("aa03-1")
     expect(outcome.status).toBe("enqueued")
@@ -144,6 +146,17 @@ describe("判例自动提取→case-archive 入档全链（S1·票03）", () => 
     expect(files).toHaveLength(1)
     expect(files[0]).toMatch(/^\d{4}-\d{2}-\d{2}-case-[a-z0-9][a-z0-9.-]*\.md$/)
     const written = fs.readFileSync(path.join(knowledgeRoot, "wiki", "cases", files[0]), "utf-8")
+
+    // 归档窗口回执：新建判例（occurrence 0 → 1，落点页可定位）
+    expect(records).toHaveLength(1)
+    expect(records[0]).toMatchObject({
+      action: "created",
+      symptom: "登录接口 500：cookie 未清",
+      case_path: `cases/${files[0]}`,
+      occurrences_before: 0,
+      occurrences_after: 1,
+    })
+    expect(records[0].error).toBeUndefined()
 
     // front-matter 判例 schema 沿用 P0（shared WikiCaseFrontmatterSchema 字段面逐字）
     expect(written).toContain("domain: cases")
@@ -206,7 +219,7 @@ describe("occurrences 合并（S1·票03 第3行：归一化+jaccard 自建判�
       { fileName: "02-phase-rejections.md", kind: "phase-rejections", payload: PHASE_REJECTIONS },
       { fileName: "03-exec-jsonl-excerpt.md", kind: "exec-jsonl-excerpt", payload: JSONL_EXCERPT },
     ])
-    const { service, cards } = makeService()
+    const { service, cards, records } = makeService()
     // 第一入：新判例（occurrences 1）
     await service.extractAndEnqueue("aa03-merge")
     await settle("首入应 committed")
@@ -233,6 +246,17 @@ describe("occurrences 合并（S1·票03 第3行：归一化+jaccard 自建判�
     expect(cards[1].data.occurrences).toBe(2)
     expect(cards[1].data.action).toBe("merged")
     expect(cards[1].data.path).toBe(`cases/${firstFile}`)
+
+    // 归档窗口回执：并档（occurrence 1 → 2，同页）
+    expect(records).toHaveLength(2)
+    expect(records[0]).toMatchObject({ action: "created", occurrences_before: 0, occurrences_after: 1 })
+    expect(records[1]).toMatchObject({
+      action: "merged",
+      symptom: "登录接口 500：cookie 未清",
+      case_path: `cases/${firstFile}`,
+      occurrences_before: 1,
+      occurrences_after: 2,
+    })
   })
 
   it("无关症状草案 ⇒ 新判例文件（不误并档）", async () => {

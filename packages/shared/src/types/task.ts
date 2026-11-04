@@ -2,8 +2,6 @@ import { z } from "zod"
 import {
   type ResourceRef,
   type TaskSpec,
-  subunitSpecSchema,
-  integrationGoalSchema,
   resourceRefSchema,
   taskPhaseSchema,
   acceptanceVerifySchema,
@@ -66,7 +64,7 @@ export type TaskStatus = z.infer<typeof TaskStatusSchema>
 
 // ── TaskSpecField (v2-D12 — the 8 agent-settable fields; v3 adds decisions) ─
 /** Fields the `update_task_spec_field` tool / `spec_field_update` SSE carry.
- *  goal/ac/subunits/integration_goal live inside task_spec; skills/projects map
+ *  goal/ac live inside task_spec; skills/projects map
  *  to the tasks.skills / tasks.project_ids columns; resources/authoring_resources
  *  map to the tasks.resources / tasks.authoring_resources columns. The server
  *  routes each field to the right column/blob on write.
@@ -92,8 +90,6 @@ export const TaskSpecFieldSchema = z.enum([
   "skills",
   "goal",
   "ac",
-  "subunits",
-  "integration_goal",
   "resources",
   "authoring_resources",
   "decisions",
@@ -131,9 +127,6 @@ export const SPEC_FIELD_UPDATE_EVENT = "spec_field_update" as const
  *  mechanism, D19): signals the task's artifact index may have changed so
  *  the OutputViewer re-fetches GET /api/tasks/:id/artifacts. No polling. */
 export const TASK_ARTIFACTS_UPDATE_EVENT = "task_artifacts_update" as const
-/** Emitted on the "taskpool" channel when an assist-workflow run changes
- *  phase (start/complete/error). Payload: {task_id, run_id, phase}. */
-export const ASSIST_RUN_UPDATE_EVENT = "assist_run_update" as const
 
 // ── 验收面 v2「验货台」SSE events ───────────────────────────────────────
 /** Lifecycle of the acceptance-time re-verification run (one per task; the
@@ -186,9 +179,7 @@ export interface TaskExecutionBadge {
   id: string
   status: string
   workflow_ref: string
-  /** The run's display name (composite subunit label = the subunit's workflow name).
-   *  This replaces `schedules.origin_role='subunit'` as the thing that told the UI
-   *  "this row is one fan-out arm of the parent": which arm it is comes from the row. */
+  /** The run's display name. */
   name: string | null
   phase_index: number | null
   round_index: number | null
@@ -208,14 +199,9 @@ export interface TaskExecutionBadge {
    *  可选字段：旧服务器行无键 = 从未被接管（与 workflow_ref 的向后兼容同律）。 */
   takeover_at?: string | null
   takeover_delivered_at?: string | null
-  /** Composite fan-out: this root's child runs (empty for a simple task; omitted where
-   *  the read model did not load them — the board's badge carries no children, the
-   *  detail/history does). */
-  children?: TaskExecutionBadge[]
 }
 
-/** Σ actual run time over the task's instance executions (rounds / composite roots —
- *  fan-out arms are inside their root's span and never double-counted). Queued waits
+/** Σ actual run time over the task's instance executions (rounds). Queued waits
  *  and 待验收 idle are NOT in here; a still-running round counts up to query time.
  *  Populated by the read model (GET /api/tasks, GET /:id). */
 export interface TaskRunStats {
@@ -240,11 +226,6 @@ export const taskExecutionSsePayloadSchema = z.object({
   status: z.string().min(1),
   phase_index: z.number().int().nullable().optional(),
   round_index: z.number().int().nullable().optional(),
-  /** Set when this run is one arm of a composite fan-out: the dispatching run, and which
-   *  subunit it is. The child's identity is `parent_id` + `name` on the row — this is the
-   *  same pair on the wire, so the timeline can place an arm without re-fetching. */
-  parent_id: z.string().min(1).optional(),
-  subunit: z.string().min(1).optional(),
   /** Present on the failure/reap paths only: the same one-liner the badge shows. */
   reason: z.string().optional(),
 })
@@ -411,13 +392,6 @@ export function validateSpecFieldValue(field: TaskSpecField, value: unknown): un
         throw new TaskSpecFieldError("field 'branch' must match ^[a-zA-Z0-9_-]{2,60}$")
       }
       return value
-    case "subunits":
-      if (!Array.isArray(value)) {
-        throw new TaskSpecFieldError("field 'subunits' must be an array")
-      }
-      return value.map((v) => subunitSpecSchema.parse(v))
-    case "integration_goal":
-      return integrationGoalSchema.parse(value)
     case "acceptance_verify":
       // 验收面 v2: null clears the field — undefined rides into the spec merge
       // and JSON.stringify drops the key (storing `null` would poison every
@@ -459,7 +433,7 @@ export function validateSpecFieldValue(field: TaskSpecField, value: unknown): un
   }
 }
 
-// ── task-authoring v3: artifact index + assist-workflow run types (ticket 01) ─
+// ── task-authoring v3: artifact index types (ticket 01) ──────────────
 /** One row of a task's artifacts.json index (ADR-0011, D5). The index is the
  *  single source of truth for "what did this task produce". `external: true`
  *  ⇒ `path` is an ABSOLUTE path at the artifact's native location (registered,
@@ -474,41 +448,6 @@ export const artifactIndexEntrySchema = z.object({
   updated_at: z.string().min(1),
 })
 export type ArtifactIndexEntry = z.infer<typeof artifactIndexEntrySchema>
-
-/** One timestamped line of an assist-workflow run's process log (D19, US10). */
-export const assistWorkflowLogSchema = z.object({
-  t: z.string().min(1),
-  icon: z.string(),
-  text: z.string(),
-})
-
-/** Structured MoA aggregator output (D10, US11). Parsed from the aggregator
- *  node's JSON; when parsing fails the run carries `output_raw` +
- *  `output_parse_error` instead (SW-BP10). */
-export const assistWorkflowOutputSchema = z.object({
-  ac_candidates: z.array(z.string()).default([]),
-  suggestions: z.array(z.string()).default([]),
-  risks: z.array(z.string()).default([]),
-})
-
-/** The lifecycle + output shape of one assist-workflow run (D9/D16/D19).
- *  `status` is a permissive string here — the execution-lifecycle vocabulary is
- *  owned by the server/ticket-07 run service; shared only carries the contract
- *  shape (the GET /assist-workflows/:runId response, spec line 126). `logs`
- *  come from the execution's node log; `output*` are the aggregator-parse
- *  triplet with the SW-BP10 fallback. */
-export const assistWorkflowRunSchema = z.object({
-  run_id: z.string().min(1),
-  execution_id: z.string().min(1),
-  workspace_id: z.string().min(1),
-  template: z.string().min(1),
-  status: z.string(),
-  logs: z.array(assistWorkflowLogSchema),
-  output: assistWorkflowOutputSchema.optional(),
-  output_raw: z.string().optional(),
-  output_parse_error: z.boolean().optional(),
-})
-export type AssistWorkflowRun = z.infer<typeof assistWorkflowRunSchema>
 
 // ── Task row (first-class tasks table; v2-D1, S2 polymorphic origin) ─
 /** A first-class task row.

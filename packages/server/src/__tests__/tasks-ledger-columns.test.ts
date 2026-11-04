@@ -149,7 +149,7 @@ beforeAll(() => {
   const ts = new TasksService(db, sse, new AgentSessionDAO(db), taskHome, undefined, { get: () => null } as never)
   const wss = { getById: (id: string) => (id === WS_ID ? { id, path: wsDir } : undefined) } as never
   evidence = new RoundEvidenceService(db, sse, ts, wss, taskHome)
-  app = new Hono(); app.route("/api/tasks", createTasksRoutes(ts, sse, undefined, evidence))
+  app = new Hono(); app.route("/api/tasks", createTasksRoutes(ts, sse, evidence))
 })
 afterAll(() => { db.close(); fs.rmSync(tmp, { recursive: true, force: true }) })
 

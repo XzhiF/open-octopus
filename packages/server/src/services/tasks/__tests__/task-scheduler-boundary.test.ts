@@ -31,10 +31,10 @@
 //     `scheduleId` variables, the pump's own run-state columns; none of those couple
 //     a task to the schedule tables. Both rules above are table- and module-precise.
 //   * the pure scheduler helpers (`../scheduler/concurrency`, `ws-launch`,
-//     `orchestration-strategy`, `template-resolver`, `task-ws-name`). They are
+//     `template-resolver`, `task-ws-name`). They are
 //     constants and pure functions with no schedule state, and duplicating them into
 //     the task domain would fork single-source-of-truth logic (the cap number, the
-//     ws naming rule, the composite threshold) — drift is the worse failure mode.
+//     ws naming rule) — drift is the worse failure mode.
 //     Per-entry WHY lives in PURE_SCHEDULER_ALLOW below.
 //
 // Comments are stripped BEFORE scanning, because every file here legitimately carries
@@ -97,9 +97,6 @@ const RUN_DAO_ALLOW = {
     // Arms + launches task instances; needs the meter to decide when a slot is free
     // (launchQueued claims 'pending' rows while countActiveWork < cap).
     "task-lifecycle-service.ts",
-    // Arms composite CHILD runs; applies the same cap before starting one
-    // (over cap the child stays 'pending' and the job claims it — task-child-run).
-    "task-child-run.ts",
   ],
   methods: ["countActiveWork"],
 }
@@ -109,8 +106,7 @@ const RUN_DAO_ALLOW = {
  *  byte-for-byte value as the scheduler and copying would fork it. */
 const PURE_SCHEDULER_ALLOW = [
   { token: "scheduler/concurrency", why: "MAX_PARALLEL_WORKSPACES + STALE_CLAIMED_THRESHOLD_MS: the cap number and its stale threshold, single source (ADR-0021)" },
-  { token: "scheduler/ws-launch", why: "formatBranchSuffix / computeTaskWsLaunchParams / isCompositeWorkflowConfig — pure naming + composite probe; prebuild and first-build must agree byte-for-byte or ws reuse never hits" },
-  { token: "scheduler/orchestration-strategy", why: "COMPOSITION_WF_REF — the composition workflow ref as ONE constant (it used to be duplicated per domain)" },
+  { token: "scheduler/ws-launch", why: "formatBranchSuffix / computeTaskWsLaunchParams — pure naming; prebuild and first-build must agree byte-for-byte or ws reuse never hits" },
   { token: "scheduler/template-resolver", why: "resolveInputValues / parseWorkflowInputDefs — placeholder + input-def parsing, no IO, no state" },
   { token: "scheduler/task-ws-name", why: "taskWorkspaceName — the display-naming rule shared with the chat path" },
 ]
@@ -235,7 +231,6 @@ const SHARED_TASKPOOL_EVENTS = [
   "task_trigger_failed",
   "spec_field_update",
   "task_artifacts_update",
-  "assist_run_update",
   "phase_status_update",
   "project_sync",
 ] as const
@@ -266,7 +261,6 @@ describe("票03 boundary — services/tasks must not couple back to the schedule
     const names = files.map((f) => path.basename(f))
     for (const required of [
       "task-lifecycle-service.ts",
-      "task-child-run.ts",
       "task-materialize.ts",
       "tasks-service.ts",
       "archiving-service.ts",

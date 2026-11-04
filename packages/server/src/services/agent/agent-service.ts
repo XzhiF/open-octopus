@@ -2,8 +2,6 @@ import type {
   AgentSession,
   AgentMessage,
   AgentPaginatedResponse,
-  MemoryContent,
-  MemorySearchResult,
   CloneInfo,
   CreateCloneRequest,
   SkillInfo,
@@ -19,6 +17,8 @@ import type {
   HealthStatus,
 } from '@octopus/shared'
 
+import type { BackgroundTaskInfo } from '@octopus/providers'
+
 import { getSessionService } from './session-service'
 import { getMemoryService } from './memory-service'
 import { getEvolutionService } from './evolution-service'
@@ -27,15 +27,12 @@ import { getConfigManager } from './config-manager'
 import { AgentSessionDAO, SafetyDAO, SessionCacheContextDAO } from '../../db/dao'
 import { SchedulerService } from '../scheduler/scheduler-service'
 import { getRecoveryService } from './recovery-service'
-import { logError } from '../../file-logger'
 
 import fs from 'fs'
 import path from 'path'
 import os from 'os'
 import crypto from 'crypto'
 import {
-  getAgentMemoryDir,
-  getDailyMemoryDir,
   getLongTermMemoryPath,
   getAgentSkillsDir,
   getReportsDir,
@@ -60,6 +57,10 @@ interface StreamEntry {
   streamId: string
   abort: () => void
   startedAt: number
+  /** Live `run_in_background` tasks (provider `background_tasks` chunk).
+   *  Non-empty = the turn is paused waiting for one, which is exactly what the
+   *  header「运行中」chip should say (2026-11-04). */
+  backgroundTasks: BackgroundTaskInfo[]
   /** Resolves when the owning route finalized its partial row (its `finally`). */
   done: Promise<void>
   finish: () => void
@@ -82,8 +83,51 @@ export function registerActiveStream(sessionId: string, abort: () => void): stri
     sessionStreams = new Map()
     activeStreams.set(sessionId, sessionStreams)
   }
-  sessionStreams.set(streamId, { streamId, abort, startedAt: Date.now(), done, finish })
+  sessionStreams.set(streamId, {
+    streamId,
+    abort,
+    startedAt: Date.now(),
+    backgroundTasks: [],
+    done,
+    finish,
+  })
   return streamId
+}
+
+/**
+ * 更新会话的「后台任务」电平（0..n 条）。provider 的 `background_tasks` chunk
+ * 是 REPLACE 语义，这里同样整体替换；空数组/tasks=null 表示后台已清空。
+ */
+export function setActiveStreamBackgroundTasks(
+  sessionId: string,
+  tasks: BackgroundTaskInfo[] | null,
+): void {
+  const sessionStreams = activeStreams.get(sessionId)
+  if (!sessionStreams) return
+  const next = Array.isArray(tasks) ? tasks.map((t) => ({ ...t })) : []
+  for (const entry of sessionStreams.values()) {
+    entry.backgroundTasks = next.map((t) => ({ ...t }))
+  }
+}
+
+/** 该会话当前所有流上的后台任务（去重，按出现顺序）。 */
+export function getActiveStreamBackgroundTasks(sessionId: string): BackgroundTaskInfo[] {
+  const sessionStreams = activeStreams.get(sessionId)
+  if (!sessionStreams) return []
+  return mergeBackgroundTasks(sessionStreams.values())
+}
+
+function mergeBackgroundTasks(entries: Iterable<StreamEntry>): BackgroundTaskInfo[] {
+  const seen = new Set<string>()
+  const out: BackgroundTaskInfo[] = []
+  for (const entry of entries) {
+    for (const task of entry.backgroundTasks) {
+      if (seen.has(task.id)) continue
+      seen.add(task.id)
+      out.push({ ...task })
+    }
+  }
+  return out
 }
 
 export function unregisterActiveStream(sessionId: string, streamId?: string): void {
@@ -114,6 +158,8 @@ export interface ActiveStreamInfo {
   sessionId: string
   startedAt: number
   streamCount: number
+  /** 正在等的后台任务（空数组 = 只在生成，没有后台等待）。 */
+  backgroundTasks: BackgroundTaskInfo[]
 }
 
 /** Sessions with at least one in-memory generation stream, newest first. */
@@ -125,7 +171,12 @@ export function listActiveStreams(): ActiveStreamInfo[] {
     for (const entry of streams.values()) {
       startedAt = Math.min(startedAt, entry.startedAt)
     }
-    result.push({ sessionId, startedAt, streamCount: streams.size })
+    result.push({
+      sessionId,
+      startedAt,
+      streamCount: streams.size,
+      backgroundTasks: mergeBackgroundTasks(streams.values()),
+    })
   }
   return result.sort((a, b) => b.startedAt - a.startedAt)
 }
@@ -254,93 +305,6 @@ export class AgentService {
       for (const entry of entries) unregisterActiveStream(sessionId, entry.streamId)
     }
     return { partial_content_preserved: true }
-  }
-
-  // ── Memory ────────────────────────────────────────────────────
-
-  async getMemory(
-    org: string,
-    layer: string,
-    query?: { clone?: string; date?: string },
-  ): Promise<MemoryContent | MemoryContent[]> {
-    const memService = getMemoryService()
-    if (layer === 'long-term') {
-      const content = memService.readLongTerm(org)
-      return { layer: 'long-term', content, token_count: Math.ceil(content.length / 4) }
-    }
-    if (layer === 'work') {
-      const content = memService.readRecentWorkMemory(org, 3)
-      return { layer: 'work', content, token_count: Math.ceil(content.length / 4) }
-    }
-    return { layer, content: '', token_count: 0 }
-  }
-
-  async addMemory(
-    org: string,
-    data: { layer: string; content: string; clone_name?: string },
-  ): Promise<{ token_count: number }> {
-    const memService = getMemoryService()
-    memService.appendWorkMemory(org, {
-      timestamp: new Date().toISOString(),
-      task: data.layer,
-      result: data.content,
-    })
-    return { token_count: Math.ceil(data.content.length / 4) }
-  }
-
-  async searchMemory(
-    org: string,
-    q: string,
-    limit?: number,
-  ): Promise<{ results: MemorySearchResult[]; degraded: boolean }> {
-    const memService = getMemoryService()
-    try {
-      const results = memService.searchSessionMemory(org, q, limit ?? 3)
-      return { results, degraded: false }
-    } catch {
-      return { results: [], degraded: true }
-    }
-  }
-
-  async rebuildFts(org: string): Promise<{ indexed_count: number }> {
-    return { indexed_count: 0 }
-  }
-
-  async archiveMemory(
-    org: string,
-    date?: string,
-  ): Promise<{ archived_date: string; essence_summary: string }> {
-    const targetDate = date ?? new Date(Date.now() - 86400000).toISOString().split('T')[0]
-    const memoryDir = getAgentMemoryDir()
-    const dailyDir = path.join(memoryDir, 'daily')
-    const archiveDir = path.join(dailyDir, 'archive')
-    const sourceFile = path.join(dailyDir, `${targetDate}.md`)
-
-    if (!fs.existsSync(sourceFile)) {
-      throw Object.assign(new Error(`Daily memory for ${targetDate} not found`), { code: 'NOT_FOUND' })
-    }
-
-    fs.mkdirSync(archiveDir, { recursive: true })
-    const content = fs.readFileSync(sourceFile, 'utf-8')
-    fs.copyFileSync(sourceFile, path.join(archiveDir, `${targetDate}.md`))
-    fs.unlinkSync(sourceFile)
-
-    // P2.6: emit memory.archived domain event
-    try {
-      const { getDomainEventBus } = require('./domain-event-bus')
-      const bus = getDomainEventBus()
-      bus.emit('memory.archived', {
-        memory_id: targetDate,
-        memory_type: 'daily_memory',
-        archived_at: new Date().toISOString(),
-      }, { source: 'agent-service' }).catch((err: unknown) => {
-        logError('memory.archived emit failed', err, { targetDate })
-      })
-    } catch (err) {
-      logError('memory.archived event setup failed', err, { targetDate })
-    }
-
-    return { archived_date: targetDate, essence_summary: content.slice(0, 500) }
   }
 
   // ── Clones ────────────────────────────────────────────────────

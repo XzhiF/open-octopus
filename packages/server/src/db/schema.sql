@@ -25,8 +25,8 @@ CREATE TABLE IF NOT EXISTS workspaces (
   source TEXT NOT NULL DEFAULT 'user',
   source_schedule_id TEXT,
   -- schema v41 (task-scheduler-decouple): direct task ownership. Replaces the
-  -- `source_schedule_id → schedules.origin_id` reverse lookup that composite parent-task
-  -- resolution used to walk. No FK (S2 polymorphic convention).
+  -- old `source_schedule_id → schedules.origin_id` reverse lookup.
+  -- No FK (S2 polymorphic convention).
   task_id TEXT,
   archive_status TEXT DEFAULT NULL
 );
@@ -90,6 +90,24 @@ CREATE TABLE IF NOT EXISTS executions (
   updated_at TEXT NOT NULL,
   FOREIGN KEY (workspace_id) REFERENCES workspaces(id)
 );
+
+-- 2b. Execution ⇄ 归属会话/任务（2026-11-03 消耗口径）
+-- 任务轮靠 executions.task_id 归集，但两类执行拿不到 task_id：
+--   · 系统辅助执行（验收规划）—— 挂 task_id 会撞 ux_exec_task_active 单实例闸、
+--     并混进看板/run_stats 的「轮」口径，所以插行时故意留 NULL；
+--   · 主对话里用 run_workflow 直接跑的工作流 —— 本就没有任务。
+-- 关联落这张表，任务账本 / 会话账本按它归集；execution_id 唯一，重复登记只更新。
+CREATE TABLE IF NOT EXISTS execution_links (
+  execution_id TEXT PRIMARY KEY,
+  session_id TEXT,
+  task_id TEXT,
+  kind TEXT NOT NULL,
+  phase_index INTEGER,
+  round_index INTEGER,
+  created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_execution_links_session ON execution_links(session_id);
+CREATE INDEX IF NOT EXISTS idx_execution_links_task ON execution_links(task_id);
 
 -- 3. Node Executions
 CREATE TABLE IF NOT EXISTS node_executions (
@@ -503,8 +521,8 @@ CREATE TABLE IF NOT EXISTS schedule_workspaces (
 -- What task launching uses instead:
 --   tasks.trigger_*       WHEN a task wants to run — the task's own data.
 --   executions.task_id    the launch instance IS the execution row; one row per v4
---                         round / composite child, status 'pending' = armed and
---                         waiting behind the concurrency gate.
+--                         round, status 'pending' = armed and waiting behind the
+--                         concurrency gate.
 --   ux_exec_task_active   「one task, one live instance」as a DB constraint.
 --
 -- A third job_type ('job') runs a registered TypeScript handler on the same cron /
@@ -518,18 +536,16 @@ CREATE INDEX IF NOT EXISTS idx_exec_task ON executions(task_id, created_at DESC)
   WHERE task_id IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_ws_task ON workspaces(task_id) WHERE task_id IS NOT NULL;
 
--- Single-instance latch over TASK INSTANCES: a root row (v3/composite coordinator and
--- everything pre-v44) plus every tagged v4 ROUND (parent_id = '0' OR phase_index IS NOT
--- NULL). A violating insert IS the 「已触发/排队中/本轮在飞」 answer — the pre-v41
--- equivalent was ~10 guard queries plus a borrowed UNIQUE index on schedule_executions.
+-- Single-instance latch over TASK INSTANCES: a root row (v3 and everything pre-v44)
+-- plus every tagged v4 ROUND (parent_id = '0' OR phase_index IS NOT NULL). A violating
+-- insert IS the 「已触发/排队中/本轮在飞」 answer — the pre-v41 equivalent was ~10 guard
+-- queries plus a borrowed UNIQUE index on schedule_executions.
 --
 -- Why rounds are IN on purpose (task-exec-tree, 2026-09-15): a v4 round now chains under
 -- the task's previous instance (parent_id = 上一轮), so the task's run history reads as
 -- ONE tree in the ws view. The chains must keep holding the latch or 「一个任务一个在飞」
--- would evaporate for every round after the first. What stays OUT are the composite
--- subunit ARMS (parent_id != '0' AND phase_index IS NULL): a composite legitimately runs
--- several arms of the same task at once — the coordinator root is the instance, the arms
--- are its internals.
+-- would evaporate for every round after the first. The instance predicate also keeps
+-- legacy parented non-phase rows out of the latch.
 --
 -- Written as NOT IN (terminal) rather than IN (active) ON PURPOSE: an execution is alive
 -- in five statuses (pending, running, paused, pending_approval, pending_resume — a
@@ -548,11 +564,8 @@ CREATE UNIQUE INDEX IF NOT EXISTS ux_exec_task_active ON executions(task_id)
 -- needs its own index is the job's per-tick scan across ALL tasks, which filters on
 -- status alone and therefore cannot use a task_id-leading index.
 --
--- Children are IN this predicate on purpose: a composite fan-out that overflows the
--- concurrency cap parks its child as a pending row — that IS the queue — and after 票03
--- deleted the scheduler's own claim loop, the job is the only owner left to pick it up.
--- The latch above counts instances but excludes the subunit ARMS, because a composite
--- may run several children of one task at once.
+-- The job is the only owner of the claim queue (票03 deleted the scheduler's own claim
+-- loop), so armed-but-not-started task launches park here exactly like any other launch.
 CREATE INDEX IF NOT EXISTS idx_exec_pending_claimable ON executions(created_at)
   WHERE task_id IS NOT NULL AND status = 'pending';
 

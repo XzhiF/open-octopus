@@ -11,9 +11,8 @@
 //   2. 预建失败 → 409：任务留 ready、**零实例**、零 schedule 行。
 //   3. 半途失败回滚：第二个项目不可解析 → ws 目录与 DB 行都不留（B0 顺序翻转）。
 //   4. 已绑定复用：createFromSpec 0 调用；worktree 手删后下一次触发自愈重建、不换绑。
-//   5. 形状闸门（原「v3/composite/仅 default → 预建整体跳过」）：预建已改为**无条件**，
-//      留在形状上的差异是 composite 建 coordinator（projects 被剥空）、
-//      project_ids 为空只产生 `default` 占位项（被过滤 → 零 worktree）。
+//   5. 形状：预建已改为**无条件**——project_ids 为空只产生 `default` 占位项
+//      （被过滤 → 零 worktree）。
 //   6. B1 入队项目预检（在 trigger 之前就把解析不动的项目挡住）。
 //
 // Anti-fake-run: fake HOME + 真 git repo（init+commit）+ 真 WorkspaceService +
@@ -33,7 +32,6 @@ import { SSEService } from "../services/sse"
 import { TasksService, TaskStatusConflictError } from "../services/tasks/tasks-service"
 import { TaskHomeService } from "../services/tasks/task-home-service"
 import { WorkspaceService } from "../services/workspace"
-import { COMPOSITION_WF_REF } from "../services/scheduler/orchestration-strategy"
 import type { RepoSyncService } from "../services/tasks/repo-sync-service"
 
 const ORG = "prebuild-org"
@@ -332,7 +330,7 @@ describe("触发预建 workspace+worktree（票03: 预建搬进 job 的 armTask�
     spy.mockRestore()
   })
 
-  it("形状：预建无条件 —— v3 任务也当场建 ws；composite 建 coordinator（projects 剥空）", async () => {
+  it("形状：预建无条件 —— v3 任务也当场建 ws；空 project_ids 则零 worktree", async () => {
     // v3（无 format）：旧版这里断言「预建跳过」，票03 之后预建没有闸门了。
     insertTask("t-v3", [REPO], {
       status: "ready",
@@ -345,42 +343,6 @@ describe("触发预建 workspace+worktree（票03: 预建搬进 job 的 armTask�
     expect(taskRow("t-v3").status).toBe("running")
     expect(execs.findLatestTaskInstance("t-v3")!.phase_index).toBeNull() // v3 不打 phase/round 标
     spyV3.mockRestore()
-
-    // composite（subunits≥2）：协调工作区按设计不带项目（spec D4），扇出由 composition 自己建
-    insertTask("t-co", [REPO], {
-      task_spec: JSON.stringify({
-        goal: "g",
-        ac: ["a"],
-        task_type: "coding",
-        subunits: [
-          {
-            name: "sub-A",
-            workspace_spec: { org: ORG, branch_prefix: "suba", projects: [{ name: REPO, source_path: "", group: "" }] },
-            workflow_ref: "built-in/a",
-            input_values: {},
-            skills: [],
-            resources: [],
-          },
-          {
-            name: "sub-B",
-            workspace_spec: { org: ORG, branch_prefix: "subb", projects: [{ name: REPO, source_path: "", group: "" }] },
-            workflow_ref: "built-in/b",
-            input_values: {},
-            skills: [],
-            resources: [],
-          },
-        ],
-      }),
-    })
-    const spyCo = vi.spyOn(wsService, "createFromSpec")
-    await service.triggerTask("t-co")
-    expect(spyCo).toHaveBeenCalledTimes(1)
-    expect((spyCo.mock.calls[0][0] as { projects: unknown[] }).projects).toEqual([])
-    expect(
-      (db.prepare("SELECT workflow_ref FROM executions WHERE task_id='t-co'").get() as { workflow_ref: string })
-        .workflow_ref,
-    ).toContain(COMPOSITION_WF_REF)
-    spyCo.mockRestore()
 
     // project_ids 为空 → materialize 只给 `default` 占位项 → 被过滤 ⇒ 零 worktree
     insertTask("t-df", [])

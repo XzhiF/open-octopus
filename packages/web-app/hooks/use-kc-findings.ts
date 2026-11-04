@@ -37,6 +37,11 @@ export interface UseKcFindingsOptions {
   onSettled?: () => void
   /** 回填成功后的编译投递回调（宿主 = feed.trackTask 挂 diff 卡跟随） */
   onBackfillCompile?: (taskId: string, rawPath: string) => void
+  /**
+   * 是否自动拉全库 open findings（默认 true）。
+   * 主 Chat 只用 adopt/ignore/fixStates 给回流卡接线，不需要全库收件箱 ⇒ false。
+   */
+  autoLoad?: boolean
 }
 
 export function viewToFindingCardData(v: KcFindingView): KcFindingCardData {
@@ -92,7 +97,7 @@ export function useKcFindings(opts: UseKcFindingsOptions = {}) {
     }
   }, [])
 
-  useEffect(() => { void load() }, [load])
+  useEffect(() => { if (opts.autoLoad !== false) void load() }, [load, opts.autoLoad])
 
   const patrol = useCallback(async () => {
     setPatrolling(true)

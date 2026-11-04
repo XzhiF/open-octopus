@@ -86,26 +86,7 @@ export const resourceRefSchema = z.object({
 })
 export type ResourceRef = z.infer<typeof resourceRefSchema>
 
-// ── Task pool v3.0 types (composite dispatch: spec = WHAT, workflow_ref = HOW) ──
-
-/** How subunit outputs are combined at the end of a composition workflow (D14).
- *  'synthesis' (default) = moa-style aggregation; 'merge' = opt-in structural merge. */
-export const integrationGoalSchema = z.object({
-  strategy: z.enum(["synthesis", "merge"]).default("synthesis"),
-  prompt: z.string().optional(),
-})
-
-/** One declarative subunit of a composite task (D5). Each materializes as its own
- *  workspace + child schedule at dispatch time (createFromSpec). */
-export const subunitSpecSchema = z.object({
-  name: z.string().min(1).max(100),
-  workspace_spec: workspaceSpecSchema,
-  workflow_ref: WorkflowRef.zodSchema(),
-  input_values: z.record(z.string(), z.string()).default({}),
-  skills: z.array(z.string()).default([]),
-  // v2-D13/SG7: workspace-scope resources → child workflow.requires at dispatch.
-  resources: z.array(resourceRefSchema).default([]),
-})
+// ── Task pool v3.0 types (spec = WHAT, workflow_ref = HOW) ──
 
 /** Path-safe slug 的单一规则 —— task 级主 slug（{@link taskSpecSchema}.slug，
  *  批次父目录名）与 phase 级 sub-slug（{@link taskPhaseSchema}.slug，批次子目录
@@ -219,7 +200,7 @@ export type AcceptanceRunbook = z.infer<typeof acceptanceRunbookSchema>
 export type TaskPhase = z.infer<typeof taskPhaseSchema>
 
 /** Structured task body produced by the task-author chatbot (D9). Stored as
- *  schedules.config.task_spec (v3.0). `subunits` present ⇒ composite task.
+ *  schedules.config.task_spec (v3.0).
  *
  *  Task-authoring v3 (ADR-0010/0011/0012, SW-BP2) adds authoring-side fields:
  *  `task_type` (coding|generic) + `skill_groups[]` (selected at creation then
@@ -244,8 +225,6 @@ export const taskSpecSchema = z.object({
   // Permissive authoring artifacts — typed but not over-constrained here.
   data_model: z.record(z.string(), z.unknown()).optional(),
   contracts: z.record(z.string(), z.unknown()).optional(),
-  subunits: z.array(subunitSpecSchema).optional(),
-  integration_goal: integrationGoalSchema.optional(),
   // v2-D13/SG7: workspace-scope resources → workflow.requires at dispatch.
   resources: z.array(resourceRefSchema).default([]),
   // v2-D8/D13: draft-scope resources prompt-injected into the task-author session.
@@ -275,7 +254,7 @@ export const taskSpecSchema = z.object({
     z.string().min(1).max(2048),
   ).optional(),
   // ── task-phase-redesign v4 (ticket 01, K4/K13) ──
-  // Sole v4 discriminator. Absent ⇒ v3/legacy (generic/composite keep the old
+  // Sole v4 discriminator. Absent ⇒ v3/legacy (generic tasks keep the old
   // chain: goal/ac double-confirm gate). Only "v4" is defined today.
   format: z.literal("v4").optional(),
   // 批次主 slug (2026-09-20 契约改版) — task 级唯一命名锚，Batch 目录的父层：
@@ -333,8 +312,8 @@ export const workflowConfigSchemaV1 = z.object({
 /** Shape of {@link workflowConfigSchema}.requires — mirrors `WorkflowDef.requires`
  *  (workflow.ts). 4 keys; 'clones' is omitted because tasks do not provision
  *  clones via config (clones are manual-install per ResourceProvisioner).
- *  {@link materializeTaskSpecToConfig} propagates tasks.resources[] /
- *  subunit.resources[] → here; EngineInitPhase UNION-merges config.requires →
+ *  {@link materializeTaskSpecToConfig} propagates tasks.resources[] → here;
+ *  EngineInitPhase UNION-merges config.requires →
  *  workflow.requires (does NOT override, SG7). */
 export const workflowConfigRequiresSchema = z.object({
   skills: z.array(z.string()).optional(),
@@ -344,7 +323,7 @@ export const workflowConfigRequiresSchema = z.object({
 })
 
 /** v2.0/v3.0 — workspace spec + workflow chain + retention.
- *  v3.0 adds optional `task_spec` (composite task body, D9). v2.0 configs (no
+ *  v3.0 adds optional `task_spec` (task body, D9). v2.0 configs (no
  *  task_spec) remain valid for backward compatibility — versioned TEXT, no migration.
  *  schema_version is a union so existing v2.0 fallbacks (scheduler-engine/service)
  *  stay type-safe: '2.0' is still assignable to WorkflowConfig.schema_version. */
@@ -403,7 +382,6 @@ export type AgentRetryPolicy = z.infer<typeof agentRetryPolicySchema>
 export type ProjectSpec = z.infer<typeof projectSpecSchema>
 export type WorkspaceSpec = z.infer<typeof workspaceSpecSchema>
 export type WorkflowChainItem = z.infer<typeof workflowChainItemSchema>
-export type SubunitSpec = z.infer<typeof subunitSpecSchema>
 export type TaskSpec = z.infer<typeof taskSpecSchema>
 export type WorkflowConfig = z.infer<typeof workflowConfigSchema>
 export type AgentConfig = z.infer<typeof agentConfigSchema>

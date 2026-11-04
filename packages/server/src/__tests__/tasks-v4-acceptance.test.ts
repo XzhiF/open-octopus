@@ -376,6 +376,13 @@ describe("AC1 — accepted: ledger + advance", () => {
     expect(body.next_action).toBe("dispatched")
     expect(body.dispatch).toMatchObject({ phase_index: 2, round_index: 1 })
 
+    // 2026-11-04: 新轮次必须再发一帧 running —— v4 任务验收后持久行一直是
+    // 'running'，同值快速路径会吞掉状态帧，chat 里就只剩首轮有「任务开始执行」卡。
+    expect(sseOf(TASK_STATUS_EVENT).map((e) => e.data)).toContainEqual({
+      task_id: taskId,
+      status: "running",
+    })
+
     // 真实派发落在同一 ws：executions tagged (2,1) + create() 带 phase-2 ref。
     const createCall = stubService.create.mock.calls.at(-1)!
     expect(createCall[0]).toBe(workspaceId)
@@ -545,6 +552,11 @@ describe("AC3 — rejected: feedback artefact + next round on the same phase", (
     expect(sseOf(PHASE_STATUS_UPDATE_EVENT)).toEqual([
       { event: PHASE_STATUS_UPDATE_EVENT, data: { task_id: taskId, phase_index: 1, status: "running", round_index: 2 } },
     ])
+    // 修复轮同样是新 episode：行一直是 running，也必须补发状态帧。
+    expect(sseOf(TASK_STATUS_EVENT).map((e) => e.data)).toContainEqual({
+      task_id: taskId,
+      status: "running",
+    })
   })
 
   it("round index follows the ledger (rejects+1) and the whole rejection chain stays traceable", async () => {

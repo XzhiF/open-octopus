@@ -144,6 +144,25 @@ describe("ExecutionLifecycle.create", () => {
     expect(exec.workflow_name).toBe("test")
   })
 
+  // 2026-11-03 消耗口径：无 task_id 的执行在创建时带 origin，归属与执行行同一次
+  // 落库 —— 这是「chat 关联的工作流都要进账」的统一入口，后续新代跑路径只传 origin。
+  it("origin 随创建写入 execution_links（chat_run / task_aux 共用同一入口）", () => {
+    const chatRun = lifecycle.create(workspaceId, {
+      workflow_ref: "test.yaml",
+      origin: { sessionId: "s-main", kind: "chat_run" },
+    }, ORG)
+    expect(db.prepare("SELECT session_id, task_id, kind FROM execution_links WHERE execution_id = ?").get(chatRun.id))
+      .toMatchObject({ session_id: "s-main", task_id: null, kind: "chat_run" })
+
+    db.prepare("UPDATE executions SET status = 'completed' WHERE id = ?").run(chatRun.id)
+    const aux = lifecycle.create(workspaceId, {
+      workflow_ref: "test.yaml",
+      origin: { sessionId: "s-main", taskId: "t-1", kind: "task_aux", phaseIndex: 2, roundIndex: 3 },
+    }, ORG)
+    expect(db.prepare("SELECT session_id, task_id, kind, phase_index, round_index FROM execution_links WHERE execution_id = ?").get(aux.id))
+      .toMatchObject({ session_id: "s-main", task_id: "t-1", kind: "task_aux", phase_index: 2, round_index: 3 })
+  })
+
   it("creates a child execution inheriting parent branch", () => {
     const root = lifecycle.create(workspaceId, { workflow_ref: "test.yaml" }, ORG)
     const child = lifecycle.create(workspaceId, {

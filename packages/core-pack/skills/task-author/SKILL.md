@@ -10,7 +10,7 @@ version: 3.5.2
 
 把用户的模糊需求转成 **v4 task_spec**：可拆成多个 Phase 的任务契约，经 [拆分确认] → [逐 phase 绑定] → 用户 [入队]，看板按 phase 逐轮调度，每 phase 末一道**人工验收 Gate**。
 
-> 本技能**不再起草 v3**（goal/ac 双确认 + skill_groups + preset 选流）；存量 v3/generic/composite 走旧链（K13 停用不物理删）。你产出的一律 `task_spec.format = "v4"`。
+> 本技能**不再起草 v3**（goal/ac 双确认 + skill_groups + preset 选流）；存量 v3/generic 走旧链（K13 停用不物理删）。你产出的一律 `task_spec.format = "v4"`。
 
 ## 契约：WHAT 固定、两端自由
 
@@ -28,12 +28,12 @@ version: 3.5.2
 ③ 拆分确认 gate      多 phase 时一表批问 —— 批准后先 spec-field 写 slug + phases 骨架，再产 spec；批准前不写 phases、不绑工作流
 ④ 逐 phase 产 spec   每 phase 走 matt 族内容轮，产 spec.md + issues/ 进 ./.scratch/<main-slug>/<sub-slug>/
 ⑤ 逐 phase 绑定      GET /api/workflow-presets → 推荐 + 骨架预填 input_values → 用户确认 → spec-field field=phases
-⑥ 交付              自查 v4 gate 齐备 → 把 TASK_ID 给用户，等 [入队]
+⑥ 交付              自查 v4 gate 齐备 → 把 TASK_ID 给用户；等 [入队] 或用户明确说「立即执行 / 入列」→ launch_task / enqueue_task
 ```
 
 ## 前置条件
 
-1. Octopus Server 在跑：主仓库 `3001`、worktree hash 端口（`pnpm port`）、prod `3099`。基础 URL `http://localhost:$PORT/api/tasks`。
+1. Octopus Server 在跑：主仓库 `3001`、worktree hash 端口（`pnpm port`）、prod `3000`（同源 UI）。基础 URL `http://localhost:$PORT/api/tasks`。
 2. 你的 cwd **恒为 task home**（生产 = 任务绑定 workspace 根下的 `.task/`，即 `{workspace.path}/.task`）—— 所有相对路径（含 matt 技能的 `<artifacts.dir>`）天然落在 home 内，Batch 目录直接写 `./.scratch/...`。
 3. 多项目路径**不假定 cwd**：只信 `context.md` 的 project 行。
 
@@ -230,7 +230,7 @@ curl -s -X POST "http://localhost:$PORT/api/tasks/$TASK_ID/spec-field" \
 | `resources` / `authoring_resources` | ResourceRef[] | 执行期 requires / 起草期注入（见「资源加载」） |
 | `acceptance_verify` / `acceptance_preview` / `acceptance_runbook` | 见「验收台预设」 | task 级，全 phase 复用 |
 
-返回 `{version}`；409 = 用户刚 [保存草稿] → 重新 `GET /api/tasks/:id` 取 version 重试。`workflowRef` 可解析集 = 已安装内置（`group/name`，如 `built-in/task-fix`）∪ task home `workflows/` 文件名，**不接受**全局 `~/.octopus/workflows/`；绑定时自查，ready gate 由 server 复核（不可解析 → `phase:<i>:workflow-ref`）。旧字段 `goal`/`ac`/`workflow_ref`/`subunits`/`integration_goal`/`skills` 是 v3 面，v4 起草一律不写。
+返回 `{version}`；409 = 用户刚 [保存草稿] → 重新 `GET /api/tasks/:id` 取 version 重试。`workflowRef` 可解析集 = 已安装内置（`group/name`，如 `built-in/task-fix`）∪ task home `workflows/` 文件名，**不接受**全局 `~/.octopus/workflows/`；绑定时自查，ready gate 由 server 复核（不可解析 → `phase:<i>:workflow-ref`）。旧字段 `goal`/`ac`/`workflow_ref`/`skills` 是 v3 面，v4 起草一律不写。
 
 ### 3. 编辑 draft（PUT，整-spec 乐观锁）
 
@@ -243,7 +243,9 @@ curl -s -X PUT "http://localhost:$PORT/api/tasks/$TASK_ID" \
 
 增量绑字段优先 §2；PUT 主要用来写 `autoAdvance`（spec-field 无此键；缺省=默认开，显式 `false` 才让每个 phase 停在人工 gate）与多字段一次性整-spec 保存。缺 If-Match → 428，冲突 → 409。v4 创建锁：PUT 不得去 `format` 旗标，省略 `phases` 时 server 保留现值。
 
-### 4. 入队 gate —— **用户**点 [入队] 才触发
+### 4. 入队 gate —— 用户点 [入队]，或在对话里明确让你执行
+
+主 Chat 里用户明确说「入列」→ `enqueue_task(confirmed=true)`；说「立即执行 / 现在开跑」→ `launch_task(confirmed=true)`（等价于点卡）。没有明确表态时只能用 `propose_launch` 出启动卡，不要自行执行。
 
 ```bash
 curl -s -X POST "http://localhost:$PORT/api/tasks/$TASK_ID/ready" | jq .

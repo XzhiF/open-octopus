@@ -3,14 +3,13 @@
 // ADR-0021 票03: the task→run materializer, moved VERBATIM out of
 // `services/scheduler/scheduler-service.ts` and into the task domain.
 //
-// Why it moves: this function knows what a TaskSpec is — goals, AC, subunits,
-// phases, resources, the composition threshold. The scheduler has no business
-// knowing any of that; its job is "run the definition you were given". While the
-// materializer lived on the scheduler side, `readyTask` had to reach across the
-// boundary to build the envelope's config, and that one call is how the two
-// domains ended up owning each other's data. The body is unchanged on purpose:
-// the shapes it produces are consumed byte-for-byte by workspace scaffolding and
-// the composition workflow, so this is a relocation, not a redesign.
+// Why it moves: this function knows what a TaskSpec is — goals, AC, phases,
+// resources, the workflow binding. The scheduler has no business knowing any of
+// that; its job is "run the definition you were given". While the materializer lived
+// on the scheduler side, `readyTask` had to reach across the boundary to build the
+// envelope's config, and that one call is how the two domains ended up owning each
+// other's data. The body is unchanged on purpose: the shapes it produces are consumed
+// byte-for-byte by workspace scaffolding, so this is a relocation, not a redesign.
 //
 // What it produces is now a LAUNCH PLAN rather than a schedule row's config: the
 // built-in task-lifecycle job materializes per launch (see task-lifecycle-service)
@@ -22,7 +21,6 @@ import type { TaskSpec, ResourceRef, WorkflowConfig } from "@octopus/shared"
 import fs from "fs"
 import path from "path"
 import { resolveInputValues, parseWorkflowInputDefs } from "../scheduler/template-resolver"
-import { COMPOSITION_WF_REF } from "../scheduler/orchestration-strategy"
 import { batchRelPath } from "./task-artifact-sync"
 
 /** phase-handoff-chaining (ticket 01): the internal input_values key carrying the
@@ -53,14 +51,6 @@ export const IS_FINAL_PHASE_KEY = "is_final_phase"
 export const TASK_ID_KEY = "task_id"
 export const OCTOPUS_API_KEY = "octopus_api"
 
-// SG9 (ticket 06): composite requires subunits.length >= 2 (1-subunit → simple
-// workflow_chain). The dispatch seam (TasksService.readyTask) uses the same
-// threshold; materialize + isCompositeTask (workflow-executor) mirror it so
-// simple 1-subunit tasks skip the coordinator-ws (ADR-0009 N+1→1 optimization).
-export function isCompositeTaskSpec(task_spec: TaskSpec): boolean {
-  return (task_spec.subunits?.length ?? 0) >= 2
-}
-
 /** One v4 phase fully resolved at the ready gate (absolute specPath verified
  *  against the task home; inputValues placeholder-resolved — management keys
  *  appended here by buildTaskLaunchConfig). */
@@ -80,19 +70,15 @@ export interface TaskV4PhaseConfig {
  *   1. task_spec is NOT included in the output — it lives in the tasks table
  *      (v2-D1); the plan carries only the runtime shape (workspace_spec +
  *      workflow_chain + requires), not the authoring WHAT.
- *   2. The composite path injects input_values.subunit_count on workflow_chain[0]
- *      so the composition-task workflow's Loop break_when reads it without
- *      re-parsing task_spec.subunits at runtime.
- *   3. The simple path (subunits < 2) uses the provided workflow_ref directly and
- *      skips the coordinator-ws (ADR-0009).
- *   4. `resources` (tasks.resources[] + every subunit's resources[]) → config.requires
+ *   2. The task's workflow_ref is used directly on workflow_chain[0].
+ *   3. `resources` (tasks.resources[]) → config.requires
  *      (skill→skills, agent→agent_files, command→commands, rule→rules; UNION + dedupe),
  *      omitted entirely when empty.
- *   5. taskArtifactsDir / taskWorkflowsDir land in workflow_chain[0].input_values as
+ *   4. taskArtifactsDir / taskWorkflowsDir land in workflow_chain[0].input_values as
  *      $vars.task_artifacts_dir / $vars.task_workflows_dir (ticket 08 D14 + ADR-0013),
  *      written LAST so they win over user-supplied input_values with the same key.
  *      Undefined for legacy tasks without a task home (key omitted, not errored).
- *   6. v4Phases (the ready gate's resolution) adds `format:'v4'` + `phases:[...]` and
+ *   5. v4Phases (the ready gate's resolution) adds `format:'v4'` + `phases:[...]` and
  *      PRE-LOADS workflow_chain[0] with phase 1. `phases`/`format` are intentional
  *      unknown keys for workflowConfigSchema (stripped on a strict re-parse, not
  *      rejected) — the persisted JSON carries them.
@@ -108,18 +94,13 @@ export function buildTaskLaunchConfig(
   taskWorkflowsDir?: string,
   v4Phases?: TaskV4PhaseConfig[],
 ): WorkflowConfig {
-  const isComposite = isCompositeTaskSpec(task_spec)
   const projects = project_ids.map((id) => ({ name: id, source_path: '', group: '' }))
   // branch_prefix must match /^[a-zA-Z0-9_-]+$/ (workspaceSpecSchema). Derive a
   // safe, stable prefix from org so multiple drafts in the same org share a prefix.
   const branchPrefix = `taskpool-${org}`.replace(/[^a-zA-Z0-9_-]/g, '-').slice(0, 50) || 'taskpool'
 
-  // Ticket 08: build the input_values for workflow_chain[0]. Simple tasks carry
-  // task_artifacts_dir directly (execute passes firstStep.input_values to the
-  // workflow). Composite tasks carry subunit_count (SG5) + task_artifacts_dir
-  // (the latter is read by buildCompositeInputValues at execute time, AC2).
   // task-workflow-presets (T4): resolve ${goal}/${ac} placeholders in
-  // task_spec.input_values and merge into simpleInputValues. Management keys
+  // task_spec.input_values and merge into the chain inputs. Management keys
   // (task_artifacts_dir, task_workflows_dir) are written LAST so they take
   // priority over any user-supplied input_values with the same key.
   const { values: resolvedInputs, unresolved } = resolveInputValues(
@@ -138,19 +119,14 @@ export function buildTaskLaunchConfig(
     )
   }
   const simpleInputValues: Record<string, unknown> = { ...resolvedInputs }
-  const compositeInputValues: Record<string, unknown> = {
-    subunit_count: task_spec.subunits?.length ?? 0,
-  }
   if (taskArtifactsDir) {
     simpleInputValues.task_artifacts_dir = taskArtifactsDir
-    compositeInputValues.task_artifacts_dir = taskArtifactsDir
   }
   // task-workflow-handoff (ADR-0013): task_workflows_dir injection (mirrors
   // task_artifacts_dir). The launch path reads it to copy {home}/workflows/
   // YAMLs into the execution ws `workflows/`.
   if (taskWorkflowsDir) {
     simpleInputValues.task_workflows_dir = taskWorkflowsDir
-    compositeInputValues.task_workflows_dir = taskWorkflowsDir
   }
   const config: WorkflowConfig = {
     schema_version: '3.0',
@@ -162,16 +138,9 @@ export function buildTaskLaunchConfig(
         ? projects
         : [{ name: 'default', source_path: '', group: '' }],
     },
-    workflow_chain: isComposite
-      ? [{
-          // SG5: inject subunit_count so the composition-task Loop break_when can
-          // read it without re-parsing task_spec.subunits at runtime. The subunits
-          // array itself is NOT injected here (task_spec is dropped); the canonical
-          // input source for iteration control is subunit_count.
-          workflow_ref: COMPOSITION_WF_REF,
-          input_values: compositeInputValues as unknown as Record<string, string>,
-        }]
-      : [{ workflow_ref: workflow_ref ?? '', input_values: simpleInputValues as unknown as Record<string, string> }],
+    workflow_chain: [
+      { workflow_ref: workflow_ref ?? '', input_values: simpleInputValues as unknown as Record<string, string> },
+    ],
     max_retain: 10,
   }
   // Re-attach skills post-validation (survives JSON.stringify; Zod would strip on
@@ -179,8 +148,8 @@ export function buildTaskLaunchConfig(
   if (skills?.length) {
     ;(config as WorkflowConfig & { skills?: string[] }).skills = skills
   }
-  // SG7 (ticket 07): propagate task-level + subunit-level resources → config.requires.
-  // UNION + dedupe across all sources (task.resources + each subunit.resources).
+  // SG7 (ticket 07): propagate task-level resources → config.requires.
+  // UNION + dedupe across all sources (task.resources).
   // Omitted entirely when no resources → config.requires stays undefined (backward
   // compat: 06's AC4 doesn't expect requires, and existing definitions have none).
   const requires = buildConfigRequires(task_spec, resources)
@@ -214,18 +183,14 @@ export function buildTaskLaunchConfig(
   return config
 }
 
-/** SG7 (ticket 07): build config.requires from task-level resources[] +
- *  task_spec.subunits[].resources[] (UNION, deduped). Returns undefined when
- *  the union is empty (no resources anywhere) so the config stays minimal.
+/** SG7 (ticket 07): build config.requires from task-level resources[] (UNION,
+ *  deduped). Returns undefined when the union is empty so the config stays minimal.
  *  Mapping: skill→skills, agent→agent_files, command→commands, rule→rules. */
 export function buildConfigRequires(
   task_spec: TaskSpec,
   taskResources?: ResourceRef[],
 ): { skills: string[]; agent_files: string[]; commands: string[]; rules: string[] } | undefined {
   const all: ResourceRef[] = [...(taskResources ?? []), ...(task_spec.resources ?? [])]
-  for (const su of task_spec.subunits ?? []) {
-    all.push(...(su.resources ?? []))
-  }
   if (all.length === 0) return undefined
 
   const skills = new Set<string>()
@@ -253,38 +218,6 @@ export function buildConfigRequires(
     return undefined
   }
   return result
-}
-
-/** Composite-task input_values for the composition workflow — the verbatim
- *  WorkflowExecutor.buildCompositeInputValues rule, re-homed with the rest of the
- *  task knowledge. The composition Loop consumes `subunits` as REAL objects
- *  (exposing $iteration.subunit), `subunit_count` for its break_when, `goal` as the
- *  moa topic and `integration_prompt` as the aggregator prompt; these mirror
- *  composition-task.yaml's `variables` block.
- *
- *  AC2: PRESERVES task_artifacts_dir from the plan's chain[0] — this function
- *  REPLACES firstStep.input_values wholesale, so without the carry-over the injected
- *  management key would be dropped (the "chain input_values replacement drops
- *  injected keys" hazard SW-BP7).
- *
- *  The scheduler version had to reach back into the tasks table through the
- *  schedule's origin_id to find the spec; here the caller hands the spec over
- *  directly, which is the whole point of the relocation. */
-export function buildCompositeInputValues(
-  task_spec: TaskSpec,
-  plan: WorkflowConfig,
-): Record<string, unknown> {
-  const chainInputValues = plan.workflow_chain[0]?.input_values as Record<string, unknown> | undefined
-  const taskArtifactsDir = chainInputValues?.task_artifacts_dir
-  const artifactsEntry = taskArtifactsDir ? { task_artifacts_dir: taskArtifactsDir } : {}
-  const subunits = task_spec.subunits ?? []
-  return {
-    subunits,
-    subunit_count: subunits.length,
-    goal: task_spec.goal ?? '',
-    integration_prompt: task_spec.integration_goal?.prompt ?? '',
-    ...artifactsEntry,
-  }
 }
 
 /** Flows that execute a phase's authored Batch directory (spec.md + issues/)
@@ -516,7 +449,7 @@ export function resolveTaskLaunchStep(args: {
     }
   }
 
-  // v3 / legacy / composite: chain[0] is the whole run (task materialization always
+  // v3 / legacy: chain[0] is the whole run (task materialization always
   // emits a single-step chain; multi-step chains are the scheduler's own business).
   const first = plan.workflow_chain[0]
   return {

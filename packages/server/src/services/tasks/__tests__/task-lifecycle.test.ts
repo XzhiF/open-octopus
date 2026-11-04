@@ -430,15 +430,14 @@ describe("task-lifecycle — the run history is one tree (v44)", () => {
     ).toThrow(/UNIQUE/)
   })
 
-  it("a chained round launches through the TASK path (startRow), not the arm path", async () => {
+  it("a chained round launches through the TASK path (startRow)", async () => {
     insertV4Task("t5", { phases: 3 })
     await round("t5")
     const r2 = svc.armTask("t5", { phaseIndex: 2 })
     expect(svc.launchQueued().launched).toBe(1)
-    expect(stub.started).toContain(r2) // startChildRun would have failed on a completed parent
+    expect(stub.started).toContain(r2)
     await complete(r2, "completed")
-    // Only the instance finalize emits the round's 待验收 + task_execution — the child
-    // path returns before collectRound/emitPhaseAwaitingReview ever runs.
+    // The instance finalize emits the round's 待验收 + task_execution.
     const done = events.find(
       (e) => (e.data as { execution_id?: string })?.execution_id === r2 && (e.data as { phase_index?: number })?.phase_index === 2,
     )
@@ -457,7 +456,7 @@ describe("task-lifecycle — the run history is one tree (v44)", () => {
     expect(execs.findById(r2)!.parent_id).toBe("0")
   })
 
-  it("listTaskChildRuns keeps ARMS (untagged children); chained rounds are instances", () => {
+  it("listTaskInstances keeps roots + chained rounds; the chained tip wins latest", () => {
     insertTask("t7")
     const ws = bindWorkspace("t7")
     db.prepare(
@@ -468,12 +467,6 @@ describe("task-lifecycle — the run history is one tree (v44)", () => {
       `INSERT INTO executions (id, workspace_id, parent_id, workflow_ref, workflow_name, status, org, created_at, updated_at, task_id, phase_index, round_index)
        VALUES ('c-r2', ?, 'c-r1', 'w', 'w', 'running', 'xzf', datetime('now'), datetime('now'), 't7', 2, 1)`,
     ).run(ws)
-    // An arm: task_id set, parent set, NO phase tag → the subunit predicate, not an instance.
-    db.prepare(
-      `INSERT INTO executions (id, workspace_id, parent_id, child_index, workflow_ref, workflow_name, status, org, created_at, updated_at, task_id)
-       VALUES ('c-arm', ?, 'c-r2', 0, 'w', 'w', 'running', 'xzf', datetime('now'), datetime('now'), 't7')`,
-    ).run(ws)
-    expect(execs.listTaskChildRuns("t7").map((r) => r.id)).toEqual(["c-arm"])
     // Both r1 (root) and r2 (chained) count as instances; the tip wins latest.
     expect(execs.listTaskInstances("t7").map((r) => r.id).sort()).toEqual(["c-r1", "c-r2"])
     expect(execs.findLatestTaskInstance("t7")!.id).toBe("c-r2")
@@ -765,22 +758,6 @@ describe("task-lifecycle — every red run carries its reason (票05)", () => {
     })
     await complete(execId, "failed")
     expect(String(reasonOn(execId))).toBe("pnpm build 退出码 1")
-  })
-
-  it("the composite aggregation says how many arms it folded in", async () => {
-    // The coordinator's own workflow completes green even when an arm died (票04), so the
-    // only truthful line available here is the count — and it must reach the row, or the
-    // card flips red with nothing to point at.
-    const execId = armRunning("r5")
-    const wsId = execs.findById(execId)!.workspace_id
-    db.prepare(
-      `INSERT INTO executions (id, workspace_id, parent_id, child_index, workflow_ref, workflow_name,
-         name, status, org, created_at, updated_at, task_id)
-       VALUES (?, ?, ?, 0, 'wf/a', 'a', 'subunit-a', 'failed', ?, datetime('now'), datetime('now'), 'r5')`,
-    ).run(`${execId}-child`, wsId, execId, ORG)
-    await complete(execId, "completed")
-    expect(execs.findById(execId)!.status).toBe("failed")
-    expect(String(reasonOn(execId))).toBe("1 个子单元执行失败")
   })
 
   it("finalize touches nothing on a green run — a leftover key is filtered by the read model", async () => {

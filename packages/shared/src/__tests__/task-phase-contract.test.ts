@@ -64,7 +64,6 @@ describe("AC2 contract — TaskPhase Zod single source ↔ spec shape", () => {
       "goal_confirmed",
       "ac_confirmed",
       "input_values",
-      "subunits",
     ]) {
       expect(keys, `v3 key '${legacy}' must remain`).toContain(legacy)
     }

@@ -7,7 +7,6 @@
 //        → 409 missing includes "input:idea"
 //   AC2: simple v3 task with input_values containing ${goal} → resolves → passes
 //   AC3: simple v3 task with literal input_values → passes
-//   AC4: composite task (subunits >= 2) → skips input check
 //   AC5: workflow with no required inputs → no input:<name> in missing
 
 import { describe, it, expect, beforeAll, afterAll } from "vitest"
@@ -245,50 +244,6 @@ describe("T5: ready-gate required inputs validation (integration)", () => {
       expect(body.missing).not.toContain("input:idea")
     } else {
       expect(res.status).toBe(200)
-    }
-  })
-
-  it("AC4: composite task skips input check", async () => {
-    const id = insertTask(db, {
-      name: "E2E_TD_composite",
-      task_spec: {
-        goal: "Big task",
-        ac: ["works"],
-        task_type: "coding",
-        goal_confirmed: true,
-        ac_confirmed: ["works"],
-        skill_groups: [],
-        decisions: [],
-        resources: [],
-        authoring_resources: [],
-        // No input_values — would fail for simple task
-        subunits: [
-          {
-            name: "sub1",
-            workspace_spec: { org: ORG, branch_prefix: "test", projects: [{ name: "p", source_path: "", group: "" }] },
-            workflow_ref: "flow1",
-            input_values: {},
-            skills: [],
-            resources: [],
-          },
-          {
-            name: "sub2",
-            workspace_spec: { org: ORG, branch_prefix: "test", projects: [{ name: "p", source_path: "", group: "" }] },
-            workflow_ref: "flow2",
-            input_values: {},
-            skills: [],
-            resources: [],
-          },
-        ],
-      },
-      // No workflow_ref needed for composite (uses composition-task)
-    })
-
-    const res = await app.request(`/api/tasks/${id}/ready`, { method: "POST" })
-    // Composite tasks don't check input:<name> — they skip the check entirely
-    if (res.status === 409) {
-      const body = await res.json() as { missing: string[] }
-      expect(body.missing.some(m => m.startsWith("input:"))).toBe(false)
     }
   })
 

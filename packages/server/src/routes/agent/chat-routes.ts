@@ -13,10 +13,11 @@ import fs from 'fs'
 import path from 'path'
 import os from 'os'
 import { createAgentError } from './middleware'
+import { createTurnStream, DEFAULT_HEARTBEAT_MS } from '../../services/agent/turn-stream'
 import { SystemPromptAssembler } from '../../services/agent/system-prompt-assembler'
 import { getNotificationService } from '../../services/agent/notification-service'
 import { getSessionCompressService } from '../../services/agent/session-compress-service'
-import { getAgentService, isStreamActive, registerActiveStream, unregisterActiveStream } from '../../services/agent/agent-service'
+import { getAgentService, getActiveStreamBackgroundTasks, isStreamActive, registerActiveStream, setActiveStreamBackgroundTasks, unregisterActiveStream } from '../../services/agent/agent-service'
 import { getSafetyInterceptor } from '../../services/agent/safety-interceptor'
 import { getAgentDir, getDailyMemoryDir, getExperiencesDir, getDebugTracesDir } from '../../services/agent/paths'
 import { deriveSessionTitle } from '../../services/agent/session-title'
@@ -34,6 +35,7 @@ import { TurnDebugRecorder, type TurnDebugIdentity } from '../../services/agent/
 import { expertName } from '@octopus/shared'
 import { createWorkflowToolServer } from '../../services/chat/workflow-tools'
 import { createTaskToolServer } from '../../services/chat/task-tools'
+import { createMemoryToolServer, resolveLongTermConsent } from '../../services/chat/memory-tools'
 import { getSlashCommands, rememberSlashCommands } from '../../services/chat/slash-commands'
 import type { TokenUsageDAO } from '../../db/dao/token-usage-dao'
 import type { EffortLevel } from '@octopus/shared'
@@ -51,6 +53,46 @@ export interface ChatRouteDeps {
   sse?: import('../../services/sse').SSEService
   /** 2026-10-28 task-thread: one main chat per task, identity by task state. */
   taskThread?: TaskThreadService
+  /** Keep-alive interval for the chat SSE (default 15s; tests pass a small value). */
+  heartbeatMs?: number
+}
+
+/** Structured failure kept on the turn outcome and persisted on the message. */
+export type TurnErrorInfo = {
+  code: string
+  message: string
+  /** Advisory for a future retry layer — P0 only surfaces it. */
+  retryable?: boolean
+}
+
+type TryClaudeSDKOutcome = {
+  generated: boolean
+  /** The turn ended in a provider/stream failure (never a canned "success"). */
+  failed?: boolean
+  /** The user stopped the turn — finalized as interrupted. */
+  aborted?: boolean
+  error?: TurnErrorInfo
+  /** Payload for the terminal `done` frame. */
+  done?: Record<string, unknown>
+}
+
+/** Transient failure classes a future retry policy may act on. */
+const RETRYABLE_ERROR_CODES = new Set([
+  'IDLE_TIMEOUT',
+  'TIMEOUT',
+  'timeout',
+  'RATE_LIMIT',
+  'rate_limited',
+  'TRANSPORT',
+  'SERVER',
+  'EMPTY_RESPONSE',
+  'network_error',
+  'overloaded',
+])
+
+function isRetryableErrorCode(code: string | undefined): boolean {
+  if (!code) return false
+  return RETRYABLE_ERROR_CODES.has(code) || RETRYABLE_ERROR_CODES.has(code.toLowerCase())
 }
 
 /** Debug inspector identity for this turn (base / legacy expert / clone). */
@@ -89,7 +131,7 @@ function turnDebugIdentity(
 }
 
 export function createChatRoutes(deps: ChatRouteDeps): Hono {
-  const { sessionDAO: sessionDao, safetyDAO, scheduleConfigDAO, tokenUsageDao, sse, taskThread } = deps
+  const { sessionDAO: sessionDao, safetyDAO, scheduleConfigDAO, tokenUsageDao, sse, taskThread, heartbeatMs } = deps
   const app = new Hono()
 
   // ── Session running state（"关闭不丢失"）──────────────────────────
@@ -104,6 +146,8 @@ export function createChatRoutes(deps: ChatRouteDeps): Hono {
     return c.json({
       running: isStreamActive(id),
       partial: sessionDao.hasStreamingMessage(id),
+      // resume 回来时补显示「等待后台」——SSE 不重连也能看到在跑什么。
+      background_tasks: getActiveStreamBackgroundTasks(id),
     })
   })
 
@@ -283,6 +327,17 @@ export function createChatRoutes(deps: ChatRouteDeps): Hono {
         identity: thread.identity,
       })
     }
+    // Memory tools are for the free main chat only. Task threads are identity-
+    // driven and their write surface is owned by the path guard — a doer turn
+    // must not write task-local detail into the main agent's memory. The tool
+    // list stays constant for free chats; only remember's consent verdict
+    // changes per turn (cached prompt prefix stays intact).
+    if (!thread) {
+      toolServers['octopus-memory'] = createMemoryToolServer(
+        { sessionId: id, org },
+        { longTermConsent: resolveLongTermConsent(body.message ?? '') },
+      )
+    }
     const mcpServers = Object.keys(toolServers).length > 0 ? toolServers : undefined
 
     // ── Trigger self-check on first message (E2E-055) ──────────────
@@ -298,6 +353,13 @@ export function createChatRoutes(deps: ChatRouteDeps): Hono {
       const abortController = new AbortController()
       const abortStream = () => { aborted = true; abortController.abort() }
       const streamId = registerActiveStream(id, abortStream)
+      // P0-3: terminal-frame guarantee + keep-alive. Every write below goes
+      // through this wrapper; the turn's last frame is emitted exactly once by
+      // `turn.terminate(...)`. A heartbeat every 15s lets the browser tell a
+      // long model think apart from a dead socket.
+      const turn = createTurnStream(stream)
+      turn.startHeartbeat(heartbeatMs ?? DEFAULT_HEARTBEAT_MS)
+      const turnStream = turn.stream
       // Wake turns have no client-owned SSE; tell the open chat to tail the
       // server-side partial (same stream-resume path as reopening a dialog).
       const notifyWake = (phase: 'started' | 'done') => {
@@ -322,7 +384,7 @@ export function createChatRoutes(deps: ChatRouteDeps): Hono {
               marker: quickEditMarkerFor(thread.takeover),
             })
             for (const cm of commits) {
-              await stream.writeSSE({
+              await turnStream.writeSSE({
                 event: 'quick_edit_commit',
                 data: JSON.stringify({ sessionId: id, taskId: thread.task.id, ...cm }),
               })
@@ -332,10 +394,10 @@ export function createChatRoutes(deps: ChatRouteDeps): Hono {
 
       try {
         // Step 1: Auto-compress long sessions
-        await autoCompressSession(id, org, stream)
+        await autoCompressSession(id, org, turnStream)
 
         if (aborted) {
-          await stream.writeSSE({ event: 'done', data: JSON.stringify({ session_id: id, aborted: true }) })
+          await turn.terminate('done', { session_id: id, aborted: true })
           return
         }
 
@@ -379,7 +441,7 @@ export function createChatRoutes(deps: ChatRouteDeps): Hono {
                 transientReminder: !!turnReminder,
               },
             })
-        const llmResult = await tryClaudeSDK(body.message!, systemPrompt, stream, id, org, sessionDao, undefined, undefined, model, effort, {
+        const llmResult = await tryClaudeSDK(body.message!, systemPrompt, turnStream, id, org, sessionDao, undefined, undefined, model, effort, {
           resumeSessionId,
           providerMessage,
           agents,
@@ -399,11 +461,22 @@ export function createChatRoutes(deps: ChatRouteDeps): Hono {
             : undefined,
         })
 
-        // Step 3: Fallback if Claude SDK unavailable. NEVER after a user stop:
-        // the partial row is already finalized as「本轮被截断」— appending the
-        // canned fallback would replace the user's interrupted turn with noise.
-        if (!llmResult.generated && !aborted) {
-          await sendFallbackResponse(body.message!, stream, id, org, sessionDao, undefined)
+        // Step 3: exactly one terminal frame, always. The old canned
+        // `sendFallbackResponse` made every SDK failure look like an assistant
+        // reply ("收到消息…") and could append a second bubble after a partial.
+        // A failure is now reported as a failure (and persisted by
+        // tryClaudeSDK); a stop closes with `done{aborted}` so any other tab
+        // tailing this stream settles too.
+        if (llmResult.aborted) {
+          await turn.terminate('done', { session_id: id, aborted: true })
+        } else if (llmResult.failed) {
+          await turn.terminate('error', {
+            session_id: id,
+            code: llmResult.error?.code ?? 'PROVIDER_ERROR',
+            message: llmResult.error?.message ?? '本轮运行失败',
+          })
+        } else {
+          await turn.terminate('done', llmResult.done ?? { session_id: id })
         }
         // 新建开发任务：首轮结束后让 AI 总结任务标题（名字仍等于这条消息的
         // 确定性截串才替换）。放在主调用之后跑 —— 起名请求若与主流并发，会
@@ -413,10 +486,15 @@ export function createChatRoutes(deps: ChatRouteDeps): Hono {
         }
       } catch (err: unknown) {
         const msg = err instanceof Error ? err.message : String(err)
-        await stream.writeSSE({ event: 'error', data: JSON.stringify({ code: 'STREAM_ERROR', message: msg }) })
+        console.error('[agent-chat] turn failed before settlement:', msg)
+        await turn.terminate('error', { session_id: id, code: 'STREAM_ERROR', message: msg })
       } finally {
+        setActiveStreamBackgroundTasks(id, null)
         unregisterActiveStream(id, streamId)
         notifyWake('done')
+        // Closes after the terminal frame has been flushed (terminate awaits
+        // the serialized write chain).
+        turn.close()
       }
     })
   })
@@ -506,12 +584,18 @@ export function createChatRoutes(deps: ChatRouteDeps): Hono {
       /** Hard-abort the provider query (stop button) — ends the SDK iterator now. */
       abortSignal?: AbortSignal
     },
-  ): Promise<{ generated: boolean }> {
+  ): Promise<TryClaudeSDKOutcome> {
     const resumeSessionId = extra?.resumeSessionId
     const providerMessage = extra?.providerMessage ?? message
     const turnDebug = extra?.turnDebug
     let resultNotified = false
     let generated = false
+    /** 首轮 result 之后又来了一条 assistant message = 后台任务唤醒的续轮。 */
+    let continuationMarked = false
+    /** 当前 assistant message 是否已经流过正文（result 只在没流过时补内容）。 */
+    let streamedSinceMessageStart = false
+    /** First provider/stream failure. Set once — later chunks are ignored. */
+    let failure: TurnErrorInfo | undefined
     // 用户已按停止：停止后只继续消费账本所需的 result/error（见 consume）。
     let stopped = false
     let fullContent = ''
@@ -552,8 +636,9 @@ export function createChatRoutes(deps: ChatRouteDeps): Hono {
     // interrupted=true 是「停止按钮」的语义：行必须落成「本轮被截断」，否则
     // 用户中断后重开只看到一条普通消息，好像那一轮没发生过（2026-10-29 用户）。
     // 首次 flush 之前就被停掉时行还没插过 —— 这里补插，内容一点不丢。
-    const finalizePartial = (interrupted: boolean) => {
-      const hasPayload = !!partialRowId || !!fullContent || !!fullThinking || currentToolCalls.length > 0
+    // error 存在时同样必须留痕（即使没有正文）：刷新后仍能看到「本轮运行失败」。
+    const finalizePartial = (interrupted: boolean, error?: TurnErrorInfo) => {
+      const hasPayload = !!partialRowId || !!fullContent || !!fullThinking || currentToolCalls.length > 0 || !!error
       // 非中断路径（错误收尾）没内容就没有可收的；中断路径必须留痕 —— 模型还没
       // 吐第一个字就被停时，这一行空的「本轮被截断」就是用户要的中断状态。
       if (!hasPayload && !interrupted) return
@@ -566,9 +651,14 @@ export function createChatRoutes(deps: ChatRouteDeps): Hono {
             return terminal ? tc : { ...tc, status: 'fail' }
           }),
         )
-        const meta: { timeline?: TurnTimelineEntry[]; interrupted?: boolean } = {}
+        const meta: {
+          timeline?: TurnTimelineEntry[]
+          interrupted?: boolean
+          error?: TurnErrorInfo
+        } = {}
         if (turnTimeline.length > 0) meta.timeline = turnTimeline
         if (interrupted) meta.interrupted = true
+        if (error) meta.error = error
         const metadata = Object.keys(meta).length > 0 ? JSON.stringify(meta) : null
         if (partialRowId) {
           sessionDao.updateMessage(assistantMsgId, {
@@ -644,6 +734,16 @@ export function createChatRoutes(deps: ChatRouteDeps): Hono {
           ...(extra?.onBeforeToolCall ? { onBeforeToolCall: extra.onBeforeToolCall } : {}),
           // 流式输入模式：停止按钮用 interrupt() 而非硬杀，换取带用量的 result。
           interruptible: true,
+          // 2026-11-04：`run_in_background` 的 Bash 在首轮 result 后仍在跑；
+          // 不继续消费的话 query 会被关掉，后台任务完成后的唤醒永远到不了
+          // （用户表现为「Agent 说稍后汇报，然后会话死掉」）。
+          awaitBackgroundTasks: true,
+          // AskUserQuestion 交互接管（2026-11-02）：与 clone-runtime 同构。
+          // 10-28 任务线程把 task-author 搬进主对话后这里漏了开关 —— SDK 在
+          // headless 下直接「执行」AskUserQuestion 并回空 answers，模型把
+          // 「用户没回答」当默认继续跑完。deny 后模型收轮，等用户答完以下一条
+          // user 消息 resume 续流。
+          interactionSession: true,
           ...(extra?.abortSignal ? { abortSignal: extra.abortSignal } : {}),
         })) {
           // 停止按钮（本路由闭包的 aborted）优先；`stream._aborted` 是旧判据，
@@ -654,7 +754,19 @@ export function createChatRoutes(deps: ChatRouteDeps): Hono {
           if (stopped && chunk.type !== 'result' && chunk.type !== 'error') continue
           turnDebug?.observe(chunk)
           switch (chunk.type) {
+            case 'message_start':
+              // 后台任务唤醒的续轮（2026-11-04）：首轮已经出过正文时，两段之间
+              // 补一个空行，避免「服务启动中服务就绪…」粘成一句。
+              if (generated && !continuationMarked) {
+                continuationMarked = true
+                const separator = fullContent ? '\n\n' : ''
+                fullContent += separator
+                await stream.writeSSE({ event: 'assistant_continue', data: JSON.stringify({ separator }) })
+              }
+              streamedSinceMessageStart = false
+              break
             case 'text_delta':
+              streamedSinceMessageStart = true
               fullContent += chunk.content
               pushTimeline({ kind: 'text', text: chunk.content })
               await stream.writeSSE({ event: 'text_delta', data: JSON.stringify({ delta: chunk.content, content: fullContent }) })
@@ -690,6 +802,12 @@ export function createChatRoutes(deps: ChatRouteDeps): Hono {
               await stream.writeSSE({ event: 'tool_call', data: JSON.stringify({ type: 'input', tool_call_id: chunk.toolCallId, tool_name: chunk.toolName, input: chunk.toolInput }) })
               break
             }
+            case 'ask_user_question':
+              // interactionSession deny 后的显式问题标记（2026-11-02）：
+              // 与 clone / main-agent 路由同构，前端据此补全 AskUserQuestion
+              // toolCall，回合结束后渲染可回答的问题卡。
+              await stream.writeSSE({ event: 'ask_user_question', data: JSON.stringify({ tool_call_id: chunk.toolCallId, questions: chunk.questions }) })
+              break
             case 'tool_result': {
               const tc = currentToolCalls.find(t => t.id === chunk.toolCallId)
               if (tc) { tc.result = chunk.content; tc.status = chunk.isError ? 'fail' : 'result' }
@@ -698,6 +816,12 @@ export function createChatRoutes(deps: ChatRouteDeps): Hono {
             }
             case 'status':
               await stream.writeSSE({ event: 'status', data: JSON.stringify({ status: chunk.status }) })
+              break
+            case 'background_tasks':
+              // 后台任务电平：注册表供 header / running 探测，SSE 供对话内
+              // 的「后台运行中：…」工作行。空数组 = 后台已清空、CLI 即将唤醒。
+              setActiveStreamBackgroundTasks(sessionId, chunk.tasks)
+              await stream.writeSSE({ event: 'background_tasks', data: JSON.stringify({ tasks: chunk.tasks }) })
               break
             case 'slash_commands':
               // CLI-advertised command set for this session (skills/plugins
@@ -708,6 +832,7 @@ export function createChatRoutes(deps: ChatRouteDeps): Hono {
             case 'local_command_output':
               // Some CLI versions surface local-command text here instead of an
               // assistant message. Either way it is the turn's reply.
+              streamedSinceMessageStart = true
               fullContent += chunk.content
               pushTimeline({ kind: 'text', text: chunk.content })
               await stream.writeSSE({ event: 'text_delta', data: JSON.stringify({ delta: chunk.content, content: fullContent }) })
@@ -723,10 +848,13 @@ export function createChatRoutes(deps: ChatRouteDeps): Hono {
               // Locally-executed slash commands (/context, /compact, …) answer
               // through result.content only — no stream deltas exist. Without
               // this fallback the reply is dropped and the turn never finishes.
-              if (!stopped && chunk.content && !fullContent) {
-                fullContent = chunk.content
-                pushTimeline({ kind: 'text', text: chunk.content })
-                await stream.writeSSE({ event: 'text_delta', data: JSON.stringify({ delta: chunk.content, content: fullContent }) })
+              // 后台唤醒的续轮同理：这一段没流过正文时补上（含空行分隔）。
+              if (!stopped && chunk.content && !streamedSinceMessageStart) {
+                const separator = fullContent ? '\n\n' : ''
+                const appended = separator + chunk.content
+                fullContent += appended
+                pushTimeline({ kind: 'text', text: appended })
+                await stream.writeSSE({ event: 'text_delta', data: JSON.stringify({ delta: appended, content: fullContent }) })
               }
               // Native resume: persist the SDK session id so the next turn (and
               // its prompt cache prefix) continues instead of starting cold.
@@ -774,12 +902,20 @@ export function createChatRoutes(deps: ChatRouteDeps): Hono {
               if (resume && !generated && !fullContent && isResumeFailure(chunk.message)) {
                 throw RESUME_FAILED
               }
-              // 用户已按停止：客户端早断开，别再写尾帧。
+              // Terminal frames are emitted by the route exactly once, after
+              // the turn settles. Record the failure and stop consuming — the
+              // route persists the error row and sends `error` as the last
+              // frame (P0-3). A second terminal write here used to race it.
               if (!stopped) {
-                await stream.writeSSE({ event: 'error', data: JSON.stringify({ code: chunk.code, message: chunk.message }) })
+                failure = {
+                  code: chunk.code || 'PROVIDER_ERROR',
+                  message: chunk.message || '未知错误',
+                  retryable: isRetryableErrorCode(chunk.code),
+                }
               }
               break
           }
+          if (failure) break
           if (!stopped) maybeFlushPartial()
         }
       }
@@ -812,10 +948,29 @@ export function createChatRoutes(deps: ChatRouteDeps): Hono {
       }
 
       // 用户按停止 ≠ 失败：输出留成一条「本轮被截断」的实录行（interrupted），
-      // 会话本身照常可续聊。不写 done 帧 —— 客户端已断开，下一次它自己重载。
+      // 会话本身照常可续聊。路由发送 done{aborted} 让其它正在 tail 的窗口也收口。
       const aborted = stopped || (extra?.isAborted?.() ?? false)
 
-      if (!aborted && generated && fullContent) {
+      if (aborted) {
+        finalizePartial(true)
+        turnDebug?.finish({ status: 'interrupted', assistantMessageId: partialRowId })
+        return { generated, aborted: true }
+      }
+
+      // Provider/stream failure (error chunk, idle timeout, …): persist the
+      // error on the turn's row so a reload still shows what happened, and let
+      // the route emit the single `error` terminal frame (P0-3).
+      if (failure) {
+        finalizePartial(false, failure)
+        turnDebug?.finish({
+          status: 'error',
+          assistantMessageId: partialRowId ?? assistantMsgId,
+          error: failure.message,
+        })
+        return { generated, failed: true, error: failure }
+      }
+
+      if (generated && fullContent) {
         const assistantNow = new Date().toISOString()
         const toolCallsJson = serializeTurnExtras(fullThinking, currentToolCalls)
         if (partialRowId) {
@@ -835,59 +990,80 @@ export function createChatRoutes(deps: ChatRouteDeps): Hono {
         autoGenerateTitle(sessionId, org, message, sessionDao)
         recordDebugLog(assistantMsgId, sessionId, assistantNow, fullContent.length, 'chat', orchestrationResult, orchestrationFullResult, org)
 
-        await stream.writeSSE({
-          event: 'done',
-          data: JSON.stringify({
+        return {
+          generated,
+          done: {
             session_id: sessionId, message_id: assistantMsgId,
             orchestration: orchestrationResult,
             session_title: sessionDao.findById(sessionId)?.title,
-          }),
-        })
-      } else if (!aborted && generated) {
+          },
+        }
+      }
+
+      if (generated) {
         // Generated but nothing displayable (/clear, an empty /compact, a turn
-        // that only produced thinking). Still close the SSE turn: a missing
-        // `done` used to leave the composer spinning until a manual reload.
+        // that only produced thinking). The route still closes with `done`.
+        // 完全空的一轮（无正文 / 思考 / 工具调用）通常是 provider 流对端提前断开
+        // —— 2026-11-03 后台任务通知的空 result 事故就是这样静默停住。留一条
+        // 告警便于下次定位；不改变行为（本地命令仍可走这条路径）。
+        if (!fullContent && !fullThinking && currentToolCalls.length === 0 && !stopped) {
+          console.warn(
+            `[agent-chat] empty turn settled with no output (session ${sessionId}) — provider stream may have detached early`,
+          )
+        }
         if (partialRowId) finalizePartial(false)
         turnDebug?.finish({ status: 'ok', assistantMessageId: partialRowId })
-        await stream.writeSSE({
-          event: 'done',
-          data: JSON.stringify({
+        return {
+          generated,
+          done: {
             session_id: sessionId,
             orchestration: orchestrationResult,
             session_title: sessionDao.findById(sessionId)?.title,
-          }),
-        })
-      } else if (aborted || partialRowId) {
-        finalizePartial(aborted)
-        turnDebug?.finish({
-          status: aborted ? 'interrupted' : 'error',
-          assistantMessageId: partialRowId,
-        })
-      } else {
-        // Provider yielded nothing at all (no result, no text, no error) — the
-        // chat route falls back to a canned reply, but the debug row must not
-        // stay「running」forever.
-        turnDebug?.finish({
-          status: 'error',
-          assistantMessageId: partialRowId,
-          error: 'provider produced no result',
-        })
+          },
+        }
       }
+
+      // Provider yielded nothing at all (no result, no text, no error). Treat
+      // it as a retryable EMPTY_RESPONSE failure — never a silent success and
+      // never a canned fallback reply (P0-3).
+      const emptyError: TurnErrorInfo = {
+        code: 'EMPTY_RESPONSE',
+        message: '模型没有返回任何内容',
+        retryable: true,
+      }
+      finalizePartial(false, emptyError)
+      turnDebug?.finish({
+        status: 'error',
+        assistantMessageId: partialRowId ?? assistantMsgId,
+        error: emptyError.message,
+      })
+      return { generated: false, failed: true, error: emptyError }
     } catch (err: unknown) {
       const errMsg = err instanceof Error ? err.message : String(err)
       // 用户按停止触发的 abort 不是故障：不打红日志，只按「中断」收尾。
       const wasAborted = stopped || (extra?.isAborted?.() ?? false)
-      if (!wasAborted) {
-        console.error(`[agent] Claude SDK call failed: ${errMsg}`, err instanceof Error ? err.stack : '')
+      if (wasAborted) {
+        finalizePartial(true)
+        turnDebug?.finish({ status: 'interrupted', assistantMessageId: partialRowId })
+        return { generated, aborted: true }
       }
-      finalizePartial(wasAborted)
+      console.error(`[agent] Claude SDK call failed: ${errMsg}`, err instanceof Error ? err.stack : '')
+      const code = typeof (err as { code?: unknown }).code === 'string'
+        ? (err as { code: string }).code
+        : 'PROVIDER_ERROR'
+      const errorInfo: TurnErrorInfo = {
+        code,
+        message: errMsg || '未知错误',
+        retryable: isRetryableErrorCode(code),
+      }
+      finalizePartial(false, errorInfo)
       turnDebug?.finish({
-        status: wasAborted ? 'interrupted' : 'error',
-        assistantMessageId: partialRowId,
+        status: 'error',
+        assistantMessageId: partialRowId ?? assistantMsgId,
         error: errMsg,
       })
+      return { generated, failed: true, error: errorInfo }
     }
-    return { generated }
   }
 
   function autoGenerateTitle(sessionId: string, org: string, message: string, dao: AgentSessionDAO): void {
@@ -946,46 +1122,6 @@ export function createChatRoutes(deps: ChatRouteDeps): Hono {
       const traceFile = path.join(debugDir, `${new Date().toISOString().split('T')[0]}.jsonl`)
       fs.appendFileSync(traceFile, JSON.stringify(debugEntry) + '\n', 'utf-8')
     } catch { /* non-fatal */ }
-  }
-
-  async function sendFallbackResponse(
-    message: string, stream: any, sessionId: string, org: string,
-    dao: AgentSessionDAO, orchestrationResult: string | undefined,
-  ): Promise<void> {
-    const orchestratorPrefix = orchestrationResult ? `📋 编排分析: ${orchestrationResult}\n\n` : ''
-    const fallbackResponse = `${orchestratorPrefix}收到消息: "${message}"。\n\n⚠️ Claude SDK 未配置或不可用。请配置 ANTHROPIC_API_KEY 环境变量以启用完整 LLM 对话功能。\n\n当前可用的编排能力：\n- 意图分类（单次任务/定时任务/信息查询/分身管理）\n- 工作流匹配与选择\n- 记忆系统读写\n- 会话上下文压缩`
-
-    const chars = fallbackResponse.split('')
-    let fullContent = ''
-    for (const char of chars) {
-      fullContent += char
-      await stream.writeSSE({ event: 'text_delta', data: JSON.stringify({ delta: char, content: fullContent }) })
-      await stream.sleep(5)
-    }
-
-    const assistantMsgId = crypto.randomUUID()
-    const assistantNow = new Date().toISOString()
-    dao.insertMessage({ id: assistantMsgId, session_id: sessionId, role: 'assistant', content: fullContent, created_at: assistantNow })
-    dao.updateLastMessageAt(sessionId, assistantNow)
-
-    try {
-      const sessionRow = dao.findById(sessionId)
-      if (sessionRow && sessionRow.title === '新会话') {
-        const autoTitle = message.slice(0, 50).replace(/\n/g, ' ').trim()
-        dao.updateSession(sessionId, { title: autoTitle || '新会话' })
-      }
-    } catch { /* non-fatal */ }
-
-    recordDebugLog(assistantMsgId, sessionId, assistantNow, fullContent.length, 'chat_fallback', orchestrationResult, undefined, org)
-
-    await stream.writeSSE({
-      event: 'done',
-      data: JSON.stringify({
-        session_id: sessionId, message_id: assistantMsgId,
-        orchestration: orchestrationResult, mode: 'fallback',
-        session_title: dao.findById(sessionId)?.title,
-      }),
-    })
   }
 
   return app

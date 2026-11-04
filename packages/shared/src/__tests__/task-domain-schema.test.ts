@@ -3,12 +3,10 @@ import {
   taskSpecSchema,
   acceptancePreviewSchema,
   acceptanceRunbookSchema,
-  subunitSpecSchema,
   workflowConfigSchema,
   taskResourceTypeSchema,
   resourceRefSchema,
   type TaskSpec,
-  type SubunitSpec,
   type WorkflowConfig,
   type ResourceRef,
   type TaskResourceType,
@@ -35,7 +33,6 @@ import {
   taskTriggerFailedPayloadSchema,
   TASK_PREVIEW_EVENT,
 } from "../types/task"
-import type { TaskDispatchPort, ChildHandle } from "../types/task-dispatch-port"
 
 // Independent sources of truth (spec literals — not derived from the code).
 // task-phase-redesign v4 (ticket 07): 'awaiting_review' + 'archiving' join the
@@ -73,8 +70,6 @@ const EXPECTED_SPEC_FIELDS = [
   "skills",
   "goal",
   "ac",
-  "subunits",
-  "integration_goal",
   "resources",
   "authoring_resources",
   "decisions",
@@ -156,7 +151,7 @@ describe("AC1 — TaskStatus + TriggerMode enums", () => {
   })
 })
 
-// ── AC2: resourceRefSchema + TaskSpec/SubunitSpec/WorkflowConfig extensions ─
+// ── AC2: resourceRefSchema + TaskSpec/WorkflowConfig extensions ─
 describe("AC2 — resource refs + spec/config extensions", () => {
   it("TaskResourceType parses the 4 provisionable types, rejects clone/workflow", () => {
     for (const t of EXPECTED_RESOURCE_TYPES) {
@@ -172,29 +167,6 @@ describe("AC2 — resource refs + spec/config extensions", () => {
     expect(resourceRefSchema.safeParse({ type: "clone", name: "x" }).success).toBe(false)
     expect(resourceRefSchema.safeParse({ type: "skill" }).success).toBe(false)
     expect(resourceRefSchema.safeParse({ name: "x" }).success).toBe(false)
-  })
-
-  it("SubunitSpec parses with resources[] and defaults to [] when omitted", () => {
-    const withRes = subunitSpecSchema.safeParse({
-      name: "backend",
-      workspace_spec: baseWorkspaceSpec,
-      workflow_ref: "flows/b.yaml",
-      resources: [{ type: "skill", name: "octo-backend" }],
-    })
-    expect(withRes.success).toBe(true)
-    if (withRes.success) {
-      expect(withRes.data.resources).toEqual([{ type: "skill", name: "octo-backend" }])
-    }
-
-    const without = subunitSpecSchema.safeParse({
-      name: "solo",
-      workspace_spec: baseWorkspaceSpec,
-      workflow_ref: "x.yaml",
-    })
-    expect(without.success).toBe(true)
-    if (without.success) {
-      expect(without.data.resources).toEqual([])
-    }
   })
 
   it("TaskSpec parses with resources[] + authoring_resources[] and defaults both to []", () => {
@@ -279,53 +251,10 @@ describe("AC2 — resource refs + spec/config extensions", () => {
       requires: { skills: ["octo-backend"] },
     }
     const spec: TaskSpec = { goal: "g", ac: ["a"], resources: [ref], authoring_resources: [ref], skill_groups: [], decisions: [], ac_confirmed: [] }
-    const sub: SubunitSpec = {
-      name: "n",
-      workspace_spec: { org: "o", branch_prefix: "b", projects: [] },
-      workflow_ref: "x",
-      input_values: {},
-      skills: [],
-      resources: [ref],
-    }
     expect(ref.type).toBe("skill")
     expect(rt).toBe("agent")
     expect(cfg.requires?.skills).toEqual(["octo-backend"])
     expect(spec.resources).toHaveLength(1)
-    expect(sub.resources).toHaveLength(1)
-  })
-})
-
-// ── AC3: TaskDispatchPort — a child RUN, not a child schedule (ADR-0021 票03/票04) ──
-describe("AC3 — TaskDispatchPort dispatchChild / ChildHandle", () => {
-  it("dispatchChild takes ONLY the subunit and returns a ChildHandle", () => {
-    // Type-level: a conforming implementation must satisfy the interface. The old
-    // version of this test asserted the OPPOSITE direction — that omitting
-    // origin_role would fail to compile — because a child schedule row needed a role
-    // written into schedules.origin_role. A child execution row carries parent_id and
-    // child_index instead, so the role parameter has nothing to feed.
-    const impl: TaskDispatchPort = {
-      async dispatchChild(subunit) {
-        expect(subunit.name).toBeDefined()
-        return { child_id: "run-1", workspace_id: "ws-1" }
-      },
-      async resumeOnCompletion(handle, output) {
-        expect(handle.child_id).toBeDefined()
-        expect(output).toBeTypeOf("object")
-      },
-    }
-    expect(impl.dispatchChild).toBeTypeOf("function")
-  })
-
-  it("ChildHandle carries child_id (the executions row), never schedule_id", async () => {
-    const impl: TaskDispatchPort = {
-      async dispatchChild() {
-        return { child_id: "run-1", workspace_id: "ws-1" }
-      },
-      async resumeOnCompletion() {},
-    }
-    const handle = await impl.dispatchChild({ name: "s1", workflow_ref: "wf", input_values: {}, workspace_spec: { org: "o", branch_prefix: "b", projects: [] } } as never)
-    expect(handle.child_id).toBe("run-1")
-    expect("schedule_id" in handle).toBe(false)
   })
 })
 
@@ -388,13 +317,13 @@ describe("AC5 — Task row type (S2 polymorphic-origin, no schedule pointers)", 
   })
 
   it("TaskExecutionBadge is the board badge AND the history row (one shape)", () => {
-    // It replaced two things: the envelope status mirror (schedule_status/scheduled_at
-    // on the task) and children[] (the child SCHEDULE rows). name + error_summary are
-    // what the UI used to have no source for — a subunit's label and a red run's reason.
+    // It replaced the envelope status mirror (schedule_status/scheduled_at on the
+    // task) and children[] (the child SCHEDULE rows). name + error_summary are
+    // what the UI used to have no source for — a run label and a red run's reason.
     const badge: TaskExecutionBadge = {
       id: "exec-1",
       status: "failed",
-      workflow_ref: "built-in/task-dev",
+      workflow_ref: "built-in/matt-spec-dev",
       name: "backend",
       phase_index: 1,
       round_index: 2,
@@ -403,19 +332,8 @@ describe("AC5 — Task row type (S2 polymorphic-origin, no schedule pointers)", 
       completed_at: null,
       created_at: "2026-01-01T00:00:00Z",
       error_summary: "engine died at node 3",
-      children: [
-        {
-          id: "exec-2", status: "completed", workflow_ref: "wf/a", name: "subunit-a",
-          phase_index: null, round_index: null, workspace_id: "ws-2",
-          started_at: null, completed_at: null, created_at: "2026-01-01T00:00:00Z",
-          error_summary: null,
-        },
-      ],
     }
-    expect(badge.children).toHaveLength(1)
-    expectTypeOf<TaskExecutionBadge["children"]>().toEqualTypeOf<
-      TaskExecutionBadge[] | undefined
-    >()
+    expect(badge.error_summary).toBe("engine died at node 3")
     // The mirror columns must not come back as optional-anythings: absent is the fix,
     // not nullable (a null schedule_status still says "there is a schedule").
     expectTypeOf<Task>().toHaveProperty("execution")
@@ -432,7 +350,7 @@ describe("ticket 07 — v4 acceptance wire contract", () => {
     name: "Phase 1",
     slug: "phase-1",
     specPath: ".scratch/20260903/phase-1/spec.md",
-    workflowRef: "built-in/task-dev",
+    workflowRef: "built-in/matt-spec-dev",
     inputValues: {},
     ...over,
   })
@@ -469,9 +387,9 @@ describe("ticket 07 — v4 acceptance wire contract", () => {
   })
 
   it("validateSpecFieldValue('phases') rejects malformed entries (path-unsafe slug, 0 index)", () => {
-    // Per-entry shape errors surface as ZodError (the subunits/resources/
-    // integration_goal precedent) — the route's classifyError maps BOTH
-    // ZodError and TaskSpecFieldError to 400, so the HTTP contract holds.
+    // Per-entry shape errors surface as ZodError (the resources precedent)
+    // — the route's classifyError maps BOTH ZodError and TaskSpecFieldError to
+    // 400, so the HTTP contract holds.
     expect(() => validateSpecFieldValue("phases", [phase({ slug: "../escape" })])).toThrow(/slug/i)
     expect(() => validateSpecFieldValue("phases", [phase({ index: 0 })])).toThrow(/too small|min/i)
   })
@@ -557,14 +475,14 @@ describe("ticket 01 (v2.1) — acceptance_preview spec-field contract", () => {
     expect(f).toBe("acceptance_preview")
     const spec = taskSpecSchema.parse({
       format: "v4", goal: "g", ac: ["a"],
-      phases: [{ index: 1, name: "P", slug: "p", specPath: "./x/spec.md", workflowRef: "task-dev" }],
+      phases: [{ index: 1, name: "P", slug: "p", specPath: "./x/spec.md", workflowRef: "matt-spec-dev" }],
       acceptance_preview: okPreview,
     })
     expect(spec.acceptance_preview?.url).toBe("http://localhost:8080")
     // absent stays absent (no spurious key), same discipline as acceptance_verify
     const bare = taskSpecSchema.parse({
       format: "v4", goal: "g", ac: ["a"],
-      phases: [{ index: 1, name: "P", slug: "p", specPath: "./x/spec.md", workflowRef: "task-dev" }],
+      phases: [{ index: 1, name: "P", slug: "p", specPath: "./x/spec.md", workflowRef: "matt-spec-dev" }],
     })
     expect("acceptance_preview" in bare).toBe(false)
     expect("acceptance_verify" in bare).toBe(false)
@@ -594,13 +512,13 @@ describe("ticket 01 (v2.1) — acceptance_preview spec-field contract", () => {
     expect(f).toBe("acceptance_runbook")
     const spec = taskSpecSchema.parse({
       format: "v4", goal: "g", ac: ["a"],
-      phases: [{ index: 1, name: "P", slug: "p", specPath: "./x/spec.md", workflowRef: "task-dev" }],
+      phases: [{ index: 1, name: "P", slug: "p", specPath: "./x/spec.md", workflowRef: "matt-spec-dev" }],
       acceptance_runbook: ok,
     })
     expect(spec.acceptance_runbook?.views).toHaveLength(2)
     const bare = taskSpecSchema.parse({
       format: "v4", goal: "g", ac: ["a"],
-      phases: [{ index: 1, name: "P", slug: "p", specPath: "./x/spec.md", workflowRef: "task-dev" }],
+      phases: [{ index: 1, name: "P", slug: "p", specPath: "./x/spec.md", workflowRef: "matt-spec-dev" }],
     })
     expect("acceptance_runbook" in bare).toBe(false)
   })

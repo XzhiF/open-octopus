@@ -17,7 +17,7 @@ import { getServerUrl } from '@/lib/server-config'
  * to top-level properties. The backend stores these as a JSON string
  * in the metadata column: { thinking?: string, tool_calls?: ToolCallRecord[] }
  */
-function parseMessageMetadata(msg: any): AgentMessage {
+export function parseMessageMetadata(msg: any): AgentMessage {
   // Normalize boolean fields from SQLite (stored as 0/1 integers) to real
   // booleans. Without this, `{0}` could leak into JSX if any code path
   // accidentally renders a numeric field — React renders `0` as visible text.
@@ -37,6 +37,7 @@ function parseMessageMetadata(msg: any): AgentMessage {
       timeline: meta.timeline ?? normalized.timeline,
       interrupted: meta.interrupted ?? normalized.interrupted,
       streaming: meta.streaming ?? normalized.streaming,
+      error: meta.error ?? normalized.error,
       displayType: meta.displayType ?? normalized.displayType,
       activity: meta.activity ?? normalized.activity,
       roleSwitch: meta.role_switch ?? normalized.roleSwitch,
@@ -60,9 +61,14 @@ async function request<T>(url: string, init?: RequestInit): Promise<T> {
   })
   if (!res.ok) {
     const body = await res.json().catch(() => ({ error: { code: 'UNKNOWN', message: res.statusText } }))
-    const err = new Error(body.error?.message ?? res.statusText) as Error & { code?: string; status?: number }
+    const err = new Error(body.error?.message ?? res.statusText) as Error & {
+      code?: string
+      status?: number
+      details?: unknown
+    }
     err.code = body.error?.code
     err.status = res.status
+    err.details = body.error?.details
     throw err
   }
   if (res.status === 204 || res.headers.get('content-length') === '0') return undefined as T
@@ -87,8 +93,15 @@ export function listSessions(query?: { clone?: string; limit?: number; cursor?: 
   const qs = params.toString()
   return request<PaginatedResponse<AgentSession>>(`/sessions${qs ? `?${qs}` : ''}`)
 }
+/** 会话里正在跑的后台任务（provider 的 `background_tasks` 电平）。 */
+export interface BackgroundTaskInfo {
+  id: string
+  description: string
+  taskType?: string
+}
+
 export function getSessionRunning(id: string) {
-  return request<{ running: boolean; partial: boolean }>(`/sessions/${id}/running`)
+  return request<{ running: boolean; partial: boolean; background_tasks?: BackgroundTaskInfo[] }>(`/sessions/${id}/running`)
 }
 /** Slash commands the CLI advertised for this session (empty until a turn ran). */
 export function getSessionSlashCommands(id: string) {
@@ -101,9 +114,36 @@ export interface RunningAgentSession {
   session_type: string
   started_at: string
   stream_count: number
+  /** 非空 = 这轮在等后台任务（chip 上显示「后台：在跑什么」）。 */
+  background_tasks?: BackgroundTaskInfo[]
 }
 export function listRunningSessions(limit = 50) {
   return request<{ items: RunningAgentSession[] }>(`/sessions/running?limit=${limit}`)
+}
+
+/**
+ * 运行中的工作流执行（header 右上角指示）。
+ *
+ * 与 RunningAgentSession 的分工：那边是 chat 的内存生成流；这边是 executions
+ * 表的顶层 running 行 —— 工作流 Agent 节点不注册 chat 流，只有这里能看见。
+ */
+export interface RunningExecution {
+  id: string
+  workspaceId: string
+  /** 人看的名字：任务名 → 工作流名 → ref。 */
+  title: string
+  workflowRef: string
+  workflowName: string
+  taskId: string | null
+  taskName: string | null
+  phaseIndex: number | null
+  roundIndex: number | null
+  status: string
+  startedAt: string | null
+}
+
+export function listRunningExecutions(limit = 50) {
+  return request<{ runs: RunningExecution[] }>(`/executions/running?limit=${limit}`)
 }
 export function getSession(id: string, query?: { limit?: number; cursor?: string }) {
   const params = new URLSearchParams()

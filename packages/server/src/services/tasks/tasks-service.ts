@@ -14,9 +14,8 @@
 // What this file used to do instead: readyTask pre-created a private `schedules` row
 // per task (the "envelope" — origin_type='task', parked status='draft') and triggering
 // meant flipping that row; its config doubled as the frozen phase binding AND the
-// "which round runs now" cursor; composite subunits were child schedules created at
-// runtime. That is the coupling this ticket removes, and why 周期触发 was structurally
-// impossible: a task could only run when its envelope said so.
+// "which round runs now" cursor. That is the coupling this ticket removes, and why
+// 周期触发 was structurally impossible: a task could only run when its envelope said so.
 //
 // Concurrency: spec-field / PUT use TaskDAO.updateWithVersion (optimistic
 // locking, 409 on stale version → agent re-GET + retry, v2-D12). The autosave
@@ -33,7 +32,6 @@ import {
   type TaskStatus,
   type TaskSpecField,
   type ResourceRef,
-  type SubunitSpec,
   type ArtifactIndexEntry,
   SPEC_FIELD_UPDATE_EVENT,
   TASK_ARTIFACTS_UPDATE_EVENT,
@@ -61,6 +59,7 @@ import {
   AgentSessionDAO,
   AcceptanceDAO,
   TokenUsageDAO,
+  ExecutionLinkDAO,
 } from "../../db/dao"
 import type { TaskRow, ExecutionRow } from "../../db/types"
 import type { SSEService } from "../sse"
@@ -73,8 +72,7 @@ import {
   resolveV4Phases,
   type TaskV4PhaseConfig,
 } from "./task-materialize"
-// trigger-prebuild (2026-09-08): 与 WorkflowExecutor 共享的命名/复合判定纯函数。
-import { isCompositeWorkflowConfig } from "../scheduler/ws-launch"
+// trigger-prebuild (2026-09-08): 与 WorkflowExecutor 共享的命名纯函数。
 import { taskBranchPrefix, taskWorkspaceName } from "../scheduler/task-ws-name"
 import { TaskLifecycleService, TaskLifecycleError, type ArmOptions } from "./task-lifecycle-service"
 // task-phase-redesign (ticket 05): STATIC registry access for dispatchPhaseRound.
@@ -97,6 +95,8 @@ import { seedPhaseToWorkspace, collectFromWorkspace, batchRelPath, resolvePhaseS
 import { specRunbookLevel } from "./runbook-spec"
 // task-phase-redesign (ticket 08): the archiving orchestrator (K11 归并面).
 import { createTaskArchiver, type TaskArchiver, type ArchiveReport } from "./archiving-service"
+import { readArchiveWikiResult, type ArchiveWikiResult } from "./archive-wiki-result"
+import { readArchiveCaseResults, type ArchiveCaseResult } from "./archive-case-result"
 import {
   createArchiveCleaner,
   type ArchiveCleanupReport,
@@ -286,12 +286,18 @@ export interface TaskUsageDTO {
   timing: TaskTimingSummary
 }
 
-/** 会话账本里的一个工作流（= 本会话发起的 task 的一次或多次执行轮）。 */
+/** 会话账本里的一个工作流（= 本会话发起的 task 的一次或多次执行轮，
+ *  或主对话里直接拉起、不属于任何任务的单个执行）。 */
 export interface SessionUsageWorkflow {
-  task_id: string
+  /** 任务工作流行带任务 id；主对话直接跑的工作流没有任务 → null。 */
+  task_id: string | null
+  /** 非任务工作流的执行 id（task 行为 undefined）。 */
+  execution_id?: string | null
+  /** 非任务工作流所在工作区（打开运行窗要）；任务行不重复给。 */
+  workspace_id?: string | null
   name: string
   status: string
-  /** 各轮实跑段之和（与任务窗 timing.duration_ms 同源）。 */
+  /** 各轮实跑段之和 + 辅助执行实跑段（与任务窗 timing 同源；chat_run 为自身跨度）。 */
   duration_ms: number
   tokens: number
   total_calls: number
@@ -330,6 +336,19 @@ export interface TaskArchiveKnowledgeItem {
   path: string
 }
 
+/** 本次归档编译产生的开放矛盾（wiki finding 只读投影；裁决在主对话里完成）。 */
+export interface TaskArchiveFinding {
+  id: string
+  kind: string
+  status: string
+  title: string
+  detail: unknown
+  pages: string[]
+  rawRef: string
+  source: string
+  createdAt: string
+}
+
 /** 知识中心投稿快照（2026-10-31 AI-native 归档总框）：素材包件数 + 编译队列状态。
  *  由 index.ts 的 archiveKnowledgeHook 装配（pack manifest + wikiWriteQueue），
  *  TasksService 自身不依赖知识中心模块。 */
@@ -338,10 +357,31 @@ export interface TaskArchiveKnowledge {
   pack_items: number
   /** 包内全部件（含已剔除；件数只算未剔除）。未装配 manifest 的宿主可省略。 */
   items?: TaskArchiveKnowledgeItem[]
+  /** 包目录（知识根相对 POSIX，如 `raw/archives/task-{id}`）；旧宿主可省略。 */
+  pack_path?: string | null
+  /** 素材包冻结时间（manifest.createdAt）——归档窗口时间线用。 */
+  pack_created_at?: string | null
+  /** 非焦点件进编译 prompt 的单件字节预算（UI「载入 / 仅指针」徽章按此估算）。 */
+  pack_item_cap?: number | null
   /** 编译队列状态 queued / running / committed / failed；null = 未入队。 */
   compile_state: string | null
   /** 排队位次（仅 queued 有值）。 */
   compile_position: number | null
+  /** 队列时间戳（进程内队列快照；重启后缺席，改看 wiki_result）。 */
+  compile_queued_at?: string | null
+  compile_started_at?: string | null
+  compile_finished_at?: string | null
+  /** 队列失败错误面（稳定 code/message）。 */
+  compile_error?: { code: string; message: string } | null
+  /** 持久编译回执（archive/wiki-result.json）——「归档在 wiki 里落了什么」的真相面。
+   *  null/缺省 = 尚未编译完成或旧任务没有此文件。 */
+  wiki_result?: ArchiveWikiResult | null
+  /** 判例入档回执（archive/case-result.json）：新建 / 并档 / 失败。
+   *  缺省 = 本次无判例入档（或旧任务）。 */
+  case_results?: ArchiveCaseResult[]
+  /** 本次编译产生的开放矛盾（未决才列）。缺省 = 无冲突或已全部裁决。
+   *  归档 Agent 在对话里逐条问「采纳修订 / 忽略 / 讨论」。 */
+  findings?: TaskArchiveFinding[]
 }
 
 /** GET /:id/archive — the archive window's one-shot read model. */
@@ -436,6 +476,13 @@ function unionSpanMs(spans: ReadonlyArray<{ start: number; end: number }>): numb
   }
   if (curEnd > curStart) total += curEnd - curStart
   return total
+}
+
+/** 辅助执行在账本里的名字 —— 已知内置流给人话，未知的去掉 built-in/ 前缀回落到 ref。 */
+function auxExecutionLabel(workflowRef: string | null): string {
+  if (!workflowRef) return "系统流程"
+  if (workflowRef === "built-in/acceptance-plan") return "验收规划"
+  return workflowRef.replace(/^built-in\//, "")
 }
 
 /** `{home}/archive/amendments.jsonl` 读侧（坏行跳过，最多 200 条）。 */
@@ -743,18 +790,12 @@ function errorSummaryOf(row: ExecutionRow): string | null {
 }
 
 /** The task's current instance, projected for the DTO. Kept as a pure function of the
- *  row so list and detail cannot drift into two different badge shapes.
- *
- *  `children` is passed only by the read models that loaded the fan-out (detail / run
- *  history) — the board's badge deliberately carries none, and `undefined` vs `[]` says
- *  which of the two loaded, so the UI never renders "no subunits" for a list row. */
-function toExecutionBadge(row: ExecutionRow, children?: ExecutionRow[]): TaskExecutionBadge {
+ *  row so list and detail cannot drift into two different badge shapes. */
+function toExecutionBadge(row: ExecutionRow): TaskExecutionBadge {
   return {
     id: row.id,
     status: row.status,
     workflow_ref: row.workflow_ref ?? undefined,
-    // The subunit's label (a child run's name IS which arm it is) — 票05's replacement
-    // for reading `schedules.origin_role`.
     name: row.name ?? null,
     phase_index: row.phase_index ?? null,
     round_index: row.round_index ?? null,
@@ -767,20 +808,7 @@ function toExecutionBadge(row: ExecutionRow, children?: ExecutionRow[]): TaskExe
     // 台账列都读这两列（可选字段 —— 旧服务器行无键时消费端按未接管处理）。
     takeover_at: row.takeover_at ?? null,
     takeover_delivered_at: row.takeover_delivered_at ?? null,
-    ...(children ? { children: children.map((c) => toExecutionBadge(c)) } : {}),
   }
-}
-
-/** Group a task's child runs under the root that dispatched them (one pass, so the read
- *  model stays one query for the fan-out instead of one per root). */
-function groupChildren(children: ExecutionRow[]): Map<string, ExecutionRow[]> {
-  const by = new Map<string, ExecutionRow[]>()
-  for (const c of children) {
-    const list = by.get(c.parent_id)
-    if (list) list.push(c)
-    else by.set(c.parent_id, [c])
-  }
-  return by
 }
 
 /** Server-side spec-field set: the shared bindable fields (9 as of v3, +11 with
@@ -991,6 +1019,9 @@ export class TasksService {
   private taskDAO: TaskDAO
   /** v49: 账本用量只读口（看板逐任务花费）。同一 handle，DAO-per-handle 惯例。 */
   private tokenUsage: TokenUsageDAO
+  /** 2026-11-03 消耗口径：执行 → 任务/会话的持久归属（无 task_id 的辅助执行、
+   *  主对话直接跑的工作流靠它进账本）。 */
+  private execLinks: ExecutionLinkDAO
   /** ADR-0021 票03: the ONLY way this domain starts, stops or watches a run. Built on
    *  the same handle as everything else here (no new ctor param — SW-BP15), and it is
    *  the task-domain half of the built-in job: the scheduler reaches the same object
@@ -1095,6 +1126,15 @@ export class TasksService {
     this.db = db
     this.taskDAO = new TaskDAO(db)
     this.tokenUsage = new TokenUsageDAO(db)
+    this.execLinks = new ExecutionLinkDAO(db)
+    // 存量验收规划执行回填归属（幂等；坐标从 input_values 读，pipeline_config
+    // 会在 start 时被引擎整体覆盖，不可依赖）。服务单例构造一次，代价可忽略。
+    try {
+      this.execLinks.backfillAcceptancePlanLinks()
+    } catch (err: unknown) {
+      console.error("[TasksService] execution_links backfill failed (non-fatal):",
+        err instanceof Error ? err.message : String(err))
+    }
     this.agentSessionDAO = agentSessionDAO ?? null
     this.sse = sse
     this.taskHomeService = taskHomeService ?? new TaskHomeService()
@@ -1112,8 +1152,8 @@ export class TasksService {
     })
   }
 
-  /** ADR-0021: the launch machinery, exposed for the acceptance route + 票04's composite
-   *  child pickup. Everything task-shaped that RUNS goes through this one object. */
+  /** ADR-0021: the launch machinery, exposed for the acceptance route.
+   *  Everything task-shaped that RUNS goes through this one object. */
   get taskLifecycle(): TaskLifecycleService {
     return this.lifecycle
   }
@@ -1380,12 +1420,13 @@ export class TasksService {
     const row = this.taskDAO.getById(id)
     if (!row) throw new TaskNotFoundError()
     const history = this.lifecycle.history(id)
-    const byParent = groupChildren(this.lifecycle.childRuns(id))
-    const badge = (root: ExecutionRow) => toExecutionBadge(root, byParent.get(root.id) ?? [])
+    const badge = (root: ExecutionRow) => toExecutionBadge(root)
+    // 辅助执行（验收规划）也算任务花费 —— 它没有 task_id，靠 execution_links 归集。
+    const auxExecIds = this.execLinks.executionIdsByTask([id]).get(id) ?? []
     const aiUsage = this.aiUsageFor([{
       id,
       authorSessionId: row.source_chat_session_id,
-      executionIds: history.map((h) => h.id),
+      executionIds: [...history.map((h) => h.id), ...auxExecIds],
     }]).get(id)
     const dto: TaskDTO = {
       ...toDTO(row),
@@ -1417,20 +1458,10 @@ export class TasksService {
   taskUsage(id: string): TaskUsageDTO {
     const row = this.taskDAO.getById(id)
     if (!row) throw new TaskNotFoundError()
-    const execRows = this.taskDAO.getDb().prepare(
-      `SELECT id, phase_index, round_index, workflow_ref, status, created_at, started_at, completed_at, parent_id
-         FROM executions WHERE task_id = ? ORDER BY created_at ASC`,
-    ).all(id) as Array<{
-      id: string
-      phase_index: number | null
-      round_index: number | null
-      workflow_ref: string | null
-      status: string
-      created_at: string
-      started_at: string | null
-      completed_at: string | null
-      parent_id: string
-    }>
+    // 任务自己的轮（executions.task_id 命中）∪ 登记到该任务的辅助执行（验收规划等）。
+    // 辅助执行插行时 task_id 故意为 NULL —— 挂了会撞 ux_exec_task_active 单实例闸、
+    // 并混进看板/run_stats 的「轮」口径；归属只在 execution_links（2026-11-03）。
+    const execRows = this.execLinks.listTaskUsageExecutions(id)
     const sessionIds = [row.source_chat_session_id, row.doer_session_id]
       .filter((s): s is string => !!s)
     const bySession = this.tokenUsage.aggregateLlmCallsBy(
@@ -1442,8 +1473,8 @@ export class TasksService {
       "execution_id",
       execRows.map((e) => e.id),
     )
-    // 2026-10-31 消耗窗「总耗时」：agent 工时按轮取一次 map，逐行挂到 breakdown 上。
-    const agentByExec = this.agentDurationByExecution(id)
+    // 2026-10-31 消耗窗「总耗时」：agent 工时按执行取一次 map，逐行挂到 breakdown 上。
+    const agentByExec = this.agentDurationByExecutions(execRows.map((e) => e.id))
     const now = Date.now()
     const breakdown: TaskUsagePart[] = []
     for (const sid of sessionIds) {
@@ -1459,18 +1490,20 @@ export class TasksService {
     for (const e of execRows) {
       const usage = byExec.get(e.id)
       if (!usage) continue
+      // 行上没有 task_id = 经 execution_links 归来的辅助执行（不是任务的一轮）。
+      const aux = e.task_id == null
       const part: TaskUsagePart = {
         kind: "execution",
         label: e.phase_index != null
           ? `P${e.phase_index}${e.round_index != null ? ` · R${e.round_index}` : ""}`
-          : "执行",
+          : aux ? auxExecutionLabel(e.workflow_ref) : "执行",
         execution_id: e.id,
         phase_index: e.phase_index,
         round_index: e.round_index,
         workflow_ref: e.workflow_ref,
         started_at: e.started_at,
         completed_at: e.completed_at,
-        instance: e.parent_id === "0" || e.phase_index != null,
+        instance: !aux && (e.parent_id === "0" || e.phase_index != null),
         ...usage,
       }
       const agentMs = agentByExec.get(e.id)
@@ -1508,9 +1541,12 @@ export class TasksService {
    *   · 对话行 = 本会话的聊天调用，只认 `execution_id IS NULL`（与 taskUsage /
    *     aiUsageFor 同一条防双计护栏：clone/interaction 行可能同时带执行归属）；
    *   · 工作流行 = `tasks.source_chat_session_id = sessionId` 的全部任务，按
-   *     executions.task_id 归集 —— 与任务窗 `/usage` 的 execution 段同源；
+   *     executions.task_id ∪ execution_links(task_aux) 归集 —— 与任务窗 `/usage`
+   *     的 execution 段同源（验收规划这类辅助执行也进账）；
+   *   · 主对话里直接跑的工作流（execution_links.kind = chat_run）不属于任何任务，
+   *     按执行单列一行；
    *   · 对话时长 = 各调用 [timestamp, timestamp+duration_ms] 的并集（同一轮里
-   *     重复上报 / 并行的模型行只算一次）；工作流时长 = 各任务 run_stats 实跑段。
+   *     重复上报 / 并行的模型行只算一次）；工作流时长 = 任务实跑段 + 辅助执行实跑段。
    *
    * 费用/模型口径与任务窗一致：全部现算（llm_calls_costed），不落快照。
    */
@@ -1519,13 +1555,32 @@ export class TasksService {
     const taskIds = links.map((l) => l.task_id)
     const timings = this.lifecycle.runTimings(taskIds)
     const stats = this.runStatsFrom(timings)
-    const execIdsByTask = new Map<string, string[]>()
+    const roundExecIdsByTask = new Map<string, string[]>()
     for (const t of timings) {
-      const list = execIdsByTask.get(t.task_id)
+      const list = roundExecIdsByTask.get(t.task_id)
       if (list) list.push(t.id)
-      else execIdsByTask.set(t.task_id, [t.id])
+      else roundExecIdsByTask.set(t.task_id, [t.id])
     }
-    const execIds = timings.map((t) => t.id)
+
+    // execution_links（2026-11-03）：验收规划等辅助执行归到任务；主对话直接拉起的
+    // 工作流没有任务，单列。两类在会话账本里都要算。
+    const linkedExecs = this.execLinks.listLinkedExecutionsBySession(sessionId)
+    const linkedById = new Map(linkedExecs.map((e) => [e.id, e]))
+    const auxExecIdsByTask = new Map<string, string[]>()
+    const chatRunExecs: typeof linkedExecs = []
+    for (const e of linkedExecs) {
+      if (e.task_id) {
+        const list = auxExecIdsByTask.get(e.task_id)
+        if (list) list.push(e.id)
+        else auxExecIdsByTask.set(e.task_id, [e.id])
+      } else {
+        chatRunExecs.push(e)
+      }
+    }
+    // 轮 ∪ 关联执行：summary / 模型分解 / 工时都按这一个集合算，防漏也防重。
+    const execIds = [...new Set([...timings.map((t) => t.id), ...linkedExecs.map((e) => e.id)])]
+    const agentByExec = this.agentDurationByExecutions(execIds)
+    const now = Date.now()
 
     // 对话段：区间并集 = 真实在说话的时间；调用时长合计 = 工时口径（含重复上报行，
     // 与账本 totalCalls 一致，不在这里做去重 —— 去重只属于「对话时长」这一列）。
@@ -1551,13 +1606,20 @@ export class TasksService {
     let workflowMs = 0
     let agentMs = 0
     for (const link of links) {
-      const taskExecIds = execIdsByTask.get(link.task_id) ?? []
+      const roundIds = roundExecIdsByTask.get(link.task_id) ?? []
+      const auxIds = auxExecIdsByTask.get(link.task_id) ?? []
+      const taskExecIds = [...roundIds, ...auxIds]
       // 草稿 / 未触发的工作流没有执行轮：不占列表（它的起草对话已计入对话段）。
       if (taskExecIds.length === 0) continue
       const merged =
         mergeLlmUsageSummaries(taskExecIds.map((id) => byExec.get(id))) ?? EMPTY_LLM_USAGE
-      const runStats = stats.get(link.task_id)
-      const durationMs = runStats?.duration_ms ?? 0
+      let durationMs = stats.get(link.task_id)?.duration_ms ?? 0
+      // 辅助执行不在 run_stats（那不是任务的一轮），按它自己的实跑段补进来。
+      for (const id of auxIds) {
+        const row = linkedById.get(id)
+        const span = row ? this.countedRunSpan(row, now) : null
+        if (span) durationMs += span.end - span.start
+      }
       workflows.push({
         task_id: link.task_id,
         name: link.name,
@@ -1568,7 +1630,25 @@ export class TasksService {
         cost: merged.totals.cost,
       })
       workflowMs += durationMs
-      for (const ms of this.agentDurationByExecution(link.task_id).values()) agentMs += ms
+      for (const id of taskExecIds) agentMs += agentByExec.get(id) ?? 0
+    }
+    for (const e of chatRunExecs) {
+      const usage = byExec.get(e.id) ?? EMPTY_LLM_USAGE
+      const span = this.countedRunSpan(e, now)
+      const durationMs = span ? span.end - span.start : 0
+      workflows.push({
+        task_id: null,
+        execution_id: e.id,
+        workspace_id: e.workspace_id,
+        name: e.name || e.workflow_ref,
+        status: e.status,
+        duration_ms: durationMs,
+        tokens: usage.totals.tokens,
+        total_calls: usage.totalCalls,
+        cost: usage.totals.cost,
+      })
+      workflowMs += durationMs
+      agentMs += agentByExec.get(e.id) ?? 0
     }
     workflows.sort((a, b) => b.duration_ms - a.duration_ms)
 
@@ -1592,15 +1672,22 @@ export class TasksService {
   /** 每轮 agent 节点工时（ms）：node_type='agent' 的 duration 之和，按 execution 分组。
    *  同一次执行里的 loop/swarm 子节点、重试都在这张表上叠加 —— 这正是「工时」与
    *  墙钟的区别，展示端自己说明口径，不要在这里做去重。 */
-  private agentDurationByExecution(taskId: string): Map<string, number> {
-    const rows = this.taskDAO.getDb().prepare(
-      `SELECT ne.execution_id AS execution_id, SUM(ne.duration) AS ms
-         FROM node_executions ne
-         JOIN executions e ON e.id = ne.execution_id
-        WHERE e.task_id = ? AND ne.node_type = 'agent' AND ne.duration IS NOT NULL
-        GROUP BY ne.execution_id`,
-    ).all(taskId) as Array<{ execution_id: string; ms: number }>
-    return new Map(rows.map((r) => [r.execution_id, r.ms]))
+  private agentDurationByExecutions(execIds: readonly string[]): Map<string, number> {
+    const out = new Map<string, number>()
+    const uniq = [...new Set(execIds)].filter((v) => typeof v === "string" && v.length > 0)
+    const CHUNK = 400
+    for (let i = 0; i < uniq.length; i += CHUNK) {
+      const slice = uniq.slice(i, i + CHUNK)
+      const marks = slice.map(() => "?").join(",")
+      const rows = this.db.prepare(
+        `SELECT execution_id, SUM(duration) AS ms
+           FROM node_executions
+          WHERE execution_id IN (${marks}) AND node_type = 'agent' AND duration IS NOT NULL
+          GROUP BY execution_id`,
+      ).all(...slice) as Array<{ execution_id: string; ms: number }>
+      for (const r of rows) out.set(r.execution_id, r.ms)
+    }
+    return out
   }
 
   /** task-phase-redesign (ticket 07): gather the three facts deriveTaskView
@@ -1636,7 +1723,7 @@ export class TasksService {
 
   /**
    * GET /api/tasks/:id/executions — the task's run history, newest first (票03/票05).
-   * One row per run (a v4 round, or the composite coordinator), with the (phase, round)
+   * One row per run (a v4 round), with the (phase, round)
    * coordinates the acceptance ledger reads and the workspace to deep-link into. This
    * replaced children[], which listed the envelope rows standing for the same runs.
    *
@@ -1649,13 +1736,12 @@ export class TasksService {
     const row = this.taskDAO.getById(id)
     if (!row) throw new TaskNotFoundError()
     const history = this.lifecycle.history(id, limit)
-    const byParent = groupChildren(this.lifecycle.childRuns(id))
     const currentId = history.length > 0 ? history[0].id : null
     // `error_summary` is on the badge now (票05): the board's badge and the history list
     // are the same projection of the same row, and an error field that only the history
     // endpoint had is how the board ended up showing red with nothing to say about it.
     return history.map((e) => ({
-      ...toExecutionBadge(e, byParent.get(e.id) ?? []),
+      ...toExecutionBadge(e),
       current: e.id === currentId,
     }))
   }
@@ -2218,11 +2304,13 @@ export class TasksService {
       if (list) list.push(t.id)
       else execIdsByTask.set(t.task_id, [t.id])
     }
+    // 辅助执行（验收规划）没有 task_id，按 execution_links 并入该任务的账。
+    const auxExecIdsByTask = this.execLinks.executionIdsByTask(ids)
     const usage = this.aiUsageFor(
       rows.map((r) => ({
         id: r.id,
         authorSessionId: r.source_chat_session_id,
-        executionIds: execIdsByTask.get(r.id) ?? [],
+        executionIds: [...(execIdsByTask.get(r.id) ?? []), ...(auxExecIdsByTask.get(r.id) ?? [])],
       })),
     )
     return dtos.map((d) => {
@@ -2541,8 +2629,6 @@ export class TasksService {
     switch (input.field) {
       case "goal":
       case "ac":
-      case "subunits":
-      case "integration_goal":
       case "decisions":
       case "goal_confirmed":
       case "ac_confirmed":
@@ -2552,7 +2638,7 @@ export class TasksService {
       case "slug":
       case "branch":
         // Merge into task_spec JSON (all v3 confirmation/decision fields +
-        // the original goal/ac/subunits/integration_goal live in task_spec).
+        // goal/ac live in task_spec).
         // acceptance_verify: validator returns undefined on null-clear →
         // JSON.stringify drops the key (见 shared validator)。
         // slug/branch（2026-09-22）：shared enum 早已可绑但这里没有 case ——
@@ -2806,14 +2892,12 @@ export class TasksService {
       // repos/index.md 解析到本地 clone —— 这是 trigger 预建 worktree 的
       // 前置条件；解析不动的项目在入队时就以 `project:<name>` 挡住（清单
       // 第 5 行 ✗），而不是等触发执行/runner claim 才炸。project_ids 为空
-      // → vacuous 通过（composite 子单元各自带项目在 dispatch 校验）。
+      // → vacuous 通过。
       const gateProjects = parseJSON<string[]>(existing.project_ids, [])
-      const gateComposite =
-        Array.isArray(taskSpec.subunits) && taskSpec.subunits.length >= 2
       // One-workspace model: a workspace-backed simple task must bind at least
       // one project, otherwise enqueue would create no worktree. Legacy /
       // test-only tasks without a bound workspace keep the old vacuous pass.
-      if (gateProjects.length === 0 && !gateComposite && existing.workspace_id) {
+      if (gateProjects.length === 0 && existing.workspace_id) {
         missing.push("project-binding")
       }
       if (gateProjects.length > 0) {
@@ -2861,48 +2945,41 @@ export class TasksService {
       const acConfirmed = taskSpec.ac_confirmed ?? []
       const unconfirmedAc = (taskSpec.ac ?? []).filter((a) => !acConfirmed.includes(a))
       if (unconfirmedAc.length > 0) missing.push("ac_confirmed")
-      // 08 (gate, 2026-08-23 — option A): a SIMPLE v3 task (subunits < 2)
-      // materializes workflow_chain[0].workflow_ref straight from tasks.workflow_ref
-      // via materializeTaskSpecToConfig (`workflow_ref ?? ''` — scheduler-service.ts:
-      // 239). An empty ref fails at RUNTIME with "Workflow not found: " (EngineFactory
-      // resolveWorkflowWithSnapshot has no default fallback) AFTER the runner has
+      // 08 (gate, 2026-08-23 — option A): a v3 task materializes
+      // workflow_chain[0].workflow_ref straight from tasks.workflow_ref. An empty
+      // ref fails at RUNTIME with "Workflow not found: " AFTER the runner has
       // claimed the schedule + provisioned a workspace + created an execution — a
       // doomed task that burns a claim slot. Gate it here so enqueue is REJECTED
-      // up-front with a clear missing-items message ("先绑定工作流再入队"). Composite
-      // tasks (subunits >= 2) materialize to the BUILT-IN 'composition-task' ref and
-      // need no task-level workflow_ref — excluded from this check.
+      // up-front with a clear missing-items message ("先绑定工作流再入队").
       //
       // task-workflow-handoff (ADR-0013, S3): gate upgrade from "non-empty" to
       // "resolvable against the resolution set" (installed built-ins ∪ task-home
       // workflows/). A non-empty but UNRESOLVABLE ref is treated the same as
       // empty — added to missing. The resolver is the same one bind-fail-fast
       // uses (single source of truth, three call sites).
-      const subunits = taskSpec.subunits ?? []
-      if (subunits.length < 2) {
-        const ref = existing.workflow_ref?.trim() ?? ""
-        // Single resolve (review fix 2026-08-27): the old code walked the ref
-        // twice (isWorkflowRefResolvable + resolveWorkflowRef). One call — null
-        // ⇒ unresolvable (→ missing workflow_ref); hit ⇒ content for the
-        // required-inputs check.
-        const resolution = ref ? resolveWorkflowRef(ref, this.resolverDeps(id)) : null
-        if (!resolution) {
-          missing.push("workflow_ref")
-        } else {
-          // task-workflow-presets (T5): required inputs check against the
-          // RESOLVED input_values (after ${goal}/${ac} substitution). Keys whose
-          // value has an unknown/empty placeholder also surface as missing
-          // (input:<name>), never a 500.
-          const inputDefs = parseWorkflowInputDefs(resolution.content)
-          const { values, unresolved } = resolveInputValues(
-            taskSpec.input_values,
-            taskSpec.goal,
-            taskSpec.ac,
-          )
-          for (const key of unresolved) missing.push(`input:${key}`)
-          for (const def of inputDefs) {
-            if (def.required && !values[def.name]?.trim()) {
-              missing.push(`input:${def.name}`)
-            }
+      const ref = existing.workflow_ref?.trim() ?? ""
+      // Single resolve (review fix 2026-08-27): the old code walked the ref
+      // twice (isWorkflowRefResolvable + resolveWorkflowRef). One call — null
+      // ⇒ unresolvable (→ missing workflow_ref); hit ⇒ content for the
+      // required-inputs check.
+      const resolution = ref ? resolveWorkflowRef(ref, this.resolverDeps(id)) : null
+      if (!resolution) {
+        missing.push("workflow_ref")
+      } else {
+        // task-workflow-presets (T5): required inputs check against the
+        // RESOLVED input_values (after ${goal}/${ac} substitution). Keys whose
+        // value has an unknown/empty placeholder also surface as missing
+        // (input:<name>), never a 500.
+        const inputDefs = parseWorkflowInputDefs(resolution.content)
+        const { values, unresolved } = resolveInputValues(
+          taskSpec.input_values,
+          taskSpec.goal,
+          taskSpec.ac,
+        )
+        for (const key of unresolved) missing.push(`input:${key}`)
+        for (const def of inputDefs) {
+          if (def.required && !values[def.name]?.trim()) {
+            missing.push(`input:${def.name}`)
           }
         }
       }
@@ -3306,8 +3383,8 @@ export class TasksService {
    * delegation and 首触/后续轮 are finally the same code path (they used to differ in
    * exactly the ways that caused bugs: crash re-claim, collect, retention exemption).
    *
-   * Kept as a named method because the acceptance/advance paths and 票04's composite
-   * resume all call it, and its error contract is theirs: TaskLifecycleError → 409.
+   * Kept as a named method because the acceptance/advance paths and the re-dispatch
+   * callers all use it, and its error contract is theirs: TaskLifecycleError → 409.
    */
   async dispatchPhaseRound(
     taskId: string,
@@ -3470,7 +3547,7 @@ export class TasksService {
         round_index: nextRound,
       }
       next_action = "dispatched"
-      this.setPersistedTaskStatus(taskId, "running")
+      this.setPersistedTaskStatus(taskId, "running", { force: true })
       this.emitPhaseStatus(taskId, pv.index, "running", nextRound)
     } else {
       // accepted — 人的放行先落帧（UI 立刻把该 phase 变绿）。
@@ -3505,7 +3582,7 @@ export class TasksService {
           round_index: 1,
         }
         next_action = "dispatched"
-        this.setPersistedTaskStatus(taskId, "running")
+        this.setPersistedTaskStatus(taskId, "running", { force: true })
         this.emitPhaseStatus(taskId, nextPhaseIndex, "running", 1)
       } else {
         // K6/US11: 每个 phase 都停在人的 gate，下一 phase 等人工起。
@@ -3744,6 +3821,14 @@ export class TasksService {
       knowledge = this.archiveKnowledgeHook?.(taskId) ?? null
     } catch {
       /* 知识中心不可用不影响归档读模型 */
+    }
+    // 编译回执是任务 home 里的事实（队列是进程内的）——挂到知识快照上，
+    // 服务重启后窗口仍能看到「落了哪几页」。没有回执时不加字段（旧读模型逐字不变）。
+    if (knowledge) {
+      const wikiResult = readArchiveWikiResult(home)
+      if (wikiResult) knowledge.wiki_result = wikiResult
+      const caseResults = readArchiveCaseResults(home)
+      if (caseResults.length > 0) knowledge.case_results = caseResults
     }
     let cleanup: ArchiveCleanupReport | null = null
     try {
@@ -4000,7 +4085,7 @@ export class TasksService {
     // 阶段衔接信道 (ticket 01): 手动推进与 autoAdvance 同注入 (AC4)。
     const prevHandoffPaths = this.collectPrevHandoffPaths(row, target.index)
     const d = await this.dispatchPhaseRound(taskId, target.index, 1, undefined, { prevHandoffPaths })
-    this.setPersistedTaskStatus(taskId, "running")
+    this.setPersistedTaskStatus(taskId, "running", { force: true })
     this.emitPhaseStatus(taskId, target.index, "running", 1)
     return {
       task: this.getTask(taskId),
@@ -4140,14 +4225,21 @@ export class TasksService {
   /** System-event status write (no version bump — the optimistic lock tracks
    *  spec edits — same discipline as the job's own status mirrors (票03).
    *  Idempotent fast-path: same value → no UPDATE, no SSE (no board flicker on
-   *  re-derivation of an unchanged state). */
+   *  re-derivation of an unchanged state).
+   *
+   *  `force` = 持久行没变，但确实开了新的一轮执行（v4 任务验收后行一直是
+   *  'running'，下一 phase / 修复轮不会产生 ready→running 的真实变迁）。此时
+   *  仍要发一帧 task_status —— ChatEventBridge 按「状态变化」去重，它等的就是
+   *  这个 episode 边界；不发的话 chat 里只有首轮有「任务开始执行」卡。 */
   private setPersistedTaskStatus(
     taskId: string,
     status: TaskStatus,
-    opts: { silent?: boolean } = {},
+    opts: { silent?: boolean; force?: boolean } = {},
   ): void {
     const row = this.taskDAO.getById(taskId)
-    if (!row || row.status === status) return
+    if (!row) return
+    const changed = row.status !== status
+    if (!changed && !opts.force) return
     const nowIso = new Date().toISOString()
     this.taskDAO
       .getDb()
@@ -4517,7 +4609,7 @@ export class TasksService {
     }
 
     const d = await this.dispatchFixRound(id, pv, nextRound, instruction)
-    this.setPersistedTaskStatus(id, "running")
+    this.setPersistedTaskStatus(id, "running", { force: true })
     this.emitPhaseStatus(id, pv.index, "running", nextRound)
     return {
       task: this.getTask(id),

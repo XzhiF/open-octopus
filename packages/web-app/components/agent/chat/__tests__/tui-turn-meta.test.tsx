@@ -106,6 +106,23 @@ describe("TuiMessage 过程 meta — 收起态", () => {
     expect(container.textContent).not.toContain("已完成")
   })
 
+  it("中断轮无过程条目 → 纯统计行照常显示（已中断 · 时长 · tok · 费用，无 0 步）", () => {
+    // 2026-11-04：中断发生在首个工具调用之前，没有 timeline / thinking / tool。
+    // 旧 TuiMeta 在 rows 为空时直接 return null，统计被整行吞掉。
+    const { container } = render(
+      <TuiMessage message={assistant([], [], STATS, { interrupted: true, content: "" })} />,
+    )
+    const text = container.textContent ?? ""
+    expect(text).toContain("已中断")
+    expect(text).not.toContain("0 步")
+    expect(text).not.toContain("工具 0")
+    expect(text).toContain("1m 34s")
+    expect(text).toContain("12.3K tok")
+    expect(text).toContain("¥0.59")
+    // 没有过程可展开 → 不渲染展开箭头 / 明细体
+    expect(container.querySelector('[data-tui-meta-body]')).toBeNull()
+  })
+
   it("部分模型未定价 → 金额带 ≈ 前缀", () => {
     const stats: TurnStats = { ...STATS, costComplete: false }
     const { container } = render(<TuiMessage message={assistant(TWELEVE, TOOLS, stats)} />)

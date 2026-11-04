@@ -117,10 +117,10 @@ beforeAll(() => {
   const tasksService = new TasksService(db, sse, new AgentSessionDAO(db), taskHome, undefined, { get: () => null } as never)
   const workspaceService = { getById: (id: string) => (id === WS_ID ? { id, path: path.join(tmp, "ws1") } : undefined) } as never
   evidence = new RoundEvidenceService(db, sse, tasksService, workspaceService, taskHome)
-  planService = new AcceptancePlanService(db, sse, tasksService, workspaceService, taskHome, evidence)
+  planService = new AcceptancePlanService(sse, tasksService, workspaceService, taskHome, evidence)
   evidence.setAcceptancePlanService(planService)
   app = new Hono()
-  app.route("/api/tasks", createTasksRoutes(tasksService, sse, undefined, evidence))
+  app.route("/api/tasks", createTasksRoutes(tasksService, sse, evidence))
 })
 afterAll(() => {
   delete process.env.OCTOPUS_ACCEPTANCE_PLAN

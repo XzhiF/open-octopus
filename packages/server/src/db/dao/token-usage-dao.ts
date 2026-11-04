@@ -148,6 +148,17 @@ export class TokenUsageDAO extends BaseDAO {
     return this.derivedCost()
   }
 
+  /**
+   * 未归档部分的全站费用 —— dashboard all-time 的 live 半边。
+   * 已进 execution_archive 的执行由 workspace_archive 快照代表（完整归档路径不删源行），
+   * 这里排除它们，防 live + archived 双计；聊天/压缩行(execution_id NULL)恒为 live。
+   */
+  liveTotalCost(): LedgerCost {
+    return this.derivedCost([
+      "(l.execution_id IS NULL OR l.execution_id NOT IN (SELECT execution_id FROM execution_archive))",
+    ])
+  }
+
   // ── llm_calls ───────────────────────────────────────────────────
 
   /** NEW-r2：读侧统一走派生视图 —— 行上带查询时算好的 cost_usd/vendor。 */
@@ -659,9 +670,9 @@ export class TokenUsageDAO extends BaseDAO {
 
   // ── Health & monitoring queries ──────────────────────────────────────
   //
-  // 「parent_id = '0'」 here always meant 「count launched instances, not composite
-  // arms」. Since task-exec-tree (v44) a v4 round carries a parent (its lineage), so
-  // the honest predicate is (parent = '0' OR phase-tagged) — the latch's predicate.
+  // 「parent_id = '0'」 here always meant 「count launched instances」. Since
+  // task-exec-tree (v44) a v4 round carries a parent (its lineage), so the honest
+  // predicate is (parent = '0' OR phase-tagged) — the latch's predicate.
 
   getHealthStats(workspaceId: string, days: number): { total: number; success_count: number; failure_count: number; avg_duration: number | null; total_cost: number | null; cost_complete: boolean } {
     const statsRow = this.stmt(`

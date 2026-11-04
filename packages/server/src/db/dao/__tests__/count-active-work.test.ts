@@ -13,7 +13,7 @@ import { TERMINAL_EXECUTION_STATUSES } from "@octopus/shared"
  * `countActiveWork()` exists because "in flight" after v41 lives in two tables: a job's
  * current fire is a `schedule_executions` row, a task's current launch is an `executions`
  * row carrying `task_id`. The three cap consumers (engine claim loop, executor re-check,
- * composite fan-out pre-check) used to count only the first — correct while tasks also
+ * task launch pre-check) used to count only the first — correct while tasks also
  * lived there, wrong the moment task launches became execution rows.
  */
 
@@ -127,17 +127,6 @@ describe("countActiveWork — spans both kinds of in-flight work", () => {
     addSchedule("sch-daily", "workflow")
     addFire("f-wf", "sch-daily", "running")
     expect(dao.countActiveWork()).toBe(1)
-  })
-
-  it("counts a composite's running CHILDREN — each holds a workspace and an engine", () => {
-    // Before v41 a child was its own schedule row, so the meter counted it; counting only
-    // roots would have silently raised a composite task's real concurrency. The LATCH is
-    // the roots-only one (a composite may run several children of one task at once) —
-    // this axis is compute slots, so it is not.
-    addExec("root", "running", "task-c")
-    addExec("kid1", "running", "task-c", "root")
-    addExec("kid2", "pending", "task-c", "root")
-    expect(dao.countActiveWork()).toBe(2)
   })
 
   it("treats every alive status as work, including approval and interaction parks", () => {

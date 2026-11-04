@@ -2,7 +2,7 @@ import { Hono } from 'hono'
 import type { Context } from 'hono'
 import {
   emptyTokenUsage, addTokenUsage, costSummary, cacheHitRateOf, ledgerTotals, llmUsageAggregates,
-  type TokenUsage, type LedgerRow,
+  type TokenUsage, type LedgerRow, type LlmUsageSummary, type ModelUsageBreakdown,
 } from '@octopus/shared'
 import { existsSync, readdirSync, readFileSync } from 'fs'
 import { join } from 'path'
@@ -19,6 +19,25 @@ import type { LogAnalysisService } from '../services/log-analysis'
 
 /** 打分启发式：单次执行 $10 为成本效率满分线（产品参数，非 ledger 口径）。 */
 const COST_EFFICIENCY_BASELINE_USD = 10
+
+type SessionLedgerSummary = LlmUsageSummary & { modelBreakdown: Record<string, ModelUsageBreakdown> }
+
+/**
+ * 会话账本摘要的晚绑定提供者（2026-11-03）。
+ *
+ * `/sessions/:id/llm-calls` 的 `data` 仍是**本会话聊天调用行**（逐轮统计按它归属），
+ * 但 composer 的「本会话 token 账」口径是**这个 chat 关联的全部工作流执行**：
+ * 任务轮 + 验收规划等辅助执行 + 主对话直接跑的工作流。那份聚合只有 TasksService
+ * 知道（task_id / execution_links 两条归集），而本路由先于它装配，故用晚绑定。
+ * 未装配时回落到旧口径（只算本会话行）——测试与独立使用不受影响。
+ */
+let sessionLedgerSummaryProvider: ((sessionId: string) => SessionLedgerSummary | null) | null = null
+
+export function setSessionLedgerSummaryProvider(
+  fn: ((sessionId: string) => SessionLedgerSummary | null) | null,
+): void {
+  sessionLedgerSummaryProvider = fn
+}
 
 function getWorkspaceId(c: { req: { param: (name: string) => string | undefined } }): string {
   const id = c.req.param("id")
@@ -528,14 +547,31 @@ export function createAnalyticsRoutes(
    * node 维度，会话没有）；② **不按 message_id 去重** —— 去重是给「并行票共享会话
    * 各记一行」那个执行侧 bug 生的，会话行是每 modelUsage 一行的真实拆分，去重会
    * 吞掉混合模型轮次的第二个模型。聚合算法在 shared llmUsageAggregates（单源）。
+   *
+   * 2026-11-03：`data` 仍是聊天行（turn 统计要按消息归属）；`aggregates` 改为
+   * **这个 chat 关联的整本账**（聊天 + 任务轮 + 辅助执行 + 主对话直接跑的工作流），
+   * 由 TasksService.sessionUsage 晚绑定提供。未装配时两者同源（旧行为）。
    */
   router.get('/sessions/:id/llm-calls', (c: Context) => {
     const sessionId = c.req.param('id')
     if (!sessionId) return c.json({ error: 'session id required' }, 400)
     const calls = tokenUsageDAO.findLlmCallsBySession(sessionId)
+    const chatOnly = llmUsageAggregates(toLedgerRows(calls))
+    let aggregates: SessionLedgerSummary = chatOnly
+    if (sessionLedgerSummaryProvider) {
+      try {
+        aggregates = sessionLedgerSummaryProvider(sessionId) ?? chatOnly
+      } catch (err: unknown) {
+        // 账本聚合失败不该打掉聊天角标：回落旧口径并留日志。
+        console.error(
+          '[analytics] session ledger summary failed, falling back to chat rows:',
+          err instanceof Error ? err.message : String(err),
+        )
+      }
+    }
     return c.json({
       data: calls,
-      aggregates: llmUsageAggregates(toLedgerRows(calls)),
+      aggregates,
       _degraded: false,
       _message: null,
     })

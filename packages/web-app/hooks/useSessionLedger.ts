@@ -4,8 +4,10 @@
 // 刷新时机 = 轮次收尾沿（streaming true→false）：llm_calls 是 result chunk 到达即落账，
 // 轮次中途的数字没有意义；也不轮询 —— 它和 ctx% 一样本来就是轮次粒度的量。
 //
-// `calls` 是逐 call 行：composer 的 token 角标只用 aggregates，chat 的
-// turn 统计（计时 / token / 缓存）用 calls 按消息归属。
+// `calls` 是逐 call 聊天行：chat 的 turn 统计（计时 / token / 缓存）按消息归属。
+// `aggregates`（2026-11-03 起）是**这个 chat 关联的整本账**：聊天 + 任务轮 +
+// 验收规划等辅助执行 + 主对话直接跑的工作流（服务端 TasksService.sessionUsage
+// 晚绑定给 `/sessions/:id/llm-calls`）。composer 的 token 角标用它。
 
 import { useEffect, useRef, useState } from 'react'
 import { fetchSessionLLMCalls } from '@/lib/observability-api'

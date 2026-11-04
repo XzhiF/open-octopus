@@ -1,10 +1,11 @@
 'use client'
 
-import { Code2, CircleHelp, LayoutGrid } from 'lucide-react'
+import { Code2, CircleHelp, LayoutGrid, StickyNote } from 'lucide-react'
 import { APP_CATALOG, isAppId } from '@/lib/app-catalog'
 import { useDesktopWindows, windowTitle } from '@/lib/desktop-windows'
 import { cn } from '@/lib/utils'
 import { OctopusMenu } from './octopus-menu'
+import { QuickNotes } from './quick-notes'
 import { RunningAgents } from './running-agents'
 
 /** Single global header: logo menu | open windows | … | running agents | Mission Control. */
@@ -36,7 +37,9 @@ export function DesktopHeader() {
           const record = state.windows[id]
           if (!record) return null
           const app = isAppId(id) ? APP_CATALOG[id] : null
-          const Icon = app?.icon ?? (id === 'dev' ? Code2 : CircleHelp)
+          const Icon =
+            app?.icon ??
+            (id === 'dev' ? Code2 : id === 'notes' ? StickyNote : CircleHelp)
           const active = state.focused === id && !record.minimized
           const title = windowTitle(record)
           return (
@@ -70,6 +73,8 @@ export function DesktopHeader() {
       </div>
 
       <RunningAgents />
+
+      <QuickNotes />
 
       <button
         type="button"

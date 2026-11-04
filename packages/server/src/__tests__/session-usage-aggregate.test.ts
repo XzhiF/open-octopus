@@ -9,7 +9,7 @@ import fs from "fs"
 import os from "os"
 import path from "path"
 import { applySchema } from "../db/schema"
-import { AgentSessionDAO } from "../db/dao"
+import { AgentSessionDAO, ExecutionLinkDAO } from "../db/dao"
 import { SSEService } from "../services/sse"
 import { TasksService } from "../services/tasks/tasks-service"
 import { TaskHomeService } from "../services/tasks/task-home-service"
@@ -66,6 +66,30 @@ function insertNode(execId: string, nodeId: string, durationMs: number, type = "
       duration, started_at, completed_at)
     VALUES (?, ?, ?, ?, 'completed', 0, ?, ?, ?)
   `).run(`${execId}-${nodeId}`, execId, nodeId, type, durationMs, NOW, NOW)
+}
+
+/** 无 task_id 的执行（验收规划 / 主对话直接跑的工作流），归属只走 execution_links。 */
+function insertStandaloneExec(opts: {
+  id: string
+  status?: string
+  startedAt: string | null
+  completedAt: string | null
+  workflowRef?: string
+}): void {
+  db.prepare(`
+    INSERT INTO executions (id, workspace_id, parent_id, org, workflow_ref, workflow_name, status,
+      task_id, phase_index, round_index, start_commit_id, end_commit_id, started_at, completed_at, created_at, updated_at)
+    VALUES (?, 'ws-u', '0', ?, ?, 'standalone', ?, NULL, NULL, NULL, '{}', '{}', ?, ?, ?, ?)
+  `).run(
+    opts.id,
+    ORG,
+    opts.workflowRef ?? 'built-in/acceptance-plan',
+    opts.status ?? 'completed',
+    opts.startedAt,
+    opts.completedAt,
+    NOW,
+    NOW,
+  )
 }
 
 function insertCall(opts: {
@@ -219,5 +243,79 @@ describe("sessionUsage", () => {
       agent_duration_ms: 0,
     })
     expect(usage.workflows).toEqual([])
+  })
+
+  // 2026-11-03 事故回归：验收规划执行 task_id=NULL（不污染轮次口径），它的 LLM
+  // 花费必须经 execution_links 进到该 chat 的会话账本和任务那行。
+  it("task_aux（验收规划）按 execution_links 并入所属任务，token / 时长 / 工时都算", () => {
+    insertSession("s-aux")
+    insertTask("t-aux", "s-aux")
+    insertExec({
+      id: "e-round",
+      taskId: "t-aux",
+      startedAt: "2026-11-03T05:00:00.000Z",
+      completedAt: "2026-11-03T05:30:00.000Z",
+    })
+    insertStandaloneExec({
+      id: "e-aux",
+      startedAt: "2026-11-03T05:31:00.000Z",
+      completedAt: "2026-11-03T05:36:00.000Z",
+    })
+    insertNode("e-round", "n1", 20 * MIN)
+    insertNode("e-aux", "plan", 4 * MIN)
+    new ExecutionLinkDAO(db).link({
+      executionId: "e-aux",
+      sessionId: "s-aux",
+      taskId: "t-aux",
+      kind: "task_aux",
+      phaseIndex: 1,
+      roundIndex: 1,
+    })
+    insertCall({ executionId: "e-round", timestamp: 1000, durationMs: 1_000, input: 100, output: 10 })
+    insertCall({ executionId: "e-aux", timestamp: 2000, durationMs: 1_000, input: 45, output: 20 })
+
+    const usage = service.sessionUsage("s-aux")
+    expect(usage.summary.totalCalls).toBe(2)
+    expect(usage.summary.usage.inputTokens).toBe(145)
+    // 任务那行 = 轮 + 辅助执行；时长 = run_stats 30m + 辅助实跑 5m
+    expect(usage.workflows).toHaveLength(1)
+    expect(usage.workflows[0]).toMatchObject({
+      task_id: "t-aux",
+      duration_ms: 35 * MIN,
+      total_calls: 2,
+    })
+    expect(usage.timing.workflow_ms).toBe(35 * MIN)
+    expect(usage.timing.agent_duration_ms).toBe(24 * MIN)
+  })
+
+  it("chat_run（主对话直接跑的工作流）单列一行，并入会话合计", () => {
+    insertSession("s-run")
+    insertStandaloneExec({
+      id: "e-chat-run",
+      workflowRef: "built-in/quick-check",
+      startedAt: "2026-11-03T06:00:00.000Z",
+      completedAt: "2026-11-03T06:03:00.000Z",
+    })
+    new ExecutionLinkDAO(db).link({
+      executionId: "e-chat-run",
+      sessionId: "s-run",
+      taskId: null,
+      kind: "chat_run",
+    })
+    insertCall({ executionId: "e-chat-run", timestamp: 3000, durationMs: 1_000, input: 30, output: 3 })
+
+    const usage = service.sessionUsage("s-run")
+    expect(usage.summary.totalCalls).toBe(1)
+    expect(usage.workflows).toHaveLength(1)
+    expect(usage.workflows[0]).toMatchObject({
+      task_id: null,
+      execution_id: "e-chat-run",
+      // 点行打开运行窗要用：执行所在工作区随行给出
+      workspace_id: "ws-u",
+      status: "completed",
+      duration_ms: 3 * MIN,
+      total_calls: 1,
+    })
+    expect(usage.timing.workflow_ms).toBe(3 * MIN)
   })
 })

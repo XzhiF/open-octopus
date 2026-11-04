@@ -70,69 +70,6 @@ describe("07 SG7: buildTaskLaunchConfig propagates resources → config.requires
     expect(config.requires?.rules).toContain("coding-style")
   })
 
-  it("propagates subunit.resources[] → config.requires (flattened + deduped)", () => {
-    const taskSpec: TaskSpec = taskSpecSchema.parse({
-      goal: "g",
-      ac: ["a"],
-      subunits: [
-        {
-          name: "sub-a",
-          workspace_spec: { org: ORG, branch_prefix: "e2e-td-07-a", projects: [{ name: "p", source_path: "", group: "" }] },
-          workflow_ref: "wf-a",
-          input_values: {},
-          skills: [],
-          resources: [{ type: "skill", name: "shared-skill" }],
-        },
-        {
-          name: "sub-b",
-          workspace_spec: { org: ORG, branch_prefix: "e2e-td-07-b", projects: [{ name: "p", source_path: "", group: "" }] },
-          workflow_ref: "wf-b",
-          input_values: {},
-          skills: [],
-          resources: [
-            { type: "skill", name: "shared-skill" }, // dupe
-            { type: "command", name: "ship-cmd" },
-          ],
-        },
-      ],
-    })
-    const config = buildTaskLaunchConfig(taskSpec, ["proj"], ORG, undefined, [])
-    // 'shared-skill' appears once (deduped)
-    expect(config.requires?.skills).toEqual(["shared-skill"])
-    expect(config.requires?.commands).toEqual(["ship-cmd"])
-  })
-
-  it("UNION-merges task-level + subunit-level resources (deduped)", () => {
-    const taskSpec: TaskSpec = taskSpecSchema.parse({
-      goal: "g",
-      ac: ["a"],
-      resources: [{ type: "skill", name: "task-skill" }],
-      subunits: [
-        {
-          name: "sub-a",
-          workspace_spec: { org: ORG, branch_prefix: "e2e-td-07-c", projects: [{ name: "p", source_path: "", group: "" }] },
-          workflow_ref: "wf-a",
-          input_values: {},
-          skills: [],
-          resources: [
-            { type: "skill", name: "task-skill" }, // dupe with task-level
-            { type: "skill", name: "sub-skill" },
-          ],
-        },
-      ],
-    })
-    const config = buildTaskLaunchConfig(
-      taskSpec,
-      ["proj"],
-      ORG,
-      undefined,
-      [],
-      taskSpec.resources, // task-level resources
-    )
-    expect(config.requires?.skills).toEqual(expect.arrayContaining(["task-skill", "sub-skill"]))
-    expect(config.requires?.skills).toHaveLength(2)
-  })
-
   it("omits requires when no resources (backward compat with 06's AC4)", () => {
     const taskSpec: TaskSpec = taskSpecSchema.parse({ goal: "g", ac: ["a"] })
     const config = buildTaskLaunchConfig(taskSpec, ["proj"], ORG, "wf", [])

@@ -163,7 +163,7 @@ beforeAll(() => {
   const workspaceService = { getById: (id: string) => (id === WS_ID ? { id, path: wsDir } : undefined) } as never
   const evidence = new RoundEvidenceService(db, sse, tasksService, workspaceService, taskHome)
   app = new Hono()
-  app.route("/api/tasks", createTasksRoutes(tasksService, sse, undefined, evidence))
+  app.route("/api/tasks", createTasksRoutes(tasksService, sse, evidence))
 })
 
 afterAll(() => {

@@ -17,7 +17,6 @@ import type {
   TaskSpec,
   ResourceRef,
   ArtifactIndexEntry,
-  AssistWorkflowRun,
   TaskPhaseStatus,
   LlmUsageSummary,
   ModelUsageBreakdown,
@@ -39,10 +38,7 @@ import type {
 // is not importable from web:
 //   - `derived` on the detail payload (mirror of @octopus/server
 //     derive-task-view.ts — see TaskDerivedView below), and
-//   - `executions[]` on the detail payload (GET /:id run history; each badge may
-//     carry its composite fan-out in `children` — the board's list badge does
-//     NOT load children, so `children === undefined` means "not loaded", never
-//     "no subunits").
+//   - `executions[]` on the detail payload (GET /:id run history).
 // `TaskView` stays as the board-row name (the list/summary endpoints answer it);
 // `TaskDetail` is that plus the two fields above.
 
@@ -53,9 +49,7 @@ export type TaskView = Task
 
 /** TaskDetail = TaskView + run history + derived (v4 视图). */
 export type TaskDetail = TaskView & {
-  /** Every ROOT execution of this task, newest first (empty for a draft).
-   *  Composite SUBUNIT runs hang off their root's `children` (票05: detail and
-   *  /executions load the fan-out; the board badge does not). */
+  /** Every instance execution of this task, newest first (empty for a draft). */
   executions: TaskExecutionBadge[]
   derived?: TaskDerivedView
 }
@@ -697,7 +691,12 @@ export interface TaskUsagePayload {
 /** GET /api/sessions/:id/usage — 会话账本（2026-10-31 消耗窗·会话版）。
  *  与任务账本同形（summary），多一份 timing 口径和本会话跑过的工作流列表。 */
 export interface SessionUsageWorkflowWire {
-  task_id: string
+  /** 任务行带 task_id；主对话里直接跑的工作流没有任务 → null。 */
+  task_id: string | null
+  /** 非任务工作流的执行 id（任务行不带）。 */
+  execution_id?: string | null
+  /** 非任务工作流所在工作区（点行打开运行窗用；任务行不带）。 */
+  workspace_id?: string | null
   name: string
   status: string
   duration_ms: number
@@ -824,13 +823,64 @@ export interface ArchiveKnowledgeItemWire {
   path: string
 }
 
+/** 归档 wiki 编译触及页（`archive/wiki-result.json` 投影）。 */
+export interface ArchiveWikiTouchedPageWire {
+  path: string
+  type: string
+  created: boolean
+}
+
+/** 归档 wiki 编译回执（2026-11-03 归档台 v2「知识落点」真相面）。 */
+export interface ArchiveWikiResultWire {
+  status: 'committed' | 'failed'
+  started_at: string
+  finished_at: string
+  commit: string | null
+  changed: boolean
+  deduped: boolean
+  created: number
+  updated: number
+  contradictions: number
+  finding_ids: string[]
+  touched: ArchiveWikiTouchedPageWire[]
+  warnings: string[]
+  error?: { code: string; message: string }
+}
+
+/** 归档判例入档回执（`archive/case-result.json`；新建 / 并档 / 失败）。 */
+export interface ArchiveCaseResultWire {
+  queue_task_id: string
+  action: 'created' | 'merged' | 'failed'
+  symptom: string
+  case_path: string | null
+  occurrences_before: number | null
+  occurrences_after: number | null
+  finished_at: string
+  error?: { code: string; message: string }
+}
+
 /** 归档素材包 / 编译状态（知识中心只读快照）。 */
 export interface ArchiveKnowledgeWire {
   pack_items: number
   /** 包内全部件（含已剔除）；旧服务端可能不返回。 */
   items?: ArchiveKnowledgeItemWire[]
+  /** 包目录（知识根相对 POSIX）；旧服务端可能不返回。 */
+  pack_path?: string | null
+  /** 素材包冻结时间（manifest.createdAt）。 */
+  pack_created_at?: string | null
+  /** 非焦点件进编译 prompt 的单件字节预算（UI 徽章估算用）。 */
+  pack_item_cap?: number | null
   compile_state: string | null
   compile_position: number | null
+  /** 队列时间戳（进程内快照；服务重启后缺席，改看 wiki_result）。 */
+  compile_queued_at?: string | null
+  compile_started_at?: string | null
+  compile_finished_at?: string | null
+  compile_error?: { code: string; message: string } | null
+  /** 持久编译回执；null/缺省 = 尚未编译完成或旧任务。 */
+  wiki_result?: ArchiveWikiResultWire | null
+  /** 判例入档回执；缺省 = 本次无判例入档（或旧任务）。 */
+  case_results?: ArchiveCaseResultWire[]
 }
 
 /** done 后构建产物清理（archive/cleanup.json，2026-10-31）。 */
@@ -1625,70 +1675,6 @@ export async function getWorkflowRefView(taskId: string): Promise<WorkflowRefVie
   return res.json()
 }
 
-// ============ Assist workflows (ticket 07 routes — US9/10/11/D9) ============
-
-/** The 3 built-in assist-workflow template ids (AC3 whitelist). Mirrors the
- *  server's `ASSIST_WORKFLOW_TEMPLATES` constant. The MoA trigger button uses
- *  `moa-requirements-review` (primary). */
-export const ASSIST_WORKFLOW_TEMPLATES = [
-  "moa-requirements-review",
-  "spec-review-swarm",
-  "clarify-debate",
-] as const
-export type AssistWorkflowTemplate = (typeof ASSIST_WORKFLOW_TEMPLATES)[number]
-
-export interface AssistWorkflowTriggerResult {
-  run_id: string
-  execution_id: string
-  workspace_id: string
-  template: string
-}
-
-/** POST /api/tasks/:id/assist-workflows — trigger a built-in assist-workflow run
- *  (US9). Body: `{ template, input? }`. Non-whitelist template → 400. The run
- *  executes in the background; the response returns immediately with the run id.
- *  Progress/completion arrive via `assist_run_update` SSE (D19). On completion,
- *  a markdown artifact is written to the task's artifacts/ dir.
- *
- *  v2 (dynamic MoA/Debate): template = "dynamic-moa-analysis", input carries
- *  mode, experts[{agent, engine, model}], aggregator?, rounds?, userInput. */
-export async function triggerAssistWorkflow(
-  taskId: string,
-  template: string,
-  input?: {
-    goal?: string
-    ac?: string[]
-    projects?: string[]
-    userInput?: string
-    /** "moa" (parallel + aggregate) or "debate" (multi-round argue). */
-    mode?: "moa" | "debate"
-    /** Expert rows: each = { agent id, engine, model }. Min 2. */
-    experts?: Array<{ agent: string; engine: string; model: string }>
-    /** Aggregator model config (MoA mode only). */
-    aggregator?: { engine?: string; model: string }
-    /** Max debate rounds (Debate mode only, default 3). */
-    rounds?: number
-  },
-): Promise<AssistWorkflowTriggerResult> {
-  const body: Record<string, unknown> = { template }
-  if (input) body.input = input
-  const res = await fetch(buildUrl(`/${taskId}/assist-workflows`), {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body),
-  })
-  return handleResponse<AssistWorkflowTriggerResult>(res)
-}
-
-/** GET /api/tasks/:id/assist-workflows/:runId — run status + process logs +
- *  structured output (US10/US11). Parse failure → `output_raw` +
- *  `output_parse_error=true` on the 200 response (SW-BP10), never an error
- *  status. Missing/mismatched run → throws (404). */
-export async function getAssistWorkflowRun(taskId: string, runId: string): Promise<AssistWorkflowRun> {
-  const res = await fetch(buildUrl(`/${taskId}/assist-workflows/${runId}`))
-  return handleResponse<AssistWorkflowRun>(res)
-}
-
 // ============ 任务对话 S1（票01 端点契约 · 票07 消费面）────────────────
 //
 // GET /:id/chat = 懒建/取得任务唯一 task-doer 会话（tasks.doer_session_id，
@@ -1774,7 +1760,6 @@ export type {
   TaskSpecField,
   TriggerMode,
   ArtifactIndexEntry,
-  AssistWorkflowRun,
   TaskPhase,
   TaskPhaseStatus,
 } from "@octopus/shared"

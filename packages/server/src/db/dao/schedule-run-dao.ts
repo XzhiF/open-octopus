@@ -190,12 +190,9 @@ export class ScheduleRunDAO extends BaseDAO {
    * janitor permanently occupy one of the 3 real slots.
    *
    * Task rows use the same fail-closed predicate as `ux_exec_task_active` (NOT IN
-   * terminal) — but over EVERY task-bound row, roots and composite children alike. This
-   * axis is compute slots, and a running subunit holds a workspace and an engine exactly
-   * like a root does; the pre-v41 meter counted each child as its own schedule row, so
-   * counting only roots would silently raise the real concurrency of a composite task.
-   * The other axis, `ux_exec_task_active`, is deliberately ROOTS ONLY: a composite is
-   * allowed to run several children of one task at once.
+   * terminal) — but over EVERY task-bound row. This axis is compute slots: a running
+   * row holds a workspace and an engine, so counting only roots would understate real
+   * concurrency.
    *
    * EXCEPT that `pending` is subtracted back out, and the two lists are NOT the same
    * axis: an armed-but-not-started row holds the task's IDENTITY slot (the latch must

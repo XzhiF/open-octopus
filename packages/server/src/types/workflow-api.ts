@@ -1,8 +1,12 @@
-import type { WorkflowDef, WorkflowInput } from "@octopus/shared"
+import type { WorkflowDef, WorkflowInput, WorkflowStage } from "@octopus/shared"
 
 export interface WorkflowInfo {
   ref: string
   name: string
+  /** Numeric release version (`version:` in YAML), when declared. */
+  version?: string
+  /** Resolved release stage — absent YAML `stage` defaults to `snapshot`. */
+  stage: WorkflowStage
   inputs?: Record<string, WorkflowInput>
   group: string
 }

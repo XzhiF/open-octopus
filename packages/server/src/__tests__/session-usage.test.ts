@@ -14,7 +14,7 @@ import { applySchema } from "../db/schema"
 import { TokenUsageDAO, toLedgerRows } from "../db/dao/token-usage-dao"
 import { ExecutionDAO } from "../db/dao/execution-dao"
 import { WorkspaceDAO } from "../db/dao/workspace-dao"
-import { createAnalyticsRoutes } from "../routes/analytics"
+import { createAnalyticsRoutes, setSessionLedgerSummaryProvider } from "../routes/analytics"
 import { SSEService } from "../services/sse"
 import { TasksService } from "../services/tasks/tasks-service"
 import { llmUsageAggregates } from "@octopus/shared"
@@ -168,6 +168,42 @@ describe("GET /api/sessions/:id/llm-calls", () => {
   it("缺 id → 400", async () => {
     const res = await app().request("/api/sessions//llm-calls")
     expect([400, 404]).toContain(res.status)
+  })
+
+  // 2026-11-03 消耗口径（全局）：角标的 averages 不再是「聊天行」而是「这个 chat
+  // 关联的整本账」（任务轮 + 辅助执行 + 主对话直接跑的工作流由 TasksService 提供）；
+  // data 保持聊天行，turn 统计按消息归属不受影响。
+  it("装配 session ledger provider 后 aggregates 走整本账，data 仍是聊天行", async () => {
+    dao.insertLlmCallBatch([call({ id: "c1" })])
+    const ledger = {
+      totalCalls: 7,
+      usage: { inputTokens: 7000, outputTokens: 700, cacheReadTokens: 0, cacheCreationTokens: 0 },
+      totals: { tokens: 7700, cost: { usd: null, complete: true }, cacheHitRate: null },
+      modelBreakdown: {},
+    }
+    setSessionLedgerSummaryProvider(() => ledger)
+    try {
+      const res = await app().request("/api/sessions/s-1/llm-calls")
+      const body = await res.json()
+      expect(body.aggregates.totalCalls).toBe(7)
+      expect(body.aggregates.usage.inputTokens).toBe(7000)
+      expect(body.data.map((r: { id: string }) => r.id)).toEqual(["c1"])
+    } finally {
+      setSessionLedgerSummaryProvider(null)
+    }
+  })
+
+  it("provider 抛错 → 回落聊天行口径，角标不挂", async () => {
+    dao.insertLlmCallBatch([call({ id: "c1" })])
+    setSessionLedgerSummaryProvider(() => { throw new Error("boom") })
+    try {
+      const res = await app().request("/api/sessions/s-1/llm-calls")
+      expect(res.status).toBe(200)
+      const body = await res.json()
+      expect(body.aggregates.totalCalls).toBe(1)
+    } finally {
+      setSessionLedgerSummaryProvider(null)
+    }
   })
 })
 

@@ -2,6 +2,7 @@
 
 import { useState, useMemo } from 'react'
 import type { AgentMessage, MessageTimelineEntry, ToolCallRecord } from '@/lib/agent/types'
+import { displayContentFor, endsOnAsk } from '@/lib/agent/display-content'
 import { cn } from '@/lib/utils'
 import { Bot, User, Brain, Wrench, ChevronRight, Square } from 'lucide-react'
 import { ToolCallCard } from './ToolCallCard'
@@ -20,13 +21,10 @@ export function ChatBubble({ message }: ChatBubbleProps) {
   // Chronological timeline (2026-08-19): the bubble body shows only the FINAL
   // agent text segment; earlier fragments / thinking / tools live in the
   // collapsed meta in arrival order. Without a timeline (old messages) the
-  // full content is shown as before.
-  const displayContent = useMemo(() => {
-    if (!hasTimeline) return message.content
-    const texts = timeline!.filter((e) => e.kind === 'text' && e.text)
-    const last = texts[texts.length - 1]
-    return last?.text ?? message.content
-  }, [hasTimeline, timeline, message.content])
+  // full content is shown as before. AskUserQuestion 收尾的回合例外：
+  // 问题前后的正文都留下（见 lib/agent/display-content.ts）。
+  const askTurn = endsOnAsk(message)
+  const displayContent = useMemo(() => displayContentFor(message), [message])
 
   // Identity-switch marker rides its own compact card (whole pack collapsible).
   if (message.roleSwitch) {
@@ -73,7 +71,7 @@ export function ChatBubble({ message }: ChatBubbleProps) {
       )}>
         {/* Collapsible thinking + tool calls (+ chronological timeline) */}
         {hasMeta && (
-          <CollapsibleMeta thinking={message.thinking} toolCalls={message.tool_calls ?? []} timeline={timeline} />
+          <CollapsibleMeta thinking={message.thinking} toolCalls={message.tool_calls ?? []} timeline={timeline} hideTextFrags={askTurn} />
         )}
 
         {/* Main content */}
@@ -98,15 +96,32 @@ export function ChatBubble({ message }: ChatBubbleProps) {
             <span className="text-xs text-agent-warn">回复已被用户中断</span>
           </div>
         )}
+
+        {/* Persisted turn failure (P0-3): survives reload instead of living
+            only in the transient `error` banner. */}
+        {message.error && (
+          <div
+            className="flex flex-wrap items-center gap-1.5 mt-2 pt-2 border-t border-dashed border-pop-red/40"
+            data-chat-error={message.error.code}
+          >
+            <span className="text-xs font-bold text-pop-red">本轮运行失败</span>
+            <span className="text-xs text-pop-red/90 break-words">{message.error.message}</span>
+            <code className="rounded bg-pop-pink-soft px-1 py-0.5 text-[10px] font-mono text-pop-red">
+              {message.error.code}
+            </code>
+          </div>
+        )}
       </div>
     </div>
   )
 }
 
-function CollapsibleMeta({ thinking, toolCalls, timeline }: {
+function CollapsibleMeta({ thinking, toolCalls, timeline, hideTextFrags }: {
   thinking?: string
   toolCalls?: ToolCallRecord[]
   timeline?: MessageTimelineEntry[]
+  /** 正文段已在 bubble 全量显示（ask 回合）→ meta 展开时不再重复。 */
+  hideTextFrags?: boolean
 }) {
   const [open, setOpen] = useState(false)
   // The server column can hand over a non-array (legacy "{}" rows); treat it
@@ -164,8 +179,9 @@ function CollapsibleMeta({ thinking, toolCalls, timeline }: {
                 const tc = toolList.find((t) => t.id === entry.id)
                 return tc ? <ToolCallCard key={i} toolCall={tc} /> : null
               }
-              // text fragment (skip the final one — it's the bubble body)
-              if (i === lastTextIdx) return null
+              // text fragment：最后一段是 bubble body；ask 回合全部正文段都
+              // 已进 body —— 两种情况都不在 meta 里重复。
+              if (hideTextFrags || i === lastTextIdx) return null
               return (
                 <div key={i}>
                   <div className="text-xs font-medium text-muted-foreground mb-1">agent 输出片段</div>

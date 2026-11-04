@@ -16,6 +16,20 @@ name: my-workflow
 
 > YAML 头部不需要任何编辑器 schema 指令注释（旧 `schema` 头注释路线已废弃，K9）——权威 = shared Zod parser（`packages/shared/src/types/workflow.ts` + `packages/shared/src/yaml/parser.ts`）。
 
+### 1b. Release Metadata — `version` + `stage`
+
+工作流按 `release` / `snapshot` 两档发版。**主对话（`list_workflows` / `run_workflow`）只能看到并运行 `release`**；快照是开发中的定义，对主对话不可见。
+
+```yaml
+name: my-workflow
+version: 1.0.0     # 展示用数字版本（字符串或数字均可，统一按字符串返回）
+stage: release     # release | snapshot；缺省 = snapshot（fail-closed）
+```
+
+- 发布 = 在 YAML 里显式写 `stage: release`，并同时给出 `version`。
+- 仅内部/实验/测试流保持 `stage: snapshot` 或干脆不写。
+- `stage` 只影响**发现**（列表/主对话）；已绑定的任务执行不受影响。
+
 ### 2. Node ID Uniqueness
 
 All node `id` values must be unique within the workflow (recursive across loop sub-nodes).

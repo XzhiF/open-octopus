@@ -83,7 +83,11 @@ export interface UseAgentChatApiOverride {
    *  a dialog that was closed mid-generation shows the growing reply (via
    *  message polling) instead of a dead transcript. Absent (main agent
    *  ChatTab) → behavior is byte-identical to before. */
-  checkRunning?: (id: string) => Promise<{ running: boolean; partial: boolean }>
+  checkRunning?: (id: string) => Promise<{
+    running: boolean
+    partial: boolean
+    background_tasks?: api.BackgroundTaskInfo[]
+  }>
 }
 
 /** Rebuild the live timeline from a persisted streaming partial (2026-10-29:
@@ -112,6 +116,9 @@ function streamTimelineFromPartial(msg: AgentMessage): StreamTimelineItem[] {
 export function useAgentChat(sessionId: string | null, options?: {
   onTitleUpdate?: (sessionId: string, title: string) => void
   api?: UseAgentChatApiOverride
+  /** Silence budget for the SSE transport. Pass a smaller value only for
+   *  channels that emit server heartbeats (main chat: 15s). Default 5min. */
+  stallMs?: number
   /** Task-thread execution turn landed a [quick-edit] commit. */
   onQuickEditCommit?: (data: {
     sessionId?: string
@@ -149,6 +156,9 @@ export function useAgentChat(sessionId: string | null, options?: {
   } | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [statusMessage, setStatusMessage] = useState('')
+  /** 正在等的后台任务（provider `background_tasks` 电平）。非空时流尾显示
+   *  「后台运行中：<description>」，回合收口/停止/新回合都会清空。 */
+  const [backgroundTasks, setBackgroundTasks] = useState<api.BackgroundTaskInfo[]>([])
   /** Slash commands the CLI advertises for this session (`system:init`). The
    *  set is skills/plugins-dependent, so it cannot be hardcoded in the UI. */
   const [slashCommands, setSlashCommands] = useState<string[]>([])
@@ -170,7 +180,7 @@ export function useAgentChat(sessionId: string | null, options?: {
       try { localStorage.removeItem(`context-usage:${sessionId}`) } catch { /* ignore */ }
     }
   }, [sessionId])
-  const { connect, disconnect } = useSSEConnection()
+  const { connect, disconnect } = useSSEConnection(options?.stallMs ? { stallMs: options.stallMs } : undefined)
   const streamContentRef = useRef('')
   const streamThinkingRef = useRef('')
   const toolCallsRef = useRef<ToolCallRecord[]>([])
@@ -230,6 +240,7 @@ export function useAgentChat(sessionId: string | null, options?: {
     setMessages([])
     setError(null)
     setStatusMessage('')
+    setBackgroundTasks([])
     setStreamContent('')
     setStreamThinking('')
     setIsThinking(false)
@@ -392,6 +403,8 @@ export function useAgentChat(sessionId: string | null, options?: {
       try {
         await loadMessages()
         const r = await checkRunningFn(sid)
+        // 切回会话时补齐「后台运行中」——本实例没有这条 SSE，只能从运行态探测拿。
+        if (Array.isArray(r.background_tasks)) setBackgroundTasks(r.background_tasks)
         if (!r.running) {
           // The route finalizes the row BEFORE unregistering the stream, so
           // running=false guarantees the finalized content is on this fetch.
@@ -409,6 +422,7 @@ export function useAgentChat(sessionId: string | null, options?: {
           setStreamTimeline([])
           timelineRef.current = []
           setStatusMessage('')
+          setBackgroundTasks([])
         }
       } catch {
         // Transient network hiccup — keep polling; the server turn is alive.
@@ -490,6 +504,7 @@ export function useAgentChat(sessionId: string | null, options?: {
     setToolCalls([])
     setError(null)
     setStatusMessage('')
+    setBackgroundTasks([])
     // contextUsage: NOT reset here — preserve the last known value so the
     // status bar stays populated between sends (and across dialog reopens).
     // The new value arrives via onContextUsage SSE handler during the stream.
@@ -641,6 +656,22 @@ export function useAgentChat(sessionId: string | null, options?: {
       onStatus: (data) => {
         setStatusMessage(data.message)
       },
+      onBackgroundTasks: (data) => {
+        setBackgroundTasks(Array.isArray(data.tasks) ? data.tasks : [])
+      },
+      onAssistantContinue: (data) => {
+        // 后台任务唤醒的续轮：与上一段正文之间留空行，并新开一个 text 段，
+        // 避免直播时两段话粘成一个气泡（2026-11-04）。
+        const separator = data?.separator ?? ''
+        if (!separator) return
+        streamContentRef.current += separator
+        setStreamContent(streamContentRef.current)
+        timelineRef.current = [
+          ...timelineRef.current,
+          { kind: 'text', id: `tx-cont-${Date.now()}`, text: separator },
+        ]
+        setStreamTimeline([...timelineRef.current])
+      },
       onConfirm: (data) => {
         setPendingConfirm(data)
       },
@@ -687,6 +718,7 @@ export function useAgentChat(sessionId: string | null, options?: {
         setStreamTimeline([])
         timelineRef.current = []
         setStatusMessage('')
+        setBackgroundTasks([])
         // Server-side event cards appended during this turn (task tools:
         // launch proposal / action request / reflection…) never ride the SSE
         // stream — without a re-read the card stays invisible until a manual
@@ -718,6 +750,18 @@ export function useAgentChat(sessionId: string | null, options?: {
         setTurnStartedAt(null)
         streamingRef.current = false
         streamingSessionRef.current = null
+        setBackgroundTasks([])
+        // Transport died without a terminal frame: the server may still have
+        // finalized a partial row before the socket dropped. Re-read once so a
+        // reload-after-crash shows whatever was actually produced (and the
+        // persisted error row, when the server survived long enough to write it).
+        if (data.code === 'STREAM_EOF' || data.code === 'STREAM_STALL') {
+          // A failed reload must not replace the more specific transport error
+          // with the generic 「Failed to load messages」 banner.
+          void loadMessages({ onlyWhenIdle: true }).then(() => {
+            setError((prev) => (prev === LOAD_MESSAGES_ERROR ? data.message : prev))
+          })
+        }
       },
     }
 
@@ -803,6 +847,7 @@ export function useAgentChat(sessionId: string | null, options?: {
     streamThinkingRef.current = ''
     toolCallsRef.current = []
     setStatusMessage('')
+    setBackgroundTasks([])
 
     // 中断的这一轮由 server 落成 interrupted 行（stopChat 等 finalize 完成才
     // 返回），这里重拉一遍让实录成为权威：本地的 partial 只是即时回显，服务端
@@ -894,6 +939,8 @@ export function useAgentChat(sessionId: string | null, options?: {
     pendingConfirm,
     error,
     statusMessage,
+    /** 正在等的后台任务（非空时流尾显示「后台运行中：…」）。 */
+    backgroundTasks,
     /** Slash commands advertised by the CLI for the active session. */
     slashCommands,
     contextUsage,

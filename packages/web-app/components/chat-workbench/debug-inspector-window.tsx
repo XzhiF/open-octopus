@@ -19,7 +19,7 @@ import type {
 } from '@/lib/agent/debug-types'
 import { useBillingCurrency } from '@/lib/billing-currency'
 import { copyToClipboard, cn } from '@/lib/utils'
-import { formatCost, formatDuration, formatTokenCount, type CostDisplay } from '@/lib/format'
+import { formatCost, formatDuration, formatPercent, formatTokenCount, type CostDisplay } from '@/lib/format'
 import { Spinner } from '@/components/ui/spinner'
 
 type Tab = 'overview' | 'prompt' | 'identity' | 'sdk' | 'timeline'
@@ -66,7 +66,8 @@ function fmtClock(iso: string | null): string {
 }
 
 function fmtOffset(ms: number): string {
-  return ms >= 1000 ? `+${(ms / 1000).toFixed(2)}s` : `+${Math.round(ms)}ms`
+  // 调试时间线的相对偏移读数（+2.34s）需要毫秒级紧凑精度
+  return ms >= 1000 ? `+${(ms / 1000).toFixed(2)}s` : `+${Math.round(ms)}ms` // fmt-ok: 相对偏移，不适配全站时长分档
 }
 
 function turnLabel(n: number): string {
@@ -819,7 +820,7 @@ function OverviewTab({
         <Stat label="账本成本" value={fmtUsageCost(usage, currency)} sub="含缓存读/写" tone="amber" />
         <Stat
           label="上下文"
-          value={ctxPct == null ? '—' : `${ctxPct.toFixed(1)}%`}
+          value={formatPercent(ctxPct == null ? null : ctxPct / 100, 1)}
           sub={ctx ? `${fmtExact(ctx.totalTokens)} / ${fmtExact(ctx.maxTokens)}` : 'SDK 未上报'}
           tone="cyan"
         />
@@ -857,7 +858,7 @@ function OverviewTab({
         ))}
       </div>
 
-      <Section title="上下文占用" link={<span className="text-pop-purple">{ctxPct == null ? '—' : `${ctxPct.toFixed(1)}%`}</span>} />
+      <Section title="上下文占用" link={<span className="text-pop-purple">{formatPercent(ctxPct == null ? null : ctxPct / 100, 1)}</span>} />
       <div className="h-1.5 overflow-hidden rounded-full bg-[#26262e]">
         <i
           className="block h-full bg-pop-cyan"

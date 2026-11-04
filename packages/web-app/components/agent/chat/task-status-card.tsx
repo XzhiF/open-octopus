@@ -210,9 +210,12 @@ export function TaskStatusCard({ message }: { message: AgentMessage }) {
   // 收尾（执行终态）后计时停住 —— 只在还活着时每秒推一格。
   const execStatus = exec?.status ?? null
   const execTerminal = !!execStatus && TERMINAL_EXEC_STATUS.has(execStatus)
-  const failed = execTerminal
+  // 验收规划失败（2026-11-03）：轮次本身仍是 awaiting_review，但「方案生成失败」
+  // 必须按失败收尾卡渲染（✕ / 红色），不能因为任务状态是待验收就打绿勾。
+  const planFailed = !!(activity?.payload as { acceptancePlanFailed?: boolean } | undefined)?.acceptancePlanFailed
+  const failed = planFailed || (execTerminal
     ? FAILED_EXEC_STATUS.has(execStatus!)
-    : cardStatus === 'failed'
+    : cardStatus === 'failed')
   const stopped = !failed && execTerminal && STOPPED_EXEC_STATUS.has(execStatus!)
   const paused = !execTerminal && (cardStatus === 'paused' || execStatus === 'paused')
   const liveNow = isRunCard && !execTerminal && !paused

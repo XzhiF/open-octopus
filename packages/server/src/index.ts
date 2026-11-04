@@ -60,13 +60,22 @@ import { EffectivenessLedgerService } from "./services/knowledge/effectiveness-l
 import { EffectivenessSyncService } from "./services/knowledge/effectiveness-sync"
 import { avgMeasuredConfidence } from "./services/knowledge/effectiveness-confidence"
 import { createProductionKnowledgeLLM } from "./services/knowledge/llm"
-import { knowledgePatrolHandlerFor, createKnowledgeSessionReporter, appendKnowledgeSessionCards, appendCardsToSession } from "./services/knowledge/patrol-job"
+import { knowledgePatrolHandlerFor, createKnowledgeSessionReporter, appendKnowledgeSessionCards, appendCardsToSession, findingCardData } from "./services/knowledge/patrol-job"
 import { FindingOpsService } from "./services/knowledge/findings"
 import { BackfillService } from "./services/knowledge/backfill"
-import { createFindingsRoutes } from "./routes/findings"
+import { createFindingsRoutes, findingView } from "./routes/findings"
 import { createEffectivenessRoutes } from "./routes/effectiveness"
 import { ArchiveIngestService, archiveCompileTaskId } from "./services/tasks/archive-ingest-service"
-import { readPackManifest } from "./services/knowledge/material-pack"
+import { packDirRel, readPackManifest, PACK_ITEM_PROMPT_CAP_BYTES } from "./services/knowledge/material-pack"
+import {
+  readArchiveWikiResult,
+  toArchiveWikiFailure,
+  toArchiveWikiResult,
+  writeArchiveWikiResult,
+  type ArchiveWikiResult,
+  type CuratorCompileResultLike,
+} from "./services/tasks/archive-wiki-result"
+import { upsertArchiveCaseResult } from "./services/tasks/archive-case-result"
 import { createProductionArchiveSummarizer } from "./services/tasks/archive-ingest-llm"
 import { createWikiRoutes } from "./routes/wiki"
 import { createArchiveRoutes } from "./routes/archive"
@@ -86,7 +95,7 @@ import { globalChatRoutes } from "./routes/global-chat"
 import { createFileRoutes } from "./routes/file-routes"
 import { createOrgRoutes } from "./routes/org"
 import { createBuiltInWorkflowRoutes } from "./routes/builtin-workflow"
-import { createAnalyticsLogRoutes, createAnalyticsRoutes } from "./routes/analytics"
+import { createAnalyticsLogRoutes, createAnalyticsRoutes, setSessionLedgerSummaryProvider } from "./routes/analytics"
 import { eventRoutes } from "./routes/events"
 import scheduleRoutes, { setScheduleService } from "./routes/schedule"
 import { createSchedulerRoutes } from "./routes/scheduler"
@@ -96,7 +105,7 @@ import {
   AcceptancePlanService,
   setAcceptancePlanReadyProvider,
 } from "./services/tasks/acceptance-plan-service"
-import { setAcceptanceToolsProvider, setArchiveToolsProvider } from "./services/chat/task-tools"
+import { setAcceptanceToolsProvider, setArchiveToolsProvider, setTaskLaunchToolsProvider, setWikiFindingToolsProvider } from "./services/chat/task-tools"
 import { TestInstanceRegistry } from "./services/tasks/test-instance-registry"
 import { createWorkflowPresetsRoutes } from "./routes/workflow-presets"
 import { createSkillGroupsRoutes } from "./routes/skill-groups"
@@ -124,10 +133,9 @@ import { initChatEventBridge } from "./services/activity/chat-event-bridge"
 import { WorkspaceScheduleService } from "./services/schedule"
 import { SchedulerService } from "./services/scheduler/scheduler-service"
 import { SchedulerEngine } from "./services/scheduler/scheduler-engine"
-import { TasksService } from "./services/tasks/tasks-service"
+import { TasksService, type TaskArchiveFinding } from "./services/tasks/tasks-service"
 import { TaskHomeService, setTaskHomeResolver } from "./services/tasks/task-home-service"
 import { PluginMaterializer } from "./services/tasks/plugin-materializer"
-import { AssistWorkflowService } from "./services/tasks/assist-workflow-service"
 import { WorkflowPresetsService } from "./services/workflow-presets-service"
 import { BuiltInWorkflowService } from "./services/builtin-workflow"
 import { WorkflowExecutor } from "./services/scheduler/executors/workflow-executor"
@@ -158,7 +166,6 @@ import { createSystemRoutes } from "./routes/system"
 import { createReposRoutes } from "./routes/repos"
 import { getRecoveryService } from "./services/agent/recovery-service"
 import { initArchiveService } from "./services/archive/archive-service"
-import { getDomainEventBus } from "./services/agent/domain-event-bus"
 
 // Install global error handlers early — catches uncaughtException / unhandledRejection
 if (!process.env.VITEST) {
@@ -356,57 +363,21 @@ if (!process.env.VITEST && daos) {
   }
 
   // Initialize archive service singleton
-  initArchiveService(daos.archive, daos.execution, db, getDomainEventBus())
+  initArchiveService(daos.archive, daos.execution, db)
 
-  // ── Scheduler seed: auto-create system:daily-archive task ────────────
-  // Idempotent — only inserts if no schedule named 'system:daily-archive' exists.
+  // ── Legacy cleanup: retire system:daily-archive ─────────────────────
+  // Daily-memory maintenance (archive + refine) is gone — memory is bounded at
+  // write time instead. Soft-delete the job seeded by older builds; idempotent
+  // and log-only (findByName already excludes soft-deleted rows).
   try {
-    const existingSeed = daos.scheduleConfig.findByName('system:daily-archive')
-    if (!existingSeed) {
-      daos.scheduleConfig.insertSchedule({
-        id: 'system:daily-archive',
-        name: 'system:daily-archive',
-        cron_expression: '0 3 * * *',
-        timezone: 'Asia/Shanghai',
-        job_type: 'agent',
-        config: JSON.stringify({
-          prompt: 'Archive yesterday daily memory and refine long-term memory',
-        }),
-        enabled: 1,
-        description: 'System-seeded daily archive task (auto-created on server startup)',
-      })
-      console.log('[server] Scheduler seed: system:daily-archive task created')
+    const legacyJob = daos.scheduleConfig.findByName('system:daily-archive')
+    if (legacyJob) {
+      daos.scheduleConfig.softDelete(legacyJob.id)
+      console.log('[server] Scheduler cleanup: retired system:daily-archive task')
     }
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : String(err)
-    console.warn(`[server] Scheduler seed failed: ${msg}`)
-  }
-
-  // One-time migration: if config.yaml has archive_cron_hour != 3 (default),
-  // update the system:daily-archive cron expression
-  try {
-    const fs = require('fs')
-    const yaml = require('js-yaml')
-    const { getAgentConfigPath } = require('./services/agent/paths')
-    const configPath = getAgentConfigPath()
-    if (fs.existsSync(configPath)) {
-      const raw = yaml.load(fs.readFileSync(configPath, 'utf-8'), { schema: yaml.JSON_SCHEMA }) as any
-      const archiveHour = raw?.memory?.archive_cron_hour
-      if (archiveHour !== undefined && archiveHour !== 3) {
-        const existingJob = daos.scheduleConfig.findByName('system:daily-archive')
-        if (existingJob) {
-          const newCron = `0 ${archiveHour} * * *`
-          daos.scheduleConfig.updateSchedule(existingJob.id, {
-            cron_expression: newCron,
-            version: existingJob.version + 1,
-          })
-          console.log(`[migration] Updated system:daily-archive cron to "${newCron}" from config.yaml archive_cron_hour`)
-        }
-      }
-    }
-  } catch (err: unknown) {
-    const msg = err instanceof Error ? err.message : String(err)
-    console.warn(`[server] archive_cron_hour migration failed: ${msg}`)
+    console.warn(`[server] system:daily-archive cleanup failed: ${msg}`)
   }
 
   // Set DAOs for middleware and yjs-ws
@@ -518,14 +489,14 @@ if (!daos) {
     try { initAgentVersionService(d.agentVersion) } catch { /* ignore */ }
     setAgentAuthOrgDAO(d.org)
     setYjsWorkspaceDAO(d.workspace)
-    try { initArchiveService(d.archive, d.execution, getDb(), getDomainEventBus()) } catch { /* db not ready yet */ }
+    try { initArchiveService(d.archive, d.execution, getDb()) } catch { /* db not ready yet */ }
     try { setHarnessDependencies(d.harness) } catch { /* db not ready yet */ }
   } catch { /* ignore */ }
 }
 
 app.route("/api/orgs", createOrgRoutes(d.org))
 app.route("/api/workspaces", createWorkspaceRoutes(wsSvc, d.org, d.workspace, d.execution))
-app.route("/api/workspaces/:id/workflows", createWorkflowOpsRoutes(d.workspace))
+app.route("/api/workspaces/:id/workflows", createWorkflowOpsRoutes(d.workspace, d.execution))
 app.route("/api/workspaces/:id/workflows", createWorkflowRoutes(d.workspace, () => resourceRegistry.get()))
 app.route("/api/workspaces/:id/executions", executionRoutes)
 app.route("/api/workspaces/:id/harness", harnessRoutes)
@@ -555,7 +526,31 @@ app.route("/api/agent", createAgentRoutes({
   // 票10 投喂泛化: 知识策展执行面（ingest_to_wiki 工具）。闭包惰性解析
   // sessionCurationService（声明在下方 wiki 装配段——票14 惰性纪律同轨：
   // 请求时才求值，不受挂载先于构造的 TDZ 影响）。
-  curation: { curate: (input) => sessionCurationService.curate(input) },
+  curation: {
+    curate: (input) => sessionCurationService.curate(input),
+    // 2026-11-03 只读知识库：冲突裁决回主对话 —— 与 finding 卡三钮同一 FindingOpsService。
+    listFindings: () => getFindingOps().list("open").map((row) => {
+      const view = findingView(row) as Record<string, unknown>
+      const detail = (view.detail ?? {}) as Record<string, unknown>
+      return {
+        id: String(view.id),
+        kind: String(view.kind),
+        title: String(view.title),
+        status: String(view.status),
+        ...(typeof detail.old_claim === "string" ? { oldClaim: detail.old_claim } : {}),
+        ...(typeof detail.new_claim === "string" ? { newClaim: detail.new_claim } : {}),
+        pages: Array.isArray(view.pages) ? view.pages.map(String) : [],
+      }
+    }),
+    resolveFinding: (findingId, action) => {
+      const ops = getFindingOps()
+      if (action === "adopt") {
+        const rec = ops.adopt(findingId)
+        return { findingId, status: rec.status, taskId: rec.id }
+      }
+      return { findingId, status: ops.ignore(findingId).status }
+    },
+  },
 }))
 
 // Clone session routes — direct entry for Web UI pages
@@ -605,6 +600,62 @@ const ruleFormJudge = createProductionRuleFormJudge()
 const wikiWriteQueue = new CompileQueue({
   lock: new WikiLock({ wikiRoot: () => resolveGlobalWikiRoot() }),
 })
+// 归档素材包编译的统一执行体（初次投喂 compilePack 与 POST /pack/:id/recompile 同源）：
+// 编译结果 / 失败面落 {task home}/archive/wiki-result.json，归档窗口据此展示
+// 「wiki 落了什么」；队列是进程内的，回执才是跨重启的真相面。写回执失败只 stderr，
+// 绝不改写编译结果本身。
+const archiveTaskHomes = new TaskHomeService()
+/**
+ * 归档编译出的冲突回流任务主对话（2026-11-03 只读知识库改版）：
+ * 知识库窗口不再列 findings；新矛盾以 finding 卡追加到发起任务的主 Chat，
+ * 人在同一条对话里采纳/忽略/讨论。只播新插入的（created_at === updated_at），
+ * 重编译刷新证据不重复打扰；无会话/无新 finding 静默。
+ */
+const postArchiveFindingsToTaskChat = (taskId: string, findingIds: string[]): void => {
+  if (findingIds.length === 0) return
+  try {
+    const sessionId = d.task.getById(taskId)?.source_chat_session_id ?? null
+    if (!sessionId) return
+    const ops = getFindingOps()
+    const rows = findingIds
+      .map((id) => ops.get(id))
+      .filter((row): row is NonNullable<typeof row> => !!row && row.status === "open" && row.created_at === row.updated_at)
+    if (rows.length === 0) return
+    appendCardsToSession(
+      getDb(),
+      sessionId,
+      `⚠️ 归档编译发现 ${rows.length} 处需要你决定的冲突（回「采纳修订 / 忽略 / 讨论」，我执行前会确认）：`,
+      rows.map((row) => ({
+        id: row.id,
+        kind: "finding" as const,
+        ts: new Date().toISOString(),
+        data: findingCardData(row),
+      })),
+    )
+  } catch (err) {
+    process.stderr.write(`[archive-compile] finding cards post failed for ${taskId}: ${err instanceof Error ? err.message : String(err)}\n`)
+  }
+}
+const runArchiveCompile = async (taskId: string, opts?: { focus?: string }): Promise<CuratorCompileResultLike> => {
+  const startedAt = new Date().toISOString()
+  const persist = (result: ArchiveWikiResult): void => {
+    try {
+      writeArchiveWikiResult(archiveTaskHomes.homePath(taskId), result)
+    } catch (err) {
+      process.stderr.write(`[archive-compile] wiki-result write failed for ${taskId}: ${err instanceof Error ? err.message : String(err)}\n`)
+    }
+  }
+  try {
+    const curator = new CuratorCompileService({ db: getDb(), llm: createProductionCuratorLLM() })
+    const result = await curator.compilePack(taskId, opts ?? {})
+    persist(toArchiveWikiResult(result, startedAt, new Date().toISOString()))
+    postArchiveFindingsToTaskChat(taskId, result.findingIds)
+    return result
+  } catch (err) {
+    persist(toArchiveWikiFailure(err, startedAt, new Date().toISOString()))
+    throw err
+  }
+}
 const curatorTasks = new CuratorTaskService({
   queue: wikiWriteQueue,
   run: async (rawPath) => {
@@ -654,6 +705,16 @@ const sessionCurationService = new SessionCurationService({
   // db 面请求时才取（票14 惰性纪律）；无会话/已删 ⇒ 原语诚实降级
   announce: (sessionId, header, events) => appendCardsToSession(getDb(), sessionId, header, events),
   positionOf: taskId => wikiWriteQueue.get(taskId)?.position ?? null,
+  // 编译产生的未决矛盾回流发起会话（2026-11-03）：只列仍 open 的 finding，
+  // 人在这条对话里采纳/忽略；知识库窗口只读。
+  findingsFor: (findingIds) => {
+    const ops = getFindingOps()
+    const ts = new Date().toISOString()
+    return findingIds
+      .map((id) => ops.get(id))
+      .filter((row): row is NonNullable<typeof row> => !!row && row.status === "open")
+      .map((row) => ({ id: row.id, kind: "finding" as const, ts, data: findingCardData(row) }))
+  },
 })
 curatorTasks.attachSettledListener(rec => sessionCurationService.onCompileSettled(rec))
 // 知识中心票05：编译任务 API（POST /compile 显式触发 + GET /compile/task/:id 状态可查）。
@@ -664,10 +725,7 @@ app.route("/api/knowledge/wiki", createWikiCompileRoutes(curatorTasks))
 const packOps = new MaterialPackOpsService({
   root: resolveGlobalKnowledgeRoot(),
   queue: wikiWriteQueue,
-  compilePack: async (taskId, opts) => {
-    const curator = new CuratorCompileService({ db: getDb(), llm: createProductionCuratorLLM() })
-    return curator.compilePack(taskId, opts ?? {})
-  },
+  compilePack: (taskId, opts) => runArchiveCompile(taskId, opts),
 })
 app.route("/api/knowledge/wiki", createWikiPackRoutes(packOps))
 // P3 票03：判例自动提取+入档。CaseExtractService（惰性 db 构造，getFindingOps 同轨）：
@@ -688,6 +746,9 @@ const getCaseExtract = () => (caseExtractInstance ??= new CaseExtractService({
       [event],
     )
   },
+  // 归档窗口「知识落点」要展示判例新建/并档/失败 —— 结果只有队列执行体里才知道，
+  // 落任务 home 的 archive/case-result.json（写失败只 stderr，不毁入档）。
+  recordCaseResult: (taskId, result) => upsertArchiveCaseResult(archiveTaskHomes.homePath(taskId), result),
 }))
 app.route("/api/knowledge/wiki", createWikiCaseRoutes({
   retireCase: (caseId) => getCaseExtract().retireCase(caseId),
@@ -1155,8 +1216,6 @@ if (shouldServe) {
       // materializer wraps the global ResourceManager singleton (registry is the
       // source of truth for skill groups, D3). /api/skill-groups is the
       // template-page data source (registry skill aggregation + default marker).
-      // 07: assist-workflow routes (POST/GET /:id/assist-workflows) — service
-      // owns temp-workspace creation + execution trigger + output parsing.
       const taskHomeService = new TaskHomeService()
       const pluginMaterializer = new PluginMaterializer(resourceRegistry.get())
       // task-workflow-handoff (ADR-0013): BuiltInWorkflowService for the
@@ -1173,6 +1232,22 @@ if (shouldServe) {
       // needs the REAL TasksService (validation + version + SSE + home backfill).
       // The route is mounted before this async block, hence the late binding.
       setTaskToolsServiceProvider(() => tasksService)
+      // 2026-11-03 消耗口径（全局）：composer 的「本会话 token 账」= 这个 chat
+      // 关联的全部工作流执行（任务轮 + 辅助执行 + 主对话直接跑的工作流），
+      // 不再只是聊天行。路由先于 TasksService 装配，故晚绑定。
+      setSessionLedgerSummaryProvider((sessionId) => tasksService.sessionUsage(sessionId).summary)
+      // 2026-11-03: 用户在对话里明确说「立即执行 / 入列 / 开跑」后，主 Chat 直接
+      // 执行启动动作（与看板点卡同一组合），不再被卡在「只能提议」。
+      setTaskLaunchToolsProvider(() => ({
+        readyTask: (id, opts) => tasksService.readyTask(id, opts),
+        triggerTask: (id) => tasksService.triggerTaskWithPrebuild(id),
+      }))
+      // 2026-11-03 只读知识库：wiki 冲突裁决回主 Chat —— 人明确说「采纳/忽略」后，
+      // 归档对话里的 Agent 经 resolve_wiki_finding 直连同一 FindingOpsService。
+      setWikiFindingToolsProvider(() => ({
+        adopt: (id) => getFindingOps().adopt(id),
+        ignore: (id) => getFindingOps().ignore(id),
+      }))
       // 知识中心票10 建链，P3 票02 升级素材包链：task 进入 archiving 态即组包
       // （raw/archives/task-{id}/ 六件+manifest，件级冻结契约同票02）→ 总结读包 →
       // 编译读包（manifest 先行按需下钻）经票06 全局串行队列（kind=archive-compile，
@@ -1186,10 +1261,7 @@ if (shouldServe) {
         taskHomeService,
         rawIngest: new RawIngestService(),
         queue: wikiWriteQueue,
-        compilePack: async (taskId, opts) => {
-          const curator = new CuratorCompileService({ db: getDb(), llm: createProductionCuratorLLM() })
-          return curator.compilePack(taskId, opts ?? {})
-        },
+        compilePack: (taskId, opts) => runArchiveCompile(taskId, opts),
         summarize: createProductionArchiveSummarizer(),
         extractCases: (taskId) => getCaseExtract().extractAndEnqueue(taskId),
         // P3 票04：第⑤步之后跑 a+c 两路草案检测（纯 fs 落 drafts 区，零入队；失败吞）。
@@ -1210,8 +1282,23 @@ if (shouldServe) {
       // 只读快照，不触发任何写入；未投喂（无 manifest 且未入队）→ null。
       tasksService.setArchiveKnowledgeHook((taskId) => {
         const manifest = readPackManifest(resolveGlobalKnowledgeRoot(), taskId)
-        const queueView = wikiWriteQueue.get(archiveCompileTaskId(taskId))
-        if (!manifest && !queueView) return null
+        // 初次编译 id=arc-{taskId}，重编译 id=arc-{taskId}-rcN —— 取该包最近一次入队，
+        // 重编译期间窗口才能看到「排队中 / 编译中」。
+        const queuePrefix = archiveCompileTaskId(taskId)
+        const queueView = wikiWriteQueue
+          .list()
+          .filter((v) => v.id === queuePrefix || v.id.startsWith(`${queuePrefix}-rc`))
+          .at(-1)
+        // 编译回执里的 finding_ids 是本次任务的真相面；只列仍 open 的，
+        // 归档 Agent 在对话里逐条问（知识库窗口已不承载 finding）。
+        const receipt = readArchiveWikiResult(archiveTaskHomes.homePath(taskId))
+        const openFindings = receipt?.finding_ids?.length
+          ? receipt.finding_ids
+              .map((id) => getFindingOps().get(id))
+              .filter((row): row is NonNullable<typeof row> => !!row && row.status === "open")
+              .map((row) => findingView(row) as unknown as TaskArchiveFinding)
+          : []
+        if (!manifest && !queueView && openFindings.length === 0) return null
         return {
           pack_items: manifest ? manifest.items.filter((item) => !item.excluded).length : 0,
           items: manifest
@@ -1223,18 +1310,25 @@ if (shouldServe) {
                 path: item.path,
               }))
             : [],
+          pack_path: manifest ? packDirRel(taskId) : null,
+          pack_created_at: manifest?.createdAt ?? null,
+          pack_item_cap: PACK_ITEM_PROMPT_CAP_BYTES,
           compile_state: queueView?.state ?? null,
           compile_position: queueView?.position ?? null,
+          compile_queued_at: queueView?.queuedAt ?? null,
+          compile_started_at: queueView?.startedAt ?? null,
+          compile_finished_at: queueView?.finishedAt ?? null,
+          compile_error: queueView?.error ?? null,
+          ...(openFindings.length > 0 ? { findings: openFindings } : {}),
         }
       })
-      const assistService = new AssistWorkflowService(db, sse)
       // 验货台 (acceptance v2)：实物 round-diff + 当场复检 — 4th optional arg
       // (tests that build the route factory without it get 501 on those 5 endpoints).
       const roundEvidence = new RoundEvidenceService(db, sse, tasksService, workspaceService!, taskHomeService)
       // 验收方案预生成（2026-10-30 AI-native 验收）：轮终态后由独立规划 Agent
       // 产出 acceptance-plan-rN.json；getPlaybook 优先读它，主 Chat 据此逐项引导。
       const acceptancePlan = new AcceptancePlanService(
-        db, sse, tasksService, workspaceService!, taskHomeService, roundEvidence,
+        sse, tasksService, workspaceService!, taskHomeService, roundEvidence,
       )
       roundEvidence.setAcceptancePlanService(acceptancePlan)
       tasksService.taskLifecycle.setAcceptancePlanHook((taskId) => {
@@ -1305,7 +1399,7 @@ if (shouldServe) {
       }))
       // 2026-10-28 task-thread: the task-doer dual chat was retired. Takeover
       // reuses the task's main thread (source_chat_session_id).
-      app.route('/api/tasks', createTasksRoutes(tasksService, sse, assistService, roundEvidence, reflectionIngest))
+      app.route('/api/tasks', createTasksRoutes(tasksService, sse, roundEvidence, reflectionIngest))
       // 2026-10-31 消耗窗通用化：/api/sessions/:id/usage（会话聊天行 + 本会话发起的全部工作流）。
       app.route('/api/sessions', createSessionUsageRoutes(tasksService))
       // task-workflow-presets (T3): preset catalog API

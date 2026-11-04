@@ -29,16 +29,14 @@ export interface SpecRowsInput {
   batches: BatchTreeEntry[]
   batchLoading: boolean
   batchError: string | null
-  /** 绑定项目数。缺省 = 不判定（保持旧调用面）；0 且非 composite → 第 5 行 ✗。 */
+  /** 绑定项目数。缺省 = 不判定（保持旧调用面）；0 → 第 5 行 ✗。 */
   projectCount?: number
-  /** Composite coordinator has no projects by design (subunits carry them). */
-  composite?: boolean
 }
 
 /** v4 入队清单六行判定（authoring-workspace v4Rows 逐字提纯，勿改判据）。 */
 export function computeSpecRows({
   phases, spec, catalog, batches, batchLoading, batchError,
-  projectCount, composite,
+  projectCount,
 }: SpecRowsInput): SpecPanelRows {
   // #53 K5 + 原型 chat-draft-v4 改版：磁盘树未就绪 → spec 行「⏳ 未核」（不再
   // 退化字符串假绿）；入队 = 所有 phase 全满足（spec 落盘 ∧ issues 产物 ∧
@@ -67,10 +65,9 @@ export function computeSpecRows({
       return v.length > 0 || v.includes("${")
     })
   })
-  // repos 行：绑定项目数已知时直接判定（0 且非 composite = 没有 worktree）；
+  // repos 行：绑定项目数已知时直接判定（0 = 没有 worktree）；
   // 缺省保持乐观，✗/服务端 409 回填仍是权威。本地无 fs 无从验证 local 路径。
-  const rowRepos =
-    projectCount === undefined ? true : projectCount > 0 || !!composite
+  const rowRepos = projectCount === undefined ? true : projectCount > 0
   return {
     rowPhases, rowSpec, specUnknown, specMissingIdx, absSpecCount: phases.length - relPhases.length,
     rowBind, rowInputs, rowRunbook,

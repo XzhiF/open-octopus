@@ -7,6 +7,22 @@ import type {
   AgentEventRow, ExecutionSummaryRow, PipelineStateRow, PaginatedResult,
 } from "../types"
 
+/** header 运行指示的一行：执行行 + 任务名（tasks 表可缺省）。 */
+export interface LiveRunRow {
+  id: string
+  workspace_id: string
+  workflow_ref: string
+  workflow_name: string | null
+  name: string | null
+  status: string
+  task_id: string | null
+  phase_index: number | null
+  round_index: number | null
+  started_at: string | null
+  created_at: string
+  task_name: string | null
+}
+
 export class ExecutionDAO extends BaseDAO {
   constructor(db: Database.Database) { super(db) }
 
@@ -20,17 +36,67 @@ export class ExecutionDAO extends BaseDAO {
     return this.stmt("SELECT * FROM executions WHERE workspace_id = ? ORDER BY created_at DESC").all(workspaceId) as ExecutionRow[]
   }
 
+  /** 作业坞「运行」面板的数据源（2026-11-02）：本工作区**顶层运行**，运行中在前。
+   *
+   *  顶层口径与 task instance 读模型同律 —— `parent_id='0' OR parent_id IS NULL
+   *  OR phase_index IS NOT NULL`：
+   *   · v4 链式轮次（parent_id 指向前一轮、phase_index 有值）→ 保留；
+   *   · 验收规划（parent_id='0'、phase_index/task_id 为 NULL）→ 保留；
+   *   · 链式子步骤 / 子工作流（parent_id != '0' 且无 phase）→ 排除。
+   *  `node_type='scheduler-root'` 是调度器的空容器行（真运行挂成它的子执行），
+   *  列出来只会是一行没有节点的「已完成」噪音 —— 排除。
+   *
+   *  排序：进行中排前面（运行中 → 排队 → 暂停/等人），其余按 created_at 倒序。 */
+  listWorkspaceRuns(workspaceId: string, limit = 50): ExecutionRow[] {
+    return this.stmt(`
+      SELECT * FROM executions
+      WHERE workspace_id = ?
+        AND (parent_id = '0' OR parent_id IS NULL OR phase_index IS NOT NULL)
+        AND (node_type IS NULL OR node_type != 'scheduler-root')
+      ORDER BY CASE status
+                 WHEN 'running' THEN 0
+                 WHEN 'pending' THEN 1
+                 WHEN 'paused' THEN 2
+                 WHEN 'pending_approval' THEN 3
+                 WHEN 'pending_interaction' THEN 4
+                 WHEN 'pending_resume' THEN 5
+                 ELSE 6
+               END,
+               created_at DESC, rowid DESC
+      LIMIT ?
+    `).all(workspaceId, limit) as ExecutionRow[]
+  }
+
+  /** header「运行中工作流」指示（2026-11-04）：跨工作区的顶层运行行。
+   *
+   *  header 的「运行中 Agent」此前只认 chat 流；工作流 Agent 节点不注册流，
+   *  所以任务/工作流在跑时右上角什么都没有。这里按 listWorkspaceRuns 的顶层
+   *  谓词取全库 `running` 行，并 LEFT JOIN tasks 带出任务名（系统运行
+   *  task_id=NULL，由路由层按 execution_links 补坐标）。
+   *  排队 / 暂停 / 待审批不亮 —— 指示的含义就是「正在跑」。 */
+  listLiveRuns(limit = 50): LiveRunRow[] {
+    return this.stmt(`
+      SELECT e.id, e.workspace_id, e.workflow_ref, e.workflow_name, e.name, e.status,
+             e.task_id, e.phase_index, e.round_index, e.started_at, e.created_at,
+             t.name AS task_name
+      FROM executions e
+      LEFT JOIN tasks t ON t.id = e.task_id
+      WHERE e.status = 'running'
+        AND (e.parent_id = '0' OR e.parent_id IS NULL OR e.phase_index IS NOT NULL)
+        AND (e.node_type IS NULL OR e.node_type != 'scheduler-root')
+      ORDER BY e.started_at DESC, e.created_at DESC, e.rowid DESC
+      LIMIT ?
+    `).all(limit) as LiveRunRow[]
+  }
+
   findChildren(parentId: string): ExecutionRow[] {
     return this.stmt("SELECT * FROM executions WHERE parent_id = ? ORDER BY child_index").all(parentId) as ExecutionRow[]
   }
 
   findRunningLeaves(workspaceId: string): ExecutionRow[] {
     // 「这个工作区里跑得最深的那条」— the child predicate is workspace-scoped on
-    // purpose (票03 复核). Composite children each live in their OWN workspace, so an
-    // unscoped NOT EXISTS would stop treating the coordinator as a leaf the moment the
-    // FIRST subunit was dispatched, and the second dispatchChild would find no parent at
-    // all. Same-workspace chain children (triggerChildStep) are still excluded, which is
-    // the invariant this helper was written for.
+    // purpose: same-workspace chain children (triggerChildStep) must be excluded,
+    // while a parent whose children live elsewhere still counts as a leaf here.
     return this.stmt(`
       SELECT e.* FROM executions e
       WHERE e.workspace_id = ? AND e.status = 'running'
@@ -60,10 +126,10 @@ export class ExecutionDAO extends BaseDAO {
    *  (task_id, created_at DESC).
    *
    *  task-exec-tree (v44): an instance is a root OR a chained v4 round — the predicate
-   *  `(parent_id = '0' OR phase_index IS NOT NULL)` is the latch's predicate, and it is
-   *  the ONLY legal way to tell 「任务实例」 from a composite subunit arm (arms: parent
-   *  set, phase NULL). A round's parent is the previous round, so the newest row — not
-   *  the newest root — is what a human is looking at. */
+   *  `(parent_id = '0' OR phase_index IS NOT NULL)` is the latch's predicate. A round's
+   *  parent is the previous round, so the newest row — not the newest root — is what a
+   *  human is looking at. The predicate also keeps any legacy parented non-phase rows
+   *  out of the instance read model. */
   findLatestTaskInstance(taskId: string): ExecutionRow | null {
     return (this.stmt(
       `SELECT * FROM executions WHERE task_id = ? AND (parent_id = '0' OR phase_index IS NOT NULL)
@@ -89,8 +155,8 @@ export class ExecutionDAO extends BaseDAO {
 
   /** Timing rows of EVERY instance execution of many tasks, one query — the board's
    *  「实际用时」aggregate source (TasksService.runStats). Same instance predicate as
-   *  findLatestTaskInstances (roots + chained v4 rounds; fan-out arms live inside their
-   *  root's span and are excluded). Rows never started (armed, queued) carry no
+   *  findLatestTaskInstances (roots + chained v4 rounds; parented non-phase rows are
+   *  excluded). Rows never started (armed, queued) carry no
    *  started_at and are filtered out; the sum itself is done in JS so the
    *  running-until-now term uses the server clock, not julianday parsing.
    *  v49: 顺带带出 `id` —— 同一批实例行也是「逐任务账本用量」的 execution 键源
@@ -161,8 +227,8 @@ export class ExecutionDAO extends BaseDAO {
    *  {@link LIVE_ROUND_STATUSES}，review-2 收口：停在交互节点的轮也是 live，
    *  旧内联字面量漏过它）的最近一条实例行。start_commit_id 必须已落（launch 即捕获；
    *  排队未起动的行没有可圈的区间）。
-   *  与 findLatestTaskInstance 同 instance 谓词（roots + chained v4 rounds，扇出臂不
-   *  算轮）。无命中 = 任务当前没有在飞的轮 → null（diff 端点据此回原 409）。 */
+   *  与 findLatestTaskInstance 同 instance 谓词（roots + chained v4 rounds）。
+   *  无命中 = 任务当前没有在飞的轮 → null（diff 端点据此回原 409）。 */
   findLiveRoundForTask(taskId: string): ExecutionRow | null {
     return (this.stmt(
       `SELECT * FROM executions
@@ -188,9 +254,8 @@ export class ExecutionDAO extends BaseDAO {
     ).get(taskId) as ExecutionRow) ?? null
   }
 
-  /** The claim queue, FIFO, over a task's roots AND its composite children (partial
-   *  index idx_exec_pending_claimable). A child that overflowed the cap is parked here
-   *  exactly like an armed root, so claiming only roots would strand it forever. */
+  /** The claim queue, FIFO, over a task's armed launches (partial index
+   *  idx_exec_pending_claimable). */
   listClaimableTaskLaunches(limit: number): ExecutionRow[] {
     return this.stmt(
       `SELECT * FROM executions
@@ -201,8 +266,7 @@ export class ExecutionDAO extends BaseDAO {
 
   /** Task rows stranded in a live status whose engine is no longer running in this
    *  process — the crash/restart residue the reconciliation pass resolves. Instances
-   *  only (roots + chained v4 rounds): a composite arm's fate is decided with its
-   *  parent, and a chained round is an instance, not an arm (task-exec-tree v44). */
+   *  only (roots + chained v4 rounds). */
   listLiveTaskInstancesNotIn(statuses: readonly string[]): Array<{ id: string; task_id: string; workspace_id: string; status: string }> {
     if (statuses.length === 0) return []
     const placeholders = statuses.map(() => "?").join(",")
@@ -246,20 +310,6 @@ export class ExecutionDAO extends BaseDAO {
       status, now, opts.startedAt ?? null, opts.completedAt ?? null, opts.duration ?? null,
       JSON.stringify({ error: opts.error }), id,
     )
-  }
-
-  /** Every subunit run of a task (child executions the task side armed), grouped by the
-   *  caller. `task_id IS NOT NULL AND parent_id != '0' AND phase_index IS NULL` is the
-   *  subunit predicate: engine chain children carry parent_id too but no task_id, and
-   *  chained v4 ROUNDS carry both (task-exec-tree v44) — the phase tag is what tells a
-   *  round apart from an arm. One query per read-model call, grouped in TS — the
-   *  alternative (findChildren per root) is N queries for a 50-row history. */
-  listTaskChildRuns(taskId: string): ExecutionRow[] {
-    return this.stmt(
-      `SELECT * FROM executions
-       WHERE task_id = ? AND parent_id != '0' AND phase_index IS NULL
-       ORDER BY child_index ASC`,
-    ).all(taskId) as ExecutionRow[]
   }
 
   /** Claim a specific armed row out of the queue. Guarded on status='pending' so two
@@ -913,7 +963,7 @@ export class ExecutionDAO extends BaseDAO {
     return (this.stmt(
       `SELECT id FROM executions
        WHERE workspace_id = ? AND (parent_id = '0' OR parent_id IS NULL)
-         AND status IN ('pending','running','paused','pending_approval','pending_interaction','pending_task_dispatch')
+         AND status IN ('pending','running','paused','pending_approval','pending_interaction')
        LIMIT 1`
     ).get(workspaceId) as { id: string }) ?? null
   }
@@ -968,24 +1018,6 @@ export class ExecutionDAO extends BaseDAO {
   findFirstRunningNode(executionId: string): NodeExecutionRow | null {
     return (this.stmt(
       "SELECT * FROM node_executions WHERE execution_id = ? AND status = 'running' ORDER BY started_at DESC LIMIT 1"
-    ).get(executionId) as NodeExecutionRow) ?? null
-  }
-
-  /**
-   * The task_dispatch node a composite parent is parked on — the resume target after a
-   * child finishes. Written to accept BOTH persistences rather than guess one: the node
-   * row mirroring the engine's `pending_task_dispatch` status, or (if the engine only
-   * persisted the execution-level status) the still-'running' task_dispatch node.
-   * `started_at DESC` matches findFirstRunningNode's convention for the same reason —
-   * the most recent visit is the one that is waiting, since a Loop re-enters the node.
-   */
-  findWaitingDispatchNode(executionId: string): NodeExecutionRow | null {
-    return (this.stmt(
-      `SELECT * FROM node_executions
-       WHERE execution_id = ?
-         AND (status = 'pending_task_dispatch'
-              OR (node_type = 'task_dispatch' AND status = 'running'))
-       ORDER BY started_at DESC LIMIT 1`,
     ).get(executionId) as NodeExecutionRow) ?? null
   }
 
@@ -1071,7 +1103,7 @@ export class ExecutionDAO extends BaseDAO {
          ORDER BY started_at DESC LIMIT 1) as current_step
       FROM executions e
       LEFT JOIN workspaces w ON e.workspace_id = w.id
-      WHERE e.status IN ('running', 'pending', 'paused', 'pending_approval', 'pending_interaction', 'pending_task_dispatch')
+      WHERE e.status IN ('running', 'pending', 'paused', 'pending_approval', 'pending_interaction')
       ORDER BY CASE e.status WHEN 'running' THEN 0 WHEN 'pending' THEN 1 ELSE 2 END, e.created_at DESC
     `).all() as Array<Record<string, unknown>>
   }
@@ -1422,8 +1454,8 @@ export class ExecutionDAO extends BaseDAO {
       SELECT
         SUM(CASE WHEN status = 'completed' THEN 1 ELSE 0 END) AS completed,
         SUM(CASE WHEN status = 'skipped'   THEN 1 ELSE 0 END) AS skipped,
-        SUM(CASE WHEN node_type IN ('agent','dynamic_sub_workflow','swarm','loop','python','task_dispatch') THEN 1 ELSE 0 END) AS business_total,
-        SUM(CASE WHEN node_type IN ('agent','dynamic_sub_workflow','swarm','loop','python','task_dispatch')
+        SUM(CASE WHEN node_type IN ('agent','dynamic_sub_workflow','swarm','loop','python') THEN 1 ELSE 0 END) AS business_total,
+        SUM(CASE WHEN node_type IN ('agent','dynamic_sub_workflow','swarm','loop','python')
                   AND status = 'completed' THEN 1 ELSE 0 END) AS business_completed
       FROM node_executions
       WHERE execution_id = ? AND substr(node_id, 1, 2) != '__'

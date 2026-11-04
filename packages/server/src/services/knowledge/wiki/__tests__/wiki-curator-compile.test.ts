@@ -286,6 +286,70 @@ stability: stable
     expect(show).toContain("sources/2026-10-13-compiled-kb-notes.md")
   })
 
+  it("same-page contradiction: one page in the finding + one marker — adopt 批内不再同路径双写", async () => {
+    // 2026-11-04 缺陷现场：curator 把本页已有的旧断言当成对手页，old_page == new_page
+    // ⇒ finding.pages=[p,p]；采纳修订按 pages 逐页装工作面 ⇒ BATCH_DUPLICATE_PATH 恒 failed。
+    const REL = "entities/ent-octopus-demo-service-user.md"
+    const compiler = new WikiCompileService({ db, org: GLOBAL_WIKI_ORG, rootDir: wikiRoot, git: realGit(wikiRoot) })
+    await compiler.compileEntry({
+      content: `---
+id: ent-octopus-demo-service-user
+type: entity
+entity_kind: service
+title: octopus-demo-service-user
+summary: Spring 用户服务示例仓
+topics: [persistence]
+aliases: []
+links: []
+sources: [raw/archives/legacy.md]
+last_compiled: 2026-10-11
+stability: stable
+---
+
+## 关键属性
+
+- 旧持久层记录（已被推翻）：数据存内存（\`InMemoryUserDao\`），持久层存原文
+`,
+    })
+
+    const pointer = ingestFixture()
+    const plan = JSON.stringify({
+      pages: [{
+        op: "update", type: "entity", id: "ent-octopus-demo-service-user", entity_kind: "service",
+        title: "octopus-demo-service-user", summary: "Spring 用户服务示例仓",
+        links: [], topics: ["persistence"],
+        body: "## 关键属性\n\n- 持久层（现行）：MySQL + MyBatis，运行期与测试统一走 MySQL。\n- 旧持久层记录（已被推翻）：数据存内存（`InMemoryUserDao`），持久层存原文。\n",
+      }],
+      key_points: ["内存实现被 MySQL 取代"],
+      // 同页冲突：old_page 与 new_page 都落在正在更新的这一页上
+      contradictions: [{
+        new_page: "ent-octopus-demo-service-user",
+        old_page: REL,
+        old_claim: "数据存内存（`InMemoryUserDao`）",
+        new_claim: "彻底删除内存实现，统一走 MySQL",
+      }],
+    })
+    const res = await makeCurator(async () => plan).compileRaw(pointer)
+
+    expect(res.contradictions).toBe(1)
+    expect(res.changed).toBe(true)
+    const findingId = res.findingIds[0]
+    const f = new FindingsDAO(db).getById(findingId)!
+
+    // 单页化：finding 只挂一页、标题明示同页（旧形态 pages=[p,p] 是缺陷源）
+    expect(JSON.parse(f.pages)).toEqual([REL])
+    expect(f.title).toContain("同页矛盾")
+    expect(f.title.split("↔")).toHaveLength(1)
+    expect(JSON.parse(f.detail).same_page).toBe(true)
+
+    // 标记只写一次，且仍可被巡检复报正则解析出双方断言
+    const pageText = fs.readFileSync(path.join(wikiRoot, REL), "utf-8")
+    expect(pageText.split(findingId)).toHaveLength(2)
+    expect(pageText.match(/旧断言「[^」]*」↔[^「]*「[^」]*」/)?.[0]).toContain("数据存内存")
+    // 不静默覆盖：旧断言原文仍在盘
+    expect(pageText).toContain("旧持久层记录（已被推翻）")
+  })
+
   it("rejects contradiction against a v2-form legacy page with a readable code（重蒸馏属票07）", async () => {
     const compiler = new WikiCompileService({ db, org: GLOBAL_WIKI_ORG, rootDir: wikiRoot, git: realGit(wikiRoot) })
     await compiler.compileEntry({

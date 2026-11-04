@@ -244,19 +244,6 @@ describe("ux_exec_task_active — one live execution per task", () => {
     expect(() => launch("lk-future-2", "lk-2-future", "ws-latch", "pending")).toThrow(/UNIQUE/)
   })
 
-  it("lets a composite run several live CHILD executions of one task", () => {
-    launch("root", "lk-comp", "ws-latch", "running")
-    // Children are nested via the engine's existing parent_id/child_index model, so the
-    // root latch leaves them alone — the built-in job schedules the fan-out itself.
-    expect(() => {
-      launch("c1", "lk-comp", "ws-latch", "pending", "root")
-      launch("c2", "lk-comp", "ws-latch", "running", "root")
-      launch("c3", "lk-comp", "ws-latch", "pending_approval", "root")
-    }).not.toThrow()
-    // …and a second ROOT is still refused.
-    expect(() => launch("root2", "lk-comp", "ws-latch", "pending")).toThrow(/UNIQUE/)
-  })
-
   it("releases the slot on every terminal status so the next round can launch", () => {
     for (const terminal of ["completed", "completed_with_failures", "failed", "cancelled", "aborted", "skipped", "rejected"]) {
       launch(`e-${terminal}`, "lk-3", "ws-latch", terminal)

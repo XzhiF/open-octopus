@@ -71,7 +71,6 @@ vi.mock("@/lib/tasks-api", () => {
     getArtifactContent: vi.fn().mockResolvedValue({ path: "reports/a.md", content: "# A\n正文" }),
     getHomeContent: vi.fn().mockResolvedValue({ path: "artifacts/a.md", content: "# A\n磁盘正文" }),
     ArtifactContentError,
-    getAssistWorkflowRun: vi.fn().mockResolvedValue({ id: "r1", status: "completed", output: null }),
     updateSpecField: vi.fn().mockResolvedValue({ ok: true }),
     MAX_HOME_FILE_READ_BYTES: 1024 * 1024,
     TaskApiError,
