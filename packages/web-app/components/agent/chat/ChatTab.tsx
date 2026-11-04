@@ -21,7 +21,7 @@ import { ChatSidebar } from './chat-sidebar'
 import { CwdPicker, type CwdChoice } from './cwd-picker'
 import { TaskModulesLayer } from '@/components/chat-workbench/task-modules-layer'
 import { TriggerDialog } from '@/components/tasks/trigger-dialog'
-import type { RunTarget, TaskModule, TaskWindowMap } from '@/components/chat-workbench/task-window-types'
+import type { RunTarget, SubagentTarget, TaskModule, TaskWindowMap } from '@/components/chat-workbench/task-window-types'
 import { TaskProjectChip } from '@/components/chat-workbench/task-project-chip'
 import { WorkspaceExplorerDock } from '@/components/workspace/workspace-explorer-dock'
 import { useActivitySnapshot } from '@/components/chat-workbench/inspector-activity'
@@ -47,7 +47,6 @@ import { Button } from '@/components/ui/button'
 import { ConfirmDialog } from '@/components/agent/shared/ConfirmDialog'
 import { ChatArea } from './ChatArea'
 import type { ComposerIdentityDisplay } from './composer-identity-chip'
-import { ToolCallDialog } from './ToolCallDialog'
 import { KcCard, type KcCardActionCtx } from '@/components/knowledge-center/cards/registry'
 import {
   parseKcCardBlocks,
@@ -99,7 +98,7 @@ export function ChatTab() {
   const [activeTask, setActiveTask] = useState<TaskView | null>(null)
   const [pendingTaskSession, setPendingTaskSession] = useState<PendingTaskSession | null>(null)
   const [creatingTask, setCreatingTask] = useState(false)
-  const [taskModuleRequest, setTaskModuleRequest] = useState<{ module: TaskModule; nonce: number; runTarget?: RunTarget | null } | null>(null)
+  const [taskModuleRequest, setTaskModuleRequest] = useState<{ module: TaskModule; nonce: number; runTarget?: RunTarget | null; subagentTarget?: SubagentTarget | null } | null>(null)
   const [taskWindows, setTaskWindows] = useState<Record<string, TaskWindowMap>>({})
   // 2026-10-31 消耗窗通用化：纯会话（无任务）也有一扇消耗窗，窗口 id 与任务窗
   // 共用 'usage'，但几何状态独立（不跟着任务切换复用/串位）。
@@ -458,12 +457,6 @@ export function ChatTab() {
     ? <div data-testid="chat-tab-card-tail">{tailEvents.map(e => <KcCard key={e.id} event={e} ctx={ctx} />)}</div>
     : null
 
-  const [showToolPanel, setShowToolPanel] = useState(false)
-  // 弹窗打开期间工具列表被清空（切会话/新一轮）→ 顺手复位开关，
-  // 否则下一批工具调用冒出来时弹窗会自己蹦出来抢焦点。
-  useEffect(() => {
-    if (showToolPanel && toolCalls.length === 0) setShowToolPanel(false)
-  }, [showToolPanel, toolCalls.length])
   const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false)
 
   // Pending message when auto-creating a session (carries + panel clone consult)
@@ -1517,6 +1510,18 @@ export function ChatTab() {
         onOpenDebug={() => setTaskModuleRequest({ module: 'debug', nonce: Date.now() })}
         debugSessionId={activeSessionId}
         debugRefreshKey={`${messages.length}:${streaming ? '1' : '0'}`}
+        subagentSessionId={activeSessionId}
+        subagentWindow={activeTask ? (taskWindows[activeTask.id]?.subagents ?? null) : (sessionUsageWindows.subagents ?? null)}
+        onOpenSubagent={(run) => {
+          setTaskModuleRequest({
+            module: 'subagents',
+            nonce: Date.now(),
+            subagentTarget: {
+              id: run.id,
+              title: run.description ?? run.agent_type ?? run.id,
+            },
+          })
+        }}
         onOpenTaskModule={(module) => setTaskModuleRequest({ module, nonce: Date.now() })}
         onOpenRun={(run) => {
           // 作业坞运行列表 → 指定执行（可能是验收规划这种 task_id=NULL 的系统运行）。
@@ -1539,23 +1544,6 @@ export function ChatTab() {
         activity={activitySnapshot}
         sidebarWidth={sidebarCollapsed ? 0 : sidebarWidth}
       />
-
-        {/* Tool call dialog —— 悬浮按钮唤起的弹窗（原先的右列 tab 会被作业坞挡死） */}
-        <ToolCallDialog
-          open={showToolPanel && toolCalls.length > 0}
-          onOpenChange={setShowToolPanel}
-          toolCalls={toolCalls}
-        />
-
-        {/* Tool dialog toggle —— 运行中有工具调用时浮在对话区右下角 */}
-      {toolCalls.length > 0 && !showToolPanel && (
-        <button
-          onClick={() => setShowToolPanel(true)}
-          className="absolute bottom-28 right-6 hidden items-center gap-1.5 rounded-full border border-white/[0.08] bg-pop-paper/85 px-3 py-1.5 text-[11px] text-pop-dim shadow-pop backdrop-blur transition-colors hover:text-pop-ink lg:flex"
-        >
-          工具调用 ({toolCalls.length})
-        </button>
-      )}
 
       <Dialog open={!!renameTarget} onOpenChange={(open) => { if (!open) setRenameTarget(null) }}>
         <DialogContent

@@ -41,8 +41,6 @@ export * from "./resource"
 export { ModelAliasConfigSchema, DEFAULT_MODEL_ALIASES, CustomProvidersMapSchema } from './config/model-alias'
 export type { ModelAliasConfig, CustomProviderDef } from './config/model-alias'
 export { resolveModelAlias, loadModelAliasConfig, collectNodeEngines } from './config/model-alias'
-export { BUILTIN_PRICING, priceFor, estimateCost, __setPricingOverlayForTest, __resetPricingOverlayForTest } from './pricing'
-export type { PricingTier } from './pricing'
 export { LEDGER_SQL, costSummary, cacheHitRateOf, ledgerTotals, mergeLedgerParts, mergeLlmUsageSummaries, llmUsageAggregates } from './ledger'
 export type { LedgerCost, LedgerTotals, LedgerRow, LedgerPart, LlmUsageSummary, LlmUsageAggregates, LlmUsageRow, ModelUsageBreakdown } from './ledger'
 export { resolveMoaModel } from './config/moa-model-resolver'

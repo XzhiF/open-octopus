@@ -1273,3 +1273,38 @@ CREATE TABLE IF NOT EXISTS archive_drafts (
   created_at TEXT NOT NULL DEFAULT (datetime('now')),
   updated_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
+
+-- subagent_runs: 主 Agent 派生的子代理（SDK Task/Agent 工具）作业记录。
+-- 数据源 = provider 的 `subagent` chunk（task_started / task_progress / log /
+-- task_completed）。`id` 是 SDK task_id，同时也是 transcript 的 agentId；
+-- `steps` 是 JSON 数组（与 chat 工具时间线同形的日志块）。token 由宿主读取
+-- `subagents/agent-<id>.jsonl` 汇总后回填（SDK 的 task usage 在代理端点全为 0）。
+CREATE TABLE IF NOT EXISTS subagent_runs (
+  id                     TEXT PRIMARY KEY,
+  session_id             TEXT NOT NULL,
+  parent_tool_use_id     TEXT,
+  agent_type             TEXT,
+  description            TEXT,
+  prompt                 TEXT,
+  status                 TEXT NOT NULL DEFAULT 'running',
+  started_at             TEXT NOT NULL,
+  ended_at               TEXT,
+  summary                TEXT,
+  model                  TEXT,
+  cwd                    TEXT,
+  sdk_session_id         TEXT,
+  input_tokens           INTEGER NOT NULL DEFAULT 0,
+  output_tokens          INTEGER NOT NULL DEFAULT 0,
+  cache_read_tokens      INTEGER NOT NULL DEFAULT 0,
+  cache_creation_tokens  INTEGER NOT NULL DEFAULT 0,
+  tool_uses              INTEGER NOT NULL DEFAULT 0,
+  duration_ms            INTEGER,
+  step_count             INTEGER NOT NULL DEFAULT 0,
+  steps                  TEXT,
+  created_at             TEXT NOT NULL,
+  updated_at             TEXT NOT NULL,
+  FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_subagent_runs_session
+  ON subagent_runs(session_id, started_at DESC);

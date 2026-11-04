@@ -21,6 +21,7 @@ import {
   Play,
   Square,
   Upload,
+  Users,
   X,
   type LucideIcon,
 } from 'lucide-react'
@@ -34,6 +35,7 @@ import {
   saveFileEntry,
   type WorkspaceRun,
 } from '@/lib/api-client'
+import { listSessionSubagents, type SubagentRunSummary } from '@/lib/agent/api'
 import { listSessionDebugTurns } from '@/lib/agent/debug-api'
 import { useYDoc, useYMap } from '@/lib/yjs-provider'
 import { SidebarFileTree, ymapToFileNodes } from '@/components/workspace/sidebar-file-tree'
@@ -48,6 +50,7 @@ import {
   type ActivitySnapshot,
 } from '@/components/chat-workbench/inspector-activity'
 import { RunPicker, isLiveRun } from '@/components/chat-workbench/run-picker'
+import { SubagentListPane } from '@/components/chat-workbench/subagent-list-pane'
 import { cn } from '@/lib/utils'
 import { useDockLabelsVisible } from '@/hooks/use-dock-labels'
 
@@ -66,6 +69,12 @@ export interface WorkspaceExplorerDockProps {
   debugSessionId?: string | null
   /** 消息数 / 流式状态变化时刷新调试徽标。 */
   debugRefreshKey?: string | number
+  /** 子代理入口取数的会话（作业坞「子代理」）。 */
+  subagentSessionId?: string | null
+  /** 子代理详情窗状态（坞上的开/最小化标记）。 */
+  subagentWindow?: TaskWindowRecord | null
+  /** 子代理列表点一条 → 打开详情窗。 */
+  onOpenSubagent?: (run: SubagentRunSummary) => void
   onOpenTaskModule?: (module: TaskModule) => void
   /** 运行列表里点了一条 → 打开指定执行的运行窗（ChatTab 负责开窗）。 */
   onOpenRun?: (run: WorkspaceRun) => void
@@ -86,7 +95,7 @@ interface EditorFile {
   extension?: string
 }
 
-type Pane = 'files' | 'activity' | 'run'
+type Pane = 'files' | 'activity' | 'run' | 'subagents'
 
 const TEXT_EXT = new Set([
   'ts', 'tsx', 'js', 'jsx', 'json', 'yaml', 'yml', 'md', 'txt', 'css', 'scss',
@@ -108,14 +117,16 @@ const DOCK_WIDTH_ICON = 48
 const DOCK_WIDTH_LABEL = 59
 const PANE_WIDTH = 300
 const RUN_PANE_WIDTH = 384
+const SUBAGENT_PANE_WIDTH = 360
 const GAP = 8
 const FLOAT_MARGIN = 12
 const SIDEBAR_DEFAULT_WIDTH = 236
 
 const MODULE_ROWS: Array<{ id: TaskModule; label: string; icon: typeof FileText }> = [
+  // 2026-11-04 用户：运行提到「项目」下面第一个。
+  { id: 'run', label: '运行', icon: Play },
   { id: 'plan', label: '规格', icon: FileText },
   { id: 'changes', label: '变更', icon: GitCompare },
-  { id: 'run', label: '运行', icon: Play },
   { id: 'acceptance', label: '验收', icon: ClipboardCheck },
   { id: 'artifacts', label: '产物', icon: Package },
   { id: 'archive', label: '归档', icon: Archive },
@@ -168,6 +179,9 @@ export function WorkspaceExplorerDock({
   onOpenDebug,
   debugSessionId,
   debugRefreshKey,
+  subagentSessionId,
+  subagentWindow,
+  onOpenSubagent,
   onOpenTaskModule,
   onOpenRun,
   onTaskAction,
@@ -202,6 +216,29 @@ export function WorkspaceExplorerDock({
     return () => { alive = false; window.clearInterval(timer) }
   }, [workspaceId])
   const liveRunCount = useMemo(() => runs.filter(isLiveRun).length, [runs])
+  // 子代理（2026-11-04）：主 Agent 派生的子代理作业。运行中 2s 刷新，
+  // 结束后保留快照 —— 详情窗按 agentId 自己取全量日志。
+  const [subagents, setSubagents] = useState<SubagentRunSummary[]>([])
+  useEffect(() => {
+    if (!subagentSessionId) {
+      setSubagents([])
+      return
+    }
+    let alive = true
+    const load = async () => {
+      try {
+        const res = await listSessionSubagents(subagentSessionId)
+        if (alive) setSubagents(Array.isArray(res?.runs) ? res.runs : [])
+      } catch { /* 服务端离线：保留上一份快照 */ }
+    }
+    void load()
+    const timer = window.setInterval(load, 2_000)
+    return () => { alive = false; window.clearInterval(timer) }
+  }, [subagentSessionId])
+  const liveSubagentCount = useMemo(
+    () => subagents.filter((run) => run.status === 'running').length,
+    [subagents],
+  )
   // 文件面板头部显示工作空间真实路径，点击进入系统文件管理器（2026-10-28）。
   const [workspacePath, setWorkspacePath] = useState<string | null>(null)
   useEffect(() => {
@@ -293,7 +330,9 @@ export function WorkspaceExplorerDock({
     return () => window.removeEventListener('resize', onResize)
   }, [])
 
-  const editorRight = FLOAT_MARGIN + dockWidth + GAP + (pane ? (pane === 'run' ? RUN_PANE_WIDTH : PANE_WIDTH) : 0)
+  const editorRight = FLOAT_MARGIN + dockWidth + GAP + (
+    pane ? (pane === 'run' ? RUN_PANE_WIDTH : pane === 'subagents' ? SUBAGENT_PANE_WIDTH : PANE_WIDTH) : 0
+  )
   const availableWidth = Math.max(
     EDITOR_MIN_WIDTH,
     viewportWidth - (viewportWidth >= 768 ? sidebarWidth : 0) - editorRight - 24,
@@ -432,6 +471,8 @@ export function WorkspaceExplorerDock({
   const usageMinimized = !!usageWindow?.minimized
   const debugOpen = !!debugWindow && !debugWindow.minimized
   const debugMinimized = !!debugWindow?.minimized
+  const subagentOpen = !!subagentWindow && !subagentWindow.minimized
+  const subagentMinimized = !!subagentWindow?.minimized
 
   const dockButton = (
     key: string,
@@ -452,8 +493,8 @@ export function WorkspaceExplorerDock({
       attention?: boolean
       /** 没有工作区时（纯会话）文件 / 活动不可用。 */
       disabled?: boolean
-      /** 徽标底色：默认青（活动）；调试用琥珀（异常）；运行中运行数用绿。 */
-      badgeTone?: 'cyan' | 'amber' | 'green'
+      /** 徽标底色：默认青（活动）；调试用琥珀（异常）；运行中运行数用绿；子代理用紫。 */
+      badgeTone?: 'cyan' | 'amber' | 'green' | 'purple'
       /** 绿点：该入口正在记录（调试）。 */
       recording?: boolean
     },
@@ -494,7 +535,10 @@ export function WorkspaceExplorerDock({
         <span
           className={cn(
             'absolute -right-0.5 -top-0.5 grid min-w-3.5 place-items-center rounded-full px-0.5 font-mono text-[8px] font-bold text-pop-bg',
-            opts.badgeTone === 'amber' ? 'bg-pop-amber' : opts.badgeTone === 'green' ? 'bg-pop-green' : 'bg-pop-cyan',
+            opts.badgeTone === 'amber' ? 'bg-pop-amber'
+              : opts.badgeTone === 'green' ? 'bg-pop-green'
+                : opts.badgeTone === 'purple' ? 'bg-pop-purple'
+                  : 'bg-pop-cyan',
           )}
         >
           {opts.badge}
@@ -590,7 +634,7 @@ export function WorkspaceExplorerDock({
           className="absolute top-14 z-30 hidden flex-col overflow-hidden rounded-2xl border border-white/[0.08] bg-pop-paper/95 shadow-pop-lg backdrop-blur-xl lg:flex"
           style={{
             right: FLOAT_MARGIN + dockWidth + GAP,
-            width: pane === 'run' ? RUN_PANE_WIDTH : PANE_WIDTH,
+            width: pane === 'run' ? RUN_PANE_WIDTH : pane === 'subagents' ? SUBAGENT_PANE_WIDTH : PANE_WIDTH,
             height: 'min(700px, calc(100% - 160px))',
           }}
         >
@@ -612,6 +656,16 @@ export function WorkspaceExplorerDock({
               onPick={(run) => {
                 setPane(null)
                 onOpenRun?.(run)
+              }}
+            />
+          ) : pane === 'subagents' ? (
+            <SubagentListPane
+              sessionId={subagentSessionId ?? null}
+              runs={subagents}
+              activeAgentId={subagentWindow?.subagentTarget?.id ?? null}
+              onPick={(run) => {
+                setPane(null)
+                onOpenSubagent?.(run)
               }}
             />
           ) : (
@@ -660,11 +714,16 @@ export function WorkspaceExplorerDock({
           shortLabel: '活动',
           disabled: !workspaceId,
         })}
-        {dockButton('usage', '消耗', BarChart3, {
-          active: usageOpen,
-          onClick: () => onOpenUsage?.(),
-          testId: 'dock-usage',
-          marker: usageMinimized ? 'minimized' : usageOpen ? 'open' : undefined,
+        {/* 子代理（2026-11-04）：只有本会话派出过子代理时才出现；徽标 = 运行中数量。 */}
+        {(subagents.length > 0 || subagentOpen || subagentMinimized) && dockButton('pane:subagents', '子代理', Users, {
+          active: pane === 'subagents' || subagentOpen,
+          onClick: () => togglePane('subagents'),
+          pane: 'subagents',
+          testId: 'dock-subagents',
+          shortLabel: '子代理',
+          badge: liveSubagentCount,
+          badgeTone: 'purple',
+          marker: subagentMinimized ? 'minimized' : subagentOpen ? 'open' : undefined,
         })}
         {/* 调试 = 唯一入口：作业坞常驻，不依赖某条消息。 */}
         {dockButton('debug', '调试', Bug, {
@@ -675,6 +734,12 @@ export function WorkspaceExplorerDock({
           badgeTone: 'amber',
           recording: !!debugSessionId,
           marker: debugMinimized ? 'minimized' : debugOpen ? 'open' : undefined,
+        })}
+        {dockButton('usage', '消耗', BarChart3, {
+          active: usageOpen,
+          onClick: () => onOpenUsage?.(),
+          testId: 'dock-usage',
+          marker: usageMinimized ? 'minimized' : usageOpen ? 'open' : undefined,
         })}
 
         {task && <div className="my-0.5 h-px w-6 bg-white/[0.12]" />}
