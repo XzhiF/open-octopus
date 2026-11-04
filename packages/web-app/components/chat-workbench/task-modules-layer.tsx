@@ -15,7 +15,8 @@ import { SessionUsageWindow } from './session-usage-window'
 import { DebugInspectorWindow } from './debug-inspector-window'
 import { ArtifactsWindow } from './artifacts-window'
 import { ArchiveWindow } from './archive-window'
-import type { TaskModule, TaskWindowMap, TaskWindowRecord, RunTarget } from './task-window-types'
+import { SubagentWindow } from './subagent-window'
+import type { TaskModule, TaskWindowMap, TaskWindowRecord, RunTarget, SubagentTarget } from './task-window-types'
 
 const MODULE_TITLE: Record<TaskModule, string> = {
   plan: '规格',
@@ -26,6 +27,7 @@ const MODULE_TITLE: Record<TaskModule, string> = {
   debug: '调试',
   artifacts: '产物',
   archive: '归档',
+  subagents: '子代理',
 }
 
 interface TaskModulesLayerProps {
@@ -49,7 +51,7 @@ interface TaskModulesLayerProps {
   /** Shared task action handler (chip / card / window controls). */
   onTaskAction?: (action: string) => void
   /** External request (inspector / board acceptance / 作业坞运行列表) to open a module once. */
-  openModule?: { module: TaskModule; nonce: number; runTarget?: RunTarget | null } | null
+  openModule?: { module: TaskModule; nonce: number; runTarget?: RunTarget | null; subagentTarget?: SubagentTarget | null } | null
   /** 会话账本里点工作流行 → 打开对应任务。 */
   onOpenLinkedTask?: (taskId: string) => void
   className?: string
@@ -107,15 +109,20 @@ export function TaskModulesLayer({
     onWindowsChange({ ...windows, [module]: { ...current, ...patch } })
   }
 
-  const openModuleAt = useCallback((module: TaskModule, runTarget: RunTarget | null = null) => {
+  const openModuleAt = useCallback((
+    module: TaskModule,
+    runTarget: RunTarget | null = null,
+    subagentTarget: SubagentTarget | null = null,
+  ) => {
     const current = windows[module]
     if (current) {
-      // 运行窗已经开着：只换目标执行并提到最前，不重建窗口（拖拽/尺寸保留）。
+      // 运行窗 / 子代理窗已经开着：只换目标，不重建窗口（拖拽/尺寸保留）。
       const patch: Partial<TaskWindowRecord> = {
         ...(current.minimized ? { minimized: false } : {}),
         z: maxZ + 1,
       }
       if (module === 'run') patch.runTarget = runTarget
+      if (module === 'subagents') patch.subagentTarget = subagentTarget
       updateWindow(module, patch)
       return
     }
@@ -133,7 +140,9 @@ export function TaskModulesLayer({
                 ? { width: 1120, height: 760 }
                 : module === 'artifacts'
                   ? { width: 1120, height: 720 }
-                  : { width: 1100, height: 640 }
+                  : module === 'subagents'
+                    ? { width: 1040, height: 720 }
+                    : { width: 1100, height: 640 }
     let rect = cascadeRect(stage, 0, preferred)
     // 打开位置 = 整个浏览器水平居中（2026-10-29 用户）：容器是侧栏右侧的聊天区，
     // 按容器居中会整体偏右；把 x 换回视口坐标。拖拽/持久化的位置不受影响。
@@ -150,6 +159,7 @@ export function TaskModulesLayer({
       restoreRect: null,
       z: maxZ + 1,
       ...(module === 'run' ? { runTarget } : {}),
+      ...(module === 'subagents' ? { subagentTarget } : {}),
     }
     onWindowsChange({ ...windows, [module]: record })
   }, [windows, onWindowsChange, maxZ, size])
@@ -157,7 +167,7 @@ export function TaskModulesLayer({
   useEffect(() => {
     if (!openModule || lastNonceRef.current === openModule.nonce) return
     lastNonceRef.current = openModule.nonce
-    openModuleAt(openModule.module, openModule.runTarget ?? null)
+    openModuleAt(openModule.module, openModule.runTarget ?? null, openModule.subagentTarget ?? null)
   }, [openModule, openModuleAt])
 
   const closeWindow = (module: TaskModule) => {
@@ -181,7 +191,9 @@ export function TaskModulesLayer({
             title={
               module === 'run' && record.runTarget
                 ? `${MODULE_TITLE[module]} · ${record.runTarget.title}`
-                : `${MODULE_TITLE[module]} · ${task?.name ?? sessionTitle ?? '会话'}`
+                : module === 'subagents'
+                  ? `${MODULE_TITLE[module]} · ${record.subagentTarget?.title ?? '详情'}`
+                  : `${MODULE_TITLE[module]} · ${task?.name ?? sessionTitle ?? '会话'}`
             }
             container={size}
             bleedLeft={containerLeft}
@@ -221,6 +233,12 @@ export function TaskModulesLayer({
             ) : module === 'run' ? (
               // 运行窗不依赖任务：自由对话里从作业坞/消耗窗点进来的指定执行也要能看。
               <RunWindow task={task} runTarget={record.runTarget ?? null} onTaskAction={onTaskAction} />
+            ) : module === 'subagents' ? (
+              // 子代理窗同样不依赖任务：主对话派生的子代理在任何上下文都要能回看。
+              <SubagentWindow
+                sessionId={chatSessionId ?? sessionId ?? null}
+                agentId={record.subagentTarget?.id ?? null}
+              />
             ) : !task ? null : module === 'changes' ? (
               <ChangesWindow task={task} />
             ) : module === 'plan' ? (

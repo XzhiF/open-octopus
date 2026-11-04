@@ -1,5 +1,5 @@
 import { query, type Options, type AgentDefinition, type CanUseTool, type SDKUserMessage } from '@anthropic-ai/claude-agent-sdk'
-import type { IAgentProvider, SendQueryOptions, MessageChunk, OctopusAgentDef, GoalTerminalReason, SystemInitData, BackgroundTaskInfo } from '../types'
+import type { IAgentProvider, SendQueryOptions, MessageChunk, OctopusAgentDef, GoalTerminalReason, SystemInitData, BackgroundTaskInfo, SubagentEvent, SubagentLogBlock } from '../types'
 import type { ModelUsage, TokenUsage, TokenUsageDelta } from '@octopus/shared'
 import { mergeModelUsages } from '@octopus/shared'
 import { LLMCallTracker } from '../llm-call-tracker'
@@ -73,7 +73,7 @@ function buildSubprocessEnv(extra?: Record<string, string>): NodeJS.ProcessEnv {
   }
 }
 
-function buildToolCaptureHooks(
+export function buildToolCaptureHooks(
   toolResultQueue: ToolResultEntry[],
   pendingQuestions: PendingQuestion[],
   pendingCompletions: PendingCompletion[],
@@ -132,6 +132,9 @@ function buildToolCaptureHooks(
     PostToolUse: [{
       hooks: [async (input: unknown) => {
         const inp = input as Record<string, unknown>
+        // 子代理内部的工具结果不进主对话队列（2026-11-04）：它们由带
+        // parent_tool_use_id 的消息带给「子代理」时间线，混入主队列会污染主对话。
+        if (typeof inp.agent_id === 'string' && inp.agent_id) return { continue: true }
         toolResultQueue.push({
           toolName: (inp.tool_name as string) ?? 'unknown',
           toolCallId: inp.tool_use_id as string | undefined,
@@ -148,6 +151,7 @@ function buildToolCaptureHooks(
         if (inp.tool_name === 'AskUserQuestion' || inp.tool_name === 'complete_interaction') {
           return { continue: true }
         }
+        if (typeof inp.agent_id === 'string' && inp.agent_id) return { continue: true }
         toolResultQueue.push({
           toolName: (inp.tool_name as string) ?? 'unknown',
           toolCallId: inp.tool_use_id as string | undefined,
@@ -328,6 +332,70 @@ function isEmptyResultAck(rm: EmptyResultAckLike): boolean {
   return tokens === 0
 }
 
+interface RawContentBlock {
+  type?: string
+  text?: string
+  thinking?: string
+  name?: string
+  id?: string
+  input?: unknown
+  tool_use_id?: string
+  content?: unknown
+  is_error?: boolean
+}
+
+function stringifyToolContent(content: unknown): string {
+  if (typeof content === 'string') return content
+  if (Array.isArray(content)) {
+    return content
+      .map((part) => {
+        if (typeof part === 'string') return part
+        const block = part as RawContentBlock
+        if (block?.type === 'text' && typeof block.text === 'string') return block.text
+        return JSON.stringify(part)
+      })
+      .join('\n')
+  }
+  if (content === undefined || content === null) return ''
+  return JSON.stringify(content)
+}
+
+/**
+ * 把子代理的 assistant/user 消息内容转成与 chat 工具时间线同形的日志块。
+ * 真机验证（SDK 0.3.235）：子代理消息没有 `stream_event` 增量流，整条到达。
+ */
+function toSubagentBlocks(content: unknown): SubagentLogBlock[] {
+  const blocks: SubagentLogBlock[] = []
+  if (typeof content === 'string') {
+    if (content.length > 0) blocks.push({ kind: 'text', text: content })
+    return blocks
+  }
+  if (!Array.isArray(content)) return blocks
+  for (const raw of content) {
+    const block = raw as RawContentBlock
+    switch (block?.type) {
+      case 'text':
+        if (typeof block.text === 'string' && block.text.length > 0) blocks.push({ kind: 'text', text: block.text })
+        break
+      case 'thinking':
+        if (typeof block.thinking === 'string' && block.thinking.length > 0) blocks.push({ kind: 'thinking', text: block.thinking })
+        break
+      case 'tool_use':
+        blocks.push({ kind: 'tool_use', toolName: block.name, toolUseId: block.id, input: block.input })
+        break
+      case 'tool_result':
+        blocks.push({
+          kind: 'tool_result',
+          toolUseId: block.tool_use_id,
+          content: stringifyToolContent(block.content),
+          isError: block.is_error === true,
+        })
+        break
+    }
+  }
+  return blocks
+}
+
 export class ClaudeSDKProvider implements IAgentProvider {
   private _llmTracker = new LLMCallTracker()
 
@@ -375,6 +443,25 @@ export class ClaudeSDKProvider implements IAgentProvider {
     // 继续消费 query（`awaitBackgroundTasks`）。description 同时给 header/chat
     // 显示「在跑什么」。
     const backgroundTasks = new Map<string, BackgroundTaskInfo>()
+    // 子代理（SDK Task/Agent 工具）—— 作业坞「子代理」入口的数据源（2026-11-04）。
+    // 真机验证：子代理消息以 `parent_tool_use_id` 指回主 Agent 的 Agent 调用，
+    // `task_started.tool_use_id` 是同一个 id；`task_id` 则是 transcript 的 agentId。
+    interface LiveSubagent {
+      parentToolUseId?: string
+      agentType?: string
+      description?: string
+      prompt?: string
+      model?: string
+      ended: boolean
+      /** 已经收到过 assistant 日志（用于识别并吞掉首条 user 指令回显）。 */
+      logSeen: boolean
+    }
+    const liveSubagents = new Map<string, LiveSubagent>()
+    const subagentIdByToolUseId = new Map<string, string>()
+    const agentPromptByToolUseId = new Map<string, string>()
+    // task_started 之前到达的子代理消息（罕见竞态）先按 Agent 调用 id 暂存。
+    const pendingSubagentBlocks = new Map<string, SubagentLogBlock[]>()
+    let sdkSessionId: string | undefined
     const modelName = this.resolveModelName(options?.model)
     this._llmTracker.reset()
 
@@ -439,6 +526,9 @@ export class ClaudeSDKProvider implements IAgentProvider {
       allowDangerouslySkipPermissions: true,
       settingSources: ['project', 'user'],
       includePartialMessages: true,
+      // 子代理的完整对话（thinking / text / tool_use / tool_result）—— 作业坞要
+      // 显示「像 chat 一样」的操作日志（2026-11-04）。默认只转发工具块。
+      forwardSubagentText: true,
       hooks: buildToolCaptureHooks(toolResultQueue, pendingQuestions, pendingCompletions, options?.onBeforeToolCall),
       env: buildSubprocessEnv(options?.env as Record<string, string> | undefined),
       agent: options?.agent,
@@ -565,6 +655,11 @@ export class ClaudeSDKProvider implements IAgentProvider {
     let sawResult = false
     try {
       for await (const event of guarded) {
+
+        // 子代理 token / 日志补全要用 SDK 会话 id 去读 transcript。
+        // 始终跟随最新值 —— /clear 会换 session id，之后的子代理要落到新目录。
+        const evSessionId = (event as { session_id?: string }).session_id
+        if (evSessionId) sdkSessionId = evSessionId
 
         if (timingOn) {
           if (!tFirstEvent) {
@@ -707,6 +802,13 @@ export class ClaudeSDKProvider implements IAgentProvider {
                   toolInput,
                   messageId: currentMessageId,
                 }
+                // 主 Agent 给子 Agent 的指令（task_started.prompt 的兜底源）。
+                if (pending.name === 'Agent' && toolInput && typeof toolInput === 'object') {
+                  const prompt = (toolInput as { prompt?: unknown }).prompt
+                  if (typeof prompt === 'string' && prompt.trim()) {
+                    agentPromptByToolUseId.set(pending.id, prompt)
+                  }
+                }
                 pendingToolCalls.delete(e.index!)
               }
             }
@@ -743,6 +845,43 @@ export class ClaudeSDKProvider implements IAgentProvider {
         }
 
         else if (event.type === 'assistant') {
+          // 子代理消息（parent_tool_use_id 非空）：不进主对话正文，转成子代理日志。
+          const subagentMessage = event as {
+            parent_tool_use_id?: string | null
+            message?: { id?: string; model?: string; content?: unknown }
+          }
+          const subagentParentId = subagentMessage.parent_tool_use_id ?? undefined
+          if (subagentParentId) {
+            const blocks = toSubagentBlocks(subagentMessage.message?.content)
+            if (blocks.length > 0) {
+              const agentId = subagentIdByToolUseId.get(subagentParentId)
+              if (!agentId) {
+                const buffered = pendingSubagentBlocks.get(subagentParentId) ?? []
+                buffered.push(...blocks)
+                pendingSubagentBlocks.set(subagentParentId, buffered)
+              } else {
+                const live = liveSubagents.get(agentId)
+                if (live) {
+                  live.logSeen = true
+                  if (subagentMessage.message?.model) live.model = subagentMessage.message.model
+                }
+                yield {
+                  type: 'subagent',
+                  event: {
+                    id: agentId,
+                    parentToolUseId: subagentParentId,
+                    agentType: live?.agentType,
+                    description: live?.description,
+                    phase: 'log',
+                    model: subagentMessage.message?.model ?? live?.model,
+                    blocks,
+                    sdkSessionId,
+                  },
+                }
+              }
+            }
+            continue
+          }
           // Do NOT use assistant event usage for token tracking —
           // input_tokens includes cache-reused tokens that inflate totals.
           // result.modelUsage has definitive totals.
@@ -768,6 +907,45 @@ export class ClaudeSDKProvider implements IAgentProvider {
         }
 
         else if (event.type === 'user') {
+          // 子代理消息（parent_tool_use_id 非空）：工具结果 / 指令回显 → 子代理日志。
+          const subagentUser = event as {
+            parent_tool_use_id?: string | null
+            message?: { content?: unknown }
+          }
+          const subagentParentId = subagentUser.parent_tool_use_id ?? undefined
+          if (subagentParentId) {
+            let blocks = toSubagentBlocks(subagentUser.message?.content)
+            const agentId = subagentIdByToolUseId.get(subagentParentId)
+            if (!agentId) {
+              if (blocks.length > 0) {
+                const buffered = pendingSubagentBlocks.get(subagentParentId) ?? []
+                buffered.push(...blocks)
+                pendingSubagentBlocks.set(subagentParentId, buffered)
+              }
+              continue
+            }
+            const live = liveSubagents.get(agentId)
+            // 第一条 user 文本就是主 Agent 的指令回显 —— 指令另有 prompt 卡，不重复。
+            if (!live?.logSeen && live?.prompt && blocks.every((b) => b.kind === 'text')) {
+              const echoed = blocks.map((b) => b.text ?? '').join('').trim()
+              if (echoed === live.prompt.trim()) blocks = []
+            }
+            if (blocks.length > 0) {
+              yield {
+                type: 'subagent',
+                event: {
+                  id: agentId,
+                  parentToolUseId: subagentParentId,
+                  agentType: live?.agentType,
+                  description: live?.description,
+                  phase: 'log',
+                  blocks,
+                  sdkSessionId,
+                },
+              }
+            }
+            continue
+          }
           // Headless LIVE path for /goal evidence: the evaluator's not-met
           // (block) verdict surfaces only as a synthetic isMeta user message
           // "Stop hook feedback:\n[<condition>]: <reason>". Map it to the same
@@ -810,7 +988,7 @@ export class ClaudeSDKProvider implements IAgentProvider {
         else if (event.type === 'system') {
           const sm = event as {
             subtype: string
-            status?: 'compacting' | 'requesting' | null
+            status?: 'compacting' | 'requesting' | 'completed' | 'failed' | 'stopped' | null
             content?: string
             claude_code_version?: string
             model?: string
@@ -832,8 +1010,17 @@ export class ClaudeSDKProvider implements IAgentProvider {
             tasks?: Array<{ task_id?: string; task_type?: string; description?: string }>
             /** task_started / task_updated / task_notification 的边沿字段。 */
             task_id?: string
+            tool_use_id?: string
             description?: string
             task_type?: string
+            /** 子代理类型（Task/Agent 工具）；background bash 任务没有。 */
+            subagent_type?: string
+            /** 主 Agent 给子代理的完整指令（task_started）。 */
+            prompt?: string
+            /** task_notification：子代理的最终汇报。 */
+            summary?: string
+            last_tool_name?: string
+            usage?: { total_tokens?: number; tool_uses?: number; duration_ms?: number }
             patch?: { status?: 'pending' | 'running' | 'completed' | 'failed' | 'killed' | 'paused' }
             /** compact_boundary：压缩完成后的 token 账（SDK 自己的口径）。 */
             compact_metadata?: {
@@ -845,7 +1032,10 @@ export class ClaudeSDKProvider implements IAgentProvider {
             }
           }
           if (sm.subtype === 'status') {
-            yield { type: 'status', status: sm.status ?? null }
+            yield {
+              type: 'status',
+              status: (sm.status ?? null) as 'compacting' | 'requesting' | null,
+            }
           } else if (sm.subtype === 'background_tasks_changed') {
             // 电平信号：用 payload 整体替换。空数组 = 后台任务全部结束，
             // 紧接着 CLI 会唤醒模型跑第二轮。
@@ -860,8 +1050,59 @@ export class ClaudeSDKProvider implements IAgentProvider {
             }
             yield { type: 'background_tasks', tasks: [...backgroundTasks.values()] }
           } else if (sm.subtype === 'task_started') {
-            // 边沿信号；通常 level 已先到，只有描述变化时才再发一次。
-            if (sm.task_id) {
+            // 子代理出生（真机 0.3.235：task_type='local_agent' + subagent_type）。
+            // `task_id` 是 transcript 的 agentId，`tool_use_id` 是主 Agent 的 Agent 调用。
+            const isSubagent = !!sm.subagent_type || sm.task_type === 'local_agent'
+            if (isSubagent && sm.task_id) {
+              const agentId = sm.task_id
+              const prompt = sm.prompt?.trim()
+                || (sm.tool_use_id ? agentPromptByToolUseId.get(sm.tool_use_id) : undefined)
+              const live: LiveSubagent = {
+                parentToolUseId: sm.tool_use_id,
+                agentType: sm.subagent_type,
+                description: sm.description?.trim() || agentId,
+                prompt,
+                ended: false,
+                logSeen: false,
+              }
+              liveSubagents.set(agentId, live)
+              if (sm.tool_use_id) subagentIdByToolUseId.set(sm.tool_use_id, agentId)
+              yield {
+                type: 'subagent',
+                event: {
+                  id: agentId,
+                  parentToolUseId: sm.tool_use_id,
+                  agentType: sm.subagent_type,
+                  description: live.description,
+                  prompt,
+                  phase: 'started',
+                  status: 'running',
+                  sdkSessionId,
+                },
+              }
+              // 先于 task_started 到达的子代理消息在这里补发。
+              const buffered = sm.tool_use_id ? pendingSubagentBlocks.get(sm.tool_use_id) : undefined
+              if (buffered && buffered.length > 0 && sm.tool_use_id) {
+                pendingSubagentBlocks.delete(sm.tool_use_id)
+                live.logSeen = true
+                yield {
+                  type: 'subagent',
+                  event: {
+                    id: agentId,
+                    parentToolUseId: sm.tool_use_id,
+                    agentType: sm.subagent_type,
+                    description: live.description,
+                    phase: 'log',
+                    blocks: buffered,
+                    sdkSessionId,
+                  },
+                }
+              }
+            }
+            // 后台任务电平：只刷新已经登记的后台任务。前台子代理也发
+            // task_started —— 把它塞进 backgroundTasks 会让收轮后误判「还有
+            // 后台任务在跑」而继续挂着（真机 2026-11-04）。
+            if (sm.task_id && (sm.task_type !== 'local_agent' || backgroundTasks.has(sm.task_id))) {
               const description = sm.description?.trim() || sm.task_id
               const prev = backgroundTasks.get(sm.task_id)
               if (!prev || prev.description !== description) {
@@ -869,13 +1110,73 @@ export class ClaudeSDKProvider implements IAgentProvider {
                 yield { type: 'background_tasks', tasks: [...backgroundTasks.values()] }
               }
             }
+          } else if (sm.subtype === 'task_progress') {
+            // 子代理进度（当前工具 / 步数 / 时长）。
+            // 注意不要用 task_progress.description 覆盖标题：它是进度短语
+            // （「Running echo ...」），会把人话描述盖掉（真机 2026-11-04）。
+            if (sm.task_id && liveSubagents.has(sm.task_id)) {
+              const live = liveSubagents.get(sm.task_id)!
+              yield {
+                type: 'subagent',
+                event: {
+                  id: sm.task_id,
+                  parentToolUseId: live.parentToolUseId,
+                  agentType: live.agentType,
+                  description: live.description,
+                  phase: 'progress',
+                  status: 'running',
+                  lastToolName: sm.last_tool_name,
+                  toolUses: sm.usage?.tool_uses,
+                  durationMs: sm.usage?.duration_ms,
+                  sdkSessionId,
+                },
+              }
+            }
           } else if (sm.subtype === 'task_updated') {
             const status = sm.patch?.status
             const terminal = status === 'completed' || status === 'failed' || status === 'killed'
+            if (terminal && sm.task_id && liveSubagents.has(sm.task_id)) {
+              const live = liveSubagents.get(sm.task_id)!
+              live.ended = true
+              yield {
+                type: 'subagent',
+                event: {
+                  id: sm.task_id,
+                  parentToolUseId: live.parentToolUseId,
+                  agentType: live.agentType,
+                  description: live.description,
+                  phase: 'completed',
+                  status: status === 'completed' ? 'completed' : status === 'killed' ? 'killed' : 'failed',
+                  model: live.model,
+                  sdkSessionId,
+                },
+              }
+            }
             if (terminal && sm.task_id && backgroundTasks.delete(sm.task_id)) {
               yield { type: 'background_tasks', tasks: [...backgroundTasks.values()] }
             }
           } else if (sm.subtype === 'task_notification') {
+            // 子代理完成：这里才带最终汇报（summary）和步数/时长。
+            if (sm.task_id && liveSubagents.has(sm.task_id)) {
+              const live = liveSubagents.get(sm.task_id)!
+              live.ended = true
+              yield {
+                type: 'subagent',
+                event: {
+                  id: sm.task_id,
+                  parentToolUseId: live.parentToolUseId,
+                  agentType: live.agentType,
+                  description: live.description,
+                  phase: 'completed',
+                  status: sm.status === 'completed' ? 'completed' : sm.status === 'stopped' ? 'killed' : 'failed',
+                  summary: sm.summary || undefined,
+                  model: live.model,
+                  toolUses: sm.usage?.tool_uses,
+                  durationMs: sm.usage?.duration_ms,
+                  sdkSessionId,
+                },
+              }
+            }
             if (sm.task_id && backgroundTasks.delete(sm.task_id)) {
               yield { type: 'background_tasks', tasks: [...backgroundTasks.values()] }
             }

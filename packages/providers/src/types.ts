@@ -149,6 +149,54 @@ export interface BackgroundTaskInfo {
   taskType?: string
 }
 
+/**
+ * 子代理（SDK Task/Agent 工具）的一条操作日志块 —— 与 chat 的
+ * tool_call / tool_result 同形，宿主据此渲染「像 chat 一样」的嵌套时间线。
+ */
+export interface SubagentLogBlock {
+  kind: 'text' | 'thinking' | 'tool_use' | 'tool_result'
+  text?: string
+  toolName?: string
+  toolUseId?: string
+  input?: unknown
+  content?: string
+  isError?: boolean
+}
+
+/**
+ * 子代理生命周期事件（2026-11-04 作业坞）。
+ *
+ * 数据源（真机 SDK 0.3.235 验证）：
+ * - `started`   ← `system:task_started`（`task_type: local_agent`），带主 Agent 的完整指令 prompt；
+ * - `progress`  ← `system:task_progress`（当前工具 / 步数 / 时长）；
+ * - `log`       ← `assistant`/`user` 消息（`parent_tool_use_id` 指向主 Agent 的 Agent 调用）；
+ * - `completed` ← `system:task_updated` / `system:task_notification`，带最终汇报 summary。
+ *
+ * 注意：子代理消息没有 `stream_event` 增量流（真机验证），是整条消息到达。
+ */
+export interface SubagentEvent {
+  /** SDK task_id，同时也是 `agent-<agentId>.jsonl` 的 agentId。 */
+  id: string
+  /** 主 Agent 那次 Agent 调用的 tool_use id。 */
+  parentToolUseId?: string
+  agentType?: string
+  description?: string
+  /** 主 Agent 给子 Agent 的指令（task_started.prompt）。 */
+  prompt?: string
+  phase: 'started' | 'progress' | 'log' | 'completed'
+  status?: 'running' | 'completed' | 'failed' | 'killed'
+  lastToolName?: string
+  /** 最终汇报（task_notification.summary）。 */
+  summary?: string
+  model?: string
+  /** SDK 自己报的步数 / 时长。部分代理端点 total_tokens 恒 0，token 另从 transcript 汇总。 */
+  toolUses?: number
+  durationMs?: number
+  blocks?: SubagentLogBlock[]
+  /** SDK 会话 id —— 宿主据此读取 `subagents/agent-<id>.jsonl` 补全 token。 */
+  sdkSessionId?: string
+}
+
 // message_delta 的 per-turn 实测用量与 SSE delta 均使用 shared 的 TokenUsageDelta，
 // providers 不再本地定义任何 token 形状（C1 · D3 不留 alias）。
 
@@ -183,6 +231,8 @@ export type MessageChunk =
   | { type: 'status'; status: 'compacting' | 'requesting' | null; varsUpdate?: Record<string, unknown> }
   /** 后台任务集合变化（电平信号，REPLACE 语义）：空数组 = 已无后台任务。 */
   | { type: 'background_tasks'; tasks: BackgroundTaskInfo[] }
+  /** 子代理生命周期 / 操作日志（作业坞「子代理」入口的数据源）。 */
+  | { type: 'subagent'; event: SubagentEvent }
   | { type: 'context_usage'; data: ContextUsageData }
   | { type: 'result'; content?: string; sessionId?: string; usage?: TokenUsage; costUsd?: number; numTurns?: number; modelUsages?: ModelUsage[] }
   | {

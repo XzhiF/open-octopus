@@ -21,7 +21,7 @@ import { ChatSidebar } from './chat-sidebar'
 import { CwdPicker, type CwdChoice } from './cwd-picker'
 import { TaskModulesLayer } from '@/components/chat-workbench/task-modules-layer'
 import { TriggerDialog } from '@/components/tasks/trigger-dialog'
-import type { RunTarget, TaskModule, TaskWindowMap } from '@/components/chat-workbench/task-window-types'
+import type { RunTarget, SubagentTarget, TaskModule, TaskWindowMap } from '@/components/chat-workbench/task-window-types'
 import { TaskProjectChip } from '@/components/chat-workbench/task-project-chip'
 import { WorkspaceExplorerDock } from '@/components/workspace/workspace-explorer-dock'
 import { useActivitySnapshot } from '@/components/chat-workbench/inspector-activity'
@@ -98,7 +98,7 @@ export function ChatTab() {
   const [activeTask, setActiveTask] = useState<TaskView | null>(null)
   const [pendingTaskSession, setPendingTaskSession] = useState<PendingTaskSession | null>(null)
   const [creatingTask, setCreatingTask] = useState(false)
-  const [taskModuleRequest, setTaskModuleRequest] = useState<{ module: TaskModule; nonce: number; runTarget?: RunTarget | null } | null>(null)
+  const [taskModuleRequest, setTaskModuleRequest] = useState<{ module: TaskModule; nonce: number; runTarget?: RunTarget | null; subagentTarget?: SubagentTarget | null } | null>(null)
   const [taskWindows, setTaskWindows] = useState<Record<string, TaskWindowMap>>({})
   // 2026-10-31 消耗窗通用化：纯会话（无任务）也有一扇消耗窗，窗口 id 与任务窗
   // 共用 'usage'，但几何状态独立（不跟着任务切换复用/串位）。
@@ -1510,6 +1510,18 @@ export function ChatTab() {
         onOpenDebug={() => setTaskModuleRequest({ module: 'debug', nonce: Date.now() })}
         debugSessionId={activeSessionId}
         debugRefreshKey={`${messages.length}:${streaming ? '1' : '0'}`}
+        subagentSessionId={activeSessionId}
+        subagentWindow={activeTask ? (taskWindows[activeTask.id]?.subagents ?? null) : (sessionUsageWindows.subagents ?? null)}
+        onOpenSubagent={(run) => {
+          setTaskModuleRequest({
+            module: 'subagents',
+            nonce: Date.now(),
+            subagentTarget: {
+              id: run.id,
+              title: run.description ?? run.agent_type ?? run.id,
+            },
+          })
+        }}
         onOpenTaskModule={(module) => setTaskModuleRequest({ module, nonce: Date.now() })}
         onOpenRun={(run) => {
           // 作业坞运行列表 → 指定执行（可能是验收规划这种 task_id=NULL 的系统运行）。

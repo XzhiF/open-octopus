@@ -15,6 +15,14 @@ export interface RunTarget {
   system?: boolean
 }
 
+/** 子代理详情窗的目标（2026-11-04 作业坞「子代理」）。 */
+export interface SubagentTarget {
+  /** SDK task_id（= transcript 的 agentId）。 */
+  id: string
+  /** 窗口标题用的描述。 */
+  title?: string
+}
+
 export type TaskModule =
   | 'plan'
   | 'changes'
@@ -24,6 +32,7 @@ export type TaskModule =
   | 'debug'
   | 'artifacts'
   | 'archive'
+  | 'subagents'
 
 export interface TaskWindowRecord {
   module: TaskModule
@@ -34,6 +43,8 @@ export interface TaskWindowRecord {
   z: number
   /** 运行窗专用：指定要展示的执行；缺省 = 任务当前一轮。 */
   runTarget?: RunTarget | null
+  /** 子代理窗专用：指定要展示的子代理；缺省 = 未选。 */
+  subagentTarget?: SubagentTarget | null
 }
 
 export type TaskWindowMap = Partial<Record<TaskModule, TaskWindowRecord>>

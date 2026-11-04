@@ -121,6 +121,54 @@ export function listRunningSessions(limit = 50) {
   return request<{ items: RunningAgentSession[] }>(`/sessions/running?limit=${limit}`)
 }
 
+// ── Subagents（作业坞「子代理」，2026-11-04）───────────────────────────
+// 主 Agent 通过 Agent 工具派生的子代理作业。运行中 / 已完成都返回；
+// 详情端点多一个 steps（与 chat 工具时间线同形的日志块）。
+export interface SubagentLogBlock {
+  kind: 'text' | 'thinking' | 'tool_use' | 'tool_result'
+  text?: string
+  toolName?: string
+  toolUseId?: string
+  input?: unknown
+  content?: string
+  isError?: boolean
+}
+
+export interface SubagentRunSummary {
+  id: string
+  session_id: string
+  parent_tool_use_id: string | null
+  agent_type: string | null
+  description: string | null
+  prompt: string | null
+  status: 'running' | 'completed' | 'failed' | 'killed' | string
+  started_at: string
+  ended_at: string | null
+  summary: string | null
+  model: string | null
+  input_tokens: number
+  output_tokens: number
+  cache_read_tokens: number
+  cache_creation_tokens: number
+  tool_uses: number
+  duration_ms: number | null
+  step_count: number
+}
+
+export interface SubagentRunDetail extends SubagentRunSummary {
+  steps?: SubagentLogBlock[]
+}
+
+export function listSessionSubagents(id: string) {
+  return request<{ runs: SubagentRunSummary[] }>(`/sessions/${id}/subagents`)
+}
+
+export function getSessionSubagent(id: string, agentId: string) {
+  return request<{ run: SubagentRunDetail }>(
+    `/sessions/${id}/subagents/${encodeURIComponent(agentId)}`,
+  )
+}
+
 /**
  * 运行中的工作流执行（header 右上角指示）。
  *

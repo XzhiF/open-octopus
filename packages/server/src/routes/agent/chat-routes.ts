@@ -30,6 +30,7 @@ import { pendingRoleCard } from '../../services/agent/role-card'
 import { appendRoleSwitchEvent, roleSwitchEventPayload } from '../../services/agent/role-switch-event'
 import { withTransientReminder } from '../../services/agent/prompt-reminder'
 import { recordProviderResultUsage, ledgerStopReason } from '../../services/llm-call-ledger'
+import { SubagentRunService } from '../../services/agent/subagent-runs'
 import { SessionTurnDebugDAO, hashPrompt } from '../../db/dao'
 import { TurnDebugRecorder, type TurnDebugIdentity } from '../../services/agent/turn-debug-recorder'
 import { expertName } from '@octopus/shared'
@@ -38,7 +39,7 @@ import { createTaskToolServer } from '../../services/chat/task-tools'
 import { createMemoryToolServer, resolveLongTermConsent } from '../../services/chat/memory-tools'
 import { getSlashCommands, rememberSlashCommands } from '../../services/chat/slash-commands'
 import type { TokenUsageDAO } from '../../db/dao/token-usage-dao'
-import type { EffortLevel } from '@octopus/shared'
+import type { EffortLevel, ModelUsage, TokenUsage } from '@octopus/shared'
 import { parseComposerContext, parseComposerEffort, resolveChatModel } from './composer-options'
 import type { TaskThreadService } from '../../services/tasks/task-thread-service'
 import { commitWorkspaceEdits, quickEditMarkerFor } from '../../services/tasks/quick-edit'
@@ -133,6 +134,9 @@ function turnDebugIdentity(
 export function createChatRoutes(deps: ChatRouteDeps): Hono {
   const { sessionDAO: sessionDao, safetyDAO, scheduleConfigDAO, tokenUsageDao, sse, taskThread, heartbeatMs } = deps
   const app = new Hono()
+  // 子代理作业记录（作业坞「子代理」）：provider subagent chunk → DB，
+  // 读侧按需从 SDK transcript 回填单代理 token。
+  const subagentRuns = new SubagentRunService(sessionDao.getDb())
 
   // ── Session running state（"关闭不丢失"）──────────────────────────
   // running = 内存里仍有该会话的生成流；partial = DB 里还有 streaming partial。
@@ -161,6 +165,31 @@ export function createChatRoutes(deps: ChatRouteDeps): Hono {
       return c.json(createAgentError('NOT_FOUND', `Session ${id} not found`), 404)
     }
     return c.json({ commands: getSlashCommands(id) })
+  })
+
+  // ── Subagents spawned by this session's main Agent ────────────────
+  // 作业坞「子代理」的数据源。运行中 / 已完成都返回；steps 只在详情端点里给。
+  app.get('/sessions/:id/subagents', (c) => {
+    const id = c.req.param('id')
+    const session = sessionDao.findById(id)
+    if (!session || session.is_deleted) {
+      return c.json(createAgentError('NOT_FOUND', `Session ${id} not found`), 404)
+    }
+    return c.json({ runs: subagentRuns.list(id) })
+  })
+
+  app.get('/sessions/:id/subagents/:agentId', (c) => {
+    const id = c.req.param('id')
+    const agentId = c.req.param('agentId')
+    const session = sessionDao.findById(id)
+    if (!session || session.is_deleted) {
+      return c.json(createAgentError('NOT_FOUND', `Session ${id} not found`), 404)
+    }
+    const run = subagentRuns.find(id, agentId)
+    if (!run) {
+      return c.json(createAgentError('NOT_FOUND', `Subagent ${agentId} not found`), 404)
+    }
+    return c.json({ run })
   })
 
   // ── Chat SSE streaming ─────────────────────────────────────────────
@@ -683,6 +712,48 @@ export function createChatRoutes(deps: ChatRouteDeps): Hono {
     const RESUME_FAILED = Symbol('resume-failed')
     const isResumeFailure = isResumeFailureMessage
 
+    // 后台唤醒轮（2026-11-04）：SDK 在每个 result 里给的是**整个 query 的累计
+    // modelUsage**。逐 result 直接入账会把前面的模型轮重复记一遍。这里按模型
+    // 记住已入账的累计值，只把增量交给账本；`usage` 兜底路径同样按总量差算。
+    const recordedModelUsage = new Map<string, ModelUsage>()
+    const recordedFallbackUsage = { inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheCreationTokens: 0 }
+    const deltaModelUsages = (current: ModelUsage[] | undefined): ModelUsage[] => {
+      if (!current || current.length === 0) return []
+      const out: ModelUsage[] = []
+      for (const mu of current) {
+        const prev = recordedModelUsage.get(mu.model)
+        const next: ModelUsage = {
+          model: mu.model,
+          inputTokens: Math.max(0, (mu.inputTokens ?? 0) - (prev?.inputTokens ?? 0)),
+          outputTokens: Math.max(0, (mu.outputTokens ?? 0) - (prev?.outputTokens ?? 0)),
+          cacheReadTokens: Math.max(0, (mu.cacheReadTokens ?? 0) - (prev?.cacheReadTokens ?? 0)),
+          cacheCreationTokens: Math.max(0, (mu.cacheCreationTokens ?? 0) - (prev?.cacheCreationTokens ?? 0)),
+          costUsd: typeof mu.costUsd === 'number'
+            ? Math.max(0, mu.costUsd - (prev?.costUsd ?? 0))
+            : undefined,
+        }
+        recordedModelUsage.set(mu.model, mu)
+        if (next.inputTokens || next.outputTokens || next.cacheReadTokens || next.cacheCreationTokens) {
+          out.push(next)
+        }
+      }
+      return out
+    }
+    const deltaUsage = (current: TokenUsage | undefined): TokenUsage | undefined => {
+      if (!current) return undefined
+      const next: TokenUsage = {
+        inputTokens: Math.max(0, (current.inputTokens ?? 0) - recordedFallbackUsage.inputTokens),
+        outputTokens: Math.max(0, (current.outputTokens ?? 0) - recordedFallbackUsage.outputTokens),
+        cacheReadTokens: Math.max(0, (current.cacheReadTokens ?? 0) - recordedFallbackUsage.cacheReadTokens),
+        cacheCreationTokens: Math.max(0, (current.cacheCreationTokens ?? 0) - recordedFallbackUsage.cacheCreationTokens),
+      }
+      recordedFallbackUsage.inputTokens += next.inputTokens
+      recordedFallbackUsage.outputTokens += next.outputTokens
+      recordedFallbackUsage.cacheReadTokens += next.cacheReadTokens
+      recordedFallbackUsage.cacheCreationTokens += next.cacheCreationTokens
+      return next
+    }
+
     try {
       const provider = getProvider('claude')
       const cwd = extra?.cwd ?? getAgentDir()
@@ -843,6 +914,19 @@ export function createChatRoutes(deps: ChatRouteDeps): Hono {
               // carries the fresh SDK session id and re-points the session.
               sessionDao.clearProviderSession(sessionId)
               break
+            case 'subagent':
+              // 作业坞「子代理」：记录主 Agent 派生的每个子代理（指令 prompt /
+              // 操作日志 / 最终汇报）。单代理 token 由读侧从 transcript 回填。
+              // 记账失败不能影响本轮 —— 作业坞是观测面，不是收轮条件。
+              try {
+                subagentRuns.applyEvent(sessionId, chunk.event, { cwd })
+              } catch (err: unknown) {
+                console.warn(
+                  '[agent-chat] subagent record failed (non-fatal):',
+                  err instanceof Error ? err.message : String(err),
+                )
+              }
+              break
             case 'result':
               generated = true
               // Locally-executed slash commands (/context, /compact, …) answer
@@ -869,8 +953,8 @@ export function createChatRoutes(deps: ChatRouteDeps): Hono {
                   sessionId,
                   org,
                   startedAtMs: turnStartedAtMs,
-                  modelUsages: chunk.modelUsages,
-                  usage: chunk.usage,
+                  modelUsages: deltaModelUsages(chunk.modelUsages),
+                  usage: deltaUsage(chunk.usage),
                 }, tokenUsageDao)
               }
               if (!resultNotified) {
@@ -891,8 +975,8 @@ export function createChatRoutes(deps: ChatRouteDeps): Hono {
                   sessionId,
                   org,
                   startedAtMs: turnStartedAtMs,
-                  modelUsages: chunk.modelUsages,
-                  usage: chunk.usage,
+                  modelUsages: deltaModelUsages(chunk.modelUsages),
+                  usage: deltaUsage(chunk.usage),
                   stopReason: ledgerStopReason(chunk.sdkTerminalReason),
                 }, tokenUsageDao)
               }
