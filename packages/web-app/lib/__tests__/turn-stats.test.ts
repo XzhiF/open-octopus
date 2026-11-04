@@ -191,6 +191,26 @@ describe("buildTurnStats — 账本归属", () => {
     expect(stats.has("a-1")).toBe(false)
   })
 
+  it("中断轮没有过程条目也挂账本（首个工具调用前被停，tok/费用不能整行消失）", () => {
+    // 2026-11-04 现场：用户说「归档」后立刻中断，中断轮 events 只有 message_start +
+    // interrupted result（无 text/thinking/tool）；旧 showsProcess 判 false → 这一轮
+    // 94k cacheRead / $0.0005 的账本行不归属任何消息，界面只剩「本轮被截断」。
+    const messages = [
+      msg({ id: "u-1", role: "user", created_at: iso(T0), content: "归档" }),
+      msg({ id: "a-int", role: "assistant", content: "", interrupted: true, created_at: iso(T0 + 5_000) }),
+      msg({ id: "u-2", role: "user", created_at: iso(T0 + 20_000), content: "继续" }),
+    ]
+    const stats = buildTurnStats(messages, [
+      call({
+        id: "c1", timestamp: T0 + 10_000, duration_ms: 5_263,
+        input_tokens: 653, output_tokens: 46, cache_read_tokens: 93_440, cost_usd: 0.0005,
+      }),
+    ]).get("a-int")!
+    expect(stats).toBeDefined()
+    expect(stats.tokens).toBe(94_139)
+    expect(stats.costUsd).toBeCloseTo(0.0005, 10)
+  })
+
   it("无过程条目的消息不挂统计（事件卡 / 纯文本行不出现 turn 行）", () => {
     const messages = [
       msg({ id: "u-1", role: "user", created_at: iso(T0) }),

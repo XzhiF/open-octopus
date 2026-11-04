@@ -229,7 +229,11 @@ function TuiMeta({ thinking, toolCalls, timeline, stats, interrupted, hideTextFr
     return { tools, failed, thinks }
   }, [rows])
 
-  if (rows.length === 0) return null
+  // 纯统计行（无过程条目）：中断轮常在首个工具调用前被停，timeline / 工具
+  // 一行都没有，但账本里有真实用量 —— 此时仍要渲染摘要，否则用户只看到
+  // 「（本轮被截断）」却看不到这轮花了多少（2026-11-04 用户反馈）。
+  const statsOnly = rows.length === 0
+  if (statsOnly && !stats) return null
 
   const duration = stats?.durationMs != null && stats.durationMs > 0
     ? formatDuration(stats.durationMs)
@@ -248,7 +252,7 @@ function TuiMeta({ thinking, toolCalls, timeline, stats, interrupted, hideTextFr
     <div className="my-1" data-tui-meta-root>
       <button
         type="button"
-        onClick={() => setOpen((v) => !v)}
+        onClick={() => { if (!statsOnly) setOpen((v) => !v) }}
         className="flex w-full select-none flex-wrap items-center gap-x-1.5 gap-y-1 py-[2px] text-left text-pop-dim transition-colors hover:text-pop-ink"
         data-tui-meta={open ? 'open' : 'closed'}
         title={
@@ -263,14 +267,18 @@ function TuiMeta({ thinking, toolCalls, timeline, stats, interrupted, hideTextFr
             <span className="text-pop-pink tabular-nums" data-tui-duration>{duration}</span>
           </>
         )}
-        <span>·</span>
-        <span className="font-semibold text-pop-ink/85">{rows.length} 步</span>
-        <span>·</span>
-        <span className="text-pop-cyan" title={counts.failed > 0 ? `失败 ${counts.failed} 次` : '工具调用次数'}>
-          工具 {counts.tools}
-        </span>
-        <span>·</span>
-        <span className="text-pop-purple">思考 {counts.thinks}</span>
+        {!statsOnly && (
+          <>
+            <span>·</span>
+            <span className="font-semibold text-pop-ink/85">{rows.length} 步</span>
+            <span>·</span>
+            <span className="text-pop-cyan" title={counts.failed > 0 ? `失败 ${counts.failed} 次` : '工具调用次数'}>
+              工具 {counts.tools}
+            </span>
+            <span>·</span>
+            <span className="text-pop-purple">思考 {counts.thinks}</span>
+          </>
+        )}
         {tokens && (
           <>
             <span>·</span>
@@ -294,9 +302,9 @@ function TuiMeta({ thinking, toolCalls, timeline, stats, interrupted, hideTextFr
           </>
         )}
         {/* 箭头紧跟最后一个数字（2026-10-29 用户：不要再被推到最右） */}
-        <span aria-hidden>{open ? '▾' : '▸'}</span>
+        {!statsOnly && <span aria-hidden>{open ? '▾' : '▸'}</span>}
       </button>
-      {open && (
+      {!statsOnly && open && (
         <div className="mt-1" data-tui-meta-body>
           {/* 展开态只有步骤列表（2026-10-29 用户：输入/输出/缓存/模型这些明细不必再显示）。
               统计信息全在上面那一行，展开不重复。 */}

@@ -7,6 +7,12 @@
 //   这里钉住：① 无增量时 assistant 正文只补发一次；② 有增量时不重复；
 //   ③ system:init 的 slash_commands 透传（terminal 绑定命令剔除）；
 //   ④ /clear 的 conversation_reset 透传。
+//
+// 压缩（2026-11-04 真机补测）：
+//   手动 /compact 成功时 CLI 只发 system:compact_boundary（带 token 账），
+//   没有 assistant 消息，result 正文为空 —— 旧逻辑整轮不可见，ctx 角标也停在
+//   压缩前的数字。这里钉住：⑤ boundary 后立刻刷新 context_usage；
+//   ⑥ 手动压缩补一条可见回执（auto 压缩不补）；⑦ 本地命令的空 result 正常收轮。
 
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import type { MessageChunk } from '../types'
@@ -174,5 +180,90 @@ describe('ClaudeSDKProvider slash commands', () => {
     expect(chunks.some((c) => c.type === 'conversation_reset')).toBe(true)
     const result = chunks.find((c) => c.type === 'result')
     expect(result).toMatchObject({ sessionId: 'sdk-2' })
+  })
+
+  it('手动 /compact：boundary 后立刻刷新 ctx，并补一条可见回执', async () => {
+    mockQuery.mockImplementation(() => makeQuery((async function* () {
+      yield { type: 'system', subtype: 'status', status: 'compacting' }
+      yield { type: 'system', subtype: 'status', status: null }
+      yield { type: 'system', subtype: 'init', session_id: 'sdk-1', slash_commands: [] }
+      yield {
+        type: 'system',
+        subtype: 'compact_boundary',
+        session_id: 'sdk-1',
+        compact_metadata: {
+          trigger: 'manual',
+          pre_tokens: 24960,
+          post_tokens: 1021,
+          cumulative_dropped_tokens: 23939,
+          duration_ms: 11189,
+        },
+      }
+      // 真机形状：成功后 result 正文为空，modelUsage 带着压缩本身的用量。
+      yield {
+        ...RESULT,
+        result: '',
+        num_turns: 0,
+        usage: { input_tokens: 0, output_tokens: 0, cache_read_input_tokens: 0, cache_creation_input_tokens: 0 },
+      }
+    })()))
+
+    const chunks = await drain(new ClaudeSDKProvider().sendQuery('/compact', '/tmp'))
+
+    // ⑤ ctx 角标不用等下一轮：boundary 就报出新占用。
+    const ctx = chunks.find((c) => c.type === 'context_usage')
+    expect(ctx).toEqual({ type: 'context_usage', data: CTX })
+
+    // ⑥ 空正文轮补一条回执，且先于 result（route 会据此落库成 assistant 行）。
+    const receipt = chunks.find((c) => c.type === 'local_command_output')
+    expect(receipt).toEqual({
+      type: 'local_command_output',
+      content: '上下文已压缩：24,960 → 1,021 tokens',
+    })
+    expect(chunks.findIndex((c) => c.type === 'local_command_output'))
+      .toBeLessThan(chunks.findIndex((c) => c.type === 'result'))
+
+    // 本轮照常收轮。
+    expect(chunks.some((c) => c.type === 'result')).toBe(true)
+  })
+
+  it('自动压缩只刷新 ctx，不往正常回复里塞回执', async () => {
+    mockQuery.mockImplementation(() => makeQuery((async function* () {
+      yield { type: 'system', subtype: 'status', status: 'compacting' }
+      yield {
+        type: 'system',
+        subtype: 'compact_boundary',
+        session_id: 'sdk-1',
+        compact_metadata: { trigger: 'auto', pre_tokens: 190000, post_tokens: 12000 },
+      }
+      yield { ...RESULT, result: 'done' }
+    })()))
+
+    const chunks = await drain(new ClaudeSDKProvider().sendQuery('hi', '/tmp'))
+
+    expect(chunks.find((c) => c.type === 'context_usage')).toEqual({ type: 'context_usage', data: CTX })
+    expect(chunks.some((c) => c.type === 'local_command_output')).toBe(false)
+    expect(chunks.find((c) => c.type === 'result')).toMatchObject({ content: 'done' })
+  })
+
+  it('/clear：空 result（num_turns=0 / 空 modelUsage）不被当成排队确认', async () => {
+    mockQuery.mockImplementation(() => makeQuery((async function* () {
+      yield { type: 'conversation_reset' }
+      yield { type: 'system', subtype: 'init', session_id: 'sdk-2', slash_commands: [] }
+      yield {
+        type: 'result',
+        subtype: 'success',
+        session_id: 'sdk-2',
+        result: '',
+        num_turns: 0,
+        usage: { input_tokens: 0, output_tokens: 0, cache_read_input_tokens: 0, cache_creation_input_tokens: 0 },
+        modelUsage: {},
+      }
+    })()))
+
+    const chunks = await drain(new ClaudeSDKProvider().sendQuery('/clear', '/tmp'))
+
+    expect(chunks.some((c) => c.type === 'conversation_reset')).toBe(true)
+    expect(chunks.find((c) => c.type === 'result')).toMatchObject({ sessionId: 'sdk-2' })
   })
 })

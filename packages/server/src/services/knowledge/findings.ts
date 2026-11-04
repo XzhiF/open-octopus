@@ -221,7 +221,10 @@ export class FindingOpsService {
   /** 队列执行体（已持串行位）：按 kind 生成修订稿 → 唯一写闸编译（lint 闸照过）。 */
   private async execute(row: FindingRow, rec: FixTaskRecord): Promise<FixTaskResult> {
     const detail = safeParse(row.detail) as Record<string, unknown>
-    const pages = safeParse(row.pages) as string[]
+    // 历史 finding 可能带重复路径（同页矛盾的旧形态：pages=[p,p]）。工作面按路径去重——
+    // 同一页只能进批一次，否则 compilePages 的 BATCH_DUPLICATE_PATH 让整条修订任务恒
+    // failed（2026-11-04 缺陷现场；新产出的同页矛盾 finding 已由 curator 单页化）。
+    const pages = [...new Set(safeParse(row.pages) as string[])]
     const scanned = scanWikiEntries(this.wikiRoot)
     const today = this.now().toISOString().slice(0, 10)
 
@@ -249,6 +252,14 @@ export class FindingOpsService {
         const a = String(detail.a ?? pages[0] ?? "")
         const b = String(detail.b ?? pages[1] ?? "")
         if (!a || !b) throw new FindingOpsError("FINDING_TARGET_MISSING", "缺互链 finding 缺少 a/b 页", 409)
+        // 畸形 a=b：自链无意义，且两笔同路径工作面会撞 BATCH_DUPLICATE_PATH——按闭环空转。
+        if (a === b) {
+          return {
+            commit: null, changed: false,
+            touched: [{ path: a, type: "page", created: false }],
+            warnings: [`缺互链 finding 的 a/b 指向同一页（${a}）——无互链可补，空转（裁决按闭环处理）`],
+          }
+        }
         const wa = loadWork(a)
         const wb = loadWork(b)
         wa.meta = { ...wa.meta, links: [...new Set([...wa.meta.links, wb.meta.id])] }
@@ -456,10 +467,14 @@ export class FindingOpsService {
    * 票13 contradiction/stale → 票07 实效账目 → 票08 容量水位/时效逾期——
    * 数字进 prompt 让人裁修订稿作者看得见「为什么」，判定权仍在人）。
    */
-  private revisionEvidence(row: FindingRow, detail: Record<string, unknown>): string {
+  private revisionEvidence(row: FindingRow, detail: Record<string, unknown>, pages: string[]): string {
     switch (row.kind) {
-      case "contradiction":
+      case "contradiction": {
+        if (pages.length <= 1) {
+          return `同页新旧断言：\n旧断言：「${String(detail.old_claim ?? "")}」\n新断言：「${String(detail.new_claim ?? "")}」\n处置：在**本页内**把旧断言改写为历史沿革口吻（保留信息、指明已废止），新断言维持现说。`
+        }
         return `旧断言：「${String(detail.old_claim ?? "")}」\n新断言：「${String(detail.new_claim ?? "")}」\n处置：旧断言所在页改写为**历史沿革**口吻（保留信息、指明已废止），新断言页维持现说。`
+      }
       case "low-confidence":
         return `实效账目：引用 ${Number(detail.cited ?? 0)}× · helpful ${Number(detail.helpful ?? 0)} · not_helpful ${Number(detail.not_helpful ?? 0)} → confidence ${String(detail.confidence ?? "")}（低置信闸下，measured=${String(detail.measured ?? "")}）。处置：该页规则被消费却反复没挡住坑——按账目把涉事规则行改写到**与现场一致且可执行**；若判断整条应废，不要在本稿删除（锚点不可删），交对话退役通道（红线2 零自动退役）。`
       case "bloat":
@@ -482,11 +497,11 @@ export class FindingOpsService {
     if (!this.llm) {
       throw new FindingOpsError("LLM_UNAVAILABLE", "修订稿需要策展 LLM（未注入/被禁用）；finding 保持 open，可改 [讨论] 或启用 provider 后重试", 503)
     }
-    const works = pages.map(p => loadWork(p))
+    const works = [...new Set(pages)].map(p => loadWork(p))
     const schemaPath = path.join(this.root, "SCHEMA.md")
     const schemaText = fs.existsSync(schemaPath) ? fs.readFileSync(schemaPath, "utf-8") : "（SCHEMA.md 缺席——按页格式 v3 常识执行）"
     const context = works.map(w => `### ${w.relPath}\n\n${serializePageMarkdown(w.meta, w.body)}`).join("\n---\n\n")
-    const evidence = this.revisionEvidence(row, detail)
+    const evidence = this.revisionEvidence(row, detail, [...new Set(pages)])
     const prompt = `# finding 修订稿任务（${row.kind}｜${row.title}）
 
 你是策展人。对下面 finding 涉及的页生成修订稿。必读 SCHEMA.md 约定：

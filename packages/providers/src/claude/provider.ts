@@ -290,6 +290,29 @@ interface EmptyResultAckLike {
   modelUsage?: Record<string, unknown>
 }
 
+/**
+ * 手动 /compact 的可见回执。
+ *
+ * 真机验证（SDK 0.3.235 · 2026-11-04）：压缩成功时 CLI 只发
+ * `system:compact_boundary`，没有 assistant 消息，result 正文为空 —— 宿主若只
+ * 透传正文，这一轮在对话里看起来什么都没发生。这里把 SDK 自己的 token 数字
+ * 拼成一行回执；数字拿不到时退化为一句「已压缩」。
+ */
+function formatCompactReceipt(meta?: {
+  pre_tokens?: number
+  post_tokens?: number
+  cumulative_dropped_tokens?: number
+}): string {
+  const fmt = (n?: number) =>
+    typeof n === 'number' && Number.isFinite(n) ? n.toLocaleString('en-US') : undefined
+  const pre = fmt(meta?.pre_tokens)
+  const post = fmt(meta?.post_tokens)
+  if (pre && post) return `上下文已压缩：${pre} → ${post} tokens`
+  const dropped = fmt(meta?.cumulative_dropped_tokens)
+  if (dropped) return `上下文已压缩（释放 ${dropped} tokens）`
+  return '上下文已压缩'
+}
+
 function isEmptyResultAck(rm: EmptyResultAckLike): boolean {
   if (rm.subtype !== 'success') return false
   // num_turns 缺失时不认 —— 旧 CLI/本地命令可能不填，按原来的收轮语义走。
@@ -513,6 +536,14 @@ export class ClaudeSDKProvider implements IAgentProvider {
     // 1-based — feeds ActiveGoalChunk.iterations; set_at = first-seen time.
     let goalIterations = 0
     let goalSetAt: number | undefined
+    // 本地斜杠命令（/compact /clear …）的收尾信号。这些命令的 result 是
+    // `num_turns: 0` + 空正文；/clear 连 modelUsage 都是空对象。isEmptyResultAck
+    // 本是给「后台任务通知」这类排队确认用的，把这些命令的 result 也吞掉会让
+    // 本轮永远等不到收轮（真机 2026-11-04：input 流不关，query 一直挂着）。
+    let sawLocalCommandSignal = false
+    // /compact 成功时 CLI 只发 compact_boundary、不产正文；SDK 的 token 数字先
+    // 存着，等 result 确认正文为空再补成一条可见回执（result 有正文则让位）。
+    let pendingCompactReceipt: string | undefined
 
     // P0-2 (2026-11-01): race every SDK demand against an idle deadline.
     // A wedged subprocess or a stalled transport can stop producing without
@@ -804,6 +835,14 @@ export class ClaudeSDKProvider implements IAgentProvider {
             description?: string
             task_type?: string
             patch?: { status?: 'pending' | 'running' | 'completed' | 'failed' | 'killed' | 'paused' }
+            /** compact_boundary：压缩完成后的 token 账（SDK 自己的口径）。 */
+            compact_metadata?: {
+              trigger?: 'manual' | 'auto'
+              pre_tokens?: number
+              post_tokens?: number
+              cumulative_dropped_tokens?: number
+              duration_ms?: number
+            }
           }
           if (sm.subtype === 'status') {
             yield { type: 'status', status: sm.status ?? null }
@@ -841,8 +880,23 @@ export class ClaudeSDKProvider implements IAgentProvider {
               yield { type: 'background_tasks', tasks: [...backgroundTasks.values()] }
             }
           } else if (sm.subtype === 'compact_boundary') {
-            yield { type: 'status', status: 'compacting' }
+            // 立即刷新占用；auto 压缩也走这里，让角标同样回落。
+            try {
+              const ctxUsage = await withSoftTimeout(q.getContextUsage(), 5_000, 'CONTEXT_USAGE_TIMEOUT')
+              contextUsageEmitted = true
+              yield { type: 'context_usage', data: ctxUsage }
+            } catch {
+              // 非致命：下一轮 message_start 仍会补报真实占用。
+            }
+            // 只有手动 /compact 是「一条命令一整轮」：它的空 result 不能再被
+            // 当成排队确认（否则收不了轮）。auto 压缩发生在正常轮次里，排队
+            // 确认的语义不能被抢走。
+            if (sm.compact_metadata?.trigger === 'manual') {
+              sawLocalCommandSignal = true
+              pendingCompactReceipt = formatCompactReceipt(sm.compact_metadata)
+            }
           } else if (sm.subtype === 'local_command_output') {
+            sawLocalCommandSignal = true
             yield { type: 'local_command_output', content: sm.content ?? '' }
           } else if (sm.subtype === 'init') {
             // Full init snapshot first: the debug inspector needs what the CLI
@@ -883,6 +937,9 @@ export class ClaudeSDKProvider implements IAgentProvider {
           // `/clear`: the CLI dropped its transcript and restarted the session.
           // Host-side history is ours to keep (semantics A) — the chunk only
           // tells the host to forget the provider session pointer.
+          // 它的 result 是 num_turns=0 + 空 modelUsage，属于本地命令收尾，
+          // 不能被 isEmptyResultAck 当成排队确认（真机 2026-11-04 验证）。
+          sawLocalCommandSignal = true
           yield { type: 'conversation_reset' }
         }
 
@@ -928,13 +985,23 @@ export class ClaudeSDKProvider implements IAgentProvider {
           const rm = event as { subtype: string; session_id?: string; result?: string; num_turns?: number; usage?: { input_tokens?: number; output_tokens?: number; cache_read_input_tokens?: number; cache_creation_input_tokens?: number }; total_cost_usd?: number; errors?: string[]; modelUsage?: Record<string, { inputTokens?: number; outputTokens?: number; cacheReadInputTokens?: number; cacheCreationInputTokens?: number; costUSD?: number }> }
           // 空 result = CLI 在确认内部排队消息，不是本轮终点：继续消费，等真正
           // 跑过模型轮的 result（见 isEmptyResultAck 上的事故说明）。空闲看门狗
-          // 仍兜底真正挂死的流。
-          if (isEmptyResultAck(rm)) {
+          // 仍兜底真正挂死的流。本地命令（/clear、/compact）的空 result 是真正
+          // 的收轮信号，不能吞（见 sawLocalCommandSignal）。
+          if (isEmptyResultAck(rm) && !sawLocalCommandSignal) {
             console.warn(
               `[claude-provider] empty result ack (num_turns=0) — keep consuming` +
                 (resumeSessionId ? ` · resume ${resumeSessionId.slice(0, 8)}` : ''),
             )
             continue
+          }
+          // /compact 成功的 result 正文为空（真机 2026-11-04）。把 boundary 里
+          // SDK 给出的 token 数字补成一条回执，否则这一轮在对话里完全不可见。
+          // 给未来版本留位：result 自带正文时不重复补。
+          if (pendingCompactReceipt) {
+            if (!rm.result?.trim()) {
+              yield { type: 'local_command_output', content: pendingCompactReceipt }
+            }
+            pendingCompactReceipt = undefined
           }
           // result.modelUsage is the ONLY authoritative source of per-model token totals.
           // SDK snake/原始 key → 规范 ModelUsage 的转换只发生在这里（seam adapter）。

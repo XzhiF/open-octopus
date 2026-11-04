@@ -214,7 +214,7 @@ export function buildCuratorPrompt(opts: {
     key_points: ["sources 回执页要点清单（本篇素材的独立可读要点）"],
     contradictions: [{
       new_page: "携带冲突断言的页 id（须出现在 pages 里）",
-      old_page: "现库被冲突页的路径或 id",
+      old_page: "现库被冲突页的路径或 id——必须与 new_page 是**不同**的页",
       old_claim: "旧断言原文（逐字摘句）",
       new_claim: "新源断言（逐字摘句）",
     }],
@@ -257,8 +257,10 @@ ${JSON.stringify(contract, null, 2)}
 硬性纪律（违反 ⇒ 编译被写闸拒绝）：
 1. **锚点发号权在服务侧**：topic 页「硬约束」小节的新祈使句规则行，以 \`${ANCHOR_TOKEN}\` 占位
    （一行一枚）；**禁止手写 oct-NNN 数字**。更新已有 topic 页时，在盘锚点必须原行原样保留。
-2. **不静默覆盖**：与旧页断言冲突 ⇒ 进 contradictions 如实上报，旧断言在旧页保留原位；
-   不要把旧断言从更新稿里删掉。
+2. **不静默覆盖**：与**其他页**的旧断言冲突 ⇒ 进 contradictions 如实上报，旧断言在旧页保留原位；
+   不要把旧断言从更新稿里删掉。**同页不报矛盾**：冲突断言就在本次要更新的同一页里，或旧断言已
+   明确标注「已被推翻 / 旧记录 / 已废止」⇒ 不算页间矛盾，直接在本页正文把它改写成历史沿革
+   口吻（保留原文信息、指明已废止），不要写进 contradictions。
 3. **sources 回执页由服务程序化生成**，不要放进 pages。
 4. 正文零日期；单页 ≤120 行/~2000 token；[[链接]] 与 links 目标必须真实存在（现库或本批）。
 5. 页 id 前缀：ent- / con- / top-；文件名默认 {id}.md。`
@@ -587,6 +589,26 @@ export class CuratorCompileService {
       // 标记行禁带 raw 路径（路径含日期 ⇒ L5 正文禁日期闸；常青页不豁免）——对质指针 =
       // hash 前缀 + 本页 front-matter sources（两页的 sources 都已并入 raw.path，闭环在）
       const rawRef = `sha256 ${raw.hash.slice(0, 12)}…（对质指针见本页 front-matter sources）`
+      // 同页「矛盾」不是页间对立：old_page 与 new_page 解析到同一页（curator 把本页已有的
+      // 旧断言当成对手，或旧断言本就标注着「已被推翻」）时，finding 只能挂一页、只写一条
+      // 标记。否则 pages 出现重复路径，采纳修订按 pages 逐页装工作面 → 批量写闸
+      // BATCH_DUPLICATE_PATH，整条修订任务恒 failed（2026-11-04 缺陷现场）。
+      if (oldWork.relPath === newWork.relPath) {
+        newWork.body = appendContradictionMarker(
+          newWork.body,
+          `> 【${findingId}】同页新旧断言冲突：旧断言「${c.old_claim}」↔ 新断言「${c.new_claim}」。旧断言原位保留未覆盖——待裁决（采纳修订/忽略/讨论）；对质源 ${rawRef}`,
+        )
+        findings.push({
+          id: findingId,
+          kind: "contradiction",
+          title: `同页矛盾：${newWork.relPath}`,
+          detail: JSON.stringify({ old_claim: c.old_claim, new_claim: c.new_claim, old_page: newWork.relPath, new_page: newWork.relPath, same_page: true, raw: { path: raw.path, hash: raw.hash } }),
+          pages: JSON.stringify([newWork.relPath]),
+          raw_ref: raw.path,
+          source: "compile",
+        })
+        continue
+      }
       oldWork.body = appendContradictionMarker(
         oldWork.body,
         `> 【${findingId}】与 [[${c.new_page}]]（${newWork.relPath}）冲突：旧断言「${c.old_claim}」↔ 新源断言「${c.new_claim}」。旧断言保留未覆盖——裁决（采纳修订/忽略/讨论）在主对话进行；对质源 ${rawRef}`,

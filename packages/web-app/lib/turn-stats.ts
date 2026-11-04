@@ -56,6 +56,10 @@ function tsOf(iso: string | undefined | null): number | null {
 function showsProcess(message: AgentMessage): boolean {
   if (message.role !== 'assistant') return false
   if (message.displayType === 'event' || message.roleSwitch) return false
+  // 中断轮即使一条过程条目都没有（模型在首个工具调用前就被停），账本里仍有
+  // stop_reason='interrupted' 的真实用量（2026-11-04 现场：94k cacheRead 被
+  // 判成「无过程」整行跳过 → 用户只看到「本轮被截断」，看不到这轮花了多少）。
+  if (message.interrupted) return true
   return !!(
     (Array.isArray(message.timeline) && message.timeline.length > 0) ||
     message.thinking ||

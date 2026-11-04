@@ -204,6 +204,63 @@ describe("[采纳修订] contradiction / stale — LLM seam 生成修订稿", ()
     expect(receipts.some(e => e.kind === "compile-diff")).toBe(true)
   })
 
+  it("同页矛盾（历史 finding pages=[p,p]）：工作面去重 → 修订单页成功，不再 BATCH_DUPLICATE_PATH", async () => {
+    // 2026-11-04 缺陷现场：同页矛盾的旧 finding 把同一路径挂两次，采纳修订时
+    // pages.map(loadWork) 产生两笔同路径工作面 → 批量写闸 BATCH_DUPLICATE_PATH。
+    const REL = "entities/ent-svc.md"
+    const fid = "fnd-samepage0000001"
+    writePage(REL, "ent-svc", "entity", ["persistence"], [],
+      [
+        "## 关键属性",
+        "- 持久层（现行）：MySQL + MyBatis。",
+        "- 旧持久层记录（已被推翻）：数据存内存（`InMemoryUserDao`）。",
+        "",
+        "## 冲突待裁决",
+        `> 【${fid}】同页新旧断言冲突：旧断言「数据存内存（\`InMemoryUserDao\`）」↔ 新断言「彻底删除内存实现，统一走 MySQL」。旧断言原位保留未覆盖——待裁决；对质源 sha256 abc…`,
+        "",
+      ].join("\n"))
+    new FindingsDAO(db).upsert({
+      id: fid,
+      kind: "contradiction",
+      title: `同页矛盾：${REL}`,
+      detail: JSON.stringify({
+        old_claim: "数据存内存（`InMemoryUserDao`）",
+        new_claim: "彻底删除内存实现，统一走 MySQL",
+        old_page: REL, new_page: REL, same_page: true,
+      }),
+      // 旧形态：同一路径两次（缺陷数据）
+      pages: JSON.stringify([REL, REL]),
+      raw_ref: "",
+      source: "compile",
+    })
+
+    const prompts: string[] = []
+    const llm: LLMCall = async (p) => {
+      prompts.push(p)
+      return JSON.stringify({
+        pages: [{
+          relPath: REL,
+          body: "## 关键属性\n\n- 持久层（现行）：MySQL + MyBatis。\n- 旧持久层记录（已被推翻）：数据存内存（`InMemoryUserDao`），已被 MySQL 取代。\n",
+        }],
+      })
+    }
+    const queue = new CompileQueue()
+    const ops = new FindingOpsService({ db, root, queue, llm, now: FROZEN_NOW, git: realGit(wikiRoot) })
+    const task = ops.adopt(fid)
+    await drain(queue)
+    const done = ops.getTask(task.id)!
+
+    expect(done.status, JSON.stringify(done.error)).toBe("committed")
+    // 同页语义进 prompt（单页修订不是「新断言页维持现说」的跨页口径）
+    expect(prompts).toHaveLength(1)
+    expect(prompts[0]).toContain("同页新旧断言")
+    expect(prompts[0]).toContain("本页内")
+    // 标记剥除、旧断言保留、finding 终态 resolved
+    expect(read(REL)).not.toContain(fid)
+    expect(read(REL)).toContain("已被 MySQL 取代")
+    expect(new FindingsDAO(db).getById(fid)!.status).toBe("resolved")
+  })
+
   it("stale：按上报修订规则行；缺 LLM ⇒ 任务 failed(LLM_UNAVAILABLE) 不静默", async () => {
     writePage("topics/top-ops.md", "top-ops", "topic", ["ops"], [],
       "## 硬约束\n- 修改 shared 后必须先重建再全量构建 <!--#oct-007-->\n")
