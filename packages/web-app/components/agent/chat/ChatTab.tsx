@@ -47,7 +47,6 @@ import { Button } from '@/components/ui/button'
 import { ConfirmDialog } from '@/components/agent/shared/ConfirmDialog'
 import { ChatArea } from './ChatArea'
 import type { ComposerIdentityDisplay } from './composer-identity-chip'
-import { ToolCallDialog } from './ToolCallDialog'
 import { KcCard, type KcCardActionCtx } from '@/components/knowledge-center/cards/registry'
 import {
   parseKcCardBlocks,
@@ -458,12 +457,6 @@ export function ChatTab() {
     ? <div data-testid="chat-tab-card-tail">{tailEvents.map(e => <KcCard key={e.id} event={e} ctx={ctx} />)}</div>
     : null
 
-  const [showToolPanel, setShowToolPanel] = useState(false)
-  // 弹窗打开期间工具列表被清空（切会话/新一轮）→ 顺手复位开关，
-  // 否则下一批工具调用冒出来时弹窗会自己蹦出来抢焦点。
-  useEffect(() => {
-    if (showToolPanel && toolCalls.length === 0) setShowToolPanel(false)
-  }, [showToolPanel, toolCalls.length])
   const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false)
 
   // Pending message when auto-creating a session (carries + panel clone consult)
@@ -1539,23 +1532,6 @@ export function ChatTab() {
         activity={activitySnapshot}
         sidebarWidth={sidebarCollapsed ? 0 : sidebarWidth}
       />
-
-        {/* Tool call dialog —— 悬浮按钮唤起的弹窗（原先的右列 tab 会被作业坞挡死） */}
-        <ToolCallDialog
-          open={showToolPanel && toolCalls.length > 0}
-          onOpenChange={setShowToolPanel}
-          toolCalls={toolCalls}
-        />
-
-        {/* Tool dialog toggle —— 运行中有工具调用时浮在对话区右下角 */}
-      {toolCalls.length > 0 && !showToolPanel && (
-        <button
-          onClick={() => setShowToolPanel(true)}
-          className="absolute bottom-28 right-6 hidden items-center gap-1.5 rounded-full border border-white/[0.08] bg-pop-paper/85 px-3 py-1.5 text-[11px] text-pop-dim shadow-pop backdrop-blur transition-colors hover:text-pop-ink lg:flex"
-        >
-          工具调用 ({toolCalls.length})
-        </button>
-      )}
 
       <Dialog open={!!renameTarget} onOpenChange={(open) => { if (!open) setRenameTarget(null) }}>
         <DialogContent

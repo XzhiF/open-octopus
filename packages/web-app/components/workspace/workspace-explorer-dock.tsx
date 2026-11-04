@@ -113,9 +113,10 @@ const FLOAT_MARGIN = 12
 const SIDEBAR_DEFAULT_WIDTH = 236
 
 const MODULE_ROWS: Array<{ id: TaskModule; label: string; icon: typeof FileText }> = [
+  // 2026-11-04 用户：运行提到「项目」下面第一个。
+  { id: 'run', label: '运行', icon: Play },
   { id: 'plan', label: '规格', icon: FileText },
   { id: 'changes', label: '变更', icon: GitCompare },
-  { id: 'run', label: '运行', icon: Play },
   { id: 'acceptance', label: '验收', icon: ClipboardCheck },
   { id: 'artifacts', label: '产物', icon: Package },
   { id: 'archive', label: '归档', icon: Archive },
@@ -660,12 +661,6 @@ export function WorkspaceExplorerDock({
           shortLabel: '活动',
           disabled: !workspaceId,
         })}
-        {dockButton('usage', '消耗', BarChart3, {
-          active: usageOpen,
-          onClick: () => onOpenUsage?.(),
-          testId: 'dock-usage',
-          marker: usageMinimized ? 'minimized' : usageOpen ? 'open' : undefined,
-        })}
         {/* 调试 = 唯一入口：作业坞常驻，不依赖某条消息。 */}
         {dockButton('debug', '调试', Bug, {
           active: debugOpen,
@@ -675,6 +670,12 @@ export function WorkspaceExplorerDock({
           badgeTone: 'amber',
           recording: !!debugSessionId,
           marker: debugMinimized ? 'minimized' : debugOpen ? 'open' : undefined,
+        })}
+        {dockButton('usage', '消耗', BarChart3, {
+          active: usageOpen,
+          onClick: () => onOpenUsage?.(),
+          testId: 'dock-usage',
+          marker: usageMinimized ? 'minimized' : usageOpen ? 'open' : undefined,
         })}
 
         {task && <div className="my-0.5 h-px w-6 bg-white/[0.12]" />}
