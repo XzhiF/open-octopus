@@ -2,6 +2,7 @@
 
 import { Suspense, lazy, useCallback, useEffect, useMemo, useRef } from 'react'
 import { cn } from '@/lib/utils'
+import { QuickNotesCountBadge, QuickNotesWindow } from '@/components/layout/quick-notes'
 import {
   AppNavigationScope,
   createNavigationScopeValue,
@@ -81,6 +82,15 @@ function WindowContent({ record, focused }: { record: DesktopWindow; focused: bo
     match.route.kind === 'standalone'
       ? STANDALONE_COMPONENTS[match.route.componentKey]
       : null
+
+  // 快速便签：和知识中心一样是桌面窗口，只是内容不走路由视图。
+  if (record.id === 'notes') {
+    return (
+      <div className="absolute inset-0 flex min-h-0 min-w-0" data-window-layer="quick-notes">
+        <QuickNotesWindow />
+      </div>
+    )
+  }
 
   if (View) {
     return (
@@ -297,6 +307,7 @@ export function AppWindow({
           >
             <WindowTitlebar
               title={title}
+              badge={id === 'notes' ? <QuickNotesCountBadge /> : undefined}
               focused={focused}
               canDrag={canDrag}
               onClose={() => closeWindow(id)}

@@ -41,6 +41,12 @@ describe('resolveUrlTarget', () => {
     expect(resolveUrlTarget('/scheduler/jobs/j1')).toMatchObject({ id: 'scheduler' })
     expect(resolveUrlTarget('/system/models')).toMatchObject({ id: 'system' })
     expect(resolveUrlTarget('/dev/harness-test')).toMatchObject({ id: 'dev' })
+    expect(resolveUrlTarget('/notes')).toEqual({
+      kind: 'window',
+      id: 'notes',
+      pathname: '/notes',
+      search: '',
+    })
     expect(resolveUrlTarget('/nope')).toMatchObject({ id: 'not-found' })
     expect(resolveUrlTarget('/system')).toEqual({ kind: 'redirect' })
     expect(resolveUrlTarget('/wiki/anything')).toEqual({ kind: 'redirect' })
@@ -64,6 +70,14 @@ describe('createInitialState', () => {
     expect(record?.basePath).toBe('/workspaces')
     expect(state.focused).toBe('workspaces')
     expect(state.order).toEqual(['workspaces'])
+  })
+
+  it('opens quick notes as a desktop window at its default top-right spot', () => {
+    const state = createInitialState(null, '/notes', VIEWPORT)
+    expect(state.windows.notes?.rect).toEqual({ x: 790, y: 8, w: 640, h: 436 })
+    expect(state.focused).toBe('notes')
+    expect(state.order).toEqual(['notes'])
+    expect(hrefForFocus(state)).toBe('/notes')
   })
 
   it('opens the task board at its preferred wide size', () => {
@@ -230,6 +244,24 @@ describe('persistence', () => {
     expect(restored.windows.tasks?.pathname).toBe('/tasks')
     expect(restored.windows.workspaces?.pathname).toBe('/workspaces')
     expect(restored.focused).toBe('tasks')
+  })
+
+  it('round-trips the quick-notes window rect and focus', () => {
+    let state = createInitialState(null, '/notes', VIEWPORT)
+    state = desktopReducer(state, {
+      type: 'setRect',
+      id: 'notes',
+      rect: { x: 100, y: 80, w: 700, h: 420 },
+    })
+    const persisted = serializeDesktopState(state)
+    expect(persisted.windows.map((item) => item.id)).toEqual(['notes'])
+    expect(persisted.focused).toBe('notes')
+
+    const restored = createInitialState(persisted, '/', VIEWPORT)
+    expect(restored.windows.notes?.rect).toEqual({ x: 100, y: 80, w: 700, h: 420 })
+    expect(restored.windows.notes?.pathname).toBe('/notes')
+    // URL 是桌面时焦点回到桌面，窗口本身仍保留
+    expect(restored.focused).toBe('desktop')
   })
 
   it('builds the focused URL and joins queries', () => {

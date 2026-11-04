@@ -153,6 +153,8 @@ const REDIRECT_ROUTES: RedirectRoute[] = [
 ]
 
 const STANDALONE_ROUTES: StandaloneRoute[] = [
+  // 快速便签是桌面窗口（不是浮层）：URL /notes 打开归属窗口，内容由 AppWindow 特判渲染。
+  { kind: 'standalone', id: 'quick-notes', path: '/notes', componentKey: 'quick-notes', title: '便签' },
   { kind: 'standalone', id: 'dev-agent-node', path: '/dev/agent-node-test', componentKey: 'dev-agent-node', title: 'Agent Node Test' },
   { kind: 'standalone', id: 'dev-harness', path: '/dev/harness-test', componentKey: 'dev-harness', title: 'Harness Test' },
   { kind: 'standalone', id: 'dev-moa', path: '/dev/moa-test', componentKey: 'dev-moa', title: 'MoA Test' },

@@ -1,11 +1,13 @@
 'use client'
 
-import { useRef, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent } from 'react'
+import { useRef, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from 'react'
 import { Maximize2, Minus, X } from 'lucide-react'
 import { cn } from '@/lib/utils'
 
 interface WindowTitlebarProps {
   title: string
+  /** 紧跟在标题后面的小徽标（如便签数量），保持标题整体居中。 */
+  badge?: ReactNode
   focused: boolean
   canDrag: boolean
   onClose: () => void
@@ -18,6 +20,7 @@ interface WindowTitlebarProps {
 
 export function WindowTitlebar({
   title,
+  badge,
   focused,
   canDrag,
   onClose,
@@ -126,7 +129,7 @@ export function WindowTitlebar({
         </button>
       </div>
 
-      <div className="pointer-events-none absolute inset-x-0 flex items-center justify-center px-16">
+      <div className="pointer-events-none absolute inset-x-0 flex items-center justify-center gap-1.5 px-16">
         <span
           className={cn(
             'max-w-full truncate text-[11px] font-bold',
@@ -135,6 +138,7 @@ export function WindowTitlebar({
         >
           {title}
         </span>
+        {badge}
       </div>
     </div>
   )

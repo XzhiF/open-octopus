@@ -25,7 +25,7 @@ import {
   type Size,
 } from './window-geometry'
 
-export type WindowId = AppId | 'dev' | 'not-found'
+export type WindowId = AppId | 'dev' | 'not-found' | 'notes'
 export type FocusTarget = 'desktop' | WindowId
 
 export interface DesktopWindow {
@@ -58,8 +58,15 @@ export type UrlTarget =
 
 export const DESKTOP_STORAGE_KEY = 'octopus.desktop.v1'
 
+/** 会跟着桌面临时状态一起持久化的窗口（便签和知识中心窗口一样记住位置/尺寸）。 */
+export type PersistedWindowId = AppId | 'notes'
+
+function isPersistedWindowId(value: unknown): value is PersistedWindowId {
+  return isAppId(String(value)) || value === 'notes'
+}
+
 export interface PersistedWindow {
-  id: AppId
+  id: PersistedWindowId
   pathname: string
   search: string
   basePath: string
@@ -76,7 +83,7 @@ export interface PersistedWindow {
 export interface PersistedDesktop {
   version: 1
   windows: PersistedWindow[]
-  order: AppId[]
+  order: PersistedWindowId[]
   focused: FocusTarget
 }
 
@@ -104,7 +111,8 @@ export function resolveUrlTarget(href: string): UrlTarget {
     return { kind: 'window', id: route.ownerView as AppId, pathname, search }
   }
   if (route.kind === 'standalone') {
-    return { kind: 'window', id: 'dev', pathname, search }
+    const id: WindowId = route.componentKey === 'quick-notes' ? 'notes' : 'dev'
+    return { kind: 'window', id, pathname, search }
   }
   return { kind: 'window', id: 'not-found', pathname, search }
 }
@@ -169,14 +177,28 @@ function focusState(state: DesktopState, id: WindowId): DesktopState {
   return { ...state, windows, order, focused: id }
 }
 
+const NOTES_DEFAULT_WIDTH = 640
+const NOTES_DEFAULT_HEIGHT = 436
+
+/** 便签窗口默认停在右上角，和原来浮层打开的位置一致。 */
+function notesDefaultRect(stage: Size): Rect {
+  const w = Math.min(NOTES_DEFAULT_WIDTH, stage.width)
+  const h = Math.min(NOTES_DEFAULT_HEIGHT, stage.height)
+  return clampRect({ x: Math.max(0, stage.width - w - 10), y: 8, w, h }, stage)
+}
+
 function openState(
   state: DesktopState,
   id: WindowId,
   pathname: string,
   search: string,
 ): DesktopState {
-  const preferred = isAppId(id) ? appPreferredSize(id) : undefined
-  const record = createRecord(id, pathname, search, cascadeRect(stageSize(state.viewport), state.order.length, preferred))
+  const stage = stageSize(state.viewport)
+  const rect =
+    id === 'notes'
+      ? notesDefaultRect(stage)
+      : cascadeRect(stage, state.order.length, isAppId(id) ? appPreferredSize(id) : undefined)
+  const record = createRecord(id, pathname, search, rect)
   return focusState(
     {
       ...state,
@@ -331,11 +353,13 @@ export function loadPersistedDesktop(): PersistedDesktop | null {
       return null
     }
     const windows = parsed.windows.filter(
-      (item): item is PersistedWindow => !!item && typeof item === 'object' && isAppId(String(item.id)),
+      (item): item is PersistedWindow =>
+        !!item && typeof item === 'object' && isPersistedWindowId(item.id),
     )
-    const order = parsed.order.filter((id): id is AppId => isAppId(String(id)))
+    const order = parsed.order.filter((id): id is PersistedWindowId => isPersistedWindowId(id))
     const focused =
-      parsed.focused === 'desktop' || (typeof parsed.focused === 'string' && isAppId(parsed.focused))
+      parsed.focused === 'desktop' ||
+      (typeof parsed.focused === 'string' && isPersistedWindowId(parsed.focused))
         ? (parsed.focused as FocusTarget)
         : 'desktop'
     return { version: 1, windows, order, focused }
@@ -347,7 +371,7 @@ export function loadPersistedDesktop(): PersistedDesktop | null {
 export function serializeDesktopState(state: DesktopState): PersistedDesktop {
   const windows: PersistedWindow[] = []
   for (const id of state.order) {
-    if (!isAppId(id)) continue
+    if (!isPersistedWindowId(id)) continue
     const record = state.windows[id]
     if (!record) continue
     windows.push({
@@ -366,8 +390,8 @@ export function serializeDesktopState(state: DesktopState): PersistedDesktop {
     })
   }
   const focused: FocusTarget =
-    state.focused === 'desktop' || isAppId(state.focused) ? state.focused : 'desktop'
-  return { version: 1, windows, order: state.order.filter(isAppId), focused }
+    state.focused === 'desktop' || isPersistedWindowId(state.focused) ? state.focused : 'desktop'
+  return { version: 1, windows, order: state.order.filter(isPersistedWindowId), focused }
 }
 
 export function createInitialState(
@@ -382,11 +406,12 @@ export function createInitialState(
   if (persisted) {
     for (const item of persisted.windows) {
       const rect = clampRect({ x: item.x, y: item.y, w: item.w, h: item.h }, stage)
+      const defaultPath = isAppId(item.id) ? appRootPath(item.id) : '/notes'
       windows[item.id] = {
         id: item.id,
-        pathname: item.pathname || appRootPath(item.id),
+        pathname: item.pathname || defaultPath,
         search: item.search ?? '',
-        basePath: item.basePath || appRootPath(item.id),
+        basePath: item.basePath || defaultPath,
         baseSearch: item.baseSearch ?? '',
         rect,
         minimized: !!item.minimized,
@@ -395,9 +420,9 @@ export function createInitialState(
       }
     }
     for (const id of persisted.order) {
-      if (isAppId(id) && windows[id] && !order.includes(id)) order.push(id)
+      if (isPersistedWindowId(id) && windows[id] && !order.includes(id)) order.push(id)
     }
-    for (const id of Object.keys(windows) as AppId[]) {
+    for (const id of Object.keys(windows) as WindowId[]) {
       if (!order.includes(id)) order.push(id)
     }
   }
@@ -434,7 +459,9 @@ export function windowTitle(record: DesktopWindow): string {
 
 export function windowLabel(id: WindowId): string {
   if (isAppId(id)) return APP_CATALOG[id].label
-  return id === 'dev' ? '开发' : '未找到'
+  if (id === 'dev') return '开发'
+  if (id === 'notes') return '便签'
+  return '未找到'
 }
 
 /** Medium/narrow viewports and maximized windows always fill the stage. */
