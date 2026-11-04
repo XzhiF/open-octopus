@@ -22,9 +22,10 @@ export interface CostDisplay {
  * 货币三态格式化（消费 totals.cost = { usd, complete }）：
  * - usd == null     → "—"（未定价）
  * - complete=false  → "≈$"前缀（部分定价，已知部分和）
- * - ≥$1 两位小数，<$1 四位（自适应），千分位分隔；0 → "$0"
- * - display 传了 CNY → 先按 rate 折算再走同一自适应/千分位/三态规则（符号换 ¥）；
- *   不传 = 恒 USD，与既有全部调用点逐字一致。
+ * - USD：≥$1 两位小数，<$1 四位（自适应），千分位分隔；0 → "$0"
+ * - CNY：常规两位（分是最小实用单位），**不足一分时四位**——2 位会把真金白银的
+ *   小额舍成 ¥0.00，看起来像「没计费」；符号换 ¥，三态规则不变。
+ * - 不传 display = 恒 USD，与既有全部调用点逐字一致。
  */
 export function formatCost(
   usd: number | null | undefined,
@@ -36,8 +37,11 @@ export function formatCost(
   const symbol = cny ? "¥" : "$"
   const amount = cny ? usd * display.rate : usd
   if (amount === 0) return complete ? `${symbol}0` : `≈${symbol}0`
-  // USD 小额用 4 位（$0.0032 有信息量）；CNY 最小实用单位是「分」，2 位足够。
-  const digits = cny || Math.abs(amount) >= 1 ? 2 : 4
+  // 非零金额不能显示成 0（2026-11-04 真机：中断轮 94k tok 的账 ≈ ¥0.0035，
+  // CNY 恒 2 位后渲染成 ¥0.00，用户以为费用没记）。USD 的小额 4 位规则不变。
+  const digits = cny
+    ? (Math.abs(amount) < 0.01 ? 4 : 2)
+    : (Math.abs(amount) >= 1 ? 2 : 4)
   const num = amount.toLocaleString("en-US", { minimumFractionDigits: digits, maximumFractionDigits: digits })
   return `${complete ? symbol : `≈${symbol}`}${num}`
 }
