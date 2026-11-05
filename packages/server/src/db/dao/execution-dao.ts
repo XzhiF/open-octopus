@@ -1509,6 +1509,34 @@ export class ExecutionDAO extends BaseDAO {
     return result.changes ?? 0
   }
 
+  /** 启动回收（2026-11-05）：本进程启动**之前**遗留的「建了行、从未启动」的
+   *  非任务执行。create 与 start 之间进程退出（验收规划这类自动拉起的执行）
+   *  会留下一条永远 pending 的行 —— 没有任何 launcher 会再认领它。
+   *
+   *  谓词只收孤儿，三个条件都不能省：
+   *   · `task_id IS NULL` —— pending + task_id 是任务 op 的**合法排队态**，
+   *     TaskLifecycleService.launchQueued 每 tick 会领（listClaimableTaskLaunches），
+   *     收了就等于把用户排队的任务判死；
+   *   · `started_at IS NULL` —— 有 started_at 说明已被 claim，轮不到我们；
+   *   · `created_at < cutoff` —— 只收本进程 boot 之前创建的（调用方传 boot 时刻
+   *     减去宽限期），本进程自己 create 的行不在范围，避免与 create→start 竞争。
+   *
+   *  标 `interrupted`（不是 failed）：语义是「进程没接上」，且终态后自动退出
+   *  队列/运行中口径。error 写进 var_pool 供排查，与 retireLaunch 同形。 */
+  retireOrphanedPendingExecutions(cutoff: string, reason: string): number {
+    const now = new Date().toISOString()
+    const result = this.stmt(
+      `UPDATE executions
+       SET status = 'interrupted', completed_at = ?, updated_at = ?,
+           var_pool = json_patch(COALESCE(NULLIF(var_pool, ''), '{}'), ?)
+       WHERE status = 'pending'
+         AND started_at IS NULL
+         AND task_id IS NULL
+         AND created_at < ?`,
+    ).run(now, now, JSON.stringify({ error: reason }), cutoff)
+    return result.changes ?? 0
+  }
+
   // ── Data retention methods ────────────────────────────────────────
 
   truncateOldAgentEventContent(cutoffTimestamp: number): Database.RunResult {

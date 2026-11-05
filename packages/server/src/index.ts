@@ -336,6 +336,22 @@ if (!process.env.VITEST && daos) {
     console.error('[startup] orphan stream-partial sweep failed (non-fatal):', err)
   }
 
+  // 启动回收（2026-11-05）：create 与 start 之间进程退出会留下一条永远 pending 的
+  // 非任务执行行（验收规划这类 auto-launch）—— 没有 launcher 会再认领它，于是它
+  // 永远留在作业坞「运行」与活动面板的全局队列里。只启动时扫一次，纯 SQL UPDATE。
+  // 宽限 15 分钟：手工「先建行、再点启动」的执行（workflow-detail-panel）在重启后
+  // 仍可补点启动；task_id 非空的 pending 是任务合法排队态，DAO 谓词已排除。
+  try {
+    const cutoff = new Date(Date.now() - 15 * 60 * 1000).toISOString()
+    const retired = daos.execution.retireOrphanedPendingExecutions(
+      cutoff,
+      "启动回收：执行行创建后未启动（进程在 create→start 之间退出）",
+    )
+    if (retired > 0) console.log(`[startup] retired ${retired} orphaned pending execution(s)`)
+  } catch (err: unknown) {
+    console.error('[startup] orphan pending execution sweep failed (non-fatal):', err instanceof Error ? err.message : String(err))
+  }
+
   // Initialize agent version service
   initAgentVersionService(daos.agentVersion)
 
@@ -1328,7 +1344,7 @@ if (shouldServe) {
       // 验收方案预生成（2026-10-30 AI-native 验收）：轮终态后由独立规划 Agent
       // 产出 acceptance-plan-rN.json；getPlaybook 优先读它，主 Chat 据此逐项引导。
       const acceptancePlan = new AcceptancePlanService(
-        sse, tasksService, workspaceService!, taskHomeService, roundEvidence,
+        sse, tasksService, workspaceService!, taskHomeService, roundEvidence, daos!.execution,
       )
       roundEvidence.setAcceptancePlanService(acceptancePlan)
       tasksService.taskLifecycle.setAcceptancePlanHook((taskId) => {
