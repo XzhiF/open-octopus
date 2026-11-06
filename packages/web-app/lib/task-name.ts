@@ -11,6 +11,9 @@
  *  名称带「开发」：任务品类会扩展，task-author 这条是开发任务。 */
 export const NEW_TASK_NAME = '新开发任务'
 
+/** workflow-dev task kind (2026-11-06): the pending draft's placeholder name. */
+export const NEW_WORKFLOW_TASK_NAME = '新工作流开发任务'
+
 /** First message seeds the task title (deterministic, instant). */
 export function taskNameFromMessage(message: string): string {
   const first = message.split(/\r?\n/)[0].trim()

@@ -23,6 +23,7 @@ import type { PlanDetail } from "../tasks/acceptance-plan-service"
 import type { ChecksFile, ProbeRunResult } from "../tasks/playbook-types"
 import type { AcceptanceResult } from "../tasks/tasks-service"
 import type { ProjectDelta } from "../tasks/archive-delta"
+import { getWorkflowDevService } from "../tasks/workflow-dev-service"
 
 export interface TaskToolsService {
   updateSpecField(
@@ -465,21 +466,40 @@ export function createTaskToolServer(input: TaskToolServerInput) {
   const { db, sessionId, profile, identity } = input
   const task = profile.task
 
-  const statusSnapshot = () => ({
-    id: task.id,
-    name: task.name,
-    status: task.status,
-    displayStatus: task.displayStatus,
-    phaseIndex: task.phaseIndex,
-    roundIndex: task.roundIndex,
-    awaitingReview: task.awaitingReview,
-    workspaceId: task.workspaceId,
-    workspacePath: task.wsPath,
-    taskHome: task.taskHome,
-    identity,
-    readOnly: profile.readOnly,
-    actions: STATUS_ACTIONS[task.displayStatus] ?? [],
-  })
+  const statusSnapshot = () => {
+    const base = {
+      id: task.id,
+      name: task.name,
+      status: task.status,
+      displayStatus: task.displayStatus,
+      phaseIndex: task.phaseIndex,
+      roundIndex: task.roundIndex,
+      awaitingReview: task.awaitingReview,
+      workspaceId: task.workspaceId,
+      workspacePath: task.wsPath,
+      taskHome: task.taskHome,
+      identity,
+      readOnly: profile.readOnly,
+      actions: STATUS_ACTIONS[task.displayStatus] ?? [],
+    }
+    if (task.kind !== "workflow-dev") return base
+    try {
+      const svc = getWorkflowDevService()
+      if (!svc) return { ...base, workflowDev: null }
+      const snap = svc.getState(task.id)
+      return {
+        ...base,
+        workflowDev: {
+          ref: snap.ref,
+          files: snap.files,
+          state: snap.state,
+          workspacePath: snap.workspacePath,
+        },
+      }
+    } catch {
+      return { ...base, workflowDev: null }
+    }
+  }
 
   const acceptanceTools = profile.acceptanceGuide ? [
     tool(
@@ -1060,6 +1080,119 @@ export function createTaskToolServer(input: TaskToolServerInput) {
     ] : []),
   ] : []
 
+  const workflowDevTools = task.kind === "workflow-dev" ? [
+    tool(
+      "get_workflow_dev_state",
+      "Workflow-dev only. Read the current authored workflow: ref, YAML content, all files in the task home, and verification state (validation / simulation / completed refs / completed flag). Read-only.",
+      {},
+      async () => {
+        const svc = getWorkflowDevService()
+        if (!svc) return text({ ok: false, error: "workflow-dev service not ready" })
+        try {
+          return text(svc.getState(task.id))
+        } catch (err: unknown) {
+          return text({ ok: false, error: err instanceof Error ? err.message : String(err) })
+        }
+      },
+    ),
+    tool(
+      "set_active_workflow",
+      "Workflow-dev only. Register / switch the workflow under development (a YAML filename in the task home `workflows/`). One at a time: the previous active workflow must be completed first.",
+      {
+        ref: z.string().min(1).describe("Workflow filename, e.g. my-flow.yaml"),
+      },
+      async ({ ref }) => {
+        const svc = getWorkflowDevService()
+        if (!svc) return text({ ok: false, error: "workflow-dev service not ready" })
+        try {
+          const snap = svc.setActiveRef(task.id, ref)
+          return text({ ok: true, ref: snap.ref, state: snap.state })
+        } catch (err: unknown) {
+          return text({ ok: false, error: err instanceof Error ? err.message : String(err) })
+        }
+      },
+    ),
+    tool(
+      "complete_workflow",
+      "Workflow-dev only. Mark ONE workflow complete after validation + simulation passed, and record the human's release/snapshot choice. stage=release also copies the YAML into the main-agent workspace (default chats can see it). Call ONLY after the human explicitly chose release or snapshot.",
+      {
+        ref: z.string().min(1).optional().describe("Workflow filename (defaults to the active authored workflow)"),
+        stage: z.enum(["release", "snapshot"]).describe("The human's explicit choice"),
+        confirmed: z.boolean().describe("true only when the human explicitly said release/snapshot — never infer"),
+      },
+      async ({ ref, stage, confirmed }) => {
+        if (!confirmed) {
+          return text({ ok: false, error: "必须等用户明确说 release 或 snapshot 后才能标记完成（confirmed=true）。" })
+        }
+        const svc = getWorkflowDevService()
+        if (!svc) return text({ ok: false, error: "workflow-dev service not ready" })
+        try {
+          const snap = svc.getState(task.id)
+          const target = ref ?? snap.ref
+          if (!target) return text({ ok: false, error: "没有正在开发的工作流；先 set_active_workflow。" })
+          if (stage === "release" && snap.parsed) {
+            if (snap.parsed.stage !== "release" || !snap.parsed.version) {
+              return text({
+                ok: false,
+                error: 'release 需要先在 YAML 顶层写 `stage: release` 和 `version`（例如 version: 1.0.0），再调用本工具。',
+              })
+            }
+          }
+          const out = svc.markWorkflowComplete(task.id, target, stage)
+          return text({
+            ok: true,
+            ref: target,
+            stage,
+            state: out.state,
+            next: "询问用户是否还要开发下一个工作流；全部完成时调 finish_workflow_dev。",
+          })
+        } catch (err: unknown) {
+          return text({ ok: false, error: err instanceof Error ? err.message : String(err) })
+        }
+      },
+    ),
+    tool(
+      "finish_workflow_dev",
+      "Workflow-dev only. Mark the whole task's development complete once every planned workflow is done (no active workflow). This parks the task at awaiting_archive; ask the human whether to archive. Call ONLY after the human confirms development is finished.",
+      {
+        confirmed: z.boolean().describe("true only when the human explicitly said development is finished — never infer"),
+      },
+      async ({ confirmed }) => {
+        if (!confirmed) {
+          return text({ ok: false, error: "必须等用户明确确认开发完成后再执行（confirmed=true）。" })
+        }
+        const svc = getWorkflowDevService()
+        if (!svc) return text({ ok: false, error: "workflow-dev service not ready" })
+        try {
+          const snap = svc.completeTask(task.id)
+          return text({
+            ok: true,
+            state: snap.state,
+            next: "任务已停在「待归档」。先问用户是否归档；用户明确说「归档」后调 start_archive。",
+          })
+        } catch (err: unknown) {
+          return text({ ok: false, error: err instanceof Error ? err.message : String(err) })
+        }
+      },
+    ),
+    tool(
+      "add_workspace_projects",
+      "Workflow-dev only. Bring project repositories into the current task workspace (worktrees) so the workflow can read/build/debug against them. The archive step later cleans up these projects like a normal dev task.",
+      {
+        projects: z.array(z.string().min(1)).min(1).describe("Project names as listed in the repo manifest"),
+      },
+      async ({ projects }) => {
+        const svc = getWorkflowDevService()
+        if (!svc) return text({ ok: false, error: "workflow-dev service not ready" })
+        try {
+          return text({ ok: true, ...svc.addProjects(task.id, projects) })
+        } catch (err: unknown) {
+          return text({ ok: false, error: err instanceof Error ? err.message : String(err) })
+        }
+      },
+    ),
+  ] : []
+
   const tools = [
     tool(
       "get_task_status",
@@ -1220,6 +1353,7 @@ export function createTaskToolServer(input: TaskToolServerInput) {
         })
       },
     ),
+    ...workflowDevTools,
     ...acceptanceTools,
     ...archiveConsentTools,
     ...archiveTools,

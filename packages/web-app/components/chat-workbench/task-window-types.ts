@@ -25,6 +25,7 @@ export interface SubagentTarget {
 
 export type TaskModule =
   | 'plan'
+  | 'workflow'
   | 'changes'
   | 'run'
   | 'acceptance'

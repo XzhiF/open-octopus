@@ -127,4 +127,18 @@ describe("ChatTab — 新建开发任务的 hero 几何（对齐新建对话）"
     await screen.findByText("描述要开发的任务")
     expect(container.querySelector('[data-testid="tui-hero-identity"]')).toBeNull()
   })
+
+  // workflow-dev（2026-11-06 用户）：工作流开发任务不绑定项目 —— hero 第二行
+  // 不再挂项目 chip；需要仓库时由 Agent 的 add_workspace_projects 按需引入。
+  it("点「工作流开发」→ 工作流 hero 文案 + 不挂项目绑定控件", async () => {
+    const { container } = render(<ChatTab />)
+    await screen.findByText("开始新的对话")
+
+    act(() => { window.dispatchEvent(new Event("octopus:new-workflow-task")) })
+
+    await screen.findByText("描述要开发的工作流")
+    expect(screen.getByText("第一句话会成为工作流开发任务的标题；后续对话用于澄清需求、确认设计并生成可运行的 YAML。")).toBeInTheDocument()
+    expect(container.querySelector('[data-testid="task-project-chip"]')).toBeNull()
+    expect(screen.getByRole("textbox").getAttribute("placeholder")).toContain("描述要开发或修改的工作流")
+  })
 })

@@ -12,6 +12,11 @@ tags: [workflow, testing, simulation, mock, simulator, fixture]
 > **前置**: 需要已创建的 workflow.yaml（通过 `octo-workflow-dev` skill）。
 > **模拟器类型定义**: `packages/engine/src/simulator/types.ts`
 > **Fixture schema**: `packages/shared/src/simulator/schemas.ts`
+>
+> **工作流开发任务（2026-11-06）**：YAML 与 fixture 都在 task home 的
+> `workflows/` 下（例如 `workflows/my-flow.yaml` + `workflows/my-flow.test.yaml`）。
+> 可以直接调用 `simulate_workflow` 工具，或 `POST /api/tasks/:id/workflow-dev/simulate`，
+> 不必依赖 CLI；结果会按当前文件 hash 记录，供真实运行前的硬闸使用。
 
 ---
 

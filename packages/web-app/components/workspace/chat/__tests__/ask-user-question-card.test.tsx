@@ -85,19 +85,20 @@ describe("AskUserQuestionCard", () => {
     expect(screen.getByText("工作流定义")).toBeInTheDocument()
     expect(screen.getByText("CI/CD 流水线")).toBeInTheDocument()
 
-    // All options should be radio inputs
+    // All options should be radio inputs + 恒带的「其他」
     const radios = screen.getAllByRole("radio")
-    expect(radios).toHaveLength(3)
+    expect(radios).toHaveLength(4)
+    expect(screen.getByText("其他")).toBeInTheDocument()
   })
 
-  it("renders multi-select question with checkboxes", () => {
+  it("renders multi-select question with checkboxes + built-in Other", () => {
     render(<AskUserQuestionCard message={makeMessage(multiSelectQuestions)} onAnswer={vi.fn()} />)
 
     expect(screen.getByText("功能选择")).toBeInTheDocument()
     expect(screen.getByText("（多选）")).toBeInTheDocument()
 
     const checkboxes = screen.getAllByRole("checkbox")
-    expect(checkboxes).toHaveLength(3)
+    expect(checkboxes).toHaveLength(4)
   })
 
   it("renders multiple questions in order", () => {
@@ -110,10 +111,10 @@ describe("AskUserQuestionCard", () => {
     expect(funcBadge).toBeInTheDocument()
 
     const radioInputs = screen.getAllByRole("radio")
-    expect(radioInputs).toHaveLength(2)
+    expect(radioInputs).toHaveLength(3)
 
     const checkboxes = screen.getAllByRole("checkbox")
-    expect(checkboxes).toHaveLength(2)
+    expect(checkboxes).toHaveLength(3)
   })
 
   it("selects a single-select option and updates state", async () => {
@@ -160,6 +161,44 @@ describe("AskUserQuestionCard", () => {
     expect(content).toContain("用户回答了以下问题")
     expect(content).toContain("YAML 类型")
     expect(content).toContain("工作流定义")
+  })
+
+  it("submits an Other-only answer for a multi-select question (2026-11-06 对齐 CLI)", async () => {
+    const onAnswer = vi.fn()
+    const user = userEvent.setup()
+    render(<AskUserQuestionCard message={makeMessage(multiSelectQuestions)} onAnswer={onAnswer} />)
+
+    await user.click(screen.getByLabelText(/其他/))
+    await user.type(screen.getByTestId("aq-other-input-0"), "以上都不合适")
+    await user.click(screen.getByText("提交答案"))
+
+    expect(onAnswer).toHaveBeenCalledTimes(1)
+    expect(onAnswer.mock.calls[0][0] as string).toContain("以上都不合适")
+  })
+
+  it("combines selected options with the Other text in multi-select", async () => {
+    const onAnswer = vi.fn()
+    const user = userEvent.setup()
+    render(<AskUserQuestionCard message={makeMessage(multiSelectQuestions)} onAnswer={onAnswer} />)
+
+    await user.click(screen.getByText("自动保存"))
+    await user.click(screen.getByText("日志记录"))
+    await user.click(screen.getByLabelText(/其他/))
+    await user.type(screen.getByTestId("aq-other-input-0"), "再加一个每日汇总")
+    await user.click(screen.getByText("提交答案"))
+
+    expect(onAnswer.mock.calls[0][0] as string).toContain("自动保存, 日志记录, 再加一个每日汇总")
+  })
+
+  it("sends a clarifying message via Chat about this instead of answering", async () => {
+    const onAnswer = vi.fn()
+    const user = userEvent.setup()
+    render(<AskUserQuestionCard message={makeMessage(singleSelectQuestions)} onAnswer={onAnswer} />)
+
+    await user.click(screen.getByTestId("aq-chat-about"))
+    const content = onAnswer.mock.calls[0][0] as string
+    expect(content).toContain("用户想先讨论这些问题")
+    expect(content).not.toContain("用户回答了以下问题")
   })
 
   it("disables all inputs after submission", async () => {

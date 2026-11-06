@@ -91,6 +91,57 @@ export function findArchiveSeedDir(): string | null {
   return null
 }
 
+// ── workflow-author clone assets (workflow-dev task kind, 2026-11-06) ──────
+//
+// The persona fork lives at packages/core-pack/clones/workflow-author/; the
+// skill family is seeded from packages/core-pack/skills/ so there is exactly
+// one source of truth for octo-workflow-* (no checked-in duplicate tree).
+export const WORKFLOW_AUTHOR_SKILL_FAMILY: readonly string[] = [
+  'octo-workflow-dev',
+  'octo-workflow-test',
+  'octo-workflow-ops',
+]
+
+/** Locate the workflow-author persona fork. Same override/no-op posture as the
+ *  task-author finder. */
+export function findWorkflowAuthorSeedDir(): string | null {
+  const override = process.env.OCTOPUS_WORKFLOW_AUTHOR_SEED_DIR
+  if (override && fs.existsSync(path.join(override, 'persona.md'))) return override
+
+  const candidates = [
+    path.resolve(__dirname, '../../../../core-pack/clones/workflow-author'),
+    path.resolve(process.cwd(), 'packages/core-pack/clones/workflow-author'),
+    path.resolve(process.cwd(), '../core-pack/clones/workflow-author'),
+    path.resolve(process.cwd(), '../../core-pack/clones/workflow-author'),
+  ]
+  for (const c of candidates) {
+    if (fs.existsSync(path.join(c, 'persona.md'))) return c
+  }
+  return null
+}
+
+/** Locate packages/core-pack/skills (source for the workflow-author skill fork). */
+export function findCorePackSkillsSeedDir(): string | null {
+  const candidates = [
+    path.resolve(__dirname, '../../../../core-pack/skills'),
+    path.resolve(process.cwd(), 'packages/core-pack/skills'),
+    path.resolve(process.cwd(), '../core-pack/skills'),
+    path.resolve(process.cwd(), '../../core-pack/skills'),
+  ]
+  for (const c of candidates) {
+    if (fs.existsSync(c)) return c
+  }
+  return null
+}
+
+/** One seeding source: files collected from `root` land under `destPrefix`. */
+interface SeedAssetSource {
+  root: string
+  entries: readonly string[]
+  /** Destination prefix relative to the clone dir (e.g. `skills`). */
+  destPrefix?: string
+}
+
 /** Relative paths of every file under `root`, restricted to the given entries.
  *  Each entry is a file (`persona.md`) or a directory (`skills`) walked
  *  recursively. Returns posix-normalized relative paths. */
@@ -203,19 +254,60 @@ export class CloneInitService {
     this.seedForkAssets('archive', findArchiveSeedDir(), cloneDir, result)
   }
 
+  /** Seed workflow-author: persona from its fork + the octo-workflow-* family
+   *  from packages/core-pack/skills (single source of truth, no duplicate tree).
+   *  Same versioned-manifest refresh discipline as task-author. */
+  private seedWorkflowAuthorAssets(cloneDir: string, result: CloneInitResult): void {
+    const sources: SeedAssetSource[] = []
+    const fork = findWorkflowAuthorSeedDir()
+    if (fork) sources.push({ root: fork, entries: ['persona.md'] })
+    const coreSkills = findCorePackSkillsSeedDir()
+    if (coreSkills) {
+      sources.push({
+        root: coreSkills,
+        entries: WORKFLOW_AUTHOR_SKILL_FAMILY,
+        destPrefix: 'skills',
+      })
+    }
+    this.seedAssetSources('workflow-author', sources, cloneDir, result)
+  }
+
   private seedForkAssets(cloneName: string, srcRoot: string | null, cloneDir: string, result: CloneInitResult): void {
-    if (!srcRoot) return
+    this.seedAssetSources(
+      cloneName,
+      srcRoot ? [{ root: srcRoot, entries: ['persona.md', 'skills'] }] : [],
+      cloneDir,
+      result,
+    )
+  }
+
+  private seedAssetSources(
+    cloneName: string,
+    sources: readonly SeedAssetSource[],
+    cloneDir: string,
+    result: CloneInitResult,
+  ): void {
+    if (sources.length === 0) return
 
     const manifestPath = path.join(cloneDir, TASK_AUTHOR_SEED_MANIFEST)
     const prev = this.readSeedManifest(manifestPath)
     if (!prev) this.backupSeedTargets(cloneName, cloneDir, result)
 
-    const srcFiles = collectSeedFiles(srcRoot, ['persona.md', 'skills'])
+    // Destination-relative path → absolute source path. destPrefix lets a
+    // source tree (core-pack/skills) land under the clone's skills/ dir.
+    const sourceMap = new Map<string, string>()
+    for (const source of sources) {
+      const prefix = source.destPrefix ? `${source.destPrefix.replace(/\\/g, '/')}/` : ''
+      for (const rel of collectSeedFiles(source.root, source.entries)) {
+        sourceMap.set(`${prefix}${rel}`, path.join(source.root, rel))
+      }
+    }
+    const srcFiles = [...sourceMap.keys()]
     const nextFiles: Record<string, string> = {}
 
     for (const rel of srcFiles) {
       const key = `built-in/${cloneName}/${rel}`
-      const srcAbs = path.join(srcRoot, rel)
+      const srcAbs = sourceMap.get(rel)!
       const destAbs = path.join(cloneDir, rel)
       const srcHash = sha256File(srcAbs)
       if (srcHash === null) continue // unreadable source — nothing to seed
@@ -514,6 +606,9 @@ export class CloneInitService {
     if (name === 'archive') {
       this.seedArchiveAssets(cloneDir, result)
     }
+    if (name === 'workflow-author') {
+      this.seedWorkflowAuthorAssets(cloneDir, result)
+    }
 
     // 3. Write/migrate persona.md. task-author / archive personas are owned by
     // their forks (step 2) and left alone; every other built-in template is
@@ -524,7 +619,7 @@ export class CloneInitService {
     //                              seed copy must never shadow a code update.
     //   hand-edited              → preserve + warn once (delete to re-seed)
     const personaPath = path.join(cloneDir, 'persona.md')
-    const forkOwnedPersona = name === 'task-author' || name === 'archive'
+    const forkOwnedPersona = name === 'task-author' || name === 'archive' || name === 'workflow-author'
     if (forkOwnedPersona) {
       result.filesSkipped.push(`built-in/${name}/persona.md`)
     } else {

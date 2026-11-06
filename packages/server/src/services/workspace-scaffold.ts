@@ -107,7 +107,6 @@ export class WorkspaceScaffold {
       "## 说明",
       "- 使用 `octo-dev-copilot` skill 管理此工作空间",
       "- 使用 `octo-workflow-dev` skill 开发与校验工作流",
-      "- 使用 `octo-swarm-dev` skill 开发 Swarm 多专家协作节点",
       ...workspaceGuide(),
     ]
     fs.writeFileSync(claudePath, lines.join("\n"), "utf-8")
@@ -135,7 +134,7 @@ export class WorkspaceScaffold {
     if (!corePackRoot) return
     const skillsDir = path.join(workspacePath, ".claude", "skills")
     fs.mkdirSync(skillsDir, { recursive: true })
-    const coreSkills = ["octo-dev-copilot", "octo-workflow-dev", "octo-swarm-dev", "octo-resource-manager", "octo-source-analyzer"]
+    const coreSkills = ["octo-dev-copilot", "octo-workflow-dev", "octo-resource-manager", "octo-source-analyzer"]
     for (const skillName of coreSkills) {
       const dest = path.join(skillsDir, skillName)
       if (fs.existsSync(dest)) continue

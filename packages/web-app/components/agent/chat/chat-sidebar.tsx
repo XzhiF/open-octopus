@@ -11,6 +11,7 @@ import {
   Search,
   SquarePen,
   Trash2,
+  Workflow,
   X,
 } from 'lucide-react'
 import type { AgentSession } from '@/lib/agent/types'
@@ -31,8 +32,9 @@ interface ChatSidebarProps {
   tasksLoading: boolean
   activeTaskId: string | null
   onSelectTask: (task: TaskView) => void
-  /** Task session being authored, before its draft row exists. */
-  pendingTask?: { sessionId: string; title: string } | null
+  /** Task session being authored, before its draft row exists. `kind` follows
+   *  task_spec.kind so the row can show the workflow-dev marker (2026-11-06). */
+  pendingTask?: { sessionId: string; title: string; kind?: 'workflow-dev' } | null
   activePendingTask?: boolean
   sessions: AgentSession[]
   sessionsLoading: boolean
@@ -42,6 +44,9 @@ interface ChatSidebarProps {
   runningSessionIds?: ReadonlySet<string>
   onCreateSession: () => void
   onCreateTask: () => void
+  /** workflow-dev task kind (2026-11-06): author a workflow YAML. Optional so
+   *  read-only/test renderings keep working without the entry. */
+  onCreateWorkflowTask?: () => void
   onRenameSession: (id: string, title: string) => void
   onDeleteSession: (id: string) => void
   /** Task row management (chat sidebar mirrors the board's rename/delete). */
@@ -114,6 +119,37 @@ function RunningPill() {
   )
 }
 
+/** 任务类型（2026-11-06）：缺省 = 开发任务；workflow-dev = 工作流开发。 */
+type TaskKind = 'workflow-dev' | 'dev'
+
+function taskKindOf(task: TaskView): TaskKind {
+  return task.task_spec?.kind === 'workflow-dev' ? 'workflow-dev' : 'dev'
+}
+
+const TASK_KIND_LABEL: Record<TaskKind, string> = {
+  'workflow-dev': '工作流开发任务',
+  dev: '开发任务',
+}
+
+/** 类型标识（用户定稿方案 A）：类型图标 + 状态点各占一列，互不遮挡。
+ *  工作流开发用 --pop-purple（与作业坞「工作流」入口同色），开发任务用弱化的
+ *  --pop-dim，避免整列都是高饱和。 */
+function TaskKindIcon({ kind }: { kind: TaskKind }) {
+  const Icon = kind === 'workflow-dev' ? Workflow : ListTodo
+  return (
+    <span
+      aria-hidden
+      data-task-kind-icon={kind}
+      className={cn(
+        'flex size-4 shrink-0 items-center justify-center',
+        kind === 'workflow-dev' ? 'text-pop-purple' : 'text-pop-dim/70',
+      )}
+    >
+      <Icon className="size-[13px]" strokeWidth={1.9} />
+    </span>
+  )
+}
+
 /** Chat sidebar: one row with the solid "开启新对话" menu (new chat / new
  *  task) + search + collapse, then task + session source lists (hairline rows). */
 export function ChatSidebar({
@@ -130,6 +166,7 @@ export function ChatSidebar({
   runningSessionIds,
   onCreateSession,
   onCreateTask,
+  onCreateWorkflowTask,
   onRenameSession,
   onDeleteSession,
   onRenameTask,
@@ -173,6 +210,7 @@ export function ChatSidebar({
     ? tasks.filter((task) => task.name.toLowerCase().includes(needle))
     : tasks
   const pendingMatches = !!pendingTask && (!needle || pendingTask.title.toLowerCase().includes(needle))
+  const pendingKind: TaskKind = pendingTask?.kind === 'workflow-dev' ? 'workflow-dev' : 'dev'
   const filteredSessions = needle
     ? visibleSessions.filter((session) => session.title.toLowerCase().includes(needle))
     : visibleSessions
@@ -218,6 +256,15 @@ export function ChatSidebar({
                 <span className="text-[10.5px] text-pop-dim">从任务作者开始，AI 总结标题</span>
               </span>
             </DropdownMenuItem>
+            {onCreateWorkflowTask && (
+              <DropdownMenuItem onClick={onCreateWorkflowTask} className="gap-2.5 py-2">
+                <Workflow className="size-3.5 shrink-0 text-pop-dim" strokeWidth={1.8} />
+                <span className="flex flex-col">
+                  <span className="text-[12.5px] text-pop-ink">工作流开发</span>
+                  <span className="text-[10.5px] text-pop-dim">从工作流开发者开始，产出可运行的 YAML</span>
+                </span>
+              </DropdownMenuItem>
+            )}
           </DropdownMenuContent>
         </DropdownMenu>
 
@@ -308,15 +355,18 @@ export function ChatSidebar({
                   <button
                     type="button"
                     data-testid="pending-task-item"
+                    data-task-kind={pendingKind}
                     aria-current={activePendingTask ? 'page' : undefined}
-                    title="新开发任务 · 等待第一句话"
+                    title={`${TASK_KIND_LABEL[pendingKind]} · 等待第一句话`}
                     className={cn(
                       ROW,
+                      'gap-2',
                       activePendingTask
                         ? 'bg-white/[0.07] text-pop-ink'
                         : 'text-pop-ink/80 hover:bg-white/[0.035] hover:text-pop-ink',
                     )}
                   >
+                    <TaskKindIcon kind={pendingKind} />
                     <span className="relative flex size-[6px] shrink-0">
                       <span className="absolute size-[6px] animate-ping rounded-full bg-pop-cyan/70" />
                       <span className="relative size-[6px] rounded-full bg-pop-cyan" />
@@ -327,6 +377,7 @@ export function ChatSidebar({
                 )}
                 {filteredTasks.map((task) => {
                   const active = activeTaskId === task.id
+                  const kind = taskKindOf(task)
                   const running =
                     task.status === 'running' ||
                     (!!task.source_chat_session_id &&
@@ -338,18 +389,22 @@ export function ChatSidebar({
                         data-testid="task-session-item"
                         data-task-id={task.id}
                         data-task-status={task.status}
+                        data-task-kind={kind}
                         data-running-task={running ? 'true' : undefined}
                         aria-current={active ? 'page' : undefined}
-                        title={running ? `${task.name} · Agent 运行中` : task.name}
+                        title={running
+                          ? `${task.name} · ${TASK_KIND_LABEL[kind]} · Agent 运行中`
+                          : `${task.name} · ${TASK_KIND_LABEL[kind]}`}
                         onClick={() => onSelectTask(task)}
                         className={cn(
                           ROW,
-                          'pr-7',
+                          'gap-2 pr-7',
                           active
                             ? 'bg-white/[0.07] text-pop-ink'
                             : 'text-pop-ink/80 hover:bg-white/[0.035] hover:text-pop-ink',
                         )}
                       >
+                        <TaskKindIcon kind={kind} />
                         <span
                           className={cn(
                             'size-[6px] shrink-0 rounded-full',
@@ -430,20 +485,21 @@ export function ChatSidebar({
                     }}
                     className={cn(
                       ROW,
+                      'gap-2',
                       active
                         ? 'bg-white/[0.07] text-pop-ink'
                         : 'text-pop-ink/80 hover:bg-white/[0.035] hover:text-pop-ink',
                     )}
                   >
-                    <span className="relative flex size-[6px] shrink-0 items-center justify-center">
-                      {running && (
-                        <>
-                          <span className="absolute size-[6px] animate-ping rounded-full bg-pop-green/60" />
-                          <span className="relative size-[6px] rounded-full bg-pop-green" />
-                          <span className="sr-only">Agent 运行中</span>
-                        </>
-                      )}
+                    {/* 会话行图标（2026-11-06 用户定稿方案 A）：与任务行类型图标
+                        同槽位同尺寸，只补节奏不新增语义；运行中仍由右侧药丸表示。 */}
+                    <span
+                      data-session-icon="chat"
+                      className="flex size-4 shrink-0 items-center justify-center text-pop-dim/70"
+                    >
+                      <MessageSquare className="size-[13px]" strokeWidth={1.9} aria-hidden />
                     </span>
+                    {running && <span className="sr-only">Agent 运行中</span>}
                     <div className="flex min-w-0 flex-1 items-center">
                       {editingId === session.id ? (
                         <input

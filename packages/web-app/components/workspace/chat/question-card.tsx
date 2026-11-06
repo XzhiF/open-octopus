@@ -7,7 +7,7 @@ import { Badge } from "@/components/ui/badge"
 import { Input } from "@/components/ui/input"
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group"
 import { Checkbox } from "@/components/ui/checkbox"
-import { HelpCircle, CheckCircle2, Loader2 } from "lucide-react"
+import { HelpCircle, CheckCircle2, Loader2, PencilLine } from "lucide-react"
 import { cn } from "@/lib/utils"
 
 interface QuestionItem {
@@ -32,27 +32,83 @@ function parseQuestions(input: unknown): QuestionItem[] {
   return questions as QuestionItem[]
 }
 
+// ── 「其他」是每题必带的输入型选项（2026-11-06，对齐 Claude Code CLI）──
+// CLI 里每条 question 都会追加 { value:"__other__", label:"Other", placeholder:"Type something" }：
+//   · 单选：选「其他」→ 输入的文本就是答案
+//   · 多选：可与任意选项同时勾选，答案 = 已选项 + 文本
+// 模型自己给了「其他 / Other」时复用那一行，不再补第二行。
+const OTHER_LABELS = new Set(["其他", "其它", "other", "自定义"])
+
+function isOtherLabel(label: string): boolean {
+  return OTHER_LABELS.has(label.trim().toLowerCase())
+}
+
+function otherLabelOf(q: QuestionItem): string {
+  return q.options.find((o) => isOtherLabel(o.label))?.label ?? "其他"
+}
+
+function normalOptionsOf(q: QuestionItem) {
+  return q.options.filter((o) => !isOtherLabel(o.label))
+}
+
+function otherInputKey(qIndex: number): string {
+  return `${qIndex}-__other__`
+}
+
+/** 单题的实际答案；null = 未答（多选一个没勾且没填其他 / 单选没选 / 其他为空）。 */
+function answerFor(
+  q: QuestionItem,
+  qIndex: number,
+  answers: Record<number, string | string[]>,
+  otherInputs: Record<string, string>,
+): string | null {
+  const answer = answers[qIndex]
+  const otherText = (otherInputs[otherInputKey(qIndex)] ?? "").trim()
+  const otherLabel = otherLabelOf(q)
+  if (q.multiSelect) {
+    const labels = Array.isArray(answer) ? answer.filter((v) => v !== otherLabel) : []
+    const parts = [...labels, ...(otherText ? [otherText] : [])]
+    return parts.length > 0 ? parts.join(", ") : null
+  }
+  if (answer === otherLabel) return otherText || null
+  return typeof answer === "string" && answer.length > 0 ? answer : null
+}
+
 function formatAnswerContent(
   questions: QuestionItem[],
   answers: Record<number, string | string[]>,
-  otherInputs: Record<string, string>
+  otherInputs: Record<string, string>,
 ): string {
   const lines: string[] = ["用户回答了以下问题：", ""]
   questions.forEach((q, i) => {
-    const answer = answers[i]
-    if (!answer || (Array.isArray(answer) && answer.length === 0)) return
-    let value: string
-    if (Array.isArray(answer)) {
-      value = answer.join(", ")
-    } else if (answer === "其他") {
-      const otherText = otherInputs[`${i}-其他`] ?? ""
-      value = otherText || "其他"
-    } else {
-      value = answer
-    }
+    const value = answerFor(q, i, answers, otherInputs)
+    if (value === null) return
     lines.push(`${i + 1}. [${q.header}] ${q.question}`)
     lines.push(`   → ${value}`)
     lines.push("")
+  })
+  return lines.join("\n")
+}
+
+/** 「Chat about this」= 不回答，把问题与当前填写情况交回 Agent 澄清（CLI 同款语义）。 */
+function formatChatAboutContent(
+  questions: QuestionItem[],
+  answers: Record<number, string | string[]>,
+  otherInputs: Record<string, string>,
+): string {
+  const lines: string[] = [
+    "用户想先讨论这些问题，而不是直接作答。",
+    "用户可能有额外的信息、上下文或问题要问你。",
+    "请结合用户的说明，必要时重新提问；先问用户想澄清什么。",
+    "",
+    "已问的问题：",
+  ]
+  questions.forEach((q, i) => {
+    const value = answerFor(q, i, answers, otherInputs)
+    lines.push(`- “${q.question}”`)
+    lines.push(`  当前答案：${value ?? "（未回答）"}`)
+    const otherText = (otherInputs[otherInputKey(i)] ?? "").trim()
+    if (otherText) lines.push(`  用户补充：${otherText}`)
   })
   return lines.join("\n")
 }
@@ -105,16 +161,7 @@ export function QuestionCard({ message, onAnswer, disabled }: QuestionCardProps)
     )
   }
 
-  const allAnswered = questions.every((q, i) => {
-    const ans = answers[i]
-    if (!ans) return false
-    if (Array.isArray(ans)) return ans.length > 0
-    if (ans === "其他") {
-      const otherText = otherInputs[`${i}-其他`] ?? ""
-      return otherText.trim().length > 0
-    }
-    return true
-  })
+  const allAnswered = questions.every((q, i) => answerFor(q, i, answers, otherInputs) !== null)
 
   const handleSingleSelect = (qIndex: number, optionLabel: string) => {
     if (phase !== "ready") return
@@ -133,24 +180,24 @@ export function QuestionCard({ message, onAnswer, disabled }: QuestionCardProps)
     })
   }
 
-  const handleOtherInput = (qIndex: number, optionLabel: string, value: string) => {
+  const selectOther = (qIndex: number, q: QuestionItem) => {
     if (phase !== "ready") return
-    const key = `${qIndex}-${optionLabel}`
-    setOtherInputs(prev => ({ ...prev, [key]: value }))
-    // For single-select: answers[qIndex] stays as the radio selection value.
-    // The text is stored only in otherInputs. Modifying answers here would change
-    // the RadioGroup value, unmounting the Input and causing focus loss.
-    // For multi-select: append/update the text in the array (existing behavior).
-    const raw = answers[qIndex]
-    if (!Array.isArray(raw)) return
-    setAnswers(prev => {
-      const current = Array.isArray(prev[qIndex]) ? prev[qIndex] as string[] : []
-      const cleaned = current.filter(v => !v.startsWith(optionLabel + ": "))
-      if (value.trim()) {
-        return { ...prev, [qIndex]: [...cleaned, `${optionLabel}: ${value.trim()}`] }
-      }
-      return { ...prev, [qIndex]: cleaned }
-    })
+    const label = otherLabelOf(q)
+    if (q.multiSelect) {
+      setAnswers(prev => {
+        const current = Array.isArray(prev[qIndex]) ? prev[qIndex] as string[] : []
+        return current.includes(label)
+          ? prev
+          : { ...prev, [qIndex]: [...current, label] }
+      })
+    } else {
+      setAnswers(prev => ({ ...prev, [qIndex]: label }))
+    }
+  }
+
+  const handleOtherInput = (qIndex: number, value: string) => {
+    if (phase !== "ready") return
+    setOtherInputs(prev => ({ ...prev, [otherInputKey(qIndex)]: value }))
   }
 
   const handleSubmit = () => {
@@ -160,7 +207,11 @@ export function QuestionCard({ message, onAnswer, disabled }: QuestionCardProps)
     onAnswer(content)
   }
 
-  const getOtherKey = (qIndex: number, optionLabel: string) => `${qIndex}-${optionLabel}`
+  const canChatAbout = questions.some((q) => !q.multiSelect)
+  const handleChatAbout = () => {
+    if (phase !== "ready") return
+    onAnswer(formatChatAboutContent(questions, answers, otherInputs))
+  }
 
   return (
     <div className="mb-4">
@@ -168,7 +219,8 @@ export function QuestionCard({ message, onAnswer, disabled }: QuestionCardProps)
         className={cn(
           "rounded-[14px] border-[2.5px] border-pop-bd px-4 py-3 text-sm text-pop-ink max-w-[90%] shadow-pop",
           "transition-colors duration-300 ease-out",
-          phase === "answered" ? "bg-pop-green-soft" : "bg-pop-amber-soft"
+          // 2026-11-06 用户：未作答时用原来的卡片底色（paper），不再铺琥珀底。
+          phase === "answered" ? "bg-pop-green-soft" : "bg-pop-paper"
         )}
       >
         {/* Header */}
@@ -191,40 +243,43 @@ export function QuestionCard({ message, onAnswer, disabled }: QuestionCardProps)
 
         {/* Questions */}
         <div className="space-y-4">
-          {questions.map((q, qIndex) => (
-            <div key={qIndex} className="space-y-2">
-              <div className="flex items-center gap-2">
-                <Badge variant="outline" className="text-xs px-1.5 py-0">
-                  {q.header}
-                </Badge>
-                {q.multiSelect && (
-                  <span className="text-xs text-muted-foreground">（多选）</span>
-                )}
-              </div>
-              <p className="text-sm">{q.question}</p>
-
-              {/* Preparing: show preview hint, options NOT in DOM */}
-              {phase === "preparing" && (
-                <div className="text-xs text-muted-foreground/60 animate-pulse">
-                  ··· 即将展开
+          {questions.map((q, qIndex) => {
+            const normalOptions = normalOptionsOf(q)
+            const otherLabel = otherLabelOf(q)
+            const otherDeclared = q.options.find((o) => isOtherLabel(o.label))
+            const otherText = otherInputs[otherInputKey(qIndex)] ?? ""
+            const otherSelected = Array.isArray(answers[qIndex])
+              ? (answers[qIndex] as string[]).includes(otherLabel)
+              : answers[qIndex] === otherLabel
+            return (
+              <div key={qIndex} className="space-y-2">
+                <div className="flex items-center gap-2">
+                  <Badge variant="outline" className="text-xs px-1.5 py-0">
+                    {q.header}
+                  </Badge>
+                  {q.multiSelect && (
+                    <span className="text-xs text-muted-foreground">（多选）</span>
+                  )}
                 </div>
-              )}
+                <p className="text-sm">{q.question}</p>
 
-              {/* Ready/answered: options rendered with entrance animation */}
-              {phase !== "preparing" && q.multiSelect && (
-                <div className="space-y-1.5 ml-1 animate-in fade-in slide-in-from-bottom-2 duration-300">
-                  {q.options.map((opt, optIndex) => {
-                    const isSelected =
-                      Array.isArray(answers[qIndex]) &&
-                      (answers[qIndex] as string[]).some(
-                        v => v === opt.label || v.startsWith(opt.label + ": ")
-                      )
-                    const otherKey = getOtherKey(qIndex, opt.label)
-                    const isOther = opt.label === "其他"
+                {/* Preparing: show preview hint, options NOT in DOM */}
+                {phase === "preparing" && (
+                  <div className="text-xs text-muted-foreground/60 animate-pulse">
+                    ··· 即将展开
+                  </div>
+                )}
 
-                    return (
-                      <div key={optIndex} className="space-y-1">
+                {/* Ready/answered: options rendered with entrance animation */}
+                {phase !== "preparing" && q.multiSelect && (
+                  <div className="space-y-1.5 ml-1 animate-in fade-in slide-in-from-bottom-2 duration-300">
+                    {normalOptions.map((opt, optIndex) => {
+                      const isSelected =
+                        Array.isArray(answers[qIndex]) &&
+                        (answers[qIndex] as string[]).includes(opt.label)
+                      return (
                         <label
+                          key={optIndex}
                           htmlFor={`aq-${qIndex}-${optIndex}`}
                           className={cn(
                             "flex items-start gap-2 px-2 py-1.5 rounded-md transition-colors",
@@ -250,37 +305,61 @@ export function QuestionCard({ message, onAnswer, disabled }: QuestionCardProps)
                             )}
                           </div>
                         </label>
-                        {isOther && isSelected && phase === "ready" && (
-                          <Input
-                            className="ml-7 text-xs h-7"
-                            placeholder="请输入..."
-                            value={otherInputs[otherKey] ?? ""}
-                            onChange={(e) =>
-                              handleOtherInput(qIndex, opt.label, e.target.value)
-                            }
-                          />
-                        )}
+                      )
+                    })}
+                    {/* 其他（CLI 的 __other__）：可与任意选项同时勾选 */}
+                    <label
+                      htmlFor={`aq-${qIndex}-other`}
+                      className={cn(
+                        "flex items-start gap-2 px-2 py-1.5 rounded-md transition-colors",
+                        phase === "answered"
+                          ? "cursor-default opacity-60 pointer-events-none"
+                          : "cursor-pointer hover:bg-accent/50",
+                        otherSelected && "bg-accent"
+                      )}
+                    >
+                      <Checkbox
+                        id={`aq-${qIndex}-other`}
+                        checked={otherSelected}
+                        onCheckedChange={() => selectOther(qIndex, q)}
+                        disabled={phase !== "ready"}
+                        className="mt-0.5 shrink-0"
+                      />
+                      <div className="flex-1 min-w-0">
+                        <span className="text-sm">{otherLabel}</span>
+                        <span className="text-xs text-muted-foreground ml-1.5">
+                          — {otherDeclared?.description || "自己输入"}
+                        </span>
                       </div>
-                    )
-                  })}
-                </div>
-              )}
+                    </label>
+                    {otherSelected && phase === "ready" && (
+                      <Input
+                        className="ml-7 text-xs h-7"
+                        placeholder="输入你的回答…"
+                        value={otherText}
+                        onChange={(e) => handleOtherInput(qIndex, e.target.value)}
+                        onFocus={() => selectOther(qIndex, q)}
+                        data-testid={`aq-other-input-${qIndex}`}
+                      />
+                    )}
+                    {phase === "answered" && !!otherText.trim() && (
+                      <p className="ml-7 text-xs text-muted-foreground">其他：{otherText.trim()}</p>
+                    )}
+                  </div>
+                )}
 
-              {phase !== "preparing" && !q.multiSelect && (
-                <RadioGroup
-                  value={(answers[qIndex] as string) ?? ""}
-                  onValueChange={(val) => handleSingleSelect(qIndex, val)}
-                  disabled={phase !== "ready"}
-                  className="space-y-1.5 ml-1 animate-in fade-in slide-in-from-bottom-2 duration-300"
-                >
-                  {q.options.map((opt, optIndex) => {
-                    const isSelected = answers[qIndex] === opt.label
-                    const otherKey = getOtherKey(qIndex, opt.label)
-                    const isOther = opt.label === "其他"
-
-                    return (
-                      <div key={optIndex} className="space-y-1">
+                {phase !== "preparing" && !q.multiSelect && (
+                  <RadioGroup
+                    value={(answers[qIndex] as string) ?? ""}
+                    onValueChange={(val) => handleSingleSelect(qIndex, val)}
+                    disabled={phase !== "ready"}
+                    className="space-y-1.5 ml-1 animate-in fade-in slide-in-from-bottom-2 duration-300"
+                  >
+                    {normalOptions.map((opt, optIndex) => {
+                      const isSelected = answers[qIndex] === opt.label
+                      return (
                         <label
+                          key={optIndex}
                           htmlFor={`aq-${qIndex}-${optIndex}`}
                           className={cn(
                             "flex items-start gap-2 px-2 py-1.5 rounded-md transition-colors",
@@ -304,23 +383,50 @@ export function QuestionCard({ message, onAnswer, disabled }: QuestionCardProps)
                             )}
                           </div>
                         </label>
-                        {isOther && isSelected && phase === "ready" && (
-                          <Input
-                            className="ml-7 text-xs h-7"
-                            placeholder="请输入..."
-                            value={otherInputs[otherKey] ?? ""}
-                            onChange={(e) =>
-                              handleOtherInput(qIndex, opt.label, e.target.value)
-                            }
-                          />
-                        )}
+                      )
+                    })}
+                    {/* 其他（CLI 的 __other__）：输入的文本就是答案 */}
+                    <label
+                      htmlFor={`aq-${qIndex}-other`}
+                      className={cn(
+                        "flex items-start gap-2 px-2 py-1.5 rounded-md transition-colors",
+                        phase === "answered"
+                          ? "cursor-default opacity-60 pointer-events-none"
+                          : "cursor-pointer hover:bg-accent/50",
+                        otherSelected && "bg-accent"
+                      )}
+                    >
+                      <RadioGroupItem
+                        id={`aq-${qIndex}-other`}
+                        value={otherLabel}
+                        className="mt-0.5 shrink-0"
+                      />
+                      <div className="flex-1 min-w-0">
+                        <span className="text-sm">{otherLabel}</span>
+                        <span className="text-xs text-muted-foreground ml-1.5">
+                          — {otherDeclared?.description || "自己输入"}
+                        </span>
                       </div>
-                    )
-                  })}
-                </RadioGroup>
-              )}
-            </div>
-          ))}
+                    </label>
+                  </RadioGroup>
+                )}
+
+                {!q.multiSelect && otherSelected && phase === "ready" && (
+                  <Input
+                    className="ml-7 text-xs h-7"
+                    placeholder="输入你的回答…"
+                    value={otherText}
+                    onChange={(e) => handleOtherInput(qIndex, e.target.value)}
+                    onFocus={() => selectOther(qIndex, q)}
+                    data-testid={`aq-other-input-${qIndex}`}
+                  />
+                )}
+                {!q.multiSelect && phase === "answered" && !!otherText.trim() && (
+                  <p className="ml-7 text-xs text-muted-foreground">其他：{otherText.trim()}</p>
+                )}
+              </div>
+            )
+          })}
         </div>
 
         {/* Submit */}
@@ -338,6 +444,21 @@ export function QuestionCard({ message, onAnswer, disabled }: QuestionCardProps)
             {!allAnswered && (
               <span className="text-xs text-muted-foreground">请回答所有问题</span>
             )}
+          </div>
+        )}
+
+        {/* Chat about this（CLI 同款，仅单选出现）：不回答，交回 Agent 澄清 */}
+        {phase === "ready" && canChatAbout && (
+          <div className="mt-2 border-t border-dashed border-white/10 pt-2">
+            <button
+              type="button"
+              onClick={handleChatAbout}
+              data-testid="aq-chat-about"
+              className="flex w-full items-center gap-1.5 rounded-md px-2 py-1.5 text-left text-xs text-muted-foreground transition-colors hover:bg-white/5 hover:text-foreground"
+            >
+              <PencilLine className="size-3 shrink-0 text-pop-purple" />
+              先和 Claude 聊聊这些问题
+            </button>
           </div>
         )}
 

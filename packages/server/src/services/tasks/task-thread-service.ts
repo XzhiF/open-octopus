@@ -60,6 +60,9 @@ export interface TaskThreadTaskInfo {
   status: string
   /** Derived display status (v4: awaiting_review/archiving included). */
   displayStatus: string
+  /** task_spec.kind — null for ordinary v4 dev tasks; 'workflow-dev' for the
+   *  workflow authoring kind (2026-11-06). */
+  kind: string | null
   phaseIndex: number | null
   roundIndex: number | null
   awaitingReview: boolean
@@ -104,7 +107,7 @@ export interface TaskThreadDeps {
   workspaceService?: WorkspaceService
   taskHomeService?: TaskHomeService
   /** 首轮任务起名（默认 haiku；测试注入桩，VITEST 下默认关闭不触网）。 */
-  generateTaskTitle?: (message: string) => Promise<string | null>
+  generateTaskTitle?: (message: string, kind?: string | null) => Promise<string | null>
 }
 
 const WRITE_TOOLS = new Set(["Write", "Edit", "NotebookEdit"])
@@ -224,9 +227,15 @@ export class TaskThreadService {
     if (!task || task.name !== derived) return
     const generate = this.titleGenerator
     if (!generate) return
+    let kind: string | null = null
+    try {
+      kind = (JSON.parse(task.task_spec || "{}") as { kind?: string }).kind ?? null
+    } catch {
+      kind = null
+    }
     setImmediate(async () => {
       try {
-        const title = await generate(message)
+        const title = await generate(message, kind)
         if (!title || title === derived) return
         const fresh = this.taskDAO.getById(task.id)
         if (!fresh || fresh.name !== derived) return
@@ -241,6 +250,7 @@ export class TaskThreadService {
   buildProfile(task: TaskRow): TaskThreadProfile {
     const spec = parseJSON<{
       format?: string
+      kind?: string
       slug?: string
       branch?: string | null
       phases?: Array<{ index: number; name: string; workflowRef?: string }>
@@ -284,6 +294,7 @@ export class TaskThreadService {
       name: task.name,
       status: task.status,
       displayStatus: String(view.taskStatus),
+      kind: spec.kind ?? null,
       phaseIndex,
       roundIndex,
       awaitingReview: view.taskStatus === "awaiting_review",
@@ -299,7 +310,7 @@ export class TaskThreadService {
         ? existingDir(taskHome) ?? getAgentDir()
         : existingDir(wsPath ?? "") ?? existingDir(taskHome) ?? getAgentDir()
 
-    const plugins = this.buildPlugins(taskHome)
+    const plugins = this.buildPlugins(taskHome, info.kind)
     const acceptanceGuide =
       identity === "doer" && !readOnly && info.awaitingReview && !!wsPath && acceptancePlanReady(task.id)
     const archiveGuide = identity === "doer" && info.status === "archiving"
@@ -327,11 +338,14 @@ export class TaskThreadService {
     }
   }
 
-  /** Stable set for the whole thread: agent home + task-author skills + task home. */
-  private buildPlugins(taskHome: string): Array<{ type: "local"; path: string }> {
+  /** Stable set for the whole thread. Workflow-dev tasks swap the task-author
+   *  fork for the workflow-author fork (persona + octo-workflow-* skills); the
+   *  shared agent dir and task home stay so skills never appear/disappear. */
+  private buildPlugins(taskHome: string, kind: string | null): Array<{ type: "local"; path: string }> {
+    const cloneDir = kind === "workflow-dev" ? "workflow-author" : "task-author"
     const plugins: Array<{ type: "local"; path: string }> = [
       { type: "local", path: getAgentDir() },
-      { type: "local", path: getBuiltInCloneDir("task-author") },
+      { type: "local", path: getBuiltInCloneDir(cloneDir) },
     ]
     if (existingDir(taskHome)) plugins.push({ type: "local", path: taskHome })
     return plugins
@@ -375,6 +389,22 @@ export class TaskThreadService {
         ? `Phase ${info.phaseIndex}${info.roundIndex != null ? ` · Round ${info.roundIndex}` : ""}`
         : "尚未开始"
     const head = `[任务线程] 任务：${info.name}（id: ${info.id}）· 状态：${label} · ${coord}`
+
+    if (extra.identity === "author" && info.kind === "workflow-dev") {
+      return [
+        head,
+        "[身份] 工作流开发者（workflow-author）。交付物是工作流 YAML，不是代码；只写 task home，project 仓库只读。",
+        `[任务 home] ${info.taskHome} · 工作流目录 ${path.join(info.taskHome, "workflows")}`,
+        "[一次一个] 当前工作流未完成（校验+仿真通过，且用户已决定 release/snapshot）前，不得开始下一个。",
+        "[流程] 1 盘点现有工作流（list_workflows / get_workflow）→ 2 澄清需求（一次一问）→ 3 给出雏形与推荐方向，**等用户确认** → 4 写 YAML → 5 validate_workflow → 6 写 fixture + simulate_workflow → 7 用户同意后 run_workflow → 8 失败先诊断再修 → 9 问 release/snapshot 后 complete_workflow → 10 问是否继续；全部完成调 finish_workflow_dev，再问是否归档。",
+        "[工具] 工作流盘点/运行/调试走 octopus-workflow（list_workflows / get_workflow / validate_workflow / simulate_workflow / run_workflow / get_execution / cancel_execution / pause_execution / resume_execution / retry_node / rerun_execution / diagnose_execution / reload_execution_workflow）。",
+        "[任务工具] set_active_workflow（登记/切换当前工作流）、get_workflow_dev_state、complete_workflow（release|snapshot）、finish_workflow_dev、add_workspace_projects（把项目引入当前 workspace）。",
+        "[运行硬闸] 未通过基础校验或仿真时 run_workflow 会拒绝；只有用户明确要求豁免时才可传 waiver 并说明原因。改过 YAML 后旧结果自动失效，必须重跑。",
+        "[release] release = 复制到主 Agent 工作区 workflows/，默认对话可见；snapshot 只留在任务侧。必须问用户，不得默认 release。",
+        "[收尾] 用户明确说「归档」后才调 start_archive；不要自己归档，也不要声称 done。",
+        "[状态感知] 任务状态变化会以事件卡出现在本会话；每轮也会刷新上面这行状态。",
+      ].join("\n")
+    }
 
     if (extra.identity === "author") {
       const phaseLines =
@@ -434,6 +464,23 @@ export class TaskThreadService {
         "  5. 用户说「中止 / 不做了」→ request_task_action(action=\"abort\", reason=...)，仍需人点确认卡。",
         "  6. 不要声称 done —— done 由服务端在全部 project 的 git 同步成功后才写入。",
       ] : []
+      if (info.kind === "workflow-dev") {
+        const devLine = info.displayStatus === "awaiting_archive"
+          ? "[工作流开发] 全部工作流已完成，任务停在「待归档」。只读：不要改 YAML；只能确认是否归档或中止。"
+          : info.displayStatus === "archiving"
+            ? "[工作流开发] 归档编排进行中：只读；可以复述归档结果、冲突与重试问题。"
+            : "[工作流开发] 当前没有在开发的阶段。"
+        return [
+          head,
+          ...consentLines,
+          ...archiveLines,
+          devLine,
+          "[身份] 工作流开发者（workflow-author）。工作流开发已完成；归档由服务端执行。",
+          "[跟进] 用户要再开发工作流时，先确认是开新任务还是回草稿；不要在归档态直接改文件。",
+          "[状态感知] 任务状态变化会以事件卡出现在本会话。",
+        ].filter(Boolean).join("\n")
+      }
+
       return [
         head,
         ...guideLines,

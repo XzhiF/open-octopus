@@ -105,6 +105,14 @@ function validateL1(yaml, result) {
     result.addError('L1', 'Missing required field: name')
   }
 
+  // stage / version (2026-11-06): absent stage = snapshot (fail-closed).
+  if (yaml.stage !== undefined && !['release', 'snapshot'].includes(yaml.stage)) {
+    result.addError('L1', `stage must be "release" or "snapshot", got: "${yaml.stage}"`)
+  }
+  if (yaml.stage === 'release' && (yaml.version === undefined || String(yaml.version).trim() === '')) {
+    result.addError('L1', 'stage: release requires a top-level version (e.g. version: 1.0.0)')
+  }
+
   // inputs — values must be objects
   if (yaml.inputs && typeof yaml.inputs === 'object') {
     for (const [key, val] of Object.entries(yaml.inputs)) {
@@ -200,6 +208,14 @@ function validateL1(yaml, result) {
       case 'dynamic_sub_workflow':
         if (!node.prompt) {
           result.addError('L1', `type=dynamic_sub_workflow requires prompt field`, node.id)
+        }
+        break
+      case 'octopus_agent':
+        if (!node.agent) {
+          result.addError('L1', `type=octopus_agent requires agent field (clone name or "__main__")`, node.id)
+        }
+        if (!node.task || typeof node.task !== 'object' || typeof node.task.brief !== 'string' || !node.task.brief.trim()) {
+          result.addError('L1', `type=octopus_agent requires task.brief`, node.id)
         }
         break
       default:

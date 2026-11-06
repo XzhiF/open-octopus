@@ -774,3 +774,36 @@ describe("AC3 — 纯函数零 IO", () => {
     expect(a).toEqual(b)
   })
 })
+
+// ── workflow-dev task kind (2026-11-06) ────────────────────────────
+//
+// No phases, no per-phase acceptance. Persisted aborted/done win; archiving is
+// read from the row; workflow_dev.complete parks at awaiting_archive; otherwise
+// the derived status is ready (the web board reads the persisted draft until
+// development completes).
+
+describe("deriveTaskView — workflow-dev task kind", () => {
+  const wfSpec = (complete: boolean) =>
+    JSON.stringify({
+      format: "v4",
+      kind: "workflow-dev",
+      workflow_dev: { completed_refs: ["my-flow.yaml"], ...(complete ? { complete: true } : {}) },
+    })
+
+  it("draft dev → ready, complete → awaiting_archive", () => {
+    expect(deriveTaskView(task(wfSpec(false), "draft"), [], []).taskStatus).toBe("ready")
+    expect(deriveTaskView(task(wfSpec(true), "ready"), [], []).taskStatus).toBe("awaiting_archive")
+  })
+
+  it("archiving → archiving; persisted done/aborted win", () => {
+    expect(deriveTaskView(task(wfSpec(true), "archiving"), [], []).taskStatus).toBe("archiving")
+    expect(deriveTaskView(task(wfSpec(true), "done"), [], []).taskStatus).toBe("done")
+    expect(deriveTaskView(task(wfSpec(false), "aborted"), [], []).taskStatus).toBe("aborted")
+  })
+
+  it("keeps isV4 true with no phase views", () => {
+    const view = deriveTaskView(task(wfSpec(true), "ready"), [], [])
+    expect(view.isV4).toBe(true)
+    expect(view.phaseViews).toEqual([])
+  })
+})

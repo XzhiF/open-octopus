@@ -292,13 +292,16 @@ export function createChatRoutes(deps: ChatRouteDeps): Hono {
     // transition as a role card (cache discipline), never re-injected per turn.
     // A user-picked third clone is respected until the next task transition.
     if (thread) {
-      const desired = thread.identity === 'author'
-        ? 'task-author'
-        : thread.identity === 'doer'
-          ? 'task-doer'
-          : null
+      const workflowDev = thread.task.kind === 'workflow-dev'
+      const desired = thread.identity === 'base'
+        ? null
+        : workflowDev
+          ? 'workflow-author'
+          : thread.identity === 'author'
+            ? 'task-author'
+            : 'task-doer'
       const currentRole = cacheCtx.getRoleState(id)
-      const taskRoles = new Set(['task-author', 'task-doer'])
+      const taskRoles = new Set(['task-author', 'task-doer', 'workflow-author'])
       if (
         (currentRole.activeExpert == null || taskRoles.has(currentRole.activeExpert)) &&
         currentRole.activeExpert !== desired
@@ -346,7 +349,10 @@ export function createChatRoutes(deps: ChatRouteDeps): Hono {
     const mcpWorkspaceId = thread?.task.workspaceId ?? session.workspace_id
     const toolServers: Record<string, unknown> = {}
     if (mcpWorkspaceId) {
-      toolServers['octopus-workflow'] = createWorkflowToolServer(mcpWorkspaceId, { sessionId: id, org })
+      toolServers['octopus-workflow'] = createWorkflowToolServer(mcpWorkspaceId, { sessionId: id, org }, {
+        taskId: thread?.task.id,
+        kind: thread?.task.kind === 'workflow-dev' ? 'workflow-dev' : undefined,
+      })
     }
     if (thread) {
       toolServers['octopus-task'] = createTaskToolServer({

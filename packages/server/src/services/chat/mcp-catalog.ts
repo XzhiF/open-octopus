@@ -20,13 +20,21 @@ export interface McpServerMeta {
 
 const WORKFLOW_TOOL_NAMES = [
   "list_workflows",
+  "get_workflow",
   "run_workflow",
+  "validate_workflow",
+  "simulate_workflow",
   "list_executions",
   "get_execution",
   "cancel_execution",
+  "pause_execution",
+  "resume_execution",
   "respond_approval",
   "retry_node",
   "rerun_execution",
+  "diagnose_execution",
+  "reset_execution_node",
+  "reload_execution_workflow",
 ] as const
 
 const TASK_TOOL_NAMES = [
@@ -55,6 +63,11 @@ const TASK_TOOL_NAMES = [
   "record_archive_amendment",
   "clean_archive_leftovers",
   "open_followup_task",
+  "get_workflow_dev_state",
+  "set_active_workflow",
+  "complete_workflow",
+  "finish_workflow_dev",
+  "add_workspace_projects",
 ] as const
 
 const MEMORY_TOOL_NAMES = ["record_daily", "remember"] as const
@@ -91,14 +104,22 @@ const MEMORY_TOOL_DESC: Record<string, string> = {
 }
 
 const WORKFLOW_TOOL_DESC: Record<string, string> = {
-  list_workflows: "列出当前工作空间可用的【已发布】工作流（工作区级 + 内置，含数字版本号）；快照/未发布工作流对主对话隐藏。",
-  run_workflow: "在当前工作空间执行一个【已发布】工作流，返回执行 id（自动开跑，不等确认）；快照工作流会被拒绝。",
+  list_workflows: "列出当前工作空间可用的工作流；普通对话只显示已发布工作流，工作流开发任务还会显示快照与自写 YAML（含描述/阶段/版本）。",
+  get_workflow: "读取单个工作流的完整 YAML 与解析摘要（描述/阶段/版本/输入/节点），用于讲解细节与使用场景。",
+  run_workflow: "在当前工作空间执行一个工作流，返回执行 id（自动开跑）；工作流开发任务可跑快照，但自写 YAML 必须先通过校验+仿真（可显式豁免）。",
+  validate_workflow: "用共享 parser 做结构与语义校验；工作流开发任务会按文件 hash 记录结果。",
+  simulate_workflow: "工作流开发任务专用：运行同名 .test.yaml fixture（默认 strict），记录仿真结果。",
   list_executions: "列出当前工作空间最近的执行记录。",
   get_execution: "查看某次执行的状态与全部节点明细。",
   cancel_execution: "取消一次运行中的执行。",
+  pause_execution: "在正在运行的节点处暂停一次执行。",
+  resume_execution: "恢复已暂停的执行，可附带干预说明。",
   respond_approval: "回答执行中挂起的审批/交互节点。",
   retry_node: "重跑一次运行中执行里的单个失败节点。",
   rerun_execution: "终态执行（失败/取消/中止）一键重跑：取首个失败节点为恢复点连同下游洗回 pending，再以全新启动方式重新拉起引擎。",
+  diagnose_execution: "诊断失败执行：根因、失败节点与建议动作。",
+  reset_execution_node: "把单个节点重置为 pending（重跑）或 completed（人工接受输出）。",
+  reload_execution_workflow: "用新的 YAML 替换执行快照（修完定义后热更新），返回节点差异。",
 }
 
 const TASK_TOOL_DESC: Record<string, string> = {
@@ -127,4 +148,9 @@ const TASK_TOOL_DESC: Record<string, string> = {
   record_archive_amendment: "归档完成后，人要求补充/修正归档内容时追加一条只增不改的增补记录。",
   clean_archive_leftovers: "归档完成后，人明确确认具体路径后删除项目工作区里残留的 git-ignored 构建产物（服务端逐条复验）。",
   open_followup_task: "归档完成后，开一个承接上下文的跟进任务继续开发。",
+  get_workflow_dev_state: "（工作流开发任务）读取当前自写工作流、全部文件与校验/仿真状态。",
+  set_active_workflow: "（工作流开发任务）登记/切换当前开发的工作流（一次一个）。",
+  complete_workflow: "（工作流开发任务）校验+仿真通过后完成单个工作流，并记录 release/snapshot 选择。",
+  finish_workflow_dev: "（工作流开发任务）全部工作流完成后结束开发，任务停在待归档。",
+  add_workspace_projects: "（工作流开发任务）把项目仓库引入当前工作空间，供工作流调试运行。",
 }

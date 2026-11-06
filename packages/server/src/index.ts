@@ -100,6 +100,9 @@ import { eventRoutes } from "./routes/events"
 import scheduleRoutes, { setScheduleService } from "./routes/schedule"
 import { createSchedulerRoutes } from "./routes/scheduler"
 import { createTasksRoutes, createSessionUsageRoutes } from "./routes/tasks"
+import { createTaskWorkflowDevRoutes } from "./routes/task-workflow-dev"
+import { initWorkflowDevService } from "./services/tasks/workflow-dev-service"
+import { TASK_STATUS_EVENT } from "@octopus/shared"
 import { RoundEvidenceService } from "./services/tasks/round-evidence-service"
 import {
   AcceptancePlanService,
@@ -1258,6 +1261,18 @@ if (shouldServe) {
         readyTask: (id, opts) => tasksService.readyTask(id, opts),
         triggerTask: (id) => tasksService.triggerTaskWithPrebuild(id),
       }))
+      // workflow-dev task kind (2026-11-06): file / validate / simulate / release
+      // service shared by REST routes and the chat tools. It emits the same
+      // taskpool status event the v4 acceptance park uses, so the existing
+      // archive-consent card + wake fire unchanged.
+      initWorkflowDevService({
+        db,
+        taskDAO: daos!.task,
+        taskHomeService,
+        workspaceService,
+        emitTaskStatus: (taskId, status) =>
+          sse.emit("taskpool", { event: TASK_STATUS_EVENT, data: { task_id: taskId, status } }),
+      })
       // 2026-11-03 只读知识库：wiki 冲突裁决回主 Chat —— 人明确说「采纳/忽略」后，
       // 归档对话里的 Agent 经 resolve_wiki_finding 直连同一 FindingOpsService。
       setWikiFindingToolsProvider(() => ({
@@ -1416,6 +1431,7 @@ if (shouldServe) {
       // 2026-10-28 task-thread: the task-doer dual chat was retired. Takeover
       // reuses the task's main thread (source_chat_session_id).
       app.route('/api/tasks', createTasksRoutes(tasksService, sse, roundEvidence, reflectionIngest))
+      app.route('/api/tasks', createTaskWorkflowDevRoutes())
       // 2026-10-31 消耗窗通用化：/api/sessions/:id/usage（会话聊天行 + 本会话发起的全部工作流）。
       app.route('/api/sessions', createSessionUsageRoutes(tasksService))
       // task-workflow-presets (T3): preset catalog API

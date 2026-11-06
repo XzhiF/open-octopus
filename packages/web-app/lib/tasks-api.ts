@@ -283,6 +283,83 @@ export async function getTask(id: string, signal?: AbortSignal): Promise<TaskDet
   return handleResponse<TaskDetail>(res)
 }
 
+// ── workflow-dev task kind (2026-11-06) ─────────────────────────────
+//
+// The task-home YAML is the source of truth; the server mirrors it to the
+// task workspace. The dock 「工作流」 window reads/saves through these two.
+
+export interface WorkflowDevVerification {
+  ref: string
+  hash: string
+  at: string
+  valid?: boolean
+  passed?: boolean
+  errors?: string[]
+  scenarios?: string[]
+  message?: string
+}
+
+export interface WorkflowDevState {
+  active_ref?: string
+  completed_refs: string[]
+  stage?: "release" | "snapshot"
+  validation?: WorkflowDevVerification
+  simulation?: WorkflowDevVerification
+  waiver?: { ref: string; hash: string; reason: string; at: string }
+  complete?: boolean
+}
+
+export interface WorkflowDevFile {
+  ref: string
+  name: string
+  description?: string
+  stage: "release" | "snapshot"
+  version?: string
+}
+
+export interface WorkflowDevSnapshot {
+  taskId: string
+  kind: "workflow-dev"
+  ref: string | null
+  content: string
+  parsed: {
+    name: string
+    description?: string
+    stage: "release" | "snapshot"
+    version?: string
+    executionMode?: string
+    nodeCount: number
+    inputs: string[]
+  } | null
+  files: WorkflowDevFile[]
+  state: WorkflowDevState
+  workspacePath: string | null
+}
+
+export async function fetchWorkflowDev(taskId: string, signal?: AbortSignal): Promise<WorkflowDevSnapshot> {
+  const res = await fetch(`${getServerUrl()}${BASE}/${taskId}/workflow-dev`, { signal })
+  return handleResponse<WorkflowDevSnapshot>(res)
+}
+
+export async function saveWorkflowDev(
+  taskId: string,
+  input: { content: string; originalContent?: string },
+): Promise<WorkflowDevSnapshot> {
+  const res = await fetch(`${getServerUrl()}${BASE}/${taskId}/workflow-dev`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(input),
+  })
+  if (res.status === 409) {
+    const body = (await res.json().catch(() => ({}))) as { error?: string }
+    const err = new Error(body.error ?? "保存冲突")
+    ;(err as Error & { conflict?: boolean }).conflict = true
+    throw err
+  }
+  return handleResponse<WorkflowDevSnapshot>(res)
+}
+
+
 /** POST /api/tasks — explicit draft creation. The autosave seam (04) may also
  *  create a draft implicitly; both paths converge on the server's createTask.
  *

@@ -9,7 +9,7 @@ Field definitions for all 11 Octopus workflow node types. Source of truth: `pack
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
 | `id` | string | ✅ | Unique node identifier within the workflow |
-| `type` | enum | ✅ | One of: `bash`, `python`, `agent`, `condition`, `approval`, `loop`, `swarm`, `interaction`, `sub_workflow`, `dynamic_sub_workflow` |
+| `type` | enum | ✅ | One of: `bash`, `python`, `agent`, `condition`, `approval`, `loop`, `swarm`, `interaction`, `sub_workflow`, `dynamic_sub_workflow`, `octopus_agent` |
 | `depends_on` | string[] | — | IDs of upstream nodes this node depends on |
 | `execute_when` | string | — | Expression; falsy → node is skipped |
 | `outputs` | Record<string, string> | — | Map VarPool keys to expressions |
@@ -409,7 +409,10 @@ When re-executing with the same upstream input, the engine compares the input ha
 | `apiVersion` | string | ✅ | Must match `octopus/v{N}` (e.g., `octopus/v1`) |
 | `kind` | string | ✅ | Must be `"Workflow"` |
 | `name` | string | ✅ | Workflow name |
-| `description` | string | — | Workflow description |
+| `description` | string | — | Workflow description (shown by `list_workflows`; use it for “what / when to use”) |
+| `version` | string \| number | — | Release version; required when `stage: release` |
+| `stage` | `release` \| `snapshot` | — | Discoverability stage; absent = `snapshot` (fail-closed). Only `release` is visible to the main chat |
+| `budget` | Record<string, unknown> | — | Optional workflow-level budget metadata |
 | `model` | string | — | Default model for all nodes |
 | `engine` | string | — | Default engine for all nodes |
 | `timeout` | number | — | Global timeout in seconds |
@@ -432,6 +435,35 @@ When re-executing with the same upstream input, the engine compares the input ha
 | `agent_files` | string[] | — | Agent file dependencies (`group/name.md` format, e.g. `built-in/architecture-explorer.md`) |
 
 > See `references/requires-and-effort.md` for full documentation on `requires` and `effort`.
+
+---
+
+## 11. `octopus_agent` — Clone-backed Agent Node
+
+Runs a built-in/user clone as the node identity (distinct from a plain `agent` prompt node).
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `agent` | string | ✅ | Clone name or `__main__` |
+| `version` | string | — | Pinned clone version (default `latest`) |
+| `min_stage` | `alpha` \| `beta` \| `rc` \| `stable` | — | Minimum clone stage accepted |
+| `task.brief` | string | ✅ | What the clone must do |
+| `task.context` | string[] | — | Extra context references |
+| `task.constraints` | string[] | — | Hard constraints |
+| `task.expected_output` | { type?, schema? } | — | Output contract |
+| `task.sop` | string | — | Standard operating procedure |
+| `task.budget` | { max_tokens?, max_duration?, max_cost_usd? } | — | Per-node budget |
+| `harness` | { heartbeat_interval?, heartbeat_timeout?, auto_abort_on_budget? } | — | Safety watchdog |
+
+```yaml
+- id: review
+  type: octopus_agent
+  agent: built-in/architecture-explorer
+  task:
+    brief: Review the generated design against the repo constraints
+    constraints: ["read-only", "cite files"]
+  depends_on: [design]
+```
 
 ### WorkflowInput
 

@@ -16,10 +16,12 @@ import { DebugInspectorWindow } from './debug-inspector-window'
 import { ArtifactsWindow } from './artifacts-window'
 import { ArchiveWindow } from './archive-window'
 import { SubagentWindow } from './subagent-window'
+import { WorkflowDevWindow } from './workflow-dev-window'
 import type { TaskModule, TaskWindowMap, TaskWindowRecord, RunTarget, SubagentTarget } from './task-window-types'
 
 const MODULE_TITLE: Record<TaskModule, string> = {
   plan: '规格',
+  workflow: '工作流',
   changes: '变更',
   run: '运行',
   acceptance: '验收',
@@ -130,8 +132,10 @@ export function TaskModulesLayer({
     const preferred =
       module === 'acceptance' || module === 'run'
         ? { width: 1240, height: 740 }
-        : module === 'plan'
-          ? { width: 980, height: 640 }
+        : module === 'workflow'
+          ? { width: 1280, height: 760 }
+          : module === 'plan'
+            ? { width: 980, height: 640 }
           : module === 'archive'
             ? { width: 1040, height: 700 }
             : module === 'usage'
@@ -239,6 +243,9 @@ export function TaskModulesLayer({
                 sessionId={chatSessionId ?? sessionId ?? null}
                 agentId={record.subagentTarget?.id ?? null}
               />
+            ) : module === 'workflow' ? (
+              // workflow-dev 任务专用：DAG + Monaco YAML（查看/修改）。
+              task ? <WorkflowDevWindow task={task} onMutated={onMutated} /> : null
             ) : !task ? null : module === 'changes' ? (
               <ChangesWindow task={task} />
             ) : module === 'plan' ? (
