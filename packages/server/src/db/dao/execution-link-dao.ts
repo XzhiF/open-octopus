@@ -8,8 +8,9 @@ import { BaseDAO } from "./base"
  *   · task_aux —— 任务里的系统辅助执行（当前唯一成员：验收规划）。挂 task_id
  *     会撞 ux_exec_task_active 的单实例闸，也会混进看板 / run_stats 的「轮」口径，
  *     所以插行时刻意留 NULL，改用本表登记；
- *   · chat_run —— 主对话里 run_workflow 直接拉起的工作流。它不属于任何任务，
- *     只认发起它的会话。
+ *   · chat_run —— 对话里 run_workflow 直接拉起的工作流。它可能有 task_id
+ *     （任务线程里跑的，2026-11-06 起进任务消耗账），也可能是 NULL（自由对话，
+ *     只认发起它的会话）。
  *
  * 任务账本 / 会话账本按本表归集；表的主键是 execution_id，重复登记只更新归属。
  */
@@ -174,6 +175,28 @@ export class ExecutionLinkDAO extends BaseDAO {
        WHERE l.session_id = ?
        ORDER BY e.created_at ASC
     `).all(sessionId) as LinkedExecutionRow[]
+  }
+
+  /** 存量回填（2026-11-06）：任务线程里 run_workflow 拉起的 chat_run 此前只登记
+   *  了 session、没有 task_id，任务「消耗」窗看不到这次执行。按「发起会话 = 任务
+   *  主线程」且「执行发生在任务创建之后」补登 task_id；同一会话挂多个任务时归属
+   *  有歧义，不回填。幂等。 */
+  backfillChatRunTaskLinks(): number {
+    return this.stmt(`
+      UPDATE execution_links
+         SET task_id = (
+           SELECT t.id FROM tasks t
+            WHERE t.source_chat_session_id = execution_links.session_id
+              AND execution_links.created_at >= t.created_at
+            LIMIT 1
+         )
+       WHERE task_id IS NULL
+         AND kind = 'chat_run'
+         AND session_id IS NOT NULL
+         AND (SELECT COUNT(*) FROM tasks t
+               WHERE t.source_chat_session_id = execution_links.session_id
+                 AND execution_links.created_at >= t.created_at) = 1
+    `).run().changes
   }
 
   /**

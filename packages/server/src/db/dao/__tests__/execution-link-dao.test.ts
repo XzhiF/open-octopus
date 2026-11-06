@@ -89,6 +89,29 @@ describe("ExecutionLinkDAO", () => {
     expect(dao.findByExecution("e-plan")?.round_index).toBe(9)
   })
 
+  it("backfill chat_run：任务线程里起的执行补登 task_id；任务创建前的运行不补", () => {
+    dao.link({ executionId: "e-after", sessionId: "s-main", taskId: null, kind: "chat_run" })
+    dao.link({
+      executionId: "e-before", sessionId: "s-main", taskId: null, kind: "chat_run",
+      createdAt: "2026-11-02T00:00:00.000Z",
+    })
+
+    expect(dao.backfillChatRunTaskLinks()).toBe(1)
+    expect(dao.findByExecution("e-after")?.task_id).toBe("t-1")
+    expect(dao.findByExecution("e-before")?.task_id).toBeNull()
+    // 幂等：已带 task_id 的行不再计数。
+    expect(dao.backfillChatRunTaskLinks()).toBe(0)
+
+    // 同一会话挂两个任务 → 归属有歧义，不回填。
+    db.prepare(`
+      INSERT INTO tasks (id, repo_group, name, status, source_chat_session_id, task_spec, created_at, updated_at, workspace_id)
+      VALUES ('t-2', 'org', '任务2', 'running', 's-main', '{"format":"v4"}', ?, ?, 'ws-1')
+    `).run(NOW, NOW)
+    dao.link({ executionId: "e-ambiguous", sessionId: "s-main", taskId: null, kind: "chat_run" })
+    expect(dao.backfillChatRunTaskLinks()).toBe(0)
+    expect(dao.findByExecution("e-ambiguous")?.task_id).toBeNull()
+  })
+
   it("link 是 upsert：同一执行重复登记只更新归属", () => {
     insertAcceptanceExec(db, "e-plan")
     dao.link({ executionId: "e-plan", sessionId: "s-main", taskId: "t-1", kind: "task_aux" })

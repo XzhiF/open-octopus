@@ -1127,10 +1127,13 @@ export class TasksService {
     this.taskDAO = new TaskDAO(db)
     this.tokenUsage = new TokenUsageDAO(db)
     this.execLinks = new ExecutionLinkDAO(db)
-    // 存量验收规划执行回填归属（幂等；坐标从 input_values 读，pipeline_config
-    // 会在 start 时被引擎整体覆盖，不可依赖）。服务单例构造一次，代价可忽略。
+    // 存量执行归属回填（幂等）：验收规划从 input_values 反查（坐标会被引擎覆盖，
+    // 不可依赖）；任务线程里的 chat_run 按主线程会话补登 task_id。服务单例构造
+    // 一次，代价可忽略。
     try {
       this.execLinks.backfillAcceptancePlanLinks()
+      // 任务线程里 run_workflow 拉起的 chat_run 补登 task_id（2026-11-06，幂等）。
+      this.execLinks.backfillChatRunTaskLinks()
     } catch (err: unknown) {
       console.error("[TasksService] execution_links backfill failed (non-fatal):",
         err instanceof Error ? err.message : String(err))
@@ -1543,8 +1546,9 @@ export class TasksService {
    *   · 工作流行 = `tasks.source_chat_session_id = sessionId` 的全部任务，按
    *     executions.task_id ∪ execution_links(task_aux) 归集 —— 与任务窗 `/usage`
    *     的 execution 段同源（验收规划这类辅助执行也进账）；
-   *   · 主对话里直接跑的工作流（execution_links.kind = chat_run）不属于任何任务，
-   *     按执行单列一行；
+   *   · 自由对话里直接跑的工作流（execution_links.kind = chat_run 且无 task_id）
+   *     按执行单列一行；任务线程里跑的 chat_run 登记了 task_id（2026-11-06），
+   *     并入该任务那一行；
    *   · 对话时长 = 各调用 [timestamp, timestamp+duration_ms] 的并集（同一轮里
    *     重复上报 / 并行的模型行只算一次）；工作流时长 = 任务实跑段 + 辅助执行实跑段。
    *

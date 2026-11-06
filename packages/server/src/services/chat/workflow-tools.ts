@@ -91,6 +91,17 @@ export function createWorkflowToolServer(
     content: [{ type: "text" as const, text: JSON.stringify(data, null, 2) }],
   })
 
+  /** 卡片标题用 YAML 里的 name；解析失败退回 ref。 */
+  const workflowDisplayName = (ref: string): string => {
+    const content = resolveContent(ref)
+    if (!content) return ref
+    try {
+      return parseWorkflow(content).name
+    } catch {
+      return ref
+    }
+  }
+
   const describe = (ref: string, content: string) => {
     const parsed = parseWorkflow(content)
     return {
@@ -167,11 +178,18 @@ export function createWorkflowToolServer(
           workflow_ref,
           input_values: input_values ?? {},
           triggered_by: "chat",
-          // 消耗口径（2026-11-03）：主对话直接跑的工作流不属于任何任务，创建时
-          // 带上 origin，ExecutionLifecycle 会在同一处落 execution_links —— 会话
-          // 账本据此把它算进「这个 chat 关联的工作流」。将来其他 chat 代跑路径
-          // 同样传 origin，不需要各自记得补登记。
-          ...(owner ? { origin: { sessionId: owner.sessionId, kind: "chat_run" as const } } : {}),
+          // 消耗口径：chat 里拉起的工作流创建时带上 origin，ExecutionLifecycle
+          // 在同一处落 execution_links —— 会话账本据此把它算进这个 chat 关联的
+          // 工作流；任务线程里跑的（2026-11-06）同时登记 taskId，任务「消耗」窗
+          // 才看得到。轮次口径不变：execution 行 task_id 仍为 NULL，不会混进
+          // run_stats / ux_exec_task_active。
+          ...(owner ? {
+            origin: {
+              sessionId: owner.sessionId,
+              ...(opts.taskId ? { taskId: opts.taskId } : {}),
+              kind: "chat_run" as const,
+            },
+          } : {}),
         })
         if (owner) {
           getChatEventBridge().bindExecution(exec.id, {
@@ -179,6 +197,16 @@ export function createWorkflowToolServer(
             org: owner.org,
             workspaceId,
             workflowRef: workflow_ref,
+          })
+          // 2026-11-06：chat 里拉起的工作流在对话落一张执行卡 —— 「工作流运行 ·
+          // xxx」原地走到完成/失败，比事后一条「工作流完成：xxx」的裸文本更清楚。
+          getChatEventBridge().requestWorkflowRunCard({
+            sessionId: owner.sessionId,
+            executionId: exec.id,
+            workspaceId,
+            workflowRef: workflow_ref,
+            workflowName: workflowDisplayName(workflow_ref),
+            system: false,
           })
         }
         await registry.service.start(exec.id, input_values ?? {})

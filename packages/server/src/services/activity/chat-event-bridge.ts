@@ -705,7 +705,10 @@ class ChatEventBridge {
    *  零 LLM：只落卡 + 通知会话刷新，不唤醒主 Chat（终态由前端轮询得到）。
    *  一执行一张：按 executionId 去重。 */
   requestWorkflowRunCard(input: {
-    taskId: string
+    /** Task-scoped callers（验收规划）按任务找主线程会话。 */
+    taskId?: string
+    /** Chat-scoped callers（`run_workflow` 工具）已经知道会话，无需任务。 */
+    sessionId?: string
     executionId: string
     workspaceId: string
     workflowRef: string
@@ -721,18 +724,22 @@ class ChatEventBridge {
       source_chat_session_id?: string | null
       workspace_id?: string | null
     } | undefined
-    try {
-      row = this.db.prepare(
-        "SELECT name, source_chat_session_id, workspace_id FROM tasks WHERE id = ?",
-      ).get(input.taskId) as typeof row
-    } catch {
-      return
+    if (input.taskId) {
+      try {
+        row = this.db.prepare(
+          "SELECT name, source_chat_session_id, workspace_id FROM tasks WHERE id = ?",
+        ).get(input.taskId) as typeof row
+      } catch {
+        return
+      }
+      if (!row?.source_chat_session_id) return
     }
-    if (!row?.source_chat_session_id) return
+    const sessionId = input.sessionId ?? row?.source_chat_session_id
+    if (!sessionId) return
     let session: { clone_name?: string | null } | undefined
     try {
       session = this.db.prepare("SELECT clone_name FROM sessions WHERE id = ?")
-        .get(row.source_chat_session_id) as typeof session
+        .get(sessionId) as typeof session
     } catch {
       return
     }
@@ -744,7 +751,7 @@ class ChatEventBridge {
       : ""
     const detail = [input.workflowRef, coord].filter(Boolean).join(" · ")
     const title = `工作流运行 · ${input.workflowName}`
-    const workspaceId = input.workspaceId || row.workspace_id || null
+    const workspaceId = input.workspaceId || row?.workspace_id || null
     const event = getActivityBus().publish({
       kind: "workflow.started",
       severity: "info",
@@ -753,7 +760,7 @@ class ChatEventBridge {
       workspaceId,
       taskId: input.taskId,
       executionId: input.executionId,
-      sessionId: row.source_chat_session_id,
+      sessionId,
       payload: {
         status: "running",
         workflowRun: true,
@@ -765,7 +772,7 @@ class ChatEventBridge {
       },
     })
     this.appendTaskCard({
-      sessionId: row.source_chat_session_id,
+      sessionId,
       workspaceId,
       title,
       detail,
@@ -774,7 +781,7 @@ class ChatEventBridge {
       actions: [],
       contentPrefix: "工作流运行",
     })
-    this.notifySession(row.source_chat_session_id, workspaceId)
+    this.notifySession(sessionId, workspaceId)
   }
 
   /** 验收方案就绪（2026-10-30 AI-native 验收；2026-10-31 两层化）：投一张
@@ -1071,7 +1078,11 @@ class ChatEventBridge {
       nodeId,
       sessionId: target?.sessionId,
     })
-    if (target) await this.wake(target, event)
+    // 已落执行卡的运行：卡片本身在对话里原地轮询到终态，这里只做 ephemeral
+    // 唤醒（模型能看到事件并回应，但不会再往 transcript 写一条
+    // 「工作流完成：xxx」的裸文本 —— 2026-11-06 用户反馈重复）。
+    const carded = this.workflowRunCarded.has(executionId)
+    if (target) await this.wake(target, event, carded ? { ephemeral: true } : undefined)
   }
 
   private queueWake(
