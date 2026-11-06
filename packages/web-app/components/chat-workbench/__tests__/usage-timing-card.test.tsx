@@ -71,6 +71,17 @@ describe('耗时卡', () => {
     expect(screen.queryByText(/编排 \/ 等待/)).toBeNull()
   })
 
+  it('工作流开发任务：0 轮但有工作流执行时也显示总耗时', () => {
+    render(
+      <UsageTimingCard
+        timing={{ count: 0, run_count: 1, duration_ms: 9 * MIN, agent_duration_ms: 6 * MIN }}
+        rounds={[]}
+      />,
+    )
+    expect(screen.getByTestId('usage-timing-total').textContent).toBe('9m 0s')
+    expect(screen.getByText(/0 轮实跑 · 1 次工作流/)).toBeTruthy()
+  })
+
   it('一轮都没跑（duration=0）时整卡不渲染', () => {
     const { container } = render(
       <UsageTimingCard timing={{ count: 0, duration_ms: 0, agent_duration_ms: 0 }} rounds={[]} />,

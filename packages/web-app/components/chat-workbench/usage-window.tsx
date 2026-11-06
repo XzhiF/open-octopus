@@ -131,7 +131,7 @@ export function UsageWindow({ taskId, versionKey }: { taskId: string; versionKey
         </span>
       </div>
       <p className="mt-2 text-[10px] leading-relaxed text-pop-dim/80">
-        口径：任务主对话（含作者/执行者身份）+ 该任务全部执行轮（含修复轮/子执行）+ 验收规划等系统辅助执行；带 execution_id 的账只走执行趟，会话趟只认 execution_id 为空的行，防双计。总耗时 = 各轮 started_at→completed_at 之和（进行中的轮计到本刻），不含排队与待验收等待。
+        口径：任务主对话（含作者/执行者身份）+ 该任务全部执行轮（含修复轮/子执行）+ 验收规划等系统辅助执行 + 任务线程里直接跑的工作流执行（run_workflow）；带 execution_id 的账只走执行趟，会话趟只认 execution_id 为空的行，防双计。总耗时 = 各轮 started_at→completed_at 之和（进行中的轮计到本刻）+ 工作流执行实跑段，不含排队与待验收等待。
       </p>
     </div>
   )

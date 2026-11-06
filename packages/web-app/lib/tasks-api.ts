@@ -752,6 +752,8 @@ export interface TaskUsagePart extends LlmUsageSummary {
 export interface TaskTimingSummary {
   /** 计入实跑段的轮数。 */
   count: number
+  /** 任务线程里 run_workflow 起的执行数（不计轮次，但计入 duration_ms）。 */
+  run_count?: number
   duration_ms: number
   agent_duration_ms: number
 }

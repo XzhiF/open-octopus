@@ -264,13 +264,17 @@ export interface TaskUsagePart extends LlmUsageSummary {
 }
 
 /** 任务耗时的两个口径（2026-10-31 消耗窗「总耗时」卡）：
- *  · duration_ms = Σ 执行轮实跑段 —— 与看板 ⏱ / 验收窗「实际用时」同源（run_stats），
- *    排队与待验收等待不算；
+ *  · duration_ms = Σ 执行轮实跑段（与看板 ⏱ / 验收窗「实际用时」同源，run_stats）
+ *    + 任务线程里 run_workflow 起的 chat_run 实跑段（2026-11-06）—— 排队与待验收
+ *    等待不算；
  *  · agent_duration_ms = Σ node_type='agent' 的节点 duration —— 这是**工时**不是墙钟，
  *    并行/重试会叠加，可能接近或超过 duration_ms，展示端按 100% 截断。 */
 export interface TaskTimingSummary {
   /** 计入实跑段的行数（同一谓词下的 run_stats.count）。 */
   count: number
+  /** 任务线程里 run_workflow 起的执行数（2026-11-06）—— 它们计入 duration_ms，
+   *  但不是相位轮，不计入 count。 */
+  run_count?: number
   duration_ms: number
   agent_duration_ms: number
 }
@@ -1523,9 +1527,19 @@ export class TasksService {
     // 是「所有 agent 执行的耗时」。它与墙钟本来就不同步（并行、暂停），
     // 展示端按 100% 截断，「其余 = 总耗时 − 工时」只在工时更小时显示。
     const agentDurationMs = [...agentByExec.values()].reduce((sum, ms) => sum + ms, 0)
+    // 非轮次执行（任务线程里 run_workflow 起的 chat_run）也算任务实跑时间：
+    // workflow-dev 没有相位轮，全部工作都在这些执行里，不计就只剩 0。轮次计数
+    // 仍只认 run_stats（看板 ⏱ 口径不变）。
+    const chatRuns = execRows.filter((e) => e.task_id == null && e.link_kind === "chat_run")
+    let chatRunDurationMs = 0
+    for (const e of chatRuns) {
+      const span = this.countedRunSpan(e, now)
+      if (span) chatRunDurationMs += span.end - span.start
+    }
     const timing: TaskTimingSummary = {
       count: stats?.count ?? 0,
-      duration_ms: stats?.duration_ms ?? 0,
+      run_count: chatRuns.length,
+      duration_ms: (stats?.duration_ms ?? 0) + chatRunDurationMs,
       agent_duration_ms: agentDurationMs,
     }
     const totals = mergeLlmUsageSummaries(breakdown) ?? EMPTY_LLM_USAGE

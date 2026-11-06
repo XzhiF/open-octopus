@@ -192,7 +192,7 @@ describe("taskUsage", () => {
     expect(usage.summary.totalCalls).toBe(0)
     expect(usage.summary.totals.tokens).toBe(0)
     expect(usage.summary.modelBreakdown).toEqual({})
-    expect(usage.timing).toEqual({ count: 0, duration_ms: 0, agent_duration_ms: 0 })
+    expect(usage.timing).toEqual({ count: 0, run_count: 0, duration_ms: 0, agent_duration_ms: 0 })
   })
 
   // 2026-11-03 事故回归：验收规划执行 task_id=NULL，归属只落 execution_links。
@@ -258,9 +258,12 @@ describe("taskUsage", () => {
     expect(run.duration_ms).toBe(9 * MIN)
     expect(run.agent_duration_ms).toBe(6 * MIN)
     expect(usage.summary.totalCalls).toBe(1)
-    // 轮次口径只认 executions.task_id —— chat_run 不叠总耗时。
+    // 轮次口径只认 executions.task_id —— chat_run 不占 count，但实跑段计入总耗时
+    // （workflow-dev 没有相位轮，全部工作都在这些执行里）。
     expect(usage.timing.count).toBe(0)
-    expect(usage.timing.duration_ms).toBe(0)
+    expect(usage.timing.run_count).toBe(1)
+    expect(usage.timing.duration_ms).toBe(9 * MIN)
+    expect(usage.timing.agent_duration_ms).toBe(6 * MIN)
   })
 
   it("unknown task → 404-shaped error", () => {
