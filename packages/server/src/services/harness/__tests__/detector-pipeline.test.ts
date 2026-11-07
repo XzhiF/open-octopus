@@ -158,15 +158,17 @@ describe("DetectorPipeline — onFailureDecision proxy", () => {
     expect(first).toEqual({ action: "abort" })
 
     const second = await wrapped.onFailureDecision!("bash-build", "err", "retry")
-    expect(second).toEqual({ action: "continue" })
+    // No harness opinion left → defer to the engine's failure_strategy (abort),
+    // not "continue" (which would override fail_fast).
+    expect(second).toEqual({ action: "abort" })
   })
 
-  it("returns default { action: 'continue' } when empty and no original callback", async () => {
+  it("returns default { action: 'abort' } when empty and no original callback", async () => {
     const wrapped = pipeline.wrapCallbacks({})
 
     const result = await wrapped.onFailureDecision!("node-x", "some error", "skip")
 
-    expect(result).toEqual({ action: "continue" })
+    expect(result).toEqual({ action: "abort" })
   })
 
   it("falls back to the original onFailureDecision when pendingFailureActions is empty", async () => {

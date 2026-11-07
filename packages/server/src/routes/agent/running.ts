@@ -30,14 +30,16 @@ export interface RunningExecutionWire {
 
 export function createRunningRoutes(execDao: ExecutionDAO): Hono {
   const router = new Hono()
-  const execLinks = new ExecutionLinkDAO(execDao.getDb())
+  // Lazy: route factories run at import time, before tests init the DB.
+  let execLinks: ExecutionLinkDAO | null = null
+  const getExecLinks = () => (execLinks ??= new ExecutionLinkDAO(execDao.getDb()))
 
   router.get("/executions/running", (c) => {
     const raw = Number(c.req.query("limit") ?? 50)
     const limit = Number.isFinite(raw) ? Math.min(Math.max(Math.trunc(raw), 1), 100) : 50
 
     const rows = execDao.listLiveRuns(limit)
-    const links = execLinks.findByExecutionIds(rows.map((r) => r.id))
+    const links = getExecLinks().findByExecutionIds(rows.map((r) => r.id))
     const runs: RunningExecutionWire[] = rows.map((row) => {
       const link = links.get(row.id)
       const taskId = row.task_id ?? link?.task_id ?? null

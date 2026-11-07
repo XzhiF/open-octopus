@@ -15,7 +15,7 @@ describe("DB Schema", () => {
     db?.close()
   })
 
-  it("creates all 46 tables", () => {
+  it("creates all expected tables", () => {
     db = createTestDb()
     applySchema(db)
     const rows = db.prepare(
@@ -53,7 +53,7 @@ describe("DB Schema", () => {
       "scheduled_job_executions", "scheduler_audit_logs", "scheduler_state", "schedules",
       "session_expert_rosters", "session_prompt_snapshots", "session_role_states",
       "session_turn_debug",
-      "sessions", "task_phase_acceptances", "tasks", "wiki_articles", "workspace_archive", "workspaces",
+      "sessions", "subagent_runs", "task_phase_acceptances", "tasks", "wiki_articles", "workspace_archive", "workspaces",
     ])
   })
 
@@ -86,7 +86,8 @@ describe("DB Schema", () => {
     // 2026-10-28 org demotion: −15 org indexes, +5 repo_group/domain/scope indexes = 89.
     // + schema v60 (dock 调试): idx_session_turn_debug_session = 90.
     // + 2026-11-03 消耗口径: execution_links 的 session/task 两条归属索引 = 92.
-    expect(rows.length).toBe(92)
+    // + 2026-11-04 作业坞子代理: idx_subagent_runs_session = 93.
+    expect(rows.length).toBe(93)
   })
 
   it("workspaces table has correct columns", () => {

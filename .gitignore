@@ -9,6 +9,9 @@
 .workbuddy/
 .scratch/
 
+# macOS
+.DS_Store
+
 # docs
 docs/superpowers/
 

@@ -39,7 +39,7 @@ import {
 // ═══════════════════════════════════════════════════
 
 const DASHSCOPE_BASE_URL = 'https://dashscope.aliyuncs.com/compatible-mode/v1'
-const MODEL_ID = 'qwen3-max'
+const MODEL_ID = 'qwen3.7-max'
 
 function makeDashScopeModel(): Model<any> {
   return {

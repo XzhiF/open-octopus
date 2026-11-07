@@ -65,7 +65,9 @@ function toWorkspaceRun(row: ExecutionRow, link?: ExecutionLinkRow): WorkspaceRu
 
 export function createWorkflowOpsRoutes(_workspaceDao: WorkspaceDAO, execDao: ExecutionDAO): Hono {
   const router = new Hono()
-  const execLinks = new ExecutionLinkDAO(execDao.getDb())
+  // Lazy: route factories run at import time, before tests init the DB.
+  let execLinks: ExecutionLinkDAO | null = null
+  const getExecLinks = () => (execLinks ??= new ExecutionLinkDAO(execDao.getDb()))
 
   // GET /runs — 本工作区顶层运行列表（作业坞运行面板）。只读，不触发执行。
   // 与 /executions 的区别：/executions 走内存 registry 的全量行（含链式子步骤），
@@ -75,7 +77,7 @@ export function createWorkflowOpsRoutes(_workspaceDao: WorkspaceDAO, execDao: Ex
     const rawLimit = Number(c.req.query("limit") ?? 50)
     const limit = Number.isFinite(rawLimit) ? Math.min(Math.max(Math.trunc(rawLimit), 1), 200) : 50
     const runs = execDao.listWorkspaceRuns(workspaceId, limit)
-    const links = execLinks.findByExecutionIds(runs.map((r) => r.id))
+    const links = getExecLinks().findByExecutionIds(runs.map((r) => r.id))
     return c.json({ runs: runs.map((r) => toWorkspaceRun(r, links.get(r.id))) })
   })
 

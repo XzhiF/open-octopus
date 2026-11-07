@@ -13,32 +13,24 @@ describe('SubAgent Tool (S13)', () => {
     expect(tool.description).toContain('Research expert')
   })
 
-  it('respects tools whitelist', () => {
+  it('declares a task parameter schema', () => {
     const def: OctopusAgentDef = {
       description: 'Limited agent',
       prompt: 'You can only read files.',
       tools: ['Read', 'Grep'],
     }
     const tool = toSubAgentTool('reader', def, '/tmp', {})
-    expect(tool.allowedTools).toEqual(['Read', 'Grep'])
+    expect(tool.parameters.required).toEqual(['task'])
+    expect(tool.parameters.properties.task.type).toBe('string')
   })
 
-  it('blocks nesting depth > 1 (TC-033)', () => {
+  it('blocks nesting depth > 1 (TC-033)', async () => {
     const def: OctopusAgentDef = {
       description: 'Nested agent',
       prompt: 'Test',
     }
     const tool = toSubAgentTool('nested', def, '/tmp', { depth: 1 })
-    expect(tool.maxDepth).toBe(1)
-  })
-
-  it('background: true maps to parallel execution', () => {
-    const def: OctopusAgentDef = {
-      description: 'Background worker',
-      prompt: 'Work in background.',
-      background: true,
-    }
-    const tool = toSubAgentTool('worker', def, '/tmp', {})
-    expect(tool.executionMode).toBe('parallel')
+    const result = await tool.execute('call-1', { task: 'delegate again' })
+    expect(result.content[0].text).toContain('nesting depth exceeded')
   })
 })

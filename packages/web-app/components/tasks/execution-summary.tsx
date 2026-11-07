@@ -140,7 +140,7 @@ export function mergeAggregates(list: LLMCallAggregates[]): LLMCallAggregates | 
   }
 }
 
-/** 紧凑 AI 账目一行（2026-09-16 用户定版）：与 node-detail/cost-tab 同口径视觉 —
+/** 紧凑 AI 账目一行（2026-09-16 用户定版）：与 LLM 账目卡同口径视觉 —
  *  ∑处理量 ↑入 ↓出 ⚡缓存读 🗡️缓存写 · N 次请求 · $费用，**不列工具调用**。
  *  任务域所有「calls · tokens · cost」行统一吃这一个实现。null/零调用 → null。 */
 export function AggInline({ agg, className, dim = "text-pop-dim" }: {

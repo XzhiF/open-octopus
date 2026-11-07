@@ -51,6 +51,23 @@ interface AgentRouteDeps {
   sse?: import('../../services/sse').SSEService
 }
 
+/** Defer a service's construction until its first method call.
+ *  Route factories run at import time, before tests init the DB. */
+function lazyService<T>(create: () => T): T {
+  let real: T | null = null
+  const resolve = () => (real ??= create())
+  return new Proxy({} as T, {
+    get(_, prop) {
+      if (typeof prop === 'symbol') return undefined
+      return (...args: unknown[]) => {
+        const instance = resolve() as any
+        const val = instance[prop]
+        return typeof val === 'function' ? val.apply(instance, args) : val
+      }
+    },
+  }) as T
+}
+
 export function createAgentRoutes(deps: AgentRouteDeps): Hono {
   const {
     sessionDAO, safetyDAO, scheduleConfigDAO, evolutionDAO, cloneDAO, tokenUsageDao, curation,
@@ -84,11 +101,11 @@ export function createAgentRoutes(deps: AgentRouteDeps): Hono {
   agent.route('/', createSafetyRoutes(safetyDAO))
   // 2026-10-28 task-thread: one main chat per task. Constructed here because
   // the chat route needs it before TasksService is created (async init block).
-  const taskThread = new TaskThreadService({
+  const taskThread = lazyService(() => new TaskThreadService({
     db: sessionDAO.getDb(),
     workspaceService: new WorkspaceService(deps.workspaceDAO),
     taskHomeService: new TaskHomeService(),
-  })
+  }))
 
   agent.route('/', createChatRoutes({ sessionDAO, safetyDAO, scheduleConfigDAO, tokenUsageDao, sse: deps.sse, taskThread }))
 

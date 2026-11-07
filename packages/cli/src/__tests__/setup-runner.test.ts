@@ -96,17 +96,12 @@ describe("SetupRunner", () => {
     it("creates org subdirectories", async () => {
       const runner = createRunner("xzf")
       await runner.run()
-      const expectedSubdirs = [
-        "env",
-        "mcp",
-        "repos",
-        "repos/projects",
-        "evolution",
-        "evolution/experiences",
-        "config",
-      ]
-      for (const subdir of expectedSubdirs) {
+      for (const subdir of ["repos", "repos/projects"]) {
         expect(existsSync(join(testOrgDir, subdir))).toBe(true)
+      }
+      // Agent-global dirs live under the global octopus home (org demotion).
+      for (const subdir of ["mcp", "env", "agent/evolution", "agent/evolution/experiences", "agent/config"]) {
+        expect(existsSync(join(testGlobalDir, subdir))).toBe(true)
       }
     })
 
@@ -183,22 +178,22 @@ describe("SetupRunner", () => {
     it("copies MCP YAML from preset", async () => {
       const runner = createRunner("xzf")
       await runner.run()
-      const mcpDir = join(testOrgDir, "mcp")
+      const mcpDir = join(testGlobalDir, "mcp")
       expect(existsSync(mcpDir)).toBe(true)
       expect(existsSync(join(mcpDir, "mcp_prod.yaml"))).toBe(true)
     })
 
     it("skips existing MCP YAML", async () => {
-      mkdirSync(join(testOrgDir, "mcp"), { recursive: true })
+      mkdirSync(join(testGlobalDir, "mcp"), { recursive: true })
       writeFileSync(
-        join(testOrgDir, "mcp", "mcp_prod.yaml"),
+        join(testGlobalDir, "mcp", "mcp_prod.yaml"),
         "existing: true\n",
         "utf-8",
       )
       const runner = createRunner("xzf")
       await runner.run()
       const content = readFileSync(
-        join(testOrgDir, "mcp", "mcp_prod.yaml"),
+        join(testGlobalDir, "mcp", "mcp_prod.yaml"),
         "utf-8",
       )
       expect(content).toContain("existing: true")
@@ -209,36 +204,36 @@ describe("SetupRunner", () => {
     it("copies env file when target doesn't exist", async () => {
       const runner = createRunner("xzf")
       await runner.run()
-      expect(existsSync(join(testOrgDir, "env", "database.md"))).toBe(true)
+      expect(existsSync(join(testGlobalDir, "env", "database.md"))).toBe(true)
     })
 
     it("merges env file when target exists", async () => {
-      mkdirSync(join(testOrgDir, "env"), { recursive: true })
+      mkdirSync(join(testGlobalDir, "env"), { recursive: true })
       writeFileSync(
-        join(testOrgDir, "env", "database.md"),
+        join(testGlobalDir, "env", "database.md"),
         "## Database\n- host: myhost\n- port: 3306\n- custom_key: myvalue\n",
         "utf-8",
       )
       const runner = createRunner("xzf")
       await runner.run()
       const content = readFileSync(
-        join(testOrgDir, "env", "database.md"),
+        join(testGlobalDir, "env", "database.md"),
         "utf-8",
       )
       expect(content).toContain("host: myhost")
     })
 
     it("preserves user env header during merge", async () => {
-      mkdirSync(join(testOrgDir, "env"), { recursive: true })
+      mkdirSync(join(testGlobalDir, "env"), { recursive: true })
       writeFileSync(
-        join(testOrgDir, "env", "database.md"),
+        join(testGlobalDir, "env", "database.md"),
         "# Database Config\n\n> Connection info\n\n## Database\n- host: myhost\n- port: 3306\n",
         "utf-8",
       )
       const runner = createRunner("xzf")
       await runner.run()
       const content = readFileSync(
-        join(testOrgDir, "env", "database.md"),
+        join(testGlobalDir, "env", "database.md"),
         "utf-8",
       )
       expect(content).toContain("# Database Config")
@@ -296,9 +291,9 @@ describe("SetupRunner", () => {
     })
 
     it("tracks skipped files in report", async () => {
-      mkdirSync(join(testOrgDir, "mcp"), { recursive: true })
+      mkdirSync(join(testGlobalDir, "mcp"), { recursive: true })
       writeFileSync(
-        join(testOrgDir, "mcp", "mcp_prod.yaml"),
+        join(testGlobalDir, "mcp", "mcp_prod.yaml"),
         "existing: true\n",
         "utf-8",
       )

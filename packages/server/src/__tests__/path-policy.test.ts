@@ -1,7 +1,7 @@
 // 工作目录路径策略：允许 home 之外的项目目录，只挡系统敏感目录。
 // 规则按平台维护（Windows / macOS / Linux），这里只断言当前宿主平台可验证的部分。
 
-import { describe, it, expect } from "vitest"
+import { describe, it, expect, afterAll } from "vitest"
 import fs from "fs"
 import os from "os"
 import path from "path"
@@ -12,9 +12,17 @@ import {
   resolveSelectableDirectory,
 } from "../services/path-policy"
 
+// os.tmpdir() on macOS resolves under /private/var, which the policy (rightly)
+// blocks as system-sensitive. Use a home-based temp base instead.
+const TEMP_BASE = fs.mkdtempSync(path.join(os.homedir(), ".octopus-path-policy-test-"))
+
 function tempDir(prefix: string): string {
-  return fs.mkdtempSync(path.join(os.tmpdir(), prefix))
+  return fs.mkdtempSync(path.join(TEMP_BASE, prefix))
 }
+
+afterAll(() => {
+  fs.rmSync(TEMP_BASE, { recursive: true, force: true })
+})
 
 describe("path-policy", () => {
   it("文件系统根不能选作 cwd", () => {

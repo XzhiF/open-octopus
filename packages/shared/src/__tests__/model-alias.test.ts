@@ -65,8 +65,15 @@ describe('resolveModelAlias', () => {
 
 describe('loadModelAliasConfig', () => {
   it('returns defaults when no file exists', () => {
-    const config = loadModelAliasConfig({ orgDir: '/nonexistent', globalDir: '/nonexistent2' })
-    expect(config).toEqual(DEFAULT_MODEL_ALIASES)
+    const originalHome = process.env.HOME
+    process.env.HOME = '/nonexistent-home-for-test'
+    try {
+      const config = loadModelAliasConfig({ orgDir: '/nonexistent', globalDir: '/nonexistent2' })
+      expect(config).toEqual(DEFAULT_MODEL_ALIASES)
+    } finally {
+      if (originalHome === undefined) delete process.env.HOME
+      else process.env.HOME = originalHome
+    }
   })
 })
 

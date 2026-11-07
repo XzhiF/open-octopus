@@ -450,11 +450,18 @@ app.use("*", async (c, next) => {
 // We use Proxy DAOs that lazily create the real DAO on first method call.
 function lazyDAO<T>(Ctor: new (db: any) => T): T {
   let real: T | null = null
+  const resolve = () => (real ??= new Ctor(getDb()))
   return new Proxy({} as any, {
     get(_, prop) {
-      if (!real) real = new Ctor(getDb())
-      const val = (real as any)[prop]
-      return typeof val === 'function' ? val.bind(real) : val
+      if (typeof prop === 'symbol') return undefined
+      // getDb() is the DB accessor itself: don't force DAO construction while
+      // route factories run at import time (tests init the DB in beforeAll).
+      if (prop === 'getDb') return () => getDb()
+      return (...args: unknown[]) => {
+        const instance = resolve() as any
+        const val = instance[prop]
+        return typeof val === 'function' ? val.apply(instance, args) : val
+      }
     },
   }) as T
 }

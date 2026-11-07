@@ -85,11 +85,11 @@ describe("resolveOutputsExpression", () => {
     expect(result).toBe("Alice is great")
   })
 
-  it("returns literal strings not starting with $ as-is", () => {
+  it("substitutes $refs inside template strings", () => {
     const pool = new VarPool({ name: "Alice" })
-    // Strings not starting with $ are literals — no substitution performed
+    // Strings containing $refs are treated as templates and interpolated
     const result = resolveOutputsExpression("Hello $vars.name!", pool, undefined, undefined)
-    expect(result).toBe("Hello $vars.name!")
+    expect(result).toBe("Hello Alice!")
   })
 
   it("returns literal strings as-is", () => {

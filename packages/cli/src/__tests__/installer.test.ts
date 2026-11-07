@@ -28,7 +28,7 @@ describe("Installer", () => {
     mkdirSync(join(mockCorePackDir, "agents"), { recursive: true })
     mkdirSync(join(mockCorePackDir, "scripts"), { recursive: true })
     mkdirSync(join(mockCorePackDir, "config"), { recursive: true })
-    mkdirSync(join(mockCorePackDir, "presets", "standard", "mcp"), {
+    mkdirSync(join(mockCorePackDir, "presets", "orgs", "standard", "mcp"), {
       recursive: true,
     })
 
@@ -59,7 +59,7 @@ describe("Installer", () => {
     )
 
     writeFileSync(
-      join(mockCorePackDir, "presets", "standard", "mcp", "mcp_prod.yaml"),
+      join(mockCorePackDir, "presets", "orgs", "standard", "mcp", "mcp_prod.yaml"),
       "servers:\n  - name: test-service\n",
       "utf-8",
     )
@@ -180,20 +180,21 @@ describe("Installer", () => {
     expect(existsSync(join(scriptsDir, "skill_search"))).toBe(true)
   })
 
-  it("registers MCP YAML from presets into org mcp dir", () => {
-    const installer = createInstaller(testDir, "xzf")
-    installer.run()
-    const mcpDir = join(
-      process.env.HOME || process.env.USERPROFILE || "",
-      ".octopus",
-      "xzf",
-      "mcp",
-    )
-    if (existsSync(mcpDir)) {
+  it("registers MCP YAML from presets into the global mcp dir", () => {
+    const originalHome = process.env.OCTOPUS_HOME
+    process.env.OCTOPUS_HOME = testDir
+    try {
+      const installer = createInstaller(testDir, "xzf")
+      installer.run()
+      const mcpDir = join(testDir, "mcp")
+      expect(existsSync(mcpDir)).toBe(true)
       const yamlFiles = readdirSync(mcpDir).filter((f) =>
         f.endsWith(".yaml"),
       )
       expect(yamlFiles.length).toBeGreaterThan(0)
+    } finally {
+      if (originalHome === undefined) delete process.env.OCTOPUS_HOME
+      else process.env.OCTOPUS_HOME = originalHome
     }
   })
 
@@ -207,30 +208,29 @@ describe("Installer", () => {
   })
 
   it("creates org subdirectories in global dir", () => {
-    const installer = createInstaller(testDir, "xzf")
-    installer.run()
-    // The rest of the codebase (workspace-cmd, setup-runner, agent cmd) uses
-    // ~/.octopus/orgs/<org>/ as the canonical org directory. The installer is
-    // expected to seed the same location, so assert against that.
-    const orgDir = join(
-      process.env.HOME || process.env.USERPROFILE || "",
-      ".octopus",
-      "orgs",
-      "xzf",
-    )
-    const expectedSubdirs = [
-      "env",
-      "mcp",
-      "repos",
-      "repos/projects",
-      "evolution",
-      "evolution/experiences",
-      "config",
-    ]
-    for (const subdir of expectedSubdirs) {
-      if (existsSync(orgDir)) {
+    const originalHome = process.env.OCTOPUS_HOME
+    process.env.OCTOPUS_HOME = testDir
+    try {
+      const installer = createInstaller(testDir, "xzf")
+      installer.run()
+      // Org repo registry lives under <home>/orgs/<org>; agent-global dirs live
+      // directly under the octopus home (org demotion).
+      const orgDir = join(testDir, "orgs", "xzf")
+      for (const subdir of ["repos", "repos/projects"]) {
         expect(existsSync(join(orgDir, subdir))).toBe(true)
       }
+      for (const subdir of [
+        "mcp",
+        "env",
+        "agent/evolution",
+        "agent/evolution/experiences",
+        "agent/config",
+      ]) {
+        expect(existsSync(join(testDir, subdir))).toBe(true)
+      }
+    } finally {
+      if (originalHome === undefined) delete process.env.OCTOPUS_HOME
+      else process.env.OCTOPUS_HOME = originalHome
     }
   })
 

@@ -59,7 +59,7 @@ grep -n "sse.emit" packages/server/src/services/execution/ExecutionLifecycle.ts
 
 ```bash
 # 搜索 SSE 监听器
-grep -n "addEventListener" packages/web-app/hooks/use-execution-tree.ts
+grep -n "addEventListener" packages/web-app/lib/sse-manager.ts
 ```
 
 **检查 handler 是否无条件覆盖状态**：

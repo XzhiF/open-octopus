@@ -12,7 +12,7 @@
 
 import crypto from "crypto"
 import type { ContextUsageData, MessageChunk, SystemInitData } from "@octopus/providers"
-import type { SessionTurnDebugDAO } from "../db/dao/session-turn-debug-dao"
+import type { SessionTurnDebugDAO } from "../../db/dao/session-turn-debug-dao"
 
 export type TurnDebugStatus = "running" | "ok" | "interrupted" | "error"
 
