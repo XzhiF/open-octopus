@@ -9,6 +9,7 @@ import path from 'path'
 import type { OctopusAgentDef } from '@octopus/providers'
 import { getBuiltInClonesDir, getClonesDir, getBuiltInCloneDir, getCloneDir } from './paths'
 import { BUILTIN_CLONES, getBuiltinCloneDef, isBuiltinClone } from './builtin-clones'
+import { appendCloneChange } from './clone-changes'
 
 /** Read-only tools every consulting clone gets — it advises, it does not mutate. */
 const CONSULT_TOOLS = ['Read', 'Grep', 'Glob']
@@ -344,6 +345,26 @@ export function updateCloneSettings(
     fs.writeFileSync(configPath, JSON.stringify(next, null, 2), 'utf-8')
   } catch (err) {
     return { ok: false, error: err instanceof Error ? err.message : String(err) }
+  }
+
+  // 技能勾选变化 = 分身资产变更（「今日」页变动追踪）。config.json 已落盘；
+  // 台账写失败不影响设置保存。
+  if (patch.skills !== undefined) {
+    const before = new Set(existing.skills ?? [])
+    const after = new Set(next.skills ?? [])
+    const added = [...after].filter((s) => !before.has(s))
+    const removed = [...before].filter((s) => !after.has(s))
+    if (added.length > 0 || removed.length > 0) {
+      const parts: string[] = []
+      if (added.length > 0) parts.push(`+ ${added.join('、')}`)
+      if (removed.length > 0) parts.push(`- ${removed.join('、')}`)
+      appendCloneChange(cloneDir, {
+        ts: new Date().toISOString(),
+        kind: 'skill',
+        path: 'config.json',
+        summary: `技能变更 ${parts.join(' / ')}`,
+      })
+    }
   }
 
   const updated = resolveCloneInfo(name)

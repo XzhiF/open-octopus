@@ -53,6 +53,16 @@ export function callVendorSql(l: string): string {
 }
 
 /**
+ * 一行因缓存读而省下的 USD（对照按输入价重算的同批 token）。
+ * 价行未配缓存读价 → NULL（不焊 0）；同币种/汇率口径与 cost 一致。
+ * 单行下限 0：缓存读价高于输入价属于配置错误，不能把「省下」算成负数。
+ */
+export function callCacheSavingsUsdSql(l: string): string {
+  const native = `MAX(0, (p.input_unit_price - p.cache_read_unit_price) * ${l}.cache_read_tokens / 1000000.0)`
+  return matchSubquery(`CASE WHEN p.currency = 'USD' THEN ${native} ELSE ${native} / ${RATE_SQL} END`, l)
+}
+
+/**
  * 视图 DDL —— applySchema 每次 DROP+CREATE（幂等且与代码同源）。
  * 列 = llm_calls 全列 + cost_usd + vendor。
  */

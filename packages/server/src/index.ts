@@ -15,7 +15,7 @@ import {
   ScheduleRunDAO, ChatDAO, OrgDAO, AgentSessionDAO, EvolutionDAO,
   CloneDAO, SafetyDAO,
   KnowledgeEffectivenessDAO, ArchiveDAO,
-  TaskDAO, WikiArticleDAO,
+  TaskDAO, WikiArticleDAO, TodayDAO,
 } from "./db/dao"
 import { ArchiveDraftDAO } from "./db/dao/archive-draft-dao"
 import { InteractionMessageDAO } from "./db/dao/interaction-message-dao"
@@ -89,6 +89,7 @@ import { createWorkflowRoutes } from "./routes/workflow"
 import executionRoutes, { setExecutionDependencies } from "./routes/execution"
 import harnessRoutes, { setHarnessDependencies } from "./routes/harness"
 import { createDashboardRoutes } from "./routes/dashboard"
+import { createTodayRoutes } from "./routes/today"
 import { createActivityRoutes } from "./routes/activity"
 import { chatRoutes } from "./routes/chat"
 import { globalChatRoutes } from "./routes/global-chat"
@@ -152,13 +153,12 @@ import { WorkspaceService } from "./services/workspace"
 import { ChatService } from "./services/chat"
 import { setTaskToolsServiceProvider } from "./services/chat/task-tools"
 import { LeaderboardService } from "./services/leaderboard"
-import { getLogAnalysisService } from "./services/log-analysis"
 import { initSessionService, getSessionService } from "./services/agent/session-service"
 import { initMemoryService } from "./services/agent/memory-service"
 import { initEvolutionService } from "./services/agent/evolution-service"
 import { initRecoveryService } from "./services/agent/recovery-service"
 import { initSessionCompressService } from "./services/agent/session-compress-service"
-import { initAgentService, getAgentService } from "./services/agent/agent-service"
+import { initAgentService, getAgentService, listActiveStreams } from "./services/agent/agent-service"
 import { initAgentVersionService, publishVersionedBuiltinClones, getAgentVersionService } from "./services/agent/agent-version-service"
 import { getFlag } from "./config/feature-flags"
 import { ActuatorService } from "./services/actuator/actuator-service"
@@ -209,6 +209,8 @@ interface AllDAOs {
   harness: HarnessDAO
   // 03: first-class tasks table DAO (v2-D1).
   task: TaskDAO
+  /** 「今日」页只读聚合（当天窗口，无写入）。 */
+  today: TodayDAO
 }
 
 function createAllDAOs(db: ReturnType<typeof initDb>): AllDAOs {
@@ -232,6 +234,7 @@ function createAllDAOs(db: ReturnType<typeof initDb>): AllDAOs {
     agentVersion: new AgentVersionDAO(db),
     harness: new HarnessDAO(db),
     task: new TaskDAO(db),
+    today: new TodayDAO(db),
   }
 }
 
@@ -479,6 +482,7 @@ const d = daos ?? {
   // in test mode (VITEST) where `daos` is null and the lazy proxy branch is used.
   // 04's task-author autosave seam + TasksService both consume it.
   task: lazyDAO(TaskDAO),
+  today: lazyDAO(TodayDAO),
 }
 
 const wsSvc = workspaceService ?? new WorkspaceService(d.workspace)
@@ -519,8 +523,14 @@ app.route("/api/workspaces/:id/workflows", createWorkflowOpsRoutes(d.workspace, 
 app.route("/api/workspaces/:id/workflows", createWorkflowRoutes(d.workspace, () => resourceRegistry.get()))
 app.route("/api/workspaces/:id/executions", executionRoutes)
 app.route("/api/workspaces/:id/harness", harnessRoutes)
-app.route("/api/workspaces/:id/analytics", createAnalyticsLogRoutes(d.workspace, getLogAnalysisService({ tokenDao: d.tokenUsage, execDao: d.execution }) ?? new (require('./services/log-analysis').LogAnalysisService)(d.tokenUsage, d.execution)))
+app.route("/api/workspaces/:id/analytics", createAnalyticsLogRoutes(d.workspace))
 app.route("/api/dashboard", createDashboardRoutes(wsSvc, lbSvc, d.execution, d.tokenUsage, d.archive))
+// 「今日」页：当天整体工作状态（消耗 / 统计 / 精选时间线 / 精选变动），只读。
+app.route("/api/dashboard", createTodayRoutes({
+  todayDAO: d.today,
+  tokenUsageDAO: d.tokenUsage,
+  runningSessionCount: () => listActiveStreams().length,
+}))
 app.route("/api/activity", createActivityRoutes())
 app.route("/api/workspaces/:id/chat", chatRoutes(sse, chatSvc, wsSvc))
 app.route("/api/chat/global", globalChatRoutes(sse, chatSvc, d.tokenUsage))

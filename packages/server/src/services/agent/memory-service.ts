@@ -4,6 +4,7 @@ import crypto from 'crypto'
 import type { MemoryContent, MemorySearchResult } from '@octopus/shared'
 import { getAgentDir, getDailyMemoryDir, getLongTermMemoryPath, getAgentMemoryDir } from './paths'
 import { getConfigManager } from './config-manager'
+import { appendCloneChange, textDelta } from './clone-changes'
 import { AgentSessionDAO } from '../../db/dao'
 
 // ── Types ──────────────────────────────────────────────────────
@@ -116,6 +117,15 @@ export class MemoryService {
     const appended = existing + `\n### ${time}\n${content}\n`
     fs.writeFileSync(filePath, appended, 'utf-8')
 
+    // 分身记忆变更台账（「今日」页变动追踪）——写失败不影响记忆落盘。
+    if (cloneDir) {
+      appendCloneChange(cloneDir, {
+        ts: new Date().toISOString(),
+        kind: 'memory',
+        path: `memory/daily/${today}.md`,
+        ...textDelta(existing, appended),
+      })
+    }
     // 2. Insert summary message into messages table (for FTS search)
     //    Source: clone name (from dir basename) or 'main'
     const source = cloneDir ? path.basename(cloneDir) : 'main'
@@ -451,6 +461,16 @@ export class MemoryService {
 
     fs.writeFileSync(filePath, refinedContent, 'utf-8')
     const afterTokens = this.estimateTokens(refinedContent)
+
+    if (cloneDir) {
+      appendCloneChange(cloneDir, {
+        ts: new Date().toISOString(),
+        kind: 'memory',
+        path: 'memory/long-term.md',
+        ...textDelta(content, refinedContent),
+        summary: '长期记忆整理',
+      })
+    }
 
     return { refined: true, before_tokens: beforeTokens, after_tokens: afterTokens, backup_path: backupPath }
   }

@@ -12,6 +12,7 @@ import {
   getBuiltInCloneDir,
   getCloneDir,
 } from '../../services/agent/paths'
+import { appendCloneChange, textDelta, CLONE_CHANGES_FILE } from '../../services/agent/clone-changes'
 
 export interface FileInfo {
   path: string
@@ -113,10 +114,12 @@ export function createCloneFilesRoutes(): Hono {
     }
 
     const cloneDir = getCloneDirectory(name)
-    const targetPath = path.join(cloneDir, filePath)
+    // 虚拟路径（__inherited__/…）与穿越守卫共用 GET 的解析器 —— 写路径绝不能把
+    // "__inherited__/memory/x.md" 当成文件夹名落进分身目录。
+    const targetPath = resolveFilePath(name, filePath)
 
     // Path traversal guard
-    if (!targetPath.startsWith(cloneDir)) {
+    if (!targetPath) {
       return c.json({ error: 'Path traversal detected' }, 403)
     }
 
@@ -131,10 +134,56 @@ export function createCloneFilesRoutes(): Hono {
       // Create file (with optional content)
       const dir = path.dirname(targetPath)
       if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true })
-      fs.writeFileSync(targetPath, body.content || '', 'utf-8')
+      const prev = readTextIfFile(targetPath)
+      const next = body.content || ''
+      fs.writeFileSync(targetPath, next, 'utf-8')
+      recordCloneFileChange(cloneDir, filePath, prev, next)
     }
 
     return c.json({ success: true, path: filePath })
+  })
+
+  // PUT /clones/:name/files/:path — overwrite an existing text file.
+  // (Web `updateCloneFile` has always used PUT; before this route existed the
+  //  save button 404'd. The handler also feeds the clone change ledger.)
+  app.put('/clones/:name/files/:path{.+}', async (c) => {
+    const name = c.req.param('name')
+    const filePath = c.req.param('path')
+
+    let body: { content?: unknown } = {}
+    try {
+      body = await c.req.json()
+    } catch {
+      return c.json({ error: 'Request body must be JSON' }, 400)
+    }
+    if (typeof body.content !== 'string') {
+      return c.json({ error: 'content must be a string' }, 400)
+    }
+
+    const cloneDir = getCloneDirectory(name)
+    const targetPath = resolveFilePath(name, filePath)
+
+    // Path traversal guard
+    if (!targetPath) {
+      return c.json({ error: 'Path traversal detected' }, 403)
+    }
+
+    // Readonly guard
+    if (isReadonlyPath(targetPath)) {
+      return c.json({ error: 'Cannot modify readonly path' }, 403)
+    }
+
+    if (fs.existsSync(targetPath) && fs.statSync(targetPath).isDirectory()) {
+      return c.json({ error: 'Target is a directory' }, 400)
+    }
+
+    const dir = path.dirname(targetPath)
+    if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true })
+    const prev = readTextIfFile(targetPath)
+    fs.writeFileSync(targetPath, body.content, 'utf-8')
+    recordCloneFileChange(cloneDir, filePath, prev, body.content)
+
+    return c.json({ ok: true, path: filePath })
   })
 
   // DELETE /clones/:name/files/:path — delete file or directory
@@ -143,10 +192,10 @@ export function createCloneFilesRoutes(): Hono {
     const filePath = c.req.param('path')
 
     const cloneDir = getCloneDirectory(name)
-    const targetPath = path.join(cloneDir, filePath)
+    const targetPath = resolveFilePath(name, filePath)
 
     // Path traversal guard
-    if (!targetPath.startsWith(cloneDir)) {
+    if (!targetPath) {
       return c.json({ error: 'Path traversal detected' }, 403)
     }
 
@@ -160,7 +209,9 @@ export function createCloneFilesRoutes(): Hono {
       if (stats.isDirectory()) {
         fs.rmSync(targetPath, { recursive: true, force: true })
       } else {
+        const prev = readTextIfFile(targetPath)
         fs.unlinkSync(targetPath)
+        recordCloneFileChange(cloneDir, filePath, prev, '')
       }
     }
 
@@ -219,6 +270,34 @@ function getCloneDirectory(name: string): string {
   const builtinDir = getBuiltInCloneDir(name)
   if (fs.existsSync(builtinDir)) return builtinDir
   return getCloneDir(name)
+}
+
+/** 读文件内容；不存在 / 是目录 / 读失败 → null。 */
+function readTextIfFile(targetPath: string): string | null {
+  try {
+    if (!fs.existsSync(targetPath) || fs.statSync(targetPath).isDirectory()) return null
+    return fs.readFileSync(targetPath, 'utf-8')
+  } catch {
+    return null
+  }
+}
+
+/** 分身文件变更台账（「今日」页变动追踪）。写失败不影响文件保存。 */
+function recordCloneFileChange(
+  cloneDir: string,
+  filePath: string,
+  prev: string | null,
+  next: string,
+): void {
+  if (path.basename(filePath) === CLONE_CHANGES_FILE) return
+  const delta = textDelta(prev, next)
+  if (delta.delta_chars === 0 && delta.delta_lines === 0) return
+  appendCloneChange(cloneDir, {
+    ts: new Date().toISOString(),
+    kind: 'file',
+    path: filePath.replace(/\\/g, '/'),
+    ...delta,
+  })
 }
 
 function resolveFilePath(name: string, filePath: string): string | null {

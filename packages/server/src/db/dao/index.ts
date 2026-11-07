@@ -10,6 +10,11 @@ export { TokenUsageDAO, toLedgerRows } from "./token-usage-dao"
 export { ScheduleConfigDAO } from "./schedule-config-dao"
 export { ScheduleRunDAO } from "./schedule-run-dao"
 export { TaskDAO } from "./task-dao"
+export { TodayDAO } from "./today-dao"
+export type {
+  TodayTaskRow, TodayAcceptanceRow, TodayExecutionRow, TodaySessionRow,
+  TodayVersionRow, TodaySkillChangeRow, TodayWikiRow,
+} from "./today-dao"
 export { AcceptanceDAO } from "./acceptance-dao"
 export { ChatDAO } from "./chat-dao"
 export { OrgDAO } from "./org-dao"

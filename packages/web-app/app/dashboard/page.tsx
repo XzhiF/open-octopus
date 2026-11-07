@@ -1,183 +1,109 @@
 "use client"
 
-import { useState, useEffect, useCallback } from "react"
-import { StatsCards } from "@/components/dashboard/stats-cards"
-import { HeroMetrics } from "@/components/dashboard/hero-metrics"
-import { QueuePanel } from "@/components/dashboard/queue-panel"
-import { RecentExecutions } from "@/components/dashboard/recent-executions"
-import { LeaderboardSection } from "@/components/dashboard/leaderboard-section"
-import { WorkflowHealthCard } from "@/components/dashboard/workflow-health-card"
-import { CostTrendChart } from "@/components/dashboard/cost-trend-chart"
-import { CacheHitCard } from "@/components/dashboard/cache-hit-card"
-import { fetchDashboardStats, fetchRunningQueue, fetchRecentExecutions, fetchWorkflowHealth, fetchCacheStats, type CacheStatsResponse } from "@/lib/api-client"
-import type { Execution } from "@/lib/types"
+import { useCallback, useEffect, useState } from "react"
+import { TodayBurn } from "@/components/dashboard/today/today-burn"
+import { TodayStats } from "@/components/dashboard/today/today-stats"
+import { TodayTimeline } from "@/components/dashboard/today/today-timeline"
+import { TodayChanges } from "@/components/dashboard/today/today-changes"
+import { fetchTodayDigest, type TodayDigest } from "@/lib/today"
 
-interface WorkflowHealth {
-  workflow_ref: string
-  executions: number
-  success_rate: number | null
-  avg_duration_ms: number | null
+/**
+ * 今日 —— 一天的工作状态（不是报表）。
+ *
+ * 三块：① 总消耗（账本当天窗口）② 统计小结 + 精选时间线 ③ 精选变动。
+ * 小结只做统计、不用 LLM；时间线与变动都由服务端精选后下发，前端不再二次筛选。
+ * 30s 轮询保持「现在」节点和运行指示新鲜（页面本身是一次 GET）。
+ */
+
+const REFRESH_INTERVAL_MS = 30_000
+
+function clock(iso: string): string {
+  const d = new Date(iso)
+  if (Number.isNaN(d.getTime())) return "--:--"
+  return `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`
 }
 
 export default function TodayPage() {
-  const [stats, setStats] = useState({
-    total_workspaces: 0,
-    total_workflows: 0,
-    total_executions: 0,
-    completed_executions: 0,
-    failed_executions: 0,
-    running_executions: 0,
-    pending_executions: 0,
-    avg_duration_ms: null as number | null,
-    total_cost: { usd: null, complete: true } as { usd: number | null; complete: boolean },
-  })
-  const [runningExecutions, setRunningExecutions] = useState<Execution[]>([])
-  const [pendingExecutions, setPendingExecutions] = useState<Execution[]>([])
-  const [recentExecutions, setRecentExecutions] = useState<Execution[]>([])
-  const [workflows, setWorkflows] = useState<WorkflowHealth[]>([])
-  const [cacheStats, setCacheStats] = useState<CacheStatsResponse | null>(null)
-  const [loading, setLoading] = useState(true)
+  const [digest, setDigest] = useState<TodayDigest | null>(null)
   const [error, setError] = useState<string | null>(null)
+  const [loading, setLoading] = useState(true)
 
-  const fetchData = useCallback(async () => {
-    setLoading(true)
-    setError(null)
+  const load = useCallback(async () => {
     try {
-      const [statsResult, queueResult, recentResult, healthResult, cacheResult] = await Promise.allSettled([
-        fetchDashboardStats(),
-        fetchRunningQueue(),
-        fetchRecentExecutions(),
-        fetchWorkflowHealth(),
-        fetchCacheStats(),
-      ])
-      if (statsResult.status === "fulfilled") {
-        setStats(statsResult.value)
-      } else {
-        setStats({ total_workspaces: 0, total_workflows: 0, total_executions: 0, completed_executions: 0, failed_executions: 0, running_executions: 0, pending_executions: 0, avg_duration_ms: null, total_cost: { usd: null, complete: true } })
-      }
-      if (queueResult.status === "fulfilled") {
-        const allQueue = Array.isArray(queueResult.value) ? queueResult.value : []
-        setRunningExecutions(allQueue.filter((e: Execution) => e.status === "running"))
-        setPendingExecutions(allQueue.filter((e: Execution) => e.status === "pending"))
-      }
-      if (recentResult.status === "fulfilled") {
-        setRecentExecutions(Array.isArray(recentResult.value) ? recentResult.value : [])
-      }
-      if (healthResult.status === "fulfilled") {
-        setWorkflows(Array.isArray(healthResult.value) ? healthResult.value : [])
-      }
-      if (cacheResult.status === "fulfilled") {
-        setCacheStats(cacheResult.value)
-      }
-
-      if (statsResult.status === "rejected" && queueResult.status === "rejected" && recentResult.status === "rejected" && healthResult.status === "rejected") {
-        setError("获取数据失败")
-      }
+      const next = await fetchTodayDigest()
+      setDigest(next)
+      setError(null)
     } catch (err) {
-      setError(err instanceof Error ? err.message : "获取数据失败")
+      setError(err instanceof Error ? err.message : "获取今日数据失败")
     } finally {
       setLoading(false)
     }
   }, [])
 
   useEffect(() => {
-    fetchData()
-  }, [fetchData])
+    void load()
+    const timer = setInterval(() => void load(), REFRESH_INTERVAL_MS)
+    return () => clearInterval(timer)
+  }, [load])
 
-  if (loading) {
+  if (loading && !digest) {
     return (
-      <div className="container mx-auto flex items-center justify-center px-4 py-12 lg:px-6">
-        <p className="text-muted-foreground">加载中...</p>
+      <div className="flex h-full items-center justify-center text-[11px] text-pop-dim">加载今日…</div>
+    )
+  }
+
+  if (error && !digest) {
+    return (
+      <div className="flex h-full flex-col items-center justify-center gap-3 text-[11px]">
+        <p className="text-pop-red">{error}</p>
+        <button
+          type="button"
+          onClick={() => void load()}
+          className="h-7 rounded-lg border-[1.5px] border-pop-bd px-3 font-bold text-pop-dim hover:bg-pop-idle hover:text-pop-ink"
+        >
+          重试
+        </button>
       </div>
     )
   }
 
-  if (error) {
-    return (
-      <div className="container mx-auto space-y-6 px-4 py-6 lg:px-6">
-        <div>
-          <h1 className="text-2xl font-black tracking-tight text-pop-ink">今日</h1>
-          <p className="text-muted-foreground">工作流编排平台概览</p>
-        </div>
-        <div className="flex flex-col items-center justify-center rounded-xl border-2 border-dashed border-pop-bd/40 bg-pop-paper py-12 text-center shadow-pop-sm">
-          <p className="text-destructive">{error}</p>
-          <button className="mt-4 text-sm text-primary underline" onClick={fetchData}>重试</button>
-        </div>
-      </div>
-    )
-  }
+  if (!digest) return null
 
-  const dashboardStats = {
-    activeWorkspaces: stats.total_workspaces,
-    totalWorkspaces: stats.total_workspaces,
-    runningExecutions: stats.running_executions,
-    pendingExecutions: stats.pending_executions ?? 0,
-    completedToday: stats.completed_executions ?? stats.total_executions,
-    failedToday: stats.failed_executions ?? 0,
-  }
-
-  // Calculate metrics for HeroMetrics
-  const totalExecutions = stats.total_executions
-  const completedCount = stats.completed_executions ?? stats.total_executions
-  const successRate = totalExecutions > 0 ? completedCount / totalExecutions : 0
+  const runningTasks = digest.stats.tasks.breakdown.find((row) => row.key === "running")?.count ?? 0
+  const runningChats = digest.stats.chats.running
 
   return (
-    <div className="container mx-auto space-y-6 px-4 py-6 lg:px-6">
-      {/* Page Header */}
-      <div>
-        <h1 className="text-2xl font-black tracking-tight text-pop-ink">今日</h1>
-        <p className="text-muted-foreground">
-          工作流编排平台概览
-        </p>
-      </div>
-
-      {/* Stats Cards - Overview */}
-      <StatsCards stats={dashboardStats} />
-
-      {/* Hero Metrics - Key Performance Indicators */}
-      <HeroMetrics
-        totalExecutions={totalExecutions}
-        successRate={successRate}
-        totalCost={stats.total_cost?.usd ?? null}
-        totalCostComplete={stats.total_cost?.complete ?? true}
-        avgDurationMs={stats.avg_duration_ms ?? 0}
-      />
-
-      {cacheStats && (
-        <CacheHitCard sources={cacheStats.sources} windowDays={cacheStats.window_days} />
-      )}
-
-      {/* Leaderboard Rankings */}
-      <LeaderboardSection />
-
-      {/* Workflow Health - Above Queue/Recent */}
-      {workflows.length > 0 && (
-        <div>
-          <h2 className="text-xl font-black mb-4">Workflow 健康度</h2>
-          <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
-            {workflows.map((w) => (
-              <WorkflowHealthCard
-                key={w.workflow_ref}
-                workflowRef={w.workflow_ref}
-                healthScore={w.success_rate ? Math.round(w.success_rate * 100) : 0}
-                grade={w.success_rate && w.success_rate > 0.9 ? 'A' : w.success_rate && w.success_rate > 0.75 ? 'B' : w.success_rate && w.success_rate > 0.6 ? 'C' : w.success_rate && w.success_rate > 0.4 ? 'D' : 'F'}
-                successRate={w.success_rate ?? 0}
-                avgDurationMs={w.avg_duration_ms ?? 0}
-                totalCost={0}
-              />
-            ))}
-          </div>
+    <div className="px-7 pb-2.5 pt-5">
+      <div className="flex items-baseline gap-3">
+        <h1 className="m-0 text-[22px] font-black tracking-[-0.02em]">今日</h1>
+        <span className="text-[10.5px] tracking-[0.04em] text-pop-dim">
+          {digest.date} {digest.weekday} · {clock(digest.generated_at)}
+        </span>
+        <div className="ml-auto flex items-center gap-3.5 text-[10px] text-pop-dim">
+          <span className="flex items-center gap-1.5">
+            <i className={`inline-block h-1.5 w-1.5 rounded-full ${runningChats > 0 ? "animate-pulse bg-pop-cyan" : "bg-pop-bd"}`} />
+            {runningChats} 段对话在跑
+          </span>
+          <span className="flex items-center gap-1.5">
+            <i className={`inline-block h-1.5 w-1.5 rounded-full ${runningTasks > 0 ? "animate-pulse bg-pop-amber" : "bg-pop-bd"}`} />
+            {runningTasks} 个任务轮次
+          </span>
         </div>
-      )}
-
-      {/* Queue & Recent */}
-      <div className="grid gap-6 lg:grid-cols-2 items-stretch max-h-[400px]">
-        <QueuePanel
-          runningExecutions={runningExecutions}
-          pendingExecutions={pendingExecutions}
-        />
-        <RecentExecutions executions={recentExecutions} />
       </div>
+
+      <TodayBurn consumption={digest.consumption} />
+      <TodayStats stats={digest.stats} />
+
+      <div className="mt-3 grid grid-cols-[1.3fr_1fr] items-start gap-[30px]">
+        <TodayTimeline
+          nodes={digest.timeline.nodes}
+          rule={digest.timeline.rule}
+          candidates={digest.timeline.candidates}
+        />
+        <TodayChanges items={digest.changes.items} />
+      </div>
+
+      {error && <p className="mt-2 text-[9px] text-pop-red">刷新失败：{error}</p>}
     </div>
   )
 }
