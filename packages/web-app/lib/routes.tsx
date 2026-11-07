@@ -85,7 +85,6 @@ const VIEW_ROUTES: ViewRoute[] = [
   { kind: 'view', id: 'system-models', path: '/system/models', view: 'system', title: '系统管理' },
   { kind: 'view', id: 'system-billing', path: '/system/billing', view: 'system', title: '系统管理' },
   { kind: 'view', id: 'system-repos', path: '/system/repos', view: 'system', title: '系统管理' },
-  { kind: 'view', id: 'system-harness', path: '/system/harness', view: 'system', title: '系统管理' },
 ]
 
 const DETAIL_ROUTES: DetailRoute[] = [
@@ -123,7 +122,6 @@ const STANDALONE_ROUTES: StandaloneRoute[] = [
   // 快速便签是桌面窗口（不是浮层）：URL /notes 打开归属窗口，内容由 AppWindow 特判渲染。
   { kind: 'standalone', id: 'quick-notes', path: '/notes', componentKey: 'quick-notes', title: '便签' },
   { kind: 'standalone', id: 'dev-agent-node', path: '/dev/agent-node-test', componentKey: 'dev-agent-node', title: 'Agent Node Test' },
-  { kind: 'standalone', id: 'dev-harness', path: '/dev/harness-test', componentKey: 'dev-harness', title: 'Harness Test' },
   { kind: 'standalone', id: 'dev-moa', path: '/dev/moa-test', componentKey: 'dev-moa', title: 'MoA Test' },
   { kind: 'standalone', id: 'dev-swarm', path: '/dev/swarm-test', componentKey: 'dev-swarm', title: 'Swarm Test' },
 ]

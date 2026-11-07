@@ -277,7 +277,8 @@ export class EvolutionDAO extends BaseDAO {
 
   /**
    * List experiences for a given execution_id, optionally filtered by outcome label.
-   * Used by HarnessController.onExecutionEnd() to batch-update pending outcomes.
+   * Historical: the retired HarnessController batched pending outcomes here.
+   * Runtime supervision no longer writes experience rows.
    */
   listByExecutionId(
     executionId: string,

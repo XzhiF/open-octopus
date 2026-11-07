@@ -1699,10 +1699,43 @@ export class WorkflowEngine {
         // Progress update
         this.callbacks?.onStatusChange?.("running", Math.round((completedCount / totalNodes) * 100))
 
-        // Failure strategy at batch boundary
+        // Failure strategy at batch boundary. The supervision hook runs here
+        // too (parallel/auto mode): without it an owner Agent could never pause
+        // or recover a failed node in parallel workflows.
         if (hasFailure) {
           const strategy = this.pipelineConfig?.execution.failure_strategy ?? "fail_fast"
-          if (strategy === "fail_fast") {
+          let decision: "continue" | "abort" = strategy === "fail_fast" ? "abort" : "continue"
+
+          if (this.callbacks?.onFailureDecision && failureNodeId) {
+            const fd = await this.callbacks.onFailureDecision(failureNodeId, failureMsg ?? "", strategy)
+            if (fd.action === "delegate") {
+              this.pausedAt = failureNodeId
+              this.callbacks?.onError?.(failureNodeId, failureMsg ?? "Unknown error")
+              return { status: "paused", pauseReason: "harness_delegate" }
+            }
+            if (fd.action === "abort") {
+              decision = "abort"
+            } else if (fd.action === "override" && fd.overrideResult) {
+              const overridden = {
+                outputs: fd.overrideResult.outputs ?? {},
+                status: "completed" as const,
+                durationMs: this.nodeResults[failureNodeId]?.durationMs ?? 0,
+                logLines: [
+                  ...(this.nodeResults[failureNodeId]?.logLines ?? []),
+                  "Overridden by runtime supervisor",
+                ],
+                exitCode: fd.overrideResult.exitCode ?? 0,
+              }
+              this.nodeResults[failureNodeId] = overridden
+              const failedDef = batch.find((n) => n.id === failureNodeId)
+              this.callbacks?.onNodeEnd?.(failureNodeId, "completed", overridden.durationMs, overridden, failedDef?.type)
+              decision = "continue"
+            } else if (fd.action === "continue" || (fd as any).continueSubsequent) {
+              decision = "continue"
+            }
+          }
+
+          if (decision === "abort") {
             this.pausedAt = failureNodeId
             this.callbacks?.onError?.(failureNodeId!, failureMsg!)
             return { status: "failed" }

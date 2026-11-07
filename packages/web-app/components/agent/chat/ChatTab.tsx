@@ -1062,6 +1062,27 @@ export function ChatTab() {
     }
   }, [executeTaskAction])
 
+  // 运行事件卡的人选 → 回给 owner Agent，由它调 resolve_incident（决策权在
+  // Agent，确认权在人）。卡片本身不改执行状态。
+  useEffect(() => {
+    const onIncidentChoice = (event: Event) => {
+      const detail = (event as CustomEvent<{
+        incidentId?: string
+        option?: string
+      }>).detail
+      if (!detail?.incidentId || !detail.option) return
+      sendMessage(
+        `[incident ${detail.incidentId}] 我选择：${detail.option}。` +
+          '请据此调用 resolve_incident 继续处理，并用一句话说明结果；如果这个选择还需要补充信息，先问我。',
+        { model, effort, maxContext },
+      )
+    }
+    window.addEventListener('octopus:incident-choice', onIncidentChoice)
+    return () => {
+      window.removeEventListener('octopus:incident-choice', onIncidentChoice)
+    }
+  }, [sendMessage, model, effort, maxContext])
+
   // Task status/execution events reload the transcript (silent cards are
   // inserted server-side; draft/ready threads have no workspace SSE channel).
   useEffect(() => {

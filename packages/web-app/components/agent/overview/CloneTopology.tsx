@@ -8,7 +8,6 @@ const MONOGRAMS: Record<string, string> = {
   scheduler: 'SC',
   archive: 'AR',
   resource: 'RS',
-  'harness-agent': 'HA',
   'task-author': 'TA',
   'task-doer': 'TD',
   'workflow-author': 'WA',

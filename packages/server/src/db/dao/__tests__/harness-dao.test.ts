@@ -112,41 +112,4 @@ describe("HarnessDAO", () => {
     })
   })
 
-  describe("harness_config", () => {
-    it("returns null when no config exists", () => {
-      expect(dao.getConfig()).toBeNull()
-    })
-
-    it("saves and retrieves config", () => {
-      const yaml = "detectors:\n  stupid_retry:\n    enabled: true\n"
-      const row = dao.saveConfig(yaml)
-
-      expect(row.id).toBe("default")
-      expect(row.config_yaml).toBe(yaml)
-      expect(row.version).toBe(1)
-
-      const retrieved = dao.getConfig()
-      expect(retrieved).not.toBeNull()
-      expect(retrieved!.config_yaml).toBe(yaml)
-      expect(retrieved!.version).toBe(1)
-    })
-
-    it("bumps version on update", () => {
-      dao.saveConfig("v1")
-      const row2 = dao.saveConfig("v2")
-      expect(row2.version).toBe(2)
-      expect(row2.config_yaml).toBe("v2")
-
-      const row3 = dao.saveConfig("v3")
-      expect(row3.version).toBe(3)
-    })
-
-    it("supports custom config id", () => {
-      dao.saveConfig("custom-config", "custom-id")
-      const retrieved = dao.getConfig("custom-id")
-      expect(retrieved).not.toBeNull()
-      expect(retrieved!.config_yaml).toBe("custom-config")
-      expect(retrieved!.id).toBe("custom-id")
-    })
-  })
 })

@@ -80,6 +80,7 @@ export class ExecutionService {
 
   destroy(): void {
     this.lifecycle.destroyResumeListener()
+    this.lifecycle.getSupervisionService()?.destroyAll()
   }
 
   getEnginePool() {
@@ -171,6 +172,15 @@ export class ExecutionService {
 
   async retry(id: string, failedNodeId: string, inputValues?: Record<string, string>, intervention?: string): Promise<ExecutionRow> {
     return this.lifecycle.retry(id, failedNodeId, inputValues, intervention)
+  }
+
+  /**
+   * Recover a harness-delegate pause: the node is `failed`, the execution is
+   * `paused`, and there is no `paused` node for resume() to pick up. Flip the
+   * execution to failed and use the normal retry path from that node.
+   */
+  async retryPausedNode(id: string, nodeId: string, intervention?: string): Promise<ExecutionRow> {
+    return this.lifecycle.retryPausedNode(id, nodeId, intervention)
   }
 
   async approve(id: string, nodeId: string, answer: string, comment?: string): Promise<ExecutionRow> {

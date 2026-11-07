@@ -47,8 +47,10 @@ export { resolveMoaModel } from './config/moa-model-resolver'
 export type { MoaModelResolution } from './config/moa-model-resolver'
 export { parseTokenAmount } from './parse-token-amount'
 
-// Harness module
+// Harness module (legacy detector signal types; supervision lives in ./runtime)
 export * from './harness'
+// Runtime supervision contract — Incident / Decision / Supervisor
+export * from './runtime'
 
 // Simulator test fixture schemas
 export * from './simulator/schemas'

@@ -354,6 +354,7 @@ export function createChatRoutes(deps: ChatRouteDeps): Hono {
       toolServers['octopus-workflow'] = createWorkflowToolServer(mcpWorkspaceId, { sessionId: id, org }, {
         taskId: thread?.task.id,
         kind: thread?.task.kind === 'workflow-dev' ? 'workflow-dev' : undefined,
+        db: sessionDao.getDb(),
       })
     }
     if (thread) {

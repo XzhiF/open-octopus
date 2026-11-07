@@ -3,13 +3,12 @@
 import Link from "@/lib/app-navigation"
 import { usePathname } from "@/lib/app-navigation"
 import { cn } from "@/lib/utils"
-import { Boxes, Database, ShieldCheck, ReceiptText } from "lucide-react"
+import { Boxes, Database, ReceiptText } from "lucide-react"
 
 const MENU = [
   { label: "模型管理", href: "/system/models", icon: Boxes },
   { label: "Token 计费", href: "/system/billing", icon: ReceiptText },
   { label: "仓库管理", href: "/system/repos", icon: Database },
-  { label: "Harness 配置", href: "/system/harness", icon: ShieldCheck },
 ]
 
 export default function SystemLayout({ children }: { children: React.ReactNode }) {

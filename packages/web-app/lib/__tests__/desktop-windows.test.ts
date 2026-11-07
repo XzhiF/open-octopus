@@ -37,7 +37,7 @@ describe('resolveUrlTarget', () => {
     expect(resolveUrlTarget('/resources/skill/demo')).toMatchObject({ id: 'resources' })
     expect(resolveUrlTarget('/scheduler/jobs/j1')).toMatchObject({ id: 'scheduler' })
     expect(resolveUrlTarget('/system/models')).toMatchObject({ id: 'system' })
-    expect(resolveUrlTarget('/dev/harness-test')).toMatchObject({ id: 'dev' })
+    expect(resolveUrlTarget('/dev/moa-test')).toMatchObject({ id: 'dev' })
     expect(resolveUrlTarget('/notes')).toEqual({
       kind: 'window',
       id: 'notes',
@@ -231,7 +231,7 @@ describe('persistence', () => {
     state = open(state, 'agent', '/agent')
     state = desktopReducer(state, {
       type: 'syncUrl',
-      target: { kind: 'window', id: 'dev', pathname: '/dev/harness-test', search: '' },
+      target: { kind: 'window', id: 'dev', pathname: '/dev/moa-test', search: '' },
     })
     const persisted = serializeDesktopState(state)
     expect(persisted.version).toBe(1)

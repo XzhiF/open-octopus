@@ -42,13 +42,13 @@ describe("DB Schema", () => {
       "branch_executions", "chat_messages", "chat_sessions",
       "clones", "effectiveness_cursors", "evolution_log", "execution_archive", "execution_links", "execution_summaries", "executions", "experiences",
       "findings",
-      "harness_config", "harness_events",
+      "harness_events",
       "insight_marks", "interaction_messages",
       // Knowledge tables (1)
       "knowledge_effectiveness",
       "llm_calls", "messages", "node_edges", "node_executions", "node_token_usages",
       "optimization_suggestions", "orgs",
-      "pipeline_state", "reports", "safety_events",
+      "pipeline_state", "reports", "runtime_incidents", "safety_events",
       "schedule_audit_logs", "schedule_executions", "schedule_workspaces",
       "scheduled_job_executions", "scheduler_audit_logs", "scheduler_state", "schedules",
       "session_expert_rosters", "session_prompt_snapshots", "session_role_states",
@@ -87,7 +87,9 @@ describe("DB Schema", () => {
     // + schema v60 (dock 调试): idx_session_turn_debug_session = 90.
     // + 2026-11-03 消耗口径: execution_links 的 session/task 两条归属索引 = 92.
     // + 2026-11-04 作业坞子代理: idx_subagent_runs_session = 93.
-    expect(rows.length).toBe(93)
+    // + 2026-11-07 runtime supervision: − harness_config (no index) +
+    //   idx_runtime_incidents_exec + idx_runtime_incidents_status = 95.
+    expect(rows.length).toBe(95)
   })
 
   it("workspaces table has correct columns", () => {
@@ -292,17 +294,16 @@ describe("Schema v34 — Harness support", () => {
     expect(idxNames).toContain("idx_harness_events_time")
   })
 
-  it("creates harness_config table with correct columns", () => {
+  it("creates runtime_incidents table with correct columns", () => {
     db = createTestDb()
     applySchema(db)
-    const cols = db.prepare("PRAGMA table_info(harness_config)").all() as { name: string; dflt_value: string | null }[]
-    const colNames = cols.map(c => c.name)
-    expect(colNames).toEqual(expect.arrayContaining([
-      "id", "config_yaml", "updated_at", "version",
+    const cols = db.prepare("PRAGMA table_info(runtime_incidents)").all() as Array<{ name: string }>
+    expect(cols.map((c) => c.name)).toEqual(expect.arrayContaining([
+      "id", "execution_id", "workspace_id", "node_id", "display_node_id",
+      "phase", "severity", "kind", "status", "owner_kind", "owner_ref",
+      "summary", "incident_json", "decision_json", "resolution_source",
+      "created_at", "dispatched_at", "resolved_at", "deadline_at",
     ]))
-    // version default is 1
-    const versionCol = cols.find(c => c.name === "version")
-    expect(versionCol?.dflt_value).toBe("1")
   })
 
   it("adds harness_status column to node_executions", () => {
@@ -334,7 +335,7 @@ describe("Schema v34 — Harness support", () => {
     applySchema(db)
     const events = db.prepare("SELECT COUNT(*) as cnt FROM harness_events").get() as { cnt: number }
     expect(events.cnt).toBe(0)
-    const config = db.prepare("SELECT COUNT(*) as cnt FROM harness_config").get() as { cnt: number }
-    expect(config.cnt).toBe(0)
+    const incidents = db.prepare("SELECT COUNT(*) as cnt FROM runtime_incidents").get() as { cnt: number }
+    expect(incidents.cnt).toBe(0)
   })
 })

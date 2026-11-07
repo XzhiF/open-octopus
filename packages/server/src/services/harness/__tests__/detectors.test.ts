@@ -1,6 +1,7 @@
 // packages/server/src/services/harness/__tests__/detectors.test.ts
 //
-// Unit tests for the 4 P0 harness detectors and the DetectorPipeline.
+// Unit tests for the 4 P0 harness detectors (now the signal layer of runtime
+// supervision).
 
 import { describe, it, expect, beforeEach, vi } from "vitest"
 import { StupidRetryDetector } from "../detectors/stupid-retry"
@@ -8,30 +9,9 @@ import { DeterministicErrorDetector } from "../detectors/deterministic-error"
 import { ModelMismatchDetector } from "../detectors/model-mismatch"
 import { ProcessConflictDetector } from "../detectors/process-conflict"
 import { TimeoutCascadeDetector } from "../detectors/timeout-cascade"
-import { DetectorPipeline } from "../detector-pipeline"
 import type { HarnessCallbackEvent } from "../base-detector"
-import type { HarnessSystemConfigParsed } from "@octopus/shared"
 import { computeErrorHash } from "@octopus/shared"
 
-// ─── Default config for tests ───────────────────────────────────────────────
-
-const defaultConfig: HarnessSystemConfigParsed = {
-  detectors: {
-    stupid_retry: { enabled: true, threshold: 2 },
-    deterministic_error: { enabled: true },
-    model_mismatch: { enabled: true },
-    process_conflict: { enabled: true },
-    timeout_cascade: { enabled: true, threshold: 3 },
-  },
-  strategies: [],
-  isolation: {
-    process_group: true,
-    port_protection: true,
-    pid_protection: true,
-    sandbox: "auto",
-    fs_whitelist: [".", "/tmp"],
-  },
-}
 
 // ─── StupidRetryDetector ────────────────────────────────────────────────────
 
@@ -661,162 +641,5 @@ describe("TimeoutCascadeDetector", () => {
 
     expect(report).not.toBeNull()
     expect(report!.evidence.length).toBe(3)
-  })
-})
-
-// ─── DetectorPipeline ───────────────────────────────────────────────────────
-
-describe("DetectorPipeline", () => {
-  let pipeline: DetectorPipeline
-  let mockDao: { insertEvent: ReturnType<typeof vi.fn> }
-  let mockSse: { emit: ReturnType<typeof vi.fn> }
-
-  beforeEach(() => {
-    mockDao = { insertEvent: vi.fn() }
-    mockSse = { emit: vi.fn() }
-    pipeline = new DetectorPipeline({
-      config: defaultConfig,
-      executionId: "exec-1",
-      workspaceId: "ws-1",
-      dao: mockDao as any,
-      sse: mockSse as any,
-    })
-  })
-
-  it("creates detectors based on config", () => {
-    expect(pipeline.detectorCount).toBe(5)
-  })
-
-  it("skips disabled detectors", () => {
-    const disabledConfig: HarnessSystemConfigParsed = {
-      ...defaultConfig,
-      detectors: {
-        ...defaultConfig.detectors,
-        stupid_retry: { enabled: false },
-      },
-    }
-
-    const p = new DetectorPipeline({
-      config: disabledConfig,
-      executionId: "exec-2",
-      workspaceId: "ws-1",
-      dao: mockDao as any,
-      sse: mockSse as any,
-    })
-
-    expect(p.detectorCount).toBe(4)
-  })
-
-  it("routes nodeRetry events to StupidRetryDetector and persists + emits on trigger", () => {
-    const result = {
-      logLines: ["error: Cannot find module 'xyz'"],
-      error: "exit code 1",
-      outputs: { exitCode: 1 },
-    }
-
-    // First attempt — no trigger
-    pipeline.routeEvent({
-      type: "nodeRetry",
-      nodeId: "bash-build",
-      attempt: 1,
-      maxAttempts: 3,
-      delayMs: 1000,
-      result,
-    })
-
-    expect(mockDao.insertEvent).not.toHaveBeenCalled()
-    expect(mockSse.emit).not.toHaveBeenCalled()
-
-    // Second attempt — triggers
-    pipeline.routeEvent({
-      type: "nodeRetry",
-      nodeId: "bash-build",
-      attempt: 2,
-      maxAttempts: 3,
-      delayMs: 1000,
-      result,
-    })
-
-    expect(mockDao.insertEvent).toHaveBeenCalledTimes(1)
-    expect(mockSse.emit).toHaveBeenCalledTimes(1)
-
-    // Verify SSE event shape
-    const sseCall = mockSse.emit.mock.calls[0]
-    expect(sseCall[1].event).toBe("harness_diagnosis")
-    expect(sseCall[1].data.executionId).toBe("exec-1")
-    expect(sseCall[1].data.report.detector).toBe("stupid_retry")
-  })
-
-  it("routes agentEvent errors to ModelMismatchDetector", () => {
-    pipeline.routeEvent({
-      type: "agentEvent",
-      nodeId: "agent-read",
-      event: {
-        type: "error",
-        code: "400",
-        message: "This model does not support vision",
-      },
-    })
-
-    expect(mockDao.insertEvent).toHaveBeenCalledTimes(1)
-    expect(mockSse.emit).toHaveBeenCalledTimes(1)
-  })
-
-  it("routes beforeNode events to ProcessConflictDetector", () => {
-    pipeline.routeEvent({
-      type: "beforeNode",
-      nodeId: "bash-test",
-      nodeType: "bash",
-      nodeConfig: {
-        bash: "kill $OCTOPUS_HOST_PID",
-      },
-    })
-
-    expect(mockDao.insertEvent).toHaveBeenCalledTimes(1)
-    expect(mockSse.emit).toHaveBeenCalledTimes(1)
-  })
-
-  it("routes nodeEnd events to TimeoutCascadeDetector", () => {
-    for (const nodeId of ["bash-a", "bash-b", "bash-c"]) {
-      pipeline.routeEvent({
-        type: "nodeEnd",
-        nodeId,
-        status: "failed",
-        durationMs: 60000,
-        result: { error: "timeout" },
-        nodeType: "bash",
-      })
-    }
-
-    // Third timeout triggers the detector
-    expect(mockDao.insertEvent).toHaveBeenCalledTimes(1)
-    expect(mockSse.emit).toHaveBeenCalledTimes(1)
-  })
-
-  it("wrapCallbacks returns a proxy that intercepts relevant callbacks", () => {
-    const originalCallbacks = {
-      onNodeStart: vi.fn(),
-      onNodeEnd: vi.fn(),
-      onNodeRetry: vi.fn(),
-      onAgentEvent: vi.fn(),
-      onError: vi.fn(),
-      onBeforeNode: vi.fn().mockResolvedValue({ action: "proceed" }),
-      onComplete: vi.fn(),
-    }
-
-    const wrapped = pipeline.wrapCallbacks(originalCallbacks)
-
-    // Original callbacks should still be callable
-    wrapped.onNodeStart!("node-1", "bash")
-    expect(originalCallbacks.onNodeStart).toHaveBeenCalledWith("node-1", "bash")
-
-    // onComplete should pass through without interception
-    wrapped.onComplete!("completed")
-    expect(originalCallbacks.onComplete).toHaveBeenCalledWith("completed")
-  })
-
-  it("destroy cleans up all detectors", () => {
-    pipeline.destroy()
-    expect(pipeline.detectorCount).toBe(0)
   })
 })

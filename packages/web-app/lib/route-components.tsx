@@ -32,7 +32,6 @@ export const DETAIL_COMPONENTS: Record<string, LazyPage> = {
 
 export const STANDALONE_COMPONENTS: Record<string, LazyPage> = {
   'dev-agent-node': lazy(() => import('@/app/dev/agent-node-test/page')),
-  'dev-harness': lazy(() => import('@/app/dev/harness-test/page')),
   'dev-moa': lazy(() => import('@/app/dev/moa-test/page')),
   'dev-swarm': lazy(() => import('@/app/dev/swarm-test/page')),
 }

@@ -1,4 +1,5 @@
 import { z } from "zod"
+import type Database from "better-sqlite3"
 import { createSdkMcpServer, tool } from "@octopus/providers"
 import { parseWorkflow, validateWorkflow } from "@octopus/shared"
 import { BuiltInWorkflowService } from "../builtin-workflow"
@@ -9,6 +10,7 @@ import { createRepairServiceForWorkspace } from "../../routes/repair"
 import { getChatEventBridge } from "../activity/chat-event-bridge"
 import { selectReleasedWorkflows } from "./workflow-release"
 import { getWorkflowDevService } from "../tasks/workflow-dev-service"
+import { createSupervisionTools } from "./supervision-tools"
 
 /**
  * In-process MCP tools that let a chat agent run and inspect workflows in its
@@ -23,6 +25,8 @@ export interface WorkflowToolOptions {
   /** Bound task (workflow-dev sessions only). */
   taskId?: string
   kind?: "workflow-dev"
+  /** SQLite handle for supervision tools (incident store). */
+  db?: Database.Database
 }
 
 export function createWorkflowToolServer(
@@ -442,12 +446,20 @@ export function createWorkflowToolServer(
     ),
   ]
 
+  const allTools = [
+    ...tools,
+    ...(opts.db ? createSupervisionTools({ db: opts.db, workspaceId }) : []),
+  ]
+
   return createSdkMcpServer({
     name: "octopus-workflow",
     version: "1.0.0",
     instructions:
-      "Use these tools to inspect, author, run, and debug workflows in the current workspace. Workflows execute automatically; use get_execution/list_executions to follow progress. In workflow-dev tasks, validate + simulate before a real run unless the human explicitly waives it.",
-    tools,
+      "Use these tools to inspect, author, run, and debug workflows in the current workspace. Workflows execute automatically; use get_execution/list_executions to follow progress. " +
+      "When you receive an [incident] notification, call get_incident first, then resolve_incident with the smallest action that fixes the root cause. " +
+      "Escalate to the human (escalate_incident) when the decision is irreversible, business-sensitive, or uncertain. " +
+      "In workflow-dev tasks, validate + simulate before a real run unless the human explicitly waives it.",
+    tools: allTools,
     alwaysLoad: true,
   })
 }

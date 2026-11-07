@@ -6,7 +6,11 @@ import type { TaskView } from '@/lib/tasks-api'
 // 那一轮已经跑完（终态读数本就不该走），所以这里用假定时器把时间轴钉住验证接线：
 // 起点取服务端 started_at，tick 只推进 now，不重置起点。
 vi.mock('@/lib/tasks-api', () => ({ getTask: vi.fn() }))
-vi.mock('@/lib/api-client', () => ({ fetchExecutionDetail: vi.fn(), rerunExecution: vi.fn() }))
+vi.mock('@/lib/api-client', () => ({
+  fetchExecutionDetail: vi.fn(),
+  fetchExecutionIncidents: vi.fn(async () => []),
+  rerunExecution: vi.fn(),
+}))
 vi.mock('@/components/workspace/workflow-flow-viewer-with-status', () => ({ WorkflowFlowViewerWithStatus: () => null }))
 vi.mock('@/components/workspace/run-log/run-log-console', () => ({ RunLogConsole: () => null }))
 

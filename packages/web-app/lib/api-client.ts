@@ -269,6 +269,115 @@ export async function fetchExecutionDetail(workspaceId: string, executionId: str
   return handleResponse(res)
 }
 
+// ============ Runtime supervision (incidents) ============
+
+export type RuntimeIncidentStatus =
+  | "open"
+  | "dispatched"
+  | "waiting_human"
+  | "resolved"
+  | "expired"
+  | "unowned"
+
+export type RuntimeDecisionType =
+  | "proceed"
+  | "inject"
+  | "retry"
+  | "pause"
+  | "abort"
+  | "block"
+  | "reload"
+  | "escalate"
+
+export interface RuntimeIncidentWire {
+  id: string
+  executionId: string
+  workspaceId: string
+  nodeId: string
+  displayNodeId?: string
+  phase: string
+  severity: "info" | "warning" | "critical"
+  kind: string
+  status: RuntimeIncidentStatus
+  summary: string
+  evidence: Array<Record<string, unknown>>
+  contextRef: string
+  allowedActions: RuntimeDecisionType[]
+  createdAt: number
+  deadlineAt?: number
+  decision?: { type: RuntimeDecisionType; [key: string]: unknown } | null
+  resolutionSource?: "agent" | "user" | "policy" | null
+}
+
+export async function fetchExecutionIncidents(
+  workspaceId: string,
+  executionId: string,
+): Promise<RuntimeIncidentWire[]> {
+  const res = await apiFetch(
+    `${getServerUrl()}/api/workspaces/${workspaceId}/harness/incidents?execution_id=${encodeURIComponent(executionId)}`,
+  )
+  if (!res.ok) return []
+  const body = await handleResponse<{ incidents: RuntimeIncidentWire[] }>(res)
+  return body.incidents ?? []
+}
+
+export async function fetchRuntimeIncident(
+  workspaceId: string,
+  incidentId: string,
+): Promise<RuntimeIncidentWire | null> {
+  const res = await apiFetch(
+    `${getServerUrl()}/api/workspaces/${workspaceId}/harness/incidents/${encodeURIComponent(incidentId)}`,
+  )
+  if (res.status === 404) return null
+  const body = await handleResponse<{ incident: RuntimeIncidentWire }>(res)
+  return body.incident ?? null
+}
+
+export interface RuntimeDecisionBody {
+  type: RuntimeDecisionType
+  message?: string
+  reason?: string
+  hint?: string
+  var_pool_patches?: Record<string, string>
+  model?: string
+  continue_subsequent?: boolean
+  yaml?: string
+  options?: string[]
+  source?: "agent" | "user" | "policy"
+}
+
+export async function resolveRuntimeIncident(
+  workspaceId: string,
+  incidentId: string,
+  decision: RuntimeDecisionBody,
+): Promise<{ ok: boolean; detail: string; status: string }> {
+  const res = await apiFetch(
+    `${getServerUrl()}/api/workspaces/${workspaceId}/harness/incidents/${encodeURIComponent(incidentId)}/resolve`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ ...decision, source: decision.source ?? "user" }),
+    },
+  )
+  return handleResponse(res)
+}
+
+export async function escalateRuntimeIncident(
+  workspaceId: string,
+  incidentId: string,
+  body: { reason: string; options?: string[] },
+): Promise<{ ok: boolean; detail: string; status: string }> {
+  const res = await apiFetch(
+    `${getServerUrl()}/api/workspaces/${workspaceId}/harness/incidents/${encodeURIComponent(incidentId)}/escalate`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    },
+  )
+  return handleResponse(res)
+}
+
 /** 作业坞「运行」面板的一行（GET /api/workspaces/:id/workflows/runs）。 */
 export interface WorkspaceRun {
   id: string

@@ -9,12 +9,13 @@ import { useEffect, useState } from 'react'
 import { Code2, Pause, Play, RotateCcw, Square } from 'lucide-react'
 import { toast } from 'sonner'
 import { getTask, type TaskDetail, type TaskView } from '@/lib/tasks-api'
-import { cancelExecution, fetchExecutionDetail, rerunExecution } from '@/lib/api-client'
+import { cancelExecution, fetchExecutionDetail, fetchExecutionIncidents, rerunExecution, type RuntimeIncidentWire } from '@/lib/api-client'
 import type { StepExecution } from '@/lib/types'
 import type { RunTarget, YamlTarget } from './task-window-types'
 import { formatStopwatch } from '@/lib/format'
 import { WorkflowFlowViewerWithStatus } from '@/components/workspace/workflow-flow-viewer-with-status'
 import { RunLogConsole } from '@/components/workspace/run-log/run-log-console'
+import { IncidentTimeline } from './incident-timeline'
 import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from '@/components/ui/resizable'
 import { Spinner } from '@/components/ui/spinner'
 
@@ -83,6 +84,8 @@ export function RunWindow({
   const [aborting, setAborting] = useState(false)
   /** DAG 与日志共用的聚焦：节点 id（= 事件 nodeId） */
   const [focus, setFocus] = useState<string | null>(null)
+  const [view, setView] = useState<'dag' | 'incidents'>('dag')
+  const [incidents, setIncidents] = useState<RuntimeIncidentWire[]>([])
 
   const runs = runTarget ? [] : detail?.executions ?? []
   const taskRun = runs.find((r) => LIVE_RUN.has(r.status)) ?? runs[0] ?? null
@@ -153,7 +156,24 @@ export function RunWindow({
   }, [taskId, live, runTarget])
 
   // 换一条执行：先清掉上一份 DAG/日志快照，避免新 target 加载前短暂串台。
-  useEffect(() => { setExec(null) }, [workspaceId, executionId])
+  useEffect(() => { setExec(null); setIncidents([]); setView('dag') }, [workspaceId, executionId])
+
+  // 运行事件（runtime supervision）：只读时间线，5s 刷新。
+  useEffect(() => {
+    if (!workspaceId || !executionId) {
+      setIncidents([])
+      return
+    }
+    let alive = true
+    const load = () => {
+      fetchExecutionIncidents(workspaceId, executionId)
+        .then((list) => { if (alive) setIncidents(list) })
+        .catch(() => { /* timeline is best-effort */ })
+    }
+    load()
+    const timer = window.setInterval(load, 5_000)
+    return () => { alive = false; window.clearInterval(timer) }
+  }, [workspaceId, executionId])
 
   useEffect(() => {
     if (!workspaceId || !executionId) {
@@ -233,6 +253,30 @@ export function RunWindow({
         )}
         <span className="truncate font-mono text-[9px] text-pop-dim/70">{executionId}</span>
         <div className="ml-auto flex items-center gap-1">
+          <div className="flex overflow-hidden rounded border border-pop-bd/70" role="tablist" aria-label="运行视图">
+            <button
+              type="button"
+              role="tab"
+              aria-selected={view === 'dag'}
+              data-testid="run-view-dag"
+              data-active={view === 'dag'}
+              onClick={() => setView('dag')}
+              className={`px-2 py-1 text-[10px] transition-colors ${view === 'dag' ? 'bg-pop-ink/10 text-pop-ink' : 'text-pop-dim hover:text-pop-ink'}`}
+            >
+              流程
+            </button>
+            <button
+              type="button"
+              role="tab"
+              aria-selected={view === 'incidents'}
+              data-testid="run-view-incidents"
+              data-active={view === 'incidents'}
+              onClick={() => setView('incidents')}
+              className={`px-2 py-1 text-[10px] transition-colors ${view === 'incidents' ? 'bg-pop-ink/10 text-pop-ink' : 'text-pop-dim hover:text-pop-ink'}`}
+            >
+              事件{incidents.length > 0 ? ` (${incidents.length})` : ''}
+            </button>
+          </div>
           {workspaceId && executionId && onOpenYaml && (
             <button
               type="button"
@@ -294,7 +338,9 @@ export function RunWindow({
 
       <ResizablePanelGroup direction="vertical" autoSaveId="octopus.run-window.v1" className="min-h-0 flex-1">
         <ResizablePanel defaultSize={38} minSize={16} className="min-h-0 overflow-hidden">
-          {!exec ? (
+          {view === 'incidents' ? (
+            <IncidentTimeline incidents={incidents} />
+          ) : !exec ? (
             <div className="flex h-full items-center gap-2 p-6 text-[11px] text-pop-dim">
               <Spinner className="size-3.5" /> 读取执行…
             </div>

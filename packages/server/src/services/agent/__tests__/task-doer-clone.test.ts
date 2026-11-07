@@ -94,7 +94,6 @@ describe('task-doer built-in clone (ADR-0025)', () => {
       'scheduler',
       'archive',
       'resource',
-      'harness-agent',
       'task-author',
       'task-doer',
       'workflow-author',
