@@ -10,32 +10,27 @@
 
 import { test, expect } from "@playwright/test"
 
-// The config tab hosts MainAgentVersionsSection which uses CloneVersionsTab
-// with agentName="__main__". This is the most reliable entry point since it
+// The main Agent 配置 page hosts CloneVersionsTab with agentName="__main__"
+// inside the 版本快照 card. This is the most reliable entry point since it
 // does not require a clone to exist.
 const CONFIG_PAGE = "/agent?tab=config"
 const AGENT_NODE_TEST_PAGE = "/dev/agent-node-test"
 
 // ── Helpers ────────────────────────────────────────────────────────
 
-/** Expand the MainAgentVersionsSection to reveal the CloneVersionsTab. */
-async function expandVersionsSection(page: import("@playwright/test").Page) {
+/** Open the config pane; the versions card renders CloneVersionsTab directly. */
+async function openVersionsSection(page: import("@playwright/test").Page) {
   await page.goto(CONFIG_PAGE)
 
-  // Wait for the config tab to load — look for the expand button
-  const expandButton = page.getByRole("button", { name: /展开版本管理/ })
-  await expect(expandButton).toBeVisible({ timeout: 30000 })
-  await expandButton.click()
-
-  // The CloneVersionsTab header should appear
-  await expect(page.getByText(/版本历史/)).toBeVisible({ timeout: 15000 })
+  // The CloneVersionsTab header should appear inside 版本快照.
+  await expect(page.getByText(/版本历史/)).toBeVisible({ timeout: 30000 })
 }
 
 // ── AC1: Versions Tab is visible ───────────────────────────────────
 
 test.describe("AC1: Versions Tab visible on clone detail", () => {
-  test("版本历史 header renders after expanding version management section", async ({ page }) => {
-    await expandVersionsSection(page)
+  test("版本历史 header renders in the versions card", async ({ page }) => {
+    await openVersionsSection(page)
 
     // Verify the version history heading is present with count
     const versionHeader = page.getByText(/版本历史/)
@@ -44,7 +39,7 @@ test.describe("AC1: Versions Tab visible on clone detail", () => {
   })
 
   test("发布新版本 button is visible in versions header", async ({ page }) => {
-    await expandVersionsSection(page)
+    await openVersionsSection(page)
 
     const publishButton = page.getByRole("button", { name: /发布新版本/ })
     await expect(publishButton).toBeVisible()
@@ -55,7 +50,7 @@ test.describe("AC1: Versions Tab visible on clone detail", () => {
 
 test.describe("AC2: Clicking Versions Tab shows version list or empty state", () => {
   test("version list area renders (list items or empty state message)", async ({ page }) => {
-    await expandVersionsSection(page)
+    await openVersionsSection(page)
 
     // Either there are version rows or the empty-state message
     const hasEmptyState = await page
@@ -78,7 +73,7 @@ test.describe("AC2: Clicking Versions Tab shows version list or empty state", ()
   })
 
   test("version history count reflects actual data state", async ({ page }) => {
-    await expandVersionsSection(page)
+    await openVersionsSection(page)
 
     // The header shows "版本历史 (N)" — N should be a non-negative integer
     const headerText = await page.getByText(/版本历史/).textContent()
@@ -90,7 +85,7 @@ test.describe("AC2: Clicking Versions Tab shows version list or empty state", ()
 
 test.describe("AC3: Publish dialog opens with version/stage/changelog fields", () => {
   test("dialog contains version input, stage select, and changelog textarea", async ({ page }) => {
-    await expandVersionsSection(page)
+    await openVersionsSection(page)
 
     // Open the publish dialog
     await page.getByRole("button", { name: /发布新版本/ }).click()
@@ -117,7 +112,7 @@ test.describe("AC3: Publish dialog opens with version/stage/changelog fields", (
   })
 
   test("version input shows validation error for invalid format", async ({ page }) => {
-    await expandVersionsSection(page)
+    await openVersionsSection(page)
     await page.getByRole("button", { name: /发布新版本/ }).click()
 
     // Type an invalid version
@@ -129,7 +124,7 @@ test.describe("AC3: Publish dialog opens with version/stage/changelog fields", (
   })
 
   test("publish button is disabled when version format is invalid", async ({ page }) => {
-    await expandVersionsSection(page)
+    await openVersionsSection(page)
     await page.getByRole("button", { name: /发布新版本/ }).click()
 
     const publishBtn = page.getByRole("button", { name: /发布版本/ })
@@ -147,7 +142,7 @@ test.describe("AC3: Publish dialog opens with version/stage/changelog fields", (
   })
 
   test("stage select offers alpha/beta/rc/stable options", async ({ page }) => {
-    await expandVersionsSection(page)
+    await openVersionsSection(page)
     await page.getByRole("button", { name: /发布新版本/ }).click()
 
     // Open the select dropdown by clicking the select trigger
@@ -170,7 +165,7 @@ test.describe("AC3: Publish dialog opens with version/stage/changelog fields", (
 
 test.describe("AC4: Stage badges render correctly", () => {
   test("empty state shows correct message when no versions exist", async ({ page }) => {
-    await expandVersionsSection(page)
+    await openVersionsSection(page)
 
     // In a fresh environment, we expect the empty state
     const emptyMsg = page.getByText(/暂无版本记录.*发布新版本/)
@@ -194,7 +189,7 @@ test.describe("AC4: Stage badges render correctly", () => {
     // This test verifies the CSS mapping via the publish dialog's stage options.
     // The stage options in PublishVersionDialog use the same stage enum
     // (alpha/beta/rc/stable) as VersionList's badge config.
-    await expandVersionsSection(page)
+    await openVersionsSection(page)
     await page.getByRole("button", { name: /发布新版本/ }).click()
 
     // Open stage select

@@ -7,6 +7,7 @@ export type ViewId =
   | 'tasks'
   | 'workspaces'
   | 'agent'
+  | 'clones'
   | 'knowledge'
   | 'resources'
   | 'scheduler'
@@ -78,6 +79,7 @@ const VIEW_ROUTES: ViewRoute[] = [
   { kind: 'view', id: 'tasks', path: '/tasks', view: 'tasks', title: '任务看板' },
   { kind: 'view', id: 'workspaces', path: '/workspaces', view: 'workspaces', title: '工作空间' },
   { kind: 'view', id: 'agent', path: '/agent', view: 'agent', title: 'Agent' },
+  { kind: 'view', id: 'clones', path: '/clones', view: 'clones', title: '分身' },
   { kind: 'view', id: 'knowledge', path: '/knowledge', view: 'knowledge', title: '知识中心' },
   { kind: 'view', id: 'resources', path: '/resources', view: 'resources', title: '资源' },
   { kind: 'view', id: 'scheduler', path: '/scheduler', view: 'scheduler', title: '系统调度' },

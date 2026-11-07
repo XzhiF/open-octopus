@@ -21,6 +21,7 @@ import { createScheduleRoutes } from './schedule-routes'
 import { createMiscRoutes } from './misc-routes'
 import { createDebugRoutes } from './debug-routes'
 import { createFsRoutes } from './fs-routes'
+import { createMainAgentFilesRoutes } from './main-agent-files'
 import { createRunningRoutes } from './running'
 import { WorkspaceDAO, AgentSessionDAO, EvolutionDAO, SafetyDAO, ScheduleConfigDAO, ExecutionDAO, CloneDAO } from '../../db/dao'
 import { SchedulerService } from '../../services/scheduler/scheduler-service'
@@ -69,6 +70,8 @@ export function createAgentRoutes(deps: AgentRouteDeps): Hono {
   agent.route('/', createMiscRoutes({ safetyDAO }))
   agent.route('/', createDebugRoutes({ sessionDAO, tokenUsageDAO: tokenUsageDao }))
   agent.route('/', createFsRoutes())
+  // 主 Agent 工作目录文件树（配置页「文件」）
+  agent.route('/', createMainAgentFilesRoutes())
   // header 运行指示：工作流执行行（chat 流仍走 /sessions/running）。
   agent.route('/', createRunningRoutes(deps.executionDAO))
 

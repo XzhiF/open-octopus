@@ -9,6 +9,7 @@ import {
   Package,
   Settings,
   Sliders,
+  Users,
 } from 'lucide-react'
 import type { ViewId } from './routes'
 
@@ -38,6 +39,7 @@ const ENTRIES: AppEntry[] = [
   },
   { id: 'workspaces', label: '工作空间', href: '/workspaces', icon: FolderKanban, group: '工作' },
   { id: 'agent', label: 'Agent', href: '/agent', icon: BrainCircuit, group: '工作' },
+  { id: 'clones', label: '分身', href: '/clones', icon: Users, group: '工作' },
   { id: 'knowledge', label: '知识中心', href: '/knowledge', icon: Library, group: '资产' },
   { id: 'resources', label: '资源', href: '/resources', icon: Package, group: '资产' },
   { id: 'scheduler', label: '系统调度', href: '/scheduler', icon: Clock, group: '资产' },

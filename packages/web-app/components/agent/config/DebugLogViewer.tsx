@@ -37,7 +37,7 @@ export function DebugLogViewer({ config, onSave }: DebugLogViewerProps) {
   const [cursor, setCursor] = useState<string | undefined>(undefined)
   const [hasMore, setHasMore] = useState(false)
   const [expandedSegments, setExpandedSegments] = useState<Set<number>>(new Set())
-  const debounceRef = useRef<ReturnType<typeof setTimeout>>()
+  const debounceRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
 
   // Sync debugEnabled when config changes externally
   useEffect(() => {

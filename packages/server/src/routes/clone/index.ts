@@ -35,6 +35,7 @@ import {
   resolveCloneInfo,
   createUserClone,
   deleteUserClone,
+  updateCloneSettings,
   isValidCloneName,
 } from '../../services/agent/clone-resolver'
 import {
@@ -195,6 +196,43 @@ export function createCloneSessionRoutes(deps: CloneSessionRouteDeps): Hono {
       return c.json({ error: { code: 'NOT_FOUND', message: `Clone "${name}" not found` } }, 404)
     }
     return c.json({ clone: info })
+  })
+
+  // ── Update clone settings (identity / memory scope / skills) ─────
+  app.patch('/:name', async (c) => {
+    const name = c.req.param('name')
+    if (!isValidCloneName(name) && !isBuiltinClone(name)) {
+      return c.json({ error: { code: 'INVALID_PARAM', message: 'Invalid clone name' } }, 400)
+    }
+    let body: { display_name?: unknown; memory_scope?: unknown; skills?: unknown }
+    try {
+      body = await c.req.json()
+    } catch {
+      return c.json({ error: { code: 'INVALID_PARAM', message: 'Request body must be JSON' } }, 400)
+    }
+    if (body.memory_scope !== undefined && body.memory_scope !== 'shared' && body.memory_scope !== 'isolated') {
+      return c.json({ error: { code: 'INVALID_PARAM', message: 'memory_scope must be "shared" or "isolated"' } }, 400)
+    }
+    if (body.display_name !== undefined && typeof body.display_name !== 'string') {
+      return c.json({ error: { code: 'INVALID_PARAM', message: 'display_name must be a string' } }, 400)
+    }
+    if (body.skills !== undefined && !Array.isArray(body.skills)) {
+      return c.json({ error: { code: 'INVALID_PARAM', message: 'skills must be an array of strings' } }, 400)
+    }
+    if (body.display_name === undefined && body.memory_scope === undefined && body.skills === undefined) {
+      return c.json({ error: { code: 'INVALID_PARAM', message: 'No updatable fields in request body' } }, 400)
+    }
+    const result = updateCloneSettings(name, {
+      display_name: typeof body.display_name === 'string' ? body.display_name : undefined,
+      memory_scope: body.memory_scope === 'shared' || body.memory_scope === 'isolated'
+        ? body.memory_scope
+        : undefined,
+      skills: Array.isArray(body.skills) ? (body.skills as string[]) : undefined,
+    })
+    if (!result.ok) {
+      return c.json({ error: { code: 'CLONE_ERROR', message: result.error } }, result.status ?? 400)
+    }
+    return c.json({ clone: result.clone })
   })
 
   // ── Delete user clone ────────────────────────────────────────────

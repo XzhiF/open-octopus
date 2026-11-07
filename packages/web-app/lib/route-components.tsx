@@ -10,6 +10,9 @@ export const VIEW_COMPONENTS: Record<Exclude<ViewId, 'chat'>, LazyPage> = {
   agent: lazy(() =>
     import('@/components/agent/layout/AgentLayout').then((m) => ({ default: m.AgentLayout })),
   ),
+  clones: lazy(() =>
+    import('@/components/agent/clone/ClonesLayout').then((m) => ({ default: m.ClonesLayout })),
+  ),
   knowledge: lazy(() => import('@/app/knowledge/page')),
   resources: lazy(() =>
     import('@/components/shell/resources-view').then((m) => ({ default: m.ResourcesView })),

@@ -32,7 +32,7 @@ web-app ← shared (类型)          core-pack ← (纯数据)
 
 ## Web 桌面壳
 
-- 对话是桌面底层；9 个应用以单实例浮动窗口打开（`lib/desktop-windows.tsx`），详情在所属窗口内钻取。
+- 对话是桌面底层；10 个应用以单实例浮动窗口打开（`lib/desktop-windows.tsx`），详情在所属窗口内钻取。
 - 全局 URL = 焦点目标的完整路由；切焦点 `replace`，窗口内导航 `push`；深链打开归属窗口。
 - 每个窗口/桌面层有独立导航作用域；全局快捷键先过 `useIsActiveRoute`，隐藏窗口另由 capture 门禁兜底。
 - 窗口几何/顺序/最小化状态持久化在 `localStorage['octopus.desktop.v1']`；窗口总览实时缩放已挂载窗口 DOM。
