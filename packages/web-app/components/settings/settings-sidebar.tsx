@@ -1,6 +1,6 @@
 "use client"
 
-import { BarChart3, Palette, type LucideIcon } from "lucide-react"
+import { Palette, type LucideIcon } from "lucide-react"
 import { cn } from "@/lib/utils"
 
 export interface SettingsMenuItem {
@@ -16,12 +16,6 @@ export const settingsMenuItems: SettingsMenuItem[] = [
     label: "外观",
     icon: Palette,
     description: "作业坞与界面显示",
-  },
-  {
-    id: "log-analysis",
-    label: "日志分析",
-    icon: BarChart3,
-    description: "失败模式分析与异常检测",
   },
 ]
 

@@ -2,8 +2,7 @@
 
 import { useEffect, useState, useCallback } from "react"
 import { formatDuration } from "@/lib/format"
-import Link from "@/lib/app-navigation"
-import { ExternalLink, RefreshCw } from "lucide-react"
+import { RefreshCw } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
 import {
@@ -125,13 +124,9 @@ export function WorkspaceHistoryTable({ jobId, maxRetain }: Props) {
                   </td>
                   <td className="px-4 py-2 text-right">
                     {ws.workspace_id ? (
-                      <Link
-                        href={`/workspaces/${ws.workspace_id}`}
-                        className="inline-flex items-center gap-1 text-xs text-pop-cyan hover:underline"
-                      >
-                        查看空间
-                        <ExternalLink className="h-3 w-3" />
-                      </Link>
+                      <span className="font-mono text-[10px] text-muted-foreground" title={ws.workspace_id}>
+                        {ws.workspace_id.slice(0, 8)}
+                      </span>
                     ) : (
                       <span className="text-xs text-muted-foreground">—</span>
                     )}

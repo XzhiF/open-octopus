@@ -108,14 +108,12 @@ describe("筛选与分页（AC2 参数面）", () => {
 })
 
 describe("行展开归属维度", () => {
-  it("展开显示 execution/node/session/workflow 与 observability 跳转链接", async () => {
+  it("展开显示 execution/node/session/workflow 归属维度", async () => {
     await renderTab()
     fireEvent.click(screen.getAllByRole("button", { name: "展开归属" })[0])
     const detail = await screen.findByTestId("ledger-detail-r-priced")
     expect(detail.textContent).toContain("e-1")
     expect(detail.textContent).toContain("s-1")
     expect(detail.textContent).toContain("wf.yaml")
-    const link = detail.querySelector("a")!
-    expect(link.getAttribute("href")).toBe("/workspaces/ws-1/executions/e-1/observability")
   })
 })

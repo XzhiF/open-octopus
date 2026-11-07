@@ -27,15 +27,6 @@ export async function getWorkspace(id: string) {
   return res.json()
 }
 
-export async function createWorkspace(data: { name: string; repo_group?: string; description?: string; path: string; repos?: string[]; branch?: string }) {
-  const res = await apiFetch(`${getServerUrl()}/api/workspaces`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(data),
-  })
-  return handleResponse(res)
-}
-
 /** Register an existing directory as a chat cwd workspace (no scaffolding). */
 export async function attachWorkspaceDirectory(data: { repo_group?: string | null; path: string; name?: string }) {
   const res = await apiFetch(`${getServerUrl()}/api/workspaces/attach`, {
@@ -87,25 +78,6 @@ export interface WorkspaceSkillInfo {
 export async function listWorkspaceSkills(id: string): Promise<{ items: WorkspaceSkillInfo[]; total: number }> {
   const res = await apiFetch(`${getServerUrl()}/api/workspaces/${encodeURIComponent(id)}/skills`, {
     headers: { Authorization: "Bearer agent" },
-  })
-  return handleResponse(res)
-}
-
-export async function deleteWorkspace(id: string) {
-  const res = await apiFetch(`${getServerUrl()}/api/workspaces/${id}`, { method: "DELETE" })
-  return handleResponse(res)
-}
-
-export async function fetchImportableWorkspaces(_repoGroup?: string) {
-  const res = await apiFetch(`${getServerUrl()}/api/workspaces/importable`)
-  return handleResponse(res)
-}
-
-export async function importWorkspace(name: string, repoGroup?: string) {
-  const res = await apiFetch(`${getServerUrl()}/api/workspaces/import`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ name, repo_group: repoGroup }),
   })
   return handleResponse(res)
 }

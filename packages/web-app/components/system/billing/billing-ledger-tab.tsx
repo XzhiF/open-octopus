@@ -1,7 +1,6 @@
 "use client"
 
 import { Fragment, useCallback, useEffect, useRef, useState } from "react"
-import Link from "@/lib/app-navigation"
 import { toast } from "sonner"
 import { ChevronDown, ChevronRight, Loader2 } from "lucide-react"
 import { Button } from "@/components/ui/button"
@@ -361,13 +360,6 @@ export function BillingLedgerTab({ drill, onDrillConsumed }: {
                                 <span>workflow: <span className="font-mono">{r.workflow_ref ?? "—"}</span></span>
                                 <span>来源: {sourcePathLabel(r.source_path)}（{r.source_path ?? "NULL"}）</span>
                                 <span>USD（查询时派生）: {r.cost_usd ?? "—"}</span>
-                                {r.workspace_id && (
-                                  <span className="col-span-full">
-                                    <Link href={`/workspaces/${r.workspace_id}/executions/${r.execution_id}/observability`} className="underline">
-                                      在 Observability 查看该执行 →
-                                    </Link>
-                                  </span>
-                                )}
                               </div>
                             </td>
                           </tr>

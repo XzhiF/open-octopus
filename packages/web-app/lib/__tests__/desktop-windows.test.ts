@@ -13,7 +13,7 @@ import { HEADER_HEIGHT } from '@/lib/window-geometry'
 
 const VIEWPORT = { width: 1440, height: 900 }
 
-function open(state: DesktopState, id: 'tasks' | 'workspaces' | 'dashboard', href: string) {
+function open(state: DesktopState, id: 'tasks' | 'agent' | 'dashboard', href: string) {
   const [pathname, search = ''] = href.split('?')
   return desktopReducer(state, { type: 'open', id, pathname, search })
 }
@@ -28,14 +28,11 @@ describe('resolveUrlTarget', () => {
       pathname: '/tasks',
       search: '',
     })
-    expect(resolveUrlTarget('/workspaces/ws-1')).toEqual({
-      kind: 'window',
-      id: 'workspaces',
-      pathname: '/workspaces/ws-1',
-      search: '',
-    })
-    expect(resolveUrlTarget('/workspaces/ws-1/executions/e1/observability')).toMatchObject({
-      id: 'workspaces',
+    // 工作空间已下线：旧深链统一改道「今日」。
+    expect(resolveUrlTarget('/workspaces')).toEqual({ kind: 'redirect' })
+    expect(resolveUrlTarget('/workspaces/ws-1')).toEqual({ kind: 'redirect' })
+    expect(resolveUrlTarget('/workspaces/ws-1/executions/e1/observability')).toEqual({
+      kind: 'redirect',
     })
     expect(resolveUrlTarget('/resources/skill/demo')).toMatchObject({ id: 'resources' })
     expect(resolveUrlTarget('/scheduler/jobs/j1')).toMatchObject({ id: 'scheduler' })
@@ -62,14 +59,14 @@ describe('resolveUrlTarget', () => {
 
 describe('createInitialState', () => {
   it('opens and focuses the window owning a deep link', () => {
-    const state = createInitialState(null, '/workspaces/ws-1?tab=files', VIEWPORT)
-    const record = state.windows.workspaces
+    const state = createInitialState(null, '/agent?tab=files', VIEWPORT)
+    const record = state.windows.agent
     expect(record).toBeDefined()
-    expect(record?.pathname).toBe('/workspaces/ws-1')
+    expect(record?.pathname).toBe('/agent')
     expect(record?.search).toBe('tab=files')
-    expect(record?.basePath).toBe('/workspaces')
-    expect(state.focused).toBe('workspaces')
-    expect(state.order).toEqual(['workspaces'])
+    expect(record?.basePath).toBe('/agent')
+    expect(state.focused).toBe('agent')
+    expect(state.order).toEqual(['agent'])
   })
 
   it('opens quick notes as a desktop window at its default top-right spot', () => {
@@ -148,10 +145,10 @@ describe('desktopReducer', () => {
   it('opens each app once and raises focused windows', () => {
     let state = createInitialState(null, '/', VIEWPORT)
     state = open(state, 'tasks', '/tasks')
-    state = open(state, 'workspaces', '/workspaces')
+    state = open(state, 'agent', '/agent')
     state = open(state, 'tasks', '/tasks')
     expect(Object.keys(state.windows)).toHaveLength(2)
-    expect(state.order).toEqual(['workspaces', 'tasks'])
+    expect(state.order).toEqual(['agent', 'tasks'])
     expect(state.focused).toBe('tasks')
   })
 
@@ -192,16 +189,16 @@ describe('desktopReducer', () => {
   })
 
   it('keeps the base view path while a detail is open', () => {
-    let state = createInitialState(null, '/workspaces?tab=list', VIEWPORT)
+    let state = createInitialState(null, '/resources?tab=list', VIEWPORT)
     state = desktopReducer(state, {
       type: 'setRoute',
-      id: 'workspaces',
-      pathname: '/workspaces/ws-1',
+      id: 'resources',
+      pathname: '/resources/skill/demo',
       search: '',
     })
-    expect(state.windows.workspaces?.pathname).toBe('/workspaces/ws-1')
-    expect(state.windows.workspaces?.basePath).toBe('/workspaces')
-    expect(state.windows.workspaces?.baseSearch).toBe('tab=list')
+    expect(state.windows.resources?.pathname).toBe('/resources/skill/demo')
+    expect(state.windows.resources?.basePath).toBe('/resources')
+    expect(state.windows.resources?.baseSearch).toBe('tab=list')
   })
 
   it('minimizes all windows for show-desktop', () => {
@@ -231,18 +228,18 @@ describe('desktopReducer', () => {
 describe('persistence', () => {
   it('round-trips app windows but never dev/404 windows', () => {
     let state = createInitialState(null, '/tasks', VIEWPORT)
-    state = open(state, 'workspaces', '/workspaces')
+    state = open(state, 'agent', '/agent')
     state = desktopReducer(state, {
       type: 'syncUrl',
       target: { kind: 'window', id: 'dev', pathname: '/dev/harness-test', search: '' },
     })
     const persisted = serializeDesktopState(state)
     expect(persisted.version).toBe(1)
-    expect(persisted.windows.map((item) => item.id)).toEqual(['tasks', 'workspaces'])
+    expect(persisted.windows.map((item) => item.id)).toEqual(['tasks', 'agent'])
     expect(persisted.focused).toBe('desktop')
     const restored = createInitialState(persisted, '/tasks', VIEWPORT)
     expect(restored.windows.tasks?.pathname).toBe('/tasks')
-    expect(restored.windows.workspaces?.pathname).toBe('/workspaces')
+    expect(restored.windows.agent?.pathname).toBe('/agent')
     expect(restored.focused).toBe('tasks')
   })
 

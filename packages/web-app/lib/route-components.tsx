@@ -6,7 +6,6 @@ type LazyPage = LazyExoticComponent<ComponentType>
 export const VIEW_COMPONENTS: Record<Exclude<ViewId, 'chat'>, LazyPage> = {
   dashboard: lazy(() => import('@/app/dashboard/page')),
   tasks: lazy(() => import('@/app/tasks/page')),
-  workspaces: lazy(() => import('@/app/workspaces/page')),
   agent: lazy(() =>
     import('@/components/agent/layout/AgentLayout').then((m) => ({ default: m.AgentLayout })),
   ),
@@ -27,11 +26,6 @@ export const VIEW_COMPONENTS: Record<Exclude<ViewId, 'chat'>, LazyPage> = {
 }
 
 export const DETAIL_COMPONENTS: Record<string, LazyPage> = {
-  workspace: lazy(() => import('@/app/workspaces/[id]/page')),
-  'archive-detail': lazy(() => import('@/app/workspaces/[id]/archive-detail/page')),
-  observability: lazy(() =>
-    import('@/app/workspaces/[id]/executions/[eid]/observability/page'),
-  ),
   resource: lazy(() => import('@/components/shell/resource-detail-route')),
   'scheduler-job': lazy(() => import('@/app/scheduler/jobs/[id]/page')),
 }
