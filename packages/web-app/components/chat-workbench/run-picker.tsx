@@ -65,11 +65,14 @@ export function RunPicker({
   runs,
   activeRunId,
   onPick,
+  onOpenYaml,
 }: {
   workspaceId: string | null
   runs: WorkspaceRun[]
   activeRunId?: string | null
   onPick: (run: WorkspaceRun) => void
+  /** 行尾 </> —— 不打开运行窗，直接看这次运行的 YAML 快照。 */
+  onOpenYaml?: (run: WorkspaceRun) => void
 }) {
   const [now, setNow] = useState(() => Date.now())
   const liveCount = useMemo(() => runs.filter(isLiveRun).length, [runs])
@@ -143,6 +146,7 @@ export function RunPicker({
                 active={run.id === activeRunId}
                 now={now}
                 onPick={onPick}
+                onOpenYaml={onOpenYaml}
               />
             ))}
           </Section>
@@ -156,6 +160,7 @@ export function RunPicker({
                 active={run.id === activeRunId}
                 now={now}
                 onPick={onPick}
+                onOpenYaml={onOpenYaml}
               />
             ))}
           </Section>
@@ -163,7 +168,8 @@ export function RunPicker({
       </div>
 
       <div className="shrink-0 border-t border-white/[0.05] px-3 py-1.5 text-[9px] leading-4 text-pop-dim/70">
-        点一条打开 DAG + 日志；系统运行不计入轮次口径。
+        点一条打开 DAG + 日志；行尾 <span className="text-pop-dim">&lt;/&gt;</span> 直接看 YAML 快照。
+        系统运行不计入轮次口径。
       </div>
     </div>
   )
@@ -185,11 +191,12 @@ function Section({ label, count, children }: {
   )
 }
 
-function RunRow({ run, active, now, onPick }: {
+function RunRow({ run, active, now, onPick, onOpenYaml }: {
   run: WorkspaceRun
   active: boolean
   now: number
   onPick: (run: WorkspaceRun) => void
+  onOpenYaml?: (run: WorkspaceRun) => void
 }) {
   const live = isLiveRun(run)
   const failed = FAILED_STATUS.has(run.status)
@@ -198,14 +205,22 @@ function RunRow({ run, active, now, onPick }: {
   const meta = [run.workflowRef, coord].filter(Boolean).join(' · ')
 
   return (
-    <button
-      type="button"
+    <div
+      role="button"
+      tabIndex={0}
       data-testid="run-picker-row"
       data-run-id={run.id}
       data-run-status={run.status}
       onClick={() => onPick(run)}
+      onKeyDown={(event) => {
+        if (event.target !== event.currentTarget) return
+        if (event.key === 'Enter' || event.key === ' ') {
+          event.preventDefault()
+          onPick(run)
+        }
+      }}
       className={cn(
-        'flex w-full items-center gap-2 rounded-[7px] border px-1.5 py-1.5 text-left transition-colors',
+        'group relative flex w-full cursor-pointer items-center gap-2 rounded-[7px] border px-1.5 py-1.5 text-left transition-colors',
         active
           ? 'border-pop-green/40 bg-pop-green-soft/40'
           : 'border-transparent hover:border-white/[0.07] hover:bg-white/[0.04]',
@@ -242,7 +257,7 @@ function RunRow({ run, active, now, onPick }: {
         <span className="mt-[1px] block truncate text-[9px] text-pop-dim">{meta}</span>
       </span>
 
-      <span className="flex shrink-0 flex-col items-end gap-[1px]">
+      <span className="flex shrink-0 flex-col items-end gap-[1px] transition-opacity group-hover:opacity-0">
         <span
           className={cn(
             'text-[9.5px] font-bold',
@@ -256,7 +271,23 @@ function RunRow({ run, active, now, onPick }: {
         </span>
       </span>
 
-      <ChevronRight className="size-3 shrink-0 text-pop-dim/50" />
-    </button>
+      {onOpenYaml ? (
+        <button
+          type="button"
+          data-testid="run-picker-yaml"
+          aria-label="查看工作流 YAML"
+          title="查看工作流 YAML"
+          onClick={(event) => {
+            event.stopPropagation()
+            onOpenYaml(run)
+          }}
+          className="absolute right-1.5 top-1/2 grid size-[25px] -translate-y-1/2 place-items-center rounded-md border border-white/[0.16] bg-[#1A1A21] font-mono text-[9.5px] font-extrabold tracking-[-0.05em] text-pop-dim opacity-0 transition-opacity hover:border-white/40 hover:bg-[#23232C] hover:text-pop-ink group-hover:opacity-100 focus-visible:opacity-100"
+        >
+          &lt;/&gt;
+        </button>
+      ) : (
+        <ChevronRight className="size-3 shrink-0 text-pop-dim/50" />
+      )}
+    </div>
   )
 }

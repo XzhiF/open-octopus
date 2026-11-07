@@ -12,6 +12,8 @@ import { parseLogFilename } from "@octopus/engine"
 import { join } from "path"
 import { existsSync, readdirSync, readFileSync } from "fs"
 
+export type WorkflowContentSource = "snapshot" | "workspace" | "builtin"
+
 export interface QueryServiceDeps {
   dao: ExecutionDAO
   sse: SSEService
@@ -143,17 +145,35 @@ export class ExecutionQueryService {
     return summary
   }
 
-  getWorkflowContent(executionId: string): string | null {
+  /**
+   * 运行 YAML 的真实来源（2026-11-07，YAML 窗的「运行快照」标签要用它说真话）：
+   *  - snapshot：start() 时落盘的本次运行快照（正常路径）
+   *  - workspace：没有快照，回退到工作区 workflows/ 的当前定义
+   *  - builtin：前两者都没有，回退到内置资源
+   * `content: null` 表示三级都取不到（执行不存在或 ref 已删）。
+   */
+  getWorkflowContentWithSource(executionId: string): {
+    content: string | null
+    source: WorkflowContentSource | null
+  } {
     const exec = this.dao.findById(executionId)
-    if (!exec) return null
+    if (!exec) return { content: null, source: null }
 
     const snapshotPath = join(this.workspacePath, "state", `${executionId}-${WorkflowRef.sanitize(exec.workflow_ref)}`)
-    if (existsSync(snapshotPath)) return readFileSync(snapshotPath, "utf-8")
+    if (existsSync(snapshotPath)) {
+      return { content: readFileSync(snapshotPath, "utf-8"), source: "snapshot" }
+    }
 
     const local = this.workflowService.get(this.workspacePath, exec.workflow_ref)
-    if (local) return local.content
+    if (local) return { content: local.content, source: "workspace" }
+
     const builtIn = this.builtInWorkflowService.get(exec.workflow_ref)
-    return builtIn?.content ?? null
+    if (builtIn) return { content: builtIn.content, source: "builtin" }
+    return { content: null, source: null }
+  }
+
+  getWorkflowContent(executionId: string): string | null {
+    return this.getWorkflowContentWithSource(executionId).content
   }
 
   streamEvents(req: Request): Response {

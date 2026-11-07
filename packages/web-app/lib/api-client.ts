@@ -229,7 +229,39 @@ export interface ExecutionDetailWire {
   started_at?: string | null
   completed_at?: string | null
   workflow_content?: string | null
+  /** workflow_content 的真实来源：运行快照 / 工作区定义 / 内置资源。
+   *  旧服务端没有该字段，前端按“快照”兜底。 */
+  workflow_content_source?: WorkflowContentSource | null
   steps?: import("@/lib/types").StepExecution[]
+}
+
+export type WorkflowContentSource = "snapshot" | "workspace" | "builtin"
+
+export interface WorkflowContentWire {
+  ref?: string
+  content?: string | null
+  parsed?: Record<string, unknown> | null
+}
+
+/**
+ * GET /api/workspaces/:ws/workflows/:ref
+ *  - 不带 executionId：工作区 workflows/ 下的当前定义（找不到时回退内置资源）
+ *  - 带 executionId + isDynamic：执行作用域的动态子流快照；未生成时服务端 404
+ */
+export async function fetchWorkflowContent(
+  workspaceId: string,
+  ref: string,
+  opts?: { executionId?: string | null; isDynamic?: boolean },
+): Promise<WorkflowContentWire | null> {
+  const params = new URLSearchParams()
+  if (opts?.executionId) params.set("executionId", opts.executionId)
+  if (opts?.isDynamic) params.set("isDynamic", "true")
+  const query = params.toString()
+  const res = await apiFetch(
+    `${getServerUrl()}/api/workspaces/${workspaceId}/workflows/${encodeURIComponent(ref)}${query ? `?${query}` : ""}`,
+  )
+  if (res.status === 404) return null
+  return handleResponse<WorkflowContentWire>(res)
 }
 
 export async function fetchExecutionDetail(workspaceId: string, executionId: string): Promise<ExecutionDetailWire> {

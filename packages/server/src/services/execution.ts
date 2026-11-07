@@ -258,6 +258,14 @@ export class ExecutionService {
     return this.lifecycle.getWorkflowContent(executionId)
   }
 
+  /** 运行 YAML + 真实来源（snapshot / workspace / builtin）—— YAML 窗用。 */
+  getWorkflowContentWithSource(executionId: string): {
+    content: string | null
+    source: import("./execution/ExecutionQueryService").WorkflowContentSource | null
+  } {
+    return this.lifecycle.getWorkflowContentWithSource(executionId)
+  }
+
   getStateJson(executionId: string): Record<string, unknown> | null {
     return this.lifecycle.getStateJson(executionId)
   }

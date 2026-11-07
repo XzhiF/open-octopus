@@ -1605,6 +1605,13 @@ export class ExecutionLifecycle {
     return this.queryService.getWorkflowContent(executionId)
   }
 
+  getWorkflowContentWithSource(executionId: string): {
+    content: string | null
+    source: import("./ExecutionQueryService").WorkflowContentSource | null
+  } {
+    return this.queryService.getWorkflowContentWithSource(executionId)
+  }
+
   getStateJson(executionId: string): Record<string, unknown> | null {
     return this.stateManager.getStateJson(executionId)
   }

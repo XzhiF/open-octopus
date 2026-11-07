@@ -6,12 +6,12 @@
 // 控制项沿用任务动作，与对话卡片同源。
 
 import { useEffect, useState } from 'react'
-import { Pause, Play, RotateCcw, Square } from 'lucide-react'
+import { Code2, Pause, Play, RotateCcw, Square } from 'lucide-react'
 import { toast } from 'sonner'
 import { getTask, type TaskDetail, type TaskView } from '@/lib/tasks-api'
 import { cancelExecution, fetchExecutionDetail, rerunExecution } from '@/lib/api-client'
 import type { StepExecution } from '@/lib/types'
-import type { RunTarget } from './task-window-types'
+import type { RunTarget, YamlTarget } from './task-window-types'
 import { formatStopwatch } from '@/lib/format'
 import { WorkflowFlowViewerWithStatus } from '@/components/workspace/workflow-flow-viewer-with-status'
 import { RunLogConsole } from '@/components/workspace/run-log/run-log-console'
@@ -59,12 +59,15 @@ export function RunWindow({
   task,
   runTarget,
   onTaskAction,
+  onOpenYaml,
 }: {
   /** 有任务 = 任务当前一轮；自由对话里打开作业坞指定的执行时没有任务。 */
   task: TaskView | null
   /** 作业坞运行列表点进来的指定执行；缺省 = 任务当前一轮（原行为不变）。 */
   runTarget?: RunTarget | null
   onTaskAction?: (action: string) => void
+  /** 头部「</> YAML」—— 看 DAG 的同时对照本次运行的 YAML 原文。 */
+  onOpenYaml?: (target: YamlTarget) => void
 }) {
   const [detail, setDetail] = useState<TaskDetail | null>(null)
   const [exec, setExec] = useState<{
@@ -230,6 +233,29 @@ export function RunWindow({
         )}
         <span className="truncate font-mono text-[9px] text-pop-dim/70">{executionId}</span>
         <div className="ml-auto flex items-center gap-1">
+          {workspaceId && executionId && onOpenYaml && (
+            <button
+              type="button"
+              data-testid="run-yaml"
+              aria-label="查看工作流 YAML"
+              title="查看工作流 YAML"
+              onClick={() =>
+                onOpenYaml({
+                  workspaceId,
+                  executionId,
+                  workflowRef,
+                  title: runTarget?.title ?? workflowRef ?? "执行",
+                  phaseIndex,
+                  roundIndex,
+                  status,
+                  from: "run",
+                })
+              }
+              className="inline-flex items-center gap-1 rounded border border-pop-cyan/40 bg-pop-cyan/[0.06] px-2 py-1 text-[10px] text-pop-cyan hover:bg-pop-cyan/[0.12]"
+            >
+              <Code2 className="size-3" /> YAML
+            </button>
+          )}
           {!runTarget && status === 'running' && (
             <button type="button" onClick={() => onTaskAction?.('pause')}
               className="inline-flex items-center gap-1 rounded border border-pop-bd px-2 py-1 text-[10px] text-pop-ink hover:bg-white/[0.06]">

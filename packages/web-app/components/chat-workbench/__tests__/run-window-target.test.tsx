@@ -89,4 +89,21 @@ describe('运行窗口 · 指定执行（作业坞运行列表）', () => {
     fireEvent.click(screen.getByTestId('run-abort'))
     expect(cancelExecution).toHaveBeenCalledWith('ws-1', 'plan-exec')
   })
+
+  it('头部 YAML 按钮回传当前执行目标（不改变运行窗本身）', async () => {
+    const onOpenYaml = vi.fn()
+    await mount({ onOpenYaml })
+    fireEvent.click(screen.getByTestId('run-yaml'))
+    expect(onOpenYaml).toHaveBeenCalledWith(
+      expect.objectContaining({
+        workspaceId: 'ws-1',
+        executionId: 'plan-exec',
+        workflowRef: 'built-in/acceptance-plan',
+        phaseIndex: 1,
+        roundIndex: 1,
+        status: 'running',
+        from: 'run',
+      }),
+    )
+  })
 })

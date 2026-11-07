@@ -79,6 +79,8 @@ export interface WorkspaceExplorerDockProps {
   onOpenTaskModule?: (module: TaskModule) => void
   /** 运行列表里点了一条 → 打开指定执行的运行窗（ChatTab 负责开窗）。 */
   onOpenRun?: (run: WorkspaceRun) => void
+  /** 运行列表行尾 </> → 直接看这次运行的 YAML 快照（ChatTab 负责开窗）。 */
+  onOpenYaml?: (run: WorkspaceRun) => void
   /** Task action (trigger/pause/resume/abort/reopen/retry_archive/accept…). */
   onTaskAction?: (action: string) => void
   activity: ActivitySnapshot
@@ -187,6 +189,7 @@ export function WorkspaceExplorerDock({
   onOpenSubagent,
   onOpenTaskModule,
   onOpenRun,
+  onOpenYaml,
   onTaskAction,
   activity,
   taskProject,
@@ -666,6 +669,9 @@ export function WorkspaceExplorerDock({
               onPick={(run) => {
                 setPane(null)
                 onOpenRun?.(run)
+              }}
+              onOpenYaml={(run) => {
+                onOpenYaml?.(run)
               }}
             />
           ) : pane === 'subagents' ? (

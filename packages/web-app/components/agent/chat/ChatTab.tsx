@@ -21,11 +21,12 @@ import { ChatSidebar } from './chat-sidebar'
 import { CwdPicker, type CwdChoice } from './cwd-picker'
 import { TaskModulesLayer } from '@/components/chat-workbench/task-modules-layer'
 import { TriggerDialog } from '@/components/tasks/trigger-dialog'
-import type { RunTarget, SubagentTarget, TaskModule, TaskWindowMap } from '@/components/chat-workbench/task-window-types'
+import type { RunTarget, SubagentTarget, TaskModule, TaskWindowMap, YamlTarget } from '@/components/chat-workbench/task-window-types'
 import { TaskProjectChip } from '@/components/chat-workbench/task-project-chip'
 import { WorkspaceExplorerDock } from '@/components/workspace/workspace-explorer-dock'
 import { useActivitySnapshot } from '@/components/chat-workbench/inspector-activity'
 import { WorkflowWindow } from '@/components/chat-workbench/workflow-window'
+import { WorkflowYamlWindow } from '@/components/chat-workbench/workflow-yaml-window'
 import { runTitle } from '@/components/chat-workbench/run-picker'
 import {
   createTask, getTask, readyTask, TaskReadyGateError, updateTask, deleteTask, abortTask,
@@ -101,6 +102,7 @@ export function ChatTab() {
   const [pendingTaskSession, setPendingTaskSession] = useState<PendingTaskSession | null>(null)
   const [creatingTask, setCreatingTask] = useState(false)
   const [taskModuleRequest, setTaskModuleRequest] = useState<{ module: TaskModule; nonce: number; runTarget?: RunTarget | null; subagentTarget?: SubagentTarget | null } | null>(null)
+  const [yamlTarget, setYamlTarget] = useState<YamlTarget | null>(null)
   const [taskWindows, setTaskWindows] = useState<Record<string, TaskWindowMap>>({})
   // 2026-10-31 消耗窗通用化：纯会话（无任务）也有一扇消耗窗，窗口 id 与任务窗
   // 共用 'usage'，但几何状态独立（不跟着任务切换复用/串位）。
@@ -1541,6 +1543,7 @@ export function ChatTab() {
           }}
           openModule={taskModuleRequest}
           onOpenLinkedTask={openLinkedTask}
+          onOpenYaml={setYamlTarget}
         />
       </div>
 
@@ -1586,10 +1589,27 @@ export function ChatTab() {
             },
           })
         }}
+        onOpenYaml={(run) => {
+          // 行尾 </> —— 不切走运行窗，直接看这次执行的 YAML 快照。
+          setYamlTarget({
+            workspaceId: run.workspaceId,
+            executionId: run.id,
+            workflowRef: run.workflowRef,
+            title: runTitle(run),
+            phaseIndex: run.phaseIndex,
+            roundIndex: run.roundIndex,
+            status: run.status,
+            from: 'dock',
+          })
+        }}
         onTaskAction={(action) => { if (activeTask) void executeTaskAction(activeTask.id, action) }}
         activity={activitySnapshot}
         sidebarWidth={sidebarCollapsed ? 0 : sidebarWidth}
       />
+
+      {yamlTarget && (
+        <WorkflowYamlWindow target={yamlTarget} onClose={() => setYamlTarget(null)} />
+      )}
 
       <Dialog open={!!renameTarget} onOpenChange={(open) => { if (!open) setRenameTarget(null) }}>
         <DialogContent

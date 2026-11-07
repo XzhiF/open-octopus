@@ -61,6 +61,28 @@ describe('RunPicker — 作业坞运行列表', () => {
     expect(onPick.mock.calls[0][0].id).toBe('plan')
   })
 
+  it('行尾 </> 只开 YAML 窗，不额外打开运行窗', () => {
+    const onPick = vi.fn()
+    const onOpenYaml = vi.fn()
+    render(
+      <RunPicker
+        workspaceId="ws-1"
+        runs={[run()]}
+        onPick={onPick}
+        onOpenYaml={onOpenYaml}
+      />,
+    )
+    fireEvent.click(screen.getByTestId('run-picker-yaml'))
+    expect(onOpenYaml).toHaveBeenCalledTimes(1)
+    expect(onOpenYaml.mock.calls[0][0].id).toBe('exec-1')
+    expect(onPick).not.toHaveBeenCalled()
+  })
+
+  it('没有 YAML 回调时不渲染行尾按钮（保留原来的箭头）', () => {
+    render(<RunPicker workspaceId="ws-1" runs={[run()]} onPick={() => {}} />)
+    expect(screen.queryByTestId('run-picker-yaml')).toBeNull()
+  })
+
   it('空态说明与无工作区降级', () => {
     const { rerender } = render(<RunPicker workspaceId="ws-1" runs={[]} onPick={() => {}} />)
     expect(screen.getByText('本工作区还没有运行。')).toBeTruthy()
