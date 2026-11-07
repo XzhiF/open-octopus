@@ -240,6 +240,30 @@ describe("GET /api/dashboard/today", () => {
     expect([...ts].sort().reverse()).toEqual(ts)
   })
 
+  it("当天删除的任务进变动流与时间线，创建失败的回滚残行不出现", async () => {
+    // 真实删除：昨天建、今天用过、今天 09:25 删掉
+    insertTask({ id: "t-del", name: "旧草稿", status: "draft", created_at: YESTERDAY, updated_at: at(9, 20) })
+    db.prepare("UPDATE tasks SET deleted_at = ? WHERE id = 't-del'").run(at(9, 25))
+    // 回滚残行：同一秒内建完又删（createTask catch 的 softDelete）
+    insertTask({ id: "t-phantom", name: "半创建残行", status: "draft", created_at: at(9, 30) })
+    db.prepare("UPDATE tasks SET deleted_at = ? WHERE id = 't-phantom'")
+      .run(new Date(2026, 10, 7, 9, 30, 0, 200).toISOString())
+
+    const body = await (await app().request("/api/dashboard/today")).json() as any
+
+    expect(body.stats.tasks.deleted).toBe(1)
+    expect(body.stats.tasks.changed).toBe(4)
+    expect(body.stats.tasks.breakdown).toContainEqual({ key: "deleted", label: "已删除", count: 1 })
+
+    const changes = body.changes.items as Array<{ title: string }>
+    expect(changes.some((i) => i.title === "「旧草稿」已删除")).toBe(true)
+    expect(changes.some((i) => i.title.includes("半创建残行"))).toBe(false)
+
+    const nodes = body.timeline.nodes as Array<{ title: string }>
+    expect(nodes.some((n) => n.title === "「旧草稿」已删除")).toBe(true)
+    expect(nodes.some((n) => n.title.includes("半创建残行"))).toBe(false)
+  })
+
   it("有价表时成本/缓存省下都按视图现算（USD 基准）", async () => {
     // 只留一条缓存读调用：100 万 cacheRead、无 input/output
     db.prepare("DELETE FROM llm_calls").run()

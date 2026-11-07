@@ -65,6 +65,8 @@ export interface TodayDigest {
   stats: {
     tasks: {
       changed: number
+      /** 其中当天被删除的任务数（也计入 changed）。 */
+      deleted: number
       breakdown: Array<{ key: string; label: string; count: number }>
     }
     chats: { sessions: number; converted: number; running: number }
@@ -105,6 +107,9 @@ const TIMELINE_QUOTA: Record<Exclude<TodayTimelineKind, "now">, number> = {
 const TIMELINE_MAX = 9
 const CHANGES_MAX = 12
 
+/** 创建失败回滚的窗口：任务存活不足这个时长就被删 = 半创建残行，不算「删除」。 */
+const DELETION_ROLLBACK_WINDOW_MS = 5_000
+
 const TIMELINE_RULE =
   "入选：任务状态跃迁 · 分身资产变更（版本/技能/记忆/文件）· 知识入库 · 你做出的决定；普通消息不占位"
 
@@ -144,6 +149,11 @@ export function buildTodayDigest(deps: TodayDigestDeps): TodayDigest {
 
   const ledger = deps.tokenUsageDAO.todayLedger(sinceMs)
   const tasks = safe(() => deps.todayDAO.listTasksTouched(sinceIso), [] as TodayTaskRow[])
+  // 删除也是「你做出的决定」：deleted_at 是唯一落点。创建失败的回滚残行
+  // （createTask catch 里同请求内 softDelete）按存活时长滤掉 —— 人不可能几秒内
+  // 建完再删，残行没有「今天的工作状态」语义。
+  const deletedTasks = safe(() => deps.todayDAO.listTasksDeletedSince(sinceIso), [] as TodayTaskRow[])
+    .filter((task) => task.deleted_at !== null && isLivedDeletion(task.created_at, task.deleted_at))
   const acceptances = safe(() => deps.todayDAO.listAcceptancesSince(sinceIso), [] as TodayAcceptanceRow[])
   const executions = safe(() => deps.todayDAO.listExecutionsStartedSince(sinceIso), [] as TodayExecutionRow[])
   const sessions = safe(() => deps.todayDAO.listSessionsTouched(sinceIso), [] as TodaySessionRow[])
@@ -167,6 +177,9 @@ export function buildTodayDigest(deps: TodayDigestDeps): TodayDigest {
   const taskBreakdown = TASK_STATUS_ORDER
     .map((key) => ({ key, label: TASK_STATUS_LABEL[key] ?? key, count: statusCounts.get(key) ?? 0 }))
     .filter((row) => row.count > 0)
+  if (deletedTasks.length > 0) {
+    taskBreakdown.push({ key: "deleted", label: "已删除", count: deletedTasks.length })
+  }
 
   const converted = safe(
     () => deps.todayDAO.countTasksFromSessions(sessions.map((s) => s.id)),
@@ -251,6 +264,21 @@ export function buildTodayDigest(deps: TodayDigestDeps): TodayDigest {
       detail: acc.feedback?.trim() || undefined,
       tone: passed ? "ok" : "bad",
       priority: 100,
+    })
+  }
+
+  // 任务删除（软删时刻即事件）
+  for (const task of deletedTasks) {
+    const ts = task.deleted_at
+    if (!ts) continue
+    push({
+      ts,
+      kind: "task",
+      cat: "task",
+      title: `「${task.name}」已删除`,
+      detail: `原状态 ${TASK_STATUS_LABEL[task.status] ?? task.status}`,
+      tone: "warn",
+      priority: 95,
     })
   }
 
@@ -424,7 +452,7 @@ export function buildTodayDigest(deps: TodayDigestDeps): TodayDigest {
       split: ledger.split,
     },
     stats: {
-      tasks: { changed: tasks.length, breakdown: taskBreakdown },
+      tasks: { changed: tasks.length + deletedTasks.length, deleted: deletedTasks.length, breakdown: taskBreakdown },
       chats: { sessions: sessions.length, converted, running },
       clones: {
         total: cloneDirs.length,
@@ -459,6 +487,18 @@ function safe<T>(fn: () => T, fallback: T): T {
   } catch {
     return fallback
   }
+}
+
+/**
+ * 是否是「真的活过」的删除。创建失败的回滚残行由 createTask 的 catch 在同一个
+ * 请求里 softDelete，created_at 与 deleted_at 只差毫秒；人不可能几秒内建完再删。
+ * 时间不可解析时按真实删除处理（宁可多记，不丢用户动作）。
+ */
+function isLivedDeletion(createdAt: string, deletedAt: string): boolean {
+  const created = Date.parse(createdAt)
+  const deleted = Date.parse(deletedAt)
+  if (!Number.isFinite(created) || !Number.isFinite(deleted)) return true
+  return deleted - created > DELETION_ROLLBACK_WINDOW_MS
 }
 
 function localDate(d: Date): string {

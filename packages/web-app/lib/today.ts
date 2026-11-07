@@ -50,6 +50,8 @@ export interface TodayDigest {
   stats: {
     tasks: {
       changed: number
+      /** 其中当天被删除的任务数（也计入 changed）。 */
+      deleted: number
       breakdown: Array<{ key: string; label: string; count: number }>
     }
     chats: { sessions: number; converted: number; running: number }

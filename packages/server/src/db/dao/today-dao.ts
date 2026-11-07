@@ -21,6 +21,8 @@ export interface TodayTaskRow {
   created_at: string
   updated_at: string
   completed_at: string | null
+  /** 软删时刻；NULL = 还活着。删除也是「今天的决定」，今日页直接读这一列。 */
+  deleted_at: string | null
   workspace_id: string | null
   source_chat_session_id: string | null
 }
@@ -85,13 +87,28 @@ export class TodayDAO extends BaseDAO {
   /** 当天有流转的未删除任务（created / updated / completed 任一命中）。 */
   listTasksTouched(sinceIso: string): TodayTaskRow[] {
     return this.stmt(`
-      SELECT id, name, status, created_at, updated_at, completed_at,
+      SELECT id, name, status, created_at, updated_at, completed_at, deleted_at,
              workspace_id, source_chat_session_id
       FROM tasks
       WHERE deleted_at IS NULL
         AND (created_at >= ? OR updated_at >= ? OR completed_at >= ?)
       ORDER BY updated_at ASC, id ASC
     `).all(sinceIso, sinceIso, sinceIso) as TodayTaskRow[]
+  }
+
+  /**
+   * 当天被软删的任务。
+   * `tasks.deleted_at` 是删除的唯一落点（没有事件表）；今日页把这一列当删除
+   * 事件读。创建失败的回滚残行由调用方按存活时长过滤（见 today-digest）。
+   */
+  listTasksDeletedSince(sinceIso: string): TodayTaskRow[] {
+    return this.stmt(`
+      SELECT id, name, status, created_at, updated_at, completed_at, deleted_at,
+             workspace_id, source_chat_session_id
+      FROM tasks
+      WHERE deleted_at IS NOT NULL AND deleted_at >= ?
+      ORDER BY deleted_at ASC
+    `).all(sinceIso) as TodayTaskRow[]
   }
 
   /** 当天的人工验收决策（append-only ledger）。 */
