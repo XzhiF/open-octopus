@@ -355,6 +355,32 @@ export function refineMemory() {
   }>('/memory/refine', { method: 'POST' })
 }
 
+// ── Main Agent files (~/.octopus/agent) ─────────────────────────────
+export function listMainAgentFiles(query?: { path?: string; recursive?: boolean }) {
+  const params = new URLSearchParams()
+  if (query?.path) params.set('path', query.path)
+  if (query?.recursive) params.set('recursive', 'true')
+  const qs = params.toString()
+  return request<{ files: import('./types').MainAgentFileInfo[]; path: string }>(
+    `/files${qs ? `?${qs}` : ''}`,
+  )
+}
+export function getMainAgentFile(filePath: string) {
+  return request<{
+    path: string
+    content: string
+    size: number
+    modified: string
+    readonly: boolean
+  }>(`/files/${encodeURIComponent(filePath)}`)
+}
+export function updateMainAgentFile(filePath: string, content: string) {
+  return request<{ ok: true; path: string }>(`/files/${encodeURIComponent(filePath)}`, {
+    method: 'PUT',
+    body: JSON.stringify({ content }),
+  })
+}
+
 // Clones (unified API at /api/clones)
 const CLONE_BASE = () => `${getServerUrl()}/api/clones`
 
@@ -386,6 +412,16 @@ export function listClones() {
 }
 export function deleteClone(name: string) {
   return cloneRequest<{ ok: true }>(`/${name}`, { method: 'DELETE' })
+}
+/** 更新分身可编辑设置（显示名 / 记忆范围 / 技能）。人格走 persona.md 文件编辑。 */
+export function updateCloneSettings(
+  name: string,
+  patch: { display_name?: string; memory_scope?: 'shared' | 'isolated'; skills?: string[] },
+) {
+  return cloneRequest<{ clone: CloneInfo }>(`/${name}`, {
+    method: 'PATCH',
+    body: JSON.stringify(patch),
+  })
 }
 export function getCloneFile(name: string, filePath: string) {
   return cloneRequest<{ content: string; path: string; size: number; readonly: boolean }>(`/${name}/files/${encodeURIComponent(filePath)}`)

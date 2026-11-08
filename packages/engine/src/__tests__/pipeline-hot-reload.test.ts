@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest"
 import { WorkflowEngine } from "../engine"
-import type { WorkflowDef, PipelineConfig } from "@octopus/shared"
+import { parsePipelineConfig, type WorkflowDef, type PipelineConfig } from "@octopus/shared"
 import fs from "fs"
 import path from "path"
 import os from "os"
@@ -102,7 +102,9 @@ describe("Pipeline Hot-Reload", () => {
     fs.writeFileSync(pipelinePath, JSON.stringify(config), "utf8")
 
     const engine = new WorkflowEngine(workflow, {}, tmpDir, tmpDir)
-    engine.setPipelineConfig(config, undefined, pipelinePath)
+    // Production passes an already-parsed config; normalize here so the initial
+    // hash matches what reloadPipelineIfNeeded computes from the file.
+    engine.setPipelineConfig(parsePipelineConfig(config), undefined, pipelinePath)
 
     // Mock BashExecutor to return success
     vi.mocked(BashExecutor.prototype.execute).mockResolvedValue({
@@ -116,7 +118,7 @@ describe("Pipeline Hot-Reload", () => {
 
     // Create engine with callbacks
     const engine2 = new WorkflowEngine(workflow, {}, tmpDir, tmpDir, callbacks)
-    engine2.setPipelineConfig(config, undefined, pipelinePath)
+    engine2.setPipelineConfig(parsePipelineConfig(config), undefined, pipelinePath)
 
     await engine2.run()
 

@@ -183,6 +183,12 @@ export interface FileInfo {
   readonly: boolean
 }
 
+/** Main Agent 工作目录（~/.octopus/agent）的一行文件树节点。 */
+export interface MainAgentFileInfo extends FileInfo {
+  /** 目录的直接子项数（文件为 undefined）。 */
+  children?: number
+}
+
 // ===== Skills =====
 export interface SkillInfo {
   name: string

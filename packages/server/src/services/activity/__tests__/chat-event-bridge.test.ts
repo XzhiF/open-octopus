@@ -106,6 +106,83 @@ describe("ChatEventBridge.requestWorkflowRunCard", () => {
   })
 })
 
+// 2026-11-06 用户反馈：chat 里 run_workflow 起的工作流只有一条事后
+// 「工作流完成：xxx」裸文本，没有运行卡。现在两者对齐：起跑就落执行卡，
+// 完成事件改走 ephemeral 唤醒（卡在原地走终态，不再重复写一条文本）。
+describe("ChatEventBridge.requestWorkflowRunCard — chat 里的 run_workflow", () => {
+  let db: Database.Database
+  let originalFetch: typeof fetch
+
+  const CHAT_CARD = {
+    sessionId: "s-main",
+    executionId: "chat-exec-1",
+    workspaceId: "ws-1",
+    workflowRef: "multi-pr-review.yaml",
+    workflowName: "multi-pr-review",
+    system: false,
+  }
+
+  beforeEach(() => {
+    db = new Database(":memory:")
+    applySchema(db)
+    resetChatEventBridgeForTests()
+    getChatEventBridge().attach(db)
+    insertSession(db, "s-main", null)
+    originalFetch = global.fetch
+  })
+
+  afterEach(() => {
+    global.fetch = originalFetch
+    db?.close()
+    resetChatEventBridgeForTests()
+  })
+
+  it("没有绑定任务时也能按 sessionId 落卡", () => {
+    getChatEventBridge().requestWorkflowRunCard(CHAT_CARD)
+
+    const rows = cards(db, "s-main")
+    expect(rows).toHaveLength(1)
+    const activity = rows[0].activity as {
+      executionId: string
+      payload: Record<string, unknown>
+    }
+    expect(activity.executionId).toBe("chat-exec-1")
+    expect(activity.payload).toMatchObject({
+      workflowRun: true,
+      system: false,
+      workflowRef: "multi-pr-review.yaml",
+      workflowName: "multi-pr-review",
+    })
+  })
+
+  it("完成事件只做 ephemeral 唤醒，对话里不再出现裸文本", async () => {
+    const bodies: Array<Record<string, unknown>> = []
+    global.fetch = vi.fn(async (_url: string, init?: RequestInit) => {
+      bodies.push(JSON.parse(String(init?.body)) as Record<string, unknown>)
+      return { ok: true, body: null } as unknown as Response
+    }) as unknown as typeof fetch
+
+    const bridge = getChatEventBridge()
+    bridge.bindExecution("chat-exec-1", {
+      sessionId: "s-main",
+      org: "org",
+      workspaceId: "ws-1",
+      workflowRef: "multi-pr-review.yaml",
+    })
+    bridge.requestWorkflowRunCard(CHAT_CARD)
+    bridge.handleSse({
+      event: "complete",
+      data: { executionId: "chat-exec-1", finalStatus: "completed" },
+    })
+
+    await vi.waitFor(() => expect(bodies).toHaveLength(1))
+    expect(bodies[0].ephemeral).toBe(true)
+    expect(String(bodies[0].message)).toContain("工作流完成")
+    // transcript 里仍然只有那张执行卡
+    expect(cards(db, "s-main")).toHaveLength(1)
+  })
+})
+
 describe("ChatEventBridge.requestAcceptanceGuide", () => {
   let db: Database.Database
   let originalFetch: typeof fetch

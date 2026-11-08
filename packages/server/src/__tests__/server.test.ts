@@ -79,7 +79,7 @@ describe("Server API", () => {
     const data = await res.json()
     expect(data.id).toBeDefined()
     expect(data.name).toBe("test")
-    expect(data.org).toBe("xzf")
+    expect(data.repo_group).toBe("xzf")
     expect(data.created_at).toBeDefined()
   })
 
@@ -147,15 +147,19 @@ describe("Server API", () => {
     expect(Array.isArray(data)).toBe(true)
   })
 
-  it("POST /api/workspaces rejects invalid org", async () => {
+  it("POST /api/workspaces accepts unknown repo_group (org is a registry key, not a validated org)", async () => {
     const res = await app.request("/api/workspaces", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ name: "Test", repo_group: "nonexistent" }),
+      body: JSON.stringify({
+        name: "Test",
+        repo_group: "nonexistent",
+        path: path.join(os.tmpdir(), `ws-unknown-group-${Date.now()}`),
+      }),
     })
-    expect(res.status).toBe(400)
-    const data = await res.json() as { error: string }
-    expect(data.error).toContain("not found")
+    expect(res.status).toBe(201)
+    const data = await res.json() as { repo_group: string | null }
+    expect(data.repo_group).toBe("nonexistent")
   })
 
   it("GET /api/dashboard/stats returns stats", async () => {

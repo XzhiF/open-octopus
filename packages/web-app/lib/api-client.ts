@@ -27,15 +27,6 @@ export async function getWorkspace(id: string) {
   return res.json()
 }
 
-export async function createWorkspace(data: { name: string; repo_group?: string; description?: string; path: string; repos?: string[]; branch?: string }) {
-  const res = await apiFetch(`${getServerUrl()}/api/workspaces`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(data),
-  })
-  return handleResponse(res)
-}
-
 /** Register an existing directory as a chat cwd workspace (no scaffolding). */
 export async function attachWorkspaceDirectory(data: { repo_group?: string | null; path: string; name?: string }) {
   const res = await apiFetch(`${getServerUrl()}/api/workspaces/attach`, {
@@ -87,25 +78,6 @@ export interface WorkspaceSkillInfo {
 export async function listWorkspaceSkills(id: string): Promise<{ items: WorkspaceSkillInfo[]; total: number }> {
   const res = await apiFetch(`${getServerUrl()}/api/workspaces/${encodeURIComponent(id)}/skills`, {
     headers: { Authorization: "Bearer agent" },
-  })
-  return handleResponse(res)
-}
-
-export async function deleteWorkspace(id: string) {
-  const res = await apiFetch(`${getServerUrl()}/api/workspaces/${id}`, { method: "DELETE" })
-  return handleResponse(res)
-}
-
-export async function fetchImportableWorkspaces(_repoGroup?: string) {
-  const res = await apiFetch(`${getServerUrl()}/api/workspaces/importable`)
-  return handleResponse(res)
-}
-
-export async function importWorkspace(name: string, repoGroup?: string) {
-  const res = await apiFetch(`${getServerUrl()}/api/workspaces/import`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ name, repo_group: repoGroup }),
   })
   return handleResponse(res)
 }
@@ -257,11 +229,152 @@ export interface ExecutionDetailWire {
   started_at?: string | null
   completed_at?: string | null
   workflow_content?: string | null
+  /** workflow_content 的真实来源：运行快照 / 工作区定义 / 内置资源。
+   *  旧服务端没有该字段，前端按“快照”兜底。 */
+  workflow_content_source?: WorkflowContentSource | null
   steps?: import("@/lib/types").StepExecution[]
+}
+
+export type WorkflowContentSource = "snapshot" | "workspace" | "builtin"
+
+export interface WorkflowContentWire {
+  ref?: string
+  content?: string | null
+  parsed?: Record<string, unknown> | null
+}
+
+/**
+ * GET /api/workspaces/:ws/workflows/:ref
+ *  - 不带 executionId：工作区 workflows/ 下的当前定义（找不到时回退内置资源）
+ *  - 带 executionId + isDynamic：执行作用域的动态子流快照；未生成时服务端 404
+ */
+export async function fetchWorkflowContent(
+  workspaceId: string,
+  ref: string,
+  opts?: { executionId?: string | null; isDynamic?: boolean },
+): Promise<WorkflowContentWire | null> {
+  const params = new URLSearchParams()
+  if (opts?.executionId) params.set("executionId", opts.executionId)
+  if (opts?.isDynamic) params.set("isDynamic", "true")
+  const query = params.toString()
+  const res = await apiFetch(
+    `${getServerUrl()}/api/workspaces/${workspaceId}/workflows/${encodeURIComponent(ref)}${query ? `?${query}` : ""}`,
+  )
+  if (res.status === 404) return null
+  return handleResponse<WorkflowContentWire>(res)
 }
 
 export async function fetchExecutionDetail(workspaceId: string, executionId: string): Promise<ExecutionDetailWire> {
   const res = await apiFetch(`${getServerUrl()}/api/workspaces/${workspaceId}/executions/${executionId}`)
+  return handleResponse(res)
+}
+
+// ============ Runtime supervision (incidents) ============
+
+export type RuntimeIncidentStatus =
+  | "open"
+  | "dispatched"
+  | "waiting_human"
+  | "resolved"
+  | "expired"
+  | "unowned"
+
+export type RuntimeDecisionType =
+  | "proceed"
+  | "inject"
+  | "retry"
+  | "pause"
+  | "abort"
+  | "block"
+  | "reload"
+  | "escalate"
+
+export interface RuntimeIncidentWire {
+  id: string
+  executionId: string
+  workspaceId: string
+  nodeId: string
+  displayNodeId?: string
+  phase: string
+  severity: "info" | "warning" | "critical"
+  kind: string
+  status: RuntimeIncidentStatus
+  summary: string
+  evidence: Array<Record<string, unknown>>
+  contextRef: string
+  allowedActions: RuntimeDecisionType[]
+  createdAt: number
+  deadlineAt?: number
+  decision?: { type: RuntimeDecisionType; [key: string]: unknown } | null
+  resolutionSource?: "agent" | "user" | "policy" | null
+}
+
+export async function fetchExecutionIncidents(
+  workspaceId: string,
+  executionId: string,
+): Promise<RuntimeIncidentWire[]> {
+  const res = await apiFetch(
+    `${getServerUrl()}/api/workspaces/${workspaceId}/harness/incidents?execution_id=${encodeURIComponent(executionId)}`,
+  )
+  if (!res.ok) return []
+  const body = await handleResponse<{ incidents: RuntimeIncidentWire[] }>(res)
+  return body.incidents ?? []
+}
+
+export async function fetchRuntimeIncident(
+  workspaceId: string,
+  incidentId: string,
+): Promise<RuntimeIncidentWire | null> {
+  const res = await apiFetch(
+    `${getServerUrl()}/api/workspaces/${workspaceId}/harness/incidents/${encodeURIComponent(incidentId)}`,
+  )
+  if (res.status === 404) return null
+  const body = await handleResponse<{ incident: RuntimeIncidentWire }>(res)
+  return body.incident ?? null
+}
+
+export interface RuntimeDecisionBody {
+  type: RuntimeDecisionType
+  message?: string
+  reason?: string
+  hint?: string
+  var_pool_patches?: Record<string, string>
+  model?: string
+  continue_subsequent?: boolean
+  yaml?: string
+  options?: string[]
+  source?: "agent" | "user" | "policy"
+}
+
+export async function resolveRuntimeIncident(
+  workspaceId: string,
+  incidentId: string,
+  decision: RuntimeDecisionBody,
+): Promise<{ ok: boolean; detail: string; status: string }> {
+  const res = await apiFetch(
+    `${getServerUrl()}/api/workspaces/${workspaceId}/harness/incidents/${encodeURIComponent(incidentId)}/resolve`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ ...decision, source: decision.source ?? "user" }),
+    },
+  )
+  return handleResponse(res)
+}
+
+export async function escalateRuntimeIncident(
+  workspaceId: string,
+  incidentId: string,
+  body: { reason: string; options?: string[] },
+): Promise<{ ok: boolean; detail: string; status: string }> {
+  const res = await apiFetch(
+    `${getServerUrl()}/api/workspaces/${workspaceId}/harness/incidents/${encodeURIComponent(incidentId)}/escalate`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    },
+  )
   return handleResponse(res)
 }
 

@@ -273,9 +273,9 @@ export class EngineCallbacks implements IEngineCallbacks {
     }
 
     return {
-      // ── onBeforeNode: budget blocking (BEFORE harness pipeline) ─────
-      // KD-11: budget check is injected before harness wrapping.
-      // The harness Proxy in DetectorPipeline intercepts onBeforeNode first,
+      // ── onBeforeNode: budget blocking (BEFORE supervision pipeline) ─────
+      // KD-11: budget check is injected before supervision wrapping.
+      // The proxy in SignalPipeline intercepts onBeforeNode first,
       // runs its detectors, then falls through to this handler.
       // KD-16: only fires for top-level nodes (not loop inner nodes).
       onBeforeNode: async (nodeId: string, nodeType: string, _nodeConfig: any) => {

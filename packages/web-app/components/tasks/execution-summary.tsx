@@ -4,7 +4,7 @@
 //   RUN_STATUS_LABEL / RUN_ERROR_STATUSES / runErrorOf — 运行行状态词表与红行
 //     判据单源（看板 tooltip / 控制台轮次行共用）。
 //   TaskAiUsageCard — AI 消耗卡（验货台左列注入 round 口径仍用）。
-//   useRunsAggregates / mergeAggregates / deepLinkTarget / execLabel — run-console
+//   useRunsAggregates / mergeAggregates / execLabel — run-console
 //     的数据 plumbing（一次拉取喂多处显示）。
 // 历史：本文件曾是 ready/running/done/failed/aborted 弹窗的信息主体
 // （TaskRunDetailView = PhaseTimeline + 任务概要 + 草稿批次 + 执行记录 + AI 卡）。
@@ -57,13 +57,6 @@ export function runErrorOf(exec: Pick<TaskExecutionBadge, "status" | "error_summ
  *  这层 wrapper 只做 toLocaleString 兜底，命名刻意避开受禁前缀。 */
 export function timeStamp(iso: string | null | undefined): string {
   return iso ? new Date(iso).toLocaleString("zh-CN") : "—"
-}
-
-/** 深链目标：徽章自带 (workspace_id, id) —— 旧契约里 execution_ref 的那一跳没了。 */
-export function deepLinkTarget(exec: TaskExecutionBadge): string | null {
-  return exec.workspace_id
-    ? `/workspaces/${exec.workspace_id}?tab=detail&execId=${exec.id}`
-    : null
 }
 
 /** 行标题。v4 的 phase/round 直接落在执行行上，「第几轮」是最贴近轮次语义的标签；
@@ -147,7 +140,7 @@ export function mergeAggregates(list: LLMCallAggregates[]): LLMCallAggregates | 
   }
 }
 
-/** 紧凑 AI 账目一行（2026-09-16 用户定版）：与 node-detail/cost-tab 同口径视觉 —
+/** 紧凑 AI 账目一行（2026-09-16 用户定版）：与 LLM 账目卡同口径视觉 —
  *  ∑处理量 ↑入 ↓出 ⚡缓存读 🗡️缓存写 · N 次请求 · $费用，**不列工具调用**。
  *  任务域所有「calls · tokens · cost」行统一吃这一个实现。null/零调用 → null。 */
 export function AggInline({ agg, className, dim = "text-pop-dim" }: {

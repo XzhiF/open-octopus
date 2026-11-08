@@ -7,6 +7,7 @@ import {
   listAllClones,
   createUserClone,
   deleteUserClone,
+  updateCloneSettings,
   isValidCloneName,
 } from '../services/agent/clone-resolver'
 
@@ -222,6 +223,34 @@ describe('Clone Resolver', () => {
       if (!result.ok) {
         expect(result.status).toBe(404)
       }
+    })
+  })
+
+  describe('updateCloneSettings', () => {
+    it('updates display name, memory scope and skills', () => {
+      const result = updateCloneSettings('workspace', {
+        display_name: '改名后的助手',
+        memory_scope: 'isolated',
+        skills: ['octo-wiki', 'octo-wiki', ' e2e-harness '],
+      })
+      expect(result.ok).toBe(true)
+      if (!result.ok) return
+      expect(result.clone.display_name).toBe('改名后的助手')
+      expect(result.clone.memory_scope).toBe('isolated')
+      expect(result.clone.skills).toEqual(['octo-wiki', 'e2e-harness'])
+      expect(resolveCloneInfo('workspace')?.display_name).toBe('改名后的助手')
+    })
+
+    it('rejects an empty display name', () => {
+      const result = updateCloneSettings('workspace', { display_name: '   ' })
+      expect(result.ok).toBe(false)
+      if (!result.ok) expect(result.status).toBe(400)
+    })
+
+    it('returns 404 for unknown clones', () => {
+      const result = updateCloneSettings('nonexistent', { display_name: 'X' })
+      expect(result.ok).toBe(false)
+      if (!result.ok) expect(result.status).toBe(404)
     })
   })
 })

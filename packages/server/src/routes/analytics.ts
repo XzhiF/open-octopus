@@ -9,13 +9,13 @@ import { join } from 'path'
 import os from 'os'
 import { getFlag, loadFeatureFlags } from '../config/feature-flags'
 import { SuggestionEngine } from '../services/suggestion-engine'
-import { getLogAnalysisService } from '../services/log-analysis'
 import { WorkspaceDAO, ExecutionDAO, TokenUsageDAO, toLedgerRows } from '../db/dao'
 import { buildTurnBoundaries, deriveTurnForTs, toEpochMs, type TurnBoundary } from '../turn-index'
-import type { LogAnalysisService } from '../services/log-analysis'
 
-// ─── Log Analysis Routes (default export) ──────────────────────────
+// ─── Workspace Analytics Routes (default export) ───────────────────
 // Mounted at: /api/workspaces/:id/analytics
+// 日志分析（health-summary / alerts / failure-patterns / anomalies /
+// cost-analysis / execution logs）随设置页下线一并移除，此处只留 swarm 统计。
 
 /** 打分启发式：单次执行 $10 为成本效率满分线（产品参数，非 ledger 口径）。 */
 const COST_EFFICIENCY_BASELINE_USD = 10
@@ -45,83 +45,8 @@ function getWorkspaceId(c: { req: { param: (name: string) => string | undefined 
   return id
 }
 
-function parseDays(c: { req: { query: (name: string) => string | undefined } }): number {
-  const raw = c.req.query("days")
-  if (!raw) return 30
-  const days = parseInt(raw, 10)
-  if (isNaN(days) || days < 1 || days > 365) {
-    throw Object.assign(new Error("days must be between 1 and 365"), { status: 400 })
-  }
-  return days
-}
-
-function parseLimit(c: { req: { query: (name: string) => string | undefined } }): number {
-  const raw = c.req.query("limit")
-  if (!raw) return 50
-  const limit = parseInt(raw, 10)
-  if (isNaN(limit) || limit < 1 || limit > 200) {
-    throw Object.assign(new Error("limit must be between 1 and 200"), { status: 400 })
-  }
-  return limit
-}
-
-export function createAnalyticsLogRoutes(
-  workspaceDAO: WorkspaceDAO,
-  logAnalysisService: LogAnalysisService,
-): Hono {
+export function createAnalyticsLogRoutes(workspaceDAO: WorkspaceDAO): Hono {
   const analyticsRoutes = new Hono()
-
-  analyticsRoutes.get("/health-summary", (c) => {
-    const workspaceId = getWorkspaceId(c)
-    const ws = workspaceDAO.findById(workspaceId)
-    if (!ws) return c.json({ error: "workspace not found" }, 404)
-    const days = parseDays(c)
-    return c.json(logAnalysisService.getHealthSummary(workspaceId, days))
-  })
-
-  analyticsRoutes.get("/alerts", (c) => {
-    const workspaceId = getWorkspaceId(c)
-    const ws = workspaceDAO.findById(workspaceId)
-    if (!ws) return c.json({ error: "workspace not found" }, 404)
-    const days = parseDays(c)
-    const limit = parseLimit(c)
-    return c.json(logAnalysisService.getAlerts(workspaceId, days, limit))
-  })
-
-  analyticsRoutes.get("/failure-patterns", (c) => {
-    const workspaceId = getWorkspaceId(c)
-    const ws = workspaceDAO.findById(workspaceId)
-    if (!ws) return c.json({ error: "workspace not found" }, 404)
-    const days = parseDays(c)
-    return c.json(logAnalysisService.getFailurePatterns(workspaceId, days))
-  })
-
-  analyticsRoutes.get("/anomalies", (c) => {
-    const workspaceId = getWorkspaceId(c)
-    const ws = workspaceDAO.findById(workspaceId)
-    if (!ws) return c.json({ error: "workspace not found" }, 404)
-    const days = parseDays(c)
-    return c.json(logAnalysisService.getAnomalies(workspaceId, days))
-  })
-
-  analyticsRoutes.get("/cost-analysis", (c) => {
-    const workspaceId = getWorkspaceId(c)
-    const ws = workspaceDAO.findById(workspaceId)
-    if (!ws) return c.json({ error: "workspace not found" }, 404)
-    const days = parseDays(c)
-    return c.json(logAnalysisService.getCostAnalysis(workspaceId, days))
-  })
-
-  analyticsRoutes.get("/execution/:executionId/logs", async (c) => {
-    const workspaceId = getWorkspaceId(c)
-    const ws = workspaceDAO.findById(workspaceId)
-    if (!ws) return c.json({ error: "workspace not found" }, 404)
-    const executionId = c.req.param("executionId")
-    if (!executionId) return c.json({ error: "executionId required" }, 400)
-    const nodeId = c.req.query("nodeId")
-    const result = await logAnalysisService.getExecutionLogs(workspaceId, executionId, nodeId)
-    return c.json(result)
-  })
 
   // Swarm node events — returns historical JSONL events for a specific node
   analyticsRoutes.get("/swarm-events/:executionId", (c) => {

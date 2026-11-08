@@ -7,6 +7,7 @@ import type { TaskView } from '@/lib/tasks-api'
 vi.mock('@/lib/tasks-api', () => ({ getTask: vi.fn() }))
 vi.mock('@/lib/api-client', () => ({
   fetchExecutionDetail: vi.fn(),
+  fetchExecutionIncidents: vi.fn(async () => []),
   cancelExecution: vi.fn(),
   rerunExecution: vi.fn(),
 }))
@@ -88,5 +89,49 @@ describe('运行窗口 · 指定执行（作业坞运行列表）', () => {
     await mount()
     fireEvent.click(screen.getByTestId('run-abort'))
     expect(cancelExecution).toHaveBeenCalledWith('ws-1', 'plan-exec')
+  })
+
+  it('头部 YAML 按钮回传当前执行目标（不改变运行窗本身）', async () => {
+    const onOpenYaml = vi.fn()
+    await mount({ onOpenYaml })
+    fireEvent.click(screen.getByTestId('run-yaml'))
+    expect(onOpenYaml).toHaveBeenCalledWith(
+      expect.objectContaining({
+        workspaceId: 'ws-1',
+        executionId: 'plan-exec',
+        workflowRef: 'built-in/acceptance-plan',
+        phaseIndex: 1,
+        roundIndex: 1,
+        status: 'running',
+        from: 'run',
+      }),
+    )
+  })
+
+  it('「事件」页签展示 runtime supervision 的只读时间线', async () => {
+    const { fetchExecutionIncidents } = await import('@/lib/api-client')
+    vi.mocked(fetchExecutionIncidents).mockResolvedValue([
+      {
+        id: 'inc-1',
+        executionId: 'plan-exec',
+        workspaceId: 'ws-1',
+        nodeId: 'spec-resolve',
+        phase: 'before_retry',
+        severity: 'warning',
+        kind: 'stupid_retry',
+        status: 'dispatched',
+        summary: '同一错误重复失败',
+        evidence: [],
+        contextRef: 'x',
+        allowedActions: ['retry', 'escalate'],
+        createdAt: Date.now(),
+      },
+    ] as never)
+
+    await mount()
+    fireEvent.click(screen.getByTestId('run-view-incidents'))
+    expect(await screen.findByTestId('incident-timeline')).toBeTruthy()
+    expect(screen.getByTestId('incident-row').textContent).toContain('同一错误重复失败')
+    expect(screen.getByTestId('run-view-incidents').textContent).toContain('事件 (1)')
   })
 })

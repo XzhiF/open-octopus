@@ -53,7 +53,9 @@ export function UsageTimingCard({ timing, rounds }: {
       <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
         <span className="font-mono text-[9.5px] font-black tracking-[.08em] text-pop-amber">耗时</span>
         <span className="ml-auto font-mono text-[9.5px] text-pop-dim">
-          {timing.count} 轮实跑 · 不含排队与待验收等待
+          {timing.count} 轮实跑
+          {timing.run_count ? ` · ${timing.run_count} 次工作流` : ''}
+          {' '}· 不含排队与待验收等待
         </span>
       </div>
 

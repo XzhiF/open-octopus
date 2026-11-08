@@ -219,6 +219,58 @@ export type TaskPhase = z.infer<typeof taskPhaseSchema>
  *  present) so a v4 payload without them parses; v3/generic enforcement moves
  *  to the format-branched ready gate (ticket 04), which still requires both
  *  for non-v4 specs. */
+/** 工作流开发任务（2026-11-06）的研发状态。
+ *
+ *  Kind 是任务级的开放枚举：目前只有 `workflow-dev`，缺省 = 普通 v4 开发任务。
+ *  工作流开发走轻量任务流（draft → 开发完成 → awaiting_archive → archiving →
+ *  done），不拆 phase、不走 per-phase 验收，因此这部分状态放在 task_spec JSON
+ *  里，而不是新增 tasks 列。
+ *
+ *  只有服务端 WorkflowDevService / 专用任务工具可以写这个对象 —— 它刻意不在
+ *  `TaskSpecFieldSchema` 里，避免 Agent 用通用 spec-field 绕过「校验 + 仿真」
+ *  硬闸。 */
+export const workflowDevStateSchema = z.object({
+  /** 当前正在开发的工作流 ref（task home `workflows/` 下的文件名）。一次只允许一个。 */
+  active_ref: z.string().min(1).optional(),
+  /** 已完成（通过校验 + 仿真，并由用户决定 release/snapshot）的工作流 ref。 */
+  completed_refs: z.array(z.string()).default([]),
+  /** 最近一次完成后用户选择的发布形态。 */
+  stage: z.enum(["release", "snapshot"]).optional(),
+  /** 最近一次基础校验（与 content hash 绑定；文件一变即失效）。 */
+  validation: z
+    .object({
+      ref: z.string().min(1),
+      hash: z.string().min(1),
+      valid: z.boolean(),
+      at: z.string().min(1),
+      errors: z.array(z.string()).default([]),
+    })
+    .optional(),
+  /** 最近一次仿真结果（同样与 content hash 绑定）。 */
+  simulation: z
+    .object({
+      ref: z.string().min(1),
+      hash: z.string().min(1),
+      passed: z.boolean(),
+      at: z.string().min(1),
+      scenarios: z.array(z.string()).default([]),
+      message: z.string().optional(),
+    })
+    .optional(),
+  /** 用户显式豁免「校验/仿真硬闸」时留痕。 */
+  waiver: z
+    .object({
+      ref: z.string().min(1),
+      hash: z.string().min(1),
+      reason: z.string().min(1),
+      at: z.string().min(1),
+    })
+    .optional(),
+  /** 任务级「开发完成」：置 true 后派生 awaiting_archive。 */
+  complete: z.boolean().optional(),
+})
+export type WorkflowDevState = z.infer<typeof workflowDevStateSchema>
+
 export const taskSpecSchema = z.object({
   goal: z.string().min(1).optional(),
   ac: z.array(z.string().min(1)).min(1).optional(),
@@ -289,6 +341,13 @@ export const taskSpecSchema = z.object({
   // 通用运行手册（多服务/远端部署的正道形态，见 {@link acceptanceRunbookSchema}）。
   // 缺省时 server 从 acceptance_preview 合成一份；两者都无 → 「未配置预览」。
   acceptance_runbook: acceptanceRunbookSchema.optional(),
+  // ── workflow-dev task kind (2026-11-06) ──
+  // 任务类型。缺省 = 普通 v4 开发任务；`workflow-dev` = 工作流开发任务。
+  // 放在 task_spec 而非 tasks 列：不需要 DB 迁移，duplicateTask 原样带过去。
+  kind: z.enum(["workflow-dev"]).optional(),
+  // 工作流开发状态（active/completed/validation/simulation/waiver/complete）。
+  // 仅由 WorkflowDevService 写 —— 不在 TaskSpecFieldSchema 中。
+  workflow_dev: workflowDevStateSchema.optional(),
 })
 
 // ── Zod schemas (single source of truth) ────────────────────────────

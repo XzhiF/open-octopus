@@ -3,7 +3,6 @@ import { expect, type Page } from '@playwright/test'
 export const APP_IDS: Record<string, string> = {
   今日: 'dashboard',
   任务看板: 'tasks',
-  工作空间: 'workspaces',
   Agent: 'agent',
   知识中心: 'knowledge',
   资源: 'resources',

@@ -14,6 +14,7 @@ import { THINKING_TONE, TOOL_TONE } from '@/lib/agent/chat-colors'
 import type { TurnStats } from '@/lib/turn-stats'
 import { TaskStatusCard } from './task-status-card'
 import { WorkflowRunCard } from './workflow-run-card'
+import { IncidentCard } from './incident-card'
 import { AcceptanceCheckCard } from './acceptance-check-card'
 import { ArchiveSummaryCard } from './archive-summary-card'
 
@@ -334,6 +335,11 @@ function TuiMeta({ thinking, toolCalls, timeline, stats, interrupted, hideTextFr
  *  prompt, so the cached prefix stays intact. */
 function ActivityEventCard({ message }: { message: AgentMessage }) {
   const activity = message.activity
+  // 运行事件卡（2026-11-07）：runtime supervision 的 incident。必须在
+  // WorkflowRunCard 之前 —— 两者都带 activity.executionId/status。
+  if ((activity?.payload as { incident?: boolean } | undefined)?.incident) {
+    return <IncidentCard message={message} />
+  }
   // 通用工作流运行卡（2026-11-02）：执行层（含 task_id=NULL 的系统运行），
   // 必须在 TaskStatusCard 分支之前 —— 它同样带 activity.status/taskId。
   if ((activity?.payload as { workflowRun?: boolean } | undefined)?.workflowRun) {

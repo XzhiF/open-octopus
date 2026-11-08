@@ -1,11 +1,23 @@
-export const RETIRED_PREFIXES = ["/wiki", "/experience"] as const
 export const KNOWLEDGE_CENTER = "/knowledge"
+export const DASHBOARD = "/dashboard"
 
-/** 退役路径 ⇒ 知识中心；旧深链的 query 一并剥除。 */
+/**
+ * 退役路径 ⇒ 落点。深链、书签和旧入口一律改道，不留 404：
+ *  - /wiki、/experience：旧知识页并入知识中心
+ *  - /workspaces：工作空间页已下线，落到「今日」
+ * `query` 会随路径一并剥除。
+ */
+export const RETIRED_PREFIXES: ReadonlyArray<readonly [string, string]> = [
+  ["/wiki", KNOWLEDGE_CENTER],
+  ["/experience", KNOWLEDGE_CENTER],
+  ["/workspaces", DASHBOARD],
+]
+
+/** 退役路径 ⇒ 改道目标；旧深链的 query 一并剥除。 */
 export function retiredRedirectTarget(pathname: string): string | null {
-  for (const prefix of RETIRED_PREFIXES) {
+  for (const [prefix, target] of RETIRED_PREFIXES) {
     if (pathname === prefix || pathname.startsWith(`${prefix}/`)) {
-      return KNOWLEDGE_CENTER
+      return target
     }
   }
   return null

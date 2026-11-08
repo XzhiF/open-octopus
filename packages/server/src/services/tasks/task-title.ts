@@ -34,10 +34,11 @@ export function normalizeTaskTitle(raw: string): string | null {
 }
 
 /** haiku 起名（与 session auto-title 同一档模型）。失败返回 null，调用方保留截串名。 */
-export async function generateTaskTitle(message: string): Promise<string | null> {
+export async function generateTaskTitle(message: string, kind?: string | null): Promise<string | null> {
   const provider = getProvider('claude')
+  const what = kind === 'workflow-dev' ? '工作流开发任务' : '开发任务'
   const prompt = [
-    '为一个开发任务生成简短标题（不超过 20 个汉字，中文优先），概括用户需求。',
+    `为一个${what}生成简短标题（不超过 20 个汉字，中文优先），概括用户需求。`,
     '只输出标题本身：不要标点、引号、序号或解释。',
     '',
     `用户需求：${message.replace(/\r?\n/g, ' ').slice(0, 400)}`,

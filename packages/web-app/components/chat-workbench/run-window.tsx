@@ -6,15 +6,16 @@
 // 控制项沿用任务动作，与对话卡片同源。
 
 import { useEffect, useState } from 'react'
-import { Pause, Play, RotateCcw, Square } from 'lucide-react'
+import { Code2, Pause, Play, RotateCcw, Square } from 'lucide-react'
 import { toast } from 'sonner'
 import { getTask, type TaskDetail, type TaskView } from '@/lib/tasks-api'
-import { cancelExecution, fetchExecutionDetail, rerunExecution } from '@/lib/api-client'
+import { cancelExecution, fetchExecutionDetail, fetchExecutionIncidents, rerunExecution, type RuntimeIncidentWire } from '@/lib/api-client'
 import type { StepExecution } from '@/lib/types'
-import type { RunTarget } from './task-window-types'
+import type { RunTarget, YamlTarget } from './task-window-types'
 import { formatStopwatch } from '@/lib/format'
 import { WorkflowFlowViewerWithStatus } from '@/components/workspace/workflow-flow-viewer-with-status'
 import { RunLogConsole } from '@/components/workspace/run-log/run-log-console'
+import { IncidentTimeline } from './incident-timeline'
 import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from '@/components/ui/resizable'
 import { Spinner } from '@/components/ui/spinner'
 
@@ -59,12 +60,15 @@ export function RunWindow({
   task,
   runTarget,
   onTaskAction,
+  onOpenYaml,
 }: {
   /** 有任务 = 任务当前一轮；自由对话里打开作业坞指定的执行时没有任务。 */
   task: TaskView | null
   /** 作业坞运行列表点进来的指定执行；缺省 = 任务当前一轮（原行为不变）。 */
   runTarget?: RunTarget | null
   onTaskAction?: (action: string) => void
+  /** 头部「</> YAML」—— 看 DAG 的同时对照本次运行的 YAML 原文。 */
+  onOpenYaml?: (target: YamlTarget) => void
 }) {
   const [detail, setDetail] = useState<TaskDetail | null>(null)
   const [exec, setExec] = useState<{
@@ -80,6 +84,8 @@ export function RunWindow({
   const [aborting, setAborting] = useState(false)
   /** DAG 与日志共用的聚焦：节点 id（= 事件 nodeId） */
   const [focus, setFocus] = useState<string | null>(null)
+  const [view, setView] = useState<'dag' | 'incidents'>('dag')
+  const [incidents, setIncidents] = useState<RuntimeIncidentWire[]>([])
 
   const runs = runTarget ? [] : detail?.executions ?? []
   const taskRun = runs.find((r) => LIVE_RUN.has(r.status)) ?? runs[0] ?? null
@@ -150,7 +156,24 @@ export function RunWindow({
   }, [taskId, live, runTarget])
 
   // 换一条执行：先清掉上一份 DAG/日志快照，避免新 target 加载前短暂串台。
-  useEffect(() => { setExec(null) }, [workspaceId, executionId])
+  useEffect(() => { setExec(null); setIncidents([]); setView('dag') }, [workspaceId, executionId])
+
+  // 运行事件（runtime supervision）：只读时间线，5s 刷新。
+  useEffect(() => {
+    if (!workspaceId || !executionId) {
+      setIncidents([])
+      return
+    }
+    let alive = true
+    const load = () => {
+      fetchExecutionIncidents(workspaceId, executionId)
+        .then((list) => { if (alive) setIncidents(list) })
+        .catch(() => { /* timeline is best-effort */ })
+    }
+    load()
+    const timer = window.setInterval(load, 5_000)
+    return () => { alive = false; window.clearInterval(timer) }
+  }, [workspaceId, executionId])
 
   useEffect(() => {
     if (!workspaceId || !executionId) {
@@ -230,6 +253,53 @@ export function RunWindow({
         )}
         <span className="truncate font-mono text-[9px] text-pop-dim/70">{executionId}</span>
         <div className="ml-auto flex items-center gap-1">
+          <div className="flex overflow-hidden rounded border border-pop-bd/70" role="tablist" aria-label="运行视图">
+            <button
+              type="button"
+              role="tab"
+              aria-selected={view === 'dag'}
+              data-testid="run-view-dag"
+              data-active={view === 'dag'}
+              onClick={() => setView('dag')}
+              className={`px-2 py-1 text-[10px] transition-colors ${view === 'dag' ? 'bg-pop-ink/10 text-pop-ink' : 'text-pop-dim hover:text-pop-ink'}`}
+            >
+              流程
+            </button>
+            <button
+              type="button"
+              role="tab"
+              aria-selected={view === 'incidents'}
+              data-testid="run-view-incidents"
+              data-active={view === 'incidents'}
+              onClick={() => setView('incidents')}
+              className={`px-2 py-1 text-[10px] transition-colors ${view === 'incidents' ? 'bg-pop-ink/10 text-pop-ink' : 'text-pop-dim hover:text-pop-ink'}`}
+            >
+              事件{incidents.length > 0 ? ` (${incidents.length})` : ''}
+            </button>
+          </div>
+          {workspaceId && executionId && onOpenYaml && (
+            <button
+              type="button"
+              data-testid="run-yaml"
+              aria-label="查看工作流 YAML"
+              title="查看工作流 YAML"
+              onClick={() =>
+                onOpenYaml({
+                  workspaceId,
+                  executionId,
+                  workflowRef,
+                  title: runTarget?.title ?? workflowRef ?? "执行",
+                  phaseIndex,
+                  roundIndex,
+                  status,
+                  from: "run",
+                })
+              }
+              className="inline-flex items-center gap-1 rounded border border-pop-cyan/40 bg-pop-cyan/[0.06] px-2 py-1 text-[10px] text-pop-cyan hover:bg-pop-cyan/[0.12]"
+            >
+              <Code2 className="size-3" /> YAML
+            </button>
+          )}
           {!runTarget && status === 'running' && (
             <button type="button" onClick={() => onTaskAction?.('pause')}
               className="inline-flex items-center gap-1 rounded border border-pop-bd px-2 py-1 text-[10px] text-pop-ink hover:bg-white/[0.06]">
@@ -268,7 +338,9 @@ export function RunWindow({
 
       <ResizablePanelGroup direction="vertical" autoSaveId="octopus.run-window.v1" className="min-h-0 flex-1">
         <ResizablePanel defaultSize={38} minSize={16} className="min-h-0 overflow-hidden">
-          {!exec ? (
+          {view === 'incidents' ? (
+            <IncidentTimeline incidents={incidents} />
+          ) : !exec ? (
             <div className="flex h-full items-center gap-2 p-6 text-[11px] text-pop-dim">
               <Spinner className="size-3.5" /> 读取执行…
             </div>

@@ -1,24 +1,16 @@
 // packages/server/src/db/dao/harness-dao.ts
 //
-// HarnessDAO — CRUD operations for harness_events and harness_config tables.
-// Used by the Harness API routes and HarnessController.
+// HarnessDAO — CRUD for the harness_events audit log.
+// Detector signals are still recorded here; the incident lifecycle lives in
+// `services/supervision/incident-store.ts`. The harness_config table and its
+// accessors were retired with the global Harness YAML (2026-11-07).
 
 import type Database from "better-sqlite3"
 import { BaseDAO } from "./base"
 import type { HarnessEvent } from "@octopus/shared"
 
 /**
- * Row shape for harness_config table.
- */
-export interface HarnessConfigRow {
-  id: string
-  config_yaml: string
-  updated_at: string
-  version: number
-}
-
-/**
- * HarnessDAO — harness event persistence and config storage.
+ * HarnessDAO — harness event persistence.
  */
 export class HarnessDAO extends BaseDAO {
   constructor(db: Database.Database) { super(db) }
@@ -83,41 +75,4 @@ export class HarnessDAO extends BaseDAO {
       "SELECT COUNT(*) as count FROM harness_events WHERE execution_id = ?",
     ).get(executionId) as { count: number }).count
   }
-
-  // ── harness_config ──────────────────────────────────────────────
-
-  /**
-   * Get the current harness config (singleton row, id='default').
-   * Returns null if no config has been saved yet.
-   */
-  getConfig(id: string = "default"): HarnessConfigRow | null {
-    return (this.stmt(
-      "SELECT * FROM harness_config WHERE id = ?",
-    ).get(id) as HarnessConfigRow) ?? null
-  }
-
-  /**
-   * Insert or update the harness config (upsert).
-   * Bumps version on update.
-   */
-  saveConfig(configYaml: string, id: string = "default"): HarnessConfigRow {
-    const existing = this.getConfig(id)
-    const newVersion = existing ? existing.version + 1 : 1
-    const now = new Date().toISOString()
-
-    this.stmt(`
-      INSERT INTO harness_config (id, config_yaml, updated_at, version)
-      VALUES (?, ?, ?, ?)
-      ON CONFLICT(id) DO UPDATE SET
-        config_yaml = excluded.config_yaml,
-        updated_at = excluded.updated_at,
-        version = excluded.version
-    `).run(id, configYaml, now, newVersion)
-
-    return { id, config_yaml: configYaml, updated_at: now, version: newVersion }
-  }
-
-  // ── Token tracking for harness agent delegations ─────────────────
-
-  // insertHarnessTokenUsage 已删除（C3）：node_token_usages 唯一写入口 = TokenUsageDAO.recordNodeUsage(source='harness')
 }

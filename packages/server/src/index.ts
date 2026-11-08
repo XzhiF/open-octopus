@@ -15,7 +15,7 @@ import {
   ScheduleRunDAO, ChatDAO, OrgDAO, AgentSessionDAO, EvolutionDAO,
   CloneDAO, SafetyDAO,
   KnowledgeEffectivenessDAO, ArchiveDAO,
-  TaskDAO, WikiArticleDAO,
+  TaskDAO, WikiArticleDAO, TodayDAO,
 } from "./db/dao"
 import { ArchiveDraftDAO } from "./db/dao/archive-draft-dao"
 import { InteractionMessageDAO } from "./db/dao/interaction-message-dao"
@@ -89,6 +89,7 @@ import { createWorkflowRoutes } from "./routes/workflow"
 import executionRoutes, { setExecutionDependencies } from "./routes/execution"
 import harnessRoutes, { setHarnessDependencies } from "./routes/harness"
 import { createDashboardRoutes } from "./routes/dashboard"
+import { createTodayRoutes } from "./routes/today"
 import { createActivityRoutes } from "./routes/activity"
 import { chatRoutes } from "./routes/chat"
 import { globalChatRoutes } from "./routes/global-chat"
@@ -100,6 +101,9 @@ import { eventRoutes } from "./routes/events"
 import scheduleRoutes, { setScheduleService } from "./routes/schedule"
 import { createSchedulerRoutes } from "./routes/scheduler"
 import { createTasksRoutes, createSessionUsageRoutes } from "./routes/tasks"
+import { createTaskWorkflowDevRoutes } from "./routes/task-workflow-dev"
+import { initWorkflowDevService } from "./services/tasks/workflow-dev-service"
+import { TASK_STATUS_EVENT } from "@octopus/shared"
 import { RoundEvidenceService } from "./services/tasks/round-evidence-service"
 import {
   AcceptancePlanService,
@@ -149,13 +153,12 @@ import { WorkspaceService } from "./services/workspace"
 import { ChatService } from "./services/chat"
 import { setTaskToolsServiceProvider } from "./services/chat/task-tools"
 import { LeaderboardService } from "./services/leaderboard"
-import { getLogAnalysisService } from "./services/log-analysis"
 import { initSessionService, getSessionService } from "./services/agent/session-service"
 import { initMemoryService } from "./services/agent/memory-service"
 import { initEvolutionService } from "./services/agent/evolution-service"
 import { initRecoveryService } from "./services/agent/recovery-service"
 import { initSessionCompressService } from "./services/agent/session-compress-service"
-import { initAgentService, getAgentService } from "./services/agent/agent-service"
+import { initAgentService, getAgentService, listActiveStreams } from "./services/agent/agent-service"
 import { initAgentVersionService, publishVersionedBuiltinClones, getAgentVersionService } from "./services/agent/agent-version-service"
 import { getFlag } from "./config/feature-flags"
 import { ActuatorService } from "./services/actuator/actuator-service"
@@ -206,6 +209,8 @@ interface AllDAOs {
   harness: HarnessDAO
   // 03: first-class tasks table DAO (v2-D1).
   task: TaskDAO
+  /** 「今日」页只读聚合（当天窗口，无写入）。 */
+  today: TodayDAO
 }
 
 function createAllDAOs(db: ReturnType<typeof initDb>): AllDAOs {
@@ -229,6 +234,7 @@ function createAllDAOs(db: ReturnType<typeof initDb>): AllDAOs {
     agentVersion: new AgentVersionDAO(db),
     harness: new HarnessDAO(db),
     task: new TaskDAO(db),
+    today: new TodayDAO(db),
   }
 }
 
@@ -336,6 +342,22 @@ if (!process.env.VITEST && daos) {
     console.error('[startup] orphan stream-partial sweep failed (non-fatal):', err)
   }
 
+  // 启动回收（2026-11-05）：create 与 start 之间进程退出会留下一条永远 pending 的
+  // 非任务执行行（验收规划这类 auto-launch）—— 没有 launcher 会再认领它，于是它
+  // 永远留在作业坞「运行」与活动面板的全局队列里。只启动时扫一次，纯 SQL UPDATE。
+  // 宽限 15 分钟：手工「先建行、再点启动」的执行（workflow-detail-panel）在重启后
+  // 仍可补点启动；task_id 非空的 pending 是任务合法排队态，DAO 谓词已排除。
+  try {
+    const cutoff = new Date(Date.now() - 15 * 60 * 1000).toISOString()
+    const retired = daos.execution.retireOrphanedPendingExecutions(
+      cutoff,
+      "启动回收：执行行创建后未启动（进程在 create→start 之间退出）",
+    )
+    if (retired > 0) console.log(`[startup] retired ${retired} orphaned pending execution(s)`)
+  } catch (err: unknown) {
+    console.error('[startup] orphan pending execution sweep failed (non-fatal):', err instanceof Error ? err.message : String(err))
+  }
+
   // Initialize agent version service
   initAgentVersionService(daos.agentVersion)
 
@@ -428,11 +450,18 @@ app.use("*", async (c, next) => {
 // We use Proxy DAOs that lazily create the real DAO on first method call.
 function lazyDAO<T>(Ctor: new (db: any) => T): T {
   let real: T | null = null
+  const resolve = () => (real ??= new Ctor(getDb()))
   return new Proxy({} as any, {
     get(_, prop) {
-      if (!real) real = new Ctor(getDb())
-      const val = (real as any)[prop]
-      return typeof val === 'function' ? val.bind(real) : val
+      if (typeof prop === 'symbol') return undefined
+      // getDb() is the DB accessor itself: don't force DAO construction while
+      // route factories run at import time (tests init the DB in beforeAll).
+      if (prop === 'getDb') return () => getDb()
+      return (...args: unknown[]) => {
+        const instance = resolve() as any
+        const val = instance[prop]
+        return typeof val === 'function' ? val.apply(instance, args) : val
+      }
     },
   }) as T
 }
@@ -460,6 +489,7 @@ const d = daos ?? {
   // in test mode (VITEST) where `daos` is null and the lazy proxy branch is used.
   // 04's task-author autosave seam + TasksService both consume it.
   task: lazyDAO(TaskDAO),
+  today: lazyDAO(TodayDAO),
 }
 
 const wsSvc = workspaceService ?? new WorkspaceService(d.workspace)
@@ -500,8 +530,14 @@ app.route("/api/workspaces/:id/workflows", createWorkflowOpsRoutes(d.workspace, 
 app.route("/api/workspaces/:id/workflows", createWorkflowRoutes(d.workspace, () => resourceRegistry.get()))
 app.route("/api/workspaces/:id/executions", executionRoutes)
 app.route("/api/workspaces/:id/harness", harnessRoutes)
-app.route("/api/workspaces/:id/analytics", createAnalyticsLogRoutes(d.workspace, getLogAnalysisService({ tokenDao: d.tokenUsage, execDao: d.execution }) ?? new (require('./services/log-analysis').LogAnalysisService)(d.tokenUsage, d.execution)))
+app.route("/api/workspaces/:id/analytics", createAnalyticsLogRoutes(d.workspace))
 app.route("/api/dashboard", createDashboardRoutes(wsSvc, lbSvc, d.execution, d.tokenUsage, d.archive))
+// 「今日」页：当天整体工作状态（消耗 / 统计 / 精选时间线 / 精选变动），只读。
+app.route("/api/dashboard", createTodayRoutes({
+  todayDAO: d.today,
+  tokenUsageDAO: d.tokenUsage,
+  runningSessionCount: () => listActiveStreams().length,
+}))
 app.route("/api/activity", createActivityRoutes())
 app.route("/api/workspaces/:id/chat", chatRoutes(sse, chatSvc, wsSvc))
 app.route("/api/chat/global", globalChatRoutes(sse, chatSvc, d.tokenUsage))
@@ -1242,6 +1278,18 @@ if (shouldServe) {
         readyTask: (id, opts) => tasksService.readyTask(id, opts),
         triggerTask: (id) => tasksService.triggerTaskWithPrebuild(id),
       }))
+      // workflow-dev task kind (2026-11-06): file / validate / simulate / release
+      // service shared by REST routes and the chat tools. It emits the same
+      // taskpool status event the v4 acceptance park uses, so the existing
+      // archive-consent card + wake fire unchanged.
+      initWorkflowDevService({
+        db,
+        taskDAO: daos!.task,
+        taskHomeService,
+        workspaceService,
+        emitTaskStatus: (taskId, status) =>
+          sse.emit("taskpool", { event: TASK_STATUS_EVENT, data: { task_id: taskId, status } }),
+      })
       // 2026-11-03 只读知识库：wiki 冲突裁决回主 Chat —— 人明确说「采纳/忽略」后，
       // 归档对话里的 Agent 经 resolve_wiki_finding 直连同一 FindingOpsService。
       setWikiFindingToolsProvider(() => ({
@@ -1328,7 +1376,7 @@ if (shouldServe) {
       // 验收方案预生成（2026-10-30 AI-native 验收）：轮终态后由独立规划 Agent
       // 产出 acceptance-plan-rN.json；getPlaybook 优先读它，主 Chat 据此逐项引导。
       const acceptancePlan = new AcceptancePlanService(
-        sse, tasksService, workspaceService!, taskHomeService, roundEvidence,
+        sse, tasksService, workspaceService!, taskHomeService, roundEvidence, daos!.execution,
       )
       roundEvidence.setAcceptancePlanService(acceptancePlan)
       tasksService.taskLifecycle.setAcceptancePlanHook((taskId) => {
@@ -1400,6 +1448,7 @@ if (shouldServe) {
       // 2026-10-28 task-thread: the task-doer dual chat was retired. Takeover
       // reuses the task's main thread (source_chat_session_id).
       app.route('/api/tasks', createTasksRoutes(tasksService, sse, roundEvidence, reflectionIngest))
+      app.route('/api/tasks', createTaskWorkflowDevRoutes())
       // 2026-10-31 消耗窗通用化：/api/sessions/:id/usage（会话聊天行 + 本会话发起的全部工作流）。
       app.route('/api/sessions', createSessionUsageRoutes(tasksService))
       // task-workflow-presets (T3): preset catalog API

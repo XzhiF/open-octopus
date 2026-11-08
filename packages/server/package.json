@@ -17,7 +17,6 @@
     "test": "vitest run"
   },
   "dependencies": {
-    "@hono/node-server": "^2.0.2",
     "@octopus/core-pack": "workspace:*",
     "@octopus/engine": "workspace:*",
     "@octopus/providers": "workspace:*",

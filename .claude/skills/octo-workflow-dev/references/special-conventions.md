@@ -29,6 +29,9 @@ stage: release     # release | snapshot；缺省 = snapshot（fail-closed）
 - 发布 = 在 YAML 里显式写 `stage: release`，并同时给出 `version`。
 - 仅内部/实验/测试流保持 `stage: snapshot` 或干脆不写。
 - `stage` 只影响**发现**（列表/主对话）；已绑定的任务执行不受影响。
+- 工作流开发任务里，`complete_workflow(stage="release")` 会把 YAML 复制到主 Agent 工作区
+  `~/.octopus/agent/workflows/`（默认对话可见）；`snapshot` 只留在任务侧。
+- 工作流开发任务可以运行 snapshot 做调试；普通主对话仍然只跑 `release`。
 
 ### 2. Node ID Uniqueness
 

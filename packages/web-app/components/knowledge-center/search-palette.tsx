@@ -6,9 +6,8 @@ import { CloseLightGlyph, closeLightButtonClass } from "@/components/ui/close-li
 import { searchKc, type KcSearchHit, type KcTree, type KcTreeEntry } from "@/lib/knowledge/knowledge-center-api"
 
 /**
- * Ctrl+K 检索命令条 — 票11 AC3（骨架参考 components/command-palette.tsx 先例：
- * 输入 → 分组结果 → 点选跳转；Cmdk 依赖 radix portal，jsdom 无先例，这里用同构的
- * 轻量弹层实现，开合逻辑与 useGlobalCommandPalette 同律在页面侧）。
+ * Ctrl+K 检索命令条 — 票11 AC3（输入 → 分组结果 → 点选跳转；Cmdk 依赖 radix
+ * portal，jsdom 无先例，这里用同构的轻量弹层实现，开合逻辑在页面侧）。
  * 匹配面：页面名/路径（树内本地匹配）+ 锚点/全文（search API：FTS5 主检索 + LIKE 降级在服务端）。
  * 别名（front-matter aliases）当前不在 DB 索引层，别名进正文/摘要后由 FTS 覆盖——见票报告遗留项。
  */

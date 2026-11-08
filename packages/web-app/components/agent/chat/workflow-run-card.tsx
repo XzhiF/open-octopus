@@ -11,7 +11,7 @@
 import { useEffect, useState } from 'react'
 import type { AgentMessage } from '@/lib/agent/types'
 import type { StepExecution } from '@/lib/types'
-import { fetchExecutionDetail } from '@/lib/api-client'
+import { fetchExecutionDetail, fetchExecutionIncidents } from '@/lib/api-client'
 import { formatRunClock } from '@/lib/format'
 
 const TERMINAL_EXEC_STATUS = new Set([
@@ -66,6 +66,7 @@ export function WorkflowRunCard({ message }: { message: AgentMessage }) {
   const [snap, setSnap] = useState<ExecSnapshot | null>(null)
   const [fetchFailed, setFetchFailed] = useState(false)
   const [now, setNow] = useState(() => Date.now())
+  const [incidents, setIncidents] = useState<{ total: number; open: number } | null>(null)
 
   useEffect(() => {
     if (!executionId || !workspaceId) return
@@ -96,6 +97,34 @@ export function WorkflowRunCard({ message }: { message: AgentMessage }) {
 
   const status = snap?.status ?? activity?.status ?? 'running'
   const terminal = TERMINAL_EXEC_STATUS.has(status)
+
+  // 运行事件摘要：同一执行上的 incident 计数（卡片本身只做只读汇总，
+  // 具体处置在 IncidentCard / chat 里）。
+  useEffect(() => {
+    if (!executionId || !workspaceId) return
+    let alive = true
+    const load = async () => {
+      try {
+        const list = await fetchExecutionIncidents(workspaceId, executionId)
+        if (!alive) return
+        const open = list.filter((i) => i.status !== 'resolved' && i.status !== 'expired').length
+        setIncidents({ total: list.length, open })
+      } catch {
+        /* summary is best-effort */
+      }
+    }
+    void load()
+    if (TERMINAL_EXEC_STATUS.has(status)) {
+      return () => {
+        alive = false
+      }
+    }
+    const timer = window.setInterval(() => void load(), 5000)
+    return () => {
+      alive = false
+      window.clearInterval(timer)
+    }
+  }, [executionId, workspaceId, status])
   const failed = FAILED_EXEC_STATUS.has(status)
   const stopped = STOPPED_EXEC_STATUS.has(status)
   const live = !terminal
@@ -219,6 +248,16 @@ export function WorkflowRunCard({ message }: { message: AgentMessage }) {
             <span className="text-pop-dim/50">·</span>
             <span className="truncate">{nodeSummary}</span>
           </>
+        )}
+        {incidents && incidents.total > 0 && (
+          <span
+            className={`shrink-0 text-[9.5px] tabular-nums ${
+              incidents.open > 0 ? 'text-pop-amber' : 'text-pop-dim/70'
+            }`}
+            title="runtime supervision 事件（open / total）"
+          >
+            ⚠ {incidents.open}/{incidents.total} 事件
+          </span>
         )}
         {visibleSteps.length > 0 && (
           <span className="ml-auto shrink-0 text-[9.5px] tabular-nums text-pop-dim/70">

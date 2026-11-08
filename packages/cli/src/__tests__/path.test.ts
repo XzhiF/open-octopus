@@ -10,6 +10,8 @@ import {
   resolveMcpDir,
   resolveReposDir,
   resolveEvolutionDir,
+  resolveGlobalDir,
+  resolveOrgDir,
 } from "../utils/path"
 
 const OCTOPUS_HOME_KEY = "OCTOPUS_HOME"
@@ -90,29 +92,25 @@ describe("resolveSkillDir", () => {
 })
 
 describe("resolveEnvDir", () => {
-  it("resolves env directory under org", () => {
-    const dir = resolveEnvDir("xzf")
-    expect(dir).toMatch(/xzf[\/\\]env$/)
+  it("resolves env directory under the global octopus home", () => {
+    expect(resolveEnvDir("xzf")).toBe(join(resolveGlobalDir(), "env"))
   })
 })
 
 describe("resolveMcpDir", () => {
-  it("resolves mcp directory under org", () => {
-    const dir = resolveMcpDir("xzf")
-    expect(dir).toMatch(/xzf[\/\\]mcp$/)
+  it("resolves mcp directory under the global octopus home", () => {
+    expect(resolveMcpDir("xzf")).toBe(join(resolveGlobalDir(), "mcp"))
   })
 })
 
 describe("resolveReposDir", () => {
   it("resolves repos directory under org", () => {
-    const dir = resolveReposDir("xzf")
-    expect(dir).toMatch(/xzf[\/\\]repos$/)
+    expect(resolveReposDir("xzf")).toBe(join(resolveOrgDir("xzf"), "repos"))
   })
 })
 
 describe("resolveEvolutionDir", () => {
-  it("resolves evolution directory under org", () => {
-    const dir = resolveEvolutionDir("xzf")
-    expect(dir).toMatch(/xzf[\/\\]evolution$/)
+  it("resolves evolution directory under the global octopus home", () => {
+    expect(resolveEvolutionDir("xzf")).toBe(join(resolveGlobalDir(), "agent", "evolution"))
   })
 })

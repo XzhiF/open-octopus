@@ -15,8 +15,8 @@ test.describe('桌面壳 · 窗口', () => {
   test('应用单实例；拖拽、缩放、最大化、最小化、关闭', async ({ page }) => {
     await page.goto('/')
     await openApp(page, '今日')
-    await openApp(page, '工作空间')
-    await expect(page).toHaveURL(/\/workspaces$/)
+    await openApp(page, '资源')
+    await expect(page).toHaveURL(/\/resources$/)
 
     const dashboard = appWindow(page, 'dashboard')
     await openApp(page, '今日')
@@ -55,7 +55,7 @@ test.describe('桌面壳 · 窗口', () => {
 
     await dashboard.getByRole('button', { name: '最小化窗口' }).click()
     await expect(dashboard).toBeHidden()
-    await expect(page).toHaveURL(/\/workspaces$/)
+    await expect(page).toHaveURL(/\/resources$/)
     await focusApp(page, 'dashboard')
     await expect(dashboard).toBeVisible()
     await expect(page).toHaveURL(/\/dashboard$/)
@@ -63,7 +63,7 @@ test.describe('桌面壳 · 窗口', () => {
     const boot = await bootId(page)
     await dashboard.getByRole('button', { name: '关闭窗口' }).click()
     await expect(dashboard).toHaveCount(0)
-    await expect(page).toHaveURL(/\/workspaces$/)
+    await expect(page).toHaveURL(/\/resources$/)
     expect(await bootId(page)).toBe(boot)
 
     await page.goBack()
@@ -122,31 +122,17 @@ test.describe('桌面壳 · 窗口', () => {
     expect(draft!.width).toBeGreaterThan(220)
   })
 
-  test('详情深链、刷新恢复与窗口布局持久化', async ({ page }) => {
-    await page.goto('/workspaces')
-    const link = page.locator('[data-window-id="workspaces"] a[href^="/workspaces/"]').first()
-    await expect(link).toBeVisible({ timeout: 20_000 })
-    const href = await link.getAttribute('href')
-    expect(href).toMatch(/^\/workspaces\//)
-
-    await page.goto(href!)
-    const win = appWindow(page, 'workspaces')
-    await expect(win.locator('[data-window-layer="detail"]')).toBeVisible({ timeout: 20_000 })
-    const detailUrl = page.url()
+  test('刷新恢复与窗口布局持久化', async ({ page }) => {
+    await page.goto('/agent?tab=files')
+    const win = appWindow(page, 'agent')
+    await expect(win).toBeVisible({ timeout: 20_000 })
+    await expect(page).toHaveURL(/\/agent\?tab=files/)
 
     await page.reload()
     await expect(win).toBeVisible({ timeout: 20_000 })
-    await expect(page).toHaveURL(detailUrl)
-    await expect(win.locator('[data-window-layer="detail"]')).toBeVisible({ timeout: 20_000 })
+    await expect(page).toHaveURL(/\/agent\?tab=files/)
 
-    await page.goBack()
-    await expect(page).toHaveURL(/\/workspaces$/)
-    await expect(win.locator('[data-window-layer="detail"]')).toHaveCount(0)
-    await page.goForward()
-    await expect(page).toHaveURL(detailUrl)
-    await expect(win.locator('[data-window-layer="detail"]')).toBeVisible({ timeout: 20_000 })
-
-    await dragWindow(page, 'workspaces', 70, 40)
+    await dragWindow(page, 'agent', 70, 40)
     const dragged = await win.boundingBox()
     await page.waitForTimeout(600)
     await page.reload()
@@ -159,7 +145,7 @@ test.describe('桌面壳 · 窗口', () => {
   test('窗口总览：桌面 + 打开窗口，点击格子聚焦', async ({ page }) => {
     await page.goto('/')
     await openApp(page, '任务看板')
-    await openApp(page, '工作空间')
+    await openApp(page, '资源')
 
     await page.getByRole('button', { name: '窗口总览' }).click()
     await expect(page.getByTestId('mission-control')).toBeVisible()
@@ -173,7 +159,7 @@ test.describe('桌面壳 · 窗口', () => {
   test('隐藏窗口的全局快捷键被门禁', async ({ page }) => {
     await page.goto('/')
     await openApp(page, '任务看板')
-    await openApp(page, '工作空间')
+    await openApp(page, '资源')
 
     const inactiveBlocked = await page.evaluate(() => {
       const el = document.querySelector('[data-window-id="tasks"]')!
@@ -187,7 +173,7 @@ test.describe('桌面壳 · 窗口', () => {
       return event.defaultPrevented
     })
     const activeAllowed = await page.evaluate(() => {
-      const el = document.querySelector('[data-window-id="workspaces"]')!
+      const el = document.querySelector('[data-window-id="resources"]')!
       const event = new KeyboardEvent('keydown', {
         key: 'k',
         metaKey: true,
@@ -249,8 +235,8 @@ test.describe('桌面壳 · 中屏', () => {
   test('窗口强制最大化铺满 stage', async ({ page }) => {
     await page.goto('/')
     await openApp(page, '任务看板')
-    await openApp(page, '工作空间')
-    for (const id of ['tasks', 'workspaces']) {
+    await openApp(page, '资源')
+    for (const id of ['tasks', 'resources']) {
       const box = await appWindow(page, id).boundingBox()
       expect(Math.round(box!.x)).toBe(0)
       expect(Math.round(box!.y)).toBe(HEADER_HEIGHT)

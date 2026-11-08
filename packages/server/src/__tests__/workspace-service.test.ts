@@ -257,7 +257,8 @@ describe("WorkspaceService · one-workspace model", () => {
 
 describe("WorkspaceService · attachDirectory path policy", () => {
   it("attaches an existing non-system directory（不再限制在 home 下）", () => {
-    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "ws-attach-"))
+    // macOS os.tmpdir() → /private/var is system-sensitive; use home-based temp.
+    const dir = fs.mkdtempSync(path.join(os.homedir(), "ws-attach-"))
     try {
       const ws = service.attachDirectory({ repo_group: "xzf", path: dir })
       expect(ws.path).toBe(fs.realpathSync(dir))

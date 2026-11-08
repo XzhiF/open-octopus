@@ -16,11 +16,6 @@ const AppearancePanel = lazy(() =>
     default: m.AppearancePanel,
   })),
 )
-const LogAnalysisPanel = lazy(() =>
-  import('@/components/settings/log-analysis/log-analysis-panel').then((m) => ({
-    default: m.LogAnalysisPanel,
-  })),
-)
 
 export function SettingsView() {
   return (
@@ -30,11 +25,6 @@ export function SettingsView() {
           appearance: (
             <Suspense fallback={<ViewLoading />}>
               <AppearancePanel />
-            </Suspense>
-          ),
-          'log-analysis': (
-            <Suspense fallback={<ViewLoading />}>
-              <LogAnalysisPanel />
             </Suspense>
           ),
         }}

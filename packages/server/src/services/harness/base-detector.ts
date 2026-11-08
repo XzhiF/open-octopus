@@ -74,7 +74,7 @@ export type HarnessCallbackEvent =
  * BaseDetector — all detectors extend this class.
  *
  * Lifecycle:
- * - Constructed per-execution by DetectorPipeline
+ * - Constructed per-execution by SignalPipeline
  * - observe() is called for every routed event
  * - reset() is called at execution start (for stateful detectors)
  * - destroy() is called at execution end (cleanup resources)

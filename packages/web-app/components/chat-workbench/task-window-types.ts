@@ -23,8 +23,22 @@ export interface SubagentTarget {
   title?: string
 }
 
+/** YAML 窗的目标（2026-11-07）：任意一次执行的主工作流 + 运行时动态子流。 */
+export interface YamlTarget {
+  workspaceId: string
+  executionId: string
+  workflowRef?: string | null
+  title?: string
+  phaseIndex?: number | null
+  roundIndex?: number | null
+  status?: string
+  /** 打开来源决定初始位置：运行列表 = 居中；运行窗 = 右下（把 DAG 留出来）。 */
+  from?: "dock" | "run"
+}
+
 export type TaskModule =
   | 'plan'
+  | 'workflow'
   | 'changes'
   | 'run'
   | 'acceptance'

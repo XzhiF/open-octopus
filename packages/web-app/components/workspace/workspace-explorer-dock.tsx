@@ -22,6 +22,7 @@ import {
   Square,
   Upload,
   Users,
+  Workflow,
   X,
   type LucideIcon,
 } from 'lucide-react'
@@ -78,6 +79,8 @@ export interface WorkspaceExplorerDockProps {
   onOpenTaskModule?: (module: TaskModule) => void
   /** 运行列表里点了一条 → 打开指定执行的运行窗（ChatTab 负责开窗）。 */
   onOpenRun?: (run: WorkspaceRun) => void
+  /** 运行列表行尾 </> → 直接看这次运行的 YAML 快照（ChatTab 负责开窗）。 */
+  onOpenYaml?: (run: WorkspaceRun) => void
   /** Task action (trigger/pause/resume/abort/reopen/retry_archive/accept…). */
   onTaskAction?: (action: string) => void
   activity: ActivitySnapshot
@@ -123,6 +126,8 @@ const FLOAT_MARGIN = 12
 const SIDEBAR_DEFAULT_WIDTH = 236
 
 const MODULE_ROWS: Array<{ id: TaskModule; label: string; icon: typeof FileText }> = [
+  // workflow-dev 任务专用（2026-11-06）：DAG + YAML，放在运行前。
+  { id: 'workflow', label: '工作流', icon: Workflow },
   // 2026-11-04 用户：运行提到「项目」下面第一个。
   { id: 'run', label: '运行', icon: Play },
   { id: 'plan', label: '规格', icon: FileText },
@@ -184,6 +189,7 @@ export function WorkspaceExplorerDock({
   onOpenSubagent,
   onOpenTaskModule,
   onOpenRun,
+  onOpenYaml,
   onTaskAction,
   activity,
   taskProject,
@@ -394,22 +400,28 @@ export function WorkspaceExplorerDock({
   const active = tabs.find((t) => t.path === activePath) ?? null
   const status = task?.status ?? ''
   const isDraft = status === 'draft'
+  // workflow-dev tasks are driven from the left chat: the dock exposes the
+  // workflow editor + workspace runs, not the phase/spec/acceptance modules.
+  const isWorkflowDev = task?.task_spec?.kind === 'workflow-dev'
   const hasExecution =
-    !!task?.execution || ['running', 'paused', 'awaiting_review', 'awaiting_archive', 'archiving', 'done'].includes(status)
+    !!task?.execution || isWorkflowDev || ['running', 'paused', 'awaiting_review', 'awaiting_archive', 'archiving', 'done'].includes(status)
   const visibleModules = task
     ? MODULE_ROWS.filter((row) => {
         switch (row.id) {
+          case 'workflow':
+            // 只有工作流开发任务有这个模块；普通任务连按钮都不出现。
+            return isWorkflowDev
           case 'plan':
           case 'artifacts':
-            return true
+            return !isWorkflowDev
           case 'changes':
-            return !isDraft
+            return !isDraft && !isWorkflowDev
           case 'run':
             return hasExecution
           case 'acceptance':
             // 2026-10-30 用户：归档后验收台仍要在 —— 只读回看「我签了什么」，
             // 不用翻聊天记录；done 的窗口内容由 AcceptanceSurface 降级为台账。
-            return status === 'awaiting_review' || status === 'awaiting_archive' || status === 'archiving' || status === 'done'
+            return !isWorkflowDev && (status === 'awaiting_review' || status === 'awaiting_archive' || status === 'archiving' || status === 'done')
           case 'archive':
             return status === 'archiving' || status === 'done'
           default:
@@ -428,6 +440,7 @@ export function WorkspaceExplorerDock({
     tone: 'green' | 'amber' | 'ghost'
     icon: LucideIcon
   }> =
+    isWorkflowDev ? [] :
     status === 'draft' ? [{ id: 'enqueue', label: '入列', tone: 'green', icon: Upload }]
       : status === 'ready'
         ? [
@@ -656,6 +669,9 @@ export function WorkspaceExplorerDock({
               onPick={(run) => {
                 setPane(null)
                 onOpenRun?.(run)
+              }}
+              onOpenYaml={(run) => {
+                onOpenYaml?.(run)
               }}
             />
           ) : pane === 'subagents' ? (

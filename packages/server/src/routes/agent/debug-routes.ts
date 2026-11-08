@@ -158,7 +158,9 @@ function applyLedger(turn: TurnSummaryWire, calls: readonly LlmCallCostedRow[]):
 export function createDebugRoutes(deps: DebugRouteDeps): Hono {
   const { sessionDAO, tokenUsageDAO } = deps
   const app = new Hono()
-  const turnDao = new SessionTurnDebugDAO(sessionDAO.getDb())
+  // Lazy: route factories run at import time, before tests init the DB.
+  let turnDao: SessionTurnDebugDAO | null = null
+  const getTurnDao = () => (turnDao ??= new SessionTurnDebugDAO(sessionDAO.getDb()))
 
   const requireSession = (c: Context): string | null => {
     const id = c.req.param('id')
@@ -171,7 +173,7 @@ export function createDebugRoutes(deps: DebugRouteDeps): Hono {
     try {
       const id = requireSession(c)
       if (!id) return c.json(createAgentError('NOT_FOUND', 'Session not found'), 404)
-      const turns = turnDao.listSummaries(id).map(toSummary)
+      const turns = getTurnDao().listSummaries(id).map(toSummary)
       if (tokenUsageDAO && turns.length > 0) {
         const calls = tokenUsageDAO.findLlmCallsBySession(id)
         for (const turn of turns) applyLedger(turn, calls)
@@ -191,7 +193,7 @@ export function createDebugRoutes(deps: DebugRouteDeps): Hono {
       if (!Number.isFinite(turnIndex) || turnIndex < 1) {
         return c.json(createAgentError('INVALID_PARAM', 'turn must be a positive integer'), 400)
       }
-      const row = turnDao.findByTurn(id, turnIndex)
+      const row = getTurnDao().findByTurn(id, turnIndex)
       if (!row) {
         return c.json(createAgentError('NOT_FOUND', `Turn ${turnIndex} not recorded`), 404)
       }
@@ -244,7 +246,7 @@ export function createDebugRoutes(deps: DebugRouteDeps): Hono {
     const systemPromptHash = row.system_prompt_hash
     const systemPromptFrozen = !!snapshot && !!systemPromptHash && snapshot.promptHash === systemPromptHash
 
-    const previousRow = turnDao.findPrevious(sessionId, row.turn_index)
+    const previousRow = getTurnDao().findPrevious(sessionId, row.turn_index)
 
     return {
       ...summary,

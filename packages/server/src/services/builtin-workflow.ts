@@ -135,6 +135,7 @@ export class BuiltInWorkflowService {
       results.push({
         ref: `${entry.group}/${entry.name}`,
         name: loaded.parsed.name,
+        description: loaded.parsed.description,
         version: loaded.parsed.version,
         stage: loaded.parsed.stage ?? "snapshot",
         inputs: loaded.parsed.inputs,

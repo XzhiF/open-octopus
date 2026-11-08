@@ -28,7 +28,9 @@ import {
 // ── Test helpers ────────────────────────────────────────────────
 
 function createTempDir(): string {
-  return fs.mkdtempSync(path.join(os.tmpdir(), "clone-lifecycle-"))
+  // LocalProvider's allowlist is os.homedir(); macOS os.tmpdir() lives under
+  // /private/var and would be rejected. Keep fixtures under home.
+  return fs.mkdtempSync(path.join(os.homedir(), ".octopus-clone-lifecycle-test-"))
 }
 
 function cleanupDir(dir: string): void {

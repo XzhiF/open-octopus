@@ -15,7 +15,7 @@ function Probe() {
       data-tab={nav?.tabKey ?? ""}
     >
       <button data-testid="go-view" onClick={() => nav?.navigate("/tasks?tab=x")} />
-      <button data-testid="go-detail" onClick={() => nav?.navigate("/workspaces/1")} />
+      <button data-testid="go-detail" onClick={() => nav?.navigate("/resources/skill/demo")} />
     </div>
   )
 }
@@ -52,9 +52,9 @@ describe("app-navigation 壳内路由", () => {
     renderAt("/")
     fireEvent.click(screen.getByTestId("go-detail"))
     expect(screen.getByTestId("probe").dataset).toMatchObject({
-      path: "/workspaces/1",
+      path: "/resources/skill/demo",
       mode: "detail",
-      tab: "workspace:1",
+      tab: "resource:skill:demo",
       view: "",
     })
   })

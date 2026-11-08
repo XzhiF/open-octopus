@@ -26,6 +26,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "fs"
 import path from "path"
 import { TASK_ACCEPTANCE_PLAN_EVENT, type AcceptanceRunbook, type AcceptanceVerify, type TaskSpec } from "@octopus/shared"
 import type { ExecutionRow } from "../../db/types"
+import type { ExecutionDAO } from "../../db/dao"
 import type { SSEService } from "../sse"
 import type { WorkspaceService } from "../workspace"
 import { getExecutionService } from "../execution-service-registry"
@@ -105,6 +106,8 @@ export class AcceptancePlanService {
     private readonly workspaceService: WorkspaceService,
     private readonly taskHome: TaskHomeService,
     private readonly roundEvidence: RoundEvidenceService,
+    /** 启动失败时回收执行行（守卫 status='pending'）。可缺省 —— 旧装配/纯函数测试不需要。 */
+    private readonly execDao?: ExecutionDAO,
   ) {}
 
   // ── kill switch ────────────────────────────────────────────────────
@@ -312,6 +315,9 @@ export class AcceptancePlanService {
   private async generate(taskId: string, info: AwaitingRoundInfo): Promise<void> {
     const { phaseIndex, roundIndex, batchRelDir, execRow } = info
     const batchRel = batchRelDir as string
+    /** create 成功后被记下：任何启动失败都要把这条行收成终态，
+     *  否则它会以 pending 永久留在作业坞/活动队列里（2026-11-05 修复的幽灵行）。 */
+    let executionId: string | null = null
     try {
       const ws = this.workspaceService.getById(execRow.workspace_id)
       if (!ws || !existsSync(ws.path)) {
@@ -372,6 +378,7 @@ export class AcceptancePlanService {
           roundIndex,
         },
       })
+      executionId = execution.id
       // 主 Chat 的「工作流运行」卡（2026-11-02）：执行层状态，卡本身零 LLM，
       // 终态由前端轮询执行详情得到。落卡失败不阻塞规划。
       try {
@@ -402,12 +409,27 @@ export class AcceptancePlanService {
       registry.service.start(execution.id, inputValues).catch((err: unknown) => {
         const msg = err instanceof Error ? err.message : String(err)
         console.error(`[acceptance-plan] start failed for task ${taskId}:`, msg)
+        this.retirePendingExecution(execution.id, `规划工作流启动失败：${msg}`)
         this.markFailed(taskId, batchRel, roundIndex, phaseIndex, `规划工作流启动失败：${msg}`)
       })
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err)
       console.error(`[acceptance-plan] generate failed for task ${taskId}:`, msg)
+      if (executionId) this.retirePendingExecution(executionId, `验收规划执行启动失败：${msg}`)
       this.markFailed(taskId, batchRel, roundIndex, phaseIndex, msg)
+    }
+  }
+
+  /** 把「建了行但没启动」的执行收成 failed —— 守卫 status='pending'，
+   *  绝不覆盖已经跑起来的行（那种行由引擎自己的终态负责）。 */
+  private retirePendingExecution(executionId: string, error: string): void {
+    try {
+      this.execDao?.retireLaunch(executionId, "failed", error)
+    } catch (err: unknown) {
+      console.error(
+        `[acceptance-plan] retire execution ${executionId} failed:`,
+        err instanceof Error ? err.message : String(err),
+      )
     }
   }
 

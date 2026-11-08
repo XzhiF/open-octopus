@@ -21,11 +21,12 @@ import { ChatSidebar } from './chat-sidebar'
 import { CwdPicker, type CwdChoice } from './cwd-picker'
 import { TaskModulesLayer } from '@/components/chat-workbench/task-modules-layer'
 import { TriggerDialog } from '@/components/tasks/trigger-dialog'
-import type { RunTarget, SubagentTarget, TaskModule, TaskWindowMap } from '@/components/chat-workbench/task-window-types'
+import type { RunTarget, SubagentTarget, TaskModule, TaskWindowMap, YamlTarget } from '@/components/chat-workbench/task-window-types'
 import { TaskProjectChip } from '@/components/chat-workbench/task-project-chip'
 import { WorkspaceExplorerDock } from '@/components/workspace/workspace-explorer-dock'
 import { useActivitySnapshot } from '@/components/chat-workbench/inspector-activity'
 import { WorkflowWindow } from '@/components/chat-workbench/workflow-window'
+import { WorkflowYamlWindow } from '@/components/chat-workbench/workflow-yaml-window'
 import { runTitle } from '@/components/chat-workbench/run-picker'
 import {
   createTask, getTask, readyTask, TaskReadyGateError, updateTask, deleteTask, abortTask,
@@ -34,7 +35,7 @@ import {
   type TaskView,
 } from '@/lib/tasks-api'
 import { readRememberedTaskOrg, rememberTaskOrg, resolveTaskOrg } from '@/lib/task-org'
-import { NEW_TASK_NAME, taskNameFromMessage } from '@/lib/task-name'
+import { NEW_TASK_NAME, NEW_WORKFLOW_TASK_NAME, taskNameFromMessage } from '@/lib/task-name'
 import { buildTurnStats } from '@/lib/turn-stats'
 import { readLastChatContext, writeLastChatContext } from '@/lib/last-chat-context'
 import { subscribeSSE } from '@/lib/sse-manager'
@@ -81,6 +82,8 @@ interface PendingTaskSession {
   org: string
   title: string
   projectIds: string[]
+  /** workflow-dev task kind (2026-11-06). */
+  kind?: 'workflow-dev'
 }
 
 /** First message seeds the task title immediately (the sidebar is never blank);
@@ -99,6 +102,7 @@ export function ChatTab() {
   const [pendingTaskSession, setPendingTaskSession] = useState<PendingTaskSession | null>(null)
   const [creatingTask, setCreatingTask] = useState(false)
   const [taskModuleRequest, setTaskModuleRequest] = useState<{ module: TaskModule; nonce: number; runTarget?: RunTarget | null; subagentTarget?: SubagentTarget | null } | null>(null)
+  const [yamlTarget, setYamlTarget] = useState<YamlTarget | null>(null)
   const [taskWindows, setTaskWindows] = useState<Record<string, TaskWindowMap>>({})
   // 2026-10-31 消耗窗通用化：纯会话（无任务）也有一扇消耗窗，窗口 id 与任务窗
   // 共用 'usage'，但几何状态独立（不跟着任务切换复用/串位）。
@@ -161,6 +165,8 @@ export function ChatTab() {
    */
   const activeSession = sessions.find((session) => session.id === activeSessionId)
   const draftScope = pendingTaskSession !== null || activeTask?.status === 'draft'
+  const workflowDraft =
+    pendingTaskSession?.kind === 'workflow-dev' || activeTask?.task_spec?.kind === 'workflow-dev'
 
   // 会话长期身份（v59 分身）：主对话用 agent 作用域，交给 ChatArea 的 ＋ 面板。
   // 任务线程的基础身份由服务端按任务状态派生（角色卡），这里只保留手动分身切换。
@@ -582,7 +588,7 @@ export function ChatTab() {
           repo_group: session.org || undefined,
           name: taskNameFromMessage(message),
           source_chat_session_id: sid,
-          task_spec: { format: 'v4' },
+          task_spec: { format: 'v4', ...(session.kind ? { kind: session.kind } : {}) },
           project_ids: session.projectIds,
           ...(taskCwd.kind === 'default'
             ? {}
@@ -750,7 +756,7 @@ export function ChatTab() {
     writeLastChatContext(null)
   }
 
-  const handleCreateTask = useCallback(async () => {
+  const handleCreateTask = useCallback(async (kind?: 'workflow-dev') => {
     if (creatingTask) return
     // 2026-10-28: creating a task from a free chat BINDS that chat (one main
     // conversation). From inside an existing task we start a fresh thread.
@@ -761,8 +767,9 @@ export function ChatTab() {
     setPendingTaskSession({
       sessionId: reuseSessionId ?? '',
       org: preferredOrg,
-      title: NEW_TASK_NAME,
+      title: kind === 'workflow-dev' ? NEW_WORKFLOW_TASK_NAME : NEW_TASK_NAME,
       projectIds: [],
+      ...(kind ? { kind } : {}),
     })
     if (!reuseSessionId) setActiveSessionId(null)
     setTaskCwd({ kind: 'default', label: '新建工作空间' })
@@ -771,6 +778,11 @@ export function ChatTab() {
     choosePendingIdentity(null)
     if (!reuseSessionId) writeLastChatContext(null)
   }, [creatingTask, preferredOrg, choosePendingIdentity, activeTask, activeSessionId])
+
+  const handleCreateWorkflowTask = useCallback(
+    () => handleCreateTask('workflow-dev'),
+    [handleCreateTask],
+  )
 
   // ── 2026-10-28 task-thread: transcript card actions ─────────────────
   const applyTaskResult = useCallback((updated: TaskView) => {
@@ -1050,6 +1062,27 @@ export function ChatTab() {
     }
   }, [executeTaskAction])
 
+  // 运行事件卡的人选 → 回给 owner Agent，由它调 resolve_incident（决策权在
+  // Agent，确认权在人）。卡片本身不改执行状态。
+  useEffect(() => {
+    const onIncidentChoice = (event: Event) => {
+      const detail = (event as CustomEvent<{
+        incidentId?: string
+        option?: string
+      }>).detail
+      if (!detail?.incidentId || !detail.option) return
+      sendMessage(
+        `[incident ${detail.incidentId}] 我选择：${detail.option}。` +
+          '请据此调用 resolve_incident 继续处理，并用一句话说明结果；如果这个选择还需要补充信息，先问我。',
+        { model, effort, maxContext },
+      )
+    }
+    window.addEventListener('octopus:incident-choice', onIncidentChoice)
+    return () => {
+      window.removeEventListener('octopus:incident-choice', onIncidentChoice)
+    }
+  }, [sendMessage, model, effort, maxContext])
+
   // Task status/execution events reload the transcript (silent cards are
   // inserted server-side; draft/ready threads have no workspace SSE channel).
   useEffect(() => {
@@ -1078,6 +1111,9 @@ export function ChatTab() {
   // open the unified chat instead of the legacy authoring modal.
   useEffect(() => {
     const onNewTask = () => { void handleCreateTask() }
+    // 工作流开发入口（2026-11-06）：与新建开发任务同构，供侧栏外的宿主
+    // （如任务板/资源页）一键进入工作流作者草稿。
+    const onNewWorkflowTask = () => { void handleCreateTask('workflow-dev') }
     const onOpenTask = (event: Event) => {
       const detail = (event as CustomEvent<{ taskId?: string; view?: 'acceptance' }>).detail
       const taskId = detail?.taskId
@@ -1093,9 +1129,11 @@ export function ChatTab() {
         .catch(() => toast.error('任务不存在或已被删除'))
     }
     window.addEventListener('octopus:new-task', onNewTask)
+    window.addEventListener('octopus:new-workflow-task', onNewWorkflowTask)
     window.addEventListener('octopus:open-task', onOpenTask)
     return () => {
       window.removeEventListener('octopus:new-task', onNewTask)
+      window.removeEventListener('octopus:new-workflow-task', onNewWorkflowTask)
       window.removeEventListener('octopus:open-task', onOpenTask)
     }
   }, [handleCreateTask, handleSelectTask, refreshChatTasks])
@@ -1125,27 +1163,30 @@ export function ChatTab() {
   //   · pending（任务未落盘）——作业坞尚不存在（无 workspaceId），留在 composer
   //     hero 第二行/停靠 ctrlbar；
   //   · 已落盘 —— 挪到作业坞「项目」图标（dockProject），composer 保持纯净。
-  const draftControls = (hero: boolean) => (
-    <TaskProjectChip
-      hero={hero}
-      org={pendingTaskSession?.org ?? preferredOrg}
-      orgs={appOrgs.map((o) => o.name)}
-      onOrgChange={(next) => {
-        rememberTaskOrg(next)
-        setPendingTaskSession((prev) => (prev ? { ...prev, org: next, projectIds: [] } : prev))
-      }}
-      projectIds={pendingTaskSession?.projectIds ?? []}
-      onSaved={(ids) => {
-        if (pendingTaskSession) {
-          setPendingTaskSession({ ...pendingTaskSession, projectIds: ids })
-        }
-      }}
-    />
-  )
+  // workflow-dev 任务例外（2026-11-06 用户）：不绑定项目，需要时由 Agent 的
+  // add_workspace_projects 工具按需引入仓库，不挂手动入口。
+  const draftControls = (hero: boolean) =>
+    pendingTaskSession?.kind === 'workflow-dev' ? undefined : (
+      <TaskProjectChip
+        hero={hero}
+        org={pendingTaskSession?.org ?? preferredOrg}
+        orgs={appOrgs.map((o) => o.name)}
+        onOrgChange={(next) => {
+          rememberTaskOrg(next)
+          setPendingTaskSession((prev) => (prev ? { ...prev, org: next, projectIds: [] } : prev))
+        }}
+        projectIds={pendingTaskSession?.projectIds ?? []}
+        onSaved={(ids) => {
+          if (pendingTaskSession) {
+            setPendingTaskSession({ ...pendingTaskSession, projectIds: ids })
+          }
+        }}
+      />
+    )
 
   const draftLead = pendingTaskSession ? draftControls(false) : undefined
 
-  const dockProject = activeTask ? (
+  const dockProject = activeTask && activeTask.task_spec?.kind !== 'workflow-dev' ? (
     <TaskProjectChip
       dock
       org={activeTask.repo_group ?? preferredOrg}
@@ -1193,12 +1234,22 @@ export function ChatTab() {
     if (taskThread) {
       const status = activeTask?.status
       if (pendingTaskSession || status === 'draft') {
-        return { label: '作者 · task-author', active: true, readOnly: true, title: '任务对话的身份由任务状态自动派生，不可手动切换' }
+        return {
+          label: workflowDraft ? '工作流开发者 · workflow-author' : '作者 · task-author',
+          active: true,
+          readOnly: true,
+          title: '任务对话的身份由任务状态自动派生，不可手动切换',
+        }
       }
       if (status === 'done' || status === 'aborted' || status === 'failed') {
         return { label: '主 Agent', active: false, readOnly: true, title: '任务已结束，对话回到主身份（只读）' }
       }
-      return { label: '执行者 · task-doer', active: true, readOnly: true, title: '任务对话的身份由任务状态自动派生，不可手动切换' }
+      return {
+        label: workflowDraft ? '工作流开发者 · workflow-author' : '执行者 · task-doer',
+        active: true,
+        readOnly: true,
+        title: '任务对话的身份由任务状态自动派生，不可手动切换',
+      }
     }
     // 身份取数窗口内先不渲染，避免先闪一下「主 Agent」再变成分身。
     if (heroActive || !identity.loaded) return undefined
@@ -1281,7 +1332,11 @@ export function ChatTab() {
             tasksLoading={chatTasksLoading}
             activeTaskId={activeTask?.id ?? null}
             onSelectTask={handleSelectTask}
-            pendingTask={pendingTaskSession ? { sessionId: pendingTaskSession.sessionId, title: pendingTaskSession.title } : null}
+            pendingTask={pendingTaskSession ? {
+              sessionId: pendingTaskSession.sessionId,
+              title: pendingTaskSession.title,
+              ...(pendingTaskSession.kind ? { kind: pendingTaskSession.kind } : {}),
+            } : null}
             activePendingTask={!!pendingTaskSession}
             sessions={sessions}
             sessionsLoading={sessionsLoading}
@@ -1290,6 +1345,7 @@ export function ChatTab() {
             runningSessionIds={runningSessionIds}
             onCreateSession={handleCreateSession}
             onCreateTask={handleCreateTask}
+            onCreateWorkflowTask={handleCreateWorkflowTask}
             onRenameSession={renameSession}
             onDeleteSession={removeSession}
             onRenameTask={openTaskRename}
@@ -1361,7 +1417,11 @@ export function ChatTab() {
             tasksLoading={chatTasksLoading}
             activeTaskId={activeTask?.id ?? null}
             onSelectTask={handleSelectTask}
-            pendingTask={pendingTaskSession ? { sessionId: pendingTaskSession.sessionId, title: pendingTaskSession.title } : null}
+            pendingTask={pendingTaskSession ? {
+              sessionId: pendingTaskSession.sessionId,
+              title: pendingTaskSession.title,
+              ...(pendingTaskSession.kind ? { kind: pendingTaskSession.kind } : {}),
+            } : null}
             activePendingTask={!!pendingTaskSession}
             sessions={sessions}
             sessionsLoading={sessionsLoading}
@@ -1370,6 +1430,7 @@ export function ChatTab() {
             runningSessionIds={runningSessionIds}
             onCreateSession={handleCreateSession}
             onCreateTask={handleCreateTask}
+            onCreateWorkflowTask={handleCreateWorkflowTask}
             onRenameSession={renameSession}
             onDeleteSession={removeSession}
             onRenameTask={openTaskRename}
@@ -1430,10 +1491,18 @@ export function ChatTab() {
             })}
             steerActiveRef={steeringRef}
             resumeTailing={resumeStreaming}
-            emptyStateTitle={draftScope ? '描述要开发的任务' : undefined}
-            emptyStateDescription={draftScope ? '第一句话会成为任务草稿的标题，后续对话用于澄清与拆分 Phase。' : undefined}
+            emptyStateTitle={draftScope ? (workflowDraft ? '描述要开发的工作流' : '描述要开发的任务') : undefined}
+            emptyStateDescription={draftScope
+              ? (workflowDraft
+                ? '第一句话会成为工作流开发任务的标题；后续对话用于澄清需求、确认设计并生成可运行的 YAML。'
+                : '第一句话会成为任务草稿的标题，后续对话用于澄清与拆分 Phase。')
+              : undefined}
             composerLeading={draftScope && !heroActive ? draftLead : mainLead}
-            composerPlaceholder={draftScope ? '描述要开发的任务…　⏎ 发送' : '问主 Agent…　⏎ 发送 · ⇧⏎ 排队 · Alt⏎ 换行'}
+            composerPlaceholder={draftScope
+              ? (workflowDraft
+                ? '描述要开发或修改的工作流…　⏎ 发送'
+                : '描述要开发的任务…　⏎ 发送')
+              : '问主 Agent…　⏎ 发送 · ⇧⏎ 排队 · Alt⏎ 换行'}
             // hero：新建对话 = 空主会话；新建开发任务 = 未落盘的 pendingTask（同一套
             // 居中 composer + 第二行控件，2026-10-28 看齐）。
             heroEmpty={heroActive}
@@ -1495,6 +1564,7 @@ export function ChatTab() {
           }}
           openModule={taskModuleRequest}
           onOpenLinkedTask={openLinkedTask}
+          onOpenYaml={setYamlTarget}
         />
       </div>
 
@@ -1540,10 +1610,27 @@ export function ChatTab() {
             },
           })
         }}
+        onOpenYaml={(run) => {
+          // 行尾 </> —— 不切走运行窗，直接看这次执行的 YAML 快照。
+          setYamlTarget({
+            workspaceId: run.workspaceId,
+            executionId: run.id,
+            workflowRef: run.workflowRef,
+            title: runTitle(run),
+            phaseIndex: run.phaseIndex,
+            roundIndex: run.roundIndex,
+            status: run.status,
+            from: 'dock',
+          })
+        }}
         onTaskAction={(action) => { if (activeTask) void executeTaskAction(activeTask.id, action) }}
         activity={activitySnapshot}
         sidebarWidth={sidebarCollapsed ? 0 : sidebarWidth}
       />
+
+      {yamlTarget && (
+        <WorkflowYamlWindow target={yamlTarget} onClose={() => setYamlTarget(null)} />
+      )}
 
       <Dialog open={!!renameTarget} onOpenChange={(open) => { if (!open) setRenameTarget(null) }}>
         <DialogContent

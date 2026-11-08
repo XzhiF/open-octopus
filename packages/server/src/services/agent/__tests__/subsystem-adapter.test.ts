@@ -109,7 +109,7 @@ describe('SubsystemAdapter — Dual Store Cleanup', () => {
     // Verify the module source does not reference getExperiencesDir
     const adapterSource = await import('fs').then(fs =>
       fs.promises.readFile(
-        path.join(process.cwd(), 'src/services/agent/subsystem-adapter.ts'),
+        new URL('../subsystem-adapter.ts', import.meta.url),
         'utf-8',
       ),
     )

@@ -3,17 +3,16 @@ import Database from "better-sqlite3"
 import fs from "fs"
 import path from "path"
 import os from "os"
+import { Hono } from "hono"
 import { applySchema } from "../../db/schema"
 import { HarnessDAO } from "../../db/dao/harness-dao"
+import { IncidentStore } from "../../services/supervision/incident-store"
 import harnessRoutes, { setHarnessDependencies } from "../harness"
 import type { HarnessEvent } from "@octopus/shared"
 
 let db: Database.Database
 let dao: HarnessDAO
 let dbPath: string
-
-// Create a Hono app to test routes
-import { Hono } from "hono"
 let app: Hono
 
 beforeEach(() => {
@@ -51,6 +50,22 @@ function makeEvent(overrides: Partial<HarnessEvent> = {}): HarnessEvent {
   }
 }
 
+function seedIncident(overrides: Record<string, unknown> = {}) {
+  return new IncidentStore(db).open({
+    executionId: "exec-001",
+    workspaceId: "ws-1",
+    nodeId: "step1",
+    phase: "before_retry",
+    severity: "warning",
+    kind: "stupid_retry",
+    summary: "same error twice",
+    evidence: [{ attempt: 2 }],
+    contextRef: "execution:exec-001/node:step1",
+    allowedActions: ["proceed", "retry", "escalate"],
+    ...overrides,
+  })
+}
+
 async function request(method: string, path: string, body?: unknown): Promise<Response> {
   const url = `http://localhost${path}`
   const init: RequestInit = { method }
@@ -61,105 +76,93 @@ async function request(method: string, path: string, body?: unknown): Promise<Re
   return app.fetch(new Request(url, init))
 }
 
-describe("Harness API Routes", () => {
-  describe("GET /api/workspaces/:id/harness/config", () => {
-    it("returns default config when no DB config exists", async () => {
-      const res = await request("GET", "/api/workspaces/ws-1/harness/config")
-      expect(res.status).toBe(200)
-      const data = await res.json() as any
-      expect(data.source).toBe("defaults")
-      expect(data.version).toBe(0)
-      expect(data.config).toContain("detectors")
-    })
-
-    it("returns saved config after PUT", async () => {
-      const yaml = "detectors:\n  stupid_retry:\n    enabled: true\n"
-      await request("PUT", "/api/workspaces/ws-1/harness/config", { config: yaml })
-
-      const res = await request("GET", "/api/workspaces/ws-1/harness/config")
-      expect(res.status).toBe(200)
-      const data = await res.json() as any
-      expect(data.source).toBe("db")
-      expect(data.version).toBe(1)
-    })
+describe("Harness API Routes — events", () => {
+  it("returns persisted harness_events for an execution", async () => {
+    dao.insertEvent(makeEvent())
+    const res = await request("GET", "/api/workspaces/ws-1/harness/events/exec-001")
+    expect(res.status).toBe(200)
+    const data = (await res.json()) as any
+    expect(data.events).toHaveLength(1)
+    expect(data.events[0].detector).toBe("stupid_retry")
   })
 
-  describe("PUT /api/workspaces/:id/harness/config", () => {
-    it("saves valid config and returns version", async () => {
-      const yaml = `
-detectors:
-  stupid_retry:
-    enabled: true
-    threshold: 3
-strategies: []
-`
-      const res = await request("PUT", "/api/workspaces/ws-1/harness/config", { config: yaml })
-      expect(res.status).toBe(200)
-      const data = await res.json() as any
-      expect(data.success).toBe(true)
-      expect(data.version).toBe(1)
-    })
+  it("filters by type", async () => {
+    dao.insertEvent(makeEvent({ event_type: "diagnosis" }))
+    dao.insertEvent(makeEvent({ event_type: "intervention" }))
+    const res = await request("GET", "/api/workspaces/ws-1/harness/events/exec-001?type=diagnosis")
+    const data = (await res.json()) as any
+    expect(data.events).toHaveLength(1)
+  })
+})
 
-    it("rejects invalid YAML", async () => {
-      const res = await request("PUT", "/api/workspaces/ws-1/harness/config", { config: "just a string" })
-      expect(res.status).toBe(400)
-    })
-
-    it("rejects missing config field", async () => {
-      const res = await request("PUT", "/api/workspaces/ws-1/harness/config", { wrong: "field" })
-      expect(res.status).toBe(400)
-    })
-
-    it("bumps version on subsequent saves", async () => {
-      const yaml1 = "detectors:\n  stupid_retry:\n    enabled: true\n"
-      const yaml2 = "detectors:\n  stupid_retry:\n    enabled: false\n"
-
-      const r1 = await request("PUT", "/api/workspaces/ws-1/harness/config", { config: yaml1 })
-      const d1 = await r1.json() as any
-      expect(d1.version).toBe(1)
-
-      const r2 = await request("PUT", "/api/workspaces/ws-1/harness/config", { config: yaml2 })
-      const d2 = await r2.json() as any
-      expect(d2.version).toBe(2)
-    })
+describe("Harness API Routes — incidents", () => {
+  it("lists incidents for an execution", async () => {
+    seedIncident()
+    const res = await request("GET", "/api/workspaces/ws-1/harness/incidents?execution_id=exec-001")
+    expect(res.status).toBe(200)
+    const data = (await res.json()) as any
+    expect(data.incidents).toHaveLength(1)
+    expect(data.incidents[0].kind).toBe("stupid_retry")
   })
 
-  describe("GET /api/workspaces/:id/harness/events/:execId", () => {
-    it("returns empty events list when no events exist", async () => {
-      const res = await request("GET", "/api/workspaces/ws-1/harness/events/exec-001")
-      expect(res.status).toBe(200)
-      const data = await res.json() as any
-      expect(data.events).toEqual([])
+  it("requires execution_id", async () => {
+    const res = await request("GET", "/api/workspaces/ws-1/harness/incidents")
+    expect(res.status).toBe(400)
+  })
+
+  it("returns one incident by id", async () => {
+    const inc = seedIncident()
+    const res = await request("GET", `/api/workspaces/ws-1/harness/incidents/${inc.id}`)
+    expect(res.status).toBe(200)
+    const data = (await res.json()) as any
+    expect(data.incident.id).toBe(inc.id)
+  })
+
+  it("404 for unknown incident", async () => {
+    const res = await request("GET", "/api/workspaces/ws-1/harness/incidents/nope")
+    expect(res.status).toBe(404)
+  })
+
+  it("resolves with a whitelisted decision", async () => {
+    const inc = seedIncident()
+    const res = await request("POST", `/api/workspaces/ws-1/harness/incidents/${inc.id}/resolve`, {
+      type: "proceed",
+      source: "user",
     })
+    expect(res.status).toBe(200)
+    const data = (await res.json()) as any
+    expect(data.ok).toBe(true)
+    expect(data.status).toBe("resolved")
+    expect(new IncidentStore(db).findById(inc.id)?.status).toBe("resolved")
+  })
 
-    it("returns events for a specific execution", async () => {
-      dao.insertEvent(makeEvent({ id: "e1", execution_id: "exec-001" }))
-      dao.insertEvent(makeEvent({ id: "e2", execution_id: "exec-001" }))
-      dao.insertEvent(makeEvent({ id: "e3", execution_id: "exec-002" }))
-
-      const res = await request("GET", "/api/workspaces/ws-1/harness/events/exec-001")
-      const data = await res.json() as any
-      expect(data.events).toHaveLength(2)
+  it("rejects an action outside the whitelist", async () => {
+    const inc = seedIncident({ allowedActions: ["proceed"] })
+    const res = await request("POST", `/api/workspaces/ws-1/harness/incidents/${inc.id}/resolve`, {
+      type: "abort",
+      reason: "nope",
     })
+    expect(res.status).toBe(400)
+    expect(new IncidentStore(db).findById(inc.id)?.status).not.toBe("resolved")
+  })
 
-    it("filters events by type query param", async () => {
-      dao.insertEvent(makeEvent({ id: "e1", event_type: "diagnosis" }))
-      dao.insertEvent(makeEvent({ id: "e2", event_type: "intervention" }))
-
-      const res = await request("GET", "/api/workspaces/ws-1/harness/events/exec-001?type=intervention")
-      const data = await res.json() as any
-      expect(data.events).toHaveLength(1)
-      expect(data.events[0].event_type).toBe("intervention")
+  it("rejects an invalid decision type", async () => {
+    const inc = seedIncident()
+    const res = await request("POST", `/api/workspaces/ws-1/harness/incidents/${inc.id}/resolve`, {
+      type: "nonsense",
     })
+    expect(res.status).toBe(400)
+  })
 
-    it("filters events by severity query param", async () => {
-      dao.insertEvent(makeEvent({ id: "e1", severity: "warning" }))
-      dao.insertEvent(makeEvent({ id: "e2", severity: "critical" }))
-
-      const res = await request("GET", "/api/workspaces/ws-1/harness/events/exec-001?severity=critical")
-      const data = await res.json() as any
-      expect(data.events).toHaveLength(1)
-      expect(data.events[0].severity).toBe("critical")
+  it("escalates to waiting_human", async () => {
+    const inc = seedIncident()
+    const res = await request("POST", `/api/workspaces/ws-1/harness/incidents/${inc.id}/escalate`, {
+      reason: "需要业务判断",
+      options: ["继续", "中止"],
     })
+    expect(res.status).toBe(200)
+    const data = (await res.json()) as any
+    expect(data.status).toBe("waiting_human")
+    expect(new IncidentStore(db).findById(inc.id)?.status).toBe("waiting_human")
   })
 })

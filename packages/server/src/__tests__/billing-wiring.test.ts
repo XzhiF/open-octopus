@@ -86,7 +86,6 @@ describe("AC1 · 记账写路径源码无 BillingService/computeForModel（写�
     "../services/execution/EngineCallbacks.ts",
     "../services/observability.ts",
     "../services/interaction/InteractionService.ts",
-    "../services/harness/agent-delegation.ts",
     "../db/dao/token-usage-dao.ts",
     "../db/dao/usage-ledger.ts",
   ]

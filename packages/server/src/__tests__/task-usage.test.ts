@@ -192,7 +192,7 @@ describe("taskUsage", () => {
     expect(usage.summary.totalCalls).toBe(0)
     expect(usage.summary.totals.tokens).toBe(0)
     expect(usage.summary.modelBreakdown).toEqual({})
-    expect(usage.timing).toEqual({ count: 0, duration_ms: 0, agent_duration_ms: 0 })
+    expect(usage.timing).toEqual({ count: 0, run_count: 0, duration_ms: 0, agent_duration_ms: 0 })
   })
 
   // 2026-11-03 事故回归：验收规划执行 task_id=NULL，归属只落 execution_links。
@@ -233,6 +233,37 @@ describe("taskUsage", () => {
     expect(usage.timing.count).toBe(1)
     expect(usage.timing.duration_ms).toBe(30 * MIN)
     expect(usage.timing.agent_duration_ms).toBe(22 * MIN)
+  })
+
+  // 2026-11-06 用户反馈：workflow-dev 任务里执行了工作流，任务「消耗」窗却看不到。
+  // 任务线程里 run_workflow 拉起的 chat_run 也登记 taskId —— 进任务账，但不占轮次。
+  it("任务线程里 chat_run 起的执行进任务账，但不占轮次口径", () => {
+    insertSession("s-chatrun")
+    insertTask("t-chatrun", "s-chatrun", null)
+    insertTimedExec({
+      id: "e-chatrun", taskId: null, phase: null, round: null,
+      workflowRef: "multi-pr-review.yaml",
+      startedAt: "2026-11-06T07:34:00.000Z", completedAt: "2026-11-06T07:43:00.000Z",
+    })
+    new ExecutionLinkDAO(db).link({
+      executionId: "e-chatrun", sessionId: "s-chatrun", taskId: "t-chatrun", kind: "chat_run",
+    })
+    insertNode("e-chatrun", "review", 6 * MIN)
+    insertCall({ executionId: "e-chatrun", input: 70, output: 7 })
+
+    const usage = service.taskUsage("t-chatrun")
+    const run = usage.breakdown.find((p) => p.execution_id === "e-chatrun")!
+    expect(run.label).toBe("multi-pr-review.yaml")
+    expect(run.instance).toBe(false)
+    expect(run.duration_ms).toBe(9 * MIN)
+    expect(run.agent_duration_ms).toBe(6 * MIN)
+    expect(usage.summary.totalCalls).toBe(1)
+    // 轮次口径只认 executions.task_id —— chat_run 不占 count，但实跑段计入总耗时
+    // （workflow-dev 没有相位轮，全部工作都在这些执行里）。
+    expect(usage.timing.count).toBe(0)
+    expect(usage.timing.run_count).toBe(1)
+    expect(usage.timing.duration_ms).toBe(9 * MIN)
+    expect(usage.timing.agent_duration_ms).toBe(6 * MIN)
   })
 
   it("unknown task → 404-shaped error", () => {

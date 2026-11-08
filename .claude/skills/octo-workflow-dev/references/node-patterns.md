@@ -1,6 +1,6 @@
 # Node Patterns Reference
 
-Typical usage patterns and working YAML examples for each of the 10 node types.
+Typical usage patterns and working YAML examples for each of the 11 node types.
 
 ---
 
@@ -495,4 +495,38 @@ nodes:
       prompt: "Plan tasks for sprint $iteration based on $vars.backlog"
 ```
 Each iteration generates a separate file: `sprint-plan-iter0.yaml`, `sprint-plan-iter1.yaml`, etc.
+
+---
+
+## 11. `octopus_agent` — Clone-backed Agent Node
+
+Use when the node should run as a specific clone (role) rather than an inline prompt.
+
+```yaml
+- id: architecture-review
+  type: octopus_agent
+  agent: built-in/architecture-explorer
+  task:
+    brief: |
+      Review the design in $design.output against the repository constraints.
+    context:
+      - $design.output
+    constraints:
+      - read-only
+      - cite file paths
+    expected_output:
+      type: markdown
+    budget:
+      max_tokens: 40000
+      max_cost_usd: 1.5
+  harness:
+    heartbeat_interval: 30
+    heartbeat_timeout: 180
+    auto_abort_on_budget: true
+  depends_on: [design]
+```
+
+- `agent` is required (clone name or `__main__`); `task.brief` is required.
+- `version` / `min_stage` pin the clone version; `harness` controls the watchdog.
+- Prefer this over `agent` when the role's persona/skills are already packaged as a clone.
 

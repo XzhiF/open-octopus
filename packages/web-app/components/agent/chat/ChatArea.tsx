@@ -18,6 +18,8 @@ import { TaskCostChip } from './task-cost-chip'
 import type { TaskUsagePayload } from '@/lib/tasks-api'
 import { TuiLive, TuiMessage } from './TuiTranscript'
 import { ToolCallCard } from './ToolCallCard'
+import { TaskProgressPanel } from './task-progress-panel'
+import { deriveTaskProgress } from '@/lib/agent/task-progress'
 import { QuestionCard } from '@/components/workspace/chat/question-card'
 import type { ChatMessage } from '@/lib/types'
 import { DangerConfirmCard } from './DangerConfirmCard'
@@ -188,6 +190,14 @@ export function ChatArea({
   const [contextExpanded, setContextExpanded] = useState(false)
   const [attachedSkill, setAttachedSkill] = useState<ComposerSkillRef | null>(null)
   const [attachedExpert, setAttachedExpert] = useState<ComposerExpertRef | null>(null)
+
+  // 任务清单（Claude Code 风格置顶面板）：历史消息里的 tool_calls + 当前流的
+  // toolCalls 合成；同一 tool_call id 只认一次（流式与持久化重叠时防重复）。
+  const taskProgress = useMemo(() => {
+    const dedupedMessages = Array.from(new Map(messages.map((m) => [m.id, m])).values())
+    const persisted = dedupedMessages.flatMap((m) => (Array.isArray(m.tool_calls) ? m.tool_calls : []))
+    return deriveTaskProgress([...persisted, ...toolCalls])
+  }, [messages, toolCalls])
   // ＋ 面板的开合提到 ChatArea：hero 态的身份 chip 也要能打开同一个面板。
   const [attachOpen, setAttachOpen] = useState(false)
   const scrollRef = useRef<HTMLDivElement>(null)
@@ -749,6 +759,9 @@ export function ChatArea({
           data-tui-hero={heroMode ? 'true' : undefined}
         >
           <div className="relative mx-auto max-w-4xl">
+            {taskProgress && (
+              <TaskProgressPanel progress={taskProgress} className="mb-1.5" />
+            )}
             {heroMode && !hideEmptyState && (
               <div className="mb-5 text-center" role="status" aria-live="polite" data-tui-hero-title>
                 <div className="text-[15px] font-semibold text-pop-ink">
@@ -1004,6 +1017,7 @@ export function ChatArea({
       ) : (
       <div className="border-t-[1.5px] border-pop-bd bg-pop-paper p-3">
         <div className="max-w-3xl mx-auto relative">
+          {taskProgress && <TaskProgressPanel progress={taskProgress} className="mb-2" />}
           {/* @分身 mention autocomplete */}
           <MentionAutocomplete
             inputValue={input}

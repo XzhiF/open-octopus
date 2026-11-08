@@ -10,7 +10,7 @@ vi.mock("@/lib/server-config", () => ({ getServerUrl: () => "http://localhost:30
 vi.mock("../authoring/artifact-viewer-dialog", () => ({ ArtifactViewerDialog: () => null }))
 
 import {
-  runErrorOf, RUN_ERROR_STATUSES, execLabel, deepLinkTarget, mergeAggregates, TaskAiUsageCard,
+  runErrorOf, RUN_ERROR_STATUSES, execLabel, mergeAggregates, TaskAiUsageCard,
   LIVE_STATUSES,
 } from "../execution-summary"
 import { LIVE_ROUND_STATUSES } from "@octopus/shared"
@@ -58,16 +58,12 @@ describe("LIVE_STATUSES — 在飞轮词表派生（票10 review-2 防漂移钉�
   })
 })
 
-describe("execLabel / deepLinkTarget", () => {
+describe("execLabel", () => {
   it("v4 phase/round 落行 → 轮次标题优先；否则 name → workflow_ref → id", () => {
     expect(execLabel(row({ phase_index: 2, round_index: 3 }))).toBe("Phase 2 · Round 3")
     expect(execLabel(row({ phase_index: 1 }))).toBe("Phase 1")
     expect(execLabel(row({ name: "后端" }))).toBe("后端")
     expect(execLabel(row({}))).toBe("wf")
-  })
-  it("深链 = workspace 执行详情；无 workspace_id → null", () => {
-    expect(deepLinkTarget(row({ id: "e9", workspace_id: "ws-1" }))).toBe("/workspaces/ws-1?tab=detail&execId=e9")
-    expect(deepLinkTarget(row({ workspace_id: "" }))).toBeNull()
   })
 })
 

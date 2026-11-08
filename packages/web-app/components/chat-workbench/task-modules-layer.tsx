@@ -16,10 +16,12 @@ import { DebugInspectorWindow } from './debug-inspector-window'
 import { ArtifactsWindow } from './artifacts-window'
 import { ArchiveWindow } from './archive-window'
 import { SubagentWindow } from './subagent-window'
-import type { TaskModule, TaskWindowMap, TaskWindowRecord, RunTarget, SubagentTarget } from './task-window-types'
+import { WorkflowDevWindow } from './workflow-dev-window'
+import type { TaskModule, TaskWindowMap, TaskWindowRecord, RunTarget, SubagentTarget, YamlTarget } from './task-window-types'
 
 const MODULE_TITLE: Record<TaskModule, string> = {
   plan: '规格',
+  workflow: '工作流',
   changes: '变更',
   run: '运行',
   acceptance: '验收',
@@ -50,6 +52,8 @@ interface TaskModulesLayerProps {
   onMutated?: () => void
   /** Shared task action handler (chip / card / window controls). */
   onTaskAction?: (action: string) => void
+  /** 运行窗头部 </> —— 打开该次执行的 YAML 窗（在运行窗外侧，不遮 DAG）。 */
+  onOpenYaml?: (target: YamlTarget) => void
   /** External request (inspector / board acceptance / 作业坞运行列表) to open a module once. */
   openModule?: { module: TaskModule; nonce: number; runTarget?: RunTarget | null; subagentTarget?: SubagentTarget | null } | null
   /** 会话账本里点工作流行 → 打开对应任务。 */
@@ -71,6 +75,7 @@ export function TaskModulesLayer({
   onWindowsChange,
   onMutated,
   onTaskAction,
+  onOpenYaml,
   openModule,
   onOpenLinkedTask,
   className,
@@ -130,8 +135,10 @@ export function TaskModulesLayer({
     const preferred =
       module === 'acceptance' || module === 'run'
         ? { width: 1240, height: 740 }
-        : module === 'plan'
-          ? { width: 980, height: 640 }
+        : module === 'workflow'
+          ? { width: 1280, height: 760 }
+          : module === 'plan'
+            ? { width: 980, height: 640 }
           : module === 'archive'
             ? { width: 1040, height: 700 }
             : module === 'usage'
@@ -232,13 +239,16 @@ export function TaskModulesLayer({
               <DebugInspectorWindow sessionId={chatSessionId ?? sessionId ?? null} refreshKey={debugRefreshKey} />
             ) : module === 'run' ? (
               // 运行窗不依赖任务：自由对话里从作业坞/消耗窗点进来的指定执行也要能看。
-              <RunWindow task={task} runTarget={record.runTarget ?? null} onTaskAction={onTaskAction} />
+              <RunWindow task={task} runTarget={record.runTarget ?? null} onTaskAction={onTaskAction} onOpenYaml={onOpenYaml} />
             ) : module === 'subagents' ? (
               // 子代理窗同样不依赖任务：主对话派生的子代理在任何上下文都要能回看。
               <SubagentWindow
                 sessionId={chatSessionId ?? sessionId ?? null}
                 agentId={record.subagentTarget?.id ?? null}
               />
+            ) : module === 'workflow' ? (
+              // workflow-dev 任务专用：DAG + Monaco YAML（查看/修改）。
+              task ? <WorkflowDevWindow task={task} onMutated={onMutated} /> : null
             ) : !task ? null : module === 'changes' ? (
               <ChangesWindow task={task} />
             ) : module === 'plan' ? (

@@ -282,7 +282,6 @@ export class WorkspaceGit {
     claudeLines.push("", "## 说明",
       "- 使用 `octo-dev-copilot` skill 管理此工作空间",
       "- 使用 `octo-workflow-dev` skill 开发与校验工作流",
-      "- 使用 `octo-swarm-dev` skill 开发 Swarm 多专家协作节点",
       "- 修改代码时直接操作各 worktree 目录",
       "- 主仓库保持干净，开发分支仅在 worktree 中",
     )

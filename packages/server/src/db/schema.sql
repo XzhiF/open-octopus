@@ -1087,14 +1087,36 @@ CREATE TABLE IF NOT EXISTS harness_events (
 CREATE INDEX IF NOT EXISTS idx_harness_events_exec ON harness_events(execution_id);
 CREATE INDEX IF NOT EXISTS idx_harness_events_time ON harness_events(timestamp);
 
--- 32. Harness Config — per-workspace harness.yaml overrides.
---     Singleton row (id='default'); version bumped on each save.
-CREATE TABLE IF NOT EXISTS harness_config (
-  id TEXT PRIMARY KEY DEFAULT 'default',
-  config_yaml TEXT NOT NULL,
-  updated_at TEXT NOT NULL DEFAULT (datetime('now')),
-  version INTEGER NOT NULL DEFAULT 1
+-- 32. Runtime Incidents — AI-native supervision lifecycle.
+--     A detector signal becomes an Incident; exactly one owner (chat / human /
+--     http) is responsible for resolving it. `allowed_actions_json` is the
+--     runtime-issued whitelist; a supervisor cannot exceed it.
+CREATE TABLE IF NOT EXISTS runtime_incidents (
+  id TEXT PRIMARY KEY,
+  execution_id TEXT NOT NULL,
+  workspace_id TEXT NOT NULL,
+  node_id TEXT NOT NULL,
+  display_node_id TEXT,
+  phase TEXT NOT NULL,
+  severity TEXT NOT NULL,
+  kind TEXT NOT NULL,
+  status TEXT NOT NULL,
+  owner_kind TEXT,
+  owner_ref TEXT,
+  summary TEXT,
+  incident_json TEXT NOT NULL,
+  decision_json TEXT,
+  resolution_source TEXT,
+  created_at INTEGER NOT NULL,
+  dispatched_at INTEGER,
+  resolved_at INTEGER,
+  deadline_at INTEGER
 );
+
+CREATE INDEX IF NOT EXISTS idx_runtime_incidents_exec
+  ON runtime_incidents(execution_id, status);
+CREATE INDEX IF NOT EXISTS idx_runtime_incidents_status
+  ON runtime_incidents(status, created_at);
 
 -- =============================================================================
 -- Seed Data

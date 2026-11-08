@@ -339,11 +339,11 @@ describe("票02 AC7 — 写成功后既有产物 manifest 即列出（零 manife
     expect(w.status).toBe(200)
     const m = await app.request(`/api/tasks/${id}/artifacts/manifest`)
     expect(m.status).toBe(200)
-    const groups = ((await m.json()) as {
-      groups: Array<{ key: string; items: Array<{ path: string; bytes: number }> }>
-    }).groups
-    const specGroup = groups.find((g) => g.key === "spec")
-    expect(specGroup?.items.some((i) => i.path === `home:${BATCH1}/spec.md`)).toBe(true)
+    const body = ((await m.json()) as {
+      phases: Array<{ items: Array<{ path: string; bytes: number }> }>
+    })
+    const items = body.phases.flatMap((p) => p.items)
+    expect(items.some((i) => i.path === `home:${BATCH1}/spec.md`)).toBe(true)
   })
 })
 
@@ -613,11 +613,11 @@ describe("票03 AC5 — 开票后产物 manifest 即含新票（并入既有 man
     expect(w.status).toBe(200)
     const m = await app.request(`/api/tasks/${id}/artifacts/manifest`)
     expect(m.status).toBe(200)
-    const groups = ((await m.json()) as {
-      groups: Array<{ key: string; items: Array<{ path: string; bytes: number }> }>
-    }).groups
-    const specGroup = groups.find((g) => g.key === "spec")
-    expect(specGroup?.items.some((i) => i.path === `home:${BATCH1}/issues/01-new-scope-ticket.md`)).toBe(true)
+    const body = ((await m.json()) as {
+      phases: Array<{ items: Array<{ path: string; bytes: number }> }>
+    })
+    const items = body.phases.flatMap((p) => p.items)
+    expect(items.some((i) => i.path === `home:${BATCH1}/issues/01-new-scope-ticket.md`)).toBe(true)
   })
 })
 

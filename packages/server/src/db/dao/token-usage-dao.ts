@@ -3,7 +3,7 @@ import { BaseDAO } from "./base"
 import type { NodeTokenUsageRow, LlmCallRow } from "../types"
 import { LEDGER_SQL, costSummary, normalizeModelId, type TokenUsage, type LedgerTotals, type LedgerCost, type LedgerRow, type LlmUsageRow, type LlmUsageSummary, type ModelUsageBreakdown } from "@octopus/shared"
 import { type NodeUsageSource } from "./usage-ledger"
-import { pricedCallsSql, PRICED_AGG } from "../price-sql"
+import { pricedCallsSql, PRICED_AGG, callCacheSavingsUsdSql } from "../price-sql"
 
 /** llm_calls_costed 视图行 = 账本全列 + 查询时派生的 cost_usd(USD 基准)/vendor。 */
 export type LlmCallCostedRow = LlmCallRow & { cost_usd: number | null; vendor: string | null }
@@ -285,6 +285,83 @@ export class TokenUsageDAO extends BaseDAO {
       cacheCreationTokens: r.cache_creation_tokens,
       hitRate: r.hit_rate,
     }))
+  }
+
+  /**
+   * 「今日」页的总消耗：当天窗口的 token 总量 / 费用 / 缓存命中 / 缓存省下 / 来源拆分。
+   *
+   * 全部走账本单一真相源（llm_calls + llm_calls_costed 派生），聚合表达式取
+   * LEDGER_SQL / PRICED_AGG，不手写公式。来源按枚举归三桶：
+   * 对话 = clone_chat|global_chat；任务 = workflow|interaction|harness；
+   * 其余（session_compress / unknown）归系统。
+   */
+  todayLedger(sinceMs: number): {
+    calls: number
+    inputTokens: number
+    outputTokens: number
+    cacheReadTokens: number
+    cacheCreationTokens: number
+    tokens: number
+    cost: LedgerCost
+    cacheHitRate: number | null
+    cacheSaved: LedgerCost
+    split: Array<{ bucket: "chat" | "task" | "system"; tokens: number; share: number }>
+  } {
+    const totals = this.stmt(`
+      SELECT COUNT(*) AS calls,
+             COALESCE(SUM(input_tokens), 0) AS input_tokens,
+             COALESCE(SUM(output_tokens), 0) AS output_tokens,
+             COALESCE(SUM(cache_read_tokens), 0) AS cache_read_tokens,
+             COALESCE(SUM(cache_creation_tokens), 0) AS cache_creation_tokens,
+             COALESCE(${LEDGER_SQL.sumTokens()}, 0) AS tokens,
+             ${LEDGER_SQL.cacheHitRate()} AS hit_rate
+      FROM llm_calls WHERE timestamp >= ?
+    `).get(sinceMs) as {
+      calls: number; input_tokens: number; output_tokens: number
+      cache_read_tokens: number; cache_creation_tokens: number
+      tokens: number; hit_rate: number | null
+    }
+
+    const cost = this.derivedCost(["l.timestamp >= ?"], [sinceMs])
+
+    // 缓存省下 = Σ cacheRead × (输入价 - 缓存读价)。未配缓存读价的行不参与（NULL 不焊 0）。
+    const savedRow = this.stmt(`
+      SELECT ${LEDGER_SQL.sumCostOf("s")} AS usd,
+             ${LEDGER_SQL.costCompleteOf("s")} AS complete
+      FROM (SELECT ${callCacheSavingsUsdSql("l")} AS s FROM llm_calls l WHERE l.timestamp >= ?)
+    `).get(sinceMs) as { usd: number | null; complete: number }
+    const cacheSaved: LedgerCost = { usd: savedRow.usd ?? null, complete: savedRow.complete === 1 }
+
+    const bucketRows = this.stmt(`
+      SELECT CASE
+               WHEN source_path IN ('clone_chat', 'global_chat') THEN 'chat'
+               WHEN source_path IN ('workflow', 'interaction', 'harness') THEN 'task'
+               ELSE 'system'
+             END AS bucket,
+             COALESCE(${LEDGER_SQL.sumTokens()}, 0) AS tokens
+      FROM llm_calls WHERE timestamp >= ?
+      GROUP BY bucket
+    `).all(sinceMs) as Array<{ bucket: "chat" | "task" | "system"; tokens: number }>
+
+    const byBucket = new Map(bucketRows.map((r) => [r.bucket, r.tokens]))
+    const total = totals.tokens
+    const split = (["chat", "task", "system"] as const).map((bucket) => {
+      const tokens = byBucket.get(bucket) ?? 0
+      return { bucket, tokens, share: total > 0 ? tokens / total : 0 }
+    })
+
+    return {
+      calls: totals.calls,
+      inputTokens: totals.input_tokens,
+      outputTokens: totals.output_tokens,
+      cacheReadTokens: totals.cache_read_tokens,
+      cacheCreationTokens: totals.cache_creation_tokens,
+      tokens: total,
+      cost,
+      cacheHitRate: totals.hit_rate,
+      cacheSaved,
+      split,
+    }
   }
 
   /** 工作区时间窗内的费用（NEW-r2：源 = llm_calls 派生，与报表同一张账）。 */  costForWorkspaceSince(workspaceId: string, createdSinceIso: string): LedgerCost {

@@ -73,4 +73,15 @@ describe("ChatSidebar — 任务线程会话去重", () => {
     expect(screen.getByText("暂无对话")).toBeInTheDocument()
     expect(container.querySelector('[data-session-id="s-clone"]')).toBeNull()
   })
+
+  // 会话行图标（2026-11-06 用户定稿方案 A）：每行左侧一个弱化气泡，
+  // 与任务行类型图标同槽位，避免会话区看起来比任务区空。
+  it("每个会话行都有统一的对话图标", () => {
+    const { container } = renderSidebar([], [session("s-1", "重构验收流程"), session("s-2", "工作流 release 机制")])
+    const rows = container.querySelectorAll("[data-session-id]")
+    expect(rows).toHaveLength(2)
+    rows.forEach((row) => {
+      expect(row.querySelector('[data-session-icon="chat"]')).toBeTruthy()
+    })
+  })
 })

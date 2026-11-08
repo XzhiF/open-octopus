@@ -17,7 +17,6 @@ const PAGES = {
   models: lazy(() => import('@/app/system/models/page')),
   billing: lazy(() => import('@/app/system/billing/page')),
   repos: lazy(() => import('@/app/system/repos/page')),
-  harness: lazy(() => import('@/app/system/harness/page')),
 }
 
 export function SystemView() {

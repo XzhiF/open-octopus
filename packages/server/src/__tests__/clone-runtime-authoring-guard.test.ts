@@ -97,7 +97,7 @@ describe("authoring guard wiring — task-author only", () => {
     expect(await guard("Bash", { command: "pnpm test" })).toMatchObject({ allow: false })
   })
 
-  it.each(["workspace", "scheduler", "archive", "resource", "harness-agent", "task-doer"])(
+  it.each(["workspace", "scheduler", "archive", "resource", "task-doer"])(
     "leaves %s unguarded — it must keep its full command surface",
     async (name) => {
       const opts = await optionsFor(cloneDef(name), "/tmp/some-task-home")

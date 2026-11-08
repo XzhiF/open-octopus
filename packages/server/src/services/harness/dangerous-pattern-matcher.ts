@@ -156,7 +156,7 @@ export class DangerousPatternMatcher {
   }
 
   /**
-   * Convenience wrapper used by DetectorPipeline.
+   * Convenience wrapper used by SignalPipeline's tool guard.
    * Returns { dangerous, pattern } compatible with the pipeline's interception flow.
    */
   check(command: string): { dangerous: boolean; pattern?: string } {

@@ -11,7 +11,11 @@ export interface ChatWakeTarget {
 }
 
 interface SqliteLike {
-  prepare(sql: string): { get(...params: unknown[]): unknown }
+  prepare(sql: string): {
+    get(...params: unknown[]): unknown
+    all(...params: unknown[]): unknown[]
+    run(...params: unknown[]): { changes: number; lastInsertRowid: number | bigint }
+  }
 }
 
 const WAKE_COALESCE_MS = 5_000
@@ -124,6 +128,8 @@ class ChatEventBridge {
   private acceptanceGuided = new Set<string>()
   /** 通用工作流运行卡去重：executionId → 已落卡（一次执行一张，原地走生命周期）。 */
   private workflowRunCarded = new Set<string>()
+  /** 运行事件卡去重：incidentId:status:options → 已落卡（升级会再落一张）。 */
+  private incidentCarded = new Set<string>()
   /** 归档引导唤醒去重（taskId → 已开始引导）。 */
   private archiveGuided = new Set<string>()
   /** 归档确认（验收后停在待归档）唤醒去重（taskId → 已问过）。 */
@@ -705,7 +711,10 @@ class ChatEventBridge {
    *  零 LLM：只落卡 + 通知会话刷新，不唤醒主 Chat（终态由前端轮询得到）。
    *  一执行一张：按 executionId 去重。 */
   requestWorkflowRunCard(input: {
-    taskId: string
+    /** Task-scoped callers（验收规划）按任务找主线程会话。 */
+    taskId?: string
+    /** Chat-scoped callers（`run_workflow` 工具）已经知道会话，无需任务。 */
+    sessionId?: string
     executionId: string
     workspaceId: string
     workflowRef: string
@@ -721,18 +730,22 @@ class ChatEventBridge {
       source_chat_session_id?: string | null
       workspace_id?: string | null
     } | undefined
-    try {
-      row = this.db.prepare(
-        "SELECT name, source_chat_session_id, workspace_id FROM tasks WHERE id = ?",
-      ).get(input.taskId) as typeof row
-    } catch {
-      return
+    if (input.taskId) {
+      try {
+        row = this.db.prepare(
+          "SELECT name, source_chat_session_id, workspace_id FROM tasks WHERE id = ?",
+        ).get(input.taskId) as typeof row
+      } catch {
+        return
+      }
+      if (!row?.source_chat_session_id) return
     }
-    if (!row?.source_chat_session_id) return
+    const sessionId = input.sessionId ?? row?.source_chat_session_id
+    if (!sessionId) return
     let session: { clone_name?: string | null } | undefined
     try {
       session = this.db.prepare("SELECT clone_name FROM sessions WHERE id = ?")
-        .get(row.source_chat_session_id) as typeof session
+        .get(sessionId) as typeof session
     } catch {
       return
     }
@@ -744,7 +757,7 @@ class ChatEventBridge {
       : ""
     const detail = [input.workflowRef, coord].filter(Boolean).join(" · ")
     const title = `工作流运行 · ${input.workflowName}`
-    const workspaceId = input.workspaceId || row.workspace_id || null
+    const workspaceId = input.workspaceId || row?.workspace_id || null
     const event = getActivityBus().publish({
       kind: "workflow.started",
       severity: "info",
@@ -753,7 +766,7 @@ class ChatEventBridge {
       workspaceId,
       taskId: input.taskId,
       executionId: input.executionId,
-      sessionId: row.source_chat_session_id,
+      sessionId,
       payload: {
         status: "running",
         workflowRun: true,
@@ -765,7 +778,7 @@ class ChatEventBridge {
       },
     })
     this.appendTaskCard({
-      sessionId: row.source_chat_session_id,
+      sessionId,
       workspaceId,
       title,
       detail,
@@ -774,7 +787,145 @@ class ChatEventBridge {
       actions: [],
       contentPrefix: "工作流运行",
     })
-    this.notifySession(row.source_chat_session_id, workspaceId)
+    this.notifySession(sessionId, workspaceId)
+  }
+
+  /**
+   * Runtime supervision card (2026-11-07): an incident opened / was escalated.
+   * Append-only, zero LLM. The web IncidentCard polls the incident endpoint by
+   * id, so a later resolve updates this same card in place.
+   */
+  requestIncidentCard(input: {
+    sessionId: string
+    workspaceId: string | null
+    executionId: string
+    incidentId: string
+    nodeId: string
+    kind: string
+    severity: ActivitySeverity
+    summary: string
+    status: string
+    allowedActions: string[]
+    options?: string[]
+  }): void {
+    if (!this.db) return
+    const dedupeKey = `${input.incidentId}:${input.status}:${(input.options ?? []).join("|")}`
+    if (this.incidentCarded.has(dedupeKey)) return
+    this.incidentCarded.add(dedupeKey)
+
+    const now = new Date().toISOString()
+    const title = input.status === "waiting_human"
+      ? `需要你决定 · ${input.kind}`
+      : `运行事件 · ${input.kind}`
+    const activity = {
+      kind: "workflow.incident",
+      severity: input.severity,
+      title,
+      message: input.summary,
+      workspaceId: input.workspaceId,
+      taskId: null,
+      executionId: input.executionId,
+      nodeId: input.nodeId,
+      status: input.status,
+      actions: [],
+      payload: {
+        incident: true,
+        incidentId: input.incidentId,
+        incidentKind: input.kind,
+        allowedActions: input.allowedActions,
+        options: input.options ?? null,
+      },
+    }
+    try {
+      this.db.prepare(
+        "INSERT INTO messages (id, session_id, role, content, metadata, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+      ).run(
+        randomUUID(),
+        input.sessionId,
+        "user",
+        `[运行事件 · ${input.kind}] ${input.summary}\nincident_id: ${input.incidentId}`,
+        JSON.stringify({ displayType: "event", activity }),
+        now,
+      )
+      this.db.prepare(
+        "UPDATE sessions SET last_message_at = ?, updated_at = ? WHERE id = ?",
+      ).run(now, now, input.sessionId)
+    } catch (err: unknown) {
+      if (process.env.NODE_ENV !== "test") {
+        console.warn(
+          `[ChatEventBridge] incident card insert failed: ${err instanceof Error ? err.message : String(err)}`,
+        )
+      }
+    }
+  }
+
+  /**
+   * Notify a chat owner about an incident: append the card, then wake the agent
+   * with the incident protocol message. Wake budget / coalescing is the same as
+   * every other high-signal event (MAX_WAKES_PER_EXECUTION).
+   */
+  async notifyIncident(input: {
+    sessionId: string
+    org: string
+    workspaceId: string | null
+    executionId: string
+    incidentId: string
+    nodeId: string
+    kind: string
+    severity: ActivitySeverity
+    summary: string
+    status: string
+    allowedActions: string[]
+    options?: string[]
+  }): Promise<void> {
+    this.requestIncidentCard(input)
+    const target: ChatWakeTarget = {
+      sessionId: input.sessionId,
+      org: input.org,
+      workspaceId: input.workspaceId,
+    }
+    const event = getActivityBus().publish({
+      kind: "workflow.incident",
+      severity: input.severity,
+      title: `运行事件 · ${input.kind}`,
+      message: input.summary,
+      workspaceId: input.workspaceId,
+      executionId: input.executionId,
+      sessionId: input.sessionId,
+      nodeId: input.nodeId,
+      payload: { incidentId: input.incidentId, status: input.status },
+    })
+    const message = [
+      `[incident · ${input.kind}/${input.severity}]`,
+      `执行 ${input.executionId} 的节点 ${input.nodeId}：${input.summary}`,
+      `incident_id: ${input.incidentId}`,
+      `允许动作: ${input.allowedActions.join(", ") || "（仅记录）"}`,
+      `请先调用 get_incident("${input.incidentId}") 读证据，再决定。`,
+      "能确定根因就用 resolve_incident 处理；需要人判断就用 escalate_incident 出确认卡；不确定就 escalate。",
+      "处置纪律见 skill octo-workflow-supervisor（需要时 Read packages/core-pack/skills/octo-workflow-supervisor/SKILL.md）。",
+      "处理完用一句话告诉用户：出了什么、做了什么、现在状态。",
+    ].join("\n")
+    await this.wake(target, event, { ephemeral: true, message })
+  }
+
+  /** Human escalation card (waiting_human). No wake — the human is already here. */
+  requestIncidentEscalation(input: {
+    sessionId: string
+    workspaceId: string | null
+    executionId: string
+    incidentId: string
+    nodeId: string
+    kind: string
+    severity: ActivitySeverity
+    summary: string
+    options: string[]
+  }): void {
+    this.requestIncidentCard({
+      ...input,
+      status: "waiting_human",
+      allowedActions: ["escalate"],
+    })
+    this.notifySession(input.sessionId, input.workspaceId)
   }
 
   /** 验收方案就绪（2026-10-30 AI-native 验收；2026-10-31 两层化）：投一张
@@ -1071,7 +1222,11 @@ class ChatEventBridge {
       nodeId,
       sessionId: target?.sessionId,
     })
-    if (target) await this.wake(target, event)
+    // 已落执行卡的运行：卡片本身在对话里原地轮询到终态，这里只做 ephemeral
+    // 唤醒（模型能看到事件并回应，但不会再往 transcript 写一条
+    // 「工作流完成：xxx」的裸文本 —— 2026-11-06 用户反馈重复）。
+    const carded = this.workflowRunCarded.has(executionId)
+    if (target) await this.wake(target, event, carded ? { ephemeral: true } : undefined)
   }
 
   private queueWake(

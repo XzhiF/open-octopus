@@ -187,3 +187,101 @@ describe("ExecutionDAO.listLiveRuns — 跨工作区运行中执行", () => {
     expect(run).toMatchObject({ id: "plan", task_id: null, task_name: null })
   })
 })
+
+/**
+ * retireOrphanedPendingExecutions —— 启动回收（2026-11-05）。
+ *
+ * pending 对任务实例是**合法排队态**（launchQueued 每 tick 领），启动回收只能
+ * 收「非任务 + 从未启动 + 早于宽限期」的孤儿，否则会把排队中的任务判死。
+ */
+describe("ExecutionDAO.retireOrphanedPendingExecutions — 启动回收孤儿", () => {
+  let db: Database.Database
+  let dao: ExecutionDAO
+
+  const CUTOFF = "2026-11-05T02:00:00.000Z"
+  const REASON = "启动回收：执行行创建后未启动"
+
+  beforeEach(() => {
+    db = new Database(":memory:")
+    applySchema(db)
+    dao = new ExecutionDAO(db)
+    db.prepare(
+      "INSERT INTO workspaces (id, name, path, created_at, updated_at) VALUES (?, ?, ?, ?, ?)",
+    ).run("ws-1", "ws-1", "/tmp/ws-1", CUTOFF, CUTOFF)
+  })
+
+  afterEach(() => {
+    db?.close()
+  })
+
+  const seed = (overrides: Partial<Parameters<ExecutionDAO["insertExecution"]>[0]>) =>
+    dao.insertExecution({
+      id: "x",
+      workspace_id: "ws-1",
+      workflow_ref: "built-in/acceptance-plan",
+      workflow_name: "acceptance-plan",
+      ...overrides,
+    })
+
+  it("回收 task_id=NULL、未启动、早于 cutoff 的 pending 行", () => {
+    seed({ id: "orphan", status: "pending", task_id: null, started_at: null, created_at: "2026-11-05T01:00:00.000Z" })
+
+    expect(dao.retireOrphanedPendingExecutions(CUTOFF, REASON)).toBe(1)
+
+    const row = dao.findById("orphan")!
+    expect(row.status).toBe("interrupted")
+    expect(row.completed_at).toBeTruthy()
+    expect(JSON.parse(row.var_pool ?? "{}").error).toBe(REASON)
+  })
+
+  it("跳过任务的排队行（task_id 非空，等并发闸的合法 pending）", () => {
+    seed({ id: "armed", status: "pending", task_id: "t-1", started_at: null, created_at: "2026-11-05T01:00:00.000Z" })
+
+    expect(dao.retireOrphanedPendingExecutions(CUTOFF, REASON)).toBe(0)
+    expect(dao.findById("armed")!.status).toBe("pending")
+  })
+
+  it("跳过已 claim（started_at 非空）、终态与宽限期内的行", () => {
+    seed({ id: "claimed", status: "pending", task_id: null, started_at: "2026-11-05T01:30:00.000Z", created_at: "2026-11-05T01:00:00.000Z" })
+    seed({ id: "done", status: "completed", task_id: null, started_at: null, created_at: "2026-11-05T01:00:00.000Z" })
+    seed({ id: "fresh", status: "pending", task_id: null, started_at: null, created_at: "2026-11-05T02:01:00.000Z" })
+
+    expect(dao.retireOrphanedPendingExecutions(CUTOFF, REASON)).toBe(0)
+  })
+})
+
+/** A（2026-11-05）依赖的守卫：retireLaunch 只能收 pending，绝不覆盖已跑起来的行。 */
+describe("ExecutionDAO.retireLaunch — 守卫 status='pending'", () => {
+  let db: Database.Database
+  let dao: ExecutionDAO
+
+  beforeEach(() => {
+    db = new Database(":memory:")
+    applySchema(db)
+    dao = new ExecutionDAO(db)
+    db.prepare(
+      "INSERT INTO workspaces (id, name, path, created_at, updated_at) VALUES (?, ?, ?, ?, ?)",
+    ).run("ws-1", "ws-1", "/tmp/ws-1", new Date().toISOString(), new Date().toISOString())
+  })
+
+  afterEach(() => {
+    db?.close()
+  })
+
+  const seed = (id: string, status: string) =>
+    dao.insertExecution({ id, workspace_id: "ws-1", workflow_ref: "built-in/x", status })
+
+  it("pending → failed 并落 error", () => {
+    seed("pending-row", "pending")
+    expect(dao.retireLaunch("pending-row", "failed", "启动失败").changes).toBe(1)
+    const row = dao.findById("pending-row")!
+    expect(row.status).toBe("failed")
+    expect(JSON.parse(row.var_pool ?? "{}").error).toBe("启动失败")
+  })
+
+  it("running 行原样不动", () => {
+    seed("running-row", "running")
+    expect(dao.retireLaunch("running-row", "failed", "启动失败").changes).toBe(0)
+    expect(dao.findById("running-row")!.status).toBe("running")
+  })
+})

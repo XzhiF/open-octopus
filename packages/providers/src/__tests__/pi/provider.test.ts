@@ -87,9 +87,11 @@ describe('PiAgentProvider', () => {
     expect(resolveSystemPrompt('You are a helpful assistant')).toBe('You are a helpful assistant')
     // undefined returns undefined
     expect(resolveSystemPrompt(undefined)).toBeUndefined()
-    // preset with append
-    expect(resolveSystemPrompt({ type: 'preset', preset: 'claude_code', append: 'extra' })).toBe('extra')
-    // preset without append
-    expect(resolveSystemPrompt({ type: 'preset', preset: 'claude_code' })).toBeUndefined()
+    // preset with append: Octopus identity + user append
+    const withAppend = resolveSystemPrompt({ type: 'preset', preset: 'claude_code', append: 'extra' })
+    expect(withAppend).toContain('You are running on the Octopus platform.')
+    expect(withAppend).toContain('extra')
+    // preset without append still carries the Octopus identity
+    expect(resolveSystemPrompt({ type: 'preset', preset: 'claude_code' })).toContain('You are running on the Octopus platform.')
   })
 })

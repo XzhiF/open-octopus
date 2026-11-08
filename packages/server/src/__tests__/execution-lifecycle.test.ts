@@ -612,6 +612,51 @@ describe("ExecutionLifecycle.getWorkflowContent", () => {
   })
 })
 
+// 2026-11-07 YAML 窗：内容相同但来源可能不同（快照 / 工作区 / 内置），
+// 前端标签必须说真话，所以单独把来源暴露出来。
+describe("ExecutionLifecycle.getWorkflowContentWithSource", () => {
+  it("运行快照存在时 source=snapshot", () => {
+    const exec = lifecycle.create(workspaceId, { workflow_ref: "test.yaml" }, ORG)
+    fs.writeFileSync(path.join(workspacePath, "state", `${exec.id}-test.yaml`), MINIMAL_WF, "utf-8")
+
+    expect(lifecycle.getWorkflowContentWithSource(exec.id)).toEqual({
+      content: MINIMAL_WF,
+      source: "snapshot",
+    })
+  })
+
+  it("没有快照时回退工作区定义 source=workspace", () => {
+    const exec = lifecycle.create(workspaceId, { workflow_ref: "test.yaml" }, ORG)
+
+    expect(lifecycle.getWorkflowContentWithSource(exec.id)).toEqual({
+      content: MINIMAL_WF,
+      source: "workspace",
+    })
+  })
+
+  it("工作区也没有时回退内置资源 source=builtin", () => {
+    const spy = vi.spyOn(builtInWfService, "get").mockReturnValue({
+      ref: "built-in/demo",
+      content: MINIMAL_WF,
+      parsed: {} as never,
+    })
+    const exec = lifecycle.create(workspaceId, { workflow_ref: "built-in/demo" }, ORG)
+
+    expect(lifecycle.getWorkflowContentWithSource(exec.id)).toEqual({
+      content: MINIMAL_WF,
+      source: "builtin",
+    })
+    spy.mockRestore()
+  })
+
+  it("三级都取不到时 content/source 都是 null", () => {
+    expect(lifecycle.getWorkflowContentWithSource("nonexistent")).toEqual({
+      content: null,
+      source: null,
+    })
+  })
+})
+
 // ==================== buildCallbacks() ====================
 
 describe("ExecutionLifecycle.buildCallbacks", () => {

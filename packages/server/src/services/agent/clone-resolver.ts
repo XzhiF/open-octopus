@@ -9,6 +9,7 @@ import path from 'path'
 import type { OctopusAgentDef } from '@octopus/providers'
 import { getBuiltInClonesDir, getClonesDir, getBuiltInCloneDir, getCloneDir } from './paths'
 import { BUILTIN_CLONES, getBuiltinCloneDef, isBuiltinClone } from './builtin-clones'
+import { appendCloneChange } from './clone-changes'
 
 /** Read-only tools every consulting clone gets — it advises, it does not mutate. */
 const CONSULT_TOOLS = ['Read', 'Grep', 'Glob']
@@ -291,6 +292,84 @@ export function deleteUserClone(name: string): { ok: true } | { ok: false; error
   } catch (err) {
     return { ok: false, error: err instanceof Error ? err.message : String(err) }
   }
+}
+
+/**
+ * Update a clone's user-editable settings — display name, memory scope, skills.
+ * Writes config.json next to persona.md (creating the built-in directory when the
+ * clone only exists as a template). Persona is NOT here: it lives in persona.md
+ * and is edited through the clone file editor.
+ */
+export function updateCloneSettings(
+  name: string,
+  patch: {
+    display_name?: string
+    memory_scope?: 'shared' | 'isolated'
+    skills?: string[]
+  },
+): { ok: true; clone: CloneInfo } | { ok: false; error: string; status?: number } {
+  const info = resolveCloneInfo(name)
+  if (!info) return { ok: false, error: `Clone "${name}" not found`, status: 404 }
+
+  const cloneDir = info.type === 'built-in' ? getBuiltInCloneDir(name) : getCloneDir(name)
+  const configPath = path.join(cloneDir, 'config.json')
+  const existing = readCloneConfig(cloneDir) ?? { name, type: info.type }
+
+  const next: CloneConfig = {
+    ...existing,
+    name: existing.name ?? name,
+    type: existing.type ?? info.type,
+  }
+
+  if (patch.display_name !== undefined) {
+    const displayName = patch.display_name.trim()
+    if (!displayName) return { ok: false, error: 'display_name must not be empty', status: 400 }
+    if (displayName.length > 80) return { ok: false, error: 'display_name is too long', status: 400 }
+    next.display_name = displayName
+  }
+  if (patch.memory_scope !== undefined) {
+    if (patch.memory_scope !== 'shared' && patch.memory_scope !== 'isolated') {
+      return { ok: false, error: 'memory_scope must be "shared" or "isolated"', status: 400 }
+    }
+    next.memoryScope = patch.memory_scope
+  }
+  if (patch.skills !== undefined) {
+    if (!Array.isArray(patch.skills) || patch.skills.some((s) => typeof s !== 'string')) {
+      return { ok: false, error: 'skills must be an array of strings', status: 400 }
+    }
+    next.skills = Array.from(new Set(patch.skills.map((s) => s.trim()).filter(Boolean)))
+  }
+
+  try {
+    fs.mkdirSync(cloneDir, { recursive: true })
+    fs.writeFileSync(configPath, JSON.stringify(next, null, 2), 'utf-8')
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : String(err) }
+  }
+
+  // 技能勾选变化 = 分身资产变更（「今日」页变动追踪）。config.json 已落盘；
+  // 台账写失败不影响设置保存。
+  if (patch.skills !== undefined) {
+    const before = new Set(existing.skills ?? [])
+    const after = new Set(next.skills ?? [])
+    const added = [...after].filter((s) => !before.has(s))
+    const removed = [...before].filter((s) => !after.has(s))
+    if (added.length > 0 || removed.length > 0) {
+      const parts: string[] = []
+      if (added.length > 0) parts.push(`+ ${added.join('、')}`)
+      if (removed.length > 0) parts.push(`- ${removed.join('、')}`)
+      appendCloneChange(cloneDir, {
+        ts: new Date().toISOString(),
+        kind: 'skill',
+        path: 'config.json',
+        summary: `技能变更 ${parts.join(' / ')}`,
+      })
+    }
+  }
+
+  const updated = resolveCloneInfo(name)
+  if (!updated) return { ok: false, error: `Clone "${name}" could not be reloaded`, status: 500 }
+  return { ok: true, clone: updated }
 }
 
 // ── Private helpers ────────────────────────────────────────────────

@@ -136,7 +136,9 @@ export function createChatRoutes(deps: ChatRouteDeps): Hono {
   const app = new Hono()
   // 子代理作业记录（作业坞「子代理」）：provider subagent chunk → DB，
   // 读侧按需从 SDK transcript 回填单代理 token。
-  const subagentRuns = new SubagentRunService(sessionDao.getDb())
+  // Lazy: route factories run at import time, before tests init the DB.
+  let subagentRuns: SubagentRunService | null = null
+  const getSubagentRuns = () => (subagentRuns ??= new SubagentRunService(sessionDao.getDb()))
 
   // ── Session running state（"关闭不丢失"）──────────────────────────
   // running = 内存里仍有该会话的生成流；partial = DB 里还有 streaming partial。
@@ -175,7 +177,7 @@ export function createChatRoutes(deps: ChatRouteDeps): Hono {
     if (!session || session.is_deleted) {
       return c.json(createAgentError('NOT_FOUND', `Session ${id} not found`), 404)
     }
-    return c.json({ runs: subagentRuns.list(id) })
+    return c.json({ runs: getSubagentRuns().list(id) })
   })
 
   app.get('/sessions/:id/subagents/:agentId', (c) => {
@@ -185,7 +187,7 @@ export function createChatRoutes(deps: ChatRouteDeps): Hono {
     if (!session || session.is_deleted) {
       return c.json(createAgentError('NOT_FOUND', `Session ${id} not found`), 404)
     }
-    const run = subagentRuns.find(id, agentId)
+    const run = getSubagentRuns().find(id, agentId)
     if (!run) {
       return c.json(createAgentError('NOT_FOUND', `Subagent ${agentId} not found`), 404)
     }
@@ -292,13 +294,16 @@ export function createChatRoutes(deps: ChatRouteDeps): Hono {
     // transition as a role card (cache discipline), never re-injected per turn.
     // A user-picked third clone is respected until the next task transition.
     if (thread) {
-      const desired = thread.identity === 'author'
-        ? 'task-author'
-        : thread.identity === 'doer'
-          ? 'task-doer'
-          : null
+      const workflowDev = thread.task.kind === 'workflow-dev'
+      const desired = thread.identity === 'base'
+        ? null
+        : workflowDev
+          ? 'workflow-author'
+          : thread.identity === 'author'
+            ? 'task-author'
+            : 'task-doer'
       const currentRole = cacheCtx.getRoleState(id)
-      const taskRoles = new Set(['task-author', 'task-doer'])
+      const taskRoles = new Set(['task-author', 'task-doer', 'workflow-author'])
       if (
         (currentRole.activeExpert == null || taskRoles.has(currentRole.activeExpert)) &&
         currentRole.activeExpert !== desired
@@ -346,7 +351,11 @@ export function createChatRoutes(deps: ChatRouteDeps): Hono {
     const mcpWorkspaceId = thread?.task.workspaceId ?? session.workspace_id
     const toolServers: Record<string, unknown> = {}
     if (mcpWorkspaceId) {
-      toolServers['octopus-workflow'] = createWorkflowToolServer(mcpWorkspaceId, { sessionId: id, org })
+      toolServers['octopus-workflow'] = createWorkflowToolServer(mcpWorkspaceId, { sessionId: id, org }, {
+        taskId: thread?.task.id,
+        kind: thread?.task.kind === 'workflow-dev' ? 'workflow-dev' : undefined,
+        db: sessionDao.getDb(),
+      })
     }
     if (thread) {
       toolServers['octopus-task'] = createTaskToolServer({
@@ -919,7 +928,7 @@ export function createChatRoutes(deps: ChatRouteDeps): Hono {
               // 操作日志 / 最终汇报）。单代理 token 由读侧从 transcript 回填。
               // 记账失败不能影响本轮 —— 作业坞是观测面，不是收轮条件。
               try {
-                subagentRuns.applyEvent(sessionId, chunk.event, { cwd })
+                getSubagentRuns().applyEvent(sessionId, chunk.event, { cwd })
               } catch (err: unknown) {
                 console.warn(
                   '[agent-chat] subagent record failed (non-fatal):',

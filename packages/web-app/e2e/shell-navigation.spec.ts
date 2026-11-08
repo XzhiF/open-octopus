@@ -55,7 +55,7 @@ test.describe('桌面壳 · 全局 header', () => {
   test('菜单「关闭所有窗口」清空桌面', async ({ page }) => {
     await page.goto('/')
     await openApp(page, '任务看板')
-    await openApp(page, '工作空间')
+    await openApp(page, '资源')
     await expect(page.locator('[data-window-id]')).toHaveCount(2)
     await closeAllWindows(page)
     await expect(page.locator('[data-window-id]')).toHaveCount(0)

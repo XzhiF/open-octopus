@@ -5,8 +5,8 @@ export type ViewId =
   | 'chat'
   | 'dashboard'
   | 'tasks'
-  | 'workspaces'
   | 'agent'
+  | 'clones'
   | 'knowledge'
   | 'resources'
   | 'scheduler'
@@ -76,8 +76,8 @@ const VIEW_ROUTES: ViewRoute[] = [
   { kind: 'view', id: 'chat', path: '/', view: 'chat', title: '对话' },
   { kind: 'view', id: 'dashboard', path: '/dashboard', view: 'dashboard', title: '今日' },
   { kind: 'view', id: 'tasks', path: '/tasks', view: 'tasks', title: '任务看板' },
-  { kind: 'view', id: 'workspaces', path: '/workspaces', view: 'workspaces', title: '工作空间' },
   { kind: 'view', id: 'agent', path: '/agent', view: 'agent', title: 'Agent' },
+  { kind: 'view', id: 'clones', path: '/clones', view: 'clones', title: '分身' },
   { kind: 'view', id: 'knowledge', path: '/knowledge', view: 'knowledge', title: '知识中心' },
   { kind: 'view', id: 'resources', path: '/resources', view: 'resources', title: '资源' },
   { kind: 'view', id: 'scheduler', path: '/scheduler', view: 'scheduler', title: '系统调度' },
@@ -85,43 +85,9 @@ const VIEW_ROUTES: ViewRoute[] = [
   { kind: 'view', id: 'system-models', path: '/system/models', view: 'system', title: '系统管理' },
   { kind: 'view', id: 'system-billing', path: '/system/billing', view: 'system', title: '系统管理' },
   { kind: 'view', id: 'system-repos', path: '/system/repos', view: 'system', title: '系统管理' },
-  { kind: 'view', id: 'system-harness', path: '/system/harness', view: 'system', title: '系统管理' },
 ]
 
 const DETAIL_ROUTES: DetailRoute[] = [
-  {
-    kind: 'detail',
-    id: 'observability',
-    path: '/workspaces/:id/executions/:eid/observability',
-    componentKey: 'observability',
-    title: (params) => `运行观测 · ${shortId(params.eid)}`,
-    key: (params) => `observability:${params.id}:${params.eid}`,
-    ownerView: 'workspaces',
-    fallback: (params) => `/workspaces/${encodeURIComponent(params.id)}`,
-    panel: 'scroll',
-  },
-  {
-    kind: 'detail',
-    id: 'archive-detail',
-    path: '/workspaces/:id/archive-detail',
-    componentKey: 'archive-detail',
-    title: (params) => `归档 · ${shortId(params.id)}`,
-    key: (params) => `archive:${params.id}`,
-    ownerView: 'workspaces',
-    fallback: () => '/workspaces',
-    panel: 'scroll',
-  },
-  {
-    kind: 'detail',
-    id: 'workspace',
-    path: '/workspaces/:id',
-    componentKey: 'workspace',
-    title: (params) => `工作空间 · ${shortId(params.id)}`,
-    key: (params) => `workspace:${params.id}`,
-    ownerView: 'workspaces',
-    fallback: () => '/workspaces',
-    panel: 'contained',
-  },
   {
     kind: 'detail',
     id: 'resource',
@@ -156,7 +122,6 @@ const STANDALONE_ROUTES: StandaloneRoute[] = [
   // 快速便签是桌面窗口（不是浮层）：URL /notes 打开归属窗口，内容由 AppWindow 特判渲染。
   { kind: 'standalone', id: 'quick-notes', path: '/notes', componentKey: 'quick-notes', title: '便签' },
   { kind: 'standalone', id: 'dev-agent-node', path: '/dev/agent-node-test', componentKey: 'dev-agent-node', title: 'Agent Node Test' },
-  { kind: 'standalone', id: 'dev-harness', path: '/dev/harness-test', componentKey: 'dev-harness', title: 'Harness Test' },
   { kind: 'standalone', id: 'dev-moa', path: '/dev/moa-test', componentKey: 'dev-moa', title: 'MoA Test' },
   { kind: 'standalone', id: 'dev-swarm', path: '/dev/swarm-test', componentKey: 'dev-swarm', title: 'Swarm Test' },
 ]

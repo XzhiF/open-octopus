@@ -2,7 +2,10 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { act, cleanup, fireEvent, render, screen } from '@testing-library/react'
 import type { AgentMessage } from '@/lib/agent/types'
 
-vi.mock('@/lib/api-client', () => ({ fetchExecutionDetail: vi.fn() }))
+vi.mock('@/lib/api-client', () => ({
+  fetchExecutionDetail: vi.fn(),
+  fetchExecutionIncidents: vi.fn(async () => []),
+}))
 
 import { fetchExecutionDetail } from '@/lib/api-client'
 import { WorkflowRunCard } from '../workflow-run-card'

@@ -187,7 +187,7 @@ executionRoutes.get("/:executionId", async (c) => {
   if (!svc) return c.json({ error: "workspace not found" }, 404)
   const execution = svc.service.getByIdWithSteps(executionId)
   if (!execution) return c.json({ error: "not found" }, 404)
-  const workflowContent = svc.service.getWorkflowContent(executionId)
+  const workflowContent = svc.service.getWorkflowContentWithSource(executionId)
   const allTokenUsages = svc.service.getTokenUsagesForExecution(executionId)
   const perStepTokenUsages = svc.service.getTokenUsagesPerStep(executionId)
   const reqCounts = svc.service.llmCallCountsByNode(executionId)
@@ -254,7 +254,8 @@ executionRoutes.get("/:executionId", async (c) => {
   return c.json({
     ...execution,
     steps,
-    workflow_content: workflowContent,
+    workflow_content: workflowContent.content,
+    workflow_content_source: workflowContent.source,
     approvalMetadata,
     interactionMetadata,
     is_partial_failure: execution.status === "completed_with_failures",

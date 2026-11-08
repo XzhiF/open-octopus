@@ -29,7 +29,9 @@ import {
 const temps: string[] = []
 
 function tmp(prefix: string): string {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), prefix))
+  // realpath: on macOS os.tmpdir() is /var/folders → /private/var/folders;
+  // git reports the real path, so the worktree-root check would mismatch.
+  const dir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), prefix)))
   temps.push(dir)
   return dir
 }
