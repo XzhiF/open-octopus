@@ -160,6 +160,8 @@ interface ChatAreaProps {
   composerSeed?: string
   /** 右列有工作区作业坞（lg+）：用户输入历史让开该列，避免重叠。 */
   timelineClearDock?: boolean
+  /** 分屏：每栏较窄，转录给贴边作业坞留出右内边距（否则正文会钻到坞下面）。 */
+  dockGutter?: boolean
 }
 
 /** ⇧⏎ 排队上限（原型 chat-tui.html 拍板）。 */
@@ -182,7 +184,7 @@ export function ChatArea({
   effort, onEffortChange, maxContext, onMaxContextChange, modelPresets,
   composerLeading, composerPlaceholder, heroEmpty, composerHeroFooter, identity, identityDisplay, workspaceContext,
   tui, onSteer, steerActiveRef, resumeTailing,
-  messageExtras, transcriptTail, composerSeed, timelineClearDock,
+  messageExtras, transcriptTail, composerSeed, timelineClearDock, dockGutter,
 }: ChatAreaProps) {
   const [input, setInput] = useState('')
   const [slashOpen, setSlashOpen] = useState(false)
@@ -519,7 +521,9 @@ export function ChatArea({
           }}
           className="flex-1 overflow-y-auto"
         >
-          <div className={tui ? 'mx-auto max-w-4xl px-5 py-4 space-y-1.5 text-[12.5px] leading-relaxed' : 'max-w-3xl mx-auto px-4 py-4 space-y-2.5'}>
+          <div className={tui
+            ? cn('mx-auto max-w-4xl px-5 py-4 space-y-1.5 text-[12.5px] leading-relaxed', dockGutter && 'pr-[68px]')
+            : 'max-w-3xl mx-auto px-4 py-4 space-y-2.5'}>
             {/* Session exists but has no turns yet (new chat / new task). */}
             {tui && messages.length === 0 && !streaming && !hideEmptyState && (
               <div className="py-8" role="status" aria-live="polite">

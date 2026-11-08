@@ -1,8 +1,9 @@
 'use client'
 
-import { Code2, CircleHelp, LayoutGrid, StickyNote } from 'lucide-react'
+import { Code2, CircleHelp, Columns2, LayoutGrid, StickyNote } from 'lucide-react'
 import { APP_CATALOG, isAppId } from '@/lib/app-catalog'
 import { useDesktopWindows, windowTitle } from '@/lib/desktop-windows'
+import { setChatSplitEnabled, useChatSplitEnabled } from '@/lib/chat-split'
 import { cn } from '@/lib/utils'
 import { OctopusMenu } from './octopus-menu'
 import { QuickNotes } from './quick-notes'
@@ -18,6 +19,13 @@ export function DesktopHeader() {
     toggleMissionControl,
   } = useDesktopWindows()
   const narrow = breakpoint === 'narrow'
+  const chatSplit = useChatSplitEnabled()
+  const splitAllowed = breakpoint === 'wide'
+  const splitTitle = chatSplit
+    ? '关闭对话分屏 (⌘\\)'
+    : splitAllowed
+      ? '对话分屏 (⌘\\)'
+      : '分屏需要更宽的窗口（≥1024px）'
 
   return (
     <header
@@ -75,6 +83,26 @@ export function DesktopHeader() {
       <RunningAgents />
 
       <QuickNotes />
+
+      {/* 对话分屏：与窗口总览并排；窄屏置灰（<1024 自动退出分屏）。 */}
+      <button
+        type="button"
+        data-testid="chat-split-toggle"
+        aria-label="对话分屏"
+        title={splitTitle}
+        aria-pressed={chatSplit}
+        disabled={!splitAllowed && !chatSplit}
+        onClick={() => setChatSplitEnabled(!chatSplit)}
+        className={cn(
+          'grid size-6 shrink-0 place-items-center rounded-md border-[1.5px] transition-colors',
+          chatSplit
+            ? 'border-pop-bd bg-pop-yellow text-pop-bg'
+            : 'border-transparent text-pop-dim hover:border-pop-bd hover:bg-accent hover:text-pop-ink',
+          !splitAllowed && !chatSplit && 'cursor-not-allowed opacity-40 hover:border-transparent hover:bg-transparent hover:text-pop-dim',
+        )}
+      >
+        <Columns2 className="size-3.5" />
+      </button>
 
       <button
         type="button"

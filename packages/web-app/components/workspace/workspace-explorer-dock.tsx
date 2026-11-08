@@ -89,6 +89,8 @@ export interface WorkspaceExplorerDockProps {
   taskProject?: ReactNode
   /** Chat sidebar width (0 when collapsed) — the editor panel sizes around it. */
   sidebarWidth?: number
+  /** 分屏：每栏变窄，坞强制收成图标栏（不改用户的文字标签偏好）。 */
+  compact?: boolean
   className?: string
 }
 
@@ -194,6 +196,7 @@ export function WorkspaceExplorerDock({
   activity,
   taskProject,
   sidebarWidth = SIDEBAR_DEFAULT_WIDTH,
+  compact = false,
   className,
 }: WorkspaceExplorerDockProps) {
   const [pane, setPane] = useState<Pane | null>(null)
@@ -288,8 +291,8 @@ export function WorkspaceExplorerDock({
       toast.error(err instanceof Error ? err.message : '打开目录失败')
     }
   }
-  // 图标下方的常驻文字（设置 → 外观 可隐藏）。
-  const showLabels = useDockLabelsVisible()
+  // 图标下方的常驻文字（设置 → 外观 可隐藏）。分屏时每栏较窄，强制图标态。
+  const showLabels = useDockLabelsVisible() && !compact
   const dockWidth = showLabels ? DOCK_WIDTH_LABEL : DOCK_WIDTH_ICON
   const [viewportWidth, setViewportWidth] = useState(() =>
     typeof window === 'undefined' ? 1440 : window.innerWidth,
