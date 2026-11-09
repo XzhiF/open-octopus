@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useMemo, useState, type ReactNode } from 'react'
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import * as Y from 'yjs'
 import {
   Activity,
@@ -42,7 +42,9 @@ import { useYDoc, useYMap } from '@/lib/yjs-provider'
 import { SidebarFileTree, ymapToFileNodes } from '@/components/workspace/sidebar-file-tree'
 import { TextEditorTab, getYText } from '@/components/workspace/text-editor-tab'
 import { CloseLightGlyph } from '@/components/ui/close-light'
-import { DialogResizeHandles } from '@/components/ui/dialog-resize'
+import { WindowResizeHandles } from '@/components/shell/window-resize-handles'
+import { fitPanelFrame, resizePanelFrame, type PanelFrame, type PanelFrameLimits } from '@/components/workspace/dock-panel-geometry'
+import type { ResizeDirection } from '@/lib/window-geometry'
 import { useEscapeClose } from '@/lib/escape-stack'
 import type { TaskView } from '@/lib/tasks-api'
 import type { TaskModule, TaskWindowMap, TaskWindowRecord } from '@/components/chat-workbench/task-window-types'
@@ -117,15 +119,31 @@ function tabsKey(workspaceId: string) {
 }
 
 const EDITOR_MIN_WIDTH = 320
+const EDITOR_MIN_HEIGHT = 220
 /** Dock footprint (p-1.5 + border) — icon-only vs. icon + permanent label. */
 const DOCK_WIDTH_ICON = 48
 const DOCK_WIDTH_LABEL = 59
 const PANE_WIDTH = 300
+const PANE_MIN_WIDTH = 240
+const PANE_MIN_HEIGHT = 180
 const RUN_PANE_WIDTH = 384
 const SUBAGENT_PANE_WIDTH = 360
 const GAP = 8
 const FLOAT_MARGIN = 12
+/** 浮窗离聊天栏左沿 / 底沿的留白。 */
+const PANEL_MARGIN = 24
 const SIDEBAR_DEFAULT_WIDTH = 236
+
+/** 各 pane 的默认宽度（用户拖过之后以 paneFrames 为准）。 */
+const DEFAULT_PANE_WIDTH: Record<Pane, number> = {
+  files: PANE_WIDTH,
+  activity: PANE_WIDTH,
+  run: RUN_PANE_WIDTH,
+  subagents: SUBAGENT_PANE_WIDTH,
+}
+
+/** 右侧锚定的浮窗只留西/北/南可拖（东边贴着作业坞，边界拖拽走 pane 自己的西边）。 */
+const PANEL_RESIZE_DIRECTIONS: readonly ResizeDirection[] = ['w', 'n', 's', 'nw', 'sw']
 
 const MODULE_ROWS: Array<{ id: TaskModule; label: string; icon: typeof FileText }> = [
   // workflow-dev 任务专用（2026-11-06）：DAG + YAML，放在运行前。
@@ -297,6 +315,17 @@ export function WorkspaceExplorerDock({
   const [viewportWidth, setViewportWidth] = useState(() =>
     typeof window === 'undefined' ? 1440 : window.innerWidth,
   )
+  // ── 浮窗几何（2026-11-09）──────────────────────────────────────────
+  // 用户拖过之后才有 frame；缺省宽度按 pane 类型、高度走 CSS（top-14/bottom-3）。
+  const [paneFrames, setPaneFrames] = useState<Partial<Record<Pane, PanelFrame>>>({})
+  const [editorFrame, setEditorFrame] = useState<PanelFrame | null>(null)
+  const dockRef = useRef<HTMLDivElement>(null)
+  const panePanelRef = useRef<HTMLDivElement>(null)
+  const editorPanelRef = useRef<HTMLDivElement>(null)
+  const paneDragRef = useRef<{ direction: ResizeDirection; frame: PanelFrame; editorWidth: number | null } | null>(null)
+  const editorDragRef = useRef<{ direction: ResizeDirection; frame: PanelFrame } | null>(null)
+  /** 聊天栏可视尺寸（offsetParent）：分屏时只有半栏，不能拿整幅视口当上限。 */
+  const [hostSize, setHostSize] = useState<{ width: number; height: number } | null>(null)
   const { doc, connected } = useYDoc(workspaceId ?? '')
   const { map, version } = useYMap(doc, 'fileTree')
 
@@ -339,19 +368,117 @@ export function WorkspaceExplorerDock({
     return () => window.removeEventListener('resize', onResize)
   }, [])
 
-  const editorRight = FLOAT_MARGIN + dockWidth + GAP + (
-    pane ? (pane === 'run' ? RUN_PANE_WIDTH : pane === 'subagents' ? SUBAGENT_PANE_WIDTH : PANE_WIDTH) : 0
+  // 聊天栏尺寸：分屏时浮窗只能占半栏，侧栏拖宽也直接反映在这里。
+  useEffect(() => {
+    const host = dockRef.current?.offsetParent
+    if (!(host instanceof HTMLElement)) return
+    const measure = () => setHostSize({ width: host.clientWidth, height: host.clientHeight })
+    measure()
+    if (typeof ResizeObserver === 'undefined') return
+    const observer = new ResizeObserver(measure)
+    observer.observe(host)
+    return () => observer.disconnect()
+    // 跨 lg 断点时坞会从 hidden 变可见（offsetParent 才有值），跟着视口宽度重挂。
+  }, [viewportWidth])
+
+  // 聊天栏可视尺寸兜底：offsetParent 还没量到时按「视口 − 侧栏」估算。
+  const fallbackHostWidth = Math.max(
+    EDITOR_MIN_WIDTH + PANEL_MARGIN,
+    viewportWidth - (viewportWidth >= 768 ? sidebarWidth : 0),
   )
-  const availableWidth = Math.max(
-    EDITOR_MIN_WIDTH,
-    viewportWidth - (viewportWidth >= 768 ? sidebarWidth : 0) - editorRight - 24,
+  const hostWidth = hostSize?.width ?? fallbackHostWidth
+  const hostHeight = hostSize?.height ?? 720
+
+  /** 文件列表 pane 的宽度上限：给作业坞和编辑器留出位置。 */
+  const paneWidthLimit = Math.max(
+    PANE_MIN_WIDTH,
+    hostWidth - (FLOAT_MARGIN + dockWidth + GAP) - (editorOpen ? EDITOR_MIN_WIDTH + PANEL_MARGIN : PANEL_MARGIN),
   )
-  const panelWidth = Math.max(EDITOR_MIN_WIDTH, Math.min(560, availableWidth))
+  const paneWidth = pane
+    ? Math.min(paneFrames[pane]?.width ?? DEFAULT_PANE_WIDTH[pane], paneWidthLimit)
+    : 0
+  const editorRight = FLOAT_MARGIN + dockWidth + GAP + paneWidth
+  /** 编辑器默认铺满作业坞左侧的可用空间（上限 560），用户拖过之后按 frame。 */
+  const editorAutoWidth = Math.max(EDITOR_MIN_WIDTH, Math.min(560, hostWidth - editorRight - PANEL_MARGIN))
+  const editorLimits: PanelFrameLimits = {
+    minWidth: EDITOR_MIN_WIDTH,
+    minHeight: EDITOR_MIN_HEIGHT,
+    maxWidth: Math.max(EDITOR_MIN_WIDTH, hostWidth - editorRight - PANEL_MARGIN),
+    containerHeight: hostHeight,
+  }
+  const fittedEditorFrame = editorFrame ? fitPanelFrame(editorFrame, editorLimits) : null
+  const editorWidth = fittedEditorFrame?.width ?? editorAutoWidth
+  const alivePaneFrame = pane ? paneFrames[pane] : undefined
+  const activePaneFrame = alivePaneFrame
+    ? fitPanelFrame(alivePaneFrame, {
+        minWidth: PANE_MIN_WIDTH,
+        minHeight: PANE_MIN_HEIGHT,
+        maxWidth: paneWidthLimit,
+        containerHeight: hostHeight,
+      })
+    : null
 
   useEscapeClose(editorOpen, () => setEditorOpen(false), 30)
   useEscapeClose(!!pane, () => setPane(null), 10)
 
   const togglePane = (next: Pane) => setPane((prev) => (prev === next ? null : next))
+
+  // ── 浮窗拖拽（纯状态，不再往 DOM 上写 left/top）─────────────────────
+  /** pointerdown 时的实测几何（相对 offsetParent，而不是视口）。 */
+  const frameOf = (el: HTMLElement | null): PanelFrame | null => {
+    if (!el) return null
+    const rect = el.getBoundingClientRect()
+    const parentTop = el.offsetParent instanceof HTMLElement
+      ? el.offsetParent.getBoundingClientRect().top
+      : 0
+    return { width: rect.width, height: rect.height, top: rect.top - parentTop }
+  }
+
+  const beginPaneResize = (direction: ResizeDirection) => {
+    const frame = frameOf(panePanelRef.current)
+    if (!frame) return
+    paneDragRef.current = { direction, frame, editorWidth: fittedEditorFrame?.width ?? null }
+  }
+  const movePaneResize = (dx: number, dy: number) => {
+    const drag = paneDragRef.current
+    if (!drag || !pane) return
+    const key = pane
+    const next = resizePanelFrame(drag.frame, drag.direction, dx, dy, {
+      minWidth: PANE_MIN_WIDTH,
+      minHeight: PANE_MIN_HEIGHT,
+      maxWidth: paneWidthLimit,
+      containerHeight: hostHeight,
+    })
+    setPaneFrames((prev) => ({ ...prev, [key]: next }))
+    // 边界往左 = 文件列表变宽、内容框变窄（左侧不动）；内容框还在自动宽度时
+    // 由 editorRight 推导，不用手动跟。拖过之后才有 frame，按反量补宽。
+    const delta = drag.frame.width - next.width
+    const startEditorWidth = drag.editorWidth
+    setEditorFrame((prev) => {
+      if (!prev || startEditorWidth == null || !delta) return prev
+      const editorMaxWidth = Math.max(
+        EDITOR_MIN_WIDTH,
+        hostWidth - (FLOAT_MARGIN + dockWidth + GAP + next.width) - PANEL_MARGIN,
+      )
+      return fitPanelFrame(
+        { ...prev, width: startEditorWidth + delta },
+        { ...editorLimits, maxWidth: editorMaxWidth },
+      )
+    })
+  }
+  const endPaneResize = () => { paneDragRef.current = null }
+
+  const beginEditorResize = (direction: ResizeDirection) => {
+    const frame = frameOf(editorPanelRef.current)
+    if (!frame) return
+    editorDragRef.current = { direction, frame }
+  }
+  const moveEditorResize = (dx: number, dy: number) => {
+    const drag = editorDragRef.current
+    if (!drag) return
+    setEditorFrame(resizePanelFrame(drag.frame, drag.direction, dx, dy, editorLimits))
+  }
+  const endEditorResize = () => { editorDragRef.current = null }
 
   const openFile = async (file: FileNode) => {
     if (file.type === 'directory') return
@@ -360,7 +487,9 @@ export function WorkspaceExplorerDock({
       toast.message('该文件不是文本文件', { description: file.name })
       return
     }
-    setPane('files')
+    // 分屏 / 窄侧栏里放不下「文件列表 + 编辑器」两个框：打开文件就收起列表，
+    // 否则内容框会被裁在栏外（看起来像错位）。
+    setPane(hostWidth - editorRight - PANEL_MARGIN >= EDITOR_MIN_WIDTH ? 'files' : null)
     const entry: EditorFile = { path: file.path, name: file.name, extension: ext }
     setTabs((prev) => (prev.some((t) => t.path === entry.path) ? prev : [...prev, entry]))
     setActivePath(entry.path)
@@ -576,9 +705,14 @@ export function WorkspaceExplorerDock({
     <>
       {editorOpen && (
         <div
+          ref={editorPanelRef}
           data-testid="editor-panel"
           className="absolute top-14 bottom-3 z-40 hidden flex-col overflow-hidden rounded-2xl border border-white/[0.10] bg-pop-bg shadow-pop-lg lg:flex"
-          style={{ right: editorRight, width: panelWidth }}
+          style={{
+            right: editorRight,
+            width: editorWidth,
+            ...(fittedEditorFrame ? { top: fittedEditorFrame.top, height: fittedEditorFrame.height } : {}),
+          }}
         >
           <div className="flex h-10 shrink-0 items-center gap-1.5 border-b border-white/[0.06] px-2.5">
             <button
@@ -639,19 +773,27 @@ export function WorkspaceExplorerDock({
               />
             ) : null}
           </div>
-          <DialogResizeHandles minWidth={EDITOR_MIN_WIDTH} minHeight={220} className="pointer-events-none absolute inset-0 z-20" />
+          <WindowResizeHandles
+            directions={PANEL_RESIZE_DIRECTIONS}
+            onStart={beginEditorResize}
+            onMove={moveEditorResize}
+            onEnd={endEditorResize}
+          />
         </div>
       )}
 
       {pane && (
         <div
+          ref={panePanelRef}
           data-testid="workspace-pane"
           data-pane={pane}
           className="absolute top-14 z-30 hidden flex-col overflow-hidden rounded-2xl border border-white/[0.08] bg-pop-paper/95 shadow-pop-lg backdrop-blur-xl lg:flex"
           style={{
             right: FLOAT_MARGIN + dockWidth + GAP,
-            width: pane === 'run' ? RUN_PANE_WIDTH : pane === 'subagents' ? SUBAGENT_PANE_WIDTH : PANE_WIDTH,
-            height: 'min(700px, calc(100% - 160px))',
+            width: paneWidth,
+            ...(activePaneFrame
+              ? { top: activePaneFrame.top, height: activePaneFrame.height }
+              : { height: 'min(700px, calc(100% - 160px))' }),
           }}
         >
           {pane === 'files' ? (
@@ -690,12 +832,18 @@ export function WorkspaceExplorerDock({
           ) : (
             <InspectorActivityPanel workspaceId={workspaceId} snapshot={activity} />
           )}
-          <DialogResizeHandles minWidth={240} minHeight={180} className="pointer-events-none absolute inset-0 z-20" />
+          <WindowResizeHandles
+            directions={PANEL_RESIZE_DIRECTIONS}
+            onStart={beginPaneResize}
+            onMove={movePaneResize}
+            onEnd={endPaneResize}
+          />
         </div>
       )}
 
       {/* macOS-style Dock: vertical; icon + ≤3-char label (可关）。 */}
       <div
+        ref={dockRef}
         data-testid="workspace-explorer-dock"
         className={cn(
           'absolute right-3 top-14 z-30 hidden flex-col items-center gap-1 rounded-2xl border border-white/[0.10] bg-pop-paper/80 p-1.5 shadow-pop-lg backdrop-blur-xl lg:flex',

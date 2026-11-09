@@ -15,6 +15,12 @@ const VIEWPORT_PADDING = 16
 /**
  * Eight-way resize for any floating box. It mutates the parent element's
  * width/height in place (works for Radix Dialog/AlertDialog and raw panels).
+ *
+ * ⚠ 只适用于 containing block = 视口的浮窗（Radix 弹窗是 fixed）。它用
+ * getBoundingClientRect 的视口坐标直接写 left/top，并在拖动后把 left 钉死 ——
+ * absolute 定位、右锚的浮窗（offsetParent 是某个容器）一拖就跳位，且后续
+ * 重渲染会跟它的 right/width 打架。作业坞浮窗因此改用状态驱动的
+ * `components/workspace/dock-panel-geometry.ts`（2026-11-09 用户反馈）。
  */
 export function DialogResizeHandles({
   minWidth = 280,
