@@ -7,9 +7,9 @@
 //   ② eventSignal —— 既有 task SSE（task_execution / task_status / phase /
 //      artifacts / verify）每来一发 bump 一次；够 FILE_EVENT_MIN_GAP 立即补拉，
 //      不够或在飞则合并成至多一枚 trailing 定时器（事件风暴不打穿端点）；
-//   ③ FILES_POLL_MS 兜底轮询 —— 没有事件的静默时段里新 commit 也 ≤10s 上屏
-//      （服务端口径见 round-evidence-service.resolveRoundForDiff：live 轮
-//      end 锚=当前 HEAD，端点无状态，拉即最新）。
+//   ③ FILES_POLL_MS 兜底轮询 —— 没有事件的静默时段里新 commit / 工作区改动
+//      也 ≤10s 上屏（服务端口径见 round-evidence-service.resolveRoundForDiff：
+//      live 轮右端 = 各仓当前工作区，端点无状态，拉即最新）。
 // 数据面纪律：失败保留旧数据 + error 如实（409「无轮可供」不清屏不谎报）；
 // error 同时带 HTTP 状态（errorStatus）—— 409 是「还没有轮」，壳落 idle 面而非
 // 错误面；末态回看关掉兜底轮询（payload 冻结，见 poll 参数）。

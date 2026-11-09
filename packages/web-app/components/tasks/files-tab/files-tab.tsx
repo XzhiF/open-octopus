@@ -471,7 +471,7 @@ export function FilesTab({ taskId, feed, serving, isLive, costText, rowDecor, to
         </div>
       ) : isLive && scope === "round" ? (
         <div className="m-1 rounded-[8px] border-[1.5px] border-dashed border-pop-bd px-3 py-3 text-center font-mono text-[10px] text-pop-dim" data-testid="files-tab-empty-live">
-          进行中 · 本轮还没有落第一个 commit —— 新提交落库即自动出现（≤10s）
+          进行中 · 本轮还没有任何代码变更 —— 提交或未提交改动都会自动出现（≤10s）
         </div>
       ) : (
         <div className="px-3 py-6 text-center font-mono text-[10.5px] text-pop-dim">该口径下没有变更文件</div>
@@ -628,7 +628,7 @@ export function FilesTab({ taskId, feed, serving, isLive, costText, rowDecor, to
             data-testid="files-tab-anchor"
             title={
               isLive
-                ? "在跑轮：end 锚 = 各仓当前 HEAD"
+                ? "在跑轮：与各仓当前工作区比对（含未提交改动 / 新文件）"
                 : "待验收 / 已验收轮：start..end 是存下的快照锚，不随 HEAD 漂移"
             }
           >

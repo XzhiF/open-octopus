@@ -1,6 +1,7 @@
 import { execFile } from "child_process"
 import { promisify } from "util"
 import { readdirSync, existsSync, statSync, mkdirSync } from "fs"
+import { readFile, stat } from "fs/promises"
 import { join, dirname } from "path"
 
 const execFileAsync = promisify(execFile)
@@ -12,6 +13,11 @@ const GIT_MAX_BUFFER = 1024 * 1024
  *  patches is still enforced at 512K chars above that (truncated flag). */
 export const GIT_DIFF_MAX_BUFFER = 16 * 1024 * 1024
 export const GIT_PATCH_CHAR_CAP = 512_000
+/** 未跟踪文件的行数统计上限（live 变更面每拍读一次）—— 超过即按二进制记，
+ *  不把大文件读进内存。 */
+const UNTRACKED_STAT_MAX_BYTES = 4 * 1024 * 1024
+/** 二进制启发式窗口：与 git 相同（前 8KB 内有 NUL 即视为二进制）。 */
+const BINARY_SNIFF_BYTES = 8000
 
 /**
  * 票01/票09 提交标记单源（taskboard-modal-v2, ADR-0025）—— 快改留痕的 subject
@@ -50,6 +56,31 @@ async function runGit(
     })
     return { stdout: stdout.trim(), stderr: stderr.trim() }
   } catch (error: unknown) {
+    throw gitError(projectPath, args, error)
+  }
+}
+
+/** runGit that treats the given exit codes as success. `git diff --no-index`
+ *  exits 1 when the two paths differ — for an untracked-file patch that IS the
+ *  success case (there is no "no differences" outcome we care about). */
+async function runGitAllowingExit(
+  projectPath: string,
+  args: string[],
+  okCodes: number[],
+  maxBufferBytes = GIT_MAX_BUFFER,
+): Promise<{ stdout: string; stderr: string }> {
+  try {
+    const { stdout, stderr } = await execFileAsync("git", args, {
+      cwd: projectPath,
+      timeout: GIT_TIMEOUT_MS,
+      maxBuffer: maxBufferBytes,
+    })
+    return { stdout: stdout.trim(), stderr: stderr.trim() }
+  } catch (error: unknown) {
+    const e = error as { code?: number | string; stdout?: string; stderr?: string }
+    if (typeof e.code === "number" && okCodes.includes(e.code)) {
+      return { stdout: String(e.stdout ?? "").trim(), stderr: String(e.stderr ?? "").trim() }
+    }
     throw gitError(projectPath, args, error)
   }
 }
@@ -323,53 +354,28 @@ export class GitOps {
       projectPath, ["diff", "-M", "--numstat", "-z", from, to],
       GIT_TIMEOUT_MS, GIT_DIFF_MAX_BUFFER,
     )
-    // name-status -z: STATUS\0path | Rxxx\0old\0new | Cxxx\0old\0new (NUL-terminated triples)
-    const nsTok = nsOut.split("\0").filter((t) => t.length > 0)
-    const entries: { status: string; path: string; oldPath?: string }[] = []
-    for (let i = 0; i < nsTok.length; i++) {
-      const status = nsTok[i]!
-      const code = status[0]!
-      if (code === "R" || code === "C") {
-        const oldPath = nsTok[i + 1]!
-        const path = nsTok[i + 2]!
-        entries.push({ status: code, path, oldPath })
-        i += 2
-      } else {
-        entries.push({ status: code, path: nsTok[i + 1]! })
-        i += 1
-      }
-    }
-    // numstat -z record shapes (columns are TAB-separated; only the PATH ends
-    // at NUL): normal → "<adds>\t<dels>\t<path>"; rename/copy →
-    // "<adds>\t<dels>\t" then two more NUL-terminated tokens old/new (the lone
-    // tab of the empty path field survives the empty-filter — arity is driven
-    // by name-status, which stays authoritative for paths/order).
-    const numTok = numOut.split("\0").filter((t) => t.length > 0)
-    const files: DiffFileEntry[] = []
-    let truncated = false
-    let ti = 0
-    for (const e of entries) {
-      if (ti >= numTok.length) break // malformed tail (concurrent repo change) — stop, keep what we have
-      const rec = numTok[ti++]!
-      const first = rec.indexOf("\t")
-      const addsRaw = first < 0 ? rec : rec.slice(0, first)
-      const rest = first < 0 ? "" : rec.slice(first + 1)
-      const second = rest.indexOf("\t")
-      const delsRaw = second < 0 ? rest : rest.slice(0, second)
-      if (e.oldPath != null) ti += 2 // skip the ""/old/new path tokens (paths from name-status)
-      if (files.length >= cap) { truncated = true; continue } // keep draining to stay token-synced
-      const binary = addsRaw === "-" || delsRaw === "-"
-      files.push({
-        path: e.path,
-        ...(e.oldPath != null ? { oldPath: e.oldPath } : {}),
-        status: e.status,
-        adds: binary ? 0 : parseInt(addsRaw, 10) || 0,
-        dels: binary ? 0 : parseInt(delsRaw, 10) || 0,
-        ...(binary ? { binary: true } : {}),
-      })
-    }
-    if (entries.length > cap) truncated = true
-    return { files, truncated }
+    return parseDiffStatOutputs(nsOut, numOut, cap)
+  }
+
+  /** Same shape as {@link diffStat}, but the right-hand side is the CURRENT
+   *  WORKING TREE (index + unstaged edits) instead of a commit. Live 轮「≡ 变更」
+   *  用它：agent 改完文件还没 commit 时，改动就已经可见（提交后同一净额，
+   *  不双计）。未跟踪文件不在 `git diff` 里 —— 调用方另用
+   *  {@link listUntracked} + {@link statUntracked} 合并。 */
+  async diffStatWorktree(
+    projectPath: string,
+    from: string,
+    cap = 3000,
+  ): Promise<{ files: DiffFileEntry[]; truncated: boolean }> {
+    const { stdout: nsOut } = await runGit(
+      projectPath, ["diff", "-M", "--name-status", "-z", from],
+      GIT_TIMEOUT_MS, GIT_DIFF_MAX_BUFFER,
+    )
+    const { stdout: numOut } = await runGit(
+      projectPath, ["diff", "-M", "--numstat", "-z", from],
+      GIT_TIMEOUT_MS, GIT_DIFF_MAX_BUFFER,
+    )
+    return parseDiffStatOutputs(nsOut, numOut, cap)
   }
 
   /** Unified patch for ONE file across start..end (lazy, on click).
@@ -383,6 +389,69 @@ export class GitOps {
     const { stdout } = await runGit(
       projectPath, ["diff", "-M", "-U3", from, to, "--", `:(literal)${filePath}`],
       GIT_TIMEOUT_MS, GIT_DIFF_MAX_BUFFER,
+    )
+    if (stdout.length > GIT_PATCH_CHAR_CAP) {
+      return { patch: stdout.slice(0, GIT_PATCH_CHAR_CAP), truncated: true }
+    }
+    return { patch: stdout, truncated: false }
+  }
+
+  /** Unified patch for ONE file: commit `from` → CURRENT WORKING TREE (same
+   *  comparison {@link diffStatWorktree} summarises). */
+  async diffPatchForWorktree(
+    projectPath: string,
+    from: string,
+    filePath: string,
+  ): Promise<{ patch: string; truncated: boolean }> {
+    const { stdout } = await runGit(
+      projectPath, ["diff", "-M", "-U3", from, "--", `:(literal)${filePath}`],
+      GIT_TIMEOUT_MS, GIT_DIFF_MAX_BUFFER,
+    )
+    if (stdout.length > GIT_PATCH_CHAR_CAP) {
+      return { patch: stdout.slice(0, GIT_PATCH_CHAR_CAP), truncated: true }
+    }
+    return { patch: stdout, truncated: false }
+  }
+
+  /** Untracked files (new files git has never seen), .gitignore respected.
+   *  `git diff` never includes these — the live 变更面 merges them itself. */
+  async listUntracked(projectPath: string): Promise<string[]> {
+    const { stdout } = await runGit(
+      projectPath, ["ls-files", "-z", "--others", "--exclude-standard"],
+      GIT_TIMEOUT_MS, GIT_DIFF_MAX_BUFFER,
+    )
+    return stdout.split("\0").filter((p) => p.length > 0)
+  }
+
+  /** Stat one untracked file as an "A" entry: lines counted like numstat,
+   *  binary sniff on the first 8KB, files over the size cap reported binary so
+   *  a huge blob is never read on every poll. Unreadable → name only (0/0). */
+  async statUntracked(projectPath: string, relPath: string): Promise<DiffFileEntry> {
+    const base: DiffFileEntry = { path: relPath, status: "A", adds: 0, dels: 0 }
+    try {
+      const abs = join(projectPath, relPath)
+      const st = await stat(abs)
+      if (!st.isFile()) return base
+      if (st.size > UNTRACKED_STAT_MAX_BYTES) return { ...base, binary: true }
+      const buf = await readFile(abs)
+      if (buf.subarray(0, BINARY_SNIFF_BYTES).includes(0)) return { ...base, binary: true }
+      return { ...base, adds: countTextLines(buf.toString("utf-8")) }
+    } catch {
+      return base
+    }
+  }
+
+  /** Patch for an UNTRACKED file = /dev/null → path. `git diff --no-index`
+   *  exits 1 whenever the contents differ, which is the only outcome here. */
+  async diffPatchForUntracked(
+    projectPath: string,
+    filePath: string,
+  ): Promise<{ patch: string; truncated: boolean }> {
+    const { stdout } = await runGitAllowingExit(
+      projectPath,
+      ["diff", "--no-index", "--no-color", "-U3", "--", "/dev/null", filePath],
+      [1],
+      GIT_DIFF_MAX_BUFFER,
     )
     if (stdout.length > GIT_PATCH_CHAR_CAP) {
       return { patch: stdout.slice(0, GIT_PATCH_CHAR_CAP), truncated: true }
@@ -432,6 +501,70 @@ export class GitOps {
     }
     return out
   }
+}
+
+/** Shared parse for a `--name-status -z` + `--numstat -z` pair (range diff and
+ *  worktree diff produce the same shapes). */
+function parseDiffStatOutputs(
+  nsOut: string,
+  numOut: string,
+  cap: number,
+): { files: DiffFileEntry[]; truncated: boolean } {
+  // name-status -z: STATUS\0path | Rxxx\0old\0new | Cxxx\0old\0new (NUL-terminated triples)
+  const nsTok = nsOut.split("\0").filter((t) => t.length > 0)
+  const entries: { status: string; path: string; oldPath?: string }[] = []
+  for (let i = 0; i < nsTok.length; i++) {
+    const status = nsTok[i]!
+    const code = status[0]!
+    if (code === "R" || code === "C") {
+      const oldPath = nsTok[i + 1]!
+      const path = nsTok[i + 2]!
+      entries.push({ status: code, path, oldPath })
+      i += 2
+    } else {
+      entries.push({ status: code, path: nsTok[i + 1]! })
+      i += 1
+    }
+  }
+  // numstat -z record shapes (columns are TAB-separated; only the PATH ends
+  // at NUL): normal → "<adds>\t<dels>\t<path>"; rename/copy →
+  // "<adds>\t<dels>\t" then two more NUL-terminated tokens old/new (the lone
+  // tab of the empty path field survives the empty-filter — arity is driven
+  // by name-status, which stays authoritative for paths/order).
+  const numTok = numOut.split("\0").filter((t) => t.length > 0)
+  const files: DiffFileEntry[] = []
+  let truncated = false
+  let ti = 0
+  for (const e of entries) {
+    if (ti >= numTok.length) break // malformed tail (concurrent repo change) — stop, keep what we have
+    const rec = numTok[ti++]!
+    const first = rec.indexOf("\t")
+    const addsRaw = first < 0 ? rec : rec.slice(0, first)
+    const rest = first < 0 ? "" : rec.slice(first + 1)
+    const second = rest.indexOf("\t")
+    const delsRaw = second < 0 ? rest : rest.slice(0, second)
+    if (e.oldPath != null) ti += 2 // skip the ""/old/new path tokens (paths from name-status)
+    if (files.length >= cap) { truncated = true; continue } // keep draining to stay token-synced
+    const binary = addsRaw === "-" || delsRaw === "-"
+    files.push({
+      path: e.path,
+      ...(e.oldPath != null ? { oldPath: e.oldPath } : {}),
+      status: e.status,
+      adds: binary ? 0 : parseInt(addsRaw, 10) || 0,
+      dels: binary ? 0 : parseInt(delsRaw, 10) || 0,
+      ...(binary ? { binary: true } : {}),
+    })
+  }
+  if (entries.length > cap) truncated = true
+  return { files, truncated }
+}
+
+/** Line count as `git diff --numstat` would report it for an "A" entry. */
+function countTextLines(text: string): number {
+  if (text.length === 0) return 0
+  let newlines = 0
+  for (let i = 0; i < text.length; i++) if (text.charCodeAt(i) === 10) newlines++
+  return text.endsWith("\n") ? newlines : newlines + 1
 }
 
 /** One row of a range-diff stat (验货台 实物 tab). */

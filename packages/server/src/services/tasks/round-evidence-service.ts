@@ -184,6 +184,8 @@ const VERIFY_RING_CAP = 5000
 const VERIFY_TAIL_LINES = 200
 const VERIFY_DEFAULT_TIMEOUT_S = 600
 const VERDICT_MAX_TAIL_BYTES = 200_000
+/** 单仓文件清单展示上限（round-diff 的 numstat cap，live 工作区合并同额）。 */
+const REPO_FILE_CAP = 3000
 /** ring 裁头后塞进 lines[0] 的占位行（不是 onLog 真行，since 补拉时按位跳过）。 */
 const VERIFY_DROP_MARKER = "[…日志超长 — 早期行已丢弃，完整输出看 verdict 文件]"
 
@@ -408,7 +410,8 @@ export class RoundEvidenceService {
    *  首轮行缺失时回落本轮口径（诚实降级，payload 形状不变）。某仓在首轮 start
    *  map 里没有键 → 走下方 `!start` 分支，expired("no_commits") 照旧。
    *  票03（taskboard-modal-v2「≡ 变更」）：无 awaiting 时解析到任务当前 live 轮，
-   *  end 锚 = 各仓当前 HEAD —— 端点/payload 形状逐字不变，仅供货窗口扩大。 */
+   *  右端 = 各仓当前工作区（已提交 + 未提交改动 + 未跟踪新文件）—— 端点/payload
+   *  形状逐字不变，仅供货窗口扩大。 */
   async getRoundDiff(
     taskId: string,
     scope: RoundDiffScope = "round",
@@ -462,13 +465,13 @@ export class RoundEvidenceService {
         repos.push(expiredRepo(name, ws ? "worktree_gone" : "no_workspace"))
         continue
       }
-      // live 轮 end 锚 = 当前 HEAD；空仓/无提交（getHeadCommit 抛）→ 诚实 no_commits。
+      // live 轮右端 = 当前工作区（含未提交改动）；空仓/无提交 → 诚实 no_commits。
       const end = isLive ? await this.liveHeadCommit(dir) : storedEnd
       if (!end) {
         repos.push(expiredRepo(name, "no_commits"))
         continue
       }
-      repos.push(await this.statRepo(dir, name, start, end))
+      repos.push(await this.statRepo(dir, name, start, end, isLive))
       // 快改统计与实物同区间（start..end）—— 交付轮 end=快照锚，交付后新提交
       // 不入本件（票08 实物区间权威）。git 读失败 → 该仓无快改行（不拖垮 diff）。
       try {
@@ -559,24 +562,53 @@ export class RoundEvidenceService {
   }
 
   /** One repo's slice: expiry-probe the SHA pair, then rename-aware numstat
-   *  stat + first-path-segment grouping (the 「按包分组」 the panel renders). */
-  private async statRepo(dir: string, name: string, start: string, end: string): Promise<RepoDiff> {
-    const [okStart, okEnd] = await Promise.all([
-      gitOps.commitExists(dir, start),
-      gitOps.commitExists(dir, end),
-    ])
-    if (!okStart || !okEnd) return expiredRepo(name, "no_commits")
-    if (start === end) {
-      return { name, commits: 0, additions: 0, dels: 0, files: 0, truncated: false, groups: [] }
+   *  stat + first-path-segment grouping (the 「按包分组」 the panel renders).
+   *
+   *  `worktree=true`（live 轮）: the right-hand side is the CURRENT WORKING TREE,
+   *  not the commit — 未提交改动一落盘就可见（`git diff <start>` 天然把已提交
+   *  与未提交合成同一份净额，提交后不双计）；未跟踪的新文件再并进来。 */
+  private async statRepo(
+    dir: string,
+    name: string,
+    start: string,
+    end: string,
+    worktree = false,
+  ): Promise<RepoDiff> {
+    const okStart = await gitOps.commitExists(dir, start)
+    if (!okStart) return expiredRepo(name, "no_commits")
+    if (!worktree) {
+      const okEnd = await gitOps.commitExists(dir, end)
+      if (!okEnd) return expiredRepo(name, "no_commits")
+      // 存储锚相等 = 冻结轮的空区间；live 轮不能短路 —— HEAD 没动但工作区可能脏了。
+      if (start === end) {
+        return { name, commits: 0, additions: 0, dels: 0, files: 0, truncated: false, groups: [] }
+      }
     }
     const [commits, stat] = await Promise.all([
       gitOps.countCommits(dir, start, end),
-      gitOps.diffStat(dir, start, end),
+      worktree
+        ? gitOps.diffStatWorktree(dir, start, REPO_FILE_CAP)
+        : gitOps.diffStat(dir, start, end, REPO_FILE_CAP),
     ])
+    const allFiles = [...stat.files]
+    let truncated = stat.truncated
+    if (worktree) {
+      // 未跟踪文件不属于 `git diff`：单独列出、按 "A" 计入（.gitignore 已排除）。
+      let untracked: string[] = []
+      try {
+        untracked = await gitOps.listUntracked(dir)
+      } catch {
+        /* best-effort —— 读不到不等于没改动，只是这一拍缺新文件面 */
+      }
+      for (const p of untracked) {
+        if (allFiles.length >= REPO_FILE_CAP) { truncated = true; break }
+        allFiles.push(await gitOps.statUntracked(dir, p))
+      }
+    }
     const byDir = new Map<string, DirGroup>()
     let additions = 0
     let dels = 0
-    for (const f of stat.files) {
+    for (const f of allFiles) {
       additions += f.adds
       dels += f.dels
       const g = f.path.includes("/") ? f.path.split("/")[0]! : "(根)"
@@ -594,15 +626,15 @@ export class RoundEvidenceService {
       commits,
       additions,
       dels,
-      files: stat.files.length,
-      truncated: stat.truncated,
+      files: allFiles.length,
+      truncated,
       groups: [...byDir.values()].sort((a, b) => b.additions + b.dels - (a.additions + a.dels)),
     }
   }
 
   /** Lazy single-file patch (实物 tab row click). Ownership falls out of
    *  resolveRoundForDiff (exec belongs to this task); repo must exist in the
-   *  map. 票03: live 轮的端锚同样取当前 HEAD，与 getRoundDiff 同闸同口径。
+   *  map. 票03: live 轮与列表同右端 —— 当前工作区（含未提交改动 / 未跟踪新文件）。
    *  2026-10-31 归档回看：解析落到已验收轮时，patch 与列表同一 start..end
    *  （冻结快照），并非按当前 HEAD 重算。 */
   async getFilePatch(
@@ -628,20 +660,32 @@ export class RoundEvidenceService {
     const ws = this.workspaceService.getById(execRow.workspace_id)
     const dir = this.resolveRepoDir(ws?.path, repo)
     if (!dir) throw new TaskStatusConflictError(`仓库 ${repo} 的工作区目录已不存在`)
-    const end = live ? await this.liveHeadCommit(dir) : storedEnds[repo]
-    if (!end) throw new TaskStatusConflictError(`本轮提交区间不含仓库 ${repo}`)
     if (filePath.includes("\0") || path.isAbsolute(filePath)) {
       throw new TaskSpecFieldError(`非法文件路径: ${filePath}`)
     }
+    // live 轮：patch 与列表同一右端 —— 当前工作区；未跟踪新文件走 /dev/null。
+    if (live) {
+      let untracked: string[] = []
+      try {
+        untracked = await gitOps.listUntracked(dir)
+      } catch {
+        /* best-effort —— 读不到只影响新文件识别，跟踪内文件照常出 patch */
+      }
+      if (untracked.includes(filePath)) return gitOps.diffPatchForUntracked(dir, filePath)
+      return gitOps.diffPatchForWorktree(dir, start, filePath)
+    }
+    const end = storedEnds[repo]
+    if (!end) throw new TaskStatusConflictError(`本轮提交区间不含仓库 ${repo}`)
     return gitOps.diffPatchFor(dir, start, end, filePath)
   }
 
   /** 票03 diff 端点专用轮次解析（**只**供 getRoundDiff/getFilePatch）：
    *  awaiting 优先 —— 命中即逐字现行为；无 awaiting 时回落任务当前 live 轮
    *  （running/paused/停在审批或交互节点的已启动行，词表 = shared
-   *  {@link LIVE_ROUND_STATUSES}），由调用方把 end 锚降级为各仓当前
-   *  HEAD —— 新 commit 落库即出现在下一次 GET（「≡ 变更」≤10s 观测口径的服务端
-   *  底座）。verify/playbook/preview/snapshotEvidence 不经这里，恒严 awaiting。
+   *  {@link LIVE_ROUND_STATUSES}），由调用方把右端换成各仓当前**工作区**
+   *  （HEAD 提交 + 未提交改动 + 未跟踪新文件）—— agent 改完文件即出现在下一次
+   *  GET（「≡ 变更」≤10s 观测口径的服务端底座），提交后同一净额不双计。
+   *  verify/playbook/preview/snapshotEvidence 不经这里，恒严 awaiting。
    *  票08 补第三级：live 也没有时认**停流未交付的接管轮**（takeover_at 有、
    *  delivered 无）—— 机器轮已停但轮还在人手里跑（对话快改持续落 commit，
    *  AC3「接管对话内改动实时进 ≡ 变更」），与 live 同口径 end 锚 = 当前 HEAD。
