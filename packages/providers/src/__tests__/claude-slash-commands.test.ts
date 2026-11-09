@@ -214,6 +214,16 @@ describe('ClaudeSDKProvider slash commands', () => {
     const ctx = chunks.find((c) => c.type === 'context_usage')
     expect(ctx).toEqual({ type: 'context_usage', data: CTX })
 
+    // ⑤-2 压缩本身也必须显式上报（宿主据此在下一轮重发一轮性上下文）。
+    expect(chunks.find((c) => c.type === 'compaction')).toEqual({
+      type: 'compaction',
+      trigger: 'manual',
+      preTokens: 24960,
+      postTokens: 1021,
+      droppedTokens: 23939,
+      durationMs: 11189,
+    })
+
     // ⑥ 空正文轮补一条回执，且先于 result（route 会据此落库成 assistant 行）。
     const receipt = chunks.find((c) => c.type === 'local_command_output')
     expect(receipt).toEqual({
@@ -242,6 +252,13 @@ describe('ClaudeSDKProvider slash commands', () => {
     const chunks = await drain(new ClaudeSDKProvider().sendQuery('hi', '/tmp'))
 
     expect(chunks.find((c) => c.type === 'context_usage')).toEqual({ type: 'context_usage', data: CTX })
+    // auto 压缩同样要上报（服务端只能从这里知道转录被重写过）。
+    expect(chunks.find((c) => c.type === 'compaction')).toEqual({
+      type: 'compaction',
+      trigger: 'auto',
+      preTokens: 190000,
+      postTokens: 12000,
+    })
     expect(chunks.some((c) => c.type === 'local_command_output')).toBe(false)
     expect(chunks.find((c) => c.type === 'result')).toMatchObject({ content: 'done' })
   })

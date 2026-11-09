@@ -28,6 +28,8 @@ import { AgentSessionDAO, SafetyDAO } from "../db/dao"
 import { createCloneSessionRoutes } from "../routes/clone"
 import { initAgentService } from "../services/agent/agent-service"
 import { finalizeOrphanStreamPartials } from "../routes/clone/stream-partials"
+import { SessionCacheContextDAO } from "../db/dao/session-cache-context-dao"
+import { pendingRoleCard } from "../services/agent/role-card"
 
 // ── Mocks ────────────────────────────────────────────────────────────────
 
@@ -41,6 +43,7 @@ function makeGate(): Gate {
 const control = vi.hoisted(() => ({
   gates: [] as Array<{ promise: Promise<void>; resolve: () => void }>,
   throwMode: false,
+  compaction: false,
   chatCalls: 0,
 }))
 
@@ -59,6 +62,7 @@ vi.mock("../services/agent/clone-runtime", () => ({
       await promise
       if (control.throwMode) throw new Error("E2E_TD provider exploded")
       yield { type: "text_delta", content: "part-2" }
+      if (control.compaction) yield { type: "compaction", trigger: "manual", preTokens: 1000, postTokens: 100 }
       yield { type: "result", sessionId: "E2E_TD_provider-sess-1" }
     }
   },
@@ -158,6 +162,7 @@ afterAll(() => { db.close() })
 beforeEach(() => {
   control.gates = []
   control.throwMode = false
+  control.compaction = false
   control.chatCalls = 0
 })
 
@@ -356,5 +361,29 @@ describe("stream-resume: finalizeOrphanStreamPartials (startup sweep)", () => {
 
     // Idempotent: second sweep finds nothing new to finalize
     expect(finalizeOrphanStreamPartials(sessionDAO)).toBe(0)
+  })
+})
+
+// ── 8: compaction re-arms the role card ─────────────────────────────────
+
+describe("compaction invalidates one-shot role delivery", () => {
+  it("a compaction chunk resets delivered revision so the next turn re-sends the card", async () => {
+    const sid = await createSession()
+    const cacheCtx = new SessionCacheContextDAO(db)
+    cacheCtx.setActiveExpert(sid, "task-author", "clone")
+    const revision = cacheCtx.getRoleState(sid).revision
+    cacheCtx.markRoleDelivered(sid, revision)
+    expect(cacheCtx.getRoleState(sid).deliveredRevision).toBe(revision)
+    expect(pendingRoleCard(cacheCtx.getRoleState(sid))).toBeNull()
+
+    control.compaction = true
+    const res = await startChatUntilPartial(sid, "E2E_TD compact turn")
+    releaseGate()
+    await res.text()
+
+    const state = cacheCtx.getRoleState(sid)
+    expect(state.revision).toBe(revision)       // identity itself did not change
+    expect(state.deliveredRevision).toBe(0)     // …but the transcript was rewritten
+    expect(pendingRoleCard(state)).not.toBeNull()
   })
 })

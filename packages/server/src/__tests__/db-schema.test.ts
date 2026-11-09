@@ -37,6 +37,8 @@ describe("DB Schema", () => {
       // v56/v57 (缓存稳定 + 身份切换): session_prompt_snapshots / session_expert_rosters /
       //   session_role_states —— 新增三表，本清单随之补正。
       // v60 (dock 调试): session_turn_debug —— 每轮实际交给 SDK 的快照。
+      // v61 (playbook 一次送达): session_turn_context —— 任务线程 playbook 的
+      //   送达哈希（压缩/清空后重发）。
       "agent_events", "agent_versions", "archive_drafts",
       "billing_price_config", "billing_setting",
       "branch_executions", "chat_messages", "chat_sessions",
@@ -52,7 +54,7 @@ describe("DB Schema", () => {
       "schedule_audit_logs", "schedule_executions", "schedule_workspaces",
       "scheduled_job_executions", "scheduler_audit_logs", "scheduler_state", "schedules",
       "session_expert_rosters", "session_prompt_snapshots", "session_role_states",
-      "session_turn_debug",
+      "session_turn_context", "session_turn_debug",
       "sessions", "subagent_runs", "task_phase_acceptances", "tasks", "wiki_articles", "workspace_archive", "workspaces",
     ])
   })

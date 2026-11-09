@@ -228,6 +228,11 @@ export type MessageChunk =
   /** `/clear`: the CLI reset its conversation. Only the provider transcript
    *  is gone — host-side history (DB/messages) is the host's own. */
   | { type: 'conversation_reset' }
+  /** Context compaction (manual `/compact` or SDK auto-compaction): the
+   *  provider transcript was REWRITTEN into a summary. One-shot context the
+   *  host sent earlier (role card, task playbook) may be summarized away, so
+   *  hosts re-deliver it on the next turn. */
+  | { type: 'compaction'; trigger: 'manual' | 'auto'; preTokens?: number; postTokens?: number; droppedTokens?: number; durationMs?: number }
   | { type: 'status'; status: 'compacting' | 'requesting' | null; varsUpdate?: Record<string, unknown> }
   /** 后台任务集合变化（电平信号，REPLACE 语义）：空数组 = 已无后台任务。 */
   | { type: 'background_tasks'; tasks: BackgroundTaskInfo[] }

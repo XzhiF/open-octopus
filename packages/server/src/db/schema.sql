@@ -210,6 +210,20 @@ CREATE TABLE IF NOT EXISTS session_role_states (
   updated_at         TEXT NOT NULL
 );
 
+-- 6c-2. Task-thread playbook delivery (schema v61)
+-- The per-turn task <system-reminder> has two parts: a tiny status head
+-- (refreshed every turn) and a large playbook (identity / discipline / tools /
+-- guides) that only changes on identity or state transitions. Sending the
+-- playbook once per change keeps the prompt cache intact and stops every turn
+-- re-paying for it. `playbook_hash` records which body the provider transcript
+-- already holds; a compaction or /clear wipes the row so the next turn
+-- re-delivers the full block.
+CREATE TABLE IF NOT EXISTS session_turn_context (
+  session_id    TEXT PRIMARY KEY,
+  playbook_hash TEXT NOT NULL,
+  updated_at    TEXT NOT NULL
+);
+
 -- 6d. Per-turn debug snapshots (schema v60)
 -- The dock's 「调试」 inspector needs what was ACTUALLY handed to the SDK for
 -- each turn — the raw user message and the provider message after the role

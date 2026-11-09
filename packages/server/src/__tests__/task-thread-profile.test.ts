@@ -123,6 +123,12 @@ describe("TaskThreadService — identity / cwd / guard", () => {
     expect(profile.readOnly).toBe(false)
     expect(profile.context).toContain("任务作者")
     expect(profile.context).toContain(taskId)
+    // The per-turn body is split: status head (every turn) + playbook (on change).
+    expect(profile.contextHead).toContain("[任务线程]")
+    expect(profile.contextHead).toContain(taskId)
+    expect(profile.contextHead).not.toContain("任务作者")
+    expect(profile.contextPlaybook).toContain("任务作者")
+    expect(profile.context).toBe(`${profile.contextHead}\n${profile.contextPlaybook}`)
     // inside home allowed
     await expect(profile.guard!("Write", { file_path: path.join(home, "spec.md") })).resolves.toBeUndefined()
     // outside home blocked

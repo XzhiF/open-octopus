@@ -29,6 +29,7 @@ import { parseCloneMentions, resolveCloneInfo, resolveCloneSubagents } from '../
 import { pendingRoleCard } from '../../services/agent/role-card'
 import { appendRoleSwitchEvent, roleSwitchEventPayload } from '../../services/agent/role-switch-event'
 import { withTransientReminder } from '../../services/agent/prompt-reminder'
+import { buildTaskPlaybookReminder } from '../../services/agent/turn-context'
 import { recordProviderResultUsage, ledgerStopReason } from '../../services/llm-call-ledger'
 import { SubagentRunService } from '../../services/agent/subagent-runs'
 import { SessionTurnDebugDAO, hashPrompt } from '../../db/dao'
@@ -321,8 +322,10 @@ export function createChatRoutes(deps: ChatRouteDeps): Hono {
     const resumeSessionId = usableResumeId(effectiveCwd, session.provider_session_id)
     if (session.provider_session_id && !resumeSessionId) {
       sessionDao.clearProviderSession(id)
-      // The provider transcript is gone → the active role card must be replayed.
+      // The provider transcript is gone → the active role card must be replayed,
+      // and so must the task playbook (the summary carrier no longer exists).
       cacheCtx.resetRoleDelivery(id)
+      cacheCtx.resetPlaybook(id)
     }
 
     // Identity switch (role card) and @ delegation (one-turn subagent consult)
@@ -343,7 +346,13 @@ export function createChatRoutes(deps: ChatRouteDeps): Hono {
       ? `用户本轮委派了以下分身：${consults.map((c) => c.displayName).join('、')}。请调用对应的 subagent 获取其专业意见，再整合成最终回答；不要简单拼接。`
       : undefined
     // Task state is injected per turn (never into the frozen system prompt).
-    const turnReminder = [roleCard, mentionReminder, thread?.context].filter(Boolean).join('\n\n')
+    // The task playbook (identity/discipline/tools/guides) is hash-gated: it is
+    // re-sent only when it changed or when the provider transcript was rewritten
+    // (compaction) / dropped (`/clear`). The status head rides every turn.
+    const playbookReminder = thread
+      ? buildTaskPlaybookReminder(thread, cacheCtx.getPlaybookHash(id))
+      : null
+    const turnReminder = [roleCard, mentionReminder, playbookReminder?.text].filter(Boolean).join('\n\n')
     const providerMessage = withTransientReminder(body.message!, turnReminder)
     // Workflow control tools (list/run/status/cancel/approve/retry) are
     // registered as an in-process MCP server bound to this chat's workspace.
@@ -384,6 +393,10 @@ export function createChatRoutes(deps: ChatRouteDeps): Hono {
     // Stream SSE response
     return streamSSE(c, async (stream) => {
       let aborted = false
+      // Compaction rewrites the provider transcript and /clear drops it: both
+      // invalidate one-shot context (role card, task playbook). Reset delivery
+      // state when the turn settles so the next turn re-sends it.
+      let contextInvalidated = false
       // 停止按钮要真的掐掉 provider 查询：只置布尔位得等下一个 chunk 才生效，
       // 模型长时间思考 / 工具调用期间按停止会一直挂着（2026-10-29 用户：
       // 中断后会话像没了一样）。AbortSignal 直接让 SDK 迭代结束，路由随即
@@ -491,10 +504,17 @@ export function createChatRoutes(deps: ChatRouteDeps): Hono {
           turnDebug,
           isAborted: () => aborted,
           abortSignal: abortController.signal,
-          onResult: roleCard
+          onContextInvalidated: () => { contextInvalidated = true },
+          onResult: roleCard || playbookReminder?.full
             ? () => {
-                cacheCtx.markRoleDelivered(id, roleState.revision)
-                appendRoleSwitchEvent(sessionDao.getDb(), id, roleSwitchEventPayload(roleState, roleCard))
+                if (roleCard) {
+                  cacheCtx.markRoleDelivered(id, roleState.revision)
+                  appendRoleSwitchEvent(sessionDao.getDb(), id, roleSwitchEventPayload(roleState, roleCard))
+                }
+                // Only a full send puts the playbook into the transcript.
+                if (playbookReminder?.full) {
+                  cacheCtx.savePlaybookHash(id, playbookReminder.playbookHash)
+                }
               }
             : undefined,
         })
@@ -527,6 +547,18 @@ export function createChatRoutes(deps: ChatRouteDeps): Hono {
         console.error('[agent-chat] turn failed before settlement:', msg)
         await turn.terminate('error', { session_id: id, code: 'STREAM_ERROR', message: msg })
       } finally {
+        // Compaction / `/clear` landed during the turn: the provider transcript
+        // no longer carries the one-shot context. Reset AFTER the turn's
+        // markRoleDelivered ran, so the next turn re-sends the role card and the
+        // full task playbook exactly once.
+        if (contextInvalidated) {
+          try {
+            cacheCtx.resetRoleDelivery(id)
+            cacheCtx.resetPlaybook(id)
+          } catch {
+            // delivery bookkeeping — never mask the turn outcome
+          }
+        }
         setActiveStreamBackgroundTasks(id, null)
         unregisterActiveStream(id, streamId)
         notifyWake('done')
@@ -615,6 +647,10 @@ export function createChatRoutes(deps: ChatRouteDeps): Hono {
       onTurnComplete?: () => Promise<void> | void
       /** Called once when the turn produces a result (mark role card delivered). */
       onResult?: () => void
+      /** Provider transcript was rewritten (compaction) or dropped (`/clear`).
+       *  The route resets one-shot delivery state when the turn settles, so the
+       *  NEXT turn re-sends the role card and the full task playbook. */
+      onContextInvalidated?: () => void
       /** Dock 「调试」 recorder — observes the provider stream + finalizes the row. */
       turnDebug?: TurnDebugRecorder
       /** Stop-button probe: the owning stream's abort flag (checked每 chunk). */
@@ -871,6 +907,12 @@ export function createChatRoutes(deps: ChatRouteDeps): Hono {
               try { sessionDao.updateContextUsage(sessionId, JSON.stringify(chunk.data)) } catch { /* telemetry — never break the turn */ }
               await stream.writeSSE({ event: 'context_usage', data: JSON.stringify(chunk.data) })
               break
+            case 'compaction':
+              // 压缩把 provider 转录换成了摘要：角色卡 / 任务 playbook 下一轮要重发。
+              // 重置推迟到轮次收尾（streamSSE finally）——manual /compact 就是本轮，
+              // 先重置会被本轮 result 的 markRoleDelivered 覆盖。
+              extra?.onContextInvalidated?.()
+              break
             case 'tool_call_start':
               currentToolCalls.push({ id: chunk.toolCallId, name: chunk.toolName, status: 'start' })
               pushTimeline({ kind: 'tool', id: chunk.toolCallId })
@@ -922,6 +964,9 @@ export function createChatRoutes(deps: ChatRouteDeps): Hono {
               // chat transcript and DB rows stay untouched; the next result
               // carries the fresh SDK session id and re-points the session.
               sessionDao.clearProviderSession(sessionId)
+              // The transcript is gone → role card + task playbook are pending
+              // again. Same end-of-turn reset as compaction.
+              extra?.onContextInvalidated?.()
               break
             case 'subagent':
               // 作业坞「子代理」：记录主 Agent 派生的每个子代理（指令 prompt /

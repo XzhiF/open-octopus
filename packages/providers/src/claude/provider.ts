@@ -1189,6 +1189,18 @@ export class ClaudeSDKProvider implements IAgentProvider {
             } catch {
               // 非致命：下一轮 message_start 仍会补报真实占用。
             }
+            // 转录被重写成了摘要：一轮性上下文（角色卡 / 任务 playbook）不保证
+            // 还在摘要里，宿主需要在下一轮重新送达。manual/auto 都要报（auto 是
+            // 服务端唯一能知道「发生过压缩」的信号）。
+            const meta = sm.compact_metadata
+            yield {
+              type: 'compaction',
+              trigger: meta?.trigger === 'manual' ? 'manual' : 'auto',
+              ...(meta?.pre_tokens != null ? { preTokens: meta.pre_tokens } : {}),
+              ...(meta?.post_tokens != null ? { postTokens: meta.post_tokens } : {}),
+              ...(meta?.cumulative_dropped_tokens != null ? { droppedTokens: meta.cumulative_dropped_tokens } : {}),
+              ...(meta?.duration_ms != null ? { durationMs: meta.duration_ms } : {}),
+            }
             // 只有手动 /compact 是「一条命令一整轮」：它的空 result 不能再被
             // 当成排队确认（否则收不了轮）。auto 压缩发生在正常轮次里，排队
             // 确认的语义不能被抢走。

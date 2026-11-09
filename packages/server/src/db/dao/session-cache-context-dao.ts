@@ -166,11 +166,40 @@ export class SessionCacheContextDAO extends BaseDAO {
     ).run(new Date().toISOString(), sessionId)
   }
 
+  // ── Task-thread playbook delivery (schema v61) ────────────────────
+
+  /** The playbook body the provider transcript already holds (null = never
+   *  delivered, or invalidated by compaction / `/clear`). */
+  getPlaybookHash(sessionId: string): string | null {
+    const row = this.stmt(
+      "SELECT playbook_hash FROM session_turn_context WHERE session_id = ?",
+    ).get(sessionId) as { playbook_hash: string } | undefined
+    return row?.playbook_hash ?? null
+  }
+
+  /** Record that the current playbook body reached the provider transcript. */
+  savePlaybookHash(sessionId: string, hash: string): void {
+    const now = new Date().toISOString()
+    this.stmt(`
+      INSERT INTO session_turn_context (session_id, playbook_hash, updated_at)
+      VALUES (?, ?, ?)
+      ON CONFLICT(session_id) DO UPDATE SET
+        playbook_hash = excluded.playbook_hash,
+        updated_at    = excluded.updated_at
+    `).run(sessionId, hash, now)
+  }
+
+  /** Compaction / transcript reset: the stored body is gone → re-deliver. */
+  resetPlaybook(sessionId: string): void {
+    this.stmt("DELETE FROM session_turn_context WHERE session_id = ?").run(sessionId)
+  }
+
   /** Remove both cache-stability rows when a session is physically deleted. */
   deleteSession(sessionId: string): void {
     this.stmt("DELETE FROM session_prompt_snapshots WHERE session_id = ?").run(sessionId)
     this.stmt("DELETE FROM session_expert_rosters WHERE session_id = ?").run(sessionId)
     this.stmt("DELETE FROM session_role_states WHERE session_id = ?").run(sessionId)
+    this.stmt("DELETE FROM session_turn_context WHERE session_id = ?").run(sessionId)
   }
 }
 

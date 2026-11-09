@@ -79,6 +79,8 @@ const fakeProfile = {
   archiveConsent: false,
   autoCommit: false,
   context: "",
+  contextHead: "",
+  contextPlaybook: "",
   plugins: [],
   guard: undefined,
   task: { id: "t-1", workspaceId: null, displayStatus: "running" },

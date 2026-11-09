@@ -650,6 +650,9 @@ export function createCloneSessionRoutes(deps: CloneSessionRouteDeps): Hono {
         let fullContent = ''
         let fullThinking = ''
         let resultSessionId: string | null = null
+        // Compaction rewrote the provider transcript → the delivered role card
+        // may be summarized away; re-send it once on the next turn.
+        let contextInvalidated = false
         const turnStartMs = Date.now()
         const toolCalls: Array<{
           id: string; name: string; input?: unknown; result?: unknown; isError?: boolean; status?: string
@@ -738,6 +741,11 @@ export function createCloneSessionRoutes(deps: CloneSessionRouteDeps): Hono {
               // so the session row is the only source a cold load can paint from.
               try { sessionDAO.updateContextUsage(sessionId, JSON.stringify(chunk.data)) } catch { /* telemetry — never break the turn */ }
               await stream.writeSSE({ event: 'context_usage', data: JSON.stringify(chunk.data) })
+              break
+            case 'compaction':
+              // 转录被压缩成摘要：角色卡下一轮需要重发（重置放在轮次收尾，
+              // 避免本轮 result 的 markRoleDelivered 覆盖）。
+              contextInvalidated = true
               break
             case 'tool_call_start':
               toolCalls.push({ id: chunk.toolCallId, name: chunk.toolName, status: 'start' })
@@ -912,6 +920,9 @@ export function createCloneSessionRoutes(deps: CloneSessionRouteDeps): Hono {
             cacheCtx.markRoleDelivered(sessionId, roleState.revision)
             appendRoleSwitchEvent(sessionDAO.getDb(), sessionId, roleSwitchEventPayload(roleState, roleCard))
           }
+          // Compaction rewrote the transcript: the card may no longer be in it,
+          // so the next turn re-sends the current role card once.
+          if (contextInvalidated) cacheCtx.resetRoleDelivery(sessionId)
 
           // Auto-generate title on first message (title still placeholder).
           // Runs even when a task is bound to the session: the session title

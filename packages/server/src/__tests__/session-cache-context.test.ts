@@ -8,6 +8,7 @@ import { applySchema } from "../db/schema"
 import { SessionCacheContextDAO, hashPrompt } from "../db/dao/session-cache-context-dao"
 import { resolveSessionExpertRoster } from "../services/agent/session-expert-roster"
 import { withTransientReminder } from "../services/agent/prompt-reminder"
+import { buildTaskPlaybookReminder, PLAYBOOK_UNCHANGED_NOTE } from "../services/agent/turn-context"
 import { pendingRoleCard, buildRoleCard, buildRoleResetCard } from "../services/agent/role-card"
 import { resolveCloneRolePack } from "../services/agent/clone-resolver"
 
@@ -27,6 +28,7 @@ afterAll(() => {
 beforeEach(() => {
   db.prepare("DELETE FROM session_prompt_snapshots").run()
   db.prepare("DELETE FROM session_expert_rosters").run()
+  db.prepare("DELETE FROM session_turn_context").run()
 })
 
 describe("SessionCacheContextDAO — frozen system prompt", () => {
@@ -198,6 +200,54 @@ describe("SessionCacheContextDAO — role state", () => {
     expect(card).toContain("revision 3")
     expect(card).toContain("最新一张角色卡生效")
     expect(buildRoleResetCard(4)).toContain("回到会话的基础角色")
+  })
+})
+
+describe("SessionCacheContextDAO — task playbook delivery", () => {
+  it("stores, replaces and resets the delivered playbook hash", () => {
+    expect(dao.getPlaybookHash("s-pb")).toBeNull()
+    dao.savePlaybookHash("s-pb", "h1")
+    expect(dao.getPlaybookHash("s-pb")).toBe("h1")
+    // A changed playbook replaces the stored body (upsert, not duplicate).
+    dao.savePlaybookHash("s-pb", "h2")
+    expect(dao.getPlaybookHash("s-pb")).toBe("h2")
+    // Compaction / `/clear` → the next turn must re-deliver.
+    dao.resetPlaybook("s-pb")
+    expect(dao.getPlaybookHash("s-pb")).toBeNull()
+  })
+
+  it("deleteSession removes the playbook row too", () => {
+    dao.savePlaybookHash("s-pb-del", "h")
+    dao.deleteSession("s-pb-del")
+    expect(dao.getPlaybookHash("s-pb-del")).toBeNull()
+  })
+})
+
+describe("buildTaskPlaybookReminder", () => {
+  const parts = { contextHead: "[任务线程] head", contextPlaybook: "[身份] body" }
+
+  it("sends head + playbook when nothing was delivered yet", () => {
+    const result = buildTaskPlaybookReminder(parts, null)
+    expect(result.full).toBe(true)
+    expect(result.text).toBe("[任务线程] head\n[身份] body")
+  })
+
+  it("keeps the status head but omits an unchanged playbook", () => {
+    const first = buildTaskPlaybookReminder(parts, null)
+    const second = buildTaskPlaybookReminder(parts, first.playbookHash)
+    expect(second.full).toBe(false)
+    expect(second.text).toBe(`[任务线程] head\n${PLAYBOOK_UNCHANGED_NOTE}`)
+    expect(second.text).not.toContain("[身份] body")
+  })
+
+  it("re-sends the whole body when it changes (identity / state switch)", () => {
+    const first = buildTaskPlaybookReminder(parts, null)
+    const changed = buildTaskPlaybookReminder(
+      { ...parts, contextPlaybook: "[身份] doer" },
+      first.playbookHash,
+    )
+    expect(changed.full).toBe(true)
+    expect(changed.text).toContain("[身份] doer")
   })
 })
 

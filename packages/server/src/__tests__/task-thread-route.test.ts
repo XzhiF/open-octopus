@@ -17,7 +17,9 @@ import { TokenUsageDAO } from "../db/dao/token-usage-dao"
 import { createChatRoutes } from "../routes/agent/chat-routes"
 import { TaskThreadService } from "../services/tasks/task-thread-service"
 import { TaskHomeService } from "../services/tasks/task-home-service"
+import { projectDirKey } from "../services/agent/resume"
 import * as providers from "@octopus/providers"
+import type { MessageChunk } from "@octopus/providers"
 
 const ORG = "E2E_TEST_task_thread"
 const ROOT = path.join(os.tmpdir(), `task-thread-route-${Date.now()}`)
@@ -35,6 +37,8 @@ interface CallRecord {
 
 interface Behavior {
   writeFile?: { rel: string; content: string }
+  /** Scripted provider stream (overrides the default text+result pair). */
+  chunks?: MessageChunk[]
 }
 
 let db: Database.Database
@@ -68,6 +72,10 @@ function installProvider() {
         const abs = path.join(WS, "projects", "app", behavior.writeFile.rel)
         fs.mkdirSync(path.dirname(abs), { recursive: true })
         fs.writeFileSync(abs, behavior.writeFile.content)
+      }
+      if (behavior.chunks) {
+        for (const chunk of behavior.chunks) yield chunk
+        return
       }
       yield { type: "text_delta", content: "ok" }
       yield { type: "result", content: "ok", sessionId: "sdk-thread-1" }
@@ -126,6 +134,14 @@ function insertTask(opts: {
   )
 }
 
+/** The SDK only resumes when its transcript file exists; without it every turn
+ *  takes the cold-start reset path (which would re-send the playbook). */
+function makeTranscript(cwd: string, sessionId: string): void {
+  const dir = path.join(process.env.CLAUDE_CONFIG_DIR!, "projects", projectDirKey(cwd))
+  fs.mkdirSync(dir, { recursive: true })
+  fs.writeFileSync(path.join(dir, `${sessionId}.jsonl`), "{}\n", "utf-8")
+}
+
 beforeAll(() => {
   fs.mkdirSync(AGENT_DIR, { recursive: true })
   fs.mkdirSync(path.join(AGENT_DIR, "memory"), { recursive: true })
@@ -159,7 +175,11 @@ beforeEach(() => {
   process.env.OCTOPUS_HOME = HOME
   process.env.CLAUDE_CONFIG_DIR = path.join(ROOT, "claude")
   fs.mkdirSync(path.join(ROOT, "claude", "projects"), { recursive: true })
-  const ordered = ["messages", "executions", "tasks", "session_prompt_snapshots", "sessions", "llm_calls"]
+  const ordered = [
+    "messages", "executions", "tasks", "session_prompt_snapshots",
+    "session_role_states", "session_expert_rosters", "session_turn_context",
+    "sessions", "llm_calls",
+  ]
   for (const table of ordered) {
     db.prepare(`DELETE FROM ${table}`).run()
   }
@@ -257,5 +277,89 @@ describe("task-thread chat route", () => {
     expect(taskThread.resolveForSession({ id: "s-bind", clone_name: null })?.task.id).toBe("t-bind")
     expect(taskThread.bindThread("t-bind", null)).toBe(true)
     expect(taskThread.resolveForSession({ id: "s-bind", clone_name: null })).toBeNull()
+  })
+})
+
+describe("task-thread playbook delivery — once per change, again after compaction", () => {
+  it("unchanged turns carry only the status head; a state switch re-sends the playbook", async () => {
+    insertSession("s-play")
+    insertTask({ id: "t-play", status: "draft", sessionId: "s-play" })
+    const home = path.join(HOME, "tasks", "t-play")
+    fs.mkdirSync(home, { recursive: true })
+
+    // Turn 1: nothing delivered yet → the full playbook rides the prompt.
+    await (await chat("s-play", "第一轮")).text()
+    expect(calls[0].prompt).toContain("[任务线程]")
+    expect(calls[0].prompt).toContain("[身份] 任务作者")
+
+    // Turn 2: identity + state unchanged → head only, playbook omitted.
+    makeTranscript(home, "sdk-thread-1")
+    await (await chat("s-play", "第二轮")).text()
+    expect(calls[1].prompt).toContain("[任务线程]")
+    expect(calls[1].prompt).not.toContain("[身份] 任务作者")
+    expect(calls[1].prompt).toContain("身份与执行规则未变化")
+
+    // Turn 3: draft → ready switches the identity to doer → full playbook again.
+    db.prepare("UPDATE tasks SET status = 'ready' WHERE id = 't-play'").run()
+    await (await chat("s-play", "第三轮")).text()
+    expect(calls[2].prompt).toContain("[任务线程]")
+    expect(calls[2].prompt).toContain("[身份] 任务执行者")
+  })
+
+  it("compaction re-delivers the playbook and the role card on the next turn", async () => {
+    insertSession("s-pbc")
+    insertTask({ id: "t-pbc", status: "draft", sessionId: "s-pbc" })
+    const home = path.join(HOME, "tasks", "t-pbc")
+    fs.mkdirSync(home, { recursive: true })
+
+    await (await chat("s-pbc", "第一轮")).text()
+    expect(calls[0].prompt).toContain("[身份] 任务作者")
+    expect(calls[0].prompt).toContain("[服务端角色切换")
+
+    makeTranscript(home, "sdk-thread-1")
+    await (await chat("s-pbc", "第二轮")).text()
+    expect(calls[1].prompt).not.toContain("[身份] 任务作者")
+    expect(calls[1].prompt).not.toContain("[服务端角色切换")
+
+    // /compact: the provider transcript is rewritten → both one-shot blobs
+    // (role card + playbook) are pending again.
+    behaviors.push({
+      chunks: [
+        { type: "status", status: "compacting" },
+        { type: "compaction", trigger: "manual", preTokens: 120000, postTokens: 6000 },
+        { type: "result", content: "", sessionId: "sdk-compact-2" },
+      ],
+    })
+    await (await chat("s-pbc", "/compact")).text()
+
+    makeTranscript(home, "sdk-compact-2")
+    await (await chat("s-pbc", "第四轮")).text()
+    expect(calls[3].prompt).toContain("[身份] 任务作者")
+    expect(calls[3].prompt).toContain("[服务端角色切换")
+  })
+
+  it("/clear also invalidates one-shot context", async () => {
+    insertSession("s-clr")
+    insertTask({ id: "t-clr", status: "draft", sessionId: "s-clr" })
+    const home = path.join(HOME, "tasks", "t-clr")
+    fs.mkdirSync(home, { recursive: true })
+
+    await (await chat("s-clr", "第一轮")).text()
+    expect(calls[0].prompt).toContain("[身份] 任务作者")
+
+    makeTranscript(home, "sdk-thread-1")
+    await (await chat("s-clr", "第二轮")).text()
+    expect(calls[1].prompt).not.toContain("[身份] 任务作者")
+
+    behaviors.push({
+      chunks: [
+        { type: "conversation_reset" },
+        { type: "result", content: "", sessionId: "sdk-clear-2" },
+      ],
+    })
+    await (await chat("s-clr", "/clear")).text()
+
+    await (await chat("s-clr", "第四轮")).text()
+    expect(calls[3].prompt).toContain("[身份] 任务作者")
   })
 })
