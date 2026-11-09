@@ -655,7 +655,6 @@ export function ChatTab() {
     activeTaskId: focusedTask?.id ?? null,
     onSelectTask: handleSelectTask,
     pendingTask: focusedPending ? {
-      sessionId: focusedPending.sessionId,
       title: focusedPending.title,
       ...(focusedPending.kind ? { kind: focusedPending.kind } : {}),
     } : null,

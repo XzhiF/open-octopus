@@ -67,7 +67,6 @@ import { ChatPanePicker } from './chat-pane-picker'
 export type ChatPaneSide = 'left' | 'right'
 
 export interface PendingTaskSession {
-  sessionId: string
   org: string
   title: string
   projectIds: string[]
@@ -551,28 +550,24 @@ export function ChatPane({
       return
     }
 
-    // First message of a task thread: bind (or create) ONE main session, create
-    // the draft on it, then send the message through the normal chat route. The
+    // First message of a task thread: create ONE fresh main session, create the
+    // draft on it, then send the message through the normal chat route. The
     // server resolves the task-author identity from the task's state.
     if (creatingTask) return
     const session = pendingTaskSession
-    const reuseExisting = !!session.sessionId
     setCreatingTask(true)
     void (async () => {
       try {
-        let sid = session.sessionId
-        if (!sid) {
-          // Hold the plain send-effect and the transcript reload: this message
-          // belongs to the task thread and needs the task row in place first.
-          taskSendPendingRef.current = true
-          pendingMessageRef.current = { message, subagents: opts?.subagents }
-          const created = await createNewSession(
-            taskCwd.kind === 'default'
-              ? undefined
-              : { workspace_id: taskCwd.workspaceId, cwd: taskCwd.path },
-          )
-          sid = created?.id ?? ''
-        }
+        // Hold the plain send-effect and the transcript reload: this message
+        // belongs to the task thread and needs the task row in place first.
+        taskSendPendingRef.current = true
+        pendingMessageRef.current = { message, subagents: opts?.subagents }
+        const created = await createNewSession(
+          taskCwd.kind === 'default'
+            ? undefined
+            : { workspace_id: taskCwd.workspaceId, cwd: taskCwd.path },
+        )
+        const sid = created?.id ?? ''
         if (!sid) throw new Error('无法创建任务会话')
         const task = await createTask({
           repo_group: session.org || undefined,
@@ -592,17 +587,11 @@ export function ChatPane({
         setActiveTask(task)
         void refreshChatTasks()
         void refreshSessions()
-        if (!reuseExisting) {
-          setSessionId(sid)
-          // Send from the render that has `sid` as the hook's session — the
-          // closure captured here still holds the pre-create null id (2026-10-29
-          // bug: the turn silently never started, only a refresh showed it).
-          setPendingTaskSend({ sessionId: sid, message, subagents: opts?.subagents })
-        } else {
-          requestAnimationFrame(() => sendMessage(message, {
-            model, effort, maxContext, subagents: opts?.subagents,
-          }))
-        }
+        setSessionId(sid)
+        // Send from the render that has `sid` as the hook's session — the
+        // closure captured here still holds the pre-create null id (2026-10-29
+        // bug: the turn silently never started, only a refresh showed it).
+        setPendingTaskSend({ sessionId: sid, message, subagents: opts?.subagents })
       } catch (err: unknown) {
         taskSendPendingRef.current = false
         pendingMessageRef.current = null
@@ -720,25 +709,25 @@ export function ChatPane({
 
   const handleCreateTask = useCallback(async (kind?: 'workflow-dev') => {
     if (creatingTask) return
-    // 2026-10-28: creating a task from a free chat BINDS that chat (one main
-    // conversation). From inside an existing task we start a fresh thread.
-    const reuseSessionId = !activeTask ? sessionId : null
+    // 2026-11-09 用户反馈：从「自由会话」点新建开发任务没有进入新任务界面 ——
+    // 旧逻辑会复用当前会话，于是界面停留在旧对话（只有侧栏多一条草稿行）。
+    // 「新建」一律开全新线程（和「当前是任务」同款）：清掉会话 → 任务 hero；
+    // 第一句话落盘时才创建会话并把 source_chat_session_id 绑到它。
     taskSendPendingRef.current = false
     setPendingTaskSend(null)
     setActiveTask(null)
     setPendingTaskSession({
-      sessionId: reuseSessionId ?? '',
       org: preferredOrg,
       title: kind === 'workflow-dev' ? NEW_WORKFLOW_TASK_NAME : NEW_TASK_NAME,
       projectIds: [],
       ...(kind ? { kind } : {}),
     })
-    if (!reuseSessionId) setSessionId(null)
+    setSessionId(null)
+    writeLastChatContext(null)
     setTaskCwd({ kind: 'default', label: '新建工作空间' })
     setTaskModuleRequest(null)
     choosePendingIdentity(null)
-    if (!reuseSessionId) writeLastChatContext(null)
-  }, [creatingTask, preferredOrg, choosePendingIdentity, activeTask, sessionId, setActiveTask, setPendingTaskSession, setSessionId])
+  }, [creatingTask, preferredOrg, choosePendingIdentity, setActiveTask, setPendingTaskSession, setSessionId])
 
   // ── 2026-10-28 task-thread: transcript card actions ─────────────────
   const applyTaskResult = useCallback((updated: TaskView) => {
@@ -1147,8 +1136,8 @@ export function ChatPane({
   ) : undefined
 
   // 2026-10-28 新建开发任务向新建对话看齐：pendingTask 空态同样走 hero ——
-  // composer 居中、cwd/项目控件挪到第二行；复用中的会话已有实录、或草稿已
-  // 成行追问时，回落到停靠态。判定与 ChatArea 的 heroMode 对齐（空消息 + 非流式）。
+  // composer 居中、cwd/项目控件挪到第二行；已有实录或草稿已落盘追问时回落到
+  // 停靠态。判定与 ChatArea 的 heroMode 对齐（空消息 + 非流式）。
   const heroActive = (draftScope ? !!pendingTaskSession : !sessionId)
     && !streaming && viewMessages.length === 0
 

@@ -35,7 +35,7 @@ interface ChatSidebarProps {
   onSelectTask: (task: TaskView) => void
   /** Task session being authored, before its draft row exists. `kind` follows
    *  task_spec.kind so the row can show the workflow-dev marker (2026-11-06). */
-  pendingTask?: { sessionId: string; title: string; kind?: 'workflow-dev' } | null
+  pendingTask?: { title: string; kind?: 'workflow-dev' } | null
   activePendingTask?: boolean
   sessions: AgentSession[]
   sessionsLoading: boolean
