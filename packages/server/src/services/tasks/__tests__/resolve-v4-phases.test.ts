@@ -9,7 +9,8 @@
 // The suite pins all four checks, and in particular check ④
 // (`phase:<i>:no-final-verification`): a batch-consuming flow (matt-spec-dev)
 // refuses to enqueue a phase whose issues/ has no final `*-e2e-*` acceptance
-// ticket.
+// ticket. It also pins the enqueue-only ④-b..d geometry (browser ownership,
+// one e2e ticket per phase, e2e only on the final phase) added 2026-11-09.
 //
 // Why ④ exists: the writing convention alone was not enough. author-
 // verified-requirement says the final acceptance ticket is "always generated",
@@ -52,10 +53,10 @@ function writeSpec(rel: string, body = '# spec\n'): void {
 }
 
 /** Write one ticket into the batch dir that owns `specRel`. */
-function writeTicket(specRel: string, filename: string): void {
+function writeTicket(specRel: string, filename: string, body = '# ticket\n'): void {
   const dir = path.join(home, path.dirname(specRel), 'issues')
   fs.mkdirSync(dir, { recursive: true })
-  fs.writeFileSync(path.join(dir, filename), '# ticket\n')
+  fs.writeFileSync(path.join(dir, filename), body)
 }
 
 function phase(over: Partial<Record<string, unknown>> = {}): Record<string, unknown> {
@@ -74,12 +75,17 @@ function specWith(phases: unknown[], extra: Record<string, unknown> = {}): TaskS
   return { format: 'v4', phases, ...extra } as unknown as TaskSpec
 }
 
-function run(phases: unknown[], refs: Record<string, string> = {}) {
+function run(
+  phases: unknown[],
+  refs: Record<string, string> = {},
+  opts: { enqueueChecks?: boolean } = {},
+) {
   return resolveV4Phases({
     taskSpec: specWith(phases),
     homeDir: home,
     taskArtifactsDir: path.join(home, 'artifacts'),
     resolveRef: (ref) => (ref in refs ? { content: refs[ref] } : null),
+    enqueueChecks: opts.enqueueChecks,
   })
 }
 
@@ -178,6 +184,131 @@ describe('resolveV4Phases — ④ final acceptance ticket (batch-consuming flows
     const { missing } = run([phase({ specPath: '.scratch/gone/spec.md' })], BATCH_FLOW)
 
     expect(missing).toEqual(['phase:1:spec-missing'])
+  })
+})
+
+describe('resolveV4Phases — ④-b..d 浏览器归属 / e2e 票几何（仅入队路径）', () => {
+  const API_TICKET = [
+    '# 01 — API ticket',
+    '',
+    '## Verification Method',
+    '1. `curl -sf http://localhost:8080/api/x` → code == 200',
+    '',
+  ].join('\n')
+  const BROWSER_TICKET = [
+    '# 04 — web-admin',
+    '',
+    '## Verification Method',
+    '**Verification type**: contract test + manual checklist',
+    '4. 手动清单（浏览器）：',
+    '   - V1：错误口令提示正确',
+    '',
+  ].join('\n')
+  const E2E_TICKET = [
+    '# 05 — e2e',
+    '',
+    '**类型**: E2E（浏览器走查）',
+    '',
+    '## 走查步骤',
+    '1. 打开 http://localhost:13000 → 看到登录表单',
+    '2. `curl -sf http://localhost:18081/health` → code == 200',
+    '',
+  ].join('\n')
+
+  it('功能票只做 API 直查 → 通过', () => {
+    writeSpec('.scratch/20260917/p1/spec.md')
+    writeTicket('.scratch/20260917/p1/spec.md', '01-api.md', API_TICKET)
+    writeTicket('.scratch/20260917/p1/spec.md', '02-e2e-a.md', E2E_TICKET)
+
+    expect(run([phase()], BATCH_FLOW, { enqueueChecks: true }).missing).toEqual([])
+  })
+
+  it('功能票写「手动清单（浏览器）」→ browser-in-feature-ticket', () => {
+    writeSpec('.scratch/20260917/p1/spec.md')
+    writeTicket('.scratch/20260917/p1/spec.md', '04-web.md', BROWSER_TICKET)
+    writeTicket('.scratch/20260917/p1/spec.md', '05-e2e-a.md', E2E_TICKET)
+
+    expect(run([phase()], BATCH_FLOW, { enqueueChecks: true }).missing).toEqual([
+      'phase:1:browser-in-feature-ticket:04-web.md',
+    ])
+  })
+
+  it('浏览器字样只在 e2e 票里 → 通过（唯一归属）', () => {
+    writeSpec('.scratch/20260917/p1/spec.md')
+    writeTicket('.scratch/20260917/p1/spec.md', '01-api.md', API_TICKET)
+    writeTicket('.scratch/20260917/p1/spec.md', '05-e2e-a.md', E2E_TICKET)
+
+    expect(run([phase()], BATCH_FLOW, { enqueueChecks: true }).missing).toEqual([])
+  })
+
+  it('没有 Verification Method 小节时退化为全文扫描', () => {
+    writeSpec('.scratch/20260917/p1/spec.md')
+    writeTicket('.scratch/20260917/p1/spec.md', '04-web.md', '# 04\n用浏览器点一遍登录页\n')
+    writeTicket('.scratch/20260917/p1/spec.md', '05-e2e-a.md', E2E_TICKET)
+
+    expect(run([phase()], BATCH_FLOW, { enqueueChecks: true }).missing).toEqual([
+      'phase:1:browser-in-feature-ticket:04-web.md',
+    ])
+  })
+
+  it('一个 phase 两张 e2e 票 → multiple-e2e-tickets', () => {
+    writeSpec('.scratch/20260917/p1/spec.md')
+    writeTicket('.scratch/20260917/p1/spec.md', '01-api.md', API_TICKET)
+    writeTicket('.scratch/20260917/p1/spec.md', '05-e2e-a.md', E2E_TICKET)
+    writeTicket('.scratch/20260917/p1/spec.md', '06-e2e-b.md', E2E_TICKET)
+
+    expect(run([phase()], BATCH_FLOW, { enqueueChecks: true }).missing).toEqual([
+      'phase:1:multiple-e2e-tickets',
+    ])
+  })
+
+  it('非末 phase 出现 e2e 票 → e2e-not-final-phase', () => {
+    writeSpec('.scratch/20260917/p1/spec.md')
+    writeTicket('.scratch/20260917/p1/spec.md', '01-api.md', API_TICKET)
+    writeTicket('.scratch/20260917/p1/spec.md', '05-e2e-a.md', E2E_TICKET)
+    writeSpec('.scratch/20260917/p2/spec.md')
+    writeTicket('.scratch/20260917/p2/spec.md', '01-api.md', API_TICKET)
+    writeTicket('.scratch/20260917/p2/spec.md', '05-e2e-a.md', E2E_TICKET)
+
+    const { missing } = run(
+      [
+        phase(),
+        phase({ index: 2, slug: 'p2', specPath: '.scratch/20260917/p2/spec.md' }),
+      ],
+      BATCH_FLOW,
+      { enqueueChecks: true },
+    )
+
+    expect(missing).toEqual(['phase:1:e2e-not-final-phase'])
+  })
+
+  it('末 phase 才产 e2e 票（前序 phase unit-only）→ 通过', () => {
+    writeSpec(
+      '.scratch/20260917/p1/spec.md',
+      '# spec\n\n## Verification\nVerification Tier: unit-only\n',
+    )
+    writeTicket('.scratch/20260917/p1/spec.md', '01-api.md', API_TICKET)
+    writeSpec('.scratch/20260917/p2/spec.md')
+    writeTicket('.scratch/20260917/p2/spec.md', '05-e2e-a.md', E2E_TICKET)
+
+    const { missing } = run(
+      [
+        phase(),
+        phase({ index: 2, slug: 'p2', specPath: '.scratch/20260917/p2/spec.md' }),
+      ],
+      BATCH_FLOW,
+      { enqueueChecks: true },
+    )
+
+    expect(missing).toEqual([])
+  })
+
+  it('launch 重解析（enqueueChecks 缺省）不产出新键 —— 历史在队任务不被牵连', () => {
+    writeSpec('.scratch/20260917/p1/spec.md')
+    writeTicket('.scratch/20260917/p1/spec.md', '04-web.md', BROWSER_TICKET)
+    writeTicket('.scratch/20260917/p1/spec.md', '05-e2e-a.md', E2E_TICKET)
+
+    expect(run([phase()], BATCH_FLOW).missing).toEqual([])
   })
 })
 

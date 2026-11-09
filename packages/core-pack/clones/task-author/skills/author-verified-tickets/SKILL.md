@@ -48,6 +48,13 @@ Apply in order; cite as ①–④.
 
 一个 phase 只容得下**一张** `NN-e2e-*` 走查票，且**只给末 phase 产**。功能票不起浏览器、不做故事走查 —— UI 的渲染与交互断言收编为走查步，功能票验到 API 响应 + DB 直查为止；写了 browser E2E 就是与走查票双跑。
 
+功能票的 `manual` 只允许**非浏览器**的契约核对；「手动清单（浏览器）」「打开页面点一遍」「Playwright/截图」这类写法同样禁止 —— 执行 agent 照做就会起浏览器。ready 前自检（v4 入队 gate 会硬拦 `browser-in-feature-ticket`）：
+
+```bash
+grep -lEi '浏览器|playwright|puppeteer|chromium|selenium|screenshot' issues/*.md | grep -viE -- '-e2e-'
+# 必须为空；非空 → 把这些步骤移进末张 NN-e2e-* 票，功能票只留 API/DB 断言
+```
+
 走查票**是声明，不是开发票**：只写「动作 → 断言」，禁写「编写 Playwright 套件 / 补全量 E2E / 跑全量回归」—— 真起浏览器、选什么框架归 `e2e-verify` 节点（几何见 `task-author`「验证声明」）。它不进 ticket-dag；绑自己按 DAG 跑票的流时它就是普通票、`Blocked by` 是真依赖，两种流票面写法不变。
 
 中间 phase 不产票，改在 spec 写 `Verification Tier: unit-only` 让节点整轮跳过（单节点 25min+），正确性由票的 unit/integration + code-review 兜底；攒下的验收面并进末 phase 那张。模式随验收面自动选：有 UI → browser 走查，无 UI → API 级走查（curl + sqlite + 手算，不给不存在的页面烧成本；spec 显式拍板不做浏览器 E2E 时同样降级，但功能票那条禁令无条件）。既不产票又不写 `unit-only` → 入队 gate 409 `no-final-verification`。

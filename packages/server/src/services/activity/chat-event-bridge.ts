@@ -285,10 +285,6 @@ class ChatEventBridge {
     if (!taskId || !this.db) return
     const status = String(data.status ?? "")
     if (!status) return
-    // One card per TRANSITION. SSE repeats the current status on several
-    // channels; a second episode of 'running' (next phase) must still card.
-    if (this.lastTaskStatus.get(taskId) === status) return
-    this.lastTaskStatus.set(taskId, status)
 
     let row: {
       name?: string
@@ -327,6 +323,15 @@ class ChatEventBridge {
     } catch {
       /* no executions table — fine */
     }
+
+    // One card per TRANSITION **per execution episode**. SSE repeats the current
+    // status on several channels → dedupe. But v4 keeps the persisted row at
+    // 'running' across 验收, so the next phase dispatches a forced `running`
+    // frame that is a genuinely new episode (new execution row) — a status-only
+    // key swallowed it and phase 2 never got its「任务开始执行」card (2026-11-09).
+    const cardKey = `${status}:${latest?.id ?? ""}`
+    if (this.lastTaskStatus.get(taskId) === cardKey) return
+    this.lastTaskStatus.set(taskId, cardKey)
 
     const high: ActivityKind | null =
       status === "done" ? "task.completed"

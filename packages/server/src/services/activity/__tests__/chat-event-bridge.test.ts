@@ -183,6 +183,68 @@ describe("ChatEventBridge.requestWorkflowRunCard — chat 里的 run_workflow", 
   })
 })
 
+describe("ChatEventBridge.handleTaskStatus — 每个执行 episode 一张卡", () => {
+  let db: Database.Database
+
+  function insertExecution(id: string, taskId: string, phaseIndex: number): void {
+    const now = new Date().toISOString()
+    db.prepare(
+      `INSERT INTO executions (id, workspace_id, workflow_ref, workflow_name, status, phase_index, round_index, task_id, created_at, updated_at)
+       VALUES (?, 'ws-1', 'built-in/matt-spec-dev', 'matt-spec-dev', 'running', ?, 1, ?, ?, ?)`,
+    ).run(id, phaseIndex, taskId, now, now)
+  }
+
+  const statusCards = () =>
+    cards(db, "s-main").filter((c) => {
+      const activity = c.activity as { kind?: string } | undefined
+      return activity?.kind === "task.status" || activity?.kind === "task.completed"
+    })
+
+  beforeEach(() => {
+    db = new Database(":memory:")
+    applySchema(db)
+    resetChatEventBridgeForTests()
+    getChatEventBridge().attach(db)
+    const now = new Date().toISOString()
+    db.prepare(
+      "INSERT INTO workspaces (id, name, path, created_at, updated_at) VALUES ('ws-1', 'ws', 'C:/ws', ?, ?)",
+    ).run(now, now)
+    insertSession(db, "s-main", null)
+    insertTask(db, "t-1", "s-main")
+  })
+
+  afterEach(() => {
+    db?.close()
+    resetChatEventBridgeForTests()
+  })
+
+  it("同 execution 的重复 running 帧只落一张卡", () => {
+    insertExecution("exec-p1", "t-1", 1)
+    const bridge = getChatEventBridge()
+    bridge.handleSse({ event: "task_status", data: { task_id: "t-1", status: "running" } })
+    bridge.handleSse({ event: "task_status", data: { task_id: "t-1", status: "running" } })
+    expect(statusCards()).toHaveLength(1)
+  })
+
+  it("v4 验收后持久状态仍 running：下一 phase 的新 execution 必须再落一张「任务开始执行」", () => {
+    insertExecution("exec-p1", "t-1", 1)
+    const bridge = getChatEventBridge()
+    bridge.handleSse({ event: "task_status", data: { task_id: "t-1", status: "running" } })
+
+    // 验收期间持久行一直是 running —— 没有 ready/awaiting 之类的状态帧
+    db.prepare("UPDATE executions SET status = 'completed' WHERE id = 'exec-p1'").run()
+    insertExecution("exec-p2", "t-1", 2)
+    bridge.handleSse({ event: "task_status", data: { task_id: "t-1", status: "running" } })
+
+    const list = statusCards()
+    expect(list).toHaveLength(2)
+    const latest = list[1].activity as { title?: string; executionId?: string; payload?: { phaseIndex?: number } }
+    expect(latest.title).toBe("任务开始执行")
+    expect(latest.executionId).toBe("exec-p2")
+    expect(latest.payload?.phaseIndex).toBe(2)
+  })
+})
+
 describe("ChatEventBridge.requestAcceptanceGuide", () => {
   let db: Database.Database
   let originalFetch: typeof fetch

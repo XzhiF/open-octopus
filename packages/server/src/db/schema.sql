@@ -355,6 +355,22 @@ CREATE TABLE IF NOT EXISTS llm_calls (
   FOREIGN KEY (node_execution_id) REFERENCES node_executions(id)
 );
 
+-- 11b. Session provider usage baseline (2026-11-09 token 账本修复)
+-- Claude Agent SDK 的 result.modelUsage 是**跨 turn 的会话累计**（SDK 文档：
+-- 「cumulative across turns in streaming-input sessions — read the latest result
+-- rather than summing across results」）。每轮把它当本轮用量落账 = 整段会话被
+-- 重复记 N 遍（真机：一个 chat 记账 87M cache-read，真实累计只有 11M）。
+-- 落账方要差分成增量，就必须记住「上一份累计快照」—— 一会话一行，进程重启
+-- 也在；provider 会话 id 变化（/clear、重开会话）= 累计从头开始，基线归零。
+-- 刻意不做 FK（同 llm_calls.session_id）：账本旁路不得因会话行缺失而失败。
+CREATE TABLE IF NOT EXISTS session_provider_usage (
+  session_id          TEXT PRIMARY KEY,
+  provider_session_id TEXT,
+  -- JSON: { [model]: { inputTokens, outputTokens, cacheReadTokens, cacheCreationTokens } }
+  usage               TEXT NOT NULL,
+  updated_at          TEXT NOT NULL
+);
+
 -- 12. Optimization Suggestions
 CREATE TABLE IF NOT EXISTS optimization_suggestions (
   id TEXT PRIMARY KEY,

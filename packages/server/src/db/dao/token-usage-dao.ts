@@ -192,6 +192,69 @@ export class TokenUsageDAO extends BaseDAO {
     ).all(sessionId, fromMs, toMs) as LlmCallCostedRow[]
   }
 
+  // ── session_provider_usage：跨 turn 累计用量的差分校准点 ──────────────
+
+  /** 会话上一份 provider 累计快照（无 → null）。 */
+  getSessionUsageBaseline(
+    sessionId: string,
+  ): { providerSessionId: string | null; usage: Record<string, TokenUsage> } | null {
+    const row = this.stmt(
+      "SELECT provider_session_id, usage FROM session_provider_usage WHERE session_id = ?",
+    ).get(sessionId) as { provider_session_id: string | null; usage: string } | undefined
+    if (!row) return null
+    try {
+      return {
+        providerSessionId: row.provider_session_id,
+        usage: JSON.parse(row.usage) as Record<string, TokenUsage>,
+      }
+    } catch {
+      return null
+    }
+  }
+
+  /** 覆盖写会话累计快照（一会话一行）。 */
+  upsertSessionUsageBaseline(
+    sessionId: string,
+    providerSessionId: string | null,
+    usage: Record<string, TokenUsage>,
+  ): void {
+    this.stmt(`
+      INSERT INTO session_provider_usage (session_id, provider_session_id, usage, updated_at)
+      VALUES (?, ?, ?, ?)
+      ON CONFLICT(session_id) DO UPDATE SET
+        provider_session_id = excluded.provider_session_id,
+        usage = excluded.usage,
+        updated_at = excluded.updated_at
+    `).run(sessionId, providerSessionId, JSON.stringify(usage), new Date().toISOString())
+  }
+
+  /**
+   * 升级兼容：本修复前聊天行是「每轮一份累计快照」（不是增量）。首次遇到
+   * 无基线行的老会话时，按模型取各字段 MAX 当起点 —— 否则升级后的第一轮
+   * 会把整段会话的累计再记一遍。只认聊天行（execution_id IS NULL）；执行行
+   * 是真正的增量账，混进来会抬高起点。
+   */
+  maxChatUsageByModel(sessionId: string): Record<string, TokenUsage> {
+    const rows = this.stmt(`
+      SELECT model,
+             MAX(input_tokens) AS i, MAX(output_tokens) AS o,
+             MAX(cache_read_tokens) AS cr, MAX(cache_creation_tokens) AS cc
+      FROM llm_calls
+      WHERE session_id = ? AND execution_id IS NULL
+      GROUP BY model
+    `).all(sessionId) as Array<{ model: string | null; i: number; o: number; cr: number; cc: number }>
+    const out: Record<string, TokenUsage> = {}
+    for (const r of rows) {
+      out[r.model ?? "unknown"] = {
+        inputTokens: r.i ?? 0,
+        outputTokens: r.o ?? 0,
+        cacheReadTokens: r.cr ?? 0,
+        cacheCreationTokens: r.cc ?? 0,
+      }
+    }
+    return out
+  }
+
   /**
    * 执行级总量 —— token 总量仍以 ntu 为账（运行中逐轮累加，与 steps/REST 终态同源，
    * C3/Q4 的「运行中↔完成跳变根除」结论不变）；NEW-r2 起 **cost 改从 llm_calls

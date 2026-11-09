@@ -202,3 +202,73 @@ describe("recordProviderResultUsage —— result chunk 入账各分支", () => 
     }
   })
 })
+
+describe("recordProviderResultUsage —— 累计 modelUsage 差分成增量（Claude SDK cumulative）", () => {
+  const base = {
+    sourcePath: "global_chat" as LlmCallSourcePath,
+    nodeExecutionId: null, executionId: null, sessionId: "s-cum",
+    startedAtMs: Date.now() - 500,
+    cumulative: true,
+    providerSessionId: "ps-1",
+  }
+  const opus = (inputTokens: number, outputTokens: number, cacheReadTokens: number) =>
+    [{ model: "opus", inputTokens, outputTokens, cacheReadTokens }]
+  const rows = () =>
+    db.prepare("SELECT model, input_tokens, output_tokens, cache_read_tokens FROM llm_calls ORDER BY rowid")
+      .all() as Array<{ model: string; input_tokens: number; output_tokens: number; cache_read_tokens: number }>
+  const sum = () =>
+    db.prepare(`SELECT COALESCE(SUM(input_tokens),0) i, COALESCE(SUM(output_tokens),0) o,
+      COALESCE(SUM(cache_read_tokens),0) cr FROM llm_calls`).get() as { i: number; o: number; cr: number }
+
+  it("连续 result 同一 provider 会话：只记增量，合计 = 末轮累计（不再重复相加）", () => {
+    recordProviderResultUsage({ ...base, modelUsages: opus(100, 10, 1000) }, dao)
+    recordProviderResultUsage({ ...base, modelUsages: opus(130, 25, 1800) }, dao)
+
+    expect(rows()).toEqual([
+      { model: "opus", input_tokens: 100, output_tokens: 10, cache_read_tokens: 1000 },
+      { model: "opus", input_tokens: 30, output_tokens: 15, cache_read_tokens: 800 },
+    ])
+    expect(sum()).toEqual({ i: 130, o: 25, cr: 1800 })
+  })
+
+  it("基线落库：换 DAO 实例（模拟进程重启）后首轮仍只记增量", () => {
+    recordProviderResultUsage({ ...base, modelUsages: opus(100, 10, 1000) }, dao)
+    const freshProcessDao = new TokenUsageDAO(db)
+    recordProviderResultUsage({ ...base, modelUsages: opus(140, 12, 1200) }, freshProcessDao)
+    expect(sum()).toEqual({ i: 140, o: 12, cr: 1200 })
+  })
+
+  it("provider 会话轮换（/clear）：累计从头开始，新快照整份入账", () => {
+    recordProviderResultUsage({ ...base, modelUsages: opus(100, 10, 1000) }, dao)
+    recordProviderResultUsage({ ...base, providerSessionId: "ps-2", modelUsages: opus(40, 5, 100) }, dao)
+
+    expect(rows().map((r) => r.input_tokens)).toEqual([100, 40])
+    expect(sum()).toEqual({ i: 140, o: 15, cr: 1100 })
+    expect(dao.getSessionUsageBaseline("s-cum")?.providerSessionId).toBe("ps-2")
+  })
+
+  it("升级前老会话（无基线行）：按历史聊天行的 MAX 起步，不把整段会话再记一遍", () => {
+    // 老行为：每轮一份累计快照直接落账
+    recordLlmCall(fullInput({ id: "legacy-1", sourcePath: "global_chat", sessionId: "s-cum", model: "opus", usage: { inputTokens: 100, outputTokens: 10, cacheReadTokens: 1000, cacheCreationTokens: 0 } }), dao)
+    recordLlmCall(fullInput({ id: "legacy-2", sourcePath: "global_chat", sessionId: "s-cum", model: "opus", usage: { inputTokens: 150, outputTokens: 12, cacheReadTokens: 1500, cacheCreationTokens: 0 } }), dao)
+
+    recordProviderResultUsage({ ...base, modelUsages: opus(180, 20, 1900) }, dao)
+
+    expect(rows().at(-1)).toMatchObject({ model: "opus", input_tokens: 30, output_tokens: 8, cache_read_tokens: 400 })
+    expect(sum()).toEqual({ i: 280, o: 30, cr: 2900 }) // 老两行 250/22/2500 + 增量
+  })
+
+  it("无 cumulative 标记（Pi 等每轮值 provider）：逐 chunk 原样入账，不差分", () => {
+    const perTurn = { ...base, cumulative: undefined }
+    recordProviderResultUsage({ ...perTurn, modelUsages: opus(100, 10, 1000) }, dao)
+    recordProviderResultUsage({ ...perTurn, modelUsages: opus(160, 30, 1200) }, dao)
+    expect(sum()).toEqual({ i: 260, o: 40, cr: 2200 })
+  })
+
+  it("cumulative 但只剩 usage（无 modelUsages）：usage 是 per-turn，原样入账", () => {
+    const usage = { inputTokens: 50, outputTokens: 5, cacheReadTokens: 0, cacheCreationTokens: 0 }
+    recordProviderResultUsage({ ...base, usage }, dao)
+    recordProviderResultUsage({ ...base, usage }, dao)
+    expect(sum()).toEqual({ i: 100, o: 10, cr: 0 })
+  })
+})

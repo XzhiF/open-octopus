@@ -255,7 +255,7 @@ const DEFAULT_BACKGROUND_WAIT_TIMEOUT_MS = 60 * 60_000
 
 function buildResultErrorChunk(
   rm: SDKResultErrorLike,
-  extra?: { usage?: TokenUsage; modelUsages?: ModelUsage[] },
+  extra?: { usage?: TokenUsage; modelUsages?: ModelUsage[]; modelUsagesCumulative?: boolean },
 ): MessageChunk {
   return {
     type: 'error',
@@ -270,6 +270,7 @@ function buildResultErrorChunk(
     // that DID complete — dropping them is how chat stops used to lose usage.
     usage: extra?.usage,
     modelUsages: extra?.modelUsages,
+    modelUsagesCumulative: extra?.modelUsagesCumulative,
   }
 }
 
@@ -1342,11 +1343,15 @@ export class ClaudeSDKProvider implements IAgentProvider {
                 costUsd: rm.total_cost_usd || undefined,
                 numTurns: rm.num_turns,
                 modelUsages,
+                // SDK 文档：result.modelUsage 在 streaming-input / resume 会话里是
+                // 跨 turn 的累计 —— 落账方必须差分成增量，不能逐轮相加。
+                modelUsagesCumulative: true,
               }
             } else {
               yield buildResultErrorChunk(rm, {
                 usage: mergeModelUsages(modelUsages),
                 modelUsages,
+                modelUsagesCumulative: true,
               })
             }
           } else {

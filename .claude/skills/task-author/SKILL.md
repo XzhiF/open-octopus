@@ -157,6 +157,7 @@ version: 3.5.2
 - **走查层**：有「单测够不着」的整链路用户可见行为 → 产末张 `NN-e2e-*` 票。模式随验收面自动选：含 UI → browser 走查；纯后端（API/DB/CLI 态）→ API 级走查。跨仓复用任务在票里加「消费方契约探针」断言真复用非就地重写。票面形状与零实现工作量纪律见 author-verified-tickets ③④。
 - **`unit-only` 层**：验收面被功能票的 unit / integration(API↔DB) / contract 测完整覆盖（典型＝纯重构、薄后端切片、内部 util、无新增用户可见行为）→ **不产走查票**，在 `spec.md` 写一行 `Verification Tier: unit-only`，gate 靠它放行、e2e-verify 节点整体跳过。
 - **集中走查**：需要端到端证据但本 phase 不是末站 → 判 `unit-only`，把该验收面并进末 phase 那张票的走查步（≤8 步预算内）。安全侧「宁可产票」只适用于末 phase（那是唯一走查载体，缺了就真没人验）。
+- **功能票无条件禁浏览器**：功能票的 Verification Method 只写 unit / integration(API↔DB) / contract / 非浏览器的 API 直查；「手动清单（浏览器）」「打开页面点一遍」同样禁止。UI 断言一律进末张走查票，中间 phase 不产 e2e 票。入队 gate 会硬拦 `browser-in-feature-ticket` / `e2e-not-final-phase` / `multiple-e2e-tickets`。
 - 判据是「验收面是否需要端到端证据」，不是「图省事」。
 
 **覆盖 matt 惯例的两处差异**：① 不执行其 Execution Decisions 出口 gate（走查跑不跑、模式、并发度由看板与用户决定，你别多问一轮）；② `docs/adr/` 与 `context-notes.md` 落 task home，不落 project。
@@ -251,9 +252,9 @@ curl -s -X PUT "http://localhost:$PORT/api/tasks/$TASK_ID" \
 curl -s -X POST "http://localhost:$PORT/api/tasks/$TASK_ID/ready" | jq .
 ```
 
-v4 gate 四项：`phases≥1 ∧ 每 phase specPath 文件存在 ∧ 每 phase workflowRef 可解析 ∧ required inputs 非空`；第五项只对批次消费型流（读 `spec.md`+`issues/` 当执行计划的那族，如 matt-spec-dev）：每 phase「验证声明」二选一 —— `issues/` 有末张 `*-e2e-*` 票，或 spec.md 写 `Verification Tier: unit-only`，两者都无 → 409。自建流等不消费批次的流不受此检。无 goal/ac 检查。不过 → `409 { missing: ["phase:<i>:<why>"] }`；过 → **仅置 ready，不产生任何 schedules 行**（ADR-0021 票03）：跑什么由内置 task-lifecycle job 起轮时按 `task_spec.phases[]` 现推。
+v4 gate 四项：`phases≥1 ∧ 每 phase specPath 文件存在 ∧ 每 phase workflowRef 可解析 ∧ required inputs 非空`；第五项只对批次消费型流（读 `spec.md`+`issues/` 当执行计划的那族，如 matt-spec-dev）：每 phase「验证声明」二选一 —— `issues/` 有末张 `*-e2e-*` 票，或 spec.md 写 `Verification Tier: unit-only`，两者都无 → 409。**入队路径另查「单一归属」几何**（launch 重解析不查，历史在队任务不受影响）：非末 phase 不得有 e2e 票、每 phase 至多一张 e2e 票、功能票（非 `*-e2e-*`）的 Verification Method 不得出现浏览器步骤。自建流等不消费批次的流不受此检。无 goal/ac 检查。不过 → `409 { missing: ["phase:<i>:<why>"] }`；过 → **仅置 ready，不产生任何 schedules 行**（ADR-0021 票03）：跑什么由内置 task-lifecycle job 起轮时按 `task_spec.phases[]` 现推。
 
-missing 词表（逐项补齐后重发）：`phase:0:no-phases` ｜ `phase:<i>:spec-missing`（产 spec）｜ `phase:<i>:workflow-ref`（重绑可解析 ref）｜ `phase:<i>:input:<name>`（补表单值）｜ `phase:<i>:no-final-verification`（补验证声明）｜ `runbook`。
+missing 词表（逐项补齐后重发）：`phase:0:no-phases` ｜ `phase:<i>:spec-missing`（产 spec）｜ `phase:<i>:workflow-ref`（重绑可解析 ref）｜ `phase:<i>:input:<name>`（补表单值）｜ `phase:<i>:no-final-verification`（补验证声明）｜ `phase:<i>:browser-in-feature-ticket:<票文件>`（浏览器步骤移进末张 e2e 票）｜ `phase:<i>:e2e-not-final-phase`（中间 phase 改 `Verification Tier: unit-only`）｜ `phase:<i>:multiple-e2e-tickets`（每 phase 只留一张）｜ `runbook`。
 
 > **入队前自查（server gate 不检，K5 纪律）**：拆分卡「依赖前序」列引用的 batch slug 全部真实存在于 `.scratch/<main-slug>/` 下 —— 衔接信道按存在性过滤，引用不存在的 slug = 下游静默缺一角，要到 phase 跑起来才暴露。
 

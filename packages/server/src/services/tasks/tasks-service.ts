@@ -2845,6 +2845,12 @@ export class TasksService {
    *       ${phase.spec_dir}/${task.home}/${task_artifacts_dir}); unknown or
    *       empty-resolving placeholders surface as `phase:<i>:input:<key>`
    *       too (never a 500 — v3 AC3 discipline inherited).
+   *    ④ 批次消费型流（matt-spec-dev）的验证声明 —— issues/ 有 `*-e2e-*` 票或
+   *       spec 写 `Verification Tier: unit-only`，都没有 → `no-final-verification`。
+   *       入队路径（enqueueChecks）再查「单一归属」几何：非末 phase 有 e2e 票 →
+   *       `e2e-not-final-phase`；一 phase 多张 e2e 票 → `multiple-e2e-tickets`；
+   *       功能票 Verification Method 写浏览器步骤 → `browser-in-feature-ticket:<file>`
+   *       （author-verified-tickets ③；否则与 e2e-verify 双跑）。
    *  Checks ① and ② run independently so the UI sees every defect at once;
    *  ③ only runs when ② hit (no workflow content to parse otherwise). A phase
    *  that passes all checks yields a {@link TaskV4PhaseConfig} for the

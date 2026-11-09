@@ -797,6 +797,8 @@ export function createCloneSessionRoutes(deps: CloneSessionRouteDeps): Hono {
                   startedAtMs: turnStartMs,
                   modelUsages: chunk.modelUsages,
                   usage: chunk.usage,
+                  cumulative: chunk.modelUsagesCumulative,
+                  providerSessionId: chunk.sessionId ?? null,
                   fallbackModel: model ?? cloneDef.config?.model ?? null,
                 }, tokenUsageDao)
               }
@@ -817,6 +819,8 @@ export function createCloneSessionRoutes(deps: CloneSessionRouteDeps): Hono {
                   startedAtMs: turnStartMs,
                   modelUsages: chunk.modelUsages,
                   usage: chunk.usage,
+                  cumulative: chunk.modelUsagesCumulative,
+                  providerSessionId: chunk.sessionId ?? null,
                   fallbackModel: model ?? cloneDef.config?.model ?? null,
                   stopReason: ledgerStopReason(chunk.sdkTerminalReason),
                 }, tokenUsageDao)

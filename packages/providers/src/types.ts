@@ -239,7 +239,20 @@ export type MessageChunk =
   /** 子代理生命周期 / 操作日志（作业坞「子代理」入口的数据源）。 */
   | { type: 'subagent'; event: SubagentEvent }
   | { type: 'context_usage'; data: ContextUsageData }
-  | { type: 'result'; content?: string; sessionId?: string; usage?: TokenUsage; costUsd?: number; numTurns?: number; modelUsages?: ModelUsage[] }
+  | {
+      type: 'result'
+      content?: string
+      sessionId?: string
+      usage?: TokenUsage
+      costUsd?: number
+      numTurns?: number
+      modelUsages?: ModelUsage[]
+      /** true = `modelUsages` 是**跨 turn 的会话累计**（不是本轮增量）。
+       *  Claude SDK 的 result.modelUsage 就是这个语义（「read the latest result
+       *  rather than summing across results」）；落账方必须按持久化基线取增量，
+       *  直接把每轮快照相加会把整段会话重复记 N 遍。Pi 等 provider 缺省 = 本轮。 */
+      modelUsagesCumulative?: boolean
+    }
   | {
       type: 'error'
       code: string
@@ -256,6 +269,8 @@ export type MessageChunk =
        *  turn is interrupted after completed model calls — never drop them. */
       usage?: TokenUsage
       modelUsages?: ModelUsage[]
+      /** 同 result：true = `modelUsages` 为跨 turn 的会话累计（Claude SDK）。 */
+      modelUsagesCumulative?: boolean
     }
   | ActiveGoalChunk
 
