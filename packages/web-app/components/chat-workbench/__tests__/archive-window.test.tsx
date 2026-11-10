@@ -153,6 +153,20 @@ describe("ArchiveWindow — 只读明细（v2 页签）", () => {
           ],
           warnings: ["日期常青自纠一轮"],
         },
+        // 服务端活列表：仍 open 的 finding（已裁决的不会出现在这里）。
+        findings: [
+          {
+            id: "fnd-9ba5118",
+            kind: "contradiction",
+            status: "open",
+            title: "矛盾：entities/ent-a.md ↔ topics/top-b.md",
+            detail: {},
+            pages: ["entities/ent-a.md", "topics/top-b.md"],
+            rawRef: "raw/archives/task-t1/07-archive-summary.md",
+            source: "compile",
+            createdAt: "2026-10-31T12:02:00.000Z",
+          },
+        ],
         case_results: [
           {
             queue_task_id: "caw-t1-01",
@@ -209,6 +223,40 @@ describe("ArchiveWindow — 只读明细（v2 页签）", () => {
     expect(screen.getByText(/occurrence 1 → 2/)).toBeTruthy()
     expect(screen.getByText("cases/2026-10-27-case-acc38e5918.md")).toBeTruthy()
     expect(screen.getByText(/CASE_ARCHIVE_FAILED: wiki lock held/)).toBeTruthy()
+  })
+
+  // 2026-11-10 用户：「我采纳了之后，归档弹窗那里还是提示有矛盾」。窗口当时拿
+  // wiki_result.finding_ids（编译时快照）当现状。现在「待裁决」以服务端活列表
+  // （knowledge.findings）为准：全部裁决后如实转为「已全部裁决」。
+  it("finding 已全部裁决 → 矛盾待裁决归零，如实显示已全部裁决", async () => {
+    mockGetTaskArchive.mockResolvedValue(payload({
+      knowledge: {
+        ...payload().knowledge!,
+        findings: [],
+        wiki_result: {
+          status: "committed",
+          started_at: "2026-10-31T12:00:10.000Z",
+          finished_at: "2026-10-31T12:02:20.000Z",
+          commit: "5a5a6690abc",
+          changed: true,
+          deduped: false,
+          created: 1,
+          updated: 0,
+          contradictions: 1,
+          finding_ids: ["fnd-9ba5118"],
+          touched: [{ path: "entities/ent-a.md", type: "entity", created: true }],
+          warnings: [],
+        },
+      },
+    }))
+    render(<ArchiveWindow task={task("done")} />)
+
+    expect(await screen.findByText("知识已落库")).toBeTruthy()
+    expect(screen.getByText(/1 页：更新 0 · 新建 1 · 矛盾已全部裁决/)).toBeTruthy()
+
+    await openTab("knowledge")
+    expect(screen.getByTestId("archive-wiki-findings-resolved").textContent).toContain("1 处矛盾已全部裁决")
+    expect(screen.queryByTestId("archive-wiki-findings")).toBeNull()
   })
 
   it("编译中 / 失败：概览有实时盒，知识落点页签给原因", async () => {

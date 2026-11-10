@@ -482,6 +482,7 @@ export class TaskThreadService {
         "  6. 归档失败：说清是哪个 project、什么原因；用户明确说「重试」→ retry_archive(confirmed=true)。",
         "  7. 若 preflight 提示有未提交改动：问用户「纳入归档」还是「排除并记录」，明确表态后调 resolve_archive_delta(decision, confirmed=true)；不要自己决定。",
         "  8. 不要声称已完成 —— done 由服务端在全部 project 的 git 同步成功后才写入。",
+        "  9. 两阶段纪律：done 只判定 git；知识沉淀（素材包编译）可能延续到 done 之后几分钟，编译若产生断言矛盾会另发 finding 卡 —— 那是归档的第二阶段，不是 done 返工。done 之后才冒出的 finding 也按同样方式逐条问、逐条裁决。",
       ] : []
       const consentLines = extra.archiveConsent ? [
         "[归档确认] 末 phase 已通过，任务停在「待归档」(awaiting_archive)，归档尚未启动。",
@@ -533,7 +534,7 @@ export class TaskThreadService {
       playbook: [
         "[身份] 只读回顾。任务已结束/归档，不再改代码或规格。",
         `[任务 home] ${info.taskHome}${info.wsPath ? ` · 执行工作区 ${info.wsPath}` : ""}`,
-        "[归档复盘] 可用 get_archive_state 复述归档结果、冲突与反思；knowledge.findings 是本次编译出的未决矛盾，用户明确表态后可逐条 resolve_wiki_finding；未决反思可按用户明确表态继续 record_reflection_decision 落/跳过。",
+        "[归档复盘] 可用 get_archive_state 复述归档结果、冲突与反思；knowledge.findings 是归档第二阶段（知识沉淀编译）产生的未决矛盾，不是 done 的返工；用户明确表态后可逐条 resolve_wiki_finding；未决反思可按用户明确表态继续 record_reflection_decision 落/跳过。",
         "[归档增补] 用户要补充/修正归档内容时，用 record_archive_amendment(confirmed=true) 追加只增不改的记录（可选同时落 wiki）；不要改写原报告。",
         "[跟进任务] 用户要再改代码/继续开发时，用 open_followup_task(confirmed=true) 开一个继承 spec 的新任务；旧任务保持 done 不可变，不要在这里写代码。",
       ].join("\n"),

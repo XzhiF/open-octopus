@@ -926,6 +926,23 @@ export interface ArchiveWikiResultWire {
   error?: { code: string; message: string }
 }
 
+/** 归档编译产生的未决矛盾（服务端活投影：已裁决的立刻消失）。
+ *  注意与 `ArchiveWikiResultWire.finding_ids` 区分 —— 那份是**编译时快照**，
+ *  采纳修订后不会变；「待裁决」一律以本列表为准。 */
+export interface ArchiveFindingWire {
+  id: string
+  kind: string
+  severity?: string
+  status: string
+  title: string
+  detail: unknown
+  pages: string[]
+  rawRef: string
+  source: string
+  createdAt: string
+  updatedAt?: string
+}
+
 /** 归档判例入档回执（`archive/case-result.json`；新建 / 并档 / 失败）。 */
 export interface ArchiveCaseResultWire {
   queue_task_id: string
@@ -958,6 +975,9 @@ export interface ArchiveKnowledgeWire {
   compile_error?: { code: string; message: string } | null
   /** 持久编译回执；null/缺省 = 尚未编译完成或旧任务。 */
   wiki_result?: ArchiveWikiResultWire | null
+  /** 本次编译仍 open 的矛盾（活列表；空数组 = 无冲突或已全部裁决）。
+   *  旧服务端可能不返回 —— 那时只能退回 wiki_result.finding_ids（编译时快照）。 */
+  findings?: ArchiveFindingWire[]
   /** 判例入档回执；缺省 = 本次无判例入档（或旧任务）。 */
   case_results?: ArchiveCaseResultWire[]
 }

@@ -308,7 +308,9 @@ export function ArchiveWindow({
     archive.in_flight ||
     task.status === 'archiving' ||
     archive.cleanup_in_flight ||
-    liveCompile
+    liveCompile ||
+    // 有未决矛盾时也快刷：人在别处「采纳修订」后，这里 4s 内就该变成已裁决。
+    (archive.knowledge?.findings?.length ?? 0) > 0
 
   useEffect(() => {
     let alive = true
@@ -413,6 +415,15 @@ export function ArchiveWindow({
   const wikiPageCount = touched.length
   const sortedTouched = [...updatedPages, ...createdPages]
 
+  // 待裁决 = 活列表（采纳/忽略后服务端立刻不再返回）；wiki_result.finding_ids
+  // 是**编译时快照**，采纳之后不会变 —— 不能拿它当现状（2026-11-10 用户：
+  // 「我采纳了之后，归档弹窗那里还是提示有矛盾」）。
+  const openFindings = knowledge?.findings ?? []
+  const openFindingCount = openFindings.length
+  const receiptFindingCount = wikiResult?.finding_ids?.length ?? 0
+  /** 编译当时有矛盾、现在全部裁决完（只对返回了 findings 活列表的新服务端成立）。 */
+  const findingsResolved = !!knowledge?.findings && receiptFindingCount > 0 && openFindingCount === 0
+
   // 判例入档回执（case-archive 独立队列）：新建 / 并档 / 失败。
   const caseResults = knowledge?.case_results ?? []
   const caseCreated = caseResults.filter((r) => r.action === 'created')
@@ -494,7 +505,11 @@ export function ArchiveWindow({
       (wikiResult.deduped
         ? `同包同焦点已编译过（快路径 no-op）· ${formatClock(wikiResult.finished_at)}`
         : `${wikiPageCount} 页：更新 ${wikiResult.updated} · 新建 ${wikiResult.created}` +
-          (wikiResult.contradictions > 0 ? ` · ${wikiResult.contradictions} 条矛盾待裁决` : ' · 无矛盾')) +
+          (openFindingCount > 0
+            ? ` · ${openFindingCount} 条矛盾待裁决`
+            : findingsResolved
+              ? ' · 矛盾已全部裁决'
+              : ' · 无矛盾')) +
       (caseOk > 0 ? ` · 判例入档 ${caseOk}` : '') +
       (caseFailed.length > 0 ? ` · 判例失败 ${caseFailed.length}` : '')
     knowledgeAction = (
@@ -881,7 +896,7 @@ export function ArchiveWindow({
                     <Kpi value={wikiResult.updated} label="更新页" tone="cyan" />
                   </div>
                   <div className="border-t border-pop-bd/70 sm:border-t-0 sm:border-l">
-                    <Kpi value={wikiResult.contradictions} label="矛盾 · 待裁决" tone={wikiResult.contradictions > 0 ? 'amber' : undefined} />
+                    <Kpi value={openFindingCount} label="矛盾 · 待裁决" tone={openFindingCount > 0 ? 'amber' : undefined} />
                   </div>
                   <div className="border-t border-pop-bd/70 sm:border-t-0 sm:border-l">
                     <Kpi value={wikiPageCount} label="触及页" />
@@ -911,26 +926,66 @@ export function ArchiveWindow({
                   </p>
                 )}
 
-                {wikiResult.finding_ids.length > 0 && (
+                {openFindingCount > 0 ? (
                   <div
                     data-testid="archive-wiki-findings"
                     className="mb-2.5 rounded-lg border-[1.5px] border-pop-amber/35 bg-pop-amber/[0.04] px-2.5 py-2"
                   >
                     <div className="flex flex-wrap items-center gap-2">
-                      <b className="font-mono text-[10px] text-pop-amber">矛盾待裁决 · {wikiResult.finding_ids.length}</b>
+                      <b className="font-mono text-[10px] text-pop-amber">矛盾待裁决 · {openFindingCount}</b>
                       <span className="ml-auto font-mono text-[8.5px] font-black text-pop-amber">OPEN</span>
                     </div>
                     <p className="mt-1 text-[9.5px] leading-relaxed text-pop-dim">
-                      新素材与现库断言冲突，旧断言保留原位、未静默覆盖。finding：
-                      <span className="font-mono text-pop-ink/75">{wikiResult.finding_ids.join(' · ')}</span>
+                      新素材与现库断言冲突，旧断言保留原位、未静默覆盖。回主对话对 Agent 说「采纳修订 / 忽略」即可裁决 ——
+                      只影响知识库，不改变任务 done。
                     </p>
+                    <ul className="mt-1 space-y-1">
+                      {openFindings.map((f) => (
+                        <li
+                          key={f.id}
+                          data-testid="archive-wiki-finding-row"
+                          className="flex items-baseline gap-1.5"
+                        >
+                          <span className="shrink-0 rounded-full border border-pop-amber/30 bg-pop-amber/10 px-1.5 py-[1px] font-mono text-[8px] text-pop-amber">
+                            {f.kind}
+                          </span>
+                          <span className="min-w-0 flex-1 truncate text-[9.5px] text-pop-ink/80" title={f.title}>
+                            {f.title}
+                          </span>
+                          <span className="shrink-0 font-mono text-[8.5px] text-pop-dim/70">{f.id}</span>
+                        </li>
+                      ))}
+                    </ul>
                     {onOpenKnowledge && (
                       <button type="button" onClick={onOpenKnowledge} className="mt-1 font-mono text-[9px] text-pop-cyan underline decoration-dotted">
                         去知识中心裁决 ↗
                       </button>
                     )}
                   </div>
-                )}
+                ) : findingsResolved ? (
+                  <div
+                    data-testid="archive-wiki-findings-resolved"
+                    className="mb-2.5 rounded-lg border-[1.5px] border-pop-green/25 bg-pop-green/[0.03] px-2.5 py-2 text-[9.5px] leading-relaxed text-pop-dim"
+                  >
+                    ✓ 编译时发现的 {receiptFindingCount} 处矛盾已全部裁决（wiki LOG 可查；不影响任务 done）。
+                  </div>
+                ) : receiptFindingCount > 0 ? (
+                  // 旧服务端不返回 findings 活列表 —— 如实退回编译回执（快照），
+                  // 不谎称「已裁决」。
+                  <div
+                    data-testid="archive-wiki-findings"
+                    className="mb-2.5 rounded-lg border-[1.5px] border-pop-amber/35 bg-pop-amber/[0.04] px-2.5 py-2"
+                  >
+                    <div className="flex flex-wrap items-center gap-2">
+                      <b className="font-mono text-[10px] text-pop-amber">矛盾待裁决 · {receiptFindingCount}</b>
+                      <span className="ml-auto font-mono text-[8.5px] font-black text-pop-amber">OPEN</span>
+                    </div>
+                    <p className="mt-1 text-[9.5px] leading-relaxed text-pop-dim">
+                      新素材与现库断言冲突，旧断言保留原位、未静默覆盖。finding：
+                      <span className="font-mono text-pop-ink/75">{wikiResult.finding_ids.join(' · ')}</span>
+                    </p>
+                  </div>
+                ) : null}
 
                 <PageGroup title="更新" pages={updatedPages} />
                 <PageGroup title="新建" pages={createdPages} />

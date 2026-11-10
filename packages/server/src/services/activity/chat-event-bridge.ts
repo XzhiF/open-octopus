@@ -594,6 +594,7 @@ class ChatEventBridge {
       "用户说「落 / 跳过 / 都跳过 / 都落」→ 逐条调用 record_reflection_decision(confirmed=true) 执行并回执；不要代替人决定。",
       "若 preflight 被未提交改动拦下（get_archive_state 里 preflight / delta 非空）：用一两句话问用户「纳入归档」还是「排除并记录」，明确表态后调 resolve_archive_delta(decision, confirmed=true)；不要自己决定。",
       "若某个 project 归档失败：说清失败原因；用户明确说「重试」→ retry_archive(confirmed=true)。",
+      "提前把两阶段说清楚（免得用户觉得顺序乱）：git 同步全绿 → 任务先变 done；知识沉淀（素材包编译）仍在后台队列里跑，可能要几分钟，**编译完成若产生断言矛盾会另发 finding 卡请你裁决**——这是归档的第二阶段，不是 done 的返工。",
       "不要声称任务已完成 —— done 由服务端在全部 project 的 git 同步成功后才写入，届时会通知你。",
     ].join("\n")
     void this.wake(
@@ -657,6 +658,8 @@ class ChatEventBridge {
     }
     const message = [
       `[归档完成] 任务 ${taskId} 的全部 project 已归档成功，服务端已把任务状态写为 done。`,
+      "⚠️ 归档完成 ≠ 知识沉淀完成：done 只判定 git 同步；素材包 → wiki 编译仍在后台串行队列里跑（可能还要几分钟），编译完成后若产生断言矛盾，会另发 finding 卡请你裁决。",
+      "播报必须分成两段说清楚：①归档主体已完成（五个仓/PR 状态）；②知识沉淀现在到哪一步（get_archive_state 的 knowledge.compile_state：排队中 / 编译中 / 已编译无矛盾 / 有 N 处矛盾待裁决）。**编译未完成时绝不说「全部完成 / 都好了」**，要明说「知识沉淀还在编译，完成后有矛盾我再单独请你裁决」。",
       "请用一两句向用户播报：同步了哪些 project、术语冲突是否已在 PR 等 review；不要贴表格。",
       "服务端已在后台自动清理各 project worktree 的构建产物（node_modules / target / dist / classes / jar 等；只删 git 忽略且无跟踪文件的目录）。调 get_archive_state 看 cleanup：已完成就顺带播报释放了多少、还剩几个 ignored 目录；仍在 running 就说「后台清理中」。",
       "若用户明确要求清理剩余 ignored 目录：先把 cleanup.projects[].leftovers 的路径列给人确认，再调 clean_archive_leftovers(confirmed=true)；服务端会再次校验，不要自己决定删哪些。",
