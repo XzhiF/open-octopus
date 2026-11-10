@@ -1320,6 +1320,13 @@ class ChatEventBridge {
           },
         }),
       })
+      // 主对话路由的并发闸：上一轮仍在生成/收尾。唤醒事件不能丢，排回队列
+      // 等会话真正空闲再投递（上面的 isStreamActive 预检到 POST 之间有一段
+      // 竞态窗口）。
+      if (response.status === 409) {
+        this.queueWake(target, event, 3_000, opts)
+        return
+      }
       if (response.ok && response.body) {
         const reader = response.body.getReader()
         while (true) {

@@ -388,6 +388,14 @@ export function ChatArea({
       if (streaming) {
         setInput('')
         const take = takeComposerAttachments(text)
+        // 尾随他端回合（resume）时本实例没有可掐的流；后台任务运行中时
+        // Enter 的本来意思是问进度，不是杀掉那个程序。两种都只排队，回合
+        // 收口后 done-flush 自动发出（2026-11-10 用户事故：dev-up.sh 被
+        // Enter 打断，消息本身也被吞掉）。
+        if (resumeTailing || (backgroundTasks?.length ?? 0) > 0) {
+          pushQueue(take.text, take.expert)
+          return
+        }
         if (onSteer) onSteer(take.text, take.opts)
         else onStop()
         return
@@ -996,7 +1004,13 @@ export function ChatArea({
                 ) : queue.length > 0 ? (
                   <span className="truncate" data-tui-hint>⏎ 继续排队 · ⇧⏎ 排队 · esc 退回输入框 <span className="opacity-70">队列 {queue.length}/{TUI_QUEUE_MAX} · done 即发</span></span>
                 ) : streaming ? (
-                  <span className="shrink-0" data-tui-hint>⏎ 打断并接管 · ⇧⏎ 不打断，排队 · esc 打断</span>
+                  <span className="shrink-0" data-tui-hint>
+                    {resumeTailing
+                      ? '⏎ 排队（正在跟随另一窗口的回合，结束即发）'
+                      : bgTasks.length > 0
+                        ? '⏎ 排队（后台任务运行中，结束即发）· esc 停止'
+                        : '⏎ 打断并接管 · ⇧⏎ 不打断，排队 · esc 打断'}
+                  </span>
                 ) : (
                   <span className="shrink-0" data-tui-hint>⏎ 发送 · ⇧⏎ 排队 · Alt⏎ 换行</span>
                 )}

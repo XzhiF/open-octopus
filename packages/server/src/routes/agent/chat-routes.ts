@@ -230,6 +230,19 @@ export function createChatRoutes(deps: ChatRouteDeps): Hono {
       return c.json(createAgentError('NOT_FOUND', `Session ${id} not found`), 404)
     }
 
+    // 同一会话只容一条生成流（2026-11-10 用户事故，克隆路由早有这道闸）：
+    // 上一轮还在跑时再 POST，第二条查询会拿同一个 provider_session_id 并发
+    // resume —— SDK 给出的第一条 result 常常是上一轮累计结果的回放（没有
+    // message_start、没有正文），宿主把它当成本轮终点，用户看到「消息发出去
+    // 了，却没有任何回复」，还得再问一遍。闸放在读入用户消息之前：被弹回的
+    // 消息不落转录，客户端按 STREAM_IN_PROGRESS 转成尾随（或排队补发）。
+    if (isStreamActive(id)) {
+      return c.json(
+        createAgentError('STREAM_IN_PROGRESS', '该会话上一轮回复仍在生成中，请稍候或先停止'),
+        409,
+      )
+    }
+
     // Store user message. Ephemeral wakes (task-thread event cards) reach the
     // model but are NOT persisted — the bridge already wrote the card.
     const userMsgId = crypto.randomUUID()

@@ -23,7 +23,7 @@ import { applySchema } from "../db/schema"
 import { AgentSessionDAO } from "../db/dao"
 import { TokenUsageDAO } from "../db/dao/token-usage-dao"
 import { createChatRoutes } from "../routes/agent/chat-routes"
-import { initAgentService } from "../services/agent/agent-service"
+import { initAgentService, isStreamActive } from "../services/agent/agent-service"
 import * as providers from "@octopus/providers"
 
 const ORG = "E2E_TEST_chat_interrupt"
@@ -35,8 +35,9 @@ const AGENT_DIR = path.join(HOME, "agent")
 
 let db: Database.Database
 let sessionDAO: AgentSessionDAO
-/** 每次 chat 调用消费一个行为：'hang' = 一直吐字直到被停止；'finish' = 正常收尾。 */
-let behaviors: Array<"hang" | "finish">
+/** 每次 chat 调用消费一个行为：'hang' = 一直吐字直到被停止；'finish' = 正常收尾；
+ *  'slow' = 无视 abortSignal 睡 4 秒（模拟收尾慢于 stop 的 3 秒等待窗）。 */
+let behaviors: Array<"hang" | "finish" | "slow">
 
 function installProvider() {
   vi.spyOn(providers, "getProvider").mockImplementation((() => ({
@@ -57,6 +58,12 @@ function installProvider() {
           if (options?.abortSignal?.aborted) break
           yield { type: "text_delta", content: "…" }
         }
+        return
+      }
+      if (mode === "slow") {
+        // 停止后仍要 4 秒才收尾 —— 比 stopChat 的 3 秒等待窗长，复现竞态。
+        yield { type: "text_delta", content: "正在构建…" }
+        await new Promise((r) => setTimeout(r, 4_000))
         return
       }
       yield { type: "text_delta", content: "好的，继续。" }
@@ -198,5 +205,63 @@ describe("main chat — interrupt keeps the session and marks the turn", () => {
     expect(JSON.parse(rows[0].metadata ?? "{}").interrupted).toBe(true)
     expect(rows[1].content).toBe("好的，继续。")
     expect(JSON.parse(rows[1].metadata ?? "{}").interrupted).toBeUndefined()
+  })
+
+  // 2026-11-10 用户事故：上一轮还在跑时再发一条 → 两条 SDK 查询并发 resume
+  // 同一 provider 会话，后一条只拿到上一轮累计 result 的回放（空正文）——
+  // 消息发出去了却没有任何回复。主对话路由现在和克隆路由一样有并发闸，
+  // 且闸在读入用户消息之前（被弹回的消息不落转录）。
+  it("上一轮仍在生成 → 第二条 chat 409，用户消息不落库", async () => {
+    behaviors.push("hang")
+    const first = await chat("跑一个长任务")
+    expect(first.status).toBe(200)
+    const reader = await readUntilFirstDelta(first)
+
+    const second = await chat("起来了吗？")
+    expect(second.status).toBe(409)
+    const body = (await second.json()) as { error: { code: string } }
+    expect(body.error.code).toBe("STREAM_IN_PROGRESS")
+
+    const users = db.prepare(
+      "SELECT content FROM messages WHERE session_id = ? AND role = 'user' ORDER BY created_at ASC",
+    ).all(SESSION) as Array<{ content: string }>
+    expect(users.map((u) => u.content)).toEqual(["跑一个长任务"])
+
+    await stop()
+    try { await reader.cancel() } catch { /* already closed */ }
+  })
+
+  // stop 的 3 秒等待窗超时 ≠ 回合真的结束：路由还在 finalize（provider drain /
+  // quick-edit commit）。此时流必须继续占着注册表 —— 否则客户端 probe 到
+  // running=false 就发下一条，又回到并发 resume 的坑（turn 25/turn 27 事故）。
+  it("停止等待超时、路由仍在收尾 → 新回合仍 409；真正收尾后才放行", { timeout: 20_000 }, async () => {
+    behaviors.push("slow")
+    const first = await chat("启动服务")
+    expect(first.status).toBe(200)
+    const reader = await readUntilFirstDelta(first)
+
+    const stopped = await stop() // 等满 3 秒超时返回；provider 4 秒才收尾
+    expect(stopped.status).toBe(200)
+    expect(isStreamActive(SESSION)).toBe(true)
+
+    const second = await chat("起来了吗？")
+    expect(second.status).toBe(409)
+    const users = db.prepare(
+      "SELECT content FROM messages WHERE session_id = ? AND role = 'user' ORDER BY created_at ASC",
+    ).all(SESSION) as Array<{ content: string }>
+    expect(users.map((u) => u.content)).toEqual(["启动服务"])
+
+    // 旧回合收尾（provider 4 秒结束）→ 注册表清空 → 新回合放行
+    for (let i = 0; i < 40 && isStreamActive(SESSION); i++) {
+      await new Promise((r) => setTimeout(r, 100))
+    }
+    expect(isStreamActive(SESSION)).toBe(false)
+
+    behaviors.push("finish")
+    const third = await chat("现在呢")
+    expect(third.status).toBe(200)
+    await third.text()
+
+    try { await reader.cancel() } catch { /* already closed */ }
   })
 })
