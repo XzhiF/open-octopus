@@ -1136,6 +1136,12 @@ export async function readArtifactManifestFile(taskId: string, ref: string): Pro
   return res.json()
 }
 
+/** 图片产物的原样地址（直接当 `<img src>` 用）—— 文本门按 UTF-8 读二进制必然
+ *  乱码（2026-11-10 用户缺陷），raw 端点与 content 同一扇读门、只服务图片扩展名。 */
+export function artifactManifestRawUrl(taskId: string, ref: string): string {
+  return buildUrl(`/${taskId}/artifacts/manifest/raw`, { path: ref })
+}
+
 /** GET /api/tasks/:id/context — read the workspace context file (context.md)
  *  + the structured task_spec snapshot (manifest.json) + filesystem paths.
  *  Returns { content, path, artifactsDir, homePath, manifestContent, manifestPath }.

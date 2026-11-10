@@ -491,6 +491,33 @@ export function createTasksRoutes(
     }
   })
 
+  // GET /:id/artifacts/manifest/raw?path= — 图片原样预览（<img src> 直连）。
+  // 与 content 同一扇读门（遍历 400 / 越界 403 / 缺文件 404 / 超限 413），
+  // 只放行图片扩展名；文本仍走 /content。
+  router.get("/:id/artifacts/manifest/raw", (c) => {
+    const ref = c.req.query("path")
+    if (!ref || !ref.trim()) {
+      return c.json({ error: "Query param 'path' is required" }, 400)
+    }
+    if (/(^|[\\/:])\.\.($|[\\/])/.test(ref)) {
+      return c.json({ error: `path must not traverse outside: ${ref}` }, 400)
+    }
+    try {
+      const { bytes, mimeType } = service.readArtifactManifestRaw(c.req.param("id"), ref)
+      c.header("Content-Type", mimeType)
+      c.header("Content-Length", String(bytes.length))
+      // 任务产物会随轮次被改写 —— 不做缓存，预览永远现读。
+      c.header("Cache-Control", "no-store")
+      c.header("X-Content-Type-Options", "nosniff")
+      // 直开 SVG 等可执行文档时不给脚本权限（<img> 嵌入本就不执行脚本）。
+      c.header("Content-Security-Policy", "sandbox")
+      return c.body(bytes)
+    } catch (err: unknown) {
+      const { status, message } = classifyError(err)
+      return c.json({ error: message }, status)
+    }
+  })
+
   // ── Context file (workspace state visible to agent) ──────────────────
   // GET /:id/context — read the task's context.md + manifest.json + filesystem
   // paths. The dynamic workspace state file the agent reads when notified via

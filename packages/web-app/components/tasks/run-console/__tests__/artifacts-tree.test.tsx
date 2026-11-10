@@ -13,6 +13,8 @@ vi.mock("@/lib/tasks-api", () => ({
     path,
     content: path.endsWith(".json") ? '{"up":"npm run dev","ok":true}' : "# 契约与落库\n正文",
   })),
+  artifactManifestRawUrl: vi.fn((taskId: string, ref: string) =>
+    `/api/tasks/${taskId}/artifacts/manifest/raw?path=${encodeURIComponent(ref)}`),
 }))
 
 vi.mock("@/components/resource/MarkdownPreview", () => ({
@@ -104,6 +106,20 @@ describe("ArtifactsTab — phase × 轮次", () => {
     expect(screen.getByTestId("md-preview").textContent).toContain("契约与落库")
     const { readArtifactManifestFile } = await import("@/lib/tasks-api")
     expect(readArtifactManifestFile).toHaveBeenCalledWith("t1", SPEC.path)
+  })
+
+  it("图片产物（.png）→ <img> 直连 raw 端点，不走文本门（不再乱码）", async () => {
+    const user = userEvent.setup()
+    const SHOT = item("evidence", "e2e-r2-home.png", "home:.scratch/phone-register/register-flow/evidence/e2e-r2-home.png")
+    render(<ArtifactsTab taskId="t1" body={{ ...BODY, unassigned: [LEGACY, SHOT] }} loading={false} />)
+    await user.click(screen.getByText("e2e-r2-home.png"))
+
+    const img = await screen.findByRole("img", { name: "e2e-r2-home.png" })
+    expect(img.getAttribute("src")).toContain("/api/tasks/t1/artifacts/manifest/raw?path=")
+    expect(img.getAttribute("src")).toContain(encodeURIComponent(SHOT.path))
+    // 文本门一次都不该被调用 —— 那正是乱码的来源。
+    const { readArtifactManifestFile } = await import("@/lib/tasks-api")
+    expect(readArtifactManifestFile).not.toHaveBeenCalled()
   })
 
   it("JSON 产物（runbook.json）：美化 + token 分色高亮", async () => {

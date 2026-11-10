@@ -920,6 +920,29 @@ export interface ArtifactManifestBody {
 
 const MANIFEST_SCRATCH_PREFIX = ".scratch"
 
+/** 图片产物的原样预览（2026-11-10 用户：点图片显示乱码）—— 文本门只能按
+ *  UTF-8 读，二进制在 `<pre>` 里必然是乱码；图片走 raw 端点交给 `<img>`. */
+const MANIFEST_IMAGE_MIME: Record<string, string> = {
+  ".png": "image/png",
+  ".jpg": "image/jpeg",
+  ".jpeg": "image/jpeg",
+  ".gif": "image/gif",
+  ".webp": "image/webp",
+  ".bmp": "image/bmp",
+  ".ico": "image/x-icon",
+  ".svg": "image/svg+xml",
+  ".avif": "image/avif",
+}
+/** 图片原样预览的大小上限（截图常破文本门的 512KB；仍给一个硬顶）。 */
+const MAX_MANIFEST_RAW_BYTES = 20 * 1024 * 1024
+
+/** ref 的扩展名 → 图片 MIME；非图片返回 null（raw 门只服务图片）。 */
+function manifestImageMime(ref: string): string | null {
+  const dot = ref.lastIndexOf(".")
+  if (dot < 0) return null
+  return MANIFEST_IMAGE_MIME[ref.slice(dot).toLowerCase()] ?? null
+}
+
 /** 文件名 → 产物类型。判据单源在 server：前端不反推、不重分组。 */
 function artifactKindOf(rel: string, name: string): ArtifactKind {
   const lower = name.toLowerCase()
@@ -1922,6 +1945,45 @@ export class TasksService {
     taskId: string,
     ref: string,
   ): { path: string; content: string } {
+    const { abs, size } = this.resolveArtifactManifestFile(taskId, ref)
+    if (size > MAX_HOME_FILE_READ_BYTES) {
+      throw new ArtifactAccessError(
+        `manifest file too large to read: ${ref} (${size} > ${MAX_HOME_FILE_READ_BYTES} bytes)`,
+        "TOO_LARGE",
+      )
+    }
+    return { path: ref, content: fs.readFileSync(abs, "utf-8") }
+  }
+
+  /** GET /:id/artifacts/manifest/raw?path=home:… | ws:… — 图片原样预览。
+   *  同一扇读门（遍历/白名单/工作区根/缺文件），只放行图片扩展名（其它 403
+   *  —— 不要把这里变成通用二进制出口），大小上限独立于文本门（截图常 >512KB）。 */
+  readArtifactManifestRaw(
+    taskId: string,
+    ref: string,
+  ): { bytes: Buffer; mimeType: string } {
+    const mimeType = manifestImageMime(ref)
+    if (!mimeType) {
+      throw new ArtifactAccessError(
+        `manifest raw preview serves images only: ${ref}`,
+        "FORBIDDEN",
+      )
+    }
+    const { abs, size } = this.resolveArtifactManifestFile(taskId, ref)
+    if (size > MAX_MANIFEST_RAW_BYTES) {
+      throw new ArtifactAccessError(
+        `manifest file too large to read: ${ref} (${size} > ${MAX_MANIFEST_RAW_BYTES} bytes)`,
+        "TOO_LARGE",
+      )
+    }
+    return { bytes: fs.readFileSync(abs), mimeType }
+  }
+
+  /** content / raw 共用的路径解析与守卫（门形单源，别在两条路由各抄一遍）。 */
+  private resolveArtifactManifestFile(
+    taskId: string,
+    ref: string,
+  ): { abs: string; size: number } {
     const row = this.taskDAO.getById(taskId)
     if (!row) throw new TaskNotFoundError()
     const sep = ref.indexOf(":")
@@ -1959,13 +2021,7 @@ export class TasksService {
     if (!st.isFile()) {
       throw new ArtifactAccessError(`manifest path is not a regular file: ${ref}`, "NOT_FOUND")
     }
-    if (st.size > MAX_HOME_FILE_READ_BYTES) {
-      throw new ArtifactAccessError(
-        `manifest file too large to read: ${ref} (${st.size} > ${MAX_HOME_FILE_READ_BYTES} bytes)`,
-        "TOO_LARGE",
-      )
-    }
-    return { path: ref, content: fs.readFileSync(abs, "utf-8") }
+    return { abs, size: st.size }
   }
 
   /** GET /api/tasks/:id/home-file?path= — 契约修复 (v4 batch spec 审阅面) +

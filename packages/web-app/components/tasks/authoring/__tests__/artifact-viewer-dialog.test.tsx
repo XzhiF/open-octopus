@@ -38,6 +38,8 @@ vi.mock("@/lib/tasks-api", () => {
   return {
     getHomeFile: mockGetHomeFile,
     getArtifactContent: mockGetArtifactContent,
+    artifactManifestRawUrl: (taskId: string, ref: string) =>
+      `/api/tasks/${taskId}/artifacts/manifest/raw?path=${encodeURIComponent(ref)}`,
     ArtifactContentError,
     TaskApiError,
     MAX_HOME_FILE_READ_BYTES: 512_000,
@@ -107,5 +109,17 @@ describe("ArtifactViewerDialog — homeEntry 模式（批次证据）", () => {
     const md = await findAttr("[data-artifact-markdown]")
     expect(md.textContent).toContain("验收台账")
     expect(document.querySelector("[data-artifact-content]")).toBeNull()
+  })
+
+  it("H6: 图片证据（.png）→ <img> 直连 raw 端点，不读文本门（不再乱码）", async () => {
+    const path = ".scratch/20260903/scaffold-1/evidence/e2e-r1-home.png"
+    render(
+      <ArtifactViewerDialog taskId="t1" entry={null} homeEntry={{ path }} onOpenChange={() => {}} />,
+    )
+    const box = await findAttr("[data-artifact-image]")
+    const img = box.querySelector("img")!
+    expect(img.getAttribute("src")).toContain("/api/tasks/t1/artifacts/manifest/raw?path=")
+    expect(img.getAttribute("src")).toContain(encodeURIComponent(`home:${path}`))
+    expect(mockGetHomeFile).not.toHaveBeenCalled()
   })
 })
