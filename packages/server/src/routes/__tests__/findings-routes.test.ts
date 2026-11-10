@@ -117,6 +117,26 @@ describe("GET /findings — 列表契约（状态过滤、camelCase 视图、det
     expect(bad.status).toBe(400)
   })
 
+  // 2026-11-10：主 Chat 的 finding 卡刷新后只带创建快照（open），按卡上 id 定向回填
+  // 活状态——已裁决的必须能取到（否则卡面永远停在「待裁决」）。
+  it("?ids= 定向取：只回请求的 id（不限状态），未知 id 静默跳过", async () => {
+    writePage("concepts/con-a.md", "con-a", "concept", ["knowledge"], [], "## 定义\n\n甲。")
+    writePage("concepts/con-b.md", "con-b", "concept", ["knowledge"], [], "## 定义\n\n乙。")
+    await (app()).request("/patrol", { method: "POST" })
+    const list = (await (await app().request("/findings")).json() as { findings: Array<{ id: string; kind: string }> }).findings
+    expect(list.length).toBeGreaterThanOrEqual(2)
+    const picked = list.slice(0, 2).map(f => f.id)
+
+    // 其中一条先裁决（ignored）——定向取必须回终态，不只是 open 的
+    await app().request(`/findings/${picked[0]}/ignore`, { method: "POST" })
+
+    const res = await app().request(`/findings?ids=${encodeURIComponent(picked.join(",") + ",fnd-0000000000000000")}`)
+    expect(res.status).toBe(200)
+    const body = await res.json() as { findings: Array<{ id: string; status: string }> }
+    expect(body.findings.map(f => f.id)).toEqual(picked)
+    expect(body.findings.find(f => f.id === picked[0])!.status).toBe("ignored")
+  })
+
   it("[忽略] 持久：API 后列表移出 open、进入 ignored；[讨论] 无服务端面（此断言=不存在状态变更端点）", async () => {
     writePage("concepts/con-a.md", "con-a", "concept", [], [], "## 定义\n\n甲。")
     await (app()).request("/patrol", { method: "POST" })

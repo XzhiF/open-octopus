@@ -374,6 +374,21 @@ export function ChatPane({
     return { viewMessages: vm, laneAByMsgId: byMsgId, laneAIds: ids, laneAIngestById: ingestById }
   }, [messages, turnStatsByMessage])
 
+  // 2026-11-10：Lane A finding 卡是编译时的沉淀快照（status 恒为创建时 open）。
+  // 刷新/重进会话时按卡上 id 向服务端要活状态，终态卡才能显示「已修订 / 已忽略」。
+  // 依赖用拼接串：流式 token 会不断重建 messages，按内容变化才触发回填。
+  const findingCardIdKey = useMemo(() => {
+    const ids = new Set<string>()
+    for (const events of laneAByMsgId.values()) {
+      for (const e of events) if (e.kind === 'finding') ids.add((e.data as KcFindingCardData).findingId)
+    }
+    return [...ids].sort().join(',')
+  }, [laneAByMsgId])
+  const hydrateFindingStatuses = findingOps.hydrateStatuses
+  useEffect(() => {
+    if (findingCardIdKey) void hydrateFindingStatuses(findingCardIdKey.split(','))
+  }, [findingCardIdKey, hydrateFindingStatuses])
+
   // Lane B 覆盖层回灌 Lane A 沉淀卡（与 curator-drawer withCardStates 同构的普通会话最小子集：
   // revert 态按 commit 匹配；ingest 重试后的编译镜像按同 id 取 store 新态）
   const withCardStates = useCallback((e: KcCardEvent): KcCardEvent => {
