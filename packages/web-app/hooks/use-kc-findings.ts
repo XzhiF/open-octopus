@@ -5,6 +5,7 @@ import {
   kcAdoptFinding,
   kcBackfill,
   kcGetFixTask,
+  kcGetFindingsByIds,
   kcGetQueueTask,
   kcIgnoreFinding,
   kcListFindings,
@@ -23,6 +24,7 @@ import { kcErrFace, kcPlaceholderTaskId, useKcPoller } from "./use-kc-poller"
  * - adopt：POST → fix 任务轮询（GET fix/task + queue/task 位次，票06 单源）回灌
  *   data.fix；committed ⇒ 卡终态 resolved + onSettled（宿主刷健康条/tree）；
  * - ignore：POST 同步终态；
+ * - hydrateStatuses：按 id 回填活状态（Lane A 沉淀卡刷新后只剩创建快照 → 终态修正）；
  * - patrol：POST /patrol（即时体检）后重列；
  * - backfill：POST /backfill → 摘录落 raw 回执 + compileTask 交宿主挂编译 diff 卡
  *   （feed.trackTask——「diff 卡跟随」复用票12 编译卡链，零新轮询器）。
@@ -70,6 +72,8 @@ export function useKcFindings(opts: UseKcFindingsOptions = {}) {
   const [dismissed, setDismissed] = useState<Record<string, true>>({})
   /** 裁决终态覆盖层（fid→终态）：覆盖任意来源卡（Lane A 消息卡同样进入终态渲染） */
   const [findingStatus, setFindingStatus] = useState<Record<string, "resolved" | "ignored">>({})
+  /** 已按 id 回填过的集合（成功含 open 也记，避免反复拉；失败不记，留待下次重试） */
+  const hydratedRef = useRef<Set<string>>(new Set())
   const [patrolling, setPatrolling] = useState(false)
   const cbsRef = useRef(opts)
   cbsRef.current = opts
@@ -98,6 +102,26 @@ export function useKcFindings(opts: UseKcFindingsOptions = {}) {
   }, [])
 
   useEffect(() => { if (opts.autoLoad !== false) void load() }, [load, opts.autoLoad])
+
+  /**
+   * 按 id 回填活状态（2026-11-10）：Lane A finding 卡是编译时的沉淀快照，刷新后
+   * 卡面 status 恒为创建时的 open。这里拿服务端真值（不限状态）覆盖终态，让
+   * 「已采纳 ⇒ 已修订 / 已忽略」跨刷新成立；只问卡上出现的 id，不拉全库收件箱。
+   */
+  const hydrateStatuses = useCallback(async (ids: string[]) => {
+    const fresh = ids.filter(id => id && !hydratedRef.current.has(id))
+    if (fresh.length === 0) return
+    for (const id of fresh) hydratedRef.current.add(id)
+    try {
+      const views = await kcGetFindingsByIds(fresh)
+      const next: Record<string, "resolved" | "ignored"> = {}
+      for (const v of views) if (v.status !== "open") next[v.id] = v.status
+      if (Object.keys(next).length > 0) setFindingStatus(prev => ({ ...next, ...prev }))
+    } catch {
+      // 服务不可达：不伪造终态，也不记已回填（下次渲染/进入可再试）
+      for (const id of fresh) hydratedRef.current.delete(id)
+    }
+  }, [])
 
   const patrol = useCallback(async () => {
     setPatrolling(true)
@@ -186,5 +210,5 @@ export function useKcFindings(opts: UseKcFindingsOptions = {}) {
     setDismissed(prev => ({ ...prev, [cardId]: true }))
   }, [])
 
-  return { cards, fixStates, backfillStates, dismissed, findingStatus, patrol, patrolling, load, adopt, ignore, backfill, dismissBackfill }
+  return { cards, fixStates, backfillStates, dismissed, findingStatus, patrol, patrolling, load, hydrateStatuses, adopt, ignore, backfill, dismissBackfill }
 }

@@ -226,6 +226,26 @@ export function buildConfigRequires(
  *  ship a final acceptance ticket — see check ④ in resolveV4Phases. */
 const BATCH_CONSUMING_FLOWS = new Set(['matt-spec-dev'])
 
+/** 功能票（非 `*-e2e-*`）里出现这些词 = 写了浏览器/UI 走查 ——
+ *  author-verified-tickets ③ 明令禁止（浏览器唯一归属 = 末张走查票，由
+ *  e2e-verify 执行）。2026-11-09 octopus-demo 批次实测：功能票写了
+ *  「手动清单（浏览器）」，执行 agent 照做就会与 e2e-verify 双跑。 */
+const BROWSER_STEP_RE =
+  /浏览器|\bbrowser\b|playwright|puppeteer|chromium|selenium|screenshot|截图|打开\s*https?:\/\//i
+
+/** 取 `## Verification Method` / `## 验证方法` 小节正文；没有该节时返回全文
+ *  （老票不一定有节标题，宁可退回全文也不漏检）。 */
+function verificationSection(text: string): string {
+  // 标题后必须跟空白/行尾/冒号 —— 不能用 \b：CJK 在 JS 里不算 \w，
+  // `验证方法\b` 两侧都是非单词字符，永远匹配不上。
+  const heading = /^#{2,3}\s*(Verification Method|验证方法|验证方式|验证步骤)(?=\s|$|[:：])/im
+  const m = heading.exec(text)
+  if (!m) return text
+  const rest = text.slice(m.index + m[0].length)
+  const next = /^#{2,3}\s+/m.exec(rest)
+  return next ? rest.slice(0, next.index) : rest
+}
+
 /**
  * The v4 ready-gate's phase contract, as a pure function.
  *
@@ -250,6 +270,14 @@ const BATCH_CONSUMING_FLOWS = new Set(['matt-spec-dev'])
  *      OR spec.md carries `Verification Tier: unit-only` ⇒ miss:
  *      `phase:<i>:no-final-verification`. Conditional, not forced: e2e runs only
  *      when the author warrants a walkthrough; light phases opt out explicitly.
+ *      ④-b..d（仅 enqueueChecks = readyTask 入队路径，历史在队任务不受牵连）把
+ *      author-verified-tickets ③ 的「单一归属」变成硬闸：
+ *        b. 非末 phase 出现 `*-e2e-*` 票 ⇒ `phase:<i>:e2e-not-final-phase`
+ *           （中间 phase 一律 unit-only，验收面攒到末 phase 那张）；
+ *        c. 每个 phase 至多一张 `*-e2e-*` 票 ⇒ 多了报 `phase:<i>:multiple-e2e-tickets`；
+ *        d. 非 `*-e2e-*` 功能票的 Verification Method 出现浏览器步骤 ⇒
+ *           `phase:<i>:browser-in-feature-ticket:<票文件>`（功能票不起浏览器，
+ *           UI 断言收编为走查步 —— 否则与 e2e-verify 双跑）。
  *
  * ① and ② run independently so the UI sees every defect at once; ③ only runs when ②
  * hit (no workflow content to parse otherwise); ④ needs a spec on disk, so it is
@@ -272,7 +300,9 @@ export function resolveV4Phases(args: {
   resolveRef: (ref: string) => { content: string } | null
   /** 入队专属加严检查（readyTask 置 true；launch 重解析不置）：
    *  ⑥ issues/ 产物基线 —— 批次目录 issues/ 存在且 ≥1 张 .md 票（所有绑定流统一），
-   *     miss `phase:<i>:issues-missing`。历史在队任务经 launch 恢复不受影响。
+   *     miss `phase:<i>:issues-missing`。
+   *  ④-b..d 浏览器归属 / e2e 票几何（见上方 ④ 注释）同样只在这里生效 ——
+   *     历史在队任务经 launch 恢复不受影响。
    *  （⑤ bindingConfirmed 人工确认闸已废，ADR-0028 —— 绑定可解析即视为确认。） */
   enqueueChecks?: boolean
 }): { missing: string[]; phases: TaskV4PhaseConfig[] } {
@@ -282,6 +312,9 @@ export function resolveV4Phases(args: {
   if (phases.length < 1) {
     return { missing: ["phase:0:no-phases"], phases: [] }
   }
+  // 末 phase = max(index)，与 resolveTaskLaunchStep 的 lastIndex 同口径
+  // （phase 数组顺序与显式 index 不一致时，以 index 为准）。
+  const lastPhaseIndex = phases.reduce((max, p) => Math.max(max, p.index), phases[0].index)
   const resolved: TaskV4PhaseConfig[] = []
   phases.forEach((p, idx) => {
     const i = idx + 1
@@ -342,7 +375,8 @@ export function resolveV4Phases(args: {
         missing.push(`phase:${i}:issues-missing`)
       }
       if (BATCH_CONSUMING_FLOWS.has(path.basename(ref))) {
-        const hasFinalTicket = issueTickets.some((f) => f.includes('-e2e-'))
+        const e2eTickets = issueTickets.filter((f) => f.includes('-e2e-'))
+        const hasFinalTicket = e2eTickets.length > 0
         let unitOnly = false
         if (!hasFinalTicket) {
           try {
@@ -352,6 +386,24 @@ export function resolveV4Phases(args: {
           }
         }
         if (!hasFinalTicket && !unitOnly) missing.push(`phase:${i}:no-final-verification`)
+        // ④-b..d（仅入队路径）—— 把 author-verified-tickets ③ 的「单一归属」
+        // 变成硬闸。launch 重解析不跑，历史在队任务不被新规则牵连。
+        if (enqueueChecks) {
+          if (e2eTickets.length > 1) missing.push(`phase:${i}:multiple-e2e-tickets`)
+          const isFinalPhase = p.index === lastPhaseIndex
+          if (!isFinalPhase && hasFinalTicket) missing.push(`phase:${i}:e2e-not-final-phase`)
+          for (const f of issueTickets) {
+            if (f.includes('-e2e-')) continue
+            try {
+              const body = fs.readFileSync(path.join(issueDir, f), 'utf-8')
+              if (BROWSER_STEP_RE.test(verificationSection(body))) {
+                missing.push(`phase:${i}:browser-in-feature-ticket:${f}`)
+              }
+            } catch {
+              // 读不到就交给 ①/⑥ 的 fs 检查兜底，这里不制造噪声。
+            }
+          }
+        }
       }
     }
     if (specOk) {

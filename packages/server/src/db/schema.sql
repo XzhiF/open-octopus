@@ -210,6 +210,20 @@ CREATE TABLE IF NOT EXISTS session_role_states (
   updated_at         TEXT NOT NULL
 );
 
+-- 6c-2. Task-thread playbook delivery (schema v61)
+-- The per-turn task <system-reminder> has two parts: a tiny status head
+-- (refreshed every turn) and a large playbook (identity / discipline / tools /
+-- guides) that only changes on identity or state transitions. Sending the
+-- playbook once per change keeps the prompt cache intact and stops every turn
+-- re-paying for it. `playbook_hash` records which body the provider transcript
+-- already holds; a compaction or /clear wipes the row so the next turn
+-- re-delivers the full block.
+CREATE TABLE IF NOT EXISTS session_turn_context (
+  session_id    TEXT PRIMARY KEY,
+  playbook_hash TEXT NOT NULL,
+  updated_at    TEXT NOT NULL
+);
+
 -- 6d. Per-turn debug snapshots (schema v60)
 -- The dock's 「调试」 inspector needs what was ACTUALLY handed to the SDK for
 -- each turn — the raw user message and the provider message after the role
@@ -339,6 +353,22 @@ CREATE TABLE IF NOT EXISTS llm_calls (
   -- 老行由 backfillLlmCallSourcePath 回填（推不出 = unknown），不造假归属。
   source_path           TEXT,
   FOREIGN KEY (node_execution_id) REFERENCES node_executions(id)
+);
+
+-- 11b. Session provider usage baseline (2026-11-09 token 账本修复)
+-- Claude Agent SDK 的 result.modelUsage 是**跨 turn 的会话累计**（SDK 文档：
+-- 「cumulative across turns in streaming-input sessions — read the latest result
+-- rather than summing across results」）。每轮把它当本轮用量落账 = 整段会话被
+-- 重复记 N 遍（真机：一个 chat 记账 87M cache-read，真实累计只有 11M）。
+-- 落账方要差分成增量，就必须记住「上一份累计快照」—— 一会话一行，进程重启
+-- 也在；provider 会话 id 变化（/clear、重开会话）= 累计从头开始，基线归零。
+-- 刻意不做 FK（同 llm_calls.session_id）：账本旁路不得因会话行缺失而失败。
+CREATE TABLE IF NOT EXISTS session_provider_usage (
+  session_id          TEXT PRIMARY KEY,
+  provider_session_id TEXT,
+  -- JSON: { [model]: { inputTokens, outputTokens, cacheReadTokens, cacheCreationTokens } }
+  usage               TEXT NOT NULL,
+  updated_at          TEXT NOT NULL
 );
 
 -- 12. Optimization Suggestions

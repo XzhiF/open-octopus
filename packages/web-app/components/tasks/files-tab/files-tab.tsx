@@ -2,16 +2,18 @@
 //
 // 票 03 —— 统一壳「≡ 变更」页签本体。
 // 2026-10-28 布局改版（作业坞变更窗）：GitLab 式「左目录树 / 右多 tab」——
-//   顶部统计条（commits/files/±/干预/成本）· 本轮|累计口径 · 左树关键字过滤 ·
+//   顶部统计条（commits/files/±/干预/成本）· 口径段 · 左树关键字过滤 ·
 //   右侧文件 tab（懒拉 patch，可同时开多个）。
-//   本轮 = 当前轮 start..end；累计 = 本 phase 首轮 start..本轮 end。roundIndex===1
-//   时两者同区间 —— 累计开关禁用并注明，不再给用户一个没信息量的按钮。
+// 2026-11-10 口径收敛（用户：只要总账）：「本 phase」= 本 phase 首轮 start .. 当前；
+//   「任务」= 任务首轮 start .. 当前（跨 phase）。本轮的 delta 视图退出变更窗
+//   （验收台/台账仍走 server 的 round 口径，互不影响）。只有一个 phase 时任务
+//   总账与本 phase 同区间 —— 任务开关禁用并注明。
 //
 // 数据纪律（票文铁律）：零新后端 —— 只用既有 GET /round-diff(+ /patch)。
-// round 口径载荷由壳的 useRoundDiffFeed 单源供入（SSE 事件 + 节流 + ≤10s 兜底，
-// 票03 起服务端 live 轮也供货）；cumulative 按需另拉、跟同一节拍补新。
-// patch 随口径带 ?scope=cumulative（服务端同一 start 锚）—— 累计列表点开旧轮
-// 文件也能出 patch，不再 409。
+// phase 口径载荷由壳的 useRoundDiffFeed 单源供入（SSE 事件 + 节流 + ≤10s 兜底，
+// 票03 起服务端 live 轮也供货）；任务口径按需另拉、跟同一节拍补新。
+// patch 随口径带 ?scope=cumulative|task（服务端同一 start 锚）—— 总账列表点开
+// 旧轮文件也能出 patch，不再 409。
 // 票 07 契约：`rowDecor`（💬chat 徽标渲染位）+ `toolbarExtra`（chat 计数 chip 位），
 // reveal（工具卡「查看 diff」跳链）→ 自动开 tab + 树行青闪。
 //
@@ -43,7 +45,7 @@ const EMPTY_SHELL = "mx-auto mt-10 max-w-[560px] rounded-xl border-[1.5px] borde
 
 export interface FilesTabProps {
   taskId: string
-  /** 壳的单源 round 载荷（含节流轮询/事件触发节拍 —— 头栏 commits 也吃它）。 */
+  /** 壳的单源 **本 phase 总账**载荷（含节流轮询/事件触发节拍 —— 头栏统计也吃它）。 */
   feed: RoundDiffFeed
   /** 值得拉 diff 吗（draft 之外都试一次；服务端 409 = 真没有轮 → 仍落 idle 面）。 */
   serving: boolean
@@ -126,11 +128,13 @@ export function clampTreeWidth(width: number): number {
 }
 
 export function FilesTab({ taskId, feed, serving, isLive, costText, rowDecor, toolbarExtra, reveal }: FilesTabProps) {
-  const [scope, setScope] = useState<RoundDiffScope>("round")
-  const [cum, setCum] = useState<RoundDiffPayload | null>(null)
-  const [cumLoading, setCumLoading] = useState(false)
-  const [cumError, setCumError] = useState<string | null>(null)
-  const [cumReload, setCumReload] = useState(0)
+  /** 总账口径（2026-11-10）：本 phase 由壳的 feed 供入；任务按需另拉。 */
+  const [scope, setScope] = useState<Exclude<RoundDiffScope, "round">>("cumulative")
+  const [taskDiff, setTaskDiff] = useState<RoundDiffPayload | null>(null)
+  const [taskLoading, setTaskLoading] = useState(false)
+  const [taskError, setTaskError] = useState<string | null>(null)
+  const [taskErrorStatus, setTaskErrorStatus] = useState<number | null>(null)
+  const [taskReload, setTaskReload] = useState(0)
 
   // ── 左树 / 右 tab 视图状态 ──────────────────────────────────────────
   const [filter, setFilter] = useState("")
@@ -151,29 +155,42 @@ export function FilesTab({ taskId, feed, serving, isLive, costText, rowDecor, to
   const [patchLoading, setPatchLoading] = useState<Record<string, boolean>>({})
   const requested = useRef<Set<string>>(new Set())
 
-  // 累计口径：按需拉，跟 round 的 nonce 同一节拍补新（票03 刷新动线只开一闸）。
+  // 任务总账：按需拉，跟 phase feed 的 nonce 同一节拍补新（只开一闸）。
   useEffect(() => {
-    if (!serving || scope !== "cumulative") return
+    if (!serving || scope !== "task") return
     let cancelled = false
-    setCumLoading(true)
-    setCumError(null)
-    getRoundDiff(taskId, "cumulative")
-      .then((d) => { if (!cancelled) setCum(d) })
-      .catch((e: unknown) => { if (!cancelled) setCumError(e instanceof Error ? e.message : String(e)) })
-      .finally(() => { if (!cancelled) setCumLoading(false) })
+    setTaskLoading(true)
+    setTaskError(null)
+    setTaskErrorStatus(null)
+    getRoundDiff(taskId, "task")
+      .then((d) => { if (!cancelled) setTaskDiff(d) })
+      .catch((e: unknown) => {
+        if (cancelled) return
+        setTaskError(e instanceof Error ? e.message : String(e))
+        const s = (e as { status?: unknown } | null)?.status
+        setTaskErrorStatus(typeof s === "number" ? s : null)
+      })
+      .finally(() => { if (!cancelled) setTaskLoading(false) })
     return () => { cancelled = true }
-  }, [serving, scope, taskId, feed.nonce, cumReload])
+  }, [serving, scope, taskId, feed.nonce, taskReload])
 
-  const diff = scope === "round" ? feed.data : cum
-  const loading = scope === "round" ? feed.loading : cumLoading
-  const error = scope === "round" ? feed.error : cumError
+  // 换任务：任务口径的旧载荷/错误不得串台（phase 口径由 feed 自己重置）。
+  useEffect(() => {
+    setTaskDiff(null)
+    setTaskError(null)
+    setTaskErrorStatus(null)
+  }, [taskId])
+
+  const diff = scope === "cumulative" ? feed.data : taskDiff
+  const loading = scope === "cumulative" ? feed.loading : taskLoading
+  const error = scope === "cumulative" ? feed.error : taskError
   const stats = scopeTotals(diff)
 
-  // 本 phase 首轮 ⇒ 累计 == 本轮（同区间同数字）—— 开关禁用并注明。
-  const cumRedundant = diff?.roundIndex === 1
+  // 只有 1 个 phase ⇒ 任务总账 == 本 phase 总账（同区间同数字）—— 开关禁用并注明。
+  const taskRedundant = diff?.phaseIndex === 1
   useEffect(() => {
-    if (cumRedundant && scope === "cumulative") setScope("round")
-  }, [cumRedundant, scope])
+    if (taskRedundant && scope === "task") setScope("cumulative")
+  }, [taskRedundant, scope])
 
   // ── 文件全集（过滤/树/统计同源）────────────────────────────────────
   const files = useMemo<TreeFile[]>(() => {
@@ -329,9 +346,7 @@ export function FilesTab({ taskId, feed, serving, isLive, costText, rowDecor, to
         return next
       })
       setPatchLoading((prev) => ({ ...prev, [pk]: true }))
-      const req = scope === "cumulative"
-        ? getRoundPatch(taskId, entry.repo, entry.file.path, "cumulative")
-        : getRoundPatch(taskId, entry.repo, entry.file.path)
+      const req = getRoundPatch(taskId, entry.repo, entry.file.path, scope)
       req
         .then((r) => setPatches((prev) => ({ ...prev, [pk]: { text: r.patch, truncated: r.truncated } })))
         .catch((e: unknown) => {
@@ -469,9 +484,9 @@ export function FilesTab({ taskId, feed, serving, isLive, costText, rowDecor, to
         <div className="px-3 py-6 text-center font-mono text-[10.5px] text-pop-dim" data-testid="files-tab-filter-empty">
           没有匹配「{filter.trim()}」的文件
         </div>
-      ) : isLive && scope === "round" ? (
+      ) : isLive ? (
         <div className="m-1 rounded-[8px] border-[1.5px] border-dashed border-pop-bd px-3 py-3 text-center font-mono text-[10px] text-pop-dim" data-testid="files-tab-empty-live">
-          进行中 · 本轮还没有落第一个 commit —— 新提交落库即自动出现（≤10s）
+          进行中 · {scope === "task" ? "任务" : "本 phase"}还没有任何代码变更 —— 提交或未提交改动都会自动出现（≤10s）
         </div>
       ) : (
         <div className="px-3 py-6 text-center font-mono text-[10.5px] text-pop-dim">该口径下没有变更文件</div>
@@ -563,7 +578,7 @@ export function FilesTab({ taskId, feed, serving, isLive, costText, rowDecor, to
           {file.oldPath && <span className="shrink-0 text-pop-cyan line-through">{file.oldPath}</span>}
           <span className="shrink-0 text-pop-green">+{file.adds}</span>
           <span className="shrink-0 text-pop-red">−{file.dels}</span>
-          <span className="ml-auto shrink-0">{repo} · {scope === "cumulative" ? "本 phase 累计" : "本轮区间"}</span>
+          <span className="ml-auto shrink-0">{repo} · {scope === "task" ? "任务总账" : "本 phase 总账"}</span>
         </div>
         <div className="min-h-0 flex-1 overflow-y-auto p-3">
           {file.binary ? (
@@ -589,37 +604,36 @@ export function FilesTab({ taskId, feed, serving, isLive, costText, rowDecor, to
 
   return (
     <div className="flex min-h-0 flex-1 flex-col" data-testid="files-tab">
-      {/* 工具行：口径段 · 锚定轮次 · 统计数字 · 同步指示 · 07 徽标位 · 数据源诚实标注
-          （2026-10-31 用户：统计不再单占一行，与「累计 = 本轮」/P·R 同位） */}
+      {/* 工具行：口径段 · 锚定轮次 · 统计数字 · 同步指示 · 07 徽标位 · 数据源诚实标注 */}
       <div className="flex shrink-0 flex-wrap items-center gap-2 border-b-[1.5px] border-pop-bd bg-pop-paper px-3 py-2 font-mono text-[10px]" data-testid="files-tab-toolbar">
         <span className="flex overflow-hidden rounded-full border-[1.5px] border-pop-bd font-mono text-[9.5px] font-black" data-testid="files-tab-scope">
-          {(["round", "cumulative"] as const).map((s) => (
+          {(["cumulative", "task"] as const).map((s) => (
             <button
               key={s}
               onClick={() => setScope(s)}
-              disabled={s === "cumulative" && cumRedundant}
+              disabled={s === "task" && taskRedundant}
               aria-selected={scope === s}
               title={
-                s === "round"
-                  ? "本轮增量（当前/待验收轮 start..end）"
-                  : cumRedundant
-                    ? "本 phase 首轮：累计与本轮是同一区间"
-                    : "本 phase 累计（首轮 start .. 本轮 end）"
+                s === "cumulative"
+                  ? "本 phase 总账（本 phase 首轮 start .. 当前工作区）"
+                  : taskRedundant
+                    ? "任务只有一个 phase：任务总账与本 phase 是同一区间"
+                    : "任务总账（P1 首轮 start .. 当前工作区，跨 phase）"
               }
               className={`px-2.5 py-px transition-colors ${
                 scope === s
                   ? "border-pop-navy bg-pop-navy text-pop-ink"
                   : "bg-pop-paper text-pop-dim hover:text-pop-ink"
-              } ${s === "cumulative" && cumRedundant ? "cursor-not-allowed opacity-40 line-through" : ""}`}
-              data-testid={s === "round" ? "files-tab-scope-round" : "files-tab-scope-cum"}
+              } ${s === "task" && taskRedundant ? "cursor-not-allowed opacity-40 line-through" : ""}`}
+              data-testid={s === "cumulative" ? "files-tab-scope-phase" : "files-tab-scope-task"}
             >
-              {s === "round" ? "本轮" : "累计"}
+              {s === "cumulative" ? "本 phase" : "任务"}
             </button>
           ))}
         </span>
-        {cumRedundant && (
-          <span className="rounded-[6px] border border-pop-amber/40 bg-pop-amber-soft px-1.5 py-px text-[9.5px] text-pop-amber" data-testid="files-tab-cum-redundant">
-            本 phase 首轮 · 累计 = 本轮
+        {taskRedundant && (
+          <span className="rounded-[6px] border border-pop-amber/40 bg-pop-amber-soft px-1.5 py-px text-[9.5px] text-pop-amber" data-testid="files-tab-task-redundant">
+            只有一个 phase · 任务总账 = 本 phase
           </span>
         )}
         {diff?.phaseIndex != null && diff.roundIndex != null && (
@@ -628,7 +642,7 @@ export function FilesTab({ taskId, feed, serving, isLive, costText, rowDecor, to
             data-testid="files-tab-anchor"
             title={
               isLive
-                ? "在跑轮：end 锚 = 各仓当前 HEAD"
+                ? "在跑轮：与各仓当前工作区比对（含未提交改动 / 新文件）"
                 : "待验收 / 已验收轮：start..end 是存下的快照锚，不随 HEAD 漂移"
             }
           >
@@ -671,7 +685,7 @@ export function FilesTab({ taskId, feed, serving, isLive, costText, rowDecor, to
       )}
 
       <div className="min-h-0 flex-1">
-        {!serving || (feed.errorStatus === 409 && !diff) ? (
+        {!serving || ((scope === "cumulative" ? feed.errorStatus : taskErrorStatus) === 409 && !diff) ? (
           <div className="p-3">
             <div className={EMPTY_SHELL} data-testid="files-tab-idle">
               实物 diff 在<b className="text-pop-ink">执行中、待验收、已验收</b>三态都供货 —— 当前没有可出示的轮次。<br />
@@ -687,7 +701,7 @@ export function FilesTab({ taskId, feed, serving, isLive, costText, rowDecor, to
             <div className="text-pop-red">实物读取失败：{error}</div>
             <button
               className="mt-1 underline underline-offset-2"
-              onClick={() => (scope === "round" ? feed.retry() : setCumReload((v) => v + 1))}
+              onClick={() => (scope === "cumulative" ? feed.retry() : setTaskReload((v) => v + 1))}
               data-testid="files-tab-retry"
             >
               重试

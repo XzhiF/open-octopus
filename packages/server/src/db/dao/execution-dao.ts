@@ -221,6 +221,20 @@ export class ExecutionDAO extends BaseDAO {
     ).get(taskId, phaseIndex, taskId, phaseIndex) as ExecutionRow) ?? null
   }
 
+  /** 任务最早轮的「最新一条」exec 行 —— round-diff **task 口径**（任务总账，
+   *  2026-11-10）的 start 锚来源：phase 最小 × 轮号最小。按 (phase_index,
+   *  round_index) 排序而不是 created_at —— phaseIndex 不可靠地随派发时序单调，
+   *  但轮号语义是「该 phase 第几轮」，两者合起来才是任务真正的起点。缺
+   *  start_commit_id 的排队行跳过（它们没有可圈区间）。 */
+  findTaskFirstRound(taskId: string): ExecutionRow | null {
+    return (this.stmt(
+      `SELECT * FROM executions
+       WHERE task_id = ? AND phase_index IS NOT NULL AND round_index IS NOT NULL
+         AND start_commit_id IS NOT NULL
+       ORDER BY phase_index ASC, round_index ASC, created_at ASC, rowid ASC LIMIT 1`,
+    ).get(taskId) as ExecutionRow) ?? null
+  }
+
   /** 票03（taskboard-modal-v2「≡ 变更」）：任务当前 **live 轮**的 exec 行 —— 已起跑、
    *  未终态（running/paused/停在审批或交互节点的 pending_approval/
    *  pending_interaction/pending_resume —— 词表单源 shared

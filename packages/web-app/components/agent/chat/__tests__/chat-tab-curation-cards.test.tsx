@@ -138,6 +138,8 @@ interface FetchCall { url: string; method: string; body: string }
 let calls: FetchCall[]
 let revertScript: string[]
 let compileScript: string[]
+/** GET /knowledge/findings?ids= 的活状态真相源（刷新后回填 finding 卡用） */
+let findingsById: Record<string, Record<string, unknown>>
 
 function makeStub() {
   let revertPoll = 0
@@ -148,6 +150,10 @@ function makeStub() {
     const method = init?.method ?? "GET"
     calls.push({ url: u, method, body: String(init?.body ?? "") })
     const json = (v: unknown) => ({ ok: true, status: 200, json: async () => v })
+    if (u.includes("/knowledge/findings?") && u.includes("ids=")) {
+      const ids = decodeURIComponent(u.split("ids=")[1]).split(",")
+      return json({ findings: ids.map(id => findingsById[id]).filter(Boolean) })
+    }
     if (u.includes("/wiki/revert/task/")) {
       const status = revertScript[Math.min(revertPoll, revertScript.length - 1)]
       revertPoll++
@@ -195,6 +201,7 @@ beforeEach(() => {
   chatBox.sent = []
   revertScript = ["queued", "running", "committed"]
   compileScript = ["queued", "compiling", "committed"]
+  findingsById = {}
   makeStub()
   localStorage.clear()
 })
@@ -281,6 +288,28 @@ describe("票10 S4：普通会话跨会话卡片渲染（注册表复用，零�
       expect(screen.getByTestId("kc-card-finding").textContent).toContain("已修订")
     }, { timeout: 8000 })
   }, 15000)
+
+  // 2026-11-10 用户：「归档已经采纳了，但一刷新进 chat，finding 卡还是显示待裁决」。
+  // Lane A 卡只带编译时快照；刷新后必须按卡上 id 回填服务端活状态。
+  it("刷新后 finding 卡按服务端活状态渲染：已裁决 ⇒ 已修订，不残留「待裁决」", async () => {
+    findingsById["fnd-1"] = {
+      id: "fnd-1", kind: "contradiction", severity: "major", status: "resolved",
+      title: "矛盾：固定窗口 ↔ 滑动窗口", detail: {}, pages: ["topics/gateway.md"],
+      rawRef: RAW_PATH, source: "compile",
+      createdAt: "2026-10-15T09:00:03Z", updatedAt: "2026-10-15T09:05:00Z",
+    }
+    chatBox.messages = [MSG("m1", "assistant", `⚠️ 归档编译发现 1 处冲突\n\n${serializeKcCardBlock(FINDING_EV)}`)]
+    render(<ChatTab />)
+
+    const card = await screen.findByTestId("kc-card-finding")
+    await waitFor(() => expect(card.textContent).toContain("已修订"))
+    expect(card.textContent).not.toContain("待裁决")
+    // 终态卡不再出钮（裁决一次性）
+    expect(screen.queryByTestId("kc-finding-adopt")).toBeNull()
+    // 定向取只带卡上 id，不拉全库收件箱
+    const statusCall = calls.find(c => c.url.includes("/knowledge/findings?") && c.url.includes("ids="))
+    expect(statusCall?.url).toContain("ids=fnd-1")
+  })
 
   it("无卡消息零变化：普通文本会话不引入任何卡面（误吞防护渲染面）", async () => {
     chatBox.messages = [MSG("m1", "user", "今天天气如何？"), MSG("m2", "assistant", "我不确定。")]

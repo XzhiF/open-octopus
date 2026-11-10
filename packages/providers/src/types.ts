@@ -228,13 +228,31 @@ export type MessageChunk =
   /** `/clear`: the CLI reset its conversation. Only the provider transcript
    *  is gone — host-side history (DB/messages) is the host's own. */
   | { type: 'conversation_reset' }
+  /** Context compaction (manual `/compact` or SDK auto-compaction): the
+   *  provider transcript was REWRITTEN into a summary. One-shot context the
+   *  host sent earlier (role card, task playbook) may be summarized away, so
+   *  hosts re-deliver it on the next turn. */
+  | { type: 'compaction'; trigger: 'manual' | 'auto'; preTokens?: number; postTokens?: number; droppedTokens?: number; durationMs?: number }
   | { type: 'status'; status: 'compacting' | 'requesting' | null; varsUpdate?: Record<string, unknown> }
   /** 后台任务集合变化（电平信号，REPLACE 语义）：空数组 = 已无后台任务。 */
   | { type: 'background_tasks'; tasks: BackgroundTaskInfo[] }
   /** 子代理生命周期 / 操作日志（作业坞「子代理」入口的数据源）。 */
   | { type: 'subagent'; event: SubagentEvent }
   | { type: 'context_usage'; data: ContextUsageData }
-  | { type: 'result'; content?: string; sessionId?: string; usage?: TokenUsage; costUsd?: number; numTurns?: number; modelUsages?: ModelUsage[] }
+  | {
+      type: 'result'
+      content?: string
+      sessionId?: string
+      usage?: TokenUsage
+      costUsd?: number
+      numTurns?: number
+      modelUsages?: ModelUsage[]
+      /** true = `modelUsages` 是**跨 turn 的会话累计**（不是本轮增量）。
+       *  Claude SDK 的 result.modelUsage 就是这个语义（「read the latest result
+       *  rather than summing across results」）；落账方必须按持久化基线取增量，
+       *  直接把每轮快照相加会把整段会话重复记 N 遍。Pi 等 provider 缺省 = 本轮。 */
+      modelUsagesCumulative?: boolean
+    }
   | {
       type: 'error'
       code: string
@@ -251,6 +269,8 @@ export type MessageChunk =
        *  turn is interrupted after completed model calls — never drop them. */
       usage?: TokenUsage
       modelUsages?: ModelUsage[]
+      /** 同 result：true = `modelUsages` 为跨 turn 的会话累计（Claude SDK）。 */
+      modelUsagesCumulative?: boolean
     }
   | ActiveGoalChunk
 

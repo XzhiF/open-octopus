@@ -45,7 +45,13 @@ function derive(data: TaskArchivePayload) {
     : knowledge && knowledge.pack_items > 0
       ? '已冻结'
       : '—'
-  return { state, doneProjects, total, entries, decided, conflicts, failures, compile, knowledge, preflight, deltaCommits }
+  const compileLive = knowledge?.compile_state === 'queued' || knowledge?.compile_state === 'running'
+  // 待裁决 = 活列表（采纳/忽略后立刻消失）；wiki_result.finding_ids 只是编译时
+  // 快照 —— 不能拿它当现状。
+  const openFindings = knowledge?.findings?.length ?? 0
+  const receiptFindings = knowledge?.wiki_result?.finding_ids?.length ?? 0
+  const findingsResolved = !!knowledge?.findings && receiptFindings > 0 && openFindings === 0
+  return { state, doneProjects, total, entries, decided, conflicts, failures, compile, knowledge, preflight, deltaCommits, compileLive, openFindings, findingsResolved }
 }
 
 export function ArchiveSummaryCard({ message }: { message: AgentMessage }) {
@@ -57,13 +63,23 @@ export function ArchiveSummaryCard({ message }: { message: AgentMessage }) {
     let alive = true
     const load = () => {
       getTaskArchive(taskId)
-        .then((next) => { if (alive) setData(next) })
+        .then((next) => {
+          if (alive) setData(next)
+        })
         .catch(() => { /* 服务端离线：保留上一份快照 */ })
     }
     void load()
-    const timer = window.setInterval(load, data?.status === 'done' ? 20_000 : 4_000)
+    // 归档完成后知识沉淀往往还在编译（甚至还会冒出待裁决矛盾）—— 只要
+    // 编译未完成或有未决 finding 就保持 4s 快刷，done 且沉淀结束才降到 20s。
+    const pending =
+      !data ||
+      data.status !== 'done' ||
+      data.knowledge?.compile_state === 'queued' ||
+      data.knowledge?.compile_state === 'running' ||
+      (data.knowledge?.findings?.length ?? 0) > 0
+    const timer = window.setInterval(load, pending ? 4_000 : 20_000)
     return () => { alive = false; window.clearInterval(timer) }
-  }, [taskId, data?.status])
+  }, [taskId, data?.status, data?.knowledge?.compile_state, data?.knowledge?.findings?.length])
 
   const openArchive = () => {
     window.dispatchEvent(new CustomEvent('octopus:task-card-action', {
@@ -90,13 +106,24 @@ export function ArchiveSummaryCard({ message }: { message: AgentMessage }) {
     )
   }
 
-  const { state, doneProjects, total, entries, decided, conflicts, failures, compile, knowledge, preflight, deltaCommits } = derive(data)
+  const { state, doneProjects, total, entries, decided, conflicts, failures, compile, knowledge, preflight, deltaCommits, compileLive, openFindings, findingsResolved } = derive(data)
   const done = data.status === 'done'
   const inFlight = data.in_flight
   const stopped = !done && data.status === 'archiving' && !inFlight && !!data.report && !data.report.ok
-  const chip = done ? '已完成' : inFlight ? '编排中' : stopped ? '停在归档' : '等待中'
+  // 归档 done 只判定 git；知识沉淀（编译 → 矛盾裁决）是第二阶段，不能把
+  // 「已完成」播成「全都完事」—— 待裁决/编译中时在 chip 上如实标出来。
+  const knowledgePending = done && (openFindings > 0 || compileLive)
+  const chip = done
+    ? openFindings > 0
+      ? `已完成 · 知识待裁决 ${openFindings}`
+      : compileLive
+        ? '已完成 · 知识编译中'
+        : '已完成'
+    : inFlight ? '编排中' : stopped ? '停在归档' : '等待中'
   const chipTone = done
-    ? 'border-pop-green/45 bg-pop-green-soft text-pop-green'
+    ? knowledgePending
+      ? 'border-pop-amber/45 bg-pop-amber-soft text-pop-amber'
+      : 'border-pop-green/45 bg-pop-green-soft text-pop-green'
     : inFlight
       ? 'border-pop-amber/45 bg-pop-amber-soft text-pop-amber animate-pulse'
       : 'border-pop-amber/45 bg-pop-amber-soft text-pop-amber'
@@ -105,7 +132,14 @@ export function ArchiveSummaryCard({ message }: { message: AgentMessage }) {
     if (done) {
       const tail = conflicts ? `；${conflicts} 处术语冲突已在归档 PR 等 review` : ''
       const delta = deltaCommits > 0 ? `；放行后 ${deltaCommits} 个提交已纳入` : ''
-      return `归档完成，任务已 done${delta}${tail}。`
+      const knowledgeNote = openFindings > 0
+        ? `；知识沉淀有 ${openFindings} 处矛盾待裁决（对我说「采纳修订 / 忽略」，不影响 done）`
+        : compileLive
+          ? '；知识沉淀仍在编译，完成后若有矛盾会单独请你裁决（不影响 done）'
+          : findingsResolved
+            ? '；知识沉淀已完成，矛盾已全部裁决'
+            : ''
+      return `归档完成，任务已 done${delta}${tail}${knowledgeNote}。`
     }
     // 重试在飞时，旧的失败报告已经不是现状 —— 先报进度。
     if (inFlight) return `正在同步到 ${total || '若干'} 个 project…`

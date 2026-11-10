@@ -74,6 +74,15 @@ let streamCounter = 0
  *  reload normalizes any still-streaming row to「已中断」anyway). */
 const STOP_SETTLE_MS = 3_000
 
+/** 停止等待超时后的「仍算忙」宽限（2026-11-10 用户事故）。
+ *  超时那一刻路由往往还在收尾（provider interrupt drain ≤2s、task-thread 的
+ *  quick-edit commit 另算），此时若立刻把流从注册表摘掉，客户端 probe 看到
+ *  running=false 就发下一条 —— 而旧 SDK 查询还没关，两条查询并发 resume 同一
+ *  provider 会话，新一条只会拿到上一轮回放的 result（空正文），用户的消息就
+ *  这样「发了但没反应」。所以超时后流继续留在注册表里（仍返回 409），真的
+ *  挂死才在 30s 后强制摘掉，免得会话永远显示运行中。 */
+const STOP_HARD_CLEAR_MS = 30_000
+
 export function registerActiveStream(sessionId: string, abort: () => void): string {
   const streamId = `${sessionId}:${++streamCounter}`
   let finish!: () => void
@@ -300,9 +309,16 @@ export class AgentService {
       if (timer) clearTimeout(timer)
     }
     if (timedOut) {
-      // A wedged provider never finalized — clear the running badge anyway so
-      // the session does not sit at「运行中」forever.
-      for (const entry of entries) unregisterActiveStream(sessionId, entry.streamId)
+      // 路由还没 finalize（见 STOP_HARD_CLEAR_MS 注释）：保留注册，新回合继续
+      // 被并发闸挡在外面；30s 后仍未收尾才强制摘除，避免真挂死的会话永远占着
+      // 「运行中」。正常收尾由路由自己的 finally 单点 unregister —— 那时这条
+      // 定时器只剩一次 no-op。
+      for (const entry of entries) {
+        const timer = setTimeout(() => {
+          unregisterActiveStream(sessionId, entry.streamId)
+        }, STOP_HARD_CLEAR_MS)
+        ;(timer as unknown as { unref?: () => void }).unref?.()
+      }
     }
     return { partial_content_preserved: true }
   }

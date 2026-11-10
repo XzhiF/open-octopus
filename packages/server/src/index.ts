@@ -660,7 +660,7 @@ const postArchiveFindingsToTaskChat = (taskId: string, findingIds: string[]): vo
     appendCardsToSession(
       getDb(),
       sessionId,
-      `⚠️ 归档编译发现 ${rows.length} 处需要你决定的冲突（回「采纳修订 / 忽略 / 讨论」，我执行前会确认）：`,
+      `🗃️ 知识沉淀阶段：归档主体已完成（任务 done）；本次编译发现 ${rows.length} 处断言矛盾需要你裁决（回「采纳修订 / 忽略 / 讨论」，我执行前会确认；只影响知识库，不改变任务 done）：`,
       rows.map((row) => ({
         id: row.id,
         kind: "finding" as const,
@@ -1367,7 +1367,8 @@ if (shouldServe) {
           compile_started_at: queueView?.startedAt ?? null,
           compile_finished_at: queueView?.finishedAt ?? null,
           compile_error: queueView?.error ?? null,
-          ...(openFindings.length > 0 ? { findings: openFindings } : {}),
+          // 活列表：已裁决的 finding 立即消失（归档窗口据此显示「已全部裁决」）。
+          findings: openFindings,
         }
       })
       // 验货台 (acceptance v2)：实物 round-diff + 当场复检 — 4th optional arg

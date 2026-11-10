@@ -216,8 +216,7 @@ describe("GET /:id/artifacts/manifest — phase × 轮次清单（2026-10-29 方
   })
 })
 
-describe("GET /:id/artifacts/manifest/content — 现读 + 遍历守卫（AC4②/④）", () => {
-  let taskId: string
+describe("GET /:id/artifacts/manifest/content — 现读 + 遍历守卫（AC4②/④）", () => {  let taskId: string
 
   beforeAll(async () => {
     taskId = await createTask("E2E_TDM content door")
@@ -280,5 +279,60 @@ describe("GET /:id/artifacts/manifest/content — 现读 + 遍历守卫（AC4②
   it("超读取上限 → 413（TOO_LARGE 惯例同 home-file 门）", async () => {
     const res = await app.request(`/api/tasks/${taskId}/artifacts/manifest/content?path=${encodeURIComponent("home:.scratch/demo/evidence/big.log")}`)
     expect(res.status).toBe(413)
+  })
+})
+
+// 2026-11-10 用户缺陷：产物窗点图片显示乱码 —— 文本门按 UTF-8 读二进制。
+// raw 端点与 content 同一扇读门，只放行图片扩展名，交给前端 <img> 直连。
+describe("GET /:id/artifacts/manifest/raw — 图片原样预览", () => {
+  let taskId: string
+  const pngBytes = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x00, 0x01, 0x02])
+  const svg = "<svg xmlns=\"http://www.w3.org/2000/svg\"></svg>"
+
+  beforeAll(async () => {
+    taskId = await createTask("E2E_TDM raw image")
+    const abs = path.join(taskHome.homePath(taskId), ".scratch/demo/evidence/shot.png")
+    fs.mkdirSync(path.dirname(abs), { recursive: true })
+    fs.writeFileSync(abs, pngBytes)
+    writeHome(taskId, ".scratch/demo/spec.md", "# 文本不是图片")
+    const now = new Date().toISOString()
+    db.prepare(`INSERT INTO workspaces (id, name, repo_group, path, source, status, created_at, updated_at)
+      VALUES ('ws-tdm-3', 'E2E_TDM ws3', ?, ?, 'manual', 'active', ?, ?)`).run(ORG, wsBase, now, now)
+    db.prepare(`INSERT INTO executions (id, workspace_id, parent_id, child_index, workflow_ref, workflow_name,
+      status, input_values, var_pool, org, created_at, updated_at, task_id, phase_index, round_index)
+      VALUES ('exec-tdm-3', 'ws-tdm-3', '0', 0, 'built-in/wf', 'wf', 'completed', '{}', '{}', ?, ?, ?, ?, 1, 1)`)
+      .run(ORG, now, now, taskId)
+    writeWs("public/prototype/diagram.svg", svg)
+  })
+
+  it("home 图片 → 原样字节 + image/png（不走 UTF-8 文本门，不乱码）", async () => {
+    const res = await app.request(`/api/tasks/${taskId}/artifacts/manifest/raw?path=${encodeURIComponent("home:.scratch/demo/evidence/shot.png")}`)
+    expect(res.status).toBe(200)
+    expect(res.headers.get("content-type")).toBe("image/png")
+    expect(res.headers.get("content-security-policy")).toBe("sandbox")
+    expect(res.headers.get("x-content-type-options")).toBe("nosniff")
+    const bytes = Buffer.from(await res.arrayBuffer())
+    expect(bytes.equals(pngBytes)).toBe(true)
+  })
+
+  it("ws 原型图同门（svg → image/svg+xml）", async () => {
+    const res = await app.request(`/api/tasks/${taskId}/artifacts/manifest/raw?path=${encodeURIComponent("ws:public/prototype/diagram.svg")}`)
+    expect(res.status).toBe(200)
+    expect(res.headers.get("content-type")).toBe("image/svg+xml")
+    expect(await res.text()).toBe(svg)
+  })
+
+  it("非图片扩展名 → 403（这扇门不是通用二进制出口）", async () => {
+    const res = await app.request(`/api/tasks/${taskId}/artifacts/manifest/raw?path=${encodeURIComponent("home:.scratch/demo/spec.md")}`)
+    expect(res.status).toBe(403)
+  })
+
+  it("守卫同源：缺文件 404 / 遍历 400 / 无参 400", async () => {
+    const missing = await app.request(`/api/tasks/${taskId}/artifacts/manifest/raw?path=${encodeURIComponent("home:.scratch/demo/evidence/nope.png")}`)
+    expect(missing.status).toBe(404)
+    const traversal = await app.request(`/api/tasks/${taskId}/artifacts/manifest/raw?path=${encodeURIComponent("home:.scratch/../escape.png")}`)
+    expect(traversal.status).toBe(400)
+    const noParam = await app.request(`/api/tasks/${taskId}/artifacts/manifest/raw`)
+    expect(noParam.status).toBe(400)
   })
 })

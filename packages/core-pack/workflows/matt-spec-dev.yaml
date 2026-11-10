@@ -24,6 +24,8 @@ kind: Workflow
 # 每批恒有 —— gate 放宽为「验证声明二选一」：有 `NN-e2e-*` 票，或 spec 写
 # `Verification Tier: unit-only`。无票 → has_e2e=false → e2e-verify 跳过，轻 phase
 # 不烧最贵的走查成本。（曾有过的 integration-gate 兜底节点仍是死码，保持删除。）
+# 浏览器唯一归属 = 那张走查票（author-verified-tickets ③）：功能票不起浏览器，
+# 票面若写了浏览器步骤，票节点一律不执行、留一行移交备注，避免与 e2e-verify 双跑。
 #
 # 多仓：spec-resolve 枚举**全部** projects/*/ 仓及各自分支写入 $vars.repos（旧实现只认
 # 第一个仓 → 第二仓分支/PR 会丢）。code-review / ship-pr 逐仓循环，每个有改动的仓各出
@@ -375,7 +377,7 @@ nodes:
       {
         "id": "ticket-NN",
         "type": "agent",
-        "prompt": "你是实现者，执行 ticket NN。\n\nSpec: <spec 文件>\nTicket: $inputs.batch_dir/issues/NN-slug.md\n代码仓: projects/ 下可能有多个仓（跨仓任务：提供方仓产出符号、消费方仓引用）。先定位本票改动落在哪个仓。\n跨仓依赖：若本票引用另一仓本次新产出的符号，其构建/安装步骤以被依赖票自己的 Verification Method 为准（作者按各仓构建系统写好），票间 Blocked by 保证顺序——本票编译前先确认依赖方产物已就绪。\n前序交接（有则先读；空则本 phase 无前序）: $vars.prev_handoffs — 不得回退其中 Protected Decisions；接口/表/组件/命令直接复用其中 Confirmed Interfaces 给的现物，不回炉重设计。\n\n使用 implement skill 和 tdd skill 方法论:\n1. Read spec + ticket 理解需求（各一次读全，不回读）\n2. 探路 ≤2 次 grep/Read：定位到源文件与测试目录即止——**已续接前序会话（你唯一依赖的那张票）探过的路**禁止重走；无续接的票（并行票/汇聚票）各自探自己的，别为别人的重复劳动买单\n3. TDD 实现（DB → API → UI → test）\n4. 运行 ticket 的 Verification Method —— **只跑本票相关的测试文件/用例（如 vitest run <files>、-t <name>），票内禁跑全量测试套件**（全量终检归 code-review 恰一次）；修复轮只重跑失败用例\n5. 更新 ticket Status: done 或 skip（原位回写票文件）\n═══ 速度纪律 ═══ 直接编辑文件，不口播实现过程；最终回复 = 票状态一行 + vars_update JSON。**相互独立的 Read/Grep 在同一回合并发发起**（一个回合放多个工具调用），不要一回合一个工具排队。\n\n你是多个并发实现者之一。只关注你的 ticket。\n不要修改其他 ticket 的文件。不要改 spec*.md。不要 commit。\n\n最后输出 vars_update: {\"vars_update\": {\"ticket_NN_status\": \"done|skip\"}}",
+        "prompt": "你是实现者，执行 ticket NN。\n\nSpec: <spec 文件>\nTicket: $inputs.batch_dir/issues/NN-slug.md\n代码仓: projects/ 下可能有多个仓（跨仓任务：提供方仓产出符号、消费方仓引用）。先定位本票改动落在哪个仓。\n跨仓依赖：若本票引用另一仓本次新产出的符号，其构建/安装步骤以被依赖票自己的 Verification Method 为准（作者按各仓构建系统写好），票间 Blocked by 保证顺序——本票编译前先确认依赖方产物已就绪。\n前序交接（有则先读；空则本 phase 无前序）: $vars.prev_handoffs — 不得回退其中 Protected Decisions；接口/表/组件/命令直接复用其中 Confirmed Interfaces 给的现物，不回炉重设计。\n\n使用 implement skill 和 tdd skill 方法论:\n1. Read spec + ticket 理解需求（各一次读全，不回读）\n2. 探路 ≤2 次 grep/Read：定位到源文件与测试目录即止——**已续接前序会话（你唯一依赖的那张票）探过的路**禁止重走；无续接的票（并行票/汇聚票）各自探自己的，别为别人的重复劳动买单\n3. TDD 实现（DB → API → UI → test）\n4. 运行 ticket 的 Verification Method —— **只跑本票相关的测试文件/用例（如 vitest run <files>、-t <name>），票内禁跑全量测试套件**（全量终检归 code-review 恰一次）；修复轮只重跑失败用例\n4b. 若票的 Verification Method 含浏览器/UI 走查步骤（打开页面、Playwright、截图…），**本节点一律不执行**——浏览器唯一归属是 code-review 之后的 e2e-verify 走查票；跳过这些步骤并在票尾记一行「浏览器步骤已移交 e2e-verify」，其余步骤照跑\n5. 更新 ticket Status: done 或 skip（原位回写票文件）\n═══ 速度纪律 ═══ 直接编辑文件，不口播实现过程；最终回复 = 票状态一行 + vars_update JSON。**相互独立的 Read/Grep 在同一回合并发发起**（一个回合放多个工具调用），不要一回合一个工具排队。\n\n你是多个并发实现者之一。只关注你的 ticket。\n不要修改其他 ticket 的文件。不要改 spec*.md。不要 commit。\n\n最后输出 vars_update: {\"vars_update\": {\"ticket_NN_status\": \"done|skip\"}}",
         "skills": ["implement", "tdd"],
         "depends_on": ["ticket-XX"],
         "context": "new",

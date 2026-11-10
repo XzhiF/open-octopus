@@ -160,6 +160,8 @@ interface ChatAreaProps {
   composerSeed?: string
   /** 右列有工作区作业坞（lg+）：用户输入历史让开该列，避免重叠。 */
   timelineClearDock?: boolean
+  /** 分屏：每栏较窄，转录给贴边作业坞留出右内边距（否则正文会钻到坞下面）。 */
+  dockGutter?: boolean
 }
 
 /** ⇧⏎ 排队上限（原型 chat-tui.html 拍板）。 */
@@ -182,7 +184,7 @@ export function ChatArea({
   effort, onEffortChange, maxContext, onMaxContextChange, modelPresets,
   composerLeading, composerPlaceholder, heroEmpty, composerHeroFooter, identity, identityDisplay, workspaceContext,
   tui, onSteer, steerActiveRef, resumeTailing,
-  messageExtras, transcriptTail, composerSeed, timelineClearDock,
+  messageExtras, transcriptTail, composerSeed, timelineClearDock, dockGutter,
 }: ChatAreaProps) {
   const [input, setInput] = useState('')
   const [slashOpen, setSlashOpen] = useState(false)
@@ -386,6 +388,14 @@ export function ChatArea({
       if (streaming) {
         setInput('')
         const take = takeComposerAttachments(text)
+        // 尾随他端回合（resume）时本实例没有可掐的流；后台任务运行中时
+        // Enter 的本来意思是问进度，不是杀掉那个程序。两种都只排队，回合
+        // 收口后 done-flush 自动发出（2026-11-10 用户事故：dev-up.sh 被
+        // Enter 打断，消息本身也被吞掉）。
+        if (resumeTailing || (backgroundTasks?.length ?? 0) > 0) {
+          pushQueue(take.text, take.expert)
+          return
+        }
         if (onSteer) onSteer(take.text, take.opts)
         else onStop()
         return
@@ -519,7 +529,9 @@ export function ChatArea({
           }}
           className="flex-1 overflow-y-auto"
         >
-          <div className={tui ? 'mx-auto max-w-4xl px-5 py-4 space-y-1.5 text-[12.5px] leading-relaxed' : 'max-w-3xl mx-auto px-4 py-4 space-y-2.5'}>
+          <div className={tui
+            ? cn('mx-auto max-w-4xl px-5 py-4 space-y-1.5 text-[12.5px] leading-relaxed', dockGutter && 'pr-[68px]')
+            : 'max-w-3xl mx-auto px-4 py-4 space-y-2.5'}>
             {/* Session exists but has no turns yet (new chat / new task). */}
             {tui && messages.length === 0 && !streaming && !hideEmptyState && (
               <div className="py-8" role="status" aria-live="polite">
@@ -992,7 +1004,13 @@ export function ChatArea({
                 ) : queue.length > 0 ? (
                   <span className="truncate" data-tui-hint>⏎ 继续排队 · ⇧⏎ 排队 · esc 退回输入框 <span className="opacity-70">队列 {queue.length}/{TUI_QUEUE_MAX} · done 即发</span></span>
                 ) : streaming ? (
-                  <span className="shrink-0" data-tui-hint>⏎ 打断并接管 · ⇧⏎ 不打断，排队 · esc 打断</span>
+                  <span className="shrink-0" data-tui-hint>
+                    {resumeTailing
+                      ? '⏎ 排队（正在跟随另一窗口的回合，结束即发）'
+                      : bgTasks.length > 0
+                        ? '⏎ 排队（后台任务运行中，结束即发）· esc 停止'
+                        : '⏎ 打断并接管 · ⇧⏎ 不打断，排队 · esc 打断'}
+                  </span>
                 ) : (
                   <span className="shrink-0" data-tui-hint>⏎ 发送 · ⇧⏎ 排队 · Alt⏎ 换行</span>
                 )}

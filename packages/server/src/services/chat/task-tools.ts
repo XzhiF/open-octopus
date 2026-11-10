@@ -57,7 +57,7 @@ export interface AcceptanceToolsService {
   startPreview(taskId: string): Promise<{ state: string; url?: string; views?: unknown }>
   stopPreview(taskId: string): unknown
   /** 放行前终检：末轮 end → 当前 HEAD 的提交 + dirty 文件（只读）。 */
-  getPostRoundDelta(taskId: string): ProjectDelta[]
+  getPostRoundDelta(taskId: string): Promise<ProjectDelta[]>
 }
 
 let acceptanceProvider: (() => AcceptanceToolsService | null) | null = null
@@ -91,7 +91,7 @@ export interface ArchiveToolsService {
   resolveArchiveDelta(
     taskId: string,
     action: "include" | "exclude",
-  ): { ok: true; decision: "include" | "exclude"; dirty_projects: string[] }
+  ): Promise<{ ok: true; decision: "include" | "exclude"; dirty_projects: string[] }>
   /** done 之后的只增不改增补（可选同时落 wiki）。 */
   recordAmendment(
     taskId: string,
@@ -513,7 +513,7 @@ export function createTaskToolServer(input: TaskToolServerInput) {
           const detail = svc.getPlanDetail(task.id)
           let postRound: ProjectDelta[] = []
           try {
-            postRound = svc.getPostRoundDelta(task.id)
+            postRound = await svc.getPostRoundDelta(task.id)
           } catch {
             postRound = []
           }
@@ -956,7 +956,7 @@ export function createTaskToolServer(input: TaskToolServerInput) {
         const svc = archiveService()
         if (!svc) return text({ ok: false, error: "归档服务未就绪" })
         try {
-          const out = svc.resolveArchiveDelta(task.id, decision)
+          const out = await svc.resolveArchiveDelta(task.id, decision)
           return text({
             ok: true,
             decision: out.decision,

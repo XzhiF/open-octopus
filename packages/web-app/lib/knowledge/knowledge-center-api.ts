@@ -472,6 +472,17 @@ export async function kcListFindings(status?: "open" | "resolved" | "ignored"): 
   return data.findings
 }
 
+/** 按 id 定向取（不限状态）：主 Chat 的 finding 卡刷新后回填活状态，不拉全库收件箱。
+ *  未知 id 服务端静默跳过（卡留着显形，不伪造终态）。 */
+export async function kcGetFindingsByIds(ids: string[]): Promise<KcFindingView[]> {
+  const unique = [...new Set(ids.filter(Boolean))]
+  if (unique.length === 0) return []
+  const url = `${getServerUrl()}/api/knowledge/findings?ids=${encodeURIComponent(unique.join(","))}`
+  const res = await apiFetch(url)
+  const data = await handleResponse<{ findings: KcFindingView[] }>(res)
+  return data.findings ?? []
+}
+
 export interface KcAdoptAck {
   findingId: string
   taskId: string

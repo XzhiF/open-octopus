@@ -7,6 +7,7 @@ import {
   MessageSquare,
   MoreHorizontal,
   PanelLeftClose,
+  PanelRightOpen,
   Pencil,
   Search,
   SquarePen,
@@ -34,7 +35,7 @@ interface ChatSidebarProps {
   onSelectTask: (task: TaskView) => void
   /** Task session being authored, before its draft row exists. `kind` follows
    *  task_spec.kind so the row can show the workflow-dev marker (2026-11-06). */
-  pendingTask?: { sessionId: string; title: string; kind?: 'workflow-dev' } | null
+  pendingTask?: { title: string; kind?: 'workflow-dev' } | null
   activePendingTask?: boolean
   sessions: AgentSession[]
   sessionsLoading: boolean
@@ -57,6 +58,14 @@ interface ChatSidebarProps {
   onSearchOpenChange: (open: boolean) => void
   /** Desktop-only collapse-to-rail affordance. */
   onCollapse?: () => void
+  /** 分屏模式：行内标 L/R，并给未占用的行一个「在另一栏打开」入口。 */
+  splitMode?: boolean
+  paneOfSession?: (sessionId: string) => 'left' | 'right' | null
+  paneOfTask?: (taskId: string) => 'left' | 'right' | null
+  onOpenSessionInOther?: (sessionId: string) => void
+  onOpenTaskInOther?: (task: TaskView) => void
+  /** hover 入口的文案，例如「在右栏打开」（由焦点栏决定）。 */
+  openInOtherLabel?: string
 }
 
 const ROW =
@@ -119,6 +128,51 @@ function RunningPill() {
   )
 }
 
+/** 分屏行标记：这一行当前开在哪一栏（点击行 = 聚焦那一栏）。 */
+function PaneMark({ pane }: { pane: 'left' | 'right' }) {
+  const label = pane === 'left' ? '已在左栏打开' : '已在右栏打开'
+  return (
+    <span
+      data-pane-mark={pane}
+      aria-label={label}
+      title={label}
+      className="grid size-4 shrink-0 place-items-center rounded-[4px] border border-pop-yellow/40 bg-pop-yellow/12 font-mono text-[9px] font-semibold leading-none text-pop-yellow"
+    >
+      {pane === 'left' ? 'L' : 'R'}
+    </span>
+  )
+}
+
+/** 行 hover 的「在另一栏打开」——只在分屏时出现。 */
+function OpenInOther({
+  label,
+  onClick,
+  group,
+}: {
+  label: string
+  onClick: () => void
+  group: 'session' | 'task'
+}) {
+  return (
+    <button
+      type="button"
+      aria-label={label}
+      title={label}
+      data-testid={`open-in-other-${group}`}
+      onClick={(event) => {
+        event.stopPropagation()
+        onClick()
+      }}
+      className={cn(
+        'grid size-5 shrink-0 place-items-center rounded text-pop-dim opacity-0 transition-all hover:bg-white/[0.08] hover:text-pop-ink',
+        group === 'session' ? 'group-hover/session:opacity-100' : 'group-hover/task:opacity-100',
+      )}
+    >
+      <PanelRightOpen className="size-3.5" strokeWidth={1.8} />
+    </button>
+  )
+}
+
 /** 任务类型（2026-11-06）：缺省 = 开发任务；workflow-dev = 工作流开发。 */
 type TaskKind = 'workflow-dev' | 'dev'
 
@@ -174,6 +228,12 @@ export function ChatSidebar({
   searchOpen,
   onSearchOpenChange,
   onCollapse,
+  splitMode = false,
+  paneOfSession,
+  paneOfTask,
+  onOpenSessionInOther,
+  onOpenTaskInOther,
+  openInOtherLabel,
 }: ChatSidebarProps) {
   const [editingId, setEditingId] = useState<string | null>(null)
   const [editTitle, setEditTitle] = useState('')
@@ -378,6 +438,7 @@ export function ChatSidebar({
                 {filteredTasks.map((task) => {
                   const active = activeTaskId === task.id
                   const kind = taskKindOf(task)
+                  const paneMark = paneOfTask?.(task.id) ?? null
                   const running =
                     task.status === 'running' ||
                     (!!task.source_chat_session_id &&
@@ -391,6 +452,7 @@ export function ChatSidebar({
                         data-task-status={task.status}
                         data-task-kind={kind}
                         data-running-task={running ? 'true' : undefined}
+                        data-pane={paneMark ?? undefined}
                         aria-current={active ? 'page' : undefined}
                         title={running
                           ? `${task.name} · ${TASK_KIND_LABEL[kind]} · Agent 运行中`
@@ -398,7 +460,8 @@ export function ChatSidebar({
                         onClick={() => onSelectTask(task)}
                         className={cn(
                           ROW,
-                          'gap-2 pr-7',
+                          'gap-2',
+                          splitMode ? 'pr-12' : 'pr-7',
                           active
                             ? 'bg-white/[0.07] text-pop-ink'
                             : 'text-pop-ink/80 hover:bg-white/[0.035] hover:text-pop-ink',
@@ -413,14 +476,24 @@ export function ChatSidebar({
                           )}
                         />
                         <span className="min-w-0 flex-1 truncate">{task.name}</span>
-                        {running ? (
-                          <RunningPill />
-                        ) : TASK_SHORT_LABEL[task.status] ? (
+                        {running && <RunningPill />}
+                        {paneMark ? (
+                          <PaneMark pane={paneMark} />
+                        ) : !splitMode && TASK_SHORT_LABEL[task.status] ? (
                           <span className="shrink-0 text-[10px] text-pop-dim">
                             {TASK_SHORT_LABEL[task.status]}
                           </span>
                         ) : null}
                       </button>
+                      {splitMode && !paneMark && onOpenTaskInOther && openInOtherLabel && (
+                        <div className="absolute right-6 top-1/2 -translate-y-1/2">
+                          <OpenInOther
+                            group="task"
+                            label={openInOtherLabel}
+                            onClick={() => onOpenTaskInOther(task)}
+                          />
+                        </div>
+                      )}
                       <DropdownMenu>
                         <DropdownMenuTrigger asChild>
                           <button
@@ -471,6 +544,7 @@ export function ChatSidebar({
               {filteredSessions.map((session) => {
                 const active = activeSessionId === session.id
                 const running = !!runningSessionIds?.has(session.id)
+                const paneMark = paneOfSession?.(session.id) ?? null
                 return (
                   <div
                     key={session.id}
@@ -479,13 +553,15 @@ export function ChatSidebar({
                     title={running ? `${session.title} · Agent 运行中` : session.title}
                     data-session-id={session.id}
                     data-running-session={running ? 'true' : undefined}
+                    data-pane={paneMark ?? undefined}
+                    aria-current={active ? 'page' : undefined}
                     onClick={() => onSelectSession(session.id)}
                     onKeyDown={(event) => {
                       if (event.key === 'Enter') onSelectSession(session.id)
                     }}
                     className={cn(
                       ROW,
-                      'gap-2',
+                      'group/session gap-2',
                       active
                         ? 'bg-white/[0.07] text-pop-ink'
                         : 'text-pop-ink/80 hover:bg-white/[0.035] hover:text-pop-ink',
@@ -522,11 +598,20 @@ export function ChatSidebar({
                     <div className="ml-auto flex shrink-0 items-center">
                       {running ? (
                         <RunningPill />
-                      ) : (
-                        <span className="text-[10.5px] tabular-nums text-pop-dim/50 group-hover:hidden">
+                      ) : !splitMode ? (
+                        <span className="text-[10.5px] tabular-nums text-pop-dim/50 group-hover/session:hidden">
                           {dateLabel(session.last_message_at)}
                         </span>
-                      )}
+                      ) : null}
+                      {paneMark ? (
+                        <PaneMark pane={paneMark} />
+                      ) : splitMode && onOpenSessionInOther && openInOtherLabel ? (
+                        <OpenInOther
+                          group="session"
+                          label={openInOtherLabel}
+                          onClick={() => onOpenSessionInOther(session.id)}
+                        />
+                      ) : null}
                       <DropdownMenu>
                         <DropdownMenuTrigger asChild>
                           <button

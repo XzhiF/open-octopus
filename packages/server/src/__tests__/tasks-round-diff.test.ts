@@ -416,6 +416,60 @@ describe("round-diff — 票03 执行中轮 live 供货", () => {
     expect(d.available).toBe(true)
     expect(d.aggregate.commits).toBe(2)
   })
+
+  // 2026-11-09 用户：只要 worktree 里的代码变了就该看见 —— 不能等第一个 commit。
+  it("L7: 未提交改动即供 —— 改一行/新增未跟踪文件立刻出现，提交后同一净额不双计", async () => {
+    const [, , k2] = freshRepo("live7")
+    const [taskId] = await newAwaitingTask({ status: "running", start: { live7: k2 }, end: null })
+    const dir = path.join(wsDir, "projects", "live7")
+    // 起跑时干净：零变更（不是谎报的"空"）。
+    expect((await diffOf(taskId)).aggregate).toEqual({ commits: 0, additions: 0, dels: 0, files: 0 })
+
+    // agent 改了受跟踪文件 + 新建一个从未提交的文件 —— 一个 commit 都还没有。
+    fs.writeFileSync(path.join(dir, "r1.txt"), "1a\n1b edited\n1c\n1d\n")
+    fs.writeFileSync(path.join(dir, "new-file.ts"), "export const a = 1\nexport const b = 2\n")
+
+    const dirty = await diffOf(taskId)
+    expect(dirty.available).toBe(true)
+    expect(dirty.aggregate.commits).toBe(0)
+    expect(dirty.aggregate.files).toBe(2)
+    const byPath = new Map(
+      dirty.repos.find((r) => r.name === "live7")!.groups.flatMap((g) => g.files.map((f) => [f.path, f])),
+    )
+    expect(byPath.get("r1.txt")).toMatchObject({ status: "M", adds: 2, dels: 1 })
+    expect(byPath.get("new-file.ts")).toMatchObject({ status: "A", adds: 2, dels: 0 })
+
+    // patch 与列表同右端：跟踪文件的未提交 hunk 与未跟踪文件全文都能取到。
+    const patchOf = async (file: string) =>
+      (await app.request(
+        `/api/tasks/${taskId}/round-diff/patch?repo=live7&path=${encodeURIComponent(file)}`,
+      )) as Response
+    const tracked = (await (await patchOf("r1.txt")).json()) as { patch: string }
+    expect(tracked.patch).toContain("-1b")
+    expect(tracked.patch).toContain("+1b edited")
+    const added = (await (await patchOf("new-file.ts")).json()) as { patch: string }
+    expect(added.patch).toContain("+export const a = 1")
+
+    // 提交之后：还是同一份净额（start..HEAD 与 start..worktree 重合），不双计。
+    git(dir, "add", "-A")
+    git(dir, "commit", "-m", "agent work")
+    const committed = await diffOf(taskId)
+    expect(committed.aggregate.commits).toBe(1)
+    expect(committed.aggregate.files).toBe(dirty.aggregate.files)
+    expect(committed.aggregate.additions).toBe(dirty.aggregate.additions)
+    expect(committed.aggregate.dels).toBe(dirty.aggregate.dels)
+  })
+
+  it("L8: awaiting 轮仍是冻结快照 —— 工作区脏了也不进本件（放行后的改动归归档 delta）", async () => {
+    const [, k1, k2] = freshRepo("frozen")
+    const [taskId] = await newAwaitingTask({ start: { frozen: k1 }, end: { frozen: k2 } })
+    // 待验收轮结束（k1..k2）后，人/agent 又动了工作区 —— 不进冻结区间。
+    fs.writeFileSync(path.join(wsDir, "projects", "frozen", "r1.txt"), "dirty while awaiting\n")
+    const d = await diffOf(taskId)
+    expect(d.aggregate).toEqual({ commits: 1, additions: 1, dels: 0, files: 1 })
+    const paths = d.repos.find((r) => r.name === "frozen")!.groups.flatMap((g) => g.files.map((f) => f.path))
+    expect(paths).toEqual(["r2.txt"])
+  })
 })
 
 // ── 2026-10-31：归档回看 —— 已验收轮在无 awaiting / live 时继续供货 ──────────
@@ -482,5 +536,51 @@ describe("round-diff — 已验收轮回落供货（归档后回看）", () => {
     expect(d.aggregate.commits).toBe(1) // P2 那一轮 k1..k2
     const paths = d.repos.find((r) => r.name === "arc2")!.groups.flatMap((g) => g.files.map((f) => f.path))
     expect(paths).toEqual(["r2.txt"])
+  })
+
+  // 2026-11-10 用户：变更窗只要两份总账 —— 本 phase 与整个任务。task 口径的
+  // start 锚是任务最早轮（P1 首轮），不是当前 phase 首轮。
+  it("A3: scope=task → P1 首轮 start .. 末轮 end（跨 phase），patch 同锚", async () => {
+    const [k0, k1, k2] = freshRepo("taskacc")
+    const phases = [
+      { index: 1, name: "P1", slug: "p-1", specPath: "./.scratch/20261110/p-1/spec.md", workflowRef: "task-dev", inputValues: {} },
+      { index: 2, name: "P2", slug: "p-2", specPath: "./.scratch/20261110/p-2/spec.md", workflowRef: "task-dev", inputValues: {} },
+    ]
+    const res = await app.request("/api/tasks", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ name: `E2E_TD taskacc ${seq++}`, task_spec: { format: "v4", goal: "g", ac: ["a"], phases } }),
+    })
+    expect(res.status).toBe(201)
+    const taskId = ((await res.json()) as { id: string }).id
+    const now = new Date().toISOString()
+    const insert = db.prepare(`
+      INSERT INTO executions (id, workspace_id, org, workflow_ref, workflow_name, status,
+        task_id, phase_index, round_index, start_commit_id, end_commit_id,
+        started_at, completed_at, created_at, updated_at)
+      VALUES (?, ?, ?, 'task-dev', 'rd', 'completed', ?, ?, 1, ?, ?, ?, ?, ?, ?)
+    `)
+    insert.run(`exec-taskacc-p1-${seq}`, WS_ID, ORG, taskId, 1, JSON.stringify({ taskacc: k0 }), JSON.stringify({ taskacc: k1 }), now, now, now, now)
+    insert.run(`exec-taskacc-p2-${seq}`, WS_ID, ORG, taskId, 2, JSON.stringify({ taskacc: k1 }), JSON.stringify({ taskacc: k2 }), now, now, now, now)
+    accept(taskId, 1, 1)
+    accept(taskId, 2, 1)
+
+    const get = async (scope: string) =>
+      (await (await app.request(`/api/tasks/${taskId}/round-diff?scope=${scope}`)).json()) as RoundDiffPayload
+    const phase = await get("cumulative")
+    const task = await get("task")
+    // 本 phase = P2 首轮 k1..k2；任务 = P1 首轮 k0..k2（r1 + r2 都在）
+    expect(phase.aggregate.commits).toBe(1)
+    expect(task.aggregate.commits).toBe(2)
+    const taskPaths = task.repos.find((r) => r.name === "taskacc")!.groups.flatMap((g) => g.files.map((f) => f.path))
+    expect(taskPaths.sort()).toEqual(["r1.txt", "r2.txt"])
+    // payload 形状两口径同 key 集合（web 解析面不变）
+    expect(Object.keys(task).sort()).toEqual(Object.keys(phase).sort())
+    // patch 与任务总账同锚：P1 轮新增的 r1.txt 也能取到
+    const pr = await app.request(
+      `/api/tasks/${taskId}/round-diff/patch?repo=taskacc&path=r1.txt&scope=task`,
+    )
+    expect(pr.status).toBe(200)
+    expect(((await pr.json()) as { patch: string }).patch).toContain("+1a")
   })
 })

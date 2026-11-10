@@ -81,8 +81,13 @@ export interface TaskThreadProfile {
   /** Stable skill-discovery set for the whole thread. */
   plugins: Array<{ type: "local"; path: string }>
   guard?: TaskThreadGuard
-  /** Per-turn <system-reminder> body. */
+  /** Per-turn <system-reminder> body (head + playbook, joined). */
   context: string
+  /** Status line — refreshed EVERY turn (task / status / phase · round). */
+  contextHead: string
+  /** Identity + discipline + tools + guides. Sent once per change; hash-gated
+   *  by the chat route so unchanged turns carry only the head. */
+  contextPlaybook: string
   /** Execution turns: land one [quick-edit] commit per dirty repo. */
   autoCommit: boolean
   readOnly: boolean
@@ -316,7 +321,15 @@ export class TaskThreadService {
     const archiveGuide = identity === "doer" && info.status === "archiving"
     const archiveConsent = identity === "doer" && awaitingArchive
     const guard = this.buildGuard(identity, { taskHome, wsPath, readOnly, taskId: task.id, acceptanceGuide })
-    const context = this.buildContext(info, { identity, spec, view, acceptanceGuide, archiveGuide, archiveConsent })
+    const { head: contextHead, playbook: contextPlaybook } = this.buildContext(info, {
+      identity,
+      spec,
+      view,
+      acceptanceGuide,
+      archiveGuide,
+      archiveConsent,
+    })
+    const context = [contextHead, contextPlaybook].filter(Boolean).join("\n")
 
     return {
       task: info,
@@ -325,6 +338,8 @@ export class TaskThreadService {
       plugins,
       guard,
       context,
+      contextHead,
+      contextPlaybook,
       autoCommit: identity === "doer" && !readOnly && !!wsPath,
       readOnly,
       // Newest instance row; a stopped-but-undelivered round is a takeover turn.
@@ -372,6 +387,15 @@ export class TaskThreadService {
     return buildReadOnlyGuard()
   }
 
+  /**
+   * Split the per-turn <system-reminder> into two parts:
+   *   - head     — the status line (task / status / phase · round). Refreshed
+   *                EVERY turn: the model must see state changes immediately.
+   *   - playbook — identity + discipline + tools + guides. Changes only on
+   *                identity/state transitions, so the chat route sends it once
+   *                per change (hash-gated) instead of re-paying for it each turn.
+   * The joined `context` is kept for tests/debug surfaces.
+   */
   private buildContext(
     info: TaskThreadTaskInfo,
     extra: {
@@ -382,7 +406,7 @@ export class TaskThreadService {
       archiveGuide?: boolean
       archiveConsent?: boolean
     },
-  ): string {
+  ): { head: string; playbook: string } {
     const label = STATUS_LABEL[info.displayStatus] ?? info.displayStatus
     const coord =
       info.phaseIndex != null
@@ -391,19 +415,21 @@ export class TaskThreadService {
     const head = `[任务线程] 任务：${info.name}（id: ${info.id}）· 状态：${label} · ${coord}`
 
     if (extra.identity === "author" && info.kind === "workflow-dev") {
-      return [
+      return {
         head,
-        "[身份] 工作流开发者（workflow-author）。交付物是工作流 YAML，不是代码；只写 task home，project 仓库只读。",
-        `[任务 home] ${info.taskHome} · 工作流目录 ${path.join(info.taskHome, "workflows")}`,
-        "[一次一个] 当前工作流未完成（校验+仿真通过，且用户已决定 release/snapshot）前，不得开始下一个。",
-        "[流程] 1 盘点现有工作流（list_workflows / get_workflow）→ 2 澄清需求（一次一问）→ 3 给出雏形与推荐方向，**等用户确认** → 4 写 YAML → 5 validate_workflow → 6 写 fixture + simulate_workflow → 7 用户同意后 run_workflow → 8 失败先诊断再修 → 9 问 release/snapshot 后 complete_workflow → 10 问是否继续；全部完成调 finish_workflow_dev，再问是否归档。",
-        "[工具] 工作流盘点/运行/调试走 octopus-workflow（list_workflows / get_workflow / validate_workflow / simulate_workflow / run_workflow / get_execution / cancel_execution / pause_execution / resume_execution / retry_node / rerun_execution / diagnose_execution / reload_execution_workflow）。",
-        "[任务工具] set_active_workflow（登记/切换当前工作流）、get_workflow_dev_state、complete_workflow（release|snapshot）、finish_workflow_dev、add_workspace_projects（把项目引入当前 workspace）。",
-        "[运行硬闸] 未通过基础校验或仿真时 run_workflow 会拒绝；只有用户明确要求豁免时才可传 waiver 并说明原因。改过 YAML 后旧结果自动失效，必须重跑。",
-        "[release] release = 复制到主 Agent 工作区 workflows/，默认对话可见；snapshot 只留在任务侧。必须问用户，不得默认 release。",
-        "[收尾] 用户明确说「归档」后才调 start_archive；不要自己归档，也不要声称 done。",
-        "[状态感知] 任务状态变化会以事件卡出现在本会话；每轮也会刷新上面这行状态。",
-      ].join("\n")
+        playbook: [
+          "[身份] 工作流开发者（workflow-author）。交付物是工作流 YAML，不是代码；只写 task home，project 仓库只读。",
+          `[任务 home] ${info.taskHome} · 工作流目录 ${path.join(info.taskHome, "workflows")}`,
+          "[一次一个] 当前工作流未完成（校验+仿真通过，且用户已决定 release/snapshot）前，不得开始下一个。",
+          "[流程] 1 盘点现有工作流（list_workflows / get_workflow）→ 2 澄清需求（一次一问）→ 3 给出雏形与推荐方向，**等用户确认** → 4 写 YAML → 5 validate_workflow → 6 写 fixture + simulate_workflow → 7 用户同意后 run_workflow → 8 失败先诊断再修 → 9 问 release/snapshot 后 complete_workflow → 10 问是否继续；全部完成调 finish_workflow_dev，再问是否归档。",
+          "[工具] 工作流盘点/运行/调试走 octopus-workflow（list_workflows / get_workflow / validate_workflow / simulate_workflow / run_workflow / get_execution / cancel_execution / pause_execution / resume_execution / retry_node / rerun_execution / diagnose_execution / reload_execution_workflow）。",
+          "[任务工具] set_active_workflow（登记/切换当前工作流）、get_workflow_dev_state、complete_workflow（release|snapshot）、finish_workflow_dev、add_workspace_projects（把项目引入当前 workspace）。",
+          "[运行硬闸] 未通过基础校验或仿真时 run_workflow 会拒绝；只有用户明确要求豁免时才可传 waiver 并说明原因。改过 YAML 后旧结果自动失效，必须重跑。",
+          "[release] release = 复制到主 Agent 工作区 workflows/，默认对话可见；snapshot 只留在任务侧。必须问用户，不得默认 release。",
+          "[收尾] 用户明确说「归档」后才调 start_archive；不要自己归档，也不要声称 done。",
+          "[状态感知] 任务状态变化会以事件卡出现在本会话；每轮也会刷新上面这行状态。",
+        ].join("\n"),
+      }
     }
 
     if (extra.identity === "author") {
@@ -411,15 +437,17 @@ export class TaskThreadService {
         extra.spec.phases?.length
           ? extra.spec.phases.map((p) => `P${p.index} ${p.name}${p.workflowRef ? ` → ${p.workflowRef}` : ""}`).join("；")
           : "尚未拆 phase"
-      return [
+      return {
         head,
-        "[身份] 任务作者。把需求澄清成 v4 task_spec；只写 task home，project 仓库只读；不跑开发/构建/测试，不 commit/push。",
-        `[任务 home] ${info.taskHome}`,
-        `[phases] ${phaseLines}`,
-        "[写规格] 优先用任务工具 update_task_spec_field（或 POST /api/tasks/:id/spec-field），不要整段覆盖 phases。",
-        "[收尾] 规格齐后默认用任务工具 propose_launch 让用户在「立即执行 / 入列待触发 / 定时触发」中选；**用户在本轮对话里明确说「立即执行 / 入列 / 现在开跑」时**，直接调 launch_task / enqueue_task（confirmed=true）执行，不要让他再去点卡片（这条覆盖旧角色卡里「只等用户点 [入队]」的说法）。没有用户明确表态时不要自行触发。",
-        "[状态感知] 入列/触发/验收等状态变化会以事件卡出现在本会话；每轮也会刷新上面这行状态。",
-      ].join("\n")
+        playbook: [
+          "[身份] 任务作者。把需求澄清成 v4 task_spec；只写 task home，project 仓库只读；不跑开发/构建/测试，不 commit/push。",
+          `[任务 home] ${info.taskHome}`,
+          `[phases] ${phaseLines}`,
+          "[写规格] 优先用任务工具 update_task_spec_field（或 POST /api/tasks/:id/spec-field），不要整段覆盖 phases。",
+          "[收尾] 规格齐后默认用任务工具 propose_launch 让用户在「立即执行 / 入列待触发 / 定时触发」中选；**用户在本轮对话里明确说「立即执行 / 入列 / 现在开跑」时**，直接调 launch_task / enqueue_task（confirmed=true）执行，不要让他再去点卡片（这条覆盖旧角色卡里「只等用户点 [入队]」的说法）。没有用户明确表态时不要自行触发。",
+          "[状态感知] 入列/触发/验收等状态变化会以事件卡出现在本会话；每轮也会刷新上面这行状态。",
+        ].join("\n"),
+      }
     }
 
     if (extra.identity === "doer") {
@@ -454,6 +482,7 @@ export class TaskThreadService {
         "  6. 归档失败：说清是哪个 project、什么原因；用户明确说「重试」→ retry_archive(confirmed=true)。",
         "  7. 若 preflight 提示有未提交改动：问用户「纳入归档」还是「排除并记录」，明确表态后调 resolve_archive_delta(decision, confirmed=true)；不要自己决定。",
         "  8. 不要声称已完成 —— done 由服务端在全部 project 的 git 同步成功后才写入。",
+        "  9. 两阶段纪律：done 只判定 git；知识沉淀（素材包编译）可能延续到 done 之后几分钟，编译若产生断言矛盾会另发 finding 卡 —— 那是归档的第二阶段，不是 done 返工。done 之后才冒出的 finding 也按同样方式逐条问、逐条裁决。",
       ] : []
       const consentLines = extra.archiveConsent ? [
         "[归档确认] 末 phase 已通过，任务停在「待归档」(awaiting_archive)，归档尚未启动。",
@@ -470,40 +499,46 @@ export class TaskThreadService {
           : info.displayStatus === "archiving"
             ? "[工作流开发] 归档编排进行中：只读；可以复述归档结果、冲突与重试问题。"
             : "[工作流开发] 当前没有在开发的阶段。"
-        return [
+        return {
           head,
-          ...consentLines,
-          ...archiveLines,
-          devLine,
-          "[身份] 工作流开发者（workflow-author）。工作流开发已完成；归档由服务端执行。",
-          "[跟进] 用户要再开发工作流时，先确认是开新任务还是回草稿；不要在归档态直接改文件。",
-          "[状态感知] 任务状态变化会以事件卡出现在本会话。",
-        ].filter(Boolean).join("\n")
+          playbook: [
+            ...consentLines,
+            ...archiveLines,
+            devLine,
+            "[身份] 工作流开发者（workflow-author）。工作流开发已完成；归档由服务端执行。",
+            "[跟进] 用户要再开发工作流时，先确认是开新任务还是回草稿；不要在归档态直接改文件。",
+            "[状态感知] 任务状态变化会以事件卡出现在本会话。",
+          ].filter(Boolean).join("\n"),
+        }
       }
 
-      return [
+      return {
         head,
-        ...guideLines,
-        ...archiveLines,
-        ...consentLines,
-        "[身份] 任务执行者。接住作者谈好的 spec / 批次 / 运行手册，在执行工作区里按用户指令改代码。",
-        `[执行工作区] ${info.wsPath ?? "尚未绑定（等待触发）"}${info.branch ? ` · 分支 ${info.branch}` : ""}`,
-        readOnlyLine,
-        quickEditLine,
-        `[改计划] 改 spec/票只能走计划回写：${planCmd}（批次目录只读，直接改会被硬闸拒绝）。`,
-        "[动作] 触发/暂停/恢复/中止/重试归档默认用任务工具 request_task_action（会落确认卡，人点才执行）；**用户在本轮明确说「开跑 / 触发 / 现在执行」且任务已入列(ready)时**，直接调 trigger_task(confirmed=true) 执行。验收的通过/打回在用户明确表态后调 submit_acceptance_decision 收口（人点验收台是兜底）。",
-        "[状态感知] 任务状态变化会以事件卡出现在本会话；每轮也会刷新上面这行状态。",
-      ].filter(Boolean).join("\n")
+        playbook: [
+          ...guideLines,
+          ...archiveLines,
+          ...consentLines,
+          "[身份] 任务执行者。接住作者谈好的 spec / 批次 / 运行手册，在执行工作区里按用户指令改代码。",
+          `[执行工作区] ${info.wsPath ?? "尚未绑定（等待触发）"}${info.branch ? ` · 分支 ${info.branch}` : ""}`,
+          readOnlyLine,
+          quickEditLine,
+          `[改计划] 改 spec/票只能走计划回写：${planCmd}（批次目录只读，直接改会被硬闸拒绝）。`,
+          "[动作] 触发/暂停/恢复/中止/重试归档默认用任务工具 request_task_action（会落确认卡，人点才执行）；**用户在本轮明确说「开跑 / 触发 / 现在执行」且任务已入列(ready)时**，直接调 trigger_task(confirmed=true) 执行。验收的通过/打回在用户明确表态后调 submit_acceptance_decision 收口（人点验收台是兜底）。",
+          "[状态感知] 任务状态变化会以事件卡出现在本会话；每轮也会刷新上面这行状态。",
+        ].filter(Boolean).join("\n"),
+      }
     }
 
-    return [
+    return {
       head,
-      "[身份] 只读回顾。任务已结束/归档，不再改代码或规格。",
-      `[任务 home] ${info.taskHome}${info.wsPath ? ` · 执行工作区 ${info.wsPath}` : ""}`,
-      "[归档复盘] 可用 get_archive_state 复述归档结果、冲突与反思；knowledge.findings 是本次编译出的未决矛盾，用户明确表态后可逐条 resolve_wiki_finding；未决反思可按用户明确表态继续 record_reflection_decision 落/跳过。",
-      "[归档增补] 用户要补充/修正归档内容时，用 record_archive_amendment(confirmed=true) 追加只增不改的记录（可选同时落 wiki）；不要改写原报告。",
-      "[跟进任务] 用户要再改代码/继续开发时，用 open_followup_task(confirmed=true) 开一个继承 spec 的新任务；旧任务保持 done 不可变，不要在这里写代码。",
-    ].join("\n")
+      playbook: [
+        "[身份] 只读回顾。任务已结束/归档，不再改代码或规格。",
+        `[任务 home] ${info.taskHome}${info.wsPath ? ` · 执行工作区 ${info.wsPath}` : ""}`,
+        "[归档复盘] 可用 get_archive_state 复述归档结果、冲突与反思；knowledge.findings 是归档第二阶段（知识沉淀编译）产生的未决矛盾，不是 done 的返工；用户明确表态后可逐条 resolve_wiki_finding；未决反思可按用户明确表态继续 record_reflection_decision 落/跳过。",
+        "[归档增补] 用户要补充/修正归档内容时，用 record_archive_amendment(confirmed=true) 追加只增不改的记录（可选同时落 wiki）；不要改写原报告。",
+        "[跟进任务] 用户要再改代码/继续开发时，用 open_followup_task(confirmed=true) 开一个继承 spec 的新任务；旧任务保持 done 不可变，不要在这里写代码。",
+      ].join("\n"),
+    }
   }
 }
 

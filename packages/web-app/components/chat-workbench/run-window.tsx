@@ -354,7 +354,7 @@ export function RunWindow({
             />
           )}
         </ResizablePanel>
-        <ResizableHandle withHandle className="shrink-0 bg-pop-bd/60" />
+        <ResizableHandle className="shrink-0 bg-pop-bd/60" />
         <ResizablePanel defaultSize={62} minSize={28} className="min-h-0">
           {workspaceId && executionId && (
             <RunLogConsole

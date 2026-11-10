@@ -12,6 +12,7 @@ import { errorResponse } from "../services/knowledge/validators"
  * findings 面路由（知识中心票13，S2 契约）——挂 `/api/knowledge`：
  *
  *   GET  /findings?status=open|resolved|ignored   列表（camelCase 视图，detail/pages 解形）
+ *   GET  /findings?ids=a,b,c      按 id 定向取（不限状态；主 Chat 刷新后回填 finding 卡活状态）
  *   POST /findings/:id/adopt       [采纳修订] ⇒ 202 {taskId, findingId, status:"queued"}
  *                                  （服务端生成修订稿经全局队列 finding-fix 编译；
  *                                   404 NOT_FOUND · 409 FINDING_ALREADY_ADJUDICATED）
@@ -83,6 +84,15 @@ export function createFindingsRoutes(api: FindingsRoutesApi): Hono {
   }
 
   routes.get("/findings", (c) => {
+    // `?ids=` 定向取（2026-11-10）：主 Chat 的 finding 卡是编译时的 Lane A 沉淀，
+    // 刷新后卡面 status 仍是创建快照。前端只带卡上出现的 id 来问活状态，
+    // 不拉全库收件箱；未知 id 静默跳过（卡留着显形，不伪造终态）。
+    const idsParam = c.req.query("ids")
+    if (idsParam !== undefined && idsParam.trim() !== "") {
+      const ids = [...new Set(idsParam.split(",").map((s) => s.trim()).filter(Boolean))].slice(0, 100)
+      const rows = ids.map((id) => api.ops.get(id)).filter((row): row is FindingRow => !!row)
+      return c.json({ findings: rows.map(findingView) })
+    }
     const statusParam = c.req.query("status")
     let status: FindingStatus | undefined
     if (statusParam !== undefined && statusParam !== "") {

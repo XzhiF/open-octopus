@@ -285,10 +285,6 @@ class ChatEventBridge {
     if (!taskId || !this.db) return
     const status = String(data.status ?? "")
     if (!status) return
-    // One card per TRANSITION. SSE repeats the current status on several
-    // channels; a second episode of 'running' (next phase) must still card.
-    if (this.lastTaskStatus.get(taskId) === status) return
-    this.lastTaskStatus.set(taskId, status)
 
     let row: {
       name?: string
@@ -327,6 +323,15 @@ class ChatEventBridge {
     } catch {
       /* no executions table — fine */
     }
+
+    // One card per TRANSITION **per execution episode**. SSE repeats the current
+    // status on several channels → dedupe. But v4 keeps the persisted row at
+    // 'running' across 验收, so the next phase dispatches a forced `running`
+    // frame that is a genuinely new episode (new execution row) — a status-only
+    // key swallowed it and phase 2 never got its「任务开始执行」card (2026-11-09).
+    const cardKey = `${status}:${latest?.id ?? ""}`
+    if (this.lastTaskStatus.get(taskId) === cardKey) return
+    this.lastTaskStatus.set(taskId, cardKey)
 
     const high: ActivityKind | null =
       status === "done" ? "task.completed"
@@ -589,6 +594,7 @@ class ChatEventBridge {
       "用户说「落 / 跳过 / 都跳过 / 都落」→ 逐条调用 record_reflection_decision(confirmed=true) 执行并回执；不要代替人决定。",
       "若 preflight 被未提交改动拦下（get_archive_state 里 preflight / delta 非空）：用一两句话问用户「纳入归档」还是「排除并记录」，明确表态后调 resolve_archive_delta(decision, confirmed=true)；不要自己决定。",
       "若某个 project 归档失败：说清失败原因；用户明确说「重试」→ retry_archive(confirmed=true)。",
+      "提前把两阶段说清楚（免得用户觉得顺序乱）：git 同步全绿 → 任务先变 done；知识沉淀（素材包编译）仍在后台队列里跑，可能要几分钟，**编译完成若产生断言矛盾会另发 finding 卡请你裁决**——这是归档的第二阶段，不是 done 的返工。",
       "不要声称任务已完成 —— done 由服务端在全部 project 的 git 同步成功后才写入，届时会通知你。",
     ].join("\n")
     void this.wake(
@@ -652,6 +658,8 @@ class ChatEventBridge {
     }
     const message = [
       `[归档完成] 任务 ${taskId} 的全部 project 已归档成功，服务端已把任务状态写为 done。`,
+      "⚠️ 归档完成 ≠ 知识沉淀完成：done 只判定 git 同步；素材包 → wiki 编译仍在后台串行队列里跑（可能还要几分钟），编译完成后若产生断言矛盾，会另发 finding 卡请你裁决。",
+      "播报必须分成两段说清楚：①归档主体已完成（五个仓/PR 状态）；②知识沉淀现在到哪一步（get_archive_state 的 knowledge.compile_state：排队中 / 编译中 / 已编译无矛盾 / 有 N 处矛盾待裁决）。**编译未完成时绝不说「全部完成 / 都好了」**，要明说「知识沉淀还在编译，完成后有矛盾我再单独请你裁决」。",
       "请用一两句向用户播报：同步了哪些 project、术语冲突是否已在 PR 等 review；不要贴表格。",
       "服务端已在后台自动清理各 project worktree 的构建产物（node_modules / target / dist / classes / jar 等；只删 git 忽略且无跟踪文件的目录）。调 get_archive_state 看 cleanup：已完成就顺带播报释放了多少、还剩几个 ignored 目录；仍在 running 就说「后台清理中」。",
       "若用户明确要求清理剩余 ignored 目录：先把 cleanup.projects[].leftovers 的路径列给人确认，再调 clean_archive_leftovers(confirmed=true)；服务端会再次校验，不要自己决定删哪些。",
@@ -1315,6 +1323,13 @@ class ChatEventBridge {
           },
         }),
       })
+      // 主对话路由的并发闸：上一轮仍在生成/收尾。唤醒事件不能丢，排回队列
+      // 等会话真正空闲再投递（上面的 isStreamActive 预检到 POST 之间有一段
+      // 竞态窗口）。
+      if (response.status === 409) {
+        this.queueWake(target, event, 3_000, opts)
+        return
+      }
       if (response.ok && response.body) {
         const reader = response.body.getReader()
         while (true) {

@@ -105,6 +105,17 @@ export interface ProviderResultUsageInput {
   stopReason?: string
   /** provider result chunk 的 per-model 用量（优先）。 */
   modelUsages?: readonly { model?: string | null; inputTokens?: number; outputTokens?: number; cacheReadTokens?: number; cacheCreationTokens?: number }[] | null
+  /**
+   * true = `modelUsages` 是**跨 turn 的会话累计**，不是本轮增量。Claude Agent SDK
+   * 的 result.modelUsage 就是这个语义（文档：「cumulative across turns in
+   * streaming-input sessions — read the latest result rather than summing across
+   * results」）。为 true 时按 `session_provider_usage` 的持久化基线差分成增量再
+   * 落账；否则（Pi 等 provider / 每轮值）原样入账。
+   */
+  cumulative?: boolean
+  /** 当前 provider 会话 id（chunk.sessionId）。与基线里记录的不同 = /clear 或新
+   *  会话 → 累计从头开始，基线归零。null/undefined = 未知，不触发归零。 */
+  providerSessionId?: string | null
   /** chunk 总量（modelUsages 缺失时兜底单行）。 */
   usage?: Pick<TokenUsage, "inputTokens" | "outputTokens" | "cacheReadTokens" | "cacheCreationTokens"> | null
   /** 兜底行的 model 归属（调用方已知模型时给）。 */
@@ -113,6 +124,23 @@ export interface ProviderResultUsageInput {
 
 const sumTokens = (u?: { inputTokens?: number; outputTokens?: number; cacheReadTokens?: number; cacheCreationTokens?: number } | null): number =>
   (u?.inputTokens ?? 0) + (u?.outputTokens ?? 0) + (u?.cacheReadTokens ?? 0) + (u?.cacheCreationTokens ?? 0)
+
+type UsageFields = Pick<TokenUsage, "inputTokens" | "outputTokens" | "cacheReadTokens" | "cacheCreationTokens">
+
+const usageOf = (u: UsageFields): TokenUsage => ({
+  inputTokens: u.inputTokens ?? 0,
+  outputTokens: u.outputTokens ?? 0,
+  cacheReadTokens: u.cacheReadTokens ?? 0,
+  cacheCreationTokens: u.cacheCreationTokens ?? 0,
+})
+
+/** 累计快照只增不减（某些模型本轮没出现时保留上一份值）。 */
+const maxUsage = (a: TokenUsage, b: TokenUsage): TokenUsage => ({
+  inputTokens: Math.max(a.inputTokens, b.inputTokens),
+  outputTokens: Math.max(a.outputTokens, b.outputTokens),
+  cacheReadTokens: Math.max(a.cacheReadTokens, b.cacheReadTokens),
+  cacheCreationTokens: Math.max(a.cacheCreationTokens, b.cacheCreationTokens),
+})
 
 /**
  * SDK result 的 terminal_reason → 账本调用级 stop_reason。
@@ -150,42 +178,86 @@ export function ledgerStopReason(terminalReason?: string | null): string {
  * 吞掉，排查时被误导成落账逻辑 bug），绝不断聊天主流水。
  * 一行 = 一次实际到达的 result chunk（KD23 防双计：chunk 到达即写，
  * 重试是新的真实调用 → 新的真实行）。
+ *
+ * 累计语义（2026-11-09）：Claude SDK 的 result.modelUsage 是**跨 turn 的会话
+ * 累计**（ resumed session 的第一份 result 就已带上前面的 turn）。`cumulative`
+ * 为 true 时按 `session_provider_usage` 的持久化基线差分成「本轮增量」再落账；
+ * 否则每轮相加会把整段会话重复记 N 遍。`usage` 字段（SDK 文档：per-turn）永远
+ * 原样入账，不参与差分。
  */
 export function recordProviderResultUsage(input: ProviderResultUsageInput, tokenDao: TokenUsageDAO): void {
   try {
     const perModel = (input.modelUsages ?? []).filter(mu => sumTokens(mu) > 0)
-    const entries = perModel.length > 0
-      ? perModel.map(mu => ({ model: mu.model ?? null, usage: mu }))
-      : input.usage && sumTokens(input.usage) > 0
-        ? [{ model: input.fallbackModel ?? null, usage: input.usage }]
-        : []
     const nowMs = Date.now()
-    entries.forEach((e, i) => {
+    const writeCall = (model: string | null, usage: UsageFields, callIndex: number): void => {
       recordLlmCall({
         id: randomUUID(),
         sourcePath: input.sourcePath,
         nodeExecutionId: input.nodeExecutionId,
         executionId: input.executionId,
         turnIndex: input.turnIndex ?? 1,
-        callIndex: i,
+        callIndex,
         messageId: input.messageId ?? null,
-        model: e.model,
+        model,
         stopReason: input.stopReason ?? 'end_turn',
         timestamp: nowMs,
         durationMs: nowMs - input.startedAtMs,
-        usage: {
-          inputTokens: e.usage.inputTokens ?? 0,
-          outputTokens: e.usage.outputTokens ?? 0,
-          cacheReadTokens: e.usage.cacheReadTokens ?? 0,
-          cacheCreationTokens: e.usage.cacheCreationTokens ?? 0,
-        },
+        usage: usageOf(usage),
         org: input.org ?? null,
         workspaceId: input.workspaceId ?? null,
         nodeId: input.nodeId ?? null,
         sessionId: input.sessionId ?? null,
         instanceId: input.instanceId ?? null,
       }, tokenDao)
-    })
+    }
+
+    // 累计快照 → 本轮增量（跨进程重启、后台唤醒续轮都只记一次）。
+    if (input.cumulative && input.sessionId && perModel.length > 0) {
+      const current: Record<string, TokenUsage> = {}
+      for (const mu of perModel) {
+        current[normalizeModelId(mu.model ?? null) ?? 'unknown'] = usageOf(mu as UsageFields)
+      }
+      const stored = tokenDao.getSessionUsageBaseline(input.sessionId)
+      // provider 会话 id 变了（/clear、新 provider session）→ 累计从头开始。
+      const rotated = !!stored?.providerSessionId && !!input.providerSessionId &&
+        stored.providerSessionId !== input.providerSessionId
+      // 无基线行 = 升级前的老会话：老聊天行是「每轮一份累计快照」，按模型取
+      // MAX 当起点，避免升级后第一轮把整段会话再记一遍。
+      const baseline = !stored
+        ? tokenDao.maxChatUsageByModel(input.sessionId)
+        : rotated ? {} : stored.usage
+
+      let callIndex = 0
+      const next: Record<string, TokenUsage> = {}
+      for (const [model, cur] of Object.entries(current)) {
+        const prev = baseline[model]
+        const delta: TokenUsage = {
+          inputTokens: Math.max(0, cur.inputTokens - (prev?.inputTokens ?? 0)),
+          outputTokens: Math.max(0, cur.outputTokens - (prev?.outputTokens ?? 0)),
+          cacheReadTokens: Math.max(0, cur.cacheReadTokens - (prev?.cacheReadTokens ?? 0)),
+          cacheCreationTokens: Math.max(0, cur.cacheCreationTokens - (prev?.cacheCreationTokens ?? 0)),
+        }
+        if (sumTokens(delta) > 0) writeCall(model, delta, callIndex++)
+        next[model] = prev ? maxUsage(prev, cur) : cur
+      }
+      // 快照只增不减：本轮没出现的模型保留上一份累计值。
+      for (const [model, prev] of Object.entries(baseline)) {
+        if (!next[model]) next[model] = prev
+      }
+      tokenDao.upsertSessionUsageBaseline(
+        input.sessionId,
+        input.providerSessionId ?? stored?.providerSessionId ?? null,
+        next,
+      )
+      return
+    }
+
+    const entries: Array<{ model: string | null; usage: UsageFields }> = perModel.length > 0
+      ? perModel.map(mu => ({ model: mu.model ?? null, usage: mu as UsageFields }))
+      : input.usage && sumTokens(input.usage) > 0
+        ? [{ model: input.fallbackModel ?? null, usage: input.usage }]
+        : []
+    entries.forEach((e, i) => writeCall(e.model, e.usage, i))
   } catch (err) {
     console.error(
       `[llm-call-ledger] ${input.sourcePath} 入账失败 (non-fatal):`,

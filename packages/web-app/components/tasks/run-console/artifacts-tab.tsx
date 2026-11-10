@@ -17,7 +17,7 @@ import { Copy } from "lucide-react"
 import { toast } from "sonner"
 import { Spinner } from "@/components/ui/spinner"
 import { MarkdownPreview, MARKDOWN_TUI_CLASS } from "@/components/resource/MarkdownPreview"
-import { readArtifactManifestFile, type ArtifactContent } from "@/lib/tasks-api"
+import { readArtifactManifestFile, artifactManifestRawUrl, type ArtifactContent } from "@/lib/tasks-api"
 import { formatBytes } from "@/lib/format"
 import type {
   ArtifactKind,
@@ -35,6 +35,8 @@ import {
 } from "./artifacts-model"
 
 const PREVIEW_MAX = 20_000
+/** 图片产物（二进制）—— 不送文本门（UTF-8 读二进制必然乱码），走 raw 端点给 <img>。 */
+const IMAGE_EXT_RE = /\.(png|jpe?g|gif|webp|bmp|ico|svg|avif)$/i
 /** 左列默认占比（2026-10-29 用户：3:7，可拖动分隔条调整）。 */
 const LEFT_DEFAULT_PCT = 30
 const LEFT_MIN_PCT = 22
@@ -209,13 +211,44 @@ function ExtraSection({ title, items, selected, onSelect }: {
   )
 }
 
+/** 图片预览：raw 端点直连（不经过文本门），失败如实降级不白屏。 */
+function ImagePreview({ taskId, item }: { taskId: string; item: ArtifactManifestItem }) {
+  const [failed, setFailed] = useState(false)
+  const src = artifactManifestRawUrl(taskId, item.path)
+  useEffect(() => setFailed(false), [src])
+  return (
+    <div className="flex h-full min-h-0 flex-col items-center justify-center gap-2" data-testid="artifact-image-preview">
+      {failed ? (
+        <p className="text-[11px] text-pop-red">图片加载失败 —— 读取被拒绝、超出 20MB 或文件已删除。</p>
+      ) : (
+        <img
+          src={src}
+          alt={item.name}
+          onError={() => setFailed(true)}
+          className="max-h-full min-h-0 max-w-full rounded border border-border object-contain"
+        />
+      )}
+      <a
+        href={src}
+        target="_blank"
+        rel="noreferrer"
+        className="font-mono text-[10px] text-pop-cyan underline underline-offset-2"
+      >
+        在新窗口打开原图
+      </a>
+    </div>
+  )
+}
+
 function PreviewPane({ taskId, item }: { taskId: string; item: ArtifactManifestItem | null }) {
   const [data, setData] = useState<ArtifactContent | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
+  const isImage = item !== null && IMAGE_EXT_RE.test(item.name)
 
   useEffect(() => {
-    if (!item) { setData(null); setError(null); return }
+    // 图片是二进制：文本门按 UTF-8 读必然乱码，交给 <img> 直连 raw 端点。
+    if (!item || isImage) { setData(null); setError(null); setBusy(false); return }
     let cancelled = false
     setBusy(true)
     setError(null)
@@ -225,7 +258,7 @@ function PreviewPane({ taskId, item }: { taskId: string; item: ArtifactManifestI
       .catch((err: unknown) => { if (!cancelled) { setData(null); setError(err instanceof Error ? err.message : String(err)) } })
       .finally(() => { if (!cancelled) setBusy(false) })
     return () => { cancelled = true }
-  }, [item, taskId])
+  }, [item, taskId, isImage])
 
   if (!item) {
     return (
@@ -267,6 +300,8 @@ function PreviewPane({ taskId, item }: { taskId: string; item: ArtifactManifestI
           <div className="flex items-center gap-2 text-[11px] text-pop-dim"><Spinner className="size-3" /> 现读中…</div>
         ) : error ? (
           <p className="text-[11px] text-pop-red">读取失败（{error}）</p>
+        ) : isImage ? (
+          <ImagePreview taskId={taskId} item={item} />
         ) : (
           <>
             {truncated && (

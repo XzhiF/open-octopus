@@ -2,7 +2,8 @@
 //
 // 2026-10-28 改版后的「≡ 变更」契约：
 //   - GitLab 式左目录树（关键字过滤）/ 右多 tab（懒拉 patch、可关、按口径缓存）
-//   - 本轮 / 累计口径：roundIndex === 1 时两口径同区间 → 累计开关禁用并注明
+//   - 口径（2026-11-10 收敛）：本 phase 总账 / 任务总账；只有一个 phase 时
+//     任务总账与本 phase 同区间 → 任务开关禁用并注明
 //   - 数据源仍是既有 round-diff(+ /patch)，无新 API（mock 面即契约面）
 import { describe, it, expect, vi, beforeEach } from "vitest"
 import { render, screen, fireEvent, waitFor, within } from "@testing-library/react"
@@ -25,7 +26,7 @@ import { FilesTab } from "../files-tab"
 import { useRoundDiffFeed } from "../use-round-diff-feed"
 import { useEscapeClose } from "@/lib/escape-stack"
 
-const ROUND: RoundDiffPayload = {
+const PHASE: RoundDiffPayload = {
   available: true,
   aggregate: { commits: 2, additions: 10, dels: 2, files: 4 },
   interventions: 1,
@@ -47,10 +48,11 @@ const ROUND: RoundDiffPayload = {
   ],
 }
 
-const CUM: RoundDiffPayload = {
+const TASK: RoundDiffPayload = {
   available: true,
   aggregate: { commits: 5, additions: 30, dels: 12, files: 2 },
   interventions: 4,
+  phaseIndex: 3,
   roundIndex: 2,
   repos: [
     {
@@ -104,7 +106,7 @@ beforeEach(() => {
   mockGetRoundDiff.mockReset()
   mockGetRoundPatch.mockReset()
   mockGetRoundDiff.mockImplementation(((_id: string, scope?: string) =>
-    Promise.resolve(scope === "cumulative" ? CUM : ROUND)) as never)
+    Promise.resolve(scope === "task" ? TASK : PHASE)) as never)
   mockGetRoundPatch.mockResolvedValue({ patch: PATCH, truncated: false })
 })
 
@@ -335,7 +337,7 @@ describe("FilesTab — 文件 tab / patch", () => {
   it("点文件 → 开 tab 并懒拉 patch（repo+path）；双行号渲染；切 tab 不重复拉", async () => {
     render(<Host />)
     fireEvent.click(await waitRow("octopus:packages/a.ts"))
-    await waitFor(() => expect(mockGetRoundPatch).toHaveBeenCalledWith("t1", "octopus", "packages/a.ts"))
+    await waitFor(() => expect(mockGetRoundPatch).toHaveBeenCalledWith("t1", "octopus", "packages/a.ts", "cumulative"))
     const patch = await screen.findByTestId("round-diff-patch")
     expect(patch.textContent).toContain("-del")
     expect(patch.textContent).toContain("+add1")
@@ -349,7 +351,7 @@ describe("FilesTab — 文件 tab / patch", () => {
 
     // 再开第二个文件 → 两个 tab
     fireEvent.click(await waitRow("octopus:packages/b.ts"))
-    await waitFor(() => expect(mockGetRoundPatch).toHaveBeenCalledWith("t1", "octopus", "packages/b.ts"))
+    await waitFor(() => expect(mockGetRoundPatch).toHaveBeenCalledWith("t1", "octopus", "packages/b.ts", "cumulative"))
     expect(screen.getByTestId("files-tab-tabs").querySelectorAll('[role="tab"]')).toHaveLength(2)
 
     // 切回 a.ts：缓存命中，不重复拉
@@ -386,44 +388,46 @@ describe("FilesTab — 文件 tab / patch", () => {
   })
 })
 
-describe("FilesTab — 本轮/累计口径", () => {
-  it("切「累计」→ 拉 cumulative 口径；统计与树同源变化；累计独有文件带 scope 拉 patch", async () => {
+describe("FilesTab — 本 phase / 任务总账口径", () => {
+  it("缺省本 phase（feed 供入）；切「任务」→ 拉 task 口径；统计与树同源；任务独有文件带 scope 拉 patch", async () => {
     render(<Host />)
     await screen.findByTestId("round-diff-strip")
     expect(mockGetRoundDiff).toHaveBeenCalledTimes(1)
+    expect(mockGetRoundDiff).toHaveBeenCalledWith("t1", "cumulative")
 
-    fireEvent.click(screen.getByTestId("files-tab-scope-cum"))
-    await waitFor(() => expect(mockGetRoundDiff).toHaveBeenCalledWith("t1", "cumulative"))
+    fireEvent.click(screen.getByTestId("files-tab-scope-task"))
+    await waitFor(() => expect(mockGetRoundDiff).toHaveBeenCalledWith("t1", "task"))
     await waitFor(() => expect(screen.getByTestId("round-diff-strip").textContent).toContain("+30"))
     expect(screen.getByTestId("round-diff-strip").textContent).toContain("5")
     expect(await waitRow("octopus:packages/z.ts")).toBeTruthy()
 
     fireEvent.click(row("octopus:packages/z.ts")!)
-    await waitFor(() => expect(mockGetRoundPatch).toHaveBeenCalledWith("t1", "octopus", "packages/z.ts", "cumulative"))
+    await waitFor(() => expect(mockGetRoundPatch).toHaveBeenCalledWith("t1", "octopus", "packages/z.ts", "task"))
 
-    fireEvent.click(screen.getByTestId("files-tab-scope-round"))
+    fireEvent.click(screen.getByTestId("files-tab-scope-phase"))
     await waitFor(() => expect(screen.getByTestId("round-diff-strip").textContent).toContain("+10"))
-    // 累计独有的 z.ts 不在本轮 → 树行与 tab 都收起
+    // 任务总账独有的 z.ts 不在本 phase → 树行与 tab 都收起
     await waitFor(() => expect(row("octopus:packages/z.ts")).toBeNull())
     expect(screen.queryByTestId("files-tab-tab-octopus:packages/z.ts")).toBeNull()
   })
 
-  it("roundIndex === 1：累计开关禁用并注明「累计 = 本轮」", async () => {
-    mockGetRoundDiff.mockImplementation((() => Promise.resolve({ ...ROUND, roundIndex: 1 })) as never)
+  it("只有一个 phase（phaseIndex === 1）→ 任务开关禁用并注明「任务总账 = 本 phase」", async () => {
+    mockGetRoundDiff.mockImplementation(((_id: string, scope?: string) =>
+      Promise.resolve(scope === "task" ? TASK : { ...PHASE, phaseIndex: 1 })) as never)
     render(<Host />)
     await screen.findByTestId("round-diff-strip")
-    const cum = screen.getByTestId("files-tab-scope-cum") as HTMLButtonElement
-    expect(cum.disabled).toBe(true)
-    expect(screen.getByTestId("files-tab-cum-redundant").textContent).toContain("累计 = 本轮")
-    fireEvent.click(cum)
-    expect(mockGetRoundDiff).not.toHaveBeenCalledWith("t1", "cumulative")
+    const task = screen.getByTestId("files-tab-scope-task") as HTMLButtonElement
+    expect(task.disabled).toBe(true)
+    expect(screen.getByTestId("files-tab-task-redundant").textContent).toContain("任务总账 = 本 phase")
+    fireEvent.click(task)
+    expect(mockGetRoundDiff).not.toHaveBeenCalledWith("t1", "task")
   })
 })
 
 describe("FilesTab — 票07 reveal：对话页签「查看 diff」跳链", () => {
   it("reveal 命中（工作区绝对路径、反斜杠）→ 自动开 tab + 树行青闪", async () => {
     render(<Host reveal={{ path: "C:\\ws\\projects\\octopus\\packages\\b.ts", nonce: 1 }} />)
-    await waitFor(() => expect(mockGetRoundPatch).toHaveBeenCalledWith("t1", "octopus", "packages/b.ts"))
+    await waitFor(() => expect(mockGetRoundPatch).toHaveBeenCalledWith("t1", "octopus", "packages/b.ts", "cumulative"))
     expect(await screen.findByTestId("round-diff-patch")).toBeTruthy()
     const flash = document.querySelector('[data-diff-flash="true"]')
     expect(flash).toBeTruthy()
@@ -440,7 +444,7 @@ describe("FilesTab — 票07 reveal：对话页签「查看 diff」跳链", () =
 
     rerender(<Host reveal={{ path: "C:/ws/projects/octopus/packages/a.ts", nonce: 2 }} />)
     await waitFor(() => expect(document.querySelector('[data-diff-flash="true"]')).toBeTruthy())
-    expect(mockGetRoundPatch).toHaveBeenCalledWith("t1", "octopus", "packages/a.ts")
+    expect(mockGetRoundPatch).toHaveBeenCalledWith("t1", "octopus", "packages/a.ts", "cumulative")
   })
 
   it("toolbarExtra：07 的 chat ×N chip 原样进工具行", async () => {

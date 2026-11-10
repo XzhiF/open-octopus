@@ -124,10 +124,10 @@ describe("useAgentChat stream-resume", () => {
     expect(state.running).toBe(true) // untouched — no probe happened
   })
 
-  it("R5: 409 STREAM_IN_PROGRESS on send → converts into resume mode, no error shown", { timeout: 15000 }, async () => {
+  it("R5: 409 STREAM_IN_PROGRESS on send → 转尾随，不报错；回合收口后自动补发", { timeout: 15000 }, async () => {
     const { api, state, chatStream } = makeHarness({ running: false })
-    // Turn the send into a bounced 409: transport error carrying the code.
-    chatStream.mockImplementation(() => ({
+    // 第一次发送被并发闸弹回 409；补发时正常入流（never-resolving reader）。
+    chatStream.mockImplementationOnce(() => ({
       reader: {
         read: () => Promise.reject(
           Object.assign(new Error("该会话上一轮回复仍在生成中"), { code: "STREAM_IN_PROGRESS" }),
@@ -148,9 +148,26 @@ describe("useAgentChat stream-resume", () => {
     // The bounce must not surface as an error banner.
     expect(result.current.error).not.toBe("该会话上一轮回复仍在生成中")
 
-    // Clean exit so the interval doesn't outlive the assertions.
+    // 2026-11-10：被弹回的消息不能凭空消失 —— 尾随结束（真正空闲）后自动补发。
     state.running = false
-    await waitFor(() => expect(result.current.streaming).toBe(false), { timeout: 4000 })
+    await waitFor(() => expect(chatStream).toHaveBeenCalledTimes(2), { timeout: 5000 })
+    expect(chatStream.mock.calls[1][1]).toBe("补发")
+    expect(result.current.streaming).toBe(true)
+  })
+
+  // 2026-11-10 用户事故：后台程序（dev-up.sh）跑着时在输入框回车 → steer 先
+  // 调 stop，把服务端回合和它的后台进程一起掐掉，然后 resume 分支直接 return，
+  // 消息也被吞掉。本实例没拥有那条流时，steer 必须什么都不做。
+  it("R7: steer 在尾随他端回合时不得 stop、不得发新流", async () => {
+    const { api, chatStream, stopChat } = makeHarness({ running: true })
+    const { result } = renderHook(() => useAgentChat(SESSION_ID, { api }))
+    await waitFor(() => expect(result.current.resumeStreaming).toBe(true))
+
+    await act(async () => { await result.current.steer("起来了吗？") })
+
+    expect(stopChat).not.toHaveBeenCalled()
+    expect(chatStream).not.toHaveBeenCalled()
+    expect(result.current.streaming).toBe(true) // 仍在尾随，回合没被掐掉
   })
 
   // 2026-10-29 用户：切换左侧任务会话后「全部都运行中」（实际任务已中止）。

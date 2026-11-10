@@ -136,6 +136,8 @@ describe('ArchiveSummaryCard', () => {
     mockGetTaskArchive.mockResolvedValue(payload({
       status: 'done',
       in_flight: false,
+      // 知识沉淀也跑完了（编译 done、无未决 finding）→ 才是干净的「已完成」。
+      knowledge: { pack_items: 7, compile_state: 'committed', compile_position: null },
       state: { date: '20261031', projects: { api: { status: 'done' }, web: { status: 'done' } } },
       reflection: {
         task_id: 't-1', created_at: new Date().toISOString(),
@@ -157,5 +159,77 @@ describe('ArchiveSummaryCard', () => {
     expect(screen.getByText('1/1')).toBeTruthy()
     expect(screen.getByText('1')).toBeTruthy() // 术语冲突
     expect(screen.getByText(/归档完成，任务已 done；1 处术语冲突已在归档 PR 等 review/)).toBeTruthy()
+  })
+
+  // 2026-11-10 用户：归档已经显示「已完成」，过了一阵子才冒出冲突裁决请求，
+  // 感觉顺序不对。done 只判定 git —— 知识沉淀还在编译 / 有未决矛盾时，卡面
+  // 必须把第二阶段如实标出来，不能笼统播「全都完事」。
+  it('done 但知识沉淀仍在编译 → chip 标出「知识编译中」，不谎称全部完成', async () => {
+    mockGetTaskArchive.mockResolvedValue(payload({
+      status: 'done',
+      in_flight: false,
+      state: { date: '20261031', projects: { api: { status: 'done' }, web: { status: 'done' } } },
+      report: {
+        taskId: 't-1', date: '20261031', ok: true,
+        projects: [
+          { project: 'api', ok: true, adrMerged: 0, adrSkipped: [], termsAppended: 0, termConflicts: [], commit: null, pushed: true, pr: { action: 'none' } },
+          { project: 'web', ok: true, adrMerged: 0, adrSkipped: [], termsAppended: 0, termConflicts: [], commit: null, pushed: true, pr: { action: 'none' } },
+        ],
+        unattributedAdrs: [], unattributedNotes: 0,
+      },
+      knowledge: { pack_items: 6, compile_state: 'running', compile_position: null },
+    }))
+    render(<ArchiveSummaryCard message={message()} />)
+    expect(await screen.findByText('已完成 · 知识编译中')).toBeTruthy()
+    expect(screen.getByText(/知识沉淀仍在编译，完成后若有矛盾会单独请你裁决/)).toBeTruthy()
+  })
+
+  it('done 且有未决矛盾 → chip 显示待裁决数量；裁决后归零显示已全部裁决', async () => {
+    const donePayload = (knowledge: NonNullable<TaskArchivePayload['knowledge']>) => payload({
+      status: 'done',
+      in_flight: false,
+      state: { date: '20261031', projects: { api: { status: 'done' }, web: { status: 'done' } } },
+      report: {
+        taskId: 't-1', date: '20261031', ok: true,
+        projects: [
+          { project: 'api', ok: true, adrMerged: 0, adrSkipped: [], termsAppended: 0, termConflicts: [], commit: null, pushed: true, pr: { action: 'none' } },
+          { project: 'web', ok: true, adrMerged: 0, adrSkipped: [], termsAppended: 0, termConflicts: [], commit: null, pushed: true, pr: { action: 'none' } },
+        ],
+        unattributedAdrs: [], unattributedNotes: 0,
+      },
+      knowledge,
+    })
+    const finding = {
+      id: 'fnd-1', kind: 'contradiction', status: 'open', title: '矛盾：a ↔ b',
+      detail: {}, pages: ['a.md', 'b.md'], rawRef: '', source: 'compile',
+      createdAt: new Date().toISOString(),
+    }
+    mockGetTaskArchive.mockResolvedValue(donePayload({
+      pack_items: 6, compile_state: 'committed',
+      findings: [finding],
+      wiki_result: {
+        status: 'committed', started_at: '2026-11-10T07:36:00.000Z', finished_at: '2026-11-10T07:40:00.000Z',
+        commit: 'abc', changed: true, deduped: false, created: 1, updated: 1, contradictions: 1,
+        finding_ids: ['fnd-1'], touched: [], warnings: [],
+      },
+    }))
+    const { unmount } = render(<ArchiveSummaryCard message={message()} />)
+    expect(await screen.findByText('已完成 · 知识待裁决 1')).toBeTruthy()
+    expect(screen.getByText(/知识沉淀有 1 处矛盾待裁决/)).toBeTruthy()
+    unmount()
+
+    // 采纳修订完成后服务端 findings 活列表为空 —— chip 回到「已完成」。
+    mockGetTaskArchive.mockResolvedValue(donePayload({
+      pack_items: 6, compile_state: 'committed',
+      findings: [],
+      wiki_result: {
+        status: 'committed', started_at: '2026-11-10T07:36:00.000Z', finished_at: '2026-11-10T07:40:00.000Z',
+        commit: 'abc', changed: true, deduped: false, created: 1, updated: 1, contradictions: 1,
+        finding_ids: ['fnd-1'], touched: [], warnings: [],
+      },
+    }))
+    render(<ArchiveSummaryCard message={message()} />)
+    expect(await screen.findByText('已完成')).toBeTruthy()
+    expect(screen.getByText(/知识沉淀已完成，矛盾已全部裁决/)).toBeTruthy()
   })
 })

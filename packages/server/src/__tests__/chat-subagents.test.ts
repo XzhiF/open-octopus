@@ -70,6 +70,7 @@ beforeAll(() => {
 
 beforeEach(() => {
   db.prepare("DELETE FROM llm_calls").run()
+  db.prepare("DELETE FROM session_provider_usage").run()
   db.prepare("DELETE FROM messages").run()
   db.prepare("DELETE FROM subagent_runs").run()
   db.prepare("DELETE FROM sessions").run()
@@ -144,14 +145,16 @@ describe("主对话 · 子代理作业", () => {
       { type: 'background_tasks', tasks: [{ id: 'bg-1', description: 'mvn build' }] },
       { type: 'result', content: '先跑着', sessionId: 'sdk-1',
         usage: { inputTokens: 100, outputTokens: 50, cacheReadTokens: 10, cacheCreationTokens: 0 },
-        modelUsages: [{ model: 'm', inputTokens: 100, outputTokens: 50, cacheReadTokens: 10, cacheCreationTokens: 0 }] },
+        modelUsages: [{ model: 'm', inputTokens: 100, outputTokens: 50, cacheReadTokens: 10, cacheCreationTokens: 0 }],
+        modelUsagesCumulative: true },
       // 后台结束 → 唤醒续轮，result 是**整个 query 的累计**
       { type: 'background_tasks', tasks: [] },
       { type: 'message_start', messageId: 'm2' },
       { type: 'text_delta', content: '跑完了', messageId: 'm2' },
       { type: 'result', content: '跑完了', sessionId: 'sdk-1',
         usage: { inputTokens: 160, outputTokens: 80, cacheReadTokens: 30, cacheCreationTokens: 0 },
-        modelUsages: [{ model: 'm', inputTokens: 160, outputTokens: 80, cacheReadTokens: 30, cacheCreationTokens: 0 }] },
+        modelUsages: [{ model: 'm', inputTokens: 160, outputTokens: 80, cacheReadTokens: 30, cacheCreationTokens: 0 }],
+        modelUsagesCumulative: true },
     ])
 
     const res = await chat()

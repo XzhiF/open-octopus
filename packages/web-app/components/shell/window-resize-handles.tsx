@@ -18,12 +18,15 @@ interface WindowResizeHandlesProps {
   onStart: (direction: ResizeDirection) => void
   onMove: (dx: number, dy: number) => void
   onEnd: (dx: number, dy: number) => void
+  /** 只渲染这些方向的把手（缺省八个方向全开）。右侧锚定的浮窗没有东边可拖。 */
+  directions?: readonly ResizeDirection[]
 }
 
 export function WindowResizeHandles({
   onStart,
   onMove,
   onEnd,
+  directions,
 }: WindowResizeHandlesProps) {
   const startRef = useRef<{ x: number; y: number; pointerId: number } | null>(null)
   const offsetRef = useRef({ dx: 0, dy: 0 })
@@ -64,7 +67,7 @@ export function WindowResizeHandles({
 
   return (
     <div className="pointer-events-none absolute inset-0 z-20">
-      {HANDLES.map((handle) => (
+      {HANDLES.filter((handle) => !directions || directions.includes(handle.dir)).map((handle) => (
         <div
           key={handle.dir}
           data-resize-dir={handle.dir}

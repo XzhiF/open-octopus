@@ -83,7 +83,7 @@ export interface CleanupLeftoversResult {
 export interface ArchiveCleanupDeps {
   db: Database.Database
   taskHomeService: TaskHomeService
-  /** Injectable command runner (production = spawnSync; tests = real git). */
+  /** Injectable command runner (production = async spawn; tests = real git). */
   run?: CommandRunner
   now?: () => Date
 }
@@ -278,33 +278,33 @@ async function removePath(abs: string): Promise<void> {
 
 type VerifyResult = { ok: true; abs: string } | { ok: false; reason: string }
 
-function verifyIgnoredPath(
+async function verifyIgnoredPath(
   rootAbs: string,
   rel: string,
   run: CommandRunner,
-): VerifyResult {
+): Promise<VerifyResult> {
   const abs = resolveInside(rootAbs, rel)
   if (!abs) return { ok: false, reason: "路径越界或非法（须为 worktree 相对路径）" }
   if (isProtectedRel(rel)) return { ok: false, reason: "受保护路径（密钥/本地配置）" }
 
-  const ignored = run("git", ["check-ignore", "-q", "--", rel], rootAbs)
+  const ignored = await run("git", ["check-ignore", "-q", "--", rel], rootAbs)
   if (ignored.code !== 0) {
     // check-ignore（不带 --no-index）对「内部有已跟踪文件」的目录返回非零 ——
     // 这正是我们要的保守语义；用 --no-index 复检一次，好给出准确的拒绝原因。
-    const patternIgnored = run("git", ["check-ignore", "-q", "--no-index", "--", rel], rootAbs)
+    const patternIgnored = await run("git", ["check-ignore", "-q", "--no-index", "--", rel], rootAbs)
     return {
       ok: false,
       reason: patternIgnored.code === 0 ? "内部含已跟踪文件，不能整体删除" : "未被 git 忽略",
     }
   }
 
-  const tracked = run("git", ["ls-files", "--", rel], rootAbs)
+  const tracked = await run("git", ["ls-files", "--", rel], rootAbs)
   if (tracked.code !== 0) {
     return { ok: false, reason: `git ls-files 失败: ${tracked.stderr.trim() || tracked.code}` }
   }
   if (tracked.stdout.trim()) return { ok: false, reason: "内部含已跟踪文件" }
 
-  const untracked = run(
+  const untracked = await run(
     "git",
     ["ls-files", "--others", "--exclude-standard", "--", rel],
     rootAbs,
@@ -321,8 +321,8 @@ function verifyIgnoredPath(
 }
 
 /** worktree 必须是它自己的 git 根（防止 config.json 指向主仓/子目录）。 */
-function verifyWorktreeRoot(dir: string, run: CommandRunner): string | null {
-  const top = run("git", ["rev-parse", "--show-toplevel"], dir)
+async function verifyWorktreeRoot(dir: string, run: CommandRunner): Promise<string | null> {
+  const top = await run("git", ["rev-parse", "--show-toplevel"], dir)
   if (top.code !== 0) {
     return `不是 git worktree: ${top.stderr.trim() || top.code}`
   }
@@ -399,14 +399,14 @@ export async function sweepWorktree(
     return result
   }
 
-  const rootError = verifyWorktreeRoot(dir, run)
+  const rootError = await verifyWorktreeRoot(dir, run)
   if (rootError) {
     result.ok = false
     result.error = rootError
     return result
   }
 
-  const status = run("git", ["status", "--porcelain", "-z", "--ignored=traditional"], dir)
+  const status = await run("git", ["status", "--porcelain", "-z", "--ignored=traditional"], dir)
   if (status.code !== 0) {
     result.ok = false
     result.error = `git status 失败: ${status.stderr.trim() || status.code}`
@@ -422,7 +422,7 @@ export async function sweepWorktree(
   }
 
   for (const candidate of candidates) {
-    const verified = verifyIgnoredPath(dir, candidate.path, run)
+    const verified = await verifyIgnoredPath(dir, candidate.path, run)
     if (!verified.ok) {
       if (result.skipped.length < SKIPPED_CAP) {
         result.skipped.push({ path: candidate.path, reason: verified.reason })
@@ -685,7 +685,7 @@ export function createArchiveCleaner(deps: ArchiveCleanupDeps): TaskArchiveClean
     const results: CleanupLeftoversResult[] = []
     for (const raw of paths) {
       const rel = raw.replace(/\\/g, "/").replace(/\/+$/, "")
-      const verified = verifyIgnoredPath(resolved.dir, rel, run)
+      const verified = await verifyIgnoredPath(resolved.dir, rel, run)
       if (!verified.ok) {
         results.push({ path: rel, ok: false, reason: verified.reason })
         continue

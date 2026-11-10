@@ -383,8 +383,10 @@ export interface TaskArchiveKnowledge {
   /** 判例入档回执（archive/case-result.json）：新建 / 并档 / 失败。
    *  缺省 = 本次无判例入档（或旧任务）。 */
   case_results?: ArchiveCaseResult[]
-  /** 本次编译产生的开放矛盾（未决才列）。缺省 = 无冲突或已全部裁决。
-   *  归档 Agent 在对话里逐条问「采纳修订 / 忽略 / 讨论」。 */
+  /** 本次编译产生的**仍 open**的矛盾（已裁决的不列；空数组 = 无冲突或已全部裁决）。
+   *  消息类字段只读；裁决在主对话里完成（resolve_wiki_finding）。
+   *  归档窗口/总框按这个活列表显示「待裁决」，不要拿 wiki_result.finding_ids
+   *  （编译时快照）当现状 —— 采纳之后那份快照不会变。 */
   findings?: TaskArchiveFinding[]
 }
 
@@ -919,6 +921,29 @@ export interface ArtifactManifestBody {
 }
 
 const MANIFEST_SCRATCH_PREFIX = ".scratch"
+
+/** 图片产物的原样预览（2026-11-10 用户：点图片显示乱码）—— 文本门只能按
+ *  UTF-8 读，二进制在 `<pre>` 里必然是乱码；图片走 raw 端点交给 `<img>`. */
+const MANIFEST_IMAGE_MIME: Record<string, string> = {
+  ".png": "image/png",
+  ".jpg": "image/jpeg",
+  ".jpeg": "image/jpeg",
+  ".gif": "image/gif",
+  ".webp": "image/webp",
+  ".bmp": "image/bmp",
+  ".ico": "image/x-icon",
+  ".svg": "image/svg+xml",
+  ".avif": "image/avif",
+}
+/** 图片原样预览的大小上限（截图常破文本门的 512KB；仍给一个硬顶）。 */
+const MAX_MANIFEST_RAW_BYTES = 20 * 1024 * 1024
+
+/** ref 的扩展名 → 图片 MIME；非图片返回 null（raw 门只服务图片）。 */
+function manifestImageMime(ref: string): string | null {
+  const dot = ref.lastIndexOf(".")
+  if (dot < 0) return null
+  return MANIFEST_IMAGE_MIME[ref.slice(dot).toLowerCase()] ?? null
+}
 
 /** 文件名 → 产物类型。判据单源在 server：前端不反推、不重分组。 */
 function artifactKindOf(rel: string, name: string): ArtifactKind {
@@ -1922,6 +1947,45 @@ export class TasksService {
     taskId: string,
     ref: string,
   ): { path: string; content: string } {
+    const { abs, size } = this.resolveArtifactManifestFile(taskId, ref)
+    if (size > MAX_HOME_FILE_READ_BYTES) {
+      throw new ArtifactAccessError(
+        `manifest file too large to read: ${ref} (${size} > ${MAX_HOME_FILE_READ_BYTES} bytes)`,
+        "TOO_LARGE",
+      )
+    }
+    return { path: ref, content: fs.readFileSync(abs, "utf-8") }
+  }
+
+  /** GET /:id/artifacts/manifest/raw?path=home:… | ws:… — 图片原样预览。
+   *  同一扇读门（遍历/白名单/工作区根/缺文件），只放行图片扩展名（其它 403
+   *  —— 不要把这里变成通用二进制出口），大小上限独立于文本门（截图常 >512KB）。 */
+  readArtifactManifestRaw(
+    taskId: string,
+    ref: string,
+  ): { bytes: Buffer; mimeType: string } {
+    const mimeType = manifestImageMime(ref)
+    if (!mimeType) {
+      throw new ArtifactAccessError(
+        `manifest raw preview serves images only: ${ref}`,
+        "FORBIDDEN",
+      )
+    }
+    const { abs, size } = this.resolveArtifactManifestFile(taskId, ref)
+    if (size > MAX_MANIFEST_RAW_BYTES) {
+      throw new ArtifactAccessError(
+        `manifest file too large to read: ${ref} (${size} > ${MAX_MANIFEST_RAW_BYTES} bytes)`,
+        "TOO_LARGE",
+      )
+    }
+    return { bytes: fs.readFileSync(abs), mimeType }
+  }
+
+  /** content / raw 共用的路径解析与守卫（门形单源，别在两条路由各抄一遍）。 */
+  private resolveArtifactManifestFile(
+    taskId: string,
+    ref: string,
+  ): { abs: string; size: number } {
     const row = this.taskDAO.getById(taskId)
     if (!row) throw new TaskNotFoundError()
     const sep = ref.indexOf(":")
@@ -1959,13 +2023,7 @@ export class TasksService {
     if (!st.isFile()) {
       throw new ArtifactAccessError(`manifest path is not a regular file: ${ref}`, "NOT_FOUND")
     }
-    if (st.size > MAX_HOME_FILE_READ_BYTES) {
-      throw new ArtifactAccessError(
-        `manifest file too large to read: ${ref} (${st.size} > ${MAX_HOME_FILE_READ_BYTES} bytes)`,
-        "TOO_LARGE",
-      )
-    }
-    return { path: ref, content: fs.readFileSync(abs, "utf-8") }
+    return { abs, size: st.size }
   }
 
   /** GET /api/tasks/:id/home-file?path= — 契约修复 (v4 batch spec 审阅面) +
@@ -2845,6 +2903,12 @@ export class TasksService {
    *       ${phase.spec_dir}/${task.home}/${task_artifacts_dir}); unknown or
    *       empty-resolving placeholders surface as `phase:<i>:input:<key>`
    *       too (never a 500 — v3 AC3 discipline inherited).
+   *    ④ 批次消费型流（matt-spec-dev）的验证声明 —— issues/ 有 `*-e2e-*` 票或
+   *       spec 写 `Verification Tier: unit-only`，都没有 → `no-final-verification`。
+   *       入队路径（enqueueChecks）再查「单一归属」几何：非末 phase 有 e2e 票 →
+   *       `e2e-not-final-phase`；一 phase 多张 e2e 票 → `multiple-e2e-tickets`；
+   *       功能票 Verification Method 写浏览器步骤 → `browser-in-feature-ticket:<file>`
+   *       （author-verified-tickets ③；否则与 e2e-verify 双跑）。
    *  Checks ① and ② run independently so the UI sees every defect at once;
    *  ③ only runs when ② hit (no workflow content to parse otherwise). A phase
    *  that passes all checks yields a {@link TaskV4PhaseConfig} for the
@@ -4002,7 +4066,7 @@ export class TasksService {
   /** 2026-10-31 收尾：人对「放行后未提交改动」的明确选择。
    *  include = 先把 dirty 落一个归档 delta commit 再继续；exclude = 记录后继续。
    *  决策按 dirty 指纹落盘，归档器重跑时同指纹才沿用；新文件会重新问人。 */
-  resolveArchiveDelta(taskId: string, action: ArchiveDeltaAction): ArchiveDeltaResult {
+  async resolveArchiveDelta(taskId: string, action: ArchiveDeltaAction): Promise<ArchiveDeltaResult> {
     const row = this.taskDAO.getById(taskId)
     if (!row) throw new TaskNotFoundError()
     if (row.status !== "archiving") {
@@ -4017,7 +4081,7 @@ export class TasksService {
     if (this.runningArchives.has(taskId)) {
       throw new TaskStatusConflictError("归档编排正在运行，等本轮 preflight 结束后再决定")
     }
-    const delta = inspectTaskDelta(this.db, taskId)
+    const delta = await inspectTaskDelta(this.db, taskId)
     const dirty = delta.filter((d) => d.dirty_files.length > 0)
     if (dirty.length === 0) {
       throw new TaskStatusConflictError("工作区已干净（没有未提交改动）—— 直接重试归档即可")

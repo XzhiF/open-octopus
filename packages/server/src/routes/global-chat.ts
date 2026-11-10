@@ -304,6 +304,8 @@ export function globalChatRoutes(sseService: SSEService, chatService: ChatServic
                 startedAtMs: turnStartMs,
                 modelUsages: chunk.modelUsages,
                 usage: chunk.usage,
+                cumulative: chunk.modelUsagesCumulative,
+                providerSessionId: chunk.sessionId ?? null,
               }, tokenUsageDao)
             }
           }
@@ -320,6 +322,8 @@ export function globalChatRoutes(sseService: SSEService, chatService: ChatServic
               startedAtMs: turnStartMs,
               modelUsages: chunk.modelUsages,
               usage: chunk.usage,
+              cumulative: chunk.modelUsagesCumulative,
+              providerSessionId: chunk.sessionId ?? null,
               stopReason: ledgerStopReason(chunk.sdkTerminalReason),
             }, tokenUsageDao)
           }

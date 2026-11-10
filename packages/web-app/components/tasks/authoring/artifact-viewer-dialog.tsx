@@ -27,10 +27,15 @@ import {
   getArtifactContent,
   ArtifactContentError,
   getHomeFile,
+  artifactManifestRawUrl,
   TaskApiError,
   MAX_HOME_FILE_READ_BYTES,
 } from "@/lib/tasks-api"
 import { MarkdownPreview, MARKDOWN_TUI_CLASS } from "@/components/resource/MarkdownPreview"
+
+/** 图片证据（2026-11-10 用户：点图片显示乱码）—— 文本门按 UTF-8 读二进制必然
+ *  乱码，home 批次里的图片改走 manifest raw 端点直接喂 <img>。 */
+const IMAGE_PREVIEW_RE = /\.(png|jpe?g|gif|webp|bmp|ico|svg|avif)$/i
 
 /** A file in the task home's batch area (`.scratch/**`) — the v4 acceptance
  *  evidence viewer payload. Paths are home-relative posix straight from
@@ -69,6 +74,9 @@ type State = Loading | Loaded | Errored
 export function ArtifactViewerDialog({ taskId, entry, homeEntry, onOpenChange }: ArtifactViewerDialogProps) {
   const open = !!entry || !!homeEntry
   const [state, setState] = useState<State>({ kind: "loading" })
+  const viewingPath = homeEntry?.path ?? entry?.path ?? ""
+  /** home 批次图片：不送文本门（会乱码），直接 <img> 吃 raw 端点。 */
+  const isHomeImage = !!homeEntry && !entry && IMAGE_PREVIEW_RE.test(homeEntry.path)
 
   // Fetch content when a new entry opens. Reset on close so a reopen re-fetches
   // live disk content (the agent may have rewritten the artifact between views).
@@ -77,6 +85,7 @@ export function ArtifactViewerDialog({ taskId, entry, homeEntry, onOpenChange }:
   // the same degraded states as ArtifactContentError (403/404) + 413.
   useEffect(() => {
     if (!entry && !homeEntry) return
+    if (isHomeImage) return // 图片走 raw 端点，<img> 自己取
     let cancelled = false
     setState({ kind: "loading" })
     const load = homeEntry
@@ -99,7 +108,7 @@ export function ArtifactViewerDialog({ taskId, entry, homeEntry, onOpenChange }:
         }
       })
     return () => { cancelled = true }
-  }, [taskId, entry, homeEntry])
+  }, [taskId, entry, homeEntry, isHomeImage])
 
   // Line/char stats for the footer (only when content is actually loaded).
   const stats =
@@ -110,7 +119,6 @@ export function ArtifactViewerDialog({ taskId, entry, homeEntry, onOpenChange }:
   // 2026-10-30 用户：验收台点开的 .md 以前是一坨 <pre>，和产物窗完全不同观感。
   // .md/.markdown 走同款 MarkdownPreview（与产物窗共用 MARKDOWN_TUI_CLASS）；
   // 其它扩展名保持等宽原文（日志、json、patch 等 Markdown 化反而误读）。
-  const viewingPath = homeEntry?.path ?? entry?.path ?? ""
   const isMarkdown = /\.(md|markdown)$/i.test(viewingPath)
 
   return (
@@ -137,7 +145,15 @@ export function ArtifactViewerDialog({ taskId, entry, homeEntry, onOpenChange }:
         </DialogHeader>
 
         <ScrollArea className="flex-1 min-h-0" data-artifact-content-scroll>
-          {state.kind === "loading" ? (
+          {homeEntry && isHomeImage ? (
+            <div className="flex min-h-[320px] items-center justify-center p-6" data-artifact-image>
+              <img
+                src={artifactManifestRawUrl(taskId, `home:${homeEntry.path}`)}
+                alt={viewingPath.split("/").pop() ?? "image"}
+                className="max-h-[70vh] max-w-full rounded border object-contain"
+              />
+            </div>
+          ) : state.kind === "loading" ? (
             <div className="flex items-center justify-center p-8 text-xs text-muted-foreground gap-2">
               <Spinner className="size-4" /> 读取产物内容…
             </div>

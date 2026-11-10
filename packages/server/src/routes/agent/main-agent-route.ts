@@ -437,6 +437,8 @@ export function createMainAgentRoute(deps: MainAgentRouteDeps): Hono {
                   startedAtMs: turnStartMs,
                   modelUsages: chunk.modelUsages,
                   usage: chunk.usage,
+                  cumulative: chunk.modelUsagesCumulative,
+                  providerSessionId: chunk.sessionId ?? null,
                 }, tokenUsageDao)
               }
               break
@@ -452,6 +454,8 @@ export function createMainAgentRoute(deps: MainAgentRouteDeps): Hono {
                   startedAtMs: turnStartMs,
                   modelUsages: chunk.modelUsages,
                   usage: chunk.usage,
+                  cumulative: chunk.modelUsagesCumulative,
+                  providerSessionId: chunk.sessionId ?? null,
                   stopReason: ledgerStopReason(chunk.sdkTerminalReason),
                 }, tokenUsageDao)
               }
@@ -984,6 +988,8 @@ async function executeDelegation(
           startedAtMs,
           modelUsages: chunk.modelUsages,
           usage: chunk.usage,
+          cumulative: chunk.modelUsagesCumulative,
+          providerSessionId: chunk.sessionId ?? null,
         }, tokenUsageDao)
       }
       const sseEvent = forwardableSSEEvent(chunk, delegateContent, cloneName)

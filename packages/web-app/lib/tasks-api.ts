@@ -926,6 +926,23 @@ export interface ArchiveWikiResultWire {
   error?: { code: string; message: string }
 }
 
+/** 归档编译产生的未决矛盾（服务端活投影：已裁决的立刻消失）。
+ *  注意与 `ArchiveWikiResultWire.finding_ids` 区分 —— 那份是**编译时快照**，
+ *  采纳修订后不会变；「待裁决」一律以本列表为准。 */
+export interface ArchiveFindingWire {
+  id: string
+  kind: string
+  severity?: string
+  status: string
+  title: string
+  detail: unknown
+  pages: string[]
+  rawRef: string
+  source: string
+  createdAt: string
+  updatedAt?: string
+}
+
 /** 归档判例入档回执（`archive/case-result.json`；新建 / 并档 / 失败）。 */
 export interface ArchiveCaseResultWire {
   queue_task_id: string
@@ -958,6 +975,9 @@ export interface ArchiveKnowledgeWire {
   compile_error?: { code: string; message: string } | null
   /** 持久编译回执；null/缺省 = 尚未编译完成或旧任务。 */
   wiki_result?: ArchiveWikiResultWire | null
+  /** 本次编译仍 open 的矛盾（活列表；空数组 = 无冲突或已全部裁决）。
+   *  旧服务端可能不返回 —— 那时只能退回 wiki_result.finding_ids（编译时快照）。 */
+  findings?: ArchiveFindingWire[]
   /** 判例入档回执；缺省 = 本次无判例入档（或旧任务）。 */
   case_results?: ArchiveCaseResultWire[]
 }
@@ -1134,6 +1154,12 @@ export async function readArtifactManifestFile(taskId: string, ref: string): Pro
     throw new ArtifactContentError(body.error ?? `HTTP ${res.status}`, res.status)
   }
   return res.json()
+}
+
+/** 图片产物的原样地址（直接当 `<img src>` 用）—— 文本门按 UTF-8 读二进制必然
+ *  乱码（2026-11-10 用户缺陷），raw 端点与 content 同一扇读门、只服务图片扩展名。 */
+export function artifactManifestRawUrl(taskId: string, ref: string): string {
+  return buildUrl(`/${taskId}/artifacts/manifest/raw`, { path: ref })
 }
 
 /** GET /api/tasks/:id/context — read the workspace context file (context.md)
@@ -1382,9 +1408,11 @@ export interface VerifySummary {
   lines_after?: string[]
 }
 
-/** diff 口径（server S3）：round = 本轮 exec start..end（缺省）；
- *  cumulative = 本 phase 首轮 start..本轮 end（修复轮看得到全 phase 终态）。 */
-export type RoundDiffScope = "round" | "cumulative"
+/** diff 口径（server S3，2026-11-10 增 task）：
+ *  round = 本轮 exec start..end（缺省；验收台/台账内部面）；
+ *  cumulative = 本 phase 总账（该 phase 首轮 start .. 本轮 end）；
+ *  task = 任务总账（任务首轮 start .. 本轮 end，跨 phase）。 */
+export type RoundDiffScope = "round" | "cumulative" | "task"
 
 /** GET /:id/round-diff — 实物 git 区间统计。服务端解析顺序：awaiting 轮 →
  *  live 轮 → 停流接管轮 → 最近已验收轮（2026-10-31 归档回看）。
@@ -1402,7 +1430,7 @@ export async function getRoundDiff(
   target?: RoundTargetQuery,
 ): Promise<RoundDiffPayload> {
   const res = await fetch(buildUrl(`/${taskId}/round-diff`, {
-    ...(scope === "cumulative" ? { scope } : {}),
+    ...(scope !== "round" ? { scope } : {}),
     ...(target ? { phase_index: String(target.phaseIndex), round_index: String(target.roundIndex) } : {}),
   }))
   if (!res.ok) {
@@ -1413,7 +1441,8 @@ export async function getRoundDiff(
 }
 
 /** GET /:id/round-diff/patch?repo=&path=[&scope=] — 单文件 unified patch（懒拉，
- *  512K 截断）。scope=cumulative → 起点换成同 phase 首轮 start 锚，与累计列表同区间。 */
+ *  512K 截断）。scope=cumulative / task → 起点换成 phase / 任务首轮 start 锚，
+ *  与对应总账列表同区间。 */
 export async function getRoundPatch(
   taskId: string,
   repo: string,
@@ -1423,7 +1452,7 @@ export async function getRoundPatch(
   const res = await fetch(
     buildUrl(
       `/${taskId}/round-diff/patch`,
-      scope === "cumulative" ? { repo, path: filePath, scope } : { repo, path: filePath },
+      scope !== "round" ? { repo, path: filePath, scope } : { repo, path: filePath },
     ),
   )
   if (!res.ok) {

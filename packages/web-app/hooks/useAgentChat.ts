@@ -22,6 +22,15 @@ export interface ChatSubagentRef {
   label?: string
 }
 
+/** Composer options carried by one send. Kept as a named type so the 409
+ *  auto-resend queue can replay the exact same request. */
+export type ChatSendOptions = {
+  model?: string
+  effort?: ComposerEffort
+  maxContext?: ComposerContext
+  subagents?: ChatSubagentRef[]
+}
+
 /** Transcript reload banner text — cleared by any later successful load. */
 const LOAD_MESSAGES_ERROR = 'Failed to load messages'
 
@@ -187,6 +196,12 @@ export function useAgentChat(sessionId: string | null, options?: {
   const streamingRef = useRef(false)
   // Track the session that initiated the current stream to prevent cross-session contamination
   const streamingSessionRef = useRef<string | null>(null)
+  // 409 弹回的普通发送（消息没落库）→ 尾随的回合收口后自动补发一次。
+  // 2026-11-10 用户事故：上一轮还在收尾时发的「起来了吗？」被静默吞掉，只好
+  // 再问一遍。steer 有自己的重试环（steerLostRef），不走这里。
+  const pendingSendRef = useRef<{ message: string; opts?: ChatSendOptions } | null>(null)
+  // sendMessage 定义在 resume 轮询之后 —— 轮询退出分支经 ref 补发，避免 TDZ。
+  const sendMessageRef = useRef<((message: string, opts?: ChatSendOptions) => Promise<void>) | null>(null)
   // ── Resume-polling state (clone chat stream-resume, "关闭不丢失") ──
   // This hook instance does NOT own the SSE stream — it is tailing a
   // server-side turn that outlived a dialog close (the client aborted the
@@ -239,6 +254,7 @@ export function useAgentChat(sessionId: string | null, options?: {
     // reloads the active session right after the switch.
     setMessages([])
     setError(null)
+    pendingSendRef.current = null
     setStatusMessage('')
     setBackgroundTasks([])
     setStreamContent('')
@@ -423,6 +439,11 @@ export function useAgentChat(sessionId: string | null, options?: {
           timelineRef.current = []
           setStatusMessage('')
           setBackgroundTasks([])
+          // 被 409 弹回的发送：会话已真正空闲，补发一次（在飞时 sendMessage
+          // 会被 streaming 闸挡住，所以放在清状态之后、下一次 tick 之前）。
+          const pending = pendingSendRef.current
+          pendingSendRef.current = null
+          if (pending) void sendMessageRef.current?.(pending.message, pending.opts)
         }
       } catch {
         // Transient network hiccup — keep polling; the server turn is alive.
@@ -463,12 +484,7 @@ export function useAgentChat(sessionId: string | null, options?: {
     return () => { alive = false }
   }, [sessionId, startResumePolling])
 
-  const sendMessage = useCallback(async (message: string, opts?: {
-    model?: string
-    effort?: ComposerEffort
-    maxContext?: ComposerContext
-    subagents?: ChatSubagentRef[]
-  }) => {
+  const sendMessage = useCallback(async (message: string, opts?: ChatSendOptions) => {
     if (!sessionId || !message.trim()) return
     // Guard: block if already streaming
     if (streamingRef.current) return
@@ -738,8 +754,15 @@ export function useAgentChat(sessionId: string | null, options?: {
         // and resent). Don't surface an error: drop the (never-persisted)
         // optimistic send and tail the live turn instead.
         if (data.code === 'STREAM_IN_PROGRESS' && apiOverrideRef.current?.checkRunning) {
-          if (steeringRef.current) steerLostRef.current = true
-          // 409 = 本条从未落库，撤掉乐观行（steer 重试环会重发）
+          if (steeringRef.current) {
+            steerLostRef.current = true
+          } else {
+            // 普通发送撞上仍在生成/收尾的上一轮：本条从未落库，记下来，等
+            // 尾随的回合真正收口后自动补发 —— 否则用户只看到自己的话凭空
+            // 消失（2026-11-10 用户：连问两次「起来了吗？」）。
+            pendingSendRef.current = { message, opts }
+          }
+          // 409 = 本条从未落库，撤掉乐观行（steer 重试环 / 补发队列会重发）
           setMessages((prev) => prev.filter((m) => !m.id.startsWith('temp-')))
           startResumePolling(sessionId)
           return
@@ -767,6 +790,7 @@ export function useAgentChat(sessionId: string | null, options?: {
 
     connect(source, handlers)
   }, [sessionId, connect, setContextUsage, startResumePolling, loadMessages])
+  sendMessageRef.current = sendMessage
 
   const stopGenerate = useCallback(async () => {
     if (!sessionId) return
@@ -891,17 +915,16 @@ export function useAgentChat(sessionId: string | null, options?: {
   // steer 重试环据此重发。
   const steerLostRef = useRef(false)
 
-  const steer = useCallback(async (message: string, opts?: {
-    model?: string
-    effort?: ComposerEffort
-    maxContext?: ComposerContext
-    subagents?: ChatSubagentRef[]
-  }) => {
+  const steer = useCallback(async (message: string, opts?: ChatSendOptions) => {
     if (!sessionId || !message.trim()) return
+    // 尾随他端回合时本实例没有可掐的本地流：stopGenerate 会真的调服务端
+    // stop，把那条回合（连同它的 run_in_background 进程）掐掉，然后这里再
+    // return 把消息吞掉 —— 2026-11-10 用户事故（「我直接发送会打断了会话，
+    // 又立马被截断」）。没有本地流就什么都不做，消息由 UI 侧改为排队。
+    if (resumeModeRef.current) return
     steeringRef.current = true
     try {
       await stopGenerate()
-      if (resumeModeRef.current) return // 尾随他端回合时无本地流可掐，忽略本次接管
       // 服务端 finalize 与 running 反注册之间可能有一瞬窗口：发送被 409 吞时
       // （onError 走 resume-polling、消息不落库）轮询到停后重发，≤3 次。
       for (let attempt = 0; attempt < 6; attempt++) {
