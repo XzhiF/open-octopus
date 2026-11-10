@@ -12,11 +12,11 @@
 //   2. 归档 preflight（archiving-service）——dirty 未决策就停在 archiving；
 //   3. 归档素材（archive-materials 的 PR diff）——end 锚改成归档时 HEAD。
 //
-// 纯读；git 全部经可注入 CommandRunner（生产 spawnSync，测试真 git/假实现）。
+// 纯读；git 全部经可注入 CommandRunner（生产 = async spawn，测试可回同步假实现）。
 
 import fs from "fs"
 import path from "path"
-import { spawnSync } from "child_process"
+import { spawn } from "child_process"
 import type Database from "better-sqlite3"
 
 export interface CommandResult {
@@ -25,22 +25,65 @@ export interface CommandResult {
   stderr: string
 }
 
-/** Injectable command runner (production = spawnSync; tests = real git). */
-export type CommandRunner = (cmd: string, args: string[], cwd: string) => CommandResult
+/** Injectable command runner (production = async spawn; tests may return a
+ *  plain result — callers always await, so a sync fake stays valid). */
+export type CommandRunner = (
+  cmd: string,
+  args: string[],
+  cwd: string,
+) => CommandResult | Promise<CommandResult>
 
-export const defaultRun: CommandRunner = (cmd, args, cwd) => {
-  const r = spawnSync(cmd, args, {
-    cwd,
-    timeout: 120000,
-    encoding: "utf-8",
-    env: { ...process.env, GIT_TERMINAL_PROMPT: "0" },
+/**
+ * 2026-11-10 用户事故：归档时 Web 弹「后端服务未连接 localhost:3001 · 已重试
+ * 2 次」。server 没挂 —— 归档编排里 5 个 project 依次 `git push`（每个 4–5 秒
+ * 网络往返）走的是 spawnSync，把整个 Node 事件循环钉死，/api/actuator/ready
+ * 也答不上，前端 4 秒超时 ×2 就判 offline。
+ *
+ * 所有 git/gh 一律 async spawn：子进程跑的时候事件循环照常服务 HTTP/SSE。
+ * 120s 上限与旧 spawnSync 的 timeout 对齐（卡死的 hook / 网络不能拖住宿主）。
+ */
+export const defaultRun: CommandRunner = (cmd, args, cwd) =>
+  new Promise<CommandResult>((resolve) => {
+    let stdout = ""
+    let stderr = ""
+    let settled = false
+    let timer: ReturnType<typeof setTimeout> | null = null
+    const finish = (result: CommandResult): void => {
+      if (settled) return
+      settled = true
+      if (timer) clearTimeout(timer)
+      resolve(result)
+    }
+
+    let child: ReturnType<typeof spawn>
+    try {
+      child = spawn(cmd, args, {
+        cwd,
+        env: { ...process.env, GIT_TERMINAL_PROMPT: "0" },
+        windowsHide: true,
+      })
+    } catch (err: unknown) {
+      resolve({ code: -1, stdout: "", stderr: err instanceof Error ? err.message : String(err) })
+      return
+    }
+
+    timer = setTimeout(() => {
+      child.kill()
+      finish({ code: -1, stdout, stderr: `${stderr} ${cmd} timed out after 120000ms` })
+    }, 120_000)
+    ;(timer as unknown as { unref?: () => void }).unref?.()
+
+    child.stdout?.setEncoding("utf-8")
+    child.stderr?.setEncoding("utf-8")
+    child.stdout?.on("data", (chunk: string) => {
+      stdout += chunk
+    })
+    child.stderr?.on("data", (chunk: string) => {
+      stderr += chunk
+    })
+    child.on("error", (err) => finish({ code: -1, stdout, stderr: `${stderr} ${err.message}` }))
+    child.on("close", (code) => finish({ code: code ?? -1, stdout, stderr }))
   })
-  return {
-    code: r.status ?? -1,
-    stdout: (r.stdout ?? "").toString(),
-    stderr: (r.stderr ?? "").toString() + (r.error ? ` ${r.error.message}` : ""),
-  }
-}
 
 export interface ProjectDelta {
   project: string
@@ -133,11 +176,11 @@ export function resolveProjectDir(wsPath: string | null, project: string): Resol
 }
 
 /** Inspect every project of a task: commits since the last round end + dirty files. */
-export function inspectTaskDelta(
+export async function inspectTaskDelta(
   db: Database.Database,
   taskId: string,
   opts: { run?: CommandRunner } = {},
-): ProjectDelta[] {
+): Promise<ProjectDelta[]> {
   const run = opts.run ?? defaultRun
   const row = db.prepare("SELECT project_ids, workspace_id FROM tasks WHERE id = ?")
     .get(taskId) as TaskDeltaRow | undefined
@@ -148,15 +191,17 @@ export function inspectTaskDelta(
     : undefined
   const wsPath = ws?.path ?? null
   const ends = lastRoundEndCommits(db, taskId)
-  return projects.map((project) => inspectProjectDelta(project, wsPath, ends[project] ?? null, run))
+  return Promise.all(
+    projects.map((project) => inspectProjectDelta(project, wsPath, ends[project] ?? null, run)),
+  )
 }
 
-export function inspectProjectDelta(
+export async function inspectProjectDelta(
   project: string,
   wsPath: string | null,
   from: string | null,
   run: CommandRunner = defaultRun,
-): ProjectDelta {
+): Promise<ProjectDelta> {
   const resolved = resolveProjectDir(wsPath, project)
   const base: ProjectDelta = {
     project,
@@ -170,19 +215,19 @@ export function inspectProjectDelta(
   }
   if (!resolved.dir) return base
   const dir = resolved.dir
-  const head = run("git", ["rev-parse", "HEAD"], dir)
+  const head = await run("git", ["rev-parse", "HEAD"], dir)
   if (head.code !== 0) {
     return { ...base, error: `git rev-parse HEAD 失败: ${head.stderr.trim() || "not a git worktree"}` }
   }
   const headSha = head.stdout.trim()
-  const status = run("git", ["status", "--porcelain"], dir)
+  const status = await run("git", ["status", "--porcelain"], dir)
   const dirty = status.code === 0 ? lines(status.stdout).slice(0, DIRTY_CAP) : []
   let commits = 0
   let subjects: string[] = []
   if (from && headSha && from !== headSha) {
-    const count = run("git", ["rev-list", "--count", `${from}..${headSha}`], dir)
+    const count = await run("git", ["rev-list", "--count", `${from}..${headSha}`], dir)
     if (count.code === 0) commits = parseInt(count.stdout.trim(), 10) || 0
-    const log = run("git", ["log", "--format=%s", `${from}..${headSha}`], dir)
+    const log = await run("git", ["log", "--format=%s", `${from}..${headSha}`], dir)
     if (log.code === 0) subjects = lines(log.stdout).slice(0, SUBJECT_CAP)
   }
   return {

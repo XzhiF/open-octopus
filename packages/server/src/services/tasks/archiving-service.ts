@@ -26,7 +26,7 @@
 // 双保险 = 目标文件含本 task marker 即跳过顺延、术语同名即跳过、commit 前
 // diff --cached 判空、push 天然幂等。retry 跳过已完成 project (A 不重复 commit).
 //
-// git 面: 全部经可注入的 run(cmd,args,cwd) (生产 = spawnSync, 测试 = 真 git +
+// git 面: 全部经可注入的 run(cmd,args,cwd) (生产 = async spawn，测试 = 真 git +
 // 本地 bare origin fixture)。PR 面: 仓库无既有 gh/PR 代码 (票 08 Exploration
 // grep 结论) → 默认 handler: 非 github.com remote → skipped (本地/自托管场景
 // push 即归档落地); github.com → gh pr list --head 命中即并入开放 PR (push
@@ -449,20 +449,20 @@ export interface ArchivingDeps {
 /** Default PR handler (no existing gh/PR code in the repo — 票 08 grep).
  *  Local/self-hosted remotes (bare-repo fixtures, Gitea, …) → 'skipped': the
  *  pushed branch IS the archive landing, review happens outside GitHub. */
-const defaultPrHandler: PrHandler = (ctx, run) => {
-  const remote = run("git", ["remote", "get-url", "origin"], ctx.worktreePath)
+const defaultPrHandler: PrHandler = async (ctx, run) => {
+  const remote = await run("git", ["remote", "get-url", "origin"], ctx.worktreePath)
   if (remote.code !== 0 || !remote.stdout.trim()) {
     return { action: "skipped", note: "no origin remote" }
   }
   if (!/github\.com[:/]/i.test(remote.stdout)) {
     return { action: "skipped", note: "non-GitHub remote — branch push is the archive landing" }
   }
-  const list = run("gh", ["pr", "list", "--head", ctx.branch, "--state", "open", "--json", "url", "-q", ".[0].url"], ctx.worktreePath)
+  const list = await run("gh", ["pr", "list", "--head", ctx.branch, "--state", "open", "--json", "url", "-q", ".[0].url"], ctx.worktreePath)
   const url = list.stdout.trim()
   if (list.code === 0 && url && url !== "null") {
     return { action: "merged-into-open", url }
   }
-  const create = run("gh", ["pr", "create", "--head", ctx.branch, "--title", ctx.title, "--body", ctx.body], ctx.worktreePath)
+  const create = await run("gh", ["pr", "create", "--head", ctx.branch, "--title", ctx.title, "--body", ctx.body], ctx.worktreePath)
   if (create.code !== 0) {
     throw new Error(`gh pr create failed for '${ctx.branch}': ${create.stderr.trim() || create.stdout.trim()}`)
   }
@@ -538,7 +538,11 @@ interface WorktreeRef {
   branch: string
 }
 
-function resolveWorktree(wsPath: string, projectName: string, run: CommandRunner): WorktreeRef {
+async function resolveWorktree(
+  wsPath: string,
+  projectName: string,
+  run: CommandRunner,
+): Promise<WorktreeRef> {
   const cfg = parseJSONSafe<{ repos?: Array<{ name?: string; worktree_path?: string; branch?: string }> }>(
     fs.existsSync(path.join(wsPath, "config.json")) ? fs.readFileSync(path.join(wsPath, "config.json"), "utf-8") : "",
     {},
@@ -550,7 +554,7 @@ function resolveWorktree(wsPath: string, projectName: string, run: CommandRunner
   }
   let branch = entry?.branch ?? ""
   if (!branch) {
-    const b = run("git", ["rev-parse", "--abbrev-ref", "HEAD"], dir)
+    const b = await run("git", ["rev-parse", "--abbrev-ref", "HEAD"], dir)
     if (b.code !== 0) throw new Error(`not a git worktree for '${projectName}' at ${dir}: ${b.stderr.trim()}`)
     branch = b.stdout.trim()
   }
@@ -688,7 +692,7 @@ export function createTaskArchiver(deps: ArchivingDeps): TaskArchiver {
     //   1. dirty 且没有匹配的 include/exclude 决定 → 停 archiving，交主 Chat 问人；
     //   2. include → 先把 dirty 落一个归档 delta commit，再继续归并；
     //   3. exclude → 记录文件清单后继续（人明确选择不带）。
-    let delta = inspectTaskDelta(deps.db, taskId, { run })
+    let delta = await inspectTaskDelta(deps.db, taskId, { run })
     const dirty = delta.filter((d) => d.dirty_files.length > 0)
     let deltaDecision: ArchiveDeltaDecision | null = null
     if (dirty.length > 0) {
@@ -728,12 +732,12 @@ export function createTaskArchiver(deps: ArchivingDeps): TaskArchiver {
           commitErrors[d.project] = d.error ?? "worktree 不可用"
           continue
         }
-        const add = run("git", ["add", "-A"], d.dir)
+        const add = await run("git", ["add", "-A"], d.dir)
         if (add.code !== 0) {
           commitErrors[d.project] = `git add 失败: ${add.stderr.trim() || add.code}`
           continue
         }
-        const commit = run(
+        const commit = await run(
           "git",
           ["commit", "-m", `chore(archive): include post-acceptance delta (task ${taskId})`],
           d.dir,
@@ -742,7 +746,7 @@ export function createTaskArchiver(deps: ArchivingDeps): TaskArchiver {
           commitErrors[d.project] = `git commit 失败: ${commit.stderr.trim() || commit.stdout.trim()}`
         }
       }
-      delta = inspectTaskDelta(deps.db, taskId, { run })
+      delta = await inspectTaskDelta(deps.db, taskId, { run })
       if (Object.keys(commitErrors).length > 0) {
         const message = `放行后改动纳入失败：${Object.entries(commitErrors).map(([p, e]) => `${p}: ${e}`).join("；")}`
         const report: ArchiveReport = {
@@ -790,7 +794,7 @@ export function createTaskArchiver(deps: ArchivingDeps): TaskArchiver {
       }
       results.push(r)
       try {
-        const wt = resolveWorktree(wsPath, projectName, run)
+        const wt = await resolveWorktree(wsPath, projectName, run)
         const writtenRel: string[] = []
 
         // ADR 顺延
@@ -831,19 +835,19 @@ export function createTaskArchiver(deps: ArchivingDeps): TaskArchiver {
         // 归档 commit
         const commitMsg = `chore(archive): ${row.name} syncback ${state.date}`
         if (writtenRel.length > 0) {
-          const add = run("git", ["add", "--", ...writtenRel], wt.dir)
+          const add = await run("git", ["add", "--", ...writtenRel], wt.dir)
           if (add.code !== 0) throw new Error(`git add failed: ${add.stderr.trim()}`)
-          const diff = run("git", ["diff", "--cached", "--quiet"], wt.dir)
+          const diff = await run("git", ["diff", "--cached", "--quiet"], wt.dir)
           if (diff.code !== 0) {
-            const commit = run("git", ["commit", "-m", commitMsg], wt.dir)
+            const commit = await run("git", ["commit", "-m", commitMsg], wt.dir)
             if (commit.code !== 0) throw new Error(`git commit failed: ${commit.stderr.trim() || commit.stdout.trim()}`)
-            const head = run("git", ["rev-parse", "HEAD"], wt.dir)
+            const head = await run("git", ["rev-parse", "HEAD"], wt.dir)
             r.commit = head.code === 0 ? head.stdout.trim() : null
           }
         }
 
         // push (git 失败 → 本 project 失败停 archiving — US15)
-        const push = run("git", ["push", "-u", "origin", wt.branch], wt.dir)
+        const push = await run("git", ["push", "-u", "origin", wt.branch], wt.dir)
         if (push.code !== 0) {
           throw new Error(`git push origin ${wt.branch} failed: ${push.stderr.trim() || push.stdout.trim()}`)
         }

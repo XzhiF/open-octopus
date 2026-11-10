@@ -561,14 +561,14 @@ export class RoundEvidenceService {
 
   /** 2026-10-31 放行前终检：末轮 end → 当前 HEAD 的提交 + dirty 文件。
    *  只读；严格锚定 awaiting 轮（resolveAwaiting 409 优先）。 */
-  getPostRoundDelta(taskId: string): ProjectDelta[] {
+  getPostRoundDelta(taskId: string): Promise<ProjectDelta[]> {
     const { execRow } = this.resolveAwaiting(taskId)
     const ends = parseCommitMap(execRow.end_commit_id)
     const ws = this.workspaceService.getById(execRow.workspace_id)
     const wsPath = ws?.path ?? null
     const detail = this.tasksService.getTask(taskId) as unknown as { project_ids?: string[] }
     const projectNames = [...new Set([...Object.keys(ends), ...(detail.project_ids ?? [])])]
-    return projectNames.map((p) => inspectProjectDelta(p, wsPath, ends[p] ?? null))
+    return Promise.all(projectNames.map((p) => inspectProjectDelta(p, wsPath, ends[p] ?? null)))
   }
 
   /** 票09「人工干预」列的读取（06 权威 SQL 的行级形态）：执行下所有
@@ -1623,7 +1623,7 @@ export class RoundEvidenceService {
       taskId, phaseIndex, roundIndex, batchRelDir,
       phaseName: ((detail.task_spec as TaskSpec | undefined)?.phases?.[phaseIndex - 1]?.name) ?? `Phase ${phaseIndex}`,
       diff, playbook, verify, preview, checks,
-      postRound: this.getPostRoundDelta(taskId),
+      postRound: await this.getPostRoundDelta(taskId),
     }
   }
 

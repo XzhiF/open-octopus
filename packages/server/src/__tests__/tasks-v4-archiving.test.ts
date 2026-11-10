@@ -618,7 +618,7 @@ describe("放行后现场 preflight（2026-10-31）", () => {
 
   it("include commits the post-acceptance delta, then archives → done", async () => {
     const { taskId, wt } = seedDirty()
-    service.resolveArchiveDelta(taskId, "include")
+    await service.resolveArchiveDelta(taskId, "include")
     const report = await runToReport(taskId)
     expect(report.ok).toBe(true)
     expect(report.delta_decision).toBe("include")
@@ -631,7 +631,7 @@ describe("放行后现场 preflight（2026-10-31）", () => {
 
   it("exclude records the file list and archives without the dirty change → done", async () => {
     const { taskId, wt } = seedDirty()
-    service.resolveArchiveDelta(taskId, "exclude")
+    await service.resolveArchiveDelta(taskId, "exclude")
     const report = await runToReport(taskId)
     expect(report.ok).toBe(true)
     expect(report.delta_decision).toBe("exclude")
