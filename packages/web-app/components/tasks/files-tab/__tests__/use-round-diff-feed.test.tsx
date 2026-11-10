@@ -41,7 +41,7 @@ describe("useRoundDiffFeed", () => {
     await settle()
     expect(result.current.data).not.toBeNull()
     expect(mockGetRoundDiff).toHaveBeenCalledTimes(1)
-    expect(mockGetRoundDiff).toHaveBeenCalledWith("t1", "round")
+    expect(mockGetRoundDiff).toHaveBeenCalledWith("t1", "cumulative")
     expect(result.current.error).toBeNull()
     unmount()
 
@@ -59,7 +59,7 @@ describe("useRoundDiffFeed", () => {
     expect(mockGetRoundDiff).toHaveBeenCalledTimes(1)
     await settle(10_000)
     expect(mockGetRoundDiff.mock.calls.length).toBeGreaterThanOrEqual(2)
-    expect(result.current.nonce).toBeGreaterThanOrEqual(2) // nonce=成功次数 —— 累计口径跟同一节拍
+    expect(result.current.nonce).toBeGreaterThanOrEqual(2) // nonce=成功次数 —— 任务总账跟同一节拍
     unmount()
   })
 
@@ -130,7 +130,7 @@ describe("useRoundDiffFeed", () => {
     rerender({ id: "t2" })
     expect(result.current.data).toBeNull()
     await settle()
-    expect(mockGetRoundDiff).toHaveBeenLastCalledWith("t2", "round")
+    expect(mockGetRoundDiff).toHaveBeenLastCalledWith("t2", "cumulative")
     unmount()
   })
 })

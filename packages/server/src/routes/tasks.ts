@@ -35,7 +35,7 @@ import {
   resourceRefSchema,
   type TaskStatus,
 } from "@octopus/shared"
-import type { RoundEvidenceService } from "../services/tasks/round-evidence-service"
+import type { RoundDiffScope, RoundEvidenceService } from "../services/tasks/round-evidence-service"
 import { InstanceGateError } from "../services/tasks/round-evidence-service"
 
 // ── Error Classification ────────────────────────────────────────────
@@ -150,6 +150,11 @@ function parseRoundTargetQuery(
     return "invalid"
   }
   return { phaseIndex, roundIndex }
+}
+
+/** round-diff 口径参数：只认白名单值，缺省/未知一律 round（历史契约）。 */
+function parseRoundDiffScope(raw: string | undefined): RoundDiffScope {
+  return raw === "cumulative" || raw === "task" ? raw : "round"
 }
 
 // 票08 分支③（改派 task-fix）body —— 指令即修复轮的输入，与打回反馈同额（≤20000）。
@@ -630,13 +635,12 @@ export function createTasksRoutes(
   // awaiting_archive 的变更窗继续出示实物，不再只剩 idle 面。
   // 无 evidence 注入（如未装配的测试 app）→ 501 而非崩溃。verify 端点的错误都经
   // classifyError：未配置命令 400 / 无 awaiting·在跑·ws 没了 409 / 未知任务 404。
-  // 实物 diff。S3（2026-09-20）起支持 ?scope=cumulative：本 phase 首轮 exec 的
-  // start 锚 .. 本轮 exec 的 end 锚（放行判的是 phase 终态，修复轮不再只见
-  // delta）；缺省/其他值 = round（本轮区间，现行为逐字不变）。payload 形状
-  // 两口径完全一致（RoundDiffPayload），web 零解析改动。
+  // 实物 diff。S3（2026-09-20）起支持 ?scope=cumulative（本 phase 总账）；2026-11-10
+  // 增 ?scope=task（任务总账：任务首轮 start .. 本轮 end）。缺省/其他值 = round
+  // （本轮区间，验收台/台账现行为逐字不变）。payload 形状三口径完全一致。
   router.get("/:id/round-diff", async (c) => {
     if (!evidence) return c.json({ error: "round evidence not wired" }, 501)
-    const scope = c.req.query("scope") === "cumulative" ? "cumulative" : "round"
+    const scope = parseRoundDiffScope(c.req.query("scope"))
     const target = parseRoundTargetQuery(c.req.query("phase_index"), c.req.query("round_index"))
     if (target === "invalid") {
       return c.json({ error: "phase_index / round_index 必须成对给出且为正整数" }, 400)
@@ -657,7 +661,7 @@ export function createTasksRoutes(
       return c.json({ error: "Query params 'repo' and 'path' are required" }, 400)
     }
     try {
-      const scope = c.req.query("scope") === "cumulative" ? "cumulative" : "round"
+      const scope = parseRoundDiffScope(c.req.query("scope"))
       return c.json(await evidence.getFilePatch(c.req.param("id"), repo, filePath, scope))
     } catch (err: unknown) {
       const { status, message } = classifyError(err)

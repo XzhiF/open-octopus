@@ -537,4 +537,50 @@ describe("round-diff — 已验收轮回落供货（归档后回看）", () => {
     const paths = d.repos.find((r) => r.name === "arc2")!.groups.flatMap((g) => g.files.map((f) => f.path))
     expect(paths).toEqual(["r2.txt"])
   })
+
+  // 2026-11-10 用户：变更窗只要两份总账 —— 本 phase 与整个任务。task 口径的
+  // start 锚是任务最早轮（P1 首轮），不是当前 phase 首轮。
+  it("A3: scope=task → P1 首轮 start .. 末轮 end（跨 phase），patch 同锚", async () => {
+    const [k0, k1, k2] = freshRepo("taskacc")
+    const phases = [
+      { index: 1, name: "P1", slug: "p-1", specPath: "./.scratch/20261110/p-1/spec.md", workflowRef: "task-dev", inputValues: {} },
+      { index: 2, name: "P2", slug: "p-2", specPath: "./.scratch/20261110/p-2/spec.md", workflowRef: "task-dev", inputValues: {} },
+    ]
+    const res = await app.request("/api/tasks", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ name: `E2E_TD taskacc ${seq++}`, task_spec: { format: "v4", goal: "g", ac: ["a"], phases } }),
+    })
+    expect(res.status).toBe(201)
+    const taskId = ((await res.json()) as { id: string }).id
+    const now = new Date().toISOString()
+    const insert = db.prepare(`
+      INSERT INTO executions (id, workspace_id, org, workflow_ref, workflow_name, status,
+        task_id, phase_index, round_index, start_commit_id, end_commit_id,
+        started_at, completed_at, created_at, updated_at)
+      VALUES (?, ?, ?, 'task-dev', 'rd', 'completed', ?, ?, 1, ?, ?, ?, ?, ?, ?)
+    `)
+    insert.run(`exec-taskacc-p1-${seq}`, WS_ID, ORG, taskId, 1, JSON.stringify({ taskacc: k0 }), JSON.stringify({ taskacc: k1 }), now, now, now, now)
+    insert.run(`exec-taskacc-p2-${seq}`, WS_ID, ORG, taskId, 2, JSON.stringify({ taskacc: k1 }), JSON.stringify({ taskacc: k2 }), now, now, now, now)
+    accept(taskId, 1, 1)
+    accept(taskId, 2, 1)
+
+    const get = async (scope: string) =>
+      (await (await app.request(`/api/tasks/${taskId}/round-diff?scope=${scope}`)).json()) as RoundDiffPayload
+    const phase = await get("cumulative")
+    const task = await get("task")
+    // 本 phase = P2 首轮 k1..k2；任务 = P1 首轮 k0..k2（r1 + r2 都在）
+    expect(phase.aggregate.commits).toBe(1)
+    expect(task.aggregate.commits).toBe(2)
+    const taskPaths = task.repos.find((r) => r.name === "taskacc")!.groups.flatMap((g) => g.files.map((f) => f.path))
+    expect(taskPaths.sort()).toEqual(["r1.txt", "r2.txt"])
+    // payload 形状两口径同 key 集合（web 解析面不变）
+    expect(Object.keys(task).sort()).toEqual(Object.keys(phase).sort())
+    // patch 与任务总账同锚：P1 轮新增的 r1.txt 也能取到
+    const pr = await app.request(
+      `/api/tasks/${taskId}/round-diff/patch?repo=taskacc&path=r1.txt&scope=task`,
+    )
+    expect(pr.status).toBe(200)
+    expect(((await pr.json()) as { patch: string }).patch).toContain("+1a")
+  })
 })

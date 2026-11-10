@@ -47,12 +47,12 @@ describe("ChangesWindow — round-diff 状态闸", () => {
   })
 
   it.each(["running", "paused", "awaiting_review", "awaiting_archive", "archiving", "done", "failed", "aborted", "ready"])(
-    "%s：拉 round 口径（服务端决定有没有已验收轮）",
+    "%s：拉本 phase 总账（服务端决定有没有可出示的轮）",
     async (status) => {
       mockGetRoundDiff.mockResolvedValue(DIFF)
       render(<ChangesWindow task={task(status)} />)
       expect(await screen.findByTestId("round-diff-strip")).toBeTruthy()
-      expect(mockGetRoundDiff).toHaveBeenCalledWith("t1", "round")
+      expect(mockGetRoundDiff).toHaveBeenCalledWith("t1", "cumulative")
     },
   )
 

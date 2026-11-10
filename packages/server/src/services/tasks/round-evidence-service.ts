@@ -147,12 +147,20 @@ export interface RoundDiffPayload {
   takeover?: LedgerTakeoverMark | null
 }
 
-/** diff 区间口径（S3，2026-09-20）：
- *  - "round"（缺省）= 本轮 exec 的 start_commit..end_commit（v2 现行为）；
- *  - "cumulative"   = 本 phase 首轮 exec 的 start_commit..本轮 exec 的
- *    end_commit —— 修复轮只见 delta，但人放行的是 phase 终态，累计口径给
- *    「这整个 phase 到底改了什么」的答案。输出形状两者完全一致。 */
-export type RoundDiffScope = "round" | "cumulative"
+/** diff 区间口径（S3，2026-09-20；2026-11-10 增 task）：
+ *  - "round"（缺省）= 本轮 exec 的 start_commit..end_commit（验收/台账内部面）；
+ *  - "cumulative"   = **本 phase 总账**：本 phase 首轮 exec 的 start_commit..本轮
+ *    exec 的 end_commit —— 放行的是 phase 终态，累计口径给「这整个 phase 到底改
+ *    了什么」的答案；
+ *  - "task"         = **任务总账**：任务最早轮（最小 phase × 最小轮）的
+ *    start_commit..本轮 end_commit —— 跨 phase 的整份交付。
+ *  输出形状三者完全一致；web「变更」窗只暴露后两种。 */
+export type RoundDiffScope = "round" | "cumulative" | "task"
+
+/** 冻结轮（awaiting / 已验收）diff 的内存短存 —— 锚定时段不可变，重复读只是
+ *  白跑 git（变更窗 + 验收台 + 台账快照会叠着读）。live 轮绝不缓存：工作区每拍
+ *  都可能变，缓存会让「≤10s 自动同步」说谎。key = exec 行 id × 口径。 */
+const FROZEN_DIFF_TTL_MS = 60_000
 
 export type VerifyState = "running" | "passed" | "failed" | "aborted" | "timeout"
 
@@ -406,26 +414,69 @@ export class RoundEvidenceService {
 
   // ── 实物 diff ───────────────────────────────────────────────────────────
 
-  /** scope="cumulative"（S3）：起点换成同 phase 首轮 exec 的 start 锚 ——
-   *  首轮行缺失时回落本轮口径（诚实降级，payload 形状不变）。某仓在首轮 start
-   *  map 里没有键 → 走下方 `!start` 分支，expired("no_commits") 照旧。
+  /** 冻结轮 diff 短存（exec 行 id × 口径）+ 并发合流。live 轮只合流不缓存。 */
+  private readonly frozenDiff = new Map<string, { expiresAt: number; payload: RoundDiffPayload }>()
+  private readonly diffInflight = new Map<string, Promise<RoundDiffPayload>>()
+
+  /** 区间口径：
+   *  - round（缺省）= 本轮 start..end（验收台/台账现行为逐字不变）；
+   *  - cumulative = 本 phase 总账（phase 首轮 start .. 本轮 end）；
+   *  - task = 任务总账（任务首轮 start .. 本轮 end）。
+   *  live 轮右端 = 各仓当前工作区（已提交 + 未提交改动 + 未跟踪新文件）；
+   *  冻结轮右端 = 存下的 end 快照。live 结果绝不缓存（工作区每拍可变），冻结轮
+   *  按 exec 行 id 短存 60s（重复读只省 git，锚本身不可变）。
    *  票03（taskboard-modal-v2「≡ 变更」）：无 awaiting 时解析到任务当前 live 轮，
-   *  右端 = 各仓当前工作区（已提交 + 未提交改动 + 未跟踪新文件）—— 端点/payload
-   *  形状逐字不变，仅供货窗口扩大。 */
+   *  端点/payload 形状逐字不变，仅供货窗口扩大。 */
   async getRoundDiff(
     taskId: string,
     scope: RoundDiffScope = "round",
     target?: RoundTarget,
   ): Promise<RoundDiffPayload> {
-    const { execRow, phaseIndex, roundIndex, live: isLive } = target
+    const sel = target
       ? (() => {
           const info = this.roundInfo(taskId, target.phaseIndex, target.roundIndex)
           return { execRow: info.execRow, phaseIndex: info.phaseIndex, roundIndex: info.roundIndex, live: false }
         })()
       : this.resolveRoundForDiff(taskId)
+    const cacheKey = `${sel.execRow.id}|${scope}`
+    if (!sel.live) {
+      const hit = this.frozenDiff.get(cacheKey)
+      if (hit && hit.expiresAt > Date.now()) return hit.payload
+    }
+    const inflightKey = `${cacheKey}|${sel.live ? "live" : "frozen"}`
+    const running = this.diffInflight.get(inflightKey)
+    if (running) return running
+    const pending = this.computeRoundDiff(taskId, scope, sel)
+      .then((payload) => {
+        if (!sel.live) {
+          this.frozenDiff.set(cacheKey, { expiresAt: Date.now() + FROZEN_DIFF_TTL_MS, payload })
+          if (this.frozenDiff.size > 200) {
+            const now = Date.now()
+            for (const [k, v] of this.frozenDiff) if (v.expiresAt <= now) this.frozenDiff.delete(k)
+          }
+        }
+        return payload
+      })
+      .finally(() => { this.diffInflight.delete(inflightKey) })
+    this.diffInflight.set(inflightKey, pending)
+    return pending
+  }
+
+  /** 真正的 git 读取（不含缓存/合流）。跨仓并发：5 仓各跑 ~6 条 git 命令，
+   *  串行就是 5 倍墙钟 —— Windows 上每条进程 50–300ms，一屏 3–10s 的主因。 */
+  private async computeRoundDiff(
+    taskId: string,
+    scope: RoundDiffScope,
+    sel: { execRow: ExecutionRow; phaseIndex: number | null; roundIndex: number; live: boolean },
+  ): Promise<RoundDiffPayload> {
+    const { execRow, phaseIndex, roundIndex, live: isLive } = sel
     let starts = parseCommitMap(execRow.start_commit_id)
     if (scope === "cumulative" && phaseIndex != null) {
       const first = this.execDao.findTaskPhaseFirstRound(taskId, phaseIndex)
+      const firstStarts = parseCommitMap(first?.start_commit_id)
+      if (Object.keys(firstStarts).length > 0) starts = firstStarts
+    } else if (scope === "task") {
+      const first = this.execDao.findTaskFirstRound(taskId)
       const firstStarts = parseCommitMap(first?.start_commit_id)
       if (Object.keys(firstStarts).length > 0) starts = firstStarts
     }
@@ -450,35 +501,39 @@ export class RoundEvidenceService {
     }
 
     const ws = this.workspaceService.getById(execRow.workspace_id)
-    const repos: RepoDiff[] = []
-    const quickEdits: LedgerQuickEditEntry[] = []
-    for (const name of names) {
+    // 跨仓并发（结果按 names 顺序落位，快改也同序）—— 见方法头：这是延迟主因。
+    const settled = await Promise.all(names.map(async (name) => {
       const start = starts[name]
       const storedEnd = storedEnds[name]
       // awaiting 现行为逐字保留：锚缺失先于目录判定。
       if (!start || (!isLive && !storedEnd)) {
-        repos.push(expiredRepo(name, "no_commits"))
-        continue
+        return { repo: expiredRepo(name, "no_commits"), quickEdits: [] as LedgerQuickEditEntry[] }
       }
       const dir = this.resolveRepoDir(ws?.path, name)
       if (!dir) {
-        repos.push(expiredRepo(name, ws ? "worktree_gone" : "no_workspace"))
-        continue
+        return { repo: expiredRepo(name, ws ? "worktree_gone" : "no_workspace"), quickEdits: [] as LedgerQuickEditEntry[] }
       }
       // live 轮右端 = 当前工作区（含未提交改动）；空仓/无提交 → 诚实 no_commits。
       const end = isLive ? await this.liveHeadCommit(dir) : storedEnd
       if (!end) {
-        repos.push(expiredRepo(name, "no_commits"))
-        continue
+        return { repo: expiredRepo(name, "no_commits"), quickEdits: [] as LedgerQuickEditEntry[] }
       }
-      repos.push(await this.statRepo(dir, name, start, end, isLive))
+      const repo = await this.statRepo(dir, name, start, end, isLive)
       // 快改统计与实物同区间（start..end）—— 交付轮 end=快照锚，交付后新提交
       // 不入本件（票08 实物区间权威）。git 读失败 → 该仓无快改行（不拖垮 diff）。
+      const quickEdits: LedgerQuickEditEntry[] = []
       try {
         for (const c of await gitOps.quickEditCommits(dir, start, end)) {
           quickEdits.push({ repo: name, sha: c.sha, subject: c.subject, files: c.files })
         }
       } catch { /* best-effort —— 快改面缺席优于整份 diff 报错 */ }
+      return { repo, quickEdits }
+    }))
+    const repos: RepoDiff[] = []
+    const quickEdits: LedgerQuickEditEntry[] = []
+    for (const s of settled) {
+      repos.push(s.repo)
+      quickEdits.push(...s.quickEdits)
     }
 
     const live = repos.filter((r) => !r.expired)
@@ -636,7 +691,7 @@ export class RoundEvidenceService {
    *  resolveRoundForDiff (exec belongs to this task); repo must exist in the
    *  map. 票03: live 轮与列表同右端 —— 当前工作区（含未提交改动 / 未跟踪新文件）。
    *  2026-10-31 归档回看：解析落到已验收轮时，patch 与列表同一 start..end
-   *  （冻结快照），并非按当前 HEAD 重算。 */
+   *  （冻结快照），并非按当前 HEAD 重算。scope=task 时起点换任务首轮 start。 */
   async getFilePatch(
     taskId: string,
     repo: string,
@@ -645,10 +700,14 @@ export class RoundEvidenceService {
   ): Promise<{ patch: string; truncated: boolean }> {
     const { execRow, phaseIndex, live } = this.resolveRoundForDiff(taskId)
     let starts = parseCommitMap(execRow.start_commit_id)
-    // 与 getRoundDiff 同一条口径：累计 patch 的起点换成同 phase 首轮 start 锚，
-    // 否则「累计列表里点开只改了旧轮的文件」会 409 / 只出本轮 delta（2026-10-28）。
+    // 与 getRoundDiff 同一条口径：累计/任务总账 patch 的起点换成对应首轮 start
+    // 锚，否则「总账列表里点开只改了旧轮的文件」会 409 / 只出本轮 delta。
     if (scope === "cumulative" && phaseIndex != null) {
       const first = this.execDao.findTaskPhaseFirstRound(taskId, phaseIndex)
+      const firstStarts = parseCommitMap(first?.start_commit_id)
+      if (Object.keys(firstStarts).length > 0) starts = firstStarts
+    } else if (scope === "task") {
+      const first = this.execDao.findTaskFirstRound(taskId)
       const firstStarts = parseCommitMap(first?.start_commit_id)
       if (Object.keys(firstStarts).length > 0) starts = firstStarts
     }

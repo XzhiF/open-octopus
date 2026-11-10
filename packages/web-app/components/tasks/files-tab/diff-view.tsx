@@ -184,9 +184,7 @@ export function DiffFileRow({ taskId, repo, file, rowDecor, revealNonce, scope =
     if (patch == null && !loading && !file.binary) {
       setLoading(true)
       setErr(null)
-      const req = scope === "cumulative"
-        ? getRoundPatch(taskId, repo, file.path, "cumulative")
-        : getRoundPatch(taskId, repo, file.path)
+      const req = getRoundPatch(taskId, repo, file.path, scope)
       req
         .then((r) => setPatch({ text: r.patch, truncated: r.truncated }))
         .catch((e: unknown) => setErr(e instanceof Error ? e.message : String(e)))

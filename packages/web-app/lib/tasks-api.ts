@@ -1388,9 +1388,11 @@ export interface VerifySummary {
   lines_after?: string[]
 }
 
-/** diff 口径（server S3）：round = 本轮 exec start..end（缺省）；
- *  cumulative = 本 phase 首轮 start..本轮 end（修复轮看得到全 phase 终态）。 */
-export type RoundDiffScope = "round" | "cumulative"
+/** diff 口径（server S3，2026-11-10 增 task）：
+ *  round = 本轮 exec start..end（缺省；验收台/台账内部面）；
+ *  cumulative = 本 phase 总账（该 phase 首轮 start .. 本轮 end）；
+ *  task = 任务总账（任务首轮 start .. 本轮 end，跨 phase）。 */
+export type RoundDiffScope = "round" | "cumulative" | "task"
 
 /** GET /:id/round-diff — 实物 git 区间统计。服务端解析顺序：awaiting 轮 →
  *  live 轮 → 停流接管轮 → 最近已验收轮（2026-10-31 归档回看）。
@@ -1408,7 +1410,7 @@ export async function getRoundDiff(
   target?: RoundTargetQuery,
 ): Promise<RoundDiffPayload> {
   const res = await fetch(buildUrl(`/${taskId}/round-diff`, {
-    ...(scope === "cumulative" ? { scope } : {}),
+    ...(scope !== "round" ? { scope } : {}),
     ...(target ? { phase_index: String(target.phaseIndex), round_index: String(target.roundIndex) } : {}),
   }))
   if (!res.ok) {
@@ -1419,7 +1421,8 @@ export async function getRoundDiff(
 }
 
 /** GET /:id/round-diff/patch?repo=&path=[&scope=] — 单文件 unified patch（懒拉，
- *  512K 截断）。scope=cumulative → 起点换成同 phase 首轮 start 锚，与累计列表同区间。 */
+ *  512K 截断）。scope=cumulative / task → 起点换成 phase / 任务首轮 start 锚，
+ *  与对应总账列表同区间。 */
 export async function getRoundPatch(
   taskId: string,
   repo: string,
@@ -1429,7 +1432,7 @@ export async function getRoundPatch(
   const res = await fetch(
     buildUrl(
       `/${taskId}/round-diff/patch`,
-      scope === "cumulative" ? { repo, path: filePath, scope } : { repo, path: filePath },
+      scope !== "round" ? { repo, path: filePath, scope } : { repo, path: filePath },
     ),
   )
   if (!res.ok) {
