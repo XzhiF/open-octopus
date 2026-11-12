@@ -39,6 +39,9 @@ import {
 import type { CabinDockModule } from '@/components/workspace/workspace-explorer-dock'
 import { useCabinContext } from './cabin-provider'
 import { CabinModulesLayer } from './CabinModulesLayer'
+import { CabinAtmosphere } from './CabinAtmosphere'
+import { CabinCrew } from './CabinCrew'
+import { useCockpit } from './CockpitProvider'
 import { CABIN_DOCK_OVERFLOW, CABIN_DOCK_PRIMARY } from './cabin-meta'
 
 const DOCK_ICONS: Record<string, typeof LayoutGrid> = {
@@ -67,6 +70,7 @@ export function CabinChatHost() {
   const {
     cabinId, cabin, view, openWindows, minimizedWindows, openModule,
   } = useCabinContext()
+  const { setStreaming } = useCockpit()
   const router = useRouter()
   const {
     sessions, loading: sessionsLoading, createNewSession, renameSession, removeSession,
@@ -325,6 +329,7 @@ export function CabinChatHost() {
         data-testid="cabin-chat-region"
         className={cn('relative flex min-w-0 flex-1')}
       >
+        <CabinAtmosphere />
         <ChatPane
           pane="left"
           split={false}
@@ -343,7 +348,7 @@ export function CabinChatHost() {
           onOpenSession={(id) => issueCommand({ type: 'select-session', sessionId: id })}
           shared={shared}
           onFocus={noop}
-          onStreamingChange={noop}
+          onStreamingChange={(sid) => setStreaming(sid !== null)}
           onOpenSidebar={() => setMobileSidebarOpen(true)}
           onExitSplit={noop}
           onSwapPanes={noop}
@@ -353,6 +358,7 @@ export function CabinChatHost() {
           cabinId={cabinId}
           cabinWorkspaceId={cabin?.workspace_id ?? null}
         />
+        <CabinCrew />
         <CabinModulesLayer onNewTask={() => issueCommand({ type: 'new-task' })} />
       </div>
     </div>

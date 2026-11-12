@@ -23,6 +23,8 @@ export interface CabinCommDeps {
   taskDAO: TaskDAO
   agentSessionDAO: AgentSessionDAO
   tasksService: TasksService
+  /** C11：任意舱活动（派发 / doer 信号）bump last_active_at，供 dormant 阈值判定。 */
+  onActivity?: (cabinId: string) => void
 }
 
 export class CabinJobNotFoundError extends Error {
@@ -67,6 +69,7 @@ export class CabinCommService {
     mandate?: CabinMandate | null
   }): CabinJobRow {
     const cabin = this.mustCabin(cabinId)
+    this.deps.onActivity?.(cabinId)
     let refId = input.ref_id ?? null
     let sessionId = input.session_id ?? null
 
@@ -166,6 +169,7 @@ export class CabinCommService {
             : null
     if (!kind) return
     const cabinId = task.cabin_id
+    this.deps.onActivity?.(cabinId)
     let job = this.deps.cabin.findJobByRef(cabinId, taskId)
     if (!job) {
       job = {

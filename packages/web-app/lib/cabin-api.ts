@@ -176,6 +176,12 @@ export async function reopenCabin(id: string): Promise<CabinDetail> {
   return body.cabin
 }
 
+export async function dormantCabin(id: string): Promise<CabinDetail> {
+  const res = await fetch(url(`/${id}/dormant`), { method: "POST" })
+  const body = await handleResponse<{ cabin: CabinDetail }>(res)
+  return body.cabin
+}
+
 export async function setCabinRequirements(id: string, version: number, requirements: string): Promise<CabinDetail> {
   const res = await fetch(url(`/${id}/requirements`), {
     method: "PUT",

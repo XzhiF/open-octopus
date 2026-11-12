@@ -2,6 +2,7 @@
 @import 'tw-animate-css';
 @import './ws-bands.css';
 @import './acceptance-paper.css';
+@import './cabin-cockpit.css';
 
 @custom-variant dark (&:is(.dark *));
 

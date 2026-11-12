@@ -21,6 +21,8 @@ import {
 export const TASK_LIFECYCLE_HANDLER = "task-lifecycle"
 /** 知识中心票13：语义巡检夜巡（五查 findings 报对话）。handler 体在知识域（patrol.ts）。 */
 export const KNOWLEDGE_PATROL_HANDLER = "knowledge-patrol"
+/** C11：舱 dormant 自动阈值 sweep（守卫三条件 + idle 阈值）。handler 体在舱域，组合根注入。 */
+export const CABIN_DORMANT_HANDLER = "cabin-dormant"
 
 interface BuiltinCodeJob {
   handler: string
@@ -60,6 +62,16 @@ export const BUILTIN_CODE_JOBS: readonly BuiltinCodeJob[] = [
     cronExpression: "17 3 * * *",
     timezone: "Asia/Shanghai",
     timeoutSeconds: 600,
+    enabled: 1,
+  },
+  {
+    handler: CABIN_DORMANT_HANDLER,
+    name: "系统 · 舱休眠巡检",
+    description: "工作舱 C11 自动休眠：空闲（无运行执行 / 无待人 attention）且超过阈值的 active 舱转 dormant。停用只停自动休眠，手动休眠/唤醒不受影响。",
+    // 每 5 分钟一趟低峰巡检；阈值由舱 cockpit_prefs.dormantMinutes 决定（默认 30 分钟）。
+    cronExpression: "*/5 * * * *",
+    timezone: "Asia/Shanghai",
+    timeoutSeconds: 120,
     enabled: 1,
   },
 ]
@@ -192,6 +204,14 @@ export async function unboundKnowledgePatrolHandler(_ctx: CodeJobContext): Promi
   }
 }
 
+/** 舱休眠巡检未接线占位（同款响亮形态；生产由 composition root 注入 cabin sweep）。 */
+export async function unboundCabinDormantHandler(_ctx: CodeJobContext): Promise<CodeJobOutcome> {
+  return {
+    summary: "cabin-dormant 未接线（composition root 未注册 handler）：本轮不巡检",
+    metrics: { dormited: 0 },
+  }
+}
+
 /**
  * Bind built-in handlers and seed their rows. Called once from the composition root
  * (index.ts) before `engine.start()`, so the very first tick sees a consistent pair.
@@ -213,10 +233,13 @@ export function registerAndSeedBuiltinCodeJobs(
   org = "",
   taskLifecycle?: CodeJobHandler,
   knowledgePatrol?: CodeJobHandler,
+  cabinDormant?: CodeJobHandler,
 ): SeedResult {
   rebindCodeJobHandler(TASK_LIFECYCLE_HANDLER, taskLifecycle ?? unboundTaskLifecycleHandler)
   // 票13：知识夜巡 handler 在知识域（services/knowledge/patrol.ts），组合根注入；
   // 未注入时同样响亮占位，不留静默空转。
   rebindCodeJobHandler(KNOWLEDGE_PATROL_HANDLER, knowledgePatrol ?? unboundKnowledgePatrolHandler)
+  // C11：舱休眠 sweep handler 在舱域（cabin-service.sweepDormant），组合根注入。
+  rebindCodeJobHandler(CABIN_DORMANT_HANDLER, cabinDormant ?? unboundCabinDormantHandler)
   return seedBuiltinCodeJobs(dao, org)
 }

@@ -7,11 +7,11 @@
 // 累计消耗 = C7 舱级聚合（chat+任务+子代理，grand 口径），10s 轮询。
 
 import { useEffect, useState } from 'react'
-import { Archive, ChevronRight, LayoutGrid, Loader2, Play, RefreshCw } from 'lucide-react'
+import { Archive, ChevronRight, LayoutGrid, Loader2, Pause, Play, RefreshCw } from 'lucide-react'
 import { toast } from 'sonner'
 import type { CabinAttentionItem } from '@octopus/shared'
 import {
-  archiveCabin, getCabinUsage, initCabin, listCabinWorktrees, reopenCabin, wakeCabin,
+  archiveCabin, dormantCabin, getCabinUsage, initCabin, listCabinWorktrees, reopenCabin, wakeCabin,
 } from '@/lib/cabin-api'
 import { formatCost } from '@/lib/format'
 import { useBillingCurrency } from '@/lib/billing-currency'
@@ -152,6 +152,7 @@ export function CabinOverview() {
         {cabin.status === 'initializing' && <span className="text-[10px] text-pop-amber">门禁进行中…</span>}
         {cabin.status === 'dormant' && lifeButton('wake', '唤醒', RefreshCw, () => wakeCabin(cabin.id), '舱已唤醒', true)}
         {cabin.status === 'dormant' && <span className="text-[10px] text-pop-dim">无活任务 · 任意消息可唤醒</span>}
+        {cabin.status === 'active' && lifeButton('dormant', '休眠', Pause, () => dormantCabin(cabin.id), '舱已休眠 · 任意消息可唤醒')}
         {(cabin.status === 'active' || cabin.status === 'dormant') && lifeButton('archive', '封存', Archive, () => archiveCabin(cabin.id), '舱已封存（可重开）')}
         {cabin.status === 'archived' && lifeButton('reopen', '重开', Play, () => reopenCabin(cabin.id), '舱已重开', true)}
         {cabin.status === 'archived' && (

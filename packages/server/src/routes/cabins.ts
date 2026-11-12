@@ -258,6 +258,15 @@ export function createCabinRoutes(
     }
   })
 
+  router.post("/:id/dormant", (c) => {
+    try {
+      return c.json({ cabin: toDTO(service.dormant(c.req.param("id"))) })
+    } catch (err) {
+      const { status, message } = classifyError(err)
+      return c.json({ error: message }, status as 400)
+    }
+  })
+
   router.post("/:id/archive", (c) => {
     try {
       return c.json({ cabin: toDTO(service.archive(c.req.param("id"))) })

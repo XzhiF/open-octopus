@@ -287,6 +287,49 @@ export class CabinService {
     return this.mustGet(id)
   }
 
+  /** C11 manual sleep: active -> dormant. Three guards (no running exec, no
+   *  person-awaiting attention) so dormiting never orphans live work. */
+  dormant(id: string): CabinRow {
+    const row = this.mustGet(id)
+    if (row.status !== "active") throw new CabinStatusConflictError(id, row.status, "dormant")
+    const { view } = this.getView(id)
+    if (view.health.running > 0) throw new CabinStatusConflictError(id, "running-tasks", "dormant")
+    if (view.attention.some((a) => a.awaiting === "person")) {
+      throw new CabinStatusConflictError(id, "awaiting-person", "dormant")
+    }
+    this.cabin.updateStatus(id, "dormant", now())
+    return this.mustGet(id)
+  }
+
+  /** C11 auto threshold sweep: idle active cabins (no running / no person
+   *  attention, idle >= per-cabin threshold) -> dormant. threshold<=0 disables.
+   *  Returns the ids dormited this pass for the job outcome. */
+  sweepDormant(nowMs: number, defaultThresholdMs: number): string[] {
+    const dormited: string[] = []
+    for (const row of this.cabin.list("active")) {
+      const threshold = this.dormantThresholdMs(row, defaultThresholdMs)
+      if (threshold <= 0) continue
+      const last = row.last_active_at ? Date.parse(row.last_active_at) : 0
+      if (!last || nowMs - last < threshold) continue
+      const { view } = this.getView(row.id)
+      if (view.health.running > 0) continue
+      if (view.attention.some((a) => a.awaiting === "person")) continue
+      this.cabin.updateStatus(row.id, "dormant", now())
+      dormited.push(row.id)
+    }
+    return dormited
+  }
+
+  private dormantThresholdMs(row: CabinRow, defaultMs: number): number {
+    try {
+      const prefs = JSON.parse(row.cockpit_prefs ?? "{}") as { dormantMinutes?: unknown }
+      if (typeof prefs.dormantMinutes === "number" && Number.isFinite(prefs.dormantMinutes)) {
+        return prefs.dormantMinutes * 60_000
+      }
+    } catch { /* malformed prefs → default */ }
+    return defaultMs
+  }
+
   private selfHeal(id: string): void {
     const row = this.mustGet(id)
     if (!this.infra || !row.workspace_id) return

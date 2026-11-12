@@ -1494,9 +1494,17 @@ if (shouldServe) {
         taskDAO: daos!.task,
         agentSessionDAO: daos!.agentSession,
         tasksService,
+        onActivity: (cabinId) => cabinService.touch(cabinId),
       })
       getChatEventBridge().setCabinSignalHook((taskId, status, summary) => {
         cabinComm.recordTaskSignal(taskId, status, summary)
+      })
+      // Cabin P5（G3）：软封存触发舱级知识沉淀 —— 逐任务复用 ArchiveIngest（冻结素材包
+      // → summary → archive-compile → 判例/技能草案）。fire-and-forget，不阻塞封存。
+      cabinService.setArchiveHook(async (cabinId) => {
+        for (const t of daos!.task.findByCabinId(cabinId)) {
+          await archiveIngest.ingestTask(t.id)
+        }
       })
       setCabinToolsProvider(() => ({ service: cabinService, comm: cabinComm }))
       app.route('/api/cabins', createCabinRoutes(cabinService, cabinInitService, sse, cabinComm))
@@ -1548,6 +1556,12 @@ if (shouldServe) {
             // + 通知卡进对话流（先斩后奏可逆；失败显形不炸作业，记账同律）。
             autoRetire: async () => { await getAutoRetire().run() },
           }),
+          // C11：舱休眠自动阈值 sweep —— 舱域 handler，组合根注入（scheduler 不 import 舱域）。
+          // 默认 30 分钟空闲阈值；舱 cockpit_prefs.dormantMinutes 可覆盖（0=关闭自动休眠）。
+          async () => {
+            const dormited = cabinService.sweepDormant(Date.now(), 30 * 60_000)
+            return { summary: `cabin-dormant：${dormited.length} 舱自动休眠`, metrics: { dormited: dormited.length } }
+          },
         )
         if (seeded.created.length || seeded.repaired.length) {
           console.log(

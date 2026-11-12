@@ -1,6 +1,6 @@
 'use client'
 
-// 舱模块窗共享原语 —— 逐字对照原型 tmp/cabin-proto/index.html 的 window body
+// 舱模块窗共享原语 —— 逐字对照原型 docs/cabin-design/index.html 的 window body
 // CSS（wb-h/wb-sec/wb-note/wt/sbadge/iterline/tcard/kanban/ledger/empty/wbtn）。
 // 数据一律来自服务端派生视图（K3），这里只负责呈现。
 

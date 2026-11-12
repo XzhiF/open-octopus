@@ -7,6 +7,7 @@
 import { DesktopHeader } from '@/components/layout/desktop-header'
 import { useRouter } from '@/lib/app-navigation'
 import { CabinProvider, useCabinContext } from './cabin-provider'
+import { CockpitProvider } from './CockpitProvider'
 import { CabinChatHost } from './CabinChatHost'
 import { CabinNewHero } from './CabinNewHero'
 import { CabinWinstrip } from './CabinModulesLayer'
@@ -47,9 +48,11 @@ function CabinShellInner() {
   return (
     <div className="flex min-h-0 flex-1 flex-col">
       <DesktopHeader extraStrip={<CabinWinstrip />} />
-      <div className="relative flex min-h-0 flex-1 overflow-hidden bg-pop-bg" data-testid="cabin-stage">
-        <CabinChatHost />
-      </div>
+      <CockpitProvider>
+        <div className="relative flex min-h-0 flex-1 overflow-hidden bg-pop-bg" data-testid="cabin-stage">
+          <CabinChatHost />
+        </div>
+      </CockpitProvider>
     </div>
   )
 }

@@ -23,6 +23,9 @@ import { CabinAcceptance } from './modules/CabinAcceptance'
 import { CabinKnowledge } from './modules/CabinKnowledge'
 import { CabinUsage } from './modules/CabinUsage'
 import { CabinMissions } from './modules/CabinMissions'
+import { CabinTuning } from './modules/CabinTuning'
+import { CabinGallery } from './modules/CabinGallery'
+import { CabinArchive } from './modules/CabinArchive'
 
 function ModuleBody({ id, onNewTask }: { id: string; onNewTask?: () => void }) {
   switch (id) {
@@ -40,6 +43,9 @@ function ModuleBody({ id, onNewTask }: { id: string; onNewTask?: () => void }) {
     case 'knowledge': return <CabinKnowledge />
     case 'usage': return <CabinUsage />
     case 'missions': return <CabinMissions />
+    case 'tuning': return <CabinTuning />
+    case 'gallery': return <CabinGallery />
+    case 'archive': return <CabinArchive />
     default:
       return (
         <div className="grid h-full min-h-40 place-items-center text-center" data-testid="cabin-module-placeholder">

@@ -1,5 +1,5 @@
 // 舱 UI 元数据：状态/attention 阶段展示词表 + 原型 dock 模块清单（DOCK_MOD /
-// DOCK_PRIMARY / WIN_TITLE 对照 tmp/cabin-proto/index.html:1278-1280,1341）。
+// DOCK_PRIMARY / WIN_TITLE 对照 docs/cabin-design/index.html:1278-1280,1341）。
 // 纯展示映射，不含业务派生（attention/health/进度一律来自服务端 CabinView，K3）。
 
 import type { CabinStatus, CabinAttentionItem } from '@octopus/shared'
@@ -77,7 +77,7 @@ export const CABIN_DOCK_OVERFLOW = [
   'repos', 'worktree', 'iterations', 'jobs', 'trace', 'changes', 'acceptance', 'knowledge', 'usage', 'archive', 'tuning', 'gallery',
 ] as const
 
-/** 原型 WIN_SIZE：浮窗默认尺寸 [w,h]（tmp/cabin-proto/index.html:1342）。 */
+/** 原型 WIN_SIZE：浮窗默认尺寸 [w,h]（docs/cabin-design/index.html:1342）。 */
 export const CABIN_WIN_SIZE: Record<string, [number, number]> = {
   overview: [760, 640],
   queue: [720, 640],

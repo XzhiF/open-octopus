@@ -1,0 +1,296 @@
+/* ════════════ 工作舱 COCKPIT P5 · 逐字对照原型 docs/cabin-design/index.html ════════════
+   氛围层（grid/glow/scan/particles/HUD/telemetry）+ 汐音立绘浮舱 + 助理 hub +
+   舱面调校台 + 立绘画廊 + 归档台。--ck-* 由 CockpitProvider 实时写入 document root。
+   选择器适配真实 DOM：浮窗 = [data-testid=cabin-window]，chat 区 = cabin-chat-region。 */
+
+:root {
+  --ck-a: #4FD1D9; --ck-b: #A78BFA; --ck-c: #FF855C;
+  --ck-glow: 1; --ck-scan-dur: 8s; --ck-grid: 30px; --ck-blur: 3px;
+  --ck-float: 5px; --ck-char-scale: 1; --crew-w: 252px;
+  --w6: rgba(255,255,255,.06); --w8: rgba(255,255,255,.08);
+  --w10: rgba(255,255,255,.10); --w12: rgba(255,255,255,.12);
+}
+
+@keyframes ckPulse { 50% { opacity: .55 } }
+@keyframes ckBlink { 50% { opacity: 0 } }
+@keyframes cockpitScan { to { transform: translateY(calc(100vh + 280px)) } }
+@keyframes ckDrift {
+  0% { transform: translateY(0) translateX(0); opacity: 0 }
+  10% { opacity: .55 } 90% { opacity: .4 }
+  100% { transform: translateY(-105vh) translateX(24px); opacity: 0 }
+}
+@keyframes bubbleIn { from { opacity: 0; transform: translateY(6px) } to { opacity: 1; transform: translateY(0) } }
+
+/* ── 氛围层（pointer-events-none 覆于 chat 区，subtle 不遮正文） ── */
+.cockpit-bg {
+  position: absolute; inset: 0; z-index: 0; pointer-events: none;
+  background:
+    linear-gradient(color-mix(in srgb, var(--ck-a) 5%, transparent) 1px, transparent 1px) 0 0 / 100% var(--ck-grid),
+    linear-gradient(90deg, color-mix(in srgb, var(--ck-a) 5%, transparent) 1px, transparent 1px) 0 0 / var(--ck-grid) 100%;
+}
+.cockpit-bg::before {
+  content: ""; position: absolute; inset: 0; filter: blur(var(--ck-blur));
+  background:
+    radial-gradient(120% 70% at 50% -12%, color-mix(in srgb, var(--ck-b) 12%, transparent), transparent 58%),
+    radial-gradient(70% 55% at 102% 104%, color-mix(in srgb, var(--ck-a) 11%, transparent), transparent 60%),
+    radial-gradient(60% 50% at -4% 108%, color-mix(in srgb, var(--ck-c) 9%, transparent), transparent 60%);
+}
+.cockpit-bg::after {
+  content: ""; position: absolute; left: 0; right: 0; top: -140px; height: 140px;
+  background: linear-gradient(180deg, transparent, color-mix(in srgb, var(--ck-a) 9%, transparent) 45%, color-mix(in srgb, var(--ck-b) 8%, transparent) 55%, transparent);
+  animation: cockpitScan var(--ck-scan-dur) linear infinite;
+}
+body.scan-off .cockpit-bg::after { animation: none; opacity: 0 }
+
+.ck-particles { position: absolute; inset: 0; z-index: 0; pointer-events: none; overflow: hidden }
+.ck-p { position: absolute; bottom: -12px; border-radius: 50%; background: var(--ck-a); opacity: 0; animation: ckDrift linear infinite }
+
+.cockpit-frame { position: absolute; inset: 0; z-index: 2; pointer-events: none }
+.cf-corner {
+  position: absolute; width: 24px; height: 24px;
+  border: 2px solid color-mix(in srgb, var(--ck-a) 60%, transparent);
+  filter: drop-shadow(0 0 calc(6px * var(--ck-glow)) color-mix(in srgb, var(--ck-a) 45%, transparent));
+}
+.cf-corner.tl { top: 7px; left: 7px; border-right: 0; border-bottom: 0; border-top-left-radius: 7px }
+.cf-corner.tr { top: 7px; right: 7px; border-left: 0; border-bottom: 0; border-top-right-radius: 7px }
+.cf-corner.bl { bottom: 7px; left: 7px; border-right: 0; border-top: 0; border-bottom-left-radius: 7px }
+.cf-corner.br { bottom: 7px; right: 7px; border-left: 0; border-top: 0; border-bottom-right-radius: 7px }
+.cf-notch {
+  position: absolute; top: 7px; left: 50%; transform: translateX(-50%); width: 120px; height: 5px;
+  background: linear-gradient(90deg, transparent, color-mix(in srgb, var(--ck-b) 70%, transparent), transparent); border-radius: 3px;
+}
+.cf-rail { position: absolute; left: 34px; right: 34px; height: 1px; background: linear-gradient(90deg, transparent, color-mix(in srgb, var(--ck-a) 22%, transparent), transparent) }
+.cf-rail.top { top: 34px } .cf-rail.bot { bottom: 34px }
+body.hud-off .cockpit-frame { display: none }
+
+.telemetry {
+  position: absolute; top: 0; left: 0; right: 0; height: 30px; z-index: 6;
+  display: flex; align-items: center; gap: 16px; padding: 0 70px 0 40px;
+  font-size: 10px; color: var(--pop-dim); pointer-events: none; font-family: var(--font-mono);
+  background: linear-gradient(180deg, rgba(10,10,12,.82), rgba(10,10,12,.3) 70%, transparent);
+}
+.telemetry .titem { display: flex; align-items: center; gap: 6px; white-space: nowrap }
+.telemetry .tk { color: rgba(150,152,163,.7) }
+.telemetry .tval { color: var(--pop-ink); font-weight: 700; font-variant-numeric: tabular-nums }
+.telemetry .tval.green { color: var(--pop-green) } .telemetry .tval.violet { color: var(--ck-b) } .telemetry .tval.dim { color: var(--pop-dim) }
+.telemetry .tsep { width: 1px; height: 12px; background: var(--w10) }
+.telemetry .sys { display: flex; align-items: center; gap: 5px; color: var(--ck-a) }
+.telemetry .sys i { width: 6px; height: 6px; border-radius: 50%; background: var(--ck-a); box-shadow: 0 0 calc(6px * var(--ck-glow)) var(--ck-a); animation: ckPulse 2s infinite }
+
+/* ── 汐音立绘浮舱（原型 .crew-pod + .xy-* 792-884） ── */
+.crew-pod {
+  position: absolute; left: calc((var(--crew-w, 252px) - 200px) / 2); bottom: 118px; z-index: 26;
+  width: 200px; display: flex; flex-direction: column; align-items: center; gap: 6px;
+  cursor: pointer; user-select: none; --xy-state: #4FD1D9;
+}
+.crew-pod[data-state="working"] { --xy-state: #A78BFA }
+.crew-pod[data-state="alert"] { --xy-state: #FFC857 }
+.crew-pod[data-state="worried"] { --xy-state: #FFC857 }
+.crew-pod[data-state="happy"] { --xy-state: #7EE787 }
+.crew-pod[data-state="cheer"] { --xy-state: #7EE787 }
+.crew-pod[data-state="sleep"] { --xy-state: #4C79BF }
+.crew-pod[data-state="boot"] { --xy-state: #D2A8FF }
+.crew-pod[data-state="thinking"] { --xy-state: #4FD1D9 }
+.crew-pod[data-state="wink"] { --xy-state: #FF855C }
+
+.xy-aura {
+  position: absolute; top: -10px; left: 50%; transform: translateX(-50%); width: 210px; height: 250px;
+  border-radius: 26px; pointer-events: none; z-index: 0;
+  background: radial-gradient(circle at 50% 55%, color-mix(in srgb, var(--xy-state) 28%, transparent), transparent 68%);
+  filter: blur(12px); animation: xyAura 3.4s ease-in-out infinite;
+}
+@keyframes xyAura { 0%, 100% { opacity: .5 } 50% { opacity: 1 } }
+
+.xy-frame {
+  position: relative; z-index: 1; width: 176px; height: 220px; border-radius: 16px; overflow: hidden;
+  cursor: pointer; border: none; background: transparent; transition: transform .18s, box-shadow .18s;
+  transform: scale(var(--ck-char-scale)); transform-origin: bottom center;
+  box-shadow: 0 0 calc(24px * var(--ck-glow)) color-mix(in srgb, var(--xy-state) 34%, transparent);
+}
+.xy-frame:hover { transform: scale(var(--ck-char-scale)) translateY(-3px); box-shadow: 0 0 calc(32px * var(--ck-glow)) color-mix(in srgb, var(--xy-state) 48%, transparent) }
+.xy-frame:active { transform: scale(calc(var(--ck-char-scale) * .97)) }
+.xy-frame img {
+  width: 100%; height: 100%; object-fit: cover; object-position: 50% 16%; display: block;
+  animation: xyIn .45s ease, xyBreath 4.4s ease-in-out infinite;
+}
+@keyframes xyIn { from { opacity: 0; transform: scale(1.06) } to { opacity: 1; transform: scale(1) } }
+@keyframes xyBreath { 0%, 100% { transform: scale(1) translateY(0) } 50% { transform: scale(1.025) translateY(-2px) } }
+.xy-frame .xy-scan { position: absolute; inset: 0; pointer-events: none; background: repeating-linear-gradient(180deg, color-mix(in srgb, var(--ck-a) 5%, transparent) 0 1px, transparent 1px 4px); mix-blend-mode: screen; opacity: .6 }
+.xy-frame .xy-sweep { position: absolute; left: 0; right: 0; height: 46px; top: -46px; pointer-events: none; background: linear-gradient(180deg, transparent, color-mix(in srgb, var(--ck-a) 22%, transparent), transparent); animation: xySweep 4.5s linear infinite }
+@keyframes xySweep { to { transform: translateY(300px) } }
+.xy-frame .xy-glow { position: absolute; inset: 0; pointer-events: none; box-shadow: inset 0 0 30px rgba(0,0,0,.55), inset 0 -26px 36px color-mix(in srgb, var(--xy-state) 26%, transparent) }
+.xy-frame.recv { animation: xyRecv .6s ease }
+@keyframes xyRecv { 0%, 100% { transform: scale(var(--ck-char-scale)) translateY(0) } 30% { transform: scale(var(--ck-char-scale)) translateY(-4px) } 60% { transform: scale(var(--ck-char-scale)) translateY(1px) } }
+
+.xy-state-icon {
+  position: absolute; top: -15px; left: 167px; width: 38px; height: 38px; border-radius: 50%; z-index: 5;
+  display: grid; place-items: center;
+  background: radial-gradient(circle at 50% 32%, color-mix(in srgb, var(--xy-state) 42%, #18181F), #0D0D11);
+  border: 2px solid color-mix(in srgb, var(--xy-state) 78%, transparent);
+  box-shadow: 0 0 calc(15px * var(--ck-glow)) color-mix(in srgb, var(--xy-state) 55%, transparent), inset 0 0 9px color-mix(in srgb, var(--xy-state) 32%, transparent);
+}
+.xy-state-icon.pop { animation: xyIconPop .55s cubic-bezier(.34,1.56,.64,1) }
+@keyframes xyIconPop { 0% { transform: scale(0) rotate(-28deg) } 60% { transform: scale(1.22) rotate(7deg) } 100% { transform: scale(1) rotate(0) } }
+.xyi-glyph { font-size: 18px; line-height: 1; filter: drop-shadow(0 0 5px color-mix(in srgb, var(--xy-state) 75%, transparent)) }
+.xyi-count {
+  position: absolute; right: -6px; bottom: -6px; min-width: 18px; height: 18px; border-radius: 999px;
+  background: var(--ck-c); color: var(--pop-bg); font-size: 9px; font-weight: 800; display: grid; place-items: center;
+  padding: 0 4px; border: 2px solid var(--pop-bg); font-family: var(--font-mono);
+  box-shadow: 0 0 8px color-mix(in srgb, var(--ck-c) 60%, transparent);
+}
+.xy-name { display: flex; flex-direction: column; align-items: center; gap: 3px; margin-top: 7px }
+.xy-name .xn { font-size: 12px; font-weight: 800; color: var(--pop-ink); font-family: var(--font-ui); letter-spacing: .06em }
+.xy-name .xn small { font-size: 9px; font-weight: 400; color: var(--pop-dim); letter-spacing: 0 }
+.xy-menu {
+  margin-top: 6px; display: inline-flex; align-items: center; gap: 5px;
+  border: 1px solid color-mix(in srgb, var(--ck-b) 40%, transparent); background: color-mix(in srgb, var(--ck-b) 10%, transparent);
+  color: var(--ck-b); border-radius: 999px; padding: 3px 12px; font-size: 10px; font-weight: 700;
+  font-family: var(--font-ui); transition: .15s;
+}
+.xy-menu:hover { background: color-mix(in srgb, var(--ck-b) 20%, transparent) }
+.xy-ripple { position: absolute; top: -6px; left: 6px; width: 188px; height: 232px; border-radius: 22px; border: 2px solid var(--xy-state); pointer-events: none; z-index: 2; animation: xyRipple .95s ease-out forwards }
+@keyframes xyRipple { 0% { opacity: .85; transform: scale(.92) } 100% { opacity: 0; transform: scale(1.22) } }
+.xy-spark { position: absolute; pointer-events: none; font-size: 14px; color: var(--ck-a); animation: xySpark .8s ease-out forwards; z-index: 5 }
+@keyframes xySpark { 0% { opacity: 0; transform: translate(0,0) scale(.4) } 25% { opacity: 1 } 100% { opacity: 0; transform: translate(var(--dx), var(--dy)) scale(1.2) } }
+
+/* ── 汐音对白（visual-novel dialog） ── */
+.xy-dialog {
+  position: absolute; left: calc((var(--crew-w, 252px) - 220px) / 2); bottom: 442px; z-index: 28; width: 220px;
+  border-radius: 14px; overflow: hidden; border: 1.5px solid color-mix(in srgb, var(--ck-b) 50%, transparent);
+  background: linear-gradient(180deg, rgba(24,24,32,.97), rgba(16,16,22,.97)); backdrop-filter: blur(16px);
+  box-shadow: 0 0 calc(20px * var(--ck-glow)) color-mix(in srgb, var(--ck-b) 24%, transparent), var(--pop-shadow-lg);
+  opacity: 0; transform: translateY(10px); pointer-events: none; transition: opacity .25s, transform .25s;
+}
+.xy-dialog.show { opacity: 1; transform: translateY(0); pointer-events: auto; cursor: pointer }
+.xy-dialog::before { content: ""; position: absolute; left: 0; top: 0; bottom: 0; width: 3px; background: linear-gradient(180deg, var(--ck-a), var(--ck-b)) }
+.xy-dialog::after { content: ""; position: absolute; bottom: -8px; left: 90px; border: 8px solid transparent; border-top-color: color-mix(in srgb, var(--ck-b) 50%, transparent); border-bottom: 0 }
+.xyd-h { display: flex; align-items: center; gap: 7px; padding: 8px 12px 6px; border-bottom: 1px solid var(--w8) }
+.xyd-name { font-size: 12px; font-weight: 800; color: var(--ck-b); font-family: var(--font-ui); letter-spacing: .08em }
+.xyd-tag { font-size: 8px; font-weight: 700; padding: 1px 7px; border-radius: 999px; background: color-mix(in srgb, var(--ck-a) 16%, transparent); color: var(--ck-a) }
+.xyd-text { padding: 9px 13px 12px; font-size: 11.5px; line-height: 1.6; color: var(--pop-ink); font-family: var(--font-ui); min-height: 42px }
+.xyd-cur { display: inline-block; color: var(--ck-a); animation: ckBlink 1s steps(1) infinite; margin-left: 2px }
+
+/* ── 助理 hub（游戏角色菜单） ── */
+.crew-hub {
+  position: absolute; left: calc((var(--crew-w, 252px) - 200px) / 2 + 212px); bottom: 118px; z-index: 27; width: 244px;
+  display: none; flex-direction: column; border-radius: 14px;
+  border: 1.5px solid color-mix(in srgb, var(--ck-b) 45%, transparent); background: rgba(24,24,30,.97); backdrop-filter: blur(20px);
+  box-shadow: 0 0 calc(20px * var(--ck-glow)) color-mix(in srgb, var(--ck-b) 22%, transparent), var(--pop-shadow-lg);
+  overflow: hidden; animation: bubbleIn .22s;
+}
+.crew-hub.open { display: flex }
+.crew-hub .ch-h { position: relative; display: flex; align-items: center; gap: 10px; padding: 12px 12px 10px; border-bottom: 1px solid var(--w8); background: linear-gradient(180deg, color-mix(in srgb, var(--ck-b) 13%, transparent), transparent) }
+.crew-hub .ch-av { width: 42px; height: 42px; border-radius: 10px; overflow: hidden; flex: none; border: 1px solid color-mix(in srgb, var(--ck-b) 45%, transparent); background: var(--pop-idle) }
+.crew-hub .ch-av img { width: 100%; height: 100%; object-fit: cover; object-position: 50% 16% }
+.crew-hub .ch-id b { font-size: 13px; font-weight: 800; color: var(--pop-ink); font-family: var(--font-ui); display: block }
+.crew-hub .ch-id span { font-size: 9px; color: var(--ck-b); font-family: var(--font-mono) }
+.crew-hub .ch-close { position: absolute; right: 8px; top: 8px; width: 18px; height: 18px; border-radius: 6px; display: grid; place-items: center; color: var(--pop-dim) }
+.crew-hub .ch-close:hover { background: var(--w8); color: var(--pop-ink) }
+.crew-hub .ch-stats { display: flex; gap: 6px; padding: 9px 12px; border-bottom: 1px solid var(--w8) }
+.crew-hub .ch-stat { flex: 1; border: 1px solid var(--pop-bd); border-radius: 8px; background: var(--pop-idle); padding: 5px 6px; text-align: center }
+.crew-hub .ch-stat b { display: block; font-size: 14px; font-variant-numeric: tabular-nums; line-height: 1.2 }
+.crew-hub .ch-stat b.violet { color: var(--ck-b) } .crew-hub .ch-stat b.amber { color: var(--pop-amber) } .crew-hub .ch-stat b.cyan { color: var(--ck-a) }
+.crew-hub .ch-stat span { font-size: 8px; color: var(--pop-dim) }
+.crew-hub .ch-menu { padding: 6px; overflow-y: auto; max-height: 296px }
+.crew-hub .ch-item { display: flex; align-items: center; gap: 10px; width: 100%; padding: 8px 9px; border-radius: 9px; text-align: left; transition: .12s }
+.crew-hub .ch-item:hover { background: color-mix(in srgb, var(--ck-b) 13%, transparent) }
+.crew-hub .ch-item .ci { width: 28px; height: 28px; border-radius: 8px; display: grid; place-items: center; flex: none; background: var(--pop-idle); color: var(--ck-b); border: 1px solid var(--pop-bd) }
+.crew-hub .ch-item .cm { flex: 1; min-width: 0 }
+.crew-hub .ch-item .cm b { font-size: 11.5px; font-weight: 600; color: var(--pop-ink); display: block; font-family: var(--font-ui) }
+.crew-hub .ch-item .cm span { font-size: 9px; color: var(--pop-dim); display: block }
+.crew-hub .ch-item .cb { min-width: 16px; height: 16px; border-radius: 999px; background: var(--ck-c); color: var(--pop-bg); font-size: 9px; font-weight: 700; display: grid; place-items: center; padding: 0 4px }
+.crew-hub .ch-item .chev { color: var(--pop-dim) }
+.crew-hub .ch-info { padding: 10px 12px; border-top: 1px solid var(--w8); font-size: 10px; color: var(--pop-dim); display: none; font-family: var(--font-mono) }
+.crew-hub .ch-info.open { display: block }
+.crew-hub .ch-info div { display: flex; justify-content: space-between; padding: 2px 0 }
+.crew-hub .ch-info b { color: var(--pop-ink) }
+
+/* ── 舱面调校台（原型 .tuning 777-790 + helm 控件 636-684） ── */
+.tuning .helm-actions { display: flex; align-items: center; gap: 6px; margin: 0 0 14px }
+.tuning .helm-grid { display: flex; flex-direction: column; gap: 0; overflow: visible }
+.tuning .hgroup { display: flex; flex-direction: column; gap: 7px; padding: 12px 0; border-bottom: 1px solid var(--w6) }
+.tuning .hgroup:first-child { padding-top: 0 }
+.tuning .hgroup:last-child { border-bottom: 0 }
+.hgroup .gl { font-size: 8.5px; letter-spacing: .14em; color: var(--pop-dim); font-family: var(--font-mono); text-transform: uppercase; display: flex; align-items: center; gap: 6px }
+.hgroup .gl .hv { margin-left: auto; color: var(--ck-a); font-weight: 700; letter-spacing: 0 }
+.hrow { display: flex; align-items: center; gap: 8px }
+.tlabel { font-size: 10px; color: var(--pop-dim); font-family: var(--font-ui) }
+.hv { font-size: 10px; color: var(--ck-a); font-family: var(--font-mono); font-variant-numeric: tabular-nums }
+.swatches { display: flex; gap: 6px }
+.swatch { width: 24px; height: 24px; border-radius: 7px; border: 2px solid var(--w10); cursor: pointer; position: relative; transition: .15s; flex: none }
+.swatch:hover { transform: translateY(-2px) }
+.swatch.on { border-color: var(--pop-ink); box-shadow: 0 0 calc(8px * var(--ck-glow)) color-mix(in srgb, var(--ck-a) 50%, transparent) }
+.swatch.on::after { content: "✓"; position: absolute; inset: 0; display: grid; place-items: center; font-size: 11px; font-weight: 800; color: #fff; text-shadow: 0 1px 2px rgba(0,0,0,.6) }
+.hrange { -webkit-appearance: none; appearance: none; width: 160px; height: 4px; border-radius: 2px; background: var(--w10); outline: none; cursor: pointer }
+.hrange::-webkit-slider-thumb { -webkit-appearance: none; width: 13px; height: 13px; border-radius: 50%; background: var(--ck-a); border: 2px solid var(--pop-bg); box-shadow: 0 0 calc(7px * var(--ck-glow)) color-mix(in srgb, var(--ck-a) 60%, transparent); cursor: pointer }
+.hrange::-moz-range-thumb { width: 13px; height: 13px; border-radius: 50%; background: var(--ck-a); border: 2px solid var(--pop-bg); cursor: pointer }
+.hrange::-moz-range-track { height: 4px; border-radius: 2px; background: var(--w10) }
+.seg { display: flex; border: 1px solid var(--pop-bd); border-radius: 7px; overflow: hidden }
+.seg button { padding: 3px 9px; font-size: 10px; color: var(--pop-dim); font-family: var(--font-ui); transition: .12s }
+.seg button:hover { color: var(--pop-ink) }
+.seg button.on { background: color-mix(in srgb, var(--ck-a) 22%, transparent); color: var(--ck-a); font-weight: 700 }
+.htoggle { position: relative; width: 34px; height: 18px; border-radius: 999px; border: 1px solid var(--pop-bd); background: var(--pop-idle); cursor: pointer; transition: .15s; flex: none }
+.htoggle i { position: absolute; top: 2px; left: 2px; width: 12px; height: 12px; border-radius: 50%; background: var(--pop-dim); transition: .15s }
+.htoggle.on { background: color-mix(in srgb, var(--ck-a) 30%, transparent); border-color: color-mix(in srgb, var(--ck-a) 55%, transparent) }
+.htoggle.on i { left: 18px; background: var(--ck-a); box-shadow: 0 0 6px var(--ck-a) }
+.hsel { height: 24px; border-radius: 7px; border: 1px solid var(--pop-bd); background: var(--pop-idle); color: var(--pop-ink); font-size: 10.5px; padding: 0 6px; outline: none; font-family: var(--font-ui); cursor: pointer }
+.hsel:focus { border-color: color-mix(in srgb, var(--ck-a) 55%, transparent) }
+.hbtn { display: inline-flex; align-items: center; gap: 5px; border: 1px solid var(--pop-bd); border-radius: 7px; padding: 4px 10px; font-size: 10px; color: var(--pop-dim); font-family: var(--font-ui); transition: .13s }
+.hbtn:hover { color: var(--ck-a); border-color: color-mix(in srgb, var(--ck-a) 50%, transparent); background: color-mix(in srgb, var(--ck-a) 8%, transparent) }
+.hbtn.pri { background: var(--ck-a); color: var(--pop-bg); border-color: var(--ck-a); font-weight: 700 }
+.hbtn.pri:hover { opacity: .9; color: var(--pop-bg) }
+
+/* ── 立绘画廊（原型 .gallery 853-868） ── */
+.gallery .wb-h { margin-bottom: 14px }
+.xy-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px }
+.xy-card { position: relative; border: 1.5px solid var(--pop-bd); border-radius: 12px; overflow: hidden; background: var(--pop-idle); cursor: pointer; transition: .16s }
+.xy-card:hover { border-color: color-mix(in srgb, var(--ck-b) 50%, transparent); transform: translateY(-2px); box-shadow: var(--pop-shadow) }
+.xy-card.on { border-color: var(--ck-b); box-shadow: 0 0 0 1px var(--ck-b), 0 0 18px color-mix(in srgb, var(--ck-b) 30%, transparent) }
+.xy-card.on::after { content: "当前"; position: absolute; right: 8px; bottom: 42px; font-size: 8px; font-weight: 700; padding: 1px 7px; border-radius: 999px; background: var(--ck-b); color: var(--pop-bg) }
+.xc-img { position: relative; aspect-ratio: 3/4; overflow: hidden; background: #0A0A0C }
+.xc-img img { width: 100%; height: 100%; object-fit: cover; object-position: 50% 14%; display: block }
+.xc-tag { position: absolute; left: 8px; top: 8px; font-size: 8px; font-weight: 700; font-family: var(--font-mono); padding: 1px 7px; border-radius: 999px; background: rgba(10,10,12,.72); color: var(--ck-a); border: 1px solid color-mix(in srgb, var(--ck-a) 40%, transparent); letter-spacing: .08em }
+.xc-dl { position: absolute; right: 8px; top: 8px; width: 24px; height: 24px; border-radius: 7px; display: grid; place-items: center; background: rgba(10,10,12,.72); color: var(--pop-ink); border: 1px solid var(--w12); opacity: 0; transition: .15s }
+.xy-card:hover .xc-dl { opacity: 1 }
+.xc-dl:hover { background: var(--ck-b); color: var(--pop-bg); border-color: var(--ck-b) }
+.xc-meta { padding: 8px 10px 10px }
+.xc-meta b { font-size: 12px; font-weight: 700; color: var(--pop-ink); font-family: var(--font-ui); display: block }
+.xc-meta span { font-size: 9.5px; color: var(--pop-dim); display: block; margin-top: 2px }
+
+/* ── 归档台（原型 .arch-metrics 220-228） ── */
+.arch-metrics { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; margin-bottom: 8px }
+.arch-metrics .am { border: 1px solid var(--pop-bd); border-radius: 7px; background: var(--pop-idle); padding: 6px; text-align: center }
+.arch-metrics .am b { display: block; font-size: 11px }
+.arch-metrics .am b.green { color: var(--pop-green) } .arch-metrics .am b.amber { color: var(--pop-amber) } .arch-metrics .am b.violet { color: var(--ck-b) }
+.arch-metrics .am span { font-size: 9px; color: var(--pop-dim) }
+
+/* ── 悬浮样式（float）作用于舱浮窗 + 汐音对白/hub（原型 587-598 适配真实 DOM） ── */
+body.float-solid [data-testid="cabin-window"], body.float-solid .xy-dialog, body.float-solid .crew-hub { backdrop-filter: none; background: var(--pop-paper) }
+body.float-holo [data-testid="cabin-window"], body.float-holo .xy-dialog, body.float-holo .crew-hub {
+  background: color-mix(in srgb, var(--ck-a) 7%, rgba(20,20,26,.72));
+  border-color: color-mix(in srgb, var(--ck-a) 45%, transparent);
+  box-shadow: 0 0 calc(18px * var(--ck-glow)) color-mix(in srgb, var(--ck-a) 22%, transparent), var(--pop-shadow-lg);
+}
+body.float-holo [data-testid="cabin-window"]::after {
+  content: ""; position: absolute; inset: 0; pointer-events: none;
+  background: repeating-linear-gradient(180deg, color-mix(in srgb, var(--ck-a) 5%, transparent) 0 1px, transparent 1px 4px); mix-blend-mode: screen;
+}
+
+/* ── 宽屏给汐音留左侧 gutter（原型 @media min-width:1281px chat-pane padding-left） ── */
+@media (min-width: 1281px) {
+  [data-testid="cabin-chat-region"] { padding-left: var(--crew-w, 252px) }
+}
+@media (max-width: 1280px) {
+  .crew-pod, .xy-dialog, .crew-hub { display: none }
+  .crew-hub.open { display: none }
+}
+@media (max-width: 1024px) {
+  .telemetry, .cockpit-frame { display: none }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .cockpit-bg::after, .ck-p, .xy-aura, .xy-frame img, .xy-frame .xy-sweep,
+  .xy-state-icon.pop, .xy-ripple, .xy-spark, .telemetry .sys i, .xyd-cur {
+    animation: none !important;
+  }
+}
