@@ -47,6 +47,13 @@ export class AgentSessionDAO extends BaseDAO {
     return { items, has_more: hasMore, next_cursor: hasMore ? items[items.length - 1].created_at : null }
   }
 
+  /** Cabin (C2/G2): all live sessions belonging to a cabin (main + task author/doer). */
+  listByCabinId(cabinId: string): SessionRow[] {
+    return this.stmt(
+      "SELECT * FROM sessions WHERE cabin_id = ? AND is_deleted = 0 ORDER BY created_at",
+    ).all(cabinId) as SessionRow[]
+  }
+
   insertSession(row: Omit<SessionRow, "is_active" | "is_deleted" | "perspective_clone_name" | "last_message_at" | "scope_id" | "provider_session_id" | "cwd" | "workspace_id" | "context_usage"> & {
     is_active?: number; is_deleted?: number; perspective_clone_name?: string | null;
     scope_id?: string | null; provider_session_id?: string | null

@@ -91,6 +91,23 @@ export class GitOps {
     return stdout
   }
 
+  /** Cabin P3（S5 仓库卡）：HEAD 的 sha/subject/author-date 一次读出。 */
+  async getHeadCommitInfo(projectPath: string): Promise<{ sha: string; msg: string; at: string }> {
+    const { stdout } = await runGit(projectPath, ["log", "-1", "--format=%H%x00%s%x00%aI"])
+    const [sha, msg, at] = stdout.split("\0")
+    return { sha: sha ?? "", msg: msg ?? "", at: at ?? "" }
+  }
+
+  /** Cabin P3（S5 仓库卡）：origin remote URL（无 origin → null）。 */
+  async getRemoteUrl(projectPath: string): Promise<string | null> {
+    try {
+      const { stdout } = await runGit(projectPath, ["remote", "get-url", "origin"])
+      return stdout || null
+    } catch {
+      return null
+    }
+  }
+
   async getCurrentBranch(projectPath: string): Promise<string> {
     const { stdout } = await runGit(projectPath, ["rev-parse", "--abbrev-ref", "HEAD"])
     return stdout

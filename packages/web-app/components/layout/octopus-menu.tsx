@@ -1,8 +1,10 @@
 'use client'
 
 import { useState, type ComponentPropsWithRef } from 'react'
+import { Container } from 'lucide-react'
 import { APP_GROUPS, type AppId } from '@/lib/app-catalog'
 import { useDesktopWindows } from '@/lib/desktop-windows'
+import { useRouter } from '@/lib/app-navigation'
 import { cn } from '@/lib/utils'
 import {
   DropdownMenu,
@@ -41,11 +43,17 @@ function LogoButton({ ref, className, ...rest }: ComponentPropsWithRef<'button'>
 
 export function OctopusMenu({ narrow }: { narrow: boolean }) {
   const { state, openApp, closeAll } = useDesktopWindows()
+  const router = useRouter()
   const [sheetOpen, setSheetOpen] = useState(false)
 
   const open = (id: AppId) => {
     openApp(id)
     setSheetOpen(false)
+  }
+
+  const openCabin = () => {
+    setSheetOpen(false)
+    router.push('/cabin/new')
   }
 
   const closeEverything = () => {
@@ -98,6 +106,15 @@ export function OctopusMenu({ narrow }: { narrow: boolean }) {
             <div className="mt-2 border-t-[1.5px] border-pop-bd/60 pt-2">
               <button
                 type="button"
+                data-app-id="cabin"
+                onClick={openCabin}
+                className="flex w-full items-center gap-2.5 rounded-lg px-2 py-1.5 text-left text-sm font-bold text-pop-ink transition-colors hover:bg-accent"
+              >
+                <Container className="size-4 shrink-0 text-pop-dim" />
+                <span className="min-w-0 flex-1 truncate">工作舱</span>
+              </button>
+              <button
+                type="button"
                 onClick={closeEverything}
                 className="flex w-full items-center rounded-lg px-2 py-1.5 text-left text-sm font-bold text-pop-dim transition-colors hover:bg-accent hover:text-pop-ink"
               >
@@ -142,6 +159,15 @@ export function OctopusMenu({ narrow }: { narrow: boolean }) {
             })}
           </div>
         ))}
+        <DropdownMenuSeparator />
+        <DropdownMenuItem
+          data-app-id="cabin"
+          onSelect={openCabin}
+          className="gap-2.5 text-sm font-bold"
+        >
+          <Container className="size-4 text-pop-dim" />
+          <span className="flex-1">工作舱</span>
+        </DropdownMenuItem>
         <DropdownMenuSeparator />
         <DropdownMenuItem
           onSelect={closeEverything}

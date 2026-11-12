@@ -32,8 +32,9 @@ export class TaskDAO extends BaseDAO {
         workflow_ref, version, deleted_at, created_at, updated_at, completed_at,
         workspace_id, semantic_summary,
         trigger_mode, trigger_at, cron_expression, cron_timezone,
-        trigger_enabled, next_fire_at, last_fired_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        trigger_enabled, next_fire_at, last_fired_at,
+        cabin_id, iteration_id
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       row.id, row.repo_group ?? null, row.name,
       row.status ?? "draft",
@@ -63,6 +64,9 @@ export class TaskDAO extends BaseDAO {
       row.trigger_enabled ?? 1,
       row.next_fire_at ?? null,
       row.last_fired_at ?? null,
+      // Cabin (C2): dispatch binds the owning cabin + iteration at creation.
+      row.cabin_id ?? null,
+      row.iteration_id ?? null,
     )
   }
 
@@ -185,6 +189,13 @@ export class TaskDAO extends BaseDAO {
     return this.stmt(
       "SELECT * FROM tasks WHERE repo_group = ? AND deleted_at IS NULL ORDER BY updated_at DESC, id DESC",
     ).all(repoGroup) as TaskRow[]
+  }
+
+  /** Cabin (C2): tasks dispatched by a cabin, oldest first. */
+  findByCabinId(cabinId: string): TaskRow[] {
+    return this.stmt(
+      "SELECT * FROM tasks WHERE cabin_id = ? AND deleted_at IS NULL ORDER BY created_at ASC, id ASC",
+    ).all(cabinId) as TaskRow[]
   }
 
   /**

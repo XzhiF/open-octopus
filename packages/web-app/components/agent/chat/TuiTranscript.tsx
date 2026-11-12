@@ -17,6 +17,7 @@ import { WorkflowRunCard } from './workflow-run-card'
 import { IncidentCard } from './incident-card'
 import { AcceptanceCheckCard } from './acceptance-check-card'
 import { ArchiveSummaryCard } from './archive-summary-card'
+import { CabinInitGateCard } from '@/components/cabin/CabinInitGateCard'
 
 /** mini-markdown：`**bold**` / `行内 code` / 行首 # 标题 —— 消灭字面星号。 */
 function mdInline(text: string): ReactNode {
@@ -351,6 +352,10 @@ function ActivityEventCard({ message }: { message: AgentMessage }) {
   const isArchiveSummary = !!(activity?.payload as { archiveSummary?: boolean } | undefined)?.archiveSummary
   if (isArchiveSummary) {
     return <ArchiveSummaryCard message={message} />
+  }
+  // 舱初始化门禁卡（Cabin P2）：7 项门禁 + 去修/重试，舱壳内读实时 initState。
+  if ((activity?.payload as { cabinInit?: boolean } | undefined)?.cabinInit) {
+    return <CabinInitGateCard message={message} />
   }
   // 任务状态卡（执行中 / 已暂停 / 收尾）交给运行卡组件：它自己走表、按需轮询
   // 执行详情，收尾后定格成只读（2026-10-30 用户定稿）。

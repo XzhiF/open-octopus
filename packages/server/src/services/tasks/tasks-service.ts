@@ -640,6 +640,9 @@ export interface CreateTaskInput {
   skills?: string[]
   resources?: ResourceRef[]
   authoring_resources?: ResourceRef[]
+  /** Cabin (C2): owning cabin + iteration binding at creation. */
+  cabin_id?: string | null
+  iteration_id?: string | null
 }
 
 export interface UpdateTaskInput {
@@ -700,6 +703,8 @@ export interface ListTasksParams {
   status?: TaskStatus
   /** Repo-registry key filter (org demotion). */
   repo_group?: string
+  /** Cabin (C2/S6): cabin-scoped board. */
+  cabin_id?: string
   /** 票06 (语义摘要进任务板): 服务端关键字搜索——对 name ∨ semantic_summary LIKE 子串
    *  过滤（零新基建、非 FTS）。空/纯空白 = 不过滤（走原列盘路径，回归保护）。 */
   q?: string
@@ -779,6 +784,8 @@ function toDTO(row: TaskRow): TaskDTO {
     trigger_enabled: row.trigger_enabled === 1,
     next_fire_at: row.next_fire_at,
     last_fired_at: row.last_fired_at,
+    cabin_id: row.cabin_id ?? null,
+    iteration_id: row.iteration_id ?? null,
     execution: null,
   }
 }
@@ -1334,6 +1341,8 @@ export class TasksService {
         : {}),
       created_at: now,
       updated_at: now,
+      cabin_id: input.cabin_id ?? null,
+      iteration_id: input.iteration_id ?? null,
     })
 
     // SG3: link the bound chat session's scope_id to the new task id (explicit
@@ -2331,7 +2340,11 @@ export class TasksService {
   /** GET /api/tasks — list active tasks (kanban), filtered by status and/or repo_group. */
   listTasks(params: ListTasksParams = {}): { items: TaskDTO[] } {    let rows: TaskRow[]
     const q = params.q?.trim()
-    if (q) {
+    if (params.cabin_id) {
+      rows = this.taskDAO.findByCabinId(params.cabin_id)
+      if (params.status) rows = rows.filter((r) => r.status === params.status)
+      if (q) rows = rows.filter((r) => r.name.includes(q))
+    } else if (q) {
       // 票06 (语义摘要进任务板): 服务端关键字搜索走 LIKE（name ∨ semantic_summary），
       // 叠加可选 status/org。未归档/无摘要 task 的 semantic_summary 为 NULL——DAO 用
       // IFNULL 兜空串，按 name 仍可命中、不报错（宽容读）。

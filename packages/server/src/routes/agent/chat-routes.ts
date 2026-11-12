@@ -38,6 +38,7 @@ import { expertName } from '@octopus/shared'
 import { createWorkflowToolServer } from '../../services/chat/workflow-tools'
 import { createTaskToolServer } from '../../services/chat/task-tools'
 import { createMemoryToolServer, resolveLongTermConsent } from '../../services/chat/memory-tools'
+import { createCabinToolServer, getCabinToolsProvider, buildCabinSummaryReminder } from '../../services/chat/cabin-tools'
 import { getSlashCommands, rememberSlashCommands } from '../../services/chat/slash-commands'
 import type { TokenUsageDAO } from '../../db/dao/token-usage-dao'
 import type { EffortLevel } from '@octopus/shared'
@@ -365,7 +366,12 @@ export function createChatRoutes(deps: ChatRouteDeps): Hono {
     const playbookReminder = thread
       ? buildTaskPlaybookReminder(thread, cacheCtx.getPlaybookHash(id))
       : null
-    const turnReminder = [roleCard, mentionReminder, playbookReminder?.text].filter(Boolean).join('\n\n')
+    // Cabin P3（C2）：舱主会话每回合注入派生舱摘要（attention/迭代/作业），
+    // 关系单写者=任务行，摘要只读不持久。
+    const cabinReminder = !thread && session.cabin_id && getCabinToolsProvider()
+      ? buildCabinSummaryReminder(getCabinToolsProvider()!.service, session.cabin_id)
+      : null
+    const turnReminder = [roleCard, mentionReminder, playbookReminder?.text, cabinReminder].filter(Boolean).join('\n\n')
     const providerMessage = withTransientReminder(body.message!, turnReminder)
     // Workflow control tools (list/run/status/cancel/approve/retry) are
     // registered as an in-process MCP server bound to this chat's workspace.
@@ -397,6 +403,10 @@ export function createChatRoutes(deps: ChatRouteDeps): Hono {
         { sessionId: id, org },
         { longTermConsent: resolveLongTermConsent(body.message ?? '') },
       )
+    }
+    // Cabin P3（C3）：舱主会话挂调度工具集（只调度不执行）。
+    if (!thread && session.cabin_id && getCabinToolsProvider()) {
+      toolServers['octopus-cabin'] = createCabinToolServer(session.cabin_id)
     }
     const mcpServers = Object.keys(toolServers).length > 0 ? toolServers : undefined
 

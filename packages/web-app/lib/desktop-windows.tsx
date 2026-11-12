@@ -55,6 +55,8 @@ export type UrlTarget =
   | { kind: 'desktop' }
   | { kind: 'redirect'; to?: string }
   | { kind: 'window'; id: WindowId; pathname: string; search: string }
+  /** 兄弟壳路由：桌面窗口态不参与（CabinShell 自渲染），URL 也不被焦点同步重写。 */
+  | { kind: 'cabin'; cabinId: string }
 
 export const DESKTOP_STORAGE_KEY = 'octopus.desktop.v1'
 
@@ -101,8 +103,9 @@ export function resolveUrlTarget(href: string): UrlTarget {
   const { pathname, search } = splitHref(href)
   const legacyTarget = queryRedirectTarget(pathname, search)
   if (legacyTarget) return { kind: 'redirect', to: legacyTarget }
-  const { route } = matchAppRoute(pathname)
+  const { route, params } = matchAppRoute(pathname)
   if (route.kind === 'redirect') return { kind: 'redirect' }
+  if (route.kind === 'cabin') return { kind: 'cabin', cabinId: params.cabinId ?? '' }
   if (route.kind === 'view') {
     if (route.view === 'chat') return { kind: 'desktop' }
     return { kind: 'window', id: route.view as AppId, pathname, search }
@@ -540,6 +543,7 @@ export function DesktopWindowsProvider({ children }: { children: ReactNode }) {
     const target = resolveUrlTarget(href)
     if (target.kind === 'desktop') dispatch({ type: 'focusDesktop' })
     else if (target.kind === 'window') dispatch({ type: 'syncUrl', target })
+    else if (target.kind === 'cabin') dispatch({ type: 'focusDesktop' })
     else if (target.kind === 'redirect' && target.to) pushUrl(target.to, true)
   }, [location.pathname, location.search, pushUrl])
 
@@ -548,7 +552,8 @@ export function DesktopWindowsProvider({ children }: { children: ReactNode }) {
   const currentKind = resolveUrlTarget(currentHref).kind
 
   useEffect(() => {
-    if (currentKind === 'redirect') return
+    // 舱壳自渲染、自管 URL：桌面焦点不得把 /cabin/* 重写回桌面路径。
+    if (currentKind === 'redirect' || currentKind === 'cabin') return
     if (focusHref === currentHref) return
     if (suppressRef.current === focusHref) return
     pushUrl(focusHref, true)
@@ -640,6 +645,11 @@ export function DesktopWindowsProvider({ children }: { children: ReactNode }) {
       if (target.kind === 'desktop') {
         dispatch({ type: 'focusDesktop' })
         pushUrl('/', replace)
+        return
+      }
+      if (target.kind === 'cabin') {
+        dispatch({ type: 'focusDesktop' })
+        pushUrl(href, replace)
         return
       }
       if (from === target.id) {

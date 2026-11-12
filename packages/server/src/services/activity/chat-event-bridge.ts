@@ -136,6 +136,27 @@ class ChatEventBridge {
   private archiveConsentGuided = new Set<string>()
   /** 归档完成播报去重（taskId → 已播报）。 */
   private archiveDoneGuided = new Set<string>()
+  /** 舱初始化门禁卡去重：cabinId:status → 已落卡（start/done/failed 各一张）。 */
+  private cabinInitCarded = new Set<string>()
+
+  /** Cabin P3（G2/C6）：doer 高信号 → 舱派发账本审计 hook（组合根注入）。 */
+  private cabinSignalHook: ((taskId: string, status: string, summary: string) => void) | null = null
+
+  setCabinSignalHook(hook: (taskId: string, status: string, summary: string) => void): void {
+    this.cabinSignalHook = hook
+  }
+
+  /** G2：舱任务的人-facing 单线程 = 舱主会话（doer 回报汇聚，C4）。 */
+  private cabinMainSession(cabinId: string): string | null {
+    if (!this.db) return null
+    try {
+      const row = this.db.prepare("SELECT main_session_id FROM cabins WHERE id = ?")
+        .get(cabinId) as { main_session_id?: string | null } | undefined
+      return row?.main_session_id ?? null
+    } catch {
+      return null
+    }
+  }
 
   attach(db: SqliteLike): void {
     this.db = db
@@ -291,24 +312,29 @@ class ChatEventBridge {
       repo_group?: string | null
       source_chat_session_id?: string | null
       workspace_id?: string | null
+      cabin_id?: string | null
     } | undefined
     try {
       row = this.db.prepare(
-        "SELECT name, repo_group, source_chat_session_id, workspace_id FROM tasks WHERE id = ?",
+        "SELECT name, repo_group, source_chat_session_id, workspace_id, cabin_id FROM tasks WHERE id = ?",
       ).get(taskId) as typeof row
     } catch {
       return
     }
     if (!row) return
 
+    // G2：舱任务卡/wake 落舱主会话（单线程收件箱），而非 per-task 人线程。
+    const humanSessionId = (row.cabin_id ? this.cabinMainSession(row.cabin_id) : null)
+      ?? row.source_chat_session_id
+
     // A task thread is a MAIN session bound to the task. Legacy task-author
     // clone sessions keep the old high-signal-wake-only behavior.
     let threadSession: { clone_name: string | null; workspace_id: string | null } | undefined
-    if (row.source_chat_session_id) {
+    if (humanSessionId) {
       try {
         threadSession = this.db.prepare(
           "SELECT clone_name, workspace_id FROM sessions WHERE id = ?",
-        ).get(row.source_chat_session_id) as typeof threadSession
+        ).get(humanSessionId) as typeof threadSession
       } catch {
         /* no sessions table in a stripped test DB — treat as legacy */
       }
@@ -356,7 +382,7 @@ class ChatEventBridge {
       workspaceId,
       taskId,
       executionId: latest?.id ?? null,
-      sessionId: row.source_chat_session_id ?? null,
+      sessionId: humanSessionId ?? null,
       payload: {
         status,
         actions,
@@ -365,6 +391,9 @@ class ChatEventBridge {
       },
     })
 
+    // C6 inbound：doer 高信号落舱派发账本（report/attention/handback）。
+    if (row.cabin_id && high) this.cabinSignalHook?.(taskId, status, `${title} · ${detail}`)
+
     // 2026-10-31 AI-native 归档：archiving / done 不再追加通用状态卡，也不会
     // 在这里唤醒 —— 入口是 beginArchiving 的总框引导与 endArchiving 的完成播报。
     // 否则一张任务会出现「归档中 + 归档总框 + 已完成」三张卡，与「只留一个总框」冲突。
@@ -372,9 +401,9 @@ class ChatEventBridge {
     const archiveHandled = isThread &&
       (status === "archiving" || status === "done" || status === "awaiting_archive")
 
-    if (isThread && row.source_chat_session_id && !archiveHandled) {
+    if (isThread && humanSessionId && !archiveHandled) {
       this.appendTaskCard({
-        sessionId: row.source_chat_session_id,
+        sessionId: humanSessionId,
         workspaceId,
         title,
         detail,
@@ -382,12 +411,12 @@ class ChatEventBridge {
         status,
         actions,
       })
-      this.notifySession(row.source_chat_session_id, workspaceId)
+      this.notifySession(humanSessionId, workspaceId)
     }
 
-    if (high && row.source_chat_session_id && !archiveHandled) {
+    if (high && humanSessionId && !archiveHandled) {
       void this.wake(
-        { sessionId: row.source_chat_session_id, org: row.repo_group ?? '', workspaceId },
+        { sessionId: humanSessionId, org: row.repo_group ?? '', workspaceId },
         event,
         // The thread already has the deterministic card; the wake turn is the
         // model seeing the same event without persisting a duplicate message.
@@ -463,13 +492,19 @@ class ChatEventBridge {
       repo_group?: string | null
       source_chat_session_id?: string | null
       workspace_id?: string | null
+      cabin_id?: string | null
     } | undefined
     try {
       row = this.db.prepare(
-        "SELECT name, repo_group, source_chat_session_id, workspace_id FROM tasks WHERE id = ?",
+        "SELECT name, repo_group, source_chat_session_id, workspace_id, cabin_id FROM tasks WHERE id = ?",
       ).get(taskId) as typeof row
     } catch {
       return
+    }
+    // G2：舱任务的引导卡/wake 同样汇聚舱主会话（C4 单线程）。
+    if (row?.cabin_id) {
+      const main = this.cabinMainSession(row.cabin_id)
+      if (main) row.source_chat_session_id = main
     }
     if (!row?.source_chat_session_id) return
     let session: { clone_name?: string | null } | undefined
@@ -539,13 +574,19 @@ class ChatEventBridge {
       repo_group?: string | null
       source_chat_session_id?: string | null
       workspace_id?: string | null
+      cabin_id?: string | null
     } | undefined
     try {
       row = this.db.prepare(
-        "SELECT name, repo_group, source_chat_session_id, workspace_id FROM tasks WHERE id = ?",
+        "SELECT name, repo_group, source_chat_session_id, workspace_id, cabin_id FROM tasks WHERE id = ?",
       ).get(taskId) as typeof row
     } catch {
       return
+    }
+    // G2：舱任务的引导卡/wake 同样汇聚舱主会话（C4 单线程）。
+    if (row?.cabin_id) {
+      const main = this.cabinMainSession(row.cabin_id)
+      if (main) row.source_chat_session_id = main
     }
     if (!row?.source_chat_session_id) return
     let session: { clone_name?: string | null } | undefined
@@ -613,13 +654,19 @@ class ChatEventBridge {
       repo_group?: string | null
       source_chat_session_id?: string | null
       workspace_id?: string | null
+      cabin_id?: string | null
     } | undefined
     try {
       row = this.db.prepare(
-        "SELECT name, repo_group, source_chat_session_id, workspace_id FROM tasks WHERE id = ?",
+        "SELECT name, repo_group, source_chat_session_id, workspace_id, cabin_id FROM tasks WHERE id = ?",
       ).get(taskId) as typeof row
     } catch {
       return
+    }
+    // G2：舱任务的引导卡/wake 同样汇聚舱主会话（C4 单线程）。
+    if (row?.cabin_id) {
+      const main = this.cabinMainSession(row.cabin_id)
+      if (main) row.source_chat_session_id = main
     }
     if (!row?.source_chat_session_id) return
     let session: { clone_name?: string | null } | undefined
@@ -737,14 +784,20 @@ class ChatEventBridge {
       name?: string
       source_chat_session_id?: string | null
       workspace_id?: string | null
+      cabin_id?: string | null
     } | undefined
     if (input.taskId) {
       try {
         row = this.db.prepare(
-          "SELECT name, source_chat_session_id, workspace_id FROM tasks WHERE id = ?",
+          "SELECT name, source_chat_session_id, workspace_id, cabin_id FROM tasks WHERE id = ?",
         ).get(input.taskId) as typeof row
       } catch {
         return
+      }
+      // G2：舱任务的引导卡/wake 同样汇聚舱主会话（C4 单线程）。
+      if (row?.cabin_id) {
+        const main = this.cabinMainSession(row.cabin_id)
+        if (main) row.source_chat_session_id = main
       }
       if (!row?.source_chat_session_id) return
     }
@@ -796,6 +849,53 @@ class ChatEventBridge {
       contentPrefix: "工作流运行",
     })
     this.notifySession(sessionId, workspaceId)
+  }
+
+  /**
+   * 舱初始化门禁卡（Cabin P1）：零 LLM，append-only。start/done/failed 各一张
+   * （cabinId:status 去重）；逐项进度走 SSE `cabin:<id>` 频道，卡片只落里程碑。
+   * payload.cabinInit=true + items 供前端 CabinInitGateCard 渲染（P2）。
+   */
+  requestCabinInitGateCard(input: {
+    sessionId: string
+    workspaceId: string | null
+    cabinId: string
+    cabinName: string
+    status: "running" | "done" | "failed"
+    items: Array<{ key: string; label: string; state: string; error?: string; fix_hint?: string }>
+  }): void {
+    if (!this.db) return
+    const dedupKey = `${input.cabinId}:${input.status}`
+    if (this.cabinInitCarded.has(dedupKey)) return
+    this.cabinInitCarded.add(dedupKey)
+
+    const failed = input.items.filter((i) => i.state === "failed")
+    const title = `舱初始化 · ${input.cabinName}`
+    const detail = input.status === "done"
+      ? "门禁全部通过，舱已就绪"
+      : input.status === "failed"
+        ? `${failed.length} 项门禁失败：${failed.map((f) => f.label).join("、")}`
+        : "门禁进行中…"
+    const event = getActivityBus().publish({
+      kind: "cabin.init",
+      severity: input.status === "failed" ? "warn" : "info",
+      title,
+      message: detail,
+      workspaceId: input.workspaceId,
+      sessionId: input.sessionId,
+      payload: { cabinInit: true, cabinId: input.cabinId, status: input.status, items: input.items },
+    })
+    this.appendTaskCard({
+      sessionId: input.sessionId,
+      workspaceId: input.workspaceId,
+      title,
+      detail,
+      event,
+      status: input.status,
+      actions: input.status === "failed" ? [{ id: "cabin_init_retry", label: "重试门禁" }] : [],
+      contentPrefix: "舱初始化",
+    })
+    this.notifySession(input.sessionId, input.workspaceId)
   }
 
   /**
@@ -955,13 +1055,19 @@ class ChatEventBridge {
       repo_group?: string | null
       source_chat_session_id?: string | null
       workspace_id?: string | null
+      cabin_id?: string | null
     } | undefined
     try {
       row = this.db.prepare(
-        "SELECT name, repo_group, source_chat_session_id, workspace_id FROM tasks WHERE id = ?",
+        "SELECT name, repo_group, source_chat_session_id, workspace_id, cabin_id FROM tasks WHERE id = ?",
       ).get(taskId) as typeof row
     } catch {
       return
+    }
+    // G2：舱任务的引导卡/wake 同样汇聚舱主会话（C4 单线程）。
+    if (row?.cabin_id) {
+      const main = this.cabinMainSession(row.cabin_id)
+      if (main) row.source_chat_session_id = main
     }
     if (!row?.source_chat_session_id) return
     let session: { clone_name?: string | null } | undefined
@@ -973,6 +1079,12 @@ class ChatEventBridge {
     }
     if (!session || session.clone_name) return // legacy clone thread — untouched
     this.acceptanceGuided.add(key)
+
+    // C6：v4 的 awaiting_review 不走 task_status 高信号（持久态仍 running），
+    // 验收引导才是规范公告点 → 舱派发账本在这里落 attention。
+    if (row.cabin_id) {
+      this.cabinSignalHook?.(taskId, "awaiting_review", `任务：${row.name ?? taskId.slice(0, 8)} · 待验收`)
+    }
 
     const title = `验收方案已就绪 · ${info.caseCount} 个场景`
     const detail = `任务：${row.name ?? taskId.slice(0, 8)} · P${info.phaseIndex} · R${info.roundIndex}` +
@@ -1043,6 +1155,11 @@ class ChatEventBridge {
     } catch {
       return
     }
+    // G2：舱任务的引导卡/wake 同样汇聚舱主会话（C4 单线程）。
+    if (row?.cabin_id) {
+      const main = this.cabinMainSession(row.cabin_id)
+      if (main) row.source_chat_session_id = main
+    }
     if (!row?.source_chat_session_id) return
     let session: { clone_name?: string | null } | undefined
     try {
@@ -1106,13 +1223,19 @@ class ChatEventBridge {
       repo_group?: string | null
       source_chat_session_id?: string | null
       workspace_id?: string | null
+      cabin_id?: string | null
     } | undefined
     try {
       row = this.db.prepare(
-        "SELECT name, repo_group, source_chat_session_id, workspace_id FROM tasks WHERE id = ?",
+        "SELECT name, repo_group, source_chat_session_id, workspace_id, cabin_id FROM tasks WHERE id = ?",
       ).get(taskId) as typeof row
     } catch {
       return
+    }
+    // G2：舱任务的引导卡/wake 同样汇聚舱主会话（C4 单线程）。
+    if (row?.cabin_id) {
+      const main = this.cabinMainSession(row.cabin_id)
+      if (main) row.source_chat_session_id = main
     }
     if (!row?.source_chat_session_id) return
     let session: { clone_name?: string | null } | undefined
@@ -1155,13 +1278,19 @@ class ChatEventBridge {
       repo_group?: string | null
       source_chat_session_id?: string | null
       workspace_id?: string | null
+      cabin_id?: string | null
     } | undefined
     try {
       row = this.db.prepare(
-        "SELECT name, repo_group, source_chat_session_id, workspace_id FROM tasks WHERE id = ?",
+        "SELECT name, repo_group, source_chat_session_id, workspace_id, cabin_id FROM tasks WHERE id = ?",
       ).get(taskId) as typeof row
     } catch {
       return
+    }
+    // G2：舱任务的引导卡/wake 同样汇聚舱主会话（C4 单线程）。
+    if (row?.cabin_id) {
+      const main = this.cabinMainSession(row.cabin_id)
+      if (main) row.source_chat_session_id = main
     }
     if (!row?.source_chat_session_id) return
     let session: { clone_name?: string | null } | undefined

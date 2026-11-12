@@ -1,5 +1,6 @@
 import { lazy, type ComponentType, type LazyExoticComponent } from 'react'
 import type { AppRoute, ViewId } from '@/lib/routes'
+import { useParams } from '@/lib/app-navigation'
 
 type LazyPage = LazyExoticComponent<ComponentType>
 
@@ -36,6 +37,20 @@ export const STANDALONE_COMPONENTS: Record<string, LazyPage> = {
   'dev-swarm': lazy(() => import('@/app/dev/swarm-test/page')),
 }
 
+const LazyCabinShell = lazy(() =>
+  import('@/components/cabin/CabinShell').then((m) => ({ default: m.CabinShell })),
+)
+
+/** 舱壳路由入口：从路由参数取 cabinId（'new' = 新建向导）。 */
+export function CabinShellRoute() {
+  const params = useParams()
+  return <LazyCabinShell cabinId={params.cabinId ?? ''} />
+}
+
+export const CABIN_COMPONENTS: Record<string, LazyPage> = {
+  'cabin-shell': lazy(() => Promise.resolve({ default: CabinShellRoute })),
+}
+
 export function componentForRoute(route: AppRoute): LazyPage | null {
   if (route.kind === 'view') {
     if (route.view === 'chat') return null
@@ -43,5 +58,6 @@ export function componentForRoute(route: AppRoute): LazyPage | null {
   }
   if (route.kind === 'detail') return DETAIL_COMPONENTS[route.componentKey] ?? null
   if (route.kind === 'standalone') return STANDALONE_COMPONENTS[route.componentKey] ?? null
+  if (route.kind === 'cabin') return CABIN_COMPONENTS[route.componentKey] ?? null
   return null
 }

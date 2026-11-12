@@ -1,0 +1,377 @@
+// packages/web-app/lib/cabin-api.ts
+//
+// Thin client for the `/api/cabins` domain (Cabin P1). Mirrors the tasks-api
+// pattern: pure fetch wrapper, types from @octopus/shared, server is the single
+// source of truth for response shapes. Derived fields (attention/health/
+// iteration progress/job status) arrive pre-computed in CabinView — the client
+// never re-derives them (K3).
+
+import { getServerUrl } from "@/lib/server-config"
+import type {
+  CabinDTO,
+  CabinView,
+  CabinStatus,
+  CabinInitState,
+  CabinIteration,
+  CabinJob,
+  CabinJobEvent,
+  CabinJobKind,
+  CabinMandate,
+  CabinAttentionItem,
+  CabinHealth,
+} from "@octopus/shared"
+
+/** Wire DTO = shared CabinDTO + the UI-prefs JSON the route parses out. */
+export type CabinDetail = CabinDTO & {
+  cockpit_prefs?: Record<string, unknown> | null
+}
+
+/** config.json.repos[] entry as the cabin repos endpoint answers it, plus the
+ *  route's git enrichment (branch/commit of the cabin worktree). */
+export interface CabinRepoEntry {
+  name: string
+  group?: string
+  repoName?: string
+  main_path?: string
+  worktree_path?: string
+  branch?: string
+  git?: {
+    branch: string; detached: boolean; commit: string
+    msg?: string; at?: string; remote?: string | null
+  } | null
+}
+
+export interface CabinWorktreeGroup {
+  repo: string
+  worktrees: Array<{ path: string; head: string; branch: string | null }>
+}
+
+export class CabinApiError extends Error {
+  public status: number
+  constructor(message: string, status: number) {
+    super(message)
+    this.name = "CabinApiError"
+    this.status = status
+  }
+}
+
+async function handleResponse<T>(res: Response): Promise<T> {
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}))
+    throw new CabinApiError(body.error ?? `HTTP ${res.status}`, res.status)
+  }
+  return res.json()
+}
+
+const BASE = "/api/cabins"
+
+function url(path: string): string {
+  return `${getServerUrl()}${BASE}${path}`
+}
+
+const JSON_HEADERS = { "Content-Type": "application/json" }
+
+// ============ CRUD ============
+
+export async function listCabins(status?: CabinStatus): Promise<CabinDetail[]> {
+  const qs = status ? `?status=${encodeURIComponent(status)}` : ""
+  const res = await fetch(url(qs))
+  const body = await handleResponse<{ cabins: CabinDetail[] }>(res)
+  return body.cabins
+}
+
+export interface CreateCabinInput {
+  name: string
+  path: string
+  requirements?: string
+  org?: string | null
+  repos?: string[]
+}
+
+export async function createCabin(input: CreateCabinInput): Promise<CabinDetail> {
+  const res = await fetch(url(""), {
+    method: "POST",
+    headers: JSON_HEADERS,
+    body: JSON.stringify(input),
+  })
+  const body = await handleResponse<{ cabin: CabinDetail }>(res)
+  return body.cabin
+}
+
+/** Reuse an existing cabin directory (.cabin/manifest.json restore). */
+export async function attachCabin(path: string, name?: string): Promise<CabinDetail> {
+  const res = await fetch(url("/attach"), {
+    method: "POST",
+    headers: JSON_HEADERS,
+    body: JSON.stringify({ path, ...(name ? { name } : {}) }),
+  })
+  const body = await handleResponse<{ cabin: CabinDetail }>(res)
+  return body.cabin
+}
+
+/** GET /:id — DTO + derived cockpit view (attention/health/iterations). */
+export async function getCabin(id: string, signal?: AbortSignal): Promise<{ cabin: CabinDetail; view: CabinView }> {
+  const res = await fetch(url(`/${id}`), { signal })
+  return handleResponse<{ cabin: CabinDetail; view: CabinView }>(res)
+}
+
+export interface PatchCabinInput {
+  name?: string
+  requirements?: string
+  mainline_strategy?: "clean-main" | "pin"
+  org?: string | null
+  cockpit_prefs?: Record<string, unknown>
+}
+
+export async function patchCabin(id: string, version: number, fields: PatchCabinInput): Promise<CabinDetail> {
+  const res = await fetch(url(`/${id}`), {
+    method: "PATCH",
+    headers: JSON_HEADERS,
+    body: JSON.stringify({ version, ...fields }),
+  })
+  const body = await handleResponse<{ cabin: CabinDetail }>(res)
+  return body.cabin
+}
+
+export async function deleteCabin(id: string): Promise<{ ok: true }> {
+  const res = await fetch(url(`/${id}`), { method: "DELETE" })
+  return handleResponse<{ ok: true }>(res)
+}
+
+// ============ Init gate ============
+
+export async function initCabin(id: string): Promise<CabinDetail> {
+  const res = await fetch(url(`/${id}/init`), { method: "POST" })
+  const body = await handleResponse<{ cabin: CabinDetail }>(res)
+  return body.cabin
+}
+
+export async function getCabinInit(id: string): Promise<{ status: CabinStatus; state: CabinInitState }> {
+  const res = await fetch(url(`/${id}/init`))
+  return handleResponse<{ status: CabinStatus; state: CabinInitState }>(res)
+}
+
+export async function retryCabinInit(id: string): Promise<{ ok: true; status: string }> {
+  const res = await fetch(url(`/${id}/init/retry`), { method: "POST" })
+  return handleResponse<{ ok: true; status: string }>(res)
+}
+
+// ============ Lifecycle ============
+
+export async function wakeCabin(id: string): Promise<CabinDetail> {
+  const res = await fetch(url(`/${id}/wake`), { method: "POST" })
+  const body = await handleResponse<{ cabin: CabinDetail }>(res)
+  return body.cabin
+}
+
+export async function archiveCabin(id: string): Promise<CabinDetail> {
+  const res = await fetch(url(`/${id}/archive`), { method: "POST" })
+  const body = await handleResponse<{ cabin: CabinDetail }>(res)
+  return body.cabin
+}
+
+export async function reopenCabin(id: string): Promise<CabinDetail> {
+  const res = await fetch(url(`/${id}/reopen`), { method: "POST" })
+  const body = await handleResponse<{ cabin: CabinDetail }>(res)
+  return body.cabin
+}
+
+export async function setCabinRequirements(id: string, version: number, requirements: string): Promise<CabinDetail> {
+  const res = await fetch(url(`/${id}/requirements`), {
+    method: "PUT",
+    headers: JSON_HEADERS,
+    body: JSON.stringify({ version, requirements }),
+  })
+  const body = await handleResponse<{ cabin: CabinDetail }>(res)
+  return body.cabin
+}
+
+// ============ Attention / iterations ============
+
+export async function getCabinAttention(id: string): Promise<{ attention: CabinAttentionItem[]; health: CabinHealth }> {
+  const res = await fetch(url(`/${id}/attention`))
+  return handleResponse<{ attention: CabinAttentionItem[]; health: CabinHealth }>(res)
+}
+
+export async function listCabinIterations(id: string): Promise<CabinIteration[]> {
+  const res = await fetch(url(`/${id}/iterations`))
+  const body = await handleResponse<{ iterations: CabinIteration[] }>(res)
+  return body.iterations
+}
+
+export async function createCabinIteration(
+  id: string,
+  input: { code: string; name: string; sort_order?: number },
+): Promise<CabinIteration> {
+  const res = await fetch(url(`/${id}/iterations`), {
+    method: "POST",
+    headers: JSON_HEADERS,
+    body: JSON.stringify(input),
+  })
+  const body = await handleResponse<{ iteration: CabinIteration }>(res)
+  return body.iteration
+}
+
+export async function patchCabinIteration(
+  id: string,
+  iterationId: string,
+  fields: { name?: string; sort_order?: number; status?: "pending" | "active" | "done" },
+): Promise<{ ok: true }> {
+  const res = await fetch(url(`/${id}/iterations/${iterationId}`), {
+    method: "PATCH",
+    headers: JSON_HEADERS,
+    body: JSON.stringify(fields),
+  })
+  return handleResponse<{ ok: true }>(res)
+}
+
+// ============ Repos / worktrees ============
+
+export async function listCabinRepos(id: string): Promise<CabinRepoEntry[]> {
+  const res = await fetch(url(`/${id}/repos`))
+  const body = await handleResponse<{ repos: CabinRepoEntry[] }>(res)
+  return body.repos
+}
+
+export async function addCabinRepo(id: string, name: string): Promise<CabinRepoEntry> {
+  const res = await fetch(url(`/${id}/repos`), {
+    method: "POST",
+    headers: JSON_HEADERS,
+    body: JSON.stringify({ name }),
+  })
+  const body = await handleResponse<{ repo: CabinRepoEntry }>(res)
+  return body.repo
+}
+
+export async function listCabinWorktrees(id: string): Promise<CabinWorktreeGroup[]> {
+  const res = await fetch(url(`/${id}/worktrees`))
+  const body = await handleResponse<{ worktrees: CabinWorktreeGroup[] }>(res)
+  return body.worktrees
+}
+
+// ============ Jobs / trace (C2/C6/C8) ============
+
+/** P3：作业 status/transport 派生自底层实体（K3），iteration_code 供面板展示。 */
+export type CabinJobView = CabinJob & {
+  status: string
+  transport: string
+  iteration_code: string | null
+}
+
+export async function listCabinJobs(id: string): Promise<CabinJobView[]> {
+  const res = await fetch(url(`/${id}/jobs`))
+  const body = await handleResponse<{ jobs: CabinJobView[] }>(res)
+  return body.jobs
+}
+
+export interface DispatchCabinJobInput {
+  kind: CabinJobKind
+  ref_id?: string | null
+  session_id?: string | null
+  iteration_id?: string | null
+  title: string
+  mandate?: CabinMandate
+  prompt?: string | null
+  priority?: number
+}
+
+export async function dispatchCabinJob(id: string, input: DispatchCabinJobInput): Promise<CabinJob> {
+  const res = await fetch(url(`/${id}/jobs`), {
+    method: "POST",
+    headers: JSON_HEADERS,
+    body: JSON.stringify(input),
+  })
+  const body = await handleResponse<{ job: CabinJob }>(res)
+  return body.job
+}
+
+export async function getCabinJob(id: string, jobId: string): Promise<{ job: CabinJob; events: CabinJobEvent[] }> {
+  const res = await fetch(url(`/${id}/jobs/${jobId}`))
+  return handleResponse<{ job: CabinJob; events: CabinJobEvent[] }>(res)
+}
+
+export async function setCabinJobPriority(id: string, jobId: string, priority: number): Promise<{ ok: true }> {
+  const res = await fetch(url(`/${id}/jobs/${jobId}`), {
+    method: "PATCH",
+    headers: JSON_HEADERS,
+    body: JSON.stringify({ priority }),
+  })
+  return handleResponse<{ ok: true }>(res)
+}
+
+export async function getCabinJobTrace(id: string, jobId: string): Promise<CabinJobEvent[]> {
+  const res = await fetch(url(`/${id}/jobs/${jobId}/trace`))
+  const body = await handleResponse<{ events: CabinJobEvent[] }>(res)
+  return body.events
+}
+
+export async function getCabinTrace(id: string): Promise<CabinJobEvent[]> {
+  const res = await fetch(url(`/${id}/trace`))
+  const body = await handleResponse<{ events: CabinJobEvent[] }>(res)
+  return body.events
+}
+
+// ============ Comm protocol (C9/D6) ============
+
+export async function noteCabinJob(id: string, jobId: string, text: string): Promise<CabinJobEvent> {
+  const res = await fetch(url(`/${id}/jobs/${jobId}/note`), {
+    method: "POST",
+    headers: JSON_HEADERS,
+    body: JSON.stringify({ text, actor: "human" }),
+  })
+  const body = await handleResponse<{ event: CabinJobEvent }>(res)
+  return body.event
+}
+
+export async function resumeCabinJob(id: string, jobId: string): Promise<CabinJobEvent> {
+  const res = await fetch(url(`/${id}/jobs/${jobId}/resume`), { method: "POST" })
+  const body = await handleResponse<{ event: CabinJobEvent }>(res)
+  return body.event
+}
+
+// ============ Changes / pull (P3) ============
+
+export interface CabinChangesSummary {
+  totals: { commits: number; additions: number; dels: number; files: number }
+  repos: Array<{ name: string; tasks: number; commits: number }>
+  tasks: Array<{
+    id: string; name: string; status: string
+    commits: number; additions: number; dels: number; files: number; available: boolean
+  }>
+}
+
+export async function getCabinChanges(id: string): Promise<CabinChangesSummary> {
+  const res = await fetch(url(`/${id}/changes`))
+  return handleResponse<CabinChangesSummary>(res)
+}
+
+export async function pullCabinRepo(id: string, name: string): Promise<{ branch: string; commit: string }> {
+  const res = await fetch(url(`/${id}/repos/${encodeURIComponent(name)}/pull`), { method: "POST" })
+  return handleResponse<{ branch: string; commit: string }>(res)
+}
+
+// ============ Focus (C8) ============
+
+export async function setCabinFocus(id: string, version: number, jobId: string | null): Promise<CabinDetail> {
+  const res = await fetch(url(`/${id}/focus`), {
+    method: "POST",
+    headers: JSON_HEADERS,
+    body: JSON.stringify({ version, job_id: jobId }),
+  })
+  const body = await handleResponse<{ cabin: CabinDetail }>(res)
+  return body.cabin
+}
+
+export async function clearCabinFocus(id: string, version: number): Promise<CabinDetail> {
+  const res = await fetch(url(`/${id}/focus?version=${version}`), { method: "DELETE" })
+  const body = await handleResponse<{ cabin: CabinDetail }>(res)
+  return body.cabin
+}
+
+// ============ SSE ============
+
+/** Shared SSE endpoint for the cabin channel (`cabin:<id>`): cabin_status /
+ *  cabin_init_progress / heartbeat. Consume via subscribeSSE (sse-manager). */
+export function cabinEventsUrl(id: string): string {
+  return url(`/${id}/events`)
+}

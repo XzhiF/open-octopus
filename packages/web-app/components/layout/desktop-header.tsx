@@ -1,5 +1,6 @@
 'use client'
 
+import type { ReactNode } from 'react'
 import { Code2, CircleHelp, Columns2, LayoutGrid, StickyNote } from 'lucide-react'
 import { APP_CATALOG, isAppId } from '@/lib/app-catalog'
 import { useDesktopWindows, windowTitle } from '@/lib/desktop-windows'
@@ -10,7 +11,7 @@ import { QuickNotes } from './quick-notes'
 import { RunningAgents } from './running-agents'
 
 /** Single global header: logo menu | open windows | … | running agents | Mission Control. */
-export function DesktopHeader() {
+export function DesktopHeader({ extraStrip }: { extraStrip?: ReactNode }) {
   const {
     state,
     breakpoint,
@@ -75,9 +76,10 @@ export function DesktopHeader() {
             </button>
           )
         })}
-        {state.order.length === 0 && (
+        {state.order.length === 0 && !extraStrip && (
           <span className="px-2 font-mono text-[10px] text-pop-dim">桌面</span>
         )}
+        {extraStrip}
       </div>
 
       <RunningAgents />

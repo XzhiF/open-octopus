@@ -28,7 +28,9 @@ CREATE TABLE IF NOT EXISTS workspaces (
   -- old `source_schedule_id → schedules.origin_id` reverse lookup.
   -- No FK (S2 polymorphic convention).
   task_id TEXT,
-  archive_status TEXT DEFAULT NULL
+  archive_status TEXT DEFAULT NULL,
+  -- Cabin (S2 no FK): directory-bound long-lived cockpit ownership.
+  cabin_id TEXT
 );
 
 -- 2. Executions
@@ -620,6 +622,8 @@ CREATE TABLE IF NOT EXISTS sessions (
   provider_session_id TEXT,
   cwd TEXT,
   workspace_id TEXT,
+  -- Cabin (S2 no FK): cabin main/orchestrator or task author/doer session.
+  cabin_id TEXT,
   -- Last provider-reported context usage (JSON, SDK context_usage payload).
   -- Turn-granular; persisted so the composer ctx chip paints on a cold load.
   context_usage TEXT,
@@ -696,6 +700,9 @@ CREATE TABLE IF NOT EXISTS tasks (
   -- 历史已归档 task 无摘要 = NULL（宽容读、搜索不崩）。走 ensureColumn 补列（既有库），
   -- 新库由本 CREATE 直接带上。
   semantic_summary TEXT,
+  -- Cabin (S2 no FK): cockpit ownership + iteration membership (single writer = task).
+  cabin_id TEXT,
+  iteration_id TEXT,
   FOREIGN KEY (source_chat_session_id) REFERENCES sessions(id)
 );
 
@@ -1360,3 +1367,70 @@ CREATE TABLE IF NOT EXISTS subagent_runs (
 
 CREATE INDEX IF NOT EXISTS idx_subagent_runs_session
   ON subagent_runs(session_id, started_at DESC);
+
+-- ── Cabin (directory-bound long-lived cockpit) ──
+-- S2 convention: cross-domain links carry NO foreign key; app-level cascade.
+CREATE TABLE IF NOT EXISTS cabins (
+  id TEXT PRIMARY KEY,
+  name TEXT NOT NULL,
+  path TEXT NOT NULL,
+  workspace_id TEXT,
+  main_session_id TEXT,
+  requirements TEXT NOT NULL DEFAULT '',
+  status TEXT NOT NULL DEFAULT 'draft'
+    CHECK (status IN ('draft','initializing','active','dormant','archived')),
+  mainline_strategy TEXT NOT NULL DEFAULT 'clean-main',
+  org TEXT,
+  init_state TEXT,
+  cockpit_prefs TEXT,
+  focused_job_id TEXT,
+  version INTEGER NOT NULL DEFAULT 1,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  last_active_at TEXT,
+  archived_at TEXT
+);
+CREATE UNIQUE INDEX IF NOT EXISTS ux_cabins_path ON cabins(path);
+CREATE INDEX IF NOT EXISTS idx_cabins_status ON cabins(status);
+
+CREATE TABLE IF NOT EXISTS cabin_iterations (
+  id TEXT PRIMARY KEY,
+  cabin_id TEXT NOT NULL,
+  code TEXT NOT NULL,
+  name TEXT NOT NULL,
+  sort_order INTEGER NOT NULL DEFAULT 0,
+  status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending','active','done')),
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_cabin_iterations_cabin ON cabin_iterations(cabin_id, sort_order);
+
+CREATE TABLE IF NOT EXISTS cabin_jobs (
+  id TEXT PRIMARY KEY,
+  cabin_id TEXT NOT NULL,
+  kind TEXT NOT NULL CHECK (kind IN ('task','workflow','subagent')),
+  ref_id TEXT,
+  session_id TEXT,
+  iteration_id TEXT,
+  title TEXT NOT NULL,
+  mandate TEXT,
+  prompt TEXT,
+  priority INTEGER NOT NULL DEFAULT 0,
+  created_at TEXT NOT NULL,
+  ended_at TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_cabin_jobs_cabin ON cabin_jobs(cabin_id, priority DESC, created_at);
+
+CREATE TABLE IF NOT EXISTS cabin_job_events (
+  id TEXT PRIMARY KEY,
+  job_id TEXT NOT NULL,
+  cabin_id TEXT NOT NULL,
+  kind TEXT NOT NULL,
+  actor TEXT,
+  payload TEXT,
+  created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_cabin_job_events_job ON cabin_job_events(job_id, created_at);
+CREATE TRIGGER IF NOT EXISTS trg_cabin_job_events_no_update
+BEFORE UPDATE ON cabin_job_events BEGIN SELECT RAISE(ABORT, 'cabin_job_events is append-only'); END;
+-- DELETE is reserved for cabin cascade cleanup (app-level, S2); no app path deletes events otherwise.

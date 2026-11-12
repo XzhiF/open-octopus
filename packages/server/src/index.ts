@@ -15,7 +15,7 @@ import {
   ScheduleRunDAO, ChatDAO, OrgDAO, AgentSessionDAO, EvolutionDAO,
   CloneDAO, SafetyDAO,
   KnowledgeEffectivenessDAO, ArchiveDAO,
-  TaskDAO, WikiArticleDAO, TodayDAO,
+  TaskDAO, WikiArticleDAO, TodayDAO, CabinDAO, AcceptanceDAO,
 } from "./db/dao"
 import { ArchiveDraftDAO } from "./db/dao/archive-draft-dao"
 import { InteractionMessageDAO } from "./db/dao/interaction-message-dao"
@@ -101,6 +101,7 @@ import { eventRoutes } from "./routes/events"
 import scheduleRoutes, { setScheduleService } from "./routes/schedule"
 import { createSchedulerRoutes } from "./routes/scheduler"
 import { createTasksRoutes, createSessionUsageRoutes } from "./routes/tasks"
+import { createCabinRoutes } from "./routes/cabins"
 import { createTaskWorkflowDevRoutes } from "./routes/task-workflow-dev"
 import { initWorkflowDevService } from "./services/tasks/workflow-dev-service"
 import { TASK_STATUS_EVENT } from "@octopus/shared"
@@ -133,11 +134,15 @@ import { registerProvider, ClaudeSDKProvider, PiAgentProvider } from "@octopus/p
 import { isPortInUse, findPidOnPort, killPid, waitForPort } from "./port-utils"
 import { globalErrorTracker, setupDataRetention } from "./services/error-tracker"
 import { initExecutionServiceRegistry, getExecutionService } from "./services/execution-service-registry"
-import { initChatEventBridge } from "./services/activity/chat-event-bridge"
+import { initChatEventBridge, getChatEventBridge } from "./services/activity/chat-event-bridge"
 import { WorkspaceScheduleService } from "./services/schedule"
 import { SchedulerService } from "./services/scheduler/scheduler-service"
 import { SchedulerEngine } from "./services/scheduler/scheduler-engine"
 import { TasksService, type TaskArchiveFinding } from "./services/tasks/tasks-service"
+import { CabinService } from "./services/cabin/cabin-service"
+import { CabinInitService } from "./services/cabin/cabin-init-service"
+import { CabinCommService } from "./services/cabin/cabin-comm-service"
+import { setCabinToolsProvider } from "./services/chat/cabin-tools"
 import { TaskHomeService, setTaskHomeResolver } from "./services/tasks/task-home-service"
 import { PluginMaterializer } from "./services/tasks/plugin-materializer"
 import { WorkflowPresetsService } from "./services/workflow-presets-service"
@@ -211,6 +216,8 @@ interface AllDAOs {
   task: TaskDAO
   /** 「今日」页只读聚合（当天窗口，无写入）。 */
   today: TodayDAO
+  /** Cabin：目录级长期座舱（四表 + 链接列回填）。 */
+  cabin: CabinDAO
 }
 
 function createAllDAOs(db: ReturnType<typeof initDb>): AllDAOs {
@@ -235,6 +242,7 @@ function createAllDAOs(db: ReturnType<typeof initDb>): AllDAOs {
     harness: new HarnessDAO(db),
     task: new TaskDAO(db),
     today: new TodayDAO(db),
+    cabin: new CabinDAO(db),
   }
 }
 
@@ -1457,6 +1465,35 @@ if (shouldServe) {
       app.route('/api/workflow-presets', createWorkflowPresetsRoutes(() => workflowPresetsService))
       app.route('/api/skill-groups', createSkillGroupsRoutes(resourceRegistry.get()))
       ;(global as any).__octopus_tasks_service = tasksService
+
+      // Cabin P1：目录绑定的长期座舱 —— 组合现有 workspace/session/task 基建。
+      // AcceptanceDAO 不入 AllDAOs（同 TasksService 先例，就地构造）。
+      const cabinService = new CabinService(daos!.cabin)
+      const cabinInitService = new CabinInitService({ cabin: daos!.cabin, sse })
+      cabinService.bindInfra({
+        workspaceService: workspaceService!,
+        workspaceDAO: daos!.workspace,
+        agentSessionDAO: daos!.agentSession,
+        taskDAO: daos!.task,
+        executionDAO: daos!.execution,
+        acceptanceDAO: new AcceptanceDAO(db),
+        tasksService,
+        repoSync: repoSyncService,
+        initService: cabinInitService,
+        roundEvidence,
+      })
+      // Cabin P3（C6/C9）：通信语义层 + G2 入站审计 hook + 舱主会话工具集。
+      const cabinComm = new CabinCommService({
+        cabin: daos!.cabin,
+        taskDAO: daos!.task,
+        agentSessionDAO: daos!.agentSession,
+        tasksService,
+      })
+      getChatEventBridge().setCabinSignalHook((taskId, status, summary) => {
+        cabinComm.recordTaskSignal(taskId, status, summary)
+      })
+      setCabinToolsProvider(() => ({ service: cabinService, comm: cabinComm }))
+      app.route('/api/cabins', createCabinRoutes(cabinService, cabinInitService, sse, cabinComm))
 
       // ★ Initialize Scheduler Engine with executors
       if (getFlag('scheduler')) {

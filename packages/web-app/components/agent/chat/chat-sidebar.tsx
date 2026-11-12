@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import {
   ChevronDown,
+  Container,
   ListTodo,
   MessageSquare,
   MoreHorizontal,
@@ -17,6 +18,8 @@ import {
 } from 'lucide-react'
 import type { AgentSession } from '@/lib/agent/types'
 import type { TaskView } from '@/lib/tasks-api'
+import type { CabinDetail } from '@/lib/cabin-api'
+import { CABIN_STATUS_META } from '@/components/cabin/cabin-meta'
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -66,6 +69,12 @@ interface ChatSidebarProps {
   onOpenTaskInOther?: (task: TaskView) => void
   /** hover 入口的文案，例如「在右栏打开」（由焦点栏决定）。 */
   openInOtherLabel?: string
+  /** 工作舱段（Cabin P2，原型 sidebar 三段：工作舱·任务·会话）。缺省 = 桌面
+   *  原样两段，不渲染舱段也不渲染新建舱菜单项。 */
+  cabins?: CabinDetail[]
+  activeCabinId?: string | null
+  onSelectCabin?: (id: string) => void
+  onCreateCabin?: () => void
 }
 
 const ROW =
@@ -234,6 +243,10 @@ export function ChatSidebar({
   onOpenSessionInOther,
   onOpenTaskInOther,
   openInOtherLabel,
+  cabins,
+  activeCabinId,
+  onSelectCabin,
+  onCreateCabin,
 }: ChatSidebarProps) {
   const [editingId, setEditingId] = useState<string | null>(null)
   const [editTitle, setEditTitle] = useState('')
@@ -274,6 +287,10 @@ export function ChatSidebar({
   const filteredSessions = needle
     ? visibleSessions.filter((session) => session.title.toLowerCase().includes(needle))
     : visibleSessions
+  const filteredCabins = useMemo(() => {
+    if (!cabins) return []
+    return needle ? cabins.filter((c) => c.name.toLowerCase().includes(needle)) : cabins
+  }, [cabins, needle])
 
   const confirmRename = async () => {
     if (editingId && editTitle.trim()) {
@@ -309,6 +326,19 @@ export function ChatSidebar({
                 <span className="text-[10.5px] text-pop-dim">与主 Agent 对话</span>
               </span>
             </DropdownMenuItem>
+            {onCreateCabin && (
+              <DropdownMenuItem
+                onClick={onCreateCabin}
+                data-testid="sidebar-new-cabin"
+                className="gap-2.5 bg-pop-yellow/10 py-2 focus:bg-pop-yellow/15"
+              >
+                <Container className="size-3.5 shrink-0 text-pop-yellow" strokeWidth={1.8} />
+                <span className="flex flex-col">
+                  <span className="text-[12.5px] font-semibold text-pop-yellow">新建工作舱</span>
+                  <span className="text-[10.5px] text-pop-dim">目录级长期开发 · agent 在对话里初始化</span>
+                </span>
+              </DropdownMenuItem>
+            )}
             <DropdownMenuItem onClick={onCreateTask} className="gap-2.5 py-2">
               <ListTodo className="size-3.5 shrink-0 text-pop-dim" strokeWidth={1.8} />
               <span className="flex flex-col">
@@ -395,6 +425,43 @@ export function ChatSidebar({
 
       <ScrollArea className="min-h-0 flex-1 [&_[data-slot=scroll-area-viewport]>div]:block!">
         <div className="px-2.5 pb-4">
+          {cabins && (
+            <div data-testid="cabin-section">
+              <SectionLabel label="工作舱" count={filteredCabins.length} />
+              {filteredCabins.length === 0 ? (
+                <p className="px-2 py-1 text-[12px] text-pop-dim/60">
+                  {needle ? '未找到匹配工作舱' : '暂无工作舱'}
+                </p>
+              ) : (
+                <div className="space-y-px">
+                  {filteredCabins.map((c) => {
+                    const meta = CABIN_STATUS_META[c.status]
+                    const active = activeCabinId === c.id
+                    return (
+                      <button
+                        key={c.id}
+                        type="button"
+                        data-cabin-row={c.id}
+                        aria-current={active ? 'page' : undefined}
+                        title={`${c.name} · ${meta.label}`}
+                        onClick={() => onSelectCabin?.(c.id)}
+                        className={cn(
+                          ROW,
+                          'gap-2',
+                          active ? 'bg-white/[0.07] text-pop-ink' : 'text-pop-dim hover:bg-white/[0.04] hover:text-pop-ink',
+                        )}
+                      >
+                        <Container className="size-[13px] shrink-0 text-pop-yellow/80" strokeWidth={1.9} />
+                        <span className={cn('size-1.5 shrink-0 rounded-full', meta.dot)} aria-hidden />
+                        <span className="min-w-0 flex-1 truncate">{c.name}</span>
+                        <span className="shrink-0 text-[9.5px] text-pop-dim/70">{meta.label}</span>
+                      </button>
+                    )
+                  })}
+                </div>
+              )}
+            </div>
+          )}
           <div data-testid="task-session-section">
             <SectionLabel
               label="任务"

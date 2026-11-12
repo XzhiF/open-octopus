@@ -72,6 +72,15 @@ const TASK_TOOL_NAMES = [
 
 const MEMORY_TOOL_NAMES = ["record_daily", "remember"] as const
 
+const CABIN_TOOL_NAMES = [
+  "cabin_list_tasks",
+  "cabin_dispatch_task",
+  "cabin_list_jobs",
+  "cabin_job_trace",
+  "cabin_note_job",
+  "cabin_resume_job",
+] as const
+
 export function buildMcpCatalog(): McpServerMeta[] {
   return [
     {
@@ -95,7 +104,23 @@ export function buildMcpCatalog(): McpServerMeta[] {
       when: "自由主对话挂载（任务线程除外）",
       tools: MEMORY_TOOL_NAMES.map((name) => ({ name, description: MEMORY_TOOL_DESC[name] })),
     },
+    {
+      server: "octopus-cabin",
+      label: "舱调度",
+      description: "工作舱主对话的调度工具集：列舱内任务/作业、派发真实任务、读审计 trace、备注/恢复作业。只调度不执行。",
+      when: "会话绑定工作舱（cabin_id）且非任务线程时挂载",
+      tools: CABIN_TOOL_NAMES.map((name) => ({ name, description: CABIN_TOOL_DESC[name] })),
+    },
   ]
+}
+
+const CABIN_TOOL_DESC: Record<string, string> = {
+  cabin_list_tasks: "列出本舱全部任务（派生状态/迭代/会话），监督读。",
+  cabin_dispatch_task: "派发真实 Octopus 任务进舱（建任务+作者线程+授权 wake），执行在独立 worktree；explicit 自决/inferred 需人确认。",
+  cabin_list_jobs: "统一作业账本（task/workflow/subagent）+ 派生 status + 优先级。",
+  cabin_job_trace: "读某作业的 append-only 审计时间线。",
+  cabin_note_job: "给 doer 发不授权备注（subagent 只留痕）。",
+  cabin_resume_job: "恢复作业（ready 触发 / paused 恢复）。",
 }
 
 const MEMORY_TOOL_DESC: Record<string, string> = {

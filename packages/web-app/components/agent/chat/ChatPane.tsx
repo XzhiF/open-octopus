@@ -30,7 +30,7 @@ import { TaskModulesLayer } from '@/components/chat-workbench/task-modules-layer
 import { TriggerDialog } from '@/components/tasks/trigger-dialog'
 import type { RunTarget, SubagentTarget, TaskModule, TaskWindowMap, YamlTarget } from '@/components/chat-workbench/task-window-types'
 import { TaskProjectChip } from '@/components/chat-workbench/task-project-chip'
-import { WorkspaceExplorerDock } from '@/components/workspace/workspace-explorer-dock'
+import { WorkspaceExplorerDock, type CabinDockModule } from '@/components/workspace/workspace-explorer-dock'
 import { useActivitySnapshot } from '@/components/chat-workbench/inspector-activity'
 import { WorkflowWindow } from '@/components/chat-workbench/workflow-window'
 import { WorkflowYamlWindow } from '@/components/chat-workbench/workflow-yaml-window'
@@ -141,6 +141,12 @@ export interface ChatPaneProps {
   onExitSplit: () => void
   onSwapPanes: () => void
   canSwap: boolean
+  /** 舱壳注入的 dock 舱模块段（Cabin P2）；桌面缺省不传。 */
+  dockCabinModules?: CabinDockModule[]
+  dockCabinMoreModules?: CabinDockModule[]
+  /** 舱壳注入（Cabin P3）：舱内新建任务绑 cabin_id + 复用舱 workspace。 */
+  cabinId?: string | null
+  cabinWorkspaceId?: string | null
 }
 
 /** 决策卡上「选择即写回卡片」的按钮 id。其余按钮（打开规格/运行窗…）只是导航，
@@ -174,6 +180,10 @@ export function ChatPane({
   onExitSplit,
   onSwapPanes,
   canSwap,
+  dockCabinModules,
+  dockCabinMoreModules,
+  cabinId,
+  cabinWorkspaceId,
 }: ChatPaneProps) {
   const {
     sessions, sessionsLoading, createNewSession, updateSessionTitle,
@@ -590,8 +600,9 @@ export function ChatPane({
           source_chat_session_id: sid,
           task_spec: { format: 'v4', ...(session.kind ? { kind: session.kind } : {}) },
           project_ids: session.projectIds,
+          ...(cabinId ? { cabin_id: cabinId } : {}),
           ...(taskCwd.kind === 'default'
-            ? {}
+            ? (cabinWorkspaceId ? { workspace_id: cabinWorkspaceId } : {})
             : { workspace_id: taskCwd.workspaceId, cwd: taskCwd.path }),
         })
         // The org this task landed in is the user's working org — reuse it for
@@ -618,6 +629,7 @@ export function ChatPane({
   }, [
     pendingTaskSession, creatingTask, sessionId, setSessionId, sendMessage, createNewSession,
     model, effort, maxContext, refreshChatTasks, refreshSessions, mainCwd, taskCwd, setActiveTask, setPendingTaskSession,
+    cabinId, cabinWorkspaceId,
   ])
 
   const handleSelectSession = useCallback((id: string) => {
@@ -1502,6 +1514,8 @@ export function ChatPane({
         workspaceName={explorerWorkspaceName}
         task={activeTask}
         taskProject={dockProject}
+        cabinModules={dockCabinModules}
+        cabinMoreModules={dockCabinMoreModules}
         taskWindows={activeTask ? (taskWindows[activeTask.id] ?? {}) : {}}
         usageWindow={activeTask ? (taskWindows[activeTask.id]?.usage ?? null) : (sessionUsageWindows.usage ?? null)}
         onOpenUsage={() => setTaskModuleRequest({ module: 'usage', nonce: Date.now() })}

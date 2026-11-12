@@ -13,7 +13,7 @@ export type ViewId =
   | 'system'
   | 'settings'
 
-export type RouteKind = 'view' | 'detail' | 'redirect' | 'standalone' | 'not-found'
+export type RouteKind = 'view' | 'detail' | 'redirect' | 'standalone' | 'cabin' | 'not-found'
 export type RouteParams = Record<string, string>
 
 export interface ViewRoute {
@@ -51,6 +51,16 @@ export interface StandaloneRoute {
   title: string
 }
 
+/** 工作舱兄弟壳：/cabin/:cabinId 渲染 CabinShell（不是桌面浮窗）。
+ *  cabinId='new' 是新建向导（S1），其余是已存在的舱。 */
+export interface CabinRoute {
+  kind: 'cabin'
+  id: 'cabin'
+  path: '/cabin/:cabinId'
+  componentKey: 'cabin-shell'
+  title: (params: RouteParams) => string
+}
+
 export interface NotFoundRoute {
   kind: 'not-found'
   id: 'not-found'
@@ -58,7 +68,7 @@ export interface NotFoundRoute {
   title: string
 }
 
-export type AppRoute = ViewRoute | DetailRoute | RedirectRoute | StandaloneRoute | NotFoundRoute
+export type AppRoute = ViewRoute | DetailRoute | RedirectRoute | StandaloneRoute | CabinRoute | NotFoundRoute
 
 export interface RouteMatch {
   route: AppRoute
@@ -126,10 +136,21 @@ const STANDALONE_ROUTES: StandaloneRoute[] = [
   { kind: 'standalone', id: 'dev-swarm', path: '/dev/swarm-test', componentKey: 'dev-swarm', title: 'Swarm Test' },
 ]
 
-/** 顺序即优先级：redirect → 长详情 → 短详情 → 视图 → standalone。 */
+const CABIN_ROUTES: CabinRoute[] = [
+  {
+    kind: 'cabin',
+    id: 'cabin',
+    path: '/cabin/:cabinId',
+    componentKey: 'cabin-shell',
+    title: (params) => (params.cabinId === 'new' ? '新建工作舱' : `工作舱 · ${shortId(params.cabinId)}`),
+  },
+]
+
+/** 顺序即优先级：redirect → 长详情 → 短详情 → 舱壳 → 视图 → standalone。 */
 const ROUTES: AppRoute[] = [
   ...REDIRECT_ROUTES,
   ...DETAIL_ROUTES,
+  ...CABIN_ROUTES,
   ...VIEW_ROUTES,
   ...STANDALONE_ROUTES,
 ]
@@ -174,6 +195,7 @@ export function viewIdFromPath(pathname: string): ViewId | null {
 
 export function titleForRoute(route: AppRoute, params: RouteParams): string {
   if (route.kind === 'detail') return route.title(params)
+  if (route.kind === 'cabin') return route.title(params)
   if (route.kind === 'redirect') return '跳转中'
   return route.title
 }

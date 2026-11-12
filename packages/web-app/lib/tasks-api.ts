@@ -193,6 +193,9 @@ export interface CreateTaskInput {
   skills?: string[]
   resources?: ResourceRef[]
   authoring_resources?: ResourceRef[]
+  /** Cabin P3（C2）：舱内新建任务绑定归属舱 + 迭代。 */
+  cabin_id?: string | null
+  iteration_id?: string | null
 }
 
 export interface UpdateTaskInput {
@@ -216,6 +219,8 @@ export interface ListTasksParams {
   /** 票06 (语义摘要进任务板): 服务端关键字搜索 —— 对 name ∨ semantic_summary LIKE 过滤。
    *  空/纯空白由服务端视为不过滤（回归保护）。 */
   q?: string
+  /** Cabin P3（S6）：舱内任务看板。 */
+  cabin_id?: string
 }
 
 // ── v3: client-side spec-field + ready-gate types (ticket 09) ──────────
@@ -273,7 +278,7 @@ function buildUrl(path: string, params?: Record<string, string | undefined>): st
  *  row carrying the 票03 trigger columns + its current instance (`execution`), which
  *  is what the 「已排队」 badge and the 上一轮 status now read. */
 export async function listTasks(params?: ListTasksParams): Promise<{ items: TaskView[] }> {
-  const res = await fetch(buildUrl("", { status: params?.status, repo_group: params?.repo_group, q: params?.q }))
+  const res = await fetch(buildUrl("", { status: params?.status, repo_group: params?.repo_group, q: params?.q, cabin_id: params?.cabin_id }))
   return handleResponse<{ items: TaskView[] }>(res)
 }
 

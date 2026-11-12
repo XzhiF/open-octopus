@@ -38,6 +38,12 @@ describe("mcp-catalog ↔ tools 源码 集合一致", () => {
     )
   })
 
+  it("octopus-cabin 工具集合 = cabin-tools.ts", () => {
+    expect([...(byServer.get("octopus-cabin") ?? [])].sort()).toEqual(
+      [...toolNamesIn("cabin-tools.ts")].sort(),
+    )
+  })
+
   it("每个工具都配了非空描述", () => {
     for (const server of catalog) {
       for (const t of server.tools) {

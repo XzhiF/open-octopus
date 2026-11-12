@@ -15,6 +15,7 @@ import {
   FileText,
   FolderTree,
   GitCompare,
+  LayoutGrid,
   Package,
   Pause,
   Pencil,
@@ -57,11 +58,28 @@ import { SubagentListPane } from '@/components/chat-workbench/subagent-list-pane
 import { cn } from '@/lib/utils'
 import { useDockLabelsVisible } from '@/hooks/use-dock-labels'
 
+/** 舱 dock 入口（原型 dock-btn）：id/label/icon + 开合态 + 点击开窗。 */
+export interface CabinDockModule {
+  id: string
+  label: string
+  icon: LucideIcon
+  active?: boolean
+  attention?: boolean
+  badge?: number
+  badgeTone?: 'amber' | 'green' | 'purple' | 'cyan'
+  marker?: 'open' | 'minimized'
+  onClick: () => void
+}
+
 export interface WorkspaceExplorerDockProps {
   workspaceId: string | null
   workspaceName?: string
   task?: TaskView | null
   taskWindows?: TaskWindowMap
+  /** 舱模块段（Cabin P2，原型 DOCK_MOD）：常驻 RES 之后的一组入口 + 「更多模块」
+   *  溢出 grid。缺省 = 桌面原样，不渲染舱段。 */
+  cabinModules?: CabinDockModule[]
+  cabinMoreModules?: CabinDockModule[]
   /** 常驻「消耗」按钮的窗口状态（任务账本或会话账本，同一扇窗）。 */
   usageWindow?: TaskWindowRecord | null
   onOpenUsage?: () => void
@@ -198,6 +216,8 @@ export function WorkspaceExplorerDock({
   workspaceName,
   task,
   taskWindows,
+  cabinModules,
+  cabinMoreModules,
   usageWindow,
   onOpenUsage,
   debugWindow,
@@ -312,6 +332,7 @@ export function WorkspaceExplorerDock({
   // 图标下方的常驻文字（设置 → 外观 可隐藏）。分屏时每栏较窄，强制图标态。
   const showLabels = useDockLabelsVisible() && !compact
   const dockWidth = showLabels ? DOCK_WIDTH_LABEL : DOCK_WIDTH_ICON
+  const [cabinMoreOpen, setCabinMoreOpen] = useState(false)
   const [viewportWidth, setViewportWidth] = useState(() =>
     typeof window === 'undefined' ? 1440 : window.innerWidth,
   )
@@ -846,7 +867,9 @@ export function WorkspaceExplorerDock({
         ref={dockRef}
         data-testid="workspace-explorer-dock"
         className={cn(
-          'absolute right-3 top-14 z-30 hidden flex-col items-center gap-1 rounded-2xl border border-white/[0.10] bg-pop-paper/80 p-1.5 shadow-pop-lg backdrop-blur-xl lg:flex',
+          // 舱模式：dock 是模块导航，须压在舱浮窗层（z-40）之上（原型 dock z-65 > win-layer z-60）。
+          'absolute right-3 top-14 hidden flex-col items-center gap-1 rounded-2xl border border-white/[0.10] bg-pop-paper/80 p-1.5 shadow-pop-lg backdrop-blur-xl lg:flex',
+          cabinModules && cabinModules.length > 0 ? 'z-[65]' : 'z-30',
           className,
         )}
       >
@@ -908,6 +931,84 @@ export function WorkspaceExplorerDock({
           testId: 'dock-usage',
           marker: usageMinimized ? 'minimized' : usageOpen ? 'open' : undefined,
         })}
+
+        {cabinModules && cabinModules.length > 0 && (
+          <>
+            <div className="my-0.5 h-px w-6 bg-white/[0.12]" />
+            {cabinModules.map((m) => dockButton(`cabin:${m.id}`, m.label, m.icon, {
+              active: m.active,
+              attention: m.attention,
+              badge: m.badge,
+              badgeTone: m.badgeTone,
+              marker: m.marker,
+              onClick: m.onClick,
+              testId: `dock-cabin-${m.id}`,
+            }))}
+            {cabinMoreModules && cabinMoreModules.length > 0 && (
+              <div className="relative">
+                <button
+                  type="button"
+                  data-testid="dock-cabin-more"
+                  aria-label="更多模块"
+                  title="更多模块"
+                  aria-expanded={cabinMoreOpen}
+                  onClick={() => setCabinMoreOpen((v) => !v)}
+                  className={cn(
+                    'relative flex shrink-0 flex-col items-center justify-center rounded-[11px] transition-all duration-150',
+                    showLabels ? 'w-11 gap-[3px] px-0.5 py-1' : 'size-9 hover:scale-105',
+                    cabinMoreOpen ? 'bg-white/[0.12] text-pop-ink' : 'text-pop-dim hover:bg-white/[0.07] hover:text-pop-ink',
+                  )}
+                >
+                  <LayoutGrid className={showLabels ? 'size-[17px]' : 'size-[18px]'} strokeWidth={1.8} />
+                  {showLabels && (
+                    <span className="max-w-full truncate text-[9px] font-medium leading-none tracking-tight">更多</span>
+                  )}
+                </button>
+                {cabinMoreOpen && (
+                  <div
+                    data-testid="dock-cabin-more-grid"
+                    className="absolute right-full top-0 z-50 mr-2 grid w-60 grid-cols-3 gap-1 rounded-2xl border border-white/[0.10] bg-pop-paper/95 p-2 shadow-pop-lg backdrop-blur-xl"
+                  >
+                    {cabinMoreModules.map((m) => (
+                      <button
+                        key={m.id}
+                        type="button"
+                        data-testid={`dock-cabin-${m.id}`}
+                        aria-label={m.label}
+                        title={m.label}
+                        onClick={() => { setCabinMoreOpen(false); m.onClick() }}
+                        className={cn(
+                          'relative flex h-[52px] flex-col items-center justify-center gap-1 rounded-[10px] transition-colors',
+                          m.active ? 'bg-white/[0.12] text-pop-ink' : 'text-pop-dim hover:bg-white/[0.07] hover:text-pop-ink',
+                        )}
+                      >
+                        {!!m.badge && m.badge > 0 && (
+                          <span className={cn(
+                            'absolute right-1 top-1 grid min-w-3.5 place-items-center rounded-full px-0.5 font-mono text-[8px] font-bold text-pop-bg',
+                            m.badgeTone === 'amber' ? 'bg-pop-amber'
+                              : m.badgeTone === 'green' ? 'bg-pop-green'
+                                : m.badgeTone === 'purple' ? 'bg-pop-purple'
+                                  : 'bg-pop-cyan',
+                          )}>
+                            {m.badge}
+                          </span>
+                        )}
+                        <m.icon className="size-[15px]" strokeWidth={1.8} />
+                        <span className="text-[8.5px] font-medium leading-none">{m.label}</span>
+                        {m.marker && (
+                          <span className={cn(
+                            'absolute bottom-1 right-1.5 size-1 rounded-full',
+                            m.marker === 'minimized' ? 'bg-pop-amber' : 'bg-pop-green',
+                          )} />
+                        )}
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
+          </>
+        )}
 
         {task && <div className="my-0.5 h-px w-6 bg-white/[0.12]" />}
 
