@@ -240,29 +240,38 @@ export class TaskLifecycleService {
     let launched = 0
     for (const row of this.execDAO.listClaimableTaskLaunches(limit)) {
       if (this.runDAO.countActiveWork() >= MAX_PARALLEL_WORKSPACES) {
+        // C8 focus 抢占：舱聚焦作业可多用一个 slot（全局上限 MAX+1，防饥饿——
+        // 每舱至多一个 focused_job，额外 slot 只放行一条，其余作业照常排队）。
+        if (this.runDAO.countActiveWork() < MAX_PARALLEL_WORKSPACES + 1) {
+          const focused = this.execDAO.focusedClaimableTaskLaunch()
+          if (focused && this.claimAndStart(focused)) launched++
+        }
         return { launched, capped: true }
       }
-      // Guarded flip: two overlapping rounds can both see the same queued row, and only
-      // the one whose UPDATE lands gets to start it. Without this guard a wake() racing
-      // the 60s tick launches a task twice — the concurrency case the whole design is
-      // gated on. The token is the started_at this claim wrote; it goes to the engine's
-      // start so the launcher can prove WHICH claim it holds (see ExecutionLifecycle.start).
-      const leaseAt = new Date().toISOString()
-      if (this.execDAO.claimLaunch(row.id, leaseAt).changes === 0) continue
-      try {
-        this.startRow(row, leaseAt)
-        launched++
-      } catch (err: unknown) {
-        const message = err instanceof Error ? err.message : String(err)
-        console.error(`[task-lifecycle] launch failed for execution ${row.id}:`, message)
-        this.execDAO.setLaunchStatus(row.id, "failed", {
-          completedAt: new Date().toISOString(),
-          error: `领取后启动失败: ${message}`,
-        })
-        this.finishTaskOutcome(row.task_id as string, "failed")
-      }
+      if (this.claimAndStart(row)) launched++
     }
     return { launched, capped: false }
+  }
+
+  /** Guarded flip + start：两个重叠回合可能看到同一 queued 行，只有 UPDATE
+   *  落地的拿到启动权。token 是 claim 写入的 started_at，engine start 用它证明
+   *  持有的是哪一次 claim（见 ExecutionLifecycle.start）。 */
+  private claimAndStart(row: ExecutionRow): boolean {
+    const leaseAt = new Date().toISOString()
+    if (this.execDAO.claimLaunch(row.id, leaseAt).changes === 0) return false
+    try {
+      this.startRow(row, leaseAt)
+      return true
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : String(err)
+      console.error(`[task-lifecycle] launch failed for execution ${row.id}:`, message)
+      this.execDAO.setLaunchStatus(row.id, "failed", {
+        completedAt: new Date().toISOString(),
+        error: `领取后启动失败: ${message}`,
+      })
+      this.finishTaskOutcome(row.task_id as string, "failed")
+      return false
+    }
   }
 
   /**

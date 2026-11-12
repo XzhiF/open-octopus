@@ -3,16 +3,18 @@
 // S3 座舱 = 原型 wbOverview：wb-h（name · 座舱 + attention-first cap）+ 四 stat
 // （运行中/需要你/并行工作树/累计消耗）+ 舱生命周期条 + 「需要你」attention 列表
 // （服务端 deriveCabinView 已 person-first + priority 排序，K3 只渲染不重派生）
-// + 迭代线（进度派生自成员任务）。点 attention → 对话底座定位任务。
-// 累计消耗聚合留 P4（CabinService.usage），先显 — 不假装有数。
+// + 迭代线（进度派生自成员任务）。点 attention → 对话底座定位任务 / 知识窗。
+// 累计消耗 = C7 舱级聚合（chat+任务+子代理，grand 口径），10s 轮询。
 
 import { useEffect, useState } from 'react'
 import { Archive, ChevronRight, LayoutGrid, Loader2, Play, RefreshCw } from 'lucide-react'
 import { toast } from 'sonner'
 import type { CabinAttentionItem } from '@octopus/shared'
 import {
-  archiveCabin, initCabin, listCabinWorktrees, reopenCabin, wakeCabin,
+  archiveCabin, getCabinUsage, initCabin, listCabinWorktrees, reopenCabin, wakeCabin,
 } from '@/lib/cabin-api'
+import { formatCost } from '@/lib/format'
+import { useBillingCurrency } from '@/lib/billing-currency'
 import { cn } from '@/lib/utils'
 import { useCabinContext } from './cabin-provider'
 import {
@@ -26,9 +28,11 @@ const ITERATION_STATUS_LABEL: Record<string, string> = {
 }
 
 export function CabinOverview() {
-  const { cabinId, cabin, view, refresh } = useCabinContext()
+  const { cabinId, cabin, view, refresh, openModule } = useCabinContext()
+  const currency = useBillingCurrency()
   const [busy, setBusy] = useState<string | null>(null)
   const [worktreeStats, setWorktreeStats] = useState<{ trees: number; repos: number } | null>(null)
+  const [grandCost, setGrandCost] = useState<{ usd: number | null; complete: boolean } | null>(null)
 
   useEffect(() => {
     let alive = true
@@ -43,6 +47,18 @@ export function CabinOverview() {
       .catch(() => { if (alive) setWorktreeStats(null) })
     return () => { alive = false }
   }, [cabinId, cabin?.status])
+
+  useEffect(() => {
+    let alive = true
+    const load = () => {
+      getCabinUsage(cabinId)
+        .then((u) => { if (alive) setGrandCost(u.grand.totals.cost) })
+        .catch(() => { /* 保留旧值，不假装有数 */ })
+    }
+    load()
+    const timer = setInterval(load, 10_000)
+    return () => { alive = false; clearInterval(timer) }
+  }, [cabinId])
 
   if (!cabin || !view) return null
 
@@ -61,6 +77,10 @@ export function CabinOverview() {
   }
 
   const openAttention = (item: CabinAttentionItem) => {
+    if (item.deep_link?.startsWith('finding:')) {
+      openModule('knowledge')
+      return
+    }
     if (item.task_id) {
       window.dispatchEvent(new CustomEvent('octopus:open-task', {
         detail: { taskId: item.task_id, ...(item.stage === 'review' ? { view: 'acceptance' } : {}) },
@@ -119,8 +139,10 @@ export function CabinOverview() {
         </div>
         <div className="rounded-lg border-[1.5px] border-pop-bd bg-white/[0.02] px-2.5 py-2">
           <div className="mb-1 text-[10.5px] text-pop-dim">累计消耗</div>
-          <div className="text-[18px] font-black text-pop-ink" data-testid="cabin-stat-cost">—</div>
-          <div className="mt-0.5 text-[9.5px] text-pop-dim">chat+任务+子代理 · P4</div>
+          <div className="text-[18px] font-black text-pop-ink" data-testid="cabin-stat-cost">
+            {grandCost ? formatCost(grandCost.usd, grandCost.complete, currency) : '—'}
+          </div>
+          <div className="mt-0.5 text-[9.5px] text-pop-dim">chat+任务+子代理</div>
         </div>
       </div>
 

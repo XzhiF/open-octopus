@@ -41,6 +41,8 @@ export const CABIN_WIN_TITLE: Record<string, string> = {
   run: '运行',
   changes: '变更',
   acceptance: '验收',
+  knowledge: '知识',
+  usage: '消耗',
   archive: '归档',
   tuning: '舱面调校',
   gallery: '汐音立绘',
@@ -60,6 +62,8 @@ export const CABIN_MODULE_PHASE: Record<string, string> = {
   run: 'P3',
   changes: 'P3',
   acceptance: 'P3',
+  knowledge: 'P4',
+  usage: 'P4',
   archive: 'P5',
   tuning: 'P5',
   gallery: 'P5',
@@ -70,7 +74,7 @@ export const CABIN_DOCK_PRIMARY = ['overview', 'queue', 'tasks', 'missions', 'ru
 
 /** 原型 DOCK_MOD 去掉 primary 后的溢出序（「更多模块」grid）。 */
 export const CABIN_DOCK_OVERFLOW = [
-  'repos', 'worktree', 'iterations', 'jobs', 'trace', 'changes', 'acceptance', 'archive', 'tuning', 'gallery',
+  'repos', 'worktree', 'iterations', 'jobs', 'trace', 'changes', 'acceptance', 'knowledge', 'usage', 'archive', 'tuning', 'gallery',
 ] as const
 
 /** 原型 WIN_SIZE：浮窗默认尺寸 [w,h]（tmp/cabin-proto/index.html:1342）。 */
@@ -87,6 +91,8 @@ export const CABIN_WIN_SIZE: Record<string, [number, number]> = {
   run: [900, 640],
   changes: [820, 600],
   acceptance: [820, 640],
+  knowledge: [820, 640],
+  usage: [680, 560],
   archive: [820, 620],
   tuning: [560, 660],
   gallery: [780, 660],

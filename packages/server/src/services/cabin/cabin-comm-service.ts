@@ -7,6 +7,7 @@
 // 派生纪律 K3：不镜像任务状态，status 一律读底层实体。
 
 import { randomUUID } from "crypto"
+import type { CabinMandate } from "@octopus/shared"
 import type { CabinDAO } from "../../db/dao/cabin-dao"
 import type { TaskDAO, AgentSessionDAO } from "../../db/dao"
 import type { CabinJobRow, CabinJobEventRow, CabinJobKind, CabinJobEventKind } from "../../db/types"
@@ -63,7 +64,7 @@ export class CabinCommService {
     session_id?: string | null
     iteration_id?: string | null
     priority?: number
-    mandate?: { strength: "explicit" | "inferred"; scope?: string; basis?: string } | null
+    mandate?: CabinMandate | null
   }): CabinJobRow {
     const cabin = this.mustCabin(cabinId)
     let refId = input.ref_id ?? null

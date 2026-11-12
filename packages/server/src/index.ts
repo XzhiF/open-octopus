@@ -19,6 +19,8 @@ import {
 } from "./db/dao"
 import { ArchiveDraftDAO } from "./db/dao/archive-draft-dao"
 import { InteractionMessageDAO } from "./db/dao/interaction-message-dao"
+import { ExecutionLinkDAO } from "./db/dao/execution-link-dao"
+import { IncidentStore } from "./services/supervision/incident-store"
 import { AgentVersionDAO } from "./db/dao/agent-version-dao"
 import { HarnessDAO } from "./db/dao/harness-dao"
 import { createIngestRoutes } from "./routes/ingest"
@@ -1481,6 +1483,10 @@ if (shouldServe) {
         repoSync: repoSyncService,
         initService: cabinInitService,
         roundEvidence,
+        incidentStore: new IncidentStore(db),
+        findingOps: getFindingOps(),
+        tokenUsageDAO: daos!.tokenUsage,
+        execLinks: new ExecutionLinkDAO(db),
       })
       // Cabin P3（C6/C9）：通信语义层 + G2 入站审计 hook + 舱主会话工具集。
       const cabinComm = new CabinCommService({

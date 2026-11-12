@@ -268,14 +268,36 @@ export class ExecutionDAO extends BaseDAO {
     ).get(taskId) as ExecutionRow) ?? null
   }
 
-  /** The claim queue, FIFO, over a task's armed launches (partial index
-   *  idx_exec_pending_claimable). */
+  /** The claim queue over a task's armed launches. C8：舱聚焦作业最先，
+   *  其次 cabin_jobs.priority DESC，同级 FIFO（无舱作业 priority=0，行为同旧）。
+   *  LEFT JOIN 子查询取每任务最新作业的 MAX(priority)，避免多作业行翻倍。 */
   listClaimableTaskLaunches(limit: number): ExecutionRow[] {
     return this.stmt(
-      `SELECT * FROM executions
-       WHERE task_id IS NOT NULL AND status = 'pending'
-       ORDER BY created_at LIMIT ?`,
+      `SELECT e.* FROM executions e
+       LEFT JOIN (
+         SELECT ref_id, MAX(priority) AS priority FROM cabin_jobs
+         WHERE kind = 'task' AND ref_id IS NOT NULL GROUP BY ref_id
+       ) cj ON cj.ref_id = e.task_id
+       LEFT JOIN (
+         SELECT fj.ref_id AS ref_id FROM cabin_jobs fj
+         JOIN cabins c ON c.focused_job_id = fj.id
+         WHERE fj.kind = 'task' AND fj.ref_id IS NOT NULL
+       ) foc ON foc.ref_id = e.task_id
+       WHERE e.task_id IS NOT NULL AND e.status = 'pending'
+       ORDER BY (foc.ref_id IS NOT NULL) DESC, COALESCE(cj.priority, 0) DESC, e.created_at
+       LIMIT ?`,
     ).all(limit) as ExecutionRow[]
+  }
+
+  /** C8 focus 抢占：当前任一舱聚焦作业的 pending 发射（额外 slot 用，至多一条）。 */
+  focusedClaimableTaskLaunch(): ExecutionRow | null {
+    return (this.stmt(
+      `SELECT e.* FROM executions e
+       JOIN cabin_jobs fj ON fj.kind = 'task' AND fj.ref_id = e.task_id
+       JOIN cabins c ON c.focused_job_id = fj.id
+       WHERE e.task_id IS NOT NULL AND e.status = 'pending'
+       ORDER BY e.created_at LIMIT 1`,
+    ).get() as ExecutionRow | undefined) ?? null
   }
 
   /** Task rows stranded in a live status whose engine is no longer running in this

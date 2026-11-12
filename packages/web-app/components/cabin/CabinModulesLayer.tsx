@@ -20,6 +20,9 @@ import { CabinTrace } from './modules/CabinTrace'
 import { CabinRun } from './modules/CabinRun'
 import { CabinChanges } from './modules/CabinChanges'
 import { CabinAcceptance } from './modules/CabinAcceptance'
+import { CabinKnowledge } from './modules/CabinKnowledge'
+import { CabinUsage } from './modules/CabinUsage'
+import { CabinMissions } from './modules/CabinMissions'
 
 function ModuleBody({ id, onNewTask }: { id: string; onNewTask?: () => void }) {
   switch (id) {
@@ -34,6 +37,9 @@ function ModuleBody({ id, onNewTask }: { id: string; onNewTask?: () => void }) {
     case 'run': return <CabinRun />
     case 'changes': return <CabinChanges />
     case 'acceptance': return <CabinAcceptance />
+    case 'knowledge': return <CabinKnowledge />
+    case 'usage': return <CabinUsage />
+    case 'missions': return <CabinMissions />
     default:
       return (
         <div className="grid h-full min-h-40 place-items-center text-center" data-testid="cabin-module-placeholder">

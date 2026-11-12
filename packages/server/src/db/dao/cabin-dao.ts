@@ -89,6 +89,14 @@ export class CabinDAO extends BaseDAO {
     return this.stmt("SELECT * FROM cabin_iterations WHERE cabin_id = ? ORDER BY sort_order, created_at").all(cabinId) as CabinIterationRow[]
   }
 
+  findIteration(id: string): CabinIterationRow | undefined {
+    return this.stmt("SELECT * FROM cabin_iterations WHERE id = ?").get(id) as CabinIterationRow | undefined
+  }
+
+  deleteIteration(id: string): void {
+    this.stmt("DELETE FROM cabin_iterations WHERE id = ?").run(id)
+  }
+
   updateIteration(id: string, fields: Partial<Pick<CabinIterationRow, "name" | "sort_order" | "status">>, now: string): void {
     const sets: string[] = []
     const vals: unknown[] = []

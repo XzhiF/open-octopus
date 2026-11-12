@@ -1,12 +1,19 @@
 import { randomUUID } from "crypto"
 import fs from "fs"
 import path from "path"
-import type { CabinInitState } from "@octopus/shared"
+import {
+  mergeLlmUsageSummaries, emptyTokenUsage, totalTokens,
+  type CabinInitState, type LlmUsageSummary, type ModelUsageBreakdown, type TokenUsage, type LedgerCost,
+} from "@octopus/shared"
 import type { CabinDAO } from "../../db/dao/cabin-dao"
 import type {
   WorkspaceDAO, AgentSessionDAO, TaskDAO, ExecutionDAO, AcceptanceDAO,
 } from "../../db/dao"
 import { SessionCacheContextDAO } from "../../db/dao"
+import type { TokenUsageDAO } from "../../db/dao/token-usage-dao"
+import type { ExecutionLinkDAO } from "../../db/dao/execution-link-dao"
+import type { FindingRow } from "../../db/dao/findings-dao"
+import { pricePreviewSql } from "../../db/price-sql"
 import type {
   CabinRow, CabinIterationRow, CabinJobRow, CabinJobEventRow, CabinStatus, CabinJobKind, CabinJobEventKind,
 } from "../../db/types"
@@ -18,10 +25,14 @@ import { gitOps } from "../git-ops"
 import { WorkspaceGit, type SpecWorktreeEntry } from "../workspace-git"
 import { deriveTaskView } from "../tasks/derive-task-view"
 import type { RoundEvidenceService } from "../tasks/round-evidence-service"
+import type { IncidentStore } from "../supervision/incident-store"
+import type { FindingOpsService } from "../knowledge/findings"
+import { MAX_PARALLEL_WORKSPACES } from "../scheduler/concurrency"
 import { deriveCabinView, type DerivedCabinView, type DeriveCabinInput } from "./derive-cabin-view"
 import type { CabinInitService } from "./cabin-init-service"
 import { isInitComplete } from "./cabin-init-service"
 import { ensureRepoCloned, readCabinConfig, writeCabinConfigRepos, type CabinRepoEntry } from "./cabin-repos"
+import { scopeCabinFindings } from "./cabin-knowledge"
 
 export class CabinNotFoundError extends Error {
   constructor(id: string) { super(`cabin not found: ${id}`); this.name = "CabinNotFoundError" }
@@ -36,6 +47,58 @@ export class CabinStatusConflictError extends Error {
 const now = () => new Date().toISOString()
 const errMsg = (err: unknown) => (err instanceof Error ? err.message : String(err))
 
+function parseMetadata(metadata: string | null | undefined): Record<string, unknown> | null {
+  if (!metadata) return null
+  try { return JSON.parse(metadata) as Record<string, unknown> } catch { return null }
+}
+
+function askDisplayType(metadata: string | null | undefined): boolean {
+  return parseMetadata(metadata)?.displayType === "ask_user_question"
+}
+
+function firstAskQuestion(metadata: string | null | undefined): string | undefined {
+  const questions = parseMetadata(metadata)?.questions
+  if (!Array.isArray(questions)) return undefined
+  const q = questions[0] as { question?: unknown } | undefined
+  return typeof q?.question === "string" ? q.question : undefined
+}
+
+const EMPTY_USAGE: LlmUsageSummary = {
+  totalCalls: 0,
+  usage: emptyTokenUsage(),
+  totals: { tokens: 0, cost: { usd: null, complete: false }, cacheHitRate: null },
+}
+
+/** C7 byJob 行：chat（orchestrator 主对话）/ task / workflow 三种 llm_calls 口径。 */
+export interface CabinUsageJob extends LlmUsageSummary {
+  job_id: string | null
+  kind: "chat" | "task" | "workflow"
+  label: string
+  ref_id: string | null
+}
+
+/** C7 子代理单列行（subagent_runs 口径，不与 llm_calls 盲加）。 */
+export interface CabinUsageSubagent {
+  id: string
+  job_id: string | null
+  label: string
+  status: string
+  usage: TokenUsage
+  tokens: number
+  cost: LedgerCost
+}
+
+export interface CabinUsageDTO {
+  /** llm_calls 口径合计（chat execution_id IS NULL + 执行），不含子代理。 */
+  summary: LlmUsageSummary & { modelBreakdown: Record<string, ModelUsageBreakdown> }
+  byJob: CabinUsageJob[]
+  /** 子代理单列（subagent_runs token + 试算成本）。 */
+  subagents: { count: number; usage: TokenUsage; tokens: number; cost: LedgerCost; runs: CabinUsageSubagent[] }
+  /** 全口径 = llm_calls + 子代理（各算一次，防双算）。 */
+  grand: LlmUsageSummary
+  timing: { duration_ms: number }
+}
+
 /** Late-bound composition (SW-BP15: ctor stays append-only). Wired in index.ts
  *  once WorkspaceService/TasksService/DAOs exist; absent in pure unit tests. */
 export interface CabinInfra {
@@ -49,6 +112,11 @@ export interface CabinInfra {
   repoSync?: RepoSyncService
   initService?: CabinInitService
   roundEvidence?: RoundEvidenceService
+  /** P4：attention 矩阵（C4）+ 知识 scoping（G4）+ 消耗聚合（C7）。 */
+  incidentStore?: IncidentStore
+  findingOps?: FindingOpsService
+  tokenUsageDAO?: TokenUsageDAO
+  execLinks?: ExecutionLinkDAO
 }
 
 /** ASCII workspace slug — WorkspaceService.create forbids non-ASCII names;
@@ -307,8 +375,11 @@ export class CabinService {
     const iterations = this.cabin.listIterations(id)
     const tasks: DeriveCabinInput["tasks"] = []
     const executions: DeriveCabinInput["executions"] = []
+    const taskRows = this.infra ? this.infra.taskDAO.findByCabinId(id) : []
+    const execToTask = new Map<string, string>()
+    const sessionToTask = new Map<string, string>()
     if (this.infra) {
-      for (const t of this.infra.taskDAO.findByCabinId(id)) {
+      for (const t of taskRows) {
         const execs = this.infra.executionDAO.listTaskInstances(t.id, 200)
         const acceptances = this.infra.acceptanceDAO.listByTask(t.id)
         const derived = deriveTaskView(t, execs, acceptances)
@@ -316,19 +387,101 @@ export class CabinService {
           id: t.id, name: t.name, status: derived.taskStatus,
           iteration_id: t.iteration_id ?? null, repo: t.repo_group ?? null, branch: null,
         })
-        for (const e of execs) executions.push({ id: e.id, task_id: t.id, status: e.status })
+        for (const e of execs) {
+          executions.push({ id: e.id, task_id: t.id, status: e.status })
+          execToTask.set(e.id, t.id)
+        }
+        if (t.source_chat_session_id) sessionToTask.set(t.source_chat_session_id, t.id)
+        if (t.doer_session_id) sessionToTask.set(t.doer_session_id, t.id)
       }
     }
     const view = deriveCabinView({
       cabin: { id: row.id, status: row.status, focused_job_id: row.focused_job_id },
       tasks, executions,
-      // P4 wires incident / ask / finding sources into the attention matrix.
-      incidents: [], asks: [], findings: [],
+      incidents: this.gatherIncidents(taskRows.map((t) => t.id), execToTask),
+      asks: this.gatherAsks(row, executions, execToTask, sessionToTask),
+      findings: this.listFindings(id, "open").map((f) => ({ id: f.id, title: f.title, status: f.status })),
       jobs: jobs.map((j) => ({ id: j.id, kind: j.kind, ref_id: j.ref_id, title: j.title, priority: j.priority })),
       iterations: iterations.map((it) => ({ id: it.id, code: it.code, name: it.name, sort_order: it.sort_order, status: it.status })),
-      maxWorkers: 5,
+      maxWorkers: MAX_PARALLEL_WORKSPACES,
     })
     return { cabin: row, view }
+  }
+
+  /** C4：waiting_human incidents（runtime_incidents 无 task_id，经 executions 反查）。 */
+  private gatherIncidents(taskIds: string[], execToTask: Map<string, string>): DeriveCabinInput["incidents"] {
+    const store = this.infra?.incidentStore
+    if (!store || taskIds.length === 0) return []
+    return store.listWaitingHumanByTasks(taskIds).map((r) => ({
+      id: r.id, task_id: execToTask.get(r.executionId) ?? null, status: r.status, title: r.summary,
+    }))
+  }
+
+  /** C4：两类 ask —— workflow pending_interaction 执行 + 舱会话里末条未答的
+   *  ask_user_question 卡（message-filter 同构：其后有「用户回答了以下问题」即已答）。 */
+  private gatherAsks(
+    row: CabinRow,
+    executions: DeriveCabinInput["executions"],
+    execToTask: Map<string, string>,
+    sessionToTask: Map<string, string>,
+  ): DeriveCabinInput["asks"] {
+    const infra = this.infra
+    if (!infra) return []
+    const asks: DeriveCabinInput["asks"] = []
+    const taskName = new Map<string, string>()
+    for (const t of infra.taskDAO.findByCabinId(row.id)) taskName.set(t.id, t.name)
+    const db = this.cabin.getDb()
+    for (const e of executions) {
+      if (e.status !== "pending_interaction") continue
+      const tid = execToTask.get(e.id) ?? null
+      let question: string | undefined
+      try {
+        const msg = db.prepare(
+          `SELECT metadata FROM interaction_messages
+           WHERE execution_id = ? AND metadata LIKE '%ask_user_question%'
+           ORDER BY created_at DESC LIMIT 1`,
+        ).get(e.id) as { metadata: string | null } | undefined
+        question = firstAskQuestion(msg?.metadata)
+      } catch { /* interaction_messages absent on old DBs */ }
+      asks.push({
+        id: e.id, task_id: tid,
+        title: `${(tid && taskName.get(tid)) || "工作流"} · 待回答`, question,
+      })
+    }
+    for (const s of infra.agentSessionDAO.listByCabinId(row.id)) {
+      const { items } = infra.agentSessionDAO.findMessagesBySession(s.id, { limit: 200 })
+      // findMessagesBySession 已按 created_at 升序返回（message-filter 同构）。
+      const asc = items
+      let lastAskIdx = -1
+      for (let i = 0; i < asc.length; i++) {
+        if (askDisplayType(asc[i].metadata)) lastAskIdx = i
+      }
+      if (lastAskIdx < 0) continue
+      const answered = asc.slice(lastAskIdx + 1).some(
+        (m) => m.role === "user" && m.content.includes("用户回答了以下问题"),
+      )
+      if (answered) continue
+      asks.push({
+        id: asc[lastAskIdx].id, task_id: sessionToTask.get(s.id) ?? null,
+        title: `${s.title || "舱会话"} · 待回答`, question: firstAskQuestion(asc[lastAskIdx].metadata),
+      })
+    }
+    return asks
+  }
+
+  // ── knowledge (S7 / G4 read-time scoping) ──
+
+  /** G4：舱 scoped findings —— 读时按 raw origin→task 锚点过滤，不改 schema。 */
+  listFindings(cabinId: string, status?: "open" | "resolved" | "ignored"): FindingRow[] {
+    const row = this.mustGet(cabinId)
+    const ops = this.infra?.findingOps
+    if (!ops) return []
+    const repoNames = new Set(readCabinConfig(row.path).repos.map((r) => r.name).filter(Boolean))
+    const taskDAO = this.infra?.taskDAO
+    return scopeCabinFindings(ops.list(status), {
+      root: ops.root, cabinId, cabinRepoNames: repoNames,
+      taskById: (tid) => taskDAO?.getById(tid) ?? undefined,
+    })
   }
 
   // ── repos (config.json.repos[] contract, decision #3) ──
@@ -368,8 +521,31 @@ export class CabinService {
     this.cabin.insertIteration(row)
     return row
   }
-  updateIteration(id: string, fields: { name?: string; sort_order?: number; status?: "pending" | "active" | "done" }): void {
-    this.cabin.updateIteration(id, fields, now())
+  updateIteration(cabinId: string, id: string, fields: { name?: string; sort_order?: number; status?: "pending" | "active" | "done" }): CabinIterationRow {
+    const row = this.mustIterationInCabin(cabinId, id)
+    this.cabin.updateIteration(row.id, fields, now())
+    return this.cabin.findIteration(row.id)!
+  }
+  /** Delete a milestone; member tasks are unbound (tasks.iteration_id single
+   *  writer, S2 app-level cascade) — the tasks themselves stay untouched. */
+  deleteIteration(cabinId: string, id: string): { unbound: number } {
+    const row = this.mustIterationInCabin(cabinId, id)
+    let unbound = 0
+    if (this.infra) {
+      for (const t of this.infra.taskDAO.findByCabinId(cabinId)) {
+        if (t.iteration_id !== row.id) continue
+        const res = this.infra.taskDAO.updateWithVersion(t.id, { iteration_id: null }, t.version)
+        if (res.changes > 0) unbound += 1
+      }
+    }
+    this.cabin.deleteIteration(row.id)
+    return { unbound }
+  }
+  private mustIterationInCabin(cabinId: string, id: string): CabinIterationRow {
+    this.mustGet(cabinId)
+    const row = this.cabin.findIteration(id)
+    if (!row || row.cabin_id !== cabinId) throw new CabinNotFoundError(`${cabinId}/iteration:${id}`)
+    return row
   }
 
   // ── dispatch ledger (C2/C6/C8) ──
@@ -534,4 +710,160 @@ export class CabinService {
   }
   listEvents(jobId: string): CabinJobEventRow[] { return this.cabin.listEvents(jobId) }
   listTrace(cabinId: string): CabinJobEventRow[] { return this.cabin.listEventsByCabin(cabinId) }
+
+  // ── usage (C7：舱级完整消耗，llm_calls_costed 派生 + 子代理单列防双算) ──
+
+  usage(cabinId: string): CabinUsageDTO {
+    const row = this.mustGet(cabinId)
+    const infra = this.infra
+    const tokenUsage = infra?.tokenUsageDAO
+    const emptyResult: CabinUsageDTO = {
+      summary: { ...EMPTY_USAGE, modelBreakdown: {} },
+      byJob: [], subagents: { count: 0, usage: emptyTokenUsage(), tokens: 0, cost: { usd: null, complete: false }, runs: [] },
+      grand: EMPTY_USAGE, timing: { duration_ms: 0 },
+    }
+    if (!infra || !tokenUsage) return emptyResult
+
+    const tasks = infra.taskDAO.findByCabinId(cabinId)
+    const jobs = this.cabin.listJobs(cabinId)
+    const jobByTask = new Map(jobs.filter((j) => j.kind === "task" && j.ref_id).map((j) => [j.ref_id as string, j]))
+    const jobBySubagent = new Map(jobs.filter((j) => j.kind === "subagent" && j.ref_id).map((j) => [j.ref_id as string, j]))
+
+    const byJob: CabinUsageJob[] = []
+    const llmParts: LlmUsageSummary[] = []
+    const chatSessionIds = new Set<string>()
+    const execIds = new Set<string>()
+    let durationMs = 0
+
+    // orchestrator 主对话（chat 口径：execution_id IS NULL，防与执行双算）
+    if (row.main_session_id) {
+      chatSessionIds.add(row.main_session_id)
+      const chat = tokenUsage.aggregateLlmCallsBy("session_id", [row.main_session_id], ["l.execution_id IS NULL"]).get(row.main_session_id)
+      byJob.push({ job_id: null, kind: "chat", label: "orchestrator 主对话", ref_id: row.main_session_id, ...(chat ?? EMPTY_USAGE) })
+      if (chat) llmParts.push(chat)
+    }
+
+    // 舱任务：复用 TasksService.taskUsage（chat guard + rounds + aux 已内置）
+    for (const t of tasks) {
+      let summary: LlmUsageSummary = EMPTY_USAGE
+      if (infra.tasksService) {
+        try {
+          const usage = infra.tasksService.taskUsage(t.id)
+          summary = usage.summary
+          durationMs += usage.timing?.duration_ms ?? 0
+        } catch { /* task deleted mid-read */ }
+      }
+      byJob.push({
+        job_id: jobByTask.get(t.id)?.id ?? null, kind: "task", label: t.name, ref_id: t.id,
+        totalCalls: summary.totalCalls, usage: summary.usage, totals: summary.totals,
+      })
+      llmParts.push(summary)
+      if (t.source_chat_session_id) chatSessionIds.add(t.source_chat_session_id)
+      if (t.doer_session_id) chatSessionIds.add(t.doer_session_id)
+      if (infra.execLinks) {
+        for (const e of infra.execLinks.listTaskUsageExecutions(t.id)) execIds.add(e.id)
+      }
+    }
+
+    // workflow 作业：execution 口径
+    for (const j of jobs) {
+      if (j.kind !== "workflow" || !j.ref_id) continue
+      execIds.add(j.ref_id)
+      const s = tokenUsage.aggregateLlmCallsBy("execution_id", [j.ref_id]).get(j.ref_id)
+      byJob.push({ job_id: j.id, kind: "workflow", label: j.title, ref_id: j.ref_id, ...(s ?? EMPTY_USAGE) })
+      if (s) llmParts.push(s)
+    }
+
+    // 子代理单列：subagent_runs（舱会话派生的 + 作业引用的），token 不走 llm_calls
+    const db = this.cabin.getDb()
+    const sessionIds = infra.agentSessionDAO.listByCabinId(cabinId).map((s) => s.id)
+    if (row.main_session_id && !sessionIds.includes(row.main_session_id)) sessionIds.push(row.main_session_id)
+    const subRows: SubagentRunLite[] = []
+    const seen = new Set<string>()
+    if (sessionIds.length > 0) {
+      const ph = sessionIds.map(() => "?").join(",")
+      for (const r of db.prepare(`SELECT * FROM subagent_runs WHERE session_id IN (${ph})`).all(...sessionIds) as SubagentRunLite[]) {
+        if (!seen.has(r.id)) { seen.add(r.id); subRows.push(r) }
+      }
+    }
+    for (const j of jobs) {
+      if (j.kind !== "subagent" || !j.ref_id || seen.has(j.ref_id)) continue
+      const r = db.prepare("SELECT * FROM subagent_runs WHERE id = ?").get(j.ref_id) as SubagentRunLite | undefined
+      if (r) { seen.add(r.id); subRows.push(r) }
+    }
+    const subUsage = emptyTokenUsage()
+    let subCostUsd: number | null = null
+    let subPriced = 0
+    const runs: CabinUsageSubagent[] = []
+    for (const r of subRows) {
+      const usage: TokenUsage = {
+        inputTokens: r.input_tokens, outputTokens: r.output_tokens,
+        cacheReadTokens: r.cache_read_tokens, cacheCreationTokens: r.cache_creation_tokens,
+      }
+      subUsage.inputTokens += usage.inputTokens
+      subUsage.outputTokens += usage.outputTokens
+      subUsage.cacheReadTokens += usage.cacheReadTokens
+      subUsage.cacheCreationTokens += usage.cacheCreationTokens
+      const cost = this.deriveSubagentCost(db, r)
+      if (cost.usd != null) { subCostUsd = (subCostUsd ?? 0) + cost.usd; subPriced += 1 }
+      runs.push({
+        id: r.id, job_id: jobBySubagent.get(r.id)?.id ?? null,
+        label: r.description || r.agent_type || "子代理", status: r.status,
+        usage, tokens: totalTokens(usage), cost,
+      })
+    }
+    const subTokens = totalTokens(subUsage)
+    const subCost: LedgerCost = { usd: subCostUsd, complete: subRows.length > 0 && subPriced === subRows.length }
+
+    const summary = mergeLlmUsageSummaries(llmParts) ?? EMPTY_USAGE
+    const modelBreakdown = tokenUsage.aggregateLlmCallsByModel([...chatSessionIds], [...execIds])
+    const grandParts: LlmUsageSummary[] = [...llmParts]
+    if (subRows.length > 0) {
+      grandParts.push({ totalCalls: subRows.length, usage: subUsage, totals: { tokens: subTokens, cost: subCost, cacheHitRate: null } })
+    }
+    return {
+      summary: { ...summary, modelBreakdown },
+      byJob,
+      subagents: { count: subRows.length, usage: subUsage, tokens: subTokens, cost: subCost, runs },
+      grand: mergeLlmUsageSummaries(grandParts) ?? EMPTY_USAGE,
+      timing: { duration_ms: durationMs },
+    }
+  }
+
+  /** 与 SubagentRunService.deriveCost 同公式（price-sql 试算，读时派生不落库）。 */
+  private deriveSubagentCost(db: ReturnType<CabinDAO["getDb"]>, r: SubagentRunLite): LedgerCost {
+    const total = r.input_tokens + r.output_tokens + r.cache_read_tokens + r.cache_creation_tokens
+    if (total <= 0 || !r.model) return { usd: null, complete: false }
+    try {
+      const ts = Date.parse(r.ended_at ?? r.started_at ?? "")
+      const priced = db.prepare(pricePreviewSql()).get({
+        model: r.model,
+        timestamp: Number.isFinite(ts) ? ts : Date.now(),
+        inputTokens: r.input_tokens,
+        outputTokens: r.output_tokens,
+        cacheCreationTokens: r.cache_creation_tokens,
+        cacheReadTokens: r.cache_read_tokens,
+      }) as { cost_usd: number | null } | undefined
+      const usd = priced?.cost_usd ?? null
+      return { usd, complete: usd != null }
+    } catch {
+      return { usd: null, complete: false }
+    }
+  }
+}
+
+/** subagent_runs 读面最小形（usage 聚合用，不拖 SubagentRunDAO 依赖）。 */
+interface SubagentRunLite {
+  id: string
+  session_id: string
+  agent_type: string | null
+  description: string | null
+  status: string
+  model: string | null
+  started_at: string | null
+  ended_at: string | null
+  input_tokens: number
+  output_tokens: number
+  cache_read_tokens: number
+  cache_creation_tokens: number
 }

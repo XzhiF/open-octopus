@@ -79,6 +79,10 @@ const CABIN_TOOL_NAMES = [
   "cabin_job_trace",
   "cabin_note_job",
   "cabin_resume_job",
+  "cabin_list_iterations",
+  "cabin_create_iteration",
+  "cabin_update_iteration",
+  "cabin_delete_iteration",
 ] as const
 
 export function buildMcpCatalog(): McpServerMeta[] {
@@ -121,6 +125,10 @@ const CABIN_TOOL_DESC: Record<string, string> = {
   cabin_job_trace: "读某作业的 append-only 审计时间线。",
   cabin_note_job: "给 doer 发不授权备注（subagent 只留痕）。",
   cabin_resume_job: "恢复作业（ready 触发 / paused 恢复）。",
+  cabin_list_iterations: "列迭代里程碑（派生进度/成员数），规划派发前先读。",
+  cabin_create_iteration: "新建迭代里程碑（code/name），成员关系由派发时的 iteration_id 建立。",
+  cabin_update_iteration: "更新迭代改名/计划态/重排；工作进度派生自成员任务不在此写。",
+  cabin_delete_iteration: "删除迭代里程碑，成员任务自动解绑（任务保留）。",
 }
 
 const MEMORY_TOOL_DESC: Record<string, string> = {

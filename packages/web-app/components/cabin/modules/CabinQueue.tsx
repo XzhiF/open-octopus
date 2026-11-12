@@ -6,7 +6,7 @@
 
 import { useMemo, useState } from 'react'
 import {
-  Activity, CheckCircle2, ClipboardCheck, HelpCircle, Play, Send, ShieldAlert, Sparkles, Users,
+  Activity, AlertTriangle, CheckCircle2, ClipboardCheck, HelpCircle, Play, Send, ShieldAlert, Sparkles, Users,
 } from 'lucide-react'
 import { toast } from 'sonner'
 import type { CabinAttentionItem, CabinJobEvent } from '@octopus/shared'
@@ -20,6 +20,7 @@ const COMM_META: Record<string, { label: string; icon: typeof Send; color: strin
   answer: { label: '待回答', icon: HelpCircle, color: 'text-pop-cyan' },
   finding: { label: '待裁决', icon: Sparkles, color: 'text-pop-purple' },
   approval: { label: '审批', icon: ShieldAlert, color: 'text-pop-pink' },
+  blocked: { label: '受阻', icon: AlertTriangle, color: 'text-pop-red' },
   result: { label: '结果', icon: CheckCircle2, color: 'text-pop-green' },
   progress: { label: '进度', icon: Activity, color: 'text-pop-dim' },
 }
@@ -29,7 +30,7 @@ const STAGE_TO_COMM: Record<CabinAttentionItem['stage'], string> = {
   answer: 'answer',
   adjudicate: 'finding',
   approval: 'approval',
-  blocked: 'result',
+  blocked: 'blocked',
 }
 
 interface CommRow {
@@ -41,11 +42,12 @@ interface CommRow {
   detail: string
   at: string
   taskId?: string | null
+  deepLink?: string | null
   state: 'queued' | 'processing' | 'done'
 }
 
 export function CabinQueue() {
-  const { cabinId, view } = useCabinContext()
+  const { cabinId, view, openModule } = useCabinContext()
   const [routingId, setRoutingId] = useState<string | null>(null)
   const [prioIds, setPrioIds] = useState<string[]>([])
   const [doneRows, setDoneRows] = useState<CommRow[]>([])
@@ -98,9 +100,10 @@ export function CabinQueue() {
       from: a.repo ?? 'orchestrator',
       role: a.awaiting === 'person' ? '等你' : 'doer',
       title: a.title,
-      detail: a.detail ?? '',
+      detail: a.question ?? a.detail ?? '',
       at: a.awaiting,
       taskId: a.task_id,
+      deepLink: a.deep_link,
       state: a.id === routingId ? 'processing' : 'queued',
     }))
     // 已优先的排到队首（不打断当前 processing）。
@@ -120,7 +123,8 @@ export function CabinQueue() {
     }
     setRoutingId(row.id)
     setPrioIds((prev) => prev.filter((id) => id !== row.id))
-    if (row.taskId) openTaskInChat(row.taskId, row.kind === 'review' ? 'acceptance' : undefined)
+    if (row.deepLink?.startsWith('finding:')) openModule('knowledge')
+    else if (row.taskId) openTaskInChat(row.taskId, row.kind === 'review' ? 'acceptance' : undefined)
     toast(`路由中 · ${row.title} → 主 chat`)
   }
 

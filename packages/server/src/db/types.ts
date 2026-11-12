@@ -745,7 +745,7 @@ export interface CabinJobRow {
   ended_at: string | null
 }
 
-export type CabinJobEventKind = 'dispatch' | 'report' | 'attention' | 'handback' | 'note' | 'human_input'
+export type CabinJobEventKind = 'dispatch' | 'report' | 'attention' | 'handback' | 'note' | 'human_input' | 'resume'
 
 export interface CabinJobEventRow {
   id: string

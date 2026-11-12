@@ -12,7 +12,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
-  Activity, Archive, ClipboardCheck, ClipboardList, Folder, GitBranch, GitCompare,
+  Activity, Archive, BarChart3, BookOpen, ClipboardCheck, ClipboardList, Folder, GitBranch, GitCompare,
   Layers, LayoutGrid, ListTodo, PanelLeft, Play, Search, Send, SlidersHorizontal,
   SquarePen, User, Boxes,
 } from 'lucide-react'
@@ -54,6 +54,8 @@ const DOCK_ICONS: Record<string, typeof LayoutGrid> = {
   trace: Activity,
   changes: GitCompare,
   acceptance: ClipboardCheck,
+  knowledge: BookOpen,
+  usage: BarChart3,
   archive: Archive,
   tuning: SlidersHorizontal,
   gallery: User,
@@ -228,16 +230,17 @@ export function CabinChatHost() {
     id,
     label: id === 'repos' ? '仓库' : id === 'worktree' ? '工作树' : id === 'iterations' ? '迭代'
       : id === 'jobs' ? '作业' : id === 'trace' ? 'Trace' : id === 'changes' ? '变更'
-        : id === 'acceptance' ? '验收' : id === 'archive' ? '归档' : id === 'tuning' ? '调校' : '立绘',
+        : id === 'acceptance' ? '验收' : id === 'knowledge' ? '知识' : id === 'usage' ? '消耗'
+          : id === 'archive' ? '归档' : id === 'tuning' ? '调校' : '立绘',
     icon: DOCK_ICONS[id],
     ...moduleState(id),
-    badge: id === 'acceptance' ? reviewCount : undefined,
+    badge: id === 'acceptance' ? reviewCount : id === 'knowledge' ? (view?.open_findings ?? 0) : undefined,
     badgeTone: 'amber' as const,
     onClick: () => {
       if (id === 'changes' || id === 'acceptance') void openTaskModule(id)
       else openModule(id)
     },
-  })), [moduleState, openModule, openTaskModule, reviewCount])
+  })), [moduleState, openModule, openTaskModule, reviewCount, view?.open_findings])
 
   const sidebarProps = {
     cabins,

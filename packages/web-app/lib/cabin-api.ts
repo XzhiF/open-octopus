@@ -216,13 +216,20 @@ export async function patchCabinIteration(
   id: string,
   iterationId: string,
   fields: { name?: string; sort_order?: number; status?: "pending" | "active" | "done" },
-): Promise<{ ok: true }> {
+): Promise<CabinIteration> {
   const res = await fetch(url(`/${id}/iterations/${iterationId}`), {
     method: "PATCH",
     headers: JSON_HEADERS,
     body: JSON.stringify(fields),
   })
-  return handleResponse<{ ok: true }>(res)
+  const body = await handleResponse<{ iteration: CabinIteration }>(res)
+  return body.iteration
+}
+
+/** Delete a milestone; member tasks are unbound server-side (tasks stay). */
+export async function deleteCabinIteration(id: string, iterationId: string): Promise<{ ok: true; unbound: number }> {
+  const res = await fetch(url(`/${id}/iterations/${iterationId}`), { method: "DELETE" })
+  return handleResponse<{ ok: true; unbound: number }>(res)
 }
 
 // ============ Repos / worktrees ============
@@ -348,6 +355,69 @@ export async function getCabinChanges(id: string): Promise<CabinChangesSummary> 
 export async function pullCabinRepo(id: string, name: string): Promise<{ branch: string; commit: string }> {
   const res = await fetch(url(`/${id}/repos/${encodeURIComponent(name)}/pull`), { method: "POST" })
   return handleResponse<{ branch: string; commit: string }>(res)
+}
+
+// ============ Knowledge (S7 / G4) / Usage (C7) ============
+
+/** G4 读时 scoping 后的 findings（与全局 findingView 同形）。裁决复用全局
+ *  /api/knowledge/findings/:id/adopt|ignore（kcAdoptFinding/kcIgnoreFinding）。 */
+export async function getCabinFindings(
+  id: string,
+  status?: "open" | "resolved" | "ignored",
+): Promise<import("@/lib/knowledge/knowledge-center-api").KcFindingView[]> {
+  const qs = status ? `?status=${status}` : ""
+  const res = await fetch(url(`/${id}/findings${qs}`))
+  const body = await handleResponse<{ findings: import("@/lib/knowledge/knowledge-center-api").KcFindingView[] }>(res)
+  return body.findings
+}
+
+/** C7 舱级消耗（llm_calls_costed 派生 + 子代理单列防双算）。 */
+export interface CabinUsageJob {
+  job_id: string | null
+  kind: "chat" | "task" | "workflow"
+  label: string
+  ref_id: string | null
+  totalCalls: number
+  usage: { inputTokens: number; outputTokens: number; cacheReadTokens: number; cacheCreationTokens: number }
+  totals: { tokens: number; cost: { usd: number | null; complete: boolean }; cacheHitRate: number | null }
+}
+
+export interface CabinUsageSubagent {
+  id: string
+  job_id: string | null
+  label: string
+  status: string
+  usage: { inputTokens: number; outputTokens: number; cacheReadTokens: number; cacheCreationTokens: number }
+  tokens: number
+  cost: { usd: number | null; complete: boolean }
+}
+
+export interface CabinUsagePayload {
+  summary: {
+    totalCalls: number
+    usage: { inputTokens: number; outputTokens: number; cacheReadTokens: number; cacheCreationTokens: number }
+    totals: { tokens: number; cost: { usd: number | null; complete: boolean }; cacheHitRate: number | null }
+    modelBreakdown?: Record<string, { calls: number; inputTokens: number; outputTokens: number; cacheReadTokens: number; cacheCreationTokens: number; costUsd: number | null }>
+  }
+  byJob: CabinUsageJob[]
+  subagents: {
+    count: number
+    usage: { inputTokens: number; outputTokens: number; cacheReadTokens: number; cacheCreationTokens: number }
+    tokens: number
+    cost: { usd: number | null; complete: boolean }
+    runs: CabinUsageSubagent[]
+  }
+  grand: {
+    totalCalls: number
+    usage: { inputTokens: number; outputTokens: number; cacheReadTokens: number; cacheCreationTokens: number }
+    totals: { tokens: number; cost: { usd: number | null; complete: boolean }; cacheHitRate: number | null }
+  }
+  timing: { duration_ms: number }
+}
+
+export async function getCabinUsage(id: string): Promise<CabinUsagePayload> {
+  const res = await fetch(url(`/${id}/usage`), { cache: "no-store" })
+  return handleResponse<CabinUsagePayload>(res)
 }
 
 // ============ Focus (C8) ============

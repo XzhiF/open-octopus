@@ -20,6 +20,7 @@ import { CabinCommService, CabinJobNotFoundError } from "../services/cabin/cabin
 import type { CabinRow, CabinJobRow, CabinJobEventRow } from "../db/types"
 import type { SSEService } from "../services/sse"
 import { gitOps } from "../services/git-ops"
+import { findingView } from "./findings"
 
 function classifyError(err: unknown): { status: number; message: string } {
   if (err instanceof ZodError) {
@@ -326,8 +327,18 @@ export function createCabinRoutes(
     if (!body) return c.json({ error: "Invalid or missing JSON body" }, 400)
     try {
       const input = iterationPatchSchema.parse(body)
-      service.updateIteration(c.req.param("iid"), input)
-      return c.json({ ok: true })
+      const iteration = service.updateIteration(c.req.param("id"), c.req.param("iid"), input)
+      return c.json({ iteration })
+    } catch (err) {
+      const { status, message } = classifyError(err)
+      return c.json({ error: message }, status as 400)
+    }
+  })
+
+  router.delete("/:id/iterations/:iid", (c) => {
+    try {
+      const result = service.deleteIteration(c.req.param("id"), c.req.param("iid"))
+      return c.json({ ok: true, ...result })
     } catch (err) {
       const { status, message } = classifyError(err)
       return c.json({ error: message }, status as 400)
@@ -390,6 +401,30 @@ export function createCabinRoutes(
   router.get("/:id/changes", async (c) => {
     try {
       return c.json(await service.changesSummary(c.req.param("id")))
+    } catch (err) {
+      const { status, message } = classifyError(err)
+      return c.json({ error: message }, status as 400)
+    }
+  })
+
+  // ── knowledge (S7 / G4) / usage (C7) ───────────────────────────────
+
+  // G4 读时 scoping；裁决复用全局 /api/knowledge/findings/:id/adopt|ignore。
+  router.get("/:id/findings", (c) => {
+    try {
+      const statusParam = c.req.query("status")
+      const status = statusParam ? z.enum(["open", "resolved", "ignored"]).parse(statusParam) : undefined
+      const findings = service.listFindings(c.req.param("id"), status)
+      return c.json({ findings: findings.map(findingView) })
+    } catch (err) {
+      const { status, message } = classifyError(err)
+      return c.json({ error: message }, status as 400)
+    }
+  })
+
+  router.get("/:id/usage", (c) => {
+    try {
+      return c.json(service.usage(c.req.param("id")))
     } catch (err) {
       const { status, message } = classifyError(err)
       return c.json({ error: message }, status as 400)

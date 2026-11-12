@@ -1147,10 +1147,11 @@ class ChatEventBridge {
       name?: string
       source_chat_session_id?: string | null
       workspace_id?: string | null
+      cabin_id?: string | null
     } | undefined
     try {
       row = this.db.prepare(
-        "SELECT name, source_chat_session_id, workspace_id FROM tasks WHERE id = ?",
+        "SELECT name, source_chat_session_id, workspace_id, cabin_id FROM tasks WHERE id = ?",
       ).get(taskId) as typeof row
     } catch {
       return
