@@ -1,0 +1,1485 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Octopus · 工作台 — ledger</title>
+<style>
+/* ───────────────────────── tokens ───────────────────────── */
+:root{
+  --ink:#EDF0F7; --dim:#8790A6; --faint:#5C6479;
+  --bd:rgba(255,255,255,.09); --bd2:rgba(255,255,255,.15);
+  --bg0:#05060A; --bg1:#0A0D14;
+  --a:#4FD1D9; --b:#A78BFA; --c:#FFC857;
+  --green:#7EE787; --amber:#FFC857; --red:#FF5C5C; --cyan:#4FD1D9; --violet:#A78BFA; --pink:#FF855C;
+  --font-ui:-apple-system,BlinkMacSystemFont,'SF Pro Text','Helvetica Neue','PingFang SC','Hiragino Sans GB','Microsoft YaHei',sans-serif;
+  --font-mono:'SF Mono','JetBrains Mono',Menlo,Consolas,ui-monospace,monospace;
+  color-scheme:dark;
+}
+*{box-sizing:border-box}
+html,body{height:100%;margin:0}
+body{background:
+    radial-gradient(90% 60% at 50% -20%, color-mix(in srgb,var(--b) 10%,transparent), transparent 60%),
+    radial-gradient(70% 50% at 100% 110%, color-mix(in srgb,var(--a) 7%,transparent), transparent 60%),
+    var(--bg0);
+  color:var(--ink);font-family:var(--font-ui);font-size:13px;line-height:1.55;overflow:hidden;
+  -webkit-font-smoothing:antialiased}
+button{font:inherit;color:inherit;border:0;background:none;padding:0;cursor:pointer}
+input{font:inherit}
+::-webkit-scrollbar{width:8px;height:8px}
+::-webkit-scrollbar-thumb{background:#343B4A;border-radius:4px;border:2px solid transparent;background-clip:content-box}
+::-webkit-scrollbar-track{background:transparent}
+.mono{font-family:var(--font-mono)}
+.dim{color:var(--dim)}
+.faint{color:var(--faint)}
+.app{height:100vh;display:flex;flex-direction:column;overflow:hidden}
+
+/* ── top ── */
+.top{flex:none;height:50px;display:flex;align-items:center;gap:12px;padding:0 18px;
+  border-bottom:1px solid var(--bd);background:rgba(8,10,16,.72);backdrop-filter:blur(12px);z-index:20}
+.brand{display:flex;align-items:center;gap:8px;font-size:10px;font-weight:800;letter-spacing:.2em;color:var(--a)}
+.brand .hex{width:20px;height:20px;display:grid;place-items:center;border:1px solid color-mix(in srgb,var(--a) 50%,transparent);
+  border-radius:6px;font-size:11px;box-shadow:0 0 12px color-mix(in srgb,var(--a) 25%,transparent)}
+.brand b{font-size:11px;letter-spacing:.08em;color:var(--ink)}
+.cwd{display:flex;align-items:center;gap:7px;font-size:10.5px;color:var(--dim);font-family:var(--font-mono)}
+.cwd i{font-style:normal;color:var(--faint);font-size:9px;letter-spacing:.1em}
+.top .tstats{display:flex;align-items:center;gap:14px;font-size:9.5px;letter-spacing:.08em;color:var(--faint);margin-left:8px}
+.top .tstats b{color:var(--ink);font-size:11px;font-family:var(--font-mono)}
+.top .right{margin-left:auto;display:flex;align-items:center;gap:8px}
+.ghost{display:inline-flex;align-items:center;gap:6px;height:28px;padding:0 11px;border-radius:8px;
+  border:1px solid var(--bd);color:var(--dim);font-size:11px;transition:.14s;background:rgba(255,255,255,.02);white-space:nowrap}
+.ghost:hover{color:var(--ink);border-color:var(--bd2);background:rgba(255,255,255,.05)}
+.ghost.pri{color:#05070B;background:linear-gradient(135deg,var(--a),color-mix(in srgb,var(--a) 55%,#fff));
+  border-color:transparent;font-weight:800;box-shadow:0 0 18px color-mix(in srgb,var(--a) 25%,transparent)}
+.ghost.pri:hover{filter:brightness(1.08)}
+
+/* ── body ── */
+.body{flex:1;min-height:0;display:flex}
+.rail{flex:none;width:288px;border-right:1px solid var(--bd);display:flex;flex-direction:column;
+  overflow:auto;padding:12px 10px 14px;background:rgba(9,11,17,.45)}
+.rsec{flex:none;margin-bottom:14px}
+.rsec.grow{flex:1;min-height:0;display:flex;flex-direction:column}
+.rhead{display:flex;align-items:center;gap:7px;padding:2px 6px 7px;font-size:9px;letter-spacing:.16em;color:var(--faint);font-weight:700}
+.rhead .ln{flex:1;height:1px;background:linear-gradient(90deg,var(--bd2),transparent)}
+.rhead .n{color:var(--dim);font-family:var(--font-mono);letter-spacing:0}
+.rlist{display:flex;flex-direction:column;gap:6px}
+
+/* attention card */
+.attn{position:relative;text-align:left;border:1px solid var(--bd);border-left:2px solid var(--accent,var(--a));
+  border-radius:10px;padding:8px 10px 9px;background:rgba(255,255,255,.02);transition:.15s;width:100%}
+.attn:hover{background:color-mix(in srgb,var(--accent) 6%,transparent);border-color:color-mix(in srgb,var(--accent) 38%,transparent);
+  transform:translateX(2px)}
+.attn .ak{display:block;font-size:8px;letter-spacing:.14em;font-weight:800;color:var(--accent)}
+.attn .at{display:block;font-size:11.5px;font-weight:750;color:var(--ink);margin-top:2px;line-height:1.35}
+.attn .as{display:block;font-size:9.5px;color:var(--dim);margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+
+/* filters + tasks */
+.fchips{display:flex;gap:5px;padding:0 4px 8px}
+.fchip{height:22px;padding:0 8px;border-radius:999px;border:1px solid var(--bd);color:var(--faint);
+  font-size:9.5px;transition:.13s}
+.fchip:hover{color:var(--ink);border-color:var(--bd2)}
+.fchip.on{color:var(--a);border-color:color-mix(in srgb,var(--a) 45%,transparent);
+  background:color-mix(in srgb,var(--a) 8%,transparent)}
+.tlist{flex:1;min-height:0;overflow:auto;display:flex;flex-direction:column;gap:4px;padding-right:2px}
+.trow{display:flex;align-items:flex-start;gap:8px;width:100%;text-align:left;padding:7px 8px;border-radius:8px;
+  border:1px solid transparent;transition:.13s}
+.trow:hover{background:rgba(255,255,255,.035);border-color:var(--bd)}
+.trow.on{background:color-mix(in srgb,var(--a) 7%,transparent);border-color:color-mix(in srgb,var(--a) 30%,transparent)}
+.trow .tk{flex:none;margin-top:1px;font-size:8px;padding:1px 5px;border-radius:4px;letter-spacing:.04em;white-space:nowrap}
+.tk.dev{color:var(--cyan);background:color-mix(in srgb,var(--cyan) 10%,transparent);border:1px solid color-mix(in srgb,var(--cyan) 30%,transparent)}
+.tk.art{color:var(--amber);background:color-mix(in srgb,var(--amber) 9%,transparent);border:1px solid color-mix(in srgb,var(--amber) 28%,transparent)}
+.trow .tb{flex:1;min-width:0}
+.trow .tb b{display:block;font-size:11.5px;font-weight:700;color:var(--ink);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.trow .tb span{display:block;font-size:9px;color:var(--faint);margin-top:1px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.trow .st{flex:none;font-size:8px;padding:1px 6px;border-radius:999px;border:1px solid var(--bd);color:var(--dim);margin-top:1px}
+.st.wait{color:var(--amber);border-color:color-mix(in srgb,var(--amber) 38%,transparent)}
+.st.run{color:var(--cyan);border-color:color-mix(in srgb,var(--cyan) 38%,transparent)}
+.st.fail{color:var(--red);border-color:color-mix(in srgb,var(--red) 38%,transparent)}
+.st.done{color:var(--green);border-color:color-mix(in srgb,var(--green) 38%,transparent)}
+
+/* sessions */
+.srow{display:flex;align-items:center;gap:7px;width:100%;text-align:left;padding:6px 7px;border-radius:8px;transition:.13s}
+.srow:hover{background:rgba(255,255,255,.035)}
+.srow.on{background:color-mix(in srgb,var(--a) 7%,transparent)}
+.srow .av{width:22px;height:22px;border-radius:6px;overflow:hidden;flex:none;background:#0c0e15;border:1px solid var(--bd)}
+.srow .av img{width:100%;height:100%;object-fit:cover;object-position:50% 12%}
+.srow .sm{flex:1;min-width:0}
+.srow .sm b{display:block;font-size:10.5px;color:var(--ink);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.srow .sm span{display:block;font-size:8.5px;color:var(--faint);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.srow .sd{width:5px;height:5px;border-radius:50%;flex:none;background:var(--dim)}
+.srow .sd.run{background:var(--cyan);box-shadow:0 0 6px var(--cyan)}
+.srow .sd.wait{background:var(--amber);box-shadow:0 0 6px var(--amber)}
+.srow .sd.fail{background:var(--red);box-shadow:0 0 6px var(--red)}
+
+/* ── main ── */
+.main{flex:1;min-width:0;min-height:0;overflow:auto;padding:16px 20px 20px}
+.taskhead{display:flex;align-items:flex-start;gap:10px;flex-wrap:wrap;padding-bottom:12px;border-bottom:1px solid var(--bd)}
+.taskhead .k{font-size:8.5px;padding:2px 7px;border-radius:5px;letter-spacing:.04em;margin-top:3px}
+.taskhead h1{font-size:19px;line-height:1.25;margin:0;letter-spacing:.01em;font-weight:800}
+.taskhead .status{font-size:9px;padding:2px 8px;border-radius:999px;border:1px solid var(--bd);color:var(--dim);margin-top:2px}
+.taskhead .meta{display:flex;align-items:center;gap:8px;font-size:9.5px;color:var(--faint);
+  font-family:var(--font-mono);margin-top:4px;width:100%}
+.taskhead .meta .sep{width:2px;height:2px;border-radius:50%;background:var(--faint)}
+.taskhead .right{margin-left:auto;display:flex;align-items:center;gap:7px}
+.mini{height:26px;padding:0 9px;border-radius:7px;border:1px solid var(--bd);color:var(--dim);font-size:10px;transition:.13s;white-space:nowrap}
+.mini:hover{color:var(--ink);border-color:var(--bd2);background:rgba(255,255,255,.05)}
+
+.lenses{display:flex;align-items:center;gap:4px;padding:10px 0 12px;border-bottom:1px solid var(--bd);margin-bottom:14px}
+.lens{height:27px;padding:0 11px;border-radius:7px;color:var(--dim);font-size:10.5px;transition:.13s}
+.lens:hover{color:var(--ink);background:rgba(255,255,255,.05)}
+.lens.on{color:var(--a);background:color-mix(in srgb,var(--a) 9%,transparent);
+  box-shadow:inset 0 0 0 1px color-mix(in srgb,var(--a) 32%,transparent)}
+.lenses .hint{margin-left:auto;font-size:9px;color:var(--faint)}
+
+/* panes */
+.pgrid{display:grid;gap:12px}
+.pgrid.c2{grid-template-columns:1fr 1fr}
+.pgrid.c12{grid-template-columns:1.08fr .92fr}
+.pgrid.c21{grid-template-columns:.92fr 1.08fr}
+.pgrid.c3{grid-template-columns:1fr 1fr 1fr}
+.pgrid.trace{grid-template-columns:1.1fr .9fr;grid-template-rows:minmax(0,.86fr) minmax(0,1.14fr);
+  height:calc(100vh - 300px);min-height:380px}
+.pgrid.trace .p1{grid-column:1;grid-row:1}
+.pgrid.trace .p2{grid-column:2;grid-row:1/3}
+.pgrid.trace .p3{grid-column:1;grid-row:2}
+.pane{border:1px solid var(--bd);border-radius:11px;background:rgba(14,18,26,.55);overflow:hidden;
+  display:flex;flex-direction:column;min-width:0;min-height:0}
+.pane-h{flex:none;display:flex;align-items:center;gap:8px;padding:8px 11px;border-bottom:1px solid var(--bd);
+  font-size:9px;letter-spacing:.13em;color:var(--faint)}
+.pane-h b{font-size:11px;letter-spacing:.02em;color:var(--ink);font-weight:700}
+.pane-h .tag{margin-left:auto;font-size:8px;padding:1px 6px;border-radius:999px;border:1px solid var(--bd);color:var(--dim)}
+.pane-h .tag.g{color:var(--green);border-color:color-mix(in srgb,var(--green) 38%,transparent)}
+.pane-h .tag.r{color:var(--red);border-color:color-mix(in srgb,var(--red) 38%,transparent)}
+.pane-h .tag.c{color:var(--cyan);border-color:color-mix(in srgb,var(--cyan) 38%,transparent)}
+.pane-b{padding:10px 12px;overflow:auto;min-height:0}
+.pane-b.tight{padding:7px 9px}
+.pane-b.flush{padding:7px;display:flex;overflow:hidden}
+.pane-b.flush .stream{flex:1;height:auto}
+
+/* task overview */
+.summary{font-size:12px;line-height:1.7;color:var(--dim)}
+.summary b{color:var(--ink);font-weight:600}
+.kv{display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-top:9px}
+.kv .cell{border:1px solid var(--bd);border-radius:7px;padding:6px 8px;background:rgba(255,255,255,.02);min-width:0}
+.kv .l{font-size:8px;letter-spacing:.1em;color:var(--faint)}
+.kv .v{font-size:10.5px;font-weight:700;margin-top:1px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.kv .v.g{color:var(--green)}.kv .v.c{color:var(--cyan)}.kv .v.m{color:var(--amber)}
+
+.phases{position:relative}
+.phases::before{content:"";position:absolute;left:8px;top:12px;bottom:12px;width:1px;background:linear-gradient(180deg,var(--bd2),transparent)}
+.phase{display:flex;gap:8px;padding:4px 1px 8px;position:relative;align-items:flex-start}
+.ph-d{width:17px;height:17px;border-radius:50%;flex:none;display:grid;place-items:center;font-size:8px;
+  border:1px solid var(--bd);color:var(--faint);background:var(--bg1);position:relative;z-index:1;margin-top:1px}
+.phase.done .ph-d{color:var(--green);border-color:color-mix(in srgb,var(--green) 45%,transparent)}
+.phase.now .ph-d{color:var(--amber);border-color:color-mix(in srgb,var(--amber) 50%,transparent);animation:pulse 1.8s infinite}
+.phase.warn .ph-d{color:var(--amber);border-color:color-mix(in srgb,var(--amber) 45%,transparent)}
+.phase.fail .ph-d{color:var(--red);border-color:color-mix(in srgb,var(--red) 45%,transparent)}
+@keyframes pulse{0%,100%{opacity:.4}50%{opacity:1}}
+.phase .pb{flex:1;min-width:0}
+.phase .pb b{display:block;font-size:10.5px;color:var(--ink)}
+.phase.wait .pb b{color:var(--dim)}
+.phase .pb span{display:block;font-size:9px;color:var(--dim);line-height:1.4;margin-top:1px}
+.phase .pw{font-size:8.5px;color:var(--faint);flex:none;margin-left:6px}
+
+.chk{display:flex;gap:8px;padding:6px 2px;border-bottom:1px dashed rgba(255,255,255,.06);font-size:10.5px;line-height:1.45}
+.chk:last-child{border-bottom:0}
+.chk .box{width:14px;height:14px;border-radius:4px;flex:none;display:grid;place-items:center;font-size:8px;margin-top:1px}
+.chk.ok .box{background:color-mix(in srgb,var(--green) 16%,transparent);color:var(--green);border:1px solid color-mix(in srgb,var(--green) 45%,transparent)}
+.chk.warn .box{background:color-mix(in srgb,var(--amber) 14%,transparent);color:var(--amber);border:1px solid color-mix(in srgb,var(--amber) 45%,transparent)}
+.chk.no .box{background:rgba(255,255,255,.04);color:var(--faint);border:1px solid var(--bd)}
+.chk .ct{flex:1;min-width:0;color:var(--ink)}
+.chk .ct small{display:block;color:var(--dim);font-size:9px;margin-top:1px}
+.chk.warn .ct{color:#FFE1A3}
+
+.acts{display:flex;gap:6px;flex-wrap:wrap;margin-top:9px}
+.btn{display:inline-flex;align-items:center;gap:5px;height:26px;padding:0 10px;border-radius:7px;
+  border:1px solid var(--bd);font-size:10px;font-weight:600;color:var(--dim);transition:.13s}
+.btn:hover{color:var(--ink);border-color:var(--bd2);background:rgba(255,255,255,.05)}
+.btn.pri{color:var(--a);border-color:color-mix(in srgb,var(--a) 40%,transparent);background:color-mix(in srgb,var(--a) 9%,transparent);
+  box-shadow:0 0 0 1px color-mix(in srgb,var(--a) 42%,transparent)}
+.btn.danger{color:var(--red);border-color:color-mix(in srgb,var(--red) 36%,transparent)}
+.btn.pri::after{content:"推荐";font-size:7px;letter-spacing:.06em;color:var(--a);
+  border:1px solid color-mix(in srgb,var(--a) 40%,transparent);border-radius:999px;padding:0 4px}
+
+/* run */
+.stream{font-family:var(--font-mono);font-size:9.5px;line-height:1.6;background:rgba(0,0,0,.26);
+  border:1px solid var(--bd);border-radius:8px;padding:7px 9px;overflow:auto;height:100%;min-height:120px}
+.sl{display:flex;gap:6px;white-space:pre-wrap;color:var(--dim);align-items:flex-start}
+.sl .st{color:var(--faint);flex:none;font-size:8px;padding-top:1px}
+.sl .tag{flex:none;font-size:7.5px;padding:0 4px;border-radius:3px;line-height:13px;height:13px;
+  border:1px solid var(--bd);color:var(--faint);margin-top:1px}
+.sl .tag.tool{color:var(--violet);border-color:color-mix(in srgb,var(--violet) 38%,transparent)}
+.sl .tag.ok{color:var(--green);border-color:color-mix(in srgb,var(--green) 38%,transparent)}
+.sl .tag.err{color:var(--red);border-color:color-mix(in srgb,var(--red) 38%,transparent)}
+.sl .tag.think{color:var(--b);border-color:color-mix(in srgb,var(--b) 38%,transparent)}
+.sl.ok{color:#9EE6A4}.sl.err{color:#FFA1A1}
+.sl .cr{display:inline-block;width:5px;height:10px;background:var(--a);animation:blink 1s steps(1) infinite;margin-top:3px}
+@keyframes blink{50%{opacity:0}}
+.nodes{display:flex;flex-direction:column;gap:2px}
+.nnode{display:flex;align-items:flex-start;gap:7px;padding:5px 5px;border-radius:6px;text-align:left;width:100%;transition:.13s}
+.nnode:hover{background:rgba(255,255,255,.04)}
+.nnode.sel{background:color-mix(in srgb,var(--a) 7%,transparent);box-shadow:inset 0 0 0 1px color-mix(in srgb,var(--a) 26%,transparent)}
+.nnode .ni{width:14px;height:14px;border-radius:50%;display:grid;place-items:center;font-size:7px;flex:none;margin-top:1px;
+  border:1px solid var(--bd);color:var(--faint)}
+.nnode.done .ni{color:var(--green);border-color:color-mix(in srgb,var(--green) 45%,transparent)}
+.nnode.run .ni{color:var(--cyan);border-color:color-mix(in srgb,var(--cyan) 50%,transparent);animation:pulse 1.8s infinite}
+.nnode.fail .ni{color:var(--red);border-color:color-mix(in srgb,var(--red) 50%,transparent)}
+.nnode .nb{flex:1;min-width:0}
+.nnode .nb b{display:block;font-size:10px;color:var(--ink)}
+.nnode .nb span{display:block;font-size:8.5px;color:var(--faint);line-height:1.4}
+.nnode .nt{font-size:8.5px;color:var(--faint);flex:none;margin-top:1px}
+.runhead{display:flex;align-items:center;gap:7px;padding:0 3px 7px;margin-bottom:5px;font-size:8.5px;color:var(--faint);
+  border-bottom:1px dashed rgba(255,255,255,.07)}
+.runhead b{color:var(--ink);font-size:10.5px}
+.runhead .rp{flex:1;height:3px;border-radius:2px;background:rgba(255,255,255,.07);overflow:hidden}
+.runhead .rp i{display:block;height:100%;background:linear-gradient(90deg,var(--a),var(--b))}
+
+/* changes */
+.file{display:flex;align-items:center;gap:8px;padding:5px 7px;border-radius:6px;font-size:10px;border:1px solid transparent;
+  width:100%;text-align:left;transition:.12s}
+.file:hover{background:rgba(255,255,255,.04);border-color:var(--bd)}
+.file.on{border-color:color-mix(in srgb,var(--a) 40%,transparent);background:color-mix(in srgb,var(--a) 7%,transparent)}
+.file .st2{font-size:8px;width:12px;text-align:center;flex:none;font-weight:800;color:var(--amber)}
+.file .fn{flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:var(--ink);font-family:var(--font-mono)}
+.file .add{color:var(--green);font-size:9px;flex:none}
+.file .del{color:var(--red);font-size:9px;flex:none}
+.diff{border:1px solid var(--bd);border-radius:8px;overflow:hidden;font-size:9.5px;line-height:1.6;background:rgba(0,0,0,.22)}
+.diff .dh{display:flex;gap:8px;padding:5px 8px;border-bottom:1px solid var(--bd);color:var(--faint);font-size:8.5px}
+.diff .dl{display:flex;gap:8px;padding:0 8px;white-space:pre;overflow-x:auto}
+.diff .dl .n{width:18px;text-align:right;color:var(--faint);flex:none}
+.diff .dl.add{background:rgba(126,231,135,.07);color:#B8F5BE}
+.diff .dl.del{background:rgba(255,92,92,.07);color:#FFB3B3}
+.diff .dl.ctx{color:var(--dim)}
+.cmt{display:flex;align-items:center;gap:7px;padding:4px 3px;border-bottom:1px dashed rgba(255,255,255,.06);font-size:9.5px}
+.cmt:last-child{border:0}
+.cmt .sha{color:var(--a);font-family:var(--font-mono);font-size:8.5px;flex:none}
+.cmt .msg{flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:var(--ink)}
+.cmt .tm{color:var(--faint);font-size:8.5px;flex:none}
+
+/* art */
+.artstrip{display:grid;grid-template-columns:repeat(4,1fr);gap:8px}
+.artcard{position:relative;border:1px solid var(--bd);border-radius:9px;overflow:hidden;background:#0b0e15;transition:.15s;text-align:left}
+.artcard:hover{transform:translateY(-2px);border-color:color-mix(in srgb,var(--a) 45%,transparent)}
+.artcard.on{border-color:color-mix(in srgb,var(--a) 65%,transparent);
+  box-shadow:0 0 0 1px color-mix(in srgb,var(--a) 30%,transparent),0 0 18px color-mix(in srgb,var(--a) 10%,transparent)}
+.artcard .im{display:block;width:100%;aspect-ratio:16/10;object-fit:cover;object-position:50% 16%;filter:saturate(1.02)}
+.artcard.v1 .im{filter:saturate(.8) hue-rotate(-12deg) brightness(.95)}
+.artcard.v2 .im{filter:saturate(.95) hue-rotate(8deg)}
+.artcard.v4 .im{filter:saturate(1.1) hue-rotate(-8deg) brightness(1.03)}
+.artcard .cap{display:flex;align-items:center;gap:5px;padding:5px 7px;font-size:8.5px;color:var(--dim)}
+.artcard .cap b{color:var(--ink);font-size:9px}
+.artcard .cap .sc{margin-left:auto;color:var(--a);font-family:var(--font-mono)}
+.artcard .pick{position:absolute;left:6px;top:6px;font-size:7.5px;padding:1px 6px;border-radius:999px;
+  background:rgba(5,7,12,.7);border:1px solid color-mix(in srgb,var(--green) 50%,transparent);color:var(--green)}
+.artgrid{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.artgrid .artcard .im{aspect-ratio:16/9}
+.reftile{border:1px solid var(--bd);border-radius:8px;overflow:hidden}
+.reftile img{display:block;width:100%;height:110px;object-fit:cover;object-position:50% 18%;filter:saturate(.9)}
+.reftile span{display:block;padding:4px 7px;font-size:8.5px;color:var(--faint)}
+.promptrow{padding:6px 4px;border-bottom:1px dashed rgba(255,255,255,.06);font-size:9.5px;color:var(--dim);line-height:1.5}
+.promptrow:last-child{border:0}
+.promptrow b{color:var(--ink);font-weight:600}
+
+/* trace */
+.dag{width:100%;height:auto;display:block;font-family:var(--font-ui)}
+.dag .edge{fill:none;stroke-width:1.1;opacity:.62;transition:.18s}
+.dag .edge.dispatch{stroke:var(--violet)}
+.dag .edge.run{stroke:var(--cyan);stroke-dasharray:4 4;opacity:.5}
+.dag .edge.on{opacity:1;stroke-width:1.7}
+.dag .edge.dim{opacity:.1}
+.dag .node rect{fill:rgba(255,255,255,.028);stroke:rgba(255,255,255,.12);transition:.16s}
+.dag .node.root rect{fill:color-mix(in srgb,var(--a) 9%,transparent);stroke:color-mix(in srgb,var(--a) 55%,transparent)}
+.dag .node.wf rect{fill:color-mix(in srgb,var(--violet) 7%,transparent)}
+.dag .node.on rect{stroke:var(--a);stroke-width:1.6}
+.dag .node.dim{opacity:.28}
+.dag .node .nm{fill:var(--ink);font-size:10.5px;font-weight:800}
+.dag .node.root .nm{font-size:13px}
+.dag .node .sub{fill:var(--faint);font-size:7.2px}
+.dag .node .cost{fill:var(--dim);font-size:8px;font-weight:700}
+.dag .node .sdot{fill:var(--dim)}
+.dag .node .sdot.run{fill:var(--cyan)}.dag .node .sdot.wait{fill:var(--amber)}.dag .node .sdot.fail{fill:var(--red)}
+.dag .legend{fill:var(--dim);font-size:7.5px}
+.dag .legend .lg{stroke-width:1.4;fill:none}
+.dag .hint{fill:var(--faint);font-size:7.2px}
+
+.tev{padding:5px 6px;border-bottom:1px dashed rgba(255,255,255,.06);border-left:2px solid transparent}
+.tev:last-child{border-bottom:0}
+.tev:hover{background:rgba(255,255,255,.03)}
+.tev.human{border-left-color:var(--green)}
+.tev.dispatch{border-left-color:var(--violet)}
+.tev.report{border-left-color:var(--cyan)}
+.tev.attention{border-left-color:var(--amber)}
+.tev.tool{border-left-color:rgba(255,255,255,.1)}
+.tev.note{border-left-color:rgba(255,255,255,.06)}
+.tev .th{display:flex;align-items:center;gap:5px;min-width:0}
+.tev .tt{font-size:8px;color:var(--faint);flex:none;font-family:var(--font-mono)}
+.tev .tk2{font-size:7.5px;padding:0 5px;border-radius:999px;flex:none;border:1px solid var(--bd);color:var(--faint);line-height:14px}
+.tk2.human{color:var(--green);border-color:color-mix(in srgb,var(--green) 38%,transparent)}
+.tk2.dispatch{color:var(--violet);border-color:color-mix(in srgb,var(--violet) 42%,transparent)}
+.tk2.report{color:var(--cyan);border-color:color-mix(in srgb,var(--cyan) 38%,transparent)}
+.tk2.attention{color:var(--amber);border-color:color-mix(in srgb,var(--amber) 42%,transparent)}
+.tev .tr{font-size:9px;color:var(--dim);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.tev .tr b{color:var(--ink);font-weight:700}
+.tev .tr i{font-style:normal;color:var(--faint);margin:0 3px}
+.tev .ts{font-size:8.5px;color:var(--dim);margin-top:1px;line-height:1.4}
+.tfilter{display:flex;align-items:center;gap:6px;font-size:8.5px;color:var(--dim);margin-bottom:5px;
+  padding:3px 7px;border-radius:6px;border:1px solid color-mix(in srgb,var(--a) 22%,transparent);
+  background:color-mix(in srgb,var(--a) 5%,transparent)}
+.tfilter b{color:var(--ink)}
+.tfilter .ulink{margin-left:auto;font-size:8px;color:var(--a)}
+.urow{display:grid;grid-template-columns:1fr 54px 44px 36px;align-items:center;gap:5px;padding:2px 4px;border-radius:5px;font-size:8.5px}
+.urow.on{background:color-mix(in srgb,var(--a) 8%,transparent);box-shadow:inset 0 0 0 1px color-mix(in srgb,var(--a) 24%,transparent)}
+.urow .un{color:var(--dim);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.urow.on .un{color:var(--ink)}
+.urow .ub{height:3px;border-radius:2px;background:rgba(255,255,255,.07);overflow:hidden}
+.urow .ub i{display:block;height:100%;border-radius:2px}
+.urow .uc{text-align:right;color:var(--ink);font-size:8.5px;font-family:var(--font-mono)}
+.urow .ut{text-align:right;color:var(--faint);font-size:7.5px;font-family:var(--font-mono)}
+.ubar{display:flex;height:4px;border-radius:3px;overflow:hidden;background:rgba(255,255,255,.06);margin:6px 0 4px}
+.ubar i{display:block;height:100%}
+.ulegend{display:flex;gap:8px;font-size:7.5px;color:var(--faint);flex-wrap:wrap}
+.ulegend .l{display:inline-flex;align-items:center;gap:3px}
+.ulegend .l i{width:5px;height:5px;border-radius:50%}
+.unote{font-size:7.5px;color:var(--faint);line-height:1.5;margin-top:6px;padding-top:5px;border-top:1px dashed rgba(255,255,255,.06)}
+.usel{display:flex;align-items:center;gap:5px;font-size:8px;color:var(--dim);margin-bottom:4px}
+.usel b{color:var(--ink)}
+.usel .ulink{margin-left:auto;font-size:8px;color:var(--a)}
+.uspark{display:flex;align-items:flex-end;gap:2px;height:12px;margin:5px 0 3px}
+.uspark i{flex:1;min-height:2px;border-radius:1px;opacity:.6;background:linear-gradient(180deg,var(--a),color-mix(in srgb,var(--a) 25%,transparent))}
+.usl{display:flex;justify-content:space-between;font-size:7.5px;color:var(--faint)}
+
+/* session view */
+.sesshead{display:flex;align-items:center;gap:9px;padding-bottom:10px;border-bottom:1px solid var(--bd);margin-bottom:12px}
+.sesshead .av{width:30px;height:30px;border-radius:8px;overflow:hidden;border:1px solid color-mix(in srgb,var(--b) 30%,transparent);flex:none}
+.sesshead .av img{width:100%;height:100%;object-fit:cover;object-position:50% 12%}
+.sesshead b{font-size:13px}
+.sesshead .sub{font-size:9.5px;color:var(--faint)}
+.sesshead .st2{margin-left:auto;font-size:8.5px;padding:1px 7px;border-radius:999px;border:1px solid var(--bd);color:var(--dim)}
+.sesshead .st2.run{color:var(--cyan);border-color:color-mix(in srgb,var(--cyan) 38%,transparent)}
+.transcript{display:flex;flex-direction:column;gap:10px;max-width:820px;margin:0 auto;padding-bottom:16px}
+.msg{display:flex;gap:8px;align-items:flex-start;max-width:88%}
+.msg .av{width:24px;height:24px;border-radius:7px;overflow:hidden;flex:none;background:#0c0e15;border:1px solid var(--bd)}
+.msg .av img{width:100%;height:100%;object-fit:cover;object-position:50% 12%}
+.msg .bubble{border:1px solid var(--bd);border-radius:3px 10px 10px 10px;padding:7px 10px;background:rgba(20,24,34,.72);
+  font-size:11.5px;line-height:1.6;color:var(--ink)}
+.msg .who{font-size:8px;letter-spacing:.1em;color:var(--faint);margin-bottom:2px;display:flex;gap:5px}
+.msg.me{align-self:flex-end;flex-direction:row-reverse}
+.msg.me .bubble{border-radius:10px 3px 10px 10px;border-color:color-mix(in srgb,var(--a) 32%,transparent);
+  background:color-mix(in srgb,var(--a) 10%,#0e121a)}
+.msg.me .who{justify-content:flex-end}
+.msg .shot{display:block;width:260px;border-radius:7px;margin-top:6px;border:1px solid var(--bd)}
+.msg .tool{font-family:var(--font-mono);font-size:9.5px;color:var(--dim);background:rgba(0,0,0,.25);
+  border:1px solid var(--bd);border-radius:6px;padding:5px 7px;margin-top:4px}
+.cards{display:flex;flex-direction:column;gap:6px;margin-top:4px}
+.cardlink{display:flex;align-items:center;gap:8px;text-align:left;border:1px solid var(--bd);
+  border-left:2px solid var(--accent,var(--a));border-radius:8px;padding:7px 9px;background:rgba(255,255,255,.02);transition:.13s}
+.cardlink:hover{background:color-mix(in srgb,var(--accent) 6%,transparent)}
+.cardlink .ck{font-size:7.5px;letter-spacing:.12em;color:var(--accent);font-weight:800}
+.cardlink .ct2{flex:1;min-width:0;font-size:10.5px;color:var(--ink);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.cardlink .ar{color:var(--faint);font-size:10px}
+
+/* command bar */
+.cmd{flex:none;padding:8px 18px 14px;border-top:1px solid var(--bd);background:rgba(8,10,16,.72);backdrop-filter:blur(12px)}
+.ticker{display:flex;align-items:center;gap:8px;height:26px;padding:0 10px;border-radius:8px;
+  border:1px solid var(--bd);background:rgba(13,16,24,.65);font-size:10.5px;color:var(--dim);margin-bottom:7px;overflow:hidden}
+.ticker .av{width:16px;height:16px;border-radius:4px;overflow:hidden;flex:none;border:1px solid var(--bd)}
+.ticker .av img{width:100%;height:100%;object-fit:cover;object-position:50% 12%}
+.ticker .who{font-size:8.5px;letter-spacing:.12em;color:var(--b);font-weight:800;flex:none}
+.ticker .tx{flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:var(--ink)}
+.ticker .go{font-size:8.5px;color:var(--a);flex:none}
+.box{display:flex;align-items:center;gap:9px;height:48px;padding:0 7px 0 14px;border-radius:12px;
+  border:1px solid color-mix(in srgb,var(--a) 24%,transparent);background:rgba(14,18,26,.82);transition:.16s}
+.box:focus-within{border-color:color-mix(in srgb,var(--a) 52%,transparent);
+  box-shadow:0 0 0 1px color-mix(in srgb,var(--a) 16%,transparent)}
+.box .pr{color:var(--a);font-size:14px;font-weight:700}
+.box input{flex:1;min-width:0;background:none;border:0;outline:none;color:var(--ink);font-size:12.5px;font-family:var(--font-ui)}
+.box input::placeholder{color:var(--faint)}
+.box .chips{display:flex;gap:5px;flex:none}
+.qchip{height:23px;padding:0 8px;border-radius:6px;border:1px solid var(--bd);color:var(--dim);font-size:9.5px;white-space:nowrap;transition:.13s}
+.qchip:hover{color:var(--ink);border-color:var(--bd2);background:rgba(255,255,255,.05)}
+.send{display:grid;place-items:center;width:34px;height:34px;border-radius:9px;flex:none;
+  background:linear-gradient(135deg,var(--a),color-mix(in srgb,var(--a) 55%,#fff));color:#05070B;font-size:14px;font-weight:800}
+
+/* misc */
+.empty{border:1px dashed var(--bd);border-radius:8px;padding:14px;text-align:center;color:var(--faint);font-size:10px;line-height:1.6}
+.legacy{padding:8px 8px 0;border-top:1px solid var(--bd);margin-top:4px}
+.legacy a{font-size:8.5px;color:var(--faint);text-decoration:none}
+.legacy a:hover{color:var(--dim)}
+.toast{position:fixed;right:20px;bottom:86px;z-index:60;max-width:360px;padding:9px 12px;border-radius:9px;
+  border:1px solid color-mix(in srgb,var(--a) 30%,transparent);background:rgba(14,18,26,.95);
+  box-shadow:0 14px 34px rgba(0,0,0,.5);font-size:11px;color:var(--ink);opacity:0;transform:translateY(8px);
+  transition:.25s;pointer-events:none}
+.toast.show{opacity:1;transform:none}
+@media (max-width:1180px){
+  .rail{width:250px}
+  .artstrip{grid-template-columns:repeat(4,1fr)}
+}
+@media (max-width:980px){
+  .rail{width:226px}
+  .pgrid.c3{grid-template-columns:1fr 1fr}
+  .top .tstats{display:none}
+}
+@media (max-width:820px){
+  .rail{display:none}
+  .main{padding:14px}
+  .pgrid.c2,.pgrid.c12,.pgrid.c21,.pgrid.trace{grid-template-columns:1fr}
+  .pgrid.trace{height:auto;grid-template-rows:auto}
+  .pgrid.trace .p1,.pgrid.trace .p2,.pgrid.trace .p3{grid-column:auto;grid-row:auto}
+  .artstrip{grid-template-columns:repeat(2,1fr)}
+}
+</style>
+</head>
+<body>
+<div class="app">
+  <header class="top">
+    <div class="brand"><span class="hex">⬢</span>OCTOPUS <b>ledger</b></div>
+    <div class="cwd"><span id="cwdPath">~/projects/ledger</span><i>main</i></div>
+    <div class="tstats"><span><b>5</b> 任务</span><span><b>7</b> 会话</span><span><b>¥1.28</b> 本舱</span></div>
+    <div class="right">
+      <button class="ghost" id="btnTrace">▦ Trace</button>
+      <button class="ghost" id="btnNew">＋ 新任务</button>
+      <button class="ghost pri" id="btnCockpit">进入工作舱 →</button>
+    </div>
+  </header>
+
+  <div class="body">
+    <aside class="rail">
+      <div class="rsec">
+        <div class="rhead">等你 <span class="n" id="attnN">3</span><span class="ln"></span></div>
+        <div class="rlist" id="attnList"></div>
+      </div>
+      <div class="rsec grow">
+        <div class="rhead">任务 <span class="n" id="taskN">5</span><span class="ln"></span></div>
+        <div class="fchips" id="kindChips">
+          <button class="fchip on" data-kind="all">全部</button>
+          <button class="fchip" data-kind="art">绘画</button>
+          <button class="fchip" data-kind="dev">开发</button>
+        </div>
+        <div class="tlist" id="taskList"></div>
+      </div>
+      <div class="rsec">
+        <div class="rhead">会话 <span class="n" id="sessN">6</span><span class="ln"></span></div>
+        <div class="rlist" id="sessList"></div>
+      </div>
+      <div class="legacy"><a href="index.html" title="旧版 P1–P5 多浮窗入口，仅作对照">旧版入口 · P1–P5</a></div>
+    </aside>
+
+    <main class="main" id="main"></main>
+  </div>
+
+  <footer class="cmd">
+    <div class="ticker" id="ticker">
+      <span class="av"><img src="./crew/xiyin-idle.png" alt="" /></span>
+      <span class="who">汐音</span>
+      <span class="tx" id="tickText">M2 等你验收；A1 出了 4 版，也等你选稿。</span>
+      <span class="go">⌘K</span>
+    </div>
+    <div class="box">
+      <span class="pr">❯</span>
+      <input id="cmdInput" placeholder="跟汐音说：看 A1 的第 3 版 / 通过 / 退回 / 做个新任务…" />
+      <div class="chips" id="quickChips">
+        <button class="qchip" data-cmd="通过">通过</button>
+        <button class="qchip" data-cmd="退回">退回</button>
+        <button class="qchip" data-cmd="看 A1 版本">看 A1 版本</button>
+      </div>
+      <button class="send" id="btnSend">⏎</button>
+    </div>
+  </footer>
+</div>
+<div class="toast" id="toast"></div>
+
+<script>
+/* ═══════════════════════ 数据：一个舱 = 一个 CWD ═══════════════════════ */
+const CABIN = { name: 'ledger', cwd: '~/projects/ledger', branch: 'main', cost: 1.28 }
+
+const TASKS = [
+  {
+    id: 'm2', code: 'M2', kind: 'dev', mode: 'workflow', title: '结算对账', status: '待验收', tone: 'wait',
+    pct: 78, branch: 'fix/reconcile', cost: 0.42, updated: '12m', workflow: 'spec-dev', session: 's-42',
+    summary: '对账幂等键从「按日期」改为「按（日期，账户）」；AC 1–3 已过，<b>AC-4（大额差异人工复核）</b>等你决定这轮补不补。',
+    phases: [
+      { t: '规格', s: 'done', d: 'spec.md · 3 phase · AC 1–4', when: '昨天 22:10' },
+      { t: '拆解', s: 'done', d: '4 个 ticket · 依赖无环', when: '昨天 22:24' },
+      { t: '实现', s: 'done', d: 'round 3 · 42 passed · +184/−32', when: '今天 09:38' },
+      { t: '验收', s: 'warn', d: 'AC-4 未覆盖 · 等你决定', when: '今天 09:41' },
+      { t: '交付', s: 'now', d: '可先开 draft · 通过后转 ready', when: '—' },
+    ],
+    ac: [
+      { s: 'ok', t: '对账单按日聚合，跨零点不重复', d: 'AC-1 · 单测覆盖' },
+      { s: 'ok', t: '差异 > 1 分自动挂起并告警', d: 'AC-2 · round 3 验证' },
+      { s: 'ok', t: '补跑幂等：同日重复执行结果一致', d: 'AC-3 · 新增用例通过' },
+      { s: 'warn', t: '大额差异（>10 万）需人工复核', d: 'AC-4 · 未覆盖，建议下一轮补' },
+    ],
+    changes: {
+      commits: [
+        { sha: 'a1f9c2e', msg: 'fix(settle): 幂等键改为 (日期, 账户)', when: '09:34' },
+        { sha: '7d2b410', msg: 'test(settle): 补同日重复执行用例', when: '09:38' },
+      ],
+      files: [
+        { id: 'reconcile', path: 'src/settlement/reconcile.ts', add: 142, del: 18, diff: [
+          ['ctx', '41', 'export function reconcile(day: string) {'],
+          ['del', '42', "-  const rows = loadRows(day)"],
+          ['add', '42', "+  const key = day + ':' + accountId"],
+          ['add', '43', '+  if (seen.has(key)) return { skipped: true }'],
+          ['add', '44', '+  const rows = loadRows(day, { dedupeBy: key })'],
+          ['ctx', '45', '  return settle(rows)'],
+          ['ctx', '46', '}'],
+        ] },
+        { id: 'test', path: 'src/settlement/reconcile.test.ts', add: 42, del: 14, diff: [
+          ['ctx', '86', "describe('reconcile', () => {"],
+          ['add', '88', "+  it('replays the same day idempotently', () => {"],
+          ['add', '89', "+    reconcile('2026-11-12'); reconcile('2026-11-12')"],
+          ['add', '90', '+    expect(settlements()).toHaveLength(1)'],
+          ['add', '91', '+  })'],
+          ['ctx', '92', '})'],
+        ] },
+      ],
+      checks: [
+        { s: 'ok', t: '单元测试 42 passed', d: 'settlement.reconcile · 5 cases' },
+        { s: 'ok', t: 'lint 0 error', d: '2 files changed' },
+        { s: 'ok', t: '变更范围 = 2 文件', d: '没有越界改动' },
+        { s: 'warn', t: 'AC-4 缺 1 条覆盖用例', d: '大额差异人工复核' },
+      ],
+    },
+    run: {
+      id: 'r-118', wf: 'spec-dev', elapsed: '18m12s',
+      nodes: [
+        { key: 'spec', label: 'spec · 规格', s: 'done', d: '1m12s', note: '3 phase · AC 1–4',
+          log: [['read', 'tool', '读 task m2 · brief + 3 条历史 finding'], ['write', 'tool', 'spec.md · AC 1–4'], ['done', 'ok', 'spec 定稿']] },
+        { key: 'issues', label: 'issues · 拆解', s: 'done', d: '48s', note: '4 tickets · 无环依赖',
+          log: [['write', 'tool', 'issues/01…04.md'], ['done', 'ok', '4 tickets']] },
+        { key: 'impl', label: 'impl · 实现', s: 'done', d: '11m04s', note: '2 文件 +184/−32',
+          log: [['edit', 'tool', 'reconcile.ts · 幂等键'], ['edit', 'tool', 'reconcile.test.ts'], ['test', 'ok', '42 passed']] },
+        { key: 'verify', label: 'verify · 验收', s: 'run', d: '3m20s', note: '3/5 用例 · AC-4 未覆盖',
+          log: [['bash', 'tool', 'pnpm vitest settlement.reconcile'], ['ok', 'ok', '42 passed · 5 cases'],
+            ['warn', 'err', 'AC-4 大额差异无覆盖用例'], ['write', 'tool', 'acceptance-evidence.json'],
+            ['run', 'think', '生成验收单，等你决定']] },
+        { key: 'deliver', label: 'deliver · 交付', s: 'wait', d: '—', note: '验收后转 ready',
+          log: [['wait', '', '等验收']] },
+      ],
+    },
+  },
+  {
+    id: 'a1', code: 'A1', kind: 'art', mode: 'iterations', title: '主视觉 · 结算台插画', status: '待选稿', tone: 'wait',
+    pct: 84, cost: 0.36, updated: '8m', session: 's-60',
+    summary: '第 3 版构图最稳，<b>手部还要再修</b>；选一版我就出 2K 成片，输出到 <b>output/art/a1/</b>。',
+    prompt: '赛博结算台，冷蓝主色，汐音在右侧操控全息账本，背景有漂浮的数字账页',
+    style: 'anime / cinematic', size: '2048×1152',
+    versions: [
+      { v: 1, score: 72, img: './crew/xiyin-thinking.png', note: '构图偏满' },
+      { v: 2, score: 78, img: './crew/xiyin-idle.png', note: '光比偏平' },
+      { v: 3, score: 84, img: './crew/xiyin-cheer.png', note: '构图最稳 · 手部待修', sel: true },
+      { v: 4, score: 81, img: './crew/xiyin-wink.png', note: '手部更好 · 构图偏右' },
+    ],
+    materials: [
+      { img: './crew/xiyin-working.png', name: '参考 · 结算台氛围' },
+      { img: './crew/xiyin-thinking.png', name: '参考 · 冷蓝光比' },
+    ],
+    prompts: [
+      { t: '09:12', p: '赛博结算台，冷蓝主色，右侧人物操控全息账本' },
+      { t: '09:18', p: '第 2 版：光比再压一档，账页密度降低' },
+      { t: '09:26', p: '第 3 版：人物稍右，手部动作改成推账本' },
+      { t: '09:31', p: '第 4 版：手部再修，构图回收一点' },
+    ],
+    deliver: { folder: 'output/art/a1/', format: 'PNG · 2K', checks: [
+      { s: 'ok', t: '尺寸 2048×1152', d: '16:9 · 印刷余量 8mm' },
+      { s: 'ok', t: '色彩配置 sRGB', d: '与结算台 UI 同色域' },
+      { s: 'ok', t: '4 版留档', d: 'output/art/a1/versions/' },
+      { s: 'warn', t: '第 3 版手部待修', d: '选稿后我先修再出片' },
+    ] },
+  },
+  {
+    id: 'm1', code: 'M1', kind: 'dev', mode: 'workflow', title: '退款链路', status: '阻塞', tone: 'fail',
+    pct: 32, branch: 'feat/refund-flow', cost: 0.27, updated: '3m', workflow: 'refund-flow', session: 's-33',
+    summary: 'CI 红：<b>idempotent replay</b> 断言失败，已停住。看着像没 rebase 到最新幂等修复。',
+    phases: [
+      { t: '规格', s: 'done', d: 'spec.md · AC 1–3', when: '昨天 18:02' },
+      { t: '实现', s: 'done', d: '2 文件 +96/−41', when: '今天 09:21' },
+      { t: '验收', s: 'fail', d: 'CI 红 · idempotent replay', when: '今天 09:38' },
+      { t: '交付', s: 'wait', d: 'CI 绿后自动发起', when: '—' },
+    ],
+    ac: [
+      { s: 'ok', t: '退款幂等重放', d: 'AC-1 · 单测覆盖' },
+      { s: 'no', t: '并发同单只退一次', d: 'AC-2 · CI 红' },
+    ],
+    changes: {
+      commits: [{ sha: '9c2d1aa', msg: 'fix(refund): replay guard', when: '09:21' }],
+      files: [{ id: 'replay', path: 'refund/replay.ts', add: 96, del: 41, diff: [
+        ['ctx', '20', 'export async function replay(order: Order) {'],
+        ['del', '21', '-  if (done.has(order.id)) return'],
+        ['add', '21', '+  if (await seen(order.id)) return { skipped: true }'],
+        ['ctx', '22', '  return execute(order)'],
+      ] }],
+      checks: [
+        { s: 'ok', t: 'build 通过', d: 'pnpm build' },
+        { s: 'no', t: '单测 idempotent replay', d: 'expected 1 but got 2' },
+      ],
+    },
+    run: {
+      id: 'r-115', wf: 'refund-flow', elapsed: '9m03s',
+      nodes: [
+        { key: 'spec', label: 'spec · 规格', s: 'done', d: '44s', note: 'AC 1–3', log: [['done', 'ok', 'spec 定稿']] },
+        { key: 'impl', label: 'impl · 实现', s: 'done', d: '7m40s', note: '2 文件 +96/−41', log: [['edit', 'tool', 'refund/replay.ts'], ['done', 'ok', '实现完成']] },
+        { key: 'verify', label: 'verify · 验收', s: 'fail', d: '0m48s', note: 'idempotent replay 失败',
+          log: [['bash', 'tool', 'pnpm test'], ['err', 'err', 'AssertionError: expected 1 but got 2'], ['stop', 'err', 'CI stopped · 等你处置']] },
+        { key: 'deliver', label: 'deliver · 交付', s: 'wait', d: '—', note: 'CI 绿后进', log: [] },
+      ],
+    },
+  },
+  {
+    id: 'd1', code: 'D1', kind: 'dev', mode: 'direct', title: '依赖升级', status: '运行中', tone: 'run',
+    pct: 56, branch: 'chore/deps-11', cost: 0.11, updated: '4m', workflow: null, session: 's-70',
+    summary: '11 个包可升，2 个 breaking。直接开干，不走工作流；batch 1 的 5 个 patch 包在升。',
+    phases: [
+      { t: '扫描', s: 'done', d: '11 可升 · 2 breaking', when: '今天 09:58' },
+      { t: '分批', s: 'done', d: '3 批 · 先 patch', when: '今天 10:01' },
+      { t: '升级', s: 'now', d: 'batch 1 · 5 个包', when: '今天 10:03' },
+      { t: '回归', s: 'wait', d: '升级后跑全量', when: '—' },
+    ],
+    ac: [
+      { s: 'ok', t: 'patch 包升级后 build 通过', d: 'batch 1 · 进行中' },
+      { s: 'warn', t: '2 个 breaking 包', d: 'batch 3 · 需要人工确认' },
+    ],
+    changes: {
+      commits: [{ sha: '3e8b001', msg: 'chore(deps): batch 1 · 5 patch bumps', when: '10:04' }],
+      files: [
+        { id: 'pkg', path: 'package.json', add: 5, del: 5, diff: [['ctx', '12', '"dependencies": {'], ['del', '13', '-  "zod": "3.23.2",'], ['add', '13', '+  "zod": "3.24.1",']] },
+        { id: 'lock', path: 'pnpm-lock.yaml', add: 48, del: 34, diff: [['ctx', '1', 'lockfileVersion: 9.0'], ['add', '2', '+  zod@3.24.1: {}']] },
+      ],
+      checks: [
+        { s: 'ok', t: 'batch 1 build 通过', d: '5 个 patch 包' },
+        { s: 'warn', t: 'breaking 包未升', d: '等 batch 3' },
+      ],
+    },
+    run: null,
+  },
+  {
+    id: 'a2', code: 'A2', kind: 'art', mode: 'iterations', title: '图标组 · 风控', status: '运行中', tone: 'run',
+    pct: 40, cost: 0.02, updated: '6m', session: 's-61',
+    summary: '8 枚图标，第 2 轮草图；先出线稿，风格跟 A1 对齐。',
+    prompt: '8 枚风控图标：拦截 / 观察 / 复核 / 冻结 / 告警 / 放行 / 回滚 / 审计，线性 + 冷蓝',
+    style: 'line / flat', size: '512×512',
+    versions: [
+      { v: 1, score: 66, img: './crew/xiyin-thinking.png', note: '线宽偏粗' },
+      { v: 2, score: 74, img: './crew/xiyin-working.png', note: '第 2 轮草图', sel: true },
+    ],
+    materials: [],
+    prompts: [{ t: '10:02', p: '8 枚风控图标，线性，冷蓝，跟 A1 同语言' }],
+    deliver: { folder: 'output/art/a2/', format: 'SVG + PNG', checks: [
+      { s: 'warn', t: '草图阶段', d: '还没到交付' },
+    ] },
+  },
+]
+
+const SESSIONS = [
+  { id: 's-xiyin', name: '汐音', taskId: null, status: 'run', doing: '主会话 · 派发与回执', elapsed: '全程',
+    log: [
+      { from: '汐音', t: '舱面就绪。5 个任务、6 个分身在推进；M2 和 A1 等你，M1 卡住了。' },
+      { from: '汐音', t: '我把要你决定的放在左边「等你」；其余我盯着，有回流再叫你。' },
+    ],
+    cards: [
+      { taskId: 'm2', lens: 'changes', k: '等你验收', t: 'M2 · 结算对账 做完了', color: 'var(--green)' },
+      { taskId: 'a1', lens: 'versions', k: '等你选稿', t: 'A1 · 主视觉 出了 4 版', color: 'var(--amber)' },
+    ] },
+  { id: 's-42', name: 'ledger-2', taskId: 'm2', status: 'run', doing: '跑 verify · settlement.reconcile', elapsed: '18m',
+    log: [
+      { from: '汐音', t: '接 M2 结算对账，走 spec-dev 流，AC 1–4。' },
+      { from: 'ledger-2', t: 'spec 定稿，3 个 phase，拆了 4 个 ticket。' },
+      { from: 'ledger-2', t: '实现完成，2 文件 +184/−32。', tool: 'pnpm vitest settlement → 42 passed' },
+      { from: 'ledger-2', t: 'AC-4 大额差异的用例不在 ticket 里，我记了一笔，等你决定本轮补不补。' },
+    ] },
+  { id: 's-60', name: 'art-1', taskId: 'a1', status: 'run', doing: '出第 3 版 · 修手部', elapsed: '22m',
+    log: [
+      { from: '汐音', t: 'A1 主视觉，出 4 版，风格 anime / cinematic，16:9。' },
+      { from: 'art-1', t: '第 1、2 版构图偏满，光比偏平；第 3 版把人物右移、手部改成推账本。', shot: './crew/xiyin-cheer.png' },
+      { from: 'art-1', t: '第 3 版构图最稳，手部还要再修一档；第 4 版手部更好但构图偏右。' },
+    ] },
+  { id: 's-61', name: 'art-2', taskId: 'a2', status: 'run', doing: '线稿第 2 轮 · 8 枚图标', elapsed: '6m',
+    log: [
+      { from: '汐音', t: 'A2 图标组，线性 + 冷蓝，跟 A1 同语言；先出线稿。' },
+      { from: 'art-2', t: '8 枚线稿第 2 轮，线宽收了一档；等 A1 风格定稿再上色。' },
+    ] },
+  { id: 's-33', name: 'gateway-2', taskId: 'm1', status: 'fail', doing: 'CI 红 · 现场冻结', elapsed: '9m',
+    log: [
+      { from: 'gateway-2', t: '实现完了，跑 verify。', tool: 'pnpm test → AssertionError: expected 1 but got 2' },
+      { from: 'gateway-2', t: '已停止，现场保留。像没 rebase 到最新幂等修复。' },
+    ] },
+  { id: 's-70', name: 'dev-1', taskId: 'd1', status: 'run', doing: '升级 batch 1 · 5 个 patch 包', elapsed: '4m',
+    log: [
+      { from: '汐音', t: 'D1 依赖升级，直做，不走流；先 patch 再 breaking。' },
+      { from: 'dev-1', t: '扫到 11 个可升，2 个 breaking；batch 1 的 5 个 patch 包在升。' },
+    ] },
+  { id: 's-31', name: 'ledger-1', taskId: 'm2', status: 'run', doing: '归档沉淀 · 编译 wiki', elapsed: '6m',
+    log: [
+      { from: '汐音', t: 'M2 通过后编译 1 篇沉淀到 wiki。' },
+      { from: 'ledger-1', t: '抽了 2 条可复用结论，正在检查术语冲突。' },
+    ] },
+]
+
+const ATTENTION = [
+  { id: 'at-m2', taskId: 'm2', lens: 'changes', k: '等你验收', t: 'M2 · 结算对账 做完了',
+    s: '2 文件 +184/−32 · AC-4 待定', color: 'var(--green)' },
+  { id: 'at-a1', taskId: 'a1', lens: 'versions', k: '等你选稿', t: 'A1 · 主视觉 出了 4 版',
+    s: '第 3 版最稳 · 手部待修', color: 'var(--amber)' },
+  { id: 'at-m1', taskId: 'm1', lens: 'run', k: '阻塞', t: 'M1 · 退款链路 CI 红了',
+    s: 'idempotent replay 断言失败', color: 'var(--red)' },
+]
+
+/* Trace / 消耗：主体是汐音 */
+const TRACE = {
+  nodes: [
+    { id: 'root', kind: 'root', name: '汐音', sub: '座舱 · orchestrator', x: 44, y: 150, w: 132, h: 44, cost: 0.03, tok: '12k', state: 'run' },
+    { id: 'chat', kind: 'chat', name: '对话 Agent', sub: 'comms · 意图 / 回执', x: 320, y: 20, w: 156, h: 36, cost: 0.02, tok: '8k', state: 'run' },
+    { id: 'ledger-2', kind: 'agent', name: 'ledger-2', sub: '开发 · M2', x: 320, y: 78, w: 156, h: 36, cost: 0.42, tok: '128k', state: 'run', taskId: 'm2' },
+    { id: 'art-1', kind: 'agent', name: 'art-1', sub: '绘画 · A1 / A2', x: 320, y: 136, w: 156, h: 36, cost: 0.38, tok: '112k', state: 'run', taskId: 'a1' },
+    { id: 'gateway-2', kind: 'agent', name: 'gateway-2', sub: '开发 · M1', x: 320, y: 194, w: 156, h: 36, cost: 0.27, tok: '71k', state: 'fail', taskId: 'm1' },
+    { id: 'dev-1', kind: 'agent', name: 'dev-1', sub: '开发 · D1（直做）', x: 320, y: 252, w: 156, h: 36, cost: 0.11, tok: '42k', state: 'run', taskId: 'd1' },
+    { id: 'ledger-1', kind: 'agent', name: 'ledger-1', sub: '归档 · wiki', x: 320, y: 310, w: 156, h: 36, cost: 0.05, tok: '34k', state: 'run', taskId: 'm2' },
+    { id: 'r-118', kind: 'wf', name: 'spec-dev', sub: 'r-118 · 3/5 节点', x: 648, y: 86, w: 150, h: 36, state: 'run' },
+    { id: 'r-115', kind: 'wf', name: 'refund-flow', sub: 'r-115 · 3/4 节点', x: 648, y: 194, w: 150, h: 36, state: 'fail' },
+  ],
+  edges: [
+    { a: 'root', b: 'chat', kind: 'dispatch' },
+    { a: 'root', b: 'ledger-2', kind: 'dispatch' },
+    { a: 'root', b: 'art-1', kind: 'dispatch' },
+    { a: 'root', b: 'gateway-2', kind: 'dispatch' },
+    { a: 'root', b: 'dev-1', kind: 'dispatch' },
+    { a: 'root', b: 'ledger-1', kind: 'dispatch' },
+    { a: 'ledger-2', b: 'r-118', kind: 'run' },
+    { a: 'gateway-2', b: 'r-115', kind: 'run' },
+  ],
+}
+const TRACE_KIND = {
+  human: { label: '人输入', cls: 'human' }, dispatch: { label: '派发', cls: 'dispatch' },
+  report: { label: '回报', cls: 'report' }, attention: { label: '需注意', cls: 'attention' },
+  tool: { label: '工具', cls: 'tool' }, note: { label: '备注', cls: 'note' },
+}
+const TRACE_EVENTS = [
+  { t: '09:31', k: 'human', from: '指挥官', to: '汐音', s: 'A1 的稿子出了叫我；M2 跑完也叫我', nodes: ['root', 'chat'] },
+  { t: '09:31', k: 'dispatch', from: '汐音', to: 'ledger-2', s: '接 M2 结算对账，走 spec-dev · AC 1–4', nodes: ['root', 'ledger-2', 'r-118'] },
+  { t: '09:31', k: 'dispatch', from: '汐音', to: 'art-1', s: 'A1 出 4 版；A2 接在它后面', nodes: ['root', 'art-1'] },
+  { t: '09:31', k: 'dispatch', from: '汐音', to: 'gateway-2', s: '接 M1 退款链，修 idempotent replay', nodes: ['root', 'gateway-2', 'r-115'] },
+  { t: '09:58', k: 'dispatch', from: '汐音', to: 'dev-1', s: 'D1 依赖升级，直做，不走工作流', nodes: ['root', 'dev-1'] },
+  { t: '09:32', k: 'report', from: 'ledger-2', to: '汐音', s: 'spec 定稿 · 3 phase · 1m12s', nodes: ['ledger-2', 'root', 'r-118'] },
+  { t: '09:41', k: 'attention', from: 'ledger-2', to: '汐音', s: 'AC-4 大额差异未覆盖，等你决定', nodes: ['ledger-2', 'root', 'r-118'] },
+  { t: '09:24', k: 'report', from: 'art-1', to: '汐音', s: 'A1 第 4 版出了；第 3 版构图最稳', nodes: ['art-1', 'root'] },
+  { t: '09:25', k: 'attention', from: 'art-1', to: '汐音', s: 'A1 手部待修，等你选稿', nodes: ['art-1', 'root'] },
+  { t: '09:38', k: 'attention', from: 'gateway-2', to: '汐音', s: 'CI 红：AssertionError expected 1 got 2', nodes: ['gateway-2', 'root', 'r-115'] },
+  { t: '10:04', k: 'tool', from: 'dev-1', to: 'deps-11', s: 'pnpm up batch1 → 5 个 patch 包', nodes: ['dev-1'] },
+  { t: '09:41', k: 'report', from: '汐音', to: '指挥官', s: 'M2 可验收；A1 可选稿', nodes: ['root', 'chat'] },
+  { t: '09:42', k: 'human', from: '指挥官', to: '汐音', s: '看 A1 的第 3 版', nodes: ['root', 'chat'] },
+  { t: '09:42', k: 'report', from: '汐音', to: 'art-1', s: '把第 3 版手部再修一档', nodes: ['root', 'art-1'] },
+  { t: '10:05', k: 'tool', from: 'ledger-1', to: 'wiki', s: '编译 wiki/entities/结算对账.md', nodes: ['ledger-1'] },
+  { t: '10:06', k: 'note', from: '汐音', to: 'A2', s: 'A2 线稿第 2 轮，等 A1 风格定稿', nodes: ['root', 'art-1'] },
+]
+const USAGE = {
+  total: 1.28, window: 1.02, calls: 42, tokIn: '312k', tokOut: '48k',
+  rows: [
+    { id: 'root', name: '汐音 · 主对话', cost: 0.03, tok: '12k', color: 'var(--b)' },
+    { id: 'chat', name: '对话 Agent', cost: 0.02, tok: '8k', color: 'var(--violet)' },
+    { id: 'ledger-2', name: 'ledger-2', cost: 0.42, tok: '128k', color: 'var(--cyan)' },
+    { id: 'art-1', name: 'art-1', cost: 0.38, tok: '112k', color: 'var(--amber)' },
+    { id: 'gateway-2', name: 'gateway-2', cost: 0.27, tok: '71k', color: 'var(--cyan)' },
+    { id: 'dev-1', name: 'dev-1', cost: 0.11, tok: '42k', color: 'var(--cyan)' },
+    { id: 'ledger-1', name: 'ledger-1', cost: 0.05, tok: '34k', color: 'var(--green)' },
+  ],
+  models: [
+    { name: 'opus-5', pct: 60, color: 'var(--violet)' },
+    { name: 'sonnet-5', pct: 34, color: 'var(--cyan)' },
+    { name: 'haiku-4.5', pct: 6, color: 'var(--green)' },
+  ],
+  ticks: [2, 4, 3, 6, 5, 8, 7, 11],
+}
+
+/* ═══════════════════════ 小工具 ═══════════════════════ */
+const $ = (s) => document.querySelector(s)
+const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]))
+const state = { view: 'task', taskId: 'm2', lens: 'overview', sessionId: null, kind: 'all', traceSel: 'root', checkFile: null, node: 'verify' }
+const MOOD = { 's-xiyin': 'wink', 's-42': 'working', 's-60': 'cheer', 's-61': 'thinking', 's-33': 'worried', 's-70': 'idle', 's-31': 'thinking' }
+const avatarOf = (s) => `./crew/xiyin-${MOOD[s.id] || 'idle'}.png`
+const taskById = (id) => TASKS.find((t) => t.id === id)
+const sessionById = (id) => SESSIONS.find((s) => s.id === id)
+const taskLensKey = (t) => state.taskId === t.id ? state.lens : ''
+
+/* hash 互跳：index-v2.html#task=m2&lens=changes */
+function readHash() {
+  const h = new URLSearchParams(location.hash.slice(1))
+  if (h.get('task') && taskById(h.get('task'))) state.taskId = h.get('task')
+  if (h.get('lens')) state.lens = h.get('lens')
+  if (h.get('view') === 'trace') state.view = 'trace'
+  if (h.get('session') && sessionById(h.get('session'))) { state.view = 'session'; state.sessionId = h.get('session') }
+}
+function toCockpit() {
+  if (state.view === 'trace') { location.href = 'cockpit-v7.html#view=trace'; return }
+  if (state.view === 'session') { location.href = 'cockpit-v7.html#session=' + state.sessionId; return }
+  const t = taskById(state.taskId) || TASKS[0]
+  location.href = `cockpit-v7.html#task=${t.id}&lens=${state.lens}`
+}
+function lensesOf(t) {
+  if (t.kind === 'art') return [['overview', '概览'], ['versions', '版本'], ['materials', '素材'], ['deliver', '交付']]
+  if (t.mode === 'direct') return [['overview', '概览'], ['session', '会话'], ['changes', '变更'], ['trace', 'Trace']]
+  return [['overview', '概览'], ['run', '运行'], ['changes', '变更'], ['trace', 'Trace']]
+}
+function defaultLens(t) { return 'overview' }
+function setTask(id, lens) {
+  state.view = 'task'; state.taskId = id; state.lens = lens || defaultLens(taskById(id))
+  state.checkFile = null
+  render()
+}
+function openSession(id) { state.view = 'session'; state.sessionId = id; render() }
+function toast(msg) {
+  const el = $('#toast'); el.textContent = msg; el.classList.add('show')
+  clearTimeout(toast._t); toast._t = setTimeout(() => el.classList.remove('show'), 2600)
+}
+function ticker(msg) {
+  $('#tickText').textContent = msg
+}
+
+/* ═══════════════════════ 左栏 ═══════════════════════ */
+function renderRail() {
+  $('#attnN').textContent = String(ATTENTION.length)
+  $('#taskN').textContent = String(TASKS.filter((t) => state.kind === 'all' || t.kind === state.kind).length)
+  $('#sessN').textContent = String(SESSIONS.length)
+  $('#attnList').innerHTML = ATTENTION.map((a) => `
+    <button class="attn" data-attn="${a.id}" style="--accent:${a.color}">
+      <span class="ak">${esc(a.k)}</span>
+      <span class="at">${esc(a.t)}</span>
+      <span class="as">${esc(a.s)}</span>
+    </button>`).join('')
+  $('#taskList').innerHTML = TASKS
+    .filter((t) => state.kind === 'all' || t.kind === state.kind)
+    .map((t) => `
+      <button class="trow ${state.view === 'task' && state.taskId === t.id ? 'on' : ''}" data-task="${t.id}">
+        <span class="tk ${t.kind}">${t.kind === 'art' ? '绘画' : '开发'}</span>
+        <span class="tb"><b>${esc(t.code)} · ${esc(t.title)}</b>
+          <span>${t.kind === 'dev' ? (t.mode === 'workflow' ? '工作流 · ' + esc(t.workflow) : '直做 · 不挂流') : t.versions.length + ' 版' + (t.versions.some((v) => v.sel) ? ' · 已选 v' + t.versions.find((v) => v.sel).v : '')} · ${t.updated}</span></span>
+        <span class="st ${t.tone}">${esc(t.status)}</span>
+      </button>`).join('') || '<div class="empty">这个分类下没有任务。</div>'
+  $('#sessList').innerHTML = SESSIONS.map((s) => {
+    const t = s.taskId ? taskById(s.taskId) : null
+    return `<button class="srow ${state.view === 'session' && state.sessionId === s.id ? 'on' : ''}" data-session="${s.id}">
+      <span class="av"><img src="${avatarOf(s)}" alt="" /></span>
+      <span class="sm"><b>${esc(s.name)}</b><span>${esc(t ? t.code + ' · ' + t.title : '主会话')} · ${esc(s.doing)}</span></span>
+      <span class="sd ${s.status}"></span>
+    </button>`
+  }).join('')
+}
+
+/* ═══════════════════════ 主区：任务 ═══════════════════════ */
+function taskHead(t) {
+  const kind = t.kind === 'art' ? '绘画' : '开发'
+  const sub = t.kind === 'art' ? '迭代' : (t.mode === 'workflow' ? '工作流 · ' + t.workflow : '直做 · 不挂流')
+  return `<div class="taskhead">
+    <span class="k ${t.kind === 'art' ? 'tk art' : 'tk dev'}">${kind} · ${esc(sub)}</span>
+    <h1>${esc(t.code)} · ${esc(t.title)}</h1>
+    <span class="status st ${t.tone}">${esc(t.status)}</span>
+    <span class="right">
+      <button class="mini" data-act="open-session">会话 ${t.session ? '· ' + esc(sessionById(t.session).name) : ''}</button>
+    </span>
+    <div class="meta"><span>${esc(CABIN.cwd)}</span><span class="sep"></span><span>${esc(t.kind === 'art' ? 'output/art/' + t.id + '/' : t.branch)}</span>
+      <span class="sep"></span><span>¥${t.cost.toFixed(2)}</span><span class="sep"></span><span>${t.updated} 前</span>
+      ${t.kind === 'dev' ? `<span class="sep"></span><span>${t.pct}%</span>` : ''}</div>
+  </div>`
+}
+
+function renderTask(t) {
+  const lenses = lensesOf(t)
+  const lens = lenses.some(([k]) => k === state.lens) ? state.lens : 'overview'
+  state.lens = lens
+  return `<div class="taskview">
+    ${taskHead(t)}
+    <div class="lenses">
+      ${lenses.map(([k, label]) => `<button class="lens ${k === lens ? 'on' : ''}" data-lens="${k}">${label}</button>`).join('')}
+      <span class="hint">${t.kind === 'art' ? '选稿 / 修图都直接说' : '运行、变更、Trace 都是这个任务的镜头'}</span>
+    </div>
+    <div id="lensBody">${lensBody(t, lens)}</div>
+  </div>`
+}
+
+function lensBody(t, lens) {
+  if (t.kind === 'art') {
+    if (lens === 'versions') return artVersions(t)
+    if (lens === 'materials') return artMaterials(t)
+    if (lens === 'deliver') return artDeliver(t)
+    return artOverview(t)
+  }
+  if (lens === 'run') return devRun(t)
+  if (lens === 'session') return devSession(t)
+  if (lens === 'changes') return devChanges(t)
+  if (lens === 'trace') return devTrace(t)
+  return devOverview(t)
+}
+
+/* ── dev overview ── */
+function devOverview(t) {
+  return `<div class="pgrid c12">
+    <div class="pane">
+      <div class="pane-h"><b>它是什么</b><span class="tag ${t.tone === 'fail' ? 'r' : t.tone === 'wait' ? '' : 'c'}">${esc(t.status)}</span></div>
+      <div class="pane-b">
+        <div class="summary">${t.summary}</div>
+        <div class="kv">
+          <div class="cell"><div class="l">MODE</div><div class="v">${t.mode === 'workflow' ? '工作流 · ' + esc(t.workflow) : '直做 · 不挂流'}</div></div>
+          <div class="cell"><div class="l">BRANCH</div><div class="v">${esc(t.branch)}</div></div>
+          <div class="cell"><div class="l">PROGRESS</div><div class="v c">${t.pct}%</div></div>
+          <div class="cell"><div class="l">COST</div><div class="v m">¥${t.cost.toFixed(2)}</div></div>
+        </div>
+        <div class="acts">
+          ${t.id === 'm2' ? '<button class="btn pri" data-act="accept">通过</button><button class="btn danger" data-act="reject">退回</button><button class="btn" data-act="deliver">发起交付</button>' : ''}
+          ${t.id === 'm1' ? '<button class="btn pri" data-act="rerun">rebase 再跑</button><button class="btn" data-act="rollback">回滚</button>' : ''}
+          ${t.id === 'd1' ? '<button class="btn" data-act="open-session">看会话</button><button class="btn" data-act="pause">暂停</button>' : ''}
+        </div>
+      </div>
+    </div>
+    <div class="pane">
+      <div class="pane-h"><b>阶段</b><span class="tag">${t.phases.filter((p) => p.s === 'done').length}/${t.phases.length}</span></div>
+      <div class="pane-b tight"><div class="phases">
+        ${t.phases.map((p) => `<div class="phase ${p.s}"><span class="ph-d">${p.s === 'done' ? '✓' : p.s === 'fail' ? '✕' : p.s === 'wait' ? '○' : '●'}</span>
+          <span class="pb"><b>${p.t}</b><span>${esc(p.d)}</span></span><span class="pw">${esc(p.when)}</span></div>`).join('')}
+      </div></div>
+    </div>
+    <div class="pane">
+      <div class="pane-h"><b>验收</b><span class="tag ${t.ac.some((a) => a.s !== 'ok') ? '' : 'g'}">${t.ac.filter((a) => a.s === 'ok').length}/${t.ac.length}</span></div>
+      <div class="pane-b tight">${t.ac.map((a) => `<div class="chk ${a.s}"><span class="box">${a.s === 'ok' ? '✓' : a.s === 'warn' ? '!' : '×'}</span>
+        <span class="ct">${esc(a.t)}<small>${esc(a.d)}</small></span></div>`).join('')}</div>
+    </div>
+    <div class="pane">
+      <div class="pane-h"><b>会话</b><span class="tag">${t.session ? '1' : '0'}</span></div>
+      <div class="pane-b tight">${t.session ? (() => { const s = sessionById(t.session); return `<button class="srow" data-session="${s.id}" style="padding:5px 3px">
+        <span class="av"><img src="${avatarOf(s)}" alt="" /></span>
+        <span class="sm"><b>${esc(s.name)}</b><span>${esc(s.doing)}</span></span><span class="sd ${s.status}"></span></button>` })() : '<div class="empty">还没有会话。</div>'}
+        <div class="summary" style="font-size:10px;margin-top:8px;color:var(--faint)">会话是执行现场；任务这一层只保留结论和证据。</div>
+      </div>
+    </div>
+  </div>`
+}
+
+/* ── dev run ── */
+function devRun(t) {
+  if (!t.run) return `<div class="empty">这个任务不挂工作流（直做），去「会话」看执行现场。</div>`
+  const r = t.run
+  const sel = r.nodes.find((n) => n.key === state.node) || r.nodes.find((n) => n.s === 'run') || r.nodes.find((n) => n.s === 'fail') || r.nodes[0]
+  state.node = sel.key
+  const done = r.nodes.filter((n) => n.s === 'done').length
+  return `<div class="pgrid c21">
+    <div class="pane">
+      <div class="pane-h"><b>节点</b><span class="tag c">${done}/${r.nodes.length}</span></div>
+      <div class="pane-b tight">
+        <div class="runhead"><b>${esc(r.wf)}</b><span class="rp"><i style="width:${Math.round(done / r.nodes.length * 100)}%"></i></span><span>${esc(r.elapsed)}</span></div>
+        <div class="nodes">${r.nodes.map((n) => `<button class="nnode ${n.s} ${n.key === sel.key ? 'sel' : ''}" data-node="${n.key}">
+          <span class="ni">${n.s === 'done' ? '✓' : n.s === 'run' ? '●' : n.s === 'fail' ? '✕' : '○'}</span>
+          <span class="nb"><b>${esc(n.label)}</b><span>${esc(n.note)}</span></span><span class="nt">${esc(n.d)}</span></button>`).join('')}</div>
+        <div class="acts"><button class="btn pri" data-act="rerun-node">重跑本节点</button><button class="btn danger" data-act="abort">中止</button></div>
+      </div>
+    </div>
+    <div class="pane">
+      <div class="pane-h"><b>实时流 · ${esc(sel.label)}</b><span class="tag c">${sel.s === 'run' ? 'LIVE' : sel.s.toUpperCase()}</span></div>
+      <div class="pane-b flush"><div class="stream">${(sel.log || []).map((l, i) => `<div class="sl ${l[1] === 'err' ? 'err' : l[1] === 'ok' ? 'ok' : ''}"><span class="st">${String(9 + Math.floor((31 + i * 2) / 60)).padStart(2, '0')}:${String((31 + i * 2) % 60).padStart(2, '0')}</span><span class="tag ${l[1]}">${esc(l[0])}</span><span>${esc(l[2])}</span></div>`).join('')}<div class="sl"><span class="st">›</span><span class="cr"></span></div></div></div>
+    </div>
+  </div>`
+}
+
+/* ── dev session lens ── */
+function devSession(t) {
+  if (!t.session) return '<div class="empty">这个任务还没有会话。</div>'
+  const s = sessionById(t.session)
+  return `<div class="pgrid c12">
+    <div class="pane">
+      <div class="pane-h"><b>${esc(s.name)} · 会话</b><span class="tag c">${s.status === 'run' ? '在执行' : s.status === 'fail' ? '已中止' : '等指令'}</span></div>
+      <div class="pane-b">${s.log.map((m) => `<div class="msg"><span class="av"><img src="${avatarOf(s)}" alt="" /></span>
+        <div class="bubble"><div class="who">${esc(m.from)}</div>${esc(m.t)}${m.tool ? `<div class="tool">${esc(m.tool)}</div>` : ''}</div></div>`).join('')}
+        <div class="acts"><button class="btn pri" data-session="${s.id}">打开完整会话</button></div>
+      </div>
+    </div>
+    <div class="pane">
+      <div class="pane-h"><b>它在做什么</b></div>
+      <div class="pane-b">
+        <div class="summary">${esc(s.doing)}。会话是任务的执行现场；需要停 / 接管，直接跟汐音说。</div>
+        <div class="kv"><div class="cell"><div class="l">ELAPSED</div><div class="v c">${esc(s.elapsed)}</div></div>
+          <div class="cell"><div class="l">TASK</div><div class="v">${esc(t.code)}</div></div></div>
+      </div>
+    </div>
+  </div>`
+}
+
+/* ── dev changes ── */
+function devChanges(t) {
+  const cs = t.changes
+  const file = cs.files.find((f) => f.id === state.checkFile) || cs.files[0]
+  state.checkFile = file.id
+  return `<div class="pgrid c21">
+    <div class="pane">
+      <div class="pane-h"><b>改动</b><span class="tag">${cs.files.length} FILES</span></div>
+      <div class="pane-b tight">
+        <div style="display:flex;flex-direction:column;gap:2px">${cs.files.map((f) => `<button class="file ${f.id === file.id ? 'on' : ''}" data-file="${f.id}">
+          <span class="st2">M</span><span class="fn">${esc(f.path)}</span><span class="add">+${f.add}</span><span class="del">−${f.del}</span></button>`).join('')}</div>
+        ${cs.commits.map((c) => `<div class="cmt"><span class="sha">${esc(c.sha)}</span><span class="msg">${esc(c.msg)}</span><span class="tm">${esc(c.when)}</span></div>`).join('')}
+      </div>
+    </div>
+    <div class="pane">
+      <div class="pane-h"><b>diff</b><span class="tag">${esc(file.path.split('/').pop())}</span></div>
+      <div class="pane-b tight"><div class="diff">
+        <div class="dh"><span style="flex:1">${esc(file.path)}</span><span>@@ −41 +41 @@</span></div>
+        ${file.diff.map((d) => `<div class="dl ${d[0]}"><span class="n">${esc(d[1])}</span><span>${esc(d[2])}</span></div>`).join('')}
+      </div></div>
+    </div>
+    <div class="pane">
+      <div class="pane-h"><b>校验</b><span class="tag ${cs.checks.every((c) => c.s === 'ok') ? 'g' : ''}">${cs.checks.filter((c) => c.s === 'ok').length}/${cs.checks.length}</span></div>
+      <div class="pane-b tight">${cs.checks.map((c) => `<div class="chk ${c.s}"><span class="box">${c.s === 'ok' ? '✓' : c.s === 'warn' ? '!' : '×'}</span><span class="ct">${esc(c.t)}<small>${esc(c.d)}</small></span></div>`).join('')}</div>
+    </div>
+    <div class="pane">
+      <div class="pane-h"><b>结论</b><span class="tag">${t.status}</span></div>
+      <div class="pane-b"><div class="summary">${t.summary}</div>
+        <div class="acts">${t.id === 'm2' ? '<button class="btn pri" data-act="accept">通过</button><button class="btn danger" data-act="reject">退回</button>' : ''}</div>
+      </div>
+    </div>
+  </div>`
+}
+
+/* ── dev trace (local) ── */
+function devTrace(t) {
+  const agent = TRACE.nodes.find((n) => n.taskId === t.id)
+  const sel = agent ? agent.id : 'root'
+  const evs = TRACE_EVENTS.filter((e) => e.nodes.includes(sel))
+  return `<div class="pgrid trace">
+    <div class="pane p1">
+      <div class="pane-h"><b>座舱拓扑 · ${esc(t.code)}</b><span class="tag">只读</span></div>
+      <div class="pane-b" style="padding:4px 6px">${dagHTML(sel)}</div>
+    </div>
+    <div class="pane p2">
+      <div class="pane-h"><b>交互流</b><span class="tag">${evs.length} EVENTS</span></div>
+      <div class="pane-b tight">${traceLogHTML(sel)}</div>
+    </div>
+    <div class="pane p3">
+      <div class="pane-h"><b>消耗</b><span class="tag">¥${t.cost.toFixed(2)}</span></div>
+      <div class="pane-b tight">${usageHTML(sel)}</div>
+    </div>
+  </div>`
+}
+
+/* ── art overview ── */
+function artOverview(t) {
+  return `<div class="pgrid c12">
+    <div class="pane">
+      <div class="pane-h"><b>这一单</b><span class="tag ${t.tone === 'wait' ? '' : 'c'}">${t.status}</span></div>
+      <div class="pane-b">
+        <div class="summary">${t.summary}</div>
+        <div class="kv"><div class="cell"><div class="l">PROMPT</div><div class="v" style="font-size:9.5px">${esc(t.prompt.slice(0, 30))}…</div></div>
+          <div class="cell"><div class="l">STYLE</div><div class="v">${esc(t.style)}</div></div>
+          <div class="cell"><div class="l">SIZE</div><div class="v c">${esc(t.size)}</div></div>
+          <div class="cell"><div class="l">COST</div><div class="v m">¥${t.cost.toFixed(2)}</div></div></div>
+        <div class="acts">
+          <button class="btn pri" data-act="art-pick">${t.versions.some((v) => v.sel) ? '就选第 ' + t.versions.find((v) => v.sel).v + ' 版' : '选一版'}</button>
+          <button class="btn" data-act="art-retouch">让 art-1 再修手部</button>
+          <button class="btn" data-lens="versions">看全部版本</button>
+        </div>
+      </div>
+    </div>
+    <div class="pane">
+      <div class="pane-h"><b>版本</b><span class="tag">${t.versions.length}</span></div>
+      <div class="pane-b tight">
+        <div class="artstrip">${t.versions.map((v) => `<button class="artcard v${v.v} ${v.sel ? 'on' : ''}" data-version="${v.v}">
+          <img class="im" src="${v.img}" alt="v${v.v}" /><span class="cap"><b>v${v.v}</b><span>${esc(v.note)}</span><span class="sc">${v.score}</span></span>
+          ${v.sel ? '<span class="pick">当前</span>' : ''}</button>`).join('')}</div>
+        <div class="summary" style="font-size:10px;margin-top:8px;color:var(--faint)">第 3 版构图最稳；手部修完就可以出 2K 成片。</div>
+        <div class="acts"><button class="btn" data-session="${t.session}">看 art-1 会话</button></div>
+      </div>
+    </div>
+  </div>`
+}
+
+function artVersions(t) {
+  return `<div class="pane">
+    <div class="pane-h"><b>全部版本</b><span class="tag">${t.versions.length} VERSIONS</span><span class="tag c" style="margin-left:4px">点一版看大图</span></div>
+    <div class="pane-b">
+      <div class="artgrid">${t.versions.map((v) => `<button class="artcard v${v.v} ${v.sel ? 'on' : ''}" data-version="${v.v}">
+        <img class="im" src="${v.img}" alt="v${v.v}" />
+        <span class="cap"><b>v${v.v}</b><span>${esc(v.note)}</span><span class="sc">${v.score}</span></span>
+        ${v.sel ? '<span class="pick">当前</span>' : ''}</button>`).join('')}</div>
+      <div class="acts"><button class="btn pri" data-act="art-pick">选当前版</button><button class="btn" data-act="art-retouch">让 art-1 修手部</button><button class="btn" data-session="${t.session}">看会话</button></div>
+    </div>
+  </div>`
+}
+
+function artMaterials(t) {
+  return `<div class="pgrid c2">
+    <div class="pane">
+      <div class="pane-h"><b>参考</b><span class="tag">${t.materials.length}</span></div>
+      <div class="pane-b tight"><div class="pgrid c2" style="gap:8px">
+        ${t.materials.map((m) => `<div class="reftile"><img src="${m.img}" alt="" /><span>${esc(m.name)}</span></div>`).join('')}
+      </div></div>
+    </div>
+    <div class="pane">
+      <div class="pane-h"><b>提示词历史</b><span class="tag">${t.prompts.length}</span></div>
+      <div class="pane-b tight">${t.prompts.map((p) => `<div class="promptrow"><b>${esc(p.t)}</b> · ${esc(p.p)}</div>`).join('')}</div>
+    </div>
+  </div>`
+}
+
+function artDeliver(t) {
+  return `<div class="pgrid c2">
+    <div class="pane">
+      <div class="pane-h"><b>交付</b><span class="tag">${t.status}</span></div>
+      <div class="pane-b">
+        <div class="kv"><div class="cell"><div class="l">FOLDER</div><div class="v" style="font-size:10px">${esc(t.deliver.folder)}</div></div>
+          <div class="cell"><div class="l">FORMAT</div><div class="v">${esc(t.deliver.format)}</div></div></div>
+        <div class="acts"><button class="btn pri" data-act="art-export">导出成片</button><button class="btn" data-act="art-retouch">再修一档</button></div>
+      </div>
+    </div>
+    <div class="pane">
+      <div class="pane-h"><b>检查</b><span class="tag">${t.deliver.checks.filter((c) => c.s === 'ok').length}/${t.deliver.checks.length}</span></div>
+      <div class="pane-b tight">${t.deliver.checks.map((c) => `<div class="chk ${c.s}"><span class="box">${c.s === 'ok' ? '✓' : c.s === 'warn' ? '!' : '×'}</span><span class="ct">${esc(c.t)}<small>${esc(c.d)}</small></span></div>`).join('')}</div>
+    </div>
+  </div>`
+}
+
+/* ═══════════════════════ 主区：会话 ═══════════════════════ */
+function renderSession(s) {
+  const t = s.taskId ? taskById(s.taskId) : null
+  const log = s.log || []
+  return `<div class="sessview">
+    <div class="sesshead">
+      ${t ? `<button class="mini" data-task="${t.id}">← ${esc(t.code)}</button>` : '<button class="mini" data-act="home">← 任务</button>'}
+      <span class="av"><img src="${avatarOf(s)}" alt="" /></span>
+      <div><b>${esc(s.name)}</b><div class="sub">${t ? esc(t.code + ' · ' + t.title) : '主会话'} · ${esc(s.doing)}</div></div>
+      <span class="st2 ${s.status}">${s.status === 'run' ? '在执行' : s.status === 'fail' ? '已中止' : '等指令'}</span>
+    </div>
+    <div class="transcript">
+      ${log.map((m) => `<div class="msg"><span class="av"><img src="${m.from === '汐音' ? './crew/xiyin-wink.png' : avatarOf(s)}" alt="" /></span>
+        <div class="bubble"><div class="who">${esc(m.from)}</div>${esc(m.t)}${m.tool ? `<div class="tool">${esc(m.tool)}</div>` : ''}
+        ${m.shot ? `<img class="shot" src="${m.shot}" alt="" />` : ''}</div></div>`).join('')}
+      ${s.cards ? `<div class="cards">${s.cards.map((c) => `<button class="cardlink" data-task="${c.taskId}" data-lens="${c.lens}" style="--accent:${c.color}">
+        <span class="ck">${esc(c.k)}</span><span class="ct2">${esc(c.t)}</span><span class="ar">→</span></button>`).join('')}</div>` : ''}
+    </div>
+  </div>`
+}
+
+/* ═══════════════════════ 主区：全舱 Trace ═══════════════════════ */
+function renderTraceView() {
+  const sel = state.traceSel
+  const evs = sel === 'root' ? TRACE_EVENTS : TRACE_EVENTS.filter((e) => e.nodes.includes(sel))
+  return `<div class="taskview">
+    <div class="taskhead">
+      <span class="k tk dev">审计</span>
+      <h1>全舱 Trace</h1>
+      <span class="status">${sel === 'root' ? '全舱路径' : '只看 ' + esc((TRACE.nodes.find((n) => n.id === sel) || {}).name || '')}</span>
+      <span class="right"><button class="mini" data-act="home">← 回任务</button></span>
+      <div class="meta"><span>${esc(CABIN.cwd)}</span><span class="sep"></span><span>汐音 → Agent → 工作流</span><span class="sep"></span><span>¥${USAGE.total.toFixed(2)} 本舱</span></div>
+    </div>
+    <div class="pgrid trace" style="margin-top:14px">
+      <div class="pane p1">
+        <div class="pane-h"><b>座舱拓扑</b><span class="tag">点击节点过滤</span></div>
+        <div class="pane-b" style="padding:4px 6px">${dagHTML(sel)}</div>
+      </div>
+      <div class="pane p2">
+        <div class="pane-h"><b>交互流</b><span class="tag">${evs.length} EVENTS</span></div>
+        <div class="pane-b tight">${traceLogHTML(sel)}</div>
+      </div>
+      <div class="pane p3">
+        <div class="pane-h"><b>消耗 · 按主体</b><span class="tag">¥${USAGE.total.toFixed(2)}</span></div>
+        <div class="pane-b tight">${usageHTML(sel)}</div>
+      </div>
+    </div>
+  </div>`
+}
+
+/* ═══════════════════════ 渲染 ═══════════════════════ */
+function render() {
+  renderRail()
+  const main = $('#main')
+  if (state.view === 'trace') { main.innerHTML = renderTraceView(); return }
+  if (state.view === 'session') {
+    const s = sessionById(state.sessionId) || SESSIONS[0]
+    main.innerHTML = renderSession(s)
+    main.scrollTop = main.scrollHeight
+    return
+  }
+  const t = taskById(state.taskId) || TASKS[0]
+  main.innerHTML = renderTask(t)
+  main.scrollTop = 0
+}
+
+/* ═══════════════════════ Trace 渲染（与工作舱共用口径） ═══════════════════════ */
+function dagHTML(selId) {
+  const map = {}
+  TRACE.nodes.forEach((n) => { map[n.id] = n })
+  const related = new Set(['root'])
+  if (selId === 'root') TRACE.nodes.forEach((n) => related.add(n.id))
+  else {
+    related.add(selId)
+    TRACE.edges.forEach((e) => { if (e.a === selId) related.add(e.b); if (e.b === selId) related.add(e.a) })
+  }
+  const edges = TRACE.edges.map((e) => {
+    const a = map[e.a], b = map[e.b]
+    const x1 = a.x + a.w, y1 = a.y + a.h / 2, x2 = b.x, y2 = b.y + b.h / 2
+    const on = selId !== 'root' && (e.a === selId || e.b === selId)
+    const dim = selId !== 'root' && !on
+    const cls = `edge ${e.kind}${on ? ' on' : ''}${dim ? ' dim' : ''}`
+    const d = `M ${x1} ${y1} C ${x1 + 58} ${y1}, ${x2 - 58} ${y2}, ${x2} ${y2}`
+    const marker = e.kind === 'dispatch' ? 'ar-d' : 'ar-r'
+    return `<path class="${cls}" d="${d}" marker-end="url(#${marker})"><title>${esc(a.name)} → ${esc(b.name)}</title></path>`
+  }).join('')
+  const nodes = TRACE.nodes.map((n) => {
+    const on = selId !== 'root' && n.id === selId
+    const dim = selId !== 'root' && !related.has(n.id)
+    const cy = n.y + n.h / 2
+    const right = n.kind === 'wf'
+      ? `<text class="cost" x="${n.x + n.w - 9}" y="${cy + 3}" text-anchor="end">${n.state === 'run' ? '运行中' : n.state === 'fail' ? '阻塞' : '等你'}</text>`
+      : `<text class="cost" x="${n.x + n.w - 9}" y="${n.y + 14}" text-anchor="end">¥${n.cost.toFixed(2)}</text>
+         <text class="sub" x="${n.x + n.w - 9}" y="${n.y + 26}" text-anchor="end">${esc(n.tok)}</text>`
+    return `<g class="node ${n.kind}${on ? ' on' : ''}${dim ? ' dim' : ''}" data-trace="${n.id}" style="cursor:pointer">
+      <title>${esc(n.name)} · ${esc(n.sub)}</title>
+      <rect x="${n.x}" y="${n.y}" width="${n.w}" height="${n.h}" rx="8"/>
+      <circle class="sdot ${n.state}" cx="${n.x + 10}" cy="${cy}" r="2.4"/>
+      <text class="nm" x="${n.x + 18}" y="${n.y + 14}">${esc(n.name)}</text>
+      <text class="sub" x="${n.x + 10}" y="${n.y + 26}">${esc(n.sub)}</text>${right}</g>`
+  }).join('')
+  return `<svg class="dag" viewBox="0 0 860 360" xmlns="http://www.w3.org/2000/svg">
+    <defs>
+      <marker id="ar-d" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="6" markerHeight="6" orient="auto"><path d="M0 0 L8 4 L0 8 z" fill="var(--violet)"/></marker>
+      <marker id="ar-r" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="6" markerHeight="6" orient="auto"><path d="M0 0 L8 4 L0 8 z" fill="var(--cyan)"/></marker>
+    </defs>
+    ${edges}${nodes}
+    <g class="legend">
+      <path class="lg" d="M44 22 L64 22" stroke="var(--violet)"/><text x="70" y="25">派发</text>
+      <path class="lg" d="M112 22 L132 22" stroke="var(--cyan)" stroke-dasharray="4 4"/><text x="138" y="25">执行</text>
+      <text x="192" y="25" class="hint">回执 / 工具在交互流 · 点节点过滤</text>
+      <text x="816" y="25" class="hint" text-anchor="end">${selId === 'root' ? '全舱路径' : '只看 ' + esc(map[selId] ? map[selId].name : '')}</text>
+    </g>
+  </svg>`
+}
+
+function traceLogHTML(selId) {
+  const node = TRACE.nodes.find((n) => n.id === selId)
+  const evs = selId === 'root' ? TRACE_EVENTS : TRACE_EVENTS.filter((e) => e.nodes.includes(selId))
+  const filter = selId === 'root' ? '' : `<div class="tfilter">只看 <b>${esc(node.name)}</b><button class="ulink" data-trace="root">全部 ✕</button></div>`
+  return filter + (evs.map((e) => {
+    const k = TRACE_KIND[e.k] || { label: e.k, cls: '' }
+    return `<div class="tev ${k.cls}"><div class="th"><span class="tt">${esc(e.t)}</span><span class="tk2 ${k.cls}">${k.label}</span>
+      <span class="tr"><b>${esc(e.from)}</b><i>→</i><b>${esc(e.to)}</b></span></div><div class="ts">${esc(e.s)}</div></div>`
+  }).join('') || '<div class="empty">这条链路上还没有消息。</div>')
+}
+
+function usageHTML(selId) {
+  const node = TRACE.nodes.find((n) => n.id === selId)
+  const isEntity = USAGE.rows.some((r) => r.id === selId)
+  const head = selId === 'root'
+    ? '<div class="usel">全舱 · 7 个主体<span style="margin-left:auto">本窗口 18m</span></div>'
+    : `<div class="usel">只看 <b>${esc(node.name)}</b><span>${isEntity ? '¥' + node.cost.toFixed(2) + ' · ' + esc(node.tok) + ' tok' : '成本计入执行它的 Agent'}</span><button class="ulink" data-trace="root">全部 ✕</button></div>`
+  const max = Math.max(...USAGE.rows.map((r) => r.cost))
+  const rows = USAGE.rows.map((r) => `<div class="urow ${r.id === selId ? 'on' : ''}">
+    <span class="un">${esc(r.name)}</span><span class="ub"><i style="width:${Math.round(r.cost / max * 100)}%;background:${r.color}"></i></span>
+    <span class="uc">¥${r.cost.toFixed(2)}</span><span class="ut">${esc(r.tok)}</span></div>`).join('')
+  const models = USAGE.models.map((m) => `<i style="width:${m.pct}%;background:${m.color}"></i>`).join('')
+  const legend = USAGE.models.map((m) => `<span class="l"><i style="background:${m.color}"></i>${esc(m.name)} ${m.pct}%</span>`).join('')
+  return `${head}
+    <div class="kv">
+      <div class="cell"><div class="l">本舱累计</div><div class="v m">¥${USAGE.total.toFixed(2)}</div></div>
+      <div class="cell"><div class="l">本窗口 18m</div><div class="v c">¥${USAGE.window.toFixed(2)}</div></div>
+      <div class="cell"><div class="l">LLM CALLS</div><div class="v">${USAGE.calls}</div></div>
+      <div class="cell"><div class="l">TOKENS IN / OUT</div><div class="v" style="font-size:9px">${USAGE.tokIn} / ${USAGE.tokOut}</div></div>
+    </div>
+    <div class="uspark">${USAGE.ticks.map((v) => `<i style="height:${Math.round(v / Math.max(...USAGE.ticks) * 100)}%"></i>`).join('')}</div>
+    <div class="usl"><span>成本趋势</span><span>近 24m</span></div>
+    ${rows}
+    <div class="ubar">${models}</div>
+    <div class="ulegend">${legend}</div>
+    <div class="unote">防双算：chat 行 execution_id IS NULL；子代理 token 走 subagent_runs 单列；成本查询时派生，不与 llm_calls 盲加。</div>`
+}
+
+/* ═══════════════════════ 动作 ═══════════════════════ */
+function applyAct(act) {
+  const t = taskById(state.taskId)
+  if (act === 'accept' && t && t.id === 'm2') {
+    t.status = '已验收'; t.tone = 'done'; t.summary = '你已通过验收；分身正在归档沉淀，PR 转 ready。'
+    t.phases[3] = { t: '验收', s: 'done', d: 'AC 1–4 · 你已通过', when: '刚刚' }
+    t.phases[4] = { t: '交付', s: 'now', d: '已转 ready · 等你合并', when: '刚刚' }
+    ATTENTION.splice(0, ATTENTION.length, ...ATTENTION.filter((a) => a.taskId !== 'm2'))
+    ticker('好，M2 按通过处理。我让 ledger-2 归档沉淀，PR 转 ready。')
+    toast('M2 已验收 · PR 转 ready')
+  } else if (act === 'reject' && t && t.id === 'm2') {
+    t.status = '返工中'; t.tone = 'wait'; t.summary = '已退回：AC-4（大额差异人工复核）补进下一轮，改完再叫你。'
+    t.phases[3] = { t: '验收', s: 'warn', d: '已退回 · AC-4 进下一轮', when: '刚刚' }
+    ATTENTION.splice(0, ATTENTION.length, ...ATTENTION.filter((a) => a.taskId !== 'm2'))
+    ticker('明白，退回改。AC-4 进下一轮，改完再叫你。')
+    toast('M2 已退回 · AC-4 进下一轮')
+  } else if (act === 'deliver' && t && t.id === 'm2') {
+    t.status = '已交付'; t.tone = 'run'; t.summary = 'PR #483 已开成 draft，带上验收单和证据；合并前不动主线。'
+    t.phases[4] = { t: '交付', s: 'done', d: 'PR #483 · draft', when: '刚刚' }
+    ticker('PR #483 开成 draft，带验收单和证据；你合并前我不动主线。')
+    toast('PR #483 · draft')
+  } else if (act === 'rerun' && t && t.id === 'm1') {
+    t.status = '重跑中'; t.tone = 'run'; t.summary = '已让 gateway-2 拉最新主线重跑；红了再升级给你。'
+    t.run.nodes[2] = { ...t.run.nodes[2], s: 'run', note: 'rebase 后重跑中', d: '0m' }
+    ATTENTION.splice(0, ATTENTION.length, ...ATTENTION.filter((a) => a.taskId !== 'm1'))
+    ticker('好，让 gateway-2 拉最新主线重跑，红了再升级。')
+    toast('M1 已重跑')
+  } else if (act === 'rollback' && t && t.id === 'm1') {
+    t.status = '已回滚'; t.tone = 'done'; t.summary = '已回滚到上一个绿提交，链路恢复；根因我接着查。'
+    t.run.nodes[2] = { ...t.run.nodes[2], s: 'wait', note: '已回滚 · 链路恢复', d: '—' }
+    ATTENTION.splice(0, ATTENTION.length, ...ATTENTION.filter((a) => a.taskId !== 'm1'))
+    ticker('收到，回滚到上一个绿提交；根因我接着查。')
+    toast('M1 已回滚')
+  } else if (act === 'pause' && t) {
+    t.status = '已暂停'; t.tone = 'wait'
+    ticker('好，先暂停；上下文和产物都留着。')
+    toast('已暂停')
+  } else if (act === 'art-pick' && t && t.kind === 'art') {
+    t.status = '已选稿'; t.tone = 'done'; t.summary = '已选版；art-1 正在修手部并出 2K 成片。'
+    ATTENTION.splice(0, ATTENTION.length, ...ATTENTION.filter((a) => a.taskId !== t.id))
+    ticker('收到，就按这版出片；我让 art-1 把手部修完再导出。')
+    toast('已选稿 · 出片中')
+  } else if (act === 'art-retouch' && t) {
+    ticker('好，让 art-1 只修手部，构图不动；修完给你对比。')
+    toast('已让 art-1 修手部')
+  } else if (act === 'art-export' && t) {
+    ticker('成片导出到 ' + t.deliver.folder + '，格式 ' + t.deliver.format + '。')
+    toast('已导出 ' + t.deliver.folder)
+  } else if (act === 'rerun-node') {
+    ticker('好，从当前节点重跑，前序产物保留。')
+    toast('已重跑本节点')
+  } else if (act === 'abort') {
+    ticker('好，先停住，现场保留。')
+    toast('已中止')
+  }
+  render()
+}
+
+/* ═══════════════════════ 命令 ═══════════════════════ */
+function interpret(text) {
+  const v = text.toLowerCase()
+  if (/进.*(舱|工作舱)|沉浸/.test(v)) return { act: 'cockpit' }
+  if (/回.*(任务|工作台)/.test(v)) return { act: 'home' }
+  if (/(trace|链路|交互|日志)/.test(v)) {
+    if (state.view === 'task' && taskById(state.taskId).kind === 'dev') return { act: 'lens', lens: 'trace' }
+    return { act: 'trace' }
+  }
+  if (/(通过|验收|可以|收下)/.test(v) && ATTENTION.some((a) => a.taskId === 'm2')) return { act: 'accept' }
+  if (/(退回|重做|不行|补一下)/.test(v) && ATTENTION.some((a) => a.taskId === 'm2')) return { act: 'reject' }
+  if (/(rebase|再跑|重跑)/.test(v) && ATTENTION.some((a) => a.taskId === 'm1')) return { act: 'rerun' }
+  if (/回滚/.test(v) && ATTENTION.some((a) => a.taskId === 'm1')) return { act: 'rollback' }
+  const idHit = TASKS.find((t) => v.includes(t.id) || v.includes(t.code.toLowerCase()) || v.includes(t.title))
+  const versionHit = v.match(/第\s*([1-9])\s*版/)
+  if (versionHit) {
+    const t = idHit && idHit.kind === 'art' ? idHit : TASKS.find((x) => x.kind === 'art' && x.id === state.taskId)
+    if (t) return { act: 'pick-version', taskId: t.id, v: Number(versionHit[1]) }
+  }
+  if (idHit) {
+    let lens = 'overview'
+    if (/版本|选稿/.test(v)) lens = idHit.kind === 'art' ? 'versions' : 'overview'
+    else if (/运行|跑到哪/.test(v)) lens = idHit.mode === 'direct' ? 'session' : 'run'
+    else if (/变更|diff|文件/.test(v)) lens = 'changes'
+    else if (/trace|链路/.test(v)) lens = 'trace'
+    else if (/交付/.test(v)) lens = idHit.kind === 'art' ? 'deliver' : 'changes'
+    else if (/会话/.test(v)) { const s = SESSIONS.find((x) => x.taskId === idHit.id); if (s) return { act: 'session', id: s.id } }
+    return { act: 'task', id: idHit.id, lens }
+  }
+  if (/(版本|选稿)/.test(v)) {
+    const t = taskById(state.taskId)
+    if (t && t.kind === 'art') return { act: 'lens', lens: 'versions' }
+  }
+  if (/(画|插画|图标|海报)/.test(v)) return { act: 'say', msg: '明白，这是绘画任务。我先记下 prompt 和尺寸，出 2 版草图给你挑。' }
+  if (/(做|开发|实现|修|任务)/.test(v)) return { act: 'say', msg: '明白，我拆成开发任务；有工作流就走流，没有就直接派分身干。' }
+  return { act: 'say', msg: '收到。要我看哪一单，直接说「看 M2」「看 A1 版本」就行。' }
+}
+
+function runCommand() {
+  const input = $('#cmdInput')
+  const v = input.value.trim()
+  if (!v) { input.focus(); return }
+  input.value = ''
+  if (state.view === 'session') {
+    const s = sessionById(state.sessionId)
+    s.log.push({ from: '指挥官', t: v })
+    s.log.push({ from: s.name, t: '收到，我按这个处理；有结果第一时间回你。' })
+    render()
+    ticker(`${s.name}：收到，我按这个处理。`)
+    return
+  }
+  const hit = interpret(v)
+  if (state.view === 'session' && hit.act === 'home') { state.view = 'task'; render(); return }
+  if (hit.act === 'cockpit') { toCockpit(); return }
+  if (hit.act === 'home') { state.view = 'task'; render(); return }
+  if (hit.act === 'trace') { state.view = 'trace'; state.traceSel = 'root'; render(); ticker('好，全舱链路摊开了。'); return }
+  if (hit.act === 'task') { setTask(hit.id, hit.lens); ticker(`好，看 ${taskById(hit.id).code} · ${taskById(hit.id).title}。`); return }
+  if (hit.act === 'session') { openSession(hit.id); return }
+  if (hit.act === 'lens') { state.lens = hit.lens; render(); ticker('好，镜头切过去了。'); return }
+  if (hit.act === 'pick-version') {
+    state.taskId = hit.taskId; state.view = 'task'; state.lens = 'versions'
+    const t = taskById(hit.taskId); const ver = t.versions.find((x) => x.v === hit.v)
+    if (ver) { t.versions.forEach((x) => { x.sel = x === ver }); t.status = '已选稿'; t.tone = 'done' }
+    ticker(`好，就选第 ${hit.v} 版；我让 art-1 修完手部再出片。`)
+    render(); return
+  }
+  if (hit.act === 'say') { ticker('汐音：' + hit.msg); toast(hit.msg); return }
+  applyAct(hit.act)
+}
+
+/* ═══════════════════════ 事件 ═══════════════════════ */
+document.addEventListener('click', (e) => {
+  const attn = e.target.closest('[data-attn]')
+  if (attn) {
+    const a = ATTENTION.find((x) => x.id === attn.dataset.attn)
+    if (a) { setTask(a.taskId, a.lens); ticker(`汐音：${a.t}，我把要看的摊开了。`) }
+    return
+  }
+  const task = e.target.closest('[data-task]')
+  if (task) { setTask(task.dataset.task, task.dataset.lens || undefined); return }
+  const sess = e.target.closest('[data-session]')
+  if (sess) { openSession(sess.dataset.session); return }
+  const kind = e.target.closest('[data-kind]')
+  if (kind) {
+    state.kind = kind.dataset.kind
+    document.querySelectorAll('#kindChips .fchip').forEach((b) => b.classList.toggle('on', b === kind))
+    renderRail(); return
+  }
+  const lens = e.target.closest('[data-lens]')
+  if (lens) { state.lens = lens.dataset.lens; state.view = 'task'; render(); return }
+  const file = e.target.closest('[data-file]')
+  if (file) { state.checkFile = file.dataset.file; render(); return }
+  const ver = e.target.closest('[data-version]')
+  if (ver) {
+    const t = taskById(state.taskId)
+    if (t && t.kind === 'art') { t.versions.forEach((x) => { x.sel = x.v === Number(ver.dataset.version) }); render(); }
+    return
+  }
+  const tr = e.target.closest('[data-trace]')
+  if (tr) { state.traceSel = tr.dataset.trace; state.view = 'trace'; render(); return }
+  const cockpit = e.target.closest('[data-cockpit]')
+  if (cockpit) { toCockpit(); return }
+  const node = e.target.closest('[data-node]')
+  if (node) { state.node = node.dataset.node; render(); return }
+  const act = e.target.closest('[data-act]')
+  if (!act) return
+  const a = act.dataset.act
+  if (a === 'open-session') {
+    const t = taskById(state.taskId)
+    if (t && t.session) openSession(t.session)
+    return
+  }
+  if (a === 'home') { state.view = 'task'; render(); return }
+  applyAct(a)
+})
+
+$('#btnSend').addEventListener('click', runCommand)
+$('#cmdInput').addEventListener('keydown', (e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); runCommand() } })
+document.querySelectorAll('#quickChips .qchip').forEach((b) => b.addEventListener('click', () => { $('#cmdInput').value = b.dataset.cmd; runCommand() }))
+$('#btnCockpit').addEventListener('click', toCockpit)
+$('#btnTrace').addEventListener('click', () => {
+  if (state.view === 'trace') { state.view = 'task'; render(); return }
+  state.view = 'trace'; state.traceSel = 'root'; render(); ticker('好，全舱链路摊开了。')
+})
+$('#btnNew').addEventListener('click', () => { $('#cmdInput').focus(); ticker('说说要做什么——绘画还是开发，我负责拆和派。'); toast('说一句就行：画一张… / 做个…') })
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'k' && (e.metaKey || e.ctrlKey)) { e.preventDefault(); $('#cmdInput').focus() }
+  if (e.key === 'Escape') { state.view = 'task'; render() }
+})
+
+/* ═══════════════════════ boot ═══════════════════════ */
+readHash()
+if (state.view === 'task' && !lensesOf(taskById(state.taskId)).some(([k]) => k === state.lens)) state.lens = 'overview'
+render()
+$('#cwdPath').textContent = CABIN.cwd
+setTimeout(() => ticker('M2 等你验收；A1 出了 4 版，也等你选稿。'), 800)
+</script>
+</body>
+</html>
