@@ -147,7 +147,7 @@ describe('CabinInitGateCard — live overlay inside CabinProvider', () => {
     )
     expect(screen.getByTestId('view-probe').textContent).toBe('')
     fireEvent.click(screen.getByTestId('cabin-gate-fix-clone'))
-    expect(screen.getByTestId('view-probe').textContent).toBe('repos')
+    expect(screen.getByTestId('view-probe').textContent).toBe('engineering')
   })
 
   it('ignores live state from a different cabin', () => {

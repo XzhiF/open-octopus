@@ -1,18 +1,21 @@
 'use client'
 
-// S3 座舱 = 原型 wbOverview：wb-h（name · 座舱 + attention-first cap）+ 四 stat
-// （运行中/需要你/并行工作树/累计消耗）+ 舱生命周期条 + 「需要你」attention 列表
-// （服务端 deriveCabinView 已 person-first + priority 排序，K3 只渲染不重派生）
-// + 迭代线（进度派生自成员任务）。点 attention → 对话底座定位任务 / 知识窗。
-// 累计消耗 = C7 舱级聚合（chat+任务+子代理，grand 口径），10s 轮询。
+// classic-v3 概览 = 原型 wbOverview 收敛版：
+//   头部（舱名 + 状态 + 目录 + 生命周期）→ 四 stat → 三入口（任务/工程/记录）
+//   → 需要你 → 迭代（点一行到任务窗并按该迭代筛）。
+// 数据：view（attention/health/iterations）由服务端派生；工作树数走 worktrees 端点；
+// 任务计数走 listTasks（不取 derived，避免 N+1）；消耗走 C7 舱级聚合。
 
 import { useEffect, useState } from 'react'
-import { Archive, ChevronRight, LayoutGrid, Loader2, Pause, Play, RefreshCw } from 'lucide-react'
+import {
+  Archive, ChevronRight, ClipboardCheck, FolderTree, GitBranch, LayoutGrid, Loader2, Pause, Play, RefreshCw,
+} from 'lucide-react'
 import { toast } from 'sonner'
 import type { CabinAttentionItem } from '@octopus/shared'
 import {
   archiveCabin, dormantCabin, getCabinUsage, initCabin, listCabinWorktrees, reopenCabin, wakeCabin,
 } from '@/lib/cabin-api'
+import { listTasks, type TaskView } from '@/lib/tasks-api'
 import { formatCost } from '@/lib/format'
 import { useBillingCurrency } from '@/lib/billing-currency'
 import { cn } from '@/lib/utils'
@@ -28,11 +31,12 @@ const ITERATION_STATUS_LABEL: Record<string, string> = {
 }
 
 export function CabinOverview() {
-  const { cabinId, cabin, view, refresh, openModule } = useCabinContext()
+  const { cabinId, cabin, view, refresh, openModule, setTaskIter } = useCabinContext()
   const currency = useBillingCurrency()
   const [busy, setBusy] = useState<string | null>(null)
   const [worktreeStats, setWorktreeStats] = useState<{ trees: number; repos: number } | null>(null)
   const [grandCost, setGrandCost] = useState<{ usd: number | null; complete: boolean } | null>(null)
+  const [tasks, setTasks] = useState<TaskView[]>([])
 
   useEffect(() => {
     let alive = true
@@ -47,6 +51,18 @@ export function CabinOverview() {
       .catch(() => { if (alive) setWorktreeStats(null) })
     return () => { alive = false }
   }, [cabinId, cabin?.status])
+
+  useEffect(() => {
+    let alive = true
+    const loadTasks = () => {
+      listTasks({ cabin_id: cabinId })
+        .then(({ items }) => { if (alive) setTasks(items) })
+        .catch(() => { /* keep last snapshot */ })
+    }
+    loadTasks()
+    const timer = window.setInterval(loadTasks, 10_000)
+    return () => { alive = false; window.clearInterval(timer) }
+  }, [cabinId])
 
   useEffect(() => {
     let alive = true
@@ -78,7 +94,7 @@ export function CabinOverview() {
 
   const openAttention = (item: CabinAttentionItem) => {
     if (item.deep_link?.startsWith('finding:')) {
-      openModule('knowledge')
+      openModule('records')
       return
     }
     if (item.task_id) {
@@ -107,15 +123,48 @@ export function CabinOverview() {
     </button>
   )
 
+  const door = (
+    id: 'tasks' | 'engineering' | 'records',
+    Icon: typeof LayoutGrid,
+    title: string,
+    sub: string,
+  ) => (
+    <button
+      type="button"
+      data-testid={`cabin-hub-door-${id}`}
+      onClick={() => openModule(id)}
+      className="group flex items-center gap-2.5 rounded-xl border-[1.5px] border-pop-bd bg-pop-idle px-3 py-3 text-left transition-all hover:-translate-y-px hover:border-pop-pink hover:bg-pop-paper"
+    >
+      <span className="grid size-8 shrink-0 place-items-center rounded-[9px] bg-pop-cyan/12 text-pop-cyan">
+        <Icon className="size-4" />
+      </span>
+      <span className="min-w-0 flex-1">
+        <b className="block text-[12.5px] text-pop-ink">{title}</b>
+        <span className="mt-0.5 block truncate text-[10px] text-pop-dim">{sub}</span>
+      </span>
+      <ChevronRight className="size-3.5 shrink-0 text-pop-dim transition-transform group-hover:translate-x-0.5" />
+    </button>
+  )
+
   return (
     <div className="flex flex-col gap-3.5" data-testid="cabin-overview">
       <div className="flex items-center gap-2">
         <LayoutGrid className="size-4 shrink-0 text-pop-dim" />
-        <h3 className="min-w-0 truncate text-[14px] font-semibold text-pop-ink">{cabin.name} · 座舱</h3>
+        <h3 className="min-w-0 truncate text-[14px] font-semibold text-pop-ink">{cabin.name}</h3>
         <span className={cn('shrink-0 rounded border px-1.5 py-0.5 text-[9.5px] font-bold', meta.badge)} data-testid="cabin-status-badge">
           {meta.label}
         </span>
-        <span className="ml-auto shrink-0 text-[10.5px] text-pop-dim">attention-first · 只呈现需要人的</span>
+        <span className="hidden min-w-0 max-w-[220px] truncate font-mono text-[10px] text-pop-dim sm:block" title={cabin.path}>
+          {cabin.path}
+        </span>
+        <span className="ml-auto flex shrink-0 gap-1.5">
+          {cabin.status === 'draft' && lifeButton('init', '开始初始化', Play, () => initCabin(cabin.id), '初始化已启动', true)}
+          {cabin.status === 'initializing' && <span className="text-[10px] text-pop-amber">门禁进行中…</span>}
+          {cabin.status === 'dormant' && lifeButton('wake', '唤醒', RefreshCw, () => wakeCabin(cabin.id), '舱已唤醒', true)}
+          {cabin.status === 'active' && lifeButton('dormant', '休眠', Pause, () => dormantCabin(cabin.id), '舱已休眠 · 任意消息可唤醒')}
+          {(cabin.status === 'active' || cabin.status === 'dormant') && lifeButton('archive', '封存', Archive, () => archiveCabin(cabin.id), '舱已封存（可重开）')}
+          {cabin.status === 'archived' && lifeButton('reopen', '重开', Play, () => reopenCabin(cabin.id), '舱已重开', true)}
+        </span>
       </div>
 
       <div className="grid grid-cols-4 gap-2.5 max-[900px]:grid-cols-2" data-testid="cabin-statgrid">
@@ -146,18 +195,10 @@ export function CabinOverview() {
         </div>
       </div>
 
-      <div className="flex flex-wrap items-center gap-2">
-        <span className="text-[10px] text-pop-dim">舱生命周期</span>
-        {cabin.status === 'draft' && lifeButton('init', '开始初始化', Play, () => initCabin(cabin.id), '初始化已启动', true)}
-        {cabin.status === 'initializing' && <span className="text-[10px] text-pop-amber">门禁进行中…</span>}
-        {cabin.status === 'dormant' && lifeButton('wake', '唤醒', RefreshCw, () => wakeCabin(cabin.id), '舱已唤醒', true)}
-        {cabin.status === 'dormant' && <span className="text-[10px] text-pop-dim">无活任务 · 任意消息可唤醒</span>}
-        {cabin.status === 'active' && lifeButton('dormant', '休眠', Pause, () => dormantCabin(cabin.id), '舱已休眠 · 任意消息可唤醒')}
-        {(cabin.status === 'active' || cabin.status === 'dormant') && lifeButton('archive', '封存', Archive, () => archiveCabin(cabin.id), '舱已封存（可重开）')}
-        {cabin.status === 'archived' && lifeButton('reopen', '重开', Play, () => reopenCabin(cabin.id), '舱已重开', true)}
-        {cabin.status === 'archived' && (
-          <span className="text-[10px] text-pop-dim">软封存 · 任务/工作树/历史全保留，重开不重跑门禁</span>
-        )}
+      <div className="grid grid-cols-3 gap-2 max-[900px]:grid-cols-1" data-testid="cabin-hub-doors">
+        {door('tasks', ClipboardCheck, '任务', `${tasks.length} 条 · 四列看板`)}
+        {door('engineering', GitBranch, '工程', worktreeStats ? `${worktreeStats.repos} 仓库 · ${worktreeStats.trees} 工作树` : '读取中')}
+        {door('records', FolderTree, '记录', '归档 · 通信 Trace')}
       </div>
 
       <section>
@@ -214,43 +255,62 @@ export function CabinOverview() {
       </section>
 
       <section>
-        <div className="mb-1.5 text-[11px] font-bold text-pop-ink">迭代</div>
+        <div className="mb-1.5 flex items-center gap-2">
+          <span className="text-[11px] font-bold text-pop-ink">迭代</span>
+          <span className="text-[10px] text-pop-dim">点一个，到任务里筛</span>
+          <button
+            type="button"
+            data-testid="cabin-overview-iter-manage"
+            onClick={() => openModule('iterations')}
+            className="ml-auto text-[10px] text-pop-dim transition-colors hover:text-pop-ink"
+          >
+            管理
+          </button>
+        </div>
         {view.iterations.length === 0 ? (
           <div className="rounded-lg border-[1.5px] border-pop-bd bg-white/[0.02] px-3 py-3 text-[11.5px] text-pop-dim">
             还没有迭代 · 初始化第 7 项门禁会提案 M1
           </div>
         ) : (
           <ul className="space-y-1.5" data-testid="cabin-iteration-line">
-            {view.iterations.map((it) => (
-              <li
-                key={it.id}
-                className={cn(
-                  'flex items-center gap-2.5 rounded-lg border-[1.5px] px-2.5 py-2',
-                  it.status === 'active' ? 'border-pop-yellow/50 bg-pop-yellow/[0.05]' : 'border-pop-bd bg-white/[0.02]',
-                )}
-                data-iteration-code={it.code}
-              >
-                <span className="grid size-7 shrink-0 place-items-center rounded-md bg-pop-cyan/15 font-mono text-[10.5px] font-black text-pop-cyan">
-                  {it.code}
-                </span>
-                <span className="min-w-0 flex-1">
-                  <span className="block truncate text-[12px] font-bold text-pop-ink">{it.name}</span>
-                  <span className="block text-[9.5px] text-pop-dim">
-                    {it.task_count ?? 0} 任务 · {ITERATION_STATUS_LABEL[it.status] ?? it.status}
-                  </span>
-                </span>
-                <span className="w-24 shrink-0">
-                  <span className="block text-right font-mono text-[9.5px] text-pop-dim">{it.progress ?? 0}%</span>
-                  <span className="mt-0.5 block h-1 overflow-hidden rounded-full bg-white/[0.06]">
-                    <span
-                      className={cn('block h-full rounded-full', it.status === 'active' ? 'bg-pop-yellow' : 'bg-pop-cyan')}
-                      style={{ width: `${Math.min(100, Math.max(0, it.progress ?? 0))}%` }}
-                      data-testid={`cabin-iteration-progress-${it.code}`}
-                    />
-                  </span>
-                </span>
-              </li>
-            ))}
+            {view.iterations.map((it) => {
+              const count = tasks.filter((t) => t.iteration_id === it.id).length || it.task_count || 0
+              return (
+                <li key={it.id}>
+                  <button
+                    type="button"
+                    data-iteration-code={it.code}
+                    data-testid={`cabin-iteration-${it.code}`}
+                    onClick={() => { setTaskIter(it.id); openModule('tasks') }}
+                    className={cn(
+                      'flex w-full items-center gap-2.5 rounded-lg border-[1.5px] px-2.5 py-2 text-left transition-colors hover:border-pop-dim',
+                      it.status === 'active' ? 'border-pop-yellow/50 bg-pop-yellow/[0.05]' : 'border-pop-bd bg-white/[0.02]',
+                    )}
+                  >
+                    <span className="grid size-7 shrink-0 place-items-center rounded-md bg-pop-cyan/15 font-mono text-[10.5px] font-black text-pop-cyan">
+                      {it.code}
+                    </span>
+                    <span className="min-w-0 flex-1">
+                      <span className="block truncate text-[12px] font-bold text-pop-ink">{it.name}</span>
+                      <span className="block text-[9.5px] text-pop-dim">
+                        {count} 任务 · {ITERATION_STATUS_LABEL[it.status] ?? it.status}
+                      </span>
+                    </span>
+                    <span className="w-24 shrink-0">
+                      <span className="block text-right font-mono text-[9.5px] text-pop-dim">{it.progress ?? 0}%</span>
+                      <span className="mt-0.5 block h-1 overflow-hidden rounded-full bg-white/[0.06]">
+                        <span
+                          className={cn('block h-full rounded-full', it.status === 'active' ? 'bg-pop-yellow' : 'bg-pop-cyan')}
+                          style={{ width: `${Math.min(100, Math.max(0, it.progress ?? 0))}%` }}
+                          data-testid={`cabin-iteration-progress-${it.code}`}
+                        />
+                      </span>
+                    </span>
+                    <ChevronRight className="size-3 shrink-0 text-pop-dim" />
+                  </button>
+                </li>
+              )
+            })}
           </ul>
         )}
       </section>

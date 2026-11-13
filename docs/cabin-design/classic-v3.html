@@ -989,24 +989,6 @@ body.float-holo .win-title b{color:var(--ck-a)}
 .v3f-b.pri{background:var(--pop-green-soft);border-color:rgba(126,231,135,.5);color:var(--pop-green);font-weight:700}
 .v3f-b.pri:hover{background:rgba(126,231,135,.18);color:var(--pop-green)}
 
-.v3-trail{margin-top:14px;padding-top:8px;border-top:1px dashed var(--w8)}
-.v3t-h{display:flex;align-items:center;gap:6px;font-size:9px;letter-spacing:.12em;
-  color:rgba(150,152,163,.7);font-family:var(--font-mono)}
-.v3t-dot{width:5px;height:5px;border-radius:50%;background:var(--pop-green);box-shadow:0 0 6px var(--pop-green);
-  animation:v3Pulse 2.2s infinite}
-.v3t-h .cnt{letter-spacing:0;color:rgba(150,152,163,.5)}
-.v3t-h button{margin-left:auto;font-size:9px;letter-spacing:0;color:var(--pop-dim);
-  border:1px solid var(--w8);border-radius:5px;padding:1px 6px}
-.v3t-h button:hover{color:var(--pop-ink);border-color:var(--pop-dim)}
-.v3t-row{display:grid;grid-template-columns:6px 34px minmax(0,1fr);gap:7px;align-items:baseline;padding:3px 0;
-  font-size:10px;color:rgba(150,152,163,.85);font-family:var(--font-mono)}
-.v3t-row .d{width:6px;height:6px;border-radius:50%;align-self:center}
-.v3t-row .t{font-size:9px;color:rgba(150,152,163,.5);font-variant-numeric:tabular-nums}
-.v3t-row .x{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.v3t-row .x span{color:var(--pop-dim)}
-.v3t-row.new{animation:v3tIn .45s ease}
-@keyframes v3tIn{from{opacity:0;transform:translateY(-4px)}to{opacity:1;transform:none}}
-
 .v3-ghost{position:fixed;z-index:300;pointer-events:none;padding:3px 9px;border-radius:7px;font-size:10px;
   background:rgba(79,209,217,.14);border:1px solid rgba(79,209,217,.5);color:var(--pop-cyan);
   white-space:nowrap;font-family:var(--font-mono)}
@@ -2627,7 +2609,7 @@ const V3_FILES=[
     ['   });','ctx'],
   ]},
 ];
-state.v3={focus:null,newId:null,trailOpen:false,seq:0,jobSel:null,jobTab:'overview',file:null,runOpen:false,chgLevel:'task',phase:null};
+state.v3={focus:null,newId:null,seq:0,jobSel:null,jobTab:'overview',file:null,runOpen:false,chgLevel:'task',phase:null};
 const V3=state.v3;
 
 /* 编队 = 所有并行作业的统一视角（任务 / 工作流 / 流开发 / 子代理 / 外部 agent） */
@@ -2698,19 +2680,6 @@ function v3Focus(){
     '<div class="v3f-lines">'+(it.logs||[]).map(([at,tag,text])=>'<div class="v3f-ln"><span class="t">'+esc(at)+'</span><span class="k">'+esc(tag)+'</span><span class="x">'+esc(text)+'</span></div>').join('')+'</div>'+
     '<div class="v3f-foot">'+acts.join('')+'</div>';
   el.classList.add('open');
-}
-
-/* ③ 航迹：一行一条，默认最近 4 条 */
-function v3Trail(){
-  const tr=$('#transcript'); if(!tr) return;
-  const c=cabin();
-  if(!c||state.thread.kind!=='cabin'||state.pendingCabin) return;
-  const col=tr.querySelector('.tui-col'); if(!col) return;
-  col.querySelectorAll('.v3-trail').forEach(n=>n.remove());
-  const evs=c.activity||[]; if(!evs.length) return;
-  const rows=V3.trailOpen?evs:evs.slice(0,4);
-  col.insertAdjacentHTML('beforeend','<div class="v3-trail"><div class="v3t-h"><span class="v3t-dot"></span>航迹<span class="cnt">最近 '+Math.min(4,evs.length)+' / '+evs.length+'</span><button data-v3="trail">'+(V3.trailOpen?'收起':'展开')+'</button></div>'+
-    rows.map((a,i)=>'<div class="v3t-row'+(i===0?' new':'')+'"><span class="d" style="background:'+(V3COLOR[a.k]||'var(--pop-dim)')+'"></span><span class="t">'+esc(a.at)+'</span><span class="x">'+a.t+'</span></div>').join('')+'</div>');
 }
 
 /* ④ 作业详情（点 → 面）：点编队 tile 打开，和独立任务看的是同一套资源 */
@@ -2907,9 +2876,7 @@ function v3Dispatch(text){
   },520);
 }
 
-/* 接管渲染：不改 v1 的任何逻辑，只在渲染后补三块 */
-const _v3RenderChat=renderChat;
-renderChat=function(){ _v3RenderChat.apply(null,arguments); v3Trail(); };
+/* 接管渲染：不改 v1 的任何逻辑，只在渲染后补编队/焦点 */
 const _v3RenderDock=renderDock;
 renderDock=function(){ _v3RenderDock.apply(null,arguments); v3Fleet(); v3Focus(); };
 const _v3SendChat=sendChat;
@@ -2941,7 +2908,6 @@ document.addEventListener('click',e=>{
   const act=el.dataset.v3;
   if(act==='all'){openWin('run');return;}
   if(act==='close'){V3.focus=null;v3Focus();v3Fleet();return;}
-  if(act==='trail'){V3.trailOpen=!V3.trailOpen;v3Trail();AudioEngine.blip(600,.03);return;}
   const it=V3.focus?v3Items().find(x=>x.id===V3.focus):null; if(!it) return;
   if(act==='talk'){
     V3.focus=null;v3Focus();v3Fleet();

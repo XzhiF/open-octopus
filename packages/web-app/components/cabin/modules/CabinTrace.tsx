@@ -9,31 +9,10 @@ import type { CabinJobEvent } from '@octopus/shared'
 import { getCabinTrace, listCabinJobs, type CabinJobView } from '@/lib/cabin-api'
 import { SubagentWindow } from '@/components/chat-workbench/subagent-window'
 import { useCabinContext } from '../cabin-provider'
-import { Empty, SBadge, WbH, WbNote, openTaskInChat, clockLabel, type SBadgeColor } from './ui'
+import { Empty, SBadge, WbH, openTaskInChat, clockLabel } from './ui'
+import { traceKind } from '../trace-meta'
 
-const TRACE_KIND: Record<string, { label: string; color: SBadgeColor }> = {
-  dispatch: { label: '派发', color: 'violet' },
-  report: { label: '回报', color: 'cyan' },
-  attention: { label: '需注意', color: 'amber' },
-  handback: { label: '回弹', color: 'pink' },
-  note: { label: '备注', color: 'dim' },
-  human_input: { label: '人输入', color: 'green' },
-  resume: { label: '恢复', color: 'green' },
-}
-
-const TRACE_DOT: Record<SBadgeColor, string> = {
-  violet: 'bg-pop-violet',
-  cyan: 'bg-pop-cyan',
-  amber: 'bg-pop-amber',
-  pink: 'bg-pop-pink',
-  dim: 'bg-pop-dim',
-  green: 'bg-pop-green',
-  red: 'bg-pop-red',
-  purple: 'bg-pop-purple',
-  navy: 'bg-pop-navy',
-}
-
-export function CabinTrace() {
+export function CabinTrace({ embedded = false }: { embedded?: boolean } = {}) {
   const { cabinId, traceJobId, setTraceJob } = useCabinContext()
   const [events, setEvents] = useState<CabinJobEvent[]>([])
   const [jobs, setJobs] = useState<CabinJobView[]>([])
@@ -61,11 +40,7 @@ export function CabinTrace() {
 
   return (
     <div data-testid="cabin-trace-body">
-      <WbH icon={Activity} title="通信 Trace" cap="orchestrator ↔ doer · 派发审计时间线" />
-      <WbNote className="mb-3">
-        每条消息持久落 cabin_job_events（append-only）。有序/幂等投递；progress 内部不 wake，
-        high-signal wake orchestrator 主会话（单线程收件箱）；仅人需 surface 卡。子代理下钻复用 subagent-window。
-      </WbNote>
+      {!embedded && <WbH icon={Activity} title="通信 Trace" cap="orchestrator ↔ doer · 派发审计时间线" />}
 
       <div className="mb-3 flex items-center gap-2">
         <select
@@ -83,18 +58,18 @@ export function CabinTrace() {
       {shown.length === 0 ? (
         <Empty>暂无 trace · 派发后这里留痕</Empty>
       ) : [...shown].reverse().map((e) => {
-        const kind = TRACE_KIND[e.kind] ?? { label: e.kind, color: 'dim' as SBadgeColor }
+        const kind = traceKind(e.kind)
         const payload = (e.payload ?? {}) as { summary?: string; title?: string; status?: string }
         const job = jobOf(e.job_id)
         const isOpen = expanded === e.id
         return (
           <div key={e.id} className="mb-1.5" data-trace-row={e.id}>
             <div className="flex items-start gap-2.5 rounded-lg border border-pop-bd bg-pop-idle px-3 py-2">
-              <span className={`mt-1 size-2 shrink-0 rounded-full ${TRACE_DOT[kind.color]}`} />
+              <span className={`mt-1 size-2 shrink-0 rounded-full ${kind.dot}`} />
               <span className="shrink-0 font-mono text-[10px] text-pop-dim">{clockLabel(e.created_at)}</span>
               <div className="min-w-0 flex-1">
                 <div className="flex flex-wrap items-center gap-1.5 text-[11px]">
-                  <SBadge color={kind.color}>{kind.label}</SBadge>
+                  <SBadge color={kind.badge}>{kind.label}</SBadge>
                   <b className="truncate text-pop-ink">{jobTitle(e.job_id)}</b>
                   <span className="text-pop-dim">· {e.actor ?? '—'}</span>
                   {job?.kind === 'task' && job.ref_id && (

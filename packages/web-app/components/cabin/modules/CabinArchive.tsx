@@ -28,7 +28,7 @@ function findingDetail(f: KcFindingView): string {
   return f.source ? `${f.kind} · ${f.source}` : f.kind
 }
 
-export function CabinArchive() {
+export function CabinArchive({ embedded = false }: { embedded?: boolean } = {}) {
   const { cabinId, cabin, view, refresh } = useCabinContext()
   const { tasks } = useCabinTasks(cabinId)
   const [findings, setFindings] = useState<KcFindingView[] | null>(null)
@@ -76,17 +76,19 @@ export function CabinArchive() {
 
   return (
     <div data-testid="cabin-archive-body">
-      <WbH icon={Archive} title="归档台" cap="沉淀明细 · 生命周期 · 裁决在主 chat" />
+      {!embedded && <WbH icon={Archive} title="归档台" cap="沉淀明细 · 生命周期 · 裁决在主 chat" />}
 
-      <div className="mb-3.5 flex flex-wrap items-center gap-2">
-        <span className="text-[10px] text-pop-dim">舱生命周期</span>
-        {cabin.status === 'active' && lifeButton('dormant', '休眠', Pause, () => dormantCabin(cabin.id), '舱已休眠 · 任意消息可唤醒', false, !canDormant)}
-        {cabin.status === 'dormant' && lifeButton('wake', '唤醒', RefreshCw, () => wakeCabin(cabin.id), '舱已唤醒 · 工作树自愈', true)}
-        {(cabin.status === 'active' || cabin.status === 'dormant') && lifeButton('archive', '封存', Archive, () => archiveCabin(cabin.id), '舱已软封存 · 知识沉淀进行中')}
-        {cabin.status === 'archived' && lifeButton('reopen', '重开', Play, () => reopenCabin(cabin.id), '舱已重开 · 工作树自愈', true)}
-        {cabin.status === 'active' && !canDormant && <span className="text-[9.5px] text-pop-dim">有运行 / 待人 · 不可休眠</span>}
-        {cabin.status === 'archived' && <span className="text-[9.5px] text-pop-dim">软封存 · 任务/工作树/历史全保留 · 重开不重跑门禁</span>}
-      </div>
+      {!embedded && (
+        <div className="mb-3.5 flex flex-wrap items-center gap-2">
+          <span className="text-[10px] text-pop-dim">舱生命周期</span>
+          {cabin.status === 'active' && lifeButton('dormant', '休眠', Pause, () => dormantCabin(cabin.id), '舱已休眠 · 任意消息可唤醒', false, !canDormant)}
+          {cabin.status === 'dormant' && lifeButton('wake', '唤醒', RefreshCw, () => wakeCabin(cabin.id), '舱已唤醒 · 工作树自愈', true)}
+          {(cabin.status === 'active' || cabin.status === 'dormant') && lifeButton('archive', '封存', Archive, () => archiveCabin(cabin.id), '舱已软封存 · 知识沉淀进行中')}
+          {cabin.status === 'archived' && lifeButton('reopen', '重开', Play, () => reopenCabin(cabin.id), '舱已重开 · 工作树自愈', true)}
+          {cabin.status === 'active' && !canDormant && <span className="text-[9.5px] text-pop-dim">有运行 / 待人 · 不可休眠</span>}
+          {cabin.status === 'archived' && <span className="text-[9.5px] text-pop-dim">软封存 · 任务/工作树/历史全保留 · 重开不重跑门禁</span>}
+        </div>
+      )}
 
       <div className="arch-metrics" style={{ marginBottom: 14 }} data-testid="archive-metrics">
         <div className="am"><b className="green">✓</b><span>git 同步</span></div>

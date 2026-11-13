@@ -11,41 +11,31 @@ import { useCabinContext } from './cabin-provider'
 import { CABIN_MODULE_PHASE, CABIN_WIN_TITLE } from './cabin-meta'
 import { CabinOverview } from './CabinOverview'
 import { CabinQueue } from './modules/CabinQueue'
-import { CabinRepos } from './modules/CabinRepos'
-import { CabinWorktrees } from './modules/CabinWorktrees'
-import { CabinIterations } from './modules/CabinIterations'
+import { CabinEngineering } from './modules/CabinEngineering'
+import { CabinRecords } from './modules/CabinRecords'
 import { CabinTasks } from './modules/CabinTasks'
-import { CabinJobs } from './modules/CabinJobs'
-import { CabinTrace } from './modules/CabinTrace'
-import { CabinRun } from './modules/CabinRun'
-import { CabinChanges } from './modules/CabinChanges'
-import { CabinAcceptance } from './modules/CabinAcceptance'
+import { CabinIterations } from './modules/CabinIterations'
+import { CabinJobDetail } from './modules/CabinJobDetail'
 import { CabinKnowledge } from './modules/CabinKnowledge'
 import { CabinUsage } from './modules/CabinUsage'
 import { CabinMissions } from './modules/CabinMissions'
 import { CabinTuning } from './modules/CabinTuning'
 import { CabinGallery } from './modules/CabinGallery'
-import { CabinArchive } from './modules/CabinArchive'
 
 function ModuleBody({ id, onNewTask }: { id: string; onNewTask?: () => void }) {
   switch (id) {
     case 'overview': return <CabinOverview />
     case 'queue': return <CabinQueue />
-    case 'repos': return <CabinRepos />
-    case 'worktree': return <CabinWorktrees />
-    case 'iterations': return <CabinIterations />
+    case 'engineering': return <CabinEngineering />
+    case 'records': return <CabinRecords />
     case 'tasks': return <CabinTasks onNewTask={onNewTask} />
-    case 'jobs': return <CabinJobs />
-    case 'trace': return <CabinTrace />
-    case 'run': return <CabinRun />
-    case 'changes': return <CabinChanges />
-    case 'acceptance': return <CabinAcceptance />
+    case 'iterations': return <CabinIterations />
+    case 'job': return <CabinJobDetail />
     case 'knowledge': return <CabinKnowledge />
     case 'usage': return <CabinUsage />
     case 'missions': return <CabinMissions />
     case 'tuning': return <CabinTuning />
     case 'gallery': return <CabinGallery />
-    case 'archive': return <CabinArchive />
     default:
       return (
         <div className="grid h-full min-h-40 place-items-center text-center" data-testid="cabin-module-placeholder">

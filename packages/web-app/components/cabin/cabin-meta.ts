@@ -31,76 +31,59 @@ export const ATTENTION_AWAITING_META: Record<CabinAttentionItem['awaiting'], { l
 export const CABIN_WIN_TITLE: Record<string, string> = {
   overview: '概览',
   queue: '通讯队列',
-  repos: '仓库',
-  worktree: '工作树',
-  iterations: '迭代',
+  engineering: '工程',
+  records: '记录',
   tasks: '任务',
-  jobs: '统一作业',
-  trace: '通信 Trace',
+  iterations: '迭代',
+  job: '作业详情',
   missions: '作战清单',
   run: '运行',
-  changes: '变更',
-  acceptance: '验收',
-  knowledge: '知识',
-  usage: '消耗',
-  archive: '归档',
   tuning: '舱面调校',
   gallery: '汐音立绘',
+  usage: '消耗',
 }
 
-/** 模块落地阶段（P2 只实装概览；其余开窗占位，按分期上线）。 */
+/** 模块落地阶段（仅占位窗使用；当前可达模块均已实装）。 */
 export const CABIN_MODULE_PHASE: Record<string, string> = {
   overview: 'P2',
   queue: 'P3',
-  repos: 'P3',
-  worktree: 'P3',
-  iterations: 'P3',
+  engineering: 'P6',
+  records: 'P6',
   tasks: 'P3',
-  jobs: 'P3',
-  trace: 'P3',
+  iterations: 'P4',
+  job: 'P6',
   missions: 'P4',
   run: 'P3',
-  changes: 'P3',
-  acceptance: 'P3',
-  knowledge: 'P4',
-  usage: 'P4',
-  archive: 'P5',
   tuning: 'P5',
   gallery: 'P5',
+  usage: 'P4',
 }
 
-/** 原型 DOCK_PRIMARY：dock 常驻主按钮序。 */
-export const CABIN_DOCK_PRIMARY = ['overview', 'queue', 'tasks', 'missions', 'run'] as const
+/** classic-v3：作业坞只留「概览」一个舱模块 —— 任务/工程/记录从概览三入口进入。 */
+export const CABIN_DOCK_PRIMARY = ['overview'] as const
 
-/** 原型 DOCK_MOD 去掉 primary 后的溢出序（「更多模块」grid）。 */
-export const CABIN_DOCK_OVERFLOW = [
-  'repos', 'worktree', 'iterations', 'jobs', 'trace', 'changes', 'acceptance', 'knowledge', 'usage', 'archive', 'tuning', 'gallery',
-] as const
+/** classic-v3：不再有「更多模块」溢出格。 */
+export const CABIN_DOCK_OVERFLOW: readonly string[] = []
 
-/** 原型 WIN_SIZE：浮窗默认尺寸 [w,h]（docs/cabin-design/index.html:1342）。 */
+/** 原型 WIN_SIZE：浮窗默认尺寸 [w,h]（docs/cabin-design/classic-v3.html）。 */
 export const CABIN_WIN_SIZE: Record<string, [number, number]> = {
-  overview: [760, 640],
+  overview: [780, 640],
   queue: [720, 640],
-  repos: [820, 660],
-  worktree: [760, 600],
+  engineering: [860, 620],
+  records: [860, 620],
+  tasks: [960, 620],
   iterations: [900, 620],
-  tasks: [980, 620],
-  jobs: [880, 620],
-  trace: [820, 620],
+  job: [900, 700],
   missions: [620, 560],
   run: [900, 640],
-  changes: [820, 600],
-  acceptance: [820, 640],
-  knowledge: [820, 640],
-  usage: [680, 560],
-  archive: [820, 620],
   tuning: [560, 660],
   gallery: [780, 660],
+  usage: [680, 560],
 }
 
 /** 门禁 deep_link（模块 key）→ 舱浮窗 id。未知 key 不开窗（回对话）。 */
 export function cabinModuleForDeepLink(deepLink: string | undefined): string | null {
-  if (deepLink === 'repos') return 'repos'
+  if (deepLink === 'repos') return 'engineering'
   if (deepLink === 'settings') return 'tuning'
   return null
 }

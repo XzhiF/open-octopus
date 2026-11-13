@@ -17,9 +17,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
-  Activity, Archive, BarChart3, BookOpen, ClipboardCheck, ClipboardList, Folder, GitBranch, GitCompare,
-  Layers, LayoutGrid, ListTodo, PanelLeft, Play, Search, Send, SlidersHorizontal,
-  SquarePen, User, Boxes,
+  LayoutGrid, PanelLeft, Search, SquarePen,
 } from 'lucide-react'
 import { toast } from 'sonner'
 import { useChatSessions } from '@/components/providers/chat-sessions'
@@ -30,7 +28,7 @@ import { useWorkspaces } from '@/hooks/use-workspaces'
 import { useCabins } from '@/hooks/use-cabins'
 import { getSession } from '@/lib/agent/api'
 import type { AgentSession } from '@/lib/agent/types'
-import { getTask, listTasks, type TaskView } from '@/lib/tasks-api'
+import { getTask, type TaskView } from '@/lib/tasks-api'
 import { readRememberedTaskOrg, resolveTaskOrg } from '@/lib/task-org'
 import { useRouter } from '@/lib/app-navigation'
 import { cn } from '@/lib/utils'
@@ -48,27 +46,12 @@ import { useCabinContext } from './cabin-provider'
 import { CabinModulesLayer } from './CabinModulesLayer'
 import { CabinAtmosphere } from './CabinAtmosphere'
 import { CabinCrew } from './CabinCrew'
+import { CabinFleet } from './CabinFleet'
 import { useCockpit } from './CockpitProvider'
-import { CABIN_DOCK_OVERFLOW, CABIN_DOCK_PRIMARY } from './cabin-meta'
+import { CABIN_DOCK_PRIMARY } from './cabin-meta'
 
 const DOCK_ICONS: Record<string, typeof LayoutGrid> = {
   overview: LayoutGrid,
-  queue: Send,
-  tasks: ListTodo,
-  missions: ClipboardList,
-  run: Play,
-  repos: Folder,
-  worktree: GitBranch,
-  iterations: Layers,
-  jobs: Boxes,
-  trace: Activity,
-  changes: GitCompare,
-  acceptance: ClipboardCheck,
-  knowledge: BookOpen,
-  usage: BarChart3,
-  archive: Archive,
-  tuning: SlidersHorizontal,
-  gallery: User,
 }
 
 const SIDEBAR_WIDTH = 236
@@ -203,28 +186,14 @@ export function CabinChatHost({ onSelectCabin, onCreateCabin }: CabinChatHostPro
     return () => window.removeEventListener('octopus:open-task', onOpenTask)
   }, [issueCommand, refreshChatTasks])
 
-  // 舱 dock「变更/验收」→ 任务级窗（复用 per-task TaskModulesLayer）：已选任务
-  // 直接开；未选则按原型自动挑（验收=待验收优先，变更=活态优先）；无任务开舱窗空态。
-  const openTaskModule = useCallback(async (module: 'changes' | 'acceptance') => {
-    if (activeTask) {
-      issueCommand({ type: 'select-task', task: activeTask, module })
-      return
+  // 作业详情「去主对话」：回到舱主会话（不从任务线程强拉，只在显式点按时切回）。
+  useEffect(() => {
+    const onMainChat = () => {
+      if (mainSessionId) issueCommand({ type: 'select-session', sessionId: mainSessionId })
     }
-    try {
-      const { items } = await listTasks({ cabin_id: cabinId })
-      const pick = module === 'acceptance'
-        ? items.find((t) => t.status === 'awaiting_review') ?? items[0]
-        : items.find((t) => ['running', 'awaiting_review', 'done'].includes(t.status)) ?? items[0]
-      if (pick) {
-        const full = await getTask(pick.id)
-        issueCommand({ type: 'select-task', task: full, module })
-        return
-      }
-    } catch {
-      /* 落舱窗空态 */
-    }
-    openModule(module)
-  }, [activeTask, cabinId, issueCommand, openModule])
+    window.addEventListener('octopus:cabin-main-chat', onMainChat)
+    return () => window.removeEventListener('octopus:cabin-main-chat', onMainChat)
+  }, [issueCommand, mainSessionId])
 
   const attachRegion = useCallback((node: HTMLDivElement | null) => {
     setRegionNode(node)
@@ -254,8 +223,6 @@ export function CabinChatHost({ onSelectCabin, onCreateCabin }: CabinChatHostPro
 
   const personCount = view?.attention.filter((a) => a.awaiting === 'person').length ?? 0
   const attentionCount = view?.attention.length ?? 0
-  const reviewCount = view?.attention.filter((a) => a.stage === 'review').length ?? 0
-  const runningCount = view?.health.running ?? 0
 
   // 舱模块段只属于舱主对话（2026-11-13 用户要求）：舱内从跳转点打开任务线程 /
   // 别的会话时，作业坞退回桌面原样（文件/活动/子代理/调试/消耗 + 任务段）。
@@ -263,33 +230,18 @@ export function CabinChatHost({ onSelectCabin, onCreateCabin }: CabinChatHostPro
   const showingCabinThread =
     !activeTask && !pendingTaskSession && !!mainSessionId && sessionId === mainSessionId
 
+  // classic-v3：坞里舱模块只留「概览」—— 任务/工程/记录都从概览三入口进，
+  // 运行/变更/验收在作业详情里。
   const dockModules = useMemo<CabinDockModule[]>(() => CABIN_DOCK_PRIMARY.map((id) => ({
     id,
-    label: id === 'overview' ? '概览' : id === 'queue' ? '队列' : id === 'tasks' ? '任务' : id === 'missions' ? '作战' : '运行',
+    label: '概览',
     icon: DOCK_ICONS[id],
     ...moduleState(id),
     attention: id === 'overview' && personCount > 0 && !openWindows.includes(id),
-    // 原型 renderDock badge：overview=attention 数(amber) / queue=待路由(amber) / run=运行数(green)
-    badge: id === 'overview' ? attentionCount : id === 'queue' ? attentionCount : id === 'run' ? runningCount : undefined,
-    badgeTone: id === 'run' ? 'green' as const : 'amber' as const,
-    onClick: () => openModule(id),
-  })), [moduleState, openModule, personCount, attentionCount, runningCount, openWindows])
-
-  const dockMoreModules = useMemo<CabinDockModule[]>(() => CABIN_DOCK_OVERFLOW.map((id) => ({
-    id,
-    label: id === 'repos' ? '仓库' : id === 'worktree' ? '工作树' : id === 'iterations' ? '迭代'
-      : id === 'jobs' ? '作业' : id === 'trace' ? 'Trace' : id === 'changes' ? '变更'
-        : id === 'acceptance' ? '验收' : id === 'knowledge' ? '知识' : id === 'usage' ? '消耗'
-          : id === 'archive' ? '归档' : id === 'tuning' ? '调校' : '立绘',
-    icon: DOCK_ICONS[id],
-    ...moduleState(id),
-    badge: id === 'acceptance' ? reviewCount : id === 'knowledge' ? (view?.open_findings ?? 0) : undefined,
+    badge: id === 'overview' ? attentionCount : undefined,
     badgeTone: 'amber' as const,
-    onClick: () => {
-      if (id === 'changes' || id === 'acceptance') void openTaskModule(id)
-      else openModule(id)
-    },
-  })), [moduleState, openModule, openTaskModule, reviewCount, view?.open_findings])
+    onClick: () => openModule(id),
+  })), [moduleState, openModule, personCount, attentionCount, openWindows])
 
   const sidebarProps = {
     cabins,
@@ -410,11 +362,11 @@ export function CabinChatHost({ onSelectCabin, onCreateCabin }: CabinChatHostPro
           onSwapPanes={noop}
           canSwap={false}
           dockCabinModules={showingCabinThread ? dockModules : undefined}
-          dockCabinMoreModules={showingCabinThread ? dockMoreModules : undefined}
           dockElevated
           cabinId={cabinId}
           cabinWorkspaceId={cabin?.workspace_id ?? null}
         />
+        {showingCabinThread && <CabinFleet />}
         <CabinCrew />
         <CabinModulesLayer onNewTask={() => issueCommand({ type: 'new-task' })} />
       </div>

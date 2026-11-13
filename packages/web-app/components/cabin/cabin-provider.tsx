@@ -47,6 +47,13 @@ export interface CabinContextValue {
   /** trace 窗下钻过滤（job-trace 按钮带入）。 */
   traceJobId: string | null
   setTraceJob: (id: string | null) => void
+  /** classic-v3：概览/编队选中的作业（作业详情窗的数据源）。 */
+  selectedJobId: string | null
+  /** 打开作业详情窗并选中该作业。 */
+  openJobDetail: (jobId: string) => void
+  /** 任务窗的迭代筛选（概览里的迭代行会写入）；null = 全部。 */
+  taskIter: string | null
+  setTaskIter: (id: string | null) => void
 }
 
 const CabinContext = createContext<CabinContextValue | null>(null)
@@ -56,6 +63,8 @@ export function CabinProvider({ cabinId, children }: { cabinId: string; children
   const [openWindows, setOpenWindows] = useState<string[]>([])
   const [windows, setWindows] = useState<Record<string, CabinWinGeo>>({})
   const [traceJobId, setTraceJob] = useState<string | null>(null)
+  const [selectedJobId, setSelectedJobId] = useState<string | null>(null)
+  const [taskIter, setTaskIter] = useState<string | null>(null)
 
   const focusModule = useCallback((id: string) => {
     setOpenWindows((prev) => [...prev.filter((w) => w !== id), id])
@@ -80,6 +89,12 @@ export function CabinProvider({ cabinId, children }: { cabinId: string; children
       return next
     })
   }, [])
+
+  /** classic-v3：编队点一行 → 作业详情窗（同一扇窗换目标，不叠窗）。 */
+  const openJobDetail = useCallback((jobId: string) => {
+    setSelectedJobId(jobId)
+    openModule('job')
+  }, [openModule])
 
   const minimizeModule = useCallback((id: string) => {
     setWindows((prev) => (prev[id] ? { ...prev, [id]: { ...prev[id], min: true } } : prev))
@@ -118,6 +133,8 @@ export function CabinProvider({ cabinId, children }: { cabinId: string; children
     setOpenWindows([])
     setWindows({})
     setTraceJob(null)
+    setSelectedJobId(null)
+    setTaskIter(null)
   }, [cabinId])
 
   const minimizedWindows = useMemo(
@@ -135,12 +152,14 @@ export function CabinProvider({ cabinId, children }: { cabinId: string; children
     openModule, closeModule, minimizeModule, focusModule,
     placeModule, moveModule, resizeModule, toggleMaxModule,
     traceJobId, setTraceJob,
+    selectedJobId, openJobDetail, taskIter, setTaskIter,
   }), [
     cabinId, cabin, view, initState, loading, error, refresh,
     openWindows, minimizedWindows, focusedWindow, windows,
     openModule, closeModule, minimizeModule, focusModule,
     placeModule, moveModule, resizeModule, toggleMaxModule,
     traceJobId,
+    selectedJobId, openJobDetail, taskIter,
   ])
 
   return <CabinContext.Provider value={value}>{children}</CabinContext.Provider>
