@@ -4,6 +4,7 @@ import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import {
   ChevronDown,
   Container,
+  Copy,
   ListTodo,
   MessageSquare,
   MoreHorizontal,
@@ -17,6 +18,7 @@ import {
   Workflow,
   X,
 } from 'lucide-react'
+import { toast } from 'sonner'
 import type { AgentSession } from '@/lib/agent/types'
 import type { TaskView } from '@/lib/tasks-api'
 import type { CabinDetail } from '@/lib/cabin-api'
@@ -30,7 +32,7 @@ import {
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { Skeleton } from '@/components/ui/skeleton'
 import { ConfirmDialog } from '../shared/ConfirmDialog'
-import { cn } from '@/lib/utils'
+import { cn, copyToClipboard } from '@/lib/utils'
 
 interface ChatSidebarProps {
   tasks: TaskView[]
@@ -255,6 +257,14 @@ export function ChatSidebar({
   const [deleteTarget, setDeleteTarget] = useState<string | null>(null)
   const [query, setQuery] = useState('')
   const searchInputRef = useRef<HTMLInputElement>(null)
+  const renameInputRef = useRef<HTMLInputElement>(null)
+  // 菜单关闭时 Radix 会把焦点还给「⋯」触发器；正在进入行内重命名时不能还，
+  // 否则输入框刚挂载就被夺焦 → onBlur 立刻提交（2026-11-14 用户反馈：重命名没反应）。
+  const renameFocusPendingRef = useRef(false)
+  const renameInFlightRef = useRef(false)
+  // 行内改名刚打开的前 250ms 里，菜单关闭动画会把焦点来回搬一次；那一下
+  // blur 不是「用户离开输入框」，不能当成提交（否则输入框刚出现就消失）。
+  const editStartedAtRef = useRef(0)
   // Task-author clone sessions live in the task group, never in the chat list.
   // 2026-10-28: 被任务绑定的主会话也不出现在会话列表 —— 它就是任务线程本体，
   // 再挂一块"会话"牌子会让人以为是两个对话（切换中间历史"不变化"的困惑来源）。
@@ -274,6 +284,17 @@ export function ChatSidebar({
   useEffect(() => {
     if (searchOpen) searchInputRef.current?.focus()
   }, [searchOpen])
+
+  // 行内重命名：焦点交给输入框并全选。菜单关闭动画的焦点回收是异步的，
+  // 这里多补两次 focus，保证最终焦点落在输入框上。
+  useEffect(() => {
+    if (!editingId) return
+    const timers = [0, 60, 160].map((delay) => window.setTimeout(() => {
+      renameInputRef.current?.focus()
+      renameInputRef.current?.select()
+    }, delay))
+    return () => timers.forEach((timer) => window.clearTimeout(timer))
+  }, [editingId])
 
   const closeSearch = () => {
     setQuery('')
@@ -295,10 +316,52 @@ export function ChatSidebar({
   }, [cabins, needle])
 
   const confirmRename = async () => {
-    if (editingId && editTitle.trim()) {
-      await onRenameSession(editingId, editTitle.trim())
-    }
+    if (renameInFlightRef.current) return
+    const id = editingId
+    const next = editTitle.trim()
     setEditingId(null)
+    if (!id || !next) return
+    renameInFlightRef.current = true
+    try {
+      await onRenameSession(id, next)
+    } finally {
+      renameInFlightRef.current = false
+    }
+  }
+
+  const beginRename = (id: string, title: string) => {
+    editStartedAtRef.current = Date.now()
+    renameFocusPendingRef.current = true
+    // 兜底：onCloseAutoFocus 万一没来（菜单被外部卸载），别让标记永久挂着。
+    window.setTimeout(() => { renameFocusPendingRef.current = false }, 500)
+    setEditingId(id)
+    setEditTitle(title)
+  }
+
+  const handleRenameBlur = () => {
+    if (Date.now() - editStartedAtRef.current < 250) {
+      // 菜单关闭时的焦点回收，不是用户离开：把焦点还回去，别提交。
+      renameInputRef.current?.focus()
+      return
+    }
+    void confirmRename()
+  }
+
+  const copyName = async (name: string) => {
+    const shown = name.trim()
+    if (!shown) return
+    // copyToClipboard 在非安全上下文（局域网 HTTP）会直接返回 false，
+    // 那里 navigator.clipboard 也不可用 —— 给一次明确的失败提示，不静默。
+    if (copyToClipboard(shown)) {
+      toast.success('名称已复制', { duration: 1500 })
+      return
+    }
+    try {
+      await navigator.clipboard.writeText(shown)
+      toast.success('名称已复制', { duration: 1500 })
+    } catch {
+      toast.error('复制失败，请手动复制')
+    }
   }
 
   return (
@@ -598,6 +661,12 @@ export function ChatSidebar({
                             <Pencil className="size-3.5" /> 重命名
                           </DropdownMenuItem>
                           <DropdownMenuItem
+                            onClick={() => void copyName(task.name)}
+                            className="gap-2"
+                          >
+                            <Copy className="size-3.5" /> 复制名称
+                          </DropdownMenuItem>
+                          <DropdownMenuItem
                             onClick={() => onDeleteTask?.(task)}
                             className="gap-2 text-pop-red focus:text-pop-red"
                           >
@@ -663,10 +732,11 @@ export function ChatSidebar({
                     <div className="flex min-w-0 flex-1 items-center">
                       {editingId === session.id ? (
                         <input
+                          ref={renameInputRef}
                           autoFocus
                           value={editTitle}
                           onChange={(event) => setEditTitle(event.target.value)}
-                          onBlur={confirmRename}
+                          onBlur={handleRenameBlur}
                           onKeyDown={(event) => {
                             if (event.key === 'Enter') void confirmRename()
                             if (event.key === 'Escape') setEditingId(null)
@@ -707,15 +777,29 @@ export function ChatSidebar({
                             <MoreHorizontal className="size-3.5" />
                           </button>
                         </DropdownMenuTrigger>
-                        <DropdownMenuContent align="end" side="bottom" sideOffset={4}>
+                        <DropdownMenuContent
+                          align="end"
+                          side="bottom"
+                          sideOffset={4}
+                          onCloseAutoFocus={(event) => {
+                            if (!renameFocusPendingRef.current) return
+                            renameFocusPendingRef.current = false
+                            // 焦点直接交给行内输入框：让 Radix 的「还焦点给触发器」
+                            // 收不到这次焦点，输入框也就不会被立刻 blur 掉。
+                            event.preventDefault()
+                            renameInputRef.current?.focus()
+                            renameInputRef.current?.select()
+                          }}
+                        >
                           <DropdownMenuItem
-                            onClick={() => {
-                              setEditingId(session.id)
-                              setEditTitle(session.title)
-                            }}
+                            onClick={() => beginRename(session.id, session.title)}
                           >
                             <Pencil className="mr-2 size-3.5" />
                             重命名
+                          </DropdownMenuItem>
+                          <DropdownMenuItem onClick={() => void copyName(session.title)}>
+                            <Copy className="mr-2 size-3.5" />
+                            复制名称
                           </DropdownMenuItem>
                           <DropdownMenuItem
                             className="text-destructive"

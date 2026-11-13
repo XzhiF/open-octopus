@@ -34,6 +34,8 @@ import { useRouter } from '@/lib/app-navigation'
 import { cn } from '@/lib/utils'
 import { Sheet, SheetContent } from '@/components/ui/sheet'
 import { ChatSidebar } from '@/components/agent/chat/chat-sidebar'
+import { SidebarResizer } from '@/components/agent/chat/sidebar-resizer'
+import { useSidebarWidth } from '@/components/agent/chat/sidebar-width'
 import {
   ChatPane,
   type ChatPaneAction,
@@ -53,8 +55,6 @@ import { CABIN_DOCK_PRIMARY } from './cabin-meta'
 const DOCK_ICONS: Record<string, typeof LayoutGrid> = {
   overview: LayoutGrid,
 }
-
-const SIDEBAR_WIDTH = 236
 
 export interface CabinChatHostProps {
   /** 桌面内壳传入：切舱保持在桌面里（不跳 /cabin/:id）。 */
@@ -88,6 +88,8 @@ export function CabinChatHost({ onSelectCabin, onCreateCabin }: CabinChatHostPro
   const [command, setCommand] = useState<ChatPaneCommand | null>(null)
   const [regionNode, setRegionNode] = useState<HTMLDivElement | null>(null)
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
+  // 左栏宽度与桌面对话共用（拖动 + 最大 380），不再是写死的 236。
+  const { width: sidebarWidth, resizing: resizingSidebar, resizeHandlers } = useSidebarWidth()
   const [sidebarSearchOpen, setSidebarSearchOpen] = useState(false)
   const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false)
   const nonceRef = useRef(0)
@@ -157,11 +159,11 @@ export function CabinChatHost({ onSelectCabin, onCreateCabin }: CabinChatHostPro
     appOrgs: appOrgs.map((org) => org.name),
     workspaces,
     preferredOrg,
-    sidebarWidth: sidebarCollapsed ? 0 : SIDEBAR_WIDTH,
+    sidebarWidth: sidebarCollapsed ? 0 : sidebarWidth,
   }), [
     paneSessions, sessionsLoading, createNewSession, updateSessionTitle, refetchSessions,
     chatTasks, chatTasksLoading, refreshChatTasks, runningAgents, appOrgs, workspaces,
-    preferredOrg, sidebarCollapsed,
+    preferredOrg, sidebarCollapsed, sidebarWidth,
   ])
 
   // 座舱 attention / 外部入口打开任务：与桌面 ChatTab 同一事件协议。
@@ -275,6 +277,10 @@ export function CabinChatHost({ onSelectCabin, onCreateCabin }: CabinChatHostPro
     onCreateWorkflowTask: () => issueCommand({ type: 'new-task', kind: 'workflow-dev' }),
     onRenameSession: renameSession,
     onDeleteSession: (id: string) => { void handleDeleteSession(id) },
+    // 舱内任务行的「⋯」与桌面对话同一套动作：重命名/删除都经 ChatPane 命令执行
+    // （2026-11-14 用户反馈：舱里点重命名没反应 —— 之前这两个 prop 没接）。
+    onRenameTask: (task: TaskView) => issueCommand({ type: 'rename-task', task }),
+    onDeleteTask: (task: TaskView) => issueCommand({ type: 'delete-task', task }),
     searchOpen: sidebarSearchOpen,
     onSearchOpenChange: setSidebarSearchOpen,
   }
@@ -283,14 +289,15 @@ export function CabinChatHost({ onSelectCabin, onCreateCabin }: CabinChatHostPro
     // min-w-0：这一行是舱壳里的 flex 项，默认自动最小宽度 = 内容最小宽度。
     // 流式回复里出现长 token / 宽工具行时，会把整行（连同编队、作业坞的定位
     // 基准）撑到视口外，回复收拢成折叠 meta 才恢复 —— 2026-11-13 用户实测。
-    <div className="ui-font relative flex h-full min-h-0 min-w-0 flex-1">
+    <div className={cn('ui-font relative flex h-full min-h-0 min-w-0 flex-1', resizingSidebar && 'cursor-col-resize select-none [&_*]:cursor-col-resize')}>
       {!sidebarCollapsed && (
         <aside
           className="relative hidden shrink-0 border-r border-white/[0.06] md:flex md:flex-col"
-          style={{ width: SIDEBAR_WIDTH }}
+          style={{ width: sidebarWidth }}
           data-chat-sidebar
         >
           <ChatSidebar {...sidebarProps} onCollapse={() => setSidebarCollapsed(true)} />
+          <SidebarResizer resizing={resizingSidebar} handlers={resizeHandlers} />
         </aside>
       )}
 

@@ -215,7 +215,9 @@ export function getSession(id: string, query?: { limit?: number; cursor?: string
   }))
 }
 export function updateSession(id: string, data: { title: string }) {
-  return request<void>(`/sessions/${id}`, { method: 'PATCH', body: JSON.stringify(data) })
+  // 服务端会话路由是 PUT /sessions/:id（packages/server/src/routes/agent/sessions.ts）；
+  // 这里曾写成 PATCH，Hono 无匹配路由直接 404 —— 重命名看起来「没反应」。
+  return request<void>(`/sessions/${id}`, { method: 'PUT', body: JSON.stringify(data) })
 }
 
 /**

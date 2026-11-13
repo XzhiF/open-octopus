@@ -42,6 +42,8 @@ import { Sheet, SheetContent } from '@/components/ui/sheet'
 import type { CabinDetail } from '@/lib/cabin-api'
 import { CabinDraftPane } from '@/components/cabin/CabinDraftPane'
 import { ChatSidebar } from './chat-sidebar'
+import { SidebarResizer } from './sidebar-resizer'
+import { useSidebarWidth } from './sidebar-width'
 import {
   ChatPane,
   type ChatPaneAction,
@@ -50,15 +52,7 @@ import {
   type PendingTaskSession,
 } from './ChatPane'
 
-const SIDEBAR_WIDTH_KEY = 'octopus.chat.sidebarWidth.v1'
 const SIDEBAR_COLLAPSED_KEY = 'octopus.chat.sidebarCollapsed.v1'
-const SIDEBAR_DEFAULT = 236
-const SIDEBAR_MIN = 200
-const SIDEBAR_MAX = 380
-
-function clampSidebarWidth(width: number): number {
-  return Math.min(SIDEBAR_MAX, Math.max(SIDEBAR_MIN, Math.round(width)))
-}
 
 /**
  * 桌面壳注入的作战舱桥（2026-11-13）：左栏作战舱段 + pendingCabin hero。
@@ -501,27 +495,14 @@ export function ChatTab({ cabinBridge }: { cabinBridge?: ChatTabCabinBridge } = 
   }, [runningAgents, streamingByPane])
 
   // ── 侧栏宽度 / 折叠 / 搜索 / 移动端抽屉 ─────────────────────────────
-  const [sidebarWidth, setSidebarWidth] = useState(() => {
-    if (typeof window === 'undefined') return SIDEBAR_DEFAULT
-    const saved = Number(window.localStorage.getItem(SIDEBAR_WIDTH_KEY))
-    return Number.isFinite(saved) && saved > 0 ? clampSidebarWidth(saved) : SIDEBAR_DEFAULT
-  })
-  const [resizingSidebar, setResizingSidebar] = useState(false)
-  const sidebarDragRef = useRef<{ startX: number; startWidth: number } | null>(null)
+  // 宽度与舱内对话共用（sidebar-width.ts）：拖出的值两个视图都认。
+  const { width: sidebarWidth, resizing: resizingSidebar, resizeHandlers } = useSidebarWidth()
   const [sidebarCollapsed, setSidebarCollapsed] = useState(() => {
     if (typeof window === 'undefined') return false
     return window.localStorage.getItem(SIDEBAR_COLLAPSED_KEY) === '1'
   })
   const [sidebarSearchOpen, setSidebarSearchOpen] = useState(false)
   const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false)
-
-  useEffect(() => {
-    try {
-      window.localStorage.setItem(SIDEBAR_WIDTH_KEY, String(sidebarWidth))
-    } catch {
-      /* storage unavailable */
-    }
-  }, [sidebarWidth])
 
   useEffect(() => {
     try {
@@ -535,34 +516,6 @@ export function ChatTab({ cabinBridge }: { cabinBridge?: ChatTabCabinBridge } = 
     setSidebarCollapsed(false)
     if (opts?.focusSearch) setSidebarSearchOpen(true)
   }, [])
-
-  const handleSidebarResizeStart = (event: ReactPointerEvent<HTMLDivElement>) => {
-    event.preventDefault()
-    sidebarDragRef.current = { startX: event.clientX, startWidth: sidebarWidth }
-    setResizingSidebar(true)
-    try {
-      event.currentTarget.setPointerCapture(event.pointerId)
-    } catch {
-      /* pointer capture unavailable */
-    }
-  }
-
-  const handleSidebarResizeMove = (event: ReactPointerEvent<HTMLDivElement>) => {
-    const drag = sidebarDragRef.current
-    if (!drag) return
-    setSidebarWidth(clampSidebarWidth(drag.startWidth + event.clientX - drag.startX))
-  }
-
-  const handleSidebarResizeEnd = (event: ReactPointerEvent<HTMLDivElement>) => {
-    if (!sidebarDragRef.current) return
-    sidebarDragRef.current = null
-    setResizingSidebar(false)
-    try {
-      event.currentTarget.releasePointerCapture(event.pointerId)
-    } catch {
-      /* pointer capture unavailable */
-    }
-  }
 
   // ── 分屏线拖拽 ─────────────────────────────────────────────────────
   const handleDividerDown = (event: ReactPointerEvent<HTMLDivElement>) => {
@@ -719,22 +672,7 @@ export function ChatTab({ cabinBridge }: { cabinBridge?: ChatTabCabinBridge } = 
             {...sidebarProps}
             onCollapse={() => setSidebarCollapsed(true)}
           />
-          <div
-            role="separator"
-            aria-orientation="vertical"
-            aria-label="调整侧栏宽度"
-            title="拖动调整宽度 · 双击复位"
-            data-testid="chat-sidebar-resizer"
-            onPointerDown={handleSidebarResizeStart}
-            onPointerMove={handleSidebarResizeMove}
-            onPointerUp={handleSidebarResizeEnd}
-            onPointerCancel={handleSidebarResizeEnd}
-            onDoubleClick={() => setSidebarWidth(SIDEBAR_DEFAULT)}
-            className={cn(
-              'absolute -right-1 top-0 z-20 hidden h-full w-2 cursor-col-resize touch-none md:block',
-              resizingSidebar ? 'bg-white/[0.12]' : 'hover:bg-white/[0.06]',
-            )}
-          />
+          <SidebarResizer resizing={resizingSidebar} handlers={resizeHandlers} />
         </aside>
       )}
 
