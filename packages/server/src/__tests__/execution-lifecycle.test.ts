@@ -426,6 +426,59 @@ describe("ExecutionLifecycle.resume — intervention persistence", () => {
   })
 })
 
+// ==================== resume() — harness_delegate 暂停 ====================
+//
+// 引擎为 harness 委派返回 {status:'paused', pauseReason:'harness_delegate'} 时不落
+// paused 节点（节点本身 failed，典型：Agent 空闲超时）。这类行此前 resume() 恒
+// 返回「未找到暂停节点」——任务控制台只有中止一条路。现在按 supervision 的恢复
+// 口径从失败节点重跑。
+
+describe("ExecutionLifecycle.resume — harness_delegate 暂停", () => {
+  it("无 paused 节点、节点已 failed → 从失败节点重跑", async () => {
+    const exec = lifecycle.create(workspaceId, { workflow_ref: "test.yaml" }, ORG)
+    dao.updateExecution(exec.id, { status: "paused" })
+    dao.insertNodeExecution({
+      id: `${exec.id}-step1`, execution_id: exec.id,
+      node_id: "step1", node_type: "bash", status: "failed",
+    })
+    // 下游节点是正常的「还没轮到」，不是崩溃残留 —— 重试不能把它们判死。
+    dao.insertNodeExecution({
+      id: `${exec.id}-step2`, execution_id: exec.id,
+      node_id: "step2", node_type: "bash", status: "pending",
+    })
+    const retried: string[] = []
+    lifecycle.getEnginePool().create(exec.id, {
+      updateSignal: () => {},
+      async retryFrom(nodeId: string) {
+        retried.push(nodeId)
+        return { workflowName: "test", status: "completed", nodeResults: {}, poolSnapshot: {}, durationMs: 1 } as never
+      },
+    } as never, new AbortController())
+
+    const res = await lifecycle.resume(exec.id)
+    expect(res.success).toBe(true)
+    // 恢复在后台跑（retry 要等整轮引擎），这里等到引擎真的被叫起来。
+    const deadline = Date.now() + 10_000
+    while (retried.length === 0 && Date.now() < deadline) {
+      await new Promise((r) => setTimeout(r, 50))
+    }
+    expect(retried).toEqual(["step1"])
+    // 旧实现会把它标成 failed（"重试前清理: 孤立节点"）；桩引擎可能已经跑完整轮
+    // 让下游变 skipped —— 无论哪种，都不该是 failed。
+    const step2 = dao.findNodeExecutionById(`${exec.id}-step2`)!
+    expect(step2.status).not.toBe("failed")
+    expect(step2.error ?? "").not.toContain("重试前清理")
+    await lifecycle.getEnginePool().waitForSettled(exec.id, 15_000)
+  })
+
+  it("既无 paused 节点也无 failed 节点时仍如实拒绝", async () => {
+    const exec = lifecycle.create(workspaceId, { workflow_ref: "test.yaml" }, ORG)
+    dao.updateExecution(exec.id, { status: "paused" })
+    const res = await lifecycle.resume(exec.id)
+    expect(res).toEqual({ success: false, error: "未找到暂停节点" })
+  })
+})
+
 // ==================== computeBranch() ====================
 
 describe("ExecutionLifecycle.computeBranch", () => {

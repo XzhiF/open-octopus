@@ -1076,6 +1076,12 @@ export function ChatPane({
         if (data.task_id !== activeTask.id) return
         void loadMessages()
         void refreshChatTasks()
+        // 任务事件也可能来自运行窗外的手工动作（例如运行窗里点「继续运行」后的
+        // 暂停→运行转场）：把 activeTask 详情一并刷新，任务头/状态卡不会停在旧态。
+        const id = activeTask.id
+        void getTask(id)
+          .then((next) => { setActiveTask((prev) => (prev?.id === next.id ? next : prev)) })
+          .catch(() => { /* 详情刷新失败不阻断事件处理 */ })
       } catch {
         /* malformed frame */
       }
@@ -1087,7 +1093,7 @@ export function ChatPane({
       subscribeSSE(url, TASK_ACCEPTANCE_CHECK_EVENT, onTask),
     ]
     return () => offs.forEach((off) => off())
-  }, [activeTask?.id, loadMessages, refreshChatTasks])
+  }, [activeTask?.id, loadMessages, refreshChatTasks, setActiveTask])
 
   // 运行窗（YAML / DAG）是栏内浮层：只有焦点栏响应（点击来源先聚焦该栏；
   // 顶栏「运行中 Agent」也落到焦点栏）。新建/打开任务的全局入口在 ChatTab 壳里。
@@ -1581,6 +1587,7 @@ export function ChatPane({
               phaseIndex: run.phaseIndex,
               roundIndex: run.roundIndex,
               status: run.status,
+              taskId: run.taskId,
               system: run.isSystem,
             },
           })

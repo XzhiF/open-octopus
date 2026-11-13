@@ -32,6 +32,8 @@ export interface CabinRunTarget {
   phaseIndex?: number | null
   roundIndex?: number | null
   status?: string
+  /** 任务绑定执行：运行窗的「继续运行」走任务恢复接口（带 callbacks 重挂）。 */
+  taskId?: string | null
 }
 
 interface Snapshot {

@@ -8,8 +8,8 @@
 import { useEffect, useState } from 'react'
 import { Code2, Pause, Play, RotateCcw, Square } from 'lucide-react'
 import { toast } from 'sonner'
-import { getTask, type TaskDetail, type TaskView } from '@/lib/tasks-api'
-import { cancelExecution, fetchExecutionDetail, fetchExecutionIncidents, rerunExecution, type RuntimeIncidentWire } from '@/lib/api-client'
+import { getTask, pauseTask, resumeTask, type TaskDetail, type TaskView } from '@/lib/tasks-api'
+import { cancelExecution, fetchExecutionDetail, fetchExecutionIncidents, pauseExecution, rerunExecution, resumeExecution, type RuntimeIncidentWire } from '@/lib/api-client'
 import type { StepExecution } from '@/lib/types'
 import type { RunTarget, YamlTarget } from './task-window-types'
 import { formatStopwatch } from '@/lib/format'
@@ -82,6 +82,8 @@ export function RunWindow({
   const [error, setError] = useState<string | null>(null)
   const [rerunning, setRerunning] = useState(false)
   const [aborting, setAborting] = useState(false)
+  const [resuming, setResuming] = useState(false)
+  const [pausing, setPausing] = useState(false)
   /** DAG 与日志共用的聚焦：节点 id（= 事件 nodeId） */
   const [focus, setFocus] = useState<string | null>(null)
   const [view, setView] = useState<'dag' | 'incidents'>('dag')
@@ -134,6 +136,56 @@ export function RunWindow({
       toast.error(err instanceof Error ? err.message : '中止失败')
     } finally {
       setAborting(false)
+    }
+  }
+
+  /**
+   * 继续运行（2026-11-14 用户反馈）：从作业详情点开的运行窗是 runTarget，
+   * 之前「恢复」被 !runTarget 挡掉，只剩中止。恢复按目标归属选路：
+   *  · 任务绑定执行 → 任务恢复接口（TasksService 先重挂 collectRound 等 callback，
+   *    否则整轮跑完没人收批次产物）；
+   *  · 没有任务的执行（验收规划等）→ 执行恢复接口。
+   * 两条路后端都对 harness-delegate 暂停（节点已 failed、没有 paused 节点）
+   * 从失败节点重跑。
+   */
+  const handleResumeTarget = async () => {
+    if (!workspaceId || !executionId || resuming) return
+    setResuming(true)
+    try {
+      if (runTarget?.taskId) await resumeTask(runTarget.taskId)
+      else await resumeExecution(workspaceId, executionId)
+      toast.success('已继续运行')
+      if (taskId) {
+        const next = await getTask(taskId)
+        setDetail(next)
+      }
+    } catch (err: unknown) {
+      toast.error(err instanceof Error ? err.message : '恢复失败')
+    } finally {
+      setResuming(false)
+    }
+  }
+
+  /**
+   * 暂停（2026-11-14 用户要求）：与中止/继续同一条按目标归属选路 ——
+   * 任务绑定执行走任务暂停（服务端落「任务已暂停」卡），无任务的执行走执行接口。
+   * 引擎只在节点真正运行时接受暂停；节点间隙会被拒绝（服务端原文提示）。
+   */
+  const handlePauseTarget = async () => {
+    if (!workspaceId || !executionId || pausing) return
+    setPausing(true)
+    try {
+      if (runTarget?.taskId) await pauseTask(runTarget.taskId)
+      else await pauseExecution(workspaceId, executionId)
+      toast.success('已暂停')
+      if (taskId) {
+        const next = await getTask(taskId)
+        setDetail(next)
+      }
+    } catch (err: unknown) {
+      toast.error(err instanceof Error ? err.message : '暂停失败')
+    } finally {
+      setPausing(false)
     }
   }
 
@@ -300,16 +352,34 @@ export function RunWindow({
               <Code2 className="size-3" /> YAML
             </button>
           )}
-          {!runTarget && status === 'running' && (
-            <button type="button" onClick={() => onTaskAction?.('pause')}
-              className="inline-flex items-center gap-1 rounded border border-pop-bd px-2 py-1 text-[10px] text-pop-ink hover:bg-white/[0.06]">
-              <Pause className="size-3" /> 暂停
+          {status === 'running' && !runTarget?.system && (runTarget || onTaskAction) && (
+            <button
+              type="button"
+              data-testid="run-pause"
+              disabled={pausing}
+              title="在当前运行节点处暂停（节点间隙无法暂停）"
+              onClick={() => {
+                if (runTarget) void handlePauseTarget()
+                else onTaskAction?.('pause')
+              }}
+              className="inline-flex items-center gap-1 rounded border border-pop-bd px-2 py-1 text-[10px] text-pop-ink hover:bg-white/[0.06] disabled:opacity-50"
+            >
+              <Pause className="size-3" /> {pausing ? '暂停中…' : '暂停'}
             </button>
           )}
-          {!runTarget && status === 'paused' && (
-            <button type="button" onClick={() => onTaskAction?.('resume')}
-              className="inline-flex items-center gap-1 rounded border border-pop-green/40 bg-pop-green-soft px-2 py-1 text-[10px] text-pop-green hover:opacity-90">
-              <Play className="size-3" /> 恢复
+          {status === 'paused' && !runTarget?.system && (runTarget || onTaskAction) && (
+            <button
+              type="button"
+              data-testid="run-resume"
+              disabled={resuming}
+              title={runTarget ? '从暂停处继续（节点已失败时从该节点重跑）' : '继续这一轮执行'}
+              onClick={() => {
+                if (runTarget) void handleResumeTarget()
+                else onTaskAction?.('resume')
+              }}
+              className="inline-flex items-center gap-1 rounded border border-pop-green/40 bg-pop-green-soft px-2 py-1 text-[10px] text-pop-green hover:opacity-90 disabled:opacity-50"
+            >
+              <Play className="size-3" /> {resuming ? '恢复中…' : '继续运行'}
             </button>
           )}
           {(status === 'running' || status === 'paused') && (

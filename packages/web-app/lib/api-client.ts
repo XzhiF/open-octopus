@@ -451,6 +451,22 @@ export async function cancelExecution(workspaceId: string, executionId: string) 
   return handleResponse(res)
 }
 
+/** 执行级恢复（暂停 → 继续）。服务端对 harness-delegate 暂停会自动从失败节点重跑。 */
+export async function resumeExecution(workspaceId: string, executionId: string) {
+  const res = await apiFetch(`${getServerUrl()}/api/workspaces/${workspaceId}/executions/${executionId}/resume`, {
+    method: "POST",
+  })
+  return handleResponse(res)
+}
+
+/** 执行级暂停（运行 → 暂停）。节点之间没有可冻结的目标时服务端会 400 拒绝。 */
+export async function pauseExecution(workspaceId: string, executionId: string) {
+  const res = await apiFetch(`${getServerUrl()}/api/workspaces/${workspaceId}/executions/${executionId}/pause`, {
+    method: "POST",
+  })
+  return handleResponse(res)
+}
+
 export async function skipExecution(workspaceId: string, executionId: string) {
   const res = await apiFetch(`${getServerUrl()}/api/workspaces/${workspaceId}/executions/${executionId}/skip`, {
     method: "POST",

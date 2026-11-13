@@ -852,6 +852,86 @@ class ChatEventBridge {
   }
 
   /**
+   * 人工暂停 / 恢复运行（POST /api/tasks/:id/pause|resume）→ 任务线程落一张确定性卡。
+   *
+   * 任务的持久状态在运行/暂停/恢复之间都是 'running'（「已暂停」由执行行派生），
+   * 所以不会再来一帧 task_status；TASK_EXECUTION_EVENT 只让前端刷新、不写 transcript。
+   * 结果就是点了按钮在 chat 里看不到任何提示（2026-11-14 用户反馈）。
+   * 零 LLM：只落卡 + 通知会话刷新。
+   */
+  notifyTaskRunState(taskId: string, executionId: string, state: "running" | "paused"): void {
+    if (!this.db) return
+    let row: {
+      name?: string
+      source_chat_session_id?: string | null
+      workspace_id?: string | null
+      cabin_id?: string | null
+    } | undefined
+    try {
+      row = this.db.prepare(
+        "SELECT name, source_chat_session_id, workspace_id, cabin_id FROM tasks WHERE id = ?",
+      ).get(taskId) as typeof row
+    } catch {
+      return
+    }
+    if (!row) return
+    // G2：舱任务的卡落舱主会话（与 handleTaskStatus 同口径）。
+    const sessionId = (row.cabin_id ? this.cabinMainSession(row.cabin_id) : null)
+      ?? row.source_chat_session_id
+    if (!sessionId) return
+    let session: { clone_name?: string | null } | undefined
+    try {
+      session = this.db.prepare("SELECT clone_name FROM sessions WHERE id = ?")
+        .get(sessionId) as typeof session
+    } catch {
+      return
+    }
+    if (!session || session.clone_name) return // 旧版 clone 线程不落卡
+
+    let latest: { phase_index?: number | null; round_index?: number | null } | undefined
+    try {
+      latest = this.db.prepare("SELECT phase_index, round_index FROM executions WHERE id = ?")
+        .get(executionId) as typeof latest
+    } catch {
+      /* 坐标缺失就不显示 */
+    }
+    const coord = latest?.phase_index != null
+      ? `P${latest.phase_index}${latest.round_index != null ? ` · R${latest.round_index}` : ""}`
+      : ""
+    const title = state === "paused" ? "任务已暂停" : "任务已继续运行"
+    const severity: ActivitySeverity = state === "paused" ? "warn" : "info"
+    const actions = TASK_STATUS_ACTIONS[state] ?? []
+    const detail = `任务：${row.name ?? taskId.slice(0, 8)}${coord ? ` · ${coord}` : ""}`
+    const workspaceId = row.workspace_id ?? null
+    const event = getActivityBus().publish({
+      kind: "task.status",
+      severity,
+      title,
+      message: detail,
+      workspaceId,
+      taskId,
+      executionId,
+      sessionId,
+      payload: {
+        status: state,
+        actions,
+        phaseIndex: latest?.phase_index ?? null,
+        roundIndex: latest?.round_index ?? null,
+      },
+    })
+    this.appendTaskCard({
+      sessionId,
+      workspaceId,
+      title,
+      detail,
+      event,
+      status: state,
+      actions,
+    })
+    this.notifySession(sessionId, workspaceId)
+  }
+
+  /**
    * 舱初始化门禁卡（Cabin P1）：零 LLM，append-only。start/done/failed 各一张
    * （cabinId:status 去重）；逐项进度走 SSE `cabin:<id>` 频道，卡片只落里程碑。
    * payload.cabinInit=true + items 供前端 CabinInitGateCard 渲染（P2）。

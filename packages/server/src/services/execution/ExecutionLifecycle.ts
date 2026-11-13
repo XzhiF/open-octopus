@@ -664,10 +664,13 @@ export class ExecutionLifecycle {
         this.enginePool.create(id, inst.engine, inst.abortController)
       }
 
-      this.updateStatus(id, "running", { started_at: new Date().toISOString() })
+      this.updateStatus(id, "running", { started_at: new Date().toISOString(), completed_at: null })
 
-      // Clean up orphaned node_executions (stuck "running"/"pending" from crash)
-      this.dao.updateNodeExecutionsByStatus(id, "failed", ["running", "pending"], { error: "重试前清理: 孤立节点" })
+      // Clean up orphaned node_executions (stuck "running" from crash). Pending
+      // descendants are NOT orphans: they are exactly the nodes this retry is about
+      // to run after the failed one. Marking them failed made a resumed round look
+      // like everything downstream had failed (2026-11-14 user report).
+      this.dao.updateNodeExecutionsByStatus(id, "failed", ["running"], { error: "重试前清理: 孤立节点" })
 
       if (inputValues) {
         this.dao.updateExecution(id, { input_values: JSON.stringify(inputValues) })
@@ -1058,7 +1061,24 @@ export class ExecutionLifecycle {
 
     const pausedNodes = this.dao.findRunningNodeExecutionsByStatus(executionId, ["paused"])
     const pausedNode = pausedNodes.length > 0 ? pausedNodes[0] : null
-    if (!pausedNode) return { success: false, error: "未找到暂停节点" }
+    if (!pausedNode) {
+      // harness_delegate 暂停没有 paused 节点：引擎返回 {status:'paused'} 时节点
+      // 本身已是 failed（典型：Agent 空闲超时兜底），resume() 没有可重新进入的
+      // 节点。按 supervision 的同一套恢复：翻到 failed 后从失败节点重跑（下游
+      // 节点随之继续）。retry() 要等整轮引擎跑完，不能挂在 HTTP 请求上 —— 后台跑。
+      const failedNode = this.dao.findFirstNodeByStatus(executionId, "failed")
+      if (failedNode) {
+        void this.retryPausedNode(executionId, failedNode.node_id, intervention).catch((err: unknown) => {
+          const message = err instanceof Error ? err.message : String(err)
+          console.error(`[ExecutionLifecycle] harness-delegate resume failed for ${executionId}: ${message}`)
+          try {
+            this.updateStatus(executionId, "failed", { error: message })
+          } catch { /* best effort */ }
+        })
+        return { success: true }
+      }
+      return { success: false, error: "未找到暂停节点" }
+    }
 
     let inst = this.enginePool.get(executionId)
     if (!inst) {

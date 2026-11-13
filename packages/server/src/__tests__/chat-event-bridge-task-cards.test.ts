@@ -158,6 +158,35 @@ describe("task status cards", () => {
     expect(fetchMock).not.toHaveBeenCalled()
   })
 
+  it("人工「继续运行」/「暂停」各落一张确定性卡（零 LLM），旧 clone 线程不落", () => {
+    const bridge = getChatEventBridge()
+    bridge.notifyTaskRunState("t-thread", "e-thread", "running")
+    let rows = cards("s-main")
+    expect(rows).toHaveLength(1)
+    expect(rows[0].content).toContain("任务已继续运行")
+    const act = activity("s-main")
+    expect(act.status).toBe("running")
+    expect(act.executionId).toBe("e-thread")
+    expect(fetchMock).not.toHaveBeenCalled()
+    expect(emit).toHaveBeenCalled()
+
+    bridge.notifyTaskRunState("t-thread", "e-thread", "paused")
+    rows = cards("s-main")
+    expect(rows).toHaveLength(2)
+    expect(rows[1].content).toContain("任务已暂停")
+    const paused = activity("s-main", 1)
+    expect(paused.status).toBe("paused")
+    // 暂停卡自带「恢复 / 打开运行窗 / 中止」，不用回运行窗也能继续。
+    expect((paused.actions as Array<{ id: string }>).map((a) => a.id)).toEqual([
+      "resume",
+      "open_run",
+      "abort",
+    ])
+
+    bridge.notifyTaskRunState("t-legacy", "e-legacy", "running")
+    expect(cards("s-clone")).toHaveLength(0)
+  })
+
   it("archiving / done / awaiting_archive are left to the AI-native archive guides (no generic card, no wake)", () => {
     const bridge = getChatEventBridge()
     db.prepare("UPDATE tasks SET status='ready' WHERE id='t-thread'").run()

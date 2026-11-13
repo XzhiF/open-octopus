@@ -4478,6 +4478,9 @@ export class TasksService {
     // execution-transition channel, which is what the board and the run console already
     // fold on (both re-fetch, so the derived 已暂停 lands with it).
     this.emitRunTransition(existing.id, inst, "paused")
+    // …but chat has no transcript card from that channel, so land one explicitly
+    // (2026-11-14 用户反馈：手动暂停/恢复在对话里没有提示)。
+    getChatEventBridge().notifyTaskRunState(existing.id, inst.id, "paused")
 
     const row = this.taskDAO.getById(id)!
     return this.attachInstances([row])[0] ?? toDTO(row)
@@ -4516,6 +4519,9 @@ export class TasksService {
     }
 
     this.emitRunTransition(existing.id, inst, "running")
+    // 暂停/恢复之间任务持久状态都是 running，不会再有 task_status 帧；不落卡的话
+    // chat 里对这次「继续运行」没有任何提示（2026-11-14 用户反馈）。
+    getChatEventBridge().notifyTaskRunState(existing.id, inst.id, "running")
 
     const row = this.taskDAO.getById(id)!
     return this.attachInstances([row])[0] ?? toDTO(row)

@@ -132,7 +132,7 @@ export function CabinJobDetail() {
       if (!job.ref_id || !cabin?.workspace_id) return null
       return { executionId: job.ref_id, workspaceId: cabin.workspace_id, title: job.title, status }
     }
-    if (job.kind !== 'task') return null
+    if (job.kind !== 'task' || !taskEntity) return null
     const executions = taskEntity?.executions ?? []
     const current = executions.find((e) => ['pending', 'running', 'paused'].includes(e.status)) ?? executions[0]
     if (!current) return null
@@ -144,6 +144,7 @@ export function CabinJobDetail() {
       phaseIndex: current.phase_index,
       roundIndex: current.round_index,
       status: current.status,
+      taskId: taskEntity.id,
     }
   })()
 

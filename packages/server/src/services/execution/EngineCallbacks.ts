@@ -360,7 +360,17 @@ export class EngineCallbacks implements IEngineCallbacks {
         obs.resetDegraded()
         // F1: 重试/重跑归零实时累计（DB 行同理被重置）
         this.liveUsageByExec.get(id)?.delete(nodeId)
-        dao.updateNodeExecution(neId, { status: "running", started_at: new Date().toISOString() })
+        // 重跑同一节点时把上一轮的失败痕迹一起清掉：只改 status 会留下旧的
+        // error / completed_at / duration，界面看起来「正在运行但显示上次失败」
+        // （2026-11-14 用户反馈：继续运行后 code-review 在跑，却还挂着旧报错）。
+        dao.updateNodeExecution(neId, {
+          status: "running",
+          started_at: new Date().toISOString(),
+          completed_at: null,
+          error: null,
+          duration: null,
+          exit_code: null,
+        })
         sse.emit(wsId, {
           event: "node_start", data: { executionId: id, nodeId, nodeType, executorType: nodeType },
         })
@@ -388,7 +398,7 @@ export class EngineCallbacks implements IEngineCallbacks {
         const isFailed = ["failed", "skipped_failed", "error"].includes(status)
         const nodeError = isFailed
           ? (result?.logLines?.join("\n") ?? result?.error ?? null)
-          : (status === "completed" ? null : undefined)
+          : (status === "completed" || status === "skipped" ? null : undefined)
         dao.updateNodeExecution(neId, {
           status,
           completed_at: new Date().toISOString(), duration: durationMs,
