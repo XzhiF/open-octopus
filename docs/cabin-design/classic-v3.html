@@ -931,7 +931,7 @@ body.float-holo .win-title b{color:var(--ck-a)}
 .xyd-cur{display:inline-block;color:var(--ck-a);animation:blink 1s steps(1) infinite;margin-left:2px}
 @media (max-width:1280px){ .xy-dialog{left:8px;bottom:24px;width:240px} }
 
-/* ════════════ classic-v3 · 编队面板 / 现场小卡 / 航迹 ════════════ */
+/* ════════════ classic-v3 · 编队面板 / 作业详情 ════════════ */
 .v3-fleet{position:absolute;top:56px;right:84px;z-index:24;width:148px;display:flex;flex-direction:column;
   border-radius:12px;border:1px solid var(--w8);background:rgba(14,14,20,.62);backdrop-filter:blur(14px);
   box-shadow:var(--shadow-pop-sm);overflow:hidden}
@@ -1049,25 +1049,24 @@ body.float-holo .win-title b{color:var(--ck-a)}
 .jb-say b{display:block;font-size:10px;color:var(--pop-violet);margin-bottom:2px}
 .jb-say p{margin:0;font-size:11px;line-height:1.5;color:var(--pop-ink);font-family:var(--font-ui)}
 .jb-run .rdlinks{display:none}
-/* 运行：预览 + 弹出完整 DAG / 日志 / YAML */
+/* 运行：省略态摘要卡（对齐 chat 执行框）；「打开运行 →」开作业坞那扇运行窗（DAG / 日志 / YAML） */
 .win[data-win="job"] .win-body{overflow:hidden}
 .jb-wrap{position:relative;height:100%;display:flex;flex-direction:column;min-height:0}
 .jb-scroll{flex:1;min-height:0;overflow:auto}
-.jb-runprev-h{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:8px}
-.jb-runprev-h b{font-size:12px;color:var(--pop-ink);font-family:var(--font-ui)}
-.jb-runprev-h .cap{font-size:9.5px;color:var(--pop-dim);font-family:var(--font-mono)}
-.jb-runprev-h .wbtn{margin-left:auto}
-.jb-runprev .rdag{margin-top:8px}
-.jb-runprev .rlogs{margin-top:8px}
-.jb-modal{position:absolute;inset:0;z-index:6;display:flex;align-items:center;justify-content:center;padding:10px;border-radius:10px;
-  background:rgba(6,6,9,.8);backdrop-filter:blur(4px)}
-.jb-modal-box{flex:0 1 auto;width:min(680px,100%);max-height:100%;min-height:0;display:flex;flex-direction:column;overflow:hidden;
-  border:1px solid var(--w12);border-radius:10px;background:var(--pop-paper);box-shadow:var(--shadow-pop-lg)}
-.jb-modal-h{flex:none;display:flex;align-items:center;gap:8px;padding:8px 10px;border-bottom:1px solid var(--w8)}
-.jb-modal-h b{font-size:11.5px;color:var(--pop-ink);font-family:var(--font-ui)}
-.jb-modal-h .x{margin-left:auto;width:22px;height:22px;border-radius:6px;display:grid;place-items:center;color:var(--pop-dim)}
-.jb-modal-h .x:hover{background:var(--w8);color:var(--pop-ink)}
-.jb-modal-b{flex:1;min-height:0;overflow:auto;padding:10px 12px}
+.jb-runsum{display:flex;flex-direction:column;gap:6px;border:1px solid var(--w10);border-radius:10px;padding:9px 11px;font-family:var(--font-mono);font-size:11px}
+.jb-runsum.live{border-color:color-mix(in srgb,var(--ck-b) 40%,transparent);background:color-mix(in srgb,var(--ck-b) 6%,transparent)}
+.jb-runsum.done{border-color:color-mix(in srgb,var(--pop-green) 35%,transparent);background:color-mix(in srgb,var(--pop-green) 5%,transparent)}
+.jb-runsum.bad{border-color:rgba(255,92,92,.4);background:rgba(255,92,92,.05)}
+.jb-runsum-h{display:flex;align-items:center;gap:8px;min-width:0}
+.jb-runsum-h .dot{width:7px;height:7px;border-radius:50%;background:var(--pop-green);flex:none}
+.jb-runsum.live .dot{background:var(--ck-b);animation:ckPulse 1.4s infinite}
+.jb-runsum.bad .dot{background:var(--pop-red)}
+.jb-runsum-h b{min-width:0;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:11.5px;color:var(--pop-ink)}
+.jb-runsum-h .clock{border:1px solid var(--pop-bd);border-radius:999px;padding:1px 7px;font-size:9.5px;color:var(--pop-ink);font-variant-numeric:tabular-nums;flex:none}
+.jb-runsum-m{display:flex;align-items:center;gap:6px;color:var(--pop-dim);font-size:9.5px;min-width:0}
+.jb-runsum-m .fill{flex:1}
+.jb-runsum-a{display:flex;align-items:center;gap:8px}
+.jb-runsum-a .cap{font-size:9px;color:var(--pop-dim)}
 /* 变更：目录树 + diff */
 .jb-chg{display:grid;grid-template-columns:224px minmax(0,1fr);gap:10px;margin-top:8px}
 .jb-tree{border:1px solid var(--w8);border-radius:9px;background:rgba(0,0,0,.16);padding:5px;overflow:auto;max-height:320px}
@@ -1091,9 +1090,6 @@ body.float-holo .win-title b{color:var(--ck-a)}
 .jb-difflines .dl.del{background:rgba(255,92,92,.08);color:var(--pop-red)}
 .jb-difflines .dl.hunk{color:var(--pop-cyan);opacity:.85}
 .jb-difflines .dl.ctx{color:var(--pop-dim)}
-/* 运行：完整现场 + 单独「打开 DAG」 */
-.jb-runbar{display:flex;align-items:center;gap:8px;margin-bottom:8px;padding:6px 8px;border:1px dashed var(--w8);border-radius:8px}
-.jb-runbar .cap{flex:1;font-size:9.5px;color:var(--pop-dim);font-family:var(--font-mono)}
 /* 变更：任务 / phase 两级 */
 .jb-seg{display:inline-flex;border:1px solid var(--pop-bd);border-radius:7px;overflow:hidden;margin:0 0 8px}
 .jb-seg button{padding:3px 11px;font-size:10px;color:var(--pop-dim);font-family:var(--font-ui)}
@@ -1204,7 +1200,7 @@ button.wb-tab.active{border-bottom-color:var(--pop-pink)}
 <div class="shell">
   <!-- global header -->
   <header class="hdr ui-font">
-    <div class="hdr-brand"><span class="mark">🐙</span>Octopus<span class="ver" title="classic-v3：主模式同 v1（侧栏+chat+固定坞）· 编队条常驻 · 点作业开小现场 · 航迹折叠过程 · 派发飞入编队">classic-v3</span></div>
+    <div class="hdr-brand"><span class="mark">🐙</span>Octopus<span class="ver" title="classic-v3：主模式同 v1（侧栏+chat+固定坞）· 编队面板常驻 · 点作业开详情（运行 tab 给摘要，打开运行看 DAG·日志·YAML）· 派发飞入编队">classic-v3</span></div>
     <button class="hdr-btn" data-action="menu-apps">应用 <svg class="i s10"><use href="#i-chev-d"/></svg></button>
     <div class="winstrip" id="winstrip"></div>
     <div class="hdr-right">
@@ -2557,12 +2553,13 @@ startCommsSim();
 <script>
 "use strict";
 /* ════════════════════════════════════════════════════════════
-   classic-v3 · 编队 / 现场 / 航迹
+   classic-v3 · 编队 / 作业详情 / 概览三入口
    主模式不动：侧栏 + chat + 固定作业坞仍是主体。
-   只加三件小事：
-   ① 编队条：所有并行作业一枚小 tile（类型字形 + 状态点 + 进度环），不写名字。
-   ② 现场小卡：点 tile 才滑出，最多 3 行流水 + 一个动作。
-   ③ 航迹：过程压成一行一条，默认只看最近 4 条。
+   ① 编队面板：所有并行作业一行一条（类型字形 + 名字 + 状态 + 进度），点行开作业详情。
+   ② 作业详情：概览 / 对接 / 运行（省略态摘要 +「打开运行 →」开作业坞运行窗）/
+      变更（任务·phase 两级）/ 验收，都在这一扇窗里看完。
+   ③ 概览：任务 / 工程 / 记录 三入口；运行·变更·验收不占坞位。
+   航迹悬浮条已移除（2026-11-13 用户裁定），过程只在作业详情与 chat 里看。
    ════════════════════════════════════════════════════════════ */
 const V3KIND={
   dev:{label:'开发',glyph:'⌂',color:'var(--pop-cyan)'},
@@ -2609,7 +2606,7 @@ const V3_FILES=[
     ['   });','ctx'],
   ]},
 ];
-state.v3={focus:null,newId:null,seq:0,jobSel:null,jobTab:'overview',file:null,runOpen:false,chgLevel:'task',phase:null};
+state.v3={focus:null,newId:null,seq:0,jobSel:null,jobTab:'overview',file:null,chgLevel:'task',phase:null};
 const V3=state.v3;
 
 /* 编队 = 所有并行作业的统一视角（任务 / 工作流 / 流开发 / 子代理 / 外部 agent） */
@@ -2733,15 +2730,29 @@ function v3TabChat(it,c){
     <div class="jb-note">执行者不直接找你：它的回报先到汐音，汐音汇总后再找你；要它做什么，也由汐音转达。</div>`;
 }
 function v3TabRun(it,c){
+  /* 省略态：先给一张执行摘要（对齐 chat 执行框），不把 DAG 铺进来；
+     「打开运行 →」开作业坞那扇运行窗（DAG / 日志 / YAML 都在里面）。 */
   const ri=runItems(c).find(x=>x.id===it.runId);
-  if(!ri) return '<div class="empty">这类作业没有运行现场</div>';
-  return `<div class="jb-runbar"><span class="cap">运行现场 · 完整 DAG / 日志 / YAML 在下面，也可以放大看</span>
-      <button class="wbtn pri" data-v3="job-dag">打开 DAG →</button></div>
-    <div class="jb-run">${runDetail(ri)}</div>`;
-}
-function v3RunDetail(it,c){
-  const ri=runItems(c).find(x=>x.id===it.runId);
-  return ri?runDetail(ri):'<div class="empty">没有运行现场</div>';
+  if(!ri) return '<div class="empty">这一轮还没有执行 · 跑起来后这里给执行摘要</div>';
+  const bad=ri.status==='blocked';
+  const live=ri.status==='running';
+  const cls=bad?'bad':live?'live':'done';
+  const stateLabel=bad?'运行受阻':live?'运行中':'运行完成';
+  const wf=ri.kind==='workflow'?((ri.task&&ri.task.wf)||'built-in/matt-spec-dev'):(ri.sub||'').split(' · ')[0];
+  const nodes=ri.kind==='workflow'?(RUN_NODES[ri.task&&ri.task.wf]||['spec','code','test','commit'])
+    :ri.kind==='dev'?['读需求','改代码','自测','交付']
+    :ri.kind==='wfdev'?['schema','节点引用','变量','试跑']:[];
+  const total=nodes.length||(ri.logs||[]).length||1;
+  const doneN=Math.min(total,Math.round(ri.pct/100*total));
+  const nodeLine=nodes.length?(doneN<total?'正在跑 '+nodes[Math.min(doneN,total-1)]:nodes[total-1]+' ✓'):'工具流水';
+  const coord=[ri.phase?('P'+ri.phase.i+' · R'+ri.round):'',it.runId].filter(Boolean).join(' · ');
+  return `<div class="jb-runsum ${cls}">
+    <div class="jb-runsum-h"><span class="dot"></span><b>${stateLabel} · ${esc(wf)}</b>
+      <span class="sbadge ${bad?'red':live?'green':'dim'}">${bad?'受阻':live?'运行中':'完成'}</span>
+      <span class="clock">${live?'⏱':'用时'} ${ri.clock}</span></div>
+    <div class="jb-runsum-m"><span>${esc(coord)}</span><span>·</span><span>${esc(nodeLine)}</span><span class="fill"></span><span>${doneN}/${total} 节点</span></div>
+    <div class="jb-runsum-a"><button class="wbtn pri" data-v3="job-open-run">打开运行 →</button><span class="cap">DAG · 日志 · YAML</span></div>
+  </div>`;
 }
 function v3Tree(files,repo,sel){
   const groups={};
@@ -2808,9 +2819,6 @@ function v3JobBody(c){
   const tab=V3.jobTab||'overview';
   const btn=(id,label)=>`<button class="wb-tab ${tab===id?'active':''}" data-v3="job-tab" data-tab="${id}">${label}</button>`;
   const body=tab==='chat'?v3TabChat(it,c):tab==='run'?v3TabRun(it,c):tab==='changes'?v3TabChanges(it,c):tab==='accept'?v3TabAccept(it,c):v3TabOverview(it,c);
-  const modal=(tab==='run'&&V3.runOpen)?`<div class="jb-modal" data-v3="job-dag-backdrop"><div class="jb-modal-box">
-      <div class="jb-modal-h"><span class="rk ${k.color}">${k.label}</span><b>${esc(it.title)} · 运行现场</b><button class="x" data-v3="job-dag-close">✕</button></div>
-      <div class="jb-modal-b jb-run">${v3RunDetail(it,c)}</div></div></div>`:'';
   return `<div class="jb-wrap"><div class="jb-scroll">
     <div class="jb-h"><span class="jb-k" style="color:${k.color}">${k.label}</span><b>${esc(it.title)}</b>
       <span class="sbadge ${it.status==='run'?'green':it.status==='wait'?'amber':it.status==='blocked'?'red':'dim'}">${st}</span>
@@ -2818,7 +2826,7 @@ function v3JobBody(c){
       <span class="jb-cap">${esc(it.meta)}</span><span class="jb-cap">⏱ ${it.clock} · ¥${it.cost||0}</span>
     </div>
     <div class="wb-tabs">${btn('overview','概览')}${btn('chat','对接')}${btn('run','运行')}${btn('changes','变更')}${btn('accept','验收')}</div>
-    ${body}</div>${modal}</div>`;
+    ${body}</div></div>`;
 }
 WIN_TITLE.job='作业详情';
 WIN_SIZE.job=[740,600];
@@ -2894,7 +2902,7 @@ respond=function(text){
     const its=v3Items();
     const it=its.find(x=>q&&x.title.includes(q))||its.find(x=>x.status==='wait')||its[0];
     pushMsg({kind:'asst',text:'好，验收证据我摆出来了；要改结论就直接说「通过」或「打回」。',meta:null});
-    if(it){V3.jobSel=it.id;V3.jobTab='accept';V3.newId=null;V3.file=null;V3.runOpen=false;V3.chgLevel='task';V3.phase=null;setTimeout(()=>openWin('job'),380);}
+    if(it){V3.jobSel=it.id;V3.jobTab='accept';V3.newId=null;V3.file=null;V3.chgLevel='task';V3.phase=null;setTimeout(()=>openWin('job'),380);}
     return;
   }
   return _v3Respond.apply(null,arguments);
@@ -2903,7 +2911,7 @@ respond=function(text){
 /* 交互 */
 document.addEventListener('click',e=>{
   const tile=e.target.closest('[data-v3-job]');
-  if(tile){V3.jobSel=tile.dataset.v3Job;V3.jobTab='overview';V3.file=null;V3.runOpen=false;V3.chgLevel='task';V3.phase=null;openWin('job');AudioEngine.blip(720,.04);return;}
+  if(tile){V3.jobSel=tile.dataset.v3Job;V3.jobTab='overview';V3.file=null;V3.chgLevel='task';V3.phase=null;openWin('job');AudioEngine.blip(720,.04);return;}
   const el=e.target.closest('[data-v3]'); if(!el) return;
   const act=el.dataset.v3;
   if(act==='all'){openWin('run');return;}
@@ -2937,15 +2945,13 @@ document.addEventListener('click',e=>{
 document.addEventListener('click',e=>{
   const el=e.target.closest('[data-v3]'); if(!el) return;
   const act=el.dataset.v3; if(!act||act.indexOf('job-')!==0) return;
-  if(act==='job-tab'){V3.jobTab=el.dataset.tab;V3.runOpen=false;renderWins();AudioEngine.blip(660,.03);return;}
+  if(act==='job-tab'){V3.jobTab=el.dataset.tab;renderWins();AudioEngine.blip(660,.03);return;}
   const it=V3.jobSel?v3Items().find(x=>x.id===V3.jobSel):null; if(!it) return;
-  if(act==='job-open-run'){V3.jobTab='run';V3.runOpen=true;renderWins();return;}
+  // 「打开运行 →」= 作业坞那扇运行窗（运行列表 + DAG / 日志 / YAML），不在这里放大 DAG。
+  if(act==='job-open-run'){if(it.runId)state.runSel=it.runId;openWin('run');AudioEngine.blip(720,.04);return;}
   if(act==='job-file'){V3.file=el.dataset.file;renderWins();AudioEngine.blip(600,.025);return;}
   if(act==='job-chg-level'){V3.chgLevel=el.dataset.level;V3.phase=null;V3.file=null;renderWins();AudioEngine.blip(640,.03);return;}
   if(act==='job-phase'){V3.phase=+el.dataset.p;V3.file=null;renderWins();AudioEngine.blip(600,.025);return;}
-  if(act==='job-dag'){V3.runOpen=true;renderWins();AudioEngine.blip(720,.04);return;}
-  if(act==='job-dag-close'){V3.runOpen=false;renderWins();return;}
-  if(act==='job-dag-backdrop'){if(e.target===el){V3.runOpen=false;renderWins();}return;}
   if(act==='job-accept'){closeWin('job');v3AcceptItem(it);return;}
   if(act==='job-retry'){v3RetryItem(it);return;}
 });

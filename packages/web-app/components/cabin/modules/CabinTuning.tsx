@@ -5,6 +5,7 @@
 // 随机/重置/导出配置/导出立绘。新增 C11 休眠阈值（dormantMinutes，0=关闭自动休眠）。
 // prefs 经 CockpitProvider 乐观写 + 防抖持久化；autonomy 是行为键（改派发行为）。
 
+import { useEffect, useState } from 'react'
 import { Dices, Download, RotateCcw, SlidersHorizontal } from 'lucide-react'
 import { toast } from 'sonner'
 import { cabinAudio } from '@/lib/cabin-audio'
@@ -12,12 +13,13 @@ import { useCabinContext } from '../cabin-provider'
 import { useCockpit } from '../CockpitProvider'
 import { WbH } from './ui'
 import {
-  HRANGES, MOOD_OPTIONS, THEMES, moodPortrait,
-  type CockpitFloat, type CockpitPrefs, type CockpitTheme, type CabinAutonomy, type CabinMood,
+  HRANGES, MOOD_OPTIONS, PRESENCE_RATES, THEMES, moodPortrait,
+  type CockpitFloat, type CockpitPrefs, type CockpitTheme, type CabinAutonomy, type CabinMood, type PresenceRate,
 } from '../cockpit'
 
 const FLOATS: [CockpitFloat, string][] = [['glass', '玻璃'], ['solid', '实色'], ['holo', '全息']]
 const AUTONOMY: [CabinAutonomy, string][] = [['off', '关闭'], ['observe', '观察'], ['auto', '自主']]
+const PRESENCE_ORDER: PresenceRate[] = ['quiet', 'std', 'active']
 
 function rangeValue(k: keyof CockpitPrefs, v: number): string {
   if (k === 'scan') return v === 0 ? '关' : String(v)
@@ -37,7 +39,24 @@ function download(name: string, href: string): void {
 
 export function CabinTuning() {
   const { cabin } = useCabinContext()
-  const { prefs, mood, setPref, reset, randomize } = useCockpit()
+  const {
+    prefs, mood, setPref, reset, randomize,
+    presenceDueAt, presenceSnoozeUntil, testPresence,
+  } = useCockpit()
+
+  // 在场「下次」倒计时：调校窗开着时每秒刷新。
+  const [now, setNow] = useState(() => Date.now())
+  useEffect(() => {
+    const iv = setInterval(() => setNow(Date.now()), 1000)
+    return () => clearInterval(iv)
+  }, [])
+  let presenceDueLabel = '—'
+  if (!prefs.presenceOn) presenceDueLabel = '已关闭'
+  else if (presenceSnoozeUntil > now) presenceDueLabel = `静默中 · ${Math.ceil((presenceSnoozeUntil - now) / 60_000)} 分后恢复`
+  else if (presenceDueAt > 0) {
+    const s = Math.max(0, Math.round((presenceDueAt - now) / 1000))
+    presenceDueLabel = s >= 120 ? `${Math.round(s / 60)} 分后` : `${s} 秒后`
+  }
 
   const exportJson = () => {
     const blob = new Blob([JSON.stringify(prefs, null, 2)], { type: 'application/json' })
@@ -113,6 +132,31 @@ export function CabinTuning() {
                 data-testid={`tuning-theme-${k}`}
               />
             ))}
+          </div>
+        </div>
+
+        <div className="hgroup">
+          <span className="gl">在场 PRESENCE<span className="hv">{prefs.presenceOn ? 'ON' : 'OFF'}</span></span>
+          <Toggle k="presenceOn" label="主动搭话" />
+          <div className="hrow">
+            <span className="tlabel">频率</span>
+            <select
+              className="hsel" value={prefs.presenceRate}
+              onChange={(e) => { setPref('presenceRate', e.target.value as PresenceRate); cabinAudio.blip(660, 0.04) }}
+              data-testid="tuning-presence-rate"
+            >
+              {PRESENCE_ORDER.map((r) => (
+                <option key={r} value={r}>{PRESENCE_RATES[r].label} {PRESENCE_RATES[r].min}–{PRESENCE_RATES[r].max} 分</option>
+              ))}
+            </select>
+          </div>
+          <div className="hrow">
+            <span className="tlabel">下次</span>
+            <span className="tlabel" style={{ fontSize: 9, opacity: .75 }} data-testid="tuning-presence-due">{presenceDueLabel}</span>
+          </div>
+          <div className="hrow">
+            <button type="button" className="hbtn" onClick={testPresence} data-testid="tuning-presence-test">现在说一句</button>
+            <span className="tlabel" style={{ fontSize: 8.5, opacity: .6 }}>免打扰 22:00–08:00</span>
           </div>
         </div>
 

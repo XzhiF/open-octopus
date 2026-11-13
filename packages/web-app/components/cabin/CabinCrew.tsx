@@ -6,21 +6,36 @@
 // 开窗。mood/prefs 来自 CockpitProvider，与调校台/画廊共享真源。
 
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { ChevronRight, ClipboardList, LayoutGrid, Send, Sparkles, User, X } from 'lucide-react'
+import { ChevronRight, ClipboardList, Dices, LayoutGrid, Send, User, X } from 'lucide-react'
+import { toast } from 'sonner'
 import { cabinAudio } from '@/lib/cabin-audio'
 import { useCabinContext } from './cabin-provider'
 import { useCockpit } from './CockpitProvider'
-import { CREW, XY_ICON, XY_LINES, moodPortrait, type MoodKey } from './cockpit'
+import { CREW, THEMES, XY_ICON, XY_LINES, moodPortrait, type CockpitTheme, type MoodKey } from './cockpit'
 
 interface Spark { id: number; left: number; top: number; dx: number; dy: number }
 
+/** 对话可能来自点立绘 / 回流提醒 / 在场（主动搭话）。主动态多一个动作行。 */
+interface CrewDialog {
+  text: string
+  tag: string
+  hold: number
+  proactive?: boolean
+  /** 主动态主按钮要打开的浮窗 id。 */
+  open?: string
+  label?: string
+}
+
 export function CabinCrew() {
   const { cabin, view, openModule } = useCabinContext()
-  const { mood, setMoodOverride } = useCockpit()
+  const {
+    mood, setMoodOverride, prefs, setPref,
+    presenceLine, dismissPresence, snoozePresence, setCrewBusy,
+  } = useCockpit()
 
   const [hubOpen, setHubOpen] = useState(false)
   const [crewInfo, setCrewInfo] = useState(false)
-  const [dialog, setDialog] = useState<{ text: string; tag: string; hold: number } | null>(null)
+  const [dialog, setDialog] = useState<CrewDialog | null>(null)
   const [typed, setTyped] = useState('')
   const [sparks, setSparks] = useState<Spark[]>([])
   const [recvFlash, setRecvFlash] = useState(false)
@@ -42,6 +57,23 @@ export function CabinCrew() {
     setDialog({ text, tag, hold })
     cabinAudio.blip(920, 0.05, 'sine', 0.09)
   }, [mood, setMoodOverride])
+
+  // 在场（主动搭话）：provider 派发一条 → 渲染成汐音对白，随即消费掉。
+  useEffect(() => {
+    if (!presenceLine) return
+    const hold = presenceLine.hold ?? 9000
+    setMoodOverride(presenceLine.mood, hold + 400)
+    setDialog({
+      text: presenceLine.text, tag: '主动', hold,
+      proactive: true, open: presenceLine.open, label: presenceLine.label,
+    })
+    cabinAudio.blip(920, 0.05, 'sine', 0.09)
+    dismissPresence()
+  }, [presenceLine, setMoodOverride, dismissPresence])
+
+  // 对白 / 助理菜单开着时上报 busy：在场闸门会等这一轮结束再开口。
+  useEffect(() => { setCrewBusy(!!dialog || hubOpen) }, [dialog, hubOpen, setCrewBusy])
+  useEffect(() => () => setCrewBusy(false), [setCrewBusy])
 
   // 打字机由 dialog 驱动（effect 清理随 dialog 变化/卸载），dev 双挂载下可重跑不空泡。
   useEffect(() => {
@@ -122,6 +154,16 @@ export function CabinCrew() {
     cabinAudio.blip(660, 0.05)
   }, [openModule])
 
+  // 随机只换色调（一定换成另一套）；整套风格仍在舱面调校里随机。
+  const randomTheme = useCallback(() => {
+    const keys = Object.keys(THEMES) as CockpitTheme[]
+    let k = keys[Math.floor(Math.random() * keys.length)]
+    if (keys.length > 1 && k === prefs.theme) k = keys[(keys.indexOf(k) + 1) % keys.length]
+    setPref('theme', k)
+    cabinAudio.chime()
+    toast(`已随机色调 · ${THEMES[k].name}`)
+  }, [prefs.theme, setPref])
+
   const meta = CREW[mood] ?? CREW.idle
   const portrait = moodPortrait(mood)
 
@@ -179,8 +221,33 @@ export function CabinCrew() {
       >
         {dialog && (
           <>
-            <div className="xyd-h"><span className="xyd-name">汐音</span><span className="xyd-tag">{dialog.tag}</span></div>
+            <div className="xyd-h">
+              <span className="xyd-name">汐音</span>
+              <span className="xyd-tag">{dialog.tag}</span>
+              {dialog.proactive && <span className="xyd-hint">定时 + 随机 · 不进 chat</span>}
+            </div>
             <div className="xyd-text"><span>{typed}</span><span className="xyd-cur">▸</span></div>
+            {dialog.proactive && (
+              <div className="xyd-acts">
+                {dialog.open && (
+                  <button
+                    type="button" className="xyd-act" data-testid="cabin-presence-open"
+                    onClick={(e) => {
+                      e.stopPropagation()
+                      const mod = dialog.open
+                      setDialog(null)
+                      if (mod) openModule(mod)
+                      cabinAudio.blip(720, 0.04)
+                    }}
+                  >{dialog.label ?? '打开 →'}</button>
+                )}
+                <button
+                  type="button" className="xyd-quiet" data-testid="cabin-presence-snooze"
+                  title="30 分钟内不再主动搭话"
+                  onClick={(e) => { e.stopPropagation(); setDialog(null); snoozePresence(30) }}
+                >静 30 分</button>
+              </div>
+            )}
           </>
         )}
       </div>
@@ -192,18 +259,40 @@ export function CabinCrew() {
           <button type="button" className="ch-close" title="关闭" onClick={toggleHub}><X className="size-3" /></button>
         </div>
         <div className="ch-stats">
-          <div className="ch-stat"><b className="violet">{running}</b><span>运行</span></div>
-          <div className="ch-stat"><b className="amber">{personCount}</b><span>需要你</span></div>
-          <div className="ch-stat"><b className="cyan">{attentionCount}</b><span>队列</span></div>
+          <button type="button" className="ch-stat" title="打开作战清单（进行中的作业）" onClick={() => openFromHub('missions')} data-testid="crew-stat-run">
+            <b className="violet">{running}</b><span>运行</span>
+          </button>
+          <button type="button" className="ch-stat" title="打开需要你（按等谁分级）" onClick={() => openFromHub('overview')} data-testid="crew-stat-person">
+            <b className="amber">{personCount}</b><span>需要你</span>
+          </button>
+          <button type="button" className="ch-stat" title="打开通讯队列" onClick={() => openFromHub('queue')} data-testid="crew-stat-queue">
+            <b className="cyan">{attentionCount}</b><span>队列</span>
+          </button>
+        </div>
+        <div className="ch-look" title={`色调 · ${THEMES[prefs.theme]?.name ?? ''}（随机只换色调；整套风格在舱面调校）`}>
+          <span className="lab">色调</span>
+          <div className="ch-themes">
+            {(Object.keys(THEMES) as CockpitTheme[]).map((k) => (
+              <button
+                key={k} type="button" title={THEMES[k].name}
+                className={`ch-theme${prefs.theme === k ? ' on' : ''}`}
+                style={{ background: `linear-gradient(135deg, ${THEMES[k].a}, ${THEMES[k].b})` }}
+                onClick={() => { setPref('theme', k); cabinAudio.blip(760, 0.06); toast(`色调 · ${THEMES[k].name}`) }}
+                data-testid={`crew-theme-${k}`}
+              />
+            ))}
+          </div>
+          <button type="button" className="ch-random" title="随机一套色调" onClick={randomTheme} data-testid="crew-theme-random">
+            <Dices className="size-3" />
+          </button>
         </div>
         <div className="ch-menu">
           {hubItem('queue', Send, '通讯队列', '分身 / 工作树回流的消息', attentionCount || undefined)}
           {hubItem('missions', ClipboardList, '作战清单', '进行中的任务总览', running || undefined)}
           {hubItem('overview', LayoutGrid, '需要你', '按「等谁」分级的待办', personCount || undefined)}
-          {hubItem('tuning', LayoutGrid, '舱面调校', '色彩 / 悬浮 / 光效 / 粒子')}
-          {hubItem('gallery', User, '立绘画廊', '汐音的九种表情 · 可导出', 9)}
+          {hubItem('tuning', LayoutGrid, '舱面调校', `色调 / 光效 · 在场 ${prefs.presenceOn ? '开' : '关'}`)}
+          {hubItem('gallery', User, '立绘画廊', '汐音的九种表情 · 可导出')}
           {hubItem(null, User, '个人状态', '汐音的舱内档案', undefined, () => { setCrewInfo((v) => !v); cabinAudio.blip(640, 0.04) })}
-          {hubItem(null, Sparkles, '互动一下', '戳戳汐音', undefined, () => { setHubOpen(false); interact() })}
         </div>
         <div className={`ch-info${crewInfo ? ' open' : ''}`}>
           <div><span>型号</span><b>汐音 XIYIN-07</b></div>

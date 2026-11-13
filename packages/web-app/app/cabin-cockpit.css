@@ -169,30 +169,37 @@ body.hud-off .cockpit-frame { display: none }
 .xyd-tag { font-size: 8px; font-weight: 700; padding: 1px 7px; border-radius: 999px; background: color-mix(in srgb, var(--ck-a) 16%, transparent); color: var(--ck-a) }
 .xyd-text { padding: 9px 13px 12px; font-size: 11.5px; line-height: 1.6; color: var(--pop-ink); font-family: var(--font-ui); min-height: 42px }
 .xyd-cur { display: inline-block; color: var(--ck-a); animation: ckBlink 1s steps(1) infinite; margin-left: 2px }
+.xyd-hint { margin-left: auto; font-family: var(--font-mono); font-size: 8px; color: var(--pop-dim) }
+/* 在场（主动搭话）：动作行 —— 打开对应窗口 / 静 30 分 */
+.xyd-acts { display: flex; align-items: center; gap: 6px; padding: 0 13px 11px }
+.xyd-act { font-size: 10px; font-weight: 700; padding: 4px 10px; border-radius: 999px; background: linear-gradient(135deg, var(--ck-a), var(--ck-b)); color: var(--pop-bg); font-family: var(--font-ui); transition: .13s }
+.xyd-act:hover { filter: brightness(1.12) }
+.xyd-quiet { margin-left: auto; font-size: 9px; color: var(--pop-dim); padding: 3px 8px; border-radius: 999px; border: 1px solid var(--w10); font-family: var(--font-ui) }
+.xyd-quiet:hover { color: var(--pop-ink); border-color: var(--w12) }
 
 /* ── 助理 hub（游戏角色菜单） ── */
 .crew-hub {
-  position: absolute; left: calc((var(--crew-w, 252px) - 200px) / 2 + 212px); bottom: 118px; z-index: 27; width: 244px;
+  position: absolute; left: calc((var(--crew-w, 252px) - 200px) / 2 + 212px); bottom: 118px; z-index: 27; width: 264px;
   display: none; flex-direction: column; border-radius: 14px;
   border: 1.5px solid color-mix(in srgb, var(--ck-b) 45%, transparent); background: rgba(24,24,30,.97); backdrop-filter: blur(20px);
   box-shadow: 0 0 calc(20px * var(--ck-glow)) color-mix(in srgb, var(--ck-b) 22%, transparent), var(--pop-shadow-lg);
   overflow: hidden; animation: bubbleIn .22s;
 }
 .crew-hub.open { display: flex }
-.crew-hub .ch-h { position: relative; display: flex; align-items: center; gap: 10px; padding: 12px 12px 10px; border-bottom: 1px solid var(--w8); background: linear-gradient(180deg, color-mix(in srgb, var(--ck-b) 13%, transparent), transparent) }
+.crew-hub .ch-h { position: relative; display: flex; align-items: center; gap: 10px; padding: 10px 12px 8px; border-bottom: 1px solid var(--w8); background: linear-gradient(180deg, color-mix(in srgb, var(--ck-b) 13%, transparent), transparent) }
 .crew-hub .ch-av { width: 42px; height: 42px; border-radius: 10px; overflow: hidden; flex: none; border: 1px solid color-mix(in srgb, var(--ck-b) 45%, transparent); background: var(--pop-idle) }
 .crew-hub .ch-av img { width: 100%; height: 100%; object-fit: cover; object-position: 50% 16% }
 .crew-hub .ch-id b { font-size: 13px; font-weight: 800; color: var(--pop-ink); font-family: var(--font-ui); display: block }
 .crew-hub .ch-id span { font-size: 9px; color: var(--ck-b); font-family: var(--font-mono) }
 .crew-hub .ch-close { position: absolute; right: 8px; top: 8px; width: 18px; height: 18px; border-radius: 6px; display: grid; place-items: center; color: var(--pop-dim) }
 .crew-hub .ch-close:hover { background: var(--w8); color: var(--pop-ink) }
-.crew-hub .ch-stats { display: flex; gap: 6px; padding: 9px 12px; border-bottom: 1px solid var(--w8) }
-.crew-hub .ch-stat { flex: 1; border: 1px solid var(--pop-bd); border-radius: 8px; background: var(--pop-idle); padding: 5px 6px; text-align: center }
+.crew-hub .ch-stats { display: flex; gap: 6px; padding: 6px 12px; border-bottom: 1px solid var(--w8) }
+.crew-hub .ch-stat { flex: 1; border: 1px solid var(--pop-bd); border-radius: 8px; background: var(--pop-idle); padding: 4px 6px; text-align: center }
 .crew-hub .ch-stat b { display: block; font-size: 14px; font-variant-numeric: tabular-nums; line-height: 1.2 }
 .crew-hub .ch-stat b.violet { color: var(--ck-b) } .crew-hub .ch-stat b.amber { color: var(--pop-amber) } .crew-hub .ch-stat b.cyan { color: var(--ck-a) }
 .crew-hub .ch-stat span { font-size: 8px; color: var(--pop-dim) }
-.crew-hub .ch-menu { padding: 6px; overflow-y: auto; max-height: 296px }
-.crew-hub .ch-item { display: flex; align-items: center; gap: 10px; width: 100%; padding: 8px 9px; border-radius: 9px; text-align: left; transition: .12s }
+.crew-hub .ch-menu { padding: 4px 6px 6px; overflow-y: auto; max-height: 300px }
+.crew-hub .ch-item { display: flex; align-items: center; gap: 10px; width: 100%; padding: 5px 9px; border-radius: 9px; text-align: left; transition: .12s }
 .crew-hub .ch-item:hover { background: color-mix(in srgb, var(--ck-b) 13%, transparent) }
 .crew-hub .ch-item .ci { width: 28px; height: 28px; border-radius: 8px; display: grid; place-items: center; flex: none; background: var(--pop-idle); color: var(--ck-b); border: 1px solid var(--pop-bd) }
 .crew-hub .ch-item .cm { flex: 1; min-width: 0 }
@@ -204,6 +211,18 @@ body.hud-off .cockpit-frame { display: none }
 .crew-hub .ch-info.open { display: block }
 .crew-hub .ch-info div { display: flex; justify-content: space-between; padding: 2px 0 }
 .crew-hub .ch-info b { color: var(--pop-ink) }
+/* v4 · 助理菜单：统计数字可点 / 一行色调条（6 套色调 + 随机） */
+.crew-hub .ch-stats button.ch-stat { width: 100%; cursor: pointer; transition: .12s }
+.crew-hub .ch-stats button.ch-stat:hover { border-color: color-mix(in srgb, var(--ck-a) 45%, transparent); background: color-mix(in srgb, var(--ck-a) 7%, transparent) }
+.crew-hub .ch-look { display: flex; align-items: center; gap: 7px; padding: 6px 12px; border-bottom: 1px solid var(--w8) }
+.crew-hub .ch-look .lab { font-size: 8.5px; letter-spacing: .12em; color: var(--pop-dim); font-family: var(--font-mono); flex: none }
+.crew-hub .ch-themes { display: flex; align-items: center; gap: 4px }
+.crew-hub .ch-theme { position: relative; width: 20px; height: 20px; border-radius: 7px; border: 2px solid var(--w10); flex: none; transition: .15s }
+.crew-hub .ch-theme:hover { transform: translateY(-1px); border-color: var(--w12) }
+.crew-hub .ch-theme.on { border-color: var(--pop-ink); box-shadow: 0 0 calc(8px * var(--ck-glow)) color-mix(in srgb, var(--ck-a) 55%, transparent) }
+.crew-hub .ch-theme.on::after { content: "✓"; position: absolute; inset: 0; display: grid; place-items: center; font-size: 9px; font-weight: 800; color: #fff; text-shadow: 0 1px 2px rgba(0,0,0,.6) }
+.crew-hub .ch-random { margin-left: auto; display: grid; place-items: center; width: 22px; height: 22px; flex: none; border: 1px solid color-mix(in srgb, var(--ck-b) 45%, transparent); background: color-mix(in srgb, var(--ck-b) 10%, transparent); color: var(--ck-b); border-radius: 999px; transition: .15s }
+.crew-hub .ch-random:hover { background: color-mix(in srgb, var(--ck-b) 22%, transparent) }
 
 /* ── 舱面调校台（原型 .tuning 777-790 + helm 控件 636-684） ── */
 .tuning .helm-actions { display: flex; align-items: center; gap: 6px; margin: 0 0 14px }

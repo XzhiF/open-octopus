@@ -8,6 +8,8 @@ import type { CabinStatus } from '@octopus/shared'
 export type CockpitTheme = 'terminal' | 'hyperion' | 'luna' | 'amber' | 'acid' | 'crimson'
 export type CockpitFloat = 'glass' | 'solid' | 'holo'
 export type CabinAutonomy = 'off' | 'observe' | 'auto'
+/** 在场频率：主动搭话的随机间隔区间（分钟）。 */
+export type PresenceRate = 'quiet' | 'std' | 'active'
 export type MoodKey = 'boot' | 'idle' | 'working' | 'alert' | 'happy' | 'sleep' | 'thinking' | 'cheer' | 'wink' | 'worried'
 export type CabinMood = 'auto' | MoodKey
 
@@ -27,6 +29,10 @@ export interface CockpitPrefs {
   autonomy: CabinAutonomy
   /** C11 自动休眠阈值（分钟）；0 = 关闭自动休眠。 */
   dormantMinutes: number
+  /** 在场：汐音主动搭话开关。 */
+  presenceOn: boolean
+  /** 在场：随机间隔档位。 */
+  presenceRate: PresenceRate
 }
 
 export const THEMES: Record<CockpitTheme, { name: string; a: string; b: string; c: string }> = {
@@ -41,7 +47,13 @@ export const THEMES: Record<CockpitTheme, { name: string; a: string; b: string; 
 export const DEFAULT_COCKPIT: CockpitPrefs = {
   theme: 'terminal', float: 'glass', floatAmp: 5, hud: true, scan: 5, grid: 30,
   glow: 1, particles: 18, blur: 3, charScale: 1, mood: 'auto', sound: true,
-  autonomy: 'auto', dormantMinutes: 30,
+  autonomy: 'auto', dormantMinutes: 30, presenceOn: true, presenceRate: 'active',
+}
+
+export const PRESENCE_RATES: Record<PresenceRate, { label: string; min: number; max: number }> = {
+  quiet: { label: '安静', min: 12, max: 24 },
+  std: { label: '标准', min: 6, max: 16 },
+  active: { label: '活跃', min: 3, max: 8 },
 }
 
 export interface HRange { k: keyof CockpitPrefs; label: string; min: number; max: number; step: number }
@@ -123,9 +135,10 @@ export function normalizePrefs(raw: unknown): CockpitPrefs {
   const theme = (typeof p.theme === 'string' && p.theme in THEMES ? p.theme : DEFAULT_COCKPIT.theme) as CockpitTheme
   const float = (p.float === 'glass' || p.float === 'solid' || p.float === 'holo' ? p.float : DEFAULT_COCKPIT.float) as CockpitFloat
   const autonomy = (p.autonomy === 'off' || p.autonomy === 'observe' || p.autonomy === 'auto' ? p.autonomy : DEFAULT_COCKPIT.autonomy) as CabinAutonomy
+  const presenceRate = (p.presenceRate === 'quiet' || p.presenceRate === 'std' || p.presenceRate === 'active' ? p.presenceRate : DEFAULT_COCKPIT.presenceRate) as PresenceRate
   const mood = (typeof p.mood === 'string' && (p.mood === 'auto' || p.mood in CREW) ? p.mood : DEFAULT_COCKPIT.mood) as CabinMood
   return {
-    theme, float, autonomy, mood,
+    theme, float, autonomy, mood, presenceRate,
     floatAmp: clamp(p.floatAmp, 0, 10, DEFAULT_COCKPIT.floatAmp),
     hud: typeof p.hud === 'boolean' ? p.hud : DEFAULT_COCKPIT.hud,
     scan: clamp(p.scan, 0, 10, DEFAULT_COCKPIT.scan),
@@ -136,6 +149,7 @@ export function normalizePrefs(raw: unknown): CockpitPrefs {
     charScale: clamp(p.charScale, 0.6, 1.5, DEFAULT_COCKPIT.charScale),
     sound: typeof p.sound === 'boolean' ? p.sound : DEFAULT_COCKPIT.sound,
     dormantMinutes: clamp(p.dormantMinutes, 0, 1440, DEFAULT_COCKPIT.dormantMinutes),
+    presenceOn: typeof p.presenceOn === 'boolean' ? p.presenceOn : DEFAULT_COCKPIT.presenceOn,
   }
 }
 
@@ -198,4 +212,116 @@ export function randomPrefs(): CockpitPrefs {
     mood: 'auto',
     hud: true,
   }
+}
+
+/* ════════════ 在场 PRESENCE（classic-v4）════════════
+   「定时 + 随机时间」：每轮从档位区间抽一个随机间隔，到点再过闸门才开口。
+   事实优先（需要你 > 收件箱 > 排队 > 运行中 > 休眠），每三轮夹一条闲聊；
+   对话只出现在立绘旁（不写进 chat，不花 token）。纯函数在这里，调度在 provider。 */
+
+export interface PresenceLineData {
+  text: string
+  mood: MoodKey
+  /** 对话框停留毫秒；省略时按 9s。 */
+  hold?: number
+  /** 主按钮要打开的浮窗 id（没有则只显示「静 30 分」）。 */
+  open?: string
+  label?: string
+}
+
+export interface PresencePickInput {
+  personAttention: number
+  attentionTotal: number
+  queued: number
+  running: number
+  dormant: boolean
+  firstAttentionTitle?: string | null
+  hour: number
+  /** 已开口次数：每三轮夹一条闲聊，避免同一件事连着复读。 */
+  n: number
+  lastText?: string | null
+  rnd?: () => number
+}
+
+/** 随机间隔（毫秒）：[min, max] 分钟均匀分布。 */
+export function presenceGap(rate: PresenceRate, rnd: () => number = Math.random): number {
+  const r = PRESENCE_RATES[rate] ?? PRESENCE_RATES.std
+  return Math.round((r.min + rnd() * (r.max - r.min)) * 60_000)
+}
+
+export type PresenceBlock = 'off' | 'snooze' | 'hidden' | 'streaming' | 'busy' | 'typing' | 'quiet' | 'ok'
+
+export interface PresenceGateInput {
+  on: boolean
+  now: number
+  snoozedUntil: number
+  hidden: boolean
+  streaming: boolean
+  /** 立绘对白/助理菜单正开着（别叠加）。 */
+  busy: boolean
+  /** 焦点在输入框（正在打字）。 */
+  editing: boolean
+  lastUserAt: number
+  idleMs: number
+  hour: number
+}
+
+/** 到点后的闸门：只有 ok 才开口；其余原因决定下次重排的等待。 */
+export function presenceGate(i: PresenceGateInput): PresenceBlock {
+  if (!i.on) return 'off'
+  if (i.snoozedUntil > i.now) return 'snooze'
+  if (i.hidden) return 'hidden'
+  if (i.streaming) return 'streaming'
+  if (i.busy) return 'busy'
+  if (i.editing) return 'typing'
+  if (i.now - i.lastUserAt < i.idleMs) return 'busy'
+  if (i.hour >= 22 || i.hour < 8) return 'quiet'
+  return 'ok'
+}
+
+const IDLE_AFTERNOON: PresenceLineData[] = [
+  { text: '下午的舱面很稳，没有冲突要裁决；想推进点什么直接说。', mood: 'idle' },
+  { text: '指挥官，要不要看看我别的表情？点我一下就行 ✦', mood: 'wink', open: 'gallery', label: '开画廊 →' },
+]
+
+/** 生成一句主动搭话：事实优先、每三轮夹一条闲聊、闲聊不连发同一句。 */
+export function buildPresenceLine(i: PresencePickInput): PresenceLineData {
+  const rnd = i.rnd ?? Math.random
+  let fact: PresenceLineData | null = null
+  if (i.personAttention > 0) {
+    const one = i.personAttention === 1 && i.firstAttentionTitle ? `：${i.firstAttentionTitle}` : ''
+    fact = { text: `指挥官，有 ${i.personAttention} 件事挂在你这里${one}。要我摆出来吗？`, mood: 'alert', hold: 9500, open: 'overview', label: '看需要你 →' }
+  } else if (i.attentionTotal > 0) {
+    fact = { text: `收件箱里还有 ${i.attentionTotal} 条在流转，我在盯着；需要你拍板时单独提卡。`, mood: 'working', hold: 8000, open: 'queue', label: '看收件箱 →' }
+  } else if (i.queued > 0) {
+    fact = { text: `队列里还有 ${i.queued} 个作业在排队，我按优先级理好了；你说一声我就去调度。`, mood: 'working', hold: 8500, open: 'queue', label: '开队列 →' }
+  } else if (i.running > 0) {
+    fact = { text: `编队里 ${i.running} 个作业在跑，测试与 diff 我都盯着；有回流第一时间报你。`, mood: 'working', hold: 7500, open: 'missions', label: '看编队 →' }
+  } else if (i.dormant) {
+    fact = { text: '舱现在是休眠的，历史和知识都留着；想开工，喊我一声就唤醒。', mood: 'sleep', hold: 8000 }
+  }
+
+  const pool: PresenceLineData[] = i.hour < 6 ? [
+    { text: '这么晚了还在指挥…我把舱面音量调低了，剩下的交给我，你去睡吧 ✦', mood: 'worried' },
+    { text: '凌晨的编队很安静，没有异常；夜间心跳我一直开着。', mood: 'sleep' },
+  ] : i.hour < 11 ? [
+    { text: '早上好，指挥官 ✦ 昨晚没有失败回流，今天从干净的主线起步。', mood: 'happy' },
+    { text: '新的一天，要不要先看一眼概览，挑一件最要紧的？', mood: 'idle', open: 'overview', label: '开概览 →' },
+  ] : i.hour < 14 ? [
+    { text: '中午了，去吃点东西；编队我替你看着。', mood: 'happy' },
+    { text: '这会儿没有待办，趁空我把昨天的知识沉淀翻了一遍。', mood: 'working' },
+  ] : i.hour < 19 ? IDLE_AFTERNOON : [
+    { text: '今天辛苦了 ✦ 收尾前我帮你把待验收的列一下？', mood: 'idle', open: 'overview', label: '看概览 →' },
+    { text: '晚间巡检完成：工作树干净、主线已同步，可以安心收工。', mood: 'happy' },
+  ]
+
+  // 每三轮两条事实 + 一条闲聊。
+  const finish = (l: PresenceLineData): PresenceLineData => ({ ...l, hold: l.hold ?? 9000 })
+  if (fact && i.n % 3 !== 2) return finish(fact)
+  const pick = pool[Math.min(pool.length - 1, Math.floor(rnd() * pool.length))]
+  if (i.lastText && pool.length > 1 && pick.text === i.lastText) {
+    // 闲聊不连发同一句：顺延到下一句。
+    return finish(pool[(pool.indexOf(pick) + 1) % pool.length])
+  }
+  return finish(pick)
 }
