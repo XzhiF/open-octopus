@@ -141,9 +141,12 @@ export interface ChatPaneProps {
   onExitSplit: () => void
   onSwapPanes: () => void
   canSwap: boolean
-  /** 舱壳注入的 dock 舱模块段（Cabin P2）；桌面缺省不传。 */
+  /** 舱壳注入的 dock 舱模块段（Cabin P2）；桌面缺省不传。
+   *  只在舱主对话上给：舱内点开任务线程时由舱壳传 undefined，坞退回原样。 */
   dockCabinModules?: CabinDockModule[]
   dockCabinMoreModules?: CabinDockModule[]
+  /** 舱壳：坞层级压在舱浮窗层之上（舱内任何线程都成立，与坞内容无关）。 */
+  dockElevated?: boolean
   /** 舱壳注入（Cabin P3）：舱内新建任务绑 cabin_id + 复用舱 workspace。 */
   cabinId?: string | null
   cabinWorkspaceId?: string | null
@@ -182,6 +185,7 @@ export function ChatPane({
   canSwap,
   dockCabinModules,
   dockCabinMoreModules,
+  dockElevated,
   cabinId,
   cabinWorkspaceId,
 }: ChatPaneProps) {
@@ -1516,6 +1520,7 @@ export function ChatPane({
         taskProject={dockProject}
         cabinModules={dockCabinModules}
         cabinMoreModules={dockCabinMoreModules}
+        elevated={dockElevated}
         taskWindows={activeTask ? (taskWindows[activeTask.id] ?? {}) : {}}
         usageWindow={activeTask ? (taskWindows[activeTask.id]?.usage ?? null) : (sessionUsageWindows.usage ?? null)}
         onOpenUsage={() => setTaskModuleRequest({ module: 'usage', nonce: Date.now() })}

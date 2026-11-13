@@ -197,12 +197,14 @@ export interface RunningExecution {
 export function listRunningExecutions(limit = 50) {
   return request<{ runs: RunningExecution[] }>(`/executions/running?limit=${limit}`)
 }
+/** Session detail. The server spreads the session row at the top level and adds
+ *  `messages` (it does NOT wrap them in `{ session, messages }`). */
 export function getSession(id: string, query?: { limit?: number; cursor?: string }) {
   const params = new URLSearchParams()
   if (query?.limit) params.set('limit', String(query.limit))
   if (query?.cursor) params.set('cursor', query.cursor)
   const qs = params.toString()
-  return request<{ session: AgentSession; messages: PaginatedResponse<AgentMessage> }>(
+  return request<AgentSession & { messages: PaginatedResponse<AgentMessage> }>(
     `/sessions/${id}${qs ? `?${qs}` : ''}`,
   ).then((raw) => ({
     ...raw,

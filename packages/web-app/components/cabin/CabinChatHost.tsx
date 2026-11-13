@@ -6,6 +6,11 @@
 // （orchestrator 主对话，C3/C4 单线程）。ChatArea/TuiTranscript/useAgentChat/
 // chatStream 全部原样复用。
 //
+// 舱主对话不是一个「会话」：服务端 listSessions 不返回它（2026-11-13 用户反馈
+// 它和左栏某个会话看起来在同步）。但 chat 底座仍需要它的 workspace/title
+// （SSE wake 订阅、作业坞标题），所以这里单独取一次，只并进喂给 ChatPane 的
+// shared.sessions，不进左栏的会话列表。
+//
 // 模块导航在悬浮作业坞（原型 DOCK_MOD）：ChatPane 透传 cabinModules 给
 // WorkspaceExplorerDock；点模块 → CabinProvider 开浮窗（CabinModulesLayer 全几何）。
 // 座舱 attention 的「打开任务」经 octopus:open-task 进来，与桌面同一协议。
@@ -23,6 +28,8 @@ import { useRunningAgents } from '@/hooks/use-running-agents'
 import { useOrgs } from '@/hooks/useOrgs'
 import { useWorkspaces } from '@/hooks/use-workspaces'
 import { useCabins } from '@/hooks/use-cabins'
+import { getSession } from '@/lib/agent/api'
+import type { AgentSession } from '@/lib/agent/types'
 import { getTask, listTasks, type TaskView } from '@/lib/tasks-api'
 import { readRememberedTaskOrg, resolveTaskOrg } from '@/lib/task-org'
 import { useRouter } from '@/lib/app-navigation'
@@ -90,6 +97,9 @@ export function CabinChatHost({ onSelectCabin, onCreateCabin }: CabinChatHostPro
   const { cabins } = useCabins()
 
   const [sessionId, setSessionId] = useState<string | null>(null)
+  // 舱主会话的元数据（workspace/title）。服务端会话列表不返回它，ChatPane 需要
+  // 它来算 SSE wake 订阅与作业坞标题 —— 只喂 chat 底座，不进左栏会话列表。
+  const [mainSession, setMainSession] = useState<AgentSession | null>(null)
   const [activeTask, setActiveTask] = useState<TaskView | null>(null)
   const [pendingTaskSession, setPendingTaskSession] = useState<PendingTaskSession | null>(null)
   const [command, setCommand] = useState<ChatPaneCommand | null>(null)
@@ -108,10 +118,32 @@ export function CabinChatHost({ onSelectCabin, onCreateCabin }: CabinChatHostPro
     setPendingTaskSession(null)
   }, [mainSessionId])
 
-  // 舱主会话可能不在最近 50 条里：进壳时刷一次会话列表。
+  // 舱主会话只在舱里可达（不在会话列表）：按 id 单独取一次元数据。
+  useEffect(() => {
+    let cancelled = false
+    setMainSession(null)
+    if (!mainSessionId) return
+    getSession(mainSessionId)
+      .then((detail) => {
+        if (!cancelled) setMainSession(detail)
+      })
+      .catch(() => {
+        // 取不到就不并进去：ChatPane 退回舱自身字段（dock/标题兜底）。
+      })
+    return () => { cancelled = true }
+  }, [mainSessionId])
+
+  // 左栏「会话」段不刷这条列表也行，但任务/会话段的其它会话照常靠它刷新。
   useEffect(() => {
     void refetchSessions()
   }, [refetchSessions])
+
+  // ChatPane 的会话集合：全局列表 + 舱主会话（若服务端列表里还没有）。
+  const paneSessions = useMemo(() => {
+    if (!mainSession) return sessions
+    if (sessions.some((session) => session.id === mainSession.id)) return sessions
+    return [mainSession, ...sessions]
+  }, [sessions, mainSession])
 
   const issueCommand = useCallback((action: ChatPaneAction) => {
     nonceRef.current += 1
@@ -130,7 +162,7 @@ export function CabinChatHost({ onSelectCabin, onCreateCabin }: CabinChatHostPro
   )
 
   const shared = useMemo<ChatPaneShared>(() => ({
-    sessions,
+    sessions: paneSessions,
     sessionsLoading,
     createNewSession,
     updateSessionTitle,
@@ -144,7 +176,7 @@ export function CabinChatHost({ onSelectCabin, onCreateCabin }: CabinChatHostPro
     preferredOrg,
     sidebarWidth: sidebarCollapsed ? 0 : SIDEBAR_WIDTH,
   }), [
-    sessions, sessionsLoading, createNewSession, updateSessionTitle, refetchSessions,
+    paneSessions, sessionsLoading, createNewSession, updateSessionTitle, refetchSessions,
     chatTasks, chatTasksLoading, refreshChatTasks, runningAgents, appOrgs, workspaces,
     preferredOrg, sidebarCollapsed,
   ])
@@ -224,6 +256,12 @@ export function CabinChatHost({ onSelectCabin, onCreateCabin }: CabinChatHostPro
   const attentionCount = view?.attention.length ?? 0
   const reviewCount = view?.attention.filter((a) => a.stage === 'review').length ?? 0
   const runningCount = view?.health.running ?? 0
+
+  // 舱模块段只属于舱主对话（2026-11-13 用户要求）：舱内从跳转点打开任务线程 /
+  // 别的会话时，作业坞退回桌面原样（文件/活动/子代理/调试/消耗 + 任务段）。
+  // 舱功能再大改也只动「舱主对话的坞」，成熟功能的坞保持独立。
+  const showingCabinThread =
+    !activeTask && !pendingTaskSession && !!mainSessionId && sessionId === mainSessionId
 
   const dockModules = useMemo<CabinDockModule[]>(() => CABIN_DOCK_PRIMARY.map((id) => ({
     id,
@@ -371,8 +409,9 @@ export function CabinChatHost({ onSelectCabin, onCreateCabin }: CabinChatHostPro
           onExitSplit={noop}
           onSwapPanes={noop}
           canSwap={false}
-          dockCabinModules={dockModules}
-          dockCabinMoreModules={dockMoreModules}
+          dockCabinModules={showingCabinThread ? dockModules : undefined}
+          dockCabinMoreModules={showingCabinThread ? dockMoreModules : undefined}
+          dockElevated
           cabinId={cabinId}
           cabinWorkspaceId={cabin?.workspace_id ?? null}
         />

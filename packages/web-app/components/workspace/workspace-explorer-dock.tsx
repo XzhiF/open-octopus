@@ -80,6 +80,9 @@ export interface WorkspaceExplorerDockProps {
    *  溢出 grid。缺省 = 桌面原样，不渲染舱段。 */
   cabinModules?: CabinDockModule[]
   cabinMoreModules?: CabinDockModule[]
+  /** 舱壳：坞压在舱浮窗层之上（原型 dock z-65 > win-layer z-60）。只影响层级，
+   *  不改变坞里有什么 —— 舱内看任务线程时坞内容退回原样、但仍在舱浮窗上面。 */
+  elevated?: boolean
   /** 常驻「消耗」按钮的窗口状态（任务账本或会话账本，同一扇窗）。 */
   usageWindow?: TaskWindowRecord | null
   onOpenUsage?: () => void
@@ -218,6 +221,7 @@ export function WorkspaceExplorerDock({
   taskWindows,
   cabinModules,
   cabinMoreModules,
+  elevated,
   usageWindow,
   onOpenUsage,
   debugWindow,
@@ -869,7 +873,7 @@ export function WorkspaceExplorerDock({
         className={cn(
           // 舱模式：dock 是模块导航，须压在舱浮窗层（z-40）之上（原型 dock z-65 > win-layer z-60）。
           'absolute right-3 top-14 hidden flex-col items-center gap-1 rounded-2xl border border-white/[0.10] bg-pop-paper/80 p-1.5 shadow-pop-lg backdrop-blur-xl lg:flex',
-          cabinModules && cabinModules.length > 0 ? 'z-[65]' : 'z-30',
+          (cabinModules && cabinModules.length > 0) || elevated ? 'z-[65]' : 'z-30',
           className,
         )}
       >

@@ -9,14 +9,20 @@ import type { RunningAgentSession, RunningExecution } from '@/lib/agent/api'
 
 const mockAgents = vi.fn<() => RunningAgentSession[]>(() => [])
 const mockExecutions = vi.fn<() => RunningExecution[]>(() => [])
+const mockCabins = vi.fn<() => Array<{ id: string; main_session_id: string | null }>>(() => [])
 const setActiveSessionId = vi.fn()
+const openCabin = vi.fn()
 const minimizeAll = vi.fn()
 const focusDesktop = vi.fn()
 
 vi.mock('@/hooks/use-running-agents', () => ({ useRunningAgents: () => mockAgents() }))
 vi.mock('@/hooks/use-running-executions', () => ({ useRunningExecutions: () => mockExecutions() }))
+vi.mock('@/hooks/use-cabins', () => ({ useCabins: () => ({ cabins: mockCabins(), loading: false }) }))
 vi.mock('@/components/providers/chat-sessions', () => ({
   useChatSessions: () => ({ setActiveSessionId }),
+}))
+vi.mock('@/components/cabin/cabin-mode', () => ({
+  useCabinMode: () => ({ openCabin }),
 }))
 vi.mock('@/lib/desktop-windows', () => ({
   useDesktopWindows: () => ({ minimizeAll, focusDesktop }),
@@ -52,6 +58,7 @@ describe('RunningAgents — 运行中工作流+Agent 指示', () => {
   beforeEach(() => {
     mockAgents.mockReturnValue([])
     mockExecutions.mockReturnValue([])
+    mockCabins.mockReturnValue([])
     vi.clearAllMocks()
   })
   afterEach(() => cleanup())
@@ -106,6 +113,20 @@ describe('RunningAgents — 运行中工作流+Agent 指示', () => {
     expect(chip.getAttribute('title')).toBe('会话 s-1 · 运行中')
     fireEvent.click(chip)
     expect(setActiveSessionId).toHaveBeenCalledWith('s-1')
+    expect(minimizeAll).toHaveBeenCalled()
+    expect(focusDesktop).toHaveBeenCalled()
+  })
+
+  // 2026-11-13：舱主对话不是会话列表里的行，点它的运行 chip 应该回到舱，
+  // 而不是把一个没有会话元数据的普通 chat 拉到台前。
+  it('舱主会话 chip → 打开对应工作舱（不切普通会话）', () => {
+    mockAgents.mockReturnValue([agent('sess-cabin', 'Aurora · 舱主对话')])
+    mockCabins.mockReturnValue([{ id: 'cabin-1', main_session_id: 'sess-cabin' }])
+    const { container } = render(<RunningAgents />)
+    const chip = container.querySelector('[data-running-agent="sess-cabin"]') as HTMLElement
+    fireEvent.click(chip)
+    expect(openCabin).toHaveBeenCalledWith('cabin-1')
+    expect(setActiveSessionId).not.toHaveBeenCalled()
     expect(minimizeAll).toHaveBeenCalled()
     expect(focusDesktop).toHaveBeenCalled()
   })

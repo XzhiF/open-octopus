@@ -23,7 +23,15 @@ export class AgentSessionDAO extends BaseDAO {
    *  too, but that filter needs the task list — while it is loading, or if its
    *  fetch fails, every task thread would otherwise "fall into" 会话 (2026-10-30).
    *  A soft-deleted task releases its session back into the list (same rule as
-   *  the clone-session route). */
+   *  the clone-session route).
+   *
+   *  Cabin main sessions (`cabins.main_session_id`) get the same treatment
+   *  (2026-11-13): the cabin's orchestrator chat is one thread bound to the
+   *  cabin row, not a conversation in the left 会话 list. Listing it there made
+   *  the cabin chat look like a normal session that "syncs" with whatever was
+   *  open in 会话 — users read that as two chats sharing one history. The cabin
+   *  row is the only entry point; the chat pane still resolves the session by
+   *  id. */
   listSessions(filters?: {
     clone?: string; session_type?: string; limit?: number; cursor?: string
   }): { items: SessionRow[]; has_more: boolean; next_cursor: string | null } {
@@ -33,6 +41,10 @@ export class AgentSessionDAO extends BaseDAO {
         SELECT 1 FROM tasks t
          WHERE t.source_chat_session_id = sessions.id
            AND t.deleted_at IS NULL
+      )
+      AND NOT EXISTS (
+        SELECT 1 FROM cabins c
+         WHERE c.main_session_id = sessions.id
       )`
     const params: unknown[] = []
     if (filters?.clone) { sql += ` AND clone_name = ?`; params.push(filters.clone) }

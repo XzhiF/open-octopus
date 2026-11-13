@@ -24,6 +24,8 @@ DesktopHeader(复用顶栏) + **原 ChatSidebar**(工作舱·任务·会话三�
 ## 状态与 chat 底座
 - CabinProvider：Context+useReducer；持 CabinDTO/attention/iterations/init/repos/worktrees + 浮窗开合/最小化/焦点序；SSE subscribeSSE('cabin:<id>') + 列表轮询折叠。
 - **CabinChatHost**（舱 chat tab）宿主单个 ChatPane(pane='left',split=false,focused)，sessionId=cabin.main_session_id；shared 由现有 hooks 组装（useChatSessions/useChatTasks 全量——原任务/会话保留/useWorkspaces/useOrgs/useRunningAgents）；左侧 ChatSidebar 加 cabins/activeCabinId/onSelectCabin/onCreateCabin 加性 props；command 路由 select-task/select-session；layerRoot。复用 ChatArea/TuiTranscript/useAgentChat/chatStream 不变。开任务发 select-task→现有 per-task TaskModulesLayer+WorkspaceExplorerDock 出现。
+  - **舱主对话不是一个会话**（2026-11-13 用户反馈：它出现在左栏会话列表里，看起来和某个会话在同步）：服务端 `AgentSessionDAO.listSessions` 与任务线程同一规则，SQL 层排除 `cabins.main_session_id`；入口只有左栏「工作舱」行。ChatPane 需要它的 workspace/title（SSE wake 订阅、作业坞标题）时，CabinChatHost 按 id 单独取一次，只并进喂给 ChatPane 的 shared.sessions，不进左栏列表。
+  - **作业坞与舱隔离**（2026-11-13 用户要求，为后续舱大迭代定界）：舱模块段（cabinModules/cabinMoreModules）只在「舱主对话」上注入；舱内从跳转点打开任务线程/别的会话时，ChatPane 不再拿舱模块，坞退回桌面原样（文件/活动/子代理/调试/消耗 + 任务段）。层级与内容分开：`dockElevated` 让坞始终压在舱浮窗层上，与坞里有什么无关。桌面 ChatTab 从不传这些 props，成熟功能的坞完全不动。
 - 作业坞舱模块段：WorkspaceExplorerDock 加性 props cabinModules/cabinMoreModules（ChatPane 透传 dockCabinModules/dockCabinMoreModules）；舱模式 dock z-50 压在浮窗层 z-40 上（原型 dock z-65 > win-layer z-60）。
 - CabinModulesLayer（P3 已落地，替换 P2 CabinWindowLayer）：原型 openWin/drag/resize 全几何移植——CabinProvider 持 {x,y,w,h,min,max,placed}+winOrder 焦点序；首帧居中+级联落位（WIN_SIZE 对照原型 1342）；标题栏 pointer-capture 拖拽、右下 resize（下限 360×240）、max 铺满/min 隐藏；顶栏 winstrip（DesktopHeader extraStrip 加性 prop）最小化角标+点击恢复。任务级窗不重造：ChatPane 内置 TaskModulesLayer（app-window 几何），舱 dock「变更/验收」→ select-task module 复用。
 
