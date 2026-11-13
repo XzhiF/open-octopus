@@ -1,0 +1,453 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Octopus · 双模式 · 出舱 / 进舱</title>
+<style>
+/* ═══════════ classic · 双模式 ═══════════
+   舱外＝classic：任务 / 会话 / chat，和现网同一风格；
+   舱内＝沉浸：只有汐音、编队、指令条。细节按需打开，不常驻面板。
+   宗旨：不加文字墙、不加按钮墙 —— 舱内默认安静，chat 在需要时拉开。*/
+:root{
+  --ink:#EDF0F7; --dim:#8790A6; --faint:#5C6479;
+  --bd:rgba(255,255,255,.09); --bd2:rgba(255,255,255,.16);
+  --bg0:#05060A; --a:#4FD1D9; --b:#A78BFA; --green:#7EE787; --amber:#FFC857; --red:#FF5C5C; --pink:#FF855C; --purple:#D2A8FF;
+  --ui:-apple-system,BlinkMacSystemFont,'SF Pro Text','Helvetica Neue','PingFang SC','Hiragino Sans GB','Microsoft YaHei',sans-serif;
+  --mono:'SF Mono','JetBrains Mono',Menlo,Consolas,ui-monospace,monospace;
+  color-scheme:dark;
+}
+*{box-sizing:border-box}
+html,body{height:100%;margin:0}
+body{background:var(--bg0);color:var(--ink);font-family:var(--ui);font-size:13px;line-height:1.5;overflow:hidden;-webkit-font-smoothing:antialiased}
+button{font:inherit;color:inherit;border:0;background:none;padding:0;cursor:pointer}
+input{font:inherit;color:inherit}
+::-webkit-scrollbar{width:8px;height:8px}
+::-webkit-scrollbar-thumb{background:#343B4A;border-radius:4px;border:2px solid transparent;background-clip:content-box}
+.mono{font-family:var(--mono)}
+.dim{color:var(--dim)}.faint{color:var(--faint)}
+.shell{position:fixed;inset:0;display:flex;flex-direction:column;transition:opacity .28s ease, transform .28s ease}
+.shell[hidden]{display:none}
+
+/* ══════════ 舱外 · classic ══════════ */
+.c-top{flex:none;height:48px;display:flex;align-items:center;gap:12px;padding:0 14px;border-bottom:1px solid var(--bd);background:rgba(8,10,16,.7)}
+.c-top .brand{display:flex;align-items:center;gap:7px;font-size:11px;font-weight:800;letter-spacing:.14em;color:var(--a)}
+.c-top .brand .mark{font-size:15px}
+.c-top .title{font-size:12px;font-weight:700}
+.c-top .sp{flex:1}
+.c-top .ghost{font-size:10px;color:var(--dim);border:1px solid var(--bd);border-radius:7px;padding:4px 9px}
+.c-top .ghost:hover{color:var(--ink);border-color:var(--bd2)}
+.c-body{flex:1;min-height:0;display:flex}
+.c-side{flex:none;width:236px;min-height:0;overflow:auto;border-right:1px solid var(--bd);background:rgba(9,11,17,.45);padding:10px 8px 14px;display:flex;flex-direction:column;gap:2px}
+.c-new{height:28px;border-radius:8px;background:rgba(255,255,255,.08);font-size:11.5px;font-weight:600;margin-bottom:8px}
+.c-new:hover{background:rgba(255,255,255,.13)}
+.c-sec{display:flex;align-items:center;gap:6px;padding:10px 8px 4px;font-size:9px;letter-spacing:.14em;color:var(--faint);font-weight:800}
+.c-sec .n{color:var(--faint);font-family:var(--mono);letter-spacing:0}
+.c-row{display:flex;align-items:center;gap:8px;width:100%;text-align:left;padding:6px 8px;border-radius:8px;color:var(--dim);font-size:11px;transition:.12s}
+.c-row:hover{background:rgba(255,255,255,.05);color:var(--ink)}
+.c-row.on{background:rgba(255,255,255,.07);color:var(--ink)}
+.c-row .dot{width:6px;height:6px;border-radius:50%;background:var(--faint);flex:none}
+.c-row .dot.run{background:var(--green);box-shadow:0 0 8px var(--green)}
+.c-row .dot.rev{background:var(--amber)}
+.c-row .dot.done{background:var(--faint)}
+.c-row .dot.blocked{background:var(--red);box-shadow:0 0 8px color-mix(in srgb,var(--red) 60%,transparent)}
+.c-row .nm{flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.c-row .tag{font-size:8.5px;color:var(--faint);font-family:var(--mono)}
+.cabin-row{position:relative;border:1px solid color-mix(in srgb,var(--amber) 28%,transparent);background:color-mix(in srgb,var(--amber) 5%,transparent)}
+.cabin-row .dot{background:var(--green);box-shadow:0 0 8px var(--green)}
+.cabin-row .enter{margin-left:auto;font-size:9px;color:var(--amber);opacity:.55;transition:.15s}
+.cabin-row:hover .enter{opacity:1}
+.c-chat{flex:1;min-width:0;display:flex;flex-direction:column;background:rgba(7,9,14,.35)}
+.c-msgs{flex:1;min-height:0;overflow:auto;padding:18px 22px 10px;display:flex;flex-direction:column;gap:10px}
+.m{max-width:min(720px,88%);font-size:12px;line-height:1.65}
+.m.user{align-self:flex-end;background:color-mix(in srgb,var(--a) 10%,transparent);border:1px solid color-mix(in srgb,var(--a) 24%,transparent);border-radius:10px;padding:7px 11px}
+.m.asst{padding:2px 2px}
+.m.asst .who{display:block;font-size:9px;letter-spacing:.1em;color:var(--a);font-weight:800;margin-bottom:2px}
+.c-input{flex:none;display:flex;align-items:center;gap:8px;margin:0 18px 14px;padding:8px 10px;border:1px solid var(--bd);border-radius:11px;background:rgba(255,255,255,.03)}
+.c-input .p{color:var(--a);font-family:var(--mono)}
+.c-input input{flex:1;min-width:0;height:24px;border:0;background:none;outline:none;font-size:12px}
+.c-input .send{font-size:10px;padding:3px 10px;border-radius:7px;background:var(--a);color:#05070B;font-weight:800}
+
+/* ══════════ 舱内 · 沉浸 ══════════ */
+.cabin{background:#04050A;overflow:hidden}
+.scene{position:absolute;inset:0;pointer-events:none;z-index:0}
+.scene .sky{position:absolute;inset:0;background:
+  radial-gradient(70% 55% at 50% 115%, color-mix(in srgb,var(--b) 16%,transparent), transparent 62%),
+  radial-gradient(50% 40% at 20% 10%, color-mix(in srgb,var(--a) 8%,transparent), transparent 60%),
+  linear-gradient(180deg,#04050A,#070A12)}
+.scene .grid{position:absolute;inset:0;opacity:.35;mask-image:radial-gradient(70% 60% at 50% 80%,#000 10%,transparent 78%);
+  background:linear-gradient(color-mix(in srgb,var(--a) 6%,transparent) 1px,transparent 1px) 0 0/100% 44px,
+             linear-gradient(90deg,color-mix(in srgb,var(--a) 6%,transparent) 1px,transparent 1px) 0 0/44px 100%;
+  transform:perspective(600px) rotateX(58deg);transform-origin:50% 100%}
+.scene .horizon{position:absolute;left:0;right:0;bottom:34%;height:1px;background:linear-gradient(90deg,transparent,color-mix(in srgb,var(--a) 35%,transparent),transparent)}
+.hud{position:relative;z-index:3;flex:none;display:flex;align-items:center;gap:14px;height:52px;padding:0 18px}
+.hud .exit{display:inline-flex;align-items:center;gap:6px;height:28px;padding:0 12px;border-radius:8px;border:1px solid var(--bd);color:var(--dim);font-size:10.5px;transition:.14s}
+.hud .exit:hover{color:var(--ink);border-color:var(--bd2);background:rgba(255,255,255,.05)}
+.hud .cname{font-size:11px;color:var(--faint);letter-spacing:.1em}
+.hud .cname b{color:var(--ink);font-size:12px;letter-spacing:0;margin-left:6px}
+.hud .sp{flex:1}
+.hud .stat{font-size:9px;letter-spacing:.1em;color:var(--faint)}
+.hud .stat b{color:var(--ink);font-size:12px;font-family:var(--mono);margin-right:3px}
+.hud .stat.warn b{color:var(--amber)}
+.presence{position:absolute;z-index:2;left:50%;transform:translateX(-50%);bottom:clamp(176px,25vh,250px);display:flex;flex-direction:column;align-items:center;gap:10px;user-select:none}
+.presence img{display:block;width:clamp(220px,24vw,320px);height:auto;filter:saturate(1.03)}
+.presence .frame{position:relative;border-radius:18px;overflow:hidden;border:1px solid rgba(255,255,255,.1);
+  box-shadow:0 30px 80px rgba(0,0,0,.55), 0 0 70px color-mix(in srgb,var(--b) 20%,transparent);
+  background:linear-gradient(180deg,color-mix(in srgb,var(--b) 8%,transparent),transparent)}
+.presence .frame::after{content:'';position:absolute;inset:0;pointer-events:none;
+  background:linear-gradient(180deg,transparent 58%,rgba(4,5,10,.8)),
+    repeating-linear-gradient(180deg,rgba(255,255,255,.028) 0 1px,transparent 1px 3px)}
+.presence .pid{display:flex;align-items:baseline;gap:8px}
+.presence .pid b{font-size:14px;letter-spacing:.06em}
+.presence .pid span{font-size:9px;letter-spacing:.14em;color:var(--a)}
+.presence .aura{position:absolute;width:min(46vw,520px);height:min(46vw,520px);border-radius:50%;z-index:-1;
+  background:radial-gradient(circle,color-mix(in srgb,var(--b) 16%,transparent),transparent 65%);filter:blur(6px)}
+.waitchip{position:absolute;left:calc(100% + 6px);top:14%;display:flex;align-items:center;gap:6px;padding:5px 10px;border-radius:999px;
+  border:1px solid color-mix(in srgb,var(--amber) 45%,transparent);background:color-mix(in srgb,var(--amber) 9%,transparent);color:var(--amber);font-size:10px;white-space:nowrap;transition:.14s}
+.waitchip:hover{background:color-mix(in srgb,var(--amber) 18%,transparent)}
+.waitchip.blocked{border-color:color-mix(in srgb,var(--red) 45%,transparent);background:color-mix(in srgb,var(--red) 9%,transparent);color:var(--red);top:calc(14% + 34px)}
+.fleetwrap{position:relative;z-index:2;flex:none;display:flex;justify-content:center;padding:0 18px 10px;margin-top:auto}
+.fleet{display:flex;gap:10px;align-items:flex-end}
+.tile{position:relative;width:56px;height:64px;border-radius:12px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:3px;
+  border:1px solid var(--bd);background:rgba(10,13,20,.55);color:var(--dim);transition:.16s}
+.tile:hover{transform:translateY(-3px);border-color:var(--bd2);color:var(--ink);background:rgba(255,255,255,.06)}
+.tile .gl{font-size:15px;line-height:1;color:var(--accent,var(--a))}
+.tile .nm{font-size:8.5px;max-width:52px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.tile .ring{position:absolute;inset:-1px;border-radius:12px;background:conic-gradient(var(--accent,var(--a)) calc(var(--p)*1%),transparent 0);opacity:.5;-webkit-mask:linear-gradient(#000 0 0) content-box,linear-gradient(#000 0 0);-webkit-mask-composite:xor;mask-composite:exclude;padding:1px}
+.tile .sd{position:absolute;right:5px;top:5px;width:6px;height:6px;border-radius:50%;background:var(--faint)}
+.tile .sd.run{background:var(--green);box-shadow:0 0 8px var(--green)}
+.tile .sd.rev{background:var(--amber);box-shadow:0 0 8px var(--amber)}
+.tile .sd.blocked{background:var(--red);box-shadow:0 0 8px var(--red)}
+.cmdbar{position:relative;z-index:3;flex:none;display:flex;align-items:center;gap:8px;margin:0 auto 18px;width:min(760px,86vw);
+  padding:7px 9px;border-radius:14px;border:1px solid var(--bd2);background:rgba(8,11,18,.82);backdrop-filter:blur(16px);box-shadow:0 18px 50px rgba(0,0,0,.5)}
+.cmdbar .ico{width:32px;height:32px;border-radius:9px;display:grid;place-items:center;color:var(--dim);border:1px solid transparent;transition:.13s;flex:none}
+.cmdbar .ico:hover{color:var(--ink);background:rgba(255,255,255,.07);border-color:var(--bd)}
+.cmdbar .ico .b{position:absolute;margin:-22px 0 0 20px;min-width:14px;height:14px;border-radius:999px;background:var(--amber);color:#05070B;font-size:8px;font-weight:800;display:grid;place-items:center;padding:0 3px}
+.cmdbar .p{color:var(--a);font-family:var(--mono);font-size:14px;margin-left:2px}
+.cmdbar input{flex:1;min-width:0;height:30px;border:0;background:none;outline:none;font-size:12px}
+.cmdbar .go{height:30px;padding:0 12px;border-radius:8px;background:var(--a);color:#05070B;font-size:10.5px;font-weight:800;flex:none}
+.panel{position:absolute;z-index:5;top:64px;right:16px;width:min(360px,36vw);max-height:calc(100vh - 176px);display:flex;flex-direction:column;
+  border:1px solid var(--bd2);border-radius:14px;background:rgba(9,12,19,.94);backdrop-filter:blur(18px);box-shadow:0 24px 70px rgba(0,0,0,.55);
+  transform:translateX(16px);opacity:0;pointer-events:none;transition:.22s}
+.panel.comms{top:64px;bottom:96px;max-height:none}
+.panel.open{transform:none;opacity:1;pointer-events:auto}
+.panel .ph{flex:none;display:flex;align-items:center;gap:8px;padding:11px 12px;border-bottom:1px solid var(--bd);font-size:11.5px;font-weight:700}
+.panel .ph .kk{font-size:7.5px;letter-spacing:.08em;font-weight:800;padding:1px 6px;border-radius:999px;border:1px solid currentColor}
+.panel .ph .x{margin-left:auto;color:var(--dim);width:22px;height:22px;border-radius:6px;display:grid;place-items:center}
+.panel .ph .x:hover{background:rgba(255,255,255,.08);color:var(--ink)}
+.panel .pb{flex:1;min-height:0;overflow:auto;padding:10px 12px;display:flex;flex-direction:column;gap:8px}
+.panel .meta{font-size:9px;color:var(--faint);font-family:var(--mono);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.panel .bar{height:3px;border-radius:2px;background:rgba(255,255,255,.08);overflow:hidden}
+.panel .bar i{display:block;height:100%;background:var(--accent,var(--a))}
+.panel .kv{display:flex;gap:12px;font-size:10px;color:var(--dim)}
+.panel .kv b{color:var(--ink);font-family:var(--mono);font-weight:600}
+.panel .ln{font-family:var(--mono);font-size:9.5px;color:var(--dim);display:flex;gap:6px}
+.panel .ln .t{color:var(--faint);flex:none;font-size:8.5px}
+.panel .ln .k{color:var(--a);flex:none;font-size:8.5px;border:1px solid var(--bd2);border-radius:4px;padding:0 3px;height:14px}
+.panel .ln .x2{color:rgba(237,240,247,.78);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.panel .foot{margin-top:auto;display:flex;gap:6px;padding-top:8px;border-top:1px solid var(--bd)}
+.panel .foot button{font-size:10px;padding:4px 9px;border-radius:7px;border:1px solid var(--bd);color:var(--dim)}
+.panel .foot button:hover{color:var(--ink);border-color:var(--bd2);background:rgba(255,255,255,.05)}
+.comms .pb{gap:7px}
+.comms .msg{font-size:11px;line-height:1.6;color:var(--ink);max-width:100%}
+.comms .msg .who{display:block;font-size:8px;letter-spacing:.1em;color:var(--a);font-weight:800;margin-bottom:1px}
+.comms .msg.user{align-self:flex-end;background:color-mix(in srgb,var(--a) 9%,transparent);border-radius:9px;padding:5px 8px}
+.comms .msg.rc{font-family:var(--mono);font-size:9px;color:var(--dim);border-left:2px solid var(--bd2);padding-left:7px}
+.comms .cin{flex:none;display:flex;gap:6px;padding:8px 10px;border-top:1px solid var(--bd)}
+.comms .cin input{flex:1;min-width:0;height:28px;border-radius:7px;border:1px solid var(--bd);background:rgba(255,255,255,.03);padding:0 8px;outline:none;font-size:11px}
+.comms .cin button{height:28px;padding:0 10px;border-radius:7px;background:var(--a);color:#05070B;font-size:10px;font-weight:800}
+
+/* 进/出舱 */
+.warp{position:fixed;inset:0;z-index:200;pointer-events:none;opacity:0;background:radial-gradient(circle at 50% 55%,color-mix(in srgb,var(--a) 38%,transparent),#04050A 62%)}
+.warp.go{animation:warp .75s ease-out}
+@keyframes warp{0%{opacity:0;transform:scale(1.6)}30%{opacity:1}100%{opacity:0;transform:scale(1)}}
+.toast{position:fixed;left:50%;bottom:96px;transform:translateX(-50%) translateY(8px);z-index:210;opacity:0;pointer-events:none;
+  background:rgba(12,15,23,.95);border:1px solid var(--bd2);border-radius:9px;padding:6px 12px;font-size:10.5px;transition:.18s}
+.toast.show{opacity:1;transform:translateX(-50%) translateY(0)}
+@media (max-width:1100px){.presence{left:3vw}.panel{width:min(320px,44vw)}}
+</style>
+</head>
+<body>
+
+<!-- ══════════ 舱外 · classic ══════════ -->
+<div class="shell" id="classic">
+  <header class="c-top">
+    <span class="brand"><span class="mark">🐙</span>OCTOPUS</span>
+    <span class="title" id="cTitle">主对话</span>
+    <span class="sp"></span>
+  </header>
+  <div class="c-body">
+    <aside class="c-side">
+      <button class="c-new">＋ 开启新对话</button>
+      <div class="c-sec">作战舱 <span class="n">1</span></div>
+      <button class="c-row cabin-row" id="cabinRow" title="进入作战舱">
+        <span class="dot"></span><span class="nm">Aurora 结算平台</span><span class="tag">活跃</span><span class="enter">进舱 →</span>
+      </button>
+      <div class="c-sec">任务 <span class="n" id="taskN">5</span></div>
+      <div id="taskList"></div>
+      <div class="c-sec">会话 <span class="n" id="sessN">3</span></div>
+      <div id="sessList"></div>
+    </aside>
+    <main class="c-chat">
+      <div class="c-msgs" id="cMsgs"></div>
+      <div class="c-input"><span class="p">❯</span><input id="cInput" placeholder="问主 Agent…" /><button class="send" id="cSend">发送</button></div>
+    </main>
+  </div>
+</div>
+
+<!-- ══════════ 舱内 · 沉浸 ══════════ -->
+<div class="shell cabin" id="cabin" hidden>
+  <div class="scene"><div class="sky"></div><div class="grid"></div><div class="horizon"></div></div>
+
+  <header class="hud">
+    <button class="exit" id="exitBtn" title="出舱（Esc）">◀ 出舱</button>
+    <span class="cname">作战舱<b>Aurora</b></span>
+    <span class="sp"></span>
+    <span class="stat"><b id="hRun">4</b>运行</span>
+    <span class="stat warn"><b id="hWait">2</b>等你</span>
+    <span class="stat mono">¥58.6</span>
+  </header>
+
+  <div class="presence" id="presence">
+    <span class="aura"></span>
+    <div class="frame"><img id="xyImg" src="../crew/xiyin-working.png" alt="汐音舰长" /></div>
+    <div class="pid"><b>汐音舰长</b><span id="xyMood">指挥中</span></div>
+    <button class="waitchip" id="waitChip">⚠ 2 件事等你</button>
+    <button class="waitchip blocked" id="blockChip">⛔ 外部 agent 受阻</button>
+  </div>
+
+  <div class="fleetwrap"><div class="fleet" id="fleet"></div></div>
+
+  <div class="cmdbar">
+    <button class="ico" id="fleetBtn" title="编队">▦</button>
+    <span class="p">❯</span>
+    <input id="order" placeholder="下令…（派发 / 问编队 / 处理待办）" />
+    <button class="ico" id="commsBtn" title="通讯" style="position:relative">✉<span class="b" id="commsBadge">2</span></button>
+    <button class="go" id="goBtn">下令</button>
+  </div>
+
+  <aside class="panel" id="console">
+    <div class="ph"><span class="kk" id="cKk"></span><span id="cName"></span><button class="x" data-close="console">✕</button></div>
+    <div class="pb" id="cBody"></div>
+  </aside>
+
+  <aside class="panel comms" id="comms">
+    <div class="ph">通讯<span class="kk" style="color:var(--a)">汐音</span><button class="x" data-close="comms">✕</button></div>
+    <div class="pb" id="commsBody"></div>
+    <div class="cin"><input id="commsInput" placeholder="说一句…" /><button id="commsSend">发</button></div>
+  </aside>
+
+  <div class="warp" id="warp"></div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+"use strict";
+const $=(s,r=document)=>r.querySelector(s);
+const esc=s=>String(s).replace(/[&<>"]/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[m]));
+const now=()=>{const d=new Date();return String(d.getHours()).padStart(2,'0')+':'+String(d.getMinutes()).padStart(2,'0');};
+
+/* ── 舱外数据：任务 / 会话（保持现网风格） ── */
+const TASKS=[
+  {id:'t1',name:'接入支付宝渠道',status:'run',label:'运行中',job:'j1'},
+  {id:'t2',name:'对账核心引擎',status:'rev',label:'待验收',job:'j2'},
+  {id:'t3',name:'结算台差异看板',status:'run',label:'运行中',job:'j3'},
+  {id:'t4',name:'对账修复工作流开发',status:'run',label:'运行中',job:'j4'},
+  {id:'t5',name:'旧渠道迁移',status:'blocked',label:'受阻',job:'j6'},
+];
+const SESSIONS=[
+  {id:'s1',name:'主对话',msgs:[
+    ['asst','舰长，Aurora 编队 8 条：4 条在跑，2 条等你。要进舱看吗？'],
+    ['user','先在任务里看，不急。'],
+    ['asst','好。舱里我只留汐音、编队和指令条，细节按需拉开，不再堆面板。'],
+  ]},
+  {id:'s2',name:'feat-alipay-channel · 执行者',msgs:[
+    ['asst','幂等骨架完成，正在补回调验签。'],
+    ['user','验签边界注意老版本回调。'],
+    ['asst','收到，我会加兼容分支。'],
+  ]},
+  {id:'s3',name:'feat-recon-core · 执行者',msgs:[
+    ['asst','round 2 完成：99.6% 命中，9 commits，等你验收。'],
+  ]},
+];
+
+/* ── 舱内数据：编队 ── */
+const KINDS={
+  dev:{label:'开发',glyph:'⌂',color:'var(--a)'},
+  workflow:{label:'工作流',glyph:'⌁',color:'var(--b)'},
+  wfdev:{label:'流开发',glyph:'ƒ',color:'var(--purple)'},
+  subagent:{label:'子代理',glyph:'◇',color:'var(--pink)'},
+  external:{label:'外部',glyph:'⌘',color:'var(--amber)'},
+};
+let seq=10;
+const JOBS=[
+  {id:'j1',kind:'dev',title:'支付宝渠道',repo:'aurora-gateway',branch:'feat-alipay-channel',status:'running',p:68,elapsed:'18:24',cost:12.4,
+    lines:[['14:41','节点','spec 解析订单模型'],['14:48','汐音','幂等三路已接，验签待补'],['14:52','回报','进度 → 不打扰人']]},
+  {id:'j2',kind:'workflow',title:'对账引擎',repo:'aurora-ledger',branch:'feat-recon-core',status:'review',p:100,elapsed:'41:12',cost:9.1,
+    lines:[['14:31','节点','diff 差异 38 笔落库'],['14:33','节点','persist 完成'],['14:34','回报','round 2 完成 → 等你验收']]},
+  {id:'j3',kind:'dev',title:'差异看板',repo:'aurora-web',branch:'feat-settle-diff',status:'running',p:35,elapsed:'06:10',cost:4.8,
+    lines:[['14:43','汐音','骨架：筛选 + 分页 + 空态'],['14:47','工具','pnpm test · 24 通过']]},
+  {id:'j4',kind:'wfdev',title:'对账修复流',repo:'aurora-ledger',branch:'feat-recon-fix',status:'running',p:60,elapsed:'12:40',cost:1.6,
+    lines:[['14:44','工具','schema ✓ 节点引用 ✓ 变量 ✓'],['14:46','回报','等试跑授权']]},
+  {id:'j6',kind:'external',title:'旧渠道迁移',repo:'aurora-ledger',branch:'feat-legacy-migrate',status:'blocked',p:72,elapsed:'26:05',cost:2.4,
+    lines:[['14:18','外部','ERROR duplicate key channel_tx'],['14:25','外部','第 2 次失败'],['14:26','回报','回弹汐音 → 升级人']]},
+  {id:'j8',kind:'external',title:'回归测试',repo:'aurora-web',branch:'feat-settle-diff',status:'running',p:22,elapsed:'02:41',cost:0.4,
+    lines:[['14:51','外部','pnpm test:e2e'],['14:52','回报','心跳正常']]},
+];
+
+/* ── 舱内通讯 ── */
+const COMMS=[
+  {who:'汐音',text:'编队 6 条：4 条在跑，1 条等验收，1 条受阻。都在这块甲板上。'},
+  {rc:'14:18 对账核心引擎 round 2 完成 → 已置入「等你」'},
+  {who:'汐音',text:'旧渠道迁移的外部 agent 连续两次撞唯一键，我按住了，等你决定去重还是覆盖。'},
+];
+
+const S={mode:'classic',session:'s1',job:null,commsOpen:false};
+let toastTimer=null;
+function toast(msg){const t=$('#toast');t.textContent=msg;t.classList.add('show');clearTimeout(toastTimer);toastTimer=setTimeout(()=>t.classList.remove('show'),1600);}
+
+/* ── 舱外渲染 ── */
+function renderClassic(){
+  $('#taskList').innerHTML=TASKS.map(t=>`<button class="c-row" data-task="${t.id}"><span class="dot ${t.status}"></span><span class="nm">${esc(t.name)}</span><span class="tag">${t.label}</span></button>`).join('');
+  $('#sessList').innerHTML=SESSIONS.map(s=>`<button class="c-row ${S.session===s.id?'on':''}" data-sess="${s.id}"><span class="nm">${esc(s.name)}</span></button>`).join('');
+  const s=SESSIONS.find(x=>x.id===S.session)||SESSIONS[0];
+  $('#cTitle').textContent=s.name;
+  $('#cMsgs').innerHTML=s.msgs.map(([role,text])=>role==='user'
+    ? `<div class="m user">${esc(text)}</div>`
+    : `<div class="m asst"><span class="who">汐音</span>${esc(text)}</div>`).join('');
+  $('#cMsgs').scrollTop=$('#cMsgs').scrollHeight;
+}
+
+/* ── 舱内渲染 ── */
+function renderFleet(){
+  $('#fleet').innerHTML=JOBS.map(j=>{
+    const k=KINDS[j.kind];
+    const sd=j.status==='running'?'run':j.status==='review'?'rev':j.status==='blocked'?'blocked':'';
+    return `<button class="tile" style="--accent:${k.color};--p:${j.p}" data-job="${j.id}" title="${esc(j.title)} · ${j.status}">
+      <span class="ring"></span><span class="sd ${sd}"></span><span class="gl">${k.glyph}</span><span class="nm">${esc(j.title)}</span>
+    </button>`;}).join('');
+  const run=JOBS.filter(j=>j.status==='running').length;
+  const wait=JOBS.filter(j=>j.status==='review'||j.status==='blocked').length;
+  $('#hRun').textContent=run;$('#hWait').textContent=wait;
+  $('#waitChip').textContent='⚠ '+wait+' 件事等你';
+  $('#commsBadge').textContent=wait;
+  $('#waitChip').style.display=wait?'flex':'none';
+  $('#blockChip').style.display=JOBS.some(j=>j.status==='blocked')?'flex':'none';
+}
+function renderConsole(){
+  const box=$('#console');
+  const j=JOBS.find(x=>x.id===S.job);
+  if(!j){box.classList.remove('open');return;}
+  const k=KINDS[j.kind];
+  const st={running:'运行中',review:'待验收',blocked:'受阻',done:'完成'}[j.status]||j.status;
+  $('#cKk').textContent=k.label;$('#cKk').style.color=k.color;$('#cName').textContent=j.title;
+  $('#cBody').innerHTML=`
+    <div class="meta">${esc(j.repo)} · ${esc(j.branch)} · ${st} · ⏱ ${j.elapsed} · ¥${j.cost}</div>
+    <div class="bar" style="--accent:${k.color}"><i style="width:${j.p}%"></i></div>
+    <div class="kv"><span>进度 <b>${j.p}%</b></span><span>类型 <b>${k.label}</b></span></div>
+    ${j.lines.map(([t,tag,text])=>`<div class="ln"><span class="t">${t}</span><span class="k">${tag}</span><span class="x2">${esc(text)}</span></div>`).join('')}
+    <div class="foot"><button data-ask="${j.id}">在通讯里说</button>${j.status==='review'?'<button data-accept="'+j.id+'">通过</button>':''}${j.status==='blocked'?'<button data-unblock="'+j.id+'">打回重做</button>':''}</div>`;
+  box.classList.add('open');
+}
+function renderComms(){
+  $('#commsBody').innerHTML=COMMS.map(m=>m.rc
+    ? `<div class="msg rc">${esc(m.rc)}</div>`
+    : `<div class="msg ${m.user?'user':''}">${m.user?'':`<span class="who">${esc(m.who)}</span>`}${esc(m.text)}</div>`).join('');
+  $('#commsBody').scrollTop=$('#commsBody').scrollHeight;
+}
+function openPanel(which){
+  if(which==='comms'){S.commsOpen=true;$('#comms').classList.add('open');S.job=null;$('#console').classList.remove('open');renderComms();}
+  else if(which==='console'){$('#comms').classList.remove('open');S.commsOpen=false;renderConsole();}
+}
+function closePanels(){$('#console').classList.remove('open');$('#comms').classList.remove('open');S.job=null;S.commsOpen=false;}
+
+/* ── 模式切换 ── */
+function switchMode(target){
+  const w=$('#warp');w.classList.remove('go');void w.offsetWidth;w.classList.add('go');
+  setTimeout(()=>{
+    S.mode=target;
+    closePanels();
+    $('#classic').hidden=target!=='classic';
+    $('#cabin').hidden=target!=='cabin';
+    if(target==='cabin')renderFleet();
+    else renderClassic();
+  },260);
+  setTimeout(()=>w.classList.remove('go'),900);
+}
+
+/* ── 事件 ── */
+$('#cabinRow').addEventListener('click',()=>switchMode('cabin'));
+$('#exitBtn').addEventListener('click',()=>switchMode('classic'));
+document.addEventListener('keydown',e=>{
+  if(e.key==='Escape'){
+    if(S.mode==='cabin'){ if($('#console').classList.contains('open')||$('#comms').classList.contains('open'))closePanels(); else switchMode('classic'); }
+  }
+});
+$('#taskList').addEventListener('click',e=>{
+  const b=e.target.closest('[data-task]');if(!b)return;
+  toast('任务详情在舱内看 · 「'+b.textContent.trim()+'」');
+});
+$('#sessList').addEventListener('click',e=>{
+  const b=e.target.closest('[data-sess]');if(!b)return;
+  S.session=b.dataset.sess;renderClassic();
+});
+$('#cSend').addEventListener('click',()=>{
+  const inp=$('#cInput');const text=inp.value.trim();if(!text)return;inp.value='';
+  const s=SESSIONS.find(x=>x.id===S.session)||SESSIONS[0];
+  s.msgs.push(['user',text]);
+  s.msgs.push(['asst','收到。要进舱就说一声，编队和待办都在甲板上。']);
+  renderClassic();
+});
+$('#cInput').addEventListener('keydown',e=>{if(e.key==='Enter')$('#cSend').click();});
+
+$('#fleet').addEventListener('click',e=>{
+  const b=e.target.closest('[data-job]');if(!b)return;
+  S.job=b.dataset.job;openPanel('console');
+});
+$('#fleetBtn').addEventListener('click',()=>toast('编队：'+JOBS.filter(j=>j.status==='running').length+' 运行 · '+JOBS.length+' 总'));
+$('#commsBtn').addEventListener('click',()=>openPanel('comms'));
+$('#waitChip').addEventListener('click',()=>{S.job=JOBS.find(j=>j.status==='review').id;openPanel('console');});
+$('#blockChip').addEventListener('click',()=>{S.job=JOBS.find(j=>j.status==='blocked').id;openPanel('console');});
+document.addEventListener('click',e=>{
+  const c=e.target.closest('[data-close]');
+  if(c){closePanels();return;}
+  const ask=e.target.closest('[data-ask]');
+  if(ask){openPanel('comms');$('#commsInput').value='关于「'+JOBS.find(j=>j.id===ask.dataset.ask).title+'」：';$('#commsInput').focus();return;}
+  const acc=e.target.closest('[data-accept]');
+  if(acc){const j=JOBS.find(x=>x.id===acc.dataset.accept);j.status='done';j.p=100;renderFleet();renderConsole();COMMS.push({who:'汐音',text:'「'+j.title+'」验收通过，已归档。'});toast('已通过 · 回执已发');return;}
+  const ub=e.target.closest('[data-unblock]');
+  if(ub){const j=JOBS.find(x=>x.id===ub.dataset.unblock);j.status='running';j.p=30;renderFleet();renderConsole();COMMS.push({who:'汐音',text:'「'+j.title+'」已打回，外部 agent 换去重策略重跑。'});toast('已打回 · 重新排队');return;}
+});
+function sendOrder(){
+  const inp=$('#order');const text=inp.value.trim();if(!text)return;inp.value='';
+  COMMS.push({user:true,who:'舰长',text});
+  let panel='comms';
+  if(/派发|派|新建|做/.test(text)){
+    const title=text.replace(/^(派发|新建|做)\s*/,'').slice(0,10)||'新作业';
+    const j={id:'j'+(++seq),kind:'dev',title,repo:'aurora-gateway',branch:'feat-new-'+seq,status:'running',p:4,elapsed:'00:05',cost:0,
+      lines:[['—','汐音','已接单，执行器启动']]};
+    JOBS.push(j);renderFleet();S.job=j.id;panel='console';toast('已派发 · 编队 +1');
+    COMMS.push({who:'汐音',text:'收到，已派给执行者；现场我放右栏了。'});
+  } else if(/等|待办|验收|受阻/.test(text)){
+    S.job=(JOBS.find(j=>j.status==='review')||JOBS.find(j=>j.status==='blocked')||JOBS[0]).id;panel='console';
+    COMMS.push({who:'汐音',text:'已经把那件事的现场放到右栏。'});
+  } else {
+    COMMS.push({who:'汐音',text:'收到。我按现在的重心排，有结论回报。'});
+  }
+  openPanel(panel);
+}
+$('#goBtn').addEventListener('click',sendOrder);
+$('#order').addEventListener('keydown',e=>{if(e.key==='Enter')sendOrder();});
+$('#commsSend').addEventListener('click',()=>{
+  const inp=$('#commsInput');const text=inp.value.trim();if(!text)return;inp.value='';
+  COMMS.push({user:true,who:'舰长',text});
+  COMMS.push({who:'汐音',text:'收到。'});
+  renderComms();
+});
+$('#commsInput').addEventListener('keydown',e=>{if(e.key==='Enter')$('#commsSend').click();});
+
+renderClassic();
+</script>
+</body>
+</html>

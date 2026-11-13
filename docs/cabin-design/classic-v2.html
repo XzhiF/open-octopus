@@ -1,0 +1,872 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Octopus · 作战舱 Aurora · classic-v2 指挥甲板</title>
+<style>
+/* ═══════════ classic-v2 · 指挥甲板 ═══════════
+   作战舱不是"点进某个任务聊天"的容器，而是一张常驻的指挥台：
+   左＝编队/频道（并行作业与通讯频道），中＝汐音+通讯流+指令条（唯一指挥面），
+   右＝现场（选中作业/频道的实时细节），坞＝舰桥系统（派发/作战桌/变更/验收/消耗/调校）。
+   点任务只换右栏现场，指挥面永不被占。*/
+:root{
+  --ink:#EDF0F7; --dim:#8790A6; --faint:#5C6479;
+  --bd:rgba(255,255,255,.09); --bd2:rgba(255,255,255,.16);
+  --bg0:#05060A; --bg1:#0A0D14; --bg2:#0D1119;
+  --a:#4FD1D9; --b:#A78BFA; --c:#FFC857;
+  --green:#7EE787; --amber:#FFC857; --red:#FF5C5C; --cyan:#4FD1D9; --violet:#A78BFA; --pink:#FF855C; --purple:#D2A8FF;
+  --font-ui:-apple-system,BlinkMacSystemFont,'SF Pro Text','Helvetica Neue','PingFang SC','Hiragino Sans GB','Microsoft YaHei',sans-serif;
+  --font-mono:'SF Mono','JetBrains Mono',Menlo,Consolas,ui-monospace,monospace;
+  color-scheme:dark;
+}
+*{box-sizing:border-box}
+html,body{height:100%;margin:0}
+body{background:
+  radial-gradient(80% 55% at 50% -18%, color-mix(in srgb,var(--b) 11%,transparent), transparent 62%),
+  radial-gradient(60% 45% at 105% 108%, color-mix(in srgb,var(--a) 8%,transparent), transparent 60%),
+  var(--bg0);
+  color:var(--ink);font-family:var(--font-ui);font-size:13px;line-height:1.5;overflow:hidden;-webkit-font-smoothing:antialiased}
+button{font:inherit;color:inherit;border:0;background:none;padding:0;cursor:pointer}
+input,select{font:inherit;color:inherit}
+::-webkit-scrollbar{width:8px;height:8px}
+::-webkit-scrollbar-thumb{background:#343B4A;border-radius:4px;border:2px solid transparent;background-clip:content-box}
+::-webkit-scrollbar-track{background:transparent}
+.mono{font-family:var(--font-mono)}
+.dim{color:var(--dim)}.faint{color:var(--faint)}
+.app{height:100vh;display:flex;flex-direction:column;overflow:hidden}
+
+/* ── header ── */
+.top{flex:none;height:52px;display:flex;align-items:center;gap:14px;padding:0 16px;border-bottom:1px solid var(--bd);
+  background:rgba(8,10,16,.78);backdrop-filter:blur(14px);z-index:30}
+.brand{display:flex;align-items:center;gap:8px;font-size:10px;font-weight:800;letter-spacing:.18em;color:var(--a)}
+.brand .mark{font-size:17px}
+.brand b{color:var(--ink);font-size:12px;letter-spacing:.06em}
+.cabin-id{display:flex;align-items:center;gap:8px;font-size:11.5px;color:var(--dim)}
+.cabin-id .dot{width:7px;height:7px;border-radius:50%;background:var(--green);box-shadow:0 0 10px var(--green);animation:pulse 2.4s infinite}
+.cabin-id b{color:var(--ink)}
+@keyframes pulse{50%{opacity:.45}}
+.stats{display:flex;gap:16px;margin-left:10px;font-size:9.5px;letter-spacing:.08em;color:var(--faint)}
+.stats b{display:block;font-size:12px;letter-spacing:0;color:var(--ink);font-family:var(--font-mono)}
+.stats .hot b{color:var(--amber)}
+.top .right{margin-left:auto;display:flex;align-items:center;gap:8px}
+.ghost{display:inline-flex;align-items:center;gap:6px;height:28px;padding:0 11px;border-radius:8px;border:1px solid var(--bd);
+  background:rgba(255,255,255,.02);color:var(--dim);font-size:11px;transition:.14s;white-space:nowrap}
+.ghost:hover{color:var(--ink);border-color:var(--bd2);background:rgba(255,255,255,.05)}
+.ghost.pri{color:#05070B;font-weight:800;border-color:transparent;background:linear-gradient(135deg,var(--a),color-mix(in srgb,var(--a) 55%,#fff));box-shadow:0 0 18px color-mix(in srgb,var(--a) 25%,transparent)}
+
+/* ── body grid ── */
+.body{flex:1;min-height:0;display:grid;grid-template-columns:252px minmax(0,1fr) 404px 50px}
+
+/* ── 左·编队 ── */
+.rail{min-height:0;display:flex;flex-direction:column;border-right:1px solid var(--bd);background:rgba(9,11,17,.5);overflow:hidden}
+.rail-head{padding:12px 12px 8px;border-bottom:1px solid var(--bd)}
+.rail-head .rl{font-size:9px;letter-spacing:.16em;color:var(--faint);font-weight:800}
+.rail-head .rn{display:flex;align-items:center;gap:8px;margin-top:4px;font-size:13px;font-weight:800;color:var(--ink)}
+.rail-head .rn .status{font-size:9px;font-weight:700;color:var(--green);border:1px solid color-mix(in srgb,var(--green) 40%,transparent);border-radius:999px;padding:1px 7px}
+.rail-head .rs{margin-top:2px;font-size:10px;color:var(--dim);font-family:var(--font-mono);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.fchips{display:flex;flex-wrap:wrap;gap:4px;padding:8px 10px 6px}
+.fchip{height:21px;padding:0 8px;border-radius:999px;border:1px solid var(--bd);color:var(--faint);font-size:9.5px;transition:.12s}
+.fchip:hover{color:var(--ink);border-color:var(--bd2)}
+.fchip.on{background:rgba(255,255,255,.09);color:var(--ink);border-color:var(--bd2)}
+.jobs{flex:1;min-height:0;overflow:auto;padding:2px 8px 10px;display:flex;flex-direction:column;gap:5px}
+.job{position:relative;display:grid;grid-template-columns:28px minmax(0,1fr) auto;grid-template-areas:'k t m' 'k s m' 'k bar m';gap:2px 7px;text-align:left;border:1px solid var(--bd);
+  border-radius:10px;padding:7px 8px;background:rgba(255,255,255,.02);transition:.13s;width:100%}
+.job:hover{border-color:var(--bd2);background:rgba(255,255,255,.045)}
+.job.sel{border-color:color-mix(in srgb,var(--accent,var(--violet)) 55%,transparent);background:color-mix(in srgb,var(--accent,var(--violet)) 8%,transparent)}
+.job.focus::after{content:'◎';position:absolute;right:6px;top:-6px;font-size:9px;color:var(--violet)}
+.job .kico{grid-area:k;width:28px;height:28px;border-radius:7px;display:grid;place-items:center;align-self:start;margin-top:1px;
+  border:1px solid color-mix(in srgb,var(--accent,var(--violet)) 45%,transparent);color:var(--accent,var(--violet));background:color-mix(in srgb,var(--accent,var(--violet)) 10%,transparent);font-size:7.5px;font-weight:800;letter-spacing:-.02em;white-space:nowrap}
+.job .t{grid-area:t;font-size:11.5px;font-weight:750;color:var(--ink);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.job .s{grid-area:s;font-size:9px;color:var(--dim);font-family:var(--font-mono);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.job .bar{grid-area:bar;height:2.5px;border-radius:2px;background:rgba(255,255,255,.08);overflow:hidden;margin-top:2px}
+.job .bar i{display:block;height:100%;background:var(--accent,var(--violet))}
+.job .m{grid-area:m;display:flex;flex-direction:column;align-items:flex-end;justify-content:center;gap:3px;font-size:8.5px;color:var(--faint);font-family:var(--font-mono);white-space:nowrap}
+.st{font-size:8px;font-weight:800;letter-spacing:.04em;padding:1px 5px;border-radius:999px;border:1px solid currentColor;white-space:nowrap}
+.st.run{color:var(--green)}.st.queued{color:var(--dim)}.st.review{color:var(--amber)}.st.blocked{color:var(--red)}.st.done{color:var(--faint)}
+.jsec{padding:8px 12px 4px;font-size:9px;letter-spacing:.16em;color:var(--faint);font-weight:800}
+.sessions{flex:none;max-height:196px;overflow:auto;padding:0 8px 12px;display:flex;flex-direction:column;gap:4px}
+.chan{display:flex;align-items:center;gap:7px;width:100%;text-align:left;padding:6px 8px;border-radius:8px;border:1px solid transparent;transition:.12s}
+.chan:hover{background:rgba(255,255,255,.05)}
+.chan.sel{background:rgba(255,255,255,.07);border-color:var(--bd)}
+.chan .ci{width:20px;height:20px;border-radius:6px;display:grid;place-items:center;border:1px solid var(--bd);color:var(--dim);flex:none;font-size:9px}
+.chan .cn{font-size:10.5px;color:var(--ink);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;flex:1}
+.chan .ck{font-size:8px;color:var(--faint);font-family:var(--font-mono)}
+.chan .badge{min-width:14px;height:14px;border-radius:999px;background:var(--amber);color:#05070B;font-size:8px;font-weight:800;display:grid;place-items:center;padding:0 3px}
+
+/* ── 中·指挥台 ── */
+.bridge{min-height:0;display:flex;flex-direction:column;position:relative;overflow:hidden}
+.bridge::before{content:'';position:absolute;inset:0;pointer-events:none;z-index:0;
+  background:linear-gradient(color-mix(in srgb,var(--a) 4%,transparent) 1px,transparent 1px) 0 0/100% 30px,
+             linear-gradient(90deg,color-mix(in srgb,var(--a) 4%,transparent) 1px,transparent 1px) 0 0/30px 100%;
+  mask-image:radial-gradient(70% 60% at 50% 0%,#000 20%,transparent 85%)}
+.stage{position:relative;z-index:1;flex:none;display:grid;grid-template-columns:196px minmax(0,1fr);gap:14px;padding:12px 16px 6px}
+.portrait{position:relative;height:206px;border-radius:14px;border:1px solid var(--bd);overflow:hidden;
+  background:radial-gradient(80% 70% at 50% 20%,color-mix(in srgb,var(--b) 18%,transparent),transparent 70%),rgba(8,10,16,.5)}
+.portrait img{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;object-position:50% 12%;filter:saturate(1.02)}
+.portrait .fade{position:absolute;inset:0;background:linear-gradient(180deg,transparent 55%,rgba(5,6,10,.78) 100%);pointer-events:none}
+.portrait .name{position:absolute;left:10px;bottom:8px;font-size:12px;font-weight:800;color:var(--ink);text-shadow:0 1px 8px #000;z-index:2}
+.portrait .mood{position:absolute;left:10px;bottom:26px;font-size:8.5px;letter-spacing:.1em;color:var(--a);z-index:2}
+.radial{position:absolute;inset:0;z-index:3;opacity:0;pointer-events:none;transition:.18s}
+.radial.open{opacity:1;pointer-events:auto}
+.radial button{position:absolute;width:52px;height:52px;border-radius:50%;display:grid;place-items:center;gap:1px;
+  background:rgba(10,13,20,.86);border:1px solid color-mix(in srgb,var(--a) 45%,transparent);color:var(--a);
+  box-shadow:0 0 20px color-mix(in srgb,var(--a) 22%,transparent);font-size:8.5px;font-weight:700;transition:.14s}
+.radial button:hover{transform:scale(1.08);background:color-mix(in srgb,var(--a) 18%,#0A0D14)}
+.radial .r1{left:50%;top:8px;transform:translateX(-50%)}
+.radial .r2{right:10px;top:50%;transform:translateY(-50%)}
+.radial .r3{left:50%;bottom:10px;transform:translateX(-50%)}
+.radial .r4{left:10px;top:50%;transform:translateY(-50%)}
+.radial-hint{position:absolute;right:8px;top:8px;z-index:2;font-size:8px;letter-spacing:.12em;color:var(--a);opacity:.75}
+.stage-info{min-width:0;display:flex;flex-direction:column;justify-content:center;gap:7px}
+.stage-info h1{font-size:16px;line-height:1.2;margin:0;letter-spacing:.02em}
+.stage-info h1 span{font-size:9px;letter-spacing:.16em;color:var(--a);font-weight:800;margin-left:8px}
+.stage-info .sub{font-size:10.5px;color:var(--dim)}
+.telemetry{display:flex;flex-wrap:wrap;gap:6px 14px;padding:7px 10px;border:1px solid var(--bd);border-radius:10px;background:rgba(255,255,255,.02);font-size:9.5px;color:var(--faint)}
+.telemetry b{color:var(--ink);font-family:var(--font-mono);font-size:11px}
+.telemetry .warn b{color:var(--amber)}
+.orbit{display:flex;flex-wrap:wrap;gap:6px;align-items:center}
+.orbit .olabel{font-size:9px;letter-spacing:.12em;color:var(--faint);font-weight:700}
+.orb{display:inline-flex;align-items:center;gap:5px;padding:3px 8px;border-radius:999px;border:1px solid color-mix(in srgb,var(--amber) 45%,transparent);
+  background:color-mix(in srgb,var(--amber) 8%,transparent);color:var(--amber);font-size:9.5px;transition:.12s}
+.orb:hover{background:color-mix(in srgb,var(--amber) 16%,transparent)}
+.orb.blocked{border-color:color-mix(in srgb,var(--red) 45%,transparent);background:color-mix(in srgb,var(--red) 8%,transparent);color:var(--red)}
+.quicks{display:flex;flex-wrap:wrap;gap:5px}
+.quick{font-size:9.5px;padding:3px 8px;border-radius:7px;border:1px solid var(--bd);color:var(--dim);transition:.12s}
+.quick:hover{color:var(--ink);border-color:var(--bd2);background:rgba(255,255,255,.05)}
+.quick.pri{color:#05070B;background:var(--a);border-color:transparent;font-weight:800}
+.comms{position:relative;z-index:1;flex:1;min-height:0;overflow:auto;padding:6px 18px 14px;display:flex;flex-direction:column;gap:8px}
+.msg{max-width:min(620px,92%);border-radius:11px;padding:8px 11px;font-size:11.5px;line-height:1.6;border:1px solid var(--bd);background:rgba(255,255,255,.025)}
+.msg.user{align-self:flex-end;background:color-mix(in srgb,var(--a) 10%,transparent);border-color:color-mix(in srgb,var(--a) 30%,transparent)}
+.msg.asst{border-left:2px solid var(--a)}
+.msg .who{display:block;font-size:8.5px;letter-spacing:.12em;color:var(--a);font-weight:800;margin-bottom:2px}
+.msg.receipt{align-self:flex-start;background:rgba(0,0,0,.18);border-style:dashed;font-family:var(--font-mono);font-size:10px;color:var(--dim)}
+.msg.receipt b{color:var(--ink)}
+.msg.event{font-size:10px;color:var(--dim);border-style:dashed}
+.card{border-radius:12px;border:1px solid color-mix(in srgb,var(--amber) 35%,transparent);background:color-mix(in srgb,var(--amber) 6%,transparent);padding:10px 12px;max-width:min(620px,92%)}
+.card .ch{display:flex;align-items:center;gap:8px;font-size:11.5px;font-weight:800;color:var(--ink)}
+.card .ch .tag{font-size:8px;letter-spacing:.1em;color:var(--amber);border:1px solid currentColor;border-radius:4px;padding:0 4px}
+.card .cs{margin-top:3px;font-size:10.5px;color:var(--dim)}
+.card .acts{display:flex;gap:6px;margin-top:8px;flex-wrap:wrap}
+.card .acts button{font-size:10px;padding:3px 9px;border-radius:7px;border:1px solid var(--bd2);color:var(--ink);transition:.12s}
+.card .acts button:hover{background:rgba(255,255,255,.08)}
+.card .acts button.pri{background:var(--a);color:#05070B;border-color:transparent;font-weight:800}
+.orderbar{position:relative;z-index:1;flex:none;display:flex;align-items:center;gap:8px;padding:9px 16px 13px;border-top:1px solid var(--bd);background:rgba(6,8,13,.72);backdrop-filter:blur(10px)}
+.orderbar .prompt{color:var(--a);font-family:var(--font-mono);font-size:14px}
+.orderbar input{flex:1;min-width:0;height:34px;border-radius:9px;border:1px solid var(--bd);background:rgba(255,255,255,.03);padding:0 12px;font-size:12px;outline:none;transition:.14s}
+.orderbar input:focus{border-color:color-mix(in srgb,var(--a) 55%,transparent);box-shadow:0 0 0 2px color-mix(in srgb,var(--a) 12%,transparent)}
+.orderbar .send{height:34px;padding:0 14px;border-radius:9px;background:var(--a);color:#05070B;font-weight:800;font-size:11.5px}
+.orderbar .hint{font-size:9px;color:var(--faint);white-space:nowrap}
+
+/* ── 右·现场 ── */
+.inspector{min-height:0;display:flex;flex-direction:column;border-left:1px solid var(--bd);background:rgba(8,10,16,.62);overflow:hidden}
+.ins-head{flex:none;padding:11px 12px 9px;border-bottom:1px solid var(--bd)}
+.ins-title{display:flex;align-items:center;gap:7px;flex-wrap:wrap}
+.ins-title .kk{font-size:8px;letter-spacing:.1em;font-weight:800;padding:1px 6px;border-radius:999px;border:1px solid currentColor}
+.ins-title b{font-size:12.5px;color:var(--ink)}
+.ins-sub{margin-top:3px;font-size:9.5px;color:var(--dim);font-family:var(--font-mono);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.ins-act{display:flex;gap:5px;margin-top:8px;flex-wrap:wrap}
+.ins-act button{font-size:9px;padding:3px 8px;border-radius:7px;border:1px solid var(--bd);color:var(--dim);transition:.12s}
+.ins-act button:hover{color:var(--ink);border-color:var(--bd2);background:rgba(255,255,255,.05)}
+.tabs{flex:none;display:flex;gap:2px;padding:7px 10px 0;border-bottom:1px solid var(--bd)}
+.tab{position:relative;font-size:10.5px;padding:5px 10px 8px;color:var(--faint);border-bottom:2px solid transparent;transition:.12s}
+.tab:hover{color:var(--dim)}
+.tab.on{color:var(--ink);border-bottom-color:var(--a)}
+.tab .n{font-size:8px;color:var(--faint);margin-left:4px}
+.ins-body{flex:1;min-height:0;overflow:auto;padding:10px 12px 14px}
+.empty{display:grid;place-items:center;height:100%;min-height:160px;color:var(--faint);font-size:11px;text-align:center;line-height:1.8}
+.sec{display:flex;align-items:baseline;gap:7px;margin:12px 0 6px;font-size:9px;letter-spacing:.13em;color:var(--faint);font-weight:800;border-top:1px solid var(--bd);padding-top:8px}
+.sec:first-child{margin-top:0;border-top:0;padding-top:0}
+.sec .cap{font-size:8.5px;letter-spacing:0;color:var(--faint);font-weight:500;font-family:var(--font-mono)}
+.dag{display:flex;flex-wrap:wrap;align-items:center;gap:5px}
+.node{font-size:9.5px;padding:3px 8px;border-radius:7px;border:1px solid var(--bd);background:rgba(255,255,255,.02);color:var(--dim);white-space:nowrap}
+.node.done{border-color:color-mix(in srgb,var(--green) 50%,transparent);color:var(--green)}
+.node.run{border-color:var(--b);color:var(--b);animation:pulse 1.6s infinite}
+.arrow{color:var(--faint);font-size:9px}
+.logs{display:flex;flex-direction:column;gap:3px;font-family:var(--font-mono);font-size:9.5px}
+.log{display:grid;grid-template-columns:42px 30px minmax(0,1fr);gap:6px;align-items:baseline;color:var(--dim)}
+.log .t{opacity:.7;font-size:8.5px}
+.log .tag{font-size:8px;text-align:center;border-radius:4px;border:1px solid var(--bd2);padding:0 2px}
+.log .tag.node{color:var(--b)}.log .tag.tool{color:var(--cyan)}.log .tag.agent{color:var(--green)}.log .tag.event{color:var(--amber)}.log .tag.term{color:var(--pink)}
+.log .x{color:rgba(237,240,247,.8);overflow:hidden;text-overflow:ellipsis}
+.term{font-family:var(--font-mono);font-size:9.5px;line-height:1.6;background:rgba(0,0,0,.28);border:1px solid var(--bd);border-radius:9px;padding:9px;color:rgba(237,240,247,.82);white-space:pre-wrap;margin:0}
+.term .p{color:var(--pink)}
+.term .ok{color:var(--green)}
+.term .warn{color:var(--amber)}
+.yaml{font-family:var(--font-mono);font-size:9.5px;line-height:1.55;background:rgba(0,0,0,.28);border:1px solid var(--bd);border-radius:9px;padding:9px;color:rgba(237,240,247,.82);white-space:pre;overflow:auto;max-height:180px;margin:0}
+.gates{display:flex;flex-wrap:wrap;gap:5px}
+.gate{font-size:9px;padding:2px 7px;border-radius:6px;border:1px dashed var(--bd2);color:var(--faint)}
+.gate.ok{border-style:solid;border-color:color-mix(in srgb,var(--green) 45%,transparent);color:var(--green)}
+.ledger{display:grid;grid-template-columns:repeat(3,1fr);gap:6px;margin-top:2px}
+.ledger .l{border:1px solid var(--bd);border-radius:8px;padding:6px 8px;background:rgba(255,255,255,.02)}
+.ledger .l b{display:block;font-size:13px;font-family:var(--font-mono)}
+.ledger .l span{font-size:8.5px;color:var(--faint)}
+.files{display:flex;flex-direction:column;gap:3px}
+.file{display:flex;align-items:center;gap:6px;font-size:9.5px;color:var(--dim);font-family:var(--font-mono);padding:3px 6px;border-radius:6px;background:rgba(255,255,255,.02)}
+.file .fn{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--ink);opacity:.85}
+.file .add{color:var(--green)}.file .del{color:var(--red)}
+.checks{display:flex;flex-direction:column;gap:4px}
+.check{display:flex;align-items:center;gap:7px;border:1px solid var(--bd);border-radius:8px;padding:6px 8px;font-size:10px;color:var(--dim);background:rgba(255,255,255,.02)}
+.check.ok .ci{color:var(--green)}
+.check .ci{color:var(--amber)}
+.check .cn{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.tx{display:flex;flex-direction:column;gap:6px}
+.tx .m{max-width:100%;font-size:10.5px;border:1px solid var(--bd);border-radius:9px;padding:6px 9px;background:rgba(255,255,255,.02);line-height:1.55}
+.tx .m.user{align-self:flex-end;background:color-mix(in srgb,var(--a) 9%,transparent)}
+.tx .m.tool{font-family:var(--font-mono);font-size:9.5px;color:var(--dim);border-style:dashed}
+.tx .m .who{display:block;font-size:8px;letter-spacing:.1em;color:var(--faint);margin-bottom:2px}
+.ins-note{font-size:9.5px;color:var(--faint);border-top:1px dashed var(--bd);padding-top:8px;margin-top:10px;line-height:1.6}
+.board-sum{display:grid;grid-template-columns:repeat(2,1fr);gap:6px;margin-bottom:4px}
+.board-sum .s{border:1px solid var(--bd);border-radius:9px;padding:7px 9px;background:rgba(255,255,255,.02)}
+.board-sum .s b{display:block;font-size:15px;font-family:var(--font-mono)}
+.board-sum .s span{font-size:8.5px;color:var(--faint);letter-spacing:.06em}
+
+/* ── 右缘 dock ── */
+.dock{display:flex;flex-direction:column;align-items:center;gap:6px;padding:10px 5px;border-left:1px solid var(--bd);background:rgba(8,10,16,.7)}
+.dbtn{width:36px;height:36px;border-radius:10px;display:grid;place-items:center;border:1px solid transparent;color:var(--faint);transition:.14s;position:relative}
+.dbtn:hover{color:var(--ink);background:rgba(255,255,255,.06);border-color:var(--bd)}
+.dbtn.pri{background:var(--a);color:#05070B;box-shadow:0 0 16px color-mix(in srgb,var(--a) 30%,transparent)}
+.dbtn.pri:hover{filter:brightness(1.08)}
+.dbtn .badge{position:absolute;right:1px;top:1px;min-width:13px;height:13px;border-radius:999px;background:var(--amber);color:#05070B;font-size:7.5px;font-weight:800;display:grid;place-items:center;padding:0 3px}
+.dsep{width:22px;height:1px;background:var(--bd2);margin:3px 0}
+.ddock-label{font-size:7px;letter-spacing:.08em;color:var(--faint)}
+
+/* ── overlay ── */
+.ov{position:fixed;inset:0;z-index:90;display:none;place-items:center;background:rgba(3,4,8,.62);backdrop-filter:blur(3px)}
+.ov.open{display:grid}
+.panel{width:min(1040px,92vw);max-height:min(720px,88vh);display:flex;flex-direction:column;border-radius:16px;border:1px solid var(--bd2);
+  background:linear-gradient(180deg,rgba(14,17,25,.98),rgba(8,10,16,.98));box-shadow:0 24px 80px rgba(0,0,0,.6);overflow:hidden}
+.panel.wide{width:min(1180px,94vw)}
+.panel.slim{width:min(560px,92vw)}
+.ph{flex:none;display:flex;align-items:center;gap:9px;padding:13px 16px;border-bottom:1px solid var(--bd)}
+.ph .icon{width:26px;height:26px;border-radius:8px;display:grid;place-items:center;border:1px solid color-mix(in srgb,var(--a) 40%,transparent);color:var(--a);background:color-mix(in srgb,var(--a) 9%,transparent)}
+.ph h3{margin:0;font-size:13px}
+.ph .cap{font-size:9px;letter-spacing:.1em;color:var(--faint)}
+.ph .x{margin-left:auto;width:26px;height:26px;border-radius:8px;display:grid;place-items:center;color:var(--dim)}
+.ph .x:hover{background:rgba(255,255,255,.07);color:var(--ink)}
+.pb{flex:1;min-height:0;overflow:auto;padding:14px 16px 18px}
+.board{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px}
+.bcard{position:relative;text-align:left;border:1px solid var(--bd);border-radius:12px;padding:10px 11px;background:rgba(255,255,255,.02);transition:.13s}
+.bcard:hover{border-color:var(--bd2);background:rgba(255,255,255,.045);transform:translateY(-1px)}
+.bcard .bk{font-size:8px;letter-spacing:.1em;font-weight:800;color:var(--accent,var(--violet))}
+.bcard .bt{display:block;margin-top:3px;font-size:12px;font-weight:800;color:var(--ink)}
+.bcard .bs{display:block;font-size:9px;color:var(--dim);font-family:var(--font-mono);margin-top:1px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.bcard .bbar{display:block;height:3px;border-radius:2px;background:rgba(255,255,255,.08);margin-top:7px;overflow:hidden}
+.bcard .bbar i{display:block;height:100%;background:var(--accent,var(--violet))}
+.bcard .bm{display:flex;justify-content:space-between;margin-top:6px;font-size:8.5px;color:var(--faint);font-family:var(--font-mono)}
+.opts{display:flex;flex-direction:column;gap:8px}
+.optrow{display:flex;flex-direction:column;gap:4px}
+.optrow label{font-size:9px;letter-spacing:.12em;color:var(--faint);font-weight:800}
+.optrow input,.optrow select{height:32px;border-radius:8px;border:1px solid var(--bd);background:rgba(255,255,255,.03);padding:0 10px;font-size:11.5px;outline:none}
+.optrow input:focus,.optrow select:focus{border-color:color-mix(in srgb,var(--a) 55%,transparent)}
+.kinds{display:flex;flex-wrap:wrap;gap:5px}
+.kind{font-size:10px;padding:4px 9px;border-radius:8px;border:1px solid var(--bd);color:var(--dim);transition:.12s}
+.kind:hover{color:var(--ink);border-color:var(--bd2)}
+.kind.on{color:#05070B;font-weight:800;background:var(--a);border-color:transparent}
+.pfoot{display:flex;gap:8px;padding:12px 16px;border-top:1px solid var(--bd);background:rgba(0,0,0,.2)}
+.pfoot .sp{flex:1}
+.btn{height:32px;padding:0 14px;border-radius:8px;border:1px solid var(--bd);color:var(--dim);font-size:11px}
+.btn:hover{color:var(--ink);border-color:var(--bd2)}
+.btn.pri{background:var(--a);color:#05070B;border-color:transparent;font-weight:800}
+.usage-row{display:flex;align-items:center;gap:8px;margin-bottom:6px;font-size:10px;color:var(--dim)}
+.usage-row .un{width:150px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.usage-row .ub{flex:1;height:6px;border-radius:3px;background:rgba(255,255,255,.07);overflow:hidden}
+.usage-row .ub i{display:block;height:100%;background:linear-gradient(90deg,var(--a),var(--b))}
+.usage-row b{font-family:var(--font-mono);font-size:10px;color:var(--ink);width:70px;text-align:right}
+.toast{position:fixed;left:50%;bottom:26px;transform:translateX(-50%) translateY(10px);z-index:120;opacity:0;pointer-events:none;
+  background:rgba(14,17,25,.96);border:1px solid var(--bd2);border-radius:10px;padding:8px 14px;font-size:11px;color:var(--ink);transition:.2s}
+.toast.show{opacity:1;transform:translateX(-50%) translateY(0)}
+@media (max-width:1280px){.body{grid-template-columns:224px minmax(0,1fr) 360px 46px}.stage{grid-template-columns:170px minmax(0,1fr)}.portrait{height:186px}}
+@media (max-width:1100px){.body{grid-template-columns:210px minmax(0,1fr) 0 44px}.inspector{display:none}}
+</style>
+</head>
+<body>
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></symbol>
+  <symbol id="i-grid" viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/></symbol>
+  <symbol id="i-compare" viewBox="0 0 24 24"><path d="M8 3 4 7l4 4M4 7h16M16 21l4-4-4-4M20 17H4"/></symbol>
+  <symbol id="i-clip" viewBox="0 0 24 24"><rect x="5" y="4" width="14" height="17" rx="2"/><path d="M9 4V3h6v1M9 10h6M9 14h4"/></symbol>
+  <symbol id="i-chart" viewBox="0 0 24 24"><path d="M4 20V10M10 20V4M16 20v-7M22 20H2"/></symbol>
+  <symbol id="i-slider" viewBox="0 0 24 24"><path d="M4 8h10M18 8h2M4 16h4M12 16h8"/><circle cx="16" cy="8" r="2"/><circle cx="10" cy="16" r="2"/></symbol>
+  <symbol id="i-bug" viewBox="0 0 24 24"><rect x="8" y="6" width="8" height="12" rx="4"/><path d="M8 10H4M20 10h-4M8 14H4M20 14h-4M9 6V4M15 6V4M12 18v3"/></symbol>
+  <symbol id="i-send" viewBox="0 0 24 24"><path d="m3 11 18-8-8 18-2-8-8-2z"/></symbol>
+  <symbol id="i-x" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6 6 18"/></symbol>
+  <symbol id="i-msg" viewBox="0 0 24 24"><path d="M4 5h16v11H9l-5 4V5z"/></symbol>
+  <symbol id="i-terminal" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="m7 9 3 3-3 3M13 15h4"/></symbol>
+  <symbol id="i-play" viewBox="0 0 24 24"><path d="M7 4l13 8-13 8V4z"/></symbol>
+  <symbol id="i-check" viewBox="0 0 24 24"><path d="m4 12 5 5L20 6"/></symbol>
+</svg>
+
+<div class="app">
+  <!-- header -->
+  <header class="top">
+    <div class="brand"><span class="mark">🐙</span><b>Octopus</b><span>作战舱</span></div>
+    <div class="cabin-id"><span class="dot"></span><b>Aurora 结算平台</b><span class="mono">~/cabins/aurora</span></div>
+    <div class="stats">
+      <div><span>编队</span><b id="stFleet">8</b></div>
+      <div><span>运行</span><b id="stRun">4</b></div>
+      <div class="hot"><span>等你</span><b id="stWait">2</b></div>
+      <div><span>执行器</span><b id="stWorkers">4/6</b></div>
+    </div>
+    <div class="right">
+      <button class="ghost" data-action="toggle-sound">◉ 舰内音效</button>
+      <button class="ghost" data-action="overlay" data-ov="board">作战桌 F3</button>
+      <button class="ghost pri" data-action="sheet">＋ 派发作战作业</button>
+    </div>
+  </header>
+
+  <div class="body">
+    <!-- 左：作战舱 · 编队 · 频道 -->
+    <aside class="rail">
+      <div class="rail-head">
+        <div class="rl">作战舱 / CABIN</div>
+        <div class="rn">Aurora 结算平台 <span class="status">活跃</span></div>
+        <div class="rs">4 仓库 · 3 迭代 · 编队 7</div>
+      </div>
+      <div class="fchips" id="filters"></div>
+      <div class="jobs" id="jobs"></div>
+      <div class="jsec">通讯频道 / CHANNELS</div>
+      <div class="sessions" id="channels"></div>
+    </aside>
+
+    <!-- 中：汐音指挥台（永不切走） -->
+    <section class="bridge">
+      <div class="stage">
+        <div class="portrait" id="portrait">
+          <img id="xyImg" src="crew/xiyin-idle.png" alt="汐音舰长">
+          <span class="fade"></span>
+          <span class="mood" id="xyMood">待命</span>
+          <span class="name">汐音舰长</span>
+          <span class="radial-hint">点击立绘 · 指挥环</span>
+          <div class="radial" id="radial">
+            <button class="r1" data-action="sheet">＋<br>派发</button>
+            <button class="r2" data-action="overlay" data-ov="board">▦<br>作战桌</button>
+            <button class="r3" data-action="focus-wait">◇<br>待办</button>
+            <button class="r4" data-action="overlay" data-ov="tune">⚙<br>调校</button>
+          </div>
+        </div>
+        <div class="stage-info">
+          <h1>汐音舰长 <span>XIYIN · CAPTAIN</span></h1>
+          <div class="sub">你只在这里下令与收报 —— 任务/会话的细节去右栏「现场」看，指挥台不切走。</div>
+          <div class="telemetry">
+            <span>编队 <b id="tpFleet">8</b></span>
+            <span>运行 <b id="tpRun">4</b></span>
+            <span class="warn">等你 <b id="tpWait">2</b></span>
+            <span>聚焦 <b id="tpFocus">接入支付宝渠道</b></span>
+            <span>执行器 <b>4/6</b></span>
+            <span>今日 <b>¥58.6</b></span>
+          </div>
+          <div class="orbit" id="orbit"></div>
+          <div class="quicks">
+            <button class="quick pri" data-action="sheet">＋ 派发</button>
+            <button class="quick" data-action="quick-dispatch" data-kind="dev">开发任务</button>
+            <button class="quick" data-action="quick-dispatch" data-kind="workflow">执行工作流</button>
+            <button class="quick" data-action="quick-dispatch" data-kind="wfdev">工作流开发</button>
+            <button class="quick" data-action="quick-dispatch" data-kind="subagent">委派子代理</button>
+            <button class="quick" data-action="quick-dispatch" data-kind="external">外部 agent</button>
+          </div>
+        </div>
+      </div>
+      <div class="comms" id="comms"></div>
+      <div class="orderbar">
+        <span class="prompt">❯</span>
+        <input id="orderInput" placeholder="向汐音下令：派发 / 看编队 / 处理待办 / 问某条作业…" />
+        <button class="send" data-action="send-order">下令</button>
+        <span class="hint">回执走通讯 · 派发会进编队</span>
+      </div>
+    </section>
+
+    <!-- 右：现场（选中作业/频道） -->
+    <aside class="inspector" id="inspector"></aside>
+
+    <!-- 右缘：舰桥系统坞 -->
+    <nav class="dock">
+      <button class="dbtn pri" data-action="sheet" title="派发作战作业"><svg class="i" width="17" height="17" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><use href="#i-plus"/></svg></button>
+      <div class="dsep"></div>
+      <button class="dbtn" data-action="overlay" data-ov="board" title="作战桌"><svg width="17" height="17" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><use href="#i-grid"/></svg><span class="ddock-label">作战桌</span></button>
+      <button class="dbtn" data-action="overlay" data-ov="changes" title="变更"><svg width="17" height="17" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><use href="#i-compare"/></svg><span class="ddock-label">变更</span></button>
+      <button class="dbtn" data-action="overlay" data-ov="accept" title="验收"><svg width="17" height="17" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><use href="#i-clip"/></svg><span class="badge" id="dockWait">2</span><span class="ddock-label">验收</span></button>
+      <button class="dbtn" data-action="overlay" data-ov="usage" title="消耗"><svg width="17" height="17" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><use href="#i-chart"/></svg><span class="ddock-label">消耗</span></button>
+      <button class="dbtn" data-action="overlay" data-ov="debug" title="调试"><svg width="17" height="17" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><use href="#i-bug"/></svg><span class="ddock-label">调试</span></button>
+      <div class="dsep"></div>
+      <button class="dbtn" data-action="overlay" data-ov="tune" title="舱面调校"><svg width="17" height="17" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><use href="#i-slider"/></svg><span class="ddock-label">调校</span></button>
+    </nav>
+  </div>
+</div>
+
+<!-- overlays -->
+<div class="ov" id="ov">
+  <div class="panel wide" id="ovBoard">
+    <div class="ph"><span class="icon">▦</span><h3>作战桌</h3><span class="cap">全舰编队 · 并行作业一览 · 点一张进现场</span><button class="x" data-action="ov-close">✕</button></div>
+    <div class="pb" id="ovBoardBody"></div>
+  </div>
+  <div class="panel" id="ovChanges">
+    <div class="ph"><span class="icon">⇄</span><h3>变更总账</h3><span class="cap">跨仓聚合 · 按任务</span><button class="x" data-action="ov-close">✕</button></div>
+    <div class="pb" id="ovChangesBody"></div>
+  </div>
+  <div class="panel" id="ovAccept">
+    <div class="ph"><span class="icon">☑</span><h3>验收台</h3><span class="cap">等你签字的作业 · 通过/打回都会回执给汐音</span><button class="x" data-action="ov-close">✕</button></div>
+    <div class="pb" id="ovAcceptBody"></div>
+  </div>
+  <div class="panel" id="ovUsage">
+    <div class="ph"><span class="icon">▤</span><h3>消耗</h3><span class="cap">按作业 · 防双算</span><button class="x" data-action="ov-close">✕</button></div>
+    <div class="pb" id="ovUsageBody"></div>
+  </div>
+  <div class="panel" id="ovDebug">
+    <div class="ph"><span class="icon">⌁</span><h3>调试</h3><span class="cap">每轮 SDK 真相 · 录制中</span><button class="x" data-action="ov-close">✕</button></div>
+    <div class="pb" id="ovDebugBody"></div>
+  </div>
+  <div class="panel slim" id="ovTune">
+    <div class="ph"><span class="icon">⚙</span><h3>舱面调校</h3><span class="cap">色彩 / 悬浮 / 光效 / 粒子</span><button class="x" data-action="ov-close">✕</button></div>
+    <div class="pb" id="ovTuneBody"></div>
+  </div>
+
+  <!-- 派发 sheet -->
+  <div class="panel slim" id="ovSheet">
+    <div class="ph"><span class="icon">＋</span><h3>派发作战作业</h3><span class="cap">交给汐音调度</span><button class="x" data-action="ov-close">✕</button></div>
+    <div class="pb">
+      <div class="opts">
+        <div class="optrow"><label>作业类型</label><div class="kinds" id="sheetKinds"></div></div>
+        <div class="optrow"><label>目标</label><select id="sheetRepo"><option>aurora-gateway</option><option>aurora-ledger</option><option>aurora-web</option></select></div>
+        <div class="optrow"><label>标题 / 指令</label><input id="sheetTitle" placeholder="例如：补齐回调验签的幂等压测" /></div>
+        <div class="optrow" id="sheetCmdRow" style="display:none"><label>外部命令</label><input id="sheetCmd" class="mono" placeholder='claude -p "fix failing tests" --output-format stream-json' /></div>
+        <div class="ins-note" id="sheetNote">派发后进入编队「排队 → 运行」，回执会出现在通讯流；任务现场在右栏看，不占指挥台。</div>
+      </div>
+    </div>
+    <div class="pfoot"><span class="sp"></span><button class="btn" data-action="ov-close">取消</button><button class="btn pri" data-action="dispatch">下令派发</button></div>
+  </div>
+</div>
+<div class="toast" id="toast"></div>
+
+<script>
+"use strict";
+const $=(s,r=document)=>r.querySelector(s);
+const $$=(s,r=document)=>[...r.querySelectorAll(s)];
+const esc=s=>String(s).replace(/[&<>"]/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[m]));
+const now=()=>{const d=new Date();return String(d.getHours()).padStart(2,'0')+':'+String(d.getMinutes()).padStart(2,'0');};
+
+/* ── 作业类型（作战作业的通用模型，含外部 agent） ── */
+const KIND={
+  dev:{label:'开发任务',short:'开发',color:'var(--cyan)'},
+  workflow:{label:'执行工作流',short:'工作流',color:'var(--violet)'},
+  wfdev:{label:'工作流开发',short:'流开发',color:'var(--purple)'},
+  subagent:{label:'委派子代理',short:'子代理',color:'var(--pink)'},
+  external:{label:'外部 agent',short:'外部',color:'var(--amber)'},
+};
+
+/* ── 编队（并行作业） ── */
+let seq=100;
+const JOB=(o)=>({id:'j'+(++seq),progress:0,elapsed:'00:00',tokens:'—',cost:0,files:[],msgs:[],logs:[],...o});
+const JOBS=[
+  JOB({id:'j1',kind:'dev',title:'接入支付宝渠道',repo:'aurora-gateway',branch:'feat-alipay-channel',status:'running',progress:68,elapsed:'18:24',phase:'P1·R2',tokens:'128K',cost:12.4,focus:true,
+    logs:[['14:41','node','spec','解析渠道订单模型 · 3 个实体'],['14:44','tool','claude','读 14 个文件 · 生成幂等骨架'],['14:48','agent','','下单/回调/退款三路幂等已接，验签待补'],['14:52','event','','进度回报 → 汐音（不打扰人）']],
+    msgs:[['user','开始接入支付宝渠道，幂等压测优先。'],['asst','收到，已在 aurora-gateway 切出工作树，按 P1·R2 推进。'],['tool','git worktree add ../feat-alipay-channel'],['asst','幂等骨架完成，正在补回调验签；验收前会请你回放差异。']],
+    files:[['src/alipay/order.ts','+182','-12'],['src/alipay/callback.ts','+96','-4'],['test/alipay.idem.test.ts','+210','-0']]}),
+  JOB({id:'j2',kind:'workflow',title:'对账核心引擎 · round 2',repo:'aurora-ledger',branch:'feat-recon-core',status:'review',progress:100,elapsed:'41:12',phase:'P1·R2',tokens:'58.3K',cost:9.1,
+    nodes:['parse','match','diff','persist'],nodeAt:3,
+    logs:[['14:18','node','parse','账单解析 12.4 万笔'],['14:26','node','match','逐笔勾兑命中 99.6%'],['14:31','node','diff','差异 38 笔落库'],['14:33','node','persist','留痕写入完成 · round 2 完成'],['14:34','event','','ready → wake 汐音，请求验收']],
+    msgs:[['user','勾兑命中率要过 99%。'],['asst','round 1 92%，我开了 round 2 修时区解析偏差。'],['asst','round 2 99.6%，9 commits · +1560 −210，等你验收。']],
+    files:[['src/recon/match.ts','+720','-90'],['src/recon/diff.ts','+410','-60'],['test/recon.match.test.ts','+430','-60']],
+    acceptance:{items:[['账单解析口径','ok'],['逐笔勾兑 ≥99%','ok'],['差异可追溯回放','ok'],['时区边界用例','ok'],['差异回放 UI','wait']]}}),
+  JOB({id:'j3',kind:'dev',title:'结算台差异看板',repo:'aurora-web',branch:'feat-settle-diff',status:'running',progress:35,elapsed:'06:10',phase:'P1·R1',tokens:'21K',cost:4.8,
+    logs:[['14:39','tool','claude','读结算台组件 · 6 个文件'],['14:43','agent','','差异看板骨架：筛选 + 分页 + 空态'],['14:47','tool','bash','pnpm test settle-web · 24 通过'],['14:50','event','','直做任务无工作流节点；证据走会话与 diff']],
+    msgs:[['user','差异看板先出骨架，能看列表就行。'],['asst','骨架已完成，正在接差异详情抽屉。']],
+    files:[['src/pages/settle/DiffBoard.tsx','+240','-8'],['src/pages/settle/filters.ts','+86','-0']]}),
+  JOB({id:'j4',kind:'wfdev',title:'对账修复工作流开发',repo:'aurora-ledger',branch:'feat-recon-fix',status:'running',progress:60,elapsed:'12:40',phase:'P1·R1',tokens:'14K',cost:1.6,
+    logs:[['14:37','tool','yaml','生成 recon-fix.yaml 草稿'],['14:40','agent','','补齐 retry / 变量引用'],['14:44','tool','validate','schema ✓ · 节点引用 ✓ · 变量 ✓'],['14:46','event','','等待试跑授权']],
+    msgs:[['user','把 recon-fix 写成工作流，别再用一次性脚本。'],['asst','YAML 已过 3 道门禁，试跑需要你点头。']],
+    files:[['workflows/recon-fix.yaml','+64','-0']],
+    gates:[['schema','ok'],['节点引用','ok'],['变量','ok'],['试跑','wait']]}),
+  JOB({id:'j5',kind:'subagent',title:'代码审查子代理',repo:'aurora-gateway',branch:'feat-alipay-channel',status:'done',progress:100,elapsed:'04:12',tokens:'8K',cost:1.2,
+    logs:[['14:40','tool','agent','fire-and-forget 派发'],['14:44','tool','grep','扫描 22 个改动文件'],['14:46','agent','','审查完成 · 2 处建议']],
+    msgs:[['asst','审查完成：回调验签建议抽公共 guard；日志里别落卡号。']]}),
+  JOB({id:'j6',kind:'external',title:'旧渠道迁移 · claude-code',repo:'aurora-ledger',branch:'feat-legacy-migrate',status:'blocked',progress:72,elapsed:'26:05',tokens:'44K',cost:2.4,
+    cmd:'claude -p "migrate legacy channel data" --output-format stream-json --headless',
+    logs:[['14:05','term','$','claude -p "migrate legacy channel data" --output-format stream-json'],['14:12','term','stdout','{"type":"assistant","text":"读取旧库 schema…"}'],['14:18','term','stderr','ERROR: duplicate key in channel_tx (order_no)'],['14:19','term','retry','backoff 2s → 第 2 次'],['14:25','term','stderr','ERROR: duplicate key in channel_tx (order_no)'],['14:26','event','','反复失败 · 带 reasons 回弹汐音 → 升级人']],
+    msgs:[['asst','外部 agent 连续两次撞唯一键，迁移口径需要你裁决：去重还是覆盖？']]}),
+  JOB({id:'j7',kind:'workflow',title:'灰度发布编排',repo:'aurora-gateway',branch:'feat-canary',status:'queued',progress:0,elapsed:'—',phase:'P2·R0',tokens:'—',cost:0,
+    nodes:['guard','canary-5','watch','full'],nodeAt:0,
+    logs:[['—','event','','排队中 · 等执行器空闲']],
+    msgs:[['asst','已入队，等支付宝渠道跑完就发灰。']]}),
+  JOB({id:'j8',kind:'external',title:'回归测试 · claude-code',repo:'aurora-web',branch:'feat-settle-diff',status:'running',progress:22,elapsed:'02:41',tokens:'6K',cost:0.4,
+    cmd:'claude -p "run regression suite" --output-format stream-json --headless',
+    logs:[['14:49','term','$','claude -p "run regression suite" --output-format stream-json'],['14:51','term','stdout','{"type":"tool_use","name":"Bash","cmd":"pnpm test:e2e"}'],['14:52','event','','外部 agent 心跳正常']],
+    msgs:[['asst','回归套件在外部 agent 上跑，结果回来我贴到现场。']]}),
+];
+
+/* ── 待办（等你的） ── */
+let WAIT=[
+  {id:'w1',jobId:'j2',kind:'review',title:'对账核心引擎 · round 2 待验收',detail:'9 commits · +1560 −210 · 22 文件，验收方案 4/5 通过'},
+  {id:'w2',jobId:'j6',kind:'blocked',title:'外部 agent 反复失败 · 需裁决',detail:'channel_tx 唯一键冲突 · 去重还是覆盖？'},
+];
+
+/* ── 通讯频道（会话/任务的 transcript 在这里看，不占指挥台） ── */
+const CHANNELS=[
+  {id:'c0',name:'主指挥 · 汐音',kind:'cabin',last:'收到，我在编队里盯着。',at:'14:53',unread:0},
+  {id:'c1',name:'feat-alipay-channel · 执行者',kind:'task',jobId:'j1',last:'幂等骨架完成，正在补验签。',at:'14:52',unread:1},
+  {id:'c2',name:'feat-recon-core · 执行者',kind:'task',jobId:'j2',last:'round 2 完成，请求验收。',at:'14:34',unread:2},
+  {id:'c3',name:'旧渠道迁移 · claude-code',kind:'external',jobId:'j6',last:'ERROR: duplicate key …',at:'14:26',unread:1},
+  {id:'c4',name:'M1 渠道接入 · 归档',kind:'session',last:'归档完成，沉淀 3 条 wiki。',at:'2h',unread:0},
+];
+
+/* ── 通讯流（指挥台） ── */
+const COMMS=[
+  {who:'汐音',cls:'asst',text:'舰长，编队 8 条：4 条在跑，2 条等你拍板，1 条排队。任务细节都在右栏「现场」，这里只留调度和回执。'},
+  {who:'',cls:'receipt',text:'<b>14:02</b> 派发「接入支付宝渠道」→ feat-alipay-channel · task-doer'},
+  {who:'',cls:'receipt',text:'<b>14:18</b> 对账核心引擎 round 2 完成 → 已置入「等你」'},
+  {who:'汐音',cls:'asst',text:'旧渠道迁移的外部 agent 连续两次撞唯一键，我把它按住了，等你裁决口径；要我先派个子代理去清点重复数据吗？'},
+];
+
+const S={
+  filter:'all', sel:{type:'job',id:'j1'}, tab:'run',
+  jobs:JOBS, wait:WAIT, channels:CHANNELS, comms:[...COMMS],
+  overlay:null, sheetKind:'dev', mood:'idle', focusId:'j1', sound:true, boot:true,
+};
+
+/* ── 派生 ── */
+const jobById=id=>S.jobs.find(j=>j.id===id);
+const runningCount=()=>S.jobs.filter(j=>j.status==='running').length;
+const waitFor=id=>S.wait.find(w=>w.jobId===id);
+function moodFor(){
+  if(S.mood!=='idle')return S.mood;
+  if(S.wait.length)return 'alert';
+  if(runningCount())return 'working';
+  return 'idle';
+}
+const MOOD_IMG={idle:'crew/xiyin-idle.png',working:'crew/xiyin-working.png',alert:'crew/xiyin-alert.png',thinking:'crew/xiyin-thinking.png',happy:'crew/xiyin-happy.png',sleep:'crew/xiyin-sleep.png'};
+const MOOD_LABEL={idle:'待命',working:'指挥中',alert:'有事',thinking:'思考',happy:'愉快',sleep:'休眠'};
+
+/* ── 渲染：头部/遥测 ── */
+function renderStats(){
+  const running=runningCount();
+  $('#stFleet').textContent=S.jobs.length;
+  $('#stRun').textContent=running;
+  $('#stWait').textContent=S.wait.length;
+  $('#tpFleet').textContent=S.jobs.length;
+  $('#tpRun').textContent=running;
+  $('#tpWait').textContent=S.wait.length;
+  const fj=jobById(S.focusId);
+  $('#tpFocus').textContent=fj?fj.title.slice(0,8):'—';
+  $('#dockWait').textContent=S.wait.length;
+  $('#dockWait').style.display=S.wait.length?'grid':'none';
+  const m=moodFor();
+  $('#xyImg').src=MOOD_IMG[m]||MOOD_IMG.idle;
+  $('#xyMood').textContent=MOOD_LABEL[m]||'待命';
+}
+
+/* ── 渲染：左栏 ── */
+const FILTERS=[['all','全部'],['dev','开发'],['workflow','工作流'],['wfdev','流开发'],['subagent','子代理'],['external','外部']];
+function renderFilters(){
+  $('#filters').innerHTML=FILTERS.map(([k,l])=>`<button class="fchip ${S.filter===k?'on':''}" data-action="filter" data-k="${k}">${l}<span class="dim" style="font-size:8px;margin-left:3px">${k==='all'?S.jobs.length:S.jobs.filter(j=>j.kind===k).length}</span></button>`).join('');
+}
+function renderJobs(){
+  const list=S.jobs.filter(j=>S.filter==='all'||j.kind===S.filter);
+  const selJob=S.sel.type==='job'?S.sel.id:null;
+  $('#jobs').innerHTML=list.map(j=>{
+    const k=KIND[j.kind];
+    const st=j.status==='running'?'<span class="st run">运行</span>':j.status==='queued'?'<span class="st queued">排队</span>':j.status==='review'?'<span class="st review">验收</span>':j.status==='blocked'?'<span class="st blocked">受阻</span>':'<span class="st done">完成</span>';
+    return `<button class="job ${selJob===j.id?'sel':''} ${S.focusId===j.id?'focus':''}" style="--accent:${k.color}" data-action="sel-job" data-id="${j.id}">
+      <span class="kico">${k.short}</span>
+      <span class="t">${esc(j.title)}</span>
+      <span class="s">${esc(j.repo)} · ${esc(j.branch)}</span>
+      <span class="bar"><i style="width:${j.progress}%"></i></span>
+      <span class="m">${j.elapsed}${st}</span>
+    </button>`;
+  }).join('')||'<div class="empty">没有这类作业</div>';
+}
+function renderChannels(){
+  $('#channels').innerHTML=S.channels.map(c=>`<button class="chan ${S.sel.type==='channel'&&S.sel.id===c.id?'sel':''}" data-action="sel-channel" data-id="${c.id}">
+    <span class="ci">${c.kind==='external'?'⌁':c.kind==='task'?'⌂':'◇'}</span>
+    <span class="cn">${esc(c.name)}</span>
+    <span class="ck">${c.at}</span>
+    ${c.unread?`<span class="badge">${c.unread}</span>`:''}
+  </button>`).join('');
+}
+
+/* ── 渲染：汐音待办 orbit ── */
+function renderOrbit(){
+  $('#orbit').innerHTML='<span class="olabel">待你</span>'+(S.wait.length?S.wait.map(w=>`<button class="orb ${w.kind==='blocked'?'blocked':''}" data-action="sel-job" data-id="${w.jobId}">${w.kind==='review'?'☑':'⚠'} ${esc(w.title)}</button>`).join(''):'<span class="dim" style="font-size:10px">没有等你的事 · 汐音在推进</span>');
+}
+
+/* ── 渲染：通讯流 ── */
+function renderComms(){
+  const box=$('#comms');
+  box.innerHTML=S.comms.map(m=>m.cls==='card'
+    ? `<div class="card"><div class="ch"><span class="tag">${m.tag||'待办'}</span>${esc(m.title)}</div><div class="cs">${esc(m.text)}</div><div class="acts">${(m.acts||[]).map(a=>`<button class="${a.pri?'pri':''}" data-action="wait-act" data-wait="${m.waitId}" data-act="${a.id}">${a.label}</button>`).join('')}</div></div>`
+    : `<div class="msg ${m.cls}">${m.who?`<span class="who">${esc(m.who)}</span>`:''}${m.cls==='receipt'?m.text:esc(m.text)}</div>`).join('');
+  box.scrollTop=box.scrollHeight;
+}
+function say(whoCls,text,who){S.comms.push({who,cls:whoCls,text});renderComms();}
+function receipt(text){S.comms.push({cls:'receipt',text});renderComms();}
+
+/* ── 渲染：右栏现场 ── */
+function renderInspector(){
+  const box=$('#inspector');
+  if(S.sel.type==='channel'){renderChannelInspector(box);return;}
+  const j=jobById(S.sel.id)||S.jobs[0];
+  if(!j){box.innerHTML='<div class="empty">编队是空的</div>';return;}
+  const k=KIND[j.kind];
+  const tabs=[['run','运行'],['tx','会话'],['diff','变更'],['acc','验收']];
+  const st=j.status==='running'?'运行中':j.status==='queued'?'排队中':j.status==='review'?'待验收':j.status==='blocked'?'受阻':j.status==='done'?'已完成':'待执行';
+  box.innerHTML=`
+    <div class="ins-head">
+      <div class="ins-title"><span class="kk" style="color:${k.color}">${k.label}</span><b>${esc(j.title)}</b></div>
+      <div class="ins-sub">${esc(j.repo)} · ${esc(j.branch)} · ${st}${j.phase?' · '+esc(j.phase):''} · ⏱ ${j.elapsed}${j.cost?' · ¥'+j.cost:''}</div>
+      <div class="ins-act">
+        <button data-action="focus-job" data-id="${j.id}">${S.focusId===j.id?'◎ 已聚焦':'◎ 聚焦'}</button>
+        <button data-action="order-about" data-id="${j.id}">在指挥台说</button>
+        <button data-action="dispatch-same" data-kind="${j.kind}">＋ 派发同类</button>
+      </div>
+    </div>
+    <div class="tabs">${tabs.map(([id,label])=>`<button class="tab ${S.tab===id?'on':''}" data-action="tab" data-tab="${id}">${label}${id==='acc'&&waitFor(j.id)?'<span class="n">!</span>':''}</button>`).join('')}</div>
+    <div class="ins-body">${tabBody(j,S.tab)}</div>`;
+}
+function tabBody(j,tab){
+  if(tab==='tx')return txBody(j);
+  if(tab==='diff')return diffBody(j);
+  if(tab==='acc')return accBody(j);
+  return runBody(j);
+}
+function runBody(j){
+  if(j.kind==='workflow'){
+    const nodes=j.nodes||['spec','code','test','commit'];
+    const at=j.nodeAt!=null?j.nodeAt:(Math.round(j.progress/100*nodes.length));
+    const dag=nodes.map((n,i)=>`<span class="node ${i<at?'done':i===at&&j.status==='running'?'run':''}">${i<at?'✓ ':i===at&&j.status==='running'?'◠ ':''}${esc(n)}</span>${i<nodes.length-1?'<span class="arrow">→</span>':''}`).join('');
+    return `<div class="sec">DAG<span class="cap">${nodes.length} 节点 · execution_id 同源</span></div><div class="dag">${dag}</div>${logSec(j)}`;
+  }
+  if(j.kind==='wfdev'){
+    const yaml=['name: recon-fix','on:','  task: { kind: dev, repo: aurora-ledger }','nodes:','  load:    { run: git.diff, with: { base: mainline } }','  lint:    { run: bash, cmd: pnpm lint }','  dry-run: { run: workflow.dryRun, needs: [load, lint] }','  publish: { run: workflow.publish, needs: [dry-run] }'].join('\n');
+    return `<div class="sec">YAML 草稿<span class="cap">workflow-author 边写边校验</span></div><pre class="yaml">${esc(yaml)}</pre><div class="sec">门禁<span class="cap">3/4</span></div><div class="gates">${(j.gates||[]).map(([n,s])=>`<span class="gate ${s==='ok'?'ok':''}">${s==='ok'?'✓':'◇'} ${esc(n)}</span>`).join('')}</div>${logSec(j)}`;
+  }
+  if(j.kind==='external'){
+    return `<div class="sec">外部 agent<span class="cap">headless · stdio</span></div><div class="mono" style="font-size:9px;color:var(--dim);border:1px solid var(--bd);border-radius:7px;padding:6px 8px;background:rgba(0,0,0,.2);margin-bottom:8px;word-break:break-all">${esc(j.cmd||'')}</div>${logSec(j,true)}<div class="ins-note">外部 agent 也进编队：派发/回执/失败回弹都走同一套调度；现场看 stdout/stderr 与分支 diff。</div>`;
+  }
+  if(j.kind==='subagent'){
+    return `<div class="sec">一次性子代理<span class="cap">token 单列 · 不与 chat 盲加</span></div>${logSec(j)}<div class="ins-note">子代理是作战作业的一种：派发即走，结果回报汐音。</div>`;
+  }
+  // dev
+  const stages=['读需求','改代码','自测','交付'];
+  const at=j.status==='done'?4:Math.min(3,Math.max(1,Math.round(j.progress/40)));
+  const line=stages.map((s,i)=>`<span class="node ${i<at?'done':i===at?'run':''}">${i<at?'✓ ':i===at?'◠ ':''}${s}</span>${i<stages.length-1?'<span class="arrow">→</span>':''}`).join('');
+  return `<div class="sec">执行阶段<span class="cap">直做开发 · 证据在会话与 diff</span></div><div class="dag">${line}</div>${logSec(j)}`;
+}
+function logSec(j,term){
+  const tagName=t=>({node:'节点',tool:'工具',agent:'汐音',event:'事件',term:'外部'}[t]||t);
+  const lines=(j.logs||[]).map(([at,tag,name,text])=>`<div class="log"><span class="t">${esc(at)}</span><span class="tag ${tag}">${tagName(tag)}</span><span class="x">${name?`<span class="dim">${esc(name)}</span> `:''}${esc(text)}</span></div>`).join('');
+  return `<div class="sec">${term?'stdout / stderr':'实时流'}<span class="cap">DAG 与日志同源</span></div><div class="logs">${lines||'<div class="dim" style="font-size:10px">还没有输出</div>'}</div>`;
+}
+function txBody(j){
+  return `<div class="sec">会话<span class="cap">只读 · 想说话回指挥台</span></div><div class="tx">${(j.msgs||[]).map(([role,text])=>`<div class="m ${role}">${role==='tool'?'▸ ':''}<span class="who">${role==='user'?'舰长':role==='tool'?'工具':'汐音 / 执行者'}</span>${esc(text)}</div>`).join('')}</div><div class="ins-note">这里是该作业的通讯频道；指挥台始终是汐音，切作业不会把中栏换成任务聊天。</div>`;
+}
+function diffBody(j){
+  const tot=(j.files||[]).reduce((a,[,add,del])=>({a:a.a+(+add.replace('+','')||0),d:a.d+(+del.replace('-','')||0)}),{a:0,d:0});
+  return `<div class="ledger"><div class="l"><b>${j.files?j.files.length:0}</b><span>文件</span></div><div class="l"><b class="green">+${tot.a}</b><span>新增</span></div><div class="l"><b class="red">−${tot.d}</b><span>删除</span></div></div><div class="sec">改动文件<span class="cap">${esc(j.repo)} · ${esc(j.branch)}</span></div><div class="files">${(j.files||[]).map(([fn,a,d])=>`<div class="file"><span class="fn">${esc(fn)}</span><span class="add">${esc(a)}</span><span class="del">${esc(d)}</span></div>`).join('')||'<div class="dim" style="font-size:10px">还没有改动</div>'}</div>`;
+}
+function accBody(j){
+  const w=waitFor(j.id);
+  const items=(j.acceptance&&j.acceptance.items)||[['构建通过','ok'],['自测通过','ok'],['变更已核对','wait']];
+  return `<div class="sec">验收方案<span class="cap">${tempLabel(j)}</span></div><div class="checks">${items.map(([n,s])=>`<div class="check ${s==='ok'?'ok':''}"><span class="ci">${s==='ok'?'✓':'◇'}</span><span class="cn">${esc(n)}</span><span class="dim" style="font-size:8.5px">${s==='ok'?'已验':'待确认'}</span></div>`).join('')}</div>
+    ${w?`<div class="sec">处置<span class="cap">回执会进通讯流</span></div><div style="display:flex;gap:6px;flex-wrap:wrap"><button class="btn pri" data-action="wait-act" data-wait="${w.id}" data-act="pass">验收通过</button><button class="btn" data-action="wait-act" data-wait="${w.id}" data-act="fail">打回修复</button><button class="btn" data-action="order-about" data-id="${j.id}">在指挥台说</button></div>`:'<div class="ins-note">这条作业目前不在验收队列。</div>'}`;
+}
+function tempLabel(j){return j.status==='review'?'等你签字':j.status==='blocked'?'受阻 · 需裁决':'进行中';}
+function renderChannelInspector(box){
+  const c=S.channels.find(x=>x.id===S.sel.id);
+  const j=c&&c.jobId?jobById(c.jobId):null;
+  box.innerHTML=`<div class="ins-head"><div class="ins-title"><span class="kk" style="color:var(--cyan)">频道</span><b>${esc(c?c.name:'')}</b></div><div class="ins-sub">只读通讯 · 指挥台仍是汐音</div></div><div class="ins-body">${j?txBody(j):`<div class="sec">会话</div><div class="tx"><div class="m"><span class="who">汐音</span>这是主指挥频道；任务会话在编队里各自一条。</div></div>`}</div>`;
+}
+
+/* ── 派发 sheet ── */
+function renderSheet(){
+  $('#sheetKinds').innerHTML=Object.entries(KIND).map(([k,v])=>`<button class="kind ${S.sheetKind===k?'on':''}" data-action="sheet-kind" data-k="${k}">${v.label}</button>`).join('');
+  $('#sheetCmdRow').style.display=S.sheetKind==='external'?'flex':'none';
+  const note={dev:'开发任务由 task-doer 直接开工；现场=阶段线+会话+diff。',workflow:'执行已有工作流；现场=DAG+实时日志。',wfdev:'workflow-author 写 YAML；现场=草稿+门禁+试跑。',subagent:'一次性子代理，派发即走；token 单列。',external:'外部 coding agent（如 claude code headless），同样进编队、同样有回执与现场。'}[S.sheetKind];
+  $('#sheetNote').textContent=note;
+}
+
+/* ── overlays ── */
+function openOverlay(name){
+  S.overlay=name;
+  $('#ov').classList.add('open');
+  ['ovBoard','ovChanges','ovAccept','ovUsage','ovDebug','ovTune','ovSheet'].forEach(id=>$('#'+id).style.display='none');
+  const map={board:'ovBoard',changes:'ovChanges',accept:'ovAccept',usage:'ovUsage',debug:'ovDebug',tune:'ovTune',sheet:'ovSheet'};
+  $('#'+map[name]).style.display='flex';
+  if(name==='board')renderBoard();
+  if(name==='changes')renderChanges();
+  if(name==='accept')renderAccept();
+  if(name==='usage')renderUsage();
+  if(name==='debug')renderDebug();
+  if(name==='tune')renderTune();
+  if(name==='sheet')renderSheet();
+}
+function closeOverlay(){S.overlay=null;$('#ov').classList.remove('open');}
+function renderBoard(){
+  $('#ovBoardBody').innerHTML=`<div class="board">${S.jobs.map(j=>{
+    const k=KIND[j.kind];
+    const st=j.status==='running'?'运行':j.status==='queued'?'排队':j.status==='review'?'待验收':j.status==='blocked'?'受阻':'完成';
+    return `<button class="bcard" style="--accent:${k.color}" data-action="sel-job" data-id="${j.id}">
+      <span class="bk">${k.label}</span><span class="bt">${esc(j.title)}</span><span class="bs">${esc(j.repo)} · ${esc(j.branch)}</span>
+      <span class="bbar"><i style="width:${j.progress}%"></i></span>
+      <span class="bm"><span>${j.elapsed} · ¥${j.cost||0}</span><span>${st}</span></span>
+    </button>`;}).join('')}</div>
+    <div class="ins-note">作战桌是并行作业的总账：点一张卡进右栏现场，指挥台不切走。</div>`;
+}
+function renderChanges(){
+  const rows=S.jobs.filter(j=>(j.files||[]).length).map(j=>{
+    const tot=(j.files||[]).reduce((a,[,x,y])=>({a:a.a+(+x.replace('+','')||0),d:a.d+(+y.replace('-','')||0)}),{a:0,d:0});
+    return `<div class="file" style="padding:7px 9px;font-family:var(--font-ui)"><span class="fn" style="font-weight:700">${esc(j.title)}</span><span class="dim" style="font-size:9px">${esc(j.repo)}</span><span class="add">+${tot.a}</span><span class="del">−${tot.d}</span><button class="btn" style="height:22px;font-size:9px" data-action="sel-job" data-id="${j.id}">看现场</button></div>`;
+  }).join('');
+  $('#ovChangesBody').innerHTML=`<div class="files">${rows}</div><div class="ins-note">跨仓聚合 · 锚定 start..end commit；逐任务下钻在右栏「变更」页。</div>`;
+}
+function renderAccept(){
+  $('#ovAcceptBody').innerHTML=S.wait.length?S.wait.map(w=>{
+    const j=jobById(w.jobId);
+    return `<div class="file" style="padding:8px 10px;font-family:var(--font-ui);align-items:flex-start;gap:8px"><div style="flex:1;min-width:0"><div style="font-size:11.5px;font-weight:800;color:var(--ink)">${esc(w.title)}</div><div class="dim" style="font-size:9.5px;margin-top:2px">${esc(w.detail)}</div></div><div style="display:flex;gap:5px"><button class="btn" data-action="sel-job" data-id="${w.jobId}">现场</button><button class="btn pri" data-action="wait-act" data-wait="${w.id}" data-act="${w.kind==='review'?'pass':'fail'}">${w.kind==='review'?'通过':'打回'}</button></div></div>`;
+  }).join(''):'<div class="empty">没有等你的事 · 汐音在推进</div>';
+}
+function renderUsage(){
+  const total=S.jobs.reduce((n,j)=>n+(j.cost||0),0);
+  const rows=S.jobs.map(j=>`<div class="usage-row"><span class="un">${esc(j.title)}</span><span class="ub"><i style="width:${Math.min(100,(j.cost||0)/12.4*100)}%"></i></span><b>¥${(j.cost||0).toFixed(1)}</b></div>`).join('');
+  $('#ovUsageBody').innerHTML=`<div class="ledger" style="grid-template-columns:repeat(3,1fr)"><div class="l"><b>¥${total.toFixed(1)}</b><span>编队累计</span></div><div class="l"><b>${S.jobs.length}</b><span>作业</span></div><div class="l"><b>${runningCount()}</b><span>运行中</span></div></div><div class="sec">按作业</div>${rows}<div class="ins-note">chat 行 execution_id IS NULL；子代理 token 单列防双算。</div>`;
+}
+function renderDebug(){
+  $('#ovDebugBody').innerHTML=`<div class="logs"><div class="log"><span class="t">14:52</span><span class="tag tool">工具</span><span class="x">sendQuery · model=sonnet-4 · plugins=task,workflow</span></div><div class="log"><span class="t">14:52</span><span class="tag node">节点</span><span class="x">context_usage 80.1K / 1M · 8.0%</span></div><div class="log"><span class="t">14:53</span><span class="tag agent">汐音</span><span class="x">turn reminder: 编队 7 · 等你 2 · 外部 agent 受阻</span></div></div><div class="ins-note">调试是每轮 SDK 真相；按作业查看在右栏「会话」与日志。</div>`;
+}
+function renderTune(){
+  $('#ovTuneBody').innerHTML=[['光效','开'],['粒子','中'],['悬浮','玻璃'],['音效','开']].map(([k,v])=>`<div class="usage-row"><span class="un">${k}</span><span class="ub"><i style="width:${v==='开'?80:v==='中'?50:30}%"></i></span><b>${v}</b></div>`).join('')+'<div class="ins-note">原型：调校只改视觉参数，不影响调度。</div>';
+}
+
+/* ── 动作 ── */
+function selectJob(id){
+  S.sel={type:'job',id};
+  S.tab='run';
+  S.channels.forEach(c=>{if(c.jobId===id)c.unread=0;});
+  render();
+}
+function acceptWait(wid,act){
+  const w=S.wait.find(x=>x.id===wid);
+  if(!w)return;
+  const j=jobById(w.jobId);
+  S.wait=S.wait.filter(x=>x.id!==wid);
+  if(j){
+    if(act==='pass'){j.status='done';j.progress=100;receipt(`<b>${now()}</b> ${esc(j.title)} · 验收通过 → done`);say('asst','收到，我把「'+j.title+'」归档并让执行者收尾；旧渠道那件仍等你裁决。','汐音');}
+    else {j.status='running';j.progress=30;receipt(`<b>${now()}</b> ${esc(j.title)} · 打回修复（round ${2}→3）`);say('asst','已打回：原因我写进任务线程，执行者按 round 3 重跑。','汐音');}
+    S.mood=act==='pass'?'happy':'thinking';
+    setTimeout(()=>{S.mood='idle';renderStats();},1400);
+  }
+  S.comms=S.comms.filter(m=>m.cls!=='card'||m.waitId!==wid);
+  render();
+  toast(act==='pass'?'已通过 · 回执已发':'已打回 · 执行者重跑');
+}
+function dispatch(){
+  const k=S.sheetKind;
+  const title=($('#sheetTitle').value||'').trim()||({
+    dev:'新的开发任务',workflow:'执行已有工作流',wfdev:'新的工作流开发',subagent:'新的子代理',external:'外部 agent 作业'
+  }[k]);
+  const repo=$('#sheetRepo').value;
+  const j=JOB({id:'j'+(++seq),kind:k,title,repo,branch:'feat-'+String(seq),status:'running',progress:4,elapsed:'00:05',phase:'P1·R1',tokens:'0K',cost:0,
+    cmd:k==='external'?($('#sheetCmd').value||'claude -p "…" --output-format stream-json'):undefined,
+    logs:[['—','event','','汐音派发 · 作业建立，执行器接单']],
+    msgs:[['user',title],['asst','已接单，现场在右栏；有动静我回报。']],
+    nodes:k==='workflow'?['spec','code','test','commit']:undefined,nodeAt:k==='workflow'?0:undefined,
+    gates:k==='wfdev'?[['schema','ok'],['节点引用','wait'],['变量','wait'],['试跑','wait']]:undefined,
+  });
+  S.jobs=[j,...S.jobs];
+  S.mood='thinking';
+  closeOverlay();
+  S.sel={type:'job',id:j.id};S.tab='run';
+  receipt(`<b>${now()}</b> 派发「${esc(title)}」→ ${KIND[k].label} · ${esc(repo)}`);
+  say('asst','作业已进编队「'+title+'」；我会盯着它，需要你时再来找你。','汐音');
+  render();
+  setTimeout(()=>{S.mood='idle';renderStats();},1200);
+  setTimeout(()=>{j.progress=18;j.logs.push(['—','tool','','执行器接单 · 开始工作']);render();},1600);
+  toast('已派发 · 编队已更新');
+}
+function focusJob(id){
+  S.focusId=id;
+  const j=jobById(id);
+  receipt(`<b>${now()}</b> 聚焦「${esc(j?j.title:'')}」· human-wake 可抢占`);
+  say('asst','已把「'+(j?j.title:'')+'」设为主目标，其余作业排队推进；需要打断我就说话。','汐音');
+  render();
+}
+function orderAbout(id){
+  const j=jobById(id);
+  const inp=$('#orderInput');
+  inp.value='关于「'+(j?j.title:'')+'」：';
+  inp.focus();
+  toast('已在指令条预填 · 继续下令');
+}
+function sendOrder(){
+  const inp=$('#orderInput');
+  const text=(inp.value||'').trim();
+  if(!text)return;
+  inp.value='';
+  S.comms.push({who:'舰长',cls:'user',text});
+  if(/派发|新建|开工/.test(text)){renderComms();openOverlay('sheet');return;}
+  const target=S.jobs.find(j=>text.includes(j.title.slice(0,4)));
+  if(target){selectJob(target.id);say('asst','已把「'+target.title+'」的现场放到右栏；指挥台不动。','汐音');return;}
+  say('asst','收到。我把它记进编队，按现在的重心排；有结论我再回报。','汐音');
+  renderComms();
+}
+
+/* ── 渲染总入口 ── */
+function render(){
+  renderStats();renderFilters();renderJobs();renderChannels();renderOrbit();renderComms();renderInspector();
+  if(S.overlay)openOverlay(S.overlay);
+}
+let toastTimer=null;
+function toast(msg){
+  const t=$('#toast');t.textContent=msg;t.classList.add('show');
+  clearTimeout(toastTimer);toastTimer=setTimeout(()=>t.classList.remove('show'),1800);
+}
+
+/* ── 事件 ── */
+$('#portrait').addEventListener('click',e=>{
+  if(e.target.closest('.radial'))return;
+  $('#radial').classList.toggle('open');
+});
+document.addEventListener('click',e=>{
+  const el=e.target.closest('[data-action]');
+  if(!el)return;
+  const a=el.dataset.action;
+  switch(a){
+    case 'filter': S.filter=el.dataset.k;renderFilters();renderJobs();break;
+    case 'sel-job': closeOverlay();selectJob(el.dataset.id);break;
+    case 'sel-channel': S.sel={type:'channel',id:el.dataset.id};S.channels.forEach(c=>{if(c.id===el.dataset.id)c.unread=0;});render();break;
+    case 'tab': S.tab=el.dataset.tab;renderInspector();break;
+    case 'focus-job': focusJob(el.dataset.id);break;
+    case 'order-about': orderAbout(el.dataset.id);break;
+    case 'wait-act': acceptWait(el.dataset.wait,el.dataset.act);break;
+    case 'send-order': sendOrder();break;
+    case 'sheet': openOverlay('sheet');break;
+    case 'quick-dispatch': S.sheetKind=el.dataset.kind;openOverlay('sheet');break;
+    case 'dispatch-same': S.sheetKind=el.dataset.kind;openOverlay('sheet');break;
+    case 'sheet-kind': S.sheetKind=el.dataset.k;renderSheet();break;
+    case 'dispatch': dispatch();break;
+    case 'overlay': openOverlay(el.dataset.ov);break;
+    case 'ov-close': closeOverlay();break;
+    case 'focus-wait': if(S.wait[0]){selectJob(S.wait[0].jobId);}else toast('没有等你的事');break;
+    case 'toggle-sound': S.sound=!S.sound;toast(S.sound?'舰内音效 · 开':'舰内音效 · 关');break;
+    default: break;
+  }
+});
+$('#orderInput').addEventListener('keydown',e=>{if(e.key==='Enter'){e.preventDefault();sendOrder();}});
+$('#ov').addEventListener('click',e=>{if(e.target===$('#ov'))closeOverlay();});
+document.addEventListener('keydown',e=>{
+  if(e.key==='Escape'){if($('#radial').classList.contains('open'))$('#radial').classList.remove('open');else closeOverlay();}
+  if(e.key==='F3'){e.preventDefault();openOverlay('board');}
+});
+
+/* ── 启动：把两条待办做成通讯卡 ── */
+S.comms.push({
+  cls:'card',waitId:'w2',tag:'受阻',title:'外部 agent 反复失败 · 需裁决',
+  text:'旧渠道迁移撞唯一键（order_no）两次：去重跳过，还是覆盖重建？',
+  acts:[{id:'fail',label:'打回去重做',pri:false},{id:'pass',label:'按去重继续',pri:true}],
+});
+S.comms.push({cls:'card',waitId:'w1',tag:'待验收',title:'对账核心引擎 · round 2',
+  text:'9 commits · +1560 −210 · 验收方案 4/5 通过；差异回放 UI 待你确认。',
+  acts:[{id:'fail',label:'打回修复'},{id:'pass',label:'验收通过',pri:true}]});
+render();
+setTimeout(()=>{S.mood='working';renderStats();},900);
+</script>
+</body>
+</html>
