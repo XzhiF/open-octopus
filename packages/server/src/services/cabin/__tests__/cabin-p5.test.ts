@@ -150,6 +150,44 @@ describe("C11 活动 bump（touch / comm.onActivity）", () => {
   })
 })
 
+describe("C11 打盹由活动驱动（互动即醒）", () => {
+  it("activity：dormant → active，并刷新 last_active_at", () => {
+    svc.dormant("c1")
+    cabinDAO.updateFields("c1", 1, { last_active_at: "2020-01-01T00:00:00.000Z" }, NOW)
+    const row = svc.activity("c1")
+    expect(row.status).toBe("active")
+    expect(Date.parse(row.last_active_at!)).toBeGreaterThan(Date.parse("2020-01-01T00:00:00.000Z"))
+  })
+  it("activity：active → touch（聊天不再被判成打盹）", () => {
+    cabinDAO.updateFields("c1", 1, { last_active_at: "2020-01-01T00:00:00.000Z" }, NOW)
+    expect(svc.activity("c1").status).toBe("active")
+    expect(svc.sweepDormant(Date.now(), 30 * MIN)).toEqual([])
+  })
+  it("晚到的旧心跳不会叫醒刚打盹的舱", () => {
+    svc.dormant("c1")
+    const sleptAt = Date.parse(cabinDAO.findById("c1")!.updated_at)
+    expect(svc.activity("c1", sleptAt - 1000).status).toBe("dormant")
+    expect(svc.activity("c1", sleptAt + 1000).status).toBe("active")
+  })
+  it("statusHook：打盹 / 叫醒都广播", () => {
+    const seen: Array<[string, string]> = []
+    svc.setStatusHook((id, status) => seen.push([id, status]))
+    svc.dormant("c1")
+    svc.activity("c1")
+    expect(seen).toEqual([["c1", "dormant"], ["c1", "active"]])
+  })
+  it("排队中的舱不打盹（queued 守卫）", () => {
+    insertTask("t1", "ready")
+    insertExecution("e1", "t1", "queued")
+    expect(svc.sweepDormant(Date.parse(NOW) + 60 * MIN, 30 * MIN)).toEqual([])
+  })
+  it("wake 幂等：活动心跳先一步叫醒后再点「叫醒」不冲突", () => {
+    svc.dormant("c1")
+    svc.activity("c1")
+    expect(svc.wake("c1").status).toBe("active")
+  })
+})
+
 describe("G3 封存沉淀 hook + reopen", () => {
   it("archive 触发 archiveHook（fire-and-forget）+ 软封存不级联", () => {
     const hook = vi.fn().mockResolvedValue(undefined)

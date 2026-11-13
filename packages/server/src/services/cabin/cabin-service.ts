@@ -136,12 +136,21 @@ export class CabinService {
   private infra: CabinInfra | null = null
   private git = new WorkspaceGit()
   private archiveHook: ((cabinId: string) => Promise<void>) | null = null
+  /** status 变更广播（组合根接 SSE）：自动打盹/活动唤醒都要让前端即时换态。 */
+  private statusHook: ((cabinId: string, status: CabinStatus) => void) | null = null
 
   constructor(private cabin: CabinDAO) {}
 
   bindInfra(infra: CabinInfra): void { this.infra = infra }
   /** P5 wires cabin-level sediment (G3) here; archive stays soft until then. */
   setArchiveHook(hook: (cabinId: string) => Promise<void>): void { this.archiveHook = hook }
+  setStatusHook(hook: (cabinId: string, status: CabinStatus) => void): void { this.statusHook = hook }
+
+  /** 唯一的状态写口：落库 + 广播（手动/自动/唤醒全部走这里）。 */
+  private setStatus(id: string, status: CabinStatus): void {
+    this.cabin.updateStatus(id, status, now())
+    this.statusHook?.(id, status)
+  }
 
   private mustGet(id: string): CabinRow {
     const row = this.cabin.findById(id)
@@ -243,7 +252,7 @@ export class CabinService {
   private transition(id: string, from: CabinStatus[], to: CabinStatus): CabinRow {
     const row = this.mustGet(id)
     if (!from.includes(row.status)) throw new CabinStatusConflictError(id, row.status, to)
-    this.cabin.updateStatus(id, to, now())
+    this.setStatus(id, to)
     return this.mustGet(id)
   }
 
@@ -259,11 +268,37 @@ export class CabinService {
     return row
   }
 
-  /** dormant -> active: worktree self-heal + fire-and-forget mainline refresh. */
+  /** dormant -> active: worktree self-heal + fire-and-forget mainline refresh.
+   *  已醒 → 幂等返回（活动心跳可能比「叫醒」按钮先一步把舱叫醒）。 */
   wake(id: string): CabinRow {
-    const row = this.transition(id, ["dormant"], "active")
-    this.cabin.updateFields(id, row.version, { last_active_at: now() }, now())
+    const row = this.mustGet(id)
+    if (row.status === "active") return row
+    const next = this.transition(id, ["dormant"], "active")
+    this.cabin.updateFields(id, next.version, { last_active_at: now() }, now())
     this.selfHeal(id)
+    return this.mustGet(id)
+  }
+
+  /**
+   * 互动信号（C11 重做：打盹由「人有没有来」驱动，不是状态锁）。
+   *   dormant → active：静默叫醒（不跑 self-heal —— 打盹从未回收工作树，
+   *     self-heal 只留给手动 wake）。
+   *   active  → touch：刷新空闲计时，避免聊着聊着被判成打盹。
+   * 其余状态（draft/initializing/archived）不动。
+   * @param atMs 互动发生的客户端时刻：晚到的旧心跳不能把刚打盹的舱叫醒。
+   */
+  activity(id: string, atMs?: number): CabinRow {
+    const row = this.mustGet(id)
+    if (row.status === "dormant") {
+      const sleptAt = row.updated_at ? Date.parse(row.updated_at) : 0
+      if (typeof atMs === "number" && Number.isFinite(atMs) && sleptAt > atMs) return row
+      const ts = now()
+      this.setStatus(id, "active")
+      const fresh = this.mustGet(id)
+      this.cabin.updateFields(id, fresh.version, { last_active_at: ts }, ts)
+      return this.mustGet(id)
+    }
+    if (row.status === "active") this.touch(id)
     return this.mustGet(id)
   }
 
@@ -297,13 +332,13 @@ export class CabinService {
     if (view.attention.some((a) => a.awaiting === "person")) {
       throw new CabinStatusConflictError(id, "awaiting-person", "dormant")
     }
-    this.cabin.updateStatus(id, "dormant", now())
+    this.setStatus(id, "dormant")
     return this.mustGet(id)
   }
 
-  /** C11 auto threshold sweep: idle active cabins (no running / no person
-   *  attention, idle >= per-cabin threshold) -> dormant. threshold<=0 disables.
-   *  Returns the ids dormited this pass for the job outcome. */
+  /** C11 auto threshold sweep: idle active cabins (no running / no queued /
+   *  no person attention, idle >= per-cabin threshold) -> dormant.
+   *  threshold<=0 disables. Returns the ids dormited this pass for the job outcome. */
   sweepDormant(nowMs: number, defaultThresholdMs: number): string[] {
     const dormited: string[] = []
     for (const row of this.cabin.list("active")) {
@@ -313,8 +348,10 @@ export class CabinService {
       if (!last || nowMs - last < threshold) continue
       const { view } = this.getView(row.id)
       if (view.health.running > 0) continue
+      // 排队中的作业随时会被拉起：这时打盹的标签会骗人（「在睡觉」却马上开工）。
+      if (view.health.queued > 0) continue
       if (view.attention.some((a) => a.awaiting === "person")) continue
-      this.cabin.updateStatus(row.id, "dormant", now())
+      this.setStatus(row.id, "dormant")
       dormited.push(row.id)
     }
     return dormited

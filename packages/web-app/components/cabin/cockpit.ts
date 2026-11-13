@@ -27,7 +27,7 @@ export interface CockpitPrefs {
   mood: CabinMood
   sound: boolean
   autonomy: CabinAutonomy
-  /** C11 自动休眠阈值（分钟）；0 = 关闭自动休眠。 */
+  /** C11 自动打盹阈值（分钟）；0 = 关闭自动打盹。 */
   dormantMinutes: number
   /** 在场：汐音主动搭话开关。 */
   presenceOn: boolean
@@ -72,7 +72,7 @@ export const CREW: Record<MoodKey, { label: string; speech: string }> = {
   working: { label: '运行中', speech: '盯着工作流呢，放心 ✦' },
   alert: { label: '需要你', speech: '有 %n 件事等你裁决！' },
   happy: { label: '完成', speech: '搞定啦 ✦ 干得漂亮' },
-  sleep: { label: '休眠', speech: '舱在休眠 · 随时唤醒我' },
+  sleep: { label: '打盹', speech: '眯一会儿 · 叫我一声就醒' },
   idle: { label: '待命', speech: '待命 · 下达指令吧' },
   thinking: { label: '思考', speech: '让我推演一下方案…' },
   cheer: { label: '庆祝', speech: '耶！又下一城 ✦' },
@@ -85,7 +85,7 @@ export const XY_FORMS: { k: MoodKey; name: string; tag: string; desc: string }[]
   { k: 'working', name: '运行', tag: 'RUN', desc: '盯着工作流呢，放心' },
   { k: 'alert', name: '需要你', tag: 'ALERT', desc: '有事等你裁决！' },
   { k: 'happy', name: '完成', tag: 'DONE', desc: '搞定啦 ✦ 干得漂亮' },
-  { k: 'sleep', name: '休眠', tag: 'SLEEP', desc: '舱在休眠 · 随时唤醒我' },
+  { k: 'sleep', name: '打盹', tag: 'NAP', desc: '眯一会儿 · 有互动就醒' },
   { k: 'thinking', name: '思考', tag: 'THINK', desc: '正在推演方案…' },
   { k: 'cheer', name: '庆祝', tag: 'CHEER', desc: '耶！又下一城 ✦' },
   { k: 'wink', name: '俏皮', tag: 'WINK', desc: '指挥官，看这边 ✦' },
@@ -111,7 +111,7 @@ export const XY_LINES: [string, MoodKey][] = [
 
 export const MOOD_OPTIONS: [CabinMood, string][] = [
   ['auto', '自动'], ['working', '运行'], ['alert', '需要你'], ['happy', '完成'],
-  ['sleep', '休眠'], ['idle', '待命'], ['boot', '初始化'], ['thinking', '思考'],
+  ['sleep', '打盹'], ['idle', '待命'], ['boot', '初始化'], ['thinking', '思考'],
   ['cheer', '庆祝'], ['wink', '俏皮'], ['worried', '担心'],
 ]
 
@@ -216,7 +216,7 @@ export function randomPrefs(): CockpitPrefs {
 
 /* ════════════ 在场 PRESENCE（classic-v4）════════════
    「定时 + 随机时间」：每轮从档位区间抽一个随机间隔，到点再过闸门才开口。
-   事实优先（需要你 > 收件箱 > 排队 > 运行中 > 休眠），每三轮夹一条闲聊；
+   事实优先（需要你 > 收件箱 > 排队 > 运行中 > 打盹），每三轮夹一条闲聊；
    对话只出现在立绘旁（不写进 chat，不花 token）。纯函数在这里，调度在 provider。 */
 
 export interface PresenceLineData {
@@ -298,7 +298,7 @@ export function buildPresenceLine(i: PresencePickInput): PresenceLineData {
   } else if (i.running > 0) {
     fact = { text: `编队里 ${i.running} 个作业在跑，测试与 diff 我都盯着；有回流第一时间报你。`, mood: 'working', hold: 7500, open: 'missions', label: '看编队 →' }
   } else if (i.dormant) {
-    fact = { text: '舱现在是休眠的，历史和知识都留着；想开工，喊我一声就唤醒。', mood: 'sleep', hold: 8000 }
+    fact = { text: '我眯一会儿…有事在 chat 喊我，听见就醒。', mood: 'sleep', hold: 8000 }
   }
 
   const pool: PresenceLineData[] = i.hour < 6 ? [

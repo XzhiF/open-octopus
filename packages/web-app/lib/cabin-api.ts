@@ -164,6 +164,19 @@ export async function wakeCabin(id: string): Promise<CabinDetail> {
   return body.cabin
 }
 
+/** 「人来了」心跳：进舱 / 键鼠 / 点汐音都算。dormant 会被静默叫醒，active 刷新计时。
+ *  幂等；客户端按分钟级节流，不做请求风暴。`at` 是事件发生的客户端时刻 ——
+ *  服务端用它避开「刚点完打盹、旧心跳晚到又把人叫醒」的竞态。 */
+export async function pingCabinActivity(id: string, at?: number): Promise<CabinDetail> {
+  const res = await fetch(url(`/${id}/activity`), {
+    method: "POST",
+    headers: JSON_HEADERS,
+    body: JSON.stringify({ at: at ?? Date.now() }),
+  })
+  const body = await handleResponse<{ cabin: CabinDetail }>(res)
+  return body.cabin
+}
+
 export async function archiveCabin(id: string): Promise<CabinDetail> {
   const res = await fetch(url(`/${id}/archive`), { method: "POST" })
   const body = await handleResponse<{ cabin: CabinDetail }>(res)

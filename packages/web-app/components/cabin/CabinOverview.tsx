@@ -160,8 +160,8 @@ export function CabinOverview() {
         <span className="ml-auto flex shrink-0 gap-1.5">
           {cabin.status === 'draft' && lifeButton('init', '开始初始化', Play, () => initCabin(cabin.id), '初始化已启动', true)}
           {cabin.status === 'initializing' && <span className="text-[10px] text-pop-amber">门禁进行中…</span>}
-          {cabin.status === 'dormant' && lifeButton('wake', '唤醒', RefreshCw, () => wakeCabin(cabin.id), '舱已唤醒', true)}
-          {cabin.status === 'active' && lifeButton('dormant', '休眠', Pause, () => dormantCabin(cabin.id), '舱已休眠 · 任意消息可唤醒')}
+          {cabin.status === 'dormant' && lifeButton('wake', '叫醒', RefreshCw, () => wakeCabin(cabin.id), '汐音醒了', true)}
+          {cabin.status === 'active' && lifeButton('dormant', '打盹', Pause, () => dormantCabin(cabin.id), '汐音去打盹了 · 任意互动即醒')}
           {(cabin.status === 'active' || cabin.status === 'dormant') && lifeButton('archive', '封存', Archive, () => archiveCabin(cabin.id), '舱已封存（可重开）')}
           {cabin.status === 'archived' && lifeButton('reopen', '重开', Play, () => reopenCabin(cabin.id), '舱已重开', true)}
         </span>

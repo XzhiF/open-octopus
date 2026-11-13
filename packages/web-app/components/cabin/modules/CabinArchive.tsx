@@ -1,7 +1,7 @@
 'use client'
 
 // S7 归档台（原型 wbArchive docs/cabin-design/index.html 1489-1498）：只读沉淀明细
-// （arch-metrics + 知识落点 + open findings）+ 舱生命周期管理（休眠/封存/唤醒/重开）。
+// （arch-metrics + 知识落点 + open findings）+ 舱生命周期管理（打盹/封存/叫醒/重开）。
 // 主体完成 / 沉淀进行中两阶段；编译可能在 done 后继续；裁决在主 chat。findings 读
 // getCabinFindings（G4 读时 scoping），任务计数读 useCabinTasks，封存触发 G3 沉淀 hook。
 
@@ -81,11 +81,11 @@ export function CabinArchive({ embedded = false }: { embedded?: boolean } = {}) 
       {!embedded && (
         <div className="mb-3.5 flex flex-wrap items-center gap-2">
           <span className="text-[10px] text-pop-dim">舱生命周期</span>
-          {cabin.status === 'active' && lifeButton('dormant', '休眠', Pause, () => dormantCabin(cabin.id), '舱已休眠 · 任意消息可唤醒', false, !canDormant)}
-          {cabin.status === 'dormant' && lifeButton('wake', '唤醒', RefreshCw, () => wakeCabin(cabin.id), '舱已唤醒 · 工作树自愈', true)}
+          {cabin.status === 'active' && lifeButton('dormant', '打盹', Pause, () => dormantCabin(cabin.id), '汐音去打盹了 · 任意互动即醒', false, !canDormant)}
+          {cabin.status === 'dormant' && lifeButton('wake', '叫醒', RefreshCw, () => wakeCabin(cabin.id), '汐音醒了 · 工作树自愈', true)}
           {(cabin.status === 'active' || cabin.status === 'dormant') && lifeButton('archive', '封存', Archive, () => archiveCabin(cabin.id), '舱已软封存 · 知识沉淀进行中')}
           {cabin.status === 'archived' && lifeButton('reopen', '重开', Play, () => reopenCabin(cabin.id), '舱已重开 · 工作树自愈', true)}
-          {cabin.status === 'active' && !canDormant && <span className="text-[9.5px] text-pop-dim">有运行 / 待人 · 不可休眠</span>}
+          {cabin.status === 'active' && !canDormant && <span className="text-[9.5px] text-pop-dim">有运行 / 待人 · 不可打盹</span>}
           {cabin.status === 'archived' && <span className="text-[9.5px] text-pop-dim">软封存 · 任务/工作树/历史全保留 · 重开不重跑门禁</span>}
         </div>
       )}

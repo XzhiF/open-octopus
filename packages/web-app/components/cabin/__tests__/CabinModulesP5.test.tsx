@@ -12,6 +12,7 @@ vi.mock('@/lib/cabin-api', async (importOriginal) => {
   return {
     ...actual,
     patchCabin: vi.fn(),
+    pingCabinActivity: vi.fn(),
     getCabinFindings: vi.fn(),
     archiveCabin: vi.fn(),
     dormantCabin: vi.fn(),
@@ -25,7 +26,7 @@ vi.mock('@/lib/tasks-api', async (importOriginal) => {
 })
 
 import { useCabin } from '@/hooks/use-cabin'
-import { patchCabin, getCabinFindings, archiveCabin } from '@/lib/cabin-api'
+import { patchCabin, getCabinFindings, archiveCabin, pingCabinActivity } from '@/lib/cabin-api'
 import { listTasks } from '@/lib/tasks-api'
 import { CabinProvider } from '../cabin-provider'
 import { CockpitProvider, useCockpit } from '../CockpitProvider'
@@ -91,6 +92,7 @@ function finding(id: string, over: Partial<KcFindingView> = {}): KcFindingView {
 beforeEach(() => {
   vi.clearAllMocks()
   vi.mocked(patchCabin).mockResolvedValue({ ...makeView().cabin, version: 2, cockpit_prefs: {} } as never)
+  vi.mocked(pingCabinActivity).mockResolvedValue({ ...makeView().cabin, status: 'active' } as never)
   vi.mocked(getCabinFindings).mockResolvedValue([])
   vi.mocked(listTasks).mockResolvedValue({ items: [], total: 0 } as never)
 })
@@ -171,6 +173,31 @@ describe('在场纯派生（classic-v4）', () => {
     expect(p.presenceRate).toBe(DEFAULT_COCKPIT.presenceRate)
     const q = normalizePrefs({ presenceOn: false, presenceRate: 'quiet' })
     expect(q.presenceOn).toBe(false); expect(q.presenceRate).toBe('quiet')
+  })
+})
+
+describe('C11 打盹（互动即醒）', () => {
+  it('进舱即报到：CabinProvider 打 activity 心跳（不靠点唤醒按钮）', async () => {
+    mockCabin(makeView())
+    render(<CabinProvider cabinId="cabin-1"><div /></CabinProvider>)
+    await waitFor(() => expect(pingCabinActivity).toHaveBeenCalledWith('cabin-1', expect.any(Number)))
+  })
+  it('键鼠在高频事件下按 5 分钟节流，不打请求风暴', async () => {
+    mockCabin(makeView())
+    render(<CabinProvider cabinId="cabin-1"><div /></CabinProvider>)
+    await waitFor(() => expect(pingCabinActivity).toHaveBeenCalledTimes(1))
+    fireEvent.keyDown(window)
+    fireEvent.pointerMove(window)
+    expect(pingCabinActivity).toHaveBeenCalledTimes(1)
+  })
+  it('打盹中任意键鼠立刻叫醒（不受节流）', async () => {
+    const v = makeView()
+    v.cabin.status = 'dormant'
+    mockCabin(v)
+    render(<CabinProvider cabinId="cabin-1"><div /></CabinProvider>)
+    await waitFor(() => expect(pingCabinActivity).toHaveBeenCalledTimes(1))
+    fireEvent.keyDown(window)
+    await waitFor(() => expect(pingCabinActivity).toHaveBeenCalledTimes(2))
   })
 })
 

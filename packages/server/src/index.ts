@@ -1472,6 +1472,10 @@ if (shouldServe) {
       // AcceptanceDAO 不入 AllDAOs（同 TasksService 先例，就地构造）。
       const cabinService = new CabinService(daos!.cabin)
       const cabinInitService = new CabinInitService({ cabin: daos!.cabin, sse })
+      // 状态变更即时广播：自动打盹 / 活动唤醒都不能等前端 30s 轮询才换态。
+      cabinService.setStatusHook((cabinId, status) => {
+        sse.emit(`cabin:${cabinId}`, { event: "cabin_status", data: { cabin_id: cabinId, status } })
+      })
       cabinService.bindInfra({
         workspaceService: workspaceService!,
         workspaceDAO: daos!.workspace,
@@ -1494,7 +1498,8 @@ if (shouldServe) {
         taskDAO: daos!.task,
         agentSessionDAO: daos!.agentSession,
         tasksService,
-        onActivity: (cabinId) => cabinService.touch(cabinId),
+        // 派发 / doer 信号都是「舱里有人干活」：同样重置打盹计时，睡着则叫醒。
+        onActivity: (cabinId) => cabinService.activity(cabinId),
       })
       getChatEventBridge().setCabinSignalHook((taskId, status, summary) => {
         cabinComm.recordTaskSignal(taskId, status, summary)

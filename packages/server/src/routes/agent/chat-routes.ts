@@ -231,6 +231,14 @@ export function createChatRoutes(deps: ChatRouteDeps): Hono {
       return c.json(createAgentError('NOT_FOUND', `Session ${id} not found`), 404)
     }
 
+    // C11 重做：舱里发消息 = 人来了 —— 打盹中的舱静默叫醒 + 重置空闲计时。
+    // 只认真实用户消息；服务端 wake turn / 事件卡不算人。失败不影响本轮对话。
+    if (!body.ephemeral && !body.wake && session.cabin_id) {
+      try {
+        getCabinToolsProvider()?.service.activity(session.cabin_id)
+      } catch { /* 活性信号尽力而为 */ }
+    }
+
     // 同一会话只容一条生成流（2026-11-10 用户事故，克隆路由早有这道闸）：
     // 上一轮还在跑时再 POST，第二条查询会拿同一个 provider_session_id 并发
     // resume —— SDK 给出的第一条 result 常常是上一轮累计结果的回放（没有

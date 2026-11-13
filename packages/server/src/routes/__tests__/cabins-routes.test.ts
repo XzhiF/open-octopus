@@ -93,6 +93,22 @@ describe("/api/cabins routes", () => {
     expect(stale.status).toBe(409)
   })
 
+  it("POST /:id/activity 静默叫醒；晚到的旧心跳不叫醒", async () => {
+    const cabin = await createCabin()
+    db.prepare("UPDATE cabins SET status='active' WHERE id=?").run(cabin.id)
+    expect((await post(`/api/cabins/${cabin.id}/dormant`, {})).status).toBe(200)
+
+    // 点「打盹」之前发生的旧心跳晚到了 → 不该把刚睡下的舱叫醒。
+    const stale = await post(`/api/cabins/${cabin.id}/activity`, { at: Date.now() - 60_000 })
+    expect(stale.status).toBe(200)
+    expect((await stale.json()).cabin.status).toBe("dormant")
+
+    // 新的互动 → 立刻醒。
+    const fresh = await post(`/api/cabins/${cabin.id}/activity`, { at: Date.now() })
+    expect(fresh.status).toBe(200)
+    expect((await fresh.json()).cabin.status).toBe("active")
+  })
+
   it("init → 202; GET init shows the 7-item gate; retry resumes to active", async () => {
     const cabin = await createCabin()
 

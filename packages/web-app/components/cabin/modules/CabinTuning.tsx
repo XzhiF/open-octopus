@@ -2,14 +2,13 @@
 
 // S8 舱面调校（原型 wbTuning docs/cabin-design/index.html 1570-1594）：色彩主题 /
 // 悬浮样式 / 场景 HUD / 光效粒子 / 角色大小+mood / 自决开关 / 音效，实时作用驾驶舱。
-// 随机/重置/导出配置/导出立绘。新增 C11 休眠阈值（dormantMinutes，0=关闭自动休眠）。
+// 随机/重置/导出配置/导出立绘。新增 C11 打盹阈值（dormantMinutes，0=关闭自动打盹）。
 // prefs 经 CockpitProvider 乐观写 + 防抖持久化；autonomy 是行为键（改派发行为）。
 
 import { useEffect, useState } from 'react'
 import { Dices, Download, RotateCcw, SlidersHorizontal } from 'lucide-react'
 import { toast } from 'sonner'
 import { cabinAudio } from '@/lib/cabin-audio'
-import { useCabinContext } from '../cabin-provider'
 import { useCockpit } from '../CockpitProvider'
 import { WbH } from './ui'
 import {
@@ -38,7 +37,6 @@ function download(name: string, href: string): void {
 }
 
 export function CabinTuning() {
-  const { cabin } = useCabinContext()
   const {
     prefs, mood, setPref, reset, randomize,
     presenceDueAt, presenceSnoozeUntil, testPresence,
@@ -212,7 +210,7 @@ export function CabinTuning() {
         </div>
 
         <div className="hgroup">
-          <span className="gl">休眠 DORMANT<span className="hv">{prefs.dormantMinutes === 0 ? '关' : `${prefs.dormantMinutes}分`}</span></span>
+          <span className="gl">打盹 NAP<span className="hv">{prefs.dormantMinutes === 0 ? '关' : `${prefs.dormantMinutes}分`}</span></span>
           <div className="hrow">
             <span className="tlabel">空闲阈值</span>
             <input
@@ -221,7 +219,7 @@ export function CabinTuning() {
               data-testid="tuning-dormant"
             />
           </div>
-          <span className="tlabel" style={{ fontSize: 9, opacity: .7 }}>无运行 / 无待人且空闲超阈值 → 自动休眠（0=关闭）· 当前舱 {cabin?.name ?? ''}</span>
+          <span className="tlabel" style={{ fontSize: 9, opacity: .7 }}>无运行 / 无待人 / 无排队且人在舱里的互动停了超阈值 → 自动打盹；进舱、键鼠、发消息都会立刻叫醒（0=关闭）</span>
         </div>
       </div>
     </div>

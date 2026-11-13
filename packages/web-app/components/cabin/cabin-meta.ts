@@ -8,7 +8,7 @@ export const CABIN_STATUS_META: Record<CabinStatus, { label: string; dot: string
   draft: { label: '草稿', dot: 'bg-pop-cyan', badge: 'border-pop-bd text-pop-dim' },
   initializing: { label: '初始化', dot: 'bg-pop-amber animate-pulse', badge: 'border-pop-amber/50 text-pop-amber' },
   active: { label: '活跃', dot: 'bg-pop-green', badge: 'border-pop-green/50 text-pop-green' },
-  dormant: { label: '休眠', dot: 'bg-pop-cyan', badge: 'border-pop-cyan/50 text-pop-cyan' },
+  dormant: { label: '打盹', dot: 'bg-pop-cyan', badge: 'border-pop-cyan/50 text-pop-cyan' },
   archived: { label: '封存', dot: 'bg-pop-dim/50', badge: 'border-pop-bd text-pop-dim' },
 }
 

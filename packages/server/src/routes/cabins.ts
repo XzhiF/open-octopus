@@ -258,6 +258,18 @@ export function createCabinRoutes(
     }
   })
 
+  /** 人来了：进舱 / 键鼠 / 点汐音都打这一枪（客户端节流）。
+   *  dormant → active 静默叫醒；active → 刷新空闲计时。幂等，不返回错误态。 */
+  router.post("/:id/activity", async (c) => {
+    try {
+      const body = await c.req.json<{ at?: number }>().catch(() => ({} as { at?: number }))
+      return c.json({ cabin: toDTO(service.activity(c.req.param("id"), body?.at)) })
+    } catch (err) {
+      const { status, message } = classifyError(err)
+      return c.json({ error: message }, status as 400)
+    }
+  })
+
   router.post("/:id/dormant", (c) => {
     try {
       return c.json({ cabin: toDTO(service.dormant(c.req.param("id"))) })

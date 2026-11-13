@@ -9,7 +9,7 @@ import {
 } from 'react'
 import type { CabinInitState, CabinView } from '@octopus/shared'
 import { useCabin } from '@/hooks/use-cabin'
-import type { CabinDetail } from '@/lib/cabin-api'
+import { pingCabinActivity, type CabinDetail } from '@/lib/cabin-api'
 import { CABIN_WIN_SIZE } from './cabin-meta'
 
 export interface CabinWinGeo {
@@ -127,6 +127,47 @@ export function CabinProvider({ cabinId, children }: { cabinId: string; children
     }
     prevStatusRef.current = status
   }, [cabin?.status, openModule])
+
+  // 人来了就算互动（C11 重做）：进舱 / 切回标签页 / 舱内任意键鼠都会打一枪
+  // activity —— 打盹中的舱被静默叫醒，醒着的刷新空闲计时。5 分钟节流，
+  // 鼠标移动不会变成请求风暴；人真走了（无事件）就不再打枪，30 分钟后自然打盹。
+  const cabinStatusRef = useRef<string | null>(null)
+  const pingAtRef = useRef(0)
+  const pingBusyRef = useRef(false)
+  useEffect(() => { cabinStatusRef.current = cabin?.status ?? null }, [cabin?.status])
+  useEffect(() => {
+    if (typeof window === 'undefined') return
+    const PING_GAP = 5 * 60_000
+    const ping = (force: boolean) => {
+      if (typeof document !== 'undefined' && document.visibilityState === 'hidden') return
+      if (pingBusyRef.current) return
+      if (cabinStatusRef.current === 'archived') return
+      const now = Date.now()
+      // 打盹中：任何互动都立即叫醒（不受 5 分钟节流管）；醒着：节流刷新计时。
+      const wasDormant = cabinStatusRef.current === 'dormant'
+      if (!force && !wasDormant && now - pingAtRef.current < PING_GAP) return
+      pingAtRef.current = now
+      pingBusyRef.current = true
+      void pingCabinActivity(cabinId, now)
+        .then((next) => {
+          // SSE 也会广播状态；这条兜底：真从打盹叫醒时立即刷新派生视图。
+          if (wasDormant && next.status === 'active') void refresh()
+        })
+        .catch(() => { /* 活性信号尽力而为，不影响舱内操作 */ })
+        .finally(() => { pingBusyRef.current = false })
+    }
+    // 进舱即报到；离开后切回来也算。
+    ping(true)
+    const mark = () => ping(false)
+    const events = ['pointerdown', 'keydown', 'input', 'wheel', 'pointermove'] as const
+    for (const e of events) window.addEventListener(e, mark, true)
+    const onVisible = () => { if (document.visibilityState === 'visible') ping(true) }
+    document.addEventListener('visibilitychange', onVisible)
+    return () => {
+      for (const e of events) window.removeEventListener(e, mark, true)
+      document.removeEventListener('visibilitychange', onVisible)
+    }
+  }, [cabinId, refresh])
 
   // 切舱时浮窗态清零（窗属于舱，不跨舱串）。
   useEffect(() => {
