@@ -9,7 +9,7 @@ Cabin = **绑定目录、长期存活**的开发座舱。一个 cwd 目录 = 一
 
 ## 三个已定决策
 1. **全量一次设计**，按依赖分阶段执行（P-1–P5，见 08）。
-2. **前端 = 兄弟壳**：`/cabin/:cabinId` 渲染 CabinShell，复用 chat 优先桌面原语（ChatPane/ChatArea/TuiTranscript + 作业坞 + 浮窗 + DesktopHeader），只新增左轨。不是浮窗。
+2. **前端 = 桌面内嵌 + 兄弟壳兜底**（2026-11-13 按 index.html 原型调整）：工作舱的创建/切换在桌面壳内完成——左栏「工作舱 · 任务 · 会话」三段常驻，新建走对话区 `pendingCabin` hero，进舱只切对话上下文，URL 始终停在 `/`；`/cabin/:cabinId` 的 `CabinShell` 保留为深链兜底。复用 chat 优先桌面原语（ChatPane/ChatArea/TuiTranscript + 作业坞 + 浮窗 + DesktopHeader）。
 3. **磁盘 = 复用 workspace 契约**：舱目录即长期 workspace，`projects/<repo>` worktree + `config.json.repos[]`。不新建 `repos/`+`.worktrees/` 字面布局 → round-evidence/archiving 零改动复用。
 
 ## 关键设计澄清总表（C1–C12）

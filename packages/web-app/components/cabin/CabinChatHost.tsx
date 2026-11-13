@@ -66,7 +66,14 @@ const DOCK_ICONS: Record<string, typeof LayoutGrid> = {
 
 const SIDEBAR_WIDTH = 236
 
-export function CabinChatHost() {
+export interface CabinChatHostProps {
+  /** 桌面内壳传入：切舱保持在桌面里（不跳 /cabin/:id）。 */
+  onSelectCabin?: (id: string) => void
+  /** 桌面内壳传入：新建走 pendingCabin hero（不跳 /cabin/new）。 */
+  onCreateCabin?: () => void
+}
+
+export function CabinChatHost({ onSelectCabin, onCreateCabin }: CabinChatHostProps = {}) {
   const {
     cabinId, cabin, view, openWindows, minimizedWindows, openModule,
   } = useCabinContext()
@@ -249,8 +256,19 @@ export function CabinChatHost() {
   const sidebarProps = {
     cabins,
     activeCabinId: cabinId,
-    onSelectCabin: (id: string) => { if (id !== cabinId) router.push(`/cabin/${id}`) },
-    onCreateCabin: () => router.push('/cabin/new'),
+    onSelectCabin: (id: string) => {
+      if (id === cabinId) {
+        // 点当前舱 = 回到舱主对话。左栏切到别的会话/任务后，这一下必须能回去
+        // （2026-11-13 用户反馈：活跃舱行点了没反应）。
+        if (cabin?.main_session_id) {
+          issueCommand({ type: 'select-session', sessionId: cabin.main_session_id })
+        }
+        return
+      }
+      if (onSelectCabin) onSelectCabin(id)
+      else router.push(`/cabin/${id}`)
+    },
+    onCreateCabin: onCreateCabin ?? (() => router.push('/cabin/new')),
     tasks: chatTasks,
     tasksLoading: chatTasksLoading,
     activeTaskId: activeTask?.id ?? null,

@@ -170,14 +170,15 @@ export function CabinModulesLayer({ onNewTask }: { onNewTask?: () => void }) {
               )}
               onPointerDown={(e) => onBarPointerDown(e, id)}
             >
-              <div className="group/lights flex h-full items-center gap-2 pl-3 pr-2" data-no-drag>
+              <div className="group/lights flex h-full cursor-default items-center gap-2 pl-3 pr-2" data-no-drag>
                 <button
                   type="button"
                   aria-label={`关闭${CABIN_WIN_TITLE[id] ?? id}`}
+                  title="关闭"
                   data-testid={`cabin-win-close-${id}`}
                   onClick={() => closeModule(id)}
                   className={cn(
-                    'grid size-3 place-items-center rounded-full border border-pop-bd transition-colors',
+                    'relative grid size-3 cursor-default place-items-center rounded-full border border-pop-bd transition-colors before:absolute before:-inset-1 before:rounded-full before:content-[""]',
                     focused ? 'border-transparent bg-pop-red' : 'bg-pop-idle hover:bg-pop-red/70',
                   )}
                 >
@@ -186,10 +187,11 @@ export function CabinModulesLayer({ onNewTask }: { onNewTask?: () => void }) {
                 <button
                   type="button"
                   aria-label={`最小化${CABIN_WIN_TITLE[id] ?? id}`}
+                  title="最小化"
                   data-testid={`cabin-win-min-${id}`}
                   onClick={() => minimizeModule(id)}
                   className={cn(
-                    'grid size-3 place-items-center rounded-full border border-pop-bd transition-colors',
+                    'relative grid size-3 cursor-default place-items-center rounded-full border border-pop-bd transition-colors before:absolute before:-inset-1 before:rounded-full before:content-[""]',
                     focused ? 'border-transparent bg-pop-amber' : 'bg-pop-idle hover:bg-pop-amber/70',
                   )}
                 >
@@ -198,10 +200,11 @@ export function CabinModulesLayer({ onNewTask }: { onNewTask?: () => void }) {
                 <button
                   type="button"
                   aria-label={`${w.max ? '还原' : '最大化'}${CABIN_WIN_TITLE[id] ?? id}`}
+                  title={w.max ? '还原' : '最大化'}
                   data-testid={`cabin-win-max-${id}`}
                   onClick={() => toggleMaxModule(id)}
                   className={cn(
-                    'grid size-3 place-items-center rounded-full border border-pop-bd transition-colors',
+                    'relative grid size-3 cursor-default place-items-center rounded-full border border-pop-bd transition-colors before:absolute before:-inset-1 before:rounded-full before:content-[""]',
                     focused ? 'border-transparent bg-pop-green' : 'bg-pop-idle hover:bg-pop-green/70',
                   )}
                 >

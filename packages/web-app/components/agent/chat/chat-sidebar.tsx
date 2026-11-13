@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import {
   ChevronDown,
   Container,
@@ -10,6 +10,7 @@ import {
   PanelLeftClose,
   PanelRightOpen,
   Pencil,
+  Plus,
   Search,
   SquarePen,
   Trash2,
@@ -104,11 +105,12 @@ const TASK_SHORT_LABEL: Record<string, string> = {
   aborted: '中止',
 }
 
-function SectionLabel({ label, count }: { label: string; count: number }) {
+function SectionLabel({ label, count, action }: { label: string; count: number; action?: ReactNode }) {
   return (
     <div className="flex h-7 items-center px-2 pt-3">
       <span className="text-[11px] font-medium text-pop-dim/80">{label}</span>
       <span className="ml-1.5 text-[10.5px] tabular-nums text-pop-dim/45">{count}</span>
+      {action && <span className="ml-auto">{action}</span>}
     </div>
   )
 }
@@ -427,7 +429,22 @@ export function ChatSidebar({
         <div className="px-2.5 pb-4">
           {cabins && (
             <div data-testid="cabin-section">
-              <SectionLabel label="工作舱" count={filteredCabins.length} />
+              <SectionLabel
+                label="工作舱"
+                count={filteredCabins.length}
+                action={onCreateCabin ? (
+                  <button
+                    type="button"
+                    data-testid="cabin-section-new"
+                    title="新建工作舱"
+                    aria-label="新建工作舱"
+                    onClick={onCreateCabin}
+                    className="grid size-5 place-items-center rounded text-pop-dim transition-colors hover:bg-white/[0.08] hover:text-pop-ink"
+                  >
+                    <Plus className="size-3.5" strokeWidth={1.8} />
+                  </button>
+                ) : undefined}
+              />
               {filteredCabins.length === 0 ? (
                 <p className="px-2 py-1 text-[12px] text-pop-dim/60">
                   {needle ? '未找到匹配工作舱' : '暂无工作舱'}

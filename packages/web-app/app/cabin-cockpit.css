@@ -279,6 +279,24 @@ body.float-holo [data-testid="cabin-window"]::after {
 /* ── 宽屏给汐音留左侧 gutter（原型 @media min-width:1281px chat-pane padding-left） ── */
 @media (min-width: 1281px) {
   [data-testid="cabin-chat-region"] { padding-left: var(--crew-w, 252px) }
+
+  /* 原型 787-790 的列宽对齐：生产 ChatArea 默认 mx-auto max-w-4xl（居中列），
+     舱内改回原型——历史左对齐 860，输入条跨过 crew gutter、右侧收 96。
+     这样立绘左右两侧到正文的间距相等（38 / 38），不再左窄右宽。 */
+  [data-testid="cabin-chat-region"] [data-tui-col]:not([data-tui-hero="true"]) {
+    margin-left: 0; margin-right: 0; max-width: 860px;
+    padding-left: 0; padding-right: 0;
+    /* 原型 .tui-col 宽屏 padding-top:42px：给 30px telemetry 条让位。 */
+    padding-top: 42px;
+  }
+  [data-testid="cabin-chat-region"] [data-tui-dock]:not([data-tui-hero="true"]) {
+    margin-left: calc(-1 * var(--crew-w, 252px));
+    padding-left: var(--crew-w, 252px);
+    padding-right: 96px;
+  }
+  [data-testid="cabin-chat-region"] [data-tui-dock]:not([data-tui-hero="true"]) [data-tui-composer] {
+    margin-left: 0; margin-right: 0; max-width: 860px;
+  }
 }
 @media (max-width: 1280px) {
   .crew-pod, .xy-dialog, .crew-hub { display: none }

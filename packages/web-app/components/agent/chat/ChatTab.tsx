@@ -39,6 +39,8 @@ import {
 } from '@/lib/chat-split'
 import { cn } from '@/lib/utils'
 import { Sheet, SheetContent } from '@/components/ui/sheet'
+import type { CabinDetail } from '@/lib/cabin-api'
+import { CabinDraftPane } from '@/components/cabin/CabinDraftPane'
 import { ChatSidebar } from './chat-sidebar'
 import {
   ChatPane,
@@ -58,7 +60,20 @@ function clampSidebarWidth(width: number): number {
   return Math.min(SIDEBAR_MAX, Math.max(SIDEBAR_MIN, Math.round(width)))
 }
 
-export function ChatTab() {
+/**
+ * 桌面壳注入的工作舱桥（2026-11-13）：左栏工作舱段 + pendingCabin hero。
+ * 缺省 undefined = 独立渲染（单测等）保持原来的两段侧栏。
+ */
+export interface ChatTabCabinBridge {
+  cabins: CabinDetail[]
+  drafting: boolean
+  onSelectCabin: (id: string) => void
+  onCreateCabin: () => void
+  onCancelDraft: () => void
+  onCabinCreated: (id: string) => void
+}
+
+export function ChatTab({ cabinBridge }: { cabinBridge?: ChatTabCabinBridge } = {}) {
   const {
     sessions, activeSessionId, setActiveSessionId,
     loading: sessionsLoading, createNewSession, renameSession, removeSession,
@@ -650,6 +665,15 @@ export function ChatTab() {
   }, [leftSession, rightSession, focus, issueCommand])
 
   const sidebarProps = {
+    // 桌面内的工作舱段（原型三段左栏：工作舱 · 任务 · 会话）。
+    ...(cabinBridge
+      ? {
+          cabins: cabinBridge.cabins,
+          activeCabinId: null,
+          onSelectCabin: cabinBridge.onSelectCabin,
+          onCreateCabin: cabinBridge.onCreateCabin,
+        }
+      : {}),
     tasks: sidebarTasks,
     tasksLoading: chatTasksLoading,
     activeTaskId: focusedTask?.id ?? null,
@@ -764,7 +788,12 @@ export function ChatTab() {
         data-split={split ? 'true' : undefined}
         className={cn('relative flex min-w-0 flex-1', resizing && 'cursor-col-resize select-none [&_*]:cursor-col-resize')}
       >
-        {split ? (
+        {cabinBridge?.drafting ? (
+          <CabinDraftPane
+            onCreated={cabinBridge.onCabinCreated}
+            onCancel={cabinBridge.onCancelDraft}
+          />
+        ) : split ? (
           <>
             <div
               className="flex min-w-0"

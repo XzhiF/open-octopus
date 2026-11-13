@@ -81,6 +81,19 @@ describe('ChatSidebar — cabin section (prototype 三段左栏)', () => {
     expect(onCreateCabin).toHaveBeenCalled()
   })
 
+  it('工作舱段标题带「+」新建入口（空列表也能直接建）', () => {
+    const onCreateCabin = vi.fn()
+    render(
+      <ChatSidebar
+        {...baseProps}
+        cabins={[]}
+        onCreateCabin={onCreateCabin}
+      />,
+    )
+    fireEvent.click(screen.getByTestId('cabin-section-new'))
+    expect(onCreateCabin).toHaveBeenCalled()
+  })
+
   it('desktop rendering without cabin props stays two-section (no cabin entry)', async () => {
     render(<ChatSidebar {...baseProps} />)
     expect(screen.queryByTestId('cabin-section')).not.toBeInTheDocument()

@@ -531,7 +531,9 @@ export function ChatArea({
         >
           <div className={tui
             ? cn('mx-auto max-w-4xl px-5 py-4 space-y-1.5 text-[12.5px] leading-relaxed', dockGutter && 'pr-[68px]')
-            : 'max-w-3xl mx-auto px-4 py-4 space-y-2.5'}>
+            : 'max-w-3xl mx-auto px-4 py-4 space-y-2.5'}
+            data-tui-col={tui ? '' : undefined}
+            data-tui-hero={heroMode ? 'true' : undefined}>
             {/* Session exists but has no turns yet (new chat / new task). */}
             {tui && messages.length === 0 && !streaming && !hideEmptyState && (
               <div className="py-8" role="status" aria-live="polite">
@@ -770,7 +772,7 @@ export function ChatArea({
           data-tui-dock
           data-tui-hero={heroMode ? 'true' : undefined}
         >
-          <div className="relative mx-auto max-w-4xl">
+          <div className="relative mx-auto max-w-4xl" data-tui-composer>
             {taskProgress && (
               <TaskProgressPanel progress={taskProgress} className="mb-1.5" />
             )}

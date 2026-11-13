@@ -7,6 +7,16 @@
 - components/providers/app-shell.tsx 在同一 provider 栈内分支：`{isCabin ? <CabinShell cabinId/> : <Desktop/>}`。
 - lib/route-components.tsx 加 lazy import。共享 chat-session/window providers。
 
+## 桌面内嵌（2026-11-13，按 index.html 原型）
+上一版只有兄弟壳：桌面首页看不到工作舱段，新建还要跳到 `/cabin/new`。现在主入口收进桌面：
+- `components/cabin/cabin-mode.tsx`：`CabinModeProvider` 持 `activeCabinId / drafting`（active 落 localStorage），`openCabin / startDraft / cancelDraft / exitCabin` 全部不改路由。
+- `ConversationHome` 在同一对话区三态切换：普通 ChatTab → `CabinDraftPane`（新建 hero）→ `CabinDesktopHost`（舱上下文）。
+- `CabinDesktopHost` 复用 CabinProvider/CockpitProvider/CabinChatHost + 一条舱条（身份/状态/CabinWinstrip/「← 对话」）；DesktopHeader、桌面浮窗、分屏仍归 Desktop。
+- ChatTab 加性 `cabinBridge`：左栏出现「工作舱」段（状态圈 + 新建项），并在 `drafting` 时用 `CabinDraftPane` 替换对话区。
+- `CabinNewForm` 从 CabinNewHero 抽出，页面（/cabin/new 深链兜底）与内联 hero 共用表单。
+- 舱内 chat 列按原型 787-790 对齐：历史左对齐 860（`[data-tui-col]`）、输入条跨过 252px crew gutter 且右侧收 96（`[data-tui-dock]`），立绘左右留白相等（38/38）。
+- 🐙 菜单「新建工作舱」= `startDraft()` + `push('/')`；`/cabin/:cabinId` 兄弟壳保留为深链兜底。
+
 ## CabinShell 布局
 DesktopHeader(复用顶栏) + **原 ChatSidebar**(工作舱·任务·会话三段；新建菜单含高亮「新建工作舱」) + chat 底座 + 作业坞舱模块段 + 浮窗层 + CabinCrew(汐音,P5)。
 **没有独立左轨**（原型左侧就是生产侧栏加工作舱段；P2 初版自造左轨替换侧栏，被用户审阅打回重做）。模块导航在悬浮作业坞（原型 DOCK_MOD/DOCK_PRIMARY），点模块开浮窗（.win chrome：灯组 close/min/max + 居中标题）。

@@ -105,6 +105,9 @@ export const MOOD_OPTIONS: [CabinMood, string][] = [
 
 /** boot 无独立立绘 → 复用 thinking（原型 XY_IMG.boot=XY_IMG.thinking）。 */
 export function moodPortrait(mood: MoodKey): string {
+  // 文件名即 mood 语义（对照 docs/cabin-design/index.html 的 XY_IMG）。
+  // 2026-11-13：P5 曾把这批 PNG 循环改名（idle 拿到了 alert 的立绘），
+  // 已按原型顺序还原；再动这些文件前先做逐 mood 对图，别批量 rename。
   return `/cabin/xiyin-${mood === 'boot' ? 'thinking' : mood}.png`
 }
 
