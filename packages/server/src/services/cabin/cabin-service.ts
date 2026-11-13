@@ -171,7 +171,7 @@ export class CabinService {
         path: input.path,
         repos: [],
         repo_group: input.org ?? null,
-        description: `工作舱：${input.name}`,
+        description: `作战舱：${input.name}`,
       })
       this.infra.workspaceDAO.update(ws.id, { cabin_id: id })
       this.cabin.bindWorkspace(id, ws.id, now())

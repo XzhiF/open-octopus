@@ -116,7 +116,7 @@ export function OctopusMenu({ narrow }: { narrow: boolean }) {
                 className="flex w-full items-center gap-2.5 rounded-lg px-2 py-1.5 text-left text-sm font-bold text-pop-ink transition-colors hover:bg-accent"
               >
                 <Container className="size-4 shrink-0 text-pop-dim" />
-                <span className="min-w-0 flex-1 truncate">新建工作舱</span>
+                <span className="min-w-0 flex-1 truncate">新建作战舱</span>
               </button>
               <button
                 type="button"
@@ -171,7 +171,7 @@ export function OctopusMenu({ narrow }: { narrow: boolean }) {
           className="gap-2.5 text-sm font-bold"
         >
           <Container className="size-4 text-pop-dim" />
-          <span className="flex-1">新建工作舱</span>
+          <span className="flex-1">新建作战舱</span>
         </DropdownMenuItem>
         <DropdownMenuSeparator />
         <DropdownMenuItem

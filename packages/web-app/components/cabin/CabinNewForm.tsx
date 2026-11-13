@@ -1,6 +1,6 @@
 'use client'
 
-// 新建工作舱表单（原型 index.html pendingCabin 的表单本体）：
+// 新建作战舱表单（原型 index.html pendingCabin 的表单本体）：
 // 名称 + 目录（browseDirectories）+ org/仓库（注册表多选）+ 需求备注 →
 // POST /api/cabins → init → onCreated(cabinId)。
 // 目录已有舱时服务端 create 冲突 → 自动走 attach 复用（原型 askReuse 语义）。

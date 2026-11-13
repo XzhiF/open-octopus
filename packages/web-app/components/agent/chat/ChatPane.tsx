@@ -1106,6 +1106,18 @@ export function ChatPane({
     return () => window.removeEventListener('octopus:open-workflow', onOpenWorkflow)
   }, [])
 
+  // 作业详情「打开运行 →」：开作业坞同款运行窗（RunWindow：DAG + 日志 + YAML），
+  // 与作业坞运行列表点进来的那条路径同一个模块窗，不另做只给 DAG 的弹层。
+  useEffect(() => {
+    const onOpenRunWindow = (event: Event) => {
+      const detail = (event as CustomEvent<RunTarget>).detail
+      if (!detail?.workspaceId || !detail?.executionId) return
+      setTaskModuleRequest({ module: 'run', nonce: Date.now(), runTarget: detail })
+    }
+    window.addEventListener('octopus:open-run-window', onOpenRunWindow)
+    return () => window.removeEventListener('octopus:open-run-window', onOpenRunWindow)
+  }, [])
+
   // 项目绑定入口（2026-10-28 用户定稿：项目是任务维度资产）：
   //   · pending（任务未落盘）——作业坞尚不存在（无 workspaceId），留在 composer
   //     hero 第二行/停靠 ctrlbar；
@@ -1155,7 +1167,9 @@ export function ChatPane({
 
   // 停靠态主对话：只有「自定义工作区」才留下名字；默认 main-agent 工作区
   // 不渲染任何字（需求 1）。身份由 ＋ 面板接管，不再单占一个文字 chip。
-  const mainLead = !taskThread && sessionId && workspaceLabel ? (
+  // 作战舱（classic-v3）：舱主对话的身份固定为汐音舰长、目录归左栏舱行承载，
+  // 输入框下方不再重复目录名与可选身份。
+  const mainLead = !taskThread && !cabinId && sessionId && workspaceLabel ? (
     <span
       data-session-workspace
       title={`工作区：${workspaceLabel}`}
@@ -1178,6 +1192,16 @@ export function ChatPane({
   //   · 普通会话：显示当前分身身份，悬停 ✕ 清除回主身份；
   //   · hero 新会话：身份由下方单选选择器承担，不重复挂贴纸。
   const identityDisplay: ComposerIdentityDisplay | undefined = (() => {
+    // 作战舱（classic-v3）：舱主对话只有一个身份 —— 汐音舰长，只读（不可切）。
+    // 舱内打开的任务线程仍走下面按任务状态派生的只读身份。
+    if (cabinId && !taskThread) {
+      return {
+        label: '汐音舰长',
+        active: true,
+        readOnly: true,
+        title: '舱主对话身份固定为汐音舰长，不可切换',
+      }
+    }
     if (taskThread) {
       const status = activeTask?.status
       if (pendingTaskSession || status === 'draft') {
@@ -1440,7 +1464,10 @@ export function ChatPane({
               ? (workflowDraft
                 ? '描述要开发或修改的工作流…　⏎ 发送'
                 : '描述要开发的任务…　⏎ 发送')
-              : '问主 Agent…　⏎ 发送 · ⇧⏎ 排队 · Alt⏎ 换行'}
+              : cabinId && !taskThread
+                // classic-v3：舱主对话固定问汐音舰长（不再露出「主 Agent」）。
+                ? '问汐音舰长…　⏎ 发送 · ⇧⏎ 排队 · Alt⏎ 换行'
+                : '问主 Agent…　⏎ 发送 · ⇧⏎ 排队 · Alt⏎ 换行'}
             // hero：新建对话 = 空主会话；新建开发任务 = 未落盘的 pendingTask（同一套
             // 居中 composer + 第二行控件，2026-10-28 看齐）。
             heroEmpty={heroActive}
@@ -1458,7 +1485,7 @@ export function ChatPane({
             )}
             workspaceContext={composerWorkspaceContext}
             identityDisplay={identityDisplay}
-            identity={!taskThread ? (
+            identity={!taskThread && !cabinId ? (
               sessionId
                 ? {
                     activeName: identity.activeName,

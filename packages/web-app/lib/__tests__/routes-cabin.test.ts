@@ -12,7 +12,7 @@ describe('cabin route matching', () => {
   it('matches /cabin/new (wizard) and titles it', () => {
     const { route, params } = matchAppRoute('/cabin/new')
     expect(route.kind).toBe('cabin')
-    expect(titleForRoute(route, params)).toBe('新建工作舱')
+    expect(titleForRoute(route, params)).toBe('新建作战舱')
   })
 
   it('does not swallow desktop routes', () => {

@@ -67,7 +67,7 @@ export const BUILTIN_CODE_JOBS: readonly BuiltinCodeJob[] = [
   {
     handler: CABIN_DORMANT_HANDLER,
     name: "系统 · 舱休眠巡检",
-    description: "工作舱 C11 自动休眠：空闲（无运行执行 / 无待人 attention）且超过阈值的 active 舱转 dormant。停用只停自动休眠，手动休眠/唤醒不受影响。",
+    description: "作战舱 C11 自动休眠：空闲（无运行执行 / 无待人 attention）且超过阈值的 active 舱转 dormant。停用只停自动休眠，手动休眠/唤醒不受影响。",
     // 每 5 分钟一趟低峰巡检；阈值由舱 cockpit_prefs.dormantMinutes 决定（默认 30 分钟）。
     cronExpression: "*/5 * * * *",
     timezone: "Asia/Shanghai",

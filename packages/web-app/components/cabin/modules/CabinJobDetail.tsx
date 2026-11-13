@@ -3,14 +3,15 @@
 // classic-v3 作业详情（原型 .jb-* · 点 → 面）：
 //   概览 = job events 时间线 + 派发授权
 //   对接 = 你→汐音 / 汐音→执行者 / 执行者→汐音（只用真实记录，不伪造聊天）
-//   运行 = 真 RunWindow（React Flow DAG + RunLogConsole + YAML），另有「打开 DAG」弹层
+//   运行 = 执行摘要卡（省略态，对齐 chat 执行框）；「打开运行 →」开作业坞同款
+//          运行窗（DAG + 日志 + YAML），不在这里铺 DAG
 //   变更 = 任务级真 ChangesWindow（phase 总账 + 实物 diff）
 //   验收 = 真 AcceptanceWindow
 // 数据：GET /api/cabins/:id/jobs/:jid（job + events，10s 轮询）+ listCabinJobs（派生 status）。
 
 import { useCallback, useEffect, useState } from 'react'
 import {
-  Activity, ArrowRight, Bot, GitBranch, ListTodo, Maximize2, MessageSquare, Star, X, Zap,
+  Activity, ArrowRight, Bot, GitBranch, ListTodo, MessageSquare, Star, Zap,
 } from 'lucide-react'
 import { toast } from 'sonner'
 import type { CabinJob, CabinJobEvent } from '@octopus/shared'
@@ -19,10 +20,10 @@ import {
 } from '@/lib/cabin-api'
 import { getTask, type TaskDetail } from '@/lib/tasks-api'
 import { cn } from '@/lib/utils'
-import { RunWindow } from '@/components/chat-workbench/run-window'
 import { SubagentWindow } from '@/components/chat-workbench/subagent-window'
 import { ChangesWindow } from '@/components/chat-workbench/changes-window'
 import { AcceptanceWindow } from '@/components/chat-workbench/acceptance-window'
+import { CabinRunSummary, type CabinRunTarget } from './CabinRunSummary'
 import { useCabinContext } from '../cabin-provider'
 import { clockLabel } from './ui'
 import { isEndedJob, jobStatusLabel, jobTone } from '../job-status'
@@ -59,7 +60,6 @@ export function CabinJobDetail() {
   const [jobView, setJobView] = useState<CabinJobView | null>(null)
   const [events, setEvents] = useState<CabinJobEvent[]>([])
   const [tab, setTab] = useState<JobTab>('overview')
-  const [runOpen, setRunOpen] = useState(false)
   const [noteOpen, setNoteOpen] = useState(false)
   const [note, setNote] = useState('')
   const [busy, setBusy] = useState<string | null>(null)
@@ -85,7 +85,6 @@ export function CabinJobDetail() {
     setJobView(null)
     setEvents([])
     setTab('overview')
-    setRunOpen(false)
     setNoteOpen(false)
     void load()
   }, [load])
@@ -124,35 +123,29 @@ export function CabinJobDetail() {
   const status = jobView?.status
   const tone = jobTone(status)
   const taskForRun = job.kind === 'task' ? taskEntity : null
-  const canRun = job.kind === 'workflow'
-    ? !!(job.ref_id && cabin?.workspace_id)
-    : job.kind === 'subagent'
-      ? !!job.ref_id
-      : !!taskForRun
+  const subagentRun = job.kind === 'subagent' && !!job.ref_id
 
-  const runBody = () => {
-    if (job.kind === 'subagent') {
-      const sessionId = job.session_id ?? cabin?.main_session_id ?? null
-      if (!job.ref_id) return null
-      return <SubagentWindow sessionId={sessionId} agentId={job.ref_id} />
-    }
+  // 运行 tab 只给摘要；「打开运行 →」开作业坞同款运行窗（DAG + 日志 + YAML）。
+  // 任务类作业取当前一轮执行（运行中的优先，否则最新一轮）。
+  const runTarget: CabinRunTarget | null = (() => {
     if (job.kind === 'workflow') {
       if (!job.ref_id || !cabin?.workspace_id) return null
-      return (
-        <RunWindow
-          task={null}
-          runTarget={{
-            executionId: job.ref_id,
-            workspaceId: cabin.workspace_id,
-            title: job.title,
-            status,
-          }}
-        />
-      )
+      return { executionId: job.ref_id, workspaceId: cabin.workspace_id, title: job.title, status }
     }
-    if (!taskForRun) return null
-    return <RunWindow task={taskForRun} runTarget={null} />
-  }
+    if (job.kind !== 'task') return null
+    const executions = taskEntity?.executions ?? []
+    const current = executions.find((e) => ['pending', 'running', 'paused'].includes(e.status)) ?? executions[0]
+    if (!current) return null
+    return {
+      executionId: current.id,
+      workspaceId: current.workspace_id,
+      title: job.title,
+      workflowRef: current.workflow_ref,
+      phaseIndex: current.phase_index,
+      roundIndex: current.round_index,
+      status: current.status,
+    }
+  })()
 
   const bump = async () => {
     setBusy('priority')
@@ -413,27 +406,26 @@ export function CabinJobDetail() {
 
         {tab === 'run' && (
           <div data-testid="cabin-job-run">
-            <div className="mb-2 flex items-center gap-2 rounded-lg border border-dashed border-pop-bd px-2.5 py-1.5">
-              <span className="min-w-0 flex-1 truncate font-mono text-[9.5px] text-pop-dim">
-                {job.kind === 'workflow' ? `execution ${job.ref_id}` : job.kind === 'subagent' ? `agent ${job.ref_id}` : `task ${job.ref_id}`}
-              </span>
-              <button
-                type="button"
-                disabled={!canRun}
-                onClick={() => setRunOpen(true)}
-                data-testid="cabin-job-open-dag"
-                className="inline-flex shrink-0 items-center gap-1 rounded-md border-[1.5px] border-pop-bd px-2 py-1 text-[10.5px] text-pop-dim transition-colors hover:text-pop-ink disabled:opacity-40"
-              >
-                <Maximize2 className="size-3" />打开 DAG
-              </button>
-            </div>
-            {canRun ? (
-              <div className="h-[500px] overflow-hidden rounded-lg border-[1.5px] border-pop-bd">
-                {runBody()}
-              </div>
+            {job.kind === 'subagent' ? (
+              subagentRun ? (
+                <div className="h-[500px] overflow-hidden rounded-lg border-[1.5px] border-pop-bd">
+                  <SubagentWindow
+                    sessionId={job.session_id ?? cabin?.main_session_id ?? null}
+                    agentId={job.ref_id}
+                  />
+                </div>
+              ) : (
+                <div className="rounded-lg border-[1.5px] border-dashed border-pop-bd p-6 text-center text-[11.5px] text-pop-dim">
+                  这条作业还没有可看的运行现场（缺子代理）
+                </div>
+              )
+            ) : runTarget ? (
+              <CabinRunSummary target={runTarget} />
             ) : (
               <div className="rounded-lg border-[1.5px] border-dashed border-pop-bd p-6 text-center text-[11.5px] text-pop-dim">
-                这条作业还没有可看的运行现场（缺执行 / 任务）
+                {job.kind === 'task' && taskForRun
+                  ? '这一轮还没有执行 · 跑起来后这里给执行摘要'
+                  : '这条作业还没有可看的运行现场（缺执行 / 任务）'}
               </div>
             )}
           </div>
@@ -471,26 +463,6 @@ export function CabinJobDetail() {
           </div>
         )}
       </div>
-
-      {runOpen && (
-        <div className="absolute inset-0 z-20 flex flex-col bg-pop-bg/85 p-3 backdrop-blur-sm" data-testid="cabin-job-dag-modal">
-          <div className="mb-2 flex items-center gap-2">
-            <b className="min-w-0 truncate text-[12px] text-pop-ink">DAG · {job.title}</b>
-            <button
-              type="button"
-              onClick={() => setRunOpen(false)}
-              data-testid="cabin-job-dag-close"
-              className="ml-auto grid size-6 place-items-center rounded-md border border-pop-bd text-pop-dim hover:text-pop-ink"
-              aria-label="关闭"
-            >
-              <X className="size-3" />
-            </button>
-          </div>
-          <div className="min-h-0 flex-1 overflow-hidden rounded-lg border-[1.5px] border-pop-bd bg-pop-bg">
-            {runBody() ?? <div className="grid h-full place-items-center text-[11.5px] text-pop-dim">没有可展示的运行</div>}
-          </div>
-        </div>
-      )}
     </div>
   )
 }

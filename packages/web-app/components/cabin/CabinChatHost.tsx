@@ -1,7 +1,7 @@
 'use client'
 
 // 舱 chat tab（原型 body：sidebar + chat-region）。左侧复用生产 ChatSidebar
-// （工作舱·任务·会话三段 + 新建菜单含「新建工作舱」），右侧 chat 底座宿主单个
+// （作战舱·任务·会话三段 + 新建菜单含「新建作战舱」），右侧 chat 底座宿主单个
 // ChatPane（pane='left'、不分屏、恒焦点），会话钉在 cabin.main_session_id
 // （orchestrator 主对话，C3/C4 单线程）。ChatArea/TuiTranscript/useAgentChat/
 // chatStream 全部原样复用。
@@ -280,7 +280,10 @@ export function CabinChatHost({ onSelectCabin, onCreateCabin }: CabinChatHostPro
   }
 
   return (
-    <div className="ui-font relative flex h-full min-h-0 flex-1">
+    // min-w-0：这一行是舱壳里的 flex 项，默认自动最小宽度 = 内容最小宽度。
+    // 流式回复里出现长 token / 宽工具行时，会把整行（连同编队、作业坞的定位
+    // 基准）撑到视口外，回复收拢成折叠 meta 才恢复 —— 2026-11-13 用户实测。
+    <div className="ui-font relative flex h-full min-h-0 min-w-0 flex-1">
       {!sidebarCollapsed && (
         <aside
           className="relative hidden shrink-0 border-r border-white/[0.06] md:flex md:flex-col"

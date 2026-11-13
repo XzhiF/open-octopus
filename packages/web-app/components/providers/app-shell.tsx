@@ -15,7 +15,7 @@ import { ChatSessionsProvider } from './chat-sessions'
  * Desktop shell: the chat is the bottom layer, apps are floating windows,
  * and a single global header owns the app menu / window strip / Mission Control.
  *
- * 工作舱（Cabin）有两种入口：
+ * 作战舱（Cabin）有两种入口：
  *   · 桌面内：CabinModeProvider 管 activeCabinId/drafting，ConversationHome 在
  *     同一壳内切对话上下文（不改路由，见 2026-11-13 原型对齐）。
  *   · 深链 /cabin/:cabinId：兄弟壳 CabinShell，共享同一 provider 栈。
@@ -46,7 +46,7 @@ function ShellBody() {
       <Suspense
         fallback={
           <div className="grid flex-1 place-items-center bg-pop-bg text-sm text-pop-dim">
-            载入工作舱…
+            载入作战舱…
           </div>
         }
       >

@@ -268,7 +268,7 @@ export class CabinInitService {
         fs.writeFileSync(tmp, JSON.stringify(manifest, null, 2), "utf-8")
         fs.renameSync(tmp, path.join(cabinDir, "manifest.json"))
         fs.writeFileSync(path.join(cabinDir, "context.md"), [
-          `# 工作舱：${row.name}`, "",
+          `# 作战舱：${row.name}`, "",
           `- 目录：${row.path}`,
           `- org：${row.org ?? "（无）"}`,
           `- 仓库：${names.length > 0 ? names.join("、") : "（无）"}`,
@@ -287,7 +287,7 @@ export class CabinInitService {
       case "first-iteration": {
         if (!row.main_session_id) throw new Error("舱主会话缺失，无法发起首迭代提案回合")
         const runner = this.deps.runOrchestratorTurn ?? defaultOrchestratorTurn
-        const message = `工作舱「${row.name}」已就绪（目录/git/仓库/主线/骨架/需求门禁全部通过）。` +
+        const message = `作战舱「${row.name}」已就绪（目录/git/仓库/主线/骨架/需求门禁全部通过）。` +
           `请阅读 .cabin/requirements.md，提出首个迭代 M1 的目标与首批任务建议` +
           `（仅提案，不派发；派发任务需用户确认）。`
         await runner(row.main_session_id, message, row.org)

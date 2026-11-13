@@ -51,7 +51,7 @@ export interface StandaloneRoute {
   title: string
 }
 
-/** 工作舱兄弟壳：/cabin/:cabinId 渲染 CabinShell（不是桌面浮窗）。
+/** 作战舱兄弟壳：/cabin/:cabinId 渲染 CabinShell（不是桌面浮窗）。
  *  cabinId='new' 是新建向导（S1），其余是已存在的舱。 */
 export interface CabinRoute {
   kind: 'cabin'
@@ -142,7 +142,7 @@ const CABIN_ROUTES: CabinRoute[] = [
     id: 'cabin',
     path: '/cabin/:cabinId',
     componentKey: 'cabin-shell',
-    title: (params) => (params.cabinId === 'new' ? '新建工作舱' : `工作舱 · ${shortId(params.cabinId)}`),
+    title: (params) => (params.cabinId === 'new' ? '新建作战舱' : `作战舱 · ${shortId(params.cabinId)}`),
   },
 ]
 

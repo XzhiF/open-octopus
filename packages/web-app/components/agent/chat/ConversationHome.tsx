@@ -6,10 +6,10 @@
 // AI-native：所有 agent 活动都从这里的统一会话开始 —— 任务草稿也由
 // 「新建任务」的 task-author 会话创建，不再挂独立弹窗。
 //
-// 2026-11-13：工作舱收进桌面壳（按 index.html 原型）。同一块对话区在三种
+// 2026-11-13：作战舱收进桌面壳（按 index.html 原型）。同一块对话区在三种
 // 上下文间切换，不改路由：
-//   · 普通对话（ChatTab，左栏含「工作舱」三段 + pendingCabin hero）
-//   · 新建工作舱（ChatTab 内的 CabinDraftPane）
+//   · 普通对话（ChatTab，左栏含「作战舱」三段 + pendingCabin hero）
+//   · 新建作战舱（ChatTab 内的 CabinDraftPane）
 //   · 舱内对话（CabinDesktopHost：同一套 CabinProvider/ChatHost，桌面顶栏保留）
 // /cabin/:id 仍由 AppShell 的兄弟壳承接，作为深链兜底。
 

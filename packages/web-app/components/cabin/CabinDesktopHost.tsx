@@ -71,7 +71,7 @@ function CabinDesktopBody({
               onClick={onCreateCabin}
               className="rounded-md border-[1.5px] border-pop-bd bg-pop-yellow px-3 py-1.5 text-[12px] font-bold text-pop-bg transition-opacity hover:opacity-90"
             >
-              新建工作舱
+              新建作战舱
             </button>
           </div>
         </div>

@@ -298,6 +298,27 @@ body.float-holo [data-testid="cabin-window"]::after {
     margin-left: 0; margin-right: 0; max-width: 860px;
   }
 }
+
+/* ── 转录内容不越列：流式回复里的长 token（长路径 / JSON / 哈希）默认
+   `overflow-wrap: break-word` 不缩小 min-content，会把整列的最小宽度顶大；
+   舱壳虽然已加 min-w-0 钳住外层，这里再让超长 token 在列内折行，免得文字
+   横向钻到编队面板底下。 ── */
+[data-testid="cabin-chat-region"] [data-tui-col] { overflow-wrap: anywhere }
+
+/* ── 编队悬浮区（≥1321px 才出现）：正文/输入条收窄让位，输入历史左移出编队 ──
+   原型 `.v3-cabin .tui-col{max-width:756px;margin-left:0}`；此处再叠一层
+   「可用宽度 − 240px（编队右缘 84 + 宽 148 + 8 间距）」的兜底，窄屏也不会
+   钻到编队下面。输入历史整条（含展开列表 264px）左移到 240px 处，排在
+   正文与编队之间，东西再多也遮不到。 */
+@media (min-width: 1321px) {
+  [data-testid="cabin-chat-region"] [data-tui-col]:not([data-tui-hero="true"]) {
+    max-width: min(756px, calc(100% - 240px));
+  }
+  [data-testid="cabin-chat-region"] [data-tui-dock]:not([data-tui-hero="true"]) [data-tui-composer] {
+    max-width: min(756px, calc(100% - 144px));
+  }
+  [data-testid="cabin-chat-region"] [data-testid="chat-timeline"] { right: 240px }
+}
 @media (max-width: 1280px) {
   .crew-pod, .xy-dialog, .crew-hub { display: none }
   .crew-hub.open { display: none }
@@ -314,7 +335,7 @@ body.float-holo [data-testid="cabin-window"]::after {
 }
 /* ════════════ classic-v3 · 编队面板（悬浮，原型 .v3-fleet） ════════════ */
 .ck-fleet {
-  position: absolute; top: 52px; right: 84px; z-index: 24; width: 184px;
+  position: absolute; top: 52px; right: 84px; z-index: 24; width: 148px;
   max-height: calc(100% - 200px); display: flex; flex-direction: column;
   border: 1px solid var(--w10); border-radius: 12px; overflow: hidden;
   background: color-mix(in srgb, var(--pop-paper) 82%, transparent);

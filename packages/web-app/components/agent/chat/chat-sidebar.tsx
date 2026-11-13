@@ -70,7 +70,7 @@ interface ChatSidebarProps {
   onOpenTaskInOther?: (task: TaskView) => void
   /** hover 入口的文案，例如「在右栏打开」（由焦点栏决定）。 */
   openInOtherLabel?: string
-  /** 工作舱段（Cabin P2，原型 sidebar 三段：工作舱·任务·会话）。缺省 = 桌面
+  /** 作战舱段（Cabin P2，原型 sidebar 三段：作战舱·任务·会话）。缺省 = 桌面
    *  原样两段，不渲染舱段也不渲染新建舱菜单项。 */
   cabins?: CabinDetail[]
   activeCabinId?: string | null
@@ -336,7 +336,7 @@ export function ChatSidebar({
               >
                 <Container className="size-3.5 shrink-0 text-pop-yellow" strokeWidth={1.8} />
                 <span className="flex flex-col">
-                  <span className="text-[12.5px] font-semibold text-pop-yellow">新建工作舱</span>
+                  <span className="text-[12.5px] font-semibold text-pop-yellow">新建作战舱</span>
                   <span className="text-[10.5px] text-pop-dim">目录级长期开发 · agent 在对话里初始化</span>
                 </span>
               </DropdownMenuItem>
@@ -430,14 +430,14 @@ export function ChatSidebar({
           {cabins && (
             <div data-testid="cabin-section">
               <SectionLabel
-                label="工作舱"
+                label="作战舱"
                 count={filteredCabins.length}
                 action={onCreateCabin ? (
                   <button
                     type="button"
                     data-testid="cabin-section-new"
-                    title="新建工作舱"
-                    aria-label="新建工作舱"
+                    title="新建作战舱"
+                    aria-label="新建作战舱"
                     onClick={onCreateCabin}
                     className="grid size-5 place-items-center rounded text-pop-dim transition-colors hover:bg-white/[0.08] hover:text-pop-ink"
                   >
@@ -447,7 +447,7 @@ export function ChatSidebar({
               />
               {filteredCabins.length === 0 ? (
                 <p className="px-2 py-1 text-[12px] text-pop-dim/60">
-                  {needle ? '未找到匹配工作舱' : '暂无工作舱'}
+                  {needle ? '未找到匹配作战舱' : '暂无作战舱'}
                 </p>
               ) : (
                 <div className="space-y-px">

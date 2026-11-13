@@ -1,6 +1,6 @@
 'use client'
 
-// 桌面内联新建工作舱（原型 index.html pendingCabin hero）：
+// 桌面内联新建作战舱（原型 index.html pendingCabin hero）：
 // 左栏保持原样，对话区换成这张表单；创建/attach + init 后直接在本壳打开舱，
 // 不跳 /cabin/new。表单本体与深链页面共用 CabinNewForm。
 
@@ -24,7 +24,7 @@ export function CabinDraftPane({ onCreated, onCancel }: CabinDraftPaneProps) {
             <Container className="size-5" />
           </span>
           <div>
-            <h1 className="text-lg font-black text-pop-ink">描述要长期开发的工作舱</h1>
+            <h1 className="text-lg font-black text-pop-ink">描述要长期开发的作战舱</h1>
             <p className="text-[12px] text-pop-dim">一个目录 = 一个舱 · 创建后 agent 在对话里继续初始化</p>
           </div>
         </div>

@@ -19,7 +19,7 @@ export function CabinNewHero() {
             <Container className="size-5" />
           </span>
           <div>
-            <h1 className="text-lg font-black text-pop-ink">新建工作舱</h1>
+            <h1 className="text-lg font-black text-pop-ink">新建作战舱</h1>
             <p className="text-[12px] text-pop-dim">绑定一个目录 · 长期存活的开发座舱 · 一切由主对话驱动</p>
           </div>
         </div>

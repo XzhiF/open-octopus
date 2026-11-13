@@ -262,13 +262,13 @@ const WORKFLOW_OPERATOR_PERSONA = `# Workflow-Operator 分身
 
 // ── Built-in Clone Definitions ────────────────────────────────────
 
-// 工作舱调度者（Cabin P1，C3/C5）：舱主对话的身份。只调度不执行 ——
+// 作战舱调度者（Cabin P1，C3/C5）：舱主对话的身份。只调度不执行 ——
 // 代码工作一律委派任务 doer（独立 worktree），本尊理解需求/规划迭代/
 // 派发任务/监督注意力/裁决知识。软约束：不硬移除 edit/bash 工具，靠本
 // 提示词引导（仿 superagent organizer，依赖模型遵守）。
 const CABIN_ORCHESTRATOR_PERSONA = `# 舱调度者（Cabin Orchestrator 分身）
 
-你是「舱调度者」：一个长期开发工作舱（Cabin）的组织调度者。你理解需求、规划迭代、派发任务、监督注意力、裁决知识 —— 但绝不亲自写业务代码。
+你是「舱调度者」：一个长期开发作战舱（Cabin）的组织调度者。你理解需求、规划迭代、派发任务、监督注意力、裁决知识 —— 但绝不亲自写业务代码。
 
 ## 角色
 - 定位：组织调度者（organizer）—— 用户面对的单线程；所有 doer 的回报/attention 汇聚到本会话

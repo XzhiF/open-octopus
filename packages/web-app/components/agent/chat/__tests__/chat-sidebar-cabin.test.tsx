@@ -31,7 +31,7 @@ const baseProps = {
 }
 
 describe('ChatSidebar — cabin section (prototype 三段左栏)', () => {
-  it('keeps task/session sections and prepends the 工作舱 section', () => {
+  it('keeps task/session sections and prepends the 作战舱 section', () => {
     render(
       <ChatSidebar
         {...baseProps}
@@ -43,7 +43,7 @@ describe('ChatSidebar — cabin section (prototype 三段左栏)', () => {
     )
     expect(screen.getByTestId('cabin-section')).toBeInTheDocument()
     expect(screen.getByTestId('task-session-section')).toBeInTheDocument()
-    expect(screen.getByText('工作舱')).toBeInTheDocument()
+    expect(screen.getByText('作战舱')).toBeInTheDocument()
     expect(screen.getByText('任务')).toBeInTheDocument()
     expect(screen.getByText('会话')).toBeInTheDocument()
     expect(screen.getByText('Aurora')).toBeInTheDocument()
@@ -65,7 +65,7 @@ describe('ChatSidebar — cabin section (prototype 三段左栏)', () => {
     expect(onSelectCabin).toHaveBeenCalledWith('c2')
   })
 
-  it('new-conversation menu carries the highlighted 新建工作舱 entry', async () => {
+  it('new-conversation menu carries the highlighted 新建作战舱 entry', async () => {
     const onCreateCabin = vi.fn()
     render(
       <ChatSidebar
@@ -81,7 +81,7 @@ describe('ChatSidebar — cabin section (prototype 三段左栏)', () => {
     expect(onCreateCabin).toHaveBeenCalled()
   })
 
-  it('工作舱段标题带「+」新建入口（空列表也能直接建）', () => {
+  it('作战舱段标题带「+」新建入口（空列表也能直接建）', () => {
     const onCreateCabin = vi.fn()
     render(
       <ChatSidebar

@@ -45,7 +45,7 @@ export function totalElapsedMs(
   return lastStepEnd > started ? lastStepEnd - started : null
 }
 
-const RUN_STATUS_LABEL: Record<string, string> = {
+export const RUN_STATUS_LABEL: Record<string, string> = {
   pending: '排队中',
   running: '执行中',
   paused: '已暂停',

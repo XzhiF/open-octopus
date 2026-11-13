@@ -61,7 +61,7 @@ function clampSidebarWidth(width: number): number {
 }
 
 /**
- * 桌面壳注入的工作舱桥（2026-11-13）：左栏工作舱段 + pendingCabin hero。
+ * 桌面壳注入的作战舱桥（2026-11-13）：左栏作战舱段 + pendingCabin hero。
  * 缺省 undefined = 独立渲染（单测等）保持原来的两段侧栏。
  */
 export interface ChatTabCabinBridge {
@@ -665,7 +665,7 @@ export function ChatTab({ cabinBridge }: { cabinBridge?: ChatTabCabinBridge } = 
   }, [leftSession, rightSession, focus, issueCommand])
 
   const sidebarProps = {
-    // 桌面内的工作舱段（原型三段左栏：工作舱 · 任务 · 会话）。
+    // 桌面内的作战舱段（原型三段左栏：作战舱 · 任务 · 会话）。
     ...(cabinBridge
       ? {
           cabins: cabinBridge.cabins,

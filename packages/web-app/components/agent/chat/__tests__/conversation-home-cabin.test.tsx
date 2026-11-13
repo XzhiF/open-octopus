@@ -1,4 +1,4 @@
-// 桌面壳内的工作舱上下文切换：新建/进舱/退出都不改路由（2026-11-13 原型对齐）。
+// 桌面壳内的作战舱上下文切换：新建/进舱/退出都不改路由（2026-11-13 原型对齐）。
 // 这里 mock 掉重组件，只锁 ConversationHome 的三态与 cabinBridge 接线。
 
 import { describe, it, expect, vi, beforeEach } from 'vitest'
@@ -32,7 +32,7 @@ function ModeControls() {
   )
 }
 
-describe('ConversationHome — 桌面内工作舱三态', () => {
+describe('ConversationHome — 桌面内作战舱三态', () => {
   beforeEach(() => {
     window.localStorage.clear()
   })
@@ -46,7 +46,7 @@ describe('ConversationHome — 桌面内工作舱三态', () => {
     )
 
     expect(screen.getByTestId('chat-tab')).toHaveAttribute('data-drafting', 'false')
-    // 左栏桥：桌面也拿到完整舱列表（→ 工作舱段/状态圈）。
+    // 左栏桥：桌面也拿到完整舱列表（→ 作战舱段/状态圈）。
     expect(screen.getByTestId('chat-tab')).toHaveAttribute('data-cabins', '2')
     expect(screen.queryByTestId('cabin-host')).not.toBeInTheDocument()
 

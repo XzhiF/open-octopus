@@ -1,7 +1,7 @@
 'use client'
 
-// 桌面壳内的工作舱模式（2026-11-13）：
-// 原型 index.html 里「新建工作舱 / 打开工作舱」都不改路由——左栏不动，对话区
+// 桌面壳内的作战舱模式（2026-11-13）：
+// 原型 index.html 里「新建作战舱 / 打开作战舱」都不改路由——左栏不动，对话区
 // 换成 pendingCabin hero 或该舱的 chat。这里把这份状态提到 AppShell 层：
 //   · activeCabinId：当前在桌面里打开的舱（null = 普通对话）
 //   · drafting：正在新建（对话区渲染 CabinDraftPane）

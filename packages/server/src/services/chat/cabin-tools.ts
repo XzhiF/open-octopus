@@ -34,7 +34,7 @@ export function buildCabinSummaryReminder(service: CabinService, cabinId: string
     const autonomyRule = autonomy === "auto" ? "inferred 可自决" : autonomy === "observe" ? "inferred 先向人确认" : "inferred 不派发，只记录建议"
     const focused = cabin.focused_job_id ? jobs.find((j) => j.id === cabin.focused_job_id) : null
     const lines = [
-      `[工作舱] ${cabin.name} · ${cabin.status} · 目录 ${cabin.path}`,
+      `[作战舱] ${cabin.name} · ${cabin.status} · 目录 ${cabin.path}`,
       `需求备注：${cabin.requirements?.trim() || "（无）"}`,
       `健康：运行 ${view.health.running} · 排队 ${view.health.queued} · 执行器 ${view.health.workers}/${view.health.max}`,
       `需要你（person-first）：${view.attention.length} 项${view.attention.length ? " —— " + view.attention.slice(0, 5).map((a) => `[${a.stage}/${a.awaiting}] ${a.title}`).join("；") : ""}`,

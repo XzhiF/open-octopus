@@ -119,7 +119,7 @@ describe('RunningAgents — 运行中工作流+Agent 指示', () => {
 
   // 2026-11-13：舱主对话不是会话列表里的行，点它的运行 chip 应该回到舱，
   // 而不是把一个没有会话元数据的普通 chat 拉到台前。
-  it('舱主会话 chip → 打开对应工作舱（不切普通会话）', () => {
+  it('舱主会话 chip → 打开对应作战舱（不切普通会话）', () => {
     mockAgents.mockReturnValue([agent('sess-cabin', 'Aurora · 舱主对话')])
     mockCabins.mockReturnValue([{ id: 'cabin-1', main_session_id: 'sess-cabin' }])
     const { container } = render(<RunningAgents />)
