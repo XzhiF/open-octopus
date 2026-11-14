@@ -2,8 +2,12 @@
 
 // 驾驶舱氛围引擎 provider（原型 COCKPIT 引擎 1531-1657 的 React 化）：
 // 持有 cockpit_prefs（乐观本地 + 防抖持久化 PATCH /:id，整列替换需 spread），
-// 实时把 --ck-* 变量写到 document root + body float/scan/hud 类，派生汐音 mood，
-// 驱动 WebAudio。tuning / gallery / atmosphere / crew 共享同一 prefs 真源。
+// 实时把 --ck-* 变量写到 document root + body float/scan/hud 类，驱动 WebAudio。
+//
+// 2026-11-14：心情 / 瞬时覆盖 / 在场（主动搭话）搬到 useXiyinState —— 场景化，
+// 每间舱按自己的 CabinView 派生；换舱即重置瞬时态（见 xiyin-scene.ts）。
+// 这个 provider 只负责「这间舱的 prefs + 舱面氛围 + 该舱场景」。
+// tuning / gallery / atmosphere / crew 共享同一 prefs 真源。
 // autonomy 是行为键（cabin-tools 读取），写它即改 orchestrator 派发行为。
 
 import {
@@ -14,14 +18,15 @@ import { CabinApiError, patchCabin } from '@/lib/cabin-api'
 import { cabinAudio } from '@/lib/cabin-audio'
 import { useCabinContext } from './cabin-provider'
 import {
-  DEFAULT_COCKPIT, buildPresenceLine, cockpitCssVars, deriveMood, normalizePrefs, presenceGap, presenceGate, randomPrefs,
-  type CockpitPrefs, type MoodKey, type PresenceLineData,
+  DEFAULT_COCKPIT, cockpitCssVars, normalizePrefs, randomPrefs,
+  type CockpitPrefs, type MoodKey,
 } from './cockpit'
+import { useXiyinState, type PresenceLine } from './use-xiyin-state'
+import { cabinScene, type XiyinScene } from './xiyin-scene'
 
-/** 一条主动搭话（provider 派发，CabinCrew 渲染成汐音对白）。 */
-export interface PresenceLine extends PresenceLineData { id: number }
+export type { PresenceLine }
 
-interface CockpitContextValue {
+export interface CockpitContextValue {
   prefs: CockpitPrefs
   mood: MoodKey
   moodOverride: MoodKey | null
@@ -40,11 +45,15 @@ interface CockpitContextValue {
   dismissPresence: () => void
   snoozePresence: (minutes: number) => void
   testPresence: () => void
-  /** CabinCrew 上报：立绘对白/助理菜单正开着，别叠加。 */
+  /** 立绘对白/助理菜单正开着，别叠加。 */
   setCrewBusy: (busy: boolean) => void
+  /** 立绘此刻是否挂在舱里（切到任务/别的会话时没有立绘 → 停止主动搭话排程）。 */
+  setPresenceActive: (active: boolean) => void
+  /** 当前场景（舱 id）；立绘与助理菜单按它区分归属。 */
+  scene: XiyinScene
 }
 
-const CockpitContext = createContext<CockpitContextValue | null>(null)
+export const CockpitContext = createContext<CockpitContextValue | null>(null)
 
 export function useCockpit(): CockpitContextValue {
   const ctx = useContext(CockpitContext)
@@ -55,29 +64,16 @@ export function useCockpit(): CockpitContextValue {
 export function CockpitProvider({ children }: { children: ReactNode }) {
   const { cabinId, cabin, view, refresh } = useCabinContext()
   const [prefs, setPrefsState] = useState<CockpitPrefs>(() => normalizePrefs(cabin?.cockpit_prefs))
-  const [moodOverride, setMoodOverrideState] = useState<MoodKey | null>(null)
   const [streaming, setStreaming] = useState(false)
-  const [presenceLine, setPresenceLine] = useState<PresenceLine | null>(null)
-  const [presenceDueAt, setPresenceDueAt] = useState(0)
-  const [presenceSnoozeUntil, setPresenceSnoozeUntil] = useState(0)
+  /** 立绘是否挂在舱里：舱主对话里才有，切到任务/别的会话时关掉在场排程。 */
+  const [presenceActive, setPresenceActive] = useState(true)
 
   const prefsRef = useRef(prefs)
   const versionRef = useRef(cabin?.version ?? 0)
   const pendingRef = useRef<CockpitPrefs | null>(null)
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
-  const moodTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const writingRef = useRef(false)
   const retryRef = useRef(0)
-  // 在场：闸门要读最新值，用 ref 避免把随机排程做成「每次渲染重置」。
-  const streamingRef = useRef(streaming)
-  const viewRef = useRef(view)
-  const cabinStatusRef = useRef(cabin?.status)
-  const crewBusyRef = useRef(false)
-  const lastUserAtRef = useRef(Date.now())
-  const presenceNRef = useRef(0)
-  const presenceLastTextRef = useRef<string | null>(null)
-  const presenceIdRef = useRef(0)
-  const presenceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   useEffect(() => { prefsRef.current = prefs }, [prefs])
   useEffect(() => { versionRef.current = cabin?.version ?? 0 }, [cabin?.version])
@@ -120,7 +116,6 @@ export function CockpitProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => () => {
     if (timerRef.current) clearTimeout(timerRef.current)
-    if (moodTimerRef.current) clearTimeout(moodTimerRef.current)
   }, [])
 
   const flushPersist = useCallback(async () => {
@@ -195,136 +190,30 @@ export function CockpitProvider({ children }: { children: ReactNode }) {
     toast('已随机一套驾驶舱风格')
   }, [applyPrefs])
 
-  const setMoodOverride = useCallback((m: MoodKey | null, ms?: number) => {
-    setMoodOverrideState(m)
-    if (moodTimerRef.current) clearTimeout(moodTimerRef.current)
-    if (m) moodTimerRef.current = setTimeout(() => setMoodOverrideState(null), ms ?? 2600)
-  }, [])
-
-  const personAttention = view?.attention.filter((a) => a.awaiting === 'person').length ?? 0
-  const hasBlocked = view?.attention.some((a) => a.stage === 'blocked') ?? false
-  const running = view?.health.running ?? 0
-  const mood = useMemo(() => deriveMood({
-    prefsMood: prefs.mood, override: moodOverride, status: cabin?.status,
-    personAttention, running, streaming, hasBlocked,
-  }), [prefs.mood, moodOverride, cabin?.status, personAttention, running, streaming, hasBlocked])
-
-  // ── 在场：定时 + 随机间隔（classic-v4）────────────────────────────
-  useEffect(() => { streamingRef.current = streaming }, [streaming])
-  useEffect(() => { viewRef.current = view }, [view])
-  useEffect(() => { cabinStatusRef.current = cabin?.status }, [cabin?.status])
-
-  // 键鼠/滚轮都算「人在」；60s 内动过就不开口（输入框聚焦另有闸门）。
-  useEffect(() => {
-    if (typeof window === 'undefined') return
-    const mark = () => { lastUserAtRef.current = Date.now() }
-    const events = ['pointerdown', 'keydown', 'input', 'wheel'] as const
-    for (const e of events) window.addEventListener(e, mark, true)
-    return () => { for (const e of events) window.removeEventListener(e, mark, true) }
-  }, [])
-
-  // 关掉在场 → 清掉静默和残留对白。
-  useEffect(() => {
-    if (prefs.presenceOn) return
-    setPresenceLine(null)
-    setPresenceSnoozeUntil(0)
-  }, [prefs.presenceOn])
-
-  const pickLine = useCallback((n: number): PresenceLineData => {
-    const v = viewRef.current
-    return buildPresenceLine({
-      personAttention: v?.attention.filter((a) => a.awaiting === 'person').length ?? 0,
-      attentionTotal: v?.attention.length ?? 0,
-      queued: v?.health.queued ?? 0,
-      running: v?.health.running ?? 0,
-      dormant: cabinStatusRef.current === 'dormant',
-      firstAttentionTitle: v?.attention.find((a) => a.awaiting === 'person')?.title,
-      hour: new Date().getHours(),
-      n,
-      lastText: presenceLastTextRef.current,
-    })
-  }, [])
-
-  // 排程：到点 → 过闸门 → 开口 → 重排；开关 / 频率 / 静默变化都会重排。
-  useEffect(() => {
-    if (presenceTimerRef.current) { clearTimeout(presenceTimerRef.current); presenceTimerRef.current = null }
-    if (!prefs.presenceOn) { setPresenceDueAt(0); return }
-    let cancelled = false
-
-    function schedule(delayMs?: number) {
-      if (cancelled) return
-      const due = presenceSnoozeUntil > Date.now()
-        ? presenceSnoozeUntil
-        : Date.now() + (delayMs ?? presenceGap(prefs.presenceRate))
-      setPresenceDueAt(due)
-      presenceTimerRef.current = setTimeout(fire, Math.max(3000, due - Date.now()))
-    }
-    function fire() {
-      if (cancelled) return
-      const now = Date.now()
-      const ae = typeof document !== 'undefined' ? document.activeElement as HTMLInputElement | HTMLTextAreaElement | HTMLElement | null : null
-      // 只在「焦点在输入框且已经有草稿」时拦：chat 底座可能残留焦点，
-      // 光看 focus 会让在场永远不开口；真正在打字由 60s 空闲闸门兜住。
-      const hasDraft = !!ae && (
-        'value' in ae ? String(ae.value ?? '').length > 0 : (ae.textContent ?? '').length > 0
-      )
-      const editing = !!ae && (ae.tagName === 'TEXTAREA' || ae.tagName === 'INPUT' || ae.isContentEditable) && hasDraft
-      const block = presenceGate({
-        on: prefsRef.current.presenceOn,
-        now,
-        snoozedUntil: presenceSnoozeUntil,
-        hidden: typeof document !== 'undefined' && document.hidden,
-        streaming: streamingRef.current,
-        busy: crewBusyRef.current,
-        editing,
-        lastUserAt: lastUserAtRef.current,
-        idleMs: 60_000,
-        hour: new Date(now).getHours(),
-      })
-      if (block !== 'ok') {
-        schedule(block === 'hidden' ? 20_000 : block === 'quiet' ? 10 * 60_000 : 15_000)
-        return
-      }
-      const line = pickLine(presenceNRef.current)
-      presenceNRef.current += 1
-      presenceLastTextRef.current = line.text
-      setPresenceLine({ ...line, id: ++presenceIdRef.current })
-      cabinAudio.blip(760, 0.05, 'sine', 0.07)
-      schedule()
-    }
-
-    // 进舱先安静 15–30s，别一进来就开口。
-    schedule(15_000 + Math.random() * 15_000)
-    return () => {
-      cancelled = true
-      if (presenceTimerRef.current) { clearTimeout(presenceTimerRef.current); presenceTimerRef.current = null }
-    }
-  }, [prefs.presenceOn, prefs.presenceRate, presenceSnoozeUntil, pickLine])
-
-  const dismissPresence = useCallback(() => setPresenceLine(null), [])
-  const snoozePresence = useCallback((minutes: number) => {
-    setPresenceLine(null)
-    setPresenceSnoozeUntil(Date.now() + Math.max(1, minutes) * 60_000)
-    toast(`已静 ${minutes} 分钟 · 汐音暂不主动搭话`)
-    cabinAudio.blip(520, 0.06)
-  }, [])
-  const testPresence = useCallback(() => {
-    const line = pickLine(0)
-    presenceNRef.current += 1
-    presenceLastTextRef.current = line.text
-    setPresenceLine({ ...line, id: ++presenceIdRef.current })
-    cabinAudio.blip(780, 0.05, 'sine', 0.06)
-  }, [pickLine])
-  const setCrewBusy = useCallback((busy: boolean) => { crewBusyRef.current = busy }, [])
+  // 这间舱的完整场景：心情/在场都只由它派生（换舱 = 换场景 = 瞬时态归零）。
+  const scene = useMemo<XiyinScene>(
+    () => cabinScene(cabin, view, streaming),
+    [cabin, view, streaming],
+  )
+  const xiyin = useXiyinState({
+    scene,
+    moodPref: prefs.mood,
+    presenceOn: prefs.presenceOn,
+    presenceRate: prefs.presenceRate,
+    active: presenceActive,
+  })
 
   const value = useMemo<CockpitContextValue>(() => ({
-    prefs, mood, moodOverride, streaming, setStreaming,
-    setPref, applyPrefs, reset, randomize, setMoodOverride,
-    presenceLine, presenceDueAt, presenceSnoozeUntil,
-    dismissPresence, snoozePresence, testPresence, setCrewBusy,
+    prefs, mood: xiyin.mood, moodOverride: xiyin.moodOverride, streaming, setStreaming,
+    setPref, applyPrefs, reset, randomize, setMoodOverride: xiyin.setMoodOverride,
+    presenceLine: xiyin.presenceLine, presenceDueAt: xiyin.presenceDueAt,
+    presenceSnoozeUntil: xiyin.presenceSnoozeUntil,
+    dismissPresence: xiyin.dismissPresence, snoozePresence: xiyin.snoozePresence,
+    testPresence: xiyin.testPresence, setCrewBusy: xiyin.setCrewBusy,
+    setPresenceActive,
+    scene,
   }), [
-    prefs, mood, moodOverride, streaming, setPref, applyPrefs, reset, randomize, setMoodOverride,
-    presenceLine, presenceDueAt, presenceSnoozeUntil, dismissPresence, snoozePresence, testPresence, setCrewBusy,
+    prefs, xiyin, streaming, setPref, applyPrefs, reset, randomize, scene,
   ])
 
   return <CockpitContext.Provider value={value}>{children}</CockpitContext.Provider>

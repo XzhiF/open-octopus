@@ -323,18 +323,23 @@ class ChatEventBridge {
     }
     if (!row) return
 
-    // G2：舱任务卡/wake 落舱主会话（单线程收件箱），而非 per-task 人线程。
-    const humanSessionId = (row.cabin_id ? this.cabinMainSession(row.cabin_id) : null)
+    // 2026-11-14 用户口径修订 G2：运行态卡属于**任务自己的 chat**（task thread），
+    // 不再汇进舱主会话 —— 否则任务 chat 看不到工作流状态，舱 chat 反而把同一次
+    // 执行重复画几遍（开始执行 / 继续运行各一张，都绑同一 execution）。
+    // 舱主会话仍保留 wake（cabin 单线程收件箱的「舰长知道」路径）+ 账本信号。
+    const cardSessionId = row.source_chat_session_id
+      ?? (row.cabin_id ? this.cabinMainSession(row.cabin_id) : null)
+    const wakeSessionId = (row.cabin_id ? this.cabinMainSession(row.cabin_id) : null)
       ?? row.source_chat_session_id
 
     // A task thread is a MAIN session bound to the task. Legacy task-author
     // clone sessions keep the old high-signal-wake-only behavior.
     let threadSession: { clone_name: string | null; workspace_id: string | null } | undefined
-    if (humanSessionId) {
+    if (cardSessionId) {
       try {
         threadSession = this.db.prepare(
           "SELECT clone_name, workspace_id FROM sessions WHERE id = ?",
-        ).get(humanSessionId) as typeof threadSession
+        ).get(cardSessionId) as typeof threadSession
       } catch {
         /* no sessions table in a stripped test DB — treat as legacy */
       }
@@ -382,7 +387,7 @@ class ChatEventBridge {
       workspaceId,
       taskId,
       executionId: latest?.id ?? null,
-      sessionId: humanSessionId ?? null,
+      sessionId: cardSessionId ?? null,
       payload: {
         status,
         actions,
@@ -401,9 +406,9 @@ class ChatEventBridge {
     const archiveHandled = isThread &&
       (status === "archiving" || status === "done" || status === "awaiting_archive")
 
-    if (isThread && humanSessionId && !archiveHandled) {
+    if (isThread && cardSessionId && !archiveHandled) {
       this.appendTaskCard({
-        sessionId: humanSessionId,
+        sessionId: cardSessionId,
         workspaceId,
         title,
         detail,
@@ -411,15 +416,17 @@ class ChatEventBridge {
         status,
         actions,
       })
-      this.notifySession(humanSessionId, workspaceId)
+      this.notifySession(cardSessionId, workspaceId)
     }
 
-    if (high && humanSessionId && !archiveHandled) {
+    if (high && wakeSessionId && !archiveHandled) {
       void this.wake(
-        { sessionId: humanSessionId, org: row.repo_group ?? '', workspaceId },
+        { sessionId: wakeSessionId, org: row.repo_group ?? '', workspaceId },
         event,
         // The thread already has the deterministic card; the wake turn is the
         // model seeing the same event without persisting a duplicate message.
+        // 卡在任务线程、wake 在舱主会话时也必须 ephemeral —— 否则舱 chat 又会
+        // 落一条同样的状态消息（2026-11-14 重复显示的根因之一）。
         isThread ? { ephemeral: true } : undefined,
       )
     }
@@ -794,8 +801,9 @@ class ChatEventBridge {
       } catch {
         return
       }
-      // G2：舱任务的引导卡/wake 同样汇聚舱主会话（C4 单线程）。
-      if (row?.cabin_id) {
+      // 2026-11-14 用户口径修订 G2：工作流运行卡跟任务自己的 chat 走；只有
+      // 任务线程缺失时才回落到舱主会话（不能反过来把舱 chat 当默认落点）。
+      if (row?.cabin_id && !row.source_chat_session_id) {
         const main = this.cabinMainSession(row.cabin_id)
         if (main) row.source_chat_session_id = main
       }
@@ -875,9 +883,10 @@ class ChatEventBridge {
       return
     }
     if (!row) return
-    // G2：舱任务的卡落舱主会话（与 handleTaskStatus 同口径）。
-    const sessionId = (row.cabin_id ? this.cabinMainSession(row.cabin_id) : null)
-      ?? row.source_chat_session_id
+    // 2026-11-14 用户口径修订 G2：暂停/继续卡落任务自己的 chat（与
+    // handleTaskStatus 同口径），舱 chat 不再重复显示同一 execution 的运行摘要。
+    const sessionId = row.source_chat_session_id
+      ?? (row.cabin_id ? this.cabinMainSession(row.cabin_id) : null)
     if (!sessionId) return
     let session: { clone_name?: string | null } | undefined
     try {
@@ -915,6 +924,9 @@ class ChatEventBridge {
       payload: {
         status: state,
         actions,
+        // 轻量「运行状态」卡：暂停 / 继续只是状态转场，不再把同一 execution 的
+        // 完整节点摘要重画一遍（否则开始执行 + 继续运行 = 两张一模一样的卡）。
+        runState: state === "paused" ? "paused" : "resumed",
         phaseIndex: latest?.phase_index ?? null,
         roundIndex: latest?.round_index ?? null,
       },

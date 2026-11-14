@@ -295,26 +295,35 @@ body.float-holo [data-testid="cabin-window"]::after {
   background: repeating-linear-gradient(180deg, color-mix(in srgb, var(--ck-a) 5%, transparent) 0 1px, transparent 1px 4px); mix-blend-mode: screen;
 }
 
-/* ── 宽屏给汐音留左侧 gutter（原型 @media min-width:1281px chat-pane padding-left） ── */
+/* ── 宽屏给汐音留左侧 gutter（原型 @media min-width:1281px chat-pane padding-left） ──
+   2026-11-14：只有舱主对话（data-cabin-thread=true）才有立绘与 gutter；
+   舱内点任务 / 别的会话时立绘不在场，正文也不再让位。 */
 @media (min-width: 1281px) {
-  [data-testid="cabin-chat-region"] { padding-left: var(--crew-w, 252px) }
+  [data-testid="cabin-chat-region"][data-cabin-thread="true"] { padding-left: var(--crew-w, 252px) }
 
   /* 原型 787-790 的列宽对齐：生产 ChatArea 默认 mx-auto max-w-4xl（居中列），
      舱内改回原型——历史左对齐 860，输入条跨过 crew gutter、右侧收 96。
      这样立绘左右两侧到正文的间距相等（38 / 38），不再左窄右宽。 */
-  [data-testid="cabin-chat-region"] [data-tui-col]:not([data-tui-hero="true"]) {
+  [data-testid="cabin-chat-region"][data-cabin-thread="true"] [data-tui-col]:not([data-tui-hero="true"]) {
     margin-left: 0; margin-right: 0; max-width: 860px;
-    padding-left: 0; padding-right: 0;
+    /* 右侧给「用户输入历史」的杠杠轨让位（chat-timeline）。1281–1320 还没进
+       编队布局，轨道停在作业坞前（默认 right:68），正文列又刚好铺满 —— 不留
+       就会被几根杠杠压住正文末尾；≥1321 轨道移到编队左侧，见下方 32px 覆盖。 */
+    padding-left: 0; padding-right: 96px;
     /* 原型 .tui-col 宽屏 padding-top:42px：给 30px telemetry 条让位。 */
     padding-top: 42px;
   }
-  [data-testid="cabin-chat-region"] [data-tui-dock]:not([data-tui-hero="true"]) {
+  [data-testid="cabin-chat-region"][data-cabin-thread="true"] [data-tui-dock]:not([data-tui-hero="true"]) {
     margin-left: calc(-1 * var(--crew-w, 252px));
     padding-left: var(--crew-w, 252px);
     padding-right: 96px;
   }
-  [data-testid="cabin-chat-region"] [data-tui-dock]:not([data-tui-hero="true"]) [data-tui-composer] {
+  [data-testid="cabin-chat-region"][data-cabin-thread="true"] [data-tui-dock]:not([data-tui-hero="true"]) [data-tui-composer] {
     margin-left: 0; margin-right: 0; max-width: 860px;
+  }
+  /* 非舱主对话（任务 / 普通会话）：不占 gutter，但仍要给顶部 telemetry 条让位。 */
+  [data-testid="cabin-chat-region"][data-cabin-thread="false"] [data-tui-col]:not([data-tui-hero="true"]) {
+    padding-top: 42px;
   }
 }
 
@@ -328,15 +337,22 @@ body.float-holo [data-testid="cabin-window"]::after {
    原型 `.v3-cabin .tui-col{max-width:756px;margin-left:0}`；此处再叠一层
    「可用宽度 − 240px（编队右缘 84 + 宽 148 + 8 间距）」的兜底，窄屏也不会
    钻到编队下面。输入历史整条（含展开列表 264px）左移到 240px 处，排在
-   正文与编队之间，东西再多也遮不到。 */
+   正文与编队之间，东西再多也遮不到。
+
+   注意选择器要带 [data-cabin-thread="true"]，与上面 1281 那条同权重 ——
+   只给上面加舱线程限定会让 860 反压 756（860 > 756 → 正文重新钻到编队下面，
+   2026-11-14 实测）。编队只在舱主对话里出现，非舱主对话让 ChatArea 自己的
+   居中列生效。 */
 @media (min-width: 1321px) {
-  [data-testid="cabin-chat-region"] [data-tui-col]:not([data-tui-hero="true"]) {
+  [data-testid="cabin-chat-region"][data-cabin-thread="true"] [data-tui-col]:not([data-tui-hero="true"]) {
     max-width: min(756px, calc(100% - 240px));
+    /* 轨道右缘 right:240 + 容器 28，杠杠落在列右缘内 22px 处；32px 留白刚好错开。 */
+    padding-right: 32px;
   }
-  [data-testid="cabin-chat-region"] [data-tui-dock]:not([data-tui-hero="true"]) [data-tui-composer] {
+  [data-testid="cabin-chat-region"][data-cabin-thread="true"] [data-tui-dock]:not([data-tui-hero="true"]) [data-tui-composer] {
     max-width: min(756px, calc(100% - 144px));
   }
-  [data-testid="cabin-chat-region"] [data-testid="chat-timeline"] { right: 240px }
+  [data-testid="cabin-chat-region"][data-cabin-thread="true"] [data-testid="chat-timeline"] { right: 240px }
 }
 @media (max-width: 1280px) {
   .crew-pod, .xy-dialog, .crew-hub { display: none }

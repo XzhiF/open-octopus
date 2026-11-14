@@ -213,6 +213,28 @@ export function ChatArea({
   const stickBottomRef = useRef(true)
   const unansweredAsk = useMemo(() => findUnansweredAsk(messages), [messages])
 
+  // 同一 execution 的运行卡只画一次完整节点摘要（2026-11-14）：暂停/继续、
+  // 历史重复卡等都带同一个 executionId，后到的降级成轻量转场卡 —— 否则 chat 里
+  // 会出现两张一模一样的「本轮执行失败 / 执行中」运行卡。
+  const renderMessages = useMemo(() => {
+    const seenExec = new Set<string>()
+    return Array.from(new Map(messages.map((m) => [m.id, m])).values()).map((msg) => {
+      const a = msg.activity
+      const payload = a?.payload as { workflowRun?: boolean; acceptanceCheck?: boolean } | undefined
+      const isRunCard = msg.displayType === 'event'
+        && !!a?.taskId
+        && (a.status === 'running' || a.status === 'paused')
+        && !payload?.workflowRun
+        && !payload?.acceptanceCheck
+      let compactEvent = false
+      if (isRunCard && a?.executionId) {
+        if (seenExec.has(a.executionId)) compactEvent = true
+        else seenExec.add(a.executionId)
+      }
+      return { msg, compactEvent }
+    })
+  }, [messages])
+
   // 🎪 状态色带（Memphis）：running/waiting/done/error 一眼可辨 —— 从既有
   // props 派生，无新数据链路。aborted 不单列（气泡内已有「中断」印记）。
   const hasAssistant = useMemo(() => messages.some((m) => m.role === 'assistant'), [messages])
@@ -549,9 +571,9 @@ export function ChatArea({
                 </div>
               </div>
             )}
-            {Array.from(new Map(messages.map(m => [m.id, m])).values()).map((msg) => (
+            {renderMessages.map(({ msg, compactEvent }) => (
               <Fragment key={msg.id}>
-                {tui ? <TuiMessage message={msg} /> : <ChatBubble message={msg} />}
+                {tui ? <TuiMessage message={msg} compactEvent={compactEvent} /> : <ChatBubble message={msg} />}
                 {messageExtras?.(msg)}
               </Fragment>
             ))}

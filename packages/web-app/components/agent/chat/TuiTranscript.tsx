@@ -334,7 +334,7 @@ function TuiMeta({ thinking, toolCalls, timeline, stats, interrupted, hideTextFr
 /** Server-originated activity card (workflow approval/failure/completion, task
  *  terminal states). Append-only in the transcript; never mutates the system
  *  prompt, so the cached prefix stays intact. */
-function ActivityEventCard({ message }: { message: AgentMessage }) {
+function ActivityEventCard({ message, compactEvent }: { message: AgentMessage; compactEvent?: boolean }) {
   const activity = message.activity
   // 运行事件卡（2026-11-07）：runtime supervision 的 incident。必须在
   // WorkflowRunCard 之前 —— 两者都带 activity.executionId/status。
@@ -360,7 +360,7 @@ function ActivityEventCard({ message }: { message: AgentMessage }) {
   // 任务状态卡（执行中 / 已暂停 / 收尾）交给运行卡组件：它自己走表、按需轮询
   // 执行详情，收尾后定格成只读（2026-10-30 用户定稿）。
   if (activity?.status && activity?.taskId && !isAcceptanceCard) {
-    return <TaskStatusCard message={message} />
+    return <TaskStatusCard message={message} compact={compactEvent} />
   }
   const severity = activity?.severity
   // 决策卡选过就只读：所选按钮高亮，其余禁用；卡片整体降噪（与启动决策一致）。
@@ -513,7 +513,7 @@ export function RoleSwitchCard({ payload }: { payload: NonNullable<AgentMessage[
   )
 }
 
-export function TuiMessage({ message }: { message: AgentMessage }) {
+export function TuiMessage({ message, compactEvent }: { message: AgentMessage; compactEvent?: boolean }) {
   const isUser = message.role === 'user'
   const timeline = !isUser ? message.timeline : undefined
   const hasTimeline = !!timeline && timeline.length > 0
@@ -532,7 +532,7 @@ export function TuiMessage({ message }: { message: AgentMessage }) {
   }
 
   if (message.displayType === 'event') {
-    return <ActivityEventCard message={message} />
+    return <ActivityEventCard message={message} compactEvent={compactEvent} />
   }
 
   if (isUser) {

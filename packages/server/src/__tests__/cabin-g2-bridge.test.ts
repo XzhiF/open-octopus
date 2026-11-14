@@ -1,5 +1,9 @@
-// Cabin P3（G2/C4/C6）：舱任务的人-facing 卡/wake 汇聚舱主会话，
+// Cabin P3（G2/C4/C6）：舱任务的卡/wake 汇聚舱主会话，
 // 且高信号经 hook 落派发账本审计。
+//
+// 2026-11-14 用户口径修订：运行态卡改落**任务自己的 chat**（task thread），舱主
+// 会话只保留 wake/账本 —— 否则任务 chat 看不到工作流状态，舱 chat 把同一次执行
+// 重复画几遍。本文件同时钉住这两半。
 import { describe, it, expect, beforeAll, afterAll, beforeEach, afterEach, vi } from "vitest"
 import Database from "better-sqlite3"
 import { applySchema } from "../db/schema"
@@ -67,14 +71,25 @@ function cards(sessionId: string): Array<Record<string, unknown>> {
     .map((r) => JSON.parse((r as { metadata: string }).metadata) as Record<string, unknown>)
 }
 
-describe("G2 舱主会话覆写", () => {
-  it("舱任务卡落舱主会话而非 per-task 线程，wake 同址", () => {
+describe("舱任务的路由（2026-11-14 修订）", () => {
+  it("舱任务卡落任务自己的 chat，wake 仍汇聚舱主会话", () => {
     const bridge = getChatEventBridge()
     bridge.handleSse({ event: "task_status", data: { task_id: "t1", status: "awaiting_review" } })
-    expect(cards("s-cabin")).toHaveLength(1)
-    expect(cards("s-task")).toHaveLength(0)
+    expect(cards("s-task")).toHaveLength(1)
+    expect(cards("s-cabin")).toHaveLength(0)
     expect(fetchMock).toHaveBeenCalledTimes(1)
     expect(String(fetchMock.mock.calls[0][0])).toContain("/sessions/s-cabin/chat")
+  })
+
+  it("暂停/继续落任务 chat，且是轻量转场卡（runState，不再重复运行摘要）", () => {
+    const bridge = getChatEventBridge()
+    bridge.notifyTaskRunState("t1", "e1", "running")
+    bridge.notifyTaskRunState("t1", "e1", "paused")
+    expect(cards("s-cabin")).toHaveLength(0)
+    const rows = cards("s-task") as Array<{ activity?: { payload?: { runState?: string } } }>
+    expect(rows).toHaveLength(2)
+    expect(rows[0].activity?.payload?.runState).toBe("resumed")
+    expect(rows[1].activity?.payload?.runState).toBe("paused")
   })
 
   it("高信号经 hook 落审计（attention），普通状态不落", () => {

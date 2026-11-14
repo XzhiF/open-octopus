@@ -7,7 +7,7 @@
 //      由 CabinChatHost 按 main_session_id 单独取一次补上。
 
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { act, render, waitFor } from '@testing-library/react'
+import { act, render, screen, waitFor } from '@testing-library/react'
 
 const h = vi.hoisted(() => ({
   paneProps: null as null | Record<string, any>,
@@ -53,12 +53,12 @@ vi.mock('../cabin-provider', () => ({
     resizeModule: vi.fn(),
   }),
 }))
-vi.mock('../CockpitProvider', () => ({ useCockpit: () => ({ setStreaming: vi.fn() }) }))
+vi.mock('../CockpitProvider', () => ({ useCockpit: () => ({ setStreaming: vi.fn(), setPresenceActive: vi.fn() }) }))
 vi.mock('../CabinModulesLayer', () => ({
   CabinModulesLayer: () => <div data-testid="modules-layer" />,
 }))
 vi.mock('../CabinAtmosphere', () => ({ CabinAtmosphere: () => null }))
-vi.mock('../CabinCrew', () => ({ CabinCrew: () => null }))
+vi.mock('../CabinCrew', () => ({ CabinCrew: () => <div data-testid="cabin-crew" /> }))
 vi.mock('@/components/agent/chat/chat-sidebar', () => ({
   ChatSidebar: (props: Record<string, any>) => {
     h.sidebarProps = props
@@ -134,5 +134,25 @@ describe('CabinChatHost — 舱主会话的会话边界', () => {
     await waitFor(() => expect(h.paneProps?.dockCabinModules).toBeUndefined())
     expect(h.paneProps?.dockCabinMoreModules).toBeUndefined()
     expect(h.paneProps?.dockElevated).toBe(true)
+  })
+
+  // 2026-11-14 用户口径：汐音只在舱主对话里出现。左栏点任务 / 别的会话时，
+  // 右侧显示的不是舱自己的 chat —— 立绘（和它的主动搭话）都不在场。
+  it('汐音只在舱主对话里：任务线程 / 普通会话不显示立绘，回到舱对话才显示', async () => {
+    render(<CabinChatHost />)
+    await waitFor(() => expect(h.paneProps?.sessionId).toBe('sess-cabin'))
+    expect(screen.getByTestId('cabin-crew')).toBeTruthy()
+
+    await act(async () => { h.paneProps?.setActiveTask({ id: 'task-1', name: '示例任务' }) })
+    await waitFor(() => expect(screen.queryByTestId('cabin-crew')).toBeNull())
+
+    await act(async () => {
+      h.paneProps?.setActiveTask(null)
+      h.paneProps?.setSessionId('sess-free')
+    })
+    await waitFor(() => expect(screen.queryByTestId('cabin-crew')).toBeNull())
+
+    await act(async () => { h.paneProps?.setSessionId('sess-cabin') })
+    await waitFor(() => expect(screen.getByTestId('cabin-crew')).toBeTruthy())
   })
 })

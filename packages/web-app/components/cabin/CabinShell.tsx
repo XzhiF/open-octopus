@@ -25,7 +25,8 @@ export function CabinShell({ cabinId }: { cabinId: string }) {
     return <CabinMissing message="缺少舱 id" />
   }
   return (
-    <CabinProvider cabinId={cabinId}>
+    // key = 舱 id：深链换舱（/cabin/a → /cabin/b）也整舱重挂，形象状态不跨舱。
+    <CabinProvider cabinId={cabinId} key={cabinId}>
       <CabinShellInner />
     </CabinProvider>
   )

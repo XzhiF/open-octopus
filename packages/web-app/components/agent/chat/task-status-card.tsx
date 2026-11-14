@@ -158,12 +158,22 @@ const SETTLED_HINT: Record<string, string> = {
   failed: '完整日志在作业坞「运行」',
 }
 
-export function TaskStatusCard({ message }: { message: AgentMessage }) {
+export function TaskStatusCard({ message, compact = false }: { message: AgentMessage; compact?: boolean }) {
   const activity = message.activity
   const taskId = activity?.taskId ?? null
   const executionId = activity?.executionId ?? null
   const cardStatus = activity?.status ?? ''
   const isRunCard = LIVE_TASK_STATUS.has(cardStatus)
+  // 人工「暂停 / 继续运行」的轻量转场卡（2026-11-14）：只报状态与坐标，
+  // 不再拉同一 execution 的节点摘要 —— 否则和「任务开始执行」那张运行卡
+  // 长得一模一样，任务 chat / 舱 chat 里都会出现两张重复的运行卡。
+  // compact = 同一 execution 的运行卡已经画过一张（历史数据也可能出现），
+  // 后到的卡同样降级成转场卡。
+  const runState = (activity?.payload as { runState?: 'paused' | 'resumed' } | undefined)?.runState
+  const transfer = !!runState || compact
+  const coord = activity?.phaseIndex != null
+    ? `P${activity.phaseIndex}${activity.roundIndex != null ? ` · R${activity.roundIndex}` : ''}`
+    : ''
 
   const [exec, setExec] = useState<ExecSnapshot | null>(null)
   const [run, setRun] = useState<TaskExecutionBadge | null>(null)
@@ -171,7 +181,8 @@ export function TaskStatusCard({ message }: { message: AgentMessage }) {
   const stoppedRef = useRef(false)
 
   useEffect(() => {
-    if (!taskId) return
+    // 转场卡不绑运行摘要：不取任务 / 执行详情，也不轮询。
+    if (!taskId || transfer) return
     let alive = true
     stoppedRef.current = false
     const load = async () => {
@@ -205,7 +216,7 @@ export function TaskStatusCard({ message }: { message: AgentMessage }) {
       if (!stoppedRef.current) void load()
     }, 3000)
     return () => { alive = false; window.clearInterval(timer) }
-  }, [taskId, executionId, isRunCard, activity?.workspaceId])
+  }, [taskId, executionId, isRunCard, transfer, activity?.workspaceId])
 
   // 收尾（执行终态）后计时停住 —— 只在还活着时每秒推一格。
   const execStatus = exec?.status ?? null
@@ -248,9 +259,41 @@ export function TaskStatusCard({ message }: { message: AgentMessage }) {
         ? Math.max(0, now - startedMs)
         : lastStepEnd > startedMs ? lastStepEnd - startedMs : null
 
-  const coord = activity?.phaseIndex != null
-    ? `P${activity.phaseIndex}${activity.roundIndex != null ? ` · R${activity.roundIndex}` : ''}`
-    : ''
+  // ── 运行状态转场卡（人工暂停 / 继续运行；不带节点摘要） ──
+  if (transfer) {
+    const isPaused = runState === 'paused' || (!runState && cardStatus === 'paused')
+    return (
+      <div
+        data-tui-msg="event"
+        data-message-id={message.id}
+        data-testid="activity-event-card"
+        data-card-tone={isPaused ? 'paused' : 'settled'}
+        className={[
+          'rounded-md border px-3 py-2 font-mono text-[11.5px]',
+          'shadow-[inset_0_0_0_1px_rgba(255,255,255,0.03)]',
+          isPaused ? 'border-pop-amber/35 bg-pop-amber/[0.05]' : 'border-pop-bd/70 bg-white/[0.015]',
+        ].join(' ')}
+      >
+        <div className="flex items-center gap-2">
+          <span
+            className={`grid size-4 shrink-0 place-items-center rounded-full border border-current text-[9px] ${
+              isPaused ? 'text-pop-amber' : 'text-pop-green'
+            }`}
+          >
+            {isPaused ? '⏸' : '▶'}
+          </span>
+          <span className={`min-w-0 flex-1 truncate font-semibold ${isPaused ? 'text-pop-amber' : 'text-pop-ink/80'}`}>
+            {activity?.title ?? (isPaused ? '任务已暂停' : '任务已继续运行')}
+          </span>
+          {coord && <span className="shrink-0 text-[10.5px] text-pop-dim">{coord}</span>}
+          <span className="shrink-0 text-[10px] text-pop-dim/70">运行窗看节点明细</span>
+        </div>
+        {activity?.message && (
+          <div className="mt-1 pl-6 text-[10.5px] text-pop-dim">{activity.message}</div>
+        )}
+      </div>
+    )
+  }
 
   // ── 收尾状态卡（本轮完成 · 待验收 / 归档 / 中止 / 失败 / 其它终态） ──
   if (!isRunCard) {

@@ -30,7 +30,7 @@ export function CabinCrew() {
   const { cabin, view, openModule } = useCabinContext()
   const {
     mood, setMoodOverride, prefs, setPref,
-    presenceLine, dismissPresence, snoozePresence, setCrewBusy,
+    presenceLine, dismissPresence, snoozePresence, setCrewBusy, scene,
   } = useCockpit()
 
   const [hubOpen, setHubOpen] = useState(false)
@@ -74,6 +74,14 @@ export function CabinCrew() {
   // 对白 / 助理菜单开着时上报 busy：在场闸门会等这一轮结束再开口。
   useEffect(() => { setCrewBusy(!!dialog || hubOpen) }, [dialog, hubOpen, setCrewBusy])
   useEffect(() => () => setCrewBusy(false), [setCrewBusy])
+
+  // 换舱（scene.key 变化）：本地对白 / 菜单 / 打字机一并清掉 —— 立绘是「一舱一份」
+  // 形象状态，深链换舱不重挂宿主时也不能把上一间舱的话带过来。
+  useEffect(() => {
+    setDialog(null)
+    setHubOpen(false)
+    setCrewInfo(false)
+  }, [scene.key])
 
   // 打字机由 dialog 驱动（effect 清理随 dialog 变化/卸载），dev 双挂载下可重跑不空泡。
   useEffect(() => {

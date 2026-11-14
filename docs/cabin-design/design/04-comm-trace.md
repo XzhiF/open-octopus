@@ -26,7 +26,9 @@
 - 权限：mandate 不可变；note 不授权；handback 重入 router 作 candidate。
 
 ## G2 关键绑定
-舱任务派发时 execution ChatWakeTarget 覆写为舱主会话（chat-event-bridge 路由若 task.cabin_id → 卡/wake 落 cabin.main_session_id）。主会话不绑单任务；任务会话仍一对一 resolveForSession。
+舱任务派发时 execution ChatWakeTarget 覆写为舱主会话（chat-event-bridge 路由若 task.cabin_id → **wake** 落 cabin.main_session_id）。主会话不绑单任务；任务会话仍一对一 resolveForSession。
+
+**2026-11-14 修订（用户口径）**：运行态**卡**改落任务自己的 chat（`tasks.source_chat_session_id`，缺线程才回落舱主会话）—— 任务状态转场 / 工作流运行卡 / 人工暂停·继续卡都跟任务线程走；舱主会话只保留 wake 与 C6 账本信号。否则任务 chat 看不到工作流状态，舱 chat 会把同一 execution 重复画几张。暂停/继续卡同时降级为轻量转场卡（`payload.runState`，不带节点摘要），前端另按 executionId 去重运行卡。
 
 ## trace 模型（C6）
 cabin_job_events kind：dispatch/report/attention/handback/note/human_input；actor：orchestrator/doer/human；payload JSON{summary,state,question,reason,mandate}。append-only 禁改触发器。仿 superagent TriggerDisposition/Decision 审计。

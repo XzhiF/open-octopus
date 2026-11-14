@@ -67,7 +67,7 @@ export function CabinChatHost({ onSelectCabin, onCreateCabin }: CabinChatHostPro
   const {
     cabinId, cabin, view, openWindows, minimizedWindows, openModule,
   } = useCabinContext()
-  const { setStreaming } = useCockpit()
+  const { setStreaming, setPresenceActive } = useCockpit()
   const router = useRouter()
   const {
     sessions, loading: sessionsLoading, createNewSession, renameSession, removeSession,
@@ -232,6 +232,10 @@ export function CabinChatHost({ onSelectCabin, onCreateCabin }: CabinChatHostPro
   const showingCabinThread =
     !activeTask && !pendingTaskSession && !!mainSessionId && sessionId === mainSessionId
 
+  // 汐音只在舱主对话里在场（2026-11-14 用户口径）：左栏点任务 / 别的会话时，
+  // 右侧显示的不是舱自己的 chat —— 立绘不出现，也不排主动搭话。
+  useEffect(() => { setPresenceActive(showingCabinThread) }, [showingCabinThread, setPresenceActive])
+
   // classic-v3：坞里舱模块只留「概览」—— 任务/工程/记录都从概览三入口进，
   // 运行/变更/验收在作业详情里。
   const dockModules = useMemo<CabinDockModule[]>(() => CABIN_DOCK_PRIMARY.map((id) => ({
@@ -345,6 +349,7 @@ export function CabinChatHost({ onSelectCabin, onCreateCabin }: CabinChatHostPro
       <div
         ref={attachRegion}
         data-testid="cabin-chat-region"
+        data-cabin-thread={showingCabinThread ? 'true' : 'false'}
         className={cn('relative flex min-w-0 flex-1')}
       >
         <CabinAtmosphere />
@@ -377,7 +382,7 @@ export function CabinChatHost({ onSelectCabin, onCreateCabin }: CabinChatHostPro
           cabinWorkspaceId={cabin?.workspace_id ?? null}
         />
         {showingCabinThread && <CabinFleet />}
-        <CabinCrew />
+        {showingCabinThread && <CabinCrew />}
         <CabinModulesLayer onNewTask={() => issueCommand({ type: 'new-task' })} />
       </div>
     </div>

@@ -233,4 +233,24 @@ describe('TaskStatusCard', () => {
     expect(card.textContent).not.toContain('✓')
     expect(screen.getByText(/cases\.0\.evidenceRefs\.2\.kind 非法/)).toBeTruthy()
   })
+
+  // 2026-11-14：暂停/继续是轻量转场卡 —— 不再拉同一 execution 的节点摘要，
+  // 否则「任务开始执行」和「任务已继续运行」会画成两张一模一样的运行卡。
+  it('暂停/继续转场卡：不取执行详情、不带节点摘要，只报状态与坐标', async () => {
+    render(<TaskStatusCard message={eventMessage({
+      kind: 'task.status', title: '任务已继续运行', status: 'running',
+      taskId: 't-run', executionId: 'e-run', workspaceId: 'w-1',
+      phaseIndex: 1, roundIndex: 1,
+      payload: { status: 'running', runState: 'resumed', actions: [] },
+    }, 'm-resume')} />)
+
+    const card = screen.getByTestId('activity-event-card')
+    expect(card.textContent).toContain('任务已继续运行')
+    expect(card.textContent).toContain('P1 · R1')
+    expect(card.textContent).toContain('▶')
+    expect(card.textContent).not.toContain('节点 ·')
+    expect(card.textContent).not.toContain('matt-spec-dev')
+    expect(getTask).not.toHaveBeenCalled()
+    expect(fetchExecutionDetail).not.toHaveBeenCalled()
+  })
 })
