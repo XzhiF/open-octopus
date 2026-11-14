@@ -53,6 +53,61 @@ const KIND_META = {
   subagent: { label: '子代理', icon: Bot, tone: 'text-pop-purple border-pop-purple/40' },
 } as const
 
+// 「对接」页签的三个角色：你 / 汐音 / 执行者。方向由事件类型决定，
+// 不靠 actor 猜（actor 只用于展示，事件类型才是协议事实）。
+type RelayRole = 'you' | 'xiyin' | 'doer'
+
+const RELAY_ROLE: Record<RelayRole, { label: string }> = {
+  you: { label: '你' },
+  xiyin: { label: '汐音' },
+  doer: { label: '执行者' },
+}
+
+/** 事件类型 → 交接方向（人输入：你→汐音；派发类：汐音→执行者；回报类：执行者→汐音）。 */
+function relayRoute(kind: string): [RelayRole, RelayRole] {
+  if (kind === 'human_input') return ['you', 'xiyin']
+  if (kind === 'report' || kind === 'attention' || kind === 'handback') return ['doer', 'xiyin']
+  return ['xiyin', 'doer']
+}
+
+/** human_input 里的「提优先」事件：payload = { action: 'priority', priority }。 */
+function priorityOf(event: CabinJobEvent): number | null {
+  const payload = event.payload as Record<string, unknown> | null
+  return payload && payload.action === 'priority' && typeof payload.priority === 'number'
+    ? payload.priority
+    : null
+}
+
+/** 时间线一行的正文：优先写明「做了什么」，而不是重复类型标签「人输入」。 */
+function relayText(event: CabinJobEvent): string {
+  const priority = priorityOf(event)
+  if (priority !== null) return `提优先 → P${priority}`
+  return summaryOf(event) || traceKind(event.kind).label
+}
+
+/** 连续的「提优先」折叠成一条（P2 → P6 · 5 次）：它们是一串同义操作，
+ *  逐条铺开只会把真正的一次交接挤出屏幕。其余事件互不合并。 */
+interface RelayGroup {
+  key: string
+  first: CabinJobEvent
+  last: CabinJobEvent
+  count: number
+}
+
+function groupRelay(timeline: readonly CabinJobEvent[]): RelayGroup[] {
+  const groups: RelayGroup[] = []
+  for (const event of timeline) {
+    const prev = groups[groups.length - 1]
+    if (priorityOf(event) !== null && prev && priorityOf(prev.last) !== null) {
+      prev.last = event
+      prev.count += 1
+      continue
+    }
+    groups.push({ key: event.id, first: event, last: event, count: 1 })
+  }
+  return groups
+}
+
 /** 超时类失败才有「连接被占满」的提示（其它失败原因不同，不要误导）。 */
 function isTimeoutMessage(message: string): boolean {
   return message.includes('超时')
@@ -148,6 +203,8 @@ export function JobFace({
   const [taskEntity, setTaskEntity] = useState<TaskDetail | null>(null)
   const [usageCost, setUsageCost] = useState<{ usd: number; complete: boolean } | null>(null)
   const [loadError, setLoadError] = useState<string | null>(null)
+  /** 对接页签：派发原文默认收 3 行（原文往往是整段需求）。 */
+  const [promptOpen, setPromptOpen] = useState(false)
 
   const tab: CockpitTab = controlled && cockpit ? cockpit.tab : innerTab
   const changeTab = useCallback((next: CockpitTab) => {
@@ -302,6 +359,17 @@ export function JobFace({
 
   const cockpitMode = variant === 'cockpit'
   const onClose = cockpit?.onClose ?? (() => {})
+  // 全域作业面：五个页签**统一等高**（面体高度固定，内容撑满它）——
+  // 否则空页签矮、满页签高，切换时整块面跳高度（2026-11-15 用户）。
+  // 旧窗变体保持原样（它有自己固定的 500 / 520px 窗格）。
+  const frameOf = (extra?: string) => (cockpitMode ? cn('ck12-tab', extra) : extra)
+  const fillOf = (fallback?: string) => (cockpitMode ? 'ck12-tabfill' : fallback)
+  const emptyOf = (extra?: string) =>
+    cn(
+      'rounded-lg border-[1.5px] border-dashed border-pop-bd p-6 text-center text-[11.5px] text-pop-dim',
+      cockpitMode && 'ck12-tabfill grid place-items-center',
+      extra,
+    )
 
   if (!job) {
     const retry = (
@@ -405,9 +473,7 @@ export function JobFace({
   })()
 
   const timeline = [...events].sort((a, b) => a.created_at.localeCompare(b.created_at))
-  const userIn = timeline.filter((e) => e.kind === 'human_input')
-  const outbound = timeline.filter((e) => ['dispatch', 'note', 'resume'].includes(e.kind))
-  const inbound = timeline.filter((e) => ['report', 'attention', 'handback'].includes(e.kind))
+  const relayGroups = groupRelay(timeline)
   const mandate = job.mandate
 
   // 概览右栏的真实读数：v4 phaseViews 才有进度（没有就不画条、不写 %）。
@@ -480,7 +546,7 @@ export function JobFace({
                 <div className="ck12-jtl">
                   {timeline.map((event) => {
                     const k = traceKind(event.kind)
-                    const text = summaryOf(event) || k.label
+                    const text = relayText(event)
                     return (
                       <div
                         key={event.id}
@@ -600,7 +666,7 @@ export function JobFace({
                         'bg-white/[0.06] text-pop-dim',
                       )}>{k.label}</span>
                       <span className="min-w-0 flex-1 text-[11px] text-pop-ink">
-                        {summaryOf(event) || k.label}
+                        {relayText(event)}
                         {event.actor && <span className="ml-1.5 text-[9.5px] text-pop-dim">· {event.actor}</span>}
                       </span>
                     </div>
@@ -613,96 +679,112 @@ export function JobFace({
       ))}
 
       {tab === 'relay' && (
-        <div data-testid="cabin-job-relay">
-          <div className="mb-2 flex items-center gap-1.5 text-[10px] text-pop-dim">
-            <span className="rounded border border-pop-cyan/40 px-1.5 py-px text-pop-cyan">你</span>
-            <ArrowRight className="size-2.5" />
-            <span className="rounded border border-pop-pink/40 px-1.5 py-px text-pop-pink">汐音</span>
-            <ArrowRight className="size-2.5" />
-            <span className="rounded border border-pop-violet/40 px-1.5 py-px text-pop-violet">执行者</span>
-            {/* 跨舱只读：投递只对入口舱开放，不给用户「能投到别的舱」的错觉。 */}
-            {cabinId === entryCabinId && (
-              <button
-                type="button"
-                data-testid="cockpit-relay-main-chat"
-                onClick={() => window.dispatchEvent(new CustomEvent('octopus:cabin-main-chat'))}
-                className="ml-auto inline-flex items-center gap-1 text-[10px] text-pop-cyan hover:underline"
-              >
-                <MessageSquare className="size-3" />去主对话
-              </button>
-            )}
-          </div>
-          <div className="grid gap-2 md:grid-cols-3">
-            <div className="rounded-lg border border-pop-cyan/30 bg-pop-cyan/[0.04] p-2.5">
-              <div className="mb-1.5 text-[10px] font-bold text-pop-cyan">你 → 汐音</div>
-              <div className="text-[11px] leading-relaxed text-pop-ink">
-                {job.prompt || '（派发时没有留下原文）'}
-              </div>
-              {mandate && (
-                <div className="mt-1.5 font-mono text-[9.5px] text-pop-dim">
-                  {mandate.strength}{mandate.basis ? ` · ${mandate.basis}` : ''}
+        <div data-testid="cabin-job-relay" className={cockpitMode ? 'ck12-relay' : undefined}>
+          <section className={cockpitMode ? 'ck12-pane' : undefined}>
+            <header className={cockpitMode ? 'ck12-pane-h' : 'mb-2 flex items-center gap-2 text-[10px] text-pop-dim'}>
+              <b>对接 · 交接时间线</b>
+              <span className={cockpitMode ? 'ck12-pane-tag' : 'font-mono text-[9.5px]'}>
+                {timeline.length} EVENTS
+              </span>
+              {/* 跨舱只读：投递只对入口舱开放，不给用户「能投到别的舱」的错觉。 */}
+              {cabinId === entryCabinId && (
+                <button
+                  type="button"
+                  data-testid="cockpit-relay-main-chat"
+                  onClick={() => window.dispatchEvent(new CustomEvent('octopus:cabin-main-chat'))}
+                  className={cockpitMode
+                    ? 'ck12-relay-go'
+                    : 'ml-auto inline-flex items-center gap-1 text-[10px] text-pop-cyan hover:underline'}
+                >
+                  <MessageSquare className="size-3" />去主对话
+                </button>
+              )}
+            </header>
+
+            <div className={cockpitMode ? 'ck12-pane-b is-tight' : undefined}>
+              {/* 派发原文 = 时间线的第 0 条（你 → 汐音），长文默认收 3 行，可展开。 */}
+              {job.prompt && (
+                <div className="ck12-relay-spec">
+                  <div className="h">
+                    <b>你 → 汐音</b>
+                    <span>派发原文</span>
+                    {mandate && <span className="k">{mandate.strength}</span>}
+                    {mandate?.basis && <span>{mandate.basis}</span>}
+                    {mandate?.scope && <span>scope: {mandate.scope}</span>}
+                    {job.prompt.length > 120 && (
+                      <button
+                        type="button"
+                        className="ck12-relay-more"
+                        data-testid="cockpit-relay-prompt-toggle"
+                        onClick={() => setPromptOpen((open) => !open)}
+                      >{promptOpen ? '收起' : '展开原文'}</button>
+                    )}
+                  </div>
+                  <p className={promptOpen ? undefined : 'is-clamp'}>{job.prompt}</p>
                 </div>
               )}
-              {userIn.length > 0 && (
-                <ul className="mt-1.5 space-y-1 border-t border-pop-cyan/20 pt-1.5">
-                  {userIn.map((e) => (
-                    <li key={e.id} className="text-[10.5px] leading-relaxed text-pop-dim">
-                      <span className="mr-1 font-mono text-[9px]">{clockLabel(e.created_at)}</span>
-                      {summaryOf(e) || traceKind(e.kind).label}
-                    </li>
-                  ))}
-                </ul>
+
+              {timeline.length === 0 ? (
+                <div className={cockpitMode ? 'ck12-face-empty' : 'rounded-lg border-[1.5px] border-dashed border-pop-bd p-6 text-center text-[11.5px] text-pop-dim'}>
+                  还没有交接事件 · 派发后这里留痕
+                </div>
+              ) : (
+                <div className="ck12-rtl" data-testid="cockpit-relay-timeline">
+                  {relayGroups.map((group) => {
+                    const event = group.last
+                    const k = traceKind(event.kind)
+                    const [from, to] = relayRoute(event.kind)
+                    const firstPriority = priorityOf(group.first)
+                    const lastPriority = priorityOf(group.last)
+                    const text = group.count > 1 && firstPriority !== null && lastPriority !== null
+                      ? `提优先 P${firstPriority} → P${lastPriority} · ${group.count} 次`
+                      : relayText(event)
+                    return (
+                      <div
+                        className="ck12-rrow"
+                        key={group.key}
+                        data-testid={`cabin-relay-event-${group.key}`}
+                      >
+                        <i className={cn('ck12-rrow-d', k.dot)} aria-hidden="true" />
+                        <span className="ck12-rrow-t">{clockLabel(event.created_at)}</span>
+                        <span className="ck12-rrow-route">
+                          <b className={`is-${from}`}>{RELAY_ROLE[from].label}</b>
+                          <ArrowRight className="ck12-rrow-arrow" aria-hidden="true" />
+                          <b className={`is-${to}`}>{RELAY_ROLE[to].label}</b>
+                        </span>
+                        <span className="ck12-rrow-k">{k.label}</span>
+                        <span className="ck12-rrow-x" title={text}>{text}</span>
+                      </div>
+                    )
+                  })}
+                </div>
               )}
             </div>
-            <div className="rounded-lg border border-pop-pink/30 bg-pop-pink/[0.04] p-2.5">
-              <div className="mb-1.5 text-[10px] font-bold text-pop-pink">汐音 → 执行者</div>
-              {outbound.length === 0 ? <div className="text-[10.5px] text-pop-dim">暂无派发事件</div> : (
-                <ul className="space-y-1">
-                  {outbound.map((e) => (
-                    <li key={e.id} className="text-[10.5px] leading-relaxed text-pop-ink">
-                      <span className="mr-1 font-mono text-[9px] text-pop-dim">{clockLabel(e.created_at)}</span>
-                      {summaryOf(e) || traceKind(e.kind).label}
-                    </li>
-                  ))}
-                </ul>
-              )}
-            </div>
-            <div className="rounded-lg border border-pop-violet/30 bg-pop-violet/[0.04] p-2.5">
-              <div className="mb-1.5 text-[10px] font-bold text-pop-violet">执行者 → 汐音</div>
-              {inbound.length === 0 ? <div className="text-[10.5px] text-pop-dim">还没有回报</div> : (
-                <ul className="space-y-1">
-                  {inbound.map((e) => (
-                    <li key={e.id} className="text-[10.5px] leading-relaxed text-pop-ink">
-                      <span className="mr-1 font-mono text-[9px] text-pop-dim">{clockLabel(e.created_at)}</span>
-                      {summaryOf(e) || traceKind(e.kind).label}
-                    </li>
-                  ))}
-                </ul>
-              )}
-            </div>
-          </div>
+          </section>
         </div>
       )}
 
       {tab === 'run' && (
-        <div data-testid="cabin-job-run">
+        <div data-testid="cabin-job-run" className={frameOf()}>
           {job.kind === 'subagent' ? (
             subagentRun ? (
-              <div className="h-[500px] overflow-hidden rounded-lg border-[1.5px] border-pop-bd">
+              <div className={cn('overflow-hidden rounded-lg border-[1.5px] border-pop-bd', fillOf('h-[500px]'))}>
                 <SubagentWindow
                   sessionId={job.session_id ?? mainSessionId ?? null}
                   agentId={job.ref_id}
                 />
               </div>
             ) : (
-              <div className="rounded-lg border-[1.5px] border-dashed border-pop-bd p-6 text-center text-[11.5px] text-pop-dim">
+              <div className={emptyOf()}>
                 这条作业还没有可看的运行现场（缺子代理）
               </div>
             )
           ) : runTarget ? (
-            <CabinRunSummary target={runTarget} />
+            <div className={fillOf()}>
+              <CabinRunSummary target={runTarget} />
+            </div>
           ) : (
-            <div className="rounded-lg border-[1.5px] border-dashed border-pop-bd p-6 text-center text-[11.5px] text-pop-dim">
+            <div className={emptyOf()}>
               {job.kind === 'task' && taskForRun
                 ? '这一轮还没有执行 · 跑起来后这里给执行摘要'
                 : '这条作业还没有可看的运行现场（缺执行 / 任务）'}
@@ -712,13 +794,13 @@ export function JobFace({
       )}
 
       {tab === 'changes' && (
-        <div data-testid="cabin-job-changes">
+        <div data-testid="cabin-job-changes" className={frameOf()}>
           {taskForRun ? (
-            <div className="h-[500px] overflow-hidden rounded-lg border-[1.5px] border-pop-bd bg-pop-paper">
+            <div className={cn('overflow-hidden rounded-lg border-[1.5px] border-pop-bd bg-pop-paper', fillOf('h-[500px]'))}>
               <ChangesWindow task={taskForRun} />
             </div>
           ) : (
-            <div className="rounded-lg border-[1.5px] border-dashed border-pop-bd p-6 text-center text-[11.5px] text-pop-dim">
+            <div className={emptyOf()}>
               {cockpitMode ? `这条${kind.label}作业没有交付变更账本` : '只有任务类作业有变更账本'}
             </div>
           )}
@@ -726,9 +808,9 @@ export function JobFace({
       )}
 
       {tab === 'accept' && (
-        <div data-testid="cabin-job-accept">
+        <div data-testid="cabin-job-accept" className={frameOf()}>
           {taskForRun ? (
-            <div className="max-h-[520px] overflow-y-auto rounded-lg border-[1.5px] border-pop-bd bg-pop-paper">
+            <div className={cn('overflow-y-auto rounded-lg border-[1.5px] border-pop-bd bg-pop-paper', fillOf('max-h-[520px]'))}>
               <AcceptanceWindow
                 task={taskForRun}
                 onMutated={() => {
@@ -740,7 +822,7 @@ export function JobFace({
               />
             </div>
           ) : (
-            <div className="rounded-lg border-[1.5px] border-dashed border-pop-bd p-6 text-center text-[11.5px] text-pop-dim">
+            <div className={emptyOf()}>
               {cockpitMode ? `这条${kind.label}作业没有交付验收单` : '只有任务类作业可验收'}
             </div>
           )}

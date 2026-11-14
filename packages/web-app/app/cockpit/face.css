@@ -56,6 +56,20 @@
 }
 
 /* ───────────────────── 页签主体：v12 .sgrid / .pane / .jrow ───────────────────── */
+/* 五个页签**统一等高**：面体高度是固定的，页签外层（.ck12-tab）撑满它，内容
+   （.ck12-tabfill）再撑满外层 —— 空页签不会矮一截，切换时不跳高度
+   （2026-11-15 用户）。旧窗变体不加这两个类，保持它自己的 500/520px。 */
+.ck12-tab {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+.ck12-tabfill {
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
 /* 概览两栏：左轨迹（1.32fr）右状态（.92fr）；窄屏折成一栏（见文件末尾 media）。 */
 .ck12-sgrid {
   flex: 1;
@@ -204,6 +218,157 @@
   white-space: nowrap;
 }
 .ck12-jrow-x {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: color-mix(in srgb, var(--ck12-ink) 84%, transparent);
+}
+
+/* ───────────────────── 对接：交接时间线（你 → 汐音 → 执行者） ─────────────────────
+   替代原来的三栏卡片：三栏看不出先后顺序，同一时刻的来回也读不出来。
+   现在是一条按时间排的单线，每行写清「谁 → 谁 · 类型 · 内容」；派发原文作为
+   第 0 条钉在顶部（默认收 3 行，可展开）。 */
+.ck12-relay {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+.ck12-relay .ck12-pane {
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+.ck12-relay-go {
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 20px;
+  padding: 0 8px;
+  flex: none;
+  border-radius: 6px;
+  border: 1px solid color-mix(in srgb, var(--ck12-cyan) 40%, transparent);
+  color: var(--ck12-cyan);
+  font-size: 9.5px;
+  font-family: var(--font-ui);
+  transition: 0.14s;
+}
+.ck12-relay-go:hover {
+  background: color-mix(in srgb, var(--ck12-cyan) 12%, transparent);
+}
+
+.ck12-relay-spec {
+  margin-bottom: 8px;
+  padding: 9px 11px;
+  border: 1px solid color-mix(in srgb, var(--ck12-cyan) 26%, transparent);
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--ck12-cyan) 5%, transparent);
+}
+.ck12-relay-spec .h {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 5px;
+  font-size: 9px;
+  color: var(--ck12-faint);
+}
+.ck12-relay-spec .h b {
+  font-size: 10.5px;
+  color: var(--ck12-cyan);
+}
+.ck12-relay-spec .h .k {
+  padding: 0 6px;
+  border: 1px solid var(--ck12-bd);
+  border-radius: 999px;
+  font-family: var(--font-mono);
+  font-size: 8.5px;
+}
+.ck12-relay-spec p {
+  margin: 0;
+  font-size: 10.5px;
+  line-height: 1.7;
+  color: var(--ck12-dim);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.ck12-relay-spec p.is-clamp {
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.ck12-relay-more {
+  margin-left: auto;
+  height: 18px;
+  padding: 0 6px;
+  flex: none;
+  border-radius: 5px;
+  border: 1px solid var(--ck12-bd);
+  color: var(--ck12-dim);
+  font-size: 9px;
+  font-family: var(--font-ui);
+  transition: 0.14s;
+}
+.ck12-relay-more:hover {
+  color: var(--ck12-ink);
+  border-color: var(--ck12-bd2);
+}
+
+.ck12-rtl { display: flex; flex-direction: column; }
+.ck12-rrow {
+  display: grid;
+  grid-template-columns: 8px 52px 116px 54px minmax(0, 1fr);
+  gap: 9px;
+  align-items: baseline;
+  padding: 9px 0;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+  font-size: 11.5px;
+  font-family: var(--font-ui);
+}
+.ck12-rrow:last-child { border-bottom: 0; }
+.ck12-rrow-d {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  align-self: center;
+}
+.ck12-rrow-t {
+  font-size: 8.5px;
+  color: var(--ck12-faint);
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+}
+.ck12-rrow-route {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 4px;
+  min-width: 0;
+  white-space: nowrap;
+  font-size: 10px;
+}
+.ck12-rrow-route b { font-weight: 700; }
+.ck12-rrow-route b.is-you { color: var(--ck12-cyan); }
+.ck12-rrow-route b.is-xiyin { color: var(--pop-pink, #ff7ab6); }
+.ck12-rrow-route b.is-doer { color: var(--ck12-violet); }
+.ck12-rrow-arrow {
+  width: 11px;
+  height: 11px;
+  align-self: center;
+  color: var(--ck12-faint);
+}
+.ck12-rrow-k {
+  justify-self: start;
+  padding: 0 3px;
+  border: 1px solid var(--ck12-bd);
+  border-radius: 4px;
+  font-size: 8px;
+  color: var(--ck12-dim);
+  white-space: nowrap;
+}
+.ck12-rrow-x {
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;

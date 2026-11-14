@@ -277,6 +277,77 @@ describe('JobFace（cockpit）', () => {
     fireEvent.click(await screen.findByTestId('cockpit-job-go'))
     expect(await screen.findByTestId('cabin-job-accept')).toBeInTheDocument()
   })
+
+  it('对接：一条按时间排的交接时间线，每行标出这一跳的方向', async () => {
+    const ev = (id: string, kind: string, actor: string, summary: string, at: string) => ({
+      id, job_id: 'j1', cabin_id: 'cabin-1', kind, actor,
+      payload: { summary }, created_at: at,
+    })
+    vi.mocked(listCabinJobs).mockResolvedValue([
+      jobView({ kind: 'workflow', ref_id: null, title: '审计工作流' }),
+    ])
+    vi.mocked(getCabinJob).mockResolvedValue({
+      job: {
+        id: 'j1', cabin_id: 'cabin-1', kind: 'workflow', ref_id: null,
+        session_id: null, iteration_id: null, title: '审计工作流',
+        mandate: null, prompt: '把渠道接进来', priority: 1,
+        created_at: '2026-11-13T14:00:00.000Z', ended_at: null,
+      },
+      events: [
+        // 故意乱序给：时间线必须按 created_at 排，不是给什么顺序画什么顺序。
+        ev('e2', 'report', 'doer', '回报：已完成', '2026-11-13T14:20:00.000Z'),
+        ev('e1', 'dispatch', 'orchestrator', '派发执行', '2026-11-13T14:10:00.000Z'),
+        ev('e3', 'human_input', 'human', '补充一句', '2026-11-13T14:30:00.000Z'),
+      ],
+    })
+
+    render(<Harness />)
+    fireEvent.click(await screen.findByTestId('cockpit-tab-relay'))
+
+    const rows = await screen.findAllByTestId(/^cabin-relay-event-/)
+    expect(rows.map((row) => row.getAttribute('data-testid'))).toEqual([
+      'cabin-relay-event-e1', 'cabin-relay-event-e2', 'cabin-relay-event-e3',
+    ])
+    // 方向按事件类型写死：派发=汐音→执行者，回报=执行者→汐音，人输入=你→汐音。
+    expect(rows[0].textContent).toContain('汐音')
+    expect(rows[0].textContent).toContain('执行者')
+    expect(rows[1].textContent).toContain('回报：已完成')
+    expect(rows[2].textContent).toContain('你')
+    // 派发原文钉在第 0 条（整段需求默认收 3 行）。
+    expect(screen.getByTestId('cabin-job-relay').textContent).toContain('派发原文')
+    expect(screen.getByTestId('cabin-job-relay').textContent).toContain('把渠道接进来')
+  })
+
+  it('对接：连续的「提优先」折叠成一条，并写明区间与次数', async () => {
+    const bump = (id: string, priority: number, at: string) => ({
+      id, job_id: 'j1', cabin_id: 'cabin-1', kind: 'human_input', actor: 'human',
+      payload: { action: 'priority', priority }, created_at: at,
+    })
+    vi.mocked(listCabinJobs).mockResolvedValue([
+      jobView({ kind: 'workflow', ref_id: null, title: '审计工作流' }),
+    ])
+    vi.mocked(getCabinJob).mockResolvedValue({
+      job: {
+        id: 'j1', cabin_id: 'cabin-1', kind: 'workflow', ref_id: null,
+        session_id: null, iteration_id: null, title: '审计工作流',
+        mandate: null, prompt: null, priority: 6,
+        created_at: '2026-11-13T14:00:00.000Z', ended_at: null,
+      },
+      events: [
+        bump('p2', 2, '2026-11-13T14:01:00.000Z'),
+        bump('p3', 3, '2026-11-13T14:02:00.000Z'),
+        bump('p4', 4, '2026-11-13T14:03:00.000Z'),
+        bump('p5', 5, '2026-11-13T14:04:00.000Z'),
+        bump('p6', 6, '2026-11-13T14:05:00.000Z'),
+      ],
+    })
+
+    render(<Harness />)
+    fireEvent.click(await screen.findByTestId('cockpit-tab-relay'))
+    const rows = await screen.findAllByTestId(/^cabin-relay-event-/)
+    expect(rows).toHaveLength(1)
+    expect(rows[0].textContent).toContain('提优先 P2 → P6 · 5 次')
+  })
 })
 
 describe('JobFace（cockpit）· 加载容错', () => {
