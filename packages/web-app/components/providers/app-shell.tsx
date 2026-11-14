@@ -3,7 +3,7 @@
 import { Suspense } from 'react'
 import { AppNavProvider, useAppNavigation } from '@/lib/app-navigation'
 import { DesktopWindowsProvider } from '@/lib/desktop-windows'
-import { CabinShellRoute } from '@/lib/route-components'
+import { CABIN_COMPONENTS } from '@/lib/route-components'
 import { CabinModeProvider } from '@/components/cabin/cabin-mode'
 import { Desktop } from '@/components/shell/desktop'
 import { ServerStatusBanner } from '@/components/shell/server-status-banner'
@@ -42,15 +42,19 @@ export function AppShell() {
 function ShellBody() {
   const nav = useAppNavigation()
   if (nav?.route.kind === 'cabin') {
+    // 兄弟壳按 componentKey 分发：/cabin/:cabinId → cabin-shell，
+    // /cabin/:cabinId/cockpit → cabin-cockpit。两条都是整屏壳，不挂桌面。
+    const CabinComponent =
+      CABIN_COMPONENTS[nav.route.componentKey] ?? CABIN_COMPONENTS['cabin-shell']
     return (
       <Suspense
         fallback={
           <div className="grid flex-1 place-items-center bg-pop-bg text-sm text-pop-dim">
-            载入作战舱…
+            {nav.route.componentKey === 'cabin-cockpit' ? '载入全域座舱…' : '载入作战舱…'}
           </div>
         }
       >
-        <CabinShellRoute />
+        <CabinComponent />
       </Suspense>
     )
   }

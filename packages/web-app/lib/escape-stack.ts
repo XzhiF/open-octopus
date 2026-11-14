@@ -25,6 +25,16 @@ function radixLayerOpen(): boolean {
   )
 }
 
+/** Radix 弹层是否开着（给自建 Esc 栈让行用）。 */
+export function isRadixLayerOpen(): boolean {
+  return radixLayerOpen()
+}
+
+/** 当前注册在共享 Esc 栈上的浮层数（任务模块窗等）。 */
+export function escapeLayerCount(): number {
+  return stack.length
+}
+
 /**
  * Esc closes the top-most custom floating layer (window/pane/editor).
  * Radix dialogs/menus/popovers handle Esc themselves; while one is open we

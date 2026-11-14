@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import {
+  ArrowLeft,
   ChevronDown,
   Container,
   Copy,
@@ -78,6 +79,8 @@ interface ChatSidebarProps {
   activeCabinId?: string | null
   onSelectCabin?: (id: string) => void
   onCreateCabin?: () => void
+  /** 桌面舱模式：退出回普通对话（舱段标题右侧的小箭头）。兄弟壳不传。 */
+  onExitCabin?: () => void
 }
 
 const ROW =
@@ -251,6 +254,7 @@ export function ChatSidebar({
   activeCabinId,
   onSelectCabin,
   onCreateCabin,
+  onExitCabin,
 }: ChatSidebarProps) {
   const [editingId, setEditingId] = useState<string | null>(null)
   const [editTitle, setEditTitle] = useState('')
@@ -495,17 +499,33 @@ export function ChatSidebar({
               <SectionLabel
                 label="作战舱"
                 count={filteredCabins.length}
-                action={onCreateCabin ? (
-                  <button
-                    type="button"
-                    data-testid="cabin-section-new"
-                    title="新建作战舱"
-                    aria-label="新建作战舱"
-                    onClick={onCreateCabin}
-                    className="grid size-5 place-items-center rounded text-pop-dim transition-colors hover:bg-white/[0.08] hover:text-pop-ink"
-                  >
-                    <Plus className="size-3.5" strokeWidth={1.8} />
-                  </button>
+                action={onCreateCabin || onExitCabin ? (
+                  <span className="flex items-center gap-0.5">
+                    {onExitCabin && (
+                      <button
+                        type="button"
+                        data-testid="cabin-section-exit"
+                        title="返回普通对话"
+                        aria-label="返回普通对话"
+                        onClick={onExitCabin}
+                        className="grid size-5 place-items-center rounded text-pop-dim transition-colors hover:bg-white/[0.08] hover:text-pop-ink"
+                      >
+                        <ArrowLeft className="size-3.5" strokeWidth={1.8} />
+                      </button>
+                    )}
+                    {onCreateCabin && (
+                      <button
+                        type="button"
+                        data-testid="cabin-section-new"
+                        title="新建作战舱"
+                        aria-label="新建作战舱"
+                        onClick={onCreateCabin}
+                        className="grid size-5 place-items-center rounded text-pop-dim transition-colors hover:bg-white/[0.08] hover:text-pop-ink"
+                      >
+                        <Plus className="size-3.5" strokeWidth={1.8} />
+                      </button>
+                    )}
+                  </span>
                 ) : undefined}
               />
               {filteredCabins.length === 0 ? (

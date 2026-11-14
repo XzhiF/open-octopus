@@ -25,7 +25,7 @@ import * as agentApi from '@/lib/agent/api'
 import type { AgentSession, AgentMessage } from '@/lib/agent/types'
 import type { RunningAgentSession } from '@/lib/agent/api'
 import { CwdPicker, type CwdChoice } from './cwd-picker'
-import { ChatArea } from './ChatArea'
+import { ChatArea, type ChatComposerBridge } from './ChatArea'
 import { TaskModulesLayer } from '@/components/chat-workbench/task-modules-layer'
 import { TriggerDialog } from '@/components/tasks/trigger-dialog'
 import type { RunTarget, SubagentTarget, TaskModule, TaskWindowMap, YamlTarget } from '@/components/chat-workbench/task-window-types'
@@ -63,6 +63,9 @@ import {
   type KcIngestCardData,
 } from '@/lib/knowledge-center/card-protocol'
 import { ChatPanePicker } from './chat-pane-picker'
+import type { CockpitChatApi } from '@/components/cockpit/state/cockpit-state'
+import { useChatTelemetry } from '@/components/cockpit/chat/use-chat-telemetry'
+import { CABIN_MAIN_IDENTITY } from '@/components/cabin/cabin-meta'
 
 export type ChatPaneSide = 'left' | 'right'
 
@@ -150,6 +153,14 @@ export interface ChatPaneProps {
   /** 舱壳注入（Cabin P3）：舱内新建任务绑 cabin_id + 复用舱 workspace。 */
   cabinId?: string | null
   cabinWorkspaceId?: string | null
+  /** 全域座舱（S5）：composer 搬到全域底栏时的 portal 目标；缺省 = 行内 composer。 */
+  composerSlot?: HTMLElement | null
+  /** 全域座舱：隐藏已搬到舰桥的模型/上下文读数（其余交互不变）。 */
+  composerVariant?: 'full' | 'cockpit'
+  /** 全域座舱：把这一栏的对话能力上报给 CockpitState（值变化才上报）。 */
+  onTelemetry?: (api: CockpitChatApi | null) => void
+  /** 全域座舱：隐藏右侧竖排作业坞（浮窗里只留 transcript，坞的功能在作业面上）。 */
+  hideDock?: boolean
 }
 
 /** 决策卡上「选择即写回卡片」的按钮 id。其余按钮（打开规格/运行窗…）只是导航，
@@ -188,6 +199,10 @@ export function ChatPane({
   dockElevated,
   cabinId,
   cabinWorkspaceId,
+  composerSlot,
+  composerVariant,
+  onTelemetry,
+  hideDock,
 }: ChatPaneProps) {
   const {
     sessions, sessionsLoading, createNewSession, updateSessionTitle,
@@ -350,6 +365,54 @@ export function ChatPane({
     context: maxContext, setContext: setMaxContext,
     presets: modelPresets,
   } = useComposerSettings()
+
+  // ── 全域座舱 telemetry（S5）────────────────────────────────────────────
+  // 只读地把这一栏的对话能力交给 CockpitState。三条纪律：
+  //   1. 值变化才上报（telemetry 对象 useMemo，依赖都是原始值/稳定回调）；
+  //   2. 所有函数入口都走 ref 稳定，绝不把每次渲染新建的 setter 放进 deps ——
+  //      否则 reportChat → Provider 重渲染 → 本组件重渲染 → 新 telemetry → 再上报；
+  //   3. submit 走 ChatArea 暴露的 composer bridge（同一条提交管线）。
+  const composerBridgeRef = useRef<ChatComposerBridge | null>(null)
+  const [queueDepth, setQueueDepth] = useState(0)
+  const composerApiRef = useRef({ setModel, setEffort, setMaxContext, stopGenerate })
+  useEffect(() => {
+    composerApiRef.current = { setModel, setEffort, setMaxContext, stopGenerate }
+  })
+  const submitFromComposer = useCallback((text: string) => {
+    composerBridgeRef.current?.submit(text)
+  }, [])
+  const stopFromComposer = useCallback(() => {
+    void composerApiRef.current.stopGenerate()
+  }, [])
+  const setModelStable = useCallback((id: string) => {
+    composerApiRef.current.setModel(id)
+  }, [])
+  const setEffortStable = useCallback((next: CockpitChatApi['effort']) => {
+    composerApiRef.current.setEffort(next)
+  }, [])
+  const setContextStable = useCallback((next: CockpitChatApi['contextWindow']) => {
+    composerApiRef.current.setMaxContext(next)
+  }, [])
+  const reportQueueDepth = useCallback((depth: number) => setQueueDepth(depth), [])
+  const chatTelemetry = useMemo<CockpitChatApi>(() => ({
+    model,
+    effort,
+    contextWindow: maxContext,
+    streaming,
+    queueDepth,
+    canSend: !!sessionId,
+    contextUsage: contextUsage ?? null,
+    usage: sessionUsage ?? null,
+    submit: submitFromComposer,
+    stop: stopFromComposer,
+    setModel: setModelStable,
+    setEffort: setEffortStable,
+    setContext: setContextStable,
+  }), [
+    model, effort, maxContext, streaming, queueDepth, sessionId, contextUsage, sessionUsage,
+    submitFromComposer, stopFromComposer, setModelStable, setEffortStable, setContextStable,
+  ])
+  useChatTelemetry(chatTelemetry, onTelemetry)
 
   // ── 票10 投喂泛化：会话策展卡回流呈现 ──
   // 卡片回流原会话的普通侧宿主：Lane A fenced 块剥块渲染（注册表复用=零新卡类），
@@ -1202,10 +1265,10 @@ export function ChatPane({
     // 舱内打开的任务线程仍走下面按任务状态派生的只读身份。
     if (cabinId && !taskThread) {
       return {
-        label: '汐音舰长',
+        label: CABIN_MAIN_IDENTITY,
         active: true,
         readOnly: true,
-        title: '舱主对话身份固定为汐音舰长，不可切换',
+        title: `舱主对话身份固定为${CABIN_MAIN_IDENTITY}，不可切换`,
       }
     }
     if (taskThread) {
@@ -1472,7 +1535,7 @@ export function ChatPane({
                 : '描述要开发的任务…　⏎ 发送')
               : cabinId && !taskThread
                 // classic-v3：舱主对话固定问汐音舰长（不再露出「主 Agent」）。
-                ? '问汐音舰长…　⏎ 发送 · ⇧⏎ 排队 · Alt⏎ 换行'
+                ? `问${CABIN_MAIN_IDENTITY}…\u3000⏎ 发送 · ⇧⏎ 排队 · Alt⏎ 换行`
                 : '问主 Agent…　⏎ 发送 · ⇧⏎ 排队 · Alt⏎ 换行'}
             // hero：新建对话 = 空主会话；新建开发任务 = 未落盘的 pendingTask（同一套
             // 居中 composer + 第二行控件，2026-10-28 看齐）。
@@ -1510,6 +1573,10 @@ export function ChatPane({
             transcriptTail={tail}
             timelineClearDock={!!explorerWorkspaceId}
             dockGutter={split}
+            composerSlot={composerSlot}
+            composerVariant={composerVariant}
+            onQueueDepthChange={reportQueueDepth}
+            composerBridgeRef={composerBridgeRef}
           />
         )}
       </div>
@@ -1546,6 +1613,7 @@ export function ChatPane({
         layerRoot,
       )}
 
+      {!hideDock && (
       <WorkspaceExplorerDock
         workspaceId={explorerWorkspaceId}
         workspaceName={explorerWorkspaceName}
@@ -1610,6 +1678,7 @@ export function ChatPane({
         sidebarWidth={sidebarWidth}
         compact={split}
       />
+      )}
 
       {yamlTarget && (
         <WorkflowYamlWindow target={yamlTarget} onClose={() => setYamlTarget(null)} />

@@ -41,14 +41,26 @@ const LazyCabinShell = lazy(() =>
   import('@/components/cabin/CabinShell').then((m) => ({ default: m.CabinShell })),
 )
 
+const LazyCockpitShell = lazy(() =>
+  import('@/components/cockpit/shell/CockpitShell').then((m) => ({ default: m.CockpitShell })),
+)
+
 /** 舱壳路由入口：从路由参数取 cabinId（'new' = 新建向导）。 */
 export function CabinShellRoute() {
   const params = useParams()
   return <LazyCabinShell cabinId={params.cabinId ?? ''} />
 }
 
+/** 全域座舱路由入口：cabinId 是入口舱（聊天/返回都锚在它上面）。 */
+export function CabinCockpitRoute() {
+  const params = useParams()
+  return <LazyCockpitShell cabinId={params.cabinId ?? ''} />
+}
+
+/** 按 route.componentKey 分发（ShellBody 只认这张表，不再按 kind 一刀切）。 */
 export const CABIN_COMPONENTS: Record<string, LazyPage> = {
   'cabin-shell': lazy(() => Promise.resolve({ default: CabinShellRoute })),
+  'cabin-cockpit': lazy(() => Promise.resolve({ default: CabinCockpitRoute })),
 }
 
 export function componentForRoute(route: AppRoute): LazyPage | null {

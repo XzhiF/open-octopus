@@ -1,0 +1,303 @@
+/* S8 owns this file —— 到达简报 .ck12-brief（340px，right:26 top:66，无按钮，10s 自动收）
+   + 全局特效 .ck12-fx 中心脉冲 / .ck12-edgefx 四边流光（3px，2.4s，只走边缘）。
+   逐段对照 docs/cabin-design/cockpit-v12.html 的 .brief / .fx / .edgefx。
+   S1 的 index.css 已经 import，本文件只增不改壳。
+   ─────────────────────────────────────────────────────────────────────── */
+
+/* ═══════════════ 到达简报（340 宽 / 无按钮 / 10s 自收） ═══════════════ */
+.ck12-brief {
+  position: fixed;
+  right: 26px;
+  top: 66px;
+  width: 340px;
+  z-index: 50;
+  border-radius: 14px;
+  border: 1px solid color-mix(in srgb, var(--ck12-brief-tone, var(--ck12-amber)) 42%, transparent);
+  background: linear-gradient(180deg, rgba(30, 26, 20, 0.96), rgba(18, 16, 14, 0.94));
+  backdrop-filter: blur(14px);
+  box-shadow:
+    0 20px 50px rgba(0, 0, 0, 0.55),
+    0 0 30px color-mix(in srgb, var(--ck12-brief-tone, var(--ck12-amber)) 12%, transparent);
+  overflow: hidden;
+  /* 入场只在挂载时播一次（元素随 state 卸载/重挂，不靠 transition） */
+  animation: ck12-brief-in 0.42s cubic-bezier(0.2, 0.9, 0.2, 1);
+}
+
+.ck12-brief-h {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 11px 13px 8px;
+}
+
+.ck12-brief-av {
+  width: 34px;
+  height: 34px;
+  border-radius: 9px;
+  overflow: hidden;
+  flex: none;
+  background: #111;
+  border: 1px solid color-mix(in srgb, var(--ck12-brief-tone, var(--ck12-amber)) 40%, transparent);
+}
+.ck12-brief-av img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  object-position: 50% 12%;
+}
+
+.ck12-brief-id {
+  min-width: 0;
+  flex: 1;
+}
+.ck12-brief-id b {
+  display: block;
+  font-size: 11.5px;
+  font-weight: 700;
+  color: var(--ck12-ink);
+  font-family: var(--font-ui);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.ck12-brief-kicker {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 9px;
+  letter-spacing: 0.1em;
+  color: var(--ck12-brief-tone, var(--ck12-amber));
+  white-space: nowrap;
+}
+.ck12-brief-dot {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  flex: none;
+  background: var(--ck12-brief-tone, var(--ck12-amber));
+  box-shadow: 0 0 8px var(--ck12-brief-tone, var(--ck12-amber));
+}
+
+.ck12-brief-demo {
+  margin-left: auto;
+  flex: none;
+  padding: 1px 6px;
+  border-radius: 5px;
+  border: 1px dashed color-mix(in srgb, var(--ck12-brief-tone, var(--ck12-amber)) 55%, transparent);
+  color: var(--ck12-brief-tone, var(--ck12-amber));
+  font-size: 9px;
+  letter-spacing: 0.08em;
+}
+
+.ck12-brief-tx {
+  padding: 0 13px 10px;
+  font-size: 12px;
+  line-height: 1.55;
+  color: var(--ck12-ink);
+  font-family: var(--font-ui);
+  overflow-wrap: anywhere;
+}
+.ck12-brief-tx b {
+  color: var(--ck12-brief-tone, var(--ck12-amber));
+}
+.ck12-brief-more {
+  color: var(--ck12-brief-tone, var(--ck12-amber));
+  font-size: 10px;
+  letter-spacing: 0.04em;
+}
+
+.ck12-brief-f {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 9px 13px 12px;
+  border-top: 1px solid rgba(255, 255, 255, 0.07);
+}
+.ck12-brief-time {
+  font-size: 10px;
+  color: var(--ck12-dim);
+}
+.ck12-brief-hint {
+  margin-left: auto;
+  font-size: 9.5px;
+  letter-spacing: 0.04em;
+  color: var(--ck12-faint);
+}
+
+@keyframes ck12-brief-in {
+  from {
+    opacity: 0;
+    transform: translateX(380px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+/* 演示触发器：仅 DEV + ?demo=1 渲染（生产构建里不存在）。极小、半透明。 */
+.ck12-demo {
+  position: fixed;
+  right: 6px;
+  top: 52px;
+  z-index: 51;
+  width: 14px;
+  height: 14px;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  border: 1px solid var(--ck12-bd);
+  color: var(--ck12-faint);
+  font-size: 9px;
+  line-height: 1;
+  opacity: 0.24;
+  transition: opacity 0.15s, color 0.15s;
+}
+.ck12-demo:hover,
+.ck12-demo:focus-visible {
+  opacity: 1;
+  color: var(--ck-a);
+}
+
+/* ═══════════════ 中心脉冲（只铺背景，压在内容之下） ═══════════════
+   z-index 4 = 原型 .fx 的层级：在 stage（2）之上、HUD/底栏（20）之下，
+   mix-blend-mode:screen + 低透明度，不糊字。 */
+.ck12-fx {
+  position: fixed;
+  inset: 0;
+  z-index: 4;
+  pointer-events: none;
+  opacity: 0;
+  mix-blend-mode: screen;
+  background: radial-gradient(
+    circle at 50% 50%,
+    color-mix(in srgb, var(--ck12-fx, var(--ck-a)) 26%, transparent),
+    transparent 58%
+  );
+}
+.ck12-fx.on {
+  animation: ck12-fx-fade 1.15s ease-out;
+}
+.ck12-fx::after {
+  content: '';
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 80vmax;
+  height: 80vmax;
+  margin: -40vmax 0 0 -40vmax;
+  border-radius: 50%;
+  border: 2px solid color-mix(in srgb, var(--ck12-fx, var(--ck-a)) 55%, transparent);
+  transform: scale(0.03);
+  opacity: 0;
+}
+.ck12-fx.on::after {
+  animation: ck12-fx-ring 1.15s cubic-bezier(0.1, 0.7, 0.2, 1);
+}
+@keyframes ck12-fx-fade {
+  0% { opacity: 0; }
+  12% { opacity: 1; }
+  100% { opacity: 0; }
+}
+@keyframes ck12-fx-ring {
+  0% { opacity: 0.85; transform: scale(0.04); }
+  70% { opacity: 0.2; }
+  100% { opacity: 0; transform: scale(1); }
+}
+
+/* ═══════════════ 舱壁流光（四条 3px，2.4s，只走边缘） ═══════════════ */
+.ck12-edgefx {
+  position: fixed;
+  inset: 0;
+  z-index: 21;
+  pointer-events: none;
+  opacity: 0;
+  overflow: hidden;
+}
+.ck12-edgefx.on {
+  animation: ck12-edge-fade 2.4s ease-out;
+}
+.ck12-edgefx::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  box-shadow:
+    inset 0 0 0 1px color-mix(in srgb, var(--ck12-fx, var(--ck12-amber)) 42%, transparent),
+    inset 0 0 80px color-mix(in srgb, var(--ck12-fx, var(--ck12-amber)) 16%, transparent);
+}
+.ck12-edgefx i {
+  position: absolute;
+  display: block;
+  filter: blur(0.2px) brightness(1.12);
+}
+.ck12-edgefx .t,
+.ck12-edgefx .b {
+  left: 0;
+  width: 100%;
+  height: 3px;
+  background: linear-gradient(
+    90deg,
+    transparent,
+    color-mix(in srgb, var(--ck12-fx, var(--ck12-amber)) 55%, transparent) 30%,
+    color-mix(in srgb, var(--ck12-fx, var(--ck12-amber)) 90%, #fff 10%) 50%,
+    color-mix(in srgb, var(--ck12-fx, var(--ck12-amber)) 55%, transparent) 70%,
+    transparent
+  );
+  background-size: 46% 100%;
+  background-repeat: no-repeat;
+  box-shadow: 0 0 22px color-mix(in srgb, var(--ck12-fx, var(--ck12-amber)) 62%, transparent);
+  animation: ck12-edge-h 2.4s ease-in-out;
+}
+.ck12-edgefx .t { top: 0; }
+.ck12-edgefx .b {
+  bottom: 0;
+  animation-direction: reverse;
+}
+.ck12-edgefx .l,
+.ck12-edgefx .r {
+  top: 0;
+  height: 100%;
+  width: 3px;
+  background: linear-gradient(
+    180deg,
+    transparent,
+    color-mix(in srgb, var(--ck12-fx, var(--ck12-amber)) 55%, transparent) 30%,
+    color-mix(in srgb, var(--ck12-fx, var(--ck12-amber)) 90%, #fff 10%) 50%,
+    color-mix(in srgb, var(--ck12-fx, var(--ck12-amber)) 55%, transparent) 70%,
+    transparent
+  );
+  background-size: 100% 46%;
+  background-repeat: no-repeat;
+  box-shadow: 0 0 22px color-mix(in srgb, var(--ck12-fx, var(--ck12-amber)) 62%, transparent);
+  animation: ck12-edge-v 2.4s ease-in-out;
+}
+.ck12-edgefx .l { left: 0; }
+.ck12-edgefx .r {
+  right: 0;
+  animation-direction: reverse;
+}
+@keyframes ck12-edge-fade {
+  0% { opacity: 0; }
+  10% { opacity: 1; }
+  65% { opacity: 0.8; }
+  100% { opacity: 0; }
+}
+@keyframes ck12-edge-h {
+  0% { background-position: -50% 0; }
+  100% { background-position: 150% 0; }
+}
+@keyframes ck12-edge-v {
+  0% { background-position: 0 -50%; }
+  100% { background-position: 0 150%; }
+}
+
+/* 关闭动效：特效直接不显示（组件层也返回 null），简报保留内容但不播入场。 */
+@media (prefers-reduced-motion: reduce) {
+  .ck12-fx,
+  .ck12-edgefx {
+    display: none;
+  }
+  .ck12-brief {
+    animation: none;
+  }
+}

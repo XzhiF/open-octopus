@@ -1,0 +1,708 @@
+/* ═══════════════════════════════════════════════════════════════════════
+   cockpit-v12 · S1 视觉底座
+   逐块对照 docs/cabin-design/cockpit-v12.html 的 token / .bg / .hud /
+   .stage / .quiet / .cmd 外层 / .ticker。类名统一 ck12- 前缀，
+   颜色改走 --ck-a/b/c（CockpitProvider 实时写入）与 pop-* 语义 token。
+   尺寸以原型为准：HUD 48 · stage padding 12 20 0 · 左栏 300 + gap 16 ·
+   立绘让位 366 / 334 / 300 · ticker 30 · 底栏 10 20 16 · 简报区留给 S8。
+   ═══════════════════════════════════════════════════════════════════════ */
+
+.ck12-app,
+.ck12-missing {
+  --ck12-ink: var(--pop-ink);
+  --ck12-dim: var(--pop-dim);
+  --ck12-faint: color-mix(in srgb, var(--pop-dim) 62%, transparent);
+  --ck12-bd: color-mix(in srgb, var(--pop-ink) 9%, transparent);
+  --ck12-bd2: color-mix(in srgb, var(--pop-ink) 14%, transparent);
+  --ck12-green: var(--pop-green);
+  --ck12-amber: var(--pop-amber);
+  --ck12-red: var(--pop-red);
+  --ck12-cyan: var(--pop-cyan);
+  --ck12-violet: var(--pop-violet);
+  --ck12-glow: var(--ck-glow, 1);
+}
+
+.ck12-app {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  isolation: isolate;
+  overflow: hidden;
+  background: var(--pop-bg);
+  color: var(--ck12-ink);
+  font-family: var(--font-mono);
+  font-size: 13px;
+  line-height: 1.55;
+  -webkit-font-smoothing: antialiased;
+}
+
+.ck12-app *,
+.ck12-app *::before,
+.ck12-app *::after {
+  box-sizing: border-box;
+}
+
+/* 按钮基线重置放进 Tailwind 的 base 层：
+   · 本层的 .ck12-* 组件类（未分层）仍能覆写 padding/border（修 2026-11-14
+     作业头页签被抹掉 9px 内边距的问题）；
+   · portal 进来的真 ChatPane / 任务模块窗的 Tailwind 工具类（utilities 层）
+     也能正常生效 —— 之前未分层的 `button{padding:0;background:none}` 会把
+     它们的内边距与配色一起抹掉。 */
+@layer base {
+  .ck12-app button {
+    font: inherit;
+    color: inherit;
+    border: 0;
+    background: none;
+    padding: 0;
+    cursor: pointer;
+  }
+
+  .ck12-app button:focus-visible,
+  .ck12-missing button:focus-visible {
+    outline: 1px solid var(--ck-a);
+    outline-offset: 2px;
+  }
+}
+
+/* 任务模块窗的挂载层（S5 用）：与 .ck12-app 同大，压在聊天浮窗（z24）之上、
+   简报 / popover 之下。pointer-events:none —— 空层不吃点击；TaskModulesLayer
+   的根自己也是 pointer-events-none，窗节点单独接收事件。 */
+.ck12-layerroot {
+  position: absolute;
+  inset: 0;
+  z-index: 25;
+  pointer-events: none;
+}
+
+/* ───────────────────────── backdrop / 星野 ───────────────────────── */
+.ck12-bg {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+  overflow: hidden;
+  background:
+    radial-gradient(120% 80% at 50% -18%, color-mix(in srgb, var(--ck-b) 15%, transparent), transparent 62%),
+    radial-gradient(90% 70% at 112% 108%, color-mix(in srgb, var(--ck-a) 12%, transparent), transparent 62%),
+    var(--pop-bg);
+}
+
+.ck12-nebula {
+  position: absolute;
+  border-radius: 50%;
+  pointer-events: none;
+  filter: blur(70px);
+  opacity: 0.55;
+  will-change: transform;
+}
+.ck12-n1 {
+  width: 62vw;
+  height: 52vh;
+  left: -14vw;
+  top: -18vh;
+  background: radial-gradient(circle, color-mix(in srgb, var(--ck-b) 34%, transparent), transparent 66%);
+  animation: ck12-neb 28s ease-in-out infinite alternate;
+}
+.ck12-n2 {
+  width: 52vw;
+  height: 44vh;
+  right: -10vw;
+  bottom: -14vh;
+  background: radial-gradient(circle, color-mix(in srgb, var(--ck-a) 28%, transparent), transparent 66%);
+  animation: ck12-neb 36s ease-in-out infinite alternate-reverse;
+}
+.ck12-n3 {
+  width: 38vw;
+  height: 30vh;
+  left: 52vw;
+  top: -10vh;
+  opacity: 0.4;
+  background: radial-gradient(circle, color-mix(in srgb, var(--ck-a) 30%, transparent), transparent 68%);
+  animation: ck12-neb 44s ease-in-out infinite alternate-reverse;
+}
+@keyframes ck12-neb {
+  0% { transform: translate3d(0, 0, 0) scale(1); }
+  100% { transform: translate3d(4vw, 3vh, 0) scale(1.16); }
+}
+
+.ck12-starfield {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+
+.ck12-warpflash {
+  position: absolute;
+  inset: 0;
+  z-index: 3;
+  pointer-events: none;
+  opacity: 0;
+  mix-blend-mode: screen;
+  background: radial-gradient(
+    circle at 50% 44%,
+    color-mix(in srgb, var(--ck-a) 52%, transparent),
+    color-mix(in srgb, var(--ck-b) 15%, transparent) 34%,
+    transparent 60%
+  );
+}
+.ck12-warpflash::after {
+  content: '';
+  position: absolute;
+  left: 50%;
+  top: 44%;
+  width: 70vmin;
+  height: 70vmin;
+  margin: -35vmin 0 0 -35vmin;
+  border-radius: 50%;
+  border: 1px solid color-mix(in srgb, var(--ck-a) 68%, #fff 6%);
+  box-shadow: 0 0 26px color-mix(in srgb, var(--ck-a) 32%, transparent);
+  transform: scale(0.05);
+  opacity: 0;
+}
+.ck12-warpflash.on { animation: ck12-wjump 0.8s ease-out; }
+.ck12-warpflash.on::after { animation: ck12-wring 0.9s cubic-bezier(0.15, 0.7, 0.2, 1); }
+@keyframes ck12-wjump {
+  0% { opacity: 0; }
+  10% { opacity: 1; }
+  100% { opacity: 0; }
+}
+@keyframes ck12-wring {
+  0% { opacity: 0.85; transform: scale(0.06); }
+  70% { opacity: 0.22; }
+  100% { opacity: 0; transform: scale(1.9); }
+}
+
+.ck12-floor {
+  position: absolute;
+  left: -40%;
+  right: -40%;
+  bottom: -42%;
+  height: 118%;
+  background-image:
+    linear-gradient(color-mix(in srgb, var(--ck-a) 15%, transparent) 1px, transparent 1px),
+    linear-gradient(90deg, color-mix(in srgb, var(--ck-a) 15%, transparent) 1px, transparent 1px);
+  background-size: 64px 64px;
+  transform: perspective(700px) rotateX(66deg);
+  transform-origin: 50% 0;
+  mask-image: radial-gradient(ellipse at 50% 0%, #000 0%, rgba(0, 0, 0, 0.5) 45%, transparent 78%);
+  opacity: 0.4;
+}
+.ck12-horizon {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 58%;
+  height: 1px;
+  background: linear-gradient(90deg, transparent, color-mix(in srgb, var(--ck-a) 55%, transparent), transparent);
+  filter: drop-shadow(0 0 12px var(--ck-a));
+  opacity: 0.35;
+}
+.ck12-scan {
+  position: absolute;
+  left: 0;
+  right: 0;
+  height: 190px;
+  background: linear-gradient(
+    180deg,
+    transparent,
+    color-mix(in srgb, var(--ck-a) 8%, transparent) 45%,
+    color-mix(in srgb, var(--ck-b) 6%, transparent) 55%,
+    transparent
+  );
+  animation: ck12-scan 12s linear infinite;
+}
+@keyframes ck12-scan {
+  0% { top: -200px; }
+  100% { top: 100%; }
+}
+
+.ck12-particles {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+}
+.ck12-p {
+  position: absolute;
+  bottom: -10px;
+  width: 2px;
+  height: 2px;
+  border-radius: 50%;
+  background: var(--ck-a);
+  opacity: 0;
+  animation: ck12-drift linear infinite;
+}
+@keyframes ck12-drift {
+  0% { transform: translateY(0) translateX(0); opacity: 0; }
+  12% { opacity: 0.55; }
+  88% { opacity: 0.3; }
+  100% { transform: translateY(-104vh) translateX(26px); opacity: 0; }
+}
+
+.ck12-vignette {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  pointer-events: none;
+  box-shadow: inset 0 0 200px 40px rgba(0, 0, 0, 0.6);
+}
+
+/* ───────────────────────── HUD（48px） ───────────────────────── */
+.ck12-hud {
+  position: relative;
+  z-index: 20;
+  height: 48px;
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 0 20px;
+  border-bottom: 1px solid var(--ck12-bd);
+  background: linear-gradient(180deg, rgba(7, 9, 14, 0.92), rgba(7, 9, 14, 0.25));
+  backdrop-filter: blur(10px);
+  min-width: 0;
+  overflow: hidden;
+}
+
+.ck12-brand {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  font-size: 10.5px;
+  font-weight: 800;
+  letter-spacing: 0.18em;
+  color: var(--ck-a);
+  white-space: nowrap;
+}
+.ck12-brand small {
+  color: var(--ck12-faint);
+  font-weight: 500;
+  letter-spacing: 0.06em;
+}
+.ck12-hex {
+  width: 20px;
+  height: 20px;
+  display: grid;
+  place-items: center;
+  border: 1px solid color-mix(in srgb, var(--ck-a) 55%, transparent);
+  border-radius: 6px;
+  font-size: 11px;
+  box-shadow: 0 0 12px color-mix(in srgb, var(--ck-a) 35%, transparent);
+}
+.ck12-hsep {
+  width: 1px;
+  height: 18px;
+  background: var(--ck12-bd);
+  flex: none;
+}
+.ck12-stat {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  font-size: 9.5px;
+  letter-spacing: 0.12em;
+  color: var(--ck12-faint);
+  white-space: nowrap;
+}
+.ck12-stat b {
+  font-size: 15px;
+  letter-spacing: 0;
+  color: var(--ck12-ink);
+  font-variant-numeric: tabular-nums;
+  font-weight: 800;
+}
+.ck12-stat b.ck12-c { color: var(--ck12-cyan); }
+.ck12-stat b.ck12-m { color: var(--ck12-amber); }
+
+.ck12-hud-right {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  flex: none;
+}
+
+.ck12-ghost {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 26px;
+  padding: 0 10px;
+  border-radius: 8px;
+  border: 1px solid var(--ck12-bd);
+  color: var(--ck12-dim);
+  font-size: 10.5px;
+  font-family: var(--font-ui);
+  transition: 0.14s;
+  background: rgba(255, 255, 255, 0.02);
+  white-space: nowrap;
+}
+.ck12-ghost:hover {
+  color: var(--ck12-ink);
+  border-color: var(--ck12-bd2);
+  background: rgba(255, 255, 255, 0.06);
+}
+.ck12-ghost-static {
+  cursor: default;
+  color: color-mix(in srgb, var(--ck-a) 78%, var(--ck12-dim));
+  border-color: color-mix(in srgb, var(--ck-a) 26%, transparent);
+}
+.ck12-ghost-static:hover {
+  color: color-mix(in srgb, var(--ck-a) 78%, var(--ck12-dim));
+  border-color: color-mix(in srgb, var(--ck-a) 26%, transparent);
+  background: rgba(255, 255, 255, 0.02);
+}
+.ck12-fleetbtn { display: none; }
+
+/* ───────────────────────── stage / arena ───────────────────────── */
+.ck12-stage {
+  position: relative;
+  z-index: 2;
+  flex: 1;
+  min-height: 0;
+  min-width: 0;
+  display: flex;
+  gap: 16px;
+  padding: 12px 20px 0;
+}
+.ck12-arena {
+  position: relative;
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+}
+
+/* ───────────────────────── 安静层 ───────────────────────── */
+.ck12-quiet {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 14px;
+  padding-left: 366px;
+  pointer-events: none;
+  transition: opacity 0.3s;
+  z-index: 1;
+}
+.ck12-arena.is-open .ck12-quiet { opacity: 0; }
+
+.ck12-clock {
+  font-size: 46px;
+  font-weight: 200;
+  letter-spacing: 0.14em;
+  color: color-mix(in srgb, var(--ck12-ink) 86%, transparent);
+  font-variant-numeric: tabular-nums;
+  text-shadow: 0 0 30px color-mix(in srgb, var(--ck-a) 26%, transparent);
+}
+.ck12-clock-sec {
+  font-size: 0.46em;
+  letter-spacing: 0.12em;
+  color: var(--ck12-faint);
+}
+.ck12-clock small {
+  font-size: 11px;
+  letter-spacing: 0.3em;
+  color: var(--ck12-faint);
+  display: block;
+  text-align: center;
+  margin-top: 6px;
+  font-weight: 600;
+}
+.ck12-arcs {
+  display: flex;
+  align-items: center;
+  gap: 18px;
+  margin-top: 6px;
+}
+.ck12-arc {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 5px;
+  font-size: 9px;
+  letter-spacing: 0.16em;
+  color: var(--ck12-faint);
+}
+.ck12-arc b {
+  font-size: 17px;
+  color: var(--ck12-ink);
+  letter-spacing: 0;
+  font-variant-numeric: tabular-nums;
+}
+.ck12-hintline {
+  margin-top: 10px;
+  font-size: 10.5px;
+  color: var(--ck12-faint);
+  letter-spacing: 0.06em;
+  text-align: center;
+  line-height: 1.8;
+}
+.ck12-hintline kbd {
+  border: 1px solid var(--ck12-bd);
+  border-radius: 5px;
+  padding: 1px 6px;
+  font-size: 10px;
+  color: var(--ck12-dim);
+}
+
+/* ───────────────────────── 底栏外层（10 20 16） ───────────────────────── */
+.ck12-cmd {
+  position: relative;
+  z-index: 20;
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 8px;
+  padding: 10px 20px 16px;
+}
+
+/* ───────────────────────── ticker（30px） ───────────────────────── */
+.ck12-ticker {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  width: 100%;
+  height: 30px;
+  padding: 0 12px;
+  border-radius: 9px;
+  border: 1px solid var(--ck12-bd);
+  background: linear-gradient(180deg, rgba(13, 16, 24, 0.82), rgba(9, 11, 17, 0.78));
+  backdrop-filter: blur(10px);
+  font-size: 11px;
+  color: var(--ck12-dim);
+  cursor: pointer;
+  transition: 0.16s;
+  font-family: var(--font-ui);
+  overflow: hidden;
+  text-align: left;
+}
+.ck12-ticker:hover {
+  border-color: color-mix(in srgb, var(--ck-b) 42%, transparent);
+  background: rgba(255, 255, 255, 0.045);
+}
+.ck12-ticker-av {
+  width: 18px;
+  height: 18px;
+  border-radius: 5px;
+  overflow: hidden;
+  flex: none;
+  border: 1px solid color-mix(in srgb, var(--ck-b) 35%, transparent);
+  background: #0c0e15;
+}
+.ck12-ticker-av img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  object-position: 50% 12%;
+}
+.ck12-ticker-who {
+  font-size: 9px;
+  letter-spacing: 0.14em;
+  color: var(--ck-b);
+  font-weight: 800;
+  flex: none;
+}
+.ck12-ticker-tx {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--ck12-ink);
+}
+.ck12-ticker-go {
+  flex: none;
+  font-size: 9.5px;
+  font-weight: 800;
+  color: var(--ck-a);
+  letter-spacing: 0.04em;
+}
+.ck12-ticker-unread {
+  border-color: color-mix(in srgb, var(--ck-b) 38%, transparent);
+  box-shadow:
+    0 0 0 1px color-mix(in srgb, var(--ck-b) 16%, transparent),
+    0 0 22px color-mix(in srgb, var(--ck-b) 12%, transparent);
+}
+
+/* ───────────────────────── 状态横幅（草稿 / 无主会话） ───────────────────────── */
+.ck12-banner {
+  position: relative;
+  z-index: 19;
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 20px;
+  border-bottom: 1px solid color-mix(in srgb, var(--ck12-amber) 26%, transparent);
+  background: color-mix(in srgb, var(--ck12-amber) 8%, transparent);
+  color: var(--ck12-dim);
+  font-size: 10.5px;
+  letter-spacing: 0.04em;
+}
+.ck12-banner-quiet {
+  border-bottom-color: color-mix(in srgb, var(--ck12-cyan) 22%, transparent);
+  background: color-mix(in srgb, var(--ck12-cyan) 7%, transparent);
+}
+.ck12-banner-dot {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--ck12-amber);
+  box-shadow: 0 0 8px var(--ck12-amber);
+  flex: none;
+}
+.ck12-banner-quiet .ck12-banner-dot {
+  background: var(--ck12-cyan);
+  box-shadow: 0 0 8px var(--ck12-cyan);
+}
+.ck12-banner button {
+  margin-left: auto;
+  color: var(--ck-a);
+  font-weight: 700;
+  font-family: var(--font-ui);
+}
+.ck12-banner button:hover { text-decoration: underline; }
+
+/* ───────────────────────── 面占位（S4 接真面后移除） ───────────────────────── */
+.ck12-face-loading {
+  position: absolute;
+  inset: 0;
+  z-index: 6;
+  display: grid;
+  place-items: center;
+  padding-left: 366px;
+  color: var(--ck12-faint);
+  font-size: 12px;
+  letter-spacing: 0.08em;
+}
+
+/* ───────────────────────── 载入骨架 / 舱不存在 ───────────────────────── */
+.ck12-skel {
+  background: var(--pop-bg);
+}
+.ck12-skel-hud {
+  height: 48px;
+  flex: none;
+  border-bottom: 1px solid var(--ck12-bd);
+  background: rgba(255, 255, 255, 0.03);
+}
+.ck12-skel-stage {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  gap: 16px;
+  padding: 12px 20px 0;
+}
+.ck12-skel-rail {
+  width: 300px;
+  flex: none;
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.03);
+  animation: ck12-breathe 1.6s ease-in-out infinite;
+}
+.ck12-skel-arena {
+  flex: 1;
+  min-width: 0;
+  border-radius: 12px;
+  display: grid;
+  place-items: center;
+  color: var(--ck12-faint);
+  font-size: 12px;
+  letter-spacing: 0.08em;
+  background: rgba(255, 255, 255, 0.02);
+  animation: ck12-breathe 1.6s ease-in-out infinite;
+}
+@keyframes ck12-breathe {
+  50% { opacity: 0.55; }
+}
+
+.ck12-missing {
+  flex: 1;
+  min-height: 0;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: var(--pop-bg);
+  color: var(--ck12-ink);
+  text-align: center;
+}
+.ck12-missing-title {
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--ck12-ink);
+}
+.ck12-missing-sub {
+  margin-top: 6px;
+  font-size: 12px;
+  color: var(--ck12-dim);
+}
+.ck12-missing-actions {
+  margin-top: 14px;
+  display: flex;
+  justify-content: center;
+  gap: 8px;
+}
+.ck12-missing-btn {
+  border-radius: 8px;
+  border: 1px solid var(--ck12-bd2);
+  padding: 6px 12px;
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--ck12-dim);
+  transition: 0.14s;
+  cursor: pointer;
+}
+.ck12-missing-btn:hover {
+  color: var(--ck12-ink);
+  background: rgba(255, 255, 255, 0.06);
+}
+
+/* ───────────────────────── 响应式（1360 / 1120 / 900） ───────────────────────── */
+@media (max-width: 1360px) {
+  .ck12-quiet,
+  .ck12-face-loading { padding-left: 334px; }
+}
+
+@media (max-width: 1240px) {
+  .ck12-hud { gap: 10px; padding: 0 14px; }
+  .ck12-opt1 { display: none; }
+}
+
+@media (max-width: 1120px) {
+  /* 窄屏：左栏变成可拉出的浮层（rail.css / S3），HUD 上给一枚「☰ 编队」。 */
+  .ck12-fleetbtn { display: inline-flex; }
+  .ck12-quiet,
+  .ck12-face-loading { padding-left: 334px; }
+  .ck12-opt2 { display: none; }
+}
+
+@media (max-width: 900px) {
+  .ck12-hud { gap: 8px; padding: 0 12px; }
+  .ck12-brand small { display: none; }
+  .ck12-quiet,
+  .ck12-face-loading { padding-left: 300px; }
+  .ck12-clock { font-size: 38px; }
+  .ck12-cmd { padding: 8px 12px 12px; }
+  .ck12-stage { padding: 10px 12px 0; gap: 10px; }
+  .ck12-skel-rail { display: none; }
+}
+
+/* ───────────────────────── reduced motion ───────────────────────── */
+@media (prefers-reduced-motion: reduce) {
+  .ck12-warpflash { display: none; }
+  .ck12-nebula { animation: none; }
+  .ck12-scan { animation: none; opacity: 0.22; }
+  .ck12-p { animation: none; opacity: 0; }
+  .ck12-skel-rail,
+  .ck12-skel-arena { animation: none; }
+  .ck12-quiet { transition: none; }
+}

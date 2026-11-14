@@ -1,0 +1,272 @@
+/* S5 owns this file —— 聊天：浮窗 .ck12-comms（fixed, z-index:24, --oa）、
+   底栏 54px 输入区 .ck12-cmdbar / .ck12-cmd-slot、transcript。
+   关闭灯组在左 ✕ → — → 📌；底板透（--oa）、字不透。 */
+
+/* ───────────────────────── 浮动对话窗 ───────────────────────── */
+.ck12-comms {
+  position: fixed;
+  z-index: 24;
+  display: flex;
+  flex-direction: column;
+  min-width: 320px;
+  min-height: 47px;
+  border-radius: 15px;
+  border: 1px solid color-mix(in srgb, var(--ck-a) 30%, transparent);
+  /* 只有底板吃 --oa：正文颜色一律用实色，避免调透明度时字也跟着发灰。 */
+  background:
+    linear-gradient(180deg, rgba(17, 21, 30, var(--oa, 0.94)), rgba(9, 11, 17, var(--oa, 0.94)));
+  backdrop-filter: blur(14px);
+  box-shadow:
+    0 0 0 1px rgba(255, 255, 255, 0.03),
+    0 22px 60px rgba(0, 0, 0, 0.55),
+    0 0 44px color-mix(in srgb, var(--ck-a) 8%, transparent);
+  overflow: hidden;
+}
+
+.ck12-comms-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: none;
+  height: 46px;
+  padding: 0 8px 0 10px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+  cursor: grab;
+  user-select: none;
+  touch-action: none;
+}
+.ck12-comms.is-pinned .ck12-comms-head { cursor: default; }
+.ck12-comms.is-mini .ck12-comms-head { border-bottom: 0; }
+
+/* 灯组在左：DOM 顺序就是 ✕ → — → 📌（不用 order 反转）。 */
+.ck12-comms-lights {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  flex: none;
+}
+.ck12-comms-btn {
+  display: grid;
+  place-items: center;
+  width: 20px;
+  height: 20px;
+  border-radius: 6px;
+  border: 1px solid transparent;
+  color: var(--ck12-dim);
+  font-size: 10px;
+  line-height: 1;
+  transition: color 0.14s, border-color 0.14s, background 0.14s;
+}
+.ck12-comms-btn:hover {
+  color: var(--ck12-ink);
+  border-color: var(--ck12-bd);
+  background: rgba(255, 255, 255, 0.05);
+}
+.ck12-comms-close:hover {
+  color: var(--pop-red, #ff6b81);
+  border-color: color-mix(in srgb, var(--pop-red, #ff6b81) 45%, transparent);
+}
+.ck12-comms-btn[aria-pressed='true'] {
+  color: var(--ck12-ink);
+  border-color: color-mix(in srgb, var(--ck-a) 45%, transparent);
+  background: color-mix(in srgb, var(--ck-a) 12%, transparent);
+}
+
+.ck12-comms-title {
+  flex: none;
+  font-size: 10.5px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  color: var(--ck12-ink);
+}
+.ck12-comms-status {
+  flex: none;
+  padding: 1px 7px;
+  border-radius: 999px;
+  border: 1px solid var(--ck12-bd);
+  font-size: 9px;
+  letter-spacing: 0.06em;
+  color: var(--ck12-dim);
+  font-variant-numeric: tabular-nums;
+}
+.ck12-comms-status[data-state='streaming'] {
+  color: var(--ck-a);
+  border-color: color-mix(in srgb, var(--ck-a) 45%, transparent);
+  background: color-mix(in srgb, var(--ck-a) 12%, transparent);
+}
+.ck12-comms-grip {
+  margin-left: auto;
+  flex: none;
+  color: var(--ck12-faint);
+  font-size: 12px;
+  letter-spacing: -1px;
+}
+.ck12-comms-alpha {
+  flex: none;
+  padding: 2px 6px;
+  border-radius: 6px;
+  border: 1px solid var(--ck12-bd);
+  color: var(--ck12-dim);
+  font-size: 9px;
+  font-variant-numeric: tabular-nums;
+  transition: color 0.14s, border-color 0.14s;
+}
+.ck12-comms-alpha:hover {
+  color: var(--ck12-ink);
+  border-color: color-mix(in srgb, var(--ck-a) 42%, transparent);
+}
+
+/* transcript 挂载点：常驻节点，关窗/收起只 display:none。 */
+.ck12-comms-body {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  overflow: hidden;
+}
+.ck12-comms-body > * {
+  min-height: 0;
+  min-width: 0;
+  flex: 1;
+}
+.ck12-comms.is-mini .ck12-comms-body { display: none; }
+
+.ck12-comms-resize {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  width: 18px;
+  height: 18px;
+  cursor: nwse-resize;
+  touch-action: none;
+  background:
+    linear-gradient(135deg, transparent 44%, var(--ck12-faint) 46%, var(--ck12-faint) 52%, transparent 54%),
+    linear-gradient(135deg, transparent 64%, var(--ck12-faint) 66%, var(--ck12-faint) 72%, transparent 74%);
+  opacity: 0.55;
+}
+.ck12-comms-resize:hover { opacity: 1; }
+.ck12-comms.is-mini .ck12-comms-resize { display: none; }
+.ck12-comms.is-pinned .ck12-comms-resize { display: none; }
+
+/* 浮窗内是普通 chat 底座：去掉它自带的顶部留白，让转录贴住 header。 */
+.ck12-comms-body [data-chat-pane] { background: transparent; }
+
+/* ───────────────────────── 底栏 54px 输入区 ───────────────────────── */
+.ck12-cmdbar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 54px;
+  padding: 3px 8px 3px 16px;
+  border-radius: 15px;
+  border: 1px solid color-mix(in srgb, var(--ck-a) 26%, transparent);
+  background: linear-gradient(180deg, rgba(16, 20, 29, 0.9), rgba(9, 11, 17, 0.86));
+  backdrop-filter: blur(12px);
+  box-shadow:
+    0 0 30px color-mix(in srgb, var(--ck-a) 7%, transparent),
+    0 10px 30px rgba(0, 0, 0, 0.45);
+  transition: border-color 0.18s, box-shadow 0.18s;
+}
+.ck12-cmdbar:focus-within {
+  border-color: color-mix(in srgb, var(--ck-a) 55%, transparent);
+  box-shadow:
+    0 0 0 1px color-mix(in srgb, var(--ck-a) 18%, transparent),
+    0 0 36px color-mix(in srgb, var(--ck-a) 12%, transparent);
+}
+.ck12-cmdbar.is-disabled {
+  border-color: var(--ck12-bd);
+  box-shadow: none;
+}
+.ck12-cmd-slot {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  flex: 1;
+  min-width: 0;
+}
+.ck12-cmd-ph {
+  font-size: 12.5px;
+  color: var(--ck12-faint);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* 真 composer 被搬进来后剥掉它自己的外框（外层 .ck12-cmdbar 就是 v12 的 .box）。 */
+.ck12-cmd-slot [data-tui-dock] {
+  padding: 0;
+  border: 0;
+  background: transparent;
+}
+.ck12-cmd-slot [data-tui-composer] { max-width: none; }
+.ck12-cmd-slot [data-composer-block] {
+  padding: 0;
+  border: 0;
+  background: transparent;
+  border-radius: 0;
+}
+.ck12-cmd-slot [data-composer-block]:focus-within { border-color: transparent; }
+.ck12-cmd-slot textarea {
+  min-height: 24px !important;
+  max-height: 24px !important;
+  height: 24px !important;
+  padding-top: 0;
+  padding-bottom: 0;
+  overflow-y: auto;
+}
+.ck12-cmd-slot [data-tui-ctrlbar] {
+  margin-top: 2px;
+  font-size: 9.5px;
+}
+.ck12-cmd-slot [data-tui-queue] { margin-bottom: 2px; }
+.ck12-cmd-slot [data-task-progress] { display: none; }
+
+/* 全域座舱：下指令 / ＋ 挂载都在同一行（v12 单行 .box）。 */
+.ck12-cmd-slot [data-tui-attach-inline] {
+  display: inline-flex;
+  align-items: center;
+}
+.ck12-cmd-slot [data-tui-attach-inline] button {
+  width: 22px;
+  height: 22px;
+}
+
+/* ───────────────────────── 用户输入历史（索引把手） ───────────────────────── */
+/* classic 是一竖排短杠（一杠对一轮）；在窄浮窗里那排杠会被读成正文旁边的
+   又一列内容。全域改成带条数的小把手：悬停/聚焦展开同一份提示词列表。 */
+.ck12-tl-handle {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 24px;
+  padding: 0 8px;
+  border-radius: 999px;
+  border: 1px solid var(--ck12-bd);
+  background: rgba(10, 12, 19, 0.78);
+  backdrop-filter: blur(10px);
+  color: var(--ck12-dim);
+  font-family: var(--font-mono);
+  font-size: 9.5px;
+  font-variant-numeric: tabular-nums;
+  transition: color 0.14s, border-color 0.14s, background 0.14s;
+}
+.ck12-tl-handle:hover,
+.ck12-tl-handle:focus-visible {
+  color: var(--ck12-ink);
+  border-color: color-mix(in srgb, var(--ck-a) 42%, transparent);
+  background: color-mix(in srgb, var(--ck-a) 10%, rgba(10, 12, 19, 0.82));
+  outline: none;
+}
+.ck12-tl-glyph {
+  font-size: 11px;
+  line-height: 1;
+  letter-spacing: 0.06em;
+  color: var(--ck-a);
+}
+.ck12-tl-count {
+  font-weight: 700;
+  color: var(--ck12-ink);
+}
+
+@media (max-width: 900px) {
+  .ck12-cmdbar { min-height: 48px; padding-left: 12px; }
+}

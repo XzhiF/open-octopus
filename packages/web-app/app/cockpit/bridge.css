@@ -1,0 +1,613 @@
+/* ═══════════════════════════════════════════════════════════════════════
+   S6 owns this file —— 舰桥 .rig（24px 一行）+ 心智 / 上下文 / 在场 popover。
+   逐块对照 docs/cabin-design/cockpit-v12.html 的 .rig / .rbtn / .cring /
+   .pop / .pop-h / .pop-b / .pop-f / .ctxhead / .ctxmix / .ctxlegend / .urow。
+   尺寸以原型为准：rig 24 · 按钮 22 · popover 334（wide 392）、向上贴按钮。
+   字号 9.5–10.5px、font-mono、tabular-nums；窄屏（≤1024）隐藏 token / ¥ 两段。
+   ═══════════════════════════════════════════════════════════════════════ */
+
+.ck12-rig {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 24px;
+  padding: 0 4px;
+  margin-top: -2px;
+  flex: none;
+  overflow: hidden;
+  white-space: nowrap;
+  font-family: var(--font-mono);
+  font-size: 9.5px;
+  color: var(--ck12-dim);
+}
+
+/* ───────────────────────── 通用读数 / 分隔 ───────────────────────── */
+.ck12-rig-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 22px;
+  padding: 0 8px;
+  flex: none;
+  border-radius: 7px;
+  border: 1px solid transparent;
+  color: var(--ck12-dim);
+  font-family: var(--font-mono);
+  font-size: 9.5px;
+  transition: 0.14s;
+}
+
+.ck12-rig-btn:hover:not(:disabled) {
+  color: var(--ck12-ink);
+  border-color: var(--ck12-bd);
+  background: rgba(255, 255, 255, 0.045);
+}
+
+.ck12-rig-btn b {
+  font-weight: 700;
+  color: var(--ck12-ink);
+  letter-spacing: 0.02em;
+  font-variant-numeric: tabular-nums;
+}
+
+.ck12-rig-btn.is-off,
+.ck12-rig-btn:disabled {
+  color: var(--ck12-faint);
+  cursor: not-allowed;
+}
+
+.ck12-rig-btn.is-off b,
+.ck12-rig-btn:disabled b {
+  color: var(--ck12-faint);
+}
+
+.ck12-rig-glyph {
+  color: var(--ck-b);
+  font-size: 10px;
+  line-height: 1;
+}
+
+.ck12-rig-cv {
+  color: var(--ck12-faint);
+  font-size: 9.5px;
+}
+
+.ck12-rig-sep {
+  width: 1px;
+  height: 11px;
+  flex: none;
+  background: var(--ck12-bd);
+}
+
+.ck12-rig-num {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 4px;
+  flex: none;
+  color: var(--ck12-faint);
+  font-variant-numeric: tabular-nums;
+}
+
+.ck12-rig-num b {
+  color: var(--ck12-dim);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.ck12-rig-num.is-off,
+.ck12-rig-num.is-off b {
+  color: var(--ck12-faint);
+}
+
+/* 舱主对话身份（固定只读）：跟模型 / token 同一行，不再占 composer 下方一行。 */
+.ck12-rig-who {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  flex: none;
+  height: 22px;
+  padding: 0 8px;
+  border-radius: 7px;
+  color: var(--ck12-dim);
+  font-family: var(--font-ui);
+  font-size: 10px;
+  letter-spacing: 0.02em;
+  white-space: nowrap;
+}
+.ck12-rig-who .ck12-rig-glyph { color: var(--pop-purple, var(--ck-b)); }
+
+.ck12-rig-lbl {
+  color: var(--ck12-faint);
+  font-size: 9.5px;
+  letter-spacing: 0.06em;
+}
+
+.ck12-rig-when {
+  color: var(--ck12-faint);
+  font-size: 9.5px;
+  letter-spacing: 0.04em;
+  opacity: 0.72;
+}
+
+.ck12-rig-dim {
+  color: var(--ck12-faint);
+}
+
+.ck12-rig-spacer {
+  flex: 1;
+}
+
+/* 上下文环：conic-gradient + mask（原型 .cring） */
+.ck12-rig-ring {
+  width: 12px;
+  height: 12px;
+  flex: none;
+  border-radius: 50%;
+  background: conic-gradient(var(--ck-a) calc(var(--p, 0) * 1%), rgba(255, 255, 255, 0.13) 0);
+  -webkit-mask: radial-gradient(circle, transparent 3.4px, #000 4px);
+  mask: radial-gradient(circle, transparent 3.4px, #000 4px);
+}
+
+/* ───────────────────────── 心智：复用 ComposerModelPopover ─────────────────────────
+   复用件自带 trigger / 内容；这里只把它重新塑形成 .rbtn 的读数样式。
+   第一个 span 是它的 "model" 前缀，舰桥不需要；◇ 用 ::before 补。 */
+.ck12-rig-model {
+  display: inline-flex;
+  min-width: 0;
+  flex: none;
+}
+
+.ck12-rig-model [data-slot='popover-trigger'] {
+  height: 22px;
+  padding: 0 8px;
+  gap: 6px;
+  border-radius: 7px;
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--ck12-dim);
+  font-family: var(--font-mono);
+  font-size: 9.5px;
+}
+
+.ck12-rig-model [data-slot='popover-trigger']:hover,
+.ck12-rig-model [data-slot='popover-trigger'][data-state='open'] {
+  color: var(--ck12-ink);
+  border-color: var(--ck12-bd);
+  background: rgba(255, 255, 255, 0.045);
+}
+
+.ck12-rig-model [data-slot='popover-trigger'] > span:first-child {
+  display: none;
+}
+
+.ck12-rig-model [data-slot='popover-trigger']::before {
+  content: '◇';
+  color: var(--ck-b);
+  font-size: 10px;
+  line-height: 1;
+}
+
+.ck12-rig-model [data-slot='popover-trigger'] > span:nth-child(2) {
+  color: var(--ck12-ink);
+  font-weight: 700;
+  font-size: 10px;
+  letter-spacing: 0.02em;
+}
+
+.ck12-rig-model [data-slot='popover-trigger'] > span:last-child {
+  color: var(--ck12-faint);
+  font-size: 8px;
+}
+
+/* 复用件的内容 portal 到 body，没有 footer prop 可加；在内容底部补一行
+   小字说明作用域。`w-80` 是 ComposerModelPopover 内容壳的固定宽度类。 */
+body:has(.ck12-app) [data-slot='popover-content'].w-80::after {
+  content: '仅影响对话 · 全局设置';
+  display: block;
+  padding: 7px 12px 8px;
+  border-top: 1px solid var(--pop-bd);
+  color: var(--pop-dim);
+  font-family: var(--font-mono);
+  font-size: 9.5px;
+  opacity: 0.8;
+}
+
+/* ───────────────────────── popover 面板（334 / 392） ───────────────────────── */
+.ck12-rig-pop {
+  width: 334px;
+  max-width: calc(100vw - 20px);
+  z-index: 70;
+  display: flex;
+  flex-direction: column;
+  padding: 0;
+  overflow: visible;
+  border-radius: 13px;
+  border: 1px solid color-mix(in srgb, var(--ck-a) 26%, var(--pop-bd));
+  background: linear-gradient(180deg, rgba(16, 20, 30, 0.975), rgba(8, 10, 16, 0.97));
+  backdrop-filter: blur(16px);
+  box-shadow: 0 24px 60px rgba(0, 0, 0, 0.62), 0 0 0 1px rgba(255, 255, 255, 0.03);
+  color: var(--pop-ink);
+  font-family: var(--font-mono);
+}
+
+.ck12-rig-pop-wide {
+  width: 392px;
+}
+
+/* 向上的小三角（贴按钮；presence 靠右时镜像） */
+.ck12-rig-pop::after {
+  content: '';
+  position: absolute;
+  bottom: -6px;
+  left: 24px;
+  width: 10px;
+  height: 10px;
+  transform: rotate(45deg);
+  background: rgba(12, 15, 23, 0.97);
+  border-right: 1px solid color-mix(in srgb, var(--ck-a) 26%, var(--pop-bd));
+  border-bottom: 1px solid color-mix(in srgb, var(--ck-a) 26%, var(--pop-bd));
+}
+
+.ck12-rig-pop.is-end::after {
+  left: auto;
+  right: 24px;
+}
+
+.ck12-rig-pop-h {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 9px 11px;
+  border-bottom: 1px solid var(--pop-bd);
+}
+
+.ck12-rig-pop-h b {
+  font-family: var(--font-ui);
+  font-size: 11.5px;
+  font-weight: 700;
+  color: var(--pop-ink);
+}
+
+.ck12-rig-pop-h span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 9.5px;
+  color: var(--pop-dim);
+}
+
+/* 关闭是 header 里第一个 DOM / 可聚焦元素（plans §1.6），视觉在左。 */
+.ck12-rig-pop-x {
+  display: grid;
+  place-items: center;
+  width: 20px;
+  height: 20px;
+  flex: none;
+  border-radius: 5px;
+  border: 1px solid var(--pop-bd);
+  color: var(--pop-dim);
+  font-size: 10px;
+  line-height: 1;
+  transition: 0.13s;
+}
+
+.ck12-rig-pop-x:hover {
+  color: var(--pop-ink);
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.ck12-rig-pop-b {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-height: 46vh;
+  overflow: auto;
+  padding: 8px;
+}
+
+.ck12-rig-pop-f {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 11px;
+  border-top: 1px solid var(--pop-bd);
+  font-size: 9.5px;
+  color: var(--pop-dim);
+}
+
+.ck12-rig-pop-sep {
+  height: 1px;
+  margin: 4px 0;
+  background: var(--pop-bd);
+}
+
+.ck12-rig-note {
+  font-size: 9.5px;
+  color: var(--pop-dim);
+  opacity: 0.82;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ck12-rig-empty {
+  padding: 7px 4px;
+  font-size: 9.5px;
+  color: var(--pop-dim);
+}
+
+/* ───────────────────────── 上下文构成 ───────────────────────── */
+.ck12-rig-ctxhead {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  padding: 2px 4px 0;
+  font-size: 11px;
+  color: var(--pop-dim);
+  font-variant-numeric: tabular-nums;
+}
+
+.ck12-rig-ctxhead b {
+  font-size: 15px;
+  font-weight: 800;
+  color: var(--pop-ink);
+}
+
+.ck12-rig-ctxhead .ck12-rig-dim {
+  color: var(--pop-dim);
+}
+
+.ck12-rig-pct {
+  margin-left: auto;
+  font-size: 9.5px;
+  color: var(--ck-a);
+}
+
+.ck12-rig-mix {
+  display: flex;
+  height: 5px;
+  gap: 1px;
+  margin: 6px 4px 0;
+  border-radius: 3px;
+  overflow: hidden;
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.ck12-rig-mix i {
+  display: block;
+  height: 100%;
+}
+
+.ck12-rig-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 10px;
+  padding: 6px 4px 2px;
+  font-size: 9.5px;
+  color: var(--pop-dim);
+}
+
+.ck12-rig-legend span {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.ck12-rig-legend i {
+  width: 5px;
+  height: 5px;
+  border-radius: 1px;
+  flex: none;
+}
+
+/* ───────────────────────── 本舱按主体 ───────────────────────── */
+.ck12-rig-sect {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  padding: 4px 4px 0;
+  font-size: 9.5px;
+  letter-spacing: 0.08em;
+  color: var(--pop-dim);
+}
+
+.ck12-rig-sect small {
+  margin-left: auto;
+  font-size: 9.5px;
+  letter-spacing: 0;
+  color: var(--pop-dim);
+  opacity: 0.7;
+}
+
+.ck12-rig-urows {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  padding: 2px 4px;
+}
+
+.ck12-rig-urow {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 56px 44px;
+  gap: 8px;
+  align-items: center;
+  font-size: 9.5px;
+}
+
+.ck12-rig-urow .un {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  color: var(--pop-dim);
+}
+
+.ck12-rig-urow .un > i {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  flex: none;
+}
+
+.ck12-rig-urow .un span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ck12-rig-urow .ub {
+  height: 3px;
+  border-radius: 2px;
+  overflow: hidden;
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.ck12-rig-urow .ub i {
+  display: block;
+  height: 100%;
+  opacity: 0.75;
+}
+
+.ck12-rig-urow .uc {
+  text-align: right;
+  color: var(--pop-ink);
+  font-variant-numeric: tabular-nums;
+}
+
+/* ───────────────────────── 在场 ───────────────────────── */
+.ck12-rig-pres i {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  flex: none;
+  background: var(--pop-green);
+  box-shadow: 0 0 7px var(--pop-green);
+  animation: ck12-rig-pulse 2.4s ease-in-out infinite;
+}
+
+.ck12-rig-pres.is-off i,
+.ck12-rig-pres:disabled i {
+  background: var(--ck12-faint);
+  box-shadow: none;
+  animation: none;
+}
+
+.ck12-rig-switchrow {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 4px;
+  font-size: 10.5px;
+  color: var(--pop-ink);
+}
+
+.ck12-rig-switchrow small {
+  font-size: 9.5px;
+  color: var(--pop-dim);
+}
+
+.ck12-rig-seg {
+  display: inline-flex;
+  align-items: stretch;
+  gap: 2px;
+  padding: 2px;
+  border-radius: 7px;
+  border: 1px solid var(--pop-bd);
+  background: rgba(255, 255, 255, 0.02);
+}
+
+.ck12-rig-seg button {
+  display: inline-flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 1px;
+  min-width: 0;
+  flex: 1;
+  height: 38px;
+  padding: 0 7px;
+  border-radius: 5px;
+  font-size: 9.5px;
+  line-height: 1.15;
+  color: var(--pop-dim);
+  transition: 0.12s;
+}
+
+.ck12-rig-seg button:hover {
+  color: var(--pop-ink);
+}
+
+.ck12-rig-seg button.on {
+  background: color-mix(in srgb, var(--ck-a) 14%, transparent);
+  color: var(--ck-a);
+}
+
+.ck12-rig-seg button small {
+  font-size: 9.5px;
+  color: var(--pop-dim);
+  opacity: 0.75;
+}
+
+.ck12-rig-seg button.on small {
+  color: var(--ck-a);
+}
+
+.ck12-rig-action {
+  display: inline-flex;
+  align-items: center;
+  height: 24px;
+  padding: 0 9px;
+  flex: none;
+  border-radius: 7px;
+  border: 1px solid var(--pop-bd);
+  background: rgba(255, 255, 255, 0.02);
+  color: var(--pop-ink);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  transition: 0.13s;
+}
+
+.ck12-rig-action:hover {
+  border-color: var(--ck-a);
+  color: var(--ck-a);
+}
+
+@keyframes ck12-rig-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.45; }
+}
+
+/* ───────────────────────── 窄屏：保留模型 / 上下文 / 在场 ───────────────────────── */
+@media (max-width: 1024px) {
+  .ck12-rig {
+    gap: 5px;
+  }
+
+  .ck12-rig-tokens,
+  .ck12-rig-cost,
+  .ck12-rig-sep-hide {
+    display: none;
+  }
+
+  .ck12-rig-pop {
+    width: min(334px, calc(100vw - 20px));
+  }
+
+  .ck12-rig-pop-wide {
+    width: min(392px, calc(100vw - 20px));
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ck12-rig-pres i {
+    animation: none;
+  }
+
+  .ck12-rig-btn,
+  .ck12-rig-model [data-slot='popover-trigger'],
+  .ck12-rig-pop-x,
+  .ck12-rig-seg button,
+  .ck12-rig-action {
+    transition: none;
+  }
+}

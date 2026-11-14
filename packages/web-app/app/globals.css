@@ -3,6 +3,7 @@
 @import './ws-bands.css';
 @import './acceptance-paper.css';
 @import './cabin-cockpit.css';
+@import './cockpit/index.css';
 
 @custom-variant dark (&:is(.dark *));
 

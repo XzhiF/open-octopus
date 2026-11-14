@@ -62,6 +62,9 @@ export const CABIN_MODULE_PHASE: Record<string, string> = {
 /** classic-v3：作业坞只留「概览」一个舱模块 —— 任务/工程/记录从概览三入口进入。 */
 export const CABIN_DOCK_PRIMARY = ['overview'] as const
 
+/** 舱主对话的固定身份（只读）：classic composer 与全域舰桥共用同一词表。 */
+export const CABIN_MAIN_IDENTITY = '汐音舰长'
+
 /** classic-v3：不再有「更多模块」溢出格。 */
 export const CABIN_DOCK_OVERFLOW: readonly string[] = []
 

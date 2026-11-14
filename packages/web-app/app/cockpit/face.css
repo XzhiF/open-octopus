@@ -1,0 +1,696 @@
+/* S4 owns this file —— 作业面 CockpitFace / CockpitJobHeader / CockpitAttentionFace。
+   v12 .jobhead（行1 28px + 行2 20px）、.jobtabs（24px 胶囊）、.jobbody / .sgrid。
+   尺寸取原型：docs/cabin-design/cockpit-v12.html 的 .jobhead / .jtab / .jobbody；
+   左让位 366 / ≤1360 334 / ≤900 300（与 .ck12-quiet 一致，立绘不被压字）。 */
+
+/* ───────────────────────── 面容器 ───────────────────────── */
+.ck12-face {
+  position: absolute;
+  inset: 0;
+  z-index: 6;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+  padding: 2px 2px 8px 366px;
+  /* 透明让位区不挡立绘点击；内容子节点各自恢复可交互。 */
+  pointer-events: none;
+}
+.ck12-face > * {
+  pointer-events: auto;
+}
+
+.ck12-face-body {
+  flex: 1;
+  min-height: 0;
+  min-width: 0;
+  overflow: auto;
+  padding: 8px 2px 8px 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.ck12-face-empty {
+  border: 1px dashed var(--ck12-bd);
+  border-radius: 10px;
+  padding: 22px 16px;
+  text-align: center;
+  font-size: 11.5px;
+  color: var(--ck12-dim);
+  font-family: var(--font-ui);
+}
+
+.ck12-face-actions {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 10px;
+}
+
+/* ───────────────────── 页签主体：v12 .sgrid / .pane / .jrow ───────────────────── */
+/* 概览两栏：左轨迹（1.32fr）右状态（.92fr）；窄屏折成一栏（见文件末尾 media）。 */
+.ck12-sgrid {
+  flex: 1;
+  min-height: 0;
+  display: grid;
+  gap: 12px;
+}
+.ck12-jg-over { grid-template-columns: minmax(0, 1.32fr) minmax(0, 0.92fr); }
+
+.ck12-pane {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  min-width: 0;
+  overflow: hidden;
+  border: 1px solid color-mix(in srgb, var(--ck-a) 24%, transparent);
+  border-radius: 12px;
+  background: linear-gradient(180deg, rgba(16, 20, 29, 0.88), rgba(10, 12, 19, 0.8));
+  backdrop-filter: blur(11px);
+  box-shadow:
+    0 0 calc(26px * var(--ck12-glow, 1)) color-mix(in srgb, var(--ck-a) 8%, transparent),
+    0 12px 34px rgba(0, 0, 0, 0.42);
+}
+.ck12-pane::before,
+.ck12-pane::after {
+  content: '';
+  position: absolute;
+  width: 14px;
+  height: 14px;
+  pointer-events: none;
+  border-color: color-mix(in srgb, var(--ck-a) 70%, transparent);
+  filter: drop-shadow(0 0 4px color-mix(in srgb, var(--ck-a) 45%, transparent));
+}
+.ck12-pane::before {
+  left: -1px;
+  top: -1px;
+  border-left: 2px solid;
+  border-top: 2px solid;
+  border-top-left-radius: 12px;
+}
+.ck12-pane::after {
+  right: -1px;
+  bottom: -1px;
+  border-right: 2px solid;
+  border-bottom: 2px solid;
+  border-bottom-right-radius: 12px;
+}
+
+.ck12-pane-h {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: none;
+  min-height: 36px;
+  padding: 9px 13px;
+  border-bottom: 1px solid var(--ck12-bd);
+  font-size: 9.5px;
+  letter-spacing: 0.16em;
+  color: var(--ck12-faint);
+}
+.ck12-pane-h b {
+  font-size: 11.5px;
+  font-weight: 750;
+  letter-spacing: 0.04em;
+  color: var(--ck12-ink);
+  font-family: var(--font-ui);
+}
+.ck12-pane-tag {
+  margin-left: auto;
+  flex: none;
+  padding: 2px 7px;
+  border-radius: 999px;
+  border: 1px solid color-mix(in srgb, var(--ck-a) 40%, transparent);
+  color: var(--ck-a);
+  font-size: 9px;
+  letter-spacing: 0.1em;
+  white-space: nowrap;
+}
+.ck12-pane-tag[data-tone='run'] {
+  color: var(--ck12-cyan);
+  border-color: color-mix(in srgb, var(--ck12-cyan) 42%, transparent);
+}
+.ck12-pane-tag[data-tone='wait'] {
+  color: var(--ck12-amber);
+  border-color: color-mix(in srgb, var(--ck12-amber) 42%, transparent);
+}
+.ck12-pane-tag[data-tone='blocked'] {
+  color: var(--ck12-red);
+  border-color: color-mix(in srgb, var(--ck12-red) 42%, transparent);
+}
+.ck12-pane-tag[data-tone='ended'] {
+  color: var(--ck12-green);
+  border-color: color-mix(in srgb, var(--ck12-green) 38%, transparent);
+}
+
+.ck12-pane-b {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: 11px 13px;
+}
+.ck12-pane-b.is-tight { padding: 8px 10px; }
+
+/* 事件轨迹行：点 / 时间 / 执行者 / 类型 / 文本（v12 .jrow）。 */
+.ck12-jtl { display: flex; flex-direction: column; }
+.ck12-jrow {
+  display: grid;
+  grid-template-columns: 8px 52px 64px 54px minmax(0, 1fr);
+  gap: 9px;
+  align-items: baseline;
+  padding: 9px 0;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+  font-size: 11.5px;
+  font-family: var(--font-ui);
+}
+.ck12-jrow:last-child { border-bottom: 0; }
+.ck12-jrow-d {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  align-self: center;
+}
+.ck12-jrow-t {
+  font-size: 8.5px;
+  color: var(--ck12-faint);
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+}
+.ck12-jrow-a {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 9.5px;
+  font-weight: 700;
+  color: var(--ck12-dim);
+}
+.ck12-jrow-k {
+  justify-self: start;
+  padding: 0 3px;
+  border: 1px solid var(--ck12-bd);
+  border-radius: 4px;
+  font-size: 8px;
+  color: var(--ck12-dim);
+  white-space: nowrap;
+}
+.ck12-jrow-x {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: color-mix(in srgb, var(--ck12-ink) 84%, transparent);
+}
+
+/* 右栏读数：2×N 网格（v12 .jstats / .jfacts / .jbar2 / .jchips / .jnow）。 */
+.ck12-jstats {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 1px;
+  overflow: hidden;
+  border: 1px solid var(--ck12-bd);
+  border-radius: 10px;
+  background: var(--ck12-bd);
+}
+.ck12-jstat {
+  min-width: 0;
+  padding: 8px 10px;
+  background: rgba(12, 15, 22, 0.92);
+}
+.ck12-jstat .l {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 8px;
+  letter-spacing: 0.14em;
+  color: var(--ck12-faint);
+}
+.ck12-jstat .v {
+  margin-top: 2px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 13px;
+  font-weight: 800;
+  color: var(--ck12-ink);
+  font-variant-numeric: tabular-nums;
+}
+.ck12-jstat .v.is-cyan { color: var(--ck12-cyan); }
+.ck12-jstat .v.is-amber { color: var(--ck12-amber); }
+/* 奇数格（缺进度 / 缺消耗）时最后一格铺满整行，不留半块空底。 */
+.ck12-jstat:last-child:nth-child(odd) { grid-column: span 2; }
+
+.ck12-jfacts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin-top: 9px;
+  font-size: 9px;
+  color: var(--ck12-faint);
+}
+.ck12-jfacts b {
+  color: var(--ck12-dim);
+  font-weight: 600;
+}
+
+.ck12-jbar2 {
+  height: 4px;
+  margin-top: 10px;
+  border-radius: 2px;
+  background: rgba(255, 255, 255, 0.07);
+  overflow: hidden;
+}
+.ck12-jbar2 i {
+  display: block;
+  height: 100%;
+  border-radius: 2px;
+  background: linear-gradient(90deg, var(--ck-a), var(--ck-b));
+}
+
+.ck12-jchips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 10px;
+}
+.ck12-jchips span {
+  padding: 2px 8px;
+  border: 1px solid var(--ck12-bd);
+  border-radius: 999px;
+  font-size: 8.5px;
+  color: var(--ck12-dim);
+}
+.ck12-jchips b { color: var(--ck12-ink); }
+
+.ck12-jmandate {
+  margin-top: 11px;
+  padding-top: 9px;
+  border-top: 1px dashed rgba(255, 255, 255, 0.08);
+}
+.ck12-jmandate .h {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 5px;
+  font-size: 9px;
+  color: var(--ck12-faint);
+}
+.ck12-jmandate .h b {
+  font-size: 10px;
+  color: var(--ck12-ink);
+}
+.ck12-jmandate .h .k {
+  padding: 0 6px;
+  border: 1px solid var(--ck12-bd);
+  border-radius: 999px;
+  font-family: var(--font-mono);
+  font-size: 8.5px;
+}
+.ck12-jmandate p {
+  margin: 0;
+  max-height: 180px;
+  overflow: auto;
+  font-size: 10.5px;
+  line-height: 1.7;
+  color: var(--ck12-dim);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+/* ───────────────────────── 作业头（.jobhead） ───────────────────────── */
+.ck12-jh {
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+  padding: 2px 2px 0;
+}
+
+.ck12-jh-h1 {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  height: 28px;
+}
+
+/* 关闭 = header 第一个可聚焦元素，视觉在左（§1.6，不许用 CSS order 伪装）。 */
+.ck12-jh-x {
+  flex: none;
+  width: 24px;
+  height: 24px;
+  margin-left: 2px;
+  display: grid;
+  place-items: center;
+  border-radius: 7px;
+  border: 1px solid var(--ck12-bd);
+  color: var(--ck12-dim);
+  font-size: 11px;
+  line-height: 1;
+  transition: 0.14s;
+}
+.ck12-jh-x:hover {
+  color: var(--ck12-ink);
+  border-color: var(--ck12-bd2);
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.ck12-jh-kind {
+  flex: none;
+  font-size: 8px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  padding: 1px 6px;
+  border-radius: 999px;
+  border: 1px solid currentColor;
+  white-space: nowrap;
+}
+.ck12-jh-kind.is-task { color: var(--ck12-cyan); }
+.ck12-jh-kind.is-workflow { color: var(--ck12-violet); }
+.ck12-jh-kind.is-subagent { color: var(--pop-purple, var(--ck12-violet)); }
+
+.ck12-jh-title {
+  margin: 0;
+  font-size: 17px;
+  font-weight: 800;
+  color: var(--ck12-ink);
+  font-family: var(--font-ui);
+  letter-spacing: 0.02em;
+  white-space: nowrap;
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.ck12-jh-title.is-loading {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--ck12-faint);
+}
+
+.ck12-jh-status {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  height: 18px;
+  padding: 0 7px;
+  border-radius: 999px;
+  border: 1px solid var(--ck12-bd);
+  font-size: 8.5px;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  color: var(--ck12-dim);
+  white-space: nowrap;
+}
+.ck12-jh-status.is-run {
+  color: var(--ck12-cyan);
+  border-color: color-mix(in srgb, var(--ck12-cyan) 42%, transparent);
+}
+.ck12-jh-status.is-wait {
+  color: var(--ck12-amber);
+  border-color: color-mix(in srgb, var(--ck12-amber) 42%, transparent);
+}
+.ck12-jh-status.is-blocked {
+  color: var(--ck12-red);
+  border-color: color-mix(in srgb, var(--ck12-red) 42%, transparent);
+}
+.ck12-jh-status.is-ended {
+  color: var(--ck12-green);
+  border-color: color-mix(in srgb, var(--ck12-green) 38%, transparent);
+}
+
+.ck12-jh-spacer {
+  flex: 1;
+  min-width: 6px;
+}
+
+/* 页签：24px 胶囊，窄屏不换行。 */
+.ck12-jh-tabs {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 1px;
+  margin-left: 2px;
+  white-space: nowrap;
+}
+.ck12-jh-tab {
+  height: 24px;
+  padding: 0 9px;
+  font-size: 10.5px;
+  color: var(--ck12-dim);
+  font-family: var(--font-ui);
+  border: 0;
+  border-radius: 6px;
+  letter-spacing: 0.02em;
+  white-space: nowrap;
+  transition: 0.14s;
+}
+.ck12-jh-tab:hover {
+  color: var(--ck12-ink);
+  background: rgba(255, 255, 255, 0.04);
+}
+.ck12-jh-tab.on {
+  color: var(--ck-a);
+  background: color-mix(in srgb, var(--ck-a) 12%, transparent);
+  font-weight: 700;
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--ck-a) 24%, transparent);
+}
+
+/* 行2：分支 · 在做 | 舱/执行者 · ⏱ · ¥ | 动作。 */
+.ck12-jh-h2 {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  height: 20px;
+  font-size: 9.5px;
+  color: var(--ck12-faint);
+}
+.ck12-jh-left {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+}
+.ck12-jh-meta {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  flex: 0 1 auto;
+  min-width: 0;
+  max-width: 46%;
+  overflow: hidden;
+  white-space: nowrap;
+}
+.ck12-jh-seg {
+  display: inline-block;
+  min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.ck12-jh-sep {
+  opacity: 0.6;
+  margin-right: 6px;
+}
+.ck12-jh-branch { color: var(--ck12-dim); }
+.ck12-jh-doing { color: var(--ck12-dim); }
+.ck12-jh-who,
+.ck12-jh-time,
+.ck12-jh-cost {
+  font-family: var(--font-mono);
+  color: var(--ck12-faint);
+  white-space: nowrap;
+}
+
+.ck12-jh-acts {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: none;
+}
+
+.ck12-jh-btn {
+  display: inline-flex;
+  align-items: center;
+  height: 22px;
+  padding: 0 8px;
+  border-radius: 6px;
+  border: 1px solid var(--ck12-bd);
+  background: rgba(255, 255, 255, 0.02);
+  color: var(--ck12-dim);
+  font-size: 10px;
+  font-family: var(--font-ui);
+  white-space: nowrap;
+  transition: 0.14s;
+}
+.ck12-jh-btn:hover:not(:disabled) {
+  color: var(--ck12-ink);
+  border-color: var(--ck12-bd2);
+  background: rgba(255, 255, 255, 0.06);
+}
+.ck12-jh-btn.is-danger {
+  color: color-mix(in srgb, var(--ck12-red) 82%, var(--ck12-dim));
+  border-color: color-mix(in srgb, var(--ck12-red) 34%, transparent);
+}
+.ck12-jh-btn:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.ck12-jh-go {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 22px;
+  padding: 0 9px;
+  border-radius: 6px;
+  border: 1px solid color-mix(in srgb, var(--ck-a) 42%, transparent);
+  background: color-mix(in srgb, var(--ck-a) 12%, transparent);
+  color: var(--ck-a);
+  font-size: 10px;
+  font-weight: 700;
+  font-family: var(--font-ui);
+  white-space: nowrap;
+  transition: 0.14s;
+}
+.ck12-jh-go:hover {
+  background: color-mix(in srgb, var(--ck-a) 20%, transparent);
+}
+.ck12-jh-go-arrow {
+  width: 11px;
+  height: 11px;
+}
+
+/* ───────────────────────── attention 面 ───────────────────────── */
+.ck12-stage-badge {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  height: 18px;
+  padding: 0 7px;
+  border-radius: 999px;
+  border: 1px solid var(--ck12-bd);
+  font-size: 8.5px;
+  font-weight: 800;
+  letter-spacing: 0.06em;
+  white-space: nowrap;
+}
+.ck12-stage-badge.is-review {
+  color: var(--ck12-green);
+  border-color: color-mix(in srgb, var(--ck12-green) 42%, transparent);
+}
+.ck12-stage-badge.is-answer {
+  color: var(--ck12-cyan);
+  border-color: color-mix(in srgb, var(--ck12-cyan) 42%, transparent);
+}
+.ck12-stage-badge.is-adjudicate,
+.ck12-stage-badge.is-approval {
+  color: var(--ck12-amber);
+  border-color: color-mix(in srgb, var(--ck12-amber) 42%, transparent);
+}
+.ck12-stage-badge.is-blocked {
+  color: var(--ck12-red);
+  border-color: color-mix(in srgb, var(--ck12-red) 42%, transparent);
+}
+
+.ck12-attn-card {
+  border: 1px solid var(--ck12-bd);
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.02);
+  padding: 10px 12px;
+  margin-bottom: 8px;
+}
+.ck12-attn-label {
+  font-size: 8px;
+  letter-spacing: 0.14em;
+  color: var(--ck12-faint);
+  margin-bottom: 3px;
+}
+.ck12-attn-text {
+  font-size: 12px;
+  line-height: 1.7;
+  color: var(--ck12-ink);
+  font-family: var(--font-ui);
+  white-space: pre-wrap;
+}
+.ck12-attn-fact {
+  display: flex;
+  align-items: baseline;
+  gap: 9px;
+  padding: 6px 2px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+  font-size: 10.5px;
+  color: var(--ck12-dim);
+  min-width: 0;
+}
+.ck12-attn-fact:last-child { border-bottom: 0; }
+.ck12-attn-fact .ck12-attn-label { margin-bottom: 0; flex: none; }
+.ck12-attn-facts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  padding: 6px 2px;
+  font-size: 9.5px;
+  color: var(--ck12-dim);
+}
+.ck12-attn-facts .ck12-attn-label { display: inline; margin: 0; }
+.ck12-attn-mono {
+  font-family: var(--font-mono);
+  color: var(--ck12-faint);
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.ck12-attn-list {
+  margin: 4px 0 0;
+  padding-left: 16px;
+  font-size: 11px;
+  line-height: 1.8;
+  color: var(--ck12-dim);
+  font-family: var(--font-ui);
+}
+
+/* ───────────────────────── 响应式（对齐 .ck12-quiet 让位） ───────────────────────── */
+@media (max-width: 1360px) {
+  .ck12-face { padding-left: 334px; }
+}
+
+@media (max-width: 1120px) {
+  .ck12-face { padding-left: 334px; }
+  .ck12-jh-meta { max-width: 40%; }
+}
+
+@media (max-width: 900px) {
+  .ck12-face {
+    padding-left: 300px;
+  }
+  .ck12-jh-title { font-size: 15px; }
+  .ck12-jh-tab { padding: 0 7px; }
+  .ck12-sgrid {
+    flex: none;
+    display: block;
+    min-height: auto;
+    overflow: auto;
+  }
+  .ck12-sgrid > .ck12-pane {
+    min-height: 210px;
+    margin-bottom: 10px;
+  }
+  .ck12-pane-b { overflow: visible; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ck12-jh-x,
+  .ck12-jh-tab,
+  .ck12-jh-btn,
+  .ck12-jh-go {
+    transition: none;
+  }
+}

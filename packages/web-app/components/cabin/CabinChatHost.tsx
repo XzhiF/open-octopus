@@ -15,21 +15,12 @@
 // WorkspaceExplorerDock；点模块 → CabinProvider 开浮窗（CabinModulesLayer 全几何）。
 // 座舱 attention 的「打开任务」经 octopus:open-task 进来，与桌面同一协议。
 
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import {
   LayoutGrid, PanelLeft, Search, SquarePen,
 } from 'lucide-react'
-import { toast } from 'sonner'
-import { useChatSessions } from '@/components/providers/chat-sessions'
-import { useChatTasks } from '@/hooks/use-chat-tasks'
-import { useRunningAgents } from '@/hooks/use-running-agents'
-import { useOrgs } from '@/hooks/useOrgs'
-import { useWorkspaces } from '@/hooks/use-workspaces'
 import { useCabins } from '@/hooks/use-cabins'
-import { getSession } from '@/lib/agent/api'
-import type { AgentSession } from '@/lib/agent/types'
-import { getTask, type TaskView } from '@/lib/tasks-api'
-import { readRememberedTaskOrg, resolveTaskOrg } from '@/lib/task-org'
+import type { TaskView } from '@/lib/tasks-api'
 import { useRouter } from '@/lib/app-navigation'
 import { cn } from '@/lib/utils'
 import { Sheet, SheetContent } from '@/components/ui/sheet'
@@ -38,17 +29,15 @@ import { SidebarResizer } from '@/components/agent/chat/sidebar-resizer'
 import { useSidebarWidth } from '@/components/agent/chat/sidebar-width'
 import {
   ChatPane,
-  type ChatPaneAction,
-  type ChatPaneCommand,
-  type ChatPaneShared,
-  type PendingTaskSession,
 } from '@/components/agent/chat/ChatPane'
 import type { CabinDockModule } from '@/components/workspace/workspace-explorer-dock'
 import { useCabinContext } from './cabin-provider'
+import { useCabinChatWiring } from './use-cabin-chat-wiring'
 import { CabinModulesLayer } from './CabinModulesLayer'
 import { CabinAtmosphere } from './CabinAtmosphere'
 import { CabinCrew } from './CabinCrew'
 import { CabinFleet } from './CabinFleet'
+import { useCockpitEntry } from '@/components/cockpit/entry/use-cockpit-entry'
 import { useCockpit } from './CockpitProvider'
 import { CABIN_DOCK_PRIMARY } from './cabin-meta'
 
@@ -61,141 +50,36 @@ export interface CabinChatHostProps {
   onSelectCabin?: (id: string) => void
   /** 桌面内壳传入：新建走 pendingCabin hero（不跳 /cabin/new）。 */
   onCreateCabin?: () => void
+  /** 桌面内壳传入：退出舱模式回普通对话（入口在左栏作战舱段）。 */
+  onExitCabin?: () => void
 }
 
-export function CabinChatHost({ onSelectCabin, onCreateCabin }: CabinChatHostProps = {}) {
+export function CabinChatHost({ onSelectCabin, onCreateCabin, onExitCabin }: CabinChatHostProps = {}) {
   const {
     cabinId, cabin, view, openWindows, minimizedWindows, openModule,
   } = useCabinContext()
   const { setStreaming, setPresenceActive } = useCockpit()
+  const { enterCockpit } = useCockpitEntry()
   const router = useRouter()
-  const {
-    sessions, loading: sessionsLoading, createNewSession, renameSession, removeSession,
-    updateSessionTitle, refetch: refetchSessions,
-  } = useChatSessions()
-  const { tasks: chatTasks, loading: chatTasksLoading, refresh: refreshChatTasks } = useChatTasks()
-  const runningAgents = useRunningAgents()
-  const { orgs: appOrgs } = useOrgs()
-  const { workspaces } = useWorkspaces()
   const { cabins } = useCabins()
 
-  const [sessionId, setSessionId] = useState<string | null>(null)
-  // 舱主会话的元数据（workspace/title）。服务端会话列表不返回它，ChatPane 需要
-  // 它来算 SSE wake 订阅与作业坞标题 —— 只喂 chat 底座，不进左栏会话列表。
-  const [mainSession, setMainSession] = useState<AgentSession | null>(null)
-  const [activeTask, setActiveTask] = useState<TaskView | null>(null)
-  const [pendingTaskSession, setPendingTaskSession] = useState<PendingTaskSession | null>(null)
-  const [command, setCommand] = useState<ChatPaneCommand | null>(null)
   const [regionNode, setRegionNode] = useState<HTMLDivElement | null>(null)
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
   // 左栏宽度与桌面对话共用（拖动 + 最大 380），不再是写死的 236。
   const { width: sidebarWidth, resizing: resizingSidebar, resizeHandlers } = useSidebarWidth()
   const [sidebarSearchOpen, setSidebarSearchOpen] = useState(false)
   const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false)
-  const nonceRef = useRef(0)
 
-  // 主会话钉住：舱加载完成 / 切换舱时落一次。用户经 select-task 打开任务线程
-  // 后不再强拉回来（ChatPane 自己管 sessionId）。
-  const mainSessionId = cabin?.main_session_id ?? null
-  useEffect(() => {
-    setSessionId(mainSessionId)
-    setActiveTask(null)
-    setPendingTaskSession(null)
-  }, [mainSessionId])
-
-  // 舱主会话只在舱里可达（不在会话列表）：按 id 单独取一次元数据。
-  useEffect(() => {
-    let cancelled = false
-    setMainSession(null)
-    if (!mainSessionId) return
-    getSession(mainSessionId)
-      .then((detail) => {
-        if (!cancelled) setMainSession(detail)
-      })
-      .catch(() => {
-        // 取不到就不并进去：ChatPane 退回舱自身字段（dock/标题兜底）。
-      })
-    return () => { cancelled = true }
-  }, [mainSessionId])
-
-  // 左栏「会话」段不刷这条列表也行，但任务/会话段的其它会话照常靠它刷新。
-  useEffect(() => {
-    void refetchSessions()
-  }, [refetchSessions])
-
-  // ChatPane 的会话集合：全局列表 + 舱主会话（若服务端列表里还没有）。
-  const paneSessions = useMemo(() => {
-    if (!mainSession) return sessions
-    if (sessions.some((session) => session.id === mainSession.id)) return sessions
-    return [mainSession, ...sessions]
-  }, [sessions, mainSession])
-
-  const issueCommand = useCallback((action: ChatPaneAction) => {
-    nonceRef.current += 1
-    setCommand({ ...action, nonce: nonceRef.current })
-  }, [])
-
-  const preferredOrg = useMemo(
-    () => cabin?.org ?? resolveTaskOrg({
-      orgs: appOrgs.map((o) => o.name),
-      remembered: readRememberedTaskOrg(),
-      recentTaskOrgs: [...chatTasks]
-        .sort((a, b) => (b.updated_at ?? '').localeCompare(a.updated_at ?? ''))
-        .map((task) => task.repo_group),
-    }),
-    [cabin?.org, appOrgs, chatTasks],
-  )
-
-  const shared = useMemo<ChatPaneShared>(() => ({
-    sessions: paneSessions,
-    sessionsLoading,
-    createNewSession,
-    updateSessionTitle,
-    refreshSessions: refetchSessions,
-    chatTasks,
-    chatTasksLoading,
-    refreshChatTasks,
-    runningAgents,
-    appOrgs: appOrgs.map((org) => org.name),
-    workspaces,
-    preferredOrg,
-    sidebarWidth: sidebarCollapsed ? 0 : sidebarWidth,
-  }), [
-    paneSessions, sessionsLoading, createNewSession, updateSessionTitle, refetchSessions,
-    chatTasks, chatTasksLoading, refreshChatTasks, runningAgents, appOrgs, workspaces,
-    preferredOrg, sidebarCollapsed, sidebarWidth,
-  ])
-
-  // 座舱 attention / 外部入口打开任务：与桌面 ChatTab 同一事件协议。
-  useEffect(() => {
-    const onOpenTask = (event: Event) => {
-      const detail = (event as CustomEvent<{ taskId?: string; view?: 'acceptance' | 'changes' }>).detail
-      const taskId = detail?.taskId
-      if (!taskId) return
-      getTask(taskId)
-        .then((task) => {
-          issueCommand({
-            type: 'select-task',
-            task,
-            ...(detail?.view === 'acceptance' ? { module: 'acceptance' as const } : {}),
-            ...(detail?.view === 'changes' ? { module: 'changes' as const } : {}),
-          })
-          void refreshChatTasks()
-        })
-        .catch(() => toast.error('任务不存在或已被删除'))
-    }
-    window.addEventListener('octopus:open-task', onOpenTask)
-    return () => window.removeEventListener('octopus:open-task', onOpenTask)
-  }, [issueCommand, refreshChatTasks])
-
-  // 作业详情「去主对话」：回到舱主会话（不从任务线程强拉，只在显式点按时切回）。
-  useEffect(() => {
-    const onMainChat = () => {
-      if (mainSessionId) issueCommand({ type: 'select-session', sessionId: mainSessionId })
-    }
-    window.addEventListener('octopus:cabin-main-chat', onMainChat)
-    return () => window.removeEventListener('octopus:cabin-main-chat', onMainChat)
-  }, [issueCommand, mainSessionId])
+  // 主会话解析 / shared / command / 事件桥（S5 抽出，与全域座舱共用）。
+  // 旧舱行为与 DOM 不变：这里拿到的每个字段与抽取前逐字对应。
+  const {
+    sessionId, setSessionId,
+    activeTask, setActiveTask,
+    pendingTaskSession, setPendingTaskSession,
+    command, issueCommand,
+    mainSessionId, shared, handleDeleteSession,
+    sessions, sessionsLoading, chatTasks, chatTasksLoading, runningAgents, renameSession,
+  } = useCabinChatWiring({ sidebarWidth: sidebarCollapsed ? 0 : sidebarWidth })
 
   const attachRegion = useCallback((node: HTMLDivElement | null) => {
     setRegionNode(node)
@@ -207,11 +91,6 @@ export function CabinChatHost({ onSelectCabin, onCreateCabin }: CabinChatHostPro
     () => new Set(runningAgents.map((agent) => agent.id)),
     [runningAgents],
   )
-
-  const handleDeleteSession = useCallback(async (id: string) => {
-    await removeSession(id)
-    if (sessionId === id) setSessionId(mainSessionId)
-  }, [removeSession, sessionId, mainSessionId])
 
   // ── dock 舱模块段（原型 DOCK_PRIMARY + 更多溢出）─────────────────────
   const moduleState = useCallback((id: string) => {
@@ -265,6 +144,7 @@ export function CabinChatHost({ onSelectCabin, onCreateCabin }: CabinChatHostPro
       else router.push(`/cabin/${id}`)
     },
     onCreateCabin: onCreateCabin ?? (() => router.push('/cabin/new')),
+    onExitCabin,
     tasks: chatTasks,
     tasksLoading: chatTasksLoading,
     activeTaskId: activeTask?.id ?? null,
@@ -294,6 +174,19 @@ export function CabinChatHost({ onSelectCabin, onCreateCabin }: CabinChatHostPro
     // 流式回复里出现长 token / 宽工具行时，会把整行（连同编队、作业坞的定位
     // 基准）撑到视口外，回复收拢成折叠 meta 才恢复 —— 2026-11-13 用户实测。
     <div className={cn('ui-font relative flex h-full min-h-0 min-w-0 flex-1', resizingSidebar && 'cursor-col-resize select-none [&_*]:cursor-col-resize')}>
+      {/* 全域座舱的**唯一**入口（classic 侧）。方向是单向的：
+          这套 classic 界面不因全域而改变任何行为（编队行仍是作业详情窗），
+          只有这个按钮把人送到 /cabin/:id/cockpit；那边的「← 返回作战舱」回来。
+          右上角在编队面板（top 52 / right 84）与作业坞图标之上，不重叠。 */}
+      <button
+        type="button"
+        data-testid="cabin-enter-cockpit"
+        title="进入全域座舱"
+        onClick={() => enterCockpit({ cabinId })}
+        className="absolute right-3 top-2.5 z-30 inline-flex items-center gap-1 rounded-md border border-white/10 bg-pop-paper/80 px-1.5 py-1 text-[10px] text-pop-dim backdrop-blur transition-colors hover:text-pop-ink"
+      >
+        ⛶ 全域
+      </button>
       {!sidebarCollapsed && (
         <aside
           className="relative hidden shrink-0 border-r border-white/[0.06] md:flex md:flex-col"

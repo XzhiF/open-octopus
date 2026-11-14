@@ -63,7 +63,14 @@ function resolveWebPort(): number {
   return 3500 + (hash % 50) * 2
 }
 
-const webPort = resolveWebPort()
+/**
+ * Optional escape hatch: run against a freshly started Vite on another port.
+ * Needed when the default port is occupied by a long-lived dev server that was
+ * started before new files existed — Vite's CSS @import resolver can keep a
+ * negative lookup for a directory it never watched, and only a restart clears
+ * it. Unset keeps the historical behavior (main repo → 3000).
+ */
+const webPort = Number(process.env.OCTOPUS_E2E_WEB_PORT) || resolveWebPort()
 
 export default defineConfig({
   testDir: "./e2e",

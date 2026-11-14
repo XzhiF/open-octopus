@@ -117,6 +117,8 @@
     每行一根条 + ¥；合计 = 顶栏那个 ¥1.28；
   - 动作：**压缩上下文**（原型里 42% → 22%，汐音回一句，ticker 记一笔）。
 - **`↑ / ↓`** 是本轮 token；**`¥`** 是本舱今日。
+- **`✦ 汐音舰长`**：舱主对话的固定身份，跟在模型 / token 后面（只读）。
+  原来它在 composer 下方单独占一行；2026-11-14 用户口径：搬进舰桥，底栏不再多一行。
 - **`◉ 在场 · 标准`**：一眼看到她在不在场；点一下开关。
 - **浮层规矩**：都从对应的读数向上弹、贴住按钮、点外部 / `Esc` 即收；
   宽度 334 / 392，不盖整屏、不改变面的状态。**点 → 小面**，不是第三个层级。
@@ -150,6 +152,11 @@
 - **不透明度**：标题栏 `◍ 94%` 五档循环（94 / 82 / 70 / 55 / 100），底板透、字不透；
   也可以说「透明」。
 - **聚焦即展开**：输入框一拿到焦点就打开；收起状态下也会摊回原大小。
+- **底栏是 v12 的单行 54px**：`❯` 输入 + `＋ 挂载` + 发送；模型 / 上下文 / token / 身份
+  都在舰桥那一条，输入框下面不再有第二条控件条（2026-11-14 用户口径）。
+- **用户输入历史是「索引」不是「竖杠」**：浮窗右侧收起态只留一个 `≡ N` 小把手，
+  悬停 / 聚焦展开提示词列表并跳轮。classic 那边仍是一竖排短杠；全域窄浮窗里
+  一杠对一轮会被读成正文旁边的又一列内容（2026-11-14 用户口径）。
 - **换面不关窗**：点编队换作业、切页签、按 `⌥1`，对话都留在原地——这正是「看细节再说话」。
 - **`📌 钉住` = 锁定位置**：锁定后拖动会提示先解锁；关闭窗口不解除锁定。
 - `Esc` 逐层收：先收浮层 / 立绘菜单 / 弹窗，再收对话浮窗，最后收面。
@@ -175,8 +182,11 @@
 
 ## 入口与退出
 
-- **入口**：作战舱舱面右上「⛶ 全域」；`⌥G`。旧舱面一行不动。
-- **深链**：建议 `/global`；可选 `?job=<id>&tab=<tab>`。
+- **入口**：作战舱 classic 舱面右上角「⛶ 全域」。**classic 一行不动** —— 编队行点击仍是原作业详情窗，
+  全域与 classic 是两套独立界面，只靠这一个按钮单向切换（全域里「← 返回作战舱」回来）。
+- **深链**（已落地）：`/cabin/:cabinId/cockpit?job=<jobId>&tab=<overview|relay|run|changes|accept>`；
+  合成任务行用 `?task=<taskId>`，无 job_id 的 attention 用 `?attn=<attentionId>`；
+  跨舱查看时追加 `&cabin=<归属舱>`（`cabinId` 永远是入口舱）。
 - **退出**：本页「← 返回作战舱」；或 `Esc` 逐层收（浮层 → 立绘菜单 → 弹窗 → 浮层编队 → 面 → 对话）。
 
 ## 数据映射（只读）
@@ -191,7 +201,64 @@
 | 五个页签 | `cabin_job_events`、execution detail、`git diff`、验收证据 |
 | 动作 | 通过 / 打回 / 中止 / 接管 / 拍板 / 启动 / 换模型 / 压缩 → 一句对话或一次设置 |
 
-## 实现顺序
+## 实现状态（2026-11-14）
+
+- **已落地**：S1–S10 全部合并。真实路由 `/cabin/:cabinId/cockpit`；入口是 classic 舱面右上角的
+  「⛶ 全域」按钮（不带 ref，默认选中一条真行）。classic 的编队行、作业详情窗、键盘行为保持原样，
+  不因全域改道（2026-11-14 用户口径修正）。
+- **数据纪律**：没有 mock / 演示数据。字段缺失时显式「未就绪 / 无此数据」，不写 `0`、
+  `--` 或假进度 45%；进度条只对**有 v4 phaseViews** 的 task 画。
+- **验证**：`pnpm --filter @octopus/web-app test`（185 files / 1453 tests）、
+  `pnpm --filter @octopus/web-app lint`、`pnpm --filter @octopus/web-app build` 全绿；
+  新增 `e2e/tests/cockpit-global.spec.ts`（11 tests）全绿。
+- **与 v12 原型的差异 / 已知边界**：见 `12-cockpit-implementation.md`。
+
+### E2E 环境
+
+- `playwright.config.ts` 的 `webServer` **只起 Vite**；后端必须已在
+  `OCTOPUS_SERVER_URL ?? http://localhost:3001` 上运行。后端不可达时新 spec 全部 `test.skip`。
+- 默认端口（主仓库 3000）若被一个**早于 `app/cockpit/` 创建**的长驻 Vite 占着，它的 CSS
+  `@import` 解析器可能保留对 `./cockpit/index.css` 的负缓存（请求 `/app/globals.css` 会返回
+  postcss ENOENT）。重启 Vite 即恢复；不动长驻进程时可以另起一个新鲜 Vite 并设置
+  `OCTOPUS_E2E_WEB_PORT=<port>`（`playwright.config.ts` 的向后兼容覆盖，默认行为不变）。
+- 整套 e2e 有历史遗留红：`e2e/tests/auth.spec.ts` 打 `/login`，本 SPA 没有登录页。
+  收尾闸门只跑新增 spec，**不以「整套 e2e 全绿」为验收条件**。
+
+## 文件映射（真实路径，均在 `packages/web-app/` 下）
+
+| 能力 | 文件 |
+|---|---|
+| 路由 / 壳分发 | `lib/routes.tsx` · `lib/route-components.tsx` · `components/providers/app-shell.tsx` |
+| 壳 / HUD / 星野 / 安静层 / ticker | `components/cockpit/shell/{CockpitShell,CockpitHud,CockpitStarfield,CockpitQuiet,CockpitTicker}.tsx` |
+| 唯一可变状态 / Esc 栈 | `components/cockpit/state/{cockpit-state.ts,CockpitStateProvider.tsx,CockpitLayerStack.tsx}` |
+| 入口 / 出口 / URL 同步 / 快捷键 | `components/cockpit/entry/{use-cockpit-entry.ts,use-cockpit-url-sync.ts,cockpit-url.ts,CockpitShortcuts.tsx,cockpit-candidates.ts}` · 舱侧入口按钮在 `components/cabin/CabinChatHost.tsx` |
+| 跨舱编队数据层（唯一轮询） | `components/cockpit/fleet/{CockpitFleetProvider.tsx,use-fleet-query.ts,fleet-model.ts}` |
+| 左栏编队 | `components/cockpit/rail/CockpitFleetRail.tsx` |
+| 作业面 / 五页签 | `components/cockpit/face/{CockpitFace,CockpitJobHeader,CockpitTaskFace,CockpitAttentionFace}.tsx` · `components/cabin/job-face.tsx` |
+| 聊天（composer 搬迁 / 浮窗 / 底栏） | `components/cockpit/chat/{CockpitChatHost,CockpitChatWindow,CockpitCommandBar,geometry.ts,chat-slots.ts,use-chat-telemetry.ts}` · `components/agent/chat/{ChatArea,ChatPane}.tsx` |
+| 舰桥与三个 popover | `components/cockpit/bridge/{CockpitBridge,CockpitModelPopover,CockpitContextPopover,CockpitPresencePopover,use-cabin-usage}.tsx` |
+| 立绘 / 在场 | `components/cockpit/crew/CockpitCrew.tsx` + `components/cabin/CockpitProvider.tsx` |
+| 到达简报 / 全局特效 | `components/cockpit/fx/{CockpitBrief,CockpitEffects}.tsx` |
+| 样式（v12 视觉真源） | `app/cockpit/{base,rail,face,chat,bridge,crew,fx}.css`，由 `app/cockpit/index.css` 汇总、`app/globals.css` 引入 |
+| E2E | `e2e/helpers/cockpit-helpers.ts` · `e2e/tests/cockpit-global.spec.ts` · `playwright.config.ts` |
+
+## 数据来源（实现口径）
+
+| 块 | 真实来源 | 缺失时 |
+|---|---|---|
+| 编队行 / 舱筛选 | `GET /api/cabins` + `GET /api/cabins/:id/jobs`（10s 轮询，全应用仅此一处）；历史舱无 job 时补 `GET /api/tasks?cabin_id=` | 保留上一份快照；空编队显示「编队空着 · 从主对话派一条」 |
+| attention 合并 | `GET /api/cabins/:id` 的 `view.attention`（`job_id` 可空） | 无 job_id 的单独成 `attn:` 行 |
+| 状态 / 进度 | `CabinJobView.status`；进度只对 `derived.phaseViews` 非空的 task 用 `taskPct` | workflow / subagent 与无 phaseViews 的 task 一律 `null`（不画条） |
+| 作业头「在做 / 分支 / 执行者 / 用时 / ¥」 | 最后一条 `cabin_job_events.summary` · `task_spec.branch` · `session_id/ref_id` 短 id · `created_at→ended_at??now` · `getCabinUsage().byJob` | 整段省略，不留空分隔符 |
+| 五页签 | `GET /api/cabins/:id/jobs/:jid`（job + events）· `GET /api/tasks/:id` · execution detail · `git diff` · 验收证据 | 明确空态文案（如「这条工作流作业没有交付验收单」） |
+| 舰桥模型 | `lib/agent/composer-settings.ts`（**进程级全局设置**，非舱级） | 显式「未就绪」并禁用 |
+| 上下文 / token | `ChatPane.onTelemetry().contextUsage`（流式实时）· `LlmUsageAggregates`（**回合结束**刷新） | 「未就绪」 |
+| 本舱消耗 | `GET /api/cabins/:id/usage` + `useBillingCurrency`（30s） | 省略该段 |
+| 在场 | `CockpitPrefs.presenceOn/presenceRate`（真实分钟区间） | — |
+| 到达 | `view.attention` 新增 id（10s 轮询） | 首屏存量不算「到达」 |
+| 动作 | 现有 API：任务暂停/恢复/中止、验收通过/打回、聚焦/提优先/备注、`/compact` | 无真实去处时不放死按钮 |
+
+## 实现顺序（历史计划，S1–S10 已执行）
 
 1. **原型评审**：`cockpit-v11.html`（本稿）。
 2. **入口 / 编队 / 面**：按 v10 的步骤落（入口 → 编队聚合 → 概览 / 对接 / 运行 → 变更 / 验收）。

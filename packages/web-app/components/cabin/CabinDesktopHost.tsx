@@ -5,16 +5,13 @@
 // CabinChatHost，但不再渲染自己的 DesktopHeader —— 顶栏仍归 Desktop，
 // 桌面窗口/分屏/任务模块照常可用。
 //
-// 顶部一条舱条：舱身份 + 状态 + 最小化模块（CabinWinstrip）+ 「← 对话」退出。
-// 退出只清 CabinMode 状态，不改路由（URL 始终停在 /）。
+// 2026-11-14 用户口径：舱身份条（舱名 / 状态 / 路径 / 「← 对话」）是多余的 ——
+// 左栏的作战舱行已经承担身份，退出改为左栏作战舱段的小箭头；这里不再有第二条横条。
+// 被最小化的舱模块窗可从坞里重开（openModule 会解除最小化）。
 
-import { ArrowLeft, Container } from 'lucide-react'
-import { cn } from '@/lib/utils'
 import { CabinProvider, useCabinContext } from './cabin-provider'
 import { CockpitProvider } from './CockpitProvider'
 import { CabinChatHost } from './CabinChatHost'
-import { CabinWinstrip } from './CabinModulesLayer'
-import { CABIN_STATUS_META } from './cabin-meta'
 
 export interface CabinDesktopHostProps {
   cabinId: string
@@ -79,38 +76,14 @@ function CabinDesktopBody({
     )
   }
 
-  const meta = CABIN_STATUS_META[cabin.status]
-
   return (
     <div className="flex h-full min-h-0 flex-col" data-testid="cabin-desktop-host">
-      <div
-        data-shell-chrome
-        className="flex h-8 shrink-0 items-center gap-2 border-b-[1.5px] border-pop-bd bg-pop-paper px-2"
-      >
-        <Container className="size-3.5 shrink-0 text-pop-yellow" strokeWidth={1.9} />
-        <span className="min-w-0 truncate text-[12px] font-bold text-pop-ink">{cabin.name}</span>
-        <span className={cn('size-1.5 shrink-0 rounded-full', meta.dot)} aria-hidden />
-        <span className="shrink-0 text-[10px] font-bold text-pop-dim">{meta.label}</span>
-        <span className="hidden min-w-0 flex-1 truncate font-mono text-[10px] text-pop-dim/60 sm:block">
-          {cabin.path}
-        </span>
-        <div className="ml-auto flex shrink-0 items-center gap-1">
-          <CabinWinstrip />
-          <button
-            type="button"
-            onClick={onExit}
-            data-testid="cabin-exit"
-            title="回到普通对话"
-            className="flex h-6 items-center gap-1 rounded-md px-1.5 text-[11px] font-bold text-pop-dim transition-colors hover:bg-accent hover:text-pop-ink"
-          >
-            <ArrowLeft className="size-3.5" />
-            对话
-          </button>
-        </div>
-      </div>
-
       <div className="relative flex min-h-0 flex-1 overflow-hidden bg-pop-bg" data-testid="cabin-stage">
-        <CabinChatHost onSelectCabin={onSelectCabin} onCreateCabin={onCreateCabin} />
+        <CabinChatHost
+          onSelectCabin={onSelectCabin}
+          onCreateCabin={onCreateCabin}
+          onExitCabin={onExit}
+        />
       </div>
     </div>
   )

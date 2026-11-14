@@ -20,10 +20,10 @@ export function CabinAtmosphere() {
     const cols = [th.a, th.b, th.c]
     return Array.from({ length: Math.round(prefs.particles) }, (_, i) => ({
       id: i,
-      left: `${(Math.random() * 100).toFixed(1)}%`,
+      left: `${(Math.random() * 100).toFixed(1)}%`, // fmt-ok: 粒子 CSS 坐标，不是文案
       size: `${(2 + Math.random() * 3).toFixed(1)}px`,
-      duration: `${(8 + Math.random() * 14).toFixed(1)}s`,
-      delay: `${(-Math.random() * 22).toFixed(1)}s`,
+      duration: `${(8 + Math.random() * 14).toFixed(1)}s`, // fmt-ok: 粒子动画时长
+      delay: `${(-Math.random() * 22).toFixed(1)}s`, // fmt-ok: 粒子动画延迟
       color: cols[i % 3],
     }))
   }, [prefs.particles, prefs.theme])

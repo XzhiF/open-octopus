@@ -61,13 +61,25 @@ export function formatTokenCount(n: number | null | undefined, digits = 1): stri
  * 时长格式化（**毫秒入参**）：850ms / 45s / 26m 21s / 1h 17m 四档。
  * null / NaN / <=0 → "—"（无耗时数据）。
  * 业务状态文案（如「进行中」）属调用方，不进本函数。
+ *
+ * `compact: true` = 窄栏用的紧凑档（省略秒、小时按 `2h07m`、超过一天按 `1d2h`），
+ * 语义与分档同源，只换刻度表达；编队行 / 作业头第二行走这一档。
  */
-export function formatDuration(ms: number | null | undefined): string {
+export function formatDuration(
+  ms: number | null | undefined,
+  options?: { compact?: boolean },
+): string {
   if (ms == null || Number.isNaN(ms) || ms <= 0) return "—"
   if (ms < 1000) return `${Math.round(ms)}ms`
   const totalSec = Math.round(ms / 1000)
   if (totalSec < 60) return `${totalSec}s`
   const minutes = Math.floor(totalSec / 60)
+  if (options?.compact) {
+    if (minutes < 60) return `${minutes}m`
+    const hours = Math.floor(minutes / 60)
+    if (hours < 24) return `${hours}h${String(minutes % 60).padStart(2, "0")}m`
+    return `${Math.floor(hours / 24)}d${hours % 24}h`
+  }
   if (minutes < 60) return `${minutes}m ${totalSec % 60}s`
   const hours = Math.floor(minutes / 60)
   return `${hours}h ${minutes % 60}m`

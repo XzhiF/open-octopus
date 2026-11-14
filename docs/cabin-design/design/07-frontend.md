@@ -11,7 +11,7 @@
 上一版只有兄弟壳：桌面首页看不到工作舱段，新建还要跳到 `/cabin/new`。现在主入口收进桌面：
 - `components/cabin/cabin-mode.tsx`：`CabinModeProvider` 持 `activeCabinId / drafting`（active 落 localStorage），`openCabin / startDraft / cancelDraft / exitCabin` 全部不改路由。
 - `ConversationHome` 在同一对话区三态切换：普通 ChatTab → `CabinDraftPane`（新建 hero）→ `CabinDesktopHost`（舱上下文）。
-- `CabinDesktopHost` 复用 CabinProvider/CockpitProvider/CabinChatHost + 一条舱条（身份/状态/CabinWinstrip/「← 对话」）；DesktopHeader、桌面浮窗、分屏仍归 Desktop。
+- `CabinDesktopHost` 复用 CabinProvider/CockpitProvider/CabinChatHost；**不渲染第二条舱条**（2026-11-14 用户口径：舱名/状态/路径与顶栏下方的图标行属冗余）。退出回普通对话放在左栏「作战舱」段标题右侧的小箭头（`cabin-section-exit`）；DesktopHeader、桌面浮窗、分屏仍归 Desktop。
 - ChatTab 加性 `cabinBridge`：左栏出现「工作舱」段（状态圈 + 新建项），并在 `drafting` 时用 `CabinDraftPane` 替换对话区。
 - `CabinNewForm` 从 CabinNewHero 抽出，页面（/cabin/new 深链兜底）与内联 hero 共用表单。
 - 舱内 chat 列按原型 787-790 对齐：历史左对齐 860（`[data-tui-col]`）、输入条跨过 252px crew gutter 且右侧收 96（`[data-tui-dock]`），立绘左右留白相等（38/38）。

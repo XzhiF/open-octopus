@@ -53,13 +53,25 @@ export interface StandaloneRoute {
 
 /** 作战舱兄弟壳：/cabin/:cabinId 渲染 CabinShell（不是桌面浮窗）。
  *  cabinId='new' 是新建向导（S1），其余是已存在的舱。 */
-export interface CabinRoute {
+export interface CabinShellRouteDecl {
   kind: 'cabin'
   id: 'cabin'
   path: '/cabin/:cabinId'
   componentKey: 'cabin-shell'
   title: (params: RouteParams) => string
 }
+
+/** 全域座舱：/cabin/:cabinId/cockpit（cabinId 永远是入口舱，面由 ?job/?task/?attn 决定）。 */
+export interface CabinCockpitRouteDecl {
+  kind: 'cabin'
+  id: 'cabin-cockpit'
+  path: '/cabin/:cabinId/cockpit'
+  componentKey: 'cabin-cockpit'
+  title: (params: RouteParams) => string
+}
+
+/** 两个字面量形状的联合：放宽成 string 会丢掉 path/componentKey 的约束。 */
+export type CabinRoute = CabinShellRouteDecl | CabinCockpitRouteDecl
 
 export interface NotFoundRoute {
   kind: 'not-found'
@@ -137,6 +149,14 @@ const STANDALONE_ROUTES: StandaloneRoute[] = [
 ]
 
 const CABIN_ROUTES: CabinRoute[] = [
+  // end:true → 两条路径互不吞并；cockpit 放前面只为可读。
+  {
+    kind: 'cabin',
+    id: 'cabin-cockpit',
+    path: '/cabin/:cabinId/cockpit',
+    componentKey: 'cabin-cockpit',
+    title: (params) => `全域座舱 · ${shortId(params.cabinId)}`,
+  },
   {
     kind: 'cabin',
     id: 'cabin',

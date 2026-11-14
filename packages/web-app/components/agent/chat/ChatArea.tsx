@@ -1,6 +1,7 @@
 'use client'
 
-import { useState, useRef, useEffect, useMemo, Fragment, type ReactNode } from 'react'
+import { useState, useRef, useEffect, useMemo, Fragment, type ReactNode, type MutableRefObject } from 'react'
+import { createPortal } from 'react-dom'
 import { Send, Square, MessageSquare, Sparkles, Users, X } from 'lucide-react'
 import type { AgentMessage, ToolCallRecord, ContextUsageData } from '@/lib/agent/types'
 import type { LlmUsageAggregates } from '@octopus/shared'
@@ -162,6 +163,25 @@ interface ChatAreaProps {
   timelineClearDock?: boolean
   /** 分屏：每栏较窄，转录给贴边作业坞留出右内边距（否则正文会钻到坞下面）。 */
   dockGutter?: boolean
+  /** 全域座舱（S5）：非空时用 createPortal 把 **composer 原样**渲染进这个容器
+   *  （= 底栏 54px 输入区）。为空 = 今天的行内 composer，逐字不变。 */
+  composerSlot?: HTMLElement | null
+  /** 全域座舱：'cockpit' 只隐藏已经搬到舰桥的模型/上下文读数，
+   *  输入、附件、队列、停止、@、/、Esc 全部保留。默认 'full'。 */
+  composerVariant?: 'full' | 'cockpit'
+  /** 队列深度（tui 排队）变化时通知宿主 —— 舰桥 telemetry 读它。 */
+  onQueueDepthChange?: (depth: number) => void
+  /** 把「走真 composer 管线」的提交入口暴露给宿主（CockpitChatApi.submit）。
+   *  含附件、流式排队、steer，与输入框回车完全同一条路径。 */
+  composerBridgeRef?: MutableRefObject<ChatComposerBridge | null>
+}
+
+/** ChatArea 暴露给宿主的 composer 能力（只增不减，避免宿主另写 send）。 */
+export interface ChatComposerBridge {
+  /** 程序化提交一句话：与在输入框里按 ⏎ 的分支完全一致（含队列/steer）。 */
+  submit(text: string): void
+  /** 聚焦真输入框（底栏点一下/⌘K 后）。 */
+  focus(): void
 }
 
 /** ⇧⏎ 排队上限（原型 chat-tui.html 拍板）。 */
@@ -185,6 +205,7 @@ export function ChatArea({
   composerLeading, composerPlaceholder, heroEmpty, composerHeroFooter, identity, identityDisplay, workspaceContext,
   tui, onSteer, steerActiveRef, resumeTailing,
   messageExtras, transcriptTail, composerSeed, timelineClearDock, dockGutter,
+  composerSlot, composerVariant = 'full', onQueueDepthChange, composerBridgeRef,
 }: ChatAreaProps) {
   const [input, setInput] = useState('')
   const [slashOpen, setSlashOpen] = useState(false)
@@ -431,6 +452,56 @@ export function ChatArea({
     }
   }
 
+  // ── 全域座舱（S5）：把**同一份**提交管线暴露出去 ─────────────────────
+  // 不新写 send：submit 走的就是上面 ⏎ 的分支（附件 / 流式排队 / steer），
+  // 宿主（CockpitChatHost → ChatPane.onTelemetry.submit）只是换了个触发源。
+  const submitFromBridge = (raw: string) => {
+    const trimmed = raw.trim()
+    if (!trimmed) return
+    if (!tui) {
+      // 非 TUI composer 原本就在流式中直接 return（handleSend 的守卫）。
+      if (streaming) return
+      const taken = takeComposerAttachments(trimmed)
+      onSend(taken.text, taken.opts)
+      stickBottomRef.current = true
+      return
+    }
+    if (streaming) {
+      const taken = takeComposerAttachments(trimmed)
+      if (queueRef.current.length > 0 || resumeTailing || (backgroundTasks?.length ?? 0) > 0) {
+        pushQueue(taken.text, taken.expert)
+      } else if (onSteer) {
+        onSteer(taken.text, taken.opts)
+      } else {
+        onStop()
+      }
+      return
+    }
+    const taken = takeComposerAttachments(trimmed)
+    onSend(taken.text, taken.opts)
+    stickBottomRef.current = true
+  }
+
+  // ref 每轮渲染后刷新：bridge 里调用到的永远是最新的 handler，
+  // 但 ref 本身（以及宿主拿到的 submit 引用）恒稳定。
+  useEffect(() => {
+    if (!composerBridgeRef) return
+    composerBridgeRef.current = {
+      submit: submitFromBridge,
+      focus: focusDockInput,
+    }
+  })
+  useEffect(() => () => {
+    if (composerBridgeRef) composerBridgeRef.current = null
+  }, [composerBridgeRef])
+
+  // 队列深度上报（只在长度变化时触发，宿主别在 render 里读 queue）。
+  useEffect(() => {
+    onQueueDepthChange?.(queue.length)
+  }, [queue.length, onQueueDepthChange])
+
+  const isCockpitVariant = composerVariant === 'cockpit'
+
   const busyStartedAt = turnStartedAt ?? (turnStartedAtRef.current || null)
   const busyElapsed = streaming && busyStartedAt ? Math.max(0, (Date.now() - busyStartedAt) / 1000) : 0
   const busyPhase = toolCalls.some((tc) => tc.status === 'start' || tc.status === 'running' || tc.status === 'pending')
@@ -513,6 +584,28 @@ export function ChatArea({
   // hero 态（2026-10-27 原型 v2）：空会话把 composer 居中，像一个空白工作台；
   // 只对 tui + 显式开启的宿主生效（主对话），草稿工作台行为不变。
   const heroMode = !!tui && !!heroEmpty && !streaming && messages.length === 0
+
+  // ＋ 挂载（SKILL / 分身）：普通布局挂在控件条；全域座舱把控件条整体收掉，
+  // 这个按钮并进输入行 —— 底栏保持 v12 的单行 54px（2026-11-14 用户）。
+  const composerAttach = showComposerAttach ? (
+    <ComposerAttachPopover
+      skill={attachedSkill}
+      expert={attachedExpert}
+      onSkillChange={setAttachedSkill}
+      onExpertChange={setAttachedExpert}
+      // hero（新会话）身份只走下方单选选择器；＋ 面板不重复展示切换，
+      // 但保留只读身份上下文，用来置顶「身份自带」的 SKILL。
+      identity={heroMode ? undefined : identity}
+      identityContext={
+        identity?.activeName
+          ? { name: identity.activeName, label: identity.label }
+          : null
+      }
+      workspaceContext={workspaceContext}
+      open={attachOpen}
+      onOpenChange={setAttachOpen}
+    />
+  ) : null
 
   return (
     <div className={cn('relative flex flex-col flex-1 min-h-0', heroMode && 'justify-center')}>
@@ -783,6 +876,7 @@ export function ChatArea({
       {/* Input area — always visible。TUI 变体（草稿工作台）：排队 dock + ❯ 单行
           输入（busy 不锁死）+ 控件条（专家咨询│model│ctx … 右端挂快捷键提示/busy）。 */}
       {tui ? (
+        <ComposerSlotPortal slot={composerSlot}>
         <div
           ref={dockRef}
           className={cn(
@@ -902,6 +996,12 @@ export function ChatArea({
                   }
                   className="flex-1 rounded-none border-0 bg-transparent px-0 py-1.5 text-[12.5px] text-pop-ink shadow-none placeholder:text-pop-dim focus-visible:ring-0"
                 />
+                {isCockpitVariant && queueHint && (
+                  <span className="shrink-0 whitespace-nowrap pt-1.5 text-[9.5px] text-pop-red" data-tui-hint>{queueHint}</span>
+                )}
+                {isCockpitVariant && composerAttach && (
+                  <span className="shrink-0 pt-1" data-tui-attach-inline>{composerAttach}</span>
+                )}
                 <span className="shrink-0 pt-1">
                   {streaming ? (
                     <button
@@ -929,31 +1029,16 @@ export function ChatArea({
               </div>
             </div>
             {/* 控件条：+ 挂载 / model / ctx 居左；快捷键提示 + busy 计时挂
-                最右（2026-09-24 用户改判：提示不再单独占输入框下方一行）。 */}
+                最右（2026-09-24 用户改判：提示不再单独占输入框下方一行）。
+                全域座舱：读数与身份都归舰桥、＋ 并进输入行 —— 整条不渲染，
+                底栏只剩 v12 的单行输入（2026-11-14 用户）。 */}
+            {!isCockpitVariant && (
             <div className="mt-2 flex min-w-0 items-center gap-1 overflow-x-auto text-[10.5px] text-pop-dim/85 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden" data-tui-ctrlbar>
               {composerLeading && (
                 <span className="flex shrink-0 items-center gap-1.5" data-composer-leading>{composerLeading}</span>
               )}
-              {showComposerAttach && (
-                <ComposerAttachPopover
-                  skill={attachedSkill}
-                  expert={attachedExpert}
-                  onSkillChange={setAttachedSkill}
-                  onExpertChange={setAttachedExpert}
-                  // hero（新会话）身份只走下方单选选择器；＋ 面板不重复展示切换，
-                  // 但保留只读身份上下文，用来置顶「身份自带」的 SKILL。
-                  identity={heroMode ? undefined : identity}
-                  identityContext={
-                    identity?.activeName
-                      ? { name: identity.activeName, label: identity.label }
-                      : null
-                  }
-                  workspaceContext={workspaceContext}
-                  open={attachOpen}
-                  onOpenChange={setAttachOpen}
-                />
-              )}
-              {currentModel && (
+              {composerAttach}
+              {currentModel && !isCockpitVariant && (
                 onModelChange ? (
                   <ComposerModelPopover
                     currentModel={currentModel}
@@ -973,8 +1058,9 @@ export function ChatArea({
                   </span>
                 )
               )}
-              {/* hero 还没有会话：ctx / token 都是空占位，只留模型可选。 */}
-              {!heroMode && (
+              {/* hero 还没有会话：ctx / token 都是空占位，只留模型可选。
+                  全域座舱里这些读数已经搬到舰桥（composerVariant='cockpit'）。 */}
+              {!heroMode && !isCockpitVariant && (
                 <>
                   <span className="hidden items-center gap-1 sm:flex">
                     {contextUsage ? (
@@ -1018,8 +1104,10 @@ export function ChatArea({
                 </>
               )}
               {/* 当前身份贴纸（2026-10-30）：tok / task 之后。任务线程只读，
-                  普通会话悬停 ✕ 清除回主身份；hero 新会话由下方选择器承担。 */}
-              {identityDisplay && <ComposerIdentityChip display={identityDisplay} />}
+                  普通会话悬停 ✕ 清除回主身份；hero 新会话由下方选择器承担。
+                  全域座舱（2026-11-14 用户）：身份搬进舰桥，跟模型 / token 同一行，
+                  composer 下不再单独占一行。 */}
+              {identityDisplay && !isCockpitVariant && <ComposerIdentityChip display={identityDisplay} />}
               <span className="ml-auto hidden min-w-0 items-center justify-end gap-2 text-[10.5px] sm:flex">
                 {/* 2026-10-29 用户：流尾工作行已经在对话里持续报状态/计时，
                     输入框下方不再重复一条 `⠋ thinking 2.1s`。 */}
@@ -1040,6 +1128,7 @@ export function ChatArea({
                 )}
               </span>
             </div>
+            )}
             {/* hero 态第二行：工作区 + 当前身份（左对齐输入框；2026-10-27 原型 v2）
                 身份选择器只做单选——「委派」属于 ＋ 面板，不搬到新会话首页。 */}
             {heroMode && (composerHeroFooter || identity) && (
@@ -1056,7 +1145,9 @@ export function ChatArea({
             )}
           </div>
         </div>
+        </ComposerSlotPortal>
       ) : (
+      <ComposerSlotPortal slot={composerSlot}>
       <div className="border-t-[1.5px] border-pop-bd bg-pop-paper p-3">
         <div className="max-w-3xl mx-auto relative">
           {taskProgress && <TaskProgressPanel progress={taskProgress} className="mb-2" />}
@@ -1126,8 +1217,9 @@ export function ChatArea({
               {composerLeading && (
                 <div className="mr-1 flex shrink-0 items-center gap-1.5" data-composer-leading>{composerLeading}</div>
               )}
-              {/* 原型 cmp-bar：model / ctx / 会话账同高 22px、等宽字、无 emoji。 */}
-              {currentModel && (
+              {/* 原型 cmp-bar：model / ctx / 会话账同高 22px、等宽字、无 emoji。
+                  全域座舱：这些读数归舰桥，composer 只留输入与动作。 */}
+              {currentModel && !isCockpitVariant && (
                 <div className="flex h-[22px] shrink-0 items-center">
                   {onModelChange ? (
                     <div className="relative flex items-center">
@@ -1152,7 +1244,7 @@ export function ChatArea({
                   )}
                 </div>
               )}
-              {contextUsage ? (
+              {!isCockpitVariant && (contextUsage ? (
                 <Popover open={contextExpanded} onOpenChange={setContextExpanded}>
                   <PopoverTrigger asChild>
                     <button
@@ -1179,12 +1271,12 @@ export function ChatArea({
                 </Popover>
               ) : showUsagePlaceholders ? (
                 <ContextUsagePlaceholder />
-              ) : null}
-              {taskUsage !== undefined ? (
+              ) : null)}
+              {!isCockpitVariant && (taskUsage !== undefined ? (
                       <TaskCostChip usage={taskUsage} placeholder={showUsagePlaceholders} />
                     ) : (
                       <SessionCostChip usage={sessionUsage} contextUsage={contextUsage} placeholder={showUsagePlaceholders} />
-                    )}
+                    ))}
               {identityDisplay && <ComposerIdentityChip display={identityDisplay} />}
               <span className="ml-auto flex shrink-0 items-center">
                 {streaming ? (
@@ -1212,6 +1304,7 @@ export function ChatArea({
 
         </div>
       </div>
+      </ComposerSlotPortal>
       )}
 
       <ChatTimeline
@@ -1219,9 +1312,17 @@ export function ChatArea({
         activeId={activeTurnId}
         onJump={jumpToTurn}
         clearDock={timelineClearDock}
+        compact={isCockpitVariant}
       />
     </div>
   )
+}
+
+/** composer 的挂载壳：有槽就 portal（全域底栏），没槽就是今天的内联渲染。
+ *  portal 不改 DOM 结构、不复制 composer —— 同一个 React 子树只渲染一次。 */
+function ComposerSlotPortal({ slot, children }: { slot?: HTMLElement | null; children: ReactNode }) {
+  if (!slot) return <>{children}</>
+  return createPortal(children, slot)
 }
 
 /** ctx 占用明细：TUI 与非 TUI 两个 composer 弹层共用。 */
