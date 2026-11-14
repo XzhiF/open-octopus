@@ -8,7 +8,7 @@
 //   · composer 通过 composerSlot portal 到底栏 54px 输入区（plans §2.4）；
 //   · onTelemetry → CockpitState.reportChat（舰桥 / ticker 读它）；
 //   · layerRoot = #ck12-arena（任务模块窗浮在整个舱面上，不夹在 320px 浮窗里）；
-//   · **全程挂载**：浮窗 ✕/— 只改 chatWindow 状态，ChatPane 不卸载 —— 底下
+//   · **全程挂载**：浮窗关闭/收起只改 chatWindow 状态，ChatPane 不卸载 —— 底下
 //     ChatPane 的 UI 由浮窗的 display:none 隐藏，composer 已 portal 到底栏，
 //     不受隐藏祖先影响。
 //

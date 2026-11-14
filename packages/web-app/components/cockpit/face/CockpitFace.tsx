@@ -43,16 +43,40 @@ function rowMatches(row: CockpitRow, ref: CockpitRef): boolean {
   return row.kind === 'attention' && row.item.id === ref.id
 }
 
+/** 编队行已有的作业摘要 → 作业面载入态的头部（不必等详情接口）。 */
+function hintOf(row: CockpitRow | null) {
+  if (!row || row.kind !== 'job') return null
+  return { title: row.job.title, kind: row.job.kind, status: row.job.status }
+}
+
 export function CockpitFace({ entryCabinId }: CockpitFaceProps) {
   const { selection, tab, setTab, select, layer } = useCockpitState()
-  const { rows, refetch } = useCockpitFleet()
+  const { rows, counts, error, refetch } = useCockpitFleet()
   const cabinCtx = useCabinOptional()
   const [crossCabin, setCrossCabin] = useState<CabinDetail | null>(null)
+  // counts !== null = 编队至少成功接过一次真值（FleetProvider 契约）。
+  const loadedOnce = counts !== null
+
+  const row = useMemo(
+    () => (selection ? rows.find((entry) => rowMatches(entry, selection)) ?? null : null),
+    [rows, selection],
+  )
+
+  // attention 选中：优先纯 attention 行；若它其实挂在某条 job 上（job_id 命中），
+  // 直接落到那条 job 的面（那里才有完整五页签）。
+  const attentionOnJob = useMemo(() => {
+    if (selection?.kind !== 'attention' || row) return null
+    return rows.find((entry) => entry.kind === 'job' && entry.attention?.id === selection.id) ?? null
+  }, [rows, selection, row])
 
   // 跨舱：归属舱的 workspace_id / version / main_session_id 不在编队行里，
   // 单独拉一次（只影响运行页签与头部元信息；失败就省略，不猜）。
+  // 等编队回来且选中项确实在编队里才拉 —— 过期深链（?job=…&cabin=…）在
+  // URL 被改写前不再请求一个已删的舱。
   const selectedCabinId = selection?.cabinId ?? null
+  const selectionKnown = !!row || !!attentionOnJob
   useEffect(() => {
+    if (!loadedOnce || !selectionKnown) return
     if (!selectedCabinId || selectedCabinId === entryCabinId) {
       setCrossCabin(null)
       return
@@ -64,7 +88,7 @@ export function CockpitFace({ entryCabinId }: CockpitFaceProps) {
       () => { /* 缺省：workspaceId 为空 → 运行摘要给明确空态 */ },
     )
     return () => { alive = false }
-  }, [selectedCabinId, entryCabinId])
+  }, [loadedOnce, selectionKnown, selectedCabinId, entryCabinId])
 
   const close = useCallback(() => select(null), [select])
 
@@ -82,18 +106,6 @@ export function CockpitFace({ entryCabinId }: CockpitFaceProps) {
     if (next) select(refOfRow(next), 'overview')
   }, [rows, select])
 
-  const row = useMemo(
-    () => (selection ? rows.find((entry) => rowMatches(entry, selection)) ?? null : null),
-    [rows, selection],
-  )
-
-  // attention 选中：优先纯 attention 行；若它其实挂在某条 job 上（job_id 命中），
-  // 直接落到那条 job 的面（那里才有完整五页签）。
-  const attentionOnJob = useMemo(() => {
-    if (selection?.kind !== 'attention' || row) return null
-    return rows.find((entry) => entry.kind === 'job' && entry.attention?.id === selection.id) ?? null
-  }, [rows, selection, row])
-
   if (!selection) return null
 
   const selectedCabin = selection.cabinId === entryCabinId
@@ -102,6 +114,37 @@ export function CockpitFace({ entryCabinId }: CockpitFaceProps) {
   const cabinName = row?.cabinName ?? attentionOnJob?.cabinName ?? null
 
   const body = (() => {
+    // 编队还没接过真值：不挂作业面（JobFace/CockpitTaskFace 会立刻拉详情）。
+    // 深链里的 job/task 可能已经删了 —— 先等编队回来校验，避免一串注定 404
+    // 的请求（随后 CockpitUrlSync 才把 URL 改写掉）。
+    if (!loadedOnce) {
+      // 编队加载失败时不能一直写「载入编队…」——给出原因和重试。
+      if (error) {
+        return (
+          <div className="ck12-face-empty" data-testid="cockpit-face-error">
+            编队加载失败 · {error}
+            <button type="button" className="ck12-rail-retry" onClick={refetch}>重试</button>
+            {error.includes('超时') && (
+              <span className="ck12-face-hint">
+                超时多半是浏览器连接被占满（同时开着多个页面/窗口）。关掉其它页面后点重试。
+              </span>
+            )}
+          </div>
+        )
+      }
+      return <div className="ck12-face-empty">载入编队…</div>
+    }
+
+    // 选中项不在当前编队（已结束且被 done 截断 / 已删除）：URL 同步会立刻
+    // 回退到有效行；这段窗口里不发任何请求，也不闪一张假的作业面。
+    if (!row && !attentionOnJob) {
+      return (
+        <div className="ck12-face-empty" data-testid="cockpit-face-stale">
+          这件作业已不在编队 · 正在切到下一件…
+        </div>
+      )
+    }
+
     if (attentionOnJob && attentionOnJob.kind === 'job') {
       return (
         <JobFace
@@ -117,6 +160,7 @@ export function CockpitFace({ entryCabinId }: CockpitFaceProps) {
           cockpit={{
             cabinName,
             attention: attentionOnJob.attention ?? null,
+            hint: hintOf(attentionOnJob),
             tab,
             onTabChange: setTab,
             onClose: close,
@@ -141,6 +185,7 @@ export function CockpitFace({ entryCabinId }: CockpitFaceProps) {
           cockpit={{
             cabinName,
             attention: row?.kind === 'job' ? row.attention ?? null : null,
+            hint: hintOf(row),
             tab,
             onTabChange: setTab,
             onClose: close,

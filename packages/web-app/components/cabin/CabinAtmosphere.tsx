@@ -29,11 +29,16 @@ export function CabinAtmosphere() {
   }, [prefs.particles, prefs.theme])
 
   const statusLabel = cabin ? CABIN_STATUS_META[cabin.status].label : '—'
-  const running = view?.health.running ?? 0
-  const queued = view?.health.queued ?? 0
-  const workers = view?.health.workers ?? 0
-  const max = view?.health.max ?? 0
-  const attention = view?.attention.length ?? 0
+  // 对齐全域座舱 HUD 的数字纪律（plans §1.5）：view 还没回来时写「—」，
+  // 不用 0 冒充「确实没有」。
+  const num = (value: number | undefined) =>
+    view && typeof value === 'number' ? String(value) : '—'
+  const running = num(view?.health.running)
+  const queued = num(view?.health.queued)
+  const workers = num(view?.health.workers)
+  const max = num(view?.health.max)
+  const executor = view ? `${workers}/${max}` : '—'
+  const attention = num(view ? view.attention.length : undefined)
 
   return (
     <div className="pointer-events-none absolute inset-0 z-[5]" data-testid="cabin-atmosphere" aria-hidden="true">
@@ -55,14 +60,17 @@ export function CabinAtmosphere() {
         <span className="cf-corner bl" /><span className="cf-corner br" />
         <span className="cf-notch" /><span className="cf-rail top" /><span className="cf-rail bot" />
       </div>
+      {/* 读数与顺序跟全域 HUD 对齐：运行中 → 需要你 → 排队 → 执行器 → 状态。
+          执行器 = 本舱运行中的 execution / 全局并发上限（OCTOPUS_SCHEDULER_MAX_PARALLEL，
+          默认 3），不是前端写死的数。 */}
       <div className="telemetry" data-testid="cabin-telemetry">
         <span className="sys"><i />SYS ONLINE</span>
         <span className="tsep" />
-        <span className="titem"><span className="tk">状态</span><span className="tval violet">{statusLabel}</span></span>
-        <span className="titem"><span className="tk">运行</span><span className="tval green">{running}</span></span>
+        <span className="titem"><span className="tk">运行中</span><span className="tval cyan">{running}</span></span>
+        <span className="titem"><span className="tk">需要你</span><span className="tval amber">{attention}</span></span>
         <span className="titem"><span className="tk">排队</span><span className="tval">{queued}</span></span>
-        <span className="titem"><span className="tk">执行器</span><span className="tval">{workers}/{max}</span></span>
-        <span className="titem"><span className="tk">需要你</span><span className="tval">{attention}</span></span>
+        <span className="titem"><span className="tk">执行器</span><span className="tval">{executor}</span></span>
+        <span className="titem"><span className="tk">状态</span><span className="tval violet">{statusLabel}</span></span>
       </div>
     </div>
   )

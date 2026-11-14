@@ -15,7 +15,8 @@
 
 import { useEffect, useRef } from 'react'
 import { useBillingCurrency } from '@/lib/billing-currency'
-import { formatCost, formatTokenCount } from '@/lib/format'
+import { formatCost } from '@/lib/format'
+import { SessionCostChip } from '@/components/agent/chat/session-cost-chip'
 import { CABIN_MAIN_IDENTITY } from '@/components/cabin/cabin-meta'
 import { useCockpitState } from '../state/CockpitStateProvider'
 import { CockpitContextPopover } from './CockpitContextPopover'
@@ -86,16 +87,11 @@ export function CockpitBridge() {
       <span className="ck12-rig-sep ck12-rig-sep-hide" />
 
       {chat ? (
-        <span
-          className="ck12-rig-num ck12-rig-tokens"
-          data-testid="ck12-rig-tokens"
-          title={tokenUsage ? '本次会话 token · 回合结束更新' : 'token · 还没有回合账'}
-        >
-          ↑ <b>{tokenUsage ? formatTokenCount(tokenUsage.usage.inputTokens) : '—'}</b>
-          {' '}
-          <span className="ck12-rig-dim">↓</span>{' '}
-          <b>{tokenUsage ? formatTokenCount(tokenUsage.usage.outputTokens) : '—'}</b>
-          {tokenUsage && <span className="ck12-rig-when">回合结束更新</span>}
+        <span className="ck12-rig-tokens" data-testid="ck12-rig-tokens">
+          {/* 直接复用 classic 的会话 token 角标（`tok 4.3M · ¥x ▾`，点开是账本）：
+              全域不再自造 ↑/↓ 读数 —— 那既不等于账本总量，也和 classic 下方
+              这块对不上（2026-11-14 用户）。 */}
+          <SessionCostChip usage={tokenUsage} contextUsage={chat.contextUsage} placeholder />
         </span>
       ) : (
         <span
@@ -103,7 +99,8 @@ export function CockpitBridge() {
           aria-disabled="true"
           data-testid="ck12-rig-tokens-off"
         >
-          ↑ <b>未就绪</b> <span className="ck12-rig-dim">↓</span> <b>未就绪</b>
+          <span className="ck12-rig-dim">tok</span>
+          <b>未就绪</b>
         </span>
       )}
 

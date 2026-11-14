@@ -117,8 +117,8 @@ export interface RunningAgentSession {
   /** 非空 = 这轮在等后台任务（chip 上显示「后台：在跑什么」）。 */
   background_tasks?: BackgroundTaskInfo[]
 }
-export function listRunningSessions(limit = 50) {
-  return request<{ items: RunningAgentSession[] }>(`/sessions/running?limit=${limit}`)
+export function listRunningSessions(limit = 50, signal?: AbortSignal) {
+  return request<{ items: RunningAgentSession[] }>(`/sessions/running?limit=${limit}`, { signal })
 }
 
 // ── Subagents（作业坞「子代理」，2026-11-04）───────────────────────────

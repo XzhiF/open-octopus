@@ -51,8 +51,9 @@
   transition: 0.14s;
 }
 .ck12-rail-close:hover {
-  color: var(--ck12r-ink);
-  border-color: var(--ck12r-bd2);
+  color: var(--pop-red, #ff6b81);
+  border-color: color-mix(in srgb, var(--pop-red, #ff6b81) 45%, transparent);
+  background: color-mix(in srgb, var(--pop-red, #ff6b81) 10%, transparent);
 }
 .ck12-rail-en {
   font-size: 8px;
@@ -387,6 +388,45 @@
   line-height: 1.6;
   text-align: center;
   background: rgba(255, 255, 255, 0.015);
+}
+.ck12-rail-error {
+  display: block;
+  color: var(--pop-red, #ff6b6b);
+  word-break: break-word;
+}
+.ck12-rail-retry {
+  display: inline-block;
+  margin-top: 8px;
+  padding: 2px 12px;
+  border: 1px solid var(--ck12r-bd2);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--ck12r-ink);
+  font: inherit;
+  font-size: 10.5px;
+  line-height: 1.6;
+  cursor: pointer;
+  transition: color 0.15s, border-color 0.15s;
+}
+.ck12-rail-retry:hover {
+  color: var(--ck-a);
+  border-color: var(--ck-a);
+}
+/* 有旧快照但本轮刷新失败：明确标记 stale（不把旧数据冒充最新）。 */
+.ck12-rail-stale {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 2px 4px;
+  font-size: 9.5px;
+  color: var(--pop-amber, #ffc857);
+  opacity: 0.9;
+}
+.ck12-rail-stale .ck12-rail-retry {
+  margin-top: 0;
+  padding: 0 8px;
+  font-size: 9.5px;
 }
 .ck12-rail-foot {
   flex: none;

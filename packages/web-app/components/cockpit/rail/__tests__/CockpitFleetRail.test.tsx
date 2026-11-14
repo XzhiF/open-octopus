@@ -262,6 +262,21 @@ describe('CockpitFleetRail', () => {
     expect(screen.getByText('编队空着 · 从主对话派一条')).toBeInTheDocument()
   })
 
+  it('加载失败：空态给出错误与重试；有旧快照时明确标 stale', () => {
+    const refetch = vi.fn()
+    const first = renderRail({ rows: [], loading: false, error: 'HTTP 404', refetch })
+    expect(screen.getByText(/编队加载失败 · HTTP 404/)).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: '重试' }))
+    expect(refetch).toHaveBeenCalledTimes(1)
+
+    // 有上一份编队：不把旧数据冒充最新，显示 stale 条 + 重试
+    first.unmount()
+    const rows = sortRows([jobRow(jobView('j1'))])
+    renderRail({ rows, counts: buildCounts(rows, null), error: 'HTTP 500', refetch })
+    expect(screen.getByTestId('cockpit-rail-stale')).toHaveTextContent('刷新失败')
+    expect(row('job:j1')).toBeInTheDocument()
+  })
+
   it('pct=null 的 job 不画进度条，task 的真 pct 才画', () => {
     const job = jobRow(jobView('j1', { status: 'running' }), { pct: null })
     const task = taskRow('t1', {}, 40)

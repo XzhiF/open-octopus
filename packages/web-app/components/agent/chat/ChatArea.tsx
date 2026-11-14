@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useRef, useEffect, useMemo, Fragment, type ReactNode, type MutableRefObject } from 'react'
+import { useState, useRef, useEffect, useCallback, useMemo, Fragment, type ReactNode, type MutableRefObject } from 'react'
 import { createPortal } from 'react-dom'
 import { Send, Square, MessageSquare, Sparkles, Users, X } from 'lucide-react'
 import type { AgentMessage, ToolCallRecord, ContextUsageData } from '@/lib/agent/types'
@@ -15,6 +15,7 @@ import { formatStopwatch, formatTokenCount } from '@/lib/format'
 import { ChatBubble } from './ChatBubble'
 import { SessionCostChip } from './session-cost-chip'
 import { ContextUsageChip, ContextUsagePlaceholder, contextUsageAriaLabel } from './context-usage-chip'
+import { ContextUsagePanel } from './context-usage-panel'
 import { TaskCostChip } from './task-cost-chip'
 import type { TaskUsagePayload } from '@/lib/tasks-api'
 import { TuiLive, TuiMessage } from './TuiTranscript'
@@ -26,6 +27,7 @@ import type { ChatMessage } from '@/lib/types'
 import { DangerConfirmCard } from './DangerConfirmCard'
 import { EvolutionConfirmCard } from './EvolutionConfirmCard'
 import { ChatTimeline, type ChatTimelineItem } from './chat-timeline'
+import { useChatSlot } from '@/components/cockpit/chat/chat-slots'
 import { AgentEmptyState } from '../shared/AgentEmptyState'
 import { ReviewCard } from '../knowledge/cards/ReviewCard'
 import { MentionAutocomplete } from './MentionAutocomplete'
@@ -232,6 +234,26 @@ export function ChatArea({
   // 贴底跟随（原型 v4.3 拍板）：离底 >40px 视为用户在回看，流式不再强制拉底；
   // 滚回底部 40px 内自动恢复跟随。发送自己消息时重置为跟随。
   const stickBottomRef = useRef(true)
+  const scrollObserverRef = useRef<ResizeObserver | null>(null)
+  // 浮窗常驻挂载：隐藏（display:none / 47px 收起）时容器的 scrollHeight 恒为 0，
+  // 贴底 effect 即使跑过也只会停在顶部；重新开窗不会改 messages，effect 不重跑。
+  // 观察容器本身：0 → 有尺寸时（开窗/展开/拖大），只要还在跟随态就重新贴底。
+  // 用户回看历史（stickBottom=false）时不打扰。
+  const attachScroller = useCallback((node: HTMLDivElement | null) => {
+    scrollObserverRef.current?.disconnect()
+    scrollObserverRef.current = null
+    scrollRef.current = node
+    if (!node || typeof ResizeObserver === 'undefined') return
+    const observer = new ResizeObserver(() => {
+      if (stickBottomRef.current) node.scrollTop = node.scrollHeight
+    })
+    observer.observe(node)
+    scrollObserverRef.current = observer
+  }, [])
+  useEffect(() => () => {
+    scrollObserverRef.current?.disconnect()
+    scrollObserverRef.current = null
+  }, [])
   const unansweredAsk = useMemo(() => findUnansweredAsk(messages), [messages])
 
   // 同一 execution 的运行卡只画一次完整节点摘要（2026-11-14）：暂停/继续、
@@ -501,6 +523,9 @@ export function ChatArea({
   }, [queue.length, onQueueDepthChange])
 
   const isCockpitVariant = composerVariant === 'cockpit'
+  // 全域：标题栏「对话索引」槽（CockpitChatWindow 注册）。classic 拿到 null，
+  // 继续用正文右侧那排短杠，行为逐字不变。
+  const cockpitIndexSlot = useChatSlot('index')
 
   const busyStartedAt = turnStartedAt ?? (turnStartedAtRef.current || null)
   const busyElapsed = streaming && busyStartedAt ? Math.max(0, (Date.now() - busyStartedAt) / 1000) : 0
@@ -637,7 +662,8 @@ export function ChatArea({
         )
       ) : (
         <div
-          ref={scrollRef}
+          ref={attachScroller}
+          data-testid="chat-transcript-scroll"
           onScroll={(e) => {
             const el = e.currentTarget
             stickBottomRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < 40
@@ -975,7 +1001,7 @@ export function ChatArea({
               <div className="flex items-start gap-2">
                 {/* pt-1.5 与 textarea 的 py-1.5 对齐：两者行高同为 24px，
                     不补 padding 则 ❯ 比首行文字高 6px（items-start 下不居中）。 */}
-                <span aria-hidden className="shrink-0 pt-1.5 font-bold leading-6 text-pop-pink">❯</span>
+                <span aria-hidden data-tui-prompt className="shrink-0 pt-1.5 font-bold leading-6 text-pop-pink">❯</span>
                 {/* minRows=2 / maxRows=5（2026-10-30 用户定稿：默认两行高，
                     最长五行，再超出内滚）。行数下限走 rows 属性、上限走 JS ——
                     不写 CSS min/max-height：max-height 会钳住 scrollHeight，
@@ -1002,7 +1028,7 @@ export function ChatArea({
                 {isCockpitVariant && composerAttach && (
                   <span className="shrink-0 pt-1" data-tui-attach-inline>{composerAttach}</span>
                 )}
-                <span className="shrink-0 pt-1">
+                <span className="shrink-0 pt-1" data-tui-send-wrap>
                   {streaming ? (
                     <button
                       type="button"
@@ -1313,6 +1339,7 @@ export function ChatArea({
         onJump={jumpToTurn}
         clearDock={timelineClearDock}
         compact={isCockpitVariant}
+        portalHost={isCockpitVariant ? cockpitIndexSlot : null}
       />
     </div>
   )
@@ -1323,47 +1350,6 @@ export function ChatArea({
 function ComposerSlotPortal({ slot, children }: { slot?: HTMLElement | null; children: ReactNode }) {
   if (!slot) return <>{children}</>
   return createPortal(children, slot)
-}
-
-/** ctx 占用明细：TUI 与非 TUI 两个 composer 弹层共用。 */
-function ContextUsagePanel({ contextUsage }: { contextUsage: ContextUsageData }) {
-  return (
-    <>
-      <div className="mb-2 flex items-center justify-between gap-2">
-        <span className="text-[11px] font-bold text-pop-ink">上下文占用</span>
-        <span className="font-mono text-[10px] tabular-nums text-pop-dim">
-          {formatTokenCount(contextUsage.totalTokens)} / {formatTokenCount(contextUsage.maxTokens, 0)} · {contextUsage.percentage.toFixed(1)}%{/* fmt-ok: percentage 量纲为 0–100（SDK context_usage），非 0–1 比率 */}
-        </span>
-      </div>
-      {contextUsage.estimated && (
-        <div className="mb-2 rounded-[7px] border border-dashed border-pop-bd/70 px-2 py-1 text-[10px] leading-relaxed text-pop-dim" data-tui-ctx-estimated>
-          估算值：该会话最后一轮早于 ctx 落库，这里按 token 账本推算；下一轮对话后自动换成精确值。
-        </div>
-      )}
-      <div className="space-y-1">
-        {contextUsage.categories.map((cat) => (
-          <div key={cat.name} className="flex items-center justify-between gap-2 text-[11px]">
-            <span className="flex min-w-0 items-center gap-1.5 text-pop-dim">
-              <span className="size-2 shrink-0 rounded-[3px]" style={{ backgroundColor: cat.color }} />
-              <span className="truncate">{cat.name}</span>
-            </span>
-            <span className="shrink-0 font-mono text-[10.5px] tabular-nums text-pop-ink">{formatTokenCount(cat.tokens)}</span>
-          </div>
-        ))}
-      </div>
-      {contextUsage.memoryFiles && contextUsage.memoryFiles.length > 0 && (
-        <div className="mt-2 border-t border-dashed border-pop-bd/60 pt-2">
-          <div className="mb-1 text-[10px] text-pop-dim">记忆文件 ({contextUsage.memoryFiles.length})</div>
-          {contextUsage.memoryFiles.map((f) => (
-            <div key={f.path} className="flex items-center justify-between gap-2 py-0.5 text-[10.5px]">
-              <span className="max-w-[190px] truncate font-mono text-pop-dim/80" title={f.path}>{f.path}</span>
-              <span className="shrink-0 font-mono tabular-nums text-pop-ink">{formatTokenCount(f.tokens)}</span>
-            </div>
-          ))}
-        </div>
-      )}
-    </>
-  )
 }
 
 /** One thinking segment of the streaming timeline — rendered as an in-flow

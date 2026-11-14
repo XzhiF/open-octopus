@@ -18,12 +18,13 @@ import {
   Activity, ArrowRight, Bot, GitBranch, ListTodo, MessageSquare, Star, Zap,
 } from 'lucide-react'
 import { toast } from 'sonner'
-import type { CabinAttentionItem, CabinJob, CabinJobEvent } from '@octopus/shared'
+import type { CabinAttentionItem, CabinJob, CabinJobEvent, CabinJobKind } from '@octopus/shared'
 import {
   getCabinJob, getCabinUsage, listCabinJobs, noteCabinJob, setCabinFocus, setCabinJobPriority,
   type CabinJobView,
 } from '@/lib/cabin-api'
 import { abortTask, getTask, pauseTask, resumeTask, type TaskDetail } from '@/lib/tasks-api'
+import { withDeadline } from '@/lib/with-deadline'
 import { useBillingCurrency } from '@/lib/billing-currency'
 import { formatCost } from '@/lib/format'
 import { cn } from '@/lib/utils'
@@ -42,11 +43,39 @@ import {
   CockpitElapsed, CockpitJobHeader, TaskRunActions, tabForAttentionStage,
 } from '@/components/cockpit/face/CockpitJobHeader'
 
+/** 作业面（详情 + 派生状态）的单请求预算：接口吊死时给出错误与重试，
+ *  不能永远停在「载入作业…」（2026-11-14 用户）。 */
+export const JOB_FACE_TIMEOUT_MS = 8_000
+
 const KIND_META = {
   task: { label: '任务', icon: ListTodo, tone: 'text-pop-cyan border-pop-cyan/40' },
   workflow: { label: '工作流', icon: GitBranch, tone: 'text-pop-violet border-pop-violet/40' },
   subagent: { label: '子代理', icon: Bot, tone: 'text-pop-purple border-pop-purple/40' },
 } as const
+
+/** 超时类失败才有「连接被占满」的提示（其它失败原因不同，不要误导）。 */
+function isTimeoutMessage(message: string): boolean {
+  return message.includes('超时')
+}
+
+/** 载入态的自证：秒数在走 = 页面与计时器都还活着；秒数停住才说明真卡死。
+ *  配合 JOB_FACE_TIMEOUT_MS（到点必出「失败 + 重试」），用户永远能区分
+ *  「还在载入」和「已经放弃了」。 */
+function LoadingElapsed({ label, testId }: { label: string; testId?: string }) {
+  const [seconds, setSeconds] = useState(0)
+  useEffect(() => {
+    const startedAt = Date.now()
+    const timer = window.setInterval(() => {
+      setSeconds(Math.floor((Date.now() - startedAt) / 1000))
+    }, 1000)
+    return () => window.clearInterval(timer)
+  }, [])
+  return (
+    <span className="flex items-center gap-1" data-testid={testId}>
+      {label}…<span className="opacity-60">已 {seconds}s</span>
+    </span>
+  )
+}
 
 function summaryOf(event: CabinJobEvent): string {
   const payload = (event.payload ?? {}) as Record<string, unknown>
@@ -68,6 +97,10 @@ export interface JobFaceCockpitControls {
   cabinName?: string | null
   /** 本作业的 attention（fleet 已按 job_id 合并；没有就不显示「去处理」）。 */
   attention?: CabinAttentionItem | null
+  /** 编队行里**已经**有的作业摘要：详情接口回来之前就拿它画头部。
+   *  没有它时载入态只能写「载入作业…」——用户分不清「哪件作业在载入」和
+   *  「卡住了」（2026-11-14 用户）。 */
+  hint?: { title: string; kind: CabinJobKind; status?: string | null } | null
   tab: CockpitTab
   onTabChange(tab: CockpitTab): void
   /** 关闭 = 收面（select(null)）。 */
@@ -114,6 +147,7 @@ export function JobFace({
   const [busy, setBusy] = useState<string | null>(null)
   const [taskEntity, setTaskEntity] = useState<TaskDetail | null>(null)
   const [usageCost, setUsageCost] = useState<{ usd: number; complete: boolean } | null>(null)
+  const [loadError, setLoadError] = useState<string | null>(null)
 
   const tab: CockpitTab = controlled && cockpit ? cockpit.tab : innerTab
   const changeTab = useCallback((next: CockpitTab) => {
@@ -122,16 +156,26 @@ export function JobFace({
   }, [controlled, cockpit])
 
   const load = useCallback(async () => {
+    // 详情是**唯一**的面级关键路径：它回来就能整面渲染（标题/事件/页签）。
+    // 派生状态（status/priority/transport）来自整舱作业列表，只是锦上添花 ——
+    // 单独预算、失败不挡详情。旧的 Promise.all 会把两条绑在一起：列表一慢，
+    // 详情明明已经到了，面还在「载入作业…」（2026-11-14 用户）。
+    let detail: { job: CabinJob; events: CabinJobEvent[] }
     try {
-      const [detail, list] = await Promise.all([
-        getCabinJob(cabinId, jobId),
-        listCabinJobs(cabinId),
-      ])
-      setJob(detail.job)
-      setEvents(detail.events)
+      detail = await withDeadline(null, JOB_FACE_TIMEOUT_MS, '作业详情', (s) => getCabinJob(cabinId, jobId, s))
+    } catch (err) {
+      // 保留上一份快照；没有快照时界面显示这句原因 + 重试。
+      setLoadError(err instanceof Error ? err.message : '作业加载失败')
+      return
+    }
+    setJob(detail.job)
+    setEvents(detail.events)
+    setLoadError(null)
+    try {
+      const list = await withDeadline(null, JOB_FACE_TIMEOUT_MS, '作业列表', (s) => listCabinJobs(cabinId, s))
       setJobView(list.find((j) => j.id === jobId) ?? null)
     } catch {
-      /* 保留上一份快照 */
+      // 列表没回来：沿用上一份 jobView（没有就省略派生读数，不猜、不挡面）。
     }
   }, [cabinId, jobId])
 
@@ -140,6 +184,7 @@ export function JobFace({
     setJobView(null)
     setEvents([])
     setNoteOpen(false)
+    setLoadError(null)
     // 旧窗行为：换作业回到概览。cockpit 的页签是受控的（URL 决定），不重置。
     if (!controlled) setInnerTab('overview')
     void load()
@@ -150,7 +195,7 @@ export function JobFace({
   const loadUsage = useCallback(async () => {
     if (variant !== 'cockpit') return
     try {
-      const payload = await getCabinUsage(cabinId)
+      const payload = await withDeadline(null, JOB_FACE_TIMEOUT_MS, '作业消耗', (s) => getCabinUsage(cabinId, s))
       const row = payload.byJob.find((entry) => entry.job_id === jobId)
       if (row && row.totals.cost.usd != null) {
         setUsageCost({ usd: row.totals.cost.usd, complete: row.totals.cost.complete })
@@ -182,9 +227,9 @@ export function JobFace({
     let alive = true
     setTaskEntity(null)
     if (!taskId) return
-    getTask(taskId).then(
+    withDeadline(null, JOB_FACE_TIMEOUT_MS, '任务实体', (s) => getTask(taskId, s)).then(
       (t) => { if (alive) setTaskEntity(t) },
-      () => { /* 任务可能已删 */ },
+      () => { /* 任务可能已删 / 请求吊死：运行·变更·验收退回明确空态，不挡面 */ },
     )
     return () => { alive = false }
   }, [taskId])
@@ -259,22 +304,79 @@ export function JobFace({
   const onClose = cockpit?.onClose ?? (() => {})
 
   if (!job) {
+    const retry = (
+      <button
+        type="button"
+        className="ck12-rail-retry"
+        data-testid="cockpit-face-job-retry"
+        onClick={() => { setLoadError(null); void load() }}
+      >重试</button>
+    )
     if (cockpitMode) {
+      const hint = cockpit?.hint ?? null
       return (
         <>
-          <CockpitJobHeader loading onClose={onClose} />
+          {/* 有编队行摘要就先画真实头部（类型/标题/状态/页签）：用户点的是
+              「这一件作业」，载入中也必须能看见是哪一件，而不是一行占位。
+              没有摘要（窗口变体/深链）才退回占位标题。 */}
+          {hint ? (
+            <CockpitJobHeader
+              kind={hint.kind}
+              title={hint.title}
+              status={hint.status ?? null}
+              tab={tab}
+              onTabChange={changeTab}
+              onClose={onClose}
+              cabinName={cockpit?.cabinName ?? null}
+            />
+          ) : (
+            <CockpitJobHeader loading onClose={onClose} />
+          )}
           <div className="ck12-face-body">
-            <div className="ck12-face-empty" data-testid="cockpit-face-job">载入作业…</div>
+            {loadError ? (
+              <div className="ck12-face-empty" data-testid="cockpit-face-job-error">
+                作业加载失败 · {loadError}
+                {retry}
+                {isTimeoutMessage(loadError) && (
+                  <span className="ck12-face-hint">
+                    接口本身是毫秒级：超时多半是浏览器连接被占满（同时开着多个座舱
+                    标签页/窗口时，每站只有 6 条连接）。关掉其它页面后点重试即可。
+                  </span>
+                )}
+              </div>
+            ) : (
+              <div className="ck12-face-empty">
+                <LoadingElapsed label="载入作业" testId="cockpit-face-job" />
+              </div>
+            )}
           </div>
         </>
       )
     }
-    return <div className="grid h-full min-h-40 place-items-center text-[12px] text-pop-dim">载入作业…</div>
+    return (
+      <div className="grid h-full min-h-40 place-items-center text-[12px] text-pop-dim">
+        {loadError ? (
+          <span
+            className="flex flex-col items-center gap-2"
+            data-testid="cabin-job-load-error"
+          >
+            作业加载失败 · {loadError}
+            {retry}
+            {isTimeoutMessage(loadError) && (
+              <span className="ck12-face-hint">
+                超时多半是浏览器连接被占满（同时开着多个页面/窗口）。关掉其它页面后点重试。
+              </span>
+            )}
+          </span>
+        ) : <LoadingElapsed label="载入作业" testId="cabin-job-loading" />}
+      </div>
+    )
   }
 
   const kind = KIND_META[job.kind]
   const KindIcon = kind.icon
-  const status = jobView?.status
+  // 派生状态优先用列表（最新真值）；列表没回来时退回编队行摘要里的状态。
+  const status = jobView?.status ?? cockpit?.hint?.status ?? null
   const tone = jobTone(status)
   const taskForRun = job.kind === 'task' ? taskEntity : null
   const subagentRun = job.kind === 'subagent' && !!job.ref_id
@@ -284,7 +386,7 @@ export function JobFace({
   const runTarget: CabinRunTarget | null = (() => {
     if (job.kind === 'workflow') {
       if (!job.ref_id || !workspaceId) return null
-      return { executionId: job.ref_id, workspaceId, title: job.title, status }
+      return { executionId: job.ref_id, workspaceId, title: job.title, status: status ?? undefined }
     }
     if (job.kind !== 'task' || !taskEntity) return null
     const executions = taskEntity?.executions ?? []

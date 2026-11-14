@@ -9,7 +9,7 @@
 //   · finding:* / 其余 deep_link 目前没有可深链的应用路由 → 只展示事实、不放按钮。
 // 时间：CabinAttentionItem 没有时间字段 —— 省略，不编一个。
 
-import { ArrowRight } from 'lucide-react'
+import { ArrowRight, X } from 'lucide-react'
 import type { CabinAttentionItem } from '@octopus/shared'
 import { cn } from '@/lib/utils'
 import { openTaskInChat } from '@/components/cabin/modules/ui'
@@ -61,7 +61,7 @@ export function CockpitAttentionFace({ attentionId, onClose }: CockpitAttentionF
               title="收起（Esc）"
               onClick={onClose}
             >
-              ✕
+              <X className="size-3" aria-hidden="true" />
             </button>
             <h2 className="ck12-jh-title">这条待办已经处理掉了</h2>
           </div>
@@ -88,7 +88,7 @@ export function CockpitAttentionFace({ attentionId, onClose }: CockpitAttentionF
             title="收起（Esc）"
             onClick={onClose}
           >
-            ✕
+            <X className="size-3" aria-hidden="true" />
           </button>
           <span className={cn('ck12-stage-badge', `is-${item.stage}`)}>
             {STAGE_LABEL[item.stage]}

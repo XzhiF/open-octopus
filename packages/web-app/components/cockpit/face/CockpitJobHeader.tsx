@@ -1,7 +1,7 @@
 'use client'
 
 // S4 owns this file —— 作业头（variant="cockpit"）。
-// 行1：✕（第一个可聚焦元素）→ 类型 → 标题 → 状态 → spacer → 5 页签；
+// 行1：关闭钮（X 图标，第一个可聚焦元素）→ 类型 → 标题 → 状态 → spacer → 5 页签；
 // 行2：按 §1.5 派生表拼 分支 · 在做 · 舱/执行者 · ⏱ · ¥，空值整段省略。
 // 视觉真源：docs/cabin-design/cockpit-v12.html 的 .jobhead（h1 28px / h2 20px /
 // gap 3 / .jtab 24px 胶囊）；类名统一 ck12-jh-*，样式在 app/cockpit/face.css。
@@ -10,7 +10,7 @@
 // （暂停/恢复/中止等）也由调用方拼好放进 `actions`，这里不碰任何 API。
 
 import { useEffect, useState, type ReactNode } from 'react'
-import { ArrowRight } from 'lucide-react'
+import { ArrowRight, X } from 'lucide-react'
 import type { CabinAttentionItem, CabinJobKind } from '@octopus/shared'
 import { cn } from '@/lib/utils'
 import { formatDuration } from '@/lib/format'
@@ -180,7 +180,7 @@ export function CockpitJobHeader({
           title="收起（Esc）"
           onClick={onClose}
         >
-          ✕
+          <X className="size-3" aria-hidden="true" />
         </button>
 
         {loading ? (

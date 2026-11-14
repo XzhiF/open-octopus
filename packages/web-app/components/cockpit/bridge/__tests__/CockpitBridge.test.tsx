@@ -219,7 +219,7 @@ describe('CockpitBridge · 未就绪', () => {
     expect(screen.getByTestId('ck12-rig-model-off')).toBeDisabled()
     expect(screen.getByTestId('ck12-rig-context-off')).toBeDisabled()
     expect(screen.getByTestId('ck12-rig-presence-off')).toBeDisabled()
-    expect(screen.getByTestId('ck12-rig-tokens-off')).toHaveTextContent(/↑\s*未就绪\s*↓\s*未就绪/)
+    expect(screen.getByTestId('ck12-rig-tokens-off')).toHaveTextContent(/tok\s*未就绪/)
     expect(screen.getByTestId('ck12-rig-cost-off')).toHaveTextContent(/未就绪/)
     expect(screen.queryByText('--')).toBeNull()
     // 未就绪时不渲染任何 popover 触发器。
@@ -233,11 +233,11 @@ describe('CockpitBridge · 读数来自 telemetry', () => {
     await renderBridge({ api: chatApi() })
 
     await waitFor(() => {
-      expect(screen.getByTestId('ck12-rig-tokens')).toHaveTextContent(/↑\s*12\.4K\s*↓\s*3\.1K/)
+      // 对齐 classic 的会话角标：显示账本总量（totals.tokens = 15.5K），不是 ↑/↓ 两段。
+      expect(screen.getByTestId('ck12-rig-tokens')).toHaveTextContent(/tok\s*15\.5K/)
     })
-    expect(screen.getByTestId('ck12-rig-tokens')).toHaveTextContent('回合结束更新')
     expect(screen.getByTestId('ck12-rig-model')).toHaveTextContent('pro')
-    expect(screen.getByTestId('ck12-rig-context')).toHaveTextContent(/42%/)
+    expect(screen.getByTestId('ck12-rig-context')).toHaveTextContent(/42\.0%/)
     // getCabinUsage 的 USD → 展示币种换算（hook 返回 CNY / 7）。
     await waitFor(() => {
       expect(screen.getByTestId('ck12-rig-cost')).toHaveTextContent(/¥8\.96/)
@@ -248,7 +248,7 @@ describe('CockpitBridge · 读数来自 telemetry', () => {
     await renderBridge({ api: chatApi({ usage: null, contextUsage: null }) })
 
     await waitFor(() => {
-      expect(screen.getByTestId('ck12-rig-tokens')).toHaveTextContent(/↑\s*—\s*↓\s*—/)
+      expect(screen.getByTestId('ck12-rig-tokens')).toHaveTextContent(/tok\s*--/)
     })
     expect(screen.getByTestId('ck12-rig-context')).toHaveTextContent('未就绪')
   })
@@ -264,7 +264,7 @@ describe('CockpitBridge · 上下文弹层', () => {
     expect(within(pop).getByText(/线程历史/)).toBeInTheDocument()
     expect(within(pop).getByTestId('ck12-rig-usage-rows')).toHaveTextContent('任务 A')
     expect(within(pop).getByTestId('ck12-rig-usage-subagents')).toHaveTextContent('子代理 · 1')
-    expect(within(pop).getByTestId('ck12-rig-context-note')).toHaveTextContent('回合结束更新')
+    expect(within(pop).getByText('上下文占用')).toBeInTheDocument()
 
     fireEvent.click(within(pop).getByTestId('ck12-rig-compact'))
 
@@ -272,7 +272,7 @@ describe('CockpitBridge · 上下文弹层', () => {
     expect(api.submit).toHaveBeenCalledWith('/compact')
     expect(toast.success).toHaveBeenCalledWith('已请汐音压缩上下文')
     // 不伪造本地数字：上下文读数保持 telemetry 原值。
-    expect(screen.getByTestId('ck12-rig-context')).toHaveTextContent(/42%/)
+    expect(screen.getByTestId('ck12-rig-context')).toHaveTextContent(/42\.0%/)
     await waitFor(() => expect(screen.queryByTestId('ck12-rig-context-pop')).toBeNull())
   })
 })

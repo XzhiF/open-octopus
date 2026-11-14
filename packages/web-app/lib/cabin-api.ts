@@ -73,9 +73,9 @@ const JSON_HEADERS = { "Content-Type": "application/json" }
 
 // ============ CRUD ============
 
-export async function listCabins(status?: CabinStatus): Promise<CabinDetail[]> {
+export async function listCabins(status?: CabinStatus, signal?: AbortSignal): Promise<CabinDetail[]> {
   const qs = status ? `?status=${encodeURIComponent(status)}` : ""
-  const res = await fetch(url(qs))
+  const res = await fetch(url(qs), { signal })
   const body = await handleResponse<{ cabins: CabinDetail[] }>(res)
   return body.cabins
 }
@@ -284,8 +284,8 @@ export type CabinJobView = CabinJob & {
   iteration_code: string | null
 }
 
-export async function listCabinJobs(id: string): Promise<CabinJobView[]> {
-  const res = await fetch(url(`/${id}/jobs`))
+export async function listCabinJobs(id: string, signal?: AbortSignal): Promise<CabinJobView[]> {
+  const res = await fetch(url(`/${id}/jobs`), { signal })
   const body = await handleResponse<{ jobs: CabinJobView[] }>(res)
   return body.jobs
 }
@@ -311,8 +311,16 @@ export async function dispatchCabinJob(id: string, input: DispatchCabinJobInput)
   return body.job
 }
 
-export async function getCabinJob(id: string, jobId: string): Promise<{ job: CabinJob; events: CabinJobEvent[] }> {
-  const res = await fetch(url(`/${id}/jobs/${jobId}`))
+export async function getCabinJob(
+  id: string,
+  jobId: string,
+  signal?: AbortSignal,
+): Promise<{ job: CabinJob; events: CabinJobEvent[] }> {
+  // signal 必须真的传进 fetch：预算到点时 abort 能取消**排队中/半开连接上**的
+  // 请求，浏览器才会丢弃坏掉的 keep-alive socket、下一条请求换新连接。
+  // 只 reject 不 abort 的话，那条请求会一直占着连接（2026-11-14 用户：详情
+  // 永远停在「载入作业…」）。
+  const res = await fetch(url(`/${id}/jobs/${jobId}`), { signal })
   return handleResponse<{ job: CabinJob; events: CabinJobEvent[] }>(res)
 }
 
@@ -434,8 +442,8 @@ export interface CabinUsagePayload {
   timing: { duration_ms: number }
 }
 
-export async function getCabinUsage(id: string): Promise<CabinUsagePayload> {
-  const res = await fetch(url(`/${id}/usage`), { cache: "no-store" })
+export async function getCabinUsage(id: string, signal?: AbortSignal): Promise<CabinUsagePayload> {
+  const res = await fetch(url(`/${id}/usage`), { cache: "no-store", signal })
   return handleResponse<CabinUsagePayload>(res)
 }
 

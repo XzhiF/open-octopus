@@ -19,6 +19,7 @@ import {
   useState,
 } from 'react'
 import { createPortal } from 'react-dom'
+import { X } from 'lucide-react'
 import { cabinAudio } from '@/lib/cabin-audio'
 import { useCockpit } from '@/components/cabin/CockpitProvider'
 import {
@@ -263,7 +264,7 @@ export function CockpitCrew() {
               onClick={closeMenu}
               aria-label="关闭控制条"
               data-testid="cockpit-crew-menu-close"
-            >✕</button>
+            ><X className="size-3" aria-hidden="true" /></button>
             <span className="ck12-pm-av"><img src={portrait} alt="" /></span>
             <b>汐音</b>
             <span className="ck12-pm-sub">XIYIN-07 · 全域助理</span>

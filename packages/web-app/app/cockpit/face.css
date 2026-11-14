@@ -40,6 +40,15 @@
   font-family: var(--font-ui);
 }
 
+/* 超时排查提示：浏览器单源 6 条 HTTP/1.1，多开页面/窗口会把连接占满。 */
+.ck12-face-hint {
+  display: block;
+  margin-top: 6px;
+  font-size: 10px;
+  color: var(--ck12-faint);
+  line-height: 1.5;
+}
+
 .ck12-face-actions {
   display: flex;
   justify-content: flex-end;
@@ -352,9 +361,9 @@
   transition: 0.14s;
 }
 .ck12-jh-x:hover {
-  color: var(--ck12-ink);
-  border-color: var(--ck12-bd2);
-  background: rgba(255, 255, 255, 0.06);
+  color: var(--pop-red, #ff6b81);
+  border-color: color-mix(in srgb, var(--pop-red, #ff6b81) 45%, transparent);
+  background: color-mix(in srgb, var(--pop-red, #ff6b81) 10%, transparent);
 }
 
 .ck12-jh-kind {

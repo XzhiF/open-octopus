@@ -1,15 +1,15 @@
 // S9 关灯组审计（用户硬要求：所有关闭按钮在左，classic 习惯）。
 //
 // 对**能低成本挂载**的组件做 DOM 顺序断言（不是 CSS order 伪装）：
-//   · 聊天浮窗 CockpitChatWindow —— ✕ 是灯组第一个、也是 header 第一个；
-//   · 作业面 CockpitJobHeader —— ✕ 是 header 第一个可聚焦元素；
-//   · 编队抽屉 CockpitFleetRail —— ✕ 是 aside 第一个可聚焦元素；
-//   · 上下文 / 在场 popover —— ✕ 是弹层 header 第一个可聚焦元素。
+//   · 聊天浮窗 CockpitChatWindow —— 关闭钮（X 图标）是灯组第一个、也是 header 第一个；
+//   · 作业面 CockpitJobHeader —— 关闭钮是 header 第一个可聚焦元素；
+//   · 编队抽屉 CockpitFleetRail —— 关闭钮是 aside 第一个可聚焦元素；
+//   · 上下文 / 在场 popover —— 关闭钮是弹层 header 第一个可聚焦元素。
 //
 // 挂载成本高 / 不在 S9 可改范围的，由各自既有测试或 S10 E2E 覆盖（见汇报）：
 //   · 立绘控制条 —— crew/__tests__/CockpitCrew.test.tsx 已断言关闭第一；
 //   · 模型 popover —— 复用 chat/ComposerModelPopover（无 header 关闭钮，点外部/Esc 收）；
-//   · 任务模块窗 —— 共享 WindowTitlebar 已是 ✕ → — → ▢（只读审计，S10 E2E 断言）。
+//   · 任务模块窗 —— 共享 WindowTitlebar（座舱内改为方正图标灯组，关闭仍在左）。
 
 import { useEffect, useRef } from 'react'
 import { describe, it, expect, vi, beforeEach } from 'vitest'
@@ -131,8 +131,12 @@ describe('关灯组：关闭按钮在左（DOM 顺序）', () => {
     expect(focusables(root)[0]).toBe(close)
     const lights = root.querySelector('.ck12-comms-lights')
     expect(lights?.firstElementChild).toBe(close)
-    // classic 顺序 ✕ → — → 📌
-    expect([...(lights?.children ?? [])].map((el) => el.textContent)).toEqual(['✕', '—', '📌'])
+    // classic 顺序 ✕ → — → 📌（图标版：关闭 / 收起 / 锁定，DOM 顺序即视觉顺序）
+    expect([...(lights?.children ?? [])].map((el) => el.getAttribute('aria-label'))).toEqual([
+      '关闭对话窗',
+      '收起对话窗',
+      '锁定位置',
+    ])
   })
 
   it('作业面 header：✕ 是第一个可聚焦元素，也是 h1 的第一个子元素', () => {

@@ -8,6 +8,7 @@
 // 「现在说一句」调已有的 testPresence()（与立绘控制条同一个动作）。
 
 import { useEffect, useState } from 'react'
+import { X } from 'lucide-react'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { Switch } from '@/components/ui/switch'
 import { useCockpit } from '@/components/cabin/CockpitProvider'
@@ -65,7 +66,7 @@ export function CockpitPresencePopover() {
             onClick={() => setOpen(false)}
             aria-label="关闭在场设置"
             data-testid="ck12-rig-presence-close"
-          >✕</button>
+          ><X className="size-3" aria-hidden="true" /></button>
           <b>在场</b>
           <span>汐音会时不时主动说一句</span>
         </div>

@@ -706,3 +706,44 @@
   .ck12-skel-arena { animation: none; }
   .ck12-quiet { transition: none; }
 }
+
+/* ─────────── 座舱内的共享窗口灯组（任务模块窗 / 运行窗 / YAML） ───────────
+   这些窗复用 components/shell/window-titlebar（macOS 三色圆点 + 悬停才出图标）。
+   三色圆点在 HUD 线框语言里太跳，座舱内换成同一套方正灯组：单色描边、
+   图标常显、悬停才按角色出色（关闭红 / 最小化琥珀 / 最大化绿）。
+   只在 #ck12-layer-root 下生效 —— 桌面与 classic 的三色圆点一个像素不动。 */
+#ck12-layer-root [data-window-titlebar] [data-no-drag] button {
+  width: 18px;
+  height: 18px;
+  border-radius: 6px;
+  border: 1px solid var(--ck12-bd);
+  background: transparent;
+  color: var(--ck12-dim);
+  transition: color 0.14s, border-color 0.14s, background 0.14s;
+}
+#ck12-layer-root [data-window-titlebar] [data-no-drag] button svg {
+  width: 10px;
+  height: 10px;
+  color: currentColor;
+  opacity: 0.9;
+}
+#ck12-layer-root [data-window-titlebar] [data-no-drag] button:hover {
+  color: var(--ck12-ink);
+  border-color: var(--ck12-bd2);
+  background: rgba(255, 255, 255, 0.06);
+}
+#ck12-layer-root [data-window-titlebar] [data-no-drag] button[aria-label='关闭窗口']:hover {
+  color: var(--pop-red);
+  border-color: color-mix(in srgb, var(--pop-red) 45%, transparent);
+  background: color-mix(in srgb, var(--pop-red) 12%, transparent);
+}
+#ck12-layer-root [data-window-titlebar] [data-no-drag] button[aria-label='最小化窗口']:hover {
+  color: var(--pop-amber);
+  border-color: color-mix(in srgb, var(--pop-amber) 45%, transparent);
+  background: color-mix(in srgb, var(--pop-amber) 12%, transparent);
+}
+#ck12-layer-root [data-window-titlebar] [data-no-drag] button[aria-label='最大化窗口']:hover {
+  color: var(--pop-green);
+  border-color: color-mix(in srgb, var(--pop-green) 45%, transparent);
+  background: color-mix(in srgb, var(--pop-green) 12%, transparent);
+}

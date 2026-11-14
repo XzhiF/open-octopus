@@ -277,8 +277,8 @@ function buildUrl(path: string, params?: Record<string, string | undefined>): st
 /** GET /api/tasks — list (kanban); ?status=&org=. Returns {items: TaskView[]}, each
  *  row carrying the 票03 trigger columns + its current instance (`execution`), which
  *  is what the 「已排队」 badge and the 上一轮 status now read. */
-export async function listTasks(params?: ListTasksParams): Promise<{ items: TaskView[] }> {
-  const res = await fetch(buildUrl("", { status: params?.status, repo_group: params?.repo_group, q: params?.q, cabin_id: params?.cabin_id }))
+export async function listTasks(params?: ListTasksParams, signal?: AbortSignal): Promise<{ items: TaskView[] }> {
+  const res = await fetch(buildUrl("", { status: params?.status, repo_group: params?.repo_group, q: params?.q, cabin_id: params?.cabin_id }), { signal })
   return handleResponse<{ items: TaskView[] }>(res)
 }
 

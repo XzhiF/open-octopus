@@ -63,18 +63,27 @@ body.scan-off .cockpit-bg::after { animation: none; opacity: 0 }
 .cf-rail.top { top: 34px } .cf-rail.bot { bottom: 34px }
 body.hud-off .cockpit-frame { display: none }
 
+/* 顶部遥测条。2026-11-14 用户口径：它压在可滚动的 chat 之上，底板不许半透明 ——
+   原来的渐变（.82 → .3 → transparent）会让上滚的历史正文从读数缝里透出来。
+   现在整块 --pop-bg + 一条底缝，高度取 42px 与转录列 padding-top 对齐（见下方
+   @media min-width:1025px），滚动内容在条底被齐平切掉。读数语汇与全域 HUD 对齐。 */
 .telemetry {
-  position: absolute; top: 0; left: 0; right: 0; height: 30px; z-index: 6;
+  position: absolute; top: 0; left: 0; right: 0; height: 42px; z-index: 6;
   display: flex; align-items: center; gap: 16px; padding: 0 70px 0 40px;
   font-size: 10px; color: var(--pop-dim); pointer-events: none; font-family: var(--font-mono);
-  background: linear-gradient(180deg, rgba(10,10,12,.82), rgba(10,10,12,.3) 70%, transparent);
+  background: var(--pop-bg);
+  border-bottom: 1px solid var(--w10);
 }
-.telemetry .titem { display: flex; align-items: center; gap: 6px; white-space: nowrap }
-.telemetry .tk { color: rgba(150,152,163,.7) }
-.telemetry .tval { color: var(--pop-ink); font-weight: 700; font-variant-numeric: tabular-nums }
-.telemetry .tval.green { color: var(--pop-green) } .telemetry .tval.violet { color: var(--ck-b) } .telemetry .tval.dim { color: var(--pop-dim) }
-.telemetry .tsep { width: 1px; height: 12px; background: var(--w10) }
-.telemetry .sys { display: flex; align-items: center; gap: 5px; color: var(--ck-a) }
+.telemetry .titem { display: flex; align-items: baseline; gap: 6px; white-space: nowrap }
+.telemetry .tk { color: rgba(150,152,163,.7); font-size: 9.5px; letter-spacing: .12em }
+.telemetry .tval {
+  color: var(--pop-ink); font-size: 13px; line-height: 1; font-weight: 800;
+  font-variant-numeric: tabular-nums; letter-spacing: 0;
+}
+.telemetry .tval.cyan { color: var(--pop-cyan) } .telemetry .tval.amber { color: var(--pop-amber) }
+.telemetry .tval.violet { color: var(--ck-b) } .telemetry .tval.dim { color: var(--pop-dim) }
+.telemetry .tsep { width: 1px; height: 14px; background: var(--w10) }
+.telemetry .sys { display: flex; align-items: center; gap: 5px; color: var(--ck-a); letter-spacing: .1em }
 .telemetry .sys i { width: 6px; height: 6px; border-radius: 50%; background: var(--ck-a); box-shadow: 0 0 calc(6px * var(--ck-glow)) var(--ck-a); animation: ckPulse 2s infinite }
 
 /* ── 汐音立绘浮舱（原型 .crew-pod + .xy-* 792-884） ── */
@@ -295,6 +304,13 @@ body.float-holo [data-testid="cabin-window"]::after {
   background: repeating-linear-gradient(180deg, color-mix(in srgb, var(--ck-a) 5%, transparent) 0 1px, transparent 1px 4px); mix-blend-mode: screen;
 }
 
+/* ── 顶部遥测条让位（1025+）：telemetry 到 ≤1024 才隐藏，转录列在它可见的
+   所有宽度都要空出 42px —— 之前只在 ≥1281 让位，1025–1280 的第一条消息
+   会被不透明的遥测条压住。高度与 .telemetry 的 42px 取同一个数。 ── */
+@media (min-width: 1025px) {
+  [data-testid="cabin-chat-region"] [data-tui-col]:not([data-tui-hero="true"]) { padding-top: 42px }
+}
+
 /* ── 宽屏给汐音留左侧 gutter（原型 @media min-width:1281px chat-pane padding-left） ──
    2026-11-14：只有舱主对话（data-cabin-thread=true）才有立绘与 gutter；
    舱内点任务 / 别的会话时立绘不在场，正文也不再让位。 */
@@ -310,8 +326,6 @@ body.float-holo [data-testid="cabin-window"]::after {
        编队布局，轨道停在作业坞前（默认 right:68），正文列又刚好铺满 —— 不留
        就会被几根杠杠压住正文末尾；≥1321 轨道移到编队左侧，见下方 32px 覆盖。 */
     padding-left: 0; padding-right: 96px;
-    /* 原型 .tui-col 宽屏 padding-top:42px：给 30px telemetry 条让位。 */
-    padding-top: 42px;
   }
   [data-testid="cabin-chat-region"][data-cabin-thread="true"] [data-tui-dock]:not([data-tui-hero="true"]) {
     margin-left: calc(-1 * var(--crew-w, 252px));
@@ -320,10 +334,6 @@ body.float-holo [data-testid="cabin-window"]::after {
   }
   [data-testid="cabin-chat-region"][data-cabin-thread="true"] [data-tui-dock]:not([data-tui-hero="true"]) [data-tui-composer] {
     margin-left: 0; margin-right: 0; max-width: 860px;
-  }
-  /* 非舱主对话（任务 / 普通会话）：不占 gutter，但仍要给顶部 telemetry 条让位。 */
-  [data-testid="cabin-chat-region"][data-cabin-thread="false"] [data-tui-col]:not([data-tui-hero="true"]) {
-    padding-top: 42px;
   }
 }
 

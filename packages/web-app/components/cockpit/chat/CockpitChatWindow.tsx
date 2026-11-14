@@ -4,11 +4,12 @@
 //
 //   position:fixed; z-index:24；默认几何来自 arena + .ck12-scene 的 paddingLeft
 //   （plans §0.3），经 chat/geometry 夹回视口；
-//   header 灯组在左：✕ → — → 📌（DOM 顺序就是前三颗可聚焦元素），
-//   右侧只放拖拽握把与只读读数；右下 18px 缩放；📌 锁拖；— 收起 47px；
+//   header 灯组在左：关闭 / 收起 / 锁定（X / Minus / Pin 图标，DOM 顺序就是
+//   前三颗可聚焦元素），右侧只放拖拽握把与只读读数；右下 18px 缩放；
+//   锁定后拖不动；收起成 47px；
 //   ◍ 五档 94/82/70/55/100 写 --oa（底板透、字不透）。
 //
-// **常驻挂载**：✕ 只把 root 切成 display:none，header/body 两个 DOM 节点不动 ——
+// **常驻挂载**：关闭只把 root 切成 display:none，header/body 两个 DOM 节点不动 ——
 // body 是 ChatPane transcript 的 portal 挂载点（模块级 chat-slots），节点一换
 // ChatPane 就会重挂。composer 已 portal 到底栏，不受隐藏祖先影响，关窗后底栏
 // 仍能输入（plans §2.4）。
@@ -17,6 +18,7 @@
 // 流式中先停流（与 composer 内 Esc 同语义），再按一次才收窗。
 
 import { useCallback, useEffect, useRef } from 'react'
+import { Minus, Pin, PinOff, X } from 'lucide-react'
 import { useCockpitState } from '../state/CockpitStateProvider'
 import { setChatSlot } from './chat-slots'
 import {
@@ -72,6 +74,13 @@ export function CockpitChatWindow() {
     setChatSlot('transcript', node)
   }, [])
   useEffect(() => () => setChatSlot('transcript', null), [])
+
+  // 标题栏「对话索引」挂载点：ChatTimeline（compact）portal 进来。
+  // 正文右侧不再有任何常驻把手 —— 索引只存在于窗框里。
+  const attachIndex = useCallback((node: HTMLSpanElement | null) => {
+    setChatSlot('index', node)
+  }, [])
+  useEffect(() => () => setChatSlot('index', null), [])
 
   const computeDefaultRect = useCallback((): CockpitRect | null => {
     const arena = document.getElementById('ck12-arena')
@@ -238,27 +247,29 @@ export function CockpitChatWindow() {
             title="关闭（Esc）"
             onClick={() => setRef.current({ open: false })}
           >
-            ✕
+            <X className="ck12-comms-ico" aria-hidden="true" />
           </button>
           <button
             type="button"
-            className="ck12-comms-btn"
+            className="ck12-comms-btn ck12-comms-min"
             aria-label={mini ? '展开对话窗' : '收起对话窗'}
             aria-pressed={mini}
             title={mini ? '展开（47px）' : '收起（47px）'}
             onClick={toggleMini}
           >
-            —
+            <Minus className="ck12-comms-ico" aria-hidden="true" />
           </button>
           <button
             type="button"
-            className="ck12-comms-btn"
+            className="ck12-comms-btn ck12-comms-pin"
             aria-label="锁定位置"
             aria-pressed={pinned}
             title={pinned ? '解除锁定' : '锁定位置与大小'}
             onClick={() => setRef.current({ pinned: !pinned })}
           >
-            📌
+            {pinned
+              ? <PinOff className="ck12-comms-ico" aria-hidden="true" />
+              : <Pin className="ck12-comms-ico" aria-hidden="true" />}
           </button>
         </div>
 
@@ -266,6 +277,13 @@ export function CockpitChatWindow() {
         <span className="ck12-comms-status" data-state={chat?.streaming ? 'streaming' : 'idle'}>
           {statusText}
         </span>
+        {/* 对话索引（用户输入历史）挂在标题栏里，由 ChatTimeline 的 compact 档
+            portal 进来；正文区零常驻控件。mini（47px）时整槽隐藏。 */}
+        <span
+          ref={attachIndex}
+          className="ck12-comms-index-slot"
+          data-testid="cockpit-chat-index-slot"
+        />
         <span className="ck12-comms-grip" aria-hidden="true">⠿</span>
         <button
           type="button"

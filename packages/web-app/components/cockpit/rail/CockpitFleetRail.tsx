@@ -6,6 +6,7 @@
 // 数字纪律：job 的 pct 只在真实拿到时画条；null 一律不画，不猜 45%。
 
 import { useEffect, useMemo, useRef, useState } from 'react'
+import { X } from 'lucide-react'
 import type { CabinAttentionItem, CabinJobKind } from '@octopus/shared'
 import { useCabinOptional } from '@/components/cabin/cabin-provider'
 import { ATTENTION_AWAITING_META, ATTENTION_STAGE_META } from '@/components/cabin/cabin-meta'
@@ -123,7 +124,7 @@ interface CabinChip {
 }
 
 export function CockpitFleetRail() {
-  const { rows, counts, arrivals, loading } = useCockpitFleet()
+  const { rows, counts, arrivals, loading, error, refetch } = useCockpitFleet()
   const { selection, select, railOpen, setRailOpen, layer } = useCockpitState()
   const cabinCtx = useCabinOptional()
   const entryCabinId = cabinCtx?.cabin?.id ?? null
@@ -278,7 +279,7 @@ export function CockpitFleetRail() {
           title="收起编队"
           onClick={() => setRailOpen(false)}
         >
-          ✕
+          <X className="size-3" aria-hidden="true" />
         </button>
         <span className="ck12-rail-h-label">编队</span>
         <span className="ck12-rail-en">FLEET</span>
@@ -290,6 +291,14 @@ export function CockpitFleetRail() {
         <div className="ck12-rail-sub">
           {chips.length} 个舱 · <b className="m">{counts.need}</b> 等你 ·{' '}
           <b className="c">{counts.run}</b> 运行 · <b className="g">{counts.done}</b> 完成
+        </div>
+      )}
+
+      {/* 有数据但本轮刷新失败：保留上一份编队，明确标 stale，不悄悄假装最新。 */}
+      {error && hasRows && (
+        <div className="ck12-rail-stale" title={error} data-testid="cockpit-rail-stale">
+          刷新失败 · 显示上一份编队
+          <button type="button" className="ck12-rail-retry" onClick={refetch}>重试</button>
         </div>
       )}
 
@@ -325,8 +334,15 @@ export function CockpitFleetRail() {
         aria-activedescendant={activeRow ? optionId(activeRow) : undefined}
       >
         {!hasRows ? (
-          <div className="ck12-rail-empty">
-            {loading ? '载入编队…' : '编队空着 · 从主对话派一条'}
+          <div className="ck12-rail-empty" data-testid="cockpit-rail-empty">
+            {error ? (
+              <>
+                <span className="ck12-rail-error">编队加载失败 · {error}</span>
+                <button type="button" className="ck12-rail-retry" onClick={refetch}>
+                  重试
+                </button>
+              </>
+            ) : loading ? '载入编队…' : '编队空着 · 从主对话派一条'}
           </div>
         ) : visible.length === 0 ? (
           <div className="ck12-rail-empty">这个舱没有作业</div>

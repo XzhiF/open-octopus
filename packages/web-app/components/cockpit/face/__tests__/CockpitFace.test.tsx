@@ -214,6 +214,7 @@ describe('CockpitFace — job 选中', () => {
   })
 
   it('跨舱：作业面能开，但「对接」不出现「去主对话」', async () => {
+    vi.mocked(listCabins).mockResolvedValue([cabin('cabin-1'), cabin('cabin-2')])
     vi.mocked(getCabin).mockImplementation(async (id: string) => {
       const c = cabin(id)
       return { cabin: c, view: makeView(c) }
@@ -226,6 +227,16 @@ describe('CockpitFace — job 选中', () => {
     fireEvent.click(screen.getByTestId('cockpit-tab-relay'))
     expect(await screen.findByTestId('cabin-job-relay')).toBeInTheDocument()
     expect(screen.queryByTestId('cockpit-relay-main-chat')).toBeNull()
+  })
+
+  it('选中项不在编队（已删/已截断）：只给回退占位，不挂 JobFace、不发详情请求', async () => {
+    mockJob()
+    render(<Harness target={{ kind: 'job', cabinId: 'cabin-1', id: 'gone' }} />)
+    await pick()
+
+    expect(await screen.findByTestId('cockpit-face-stale')).toBeInTheDocument()
+    expect(screen.queryByTestId('cockpit-job-header')).toBeNull()
+    expect(getCabinJob).not.toHaveBeenCalled()
   })
 })
 

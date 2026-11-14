@@ -4,7 +4,7 @@
 //   · window 变体：旧 DOM 形状保持不变（详细回归在 CabinModulesP3）。
 
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { render, screen, fireEvent, waitFor } from '@testing-library/react'
+import { act, render, screen, fireEvent, waitFor } from '@testing-library/react'
 import { useState } from 'react'
 import type { CabinAttentionItem } from '@octopus/shared'
 
@@ -39,7 +39,7 @@ import {
   getCabinJob, getCabinUsage, listCabinJobs, type CabinJobView,
 } from '@/lib/cabin-api'
 import { abortTask, getTask, pauseTask, resumeTask } from '@/lib/tasks-api'
-import { JobFace } from '../job-face'
+import { JobFace, JOB_FACE_TIMEOUT_MS } from '../job-face'
 import type { CockpitTab } from '../../cockpit/state/cockpit-state'
 
 function jobView(over: Partial<CabinJobView> = {}): CabinJobView {
@@ -117,11 +117,13 @@ function Harness({
   cabinId = 'cabin-1',
   entryCabinId = 'cabin-1',
   attention = null,
+  hint = null,
   onMutated,
 }: {
   cabinId?: string
   entryCabinId?: string
   attention?: CabinAttentionItem | null
+  hint?: { title: string; kind: CabinJobView['kind']; status?: string | null } | null
   onMutated?: () => void
 }) {
   const [tab, setTab] = useState<CockpitTab>('overview')
@@ -138,6 +140,7 @@ function Harness({
       cockpit={{
         cabinName: 'Aurora',
         attention,
+        hint,
         tab,
         onTabChange: setTab,
         onClose: () => {},
@@ -273,6 +276,56 @@ describe('JobFace（cockpit）', () => {
     )
     fireEvent.click(await screen.findByTestId('cockpit-job-go'))
     expect(await screen.findByTestId('cabin-job-accept')).toBeInTheDocument()
+  })
+})
+
+describe('JobFace（cockpit）· 加载容错', () => {
+  it('作业详情吊死：到预算显示失败 + 重试，重试成功即出图', async () => {
+    vi.useFakeTimers()
+    try {
+      vi.mocked(getCabinJob).mockImplementation(() => new Promise(() => {}))
+      vi.mocked(listCabinJobs).mockResolvedValue([jobView()])
+      render(<Harness />)
+      expect(screen.getByTestId('cockpit-face-job')).toBeInTheDocument()
+
+      await act(async () => { await vi.advanceTimersByTimeAsync(JOB_FACE_TIMEOUT_MS) })
+
+      const err = screen.getByTestId('cockpit-face-job-error')
+      expect(err.textContent).toContain('作业详情超时')
+
+      // 接口恢复后点重试：同一份界面不再卡在「载入作业…」。
+      mockJob({ kind: 'workflow', ref_id: null, title: '接入渠道' })
+      fireEvent.click(screen.getByText('重试'))
+      await act(async () => { await vi.advanceTimersByTimeAsync(0) })
+
+      expect(screen.queryByTestId('cockpit-face-job-error')).toBeNull()
+      expect(screen.getByTestId('cockpit-job-header')).toBeInTheDocument()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('载入中：头部就用编队行摘要画（标题/类型/状态），不是空白占位', () => {
+    vi.mocked(getCabinJob).mockImplementation(() => new Promise(() => {}))
+    vi.mocked(listCabinJobs).mockImplementation(() => new Promise(() => {}))
+    render(
+      <Harness hint={{ title: 'C 端用户体系', kind: 'task', status: 'aborted' }} />,
+    )
+    const header = screen.getByTestId('cockpit-job-header')
+    expect(header.textContent).toContain('C 端用户体系')
+    expect(header.textContent).toContain('任务')
+    expect(header.textContent).toContain('已中止')
+    // 载入态带秒数自证：不是一动不动的「载入作业…」。
+    expect(screen.getByTestId('cockpit-face-job').textContent).toMatch(/载入作业.*已 \d+s/)
+  })
+
+  it('作业列表吊死：不挡详情出图（两条请求解耦）', async () => {
+    mockJob({ kind: 'workflow', ref_id: null, title: '接入渠道' })
+    vi.mocked(listCabinJobs).mockImplementation(() => new Promise(() => {}))
+    render(<Harness />)
+    expect(await screen.findByTestId('cabin-job-overview')).toBeInTheDocument()
+    expect(screen.queryByTestId('cockpit-face-job-error')).toBeNull()
+    // 列表没回来时状态退回编队行摘要（没有就省略），面本身照常可用。
   })
 })
 

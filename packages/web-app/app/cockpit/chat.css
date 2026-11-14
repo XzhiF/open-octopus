@@ -57,6 +57,8 @@
   line-height: 1;
   transition: color 0.14s, border-color 0.14s, background 0.14s;
 }
+/* 灯组用同一套线性图标（X / Minus / Pin），不再混排 ✕ / — / emoji。 */
+.ck12-comms-ico { width: 12px; height: 12px; }
 .ck12-comms-btn:hover {
   color: var(--ck12-ink);
   border-color: var(--ck12-bd);
@@ -65,6 +67,16 @@
 .ck12-comms-close:hover {
   color: var(--pop-red, #ff6b81);
   border-color: color-mix(in srgb, var(--pop-red, #ff6b81) 45%, transparent);
+}
+.ck12-comms-min:hover {
+  color: var(--pop-amber);
+  border-color: color-mix(in srgb, var(--pop-amber) 45%, transparent);
+  background: color-mix(in srgb, var(--pop-amber) 12%, transparent);
+}
+.ck12-comms-pin:hover {
+  color: var(--ck-a);
+  border-color: color-mix(in srgb, var(--ck-a) 45%, transparent);
+  background: color-mix(in srgb, var(--ck-a) 12%, transparent);
 }
 .ck12-comms-btn[aria-pressed='true'] {
   color: var(--ck12-ink);
@@ -213,6 +225,26 @@
   padding-bottom: 0;
   overflow-y: auto;
 }
+/* 上面把 textarea 的上下 padding 清零了（v12 单行 24px），共享 markup 里给
+   ❯ / ＋ / ⏎ 补的 pt-1.5 / pt-1（对齐 classic 的 textarea py-1.5）在这里就
+   多垫了一截 —— 图标会比首行文字低 4–6px。这里按 24px 行盒重新居中。
+   2026-11-14 用户：「输入框左边的图标跟文字上下没有居中对齐」。 */
+.ck12-cmd-slot [data-tui-prompt] {
+  display: flex;
+  align-items: center;
+  height: 24px;
+  padding-top: 0;
+  line-height: 24px;
+}
+.ck12-cmd-slot [data-tui-attach-inline] {
+  padding-top: 1px;
+}
+.ck12-cmd-slot [data-tui-send-wrap] {
+  display: flex;
+  align-items: center;
+  height: 24px;
+  padding-top: 0;
+}
 .ck12-cmd-slot [data-tui-ctrlbar] {
   margin-top: 2px;
   font-size: 9.5px;
@@ -230,41 +262,130 @@
   height: 22px;
 }
 
-/* ───────────────────────── 用户输入历史（索引把手） ───────────────────────── */
-/* classic 是一竖排短杠（一杠对一轮）；在窄浮窗里那排杠会被读成正文旁边的
-   又一列内容。全域改成带条数的小把手：悬停/聚焦展开同一份提示词列表。 */
-.ck12-tl-handle {
+/* ─────────────────── 用户输入历史（标题栏「对话索引」）─────────────────── */
+/* classic 是一竖排短杠；全域不再往正文右侧放任何常驻把手 —— 那枚 ≡N 会被读成
+   正文旁边多出来的一列。索引现在住在浮窗标题栏（CockpitChatWindow 的 index
+   槽），点开才在标题下弹编号列表（2026-11-14 用户口径）。 */
+.ck12-comms-index-slot {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  flex: none;
+  min-width: 0;
+}
+.ck12-comms.is-mini .ck12-comms-index-slot { display: none; }
+
+.ck12-idx { position: relative; display: inline-flex }
+.ck12-idx-btn {
   display: inline-flex;
   align-items: center;
   gap: 5px;
-  height: 24px;
+  height: 22px;
   padding: 0 8px;
   border-radius: 999px;
   border: 1px solid var(--ck12-bd);
-  background: rgba(10, 12, 19, 0.78);
-  backdrop-filter: blur(10px);
   color: var(--ck12-dim);
   font-family: var(--font-mono);
   font-size: 9.5px;
   font-variant-numeric: tabular-nums;
   transition: color 0.14s, border-color 0.14s, background 0.14s;
 }
-.ck12-tl-handle:hover,
-.ck12-tl-handle:focus-visible {
+.ck12-idx-btn:hover,
+.ck12-idx-btn[aria-expanded='true'],
+.ck12-idx-btn:focus-visible {
   color: var(--ck12-ink);
   border-color: color-mix(in srgb, var(--ck-a) 42%, transparent);
-  background: color-mix(in srgb, var(--ck-a) 10%, rgba(10, 12, 19, 0.82));
+  background: color-mix(in srgb, var(--ck-a) 10%, transparent);
   outline: none;
 }
-.ck12-tl-glyph {
+.ck12-idx-glyph {
   font-size: 11px;
   line-height: 1;
   letter-spacing: 0.06em;
   color: var(--ck-a);
 }
-.ck12-tl-count {
-  font-weight: 700;
-  color: var(--ck12-ink);
+.ck12-idx-count { font-weight: 700; color: var(--ck12-ink) }
+
+/* 面板挂在浮窗本体上（不是标题栏槽），left/width 由 ChatTimeline 按按钮位置
+   算好并夹在窗内 —— 槽只有一枚按钮宽，右对齐弹 300px 会从窗左缘漏出去。 */
+.ck12-idx-panel {
+  position: absolute;
+  top: 52px;
+  right: auto;
+  z-index: 40;
+  max-width: calc(100% - 24px);
+  max-height: calc(100% - 64px);
+  display: flex;
+  flex-direction: column;
+  border-radius: 12px;
+  border: 1px solid color-mix(in srgb, var(--ck-a) 26%, var(--ck12-bd));
+  background: rgba(10, 12, 19, 0.96);
+  backdrop-filter: blur(14px);
+  box-shadow: 0 18px 44px rgba(0, 0, 0, 0.5);
+  overflow: hidden;
+  cursor: default;
+  touch-action: auto;
+  text-align: left;
+}
+.ck12-idx-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 7px 10px;
+  border-bottom: 1px solid var(--ck12-bd);
+  font-size: 9px;
+  letter-spacing: 0.08em;
+  color: var(--ck12-faint);
+  white-space: nowrap;
+}
+.ck12-idx-head b { color: var(--ck12-dim); font-weight: 700 }
+.ck12-idx-head span { color: var(--ck12-faint); letter-spacing: 0 }
+.ck12-idx-list {
+  max-height: min(46vh, 300px);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 5px;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+.ck12-idx-item {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  width: 100%;
+  padding: 5px 8px;
+  border-radius: 7px;
+  text-align: left;
+  font-size: 11px;
+  line-height: 1.35;
+  color: var(--ck12-dim);
+  transition: color 0.12s, background 0.12s;
+}
+.ck12-idx-item:hover { background: rgba(255, 255, 255, 0.05); color: var(--ck12-ink) }
+.ck12-idx-item.on {
+  color: var(--ck-a);
+  background: color-mix(in srgb, var(--ck-a) 10%, transparent);
+}
+.ck12-idx-item:focus-visible {
+  outline: 1px solid color-mix(in srgb, var(--ck-a) 50%, transparent);
+  outline-offset: -1px;
+}
+.ck12-idx-no {
+  flex: none;
+  width: 18px;
+  font-family: var(--font-mono);
+  font-size: 9px;
+  color: var(--ck12-faint);
+  font-variant-numeric: tabular-nums;
+}
+.ck12-idx-text {
+  min-width: 0;
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 @media (max-width: 900px) {

@@ -6,6 +6,7 @@
 // 是**平级**的两个兄弟（Host 在 footer 之后）。Host 拿不到 Window/CommandBar 的
 // ref，所以用模块级 registry：
 //   · Window 注册 transcript 挂载点（ChatPane 的转录区 portal 进去）；
+//   · Window 注册 index 挂载点（标题栏的「对话索引」，ChatTimeline portal 进去）；
 //   · CommandBar 注册 composer 槽（真 composer 的 portal 目标，见 §2.4）。
 //
 // 用 useSyncExternalStore：注册/注销在 commit 阶段发生，消费方安全重渲染。
@@ -14,11 +15,12 @@
 
 import { useSyncExternalStore } from 'react'
 
-export type ChatSlotKind = 'transcript' | 'composer'
+export type ChatSlotKind = 'transcript' | 'composer' | 'index'
 
 const slots: Record<ChatSlotKind, HTMLElement | null> = {
   transcript: null,
   composer: null,
+  index: null,
 }
 
 const listeners = new Set<() => void>()
@@ -42,6 +44,7 @@ export function getChatSlot(kind: ChatSlotKind): HTMLElement | null {
 export function resetChatSlots() {
   slots.transcript = null
   slots.composer = null
+  slots.index = null
   emit()
 }
 

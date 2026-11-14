@@ -43,13 +43,13 @@ describe("cabin-api CRUD", () => {
     const rows = await listCabins()
     expect(rows).toHaveLength(1)
     expect(rows[0].name).toBe("Aurora 结算平台")
-    expect(globalThis.fetch).toHaveBeenCalledWith("http://localhost:3001/api/cabins")
+    expect(globalThis.fetch).toHaveBeenCalledWith("http://localhost:3001/api/cabins", { signal: undefined })
   })
 
   it("listCabins passes ?status= when filtering", async () => {
     mockFetchOnce({ cabins: [] })
     await listCabins("archived")
-    expect(globalThis.fetch).toHaveBeenCalledWith("http://localhost:3001/api/cabins?status=archived")
+    expect(globalThis.fetch).toHaveBeenCalledWith("http://localhost:3001/api/cabins?status=archived", { signal: undefined })
   })
 
   it("createCabin POSTs the body and unwraps cabin", async () => {

@@ -130,7 +130,7 @@ describe('CockpitCrew · 立绘与控制条', () => {
 
     const buttons = within(menu).getAllByRole('button')
     expect(buttons[0]).toBe(screen.getByTestId('cockpit-crew-menu-close'))
-    expect(buttons[0]).toHaveTextContent('✕')
+    expect(buttons[0]).toHaveAttribute('aria-label', '关闭控制条')
     expect(buttons[0]).toHaveFocus()
 
     const gallery = within(screen.getByTestId('cockpit-crew-gallery')).getAllByRole('button')

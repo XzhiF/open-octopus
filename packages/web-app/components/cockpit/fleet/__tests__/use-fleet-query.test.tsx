@@ -27,7 +27,7 @@ import {
 } from '@/lib/cabin-api'
 import { getTask, listTasks } from '@/lib/tasks-api'
 import { listRunningSessions } from '@/lib/agent/api'
-import { useFleetQuery } from '../use-fleet-query'
+import { useFleetQuery, FLEET_TICK_TIMEOUT_MS, CABIN_REQUEST_TIMEOUT_MS } from '../use-fleet-query'
 
 function cabin(id: string, name = `舱${id}`, status: CabinDetail['status'] = 'active'): CabinDetail {
   return {
@@ -153,10 +153,12 @@ beforeEach(() => {
 describe('useFleetQuery — 基础装配', () => {
   it('单舱单 job：1 条 job 行、counts 非空、workflow 的 pct=null', async () => {
     wire({ c1: { cabin: cabin('c1', '测试作战舱'), jobs: [job('j1', { kind: 'workflow', status: 'running' })] } })
+    vi.mocked(listCabins).mockResolvedValue([cabin('c1', '测试作战舱')])
     vi.mocked(listRunningSessions).mockResolvedValue({ items: [{ id: 's1' }, { id: 's2' }] } as never)
 
     const { result } = renderHook(() => useFleetQuery())
     await waitFor(() => expect(result.current.rows).toHaveLength(1))
+    await waitFor(() => expect(result.current.counts?.sessions).toBe(2))
 
     expect(result.current.rows[0]).toMatchObject({
       key: 'job:j1',
@@ -219,7 +221,7 @@ describe('useFleetQuery — 历史舱回退', () => {
     expect(result.current.rows.every((row) => row.kind === 'task')).toBe(true)
     expect(result.current.rows.map((row) => row.key).sort()).toEqual(['task:t1', 'task:t2', 'task:t3'])
     expect(result.current.counts).toMatchObject({ run: 1, queue: 1, need: 1, jobs: 3 })
-    expect(vi.mocked(listTasks)).toHaveBeenCalledWith({ cabin_id: 'c1' })
+    expect(vi.mocked(listTasks)).toHaveBeenCalledWith({ cabin_id: 'c1' }, expect.any(AbortSignal))
     expect(vi.mocked(getTask)).not.toHaveBeenCalled() // 回退不触发 N+1 富化
   })
 
@@ -314,7 +316,11 @@ describe('useFleetQuery — task 进度富化', () => {
     wire({ c1: { cabin: cabin('c1'), jobs } })
 
     const { result } = renderHook(() => useFleetQuery())
+    // 行先出（不等富化），pct 随后补上。
     await waitFor(() => expect(result.current.rows).toHaveLength(15))
+    await waitFor(() =>
+      expect(result.current.rows.filter((row) => row.kind === 'job' && row.pct !== null)).toHaveLength(12),
+    )
 
     expect(vi.mocked(getTask)).toHaveBeenCalledTimes(12)
     const withPct = result.current.rows.filter((row) => row.kind === 'job' && row.pct !== null)
@@ -359,6 +365,10 @@ describe('useFleetQuery — task 进度富化', () => {
     })
     const { result } = renderHook(() => useFleetQuery())
     await waitFor(() => expect(result.current.rows).toHaveLength(2))
+    await waitFor(() => {
+      const ok = result.current.rows.find((row) => row.key === 'job:j1')
+      expect(ok?.kind === 'job' ? ok.pct : null).not.toBeNull()
+    })
     const byKey = new Map(result.current.rows.map((row) => [row.key, row]))
     const okRow = byKey.get('job:j1')
     const badRow = byKey.get('job:j2')
@@ -374,6 +384,8 @@ describe('useFleetQuery — task 进度富化', () => {
 
     const { result } = renderHook(() => useFleetQuery())
     await waitFor(() => expect(result.current.rows).toHaveLength(1))
+    await waitFor(() => expect(vi.mocked(getTask)).toHaveBeenCalled())
+    await flush()
     const row = result.current.rows[0]
     expect(row.kind).toBe('job')
     expect(row.kind === 'job' ? row.pct : 'x').toBeNull()
@@ -437,6 +449,82 @@ describe('useFleetQuery — 容错', () => {
     expect(result.current.rows).toEqual([])
     expect(result.current.loading).toBe(false)
   })
+
+  it('请求吊死：watchdog 收尾 loading 并报超时（不永久停在「载入编队…」）', async () => {
+    vi.useFakeTimers()
+    try {
+      vi.mocked(listCabins).mockImplementation(() => new Promise(() => {}))
+      const { result } = renderHook(() => useFleetQuery())
+      expect(result.current.loading).toBe(true)
+
+      await act(async () => { await vi.advanceTimersByTimeAsync(FLEET_TICK_TIMEOUT_MS) })
+
+      expect(result.current.loading).toBe(false)
+      expect(result.current.counts).toBeNull()
+      expect(result.current.error).toContain('超时')
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('舱详情吊死：作业列表照常出图（classic 看得到的作业不会消失）', async () => {
+    vi.useFakeTimers()
+    try {
+      vi.mocked(getCabin).mockImplementation(() => new Promise(() => {}))
+      wire({ c1: { cabin: cabin('c1'), jobs: [job('j1', { status: 'running' })] } })
+
+      const { result } = renderHook(() => useFleetQuery())
+      expect(result.current.loading).toBe(true)
+
+      await act(async () => { await vi.advanceTimersByTimeAsync(CABIN_REQUEST_TIMEOUT_MS) })
+
+      expect(result.current.loading).toBe(false)
+      expect(result.current.rows.map((row) => row.key)).toEqual(['job:j1'])
+      expect(result.current.counts).toMatchObject({ jobs: 1, run: 1 })
+      expect(result.current.error).toBeNull()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('作业列表吊死：单请求预算到点就收尾并报出是哪一段', async () => {
+    vi.useFakeTimers()
+    try {
+      vi.mocked(listCabinJobs).mockImplementation(() => new Promise(() => {}))
+      const { result } = renderHook(() => useFleetQuery())
+      expect(result.current.loading).toBe(true)
+
+      await act(async () => { await vi.advanceTimersByTimeAsync(CABIN_REQUEST_TIMEOUT_MS) })
+
+      expect(result.current.loading).toBe(false)
+      expect(result.current.counts).toBeNull()
+      expect(result.current.error).toContain('作业列表超时')
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('富化吊死：作业行照常发布（进度条永远不挡编队）', async () => {
+    wire({ c1: { cabin: cabin('c1'), jobs: [job('j1', { kind: 'task', ref_id: 'slow' })] } })
+    vi.mocked(getTask).mockImplementation(() => new Promise(() => {}))
+
+    const { result } = renderHook(() => useFleetQuery())
+    await waitFor(() => expect(result.current.rows).toHaveLength(1))
+
+    expect(result.current.loading).toBe(false)
+    expect(result.current.counts).toMatchObject({ jobs: 1, perCabin: { c1: 1 } })
+    const row = result.current.rows[0]
+    expect(row.kind === 'job' ? row.pct : 'x').toBeNull()
+  })
+
+  it('分身数吊死：编队行不等它', async () => {
+    vi.mocked(listRunningSessions).mockImplementation(() => new Promise(() => {}) as never)
+    wire({ c1: { cabin: cabin('c1'), jobs: [job('j1')] } })
+
+    const { result } = renderHook(() => useFleetQuery())
+    await waitFor(() => expect(result.current.rows).toHaveLength(1))
+    expect(result.current.counts).toMatchObject({ jobs: 1, sessions: null })
+  })
 })
 
 describe('useFleetQuery — 轮询', () => {
@@ -444,6 +532,8 @@ describe('useFleetQuery — 轮询', () => {
     vi.useFakeTimers()
     try {
       renderHook(() => useFleetQuery())
+      // 每个请求都走 withDeadline（微任务后才真正发请求）。
+      await act(async () => { await vi.advanceTimersByTimeAsync(0) })
       expect(vi.mocked(listCabins)).toHaveBeenCalledTimes(1)
       await act(async () => { await vi.advanceTimersByTimeAsync(10_000) })
       expect(vi.mocked(listCabins)).toHaveBeenCalledTimes(2)

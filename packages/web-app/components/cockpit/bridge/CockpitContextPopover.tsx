@@ -1,25 +1,26 @@
 'use client'
 
-// S6 owns this file —— 上下文 popover（v12 #popCtx，392 宽，向上贴按钮）。
+// S6 owns this file —— 上下文 popover（向上贴舰桥）。
 //
 // 数据全部来自真接口：
-//   · 构成条 / 图例 ← chat.contextUsage.categories（颜色用 category.color，缺失才兜底）；
+//   · 构成 / 记忆文件 ← chat.contextUsage，**直接复用 classic 的 ContextUsagePanel**
+//     （2026-11-14 用户：全域自己那套大字号 + 每行百分比跟 classic 下方这块对不上）；
 //   · 本舱按主体 ← getCabinUsage(entryCabinId).byJob（每行一条），子代理单列；
-//   · 压缩上下文 = chat.submit('/compact') —— 真正的斜杠命令，不伪造本地数字；
-//   · token 读数 ← chat.usage，回合结束才刷新（footer 里注明）。
+//   · 压缩上下文 = chat.submit('/compact') —— 真正的斜杠命令，不伪造本地数字。
 //
 // header 的关闭按钮是第一个可聚焦元素（plans §1.6）；Esc 交给 CockpitLayerStack。
 
-import { useCallback, useEffect, useMemo, useState, type CSSProperties } from 'react'
+import { useCallback, useEffect, useState } from 'react'
+import { X } from 'lucide-react'
 import { toast } from 'sonner'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
-import { formatCost, formatPercent, formatTokenCount, type CostDisplay } from '@/lib/format'
-import type { ContextUsageData } from '@/lib/agent/types'
+import { ContextUsageChip } from '@/components/agent/chat/context-usage-chip'
+import { ContextUsagePanel } from '@/components/agent/chat/context-usage-panel'
+import { formatCost, type CostDisplay } from '@/lib/format'
 import type { CabinUsagePayload } from '@/lib/cabin-api'
 import { useCockpitState } from '../state/CockpitStateProvider'
 import type { CockpitChatApi } from '../state/cockpit-state'
 import { BRIDGE_POP_LAYER_PRIORITY } from './CockpitModelPopover'
-import { categoryColor, clampPercent } from './rig-model'
 
 const ROW_COLORS = [
   'var(--pop-cyan)',
@@ -37,27 +38,6 @@ export interface CockpitContextPopoverProps {
   currency: CostDisplay
 }
 
-interface Composition {
-  name: string
-  tokens: number
-  color: string
-  share: number
-}
-
-function composition(context: ContextUsageData): { parts: Composition[]; total: number } {
-  const sum = context.categories.reduce((acc, item) => acc + (Number.isFinite(item.tokens) ? item.tokens : 0), 0)
-  const total = sum > 0 ? sum : context.totalTokens
-  return {
-    total,
-    parts: context.categories.map((item, index) => ({
-      name: item.name,
-      tokens: item.tokens,
-      color: categoryColor(item.color, index),
-      share: total > 0 ? Math.max(0, (item.tokens / total) * 100) : 0,
-    })),
-  }
-}
-
 export function CockpitContextPopover({ chat, usage, usageStale, currency }: CockpitContextPopoverProps) {
   const { layer } = useCockpitState()
   const [open, setOpen] = useState(false)
@@ -68,9 +48,6 @@ export function CockpitContextPopover({ chat, usage, usageStale, currency }: Coc
   }, [open, layer])
 
   const context = chat.contextUsage
-  const percent = context ? clampPercent(context.percentage) : 0
-  const composed = useMemo(() => (context ? composition(context) : null), [context])
-  const tokenUsage = chat.usage
 
   const rows = usage?.byJob ?? []
   const subagents = usage?.subagents ?? null
@@ -94,24 +71,17 @@ export function CockpitContextPopover({ chat, usage, usageStale, currency }: Coc
       <PopoverTrigger asChild>
         <button
           type="button"
-          className="ck12-rig-btn ck12-rig-ctx"
+          className="ck12-rig-ctx"
           title="上下文与消耗"
           aria-label="上下文与消耗"
           data-testid="ck12-rig-context"
         >
+          {/* 与 classic composer 的 ctx 角标同一个组件：`84.7K / 1M · 8.0%` 胶囊。 */}
           {context ? (
-            <>
-              <span
-                aria-hidden="true"
-                className="ck12-rig-ring"
-                style={{ '--p': percent } as CSSProperties}
-              />
-              <b>{context.estimated ? '~' : ''}{Math.round(percent)}%</b>
-            </>
+            <ContextUsageChip contextUsage={context} expanded={open} />
           ) : (
             <b>未就绪</b>
           )}
-          <span className="ck12-rig-lbl">上下文</span>
         </button>
       </PopoverTrigger>
 
@@ -136,45 +106,14 @@ export function CockpitContextPopover({ chat, usage, usageStale, currency }: Coc
             onClick={() => setOpen(false)}
             aria-label="关闭上下文与消耗"
             data-testid="ck12-rig-context-close"
-          >✕</button>
+          ><X className="size-3" aria-hidden="true" /></button>
           <b>上下文与消耗</b>
           <span>本舱 · 本轮</span>
         </div>
 
         <div className="ck12-rig-pop-b">
-          {context && composed ? (
-            <>
-              <div className="ck12-rig-ctxhead">
-                <span>
-                  <b>{formatTokenCount(context.totalTokens)}</b>
-                  <span className="ck12-rig-dim"> / {formatTokenCount(context.maxTokens, 0)}</span>
-                </span>
-                <span className="ck12-rig-pct">
-                  已用 {Math.round(percent)}%{context.estimated ? '（估算）' : ''}
-                </span>
-              </div>
-
-              {composed.total > 0 && (
-                <div className="ck12-rig-mix" data-testid="ck12-rig-context-mix">
-                  {composed.parts.map((part) => (
-                    <i
-                      key={part.name}
-                      style={{ width: `${part.share}%`, backgroundColor: part.color }}
-                      title={`${part.name} · ${formatTokenCount(part.tokens)}`}
-                    />
-                  ))}
-                </div>
-              )}
-
-              <div className="ck12-rig-legend" data-testid="ck12-rig-context-legend">
-                {composed.parts.map((part) => (
-                  <span key={part.name}>
-                    <i style={{ backgroundColor: part.color }} />
-                    {part.name} {formatPercent(part.share / 100, 0)}
-                  </span>
-                ))}
-              </div>
-            </>
+          {context ? (
+            <ContextUsagePanel contextUsage={context} />
           ) : (
             <div className="ck12-rig-empty" data-testid="ck12-rig-context-empty">
               未就绪 · 这一轮还没有上下文数据
@@ -241,11 +180,6 @@ export function CockpitContextPopover({ chat, usage, usageStale, currency }: Coc
             data-testid="ck12-rig-compact"
           >压缩上下文</button>
           <span className="ck12-rig-spacer" />
-          <span className="ck12-rig-note" data-testid="ck12-rig-context-note">
-            {tokenUsage
-              ? `↑ ${formatTokenCount(tokenUsage.usage.inputTokens)} · ↓ ${formatTokenCount(tokenUsage.usage.outputTokens)} · ${tokenUsage.totalCalls} 次调用 · 回合结束更新`
-              : 'token · 回合结束更新'}
-          </span>
         </div>
       </PopoverContent>
     </Popover>
