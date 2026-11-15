@@ -8,8 +8,8 @@
 //
 // 2026-11-13：作战舱收进桌面壳（按 index.html 原型）。同一块对话区在三种
 // 上下文间切换，不改路由：
-//   · 普通对话（ChatTab，左栏含「作战舱」三段 + pendingCabin hero）
-//   · 新建作战舱（ChatTab 内的 CabinDraftPane）
+//   · 普通对话（ChatTab，左栏含「作战舱」三段 + 新建舱草稿行）
+//   · 新建作战舱（ChatTab 内的 CabinCreateHero —— 大输入框 + 她取名）
 //   · 舱内对话（CabinDesktopHost：同一套 CabinProvider/ChatHost，桌面顶栏保留）
 // /cabin/:id 仍由 AppShell 的兄弟壳承接，作为深链兜底。
 
@@ -41,14 +41,22 @@ export function ConversationHome() {
 }
 
 function DesktopChat({ mode }: { mode: CabinModeValue }) {
-  const { cabins } = useCabins()
+  const { cabins, refresh } = useCabins()
   const bridge: ChatTabCabinBridge = {
     cabins,
-    drafting: mode.drafting,
+    draft: mode.draft,
+    draftOpen: mode.draftOpen,
     onSelectCabin: mode.openCabin,
     onCreateCabin: mode.startDraft,
+    onUpdateDraft: mode.updateDraft,
+    onCloseDraft: mode.closeDraft,
     onCancelDraft: mode.cancelDraft,
-    onCabinCreated: mode.openCabin,
+    // 建好 / 打开已有舱 → 草稿行换成正式舱行（草稿被消费掉），并立刻刷新左栏。
+    onCabinCreated: (id) => {
+      mode.cancelDraft()
+      mode.openCabin(id)
+      void refresh()
+    },
   }
   return <ChatTab cabinBridge={bridge} />
 }

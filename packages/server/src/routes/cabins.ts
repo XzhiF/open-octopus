@@ -75,11 +75,15 @@ function toEventDTO(row: CabinJobEventRow) {
 }
 
 const createBodySchema = z.object({
-  name: z.string().min(1),
-  path: z.string().min(1),
+  /** v5：可选。空名先落「未命名舱」，init 开头按需求取名（一次请求就建）。 */
+  name: z.string().max(64).optional(),
+  /** 可省略 = 新建工作空间（服务端生成 ~/.octopus/workspaces/cabin-…）。 */
+  path: z.string().min(1).optional(),
   requirements: z.string().optional(),
   org: z.string().nullable().optional(),
   repos: z.array(z.string().min(1)).optional(),
+  /** 跨 org 的项目关联；优先于 org+repos。 */
+  projects: z.array(z.object({ org: z.string().min(1), repo: z.string().min(1) })).optional(),
 })
 
 const attachBodySchema = z.object({
@@ -150,7 +154,10 @@ export function createCabinRoutes(
     if (!body) return c.json({ error: "Invalid or missing JSON body" }, 400)
     try {
       const input = createBodySchema.parse(body)
-      return c.json({ cabin: toDTO(service.create(input)) }, 201)
+      const { cabin, created } = service.createWithResult(input)
+      // created:false = 目录已经是一个舱（一目录一舱）。客户端据此直接打开已有舱，
+      // 不再 init（plan §4.2：保持 201 + 不报错，避免牵连 attach/测试）。
+      return c.json({ cabin: toDTO(cabin), created }, 201)
     } catch (err) {
       const { status, message } = classifyError(err)
       return c.json({ error: message }, status as 400)

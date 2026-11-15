@@ -100,4 +100,47 @@ describe('ChatSidebar — cabin section (prototype 三段左栏)', () => {
     await userEvent.click(screen.getByText('开启新对话'))
     expect(screen.queryByTestId('sidebar-new-cabin')).not.toBeInTheDocument()
   })
+
+  it('新建舱草稿行：呼吸点 + 草稿中 + 计数 +1；点它回新建页', () => {
+    const onOpenDraft = vi.fn()
+    render(
+      <ChatSidebar
+        {...baseProps}
+        cabins={[cabin('c1', 'Aurora', 'active')]}
+        onSelectCabin={vi.fn()}
+        onCreateCabin={vi.fn()}
+        pendingCabin={{ name: '未命名舱' }}
+        activePendingCabin
+        onOpenDraft={onOpenDraft}
+        onCancelDraft={vi.fn()}
+      />,
+    )
+    const row = screen.getByTestId('pending-cabin-item')
+    expect(row).toHaveAttribute('aria-current', 'page')
+    expect(row).toHaveTextContent('未命名舱')
+    expect(row).toHaveTextContent('草稿中')
+    // 计数 = 已有舱 1 + 草稿 1
+    expect(screen.getByTestId('cabin-section')).toHaveTextContent('2')
+    fireEvent.click(row)
+    expect(onOpenDraft).toHaveBeenCalled()
+  })
+
+  it('悬停 × 丢弃草稿（零请求、无确认）', () => {
+    const onCancelDraft = vi.fn()
+    const onSelectCabin = vi.fn()
+    render(
+      <ChatSidebar
+        {...baseProps}
+        cabins={[]}
+        onSelectCabin={onSelectCabin}
+        onCreateCabin={vi.fn()}
+        pendingCabin={{ name: '账本舱' }}
+        onOpenDraft={vi.fn()}
+        onCancelDraft={onCancelDraft}
+      />,
+    )
+    fireEvent.click(screen.getByTestId('pending-cabin-cancel'))
+    expect(onCancelDraft).toHaveBeenCalledTimes(1)
+    expect(onSelectCabin).not.toHaveBeenCalled()
+  })
 })

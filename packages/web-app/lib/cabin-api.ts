@@ -81,21 +81,37 @@ export async function listCabins(status?: CabinStatus, signal?: AbortSignal): Pr
 }
 
 export interface CreateCabinInput {
-  name: string
-  path: string
+  /** v5：可选。不填 → 服务端先落「未命名舱」，init 开头按需求取名。 */
+  name?: string
+  /** 省略 = 新建工作空间（服务端生成 ~/.octopus/workspaces/cabin-…）。 */
+  path?: string
   requirements?: string
   org?: string | null
+  /** 老调用方：单 org + 仓库名列表。 */
   repos?: string[]
+  /** 跨 org 的项目关联（优先于 org+repos）。 */
+  projects?: Array<{ org: string; repo: string }>
 }
 
-export async function createCabin(input: CreateCabinInput): Promise<CabinDetail> {
+/** POST /api/cabins 的完整结果：`created:false` = 目录已经是一个舱（一目录一舱）。 */
+export interface CreateCabinResult {
+  cabin: CabinDetail
+  created: boolean
+}
+
+export async function createCabinWithResult(input: CreateCabinInput): Promise<CreateCabinResult> {
   const res = await fetch(url(""), {
     method: "POST",
     headers: JSON_HEADERS,
     body: JSON.stringify(input),
   })
-  const body = await handleResponse<{ cabin: CabinDetail }>(res)
-  return body.cabin
+  const body = await handleResponse<{ cabin: CabinDetail; created?: boolean }>(res)
+  // 老服务端没有 created 字段 → 视为新建（保持兼容）。
+  return { cabin: body.cabin, created: body.created !== false }
+}
+
+export async function createCabin(input: CreateCabinInput): Promise<CabinDetail> {
+  return (await createCabinWithResult(input)).cabin
 }
 
 /** Reuse an existing cabin directory (.cabin/manifest.json restore). */

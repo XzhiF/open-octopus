@@ -23,6 +23,7 @@ import { WorkspaceGit, type SpecWorktreeEntry } from "../workspace-git"
 import { gitOps } from "../git-ops"
 import { getChatEventBridge } from "../activity/chat-event-bridge"
 import { ensureRepoCloned, readCabinConfig } from "./cabin-repos"
+import { nameForRequirements, UNNAMED_CABIN_NAME } from "./cabin-naming"
 
 export interface CabinInitDeps {
   cabin: CabinDAO
@@ -151,6 +152,10 @@ export class CabinInitService {
     if (this.running.has(cabinId)) return
     this.running.add(cabinId)
     try {
+      // v5：舱名可选。空名建出来的舱先叫「未命名舱」，初始化开头按需求取名 ——
+      // 放在门禁之前，所以 gate 7 的提示语已经是真名；取名变化经 init 进度事件
+      // 触发前端重取（useCabin 的 cabin_init_progress 订阅）。
+      this.ensureName(row)
       const state = this.loadState(row)
       this.card(row, state, "running")
       this.emitProgress(cabinId, state)
@@ -188,6 +193,22 @@ export class CabinInitService {
     }
   }
 
+  /** 没填舱名的舱（v5）：初始化开头按需求取一个，写回 cabins.name。
+   *  乐观锁冲突（别处刚改过名）时不覆盖，直接读最新的那一行。 */
+  private ensureName(row: CabinRow): void {
+    const current = (row.name ?? "").trim()
+    if (current !== "" && current !== UNNAMED_CABIN_NAME) return
+    const next = nameForRequirements(row.requirements)
+    const ok = this.deps.cabin.updateFields(row.id, row.version, { name: next }, now())
+    if (!ok) {
+      const fresh = this.deps.cabin.findById(row.id)
+      if (fresh) row.name = fresh.name
+      return
+    }
+    row.name = next
+    row.version += 1
+  }
+
   // ── gate items ─────────────────────────────────────────────────────
 
   private async runItem(row: CabinRow, item: CabinInitState["items"][number]): Promise<void> {
@@ -206,41 +227,51 @@ export class CabinInitService {
         return
       }
       case "clone": {
-        const names = readCabinConfig(row.path).repos.map((r) => r.name).filter(Boolean)
-        if (names.length === 0) { item.sub = "无仓库"; return }
-        if (!row.org) throw new Error("请求了仓库但舱未指定 org")
+        // 跨 org（v4 I5）：config.json.repos[] 的 group 就是该仓库的 org；
+        // 老数据 group 为空时回落到舱级 row.org。
+        const repoEntries = readCabinConfig(row.path).repos.filter((r) => r.name)
+        if (repoEntries.length === 0) { item.sub = "无仓库"; return }
         const failed: string[] = []
-        for (const name of names) {
-          const res = ensureRepoCloned(row.org, name)
-          if ("error" in res) failed.push(`${name}: ${res.error}`)
+        for (const entry of repoEntries) {
+          const org = entry.group || row.org || ""
+          if (!org) { failed.push(`${entry.name}: 仓库未指定 org`); continue }
+          const res = ensureRepoCloned(org, entry.name)
+          if ("error" in res) failed.push(`${entry.name}: ${res.error}`)
         }
         // Partial clone failure does not block the whole gate (plan risk #3):
         // succeeded repos proceed; failed ones are re-clonable from S5 later.
-        if (failed.length === names.length) throw new Error(`全部克隆失败：${failed.join("；")}`)
-        item.sub = failed.length > 0 ? `部分失败：${failed.join("；")}` : `${names.length} 个仓库就绪`
+        if (failed.length === repoEntries.length) throw new Error(`全部克隆失败：${failed.join("；")}`)
+        item.sub = failed.length > 0 ? `部分失败：${failed.join("；")}` : `${repoEntries.length} 个仓库就绪`
         return
       }
       case "mainline": {
         const config = readCabinConfig(row.path)
-        const names = config.repos.map((r) => r.name).filter(Boolean)
-        if (names.length === 0) { item.sub = "无仓库"; return }
+        const repoEntries = config.repos.filter((r) => r.name)
+        if (repoEntries.length === 0) { item.sub = "无仓库"; return }
         const branch = `cabin-${row.id.slice(0, 8)}`
         const entries: SpecWorktreeEntry[] = []
         const syncFailed: string[] = []
-        for (const name of names) {
-          const res = ensureRepoCloned(row.org ?? "", name)
-          if ("error" in res) { syncFailed.push(`${name}: ${res.error}`); continue }
+        for (const entry of repoEntries) {
+          const org = entry.group || row.org || ""
+          if (!org) { syncFailed.push(`${entry.name}: 仓库未指定 org`); continue }
+          const res = ensureRepoCloned(org, entry.name)
+          if ("error" in res) { syncFailed.push(`${entry.name}: ${res.error}`); continue }
           // Per-repo serial: syncToDefaultBranch force-aligns the shared org
           // mirror; concurrent syncs of the same mirror would race (risk #1).
           try {
             await gitOps.syncToDefaultBranch(res.localPath)
           } catch (err) {
-            syncFailed.push(`${name}: ${errMsg(err)}`)
+            syncFailed.push(`${entry.name}: ${errMsg(err)}`)
           }
           try {
-            entries.push(this.git.initWorktreeOne(row.path, { name, source_path: res.localPath }, branch, row.org ?? ""))
+            entries.push(this.git.initWorktreeOne(
+              row.path,
+              { name: entry.name, source_path: res.localPath, ...(entry.group ? { group: entry.group } : {}) },
+              branch,
+              org,
+            ))
           } catch (err) {
-            throw new Error(`worktree 建立失败 '${name}': ${errMsg(err)}`)
+            throw new Error(`worktree 建立失败 '${entry.name}': ${errMsg(err)}`)
           }
         }
         if (entries.length > 0) {

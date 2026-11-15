@@ -77,6 +77,19 @@ describe("CabinInitService", () => {
     expect(JSON.parse(dao.findById("cabin-1")!.init_state!).items).toHaveLength(7)
   })
 
+  it("舱名可选：未命名舱在门禁前按需求取名，gate 7 的提示语已经是真名", async () => {
+    seed({ name: "未命名舱", requirements: "# 需求\n\n做一个电商后台，长期维护订单、库存和结算对账" })
+    await svc.runGate("cabin-1")
+    expect(dao.findById("cabin-1")!.name).toBe("电商舱")
+    expect(turnRunner.mock.calls[0][1]).toContain("电商舱")
+  })
+
+  it("填了舱名就绝不覆盖", async () => {
+    seed({ name: "我的舱", requirements: "做一个电商后台" })
+    await svc.runGate("cabin-1")
+    expect(dao.findById("cabin-1")!.name).toBe("我的舱")
+  })
+
   it("gate failure keeps initializing; retry skips done items and resumes", async () => {
     seed()
     turnRunner.mockRejectedValueOnce(new Error("model unavailable"))

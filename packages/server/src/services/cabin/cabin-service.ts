@@ -1,5 +1,6 @@
 import { randomUUID } from "crypto"
 import fs from "fs"
+import os from "os"
 import path from "path"
 import {
   mergeLlmUsageSummaries, emptyTokenUsage, totalTokens,
@@ -21,6 +22,7 @@ import type { WorkspaceService } from "../workspace"
 import type { TasksService } from "../tasks/tasks-service"
 import type { RepoSyncService } from "../tasks/repo-sync-service"
 import { getSessionService } from "../agent/session-service"
+import { UNNAMED_CABIN_NAME } from "./cabin-naming"
 import { gitOps } from "../git-ops"
 import { WorkspaceGit, type SpecWorktreeEntry } from "../workspace-git"
 import { deriveTaskView } from "../tasks/derive-task-view"
@@ -123,7 +125,40 @@ export interface CabinInfra {
  *  the Chinese display name stays on cabins.name (plan conflict 6e). */
 function workspaceSlug(cabinPath: string, id: string): string {
   const base = path.basename(cabinPath).replace(/[^a-zA-Z0-9_-]/g, "-") || "cabin"
-  return `cabin-${base}-${id.slice(0, 6)}`
+  // 自动目录本身就以 cabin- 开头（cabin-1115-162104-f01335），再前缀一次会变
+  // cabin-cabin-…（plan §4.1 顺手清理）。
+  const stem = base.startsWith("cabin-") ? base : `cabin-${base}`
+  return `${stem}-${id.slice(0, 6)}`
+}
+
+/** 不选目录时的默认工作空间（I4）：与任务目录同族
+ *  ~/.octopus/workspaces/cabin-<MMDD>-<HHmmss>-<rand6>。
+ *  路径由**服务端**生成：workspaceService.create 会 mkdir -p 并铺骨架，
+ *  前端不再自己拼路径（plan §4.1）。 */
+function autoWorkspacePath(now = new Date()): string {
+  const p = (n: number) => String(n).padStart(2, "0")
+  const stamp = `${p(now.getMonth() + 1)}${p(now.getDate())}-${p(now.getHours())}${p(now.getMinutes())}${p(now.getSeconds())}`
+  const rand = randomUUID().replace(/-/g, "").slice(0, 6)
+  return path.join(os.homedir(), ".octopus", "workspaces", `cabin-${stamp}-${rand}`)
+}
+
+/** POST /api/cabins body（v5）：`path` 可省略 = 新建工作空间；
+ *  `projects[]` 是跨 org 的关联关系（写入 config.json.repos[].group）；
+ *  `name` 也可省略 —— 空名先落「未命名舱」，init 开头按需求取名。 */
+export interface CreateCabinInput {
+  name?: string
+  path?: string
+  requirements?: string
+  org?: string | null
+  /** 老调用方：单 org + 仓库名列表（与 projects 二选一，projects 优先）。 */
+  repos?: string[]
+  projects?: Array<{ org: string; repo: string }>
+}
+
+export interface CreateCabinResult {
+  cabin: CabinRow
+  /** false = 这个目录已经是一个舱（一目录一舱，I3）。客户端据此改为“打开”。 */
+  created: boolean
 }
 
 /**
@@ -158,17 +193,30 @@ export class CabinService {
     return row
   }
 
-  create(input: { name: string; path: string; requirements?: string; org?: string | null; repos?: string[] }): CabinRow {
-    const existing = this.cabin.findByPath(input.path)
-    if (existing) return existing
+  /** 兼容旧调用：只要行，不要 created 标记。 */
+  create(input: CreateCabinInput): CabinRow {
+    return this.createWithResult(input).cabin
+  }
+
+  /**
+   * v4 建舱入口：`path` 省略 → 服务端自动建工作空间；`projects[]` → config.json
+   * 带 group（跨 org 关联）。同目录已有舱时**不报错**，返回 created:false 让 UI
+   * 改成「打开」（I3；保持老调用方 attach 语义不变）。
+   */
+  createWithResult(input: CreateCabinInput): CreateCabinResult {
+    const cabinPath = input.path?.trim() || autoWorkspacePath()
+    const existing = this.cabin.findByPath(cabinPath)
+    if (existing) return { cabin: existing, created: false }
+    const name = input.name?.trim() || UNNAMED_CABIN_NAME
+    const org = input.org ?? input.projects?.find((p) => p.org)?.org ?? null
     const id = randomUUID()
     const ts = now()
     const row: CabinRow = {
-      id, name: input.name, path: input.path,
+      id, name, path: cabinPath,
       workspace_id: null, main_session_id: null,
       requirements: input.requirements ?? "",
       status: "draft", mainline_strategy: "clean-main",
-      org: input.org ?? null, init_state: null, cockpit_prefs: null,
+      org, init_state: null, cockpit_prefs: null,
       focused_job_id: null, version: 1,
       created_at: ts, updated_at: ts, last_active_at: ts, archived_at: null,
     }
@@ -176,18 +224,23 @@ export class CabinService {
     if (this.infra) {
       // Scaffold WITHOUT repos: clones land in init gate 3, worktrees in gate 4.
       const ws = this.infra.workspaceService.create({
-        name: workspaceSlug(input.path, id),
-        path: input.path,
+        name: workspaceSlug(cabinPath, id),
+        path: cabinPath,
         repos: [],
-        repo_group: input.org ?? null,
-        description: `作战舱：${input.name}`,
+        repo_group: org,
+        description: `作战舱：${name}`,
       })
       this.infra.workspaceDAO.update(ws.id, { cabin_id: id })
       this.cabin.bindWorkspace(id, ws.id, now())
-      if (input.repos && input.repos.length > 0) {
-        writeCabinConfigRepos(input.path, input.repos.map((n) => ({ group: "", name: n, repoName: n })))
-      }
-      const session = getSessionService().createSession({ cwd: input.path, workspace_id: ws.id })
+      const projectEntries: CabinRepoEntry[] = (input.projects ?? [])
+        .filter((p) => p.org && p.repo)
+        .map((p) => ({ group: p.org, name: p.repo, repoName: p.repo }))
+      const legacyEntries: CabinRepoEntry[] = (input.repos ?? [])
+        .filter(Boolean)
+        .map((n) => ({ group: "", name: n, repoName: n }))
+      const repoEntries = projectEntries.length > 0 ? projectEntries : legacyEntries
+      if (repoEntries.length > 0) writeCabinConfigRepos(cabinPath, repoEntries)
+      const session = getSessionService().createSession({ cwd: cabinPath, workspace_id: ws.id })
       this.infra.agentSessionDAO.updateSession(session.id, {
         cabin_id: id, title: `${input.name} · 舱主对话`,
       })
@@ -195,7 +248,7 @@ export class CabinService {
         .setActiveExpert(session.id, "cabin-orchestrator", "clone")
       this.cabin.bindSession(id, session.id, now())
     }
-    return this.mustGet(id)
+    return { cabin: this.mustGet(id), created: true }
   }
 
   /** Register an existing directory; reuse if a cabin already owns it. A

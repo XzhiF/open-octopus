@@ -1,12 +1,18 @@
 // 桌面壳内的作战舱上下文切换：新建/进舱/退出都不改路由（2026-11-13 原型对齐）。
 // 这里 mock 掉重组件，只锁 ConversationHome 的三态与 cabinBridge 接线。
+// v4（2026-11-15）：走开（进舱 / 退出）只关右页，草稿还在（I7）。
 
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { render, screen, fireEvent } from '@testing-library/react'
 
 vi.mock('@/components/agent/chat/ChatTab', () => ({
-  ChatTab: ({ cabinBridge }: { cabinBridge?: { drafting: boolean; cabins: unknown[] } }) => (
-    <div data-testid="chat-tab" data-drafting={String(!!cabinBridge?.drafting)} data-cabins={cabinBridge?.cabins.length ?? -1} />
+  ChatTab: ({ cabinBridge }: { cabinBridge?: { draftOpen: boolean; draft: unknown; cabins: unknown[] } }) => (
+    <div
+      data-testid="chat-tab"
+      data-drafting={String(!!cabinBridge?.draftOpen)}
+      data-draft={String(!!cabinBridge?.draft)}
+      data-cabins={cabinBridge?.cabins.length ?? -1}
+    />
   ),
 }))
 
@@ -15,7 +21,7 @@ vi.mock('@/components/cabin/CabinDesktopHost', () => ({
 }))
 
 vi.mock('@/hooks/use-cabins', () => ({
-  useCabins: () => ({ cabins: [{ id: 'c1' }, { id: 'c2' }], loading: false }),
+  useCabins: () => ({ cabins: [{ id: 'c1' }, { id: 'c2' }], loading: false, refresh: vi.fn() }),
 }))
 
 import { ConversationHome } from '../ConversationHome'
@@ -27,6 +33,7 @@ function ModeControls() {
     <div>
       <button type="button" onClick={() => mode.startDraft()}>draft</button>
       <button type="button" onClick={() => mode.openCabin('c1')}>open</button>
+      <button type="button" onClick={() => mode.cancelDraft()}>cancel</button>
       <button type="button" onClick={() => mode.exitCabin()}>exit</button>
     </div>
   )
@@ -46,20 +53,28 @@ describe('ConversationHome — 桌面内作战舱三态', () => {
     )
 
     expect(screen.getByTestId('chat-tab')).toHaveAttribute('data-drafting', 'false')
+    expect(screen.getByTestId('chat-tab')).toHaveAttribute('data-draft', 'false')
     // 左栏桥：桌面也拿到完整舱列表（→ 作战舱段/状态圈）。
     expect(screen.getByTestId('chat-tab')).toHaveAttribute('data-cabins', '2')
     expect(screen.queryByTestId('cabin-host')).not.toBeInTheDocument()
 
     fireEvent.click(screen.getByText('draft'))
     expect(screen.getByTestId('chat-tab')).toHaveAttribute('data-drafting', 'true')
+    expect(screen.getByTestId('chat-tab')).toHaveAttribute('data-draft', 'true')
     expect(screen.queryByTestId('cabin-host')).not.toBeInTheDocument()
 
     fireEvent.click(screen.getByText('open'))
     expect(screen.queryByTestId('chat-tab')).not.toBeInTheDocument()
     expect(screen.getByTestId('cabin-host')).toHaveTextContent('c1')
 
+    // 走开：右页让给舱，草稿留着。
     fireEvent.click(screen.getByText('exit'))
     expect(screen.getByTestId('chat-tab')).toBeInTheDocument()
-    expect(screen.queryByTestId('cabin-host')).not.toBeInTheDocument()
+    expect(screen.getByTestId('chat-tab')).toHaveAttribute('data-drafting', 'false')
+    expect(screen.getByTestId('chat-tab')).toHaveAttribute('data-draft', 'true')
+
+    // 取消：草稿丢掉。
+    fireEvent.click(screen.getByText('cancel'))
+    expect(screen.getByTestId('chat-tab')).toHaveAttribute('data-draft', 'false')
   })
 })

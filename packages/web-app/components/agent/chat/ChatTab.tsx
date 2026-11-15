@@ -40,7 +40,8 @@ import {
 import { cn } from '@/lib/utils'
 import { Sheet, SheetContent } from '@/components/ui/sheet'
 import type { CabinDetail } from '@/lib/cabin-api'
-import { CabinDraftPane } from '@/components/cabin/CabinDraftPane'
+import type { CabinDraft } from '@/lib/cabin-draft'
+import { CabinCreateHero } from '@/components/cabin/CabinCreateHero'
 import { ChatSidebar } from './chat-sidebar'
 import { SidebarResizer } from './sidebar-resizer'
 import { useSidebarWidth } from './sidebar-width'
@@ -55,14 +56,19 @@ import {
 const SIDEBAR_COLLAPSED_KEY = 'octopus.chat.sidebarCollapsed.v1'
 
 /**
- * 桌面壳注入的作战舱桥（2026-11-13）：左栏作战舱段 + pendingCabin hero。
+ * 桌面壳注入的作战舱桥（2026-11-13，v4 2026-11-15）：左栏作战舱段 + 新建页。
  * 缺省 undefined = 独立渲染（单测等）保持原来的两段侧栏。
  */
 export interface ChatTabCabinBridge {
   cabins: CabinDetail[]
-  drafting: boolean
+  /** 新建草稿（左栏一行）；null = 没有草稿。 */
+  draft: CabinDraft | null
+  /** 右页是否停在新建页。 */
+  draftOpen: boolean
   onSelectCabin: (id: string) => void
   onCreateCabin: () => void
+  onUpdateDraft: (patch: Partial<CabinDraft>) => void
+  onCloseDraft: () => void
   onCancelDraft: () => void
   onCabinCreated: (id: string) => void
 }
@@ -625,6 +631,12 @@ export function ChatTab({ cabinBridge }: { cabinBridge?: ChatTabCabinBridge } = 
           activeCabinId: null,
           onSelectCabin: cabinBridge.onSelectCabin,
           onCreateCabin: cabinBridge.onCreateCabin,
+          pendingCabin: cabinBridge.draft
+            ? { name: cabinBridge.draft.name.trim() || '未命名舱' }
+            : null,
+          activePendingCabin: cabinBridge.draftOpen,
+          onOpenDraft: cabinBridge.onCreateCabin,
+          onCancelDraft: cabinBridge.onCancelDraft,
         }
       : {}),
     tasks: sidebarTasks,
@@ -726,10 +738,13 @@ export function ChatTab({ cabinBridge }: { cabinBridge?: ChatTabCabinBridge } = 
         data-split={split ? 'true' : undefined}
         className={cn('relative flex min-w-0 flex-1', resizing && 'cursor-col-resize select-none [&_*]:cursor-col-resize')}
       >
-        {cabinBridge?.drafting ? (
-          <CabinDraftPane
-            onCreated={cabinBridge.onCabinCreated}
+        {cabinBridge?.draftOpen && cabinBridge.draft ? (
+          <CabinCreateHero
+            draft={cabinBridge.draft}
+            cabins={cabinBridge.cabins}
+            onChange={cabinBridge.onUpdateDraft}
             onCancel={cabinBridge.onCancelDraft}
+            onCreated={cabinBridge.onCabinCreated}
           />
         ) : split ? (
           <>

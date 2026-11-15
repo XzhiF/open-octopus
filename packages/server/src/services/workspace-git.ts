@@ -20,6 +20,8 @@ export interface SpecWorktreeEntry {
   main_path: string
   worktree_path: string
   branch: string
+  /** 仓库所属 org（作战舱跨 org 绑定用；老路径不填 = 舱级 org）。 */
+  group?: string
 }
 
 export class WorkspaceGit {
@@ -213,7 +215,10 @@ export class WorkspaceGit {
       }
     }
 
-    return { name: proj.name, main_path: sourcePath, worktree_path: wtDir, branch: branchName }
+    return {
+      name: proj.name, main_path: sourcePath, worktree_path: wtDir, branch: branchName,
+      ...(proj.group ? { group: proj.group } : {}),
+    }
   }
 
   /** worktree 目录是否仍是活的 git worktree（自愈检测用，trigger-prebuild
@@ -240,6 +245,7 @@ export class WorkspaceGit {
     const config = JSON.parse(fs.readFileSync(configPath, "utf-8"))
     config.repos = entries.map(e => ({
       name: e.name, main_path: e.main_path, worktree_path: e.worktree_path, branch: e.branch,
+      ...(e.group ? { group: e.group } : {}),
     }))
     fs.writeFileSync(configPath, JSON.stringify(config, null, 2), "utf-8")
 

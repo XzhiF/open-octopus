@@ -32,6 +32,7 @@ import {
 } from '@/components/agent/chat/ChatPane'
 import type { CabinDockModule } from '@/components/workspace/workspace-explorer-dock'
 import { useCabinContext } from './cabin-provider'
+import { useCabinMode } from './cabin-mode'
 import { useCabinChatWiring } from './use-cabin-chat-wiring'
 import { CabinModulesLayer } from './CabinModulesLayer'
 import { CabinAtmosphere } from './CabinAtmosphere'
@@ -61,7 +62,8 @@ export function CabinChatHost({ onSelectCabin, onCreateCabin, onExitCabin }: Cab
   const { setStreaming, setPresenceActive } = useCockpit()
   const { enterCockpit } = useCockpitEntry()
   const router = useRouter()
-  const { cabins } = useCabins()
+  const { cabins, refresh: refreshCabins } = useCabins()
+  const cabinMode = useCabinMode()
 
   const [regionNode, setRegionNode] = useState<HTMLDivElement | null>(null)
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
@@ -111,6 +113,12 @@ export function CabinChatHost({ onSelectCabin, onCreateCabin, onExitCabin }: Cab
   const showingCabinThread =
     !activeTask && !pendingTaskSession && !!mainSessionId && sessionId === mainSessionId
 
+  // v5：舱名可能是 init 开的头（空名建舱 → 按需求取名）。舱详情的名字一变，
+  // 顺手刷一次左栏列表 —— 否则要等 useCabins 的 30s 轮询。
+  useEffect(() => {
+    if (cabin?.name || cabin?.status) void refreshCabins()
+  }, [cabin?.name, cabin?.status, refreshCabins])
+
   // 汐音只在舱主对话里在场（2026-11-14 用户口径）：左栏点任务 / 别的会话时，
   // 右侧显示的不是舱自己的 chat —— 立绘不出现，也不排主动搭话。
   useEffect(() => { setPresenceActive(showingCabinThread) }, [showingCabinThread, setPresenceActive])
@@ -131,6 +139,19 @@ export function CabinChatHost({ onSelectCabin, onCreateCabin, onExitCabin }: Cab
   const sidebarProps = {
     cabins,
     activeCabinId: cabinId,
+    // 走开（进舱）草稿还在：左栏同样显示那一行，点它回桌面新建页（I7 / plan §5.4）。
+    pendingCabin: cabinMode.draft
+      ? { name: cabinMode.draft.name.trim() || '未命名舱' }
+      : null,
+    activePendingCabin: false,
+    onOpenDraft: () => {
+      cabinMode.startDraft()
+      // 兄弟壳 /cabin/:id 里草稿页在桌面；桌面壳里已经在 '/'，不重复 push。
+      if (typeof window !== 'undefined' && window.location.pathname.startsWith('/cabin')) {
+        router.push('/')
+      }
+    },
+    onCancelDraft: cabinMode.cancelDraft,
     onSelectCabin: (id: string) => {
       if (id === cabinId) {
         // 点当前舱 = 回到舱主对话。左栏切到别的会话/任务后，这一下必须能回去

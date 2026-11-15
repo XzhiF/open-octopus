@@ -79,6 +79,13 @@ interface ChatSidebarProps {
   activeCabinId?: string | null
   onSelectCabin?: (id: string) => void
   onCreateCabin?: () => void
+  /** 新建舱草稿行（v4）：跟 pendingTask 同一套语义 —— 呼吸点 + 草稿中 + 悬停 ×。 */
+  pendingCabin?: { name: string } | null
+  activePendingCabin?: boolean
+  /** 点草稿行：回到新建页（草稿还在）。 */
+  onOpenDraft?: () => void
+  /** 悬停 ×：丢弃草稿（零请求）。 */
+  onCancelDraft?: () => void
   /** 桌面舱模式：退出回普通对话（舱段标题右侧的小箭头）。兄弟壳不传。 */
   onExitCabin?: () => void
 }
@@ -254,6 +261,10 @@ export function ChatSidebar({
   activeCabinId,
   onSelectCabin,
   onCreateCabin,
+  pendingCabin,
+  activePendingCabin,
+  onOpenDraft,
+  onCancelDraft,
   onExitCabin,
 }: ChatSidebarProps) {
   const [editingId, setEditingId] = useState<string | null>(null)
@@ -318,6 +329,8 @@ export function ChatSidebar({
     if (!cabins) return []
     return needle ? cabins.filter((c) => c.name.toLowerCase().includes(needle)) : cabins
   }, [cabins, needle])
+  // 新建舱草稿行（v4）：跟 pendingTask 一样参与搜索与计数。
+  const pendingCabinMatches = !!pendingCabin && (!needle || pendingCabin.name.toLowerCase().includes(needle))
 
   const confirmRename = async () => {
     if (renameInFlightRef.current) return
@@ -498,7 +511,7 @@ export function ChatSidebar({
             <div data-testid="cabin-section">
               <SectionLabel
                 label="作战舱"
-                count={filteredCabins.length}
+                count={filteredCabins.length + (pendingCabinMatches ? 1 : 0)}
                 action={onCreateCabin || onExitCabin ? (
                   <span className="flex items-center gap-0.5">
                     {onExitCabin && (
@@ -528,12 +541,54 @@ export function ChatSidebar({
                   </span>
                 ) : undefined}
               />
-              {filteredCabins.length === 0 ? (
+              {filteredCabins.length === 0 && !pendingCabinMatches ? (
                 <p className="px-2 py-1 text-[12px] text-pop-dim/60">
                   {needle ? '未找到匹配作战舱' : '暂无作战舱'}
                 </p>
               ) : (
                 <div className="space-y-px">
+                  {/* 新建舱草稿行（v4）：跟任务段的 pendingTask 同一个语义 ——
+                      呼吸点 + 名字 + 草稿中 + 悬停 ×（丢弃，零请求）。 */}
+                  {pendingCabin && pendingCabinMatches && (
+                    <div className="group/draftcabin relative">
+                      <button
+                        type="button"
+                        data-testid="pending-cabin-item"
+                        aria-current={activePendingCabin ? 'page' : undefined}
+                        title={`${pendingCabin.name} · 还没创建，可以先放一放`}
+                        onClick={() => onOpenDraft?.()}
+                        className={cn(
+                          ROW,
+                          'gap-2 pr-7',
+                          activePendingCabin
+                            ? 'bg-white/[0.07] text-pop-ink shadow-[inset_2px_0_0_var(--pop-cyan)]'
+                            : 'text-pop-ink/80 hover:bg-white/[0.035] hover:text-pop-ink',
+                        )}
+                      >
+                        <span className="relative flex size-[6px] shrink-0">
+                          <span className="absolute size-[6px] animate-ping rounded-full bg-pop-cyan/70" />
+                          <span className="relative size-[6px] rounded-full bg-pop-cyan" />
+                        </span>
+                        <span className="min-w-0 flex-1 truncate">{pendingCabin.name}</span>
+                        <span className="shrink-0 text-[10px] text-pop-dim">草稿中</span>
+                      </button>
+                      {onCancelDraft && (
+                        <button
+                          type="button"
+                          aria-label="丢弃草稿"
+                          title="丢弃草稿"
+                          data-testid="pending-cabin-cancel"
+                          onClick={(event) => {
+                            event.stopPropagation()
+                            onCancelDraft()
+                          }}
+                          className="absolute right-1 top-1/2 grid size-5 -translate-y-1/2 place-items-center rounded text-pop-dim opacity-0 transition-all hover:bg-white/[0.08] hover:text-pop-ink group-hover/draftcabin:opacity-100"
+                        >
+                          <X className="size-3" strokeWidth={2} />
+                        </button>
+                      )}
+                    </div>
+                  )}
                   {filteredCabins.map((c) => {
                     const meta = CABIN_STATUS_META[c.status]
                     const active = activeCabinId === c.id

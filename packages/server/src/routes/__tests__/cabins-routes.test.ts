@@ -80,7 +80,8 @@ describe("/api/cabins routes", () => {
   })
 
   it("POST / with invalid body → 400; unknown id → 404", async () => {
-    expect((await post("/api/cabins", { name: "" })).status).toBe(400)
+    // v5：name 可省略（空名 → 未命名舱），改用类型错的 body 验 400。
+    expect((await post("/api/cabins", { path: 123 })).status).toBe(400)
     expect((await app.request("/api/cabins/nope")).status).toBe(404)
   })
 

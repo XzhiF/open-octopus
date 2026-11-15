@@ -88,7 +88,7 @@ vi.mock('@/hooks/use-chat-tasks', () => ({
 vi.mock('@/hooks/use-running-agents', () => ({ useRunningAgents: () => [] }))
 vi.mock('@/hooks/useOrgs', () => ({ useOrgs: () => ({ orgs: [] }) }))
 vi.mock('@/hooks/use-workspaces', () => ({ useWorkspaces: () => ({ workspaces: [] }) }))
-vi.mock('@/hooks/use-cabins', () => ({ useCabins: () => ({ cabins: [], loading: false }) }))
+vi.mock('@/hooks/use-cabins', () => ({ useCabins: () => ({ cabins: [], loading: false, refresh: vi.fn() }) }))
 vi.mock('@/lib/app-navigation', () => ({ useRouter: () => ({ push: vi.fn(), replace: vi.fn() }) }))
 vi.mock('@/lib/agent/api', () => ({ getSession: h.getSession }))
 
