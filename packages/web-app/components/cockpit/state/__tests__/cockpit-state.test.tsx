@@ -103,6 +103,37 @@ describe('默认选中解析', () => {
   })
 })
 
+describe('切面时让出作业面', () => {
+  it('选作业 / 项目（ref 非空）会收起展开的对话浮窗；选中同一项也生效', () => {
+    const { result } = renderHook(() => useCockpitState(), { wrapper })
+
+    act(() => result.current.chatWindow.openWithFocus())
+    expect(result.current.chatWindow.open).toBe(true)
+
+    act(() => result.current.select({ kind: 'job', cabinId: 'c1', id: 'j1' }))
+    expect(result.current.selection).toEqual({ kind: 'job', cabinId: 'c1', id: 'j1' })
+    expect(result.current.chatWindow.open).toBe(false)
+
+    // 已经选中这条时再点一下编队行（select 同一个 ref）也要让出作业面。
+    act(() => result.current.chatWindow.openWithFocus())
+    act(() => result.current.select({ kind: 'job', cabinId: 'c1', id: 'j1' }))
+    expect(result.current.chatWindow.open).toBe(false)
+
+    // 项目面同理。
+    act(() => result.current.chatWindow.openWithFocus())
+    act(() => result.current.select({ kind: 'project', cabinId: 'c1', id: 'org:demo' }))
+    expect(result.current.chatWindow.open).toBe(false)
+  })
+
+  it('收面（select(null)）不动对话浮窗', () => {
+    const { result } = renderHook(() => useCockpitState(), { wrapper })
+    act(() => result.current.chatWindow.openWithFocus())
+    act(() => result.current.select(null))
+    expect(result.current.selection).toBeNull()
+    expect(result.current.chatWindow.open).toBe(true)
+  })
+})
+
 describe('路由', () => {
   it('cockpit 是独立兄弟壳，不吞 /cabin/:id', () => {
     const cockpit = matchAppRoute('/cabin/c1/cockpit')
