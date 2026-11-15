@@ -17,32 +17,50 @@ export class CabinDAO extends BaseDAO {
     try { db.exec("ALTER TABLE tasks ADD COLUMN cabin_id TEXT") } catch {}
     try { db.exec("ALTER TABLE sessions ADD COLUMN cabin_id TEXT") } catch {}
     try { db.exec("ALTER TABLE tasks ADD COLUMN iteration_id TEXT") } catch {}
+    // 软删除列（2026-11-15）。index.ts 里 DAO 先于 applySchema 构造，新库这里会
+    // 静默失败（表还没建），由 schema.sql 建 —— 两种情况都要能跑。
+    try { db.exec("ALTER TABLE cabins ADD COLUMN deleted_at TEXT") } catch {}
+    // 老库的 ux_cabins_path 是全表唯一：软删的行还占着 path，同目录就再也建不了
+    // 新舱。换成只约束活行的部分索引（schema.sql 里也是这一版）。
+    try {
+      db.exec("DROP INDEX IF EXISTS ux_cabins_path")
+      db.exec("CREATE UNIQUE INDEX IF NOT EXISTS ux_cabins_path ON cabins(path) WHERE deleted_at IS NULL")
+    } catch { /* fresh DB: 表还没建，schema.sql 负责 */ }
   }
 
   insert(row: CabinRow): void {
     this.stmt(`
       INSERT INTO cabins (id, name, path, workspace_id, main_session_id, requirements, status,
         mainline_strategy, org, init_state, cockpit_prefs, focused_job_id, version,
-        created_at, updated_at, last_active_at, archived_at)
-      VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+        created_at, updated_at, last_active_at, archived_at, deleted_at)
+      VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
     `).run(
       row.id, row.name, row.path, row.workspace_id, row.main_session_id, row.requirements, row.status,
       row.mainline_strategy, row.org, row.init_state, row.cockpit_prefs, row.focused_job_id, row.version,
-      row.created_at, row.updated_at, row.last_active_at, row.archived_at,
+      row.created_at, row.updated_at, row.last_active_at, row.archived_at, row.deleted_at,
     )
   }
 
+  /** 活着的舱。软删的行对调用方不存在（404 / 可重建同目录新舱）。 */
   findById(id: string): CabinRow | undefined {
+    return this.stmt("SELECT * FROM cabins WHERE id = ? AND deleted_at IS NULL").get(id) as CabinRow | undefined
+  }
+
+  /** 含软删（attach 从 .cabin/manifest.json 复原身份时要看得到墓碑行）。 */
+  findAnyById(id: string): CabinRow | undefined {
     return this.stmt("SELECT * FROM cabins WHERE id = ?").get(id) as CabinRow | undefined
   }
 
   findByPath(path: string): CabinRow | undefined {
-    return this.stmt("SELECT * FROM cabins WHERE path = ?").get(path) as CabinRow | undefined
+    return this.stmt("SELECT * FROM cabins WHERE path = ? AND deleted_at IS NULL").get(path) as CabinRow | undefined
   }
 
   list(status?: CabinStatus): CabinRow[] {
-    if (status) return this.stmt("SELECT * FROM cabins WHERE status = ? ORDER BY created_at DESC").all(status) as CabinRow[]
-    return this.stmt("SELECT * FROM cabins ORDER BY created_at DESC").all() as CabinRow[]
+    if (status) {
+      return this.stmt("SELECT * FROM cabins WHERE status = ? AND deleted_at IS NULL ORDER BY created_at DESC")
+        .all(status) as CabinRow[]
+    }
+    return this.stmt("SELECT * FROM cabins WHERE deleted_at IS NULL ORDER BY created_at DESC").all() as CabinRow[]
   }
 
   updateStatus(id: string, status: CabinStatus, now: string): void {
@@ -77,6 +95,27 @@ export class CabinDAO extends BaseDAO {
 
   delete(id: string): void {
     this.stmt("DELETE FROM cabins WHERE id = ?").run(id)
+  }
+
+  /** 软删除：行留在表里（计费 / Trace / 验收历史不丢），只是不再算「活着的舱」。 */
+  softDelete(id: string, now: string): void {
+    this.stmt("UPDATE cabins SET deleted_at = ?, updated_at = ?, version = version + 1 WHERE id = ?")
+      .run(now, now, id)
+  }
+
+  /** 从墓碑行复原（attach 读到 .cabin/manifest.json 的 id，但本地已软删过）。 */
+  revive(id: string, fields: Partial<Pick<CabinRow,
+    "name" | "path" | "status" | "requirements" | "org" | "mainline_strategy"
+  >>, now: string): void {
+    const sets: string[] = ["deleted_at = NULL", "version = version + 1", "updated_at = ?"]
+    const vals: unknown[] = [now]
+    for (const [k, v] of Object.entries(fields)) {
+      if (v === undefined) continue
+      sets.push(`${k} = ?`)
+      vals.push(v)
+    }
+    vals.push(id)
+    this.stmt(`UPDATE cabins SET ${sets.join(", ")} WHERE id = ?`).run(...vals)
   }
 
   // ── iterations ──

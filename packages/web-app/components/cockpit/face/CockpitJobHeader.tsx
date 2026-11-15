@@ -107,6 +107,8 @@ export interface CockpitJobHeaderProps {
   onGoHandle?: () => void
   /** 按 kind 的真实动作（JobFace/CockpitTaskFace 拼好）。 */
   actions?: ReactNode
+  /** 项目签（作业有项目锚点才给）：点它打开项目面。 */
+  projectTag?: ReactNode
 }
 
 export function CockpitJobHeader({
@@ -126,6 +128,7 @@ export function CockpitJobHeader({
   costLabel,
   onGoHandle,
   actions,
+  projectTag,
 }: CockpitJobHeaderProps) {
   // 走表：作业还在跑时 ⏱ 每秒刷新；终态/未开始不挂定时器。
   const [now, setNow] = useState(() => Date.now())
@@ -150,6 +153,9 @@ export function CockpitJobHeader({
     bucket.push(
       <span key={key} className={className} title={text}>{text}</span>,
     )
+  }
+  if (projectTag) {
+    left.push(<span key="project" className="ck12-jh-project">{projectTag}</span>)
   }
   push(left, 'branch', branch, 'ck12-jh-branch')
   push(left, 'doing', doing, 'ck12-jh-doing')

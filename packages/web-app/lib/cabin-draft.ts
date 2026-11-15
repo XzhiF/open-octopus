@@ -8,9 +8,17 @@
 //
 // 取名 v1 不用 LLM：关键词表 → 确定性、零延迟、可测，接口位留给 async 版本。
 
+/** 项目关联：ORG（org+repo）/ 舱内本地（localPath）/ 舱外（absolutePath+external）。
+ *  老草稿只有 {org, repo} —— source 缺省按 org 读，保持兼容。 */
 export interface CabinProjectRef {
-  org: string
+  source?: 'org' | 'local'
+  org?: string
   repo: string
+  /** 舱内相对路径（source=local）。 */
+  localPath?: string
+  /** 舱外绝对路径（显式登记）。 */
+  absolutePath?: string
+  external?: boolean
 }
 
 export interface CabinDraft {
@@ -65,7 +73,11 @@ export function readCabinDraft(now = Date.now()): CabinDraft | null {
       path: typeof parsed.path === 'string' && parsed.path ? parsed.path : null,
       projects: Array.isArray(parsed.projects)
         ? parsed.projects.filter((p): p is CabinProjectRef =>
-            !!p && typeof p === 'object' && typeof (p as CabinProjectRef).org === 'string' && typeof (p as CabinProjectRef).repo === 'string')
+            !!p && typeof p === 'object'
+            && typeof (p as CabinProjectRef).repo === 'string'
+            && (typeof (p as CabinProjectRef).org === 'string'
+              || typeof (p as CabinProjectRef).localPath === 'string'
+              || typeof (p as CabinProjectRef).absolutePath === 'string'))
         : [],
       requirements: typeof parsed.requirements === 'string' ? parsed.requirements : '',
       updatedAt,
@@ -153,6 +165,8 @@ export function rememberDirProjects(path: string | null, projects: CabinProjectR
 // 取名：v5 起由服务端做（init 开头按需求取，见 server cabin-naming.ts）。
 // 前端只保留长度上限给输入框用。
 
+/** 与 server `projectKey()` 同构：org:<org>/<name> · local:<path>。 */
 export function projectKey(p: CabinProjectRef): string {
-  return `${p.org}/${p.repo}`
+  if (p.source === 'local') return `local:${p.localPath ?? p.absolutePath ?? p.repo}`
+  return `org:${p.org ?? ''}/${p.repo}`
 }

@@ -1388,9 +1388,13 @@ CREATE TABLE IF NOT EXISTS cabins (
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL,
   last_active_at TEXT,
-  archived_at TEXT
+  archived_at TEXT,
+  -- 软删除（2026-11-15）：删舱不清账 —— 行留在表里，计费 / Trace / 验收历史都还在，
+  -- 只是不再出现在列表和接口里。一个目录一个舱的唯一约束只约束「活着的舱」，
+  -- 所以软删之后同一个目录还能再建新舱。
+  deleted_at TEXT
 );
-CREATE UNIQUE INDEX IF NOT EXISTS ux_cabins_path ON cabins(path);
+CREATE UNIQUE INDEX IF NOT EXISTS ux_cabins_path ON cabins(path) WHERE deleted_at IS NULL;
 CREATE INDEX IF NOT EXISTS idx_cabins_status ON cabins(status);
 
 CREATE TABLE IF NOT EXISTS cabin_iterations (

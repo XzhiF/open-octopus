@@ -26,19 +26,43 @@ export type CabinDetail = CabinDTO & {
   cockpit_prefs?: Record<string, unknown> | null
 }
 
-/** config.json.repos[] entry as the cabin repos endpoint answers it, plus the
- *  route's git enrichment (branch/commit of the cabin worktree). */
+/** 并行 worktree 实例（同一项目多条分支并行）。 */
+export interface CabinRepoWorktree {
+  path: string
+  branch: string
+  instance: string
+  created_at?: string
+}
+
+/** 舱籍项目视图（2026-11-15 契约）：ORG / 本地 / 外部同表不同源。
+ *  `git` 由 route 富化，目标 = worktree_path ?? main_path（没有工作树也有分支）。 */
 export interface CabinRepoEntry {
+  key: string
   name: string
-  group?: string
-  repoName?: string
-  main_path?: string
-  worktree_path?: string
-  branch?: string
+  source: 'org' | 'local'
+  org: string | null
+  group: string | null
+  repoName: string | null
+  main_path: string | null
+  local_path: string | null
+  external: boolean
+  mainline_branch: string | null
+  worktree_path: string | null
+  branch: string | null
+  worktrees: CabinRepoWorktree[]
   git?: {
     branch: string; detached: boolean; commit: string
     msg?: string; at?: string; remote?: string | null
   } | null
+}
+
+/** 建舱/扫描候选（相对扫描根）。 */
+export interface LocalProjectCandidate {
+  name: string
+  local_path: string
+  branch: string | null
+  dirty: boolean
+  remote: string | null
 }
 
 export interface CabinWorktreeGroup {
@@ -89,8 +113,15 @@ export interface CreateCabinInput {
   org?: string | null
   /** 老调用方：单 org + 仓库名列表。 */
   repos?: string[]
-  /** 跨 org 的项目关联（优先于 org+repos）。 */
-  projects?: Array<{ org: string; repo: string }>
+  /** 项目关联（优先于 org+repos）：ORG / 舱内本地 / 舱外显式登记。 */
+  projects?: Array<{
+    source?: 'org' | 'local'
+    org?: string
+    repo: string
+    localPath?: string
+    absolutePath?: string
+    external?: boolean
+  }>
 }
 
 /** POST /api/cabins 的完整结果：`created:false` = 目录已经是一个舱（一目录一舱）。 */
@@ -149,9 +180,23 @@ export async function patchCabin(id: string, version: number, fields: PatchCabin
   return body.cabin
 }
 
-export async function deleteCabin(id: string): Promise<{ ok: true }> {
-  const res = await fetch(url(`/${id}`), { method: "DELETE" })
-  return handleResponse<{ ok: true }>(res)
+/** 删舱 = 软删除（2026-11-15 用户口径：平台计费，账不能删）。行留在库里，
+ *  计费 / Trace / 验收历史都还能追；列表与接口从此看不见它。
+ *  `deleteFiles: true` = 确认弹框里勾了「同时删除本地文件」，连舱目录一起删。 */
+export interface DeleteCabinOptions {
+  deleteFiles?: boolean
+}
+
+export interface DeleteCabinResult {
+  ok: true
+  /** 目录真的删掉了才 true（未勾选 / 路径受保护 / 删失败都是 false）。 */
+  deleted_files: boolean
+}
+
+export async function deleteCabin(id: string, opts: DeleteCabinOptions = {}): Promise<DeleteCabinResult> {
+  const query = opts.deleteFiles ? '?delete_files=1' : ''
+  const res = await fetch(url(`/${id}${query}`), { method: "DELETE" })
+  return handleResponse<DeleteCabinResult>(res)
 }
 
 // ============ Init gate ============
@@ -269,20 +314,66 @@ export async function deleteCabinIteration(id: string, iterationId: string): Pro
 
 // ============ Repos / worktrees ============
 
-export async function listCabinRepos(id: string): Promise<CabinRepoEntry[]> {
-  const res = await fetch(url(`/${id}/repos`))
+export async function fetchCabinRepos(
+  id: string, opts: { enrich?: boolean } = {},
+): Promise<CabinRepoEntry[]> {
+  const qs = opts.enrich === false ? '?enrich=0' : ''
+  const res = await fetch(url(`/${encodeURIComponent(id)}/repos${qs}`))
   const body = await handleResponse<{ repos: CabinRepoEntry[] }>(res)
   return body.repos
 }
 
-export async function addCabinRepo(id: string, name: string): Promise<CabinRepoEntry> {
-  const res = await fetch(url(`/${id}/repos`), {
-    method: "POST",
+/** 扫描一个绝对目录下的 git 仓库（建舱 / 绑定面板用；只读）。 */
+export async function scanLocalProjects(path: string): Promise<LocalProjectCandidate[]> {
+  const res = await fetch(url(`/local-projects?path=${encodeURIComponent(path)}`))
+  const body = await handleResponse<{ projects: LocalProjectCandidate[] }>(res)
+  return body.projects
+}
+
+export interface AddCabinRepoInput {
+  source?: 'org' | 'local'
+  name: string
+  org?: string
+  localPath?: string
+  absolutePath?: string
+  external?: boolean
+}
+
+export async function addCabinRepo(
+  id: string, input: string | AddCabinRepoInput,
+): Promise<CabinRepoEntry> {
+  const body = typeof input === 'string' ? { name: input } : input
+  const res = await fetch(url(`/${encodeURIComponent(id)}/repos`), {
+    method: 'POST',
     headers: JSON_HEADERS,
-    body: JSON.stringify({ name }),
+    body: JSON.stringify(body),
   })
-  const body = await handleResponse<{ repo: CabinRepoEntry }>(res)
-  return body.repo
+  return (await handleResponse<{ repo: CabinRepoEntry }>(res)).repo
+}
+
+export async function removeCabinRepo(id: string, name: string): Promise<{ removed: boolean }> {
+  const res = await fetch(url(`/${encodeURIComponent(id)}/repos/${encodeURIComponent(name)}`), {
+    method: 'DELETE',
+  })
+  return handleResponse<{ removed: boolean }>(res)
+}
+
+/** 显式开工作树；同分支已开 → 409（调用方按 CabinApiError.status 区分）。 */
+export async function createRepoWorktree(
+  id: string, name: string, opts: { branch?: string; instance?: string } = {},
+): Promise<CabinRepoEntry> {
+  const res = await fetch(url(`/${encodeURIComponent(id)}/repos/${encodeURIComponent(name)}/worktree`), {
+    method: 'POST',
+    headers: JSON_HEADERS,
+    body: JSON.stringify(opts),
+  })
+  return (await handleResponse<{ repo: CabinRepoEntry }>(res)).repo
+}
+
+export async function listCabinRepos(id: string): Promise<CabinRepoEntry[]> {
+  const res = await fetch(url(`/${id}/repos`))
+  const body = await handleResponse<{ repos: CabinRepoEntry[] }>(res)
+  return body.repos
 }
 
 export async function listCabinWorktrees(id: string): Promise<CabinWorktreeGroup[]> {
@@ -295,9 +386,12 @@ export async function listCabinWorktrees(id: string): Promise<CabinWorktreeGroup
 
 /** P3：作业 status/transport 派生自底层实体（K3），iteration_code 供面板展示。 */
 export type CabinJobView = CabinJob & {
+  /** 作业的项目锚点（空 = 未归属；不猜）。 */
   status: string
   transport: string
   iteration_code: string | null
+  /** 项目锚点（空/缺省 = 未归属；老服务端没有该字段）。 */
+  project_keys?: string[]
 }
 
 export async function listCabinJobs(id: string, signal?: AbortSignal): Promise<CabinJobView[]> {
@@ -416,6 +510,8 @@ export async function getCabinFindings(
 
 /** C7 舱级消耗（llm_calls_costed 派生 + 子代理单列防双算）。 */
 export interface CabinUsageJob {
+  /** 项目锚点（chat / 未归属为空/缺省）。 */
+  project_keys?: string[]
   job_id: string | null
   kind: "chat" | "task" | "workflow"
   label: string

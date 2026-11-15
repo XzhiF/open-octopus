@@ -82,6 +82,7 @@ export interface CockpitStateProviderProps {
 
 export function CockpitStateProvider({ entryCabinId, children }: CockpitStateProviderProps) {
   const [selection, setSelection] = useState<CockpitRef | null>(null)
+  const [projectFilter, setProjectFilterState] = useState<string | null>(null)
   const [tab, setTabState] = useState<CockpitTab>('overview')
   const [chat, setChat] = useState<CockpitChatApi | null>(null)
   const [chatWindowState, setChatWindowState] = useState<CockpitChatWindowState>(INITIAL_CHAT_WINDOW)
@@ -95,6 +96,7 @@ export function CockpitStateProvider({ entryCabinId, children }: CockpitStatePro
   }, [])
 
   const setTab = useCallback((next: CockpitTab) => setTabState(next), [])
+  const setProjectFilter = useCallback((next: string | null) => setProjectFilterState(next), [])
 
   // ── chat telemetry（S5 写，S6/S1 读；未接上恒 null）─────────────────
   const reportChat = useCallback((api: CockpitChatApi | null) => setChat(api), [])
@@ -214,6 +216,8 @@ export function CockpitStateProvider({ entryCabinId, children }: CockpitStatePro
       tab,
       select,
       setTab,
+      projectFilter,
+      setProjectFilter,
       chat,
       reportChat,
       chatWindow,
@@ -223,7 +227,7 @@ export function CockpitStateProvider({ entryCabinId, children }: CockpitStatePro
       layer,
     }),
     [
-      entryCabinId, selection, tab, select, setTab,
+      entryCabinId, selection, tab, select, setTab, projectFilter, setProjectFilter,
       chat, reportChat, chatWindow,
       railOpen, setRailOpen,
       fx, layer,

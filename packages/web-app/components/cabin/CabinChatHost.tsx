@@ -21,6 +21,8 @@ import {
 } from 'lucide-react'
 import { useCabins } from '@/hooks/use-cabins'
 import type { TaskView } from '@/lib/tasks-api'
+import type { CabinDetail } from '@/lib/cabin-api'
+import { useCabinRowActions } from '@/hooks/use-cabin-row-actions'
 import { useRouter } from '@/lib/app-navigation'
 import { cn } from '@/lib/utils'
 import { Sheet, SheetContent } from '@/components/ui/sheet'
@@ -57,7 +59,7 @@ export interface CabinChatHostProps {
 
 export function CabinChatHost({ onSelectCabin, onCreateCabin, onExitCabin }: CabinChatHostProps = {}) {
   const {
-    cabinId, cabin, view, openWindows, minimizedWindows, openModule,
+    cabinId, cabin, view, openWindows, minimizedWindows, openModule, refresh,
   } = useCabinContext()
   const { setStreaming, setPresenceActive } = useCockpit()
   const { enterCockpit } = useCockpitEntry()
@@ -136,6 +138,25 @@ export function CabinChatHost({ onSelectCabin, onCreateCabin, onExitCabin }: Cab
     onClick: () => openModule(id),
   })), [moduleState, openModule, personCount, attentionCount, openWindows])
 
+  // ── 左栏舱行：重命名 / 删除（2026-11-15 用户要求，跟任务行同一套手感）──
+  // 写库与列表刷新在 useCabinRowActions；这里只补「当前舱」两件事：
+  // 改了当前舱 → 舱头/门禁卡一起刷新；删了当前舱 → 当场离开。
+  const onCabinRenamed = useCallback((target: CabinDetail) => {
+    if (cabin?.id === target.id) void refresh()
+  }, [cabin?.id, refresh])
+
+  const onCabinDeleted = useCallback((target: CabinDetail) => {
+    if (cabinId !== target.id) return
+    if (onExitCabin) onExitCabin()
+    else router.push('/')
+  }, [cabinId, onExitCabin, router])
+
+  const { renameCabin, deleteCabinRow } = useCabinRowActions({
+    refresh: refreshCabins,
+    onRenamed: onCabinRenamed,
+    onDeleted: onCabinDeleted,
+  })
+
   const sidebarProps = {
     cabins,
     activeCabinId: cabinId,
@@ -152,6 +173,8 @@ export function CabinChatHost({ onSelectCabin, onCreateCabin, onExitCabin }: Cab
       }
     },
     onCancelDraft: cabinMode.cancelDraft,
+    onRenameCabin: renameCabin,
+    onDeleteCabin: deleteCabinRow,
     onSelectCabin: (id: string) => {
       if (id === cabinId) {
         // 点当前舱 = 回到舱主对话。左栏切到别的会话/任务后，这一下必须能回去

@@ -20,7 +20,7 @@ function makeRow(over: Partial<CabinRow> & { id: string; path: string }): CabinR
     requirements: "# 需求\n\n做一个结算平台", status: "initializing",
     mainline_strategy: "clean-main", org: null, init_state: null, cockpit_prefs: null,
     focused_job_id: null, version: 1,
-    created_at: ts, updated_at: ts, last_active_at: ts, archived_at: null,
+    created_at: ts, updated_at: ts, last_active_at: ts, archived_at: null, deleted_at: null,
     ...over,
   }
 }
@@ -155,7 +155,7 @@ describe("CabinInitService", () => {
     expect(failed.error).toContain("org")
   })
 
-  it("clones from the org registry and cuts spec-shaped worktrees (config.json.repos[] contract)", async () => {
+  it("clones from the org registry and registers the mainline WITHOUT cutting worktrees", async () => {
     // Real local git repo as the clone source; OCTOPUS_HOME points at a fixture.
     const octopusHome = fs.mkdtempSync(path.join(os.tmpdir(), "cabin-init-home-"))
     const prevHome = process.env.OCTOPUS_HOME
@@ -184,20 +184,86 @@ describe("CabinInitService", () => {
       await svc.runGate("cabin-1")
       expect(dao.findById("cabin-1")!.status).toBe("active")
 
-      // config.json.repos[] upgraded to the full spec shape resolveWorktree reads.
+      // 2026-11-15 口径：只登记项目 + 主线，不预建 worktree。
       const config = JSON.parse(fs.readFileSync(path.join(tmpDir, "config.json"), "utf-8"))
       expect(config.repos).toHaveLength(1)
       const entry = config.repos[0]
       expect(entry.name).toBe("demo")
+      expect(entry.source).toBe("org")
       expect(entry.main_path).toBeTruthy()
-      expect(entry.branch).toBe("cabin-cabin-1")
-      expect(fs.existsSync(entry.worktree_path)).toBe(true)
-      expect(fs.existsSync(path.join(entry.worktree_path, "a.txt"))).toBe(true)
-      // The clone's origin points at the local fixture repo, so mainline sync
-      // legitimately succeeds; the worktree lands on the cabin branch.
+      expect(entry.mainline_branch).toBe("main")
+      expect(entry.branch).toBeUndefined()
+      expect(entry.worktree_path).toBeUndefined()
+      expect(fs.existsSync(path.join(tmpDir, "projects"))).toBe(false)
+      // 舱目录契约：CLAUDE.md 写清只读门槛与开工作树的命令。
+      const claude = fs.readFileSync(path.join(tmpDir, "CLAUDE.md"), "utf-8")
+      expect(claude).toContain("只读")
+      expect(claude).toContain("worktree add")
       const mainline = svc.loadState(dao.findById("cabin-1")!).items.find((i) => i.key === "mainline")!
       expect(mainline.state).toBe("done")
-      expect(mainline.sub).toContain("worktree 就绪")
+      expect(mainline.sub).toContain("未预建工作树")
+    } finally {
+      if (prevHome === undefined) delete process.env.OCTOPUS_HOME
+      else process.env.OCTOPUS_HOME = prevHome
+      fs.rmSync(octopusHome, { recursive: true, force: true })
+    }
+  })
+
+  it("ORG + 本地混合舱：两者都只登记，不建工作树，本地不克隆", async () => {
+    const octopusHome = fs.mkdtempSync(path.join(os.tmpdir(), "cabin-init-mixed-home-"))
+    const prevHome = process.env.OCTOPUS_HOME
+    process.env.OCTOPUS_HOME = octopusHome
+    try {
+      const git = (args: string[], cwd: string) =>
+        spawnSync("git", ["-c", "user.email=t@t", "-c", "user.name=t", ...args], { cwd, encoding: "utf-8" })
+      const sourceRepo = path.join(octopusHome, "source-demo")
+      fs.mkdirSync(sourceRepo, { recursive: true })
+      expect(git(["init", "-b", "main"], sourceRepo).status).toBe(0)
+      fs.writeFileSync(path.join(sourceRepo, "a.txt"), "hello")
+      expect(git(["add", "."], sourceRepo).status).toBe(0)
+      expect(git(["commit", "-m", "init"], sourceRepo).status).toBe(0)
+
+      const reposDir = path.join(octopusHome, "orgs", "test-org", "repos")
+      fs.mkdirSync(reposDir, { recursive: true })
+      fs.writeFileSync(path.join(reposDir, "manifest.json"), writeManifestJson({
+        g: [{ name: "demo", git_url: sourceRepo, branch: "main", manual_tags: [], group: "g" }],
+      }))
+
+      // 舱目录里的本地项目（不克隆）。
+      const localRepo = path.join(tmpDir, "apps", "console")
+      fs.mkdirSync(localRepo, { recursive: true })
+      expect(git(["init", "-b", "feat/console"], localRepo).status).toBe(0)
+      fs.writeFileSync(path.join(localRepo, "b.txt"), "local")
+      expect(git(["add", "."], localRepo).status).toBe(0)
+      expect(git(["commit", "-m", "init"], localRepo).status).toBe(0)
+
+      seed({ org: "test-org" })
+      fs.writeFileSync(path.join(tmpDir, "config.json"), JSON.stringify({
+        name: "test",
+        repos: [
+          { name: "demo", source: "org", org: "test-org", group: "test-org" },
+          { name: "console", source: "local", local_path: "apps/console" },
+        ],
+      }))
+
+      await svc.runGate("cabin-1")
+      expect(dao.findById("cabin-1")!.status).toBe("active")
+
+      const config = JSON.parse(fs.readFileSync(path.join(tmpDir, "config.json"), "utf-8"))
+      const org = config.repos.find((r: { name: string }) => r.name === "demo")
+      const local = config.repos.find((r: { name: string }) => r.name === "console")
+      expect(org.main_path).toBeTruthy()
+      expect(org.mainline_branch).toBe("main")
+      expect(org.worktree_path).toBeUndefined()
+      expect(local.source).toBe("local")
+      expect(local.mainline_branch).toBe("feat/console")
+      expect(local.worktree_path).toBeUndefined()
+      expect(fs.existsSync(path.join(tmpDir, "projects"))).toBe(false)
+
+      const items = svc.loadState(dao.findById("cabin-1")!).items
+      expect(items.find((i) => i.key === "clone")!.sub).toContain("1 个本地映射")
+      expect(items.find((i) => i.key === "mainline")!.sub).toContain("2 个项目登记")
+      expect(items.find((i) => i.key === "mainline")!.sub).toContain("未预建工作树")
     } finally {
       if (prevHome === undefined) delete process.env.OCTOPUS_HOME
       else process.env.OCTOPUS_HOME = prevHome

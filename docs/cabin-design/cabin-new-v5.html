@@ -475,13 +475,13 @@ kbd{border:1px solid var(--bd);border-radius:4px;padding:0 4px;font-size:9.5px;c
               <div class="ph">绑定项目 <span class="x" id="projPopX">Esc</span></div>
               <div class="search">
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><path d="M20 20l-3.5-3.5"/></svg>
-                <input id="projSearch" placeholder="搜项目名或 org…（共 14 个）" />
+                <input id="projSearch" placeholder="搜项目名 / org / 本地目录…" />
                 <button class="clr" id="projClear">清空</button>
               </div>
               <div class="selbar" id="selBar"></div>
               <div class="list" id="projList"></div>
               <div class="echo" id="projEcho" style="display:none"></div>
-              <div class="note">项目是关联关系，不搬代码 —— 可跨多个 org 一起绑。</div>
+              <div class="note">项目是关联关系，不搬代码 —— ORG 项目按 manifest；<b style="color:var(--dim)">本地目录项目在建舱时映射</b>（不克隆、不预建工作树）。</div>
             </div>
           </div>
 
@@ -565,6 +565,16 @@ const ECHO = {
   '~/Projects/ai/XzhiF/ledger':       ['XzhiF/ledger', 'XzhiF/engine'],
   '~/Projects/ai/XzhiF/aurora':       ['XzhiF/web-app'],
 }
+/* 当前工作目录下的本地项目：建舱初始化时映射成关联。
+   不是 ORG 仓库，不克隆；也不预建工作树（按作业开）。 */
+const LOCAL = {
+  '~/Projects/ai/XzhiF/open-octopus': [],
+  '~/Projects/ai/XzhiF/ledger': [],
+  '~/Projects/ai/XzhiF/aurora': [
+    { name: 'console', path: 'apps/console', branch: 'feat/console', dirty: false },
+    { name: 'scripts', path: 'tools/scripts', branch: 'main', dirty: true },
+  ],
+}
 /* 已经是舱的目录：一个目录只能有一个舱 → 选中要拦住，只允许打开已有舱 */
 const EXISTING = {
   '~/Projects/ai/XzhiF/open-octopus': '八爪舱',
@@ -597,8 +607,8 @@ const GREET = '开个新舱。说说它要做什么。'
 const GATE = [
   ['dir', '目录可写', ''],
   ['git', 'git 可用', ''],
-  ['clone', '克隆仓库', ''],
-  ['mainline', '主线分支', ''],
+  ['clone', '克隆 ORG 仓库', ''],
+  ['mainline', '项目 / 主线登记', '不预建工作树'],
   ['skeleton', '舱骨架 .cabin/', ''],
   ['requirements', '需求落盘', '.cabin/requirements.md'],
   ['first-iteration', '首迭代提案', '起主会话'],
@@ -766,7 +776,9 @@ function renderProjList() {
 
   const q = state.pQuery.trim().toLowerCase()
   const hits = PROJECTS.filter((p) => !q || p.name.toLowerCase().includes(q) || p.org.toLowerCase().includes(q))
-  if (hits.length === 0) {
+  const localHits = (LOCAL[state.dir] || []).filter((p) =>
+    !q || p.name.toLowerCase().includes(q) || p.path.toLowerCase().includes(q))
+  if (hits.length === 0 && localHits.length === 0) {
     const none = document.createElement('div')
     none.className = 'none'
     none.textContent = `没有匹配「${state.pQuery.trim()}」的项目`
@@ -774,6 +786,29 @@ function renderProjList() {
     $('projEcho').style.display = 'none'
     return
   }
+  /* 本地目录项目：建舱初始化时映射；不是 ORG 仓库，不克隆、不预建工作树 */
+  if (localHits.length) {
+    const h = document.createElement('div')
+    h.className = 'org'
+    h.innerHTML = `本地目录 · 建舱时映射 <span class="n">${localHits.length}</span>`
+    box.appendChild(h)
+    for (const p of localHits) {
+      const key = 'local/' + p.name
+      const b = document.createElement('button')
+      b.className = 'it' + (state.projects.includes(key) ? ' on' : '')
+      const hl = q ? p.name.replace(new RegExp(`(${q.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')})`, 'ig'), '<mark>$1</mark>') : p.name
+      b.innerHTML = `<span class="p">${hl} <span style="font-family:var(--font-mono);font-size:9px;color:var(--faint)">`
+        + `${p.path} · ${p.branch}</span></span><span class="tag">本地</span><span class="ck"></span>`
+      b.onclick = () => {
+        state.projects = state.projects.includes(key)
+          ? state.projects.filter((x) => x !== key)
+          : [...state.projects, key]
+        renderProjList(); render()
+      }
+      box.appendChild(b)
+    }
+  }
+
   const perOrg = hits.reduce((m, p) => (m[p.org] = (m[p.org] || 0) + 1, m), {})
   let lastOrg = ''
   for (const p of hits) {
@@ -798,8 +833,12 @@ function renderProjList() {
     box.appendChild(b)
   }
   const echo = ECHO[state.dir]
-  $('projEcho').style.display = echo ? '' : 'none'
-  if (echo) $('projEcho').textContent = `已从这个工作空间回显 ${echo.length} 个项目 —— 可以增减，也能跨 org 再加。`
+  const locN = (LOCAL[state.dir] || []).length
+  $('projEcho').style.display = echo || locN ? '' : 'none'
+  if (echo || locN) {
+    $('projEcho').textContent = `${echo ? `已从这个工作空间回显 ${echo.length} 个 ORG 项目` : '这个目录还没有回显的 ORG 项目'}`
+      + `${locN ? `；目录里还有 ${locN} 个本地项目可以映射` : ''} —— 可以增减，也能跨 org 再加。`
+  }
 }
 
 /* ═════════ 两个下拉 ═════════ */
@@ -1016,12 +1055,14 @@ function buildGate() {
 
 async function runInit() {
   await sleep(260)
-  const n = state.projects.length
+  const orgN = state.projects.filter((k) => !k.startsWith('local/')).length
+  const locN = state.projects.length - orgN
   const cloneLi = document.querySelector('#gateList li[data-key="clone"]')
   if (cloneLi) {
     const sub = document.createElement('span')
     sub.className = 'sub'
-    sub.textContent = n ? `${n} 个仓库` : '无仓库，跳过'
+    sub.textContent = orgN ? `${orgN} 个仓库` : '无 ORG 仓库，跳过'
+    if (locN) sub.textContent += ` · ${locN} 个本地映射`
     cloneLi.appendChild(sub)
   }
   for (const [key] of GATE) {

@@ -19,6 +19,7 @@ import {
   type CockpitRowGroup,
 } from '../fleet/fleet-model'
 import { sameCockpitRef, type CockpitRef } from '../state/cockpit-state'
+import { projectNameFromKey, rowProjectKeys } from '../projects/project-model'
 import { useCockpitState } from '../state/CockpitStateProvider'
 
 const RAIL_LAYER_PRIORITY = 70
@@ -125,7 +126,7 @@ interface CabinChip {
 
 export function CockpitFleetRail() {
   const { rows, counts, arrivals, loading, error, refetch } = useCockpitFleet()
-  const { selection, select, railOpen, setRailOpen, layer } = useCockpitState()
+  const { selection, select, railOpen, setRailOpen, layer, projectFilter, setProjectFilter } = useCockpitState()
   const cabinCtx = useCabinOptional()
   const entryCabinId = cabinCtx?.cabin?.id ?? null
   const entryCabinName = cabinCtx?.cabin?.name ?? null
@@ -156,10 +157,11 @@ export function CockpitFleetRail() {
     if (cabinFilter !== activeFilter) setCabinFilter(activeFilter)
   }, [cabinFilter, activeFilter])
 
-  const visible = useMemo(
-    () => (activeFilter === 'all' ? rows : rows.filter((row) => row.cabinId === activeFilter)),
-    [rows, activeFilter],
-  )
+  const visible = useMemo(() => {
+    const byCabin = activeFilter === 'all' ? rows : rows.filter((row) => row.cabinId === activeFilter)
+    if (!projectFilter) return byCabin
+    return byCabin.filter((row) => rowProjectKeys(row).includes(projectFilter))
+  }, [rows, activeFilter, projectFilter])
 
   // 分桶只决定「放在哪个组标题下」，桶内顺序 = sortRows 的既有顺序。
   const grouped = useMemo(() => {
@@ -326,6 +328,21 @@ export function CockpitFleetRail() {
         ))}
       </div>
 
+      {projectFilter && (
+        <div className="ck12-rail-pfilter" data-testid="cockpit-rail-project-filter">
+          <span>只看 <b>{projectNameFromKey(projectFilter)}</b></span>
+          <b>{visible.length} 条作业</b>
+          <button
+            type="button"
+            aria-label="清除项目筛选"
+            title="清除项目筛选"
+            onClick={() => setProjectFilter(null)}
+          >
+            ✕
+          </button>
+        </div>
+      )}
+
       <div
         className="ck12-rail-list"
         role="listbox"
@@ -419,7 +436,16 @@ export function CockpitFleetRail() {
                             style={{ background: cabinTone(row.cabinId) }}
                             aria-hidden="true"
                           />
-                          <span className="ck12-rail-meta-tx">{meta}</span>
+                          <span className="ck12-rail-meta-tx">
+                            {rowProjectKeys(row).length > 0 && (
+                              <span className="ck12-rail-proj">
+                                {projectNameFromKey(rowProjectKeys(row)[0])}
+                                {rowProjectKeys(row).length > 1 ? ` +${rowProjectKeys(row).length - 1}` : ''}
+                                {' / '}
+                              </span>
+                            )}
+                            {meta}
+                          </span>
                         </span>
                       </span>
 

@@ -274,6 +274,19 @@ export class GitOps {
   }
 
   /**
+   * 只读主仓的拉取：fetch + merge --ff-only（分支落后才成功，分叉直接抛）。
+   * 舱籍第三轮门槛（design 21 §1.6 ⑤）：ORG 主仓只允许这一种写向动作。
+   */
+  async pullFastForward(projectPath: string): Promise<{ branch: string; commit: string }> {
+    await runGit(projectPath, ["fetch", "origin"], 120_000)
+    const { stdout } = await runGit(projectPath, ["symbolic-ref", "--short", "HEAD"])
+    const branch = stdout.trim()
+    await runGit(projectPath, ["merge", "--ff-only", `origin/${branch}`])
+    const commit = await this.getHeadCommit(projectPath)
+    return { branch, commit }
+  }
+
+  /**
    * 镜像同步（draft repo-sync 2026-09-08）：把 repos 主 clone 强制对齐到
    * origin/<默认分支> 最新。与 pullLatest 的区别是**语义级**的：主 clone 按
    * 一次性镜像对待（用户授权决策）——

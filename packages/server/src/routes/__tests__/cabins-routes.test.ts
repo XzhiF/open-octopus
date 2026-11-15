@@ -182,10 +182,26 @@ describe("/api/cabins routes", () => {
     expect((await patch(`/api/cabins/${cabin.id}/iterations/${it.id}`, { status: "active" })).status).toBe(200)
   })
 
-  it("DELETE /:id removes the cabin", async () => {
+  it("DELETE /:id 软删：默认留本地目录；?delete_files=1 才删", async () => {
     const cabin = await createCabin()
-    expect((await app.request(`/api/cabins/${cabin.id}`, { method: "DELETE" })).status).toBe(200)
+    const res = await app.request(`/api/cabins/${cabin.id}`, { method: "DELETE" })
+    expect(res.status).toBe(200)
+    expect(await res.json()).toEqual({ ok: true, deleted_files: false })
+    expect(fs.existsSync(tmpDir)).toBe(true)
     expect((await app.request(`/api/cabins/${cabin.id}`)).status).toBe(404)
+    expect((await (await app.request("/api/cabins")).json()).cabins).toHaveLength(0)
+
+    // 同目录可以重新建（软删的行不占 path）
+    const again = await post("/api/cabins", { name: "重开舱", path: tmpDir })
+    expect(again.status).toBe(201)
+    const againBody = await again.json()
+    expect(againBody.created).toBe(true)
+
+    const second = againBody.cabin
+    const withFiles = await app.request(`/api/cabins/${second.id}?delete_files=1`, { method: "DELETE" })
+    expect(withFiles.status).toBe(200)
+    expect((await withFiles.json()).deleted_files).toBe(true)
+    expect(fs.existsSync(tmpDir)).toBe(false)
   })
 
   it("GET /:id/events streams SSE with an immediate heartbeat", async () => {

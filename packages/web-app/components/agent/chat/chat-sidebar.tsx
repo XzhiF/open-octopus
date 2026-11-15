@@ -24,6 +24,7 @@ import type { AgentSession } from '@/lib/agent/types'
 import type { TaskView } from '@/lib/tasks-api'
 import type { CabinDetail } from '@/lib/cabin-api'
 import { CABIN_STATUS_META } from '@/components/cabin/cabin-meta'
+import { CabinDeleteDialog, CabinRenameDialog } from '@/components/cabin/CabinRowDialogs'
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -86,6 +87,10 @@ interface ChatSidebarProps {
   onOpenDraft?: () => void
   /** 悬停 ×：丢弃草稿（零请求）。 */
   onCancelDraft?: () => void
+  /** 舱行「⋯」：重命名（2026-11-15 用户要求，跟任务行同一个手感）。 */
+  onRenameCabin?: (cabin: CabinDetail, name: string) => Promise<void>
+  /** 舱行「⋯」：删除。软删除 + 确认弹框；`deleteFiles` = 勾了「同时删除本地文件」。 */
+  onDeleteCabin?: (cabin: CabinDetail, opts: { deleteFiles: boolean }) => Promise<void>
   /** 桌面舱模式：退出回普通对话（舱段标题右侧的小箭头）。兄弟壳不传。 */
   onExitCabin?: () => void
 }
@@ -265,11 +270,17 @@ export function ChatSidebar({
   activePendingCabin,
   onOpenDraft,
   onCancelDraft,
+  onRenameCabin,
+  onDeleteCabin,
   onExitCabin,
 }: ChatSidebarProps) {
   const [editingId, setEditingId] = useState<string | null>(null)
   const [editTitle, setEditTitle] = useState('')
   const [deleteTarget, setDeleteTarget] = useState<string | null>(null)
+  // 舱行的两个弹框：null = 关着。
+  const [cabinRenameTarget, setCabinRenameTarget] = useState<CabinDetail | null>(null)
+  const [cabinDeleteTarget, setCabinDeleteTarget] = useState<CabinDetail | null>(null)
+  const [cabinBusy, setCabinBusy] = useState(false)
   const [query, setQuery] = useState('')
   const searchInputRef = useRef<HTMLInputElement>(null)
   const renameInputRef = useRef<HTMLInputElement>(null)
@@ -378,6 +389,38 @@ export function ChatSidebar({
       toast.success('名称已复制', { duration: 1500 })
     } catch {
       toast.error('复制失败，请手动复制')
+    }
+  }
+
+  // ── 舱行：重命名 / 删除（2026-11-15）──────────────────────────────
+  // 写库交给宿主（CabinChatHost）：它知道要不要刷新当前舱、删的是不是当前舱。
+  const confirmCabinRename = async (name: string) => {
+    const target = cabinRenameTarget
+    if (!target || cabinBusy) return
+    setCabinBusy(true)
+    try {
+      await onRenameCabin?.(target, name)
+      setCabinRenameTarget(null)
+      toast.success('作战舱已重命名')
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : '重命名失败')
+    } finally {
+      setCabinBusy(false)
+    }
+  }
+
+  const confirmCabinDelete = async (opts: { deleteFiles: boolean }) => {
+    const target = cabinDeleteTarget
+    if (!target || cabinBusy) return
+    setCabinBusy(true)
+    try {
+      await onDeleteCabin?.(target, opts)
+      setCabinDeleteTarget(null)
+      toast.success('作战舱已删除（历史与计费保留）')
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : '删除失败')
+    } finally {
+      setCabinBusy(false)
     }
   }
 
@@ -592,25 +635,77 @@ export function ChatSidebar({
                   {filteredCabins.map((c) => {
                     const meta = CABIN_STATUS_META[c.status]
                     const active = activeCabinId === c.id
+                    // 行菜单（2026-11-15）：跟任务行同一套 —— 悬停出「⋯」，
+                    // 点开是 重命名 / 复制名称 / 删除。
+                    const manageable = !!onRenameCabin || !!onDeleteCabin
                     return (
-                      <button
-                        key={c.id}
-                        type="button"
-                        data-cabin-row={c.id}
-                        aria-current={active ? 'page' : undefined}
-                        title={`${c.name} · ${meta.label}`}
-                        onClick={() => onSelectCabin?.(c.id)}
-                        className={cn(
-                          ROW,
-                          'gap-2',
-                          active ? 'bg-white/[0.07] text-pop-ink' : 'text-pop-dim hover:bg-white/[0.04] hover:text-pop-ink',
+                      <div key={c.id} className="group/cabin relative">
+                        <button
+                          type="button"
+                          data-cabin-row={c.id}
+                          aria-current={active ? 'page' : undefined}
+                          title={`${c.name} · ${meta.label}`}
+                          onClick={() => onSelectCabin?.(c.id)}
+                          className={cn(
+                            ROW,
+                            'gap-2',
+                            manageable && 'pr-7',
+                            active ? 'bg-white/[0.07] text-pop-ink' : 'text-pop-dim hover:bg-white/[0.04] hover:text-pop-ink',
+                          )}
+                        >
+                          <Container className="size-[13px] shrink-0 text-pop-yellow/80" strokeWidth={1.9} />
+                          <span className={cn('size-1.5 shrink-0 rounded-full', meta.dot)} aria-hidden />
+                          <span className="min-w-0 flex-1 truncate">{c.name}</span>
+                          {/* 悬停让位给「⋯」，不然状态字和按钮会叠在一起 */}
+                          <span
+                            className={cn(
+                              'shrink-0 text-[9.5px] text-pop-dim/70',
+                              manageable && 'group-hover/cabin:opacity-0',
+                            )}
+                          >
+                            {meta.label}
+                          </span>
+                        </button>
+                        {manageable && (
+                          <DropdownMenu>
+                            <DropdownMenuTrigger asChild>
+                              <button
+                                type="button"
+                                aria-label={`作战舱操作 ${c.name}`}
+                                title="作战舱操作"
+                                data-testid="cabin-row-menu"
+                                onClick={(event) => event.stopPropagation()}
+                                className="absolute right-1 top-1/2 grid size-5 -translate-y-1/2 place-items-center rounded text-pop-dim opacity-0 transition-all hover:bg-white/[0.08] hover:text-pop-ink group-hover/cabin:opacity-100"
+                              >
+                                <MoreHorizontal className="size-3.5" />
+                              </button>
+                            </DropdownMenuTrigger>
+                            <DropdownMenuContent align="end" side="bottom" sideOffset={4}>
+                              {onRenameCabin && (
+                                <DropdownMenuItem
+                                  data-testid="cabin-row-rename"
+                                  onClick={() => setCabinRenameTarget(c)}
+                                  className="gap-2"
+                                >
+                                  <Pencil className="size-3.5" /> 重命名
+                                </DropdownMenuItem>
+                              )}
+                              <DropdownMenuItem onClick={() => void copyName(c.name)} className="gap-2">
+                                <Copy className="size-3.5" /> 复制名称
+                              </DropdownMenuItem>
+                              {onDeleteCabin && (
+                                <DropdownMenuItem
+                                  data-testid="cabin-row-delete"
+                                  onClick={() => setCabinDeleteTarget(c)}
+                                  className="gap-2 text-pop-red focus:text-pop-red"
+                                >
+                                  <Trash2 className="size-3.5" /> 删除
+                                </DropdownMenuItem>
+                              )}
+                            </DropdownMenuContent>
+                          </DropdownMenu>
                         )}
-                      >
-                        <Container className="size-[13px] shrink-0 text-pop-yellow/80" strokeWidth={1.9} />
-                        <span className={cn('size-1.5 shrink-0 rounded-full', meta.dot)} aria-hidden />
-                        <span className="min-w-0 flex-1 truncate">{c.name}</span>
-                        <span className="shrink-0 text-[9.5px] text-pop-dim/70">{meta.label}</span>
-                      </button>
+                      </div>
                     )
                   })}
                 </div>
@@ -907,6 +1002,20 @@ export function ChatSidebar({
           if (deleteTarget) onDeleteSession(deleteTarget)
           setDeleteTarget(null)
         }}
+      />
+
+      <CabinRenameDialog
+        cabin={cabinRenameTarget}
+        busy={cabinBusy}
+        onClose={() => { if (!cabinBusy) setCabinRenameTarget(null) }}
+        onSubmit={(name) => void confirmCabinRename(name)}
+      />
+
+      <CabinDeleteDialog
+        cabin={cabinDeleteTarget}
+        busy={cabinBusy}
+        onClose={() => { if (!cabinBusy) setCabinDeleteTarget(null) }}
+        onConfirm={(opts) => void confirmCabinDelete(opts)}
       />
     </div>
   )

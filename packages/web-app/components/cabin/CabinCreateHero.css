@@ -846,3 +846,82 @@
     opacity: 0.6;
   }
 }
+/* ── 舱籍第三轮：本地目录映射 / 舱外登记（2026-11-15）───────────── */
+.cc-pop .cc-group + .cc-group {
+  margin-top: 2px;
+}
+.cc-pop .cc-it[data-local='true'] {
+  height: auto;
+  min-height: 34px;
+  display: grid;
+  grid-template-columns: 1fr auto auto;
+  grid-template-areas:
+    'p tag ck'
+    'sub sub ck';
+  row-gap: 1px;
+  padding: 4px 8px;
+}
+.cc-pop .cc-it[data-local='true'] .cc-p { grid-area: p; }
+.cc-pop .cc-it[data-local='true'] .cc-tag { grid-area: tag; }
+.cc-pop .cc-it[data-local='true'] .cc-ck { grid-area: ck; align-self: center; }
+.cc-pop .cc-it .cc-sub {
+  grid-area: sub;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: 9.5px;
+  color: color-mix(in srgb, var(--pop-dim) 62%, transparent);
+}
+.cc-pop .cc-none-sm {
+  padding: 4px 10px 6px;
+  font-size: 10px;
+}
+.cc-pop .cc-spin {
+  margin-left: auto;
+}
+.cc-pop .cc-ext {
+  padding: 6px 4px 2px;
+}
+.cc-pop .cc-ext-btn {
+  width: 100%;
+  text-align: left;
+  padding: 5px 8px;
+  border-radius: 7px;
+  font-size: 10.5px;
+  color: color-mix(in srgb, var(--pop-dim) 78%, transparent);
+}
+.cc-pop .cc-ext-btn:hover {
+  background: rgba(255, 255, 255, 0.05);
+  color: var(--pop-ink);
+}
+.cc-pop .cc-ext-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.cc-pop .cc-ext-input {
+  flex: 1;
+  min-width: 0;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid var(--pop-bd);
+  border-radius: 6px;
+  padding: 4px 7px;
+  font-size: 10.5px;
+  font-family: var(--font-mono, ui-monospace, monospace);
+  color: var(--pop-ink);
+}
+.cc-pop .cc-ext-ok,
+.cc-pop .cc-ext-cancel {
+  flex: none;
+  font-size: 10.5px;
+  padding: 3px 8px;
+  border-radius: 6px;
+  border: 1px solid var(--pop-bd);
+  color: var(--pop-dim);
+}
+.cc-pop .cc-ext-ok {
+  color: var(--pop-cyan);
+  border-color: color-mix(in srgb, var(--pop-cyan) 45%, transparent);
+}

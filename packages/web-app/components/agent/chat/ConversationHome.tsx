@@ -17,6 +17,7 @@ import { ChatTab, type ChatTabCabinBridge } from '@/components/agent/chat/ChatTa
 import { CabinDesktopHost } from '@/components/cabin/CabinDesktopHost'
 import { useCabinMode, type CabinModeValue } from '@/components/cabin/cabin-mode'
 import { useCabins } from '@/hooks/use-cabins'
+import { useCabinRowActions } from '@/hooks/use-cabin-row-actions'
 
 export function ConversationHome() {
   const mode = useCabinMode()
@@ -42,6 +43,8 @@ export function ConversationHome() {
 
 function DesktopChat({ mode }: { mode: CabinModeValue }) {
   const { cabins, refresh } = useCabins()
+  // 舱行「⋯」：重命名 / 删除（跟任务行同一套；桌面这边没有「当前舱」要收尾）。
+  const { renameCabin, deleteCabinRow } = useCabinRowActions({ refresh })
   const bridge: ChatTabCabinBridge = {
     cabins,
     draft: mode.draft,
@@ -51,6 +54,8 @@ function DesktopChat({ mode }: { mode: CabinModeValue }) {
     onUpdateDraft: mode.updateDraft,
     onCloseDraft: mode.closeDraft,
     onCancelDraft: mode.cancelDraft,
+    onRenameCabin: renameCabin,
+    onDeleteCabin: deleteCabinRow,
     // 建好 / 打开已有舱 → 草稿行换成正式舱行（草稿被消费掉），并立刻刷新左栏。
     onCabinCreated: (id) => {
       mode.cancelDraft()

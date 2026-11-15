@@ -41,6 +41,9 @@ export function candidatesOf(rows: readonly CockpitRow[]): CockpitCandidate[] {
  * 跨舱 ref 直接在全部行里找（rows 本来就跨舱）。
  */
 export function refInRows(ref: CockpitRef, rows: readonly CockpitRow[]): boolean {
+  // 项目 ref 不在编队行里：有效性由项目数据判定（CockpitProjectFace），
+  // 这里放行，避免 URL 同步把 ?project= 当成失效深链弹回作业。
+  if (ref.kind === 'project') return true
   for (const row of rows) {
     if (row.cabinId !== ref.cabinId) continue
     if (ref.kind === 'job' && row.kind === 'job' && row.job.id === ref.id) return true

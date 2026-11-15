@@ -36,7 +36,7 @@ beforeEach(() => {
     main_session_id: "s-main", requirements: "", status: "active",
     mainline_strategy: "clean-main", org: "org", init_state: null, cockpit_prefs: null,
     focused_job_id: null, version: 1, created_at: NOW, updated_at: NOW,
-    last_active_at: NOW, archived_at: null,
+    last_active_at: NOW, archived_at: null, deleted_at: null,
   })
   fetchMock = vi.fn(async () => ({
     ok: true,

@@ -55,6 +55,10 @@ export function parseCockpitUrl(
   const attention = cleanId(params.get('attn'))
   if (attention) return { ref: { kind: 'attention', cabinId: ownerCabinId, id: attention }, tab }
 
+  // 舱籍：?project=<key>（舱籍面用 __roster__）。
+  const project = cleanId(params.get('project'))
+  if (project) return { ref: { kind: 'project', cabinId: ownerCabinId, id: project }, tab }
+
   return { ref: null, tab }
 }
 
@@ -77,7 +81,7 @@ export function serializeCockpitHref(
 }
 
 /** 座舱自己拥有的查询参数；同步 URL 时只重写这些，其余（?demo=1 等）原样保留。 */
-export const COCKPIT_OWNED_PARAMS = ['job', 'task', 'attn', 'tab', 'cabin'] as const
+export const COCKPIT_OWNED_PARAMS = ['job', 'task', 'attn', 'project', 'tab', 'cabin'] as const
 
 /** 把当前 query 里不归座舱管的参数并到目标 href 上（顺序：座舱参数在前）。 */
 export function cockpitHrefPreserving(

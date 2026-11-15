@@ -1,5 +1,5 @@
-import { describe, it, expect, vi } from 'vitest'
-import { render, screen, fireEvent } from '@testing-library/react'
+import { describe, it, expect, vi, beforeAll } from 'vitest'
+import { render, screen, fireEvent, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import type { CabinDetail } from '@/lib/cabin-api'
 import { ChatSidebar } from '../chat-sidebar'
@@ -142,5 +142,93 @@ describe('ChatSidebar — cabin section (prototype 三段左栏)', () => {
     fireEvent.click(screen.getByTestId('pending-cabin-cancel'))
     expect(onCancelDraft).toHaveBeenCalledTimes(1)
     expect(onSelectCabin).not.toHaveBeenCalled()
+  })
+})
+
+// 2026-11-15 用户要求：舱行跟任务行一样，悬停「⋯」→ 重命名 / 删除；
+// 删除走确认弹框，**默认不勾**「同时删除本地文件」，勾上才连目录一起删。
+beforeAll(() => {
+  Element.prototype.hasPointerCapture = vi.fn(() => false)
+  Element.prototype.setPointerCapture = vi.fn()
+  Element.prototype.releasePointerCapture = vi.fn()
+  Element.prototype.scrollIntoView = vi.fn()
+})
+
+describe('ChatSidebar — 作战舱行菜单与弹框', () => {
+  const withActions = (overrides: Partial<Parameters<typeof ChatSidebar>[0]> = {}) => render(
+    <ChatSidebar
+      {...baseProps}
+      cabins={[cabin('c1', 'Aurora', 'active')]}
+      activeCabinId="c1"
+      onSelectCabin={vi.fn()}
+      onRenameCabin={vi.fn().mockResolvedValue(undefined)}
+      onDeleteCabin={vi.fn().mockResolvedValue(undefined)}
+      {...overrides}
+    />,
+  )
+
+  it('舱行「⋯」菜单：重命名 / 复制名称 / 删除', async () => {
+    const user = userEvent.setup()
+    withActions()
+    await user.click(screen.getByRole('button', { name: '作战舱操作 Aurora' }))
+    const items = await screen.findAllByRole('menuitem')
+    expect(items.map((item) => item.textContent?.trim())).toEqual(['重命名', '复制名称', '删除'])
+  })
+
+  it('重命名弹框：改名后回写 onRenameCabin(cabin, 新名)', async () => {
+    const user = userEvent.setup()
+    const onRenameCabin = vi.fn().mockResolvedValue(undefined)
+    withActions({ onRenameCabin })
+    await user.click(screen.getByRole('button', { name: '作战舱操作 Aurora' }))
+    await user.click(await screen.findByRole('menuitem', { name: /^重命名$/ }))
+    const input = await screen.findByTestId('cabin-rename-input')
+    await waitFor(() => expect((input as HTMLInputElement).value).toBe('Aurora'))
+    fireEvent.change(input, { target: { value: '结算舱' } })
+    await user.click(screen.getByTestId('cabin-rename-save'))
+    await waitFor(() => expect(onRenameCabin).toHaveBeenCalledWith(
+      expect.objectContaining({ id: 'c1' }), '结算舱',
+    ))
+    await waitFor(() => expect(screen.queryByTestId('cabin-rename-dialog')).toBeNull())
+  })
+
+  it('删除弹框：默认不勾「同时删除本地文件」→ deleteFiles:false', async () => {
+    const user = userEvent.setup()
+    const onDeleteCabin = vi.fn().mockResolvedValue(undefined)
+    withActions({ onDeleteCabin })
+    await user.click(screen.getByRole('button', { name: '作战舱操作 Aurora' }))
+    await user.click(await screen.findByRole('menuitem', { name: /^删除$/ }))
+    const dialog = await screen.findByTestId('cabin-delete-dialog')
+    expect(dialog).toHaveTextContent('软删除')
+    expect(dialog).toHaveTextContent('/tmp/c1') // 目录摆出来给人看
+    expect(screen.getByTestId('cabin-delete-files')).toHaveAttribute('aria-checked', 'false')
+    await user.click(screen.getByTestId('cabin-delete-confirm'))
+    await waitFor(() => expect(onDeleteCabin).toHaveBeenCalledWith(
+      expect.objectContaining({ id: 'c1' }), { deleteFiles: false },
+    ))
+  })
+
+  it('删除弹框：勾上「同时删除本地文件」→ deleteFiles:true', async () => {
+    const user = userEvent.setup()
+    const onDeleteCabin = vi.fn().mockResolvedValue(undefined)
+    withActions({ onDeleteCabin })
+    await user.click(screen.getByRole('button', { name: '作战舱操作 Aurora' }))
+    await user.click(await screen.findByRole('menuitem', { name: /^删除$/ }))
+    await user.click(await screen.findByTestId('cabin-delete-files'))
+    await waitFor(() => expect(screen.getByTestId('cabin-delete-files')).toHaveAttribute('aria-checked', 'true'))
+    await user.click(screen.getByTestId('cabin-delete-confirm'))
+    await waitFor(() => expect(onDeleteCabin).toHaveBeenCalledWith(
+      expect.objectContaining({ id: 'c1' }), { deleteFiles: true },
+    ))
+  })
+
+  it('没接回调（桌面普通对话）时舱行不出「⋯」', () => {
+    render(
+      <ChatSidebar
+        {...baseProps}
+        cabins={[cabin('c1', 'Aurora', 'active')]}
+        onSelectCabin={vi.fn()}
+      />,
+    )
+    expect(screen.queryByTestId('cabin-row-menu')).toBeNull()
   })
 })

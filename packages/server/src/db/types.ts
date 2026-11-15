@@ -715,6 +715,8 @@ export interface CabinRow {
   updated_at: string
   last_active_at: string | null
   archived_at: string | null
+  /** 软删除时间（2026-11-15）：非空 = 已删。计费与历史行保留，只是不再出现在列表/接口。 */
+  deleted_at: string | null
 }
 
 export interface CabinIterationRow {

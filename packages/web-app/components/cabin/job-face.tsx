@@ -13,7 +13,7 @@
 // （派生 status）；task 类作业再取任务实体（运行/变更/验收都要）。
 // 本文件**不读 useCabinContext()**（§3.4 的 critical 修正）。
 
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useState, type ReactNode } from 'react'
 import {
   Activity, ArrowRight, Bot, GitBranch, ListTodo, MessageSquare, Star, Zap,
 } from 'lucide-react'
@@ -162,6 +162,8 @@ export interface JobFaceCockpitControls {
   onClose(): void
   /** 验收通过/打回后（CockpitFace 用来落下一行「需要你」）。 */
   onAcceptanceMutated?(): void
+  /** 项目签（作业有项目锚点才给）。 */
+  projectTag?: ReactNode
 }
 
 export interface JobFaceProps {
@@ -396,6 +398,7 @@ export function JobFace({
               onTabChange={changeTab}
               onClose={onClose}
               cabinName={cockpit?.cabinName ?? null}
+              projectTag={cockpit?.projectTag}
             />
           ) : (
             <CockpitJobHeader loading onClose={onClose} />
@@ -850,6 +853,7 @@ export function JobFace({
           costLabel={costLabel}
           onGoHandle={goTab ? () => changeTab(goTab) : undefined}
           actions={cockpitActions}
+          projectTag={cockpit?.projectTag}
         />
         <div className="ck12-face-body" data-testid="cockpit-face-job">{panes}</div>
       </>

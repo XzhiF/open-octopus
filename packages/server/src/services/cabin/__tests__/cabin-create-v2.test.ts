@@ -90,9 +90,10 @@ describe("CabinService.createWithResult — v4 建舱契约", () => {
     })
     expect(cabin.org).toBe("XzhiF")
     const config = JSON.parse(fs.readFileSync(path.join(cabinPath, "config.json"), "utf-8"))
+    // 2026-11-15 舱籍契约：source/org 显式落盘（本地/外部项目同表不同源）。
     expect(config.repos).toEqual([
-      { group: "XzhiF", name: "ledger", repoName: "ledger" },
-      { group: "acme", name: "billing", repoName: "billing" },
+      { name: "ledger", source: "org", org: "XzhiF", group: "XzhiF", repoName: "ledger" },
+      { name: "billing", source: "org", org: "acme", group: "acme", repoName: "billing" },
     ])
   })
 

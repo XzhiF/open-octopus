@@ -8,7 +8,7 @@ const row = (id: string, path: string): CabinRow => ({
   id, name: id, path, workspace_id: null, main_session_id: null,
   requirements: "", status: "draft", mainline_strategy: "clean-main",
   org: null, init_state: null, cockpit_prefs: null, focused_job_id: null,
-  version: 1, created_at: "t0", updated_at: "t0", last_active_at: null, archived_at: null,
+  version: 1, created_at: "t0", updated_at: "t0", last_active_at: null, archived_at: null, deleted_at: null,
 })
 
 describe("CabinDAO", () => {

@@ -20,6 +20,9 @@ import { useCockpitFleet } from '../fleet/CockpitFleetProvider'
 import { groupOf, type CockpitRow } from '../fleet/fleet-model'
 import { CockpitAttentionFace } from './CockpitAttentionFace'
 import { CockpitTaskFace } from './CockpitTaskFace'
+import { CockpitManifestFace } from '../projects/CockpitManifestFace'
+import { CockpitProjectFace } from '../projects/CockpitProjectFace'
+import { PROJECT_ROSTER_ID, projectNameFromKey } from '../projects/project-model'
 
 /** 作业面的 Esc 层 id / 优先级：最低（其它层都先关）。 */
 export const FACE_LAYER_ID = 'cockpit-face'
@@ -57,6 +60,8 @@ export function CockpitFace({ entryCabinId }: CockpitFaceProps) {
   // counts !== null = 编队至少成功接过一次真值（FleetProvider 契约）。
   const loadedOnce = counts !== null
 
+  const isProject = selection?.kind === 'project'
+
   const row = useMemo(
     () => (selection ? rows.find((entry) => rowMatches(entry, selection)) ?? null : null),
     [rows, selection],
@@ -74,10 +79,10 @@ export function CockpitFace({ entryCabinId }: CockpitFaceProps) {
   // 等编队回来且选中项确实在编队里才拉 —— 过期深链（?job=…&cabin=…）在
   // URL 被改写前不再请求一个已删的舱。
   const selectedCabinId = selection?.cabinId ?? null
-  const selectionKnown = !!row || !!attentionOnJob
+  const selectionKnown = !!row || !!attentionOnJob || isProject
   useEffect(() => {
     if (!loadedOnce || !selectionKnown) return
-    if (!selectedCabinId || selectedCabinId === entryCabinId) {
+    if (isProject || !selectedCabinId || selectedCabinId === entryCabinId) {
       setCrossCabin(null)
       return
     }
@@ -91,6 +96,26 @@ export function CockpitFace({ entryCabinId }: CockpitFaceProps) {
   }, [loadedOnce, selectionKnown, selectedCabinId, entryCabinId])
 
   const close = useCallback(() => select(null), [select])
+
+  // 作业头项目签：有锚点才显示；点它打开项目面（不是换作业）。
+  const projectTagOf = (cabinId: string, keys: string[] | undefined) => {
+    if (!keys || keys.length === 0) return null
+    return (
+      <button
+        type="button"
+        className="ck12-jh-projectbtn"
+        data-testid="cockpit-job-project-tag"
+        title={keys.join(' · ')}
+        onClick={(event) => {
+          event.stopPropagation()
+          select({ kind: 'project', cabinId, id: keys[0] })
+        }}
+      >
+        {projectNameFromKey(keys[0])}
+        {keys.length > 1 ? ` +${keys.length - 1}` : ''}
+      </button>
+    )
+  }
 
   // 关闭注册进唯一 Esc 栈（最外层：只收面，不退出路由）。
   useEffect(() => {
@@ -114,6 +139,13 @@ export function CockpitFace({ entryCabinId }: CockpitFaceProps) {
   const cabinName = row?.cabinName ?? attentionOnJob?.cabinName ?? null
 
   const body = (() => {
+    // 舱籍 / 项目面不依赖编队：项目数据自己拉，先渲染。
+    if (selection.kind === 'project') {
+      return selection.id === PROJECT_ROSTER_ID
+        ? <CockpitManifestFace cabinId={selection.cabinId} onClose={close} />
+        : <CockpitProjectFace cabinId={selection.cabinId} projectKey={selection.id} onClose={close} />
+    }
+
     // 编队还没接过真值：不挂作业面（JobFace/CockpitTaskFace 会立刻拉详情）。
     // 深链里的 job/task 可能已经删了 —— 先等编队回来校验，避免一串注定 404
     // 的请求（随后 CockpitUrlSync 才把 URL 改写掉）。
@@ -165,6 +197,7 @@ export function CockpitFace({ entryCabinId }: CockpitFaceProps) {
             onTabChange: setTab,
             onClose: close,
             onAcceptanceMutated: () => advance(selection),
+            projectTag: projectTagOf(attentionOnJob.cabinId, attentionOnJob.job.project_keys),
           }}
         />
       )
@@ -190,6 +223,10 @@ export function CockpitFace({ entryCabinId }: CockpitFaceProps) {
             onTabChange: setTab,
             onClose: close,
             onAcceptanceMutated: () => advance(selection),
+            projectTag: projectTagOf(
+              selection.cabinId,
+              row?.kind === 'job' ? row.job.project_keys : undefined,
+            ),
           }}
         />
       )

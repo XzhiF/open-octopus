@@ -71,6 +71,9 @@ export interface ChatTabCabinBridge {
   onCloseDraft: () => void
   onCancelDraft: () => void
   onCabinCreated: (id: string) => void
+  /** 舱行「⋯」：重命名 / 删除（2026-11-15；软删除 + 可勾「同时删除本地文件」）。 */
+  onRenameCabin: (cabin: CabinDetail, name: string) => Promise<void>
+  onDeleteCabin: (cabin: CabinDetail, opts: { deleteFiles: boolean }) => Promise<void>
 }
 
 export function ChatTab({ cabinBridge }: { cabinBridge?: ChatTabCabinBridge } = {}) {
@@ -637,6 +640,8 @@ export function ChatTab({ cabinBridge }: { cabinBridge?: ChatTabCabinBridge } = 
           activePendingCabin: cabinBridge.draftOpen,
           onOpenDraft: cabinBridge.onCreateCabin,
           onCancelDraft: cabinBridge.onCancelDraft,
+          onRenameCabin: cabinBridge.onRenameCabin,
+          onDeleteCabin: cabinBridge.onDeleteCabin,
         }
       : {}),
     tasks: sidebarTasks,

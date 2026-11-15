@@ -33,7 +33,13 @@ import { MAX_PARALLEL_WORKSPACES } from "../scheduler/concurrency"
 import { deriveCabinView, type DerivedCabinView, type DeriveCabinInput } from "./derive-cabin-view"
 import type { CabinInitService } from "./cabin-init-service"
 import { isInitComplete } from "./cabin-init-service"
-import { ensureRepoCloned, readCabinConfig, writeCabinConfigRepos, type CabinRepoEntry } from "./cabin-repos"
+import {
+  ensureRepoCloned, readCabinConfig, writeCabinConfigRepos,
+  mergeCabinRepoEntry, removeCabinRepoEntry, repoSource, resolveCabinRepo,
+  projectKey, localRepoEntry, orgRepoEntry, worktreeDirFor, isPathInside,
+  isGitRepo, readLocalRepoInfo, defaultMainlineBranch,
+  type CabinRepoEntry, type CabinProjectInput,
+} from "./cabin-repos"
 import { scopeCabinFindings } from "./cabin-knowledge"
 
 export class CabinNotFoundError extends Error {
@@ -44,6 +50,47 @@ export class CabinVersionConflictError extends Error {
 }
 export class CabinStatusConflictError extends Error {
   constructor(id: string, from: string, to: string) { super(`cabin status conflict: ${id} ${from}->${to}`); this.name = "CabinStatusConflictError" }
+}
+/** 项目入参不合法（路径/来源）——route 归 400，不当 500。 */
+export class CabinRepoInputError extends Error {
+  constructor(message: string) { super(message); this.name = "CabinRepoInputError" }
+}
+
+/** 显式开工作树时目标已存在（活 worktree）——不覆盖、不删除。 */
+export class WorktreeConflictError extends Error {
+  constructor(message: string) { super(message); this.name = "WorktreeConflictError" }
+}
+
+/** 项目 wire 视图（git 富化由 route 追加）。 */
+export interface CabinRepoView {
+  key: string
+  name: string
+  source: "org" | "local"
+  org: string | null
+  group: string | null
+  repoName: string | null
+  main_path: string | null
+  local_path: string | null
+  external: boolean
+  mainline_branch: string | null
+  worktree_path: string | null
+  branch: string | null
+  worktrees: Array<{ path: string; branch: string; instance: string; created_at?: string }>
+}
+
+/** 仍占用项目锚点的任务状态（解绑前必须收尾）。 */
+const LIVE_TASK_STATUSES = new Set([
+  "running", "ready", "queued", "pending", "paused", "awaiting_review", "awaiting_archive",
+])
+
+function parseProjectIds(raw: string | null | undefined): string[] {
+  if (!raw) return []
+  try {
+    const parsed = JSON.parse(raw) as unknown
+    return Array.isArray(parsed) ? parsed.filter((x): x is string => typeof x === "string") : []
+  } catch {
+    return []
+  }
 }
 
 const now = () => new Date().toISOString()
@@ -77,6 +124,8 @@ export interface CabinUsageJob extends LlmUsageSummary {
   kind: "chat" | "task" | "workflow"
   label: string
   ref_id: string | null
+  /** 项目锚点（chat / 未归属为空数组）。 */
+  project_keys?: string[]
 }
 
 /** C7 子代理单列行（subagent_runs 口径，不与 llm_calls 盲加）。 */
@@ -152,7 +201,8 @@ export interface CreateCabinInput {
   org?: string | null
   /** 老调用方：单 org + 仓库名列表（与 projects 二选一，projects 优先）。 */
   repos?: string[]
-  projects?: Array<{ org: string; repo: string }>
+  /** 项目关联：ORG（org+repo）/ 本地（localPath，舱内相对）/ 外部（absolutePath + external）。 */
+  projects?: CabinProjectInput[]
 }
 
 export interface CreateCabinResult {
@@ -198,6 +248,27 @@ export class CabinService {
     return this.createWithResult(input).cabin
   }
 
+  /** 建舱入参 → config 条目。本地项目只登记不克隆；失败返回 null（init 门禁报）。 */
+  private projectEntryFromInput(
+    cabinPath: string, p: CabinProjectInput, fallbackOrg: string | null,
+  ): CabinRepoEntry | null {
+    if (p.source === "local") {
+      const raw = p.absolutePath?.trim() || p.localPath?.trim()
+      if (!raw) return null
+      const abs = path.isAbsolute(raw) ? raw : path.resolve(cabinPath, raw)
+      const name = p.name?.trim() || p.repo?.trim() || path.basename(abs)
+      try {
+        return localRepoEntry(cabinPath, { name, absPath: abs })
+      } catch {
+        return { name, source: "local", main_path: abs, local_path: raw, external: p.external }
+      }
+    }
+    const orgName = p.org?.trim() || fallbackOrg || ""
+    const repoName = p.repo?.trim() || p.name?.trim() || ""
+    if (!repoName) return null
+    return orgRepoEntry({ name: repoName, org: orgName || undefined, group: orgName || undefined })
+  }
+
   /**
    * v4 建舱入口：`path` 省略 → 服务端自动建工作空间；`projects[]` → config.json
    * 带 group（跨 org 关联）。同目录已有舱时**不报错**，返回 created:false 让 UI
@@ -218,7 +289,7 @@ export class CabinService {
       status: "draft", mainline_strategy: "clean-main",
       org, init_state: null, cockpit_prefs: null,
       focused_job_id: null, version: 1,
-      created_at: ts, updated_at: ts, last_active_at: ts, archived_at: null,
+      created_at: ts, updated_at: ts, last_active_at: ts, archived_at: null, deleted_at: null,
     }
     this.cabin.insert(row)
     if (this.infra) {
@@ -233,8 +304,8 @@ export class CabinService {
       this.infra.workspaceDAO.update(ws.id, { cabin_id: id })
       this.cabin.bindWorkspace(id, ws.id, now())
       const projectEntries: CabinRepoEntry[] = (input.projects ?? [])
-        .filter((p) => p.org && p.repo)
-        .map((p) => ({ group: p.org, name: p.repo, repoName: p.repo }))
+        .map((p) => this.projectEntryFromInput(cabinPath, p, org))
+        .filter((e): e is CabinRepoEntry => !!e)
       const legacyEntries: CabinRepoEntry[] = (input.repos ?? [])
         .filter(Boolean)
         .map((n) => ({ group: "", name: n, repoName: n }))
@@ -264,7 +335,10 @@ export class CabinService {
           id?: string; name?: string; org?: string | null
           main_session_id?: string | null; createdAt?: string
         }
-        if (m.id && m.name && !this.cabin.findById(m.id)) {
+        // 软删（2026-11-15）之后目录里的 manifest 还在：那个 id 对应的是墓碑行，
+        // 不能 insert（主键冲突），要把它复原成活行 —— 承认「这个目录本来就是这个舱」。
+        const tombstone = m.id ? this.cabin.findAnyById(m.id) : undefined
+        if (m.id && m.name && (!tombstone || tombstone.deleted_at)) {
           const ts = now()
           let requirements = ""
           try { requirements = fs.readFileSync(path.join(cabinPath, ".cabin", "requirements.md"), "utf-8") } catch { /* optional */ }
@@ -273,14 +347,21 @@ export class CabinService {
             const st = JSON.parse(fs.readFileSync(path.join(cabinPath, ".cabin", "init-state.json"), "utf-8")) as CabinInitState
             if (Array.isArray(st.items) && isInitComplete(st)) status = "active"
           } catch { /* no gate snapshot → draft */ }
-          this.cabin.insert({
-            id: m.id, name: m.name, path: cabinPath,
-            workspace_id: null, main_session_id: null,
-            requirements, status, mainline_strategy: "clean-main",
-            org: m.org ?? null, init_state: null, cockpit_prefs: null,
-            focused_job_id: null, version: 1,
-            created_at: m.createdAt ?? ts, updated_at: ts, last_active_at: ts, archived_at: null,
-          })
+          if (tombstone) {
+            this.cabin.revive(m.id, {
+              name: m.name, path: cabinPath, status, requirements, org: m.org ?? null,
+            }, ts)
+          } else {
+            this.cabin.insert({
+              id: m.id, name: m.name, path: cabinPath,
+              workspace_id: null, main_session_id: null,
+              requirements, status, mainline_strategy: "clean-main",
+              org: m.org ?? null, init_state: null, cockpit_prefs: null,
+              focused_job_id: null, version: 1,
+              created_at: m.createdAt ?? ts, updated_at: ts, last_active_at: ts, archived_at: null,
+              deleted_at: null,
+            })
+          }
           if (this.infra) {
             const ws = this.infra.workspaceDAO.findByPath(cabinPath)
             if (ws) {
@@ -436,43 +517,76 @@ export class CabinService {
     }
   }
 
-  /** G1 destructive cascade (delete only; archive NEVER cascades). Running
-   *  tasks must be aborted first — same guard as TasksService.deleteTask. */
-  delete(id: string): void {
+  /**
+   * 删除舱（2026-11-15 用户口径：**软删除**，跟任务一样 —— 平台计费，账不能删）。
+   *
+   * 行留在 `cabins` 表里（`deleted_at` 非空），列表/接口从此看不见它；任务与会话
+   * 跟着软删（隐藏但不丢），**execution / llm_calls / Trace / 验收历史一律保留** ——
+   * 计费与审计要能追（工作空间行也留着，executions 外键指着它）。
+   *
+   * 本地文件默认**不动**；`deleteFiles: true`（确认弹框里勾选）才连同舱目录
+   * （`row.path`）一起删。目录是用户选的，所以带一层防呆：根目录 / home /
+   * home 的父级一律拒绝。
+   *
+   * 正在跑的任务必须先停 —— 和 TasksService.deleteTask 同一个守卫。
+   */
+  delete(id: string, opts: { deleteFiles?: boolean } = {}): { deleted_files: boolean } {
     const row = this.mustGet(id)
     const infra = this.infra
     const tasks = infra ? infra.taskDAO.findByCabinId(id) : []
     if (tasks.some((t) => t.status === "running")) {
       throw new CabinStatusConflictError(id, "running-tasks", "delete")
     }
+    const ts = now()
     this.cabin.transaction(() => {
-      this.cabin.deleteEventsByCabin(id)
-      this.cabin.deleteJobsByCabin(id)
-      this.cabin.deleteIterationsByCabin(id)
-      if (infra) {
-        if (row.workspace_id) {
-          for (const e of infra.executionDAO.listByWorkspace(row.workspace_id)) infra.executionDAO.deleteById(e.id)
-        }
-        for (const t of tasks) {
-          for (const e of infra.executionDAO.listTaskInstances(t.id, 1000)) infra.executionDAO.deleteById(e.id)
-        }
-        for (const t of tasks) {
-          if (infra.tasksService) infra.tasksService.deleteTask(t.id)
-          else infra.taskDAO.softDelete(t.id)
-        }
-        for (const s of infra.agentSessionDAO.listByCabinId(id)) infra.agentSessionDAO.softDelete(s.id)
-        if (row.workspace_id) infra.workspaceDAO.deleteById(row.workspace_id)
+      // 任务 / 会话软删（隐藏），execution 行故意不删：那是计费与历史的账本。
+      for (const t of tasks) {
+        if (infra?.tasksService) infra.tasksService.deleteTask(t.id)
+        else infra?.taskDAO.softDelete(t.id)
       }
-      this.cabin.delete(id)
+      if (infra) {
+        for (const s of infra.agentSessionDAO.listByCabinId(id)) infra.agentSessionDAO.softDelete(s.id)
+      }
+      // 工作空间行**保留**：executions 外键指着它，删了就等于毁掉计费账本；
+      // 而且任务工作空间本来就是「删任务留空间」，舱沿用同一条规矩。
+      this.cabin.softDelete(id, ts)
     })
-    // Disk worktrees: best-effort, outside the DB transaction. The cabin
-    // directory itself is the user's — never rm -rf it here.
+    // 磁盘工作树：尽力而为，事务外（与原来一致）。
     for (const e of readCabinConfig(row.path).repos) {
       if (e.main_path && e.worktree_path) {
         void gitOps.worktreeRemove(e.main_path, e.worktree_path).catch((err) => {
           console.error(`[CabinService] worktree remove failed for ${id}/${e.name}:`, errMsg(err))
         })
       }
+    }
+    const deletedFiles = opts.deleteFiles ? this.removeCabinDir(row) : false
+    return { deleted_files: deletedFiles }
+  }
+
+  /** 勾了「同时删除本地文件」才走这里。目录是用户选的，先过防呆再 rm -rf。 */
+  private removeCabinDir(row: CabinRow): boolean {
+    const raw = row.path?.trim()
+    if (!raw || !path.isAbsolute(raw)) {
+      console.error(`[CabinService] 拒绝删除非绝对路径的舱目录: ${row.id} ${raw ?? ""}`)
+      return false
+    }
+    const target = path.resolve(raw)
+    const home = path.resolve(os.homedir())
+    const guarded = new Set([
+      path.parse(target).root, // "/"
+      home,
+      path.dirname(home), // /Users
+    ])
+    if (guarded.has(target) || target.length <= 3) {
+      console.error(`[CabinService] 拒绝删除受保护的路径: ${row.id} ${target}`)
+      return false
+    }
+    try {
+      fs.rmSync(target, { recursive: true, force: true })
+      return true
+    } catch (err) {
+      console.error(`[CabinService] 舱目录删除失败: ${row.id} ${target}`, errMsg(err))
+      return false
     }
   }
 
@@ -621,25 +735,130 @@ export class CabinService {
 
   listRepos(id: string): CabinRepoEntry[] {
     const row = this.mustGet(id)
-    return readCabinConfig(row.path).repos
+    return readCabinConfig(row.path).repos.map((r) => ({ ...r, source: repoSource(r) }))
   }
 
-  /** Clone (if needed) + cut a cabin worktree for one repo; merges the entry
-   *  into config.json.repos[] via the existing spec-meta writer. */
-  addRepo(id: string, name: string): SpecWorktreeEntry {
+  /** 项目视图（wire 形态）：来源 / 路径 / 主线 / worktree；git 富化由 route 做。 */
+  repoViews(id: string): CabinRepoView[] {
     const row = this.mustGet(id)
-    if (!row.org) throw new Error("cabin has no org — cannot clone repos")
-    const config = readCabinConfig(row.path)
-    const existing = config.repos.find((r) => r.name === name && r.worktree_path && r.branch && r.main_path)
-    if (existing) return existing as SpecWorktreeEntry
-    const res = ensureRepoCloned(row.org, name)
+    return readCabinConfig(row.path).repos.map((entry) => {
+      const { mainPath, external } = resolveCabinRepo(row.path, entry)
+      return {
+        key: projectKey(entry),
+        name: entry.name,
+        source: repoSource(entry),
+        org: entry.org || entry.group || null,
+        group: entry.group || null,
+        repoName: entry.repoName || null,
+        main_path: mainPath,
+        local_path: entry.local_path ?? null,
+        external: entry.external === true || (entry.source === "local" && external),
+        mainline_branch: entry.mainline_branch ?? null,
+        worktree_path: entry.worktree_path ?? null,
+        branch: entry.branch ?? null,
+        worktrees: entry.worktrees ?? [],
+      }
+    })
+  }
+
+  /** 绑定一个项目：ORG 只克隆 + 登记主线；本地/外部只校验 + 登记。
+   *  **绝不预建 worktree**（worktree 是执行时产物）。 */
+  addRepo(id: string, input: CabinProjectInput): CabinRepoEntry {
+    const row = this.mustGet(id)
+    const name = (input.name || input.repo || "").trim()
+    if (!name) throw new CabinRepoInputError("项目名不能为空")
+
+    if (input.source === "local") {
+      const raw = input.absolutePath?.trim() || input.localPath?.trim()
+      if (!raw) throw new CabinRepoInputError("本地项目需要 localPath 或 absolutePath")
+      const abs = path.isAbsolute(raw) ? raw : path.resolve(row.path, raw)
+      if (!fs.existsSync(abs) || !isGitRepo(abs)) throw new CabinRepoInputError(`不是 git 仓库：${abs}`)
+      if (!isPathInside(row.path, abs) && !input.external) {
+        throw new CabinRepoInputError("舱目录之外的仓库需要显式登记（external: true）")
+      }
+      return mergeCabinRepoEntry(row.path, localRepoEntry(row.path, { name, absPath: abs }))
+    }
+
+    const org = (input.org || row.org || "").trim()
+    if (!org) throw new Error("cabin has no org — cannot clone repos")
+    const res = ensureRepoCloned(org, name)
     if ("error" in res) throw new Error(res.error)
-    const branch = `cabin-${row.id.slice(0, 8)}`
-    const entry = this.git.initWorktreeOne(row.path, { name, source_path: res.localPath }, branch, row.org)
-    const kept = config.repos.filter((r): r is SpecWorktreeEntry =>
-      r.name !== name && Boolean(r.main_path && r.worktree_path && r.branch))
-    this.git.writeSpecWorktreeMeta(row.path, [...kept, entry], config.name)
-    return entry
+    const info = readLocalRepoInfo(res.localPath)
+    return mergeCabinRepoEntry(row.path, orgRepoEntry({
+      name, org, group: org, mainPath: res.localPath,
+      mainline: info.branch ?? defaultMainlineBranch(res.localPath),
+    }))
+  }
+
+  /** 解绑：只动 config，不动磁盘（worktree / 主仓都保留）。
+   *  有活跃作业仍指向这个项目 → 409（不静默把作业变成「未归属」）。 */
+  removeRepo(id: string, name: string): { removed: boolean } {
+    const row = this.mustGet(id)
+    const entry = readCabinConfig(row.path).repos.find((r) => r.name === name)
+    if (!entry) return { removed: false }
+    const live = LIVE_TASK_STATUSES
+    const busy = this.infra?.taskDAO.findByCabinId(id).find((t) => {
+      if (!live.has(t.status)) return false
+      const ids = parseProjectIds(t.project_ids)
+      return ids.includes(name) || ids.includes(entry.repoName ?? name)
+    })
+    if (busy) throw new Error(`项目上有活跃任务「${busy.name}」，先收尾再解绑`)
+    return { removed: removeCabinRepoEntry(row.path, name) }
+  }
+
+  /** 显式开工作树（唯一会产生 worktree 的舱内入口；作业另有自己的路径）。
+   *  主实例落 `projects/<name>`；重复开同分支 → 409（不覆盖）；
+   *  换分支 → 并行实例 `projects/<instance>/<name>`，登记进 `worktrees[]`。 */
+  openRepoWorktree(
+    id: string, name: string, opts: { branch?: string; instance?: string } = {},
+  ): CabinRepoEntry {
+    const row = this.mustGet(id)
+    const entry = readCabinConfig(row.path).repos.find((r) => r.name === name)
+    if (!entry) throw new Error(`repo not in cabin: ${name}`)
+    const { mainPath } = resolveCabinRepo(row.path, entry)
+    if (!mainPath || !fs.existsSync(mainPath)) throw new Error(`主仓不可用：${mainPath ?? name}`)
+
+    // 主线分支（如 main）通常已被主仓检出：worktree 必须落在自己的分支上。
+    // 默认切一条舱分支；要特定分支就显式传，git 会拒绝「同一分支检出两次」。
+    const branch = opts.branch?.trim() || `cabin-${row.id.slice(0, 8)}`
+
+    if (entry.worktree_path && this.git.worktreeAlive(entry.worktree_path)) {
+      if (entry.branch === branch) {
+        throw new WorktreeConflictError(`worktree_exists: ${entry.name} 的 ${branch} 已有工作树`)
+      }
+      const instance = opts.instance?.trim() || `wt-${Date.now().toString(36)}`
+      const wtPath = worktreeDirFor(row.path, entry.name, instance)
+      const fresh = this.git.initWorktreeOne(
+        row.path,
+        { name: entry.name, source_path: mainPath, group: entry.group },
+        branch, row.org ?? "", { clobber: false, worktreePath: wtPath },
+      )
+      const next = mergeCabinRepoEntry(row.path, {
+        ...entry,
+        worktrees: [
+          ...(entry.worktrees ?? []),
+          { path: fresh.worktree_path, branch, instance, created_at: now() },
+        ],
+      })
+      return next
+    }
+
+    const wtPath = opts.instance?.trim()
+      ? worktreeDirFor(row.path, entry.name, opts.instance)
+      : worktreeDirFor(row.path, entry.name)
+    if (!isPathInside(row.path, path.dirname(wtPath))) {
+      throw new CabinRepoInputError(`工作树路径越界：${wtPath}`)
+    }
+    const fresh = this.git.initWorktreeOne(
+      row.path,
+      { name: entry.name, source_path: mainPath, group: entry.group },
+      branch, row.org ?? "", { clobber: false, worktreePath: wtPath },
+    )
+    return mergeCabinRepoEntry(row.path, {
+      ...entry,
+      worktree_path: fresh.worktree_path,
+      branch: fresh.branch,
+    })
   }
 
   // ── iterations ──
@@ -751,46 +970,124 @@ export class CabinService {
   /** C2/K3：作业 status 派生自底层实体（task→deriveTaskView / execution /
    *  subagent_runs），不镜像存储。transport = 传输层通道（D6）。 */
   listJobsView(cabinId: string): Array<CabinJobRow & {
-    status: string; transport: string; iteration_code: string | null
+    status: string; transport: string; iteration_code: string | null; project_keys: string[]
   }> {
-    this.mustGet(cabinId)
+    const cabinRow = this.mustGet(cabinId)
     const iterations = this.cabin.listIterations(cabinId)
     const db = this.cabin.getDb()
+    const projects = readCabinConfig(cabinRow.path).repos
     return this.cabin.listJobs(cabinId).map((j) => {
       let status = "unknown"
+      let project_keys: string[] = []
       if (j.kind === "task" && j.ref_id && this.infra) {
         const t = this.infra.taskDAO.getById(j.ref_id)
         if (t) {
           const execs = this.infra.executionDAO.listTaskInstances(t.id, 200)
           const acceptances = this.infra.acceptanceDAO.listByTask(t.id)
           status = deriveTaskView(t, execs, acceptances).taskStatus
+          project_keys = this.anchorsOfTask(t.repo_group, t.project_ids, projects)
         }
       } else if (j.kind === "workflow" && j.ref_id) {
         const row = db.prepare("SELECT status FROM executions WHERE id = ?").get(j.ref_id) as { status?: string } | undefined
         status = row?.status ?? "unknown"
+        project_keys = this.anchorsOfWorkflow(j.ref_id, projects)
       } else if (j.kind === "subagent" && j.ref_id) {
-        const row = db.prepare("SELECT status FROM subagent_runs WHERE id = ?").get(j.ref_id) as { status?: string } | undefined
+        // 子代理自己的 cwd 优先；没记就回落到所属会话的 cwd（同一工作现场）。
+        const row = db.prepare(
+          `SELECT r.status, COALESCE(NULLIF(r.cwd, ''), s.cwd) AS cwd
+             FROM subagent_runs r LEFT JOIN sessions s ON s.id = r.session_id
+            WHERE r.id = ?`,
+        ).get(j.ref_id) as { status?: string; cwd?: string | null } | undefined
         status = row?.status ?? "unknown"
+        project_keys = this.anchorsOfCwd(row?.cwd ?? null, projects)
       }
       const transport = j.kind === "task" ? "task-thread" : j.kind === "workflow" ? "workflow-engine" : "sdk-agent"
       const iteration_code = iterations.find((it) => it.id === j.iteration_id)?.code ?? null
-      return { ...j, status, transport, iteration_code }
+      return { ...j, status, transport, iteration_code, project_keys }
     })
   }
 
-  /** S5 拉取主线：clean-main → syncToDefaultBranch（镜像），pin → pullLatest。 */
+  // ── 作业 → 项目锚点（不加列；拿不到就是 []，不猜）────────────────
+
+  /** task：repo_group + project_ids 与舱项目求交；命中多个全返回。 */
+  private anchorsOfTask(
+    repoGroup: string | null, projectIds: string, projects: CabinRepoEntry[],
+  ): string[] {
+    const wanted = new Set(parseProjectIds(projectIds))
+    if (repoGroup) wanted.add(repoGroup)
+    if (wanted.size === 0) return []
+    const keys: string[] = []
+    for (const entry of projects) {
+      const names = [entry.name, entry.repoName].filter(Boolean) as string[]
+      if (names.some((n) => wanted.has(n))) keys.push(projectKey(entry))
+    }
+    return keys
+  }
+
+  /** workflow：execution → workspace.config.repos；恰好一个项目才归属。 */
+  private anchorsOfWorkflow(executionId: string, projects: CabinRepoEntry[]): string[] {
+    const db = this.cabin.getDb()
+    const exec = db.prepare("SELECT workspace_id FROM executions WHERE id = ?").get(executionId) as
+      { workspace_id?: string } | undefined
+    if (!exec?.workspace_id) return []
+    const ws = db.prepare("SELECT path FROM workspaces WHERE id = ?").get(exec.workspace_id) as
+      { path?: string } | undefined
+    if (!ws?.path) return []
+    // workspace 的项目登记在磁盘 config.json（表里没有 config 列）。
+    let names: string[] = []
+    try {
+      const raw = JSON.parse(fs.readFileSync(path.join(ws.path, "config.json"), "utf-8")) as
+        { repos?: Array<{ name?: string }> }
+      names = (raw.repos ?? []).map((r) => r.name ?? "").filter(Boolean)
+    } catch {
+      return []
+    }
+    const keys = projects
+      .filter((entry) => names.includes(entry.name) || names.includes(entry.repoName ?? ""))
+      .map(projectKey)
+    return keys.length === 1 ? keys : []
+  }
+
+  /** subagent：cwd 与项目主仓的最长前缀；唯一命中才归属。 */
+  private anchorsOfCwd(cwd: string | null, projects: CabinRepoEntry[]): string[] {
+    if (!cwd) return []
+    // cwd 可能是已删除的目录：对不存在的路径沿父链 realpath（/var → /private/var）。
+    const real = (p: string): string => {
+      try {
+        return fs.realpathSync.native(p)
+      } catch {
+        const parent = path.dirname(p)
+        return parent === p ? path.resolve(p) : path.join(real(parent), path.basename(p))
+      }
+    }
+    const target = real(cwd)
+    let best: { key: string; len: number } | null = null
+    let tie = false
+    for (const entry of projects) {
+      if (!entry.main_path) continue
+      const base = real(entry.main_path)
+      const pref = base.endsWith(path.sep) ? base : base + path.sep
+      if (target !== base && !target.startsWith(pref)) continue
+      const len = base.length
+      if (!best || len > best.len) { best = { key: projectKey(entry), len }; tie = false }
+      else if (len === best.len) tie = true
+    }
+    if (!best || tie) return []
+    return [best.key]
+  }
+
+  /** S5 拉取主线：clean-main → syncToDefaultBranch（镜像，主仓永远干净在默认分支），
+   *  pin → fetch + merge --ff-only（只快进，分叉直接报，不动主仓历史）。 */
   async pullRepo(cabinId: string, name: string): Promise<{ branch: string; commit: string }> {
     const row = this.mustGet(cabinId)
     const entry = readCabinConfig(row.path).repos.find((r) => r.name === name)
-    if (!entry?.main_path) throw new Error(`repo not in cabin: ${name}`)
+    if (!entry) throw new Error(`repo not in cabin: ${name}`)
+    const { mainPath } = resolveCabinRepo(row.path, entry)
+    if (!mainPath) throw new Error(`repo 没有主仓路径：${name}`)
     if (row.mainline_strategy === "clean-main") {
-      return gitOps.syncToDefaultBranch(entry.main_path)
+      return gitOps.syncToDefaultBranch(mainPath)
     }
-    const target = entry.worktree_path ?? entry.main_path
-    await gitOps.pullLatest(target)
-    const info = await gitOps.getBranchInfo(target)
-    const commit = await gitOps.getHeadCommit(target)
-    return { branch: info.branch, commit }
+    return gitOps.pullFastForward(entry.worktree_path ?? mainPath)
   }
 
   /** P3 变更窗：任务总账跨仓聚合（round-diff scope=task，现有服务零改动）。 */
@@ -859,6 +1156,7 @@ export class CabinService {
 
     const tasks = infra.taskDAO.findByCabinId(cabinId)
     const jobs = this.cabin.listJobs(cabinId)
+    const projects = readCabinConfig(row.path).repos
     const jobByTask = new Map(jobs.filter((j) => j.kind === "task" && j.ref_id).map((j) => [j.ref_id as string, j]))
     const jobBySubagent = new Map(jobs.filter((j) => j.kind === "subagent" && j.ref_id).map((j) => [j.ref_id as string, j]))
 
@@ -872,7 +1170,10 @@ export class CabinService {
     if (row.main_session_id) {
       chatSessionIds.add(row.main_session_id)
       const chat = tokenUsage.aggregateLlmCallsBy("session_id", [row.main_session_id], ["l.execution_id IS NULL"]).get(row.main_session_id)
-      byJob.push({ job_id: null, kind: "chat", label: "orchestrator 主对话", ref_id: row.main_session_id, ...(chat ?? EMPTY_USAGE) })
+      byJob.push({
+        job_id: null, kind: "chat", label: "orchestrator 主对话", ref_id: row.main_session_id,
+        project_keys: [], ...(chat ?? EMPTY_USAGE),
+      })
       if (chat) llmParts.push(chat)
     }
 
@@ -888,6 +1189,7 @@ export class CabinService {
       }
       byJob.push({
         job_id: jobByTask.get(t.id)?.id ?? null, kind: "task", label: t.name, ref_id: t.id,
+        project_keys: this.anchorsOfTask(t.repo_group, t.project_ids, projects),
         totalCalls: summary.totalCalls, usage: summary.usage, totals: summary.totals,
       })
       llmParts.push(summary)
@@ -903,7 +1205,10 @@ export class CabinService {
       if (j.kind !== "workflow" || !j.ref_id) continue
       execIds.add(j.ref_id)
       const s = tokenUsage.aggregateLlmCallsBy("execution_id", [j.ref_id]).get(j.ref_id)
-      byJob.push({ job_id: j.id, kind: "workflow", label: j.title, ref_id: j.ref_id, ...(s ?? EMPTY_USAGE) })
+      byJob.push({
+        job_id: j.id, kind: "workflow", label: j.title, ref_id: j.ref_id,
+        project_keys: this.anchorsOfWorkflow(j.ref_id, projects), ...(s ?? EMPTY_USAGE),
+      })
       if (s) llmParts.push(s)
     }
 
@@ -938,7 +1243,8 @@ export class CabinService {
       subUsage.cacheReadTokens += usage.cacheReadTokens
       subUsage.cacheCreationTokens += usage.cacheCreationTokens
       const cost = this.deriveSubagentCost(db, r)
-      if (cost.usd != null) { subCostUsd = (subCostUsd ?? 0) + cost.usd; subPriced += 1 }
+      // cost.usd 已判空 → 只累计「已定价」子代理行（subPriced 是分母）。
+      if (cost.usd != null) { subCostUsd = (subCostUsd ?? 0) + cost.usd; subPriced += 1 } // ledger-ok: 见上一行判空
       runs.push({
         id: r.id, job_id: jobBySubagent.get(r.id)?.id ?? null,
         label: r.description || r.agent_type || "子代理", status: r.status,

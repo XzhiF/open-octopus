@@ -138,7 +138,12 @@ describe('CabinEngineering — 仓库展开工作树', () => {
   it('默认折叠；点仓库行展开工作树', async () => {
     mockCabin(makeView())
     vi.mocked(listCabinRepos).mockResolvedValue([
-      { name: 'aurora', git: { branch: 'main', detached: false, commit: 'abc1234', msg: 'init' } },
+      {
+        key: 'org:XzhiF/aurora', name: 'aurora', source: 'org', org: 'XzhiF', group: 'XzhiF',
+        repoName: 'aurora', main_path: '/repos/aurora', local_path: null, external: false,
+        mainline_branch: 'main', worktree_path: null, branch: null, worktrees: [],
+        git: { branch: 'main', detached: false, commit: 'abc1234', msg: 'init' },
+      },
     ])
     vi.mocked(listCabinWorktrees).mockResolvedValue([
       { repo: 'aurora', worktrees: [{ path: '/w1', head: 'h1', branch: 'feat-x' }] },

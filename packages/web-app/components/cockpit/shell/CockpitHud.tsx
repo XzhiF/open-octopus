@@ -7,12 +7,16 @@
 // 数字纪律（plans §1.5）：S1 没有编队数据 → 四统计一律「—」。绝不能写 0 冒充。
 // counts.sessions 为 null（拿不到 /api/agent/sessions/running）时隐藏「分身」统计。
 
-import { useCallback, useRef } from 'react'
+import { useCallback, useRef, useState } from 'react'
 import { THEMES, type CockpitTheme } from '@/components/cabin/cockpit'
 import { useCockpit } from '@/components/cabin/CockpitProvider'
 import { useCockpitFleet } from '../fleet/CockpitFleetProvider'
 import { useCockpitEntry } from '../entry/use-cockpit-entry'
 import { useCockpitState } from '../state/CockpitStateProvider'
+import { useCabinOptional } from '@/components/cabin/cabin-provider'
+import { CockpitProjectsPopover } from '../projects/CockpitProjectsPopover'
+import { CockpitRepoBinder } from '../projects/CockpitRepoBinder'
+import { useCabinProjects } from '../projects/use-cabin-projects'
 import { CockpitCrewSettings } from '../crew/CockpitCrewSettings'
 import {
   setCrewSettingsOpen,
@@ -28,9 +32,19 @@ function stat(value: number | null | undefined): string {
 
 export function CockpitHud() {
   const { prefs, applyPrefs } = useCockpit()
-  const { entryCabinId, railOpen, setRailOpen, fx } = useCockpitState()
+  const { entryCabinId, railOpen, setRailOpen, fx, selection } = useCockpitState()
   const { exitCockpit } = useCockpitEntry()
-  const { counts } = useCockpitFleet()
+  const { counts, rows } = useCockpitFleet()
+  const cabinCtx = useCabinOptional()
+  const currentCabinId = selection?.cabinId ?? entryCabinId
+  const currentCabinName =
+    currentCabinId === entryCabinId
+      ? cabinCtx?.cabin?.name ?? '作战舱'
+      : rows.find((row) => row.cabinId === currentCabinId)?.cabinName ?? '作战舱'
+  const {
+    projects, loading: projectsLoading, error: projectsError, refetch: refetchProjects,
+  } = useCabinProjects(currentCabinId)
+  const [bindOpen, setBindOpen] = useState(false)
   const settingsOpen = useCrewSettingsOpen()
   const xiyinBtnRef = useRef<HTMLButtonElement>(null)
   const closeSettings = useCallback(() => setCrewSettingsOpen(false), [])
@@ -70,6 +84,17 @@ export function CockpitHud() {
       {showSessions && (
         <div className="ck12-stat ck12-opt1"><b>{stat(counts?.sessions)}</b>分身</div>
       )}
+
+      {/* 舱籍读数（v14）：当前舱关联了几个项目；0 项目 = 绑定入口。 */}
+      <CockpitProjectsPopover
+        cabinId={currentCabinId}
+        cabinName={currentCabinName}
+        projects={projects}
+        loading={projectsLoading}
+        error={projectsError}
+        onRefetch={refetchProjects}
+        onBind={() => setBindOpen(true)}
+      />
 
       <div className="ck12-hud-right">
         <button
@@ -121,6 +146,15 @@ export function CockpitHud() {
         open={settingsOpen}
         anchor={xiyinBtnRef.current}
         onClose={closeSettings}
+      />
+
+      <CockpitRepoBinder
+        open={bindOpen}
+        cabinId={currentCabinId}
+        cabinPath={currentCabinId === entryCabinId ? cabinCtx?.cabin?.path ?? null : null}
+        projects={projects}
+        onClose={() => setBindOpen(false)}
+        onSaved={() => { refetchProjects(); fx.jump() }}
       />
     </header>
   )

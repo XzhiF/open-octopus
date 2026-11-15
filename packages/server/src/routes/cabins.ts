@@ -5,6 +5,8 @@
 // classifyError → 400/404/409, streamSSE on channel `cabin:<id>`.
 // Usage aggregation (P4) and comm note/resume (P3) land with their phases.
 
+import fs from "fs"
+import path from "path"
 import { Hono } from "hono"
 import type { Context } from "hono"
 import { streamSSE } from "hono/streaming"
@@ -14,7 +16,9 @@ import {
 } from "@octopus/shared"
 import {
   CabinService, CabinNotFoundError, CabinVersionConflictError, CabinStatusConflictError,
+  WorktreeConflictError, CabinRepoInputError,
 } from "../services/cabin/cabin-service"
+import { scanLocalProjects } from "../services/cabin/cabin-repos"
 import type { CabinInitService } from "../services/cabin/cabin-init-service"
 import { CabinCommService, CabinJobNotFoundError } from "../services/cabin/cabin-comm-service"
 import type { CabinRow, CabinJobRow, CabinJobEventRow } from "../db/types"
@@ -30,6 +34,8 @@ function classifyError(err: unknown): { status: number; message: string } {
   if (err instanceof CabinJobNotFoundError) return { status: 404, message: err.message }
   if (err instanceof CabinVersionConflictError) return { status: 409, message: err.message }
   if (err instanceof CabinStatusConflictError) return { status: 409, message: err.message }
+  if (err instanceof WorktreeConflictError) return { status: 409, message: err.message }
+  if (err instanceof CabinRepoInputError) return { status: 400, message: err.message }
   return { status: 500, message: err instanceof Error ? err.message : String(err) }
 }
 
@@ -82,8 +88,31 @@ const createBodySchema = z.object({
   requirements: z.string().optional(),
   org: z.string().nullable().optional(),
   repos: z.array(z.string().min(1)).optional(),
-  /** 跨 org 的项目关联；优先于 org+repos。 */
-  projects: z.array(z.object({ org: z.string().min(1), repo: z.string().min(1) })).optional(),
+  /** 项目关联；优先于 org+repos。ORG（org+repo）/ 本地（localPath）/ 舱外（absolutePath+external）。 */
+  projects: z.array(z.object({
+    source: z.enum(["org", "local"]).optional(),
+    org: z.string().min(1).optional(),
+    repo: z.string().min(1).optional(),
+    name: z.string().min(1).optional(),
+    localPath: z.string().min(1).optional(),
+    absolutePath: z.string().min(1).optional(),
+    external: z.boolean().optional(),
+  })).optional(),
+})
+
+const repoBodySchema = z.object({
+  source: z.enum(["org", "local"]).optional(),
+  name: z.string().min(1).optional(),
+  repo: z.string().min(1).optional(),
+  org: z.string().min(1).optional(),
+  localPath: z.string().min(1).optional(),
+  absolutePath: z.string().min(1).optional(),
+  external: z.boolean().optional(),
+})
+
+const worktreeBodySchema = z.object({
+  branch: z.string().min(1).optional(),
+  instance: z.string().min(1).optional(),
 })
 
 const attachBodySchema = z.object({
@@ -178,6 +207,21 @@ export function createCabinRoutes(
 
   // ── per-cabin ──────────────────────────────────────────────────────
 
+  /** 建舱/绑定前的本地项目扫描（只读）：返回 path 下深度 ≤2 的 git 仓库元信息。 */
+  router.get("/local-projects", (c) => {
+    const raw = c.req.query("path")?.trim()
+    if (!raw) return c.json({ error: "path required" }, 400)
+    if (!path.isAbsolute(raw)) return c.json({ error: "path must be absolute" }, 400)
+    let stat: fs.Stats
+    try {
+      stat = fs.lstatSync(raw)
+    } catch {
+      return c.json({ error: "path not found" }, 400)
+    }
+    if (!stat.isDirectory() || stat.isSymbolicLink()) return c.json({ error: "path must be a directory" }, 400)
+    return c.json({ projects: scanLocalProjects(raw) })
+  })
+
   router.get("/:id", (c) => {
     try {
       const { cabin, view } = service.getView(c.req.param("id"))
@@ -206,10 +250,14 @@ export function createCabinRoutes(
     }
   })
 
+  /** 软删除（计费账不删）。`?delete_files=1` = 确认弹框里勾了「同时删除本地文件」，
+   *  连同舱目录一起删；默认只删记录、目录不动。 */
   router.delete("/:id", (c) => {
     try {
-      service.delete(c.req.param("id"))
-      return c.json({ ok: true })
+      const flag = (c.req.query("delete_files") ?? "").toLowerCase()
+      const deleteFiles = flag === "1" || flag === "true"
+      const result = service.delete(c.req.param("id"), { deleteFiles })
+      return c.json({ ok: true, ...result })
     } catch (err) {
       const { status, message } = classifyError(err)
       return c.json({ error: message }, status as 400)
@@ -377,12 +425,16 @@ export function createCabinRoutes(
 
   router.get("/:id/repos", async (c) => {
     try {
-      const repos = service.listRepos(c.req.param("id"))
+      const repos = service.repoViews(c.req.param("id"))
+      // ?enrich=0 只回条目（HUD 计数用），不打 git。
+      if (c.req.query("enrich") === "0") return c.json({ repos })
       const enriched = await Promise.all(repos.map(async (r) => {
-        if (!r.worktree_path) return { ...r, git: null }
+        // 无 worktree 也富化：目标回落到主仓（项目面要看分支 / HEAD）。
+        const target = r.worktree_path ?? r.main_path
+        if (!target) return { ...r, git: null }
         try {
-          const info = await gitOps.getBranchInfo(r.worktree_path)
-          const commit = await gitOps.getHeadCommitInfo(r.worktree_path)
+          const info = await gitOps.getBranchInfo(target)
+          const commit = await gitOps.getHeadCommitInfo(target)
           const remote = r.main_path ? await gitOps.getRemoteUrl(r.main_path) : null
           return {
             ...r,
@@ -406,11 +458,36 @@ export function createCabinRoutes(
     const body = await safeJson(c)
     if (!body) return c.json({ error: "Invalid or missing JSON body" }, 400)
     try {
-      const input = z.object({ name: z.string().min(1) }).parse(body)
-      return c.json({ repo: service.addRepo(c.req.param("id"), input.name) }, 201)
+      const input = repoBodySchema.parse(body)
+      if (!input.name && !input.repo) throw new Error("name or repo required")
+      const entry = service.addRepo(c.req.param("id"), { ...input, name: input.name ?? input.repo })
+      return c.json({ repo: entry }, 201)
     } catch (err) {
       const { status, message } = classifyError(err)
       return c.json({ error: message }, status as 400)
+    }
+  })
+
+  /** 解绑：只动 config，不动磁盘；有活跃任务 → 409。 */
+  router.delete("/:id/repos/:name", (c) => {
+    try {
+      return c.json(service.removeRepo(c.req.param("id"), c.req.param("name")))
+    } catch (err) {
+      const { status, message } = classifyError(err)
+      return c.json({ error: message }, status as 409)
+    }
+  })
+
+  /** 显式开工作树（默认不预建；重复开同分支 409，不覆盖）。 */
+  router.post("/:id/repos/:name/worktree", async (c) => {
+    const body = (await safeJson(c)) ?? {}
+    try {
+      const input = worktreeBodySchema.parse(body)
+      const entry = service.openRepoWorktree(c.req.param("id"), c.req.param("name"), input)
+      return c.json({ repo: entry }, 201)
+    } catch (err) {
+      const { status, message } = classifyError(err)
+      return c.json({ error: message }, status === 500 ? 409 : status as 400)
     }
   })
 

@@ -12,11 +12,13 @@ import type { ContextUsageData } from '@/lib/agent/types'
 import type { ComposerContext, ComposerEffort } from '@/lib/agent/composer-settings'
 import type { MoodKey } from '@/components/cabin/cockpit'
 
-/** 面上要显示哪一条：job / task / attention 三型，cabinId 可 ≠ 入口舱（跨舱只读）。 */
+/** 面上要显示哪一条：job / task / attention / project 四型，cabinId 可 ≠ 入口舱。
+ *  project 的 id = 项目 key（org:<org>/<name> | local:<path>），舱籍面用 __roster__。 */
 export type CockpitRef =
   | { kind: 'job'; cabinId: string; id: string }
   | { kind: 'task'; cabinId: string; id: string }
   | { kind: 'attention'; cabinId: string; id: string }
+  | { kind: 'project'; cabinId: string; id: string }
 
 export type CockpitRefKind = CockpitRef['kind']
 
@@ -132,6 +134,10 @@ export interface CockpitState {
   tab: CockpitTab
   select(ref: CockpitRef | null, tab?: CockpitTab): void
   setTab(tab: CockpitTab): void
+
+  /** 左栏「只看这个项目」：只筛编队，不换面。null = 不筛。 */
+  projectFilter: string | null
+  setProjectFilter(next: string | null): void
 
   chat: CockpitChatApi | null
   reportChat(api: CockpitChatApi | null): void

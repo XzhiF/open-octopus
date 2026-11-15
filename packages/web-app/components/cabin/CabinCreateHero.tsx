@@ -74,13 +74,17 @@ export function CabinCreateHero({ draft, cabins, onChange, onCancel, onCreated }
   }, [cabins])
 
   const echoHint = useMemo(() => {
-    // 目录原来有项目时的回显说明（本地记忆；真实实现接 workspace 项目关联）。
-    if (!draft.path) return null
+    // 目录原来有项目时的回显说明（本地记忆）+ 本地目录映射计数。
+    if (!draft.path || draft.projects.length === 0) return null
     const echo = echoProjectsForDir(draft.path)
-    return echo.length > 0 && draft.projects.length > 0
-      ? `已从这个工作空间回显 ${draft.projects.length} 个项目 —— 可以增减，也能跨 org 再加。`
-      : null
-  }, [draft.path, draft.projects.length])
+    const orgCount = draft.projects.filter((p) => p.source !== 'local').length
+    const localCount = draft.projects.filter((p) => p.source === 'local').length
+    const localPart = localCount > 0 ? `；目录里还有 ${localCount} 个本地项目已映射` : ''
+    if (echo.length > 0) {
+      return `已从这个工作空间回显 ${orgCount} 个 ORG 项目${localPart} —— 可以增减，也能跨 org 再加。`
+    }
+    return `已关联 ${orgCount} 个 ORG 项目${localPart} —— 可以增减，也能跨 org 再加。`
+  }, [draft.path, draft.projects])
 
   useEffect(() => {
     setRecentDirs(readRecentCabinDirs())
@@ -442,7 +446,12 @@ export function CabinCreateHero({ draft, cabins, onChange, onCancel, onCreated }
             {/* 绑定项目 */}
             {projOpen && (
               <div className="cc-pop" style={{ width: 'min(420px,100%)' }} data-testid="cabin-project-pop">
-                <CabinProjectBinder selected={draft.projects} onChange={setProjects} echoHint={echoHint} />
+                <CabinProjectBinder
+                  selected={draft.projects}
+                  onChange={setProjects}
+                  echoHint={echoHint}
+                  dirPath={draft.path}
+                />
               </div>
             )}
           </div>

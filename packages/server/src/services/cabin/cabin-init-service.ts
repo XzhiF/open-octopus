@@ -19,10 +19,13 @@ import type { CabinInitState } from "@octopus/shared"
 import type { CabinDAO } from "../../db/dao/cabin-dao"
 import type { CabinRow } from "../../db/types"
 import type { SSEService } from "../sse"
-import { WorkspaceGit, type SpecWorktreeEntry } from "../workspace-git"
+import { WorkspaceGit } from "../workspace-git"
 import { gitOps } from "../git-ops"
 import { getChatEventBridge } from "../activity/chat-event-bridge"
-import { ensureRepoCloned, readCabinConfig } from "./cabin-repos"
+import {
+  ensureRepoCloned, readCabinConfig, mergeCabinRepoEntry, repoSource, resolveCabinRepo,
+  readLocalRepoInfo, isGitRepo, projectKey, type CabinRepoEntry,
+} from "./cabin-repos"
 import { nameForRequirements, UNNAMED_CABIN_NAME } from "./cabin-naming"
 
 export interface CabinInitDeps {
@@ -43,8 +46,8 @@ interface GateDef {
 const GATE_DEFS: GateDef[] = [
   { key: "dir", label: "目录可写", fixHint: "检查目录路径与写权限", deepLink: "settings" },
   { key: "git", label: "git 可用", fixHint: "安装 git 或修正 PATH", deepLink: "settings" },
-  { key: "clone", label: "克隆仓库", fixHint: "检查 org 仓库注册表与 git 认证", deepLink: "repos" },
-  { key: "mainline", label: "主线分支", fixHint: "检查网络/远端后重试；worktree 失败去仓库模块", deepLink: "repos" },
+  { key: "clone", label: "克隆 ORG 仓库", fixHint: "检查 org 仓库注册表与 git 认证", deepLink: "repos" },
+  { key: "mainline", label: "项目 / 主线登记", fixHint: "登记 main_path / 主线分支；worktree 按作业开", deepLink: "repos" },
   { key: "skeleton", label: "舱骨架 .cabin/", fixHint: "检查目录写权限", deepLink: "settings" },
   { key: "requirements", label: "需求落盘", fixHint: "检查目录写权限", deepLink: "settings" },
   { key: "first-iteration", label: "首迭代提案", fixHint: "检查模型服务配置后重试门禁", deepLink: "settings" },
@@ -229,59 +232,91 @@ export class CabinInitService {
       case "clone": {
         // 跨 org（v4 I5）：config.json.repos[] 的 group 就是该仓库的 org；
         // 老数据 group 为空时回落到舱级 row.org。
+        // 本地 / 外部项目**不克隆**：只校验目录存在且是 git repo。
         const repoEntries = readCabinConfig(row.path).repos.filter((r) => r.name)
         if (repoEntries.length === 0) { item.sub = "无仓库"; return }
         const failed: string[] = []
+        let orgCloned = 0
+        let localMapped = 0
         for (const entry of repoEntries) {
-          const org = entry.group || row.org || ""
+          if (repoSource(entry) === "local") {
+            const { mainPath } = resolveCabinRepo(row.path, entry)
+            if (!mainPath || !isGitRepo(mainPath)) {
+              failed.push(`${entry.name}: 本地目录不是 git 仓库（${mainPath ?? "路径缺失"}）`)
+              continue
+            }
+            localMapped += 1
+            continue
+          }
+          const org = entry.group || entry.org || row.org || ""
           if (!org) { failed.push(`${entry.name}: 仓库未指定 org`); continue }
           const res = ensureRepoCloned(org, entry.name)
           if ("error" in res) failed.push(`${entry.name}: ${res.error}`)
+          else orgCloned += 1
         }
         // Partial clone failure does not block the whole gate (plan risk #3):
         // succeeded repos proceed; failed ones are re-clonable from S5 later.
-        if (failed.length === repoEntries.length) throw new Error(`全部克隆失败：${failed.join("；")}`)
-        item.sub = failed.length > 0 ? `部分失败：${failed.join("；")}` : `${repoEntries.length} 个仓库就绪`
+        if (failed.length === repoEntries.length) throw new Error(`全部失败：${failed.join("；")}`)
+        const summary = `${orgCloned} 个仓库就绪 · ${localMapped} 个本地映射`
+        item.sub = failed.length > 0 ? `${summary}（部分失败：${failed.join("；")}）` : summary
         return
       }
       case "mainline": {
+        // 本轮口径（design 21 §1.6 ⑤⑥ / plan 22 §2.5）：只登记项目与主线，
+        // **不预建 worktree**。ORG 主仓只拉主线（syncToDefaultBranch 的镜像语义
+        // 天然保证「主仓永远干净且在默认分支」）；worktree 由作业或显式动作开。
         const config = readCabinConfig(row.path)
         const repoEntries = config.repos.filter((r) => r.name)
         if (repoEntries.length === 0) { item.sub = "无仓库"; return }
-        const branch = `cabin-${row.id.slice(0, 8)}`
-        const entries: SpecWorktreeEntry[] = []
-        const syncFailed: string[] = []
+        const registered: CabinRepoEntry[] = []
+        const failed: string[] = []
         for (const entry of repoEntries) {
-          const org = entry.group || row.org || ""
-          if (!org) { syncFailed.push(`${entry.name}: 仓库未指定 org`); continue }
+          if (repoSource(entry) === "local") {
+            const { mainPath } = resolveCabinRepo(row.path, entry)
+            if (!mainPath || !isGitRepo(mainPath)) {
+              failed.push(`${entry.name}: 本地目录不可用`)
+              continue
+            }
+            const info = readLocalRepoInfo(mainPath)
+            registered.push(mergeCabinRepoEntry(row.path, {
+              ...entry,
+              source: "local",
+              main_path: mainPath,
+              mainline_branch: entry.mainline_branch ?? info.branch ?? undefined,
+            }))
+            continue
+          }
+          const org = entry.group || entry.org || row.org || ""
+          if (!org) { failed.push(`${entry.name}: 仓库未指定 org`); continue }
           const res = ensureRepoCloned(org, entry.name)
-          if ("error" in res) { syncFailed.push(`${entry.name}: ${res.error}`); continue }
+          if ("error" in res) { failed.push(`${entry.name}: ${res.error}`); continue }
           // Per-repo serial: syncToDefaultBranch force-aligns the shared org
           // mirror; concurrent syncs of the same mirror would race (risk #1).
+          let mainline = entry.mainline_branch
           try {
-            await gitOps.syncToDefaultBranch(res.localPath)
+            const synced = await gitOps.syncToDefaultBranch(res.localPath)
+            mainline = synced.branch
           } catch (err) {
-            syncFailed.push(`${entry.name}: ${errMsg(err)}`)
+            failed.push(`${entry.name}: ${errMsg(err)}`)
           }
-          try {
-            entries.push(this.git.initWorktreeOne(
-              row.path,
-              { name: entry.name, source_path: res.localPath, ...(entry.group ? { group: entry.group } : {}) },
-              branch,
-              org,
-            ))
-          } catch (err) {
-            throw new Error(`worktree 建立失败 '${entry.name}': ${errMsg(err)}`)
-          }
+          registered.push(mergeCabinRepoEntry(row.path, {
+            ...entry,
+            source: "org",
+            org,
+            group: entry.group || org,
+            repoName: entry.repoName || entry.name,
+            main_path: res.localPath,
+            mainline_branch: mainline,
+            // 明确清掉旧形态里可能残留的 worktree 字段（老舱重试门禁时）。
+            worktree_path: entry.worktree_path,
+            branch: entry.branch,
+          }))
         }
-        if (entries.length > 0) {
-          // writeSpecWorktreeMeta writes config.json.repos[] (the contract
-          // resolveRepoDir / resolveWorktree read) + CLAUDE.md in one pass.
-          this.git.writeSpecWorktreeMeta(row.path, entries, config.name)
+        this.writeProjectsClaudeMd(row, registered)
+        if (failed.length > 0) {
+          throw new Error(`项目登记失败：${failed.join("；")}`)
         }
-        item.sub = syncFailed.length > 0
-          ? `主线同步失败（worktree 按本地 HEAD 建立）：${syncFailed.join("；")}`
-          : `${entries.length} 个 worktree 就绪`
+        item.sub = `${registered.length} 个项目登记 · 未预建工作树`
         return
       }
       case "skeleton": {
@@ -335,6 +370,40 @@ export class CabinInitService {
       default:
         throw new Error(`unknown gate item: ${item.key}`)
     }
+  }
+
+  /** 舱目录的 CLAUDE.md：项目清单 + 只读门槛 + 开工作树的命令。
+   *  Agent 起来就读得到「哪些仓库只读、要改怎么开工作树」，不靠记忆。 */
+  private writeProjectsClaudeMd(row: CabinRow, entries: CabinRepoEntry[]): void {
+    const lines: string[] = [
+      `# 作战舱：${row.name}`, "",
+      "## 项目（只读引用 · 不搬代码）", "",
+    ]
+    if (entries.length === 0) {
+      lines.push("（还没有关联项目）", "")
+    }
+    for (const entry of entries) {
+      const { mainPath } = resolveCabinRepo(row.path, entry)
+      const kind = repoSource(entry) === "local"
+        ? (entry.external ? "外部目录" : "本地目录")
+        : `ORG ${entry.org || entry.group || ""}`
+      lines.push(`- **${entry.name}** — ${kind} · \`${projectKey(entry)}\``)
+      if (mainPath) lines.push(`  - 主仓：\`${mainPath}\`（只读）`)
+      lines.push(`  - 主线：${entry.mainline_branch ?? "（未探测）"}`)
+      lines.push(
+        `  - 要改：开工作树 —— \`git -C "${mainPath ?? ""}" worktree add ` +
+        `"${row.path}/projects/<instance>/${entry.name}" -b <branch>\``,
+      )
+    }
+    lines.push(
+      "",
+      "## 门槛",
+      "- 上述主仓一律只读：唯一允许的写向动作是拉主线（fetch + pull --ff-only）。",
+      "- 任何编辑都发生在工作树里；建舱不预建工作树，按作业或显式动作开。",
+      "- 任务天然在自己的 workspace 里建工作树，不会写主仓。",
+      "",
+    )
+    fs.writeFileSync(path.join(row.path, "CLAUDE.md"), lines.join("\n"), "utf-8")
   }
 
   // ── persistence / streaming ────────────────────────────────────────

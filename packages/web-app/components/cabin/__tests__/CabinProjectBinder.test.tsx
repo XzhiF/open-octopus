@@ -1,9 +1,10 @@
 // 绑定项目面板：搜索过滤/高亮、无结果、已选条移除、跨 org 累加（不清空）。
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { render, screen, fireEvent, waitFor } from '@testing-library/react'
+import { render, screen, fireEvent, waitFor, within } from '@testing-library/react'
 import { useState } from 'react'
 import type { CabinProjectRef } from '@/lib/cabin-draft'
 import { fetchManifestRepos } from '@/lib/api-client'
+import { scanLocalProjects } from '@/lib/cabin-api'
 
 vi.mock('@/hooks/useOrgs', () => ({
   useOrgs: () => ({
@@ -18,6 +19,11 @@ vi.mock('@/lib/api-client', async (importOriginal) => {
   return { ...actual, fetchManifestRepos: vi.fn() }
 })
 
+vi.mock('@/lib/cabin-api', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/lib/cabin-api')>()
+  return { ...actual, scanLocalProjects: vi.fn() }
+})
+
 import { CabinProjectBinder } from '../CabinProjectBinder'
 
 function Harness({ initial = [] as CabinProjectRef[] }) {
@@ -27,6 +33,7 @@ function Harness({ initial = [] as CabinProjectRef[] }) {
 
 describe('CabinProjectBinder — 跨 org 关联', () => {
   beforeEach(() => {
+    vi.mocked(scanLocalProjects).mockResolvedValue([])
     vi.mocked(fetchManifestRepos).mockImplementation(async (org: string) => {
       if (org === 'XzhiF') {
         return { groups: { XzhiF: [{ name: 'ledger' }, { name: 'engine' }, { name: 'web-app' }] } }
@@ -79,5 +86,87 @@ describe('CabinProjectBinder — 跨 org 关联', () => {
     render(<Harness />)
     await waitFor(() => expect(screen.getByText('ledger')).toBeInTheDocument())
     expect(screen.getByTestId('cabin-project-binder')).toHaveTextContent('项目是关联关系，不搬代码')
+  })
+})
+
+describe('CabinProjectBinder — 本地目录映射（舱籍第三轮）', () => {
+  beforeEach(() => {
+    vi.mocked(fetchManifestRepos).mockResolvedValue({
+      groups: { XzhiF: [{ name: 'ledger' }] },
+    })
+    vi.mocked(scanLocalProjects).mockResolvedValue([
+      { name: 'console', local_path: 'console', branch: 'feat/console', dirty: false, remote: null },
+      { name: 'scripts', local_path: 'tools/scripts', branch: 'main', dirty: true, remote: null },
+    ])
+  })
+
+  it('本地组置顶、带路径与来源标；深度 1 默认勾上', async () => {
+    const seen: CabinProjectRef[][] = []
+    function LocalHarness() {
+      const [selected, setSelected] = useState<CabinProjectRef[]>([])
+      return (
+        <CabinProjectBinder
+          selected={selected}
+          onChange={(next) => { seen.push(next); setSelected(next) }}
+          dirPath="/w/aurora"
+        />
+      )
+    }
+    render(<LocalHarness />)
+    await waitFor(() => expect(screen.getByTestId('cabin-project-local-group')).toBeInTheDocument())
+    const list = screen.getByTestId('cabin-project-list')
+    // 本地组在 ORG 组之前
+    expect(list.textContent?.indexOf('本地目录')).toBeLessThan(list.textContent?.indexOf('XzhiF') ?? -1)
+    expect(screen.getByTestId('cabin-project-list').textContent).toContain('console')
+    expect(screen.getAllByText('本地').length).toBeGreaterThan(0)
+    // 深度 1 默认选中；深度 2 不默认选
+    await waitFor(() => expect(seen.at(-1)?.map((p) => p.repo)).toEqual(['console']))
+    expect(seen.at(-1)?.[0]).toMatchObject({ source: 'local', localPath: 'console' })
+  })
+
+  it('点深度 2 项目 → 选择里带 localPath；再点取消', async () => {
+    const seen: CabinProjectRef[][] = []
+    function LocalHarness() {
+      const [selected, setSelected] = useState<CabinProjectRef[]>([])
+      return (
+        <CabinProjectBinder
+          selected={selected}
+          onChange={(next) => { seen.push(next); setSelected(next) }}
+          dirPath="/w/aurora"
+        />
+      )
+    }
+    render(<LocalHarness />)
+    await waitFor(() => expect(screen.getByTestId('cabin-project-list').textContent).toContain('scripts'))
+    const list = () => screen.getByTestId('cabin-project-list')
+    fireEvent.click(within(list()).getByText('scripts'))
+    await waitFor(() => expect(seen.at(-1)?.some((p) => p.repo === 'scripts')).toBe(true))
+    fireEvent.click(within(list()).getByText('scripts'))
+    await waitFor(() => expect(seen.at(-1)?.some((p) => p.repo === 'scripts')).toBe(false))
+  })
+
+  it('舱外目录显式登记 → absolutePath + external', async () => {
+    const seen: CabinProjectRef[][] = []
+    function LocalHarness() {
+      const [selected, setSelected] = useState<CabinProjectRef[]>([])
+      return (
+        <CabinProjectBinder
+          selected={selected}
+          onChange={(next) => { seen.push(next); setSelected(next) }}
+          dirPath="/w/aurora"
+        />
+      )
+    }
+    render(<LocalHarness />)
+    await waitFor(() => expect(screen.getByTestId('cabin-project-external-open')).toBeInTheDocument())
+    fireEvent.click(screen.getByTestId('cabin-project-external-open'))
+    fireEvent.change(screen.getByTestId('cabin-project-external-input'), {
+      target: { value: '/shared/gateway' },
+    })
+    fireEvent.click(screen.getByText('登记'))
+    await waitFor(() => {
+      const added = seen.at(-1)?.find((p) => p.repo === 'gateway')
+      expect(added).toMatchObject({ source: 'local', absolutePath: '/shared/gateway', external: true })
+    })
   })
 })
