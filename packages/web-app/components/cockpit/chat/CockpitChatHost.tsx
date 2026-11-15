@@ -45,11 +45,16 @@ export function CockpitChatHost({ entryCabinId }: CockpitChatHostProps) {
     // 就地回答（design 23 §2 续）：attention 面「在对话里回答」只发事件，
     // 浮窗同样要展开；滚动到具体卡片由转录里的 AuthorAskInbox 负责。
     const onOpenAsk = () => chatWindow.openWithFocus()
+    // 作业面「去主对话」：切面会自动收窗（ce078160），只切会话不展开浮窗的话
+    // 人看到的是「点了没反应」—— 与「去任务对话」同样先开窗。
+    const onMainChat = () => chatWindow.openWithFocus()
     window.addEventListener('octopus:open-task', onOpenTask)
     window.addEventListener('octopus:open-ask', onOpenAsk)
+    window.addEventListener('octopus:cabin-main-chat', onMainChat)
     return () => {
       window.removeEventListener('octopus:open-task', onOpenTask)
       window.removeEventListener('octopus:open-ask', onOpenAsk)
+      window.removeEventListener('octopus:cabin-main-chat', onMainChat)
     }
   }, [chatWindow])
 

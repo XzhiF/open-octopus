@@ -156,4 +156,13 @@ describe('CockpitChatHost / CockpitChatWindow — 全程挂载', () => {
     fireEvent(window, new CustomEvent('octopus:open-task', { detail: { taskId: 'task-1' } }))
     await waitFor(() => expect(win.getAttribute('data-open')).toBe('true'))
   })
+
+  it('octopus:cabin-main-chat（去主对话）→ 同样自动展开浮窗', async () => {
+    // 2026-11-16 用户反馈：作业面「去主对话」只切会话不开窗，看起来像点了没反应。
+    renderShell()
+    const win = screen.getByTestId('cockpit-chat-window')
+    expect(win.getAttribute('data-open')).toBe('false')
+    fireEvent(window, new CustomEvent('octopus:cabin-main-chat'))
+    await waitFor(() => expect(win.getAttribute('data-open')).toBe('true'))
+  })
 })
