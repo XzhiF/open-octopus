@@ -178,6 +178,12 @@ interface ChatAreaProps {
   /** 把「走真 composer 管线」的提交入口暴露给宿主（CockpitChatApi.submit）。
    *  含附件、流式排队、steer，与输入框回车完全同一条路径。 */
   composerBridgeRef?: MutableRefObject<ChatComposerBridge | null>
+  /** design 25 §5.5：任务线程默认只读 —— 输入框收成一条「只读 + 兜底开关」的条。
+   *  打开兜底后才走正常 composer（例外路径）。 */
+  composerHidden?: boolean
+  composerHiddenHint?: string
+  composerEnableLabel?: string
+  onEnableComposer?: () => void
 }
 
 /** ChatArea 暴露给宿主的 composer 能力（只增不减，避免宿主另写 send）。 */
@@ -210,6 +216,7 @@ export function ChatArea({
   tui, onSteer, steerActiveRef, resumeTailing,
   messageExtras, transcriptTail, transcriptHeader, composerSeed, timelineClearDock, dockGutter,
   composerSlot, composerVariant = 'full', onQueueDepthChange, composerBridgeRef,
+  composerHidden, composerHiddenHint, composerEnableLabel, onEnableComposer,
 }: ChatAreaProps) {
   const [input, setInput] = useState('')
   const [slashOpen, setSlashOpen] = useState(false)
@@ -908,7 +915,30 @@ export function ChatArea({
 
       {/* Input area — always visible。TUI 变体（草稿工作台）：排队 dock + ❯ 单行
           输入（busy 不锁死）+ 控件条（专家咨询│model│ctx … 右端挂快捷键提示/busy）。 */}
-      {tui ? (
+      {composerHidden ? (
+        // design 25 §5.5：任务线程默认只读 —— 决策在主对话做，这里只是证据面。
+        // 「在此处回答（兜底）」是显式开关；打开后才出现输入框（例外路径）。
+        <div
+          data-testid="composer-readonly-bar"
+          className="shrink-0 border-t border-white/[0.06] bg-pop-bg px-4 py-2"
+        >
+          <div className="mx-auto flex max-w-3xl items-center gap-2 text-[11.5px]">
+            <span className="min-w-0 flex-1 truncate text-pop-dim">
+              {composerHiddenHint ?? '此线程只读：决定都在主对话里做'}
+            </span>
+            {onEnableComposer && (
+              <button
+                type="button"
+                data-testid="composer-enable-fallback"
+                onClick={onEnableComposer}
+                className="shrink-0 rounded-full border border-pop-cyan/40 bg-pop-cyan/10 px-2 py-0.5 font-bold text-pop-cyan transition-colors hover:bg-pop-cyan/20"
+              >
+                {composerEnableLabel ?? '在此处回答（兜底）'}
+              </button>
+            )}
+          </div>
+        </div>
+      ) : tui ? (
         <ComposerSlotPortal slot={composerSlot}>
         <div
           ref={dockRef}

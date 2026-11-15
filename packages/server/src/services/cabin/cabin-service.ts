@@ -5,12 +5,14 @@ import path from "path"
 import {
   mergeLlmUsageSummaries, emptyTokenUsage, totalTokens,
   type CabinInitState, type LlmUsageSummary, type ModelUsageBreakdown, type TokenUsage, type LedgerCost,
+  type CabinWorkRow,
 } from "@octopus/shared"
 import type { CabinDAO } from "../../db/dao/cabin-dao"
 import type {
   WorkspaceDAO, AgentSessionDAO, TaskDAO, ExecutionDAO, AcceptanceDAO,
 } from "../../db/dao"
 import { SessionCacheContextDAO } from "../../db/dao"
+import type { CabinDelegationDAO } from "../../db/dao/cabin-delegation-dao"
 import type { TokenUsageDAO } from "../../db/dao/token-usage-dao"
 import type { ExecutionLinkDAO } from "../../db/dao/execution-link-dao"
 import type { FindingRow } from "../../db/dao/findings-dao"
@@ -31,6 +33,7 @@ import type { IncidentStore } from "../supervision/incident-store"
 import type { FindingOpsService } from "../knowledge/findings"
 import { MAX_PARALLEL_WORKSPACES } from "../scheduler/concurrency"
 import { deriveCabinView, type DerivedCabinView, type DeriveCabinInput } from "./derive-cabin-view"
+import { assignHandles } from "./cabin-handles"
 import type { CabinInitService } from "./cabin-init-service"
 import { isInitComplete } from "./cabin-init-service"
 import {
@@ -202,6 +205,8 @@ export interface CabinInfra {
   findingOps?: FindingOpsService
   tokenUsageDAO?: TokenUsageDAO
   execLinks?: ExecutionLinkDAO
+  /** design 25 §4.2：独立委派（第二种工作实体）。 */
+  cabinDelegationDAO?: CabinDelegationDAO
 }
 
 /** ASCII workspace slug — WorkspaceService.create forbids non-ASCII names;
@@ -658,14 +663,20 @@ export class CabinService {
     const taskRows = this.infra ? this.infra.taskDAO.findByCabinId(id) : []
     const execToTask = new Map<string, string>()
     const sessionToTask = new Map<string, string>()
+    // design 25 §4.1：句柄 / 颜色由创建顺序 + id hash 派生，不落库。
+    const taskHandles = assignHandles(
+      taskRows.map((t) => ({ id: t.id, created_at: t.created_at })), "task",
+    )
     if (this.infra) {
       for (const t of taskRows) {
         const execs = this.infra.executionDAO.listTaskInstances(t.id, 200)
         const acceptances = this.infra.acceptanceDAO.listByTask(t.id)
         const derived = deriveTaskView(t, execs, acceptances)
+        const handle = taskHandles.get(t.id)
         tasks.push({
           id: t.id, name: t.name, status: derived.taskStatus,
           repo: t.repo_group ?? null, branch: null,
+          ...(handle ? { handle: handle.handle, color: handle.color } : {}),
         })
         for (const e of execs) {
           executions.push({ id: e.id, task_id: t.id, status: e.status })
@@ -675,6 +686,11 @@ export class CabinService {
         if (t.doer_session_id) sessionToTask.set(t.doer_session_id, t.id)
       }
     }
+    // 独立委派（design 25 §4.2）：读侧归一化 —— 与任务同一种 attention 形状。
+    const delegationRows = this.infra?.cabinDelegationDAO?.listByCabin(id) ?? []
+    const delegationHandles = assignHandles(
+      delegationRows.map((d) => ({ id: d.id, created_at: d.created_at })), "delegation",
+    )
     const view = deriveCabinView({
       cabin: { id: row.id, status: row.status, focused_job_id: row.focused_job_id },
       tasks, executions,
@@ -682,6 +698,13 @@ export class CabinService {
       asks: this.gatherAsks(row, executions, execToTask, sessionToTask),
       findings: this.listFindings(id, "open").map((f) => ({ id: f.id, title: f.title, status: f.status })),
       jobs: jobs.map((j) => ({ id: j.id, kind: j.kind, ref_id: j.ref_id, title: j.title, priority: j.priority })),
+      delegations: delegationRows.map((d) => {
+        const h = delegationHandles.get(d.id)
+        return {
+          id: d.id, title: d.title, state: d.state,
+          ...(h ? { handle: h.handle, color: h.color } : {}),
+        }
+      }),
       maxWorkers: MAX_PARALLEL_WORKSPACES,
     })
     return { cabin: row, view }
@@ -1027,8 +1050,44 @@ export class CabinService {
     })
   }
 
-  // ── 作业 → 项目锚点（不加列；拿不到就是 []，不猜）────────────────
+  /**
+   * design 25 §4.2 读侧归一化：把 task 与 delegation 映射成同一种 WorkRow。
+   * 编队 / attention / reminder 都只读这一处 —— 写侧保持独立，读侧只有一个入口。
+   * `#1` 是立项的任务，`D1` 是跑一趟的委派。
+   */
+  listWorkView(cabinId: string): CabinWorkRow[] {
+    this.mustGet(cabinId)
+    const jobs = this.listJobsView(cabinId).filter((j) => j.kind === "task" && j.ref_id)
+    const taskHandles = assignHandles(
+      jobs.map((j) => ({ id: j.ref_id as string, created_at: j.created_at })), "task",
+    )
+    const delegations = this.infra?.cabinDelegationDAO?.listByCabin(cabinId) ?? []
+    const delegationHandles = assignHandles(
+      delegations.map((d) => ({ id: d.id, created_at: d.created_at })), "delegation",
+    )
+    return [
+      ...jobs.map((j) => {
+        const h = taskHandles.get(j.ref_id as string)
+        return {
+          id: j.ref_id as string, kind: "task" as const,
+          handle: h?.handle ?? "#?", color: h?.color ?? 0,
+          title: j.title, status: j.status,
+          session_id: j.session_id, job_id: j.id, priority: j.priority,
+        } satisfies CabinWorkRow
+      }),
+      ...delegations.map((d) => {
+        const h = delegationHandles.get(d.id)
+        return {
+          id: d.id, kind: "delegation" as const,
+          handle: h?.handle ?? "D?", color: h?.color ?? 0,
+          title: d.title, status: d.state,
+          session_id: d.doer_session_id, job_id: d.id, priority: 0,
+        } satisfies CabinWorkRow
+      }),
+    ]
+  }
 
+  // ── 作业 → 项目锚点（不加列；拿不到就是 []，不猜）────────────────
   /** task：repo_group + project_ids 与舱项目求交；命中多个全返回。 */
   private anchorsOfTask(
     repoGroup: string | null, projectIds: string, projects: CabinRepoEntry[],

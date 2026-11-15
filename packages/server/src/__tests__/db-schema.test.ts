@@ -45,7 +45,8 @@ describe("DB Schema", () => {
       "billing_price_config", "billing_setting",
       "branch_executions",
       // Cabin P1（作战舱）：cabins + 作业台账 / 审计事件。此前漏计本清单。
-      "cabin_job_events", "cabin_jobs", "cabins",
+      // design 25 §4.2：独立委派（第二种工作实体，不并入 cabin_jobs）。
+      "cabin_delegations", "cabin_job_events", "cabin_jobs", "cabins",
       "chat_messages", "chat_sessions",
       "clones", "effectiveness_cursors", "evolution_log", "execution_archive", "execution_links", "execution_summaries", "executions", "experiences",
       "findings",
@@ -98,7 +99,8 @@ describe("DB Schema", () => {
     //   idx_runtime_incidents_exec + idx_runtime_incidents_status = 95.
     // + Cabin P1（作战舱）3 条：idx_cabins_status / idx_cabin_jobs_cabin /
     //   idx_cabin_job_events_job = 98（此前漏计，与表清单同上）。迭代退役后 −1。
-    expect(rows.length).toBe(98)
+    // + design 25 §4.2 独立委派 2 条：idx_cabin_delegations_cabin / _doer = 100。
+    expect(rows.length).toBe(100)
   })
 
   it("workspaces table has correct columns", () => {

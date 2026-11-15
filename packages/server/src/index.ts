@@ -144,6 +144,9 @@ import { TasksService, type TaskArchiveFinding } from "./services/tasks/tasks-se
 import { CabinService } from "./services/cabin/cabin-service"
 import { CabinInitService } from "./services/cabin/cabin-init-service"
 import { CabinCommService } from "./services/cabin/cabin-comm-service"
+import { CabinDecisionService } from "./services/cabin/cabin-decision-service"
+import { CabinDelegationService } from "./services/cabin/cabin-delegation-service"
+import { CabinDelegationDAO } from "./db/dao/cabin-delegation-dao"
 import { setCabinToolsProvider } from "./services/chat/cabin-tools"
 import { TaskHomeService, setTaskHomeResolver } from "./services/tasks/task-home-service"
 import { PluginMaterializer } from "./services/tasks/plugin-materializer"
@@ -1472,6 +1475,8 @@ if (shouldServe) {
       // AcceptanceDAO 不入 AllDAOs（同 TasksService 先例，就地构造）。
       const cabinService = new CabinService(daos!.cabin)
       const cabinInitService = new CabinInitService({ cabin: daos!.cabin, sse })
+      // design 25 §4.2：独立委派实体（无 phase / worktree / 验收 / 归档）。
+      const cabinDelegationDAO = new CabinDelegationDAO(db)
       // 状态变更即时广播：自动打盹 / 活动唤醒都不能等前端 30s 轮询才换态。
       cabinService.setStatusHook((cabinId, status) => {
         sse.emit(`cabin:${cabinId}`, { event: "cabin_status", data: { cabin_id: cabinId, status } })
@@ -1491,6 +1496,7 @@ if (shouldServe) {
         findingOps: getFindingOps(),
         tokenUsageDAO: daos!.tokenUsage,
         execLinks: new ExecutionLinkDAO(db),
+        cabinDelegationDAO,
       })
       // Cabin P3（C6/C9）：通信语义层 + G2 入站审计 hook + 舱主会话工具集。
       const cabinComm = new CabinCommService({
@@ -1504,6 +1510,30 @@ if (shouldServe) {
       getChatEventBridge().setCabinSignalHook((taskId, status, summary) => {
         cabinComm.recordTaskSignal(taskId, status, summary)
       })
+      // design 25：决策票据 / 账本 / 转达 + 独立委派。
+      const cabinDelegationService = new CabinDelegationService({
+        cabin: daos!.cabin,
+        delegations: cabinDelegationDAO,
+        service: cabinService,
+        comm: cabinComm,
+      })
+      const cabinDecisionService = new CabinDecisionService({
+        cabin: daos!.cabin,
+        service: cabinService,
+        onAppend: (sessionId, workspaceId) => {
+          if (!workspaceId) return
+          sse.emit(workspaceId, {
+            event: "session_updated",
+            data: { sessionId, wake: false, phase: "event" },
+          })
+        },
+        // 委派的提问被转达后回到 running（否则编队里会一直挂着「在问你」）。
+        onDelegationRelayed: (delegationId) => cabinDelegationService.markRunning(delegationId),
+      })
+      getChatEventBridge().setDelegationStateHook((delegationId, state) => {
+        if (state === "waiting_input") cabinDelegationService.markWaitingInput(delegationId)
+        else cabinDelegationService.markRunning(delegationId)
+      })
       // Cabin P5（G3）：软封存触发舱级知识沉淀 —— 逐任务复用 ArchiveIngest（冻结素材包
       // → summary → archive-compile → 判例/技能草案）。fire-and-forget，不阻塞封存。
       cabinService.setArchiveHook(async (cabinId) => {
@@ -1511,8 +1541,16 @@ if (shouldServe) {
           await archiveIngest.ingestTask(t.id)
         }
       })
-      setCabinToolsProvider(() => ({ service: cabinService, comm: cabinComm }))
-      app.route('/api/cabins', createCabinRoutes(cabinService, cabinInitService, sse, cabinComm))
+      setCabinToolsProvider(() => ({
+        service: cabinService,
+        comm: cabinComm,
+        decisions: cabinDecisionService,
+        delegations: cabinDelegationService,
+      }))
+      app.route('/api/cabins', createCabinRoutes(
+        cabinService, cabinInitService, sse, cabinComm,
+        cabinDecisionService, cabinDelegationService,
+      ))
 
       // ★ Initialize Scheduler Engine with executors
       if (getFlag('scheduler')) {

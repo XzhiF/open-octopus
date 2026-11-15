@@ -1404,6 +1404,10 @@ export function ChatPane({
     if (onBackToCabinMain) onBackToCabinMain()
     else window.dispatchEvent(new CustomEvent('octopus:cabin-main-chat'))
   }
+  // design 25 §5.5：任务线程默认只读 —— 决定都在主对话做；「在此处回答」是
+  // 显式打开的兜底路径（例外，不是主路径）。切会话时复位。
+  const [threadComposerEnabled, setThreadComposerEnabled] = useState(false)
+  useEffect(() => { setThreadComposerEnabled(false) }, [sessionId])
 
   return (
     <div
@@ -1495,8 +1499,11 @@ export function ChatPane({
             className="flex shrink-0 items-center gap-2 border-b border-pop-bd/60 bg-pop-amber-soft/60 px-3 py-1.5 text-[11px]"
           >
             <span className="min-w-0 truncate font-semibold text-pop-ink">{paneTitle}</span>
-            <span className="shrink-0 text-pop-dim/70">任务线程</span>
-            <span className="flex-1" />
+            <span className="shrink-0 text-pop-dim/70">任务线程 · 证据面</span>
+            <span className="hidden min-w-0 flex-1 truncate text-[10.5px] text-pop-dim/60 sm:block">
+              汐音代你在与作者对话 · 你的决定都在主对话
+            </span>
+            <span className="flex-1 sm:hidden" />
             <button
               type="button"
               data-testid="chat-back-to-main"
@@ -1557,6 +1564,10 @@ export function ChatPane({
             })}
             steerActiveRef={steeringRef}
             resumeTailing={resumeStreaming}
+            composerHidden={showBackToMain && !threadComposerEnabled}
+            composerHiddenHint="汐音代你在与作者对话 · 你的决定都在主对话"
+            composerEnableLabel="在此处回答（兜底）"
+            onEnableComposer={() => setThreadComposerEnabled(true)}
             emptyStateTitle={draftScope ? (workflowDraft ? '描述要开发的工作流' : '描述要开发的任务') : undefined}
             emptyStateDescription={draftScope
               ? (workflowDraft

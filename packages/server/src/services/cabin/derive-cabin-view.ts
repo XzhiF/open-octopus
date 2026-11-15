@@ -15,6 +15,9 @@ export interface DeriveTaskInput {
   status: string
   repo?: string | null
   branch?: string | null
+  /** design 25 §4.1：派生句柄 / 颜色（不落库）。 */
+  handle?: string
+  color?: number
 }
 
 export interface DeriveExecutionInput {
@@ -51,6 +54,16 @@ export interface DeriveJobInput {
   priority: number
 }
 
+/** 独立委派（design 25 §4.2）：与 workload 同级的第二种工作实体。 */
+export interface DeriveDelegationInput {
+  id: string
+  title: string
+  state: "queued" | "running" | "waiting_input" | "done" | "failed" | "cancelled"
+  /** 派生句柄：`D1`。由调用方按创建顺序分配。 */
+  handle?: string
+  color?: number
+}
+
 export interface DeriveCabinInput {
   cabin: { id: string; status: CabinStatus; focused_job_id: string | null }
   tasks: DeriveTaskInput[]
@@ -59,6 +72,7 @@ export interface DeriveCabinInput {
   asks: DeriveAskInput[]
   findings: DeriveFindingInput[]
   jobs: DeriveJobInput[]
+  delegations?: DeriveDelegationInput[]
   maxWorkers: number
 }
 
@@ -73,7 +87,7 @@ const AWAITING_ORDER: Record<CabinAttentionItem["awaiting"], number> = {
 }
 
 export function deriveCabinView(input: DeriveCabinInput): DerivedCabinView {
-  const { cabin, tasks, executions, incidents, asks, findings, jobs, maxWorkers } = input
+  const { cabin, tasks, executions, incidents, asks, findings, jobs, delegations = [], maxWorkers } = input
   const jobByTask = new Map<string, DeriveJobInput>()
   for (const j of jobs) if (j.kind === "task" && j.ref_id) jobByTask.set(j.ref_id, j)
   const priorityOf = (taskId: string | null): number =>
@@ -83,26 +97,37 @@ export function deriveCabinView(input: DeriveCabinInput): DerivedCabinView {
   const attention: CabinAttentionItem[] = []
   const push = (a: Omit<CabinAttentionItem, "priority"> & { priority?: number }) =>
     attention.push({ ...a, priority: a.priority ?? 0 })
+  /** 两种工作实体共用一套 attention：subject / handle / color 由这里统一挂上。 */
+  const subjectOf = (taskId: string | null): Pick<CabinAttentionItem, "subject" | "handle" | "color"> => {
+    if (!taskId) return {}
+    const t = taskById.get(taskId)
+    return {
+      subject: { kind: "task", id: taskId },
+      ...(t?.handle ? { handle: t.handle } : {}),
+      ...(t?.color !== undefined ? { color: t.color } : {}),
+    }
+  }
 
   for (const t of tasks) {
     const job = jobByTask.get(t.id)
+    const subject = subjectOf(t.id)
     if (t.status === "awaiting_review") {
       push({
         id: `review-${t.id}`, job_id: job?.id ?? null, stage: "review", awaiting: "person",
         title: `${t.name} · 待验收`, task_id: t.id, repo: t.repo ?? null, wt: t.branch ?? null,
-        deep_link: `task:${t.id}`, priority: job?.priority ?? 0,
+        deep_link: `task:${t.id}`, priority: job?.priority ?? 0, ...subject,
       })
     } else if (t.status === "awaiting_archive") {
       push({
         id: `archive-${t.id}`, job_id: job?.id ?? null, stage: "review", awaiting: "person",
         title: `${t.name} · 待归档`, task_id: t.id, repo: t.repo ?? null, wt: t.branch ?? null,
-        deep_link: `task:${t.id}`, priority: job?.priority ?? 0,
+        deep_link: `task:${t.id}`, priority: job?.priority ?? 0, ...subject,
       })
     } else if (t.status === "failed") {
       push({
         id: `failed-${t.id}`, job_id: job?.id ?? null, stage: "blocked", awaiting: "person",
         title: `${t.name} · 失败已升级`, task_id: t.id, repo: t.repo ?? null, wt: t.branch ?? null,
-        deep_link: `task:${t.id}`, priority: job?.priority ?? 0,
+        deep_link: `task:${t.id}`, priority: job?.priority ?? 0, ...subject,
       })
     }
   }
@@ -114,6 +139,7 @@ export function deriveCabinView(input: DeriveCabinInput): DerivedCabinView {
         stage: "approval", awaiting: "person", title: `${t?.name ?? e.id} · 待审批`,
         task_id: e.task_id, repo: t?.repo ?? null, wt: t?.branch ?? null,
         deep_link: `execution:${e.id}`, priority: priorityOf(e.task_id),
+        ...subjectOf(e.task_id),
       })
     }
   }
@@ -123,7 +149,7 @@ export function deriveCabinView(input: DeriveCabinInput): DerivedCabinView {
         id: `incident-${inc.id}`, job_id: inc.task_id ? (jobByTask.get(inc.task_id)?.id ?? null) : null,
         stage: "blocked", awaiting: "person", title: inc.title,
         task_id: inc.task_id, repo: null, wt: null, deep_link: `incident:${inc.id}`,
-        priority: priorityOf(inc.task_id),
+        priority: priorityOf(inc.task_id), ...subjectOf(inc.task_id),
       })
     }
   }
@@ -132,7 +158,7 @@ export function deriveCabinView(input: DeriveCabinInput): DerivedCabinView {
       id: `ask-${a.id}`, job_id: a.task_id ? (jobByTask.get(a.task_id)?.id ?? null) : null,
       stage: "answer", awaiting: "person", title: a.title, question: a.question,
       task_id: a.task_id, repo: null, wt: null, deep_link: `ask:${a.id}`,
-      priority: priorityOf(a.task_id),
+      priority: priorityOf(a.task_id), ...subjectOf(a.task_id),
     })
   }
   for (const f of findings) {
@@ -140,6 +166,28 @@ export function deriveCabinView(input: DeriveCabinInput): DerivedCabinView {
       push({
         id: `finding-${f.id}`, job_id: null, stage: "adjudicate", awaiting: "person",
         title: f.title, task_id: null, repo: null, wt: null, deep_link: `finding:${f.id}`,
+      })
+    }
+  }
+  // 委派（design 25 §4.2）：waiting_input → answer；failed → blocked；
+  // done 不产 attention（只留回执，免得跑一趟的小事把决策队列占满）。
+  for (const d of delegations) {
+    const subject = {
+      subject: { kind: "delegation" as const, id: d.id },
+      ...(d.handle ? { handle: d.handle } : {}),
+      ...(d.color !== undefined ? { color: d.color } : {}),
+    }
+    if (d.state === "waiting_input") {
+      push({
+        id: `delegation-ask-${d.id}`, job_id: null, stage: "answer", awaiting: "person",
+        title: `${d.title} · 委派在问你`, task_id: null, repo: null, wt: null,
+        deep_link: `delegation:${d.id}`, ...subject,
+      })
+    } else if (d.state === "failed") {
+      push({
+        id: `delegation-failed-${d.id}`, job_id: null, stage: "blocked", awaiting: "person",
+        title: `${d.title} · 委派失败`, task_id: null, repo: null, wt: null,
+        deep_link: `delegation:${d.id}`, ...subject,
       })
     }
   }

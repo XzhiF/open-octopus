@@ -66,6 +66,19 @@ export function CockpitChatHost({ entryCabinId }: CockpitChatHostProps) {
     mainSessionId, shared,
   } = useCabinChatWiring({ sidebarWidth: 0 })
 
+  // design 25 §4.2：委派行点开 = doer 会话（证据面）。委派没有 cockpit ref
+  // （它不占用 task:/job: 命名空间），所以走独立的 open-session 事件。
+  useEffect(() => {
+    const onOpenSession = (event: Event) => {
+      const id = (event as CustomEvent<{ sessionId?: string }>).detail?.sessionId
+      if (!id) return
+      issueCommand({ type: 'select-session', sessionId: id })
+      chatWindow.openWithFocus()
+    }
+    window.addEventListener('octopus:open-session', onOpenSession)
+    return () => window.removeEventListener('octopus:open-session', onOpenSession)
+  }, [issueCommand, chatWindow])
+
   // layerRoot：任务模块窗（运行 / YAML / 子代理）挂在整个舱面之上。
   // 注意不能挂 #ck12-arena —— arena 在 .ck12-stage 的 stacking context（z-index:2）里，
   // 子节点 z-[60] 也压不过 fixed 的聊天浮窗（z-index:24）。所以用一个与 .ck12-app

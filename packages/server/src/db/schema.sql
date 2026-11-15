@@ -1424,3 +1424,25 @@ CREATE INDEX IF NOT EXISTS idx_cabin_job_events_job ON cabin_job_events(job_id, 
 CREATE TRIGGER IF NOT EXISTS trg_cabin_job_events_no_update
 BEFORE UPDATE ON cabin_job_events BEGIN SELECT RAISE(ABORT, 'cabin_job_events is append-only'); END;
 -- DELETE is reserved for cabin cascade cleanup (app-level, S2); no app path deletes events otherwise.
+
+-- 独立委派（design 25 §4.2）：轻量工作实体，不是任务 —— 没有 phase / worktree /
+-- 验收 / 归档。不复用 cabin_jobs：那一列 kind 带 CHECK（不可扩值），账本不合并，
+-- 读侧归一化成同一种 WorkRow。CREATE ... IF NOT EXISTS 让老库 applySchema 时自动补表。
+CREATE TABLE IF NOT EXISTS cabin_delegations (
+  id TEXT PRIMARY KEY,
+  cabin_id TEXT NOT NULL,
+  title TEXT NOT NULL,
+  intent_text TEXT NOT NULL,
+  brief TEXT,
+  autonomy TEXT NOT NULL DEFAULT 'checkpoint'
+    CHECK (autonomy IN ('approve','checkpoint','hands-off')),
+  state TEXT NOT NULL DEFAULT 'queued'
+    CHECK (state IN ('queued','running','waiting_input','done','failed','cancelled')),
+  doer_session_id TEXT,
+  result_summary TEXT,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  ended_at TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_cabin_delegations_cabin ON cabin_delegations(cabin_id, created_at);
+CREATE INDEX IF NOT EXISTS idx_cabin_delegations_doer ON cabin_delegations(doer_session_id);

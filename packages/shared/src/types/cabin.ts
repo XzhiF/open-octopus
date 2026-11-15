@@ -10,11 +10,128 @@ export type CabinStatus = z.infer<typeof CabinStatusSchema>
 export const CabinJobKindSchema = z.enum(["task", "workflow", "subagent"])
 export type CabinJobKind = z.infer<typeof CabinJobKindSchema>
 
-export const CabinJobEventKindSchema = z.enum(["dispatch", "report", "attention", "handback", "note", "human_input", "resume"])
+/** `brief` / `decision` 是 design 25 加的两类审计事件（追加，不改旧值）。 */
+export const CabinJobEventKindSchema = z.enum([
+  "dispatch", "report", "attention", "handback", "note", "human_input", "resume",
+  "brief", "decision",
+])
 export type CabinJobEventKind = z.infer<typeof CabinJobEventKindSchema>
 
 export const CabinAutonomySchema = z.enum(["off", "observe", "auto"])
 export type CabinAutonomy = z.infer<typeof CabinAutonomySchema>
+
+/** 托管档位（design 24 §10.3 / 25 §6.1）：每步问 / 关键点停 / 全权。 */
+export const CabinAutonomyTierSchema = z.enum(["approve", "checkpoint", "hands-off"])
+export type CabinAutonomyTier = z.infer<typeof CabinAutonomyTierSchema>
+
+/** 意图编译产物（design 25 §6.1）。原文永远另存，不就地被改写（I4）。 */
+export const CabinBriefSchema = z.object({
+  goal: z.string(),
+  done_when: z.array(z.string()).default([]),
+  constraints: z.array(z.string()).default([]),
+  non_goals: z.array(z.string()).default([]),
+  refs: z.array(z.string()).default([]),
+  autonomy: CabinAutonomyTierSchema.default("checkpoint"),
+  decide_by: z.enum(["human-in-loop", "orchestrator"]).default("human-in-loop"),
+})
+export type CabinBrief = z.infer<typeof CabinBriefSchema>
+
+/** 代理发言（design 25 §2）：doer 侧每条 user 消息都要能回答「谁说的 / 根据什么」。 */
+export const ProxyTurnSchema = z.object({
+  by: z.enum(["principal", "orchestrator"]),
+  sessionId: z.string(),
+  basis: z.string().nullable().default(null),
+  /** verbatim = 逐字转达的选择；brief = 编译后的意图；note = 补充说明。 */
+  kind: z.enum(["verbatim", "brief", "note", "receipt"]).default("note"),
+})
+export type ProxyTurn = z.infer<typeof ProxyTurnSchema>
+
+/** 决策状态机（design 25 §7）。状态不落表，由 job event + 消息派生。 */
+export const CabinDecisionStateSchema = z.enum([
+  "asked", "shown", "decided", "relayed", "acked", "fallback_relayed", "expired",
+])
+export type CabinDecisionState = z.infer<typeof CabinDecisionStateSchema>
+
+/** 提交票据（design 25 §7.1）：askId 是唯一权威，focusAtSubmit 只做诊断。 */
+export const CabinDecisionTicketSchema = z.object({
+  decisionId: z.string(),
+  askId: z.string(),
+  subject: z.object({
+    kind: z.enum(["task", "delegation"]),
+    id: z.string(),
+  }),
+  handle: z.string(),
+  choice: z.string(),
+  note: z.string().optional(),
+  source: z.enum(["card", "composer", "thread_fallback"]).default("card"),
+  focusAtSubmit: z.string().nullable().optional(),
+  submittedAt: z.string(),
+})
+export type CabinDecisionTicket = z.infer<typeof CabinDecisionTicketSchema>
+
+/** 独立委派（design 25 §4.2）：不是任务，没有 phase / worktree / 验收 / 归档。 */
+export const CabinDelegationStateSchema = z.enum([
+  "queued", "running", "waiting_input", "done", "failed", "cancelled",
+])
+export type CabinDelegationState = z.infer<typeof CabinDelegationStateSchema>
+
+export const CabinDelegationSchema = z.object({
+  id: z.string(),
+  cabin_id: z.string(),
+  title: z.string(),
+  intent_text: z.string(),
+  brief: z.string().nullable(),
+  autonomy: CabinAutonomyTierSchema,
+  state: CabinDelegationStateSchema,
+  doer_session_id: z.string().nullable(),
+  result_summary: z.string().nullable(),
+  created_at: z.string(),
+  updated_at: z.string(),
+  ended_at: z.string().nullable(),
+})
+export type CabinDelegationDTO = z.infer<typeof CabinDelegationSchema>
+
+/** 工作实体（design 25 §4.2）：读侧把 task 与 delegation 归一成同一种行。 */
+export const CabinWorkKindSchema = z.enum(["task", "delegation"])
+export type CabinWorkKind = z.infer<typeof CabinWorkKindSchema>
+
+export interface CabinWorkRow {
+  /** 工作实体 id（task id / delegation id）。 */
+  id: string
+  kind: CabinWorkKind
+  /** `#1` / `D1` —— 给人指代用，由列表顺序派生，不落库。 */
+  handle: string
+  /** 0..5，由 id hash 派生（与 pop 色板同族）。 */
+  color: number
+  title: string
+  status: string
+  session_id: string | null
+  /** 底层 job id（delegation 无 job 时为自身 id）。 */
+  job_id: string
+  priority: number
+}
+
+/** 句柄序号：按列表顺序（= 创建顺序）分配。 */
+export function cabinHandleFor(kind: CabinWorkKind, ordinal: number): string {
+  return kind === "delegation" ? `D${ordinal}` : `#${ordinal}`
+}
+
+/** 颜色 = hash(id) % 6。前后端同一个纯函数，保证同一任务处处同色。 */
+export function cabinHandleColor(seed: string): number {
+  let h = 2166136261
+  for (let i = 0; i < seed.length; i++) {
+    h ^= seed.charCodeAt(i)
+    h = Math.imul(h, 16777619)
+  }
+  return Math.abs(h) % 6
+}
+
+/** 从任意较长文本里挑出 handle（`#12` / `D3`）——供自由文本改作用域用。 */
+export function parseCabinHandle(text: string): { kind: CabinWorkKind; ordinal: number } | null {
+  const m = /(^|\s)([#D])(\d{1,3})(?=\s|$|[:：,，.。])/.exec(text.trim())
+  if (!m) return null
+  return { kind: m[2] === "D" ? "delegation" : "task", ordinal: Number(m[3]) }
+}
 
 /** Immutable authorization recorded per dispatch (C5).
  *
@@ -94,6 +211,13 @@ export const CabinAttentionItemSchema = z.object({
   wt: z.string().nullable(),
   deep_link: z.string().nullable(),
   priority: z.number(),
+  /** design 25 §4.2：两种工作实体共用一套 attention。 */
+  subject: z.object({
+    kind: z.enum(["task", "delegation"]),
+    id: z.string(),
+  }).optional(),
+  handle: z.string().optional(),
+  color: z.number().optional(),
 })
 export type CabinAttentionItem = z.infer<typeof CabinAttentionItemSchema>
 

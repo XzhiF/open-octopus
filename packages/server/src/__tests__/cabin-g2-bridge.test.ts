@@ -125,6 +125,96 @@ describe("作者提问卡（design 23 §2 · 舱主会话就地作答）", () =>
   })
 })
 
+describe("决策信封 / 句柄 / 回执（design 24 §3 + design 25 §4.1 / §5.1）", () => {
+  const QUESTIONS = {
+    questions: [{
+      question: "走哪个通道？", header: "通道", multiSelect: false,
+      options: [
+        { label: "短信", description: "只做通道验证" },
+        { label: "邮件", description: "多一张投递记录表" },
+      ],
+    }],
+  }
+
+  it("信封富化字段落 payload：decision / recommendation / options / handle", () => {
+    const bridge = getChatEventBridge()
+    bridge.requestAuthorAskCard({
+      authorSessionId: "s-task",
+      askMessageId: "ask-env-1",
+      questions: QUESTIONS,
+      decision: "失败回调用什么通道重试？",
+      recommendation: { label: "短信", reason: "最薄" },
+      options: [
+        { label: "短信", impact: "只做通道验证" },
+        { label: "邮件", impact: "多一张投递记录表" },
+      ],
+    })
+    const payload = (cards("s-cabin")[0] as {
+      activity?: { payload?: Record<string, unknown> }
+    }).activity?.payload ?? {}
+    expect(payload.decision).toBe("失败回调用什么通道重试？")
+    expect(payload.recommendation).toEqual({ label: "短信", reason: "最薄" })
+    expect(payload.options).toHaveLength(2)
+    // 句柄由创建顺序派生：本舱只有 t1。
+    expect(payload.handle).toBe("#1")
+    expect(payload.subject).toEqual({ kind: "task", id: "t1" })
+    expect(payload.blocking).toBe(true)
+  })
+
+  it("缺字段降级：没有 decision 就不带这个键（UI 不渲染空块）", () => {
+    const bridge = getChatEventBridge()
+    bridge.requestAuthorAskCard({
+      authorSessionId: "s-task", askMessageId: "ask-env-2", questions: QUESTIONS,
+    })
+    const payload = (cards("s-cabin")[0] as {
+      activity?: { payload?: Record<string, unknown> }
+    }).activity?.payload ?? {}
+    expect("decision" in payload).toBe(false)
+    expect("recommendation" in payload).toBe(false)
+    expect(payload.options).toBeUndefined()
+  })
+
+  it("任务线程兜底作答 → 主会话多一条回执（幂等键 askMessageId）", () => {
+    const bridge = getChatEventBridge()
+    bridge.requestAuthorAskCard({
+      authorSessionId: "s-task", askMessageId: "ask-env-3", questions: QUESTIONS,
+    })
+    bridge.markAuthorAskAnswered("s-task")
+    bridge.markAuthorAskAnswered("s-task")
+    const rows = cards("s-cabin")
+    const receipts = rows.filter((r) => JSON.stringify(r).includes("authorAskReceipt"))
+    expect(receipts).toHaveLength(1)
+    const receipt = receipts[0] as {
+      activity?: { payload?: { askReceiptFor?: string; authorAskReceipt?: { handle?: string } } }
+    }
+    expect(receipt.activity?.payload?.askReceiptFor).toBe("ask-env-3")
+    expect(receipt.activity?.payload?.authorAskReceipt?.handle).toBe("#1")
+  })
+
+  it("委派 doer 的提问：subject=delegation、handle=D1，并回流 waiting_input", () => {
+    db.prepare(`
+      INSERT INTO cabin_delegations
+        (id, cabin_id, title, intent_text, autonomy, state, doer_session_id, created_at, updated_at)
+      VALUES ('d1', 'c1', '三方案对比', '帮我对比一下', 'checkpoint', 'running', 's-deleg', ?, ?)
+    `).run(NOW, NOW)
+    insertSession("s-deleg")
+    const states: Array<{ id: string; state: string }> = []
+    const bridge = getChatEventBridge()
+    bridge.setDelegationStateHook((id, state) => { states.push({ id, state }) })
+
+    bridge.requestAuthorAskCard({
+      authorSessionId: "s-deleg", askMessageId: "ask-del-1", questions: QUESTIONS,
+    })
+    const payload = (cards("s-cabin")[0] as {
+      activity?: { payload?: Record<string, unknown> }
+    }).activity?.payload ?? {}
+    expect(payload.subject).toEqual({ kind: "delegation", id: "d1" })
+    expect(payload.handle).toBe("D1")
+    expect(payload.taskId).toBeNull()
+    expect(states).toEqual([{ id: "d1", state: "waiting_input" }])
+  })
+})
+
 describe("舱任务的路由（2026-11-16 双会话修订）", () => {
   it("舱任务卡同时落任务 chat 与舱主会话，wake 仍汇聚舱主会话", () => {
     const bridge = getChatEventBridge()

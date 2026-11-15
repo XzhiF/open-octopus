@@ -542,3 +542,134 @@ export async function clearCabinFocus(id: string, version: number): Promise<Cabi
 export function cabinEventsUrl(id: string): string {
   return url(`/${id}/events`)
 }
+
+// ============ 决策（design 25 §7.1：票据 / 账本 / 队列）============
+
+export interface CabinDecisionRecord {
+  decisionId: string
+  askId: string
+  subject: { kind: "task" | "delegation"; id: string }
+  handle: string
+  taskName: string
+  choice: string
+  note?: string
+  source: string
+  submittedAt: string
+  stage: "decided" | "relayed" | "fallback_relayed" | "expired"
+  relayedAt?: string
+}
+
+export interface CabinDecisionSubmitResult {
+  decision: CabinDecisionRecord
+  already: boolean
+  receipt: { handle: string; choice: string; line: string }
+}
+
+/** 提交失败时服务端会带「正确映射」：这张卡属于谁、当前可选哪些。 */
+export class CabinDecisionError extends Error {
+  constructor(
+    message: string,
+    readonly status: number,
+    readonly detail?: unknown,
+  ) {
+    super(message)
+    this.name = "CabinDecisionError"
+  }
+}
+
+/**
+ * 提交一条决策。**askId 必须来自卡片自身的 payload**，不能取 UI 焦点 ——
+ * 归属正确性靠票据，不靠「屏幕上现在显示的是哪张卡」（design 25 §7.1）。
+ */
+export async function submitCabinDecision(
+  cabinId: string,
+  input: {
+    askId: string
+    choice: string
+    note?: string
+    source?: "card" | "composer" | "thread_fallback"
+    focusAtSubmit?: string | null
+    taskId?: string
+  },
+): Promise<CabinDecisionSubmitResult> {
+  const res = await fetch(url(`/${cabinId}/decisions`), {
+    method: "POST",
+    headers: JSON_HEADERS,
+    body: JSON.stringify(input),
+  })
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({} as Record<string, unknown>))
+    throw new CabinDecisionError(
+      typeof body.error === "string" ? body.error : `HTTP ${res.status}`,
+      res.status,
+      body.detail,
+    )
+  }
+  return res.json() as Promise<CabinDecisionSubmitResult>
+}
+
+export async function fetchCabinDecisions(cabinId: string, signal?: AbortSignal): Promise<{
+  decisions: CabinDecisionRecord[]
+  pending: CabinDecisionRecord[]
+  asks: Array<{
+    askId: string
+    handle: string | null
+    title: string
+    subject: { kind: "task" | "delegation"; id: string } | null
+    question: string
+    decision?: string
+  }>
+}> {
+  const res = await fetch(url(`/${cabinId}/decisions`), { cache: "no-store", signal })
+  return handleResponse(res)
+}
+
+// ============ 独立委派（design 25 §4.2）==========================
+
+export interface CabinDelegationView {
+  id: string
+  cabin_id: string
+  title: string
+  intent_text: string
+  brief: unknown
+  autonomy: "approve" | "checkpoint" | "hands-off"
+  state: "queued" | "running" | "waiting_input" | "done" | "failed" | "cancelled"
+  doer_session_id: string | null
+  result_summary: string | null
+  created_at: string
+  updated_at: string
+  ended_at: string | null
+  handle: string | null
+  color: number | null
+}
+
+export async function listCabinDelegations(cabinId: string, signal?: AbortSignal): Promise<CabinDelegationView[]> {
+  const res = await fetch(url(`/${cabinId}/delegations`), { cache: "no-store", signal })
+  const body = await handleResponse<{ delegations: CabinDelegationView[] }>(res)
+  return body.delegations
+}
+
+export async function createCabinDelegation(
+  cabinId: string,
+  input: {
+    title: string
+    intent: string
+    brief?: {
+      goal: string
+      done_when?: string[]
+      constraints?: string[]
+      non_goals?: string[]
+      refs?: string[]
+      autonomy?: "approve" | "checkpoint" | "hands-off"
+    }
+    autonomy?: "approve" | "checkpoint" | "hands-off"
+  },
+): Promise<CabinDelegationView> {
+  const res = await fetch(url(`/${cabinId}/delegations`), {
+    method: "POST",
+    headers: JSON_HEADERS,
+    body: JSON.stringify(input),
+  })
+  const body = await handleResponse<{ delegation: CabinDelegationView }>(res)
+  return body.delegation
+}

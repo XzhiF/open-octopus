@@ -146,6 +146,13 @@ class ChatEventBridge {
     this.cabinSignalHook = hook
   }
 
+  /** design 25 §4.2：委派 / 任务的提问状态回流（组合根注入，避免桥依赖服务层）。 */
+  private delegationStateHook: ((delegationId: string, state: "waiting_input" | "running") => void) | null = null
+
+  setDelegationStateHook(hook: (delegationId: string, state: "waiting_input" | "running") => void): void {
+    this.delegationStateHook = hook
+  }
+
   /** G2：舱任务的人-facing 单线程 = 舱主会话（doer 回报汇聚，C4）。 */
   private cabinMainSession(cabinId: string): string | null {
     if (!this.db) return null
@@ -1101,37 +1108,32 @@ class ChatEventBridge {
   }
 
   /**
-   * 作者提问卡（design 23 §2 · 就地作答）：任务作者在任务线程里 AskUserQuestion
-   * 时，把同一组问题投一张卡到**舱主会话** —— 用户不用切对话就能答。卡片是
-   * append-only 事件（零 LLM）；答案由 web 卡片转发回作者线程，本服务不代答。
+   * 作者提问卡（design 23 §2 就地作答 + design 24 信封 + design 25 §4.2 两种实体）：
+   * 任务作者 / 委派 doer 在会话里 AskUserQuestion 时，把同一组问题投一张卡到舱主会话，
+   * 用户不用切对话就能答。卡片是 append-only 事件（零 LLM）；答案由决策端点 /
+   * web 卡片转发回 doer 线程，本服务不代答。
    *
-   * 只对「绑了舱的任务」生效；同一张提问（askMessageId）幂等，重启后也不会重投。
+   * 只对「绑了舱的任务或委派」生效；同一张提问（askMessageId）幂等。
    */
   requestAuthorAskCard(input: {
     authorSessionId: string
     askMessageId: string
     questions: unknown
+    /** design 24 §3：必填最小集的富化字段，缺了就降级（不占位、不空块）。 */
+    decision?: string
+    recommendation?: { label?: string; reason?: string }
+    options?: Array<{ label?: string; impact?: string }>
+    origin?: string
+    blocking?: boolean
+    intent?: string
+    phase?: { index?: number; round?: number } | null
   }): void {
     if (!this.db) return
-    let row: {
-      task_id: string; task_name: string; main_session_id: string | null; workspace_id: string | null
-    } | undefined
-    try {
-      row = this.db.prepare(
-        `SELECT t.id AS task_id, t.name AS task_name,
-                c.main_session_id AS main_session_id, c.workspace_id AS workspace_id
-           FROM tasks t JOIN cabins c ON c.id = t.cabin_id
-          WHERE t.source_chat_session_id = ? AND t.deleted_at IS NULL
-          ORDER BY t.created_at DESC
-          LIMIT 1`,
-      ).get(input.authorSessionId) as typeof row
-    } catch {
-      return // old DB without cabins — feature off
-    }
-    if (!row?.main_session_id) return
+    const subject = this.resolveAskSubject(input.authorSessionId)
+    if (!subject?.mainSessionId) return
     const dup = this.db.prepare(
       "SELECT 1 FROM messages WHERE session_id = ? AND metadata LIKE ? LIMIT 1",
-    ).get(row.main_session_id, `%"askMessageId":"${input.askMessageId}"%`)
+    ).get(subject.mainSessionId, `%"askMessageId":"${input.askMessageId}"%`)
     if (dup) return
 
     const questions = Array.isArray(input.questions)
@@ -1141,21 +1143,33 @@ class ChatEventBridge {
       ? questions[0] as { question?: unknown } | undefined
       : undefined
     const questionText = typeof first?.question === "string" ? first.question : ""
-    const title = `任务「${row.task_name}」的作者在问你`
+    const prefix = subject.handle ? `${subject.handle} ` : ""
+    const title = `${prefix}${subject.title} 在问你`
     const activity = {
       kind: "cabin.author_ask",
       severity: "info",
       title,
       message: questionText,
-      workspaceId: row.workspace_id,
-      taskId: row.task_id,
+      workspaceId: subject.workspaceId,
+      taskId: subject.subject.kind === "task" ? subject.subject.id : null,
       status: "awaiting_input",
       payload: {
         authorAsk: true,
         askMessageId: input.askMessageId,
         authorSessionId: input.authorSessionId,
-        taskId: row.task_id,
-        taskName: row.task_name,
+        cabinId: subject.cabinId,
+        taskId: subject.subject.kind === "task" ? subject.subject.id : null,
+        taskName: subject.title,
+        subject: subject.subject,
+        handle: subject.handle,
+        taskHandle: subject.handle,
+        blocking: input.blocking ?? true,
+        ...(input.decision ? { decision: input.decision } : {}),
+        ...(input.recommendation ? { recommendation: input.recommendation } : {}),
+        ...(input.options?.length ? { options: input.options } : {}),
+        ...(input.origin ? { origin: input.origin } : {}),
+        ...(input.intent ? { intent: input.intent } : {}),
+        ...(input.phase ? { phase: input.phase } : {}),
         questions: input.questions,
       },
     }
@@ -1165,7 +1179,7 @@ class ChatEventBridge {
         "INSERT INTO messages (id, session_id, role, content, metadata, created_at) VALUES (?, ?, ?, ?, ?, ?)",
       ).run(
         randomUUID(),
-        row.main_session_id,
+        subject.mainSessionId,
         "user",
         `[任务提问 · 待回答] ${title}\n${questionText}`,
         JSON.stringify({ displayType: "event", activity }),
@@ -1173,12 +1187,95 @@ class ChatEventBridge {
       )
       this.db.prepare(
         "UPDATE sessions SET last_message_at = ?, updated_at = ? WHERE id = ?",
-      ).run(now, now, row.main_session_id)
-      this.notifySession(row.main_session_id, row.workspace_id)
+      ).run(now, now, subject.mainSessionId)
+      this.notifySession(subject.mainSessionId, subject.workspaceId)
     } catch (err: unknown) {
       if (process.env.NODE_ENV !== "test") {
         console.warn("[ChatEventBridge] author-ask card append failed:", err instanceof Error ? err.message : String(err))
       }
+      return
+    }
+    // 委派：提问即 waiting_input（编队里能看到「D1 在问你」）。
+    if (subject.subject.kind === "delegation") {
+      try { this.delegationStateHook?.(subject.subject.id, "waiting_input") } catch { /* best effort */ }
+    }
+  }
+
+  /** 提问者会话 → 归属实体（task / delegation）+ 舱主会话 + handle。 */
+  private resolveAskSubject(authorSessionId: string): {
+    cabinId: string
+    mainSessionId: string | null
+    workspaceId: string | null
+    subject: { kind: "task" | "delegation"; id: string }
+    title: string
+    handle: string
+  } | null {
+    if (!this.db) return null
+    // 1) 任务：作者主线程（source）或 doer 会话都算它的提问面。
+    try {
+      const task = this.db.prepare(
+        `SELECT t.id AS id, t.name AS title, t.cabin_id AS cabin_id,
+                c.main_session_id AS main_session_id, c.workspace_id AS workspace_id
+           FROM tasks t JOIN cabins c ON c.id = t.cabin_id
+          WHERE (t.source_chat_session_id = ? OR t.doer_session_id = ?)
+            AND t.deleted_at IS NULL
+          ORDER BY t.created_at DESC LIMIT 1`,
+      ).get(authorSessionId, authorSessionId) as {
+        id: string; title: string; cabin_id: string
+        main_session_id: string | null; workspace_id: string | null
+      } | undefined
+      if (task) {
+        return {
+          cabinId: task.cabin_id,
+          mainSessionId: task.main_session_id,
+          workspaceId: task.workspace_id,
+          subject: { kind: "task", id: task.id },
+          title: task.title,
+          handle: this.handleFor("task", task.cabin_id, task.id),
+        }
+      }
+    } catch { /* tasks/cabins absent on very old DBs */ }
+
+    // 2) 独立委派（design 25 §4.2）：doer 会话就是它的提问面。
+    try {
+      const row = this.db.prepare(
+        `SELECT d.id AS id, d.title AS title, d.cabin_id AS cabin_id,
+                c.main_session_id AS main_session_id, c.workspace_id AS workspace_id
+           FROM cabin_delegations d JOIN cabins c ON c.id = d.cabin_id
+          WHERE d.doer_session_id = ?
+          ORDER BY d.created_at DESC LIMIT 1`,
+      ).get(authorSessionId) as {
+        id: string; title: string; cabin_id: string
+        main_session_id: string | null; workspace_id: string | null
+      } | undefined
+      if (row) {
+        return {
+          cabinId: row.cabin_id,
+          mainSessionId: row.main_session_id,
+          workspaceId: row.workspace_id,
+          subject: { kind: "delegation", id: row.id },
+          title: row.title,
+          handle: this.handleFor("delegation", row.cabin_id, row.id),
+        }
+      }
+    } catch { /* old DB */ }
+    return null
+  }
+
+  /** 派生句柄（design 25 §4.1）：按创建顺序；不落库。 */
+  private handleFor(kind: "task" | "delegation", cabinId: string, id: string): string {
+    try {
+      const rows = kind === "task"
+        ? this.db!.prepare(
+          "SELECT id FROM tasks WHERE cabin_id = ? AND deleted_at IS NULL ORDER BY created_at, id",
+        ).all(cabinId) as Array<{ id: string }>
+        : this.db!.prepare(
+          "SELECT id FROM cabin_delegations WHERE cabin_id = ? ORDER BY created_at, id",
+        ).all(cabinId) as Array<{ id: string }>
+      const index = rows.findIndex((r) => r.id === id)
+      return index >= 0 ? `${kind === "task" ? "#" : "D"}${index + 1}` : (kind === "task" ? "#?" : "D?")
+    } catch {
+      return kind === "task" ? "#?" : "D?"
     }
   }
 
@@ -1192,25 +1289,15 @@ class ChatEventBridge {
    */
   markAuthorAskAnswered(authorSessionId: string): void {
     if (!this.db) return
-    let row: { main_session_id: string | null; workspace_id: string | null } | undefined
-    try {
-      row = this.db.prepare(
-        `SELECT c.main_session_id AS main_session_id, c.workspace_id AS workspace_id
-           FROM tasks t JOIN cabins c ON c.id = t.cabin_id
-          WHERE t.source_chat_session_id = ? AND t.deleted_at IS NULL
-          ORDER BY t.created_at DESC LIMIT 1`,
-      ).get(authorSessionId) as typeof row
-    } catch {
-      return
-    }
-    if (!row?.main_session_id) return
+    const subject = this.resolveAskSubject(authorSessionId)
+    if (!subject?.mainSessionId) return
     let cards: Array<{ id: string; metadata: string | null }> = []
     try {
       cards = this.db.prepare(
         `SELECT id, metadata FROM messages
           WHERE session_id = ? AND metadata LIKE '%"authorAsk":true%'
           ORDER BY created_at DESC, rowid DESC LIMIT 20`,
-      ).all(row.main_session_id) as typeof cards
+      ).all(subject.mainSessionId) as typeof cards
     } catch {
       return
     }
@@ -1233,9 +1320,74 @@ class ChatEventBridge {
         this.db.prepare("UPDATE messages SET metadata = ? WHERE id = ?")
           .run(JSON.stringify(meta), card.id)
       } catch { /* best effort */ }
-      this.notifySession(row.main_session_id, row.workspace_id)
+      this.appendAskReceipt({
+        sessionId: subject.mainSessionId,
+        workspaceId: subject.workspaceId,
+        askMessageId: String(payload.askMessageId ?? card.id),
+        subject: (payload.subject as { kind: "task" | "delegation"; id: string } | undefined)
+          ?? subject.subject,
+        handle: typeof payload.handle === "string" ? payload.handle : subject.handle,
+        title: typeof payload.taskName === "string" ? payload.taskName : subject.title,
+        label: "已回答（任务线程兜底）",
+      })
+      if (subject.subject.kind === "delegation") {
+        try { this.delegationStateHook?.(subject.subject.id, "running") } catch { /* best effort */ }
+      }
+      this.notifySession(subject.mainSessionId, subject.workspaceId)
       return
     }
+  }
+
+  /** design 24 §5：答完留一条回执（幂等键 = askMessageId），刷新/换设备也在。 */
+  private appendAskReceipt(input: {
+    sessionId: string
+    workspaceId: string | null
+    askMessageId: string
+    subject: { kind: "task" | "delegation"; id: string }
+    handle: string
+    title: string
+    label: string
+  }): void {
+    if (!this.db) return
+    try {
+      const dup = this.db.prepare(
+        "SELECT 1 FROM messages WHERE session_id = ? AND metadata LIKE ? LIMIT 1",
+      ).get(input.sessionId, `%"askReceiptFor":"${input.askMessageId}"%`)
+      if (dup) return
+      const now = new Date().toISOString()
+      const line = `✓ 已答 · ${input.handle} ${input.title}：${input.label}`
+      this.db.prepare(
+        "INSERT INTO messages (id, session_id, role, content, metadata, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+      ).run(
+        randomUUID(), input.sessionId, "user", line,
+        JSON.stringify({
+          displayType: "event",
+          activity: {
+            kind: "cabin.author_ask_receipt",
+            severity: "info",
+            title: "已答",
+            workspaceId: input.workspaceId,
+            taskId: input.subject.kind === "task" ? input.subject.id : null,
+            status: "ok",
+            payload: {
+              askReceiptFor: input.askMessageId,
+              authorAskReceipt: {
+                askId: input.askMessageId,
+                subject: input.subject,
+                handle: input.handle,
+                taskName: input.title,
+                label: input.label,
+                at: now,
+              },
+            },
+          },
+        }),
+        now,
+      )
+      this.db.prepare(
+        "UPDATE sessions SET last_message_at = ?, updated_at = ? WHERE id = ?",
+      ).run(now, now, input.sessionId)
+    } catch { /* best effort */ }
   }
 
   /**

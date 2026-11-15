@@ -75,11 +75,15 @@ const MEMORY_TOOL_NAMES = ["record_daily", "remember"] as const
 const CABIN_TOOL_NAMES = [
   "cabin_list_tasks",
   "cabin_dispatch_task",
+  "cabin_delegate_task",
+  "cabin_relay_decision",
   "cabin_list_jobs",
   "cabin_job_trace",
   "cabin_note_job",
   "cabin_resume_job",
 ] as const
+
+const CABIN_DOER_TOOL_NAMES = ["cabin_delegation_done"] as const
 
 export function buildMcpCatalog(): McpServerMeta[] {
   return [
@@ -107,20 +111,33 @@ export function buildMcpCatalog(): McpServerMeta[] {
     {
       server: "octopus-cabin",
       label: "舱调度",
-      description: "作战舱主对话的调度工具集：列舱内任务/作业、派发真实任务、读审计 trace、备注/恢复作业。只调度不执行。",
-      when: "会话绑定作战舱（cabin_id）且非任务线程时挂载",
+      description: "作战舱主对话的调度工具集：列舱内任务/作业、派发真实任务、派发轻量委派、转达用户决策、读审计 trace、备注/恢复作业。只调度不执行。",
+      when: "会话绑定作战舱（cabin_id）且非任务线程、非委派 doer 时挂载",
       tools: CABIN_TOOL_NAMES.map((name) => ({ name, description: CABIN_TOOL_DESC[name] })),
+    },
+    {
+      server: "octopus-cabin-doer",
+      label: "委派执行",
+      description: "独立委派 doer 的收口工具：交一句话结论 + 产物引用。不能派任务、不能开工作树。",
+      when: "会话是某条独立委派（cabin_delegations）的 doer 时挂载",
+      tools: CABIN_DOER_TOOL_NAMES.map((name) => ({ name, description: CABIN_DOER_TOOL_DESC[name] })),
     },
   ]
 }
 
 const CABIN_TOOL_DESC: Record<string, string> = {
   cabin_list_tasks: "列出本舱全部任务（派生状态/会话），监督读。",
-  cabin_dispatch_task: "派发真实 Octopus 任务进舱（建任务+作者线程+授权 wake），执行在独立 worktree；explicit 自决/inferred 需人确认。",
-  cabin_list_jobs: "统一作业账本（task/workflow/subagent）+ 派生 status + 优先级。",
+  cabin_dispatch_task: "派发真实 Octopus 任务进舱（建任务+作者线程+授权 wake），brief 是编译后的意图、原文逐字附后；执行在独立 worktree。",
+  cabin_delegate_task: "派发一次轻量委派（无 phase / worktree / 验收 / 归档）：一份 brief + 一个 doer 会话，编队显示 D1。",
+  cabin_relay_decision: "把用户在舱主对话里做的决定代述给 doer；verbatim 逐字、幂等，framing 只补边界不改选择。",
+  cabin_list_jobs: "统一作业账本（task/workflow/subagent）+ 独立委派 + 派生 status + 句柄 + 优先级。",
   cabin_job_trace: "读某作业的 append-only 审计时间线。",
   cabin_note_job: "给 doer 发不授权备注（subagent 只留痕）。",
   cabin_resume_job: "恢复作业（ready 触发 / paused 恢复）。",
+}
+
+const CABIN_DOER_TOOL_DESC: Record<string, string> = {
+  cabin_delegation_done: "交委派结论（一句话 + 产物路径/链接）；ok=false 表示没做成并说明卡在哪。",
 }
 
 const MEMORY_TOOL_DESC: Record<string, string> = {

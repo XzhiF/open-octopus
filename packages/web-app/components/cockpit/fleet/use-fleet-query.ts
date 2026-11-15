@@ -19,7 +19,7 @@
 // rows 是 sortRows（done 截前 3）的显示行；counts 用未截断的行集统计。
 
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { getCabin, listCabinJobs, type CabinJobView } from '@/lib/cabin-api'
+import { getCabin, listCabinDelegations, listCabinJobs, type CabinDelegationView, type CabinJobView } from '@/lib/cabin-api'
 import type { CabinAttentionItem } from '@octopus/shared'
 import { getTask, listTasks } from '@/lib/tasks-api'
 import { withDeadline } from '@/lib/with-deadline'
@@ -109,6 +109,17 @@ function taskRow(base: CockpitCabinRef, task: CabinTaskRow): CockpitRow {
   }
 }
 
+function delegationRow(base: CockpitCabinRef, delegation: CabinDelegationView): CockpitRow {
+  return {
+    key: `delegation:${delegation.id}`,
+    kind: 'delegation',
+    cabinId: base.cabinId,
+    cabinName: base.cabinName,
+    delegation,
+    pct: null,
+  }
+}
+
 async function loadCabin(
   cabinId: string,
   previous: CabinSnapshot | undefined,
@@ -116,12 +127,15 @@ async function loadCabin(
 ): Promise<CabinSnapshot> {
   // 详情与作业列表**分开**判成败：详情（派生视图）挂了不该连作业行一起消失 ——
   // 这正是 2026-11-14「classic 看得到、全域看不到」的形态。
-  const [detailResult, jobsResult] = await Promise.allSettled([
+  // design 25 §4.2：委派是第二种工作实体，同样进编队（失败不影响任务行）。
+  const [detailResult, jobsResult, delegationsResult] = await Promise.allSettled([
     withDeadline(signal, CABIN_REQUEST_TIMEOUT_MS, '舱详情', (s) => getCabin(cabinId, s)),
     withDeadline(signal, CABIN_REQUEST_TIMEOUT_MS, '作业列表', (s) => listCabinJobs(cabinId, s)),
+    withDeadline(signal, CABIN_REQUEST_TIMEOUT_MS, '委派列表', (s) => listCabinDelegations(cabinId, s)),
   ])
   if (jobsResult.status === 'rejected') throw jobsResult.reason
   const jobs = jobsResult.value
+  const delegationViews = delegationsResult.status === 'fulfilled' ? delegationsResult.value : []
   const detail = detailResult.status === 'fulfilled' ? detailResult.value : null
   const attention = detail
     ? detail.view.attention
@@ -132,11 +146,14 @@ async function loadCabin(
     cabinName: detail?.cabin.name ?? previous?.cabinName ?? cabinId,
   }
   const attentionIds = attention.map((item) => item.id)
+  const delegationRows = delegationViews
+    .filter((d) => d.state !== 'cancelled')
+    .map((d) => delegationRow(base, d))
 
   if (jobs.length > 0) {
     return {
       ...base,
-      rows: mergeAttention(jobs.map((job) => jobRow(base, job)), attention, base),
+      rows: mergeAttention([...jobs.map((job) => jobRow(base, job)), ...delegationRows], attention, base),
       attentionIds,
       attention,
     }
@@ -149,9 +166,12 @@ async function loadCabin(
     '任务列表',
     (s) => listTasks({ cabin_id: cabinId }, s),
   )
-  const rows = items
-    .filter((task) => LIVE_TASK_STATUSES.has(task.status))
-    .map((task) => taskRow(base, task as CabinTaskRow))
+  const rows = [
+    ...items
+      .filter((task) => LIVE_TASK_STATUSES.has(task.status))
+      .map((task) => taskRow(base, task as CabinTaskRow)),
+    ...delegationRows,
+  ]
   return {
     ...base,
     rows: mergeAttention(rows, attention, base),

@@ -15,6 +15,10 @@ import type { TasksService } from "../tasks/tasks-service"
 import { getSessionService } from "../agent/session-service"
 import { readCabinConfig } from "./cabin-repos"
 import { CabinNotFoundError } from "./cabin-service"
+import {
+  formatDispatchMessage, normalizeBrief,
+  type CabinBriefInput, type NormalizedBrief,
+} from "./cabin-brief"
 
 const now = () => new Date().toISOString()
 
@@ -66,6 +70,8 @@ export class CabinCommService {
     session_id?: string | null
     priority?: number
     mandate?: CabinMandate | null
+    /** design 25 §6.1：汐音编译的意图。可选 —— 没有就退回「只有原文」。 */
+    brief?: CabinBriefInput | NormalizedBrief | null
   }): CabinJobRow {
     const cabin = this.mustCabin(cabinId)
     this.deps.onActivity?.(cabinId)
@@ -119,26 +125,44 @@ export class CabinCommService {
       // 「建任务 / 开工作树 / 花 token」，澄清与拆分确认仍归用户；clarify=auto
       // 才是用户原话「你看着办 / 直接做」的授权。
       const clarify = input.mandate?.clarify ?? "ask"
-      const message = [
-        `[舱派发 · mandate=${strength} · clarify=${clarify}] 任务「${input.title}」`,
-        "需求原文（转发，不改写）：",
-        input.prompt?.trim() || input.title,
-        strength === "explicit"
-          ? "授权边界：舱调度者已代表用户授权建任务、开工作树、消耗 token；但不等于规格免确认 —— 影响验收物 / 范围 / 优先级 / 风险的歧义仍要问人。"
-          : "授权为 inferred：规格完成后先出确认卡，等人放行再执行。",
-        clarify === "ask"
-          ? "先澄清：读 .cabin/requirements.md 与任务 home 的 context.md，用 AskUserQuestion 一次一问（建议 ≤5 轮），只问影响验收 / 范围 / 优先级的问题；多 phase 拆分卡必须由用户批准。需要人拍板的节点（拆分批准 / 每 phase 绑定确认 / 入列方式）也用 AskUserQuestion 一次一问提出（摘要 + 选项）—— 它会被投到舱主会话，用户可能不切对话就答；完整卡仍写任务线程。澄清完写 phases + 各 phase spec/票 + runbook；" +
-            (strength === "explicit"
-              ? "拆分批准后按 explicit 授权直接 enqueue_task / launch_task(confirmed=true)，成交后入列并执行。"
-              : "然后 propose_launch 出卡，等人放行。")
-          : "clarify=auto：用户已说「看着办」——无实质歧义时可直接按 v4 完成规格" +
-            (strength === "explicit" ? "并入列执行。" : "并出 propose_launch 卡。") +
-            "有歧义仍先问人。",
-        "执行隔离：worktree 从任务自己的 workspace 切出；回报/attention 会汇聚到舱主对话（单线程收件箱）。",
-      ].join("\n")
-      void this.wakeSession(sessionId, cabin.org ?? "", message)
+      const brief = normalizeBrief(input.brief ?? null)
+      // design 25 §6.1：wake 消息两段式 —— 意图（汐音编译，可执行）+ 原文（逐字，权威）。
+      // 原文永远不会被 brief 替换（I4）；brief 只是「更明确」，不是「更权威」。
+      const message = formatDispatchMessage({
+        title: input.title,
+        mandateStrength: strength,
+        clarify,
+        brief,
+        original: input.prompt?.trim() || input.title,
+        rules: [
+          strength === "explicit"
+            ? "授权边界：舱调度者已代表用户授权建任务、开工作树、消耗 token；但不等于规格免确认 —— 影响验收物 / 范围 / 优先级 / 风险的歧义仍要问人。"
+            : "授权为 inferred：规格完成后先出确认卡，等人放行再执行。",
+          clarify === "ask"
+            ? "先澄清：读 .cabin/requirements.md 与任务 home 的 context.md，用 AskUserQuestion 一次一问（建议 ≤5 轮），只问影响验收 / 范围 / 优先级的问题；多 phase 拆分卡必须由用户批准。需要人拍板的节点（拆分批准 / 每 phase 绑定确认 / 入列方式）也用 AskUserQuestion 一次一问提出（摘要 + 选项）—— 它会被投到舱主会话，用户可能不切对话就答；完整卡仍写任务线程。澄清完写 phases + 各 phase spec/票 + runbook；" +
+              (strength === "explicit"
+                ? "拆分批准后按 explicit 授权直接 enqueue_task / launch_task(confirmed=true)，成交后入列并执行。"
+                : "然后 propose_launch 出卡，等人放行。")
+            : "clarify=auto：用户已说「看着办」——无实质歧义时可直接按 v4 完成规格" +
+              (strength === "explicit" ? "并入列执行。" : "并出 propose_launch 卡。") +
+              "有歧义仍先问人。",
+          "执行隔离：worktree 从任务自己的 workspace 切出；回报/attention 会汇聚到舱主对话（单线程收件箱）。",
+          "跨会话提问纪律：调用 AskUserQuestion 前，正文最后两行写「决策：<要定什么>」与「建议：<选项> · <理由>」；每个 option.description 写选它会发生什么。",
+        ].join("\n"),
+      })
+      if (brief) {
+        this.appendEvent(row.id, cabinId, "brief", "orchestrator", {
+          brief, autonomy: brief.autonomy, goal: brief.goal,
+        })
+      }
+      void this.wakeSessionPublic(sessionId, cabin.org ?? "", message)
     }
     return row
+  }
+
+  /** 公开 wake 通道：决策 / 委派服务复用同一条内部 agent chat 通道。 */
+  async wakeSessionPublic(sessionId: string, org: string, message: string): Promise<void> {
+    return this.wakeSession(sessionId, org, message)
   }
 
   /** D6 note：不授权 steer。subagent 一次性无 mid-run input（C9 风险12）→ 只留痕。 */

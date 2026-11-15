@@ -39,7 +39,8 @@ import { createWorkflowToolServer } from '../../services/chat/workflow-tools'
 import { createTaskToolServer } from '../../services/chat/task-tools'
 import { getChatEventBridge } from '../../services/activity/chat-event-bridge'
 import { createMemoryToolServer, resolveLongTermConsent } from '../../services/chat/memory-tools'
-import { createCabinToolServer, getCabinToolsProvider, buildCabinSummaryReminder } from '../../services/chat/cabin-tools'
+import { createCabinToolServer, createCabinDelegationToolServer, getCabinToolsProvider, buildCabinSummaryReminder } from '../../services/chat/cabin-tools'
+import { parseDecisionEnvelope } from '../../services/cabin/cabin-brief'
 import { getSlashCommands, rememberSlashCommands } from '../../services/chat/slash-commands'
 import type { TokenUsageDAO } from '../../db/dao/token-usage-dao'
 import type { EffortLevel } from '@octopus/shared'
@@ -381,8 +382,9 @@ export function createChatRoutes(deps: ChatRouteDeps): Hono {
       : null
     // Cabin P3（C2）：舱主会话每回合注入派生舱摘要（attention/迭代/作业），
     // 关系单写者=任务行，摘要只读不持久。
-    const cabinReminder = !thread && session.cabin_id && getCabinToolsProvider()
-      ? buildCabinSummaryReminder(getCabinToolsProvider()!.service, session.cabin_id)
+    const cabinProvider = getCabinToolsProvider()
+    const cabinReminder = !thread && session.cabin_id && cabinProvider
+      ? buildCabinSummaryReminder(cabinProvider.service, session.cabin_id, cabinProvider.decisions)
       : null
     const turnReminder = [roleCard, mentionReminder, playbookReminder?.text, cabinReminder].filter(Boolean).join('\n\n')
     const providerMessage = withTransientReminder(body.message!, turnReminder)
@@ -418,8 +420,18 @@ export function createChatRoutes(deps: ChatRouteDeps): Hono {
       )
     }
     // Cabin P3（C3）：舱主会话挂调度工具集（只调度不执行）。
-    if (!thread && session.cabin_id && getCabinToolsProvider()) {
-      toolServers['octopus-cabin'] = createCabinToolServer(session.cabin_id)
+    // design 25 §4.2：委派 doer 只挂「交结论」这一个工具，不能派任务 / 建任务。
+    if (!thread && session.cabin_id && cabinProvider) {
+      let delegationId: string | null = null
+      try {
+        const row = sessionDao.getDb().prepare(
+          "SELECT id FROM cabin_delegations WHERE doer_session_id = ? LIMIT 1",
+        ).get(id) as { id?: string } | undefined
+        delegationId = row?.id ?? null
+      } catch { /* old DB without cabin_delegations — feature off */ }
+      toolServers[delegationId ? 'octopus-cabin-doer' : 'octopus-cabin'] = delegationId
+        ? createCabinDelegationToolServer(delegationId)
+        : createCabinToolServer(session.cabin_id)
     }
     const mcpServers = Object.keys(toolServers).length > 0 ? toolServers : undefined
 
@@ -1170,10 +1182,16 @@ export function createChatRoutes(deps: ChatRouteDeps): Hono {
         // 对话就能就地回答（答案由 web 卡片转回本线程）。零 LLM，幂等。
         if (askQuestions && partialRowId) {
           try {
+            // design 24 §3 / 25 §5：信封由「作者正文约定 + 服务端结构化搬运」构成，
+            // 不改 AskUserQuestion 的工具 schema。缺少「决策 / 建议」行时按缺失降级。
+            const envelope = parseDecisionEnvelope(fullContent, askQuestions)
             getChatEventBridge().requestAuthorAskCard({
               authorSessionId: sessionId,
               askMessageId: partialRowId,
               questions: askQuestions,
+              ...(envelope.decision ? { decision: envelope.decision } : {}),
+              ...(envelope.recommendation ? { recommendation: envelope.recommendation } : {}),
+              ...(envelope.options.length ? { options: envelope.options } : {}),
             })
           } catch { /* bridge not attached (unit tests) — attention still works */ }
         }

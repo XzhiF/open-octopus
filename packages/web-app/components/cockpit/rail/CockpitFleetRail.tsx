@@ -55,9 +55,11 @@ function cabinTone(cabinId: string): string {
   return CABIN_TONES[Math.abs(hash) % CABIN_TONES.length]
 }
 
-function rowRef(row: CockpitRow): CockpitRef {
+function rowRef(row: CockpitRow): CockpitRef | null {
   if (row.kind === 'job') return { kind: 'job', cabinId: row.cabinId, id: row.job.id }
   if (row.kind === 'task') return { kind: 'task', cabinId: row.cabinId, id: row.task.id }
+  // 委派不是任务：点开是 doer 会话（证据面），不占用 cockpit 的 ref 命名空间。
+  if (row.kind === 'delegation') return null
   return { kind: 'attention', cabinId: row.cabinId, id: row.item.id }
 }
 
@@ -75,6 +77,7 @@ function toneOf(row: CockpitRow): RowTone {
   if (row.kind === 'job' && (row.job.status === 'blocked' || row.job.status === 'failed')) {
     return 'blocked'
   }
+  if (row.kind === 'delegation' && row.delegation.state === 'failed') return 'blocked'
   return group
 }
 
@@ -91,6 +94,7 @@ function attentionStatus(item: CabinAttentionItem): string {
 function rowTitle(row: CockpitRow): string {
   if (row.kind === 'job') return row.job.title
   if (row.kind === 'task') return row.task.name
+  if (row.kind === 'delegation') return row.delegation.title
   return row.item.title
 }
 
@@ -138,8 +142,21 @@ export function CockpitFleetRail() {
   }, [visible])
 
   const activeRow = selection
-    ? visible.find((row) => sameCockpitRef(selection, rowRef(row)))
+    ? visible.find((row) => {
+      const ref = rowRef(row)
+      return ref ? sameCockpitRef(selection, ref) : false
+    })
     : undefined
+
+  /** 委派行没有 cockpit ref：点开它的 doer 会话（证据面）。 */
+  const activate = (row: CockpitRow, ref: CockpitRef | null) => {
+    if (ref) { select(ref); return }
+    if (row.kind === 'delegation' && row.delegation.doer_session_id) {
+      window.dispatchEvent(new CustomEvent('octopus:open-session', {
+        detail: { sessionId: row.delegation.doer_session_id },
+      }))
+    }
+  }
 
   // ── 新行 pop：arrivals 命中的 attention + 首次出现的 key，900ms 后收 ──
   const seenKeysRef = useRef<Set<string> | null>(null)
@@ -325,7 +342,7 @@ export function CockpitFleetRail() {
                 </div>
                 {groupRows.map((row) => {
                   const ref = rowRef(row)
-                  const selected = sameCockpitRef(selection, ref)
+                  const selected = ref ? sameCockpitRef(selection, ref) : false
                   const pct = rowPct(row)
                   const status = rowStatus(row)
                   const title = rowTitle(row)
@@ -347,17 +364,17 @@ export function CockpitFleetRail() {
                       className={`ck12-rail-row${selected ? ' is-on' : ''}${
                         popped.has(row.key) ? ' is-pop' : ''
                       }`}
-                      onClick={() => select(ref)}
+                      onClick={() => activate(row, ref)}
                       onKeyDown={(event) => {
                         if (event.key === 'Enter' || event.key === ' ') {
                           event.preventDefault()
-                          select(ref)
+                          activate(row, ref)
                         }
                       }}
                     >
                       <span
                         className="ck12-rail-glyph"
-                        data-kind={row.kind === 'job' ? row.job.kind : undefined}
+                        data-kind={row.kind === 'job' ? row.job.kind : row.kind === 'delegation' ? 'delegate' : undefined}
                         data-stage={row.kind === 'attention' ? row.item.stage : undefined}
                         aria-hidden="true"
                       >
@@ -365,12 +382,17 @@ export function CockpitFleetRail() {
                           ? JOB_GLYPH[row.job.kind]
                           : row.kind === 'task'
                             ? JOB_GLYPH.task
-                            : '◉'}
+                            : row.kind === 'delegation'
+                              ? '≫'
+                              : '◉'}
                       </span>
 
                       <span className="ck12-rail-main">
                         <span className="ck12-rail-title">
                           {row.kind === 'task' && <span className="ck12-rail-kind">任务</span>}
+                          {row.kind === 'delegation' && (
+                            <span className="ck12-rail-kind">{row.delegation.handle ?? 'D?'}</span>
+                          )}
                           <span className="ck12-rail-title-tx">{title}</span>
                         </span>
                         <span className="ck12-rail-meta">

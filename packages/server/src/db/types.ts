@@ -733,7 +733,7 @@ export interface CabinJobRow {
   ended_at: string | null
 }
 
-export type CabinJobEventKind = 'dispatch' | 'report' | 'attention' | 'handback' | 'note' | 'human_input' | 'resume'
+export type CabinJobEventKind = 'dispatch' | 'report' | 'attention' | 'handback' | 'note' | 'human_input' | 'resume' | 'brief' | 'decision'
 
 export interface CabinJobEventRow {
   id: string
@@ -743,4 +743,23 @@ export interface CabinJobEventRow {
   actor: string | null
   payload: string | null
   created_at: string
+}
+
+/** 独立委派（design 25 §4.2）：不是任务 —— 没有 phase / worktree / 验收 / 归档。
+ *  与 cabin_jobs 账本不合并（CHECK 约束不可扩值），读侧归一化。 */
+export type CabinDelegationState = 'queued' | 'running' | 'waiting_input' | 'done' | 'failed' | 'cancelled'
+
+export interface CabinDelegationRow {
+  id: string
+  cabin_id: string
+  title: string
+  intent_text: string
+  brief: string | null
+  autonomy: 'approve' | 'checkpoint' | 'hands-off'
+  state: CabinDelegationState
+  doer_session_id: string | null
+  result_summary: string | null
+  created_at: string
+  updated_at: string
+  ended_at: string | null
 }

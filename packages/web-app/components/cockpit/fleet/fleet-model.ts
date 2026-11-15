@@ -11,7 +11,7 @@
 // 任何 pct 只会是真值或 null（不画条，不猜）。
 
 import type { CabinAttentionItem } from '@octopus/shared'
-import type { CabinJobView } from '@/lib/cabin-api'
+import type { CabinDelegationView, CabinJobView } from '@/lib/cabin-api'
 import { formatDuration } from '@/lib/format'
 import { taskDisplayStatus, type CabinTaskRow } from '@/components/cabin/modules/ui'
 import { isEndedJob, jobStatusLabel } from '@/components/cabin/job-status'
@@ -42,6 +42,16 @@ export type CockpitRow =
       cabinName: string
       item: CabinAttentionItem
     }
+  /** 独立委派（design 25 §4.2）：没有 phase / worktree / 验收 / 归档。
+   *  句柄用 D1，不进 task: 命名空间；点开是 doer 会话（证据面）。 */
+  | {
+      key: `delegation:${string}`
+      kind: 'delegation'
+      cabinId: string
+      cabinName: string
+      delegation: CabinDelegationView
+      pct: null
+    }
 
 export type CockpitRowGroup = 'need' | 'run' | 'queue' | 'done'
 
@@ -60,7 +70,7 @@ export interface CockpitFleetCounts {
 
 /** 「需要你」的作业状态：待验收 / 待归档 / 失败升级。job 带 attention 时
  *  也在 need（见 groupOf），这条兜住服务端还没来得及派生 attention 的窗口。 */
-const NEED_STATUSES = new Set(['awaiting_review', 'awaiting_archive', 'failed', 'blocked'])
+const NEED_STATUSES = new Set(['awaiting_review', 'awaiting_archive', 'failed', 'blocked', 'waiting_input'])
 const RUN_STATUSES = new Set(['running'])
 /** 已结束组只留最近 3 条（plans Step 2 task 1）。 */
 const DONE_LIMIT = 3
@@ -79,6 +89,12 @@ export function groupOf(row: CockpitRow): CockpitRowGroup {
     if (row.item.awaiting === 'working') return 'run'
     return 'done'
   }
+  if (row.kind === 'delegation') {
+    if (row.delegation.state === 'waiting_input' || row.delegation.state === 'failed') return 'need'
+    if (row.delegation.state === 'running') return 'run'
+    if (row.delegation.state === 'queued') return 'queue'
+    return 'done'
+  }
   if (row.kind === 'job' && row.attention) return 'need'
   if (row.kind === 'job' && !row.job.status) return row.job.ended_at ? 'done' : 'queue'
 
@@ -94,7 +110,6 @@ function priorityOf(row: CockpitRow): number {
   if (row.kind === 'job') return row.attention?.priority ?? row.job.priority
   return 0
 }
-
 function timeOf(iso: string | null | undefined): number | null {
   if (!iso) return null
   const at = Date.parse(iso)
@@ -103,14 +118,22 @@ function timeOf(iso: string | null | undefined): number | null {
 
 function createdAtOf(row: CockpitRow): number | null {
   if (row.kind === 'attention') return null
-  return row.kind === 'job' ? timeOf(row.job.created_at) : timeOf(row.task.created_at)
+  if (row.kind === 'job') return timeOf(row.job.created_at)
+  if (row.kind === 'task') return timeOf(row.task.created_at)
+  return timeOf(row.delegation.created_at)
 }
 
 /** 已结束行的结束时间；活态行返回 null（durationLabel 用 now 兜）。 */
 function endedAtOf(row: CockpitRow): number | null {
   if (row.kind === 'attention') return null
   if (row.kind === 'job') return timeOf(row.job.ended_at)
-  return isEndedJob(taskDisplayStatus(row.task)) ? timeOf(row.task.updated_at) : null
+  if (row.kind === 'task') {
+    return isEndedJob(taskDisplayStatus(row.task)) ? timeOf(row.task.updated_at) : null
+  }
+  const state = row.delegation.state
+  return state === 'done' || state === 'failed' || state === 'cancelled'
+    ? timeOf(row.delegation.ended_at ?? row.delegation.updated_at)
+    : null
 }
 
 /**
@@ -239,7 +262,11 @@ export function buildCounts(
  */
 export function durationLabel(row: CockpitRow, now: number): string | null {
   if (row.kind === 'attention') return null
-  const start = timeOf(row.kind === 'job' ? row.job.created_at : row.task.created_at)
+  const start = timeOf(
+    row.kind === 'job' ? row.job.created_at
+      : row.kind === 'task' ? row.task.created_at
+        : row.delegation.created_at,
+  )
   if (start === null) return null
   const end = endedAtOf(row) ?? now
   if (!Number.isFinite(end)) return null
@@ -253,6 +280,9 @@ export function metaLine(row: CockpitRow): string {
   }
   if (row.kind === 'task') {
     return [row.cabinName, row.task.repo_group].filter(Boolean).join(' · ')
+  }
+  if (row.kind === 'delegation') {
+    return [row.cabinName, `委派 ${row.delegation.handle ?? ''}`.trim()].filter(Boolean).join(' · ')
   }
   return [row.cabinName, row.item.repo].filter(Boolean).join(' · ')
 }
@@ -272,5 +302,15 @@ export function statusLabel(row: CockpitRow): string {
     const status = taskDisplayStatus(row.task)
     return TASK_STATUS_LABEL[status] ?? jobStatusLabel(status)
   }
+  if (row.kind === 'delegation') return DELEGATION_STATE_LABEL[row.delegation.state]
   return ATTENTION_STAGE_LABEL[row.item.stage]
+}
+
+const DELEGATION_STATE_LABEL: Record<CabinDelegationView['state'], string> = {
+  queued: '排队',
+  running: '跑着',
+  waiting_input: '在问你',
+  done: '已完成',
+  failed: '失败',
+  cancelled: '已取消',
 }

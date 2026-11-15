@@ -21,6 +21,8 @@ import {
 import { scanLocalProjects } from "../services/cabin/cabin-repos"
 import type { CabinInitService } from "../services/cabin/cabin-init-service"
 import { CabinCommService, CabinJobNotFoundError } from "../services/cabin/cabin-comm-service"
+import { CabinDecisionService, CabinDecisionError } from "../services/cabin/cabin-decision-service"
+import { CabinDelegationService } from "../services/cabin/cabin-delegation-service"
 import type { CabinRow, CabinJobRow, CabinJobEventRow } from "../db/types"
 import type { SSEService } from "../services/sse"
 import { gitOps } from "../services/git-ops"
@@ -32,6 +34,7 @@ function classifyError(err: unknown): { status: number; message: string } {
   }
   if (err instanceof CabinNotFoundError) return { status: 404, message: err.message }
   if (err instanceof CabinJobNotFoundError) return { status: 404, message: err.message }
+  if (err instanceof CabinDecisionError) return { status: err.status, message: err.message }
   if (err instanceof CabinVersionConflictError) return { status: 409, message: err.message }
   if (err instanceof CabinStatusConflictError) return { status: 409, message: err.message }
   if (err instanceof WorktreeConflictError) return { status: 409, message: err.message }
@@ -144,11 +147,36 @@ const focusBodySchema = z.object({
   job_id: z.string().nullable(),
 })
 
+const decisionBodySchema = z.object({
+  askId: z.string().min(1),
+  choice: z.string().min(1),
+  note: z.string().optional(),
+  source: z.enum(["card", "composer", "thread_fallback"]).optional(),
+  focusAtSubmit: z.string().nullable().optional(),
+  taskId: z.string().optional(),
+})
+
+const delegationBodySchema = z.object({
+  title: z.string().min(1),
+  intent: z.string().min(1),
+  brief: z.object({
+    goal: z.string().min(1),
+    done_when: z.array(z.string()).optional(),
+    constraints: z.array(z.string()).optional(),
+    non_goals: z.array(z.string()).optional(),
+    refs: z.array(z.string()).optional(),
+    autonomy: z.enum(["approve", "checkpoint", "hands-off"]).optional(),
+  }).optional(),
+  autonomy: z.enum(["approve", "checkpoint", "hands-off"]).optional(),
+})
+
 export function createCabinRoutes(
   service: CabinService,
   initService: CabinInitService,
   sse: SSEService,
   comm?: CabinCommService,
+  decisions?: CabinDecisionService,
+  delegations?: CabinDelegationService,
 ): Hono {
   const router = new Hono()
 
@@ -632,6 +660,106 @@ export function createCabinRoutes(
       const { status, message } = classifyError(err)
       return c.json({ error: message }, status as 400)
     }
+  })
+
+  // ── 决策（design 25 §7.1：票据 / 账本 / 队列）──────────────────────
+
+  /** 提交决策：askId 是唯一权威；choice 逐字命中 options；重复提交幂等。 */
+  router.post("/:id/decisions", async (c) => {
+    if (!decisions) return c.json({ error: "decision service not wired" }, 503)
+    const body = await safeJson(c)
+    if (!body) return c.json({ error: "Invalid or missing JSON body" }, 400)
+    try {
+      const input = decisionBodySchema.parse(body)
+      const res = await decisions.submitDecision(c.req.param("id"), input)
+      return c.json({
+        decision: res.record,
+        already: res.already,
+        receipt: {
+          handle: res.record.handle,
+          choice: res.record.choice,
+          // 第 5 步纪律：提交成功立刻可见，不等转达（§5.6）。
+          line: res.already
+            ? `已经答过（你选的是「${res.record.choice}」）`
+            : `✓ 已记下：${res.record.choice} · 汐音正在转达…`,
+        },
+      })
+    } catch (err) {
+      const { status, message } = classifyError(err)
+      const detail = err instanceof CabinDecisionError ? err.detail : undefined
+      return c.json({ error: message, ...(detail !== undefined ? { detail } : {}) }, status as 400)
+    }
+  })
+
+  /** 决策账本（可重放）：state = decided | relayed | fallback_relayed | expired。 */
+  router.get("/:id/decisions", (c) => {
+    if (!decisions) return c.json({ decisions: [], pending: [] })
+    try {
+      return c.json({
+        decisions: decisions.listDecisions(c.req.param("id")),
+        pending: decisions.pendingRelays(c.req.param("id")),
+        asks: decisions.listAskCards(c.req.param("id")),
+      })
+    } catch (err) {
+      const { status, message } = classifyError(err)
+      return c.json({ error: message }, status as 400)
+    }
+  })
+
+  // ── 独立委派（design 25 §4.2）─────────────────────────────────────
+
+  router.get("/:id/delegations", (c) => {
+    if (!delegations) return c.json({ delegations: [] })
+    try {
+      const rows = delegations.list(c.req.param("id"))
+      const handles = service.listWorkView(c.req.param("id"))
+        .filter((w) => w.kind === "delegation")
+      return c.json({
+        delegations: rows.map((d) => {
+          const h = handles.find((w) => w.id === d.id)
+          return {
+            ...d,
+            brief: d.brief ? JSON.parse(d.brief) as unknown : null,
+            handle: h?.handle ?? null,
+            color: h?.color ?? null,
+          }
+        }),
+      })
+    } catch (err) {
+      const { status, message } = classifyError(err)
+      return c.json({ error: message }, status as 400)
+    }
+  })
+
+  router.post("/:id/delegations", async (c) => {
+    if (!delegations) return c.json({ error: "delegation service not wired" }, 503)
+    const body = await safeJson(c)
+    if (!body) return c.json({ error: "Invalid or missing JSON body" }, 400)
+    try {
+      const input = delegationBodySchema.parse(body)
+      const row = delegations.delegate(c.req.param("id"), {
+        title: input.title,
+        intent: input.intent,
+        brief: input.brief ?? null,
+        autonomy: input.autonomy,
+      })
+      return c.json({
+        delegation: {
+          ...row,
+          brief: row.brief ? JSON.parse(row.brief) as unknown : null,
+        },
+      }, 201)
+    } catch (err) {
+      const { status, message } = classifyError(err)
+      return c.json({ error: message }, status as 400)
+    }
+  })
+
+  router.post("/:id/delegations/:did/cancel", (c) => {
+    if (!delegations) return c.json({ error: "delegation service not wired" }, 503)
+    const row = delegations.get(c.req.param("did"))
+    if (!row || row.cabin_id !== c.req.param("id")) return c.json({ error: "delegation not found" }, 404)
+    return c.json({ delegation: delegations.cancel(row.id) })
   })
 
   // ── SSE (channel cabin:<id>) ───────────────────────────────────────
