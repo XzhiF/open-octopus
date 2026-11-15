@@ -96,6 +96,9 @@ export interface CockpitSaid {
   mood?: MoodKey
 }
 
+/** 反馈背景特效强度（v13）：full = 背景层 + 内容之上层；lite = 只光晕 + 环；off = 只边缘。 */
+export type CockpitFxLevel = 'full' | 'lite' | 'off'
+
 /** 特效信号量：谁都能触发，S1 星野 / S8 光效各自订阅。 */
 export interface CockpitFx {
   pulseNonce: number
@@ -103,9 +106,14 @@ export interface CockpitFx {
   edgeNonce: number
   edgeColor: string
   jumpNonce: number
+  /** v13 反馈特效：背景扫描/网格 + 内容之上的光晕/环，绝不遮挡、不接收点击。 */
+  feedbackNonce: number
+  feedbackColor: string
+  feedbackLevel: CockpitFxLevel
   pulse(color?: string): void
   edge(color?: string): void
   jump(): void
+  feedback(color?: string, level?: CockpitFxLevel): void
   say(line: string, mood?: MoodKey): void
   lastSaid: CockpitSaid | null
 }

@@ -325,16 +325,16 @@ describe('CockpitBridge · ⌘⇧M', () => {
 })
 
 describe('CockpitBridge · 在场', () => {
-  it('开关 / 真实分钟频率 / 现在说一句都写回 CockpitProvider', async () => {
+  it('开关 / 真实静默秒数 / 现在说一句都写回 CockpitProvider', async () => {
     const cockpit = makeCockpit()
     await renderBridge({ api: chatApi(), cockpit })
 
     fireEvent.click(screen.getByTestId('ck12-rig-presence'))
     const pop = await screen.findByTestId('ck12-rig-presence-pop')
 
-    expect(pop).toHaveTextContent('12–24 分钟')
-    expect(pop).toHaveTextContent('6–16 分钟')
-    expect(pop).toHaveTextContent('3–8 分钟')
+    expect(pop).toHaveTextContent('30 秒')
+    expect(pop).toHaveTextContent('90 秒')
+    expect(pop).toHaveTextContent('5 分钟')
 
     fireEvent.click(within(pop).getByTestId('ck12-rig-presence-switch'))
     expect(cockpit.setPref).toHaveBeenCalledWith('presenceOn', false)

@@ -412,6 +412,10 @@ export function ChatArea({
     focusDockInput()
   }
   const handleTuiKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    // v13 全域座舱：⇧⏎ 换行 —— 直接放行浏览器默认行为（textarea 原生插入换行 +
+    // 触发受控 onChange）。不要 preventDefault 再 execCommand：实测连打会吞字。
+    if (e.key === 'Enter' && isCockpitVariant && e.shiftKey && !e.altKey) return
+
     // Alt+⏎ = 换行不发送。浏览器对 alt+enter 没有默认换行行为；优先用原生
     // insertText（保住游标 + 触发受控 onChange，避免手动 rAF 复位与连打竞态），
     // 不支持时回退到 setState 插入。（下拉开着也要能换行，故在 slashOpen 门之前。）

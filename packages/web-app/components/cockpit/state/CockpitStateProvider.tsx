@@ -49,6 +49,9 @@ interface FxState {
   edgeNonce: number
   edgeColor: string
   jumpNonce: number
+  feedbackNonce: number
+  feedbackColor: string
+  feedbackLevel: 'full' | 'lite' | 'off'
   lastSaid: CockpitSaid | null
 }
 
@@ -66,6 +69,9 @@ const INITIAL_FX: FxState = {
   edgeNonce: 0,
   edgeColor: 'var(--pop-amber)',
   jumpNonce: 0,
+  feedbackNonce: 0,
+  feedbackColor: 'var(--ck-a)',
+  feedbackLevel: 'full',
   lastSaid: null,
 }
 
@@ -131,6 +137,15 @@ export function CockpitStateProvider({ entryCabinId, children }: CockpitStatePro
     setFxState((prev) => ({ ...prev, jumpNonce: prev.jumpNonce + 1 }))
   }, [])
 
+  const feedback = useCallback((color?: string, level: 'full' | 'lite' | 'off' = 'full') => {
+    setFxState((prev) => ({
+      ...prev,
+      feedbackNonce: prev.feedbackNonce + 1,
+      feedbackColor: color ?? prev.feedbackColor,
+      feedbackLevel: level,
+    }))
+  }, [])
+
   const say = useCallback((line: string, mood?: MoodKey) => {
     setFxState((prev) => ({
       ...prev,
@@ -145,13 +160,17 @@ export function CockpitStateProvider({ entryCabinId, children }: CockpitStatePro
       edgeNonce: fxState.edgeNonce,
       edgeColor: fxState.edgeColor,
       jumpNonce: fxState.jumpNonce,
+      feedbackNonce: fxState.feedbackNonce,
+      feedbackColor: fxState.feedbackColor,
+      feedbackLevel: fxState.feedbackLevel,
       pulse,
       edge,
       jump,
+      feedback,
       say,
       lastSaid: fxState.lastSaid,
     }),
-    [fxState, pulse, edge, jump, say],
+    [fxState, pulse, edge, jump, feedback, say],
   )
 
   // ── Esc 层栈 ───────────────────────────────────────────────────────

@@ -6,6 +6,7 @@
 //   ⌥2  收面（select(null)）
 //   ⌘K  打开聊天浮窗并聚焦真 composer（输入框里也生效 —— 唯一例外）
 //   ⌥W  跃迁特效（fx.jump）
+//   ⌥X  打开 / 收起汐音设置（HUD「◐ 汐音」同一个开关）
 //   ⌥G  不处理：全域入口是 classic 舱壳上的按钮（单向切换），这里没有对应动作。
 //   ↑↓  不在这里 —— S3 的 CockpitFleetRail 已在可见行内处理。
 //
@@ -18,6 +19,7 @@ import { useEffect, useRef } from 'react'
 import { useCockpitFleet } from '../fleet/CockpitFleetProvider'
 import { useCockpitState } from '../state/CockpitStateProvider'
 import { getChatSlot } from '../chat/chat-slots'
+import { toggleCrewSettings } from '../crew/crew-settings'
 import { candidatesOf } from './cockpit-candidates'
 import { resolveDefaultRef } from './cockpit-url'
 import { useOptionalIsActiveRoute } from './safe-navigation'
@@ -29,11 +31,12 @@ function isEditableTarget(target: EventTarget | null): boolean {
 }
 
 /** Alt + 哪个键（不认识返回 null）。兼容 event.code 缺失的合成事件与测试。 */
-function altKeyOf(event: KeyboardEvent): '1' | '2' | 'w' | null {
+function altKeyOf(event: KeyboardEvent): '1' | '2' | 'w' | 'x' | null {
   if (!event.altKey || event.metaKey || event.ctrlKey || event.shiftKey) return null
   if (event.code === 'Digit1' || event.code === 'Numpad1' || event.key === '1') return '1'
   if (event.code === 'Digit2' || event.code === 'Numpad2' || event.key === '2') return '2'
   if (event.code === 'KeyW' || event.key.toLowerCase() === 'w') return 'w'
+  if (event.code === 'KeyX' || event.key.toLowerCase() === 'x') return 'x'
   return null
 }
 
@@ -97,6 +100,12 @@ export function CockpitShortcuts() {
       if (key === 'w') {
         event.preventDefault()
         jumpRef.current()
+        return
+      }
+
+      if (key === 'x') {
+        event.preventDefault()
+        toggleCrewSettings()
         return
       }
     }

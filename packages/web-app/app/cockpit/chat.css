@@ -391,3 +391,96 @@
 @media (max-width: 900px) {
   .ck12-cmdbar { min-height: 48px; padding-left: 12px; }
 }
+
+/* ═══════════════ v13 · 多行草稿（浮层，底栏 54px 不变） ═══════════════
+   ⇧⏎ / ⌥⏎ 换行 → 编辑器 position:fixed 浮到底栏上方；底栏原地只显示首行与行数。
+   几何由 CockpitCommandBar 写到 --ck12-draft-* 变量上（贴住底栏上沿）。
+   纪律：不改任何 flex 高度，面 / ticker / 舰桥的 rect 全程不变。 */
+.ck12-cmdbar.is-draft {
+  border-color: color-mix(in srgb, var(--ck-a) 38%, transparent);
+}
+.ck12-cmdbar.is-draft [data-composer-block] {
+  position: fixed;
+  left: var(--ck12-draft-x, 20px);
+  width: var(--ck12-draft-w, calc(100vw - 40px));
+  bottom: var(--ck12-draft-b, 90px);
+  z-index: 65;
+  padding: 9px 12px 11px;
+  border: 1px solid color-mix(in srgb, var(--ck-a) 38%, transparent);
+  border-radius: 14px;
+  background: linear-gradient(180deg, rgba(14, 18, 27, 0.97), rgba(8, 10, 16, 0.96));
+  backdrop-filter: blur(16px);
+  box-shadow:
+    0 26px 64px rgba(0, 0, 0, 0.66),
+    0 0 36px color-mix(in srgb, var(--ck-a) 12%, transparent);
+  animation: ck12-draft-in 0.18s cubic-bezier(0.2, 0.9, 0.2, 1);
+}
+@keyframes ck12-draft-in {
+  from { opacity: 0; transform: translateY(10px) scaleY(0.96); }
+  to { opacity: 1; transform: none; }
+}
+.ck12-cmdbar.is-draft [data-composer-block]::before {
+  content: '多行草稿 · ⇧⏎ 换行 · ⏎ 发送 · Esc 收起';
+  display: block;
+  margin-bottom: 7px;
+  padding-bottom: 6px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+  font-size: 9.5px;
+  letter-spacing: 0.1em;
+  color: var(--ck-a);
+  font-family: var(--font-ui);
+}
+.ck12-cmdbar.is-draft [data-composer-block] textarea {
+  min-height: 66px !important;
+  max-height: 38vh !important;
+  height: auto !important;
+  overflow-y: auto;
+  white-space: pre-wrap;
+}
+.ck12-draft-peek {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+  flex: 1;
+  font-size: 13px;
+  color: var(--ck12-ink);
+}
+.ck12-draft-first {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.ck12-draft-lines {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  height: 22px;
+  padding: 0 8px;
+  border-radius: 6px;
+  border: 1px solid color-mix(in srgb, var(--ck-a) 38%, transparent);
+  background: color-mix(in srgb, var(--ck-a) 8%, transparent);
+  color: var(--ck-a);
+  font-size: 9.5px;
+  font-family: var(--font-ui);
+  white-space: nowrap;
+}
+.ck12-draft-keys {
+  flex: none;
+  margin-left: auto;
+  font-size: 9px;
+  color: var(--ck12-faint);
+  white-space: nowrap;
+}
+.ck12-draft-keys kbd {
+  border: 1px solid var(--ck12-bd);
+  border-radius: 4px;
+  padding: 0 4px;
+  font-size: 9px;
+  color: var(--ck12-dim);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ck12-cmdbar.is-draft [data-composer-block] { animation: none; }
+}

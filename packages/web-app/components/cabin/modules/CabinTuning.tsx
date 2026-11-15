@@ -12,7 +12,7 @@ import { cabinAudio } from '@/lib/cabin-audio'
 import { useCockpit } from '../CockpitProvider'
 import { WbH } from './ui'
 import {
-  HRANGES, MOOD_OPTIONS, PRESENCE_RATES, THEMES, moodPortrait,
+  HRANGES, MOOD_OPTIONS, PRESENCE_RATES, THEMES, moodPortrait, presenceRateLabel,
   type CockpitFloat, type CockpitPrefs, type CockpitTheme, type CabinAutonomy, type CabinMood, type PresenceRate,
 } from '../cockpit'
 
@@ -144,7 +144,7 @@ export function CabinTuning() {
               data-testid="tuning-presence-rate"
             >
               {PRESENCE_ORDER.map((r) => (
-                <option key={r} value={r}>{PRESENCE_RATES[r].label} {PRESENCE_RATES[r].min}–{PRESENCE_RATES[r].max} 分</option>
+                <option key={r} value={r}>{PRESENCE_RATES[r].label} · 静默 {presenceRateLabel(r)}</option>
               ))}
             </select>
           </div>

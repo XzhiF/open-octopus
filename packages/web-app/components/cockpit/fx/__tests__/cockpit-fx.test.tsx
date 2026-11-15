@@ -8,6 +8,8 @@ import { act, fireEvent, render, screen } from '@testing-library/react'
 import type { ReactNode } from 'react'
 import type { CabinAttentionItem } from '@octopus/shared'
 import type { CabinJobView } from '@/lib/cabin-api'
+import { CockpitContext, type CockpitContextValue } from '@/components/cabin/CockpitProvider'
+import { DEFAULT_COCKPIT } from '@/components/cabin/cockpit'
 import type { CockpitRow } from '../../fleet/fleet-model'
 import { CockpitStateProvider, useCockpitState } from '../../state/CockpitStateProvider'
 import { CockpitLayerStack } from '../../state/CockpitLayerStack'
@@ -67,8 +69,45 @@ function Probe() {
       data-pulse-color={fx.pulseColor}
       data-said={fx.lastSaid?.line ?? ''}
       data-mood={fx.lastSaid?.mood ?? ''}
+      data-feedback={fx.feedbackNonce}
+      data-level={fx.feedbackLevel}
+      data-feedback-color={fx.feedbackColor}
     />
   )
+}
+
+function WindowProbe() {
+  const { chatWindow } = useCockpitState()
+  return <div data-testid="win" data-open={chatWindow.open ? '1' : '0'} />
+}
+
+function SelectionProbe() {
+  const { selection } = useCockpitState()
+  return <div data-testid="sel" data-key={selection ? `${selection.kind}:${selection.id}` : ''} />
+}
+
+function makeCockpit(): CockpitContextValue {
+  return {
+    prefs: DEFAULT_COCKPIT,
+    mood: 'idle',
+    moodOverride: null,
+    streaming: false,
+    setStreaming: vi.fn(),
+    setPref: vi.fn(),
+    applyPrefs: vi.fn(),
+    reset: vi.fn(),
+    randomize: vi.fn(),
+    setMoodOverride: vi.fn(),
+    presenceLine: null,
+    presenceDueAt: 0,
+    presenceSnoozeUntil: 0,
+    dismissPresence: vi.fn(),
+    snoozePresence: vi.fn(),
+    testPresence: vi.fn(),
+    setCrewBusy: vi.fn(),
+    setPresenceActive: vi.fn(),
+    scene: { key: 'cabin-1' } as unknown as CockpitContextValue['scene'],
+  }
 }
 
 function FxTriggers() {
@@ -77,18 +116,24 @@ function FxTriggers() {
     <>
       <button type="button" onClick={() => fx.edge('var(--pop-red)')}>edge</button>
       <button type="button" onClick={() => fx.pulse('var(--pop-cyan)')}>pulse</button>
+      <button type="button" onClick={() => fx.feedback('var(--pop-green)', 'full')}>feedback</button>
+      <button type="button" onClick={() => fx.feedback('var(--pop-green)', 'lite')}>feedback-lite</button>
     </>
   )
 }
 
 function Harness({ children }: { children?: ReactNode }) {
   return (
-    <CockpitStateProvider entryCabinId="c1">
-      <CockpitLayerStack>
-        {children ?? <CockpitBrief />}
-        <Probe />
-      </CockpitLayerStack>
-    </CockpitStateProvider>
+    <CockpitContext.Provider value={makeCockpit()}>
+      <CockpitStateProvider entryCabinId="c1">
+        <CockpitLayerStack>
+          {children ?? <CockpitBrief />}
+          <Probe />
+          <WindowProbe />
+          <SelectionProbe />
+        </CockpitLayerStack>
+      </CockpitStateProvider>
+    </CockpitContext.Provider>
   )
 }
 
@@ -131,6 +176,45 @@ describe('CockpitBrief · 到达', () => {
     expect(probe.dataset.edgeColor).toBe('var(--pop-green)')
     expect(probe.dataset.said).toContain('M2 结算对账')
     expect(probe.dataset.mood).toBe('alert')
+    // v13：背景特效信号量（full = 背景层 + 内容之上层），与 pulse/edge 并存
+    expect(probe.dataset.feedback).toBe('1')
+    expect(probe.dataset.level).toBe('full')
+    expect(probe.dataset.feedbackColor).toBe('var(--pop-green)')
+  })
+
+  it('点简报任意处 = 激活：选中该作业并打开对话窗，卡片收起', () => {
+    fleet.rows = [
+      {
+        key: 'job:j1',
+        kind: 'job',
+        cabinId: 'c1',
+        cabinName: '舱一',
+        job: { id: 'j1', priority: 5 } as CabinJobView,
+        attention: attention('a9', { title: '合规审计' }),
+        pct: null,
+      } as CockpitRow,
+    ]
+    fleet.arrivals = ['a9']
+
+    render(<Harness />)
+    expect(screen.getByTestId('sel').dataset.key).toBe('')
+
+    fireEvent.click(screen.getByTestId('cockpit-brief'))
+
+    expect(screen.getByTestId('sel').dataset.key).toBe('job:j1')
+    expect(screen.getByTestId('win').dataset.open).toBe('1')
+    expect(screen.queryByTestId('cockpit-brief')).toBeNull()
+  })
+
+  it('没有 job_id 的 attention：点开只开对话，不选作业面', () => {
+    fleet.rows = [attentionRow(attention('a1'))]
+    fleet.arrivals = ['a1']
+
+    render(<Harness />)
+    fireEvent.click(screen.getByTestId('cockpit-brief'))
+
+    expect(screen.getByTestId('sel').dataset.key).toBe('attention:a1')
+    expect(screen.getByTestId('win').dataset.open).toBe('1')
   })
 
   it('job 行上挂的 attention 也能定位到 title/stage', () => {
@@ -263,6 +347,19 @@ describe('CockpitEffects · 信号量', () => {
       .toBe('var(--pop-red)')
     expect(screen.getByTestId('cockpit-fx').style.getPropertyValue('--ck12-fx'))
       .toBe('var(--pop-cyan)')
+  })
+
+  it('feedback full → 背景层（z1）+ 内容之上层（z3）；lite 只留光晕与环', () => {
+    render(<Harness><CockpitEffects /><FxTriggers /></Harness>)
+
+    fireEvent.click(screen.getByText('feedback'))
+    expect(screen.getByTestId('cockpit-bgfx')).toBeInTheDocument()
+    expect(screen.getByTestId('cockpit-bgfx-top')).toBeInTheDocument()
+    expect(screen.getByTestId('cockpit-bgfx-top')).not.toHaveClass('is-lite')
+
+    fireEvent.click(screen.getByText('feedback-lite'))
+    expect(screen.queryByTestId('cockpit-bgfx')).toBeNull()
+    expect(screen.getByTestId('cockpit-bgfx-top')).toHaveClass('is-lite')
   })
 
   it('prefers-reduced-motion 下不挂载', () => {

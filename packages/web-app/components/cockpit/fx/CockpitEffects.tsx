@@ -39,8 +39,41 @@ export function CockpitEffects() {
 
   if (reduced) return null
 
+  const showBg = fx.feedbackLevel === 'full'
+  const showTop = fx.feedbackLevel !== 'off'
+
   return (
     <>
+      {/* v13 反馈背景层：z1，在舱面之下；扫描带 + 网格脉冲 */}
+      {showBg && fx.feedbackNonce > 0 && (
+        <div
+          key={`bgfx:${fx.feedbackNonce}`}
+          className="ck12-bgfx"
+          style={{ '--ck12-fx': fx.feedbackColor } as CSSProperties}
+          data-testid="cockpit-bgfx"
+          data-nonce={fx.feedbackNonce}
+          aria-hidden="true"
+        >
+          <span className="ck12-bgfx-scan" />
+          <span className="ck12-bgfx-grid" />
+        </div>
+      )}
+
+      {/* v13 反馈之上层：z3，screen 叠加只提亮（不糊字、不挡点击）；光晕 + 三圈细环 */}
+      {showTop && fx.feedbackNonce > 0 && (
+        <div
+          key={`bgfxtop:${fx.feedbackNonce}`}
+          className={`ck12-bgfx-top${fx.feedbackLevel === 'lite' ? ' is-lite' : ''}`}
+          style={{ '--ck12-fx': fx.feedbackColor } as CSSProperties}
+          data-testid="cockpit-bgfx-top"
+          data-nonce={fx.feedbackNonce}
+          aria-hidden="true"
+        >
+          <span className="ck12-bgfx-bloom" />
+          <span className="ck12-bgfx-rings"><i /><i /><i /></span>
+        </div>
+      )}
+
       {/* 中心脉冲：key = nonce，换一次重放一次；nonce 0 是初值，不用播 */}
       <div
         key={`pulse:${fx.pulseNonce}`}

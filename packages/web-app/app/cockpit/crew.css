@@ -1,7 +1,7 @@
 /* ═══════════════════════════════════════════════════════════════════════
    cockpit-v12 · S7 立绘 / 台词 / 在场
    逐块对照 docs/cabin-design/cockpit-v12.html 的 .crew / .pod / .speech /
-   .pmenu / .pmgal / .heart（尺寸取原型：344 × min(60vh,548)，left:6 bottom:6）。
+   .xset（HUD「◐ 汐音」）/ .spark / .tapring / .heart（尺寸取原型：344 × min(60vh,548)，left:6 bottom:6）。
    类名统一 ck12- 前缀；颜色走 --ck-a/b 与 pop-* token（CockpitProvider 实时写入）。
    控制条 portal 到 body，所以这里的 button 需要自带 reset。
    ═══════════════════════════════════════════════════════════════════════ */
@@ -221,11 +221,12 @@
   50% { opacity: 0; }
 }
 
-/* ───────────────────────── 立绘控制条（portal） ───────────────────────── */
-.ck12-pmenu {
+/* ───────────────────────── 汐音设置（HUD「◐ 汐音」/ ⌥X，portal） ───────────────────────── */
+/* v13：设置从立绘控制条搬到 HUD；点立绘只负责说话。 */
+.ck12-xset {
   position: fixed;
   z-index: 30;
-  width: 344px;
+  width: 352px;
   padding: 8px;
   border: 1px solid color-mix(in srgb, var(--ck-b) 40%, transparent);
   border-radius: 14px;
@@ -234,17 +235,16 @@
   box-shadow:
     0 18px 46px rgba(0, 0, 0, 0.6),
     0 0 26px color-mix(in srgb, var(--ck-b) 12%, transparent);
-  transform: translateX(-50%);
   animation: ck12-pm-in 0.18s ease-out;
   color: var(--pop-ink);
   font-family: var(--font-ui);
 }
-.ck12-pmenu *,
-.ck12-pmenu *::before,
-.ck12-pmenu *::after {
+.ck12-xset *,
+.ck12-xset *::before,
+.ck12-xset *::after {
   box-sizing: border-box;
 }
-.ck12-pmenu button {
+.ck12-xset button {
   font: inherit;
   color: inherit;
   border: 0;
@@ -252,16 +252,16 @@
   padding: 0;
   cursor: pointer;
 }
-.ck12-pmenu button:focus-visible {
+.ck12-xset button:focus-visible {
   outline: 1px solid var(--ck-a);
   outline-offset: 2px;
 }
 @keyframes ck12-pm-in {
-  from { opacity: 0; transform: translateX(-50%) scale(0.985); }
-  to { opacity: 1; transform: translateX(-50%) scale(1); }
+  from { opacity: 0; transform: translateY(-6px) scale(0.985); }
+  to { opacity: 1; transform: none; }
 }
 
-.ck12-pm-h {
+.ck12-xset-h {
   display: flex;
   align-items: center;
   gap: 7px;
@@ -269,11 +269,11 @@
   margin-bottom: 6px;
   border-bottom: 1px solid var(--ck12-bd, rgba(255, 255, 255, 0.09));
 }
-.ck12-pm-h b {
+.ck12-xset-h b {
   font-size: 11.5px;
   color: var(--pop-ink);
 }
-.ck12-pm-av {
+.ck12-xset-av {
   width: 22px;
   height: 22px;
   flex: none;
@@ -281,18 +281,19 @@
   overflow: hidden;
   border: 1px solid color-mix(in srgb, var(--ck-b) 40%, transparent);
 }
-.ck12-pm-av img {
+.ck12-xset-av img {
   width: 100%;
   height: 100%;
   object-fit: cover;
   object-position: 50% 12%;
 }
-.ck12-pm-sub {
+.ck12-xset-sub {
   font-size: 8.5px;
   letter-spacing: 0.08em;
   color: var(--ck12-faint, var(--pop-dim));
 }
-.ck12-pm-x {
+.ck12-xset-x {
+  margin-left: auto;
   width: 20px;
   height: 20px;
   flex: none;
@@ -304,21 +305,74 @@
   font-size: 10px;
   line-height: 1;
 }
-.ck12-pm-x:hover {
+.ck12-xset-x:hover {
   color: var(--pop-red, #ff6b81);
   border-color: color-mix(in srgb, var(--pop-red, #ff6b81) 45%, transparent);
   background: color-mix(in srgb, var(--pop-red, #ff6b81) 10%, transparent);
 }
 
-.ck12-pm-line {
+.ck12-xset-row {
   display: flex;
   align-items: center;
   gap: 6px;
-  padding: 0 1px 7px;
-  margin-bottom: 7px;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+  padding: 6px 2px 7px;
+  border-top: 1px solid rgba(255, 255, 255, 0.05);
 }
-.ck12-pm-btn {
+.ck12-xset-row:first-of-type { border-top: 0; }
+.ck12-xset-l {
+  flex: none;
+  width: 30px;
+  font-size: 9.5px;
+  letter-spacing: 0.1em;
+  color: var(--ck12-faint, var(--pop-dim));
+}
+.ck12-xset-toggle {
+  flex: none;
+  height: 20px;
+  padding: 0 8px;
+  border-radius: 999px;
+  border: 1px solid var(--ck12-bd2, rgba(255, 255, 255, 0.14));
+  font-size: 9px;
+  color: var(--ck12-faint, var(--pop-dim));
+}
+.ck12-xset-toggle.is-on {
+  color: var(--ck-a);
+  border-color: color-mix(in srgb, var(--ck-a) 45%, transparent);
+  background: color-mix(in srgb, var(--ck-a) 10%, transparent);
+}
+.ck12-xset-seg {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  margin-left: auto;
+  padding: 2px;
+  flex: none;
+  border-radius: 7px;
+  border: 1px solid var(--ck12-bd, rgba(255, 255, 255, 0.09));
+  background: rgba(255, 255, 255, 0.02);
+}
+.ck12-xset-seg button {
+  height: 18px;
+  padding: 0 7px;
+  border-radius: 5px;
+  font-size: 9px;
+  color: var(--ck12-faint, var(--pop-dim));
+  transition: 0.12s;
+}
+.ck12-xset-seg button:hover {
+  color: var(--pop-ink);
+}
+.ck12-xset-seg button.on {
+  background: color-mix(in srgb, var(--ck-a) 14%, transparent);
+  color: var(--ck-a);
+}
+.ck12-xset-note {
+  padding: 0 2px 7px;
+  font-size: 9px;
+  line-height: 1.55;
+  color: var(--ck12-faint, var(--pop-dim));
+}
+.ck12-xset-btn {
   display: inline-flex;
   align-items: center;
   gap: 5px;
@@ -332,55 +386,22 @@
   white-space: nowrap;
   transition: 0.13s;
 }
-.ck12-pm-btn:hover {
+.ck12-xset-btn:hover {
   color: var(--pop-ink);
   border-color: color-mix(in srgb, var(--pop-ink) 24%, transparent);
   background: rgba(255, 255, 255, 0.05);
 }
-.ck12-pm-btn span {
+.ck12-xset-btn span {
   color: var(--ck-b);
   font-size: 10px;
 }
-.ck12-pm-seg {
-  display: inline-flex;
-  align-items: center;
-  gap: 2px;
-  margin-left: auto;
-  padding: 2px;
-  flex: none;
-  border-radius: 7px;
-  border: 1px solid var(--ck12-bd, rgba(255, 255, 255, 0.09));
-  background: rgba(255, 255, 255, 0.02);
-}
-.ck12-pm-seg button {
-  height: 18px;
-  padding: 0 7px;
-  border-radius: 5px;
-  font-size: 9px;
-  color: var(--ck12-faint, var(--pop-dim));
-  transition: 0.12s;
-}
-.ck12-pm-seg button:hover {
-  color: var(--pop-ink);
-}
-.ck12-pm-seg button.on {
-  background: color-mix(in srgb, var(--ck-a) 14%, transparent);
-  color: var(--ck-a);
-}
-
-.ck12-pm-note {
-  padding: 0 2px 7px;
-  font-size: 8.5px;
-  letter-spacing: 0.04em;
-  color: var(--ck12-faint, var(--pop-dim));
-}
-
-.ck12-pm-gal {
+.ck12-xset-gal {
   display: flex;
   gap: 4px;
-  padding: 0 1px;
+  padding: 4px 1px 6px;
+  border-top: 1px solid rgba(255, 255, 255, 0.05);
 }
-.ck12-pm-gal button {
+.ck12-xset-gal button {
   flex: 1;
   min-width: 0;
   aspect-ratio: 1;
@@ -391,19 +412,74 @@
   opacity: 0.55;
   transition: 0.14s;
 }
-.ck12-pm-gal button img {
+.ck12-xset-gal button img {
   width: 100%;
   height: 100%;
   object-fit: cover;
   object-position: 50% 14%;
 }
-.ck12-pm-gal button:hover {
+.ck12-xset-gal button:hover {
   opacity: 0.95;
 }
-.ck12-pm-gal button.on {
+.ck12-xset-gal button.on {
   opacity: 1;
   border-color: color-mix(in srgb, var(--ck-b) 60%, transparent);
   box-shadow: 0 0 10px color-mix(in srgb, var(--ck-b) 22%, transparent);
+}
+.ck12-xset-foot {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 3px 2px;
+  border-top: 1px solid rgba(255, 255, 255, 0.05);
+  font-size: 9px;
+  letter-spacing: 0.04em;
+  color: var(--ck12-faint, var(--pop-dim));
+}
+.ck12-xset-foot b { color: var(--ck-b); font-weight: 700; }
+.ck12-xset-cd {
+  margin-left: auto;
+  color: var(--ck-a);
+  font-variant-numeric: tabular-nums;
+}
+
+/* ───────────────────── 点击即时反馈（v13.1） ─────────────────────
+   星光在舱体里（跟着 overflow:hidden 裁），涟漪在舱体外一圈；两者都是
+   absolute + pointer-events:none，绝不参与 .ck12-crew 的尺寸。 */
+.ck12-spark {
+  position: absolute;
+  z-index: 4;
+  font-size: 13px;
+  line-height: 1;
+  color: color-mix(in srgb, var(--ck-a) 88%, #fff);
+  text-shadow: 0 0 10px color-mix(in srgb, var(--ck-a) 75%, transparent);
+  pointer-events: none;
+  animation: ck12-sparkup 0.85s ease-out forwards;
+}
+@keyframes ck12-sparkup {
+  0% { opacity: 0; transform: translate(0, 8px) scale(0.5); }
+  22% { opacity: 1; }
+  100% { opacity: 0; transform: translate(var(--dx, 0), var(--dy, -60px)) scale(1.05); }
+}
+
+.ck12-tapring {
+  position: absolute;
+  inset: 0;
+  z-index: 7;
+  border-radius: 18px;
+  border: 1px solid color-mix(in srgb, var(--ck-b) 72%, transparent);
+  box-shadow: 0 0 22px color-mix(in srgb, var(--ck-b) 34%, transparent);
+  pointer-events: none;
+  animation: ck12-tapring 0.52s ease-out forwards;
+}
+@keyframes ck12-tapring {
+  0% { opacity: 0.9; transform: scale(1); }
+  100% { opacity: 0; transform: scale(1.045); }
+}
+
+/* 按下去的那一下也要有回应（触感；不改变几何）。 */
+.ck12-pod:active {
+  border-color: color-mix(in srgb, var(--ck-b) 82%, transparent);
 }
 
 /* ───────────────────────── 心形 ───────────────────────── */
@@ -431,7 +507,9 @@
 @media (prefers-reduced-motion: reduce) {
   .ck12-pod { animation: none; }
   .ck12-heart { display: none; }
+  .ck12-spark,
+  .ck12-tapring { display: none; }
   .ck12-speech { transition: none; }
   .ck12-speech-cur { animation: none; }
-  .ck12-pmenu { animation: none; }
+  .ck12-xset { animation: none; }
 }

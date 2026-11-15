@@ -7,11 +7,18 @@
 // 数字纪律（plans §1.5）：S1 没有编队数据 → 四统计一律「—」。绝不能写 0 冒充。
 // counts.sessions 为 null（拿不到 /api/agent/sessions/running）时隐藏「分身」统计。
 
+import { useCallback, useRef } from 'react'
 import { THEMES, type CockpitTheme } from '@/components/cabin/cockpit'
 import { useCockpit } from '@/components/cabin/CockpitProvider'
 import { useCockpitFleet } from '../fleet/CockpitFleetProvider'
 import { useCockpitEntry } from '../entry/use-cockpit-entry'
 import { useCockpitState } from '../state/CockpitStateProvider'
+import { CockpitCrewSettings } from '../crew/CockpitCrewSettings'
+import {
+  setCrewSettingsOpen,
+  toggleCrewSettings,
+  useCrewSettingsOpen,
+} from '../crew/crew-settings'
 
 const THEME_ORDER = Object.keys(THEMES) as CockpitTheme[]
 
@@ -24,6 +31,9 @@ export function CockpitHud() {
   const { entryCabinId, railOpen, setRailOpen, fx } = useCockpitState()
   const { exitCockpit } = useCockpitEntry()
   const { counts } = useCockpitFleet()
+  const settingsOpen = useCrewSettingsOpen()
+  const xiyinBtnRef = useRef<HTMLButtonElement>(null)
+  const closeSettings = useCallback(() => setCrewSettingsOpen(false), [])
 
   const cycleTheme = () => {
     const index = THEME_ORDER.indexOf(prefs.theme)
@@ -82,7 +92,36 @@ export function CockpitHud() {
         >
           ◐ 换色
         </button>
+        {/* v13：跃迁有了看得见的入口（原来只有 ⌥W / 指令） */}
+        <button
+          type="button"
+          className="ck12-ghost ck12-opt2"
+          onClick={() => fx.jump()}
+          title="跃迁：星流重新对齐（⌥W）"
+          data-testid="cockpit-jump"
+        >
+          ⟳ 跃迁
+        </button>
+        {/* v13：汐音的设置唯一的入口；点立绘只负责说话 */}
+        <button
+          ref={xiyinBtnRef}
+          type="button"
+          className={`ck12-ghost${settingsOpen ? ' is-on' : ''}`}
+          aria-haspopup="dialog"
+          aria-expanded={settingsOpen}
+          onClick={() => toggleCrewSettings()}
+          title="汐音的设置（⌥X）"
+          data-testid="cockpit-crew-settings-btn"
+        >
+          ◐ 汐音
+        </button>
       </div>
+
+      <CockpitCrewSettings
+        open={settingsOpen}
+        anchor={xiyinBtnRef.current}
+        onClose={closeSettings}
+      />
     </header>
   )
 }

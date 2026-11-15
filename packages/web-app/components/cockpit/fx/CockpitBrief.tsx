@@ -12,9 +12,12 @@ import { useCallback, useEffect, useRef, useState, type CSSProperties } from 're
 import type { CabinAttentionItem } from '@octopus/shared'
 import { ATTENTION_STAGE_META } from '@/components/cabin/cabin-meta'
 import { moodPortrait } from '@/components/cabin/cockpit'
+import { useCockpit } from '@/components/cabin/CockpitProvider'
 import { useCockpitFleet } from '../fleet/CockpitFleetProvider'
 import type { CockpitRow } from '../fleet/fleet-model'
 import { useCockpitState } from '../state/CockpitStateProvider'
+import type { CockpitRef } from '../state/cockpit-state'
+import { getChatSlot } from '../chat/chat-slots'
 
 /** 10s 自动收（plans §0.3）。 */
 export const BRIEF_MS = 10_000
@@ -31,6 +34,8 @@ export interface CockpitBriefItem {
   color: string
   time: string
   demo?: boolean
+  /** 点开现场的目标：job → 作业面；无 job_id 的 attention → 只开对话。 */
+  ref?: CockpitRef
 }
 
 interface BriefView {
@@ -73,6 +78,19 @@ function findAttention(rows: readonly CockpitRow[], id: string): CabinAttentionI
   return null
 }
 
+/** attention → 点开现场的目标：挂在 job 上就开作业面，否则只开对话。 */
+function refOfAttention(rows: readonly CockpitRow[], id: string): CockpitRef | undefined {
+  for (const row of rows) {
+    if (row.kind === 'attention' && row.item.id === id) {
+      return { kind: 'attention', cabinId: row.cabinId, id: row.item.id }
+    }
+    if (row.kind === 'job' && row.attention?.id === id) {
+      return { kind: 'job', cabinId: row.cabinId, id: row.job.id }
+    }
+  }
+  return undefined
+}
+
 /** arrivals 顺序即到达顺序；同批合并成一张卡，查不到的行跳过。 */
 export function collectArrivals(
   arrivals: readonly string[],
@@ -84,7 +102,7 @@ export function collectArrivals(
     if (seen.has(id)) continue
     seen.add(id)
     const attention = findAttention(rows, id)
-    if (attention) items.push(briefItemOf(attention))
+    if (attention) items.push({ ...briefItemOf(attention), ref: refOfAttention(rows, id) })
   }
   return items
 }
@@ -124,7 +142,8 @@ export function demoArrivalEnabled(): boolean {
 
 export function CockpitBrief() {
   const { rows, arrivals } = useCockpitFleet()
-  const { fx, layer } = useCockpitState()
+  const { prefs } = useCockpit()
+  const { fx, layer, select, chatWindow } = useCockpitState()
   const [brief, setBrief] = useState<BriefView | null>(null)
   /** 同一批 arrivals 的签名：provider 每 tick 都给新数组，用它挡住重复触发。 */
   const handledRef = useRef('')
@@ -144,11 +163,14 @@ export function CockpitBrief() {
     if (items.length === 0) return
 
     const first = items[0]
+    // v13：通知窗照旧，特效只铺背景（克制档只留边缘流光）。
+    fx.feedback(first.color, prefs.fxLevel === 'lite' ? 'lite' : 'full')
     fx.pulse(first.color)
     fx.edge(first.color)
+    fx.jump()
     fx.say(arrivalLine(first), 'alert')
     setBrief({ items, demo: false })
-  }, [arrivals, rows, fx])
+  }, [arrivals, rows, fx, prefs.fxLevel])
 
   // ── 10s 自动收（新简报会重置计时）────────────────────────────────────
   useEffect(() => {
@@ -159,6 +181,16 @@ export function CockpitBrief() {
 
   // ── Esc：注册进唯一的 layer 栈，可提前收 ─────────────────────────────
   const closeBrief = useCallback(() => setBrief(null), [])
+
+  /* v13：点消息任意处 = 激活（作业面 + 对话窗 + 焦点进 composer）。 */
+  const activate = useCallback((item: CockpitBriefItem) => {
+    setBrief(null)
+    if (item.ref) select(item.ref)
+    chatWindow.openWithFocus()
+    requestAnimationFrame(() => {
+      getChatSlot('composer')?.querySelector<HTMLTextAreaElement>('textarea')?.focus()
+    })
+  }, [select, chatWindow])
   useEffect(() => {
     if (!brief) return
     return layer.register('brief', BRIEF_LAYER_PRIORITY, closeBrief)
@@ -166,8 +198,10 @@ export function CockpitBrief() {
 
   // ── 演示触发器（不伪造编队数据，只走 fx + 一张标注「演示」的简报）─────
   const runDemo = useCallback(() => {
+    fx.feedback(DEMO_ITEM.color, 'full')
     fx.pulse(DEMO_ITEM.color)
     fx.edge(DEMO_ITEM.color)
+    fx.jump()
     fx.say('演示到达：一条新回流已进编队。', 'alert')
     setBrief({ items: [DEMO_ITEM], demo: true })
   }, [fx])
@@ -194,8 +228,16 @@ export function CockpitBrief() {
         <aside
           className="ck12-brief"
           style={{ '--ck12-brief-tone': first.color } as CSSProperties}
-          role="status"
-          aria-live="polite"
+          role="button"
+          tabIndex={0}
+          aria-label="汐音的简报 · 点开现场"
+          onClick={() => activate(first)}
+          onKeyDown={(event) => {
+            if (event.key === 'Enter' || event.key === ' ') {
+              event.preventDefault()
+              activate(first)
+            }
+          }}
           data-testid="cockpit-brief"
           data-demo={brief.demo ? '1' : undefined}
         >
@@ -222,7 +264,7 @@ export function CockpitBrief() {
 
           <div className="ck12-brief-f">
             <span className="ck12-brief-time">{first.time}</span>
-            <span className="ck12-brief-hint">已进编队 · 不用点</span>
+            <span className="ck12-brief-hint"><b>点开现场</b> · Esc 关闭</span>
           </div>
         </aside>
       )}

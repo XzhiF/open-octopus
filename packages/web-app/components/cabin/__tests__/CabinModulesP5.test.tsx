@@ -130,10 +130,10 @@ describe('cockpit 纯派生（K3 mood / prefs 规整）', () => {
 })
 
 describe('在场纯派生（classic-v4）', () => {
-  it('presenceGap：落在档位区间（分钟）', () => {
-    expect(presenceGap('active', () => 0)).toBe(3 * 60_000)
-    expect(presenceGap('active', () => 1)).toBe(8 * 60_000)
-    expect(presenceGap('quiet', () => 0.5)).toBe(18 * 60_000)
+  it('presenceGap：v13 起是按档位的静默秒数（30s / 90s / 5min）', () => {
+    expect(presenceGap('active')).toBe(30_000)
+    expect(presenceGap('std')).toBe(90_000)
+    expect(presenceGap('quiet')).toBe(300_000)
   })
   it('presenceGate：关闭/静默/后台/流式/忙碌/输入/空闲/免打扰', () => {
     const base = { on: true, now: 1_000_000, snoozedUntil: 0, hidden: false, streaming: false, busy: false, editing: false, lastUserAt: 800_000, idleMs: 60_000, hour: 10 }

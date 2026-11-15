@@ -3,7 +3,7 @@
 // S6 owns this file —— 在场 popover（v12 的在场按钮 + 设计稿要求的三档频率）。
 //
 // 真源是 CockpitProvider 的 prefs：presenceOn / presenceRate；频率显示
-// cockpit.ts 的 PRESENCE_RATES 真实分钟区间（quiet 12–24 / std 6–16 / active 3–8），
+// cockpit.ts 的 PRESENCE_RATES 静默秒数（活跃 30s / 标准 90s / 安静 5min），
 // 不写「偶尔 / 经常」这种模糊词，也不自造档位。
 // 「现在说一句」调已有的 testPresence()（与立绘控制条同一个动作）。
 
@@ -12,24 +12,34 @@ import { X } from 'lucide-react'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { Switch } from '@/components/ui/switch'
 import { useCockpit } from '@/components/cabin/CockpitProvider'
-import { PRESENCE_RATES, type PresenceRate } from '@/components/cabin/cockpit'
+import { PRESENCE_RATES, presenceRateLabel, type PresenceRate } from '@/components/cabin/cockpit'
 import { useCockpitState } from '../state/CockpitStateProvider'
 import { BRIDGE_POP_LAYER_PRIORITY } from './CockpitModelPopover'
 
-const RATE_ORDER: PresenceRate[] = ['quiet', 'std', 'active']
+const RATE_ORDER: PresenceRate[] = ['active', 'std', 'quiet']
 
 export function CockpitPresencePopover() {
-  const { prefs, setPref, testPresence } = useCockpit()
+  const { prefs, setPref, testPresence, presenceDueAt } = useCockpit()
   const { layer } = useCockpitState()
   const [open, setOpen] = useState(false)
+  const [now, setNow] = useState(() => Date.now())
+
+  // v13：在场是「最后一次交互 + 档位秒数」，按钮上直接显示倒计时。
+  useEffect(() => {
+    if (!prefs.presenceOn) return
+    const timer = window.setInterval(() => setNow(Date.now()), 1000)
+    return () => window.clearInterval(timer)
+  }, [prefs.presenceOn])
 
   useEffect(() => {
     if (!open) return
     return layer.register('bridge-pop', BRIDGE_POP_LAYER_PRIORITY, () => setOpen(false))
   }, [open, layer])
 
-  const rate = PRESENCE_RATES[prefs.presenceRate] ?? PRESENCE_RATES.std
-  const label = prefs.presenceOn ? `在场 · ${rate.label}` : '不在场'
+  const left = presenceDueAt > 0 ? Math.max(0, Math.ceil((presenceDueAt - now) / 1000)) : null
+  const label = prefs.presenceOn
+    ? (left != null ? `在场 · ${left}s` : '在场 · 待排程')
+    : '不在场'
 
   return (
     <Popover open={open} onOpenChange={setOpen}>
@@ -84,7 +94,7 @@ export function CockpitPresencePopover() {
             <small>{prefs.presenceOn ? '开' : '关'}</small>
           </div>
 
-          <div className="ck12-rig-sect">频率</div>
+          <div className="ck12-rig-sect">没在交互多久说一句</div>
           <div className="ck12-rig-seg" role="group" aria-label="在场频率">
             {RATE_ORDER.map((key) => {
               const item = PRESENCE_RATES[key]
@@ -99,7 +109,7 @@ export function CockpitPresencePopover() {
                   data-testid={`ck12-rig-rate-${key}`}
                 >
                   {item.label}
-                  <small>{item.min}–{item.max} 分钟</small>
+                  <small>{presenceRateLabel(key)}</small>
                 </button>
               )
             })}
@@ -107,8 +117,8 @@ export function CockpitPresencePopover() {
 
           <div className="ck12-rig-note" data-testid="ck12-rig-presence-note">
             {prefs.presenceOn
-              ? `约每 ${rate.min}–${rate.max} 分钟一句`
-              : '已关闭 · 开启后按该频率开口'}
+              ? `静默 ${presenceRateLabel(prefs.presenceRate)} 就说一句 · 一动键鼠重新计时`
+              : '已关闭 · 开启后按该节奏开口'}
           </div>
         </div>
 

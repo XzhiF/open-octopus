@@ -1,49 +1,64 @@
 'use client'
 
-// S7 · 汐音立绘 / 台词 / 在场（cockpit-v12 .crew / .pod / .speech / .pmenu / .heart）。
+// S7 · 汐音立绘 / 台词 / 在场（cockpit-v13 .crew / .pod / .speech / .heart）。
 //
-// 数据只读 CockpitProvider（mood / presenceLine / testPresence / setPref）与
-// CockpitStateProvider（chat.streaming / fx.say / layer）：
+// 2026-11-15 v13：**点立绘 = 跟她说话**（打开对话浮窗并把焦点送进 composer），
+// 与 classic 同义。表情画廊 / 在场节奏 / 互动 / 说一句这些设置全部搬到 HUD 的
+// 「◐ 汐音」（CockpitCrewSettings）；本组件不再承载控制条。
+//
+// 2026-11-15 v13.1 · 点击的**即时反馈**（对齐 classic 点立绘的手感）：
+//   一次点击在同一拍里出四样东西 —— 表情换图（mood override）、立绘上浮星光、
+//   一圈边框涟漪、点击音；随后气泡说一句（首点「我在。你说。」，之后按 XY_LINES
+//   顺序轮播）。全仓再叠 `fx.edge` 四边流光，炫档加背景扫描/环（`fx.feedback`）。
+//   900ms 内的连点只重复「星光 + 涟漪 + 音效」，不重启打字机、不重复台词 ——
+//   否则连点会看到字一闪一闪地从头打。
+//   反馈全部是绝对定位，`.ck12-crew` 的尺寸一键不变（见 design/13 §1.5 铁律）。
+//
+// 数据只读 CockpitProvider（mood / presenceLine / testPresence）与
+// CockpitStateProvider（chat.streaming / fx.say / chatWindow）：
 //   · presenceLine → 本地气泡逐字 + fx.say（ticker 一份）；**不写 chat DOM，不调 chat API**；
-//   · 「互动一下」随机取 cockpit.ts 的 XY_LINES，表情画廊取 XY_FORMS 的真实列表；
-//   · 关闭按钮是控制条 DOM 里第一个可聚焦元素（plans §1.6），Esc 交给 LayerStack；
+//   · 「互动一下」由设置面经 crew-events 发信号，这里执行（台词取 XY_LINES）；
 //   · prefers-reduced-motion：心形 / 浮动关掉，打字机直接出全文。
 //
-// 在场定时器由 useXiyinState 统一排程，这里只呈现 + 调已有动作。
+// 布局纪律：气泡 / 心形都是绝对定位，不参与任何 flex 高度计算。
 
 import {
   useCallback,
   useEffect,
-  useLayoutEffect,
   useRef,
   useState,
 } from 'react'
-import { createPortal } from 'react-dom'
-import { X } from 'lucide-react'
 import { cabinAudio } from '@/lib/cabin-audio'
 import { useCockpit } from '@/components/cabin/CockpitProvider'
 import {
   CREW,
-  PRESENCE_RATES,
-  XY_FORMS,
   XY_LINES,
   moodPortrait,
   type MoodKey,
-  type PresenceRate,
 } from '@/components/cabin/cockpit'
 import { useCockpitState } from '../state/CockpitStateProvider'
+import { subscribeCrewPoke } from './crew-events'
+import { getChatSlot } from '../chat/chat-slots'
 
-/** Esc 顺序：popover（更高）→ 立绘控制条 → 任务模块窗 → 编队抽屉 → 聊天浮窗（60）。 */
-const CREW_MENU_LAYER_PRIORITY = 75
 const TYPE_MS = 22
-const PMENU_WIDTH = 344
-const PMENU_FALLBACK_HEIGHT = 148
+/** 首点（对话窗原本是关的）说这一句；之后连点按 XY_LINES 顺序轮播。 */
+const GREET = '我在。你说。'
+/** 连点节流：这段时间内只重复触感（星光/涟漪/音效），不重开打字机。 */
+const TALK_GAP_MS = 900
 
 interface Speech {
   id: number
   text: string
   mood: MoodKey
   hold: number
+}
+
+interface Spark {
+  id: number
+  left: number
+  top: number
+  dx: number
+  dy: number
 }
 
 function usePrefersReducedMotion(): boolean {
@@ -66,30 +81,29 @@ function usePrefersReducedMotion(): boolean {
 
 export function CockpitCrew() {
   const {
-    mood,
     prefs,
-    setPref,
-    setMoodOverride,
+    mood,
     presenceLine,
     dismissPresence,
-    testPresence,
+    setMoodOverride,
     setCrewBusy,
   } = useCockpit()
-  const { chat, fx, layer } = useCockpitState()
+  const { chat, fx, chatWindow } = useCockpitState()
   const reduce = usePrefersReducedMotion()
 
-  const [menuOpen, setMenuOpen] = useState(false)
   const [speech, setSpeech] = useState<Speech | null>(null)
   const [typed, setTyped] = useState('')
   const [heart, setHeart] = useState(0)
-  const [menuPos, setMenuPos] = useState<{ left: number; top: number } | null>(null)
+  const [sparks, setSparks] = useState<Spark[]>([])
+  const [tap, setTap] = useState(0)
 
   const speechIdRef = useRef(0)
   const consumedPresenceRef = useRef<number | null>(null)
   const heartTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
-  const podRef = useRef<HTMLButtonElement>(null)
-  const menuRef = useRef<HTMLDivElement>(null)
-  const closeRef = useRef<HTMLButtonElement>(null)
+  const sparkIdRef = useRef(0)
+  const sparkTimersRef = useRef<Array<ReturnType<typeof setTimeout>>>([])
+  const lineIdxRef = useRef(0)
+  const lastTalkRef = useRef(0)
 
   const meta = CREW[mood] ?? CREW.idle
   const portrait = moodPortrait(mood)
@@ -100,6 +114,67 @@ export function CockpitCrew() {
     setSpeech({ id: ++speechIdRef.current, text, mood: nextMood, hold })
   }, [])
 
+  // ── 触感：立绘上浮星光（对齐 classic .xy-spark）──────────────────────
+  const sparkle = useCallback(() => {
+    if (reduce) return
+    const batch: Spark[] = Array.from({ length: 6 }, () => ({
+      id: sparkIdRef.current++,
+      left: 36 + Math.random() * 260,
+      top: 70 + Math.random() * 230,
+      dx: Math.random() * 90 - 45,
+      dy: -42 - Math.random() * 66,
+    }))
+    // 连点不无限堆积：只留最近 18 颗。
+    setSparks((all) => [...all, ...batch].slice(-18))
+    const ids = new Set(batch.map((item) => item.id))
+    const timer = setTimeout(() => {
+      setSparks((all) => all.filter((item) => !ids.has(item.id)))
+      sparkTimersRef.current = sparkTimersRef.current.filter((item) => item !== timer)
+    }, 900)
+    sparkTimersRef.current.push(timer)
+  }, [reduce])
+
+  // ── 点她 = 说话（v13.1：点击同一拍就给反馈，然后才开窗）──────────────
+  const talkToXiyin = useCallback(() => {
+    const wasOpen = chatWindow.open
+    const now = Date.now()
+    const fresh = now - lastTalkRef.current > TALK_GAP_MS
+    lastTalkRef.current = now
+
+    // 1) 手感：星光 + 边框涟漪 + 点击音 —— 每次都出，连点也出。
+    sparkle()
+    setTap((n) => n + 1)
+    cabinAudio.blip(920, 0.05)
+
+    // 2) 台词（节流）：首点招呼，之后按 XY_LINES 顺序轮播；表情跟着台词换。
+    if (fresh) {
+      let text: string
+      let lineMood: MoodKey
+      let hold: number
+      if (!wasOpen) {
+        text = GREET
+        lineMood = 'wink'
+        hold = 3600
+      } else {
+        const [line, mood] = XY_LINES[lineIdxRef.current++ % XY_LINES.length]
+        text = line
+        lineMood = mood
+        hold = 4600
+      }
+      present(text, lineMood, hold)
+      setMoodOverride(lineMood, hold + 400)
+      // 3) 全仓一拍：四边流光；炫档再加背景扫描/环（都在内容之下，不挡点击）。
+      fx.edge('var(--ck-b)')
+      if (prefs.fxLevel === 'full') fx.feedback('var(--ck-b)', 'lite')
+    }
+
+    // 4) 正事：开对话窗 + 焦点送进 composer（槽是跨树 portal 的）。
+    chatWindow.openWithFocus()
+    requestAnimationFrame(() => {
+      getChatSlot('composer')?.querySelector<HTMLTextAreaElement>('textarea')?.focus()
+    })
+  }, [chatWindow, fx, prefs.fxLevel, present, setMoodOverride, sparkle])
+
   useEffect(() => {
     if (!presenceLine) return
     if (consumedPresenceRef.current === presenceLine.id) return
@@ -109,8 +184,11 @@ export function CockpitCrew() {
     present(presenceLine.text, presenceLine.mood, hold)
     setMoodOverride(presenceLine.mood, hold + 400)
     fx.say(presenceLine.text, presenceLine.mood)
+    // 反馈特效：炫档给光晕+环（lite），标准/克制只留四边流光（off）。
+    fx.feedback('var(--ck-b)', prefs.fxLevel === 'full' ? 'lite' : 'off')
+    fx.edge('var(--ck-b)')
     dismissPresence()
-  }, [presenceLine, present, setMoodOverride, fx, dismissPresence])
+  }, [presenceLine, present, setMoodOverride, fx, dismissPresence, prefs.fxLevel])
 
   // 打字机：新台词重开；reduced-motion 直接出全文。
   useEffect(() => {
@@ -132,7 +210,7 @@ export function CockpitCrew() {
     return () => clearInterval(timer)
   }, [speech, reduce])
 
-  // 气泡停留：hold + 打字耗时（与旧舱一致）；只让当前这条收起。
+  // 气泡停留：hold + 打字耗时；只让当前这条收起。
   useEffect(() => {
     if (!speech) return
     const life = speech.hold + (reduce ? 0 : speech.text.length * TYPE_MS)
@@ -150,79 +228,17 @@ export function CockpitCrew() {
 
   useEffect(() => () => {
     if (heartTimerRef.current) clearTimeout(heartTimerRef.current)
+    sparkTimersRef.current.forEach((timer) => clearTimeout(timer))
+    sparkTimersRef.current = []
   }, [])
 
-  // ── 控制条：位置（贴在立绘上方）、焦点、Esc、外点关闭 ────────────────
-  const place = useCallback(() => {
-    if (typeof window === 'undefined') return
-    const rect = podRef.current?.getBoundingClientRect()
-    if (!rect) return
-    const width = menuRef.current?.offsetWidth || PMENU_WIDTH
-    const height = menuRef.current?.offsetHeight || PMENU_FALLBACK_HEIGHT
-    setMenuPos({
-      // left 是控制条中心：CSS 用 translateX(-50%)。
-      left: Math.max(10 + width / 2, Math.min(rect.left + rect.width / 2, window.innerWidth - 10 - width / 2)),
-      top: Math.max(56, rect.top - height - 12),
-    })
-  }, [])
-
-  useLayoutEffect(() => {
-    if (!menuOpen) return
-    place()
-  }, [menuOpen, place])
-
-  useEffect(() => {
-    if (!menuOpen) return
-    const onResize = () => place()
-    window.addEventListener('resize', onResize)
-    return () => window.removeEventListener('resize', onResize)
-  }, [menuOpen, place])
-
-  useEffect(() => {
-    if (!menuOpen) return
-    closeRef.current?.focus()
-  }, [menuOpen])
-
-  // Esc 逐层：控制条是独立一层（S1 的 CockpitLayerStack 是唯一监听者）。
-  useEffect(() => {
-    if (!menuOpen) return
-    return layer.register('cockpit-crew-menu', CREW_MENU_LAYER_PRIORITY, () => setMenuOpen(false))
-  }, [menuOpen, layer])
-
-  useEffect(() => {
-    if (!menuOpen) return
-    const onPointerDown = (event: PointerEvent) => {
-      const target = event.target as Node | null
-      if (!target) return
-      if (menuRef.current?.contains(target) || podRef.current?.contains(target)) return
-      setMenuOpen(false)
-    }
-    document.addEventListener('pointerdown', onPointerDown, true)
-    return () => document.removeEventListener('pointerdown', onPointerDown, true)
-  }, [menuOpen])
-
-  const closeMenu = useCallback(() => {
-    setMenuOpen(false)
-    cabinAudio.blip(560, 0.04)
-  }, [])
-
-  const toggleMenu = useCallback(() => {
-    cabinAudio.blip(720, 0.05)
-    setMenuOpen((open) => !open)
-  }, [])
-
-  // ── 动作 ───────────────────────────────────────────────────────────
-  const saySomething = useCallback(() => {
-    setMenuOpen(false)
-    testPresence()
-  }, [testPresence])
-
+  // ── 「互动一下」：设置面发信号，这里执行（气泡 + 表情 + 心形）──────────
   const interact = useCallback(() => {
-    setMenuOpen(false)
     const [line, lineMood] = XY_LINES[Math.floor(Math.random() * XY_LINES.length)]
     present(line, lineMood, 5000)
     setMoodOverride(lineMood, 3000)
     fx.say(line, lineMood)
+    fx.edge('var(--ck-b)')
     cabinAudio.chime()
     if (reduce) return
     setHeart((n) => n + 1)
@@ -230,115 +246,35 @@ export function CockpitCrew() {
     heartTimerRef.current = setTimeout(() => setHeart(0), 1100)
   }, [present, setMoodOverride, fx, reduce])
 
-  const pickMood = useCallback((next: MoodKey) => {
-    setMoodOverride(next)
-    cabinAudio.blip(660, 0.05)
-  }, [setMoodOverride])
-
-  const pickRate = useCallback((rate: PresenceRate) => {
-    setPref('presenceRate', rate)
-  }, [setPref])
-
-  const rate = PRESENCE_RATES[prefs.presenceRate] ?? PRESENCE_RATES.std
-
-  // ── 控制条（portal 到 body：不被 arena overflow 裁剪，层级独立）────────
-  const pmenu = menuOpen && typeof document !== 'undefined'
-    ? createPortal(
-        <div
-          ref={menuRef}
-          className="ck12-pmenu"
-          role="dialog"
-          aria-label="汐音控制条"
-          data-testid="cockpit-crew-menu"
-          style={{
-            left: menuPos ? `${menuPos.left}px` : '50%',
-            top: `${menuPos?.top ?? 64}px`,
-          }}
-        >
-          <div className="ck12-pm-h">
-            {/* 硬要求：关闭是第一个可聚焦元素，视觉在左（plans §1.6）。 */}
-            <button
-              ref={closeRef}
-              type="button"
-              className="ck12-pm-x"
-              onClick={closeMenu}
-              aria-label="关闭控制条"
-              data-testid="cockpit-crew-menu-close"
-            ><X className="size-3" aria-hidden="true" /></button>
-            <span className="ck12-pm-av"><img src={portrait} alt="" /></span>
-            <b>汐音</b>
-            <span className="ck12-pm-sub">XIYIN-07 · 全域助理</span>
-          </div>
-
-          <div className="ck12-pm-line">
-            <button type="button" className="ck12-pm-btn" onClick={saySomething} data-testid="cockpit-crew-say">
-              <span>✦</span>说一句
-            </button>
-            <button type="button" className="ck12-pm-btn" onClick={interact} data-testid="cockpit-crew-poke">
-              <span>♡</span>互动一下
-            </button>
-            <span className="ck12-pm-seg" role="group" aria-label="在场频率">
-              {(Object.keys(PRESENCE_RATES) as PresenceRate[]).map((key) => {
-                const item = PRESENCE_RATES[key]
-                return (
-                  <button
-                    key={key}
-                    type="button"
-                    className={prefs.presenceRate === key ? 'on' : undefined}
-                    aria-pressed={prefs.presenceRate === key}
-                    title={`${item.label} · 每 ${item.min}–${item.max} 分钟一句`}
-                    onClick={() => pickRate(key)}
-                    data-testid={`cockpit-crew-rate-${key}`}
-                  >{item.label}</button>
-                )
-              })}
-            </span>
-          </div>
-
-          <div className="ck12-pm-note" data-testid="cockpit-crew-rate-note">
-            {prefs.presenceOn
-              ? `在场 · 约每 ${rate.min}–${rate.max} 分钟一句`
-              : '在场已关 · 在舰桥开启后按该频率开口'}
-          </div>
-
-          <div className="ck12-pm-gal" data-testid="cockpit-crew-gallery">
-            {XY_FORMS.map((form) => (
-              <button
-                key={form.k}
-                type="button"
-                className={mood === form.k ? 'on' : undefined}
-                aria-label={`表情 · ${form.name}`}
-                aria-pressed={mood === form.k}
-                title={`${form.name} · ${form.tag} · ${form.desc}`}
-                onClick={() => pickMood(form.k)}
-                data-mood={form.k}
-              >
-                <img src={moodPortrait(form.k)} alt="" />
-              </button>
-            ))}
-          </div>
-        </div>,
-        document.body,
-      )
-    : null
+  useEffect(() => subscribeCrewPoke(interact), [interact])
 
   return (
     <div className="ck12-crew" data-testid="cockpit-crew">
       <button
-        ref={podRef}
         type="button"
         className="ck12-pod"
         data-state={mood}
         data-testid="cockpit-crew-pod"
-        aria-haspopup="dialog"
-        aria-expanded={menuOpen}
-        aria-label={`汐音 · ${meta.label} · 打开控制条`}
-        title="汐音 · 点击打开控制条"
-        onClick={toggleMenu}
+        aria-label={`汐音 · ${meta.label} · 点击跟她说话`}
+        onClick={talkToXiyin}
       >
         <img src={portrait} alt="汐音" />
         <span className="ck12-pod-scan" aria-hidden="true" />
         <span className="ck12-pod-vg" aria-hidden="true" />
+        {sparks.map((spark) => (
+          <span
+            key={spark.id}
+            className="ck12-spark"
+            aria-hidden="true"
+            data-testid="cockpit-crew-spark"
+            style={{
+              left: `${spark.left}px`,
+              top: `${spark.top}px`,
+              ['--dx' as string]: `${spark.dx}px`,
+              ['--dy' as string]: `${spark.dy}px`,
+            }}
+          >✦</span>
+        ))}
         <span className="ck12-pod-tag"><i aria-hidden="true" />XIYIN-07 · 在线</span>
         <span className="ck12-pod-name">
           汐音 <small>· 全域助理</small>
@@ -346,11 +282,20 @@ export function CockpitCrew() {
         </span>
       </button>
 
+      {/* 点击涟漪：一圈边框向外淡出（纯装饰，不吃事件、不占布局） */}
+      {tap > 0 && (
+        <span key={tap} className="ck12-tapring" aria-hidden="true" data-testid="cockpit-crew-tapring" />
+      )}
+
       <div
         className={`ck12-speech${speech ? ' show' : ''}`}
         data-testid="cockpit-crew-speech"
         aria-live="polite"
         aria-hidden={!speech}
+        onClick={talkToXiyin}
+        role={speech ? 'button' : undefined}
+        tabIndex={speech ? 0 : undefined}
+        title="点气泡也能说话"
       >
         {speech && (
           <>
@@ -369,8 +314,6 @@ export function CockpitCrew() {
       {!reduce && heart > 0 && (
         <span key={heart} className="ck12-heart pop" aria-hidden="true" data-testid="cockpit-crew-heart">♡</span>
       )}
-
-      {pmenu}
     </div>
   )
 }

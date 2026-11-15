@@ -8,8 +8,10 @@ import type { CabinStatus } from '@octopus/shared'
 export type CockpitTheme = 'terminal' | 'hyperion' | 'luna' | 'amber' | 'acid' | 'crimson'
 export type CockpitFloat = 'glass' | 'solid' | 'holo'
 export type CabinAutonomy = 'off' | 'observe' | 'auto'
-/** 在场频率：主动搭话的随机间隔区间（分钟）。 */
+/** 在场频率：静默多少秒之后主动搭话（2026-11-15 v13：随机间隔改静默计时）。 */
 export type PresenceRate = 'quiet' | 'std' | 'active'
+/** 反馈特效强度：炫 / 标准 / 克制（只影响背景特效，不影响通知窗）。 */
+export type PresenceFxLevel = 'full' | 'std' | 'lite'
 export type MoodKey = 'boot' | 'idle' | 'working' | 'alert' | 'happy' | 'sleep' | 'thinking' | 'cheer' | 'wink' | 'worried'
 export type CabinMood = 'auto' | MoodKey
 
@@ -31,8 +33,10 @@ export interface CockpitPrefs {
   dormantMinutes: number
   /** 在场：汐音主动搭话开关。 */
   presenceOn: boolean
-  /** 在场：随机间隔档位。 */
+  /** 在场：静默计时档位（30s / 90s / 5min）。 */
   presenceRate: PresenceRate
+  /** 反馈背景特效强度。 */
+  fxLevel: PresenceFxLevel
 }
 
 export const THEMES: Record<CockpitTheme, { name: string; a: string; b: string; c: string }> = {
@@ -48,12 +52,19 @@ export const DEFAULT_COCKPIT: CockpitPrefs = {
   theme: 'terminal', float: 'glass', floatAmp: 5, hud: true, scan: 5, grid: 30,
   glow: 1, particles: 18, blur: 3, charScale: 1, mood: 'auto', sound: true,
   autonomy: 'auto', dormantMinutes: 30, presenceOn: true, presenceRate: 'active',
+  fxLevel: 'full',
 }
 
-export const PRESENCE_RATES: Record<PresenceRate, { label: string; min: number; max: number }> = {
-  quiet: { label: '安静', min: 12, max: 24 },
-  std: { label: '标准', min: 6, max: 16 },
-  active: { label: '活跃', min: 3, max: 8 },
+export const PRESENCE_RATES: Record<PresenceRate, { label: string; seconds: number }> = {
+  active: { label: '活跃', seconds: 30 },
+  std: { label: '标准', seconds: 90 },
+  quiet: { label: '安静', seconds: 300 },
+}
+
+/** 「30 秒」/「5 分钟」：设置面与浮层共用的读数。 */
+export function presenceRateLabel(rate: PresenceRate): string {
+  const r = PRESENCE_RATES[rate] ?? PRESENCE_RATES.active
+  return r.seconds >= 120 ? `${Math.round(r.seconds / 60)} 分钟` : `${r.seconds} 秒`
 }
 
 export interface HRange { k: keyof CockpitPrefs; label: string; min: number; max: number; step: number }
@@ -136,9 +147,10 @@ export function normalizePrefs(raw: unknown): CockpitPrefs {
   const float = (p.float === 'glass' || p.float === 'solid' || p.float === 'holo' ? p.float : DEFAULT_COCKPIT.float) as CockpitFloat
   const autonomy = (p.autonomy === 'off' || p.autonomy === 'observe' || p.autonomy === 'auto' ? p.autonomy : DEFAULT_COCKPIT.autonomy) as CabinAutonomy
   const presenceRate = (p.presenceRate === 'quiet' || p.presenceRate === 'std' || p.presenceRate === 'active' ? p.presenceRate : DEFAULT_COCKPIT.presenceRate) as PresenceRate
+  const fxLevel = (p.fxLevel === 'full' || p.fxLevel === 'std' || p.fxLevel === 'lite' ? p.fxLevel : DEFAULT_COCKPIT.fxLevel) as PresenceFxLevel
   const mood = (typeof p.mood === 'string' && (p.mood === 'auto' || p.mood in CREW) ? p.mood : DEFAULT_COCKPIT.mood) as CabinMood
   return {
-    theme, float, autonomy, mood, presenceRate,
+    theme, float, autonomy, mood, presenceRate, fxLevel,
     floatAmp: clamp(p.floatAmp, 0, 10, DEFAULT_COCKPIT.floatAmp),
     hud: typeof p.hud === 'boolean' ? p.hud : DEFAULT_COCKPIT.hud,
     scan: clamp(p.scan, 0, 10, DEFAULT_COCKPIT.scan),
@@ -243,10 +255,10 @@ export interface PresencePickInput {
   rnd?: () => number
 }
 
-/** 随机间隔（毫秒）：[min, max] 分钟均匀分布。 */
-export function presenceGap(rate: PresenceRate, rnd: () => number = Math.random): number {
-  const r = PRESENCE_RATES[rate] ?? PRESENCE_RATES.std
-  return Math.round((r.min + rnd() * (r.max - r.min)) * 60_000)
+/** 静默多久后开口（毫秒）：从「最后一次交互」起算，不是从现在起算。 */
+export function presenceGap(rate: PresenceRate): number {
+  const r = PRESENCE_RATES[rate] ?? PRESENCE_RATES.active
+  return r.seconds * 1000
 }
 
 export type PresenceBlock = 'off' | 'snooze' | 'hidden' | 'streaming' | 'busy' | 'typing' | 'quiet' | 'ok'

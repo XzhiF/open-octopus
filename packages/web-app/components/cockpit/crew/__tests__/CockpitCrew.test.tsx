@@ -1,13 +1,15 @@
-// S7 立绘 / 台词 / 在场 RTL：
-//   · 点立绘开控制条，关闭按钮是控制条里第一个可聚焦元素；
-//   · 画廊 / 在场频率走 cockpit.ts 的真实列表与真实分钟；
+// S7 立绘 / 台词 / 在场 + v13 汐音设置 RTL：
+//   · v13：**点立绘 = 跟她说话**（打开对话窗），不再弹控制条；
+//   · 设置搬到 HUD「◐ 汐音」→ CockpitCrewSettings：在场节奏（秒级）/ 特效强度 /
+//     说一句 / 互动一下 / 表情画廊；
 //   · presenceLine 变化 → 气泡逐字 + fx.say（ticker 一份），**chat DOM 不出现台词**；
 //   · reduced-motion 直接出全文、没有心形动画；
 //   · setCrewBusy 跟随 chat.streaming（chat 为 null 时 false）。
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
-import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { useEffect, type ReactNode } from 'react'
+import { cabinAudio } from '@/lib/cabin-audio'
 import type { MoodKey } from '@/components/cabin/cockpit'
 import {
   DEFAULT_COCKPIT,
@@ -25,6 +27,8 @@ import { CockpitStateProvider, useCockpitState } from '../../state/CockpitStateP
 import { CockpitLayerStack } from '../../state/CockpitLayerStack'
 import { CockpitTicker } from '../../shell/CockpitTicker'
 import { CockpitCrew } from '../CockpitCrew'
+import { CockpitCrewSettings } from '../CockpitCrewSettings'
+import { requestCrewPoke, resetCrewPoke, subscribeCrewPoke } from '../crew-events'
 
 vi.mock('@/lib/cabin-audio', () => ({
   cabinAudio: { blip: vi.fn(), chime: vi.fn(), setOn: vi.fn(), resume: vi.fn() },
@@ -38,18 +42,22 @@ function FxProbe() {
   return null
 }
 
+function WindowProbe() {
+  const { chatWindow } = useCockpitState()
+  return (
+    <div
+      data-testid="win"
+      data-open={chatWindow.open ? '1' : '0'}
+      data-mini={chatWindow.mini ? '1' : '0'}
+    />
+  )
+}
+
 function ChatSeeder({ streaming }: { streaming: boolean }) {
   const { reportChat } = useCockpitState()
   useEffect(() => {
     reportChat({ streaming } as unknown as CockpitChatApi)
   }, [reportChat, streaming])
-  return null
-}
-
-/** 低优先级层：证明 Esc 先收立绘控制条，再轮到下层。 */
-function LowerLayer({ onClose }: { onClose: () => void }) {
-  const { layer } = useCockpitState()
-  useEffect(() => layer.register('lower-layer', 10, onClose), [layer, onClose])
   return null
 }
 
@@ -86,6 +94,7 @@ function tree(cockpit: CockpitContextValue, extra?: ReactNode) {
           <CockpitCrew />
           <CockpitTicker />
           <FxProbe />
+          <WindowProbe />
           <div data-testid="cockpit-chat-transcript" />
           {extra}
         </CockpitLayerStack>
@@ -99,75 +108,113 @@ function renderCrew(overrides: Partial<CockpitContextValue> = {}, extra?: ReactN
   const view = render(tree(cockpit, extra))
   return {
     cockpit,
+    unmount: () => view.unmount(),
     rerender: (next: Partial<CockpitContextValue>) =>
       view.rerender(tree(makeCockpit({ ...overrides, ...next }), extra)),
   }
 }
 
-function openMenu() {
-  fireEvent.click(screen.getByTestId('cockpit-crew-pod'))
-  return screen.getByTestId('cockpit-crew-menu')
-}
-
 beforeEach(() => {
   said = null
+  resetCrewPoke()
   vi.restoreAllMocks()
 })
 
 afterEach(() => {
   vi.restoreAllMocks()
-  // jsdom 默认没有 matchMedia；测试自己装的那个在用例里撤掉。
   delete (window as unknown as { matchMedia?: unknown }).matchMedia
 })
 
-describe('CockpitCrew · 立绘与控制条', () => {
-  it('点立绘开控制条：关闭是第一个可聚焦按钮，画廊取 XY_FORMS 全表', () => {
-    const { cockpit } = renderCrew()
-
-    const menu = openMenu()
-    expect(menu).toBeInTheDocument()
-    expect(screen.getByTestId('cockpit-crew-mood')).toHaveTextContent('待命')
-
-    const buttons = within(menu).getAllByRole('button')
-    expect(buttons[0]).toBe(screen.getByTestId('cockpit-crew-menu-close'))
-    expect(buttons[0]).toHaveAttribute('aria-label', '关闭控制条')
-    expect(buttons[0]).toHaveFocus()
-
-    const gallery = within(screen.getByTestId('cockpit-crew-gallery')).getAllByRole('button')
-    expect(gallery).toHaveLength(XY_FORMS.length)
-
-    // 在场频率：三档 + 真实分钟区间（默认 active = 3–8 分钟）。
-    expect(screen.getByTestId('cockpit-crew-rate-note')).toHaveTextContent(
-      `约每 ${PRESENCE_RATES.active.min}–${PRESENCE_RATES.active.max} 分钟一句`,
-    )
-    fireEvent.click(screen.getByTestId('cockpit-crew-rate-quiet'))
-    expect(cockpit.setPref).toHaveBeenCalledWith('presenceRate', 'quiet')
-    expect(screen.getByTestId('cockpit-crew-rate-quiet')).toHaveAttribute('title', expect.stringContaining('12–24'))
-  })
-
-  it('画廊切换调用 setMoodOverride，Esc 先收控制条再收下层', () => {
-    const lowerClose = vi.fn()
-    const { cockpit } = renderCrew({}, <LowerLayer onClose={lowerClose} />)
-    const menu = openMenu()
-
-    fireEvent.click(menu.querySelector('[data-mood="wink"]') as HTMLElement)
-    expect(cockpit.setMoodOverride).toHaveBeenCalledWith('wink')
-
-    fireEvent.keyDown(window, { key: 'Escape' })
+describe('CockpitCrew · v13 点立绘 = 说话', () => {
+  it('点立绘打开对话窗（不再有控制条）', () => {
+    renderCrew()
     expect(screen.queryByTestId('cockpit-crew-menu')).toBeNull()
-    expect(lowerClose).not.toHaveBeenCalled()
+    expect(screen.getByTestId('win').dataset.open).toBe('0')
 
-    fireEvent.keyDown(window, { key: 'Escape' })
-    expect(lowerClose).toHaveBeenCalledTimes(1)
+    fireEvent.click(screen.getByTestId('cockpit-crew-pod'))
+
+    expect(screen.getByTestId('win').dataset.open).toBe('1')
+    expect(screen.queryByTestId('cockpit-crew-menu')).toBeNull()
   })
 
-  it('「互动一下」随机取 XY_LINES + 覆盖心情 + 心形', async () => {
-    vi.spyOn(Math, 'random').mockReturnValue(0.4) // floor(0.4*9)=3 → cheer
-    const expected = XY_LINES[3]
+  it('点气泡也打开对话窗', () => {
+    const line: PresenceLine = { id: 1, text: '指挥官，我在。', mood: 'idle', hold: 9000 }
+    const { rerender } = renderCrew()
+    rerender({ presenceLine: line })
+
+    fireEvent.click(screen.getByTestId('cockpit-crew-speech'))
+    expect(screen.getByTestId('win').dataset.open).toBe('1')
+  })
+
+  // v13.1 · 点击即时反馈（对齐 classic 点立绘的手感）
+  it('点立绘同一拍就给反馈：表情 + 台词 + 星光 + 涟漪，然后才开窗', async () => {
     const { cockpit } = renderCrew()
 
-    openMenu()
-    fireEvent.click(screen.getByTestId('cockpit-crew-poke'))
+    fireEvent.click(screen.getByTestId('cockpit-crew-pod'))
+
+    // 表情立即换（首点 = 招呼句 wink）
+    expect(cockpit.setMoodOverride).toHaveBeenCalledWith('wink', expect.any(Number))
+    // 触感：6 颗星光 + 一圈涟漪 + 点击音
+    expect(screen.getAllByTestId('cockpit-crew-spark')).toHaveLength(6)
+    expect(screen.getByTestId('cockpit-crew-tapring')).toBeInTheDocument()
+    expect(cabinAudio.blip).toHaveBeenCalled()
+    // 台词逐字打完（不打进 chat DOM）
+    await waitFor(() =>
+      expect(screen.getByTestId('cockpit-crew-speech')).toHaveTextContent('我在。你说。'),
+    )
+    expect(screen.getByTestId('cockpit-chat-transcript')).not.toHaveTextContent('我在。你说。')
+    // 开窗仍然是这一拍的正事
+    expect(screen.getByTestId('win').dataset.open).toBe('1')
+  })
+
+  it('900ms 内连点只重复触感，不重开打字机；过了节流就轮播下一句', async () => {
+    const { cockpit } = renderCrew()
+    const pod = screen.getByTestId('cockpit-crew-pod')
+
+    fireEvent.click(pod)
+    fireEvent.click(pod)
+
+    // 台词只起了一次（表情 override 只有一次），星光却叠了两批
+    expect(cockpit.setMoodOverride).toHaveBeenCalledTimes(1)
+    expect(screen.getAllByTestId('cockpit-crew-spark')).toHaveLength(12)
+
+    vi.spyOn(Date, 'now').mockReturnValue(Date.now() + 1000)
+    fireEvent.click(pod)
+
+    // 对话窗已开 → 走 XY_LINES 顺序轮播
+    expect(cockpit.setMoodOverride).toHaveBeenCalledTimes(2)
+    await waitFor(
+      () => expect(screen.getByTestId('cockpit-crew-speech')).toHaveTextContent('指挥官，我在。'),
+      { timeout: 3000 },
+    )
+  })
+
+  it('reduced-motion 下点击：台词照出，星光/涟漪不出', () => {
+    window.matchMedia = vi.fn().mockImplementation((query: string) => ({
+      matches: true,
+      media: query,
+      onchange: null,
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+      addListener: vi.fn(),
+      removeListener: vi.fn(),
+      dispatchEvent: vi.fn(),
+    })) as unknown as typeof window.matchMedia
+
+    renderCrew()
+    fireEvent.click(screen.getByTestId('cockpit-crew-pod'))
+
+    expect(screen.getByTestId('cockpit-crew-speech')).toHaveTextContent('我在。你说。')
+    expect(screen.queryAllByTestId('cockpit-crew-spark')).toHaveLength(0)
+    expect(screen.getByTestId('win').dataset.open).toBe('1')
+  })
+
+  it('「互动一下」由设置面发信号，立绘执行：台词 + 表情 + 心形', async () => {
+    vi.spyOn(Math, 'random').mockReturnValue(0.4) // floor(0.4*9)=3
+    const expected = XY_LINES[3]
+    const { cockpit, unmount } = renderCrew()
+
+    act(() => requestCrewPoke())
 
     expect(cockpit.setMoodOverride).toHaveBeenCalledWith(expected[1], 3000)
     await waitFor(() =>
@@ -175,6 +222,7 @@ describe('CockpitCrew · 立绘与控制条', () => {
     )
     expect(screen.getByTestId('cockpit-crew-heart')).toBeInTheDocument()
     expect(said).toEqual(expect.objectContaining({ line: expected[0], mood: expected[1] }))
+    unmount()
   })
 })
 
@@ -196,9 +244,7 @@ describe('CockpitCrew · 在场台词', () => {
     )
 
     expect(said).toEqual(expect.objectContaining({ line: line.text, mood: 'working' }))
-    // ticker 一份
     expect(screen.getByTestId('cockpit-ticker')).toHaveTextContent(line.text)
-    // chat DOM 里没有这句台词（只在气泡 + ticker 各出现一次）
     expect(screen.getByTestId('cockpit-chat-transcript')).not.toHaveTextContent(line.text)
     expect((document.body.textContent ?? '').split(line.text)).toHaveLength(3)
     expect(dismissPresence).toHaveBeenCalled()
@@ -218,17 +264,15 @@ describe('CockpitCrew · 在场台词', () => {
 
     vi.spyOn(Math, 'random').mockReturnValue(0) // XY_LINES[0]
     const line: PresenceLine = { id: 1, text: '指挥官，我在。', mood: 'idle', hold: 9000 }
-    const { rerender } = renderCrew()
+    const { rerender, unmount } = renderCrew()
 
     rerender({ presenceLine: line })
-
-    // 没有逐字过程的等待：effect 直接把全文写进气泡。
     expect(screen.getByTestId('cockpit-crew-speech')).toHaveTextContent(line.text)
 
-    openMenu()
-    fireEvent.click(screen.getByTestId('cockpit-crew-poke'))
+    act(() => requestCrewPoke())
     expect(screen.getByTestId('cockpit-crew-speech')).toHaveTextContent(XY_LINES[0][0])
     expect(screen.queryByTestId('cockpit-crew-heart')).toBeNull()
+    unmount()
   })
 })
 
@@ -242,9 +286,68 @@ describe('CockpitCrew · 闸门', () => {
     await waitFor(() => expect(setCrewBusy).toHaveBeenLastCalledWith(true))
     view.unmount()
 
-    // chat 为 null 的新实例：最后一次上报是 false。
     const idleSetCrewBusy = vi.fn()
     renderCrew({ setCrewBusy: idleSetCrewBusy })
     expect(idleSetCrewBusy).toHaveBeenLastCalledWith(false)
+  })
+})
+
+// ── v13 汐音设置 ────────────────────────────────────────────────────
+function renderSettings(overrides: Partial<CockpitContextValue> = {}) {
+  const cockpit = makeCockpit(overrides)
+  const onClose = vi.fn()
+  render(
+    <CockpitContext.Provider value={cockpit}>
+      <CockpitStateProvider entryCabinId="c1">
+        <CockpitLayerStack>
+          <CockpitCrewSettings open anchor={null} onClose={onClose} />
+        </CockpitLayerStack>
+      </CockpitStateProvider>
+    </CockpitContext.Provider>,
+  )
+  return { cockpit, onClose }
+}
+
+describe('CockpitCrewSettings · v13', () => {
+  it('在场节奏是秒级三档 + 关闭开关；默认活跃 30 秒', () => {
+    const { cockpit } = renderSettings()
+
+    const panel = screen.getByTestId('cockpit-crew-settings')
+    expect(panel).toHaveTextContent('30 秒')
+    expect(screen.getByTestId('cockpit-crew-rate-note')).toHaveTextContent('静默 30 秒')
+
+    fireEvent.click(screen.getByTestId('cockpit-crew-rate-quiet'))
+    expect(cockpit.setPref).toHaveBeenCalledWith('presenceRate', 'quiet')
+    expect(PRESENCE_RATES.quiet.seconds).toBe(300)
+
+    fireEvent.click(screen.getByTestId('cockpit-crew-presence-toggle'))
+    expect(cockpit.setPref).toHaveBeenCalledWith('presenceOn', false)
+  })
+
+  it('特效强度三档写进 prefs；说一句 / 互动 / 表情都走既有动作', () => {
+    const { cockpit } = renderSettings()
+
+    fireEvent.click(screen.getByTestId('cockpit-crew-fx-lite'))
+    expect(cockpit.setPref).toHaveBeenCalledWith('fxLevel', 'lite')
+
+    fireEvent.click(screen.getByTestId('cockpit-crew-say'))
+    expect(cockpit.testPresence).toHaveBeenCalled()
+
+    const onPoke = vi.fn()
+    const unsubscribe = subscribeCrewPoke(onPoke)
+    fireEvent.click(screen.getByTestId('cockpit-crew-poke'))
+    expect(onPoke).toHaveBeenCalledTimes(1)
+    unsubscribe()
+
+    const gallery = within(screen.getByTestId('cockpit-crew-gallery')).getAllByRole('button')
+    expect(gallery).toHaveLength(XY_FORMS.length)
+    fireEvent.click(gallery[0])
+    expect(cockpit.setMoodOverride).toHaveBeenCalledWith(XY_FORMS[0].k)
+  })
+
+  it('Esc 关设置面（走同一层栈）', () => {
+    const { onClose } = renderSettings()
+    fireEvent.keyDown(window, { key: 'Escape' })
+    expect(onClose).toHaveBeenCalled()
   })
 })

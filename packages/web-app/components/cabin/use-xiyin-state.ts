@@ -98,10 +98,19 @@ export function useXiyinState({
     if (m) moodTimerRef.current = setTimeout(() => setMoodOverrideState(null), ms ?? 2600)
   }, [])
 
-  // 键鼠/滚轮都算「人在」；60s 内动过就不开口（输入框聚焦另有闸门）。
+  // 键鼠/滚轮都算「人在」：v13 起在场按「最后一次交互 + gap」计时，
+  // 所以每次交互都要把下一轮开口时间往后推（throttle 800ms，连打不狂渲染）。
+  const [activityTick, setActivityTick] = useState(0)
+  const lastBumpRef = useRef(0)
   useEffect(() => {
     if (typeof window === 'undefined') return
-    const mark = () => { lastUserAtRef.current = Date.now() }
+    const mark = () => {
+      lastUserAtRef.current = Date.now()
+      const at = Date.now()
+      if (at - lastBumpRef.current < 800) return
+      lastBumpRef.current = at
+      setActivityTick((n) => n + 1)
+    }
     const events = ['pointerdown', 'keydown', 'input', 'wheel'] as const
     for (const e of events) window.addEventListener(e, mark, true)
     return () => { for (const e of events) window.removeEventListener(e, mark, true) }
@@ -139,9 +148,12 @@ export function useXiyinState({
       if (cancelled) return
       const due = presenceSnoozeUntil > Date.now()
         ? presenceSnoozeUntil
-        : Date.now() + (delayMs ?? presenceGap(presenceRate))
+        : delayMs != null
+          ? Date.now() + delayMs
+          // 用户口径：没在交互、静默到档位秒数就开口（不是「从现在起再随机等」）。
+          : lastUserAtRef.current + presenceGap(presenceRate)
       setPresenceDueAt(due)
-      presenceTimerRef.current = setTimeout(fire, Math.max(3000, due - Date.now()))
+      presenceTimerRef.current = setTimeout(fire, Math.max(1200, due - Date.now()))
     }
     function fire() {
       if (cancelled) return
@@ -163,7 +175,8 @@ export function useXiyinState({
         busy: crewBusyRef.current,
         editing,
         lastUserAt: lastUserAtRef.current,
-        idleMs: 60_000,
+        // 计时已经按「lastUser + gap」排过，这里不再叠加 60s 空闲闸门。
+        idleMs: 0,
         hour: new Date(now).getHours(),
       })
       if (block !== 'ok') {
@@ -174,16 +187,18 @@ export function useXiyinState({
       presenceNRef.current += 1
       presenceLastTextRef.current = line.text
       setPresenceLine({ ...line, id: ++presenceIdRef.current })
+      // 开口算一次交互：否则 due 仍在过去，会立刻再触发一轮。
+      lastUserAtRef.current = Date.now()
       schedule()
     }
 
-    // 进场景先安静 15–30s，别一进来就开口。
-    schedule(15_000 + Math.random() * 15_000)
+    // 进场景先按档位静默，不立刻开口。
+    schedule()
     return () => {
       cancelled = true
       if (presenceTimerRef.current) { clearTimeout(presenceTimerRef.current); presenceTimerRef.current = null }
     }
-  }, [presenceOn, presenceRate, presenceSnoozeUntil, pickLine, sceneKey, active])
+  }, [presenceOn, presenceRate, presenceSnoozeUntil, pickLine, sceneKey, active, activityTick])
 
   const dismissPresence = useCallback(() => setPresenceLine(null), [])
   const snoozePresence = useCallback((minutes: number) => {

@@ -1535,7 +1535,8 @@ export function ChatPane({
                 : '描述要开发的任务…　⏎ 发送')
               : cabinId && !taskThread
                 // classic-v3：舱主对话固定问汐音舰长（不再露出「主 Agent」）。
-                ? `问${CABIN_MAIN_IDENTITY}…\u3000⏎ 发送 · ⇧⏎ 排队 · Alt⏎ 换行`
+                // 全域座舱（v13）⇧⏎ 是换行、不是排队。
+                ? `问${CABIN_MAIN_IDENTITY}…\u3000⏎ 发送 · ${composerVariant === 'cockpit' ? '⇧⏎ 换行' : '⇧⏎ 排队 · Alt⏎ 换行'}`
                 : '问主 Agent…　⏎ 发送 · ⇧⏎ 排队 · Alt⏎ 换行'}
             // hero：新建对话 = 空主会话；新建开发任务 = 未落盘的 pendingTask（同一套
             // 居中 composer + 第二行控件，2026-10-28 看齐）。
