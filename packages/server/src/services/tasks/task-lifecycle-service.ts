@@ -67,6 +67,9 @@ import {
   resolveTaskLaunchStep,
   type TaskV4PhaseConfig,
 } from "./task-materialize"
+// design 23 §3.2：舱本地/外部项目的 source_path 必须在建 worktree 前解析出来，
+// 否则 initWorktreeOne 只会走 org 注册表（本地项目找不到）。
+import { resolveTaskProjectPath } from "./task-project-resolver"
 import { computeTaskWsLaunchParams } from "../scheduler/ws-launch"
 import { calculateNextExecutions } from "../cron-utils"
 import { getChatEventBridge } from "../activity/chat-event-bridge"
@@ -415,9 +418,17 @@ export class TaskLifecycleService {
       v4Phases = phases
     }
 
+    const launchProjectIds = parseJSON<string[]>(task.project_ids, [])
+    // 舱本地 / 外部项目不在 org 注册表里 —— 把解析出的绝对路径带进
+    // workspace_spec.projects[].source_path，initWorktreeOne 会优先用它。
+    const projectSources: Record<string, string> = {}
+    for (const projectId of launchProjectIds) {
+      const resolved = resolveTaskProjectPath(this.deps.db, task, projectId)
+      if (resolved) projectSources[projectId] = resolved
+    }
     const plan = buildTaskLaunchConfig(
       spec,
-      parseJSON<string[]>(task.project_ids, []),
+      launchProjectIds,
       task.repo_group ?? "",
       task.workflow_ref ?? undefined,
       parseJSON<string[]>(task.skills, []),
@@ -425,6 +436,7 @@ export class TaskLifecycleService {
       artifactsDir,
       workflowsDir,
       v4Phases,
+      projectSources,
     )
 
     const wantsPhase = spec.format === "v4"

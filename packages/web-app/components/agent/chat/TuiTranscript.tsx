@@ -17,6 +17,7 @@ import { WorkflowRunCard } from './workflow-run-card'
 import { IncidentCard } from './incident-card'
 import { AcceptanceCheckCard } from './acceptance-check-card'
 import { ArchiveSummaryCard } from './archive-summary-card'
+import { AuthorAskCard } from './author-ask-card'
 import { CabinInitGateCard } from '@/components/cabin/CabinInitGateCard'
 
 /** mini-markdown：`**bold**` / `行内 code` / 行首 # 标题 —— 消灭字面星号。 */
@@ -336,6 +337,11 @@ function TuiMeta({ thinking, toolCalls, timeline, stats, interrupted, hideTextFr
  *  prompt, so the cached prefix stays intact. */
 function ActivityEventCard({ message, compactEvent }: { message: AgentMessage; compactEvent?: boolean }) {
   const activity = message.activity
+  // 作者提问卡（design 23 §2）：任务线程的问题被投到舱主会话，就地作答后由
+  // 卡片转发回作者线程。必须排在通用状态卡之前（它也带 taskId/status）。
+  if ((activity?.payload as { authorAsk?: boolean } | undefined)?.authorAsk) {
+    return <AuthorAskCard message={message} />
+  }
   // 运行事件卡（2026-11-07）：runtime supervision 的 incident。必须在
   // WorkflowRunCard 之前 —— 两者都带 activity.executionId/status。
   if ((activity?.payload as { incident?: boolean } | undefined)?.incident) {

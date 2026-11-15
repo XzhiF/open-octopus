@@ -101,15 +101,49 @@ function parseMetadata(metadata: string | null | undefined): Record<string, unkn
   try { return JSON.parse(metadata) as Record<string, unknown> } catch { return null }
 }
 
-function askDisplayType(metadata: string | null | undefined): boolean {
-  return parseMetadata(metadata)?.displayType === "ask_user_question"
+function parseQuestions(value: unknown): unknown[] | null {
+  let raw = value
+  if (typeof raw === "string") {
+    try { raw = JSON.parse(raw) } catch { return null }
+  }
+  // 三种历史形态：tool input 的 { questions: [...] }、metadata 直接存数组、
+  // SSE / interaction 的包装对象。
+  if (Array.isArray(raw)) return raw
+  const qs = (raw as { questions?: unknown } | null)?.questions
+  return Array.isArray(qs) ? qs : null
 }
 
-function firstAskQuestion(metadata: string | null | undefined): string | undefined {
-  const questions = parseMetadata(metadata)?.questions
-  if (!Array.isArray(questions)) return undefined
-  const q = questions[0] as { question?: unknown } | undefined
+function firstQuestionText(questions: unknown[] | null): string | undefined {
+  const q = questions?.[0] as { question?: unknown } | undefined
   return typeof q?.question === "string" ? q.question : undefined
+}
+
+/** 工作流 interaction_messages：问题正文只从 metadata 取。 */
+function questionsFromMetadata(metadata: string | null | undefined): unknown[] | null {
+  const meta = parseMetadata(metadata)
+  if (meta?.displayType !== "ask_user_question") return null
+  return parseQuestions(meta.questions)
+}
+
+/** 会话消息：metadata（clone / interaction / 修好后的 agent-chat）优先；
+ *  老行只有 tool_calls 里的 AskUserQuestion —— 一并兜住，避免升级前的提问
+ *  在舱里永远看不到。 */
+function questionsFromMessage(row: { metadata?: string | null; tool_calls?: string | null }): unknown[] | null {
+  const fromMeta = questionsFromMetadata(row.metadata)
+  if (fromMeta) return fromMeta
+  if (!row.tool_calls) return null
+  let parsed: unknown
+  try { parsed = JSON.parse(row.tool_calls) } catch { return null }
+  const wrapped = parsed as { tool_calls?: unknown } | null
+  const list = Array.isArray(parsed)
+    ? parsed
+    : Array.isArray(wrapped?.tool_calls) ? wrapped.tool_calls : []
+  for (const item of list) {
+    const tc = item as { name?: unknown; input?: unknown; result?: unknown } | null
+    if (tc?.name !== "AskUserQuestion") continue
+    return parseQuestions(tc.input ?? tc.result)
+  }
+  return null
 }
 
 const EMPTY_USAGE: LlmUsageSummary = {
@@ -662,8 +696,15 @@ export class CabinService {
     }))
   }
 
-  /** C4：两类 ask —— workflow pending_interaction 执行 + 舱会话里末条未答的
-   *  ask_user_question 卡（message-filter 同构：其后有「用户回答了以下问题」即已答）。 */
+  /** C4：两类 ask —— workflow pending_interaction 执行 + 舱会话里的 ask_user_question 卡。
+   *
+   *  并发纪律（2026-11-16）：编队里多个任务可能同时来问；attention 必须**逐条**
+   *  列出，不能只取会话末条。判据：
+   *   · 每条提问独立判断是否已答 —— 其后存在「用户回答了以下问题」用户消息，
+   *     或该卡 metadata 已被 recordCardDecision 写上 activity.decision（就地作答
+   *     卡走这条）；答掉一条不会顺带把别的会话 / 别的卡标成已答。
+   *   · 会话集合 = 舱绑定会话 ∪ 舱任务的主线程会话（UI 直建任务可能没把
+   *     cabin_id 写回会话，只靠 sessionToTask 会漏掉）。 */
   private gatherAsks(
     row: CabinRow,
     executions: DeriveCabinInput["executions"],
@@ -673,8 +714,9 @@ export class CabinService {
     const infra = this.infra
     if (!infra) return []
     const asks: DeriveCabinInput["asks"] = []
+    const taskRows = infra.taskDAO.findByCabinId(row.id)
     const taskName = new Map<string, string>()
-    for (const t of infra.taskDAO.findByCabinId(row.id)) taskName.set(t.id, t.name)
+    for (const t of taskRows) taskName.set(t.id, t.name)
     const db = this.cabin.getDb()
     for (const e of executions) {
       if (e.status !== "pending_interaction") continue
@@ -686,30 +728,54 @@ export class CabinService {
            WHERE execution_id = ? AND metadata LIKE '%ask_user_question%'
            ORDER BY created_at DESC LIMIT 1`,
         ).get(e.id) as { metadata: string | null } | undefined
-        question = firstAskQuestion(msg?.metadata)
+        question = firstQuestionText(questionsFromMetadata(msg?.metadata))
       } catch { /* interaction_messages absent on old DBs */ }
       asks.push({
         id: e.id, task_id: tid,
         title: `${(tid && taskName.get(tid)) || "工作流"} · 待回答`, question,
       })
     }
+
+    // 会话 → 标题 / 归属任务（舱绑定会话优先，任务主线程兜底补全）。
+    const sessions = new Map<string, { label: string; taskId: string | null }>()
     for (const s of infra.agentSessionDAO.listByCabinId(row.id)) {
-      const { items } = infra.agentSessionDAO.findMessagesBySession(s.id, { limit: 200 })
-      // findMessagesBySession 已按 created_at 升序返回（message-filter 同构）。
-      const asc = items
-      let lastAskIdx = -1
-      for (let i = 0; i < asc.length; i++) {
-        if (askDisplayType(asc[i].metadata)) lastAskIdx = i
+      sessions.set(s.id, { label: s.title || "舱会话", taskId: sessionToTask.get(s.id) ?? null })
+    }
+    for (const t of taskRows) {
+      if (!t.source_chat_session_id || sessions.has(t.source_chat_session_id)) continue
+      sessions.set(t.source_chat_session_id, { label: t.name, taskId: t.id })
+    }
+
+    for (const [sessionId, info] of sessions) {
+      let rows: Array<{
+        id: string; role: string; content: string; metadata: string | null; tool_calls: string | null
+      }> = []
+      try {
+        rows = db.prepare(
+          `SELECT id, role, content, metadata, tool_calls FROM messages
+           WHERE session_id = ? ORDER BY created_at ASC, rowid ASC`,
+        ).all(sessionId) as typeof rows
+      } catch { continue }
+      // 最后一条「用户回答了以下问题」的位置：只有它之后的提问才算未答。
+      let lastAnswerIdx = -1
+      for (let i = 0; i < rows.length; i++) {
+        if (rows[i].role === "user" && rows[i].content.includes("用户回答了以下问题")) lastAnswerIdx = i
       }
-      if (lastAskIdx < 0) continue
-      const answered = asc.slice(lastAskIdx + 1).some(
-        (m) => m.role === "user" && m.content.includes("用户回答了以下问题"),
-      )
-      if (answered) continue
-      asks.push({
-        id: asc[lastAskIdx].id, task_id: sessionToTask.get(s.id) ?? null,
-        title: `${s.title || "舱会话"} · 待回答`, question: firstAskQuestion(asc[lastAskIdx].metadata),
-      })
+      for (let i = 0; i < rows.length; i++) {
+        const questions = questionsFromMessage(rows[i])
+        if (!questions) continue
+        if (i < lastAnswerIdx) continue
+        // 就地作答卡：选择写回 activity.decision 后即便同一条消息没有后续
+        // 用户回复，也已经答过 —— 不能一直在「待回答」里挂着。
+        const prefix = parseMetadata(rows[i].metadata)
+        const activity = prefix?.activity
+        if (activity && typeof activity === "object" && !Array.isArray(activity)
+          && (activity as { decision?: unknown }).decision) continue
+        asks.push({
+          id: rows[i].id, task_id: info.taskId,
+          title: `${info.label} · 待回答`, question: firstQuestionText(questions),
+        })
+      }
     }
     return asks
   }

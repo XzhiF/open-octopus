@@ -37,6 +37,7 @@ import { TurnDebugRecorder, type TurnDebugIdentity } from '../../services/agent/
 import { expertName } from '@octopus/shared'
 import { createWorkflowToolServer } from '../../services/chat/workflow-tools'
 import { createTaskToolServer } from '../../services/chat/task-tools'
+import { getChatEventBridge } from '../../services/activity/chat-event-bridge'
 import { createMemoryToolServer, resolveLongTermConsent } from '../../services/chat/memory-tools'
 import { createCabinToolServer, getCabinToolsProvider, buildCabinSummaryReminder } from '../../services/chat/cabin-tools'
 import { getSlashCommands, rememberSlashCommands } from '../../services/chat/slash-commands'
@@ -265,6 +266,10 @@ export function createChatRoutes(deps: ChatRouteDeps): Hono {
           : {}),
       })
       sessionDao.updateLastMessageAt(id, now)
+      // 双会话同步：在任务线程里直接答了问题卡 → 舱主会话的镜像卡变只读。
+      if (body.message.includes('用户回答了以下问题')) {
+        try { getChatEventBridge().markAuthorAskAnswered(id) } catch { /* bridge off */ }
+      }
     }
 
     // ── Safety: detect dangerous commands in user message (B5 fix) ────
@@ -706,6 +711,12 @@ export function createChatRoutes(deps: ChatRouteDeps): Hono {
     let fullContent = ''
     let fullThinking = ''
     const currentToolCalls: Array<{ id: string; name: string; input?: unknown; result?: unknown; status?: string }> = []
+    /** AskUserQuestion 的 questions（2026-11-16，design 23 §2）：interactionSession
+     *  deny 后本轮就此收尾，把问题正文随 assistant 行一并落库 —— 舱的 attention
+     *  推导（cabin-service.gatherAsks）只认 metadata.displayType，缺了它作者提问
+     *  就永远进不了「需要你」。落的是 provider 的原始 wrapper
+     *  `{ questions: [...] }`（与 tool input / SSE 逐字一致）。 */
+    let askQuestions: unknown = null
     // 流式时间线（与客户端 StreamTimelineItem 同形）：thinking/text 段 + 工具 id，
     // 按到达顺序。写进 partial 的 metadata，切走再切回的会话据此原样重建实时块
     // （2026-10-29 用户：切回来只见一条「已完成」外观的消息 +「Agent 思考中」）。
@@ -760,10 +771,18 @@ export function createChatRoutes(deps: ChatRouteDeps): Hono {
           timeline?: TurnTimelineEntry[]
           interrupted?: boolean
           error?: TurnErrorInfo
+          displayType?: 'ask_user_question'
+          questions?: unknown
         } = {}
         if (turnTimeline.length > 0) meta.timeline = turnTimeline
         if (interrupted) meta.interrupted = true
         if (error) meta.error = error
+        // 与 clone / main-agent / InteractionService 同构：问题卡重开可恢复，
+        // 舱 attention 也能从 metadata 直接推导出「待回答」。
+        if (askQuestions) {
+          meta.displayType = 'ask_user_question'
+          meta.questions = askQuestions
+        }
         const metadata = Object.keys(meta).length > 0 ? JSON.stringify(meta) : null
         if (partialRowId) {
           sessionDao.updateMessage(assistantMsgId, {
@@ -805,6 +824,7 @@ export function createChatRoutes(deps: ChatRouteDeps): Hono {
           const metadata = JSON.stringify({
             streaming: true,
             ...(turnTimeline.length > 0 ? { timeline: turnTimeline } : {}),
+            ...(askQuestions ? { displayType: 'ask_user_question', questions: askQuestions } : {}),
           })
           if (!partialRowId) {
             sessionDao.insertMessage({
@@ -917,6 +937,7 @@ export function createChatRoutes(deps: ChatRouteDeps): Hono {
               // interactionSession deny 后的显式问题标记（2026-11-02）：
               // 与 clone / main-agent 路由同构，前端据此补全 AskUserQuestion
               // toolCall，回合结束后渲染可回答的问题卡。
+              askQuestions = chunk.questions
               await stream.writeSSE({ event: 'ask_user_question', data: JSON.stringify({ tool_call_id: chunk.toolCallId, questions: chunk.questions }) })
               break
             case 'tool_result': {
@@ -1145,6 +1166,17 @@ export function createChatRoutes(deps: ChatRouteDeps): Hono {
           )
         }
         if (partialRowId) finalizePartial(false)
+        // design 23 §2：舱任务的作者提问同时投一张卡到舱主会话 —— 用户不切
+        // 对话就能就地回答（答案由 web 卡片转回本线程）。零 LLM，幂等。
+        if (askQuestions && partialRowId) {
+          try {
+            getChatEventBridge().requestAuthorAskCard({
+              authorSessionId: sessionId,
+              askMessageId: partialRowId,
+              questions: askQuestions,
+            })
+          } catch { /* bridge not attached (unit tests) — attention still works */ }
+        }
         turnDebug?.finish({ status: 'ok', assistantMessageId: partialRowId })
         return {
           generated,

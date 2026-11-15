@@ -32,7 +32,7 @@ import { SubagentWindow } from '@/components/chat-workbench/subagent-window'
 import { ChangesWindow } from '@/components/chat-workbench/changes-window'
 import { AcceptanceWindow } from '@/components/chat-workbench/acceptance-window'
 import { CabinRunSummary, type CabinRunTarget } from './modules/CabinRunSummary'
-import { clockLabel } from './modules/ui'
+import { clockLabel, openTaskInChat } from './modules/ui'
 import { pctFromPhases } from './job-progress'
 import { isEndedJob, jobStatusLabel, jobTone } from './job-status'
 import { traceKind } from './trace-meta'
@@ -689,6 +689,18 @@ export function JobFace({
                 {timeline.length} EVENTS
               </span>
               {/* 跨舱只读：投递只对入口舱开放，不给用户「能投到别的舱」的错觉。 */}
+              {cabinId === entryCabinId && job.kind === 'task' && job.ref_id && (
+                <button
+                  type="button"
+                  data-testid="cockpit-relay-task-chat"
+                  onClick={() => openTaskInChat(job.ref_id as string)}
+                  className={cockpitMode
+                    ? 'ck12-relay-go ml-auto'
+                    : 'ml-auto inline-flex items-center gap-1 text-[10px] text-pop-cyan hover:underline'}
+                >
+                  <MessageSquare className="size-3" />任务对话
+                </button>
+              )}
               {cabinId === entryCabinId && (
                 <button
                   type="button"

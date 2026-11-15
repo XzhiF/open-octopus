@@ -25,6 +25,7 @@ let fetchMock: ReturnType<typeof vi.fn>
 let triggerMock: ReturnType<typeof vi.fn>
 let resumeMock: ReturnType<typeof vi.fn>
 let createTaskMock: ReturnType<typeof vi.fn>
+let updateSessionMock: ReturnType<typeof vi.fn>
 
 beforeEach(() => {
   db = new Database(":memory:")
@@ -45,12 +46,13 @@ beforeEach(() => {
   vi.stubGlobal("fetch", fetchMock)
   triggerMock = vi.fn(async () => ({}))
   resumeMock = vi.fn(async () => ({}))
-  createTaskMock = vi.fn(() => ({ id: "task-1", workspace_id: "ws-cabin" }))
+  createTaskMock = vi.fn(() => ({ id: "task-1", workspace_id: "ws-task" }))
+  updateSessionMock = vi.fn()
   comm = new CabinCommService({
     cabin,
     taskDAO,
     agentSessionDAO: {
-      updateSession: vi.fn(),
+      updateSession: updateSessionMock,
     } as never,
     tasksService: {
       createTask: createTaskMock,
@@ -77,8 +79,15 @@ describe("CabinCommService", () => {
     const job = comm.dispatch("c1", {
       kind: "task", title: "接入渠道", prompt: "需求原文", mandate: { strength: "explicit" },
     })
+    // design 23 §3.1/§4：v4 起草形状 + 任务自己的 workspace（不再复用舱 ws）。
     expect(createTaskMock).toHaveBeenCalledWith(expect.objectContaining({
-      cabin_id: "c1", workspace_id: "ws-cabin", task_type: "coding",
+      cabin_id: "c1", task_spec: { format: "v4" }, source_chat_session_id: "sess-author",
+    }))
+    const createArgs = createTaskMock.mock.calls[0][0] as Record<string, unknown>
+    expect(createArgs).not.toHaveProperty("workspace_id")
+    expect(createArgs).not.toHaveProperty("task_type")
+    expect(updateSessionMock).toHaveBeenCalledWith("sess-author", expect.objectContaining({
+      cabin_id: "c1", scope_id: "task-1", workspace_id: "ws-task",
     }))
     expect(job.ref_id).toBe("task-1")
     expect(job.session_id).toBe("sess-author")
@@ -87,7 +96,23 @@ describe("CabinCommService", () => {
     await vi.waitFor(() => expect(fetchMock).toHaveBeenCalled())
     const body = JSON.parse(String(fetchMock.mock.calls[0][1].body)) as { message: string }
     expect(body.message).toContain("mandate=explicit")
+    expect(body.message).toContain("clarify=ask")
     expect(body.message).toContain("需求原文")
+    // design 23 §1：派发授权不再等于「规格免确认」。
+    expect(body.message).toContain("先澄清")
+    expect(body.message).not.toContain("无需再向人确认")
+  })
+
+  it("dispatch(task, clarify=auto)：用户说「看着办」才允许无歧义直接入列", async () => {
+    comm.dispatch("c1", {
+      kind: "task", title: "T", prompt: "P",
+      mandate: { strength: "explicit", clarify: "auto" },
+    })
+    await vi.waitFor(() => expect(fetchMock).toHaveBeenCalled())
+    const body = JSON.parse(String(fetchMock.mock.calls[0][1].body)) as { message: string }
+    expect(body.message).toContain("clarify=auto")
+    expect(body.message).toContain("看着办")
+    expect(body.message).not.toContain("先澄清：")
   })
 
   it("note：task 落痕+steer wake；subagent 只留痕（C9 风险12）", async () => {

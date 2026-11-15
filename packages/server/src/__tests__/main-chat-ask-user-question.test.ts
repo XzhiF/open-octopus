@@ -139,4 +139,28 @@ describe("主对话 AskUserQuestion 交互接管", () => {
     expect(text).toContain('"tool_call_id":"tc-ask"')
     expect(text).toContain("登录形态")
   })
+
+  it("问题落进 assistant 行 metadata（displayType + questions）—— 舱 attention 的推导源", async () => {
+    chunks = [
+      // 真实 provider 在 deny 前会先发 tool_call_start / tool_call（input 即问题）。
+      { type: "tool_call_start", toolCallId: "tc-ask", toolName: "AskUserQuestion" },
+      { type: "tool_call", toolCallId: "tc-ask", toolName: "AskUserQuestion", toolInput: QUESTIONS },
+      { type: "ask_user_question", toolCallId: "tc-ask", questions: QUESTIONS },
+      { type: "result", content: "", sessionId: "sdk-1" },
+    ]
+    installProvider()
+
+    const res = await chat()
+    expect(res.status).toBe(200)
+    await res.text()
+
+    const row = db.prepare(
+      "SELECT metadata FROM messages WHERE session_id = 's-1' AND role = 'assistant' ORDER BY created_at DESC LIMIT 1",
+    ).get() as { metadata: string | null } | undefined
+    expect(row?.metadata).toBeTruthy()
+    const meta = JSON.parse(row!.metadata!) as { displayType?: string; questions?: unknown }
+    expect(meta.displayType).toBe("ask_user_question")
+    // 与 tool input / SSE 同形：保持 provider 的 wrapper（cabin-service 两种都认）。
+    expect(meta.questions).toEqual(QUESTIONS)
+  })
 })

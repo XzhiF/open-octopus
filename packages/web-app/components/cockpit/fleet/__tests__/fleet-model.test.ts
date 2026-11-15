@@ -127,7 +127,7 @@ describe('groupOf', () => {
 describe('mergeAttention', () => {
   const cabin = { cabinId: 'c1', cabinName: 'A舱' }
 
-  it('job_id 命中 → 挂到 job 行；同一 job 多条只留 priority 最高，不额外成行', () => {
+  it('job_id 命中 → 最高优先挂到 job 行，其余并发待办保留为 attn: 行（不丢）', () => {
     const rows = [jobRow('j1', { status: 'running' })]
     const merged = mergeAttention(
       rows,
@@ -137,9 +137,12 @@ describe('mergeAttention', () => {
       ],
       cabin,
     )
-    expect(merged).toHaveLength(1)
-    expect(merged[0].kind).toBe('job')
-    if (merged[0].kind === 'job') expect(merged[0].attention?.id).toBe('a-high')
+    expect(merged).toHaveLength(2)
+    const job = merged.find((row) => row.kind === 'job')
+    expect(job?.kind).toBe('job')
+    if (job?.kind === 'job') expect(job.attention?.id).toBe('a-high')
+    const extra = merged.find((row) => row.kind === 'attention')
+    if (extra?.kind === 'attention') expect(extra.item.id).toBe('a-low')
   })
 
   it('job_id 不存在 / job_id=null → 各自保留为 attn: 行', () => {

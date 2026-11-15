@@ -12,7 +12,7 @@
 import { ArrowRight, X } from 'lucide-react'
 import type { CabinAttentionItem } from '@octopus/shared'
 import { cn } from '@/lib/utils'
-import { openTaskInChat } from '@/components/cabin/modules/ui'
+import { openAuthorAskInChat, openTaskInChat } from '@/components/cabin/modules/ui'
 import { useCockpitFleet } from '../fleet/CockpitFleetProvider'
 
 const STAGE_LABEL: Record<CabinAttentionItem['stage'], string> = {
@@ -104,6 +104,18 @@ export function CockpitAttentionFace({ attentionId, onClose }: CockpitAttentionF
             </div>
             <span className="ck12-jh-spacer" />
             <span className="ck12-jh-acts">
+              {/* 2026-11-16：并发提问时每条 ask 都能就地处理 —— 开浮窗并把
+                  舱主会话里对应的作答卡滚进视野，不切任务线程。 */}
+              {item.stage === 'answer' && item.deep_link?.startsWith('ask:') && (
+                <button
+                  type="button"
+                  className="ck12-jh-go"
+                  data-testid="cockpit-attn-answer-inline"
+                  onClick={() => openAuthorAskInChat(item.deep_link!.slice(4), taskId)}
+                >
+                  在对话里回答 <ArrowRight className="ck12-jh-go-arrow" aria-hidden="true" />
+                </button>
+              )}
               {taskId && (
                 <button
                   type="button"
@@ -116,7 +128,7 @@ export function CockpitAttentionFace({ attentionId, onClose }: CockpitAttentionF
                     )
                   }
                 >
-                  去处理 <ArrowRight className="ck12-jh-go-arrow" aria-hidden="true" />
+                  去任务对话 <ArrowRight className="ck12-jh-go-arrow" aria-hidden="true" />
                 </button>
               )}
             </span>

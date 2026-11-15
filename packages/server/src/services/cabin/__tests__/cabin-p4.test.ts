@@ -182,6 +182,86 @@ describe("attention gather（P4-3 / C4）", () => {
     expect(view.attention.some((a) => a.stage === "answer")).toBe(false)
   })
 
+  it("多个任务并发提问 → 每条都进 answer，答掉一条不影响另一条", () => {
+    insertTask("t1", "c1")
+    insertTask("t2", "c1")
+    const s1 = getSessionService().createSession({ cwd: tmpDir })
+    const s2 = getSessionService().createSession({ cwd: tmpDir })
+    agentSessionDAO.updateSession(s1.id, { cabin_id: "c1", title: "任务A" })
+    agentSessionDAO.updateSession(s2.id, { cabin_id: "c1", title: "任务B" })
+    db.prepare("UPDATE tasks SET source_chat_session_id = ? WHERE id = 't1'").run(s1.id)
+    db.prepare("UPDATE tasks SET source_chat_session_id = ? WHERE id = 't2'").run(s2.id)
+
+    agentSessionDAO.insertMessage({
+      id: "ask-a", session_id: s1.id, role: "assistant", content: "问",
+      metadata: JSON.stringify({ displayType: "ask_user_question", questions: [{ question: "A 的范围？" }] }),
+      created_at: NOW,
+    })
+    agentSessionDAO.insertMessage({
+      id: "ask-b", session_id: s2.id, role: "assistant", content: "问",
+      metadata: JSON.stringify({ displayType: "ask_user_question", questions: [{ question: "B 的验收？" }] }),
+      created_at: "2026-11-12T10:00:30.000Z",
+    })
+
+    let { view } = svc.getView("c1")
+    const asks = view.attention.filter((a) => a.stage === "answer")
+    expect(asks.map((a) => a.question)).toEqual(expect.arrayContaining(["A 的范围？", "B 的验收？"]))
+    expect(asks).toHaveLength(2)
+
+    // 只答 A：A 消失，B 仍在。
+    agentSessionDAO.insertMessage({
+      id: "ans-a", session_id: s1.id, role: "user",
+      content: "用户回答了以下问题：A 的范围", created_at: "2026-11-12T10:01:00.000Z",
+    })
+    view = svc.getView("c1").view
+    const left = view.attention.filter((a) => a.stage === "answer")
+    expect(left).toHaveLength(1)
+    expect(left[0].question).toBe("B 的验收？")
+  })
+
+  it("卡片 metadata 有 activity.decision（就地作答）→ 不再进「待回答」", () => {
+    const session = getSessionService().createSession({ cwd: tmpDir })
+    agentSessionDAO.updateSession(session.id, { cabin_id: "c1", title: "作者会话" })
+    insertTask("t1", "c1")
+    db.prepare("UPDATE tasks SET source_chat_session_id = ? WHERE id = 't1'").run(session.id)
+
+    agentSessionDAO.insertMessage({
+      id: "ask-decided", session_id: session.id, role: "assistant", content: "问",
+      metadata: JSON.stringify({
+        displayType: "ask_user_question",
+        questions: [{ question: "确认吗？" }],
+        activity: { decision: { id: "answer_author_ask", label: "已回答" } },
+      }),
+      created_at: NOW,
+    })
+    const { view } = svc.getView("c1")
+    expect(view.attention.some((a) => a.stage === "answer")).toBe(false)
+  })
+
+  it("agent-chat 落库只有 tool_calls（无 displayType）→ 仍进「待回答」", () => {
+    // design 23 §2：任务作者走 /api/agent/sessions/:id/chat，修好前 metadata
+    // 没有 displayType；老行也必须能靠 tool_calls 兜住。
+    const session = getSessionService().createSession({ cwd: tmpDir })
+    agentSessionDAO.updateSession(session.id, { cabin_id: "c1", title: "作者会话" })
+    insertTask("t1", "c1")
+    db.prepare("UPDATE tasks SET source_chat_session_id = ? WHERE id = 't1'").run(session.id)
+
+    agentSessionDAO.insertMessage({
+      id: "ask-tc", session_id: session.id, role: "assistant", content: "问",
+      tool_calls: JSON.stringify({
+        tool_calls: [{
+          id: "tc-1", name: "AskUserQuestion", status: "fail",
+          input: { questions: [{ question: "走哪个通道？" }] },
+        }],
+      }),
+      created_at: NOW,
+    })
+    const { view } = svc.getView("c1")
+    const ask = view.attention.find((a) => a.stage === "answer")
+    expect(ask?.question).toBe("走哪个通道？")
+    expect(ask?.task_id).toBe("t1")
+  })
+
   it("open findings（G4 scoped）→ adjudicate + open_findings 计数", () => {
     fs.mkdirSync(path.join(tmpDir, "raw", "archives"), { recursive: true })
     fs.writeFileSync(

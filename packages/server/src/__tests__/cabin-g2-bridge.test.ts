@@ -71,21 +71,77 @@ function cards(sessionId: string): Array<Record<string, unknown>> {
     .map((r) => JSON.parse((r as { metadata: string }).metadata) as Record<string, unknown>)
 }
 
-describe("舱任务的路由（2026-11-14 修订）", () => {
-  it("舱任务卡落任务自己的 chat，wake 仍汇聚舱主会话", () => {
+describe("作者提问卡（design 23 §2 · 舱主会话就地作答）", () => {
+  const QUESTIONS = {
+    questions: [{
+      question: "走哪个通道？", header: "通道", multiSelect: false,
+      options: [{ label: "短信", description: "最薄" }],
+    }],
+  }
+
+  it("舱任务的作者提问投到舱主会话；同 askMessageId 幂等", () => {
+    const bridge = getChatEventBridge()
+    bridge.requestAuthorAskCard({
+      authorSessionId: "s-task", askMessageId: "ask-msg-1", questions: QUESTIONS,
+    })
+    const cabinCards = cards("s-cabin") as Array<{
+      activity?: { payload?: Record<string, unknown> }
+    }>
+    expect(cabinCards).toHaveLength(1)
+    const payload = cabinCards[0].activity?.payload ?? {}
+    expect(payload.authorAsk).toBe(true)
+    expect(payload.authorSessionId).toBe("s-task")
+    expect(payload.taskName).toBe("舱任务")
+    expect(payload.questions).toEqual(QUESTIONS)
+
+    // 同一张提问重复投递 → 不新增卡（重启/重放都幂等）。
+    bridge.requestAuthorAskCard({
+      authorSessionId: "s-task", askMessageId: "ask-msg-1", questions: QUESTIONS,
+    })
+    expect(cards("s-cabin")).toHaveLength(1)
+  })
+
+  it("非舱任务不投卡；作者会话缺失 main session 时静默跳过", () => {
+    const bridge = getChatEventBridge()
+    // t2 没有 cabin_id → JOIN 落空。
+    bridge.requestAuthorAskCard({
+      authorSessionId: "s-task", askMessageId: "ask-msg-2", questions: QUESTIONS,
+    })
+    expect(cards("s-cabin")).toHaveLength(1) // 只有上一条用例的卡
+  })
+
+  it("在任务线程答题 → 主会话镜像卡写回 decision（双会话同步）", () => {
+    const bridge = getChatEventBridge()
+    bridge.requestAuthorAskCard({
+      authorSessionId: "s-task", askMessageId: "ask-msg-3", questions: QUESTIONS,
+    })
+    bridge.markAuthorAskAnswered("s-task")
+    const card = cards("s-cabin")[0] as { activity?: { decision?: { id?: string } } }
+    expect(card.activity?.decision?.id).toBe("answer_from_thread")
+    // 幂等：重复同步不会把更早的卡翻出来再改。
+    bridge.markAuthorAskAnswered("s-task")
+    const again = cards("s-cabin")[0] as { activity?: { decision?: { id?: string } } }
+    expect(again.activity?.decision?.id).toBe("answer_from_thread")
+  })
+})
+
+describe("舱任务的路由（2026-11-16 双会话修订）", () => {
+  it("舱任务卡同时落任务 chat 与舱主会话，wake 仍汇聚舱主会话", () => {
     const bridge = getChatEventBridge()
     bridge.handleSse({ event: "task_status", data: { task_id: "t1", status: "awaiting_review" } })
     expect(cards("s-task")).toHaveLength(1)
-    expect(cards("s-cabin")).toHaveLength(0)
+    // 2026-11-16 用户口径：舱里汐音这条对话也要能追溯到同一事件
+    // （规格 / 运行 / 验收就在卡片上内嵌展开）。
+    expect(cards("s-cabin")).toHaveLength(1)
     expect(fetchMock).toHaveBeenCalledTimes(1)
     expect(String(fetchMock.mock.calls[0][0])).toContain("/sessions/s-cabin/chat")
   })
 
-  it("暂停/继续落任务 chat，且是轻量转场卡（runState，不再重复运行摘要）", () => {
+  it("暂停/继续落任务 chat，并镜像到舱主会话，且是轻量转场卡", () => {
     const bridge = getChatEventBridge()
     bridge.notifyTaskRunState("t1", "e1", "running")
     bridge.notifyTaskRunState("t1", "e1", "paused")
-    expect(cards("s-cabin")).toHaveLength(0)
+    expect(cards("s-cabin")).toHaveLength(2)
     const rows = cards("s-task") as Array<{ activity?: { payload?: { runState?: string } } }>
     expect(rows).toHaveLength(2)
     expect(rows[0].activity?.payload?.runState).toBe("resumed")

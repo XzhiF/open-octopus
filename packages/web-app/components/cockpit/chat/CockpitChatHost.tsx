@@ -31,10 +31,27 @@ export interface CockpitChatHostProps {
 
 export function CockpitChatHost({ entryCabinId }: CockpitChatHostProps) {
   const { cabinId, cabin } = useCabinContext()
-  const { reportChat } = useCockpitState()
+  const { reportChat, chatWindow } = useCockpitState()
   const { setStreaming } = useCockpit()
   const transcriptSlot = useChatSlot('transcript')
   const composerSlot = useChatSlot('composer')
+
+  // 2026-11-16（design 23 §2）：切面会自动收起对话浮窗（ce078160），但
+  // 「去处理 / 去任务对话」只发 octopus:open-task —— 不重新开窗的话，任务线程
+  // 已经切过去了，人却看到一张没反应的作业面。凡是「打开任务」的入口都从这里
+  // 统一把浮窗展开（CockpitBrief 也是 select + openWithFocus 的同一语义）。
+  useEffect(() => {
+    const onOpenTask = () => chatWindow.openWithFocus()
+    // 就地回答（design 23 §2 续）：attention 面「在对话里回答」只发事件，
+    // 浮窗同样要展开；滚动到具体卡片由转录里的 AuthorAskInbox 负责。
+    const onOpenAsk = () => chatWindow.openWithFocus()
+    window.addEventListener('octopus:open-task', onOpenTask)
+    window.addEventListener('octopus:open-ask', onOpenAsk)
+    return () => {
+      window.removeEventListener('octopus:open-task', onOpenTask)
+      window.removeEventListener('octopus:open-ask', onOpenAsk)
+    }
+  }, [chatWindow])
 
   const {
     sessionId, setSessionId,

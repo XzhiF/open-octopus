@@ -26,6 +26,7 @@ import type { AgentSession, AgentMessage } from '@/lib/agent/types'
 import type { RunningAgentSession } from '@/lib/agent/api'
 import { CwdPicker, type CwdChoice } from './cwd-picker'
 import { ChatArea, type ChatComposerBridge } from './ChatArea'
+import { AuthorAskInbox } from './author-ask-inbox'
 import { TaskModulesLayer } from '@/components/chat-workbench/task-modules-layer'
 import { TriggerDialog } from '@/components/tasks/trigger-dialog'
 import type { RunTarget, SubagentTarget, TaskModule, TaskWindowMap, YamlTarget } from '@/components/chat-workbench/task-window-types'
@@ -1488,6 +1489,7 @@ export function ChatPane({
         ) : (
           <ChatArea
             messages={viewMessages}
+            transcriptHeader={<AuthorAskInbox messages={viewMessages} />}
             streaming={streaming}
             streamContent={streamContent}
             streamThinking={streamThinking}

@@ -21,6 +21,9 @@ interface AskUserQuestionCardProps {
   message: ChatMessage
   onAnswer: (content: string) => void
   disabled?: boolean
+  /** 跨线程复用（舱主会话的作者提问卡）时关掉「先讨论」——它会把讨论请求
+   *  转发到另一个线程，而回答正文不会回到当前对话，语义会断。 */
+  hideChatAbout?: boolean
 }
 
 function parseQuestions(input: unknown): QuestionItem[] {
@@ -107,7 +110,7 @@ function formatChatAboutContent(
   return lines.join("\n")
 }
 
-export function AskUserQuestionCard({ message, onAnswer, disabled }: AskUserQuestionCardProps) {
+export function AskUserQuestionCard({ message, onAnswer, disabled, hideChatAbout }: AskUserQuestionCardProps) {
   const questions = useMemo(() => parseQuestions(message.toolInput), [message.toolInput])
   const [answers, setAnswers] = useState<Record<number, string | string[]>>({})
   const [otherInputs, setOtherInputs] = useState<Record<string, string>>({})
@@ -395,7 +398,7 @@ export function AskUserQuestionCard({ message, onAnswer, disabled }: AskUserQues
         )}
 
         {/* Chat about this（CLI 同款，仅单选出现）：不回答，交回 Agent 澄清 */}
-        {!submitted && !disabled && canChatAbout && (
+        {!submitted && !disabled && canChatAbout && !hideChatAbout && (
           <div className="mt-2 border-t border-dashed border-white/10 pt-2">
             <button
               type="button"

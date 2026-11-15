@@ -93,8 +93,16 @@ export function buildTaskLaunchConfig(
   taskArtifactsDir?: string,
   taskWorkflowsDir?: string,
   v4Phases?: TaskV4PhaseConfig[],
+  /** design 23 §3.2：项目名 → 已解析的本地路径（舱本地/外部项目不在
+   *  org repos/index.md 里）。缺省（undefined）保持旧行为：source_path 空，
+   *  执行期再由 org 注册表解析。 */
+  projectSources?: Record<string, string>,
 ): WorkflowConfig {
-  const projects = project_ids.map((id) => ({ name: id, source_path: '', group: '' }))
+  const projects = project_ids.map((id) => ({
+    name: id,
+    source_path: projectSources?.[id] ?? '',
+    group: '',
+  }))
   // branch_prefix must match /^[a-zA-Z0-9_-]+$/ (workspaceSpecSchema). Derive a
   // safe, stable prefix from org so multiple drafts in the same org share a prefix.
   const branchPrefix = `taskpool-${org}`.replace(/[^a-zA-Z0-9_-]/g, '-').slice(0, 50) || 'taskpool'

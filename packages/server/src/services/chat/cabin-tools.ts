@@ -42,6 +42,7 @@ export function buildCabinSummaryReminder(service: CabinService, cabinId: string
       `自决模式：${autonomy} —— explicit 明确指令直接派发；${autonomyRule}`,
       ...(focused ? [`聚焦作业：${focused.title} —— 优先驱动它到完成，其余作业排队不打断；human-wake 可抢占`] : []),
       "纪律：只调度不执行；一次只问人一个结构化问题；派发用 cabin_dispatch_task，监督用 cabin_list_tasks/cabin_list_jobs/cabin_job_trace。",
+      "派发≠免澄清：作者会先在任务线程里问规格问题；出 stage=answer 的「待回答」时把用户送去任务线程，不要代答。",
     ]
     return lines.join("\n")
   } catch {
@@ -91,18 +92,20 @@ export function createCabinToolServer(cabinId: string) {
     ),
     tool(
       "cabin_dispatch_task",
-      "派发一个真实 Octopus 任务进舱：建任务+作者主线程+首回合授权 wake，执行在独立 worktree。mandate_strength=explicit 表示用户已明确授权（自决派发，作者不再问人）；inferred 表示需人确认。prompt 转发需求原文，不改写成计划。",
+      "派发一个真实 Octopus 任务进舱：建任务+作者主线程+首回合授权 wake，执行在独立 worktree。mandate_strength=explicit 表示用户已明确授权（建任务/开工作树/消耗 token），**不表示跳过规格澄清** —— 作者默认会先问人；clarify=auto 只在用户原话是「你看着办/直接做」时传。inferred 表示需人确认。prompt 转发需求原文，不改写成计划。",
       {
         title: z.string().min(1).describe("任务显示名"),
         prompt: z.string().min(1).describe("需求原文（转发原始 trigger）"),
         priority: z.number().int().optional().describe("数字优先级，默认 0"),
         mandate_strength: z.enum(["explicit", "inferred"]).optional().describe("授权强度，默认 explicit"),
+        clarify: z.enum(["ask", "auto"]).optional().describe("规格澄清：ask 默认先问人；auto = 用户明确说「看着办/直接做」"),
       },
       async (input) => {
         const { comm, service } = must()
         // C5 确定性 gate：explicit 恒可派发（用户明确命令）；inferred 按
         // autonomy 模式分支 —— auto 自决 / observe 先确认 / off 只记录建议。
         const strength = input.mandate_strength ?? "explicit"
+        const clarify = input.clarify ?? "ask"
         const autonomy = cabinAutonomy(service.get(cabinId).cockpit_prefs)
         const decision = cabinDispatchDecision(autonomy, strength)
         if (decision === "blocked") {
@@ -122,9 +125,9 @@ export function createCabinToolServer(cabinId: string) {
           title: input.title,
           prompt: input.prompt,
           priority: input.priority ?? 0,
-          mandate: { strength, scope: "task", basis: "orchestrator-dispatch", policyVersion: 1 },
+          mandate: { strength, scope: "task", basis: "orchestrator-dispatch", policyVersion: 1, clarify },
         })
-        return { content: [{ type: "text" as const, text: JSON.stringify({ job_id: job.id, task_id: job.ref_id, session_id: job.session_id, status: "dispatched" }) }] }
+        return { content: [{ type: "text" as const, text: JSON.stringify({ job_id: job.id, task_id: job.ref_id, session_id: job.session_id, status: "dispatched", clarify }) }] }
       },
     ),
     tool(

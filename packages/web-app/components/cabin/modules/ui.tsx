@@ -219,6 +219,16 @@ export function openTaskInChat(taskId: string, view?: 'acceptance' | 'changes') 
   window.dispatchEvent(new CustomEvent('octopus:open-task', { detail: { taskId, ...(view ? { view } : {}) } }))
 }
 
+/** 就地回答作者提问（design 23 §2 续）：开对话浮窗并把那张卡滚到视野里。
+ *  找不到卡（消息还没加载 / 旧数据）时退回任务线程。 */
+export function openAuthorAskInChat(askMessageId: string, taskId?: string | null) {
+  window.dispatchEvent(new CustomEvent('octopus:open-ask', { detail: { askMessageId } }))
+  if (!taskId) return
+  window.setTimeout(() => {
+    if (!document.getElementById(`author-ask-${askMessageId}`)) openTaskInChat(taskId)
+  }, 600)
+}
+
 export function clockLabel(iso: string): string {
   const d = new Date(iso)
   if (Number.isNaN(d.getTime())) return ''

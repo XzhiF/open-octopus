@@ -16,12 +16,20 @@ export type CabinJobEventKind = z.infer<typeof CabinJobEventKindSchema>
 export const CabinAutonomySchema = z.enum(["off", "observe", "auto"])
 export type CabinAutonomy = z.infer<typeof CabinAutonomySchema>
 
-/** Immutable authorization recorded per dispatch (C5). */
+/** Immutable authorization recorded per dispatch (C5).
+ *
+ *  `clarify` is the spec-conversation knob added with the chat closed-loop
+ *  (design 23): `explicit` authorizes CREATING/running the task, it does NOT
+ *  authorize skipping the author's requirement Q&A. `ask` (default) = the
+ *  task-author must ask the human about anything that affects acceptance /
+ *  scope / priority; `auto` = the user explicitly said "你看着办/直接做", so
+ *  the author may enqueue without asking when the brief is unambiguous. */
 export const CabinMandateSchema = z.object({
   strength: z.enum(["explicit", "inferred"]),
   scope: z.string().optional(),
   basis: z.string().optional(),
   policyVersion: z.number().optional(),
+  clarify: z.enum(["ask", "auto"]).optional(),
 })
 export type CabinMandate = z.infer<typeof CabinMandateSchema>
 

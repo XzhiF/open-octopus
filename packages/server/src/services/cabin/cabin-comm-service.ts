@@ -74,25 +74,29 @@ export class CabinCommService {
 
     if (input.kind === "task" && !refId) {
       const repos = readCabinConfig(cabin.path).repos.map((r) => r.name).filter(Boolean)
+      // 作者会话先建、任务带 source_chat_session_id 建（与「新建任务」同序）：
+      // createTask 会把会话 scope/workspace/cwd 一并绑到任务自己的 workspace。
+      //
+      // 2026-11-16（design 23 §4）：**不再复用舱 workspace**。one-workspace model
+      // 的 task home = `<workspace>/.task`，复用舱 ws 会让同舱所有任务共用一个
+      // home（context.md / manifest.json / .scratch 互相覆盖）。让 createTask 建
+      // 任务自己的 shell，worktree 也落在它自己的 projects/ 下。
+      const session = getSessionService().createSession({ cwd: cabin.path })
       const task = this.deps.tasksService.createTask({
         name: input.title,
         repo_group: cabin.org ?? undefined,
         cabin_id: cabinId,
-        task_type: "coding",
+        task_spec: { format: "v4" },
         preset: { org: cabin.org ?? undefined, projects: repos },
-        workspace_id: cabin.workspace_id ?? undefined,
+        source_chat_session_id: session.id,
       })
       refId = task.id
-      const session = getSessionService().createSession({
-        cwd: cabin.path,
-        workspace_id: task.workspace_id ?? cabin.workspace_id,
-      })
       this.deps.agentSessionDAO.updateSession(session.id, {
         cabin_id: cabinId,
         title: `${input.title} · 任务主线程`,
         scope_id: task.id,
+        ...(task.workspace_id ? { workspace_id: task.workspace_id } : {}),
       })
-      this.deps.taskDAO.bindSourceChatSession(task.id, session.id)
       sessionId = session.id
     }
 
@@ -111,14 +115,26 @@ export class CabinCommService {
 
     if (input.kind === "task" && sessionId) {
       const strength = input.mandate?.strength ?? "explicit"
+      // 2026-11-16（design 23 §1）：派发授权 ≠ 规格免确认。explicit 只解除
+      // 「建任务 / 开工作树 / 花 token」，澄清与拆分确认仍归用户；clarify=auto
+      // 才是用户原话「你看着办 / 直接做」的授权。
+      const clarify = input.mandate?.clarify ?? "ask"
       const message = [
-        `[舱派发 · mandate=${strength}] 任务「${input.title}」`,
+        `[舱派发 · mandate=${strength} · clarify=${clarify}] 任务「${input.title}」`,
         "需求原文（转发，不改写）：",
         input.prompt?.trim() || input.title,
         strength === "explicit"
-          ? "舱调度者已代表用户明确授权：按 task-author 纪律完成规格后直接入列并立即执行，无需再向人确认（C5 explicit 自决）。"
+          ? "授权边界：舱调度者已代表用户授权建任务、开工作树、消耗 token；但不等于规格免确认 —— 影响验收物 / 范围 / 优先级 / 风险的歧义仍要问人。"
           : "授权为 inferred：规格完成后先出确认卡，等人放行再执行。",
-        "执行隔离：worktree 从舱主线切出；回报/attention 会汇聚到舱主对话（单线程收件箱）。",
+        clarify === "ask"
+          ? "先澄清：读 .cabin/requirements.md 与任务 home 的 context.md，用 AskUserQuestion 一次一问（建议 ≤5 轮），只问影响验收 / 范围 / 优先级的问题；多 phase 拆分卡必须由用户批准。需要人拍板的节点（拆分批准 / 每 phase 绑定确认 / 入列方式）也用 AskUserQuestion 一次一问提出（摘要 + 选项）—— 它会被投到舱主会话，用户可能不切对话就答；完整卡仍写任务线程。澄清完写 phases + 各 phase spec/票 + runbook；" +
+            (strength === "explicit"
+              ? "拆分批准后按 explicit 授权直接 enqueue_task / launch_task(confirmed=true)，成交后入列并执行。"
+              : "然后 propose_launch 出卡，等人放行。")
+          : "clarify=auto：用户已说「看着办」——无实质歧义时可直接按 v4 完成规格" +
+            (strength === "explicit" ? "并入列执行。" : "并出 propose_launch 卡。") +
+            "有歧义仍先问人。",
+        "执行隔离：worktree 从任务自己的 workspace 切出；回报/attention 会汇聚到舱主对话（单线程收件箱）。",
       ].join("\n")
       void this.wakeSession(sessionId, cabin.org ?? "", message)
     }

@@ -159,6 +159,8 @@ interface ChatAreaProps {
   /** 知识中心票12：transcript 末尾（流式区之前）的结构化节点——异步任务卡等
    *  不锚定具体消息的 Lane B 沉淀态。缺省 = 零变化。 */
   transcriptTail?: ReactNode
+  /** 转录顶端粘性区（design 23 §2 续）：待回答收件箱等全局待办。缺省 = 零变化。 */
+  transcriptHeader?: ReactNode
   /** 知识中心票12：卡片钮「对策展人说」等动作预进取号器文本（值变化即灌入输入框）。 */
   composerSeed?: string
   /** 右列有工作区作业坞（lg+）：用户输入历史让开该列，避免重叠。 */
@@ -206,7 +208,7 @@ export function ChatArea({
   effort, onEffortChange, maxContext, onMaxContextChange, modelPresets,
   composerLeading, composerPlaceholder, heroEmpty, composerHeroFooter, identity, identityDisplay, workspaceContext,
   tui, onSteer, steerActiveRef, resumeTailing,
-  messageExtras, transcriptTail, composerSeed, timelineClearDock, dockGutter,
+  messageExtras, transcriptTail, transcriptHeader, composerSeed, timelineClearDock, dockGutter,
   composerSlot, composerVariant = 'full', onQueueDepthChange, composerBridgeRef,
 }: ChatAreaProps) {
   const [input, setInput] = useState('')
@@ -679,6 +681,7 @@ export function ChatArea({
             : 'max-w-3xl mx-auto px-4 py-4 space-y-2.5'}
             data-tui-col={tui ? '' : undefined}
             data-tui-hero={heroMode ? 'true' : undefined}>
+            {transcriptHeader}
             {/* Session exists but has no turns yet (new chat / new task). */}
             {tui && messages.length === 0 && !streaming && !hideEmptyState && (
               <div className="py-8" role="status" aria-live="polite">

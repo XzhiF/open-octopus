@@ -14,7 +14,9 @@
 //   · 收尾状态（本轮完成 · 待验收 / 归档中 / 已归档 / 中止 / 失败）→ 收尾只读卡，
 //     和「启动方式选完」的决策卡同一套观感：降噪、无按钮，操作回主 chat / 作业坞。
 //
-// 卡片永远没有动作按钮 —— 用户明确要求操作走主 chat 或作业坞对应窗口。
+// 卡片永远没有「操作」按钮 —— 用户明确要求操作走主 chat 或作业坞对应窗口。
+// 2026-11-16（design 23 §2 续）：新增「规格 / 运行 / 验收」**查看**页签，
+// 模块直接内嵌在消息流里（任务线程与舱主会话都有），不需要为看规格再切会话。
 
 import { useEffect, useRef, useState } from 'react'
 import { getTask, type TaskDetail, type TaskExecutionBadge } from '@/lib/tasks-api'
@@ -22,6 +24,7 @@ import { fetchExecutionDetail } from '@/lib/api-client'
 import type { StepExecution } from '@/lib/types'
 import type { AgentMessage } from '@/lib/agent/types'
 import { formatRunClock } from '@/lib/format'
+import { TaskModuleInline, INLINE_MODULE_LABEL, type InlineTaskModule } from './task-module-inline'
 
 const LIVE_TASK_STATUS = new Set(['running', 'paused'])
 const TERMINAL_EXEC_STATUS = new Set([
@@ -158,6 +161,36 @@ const SETTLED_HINT: Record<string, string> = {
   failed: '完整日志在作业坞「运行」',
 }
 
+/** 双会话查看入口：规格 / 运行 / 验收内嵌展开，纯查看，不改任务状态。 */
+function ModuleTabs({ taskId }: { taskId: string }) {
+  const [open, setOpen] = useState<InlineTaskModule | null>(null)
+  return (
+    <>
+      <div className="mt-1.5 flex items-center gap-1 pl-6" data-testid="task-module-tabs">
+        <span className="text-[9.5px] text-pop-dim/60">在对话里看</span>
+        {(['plan', 'run', 'acceptance'] as const).map((key) => (
+          <button
+            key={key}
+            type="button"
+            data-testid={`task-module-tab-${key}`}
+            aria-pressed={open === key}
+            onClick={() => setOpen((cur) => (cur === key ? null : key))}
+            className={[
+              'rounded border px-1.5 py-0.5 text-[10px] transition-colors',
+              open === key
+                ? 'border-pop-cyan/50 bg-pop-cyan/10 font-bold text-pop-cyan'
+                : 'border-pop-bd/70 bg-black/10 text-pop-dim hover:bg-white/[0.06] hover:text-pop-ink',
+            ].join(' ')}
+          >
+            {INLINE_MODULE_LABEL[key]}
+          </button>
+        ))}
+      </div>
+      {open && <TaskModuleInline taskId={taskId} module={open} onClose={() => setOpen(null)} />}
+    </>
+  )
+}
+
 export function TaskStatusCard({ message, compact = false }: { message: AgentMessage; compact?: boolean }) {
   const activity = message.activity
   const taskId = activity?.taskId ?? null
@@ -291,6 +324,7 @@ export function TaskStatusCard({ message, compact = false }: { message: AgentMes
         {activity?.message && (
           <div className="mt-1 pl-6 text-[10.5px] text-pop-dim">{activity.message}</div>
         )}
+        {taskId && <ModuleTabs taskId={taskId} />}
       </div>
     )
   }
@@ -328,6 +362,7 @@ export function TaskStatusCard({ message, compact = false }: { message: AgentMes
         {SETTLED_HINT[cardStatus] && (
           <div className="mt-0.5 pl-6 text-[10px] text-pop-dim/70">{SETTLED_HINT[cardStatus]}</div>
         )}
+        {taskId && <ModuleTabs taskId={taskId} />}
       </div>
     )
   }
@@ -506,6 +541,8 @@ export function TaskStatusCard({ message, compact = false }: { message: AgentMes
           </div>
         </>
       )}
+
+      {taskId && <ModuleTabs taskId={taskId} />}
     </div>
   )
 }

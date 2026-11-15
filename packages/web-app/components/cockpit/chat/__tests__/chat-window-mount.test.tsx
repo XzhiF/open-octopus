@@ -146,4 +146,14 @@ describe('CockpitChatHost / CockpitChatWindow — 全程挂载', () => {
     fireEvent.pointerDown(screen.getByTestId('cockpit-composer-slot'))
     await waitFor(() => expect(win.getAttribute('data-open')).toBe('true'))
   })
+
+  it('octopus:open-task（去处理 / 去任务对话）→ 自动展开浮窗', async () => {
+    // design 23 §2：切面会自动收窗；「打开任务」必须把浮窗带回来，否则任务
+    // 线程切过去了、人只看到一张没反应的作业面。
+    renderShell()
+    const win = screen.getByTestId('cockpit-chat-window')
+    expect(win.getAttribute('data-open')).toBe('false')
+    fireEvent(window, new CustomEvent('octopus:open-task', { detail: { taskId: 'task-1' } }))
+    await waitFor(() => expect(win.getAttribute('data-open')).toBe('true'))
+  })
 })

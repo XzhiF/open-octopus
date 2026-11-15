@@ -120,6 +120,12 @@ import { PluginMaterializer } from "./plugin-materializer"
 export { ArtifactAccessError } from "./task-home-service"
 import { getResourceRegistry } from "../resource-registry"
 import { WorkspaceGit } from "../workspace-git"
+// design 23 §3.2：舱项目（本地 / 外部）不在 org repos/index.md 里 —— 任务
+// 解析项目路径时先试 org 注册表，失败再回落到舱 config.json.repos[]。
+import {
+  cabinHasProjects,
+  resolveTaskProjectPath,
+} from "./task-project-resolver"
 // repo-sync / trigger-prebuild (2026-09-08): 类型注入（构造器尾参），运行时实例
 // 由 index.ts 装配 — type-only import 避免 services 图新增环。
 import type { RepoSyncService } from "./repo-sync-service"
@@ -1219,20 +1225,38 @@ export class TasksService {
     return this.pluginMaterializer
   }
 
-  /** Resolve project names to ProjectRef[] with filesystem paths via
-   *  WorkspaceGit (repos/index.md lookup). Unresolvable names get
-   *  { name, path: undefined } so they still appear in context.md. */
-  private resolveProjectRefs(repoGroup: string | null | undefined, names: string[]): ProjectRef[] {
-    if (!repoGroup || names.length === 0) return []
-    const git = new WorkspaceGit()
+  /** Resolve project names to ProjectRef[] with filesystem paths: org
+   *  repos/index.md first, then (design 23 §3.2) the cabin's
+   *  config.json.repos[] for local/external projects. Unresolvable names get
+   *  `{ name }` so they still appear in context.md. */
+  private resolveProjectRefs(
+    repoGroup: string | null | undefined,
+    names: string[],
+    cabinId?: string | null,
+  ): ProjectRef[] {
+    if (names.length === 0) return []
     return names.map((name) => {
-      try {
-        const resolved = git.resolveRepoPath(repoGroup, name)
-        return { name, path: resolved }
-      } catch {
-        return { name }
-      }
+      const resolved = this.resolveTaskProjectPath(
+        { repo_group: repoGroup ?? null, cabin_id: cabinId ?? null }, name,
+      )
+      return resolved ? { name, path: resolved } : { name }
     })
+  }
+
+  /** Project path resolver for the task domain (design 23 §3.2) — thin
+   *  delegation to the shared single source. Returns null when unresolved. */
+  private resolveTaskProjectPath(
+    task: { repo_group: string | null; cabin_id: string | null },
+    name: string,
+  ): string | null {
+    return resolveTaskProjectPath(this.db, task, name)
+  }
+
+  /** Policy (design 23 §3.3): a cabin with zero repos may enqueue a v4 task
+   *  with no project binding (nothing to worktree); a cabin WITH repos expects
+   *  the author to bind at least one. */
+  private cabinHasProjects(cabinId: string): boolean {
+    return cabinHasProjects(this.db, cabinId)
   }
 
   // ── Create ────────────────────────────────────────────────────────
@@ -1417,7 +1441,7 @@ export class TasksService {
       // Pass repo group + resolved project paths + skill groups to createHome so
       // context.md is populated from the start (not empty until the first
       // chat turn or a subsequent updateTask).
-      const projectRefs = this.resolveProjectRefs(repoGroup, projectIds)
+      const projectRefs = this.resolveProjectRefs(repoGroup, projectIds, input.cabin_id)
       const home = this.taskHomeService.createHome(id, { repo_group: repoGroup, projects: projectRefs, skillGroups: groups })
       // repo-sync (2026-09-08, 特性A): v4 draft 创建即异步把选中项目的主 clone
       // 强制对齐 origin/<main|master> 最新（镜像语义，fire-and-forget — 绝不影响
@@ -2644,7 +2668,7 @@ export class TasksService {
           if (ctxSpec?.format === "v4" && changedFields.includes("project_ids") && projectIds.length > 0) {
             this.repoSyncService?.syncProjectsForTask(id, row.repo_group, projectIds)
           }
-          const projectRefs = this.resolveProjectRefs(row.repo_group, projectIds)
+          const projectRefs = this.resolveProjectRefs(row.repo_group, projectIds, row.cabin_id)
           this.taskHomeService.writeContextFile(id, row.repo_group, projectRefs, groups,
             this.repoSyncService?.freshnessNotes(id, projectIds))
           // Add context_updated to the notice so the agent knows to re-read
@@ -2808,7 +2832,7 @@ export class TasksService {
       try {
         if (!fs.existsSync(this.taskHomeService.homePath(id))) {
           const backfillProjects = parseJSON<string[]>(updated.project_ids, [])
-          const backfillRefs = this.resolveProjectRefs(updated.repo_group, backfillProjects)
+          const backfillRefs = this.resolveProjectRefs(updated.repo_group, backfillProjects, updated.cabin_id)
           this.taskHomeService.createHome(id, {
             repo_group: updated.repo_group,
             projects: backfillRefs,
@@ -2846,7 +2870,7 @@ export class TasksService {
           if (input.field === "projects" && ctxSpec?.format === "v4" && projectIds.length > 0) {
             this.repoSyncService?.syncProjectsForTask(id, row.repo_group, projectIds)
           }
-          const projectRefs = this.resolveProjectRefs(row.repo_group, projectIds)
+          const projectRefs = this.resolveProjectRefs(row.repo_group, projectIds, row.cabin_id)
           this.taskHomeService.writeContextFile(id, row.repo_group, projectRefs, groups,
             this.repoSyncService?.freshnessNotes(id, projectIds))
           if (input.source === "user") {
@@ -2989,17 +3013,18 @@ export class TasksService {
       // One-workspace model: a workspace-backed simple task must bind at least
       // one project, otherwise enqueue would create no worktree. Legacy /
       // test-only tasks without a bound workspace keep the old vacuous pass.
+      // design 23 §3.3: a cabin with ZERO repos is a no-code cabin — nothing to
+      // worktree, so a project-less v4 task may enqueue; a cabin WITH repos
+      // expects the author to bind at least one.
       if (gateProjects.length === 0 && existing.workspace_id) {
-        missing.push("project-binding")
+        const noRepoCabin = !!existing.cabin_id && !this.cabinHasProjects(existing.cabin_id)
+        if (!noRepoCabin) missing.push("project-binding")
       }
       if (gateProjects.length > 0) {
-        const git = new WorkspaceGit()
         for (const name of gateProjects) {
-          try {
-            git.resolveRepoPath(existing.repo_group ?? "", name)
-          } catch {
-            missing.push(`project:${name}`)
-          }
+          // org registry first, cabin config fallback (local/external projects —
+          // design 23 §3.2). Unresolvable still blocks enqueue.
+          if (!this.resolveTaskProjectPath(existing, name)) missing.push(`project:${name}`)
         }
       }
       // 验收 runbook 硬检（2026-09-22）：v4 任务入队前必须预设「跑起来看」的
