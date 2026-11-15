@@ -193,9 +193,8 @@ export interface CreateTaskInput {
   skills?: string[]
   resources?: ResourceRef[]
   authoring_resources?: ResourceRef[]
-  /** Cabin P3（C2）：舱内新建任务绑定归属舱 + 迭代。 */
+  /** Cabin P3（C2）：舱内新建任务绑定归属舱。 */
   cabin_id?: string | null
-  iteration_id?: string | null
 }
 
 export interface UpdateTaskInput {

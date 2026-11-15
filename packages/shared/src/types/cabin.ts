@@ -2,7 +2,7 @@ import { z } from "zod"
 
 // ── Cabin (directory-bound long-lived cockpit) ──
 // Shared DTOs. Persisted shape lives in server db/types.ts; derived views
-// (attention/health/iteration progress) are computed by deriveCabinView (K3: never stored).
+// (attention/health) are computed by deriveCabinView (K3: never stored).
 
 export const CabinStatusSchema = z.enum(["draft", "initializing", "active", "dormant", "archived"])
 export type CabinStatus = z.infer<typeof CabinStatusSchema>
@@ -44,26 +44,12 @@ export const CabinSchema = z.object({
 })
 export type CabinDTO = z.infer<typeof CabinSchema>
 
-export const CabinIterationSchema = z.object({
-  id: z.string(),
-  cabin_id: z.string(),
-  code: z.string(),
-  name: z.string(),
-  sort_order: z.number(),
-  status: z.enum(["pending", "active", "done"]),
-  /** Derived from member tasks (tasks.iteration_id), not stored. */
-  progress: z.number().optional(),
-  task_count: z.number().optional(),
-})
-export type CabinIteration = z.infer<typeof CabinIterationSchema>
-
 export const CabinJobSchema = z.object({
   id: z.string(),
   cabin_id: z.string(),
   kind: CabinJobKindSchema,
   ref_id: z.string().nullable(),
   session_id: z.string().nullable(),
-  iteration_id: z.string().nullable(),
   title: z.string(),
   mandate: CabinMandateSchema.nullable(),
   prompt: z.string().nullable(),
@@ -117,7 +103,6 @@ export const CabinViewSchema = z.object({
   cabin: CabinSchema,
   attention: z.array(CabinAttentionItemSchema),
   health: CabinHealthSchema,
-  iterations: z.array(CabinIterationSchema),
   open_findings: z.number(),
 })
 export type CabinView = z.infer<typeof CabinViewSchema>

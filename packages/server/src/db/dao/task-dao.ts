@@ -33,8 +33,8 @@ export class TaskDAO extends BaseDAO {
         workspace_id, semantic_summary,
         trigger_mode, trigger_at, cron_expression, cron_timezone,
         trigger_enabled, next_fire_at, last_fired_at,
-        cabin_id, iteration_id
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        cabin_id
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       row.id, row.repo_group ?? null, row.name,
       row.status ?? "draft",
@@ -64,9 +64,8 @@ export class TaskDAO extends BaseDAO {
       row.trigger_enabled ?? 1,
       row.next_fire_at ?? null,
       row.last_fired_at ?? null,
-      // Cabin (C2): dispatch binds the owning cabin + iteration at creation.
+      // Cabin (C2): dispatch binds the owning cabin at creation.
       row.cabin_id ?? null,
-      row.iteration_id ?? null,
     )
   }
 

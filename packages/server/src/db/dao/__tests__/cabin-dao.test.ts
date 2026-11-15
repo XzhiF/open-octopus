@@ -52,7 +52,7 @@ describe("CabinDAO", () => {
     dao.insert(row("c1", "/a"))
     dao.insertJob({
       id: "j1", cabin_id: "c1", kind: "task", ref_id: "t1", session_id: null,
-      iteration_id: null, title: "job", mandate: null, prompt: null, priority: 0,
+      title: "job", mandate: null, prompt: null, priority: 0,
       created_at: "t0", ended_at: null,
     })
     dao.appendEvent({ id: "e1", job_id: "j1", cabin_id: "c1", kind: "dispatch", actor: "orchestrator", payload: "{}", created_at: "t0" })
@@ -60,22 +60,19 @@ describe("CabinDAO", () => {
     expect(() => db.exec("UPDATE cabin_job_events SET kind='report' WHERE id='e1'")).toThrow()
   })
 
-  it("cascade delete removes events/jobs/iterations/cabin", () => {
+  it("cascade delete removes events/jobs/cabin", () => {
     dao.insert(row("c1", "/a"))
-    dao.insertIteration({ id: "i1", cabin_id: "c1", code: "M1", name: "m", sort_order: 0, status: "pending", created_at: "t0", updated_at: "t0" })
-    dao.insertJob({ id: "j1", cabin_id: "c1", kind: "task", ref_id: null, session_id: null, iteration_id: "i1", title: "j", mandate: null, prompt: null, priority: 0, created_at: "t0", ended_at: null })
+    dao.insertJob({ id: "j1", cabin_id: "c1", kind: "task", ref_id: null, session_id: null, title: "j", mandate: null, prompt: null, priority: 0, created_at: "t0", ended_at: null })
     dao.appendEvent({ id: "e1", job_id: "j1", cabin_id: "c1", kind: "dispatch", actor: "orchestrator", payload: "{}", created_at: "t0" })
     dao.deleteEventsByCabin("c1")
     dao.deleteJobsByCabin("c1")
-    dao.deleteIterationsByCabin("c1")
     dao.delete("c1")
     expect(dao.findById("c1")).toBeUndefined()
     expect(dao.listJobs("c1").length).toBe(0)
-    expect(dao.listIterations("c1").length).toBe(0)
     expect(dao.listEventsByCabin("c1").length).toBe(0)
   })
 
-  it("backfills cabin_id/iteration_id on legacy tables via ctor ALTER", () => {
+  it("backfills cabin_id on legacy tables via ctor ALTER", () => {
     const legacy = new Database(":memory:")
     legacy.exec(`
       CREATE TABLE workspaces (id TEXT PRIMARY KEY, name TEXT, path TEXT);
@@ -88,7 +85,6 @@ describe("CabinDAO", () => {
     const ss = legacy.prepare("PRAGMA table_info(sessions)").all() as { name: string }[]
     expect(ws.some(c => c.name === "cabin_id")).toBe(true)
     expect(tk.some(c => c.name === "cabin_id")).toBe(true)
-    expect(tk.some(c => c.name === "iteration_id")).toBe(true)
     expect(ss.some(c => c.name === "cabin_id")).toBe(true)
     legacy.close()
   })

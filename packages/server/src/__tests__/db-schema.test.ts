@@ -44,8 +44,8 @@ describe("DB Schema", () => {
       "agent_events", "agent_versions", "archive_drafts",
       "billing_price_config", "billing_setting",
       "branch_executions",
-      // Cabin P1（作战舱）：cabins + 迭代 / 作业台账 / 审计事件。此前漏计本清单。
-      "cabin_iterations", "cabin_job_events", "cabin_jobs", "cabins",
+      // Cabin P1（作战舱）：cabins + 作业台账 / 审计事件。此前漏计本清单。
+      "cabin_job_events", "cabin_jobs", "cabins",
       "chat_messages", "chat_sessions",
       "clones", "effectiveness_cursors", "evolution_log", "execution_archive", "execution_links", "execution_summaries", "executions", "experiences",
       "findings",
@@ -96,9 +96,9 @@ describe("DB Schema", () => {
     // + 2026-11-04 作业坞子代理: idx_subagent_runs_session = 93.
     // + 2026-11-07 runtime supervision: − harness_config (no index) +
     //   idx_runtime_incidents_exec + idx_runtime_incidents_status = 95.
-    // + Cabin P1（作战舱）4 条：idx_cabins_status / idx_cabin_iterations_cabin /
-    //   idx_cabin_jobs_cabin / idx_cabin_job_events_job = 99（此前漏计，与表清单同上）。
-    expect(rows.length).toBe(99)
+    // + Cabin P1（作战舱）3 条：idx_cabins_status / idx_cabin_jobs_cabin /
+    //   idx_cabin_job_events_job = 98（此前漏计，与表清单同上）。迭代退役后 −1。
+    expect(rows.length).toBe(98)
   })
 
   it("workspaces table has correct columns", () => {

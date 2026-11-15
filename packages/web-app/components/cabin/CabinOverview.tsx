@@ -3,7 +3,7 @@
 // classic-v3 概览 = 原型 wbOverview 收敛版：
 //   头部（舱名 + 状态 + 目录 + 生命周期）→ 四 stat → 三入口（任务/工程/记录）
 //   → 需要你 → 迭代（点一行到任务窗并按该迭代筛）。
-// 数据：view（attention/health/iterations）由服务端派生；工作树数走 worktrees 端点；
+// 数据：view（attention/health）由服务端派生；工作树数走 worktrees 端点；
 // 任务计数走 listTasks（不取 derived，避免 N+1）；消耗走 C7 舱级聚合。
 
 import { useEffect, useState } from 'react'
@@ -24,14 +24,8 @@ import {
   ATTENTION_AWAITING_META, ATTENTION_STAGE_META, CABIN_STATUS_META,
 } from './cabin-meta'
 
-const ITERATION_STATUS_LABEL: Record<string, string> = {
-  pending: '待启动',
-  active: '进行中',
-  done: '已完成',
-}
-
 export function CabinOverview() {
-  const { cabinId, cabin, view, refresh, openModule, setTaskIter } = useCabinContext()
+  const { cabinId, cabin, view, refresh, openModule } = useCabinContext()
   const currency = useBillingCurrency()
   const [busy, setBusy] = useState<string | null>(null)
   const [worktreeStats, setWorktreeStats] = useState<{ trees: number; repos: number } | null>(null)
@@ -245,67 +239,6 @@ export function CabinOverview() {
                     </span>
                     <span className={cn('shrink-0 rounded-full px-1.5 py-0.5 text-[9.5px] font-bold', awaiting.tone)}>{awaiting.label}</span>
                     {item.priority > 0 && <span className="shrink-0 text-[9.5px] font-bold text-pop-dim">P{item.priority}</span>}
-                    <ChevronRight className="size-3 shrink-0 text-pop-dim" />
-                  </button>
-                </li>
-              )
-            })}
-          </ul>
-        )}
-      </section>
-
-      <section>
-        <div className="mb-1.5 flex items-center gap-2">
-          <span className="text-[11px] font-bold text-pop-ink">迭代</span>
-          <span className="text-[10px] text-pop-dim">点一个，到任务里筛</span>
-          <button
-            type="button"
-            data-testid="cabin-overview-iter-manage"
-            onClick={() => openModule('iterations')}
-            className="ml-auto text-[10px] text-pop-dim transition-colors hover:text-pop-ink"
-          >
-            管理
-          </button>
-        </div>
-        {view.iterations.length === 0 ? (
-          <div className="rounded-lg border-[1.5px] border-pop-bd bg-white/[0.02] px-3 py-3 text-[11.5px] text-pop-dim">
-            还没有迭代 · 初始化第 7 项门禁会提案 M1
-          </div>
-        ) : (
-          <ul className="space-y-1.5" data-testid="cabin-iteration-line">
-            {view.iterations.map((it) => {
-              const count = tasks.filter((t) => t.iteration_id === it.id).length || it.task_count || 0
-              return (
-                <li key={it.id}>
-                  <button
-                    type="button"
-                    data-iteration-code={it.code}
-                    data-testid={`cabin-iteration-${it.code}`}
-                    onClick={() => { setTaskIter(it.id); openModule('tasks') }}
-                    className={cn(
-                      'flex w-full items-center gap-2.5 rounded-lg border-[1.5px] px-2.5 py-2 text-left transition-colors hover:border-pop-dim',
-                      it.status === 'active' ? 'border-pop-yellow/50 bg-pop-yellow/[0.05]' : 'border-pop-bd bg-white/[0.02]',
-                    )}
-                  >
-                    <span className="grid size-7 shrink-0 place-items-center rounded-md bg-pop-cyan/15 font-mono text-[10.5px] font-black text-pop-cyan">
-                      {it.code}
-                    </span>
-                    <span className="min-w-0 flex-1">
-                      <span className="block truncate text-[12px] font-bold text-pop-ink">{it.name}</span>
-                      <span className="block text-[9.5px] text-pop-dim">
-                        {count} 任务 · {ITERATION_STATUS_LABEL[it.status] ?? it.status}
-                      </span>
-                    </span>
-                    <span className="w-24 shrink-0">
-                      <span className="block text-right font-mono text-[9.5px] text-pop-dim">{it.progress ?? 0}%</span>
-                      <span className="mt-0.5 block h-1 overflow-hidden rounded-full bg-white/[0.06]">
-                        <span
-                          className={cn('block h-full rounded-full', it.status === 'active' ? 'bg-pop-yellow' : 'bg-pop-cyan')}
-                          style={{ width: `${Math.min(100, Math.max(0, it.progress ?? 0))}%` }}
-                          data-testid={`cabin-iteration-progress-${it.code}`}
-                        />
-                      </span>
-                    </span>
                     <ChevronRight className="size-3 shrink-0 text-pop-dim" />
                   </button>
                 </li>

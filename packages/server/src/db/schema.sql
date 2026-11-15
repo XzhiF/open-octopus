@@ -700,9 +700,8 @@ CREATE TABLE IF NOT EXISTS tasks (
   -- 历史已归档 task 无摘要 = NULL（宽容读、搜索不崩）。走 ensureColumn 补列（既有库），
   -- 新库由本 CREATE 直接带上。
   semantic_summary TEXT,
-  -- Cabin (S2 no FK): cockpit ownership + iteration membership (single writer = task).
+  -- Cabin (S2 no FK): cockpit ownership.
   cabin_id TEXT,
-  iteration_id TEXT,
   FOREIGN KEY (source_chat_session_id) REFERENCES sessions(id)
 );
 
@@ -1397,25 +1396,12 @@ CREATE TABLE IF NOT EXISTS cabins (
 CREATE UNIQUE INDEX IF NOT EXISTS ux_cabins_path ON cabins(path) WHERE deleted_at IS NULL;
 CREATE INDEX IF NOT EXISTS idx_cabins_status ON cabins(status);
 
-CREATE TABLE IF NOT EXISTS cabin_iterations (
-  id TEXT PRIMARY KEY,
-  cabin_id TEXT NOT NULL,
-  code TEXT NOT NULL,
-  name TEXT NOT NULL,
-  sort_order INTEGER NOT NULL DEFAULT 0,
-  status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending','active','done')),
-  created_at TEXT NOT NULL,
-  updated_at TEXT NOT NULL
-);
-CREATE INDEX IF NOT EXISTS idx_cabin_iterations_cabin ON cabin_iterations(cabin_id, sort_order);
-
 CREATE TABLE IF NOT EXISTS cabin_jobs (
   id TEXT PRIMARY KEY,
   cabin_id TEXT NOT NULL,
   kind TEXT NOT NULL CHECK (kind IN ('task','workflow','subagent')),
   ref_id TEXT,
   session_id TEXT,
-  iteration_id TEXT,
   title TEXT NOT NULL,
   mandate TEXT,
   prompt TEXT,

@@ -54,7 +54,6 @@ function makeView(c: CabinDetail, attention: CabinAttentionItem[] = []): CabinVi
     cabin: c,
     attention,
     health: { running: 0, queued: 0, dormant: 0, workers: 0, max: 4 },
-    iterations: [],
     open_findings: 0,
   }
 }
@@ -66,7 +65,6 @@ function job(id: string, over: Partial<CabinJobView> = {}): CabinJobView {
     kind: 'task',
     ref_id: `t-${id}`,
     session_id: null,
-    iteration_id: null,
     title: `作业${id}`,
     mandate: null,
     prompt: null,
@@ -75,7 +73,6 @@ function job(id: string, over: Partial<CabinJobView> = {}): CabinJobView {
     ended_at: null,
     status: 'running',
     transport: 'task-thread',
-    iteration_code: null,
     ...over,
   }
 }

@@ -411,8 +411,6 @@ export interface TaskRow {
   semantic_summary: string | null
   /** Cabin (S2 no FK): cockpit ownership. Additive/optional. */
   cabin_id?: string | null
-  /** Cabin iteration membership (single writer = task); derived progress reads this. */
-  iteration_id?: string | null
   // ── schema v41 (ADR-0021): WHEN this task wants to run — the task's own data. ──
   // Before v41 the due time lived on a private `schedules` row that readyTask
   // pre-created and parked ('draft'); arming a task meant flipping that row, which
@@ -719,17 +717,6 @@ export interface CabinRow {
   deleted_at: string | null
 }
 
-export interface CabinIterationRow {
-  id: string
-  cabin_id: string
-  code: string
-  name: string
-  sort_order: number
-  status: 'pending' | 'active' | 'done'
-  created_at: string
-  updated_at: string
-}
-
 export type CabinJobKind = 'task' | 'workflow' | 'subagent'
 
 export interface CabinJobRow {
@@ -738,7 +725,6 @@ export interface CabinJobRow {
   kind: CabinJobKind
   ref_id: string | null
   session_id: string | null
-  iteration_id: string | null
   title: string
   mandate: string | null
   prompt: string | null

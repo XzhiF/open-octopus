@@ -69,7 +69,6 @@ describe("CabinInitService", () => {
     expect(manifest.id).toBe("cabin-1")
     expect(manifest.hash).toMatch(/^[0-9a-f]{64}$/)
     expect(fs.readFileSync(path.join(tmpDir, ".cabin", "requirements.md"), "utf-8")).toContain("结算平台")
-    expect(dao.listIterations("cabin-1").map((i) => i.code)).toEqual(["M1"])
     expect(turnRunner).toHaveBeenCalledTimes(1)
     expect(events).toContain("cabin_init_progress")
     expect(events).toContain("cabin_status")
@@ -98,7 +97,7 @@ describe("CabinInitService", () => {
     const row = dao.findById("cabin-1")!
     expect(row.status).toBe("initializing")
     const state = svc.loadState(row)
-    const failed = state.items.find((i) => i.key === "first-iteration")!
+    const failed = state.items.find((i) => i.key === "first-plan")!
     expect(failed.state).toBe("failed")
     expect(failed.error).toContain("model unavailable")
     expect(failed.fix_hint).toBeTruthy()

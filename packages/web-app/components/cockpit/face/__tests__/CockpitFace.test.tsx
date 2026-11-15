@@ -74,7 +74,6 @@ function makeView(c: CabinDetail, attention: CabinAttentionItem[] = []): CabinVi
     cabin: c,
     attention,
     health: { running: 0, queued: 0, dormant: 0, workers: 0, max: 4 },
-    iterations: [],
     open_findings: 0,
   }
 }
@@ -86,7 +85,6 @@ function jobView(cabinId: string, over: Partial<CabinJobView> = {}): CabinJobVie
     kind: 'workflow',
     ref_id: null,
     session_id: null,
-    iteration_id: null,
     title: '审计工作流',
     mandate: null,
     prompt: '跑一遍审计',
@@ -95,7 +93,6 @@ function jobView(cabinId: string, over: Partial<CabinJobView> = {}): CabinJobVie
     ended_at: null,
     status: 'running',
     transport: 'workflow',
-    iteration_code: null,
     ...over,
   }
 }
@@ -130,7 +127,6 @@ function mockJob(cabinId = 'cabin-1', over: Partial<CabinJobView> = {}) {
       kind: job.kind,
       ref_id: job.ref_id,
       session_id: job.session_id,
-      iteration_id: null,
       title: job.title,
       mandate: null,
       prompt: job.prompt,

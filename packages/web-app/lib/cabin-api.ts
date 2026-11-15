@@ -3,8 +3,8 @@
 // Thin client for the `/api/cabins` domain (Cabin P1). Mirrors the tasks-api
 // pattern: pure fetch wrapper, types from @octopus/shared, server is the single
 // source of truth for response shapes. Derived fields (attention/health/
-// iteration progress/job status) arrive pre-computed in CabinView — the client
-// never re-derives them (K3).
+// job status) arrive pre-computed in CabinView — the client never re-derives
+// them (K3).
 
 import { getServerUrl } from "@/lib/server-config"
 import type {
@@ -12,7 +12,6 @@ import type {
   CabinView,
   CabinStatus,
   CabinInitState,
-  CabinIteration,
   CabinJob,
   CabinJobEvent,
   CabinJobKind,
@@ -156,7 +155,7 @@ export async function attachCabin(path: string, name?: string): Promise<CabinDet
   return body.cabin
 }
 
-/** GET /:id — DTO + derived cockpit view (attention/health/iterations). */
+/** GET /:id — DTO + derived cockpit view (attention/health). */
 export async function getCabin(id: string, signal?: AbortSignal): Promise<{ cabin: CabinDetail; view: CabinView }> {
   const res = await fetch(url(`/${id}`), { signal })
   return handleResponse<{ cabin: CabinDetail; view: CabinView }>(res)
@@ -266,50 +265,11 @@ export async function setCabinRequirements(id: string, version: number, requirem
   return body.cabin
 }
 
-// ============ Attention / iterations ============
+// ============ Attention ============
 
 export async function getCabinAttention(id: string): Promise<{ attention: CabinAttentionItem[]; health: CabinHealth }> {
   const res = await fetch(url(`/${id}/attention`))
   return handleResponse<{ attention: CabinAttentionItem[]; health: CabinHealth }>(res)
-}
-
-export async function listCabinIterations(id: string): Promise<CabinIteration[]> {
-  const res = await fetch(url(`/${id}/iterations`))
-  const body = await handleResponse<{ iterations: CabinIteration[] }>(res)
-  return body.iterations
-}
-
-export async function createCabinIteration(
-  id: string,
-  input: { code: string; name: string; sort_order?: number },
-): Promise<CabinIteration> {
-  const res = await fetch(url(`/${id}/iterations`), {
-    method: "POST",
-    headers: JSON_HEADERS,
-    body: JSON.stringify(input),
-  })
-  const body = await handleResponse<{ iteration: CabinIteration }>(res)
-  return body.iteration
-}
-
-export async function patchCabinIteration(
-  id: string,
-  iterationId: string,
-  fields: { name?: string; sort_order?: number; status?: "pending" | "active" | "done" },
-): Promise<CabinIteration> {
-  const res = await fetch(url(`/${id}/iterations/${iterationId}`), {
-    method: "PATCH",
-    headers: JSON_HEADERS,
-    body: JSON.stringify(fields),
-  })
-  const body = await handleResponse<{ iteration: CabinIteration }>(res)
-  return body.iteration
-}
-
-/** Delete a milestone; member tasks are unbound server-side (tasks stay). */
-export async function deleteCabinIteration(id: string, iterationId: string): Promise<{ ok: true; unbound: number }> {
-  const res = await fetch(url(`/${id}/iterations/${iterationId}`), { method: "DELETE" })
-  return handleResponse<{ ok: true; unbound: number }>(res)
 }
 
 // ============ Repos / worktrees ============
@@ -384,12 +344,11 @@ export async function listCabinWorktrees(id: string): Promise<CabinWorktreeGroup
 
 // ============ Jobs / trace (C2/C6/C8) ============
 
-/** P3：作业 status/transport 派生自底层实体（K3），iteration_code 供面板展示。 */
+/** P3：作业 status/transport 派生自底层实体（K3）。 */
 export type CabinJobView = CabinJob & {
   /** 作业的项目锚点（空 = 未归属；不猜）。 */
   status: string
   transport: string
-  iteration_code: string | null
   /** 项目锚点（空/缺省 = 未归属；老服务端没有该字段）。 */
   project_keys?: string[]
 }
@@ -404,7 +363,6 @@ export interface DispatchCabinJobInput {
   kind: CabinJobKind
   ref_id?: string | null
   session_id?: string | null
-  iteration_id?: string | null
   title: string
   mandate?: CabinMandate
   prompt?: string | null

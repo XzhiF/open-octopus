@@ -43,7 +43,6 @@ function makeView(overrides: Partial<CabinView> = {}): CabinView {
     },
     attention: [],
     health: { running: 0, queued: 0, dormant: 0, workers: 0, max: 5 },
-    iterations: [],
     open_findings: 0,
     ...overrides,
   }
@@ -180,39 +179,6 @@ describe('CabinTasks — 四列 kanban（classic-v3）', () => {
     expect(spy).toHaveBeenCalled()
     window.removeEventListener('octopus:open-task', spy)
   })
-
-  it('迭代筛选：点 M1 只剩该迭代任务', async () => {
-    mockCabin(makeView({
-      iterations: [{
-        id: 'i1', cabin_id: 'cabin-1', code: 'M1', name: '渠道接入',
-        sort_order: 0, status: 'active', progress: 50, task_count: 1,
-      }],
-    }))
-    const task = (id: string, iteration_id: string | null) => ({
-      id, name: `任务${id}`, status: 'running', iteration_id, repo_group: 'pay', workflow_ref: 'dev',
-      task_spec: { goal: '', ac: [] }, version: 1, created_at: '', updated_at: '',
-    })
-    const items = [task('t1', 'i1'), task('t2', null)]
-    vi.mocked(listTasks).mockResolvedValue({ items: items as never })
-    vi.mocked(getTask).mockImplementation(async (id: string) => ({
-      ...items.find((t) => t.id === id),
-      executions: [],
-    }) as never)
-    render(
-      <CabinProvider cabinId="cabin-1">
-        <CabinTasks />
-      </CabinProvider>,
-    )
-    await screen.findByTestId('cabin-tasks-iters')
-    fireEvent.click(screen.getByTestId('cabin-tasks-iter-i1'))
-    await waitFor(() => {
-      const body = screen.getByTestId('cabin-kanban')
-      expect(body.textContent).toContain('任务t1')
-      expect(body.textContent).not.toContain('任务t2')
-    })
-    fireEvent.click(screen.getByTestId('cabin-tasks-iter-all'))
-    await waitFor(() => expect(screen.getByTestId('cabin-kanban').textContent).toContain('任务t2'))
-  })
 })
 
 describe('CabinJobDetail — 提优先/聚焦/对接', () => {
@@ -226,14 +192,14 @@ describe('CabinJobDetail — 提优先/聚焦/对接', () => {
     vi.mocked(listCabinJobs).mockResolvedValue([
       {
         id: 'j1', cabin_id: 'cabin-1', kind: 'task', ref_id: 't1', session_id: null,
-        iteration_id: null, title: '接入渠道', mandate: null, prompt: '把渠道接进来', priority: 2,
-        created_at: '', ended_at: null, status: 'running', transport: 'task-thread', iteration_code: 'M1',
+        title: '接入渠道', mandate: null, prompt: '把渠道接进来', priority: 2,
+        created_at: '', ended_at: null, status: 'running', transport: 'task-thread',
       },
     ])
     vi.mocked(getCabinJob).mockResolvedValue({
       job: {
         id: 'j1', cabin_id: 'cabin-1', kind: 'task', ref_id: 't1', session_id: null,
-        iteration_id: null, title: '接入渠道', mandate: null, prompt: '把渠道接进来', priority: 2,
+        title: '接入渠道', mandate: null, prompt: '把渠道接进来', priority: 2,
         created_at: '2026-11-13T14:00:00.000Z', ended_at: null,
       },
       events: [

@@ -2,6 +2,8 @@
 
 > 每个文件都是可独立打开的自包含 HTML（直接 `open`）。立绘在 `crew/`。
 > 设计稿：`design/09-cockpit-v2.md`（驾座演进）、`design/10-workbench-and-cabin.md`（两种模式）、`design/11-global-mode.md`（全局模式）。
+>
+> **2026-11-15 · 迭代（M1/M2 里程碑）完整退役**：`cabin_iterations` 表、`tasks.iteration_id`、`cabin_jobs.iteration_id`、cabin-tools 的 4 个 iteration 工具、REST `/iterations`、前端迭代窗与筛选均已删除。历史 HTML 原型与旧设计稿中的「迭代 / M1」仅作存档，不再实现。
 
 ## 两种模式（当前采用）
 

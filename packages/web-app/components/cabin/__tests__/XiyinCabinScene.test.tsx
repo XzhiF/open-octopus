@@ -47,7 +47,6 @@ const viewOf = (cabin: CabinDetail, over: Record<string, unknown> = {}): CabinVi
   cabin,
   attention: [],
   health: { running: 0, queued: 0, dormant: 0, workers: 0, max: 5 },
-  iterations: [],
   open_findings: 0,
   ...over,
 } as unknown as CabinView)

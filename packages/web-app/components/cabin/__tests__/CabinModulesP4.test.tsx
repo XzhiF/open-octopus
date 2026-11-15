@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { render, screen, fireEvent, waitFor } from '@testing-library/react'
-import type { CabinView, CabinIteration } from '@octopus/shared'
+import type { CabinView } from '@octopus/shared'
 import type { CabinUsagePayload } from '@/lib/cabin-api'
 import type { KcFindingView } from '@/lib/knowledge/knowledge-center-api'
 
@@ -11,9 +11,6 @@ vi.mock('@/lib/cabin-api', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@/lib/cabin-api')>()
   return {
     ...actual,
-    createCabinIteration: vi.fn(),
-    patchCabinIteration: vi.fn(),
-    deleteCabinIteration: vi.fn(),
     getCabinUsage: vi.fn(),
     getCabinFindings: vi.fn(),
     getCabinTrace: vi.fn(),
@@ -49,14 +46,12 @@ vi.mock('@/components/knowledge-center/cards/finding-card', () => ({
 
 import { useCabin } from '@/hooks/use-cabin'
 import {
-  createCabinIteration, patchCabinIteration, deleteCabinIteration,
   getCabinUsage, getCabinFindings, getCabinTrace, listCabinWorktrees,
 } from '@/lib/cabin-api'
 import { listTasks, getTask } from '@/lib/tasks-api'
 import { searchKc } from '@/lib/knowledge/knowledge-center-api'
 import { CabinProvider, useCabinContext } from '../cabin-provider'
 import { CabinModulesLayer } from '../CabinModulesLayer'
-import { CabinIterations } from '../modules/CabinIterations'
 import { CabinUsage } from '../modules/CabinUsage'
 import { CabinKnowledge } from '../modules/CabinKnowledge'
 import { CabinQueue } from '../modules/CabinQueue'
@@ -74,7 +69,6 @@ function makeView(overrides: Partial<CabinView> = {}): CabinView {
     },
     attention: [],
     health: { running: 0, queued: 0, dormant: 0, workers: 0, max: 5 },
-    iterations: [],
     open_findings: 0,
     ...overrides,
   }
@@ -89,10 +83,6 @@ function mockCabin(view: CabinView) {
     error: null,
     refresh: vi.fn().mockResolvedValue(undefined),
   })
-}
-
-function iter(id: string, code: string, over: Partial<CabinIteration> = {}): CabinIteration {
-  return { id, cabin_id: 'cabin-1', code, name: `里程碑${code}`, sort_order: 0, status: 'pending', progress: 0, task_count: 0, ...over }
 }
 
 function makeUsage(over: Partial<CabinUsagePayload> = {}): CabinUsagePayload {
@@ -129,34 +119,6 @@ beforeEach(() => {
   vi.mocked(listTasks).mockResolvedValue({ items: [] })
   vi.mocked(getCabinUsage).mockResolvedValue(makeUsage())
   vi.mocked(getCabinFindings).mockResolvedValue([])
-})
-
-describe('CabinIterations — CRUD（P4-1）', () => {
-  it('新建：填代号+名称 → createCabinIteration；列表渲染里程碑线', async () => {
-    mockCabin(makeView({ iterations: [iter('i1', 'M1', { status: 'active', progress: 50, task_count: 2 })] }))
-    vi.mocked(createCabinIteration).mockResolvedValue(iter('i2', 'M2'))
-    render(<CabinProvider cabinId="cabin-1"><CabinIterations /></CabinProvider>)
-    await screen.findByTestId('cabin-iterations-body')
-    expect(screen.getByTestId('cabin-iterations-body').textContent).toContain('里程碑M1')
-    fireEvent.click(screen.getByTestId('iter-new'))
-    fireEvent.change(screen.getByLabelText('迭代代号'), { target: { value: 'M2' } })
-    fireEvent.change(screen.getByLabelText('迭代名称'), { target: { value: '对账' } })
-    fireEvent.click(screen.getByTestId('iter-create-submit'))
-    await waitFor(() => expect(createCabinIteration).toHaveBeenCalledWith('cabin-1', { code: 'M2', name: '对账', sort_order: 1 }))
-  })
-
-  it('计划态 select → patchCabinIteration；删除二次确认 → deleteCabinIteration', async () => {
-    mockCabin(makeView({ iterations: [iter('i1', 'M1')] }))
-    vi.mocked(patchCabinIteration).mockResolvedValue(iter('i1', 'M1', { status: 'active' }))
-    vi.mocked(deleteCabinIteration).mockResolvedValue({ ok: true, unbound: 2 })
-    render(<CabinProvider cabinId="cabin-1"><CabinIterations /></CabinProvider>)
-    await screen.findByTestId('iter-status-M1')
-    fireEvent.change(screen.getByTestId('iter-status-M1'), { target: { value: 'active' } })
-    await waitFor(() => expect(patchCabinIteration).toHaveBeenCalledWith('cabin-1', 'i1', { status: 'active' }))
-    fireEvent.click(screen.getByTestId('iter-delete-M1'))
-    fireEvent.click(screen.getByTestId('iter-delete-confirm-M1'))
-    await waitFor(() => expect(deleteCabinIteration).toHaveBeenCalledWith('cabin-1', 'i1'))
-  })
 })
 
 describe('CabinUsage — 舱级消耗（P4-5 / C7）', () => {
@@ -236,7 +198,6 @@ describe('CabinQueue — blocked 态 + finding 深链路由（P4-3 / C4）', () 
 describe('CabinMissions — 作战清单（P4 · 原型 taskPanel）', () => {
   it('ring 点阵 + ≤5 行 + 运行/需要你/完成汇总；折叠；点行开任务', async () => {
     const view = makeView({
-      iterations: [iter('i1', 'M2', { status: 'active' })],
       attention: [{ id: 'a1', job_id: null, stage: 'review', awaiting: 'person', title: '待验收', task_id: 't2', repo: null, wt: null, deep_link: null, priority: 0 }],
     })
     mockCabin(view)
@@ -247,7 +208,7 @@ describe('CabinMissions — 作战清单（P4 · 原型 taskPanel）', () => {
     window.addEventListener('octopus:open-task', spy)
     render(<CabinProvider cabinId="cabin-1"><CabinMissions /></CabinProvider>)
     await screen.findByTestId('cabin-missions-panel')
-    expect(screen.getByTestId('cabin-missions-panel').textContent).toContain('MISSION · M2')
+    expect(screen.getByTestId('cabin-missions-panel').textContent).toContain('MISSION')
     expect(screen.getByTestId('cabin-missions-panel').textContent).toContain('1/3') // t3 done → 1/3
     expect(screen.getByTestId('cabin-missions-ring').children.length).toBe(3)
     expect(screen.getByTestId('cabin-missions-rows').querySelector('[data-mission-row="t1"]')).not.toBeNull()

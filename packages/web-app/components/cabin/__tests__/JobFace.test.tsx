@@ -49,7 +49,6 @@ function jobView(over: Partial<CabinJobView> = {}): CabinJobView {
     kind: 'task',
     ref_id: 't1',
     session_id: 'sess-abcdefgh',
-    iteration_id: null,
     title: '接入渠道',
     mandate: null,
     prompt: '把渠道接进来',
@@ -58,7 +57,6 @@ function jobView(over: Partial<CabinJobView> = {}): CabinJobView {
     ended_at: null,
     status: 'running',
     transport: 'task-thread',
-    iteration_code: 'M1',
     ...over,
   }
 }
@@ -72,7 +70,6 @@ function mockJob(view: Partial<CabinJobView> = {}, opts: { branch?: string } = {
       kind: view.kind ?? 'task',
       ref_id: view.ref_id ?? 't1',
       session_id: view.session_id ?? 'sess-abcdefgh',
-      iteration_id: null,
       title: view.title ?? '接入渠道',
       mandate: null,
       prompt: '把渠道接进来',
@@ -289,7 +286,7 @@ describe('JobFace（cockpit）', () => {
     vi.mocked(getCabinJob).mockResolvedValue({
       job: {
         id: 'j1', cabin_id: 'cabin-1', kind: 'workflow', ref_id: null,
-        session_id: null, iteration_id: null, title: '审计工作流',
+        session_id: null, title: '审计工作流',
         mandate: null, prompt: '把渠道接进来', priority: 1,
         created_at: '2026-11-13T14:00:00.000Z', ended_at: null,
       },
@@ -329,7 +326,7 @@ describe('JobFace（cockpit）', () => {
     vi.mocked(getCabinJob).mockResolvedValue({
       job: {
         id: 'j1', cabin_id: 'cabin-1', kind: 'workflow', ref_id: null,
-        session_id: null, iteration_id: null, title: '审计工作流',
+        session_id: null, title: '审计工作流',
         mandate: null, prompt: null, priority: 6,
         created_at: '2026-11-13T14:00:00.000Z', ended_at: null,
       },

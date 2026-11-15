@@ -1,9 +1,9 @@
 import type {
-  CabinAttentionItem, CabinHealth, CabinIteration, CabinStatus,
+  CabinAttentionItem, CabinHealth, CabinStatus,
 } from "@octopus/shared"
 
 /**
- * deriveCabinView — PURE attention/health/iteration aggregation (K3: never stored).
+ * deriveCabinView — PURE attention/health aggregation (K3: never stored).
  * Mirrors derive-task-view discipline: no DAO / fs / clock; caller gathers rows.
  * "awaiting" = whom the work waits for (superagent stage.ts), first-match wins.
  */
@@ -13,7 +13,6 @@ export interface DeriveTaskInput {
   name: string
   /** Derived task status (from deriveTaskView), not the raw column. */
   status: string
-  iteration_id: string | null
   repo?: string | null
   branch?: string | null
 }
@@ -52,14 +51,6 @@ export interface DeriveJobInput {
   priority: number
 }
 
-export interface DeriveIterationInput {
-  id: string
-  code: string
-  name: string
-  sort_order: number
-  status: "pending" | "active" | "done"
-}
-
 export interface DeriveCabinInput {
   cabin: { id: string; status: CabinStatus; focused_job_id: string | null }
   tasks: DeriveTaskInput[]
@@ -68,14 +59,12 @@ export interface DeriveCabinInput {
   asks: DeriveAskInput[]
   findings: DeriveFindingInput[]
   jobs: DeriveJobInput[]
-  iterations: DeriveIterationInput[]
   maxWorkers: number
 }
 
 export interface DerivedCabinView {
   attention: CabinAttentionItem[]
   health: CabinHealth
-  iterations: CabinIteration[]
   open_findings: number
 }
 
@@ -84,7 +73,7 @@ const AWAITING_ORDER: Record<CabinAttentionItem["awaiting"], number> = {
 }
 
 export function deriveCabinView(input: DeriveCabinInput): DerivedCabinView {
-  const { cabin, tasks, executions, incidents, asks, findings, jobs, iterations, maxWorkers } = input
+  const { cabin, tasks, executions, incidents, asks, findings, jobs, maxWorkers } = input
   const jobByTask = new Map<string, DeriveJobInput>()
   for (const j of jobs) if (j.kind === "task" && j.ref_id) jobByTask.set(j.ref_id, j)
   const priorityOf = (taskId: string | null): number =>
@@ -166,19 +155,8 @@ export function deriveCabinView(input: DeriveCabinInput): DerivedCabinView {
     workers: running, max: maxWorkers,
   }
 
-  const derivedIterations: CabinIteration[] = iterations.map(it => {
-    const members = tasks.filter(t => t.iteration_id === it.id)
-    const done = members.filter(t => t.status === "done").length
-    return {
-      id: it.id, cabin_id: cabin.id, code: it.code, name: it.name,
-      sort_order: it.sort_order, status: it.status,
-      task_count: members.length,
-      progress: members.length ? Math.round((done / members.length) * 100) : 0,
-    }
-  })
-
   return {
-    attention, health, iterations: derivedIterations,
+    attention, health,
     open_findings: findings.filter(f => f.status === "open").length,
   }
 }

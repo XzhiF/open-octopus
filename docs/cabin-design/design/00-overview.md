@@ -1,6 +1,8 @@
 # 00 · 工作舱 Cabin 总览
 
 > 入口文档。实现基准 = 本 design/ 文档集 + 计划 `slow-glade-hawk.md`。原型 UX 参照 `../index.html`。
+>
+> **2026-11-15：迭代（M1/M2 里程碑）已完整退役——表、字段、API、工具、UI 全部删除。下文及历史设计稿中出现的「迭代 / M1」仅作存档，不再是实现要求。**
 
 ## 是什么
 Cabin = **绑定目录、长期存活**的开发座舱。一个 cwd 目录 = 一个舱。层级 **Cabin ⊃ Workspace(任务执行环境) ⊃ Worktree**；克隆仓库仍叫「仓库」。AI-native：一切由持久主对话（orchestrator）驱动，作业坞/面板只是监督面。
@@ -30,10 +32,10 @@ Cabin = **绑定目录、长期存活**的开发座舱。一个 cwd 目录 = 一
 
 ## 与现有实体接缝
 - 复用：WorkspaceService（attach/create/ensureWorktreesForReuse）、WorkspaceGit（initWorktreeOne/writeSpecWorktreeMeta）、gitOps（syncToDefaultBranch/worktree*）、cloneProject、TasksService/TaskThreadService/deriveTaskView、archiving-service/ArchiveIngestService、round-evidence-service、findings/FindingOpsService、chat-event-bridge、subagent_runs、llm_calls/llm_calls_costed。
-- 新增：cabins/cabin_iterations/cabin_jobs/cabin_job_events 四表、CabinDAO/CabinService/CabinInitService/CabinCommService/deriveCabinView、cabin-orchestrator preset、routes/cabins、前端 cabin/ 组件集。
+- 新增：cabins/cabin_jobs/cabin_job_events 三表、CabinDAO/CabinService/CabinInitService/CabinCommService/deriveCabinView、cabin-orchestrator preset、routes/cabins、前端 cabin/ 组件集。
 
 ## 种子场景（演示）
-Aurora 结算平台 `~/cabins/aurora`：3 仓（gateway/ledger/web）、3 迭代 M1/M2/M3、并行 worktree、attention 四态（待验收/待回答/待裁决/审批）。
+Aurora 结算平台 `~/cabins/aurora`：3 仓（gateway/ledger/web）、并行 worktree、attention 四态（待验收/待回答/待裁决/审批）。
 
 ## 范围边界
 本阶段实现 Cabin 全旅程；multi-org 跨 org、自动沉淀增强等留 v2（见 08 开放项）。

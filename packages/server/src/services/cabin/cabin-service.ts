@@ -16,7 +16,7 @@ import type { ExecutionLinkDAO } from "../../db/dao/execution-link-dao"
 import type { FindingRow } from "../../db/dao/findings-dao"
 import { pricePreviewSql } from "../../db/price-sql"
 import type {
-  CabinRow, CabinIterationRow, CabinJobRow, CabinJobEventRow, CabinStatus, CabinJobKind, CabinJobEventKind,
+  CabinRow, CabinJobRow, CabinJobEventRow, CabinStatus, CabinJobKind, CabinJobEventKind,
 } from "../../db/types"
 import type { WorkspaceService } from "../workspace"
 import type { TasksService } from "../tasks/tasks-service"
@@ -214,7 +214,7 @@ export interface CreateCabinResult {
 /**
  * CabinService — directory-bound long-lived cockpit.
  * Identity + lifecycle (soft archive / reopen / dormant) + G1 cascade delete
- * + iterations + dispatch ledger. Composes the existing workspace/session/task
+ * + dispatch ledger. Composes the existing workspace/session/task
  * infrastructure; init orchestration lives in CabinInitService.
  */
 export class CabinService {
@@ -619,7 +619,6 @@ export class CabinService {
   getView(id: string): { cabin: CabinRow; view: DerivedCabinView } {
     const row = this.mustGet(id)
     const jobs = this.cabin.listJobs(id)
-    const iterations = this.cabin.listIterations(id)
     const tasks: DeriveCabinInput["tasks"] = []
     const executions: DeriveCabinInput["executions"] = []
     const taskRows = this.infra ? this.infra.taskDAO.findByCabinId(id) : []
@@ -632,7 +631,7 @@ export class CabinService {
         const derived = deriveTaskView(t, execs, acceptances)
         tasks.push({
           id: t.id, name: t.name, status: derived.taskStatus,
-          iteration_id: t.iteration_id ?? null, repo: t.repo_group ?? null, branch: null,
+          repo: t.repo_group ?? null, branch: null,
         })
         for (const e of execs) {
           executions.push({ id: e.id, task_id: t.id, status: e.status })
@@ -649,7 +648,6 @@ export class CabinService {
       asks: this.gatherAsks(row, executions, execToTask, sessionToTask),
       findings: this.listFindings(id, "open").map((f) => ({ id: f.id, title: f.title, status: f.status })),
       jobs: jobs.map((j) => ({ id: j.id, kind: j.kind, ref_id: j.ref_id, title: j.title, priority: j.priority })),
-      iterations: iterations.map((it) => ({ id: it.id, code: it.code, name: it.name, sort_order: it.sort_order, status: it.status })),
       maxWorkers: MAX_PARALLEL_WORKSPACES,
     })
     return { cabin: row, view }
@@ -861,57 +859,18 @@ export class CabinService {
     })
   }
 
-  // ── iterations ──
-  listIterations(cabinId: string): CabinIterationRow[] { return this.cabin.listIterations(cabinId) }
-  createIteration(cabinId: string, input: { code: string; name: string; sort_order?: number }): CabinIterationRow {
-    this.mustGet(cabinId)
-    const ts = now()
-    const row: CabinIterationRow = {
-      id: randomUUID(), cabin_id: cabinId, code: input.code, name: input.name,
-      sort_order: input.sort_order ?? 0, status: "pending", created_at: ts, updated_at: ts,
-    }
-    this.cabin.insertIteration(row)
-    return row
-  }
-  updateIteration(cabinId: string, id: string, fields: { name?: string; sort_order?: number; status?: "pending" | "active" | "done" }): CabinIterationRow {
-    const row = this.mustIterationInCabin(cabinId, id)
-    this.cabin.updateIteration(row.id, fields, now())
-    return this.cabin.findIteration(row.id)!
-  }
-  /** Delete a milestone; member tasks are unbound (tasks.iteration_id single
-   *  writer, S2 app-level cascade) — the tasks themselves stay untouched. */
-  deleteIteration(cabinId: string, id: string): { unbound: number } {
-    const row = this.mustIterationInCabin(cabinId, id)
-    let unbound = 0
-    if (this.infra) {
-      for (const t of this.infra.taskDAO.findByCabinId(cabinId)) {
-        if (t.iteration_id !== row.id) continue
-        const res = this.infra.taskDAO.updateWithVersion(t.id, { iteration_id: null }, t.version)
-        if (res.changes > 0) unbound += 1
-      }
-    }
-    this.cabin.deleteIteration(row.id)
-    return { unbound }
-  }
-  private mustIterationInCabin(cabinId: string, id: string): CabinIterationRow {
-    this.mustGet(cabinId)
-    const row = this.cabin.findIteration(id)
-    if (!row || row.cabin_id !== cabinId) throw new CabinNotFoundError(`${cabinId}/iteration:${id}`)
-    return row
-  }
-
   // ── dispatch ledger (C2/C6/C8) ──
   listJobs(cabinId: string): CabinJobRow[] { return this.cabin.listJobs(cabinId) }
   getJob(id: string): CabinJobRow | undefined { return this.cabin.findJob(id) }
   dispatchJob(cabinId: string, input: {
-    kind: CabinJobKind; ref_id?: string | null; session_id?: string | null; iteration_id?: string | null
+    kind: CabinJobKind; ref_id?: string | null; session_id?: string | null
     title: string; mandate?: unknown; prompt?: string | null; priority?: number
   }): CabinJobRow {
     this.mustGet(cabinId)
     const row: CabinJobRow = {
       id: randomUUID(), cabin_id: cabinId, kind: input.kind,
       ref_id: input.ref_id ?? null, session_id: input.session_id ?? null,
-      iteration_id: input.iteration_id ?? null, title: input.title,
+      title: input.title,
       mandate: input.mandate ? JSON.stringify(input.mandate) : null,
       prompt: input.prompt ?? null, priority: input.priority ?? 0,
       created_at: now(), ended_at: null,
@@ -947,20 +906,17 @@ export class CabinService {
 
   /** C2 agent 可知：舱内任务清单（派生状态，单写者=任务行）。 */
   listTasksView(cabinId: string): Array<{
-    id: string; name: string; status: string; iteration_id: string | null
-    iteration_code: string | null; workspace_id: string | null; session_id: string | null
+    id: string; name: string; status: string
+    workspace_id: string | null; session_id: string | null
   }> {
     this.mustGet(cabinId)
     if (!this.infra) return []
-    const iterations = this.cabin.listIterations(cabinId)
     return this.infra.taskDAO.findByCabinId(cabinId).map((t) => {
       const execs = this.infra!.executionDAO.listTaskInstances(t.id, 200)
       const acceptances = this.infra!.acceptanceDAO.listByTask(t.id)
       return {
         id: t.id, name: t.name,
         status: deriveTaskView(t, execs, acceptances).taskStatus,
-        iteration_id: t.iteration_id ?? null,
-        iteration_code: iterations.find((it) => it.id === t.iteration_id)?.code ?? null,
         workspace_id: t.workspace_id ?? null,
         session_id: t.source_chat_session_id ?? null,
       }
@@ -970,10 +926,9 @@ export class CabinService {
   /** C2/K3：作业 status 派生自底层实体（task→deriveTaskView / execution /
    *  subagent_runs），不镜像存储。transport = 传输层通道（D6）。 */
   listJobsView(cabinId: string): Array<CabinJobRow & {
-    status: string; transport: string; iteration_code: string | null; project_keys: string[]
+    status: string; transport: string; project_keys: string[]
   }> {
     const cabinRow = this.mustGet(cabinId)
-    const iterations = this.cabin.listIterations(cabinId)
     const db = this.cabin.getDb()
     const projects = readCabinConfig(cabinRow.path).repos
     return this.cabin.listJobs(cabinId).map((j) => {
@@ -1002,8 +957,7 @@ export class CabinService {
         project_keys = this.anchorsOfCwd(row?.cwd ?? null, projects)
       }
       const transport = j.kind === "task" ? "task-thread" : j.kind === "workflow" ? "workflow-engine" : "sdk-agent"
-      const iteration_code = iterations.find((it) => it.id === j.iteration_id)?.code ?? null
-      return { ...j, status, transport, iteration_code, project_keys }
+      return { ...j, status, transport, project_keys }
     })
   }
 

@@ -13,7 +13,7 @@ import { TokenUsageDAO } from "../../../db/dao/token-usage-dao"
 import { ExecutionLinkDAO } from "../../../db/dao/execution-link-dao"
 import { IncidentStore } from "../../supervision/incident-store"
 import { initSessionService, getSessionService } from "../../agent/session-service"
-import { CabinService, CabinNotFoundError } from "../cabin-service"
+import { CabinService } from "../cabin-service"
 import { clearCabinFindingScopeCache } from "../cabin-knowledge"
 import { cabinAutonomy, cabinDispatchDecision } from "../../chat/cabin-tools"
 import type { FindingOpsService } from "../../knowledge/findings"
@@ -42,11 +42,11 @@ function insertCabin(id: string): void {
   })
 }
 
-function insertTask(id: string, cabinId: string, status = "running", iterationId: string | null = null): void {
+function insertTask(id: string, cabinId: string, status = "running"): void {
   db.prepare(`
-    INSERT INTO tasks (id, repo_group, name, status, task_spec, cabin_id, iteration_id, created_at, updated_at)
-    VALUES (?, 'repo-a', ?, ?, '{}', ?, ?, ?, ?)
-  `).run(id, `任务${id}`, status, cabinId, iterationId, NOW, NOW)
+    INSERT INTO tasks (id, repo_group, name, status, task_spec, cabin_id, created_at, updated_at)
+    VALUES (?, 'repo-a', ?, ?, '{}', ?, ?, ?)
+  `).run(id, `任务${id}`, status, cabinId, NOW, NOW)
 }
 
 function insertExecution(id: string, taskId: string | null, status: string, createdAt = NOW): void {
@@ -121,38 +121,6 @@ beforeEach(() => {
 afterEach(() => {
   db.close()
   fs.rmSync(tmpDir, { recursive: true, force: true })
-})
-
-describe("迭代 CRUD（P4-1）", () => {
-  it("create → update（改名/计划态/重排）→ delete 解绑成员任务", () => {
-    const it1 = svc.createIteration("c1", { code: "M1", name: "渠道接入" })
-    const it2 = svc.createIteration("c1", { code: "M2", name: "对账", sort_order: 1 })
-    insertTask("t1", "c1", "running", it1.id)
-    insertTask("t2", "c1", "done", it1.id)
-
-    const updated = svc.updateIteration("c1", it1.id, { name: "渠道接入 v2", status: "active" })
-    expect(updated.name).toBe("渠道接入 v2")
-    expect(updated.status).toBe("active")
-
-    // 进度派生自成员任务（K3）
-    const { view } = svc.getView("c1")
-    const m1 = view.iterations.find((i) => i.id === it1.id)!
-    expect(m1.task_count).toBe(2)
-    expect(m1.progress).toBe(50)
-
-    const res = svc.deleteIteration("c1", it1.id)
-    expect(res.unbound).toBe(2)
-    expect(taskDAO.getById("t1")!.iteration_id).toBeNull()
-    expect(taskDAO.getById("t2")!.iteration_id).toBeNull()
-    expect(svc.listIterations("c1").map((i) => i.id)).toEqual([it2.id])
-  })
-
-  it("跨舱操作迭代 → CabinNotFoundError（所有权守卫）", () => {
-    insertCabin("c2")
-    const it1 = svc.createIteration("c1", { code: "M1", name: "x" })
-    expect(() => svc.updateIteration("c2", it1.id, { name: "y" })).toThrow(CabinNotFoundError)
-    expect(() => svc.deleteIteration("c2", it1.id)).toThrow(CabinNotFoundError)
-  })
 })
 
 describe("attention gather（P4-3 / C4）", () => {

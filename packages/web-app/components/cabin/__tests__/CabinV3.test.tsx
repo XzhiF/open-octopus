@@ -47,7 +47,6 @@ function makeView(overrides: Partial<CabinView> = {}): CabinView {
     },
     attention: [],
     health: { running: 1, queued: 0, dormant: 0, workers: 1, max: 5 },
-    iterations: [],
     open_findings: 0,
     ...overrides,
   }
@@ -66,16 +65,16 @@ function mockCabin(view: CabinView) {
 
 function task(id: string, over: Record<string, unknown> = {}) {
   return {
-    id, name: `任务${id}`, status: 'running', iteration_id: null, repo_group: 'pay', workflow_ref: 'dev',
+    id, name: `任务${id}`, status: 'running', repo_group: 'pay', workflow_ref: 'dev',
     task_spec: { goal: '', ac: [] }, version: 1, created_at: '', updated_at: '', ...over,
   }
 }
 
 function job(id: string, over: Record<string, unknown> = {}) {
   return {
-    id, cabin_id: 'cabin-1', kind: 'task', ref_id: 't1', session_id: null, iteration_id: null,
+    id, cabin_id: 'cabin-1', kind: 'task', ref_id: 't1', session_id: null,
     title: `作业${id}`, mandate: null, prompt: null, priority: 0, created_at: '2026-11-13T10:00:00.000Z',
-    ended_at: null, status: 'running', transport: 'task-thread', iteration_code: null, ...over,
+    ended_at: null, status: 'running', transport: 'task-thread', ...over,
   }
 }
 
@@ -98,18 +97,12 @@ beforeEach(() => {
 })
 
 describe('CabinOverview — classic-v3 三入口', () => {
-  it('只有任务/工程/记录三张门卡；点门卡开对应窗；点迭代带筛选开任务窗', async () => {
-    mockCabin(makeView({
-      iterations: [{
-        id: 'i1', cabin_id: 'cabin-1', code: 'M1', name: '渠道接入',
-        sort_order: 0, status: 'active', progress: 50, task_count: 1,
-      }],
-    }))
+  it('只有任务/工程/记录三张门卡；点门卡开对应窗', async () => {
+    mockCabin(makeView())
     vi.mocked(listCabinWorktrees).mockResolvedValue([
       { repo: 'aurora', worktrees: [{ path: '/w1', head: 'h1', branch: 'feat-x' }] },
     ])
-    const items = [task('t1', { iteration_id: 'i1' }), task('t2')]
-    vi.mocked(listTasks).mockResolvedValue({ items: items as never })
+    vi.mocked(listTasks).mockResolvedValue({ items: [task('t1'), task('t2')] as never })
 
     render(
       <CabinProvider cabinId="cabin-1">
@@ -125,12 +118,6 @@ describe('CabinOverview — classic-v3 三入口', () => {
 
     fireEvent.click(screen.getByTestId('cabin-hub-door-engineering'))
     await waitFor(() => expect(screen.getByTestId('window-probe').textContent).toContain('engineering'))
-
-    fireEvent.click(await screen.findByTestId('cabin-iteration-M1'))
-    await waitFor(() => {
-      expect(screen.getByTestId('window-probe').textContent).toContain('tasks')
-      expect(screen.getByTestId('window-probe').textContent).toContain('i1')
-    })
   })
 })
 

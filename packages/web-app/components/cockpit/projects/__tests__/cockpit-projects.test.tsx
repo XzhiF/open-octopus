@@ -113,17 +113,17 @@ beforeEach(() => {
   vi.mocked(getCabin).mockImplementation(async (id: string) => ({ cabin: cabin(id, '账务中台'), view: {} as never }))
   vi.mocked(listCabinJobs).mockResolvedValue([
     {
-      id: 'j1', cabin_id: 'c1', kind: 'task', ref_id: 't1', session_id: null, iteration_id: null,
+      id: 'j1', cabin_id: 'c1', kind: 'task', ref_id: 't1', session_id: null,
       title: '对齐尾差', mandate: null, prompt: null, priority: 0,
       created_at: '2026-11-15T01:00:00.000Z', ended_at: null,
-      status: 'running', transport: 'task-thread', iteration_code: 'M2',
+      status: 'running', transport: 'task-thread',
       project_keys: ['org:XzhiF/ledger'],
     },
     {
-      id: 'j2', cabin_id: 'c1', kind: 'workflow', ref_id: null, session_id: null, iteration_id: null,
+      id: 'j2', cabin_id: 'c1', kind: 'workflow', ref_id: null, session_id: null,
       title: '杂活', mandate: null, prompt: null, priority: 0,
       created_at: '2026-11-15T01:00:00.000Z', ended_at: null,
-      status: 'pending', transport: 'workflow-engine', iteration_code: null,
+      status: 'pending', transport: 'workflow-engine',
       project_keys: [],
     },
   ])

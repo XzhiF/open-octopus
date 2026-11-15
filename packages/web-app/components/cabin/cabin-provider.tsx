@@ -51,9 +51,6 @@ export interface CabinContextValue {
   selectedJobId: string | null
   /** 打开作业详情窗并选中该作业。 */
   openJobDetail: (jobId: string) => void
-  /** 任务窗的迭代筛选（概览里的迭代行会写入）；null = 全部。 */
-  taskIter: string | null
-  setTaskIter: (id: string | null) => void
 }
 
 const CabinContext = createContext<CabinContextValue | null>(null)
@@ -64,7 +61,6 @@ export function CabinProvider({ cabinId, children }: { cabinId: string; children
   const [windows, setWindows] = useState<Record<string, CabinWinGeo>>({})
   const [traceJobId, setTraceJob] = useState<string | null>(null)
   const [selectedJobId, setSelectedJobId] = useState<string | null>(null)
-  const [taskIter, setTaskIter] = useState<string | null>(null)
 
   const focusModule = useCallback((id: string) => {
     setOpenWindows((prev) => [...prev.filter((w) => w !== id), id])
@@ -175,7 +171,6 @@ export function CabinProvider({ cabinId, children }: { cabinId: string; children
     setWindows({})
     setTraceJob(null)
     setSelectedJobId(null)
-    setTaskIter(null)
   }, [cabinId])
 
   const minimizedWindows = useMemo(
@@ -193,14 +188,14 @@ export function CabinProvider({ cabinId, children }: { cabinId: string; children
     openModule, closeModule, minimizeModule, focusModule,
     placeModule, moveModule, resizeModule, toggleMaxModule,
     traceJobId, setTraceJob,
-    selectedJobId, openJobDetail, taskIter, setTaskIter,
+    selectedJobId, openJobDetail,
   }), [
     cabinId, cabin, view, initState, loading, error, refresh,
     openWindows, minimizedWindows, focusedWindow, windows,
     openModule, closeModule, minimizeModule, focusModule,
     placeModule, moveModule, resizeModule, toggleMaxModule,
     traceJobId,
-    selectedJobId, openJobDetail, taskIter,
+    selectedJobId, openJobDetail,
   ])
 
   return <CabinContext.Provider value={value}>{children}</CabinContext.Provider>

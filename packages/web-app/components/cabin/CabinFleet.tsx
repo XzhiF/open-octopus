@@ -83,7 +83,7 @@ export function CabinFleet() {
           title: j.title,
           status: j.status,
           pct: j.kind === 'task' ? taskPct(task) : isEndedJob(j.status) ? 100 : 45,
-          meta: [j.iteration_code, j.transport].filter(Boolean).join(' · '),
+          meta: j.transport,
           job: j,
           task,
         }

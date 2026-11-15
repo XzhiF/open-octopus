@@ -14,7 +14,6 @@ import { CabinQueue } from './modules/CabinQueue'
 import { CabinEngineering } from './modules/CabinEngineering'
 import { CabinRecords } from './modules/CabinRecords'
 import { CabinTasks } from './modules/CabinTasks'
-import { CabinIterations } from './modules/CabinIterations'
 import { CabinJobDetail } from './modules/CabinJobDetail'
 import { CabinKnowledge } from './modules/CabinKnowledge'
 import { CabinUsage } from './modules/CabinUsage'
@@ -29,7 +28,6 @@ function ModuleBody({ id, onNewTask }: { id: string; onNewTask?: () => void }) {
     case 'engineering': return <CabinEngineering />
     case 'records': return <CabinRecords />
     case 'tasks': return <CabinTasks onNewTask={onNewTask} />
-    case 'iterations': return <CabinIterations />
     case 'job': return <CabinJobDetail />
     case 'knowledge': return <CabinKnowledge />
     case 'usage': return <CabinUsage />

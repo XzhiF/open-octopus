@@ -62,7 +62,7 @@
 | 任务（`tasks`） | 软删（`deleteTask`） | 跟任务删除同语义：隐藏、不丢 |
 | 会话（`sessions`） | 软删（`is_deleted=1`） | 否则舱主会话会漏进「会话」列表 |
 | `executions` / `llm_calls` / Trace / 验收 | **一律保留** | **计费与审计的账本，删了就对不上账** |
-| `cabin_jobs` / `cabin_job_events` / `cabin_iterations` | 保留 | 审计与按作业归集的消耗还要能追 |
+| `cabin_jobs` / `cabin_job_events` | 保留 | 审计与按作业归集的消耗还要能追 |
 | `workspaces` 行 | **保留** | `executions.workspace_id` 有外键指着它；任务也是「删任务留空间」 |
 | 磁盘工作树 | 尽力移除（与原来一致） | 临时检出，不是账 |
 | 舱目录 `row.path` | 默认不动；`delete_files=1` 才 `rm -rf` | 用户明确勾选才删；带防呆（拒绝 `/`、home、home 的父级、非绝对路径） |

@@ -604,12 +604,11 @@ export function JobFace({
                 </div>
               </div>
 
-              {(cockpit?.cabinName || executor || branch || jobView?.iteration_code) && (
+              {(cockpit?.cabinName || executor || branch) && (
                 <div className="ck12-jfacts">
                   {cockpit?.cabinName && <span>舱 <b>{cockpit.cabinName}</b></span>}
                   {executor && <span>执行者 <b>{executor}</b></span>}
                   {branch && <span>分支 <b>{branch}</b></span>}
-                  {jobView?.iteration_code && <span>迭代 <b>{jobView.iteration_code}</b></span>}
                 </div>
               )}
 
@@ -880,7 +879,6 @@ export function JobFace({
           }[tone])} />
           {jobStatusLabel(status)}
         </span>
-        {jobView?.iteration_code && <span className="font-mono text-[10px] text-pop-dim">{jobView.iteration_code}</span>}
         {jobView?.transport && <span className="font-mono text-[10px] text-pop-dim">· {jobView.transport}</span>}
         <span className="ml-auto flex shrink-0 flex-wrap gap-1.5">
           <button

@@ -170,18 +170,6 @@ describe("/api/cabins routes", () => {
     expect((await unfocused.json()).cabin.focused_job_id).toBeNull()
   })
 
-  it("iterations: create + derived progress + patch status", async () => {
-    const cabin = await createCabin()
-    const created = await post(`/api/cabins/${cabin.id}/iterations`, { code: "M1", name: "渠道接入" })
-    expect(created.status).toBe(201)
-    const it = (await created.json()).iteration
-    const list = await app.request(`/api/cabins/${cabin.id}/iterations`)
-    const items = (await list.json()).iterations
-    expect(items[0].progress).toBe(0)
-    expect(items[0].task_count).toBe(0)
-    expect((await patch(`/api/cabins/${cabin.id}/iterations/${it.id}`, { status: "active" })).status).toBe(200)
-  })
-
   it("DELETE /:id 软删：默认留本地目录；?delete_files=1 才删", async () => {
     const cabin = await createCabin()
     const res = await app.request(`/api/cabins/${cabin.id}`, { method: "DELETE" })

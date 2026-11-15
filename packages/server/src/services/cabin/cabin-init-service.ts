@@ -3,7 +3,7 @@
 // CabinInitService — the one genuinely new orchestration in Cabin P1: an
 // agent-driven setup gate modeled on InitService.initAgent idempotence +
 // archiving per-item resume. Gates 1–6 are deterministic service calls (no
-// LLM); gate 7 (first-iteration proposal) is a real orchestrator turn through
+// LLM); gate 7 (first-task proposal) is a real orchestrator turn through
 // the normal chat endpoint (self-POST, same path ChatEventBridge.wake uses).
 //
 // Truth on disk: .cabin/init-state.json (per-item resume) + .cabin/manifest.json
@@ -13,7 +13,7 @@
 
 import fs from "fs"
 import path from "path"
-import { createHash, randomUUID } from "crypto"
+import { createHash } from "crypto"
 import { spawnSync } from "child_process"
 import type { CabinInitState } from "@octopus/shared"
 import type { CabinDAO } from "../../db/dao/cabin-dao"
@@ -50,7 +50,7 @@ const GATE_DEFS: GateDef[] = [
   { key: "mainline", label: "项目 / 主线登记", fixHint: "登记 main_path / 主线分支；worktree 按作业开", deepLink: "repos" },
   { key: "skeleton", label: "舱骨架 .cabin/", fixHint: "检查目录写权限", deepLink: "settings" },
   { key: "requirements", label: "需求落盘", fixHint: "检查目录写权限", deepLink: "settings" },
-  { key: "first-iteration", label: "首迭代提案", fixHint: "检查模型服务配置后重试门禁", deepLink: "settings" },
+  { key: "first-plan", label: "首批任务建议", fixHint: "检查模型服务配置后重试门禁", deepLink: "settings" },
 ]
 
 const now = () => new Date().toISOString()
@@ -350,21 +350,13 @@ export class CabinInitService {
         fs.writeFileSync(path.join(cabinDir, "requirements.md"), content, "utf-8")
         return
       }
-      case "first-iteration": {
-        if (!row.main_session_id) throw new Error("舱主会话缺失，无法发起首迭代提案回合")
+      case "first-plan": {
+        if (!row.main_session_id) throw new Error("舱主会话缺失，无法发起首批任务提案回合")
         const runner = this.deps.runOrchestratorTurn ?? defaultOrchestratorTurn
         const message = `作战舱「${row.name}」已就绪（目录/git/仓库/主线/骨架/需求门禁全部通过）。` +
-          `请阅读 .cabin/requirements.md，提出首个迭代 M1 的目标与首批任务建议` +
-          `（仅提案，不派发；派发任务需用户确认）。`
+          `请阅读 .cabin/requirements.md，给出首批任务建议（按优先级排列；仅建议，不派发；派发任务需用户确认）。`
         await runner(row.main_session_id, message, row.org)
-        if (this.deps.cabin.listIterations(row.id).length === 0) {
-          const ts = now()
-          this.deps.cabin.insertIteration({
-            id: randomUUID(), cabin_id: row.id, code: "M1", name: "首个迭代",
-            sort_order: 0, status: "pending", created_at: ts, updated_at: ts,
-          })
-        }
-        item.sub = "M1 已提案，待调度者细化"
+        item.sub = "首批任务建议已生成，待调度者细化"
         return
       }
       default:

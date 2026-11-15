@@ -64,7 +64,6 @@ export class CabinCommService {
     prompt?: string | null
     ref_id?: string | null
     session_id?: string | null
-    iteration_id?: string | null
     priority?: number
     mandate?: CabinMandate | null
   }): CabinJobRow {
@@ -79,7 +78,6 @@ export class CabinCommService {
         name: input.title,
         repo_group: cabin.org ?? undefined,
         cabin_id: cabinId,
-        iteration_id: input.iteration_id ?? null,
         task_type: "coding",
         preset: { org: cabin.org ?? undefined, projects: repos },
         workspace_id: cabin.workspace_id ?? undefined,
@@ -101,7 +99,7 @@ export class CabinCommService {
     const row: CabinJobRow = {
       id: randomUUID(), cabin_id: cabinId, kind: input.kind,
       ref_id: refId, session_id: sessionId,
-      iteration_id: input.iteration_id ?? null, title: input.title,
+      title: input.title,
       mandate: input.mandate ? JSON.stringify(input.mandate) : null,
       prompt: input.prompt ?? null, priority: input.priority ?? 0,
       created_at: now(), ended_at: null,
@@ -174,7 +172,7 @@ export class CabinCommService {
     if (!job) {
       job = {
         id: randomUUID(), cabin_id: cabinId, kind: "task", ref_id: taskId,
-        session_id: task.source_chat_session_id ?? null, iteration_id: task.iteration_id ?? null,
+        session_id: task.source_chat_session_id ?? null,
         title: task.name, mandate: JSON.stringify({ strength: "inferred", scope: "task", basis: "auto-register" }),
         prompt: null, priority: 0, created_at: now(), ended_at: null,
       }

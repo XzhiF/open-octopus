@@ -234,10 +234,10 @@ export function durationLabel(row: CockpitRow, now: number): string | null {
   const ms = end - start
   return ms <= 0 ? '0s' : formatDuration(ms, { compact: true })
 }
-/** 舱名 · iteration_code · transport（task 行用 repo_group）。只拼真实字段。 */
+/** 舱名 · transport（task 行用 repo_group）。只拼真实字段。 */
 export function metaLine(row: CockpitRow): string {
   if (row.kind === 'job') {
-    return [row.cabinName, row.job.iteration_code, row.job.transport].filter(Boolean).join(' · ')
+    return [row.cabinName, row.job.transport].filter(Boolean).join(' · ')
   }
   if (row.kind === 'task') {
     return [row.cabinName, row.task.repo_group].filter(Boolean).join(' · ')

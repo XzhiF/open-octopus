@@ -29,7 +29,6 @@ function job(id: string, over: Partial<CabinJobView> = {}): CabinJobView {
     kind: 'task',
     ref_id: null,
     session_id: null,
-    iteration_id: null,
     title: `作业 ${id}`,
     mandate: null,
     prompt: null,
@@ -38,7 +37,6 @@ function job(id: string, over: Partial<CabinJobView> = {}): CabinJobView {
     ended_at: null,
     status: 'running',
     transport: 'task-thread',
-    iteration_code: null,
     ...over,
   }
 }

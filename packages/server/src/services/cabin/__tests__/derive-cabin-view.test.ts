@@ -3,7 +3,7 @@ import { deriveCabinView, type DeriveCabinInput } from "../derive-cabin-view"
 
 const base = (over: Partial<DeriveCabinInput> = {}): DeriveCabinInput => ({
   cabin: { id: "c1", status: "active", focused_job_id: null },
-  tasks: [], executions: [], incidents: [], asks: [], findings: [], jobs: [], iterations: [],
+  tasks: [], executions: [], incidents: [], asks: [], findings: [], jobs: [],
   maxWorkers: 4,
   ...over,
 })
@@ -19,10 +19,10 @@ describe("deriveCabinView", () => {
   it("maps sources to stages with awaiting=person", () => {
     const v = deriveCabinView(base({
       tasks: [
-        { id: "t1", name: "A", status: "awaiting_review", iteration_id: null },
-        { id: "t2", name: "B", status: "awaiting_archive", iteration_id: null },
-        { id: "t3", name: "C", status: "failed", iteration_id: null },
-        { id: "t4", name: "D", status: "running", iteration_id: null },
+        { id: "t1", name: "A", status: "awaiting_review" },
+        { id: "t2", name: "B", status: "awaiting_archive" },
+        { id: "t3", name: "C", status: "failed" },
+        { id: "t4", name: "D", status: "running" },
       ],
       executions: [{ id: "e1", task_id: "t4", status: "pending_approval" }],
       incidents: [{ id: "i1", task_id: null, status: "waiting_human", title: "inc" }],
@@ -40,8 +40,8 @@ describe("deriveCabinView", () => {
   it("sorts person-first then priority desc", () => {
     const v = deriveCabinView(base({
       tasks: [
-        { id: "t1", name: "low", status: "awaiting_review", iteration_id: null },
-        { id: "t2", name: "high", status: "awaiting_review", iteration_id: null },
+        { id: "t1", name: "low", status: "awaiting_review" },
+        { id: "t2", name: "high", status: "awaiting_review" },
       ],
       jobs: [
         { id: "j1", kind: "task", ref_id: "t1", title: "low", priority: 1 },
@@ -51,19 +51,6 @@ describe("deriveCabinView", () => {
     expect(v.attention[0].task_id).toBe("t2")
     expect(v.attention[0].priority).toBe(5)
     expect(v.attention[1].task_id).toBe("t1")
-  })
-
-  it("derives iteration progress + membership from tasks.iteration_id", () => {
-    const v = deriveCabinView(base({
-      iterations: [{ id: "i1", code: "M1", name: "m", sort_order: 0, status: "active" }],
-      tasks: [
-        { id: "t1", name: "a", status: "done", iteration_id: "i1" },
-        { id: "t2", name: "b", status: "running", iteration_id: "i1" },
-        { id: "t3", name: "c", status: "done", iteration_id: null },
-      ],
-    }))
-    expect(v.iterations[0].task_count).toBe(2)
-    expect(v.iterations[0].progress).toBe(50)
   })
 
   it("health counts running/queued and dormant flag", () => {

@@ -640,9 +640,8 @@ export interface CreateTaskInput {
   skills?: string[]
   resources?: ResourceRef[]
   authoring_resources?: ResourceRef[]
-  /** Cabin (C2): owning cabin + iteration binding at creation. */
+  /** Cabin (C2): owning cabin binding at creation. */
   cabin_id?: string | null
-  iteration_id?: string | null
 }
 
 export interface UpdateTaskInput {
@@ -785,7 +784,6 @@ function toDTO(row: TaskRow): TaskDTO {
     next_fire_at: row.next_fire_at,
     last_fired_at: row.last_fired_at,
     cabin_id: row.cabin_id ?? null,
-    iteration_id: row.iteration_id ?? null,
     execution: null,
   }
 }
@@ -1342,7 +1340,6 @@ export class TasksService {
       created_at: now,
       updated_at: now,
       cabin_id: input.cabin_id ?? null,
-      iteration_id: input.iteration_id ?? null,
     })
 
     // SG3: link the bound chat session's scope_id to the new task id (explicit

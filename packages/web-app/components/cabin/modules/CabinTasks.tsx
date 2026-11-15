@@ -1,9 +1,8 @@
 'use client'
 
-// classic-v3 任务窗：四列看板（待执行/执行中/待验收/已完成）+ 迭代筛选。
+// classic-v3 任务窗：四列看板（待执行/执行中/待验收/已完成）。
 // 数据 = GET /api/tasks?cabin_id（舱内过滤）+ 逐任务 derived（useCabinTasks）。
 // 点卡 → chat 底座 select-task；新任务 → 舱绑定的 new-task 流程。
-// 迭代筛选与概览共享（provider.taskIter）：概览点迭代行会带着筛选打开本窗。
 
 import { ListTodo, Plus } from 'lucide-react'
 import { useCabinContext } from '../cabin-provider'
@@ -24,28 +23,9 @@ const COLUMNS: Column[] = [
 ]
 
 export function CabinTasks({ onNewTask }: { onNewTask?: () => void }) {
-  const { cabinId, view, taskIter, setTaskIter } = useCabinContext()
+  const { cabinId } = useCabinContext()
   const { tasks, loading } = useCabinTasks(cabinId)
-  const iterations = view?.iterations ?? []
-  const active = taskIter && iterations.some((it) => it.id === taskIter) ? taskIter : null
-  const visible = active ? tasks.filter((t) => t.iteration_id === active) : tasks
-
-  const chip = (id: string | null, label: string, count: number) => (
-    <button
-      key={id ?? 'all'}
-      type="button"
-      data-testid={`cabin-tasks-iter-${id ?? 'all'}`}
-      onClick={() => setTaskIter(id)}
-      className={`inline-flex items-center gap-1.5 rounded-full border-[1.5px] px-2.5 py-1 text-[10.5px] transition-colors ${
-        active === id
-          ? 'border-pop-pink bg-pop-pink font-bold text-pop-bg'
-          : 'border-pop-bd bg-pop-idle text-pop-dim hover:border-pop-dim hover:text-pop-ink'
-      }`}
-    >
-      {label}
-      <span className="font-mono text-[9.5px] opacity-75">{count}</span>
-    </button>
-  )
+  const visible = tasks
 
   return (
     <div data-testid="cabin-tasks-body">
@@ -54,15 +34,6 @@ export function CabinTasks({ onNewTask }: { onNewTask?: () => void }) {
           <Plus className="size-3" />新任务
         </WBtn>
       </WbH>
-
-      <div className="mb-3 flex flex-wrap gap-1.5" data-testid="cabin-tasks-iters">
-        {chip(null, '全部', tasks.length)}
-        {iterations.map((it) => chip(
-          it.id,
-          `${it.code} ${it.name}`,
-          tasks.filter((t) => t.iteration_id === it.id).length,
-        ))}
-      </div>
 
       <div className="grid grid-cols-4 gap-2 max-[900px]:grid-cols-2" data-testid="cabin-kanban">
         {COLUMNS.map((col) => {

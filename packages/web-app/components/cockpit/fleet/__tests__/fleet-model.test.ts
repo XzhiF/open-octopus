@@ -23,7 +23,6 @@ function job(id: string, over: Partial<CabinJobView> = {}): CabinJobView {
     kind: 'task',
     ref_id: 't1',
     session_id: null,
-    iteration_id: null,
     title: `作业${id}`,
     mandate: null,
     prompt: null,
@@ -32,7 +31,6 @@ function job(id: string, over: Partial<CabinJobView> = {}): CabinJobView {
     ended_at: null,
     status: 'running',
     transport: 'task-thread',
-    iteration_code: null,
     ...over,
   }
 }
@@ -280,17 +278,16 @@ describe('buildCounts', () => {
 })
 
 describe('三型行 + duration / meta', () => {
-  it('job 行：时长 created_at → ended_at；meta = 舱名 · iteration · transport', () => {
+  it('job 行：时长 created_at → ended_at；meta = 舱名 · transport', () => {
     const row = jobRow('j1', {
       status: 'done',
       created_at: '2026-11-14T00:00:00.000Z',
       ended_at: '2026-11-14T00:01:30.000Z',
       transport: 'task-thread',
-      iteration_code: 'I1',
     })
     expect(row.kind).toBe('job')
     expect(durationLabel(row, Date.parse('2026-11-14T05:00:00.000Z'))).toBe('1m')
-    expect(metaLine(row)).toBe('A舱 · I1 · task-thread')
+    expect(metaLine(row)).toBe('A舱 · task-thread')
     expect(statusLabel(row)).toBe('已完成')
   })
 

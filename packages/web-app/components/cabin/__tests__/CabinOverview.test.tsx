@@ -32,7 +32,6 @@ function makeView(overrides: Partial<CabinView> = {}): CabinView {
     },
     attention: [],
     health: { running: 2, queued: 1, dormant: 0, workers: 2, max: 5 },
-    iterations: [],
     open_findings: 0,
     ...overrides,
   }
@@ -110,7 +109,7 @@ describe('CabinOverview — serial inbox', () => {
   })
 })
 
-describe('CabinOverview — statgrid + iterations', () => {
+describe('CabinOverview — statgrid', () => {
   it('renders the prototype four-stat grid from the derived view + worktrees', async () => {
     renderOverview(makeView({ open_findings: 4 }))
     expect(screen.getByTestId('cabin-health-running').textContent).toBe('2')
@@ -118,18 +117,6 @@ describe('CabinOverview — statgrid + iterations', () => {
     expect(screen.getByTestId('cabin-stat-attention').textContent).toBe('0')
     await waitFor(() => expect(screen.getByTestId('cabin-stat-worktrees').textContent).toBe('3'))
     expect(screen.getByTestId('cabin-stat-cost').textContent).toBe('—')
-  })
-
-  it('renders iteration progress bars from derived progress', () => {
-    const view = makeView({
-      iterations: [
-        { id: 'it-1', cabin_id: 'cabin-1', code: 'M1', name: '渠道接入', sort_order: 0, status: 'active', progress: 40, task_count: 5 },
-      ],
-    })
-    renderOverview(view)
-    expect(screen.getByTestId('cabin-iteration-progress-M1').style.width).toBe('40%')
-    expect(screen.getByText('渠道接入')).toBeInTheDocument()
-    expect(screen.getByTestId('cabin-iteration-line').textContent).toContain('5 任务')
   })
 })
 

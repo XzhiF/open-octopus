@@ -33,7 +33,6 @@ vi.mock('../cabin-provider', () => ({
       cabin: h.cabin,
       attention: [],
       health: { running: 0, queued: 0, dormant: 0, workers: 0, max: 4 },
-      iterations: [],
       open_findings: 0,
     },
     initState: null,

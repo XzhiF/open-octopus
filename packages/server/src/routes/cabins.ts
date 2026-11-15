@@ -129,23 +129,10 @@ const patchBodySchema = z.object({
   cockpit_prefs: z.record(z.unknown()).optional(),
 })
 
-const iterationBodySchema = z.object({
-  code: z.string().min(1),
-  name: z.string().min(1),
-  sort_order: z.number().int().optional(),
-})
-
-const iterationPatchSchema = z.object({
-  name: z.string().min(1).optional(),
-  sort_order: z.number().int().optional(),
-  status: z.enum(["pending", "active", "done"]).optional(),
-})
-
 const jobBodySchema = z.object({
   kind: CabinJobKindSchema,
   ref_id: z.string().nullable().optional(),
   session_id: z.string().nullable().optional(),
-  iteration_id: z.string().nullable().optional(),
   title: z.string().min(1),
   mandate: CabinMandateSchema.optional(),
   prompt: z.string().nullable().optional(),
@@ -364,57 +351,12 @@ export function createCabinRoutes(
     }
   })
 
-  // ── attention / iterations ─────────────────────────────────────────
+  // ── attention ──────────────────────────────────────────────────────
 
   router.get("/:id/attention", (c) => {
     try {
       const { view } = service.getView(c.req.param("id"))
       return c.json({ attention: view.attention, health: view.health })
-    } catch (err) {
-      const { status, message } = classifyError(err)
-      return c.json({ error: message }, status as 400)
-    }
-  })
-
-  router.get("/:id/iterations", (c) => {
-    try {
-      const { view } = service.getView(c.req.param("id"))
-      return c.json({ iterations: view.iterations })
-    } catch (err) {
-      const { status, message } = classifyError(err)
-      return c.json({ error: message }, status as 400)
-    }
-  })
-
-  router.post("/:id/iterations", async (c) => {
-    const body = await safeJson(c)
-    if (!body) return c.json({ error: "Invalid or missing JSON body" }, 400)
-    try {
-      const input = iterationBodySchema.parse(body)
-      return c.json({ iteration: service.createIteration(c.req.param("id"), input) }, 201)
-    } catch (err) {
-      const { status, message } = classifyError(err)
-      return c.json({ error: message }, status as 400)
-    }
-  })
-
-  router.patch("/:id/iterations/:iid", async (c) => {
-    const body = await safeJson(c)
-    if (!body) return c.json({ error: "Invalid or missing JSON body" }, 400)
-    try {
-      const input = iterationPatchSchema.parse(body)
-      const iteration = service.updateIteration(c.req.param("id"), c.req.param("iid"), input)
-      return c.json({ iteration })
-    } catch (err) {
-      const { status, message } = classifyError(err)
-      return c.json({ error: message }, status as 400)
-    }
-  })
-
-  router.delete("/:id/iterations/:iid", (c) => {
-    try {
-      const result = service.deleteIteration(c.req.param("id"), c.req.param("iid"))
-      return c.json({ ok: true, ...result })
     } catch (err) {
       const { status, message } = classifyError(err)
       return c.json({ error: message }, status as 400)

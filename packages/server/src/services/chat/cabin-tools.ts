@@ -38,11 +38,10 @@ export function buildCabinSummaryReminder(service: CabinService, cabinId: string
       `需求备注：${cabin.requirements?.trim() || "（无）"}`,
       `健康：运行 ${view.health.running} · 排队 ${view.health.queued} · 执行器 ${view.health.workers}/${view.health.max}`,
       `需要你（person-first）：${view.attention.length} 项${view.attention.length ? " —— " + view.attention.slice(0, 5).map((a) => `[${a.stage}/${a.awaiting}] ${a.title}`).join("；") : ""}`,
-      `迭代：${view.iterations.map((it) => `${it.code} ${it.name} ${it.progress}% (id=${it.id})`).join("；") || "（无）"}`,
       `作业：${jobs.length ? jobs.slice(0, 8).map((j) => `${j.title}(${j.kind}/${j.status}/P${j.priority})`).join("；") : "（无）"}`,
       `自决模式：${autonomy} —— explicit 明确指令直接派发；${autonomyRule}`,
       ...(focused ? [`聚焦作业：${focused.title} —— 优先驱动它到完成，其余作业排队不打断；human-wake 可抢占`] : []),
-      "纪律：只调度不执行；一次只问人一个结构化问题；派发用 cabin_dispatch_task，监督用 cabin_list_tasks/cabin_list_jobs/cabin_job_trace，迭代用 cabin_list_iterations/cabin_create_iteration。",
+      "纪律：只调度不执行；一次只问人一个结构化问题；派发用 cabin_dispatch_task，监督用 cabin_list_tasks/cabin_list_jobs/cabin_job_trace。",
     ]
     return lines.join("\n")
   } catch {
@@ -96,7 +95,6 @@ export function createCabinToolServer(cabinId: string) {
       {
         title: z.string().min(1).describe("任务显示名"),
         prompt: z.string().min(1).describe("需求原文（转发原始 trigger）"),
-        iteration_id: z.string().optional().describe("归属迭代 id（cabin_list_jobs/iterations 可读）"),
         priority: z.number().int().optional().describe("数字优先级，默认 0"),
         mandate_strength: z.enum(["explicit", "inferred"]).optional().describe("授权强度，默认 explicit"),
       },
@@ -123,7 +121,6 @@ export function createCabinToolServer(cabinId: string) {
           kind: "task",
           title: input.title,
           prompt: input.prompt,
-          iteration_id: input.iteration_id ?? null,
           priority: input.priority ?? 0,
           mandate: { strength, scope: "task", basis: "orchestrator-dispatch", policyVersion: 1 },
         })
@@ -172,57 +169,6 @@ export function createCabinToolServer(cabinId: string) {
         const { comm } = must()
         const event = await comm.resume(cabinId, input.job_id)
         return { content: [{ type: "text" as const, text: JSON.stringify({ event_id: event.id, kind: "resume" }) }] }
-      },
-    ),
-    tool(
-      "cabin_list_iterations",
-      "列出本舱迭代里程碑（id/code/name/计划态 + 派生进度/成员数）。进度派生自成员任务，不存储。规划派发前先读。",
-      {},
-      async () => {
-        const { service } = must()
-        const { view } = service.getView(cabinId)
-        return { content: [{ type: "text" as const, text: JSON.stringify(view.iterations, null, 2) }] }
-      },
-    ),
-    tool(
-      "cabin_create_iteration",
-      "新建迭代里程碑（code 如 M2、name 显示名）。人 curate 的长期计划身份；成员关系由派发任务时的 iteration_id 建立。",
-      {
-        code: z.string().min(1).describe("里程碑代号，如 M2"),
-        name: z.string().min(1).describe("显示名，如「渠道接入」"),
-        sort_order: z.number().int().optional().describe("排序权重，默认 0"),
-      },
-      async (input) => {
-        const { service } = must()
-        const it = service.createIteration(cabinId, input)
-        return { content: [{ type: "text" as const, text: JSON.stringify({ iteration_id: it.id, code: it.code, status: it.status }) }] }
-      },
-    ),
-    tool(
-      "cabin_update_iteration",
-      "更新迭代：改名 / 计划态（pending→active→done）/ 重排。工作进度不在此写——派生自成员任务。",
-      {
-        iteration_id: z.string().min(1),
-        name: z.string().min(1).optional(),
-        status: z.enum(["pending", "active", "done"]).optional(),
-        sort_order: z.number().int().optional(),
-      },
-      async (input) => {
-        const { service } = must()
-        const it = service.updateIteration(cabinId, input.iteration_id, {
-          name: input.name, status: input.status, sort_order: input.sort_order,
-        })
-        return { content: [{ type: "text" as const, text: JSON.stringify({ iteration_id: it.id, code: it.code, name: it.name, status: it.status }) }] }
-      },
-    ),
-    tool(
-      "cabin_delete_iteration",
-      "删除迭代里程碑：成员任务自动解绑（任务本身保留）。仅删计划身份，不删任务。",
-      { iteration_id: z.string().min(1) },
-      async (input) => {
-        const { service } = must()
-        const result = service.deleteIteration(cabinId, input.iteration_id)
-        return { content: [{ type: "text" as const, text: JSON.stringify({ ok: true, unbound_tasks: result.unbound }) }] }
       },
     ),
   ]

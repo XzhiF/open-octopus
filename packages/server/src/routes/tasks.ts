@@ -321,9 +321,8 @@ export function createTasksRoutes(
       if (body.project_ids !== undefined) input.project_ids = z.array(z.string()).parse(body.project_ids)
       if (typeof body.workspace_id === "string" && body.workspace_id.length > 0) input.workspace_id = body.workspace_id
       if (typeof body.cwd === "string" && body.cwd.length > 0) input.cwd = body.cwd
-      // Cabin (C2): dispatch / UI bind the owning cabin + iteration at creation.
+      // Cabin (C2): dispatch / UI bind the owning cabin at creation.
       if (body.cabin_id === null || (typeof body.cabin_id === "string" && body.cabin_id.length > 0)) input.cabin_id = body.cabin_id
-      if (body.iteration_id === null || (typeof body.iteration_id === "string" && body.iteration_id.length > 0)) input.iteration_id = body.iteration_id
       if (body.skills !== undefined) input.skills = z.array(z.string()).parse(body.skills)
       if (body.resources !== undefined) input.resources = z.array(resourceRefSchema).parse(body.resources)
       if (body.authoring_resources !== undefined) input.authoring_resources = z.array(resourceRefSchema).parse(body.authoring_resources)

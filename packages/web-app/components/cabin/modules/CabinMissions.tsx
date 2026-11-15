@@ -53,7 +53,6 @@ export function CabinMissions() {
   const running = tasks.filter((t) => taskDisplayStatus(t) === 'running').length
   const need = view?.attention.length ?? 0
   const allDone = tasks.length > 0 && done === tasks.length
-  const code = view?.iterations.find((i) => i.status === 'active')?.code ?? 'M1'
 
   return (
     <div className="max-w-[600px]" data-testid="cabin-missions-body">
@@ -78,7 +77,7 @@ export function CabinMissions() {
             </span>
             <span className="ui-font text-[11.5px] font-extrabold tracking-[.05em] text-pop-ink">作战清单</span>
             <span className="rounded-[5px] border border-pop-violet/40 px-1.5 py-px font-mono text-[8.5px] font-bold tracking-[.06em] text-pop-violet">
-              MISSION · {code}
+              MISSION
             </span>
             <span className="ml-0.5 flex gap-0.5" data-testid="cabin-missions-ring">
               {tasks.slice(0, 10).map((t) => {

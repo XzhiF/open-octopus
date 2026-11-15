@@ -90,7 +90,6 @@ describe("CabinService integration (real workspace/session infra)", () => {
     await waitForStatus(svc, cabin.id, "active")
 
     expect(fs.existsSync(path.join(tmpDir, ".cabin", "manifest.json"))).toBe(true)
-    expect(svc.listIterations(cabin.id).map((i) => i.code)).toEqual(["M1"])
 
     // soft archive keeps everything (C1)
     const archived = svc.archive(cabin.id)
