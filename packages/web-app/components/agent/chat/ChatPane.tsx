@@ -162,6 +162,11 @@ export interface ChatPaneProps {
   onTelemetry?: (api: CockpitChatApi | null) => void
   /** 全域座舱：隐藏右侧竖排作业坞（浮窗里只留 transcript，坞的功能在作业面上）。 */
   hideDock?: boolean
+  /** 舱主会话 id（CockpitChatHost 注入）。当前看的是任务线程时，顶部常驻
+   *  「← 回主对话」——用户从任务对话里答完题后不用再绕作业面找入口。 */
+  cabinMainSessionId?: string | null
+  /** 直连切换到主会话（缺省退回 octopus:cabin-main-chat 事件）。 */
+  onBackToCabinMain?: () => void
 }
 
 /** 决策卡上「选择即写回卡片」的按钮 id。其余按钮（打开规格/运行窗…）只是导航，
@@ -204,6 +209,8 @@ export function ChatPane({
   composerVariant,
   onTelemetry,
   hideDock,
+  cabinMainSessionId,
+  onBackToCabinMain,
 }: ChatPaneProps) {
   const {
     sessions, sessionsLoading, createNewSession, updateSessionTitle,
@@ -1390,6 +1397,14 @@ export function ChatPane({
     ? explorerWorkspaceName
     : ''
 
+  // 任务线程 → 主对话：直接可见的回头路（2026-11-16 用户反馈：从任务对话里
+  // 答完题后没有入口回汐音）。缺省回调时退回作业面同一条事件。
+  const showBackToMain = !!cabinMainSessionId && !!sessionId && sessionId !== cabinMainSessionId
+  const backToMain = () => {
+    if (onBackToCabinMain) onBackToCabinMain()
+    else window.dispatchEvent(new CustomEvent('octopus:cabin-main-chat'))
+  }
+
   return (
     <div
       data-chat-pane={pane}
@@ -1474,6 +1489,24 @@ export function ChatPane({
       </button>
 
       <div className={cn('flex min-h-0 flex-1 flex-col', split && 'pt-[34px]')}>
+        {showBackToMain && (
+          <div
+            data-testid="chat-back-main-bar"
+            className="flex shrink-0 items-center gap-2 border-b border-pop-bd/60 bg-pop-amber-soft/60 px-3 py-1.5 text-[11px]"
+          >
+            <span className="min-w-0 truncate font-semibold text-pop-ink">{paneTitle}</span>
+            <span className="shrink-0 text-pop-dim/70">任务线程</span>
+            <span className="flex-1" />
+            <button
+              type="button"
+              data-testid="chat-back-to-main"
+              onClick={backToMain}
+              className="shrink-0 rounded-full border border-pop-cyan/40 bg-pop-cyan/10 px-2 py-0.5 font-bold text-pop-cyan transition-colors hover:bg-pop-cyan/20"
+            >
+              ← 回主对话
+            </button>
+          </div>
+        )}
         {/* 顶部状态条已移除（2026-10-28 用户定稿）：状态/身份/工作区信息
             由侧栏任务行与作业坞承载，对话区保持纯净转录。 */}
         {showPicker ? (

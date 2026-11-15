@@ -111,6 +111,8 @@ export function CockpitChatHost({ entryCabinId }: CockpitChatHostProps) {
       canSwap={false}
       cabinId={cabinId}
       cabinWorkspaceId={cabin?.workspace_id ?? null}
+      cabinMainSessionId={mainSessionId}
+      onBackToCabinMain={() => issueCommand({ type: 'select-session', sessionId: mainSessionId })}
       composerSlot={composerSlot}
       composerVariant="cockpit"
       onTelemetry={reportChat}
