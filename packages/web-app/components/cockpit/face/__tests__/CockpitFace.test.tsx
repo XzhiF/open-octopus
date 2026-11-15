@@ -1,6 +1,6 @@
 // S4 — 作业面 chrome：三型选中（job / task / attention）解析、关闭（DOM 首焦点 +
-// Esc 层栈）、跨舱不显示「去主对话」、attention 的 CTA 只在有真实去处时出现。
-// 编队数据走真实 CockpitFleetProvider（API 全 mock，不打真服务）。
+// Esc 层栈）、attention 的 CTA 只在有真实去处时出现。
+// 编队数据走真实 CockpitFleetProvider（只轮询入口舱，API 全 mock，不打真服务）。
 
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { render, screen, fireEvent, waitFor } from '@testing-library/react'
@@ -14,7 +14,6 @@ vi.mock('@/lib/cabin-api', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@/lib/cabin-api')>()
   return {
     ...actual,
-    listCabins: vi.fn(),
     getCabin: vi.fn(),
     listCabinJobs: vi.fn(),
     getCabinJob: vi.fn(),
@@ -38,7 +37,7 @@ vi.mock('@/lib/agent/api', async (importOriginal) => {
 })
 
 import {
-  getCabin, getCabinJob, getCabinUsage, listCabins, listCabinJobs,
+  getCabin, getCabinJob, getCabinUsage, listCabinJobs,
   type CabinDetail, type CabinJobView,
 } from '@/lib/cabin-api'
 import { getTask, listTasks } from '@/lib/tasks-api'
@@ -162,7 +161,6 @@ async function pick() {
 
 beforeEach(() => {
   vi.clearAllMocks()
-  vi.mocked(listCabins).mockResolvedValue([cabin('cabin-1')])
   vi.mocked(getCabin).mockImplementation(async (id: string) => {
     const c = id === 'cabin-1' ? cabin('cabin-1') : cabin(id)
     return { cabin: c, view: makeView(c) }
@@ -207,22 +205,6 @@ describe('CockpitFace — job 选中', () => {
     await screen.findByTestId('cockpit-job-header')
     fireEvent.keyDown(window, { key: 'Escape' })
     await waitFor(() => expect(screen.queryByTestId('cockpit-face')).toBeNull())
-  })
-
-  it('跨舱：作业面能开，但「对接」不出现「去主对话」', async () => {
-    vi.mocked(listCabins).mockResolvedValue([cabin('cabin-1'), cabin('cabin-2')])
-    vi.mocked(getCabin).mockImplementation(async (id: string) => {
-      const c = cabin(id)
-      return { cabin: c, view: makeView(c) }
-    })
-    mockJob('cabin-2', { id: 'j9', title: '别舱作业' })
-    render(<Harness target={{ kind: 'job', cabinId: 'cabin-2', id: 'j9' }} />)
-    await pick()
-
-    await screen.findByTestId('cockpit-job-header')
-    fireEvent.click(screen.getByTestId('cockpit-tab-relay'))
-    expect(await screen.findByTestId('cabin-job-relay')).toBeInTheDocument()
-    expect(screen.queryByTestId('cockpit-relay-main-chat')).toBeNull()
   })
 
   it('选中项不在编队（已删/已截断）：只给回退占位，不挂 JobFace、不发详情请求', async () => {

@@ -3,7 +3,7 @@
 //   · 深链直接进 → 出口回 /cabin/:entryCabinId；
 //   · 全域内部再点入口不覆盖 origin；
 //   · 默认选中（need 优先级降序 → run → queue），只落一次（⌥2/✕ 收面后不被弹回）；
-//   · 无效 ref 回退；跨舱 ref 合法且保留 &cabin=；
+//   · 无效 ref 回退；旧 ?cabin= 跨舱参数被忽略并清掉（全域只含入口舱）；
 //   · merged attention 命中 job 行时 ?attn 仍算有效。
 // 编队数据走 useCockpitFleet mock（不 fetch），selection/URL 都是真组件。
 
@@ -163,15 +163,16 @@ describe('CockpitUrlSync — 默认选中 / 无效 ref 回退 / 跨舱', () => {
     await waitFor(() => expect(screen.getByTestId('url').textContent).toBe('/cabin/c1/cockpit'))
   })
 
-  it('跨舱 ref（?cabin=）合法：不重绑、URL 保留归属舱', async () => {
+  it('旧跨舱参数 ?cabin= 被忽略：只认入口舱，残留参数被清掉', async () => {
     const rows = [
       jobRow(job('j1', { status: 'running' })),
       jobRow(job('jx', { status: 'running' }, 'c2')),
     ]
     const { load } = renderSync('/cabin/c1/cockpit?job=jx&cabin=c2', fleet([], false))
     load(rows)
-    await waitFor(() => expect(screen.getByTestId('selection').textContent).toBe('job:c2:jx'))
-    expect(screen.getByTestId('url').textContent).toBe('/cabin/c1/cockpit?job=jx&cabin=c2')
+    // jx 属于 c2：对入口舱 c1 来说是无效深链 → 落入口舱自己的默认选中。
+    await waitFor(() => expect(screen.getByTestId('selection').textContent).toBe('job:c1:j1'))
+    await waitFor(() => expect(screen.getByTestId('url').textContent).toBe('/cabin/c1/cockpit?job=j1'))
   })
 
   it('merged attention 命中 job 行时 ?attn 仍算有效（不回退）', async () => {

@@ -1,5 +1,8 @@
-// S2 owns this file —— S1 只把跨舱编队的行模型/计数契约落死，便于 S3/S6/S8
+// S2 owns this file —— S1 只把编队的行模型/计数契约落死，便于 S3/S6/S8
 // 在 S2 完成前就能对着类型写。S2 在此基础上实现 groupOf / 排序 / duration 等纯函数。
+//
+// 2026-11-15：编队只含入口舱（跨舱视图已退役）；行上的 cabinId/cabinName 保留
+// 是为了让行模型与 URL/ref 契约不依赖「一定只有一舱」这个实现细节。
 //
 // 数据来源（plans §1.5）：
 //   · listCabinJobs(cabinId) → CabinJobView

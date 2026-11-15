@@ -32,15 +32,13 @@ function stat(value: number | null | undefined): string {
 
 export function CockpitHud() {
   const { prefs, applyPrefs } = useCockpit()
-  const { entryCabinId, railOpen, setRailOpen, fx, selection } = useCockpitState()
+  const { entryCabinId, railOpen, setRailOpen, fx } = useCockpitState()
   const { exitCockpit } = useCockpitEntry()
-  const { counts, rows } = useCockpitFleet()
+  const { counts } = useCockpitFleet()
   const cabinCtx = useCabinOptional()
-  const currentCabinId = selection?.cabinId ?? entryCabinId
-  const currentCabinName =
-    currentCabinId === entryCabinId
-      ? cabinCtx?.cabin?.name ?? '作战舱'
-      : rows.find((row) => row.cabinId === currentCabinId)?.cabinName ?? '作战舱'
+  // 全域只属于入口舱（2026-11-15）：读数 / 舱籍 / 绑定入口永远说这一个舱。
+  const currentCabinId = entryCabinId
+  const currentCabinName = cabinCtx?.cabin?.name ?? '作战舱'
   const {
     projects, loading: projectsLoading, error: projectsError, refetch: refetchProjects,
   } = useCabinProjects(currentCabinId)

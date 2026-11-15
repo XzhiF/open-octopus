@@ -2,28 +2,25 @@
 
 // S2 owns this file —— 全应用**唯一**一次编队轮询。
 //
+// 2026-11-15 用户口径：全域座舱属于**入口舱**。`/cabin/:id/cockpit` 只轮询
+// 这一个舱的作业，不再把别的舱的作业堆进同一条编队。`?cabin=` 跨舱深链已退役。
+//
 // 一次 tick：
-//   1. listCabins()（客户端过滤 archived）+ listRunningSessions()（分身数）并行；
-//   2. 每个舱并行 getCabin + listCabinJobs —— 每舱基础 2 个请求；
-//      历史舱没有 job 时补一次 listTasks({ cabin_id }) 合成 task 行（第三请求，
-//      只发生在无 job 账本的舱）；
-//   3. 富化：只对 kind==='task' 的 job 行 getTask(ref_id)，每次 tick 最多选 12 条，
-//      按 task id 缓存 30s；超限/失败/非 task 的 pct 一律 null（不画条、不猜）。
+//   1. getCabin(cabinId) + listCabinJobs(cabinId) 并行 —— 固定 2 个请求；
+//      没有 job 账本时补一次 listTasks({ cabin_id }) 合成 task 行（第三请求）；
+//   2. 富化：只对 kind==='task' 的 job 行 getTask(ref_id)，每次 tick 最多 12 条，
+//      按 task id 缓存 30s；
+//   3. listRunningSessions 只取「分身」读数，不进首屏关键路径。
 //
-// 容错：某舱任一请求失败 → 该舱保留上一份快照，其它舱照常更新；listCabins 失败
-// → 整体保留上一份。卸载 abort（能传 signal 的 getCabin/getTask），其余请求用
-// aborted 标记丢弃结果。切舱（舱从列表消失）→ 快照与缓存一起清理。
+// 容错：作业列表失败 → 保留上一份快照并标 stale，不清空编队；舱详情失败 →
+// 只是这一轮没有 attention（作业行照常出图）。卸载 abort（能传 signal 的
+// getCabin/getTask），其余请求用 aborted 标记丢弃结果。
 //
-// rows 是 sortRows（done 截前 3）的显示行；counts 用未截断的行集统计，done 是真实条数。
+// rows 是 sortRows（done 截前 3）的显示行；counts 用未截断的行集统计。
 
 import { useCallback, useEffect, useRef, useState } from 'react'
-import {
-  getCabin,
-  listCabins,
-  listCabinJobs,
-  type CabinJobView,
-} from '@/lib/cabin-api'
-import type { CabinAttentionItem, CabinDTO } from '@octopus/shared'
+import { getCabin, listCabinJobs, type CabinJobView } from '@/lib/cabin-api'
+import type { CabinAttentionItem } from '@octopus/shared'
 import { getTask, listTasks } from '@/lib/tasks-api'
 import { withDeadline } from '@/lib/with-deadline'
 import { listRunningSessions } from '@/lib/agent/api'
@@ -52,7 +49,6 @@ export const FLEET_TICK_TIMEOUT_MS = 15_000
  */
 export const CABIN_REQUEST_TIMEOUT_MS = 5_000
 const TASKS_FALLBACK_TIMEOUT_MS = 4_000
-const LIST_TIMEOUT_MS = 6_000
 const SESSIONS_TIMEOUT_MS = 4_000
 const ENRICH_TIMEOUT_MS = 3_000
 /** 历史舱回退：只合成这些活态任务（与 CabinFleet 的回退集合一致）。 */
@@ -86,8 +82,6 @@ interface TaskProgressEntry {
   at: number
 }
 
-type LoadedCabin = CabinSnapshot
-
 function errorMessage(err: unknown): string {
   return err instanceof Error ? err.message : String(err)
 }
@@ -116,23 +110,27 @@ function taskRow(base: CockpitCabinRef, task: CabinTaskRow): CockpitRow {
 }
 
 async function loadCabin(
-  cabin: CabinDTO,
+  cabinId: string,
   previous: CabinSnapshot | undefined,
   signal: AbortSignal,
-): Promise<LoadedCabin> {
+): Promise<CabinSnapshot> {
   // 详情与作业列表**分开**判成败：详情（派生视图）挂了不该连作业行一起消失 ——
   // 这正是 2026-11-14「classic 看得到、全域看不到」的形态。
   const [detailResult, jobsResult] = await Promise.allSettled([
-    withDeadline(signal, CABIN_REQUEST_TIMEOUT_MS, '舱详情', (s) => getCabin(cabin.id, s)),
-    withDeadline(signal, CABIN_REQUEST_TIMEOUT_MS, '作业列表', (s) => listCabinJobs(cabin.id, s)),
+    withDeadline(signal, CABIN_REQUEST_TIMEOUT_MS, '舱详情', (s) => getCabin(cabinId, s)),
+    withDeadline(signal, CABIN_REQUEST_TIMEOUT_MS, '作业列表', (s) => listCabinJobs(cabinId, s)),
   ])
   if (jobsResult.status === 'rejected') throw jobsResult.reason
   const jobs = jobsResult.value
-  const attention = detailResult.status === 'fulfilled'
-    ? detailResult.value.view.attention
+  const detail = detailResult.status === 'fulfilled' ? detailResult.value : null
+  const attention = detail
+    ? detail.view.attention
     : previous?.attention ?? []
 
-  const base: CockpitCabinRef = { cabinId: cabin.id, cabinName: cabin.name }
+  const base: CockpitCabinRef = {
+    cabinId,
+    cabinName: detail?.cabin.name ?? previous?.cabinName ?? cabinId,
+  }
   const attentionIds = attention.map((item) => item.id)
 
   if (jobs.length > 0) {
@@ -149,7 +147,7 @@ async function loadCabin(
     signal,
     TASKS_FALLBACK_TIMEOUT_MS,
     '任务列表',
-    (s) => listTasks({ cabin_id: cabin.id }, s),
+    (s) => listTasks({ cabin_id: cabinId }, s),
   )
   const rows = items
     .filter((task) => LIVE_TASK_STATUSES.has(task.status))
@@ -216,7 +214,11 @@ async function enrichTaskRows(
   return next
 }
 
-export function useFleetQuery(): FleetQuery {
+/**
+ * 入口舱的编队轮询。
+ * @param cabinId 入口舱（`/cabin/:id/cockpit` 的 id）—— 全域只读这一个舱。
+ */
+export function useFleetQuery(cabinId: string): FleetQuery {
   const [state, setState] = useState<FleetQueryState>({
     rows: [],
     counts: null,
@@ -228,11 +230,9 @@ export function useFleetQuery(): FleetQuery {
   const mountedRef = useRef(true)
   const inFlightRef = useRef(false)
   const abortRef = useRef<AbortController | null>(null)
-  const snapshotsRef = useRef<Map<string, CabinSnapshot>>(new Map())
+  const snapshotRef = useRef<CabinSnapshot | null>(null)
   const cacheRef = useRef<Map<string, TaskProgressEntry>>(new Map())
   const prevAttentionRef = useRef<Set<string> | null>(null)
-  /** 上一 tick 见过的舱：新加入编队的舱不把它存量的 attention 当成「到达」。 */
-  const seenCabinsRef = useRef<Set<string>>(new Set())
   /** 本 tick 的起点：卡死的 tick 超过预算就让路（tick 自愈）。 */
   const tickStartedAtRef = useRef(0)
   /** 上一次拿到的分身数（拿不到时沿用，不把 null 当 0）。 */
@@ -263,9 +263,7 @@ export function useFleetQuery(): FleetQuery {
     }, FLEET_TICK_TIMEOUT_MS)
 
     try {
-      const all = await withDeadline(signal, LIST_TIMEOUT_MS, '编队列表', (s) => listCabins(undefined, s))
-      const cabins = all.filter((cabin) => cabin.status !== 'archived')
-
+      // 分身数只影响 HUD 读数，不进首屏关键路径。
       const sessionsTask = withDeadline(signal, SESSIONS_TIMEOUT_MS, '分身数', (s) => listRunningSessions(50, s))
         .then((payload) => {
           sessionsRef.current = payload.items.length
@@ -273,136 +271,53 @@ export function useFleetQuery(): FleetQuery {
         })
         .catch(() => null) // 分身数拿不到不影响编队（HUD 隐藏该统计）。
 
-      const failures: unknown[] = []
-      // 先只等舱：分身数不进首屏关键路径（它吊死不能挡住作业行）。
-      const loaded = await Promise.all(
-        cabins.map(async (cabin) => {
-          try {
-            return await loadCabin(cabin, snapshotsRef.current.get(cabin.id), signal)
-          } catch (err) {
-            failures.push(err)
-            return null // 单舱失败：保留该舱上一份快照，不拖垮别的舱。
-          }
-        }),
-      )
+      const fresh = await loadCabin(cabinId, snapshotRef.current ?? undefined, signal)
 
-      const previous = snapshotsRef.current
-      const next = new Map<string, CabinSnapshot>()
-      const replaced: LoadedCabin[] = []
-      for (let i = 0; i < cabins.length; i += 1) {
-        const cabin = cabins[i]
-        const fresh = loaded[i]
-        if (fresh) {
-          const old = previous.get(cabin.id)
-          if (old) {
-            // 先出图时不闪掉已算好的进度条：同一行的上一份 pct 先沿用，
-            // 富化回来再覆盖。
-            const prevByKey = new Map(old.rows.map((row) => [row.key, row]))
-            fresh.rows = fresh.rows.map((row) => {
-              const prev = prevByKey.get(row.key)
-              return row.kind === 'job' && row.pct === null &&
-                prev?.kind === 'job' && prev.pct !== null
-                ? { ...row, pct: prev.pct }
-                : row
-            })
-          }
-          next.set(cabin.id, fresh)
-          replaced.push(fresh)
-        } else {
-          const old = previous.get(cabin.id)
-          if (old) next.set(cabin.id, old)
-        }
-      }
-
-      // 首次加载就全挂：没有可保留的快照，counts 必须保持 null —— 不能写 0 冒充空编队。
-      if (cabins.length > 0 && next.size === 0 && previous.size === 0) {
-        if (mountedRef.current && !signal.aborted) {
-          setState((prev) => ({
-            ...prev,
-            loading: false,
-            error: failures.length > 0 ? errorMessage(failures[0]) : '编队数据加载失败',
-          }))
-        }
-        return
-      }
-
-      const collect = (map: Map<string, CabinSnapshot>) => {
-        const finalRows: CockpitRow[] = []
-        for (const snapshot of map.values()) finalRows.push(...snapshot.rows)
-        return finalRows
+      // 先出图时不闪掉已算好的进度条：同一行的上一份 pct 先沿用，富化回来再覆盖。
+      const previous = snapshotRef.current
+      if (previous) {
+        const prevByKey = new Map(previous.rows.map((row) => [row.key, row]))
+        fresh.rows = fresh.rows.map((row) => {
+          const prev = prevByKey.get(row.key)
+          return row.kind === 'job' && row.pct === null &&
+            prev?.kind === 'job' && prev.pct !== null
+            ? { ...row, pct: prev.pct }
+            : row
+        })
       }
 
       // ── arrivals：比较本 tick 的 attention 集合与上一份 ──────────────
-      const currentAttention = new Set<string>()
-      for (const snapshot of next.values()) {
-        for (const id of snapshot.attentionIds) currentAttention.add(id)
-      }
+      const currentAttention = new Set(fresh.attentionIds)
       const prevAttention = prevAttentionRef.current
-      const seenCabins = seenCabinsRef.current
-      const arrivals: string[] = []
-      if (prevAttention !== null) {
-        for (const snapshot of next.values()) {
-          // 新加入的舱：存量 attention 不是「刚到达」，否则会在换代舱/新建舱时
-          // 凭空弹一张「N 件需要你」的简报。
-          if (!seenCabins.has(snapshot.cabinId)) continue
-          for (const id of snapshot.attentionIds) {
-            if (!prevAttention.has(id)) arrivals.push(id)
-          }
-        }
-      }
+      const arrivals = prevAttention === null
+        ? []
+        : [...currentAttention].filter((id) => !prevAttention.has(id))
       prevAttentionRef.current = currentAttention
-      seenCabinsRef.current = new Set(next.keys())
-      snapshotsRef.current = next
+      snapshotRef.current = fresh
 
       // ── 先出图：编队行一旦到手立刻发布，不等富化 ─────────────────────
       // 旧实现把 12 条 getTask 串行挡在发布之前，任何一个慢接口都会让编队
       // 「一直加载中」。任务进度只是锦上添花，绝不能挡住作业行本身。
-      const firstRows = collect(next)
       if (mountedRef.current && !signal.aborted) {
-        const counts = buildCounts(firstRows, sessionsRef.current)
-        setState({ rows: sortRows(firstRows), counts, arrivals, loading: false, error: null })
+        setState({
+          rows: sortRows(fresh.rows),
+          counts: buildCounts(fresh.rows, sessionsRef.current),
+          arrivals,
+          loading: false,
+          error: null,
+        })
       }
 
       // ── 再富化：并发 + 单请求预算，结果只补 pct ─────────────────────
-      const freshRows = replaced.flatMap((snapshot) => snapshot.rows)
-      if (freshRows.length === 0) {
-        // 没有要富化的行：等分身数（有预算）后把 counts 收正一次。
-        await sessionsTask
-        if (mountedRef.current && !signal.aborted && abortRef.current === controller) {
-          const rowsNow = collect(next)
-          setState({
-            rows: sortRows(rowsNow),
-            counts: buildCounts(rowsNow, sessionsRef.current),
-            arrivals,
-            loading: false,
-            error: null,
-          })
-        }
-        return
+      if (fresh.rows.length > 0) {
+        fresh.rows = await enrichTaskRows(fresh.rows, cacheRef.current, Date.now(), signal)
+        if (!mountedRef.current || signal.aborted || abortRef.current !== controller) return
+        snapshotRef.current = fresh
       }
-      const enrichedFresh = await enrichTaskRows(freshRows, cacheRef.current, Date.now(), signal)
-      if (!mountedRef.current || signal.aborted || abortRef.current !== controller) return
-
-      const enrichedByCabin = new Map<string, Map<string, CockpitRow>>()
-      for (const row of enrichedFresh) {
-        let byKey = enrichedByCabin.get(row.cabinId)
-        if (!byKey) {
-          byKey = new Map()
-          enrichedByCabin.set(row.cabinId, byKey)
-        }
-        byKey.set(row.key, row)
-      }
-      for (const snapshot of replaced) {
-        const byKey = enrichedByCabin.get(snapshot.cabinId)
-        if (byKey) snapshot.rows = snapshot.rows.map((row) => byKey.get(row.key) ?? row)
-        next.set(snapshot.cabinId, snapshot)
-      }
-
-      const finalRows = collect(next)
 
       // 切舱清理：舱消失后它的 task 进度缓存不再需要。
       const liveTaskIds = new Set<string>()
-      for (const row of finalRows) {
+      for (const row of fresh.rows) {
         if (row.kind === 'job' && row.job.kind === 'task' && row.job.ref_id) {
           liveTaskIds.add(row.job.ref_id)
         }
@@ -415,8 +330,8 @@ export function useFleetQuery(): FleetQuery {
       await sessionsTask
       if (!mountedRef.current || signal.aborted || abortRef.current !== controller) return
       setState({
-        rows: sortRows(finalRows),
-        counts: buildCounts(finalRows, sessionsRef.current),
+        rows: sortRows(fresh.rows),
+        counts: buildCounts(fresh.rows, sessionsRef.current),
         arrivals,
         loading: false,
         error: null,
@@ -444,10 +359,16 @@ export function useFleetQuery(): FleetQuery {
         inFlightRef.current = false
       }
     }
-  }, [])
+  }, [cabinId])
 
   useEffect(() => {
     mountedRef.current = true
+    // 入口舱换了（深链换舱）：旧舱的行与缓存不能带过去。
+    snapshotRef.current = null
+    prevAttentionRef.current = null
+    cacheRef.current.clear()
+    sessionsRef.current = null
+    setState({ rows: [], counts: null, arrivals: [], loading: true, error: null })
     void tick()
     const timer = window.setInterval(() => { void tick() }, POLL_MS)
     return () => {

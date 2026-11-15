@@ -12,7 +12,8 @@ import type { ContextUsageData } from '@/lib/agent/types'
 import type { ComposerContext, ComposerEffort } from '@/lib/agent/composer-settings'
 import type { MoodKey } from '@/components/cabin/cockpit'
 
-/** 面上要显示哪一条：job / task / attention / project 四型，cabinId 可 ≠ 入口舱。
+/** 面上要显示哪一条：job / task / attention / project 四型。
+ *  全域只含入口舱（2026-11-15），cabinId 恒 = 入口舱；保留字段是为了 ref 形状稳定。
  *  project 的 id = 项目 key（org:<org>/<name> | local:<path>），舱籍面用 __roster__。 */
 export type CockpitRef =
   | { kind: 'job'; cabinId: string; id: string }

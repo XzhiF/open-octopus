@@ -5,6 +5,7 @@
 // 但 useCockpitFleet() 的返回形状不变，壳/左栏/舰桥/到达都不需要改。
 
 import { createContext, useContext, type ReactNode } from 'react'
+import { useCockpitState } from '../state/CockpitStateProvider'
 import { useFleetQuery } from './use-fleet-query'
 import type { CockpitFleetCounts, CockpitRow } from './fleet-model'
 
@@ -35,7 +36,9 @@ export function useCockpitFleet(): CockpitFleetContextValue {
 }
 
 export function CockpitFleetProvider({ children }: { children: ReactNode }) {
+  // 全域只轮询入口舱（2026-11-15）：编队不再是全舰队汇总。
+  const { entryCabinId } = useCockpitState()
   // 全应用唯一一次编队轮询都收在这里；对消费者来说契约完全不变。
-  const fleet = useFleetQuery()
+  const fleet = useFleetQuery(entryCabinId)
   return <CockpitFleetContext.Provider value={fleet}>{children}</CockpitFleetContext.Provider>
 }

@@ -8,10 +8,11 @@
 //   1. `.ck12-face` 容器（让位给左下立绘，宽度断点与安静层一致）；
 //   2. 从 useCockpitFleet().rows 找选中行，拿 cabinName / attention；
 //   3. 关闭 = select(null)，并注册进 layer（priority 最低 → Esc 最后才收面）。
-// 跨舱查看时向归属舱拉一次 cabin（工作区/版本/主会话），失败就按缺省省略 —— 不猜。
+//
+// 2026-11-15：全域只含入口舱，跨舱查看 / `?cabin=` 已退役 —— 工作区 / 版本 /
+// 主会话直接从入口舱的 CabinProvider 拿，不再按选中项另拉一次舱详情。
 
-import { useCallback, useEffect, useMemo, useState } from 'react'
-import { getCabin, type CabinDetail } from '@/lib/cabin-api'
+import { useCallback, useEffect, useMemo } from 'react'
 import { useCabinOptional } from '@/components/cabin/cabin-provider'
 import { JobFace } from '@/components/cabin/job-face'
 import { useCockpitState } from '../state/CockpitStateProvider'
@@ -29,7 +30,7 @@ export const FACE_LAYER_ID = 'cockpit-face'
 export const FACE_LAYER_PRIORITY = 1
 
 export interface CockpitFaceProps {
-  /** 入口舱（跨舱查看时 ≠ selection.cabinId）；「对接」投递只对入口舱开放。 */
+  /** 入口舱（全域单舱化后 = selection.cabinId；保留给 JobFace 的投递门禁）。 */
   entryCabinId: string
 }
 
@@ -56,11 +57,8 @@ export function CockpitFace({ entryCabinId }: CockpitFaceProps) {
   const { selection, tab, setTab, select, layer } = useCockpitState()
   const { rows, counts, error, refetch } = useCockpitFleet()
   const cabinCtx = useCabinOptional()
-  const [crossCabin, setCrossCabin] = useState<CabinDetail | null>(null)
   // counts !== null = 编队至少成功接过一次真值（FleetProvider 契约）。
   const loadedOnce = counts !== null
-
-  const isProject = selection?.kind === 'project'
 
   const row = useMemo(
     () => (selection ? rows.find((entry) => rowMatches(entry, selection)) ?? null : null),
@@ -73,27 +71,6 @@ export function CockpitFace({ entryCabinId }: CockpitFaceProps) {
     if (selection?.kind !== 'attention' || row) return null
     return rows.find((entry) => entry.kind === 'job' && entry.attention?.id === selection.id) ?? null
   }, [rows, selection, row])
-
-  // 跨舱：归属舱的 workspace_id / version / main_session_id 不在编队行里，
-  // 单独拉一次（只影响运行页签与头部元信息；失败就省略，不猜）。
-  // 等编队回来且选中项确实在编队里才拉 —— 过期深链（?job=…&cabin=…）在
-  // URL 被改写前不再请求一个已删的舱。
-  const selectedCabinId = selection?.cabinId ?? null
-  const selectionKnown = !!row || !!attentionOnJob || isProject
-  useEffect(() => {
-    if (!loadedOnce || !selectionKnown) return
-    if (isProject || !selectedCabinId || selectedCabinId === entryCabinId) {
-      setCrossCabin(null)
-      return
-    }
-    let alive = true
-    setCrossCabin(null)
-    getCabin(selectedCabinId).then(
-      ({ cabin }) => { if (alive) setCrossCabin(cabin) },
-      () => { /* 缺省：workspaceId 为空 → 运行摘要给明确空态 */ },
-    )
-    return () => { alive = false }
-  }, [loadedOnce, selectionKnown, selectedCabinId, entryCabinId])
 
   const close = useCallback(() => select(null), [select])
 
@@ -133,9 +110,7 @@ export function CockpitFace({ entryCabinId }: CockpitFaceProps) {
 
   if (!selection) return null
 
-  const selectedCabin = selection.cabinId === entryCabinId
-    ? cabinCtx?.cabin ?? null
-    : crossCabin
+  const selectedCabin = cabinCtx?.cabin ?? null
   const cabinName = row?.cabinName ?? attentionOnJob?.cabinName ?? null
 
   const body = (() => {

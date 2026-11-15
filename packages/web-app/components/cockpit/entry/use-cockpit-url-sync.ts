@@ -9,9 +9,9 @@
 // S9 规则（plans §1.3 / §1.1）：
 //   · 无 ref 且编队**首次加载完成**后 → 默认选中（need 优先级降序 → run → queue）。
 //     只做一次：之后用户按 ⌥2 / ✕ 收面（select(null)）不会被自动弹回来。
-//   · ?job / ?task / ?attn 在全部 rows 里找不到（含跨舱行）且 rows 已加载过至少
+//   · ?job / ?task / ?attn 在 rows（入口舱单舱编队）里找不到且 rows 已加载过至少
 //     一次 → 落默认选中；编队为空则收面（select(null)）。
-//   · 跨舱 ref（?cabin=）本来就是合法行，不重绑聊天（聊天始终绑入口舱）。
+//   · `?cabin=` 已退役：所属舱恒为入口舱，旧参数由 URL 同步清掉。
 //
 // rows 的「加载过至少一次」用 counts !== null 判定（FleetProvider 的契约：
 // null = 还没接过真值，不是空编队）。
@@ -51,7 +51,7 @@ export function CockpitUrlSync() {
     if (fallback) select(fallback)
   }, [hydrated, loadedOnce, selection, rows, select])
 
-  // 无效 ref 回退：跨舱行也在 rows 里；merged attention 命中 job 行时也算有效。
+  // 无效 ref 回退：编队已经是入口舱单舱；merged attention 命中 job 行时也算有效。
   useEffect(() => {
     if (!hydrated || !loadedOnce || !selection) return
     if (refInRows(selection, rows)) return

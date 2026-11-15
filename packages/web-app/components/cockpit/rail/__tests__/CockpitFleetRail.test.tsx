@@ -1,6 +1,6 @@
-// S3 左栏编队 RTL：三型行渲染 / 点击 payload / 舱筛选计数 / pct=null 不画条 /
-// 空态 / arrivals pop / ↑↓ 与输入框让位。数据全部走 useCockpitFleet mock，
-// 不 fetch；selection 用真实的 CockpitStateProvider 断言。
+// S3 左栏编队 RTL：三型行渲染 / 点击 payload / pct=null 不画条 / 空态 /
+// arrivals pop / ↑↓ 与输入框让位。数据全部走 useCockpitFleet mock，不 fetch；
+// selection 用真实的 CockpitStateProvider 断言。编队只含入口舱（2026-11-15）。
 
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { fireEvent, render, screen, within } from '@testing-library/react'
@@ -13,14 +13,9 @@ import type { CockpitFleetContextValue } from '../../fleet/CockpitFleetProvider'
 import { CockpitFleetRail } from '../CockpitFleetRail'
 
 const fleetState = vi.hoisted(() => ({ value: null as unknown }))
-const cabinState = vi.hoisted(() => ({ value: null as unknown }))
 
 vi.mock('../../fleet/CockpitFleetProvider', () => ({
   useCockpitFleet: () => fleetState.value,
-}))
-
-vi.mock('@/components/cabin/cabin-provider', () => ({
-  useCabinOptional: () => cabinState.value,
 }))
 
 function fleet(over: Partial<CockpitFleetContextValue> = {}): CockpitFleetContextValue {
@@ -153,7 +148,6 @@ function row(key: string) {
 
 beforeEach(() => {
   fleetState.value = fleet()
-  cabinState.value = null
 })
 
 describe('CockpitFleetRail', () => {
@@ -223,39 +217,15 @@ describe('CockpitFleetRail', () => {
     )
   })
 
-  it('舱筛选胶囊带每舱计数，点击后只留该舱行', () => {
-    const c1a = jobRow(jobView('j1', { title: '舱一 A' }))
-    const c1b = jobRow(jobView('j2', { title: '舱一 B' }))
-    const c2 = {
-      ...jobRow(jobView('j3', { title: '舱二 C' })),
-      cabinId: 'c2',
-      cabinName: '舱二',
-    } as CockpitRow
-    const rows = sortRows([c1a, c1b, c2])
+  it('不再渲染舱筛选胶囊（全域只含入口舱）', () => {
+    const rows = sortRows([jobRow(jobView('j1'))])
     renderRail({ rows, counts: buildCounts(rows, null) })
-
-    const allChip = screen.getByRole('button', { name: /全部/ })
-    expect(within(allChip).getByText('3')).toBeInTheDocument()
-    expect(within(screen.getByRole('button', { name: /舱一/ })).getByText('2')).toBeInTheDocument()
-    expect(within(screen.getByRole('button', { name: /舱二/ })).getByText('1')).toBeInTheDocument()
-
-    fireEvent.click(screen.getByRole('button', { name: /舱二/ }))
-
-    expect(row('job:j3')).toBeInTheDocument()
-    expect(screen.queryByTestId('cockpit-rail-row-job:j1')).not.toBeInTheDocument()
-    expect(screen.queryByTestId('cockpit-rail-row-job:j2')).not.toBeInTheDocument()
+    expect(screen.queryByRole('toolbar', { name: '按舱筛选' })).toBeNull()
+    expect(screen.queryByRole('button', { name: /全部/ })).toBeNull()
+    expect(row('job:j1')).toBeInTheDocument()
   })
 
-  it('筛选后为空显示「这个舱没有作业」，整队为空显示空态', () => {
-    cabinState.value = { cabin: { id: 'c-empty', name: '空舱' } }
-    const rows = sortRows([jobRow(jobView('j1'))])
-    const first = renderRail({ rows, counts: buildCounts(rows, null) })
-
-    fireEvent.click(screen.getByRole('button', { name: /空舱/ }))
-    expect(screen.getByText('这个舱没有作业')).toBeInTheDocument()
-
-    // 重新挂载，避免筛选状态残留
-    first.unmount()
+  it('空编队显示空态', () => {
     renderRail({ rows: [] })
     expect(screen.getByText('编队空着 · 从主对话派一条')).toBeInTheDocument()
   })
@@ -334,22 +304,5 @@ describe('CockpitFleetRail', () => {
     input.focus()
     fireEvent.keyDown(input, { key: 'ArrowDown' })
     expect(screen.getByTestId('selection')).toHaveTextContent('job:c1:j1')
-  })
-
-  it('↑↓ 只在筛选后的可见行内移动', () => {
-    const c1 = jobRow(jobView('j1', { title: '舱一 A' }))
-    const c2 = {
-      ...jobRow(jobView('j2', { title: '舱二 B' })),
-      cabinId: 'c2',
-      cabinName: '舱二',
-    } as CockpitRow
-    renderRail({ rows: sortRows([c1, c2]) })
-
-    fireEvent.click(screen.getByRole('button', { name: /舱二/ }))
-    fireEvent.keyDown(document.body, { key: 'ArrowDown' })
-    expect(screen.getByTestId('selection')).toHaveTextContent('job:c2:j2')
-
-    fireEvent.keyDown(document.body, { key: 'ArrowDown' })
-    expect(screen.getByTestId('selection')).toHaveTextContent('job:c2:j2')
   })
 })

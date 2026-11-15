@@ -56,16 +56,13 @@ describe('cockpit URL 契约', () => {
     })
   })
 
-  it('跨舱 ref 带 &cabin=，同舱不带；往返后所属舱不丢', () => {
-    const cross = serializeCockpitHref('c1', { kind: 'job', cabinId: 'c2', id: 'j9' }, 'run')
-    expect(cross).toBe('/cabin/c1/cockpit?job=j9&cabin=c2&tab=run')
-    expect(parseCockpitUrl(cross.slice(cross.indexOf('?')), 'c1')).toEqual({
-      ref: { kind: 'job', cabinId: 'c2', id: 'j9' },
-      tab: 'run',
+  it('跨舱已退役：serialize 不写 &cabin=，parse 读到也归入口舱', () => {
+    const href = serializeCockpitHref('c1', { kind: 'job', cabinId: 'c2', id: 'j9' }, 'run')
+    expect(href).toBe('/cabin/c1/cockpit?job=j9&tab=run')
+    expect(parseCockpitUrl('?job=j9&cabin=c2', 'c1')).toEqual({
+      ref: { kind: 'job', cabinId: 'c1', id: 'j9' },
+      tab: null,
     })
-
-    const same = serializeCockpitHref('c1', { kind: 'job', cabinId: 'c1', id: 'j1' })
-    expect(same).toBe('/cabin/c1/cockpit?job=j1')
   })
 
   it('URL 同步保留调用方参数（?demo=1），只重写座舱自己的', () => {

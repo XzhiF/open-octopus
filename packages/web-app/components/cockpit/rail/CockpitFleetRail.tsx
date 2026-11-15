@@ -1,14 +1,13 @@
 'use client'
 
 // 左栏编队（cockpit-v12 .rail，300px / z-index:7；≤1120 变抽屉读 railOpen）。
-// 数据只从 useCockpitFleet() 来，不自己 fetch；行点击写 CockpitState.select()。
-// 组内顺序严格沿用 sortRows 的结果（这里只做 cabin 筛选与分桶，不重排）。
+// 数据只从 useCockpitFleet() 来（已经是入口舱单舱），不自己 fetch；行点击写
+// CockpitState.select()。组内顺序严格沿用 sortRows 的结果（这里只做分桶，不重排）。
 // 数字纪律：job 的 pct 只在真实拿到时画条；null 一律不画，不猜 45%。
 
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { X } from 'lucide-react'
 import type { CabinAttentionItem, CabinJobKind } from '@octopus/shared'
-import { useCabinOptional } from '@/components/cabin/cabin-provider'
 import { ATTENTION_AWAITING_META, ATTENTION_STAGE_META } from '@/components/cabin/cabin-meta'
 import { useCockpitFleet } from '../fleet/CockpitFleetProvider'
 import {
@@ -118,50 +117,18 @@ function isEditableTarget(target: EventTarget | null): boolean {
   return tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || target.isContentEditable
 }
 
-interface CabinChip {
-  id: string
-  name: string
-  count: number
-}
-
 export function CockpitFleetRail() {
   const { rows, counts, arrivals, loading, error, refetch } = useCockpitFleet()
   const { selection, select, railOpen, setRailOpen, layer, projectFilter, setProjectFilter } = useCockpitState()
-  const cabinCtx = useCabinOptional()
-  const entryCabinId = cabinCtx?.cabin?.id ?? null
-  const entryCabinName = cabinCtx?.cabin?.name ?? null
 
-  const [cabinFilter, setCabinFilter] = useState<string>('all')
   const [popped, setPopped] = useState<ReadonlySet<string>>(() => new Set())
   const railRef = useRef<HTMLElement | null>(null)
 
-  // 舱筛选胶囊：全部 + 每舱计数。入口舱即使 0 行也保留（可切出「这个舱没有作业」）。
-  const chips = useMemo<CabinChip[]>(() => {
-    const map = new Map<string, CabinChip>()
-    if (entryCabinId) {
-      map.set(entryCabinId, { id: entryCabinId, name: entryCabinName ?? entryCabinId, count: 0 })
-    }
-    for (const row of rows) {
-      const chip = map.get(row.cabinId)
-      if (chip) chip.count += 1
-      else map.set(row.cabinId, { id: row.cabinId, name: row.cabinName, count: 1 })
-    }
-    return [...map.values()].sort((a, b) => a.name.localeCompare(b.name, 'zh-Hans-CN'))
-  }, [rows, entryCabinId, entryCabinName])
-
-  // 筛选舱从编队消失 → 回到「全部」；渲染侧先用 activeFilter 兜住，避免闪一帧空态。
-  const activeFilter =
-    cabinFilter !== 'all' && chips.some((chip) => chip.id === cabinFilter) ? cabinFilter : 'all'
-
-  useEffect(() => {
-    if (cabinFilter !== activeFilter) setCabinFilter(activeFilter)
-  }, [cabinFilter, activeFilter])
-
+  // 编队只含入口舱（2026-11-15）：不再有「全部 / 各舱」筛选胶囊。
   const visible = useMemo(() => {
-    const byCabin = activeFilter === 'all' ? rows : rows.filter((row) => row.cabinId === activeFilter)
-    if (!projectFilter) return byCabin
-    return byCabin.filter((row) => rowProjectKeys(row).includes(projectFilter))
-  }, [rows, activeFilter, projectFilter])
+    if (!projectFilter) return rows
+    return rows.filter((row) => rowProjectKeys(row).includes(projectFilter))
+  }, [rows, projectFilter])
 
   // 分桶只决定「放在哪个组标题下」，桶内顺序 = sortRows 的既有顺序。
   const grouped = useMemo(() => {
@@ -291,7 +258,7 @@ export function CockpitFleetRail() {
 
       {counts && (
         <div className="ck12-rail-sub">
-          {chips.length} 个舱 · <b className="m">{counts.need}</b> 等你 ·{' '}
+          <b className="m">{counts.need}</b> 等你 ·{' '}
           <b className="c">{counts.run}</b> 运行 · <b className="g">{counts.done}</b> 完成
         </div>
       )}
@@ -303,30 +270,6 @@ export function CockpitFleetRail() {
           <button type="button" className="ck12-rail-retry" onClick={refetch}>重试</button>
         </div>
       )}
-
-      <div className="ck12-rail-filter" role="toolbar" aria-label="按舱筛选">
-        <button
-          type="button"
-          className={`ck12-rail-chip${activeFilter === 'all' ? ' is-on' : ''}`}
-          aria-pressed={activeFilter === 'all'}
-          onClick={() => setCabinFilter('all')}
-        >
-          全部 <b>{rows.length}</b>
-        </button>
-        {chips.map((chip) => (
-          <button
-            key={chip.id}
-            type="button"
-            className={`ck12-rail-chip${activeFilter === chip.id ? ' is-on' : ''}`}
-            aria-pressed={activeFilter === chip.id}
-            title={`${chip.name} · ${chip.count}`}
-            onClick={() => setCabinFilter(chip.id)}
-          >
-            <i style={{ background: cabinTone(chip.id) }} aria-hidden="true" />
-            {chip.name} <b>{chip.count}</b>
-          </button>
-        ))}
-      </div>
 
       {projectFilter && (
         <div className="ck12-rail-pfilter" data-testid="cockpit-rail-project-filter">
