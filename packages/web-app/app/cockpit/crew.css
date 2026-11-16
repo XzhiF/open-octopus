@@ -482,6 +482,81 @@
   border-color: color-mix(in srgb, var(--ck-b) 82%, transparent);
 }
 
+/* ───────────── 对话联动（2026-11-16）：等待 / 倾听 / 收尾 ─────────────
+   全部只动颜色、背景位移与 img transform；pod 尺寸与舱面 rect 一键不变。 */
+.ck12-pod[data-phase='waiting'] .ck12-pod-scan {
+  animation: ck12-scan-run 2.2s linear infinite;
+}
+@keyframes ck12-scan-run {
+  from { background-position: 0 0; }
+  to { background-position: 0 8px; }
+}
+
+.ck12-pod[data-phase='done'] img {
+  animation: ck12-crew-cheer 0.9s ease-out;
+}
+@keyframes ck12-crew-cheer {
+  0%, 100% { transform: scale(1); }
+  32% { transform: scale(1.045) rotate(-0.4deg); }
+  64% { transform: scale(1.015) rotate(0.3deg); }
+}
+
+.ck12-pod[data-listening='true'] {
+  border-color: color-mix(in srgb, var(--ck-b) 62%, transparent);
+  box-shadow:
+    0 0 calc(60px * var(--ck-glow, 1)) color-mix(in srgb, var(--ck-b) 24%, transparent),
+    0 26px 64px rgba(0, 0, 0, 0.62),
+    inset 0 0 46px rgba(0, 0, 0, 0.66);
+}
+
+/* 倾听：右下角三颗呼吸点，表示她在等你把话说完（不进布局）。 */
+.ck12-pod-listen {
+  position: absolute;
+  right: 15px;
+  bottom: 15px;
+  z-index: 3;
+  display: inline-flex;
+  align-items: flex-end;
+  gap: 3px;
+  pointer-events: none;
+}
+.ck12-pod-listen i {
+  width: 3px;
+  height: 3px;
+  border-radius: 50%;
+  background: color-mix(in srgb, var(--ck-a) 88%, #fff);
+  box-shadow: 0 0 8px color-mix(in srgb, var(--ck-a) 70%, transparent);
+  animation: ck12-listen-dot 1.15s ease-in-out infinite;
+}
+.ck12-pod-listen i:nth-child(2) { animation-delay: 0.16s; }
+.ck12-pod-listen i:nth-child(3) { animation-delay: 0.32s; }
+@keyframes ck12-listen-dot {
+  0%, 100% { opacity: 0.35; transform: translateY(0) scale(0.9); }
+  40% { opacity: 1; transform: translateY(-3px) scale(1.12); }
+}
+
+/* 等待回答：气泡正文后面的三颗打字点。 */
+.ck12-speech-dots {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  margin-left: 6px;
+  vertical-align: middle;
+}
+.ck12-speech-dots i {
+  width: 3px;
+  height: 3px;
+  border-radius: 50%;
+  background: var(--ck-a);
+  animation: ck12-speech-dot 1.2s ease-in-out infinite;
+}
+.ck12-speech-dots i:nth-child(2) { animation-delay: 0.18s; }
+.ck12-speech-dots i:nth-child(3) { animation-delay: 0.36s; }
+@keyframes ck12-speech-dot {
+  0%, 100% { opacity: 0.3; transform: translateY(0); }
+  40% { opacity: 1; transform: translateY(-2px); }
+}
+
 /* ───────────────────────── 心形 ───────────────────────── */
 .ck12-heart {
   position: absolute;
@@ -506,6 +581,10 @@
 /* ───────────────────────── reduced motion ───────────────────────── */
 @media (prefers-reduced-motion: reduce) {
   .ck12-pod { animation: none; }
+  .ck12-pod[data-phase='waiting'] .ck12-pod-scan,
+  .ck12-pod[data-phase='done'] img,
+  .ck12-pod-listen i,
+  .ck12-speech-dots i { animation: none; }
   .ck12-heart { display: none; }
   .ck12-spark,
   .ck12-tapring { display: none; }

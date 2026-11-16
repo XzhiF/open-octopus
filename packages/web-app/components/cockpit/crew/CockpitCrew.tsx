@@ -14,11 +14,19 @@
 //   否则连点会看到字一闪一闪地从头打。
 //   反馈全部是绝对定位，`.ck12-crew` 的尺寸一键不变（见 design/13 §1.5 铁律）。
 //
+// 2026-11-16 · 对话联动（chat-reactions.ts）：
+//   · 发出消息（chat.streaming false → true）→「回复中」思考/工作表情 + 等待气泡，
+//     每 15s 换一句（越等越久语气换档），立绘角标显示已等秒数；
+//   · 回答结束（true → false）→ 收尾表情（庆祝/完成/俏皮）+「回完了」+ 星光/边缘；
+//   · 用户正在输入（composer 草稿非空）→「倾听」表情 + 一句「我在听」，只提示一次。
+//   表情覆盖只在 prefs.mood = auto 且没有点击/presence 的瞬时 override 时生效，
+//   所以 v13.1 的「点她立刻换表情」不会被对话联动吃掉。
+//
 // 数据只读 CockpitProvider（mood / presenceLine / testPresence）与
 // CockpitStateProvider（chat.streaming / fx.say / chatWindow）：
 //   · presenceLine → 本地气泡逐字 + fx.say（ticker 一份）；**不写 chat DOM，不调 chat API**；
 //   · 「互动一下」由设置面经 crew-events 发信号，这里执行（台词取 XY_LINES）；
-//   · prefers-reduced-motion：心形 / 浮动关掉，打字机直接出全文。
+//   · prefers-reduced-motion：心形 / 浮动 / 星光关掉，打字机直接出全文。
 //
 // 布局纪律：气泡 / 心形都是绝对定位，不参与任何 flex 高度计算。
 
@@ -39,18 +47,32 @@ import {
 import { useCockpitState } from '../state/CockpitStateProvider'
 import { subscribeCrewPoke } from './crew-events'
 import { getChatSlot } from '../chat/chat-slots'
+import {
+  doneLine, listenLine, waitingLine,
+} from './chat-reactions'
 
 const TYPE_MS = 22
 /** 首点（对话窗原本是关的）说这一句；之后连点按 XY_LINES 顺序轮播。 */
 const GREET = '我在。你说。'
 /** 连点节流：这段时间内只重复触感（星光/涟漪/音效），不重开打字机。 */
 const TALK_GAP_MS = 900
+/** 等待回答的气泡保持到下一次轮换/收尾；长回答中途不会空掉。 */
+const WAIT_HOLD_MS = 60_000
+/** 生成中每 15s 换一句等待台词（只在气泡仍是等待台词、或已收起时）。 */
+const WAIT_REFRESH_MS = 15_000
+/** 回答结束后，收尾表情和「已回完」标签保持多久。 */
+const DONE_MOOD_MS = 3_200
+
+type ChatPhase = 'idle' | 'waiting' | 'done'
+/** 气泡来源：等待轮换只覆盖自己，不打断点击/在场/倾听的台词。 */
+type SpeechSource = 'chat-wait' | 'chat-done' | 'listen' | 'click' | 'presence' | 'poke'
 
 interface Speech {
   id: number
   text: string
   mood: MoodKey
   hold: number
+  source: SpeechSource
 }
 
 interface Spark {
@@ -83,6 +105,7 @@ export function CockpitCrew() {
   const {
     prefs,
     mood,
+    moodOverride,
     presenceLine,
     dismissPresence,
     setMoodOverride,
@@ -96,22 +119,71 @@ export function CockpitCrew() {
   const [heart, setHeart] = useState(0)
   const [sparks, setSparks] = useState<Spark[]>([])
   const [tap, setTap] = useState(0)
+  /** 对话联动：空闲 / 正在回复 / 刚回完。 */
+  const [phase, setPhase] = useState<ChatPhase>('idle')
+  /** 对话联动带来的表情（思考 / 完成 / 倾听）；null = 用舱面的派生 mood。 */
+  const [reactMood, setReactMood] = useState<MoodKey | null>(null)
+  /** 用户草稿非空 = 倾听态（助理在等你把话说完）。 */
+  const [listening, setListening] = useState(false)
+  /** 「回复中 12s」的秒表。 */
+  const [waitSeconds, setWaitSeconds] = useState(0)
 
   const speechIdRef = useRef(0)
+  const speechRef = useRef<Speech | null>(null)
   const consumedPresenceRef = useRef<number | null>(null)
   const heartTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const sparkIdRef = useRef(0)
   const sparkTimersRef = useRef<Array<ReturnType<typeof setTimeout>>>([])
   const lineIdxRef = useRef(0)
   const lastTalkRef = useRef(0)
+  // 对话联动用 ref 读最新值，避免把 streaming 过渡做成「每次渲染重新触发」。
+  const streamingRef = useRef(false)
+  const prevStreamingRef = useRef(false)
+  const streamStartedRef = useRef(0)
+  const listeningRef = useRef(false)
+  const phaseRef = useRef<ChatPhase>('idle')
+  const doneTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
-  const meta = CREW[mood] ?? CREW.idle
-  const portrait = moodPortrait(mood)
   const streaming = chat?.streaming ?? false
+  useEffect(() => { streamingRef.current = streaming }, [streaming])
+  useEffect(() => { phaseRef.current = phase }, [phase])
+
+  // 对话联动表情只在「自动心情」且没有点击/在场瞬时 override 时生效：
+  // 点她一下仍然是 wink，不会被「思考」压住。
+  const chatMood: MoodKey | null =
+    phase === 'waiting' ? (reactMood ?? 'thinking')
+      : phase === 'done' ? (reactMood ?? 'cheer')
+        : listening ? (reactMood ?? 'happy')
+          : null
+  const shownMood: MoodKey = prefs.mood === 'auto' && !moodOverride && chatMood
+    ? chatMood
+    : mood
+  const label = phase === 'waiting'
+    ? '回复中'
+    : phase === 'done'
+      ? (CREW[shownMood]?.label ?? CREW.happy.label)
+      : listening
+        ? '倾听'
+        : (CREW[shownMood]?.label ?? CREW.idle.label)
+  const portrait = moodPortrait(shownMood)
+  const tagText = phase === 'waiting'
+    ? `XIYIN-07 · 回复中 ${waitSeconds}s`
+    : phase === 'done'
+      ? 'XIYIN-07 · 已回完'
+      : listening
+        ? 'XIYIN-07 · 倾听'
+        : 'XIYIN-07 · 在线'
 
   // ── 台词：本地气泡（逐字）+ ticker（fx.say 一份）────────────────────
-  const present = useCallback((text: string, nextMood: MoodKey, hold: number) => {
-    setSpeech({ id: ++speechIdRef.current, text, mood: nextMood, hold })
+  const present = useCallback((
+    text: string,
+    nextMood: MoodKey,
+    hold: number,
+    source: SpeechSource = 'click',
+  ) => {
+    const next: Speech = { id: ++speechIdRef.current, text, mood: nextMood, hold, source }
+    speechRef.current = next
+    setSpeech(next)
   }, [])
 
   // ── 触感：立绘上浮星光（对齐 classic .xy-spark）──────────────────────
@@ -161,7 +233,7 @@ export function CockpitCrew() {
         lineMood = mood
         hold = 4600
       }
-      present(text, lineMood, hold)
+      present(text, lineMood, hold, 'click')
       setMoodOverride(lineMood, hold + 400)
       // 3) 全仓一拍：四边流光；炫档再加背景扫描/环（都在内容之下，不挡点击）。
       fx.edge('var(--ck-b)')
@@ -181,7 +253,7 @@ export function CockpitCrew() {
     consumedPresenceRef.current = presenceLine.id
 
     const hold = presenceLine.hold ?? 9000
-    present(presenceLine.text, presenceLine.mood, hold)
+    present(presenceLine.text, presenceLine.mood, hold, 'presence')
     setMoodOverride(presenceLine.mood, hold + 400)
     fx.say(presenceLine.text, presenceLine.mood)
     // 反馈特效：炫档给光晕+环（lite），标准/克制只留四边流光（off）。
@@ -215,10 +287,137 @@ export function CockpitCrew() {
     if (!speech) return
     const life = speech.hold + (reduce ? 0 : speech.text.length * TYPE_MS)
     const timer = setTimeout(() => {
-      setSpeech((current) => (current && current.id === speech.id ? null : current))
+      setSpeech((current) => {
+        if (!current || current.id !== speech.id) return current
+        if (speechRef.current?.id === speech.id) speechRef.current = null
+        return null
+      })
     }, life)
     return () => clearTimeout(timer)
   }, [speech, reduce])
+
+  // ── 对话联动 ①：送出消息 → 回复中；回答结束 → 收尾 ────────────────────
+  useEffect(() => {
+    const was = prevStreamingRef.current
+    prevStreamingRef.current = streaming
+    if (streaming === was) return
+
+    if (streaming) {
+      streamStartedRef.current = Date.now()
+      setPhase('waiting')
+      setWaitSeconds(0)
+      // 已经发出去了：草稿不再算「正在输入」。
+      if (listeningRef.current) {
+        listeningRef.current = false
+        setListening(false)
+      }
+      const line = waitingLine(0)
+      setReactMood(line.mood)
+      present(line.text, line.mood, WAIT_HOLD_MS, 'chat-wait')
+      sparkle()
+      fx.edge('var(--ck-b)')
+      cabinAudio.blip(660, 0.04)
+      return
+    }
+
+    // 停止 / 正常收流都算这一轮结束：给一句收尾，但不假装「成功」。
+    setPhase('done')
+    const line = doneLine()
+    setReactMood(line.mood)
+    present(line.text, line.mood, 4600, 'chat-done')
+    sparkle()
+    fx.edge('var(--ck-a)')
+    if (prefs.fxLevel === 'full') fx.feedback('var(--ck-a)', 'lite')
+    cabinAudio.chime()
+    if (doneTimerRef.current) clearTimeout(doneTimerRef.current)
+    doneTimerRef.current = setTimeout(() => {
+      doneTimerRef.current = null
+      setPhase('idle')
+      setReactMood(null)
+    }, DONE_MOOD_MS)
+  }, [streaming, present, sparkle, fx, prefs.fxLevel])
+
+  // 回复中的秒表 + 台词轮换（只在气泡仍属于等待、或已收起时换）。
+  useEffect(() => {
+    if (phase !== 'waiting') {
+      setWaitSeconds(0)
+      return
+    }
+    const started = streamStartedRef.current || Date.now()
+    const tick = () => setWaitSeconds(Math.max(0, Math.floor((Date.now() - started) / 1000)))
+    tick()
+    const timer = window.setInterval(tick, 1000)
+    return () => window.clearInterval(timer)
+  }, [phase])
+
+  useEffect(() => {
+    if (phase !== 'waiting') return
+    const timer = window.setInterval(() => {
+      if (!streamingRef.current) return
+      const source = speechRef.current?.source
+      // 点击 / 在场 / 倾听的台词优先，不打断。
+      if (source && source !== 'chat-wait') return
+      const line = waitingLine(Date.now() - streamStartedRef.current)
+      setReactMood(line.mood)
+      present(line.text, line.mood, WAIT_HOLD_MS, 'chat-wait')
+    }, WAIT_REFRESH_MS)
+    return () => window.clearInterval(timer)
+  }, [phase, present])
+
+  // ── 对话联动 ②：用户正在输入（composer 草稿非空）→ 倾听 ───────────────
+  // composer 是跨 React 树 portal，所以挂原生 DOM 监听；只看底栏槽里的编辑器。
+  // 只在「有字 ↔ 没字」切换时更新，不在每个键上 setState（避免吞字）。
+  useEffect(() => {
+    if (typeof document === 'undefined') return
+    const readDraft = () => {
+      const slot = document.querySelector<HTMLElement>('[data-testid="cockpit-composer-slot"]')
+      const editor = slot?.querySelector<HTMLTextAreaElement | HTMLInputElement>('textarea, input')
+      return !!editor && editor.value.trim().length > 0
+    }
+    const sync = () => {
+      // 正在回复 = 她不是在等你，倾听态让位给「回复中」。
+      if (streamingRef.current) {
+        if (listeningRef.current) {
+          listeningRef.current = false
+          setListening(false)
+        }
+        return
+      }
+      const active = readDraft()
+      if (active === listeningRef.current) return
+      listeningRef.current = active
+      setListening(active)
+      if (active) {
+        // 收尾表情还没退场时开始输入：让「倾听」接上。
+        if (doneTimerRef.current) {
+          clearTimeout(doneTimerRef.current)
+          doneTimerRef.current = null
+        }
+        if (phaseRef.current === 'done') setPhase('idle')
+        const line = listenLine()
+        setReactMood(line.mood)
+        present(line.text, line.mood, 5200, 'listen')
+        sparkle()
+        cabinAudio.blip(700, 0.03)
+      } else if (phaseRef.current === 'idle') {
+        setReactMood(null)
+      }
+    }
+    sync()
+    document.addEventListener('input', sync, true)
+    document.addEventListener('focusin', sync, true)
+    document.addEventListener('focusout', sync, true)
+    document.addEventListener('keydown', sync, true)
+    // 发送后 value 由 composer 清空，不会再触发 input —— 兜底轮询（很低频）。
+    const timer = window.setInterval(sync, 2000)
+    return () => {
+      document.removeEventListener('input', sync, true)
+      document.removeEventListener('focusin', sync, true)
+      document.removeEventListener('focusout', sync, true)
+      document.removeEventListener('keydown', sync, true)
+      window.clearInterval(timer)
+    }
+  }, [present, sparkle])
 
   // 流式时占用在场闸门：汐音不在这时候主动开口（chat 未接上 → false）。
   useEffect(() => {
@@ -228,6 +427,7 @@ export function CockpitCrew() {
 
   useEffect(() => () => {
     if (heartTimerRef.current) clearTimeout(heartTimerRef.current)
+    if (doneTimerRef.current) clearTimeout(doneTimerRef.current)
     sparkTimersRef.current.forEach((timer) => clearTimeout(timer))
     sparkTimersRef.current = []
   }, [])
@@ -235,7 +435,7 @@ export function CockpitCrew() {
   // ── 「互动一下」：设置面发信号，这里执行（气泡 + 表情 + 心形）──────────
   const interact = useCallback(() => {
     const [line, lineMood] = XY_LINES[Math.floor(Math.random() * XY_LINES.length)]
-    present(line, lineMood, 5000)
+    present(line, lineMood, 5000, 'poke')
     setMoodOverride(lineMood, 3000)
     fx.say(line, lineMood)
     fx.edge('var(--ck-b)')
@@ -253,14 +453,21 @@ export function CockpitCrew() {
       <button
         type="button"
         className="ck12-pod"
-        data-state={mood}
+        data-state={shownMood}
+        data-phase={phase}
+        data-listening={listening ? 'true' : 'false'}
         data-testid="cockpit-crew-pod"
-        aria-label={`汐音 · ${meta.label} · 点击跟她说话`}
+        aria-label={`汐音 · ${label} · 点击跟她说话`}
         onClick={talkToXiyin}
       >
         <img src={portrait} alt="汐音" />
         <span className="ck12-pod-scan" aria-hidden="true" />
         <span className="ck12-pod-vg" aria-hidden="true" />
+        {listening && phase === 'idle' && (
+          <span className="ck12-pod-listen" data-testid="cockpit-crew-listening" aria-hidden="true">
+            <i /><i /><i />
+          </span>
+        )}
         {sparks.map((spark) => (
           <span
             key={spark.id}
@@ -275,10 +482,10 @@ export function CockpitCrew() {
             }}
           >✦</span>
         ))}
-        <span className="ck12-pod-tag"><i aria-hidden="true" />XIYIN-07 · 在线</span>
+        <span className="ck12-pod-tag"><i aria-hidden="true" />{tagText}</span>
         <span className="ck12-pod-name">
           汐音 <small>· 全域助理</small>
-          <em data-testid="cockpit-crew-mood">{meta.label}</em>
+          <em data-testid="cockpit-crew-mood">{label}</em>
         </span>
       </button>
 
@@ -290,6 +497,7 @@ export function CockpitCrew() {
       <div
         className={`ck12-speech${speech ? ' show' : ''}`}
         data-testid="cockpit-crew-speech"
+        data-phase={phase}
         aria-live="polite"
         aria-hidden={!speech}
         onClick={talkToXiyin}
@@ -301,11 +509,24 @@ export function CockpitCrew() {
           <>
             <div className="ck12-speech-who">
               <i aria-hidden="true" />汐音 · 助理
-              <span className="ck12-speech-tag">{CREW[speech.mood]?.label ?? '待命'}</span>
+              <span className="ck12-speech-tag">
+                {phase === 'waiting'
+                  ? '回复中'
+                  : phase === 'done'
+                    ? '已回完'
+                    : listening
+                      ? '倾听'
+                      : (CREW[speech.mood]?.label ?? '待命')}
+              </span>
             </div>
             <div className="ck12-speech-tx">
               {typed}
               <span className="ck12-speech-cur" aria-hidden="true">▸</span>
+              {phase === 'waiting' && speech.source === 'chat-wait' && (
+                <span className="ck12-speech-dots" data-testid="cockpit-crew-wait-dots" aria-hidden="true">
+                  <i /><i /><i />
+                </span>
+              )}
             </div>
           </>
         )}

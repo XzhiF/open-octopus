@@ -29,6 +29,7 @@ import { CockpitTicker } from '../../shell/CockpitTicker'
 import { CockpitCrew } from '../CockpitCrew'
 import { CockpitCrewSettings } from '../CockpitCrewSettings'
 import { requestCrewPoke, resetCrewPoke, subscribeCrewPoke } from '../crew-events'
+import { CHAT_DONE, CHAT_LISTEN, CHAT_WAIT_EARLY } from '../chat-reactions'
 
 vi.mock('@/lib/cabin-audio', () => ({
   cabinAudio: { blip: vi.fn(), chime: vi.fn(), setOn: vi.fn(), resume: vi.fn() },
@@ -289,6 +290,100 @@ describe('CockpitCrew · 闸门', () => {
     const idleSetCrewBusy = vi.fn()
     renderCrew({ setCrewBusy: idleSetCrewBusy })
     expect(idleSetCrewBusy).toHaveBeenLastCalledWith(false)
+  })
+})
+
+describe('CockpitCrew · 对话联动（2026-11-16）', () => {
+  it('送出消息（streaming true）→ 思考表情 + 等待气泡 + 回复中秒表', async () => {
+    vi.spyOn(Math, 'random').mockReturnValue(0) // waitingLine(0) = CHAT_WAIT_EARLY[0]
+    const view = render(tree(makeCockpit(), <ChatSeeder streaming />))
+
+    await waitFor(() =>
+      expect(screen.getByTestId('cockpit-crew-mood')).toHaveTextContent('回复中'),
+    )
+    const pod = screen.getByTestId('cockpit-crew-pod')
+    expect(pod.dataset.state).toBe(CHAT_WAIT_EARLY[0].mood)
+    expect(pod.dataset.phase).toBe('waiting')
+    expect(screen.getByTestId('cockpit-crew-pod').textContent).toContain('回复中')
+    await waitFor(() =>
+      expect(screen.getByTestId('cockpit-crew-speech')).toHaveTextContent(CHAT_WAIT_EARLY[0].text),
+    )
+    expect(screen.getByTestId('cockpit-crew-wait-dots')).toBeInTheDocument()
+
+    view.unmount()
+  })
+
+  it('回答结束（streaming true → false）→ 收尾表情 +「回完了」+ 星光', async () => {
+    vi.spyOn(Math, 'random').mockReturnValue(0) // doneLine = CHAT_DONE[0]（cheer）
+    const view = render(tree(makeCockpit(), <ChatSeeder streaming />))
+    await waitFor(() =>
+      expect(screen.getByTestId('cockpit-crew-mood')).toHaveTextContent('回复中'),
+    )
+
+    view.rerender(tree(makeCockpit(), <ChatSeeder streaming={false} />))
+
+    await waitFor(() =>
+      expect(screen.getByTestId('cockpit-crew-mood')).toHaveTextContent('庆祝'),
+    )
+    expect(screen.getByTestId('cockpit-crew-pod').dataset.state).toBe(CHAT_DONE[0].mood)
+    expect(screen.getByTestId('cockpit-crew-pod').dataset.phase).toBe('done')
+    await waitFor(() =>
+      expect(screen.getByTestId('cockpit-crew-speech')).toHaveTextContent(CHAT_DONE[0].text),
+    )
+    expect(screen.getAllByTestId('cockpit-crew-spark').length).toBeGreaterThan(0)
+
+    view.unmount()
+  })
+
+  it('用户输入草稿 → 倾听表情 +「我在听」+ 呼吸点；清空即退', async () => {
+    vi.spyOn(Math, 'random').mockReturnValue(0) // listenLine = CHAT_LISTEN[0]
+    const view = render(
+      tree(
+        makeCockpit(),
+        <div data-testid="cockpit-composer-slot"><textarea data-testid="composer" /></div>,
+      ),
+    )
+    const input = screen.getByTestId('composer')
+
+    fireEvent.input(input, { target: { value: '帮我看看这个任务' } })
+
+    await waitFor(() =>
+      expect(screen.getByTestId('cockpit-crew-mood')).toHaveTextContent('倾听'),
+    )
+    expect(screen.getByTestId('cockpit-crew-pod').dataset.state).toBe(CHAT_LISTEN[0].mood)
+    expect(screen.getByTestId('cockpit-crew-listening')).toBeInTheDocument()
+    await waitFor(() =>
+      expect(screen.getByTestId('cockpit-crew-speech')).toHaveTextContent(CHAT_LISTEN[0].text),
+    )
+
+    fireEvent.input(input, { target: { value: '' } })
+    await waitFor(() =>
+      expect(screen.queryByTestId('cockpit-crew-listening')).toBeNull(),
+    )
+
+    view.unmount()
+  })
+
+  it('正在回复时不进倾听态（回复中优先）', async () => {
+    const view = render(
+      tree(
+        makeCockpit(),
+        <>
+          <ChatSeeder streaming />
+          <div data-testid="cockpit-composer-slot"><textarea data-testid="composer" /></div>
+        </>,
+      ),
+    )
+
+    fireEvent.input(screen.getByTestId('composer'), { target: { value: '排队一条' } })
+
+    await waitFor(() =>
+      expect(screen.getByTestId('cockpit-crew-mood')).toHaveTextContent('回复中'),
+    )
+    expect(screen.queryByTestId('cockpit-crew-listening')).toBeNull()
+    expect(screen.getByTestId('cockpit-crew-pod').dataset.phase).toBe('waiting')
+
+    view.unmount()
   })
 })
 
