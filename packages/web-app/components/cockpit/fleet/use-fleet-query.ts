@@ -391,9 +391,22 @@ export function useFleetQuery(cabinId: string): FleetQuery {
     setState({ rows: [], counts: null, arrivals: [], loading: true, error: null })
     void tick()
     const timer = window.setInterval(() => { void tick() }, POLL_MS)
+    // 人答完决策 → 答案转达给作者、主线程流启动。等 1.2s 补一拍，编队立刻
+    // 显示「作者在推进」，不然要干等下一个 10s 轮询，看起来像没人在跑。
+    const answerTimers = new Set<number>()
+    const onAnswered = () => {
+      const id = window.setTimeout(() => {
+        answerTimers.delete(id)
+        void tick()
+      }, 1_200)
+      answerTimers.add(id)
+    }
+    window.addEventListener('octopus:author-ask-answered', onAnswered)
     return () => {
       mountedRef.current = false
       window.clearInterval(timer)
+      window.removeEventListener('octopus:author-ask-answered', onAnswered)
+      for (const id of answerTimers) window.clearTimeout(id)
       abortRef.current?.abort()
       abortRef.current = null
       inFlightRef.current = false

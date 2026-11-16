@@ -7,6 +7,7 @@ import os from "os"
 import path from "path"
 import {
   browseDirectory,
+  createDirectory,
   isSensitivePath,
   PathPolicyError,
   resolveSelectableDirectory,
@@ -94,5 +95,57 @@ describe("path-policy", () => {
       ? (process.env.SystemRoot ?? "C:\\Windows")
       : "/etc"
     expect(() => browseDirectory(blocked)).toThrow(PathPolicyError)
+  })
+})
+
+describe("createDirectory（目录浏览器新建文件夹）", () => {
+  it("在可浏览目录下建一条，并直接返回新目录的 browse DTO", () => {
+    const root = tempDir("octo-mkdir-")
+    try {
+      const res = createDirectory(root, "feature-x")
+      expect(res.path).toBe(fs.realpathSync(path.join(root, "feature-x")))
+      expect(fs.statSync(res.path).isDirectory()).toBe(true)
+      // 前端要能直接落到新目录，不用再请求一次。
+      expect(res.browse.path).toBe(res.path)
+      expect(res.browse.canSelect).toBe(true)
+      expect(browseDirectory(root).dirs.map((d) => d.name)).toEqual(["feature-x"])
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true })
+    }
+  })
+
+  it("重名 → PATH_EXISTS；名字不合法 → PATH_INVALID_NAME", () => {
+    const root = tempDir("octo-mkdir-dup-")
+    try {
+      createDirectory(root, "same")
+      expect(() => createDirectory(root, "same")).toThrow(/已存在/)
+      try { createDirectory(root, "same") } catch (err) {
+        expect((err as PathPolicyError).code).toBe("PATH_EXISTS")
+      }
+      for (const bad of ["", ".", "..", "a/b", "a\\b", "  "]) {
+        try {
+          createDirectory(root, bad)
+          throw new Error(`应当拒绝: ${JSON.stringify(bad)}`)
+        } catch (err) {
+          expect((err as PathPolicyError).code).toBe("PATH_INVALID_NAME")
+        }
+      }
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true })
+    }
+  })
+
+  it("敏感父目录 / 敏感名字被拒（home 下的凭据目录）", () => {
+    try {
+      createDirectory(os.homedir(), ".ssh")
+      throw new Error("应当拒绝 ~/.ssh")
+    } catch (err) {
+      expect(err).toBeInstanceOf(PathPolicyError)
+      expect((err as PathPolicyError).code).toBe("PATH_BLOCKED")
+    }
+    const blocked = process.platform === "win32"
+      ? (process.env.SystemRoot ?? "C:\\Windows")
+      : "/etc"
+    expect(() => createDirectory(blocked, "x")).toThrow(PathPolicyError)
   })
 })

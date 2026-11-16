@@ -15,15 +15,13 @@
 // 旧服务端（没有 decisions 端点）自动退回「直接转发作者线程」的兼容路径。
 
 import { useCallback, useState } from 'react'
-import { toast } from 'sonner'
 import { CheckCircle2, ChevronDown, MessageSquare } from 'lucide-react'
 import type { AgentMessage } from '@/lib/agent/types'
 import type { ChatMessage } from '@/lib/types'
-import { chatStream, recordCardDecision } from '@/lib/agent/api'
-import { submitCabinDecision, CabinDecisionError } from '@/lib/cabin-api'
 import { useCabinOptional } from '@/components/cabin/cabin-provider'
 import { AskUserQuestionCard } from '@/components/workspace/chat/ask-user-question-card'
 import { openTaskInChat } from '@/components/cabin/modules/ui'
+import { useAskSubmit } from '@/components/cabin/asks/ask-submit'
 
 interface AuthorAskOption {
   label?: string
@@ -50,69 +48,8 @@ interface AuthorAskPayload {
   questions?: unknown
 }
 
-const RETRY_DELAYS = [2_000, 5_000]
-
-/** 送进作者线程一轮；只等「已被受理」的信号（首块或被拒），不等整轮跑完。 */
-function forwardOnce(authorSessionId: string, content: string): Promise<void> {
-  const conn = chatStream(authorSessionId, content)
-  return new Promise<void>((resolve, reject) => {
-    let settled = false
-    const timer = setTimeout(() => {
-      if (settled) return
-      settled = true
-      void (async () => {
-        try {
-          for (;;) { const { done } = await conn.reader.read(); if (done) break }
-        } catch { /* 受理后的读失败不影响送达 */ }
-      })()
-      resolve()
-    }, 4_000)
-    conn.reader.read().then(({ done }) => {
-      if (settled) return
-      settled = true
-      clearTimeout(timer)
-      void (async () => {
-        try {
-          if (done) return
-          for (;;) { const { done: d } = await conn.reader.read(); if (d) break }
-        } catch { /* 同上 */ }
-      })()
-      resolve()
-    }).catch((err: unknown) => {
-      if (settled) return
-      settled = true
-      clearTimeout(timer)
-      reject(err)
-    })
-  })
-}
-
-async function forwardWithRetry(authorSessionId: string, content: string): Promise<void> {
-  let last: unknown = null
-  for (let attempt = 0; attempt <= RETRY_DELAYS.length; attempt++) {
-    try {
-      await forwardOnce(authorSessionId, content)
-      return
-    } catch (err) {
-      last = err
-      const delay = RETRY_DELAYS[attempt]
-      if (delay == null) break
-      await new Promise((r) => setTimeout(r, delay))
-    }
-  }
-  throw last instanceof Error ? last : new Error('回答发送失败')
-}
-
-/** 从「用户回答了以下问题」正文里取第一个 → 后的选择（逐字）与其余补充。 */
-export function parseAnsweredChoice(content: string): { choice: string; note?: string } {
-  const lines = content.split('\n')
-  const arrows = lines
-    .map((line) => /^\s*→\s*(.+)$/.exec(line)?.[1]?.trim())
-    .filter((v): v is string => !!v)
-  const choice = arrows[0] ?? content.trim()
-  const note = arrows.length > 1 ? arrows.slice(1).join('；') : undefined
-  return { choice, ...(note ? { note } : {}) }
-}
+/** 提交管线与解析在 asks/ask-submit（与问答窗共用）；这里保留同名导出。 */
+export { parseAnsweredChoice } from '@/components/cabin/asks/ask-submit'
 
 function envelopeState(payload: AuthorAskPayload) {
   const phase = payload.phase && typeof payload.phase.index === 'number'
@@ -128,8 +65,6 @@ export function AuthorAskCard({ message }: { message: AgentMessage }) {
   const cabin = useCabinOptional()
   const cabinId = cabin?.cabinId ?? null
   const [answered, setAnswered] = useState(!!activity?.decision)
-  const [busy, setBusy] = useState(false)
-  const [failed, setFailed] = useState<string | null>(null)
   const [receipt, setReceipt] = useState<string | null>(() => {
     const label = activity?.decision?.label
     if (typeof label !== 'string' || !label) return null
@@ -146,70 +81,26 @@ export function AuthorAskCard({ message }: { message: AgentMessage }) {
   const anchorId = `author-ask-${askId}`
   const { phase, options } = envelopeState(payload)
 
+  // 与问答窗共用同一套提交语义（design 26 §5.1）：票据、幂等、回执、事件。
+  const { submit, busy, failed } = useAskSubmit({
+    cabinId: effectiveCabinId,
+    askId,
+    ...(typeof payload.authorSessionId === 'string' ? { authorSessionId: payload.authorSessionId } : {}),
+    ...(handle ? { handle } : {}),
+    taskName,
+    ...(payload.subject?.kind === 'task' ? { taskId: payload.subject.id } : {}),
+    optionLabels: options.map((o) => o.label ?? '').filter(Boolean),
+    messageId: message.id,
+    threadFallback: true,
+  })
+
   const answer = useCallback(async (content: string) => {
-    const authorSessionId = payload.authorSessionId
-    if (!authorSessionId) {
-      toast.error('缺少作者线程，暂时无法就地回答')
-      return
-    }
-    setBusy(true)
-    setFailed(null)
-    const { choice, note } = parseAnsweredChoice(content)
-    // Other / 自由文本不是选项选择：走 composer 语义（服务端放宽逐字命中）。
-    const isOption = options.some((o) => o.label === choice)
-    try {
-      if (effectiveCabinId) {
-        try {
-          const res = await submitCabinDecision(effectiveCabinId, {
-            askId,
-            choice,
-            ...(note ? { note } : {}),
-            source: isOption ? 'card' : 'composer',
-            focusAtSubmit: askId,
-            ...(payload.subject?.kind === 'task' ? { taskId: payload.subject.id } : {}),
-          })
-          // §5.6 第 5 步：先变只读，再等转达。转达慢 / 失败都不再让卡片回弹。
-          setAnswered(true)
-          setReceipt(res.receipt.line)
-          toast.success(res.already ? res.receipt.line : '已记下，汐音正在转达')
-          window.dispatchEvent(new CustomEvent('octopus:author-ask-answered', {
-            detail: { askMessageId: askId, handle, choice },
-          }))
-          return
-        } catch (err) {
-          // 服务端明确拒绝（归属 / 选项 / 已过期）：不要把答案偷偷发到别处。
-          if (err instanceof CabinDecisionError && err.status !== 404 && err.status !== 503) {
-            if (err.status === 409 && /已经答过|已答/.test(err.message)) {
-              setAnswered(true)
-              setReceipt(`已经答过（${err.message}）`)
-              window.dispatchEvent(new CustomEvent('octopus:author-ask-answered', {
-                detail: { askMessageId: askId },
-              }))
-              return
-            }
-            setFailed(err.message)
-            toast.error(err.message)
-            return
-          }
-          // 旧服务端 / 网络不可达：落到兼容的直发路径。
-        }
-      }
-      await forwardWithRetry(authorSessionId, content)
-      void recordCardDecision(message.id, { actionId: 'answer_author_ask', label: '已回答' })
-        .catch(() => {})
-      setAnswered(true)
-      setReceipt(`✓ 已答 · ${handle ? `${handle} ` : ''}${taskName}：${choice}（已直接转达）`)
-      window.dispatchEvent(new CustomEvent('octopus:author-ask-answered', {
-        detail: { askMessageId: askId, handle, choice },
-      }))
-      toast.success('已回答 · 任务作者继续推进')
-    } catch {
-      setFailed('作者线程正忙，答案没有送达 —— 请再点一次提交')
-      toast.error('作者线程正忙，答案没有送达 —— 请再点一次提交')
-    } finally {
-      setBusy(false)
-    }
-  }, [askId, effectiveCabinId, handle, message.id, options, payload.authorSessionId, payload.subject, taskName])
+    const outcome = await submit(content)
+    if (!outcome.ok) return
+    // §5.6 第 5 步：先变只读，再等转达。转达慢 / 失败都不再让卡片回弹。
+    setAnswered(true)
+    if (outcome.receipt) setReceipt(outcome.receipt)
+  }, [submit])
 
   if (answered) {
     return (
@@ -249,7 +140,7 @@ export function AuthorAskCard({ message }: { message: AgentMessage }) {
             className="mt-2 text-[11.5px] font-bold text-pop-cyan hover:underline"
             onClick={() => openTaskInChat(payload.taskId as string)}
           >
-            去任务对话 →
+            任务线程 · 去回答 →
           </button>
         )}
       </div>
@@ -295,13 +186,14 @@ export function AuthorAskCard({ message }: { message: AgentMessage }) {
             className="shrink-0 text-[10.5px] font-bold text-pop-cyan hover:underline"
             onClick={() => openTaskInChat(payload.taskId as string)}
           >
-            去任务对话 →
+            任务线程 · 看过程 →
           </button>
         )}
       </div>
 
       {hasEnvelope && (
         <details
+          open
           data-testid="author-ask-envelope"
           className="mb-1.5 rounded-lg border border-pop-bd/60 bg-pop-paper/70 px-2 py-1.5 text-[11.5px] text-pop-ink"
         >

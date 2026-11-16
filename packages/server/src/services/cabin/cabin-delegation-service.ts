@@ -28,6 +28,8 @@ export interface CabinDelegationDeps {
   delegations: CabinDelegationDAO
   service: CabinService
   comm: CabinCommService
+  /** 主会话消息落库后的即时通知（SSE session_updated），否则回执要等轮询。 */
+  onAppend?: (sessionId: string, workspaceId: string | null) => void
 }
 
 export interface DelegateInput {
@@ -94,6 +96,7 @@ export class CabinDelegationService {
     } catch { /* session columns best effort */ }
 
     this.appendAudit(cabinId, row, "delegate", { title, autonomy })
+    try { this.deps.service.notifyViewChanged(cabinId) } catch { /* view hook optional */ }
     if (!input.noWake) {
       void this.deps.comm.wakeSessionPublic(session.id, cabin.org ?? "", this.wakeMessage(row, brief, intent))
     }
@@ -138,6 +141,7 @@ export class CabinDelegationService {
     const row = this.deps.delegations.getById(id)
     if (!row) return undefined
     this.deps.delegations.updateState(id, state, extra)
+    try { this.deps.service.notifyViewChanged(row.cabin_id) } catch { /* view hook optional */ }
     const ended = state === "done" || state === "failed" || state === "cancelled"
     return {
       ...row, state, updated_at: now(),
@@ -150,11 +154,15 @@ export class CabinDelegationService {
     const row = this.deps.delegations.getById(id)
     if (!row || row.state === "done" || row.state === "failed" || row.state === "cancelled") return
     this.deps.delegations.updateState(id, "waiting_input")
+    try { this.deps.service.notifyViewChanged(row.cabin_id) } catch { /* view hook optional */ }
   }
 
   markRunning(id: string): void {
     const row = this.deps.delegations.getById(id)
-    if (row?.state === "waiting_input") this.deps.delegations.updateState(id, "running")
+    if (row?.state === "waiting_input") {
+      this.deps.delegations.updateState(id, "running")
+      try { this.deps.service.notifyViewChanged(row.cabin_id) } catch { /* view hook optional */ }
+    }
   }
 
   finish(id: string, summary: string, ok = true): CabinDelegationRow | undefined {
@@ -207,6 +215,8 @@ export class CabinDelegationService {
       this.deps.cabin.getDb().prepare(
         "UPDATE sessions SET last_message_at = ?, updated_at = ? WHERE id = ?",
       ).run(ts, ts, sessionId)
+      // 回执已落库：立即通知打开着的主对话刷新，不等下一次轮询。
+      this.deps.onAppend?.(sessionId, cabin?.workspace_id ?? null)
     } catch { /* best effort */ }
   }
 

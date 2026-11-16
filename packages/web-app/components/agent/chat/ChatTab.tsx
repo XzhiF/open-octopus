@@ -136,13 +136,28 @@ export function ChatTab({ cabinBridge }: { cabinBridge?: ChatTabCabinBridge } = 
     setRegionNode(node)
   }, [])
 
+  // 新建作战舱右页（CabinCreateHero）会整块接管对话区，ChatPane 这时是**卸载**的。
+  // 侧栏 / 顶栏的任何导航都必须先收起这页（草稿仍留在左栏），否则指令发给一个
+  // 不存在的 ChatPane，用户看到的就是「点了没反应」。
+  const draftPageOpen = !!cabinBridge?.draftOpen
+  const closeDraftPage = cabinBridge?.onCloseDraft
+  // 同一次点击里 handleSelectX 与 issueCommand 都会调它：用 ref 保证只收一次。
+  const draftPageVisibleRef = useRef(false)
+  draftPageVisibleRef.current = draftPageOpen
+  const leaveDraftPage = useCallback(() => {
+    if (!draftPageVisibleRef.current) return
+    draftPageVisibleRef.current = false
+    closeDraftPage?.()
+  }, [closeDraftPage])
+
   const issueCommand = useCallback((pane: ChatPaneId, action: ChatPaneAction) => {
+    leaveDraftPage()
     userNavigatedRef.current = true
     nonceRef.current += 1
     const command: ChatPaneCommand = { ...action, nonce: nonceRef.current }
     if (pane === 'left') setLeftCommand(command)
     else setRightCommand(command)
-  }, [])
+  }, [leaveDraftPage])
 
   const collapseSplit = useCallback(() => {
     // 关闭分屏 = 保留焦点栏：焦点在右时把右栏的内容搬到剩下的一栏。
@@ -389,10 +404,13 @@ export function ChatTab({ cabinBridge }: { cabinBridge?: ChatTabCabinBridge } = 
   }, [split, leftSession, rightSession, issueCommand])
 
   const handleSelectSession = useCallback((id: string) => {
+    leaveDraftPage()
     openSessionInPane(split ? focus : 'left', id)
-  }, [split, focus, openSessionInPane])
+  }, [split, focus, openSessionInPane, leaveDraftPage])
 
   const handleSelectTask = useCallback((task: TaskView, opts?: { module?: TaskModule }) => {
+    // 分屏下「已在某栏打开」会提前 return，所以这里先收新建页。
+    leaveDraftPage()
     if (!split) {
       issueCommand('left', { type: 'select-task', task, ...(opts?.module ? { module: opts.module } : {}) })
       return
@@ -414,7 +432,7 @@ export function ChatTab({ cabinBridge }: { cabinBridge?: ChatTabCabinBridge } = 
       return
     }
     issueCommand(focus, { type: 'select-task', task, ...(opts?.module ? { module: opts.module } : {}) })
-  }, [split, leftTask, rightTask, leftSession, rightSession, focus, issueCommand])
+  }, [split, leftTask, rightTask, leftSession, rightSession, focus, issueCommand, leaveDraftPage])
 
   const handleCreateSession = useCallback(() => {
     issueCommand(split ? focus : 'left', { type: 'new-session' })
@@ -425,6 +443,8 @@ export function ChatTab({ cabinBridge }: { cabinBridge?: ChatTabCabinBridge } = 
   }, [split, focus, issueCommand])
 
   const openInOtherPane = useCallback((target: { kind: 'session' | 'task'; id: string; task?: TaskView }) => {
+    // 「已在某栏打开」也提前 return；新建页同样要收起来。
+    leaveDraftPage()
     if (!split) return
     const other: ChatPaneId = focus === 'left' ? 'right' : 'left'
     if (target.kind === 'session') {
@@ -438,7 +458,7 @@ export function ChatTab({ cabinBridge }: { cabinBridge?: ChatTabCabinBridge } = 
     if (rightTask?.id === target.id) { setFocus('right'); toast.message('已在右栏打开'); return }
     setFocus(other)
     if (target.task) issueCommand(other, { type: 'select-task', task: target.task })
-  }, [split, focus, leftSession, rightSession, leftTask, rightTask, issueCommand])
+  }, [split, focus, leftSession, rightSession, leftTask, rightTask, issueCommand, leaveDraftPage])
 
   const handleDeleteSession = useCallback(async (id: string) => {
     await removeSession(id)

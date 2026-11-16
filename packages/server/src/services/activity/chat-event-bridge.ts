@@ -538,6 +538,7 @@ class ChatEventBridge {
       contentPrefix: input.contentPrefix,
     })
     this.notifySession(main, input.workspaceId)
+    this.emitCabinView(input.cabinId)
   }
 
   /** 引导类卡（验收 / 归档）在舱里默认落主会话；这里把同一张卡补进任务自己的
@@ -632,6 +633,7 @@ class ChatEventBridge {
         actions,
       })
       this.notifySession(row.source_chat_session_id, row.workspace_id ?? null)
+      this.emitCabinView(row.cabin_id)
       this.mirrorCardToTaskThread({
         sessionId: threadSessionId,
         excludeSessionId: row.source_chat_session_id,
@@ -720,6 +722,7 @@ class ChatEventBridge {
         actions,
       })
       this.notifySession(row.source_chat_session_id, row.workspace_id ?? null)
+      this.emitCabinView(row.cabin_id)
       this.mirrorCardToTaskThread({
         sessionId: threadSessionId,
         excludeSessionId: row.source_chat_session_id,
@@ -806,6 +809,7 @@ class ChatEventBridge {
         actions: [{ id: "open_archive", label: "打开归档台看明细" }],
       })
       this.notifySession(row.source_chat_session_id, row.workspace_id ?? null)
+      this.emitCabinView(row.cabin_id)
       this.mirrorCardToTaskThread({
         sessionId: threadSessionId,
         excludeSessionId: row.source_chat_session_id,
@@ -1132,9 +1136,17 @@ class ChatEventBridge {
     const subject = this.resolveAskSubject(input.authorSessionId)
     if (!subject?.mainSessionId) return
     const dup = this.db.prepare(
-      "SELECT 1 FROM messages WHERE session_id = ? AND metadata LIKE ? LIMIT 1",
-    ).get(subject.mainSessionId, `%"askMessageId":"${input.askMessageId}"%`)
-    if (dup) return
+      "SELECT id, metadata FROM messages WHERE session_id = ? AND metadata LIKE ? LIMIT 1",
+    ).get(subject.mainSessionId, `%"askMessageId":"${input.askMessageId}"%`) as
+      { id: string; metadata: string | null } | undefined
+    // 2026-11-16：提问瞬间先落一张最小卡（降低延迟），回合收尾再用同一
+    // askMessageId 补齐信封字段（决策 / 建议 / 选项影响）。幂等键不变。
+    if (dup) {
+      if (this.enrichAskCard(dup.id, dup.metadata, input)) {
+        this.emitCabinView(subject.cabinId)
+      }
+      return
+    }
 
     const questions = Array.isArray(input.questions)
       ? input.questions
@@ -1189,6 +1201,7 @@ class ChatEventBridge {
         "UPDATE sessions SET last_message_at = ?, updated_at = ? WHERE id = ?",
       ).run(now, now, subject.mainSessionId)
       this.notifySession(subject.mainSessionId, subject.workspaceId)
+      this.emitCabinView(subject.cabinId)
     } catch (err: unknown) {
       if (process.env.NODE_ENV !== "test") {
         console.warn("[ChatEventBridge] author-ask card append failed:", err instanceof Error ? err.message : String(err))
@@ -1198,6 +1211,61 @@ class ChatEventBridge {
     // 委派：提问即 waiting_input（编队里能看到「D1 在问你」）。
     if (subject.subject.kind === "delegation") {
       try { this.delegationStateHook?.(subject.subject.id, "waiting_input") } catch { /* best effort */ }
+    }
+  }
+
+  /** 回合收尾补信封：只补空字段，不覆盖提问瞬间已有的值（幂等）。
+   *  返回是否真的改了 metadata（调用方据此决定是否广播）。 */
+  private enrichAskCard(
+    messageId: string,
+    metadata: string | null,
+    input: {
+      decision?: string
+      recommendation?: { label?: string; reason?: string }
+      options?: Array<{ label?: string; impact?: string }>
+      origin?: string
+      blocking?: boolean
+      intent?: string
+      phase?: { index?: number; round?: number } | null
+    },
+  ): boolean {
+    if (!this.db || !metadata) return false
+    try {
+      const meta = JSON.parse(metadata) as {
+        activity?: { payload?: Record<string, unknown> }
+      }
+      const payload = meta.activity?.payload
+      if (!payload) return false
+      let changed = false
+      const fill = (key: string, value: unknown) => {
+        if (value === undefined || value === null) return
+        if (payload[key] === undefined || payload[key] === null) {
+          payload[key] = value
+          changed = true
+        }
+      }
+      fill("decision", input.decision)
+      fill("recommendation", input.recommendation)
+      fill("origin", input.origin)
+      fill("blocking", input.blocking)
+      fill("intent", input.intent)
+      fill("phase", input.phase)
+      // options：提问瞬间只有 label，收尾带上 impact —— 只有旧值缺影响时才替换。
+      const next = input.options ?? []
+      const old = Array.isArray(payload.options)
+        ? (payload.options as Array<{ label?: string; impact?: string }>)
+        : []
+      const oldHasImpact = old.some((o) => !!o?.impact)
+      if (next.length > 0 && !oldHasImpact && next.some((o) => !!o?.impact)) {
+        payload.options = next
+        changed = true
+      }
+      if (!changed) return false
+      this.db.prepare("UPDATE messages SET metadata = ? WHERE id = ?")
+        .run(JSON.stringify(meta), messageId)
+      return true
+    } catch {
+      return false
     }
   }
 
@@ -1334,6 +1402,7 @@ class ChatEventBridge {
         try { this.delegationStateHook?.(subject.subject.id, "running") } catch { /* best effort */ }
       }
       this.notifySession(subject.mainSessionId, subject.workspaceId)
+      this.emitCabinView(subject.cabinId)
       return
     }
   }
@@ -1709,12 +1778,35 @@ class ChatEventBridge {
     })
   }
 
-  /** Tell an open chat to reload its transcript (no wake turn). */
+  /** Tell an open chat to reload its transcript (no wake turn).
+   *
+   *  2026-11-16 修复：调用方经常把「舱主会话 + 任务 workspace」一起传进来
+   *  （archive / acceptance 引导先把 session 换成 main）。SSE 是按 workspace
+   *  频道分发的，发错频道 = 主对话收不到，只能等 F5。以会话行自己的
+   *  workspace_id 为准，调用方给的值仅作兜底。 */
   private notifySession(sessionId: string, workspaceId: string | null): void {
-    if (!this.sse || !workspaceId) return
-    this.sse.emit(workspaceId, {
+    if (!this.sse) return
+    let resolved: string | null = null
+    try {
+      const row = this.db?.prepare("SELECT workspace_id FROM sessions WHERE id = ?")
+        .get(sessionId) as { workspace_id?: string | null } | undefined
+      resolved = row?.workspace_id ?? null
+    } catch { /* old DB — fall back to hint */ }
+    const target = resolved ?? workspaceId
+    if (!target) return
+    this.sse.emit(target, {
       event: "session_updated",
       data: { sessionId, wake: false, phase: "event" },
+    })
+  }
+
+  /** 舱级视图变脏（attention / 编队 / 待你数）：让开着的舱壳立即重拉派生视图，
+   *  而不是等 useCabin 的 30s 轮询。零 LLM。 */
+  private emitCabinView(cabinId: string | null | undefined): void {
+    if (!cabinId || !this.sse) return
+    this.sse.emit(`cabin:${cabinId}`, {
+      event: "cabin_view",
+      data: { cabin_id: cabinId },
     })
   }
 

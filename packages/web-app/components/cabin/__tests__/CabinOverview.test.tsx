@@ -20,6 +20,7 @@ import { useCabin } from '@/hooks/use-cabin'
 import { archiveCabin, initCabin, listCabinWorktrees, reopenCabin, wakeCabin } from '@/lib/cabin-api'
 import { CabinOverview } from '../CabinOverview'
 import { CabinProvider, useCabinContext } from '../cabin-provider'
+import { AskWindowsProvider, useAskWindows } from '../asks/ask-windows-provider'
 
 const mockUseCabin = vi.mocked(useCabin)
 
@@ -100,6 +101,34 @@ describe('CabinOverview — serial inbox', () => {
     fireEvent.click(screen.getByText('任务A · 待验收'))
     expect(spy).toHaveBeenCalledTimes(1)
     expect((spy.mock.calls[0][0] as CustomEvent).detail).toEqual({ taskId: 't1', view: 'acceptance' })
+    window.removeEventListener('octopus:open-task', spy)
+  })
+
+  it('ask: 行点开问答窗，不派发 open-task（design 26 §3.6）', () => {
+    const spy = vi.fn()
+    window.addEventListener('octopus:open-task', spy)
+    const attention = [{
+      id: 'ask-a1', job_id: null, stage: 'answer' as const, awaiting: 'person' as const,
+      title: '接入支付宝 · 待回答', question: '接哪个渠道？', task_id: 't1',
+      repo: null, wt: null, deep_link: 'ask:a1', priority: 1,
+      ask: { ask_id: 'a1', message_id: 'm1', decision: '接哪个渠道' },
+    }]
+    mockCabin(makeView({ attention }))
+    function AskProbe() {
+      const { windows } = useAskWindows()
+      return <div data-testid="ask-probe">{windows.map((w) => w.askId).join(',')}</div>
+    }
+    render(
+      <CabinProvider cabinId="cabin-1">
+        <AskWindowsProvider attention={attention}>
+          <AskProbe />
+          <CabinOverview />
+        </AskWindowsProvider>
+      </CabinProvider>,
+    )
+    fireEvent.click(screen.getByText('接入支付宝 · 待回答'))
+    expect(screen.getByTestId('ask-probe').textContent).toBe('a1')
+    expect(spy).not.toHaveBeenCalled()
     window.removeEventListener('octopus:open-task', spy)
   })
 

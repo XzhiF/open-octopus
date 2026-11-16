@@ -66,6 +66,22 @@ export async function browseDirectories(path?: string): Promise<BrowseResult> {
   return handleResponse<BrowseResult>(res)
 }
 
+export interface CreateDirectoryResult {
+  path: string
+  /** 新目录自己的 browse DTO —— 建完直接落进去，不用再拉一次。 */
+  browse: BrowseResult
+}
+
+/** 在目录浏览器的当前目录下新建文件夹（单段名字，重名 409）。 */
+export async function createDirectory(parent: string, name: string): Promise<CreateDirectoryResult> {
+  const res = await apiFetch(`${getServerUrl()}/api/agent/fs/mkdir`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Authorization: "Bearer agent" },
+    body: JSON.stringify({ parent, name }),
+  })
+  return handleResponse<CreateDirectoryResult>(res)
+}
+
 export interface WorkspaceSkillInfo {
   name: string
   source: "workspace"

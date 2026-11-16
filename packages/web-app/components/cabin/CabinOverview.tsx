@@ -20,12 +20,14 @@ import { formatCost } from '@/lib/format'
 import { useBillingCurrency } from '@/lib/billing-currency'
 import { cn } from '@/lib/utils'
 import { useCabinContext } from './cabin-provider'
+import { useAskWindows } from './asks/ask-windows-provider'
 import {
   ATTENTION_AWAITING_META, ATTENTION_STAGE_META, CABIN_STATUS_META,
 } from './cabin-meta'
 
 export function CabinOverview() {
   const { cabinId, cabin, view, refresh, openModule } = useCabinContext()
+  const askWindows = useAskWindows()
   const currency = useBillingCurrency()
   const [busy, setBusy] = useState<string | null>(null)
   const [worktreeStats, setWorktreeStats] = useState<{ trees: number; repos: number } | null>(null)
@@ -89,6 +91,11 @@ export function CabinOverview() {
   const openAttention = (item: CabinAttentionItem) => {
     if (item.deep_link?.startsWith('finding:')) {
       openModule('records')
+      return
+    }
+    // 有决策票据的提问 → 就地开问答窗（design 26 §3.6）；其它 stage 行为不变。
+    if (item.deep_link?.startsWith('ask:') && item.ask?.ask_id) {
+      askWindows.open(item.ask.ask_id)
       return
     }
     if (item.task_id) {

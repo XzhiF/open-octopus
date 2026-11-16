@@ -89,7 +89,7 @@
   border: 1px solid color-mix(in srgb, var(--ck-a) 24%, transparent);
   border-radius: 12px;
   background: linear-gradient(180deg, rgba(16, 20, 29, 0.88), rgba(10, 12, 19, 0.8));
-  backdrop-filter: blur(11px);
+  /* 2026-11-16 性能：作业面是大面积常驻面板，底板近似不透明，去掉每帧背后模糊。 */
   box-shadow:
     0 0 calc(26px * var(--ck12-glow, 1)) color-mix(in srgb, var(--ck-a) 8%, transparent),
     0 12px 34px rgba(0, 0, 0, 0.42);

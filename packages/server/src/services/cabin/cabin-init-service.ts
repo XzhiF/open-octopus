@@ -22,6 +22,7 @@ import type { SSEService } from "../sse"
 import { WorkspaceGit } from "../workspace-git"
 import { gitOps } from "../git-ops"
 import { getChatEventBridge } from "../activity/chat-event-bridge"
+import { getSessionService } from "../agent/session-service"
 import {
   ensureRepoCloned, readCabinConfig, mergeCabinRepoEntry, repoSource, resolveCabinRepo,
   readLocalRepoInfo, isGitRepo, projectKey, type CabinRepoEntry,
@@ -46,8 +47,8 @@ interface GateDef {
 const GATE_DEFS: GateDef[] = [
   { key: "dir", label: "目录可写", fixHint: "检查目录路径与写权限", deepLink: "settings" },
   { key: "git", label: "git 可用", fixHint: "安装 git 或修正 PATH", deepLink: "settings" },
-  { key: "clone", label: "克隆 ORG 仓库", fixHint: "检查 org 仓库注册表与 git 认证", deepLink: "repos" },
-  { key: "mainline", label: "项目 / 主线登记", fixHint: "登记 main_path / 主线分支；worktree 按作业开", deepLink: "repos" },
+  { key: "clone", label: "准备 ORG 仓库", fixHint: "检查 org 仓库注册表与 git 认证", deepLink: "repos" },
+  { key: "mainline", label: "主线同步 / 项目登记", fixHint: "登记 main_path / 主线分支；worktree 按作业开", deepLink: "repos" },
   { key: "skeleton", label: "舱骨架 .cabin/", fixHint: "检查目录写权限", deepLink: "settings" },
   { key: "requirements", label: "需求落盘", fixHint: "检查目录写权限", deepLink: "settings" },
   { key: "first-plan", label: "首批任务建议", fixHint: "检查模型服务配置后重试门禁", deepLink: "settings" },
@@ -138,7 +139,10 @@ export class CabinInitService {
     return {
       items: GATE_DEFS.map((def) => {
         const existing = byKey.get(def.key)
-        return existing ?? { key: def.key, label: def.label, state: "pending" as const }
+        if (!existing) return { key: def.key, label: def.label, state: "pending" as const }
+        // 文案属于门禁定义，不属于运行数据：老舱磁盘里还存着旧 label
+        // （如「克隆 ORG 仓库」），这里始终按最新口径覆盖；state/sub/error 仍以磁盘为准。
+        return { ...existing, label: def.label }
       }),
     }
   }
@@ -210,6 +214,20 @@ export class CabinInitService {
     }
     row.name = next
     row.version += 1
+    // v5 建舱时还没有名字，主会话标题会落成「undefined · 舱主对话」；
+    // 起名后顺手纠正（只动占位标题，不覆盖用户自己改过的会话名）。
+    this.syncMainSessionTitle(row.main_session_id, next)
+  }
+
+  private syncMainSessionTitle(sessionId: string | null | undefined, cabinName: string): void {
+    if (!sessionId) return
+    try {
+      const sessions = getSessionService()
+      const session = sessions.getSession(sessionId)
+      const title = (session?.title ?? "").trim()
+      if (!title || !/^(undefined|未命名舱)\s*(·|$)/i.test(title)) return
+      sessions.updateSession(sessionId, { title: `${cabinName} · 舱主对话` })
+    } catch { /* session service not initialized (unit tests) — cosmetic only */ }
   }
 
   // ── gate items ─────────────────────────────────────────────────────
@@ -233,10 +251,14 @@ export class CabinInitService {
         // 跨 org（v4 I5）：config.json.repos[] 的 group 就是该仓库的 org；
         // 老数据 group 为空时回落到舱级 row.org。
         // 本地 / 外部项目**不克隆**：只校验目录存在且是 git repo。
+        // 「就绪」不等于「新克隆」：共享主仓已存在时直接复用，不 fetch/pull
+        //（主线对齐在下一个门禁）。sub 里分开报，别让人以为又存了一份代码。
         const repoEntries = readCabinConfig(row.path).repos.filter((r) => r.name)
         if (repoEntries.length === 0) { item.sub = "无仓库"; return }
         const failed: string[] = []
         let orgCloned = 0
+        let orgReused = 0
+        let orgNew = 0
         let localMapped = 0
         for (const entry of repoEntries) {
           if (repoSource(entry) === "local") {
@@ -252,12 +274,21 @@ export class CabinInitService {
           if (!org) { failed.push(`${entry.name}: 仓库未指定 org`); continue }
           const res = ensureRepoCloned(org, entry.name)
           if ("error" in res) failed.push(`${entry.name}: ${res.error}`)
-          else orgCloned += 1
+          else {
+            orgCloned += 1
+            if (res.reused) orgReused += 1
+            else orgNew += 1
+          }
         }
         // Partial clone failure does not block the whole gate (plan risk #3):
         // succeeded repos proceed; failed ones are re-clonable from S5 later.
         if (failed.length === repoEntries.length) throw new Error(`全部失败：${failed.join("；")}`)
-        const summary = `${orgCloned} 个仓库就绪 · ${localMapped} 个本地映射`
+        const provenance = orgCloned === 0
+          ? ""
+          : orgNew > 0
+            ? `（新克隆 ${orgNew} · 复用共享主仓 ${orgReused}）`
+            : `（复用共享主仓 ${orgReused}）`
+        const summary = `${orgCloned} 个仓库就绪${provenance} · ${localMapped} 个本地映射`
         item.sub = failed.length > 0 ? `${summary}（部分失败：${failed.join("；")}）` : summary
         return
       }
@@ -270,6 +301,7 @@ export class CabinInitService {
         if (repoEntries.length === 0) { item.sub = "无仓库"; return }
         const registered: CabinRepoEntry[] = []
         const failed: string[] = []
+        let orgSynced = 0
         for (const entry of repoEntries) {
           if (repoSource(entry) === "local") {
             const { mainPath } = resolveCabinRepo(row.path, entry)
@@ -296,6 +328,7 @@ export class CabinInitService {
           try {
             const synced = await gitOps.syncToDefaultBranch(res.localPath)
             mainline = synced.branch
+            orgSynced += 1
           } catch (err) {
             failed.push(`${entry.name}: ${errMsg(err)}`)
           }
@@ -316,7 +349,7 @@ export class CabinInitService {
         if (failed.length > 0) {
           throw new Error(`项目登记失败：${failed.join("；")}`)
         }
-        item.sub = `${registered.length} 个项目登记 · 未预建工作树`
+        item.sub = `${registered.length} 个项目登记 · ${orgSynced > 0 ? `${orgSynced} 个 ORG 主线已对齐 origin · ` : ""}未预建工作树`
         return
       }
       case "skeleton": {

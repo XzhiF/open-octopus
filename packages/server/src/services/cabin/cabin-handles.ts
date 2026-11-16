@@ -24,8 +24,9 @@ export function assignHandles(
   rows: HandleSeed[],
   kind: CabinWorkKind,
 ): Map<string, HandleInfo> {
-  const ordered = [...rows].sort((a, b) =>
-    a.created_at.localeCompare(b.created_at) || a.id.localeCompare(b.id))
+  // 稳定排序：created_at 相同的行保持调用方给来的顺序（DAO 已按 rowid / 创建序
+  // 返回）。之前用 id 兜底会在同一毫秒建两条委派时把 D1/D2 排反。
+  const ordered = [...rows].sort((a, b) => a.created_at.localeCompare(b.created_at))
   const out = new Map<string, HandleInfo>()
   ordered.forEach((row, index) => {
     const ordinal = index + 1

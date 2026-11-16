@@ -17,9 +17,10 @@
 // Esc：由 CockpitLayerStack 统一处理（priority 60 = 作业面之上、其它弹层之下）。
 // 流式中先停流（与 composer 内 Esc 同语义），再按一次才收窗。
 
-import { useCallback, useEffect, useRef } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { Minus, Pin, PinOff, X } from 'lucide-react'
 import { useCockpitState } from '../state/CockpitStateProvider'
+import { nextZ } from '@/components/cabin/z-order'
 import { setChatSlot } from './chat-slots'
 import {
   CHAT_MINI_HEIGHT,
@@ -57,6 +58,9 @@ export function CockpitChatWindow() {
   } = chatWindow
 
   const rootRef = useRef<HTMLDivElement>(null)
+  /** 共享 z 栈（design 26 §5.3）：打开 / 聚焦即置顶，问答窗反而能再压回来。 */
+  const [z, setZ] = useState<number | null>(null)
+  const bumpZ = useCallback(() => setZ(nextZ()), [])
   const dragRef = useRef<DragState | null>(null)
   const restoreHeightRef = useRef<number | null>(null)
   const userAdjustedRef = useRef(false)
@@ -69,6 +73,15 @@ export function CockpitChatWindow() {
     setRef.current = chatWindow.set
     chatRef.current = chat
   })
+
+  // 打开、或从任意入口再次聚焦（openWithFocus 发 octopus:chat-focus）都置顶。
+  useEffect(() => {
+    if (open) bumpZ()
+  }, [open, bumpZ])
+  useEffect(() => {
+    window.addEventListener('octopus:chat-focus', bumpZ)
+    return () => window.removeEventListener('octopus:chat-focus', bumpZ)
+  }, [bumpZ])
 
   const attachTranscript = useCallback((node: HTMLDivElement | null) => {
     setChatSlot('transcript', node)
@@ -222,7 +235,9 @@ export function CockpitChatWindow() {
       data-testid="cockpit-chat-window"
       data-open={open ? 'true' : 'false'}
       data-mini={mini ? 'true' : 'false'}
+      onPointerDownCapture={bumpZ}
       style={{
+        zIndex: z ?? undefined,
         left: rect?.x ?? 0,
         top: rect?.y ?? 0,
         width: rect?.w ?? 0,

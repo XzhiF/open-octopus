@@ -25,7 +25,6 @@ import type { PresenceLine } from '@/components/cabin/use-xiyin-state'
 import type { CockpitChatApi } from '../../state/cockpit-state'
 import { CockpitStateProvider, useCockpitState } from '../../state/CockpitStateProvider'
 import { CockpitLayerStack } from '../../state/CockpitLayerStack'
-import { CockpitTicker } from '../../shell/CockpitTicker'
 import { CockpitCrew } from '../CockpitCrew'
 import { CockpitCrewSettings } from '../CockpitCrewSettings'
 import { requestCrewPoke, resetCrewPoke, subscribeCrewPoke } from '../crew-events'
@@ -93,7 +92,6 @@ function tree(cockpit: CockpitContextValue, extra?: ReactNode) {
       <CockpitStateProvider entryCabinId="c1">
         <CockpitLayerStack>
           <CockpitCrew />
-          <CockpitTicker />
           <FxProbe />
           <WindowProbe />
           <div data-testid="cockpit-chat-transcript" />
@@ -245,9 +243,8 @@ describe('CockpitCrew · 在场台词', () => {
     )
 
     expect(said).toEqual(expect.objectContaining({ line: line.text, mood: 'working' }))
-    expect(screen.getByTestId('cockpit-ticker')).toHaveTextContent(line.text)
     expect(screen.getByTestId('cockpit-chat-transcript')).not.toHaveTextContent(line.text)
-    expect((document.body.textContent ?? '').split(line.text)).toHaveLength(3)
+    expect((document.body.textContent ?? '').split(line.text)).toHaveLength(2)
     expect(dismissPresence).toHaveBeenCalled()
   })
 

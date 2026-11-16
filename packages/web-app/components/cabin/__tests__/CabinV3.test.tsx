@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { render, screen, fireEvent, waitFor } from '@testing-library/react'
-import type { CabinView } from '@octopus/shared'
+import type { CabinAttentionItem, CabinView } from '@octopus/shared'
 
 vi.mock('@/lib/server-config', () => ({ getServerUrl: () => 'http://localhost:3001' }))
 vi.mock('@/hooks/use-cabin', () => ({ useCabin: vi.fn() }))
@@ -33,6 +33,7 @@ import { listTasks, getTask } from '@/lib/tasks-api'
 import { CabinProvider, useCabinContext } from '../cabin-provider'
 import { CabinOverview } from '../CabinOverview'
 import { CabinFleet } from '../CabinFleet'
+import { AskWindowsProvider, useAskWindows } from '../asks/ask-windows-provider'
 import { CabinEngineering } from '../modules/CabinEngineering'
 import { CabinRecords } from '../modules/CabinRecords'
 
@@ -201,6 +202,29 @@ describe('CabinFleet — 编队面板', () => {
     await waitFor(() => expect(screen.getByTestId('window-probe').textContent).toContain('job'))
   })
 
+  it('主线程 agent 在跑：ready 也显示「作者在推进」，排在待执行前、不画 0%', async () => {
+    mockCabin(makeView())
+    vi.mocked(listCabinJobs).mockResolvedValue([
+      job('j1', { title: '接入支付宝', status: 'ready', agent_running: true }),
+      job('j2', { title: '排队作业', status: 'ready' }),
+    ] as never)
+
+    render(
+      <CabinProvider cabinId="cabin-1">
+        <CabinFleet />
+      </CabinProvider>,
+    )
+    const rows = await screen.findAllByTestId(/^cabin-fleet-row-/)
+    expect(rows).toHaveLength(2)
+    expect(rows[0].textContent).toContain('接入支付宝')
+    expect(rows[0].textContent).toContain('作者在推进')
+    expect(rows[0].textContent).not.toContain('0%')
+    expect(rows[0].getAttribute('data-tone')).toBe('run')
+    expect(rows[0].getAttribute('data-live')).toBe('true')
+    // 没有流在跑的 ready 作业维持「待执行」。
+    expect(rows[1].textContent).toContain('待执行')
+  })
+
   it('没有 job 账本时回退为活态任务', async () => {
     mockCabin(makeView())
     vi.mocked(listCabinJobs).mockResolvedValue([])
@@ -215,5 +239,74 @@ describe('CabinFleet — 编队面板', () => {
     const rows = await screen.findAllByTestId(/^cabin-fleet-row-/)
     expect(rows).toHaveLength(1)
     expect(rows[0].textContent).toContain('任务t1')
+  })
+})
+
+// ── 等你答（design 26 §3.1 · classic）────────────────────────────────
+const ASK_ATTENTION: CabinAttentionItem[] = [{
+  id: 'ask-a1',
+  job_id: null,
+  stage: 'answer',
+  awaiting: 'person',
+  title: '接入支付宝 · 待回答',
+  question: '接哪个渠道？',
+  task_id: 't1',
+  repo: null,
+  wt: null,
+  deep_link: 'ask:a1',
+  priority: 1,
+  ask: { ask_id: 'a1', message_id: 'm1', decision: '接哪个渠道' },
+}]
+
+function AskWindowsProbe() {
+  const { windows } = useAskWindows()
+  return <div data-testid="ask-probe">{windows.map((w) => w.askId).join(',')}</div>
+}
+
+describe('CabinFleet · 等你答', () => {
+  it('组在编队面板顶部；点行开窗，不切作业详情', async () => {
+    mockCabin(makeView({ attention: ASK_ATTENTION }))
+    vi.mocked(listCabinJobs).mockResolvedValue([job('j1', { title: '接入支付宝' })] as never)
+    vi.mocked(listTasks).mockResolvedValue({ items: [task('t1')] as never })
+
+    render(
+      <CabinProvider cabinId="cabin-1">
+        <AskWindowsProvider attention={ASK_ATTENTION}>
+          <CabinFleet />
+          <AskWindowsProbe />
+          <WindowProbe />
+        </AskWindowsProvider>
+      </CabinProvider>,
+    )
+
+    await screen.findByTestId('cabin-fleet-asks')
+    const askRow = screen.getByTestId('cabin-fleet-ask-a1')
+    expect(askRow.textContent).toContain('接入支付宝')
+    expect(askRow.textContent).toContain('接哪个渠道？')
+    // 组在作业行之前
+    const fleetList = document.querySelector('.ck-fleet-list') as HTMLElement
+    expect(fleetList.firstElementChild).toContainElement(askRow)
+
+    fireEvent.click(askRow)
+    await waitFor(() => expect(screen.getByTestId('ask-probe').textContent).toBe('a1'))
+    // 没有打开作业详情窗
+    expect(screen.getByTestId('window-probe').textContent).not.toContain('job')
+  })
+
+  it('只有提问、没有作业行时面板仍渲染', async () => {
+    mockCabin(makeView({ attention: ASK_ATTENTION }))
+    vi.mocked(listCabinJobs).mockResolvedValue([])
+    vi.mocked(listTasks).mockResolvedValue({ items: [] })
+
+    render(
+      <CabinProvider cabinId="cabin-1">
+        <AskWindowsProvider attention={ASK_ATTENTION}>
+          <CabinFleet />
+        </AskWindowsProvider>
+      </CabinProvider>,
+    )
+    expect(await screen.findByTestId('cabin-fleet')).toBeInTheDocument()
+    expect(screen.getByTestId('cabin-fleet-ask-a1')).toBeInTheDocument()
+    expect(screen.queryAllByTestId(/^cabin-fleet-row-/)).toHaveLength(0)
   })
 })

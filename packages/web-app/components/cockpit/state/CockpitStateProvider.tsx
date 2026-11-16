@@ -116,6 +116,11 @@ export function CockpitStateProvider({ entryCabinId, children }: CockpitStatePro
 
   const openWithFocus = useCallback(() => {
     setChatWindowState((prev) => (prev.open && !prev.mini ? prev : { ...prev, open: true, mini: false }))
+    // 共享 z 栈（design 26 §5.3）：主 chat 从任意入口打开 / 聚焦都要压住问答窗。
+    // 用事件而不是改状态契约 —— 浮窗自己持有 DOM z，状态保持纯数据。
+    if (typeof window !== 'undefined') {
+      window.dispatchEvent(new CustomEvent('octopus:chat-focus'))
+    }
   }, [])
 
   const chatWindow = useMemo<CockpitChatWindow>(

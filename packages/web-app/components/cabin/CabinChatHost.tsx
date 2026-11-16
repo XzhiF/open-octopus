@@ -37,6 +37,8 @@ import { useCabinContext } from './cabin-provider'
 import { useCabinMode } from './cabin-mode'
 import { useCabinChatWiring } from './use-cabin-chat-wiring'
 import { CabinModulesLayer } from './CabinModulesLayer'
+import { AskWindowsProvider } from './asks/ask-windows-provider'
+import { AskWindowLayer } from './asks/ask-window-layer'
 import { CabinAtmosphere } from './CabinAtmosphere'
 import { CabinCrew } from './CabinCrew'
 import { CabinFleet } from './CabinFleet'
@@ -213,10 +215,12 @@ export function CabinChatHost({ onSelectCabin, onCreateCabin, onExitCabin }: Cab
     onSearchOpenChange: setSidebarSearchOpen,
   }
 
+  // 问答窗（design 26 §3.1）：组在右侧编队面板，窗开在编队左侧。
+  // 外层 div 的 min-w-0：这一行是舱壳里的 flex 项，默认自动最小宽度 = 内容最小宽度。
+  // 流式回复里出现长 token / 宽工具行时，会把整行（连同编队、作业坞的定位
+  // 基准）撑到视口外，回复收拢成折叠 meta 才恢复 —— 2026-11-13 用户实测。
   return (
-    // min-w-0：这一行是舱壳里的 flex 项，默认自动最小宽度 = 内容最小宽度。
-    // 流式回复里出现长 token / 宽工具行时，会把整行（连同编队、作业坞的定位
-    // 基准）撑到视口外，回复收拢成折叠 meta 才恢复 —— 2026-11-13 用户实测。
+    <AskWindowsProvider attention={view?.attention ?? null}>
     <div className={cn('ui-font relative flex h-full min-h-0 min-w-0 flex-1', resizingSidebar && 'cursor-col-resize select-none [&_*]:cursor-col-resize')}>
       {/* 全域座舱的**唯一**入口（classic 侧）。方向是单向的：
           这套 classic 界面不因全域而改变任何行为（编队行仍是作业详情窗），
@@ -323,5 +327,7 @@ export function CabinChatHost({ onSelectCabin, onCreateCabin, onExitCabin }: Cab
         <CabinModulesLayer onNewTask={() => issueCommand({ type: 'new-task' })} />
       </div>
     </div>
+    <AskWindowLayer mode="classic" />
+    </AskWindowsProvider>
   )
 }

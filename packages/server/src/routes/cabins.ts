@@ -691,6 +691,16 @@ export function createCabinRoutes(
     }
   })
 
+  /** 忽略一条提问（旧卡 / 不再需要回答）：写回消息 decision，attention 随即消项。 */
+  router.post("/:id/asks/:askId/dismiss", (c) => {
+    try {
+      return c.json(service.dismissAsk(c.req.param("id"), c.req.param("askId")))
+    } catch (err) {
+      const { status, message } = classifyError(err)
+      return c.json({ error: message }, status as 400)
+    }
+  })
+
   /** 决策账本（可重放）：state = decided | relayed | fallback_relayed | expired。 */
   router.get("/:id/decisions", (c) => {
     if (!decisions) return c.json({ decisions: [], pending: [] })

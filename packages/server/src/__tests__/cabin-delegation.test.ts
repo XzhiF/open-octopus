@@ -24,17 +24,18 @@ let db: Database.Database
 let dao: CabinDAO
 let delegations: CabinDelegationService
 let service: CabinService
+const appended: Array<{ sessionId: string; workspaceId: string | null }> = []
 
 beforeAll(() => {
   db = new Database(":memory:")
   applySchema(db)
   db.prepare(`
-    INSERT INTO cabins (id, name, path, status, main_session_id, org, version, created_at, updated_at)
-    VALUES (?, '测试舱', '/tmp/cabin-delegation', 'active', 's-main', 'org', 1, ?, ?)
+    INSERT INTO cabins (id, name, path, status, main_session_id, workspace_id, org, version, created_at, updated_at)
+    VALUES (?, '测试舱', '/tmp/cabin-delegation', 'active', 's-main', 'ws-cabin', 'org', 1, ?, ?)
   `).run(CABIN, NOW, NOW)
   db.prepare(`
-    INSERT INTO sessions (id, org, title, session_type, is_active, is_deleted, created_at, updated_at)
-    VALUES ('s-main', 'org', 'main', 'main', 1, 0, ?, ?)
+    INSERT INTO sessions (id, org, title, session_type, is_active, is_deleted, workspace_id, created_at, updated_at)
+    VALUES ('s-main', 'org', 'main', 'main', 1, 0, 'ws-cabin', ?, ?)
   `).run(NOW, NOW)
 
   dao = new CabinDAO(db)
@@ -54,6 +55,7 @@ beforeAll(() => {
     delegations: delegationDAO,
     service,
     comm: { wakeSessionPublic: async () => {} } as unknown as CabinCommService,
+    onAppend: (sessionId, workspaceId) => appended.push({ sessionId, workspaceId }),
   })
 })
 
@@ -61,6 +63,8 @@ afterAll(() => db.close())
 
 beforeEach(() => {
   db.prepare("DELETE FROM cabin_delegations").run()
+  db.prepare("DELETE FROM messages").run()
+  appended.length = 0
 })
 
 describe("CabinDelegationService：一份 brief + 一个 doer 会话", () => {
@@ -92,6 +96,18 @@ describe("CabinDelegationService：一份 brief + 一个 doer 会话", () => {
     expect(done?.state).toBe("done")
     expect(done?.result_summary).toBe("结论：选 B")
     expect(done?.ended_at).toBeTruthy()
+  })
+
+  it("委派完成 → 主会话回执落库并通知打开着的对话刷新", () => {
+    const row = delegations.delegate(CABIN, { title: "三方案对比", intent: "对比一下", noWake: true })
+    appended.length = 0
+    delegations.finish(row.id, "结论：选 B", true)
+    // 修复前只写库不通知，主对话要等下一次轮询 / F5 才看得到回执。
+    expect(appended).toEqual([{ sessionId: "s-main", workspaceId: "ws-cabin" }])
+    const msg = db.prepare("SELECT content FROM messages WHERE session_id = 's-main'").get() as
+      { content: string } | undefined
+    expect(msg?.content).toContain("三方案对比")
+    expect(msg?.content).toContain("结论：选 B")
   })
 
   it("failed / cancelled 终态不再被 ask 回调改回 running", () => {

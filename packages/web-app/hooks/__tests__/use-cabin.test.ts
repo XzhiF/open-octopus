@@ -107,6 +107,22 @@ describe('useCabin', () => {
     await waitFor(() => expect(result.current.cabin?.status).toBe('active'))
   })
 
+  it('cabin_view triggers a coalesced refetch (attention / fleet live)', async () => {
+    const { result } = renderHook(() => useCabin('cabin-1'))
+    await waitFor(() => expect(result.current.loading).toBe(false))
+    const callsBefore = mockGetCabin.mock.calls.length
+    mockGetCabin.mockResolvedValue({
+      cabin: cabinRow as never,
+      view: {
+        ...view,
+        attention: [{ id: 'ask-1', stage: 'answer', awaiting: 'person', title: '#1 在问你' } as never],
+      },
+    })
+    fire('cabin_view', { cabin_id: 'cabin-1' })
+    await waitFor(() => expect(mockGetCabin.mock.calls.length).toBeGreaterThan(callsBefore))
+    await waitFor(() => expect(result.current.view?.attention).toHaveLength(1))
+  })
+
   it('404 surfaces as not-found error', async () => {
     mockGetCabin.mockRejectedValue(new CabinApiError('cabin not found', 404))
     const { result } = renderHook(() => useCabin('missing'))

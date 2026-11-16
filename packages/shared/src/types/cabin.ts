@@ -197,6 +197,46 @@ export const CabinJobEventSchema = z.object({
 })
 export type CabinJobEvent = z.infer<typeof CabinJobEventSchema>
 
+/**
+ * 提问信封（design 26 §4.1）：`stage=answer` 的 attention 若带决策票据，就把
+ * 「要定的事 / 选项 / 建议 / 原问题体」随 attention 一次带回 —— 前端不必再
+ * 打开任务线程才能答。工作流执行提问没有 askId，不带本信封。
+ */
+export const CabinAskOptionSchema = z.object({
+  label: z.string(),
+  /** 选它意味着什么（design 24 信封字段）。 */
+  impact: z.string().optional(),
+  description: z.string().optional(),
+})
+export type CabinAskOption = z.infer<typeof CabinAskOptionSchema>
+
+export const CabinAskEnvelopeSchema = z.object({
+  /** 决策票据（= 镜像卡 payload.askMessageId）。 */
+  ask_id: z.string(),
+  /** 舱主会话镜像卡的 message.id（回执锚点）。 */
+  message_id: z.string().optional(),
+  /** 作者线程（旧服务端 / 无票据时的回退入口）。 */
+  author_session_id: z.string().optional(),
+  origin: z.enum(["session", "delegation", "workflow"]).optional(),
+  /** 要定的事。 */
+  decision: z.string().optional(),
+  /** 人的原始要求（截断）。 */
+  intent: z.string().optional(),
+  options: z.array(CabinAskOptionSchema).max(12).optional(),
+  recommendation: z.object({
+    label: z.string().optional(),
+    reason: z.string().optional(),
+  }).optional(),
+  blocking: z.boolean().optional(),
+  phase: z.object({
+    index: z.number().optional(),
+    round: z.number().optional(),
+  }).nullable().optional(),
+  /** AskUserQuestion 原对象（`{ questions: [...] }`），直接喂现有卡组件。 */
+  questions: z.unknown().optional(),
+})
+export type CabinAskEnvelope = z.infer<typeof CabinAskEnvelopeSchema>
+
 /** One serial-inbox item (C4). awaiting = "whom it waits for" (superagent stage). */
 export const CabinAttentionItemSchema = z.object({
   id: z.string(),
@@ -218,6 +258,8 @@ export const CabinAttentionItemSchema = z.object({
   }).optional(),
   handle: z.string().optional(),
   color: z.number().optional(),
+  /** design 26：可作答的提问（有决策票据时）附带完整信封。 */
+  ask: CabinAskEnvelopeSchema.optional(),
 })
 export type CabinAttentionItem = z.infer<typeof CabinAttentionItemSchema>
 

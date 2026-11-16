@@ -31,6 +31,8 @@ let incidentStore: IncidentStore
 let svc: CabinService
 let tmpDir: string
 let findingsStub: FindingRow[]
+/** listJobsView 的 agent_running 桩：模拟主线程 chat 流。 */
+let streamingSessions: Set<string>
 
 function insertCabin(id: string): void {
   cabinDAO.insert({
@@ -74,6 +76,7 @@ beforeEach(() => {
   initSessionService(agentSessionDAO)
   tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "cabin-p4-test-"))
   findingsStub = []
+  streamingSessions = new Set()
   clearCabinFindingScopeCache()
   svc = new CabinService(cabinDAO)
   svc.bindInfra({
@@ -90,6 +93,7 @@ beforeEach(() => {
     } as unknown as FindingOpsService,
     tokenUsageDAO: new TokenUsageDAO(db),
     execLinks: new ExecutionLinkDAO(db),
+    isSessionStreaming: (sessionId: string) => streamingSessions.has(sessionId),
     tasksService: {
       taskUsage: (taskId: string) => {
         // 真实 taskUsage 内部已在 tasks-service 测试覆盖；这里给确定摘要验证舱级合并。
@@ -236,6 +240,114 @@ describe("attention gather（P4-3 / C4）", () => {
     })
     const { view } = svc.getView("c1")
     expect(view.attention.some((a) => a.stage === "answer")).toBe(false)
+  })
+
+  it("决策账本已答 → 作者线程原卡跨会话消项（不再一轮轮累积）", () => {
+    const session = getSessionService().createSession({ cwd: tmpDir })
+    agentSessionDAO.updateSession(session.id, { cabin_id: "c1", title: "作者会话" })
+    insertTask("t1", "c1")
+    db.prepare("UPDATE tasks SET source_chat_session_id = ? WHERE id = 't1'").run(session.id)
+
+    // 作者线程原卡（tool_calls 形态）。
+    agentSessionDAO.insertMessage({
+      id: "ask-ledger", session_id: session.id, role: "assistant", content: "问",
+      tool_calls: JSON.stringify({
+        tool_calls: [{
+          id: "tc-1", name: "AskUserQuestion", status: "done",
+          input: { questions: [{ question: "账本题？" }] },
+        }],
+      }),
+      created_at: NOW,
+    })
+    // 舱主会话里的镜像卡：同一 askId，指向原卡。
+    agentSessionDAO.insertMessage({
+      id: "mirror-1", session_id: "s-main", role: "assistant", content: "镜像",
+      metadata: JSON.stringify({
+        displayType: "ask_user_question",
+        questions: [{ question: "账本题？" }],
+        activity: { payload: { authorAsk: true, askMessageId: "ask-ledger", taskName: "任务t1" } },
+      }),
+      created_at: NOW,
+    })
+
+    let view = svc.getView("c1").view
+    // 镜像卡和原卡是同一张提问：只投一次。
+    expect(view.attention.filter((a) => a.stage === "answer")).toHaveLength(1)
+
+    // cockpit 提交决策：账本先落，镜像卡与作者线程都不必再留「待回答」。
+    db.prepare(`
+      INSERT INTO cabin_job_events (id, job_id, cabin_id, kind, actor, payload, created_at)
+      VALUES ('ev-ledger', 'job-1', 'c1', 'decision', 'human', ?, ?)
+    `).run(JSON.stringify({ askId: "ask-ledger", choice: "确认" }), NOW)
+
+    view = svc.getView("c1").view
+    expect(view.attention.some((a) => a.stage === "answer")).toBe(false)
+  })
+
+  it("attention 带 ask 信封：决策 / 选项 / 建议 / 作者会话（design 26）", () => {
+    const session = getSessionService().createSession({ cwd: tmpDir })
+    agentSessionDAO.updateSession(session.id, { cabin_id: "c1", title: "作者会话" })
+    insertTask("t1", "c1")
+    db.prepare("UPDATE tasks SET source_chat_session_id = ? WHERE id = 't1'").run(session.id)
+
+    // 作者线程原卡（只有 tool_calls，没有信封）。
+    agentSessionDAO.insertMessage({
+      id: "ask-env", session_id: session.id, role: "assistant", content: "问",
+      tool_calls: JSON.stringify({
+        tool_calls: [{
+          id: "tc-1", name: "AskUserQuestion", status: "done",
+          input: { questions: [{ question: "接哪个渠道？", options: [{ label: "支付宝", description: "账号现成" }] }] },
+        }],
+      }),
+      created_at: NOW,
+    })
+    // 舱主会话镜像卡：同一 askId，带完整富化信封。
+    agentSessionDAO.insertMessage({
+      id: "mirror-env", session_id: "s-main", role: "user", content: "镜像",
+      metadata: JSON.stringify({
+        displayType: "event",
+        activity: {
+          payload: {
+            authorAsk: true, askMessageId: "ask-env", authorSessionId: session.id,
+            taskName: "任务t1", origin: "session",
+            decision: "接哪个渠道", intent: "接通支付",
+            options: [{ label: "支付宝", impact: "3 天" }],
+            recommendation: { label: "支付宝", reason: "账号现成" },
+            blocking: true, phase: { index: 2, round: 1 },
+            questions: { questions: [{ question: "接哪个渠道？" }] },
+          },
+        },
+      }),
+      created_at: NOW,
+    })
+
+    const ask = svc.getView("c1").view.attention.find((a) => a.stage === "answer")
+    expect(ask?.ask?.ask_id).toBe("ask-env")
+    // 镜像卡优先：回执锚点指向主会话那张，而不是作者线程原卡。
+    expect(ask?.ask?.message_id).toBe("mirror-env")
+    expect(ask?.ask?.author_session_id).toBe(session.id)
+    expect(ask?.ask?.decision).toBe("接哪个渠道")
+    expect(ask?.ask?.options?.[0]).toEqual({ label: "支付宝", impact: "3 天" })
+    expect(ask?.ask?.recommendation).toEqual({ label: "支付宝", reason: "账号现成" })
+    expect(ask?.ask?.blocking).toBe(true)
+    expect(ask?.ask?.phase).toEqual({ index: 2, round: 1 })
+    expect(Array.isArray((ask?.ask?.questions as { questions?: unknown[] })?.questions)).toBe(true)
+  })
+
+  it("工作流 pending_interaction 不带 ask 票据（v1 不开问答窗）", () => {
+    insertTask("t1", "c1")
+    insertExecution("e-ask", "t1", "pending_interaction")
+    db.prepare(`
+      INSERT INTO interaction_messages (id, execution_id, node_id, role, type, content, metadata, created_at)
+      VALUES ('im-1', 'e-ask', 'n1', 'assistant', 'question', '', ?, ?)
+    `).run(JSON.stringify({
+      displayType: "ask_user_question",
+      questions: [{ question: "工作流问？" }],
+    }), NOW)
+
+    const ask = svc.getView("c1").view.attention.find((a) => a.stage === "answer")
+    expect(ask?.question).toBe("工作流问？")
+    expect(ask?.ask).toBeUndefined()
   })
 
   it("agent-chat 落库只有 tool_calls（无 displayType）→ 仍进「待回答」", () => {
@@ -393,5 +505,71 @@ describe("autonomy gate（P4-4 / C5）", () => {
     expect(cabinDispatchDecision("auto", "inferred")).toBe("dispatch")
     expect(cabinDispatchDecision("observe", "inferred")).toBe("needs_confirmation")
     expect(cabinDispatchDecision("off", "inferred")).toBe("blocked")
+  })
+})
+describe("listJobsView · agent_running（编队「作者在推进」）", () => {
+  it("任务主线程在流式 → agent_running=true；生命周期 status 不被改写", () => {
+    insertTask("t1", "c1", "ready")
+    cabinDAO.insertJob({
+      id: "j1", cabin_id: "c1", kind: "task", ref_id: "t1", session_id: "s-author",
+      title: "作业一", mandate: null, prompt: null, priority: 0,
+      created_at: NOW, ended_at: null,
+    })
+
+    const before = svc.listJobsView("c1")[0]
+    expect(before.agent_running).toBe(false)
+    expect(before.status).toBe("ready")
+
+    streamingSessions.add("s-author")
+    const after = svc.listJobsView("c1")[0]
+    expect(after.agent_running).toBe(true)
+    // 派生态只表达「主线程在跑」，不冒充任务开始执行（K3）。
+    expect(after.status).toBe("ready")
+  })
+})
+
+describe("gatherAsks · 旧卡 / 忽略 / 标题兜底（2026-11-16）", () => {
+  const LATER = "2026-11-12T10:01:00.000Z"
+  const toolCalls = JSON.stringify([{
+    name: "AskUserQuestion",
+    input: { questions: [{ question: "旧问题？", header: "q", multiSelect: false, options: [] }] },
+  }])
+
+  it("原生提问后又有 assistant 消息 → 视为旧账，不再进 attention", () => {
+    agentSessionDAO.insertMessage({
+      id: "ask-old", session_id: "s-main", role: "assistant", content: "问",
+      created_at: NOW, tool_calls: toolCalls,
+    })
+    agentSessionDAO.insertMessage({
+      id: "later", session_id: "s-main", role: "assistant", content: "继续推进",
+      created_at: LATER,
+    })
+    const { view } = svc.getView("c1")
+    expect(view.attention.some((a) => a.question === "旧问题？")).toBe(false)
+  })
+
+  it("没有后续 assistant → 仍待答；dismissAsk 写回 decision 后消项", () => {
+    agentSessionDAO.insertMessage({
+      id: "ask-live", session_id: "s-main", role: "assistant", content: "问",
+      created_at: NOW, tool_calls: toolCalls,
+    })
+    let { view } = svc.getView("c1")
+    const ask = view.attention.find((a) => a.question === "旧问题？")
+    expect(ask?.ask?.ask_id).toBe("ask-live")
+
+    expect(svc.dismissAsk("c1", "ask-live")).toEqual({ dismissed: 1 })
+    ;({ view } = svc.getView("c1"))
+    expect(view.attention.some((a) => a.question === "旧问题？")).toBe(false)
+  })
+
+  it("会话标题「undefined · 舱主对话」→ 展示名去掉占位前缀", () => {
+    agentSessionDAO.updateSession("s-main", { title: "undefined · 舱主对话" })
+    agentSessionDAO.insertMessage({
+      id: "ask-title", session_id: "s-main", role: "assistant", content: "问",
+      created_at: NOW, tool_calls: toolCalls,
+    })
+    const { view } = svc.getView("c1")
+    const ask = view.attention.find((a) => a.question === "旧问题？")
+    expect(ask?.title).toBe("舱主对话 · 待回答")
   })
 })

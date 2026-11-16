@@ -11,6 +11,7 @@ import { CockpitStateProvider, useCockpitState } from '../../state/CockpitStateP
 import { buildCounts, sortRows, type CockpitRow } from '../../fleet/fleet-model'
 import type { CockpitFleetContextValue } from '../../fleet/CockpitFleetProvider'
 import { CockpitFleetRail } from '../CockpitFleetRail'
+import { AskWindowsProvider, useAskWindows } from '@/components/cabin/asks/ask-windows-provider'
 
 const fleetState = vi.hoisted(() => ({ value: null as unknown }))
 
@@ -304,5 +305,87 @@ describe('CockpitFleetRail', () => {
     input.focus()
     fireEvent.keyDown(input, { key: 'ArrowDown' })
     expect(screen.getByTestId('selection')).toHaveTextContent('job:c1:j1')
+  })
+})
+
+// ── 「等你答」组（design 26 §3.1 / §3.6）──────────────────────────────
+function AskProbe() {
+  const { windows } = useAskWindows()
+  return <output data-testid="ask-windows">{windows.map((w) => w.askId).join(',')}</output>
+}
+
+function uiWithAsks(attention: CabinAttentionItem[]) {
+  return (
+    <CockpitStateProvider entryCabinId="c1">
+      <AskWindowsProvider attention={attention}>
+        <SelectionProbe />
+        <AskProbe />
+        <CockpitFleetRail />
+      </AskWindowsProvider>
+    </CockpitStateProvider>
+  )
+}
+
+describe('CockpitFleetRail · 等你答', () => {
+  const askItem = attention('a1', {
+    id: 'ask-a1',
+    stage: 'answer',
+    title: '支付接入 · 待回答',
+    question: '接哪个渠道？',
+    task_id: 't1',
+    deep_link: 'ask:a1',
+    ask: {
+      ask_id: 'a1',
+      message_id: 'm1',
+      author_session_id: 's1',
+      decision: '接哪个渠道',
+      options: [{ label: '支付宝', impact: '3 天' }],
+    },
+  })
+
+  it('组标题 + 一行一题；点行开窗、不切面、不在 need 重复', () => {
+    const job = jobRow(jobView('j1', { status: 'running' }), { attention: askItem })
+    const attn = attentionRow('a1', {
+      id: 'ask-a1', stage: 'answer', title: '支付接入 · 待回答', question: '接哪个渠道？', ask: askItem.ask,
+    })
+    fleetState.value = fleet({
+      rows: sortRows([job, attn]),
+      counts: buildCounts([job, attn], null),
+    })
+    render(uiWithAsks([askItem]))
+
+    expect(document.querySelector('.ck12-rail-g[data-group="ask"]')).toHaveTextContent('等你答')
+    const askNode = screen.getByTestId('cockpit-rail-ask-a1')
+    expect(within(askNode).getByText('支付接入')).toBeInTheDocument()
+    expect(within(askNode).getByText('接哪个渠道？')).toBeInTheDocument()
+    expect(within(askNode).getByText('回答')).toBeInTheDocument()
+
+    // 同一条 attention 不再出现在「需要你」
+    expect(screen.queryByTestId('cockpit-rail-row-attn:a1')).not.toBeInTheDocument()
+
+    fireEvent.click(askNode)
+    expect(screen.getByTestId('ask-windows').textContent).toBe('a1')
+    expect(screen.getByTestId('selection').textContent).toBe('none')
+  })
+
+  it('只有提问、没有编队行时仍渲染（不显示「这个舱没有作业」）', () => {
+    fleetState.value = fleet({
+      rows: sortRows([attentionRow('a1', {
+        id: 'ask-a1', stage: 'answer', title: '支付接入 · 待回答', ask: askItem.ask,
+      })]),
+      counts: buildCounts([], null),
+    })
+    render(uiWithAsks([askItem]))
+    expect(screen.getByTestId('cockpit-rail-ask-a1')).toBeInTheDocument()
+    expect(screen.queryByText('这个舱没有作业')).not.toBeInTheDocument()
+  })
+
+  it('↑↓ 落在提问行，Enter 开窗', () => {
+    fleetState.value = fleet({ rows: sortRows([jobRow(jobView('j1', { status: 'running' }))]) })
+    render(uiWithAsks([askItem]))
+    fireEvent.keyDown(window, { key: 'ArrowDown' })
+    expect(screen.getByTestId('cockpit-rail-ask-a1')).toHaveClass('is-on')
+    fireEvent.keyDown(screen.getByRole('listbox'), { key: 'Enter' })
+    expect(screen.getByTestId('ask-windows').textContent).toBe('a1')
   })
 })

@@ -5,7 +5,7 @@ import path from "path"
 import {
   mergeLlmUsageSummaries, emptyTokenUsage, totalTokens,
   type CabinInitState, type LlmUsageSummary, type ModelUsageBreakdown, type TokenUsage, type LedgerCost,
-  type CabinWorkRow,
+  type CabinWorkRow, type CabinAskEnvelope,
 } from "@octopus/shared"
 import type { CabinDAO } from "../../db/dao/cabin-dao"
 import type {
@@ -24,6 +24,7 @@ import type { WorkspaceService } from "../workspace"
 import type { TasksService } from "../tasks/tasks-service"
 import type { RepoSyncService } from "../tasks/repo-sync-service"
 import { getSessionService } from "../agent/session-service"
+import { isStreamActive } from "../agent/agent-service"
 import { UNNAMED_CABIN_NAME } from "./cabin-naming"
 import { gitOps } from "../git-ops"
 import { WorkspaceGit, type SpecWorktreeEntry } from "../workspace-git"
@@ -128,6 +129,128 @@ function questionsFromMetadata(metadata: string | null | undefined): unknown[] |
   return parseQuestions(meta.questions)
 }
 
+/** 作者提问信封里与「归属」相关的字段（design 23 §2 / 25 §5.6）。 */
+interface AuthorAskPayload {
+  authorAsk?: unknown
+  askMessageId?: unknown
+  askReceiptFor?: unknown
+  /** design 24 / 26：富化信封（镜像卡 payload 上带全量字段）。 */
+  authorSessionId?: unknown
+  cabinId?: unknown
+  decision?: unknown
+  intent?: unknown
+  options?: unknown
+  recommendation?: unknown
+  blocking?: unknown
+  phase?: unknown
+  origin?: unknown
+  questions?: unknown
+}
+
+/** 一条提问的稳定 id：镜像卡用信封里的 askMessageId，原卡就是消息行 id。
+ *  舱主会话的镜像卡与作者线程的原卡因此指向同一个 askId。 */
+function authorAskId(payload: AuthorAskPayload | undefined, fallback: string): string {
+  if (payload?.authorAsk && typeof payload.askMessageId === "string" && payload.askMessageId) {
+    return payload.askMessageId
+  }
+  return fallback
+}
+
+/** 会话标题 → 展示名：v5 未命名舱的「undefined · 舱主对话」去掉占位前缀。 */
+function sessionLabel(title: string | null | undefined): string {
+  const cleaned = (title ?? "").replace(/^undefined\s*(·\s*)?/i, "").trim()
+  return cleaned || "舱会话"
+}
+
+/** 信封体积纪律（design 26 §4.1）：不把整段 transcript 塞进 attention。 */
+function clip(value: unknown, max: number): string | undefined {
+  if (typeof value !== "string") return undefined
+  const s = value.trim()
+  if (!s) return undefined
+  return s.length > max ? `${s.slice(0, max - 1)}…` : s
+}
+
+function clipOptions(value: unknown): CabinAskEnvelope["options"] {
+  if (!Array.isArray(value)) return undefined
+  const out: NonNullable<CabinAskEnvelope["options"]> = []
+  for (const item of value.slice(0, 12)) {
+    const o = item as { label?: unknown; impact?: unknown; description?: unknown } | null
+    const label = clip(o?.label, 80)
+    if (!label) continue
+    const impact = clip(o?.impact, 160)
+    const description = clip(o?.description, 160)
+    out.push({ label, ...(impact ? { impact } : {}), ...(description ? { description } : {}) })
+  }
+  return out.length > 0 ? out : undefined
+}
+
+function clipRecommendation(value: unknown): CabinAskEnvelope["recommendation"] {
+  if (!value || typeof value !== "object") return undefined
+  const r = value as { label?: unknown; reason?: unknown }
+  const label = clip(r.label, 120)
+  const reason = clip(r.reason, 240)
+  if (!label && !reason) return undefined
+  return { ...(label ? { label } : {}), ...(reason ? { reason } : {}) }
+}
+
+function clipPhase(value: unknown): CabinAskEnvelope["phase"] {
+  if (!value || typeof value !== "object") return undefined
+  const p = value as { index?: unknown; round?: unknown }
+  const index = typeof p.index === "number" ? p.index : undefined
+  const round = typeof p.round === "number" ? p.round : undefined
+  return index === undefined && round === undefined ? undefined : { ...(index !== undefined ? { index } : {}), ...(round !== undefined ? { round } : {}) }
+}
+
+/** AskUserQuestion 原对象：只留 questions 数组（选项描述等原样，供卡组件渲染）。 */
+function clipQuestions(value: unknown[] | null | undefined): CabinAskEnvelope["questions"] {
+  if (!value || value.length === 0) return undefined
+  return { questions: value.slice(0, 6) }
+}
+
+/** 从镜像卡 payload 解出信封；没有票据 / 工作流提问返回 undefined。 */
+function askEnvelopeFromPayload(
+  payload: AuthorAskPayload,
+  messageId: string,
+  questions: unknown[] | null,
+): CabinAskEnvelope | undefined {
+  if (!payload.authorAsk) return undefined
+  const askId = clip(payload.askMessageId, 200)
+  if (!askId) return undefined
+  const originRaw = payload.origin
+  const origin = originRaw === "session" || originRaw === "delegation" || originRaw === "workflow"
+    ? originRaw
+    : undefined
+  // 工作流执行提问没有决策票据：v1 不为它开问答窗（design 26 §9）。
+  if (origin === "workflow") return undefined
+  const authorSessionId = clip(payload.authorSessionId, 200)
+  const decision = clip(payload.decision, 200)
+  const intent = clip(payload.intent, 400)
+  const options = clipOptions(payload.options)
+    ?? clipOptions((questions?.[0] as { options?: unknown } | undefined)?.options)
+  const recommendation = clipRecommendation(payload.recommendation)
+  const phase = clipPhase(payload.phase)
+  const questionBody = clipQuestions(questions)
+  return {
+    ask_id: askId,
+    message_id: messageId,
+    ...(authorSessionId ? { author_session_id: authorSessionId } : {}),
+    ...(origin ? { origin } : {}),
+    ...(decision ? { decision } : {}),
+    ...(intent ? { intent } : {}),
+    ...(options ? { options } : {}),
+    ...(recommendation ? { recommendation } : {}),
+    ...(typeof payload.blocking === "boolean" ? { blocking: payload.blocking } : {}),
+    ...(phase ? { phase } : {}),
+    ...(questionBody ? { questions: questionBody } : {}),
+  }
+}
+
+/** 信封完整度：镜像卡（有决策 / 选项 / 问题体）优先于作者线程原卡。 */
+function askEnvelopeScore(env: CabinAskEnvelope): number {
+  return (env.questions ? 4 : 0) + (env.options?.length ? 2 : 0)
+    + (env.decision ? 1 : 0) + (env.author_session_id ? 1 : 0)
+}
+
 /** 会话消息：metadata（clone / interaction / 修好后的 agent-chat）优先；
  *  老行只有 tool_calls 里的 AskUserQuestion —— 一并兜住，避免升级前的提问
  *  在舱里永远看不到。 */
@@ -207,6 +330,8 @@ export interface CabinInfra {
   execLinks?: ExecutionLinkDAO
   /** design 25 §4.2：独立委派（第二种工作实体）。 */
   cabinDelegationDAO?: CabinDelegationDAO
+  /** 任务主线程此刻是否有 chat 流在跑（编队「作者在推进」用）；测试可注入。 */
+  isSessionStreaming?: (sessionId: string) => boolean
 }
 
 /** ASCII workspace slug — WorkspaceService.create forbids non-ASCII names;
@@ -262,6 +387,7 @@ export class CabinService {
   private archiveHook: ((cabinId: string) => Promise<void>) | null = null
   /** status 变更广播（组合根接 SSE）：自动打盹/活动唤醒都要让前端即时换态。 */
   private statusHook: ((cabinId: string, status: CabinStatus) => void) | null = null
+  private viewHook: ((cabinId: string) => void) | null = null
 
   constructor(private cabin: CabinDAO) {}
 
@@ -269,6 +395,12 @@ export class CabinService {
   /** P5 wires cabin-level sediment (G3) here; archive stays soft until then. */
   setArchiveHook(hook: (cabinId: string) => Promise<void>): void { this.archiveHook = hook }
   setStatusHook(hook: (cabinId: string, status: CabinStatus) => void): void { this.statusHook = hook }
+
+  /** 派生视图（attention / 编队）变脏的即时广播：delegation / decision 等
+   *  状态变化不必等 useCabin 的 30s 轮询。 */
+  setViewHook(hook: (cabinId: string) => void): void { this.viewHook = hook }
+
+  notifyViewChanged(cabinId: string): void { this.viewHook?.(cabinId) }
 
   /** 唯一的状态写口：落库 + 广播（手动/自动/唤醒全部走这里）。 */
   private setStatus(id: string, status: CabinStatus): void {
@@ -352,7 +484,7 @@ export class CabinService {
       if (repoEntries.length > 0) writeCabinConfigRepos(cabinPath, repoEntries)
       const session = getSessionService().createSession({ cwd: cabinPath, workspace_id: ws.id })
       this.infra.agentSessionDAO.updateSession(session.id, {
-        cabin_id: id, title: `${input.name} · 舱主对话`,
+        cabin_id: id, title: `${name} · 舱主对话`,
       })
       new SessionCacheContextDAO(this.infra.agentSessionDAO.getDb())
         .setActiveExpert(session.id, "cabin-orchestrator", "clone")
@@ -760,47 +892,165 @@ export class CabinService {
     }
 
     // 会话 → 标题 / 归属任务（舱绑定会话优先，任务主线程兜底补全）。
+    // v5 建舱时舱名还没起，主会话标题会落成「undefined · 舱主对话」；
+    // 展示层兜底去掉前缀，别再把这个占位词带进「等你答」。
     const sessions = new Map<string, { label: string; taskId: string | null }>()
     for (const s of infra.agentSessionDAO.listByCabinId(row.id)) {
-      sessions.set(s.id, { label: s.title || "舱会话", taskId: sessionToTask.get(s.id) ?? null })
+      sessions.set(s.id, { label: sessionLabel(s.title), taskId: sessionToTask.get(s.id) ?? null })
     }
     for (const t of taskRows) {
       if (!t.source_chat_session_id || sessions.has(t.source_chat_session_id)) continue
-      sessions.set(t.source_chat_session_id, { label: t.name, taskId: t.id })
+      sessions.set(t.source_chat_session_id, { label: sessionLabel(t.name), taskId: t.id })
     }
 
-    for (const [sessionId, info] of sessions) {
-      let rows: Array<{
-        id: string; role: string; content: string; metadata: string | null; tool_calls: string | null
-      }> = []
+    // 先把每个会话的消息各查一次；再做两遍扫描：
+    //   ① 收集「已答」—— 决策账本（cockpit 作答的唯一权威）+ 镜像卡上的
+    //      activity.decision + 回执 askReceiptFor；
+    //   ② 逐条投卡 —— 同一 askId（舱主会话镜像卡 / 作者线程原卡）只投一次。
+    // 2026-11-16 修复：以前只认「用户回答了以下问题」用户消息，在 cockpit 里
+    // 按决策卡作答时作者线程没有这条消息，同一个任务答过的历史提问会一轮轮
+    // 累积在「需要你」里。账本是跨会话的事实源，必须参与判定。
+    const perSession = new Map<string, Array<{
+      id: string; role: string; content: string; metadata: string | null; tool_calls: string | null
+    }>>()
+    for (const sessionId of sessions.keys()) {
       try {
-        rows = db.prepare(
+        perSession.set(sessionId, db.prepare(
           `SELECT id, role, content, metadata, tool_calls FROM messages
            WHERE session_id = ? ORDER BY created_at ASC, rowid ASC`,
-        ).all(sessionId) as typeof rows
-      } catch { continue }
+        ).all(sessionId) as Array<{
+          id: string; role: string; content: string; metadata: string | null; tool_calls: string | null
+        }>)
+      } catch { /* messages table absent / weird row — skip this session */ }
+    }
+
+    const answered = this.answeredAskIds(row.id)
+    // design 26 §4.1：同一 askId 的信封只留最全的一份（镜像卡 payload 优先，
+    // 作者线程原卡兜底 questions）。信封随后挂到对应 attention 项上。
+    const envelopes = new Map<string, CabinAskEnvelope>()
+    const keepEnvelope = (env: CabinAskEnvelope | undefined) => {
+      if (!env) return
+      const prev = envelopes.get(env.ask_id)
+      if (!prev || askEnvelopeScore(env) > askEnvelopeScore(prev)) envelopes.set(env.ask_id, env)
+    }
+    for (const rows of perSession.values()) {
+      for (const r of rows) {
+        const activity = parseMetadata(r.metadata)?.activity as Record<string, unknown> | null | undefined
+        const payload = activity?.payload as AuthorAskPayload | undefined
+        if (!payload) continue
+        const askId = authorAskId(payload, r.id)
+        if (payload.authorAsk && activity?.decision) answered.add(askId)
+        if (typeof payload.askReceiptFor === "string") answered.add(payload.askReceiptFor)
+        if (payload.authorAsk) {
+          keepEnvelope(askEnvelopeFromPayload(
+            payload, r.id, parseQuestions(payload.questions) ?? questionsFromMessage(r),
+          ))
+        }
+      }
+    }
+
+    const seen = new Set<string>()
+    for (const [sessionId, rows] of perSession) {
+      const info = sessions.get(sessionId)!
       // 最后一条「用户回答了以下问题」的位置：只有它之后的提问才算未答。
       let lastAnswerIdx = -1
+      let lastAssistantIdx = -1
       for (let i = 0; i < rows.length; i++) {
         if (rows[i].role === "user" && rows[i].content.includes("用户回答了以下问题")) lastAnswerIdx = i
+        if (rows[i].role === "assistant") lastAssistantIdx = i
       }
       for (let i = 0; i < rows.length; i++) {
         const questions = questionsFromMessage(rows[i])
         if (!questions) continue
         if (i < lastAnswerIdx) continue
+        // 原生 AskUserQuestion 是 assistant 行；其后又出现了 assistant 消息，
+        // 说明这一轮早已继续/放弃（例：舱初始化那张旧卡被自由文本回复后一直
+        // 挂在「等你答」里）。mirror 卡是 user 行，不受此判据影响。
+        if (rows[i].role === "assistant" && i < lastAssistantIdx) continue
         // 就地作答卡：选择写回 activity.decision 后即便同一条消息没有后续
         // 用户回复，也已经答过 —— 不能一直在「待回答」里挂着。
-        const prefix = parseMetadata(rows[i].metadata)
-        const activity = prefix?.activity
+        const activity = parseMetadata(rows[i].metadata)?.activity as Record<string, unknown> | null | undefined
         if (activity && typeof activity === "object" && !Array.isArray(activity)
           && (activity as { decision?: unknown }).decision) continue
+        const askId = authorAskId(activity?.payload as AuthorAskPayload | undefined, rows[i].id)
+        if (answered.has(askId) || seen.has(askId)) continue
+        seen.add(askId)
+        // 没有镜像卡信封（作者线程原卡 / 旧数据）：给一份最小信封 ——
+        // 至少让「等你答」窗能就地把问题体渲染出来；提交若 404 由窗内回退。
+        const envelope = envelopes.get(askId) ?? {
+          ask_id: askId,
+          message_id: rows[i].id,
+          ...(clipQuestions(questions) ? { questions: clipQuestions(questions) } : {}),
+        }
         asks.push({
-          id: rows[i].id, task_id: info.taskId,
+          id: askId, task_id: info.taskId,
           title: `${info.label} · 待回答`, question: firstQuestionText(questions),
+          ask: envelope,
         })
       }
     }
     return asks
+  }
+
+  /** 人主动忽略一条提问（旧卡 / 不再需要回答的那条）。把 decision 写回原消息
+   *  metadata（与就地作答同一处），派生的 attention 与决策队列随即不再列出。
+   *  不转达、不写决策账本 —— 忽略没有「答案」可转达。
+   *  工作流 pending_interaction 没有会话消息行，返回 dismissed: 0。 */
+  dismissAsk(cabinId: string, askId: string): { dismissed: number } {
+    const row = this.mustGet(cabinId)
+    const infra = this.infra
+    if (!infra) return { dismissed: 0 }
+    const db = this.cabin.getDb()
+    const sessionIds = new Set<string>()
+    for (const s of infra.agentSessionDAO.listByCabinId(row.id)) sessionIds.add(s.id)
+    for (const t of infra.taskDAO.findByCabinId(row.id)) {
+      if (t.source_chat_session_id) sessionIds.add(t.source_chat_session_id)
+    }
+    const at = now()
+    const update = db.prepare("UPDATE messages SET metadata = ? WHERE id = ?")
+    let dismissed = 0
+    for (const sessionId of sessionIds) {
+      let rows: Array<{ id: string; metadata: string | null }> = []
+      try {
+        rows = db.prepare("SELECT id, metadata FROM messages WHERE session_id = ?")
+          .all(sessionId) as typeof rows
+      } catch { continue }
+      for (const r of rows) {
+        const meta = parseMetadata(r.metadata)
+        const activity = meta?.activity as Record<string, unknown> | undefined
+        const payload = activity?.payload as AuthorAskPayload | undefined
+        if (authorAskId(payload, r.id) !== askId) continue
+        if (activity?.decision) continue
+        const next = {
+          ...(meta ?? {}),
+          activity: {
+            ...(activity ?? {}),
+            decision: { id: "dismissed", label: "已忽略", source: "dismiss", at },
+          },
+        }
+        update.run(JSON.stringify(next), r.id)
+        dismissed += 1
+      }
+    }
+    if (dismissed > 0) {
+      try { this.notifyViewChanged(cabinId) } catch { /* view hook optional */ }
+    }
+    return { dismissed }
+  }
+
+  /** 本舱决策账本里已经答过的 askId（cross-session 事实源）。 */
+  private answeredAskIds(cabinId: string): Set<string> {
+    const out = new Set<string>()
+    try {
+      const rows = this.cabin.getDb().prepare(
+        "SELECT payload FROM cabin_job_events WHERE cabin_id = ? AND kind = 'decision'",
+      ).all(cabinId) as Array<{ payload: string | null }>
+      for (const r of rows) {
+        const askId = parseMetadata(r.payload)?.askId
+        if (typeof askId === "string" && askId) out.add(askId)
+      }
+    } catch { /* old DB — no ledger yet */ }
+    return out
   }
 
   // ── knowledge (S7 / G4 read-time scoping) ──
@@ -1013,13 +1263,19 @@ export class CabinService {
   }
 
   /** C2/K3：作业 status 派生自底层实体（task→deriveTaskView / execution /
-   *  subagent_runs），不镜像存储。transport = 传输层通道（D6）。 */
+   *  subagent_runs），不镜像存储。transport = 传输层通道（D6）。
+   *
+   *  `agent_running` 也是派生态（不落库）：cabin_jobs.session_id 指向任务主线程，
+   *  主线程正在流式 = 作者 agent 在推进（典型场景：人刚答完决策，watchdog /
+   *  汐音把答案转达给作者，作者在任务线程里干活，而任务生命周期仍是 ready）。
+   *  编队拿它把「待执行」换成「作者在推进」，避免看起来没人在跑。 */
   listJobsView(cabinId: string): Array<CabinJobRow & {
-    status: string; transport: string; project_keys: string[]
+    status: string; transport: string; project_keys: string[]; agent_running: boolean
   }> {
     const cabinRow = this.mustGet(cabinId)
     const db = this.cabin.getDb()
     const projects = readCabinConfig(cabinRow.path).repos
+    const isStreaming = this.infra?.isSessionStreaming ?? isStreamActive
     return this.cabin.listJobs(cabinId).map((j) => {
       let status = "unknown"
       let project_keys: string[] = []
@@ -1046,7 +1302,8 @@ export class CabinService {
         project_keys = this.anchorsOfCwd(row?.cwd ?? null, projects)
       }
       const transport = j.kind === "task" ? "task-thread" : j.kind === "workflow" ? "workflow-engine" : "sdk-agent"
-      return { ...j, status, transport, project_keys }
+      const agent_running = !!j.session_id && isStreaming(j.session_id)
+      return { ...j, status, transport, project_keys, agent_running }
     })
   }
 

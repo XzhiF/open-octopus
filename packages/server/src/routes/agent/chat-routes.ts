@@ -951,6 +951,20 @@ export function createChatRoutes(deps: ChatRouteDeps): Hono {
               // toolCall，回合结束后渲染可回答的问题卡。
               askQuestions = chunk.questions
               await stream.writeSSE({ event: 'ask_user_question', data: JSON.stringify({ tool_call_id: chunk.toolCallId, questions: chunk.questions }) })
+              // 2026-11-16 延迟修复：提问瞬间就把镜像卡投到舱主会话（最小信封），
+              // 不等人把整轮输出完再落卡。askMessageId 用稳定的 assistantMsgId；
+              // 回合收尾再用同一个 id 补齐「决策 / 建议 / 选项影响」（幂等）。
+              try {
+                const early = parseDecisionEnvelope(fullContent, askQuestions)
+                getChatEventBridge().requestAuthorAskCard({
+                  authorSessionId: sessionId,
+                  askMessageId: assistantMsgId,
+                  questions: askQuestions,
+                  ...(early.decision ? { decision: early.decision } : {}),
+                  ...(early.recommendation ? { recommendation: early.recommendation } : {}),
+                  ...(early.options.length ? { options: early.options } : {}),
+                })
+              } catch { /* bridge not attached (unit tests) — attention still works */ }
               break
             case 'tool_result': {
               const tc = currentToolCalls.find(t => t.id === chunk.toolCallId)
@@ -1187,7 +1201,7 @@ export function createChatRoutes(deps: ChatRouteDeps): Hono {
             const envelope = parseDecisionEnvelope(fullContent, askQuestions)
             getChatEventBridge().requestAuthorAskCard({
               authorSessionId: sessionId,
-              askMessageId: partialRowId,
+              askMessageId: assistantMsgId,
               questions: askQuestions,
               ...(envelope.decision ? { decision: envelope.decision } : {}),
               ...(envelope.recommendation ? { recommendation: envelope.recommendation } : {}),

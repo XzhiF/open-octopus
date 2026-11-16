@@ -7,7 +7,7 @@
 // 这一层是 S1 的壳：S2–S8 的组件已经全部建好空壳并在此一次性 import，
 // 后续 Step 只改各自目录里的文件，**永远不需要再动这个壳**。
 
-import { useMemo } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { useRouter } from '@/lib/app-navigation'
 import type { CabinDetail } from '@/lib/cabin-api'
 import { CabinProvider, useCabinContext } from '@/components/cabin/cabin-provider'
@@ -20,7 +20,8 @@ import { CockpitFleetProvider } from '../fleet/CockpitFleetProvider'
 import { CockpitHud } from './CockpitHud'
 import { CockpitStarfield } from './CockpitStarfield'
 import { CockpitQuiet } from './CockpitQuiet'
-import { CockpitTicker } from './CockpitTicker'
+import { AskWindowsProvider, useAskWindows } from '@/components/cabin/asks/ask-windows-provider'
+import { AskWindowLayer } from '@/components/cabin/asks/ask-window-layer'
 import { CockpitFleetRail } from '../rail/CockpitFleetRail'
 import { CockpitFace } from '../face/CockpitFace'
 import { CockpitChatHost } from '../chat/CockpitChatHost'
@@ -80,7 +81,8 @@ function CockpitGate() {
 }
 
 function CockpitSurface({ cabin }: { cabin: CabinDetail }) {
-  const { entryCabinId, selection } = useCockpitState()
+  const { entryCabinId, selection, layer } = useCockpitState()
+  const { view } = useCabinContext()
 
   // 背景漂浮粒子（原型 seedParticles：24 颗，随机时长/相位）。
   const particles = useMemo(
@@ -94,6 +96,8 @@ function CockpitSurface({ cabin }: { cabin: CabinDetail }) {
   )
 
   return (
+    <AskWindowsProvider attention={view?.attention ?? null}>
+    <CockpitAskDeepLink />
     <div className="ck12-app" data-testid="cockpit-shell">
       <div className="ck12-bg" aria-hidden="true">
         <div className="ck12-nebula ck12-n1" />
@@ -137,7 +141,6 @@ function CockpitSurface({ cabin }: { cabin: CabinDetail }) {
       </main>
 
       <footer className="ck12-cmd">
-        <CockpitTicker />
         <CockpitBridge />
         <CockpitCommandBar entryCabinId={entryCabinId} />
       </footer>
@@ -151,7 +154,38 @@ function CockpitSurface({ cabin }: { cabin: CabinDetail }) {
 
       <div className="ck12-vignette" aria-hidden="true" />
     </div>
+    {/* 问答窗 portal 到 body；Esc 走 CockpitLayerStack（priority 75）。 */}
+    <AskWindowLayer mode="cockpit" escLayer={layer} />
+    </AskWindowsProvider>
   )
+}
+
+/** 深链 `?attn=ask:<askId>`：attention 到齐后打开对应问答窗（design 26 §3.4）。
+ *
+ *  只读挂载时的 location 一次：`ask:<askId>` 是 deep_link 的词法，不是 attention
+ *  行 id（行 id 是 `ask-<askId>`），所以不参与 selection / URL 回写；窗开出来后
+ *  URL 是否保留该参数由既有的 url-sync 决定（打开即生效，不依赖回写）。
+ *  `?job=` / `?task=` 优先：同时带作业深链时不开窗。 */
+function CockpitAskDeepLink() {
+  const { asks, open } = useAskWindows()
+  const [target] = useState<string | null>(() => {
+    if (typeof window === 'undefined') return null
+    const params = new URLSearchParams(window.location.search)
+    if (params.get('job') || params.get('task')) return null
+    const attn = params.get('attn')
+    return attn?.startsWith('ask:') ? attn.slice('ask:'.length) : null
+  })
+  const openedRef = useRef(false)
+
+  useEffect(() => {
+    if (!target || openedRef.current) return
+    const hit = asks.find((ask) => ask.askId === target)
+    if (!hit) return // attention 还没到 / 已答：等下一次 asks 变化再判
+    openedRef.current = true
+    open(hit)
+  }, [asks, open, target])
+
+  return null
 }
 
 /** 载入 / 草稿·初始化 / 无主会话 —— 只做渲染层提示，聊天禁用态留给 S5。 */

@@ -4,16 +4,18 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react"
 import { beforeEach, describe, expect, it, vi } from "vitest"
 
-const { listWorkspaces, browseDirectories, attachWorkspaceDirectory } = vi.hoisted(() => ({
+const { listWorkspaces, browseDirectories, attachWorkspaceDirectory, createDirectory } = vi.hoisted(() => ({
   listWorkspaces: vi.fn(),
   browseDirectories: vi.fn(),
   attachWorkspaceDirectory: vi.fn(),
+  createDirectory: vi.fn(),
 }))
 
 vi.mock("@/lib/api-client", () => ({
   listWorkspaces,
   browseDirectories,
   attachWorkspaceDirectory,
+  createDirectory,
 }))
 
 import { CwdPicker } from "../cwd-picker"
@@ -47,6 +49,7 @@ beforeEach(() => {
     name: "projects-abc123",
     path: "/home/u/projects",
   })
+  createDirectory.mockReset()
 })
 
 describe("CwdPicker — 目录浏览器", () => {
@@ -126,6 +129,59 @@ describe("CwdPicker — 目录浏览器", () => {
     // 于是顶边落在 (视口高 - 弹窗高)/4 —— 与弹窗高度无关。
     const content = document.querySelector('[data-slot="dialog-content"]')
     expect(content).toHaveClass("translate-y-[calc(-25vh_-_25%)]")
+  })
+
+  it("新建文件夹 → 建完直接进入新目录", async () => {
+    createDirectory.mockResolvedValue({
+      path: "/home/u/newdir",
+      browse: { ...homeBrowse, path: "/home/u/newdir", parent: "/home/u", dirs: [] },
+    })
+    render(
+      <CwdPicker
+        mode="main"
+        org="xzf"
+        value={{ kind: "default", label: "Main Agent 工作区" }}
+        onChange={vi.fn()}
+        hero
+      />,
+    )
+
+    fireEvent.click(screen.getByTestId("cwd-chip"))
+    fireEvent.click(await screen.findByTestId("cwd-browse-open"))
+    await waitFor(() => expect(screen.getByTestId("cwd-browse-path")).toHaveTextContent("/home/u"))
+
+    fireEvent.click(screen.getByTestId("cwd-mkdir-open"))
+    fireEvent.change(screen.getByTestId("cwd-mkdir-input"), { target: { value: "newdir" } })
+    fireEvent.click(screen.getByTestId("cwd-mkdir-ok"))
+
+    await waitFor(() => expect(createDirectory).toHaveBeenCalledWith("/home/u", "newdir"))
+    // 服务端回传新目录 DTO：直接落进去，不用再 browse 一次。
+    await waitFor(() => expect(screen.getByTestId("cwd-browse-path")).toHaveTextContent("/home/u/newdir"))
+    expect(screen.queryByTestId("cwd-mkdir-error")).toBeNull()
+  })
+
+  it("新建文件夹失败 → 错误留在行内，不离开当前目录", async () => {
+    createDirectory.mockRejectedValue(new Error("同名文件或文件夹已存在: newdir"))
+    render(
+      <CwdPicker
+        mode="main"
+        org="xzf"
+        value={{ kind: "default", label: "Main Agent 工作区" }}
+        onChange={vi.fn()}
+        hero
+      />,
+    )
+
+    fireEvent.click(screen.getByTestId("cwd-chip"))
+    fireEvent.click(await screen.findByTestId("cwd-browse-open"))
+    await waitFor(() => expect(screen.getByTestId("cwd-browse-path")).toHaveTextContent("/home/u"))
+
+    fireEvent.click(screen.getByTestId("cwd-mkdir-open"))
+    fireEvent.change(screen.getByTestId("cwd-mkdir-input"), { target: { value: "newdir" } })
+    fireEvent.click(screen.getByTestId("cwd-mkdir-ok"))
+
+    expect(await screen.findByTestId("cwd-mkdir-error")).toHaveTextContent("已存在")
+    expect(screen.getByTestId("cwd-browse-path")).toHaveTextContent("/home/u")
   })
 
   it("选了身份 → 默认档文案跟着身份走", async () => {

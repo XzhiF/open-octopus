@@ -153,6 +153,32 @@ describe("submitDecision：票据 / 账本 / 幂等", () => {
     expect(decisionMessage?.content).toContain("（逐字）短信")
   })
 
+  it("作答同步写回作者线程原卡（跨会话同一张提问）", async () => {
+    insertAskCard("ask_1")
+    // 作者线程原卡：id 就是 askId（chat-routes 的契约）。
+    db.prepare(
+      "INSERT INTO messages (id, session_id, role, content, metadata, created_at) VALUES (?, ?, 'assistant', '问', ?, ?)",
+    ).run(
+      "ask_1", TASK_THREAD,
+      JSON.stringify({
+        displayType: "ask_user_question",
+        questions: [{ question: "回调失败后用什么通道重试？" }],
+      }),
+      NOW,
+    )
+
+    await decisions.submitDecision(CABIN, { askId: "ask_1", choice: "短信" })
+
+    const original = db.prepare("SELECT metadata FROM messages WHERE id = ? AND session_id = ?")
+      .get("ask_1", TASK_THREAD) as { metadata: string }
+    const meta = JSON.parse(original.metadata) as {
+      displayType?: string
+      activity?: { decision?: { label?: string } }
+    }
+    expect(meta.displayType).toBe("ask_user_question")
+    expect(meta.activity?.decision?.label).toBe("短信")
+  })
+
   it("重复提交幂等：只有一条 decided 事件，返回 already", async () => {
     insertAskCard("ask_1")
     await decisions.submitDecision(CABIN, { askId: "ask_1", choice: "短信" })

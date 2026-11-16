@@ -37,6 +37,27 @@ describe("deriveCabinView", () => {
     expect(v.attention.some(a => a.task_id === "t4" && a.stage === "review")).toBe(false)
   })
 
+  it("ask envelope is passed through on answer items (design 26)", () => {
+    const envelope = {
+      ask_id: "ask-1",
+      message_id: "mirror-1",
+      author_session_id: "s-author",
+      decision: "接哪个渠道",
+      options: [{ label: "支付宝", impact: "3 天" }],
+      questions: { questions: [{ question: "q?" }] },
+    }
+    const v = deriveCabinView(base({
+      asks: [
+        { id: "ask-1", task_id: null, title: "ask", question: "q?", ask: envelope },
+        { id: "ask-2", task_id: null, title: "plain" },
+      ],
+    }))
+    const withAsk = v.attention.find(a => a.id === "ask-ask-1")
+    const plain = v.attention.find(a => a.id === "ask-ask-2")
+    expect(withAsk?.ask).toEqual(envelope)
+    expect(plain?.ask).toBeUndefined()
+  })
+
   it("sorts person-first then priority desc", () => {
     const v = deriveCabinView(base({
       tasks: [

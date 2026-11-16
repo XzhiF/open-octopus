@@ -82,9 +82,13 @@ function createStarfield(canvas: HTMLCanvasElement): {
   const context: CanvasRenderingContext2D = ctx
 
   const reduce = window.matchMedia('(prefers-reduced-motion: reduce)').matches
-  const starCount = reduce ? 130 : 300
-  const dustCount = reduce ? 90 : 230
+  // 2026-11-16 性能：星野是常驻全屏 canvas，旧 Intel 驱动上 300 星 × 60fps
+  // 会和聊天流式渲染抢帧。降到 200 星 / 150 尘，并以 ~30fps 渲染（巡航本身
+  // 很慢，30fps 肉眼无差），DPR 上限压到 1.5，省一半以上像素填充。
+  const starCount = reduce ? 90 : 200
+  const dustCount = reduce ? 60 : 150
   const cruise = reduce ? 0.005 : 0.028
+  const frameMs = reduce ? 1000 / 15 : 1000 / 30
 
   let width = 1
   let height = 1
@@ -118,7 +122,8 @@ function createStarfield(canvas: HTMLCanvasElement): {
   }
 
   function resize() {
-    dpr = Math.min(2, window.devicePixelRatio || 1)
+    // DPR 上限 1.5：全屏 canvas 在 2x 屏上像素量翻倍，旧 GPU 吃不消。
+    dpr = Math.min(1.5, window.devicePixelRatio || 1)
     width = canvas.clientWidth || window.innerWidth
     height = canvas.clientHeight || window.innerHeight
     canvas.width = Math.round(width * dpr)
@@ -167,6 +172,8 @@ function createStarfield(canvas: HTMLCanvasElement): {
 
   function frame(now: number) {
     raf = requestAnimationFrame(frame)
+    // ~30fps 上限：慢速星野不需要 60fps，省下的合成时间留给流式文字。
+    if (now - last < frameMs) return
     const dt = Math.min(0.05, Math.max(0, (now - last) / 1000))
     last = now
     speed += (target - speed) * Math.min(1, dt * 3.2)

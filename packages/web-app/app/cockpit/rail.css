@@ -448,3 +448,7 @@
   .ck12-rail-row { transition: none; }
   .ck12-rail-row.is-pop { animation: none; }
 }
+
+/* ── 「等你答」组（design 26 §3.1）：一条提问一行，排在编队最前 ── */
+.ck12-rail-g[data-group='ask'],
+.ck12-rail-g[data-group='ask'] b { color: var(--pop-amber); }

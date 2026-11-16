@@ -150,7 +150,7 @@
   border: 1px solid color-mix(in srgb, var(--ck-b) 42%, transparent);
   border-radius: 14px;
   background: linear-gradient(180deg, rgba(24, 22, 36, 0.94), rgba(16, 15, 24, 0.9));
-  backdrop-filter: blur(12px);
+  /* 2026-11-16 性能：气泡常驻在动画星野之上，去掉 backdrop-filter。 */
   box-shadow:
     0 14px 40px rgba(0, 0, 0, 0.5),
     0 0 24px color-mix(in srgb, var(--ck-b) 12%, transparent);

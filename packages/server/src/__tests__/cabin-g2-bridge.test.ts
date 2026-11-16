@@ -17,22 +17,22 @@ let emit: ReturnType<typeof vi.fn>
 let fetchMock: ReturnType<typeof vi.fn>
 let signals: Array<{ taskId: string; status: string }>
 
-function insertSession(id: string): void {
+function insertSession(id: string, workspaceId: string | null = null): void {
   db.prepare(`
-    INSERT INTO sessions (id, org, title, clone_name, session_type, is_active, is_deleted, created_at, updated_at)
-    VALUES (?, 'org', ?, NULL, 'main', 1, 0, ?, ?)
-  `).run(id, id, NOW, NOW)
+    INSERT INTO sessions (id, org, title, clone_name, session_type, is_active, is_deleted, workspace_id, created_at, updated_at)
+    VALUES (?, 'org', ?, NULL, 'main', 1, 0, ?, ?, ?)
+  `).run(id, id, workspaceId, NOW, NOW)
 }
 
 beforeAll(() => {
   db = new Database(":memory:")
   applySchema(db)
   db.prepare(`
-    INSERT INTO cabins (id, name, path, status, main_session_id, version, created_at, updated_at)
-    VALUES ('c1', '测试舱', 'C:/tmp/cabin-g2', 'active', 's-cabin', 1, ?, ?)
+    INSERT INTO cabins (id, name, path, status, main_session_id, workspace_id, version, created_at, updated_at)
+    VALUES ('c1', '测试舱', 'C:/tmp/cabin-g2', 'active', 's-cabin', 'ws-cabin', 1, ?, ?)
   `).run(NOW, NOW)
-  insertSession("s-cabin")
-  insertSession("s-task")
+  insertSession("s-cabin", "ws-cabin")
+  insertSession("s-task", "ws-task")
   db.prepare(`
     INSERT INTO tasks (id, repo_group, name, status, source_chat_session_id, task_spec, cabin_id, created_at, updated_at)
     VALUES ('t1', 'org', '舱任务', 'running', 's-task', '{"format":"v4"}', 'c1', ?, ?)
@@ -93,6 +93,13 @@ describe("作者提问卡（design 23 §2 · 舱主会话就地作答）", () =>
     expect(payload.authorSessionId).toBe("s-task")
     expect(payload.taskName).toBe("舱任务")
     expect(payload.questions).toEqual(QUESTIONS)
+    // SSE 必须发到舱主会话自己的 workspace，舱壳才收得到 session_updated；
+    // 同时广播 cabin_view 让编队/attention 立即刷新（不等 30s 轮询）。
+    expect(emit).toHaveBeenCalledWith('ws-cabin', expect.objectContaining({
+      event: 'session_updated',
+      data: expect.objectContaining({ sessionId: 's-cabin' }),
+    }))
+    expect(emit).toHaveBeenCalledWith('cabin:c1', expect.objectContaining({ event: 'cabin_view' }))
 
     // 同一张提问重复投递 → 不新增卡（重启/重放都幂等）。
     bridge.requestAuthorAskCard({
@@ -161,8 +168,7 @@ describe("决策信封 / 句柄 / 回执（design 24 §3 + design 25 §4.1 / §5
     expect(payload.blocking).toBe(true)
   })
 
-  it("缺字段降级：没有 decision 就不带这个键（UI 不渲染空块）", () => {
-    const bridge = getChatEventBridge()
+  it("缺字段降级：没有 decision 就不带这个键（UI 不渲染空块）", () => {    const bridge = getChatEventBridge()
     bridge.requestAuthorAskCard({
       authorSessionId: "s-task", askMessageId: "ask-env-2", questions: QUESTIONS,
     })
@@ -172,6 +178,37 @@ describe("决策信封 / 句柄 / 回执（design 24 §3 + design 25 §4.1 / §5
     expect("decision" in payload).toBe(false)
     expect("recommendation" in payload).toBe(false)
     expect(payload.options).toBeUndefined()
+  })
+
+  it("先落最小卡、回合收尾再补齐信封（同一 askMessageId，不新增卡）", () => {
+    const bridge = getChatEventBridge()
+    bridge.requestAuthorAskCard({
+      authorSessionId: "s-task", askMessageId: "ask-early-1", questions: QUESTIONS,
+    })
+    let payload = (cards("s-cabin")[0] as {
+      activity?: { payload?: Record<string, unknown> }
+    }).activity?.payload ?? {}
+    expect(payload.decision).toBeUndefined()
+
+    bridge.requestAuthorAskCard({
+      authorSessionId: "s-task",
+      askMessageId: "ask-early-1",
+      questions: QUESTIONS,
+      decision: "失败回调用什么通道重试？",
+      recommendation: { label: "短信", reason: "最薄" },
+      options: [
+        { label: "短信", impact: "只做通道验证" },
+        { label: "邮件", impact: "多一张投递记录表" },
+      ],
+    })
+    const rows = cards("s-cabin")
+    expect(rows).toHaveLength(1)
+    payload = (rows[0] as { activity?: { payload?: Record<string, unknown> } }).activity?.payload ?? {}
+    expect(payload.decision).toBe("失败回调用什么通道重试？")
+    expect(payload.options).toEqual([
+      { label: "短信", impact: "只做通道验证" },
+      { label: "邮件", impact: "多一张投递记录表" },
+    ])
   })
 
   it("任务线程兜底作答 → 主会话多一条回执（幂等键 askMessageId）", () => {
@@ -223,6 +260,13 @@ describe("舱任务的路由（2026-11-16 双会话修订）", () => {
     // 2026-11-16 用户口径：舱里汐音这条对话也要能追溯到同一事件
     // （规格 / 运行 / 验收就在卡片上内嵌展开）。
     expect(cards("s-cabin")).toHaveLength(1)
+    // 镜像卡的 SSE 必须走舱主会话的 workspace（修复前发去了任务 workspace，
+    // 开着的主对话收不到，只能 F5）。
+    expect(emit).toHaveBeenCalledWith('ws-cabin', expect.objectContaining({
+      event: 'session_updated',
+      data: expect.objectContaining({ sessionId: 's-cabin' }),
+    }))
+    expect(emit).toHaveBeenCalledWith('cabin:c1', expect.objectContaining({ event: 'cabin_view' }))
     expect(fetchMock).toHaveBeenCalledTimes(1)
     expect(String(fetchMock.mock.calls[0][0])).toContain("/sessions/s-cabin/chat")
   })

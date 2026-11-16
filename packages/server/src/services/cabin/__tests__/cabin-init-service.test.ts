@@ -8,6 +8,7 @@ import { applySchema } from "../../../db/schema"
 import { CabinDAO } from "../../../db/dao/cabin-dao"
 import { SSEService } from "../../sse"
 import { CabinInitService } from "../cabin-init-service"
+import { ensureRepoCloned } from "../cabin-repos"
 import { writeManifestJson } from "@octopus/shared"
 import type { CabinRow } from "../../../db/types"
 
@@ -198,8 +199,13 @@ describe("CabinInitService", () => {
       const claude = fs.readFileSync(path.join(tmpDir, "CLAUDE.md"), "utf-8")
       expect(claude).toContain("只读")
       expect(claude).toContain("worktree add")
-      const mainline = svc.loadState(dao.findById("cabin-1")!).items.find((i) => i.key === "mainline")!
+      const items = svc.loadState(dao.findById("cabin-1")!).items
+      const clone = items.find((i) => i.key === "clone")!
+      expect(clone.label).toBe("准备 ORG 仓库")
+      expect(clone.sub).toContain("新克隆 1")
+      const mainline = items.find((i) => i.key === "mainline")!
       expect(mainline.state).toBe("done")
+      expect(mainline.sub).toContain("1 个 ORG 主线已对齐")
       expect(mainline.sub).toContain("未预建工作树")
     } finally {
       if (prevHome === undefined) delete process.env.OCTOPUS_HOME
@@ -263,6 +269,48 @@ describe("CabinInitService", () => {
       expect(items.find((i) => i.key === "clone")!.sub).toContain("1 个本地映射")
       expect(items.find((i) => i.key === "mainline")!.sub).toContain("2 个项目登记")
       expect(items.find((i) => i.key === "mainline")!.sub).toContain("未预建工作树")
+    } finally {
+      if (prevHome === undefined) delete process.env.OCTOPUS_HOME
+      else process.env.OCTOPUS_HOME = prevHome
+      fs.rmSync(octopusHome, { recursive: true, force: true })
+    }
+  })
+
+  it("共享主仓已存在 → 准备门禁记「复用」，不再产生第二份克隆", async () => {
+    const octopusHome = fs.mkdtempSync(path.join(os.tmpdir(), "cabin-init-reuse-home-"))
+    const prevHome = process.env.OCTOPUS_HOME
+    process.env.OCTOPUS_HOME = octopusHome
+    try {
+      const git = (args: string[], cwd: string) =>
+        spawnSync("git", ["-c", "user.email=t@t", "-c", "user.name=t", ...args], { cwd, encoding: "utf-8" })
+      const sourceRepo = path.join(octopusHome, "source-demo")
+      fs.mkdirSync(sourceRepo, { recursive: true })
+      expect(git(["init", "-b", "main"], sourceRepo).status).toBe(0)
+      fs.writeFileSync(path.join(sourceRepo, "a.txt"), "hello")
+      expect(git(["add", "."], sourceRepo).status).toBe(0)
+      expect(git(["commit", "-m", "init"], sourceRepo).status).toBe(0)
+
+      const reposDir = path.join(octopusHome, "orgs", "test-org", "repos")
+      fs.mkdirSync(reposDir, { recursive: true })
+      fs.writeFileSync(path.join(reposDir, "manifest.json"), writeManifestJson({
+        g: [{ name: "demo", git_url: sourceRepo, branch: "main", manual_tags: [], group: "g" }],
+      }))
+
+      // 模拟别的舱已经克隆过：共享主仓在，第二次建舱只复用。
+      const first = ensureRepoCloned("test-org", "demo")
+      expect("error" in first).toBe(false)
+      if (!("error" in first)) expect(first.reused).toBe(false)
+
+      seed({ org: "test-org" })
+      fs.writeFileSync(path.join(tmpDir, "config.json"), JSON.stringify({
+        name: "test", repos: [{ name: "demo" }],
+      }))
+      await svc.runGate("cabin-1")
+
+      const clone = svc.loadState(dao.findById("cabin-1")!).items.find((i) => i.key === "clone")!
+      expect(clone.label).toBe("准备 ORG 仓库")
+      expect(clone.sub).toContain("复用共享主仓 1")
+      expect(clone.sub).not.toContain("新克隆")
     } finally {
       if (prevHome === undefined) delete process.env.OCTOPUS_HOME
       else process.env.OCTOPUS_HOME = prevHome

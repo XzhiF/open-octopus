@@ -1341,7 +1341,9 @@ export function ChatPane({
   // to the task's workspace. Without it the chat never subscribes to
   // `session_updated`, and server-appended cards (run / completion / acceptance
   // failure) only appear after F5 (2026-11-02 user bug).
-  const activeWorkspaceId = activeTask?.workspace_id ?? activeSession?.workspace_id ?? null
+  // 舱主对话不在会话列表里时，`activeSession` 可能晚一拍才由 shared.sessions
+  // 补上；舱壳已经知道 workspace，直接兜底，避免 session_updated 订阅短暂缺失。
+  const activeWorkspaceId = activeTask?.workspace_id ?? activeSession?.workspace_id ?? cabinWorkspaceId ?? null
   useEffect(() => {
     if (!activeWorkspaceId || !sessionId) return
     const off = subscribeSSE(

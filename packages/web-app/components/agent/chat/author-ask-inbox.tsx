@@ -2,16 +2,17 @@
 
 // 决策队列（design 23 §2 续 → design 25 §5.3 / §5.6）
 //
-// 编队里多条 attention 同时来是常态。这里在转录顶端给一个粘性条：
-//   · 按 handle 分组列出待决项，扫一眼就知道在跟哪条线说话；
-//   · 同屏最多 3 条展开，其余折成「+N 条待处理」；
+// 编队里多条 attention 同时来是常态。这里在转录顶端给一条合并 dock：
+//   · 常驻行 = 计数「待你定 N」+ 当前一条（handle / 作业 / 要定的事）；
+//   · 2 条以上在下面挂列表，同屏最多 3 条，其余折成「+N 条待处理」；
 //   · 键盘 1/2/3 选当前卡的选项、↵ 提交；提交后焦点自动下一条；
-//   · 焦点条常驻：「正在回答 #1 支付回调」，切任务变成一次显式操作而不是滚动。
+//   · 焦点行常驻，切任务变成一次显式操作而不是滚动。
 //
+// 2026-11-16 改版：原「琥珀队列条 + 青色焦点条」两条堆叠重复且缝隙漏字，
+// 改为一块实面板（左琥珀脊线 + 激活行内高亮），见 tmp/inbox-redesign.html 方案 A。
 // 归属永远由卡片 payload 里的 askId 决定（票据），焦点只是 UI 提示。
 
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import { MessageSquare, X } from 'lucide-react'
 import type { AgentMessage } from '@/lib/agent/types'
 
 interface AuthorAskPayload {
@@ -160,34 +161,70 @@ export function AuthorAskInbox({ messages }: { messages: AgentMessage[] }) {
 
   const visible = showAll ? pending : pending.slice(0, VISIBLE_ROWS)
   const hidden = pending.length - visible.length
+  const multi = pending.length > 1
+  // 常驻行永远有可显示的一条（effect 会在下一拍把 activeAskId 落到首条）。
+  const focusItem = active ?? pending[0]
 
   return (
-    <div data-testid="author-ask-inbox" className="sticky top-0 z-20 mb-2 flex flex-col gap-1">
-      <div className="rounded-lg border-2 border-pop-amber/60 bg-pop-amber-soft/95 px-2.5 py-1.5 shadow-pop backdrop-blur">
-        <div className="flex items-center gap-2 text-[11px] font-bold text-pop-amber">
-          <MessageSquare className="size-3" aria-hidden />
-          {pending.length} 个作业在等你 · 一次处理一条
-          <span className="flex-1" />
-          {hidden > 0 && (
-            <button
-              type="button"
-              onClick={() => setShowAll(true)}
-              className="shrink-0 rounded-full border border-pop-amber/40 px-1.5 py-0.5 text-[10px] font-bold text-pop-amber hover:bg-pop-amber/10"
-            >
-              +{hidden} 条待处理
-            </button>
+    <div
+      data-testid="author-ask-inbox"
+      className="relative mb-2 overflow-hidden rounded-[9px] border border-pop-bd bg-pop-paper/95 shadow-pop sticky top-0 z-20"
+    >
+      {/* 左侧琥珀脊线：仍是「待办」语义，但不再整框描琥珀边。 */}
+      <span
+        aria-hidden="true"
+        className="pointer-events-none absolute inset-y-0 left-0 w-[3px] bg-gradient-to-b from-pop-amber to-[#b8862f]"
+      />
+      <div className="flex items-center gap-2 py-1.5 pl-3 pr-2.5">
+        <span className="inline-flex shrink-0 items-center gap-1 rounded-full border border-pop-amber/30 bg-pop-amber-soft px-1.5 py-0.5 font-mono text-[10px] font-bold text-pop-amber">
+          <i className="size-1.5 rounded-full bg-pop-amber" aria-hidden="true" />
+          待你定 {pending.length}
+        </span>
+        <button
+          type="button"
+          data-testid="author-ask-inbox-now"
+          onClick={() => jump(focusItem.askMessageId)}
+          title="跳到这张卡"
+          className="flex min-w-0 flex-1 items-center gap-2 rounded px-0.5 py-0.5 text-left text-[11.5px] transition-colors hover:bg-white/5"
+        >
+          <span className="shrink-0 font-mono text-[10.5px] font-bold text-pop-amber">
+            {focusItem.handle || '—'}
+          </span>
+          <span className="max-w-[36%] shrink-0 truncate font-semibold text-pop-ink">
+            {focusItem.taskName}
+          </span>
+          {!multi && (
+            <span className="min-w-0 flex-1 truncate text-pop-dim">
+              {focusItem.decision || focusItem.question || '（打开卡片看问题）'}
+            </span>
           )}
-          {showAll && pending.length > VISIBLE_ROWS && (
-            <button
-              type="button"
-              onClick={() => setShowAll(false)}
-              className="shrink-0 text-[10px] font-bold text-pop-dim hover:text-pop-ink"
-            >
-              收起
-            </button>
-          )}
-        </div>
-        <div className="mt-1 flex flex-col gap-0.5">
+        </button>
+        {!multi && <span className="shrink-0 text-[10px] font-bold text-pop-cyan">◉ 回答中</span>}
+        <span className="hidden shrink-0 font-mono text-[10px] font-semibold text-pop-dim/70 sm:inline">
+          1/2/3 · ↵
+        </span>
+        {hidden > 0 && (
+          <button
+            type="button"
+            onClick={() => setShowAll(true)}
+            className="shrink-0 rounded-full border border-pop-amber/30 px-1.5 py-0.5 text-[10px] font-bold text-pop-amber hover:bg-pop-amber/10"
+          >
+            +{hidden} 条待处理
+          </button>
+        )}
+        {showAll && pending.length > VISIBLE_ROWS && (
+          <button
+            type="button"
+            onClick={() => setShowAll(false)}
+            className="shrink-0 text-[10px] font-bold text-pop-dim hover:text-pop-ink"
+          >
+            收起
+          </button>
+        )}
+      </div>
+
+      {multi && (
+        <div className="flex flex-col gap-0.5 border-t border-pop-bd/60 px-1.5 py-1">
           {visible.map((item) => {
             const isActive = item.askMessageId === activeAskId
             return (
@@ -197,47 +234,29 @@ export function AuthorAskInbox({ messages }: { messages: AgentMessage[] }) {
                 data-testid="author-ask-inbox-row"
                 data-active={isActive ? 'true' : undefined}
                 onClick={() => jump(item.askMessageId)}
-                className={`flex items-center gap-2 rounded px-1 py-0.5 text-left text-[11.5px] transition-colors ${
-                  isActive ? 'bg-pop-amber/20' : 'hover:bg-white/10'
+                className={`flex items-center gap-2 rounded px-1.5 py-1 text-left text-[11.5px] transition-colors ${
+                  isActive
+                    ? 'bg-pop-amber/15 shadow-[inset_2px_0_0_var(--pop-amber)]'
+                    : 'hover:bg-white/5'
                 }`}
               >
-                <span className="w-7 shrink-0 font-mono text-[10.5px] font-bold text-pop-amber">
+                <span className="w-6 shrink-0 font-mono text-[10px] font-bold text-pop-amber">
                   {item.handle || '—'}
                 </span>
-                <span className="max-w-[30%] truncate font-semibold text-pop-ink">{item.taskName}</span>
                 <span className="min-w-0 flex-1 truncate text-pop-dim">
                   {item.decision || item.question || '（打开卡片看问题）'}
                 </span>
                 {!item.blocking && <span className="shrink-0 text-[9.5px] text-pop-dim">不阻塞</span>}
-                <span className="shrink-0 text-[10px] font-bold text-pop-cyan">
-                  {isActive ? '回答中' : '回答 →'}
+                <span
+                  className={`shrink-0 text-[9.5px] font-bold ${
+                    isActive ? 'text-pop-cyan' : 'text-pop-dim'
+                  }`}
+                >
+                  {isActive ? '◉ 回答中' : '回答 →'}
                 </span>
               </button>
             )
           })}
-        </div>
-      </div>
-
-      {active && (
-        <div
-          data-testid="decision-focus-bar"
-          className="flex items-center gap-2 rounded-lg border border-pop-cyan/50 bg-pop-cyan/10 px-2.5 py-1 text-[11px] text-pop-cyan backdrop-blur"
-        >
-          <span className="font-mono font-bold">{active.handle || '—'}</span>
-          <span className="min-w-0 flex-1 truncate">
-            正在回答 {active.taskName}
-            {active.decision ? ` · ${active.decision}` : active.question ? ` · ${active.question}` : ''}
-          </span>
-          <span className="hidden shrink-0 text-[10px] text-pop-dim sm:inline">1/2/3 选项 · ↵ 提交</span>
-          <button
-            type="button"
-            aria-label="取消焦点"
-            title="取消焦点"
-            onClick={() => setActiveAskId(null)}
-            className="shrink-0 rounded p-0.5 text-pop-dim hover:text-pop-ink"
-          >
-            <X className="size-3" />
-          </button>
         </div>
       )}
     </div>

@@ -1,7 +1,7 @@
 'use client'
 
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { ArrowUp, Check, ChevronDown, Folder, FolderOpen, Loader2, Plus } from 'lucide-react'
+import { ArrowUp, Check, ChevronDown, Folder, FolderOpen, FolderPlus, Loader2, Plus } from 'lucide-react'
 import { toast } from 'sonner'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { Dialog, DialogContent, DialogTitle } from '@/components/ui/dialog'
@@ -9,6 +9,7 @@ import { Button } from '@/components/ui/button'
 import {
   attachWorkspaceDirectory,
   browseDirectories,
+  createDirectory,
   listWorkspaces,
   type BrowseResult,
 } from '@/lib/api-client'
@@ -57,6 +58,11 @@ export function CwdPicker({ mode, org, value, onChange, disabled, hero, defaultL
   const [browseError, setBrowseError] = useState<string | null>(null)
   const [workspaces, setWorkspaces] = useState<Workspace[]>([])
   const [busy, setBusy] = useState(false)
+  // 新建文件夹：与舱里那套目录窗同手感 —— 建完直接落进去。
+  const [mkdirOpen, setMkdirOpen] = useState(false)
+  const [mkdirName, setMkdirName] = useState('')
+  const [mkdirBusy, setMkdirBusy] = useState(false)
+  const [mkdirError, setMkdirError] = useState<string | null>(null)
   const listRef = useRef<HTMLDivElement>(null)
   const browsePath = browse?.path
 
@@ -119,9 +125,29 @@ export function CwdPicker({ mode, org, value, onChange, disabled, hero, defaultL
   const openBrowser = () => {
     setOpen(false)
     setDirOpen(true)
+    setMkdirOpen(false)
+    setMkdirName('')
+    setMkdirError(null)
     // 上次选过目录就从那里开始，否则从 home 开始。
     const start = value.kind === 'directory' && value.path ? value.path : undefined
     void loadDir(start)
+  }
+
+  const submitMkdir = async () => {
+    const name = mkdirName.trim()
+    if (!browse?.path || !name || mkdirBusy) return
+    setMkdirBusy(true)
+    setMkdirError(null)
+    try {
+      const created = await createDirectory(browse.path, name)
+      setBrowse(created.browse)
+      setMkdirOpen(false)
+      setMkdirName('')
+    } catch (err: unknown) {
+      setMkdirError(err instanceof Error ? err.message : '新建文件夹失败')
+    } finally {
+      setMkdirBusy(false)
+    }
   }
 
   const attachDirectory = async () => {
@@ -333,7 +359,63 @@ export function CwdPicker({ mode, org, value, onChange, disabled, hero, defaultL
             )}
           </div>
 
+          {mkdirOpen && (
+            <div className="mt-2 flex items-center gap-1.5" data-testid="cwd-mkdir-row">
+              <FolderPlus className="size-3.5 shrink-0 text-pop-yellow" strokeWidth={1.8} />
+              <input
+                data-testid="cwd-mkdir-input"
+                aria-label="新文件夹名字"
+                autoFocus
+                value={mkdirName}
+                placeholder="新文件夹名字"
+                disabled={mkdirBusy || !browse}
+                onChange={(e) => setMkdirName(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') {
+                    e.preventDefault()
+                    void submitMkdir()
+                  }
+                  if (e.key === 'Escape') {
+                    e.preventDefault()
+                    e.stopPropagation()
+                    setMkdirOpen(false)
+                    setMkdirError(null)
+                  }
+                }}
+                className="h-[30px] min-w-0 flex-1 rounded-[8px] border border-pop-bd bg-pop-paper px-2 text-[12px] text-pop-ink outline-none focus:border-pop-violet/60"
+              />
+              <Button
+                size="sm"
+                variant="pop"
+                data-testid="cwd-mkdir-ok"
+                disabled={!mkdirName.trim() || mkdirBusy || !browse}
+                onClick={() => void submitMkdir()}
+              >
+                {mkdirBusy ? '新建中…' : '新建'}
+              </Button>
+              <Button
+                size="sm"
+                variant="ghost"
+                onClick={() => { setMkdirOpen(false); setMkdirError(null) }}
+              >
+                取消
+              </Button>
+            </div>
+          )}
+          {mkdirError && (
+            <div data-testid="cwd-mkdir-error" className="mt-1 text-[11px] text-pop-red">{mkdirError}</div>
+          )}
+
           <div className="mt-3 flex items-center gap-2">
+            <Button
+              size="sm"
+              variant="ghost"
+              data-testid="cwd-mkdir-open"
+              disabled={!browse || browseLoading || mkdirOpen}
+              onClick={() => { setMkdirOpen(true); setMkdirName(''); setMkdirError(null) }}
+            >
+              ＋ 新建文件夹
+            </Button>
             <span className="text-[10px] text-pop-dim">
               {browse?.canSelect === false ? '当前目录不可选' : '将注册为工作空间'}
             </span>

@@ -3,11 +3,11 @@
 // 钉住：
 //   ① 并发多个作业的提问 → 逐条列出，带 handle（#N / DN），可挑选；
 //   ② 同屏最多 3 条展开，其余折成「+N 条待处理」；
-//   ③ 焦点条常驻「正在回答谁」；键盘 1/2/3 + ↵ 通过 askId 定向到当前卡；
+//   ③ 常驻行「待你定 N」+ 当前一条（design-26 后续：合并 dock）；
 //   ④ 已答的卡不出现；答完焦点自动落到下一条。
 
 import { describe, it, expect, vi } from 'vitest'
-import { render, screen, fireEvent, waitFor } from '@testing-library/react'
+import { render, screen, fireEvent, waitFor, act } from '@testing-library/react'
 import type { AgentMessage } from '@/lib/agent/types'
 import { AuthorAskInbox, pendingAuthorAsks } from '../author-ask-inbox'
 
@@ -55,7 +55,7 @@ describe('AuthorAskInbox', () => {
     ]} />)
 
     expect(screen.getByTestId('author-ask-inbox')).toBeInTheDocument()
-    expect(screen.getByText(/2 个作业在等你/)).toBeInTheDocument()
+    expect(screen.getByText(/待你定 2/)).toBeInTheDocument()
     expect(screen.getAllByTestId('author-ask-inbox-row')).toHaveLength(2)
     const rows = screen.getAllByTestId('author-ask-inbox-row')
     expect(rows[0].textContent).toContain('#1')
@@ -75,18 +75,30 @@ describe('AuthorAskInbox', () => {
     expect(screen.getByText('+2 条待处理')).toBeInTheDocument()
   })
 
-  it('焦点条：屏幕上有且只有一处写着「正在回答哪一条」', () => {
+  it('常驻行：一条时直接写清要定的事，不铺列表', () => {
+    render(<AuthorAskInbox messages={[
+      askMessage('ask-a', 't1', '任务A', 'A 的范围？', false, '#1'),
+    ]} />)
+    expect(screen.queryAllByTestId('author-ask-inbox-row')).toHaveLength(0)
+    const now = screen.getByTestId('author-ask-inbox-now')
+    expect(now.textContent).toContain('#1')
+    expect(now.textContent).toContain('任务A')
+    expect(now.textContent).toContain('A 的范围？')
+  })
+
+  it('焦点行：屏幕上有且只有一处写着「正在回答哪一条」', () => {
     const messages = [
       askMessage('ask-a', 't1', '任务A', 'A 的范围？', false, '#1'),
       askMessage('ask-b', 't2', '任务B', 'B 的验收？', false, '#2'),
     ]
     render(<AuthorAskInbox messages={messages} />)
-    const bar = screen.getByTestId('decision-focus-bar')
+    const bar = screen.getByTestId('author-ask-inbox-now')
     expect(bar.textContent).toContain('#1')
-    expect(bar.textContent).toContain('正在回答 任务A')
+    expect(bar.textContent).toContain('任务A')
     // 点第二行 → 焦点切过去（显式操作，不是靠滚动位置）。
     fireEvent.click(screen.getByText('B 的验收？'))
-    expect(screen.getByTestId('decision-focus-bar').textContent).toContain('正在回答 任务B')
+    expect(screen.getByTestId('author-ask-inbox-now').textContent).toContain('任务B')
+    expect(screen.getAllByText('◉ 回答中')).toHaveLength(1)
   })
 
   it('键盘 1/2/3 + ↵ 只发给当前 ask（票据定向，不靠屏幕位置猜）', () => {
@@ -137,10 +149,12 @@ describe('AuthorAskInbox', () => {
       askMessage('ask-b', 't2', '任务B', 'B 的验收？', false, '#2'),
     ]} />)
     expect(screen.getByTestId('author-ask-inbox')).toBeInTheDocument()
-    window.dispatchEvent(new CustomEvent('octopus:author-ask-answered', {
-      detail: { askMessageId: 'ask-a' },
-    }))
+    act(() => {
+      window.dispatchEvent(new CustomEvent('octopus:author-ask-answered', {
+        detail: { askMessageId: 'ask-a' },
+      }))
+    })
     await waitFor(() => expect(screen.queryByText('A 的范围？')).toBeNull())
-    expect(screen.getByTestId('decision-focus-bar').textContent).toContain('正在回答 任务B')
+    expect(screen.getByTestId('author-ask-inbox-now').textContent).toContain('任务B')
   })
 })

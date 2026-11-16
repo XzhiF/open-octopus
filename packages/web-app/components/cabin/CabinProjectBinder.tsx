@@ -7,7 +7,7 @@
 // 语义写在面板底部：项目是关联关系，不搬代码；ORG 主仓只读。
 
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { Loader2, Search } from 'lucide-react'
+import { ChevronRight, Loader2, Search } from 'lucide-react'
 import { fetchManifestRepos } from '@/lib/api-client'
 import { scanLocalProjects, type LocalProjectCandidate } from '@/lib/cabin-api'
 import { useOrgs } from '@/hooks/useOrgs'
@@ -35,9 +35,14 @@ async function loadOrgRepos(org: string): Promise<CabinProjectRef[]> {
   if (hit && Date.now() - hit.at < CACHE_TTL) return hit.repos
   const data = (await fetchManifestRepos(org)) as ManifestShape
   const repos: CabinProjectRef[] = []
+  // manifest 的一个 org 可能有多组（miyuan / miyuan3.0 / bigdatabase），同名仓库会在
+  // 多组里重复出现。按名字去重 —— 否则 projectKey 重复 → React key 重复，过滤时
+  // 列表会残留旧行（2026-11-16 用户实测：搜 octopus 还挂着 miyuan 的项目）。
+  const seen = new Set<string>()
   for (const items of Object.values(data?.groups ?? {})) {
     for (const item of items ?? []) {
-      if (!item?.name) continue
+      if (!item?.name || seen.has(item.name)) continue
+      seen.add(item.name)
       // 归属 org = 被查询的那个 org（manifest 里的 group 是仓库分组，不是 org）。
       repos.push({ source: 'org', org, repo: item.name })
     }
@@ -60,6 +65,12 @@ function localToRef(p: LocalProjectCandidate): CabinProjectRef {
 
 function escapeRegExp(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+}
+
+/** 多词 AND：每个词都要出现在（小写化的）搜索文本里。 */
+function matchesTerms(haystack: string, terms: string[]): boolean {
+  const text = haystack.toLowerCase()
+  return terms.every((term) => text.includes(term))
 }
 
 export interface CabinProjectBinderProps {
@@ -165,21 +176,22 @@ export function CabinProjectBinder({
   }, [])
 
   const selectedKeys = useMemo(() => new Set(selected.map(projectKey)), [selected])
-  const needle = query.trim().toLowerCase()
+  // 空格分隔的多个词按 AND 组合：「xzf oct」= org 含 xzf 且项目名含 oct。
+  // 只输一段时仍是整段子串匹配（不是逐字母模糊）。
+  const terms = useMemo(
+    () => query.trim().toLowerCase().split(/\s+/).filter(Boolean),
+    [query],
+  )
 
   const localHits = useMemo(() => {
-    if (!needle) return locals
-    return locals.filter(
-      (p) => p.name.toLowerCase().includes(needle) || p.local_path.toLowerCase().includes(needle),
-    )
-  }, [locals, needle])
+    if (terms.length === 0) return locals
+    return locals.filter((p) => matchesTerms(`${p.name} ${p.local_path}`, terms))
+  }, [locals, terms])
 
   const hits = useMemo(() => {
-    if (!needle) return options
-    return options.filter(
-      (p) => p.repo.toLowerCase().includes(needle) || (p.org ?? '').toLowerCase().includes(needle),
-    )
-  }, [options, needle])
+    if (terms.length === 0) return options
+    return options.filter((p) => matchesTerms(`${p.repo} ${p.org ?? ''}`, terms))
+  }, [options, terms])
 
   const perOrg = useMemo(() => {
     const map = new Map<string, number>()
@@ -187,11 +199,27 @@ export function CabinProjectBinder({
     return map
   }, [hits])
 
+  // org 分组折叠（默认全展开；折叠状态只在本面板内记忆）。
+  const [collapsed, setCollapsed] = useState<Set<string>>(new Set())
+  const toggleGroup = (group: string) => {
+    setCollapsed((prev) => {
+      const next = new Set(prev)
+      if (next.has(group)) next.delete(group)
+      else next.add(group)
+      return next
+    })
+  }
+
+  const highlightPattern = useMemo(() => {
+    if (terms.length === 0) return null
+    return new RegExp(`(${terms.map(escapeRegExp).join('|')})`, 'ig')
+  }, [terms])
+
   const highlight = (text: string) => {
-    if (!needle) return text
-    const parts = text.split(new RegExp(`(${escapeRegExp(needle)})`, 'ig'))
+    if (!highlightPattern) return text
+    const parts = text.split(highlightPattern)
     return parts.map((part, index) =>
-      part.toLowerCase() === needle
+      terms.includes(part.toLowerCase())
         ? <mark key={`${part}-${index}`}>{part}</mark>
         : <span key={`${part}-${index}`}>{part}</span>,
     )
@@ -285,17 +313,28 @@ export function CabinProjectBinder({
           </div>
         ) : localHits.length === 0 && hits.length === 0 ? (
           <div className="cc-none">
-            {needle ? `没有匹配「${query.trim()}」的项目` : '还没有可绑定的项目'}
+            {terms.length > 0 ? `没有匹配「${query.trim()}」的项目` : '还没有可绑定的项目'}
           </div>
         ) : (
           <>
             {(localHits.length > 0 || localsLoading) && (
               <div className="cc-group" data-testid="cabin-project-local-group">
-                <div className="cc-org">
+                <button
+                  type="button"
+                  className="cc-org cc-org-btn"
+                  data-testid="cabin-project-group-local"
+                  data-collapsed={collapsed.has(LOCAL_GROUP) ? 'true' : undefined}
+                  aria-expanded={!collapsed.has(LOCAL_GROUP)}
+                  onClick={() => toggleGroup(LOCAL_GROUP)}
+                >
+                  <ChevronRight
+                    className="cc-org-chev size-3"
+                    data-open={collapsed.has(LOCAL_GROUP) ? 'false' : 'true'}
+                  />
                   {LOCAL_GROUP} <span className="n">{localHits.length}</span>
                   {localsLoading && <Loader2 className="cc-spin size-3 animate-spin" />}
-                </div>
-                {localHits.map((p) => {
+                </button>
+                {!collapsed.has(LOCAL_GROUP) && localHits.map((p) => {
                   const ref = localToRef(p)
                   const key = projectKey(ref)
                   const on = selectedKeys.has(key)
@@ -316,7 +355,7 @@ export function CabinProjectBinder({
                     </button>
                   )
                 })}
-                {!localsLoading && localHits.length === 0 && (
+                {!collapsed.has(LOCAL_GROUP) && !localsLoading && localHits.length === 0 && (
                   <div className="cc-none cc-none-sm">这个目录下没有发现本地项目</div>
                 )}
               </div>
@@ -328,6 +367,8 @@ export function CabinProjectBinder({
                 selectedKeys={selectedKeys}
                 onToggle={toggle}
                 highlight={highlight}
+                collapsed={collapsed}
+                onToggleGroup={toggleGroup}
               />
             )}
           </>
@@ -380,23 +421,43 @@ function ProjectGroups({
   selectedKeys,
   onToggle,
   highlight,
+  collapsed,
+  onToggleGroup,
 }: {
   hits: ProjectOption[]
   perOrg: Map<string, number>
   selectedKeys: Set<string>
   onToggle: (option: ProjectOption) => void
   highlight: (text: string) => React.ReactNode
+  collapsed: Set<string>
+  onToggleGroup: (group: string) => void
 }) {
   const rows: React.ReactNode[] = []
   let lastOrg = ''
   for (const option of hits) {
     if (option.group !== lastOrg) {
       lastOrg = option.group
+      const isCollapsed = collapsed.has(option.group)
       rows.push(
-        <div key={`org-${option.group}`} className="cc-org">
+        <button
+          key={`org-${option.group}`}
+          type="button"
+          className="cc-org cc-org-btn"
+          data-testid={`cabin-project-group-${option.group}`}
+          data-collapsed={isCollapsed ? 'true' : undefined}
+          aria-expanded={!isCollapsed}
+          onClick={() => onToggleGroup(option.group)}
+        >
+          <ChevronRight
+            className="cc-org-chev size-3"
+            data-open={isCollapsed ? 'false' : 'true'}
+          />
           {option.group} <span className="n">{perOrg.get(option.group) ?? 0}</span>
-        </div>,
+        </button>,
       )
+      if (isCollapsed) continue
+    } else if (collapsed.has(option.group)) {
+      continue
     }
     const key = projectKey(option)
     const on = selectedKeys.has(key)

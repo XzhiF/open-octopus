@@ -20,6 +20,8 @@ import {
 import { sameCockpitRef, type CockpitRef } from '../state/cockpit-state'
 import { projectNameFromKey, rowProjectKeys } from '../projects/project-model'
 import { useCockpitState } from '../state/CockpitStateProvider'
+import { useAskWindows } from '@/components/cabin/asks/ask-windows-provider'
+import { askWindowTitle } from '@/components/cabin/asks/ask-window-model'
 
 const RAIL_LAYER_PRIORITY = 70
 const POP_MS = 900
@@ -67,6 +69,15 @@ function optionId(row: CockpitRow): string {
   return `ck12-rail-opt-${row.key.replace(/[^a-zA-Z0-9_-]/g, '-')}`
 }
 
+function askOptionId(askId: string): string {
+  return `ck12-rail-ask-${askId.replace(/[^a-zA-Z0-9_-]/g, '-')}`
+}
+
+/** 带决策票据的提问行：归「等你答」组，不再进 need 桶（避免同一条出现两次）。 */
+function isAskRow(row: CockpitRow): boolean {
+  return row.kind === 'attention' && row.item.stage === 'answer' && !!row.item.ask?.ask_id
+}
+
 type RowTone = CockpitRowGroup | 'blocked'
 
 function toneOf(row: CockpitRow): RowTone {
@@ -112,7 +123,10 @@ function rowStatus(row: CockpitRow): string {
 }
 
 function rowPct(row: CockpitRow): number | null {
-  return row.kind === 'attention' ? null : row.pct
+  if (row.kind === 'attention') return null
+  // 主线程 agent 在跑、执行还没开始：不显示 0% 的假进度条（状态词已说明在推进）。
+  if (row.kind === 'job' && row.job.agent_running && row.job.status !== 'running') return null
+  return row.pct
 }
 
 function isEditableTarget(target: EventTarget | null): boolean {
@@ -124,8 +138,12 @@ function isEditableTarget(target: EventTarget | null): boolean {
 export function CockpitFleetRail() {
   const { rows, counts, arrivals, loading, error, refetch } = useCockpitFleet()
   const { selection, select, railOpen, setRailOpen, layer, projectFilter, setProjectFilter } = useCockpitState()
+  const askWindows = useAskWindows()
+  const asks = askWindows.asks
 
   const [popped, setPopped] = useState<ReadonlySet<string>>(() => new Set())
+  /** ↑↓ 落在「等你答」行时的键盘焦点（不是 selection —— 点提问不切面）。 */
+  const [askActiveId, setAskActiveId] = useState<string | null>(null)
   const railRef = useRef<HTMLElement | null>(null)
 
   // 编队只含入口舱（2026-11-15）：不再有「全部 / 各舱」筛选胶囊。
@@ -134,19 +152,32 @@ export function CockpitFleetRail() {
     return rows.filter((row) => rowProjectKeys(row).includes(projectFilter))
   }, [rows, projectFilter])
 
+  // 「等你答」行从编队分桶中挪出（组里只渲染一次；attention 仍是事实源）。
+  const fleetRows = useMemo(() => visible.filter((row) => !isAskRow(row)), [visible])
+
   // 分桶只决定「放在哪个组标题下」，桶内顺序 = sortRows 的既有顺序。
   const grouped = useMemo(() => {
     const buckets: Record<CockpitRowGroup, CockpitRow[]> = { need: [], run: [], queue: [], done: [] }
-    for (const row of visible) buckets[groupOf(row)].push(row)
+    for (const row of fleetRows) buckets[groupOf(row)].push(row)
     return buckets
-  }, [visible])
+  }, [fleetRows])
 
   const activeRow = selection
-    ? visible.find((row) => {
+    ? fleetRows.find((row) => {
       const ref = rowRef(row)
       return ref ? sameCockpitRef(selection, ref) : false
     })
     : undefined
+
+  // 已经不在「等你答」里的 askId（答掉 / 切换舱）不保留键盘焦点。
+  useEffect(() => {
+    if (askActiveId && !asks.some((ask) => ask.askId === askActiveId)) setAskActiveId(null)
+  }, [askActiveId, asks])
+
+  const openAsk = (askId: string) => {
+    setAskActiveId(askId)
+    askWindows.open(askId)
+  }
 
   /** 委派行没有 cockpit ref：点开它的 doer 会话（证据面）。 */
   const activate = (row: CockpitRow, ref: CockpitRef | null) => {
@@ -214,11 +245,17 @@ export function CockpitFleetRail() {
     return layer.register('cockpit-fleet-rail', RAIL_LAYER_PRIORITY, () => setRailOpen(false))
   }, [railOpen, layer, setRailOpen])
 
-  // ── ↑↓：在当前可见（筛选后）行内移动并 select。输入框聚焦时不接管 ──
-  const visibleRef = useRef(visible)
-  visibleRef.current = visible
+  // ── ↑↓：在「等你答 + 编队行」的合并序列里移动。输入框聚焦时不接管 ──
+  // 「等你答」行不在 selection 命名空间里（点它不切面），所以另起一个键盘焦点；
+  // Enter 落在提问行上时开窗（design 26 §3.6）。
+  const fleetRowsRef = useRef(fleetRows)
+  fleetRowsRef.current = fleetRows
+  const asksRef = useRef(asks)
+  asksRef.current = asks
   const selectionRef = useRef(selection)
   selectionRef.current = selection
+  const askActiveRef = useRef(askActiveId)
+  askActiveRef.current = askActiveId
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
@@ -227,21 +264,36 @@ export function CockpitFleetRail() {
       if (isEditableTarget(event.target)) return
       if (event.defaultPrevented) return
 
-      const list = visibleRef.current
-      if (list.length === 0) return
+      const askList = asksRef.current
+      const rowList = fleetRowsRef.current
+      const total = askList.length + rowList.length
+      if (total === 0) return
+
+      const current = selectionRef.current
+      const activeAsk = askActiveRef.current
+      let index = -1
+      if (activeAsk) {
+        index = askList.findIndex((ask) => ask.askId === activeAsk)
+      } else if (current) {
+        const rowIndex = rowList.findIndex((row) => {
+          const ref = rowRef(row)
+          return ref ? sameCockpitRef(current, ref) : false
+        })
+        if (rowIndex >= 0) index = askList.length + rowIndex
+      }
 
       event.preventDefault()
-      const current = selectionRef.current
-      const index = current ? list.findIndex((row) => sameCockpitRef(current, rowRef(row))) : -1
       const delta = event.key === 'ArrowDown' ? 1 : -1
-      const nextIndex =
-        index < 0
-          ? delta > 0
-            ? 0
-            : list.length - 1
-          : (index + delta + list.length) % list.length
-      const next = list[nextIndex]
-      if (next) select(rowRef(next))
+      const nextIndex = index < 0
+        ? (delta > 0 ? 0 : total - 1)
+        : (index + delta + total) % total
+      if (nextIndex < askList.length) {
+        setAskActiveId(askList[nextIndex].askId)
+        return
+      }
+      setAskActiveId(null)
+      const row = rowList[nextIndex - askList.length]
+      if (row) select(rowRef(row))
     }
     window.addEventListener('keydown', onKeyDown)
     return () => window.removeEventListener('keydown', onKeyDown)
@@ -308,9 +360,72 @@ export function CockpitFleetRail() {
         role="listbox"
         aria-label="编队作业"
         tabIndex={0}
-        aria-activedescendant={activeRow ? optionId(activeRow) : undefined}
+        aria-activedescendant={
+          askActiveId
+            ? askOptionId(askActiveId)
+            : activeRow ? optionId(activeRow) : undefined
+        }
+        onKeyDown={(event) => {
+          // 行自己的 Enter 已在行上处理；这里只管「焦点在提问行」时的提交。
+          if (event.key !== 'Enter' || event.target !== event.currentTarget) return
+          if (!askActiveId) return
+          event.preventDefault()
+          openAsk(askActiveId)
+        }}
       >
-        {!hasRows ? (
+        {asks.length > 0 && (
+          <div className="ck12-rail-group" role="group" aria-labelledby="ck12-rail-g-asks">
+            <div className="ck12-rail-g" data-group="ask" id="ck12-rail-g-asks">
+              <span>等你答</span>
+              <b>{asks.length}</b>
+              <span className="ck12-rail-ln" aria-hidden="true" />
+            </div>
+            {asks.map((ask) => {
+              const active = askActiveId === ask.askId
+              const question = ask.item.question ?? ask.env.decision ?? ''
+              return (
+                <div
+                  key={ask.askId}
+                  id={askOptionId(ask.askId)}
+                  role="option"
+                  aria-selected={active}
+                  tabIndex={-1}
+                  data-testid={`cockpit-rail-ask-${ask.askId}`}
+                  data-tone="need"
+                  title={`${askWindowTitle(ask.item)} · 等你答`}
+                  className={`ck12-rail-row${active ? ' is-on' : ''}`}
+                  onClick={() => openAsk(ask.askId)}
+                  onKeyDown={(event) => {
+                    if (event.key === 'Enter' || event.key === ' ') {
+                      event.preventDefault()
+                      event.stopPropagation()
+                      openAsk(ask.askId)
+                    }
+                  }}
+                >
+                  <span className="ck12-rail-glyph" data-stage="answer" aria-hidden="true">◉</span>
+                  <span className="ck12-rail-main">
+                    <span className="ck12-rail-title">
+                      {ask.item.handle && <span className="ck12-rail-kind">{ask.item.handle}</span>}
+                      <span className="ck12-rail-title-tx">{askWindowTitle(ask.item)}</span>
+                    </span>
+                    <span className="ck12-rail-meta">
+                      <span className="ck12-rail-meta-tx">{question}</span>
+                    </span>
+                  </span>
+                  <span className="ck12-rail-right">
+                    <span className="ck12-rail-badge" data-stage="answer">
+                      <i aria-hidden="true" />
+                      回答
+                    </span>
+                  </span>
+                </div>
+              )
+            })}
+          </div>
+        )}
+
+        {!hasRows && asks.length === 0 ? (
           <div className="ck12-rail-empty" data-testid="cockpit-rail-empty">
             {error ? (
               <>
@@ -321,8 +436,8 @@ export function CockpitFleetRail() {
               </>
             ) : loading ? '载入编队…' : '编队空着 · 从主对话派一条'}
           </div>
-        ) : visible.length === 0 ? (
-          <div className="ck12-rail-empty">这个舱没有作业</div>
+        ) : fleetRows.length === 0 ? (
+          asks.length > 0 ? null : <div className="ck12-rail-empty">这个舱没有作业</div>
         ) : (
           GROUPS.map((group) => {
             const groupRows = grouped[group.id]

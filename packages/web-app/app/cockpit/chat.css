@@ -15,7 +15,9 @@
   /* 只有底板吃 --oa：正文颜色一律用实色，避免调透明度时字也跟着发灰。 */
   background:
     linear-gradient(180deg, rgba(17, 21, 30, var(--oa, 0.94)), rgba(9, 11, 17, var(--oa, 0.94)));
-  backdrop-filter: blur(14px);
+  /* 2026-11-16 性能：对话浮窗是最大的一块常驻面，后面是持续动画的星野。
+     backdrop-filter 会逼浏览器每帧对整个窗口背后的画面重做模糊 —— 旧 Intel
+     驱动上直接卡死。底板 alpha 已 ≥0.9，去掉它几乎看不出差别。 */
   box-shadow:
     0 0 0 1px rgba(255, 255, 255, 0.03),
     0 22px 60px rgba(0, 0, 0, 0.55),
@@ -172,7 +174,7 @@
   border-radius: 15px;
   border: 1px solid color-mix(in srgb, var(--ck-a) 26%, transparent);
   background: linear-gradient(180deg, rgba(16, 20, 29, 0.9), rgba(9, 11, 17, 0.86));
-  backdrop-filter: blur(12px);
+  /* 同上：底栏横跨整屏，去掉 backdrop-filter。 */
   box-shadow:
     0 0 30px color-mix(in srgb, var(--ck-a) 7%, transparent),
     0 10px 30px rgba(0, 0, 0, 0.45);
@@ -409,7 +411,7 @@
   border: 1px solid color-mix(in srgb, var(--ck-a) 38%, transparent);
   border-radius: 14px;
   background: linear-gradient(180deg, rgba(14, 18, 27, 0.97), rgba(8, 10, 16, 0.96));
-  backdrop-filter: blur(16px);
+  /* 多行草稿只在输入时出现；打字时更不能吃模糊。 */
   box-shadow:
     0 26px 64px rgba(0, 0, 0, 0.66),
     0 0 36px color-mix(in srgb, var(--ck-a) 12%, transparent);

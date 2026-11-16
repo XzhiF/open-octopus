@@ -1481,6 +1481,11 @@ if (shouldServe) {
       cabinService.setStatusHook((cabinId, status) => {
         sse.emit(`cabin:${cabinId}`, { event: "cabin_status", data: { cabin_id: cabinId, status } })
       })
+      // 派生视图（attention / 编队 / 待你数）变脏：新提问、决策、委派状态都走
+      // 这条即时广播，前端 useCabin 收到后重拉一次，不再等 30s 轮询。
+      cabinService.setViewHook((cabinId) => {
+        sse.emit(`cabin:${cabinId}`, { event: "cabin_view", data: { cabin_id: cabinId } })
+      })
       cabinService.bindInfra({
         workspaceService: workspaceService!,
         workspaceDAO: daos!.workspace,
@@ -1516,6 +1521,13 @@ if (shouldServe) {
         delegations: cabinDelegationDAO,
         service: cabinService,
         comm: cabinComm,
+        onAppend: (sessionId, workspaceId) => {
+          if (!workspaceId) return
+          sse.emit(workspaceId, {
+            event: "session_updated",
+            data: { sessionId, wake: false, phase: "event" },
+          })
+        },
       })
       const cabinDecisionService = new CabinDecisionService({
         cabin: daos!.cabin,

@@ -7,9 +7,9 @@
 //   · 当前目录属于某个舱时，主按钮变成「打开「X舱」」—— 一目录一舱（I3）。
 
 import { useCallback, useEffect, useState } from 'react'
-import { ArrowUp, Folder, Loader2, X } from 'lucide-react'
+import { ArrowUp, Folder, FolderPlus, Loader2, X } from 'lucide-react'
 import { Dialog, DialogContent, DialogTitle } from '@/components/ui/dialog'
-import { browseDirectories, type BrowseResult } from '@/lib/api-client'
+import { browseDirectories, createDirectory, type BrowseResult } from '@/lib/api-client'
 import { cn } from '@/lib/utils'
 import './CabinCreateHero.css'
 
@@ -35,6 +35,11 @@ export function DirectoryBrowserDialog({
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [listKey, setListKey] = useState(0)
+  // 新建文件夹：内联一行输入，建完直接进新目录（与系统对话框同手感）。
+  const [mkdirOpen, setMkdirOpen] = useState(false)
+  const [mkdirName, setMkdirName] = useState('')
+  const [mkdirBusy, setMkdirBusy] = useState(false)
+  const [mkdirError, setMkdirError] = useState<string | null>(null)
 
   const goto = useCallback(async (target?: string) => {
     setLoading(true)
@@ -54,8 +59,30 @@ export function DirectoryBrowserDialog({
     if (!open) return
     setBrowse(null)
     setError(null)
+    setMkdirOpen(false)
+    setMkdirName('')
+    setMkdirError(null)
     void goto(initialPath ?? undefined)
   }, [open, initialPath, goto])
+
+  const submitMkdir = useCallback(async () => {
+    const name = mkdirName.trim()
+    if (!browse?.path || !name || mkdirBusy) return
+    setMkdirBusy(true)
+    setMkdirError(null)
+    try {
+      const created = await createDirectory(browse.path, name)
+      // 服务端已经回传新目录的 DTO —— 直接落进去，不再多拉一次。
+      setBrowse(created.browse)
+      setListKey((k) => k + 1)
+      setMkdirOpen(false)
+      setMkdirName('')
+    } catch (err) {
+      setMkdirError(err instanceof Error ? err.message : '新建文件夹失败')
+    } finally {
+      setMkdirBusy(false)
+    }
+  }, [browse?.path, mkdirBusy, mkdirName])
 
   const current = browse?.path ?? null
   const lockedName = current ? lockedPaths.get(current) : undefined
@@ -160,7 +187,66 @@ export function DirectoryBrowserDialog({
             </div>
           )}
 
+          {mkdirOpen && (
+            <div className="cc-mkdir" data-testid="cabin-dir-mkdir-row">
+              <FolderPlus className="size-3.5 shrink-0 text-pop-yellow" strokeWidth={1.8} />
+              <input
+                data-testid="cabin-dir-mkdir-input"
+                aria-label="新文件夹名字"
+                autoFocus
+                value={mkdirName}
+                placeholder="新文件夹名字"
+                disabled={mkdirBusy || !browse}
+                onChange={(e) => setMkdirName(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') {
+                    e.preventDefault()
+                    void submitMkdir()
+                  }
+                  if (e.key === 'Escape') {
+                    e.preventDefault()
+                    e.stopPropagation()
+                    setMkdirOpen(false)
+                    setMkdirError(null)
+                  }
+                }}
+              />
+              <button
+                type="button"
+                className="cc-send"
+                data-testid="cabin-dir-mkdir-ok"
+                disabled={!mkdirName.trim() || mkdirBusy || !browse}
+                onClick={() => void submitMkdir()}
+              >
+                {mkdirBusy ? <Loader2 className="size-3 animate-spin" /> : null}
+                新建
+              </button>
+              <button
+                type="button"
+                className="cc-ghost"
+                onClick={() => { setMkdirOpen(false); setMkdirError(null) }}
+              >
+                取消
+              </button>
+            </div>
+          )}
+          {mkdirError && (
+            <div className="cc-mkdir-err" data-testid="cabin-dir-mkdir-error">{mkdirError}</div>
+          )}
+
           <div className="cc-dlg-f">
+            {!lockedName && !mkdirOpen && (
+              <button
+                type="button"
+                className="cc-ghost cc-mkdir-btn"
+                data-testid="cabin-dir-mkdir-open"
+                disabled={!browse || loading}
+                onClick={() => { setMkdirOpen(true); setMkdirName(''); setMkdirError(null) }}
+              >
+                <FolderPlus className="mr-1 size-3.5" strokeWidth={1.8} />
+                新建文件夹
+              </button>
+            )}
             <button type="button" className="cc-ghost" onClick={onClose}>取消</button>
             {lockedName ? (
               <button

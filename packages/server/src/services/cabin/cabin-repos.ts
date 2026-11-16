@@ -402,21 +402,27 @@ export function worktreeDirFor(cabinPath: string, name: string, instance?: strin
 
 // ── 克隆 ────────────────────────────────────────────────────────────
 
-/** Idempotent: already-cloned repos return their local path; otherwise clone
- *  from the org manifest. Never throws — failures come back as {error}. */
-export function ensureRepoCloned(org: string, name: string): { localPath: string } | { error: string } {
+/** Idempotent: already-cloned repos return their local path (`reused: true`);
+ *  otherwise clone from the org manifest (`reused: false`). Never throws —
+ *  failures come back as {error}.
+ *
+ *  注意：复用分支**不** fetch/pull —— 这里只保证共享主仓存在；主线对齐由
+ *  下一个门禁的 gitOps.syncToDefaultBranch 负责（2026-11-16 文案口径）。 */
+export function ensureRepoCloned(
+  org: string, name: string,
+): { localPath: string; reused: boolean } | { error: string } {
   const groups = readOrgManifest(org)
   const found = findOrgEntry(groups, name)
   if (!found) return { error: `repo '${name}' not found in org '${org}' manifest` }
   const cloneBase = getCloneBase(org)
   const existing = findLocalRepo(found.group, name, cloneBase)
-  if (existing) return { localPath: existing }
+  if (existing) return { localPath: existing, reused: true }
   if (!found.entry.git_url) return { error: `repo '${name}' has no git_url` }
   const result = cloneProject(found.entry.git_url, found.group, name, found.entry.branch, cloneBase)
   if (!result.success) return { error: result.message }
   const localPath = findLocalRepo(found.group, name, cloneBase)
   if (!localPath) return { error: `clone reported success but local path missing for '${name}'` }
-  return { localPath }
+  return { localPath, reused: false }
 }
 
 /** 舱内/舱外本地项目的登记条目（不 clone）。 */

@@ -38,6 +38,8 @@ export interface DeriveAskInput {
   task_id: string | null
   title: string
   question?: string
+  /** design 26：有决策票据的提问把信封一起带进 attention（可选）。 */
+  ask?: CabinAttentionItem["ask"]
 }
 
 export interface DeriveFindingInput {
@@ -159,6 +161,7 @@ export function deriveCabinView(input: DeriveCabinInput): DerivedCabinView {
       stage: "answer", awaiting: "person", title: a.title, question: a.question,
       task_id: a.task_id, repo: null, wt: null, deep_link: `ask:${a.id}`,
       priority: priorityOf(a.task_id), ...subjectOf(a.task_id),
+      ...(a.ask ? { ask: a.ask } : {}),
     })
   }
   for (const f of findings) {

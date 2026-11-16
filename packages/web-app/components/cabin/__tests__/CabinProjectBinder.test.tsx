@@ -89,6 +89,65 @@ describe('CabinProjectBinder — 跨 org 关联', () => {
   })
 })
 
+describe('CabinProjectBinder — 去重 / 多词过滤 / org 折叠（2026-11-16）', () => {
+  beforeEach(() => {
+    vi.mocked(scanLocalProjects).mockResolvedValue([])
+    // 同一个 org 的 manifest 常有多组（miyuan / miyuan3.0），同名仓库会重复出现。
+    vi.mocked(fetchManifestRepos).mockImplementation(async (org: string) => {
+      if (org === 'XzhiF') {
+        return {
+          groups: {
+            XzhiF: [{ name: 'ledger' }, { name: 'engine' }],
+            legacy: [{ name: 'ledger' }, { name: 'web-app' }],
+          },
+        }
+      }
+      return { groups: { acme: [{ name: 'billing' }, { name: 'gateway' }] } }
+    })
+  })
+
+  it('不同 manifest 组里的同名仓库只出现一次（key 不重复）', async () => {
+    render(<Harness />)
+    await waitFor(() => expect(screen.getByText('ledger')).toBeInTheDocument())
+    const list = screen.getByTestId('cabin-project-list')
+    expect(list.querySelectorAll('[data-project-key="org:XzhiF/ledger"]')).toHaveLength(1)
+    // 去重后 XzhiF 组计数 = 3（ledger / engine / web-app）
+    expect(screen.getByTestId('cabin-project-group-XzhiF').textContent).toContain('3')
+  })
+
+  it('多个词按 AND 组合过滤：org + 项目名都要命中', async () => {
+    render(<Harness />)
+    await waitFor(() => expect(screen.getByText('ledger')).toBeInTheDocument())
+    const list = () => screen.getByTestId('cabin-project-list')
+    const search = screen.getByTestId('cabin-project-search')
+
+    fireEvent.change(search, { target: { value: 'xzhif eng' } })
+    expect(list().textContent).toContain('engine')
+    expect(list().textContent).not.toContain('ledger')
+    expect(list().textContent).not.toContain('billing')
+
+    // 跨 org 的词组合 → 没有结果（不是逐字母模糊匹配）
+    fireEvent.change(search, { target: { value: 'acme engine' } })
+    expect(list()).toHaveTextContent('没有匹配「acme engine」的项目')
+  })
+
+  it('org 分组可折叠 / 展开', async () => {
+    render(<Harness />)
+    await waitFor(() => expect(screen.getByText('ledger')).toBeInTheDocument())
+    const header = screen.getByTestId('cabin-project-group-XzhiF')
+    expect(header).toHaveAttribute('aria-expanded', 'true')
+
+    fireEvent.click(header)
+    expect(screen.getByTestId('cabin-project-group-XzhiF')).toHaveAttribute('aria-expanded', 'false')
+    expect(screen.getByTestId('cabin-project-list').textContent).not.toContain('ledger')
+    // 别的 org 不受影响
+    expect(screen.getByTestId('cabin-project-list').textContent).toContain('billing')
+
+    fireEvent.click(screen.getByTestId('cabin-project-group-XzhiF'))
+    expect(screen.getByTestId('cabin-project-list').textContent).toContain('ledger')
+  })
+})
+
 describe('CabinProjectBinder — 本地目录映射（舱籍第三轮）', () => {
   beforeEach(() => {
     vi.mocked(fetchManifestRepos).mockResolvedValue({

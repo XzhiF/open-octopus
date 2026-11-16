@@ -351,6 +351,8 @@ export type CabinJobView = CabinJob & {
   transport: string
   /** 项目锚点（空/缺省 = 未归属；老服务端没有该字段）。 */
   project_keys?: string[]
+  /** 任务主线程此刻有 agent 流在跑（派生态；老服务端没有该字段）。 */
+  agent_running?: boolean
 }
 
 export async function listCabinJobs(id: string, signal?: AbortSignal): Promise<CabinJobView[]> {
@@ -608,8 +610,22 @@ export async function submitCabinDecision(
   return res.json() as Promise<CabinDecisionSubmitResult>
 }
 
-export async function fetchCabinDecisions(cabinId: string, signal?: AbortSignal): Promise<{
-  decisions: CabinDecisionRecord[]
+/**
+ * 忽略一条提问（旧卡 / 不再需要回答）。服务端把 decision 写回消息 metadata，
+ * 派生的 attention 与「等你答」随即消项；不转达、不写决策账本。
+ * `dismissed: 0` = 没找到对应会话消息（如工作流 pending_interaction）。
+ */
+export async function dismissCabinAsk(
+  cabinId: string,
+  askId: string,
+): Promise<{ dismissed: number }> {
+  const res = await fetch(url(`/${cabinId}/asks/${encodeURIComponent(askId)}/dismiss`), {
+    method: "POST",
+  })
+  return handleResponse<{ dismissed: number }>(res)
+}
+
+export async function fetchCabinDecisions(cabinId: string, signal?: AbortSignal): Promise<{  decisions: CabinDecisionRecord[]
   pending: CabinDecisionRecord[]
   asks: Array<{
     askId: string

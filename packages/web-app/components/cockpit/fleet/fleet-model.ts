@@ -100,8 +100,10 @@ export function groupOf(row: CockpitRow): CockpitRowGroup {
 
   const status = row.kind === 'job' ? (row.job.status as string) : taskDisplayStatus(row.task)
   if (NEED_STATUSES.has(status)) return 'need'
-  if (RUN_STATUSES.has(status)) return 'run'
   if (isEndedJob(status)) return 'done'
+  // 主线程 agent 在跑（人刚答完、答案已转达给作者）：任务生命周期还是 ready，
+  // 但编队应该进「运行中」——否则看起来没人在干活。
+  if (RUN_STATUSES.has(status) || (row.kind === 'job' && row.job.agent_running)) return 'run'
   return 'queue'
 }
 
@@ -297,7 +299,12 @@ const ATTENTION_STAGE_LABEL: Record<CabinAttentionItem['stage'], string> = {
 
 /** 行状态文案（S3/S4 可直接用；词表复用既有 job / task 映射，不另造一套）。 */
 export function statusLabel(row: CockpitRow): string {
-  if (row.kind === 'job') return jobStatusLabel(row.job.status)
+  if (row.kind === 'job') {
+    // 生命周期「待执行」但主线程在流式 —— 说清楚是作者在干活，而不是等人派发。
+    return row.job.agent_running && row.job.status !== 'running'
+      ? '作者在推进'
+      : jobStatusLabel(row.job.status)
+  }
   if (row.kind === 'task') {
     const status = taskDisplayStatus(row.task)
     return TASK_STATUS_LABEL[status] ?? jobStatusLabel(status)

@@ -303,9 +303,13 @@ export class CabinDecisionService {
     }
 
     this.appendDecisionEvent(cabinId, record, "decided")
+    try { this.deps.service.notifyViewChanged(cabinId) } catch { /* view hook optional */ }
 
     // 卡片立刻只读：把 decision 写回镜像卡 metadata（前端 100ms 内可见）。
     this.writeMirrorDecision(card.messageId, record)
+    // 作者线程里的**原卡**也写一笔：任务线程 / 对话悬浮条只看自己会话的
+    // metadata，镜像卡置灰管不到那边 —— 不写的话同一张提问会在别处还挂着。
+    this.writeOriginalAskDecision(card.payload, record)
 
     // 结构化用户消息（§7.1）：助理回合看到的第一手材料。
     await this.injectDecisionMessage(cabinId, record)
@@ -399,6 +403,40 @@ export class CabinDecisionService {
       this.db().prepare("UPDATE messages SET metadata = ? WHERE id = ?")
         .run(JSON.stringify(meta), messageId)
     } catch { /* best effort：卡片置灰失败不阻断决策 */ }
+  }
+
+  /** 作答本身是「跨会话事实」：作者线程的原卡也写 activity.decision。
+   *
+   *  cockpit 的决策卡只改主会话镜像卡；任务线程里的原卡若不同步，会同时出现
+   *  「决策记录已答」和「对话悬浮条还挂着这张提问」两种真相（2026-11-16 用户
+   *  反馈：同一个任务反复累加）。原卡 id 就是 askId（chat-routes 的契约）。 */
+  private writeOriginalAskDecision(payload: AskCardPayload, record: DecisionRecord): void {
+    const authorSessionId = payload.authorSessionId
+    if (!authorSessionId) return
+    const askId = payload.askMessageId
+    if (!askId) return
+    try {
+      const row = this.db().prepare(
+        "SELECT id, metadata FROM messages WHERE id = ? AND session_id = ?",
+      ).get(askId, authorSessionId) as { id: string; metadata?: string | null } | undefined
+      if (!row) return
+      let meta: Record<string, unknown> = {}
+      try { meta = row.metadata ? JSON.parse(row.metadata) as Record<string, unknown> : {} } catch { meta = {} }
+      const activity = (meta.activity && typeof meta.activity === "object")
+        ? meta.activity as Record<string, unknown>
+        : {}
+      if (activity.decision) return
+      activity.decision = {
+        id: record.decisionId,
+        label: record.choice,
+        note: record.note ?? null,
+        source: record.source,
+        at: record.submittedAt,
+      }
+      meta.activity = activity
+      this.db().prepare("UPDATE messages SET metadata = ? WHERE id = ?")
+        .run(JSON.stringify(meta), row.id)
+    } catch { /* best effort */ }
   }
 
   /** `[决策 · #1 支付回调 · ask_7f3a] 短信` 结构化用户消息。 */
@@ -520,6 +558,7 @@ export class CabinDecisionService {
     if (delivered) {
       this.clearWatchdog(askId)
       this.appendReceipt(cabinId, record, "assistant")
+      try { this.deps.service.notifyViewChanged(cabinId) } catch { /* view hook optional */ }
       if (record.subject.kind === "delegation") {
         try { this.deps.onDelegationRelayed?.(record.subject.id) } catch { /* best effort */ }
       }

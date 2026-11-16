@@ -59,6 +59,15 @@ export function useCabin(cabinId: string | null) {
       timer = window.setTimeout(() => { timer = null; void refresh() }, 300)
     }
     const offStatus = subscribeSSE(url, 'cabin_status', () => scheduleRefresh())
+    // 派生视图变脏（新提问 / 决策 / 委派状态）：立即重拉 attention / 编队，
+    // 不再等 30s 轮询。
+    const offView = subscribeSSE(url, 'cabin_view', (e) => {
+      try {
+        const data = JSON.parse(e.data) as { cabin_id?: string }
+        if (data.cabin_id && data.cabin_id !== cabinId) return
+      } catch { /* malformed frame — still refresh */ }
+      scheduleRefresh()
+    })
     const offProgress = subscribeSSE(url, 'cabin_init_progress', (e) => {
       try {
         const data = JSON.parse(e.data) as { cabin_id?: string; items?: CabinInitState['items'] }
@@ -72,6 +81,7 @@ export function useCabin(cabinId: string | null) {
     return () => {
       offStatus()
       offProgress()
+      offView()
       if (timer !== null) window.clearTimeout(timer)
       window.clearInterval(poll)
     }

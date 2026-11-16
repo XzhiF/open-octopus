@@ -11,6 +11,8 @@ import { cn } from '@/lib/utils'
 import { useCabinContext } from './cabin-provider'
 import { isEndedJob, jobStatusLabel, jobTone } from './job-status'
 import { openTaskInChat, taskDisplayStatus, useCabinTasks, type CabinTaskRow } from './modules/ui'
+import { useAskWindows } from './asks/ask-windows-provider'
+import { askWindowTitle } from './asks/ask-window-model'
 
 const JOB_ICON = { task: ListTodo, workflow: GitBranch, subagent: Bot } as const
 
@@ -21,6 +23,8 @@ interface FleetRow {
   status: string
   pct: number
   meta: string
+  /** 任务主线程 agent 在跑（生命周期可能仍是「待执行」）。 */
+  live: boolean
   job?: CabinJobView
   task?: CabinTaskRow
 }
@@ -44,6 +48,8 @@ function taskPct(task: CabinTaskRow | undefined): number {
 export function CabinFleet() {
   const { cabinId, cabin, openJobDetail } = useCabinContext()
   const { tasks } = useCabinTasks(cabinId)
+  // 等你答（design 26 §3.1）：组在右侧编队面板顶部，点一行在面板左侧开窗。
+  const { asks, open: openAsk } = useAskWindows()
   const [jobs, setJobs] = useState<CabinJobView[]>([])
   const prevIdsRef = useRef<Set<string> | null>(null)
   const [popped, setPopped] = useState<Set<string>>(new Set())
@@ -57,20 +63,37 @@ export function CabinFleet() {
     }
     load()
     const timer = window.setInterval(load, 10_000)
-    return () => { alive = false; window.clearInterval(timer) }
+    // 答完决策 1.2s 补一拍：主线程流启动后立刻显示「作者在推进」。
+    const answerTimers = new Set<number>()
+    const onAnswered = () => {
+      const id = window.setTimeout(() => {
+        answerTimers.delete(id)
+        load()
+      }, 1_200)
+      answerTimers.add(id)
+    }
+    window.addEventListener('octopus:author-ask-answered', onAnswered)
+    return () => {
+      alive = false
+      window.clearInterval(timer)
+      window.removeEventListener('octopus:author-ask-answered', onAnswered)
+      for (const id of answerTimers) window.clearTimeout(id)
+    }
   }, [cabinId])
 
   const rows = useMemo<FleetRow[]>(() => {
     const taskOf = (id: string | null | undefined) =>
       (id ? tasks.find((t) => t.id === id) : undefined)
     if (jobs.length > 0) {
-      const rank = (status: string) => {
-        const tone = jobTone(status)
+      const rank = (j: CabinJobView) => {
+        // 作者 agent 在跑（刚答完决策、答案已转达）优先于一切待执行作业。
+        if (j.agent_running) return 0
+        const tone = jobTone(j.status)
         return tone === 'run' ? 0 : tone === 'blocked' ? 1 : tone === 'wait' ? 2 : 3
       }
       const live = jobs
         .filter((j) => !isEndedJob(j.status))
-        .sort((a, b) => rank(a.status) - rank(b.status) || b.priority - a.priority)
+        .sort((a, b) => rank(a) - rank(b) || b.priority - a.priority)
       const ended = jobs
         .filter((j) => isEndedJob(j.status))
         .sort((a, b) => (b.ended_at ?? '').localeCompare(a.ended_at ?? ''))
@@ -84,6 +107,7 @@ export function CabinFleet() {
           status: j.status,
           pct: j.kind === 'task' ? taskPct(task) : isEndedJob(j.status) ? 100 : 45,
           meta: j.transport,
+          live: !!j.agent_running,
           job: j,
           task,
         }
@@ -99,6 +123,7 @@ export function CabinFleet() {
         status: taskDisplayStatus(t),
         pct: taskPct(t),
         meta: t.repo_group ?? '',
+        live: false,
         task: t,
       }))
   }, [jobs, tasks])
@@ -116,25 +141,62 @@ export function CabinFleet() {
     return () => window.clearTimeout(timer)
   }, [rows])
 
-  if (!cabin || rows.length === 0) return null
+  if (!cabin || (rows.length === 0 && asks.length === 0)) return null
 
   return (
     <aside className="ck-fleet" data-testid="cabin-fleet" aria-label="编队">
       <div className="ck-fleet-h">
         <span>编队</span>
-        <b>{rows.length}</b>
+        <b>{rows.length + asks.length}</b>
       </div>
       <div className="ck-fleet-list">
+        {asks.length > 0 && (
+          <div className="ck-fleet-asks" data-testid="cabin-fleet-asks">
+            <div className="ck-fleet-gh" data-group="ask">
+              <span>等你答</span>
+              <b>{asks.length}</b>
+            </div>
+            {asks.map((ask) => (
+              <button
+                key={ask.askId}
+                type="button"
+                data-testid={`cabin-fleet-ask-${ask.askId}`}
+                data-ask-open={ask.askId}
+                title={`${askWindowTitle(ask.item)} · 等你答`}
+                onClick={() => openAsk(ask.askId)}
+                className="ck-frow wait askrow"
+              >
+                <span className="g">◉</span>
+                <span className="n">{askWindowTitle(ask.item)}</span>
+                <span className="s">
+                  <i className="d" />
+                  {ask.item.question ?? ask.env.decision ?? '在问你'}
+                </span>
+              </button>
+            ))}
+          </div>
+        )}
+        {rows.length > 0 && (
+          <div className="ck-fleet-gh" data-group="fleet">
+            <span>编队</span>
+            <b>{rows.length}</b>
+          </div>
+        )}
         {rows.map((row) => {
           const Icon = JOB_ICON[row.kind]
-          const tone = jobTone(row.status)
+          const isLive = row.live && row.status !== 'running'
+          const statusText = isLive ? '作者在推进' : jobStatusLabel(row.status)
+          const tone = row.live ? 'run' : jobTone(row.status)
+          // 作者在写方案 / 澄清时，执行进度还没开始：不画 0% 的假进度。
+          const showPct = !isLive
           return (
             <button
               key={row.id}
               type="button"
               data-testid={`cabin-fleet-row-${row.id}`}
               data-tone={tone}
-              title={`${row.title} · ${jobStatusLabel(row.status)} · ${row.pct}%`}
+              data-live={row.live ? 'true' : undefined}
+              title={`${row.title} · ${statusText}${showPct ? ` · ${row.pct}%` : ''}`}
               onClick={() => {
                 if (row.job) openJobDetail(row.job.id)
                 else if (row.task) openTaskInChat(row.task.id)
@@ -145,9 +207,9 @@ export function CabinFleet() {
               <span className="n">{row.title}</span>
               <span className="s">
                 <i className="d" />
-                {jobStatusLabel(row.status)} · {row.pct}%
+                {statusText}{showPct ? ` · ${row.pct}%` : ''}
               </span>
-              <span className="bar"><i style={{ width: `${row.pct}%` }} /></span>
+              {showPct && <span className="bar"><i style={{ width: `${row.pct}%` }} /></span>}
             </button>
           )
         })}

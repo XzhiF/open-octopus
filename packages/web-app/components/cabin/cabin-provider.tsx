@@ -113,16 +113,8 @@ export function CabinProvider({ cabinId, children }: { cabinId: string; children
     setOpenWindows((prev) => [...prev.filter((w) => w !== id), id])
   }, [])
 
-  // 初始化完成的那一刻自动开概览窗（原型 autoAdvance）：门禁 transcript 留在
-  // 对话里，人第一眼看到的是派生 attention/健康度。
-  const prevStatusRef = useRef<string | null>(null)
-  useEffect(() => {
-    const status = cabin?.status ?? null
-    if (prevStatusRef.current === 'initializing' && status === 'active') {
-      openModule('overview')
-    }
-    prevStatusRef.current = status
-  }, [cabin?.status, openModule])
+  // 初始化完成不再自动开概览窗（2026-11-16 用户要求）：门禁卡留在对话里，
+  // 概览由人自己从作业坞点开；有 attention 时坞上的红点照常提示。
 
   // 人来了就算互动（C11 重做）：进舱 / 切回标签页 / 舱内任意键鼠都会打一枪
   // activity —— 打盹中的舱被静默叫醒，醒着的刷新空闲计时。5 分钟节流，

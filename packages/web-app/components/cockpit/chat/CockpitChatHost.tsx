@@ -16,7 +16,7 @@
 // 一个新会话，绕开舱主对话的绑定。此时 telemetry 保持 null（舰桥显示未就绪），
 // 底栏由 CockpitCommandBar 显示禁用文案。
 
-import { useCallback, useEffect, useState } from 'react'
+import { memo, useCallback, useEffect, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { ChatPane } from '@/components/agent/chat/ChatPane'
 import { useCabinContext } from '@/components/cabin/cabin-provider'
@@ -28,6 +28,11 @@ import { useChatSlot } from './chat-slots'
 export interface CockpitChatHostProps {
   entryCabinId: string
 }
+
+/** ChatPane 是舱里最重的子树（整段转录 + 编辑器）。CockpitStateProvider 会因
+ *  选择 / 特效 / 遥测等任意状态变化重渲染宿主，但那些变化与转录无关 ——
+ *  memo 让宿主重渲染时不再重跑整棵 ChatPane（2026-11-16 全舱卡顿优化）。 */
+const MemoChatPane = memo(ChatPane)
 
 export function CockpitChatHost({ entryCabinId }: CockpitChatHostProps) {
   const { cabinId, cabin } = useCabinContext()
@@ -95,11 +100,14 @@ export function CockpitChatHost({ entryCabinId }: CockpitChatHostProps) {
   const handleOpenSession = useCallback((id: string) => {
     issueCommand({ type: 'select-session', sessionId: id })
   }, [issueCommand])
+  const backToCabinMain = useCallback(() => {
+    if (mainSessionId) issueCommand({ type: 'select-session', sessionId: mainSessionId })
+  }, [issueCommand, mainSessionId])
 
   if (!mainSessionId) return null
 
   const pane = (
-    <ChatPane
+    <MemoChatPane
       pane="left"
       split={false}
       focused
@@ -125,7 +133,7 @@ export function CockpitChatHost({ entryCabinId }: CockpitChatHostProps) {
       cabinId={cabinId}
       cabinWorkspaceId={cabin?.workspace_id ?? null}
       cabinMainSessionId={mainSessionId}
-      onBackToCabinMain={() => issueCommand({ type: 'select-session', sessionId: mainSessionId })}
+      onBackToCabinMain={backToCabinMain}
       composerSlot={composerSlot}
       composerVariant="cockpit"
       onTelemetry={reportChat}

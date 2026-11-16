@@ -91,6 +91,14 @@ describe('groupOf', () => {
     expect(groupOf(jobRow('j6', { status: 'cancelled' }))).toBe('done')
     expect(groupOf(jobRow('j7', { status: 'awaiting_review' }))).toBe('need')
     expect(groupOf(jobRow('j8', { status: 'failed' }))).toBe('need')
+    // 主线程 agent 在跑：生命周期还是 ready/paused，编队归「运行中」。
+    expect(groupOf(jobRow('j9', { status: 'ready', agent_running: true }))).toBe('run')
+    expect(groupOf(jobRow('j10', { status: 'paused', agent_running: true }))).toBe('run')
+    // attention 与终态优先：作者在跑也不能把待验收/已完成从原组挪走。
+    expect(groupOf(jobRow('j11', { status: 'awaiting_review', agent_running: true }))).toBe('need')
+    expect(groupOf(jobRow('j12', {
+      status: 'done', ended_at: '2026-11-14T01:00:00.000Z', agent_running: true,
+    }))).toBe('done')
   })
 
   it('job 缺 status：有 ended_at 归 done，否则归 queue（不冒充运行中）', () => {
@@ -302,6 +310,13 @@ describe('三型行 + duration / meta', () => {
     })
     expect(durationLabel(row, Date.parse('2026-11-14T02:05:00.000Z'))).toBe('2h05m')
     expect(statusLabel(row)).toBe('运行中')
+  })
+
+  it('job 行：主线程在跑但生命周期未进 running → 「作者在推进」', () => {
+    expect(statusLabel(jobRow('j1', { status: 'ready', agent_running: true }))).toBe('作者在推进')
+    // 真的在跑执行时仍说「运行中」。
+    expect(statusLabel(jobRow('j2', { status: 'running', agent_running: true }))).toBe('运行中')
+    expect(statusLabel(jobRow('j3', { status: 'ready' }))).toBe('待执行')
   })
 
   it('task 行：pct 用 taskPct 结果；meta = 舱名 · repo_group', () => {
