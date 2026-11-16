@@ -588,3 +588,31 @@ tone=run / 无进度条`，cockpit 行落在「运行中」组、`status=作者�
 返回 `{"dismissed":2}`（mirror + 原卡），再读 attention 为空。
 测试：`cabin-p4` 21 例（旧卡判据 / dismiss / 标题兜底）、`ask-window` 8 例
 （忽略成功 / dismissed:0）、inbox / CabinV3 / asks 套件全绿；tsc、eslint 干净。
+
+### 11.5 再改：待你定 dock 移到输入区（方案 B，2026-11-16）
+
+用户反馈 11.2 的合并 dock 仍然突兀（classic / 全舱都是）。原型
+`tmp/ask-dock-redesign-v2.html` 对比了 A 静音行 / B 输入框挂件 / C 右上药丸 /
+D 窗头徽章，用户选 **B**。
+
+实现：
+
+- `ChatArea` 新增 `composerDock` 槽：TUI dock 里渲染在 composer 之上（非 TUI
+  composer 同样位置）；cockpit 的 composerSlot portal 把整块带到 54px 底栏，
+  挂件随之进入 `.ck12-cmd-slot`。旧的 `transcriptHeader` 槽删除（无其它调用方）。
+- `AuthorAskInbox` 从「顶部粘性面板」改为「贴 composer 的一行」：
+  `● 待你定 N · #handle · 任务 · 要定的事 · 1/2/3 ↵ · 回答 →`；
+  多条时右侧出现 `N 条 ⌃`，列表**向上展开**（最多 3 条，其余 +N 条待处理），
+  激活行内高亮；键盘 1/2/3 + ↵ 语义不变。
+- cockpit CSS 覆盖 `.ck12-cmd-slot [data-testid="author-ask-inbox"]`：去边框 /
+  背景 / 圆角，只留一行；底栏高度自然从 54 → 61px。
+
+实测（dev 3000，HMR）：classic 挂件 32px，`gap = -1`（与 composer 上沿贴合）；
+cockpit 挂件在 `ck12-cmd-slot` 内、29px，边框 0 / 背景透明，底栏 61px。
+测试：chat + cockpit-chat 52 文件 248 例全绿，tsc / eslint 干净。
+
+**对齐修正（同日）：** 初次实装把挂件放在 `max-w-4xl` 外层，classic 舱的 composer
+列被 `cabin-cockpit.css` 收窄到 `min(756px, 100% - 144px)`（实测 712px），右边多出
+144px。现把 `composerDock` 渲染进 `[data-tui-composer]` 内部，宽度自动继承列宽：
+classic 挂件 712px（x=488，与 composer / 输入块逐像素对齐）；cockpit 挂件 1374px
+（x=37，与 composer 同宽同起止）。`ChatArea` 两处（TUI / 非 TUI）同口径。

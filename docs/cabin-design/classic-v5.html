@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>Octopus · 作战舱 · classic-v5 — 等你答：编队一题一行，左侧开窗</title>
+<title>Octopus · 作战舱 · classic-v5 — 等你答：编队一题一行，左侧开窗；主 chat「待你定」挂件</title>
 <style>
 /* ── 净黑终端 TUI · pop 色板（verbatim globals.css） ── */
 :root{
@@ -973,6 +973,10 @@ body.float-holo .win-title b{color:var(--ck-a)}
 .v3-frow.wait .d{background:var(--pop-amber);animation:v3Pulse 1.5s infinite}
 .v3-frow.blocked .d{background:var(--pop-red);animation:v3Pulse 1s infinite}
 .v3-frow.done{opacity:.45}
+/* 作者在推进：状态点走运行绿、呼吸；不铺进度条（进度对人不重要，重要的是「没停」） */
+.v3-frow.live{border-color:color-mix(in srgb,var(--pop-green) 30%,transparent)}
+.v3-frow.live .d{background:var(--pop-green);box-shadow:0 0 6px var(--pop-green);animation:v3Pulse 1.5s infinite}
+.v3-frow.live .s{color:var(--pop-green)}
 .v3-frow .bar{grid-column:1 / -1;height:2px;border-radius:1px;background:rgba(255,255,255,.07);overflow:hidden;margin-top:3px}
 .v3-frow .bar i{display:block;height:100%;background:var(--accent);opacity:.65}
 .v3-frow.pop{animation:v3Pop .55s cubic-bezier(.34,1.56,.64,1)}
@@ -1221,7 +1225,7 @@ button.wb-tab.active{border-bottom-color:var(--pop-pink)}
 <div class="shell">
   <!-- global header -->
   <header class="hdr ui-font">
-    <div class="hdr-brand"><span class="mark">🐙</span>Octopus<span class="ver" title="classic-v5：v4 + 等你答 —— 编队面板里一题一行，点行在编队左侧开窗，窗内直接作答；答完原地回执、编队消项">classic-v5</span></div>
+    <div class="hdr-brand"><span class="mark">🐙</span>Octopus<span class="ver" title="classic-v5：v4 + 等你答 —— 编队面板里一题一行，点行在编队左侧开窗，窗内直接作答；主 chat 输入框上沿挂「待你定」dock（同宽、可展开、可忽略）；答完编队消项并出现「作者在推进」">classic-v5</span></div>
     <button class="hdr-btn" data-action="menu-apps">应用 <svg class="i s10"><use href="#i-chev-d"/></svg></button>
     <div class="winstrip" id="winstrip"></div>
     <div class="hdr-right">
@@ -2815,7 +2819,9 @@ const V3_FILES=[
     ['   });','ctx'],
   ]},
 ];
-state.v3={focus:null,newId:null,seq:0,jobSel:null,jobTab:'overview',file:null,chgLevel:'task',phase:null};
+state.v3={focus:null,newId:null,seq:0,jobSel:null,jobTab:'overview',file:null,chgLevel:'task',phase:null,
+  /* 作者代理在主线程推进中（agent_running）：状态还停在等你，但作者没停 —— 编队里单列「作者在推进」 */
+  live:new Set()};
 const V3=state.v3;
 
 /* 编队 = 所有并行作业的统一视角（任务 / 工作流 / 流开发 / 子代理 / 外部 agent） */
@@ -2824,10 +2830,13 @@ function v3Items(){
   const out=[];
   (c.tasks||[]).forEach(t=>{
     const st=t.status==='running'?'run':t.status==='awaiting_review'?'wait':t.status==='failed'?'blocked':null;
-    if(!st) return;
+    /* agent_running：答完提问后作者代理仍在主线程推进，状态没变、人不用再管 —— 编队排最前，
+       显示「作者在推进」并收起进度条（真实实现：cabin_jobs.session_id 在流上）。 */
+    const live=V3.live.has(t.id);
+    if(!st&&!live) return;
     const kind=t.kind==='dev'?'dev':t.kind==='workflow-dev'?'wfdev':'workflow';
     const raw=(RUN_LOGS['run-'+t.id]||[]).slice(-3).map(([at,tag,name,text])=>[at,tag,(name?name+' · ':'')+text]);
-    out.push({id:'f-'+t.id,kind,title:t.name,status:st,jobId:'j-'+t.id,runId:'run-'+t.id,
+    out.push({id:'f-'+t.id,kind,title:t.name,status:st||'live',live,jobId:'j-'+t.id,runId:'run-'+t.id,
       pct:st==='wait'?100:st==='blocked'?72:Math.min(88,32+(t.round||1)*17),
       meta:t.repo+' · '+t.branch,
       clock:st==='wait'?'41:12':(t.round||1)*9+':2'+(t.round||1),
@@ -2846,6 +2855,8 @@ function v3Items(){
       status:x.status==='blocked'?'blocked':x.status==='running'?'run':'wait',
       pct:x.pct,meta:x.repo+' · '+x.branch,clock:x.clock,cost:x.cost,logs:(x.logs||[]).slice(-3),ext:x});
   });
+  /* 作者在推进的排最前（与真实实现 groupOf 的 run 组口径一致），其余保持原序。 */
+  out.sort((a,b)=>(b.live?1:0)-(a.live?1:0));
   return out;
 }
 
@@ -2859,11 +2870,14 @@ function v3Fleet(){
   const its=v3Items();
   el.innerHTML='<div class="v3-fhead">编队<b>'+its.length+'</b></div><div class="v3-flist">'+its.map(i=>{
     const k=V3KIND[i.kind];
-    const st={run:'运行中',wait:'等你',blocked:'受阻',done:'完成'}[i.status];
-    return '<button class="v3-frow '+i.status+(V3.newId===i.id?' pop':'')+((V3.focus===i.id||(V3.jobSel===i.id&&state.windows.job))?' on':'')+'" data-v3-job="'+i.id+'" style="--accent:'+k.color+'" title="'+k.label+' · '+esc(i.title)+' · '+i.pct+'%">'+
+    /* 作者在推进：live 且状态不是运行中 → 换标签、收起百分比与进度条（和真实实现同一口径） */
+    const liveRow=!!i.live&&i.status!=='run';
+    const st=i.status==='live'||liveRow?'作者在推进':{run:'运行中',wait:'等你',blocked:'受阻',done:'完成'}[i.status];
+    const pct=' · '+i.pct+'%';
+    return '<button class="v3-frow '+(liveRow||i.status==='live'?'live':i.status)+(V3.newId===i.id?' pop':'')+((V3.focus===i.id||(V3.jobSel===i.id&&state.windows.job))?' on':'')+'" data-v3-job="'+i.id+'" style="--accent:'+k.color+'" title="'+k.label+' · '+esc(i.title)+' · '+st+'">'+
       '<span class="g">'+k.glyph+'</span><span class="n">'+esc(i.title)+'</span>'+
-      '<span class="s"><i class="d"></i>'+st+' · '+i.pct+'%</span>'+
-      '<span class="bar"><i style="width:'+i.pct+'%"></i></span></button>';
+      '<span class="s"><i class="d"></i>'+st+(liveRow||i.status==='live'?'':pct)+'</span>'+
+      (liveRow||i.status==='live'?'':'<span class="bar"><i style="width:'+i.pct+'%"></i></span>')+'</button>';
   }).join('')+'</div>';
   if(V3.newId) setTimeout(()=>{V3.newId=null;},700);
 }
@@ -3192,6 +3206,42 @@ presenceBoot();
 .v3-frow.askrow .n{font-size:11px}
 .v3-frow.askrow .s{color:var(--pop-amber)}
 
+/* ── 主 chat：「待你定」挂件（B 版 · 贴 composer 上沿，同宽同起止）──
+   一行常驻：● 待你定 N · #handle 作业 · 要定的事 · 1/2/3 ↵ · 回答 →
+   多条：右侧「N 条 ⌃」向上展开（最多 3 行，其余 +N 条待处理），答到只剩一条自动收起。 */
+.askdock{position:relative;border:1px solid var(--pop-bd);border-bottom:0;border-radius:9px 9px 0 0;
+  background:rgba(28,28,34,.95);padding:4px 10px 6px;margin-bottom:-1px;font-size:11px;font-family:var(--font-ui)}
+.askdock-line{display:flex;align-items:center;gap:8px;min-width:0}
+.askdock .g{width:6px;height:6px;border-radius:50%;background:var(--pop-amber);flex:none}
+.askdock .cnt{flex:none;font-family:var(--font-mono);font-size:10px;font-weight:700;line-height:1;color:var(--pop-amber)}
+.askdock .now{display:flex;align-items:center;gap:8px;min-width:0;flex:1;padding:2px;
+  border:0;border-radius:5px;background:none;text-align:left;color:var(--pop-ink)}
+.askdock .now:hover{background:rgba(255,255,255,.05)}
+.askdock .h{flex:none;font-family:var(--font-mono);font-size:10px;font-weight:700;line-height:1;color:var(--pop-amber)}
+.askdock .t{flex:none;max-width:32%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
+  font-size:11.5px;font-weight:600;color:var(--pop-ink)}
+.askdock .q{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
+  font-size:11.5px;color:var(--pop-dim)}
+.askdock .hint{flex:none;font-family:var(--font-mono);font-size:9.5px;font-weight:600;color:rgba(150,152,163,.7)}
+.askdock .go{flex:none;font-size:10px;font-weight:700;color:var(--pop-cyan)}
+.askdock .more{flex:none;border:1px solid rgba(255,200,87,.3);border-radius:999px;background:none;
+  padding:2px 7px;font-family:var(--font-mono);font-size:9.5px;font-weight:700;color:var(--pop-amber)}
+.askdock .more:hover{background:var(--pop-amber-soft)}
+.askdock-list{display:flex;flex-direction:column;gap:2px;border-bottom:1px solid rgba(50,50,59,.6);
+  padding-bottom:4px;margin-bottom:4px}
+.askdock-row{display:flex;align-items:center;gap:8px;width:100%;padding:4px 6px;border-radius:5px;
+  border:0;background:none;text-align:left;font-size:11.5px;color:var(--pop-dim)}
+.askdock-row:hover{background:rgba(255,255,255,.05)}
+.askdock-row.on{background:rgba(255,200,87,.15);box-shadow:inset 2px 0 0 var(--pop-amber)}
+.askdock-row .h{flex:none;width:24px;font-family:var(--font-mono);font-size:10px;font-weight:700;color:var(--pop-amber)}
+.askdock-row .q{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.askdock-row .st{flex:none;font-size:9.5px;font-weight:700;color:var(--pop-dim)}
+.askdock-row.on .st{color:var(--pop-cyan)}
+.askdock .note{align-self:flex-start;border:0;background:none;padding:2px 6px;text-align:left;
+  font-size:10px;font-weight:700;color:var(--pop-amber)}
+/* 问答窗底栏：忽略这条（不答，从队列里去掉） */
+.askwin-foot [data-ask-dismiss]{color:var(--pop-dim);margin-right:auto}
+
 /* ── 问答窗：沿用 classic 的 paper / bd / shadow，关闭灯组在左 ── */
 .askwin{position:fixed;z-index:200;width:520px;max-width:calc(100vw - 24px);
   max-height:min(72vh,640px);display:flex;flex-direction:column;overflow:hidden;
@@ -3292,8 +3342,14 @@ presenceBoot();
   ];
 
   const OPEN = new Map();
+  /* 已忽略的提问：不进「等你答」、不进挂件；数据侧对应 dismissAsk（写了 decision=已忽略）。 */
+  const DISMISSED = new Set();
   let zTop = 200;
-  const waiting = () => ASKS.filter((a) => !a.answered);
+  /* 主 chat 挂件的本地状态：哪条是焦点、列表是否展开、是否摊开全部 */
+  let dockActive = null;
+  let dockExpanded = false;
+  let dockShowAll = false;
+  const waiting = () => ASKS.filter((a) => !a.answered && !DISMISSED.has(a.id));
   const askById = (id) => ASKS.find((a) => a.id === id);
 
   /* 与 cockpit-v15 同一口径：已经在「等你答」里的，不再重复出现在需要你列表。 */
@@ -3317,6 +3373,54 @@ presenceBoot();
           <span class="s"><i class="d"></i>等你答 · 回答</span>
           <span class="bar"><i style="width:100%"></i></span>
         </button>`).join('')}`);
+  }
+
+  /* ── 主 chat：「待你定」挂件（B 版，实装同款） ──
+     插在 composer 列的 .input-block 之前：宽度由列宽继承（舱里 712px），
+     上圆角 + 压住 1px 边框，看起来是输入框长出来的一块。 */
+  function injectDock() {
+    const wrap = document.querySelector('#chatPane .composer-wrap');
+    if (!wrap) return;
+    wrap.querySelector('[data-ask-dock]')?.remove();
+    if (state.thread.kind !== 'cabin' || state.pendingCabin) { dockActive = null; return; }
+    const open = waiting();
+    if (!open.length) { dockActive = null; return; }
+    if (!open.some((a) => a.id === dockActive)) dockActive = open[0].id;
+    wrap.insertAdjacentHTML('afterbegin', dockHTML(open));
+  }
+
+  function dockHTML(open) {
+    const active = open.find((a) => a.id === dockActive) || open[0];
+    const visible = dockShowAll ? open : open.slice(0, 3);
+    const hidden = open.length - visible.length;
+    const multi = open.length > 1;
+    const listOpen = dockExpanded && multi;
+    const rows = visible.map((a) => `
+      <button class="askdock-row${a.id === active.id ? ' on' : ''}" data-ask-dock-row="${a.id}"
+        title="${esc(a.title)} · ${esc(a.question)}">
+        <span class="h">${esc(a.handle)}</span>
+        <span class="q">${esc(a.title)} · ${esc(a.question)}</span>
+        <span class="st">${a.id === active.id ? '◉ 回答中' : '回答 →'}</span>
+      </button>`).join('');
+    return `
+      <div class="askdock" data-ask-dock>
+        ${listOpen ? `<div class="askdock-list">${rows}
+          ${hidden > 0 ? `<button class="note" data-ask-dock-more>+${hidden} 条待处理</button>` : ''}
+          ${dockShowAll && open.length > 3 ? `<button class="note" data-ask-dock-collapse>收起</button>` : ''}
+        </div>` : ''}
+        <div class="askdock-line">
+          <i class="g"></i>
+          <b class="cnt">待你定 ${open.length}</b>
+          <button class="now" data-ask-dock-open="${active.id}" title="跳到这张卡">
+            <span class="h">${esc(active.handle)}</span>
+            <span class="t">${esc(active.title)}</span>
+            <span class="q">${esc(active.question)}</span>
+            <span class="hint">1/2/3 · ↵</span>
+            <span class="go">回答 →</span>
+          </button>
+          ${multi ? `<button class="more" data-ask-dock-toggle>${listOpen ? '收起 ⌄' : `${open.length} 条 ⌃`}</button>` : ''}
+        </div>
+      </div>`;
   }
 
   /* ── 固定落点：贴在编队面板左侧（x = 编队左 - 窗宽 - 10），y 固定 56；
@@ -3363,6 +3467,7 @@ presenceBoot();
         </div>
         <div class="askdone" data-ask-done hidden></div>
         <div class="askwin-foot">
+          <button data-ask-dismiss title="不回答，直接从队列里去掉（真实实现会写一条「已忽略」decision）">忽略这条</button>
           <button data-ask-close>关闭</button>
         </div>
       </div>`;
@@ -3385,6 +3490,9 @@ presenceBoot();
   function openAsk(id) {
     const a = askById(id);
     if (!a) return;
+    /* 开哪扇窗，挂件焦点就跟到哪条 —— 两边永远说的是同一条。 */
+    dockActive = id;
+    injectDock();
     const existing = OPEN.get(id);
     if (existing) {
       existing.style.zIndex = String(++zTop);
@@ -3418,15 +3526,78 @@ presenceBoot();
     a.answered = choice;
     paintAnswered(win, a);
     injectAskRows();
+    /* 答完 = 作者代理接着推进：编队冒出一行「作者在推进」（真实实现靠 agent_running 派生）。 */
+    if (a.taskId) {
+      V3.live.add(a.taskId);
+      v3Fleet();
+      setTimeout(() => { V3.live.delete(a.taskId); v3Fleet(); }, 25000);
+    }
+    injectDock();
   }
 
   /* ── 接线（capture：先于编队行自己的处理） ── */
   document.addEventListener('click', (e) => {
+    /* 挂件：点常驻行 / 列表行 → 开窗并设为焦点；「N 条 ⌃ / 收起 ⌄」只在本地区块展开收起。 */
+    const dockOpen = e.target.closest('[data-ask-dock-open]');
+    if (dockOpen) {
+      e.preventDefault();
+      e.stopPropagation();
+      dockActive = dockOpen.dataset.askDockOpen;
+      openAsk(dockActive);
+      return;
+    }
+    const dockRow = e.target.closest('[data-ask-dock-row]');
+    if (dockRow) {
+      e.preventDefault();
+      e.stopPropagation();
+      dockActive = dockRow.dataset.askDockRow;
+      openAsk(dockActive);
+      injectDock();
+      return;
+    }
+    const dockToggle = e.target.closest('[data-ask-dock-toggle]');
+    if (dockToggle) {
+      e.preventDefault();
+      e.stopPropagation();
+      dockExpanded = !dockExpanded;
+      if (!dockExpanded) dockShowAll = false;
+      injectDock();
+      return;
+    }
+    const dockMore = e.target.closest('[data-ask-dock-more]');
+    if (dockMore) {
+      e.preventDefault();
+      e.stopPropagation();
+      dockShowAll = true;
+      injectDock();
+      return;
+    }
+    const dockLess = e.target.closest('[data-ask-dock-collapse]');
+    if (dockLess) {
+      e.preventDefault();
+      e.stopPropagation();
+      dockShowAll = false;
+      injectDock();
+      return;
+    }
     const row = e.target.closest('[data-ask-open]');
     if (row) {
       e.preventDefault();
       e.stopPropagation();
       openAsk(row.dataset.askOpen);
+      return;
+    }
+    /* 忽略这条：不答、从「等你答」与挂件里一起去掉（窗口一并关掉）。 */
+    const dismiss = e.target.closest('[data-ask-dismiss]');
+    if (dismiss) {
+      const win = dismiss.closest('.askwin');
+      const id = win.dataset.ask;
+      DISMISSED.add(id);
+      OPEN.delete(id);
+      win.remove();
+      if (dockActive === id) dockActive = null;
+      injectAskRows();
+      injectDock();
       return;
     }
     const close = e.target.closest('[data-ask-close]');
@@ -3479,6 +3650,14 @@ presenceBoot();
       win.style.left = Math.max(8, left) + 'px';
     }
   });
+
+  /* 主 chat 每次重绘后补插「待你定」挂件（只有舱主对话才有；任务线程 / 建舱 hero 不挂）。 */
+  const baseRenderChat = renderChat;
+  renderChat = function patchedRenderChat() {
+    baseRenderChat.apply(null, arguments);
+    injectDock();
+  };
+  injectDock();
 
   /* 编队面板每次重绘后补插「等你答」组。 */
   const baseFleet = v3Fleet;

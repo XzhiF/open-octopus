@@ -1531,7 +1531,7 @@ export function ChatPane({
         ) : (
           <ChatArea
             messages={viewMessages}
-            transcriptHeader={<AuthorAskInbox messages={viewMessages} />}
+            composerDock={<AuthorAskInbox messages={viewMessages} />}
             streaming={streaming}
             streamContent={streamContent}
             streamThinking={streamThinking}

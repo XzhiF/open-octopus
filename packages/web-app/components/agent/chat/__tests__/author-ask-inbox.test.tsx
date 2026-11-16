@@ -56,6 +56,11 @@ describe('AuthorAskInbox', () => {
 
     expect(screen.getByTestId('author-ask-inbox')).toBeInTheDocument()
     expect(screen.getByText(/待你定 2/)).toBeInTheDocument()
+    // 默认只留一行（贴 composer），多条要点开才铺列表。
+    expect(screen.queryAllByTestId('author-ask-inbox-row')).toHaveLength(0)
+    expect(screen.getByTestId('author-ask-inbox-expand').textContent).toContain('2 条')
+    fireEvent.click(screen.getByTestId('author-ask-inbox-expand'))
+
     expect(screen.getAllByTestId('author-ask-inbox-row')).toHaveLength(2)
     const rows = screen.getAllByTestId('author-ask-inbox-row')
     expect(rows[0].textContent).toContain('#1')
@@ -71,6 +76,7 @@ describe('AuthorAskInbox', () => {
     const messages = ['A', 'B', 'C', 'D', 'E'].map((n, i) =>
       askMessage(`ask-${n}`, `t${i}`, `任务${n}`, `${n} 的问题？`, false, `#${i + 1}`))
     render(<AuthorAskInbox messages={messages} />)
+    fireEvent.click(screen.getByTestId('author-ask-inbox-expand'))
     expect(screen.getAllByTestId('author-ask-inbox-row')).toHaveLength(3)
     expect(screen.getByText('+2 条待处理')).toBeInTheDocument()
   })
@@ -95,7 +101,8 @@ describe('AuthorAskInbox', () => {
     const bar = screen.getByTestId('author-ask-inbox-now')
     expect(bar.textContent).toContain('#1')
     expect(bar.textContent).toContain('任务A')
-    // 点第二行 → 焦点切过去（显式操作，不是靠滚动位置）。
+    // 多条时列表默认收起；展开后点第二行 → 焦点切过去。
+    fireEvent.click(screen.getByTestId('author-ask-inbox-expand'))
     fireEvent.click(screen.getByText('B 的验收？'))
     expect(screen.getByTestId('author-ask-inbox-now').textContent).toContain('任务B')
     expect(screen.getAllByText('◉ 回答中')).toHaveLength(1)
@@ -112,6 +119,7 @@ describe('AuthorAskInbox', () => {
       askMessage('ask-a', 't1', '任务A', 'A 的范围？', false, '#1'),
       askMessage('ask-b', 't2', '任务B', 'B 的验收？', false, '#2'),
     ]} />)
+    fireEvent.click(screen.getByTestId('author-ask-inbox-expand'))
     fireEvent.click(screen.getByText('B 的验收？'))
     fireEvent.keyDown(window, { key: '2' })
     fireEvent.keyDown(window, { key: 'Enter' })

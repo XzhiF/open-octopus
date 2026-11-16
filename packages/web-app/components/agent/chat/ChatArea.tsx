@@ -159,8 +159,9 @@ interface ChatAreaProps {
   /** 知识中心票12：transcript 末尾（流式区之前）的结构化节点——异步任务卡等
    *  不锚定具体消息的 Lane B 沉淀态。缺省 = 零变化。 */
   transcriptTail?: ReactNode
-  /** 转录顶端粘性区（design 23 §2 续）：待回答收件箱等全局待办。缺省 = 零变化。 */
-  transcriptHeader?: ReactNode
+  /** composer 上沿挂件（2026-11-16 用户定稿 B）：待你定队列贴在输入区上方，
+   *  不占转录阅读区；TUI / 非 TUI / cockpit portal 三种路径同一位置。 */
+  composerDock?: ReactNode
   /** 知识中心票12：卡片钮「对策展人说」等动作预进取号器文本（值变化即灌入输入框）。 */
   composerSeed?: string
   /** 右列有工作区作业坞（lg+）：用户输入历史让开该列，避免重叠。 */
@@ -214,7 +215,7 @@ export function ChatArea({
   effort, onEffortChange, maxContext, onMaxContextChange, modelPresets,
   composerLeading, composerPlaceholder, heroEmpty, composerHeroFooter, identity, identityDisplay, workspaceContext,
   tui, onSteer, steerActiveRef, resumeTailing,
-  messageExtras, transcriptTail, transcriptHeader, composerSeed, timelineClearDock, dockGutter,
+  messageExtras, transcriptTail, composerDock, composerSeed, timelineClearDock, dockGutter,
   composerSlot, composerVariant = 'full', onQueueDepthChange, composerBridgeRef,
   composerHidden, composerHiddenHint, composerEnableLabel, onEnableComposer,
 }: ChatAreaProps) {
@@ -688,7 +689,6 @@ export function ChatArea({
             : 'max-w-3xl mx-auto px-4 py-4 space-y-2.5'}
             data-tui-col={tui ? '' : undefined}
             data-tui-hero={heroMode ? 'true' : undefined}>
-            {transcriptHeader}
             {/* Session exists but has no turns yet (new chat / new task). */}
             {tui && messages.length === 0 && !streaming && !hideEmptyState && (
               <div className="py-8" role="status" aria-live="polite">
@@ -952,6 +952,9 @@ export function ChatArea({
           data-tui-hero={heroMode ? 'true' : undefined}
         >
           <div className="relative mx-auto max-w-4xl" data-tui-composer>
+            {/* 挂在 composer 列内部：宽度自动继承列宽（舱里被 CSS 收窄到
+                min(756px, 100% - 144px)，外置会成为另一条宽带）。 */}
+            {composerDock && <div className="-mb-px">{composerDock}</div>}
             {taskProgress && (
               <TaskProgressPanel progress={taskProgress} className="mb-1.5" />
             )}
@@ -1213,6 +1216,7 @@ export function ChatArea({
       <ComposerSlotPortal slot={composerSlot}>
       <div className="border-t-[1.5px] border-pop-bd bg-pop-paper p-3">
         <div className="max-w-3xl mx-auto relative">
+          {composerDock && <div className="mb-2">{composerDock}</div>}
           {taskProgress && <TaskProgressPanel progress={taskProgress} className="mb-2" />}
           {/* @分身 mention autocomplete */}
           <MentionAutocomplete

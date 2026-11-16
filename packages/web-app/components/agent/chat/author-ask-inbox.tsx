@@ -86,6 +86,7 @@ export function AuthorAskInbox({ messages }: { messages: AgentMessage[] }) {
   const [answeredIds, setAnsweredIds] = useState<Set<string>>(() => new Set())
   const [activeAskId, setActiveAskId] = useState<string | null>(null)
   const [showAll, setShowAll] = useState(false)
+  const [expanded, setExpanded] = useState(false)
   const pending = useMemo(
     () => pendingAuthorAsks(messages).filter((p) => !answeredIds.has(p.askMessageId)),
     [messages, answeredIds],
@@ -164,67 +165,17 @@ export function AuthorAskInbox({ messages }: { messages: AgentMessage[] }) {
   const multi = pending.length > 1
   // 常驻行永远有可显示的一条（effect 会在下一拍把 activeAskId 落到首条）。
   const focusItem = active ?? pending[0]
+  // 多条才展开列表；答到只剩一条时自动收起，不留一块空面板。
+  const listOpen = expanded && multi
 
   return (
     <div
       data-testid="author-ask-inbox"
-      className="relative mb-2 overflow-hidden rounded-[9px] border border-pop-bd bg-pop-paper/95 shadow-pop sticky top-0 z-20"
+      className="relative -mb-px rounded-t-[9px] border border-b-0 border-pop-bd bg-pop-paper/95 px-2.5 pb-1.5 pt-1"
     >
-      {/* 左侧琥珀脊线：仍是「待办」语义，但不再整框描琥珀边。 */}
-      <span
-        aria-hidden="true"
-        className="pointer-events-none absolute inset-y-0 left-0 w-[3px] bg-gradient-to-b from-pop-amber to-[#b8862f]"
-      />
-      <div className="flex items-center gap-2 py-1.5 pl-3 pr-2.5">
-        <span className="inline-flex shrink-0 items-center gap-1 rounded-full border border-pop-amber/30 bg-pop-amber-soft px-1.5 py-0.5 font-mono text-[10px] font-bold text-pop-amber">
-          <i className="size-1.5 rounded-full bg-pop-amber" aria-hidden="true" />
-          待你定 {pending.length}
-        </span>
-        <button
-          type="button"
-          data-testid="author-ask-inbox-now"
-          onClick={() => jump(focusItem.askMessageId)}
-          title="跳到这张卡"
-          className="flex min-w-0 flex-1 items-center gap-2 rounded px-0.5 py-0.5 text-left text-[11.5px] transition-colors hover:bg-white/5"
-        >
-          <span className="shrink-0 font-mono text-[10.5px] font-bold text-pop-amber">
-            {focusItem.handle || '—'}
-          </span>
-          <span className="max-w-[36%] shrink-0 truncate font-semibold text-pop-ink">
-            {focusItem.taskName}
-          </span>
-          {!multi && (
-            <span className="min-w-0 flex-1 truncate text-pop-dim">
-              {focusItem.decision || focusItem.question || '（打开卡片看问题）'}
-            </span>
-          )}
-        </button>
-        {!multi && <span className="shrink-0 text-[10px] font-bold text-pop-cyan">◉ 回答中</span>}
-        <span className="hidden shrink-0 font-mono text-[10px] font-semibold text-pop-dim/70 sm:inline">
-          1/2/3 · ↵
-        </span>
-        {hidden > 0 && (
-          <button
-            type="button"
-            onClick={() => setShowAll(true)}
-            className="shrink-0 rounded-full border border-pop-amber/30 px-1.5 py-0.5 text-[10px] font-bold text-pop-amber hover:bg-pop-amber/10"
-          >
-            +{hidden} 条待处理
-          </button>
-        )}
-        {showAll && pending.length > VISIBLE_ROWS && (
-          <button
-            type="button"
-            onClick={() => setShowAll(false)}
-            className="shrink-0 text-[10px] font-bold text-pop-dim hover:text-pop-ink"
-          >
-            收起
-          </button>
-        )}
-      </div>
-
-      {multi && (
-        <div className="flex flex-col gap-0.5 border-t border-pop-bd/60 px-1.5 py-1">
+      {/* 多条：列表向上展开（贴 composer 上沿，不挡阅读区）。 */}
+      {listOpen && (
+        <div className="mb-1 flex flex-col gap-0.5 border-b border-pop-bd/60 pb-1">
           {visible.map((item) => {
             const isActive = item.askMessageId === activeAskId
             return (
@@ -257,8 +208,65 @@ export function AuthorAskInbox({ messages }: { messages: AgentMessage[] }) {
               </button>
             )
           })}
+          {hidden > 0 && !showAll && (
+            <button
+              type="button"
+              onClick={() => setShowAll(true)}
+              className="self-start rounded-full border border-pop-amber/30 px-1.5 py-0.5 text-[10px] font-bold text-pop-amber hover:bg-pop-amber/10"
+            >
+              +{hidden} 条待处理
+            </button>
+          )}
+          {showAll && pending.length > VISIBLE_ROWS && (
+            <button
+              type="button"
+              onClick={() => setShowAll(false)}
+              className="self-start text-[10px] font-bold text-pop-dim hover:text-pop-ink"
+            >
+              收起
+            </button>
+          )}
         </div>
       )}
+
+      <div className="flex items-center gap-2 text-[11px]">
+        <i className="size-1.5 shrink-0 rounded-full bg-pop-amber" aria-hidden="true" />
+        <b className="shrink-0 font-mono text-[10px] font-bold text-pop-amber">
+          待你定 {pending.length}
+        </b>
+        <button
+          type="button"
+          data-testid="author-ask-inbox-now"
+          onClick={() => jump(focusItem.askMessageId)}
+          title="跳到这张卡"
+          className="flex min-w-0 flex-1 items-center gap-2 rounded px-0.5 py-0.5 text-left text-[11.5px] transition-colors hover:bg-white/5"
+        >
+          <span className="shrink-0 font-mono text-[10px] font-bold text-pop-amber">
+            {focusItem.handle || '—'}
+          </span>
+          <span className="max-w-[32%] shrink-0 truncate font-semibold text-pop-ink">
+            {focusItem.taskName}
+          </span>
+          <span className="min-w-0 flex-1 truncate text-pop-dim">
+            {focusItem.decision || focusItem.question || '（打开卡片看问题）'}
+          </span>
+          <span className="hidden shrink-0 font-mono text-[9.5px] font-semibold text-pop-dim/70 sm:inline">
+            1/2/3 · ↵
+          </span>
+          <span className="shrink-0 text-[10px] font-bold text-pop-cyan">回答 →</span>
+        </button>
+        {multi && (
+          <button
+            type="button"
+            data-testid="author-ask-inbox-expand"
+            aria-expanded={listOpen}
+            onClick={() => setExpanded((v) => !v)}
+            className="shrink-0 rounded-full border border-pop-amber/30 px-1.5 py-0.5 font-mono text-[9.5px] font-bold text-pop-amber hover:bg-pop-amber/10"
+          >
+            {listOpen ? '收起 ⌄' : `${pending.length} 条 ⌃`}
+          </button>
+        )}
+      </div>
     </div>
   )
 }

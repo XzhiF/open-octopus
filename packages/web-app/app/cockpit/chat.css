@@ -211,6 +211,14 @@
   border: 0;
   background: transparent;
 }
+/* 「待你定」挂件随 composer 进底栏：剥掉挂件自带的面板感，贴着输入行上沿。 */
+.ck12-cmd-slot [data-testid="author-ask-inbox"] {
+  margin: 0;
+  padding: 2px 2px 5px;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+}
 .ck12-cmd-slot [data-tui-composer] { max-width: none; }
 .ck12-cmd-slot [data-composer-block] {
   padding: 0;
