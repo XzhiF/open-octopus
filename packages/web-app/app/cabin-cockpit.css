@@ -522,7 +522,7 @@ body.float-holo [data-testid="cabin-window"]::after {
   font-size: 8.5px; font-weight: 800; letter-spacing: .12em; color: var(--pop-dim);
 }
 .ck-inboxpop-group b { font-size: 8.5px; font-weight: 800; color: rgba(150, 152, 163, .55) }
-.ck-inboxpop-group[data-type='ask'] { color: var(--pop-amber) }
+.ck-inboxpop-group[data-type='decide'] { color: var(--pop-amber) }
 .ck-inboxpop-group[data-type='review'] { color: var(--pop-violet) }
 .ck-inboxpop-group[data-type='blocked'] { color: var(--pop-red) }
 .ck-inboxpop-row {
@@ -537,6 +537,7 @@ body.float-holo [data-testid="cabin-window"]::after {
   border: 1px solid currentColor; border-radius: 4px; padding: 0 4px; line-height: 13px;
 }
 .ck-inboxpop-type[data-type='ask'] { color: var(--pop-amber) }
+.ck-inboxpop-type[data-type='start'] { color: var(--pop-cyan) }
 .ck-inboxpop-type[data-type='review'] { color: var(--pop-violet) }
 .ck-inboxpop-type[data-type='blocked'] { color: var(--pop-red) }
 .ck-inboxpop-name {

@@ -238,11 +238,16 @@ export type CabinAskEnvelope = z.infer<typeof CabinAskEnvelopeSchema>
 export const CabinAttentionItemSchema = z.object({
   id: z.string(),
   job_id: z.string().nullable(),
-  stage: z.enum(["review", "answer", "adjudicate", "approval", "blocked"]),
+  stage: z.enum(["review", "answer", "adjudicate", "approval", "blocked", "start"]),
   awaiting: z.enum(["person", "working", "idle", "ended"]),
   title: z.string(),
   question: z.string().optional(),
   detail: z.string().optional(),
+  /** stage=start 的机器可读动作（2026-11-17）：
+   *  `enqueue` = 任务还是 draft（可「立即开跑」或「先入列」）；
+   *  `trigger` = 已 ready，待触发；`resume` = 已暂停，待恢复。
+   *  前端靠它决定放行窗的按钮与 API，不再从标题后缀猜。 */
+  start_kind: z.enum(["enqueue", "trigger", "resume"]).optional(),
   task_id: z.string().nullable(),
   repo: z.string().nullable(),
   wt: z.string().nullable(),

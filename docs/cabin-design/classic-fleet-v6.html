@@ -176,6 +176,7 @@ html::-webkit-scrollbar-thumb{background:#46464E;border-radius:5px;border:2px so
 .ip-row .r1{display:flex;align-items:center;gap:6px;min-width:0}
 .ip-type{flex:none;font-family:var(--font-mono);font-size:8px;font-weight:800;letter-spacing:.04em;border:1px solid currentColor;border-radius:4px;padding:0 4px;line-height:13px}
 .ip-type.ask{color:var(--pop-amber)}
+.ip-type.start{color:var(--pop-cyan)}
 .ip-type.review{color:var(--pop-violet)}
 .ip-type.blocked{color:var(--pop-red)}
 .ip-name{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:11px;font-weight:600;font-family:var(--font-ui);color:rgba(245,245,242,.92)}
@@ -234,10 +235,12 @@ html::-webkit-scrollbar-thumb{background:#46464E;border-radius:5px;border:2px so
 .win-glyph.task{color:var(--pop-cyan);border-color:rgba(79,209,217,.35)}
 .win-glyph.sess{color:var(--pop-violet);border-color:rgba(167,139,250,.35)}
 .win-glyph.review{color:var(--pop-violet);border-color:rgba(167,139,250,.4)}
+.win-glyph.start{color:var(--pop-cyan);border-color:rgba(79,209,217,.4)}
 .win-glyph.blocked{color:var(--pop-red);border-color:rgba(255,92,92,.4)}
 .win-t{font-size:12px;font-weight:700;color:var(--pop-ink);font-family:var(--font-ui);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .win-tag{font-size:9.5px;font-weight:700;color:var(--pop-amber);flex:none;border:1px solid rgba(255,200,87,.35);border-radius:999px;padding:1px 7px}
 .win-tag.review{color:var(--pop-violet);border-color:rgba(167,139,250,.4)}
+.win-tag.start{color:var(--pop-cyan);border-color:rgba(79,209,217,.4)}
 .win-tag.run{color:var(--pop-green);border-color:rgba(126,231,135,.4)}
 .win-tag.done{color:var(--pop-green);border-color:rgba(126,231,135,.4)}
 .win-tag.stopped{color:rgba(150,152,163,.75);border-color:rgba(150,152,163,.35)}
@@ -371,7 +374,7 @@ html::-webkit-scrollbar-thumb{background:#46464E;border-radius:5px;border:2px so
         <div class="transcript"><div class="tui-col">
           <div class="tmsg xy"><span class="who">汐音</span><div class="bub">右侧 <b>编队</b> 只放任务和会话，显示在跑还是中止；要看细节点一行。要你拍板 / 验收 / 解阻的事，收在编队上方的 <b>inbox</b>。</div></div>
           <div class="tmsg me"><span class="who">你</span><div class="bub">inbox 点开是弹窗吗？</div></div>
-          <div class="tmsg xy"><span class="who">汐音</span><div class="bub">不是弹窗：点 inbox 图标，<b>图标左边</b>会出来一列待办和计数，你在里面选一条，才打开对应的待办窗；处理完自动回到这列，接着点下一条。输入框上方的「待你定」保持原样，随时能直接答。</div></div>
+          <div class="tmsg xy"><span class="who">汐音</span><div class="bub">不是弹窗：点 inbox 图标，<b>图标左边</b>会出来一列待办和计数，你在里面选一条，才打开对应的待办窗；处理完自动回到这列，接着点下一条。输入框上方的「待你定」保持原样，随时能直接答。 <b>待放行</b>不用跳任务线程 —— 浮窗里我总结好、给选项，选完当场执行。</div></div>
         </div></div>
       </div>
 
@@ -418,7 +421,7 @@ const ROLES = {
   external:{ label:'外部', color:'var(--pop-amber)' },
 };
 const TSTATUS = { wait:'待你定', review:'等你验收', run:'运行中', stopped:'已中止', done:'完成' };
-const ATYPE = { ask:'待你定', review:'待验收', blocked:'受阻' };
+const ATYPE = { ask:'待你定', start:'待放行', review:'待验收', blocked:'受阻' };
 
 const TASKS = [
   {
@@ -434,6 +437,19 @@ const TASKS = [
       ['41:12','汐音','派发 · 作者开始拆 phase','amber'],
       ['32:05','作者','上报 P2 方案，等你定渠道优先级','amber'],
       ['12:40','执行者','幂等键改造完成，等你的渠道决策','green'],
+    ],
+  },
+  {
+    id:'t4', name:'库存对账表', status:'wait', start:true, pct:0, phase:'P1 · 待入列',
+    repo:'octopus · feat-stock-recon', clock:'—', cost:'0.08',
+    goal:'规格与 P1 工作流绑定已齐，等放行后开跑 phase 1。',
+    crew:[
+      { role:'author', name:'task-author', status:'wait' },
+      { role:'doer', name:'task-doer', status:'wait' },
+    ],
+    events:[
+      ['——','作者','规格与 phase 绑定完成，等你放行','amber'],
+      ['——','汐音','规格和绑定都齐了，可以开跑','green'],
     ],
   },
   {
@@ -547,6 +563,19 @@ const BLOCKED = {
   done:false,
 };
 
+/* 待放行（2026-11-17）：不跳任务线程，浮窗里由汐音总结 + 选项，选完当场执行。 */
+const START = {
+  id:'s1', type:'start', taskId:'t4', kind:'enqueue',
+  title:'库存对账表 · 待入列',
+  said:'规格和 phase 绑定已经齐了，可以开跑 phase 1。要我现在放行吗？',
+  detail:'规格与 phase 绑定已齐，等你入列',
+  options:[
+    { id:'launch',  label:'立即开跑', sub:'入列并马上触发 phase 1（推荐）' },
+    { id:'enqueue', label:'先入列，稍后触发', sub:'只入列，不马上消耗 token' },
+  ],
+  choice:'launch', done:false, answered:null,
+};
+
 const state = { win:null, inboxOpen:false, dockOpen:false, dockActive:null, fromInbox:false };
 
 const $ = (s, r=document) => r.querySelector(s);
@@ -559,6 +588,7 @@ const openAsks = () => ASKS.filter((a) => !a.answered);
 function todoList() {
   const out = [];
   for (const a of openAsks()) out.push({ id:a.id, type:'ask', taskId:a.taskId, title:a.question });
+  if (!START.done) out.push({ id:START.id, type:'start', taskId:START.taskId, title:START.detail });
   if (!REVIEW.done) out.push({ id:REVIEW.id, type:'review', taskId:REVIEW.taskId, title:REVIEW.title });
   if (!BLOCKED.done) out.push({ id:BLOCKED.id, type:'blocked', taskId:BLOCKED.taskId, title:BLOCKED.title });
   return out;
@@ -567,13 +597,15 @@ function todoCounts() {
   const list = todoList();
   return {
     total:list.length,
-    ask:list.filter((t) => t.type === 'ask').length,
+    ask:list.filter((t) => t.type === 'ask' || t.type === 'start').length,
     review:list.filter((t) => t.type === 'review').length,
     blocked:list.filter((t) => t.type === 'blocked').length,
   };
 }
 function statusText(s) { return TSTATUS[s] || s; }
 function taskStatusFull(t) {
+  if (t.enqueued) return '待触发';
+  if (t.start) return '待放行';
   if (t.status === 'run' || t.status === 'wait' || t.status === 'stopped') return statusText(t.status) + ' · ' + t.pct + '%';
   return statusText(t.status);
 }
@@ -623,7 +655,7 @@ function renderInbox() {
   if (!state.inboxOpen) { pop.innerHTML = ''; return; }
   const list = todoList();
   const groups = [
-    { type:'ask', label:'待你定', items:list.filter((t) => t.type === 'ask') },
+    { type:'ask', label:'待你定', items:list.filter((t) => t.type === 'ask' || t.type === 'start') },
     { type:'review', label:'待验收', items:list.filter((t) => t.type === 'review') },
     { type:'blocked', label:'受阻', items:list.filter((t) => t.type === 'blocked') },
   ].filter((g) => g.items.length);
@@ -641,7 +673,7 @@ function renderInbox() {
             <span class="r1">
               <span class="ip-type ${t.type}">${ATYPE[t.type]}</span>
               <span class="ip-name">${fmt(task.name)}</span>
-              <span class="ip-go">${t.type === 'ask' ? '回答 →' : '去处理 →'}</span>
+              <span class="ip-go">${t.type === 'start' ? '放行 →' : t.type === 'ask' ? '回答 →' : '去处理 →'}</span>
             </span>
             <span class="ip-q">${fmt(t.title)}</span>
           </button>`;
@@ -750,6 +782,7 @@ function renderWin() {
   if (!state.win) { closeWin(); return; }
   const { kind, id } = state.win;
   if (kind === 'ask') renderAsk(el, askOf(id));
+  else if (kind === 'start') renderStart(el);
   else if (kind === 'instr') renderInstr(el, id === REVIEW.id ? REVIEW : BLOCKED);
   else if (kind === 'task') renderTaskDetail(el, taskOf(id));
   else if (kind === 'sess') renderSessDetail(el, sessOf(id));
@@ -883,6 +916,56 @@ function renderInstr(el, item) {
   if (input) input.addEventListener('keydown', (e) => { if (e.key === 'Enter') submitInstr(item); });
 }
 
+/* 待办窗：待放行（2026-11-17）—— 汐音总结 + 选项，当场执行，不跳任务线程 */
+function renderStart(el) {
+  el.style.width = '520px';
+  const t = taskOf(START.taskId);
+  if (START.done) {
+    el.classList.add('is-done');
+    el.innerHTML = `
+      <div class="win-h">
+        <button class="win-x" data-close-win>✕</button>
+        <span class="win-glyph start">⚑</span>
+        <span class="win-t">${fmt(t.name)}</span>
+        <span class="win-tag">已执行</span>
+        <span class="win-ctx">${fmt(t.repo)}</span>
+      </div>
+      <div class="win-b"><div class="askrecpt">
+        <div class="ok">✓ 已放行 · ${fmt(START.answered || '')}</div>
+        <div class="ans">${fmt(START.detail)}</div>
+        <div class="note">已从「要我处理」消项；编队里的任务状态跟着更新，回执 1.5s 后窗自动收起。</div>
+      </div></div>`;
+    return;
+  }
+  el.classList.remove('is-done');
+  el.innerHTML = `
+    <div class="win-h">
+      <button class="win-x" data-close-win>✕</button>
+      <span class="win-glyph start">⚑</span>
+      <span class="win-t">${fmt(t.name)}</span>
+      <span class="win-tag start">待放行</span>
+      <span class="win-ctx">${fmt(t.repo)} · ${t.phase}</span>
+    </div>
+    <div class="win-b">
+      <div class="ctxline"><b>汐音</b> · ${fmt(START.said)}</div>
+      <div class="ask-card">
+        <div class="askq">${fmt(START.detail)}</div>
+        ${START.options.map((o, i) => `
+          <button class="askopt${START.choice === o.id ? ' on' : ''}" data-start-opt="${o.id}">
+            <span class="k">${i + 1}</span>
+            <span><b>${fmt(o.label)}</b><span>${fmt(o.sub)}</span></span>
+          </button>`).join('')}
+        <div class="askrec" style="margin-top:8px">选中后汐音直接执行 · 回执 1.5s 后自动收起</div>
+      </div>
+    </div>
+    <div class="win-foot">
+      <button data-enter-task="${t.id}">打开任务详情 →</button>
+      <span class="sp"></span>
+      <span class="cap">选一个后 · 确认执行</span>
+      <button class="btn-pop" data-start-exec>确认执行</button>
+    </div>`;
+}
+
 /* 详情窗：任务 / 会话 */
 function renderTaskDetail(el, t) {
   if (!t) { closeWin(); return; }
@@ -993,6 +1076,20 @@ function submitInstr(item) {
   if (!val) { input?.focus(); return; }
   markInstr(item, val);
 }
+/* 放行：选完直接执行，不跳任务线程 */
+function executeStart() {
+  if (START.done) return;
+  START.done = true;
+  const opt = START.options.find((o) => o.id === START.choice) || START.options[0];
+  START.answered = opt.label;
+  const t = taskOf(START.taskId);
+  t.start = false;
+  if (START.choice === 'enqueue') { t.enqueued = true; t.phase = 'P1 · 待触发'; }
+  else { t.status = 'run'; t.pct = 8; }
+  toast('已放行 · ' + opt.label + ' · 从「要我处理」消项');
+  renderAll();
+  completeTodoWindow('start', START.id, 1500);
+}
 function ignoreAsk(id) {
   const ask = askOf(id);
   if (!ask) return;
@@ -1032,6 +1129,7 @@ document.addEventListener('click', (e) => {
     if (!item) return;
     state.fromInbox = true;
     if (item.type === 'ask') openWin('ask', item.id);
+    else if (item.type === 'start') openWin('start', item.id);
     else openWin('instr', item.id);
     return;
   }
@@ -1058,6 +1156,18 @@ document.addEventListener('click', (e) => {
   if (e.target.closest('[data-instr-send]')) {
     const item = state.win?.kind === 'instr' ? (state.win.id === REVIEW.id ? REVIEW : BLOCKED) : null;
     if (item) submitInstr(item);
+    return;
+  }
+  const startOpt = e.target.closest('[data-start-opt]');
+  if (startOpt) {
+    if (state.win?.kind === 'start' && !START.done) {
+      START.choice = startOpt.dataset.startOpt;
+      renderWin();
+    }
+    return;
+  }
+  if (e.target.closest('[data-start-exec]')) {
+    if (state.win?.kind === 'start') executeStart();
     return;
   }
   const fill = e.target.closest('[data-fill]');

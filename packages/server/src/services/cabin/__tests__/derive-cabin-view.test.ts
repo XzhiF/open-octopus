@@ -82,4 +82,41 @@ describe("deriveCabinView", () => {
     expect(v.health.dormant).toBe(1)
     expect(v.health.max).toBe(4)
   })
+
+  // ── start（待放行）：所有「人给一脚才能动」的任务态 ──────────────────
+  it("raw ready → 待触发；draft + 绑定齐 → 待入列；paused → 待恢复；半草稿不产", () => {
+    const v = deriveCabinView(base({
+      tasks: [
+        { id: "t1", name: "已入列", status: "ready", rawStatus: "ready" },
+        { id: "t2", name: "草稿就绪", status: "ready", rawStatus: "draft", enqueueReady: true },
+        { id: "t3", name: "半草稿", status: "ready", rawStatus: "draft", enqueueReady: false },
+        { id: "t4", name: "暂停中", status: "paused", rawStatus: "running" },
+        { id: "t5", name: "中段 ready", status: "ready", rawStatus: "running" },
+      ],
+    }))
+    const start = v.attention.filter(a => a.stage === "start")
+    expect(start.map(a => a.title)).toEqual([
+      "已入列 · 待触发",
+      "草稿就绪 · 待入列",
+      "暂停中 · 待恢复",
+    ])
+    expect(start.map(a => a.start_kind)).toEqual(["trigger", "enqueue", "resume"])
+    expect(start.every(a => a.awaiting === "person" && a.deep_link === `task:${a.task_id}`)).toBe(true)
+  })
+
+  it("作者在跑 / 已有提问 / 已有受阻时不重复产 start", () => {
+    const v = deriveCabinView(base({
+      tasks: [
+        { id: "t1", name: "A", status: "ready", rawStatus: "ready" },
+        { id: "t2", name: "B", status: "ready", rawStatus: "ready" },
+        { id: "t3", name: "C", status: "paused", rawStatus: "running" },
+      ],
+      jobs: [{ id: "j1", kind: "task", ref_id: "t1", title: "A", agent_running: true }],
+      asks: [{ id: "a1", task_id: "t2", title: "ask" }],
+      incidents: [{ id: "i1", task_id: "t3", status: "waiting_human", title: "inc" }],
+    }))
+    expect(v.attention.some(a => a.stage === "start")).toBe(false)
+    expect(v.attention.some(a => a.stage === "answer")).toBe(true)
+    expect(v.attention.some(a => a.stage === "blocked")).toBe(true)
+  })
 })

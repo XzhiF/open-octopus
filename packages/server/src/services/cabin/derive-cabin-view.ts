@@ -13,6 +13,13 @@ export interface DeriveTaskInput {
   name: string
   /** Derived task status (from deriveTaskView), not the raw column. */
   status: string
+  /** 任务行原始状态（draft / ready / running / …）。
+   *  派生 status 会把「草稿」和「已入列」都折成 ready；start 需要靠它区分
+   *  「待入列」与「待触发」。缺省（老调用方）不产 start 项。 */
+  rawStatus?: string
+  /** v4 且所有 phase 都绑了 workflowRef —— 入队 gate 的静态前提。
+   *  只有为真才把 draft 认成「待入列」，避免把还在写规格的草稿也当成待办。 */
+  enqueueReady?: boolean
   repo?: string | null
   branch?: string | null
   /** design 25 §4.1：派生句柄 / 颜色（不落库）。 */
@@ -53,6 +60,8 @@ export interface DeriveJobInput {
   kind: string
   ref_id: string | null
   title: string
+  /** 任务主线程是否在流式（作者 agent 在推进）。start 项在作者干活时先不冒出来。 */
+  agent_running?: boolean
 }
 
 /** 独立委派（design 25 §4.2）：与 workload 同级的第二种工作实体。 */
@@ -92,6 +101,16 @@ export function deriveCabinView(input: DeriveCabinInput): DerivedCabinView {
   const jobByTask = new Map<string, DeriveJobInput>()
   for (const j of jobs) if (j.kind === "task" && j.ref_id) jobByTask.set(j.ref_id, j)
   const taskById = new Map(tasks.map(t => [t.id, t]))
+  // start（待放行）的去重护栏：同一条任务已经有「等你答」或「受阻」时，
+  // 不再额外冒一条「待入列 / 待触发 / 待恢复」——人先处理更紧要的那条。
+  const askTaskIds = new Set(
+    asks.map(a => a.task_id).filter((v): v is string => !!v),
+  )
+  const blockedTaskIds = new Set(
+    incidents
+      .filter(i => i.status === "waiting_human" && i.task_id)
+      .map(i => i.task_id as string),
+  )
 
   const attention: CabinAttentionItem[] = []
   const push = (a: CabinAttentionItem) => attention.push(a)
@@ -127,6 +146,42 @@ export function deriveCabinView(input: DeriveCabinInput): DerivedCabinView {
         title: `${t.name} · 失败已升级`, task_id: t.id, repo: t.repo ?? null, wt: t.branch ?? null,
         deep_link: `task:${t.id}`, ...subject,
       })
+    } else if (t.rawStatus && (t.status === "paused" || t.status === "ready")) {
+      // 待放行（start）：任务停在「等人给一脚」的门上。
+      //   · paused            → 待恢复
+      //   · raw ready         → 已入列，待你触发
+      //   · raw draft + 绑定齐 → 待你入列（草稿还没到这一步时不冒出来）
+      // raw running + 派生 ready 是「阶段之间的瞬时等待」，不归人，不产项。
+      // 作者主线程在流式（agent_running）或已有更紧要的提问/受阻时也不产。
+      if (!askTaskIds.has(t.id) && !blockedTaskIds.has(t.id) && !job?.agent_running) {
+        const startKind: "enqueue" | "trigger" | "resume" | null = t.status === "paused"
+          ? "resume"
+          : t.rawStatus === "ready"
+            ? "trigger"
+            : t.rawStatus === "draft" && t.enqueueReady
+              ? "enqueue"
+              : null
+        const label = startKind === "resume"
+          ? "待恢复"
+          : startKind === "trigger"
+            ? "待触发"
+            : startKind === "enqueue"
+              ? "待入列"
+              : null
+        if (label && startKind) {
+          const detail = label === "待入列"
+            ? "规格与 phase 绑定已齐，等你入列"
+            : label === "待触发"
+              ? "已入列，等你触发执行"
+              : "已暂停，等你恢复推进"
+          push({
+            id: `start-${t.id}`, job_id: job?.id ?? null, stage: "start", awaiting: "person",
+            title: `${t.name} · ${label}`, detail, task_id: t.id, start_kind: startKind,
+            repo: t.repo ?? null, wt: t.branch ?? null,
+            deep_link: `task:${t.id}`, ...subject,
+          })
+        }
+      }
     }
   }
   for (const e of executions) {

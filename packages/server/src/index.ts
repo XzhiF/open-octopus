@@ -1285,8 +1285,8 @@ if (shouldServe) {
       // 关联的全部工作流执行（任务轮 + 辅助执行 + 主对话直接跑的工作流），
       // 不再只是聊天行。路由先于 TasksService 装配，故晚绑定。
       setSessionLedgerSummaryProvider((sessionId) => tasksService.sessionUsage(sessionId).summary)
-      // 2026-11-03: 用户在对话里明确说「立即执行 / 入列 / 开跑」后，主 Chat 直接
-      // 执行启动动作（与看板点卡同一组合），不再被卡在「只能提议」。
+      // 2026-11-03; 2026-11-17 去人工门：规格与 phase 绑定齐后，主 Chat 可自行
+      // 启动 / 入列 / 触发（与看板点卡同一组合），不再要求用户另行表态。
       setTaskLaunchToolsProvider(() => ({
         readyTask: (id, opts) => tasksService.readyTask(id, opts),
         triggerTask: (id) => tasksService.triggerTaskWithPrebuild(id),

@@ -35,6 +35,7 @@ function profile(overrides: Partial<TaskThreadProfile["task"]> = {}, identity: T
       name: "昵称敏感词过滤组件",
       status: "running",
       displayStatus: "running",
+      kind: null,
       phaseIndex: 1,
       roundIndex: 1,
       awaitingReview: false,
@@ -75,21 +76,19 @@ describe("canStartArchive — 归档前的明确同意门", () => {
   })
 })
 
-describe("canExecuteLaunch — 对话里的明确启动指令", () => {
-  it("author + draft + confirmed 才允许 launch_now / enqueue", () => {
-    expect(canExecuteLaunch("author", "draft", "launch_now", true).ok).toBe(true)
-    expect(canExecuteLaunch("author", "draft", "enqueue", true).ok).toBe(true)
-    expect(canExecuteLaunch("author", "draft", "launch_now", false).reason).toContain("必须等用户")
-    expect(canExecuteLaunch("doer", "draft", "launch_now", true).reason).toContain("作者")
-    expect(canExecuteLaunch("author", "running", "launch_now", true).reason).toContain("draft")
-    expect(canExecuteLaunch("author", "ready", "enqueue", true).reason).toContain("draft")
+describe("canExecuteLaunch — agent 可自行启动（2026-11-17 去人工门）", () => {
+  it("author + raw draft 即可 launch_now / enqueue，不需要 confirmed", () => {
+    expect(canExecuteLaunch("author", "draft", "launch_now").ok).toBe(true)
+    expect(canExecuteLaunch("author", "draft", "enqueue").ok).toBe(true)
+    expect(canExecuteLaunch("doer", "draft", "launch_now").reason).toContain("作者")
+    expect(canExecuteLaunch("author", "running", "launch_now").reason).toContain("draft")
+    expect(canExecuteLaunch("author", "ready", "enqueue").reason).toContain("draft")
   })
 
-  it("trigger 只给 doer + ready + confirmed", () => {
-    expect(canExecuteLaunch("doer", "ready", "trigger", true).ok).toBe(true)
-    expect(canExecuteLaunch("author", "ready", "trigger", true).reason).toContain("执行者")
-    expect(canExecuteLaunch("doer", "draft", "trigger", true).reason).toContain("ready")
-    expect(canExecuteLaunch("doer", "ready", "trigger", false).reason).toContain("必须等用户")
+  it("trigger 只给 doer + raw ready", () => {
+    expect(canExecuteLaunch("doer", "ready", "trigger").ok).toBe(true)
+    expect(canExecuteLaunch("author", "ready", "trigger").reason).toContain("执行者")
+    expect(canExecuteLaunch("doer", "draft", "trigger").reason).toContain("ready")
   })
 })
 

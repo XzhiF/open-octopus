@@ -18,6 +18,7 @@ export const ATTENTION_STAGE_META: Record<CabinAttentionItem['stage'], { label: 
   adjudicate: { label: '裁决', tone: 'border-pop-amber/50 text-pop-amber' },
   approval: { label: '审批', tone: 'border-pop-yellow/60 text-pop-yellow' },
   blocked: { label: '阻塞', tone: 'border-pop-red/50 text-pop-red' },
+  start: { label: '放行', tone: 'border-pop-cyan/50 text-pop-cyan' },
 }
 
 export const ATTENTION_AWAITING_META: Record<CabinAttentionItem['awaiting'], { label: string; tone: string }> = {

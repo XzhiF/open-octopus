@@ -21,7 +21,11 @@ vi.mock('@/lib/cabin-api', async (importOriginal) => {
 })
 vi.mock('@/lib/tasks-api', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@/lib/tasks-api')>()
-  return { ...actual, listTasks: vi.fn(), getTask: vi.fn(), triggerTask: vi.fn() }
+  return {
+    ...actual,
+    listTasks: vi.fn(), getTask: vi.fn(), triggerTask: vi.fn(),
+    readyTask: vi.fn(), resumeTask: vi.fn(),
+  }
 })
 
 import { useCabin } from '@/hooks/use-cabin'
@@ -29,7 +33,7 @@ import {
   listCabinJobs, getCabinTrace, getCabinUsage, getCabinFindings,
   listCabinRepos, listCabinWorktrees,
 } from '@/lib/cabin-api'
-import { listTasks, getTask } from '@/lib/tasks-api'
+import { listTasks, getTask, readyTask, resumeTask, triggerTask } from '@/lib/tasks-api'
 import { CabinProvider, useCabinContext } from '../cabin-provider'
 import { CabinOverview } from '../CabinOverview'
 import { CabinFleet } from '../CabinFleet'
@@ -281,6 +285,19 @@ const BLOCKED_ATTENTION: CabinAttentionItem = {
   wt: null,
   deep_link: 'task:t9',
 }
+const START_ATTENTION: CabinAttentionItem = {
+  id: 'start-t3',
+  job_id: 'j3',
+  stage: 'start',
+  awaiting: 'person',
+  title: '结算台 UI · 待触发',
+  detail: '已入列，等你触发执行',
+  task_id: 't3',
+  start_kind: 'trigger',
+  repo: null,
+  wt: null,
+  deep_link: 'task:t3',
+}
 const ALL_ATTENTION = [...ASK_ATTENTION, REVIEW_ATTENTION, BLOCKED_ATTENTION]
 
 function AskWindowsProbe() {
@@ -350,6 +367,83 @@ describe('CabinInbox · 要我处理', () => {
     } finally {
       capture.dispose()
     }
+  })
+
+  it('待放行：计入待你定，点行直接开放行窗，确认触发后消项（不跳任务线程）', async () => {
+    mockCabin(makeView({ attention: [START_ATTENTION] }))
+    vi.mocked(triggerTask).mockResolvedValue({} as never)
+    vi.mocked(readyTask).mockResolvedValue({} as never)
+    vi.mocked(resumeTask).mockResolvedValue({} as never)
+    const capture = captureTaskOpens()
+    try {
+      render(
+        <CabinProvider cabinId="cabin-1">
+          <AskWindowsProvider attention={[START_ATTENTION]}>
+            <CabinInbox />
+          </AskWindowsProvider>
+        </CabinProvider>,
+      )
+
+      const chip = screen.getByTestId('cabin-inbox-chip')
+      expect(chip.textContent).toContain('待你定 1')
+      expect(chip.textContent).toContain('1')
+
+      fireEvent.click(chip)
+      const row = screen.getByTestId('cabin-inbox-row-start-t3')
+      expect(row.textContent).toContain('待放行')
+      expect(row.textContent).toContain('结算台 UI')
+      expect(row.textContent).toContain('放行 →')
+      fireEvent.click(row)
+
+      // 不再跳任务线程：浮窗里由汐音总结 + 选项。
+      expect(capture.opened).toHaveLength(0)
+      const win = screen.getByTestId('cabin-start-window-start-t3')
+      expect(win.textContent).toContain('汐音')
+      expect(win.textContent).toContain('立即触发')
+      expect(win.textContent).toContain('已入列，等你触发执行')
+
+      fireEvent.click(screen.getByTestId('cabin-start-window-exec'))
+      await waitFor(() => expect(triggerTask).toHaveBeenCalledWith('t3'))
+      expect(readyTask).not.toHaveBeenCalled()
+      expect(screen.getByTestId('cabin-start-window-receipt').textContent).toContain('已触发执行')
+
+      // 乐观消项：重开列表已经看不到这条。
+      fireEvent.click(screen.getByTestId('cabin-inbox-chip'))
+      expect(screen.queryByTestId('cabin-inbox-row-start-t3')).toBeNull()
+      expect(screen.getByTestId('cabin-inbox-empty').textContent).toContain('都处理完了')
+    } finally {
+      capture.dispose()
+    }
+  })
+
+  it('待入列：窗里默认立即开跑 = ready → trigger；也可只入列', async () => {
+    const enqueueAttn: CabinAttentionItem = {
+      ...START_ATTENTION,
+      id: 'start-t4',
+      title: '结算台 UI · 待入列',
+      detail: '规格与 phase 绑定已齐，等你入列',
+      task_id: 't4',
+      start_kind: 'enqueue',
+      deep_link: 'task:t4',
+    }
+    mockCabin(makeView({ attention: [enqueueAttn] }))
+    vi.mocked(readyTask).mockResolvedValue({} as never)
+    vi.mocked(triggerTask).mockResolvedValue({} as never)
+
+    render(
+      <CabinProvider cabinId="cabin-1">
+        <AskWindowsProvider attention={[enqueueAttn]}>
+          <CabinInbox />
+        </AskWindowsProvider>
+      </CabinProvider>,
+    )
+
+    fireEvent.click(screen.getByTestId('cabin-inbox-chip'))
+    fireEvent.click(screen.getByTestId('cabin-inbox-row-start-t4'))
+    expect(screen.getByTestId('cabin-start-window-start-t4').textContent).toContain('立即开跑')
+    fireEvent.click(screen.getByTestId('cabin-start-window-exec'))
+    await waitFor(() => expect(triggerTask).toHaveBeenCalledWith('t4'))
+    expect(readyTask).toHaveBeenCalledWith('t4', { silentCard: true })
   })
 
   it('没有待办：chip 变灰、显示暂无待办，点开是「都处理完了」', () => {

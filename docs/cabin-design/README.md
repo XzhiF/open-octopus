@@ -185,6 +185,15 @@
   答完 / 给完指示后，inbox 计数消项、编队状态与排序跟着变。截图：`shots-fleet-v6/`。
   **2026-11-17 已实装**：`packages/web-app/components/cabin/CabinInbox.tsx`（inbox）、
   `CabinFleet.tsx`（摘掉提问行）、`app/cabin-cockpit.css`（.ck-inbox / .ck-fleet v6）。
+  **「要我处理」覆盖的人介入点**（`derive-cabin-view.ts`）：answer / adjudicate（待你定）、
+  **start（待放行：raw draft 且 phase 全绑 → 待入列；raw ready → 待触发；paused → 待恢复）**、
+  review（验收 / 归档）、approval（审批）、blocked（失败 / 阻塞）。start 在作者主线程仍在跑、
+  或同一任务已有提问 / 受阻时不重复冒项。**2026-11-17 补**：待放行不再跳任务线程 ——
+  点行直接开**放行窗**（`asks/start-window.tsx`，复用问答窗 chrome）：汐音一句话总结 +
+  「立即开跑 / 先入列 / 立即触发 / 恢复推进」选项，选完当场调 ready / trigger / resume，
+  回执 1.5s 后自动关窗并消项；`start_kind`（enqueue / trigger / resume）随 attention 下发。
+  同日起 **Agent 可自行放行**：`launch_task` / `enqueue_task` / `trigger_task` 去掉
+  “必须人明确表态 + confirmed=true” 的门，规格与 phase 绑定齐后作者可直接开跑。
 
 ## 双模式 · `pair/`（两个独立页面，2026-11-13 起）
 

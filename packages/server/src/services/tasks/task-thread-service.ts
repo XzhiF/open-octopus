@@ -444,7 +444,7 @@ export class TaskThreadService {
           `[任务 home] ${info.taskHome}`,
           `[phases] ${phaseLines}`,
           "[写规格] 优先用任务工具 update_task_spec_field（或 POST /api/tasks/:id/spec-field），不要整段覆盖 phases。",
-          "[收尾] 规格齐后默认用任务工具 propose_launch 让用户在「立即执行 / 入列待触发 / 定时触发」中选；**用户在本轮对话里明确说「立即执行 / 入列 / 现在开跑」时**，直接调 launch_task / enqueue_task（confirmed=true）执行，不要让他再去点卡片（这条覆盖旧角色卡里「只等用户点 [入队]」的说法）。没有用户明确表态时不要自行触发。",
+          "[收尾] 规格与 phase 绑定齐了、入队 gate 自查通过后，**直接调 launch_task 开跑**，不必等用户点卡或另行说「立即执行」；开跑后用一句话告诉用户。只有用户明确说「先入列 / 等一下 / 定时」时才用 enqueue_task / 定时触发。启动方式确实需要用户选（比如要定时间窗）时才用 propose_launch 出卡。",
           "[状态感知] 入列/触发/验收等状态变化会以事件卡出现在本会话；每轮也会刷新上面这行状态。",
         ].join("\n"),
       }
@@ -523,7 +523,7 @@ export class TaskThreadService {
           readOnlyLine,
           quickEditLine,
           `[改计划] 改 spec/票只能走计划回写：${planCmd}（批次目录只读，直接改会被硬闸拒绝）。`,
-          "[动作] 触发/暂停/恢复/中止/重试归档默认用任务工具 request_task_action（会落确认卡，人点才执行）；**用户在本轮明确说「开跑 / 触发 / 现在执行」且任务已入列(ready)时**，直接调 trigger_task(confirmed=true) 执行。验收的通过/打回在用户明确表态后调 submit_acceptance_decision 收口（人点验收台是兜底）。",
+          "[动作] 触发：任务已入列(ready)且该开跑时，**直接调 trigger_task**，不必等用户明确说「开跑」，也不必用确认卡；开跑后一句话告知。暂停 / 恢复 / 中止 / 重试归档仍默认用 request_task_action 落确认卡（破坏性或方向性动作由人拍板）；用户明确表态后可直接执行。验收的通过/打回在用户明确表态后调 submit_acceptance_decision 收口（人点验收台是兜底）。",
           "[状态感知] 任务状态变化会以事件卡出现在本会话；每轮也会刷新上面这行状态。",
         ].filter(Boolean).join("\n"),
       }

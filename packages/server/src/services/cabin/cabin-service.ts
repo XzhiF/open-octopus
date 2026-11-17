@@ -804,8 +804,14 @@ export class CabinService {
         const acceptances = this.infra.acceptanceDAO.listByTask(t.id)
         const derived = deriveTaskView(t, execs, acceptances)
         const handle = taskHandles.get(t.id)
+        // 入队 gate 的静态前提：v4、至少一个 phase、每个 phase 都绑了 workflowRef。
+        // 全满足才把 draft 认成「待入列」；半草稿不会进 attention。
+        const enqueueReady = derived.isV4
+          && derived.phaseViews.length > 0
+          && derived.phaseViews.every((p) => !!p.workflowRef)
         tasks.push({
           id: t.id, name: t.name, status: derived.taskStatus,
+          rawStatus: t.status, enqueueReady,
           repo: t.repo_group ?? null, branch: null,
           ...(handle ? { handle: handle.handle, color: handle.color } : {}),
         })
@@ -822,13 +828,17 @@ export class CabinService {
     const delegationHandles = assignHandles(
       delegationRows.map((d) => ({ id: d.id, created_at: d.created_at })), "delegation",
     )
+    const isStreaming = this.infra?.isSessionStreaming ?? isStreamActive
     const view = deriveCabinView({
       cabin: { id: row.id, status: row.status },
       tasks, executions,
       incidents: this.gatherIncidents(taskRows.map((t) => t.id), execToTask),
       asks: this.gatherAsks(row, executions, execToTask, sessionToTask),
       findings: this.listFindings(id, "open").map((f) => ({ id: f.id, title: f.title, status: f.status })),
-      jobs: jobs.map((j) => ({ id: j.id, kind: j.kind, ref_id: j.ref_id, title: j.title })),
+      jobs: jobs.map((j) => ({
+        id: j.id, kind: j.kind, ref_id: j.ref_id, title: j.title,
+        agent_running: !!j.session_id && isStreaming(j.session_id),
+      })),
       delegations: delegationRows.map((d) => {
         const h = delegationHandles.get(d.id)
         return {

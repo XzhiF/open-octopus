@@ -9,6 +9,8 @@
 //       待验收 → 任务验收视图，受阻 / 裁决 → 对应任务 / 记录。
 // 数据仍是 CabinProvider.view.attention（唯一事实源）+ 问答窗 Provider 的
 // 乐观已答集合；这里不新造状态，也不重排 attention。
+// 2026-11-17 用户口径：待放行不再跳任务线程 —— 点行直接开**放行窗**（汐音总结 +
+// 选项 + 当场 ready/trigger/resume），执行成功即乐观消项。
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Inbox as InboxIcon } from 'lucide-react'
@@ -17,9 +19,10 @@ import { cn } from '@/lib/utils'
 import { useCabinContext } from './cabin-provider'
 import { useAskWindows } from './asks/ask-windows-provider'
 import { askWindowTitle } from './asks/ask-window-model'
+import { StartWindow, startDecisionKey } from './asks/start-window'
 import { openTaskInChat } from './modules/ui'
 
-type InboxType = 'ask' | 'review' | 'blocked'
+type InboxType = 'ask' | 'start' | 'review' | 'blocked'
 
 interface InboxItem {
   key: string
@@ -36,19 +39,21 @@ interface InboxItem {
 
 const TYPE_LABEL: Record<InboxType, string> = {
   ask: '待你定',
+  start: '待放行',
   review: '待验收',
   blocked: '受阻',
 }
-const GROUPS: Array<{ type: InboxType; label: string }> = [
-  { type: 'ask', label: '待你定' },
-  { type: 'review', label: '待验收' },
-  { type: 'blocked', label: '受阻' },
+/** 三组只变计数口径：start（待入列/触发/恢复）归「待你定」——都是人给一脚。 */
+const GROUPS: Array<{ key: string; label: string; types: InboxType[] }> = [
+  { key: 'decide', label: '待你定', types: ['ask', 'start'] },
+  { key: 'review', label: '待验收', types: ['review'] },
+  { key: 'blocked', label: '受阻', types: ['blocked'] },
 ]
 
 /** attention 标题去掉服务端后缀（`· 待验收` / `· 委派失败`），只留主体名。 */
 function attentionName(item: CabinAttentionItem): string {
   return item.title
-    .replace(/\s*·\s*待(验收|归档|审批|回答)$/, '')
+    .replace(/\s*·\s*待(验收|归档|审批|回答|入列|触发|恢复)$/, '')
     .replace(/\s*·\s*(失败已升级|委派失败|委派在问你)$/, '')
     || item.title
 }
@@ -62,10 +67,28 @@ function askName(item: CabinAttentionItem): string {
 }
 
 export function CabinInbox() {
-  const { cabin, view, openModule, openJobDetail } = useCabinContext()
+  const { cabin, view, refresh, openModule, openJobDetail } = useCabinContext()
   const { asks, open: openAsk } = useAskWindows()
   const [open, setOpen] = useState(false)
+  /** 打开中的放行窗（快照 attention 项，刷新不腾空窗内选项）。 */
+  const [startItem, setStartItem] = useState<CabinAttentionItem | null>(null)
+  /** 已执行成功的 start 项：服务端 view 刷新前先把它从列表里拿掉。 */
+  const [decided, setDecided] = useState<ReadonlySet<string>>(() => new Set())
   const rootRef = useRef<HTMLElement>(null)
+
+  // view 里已经消失的乐观项要清掉：否则同一个 id 以后再出现会被永久藏住。
+  useEffect(() => {
+    setDecided((prev) => {
+      if (prev.size === 0) return prev
+      const live = new Set(
+        (view?.attention ?? [])
+          .filter((item) => item.stage === 'start')
+          .map((item) => startDecisionKey(item)),
+      )
+      const next = new Set([...prev].filter((key) => live.has(key)))
+      return next.size === prev.size ? prev : next
+    })
+  }, [view?.attention])
 
   const items = useMemo<InboxItem[]>(() => {
     const out: InboxItem[] = []
@@ -84,11 +107,14 @@ export function CabinInbox() {
     }
     for (const item of view?.attention ?? []) {
       if (!item || item.awaiting !== 'person') continue
+      if (item.stage === 'start' && decided.has(startDecisionKey(item))) continue
       // 有票据的提问由上面的乐观集合负责（已答后不在这里复活）。
       if (item.ask?.ask_id || ticketed.has(item.id)) continue
       const question = item.question || item.detail || ''
       if (item.stage === 'answer' || item.stage === 'adjudicate') {
         out.push({ key: item.id, type: 'ask', name: attentionName(item), question, attn: item })
+      } else if (item.stage === 'start') {
+        out.push({ key: item.id, type: 'start', name: attentionName(item), question, attn: item })
       } else if (item.stage === 'review' || item.stage === 'approval') {
         out.push({ key: item.id, type: 'review', name: attentionName(item), question, attn: item })
       } else if (item.stage === 'blocked') {
@@ -96,10 +122,10 @@ export function CabinInbox() {
       }
     }
     return out
-  }, [asks, view?.attention])
+  }, [asks, decided, view?.attention])
 
   const counts = useMemo(() => ({
-    ask: items.filter((i) => i.type === 'ask').length,
+    ask: items.filter((i) => i.type === 'ask' || i.type === 'start').length,
     review: items.filter((i) => i.type === 'review').length,
     blocked: items.filter((i) => i.type === 'blocked').length,
     total: items.length,
@@ -110,6 +136,8 @@ export function CabinInbox() {
     if (item.askId) { openAsk(item.askId); return }
     const attn = item.attn
     if (!attn) return
+    // 待放行：不跳任务线程，直接在浮窗里放行（2026-11-17 用户口径）。
+    if (attn.stage === 'start') { setStartItem(attn); return }
     if (attn.deep_link?.startsWith('finding:')) { openModule('records'); return }
     if (attn.task_id) {
       openTaskInChat(attn.task_id, attn.stage === 'review' ? 'acceptance' : undefined)
@@ -118,6 +146,16 @@ export function CabinInbox() {
     if (attn.job_id) { openJobDetail(attn.job_id); return }
     openModule('queue')
   }, [openAsk, openModule, openJobDetail])
+
+  const handleStartDecided = useCallback((decisionKey: string) => {
+    setDecided((prev) => {
+      if (prev.has(decisionKey)) return prev
+      const next = new Set(prev)
+      next.add(decisionKey)
+      return next
+    })
+    void refresh()
+  }, [refresh])
 
   // 点空白 / Esc 收起左侧列表；ask 窗与其它浮窗的 Esc 各自处理。
   useEffect(() => {
@@ -141,7 +179,8 @@ export function CabinInbox() {
   const zero = counts.total === 0
 
   return (
-    <aside className="ck-inbox" data-testid="cabin-inbox" aria-label="要我处理" ref={rootRef}>
+    <>
+      <aside className="ck-inbox" data-testid="cabin-inbox" aria-label="要我处理" ref={rootRef}>
       <button
         type="button"
         className="ck-inbox-chip"
@@ -182,11 +221,11 @@ export function CabinInbox() {
             {zero ? (
               <div className="ck-inboxpop-empty" data-testid="cabin-inbox-empty"><b>✓</b>都处理完了</div>
             ) : GROUPS.map((group) => {
-              const rows = items.filter((i) => i.type === group.type)
+              const rows = items.filter((i) => group.types.includes(i.type))
               if (rows.length === 0) return null
               return (
-                <div key={group.type}>
-                  <div className="ck-inboxpop-group" data-type={group.type}>
+                <div key={group.key}>
+                  <div className="ck-inboxpop-group" data-type={group.key}>
                     <span>{group.label}</span><b>{rows.length}</b>
                   </div>
                   {rows.map((item) => (
@@ -200,7 +239,9 @@ export function CabinInbox() {
                       <span className="r1">
                         <span className="ck-inboxpop-type" data-type={item.type}>{TYPE_LABEL[item.type]}</span>
                         <span className="ck-inboxpop-name">{item.name}</span>
-                        <span className="ck-inboxpop-go">{item.askId ? '回答 →' : '去处理 →'}</span>
+                        <span className="ck-inboxpop-go">
+                          {item.type === 'start' ? '放行 →' : item.askId ? '回答 →' : '去处理 →'}
+                        </span>
                       </span>
                       <span className="ck-inboxpop-q">{item.question || '（打开看详情）'}</span>
                     </button>
@@ -209,9 +250,18 @@ export function CabinInbox() {
               )
             })}
           </div>
-          {!zero && <div className="ck-inboxpop-foot">Esc 收起 · 选一条打开对应的待办</div>}
+          {!zero && <div className="ck-inboxpop-foot">Esc 收起 · 待放行可直接在浮窗处理</div>}
         </div>
       )}
-    </aside>
+      </aside>
+      {startItem && (
+        <StartWindow
+          key={startItem.id}
+          item={startItem}
+          onClose={() => setStartItem(null)}
+          onDecided={handleStartDecided}
+        />
+      )}
+    </>
   )
 }

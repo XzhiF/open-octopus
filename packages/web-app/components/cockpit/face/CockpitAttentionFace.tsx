@@ -21,6 +21,7 @@ const STAGE_LABEL: Record<CabinAttentionItem['stage'], string> = {
   adjudicate: '待裁决',
   approval: '待审批',
   blocked: '受阻',
+  start: '待放行',
 }
 
 const AWAITING_LABEL: Record<CabinAttentionItem['awaiting'], string> = {

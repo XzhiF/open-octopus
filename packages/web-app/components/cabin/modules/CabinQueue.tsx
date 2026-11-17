@@ -31,6 +31,7 @@ const STAGE_TO_COMM: Record<CabinAttentionItem['stage'], string> = {
   adjudicate: 'finding',
   approval: 'approval',
   blocked: 'blocked',
+  start: 'progress',
 }
 
 interface CommRow {

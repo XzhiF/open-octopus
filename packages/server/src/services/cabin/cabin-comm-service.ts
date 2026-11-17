@@ -138,9 +138,9 @@ export class CabinCommService {
             ? "授权边界：舱调度者已代表用户授权建任务、开工作树、消耗 token；但不等于规格免确认 —— 影响验收物 / 范围 / 优先级 / 风险的歧义仍要问人。"
             : "授权为 inferred：规格完成后先出确认卡，等人放行再执行。",
           clarify === "ask"
-            ? "先澄清：读 .cabin/requirements.md 与任务 home 的 context.md，用 AskUserQuestion 一次一问（建议 ≤5 轮），只问影响验收 / 范围 / 优先级的问题；多 phase 拆分卡必须由用户批准。需要人拍板的节点（拆分批准 / 每 phase 绑定确认 / 入列方式）也用 AskUserQuestion 一次一问提出（摘要 + 选项）—— 它会被投到舱主会话，用户可能不切对话就答；完整卡仍写任务线程。澄清完写 phases + 各 phase spec/票 + runbook；" +
+            ? "先澄清：读 .cabin/requirements.md 与任务 home 的 context.md，用 AskUserQuestion 一次一问（建议 ≤5 轮），只问影响验收 / 范围 / 优先级的问题；多 phase 拆分卡必须由用户批准。需要人拍板的节点（拆分批准 / 每 phase 绑定确认）也用 AskUserQuestion 一次一问提出（摘要 + 选项）—— 它会被投到舱主会话，用户可能不切对话就答；完整卡仍写任务线程。澄清完写 phases + 各 phase spec/票 + runbook；" +
               (strength === "explicit"
-                ? "拆分批准后按 explicit 授权直接 enqueue_task / launch_task(confirmed=true)，成交后入列并执行。"
+                ? "拆分批准后按 explicit 授权直接 launch_task 开跑（不再等人工点卡）。"
                 : "然后 propose_launch 出卡，等人放行。")
             : "clarify=auto：用户已说「看着办」——无实质歧义时可直接按 v4 完成规格" +
               (strength === "explicit" ? "并入列执行。" : "并出 propose_launch 卡。") +
