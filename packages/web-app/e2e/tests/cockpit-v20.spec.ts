@@ -217,23 +217,35 @@ test.describe("全域座舱 v20 · 真数据 E2E", () => {
     audit.dispose()
   })
 
-  test("12 姿态：图鉴 12 卡 + playPose + 帧推进", async ({ page }) => {
+  test("12 姿态：图鉴 12 卡 + playPose（v21 静态阶段单帧）", async ({ page }) => {
     const audit = attachConsoleAudit(page)
     await gotoCockpit(page, seed!.cabin.id)
     const sprite = page.getByTestId("cockpit-pose-sprite")
     await expect(sprite).toBeVisible()
-    // 帧推进：5 次采样 transform 不全相同（ping-pong 别名防护）。
-    const samples = new Set<string>()
-    for (let i = 0; i < 5; i += 1) {
-      samples.add(await sprite.locator("img").evaluate((el) => el.style.transform))
-      await page.waitForTimeout(130)
+    // v21 先静态确认人设：motion sheet 未接，frames=1、立绘走单帧 pose PNG。
+    // sheet 补齐后这里会退化成 12 帧，所以两种形态都接受，只断言「不是空图」。
+    const frames = Number(await sprite.getAttribute("data-frames"))
+    expect(frames).toBeGreaterThanOrEqual(1)
+    if (frames > 1) {
+      // 帧推进：5 次采样 transform 不全相同（ping-pong 别名防护）。
+      const samples = new Set<string>()
+      for (let i = 0; i < 5; i += 1) {
+        samples.add(await sprite.locator("img").evaluate((el) => el.style.transform))
+        await page.waitForTimeout(130)
+      }
+      expect(samples.size).toBeGreaterThan(1)
+    } else {
+      await expect(sprite.locator("img")).toHaveAttribute("src", /pose-.+\.png/)
     }
-    expect(samples.size).toBeGreaterThan(1)
 
     await page.getByTestId("cockpit-poses-open").click()
     const gallery = page.getByTestId("cockpit-poses-gallery")
     await expect(gallery).toBeVisible()
     await expect(gallery.locator(".ck12-pose-card")).toHaveCount(12)
+    // v21 新键就位，旧键（happy/worried/salute）不再出现在图鉴。
+    await expect(page.getByTestId("cockpit-pose-card-smile")).toBeVisible()
+    await expect(page.getByTestId("cockpit-pose-card-concerned")).toBeVisible()
+    await expect(page.getByTestId("cockpit-pose-card-ready")).toBeVisible()
     await page.getByTestId("cockpit-pose-card-cheer").click()
     await expect(gallery).toHaveCount(0)
     await expect(sprite).toHaveAttribute("data-pose", "cheer")
@@ -268,7 +280,7 @@ test.describe("全域座舱 v20 · 真数据 E2E", () => {
       const box = await dock.boundingBox()
       expect(box!.x).toBeGreaterThanOrEqual(0)
       expect(box!.x + box!.width).toBeLessThanOrEqual(width)
-      await expectNoHorizontalOverflow(page)
+      await expectNoHorizontalOverflow(page, `${width}px 视口`)
     }
     expect(audit.filtered).toEqual([])
     audit.dispose()

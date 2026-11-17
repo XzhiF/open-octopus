@@ -1,21 +1,21 @@
 'use client'
 
-// v20（design 29 §9.3）：sprite-sheet 帧播放器 —— 真·连续动作。
+// v20 帧播放器 / v21 静态阶段（design 29 §9.3 + design 31 §3.5）：
 //
+//   · 帧源由 pose-model.poseSource() 决定：motion sheet（12 帧）→ 双帧回退 → 单帧
+//     pose PNG。v21 先静态确认人设，MOTION_SHEETS 留空 → frames=1，rAF 不启动；
+//     sheet 补齐后同一组件自动回到 12 帧播放，无需改这里。
 //   · 单 rAF：dt 累积 → 每 1000/fps 步 idx+=dir，端点折返（ping-pong 保证任意
 //     视频片段首尾相接循环无跳变）→ transform translateY(-idx*100/frames%)；
 //   · .ck12-spr 裁切窗 + img height=frames*100%（sheet 1:3 与窗 2:3×frames 同比）；
 //   · document.hidden 暂停；prefers-reduced-motion 静帧 0；
-//   · motion 源 onerror → 双帧回退（fps 降 1.6 防眨闪）；
+//   · 解码失败逐级回退（fallbackSource），最终停在单帧立绘；
 //   · 粒子层与帧动画解耦（PoseFX 按 POSE_META.fx 发射）。
 
 import { useEffect, useRef, useState, type CSSProperties } from 'react'
 import {
-  FALLBACK_FPS,
-  FALLBACK_FRAMES,
-  FALLBACK_SHEETS,
-  MOTION_FRAMES,
-  MOTION_SHEETS,
+  fallbackSource,
+  poseSource,
   POSE_META,
   type PoseKey,
 } from './pose-model'
@@ -28,16 +28,18 @@ interface MoState {
 }
 
 export function CockpitPoseSprite({ pose, reduce }: { pose: PoseKey; reduce: boolean }) {
-  const [src, setSrc] = useState(MOTION_SHEETS[pose])
-  const [frames, setFrames] = useState(MOTION_FRAMES)
-  const [fps, setFps] = useState(POSE_META[pose].fps)
+  const initial = poseSource(pose)
+  const [src, setSrc] = useState(initial.src)
+  const [frames, setFrames] = useState(initial.frames)
+  const [fps, setFps] = useState(initial.fps)
   const imgRef = useRef<HTMLImageElement>(null)
   const moRef = useRef<MoState>({ idx: 0, dir: 1, acc: 0, last: 0 })
 
   useEffect(() => {
-    setSrc(MOTION_SHEETS[pose])
-    setFrames(MOTION_FRAMES)
-    setFps(POSE_META[pose].fps)
+    const next = poseSource(pose)
+    setSrc(next.src)
+    setFrames(next.frames)
+    setFps(next.fps)
     moRef.current = { idx: 0, dir: 1, acc: 0, last: 0 }
   }, [pose])
 
@@ -46,7 +48,8 @@ export function CockpitPoseSprite({ pose, reduce }: { pose: PoseKey; reduce: boo
       const el = imgRef.current
       if (el) el.style.transform = `translateY(-${(idx * 100) / frames}%)`
     }
-    if (reduce) {
+    // 单帧 / reduced-motion：静帧，不占 rAF。
+    if (reduce || frames < 2) {
       apply(0)
       return
     }
@@ -61,7 +64,7 @@ export function CockpitPoseSprite({ pose, reduce }: { pose: PoseKey; reduce: boo
       if (!mo.last) mo.last = t
       mo.acc += t - mo.last
       mo.last = t
-      const step = 1000 / (frames > FALLBACK_FRAMES ? fps : FALLBACK_FPS)
+      const step = 1000 / fps
       while (mo.acc >= step) {
         mo.acc -= step
         mo.idx += mo.dir
@@ -86,14 +89,15 @@ export function CockpitPoseSprite({ pose, reduce }: { pose: PoseKey; reduce: boo
         src={src}
         alt="汐音"
         draggable={false}
+        data-static={frames < 2 ? 'true' : undefined}
         style={{ height: `${frames * 100}%` }}
         onError={() => {
-          if (src === MOTION_SHEETS[pose]) {
-            setSrc(FALLBACK_SHEETS[pose])
-            setFrames(FALLBACK_FRAMES)
-            setFps(FALLBACK_FPS)
-            moRef.current = { idx: 0, dir: 1, acc: 0, last: 0 }
-          }
+          const next = fallbackSource(pose, src)
+          if (!next) return
+          setSrc(next.src)
+          setFrames(next.frames)
+          setFps(next.fps)
+          moRef.current = { idx: 0, dir: 1, acc: 0, last: 0 }
         }}
       />
     </span>

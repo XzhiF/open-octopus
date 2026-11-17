@@ -49,7 +49,7 @@ import { getChatSlot } from '../chat/chat-slots'
 import {
   doneLine, listenLine, waitingLine,
 } from './chat-reactions'
-import { MOOD_POSE, POSE_META, type PoseKey } from './pose-model'
+import { MOOD_POSE, POSE_META, POSE_MOOD, type PoseKey } from './pose-model'
 import { CockpitPoseSprite, PoseFX } from './CockpitPoseSprite'
 
 const TYPE_MS = 22
@@ -63,6 +63,8 @@ const WAIT_HOLD_MS = 60_000
 const WAIT_REFRESH_MS = 15_000
 /** 回答结束后，收尾表情和「已回完」标签保持多久。 */
 const DONE_MOOD_MS = 3_200
+/** 报到（ready）停留时长：台词比普通动作长，给足打字 + 停留。 */
+const READY_MS = 4_200
 
 type ChatPhase = 'idle' | 'waiting' | 'done'
 /** 气泡来源：等待轮换只覆盖自己，不打断点击/在场/倾听的台词。 */
@@ -111,6 +113,7 @@ export function CockpitCrew() {
     dismissPresence,
     setMoodOverride,
     setCrewBusy,
+    scene,
   } = useCockpit()
   const { chat, fx, chatWindow, reportPose } = useCockpitState()
   const reduce = usePrefersReducedMotion()
@@ -166,8 +169,9 @@ export function CockpitCrew() {
       : listening
         ? '倾听'
         : (CREW[shownMood]?.label ?? CREW.idle.label)
-  /** v20：动作姿态 override（派单 command / 图鉴 playPose / 报到 salute），
-   *  期间 mood 不覆盖 pose；结束回落 mood pose（design 29 §9.1）。 */
+  /** v20/v21：动作姿态 override（派单 command / 图鉴 playPose / 报到 ready），
+   *  期间 mood 不覆盖 pose；结束回落 mood pose（design 29 §9.1）。
+   *  typing 只属于作业阶段：对话回复中（phase=waiting）走 typing。 */
   const [actionPose, setActionPose] = useState<PoseKey | null>(null)
   const actionTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const shownPose: PoseKey = actionPose
@@ -458,27 +462,51 @@ export function CockpitCrew() {
 
   useEffect(() => subscribeCrewPoke(interact), [interact])
 
-  // ── v20：姿态事件（图鉴 playPose / 委派 relay command）─────────────────
+  // ── v21：动作姿态（图鉴 playPose / 委派 relay command / 报到 ready）──────
+  const playAction = useCallback((pose: PoseKey, ms = 2600) => {
+    if (!(pose in POSE_META)) return
+    setActionPose(pose)
+    if (actionTimerRef.current) clearTimeout(actionTimerRef.current)
+    actionTimerRef.current = setTimeout(() => setActionPose(null), ms)
+    const meta = POSE_META[pose]
+    const lineMood = POSE_MOOD[pose]
+    present(meta.line, lineMood, ms, 'poke')
+    fx.say(meta.line, lineMood)
+    cabinAudio.chime()
+  }, [present, fx])
+
   useEffect(() => {
     const onPose = (event: Event) => {
       const detail = (event as CustomEvent<{ pose?: PoseKey; ms?: number }>).detail
       const pose = detail?.pose
       if (!pose || !(pose in POSE_META)) return
-      const ms = detail.ms ?? 2600
-      setActionPose(pose)
-      if (actionTimerRef.current) clearTimeout(actionTimerRef.current)
-      actionTimerRef.current = setTimeout(() => setActionPose(null), ms)
-      const meta = POSE_META[pose]
-      const mood: MoodKey = pose === 'command' || pose === 'typing'
-        ? 'working'
-        : pose === 'salute' ? 'boot' : (pose as MoodKey)
-      present(meta.line, mood, ms, 'poke')
-      fx.say(meta.line, mood)
-      cabinAudio.chime()
+      playAction(pose, detail.ms ?? 2600)
     }
     window.addEventListener('octopus:crew-pose', onPose)
     return () => window.removeEventListener('octopus:crew-pose', onPose)
-  }, [present, fx])
+  }, [playAction])
+
+  // ── v21 ready：报到由真实事件驱动（不再靠点击轮播）─────────────────────
+  // ① 从休眠唤醒（mood sleep → 醒）：汐音报到；首进舱不播（design 31 §3.5
+  //    开机=待命），以免一打开舱就被台词糊脸。
+  const prevMoodRef = useRef<MoodKey>(mood)
+  useEffect(() => {
+    const prev = prevMoodRef.current
+    prevMoodRef.current = mood
+    if (prev !== 'sleep' || mood === 'sleep') return
+    if (streamingRef.current) return
+    playAction('ready', READY_MS)
+  }, [mood, playAction])
+
+  // ② 接管另一间舱（scene.key 变化）：一趟报到。同一间舱内切作业面不算。
+  const sceneKey = scene.key
+  const prevSceneRef = useRef(sceneKey)
+  useEffect(() => {
+    if (prevSceneRef.current === sceneKey) return
+    prevSceneRef.current = sceneKey
+    if (streamingRef.current) return
+    playAction('ready', READY_MS)
+  }, [sceneKey, playAction])
 
   return (
     <div className="ck12-crew" data-testid="cockpit-crew">

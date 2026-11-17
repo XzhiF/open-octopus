@@ -443,3 +443,33 @@ describe('CockpitCrewSettings · v13', () => {
     expect(onClose).toHaveBeenCalled()
   })
 })
+describe('CockpitCrew · v21 ready 报到（真实事件驱动）', () => {
+  const sprite = () => screen.getByTestId('cockpit-pose-sprite')
+
+  it('首次进舱保持待命，不播报到（design 31 §3.5：开机=待命）', () => {
+    renderCrew()
+    expect(sprite()).toHaveAttribute('data-pose', 'idle')
+    expect(screen.getByTestId('cockpit-crew-speech')).not.toHaveTextContent('舰桥接管')
+  })
+
+  it('从休眠唤醒（mood sleep → idle）→ 报到', async () => {
+    const { rerender } = renderCrew({ mood: 'sleep' })
+    expect(sprite()).toHaveAttribute('data-pose', 'sleep')
+
+    rerender({ mood: 'idle' })
+
+    expect(sprite()).toHaveAttribute('data-pose', 'ready')
+    // 台词逐字打出，等打字机推进到「舰桥接管」这一拍。
+    await waitFor(() =>
+      expect(screen.getByTestId('cockpit-crew-speech')).toHaveTextContent('舰桥接管'),
+    )
+  })
+
+  it('接管另一间舱（scene.key 变化）→ 报到；同舱内不变则不播', () => {
+    const { rerender } = renderCrew()
+    expect(sprite()).toHaveAttribute('data-pose', 'idle')
+
+    rerender({ scene: { key: 'cabin-2' } as unknown as CockpitContextValue['scene'] })
+    expect(sprite()).toHaveAttribute('data-pose', 'ready')
+  })
+})

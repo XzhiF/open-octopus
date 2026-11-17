@@ -660,6 +660,12 @@
   background: color-mix(in srgb, var(--ck-a) 70%, transparent);
   animation: ck12-pfx-keys 0.9s steps(2, end) infinite;
 }
+/* v21：idle 的环境微尘 —— 比 bubble 更慢、更低估（静默呼吸感）。 */
+.ck12-pfx-ambient i { animation: ck12-pfx-rise 5.2s linear infinite; }
+.ck12-pfx-ambient i:nth-child(odd) { background: var(--ck-b); }
+/* v21：wink 的星光 —— ✦ 字符，金色，短促上浮。 */
+.ck12-pfx-sparkle i { background: transparent; width: auto; height: auto; animation: ck12-pfx-sparkle 1.4s ease-out infinite; }
+.ck12-pfx-sparkle i::after { content: '✦'; color: var(--ck-c); font-size: 10px; }
 @keyframes ck12-pfx-rise {
   0% { opacity: 0; transform: translateY(0); }
   18% { opacity: 0.85; }
@@ -697,4 +703,9 @@
   0% { opacity: 0.25; transform: translateY(0); }
   50% { opacity: 1; transform: translateY(2px); }
   100% { opacity: 0.25; transform: translateY(0); }
+}
+@keyframes ck12-pfx-sparkle {
+  0% { opacity: 0; transform: translateY(6px) scale(0.6); }
+  30% { opacity: 1; }
+  100% { opacity: 0; transform: translateY(-26px) scale(1.1); }
 }

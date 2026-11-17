@@ -1,8 +1,9 @@
 'use client'
 
-// v20（design 29 §6 poses）：动作图鉴 —— 12 卡（缩略图 + 中英名 + 描述）。
+// v21（design 31 §3.5 poses）：动作图鉴 —— 12 卡（缩略图 + 中英名 + 描述）。
 // 点卡 playPose：关面板就地演（姿态事件 → 帧播放器 + 粒子 + 台词 + toast）；
 // 当前姿态金边（state.pose 由 CockpitCrew 上报）。缩略图 = 单帧 pose-*.png。
+// 12 套立绘 2026-11-17 重绘，动画 sheet 待补：当前为单帧静图，帧播放器就绪。
 
 import { toast } from 'sonner'
 import { useCockpitState } from '../state/CockpitStateProvider'
@@ -42,7 +43,8 @@ export function CockpitPosesPanel() {
         })}
       </div>
       <div className="ck12-ops-foot">
-        帧源 = 12 帧竖叠 PNG sheet · ping-pong 循环 · 每姿态独立 fps · 隐藏页暂停 · reduced-motion 静帧
+        12 套单帧立绘（1024×1536 透明底）· 动作由真实状态驱动 · 粒子层随姿态切换 ·
+        reduced-motion 静帧 · 动画 sheet 待 VideoGen 补齐后自动切 12 帧
       </div>
     </CockpitPanelShell>
   )

@@ -267,7 +267,7 @@
   `idle 10 · working 12 · thinking 8 · alert 10 · worried 8 · happy 12 · cheer 14 · wink 10 · sleep 6 · salute 8 · command 12 · typing 16`。
 - 回退链：motion-sheet → 双帧 sheet（625ms/帧）→ pose PNG（1024×1536）；sheet 缺项回退 `POSE_SRC`。
 - 隐藏页暂停；`prefers-reduced-motion` 静帧。
-- **开机=待命**：`setMood('idle')`，不播敬礼；`motion-sheet-idle.png` 已用睁眼 `pose-idle.png` 重建（呼吸 ±0.6%，脚底线 y=717，帧 bbox 104,6,376,717）。
+- **开机=待命**：`setMood('idle')`，不播敬礼；`motion-sheet-idle.png` 曾用睁眼 `pose-idle.png` 重建（呼吸 ±0.6%，脚底线 y=717，帧 bbox 104,6,376,717）。2026-11-17 全身重绘后进入静态阶段：`MOTION={}`，12 帧 sheet 待 VideoGen 重出。
 - 已剔除不满意的立绘：`POSE_SRC` 无 happy/sleep；`SHEET_SRC` 无 idle/salute/sleep（这些动作仍可走 motion sheet / 胸像）。
 - 名牌：立绘底部居中，`--cut` 玻璃，9.5 `.12em` teal，绿点在线。
 - 粒子层：confetti / spark / heart / bubble / zzz / sweat / keys / holo / beam / fly / ring / bang，按 `POSE_META.fx`。
@@ -346,8 +346,11 @@
 
 ### 5.5 立绘
 
-- `crew/pose-model.ts`：boot 映射 idle（去掉 salut）；`motion-sheet-idle` 用重建版；保留 12 姿态 fps 表。
-- `crew/CockpitPoseSprite.tsx`：rAF ping-pong、隐藏暂停、reduced 静帧、双帧回退（已有，核对参数）。
+- `crew/pose-model.ts`：12 个姿态键换新（`smile/concerned/ready` 替换 `happy/worried/salute`）；mood 键不动，经 `MOOD_POSE`（happy→smile、worried→concerned、boot→idle）与 `POSE_MOOD` 双向映射；`ACTION_POSES = cheer/command/ready`；boot 映射 idle。
+- **静态阶段（2026-11-17）**：`MOTION_SHEETS` / `FALLBACK_SHEETS` 为空表，`framesFor()` 全返回 1，立绘走单帧 `pose-*.png`（1024×1536 透明底）；`poseSource()` / `fallbackSource()` 已就位，VideoGen 补齐 sheet 后只填表即回到 12 帧。
+- `crew/CockpitPoseSprite.tsx`：rAF ping-pong、隐藏暂停、reduced 静帧、逐级回退；单帧时不启动 rAF。
+- **ready 由真实事件驱动**：从休眠唤醒（mood sleep → 醒）与接管另一间舱（`scene.key` 变化）播报到；首次进舱保持待命，不播敬礼（沿用 §3.5）。
+- 对话框（图鉴）点卡仍是显式查看入口；运行时没有点击轮播。
 
 ### 5.6 banner
 
