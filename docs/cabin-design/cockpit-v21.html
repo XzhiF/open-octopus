@@ -812,7 +812,7 @@ kbd{border:1px solid rgba(185,179,217,.35);border-bottom-width:2px;border-radius
 
   <div class="character" id="character" title="点汐音 = 跟她说话">
     <span class="ring"></span>
-    <span class="spr"><img id="charImg" src="./assets/motion-sheet-idle.png" alt="汐音" /></span>
+    <span class="spr"><img id="charImg" src="./assets/pose-idle.png" alt="汐音" style="height:100%" /></span>
     <span class="fx" id="charFx"></span>
     <span class="ptag"><i></i><span id="poseTag">汐音 · 待命</span></span>
   </div>
@@ -902,20 +902,19 @@ const rnd=a=>a[Math.floor(Math.random()*a.length)];
 const fmtK=n=>n>=1e6?(n/1e6).toFixed(2)+'M':n>=1000?Math.round(n/1000)+'k':String(Math.round(n));
 const PORTRAIT={idle:'./crew/xiyin-idle.png',alert:'./crew/xiyin-alert.png',working:'./crew/xiyin-working.png',thinking:'./crew/xiyin-thinking.png',worried:'./crew/xiyin-worried.png',happy:'./crew/xiyin-happy.png',cheer:'./crew/xiyin-cheer.png',wink:'./crew/xiyin-wink.png',sleep:'./crew/xiyin-sleep.png'};
 const MOOD_LABEL={idle:'待命',alert:'警觉',working:'作业',thinking:'思考',worried:'担忧',happy:'愉悦',cheer:'振奋',wink:'俏皮',sleep:'休眠'};
-const POSE_OF={idle:'idle',working:'working',thinking:'thinking',alert:'alert',worried:'worried',happy:'happy',cheer:'cheer',wink:'wink',sleep:'sleep'};
-/* 立绘已剔除不满意的 happy / sleep；这两个动作仍走 motion-sheet（12 帧）与 crew 胸像，不受影响 */
+const POSE_OF={idle:'idle',working:'working',thinking:'thinking',alert:'alert',worried:'concerned',happy:'smile',cheer:'cheer',wink:'wink',sleep:'sleep'};
+/* v21 立绘重制：全身 12 套统一按 command 的修长比例，剔除闭眼表情（worried/salute）与矮胖比例（happy） */
 const POSE_SRC={idle:'./assets/pose-idle.png',working:'./assets/pose-working.png',alert:'./assets/pose-alert.png',
- thinking:'./assets/pose-thinking.png',worried:'./assets/pose-worried.png',cheer:'./assets/pose-cheer.png',wink:'./assets/pose-wink.png',
- salute:'./assets/pose-salute.png',command:'./assets/pose-command.png',typing:'./assets/pose-typing.png'};
-const POSE_ORDER=['idle','working','thinking','alert','worried','cheer','wink','salute','command','typing'];
-/* 两帧兜底表已剔除 sheet-idle / sheet-salute / sheet-sleep；缺项时回退 POSE_SRC */
-const SHEET_SRC={working:'./assets/sheet-working.png',thinking:'./assets/sheet-thinking.png',alert:'./assets/sheet-alert.png',
- worried:'./assets/sheet-worried.png',happy:'./assets/sheet-happy.png',cheer:'./assets/sheet-cheer.png',wink:'./assets/sheet-wink.png',
- command:'./assets/sheet-command.png',typing:'./assets/sheet-typing.png'};
-/* 视频衍生的多帧 sprite sheet（_motion-v20.mjs 生成）；缺失时回退双帧 sheet */
-const MOTION={idle:1,working:1,typing:1,cheer:1,happy:1,thinking:1,worried:1,sleep:1,wink:1,salute:1,command:1,alert:1};
-const MO_FPS={idle:10,working:12,thinking:8,alert:10,worried:8,happy:12,cheer:14,wink:10,sleep:6,salute:8,command:12,typing:16};
+ smile:'./assets/pose-smile.png',thinking:'./assets/pose-thinking.png',concerned:'./assets/pose-concerned.png',
+ cheer:'./assets/pose-cheer.png',wink:'./assets/pose-wink.png',sleep:'./assets/pose-sleep.png',
+ ready:'./assets/pose-ready.png',command:'./assets/pose-command.png',typing:'./assets/pose-typing.png'};
+const POSE_ORDER=['idle','working','thinking','alert','smile','concerned','cheer','wink','sleep','ready','command','typing'];
+/* 静态阶段：双帧兜底与 12 帧动图全部停用，立绘走单帧 POSE_SRC；确认人设后由 _motion 流程补动图再启用 */
+const SHEET_SRC={};
+const MOTION={};
+const MO_FPS={idle:10,working:12,thinking:8,alert:10,smile:12,concerned:8,cheer:14,wink:10,sleep:6,ready:8,command:12,typing:16};
 const mo={idx:0,dir:1,acc:0,last:0,frames:2};
+const framesFor=p=>MOTION[p]?12:(SHEET_SRC[p]?2:1);
 function tickMo(t){requestAnimationFrame(tickMo);if(document.hidden||reduced){mo.last=t;return;}
  const dt=Math.min(100,t-mo.last);mo.last=t;mo.acc+=dt;const step=1000/(mo.frames>2?(MO_FPS[state.pose]||10):1.6);let moved=false;
  while(mo.acc>=step){mo.acc-=step;mo.idx+=mo.dir;if(mo.idx>=mo.frames-1){mo.idx=mo.frames-1;mo.dir=-1;}if(mo.idx<=0){mo.idx=0;mo.dir=1;}moved=true;}
@@ -925,12 +924,12 @@ const POSE_META={
  working:{cn:'作业',en:'WORK',desc:'盯执行 · 推进度',line:'这条我在盯，进度实时举给您。',fx:'spark'},
  thinking:{cn:'思考',en:'THINK',desc:'整理证据 · 给建议',line:'嗯……我把证据摊开想一下，马上给您建议。',fx:'bubble'},
  alert:{cn:'警觉',en:'ALERT',desc:'发现异常 · 举牌',line:'指挥官，有情况，我举上来了。',fx:'ring'},
- worried:{cn:'担忧',en:'WORRY',desc:'现场冻结 · 等你',line:'别担心，现场我先停住保留了。',fx:'sweat'},
- happy:{cn:'愉悦',en:'HAPPY',desc:'消项回执 · 开心',line:'收到～这条消项了，我盯到收口。',fx:'heart'},
+ concerned:{cn:'担忧',en:'CONCERN',desc:'现场冻结 · 等你',line:'别担心，现场我先停住保留了。',fx:'sweat'},
+ smile:{cn:'愉悦',en:'SMILE',desc:'消项回执 · 开心',line:'收到～这条消项了，我盯到收口。',fx:'heart'},
  cheer:{cn:'振奋',en:'CHEER',desc:'验收通过 · 欢呼',line:'验收通过！指挥官，这一轮漂亮！',fx:'confetti'},
  wink:{cn:'俏皮',en:'WINK',desc:'眨眼 · 轻松一刻',line:'嘿，别绷太紧，喝口水再拍板。',fx:'sparkle'},
  sleep:{cn:'休眠',en:'SLEEP',desc:'长时间无交互 · 打盹',line:'……Zzz（任意键唤醒）',fx:'zzz'},
- salute:{cn:'敬礼',en:'SALUTE',desc:'舰桥接管 · 报到',line:'汐音报到，舰桥接管完毕，全舱正常。',fx:'shine'},
+ ready:{cn:'待令',en:'READY',desc:'舰桥接管 · 报到',line:'汐音报到，舰桥接管完毕，全舱正常。',fx:'shine'},
  command:{cn:'指挥',en:'CMD',desc:'派单 relay · 出击',line:'收到，派进编队，出击！',fx:'beam'},
  typing:{cn:'键入',en:'TYPE',desc:'全息键盘 · 编译',line:'我在编译产物，键声就是进度。',fx:'keys'}};
 const SCENES=[{name:'舰桥 · 日落',short:'舰桥·日落',file:'./assets/scene-bridge.png',coord:'RA 17h42m · DEC −28°'},
@@ -1025,12 +1024,12 @@ const threadOf=id=>state.threads[id]||(state.threads[id]=[]);
 const modelMult=()=>modelOf(state.model).mult*(state.effort==='极深'?1.5:state.effort==='高'?1.2:state.effort==='低'?.7:1);
 
 /* ── 立绘动作替换 + 粒子动态 ── */
-const ACTION_POSES=['cheer','command','salute'];
+const ACTION_POSES=['cheer','command','ready'];
 function forcePose(p){state.pose=null;setPose(p);}
 const poseTagText=()=>'汐音 · '+((POSE_META[state.pose]||{}).cn||MOOD_LABEL[state.mood]||'待命');
 function setPose(p){if(state.pose===p)return;state.pose=p;$('#fPose').textContent=p;$('#poseTag').textContent=poseTagText();
  const ch=$('#character');ch.dataset.pose=p;const img=$('#charImg');const seq=++state.poseSeq;
- mo.frames=MOTION[p]?12:2;mo.idx=0;mo.dir=1;mo.acc=0;img.style.height=(mo.frames*100)+'%';img.style.transform='translateY(0)';
+ mo.frames=framesFor(p);mo.idx=0;mo.dir=1;mo.acc=0;img.style.height=(mo.frames*100)+'%';img.style.transform='translateY(0)';
  img.style.opacity=0;
  setTimeout(()=>{if(seq!==state.poseSeq)return;img.src=MOTION[p]?'./assets/motion-sheet-'+p+'.png':(SHEET_SRC[p]||POSE_SRC[p]);img.style.opacity=1;},120);
  poseFX(p);}
@@ -1323,7 +1322,7 @@ function resolveOp(id,choice,note=''){const o=opOf(id);if(!o||o.status!=='open')
  pushReply(o.job,{who:'xy',name:'汐音',text:'收到，「'+choice+'」已派回执行。这条从决断队列消项了，我盯到收口。',t:nowHM(),mood:'happy'},700);
  renderDots();renderHUD();renderTabs();renderFleetRail();renderInbox();renderWins();renderBar();if(state.thread===o.job)renderConsole();if(state.panel==='ops'||state.panel==='detail'||state.panel==='fleet'||state.panel==='usage')renderPanel();
  flash('var(--green)');Audio.sfx('confirm');setMood('happy',5000);
- if(o.kind==='accept'){setPose('cheer');setTimeout(()=>{if(state.pose==='cheer')forcePose(POSE_OF[state.mood]||'happy');},2600);}
+ if(o.kind==='accept'){setPose('cheer');setTimeout(()=>{if(state.pose==='cheer')forcePose(POSE_OF[state.mood]||'smile');},2600);}
  setTimeout(()=>{o.removed=true;const el=$(`[data-opdone="${id}"]`);if(el){el.classList.add('collapsing');setTimeout(()=>{if(state.panel==='ops')renderPanel();if(state.thread===o.job)renderConsole();},500);}else{if(state.panel==='ops')renderPanel();if(state.thread===o.job)renderConsole();}},2600);}
 
 /* ── 作战文件目录树（task home 真实布局） ── */
@@ -1501,7 +1500,7 @@ function renderPanel(){const p=$('#panel');if(!state.panel){p.classList.remove('
  else if(state.panel==='projects'){body=`<div class="pnote">ORG 主仓只读 · 只能拉主线（ff-only）· worktree 按作业开，建舱不预建。</div>`+PROJECTS.map(pr=>{const js=state.jobs.filter(j=>j.proj===pr.id);const run=js.filter(j=>j.status==='run'||j.status==='wait'||j.status==='blocked').length;const cost=js.reduce((s,j)=>s+j.cost,0);const wt=js.filter(j=>j.status!=='queue'&&j.status!=='done').length;
   return `<div class="pcard" style="--accent:${pr.color}"><div class="pt2"><b>${esc(pr.name)}</b><span class="og">${pr.org}/${pr.group}</span><span class="dirty ${pr.dirty?'dirty':'clean'}">${pr.dirty?'dirty':'clean'}</span></div><div class="git"><b>${pr.branch}</b> · HEAD ${pr.head} · ${pr.commit}</div><div class="stats"><span>作战 <b>${js.length}</b></span><span>在跑 <b>${run}</b></span><span>工作树 <b>${wt}</b></span><span>消耗 <b>¥${cost.toFixed(2)}</b></span></div><div class="wt">&lt;ws&gt;/projects/${pr.id}</div><div style="display:flex;gap:14px"><button class="go2" data-fproj-go="${pr.id}">看该项目作战 →</button><button class="go2" data-ws-go="${pr.id}">⌗ 工作区文件 →</button></div></div>`;}).join('');}
  else if(state.panel==='ws'){body=renderWS();}
- else if(state.panel==='poses'){body=`<div class="pnote" style="color:var(--teal);border-color:rgba(46,230,214,.4);background:rgba(46,230,214,.06)">点任一形象 → 汐音就地换动作 + 粒子动态；事件也会自动触发（接管敬礼 / 派单指挥 / 验收欢呼 / 久置休眠）。</div><div class="posegrid">${POSE_ORDER.map(k=>{const m=POSE_META[k];return `<button class="posecard${state.pose===k?' on':''}" data-pose-play="${k}"><span class="pv"><img src="${POSE_SRC[k]}" alt="${m.cn}" loading="lazy"/></span><span class="pm"><b>${m.cn}</b><i>${m.en}</i></span><span class="pd">${m.desc}</span></button>`;}).join('')}</div>`;}
+ else if(state.panel==='poses'){body=`<div class="pnote" style="color:var(--teal);border-color:rgba(46,230,214,.4);background:rgba(46,230,214,.06)">点任一形象 → 汐音就地换动作 + 粒子动态；事件也会自动触发（接管待令 / 派单指挥 / 验收欢呼 / 久置休眠）。原型：连点立绘可依次轮播 12 套。</div><div class="posegrid">${POSE_ORDER.map(k=>{const m=POSE_META[k];return `<button class="posecard${state.pose===k?' on':''}" data-pose-play="${k}"><span class="pv"><img src="${POSE_SRC[k]}" alt="${m.cn}" loading="lazy"/></span><span class="pm"><b>${m.cn}</b><i>${m.en}</i></span><span class="pd">${m.desc}</span></button>`;}).join('')}</div>`;}
  else{body=threadOf(state.thread).map(m=>{if(m.who==='sys')return `<div class="loglm sys"><div class="bb">${esc(m.text)}</div></div>`;if(m.who==='you')return `<div class="loglm me"><div class="bb"><div class="who"><b>${esc(m.name||'指挥官')}</b><span>${esc(m.t||'')}</span></div>${esc(m.text)}</div></div>`;if(m.who==='doer')return `<div class="loglm"><span class="av doer">⚙</span><div class="bb"><div class="who"><b>${esc(m.name)}</b><span>${esc(m.t||'')}</span></div>${esc(m.text)}</div></div>`;return `<div class="loglm"><span class="av"><img src="${PORTRAIT[m.mood||'idle']}" alt=""/></span><div class="bb"><div class="who"><b>汐音</b><span>${esc(m.t||'')}</span></div>${esc(m.text)}</div></div>`;}).join('');}
  p.innerHTML=`<div class="ph"><button class="phx" data-close title="关闭">✕</button><span class="pg">${T[0]}</span><span class="pt"><b>${T[1]}</b><span>${T[2]}</span></span><span class="sp"></span></div><div class="pb">${body}</div>`;bindPanel();restore();}
 function bindPanel(){const p=$('#panel');
@@ -1704,7 +1703,10 @@ $('#curCost').addEventListener('click',()=>openPanel('usage'));
 $('#curCtx').addEventListener('click',()=>openPanel('usage'));
 $('#curTok').addEventListener('click',()=>openPanel('usage'));
 $('#btnSound').addEventListener('click',()=>{const on=!state.sound;Audio.setSound(on);if(on)Audio.ensure();$('#btnSound').classList.toggle('on',on);$('#btnSound').classList.toggle('off',!on);$('#btnSound').textContent=on?'♪':'∅';if(on)Audio.sfx('click');});
-$('#character').addEventListener('click',()=>{Audio.sfx('click');const[t,m]=rnd(SAY);setMood(m,5500);typeCurrent({who:'xy',name:'汐音',text:t});});
+/* 原型验收入口：连点立绘按 POSE_ORDER 顺序轮播 12 个动作，方便一次看全。
+   正式实现必须由真实状态/事件驱动（mood、作业阶段、回传、休眠等），不要保留点击轮播。 */
+let poseCycle=0;
+$('#character').addEventListener('click',()=>{Audio.sfx('click');state.lastAct=Date.now();playPose(POSE_ORDER[poseCycle++%POSE_ORDER.length]);});
 $('#conBack').addEventListener('click',()=>openThread('main'));
 $('#conDetail').addEventListener('click',()=>{state.detailJob=state.thread;state.detailTab='overview';openPanel('detail');});
 $('#conDebug').addEventListener('click',()=>{state.detailJob=state.thread;state.detailTab='debug';openPanel('detail');});
@@ -1734,9 +1736,9 @@ addEventListener('keydown',e=>{const inIn=e.target.closest('textarea,input');
 
 /* ── boot ── */
 sizeWarp();seed();startWarp();renderDots();renderHUD();renderConsole();renderInbox();setMood('idle');
-mo.frames=MOTION[state.pose]?12:2;$('#charImg').style.height=(mo.frames*100)+'%';
+mo.frames=framesFor(state.pose);$('#charImg').style.height=(mo.frames*100)+'%';
 bindGrips();renderBar();
-$('#charImg').addEventListener('error',()=>{const img=$('#charImg');if(!img.src.includes('motion-sheet'))return;const fb=SHEET_SRC[state.pose]||POSE_SRC[state.pose];if(!fb)return;img.src=fb;mo.frames=2;img.style.height='200%';img.style.transform='translateY(0)';});
+$('#charImg').addEventListener('error',()=>{const img=$('#charImg');if(!img.src.includes('motion-sheet'))return;const fb=SHEET_SRC[state.pose]||POSE_SRC[state.pose];if(!fb)return;img.src=fb;mo.frames=framesFor(state.pose);img.style.height=(mo.frames*100)+'%';img.style.transform='translateY(0)';});
 requestAnimationFrame(tickMo);
 $('#scA').dataset.init='1';
 arrT=setTimeout(arriveNext,16000);
