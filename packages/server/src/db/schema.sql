@@ -1382,7 +1382,6 @@ CREATE TABLE IF NOT EXISTS cabins (
   org TEXT,
   init_state TEXT,
   cockpit_prefs TEXT,
-  focused_job_id TEXT,
   version INTEGER NOT NULL DEFAULT 1,
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL,
@@ -1405,11 +1404,10 @@ CREATE TABLE IF NOT EXISTS cabin_jobs (
   title TEXT NOT NULL,
   mandate TEXT,
   prompt TEXT,
-  priority INTEGER NOT NULL DEFAULT 0,
   created_at TEXT NOT NULL,
   ended_at TEXT
 );
-CREATE INDEX IF NOT EXISTS idx_cabin_jobs_cabin ON cabin_jobs(cabin_id, priority DESC, created_at);
+CREATE INDEX IF NOT EXISTS idx_cabin_jobs_cabin ON cabin_jobs(cabin_id, created_at);
 
 CREATE TABLE IF NOT EXISTS cabin_job_events (
   id TEXT PRIMARY KEY,

@@ -16,7 +16,7 @@ const h = vi.hoisted(() => ({
   cabin: {
     id: 'cabin-1', name: 'Aurora', path: '/tmp/a', workspace_id: 'ws-1',
     main_session_id: 'sess-cabin', requirements: '', status: 'active',
-    mainline_strategy: 'clean-main', org: null, focused_job_id: null, version: 1,
+    mainline_strategy: 'clean-main', org: null, version: 1,
     created_at: '', updated_at: '', last_active_at: null, archived_at: null,
   },
   sessions: [{

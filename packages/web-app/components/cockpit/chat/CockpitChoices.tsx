@@ -29,7 +29,7 @@ function openItemsForThread(
     if (!item || item.awaiting !== 'person') continue
     if (threadKeyOfAttention(rows, item) === threadKey) items.push(item)
   }
-  return items.sort((a, b) => b.priority - a.priority)
+  return items
 }
 
 function refOfItem(item: CabinAttentionItem, cabinId: string): CockpitRef {

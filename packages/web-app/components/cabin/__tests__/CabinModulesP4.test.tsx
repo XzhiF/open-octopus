@@ -65,7 +65,7 @@ function makeView(overrides: Partial<CabinView> = {}): CabinView {
     cabin: {
       id: 'cabin-1', name: 'Aurora', path: '/tmp/a', workspace_id: 'ws-1', main_session_id: 'sess-1',
       requirements: '', status: 'active', mainline_strategy: 'clean-main', org: null,
-      focused_job_id: null, version: 1, created_at: '', updated_at: '', last_active_at: null, archived_at: null,
+      version: 1, created_at: '', updated_at: '', last_active_at: null, archived_at: null,
     },
     attention: [],
     health: { running: 0, queued: 0, dormant: 0, workers: 0, max: 5 },
@@ -173,8 +173,8 @@ describe('CabinQueue — blocked 态 + finding 深链路由（P4-3 / C4）', () 
   it('blocked attention 渲染「受阻」；finding 深链 → 开知识窗而非任务', async () => {
     const view = makeView({
       attention: [
-        { id: 'b1', job_id: null, stage: 'blocked', awaiting: 'person', title: '执行受阻', detail: '同一错误反复', task_id: 't1', repo: 'pay', wt: null, deep_link: null, priority: 0 },
-        { id: 'f1', job_id: null, stage: 'adjudicate', awaiting: 'person', title: '口径矛盾', task_id: null, repo: null, wt: null, deep_link: 'finding:f1', priority: 0 },
+        { id: 'b1', job_id: null, stage: 'blocked', awaiting: 'person', title: '执行受阻', detail: '同一错误反复', task_id: 't1', repo: 'pay', wt: null, deep_link: null },
+        { id: 'f1', job_id: null, stage: 'adjudicate', awaiting: 'person', title: '口径矛盾', task_id: null, repo: null, wt: null, deep_link: 'finding:f1' },
       ],
     })
     mockCabin(view)
@@ -198,7 +198,7 @@ describe('CabinQueue — blocked 态 + finding 深链路由（P4-3 / C4）', () 
 describe('CabinMissions — 作战清单（P4 · 原型 taskPanel）', () => {
   it('ring 点阵 + ≤5 行 + 运行/需要你/完成汇总；折叠；点行开任务', async () => {
     const view = makeView({
-      attention: [{ id: 'a1', job_id: null, stage: 'review', awaiting: 'person', title: '待验收', task_id: 't2', repo: null, wt: null, deep_link: null, priority: 0 }],
+      attention: [{ id: 'a1', job_id: null, stage: 'review', awaiting: 'person', title: '待验收', task_id: 't2', repo: null, wt: null, deep_link: null }],
     })
     mockCabin(view)
     const task = (id: string, status: string) => ({ id, name: `任务${id}`, status, repo_group: 'pay', workflow_ref: 'dev', task_spec: { goal: '', ac: [] }, version: 1, created_at: '', updated_at: '' })

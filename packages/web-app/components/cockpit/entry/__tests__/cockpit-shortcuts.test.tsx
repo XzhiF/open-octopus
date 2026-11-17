@@ -32,7 +32,6 @@ function job(id: string, over: Partial<CabinJobView> = {}): CabinJobView {
     title: `作业 ${id}`,
     mandate: null,
     prompt: null,
-    priority: 0,
     created_at: '2026-11-14T09:00:00.000Z',
     ended_at: null,
     status: 'running',
@@ -97,15 +96,15 @@ beforeEach(() => {
 })
 
 describe('CockpitShortcuts', () => {
-  it('⌥1 选最紧要的一条（need 优先级降序 → run → queue）', async () => {
+  it('⌥1 选最紧要的一条（第一条 need → run → queue）', async () => {
     fleetState.current = fleet([
       row(job('run1', { status: 'running' })),
-      row(job('need-low', { status: 'awaiting_review', priority: 2 })),
-      row(job('need-high', { status: 'awaiting_review', priority: 8 })),
+      row(job('need-first', { status: 'awaiting_review' })),
+      row(job('need-second', { status: 'awaiting_review' })),
     ])
     renderShortcuts()
     fireEvent.keyDown(window, { key: '1', code: 'Digit1', altKey: true })
-    await waitFor(() => expect(screen.getByTestId('selection').textContent).toBe('job:c1:need-high'))
+    await waitFor(() => expect(screen.getByTestId('selection').textContent).toBe('job:c1:need-first'))
   })
 
   it('⌥1 在没有 need 时选 run，再没有则选 queue', async () => {

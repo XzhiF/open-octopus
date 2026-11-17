@@ -20,7 +20,7 @@ export interface PendingAsk {
  *   · stage === 'answer' 且带决策票据（ask.ask_id）；
  *   · 本地已答（乐观集合）与跨行重复的 askId 不出现；
  *   · 工作流执行提问没有票据，不进这个组（继续走旧入口）。
- * 顺序沿用 attention 的既有排序（person-first / priority desc），这里不重排。
+ * 顺序沿用 attention 的既有排序（person-first），这里不重排。
  */
 export function pendingAsks(
   attention: readonly CabinAttentionItem[] | null | undefined,

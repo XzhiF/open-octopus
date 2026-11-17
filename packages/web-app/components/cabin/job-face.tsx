@@ -15,15 +15,17 @@
 
 import { useCallback, useEffect, useState, type ReactNode } from 'react'
 import {
-  Activity, ArrowRight, Bot, GitBranch, ListTodo, MessageSquare, Star, Zap,
+  ArrowRight, Bot, GitBranch, ListTodo, MessageSquare,
 } from 'lucide-react'
 import { toast } from 'sonner'
 import type { CabinAttentionItem, CabinJob, CabinJobEvent, CabinJobKind } from '@octopus/shared'
 import {
-  getCabinJob, getCabinUsage, listCabinJobs, noteCabinJob, setCabinFocus, setCabinJobPriority,
+  getCabinJob, getCabinUsage, listCabinJobs,
   type CabinJobView,
 } from '@/lib/cabin-api'
 import { abortTask, getTask, pauseTask, resumeTask, type TaskDetail } from '@/lib/tasks-api'
+import { getSession } from '@/lib/agent/api'
+import type { AgentMessage } from '@/lib/agent/types'
 import { withDeadline } from '@/lib/with-deadline'
 import { useBillingCurrency } from '@/lib/billing-currency'
 import { formatCost } from '@/lib/format'
@@ -34,7 +36,7 @@ import { AcceptanceWindow } from '@/components/chat-workbench/acceptance-window'
 import { CabinRunSummary, type CabinRunTarget } from './modules/CabinRunSummary'
 import { clockLabel, openTaskInChat } from './modules/ui'
 import { pctFromPhases } from './job-progress'
-import { isEndedJob, jobStatusLabel, jobTone } from './job-status'
+import { jobStatusLabel, jobTone } from './job-status'
 import { traceKind } from './trace-meta'
 import {
   COCKPIT_TABS, COCKPIT_TAB_LABELS, type CockpitTab,
@@ -44,9 +46,11 @@ import {
 } from '@/components/cockpit/face/CockpitJobHeader'
 import { CockpitJobFiles } from '@/components/cockpit/face/CockpitJobFiles'
 import { CockpitJobDebug } from '@/components/cockpit/face/CockpitJobDebug'
+import { PHASE_PILL, PHASE_STATUS_LABEL } from '@/components/tasks/run-console/phase-status'
 
-/** classic 作业窗页签保持 v12 五页签；files/debug 只在全域面出现（design 29）。 */
-const WINDOW_TABS: readonly CockpitTab[] = ['overview', 'relay', 'run', 'changes', 'accept']
+/** classic 作业窗页签 = v12 五页签 + 文件（2026-11-17 用户：作战详情要能像
+ *  作业坞那样查 task home）。debug 仍只在全域面出现。 */
+const WINDOW_TABS: readonly CockpitTab[] = ['overview', 'relay', 'run', 'changes', 'accept', 'files']
 
 /** 作业面（详情 + 派生状态）的单请求预算：接口吊死时给出错误与重试，
  *  不能永远停在「载入作业…」（2026-11-14 用户）。 */
@@ -68,11 +72,93 @@ const RELAY_ROLE: Record<RelayRole, { label: string }> = {
   doer: { label: '执行者' },
 }
 
-/** 事件类型 → 交接方向（人输入：你→汐音；派发类：汐音→执行者；回报类：执行者→汐音）。 */
+/** 事件类型 → 交接方向（人输入/决策：你→汐音；派发类：汐音→执行者；回报类：执行者→汐音）。 */
 function relayRoute(kind: string): [RelayRole, RelayRole] {
-  if (kind === 'human_input') return ['you', 'xiyin']
+  if (kind === 'human_input' || kind === 'decision') return ['you', 'xiyin']
   if (kind === 'report' || kind === 'attention' || kind === 'handback') return ['doer', 'xiyin']
   return ['xiyin', 'doer']
+}
+
+/** actor 是展示字段，不是协议：未知值原样露出，不硬猜成某个角色。 */
+function actorLabel(actor: string | null | undefined): string {
+  if (!actor) return '—'
+  if (actor === 'human') return '你'
+  if (actor === 'orchestrator') return '汐音'
+  if (actor === 'doer') return '执行者'
+  if (actor === 'system') return '系统'
+  return actor
+}
+
+/** 概览「交接统计」的固定词序：先派发后回报，人输入/决策单列。 */
+const STAT_KINDS = ['dispatch', 'brief', 'report', 'attention', 'handback', 'human_input', 'decision', 'resume'] as const
+
+function countKinds(events: readonly CabinJobEvent[]): Map<string, number> {
+  const counts = new Map<string, number>()
+  const seenDecisions = new Set<string>()
+  for (const event of events) {
+    // 决策账本是同一决策跨 stage 的多行：统计按 decisionId 算一次。
+    const decisionId = decisionIdOf(event)
+    if (decisionId) {
+      if (seenDecisions.has(decisionId)) continue
+      seenDecisions.add(decisionId)
+    }
+    counts.set(event.kind, (counts.get(event.kind) ?? 0) + 1)
+  }
+  return counts
+}
+
+/** 对接气泡的正文：不同事件把 payload 里真正有信息量的字段摊开，没值才退回摘要。 */
+function relayBody(event: CabinJobEvent): string {
+  const payload = (event.payload ?? {}) as Record<string, unknown>
+  if (priorityOf(event) !== null) return `提优先 → P${priorityOf(event)}`
+  switch (event.kind) {
+    case 'dispatch': {
+      const title = typeof payload.title === 'string' ? payload.title : ''
+      const mandate = payload.mandate as { strength?: string } | null
+      return [title ? `派发「${title}」` : '已派发', mandate?.strength ? `授权 ${mandate.strength}` : '']
+        .filter(Boolean).join(' · ')
+    }
+    case 'brief': {
+      const brief = payload.brief as { goal?: string; done_when?: unknown[]; autonomy?: string } | null
+      const goal = brief?.goal ?? (typeof payload.goal === 'string' ? payload.goal : '')
+      const done = Array.isArray(brief?.done_when) ? brief.done_when.length : 0
+      return [goal || '意图已编译', done > 0 ? `完成条件 ${done} 条` : '', brief?.autonomy ? `托管 ${brief.autonomy}` : '']
+        .filter(Boolean).join(' · ')
+    }
+    case 'decision': {
+      const choice = typeof payload.choice === 'string' ? payload.choice : ''
+      const note = typeof payload.note === 'string' ? payload.note : ''
+      const stage = typeof payload.stage === 'string' ? payload.stage : ''
+      const relayed = stage === 'relayed' || stage === 'acked' ? '已转达执行者' : ''
+      return [choice ? `选择「${choice}」` : '已作出决策', note, relayed].filter(Boolean).join(' · ')
+    }
+    case 'resume':
+      return '解除阻塞 · 恢复推进'
+    default:
+      return summaryOf(event) || traceKind(event.kind).label
+  }
+}
+
+/** 舱主会话里汐音发给用户的卡：里程碑（任务状态）、提问、决策回执。
+ *  对接的最后一跳就是它们 —— 执行者只回报汐音，汐音再挑该说的告诉人。 */
+const MIRROR_KIND_LABEL: Record<string, string> = {
+  'cabin.author_ask': '提问',
+  'cabin.author_ask_receipt': '回执',
+  'cabin.decision_receipt': '回执',
+  'cabin.init': '舱务',
+}
+
+function mirrorText(message: AgentMessage): string {
+  const activity = message.activity
+  // 决策回执的 title 只是「决策已转达」；真正的内容是选择本身。
+  if (activity?.kind === 'cabin.decision_receipt') {
+    const receipt = (activity.payload as { decisionReceipt?: { choice?: string } } | undefined)?.decisionReceipt
+    const choice = receipt?.choice?.trim()
+    return choice ? `决策已转达 · 「${choice}」` : '决策已转达'
+  }
+  const parts = [activity?.title?.trim(), activity?.message?.trim()].filter(Boolean)
+  if (parts.length > 0) return parts.join(' · ')
+  return message.content.replace(/^\[[^\]]*\]\s*/, '').split('\n')[0]?.trim() ?? ''
 }
 
 /** human_input 里的「提优先」事件：payload = { action: 'priority', priority }。 */
@@ -83,15 +169,17 @@ function priorityOf(event: CabinJobEvent): number | null {
     : null
 }
 
-/** 时间线一行的正文：优先写明「做了什么」，而不是重复类型标签「人输入」。 */
-function relayText(event: CabinJobEvent): string {
-  const priority = priorityOf(event)
-  if (priority !== null) return `提优先 → P${priority}`
-  return summaryOf(event) || traceKind(event.kind).label
+/** 决策账本是一条决策跨多个 stage（decided → relayed → acked 各落一行）：
+ *  同一个 decisionId 在对接里只算一次发言，位置留在第一次、内容取最新 stage。 */
+function decisionIdOf(event: CabinJobEvent): string | null {
+  const payload = event.payload as Record<string, unknown> | null
+  return event.kind === 'decision' && typeof payload?.decisionId === 'string'
+    ? payload.decisionId
+    : null
 }
 
 /** 连续的「提优先」折叠成一条（P2 → P6 · 5 次）：它们是一串同义操作，
- *  逐条铺开只会把真正的一次交接挤出屏幕。其余事件互不合并。 */
+ *  逐条铺开只会把真正的一次交接挤出屏幕。决策按 decisionId 去重（跨 stage）。 */
 interface RelayGroup {
   key: string
   first: CabinJobEvent
@@ -99,13 +187,39 @@ interface RelayGroup {
   count: number
 }
 
+/** 对接里的一条发言：三跳（你/汐音/执行者）合流后的最小渲染单元。 */
+interface RelayLine {
+  key: string
+  at: string
+  from: RelayRole
+  to: RelayRole
+  kindLabel: string
+  text: string
+  /** 来自舱主会话的任务卡（汐音 → 你），不是 job ledger。 */
+  mirror?: boolean
+}
+
 function groupRelay(timeline: readonly CabinJobEvent[]): RelayGroup[] {
   const groups: RelayGroup[] = []
+  const decisions = new Map<string, RelayGroup>()
   for (const event of timeline) {
     const prev = groups[groups.length - 1]
     if (priorityOf(event) !== null && prev && priorityOf(prev.last) !== null) {
       prev.last = event
       prev.count += 1
+      continue
+    }
+    const decisionId = decisionIdOf(event)
+    if (decisionId) {
+      const hit = decisions.get(decisionId)
+      if (hit) {
+        hit.last = event
+        hit.count += 1
+        continue
+      }
+      const group = { key: event.id, first: event, last: event, count: 1 }
+      decisions.set(decisionId, group)
+      groups.push(group)
       continue
     }
     groups.push({ key: event.id, first: event, last: event, count: 1 })
@@ -173,7 +287,6 @@ export interface JobFaceCockpitControls {
 
 export interface JobFaceProps {
   cabinId: string
-  cabinVersion: number
   workspaceId: string | null
   jobId: string
   variant: 'window' | 'cockpit'
@@ -182,21 +295,17 @@ export interface JobFaceProps {
   onMutated?: () => void
   /** 旧窗：舱主会话（subagent 运行现场的回退，旧行为逐字保留）。 */
   mainSessionId?: string | null
-  /** 旧窗：当前聚焦作业。undefined = 舱还没加载完（聚焦按钮点了不生效）。 */
-  focusedJobId?: string | null
   cockpit?: JobFaceCockpitControls
 }
 
 export function JobFace({
   cabinId,
-  cabinVersion,
   workspaceId,
   jobId,
   variant,
   entryCabinId,
   onMutated,
   mainSessionId,
-  focusedJobId,
   cockpit,
 }: JobFaceProps) {
   const controlled = variant === 'cockpit' && !!cockpit
@@ -204,10 +313,10 @@ export function JobFace({
   const [jobView, setJobView] = useState<CabinJobView | null>(null)
   const [events, setEvents] = useState<CabinJobEvent[]>([])
   const [innerTab, setInnerTab] = useState<CockpitTab>('overview')
-  const [noteOpen, setNoteOpen] = useState(false)
-  const [note, setNote] = useState('')
   const [busy, setBusy] = useState<string | null>(null)
   const [taskEntity, setTaskEntity] = useState<TaskDetail | null>(null)
+  /** 舱主会话消息：对接里「汐音 → 你」那一跳的原始来源（任务卡）。 */
+  const [mainMessages, setMainMessages] = useState<AgentMessage[]>([])
   const [usageCost, setUsageCost] = useState<{ usd: number; complete: boolean } | null>(null)
   const [loadError, setLoadError] = useState<string | null>(null)
   /** 对接页签：派发原文默认收 3 行（原文往往是整段需求）。 */
@@ -221,7 +330,7 @@ export function JobFace({
 
   const load = useCallback(async () => {
     // 详情是**唯一**的面级关键路径：它回来就能整面渲染（标题/事件/页签）。
-    // 派生状态（status/priority/transport）来自整舱作业列表，只是锦上添花 ——
+    // 派生状态（status/transport）来自整舱作业列表，只是锦上添花 ——
     // 单独预算、失败不挡详情。旧的 Promise.all 会把两条绑在一起：列表一慢，
     // 详情明明已经到了，面还在「载入作业…」（2026-11-14 用户）。
     let detail: { job: CabinJob; events: CabinJobEvent[] }
@@ -247,7 +356,6 @@ export function JobFace({
     setJob(null)
     setJobView(null)
     setEvents([])
-    setNoteOpen(false)
     setLoadError(null)
     // 旧窗行为：换作业回到概览。cockpit 的页签是受控的（URL 决定），不重置。
     if (!controlled) setInnerTab('overview')
@@ -298,51 +406,24 @@ export function JobFace({
     return () => { alive = false }
   }, [taskId])
 
-  const bump = async () => {
-    if (!job) return
-    setBusy('priority')
-    try {
-      await setCabinJobPriority(cabinId, job.id, (jobView?.priority ?? job.priority) + 1)
-      toast.success(`已提优先 · P${(jobView?.priority ?? job.priority) + 1}`)
-      await load()
-    } catch (err) {
-      toast.error(err instanceof Error ? err.message : '提优先失败')
-    } finally {
-      setBusy(null)
+  // 对接最后一跳：汐音 → 你。数据是舱主会话里带本任务 taskId 的事件卡
+  // （任务里程碑 / 提问 / 决策回执）—— 执行者只回报汐音，汐音挑该说的
+  // 告诉人。只在对接页拉取（概览不占连接池）；读不到就少这一跳，
+  // 不影响前两跳（不伪造成「已转达」）。
+  useEffect(() => {
+    let alive = true
+    setMainMessages([])
+    if (!mainSessionId || !taskId || tab !== 'relay') return
+    const pull = () => {
+      withDeadline(null, JOB_FACE_TIMEOUT_MS, '舱主会话', () => getSession(mainSessionId, { limit: 200 })).then(
+        (session) => { if (alive) setMainMessages(session.messages.items) },
+        () => { /* 保留上一份快照 */ },
+      )
     }
-  }
-
-  const toggleFocus = async () => {
-    if (!job) return
-    if (focusedJobId === undefined) return // 舱还没加载完：旧行为就是静默不动
-    setBusy('focus')
-    try {
-      const focused = focusedJobId === job.id
-      await setCabinFocus(cabinId, cabinVersion, focused ? null : job.id)
-      toast.success(focused ? '已退出聚焦' : `已聚焦「${job.title}」`)
-      onMutated?.()
-      await load()
-    } catch (err) {
-      toast.error(err instanceof Error ? err.message : '聚焦失败')
-    } finally {
-      setBusy(null)
-    }
-  }
-
-  const saveNote = async () => {
-    if (!job) return
-    const text = note.trim()
-    if (!text) return
-    try {
-      await noteCabinJob(cabinId, job.id, text)
-      setNote('')
-      setNoteOpen(false)
-      await load()
-      toast.success('备注已落到 trace')
-    } catch (err) {
-      toast.error(err instanceof Error ? err.message : '备注失败')
-    }
-  }
+    pull()
+    const timer = window.setInterval(pull, 10_000)
+    return () => { alive = false; window.clearInterval(timer) }
+  }, [mainSessionId, taskId, tab])
 
   /** task 类作业的暂停/恢复/中止：只用 lib/tasks-api 现有函数。 */
   const runTaskAction = async (action: 'pause' | 'resume' | 'abort') => {
@@ -488,8 +569,22 @@ export function JobFace({
   const phaseViews = taskEntity?.derived?.phaseViews ?? []
   const pct = pctFromPhases(phaseViews)
   const acceptedPhases = phaseViews.filter((phase) => phase.status === 'accepted').length
-  const priorityLabel = `P${jobView?.priority ?? job.priority}`
   const jobStatusText = jobStatusLabel(status)
+
+  // ── 概览统计（2026-11-17 用户：概览不看事件流，看统计）────────────────
+  // 每个数都是真账本/真任务实体；缺数据就不出那一格，不补 0、不猜。
+  const kindCounts = countKinds(timeline)
+  const kindStats = STAT_KINDS
+    .map((kind) => ({ kind, meta: traceKind(kind), n: kindCounts.get(kind) ?? 0 }))
+    .filter((entry) => entry.n > 0)
+  /** 语义交接数（决策已按 decisionId 去重），不是账本行数。 */
+  const kindTotal = kindStats.reduce((sum, entry) => sum + entry.n, 0)
+  const execs = taskEntity?.executions ?? []
+  const execDone = execs.filter((exec) => ['completed', 'completed_with_failures'].includes(exec.status)).length
+  const execFailed = execs.filter((exec) => ['failed', 'aborted', 'interrupted', 'rejected', 'cancelled'].includes(exec.status)).length
+  const execLive = execs.filter((exec) => ['pending', 'running', 'paused'].includes(exec.status)).length
+  const goal = taskEntity?.task_spec?.goal ?? null
+  const acList = taskEntity?.task_spec?.ac ?? []
 
   // ── cockpit 头部派生（§1.5，缺就省略）────────────────────────────────
   const lastEvent = timeline[timeline.length - 1]
@@ -583,42 +678,196 @@ export function JobFace({
     </>
   )
 
+  // ── 概览块（两种宿主共用；2026-11-17 用户：概览看统计，不再铺事件流）──
+  // 统计只读真账本：kind 计数来自 cabin_job_events，执行/阶段来自任务实体。
+  const kpiGrid = (
+    <div className="ck12-jstats">
+      <div className="ck12-jstat">
+        <div className="l">状态</div>
+        <div className="v">{jobStatusText}</div>
+      </div>
+      {pct !== null && (
+        <div className="ck12-jstat">
+          <div className="l">进度</div>
+          <div className="v is-cyan">{pct}%</div>
+        </div>
+      )}
+      <div className="ck12-jstat">
+        <div className="l">耗时</div>
+        <div className="v"><CockpitElapsed start={job.created_at} end={job.ended_at} /></div>
+      </div>
+      {costLabel && (
+        <div className="ck12-jstat">
+          <div className="l">消耗</div>
+          <div className="v is-amber">{costLabel}</div>
+        </div>
+      )}
+      {execs.length > 0 && (
+        <div className="ck12-jstat">
+          <div className="l">执行</div>
+          <div className="v">{execs.length} 轮</div>
+        </div>
+      )}
+    </div>
+  )
+
+  const kindChips = (
+    <div className="ck12-jchips" data-testid="cabin-job-stats">
+      <span>交接 <b>{kindTotal}</b></span>
+      {kindStats.map(({ kind: statKind, meta, n }) => (
+        <span key={statKind}>{meta.label} <b>{n}</b></span>
+      ))}
+      {execs.length > 0 && (
+        <>
+          <span>执行 <b>{execs.length}</b></span>
+          {execDone > 0 && <span>完成 <b>{execDone}</b></span>}
+          {execLive > 0 && <span>进行中 <b>{execLive}</b></span>}
+          {execFailed > 0 && <span>失败 <b>{execFailed}</b></span>}
+        </>
+      )}
+    </div>
+  )
+
+  const lastHandoff = lastEvent ? (
+    <div className="ck12-jmandate" data-testid="cabin-job-last-handoff">
+      <div className="h">
+        <b>最近交接</b>
+        <span className="k">{traceKind(lastEvent.kind).label}</span>
+        <span>{actorLabel(lastEvent.actor)}</span>
+        <span>{clockLabel(lastEvent.created_at)}</span>
+      </div>
+      <p>{relayBody(lastEvent)}</p>
+    </div>
+  ) : null
+
+  const taskSummary = (goal || acList.length > 0) ? (
+    <div className="ck12-jmandate" data-testid="cabin-job-task-summary">
+      <div className="h">
+        <b>任务摘要</b>
+        <span className="k">AC {acList.length > 0 ? acList.length : '—'}</span>
+      </div>
+      {goal && <p>{goal}</p>}
+      {acList.length > 0 && (
+        <ul className="ck12-jac">
+          {acList.map((item, index) => (
+            <li key={index}><span aria-hidden="true">◇</span>{item}</li>
+          ))}
+        </ul>
+      )}
+    </div>
+  ) : null
+
+  const mandateBlock = (mandate || job.prompt) ? (
+    <div className="ck12-jmandate">
+      <div className="h">
+        <b>派发授权</b>
+        {mandate && <span className="k">{mandate.strength}</span>}
+        {mandate?.scope && <span>scope: {mandate.scope}</span>}
+      </div>
+      {job.prompt && <p>{job.prompt}</p>}
+    </div>
+  ) : null
+
+  const progressBar = pct !== null ? (
+    <div className="ck12-jbar2" aria-hidden="true">
+      <i style={{ width: `${Math.max(0, Math.min(100, pct))}%` }} />
+    </div>
+  ) : null
+
+  const phaseChips = phaseViews.length > 0 ? (
+    <div className="ck12-jchips">
+      <span>阶段 <b>{acceptedPhases}/{phaseViews.length}</b></span>
+      <span>类型 <b>{kind.label}</b></span>
+    </div>
+  ) : null
+
+  /** 阶段统计：每一 phase 的名字 / 当前轮 / 派生态 —— 概览里最有用的一组读数。 */
+  const phaseList = phaseViews.length > 0 ? (
+    <div className="ck12-jmandate" data-testid="cabin-job-phases">
+      <div className="h">
+        <b>阶段</b>
+        <span className="k">{acceptedPhases}/{phaseViews.length} 已通过</span>
+      </div>
+      <ul className="ck12-jphase">
+        {phaseViews.map((phase) => (
+          <li key={phase.index}>
+            <span className="p">P{phase.index}</span>
+            <span className="n" title={phase.slug}>{phase.name || phase.slug || `phase ${phase.index}`}</span>
+            <span className="r">{phase.currentRound != null ? `R${phase.currentRound}` : '—'}</span>
+            <span className={cn('s', PHASE_PILL[phase.status])}>{PHASE_STATUS_LABEL[phase.status] ?? phase.status}</span>
+          </li>
+        ))}
+      </ul>
+    </div>
+  ) : null
+
+  // 对接链路：执行者 → 汐音（job events）+ 汐音 → 你（舱主会话任务卡）+
+  // 你 → 汐音（输入/决策）。三跳按时间合流；提优先已折叠、决策跨 stage
+  // 已去重，计数按「发言」不是账本行数。
+  const doerLabel = job.kind === 'subagent' ? '子代理' : '执行者'
+  const mirrorCards = taskId
+    ? mainMessages.filter((message) =>
+      message.displayType === 'event' && message.activity?.taskId === taskId)
+    : []
+
+  const eventLines: RelayLine[] = relayGroups.map((group) => {
+    const event = group.last
+    const [from, to] = relayRoute(event.kind)
+    const firstPriority = priorityOf(group.first)
+    const lastPriority = priorityOf(group.last)
+    const text = group.count > 1 && firstPriority !== null && lastPriority !== null
+      ? `提优先 P${firstPriority} → P${lastPriority} · ${group.count} 次`
+      : relayBody(event)
+    return {
+      key: event.id,
+      at: event.created_at,
+      from,
+      to,
+      kindLabel: traceKind(event.kind).label,
+      text,
+    }
+  })
+  const mirrorLines: RelayLine[] = mirrorCards.map((message) => ({
+    key: `mirror-${message.id}`,
+    at: message.created_at,
+    from: 'xiyin',
+    to: 'you',
+    kindLabel: MIRROR_KIND_LABEL[message.activity?.kind ?? ''] ?? '回告',
+    text: mirrorText(message),
+    mirror: true,
+  }))
+  const relayLines = [...eventLines, ...mirrorLines].sort((a, b) => a.at.localeCompare(b.at))
+  const linesFrom = (lane: RelayRole) => relayLines.filter((line) => line.from === lane)
+  const lastOf = (lines: RelayLine[]) => (lines.length > 0 ? lines[lines.length - 1].at : null)
+  const youLines = linesFrom('you')
+  const xiyinLines = linesFrom('xiyin')
+  const doerLines = linesFrom('doer')
+  const youCount = youLines.length + (job.prompt ? 1 : 0)
+  const xiyinCount = xiyinLines.length
+  const doerCount = doerLines.length
+  const lastYou = lastOf(youLines) ?? (job.prompt ? job.created_at : null)
+  const lastXiyin = lastOf(xiyinLines)
+  const lastDoer = lastOf(doerLines)
+
   const panes = (
     <>
       {tab === 'overview' && (cockpitMode ? (
-        // 全域概览（v12 .sgrid.jg-over）：左「汐音 ↔ 作业」事件轨迹，右「作业状态」
-        // 读数（状态 / 进度 / 耗时 / 消耗 / 优先 + 舱/执行者/分支 + 派发授权）。
-        // 每个数都来自真字段；phaseViews 缺失时进度整段不画。
+        // 全域概览（v12 .sgrid.jg-over）：左「作战统计」（交接/执行/最近交接/
+        // 任务摘要），右「作业状态」读数（KPI + 舱/执行者/分支 + 派发授权）。
         <div data-testid="cabin-job-overview" className="ck12-sgrid ck12-jg-over">
           <section className="ck12-pane">
             <header className="ck12-pane-h">
-              <b>汐音 ↔ 作业</b>
-              <span className="ck12-pane-tag">{timeline.length} EVENTS</span>
+              <b>作战统计</b>
+              <span className="ck12-pane-tag">{kindTotal} 交接 · {execs.length} 执行</span>
             </header>
             <div className="ck12-pane-b is-tight">
-              {timeline.length === 0 ? (
-                <div className="ck12-face-empty">还没有事件 · 派发后这里留痕</div>
-              ) : (
-                <div className="ck12-jtl">
-                  {timeline.map((event) => {
-                    const k = traceKind(event.kind)
-                    const text = relayText(event)
-                    return (
-                      <div
-                        key={event.id}
-                        className="ck12-jrow"
-                        data-testid={`cabin-job-event-${event.id}`}
-                      >
-                        <i className={cn('ck12-jrow-d', k.dot)} aria-hidden="true" />
-                        <span className="ck12-jrow-t">{clockLabel(event.created_at)}</span>
-                        <span className="ck12-jrow-a" title={event.actor ?? undefined}>
-                          {event.actor ?? '—'}
-                        </span>
-                        <span className="ck12-jrow-k">{k.label}</span>
-                        <span className="ck12-jrow-x" title={text}>{text}</span>
-                      </div>
-                    )
-                  })}
+              {kindChips}
+              {phaseList}
+              {lastHandoff}
+              {taskSummary}
+              {timeline.length === 0 && execs.length === 0 && (
+                <div className="ck12-face-empty" style={{ marginTop: 10 }}>
+                  还没有交接事件 · 派发后这里开始累计统计。
                 </div>
               )}
             </div>
@@ -630,32 +879,7 @@ export function JobFace({
               <span className="ck12-pane-tag" data-tone={tone}>{jobStatusText}</span>
             </header>
             <div className="ck12-pane-b is-tight">
-              <div className="ck12-jstats">
-                <div className="ck12-jstat">
-                  <div className="l">状态</div>
-                  <div className="v">{jobStatusText}</div>
-                </div>
-                {pct !== null && (
-                  <div className="ck12-jstat">
-                    <div className="l">进度</div>
-                    <div className="v is-cyan">{pct}%</div>
-                  </div>
-                )}
-                <div className="ck12-jstat">
-                  <div className="l">耗时</div>
-                  <div className="v"><CockpitElapsed start={job.created_at} end={job.ended_at} /></div>
-                </div>
-                {costLabel && (
-                  <div className="ck12-jstat">
-                    <div className="l">消耗</div>
-                    <div className="v is-amber">{costLabel}</div>
-                  </div>
-                )}
-                <div className="ck12-jstat">
-                  <div className="l">优先</div>
-                  <div className="v">{priorityLabel}</div>
-                </div>
-              </div>
+              {kpiGrid}
 
               {(cockpit?.cabinName || executor || branch) && (
                 <div className="ck12-jfacts">
@@ -665,81 +889,39 @@ export function JobFace({
                 </div>
               )}
 
-              {pct !== null && (
-                <div className="ck12-jbar2" aria-hidden="true">
-                  <i style={{ width: `${Math.max(0, Math.min(100, pct))}%` }} />
-                </div>
-              )}
-
-              {phaseViews.length > 0 && (
-                <div className="ck12-jchips">
-                  <span>阶段 <b>{acceptedPhases}/{phaseViews.length}</b></span>
-                  <span>类型 <b>{kind.label}</b></span>
-                </div>
-              )}
-
-              {(mandate || job.prompt) && (
-                <div className="ck12-jmandate">
-                  <div className="h">
-                    <b>派发授权</b>
-                    {mandate && <span className="k">{mandate.strength}</span>}
-                    {mandate?.scope && <span>scope: {mandate.scope}</span>}
-                  </div>
-                  {job.prompt && <p>{job.prompt}</p>}
-                </div>
-              )}
+              {progressBar}
+              {phaseChips}
+              {mandateBlock}
             </div>
           </section>
         </div>
       ) : (
-        <div data-testid="cabin-job-overview">
-          {(mandate || job.prompt) && (
-            <div className="mb-2.5 rounded-lg border-[1.5px] border-pop-bd bg-pop-idle px-3 py-2">
-              <div className="mb-1 flex flex-wrap items-center gap-2 text-[10px] text-pop-dim">
-                <span className="font-bold text-pop-ink">派发授权</span>
-                {mandate && <span className="rounded border border-pop-bd px-1.5 py-px font-mono text-[9px]">{mandate.strength}</span>}
-                {mandate?.scope && <span className="truncate">scope: {mandate.scope}</span>}
-              </div>
-              {job.prompt && <div className="text-[11px] leading-relaxed text-pop-dim">{job.prompt}</div>}
-            </div>
-          )}
-          {timeline.length === 0 ? (
+        // classic 作业窗：同一条统计主线，单列往下排。不再画事件流 ——
+        // 那部分信息在「对接」里按三方发言看，概览只负责读数。
+        <div data-testid="cabin-job-overview" className="cabin-job-overview">
+          {kpiGrid}
+          {progressBar}
+          {phaseChips}
+          {phaseList}
+          {kindChips}
+          {lastHandoff}
+          {taskSummary}
+          {mandateBlock}
+          {timeline.length === 0 && execs.length === 0 && !goal && acList.length === 0 && (
             <div className="rounded-lg border-[1.5px] border-dashed border-pop-bd p-6 text-center text-[11.5px] text-pop-dim">
-              还没有事件 · 派发后这里留痕
+              还没有统计 · 派发后这里开始累计。
             </div>
-          ) : (
-            <ol className="relative space-y-1 border-l border-pop-bd/70 pl-3">
-              {timeline.map((event) => {
-                const k = traceKind(event.kind)
-                return (
-                  <li key={event.id} className="relative" data-testid={`cabin-job-event-${event.id}`}>
-                    <i className={cn('absolute -left-[17px] top-2 size-2 rounded-full', k.dot)} />
-                    <div className="flex items-start gap-2 rounded-lg border border-pop-bd bg-pop-idle px-2.5 py-1.5">
-                      <span className="shrink-0 font-mono text-[9.5px] text-pop-dim">{clockLabel(event.created_at)}</span>
-                      <span className={cn(
-                        'shrink-0 rounded px-1.5 py-px text-[9px] font-bold',
-                        'bg-white/[0.06] text-pop-dim',
-                      )}>{k.label}</span>
-                      <span className="min-w-0 flex-1 text-[11px] text-pop-ink">
-                        {relayText(event)}
-                        {event.actor && <span className="ml-1.5 text-[9.5px] text-pop-dim">· {event.actor}</span>}
-                      </span>
-                    </div>
-                  </li>
-                )
-              })}
-            </ol>
           )}
         </div>
       ))}
 
       {tab === 'relay' && (
-        <div data-testid="cabin-job-relay" className={cockpitMode ? 'ck12-relay' : undefined}>
-          <section className={cockpitMode ? 'ck12-pane' : undefined}>
-            <header className={cockpitMode ? 'ck12-pane-h' : 'mb-2 flex items-center gap-2 text-[10px] text-pop-dim'}>
-              <b>对接 · 交接时间线</b>
-              <span className={cockpitMode ? 'ck12-pane-tag' : 'font-mono text-[9.5px]'}>
-                {timeline.length} EVENTS
+        <div data-testid="cabin-job-relay" className={cockpitMode ? 'ck12-relay' : 'cabin-relay'}>
+          <section className={cockpitMode ? 'ck12-pane' : 'cabin-relay-pane'}>
+            <header className={cockpitMode ? 'ck12-pane-h' : 'cabin-relay-h'}>
+              <b>对接 · 三方通讯</b>
+              <span className={cockpitMode ? 'ck12-pane-tag' : 'cabin-relay-count'}>
+                {relayLines.length + (job.prompt ? 1 : 0)} 条
               </span>
               {/* 跨舱只读：投递只对入口舱开放，不给用户「能投到别的舱」的错觉。 */}
               {cabinId === entryCabinId && job.kind === 'task' && job.ref_id && (
@@ -749,7 +931,7 @@ export function JobFace({
                   onClick={() => openTaskInChat(job.ref_id as string)}
                   className={cockpitMode
                     ? 'ck12-relay-go ml-auto'
-                    : 'ml-auto inline-flex items-center gap-1 text-[10px] text-pop-cyan hover:underline'}
+                    : 'cabin-relay-go'}
                 >
                   <MessageSquare className="size-3" />任务对话
                 </button>
@@ -761,71 +943,93 @@ export function JobFace({
                   onClick={() => window.dispatchEvent(new CustomEvent('octopus:cabin-main-chat'))}
                   className={cockpitMode
                     ? 'ck12-relay-go'
-                    : 'ml-auto inline-flex items-center gap-1 text-[10px] text-pop-cyan hover:underline'}
+                    : 'cabin-relay-go'}
                 >
                   <MessageSquare className="size-3" />去主对话
                 </button>
               )}
             </header>
 
-            <div className={cockpitMode ? 'ck12-pane-b is-tight' : undefined}>
-              {/* 派发原文 = 时间线的第 0 条（你 → 汐音），长文默认收 3 行，可展开。 */}
-              {job.prompt && (
-                <div className="ck12-relay-spec">
-                  <div className="h">
-                    <b>你 → 汐音</b>
-                    <span>派发原文</span>
-                    {mandate && <span className="k">{mandate.strength}</span>}
-                    {mandate?.basis && <span>{mandate.basis}</span>}
-                    {mandate?.scope && <span>scope: {mandate.scope}</span>}
-                    {job.prompt.length > 120 && (
-                      <button
-                        type="button"
-                        className="ck12-relay-more"
-                        data-testid="cockpit-relay-prompt-toggle"
-                        onClick={() => setPromptOpen((open) => !open)}
-                      >{promptOpen ? '收起' : '展开原文'}</button>
-                    )}
-                  </div>
-                  <p className={promptOpen ? undefined : 'is-clamp'}>{job.prompt}</p>
-                </div>
-              )}
+            <div className={cockpitMode ? 'ck12-pane-b is-tight' : 'cabin-relay-body'}>
+              {/* 三方在场：角色 + 发言数 + 最后一句时间（title 里带时间，不挤版面）。 */}
+              <div className="cabin-relay-map" data-testid="cabin-relay-map">
+                <span className="party is-you" title={lastYou ? `最后一句 ${clockLabel(lastYou)}` : undefined}>
+                  <b>你</b>
+                  <em>指挥 · {youCount} 条</em>
+                </span>
+                <ArrowRight className="link" aria-hidden="true" />
+                <span className="party is-xiyin" title={lastXiyin ? `最后一句 ${clockLabel(lastXiyin)}` : undefined}>
+                  <i aria-hidden="true" />
+                  <b>汐音</b>
+                  <em>调度 · {xiyinCount} 条</em>
+                </span>
+                <ArrowRight className="link" aria-hidden="true" />
+                <span className="party is-doer" title={lastDoer ? `最后一句 ${clockLabel(lastDoer)}` : undefined}>
+                  <b>{doerLabel}</b>
+                  <em>{jobStatusText} · {doerCount} 条</em>
+                </span>
+                <span className="tail">你指挥汐音 · 汐音调度{doerLabel}</span>
+              </div>
 
-              {timeline.length === 0 ? (
-                <div className={cockpitMode ? 'ck12-face-empty' : 'rounded-lg border-[1.5px] border-dashed border-pop-bd p-6 text-center text-[11.5px] text-pop-dim'}>
-                  还没有交接事件 · 派发后这里留痕
-                </div>
-              ) : (
-                <div className="ck12-rtl" data-testid="cockpit-relay-timeline">
-                  {relayGroups.map((group) => {
-                    const event = group.last
-                    const k = traceKind(event.kind)
-                    const [from, to] = relayRoute(event.kind)
-                    const firstPriority = priorityOf(group.first)
-                    const lastPriority = priorityOf(group.last)
-                    const text = group.count > 1 && firstPriority !== null && lastPriority !== null
-                      ? `提优先 P${firstPriority} → P${lastPriority} · ${group.count} 次`
-                      : relayText(event)
+              {/* 完整链路：执行者的回报不会直接落到人，必经汐音汇总这一跳。 */}
+              <div className="cabin-relay-chain" data-testid="cabin-relay-chain">
+                <span>完整链路</span>
+                <b>你</b><i>→</i><b>汐音</b><i>→</i><b>{doerLabel}</b><i>→</i><b>汐音</b><i>→</i><b>你</b>
+              </div>
+
+              <div className="cabin-relay-flow" data-testid="cockpit-relay-timeline">
+                {/* 派发原文 = 第 0 条（你 → 汐音），长文默认收 3 行，可展开。 */}
+                {job.prompt && (
+                  <div className="cabin-rm is-you" data-testid="cabin-relay-prompt">
+                    <div className="cabin-rm-h">
+                      <b>你 → 汐音</b>
+                      <span className="k">派发原文</span>
+                      {mandate && <span className="k">{mandate.strength}</span>}
+                      {mandate?.scope && <span className="k">{mandate.scope}</span>}
+                      <span className="t">
+                        {job.prompt.length > 120 && (
+                          <button
+                            type="button"
+                            className="cabin-rm-more"
+                            data-testid="cockpit-relay-prompt-toggle"
+                            onClick={() => setPromptOpen((open) => !open)}
+                          >{promptOpen ? '收起' : '展开原文'}</button>
+                        )}
+                      </span>
+                    </div>
+                    <p className={promptOpen ? undefined : 'is-clamp'}>{job.prompt}</p>
+                  </div>
+                )}
+
+                {relayLines.length === 0 && !job.prompt ? (
+                  <div className={cockpitMode ? 'ck12-face-empty' : 'cabin-relay-empty'}>
+                    还没有交接事件 · 派发后这里留痕
+                  </div>
+                ) : (
+                  relayLines.map((line) => {
+                    const fromLabel = line.from === 'doer' ? doerLabel : RELAY_ROLE[line.from].label
+                    const toLabel = line.to === 'doer' ? doerLabel : RELAY_ROLE[line.to].label
                     return (
                       <div
-                        className="ck12-rrow"
-                        key={group.key}
-                        data-testid={`cabin-relay-event-${group.key}`}
+                        className={cn('cabin-rm', `is-${line.from}`, line.mirror && 'is-mirror')}
+                        key={line.key}
+                        data-testid={`cabin-relay-event-${line.key}`}
                       >
-                        <i className={cn('ck12-rrow-d', k.dot)} aria-hidden="true" />
-                        <span className="ck12-rrow-t">{clockLabel(event.created_at)}</span>
-                        <span className="ck12-rrow-route">
-                          <b className={`is-${from}`}>{RELAY_ROLE[from].label}</b>
-                          <ArrowRight className="ck12-rrow-arrow" aria-hidden="true" />
-                          <b className={`is-${to}`}>{RELAY_ROLE[to].label}</b>
-                        </span>
-                        <span className="ck12-rrow-k">{k.label}</span>
-                        <span className="ck12-rrow-x" title={text}>{text}</span>
+                        <div className="cabin-rm-h">
+                          <b>{fromLabel} → {toLabel}</b>
+                          <span className="k">{line.kindLabel}</span>
+                          <span className="t">{clockLabel(line.at)}</span>
+                        </div>
+                        <p title={line.text}>{line.text}</p>
                       </div>
                     )
-                  })}
-                </div>
-              )}
+                  })
+                )}
+              </div>
+
+              <div className="cabin-relay-foot">
+                {doerLabel}不直接找你：它的回报先到汐音，汐音汇总后再找你；要它做什么，也由汐音转达。
+              </div>
             </div>
           </section>
         </div>
@@ -895,8 +1099,11 @@ export function JobFace({
           )}
         </div>
       )}
-      {tab === 'files' && cockpitMode && (
-        <div data-testid="cockpit-job-files" className={frameOf()}>
+      {tab === 'files' && (
+        <div
+          data-testid={cockpitMode ? 'cockpit-job-files' : 'cabin-job-files'}
+          className={cockpitMode ? frameOf() : 'h-full min-h-0'}
+        >
           <CockpitJobFiles taskId={job.kind === 'task' ? job.ref_id : null} />
         </div>
       )}
@@ -934,7 +1141,7 @@ export function JobFace({
     )
   }
 
-  // ── 旧窗（DOM/行为逐字不变）──────────────────────────────────────────
+  // ── 旧窗（2026-11-17 用户：提优先/聚焦/备注不常用且看不到效果，摘掉）──────
   return (
     <div className="flex h-full min-h-0 flex-col" data-testid="cabin-job-detail">
       <div className="mb-2 flex flex-wrap items-center gap-2">
@@ -955,60 +1162,7 @@ export function JobFace({
           {jobStatusLabel(status)}
         </span>
         {jobView?.transport && <span className="font-mono text-[10px] text-pop-dim">· {jobView.transport}</span>}
-        <span className="ml-auto flex shrink-0 flex-wrap gap-1.5">
-          <button
-            type="button"
-            disabled={busy === 'priority' || isEndedJob(status)}
-            onClick={() => { void bump() }}
-            data-testid="cabin-job-priority"
-            className="inline-flex items-center gap-1 rounded-md border-[1.5px] border-pop-bd px-2 py-1 text-[10.5px] text-pop-dim transition-colors hover:text-pop-ink disabled:opacity-40"
-          >
-            <Zap className="size-3" />提优先 P{(jobView?.priority ?? job.priority)}
-          </button>
-          <button
-            type="button"
-            disabled={busy === 'focus' || isEndedJob(status)}
-            onClick={() => { void toggleFocus() }}
-            data-testid="cabin-job-focus"
-            className={cn(
-              'inline-flex items-center gap-1 rounded-md border-[1.5px] px-2 py-1 text-[10.5px] transition-colors disabled:opacity-40',
-              focusedJobId === job.id
-                ? 'border-pop-violet bg-pop-violet/10 text-pop-violet'
-                : 'border-pop-bd text-pop-dim hover:text-pop-ink',
-            )}
-          >
-            <Star className="size-3" />{focusedJobId === job.id ? '聚焦中' : '聚焦'}
-          </button>
-          <button
-            type="button"
-            onClick={() => setNoteOpen((v) => !v)}
-            data-testid="cabin-job-note"
-            className="inline-flex items-center gap-1 rounded-md border-[1.5px] border-pop-bd px-2 py-1 text-[10.5px] text-pop-dim transition-colors hover:text-pop-ink"
-          >
-            <Activity className="size-3" />备注
-          </button>
-        </span>
       </div>
-
-      {noteOpen && (
-        <div className="mb-2 flex items-center gap-2" data-testid="cabin-job-note-row">
-          <input
-            value={note}
-            onChange={(e) => setNote(e.target.value)}
-            onKeyDown={(e) => { if (e.key === 'Enter') void saveNote() }}
-            placeholder="给这条作业记一笔（落 cabin_job_events）"
-            className="h-7 flex-1 rounded-md border border-pop-bd bg-pop-bg px-2 text-[11.5px] text-pop-ink outline-none focus:border-pop-pink/60"
-          />
-          <button
-            type="button"
-            onClick={() => { void saveNote() }}
-            disabled={!note.trim()}
-            className="rounded-md border-[1.5px] border-pop-bd px-2 py-1 text-[11px] text-pop-dim hover:text-pop-ink disabled:opacity-40"
-          >
-            记一笔
-          </button>
-        </div>
-      )}
 
       <div className="mb-2.5 flex shrink-0 gap-1 border-b-[1.5px] border-pop-bd" role="tablist">
         {WINDOW_TABS.map((key) => (
@@ -1031,7 +1185,7 @@ export function JobFace({
         ))}
       </div>
 
-      <div className="min-h-0 flex-1">{panes}</div>
+      <div className={cn('min-h-0 flex-1', !cockpitMode && 'cabin-job-scope')}>{panes}</div>
     </div>
   )
 }

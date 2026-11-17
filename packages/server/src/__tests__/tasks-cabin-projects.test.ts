@@ -51,9 +51,9 @@ function writeCabinConfig(repos: unknown[]): void {
 function insertCabin(): void {
   db.prepare(`
     INSERT INTO cabins (id, name, path, workspace_id, main_session_id, requirements, status,
-      mainline_strategy, org, init_state, cockpit_prefs, focused_job_id, version,
+      mainline_strategy, org, init_state, cockpit_prefs, version,
       created_at, updated_at, last_active_at, archived_at, deleted_at)
-    VALUES (?, '舱', ?, NULL, NULL, '', 'active', 'clean-main', 'org', NULL, NULL, NULL, 1, ?, ?, ?, NULL, NULL)
+    VALUES (?, '舱', ?, NULL, NULL, '', 'active', 'clean-main', 'org', NULL, NULL, 1, ?, ?, ?, NULL, NULL)
   `).run(CABIN_ID, cabinDir, NOW, NOW, NOW)
 }
 

@@ -12,7 +12,7 @@ export type CabinJobKind = z.infer<typeof CabinJobKindSchema>
 
 /** `brief` / `decision` 是 design 25 加的两类审计事件（追加，不改旧值）。 */
 export const CabinJobEventKindSchema = z.enum([
-  "dispatch", "report", "attention", "handback", "note", "human_input", "resume",
+  "dispatch", "report", "attention", "handback", "human_input", "resume",
   "brief", "decision",
 ])
 export type CabinJobEventKind = z.infer<typeof CabinJobEventKindSchema>
@@ -108,7 +108,6 @@ export interface CabinWorkRow {
   session_id: string | null
   /** 底层 job id（delegation 无 job 时为自身 id）。 */
   job_id: string
-  priority: number
 }
 
 /** 句柄序号：按列表顺序（= 创建顺序）分配。 */
@@ -160,7 +159,6 @@ export const CabinSchema = z.object({
   status: CabinStatusSchema,
   mainline_strategy: z.string(),
   org: z.string().nullable(),
-  focused_job_id: z.string().nullable(),
   version: z.number(),
   created_at: z.string(),
   updated_at: z.string(),
@@ -178,7 +176,6 @@ export const CabinJobSchema = z.object({
   title: z.string(),
   mandate: CabinMandateSchema.nullable(),
   prompt: z.string().nullable(),
-  priority: z.number(),
   created_at: z.string(),
   ended_at: z.string().nullable(),
   /** Derived from the underlying entity (task/execution/subagent), not stored. */
@@ -250,7 +247,6 @@ export const CabinAttentionItemSchema = z.object({
   repo: z.string().nullable(),
   wt: z.string().nullable(),
   deep_link: z.string().nullable(),
-  priority: z.number(),
   /** design 25 §4.2：两种工作实体共用一套 attention。 */
   subject: z.object({
     kind: z.enum(["task", "delegation"]),

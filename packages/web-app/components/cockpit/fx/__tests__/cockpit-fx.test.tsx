@@ -43,7 +43,6 @@ function attention(
     repo: null,
     wt: null,
     deep_link: null,
-    priority: 5,
     ...overrides,
   }
 }
@@ -189,7 +188,7 @@ describe('CockpitBrief · 到达', () => {
         kind: 'job',
         cabinId: 'c1',
         cabinName: '舱一',
-        job: { id: 'j1', priority: 5 } as CabinJobView,
+        job: { id: 'j1' } as unknown as CabinJobView,
         attention: attention('a9', { title: '合规审计' }),
         pct: null,
       } as CockpitRow,
@@ -224,7 +223,7 @@ describe('CockpitBrief · 到达', () => {
         kind: 'job',
         cabinId: 'c1',
         cabinName: '舱一',
-        job: { id: 'j1', priority: 5 } as CabinJobView,
+        job: { id: 'j1' } as unknown as CabinJobView,
         attention: attention('a9', { title: '合规审计', stage: 'blocked', awaiting: 'person' }),
         pct: null,
       } as CockpitRow,

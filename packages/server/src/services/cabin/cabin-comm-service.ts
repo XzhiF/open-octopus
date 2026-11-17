@@ -2,7 +2,7 @@
 //
 // Cabin P3（C6/C9/D6）：orchestrator ↔ doer 通信语义层。传输层复用现有异构通道
 // （task 主线程 / 内部 chat wake），语义层统一落 cabin_jobs + cabin_job_events：
-//   outbound dispatch/input(note)/resume → 建真实任务/steer/触发 + 审计事件
+//   outbound dispatch/resume → 建真实任务/触发 + 审计事件
 //   inbound  report/attention/handback  → bridge G2 hook 落审计（wake 由 bridge 负责）
 // 派生纪律 K3：不镜像任务状态，status 一律读底层实体。
 
@@ -68,7 +68,6 @@ export class CabinCommService {
     prompt?: string | null
     ref_id?: string | null
     session_id?: string | null
-    priority?: number
     mandate?: CabinMandate | null
     /** design 25 §6.1：汐音编译的意图。可选 —— 没有就退回「只有原文」。 */
     brief?: CabinBriefInput | NormalizedBrief | null
@@ -111,7 +110,7 @@ export class CabinCommService {
       ref_id: refId, session_id: sessionId,
       title: input.title,
       mandate: input.mandate ? JSON.stringify(input.mandate) : null,
-      prompt: input.prompt ?? null, priority: input.priority ?? 0,
+      prompt: input.prompt ?? null,
       created_at: now(), ended_at: null,
     }
     this.deps.cabin.insertJob(row)
@@ -165,17 +164,6 @@ export class CabinCommService {
     return this.wakeSession(sessionId, org, message)
   }
 
-  /** D6 note：不授权 steer。subagent 一次性无 mid-run input（C9 风险12）→ 只留痕。 */
-  note(cabinId: string, jobId: string, text: string, actor: "orchestrator" | "human" = "orchestrator"): CabinJobEventRow {
-    this.mustCabin(cabinId)
-    const job = this.mustJob(cabinId, jobId)
-    const event = this.appendEvent(jobId, cabinId, "note", actor, { summary: text })
-    if (job.kind !== "subagent" && job.session_id) {
-      void this.wakeSession(job.session_id, this.mustCabin(cabinId).org ?? "", `[舱备注 · 不授权] ${text}`)
-    }
-    return event
-  }
-
   /** D6 resume：task → ready 触发 / paused 恢复；其余只留痕 + wake。 */
   async resume(cabinId: string, jobId: string): Promise<CabinJobEventRow> {
     this.mustCabin(cabinId)
@@ -214,7 +202,7 @@ export class CabinCommService {
         id: randomUUID(), cabin_id: cabinId, kind: "task", ref_id: taskId,
         session_id: task.source_chat_session_id ?? null,
         title: task.name, mandate: JSON.stringify({ strength: "inferred", scope: "task", basis: "auto-register" }),
-        prompt: null, priority: 0, created_at: now(), ended_at: null,
+        prompt: null, created_at: now(), ended_at: null,
       }
       this.deps.cabin.insertJob(job)
       this.appendEvent(job.id, cabinId, "dispatch", "system", { title: job.title, auto: true })

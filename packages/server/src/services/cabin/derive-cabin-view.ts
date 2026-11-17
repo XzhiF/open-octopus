@@ -53,7 +53,6 @@ export interface DeriveJobInput {
   kind: string
   ref_id: string | null
   title: string
-  priority: number
 }
 
 /** 独立委派（design 25 §4.2）：与 workload 同级的第二种工作实体。 */
@@ -67,7 +66,7 @@ export interface DeriveDelegationInput {
 }
 
 export interface DeriveCabinInput {
-  cabin: { id: string; status: CabinStatus; focused_job_id: string | null }
+  cabin: { id: string; status: CabinStatus }
   tasks: DeriveTaskInput[]
   executions: DeriveExecutionInput[]
   incidents: DeriveIncidentInput[]
@@ -92,13 +91,10 @@ export function deriveCabinView(input: DeriveCabinInput): DerivedCabinView {
   const { cabin, tasks, executions, incidents, asks, findings, jobs, delegations = [], maxWorkers } = input
   const jobByTask = new Map<string, DeriveJobInput>()
   for (const j of jobs) if (j.kind === "task" && j.ref_id) jobByTask.set(j.ref_id, j)
-  const priorityOf = (taskId: string | null): number =>
-    taskId ? (jobByTask.get(taskId)?.priority ?? 0) : 0
   const taskById = new Map(tasks.map(t => [t.id, t]))
 
   const attention: CabinAttentionItem[] = []
-  const push = (a: Omit<CabinAttentionItem, "priority"> & { priority?: number }) =>
-    attention.push({ ...a, priority: a.priority ?? 0 })
+  const push = (a: CabinAttentionItem) => attention.push(a)
   /** 两种工作实体共用一套 attention：subject / handle / color 由这里统一挂上。 */
   const subjectOf = (taskId: string | null): Pick<CabinAttentionItem, "subject" | "handle" | "color"> => {
     if (!taskId) return {}
@@ -117,19 +113,19 @@ export function deriveCabinView(input: DeriveCabinInput): DerivedCabinView {
       push({
         id: `review-${t.id}`, job_id: job?.id ?? null, stage: "review", awaiting: "person",
         title: `${t.name} · 待验收`, task_id: t.id, repo: t.repo ?? null, wt: t.branch ?? null,
-        deep_link: `task:${t.id}`, priority: job?.priority ?? 0, ...subject,
+        deep_link: `task:${t.id}`, ...subject,
       })
     } else if (t.status === "awaiting_archive") {
       push({
         id: `archive-${t.id}`, job_id: job?.id ?? null, stage: "review", awaiting: "person",
         title: `${t.name} · 待归档`, task_id: t.id, repo: t.repo ?? null, wt: t.branch ?? null,
-        deep_link: `task:${t.id}`, priority: job?.priority ?? 0, ...subject,
+        deep_link: `task:${t.id}`, ...subject,
       })
     } else if (t.status === "failed") {
       push({
         id: `failed-${t.id}`, job_id: job?.id ?? null, stage: "blocked", awaiting: "person",
         title: `${t.name} · 失败已升级`, task_id: t.id, repo: t.repo ?? null, wt: t.branch ?? null,
-        deep_link: `task:${t.id}`, priority: job?.priority ?? 0, ...subject,
+        deep_link: `task:${t.id}`, ...subject,
       })
     }
   }
@@ -140,7 +136,7 @@ export function deriveCabinView(input: DeriveCabinInput): DerivedCabinView {
         id: `approval-${e.id}`, job_id: e.task_id ? (jobByTask.get(e.task_id)?.id ?? null) : null,
         stage: "approval", awaiting: "person", title: `${t?.name ?? e.id} · 待审批`,
         task_id: e.task_id, repo: t?.repo ?? null, wt: t?.branch ?? null,
-        deep_link: `execution:${e.id}`, priority: priorityOf(e.task_id),
+        deep_link: `execution:${e.id}`,
         ...subjectOf(e.task_id),
       })
     }
@@ -151,7 +147,7 @@ export function deriveCabinView(input: DeriveCabinInput): DerivedCabinView {
         id: `incident-${inc.id}`, job_id: inc.task_id ? (jobByTask.get(inc.task_id)?.id ?? null) : null,
         stage: "blocked", awaiting: "person", title: inc.title,
         task_id: inc.task_id, repo: null, wt: null, deep_link: `incident:${inc.id}`,
-        priority: priorityOf(inc.task_id), ...subjectOf(inc.task_id),
+        ...subjectOf(inc.task_id),
       })
     }
   }
@@ -160,7 +156,7 @@ export function deriveCabinView(input: DeriveCabinInput): DerivedCabinView {
       id: `ask-${a.id}`, job_id: a.task_id ? (jobByTask.get(a.task_id)?.id ?? null) : null,
       stage: "answer", awaiting: "person", title: a.title, question: a.question,
       task_id: a.task_id, repo: null, wt: null, deep_link: `ask:${a.id}`,
-      priority: priorityOf(a.task_id), ...subjectOf(a.task_id),
+      ...subjectOf(a.task_id),
       ...(a.ask ? { ask: a.ask } : {}),
     })
   }
@@ -195,8 +191,7 @@ export function deriveCabinView(input: DeriveCabinInput): DerivedCabinView {
     }
   }
 
-  attention.sort((a, b) =>
-    AWAITING_ORDER[a.awaiting] - AWAITING_ORDER[b.awaiting] || b.priority - a.priority)
+  attention.sort((a, b) => AWAITING_ORDER[a.awaiting] - AWAITING_ORDER[b.awaiting])
 
   const running = executions.filter(e => e.status === "running").length
   const queued = executions.filter(e => e.status === "pending" || e.status === "queued").length

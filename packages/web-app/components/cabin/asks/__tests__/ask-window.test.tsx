@@ -33,7 +33,6 @@ function attn(over: Partial<CabinAttentionItem> = {}): CabinAttentionItem {
     repo: 'octopus',
     wt: 'feat-pay',
     deep_link: 'ask:a1',
-    priority: 1,
     handle: '#1',
     subject: { kind: 'task', id: 't1' },
     ask: {

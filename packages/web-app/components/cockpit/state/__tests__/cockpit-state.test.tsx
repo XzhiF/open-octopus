@@ -79,17 +79,17 @@ describe('cockpit URL 契约', () => {
 describe('默认选中解析', () => {
   const candidates: CockpitCandidate[] = [
     { ref: { kind: 'job', cabinId: 'c1', id: 'queued' }, group: 'queue' },
-    { ref: { kind: 'job', cabinId: 'c1', id: 'need-low' }, group: 'need', priority: 2 },
+    { ref: { kind: 'job', cabinId: 'c1', id: 'need-first' }, group: 'need' },
     { ref: { kind: 'job', cabinId: 'c1', id: 'running' }, group: 'run' },
-    { ref: { kind: 'job', cabinId: 'c1', id: 'need-high' }, group: 'need', priority: 9 },
+    { ref: { kind: 'job', cabinId: 'c1', id: 'need-second' }, group: 'need' },
     { ref: { kind: 'job', cabinId: 'c1', id: 'done' }, group: 'done' },
   ]
 
-  it('需要你（priority 降序）优先，其次运行中，其次排队', () => {
+  it('第一条「需要你」优先，其次运行中，其次排队', () => {
     expect(resolveDefaultRef(candidates)).toEqual({
       kind: 'job',
       cabinId: 'c1',
-      id: 'need-high',
+      id: 'need-first',
     })
     expect(resolveDefaultRef(candidates.filter((c) => c.group !== 'need'))).toEqual({
       kind: 'job',

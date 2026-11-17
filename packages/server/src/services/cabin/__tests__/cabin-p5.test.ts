@@ -34,7 +34,7 @@ function insertCabin(id: string, prefs: string | null = null, lastActive = NOW):
     id, name: `舱${id}`, path: path.join(tmpDir, id), workspace_id: "ws-1",
     main_session_id: "s-main", requirements: "", status: "active",
     mainline_strategy: "clean-main", org: "org", init_state: null, cockpit_prefs: prefs,
-    focused_job_id: null, version: 1, created_at: NOW, updated_at: NOW,
+    version: 1, created_at: NOW, updated_at: NOW,
     last_active_at: lastActive, archived_at: null, deleted_at: null,
   })
 }

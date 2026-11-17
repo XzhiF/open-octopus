@@ -43,7 +43,7 @@ export function CockpitOpsPanel() {
       if (!item || item.awaiting !== 'person') continue
       if (!byId.has(item.id)) byId.set(item.id, { item, rowKey: row.key })
     }
-    return [...byId.values()].sort((a, b) => b.item.priority - a.item.priority)
+    return [...byId.values()]
   }, [rows])
 
   // ── 消项卡：open 里消失的 id → ✓ 卡 2.6s；choice 取真实 answered 事件 ──
@@ -145,7 +145,6 @@ export function CockpitOpsPanel() {
               <button type="button" className="ck12-ops-detail" onClick={() => detail(item)}>
                 ▦ 详情
               </button>
-              <span className="ck12-ops-pri">pri {item.priority}</span>
             </div>
           </div>
         )

@@ -19,16 +19,19 @@ vi.mock('@/lib/cabin-api', async (importOriginal) => {
     getCabinJob: vi.fn(),
     listCabinJobs: vi.fn(),
     getCabinUsage: vi.fn(),
-    setCabinJobPriority: vi.fn(),
-    setCabinFocus: vi.fn(),
-    noteCabinJob: vi.fn(),
   }
+})
+vi.mock('@/lib/agent/api', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/lib/agent/api')>()
+  return { ...actual, getSession: vi.fn() }
 })
 vi.mock('@/lib/tasks-api', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@/lib/tasks-api')>()
   return {
     ...actual,
     getTask: vi.fn(),
+    getHomeTree: vi.fn(),
+    getHomeContent: vi.fn(),
     pauseTask: vi.fn(),
     resumeTask: vi.fn(),
     abortTask: vi.fn(),
@@ -38,9 +41,11 @@ vi.mock('@/lib/tasks-api', async (importOriginal) => {
 import {
   getCabinJob, getCabinUsage, listCabinJobs, type CabinJobView,
 } from '@/lib/cabin-api'
-import { abortTask, getTask, pauseTask, resumeTask } from '@/lib/tasks-api'
+import { abortTask, getHomeTree, getTask, pauseTask, resumeTask } from '@/lib/tasks-api'
+import { getSession } from '@/lib/agent/api'
 import { JobFace, JOB_FACE_TIMEOUT_MS } from '../job-face'
 import type { CockpitTab } from '../../cockpit/state/cockpit-state'
+import type { CabinJobEvent } from '@octopus/shared'
 
 function jobView(over: Partial<CabinJobView> = {}): CabinJobView {
   return {
@@ -52,7 +57,6 @@ function jobView(over: Partial<CabinJobView> = {}): CabinJobView {
     title: '接入渠道',
     mandate: null,
     prompt: '把渠道接进来',
-    priority: 2,
     created_at: '2026-11-13T14:00:00.000Z',
     ended_at: null,
     status: 'running',
@@ -73,7 +77,6 @@ function mockJob(view: Partial<CabinJobView> = {}, opts: { branch?: string } = {
       title: view.title ?? '接入渠道',
       mandate: null,
       prompt: '把渠道接进来',
-      priority: 2,
       created_at: '2026-11-13T14:00:00.000Z',
       ended_at: view.ended_at ?? null,
     },
@@ -127,7 +130,6 @@ function Harness({
   return (
     <JobFace
       cabinId={cabinId}
-      cabinVersion={1}
       workspaceId="ws-1"
       jobId="j1"
       variant="cockpit"
@@ -151,15 +153,26 @@ beforeEach(() => {
   vi.mocked(pauseTask).mockResolvedValue({} as never)
   vi.mocked(resumeTask).mockResolvedValue({} as never)
   vi.mocked(abortTask).mockResolvedValue({} as never)
+  vi.mocked(getHomeTree).mockResolvedValue({ dir: '/tmp/task-home', entries: [] })
+  vi.mocked(getSession).mockResolvedValue({
+    messages: { items: [], has_more: false, next_cursor: null, total: 0 },
+  } as never)
 })
 
 describe('JobFace（cockpit）', () => {
-  it('五页签渲染与切换；概览用真事件时间线', async () => {
-    // workflow + 无 ref：运行/变更/验收都是轻量空态，只验页签与真时间线。
+  it('五页签渲染与切换；概览给统计读数（不再铺事件流）', async () => {
+    // workflow + 无 ref：运行/变更/验收都是轻量空态，只验页签与真统计。
     mockJob({ kind: 'workflow', ref_id: null, title: '接入渠道' })
     render(<Harness />)
     await screen.findByTestId('cockpit-job-header')
-    expect((await screen.findByTestId('cabin-job-overview')).textContent).toContain('派发接入渠道')
+    const overview = await screen.findByTestId('cabin-job-overview')
+    // 统计来自真事件：2 条交接（派发 1 / 回报 1），最近一条写「正在跑 node-2」。
+    expect(overview.textContent).toContain('交接 2')
+    expect(overview.textContent).toContain('派发 1')
+    expect(overview.textContent).toContain('最近交接')
+    expect(overview.textContent).toContain('正在跑 node-2')
+    // 事件流已从概览移走：概览里不再逐条列 event。
+    expect(screen.queryByTestId('cabin-job-event-e1')).toBeNull()
 
     fireEvent.click(screen.getByTestId('cockpit-tab-relay'))
     expect(await screen.findByTestId('cabin-job-relay')).toBeInTheDocument()
@@ -267,7 +280,7 @@ describe('JobFace（cockpit）', () => {
       <Harness
         attention={{
           id: 'a1', job_id: 'j1', stage: 'review', awaiting: 'person', title: '产物已就绪',
-          task_id: 't1', repo: 'pay', wt: null, deep_link: null, priority: 3,
+          task_id: 't1', repo: 'pay', wt: null, deep_link: null,
         }}
       />,
     )
@@ -276,7 +289,7 @@ describe('JobFace（cockpit）', () => {
   })
 
   it('对接：一条按时间排的交接时间线，每行标出这一跳的方向', async () => {
-    const ev = (id: string, kind: string, actor: string, summary: string, at: string) => ({
+    const ev = (id: string, kind: CabinJobEvent['kind'], actor: string, summary: string, at: string) => ({
       id, job_id: 'j1', cabin_id: 'cabin-1', kind, actor,
       payload: { summary }, created_at: at,
     })
@@ -287,7 +300,7 @@ describe('JobFace（cockpit）', () => {
       job: {
         id: 'j1', cabin_id: 'cabin-1', kind: 'workflow', ref_id: null,
         session_id: null, title: '审计工作流',
-        mandate: null, prompt: '把渠道接进来', priority: 1,
+        mandate: null, prompt: '把渠道接进来',
         created_at: '2026-11-13T14:00:00.000Z', ended_at: null,
       },
       events: [
@@ -315,8 +328,113 @@ describe('JobFace（cockpit）', () => {
     expect(screen.getByTestId('cabin-job-relay').textContent).toContain('把渠道接进来')
   })
 
+  it('对接：同一决策的 decided / relayed 两行只算一次发言', async () => {
+    const dec = (id: string, stage: string, at: string) => ({
+      id, job_id: 'j1', cabin_id: 'cabin-1', kind: 'decision' as const, actor: 'human',
+      payload: { decisionId: 'd1', stage, choice: '只绑 phase 1' }, created_at: at,
+    })
+    vi.mocked(listCabinJobs).mockResolvedValue([
+      jobView({ kind: 'workflow', ref_id: null, title: '审计工作流' }),
+    ])
+    vi.mocked(getCabinJob).mockResolvedValue({
+      job: {
+        id: 'j1', cabin_id: 'cabin-1', kind: 'workflow', ref_id: null,
+        session_id: null, title: '审计工作流',
+        mandate: null, prompt: null,
+        created_at: '2026-11-13T14:00:00.000Z', ended_at: null,
+      },
+      events: [
+        dec('d-decided', 'decided', '2026-11-13T14:10:00.000Z'),
+        dec('d-relayed', 'relayed', '2026-11-13T14:10:00.000Z'),
+      ],
+    })
+
+    render(<Harness />)
+    fireEvent.click(await screen.findByTestId('cockpit-tab-relay'))
+    const rows = await screen.findAllByTestId(/^cabin-relay-event-/)
+    expect(rows).toHaveLength(1)
+    // 内容取最新 stage：已转达执行者。
+    expect(rows[0].textContent).toContain('已转达执行者')
+    // 三方计数也按发言算（1 条），不是账本行数（2 行）。
+    expect(screen.getByTestId('cabin-relay-map').textContent).toContain('指挥 · 1 条')
+  })
+
+  it('对接完整链路：舱主会话里本任务的任务卡算「汐音 → 你」一跳', async () => {
+    mockJob()
+    vi.mocked(getSession).mockResolvedValue({
+      messages: {
+        items: [
+          {
+            id: 'card-1',
+            session_id: 'sess-main',
+            role: 'user',
+            content: '[任务状态 · awaiting_review] 产物已就绪\n请验收',
+            created_at: '2026-11-13T14:30:00.000Z',
+            is_summary: false,
+            is_compressed: false,
+            is_edited: false,
+            displayType: 'event',
+            activity: {
+              kind: 'task.awaiting_review',
+              title: '产物已就绪',
+              message: '请验收',
+              taskId: 't1',
+            },
+          },
+          {
+            id: 'card-3',
+            session_id: 'sess-main',
+            role: 'user',
+            content: '✓ 决策已转达',
+            created_at: '2026-11-13T14:32:00.000Z',
+            is_summary: false,
+            is_compressed: false,
+            is_edited: false,
+            displayType: 'event',
+            activity: {
+              kind: 'cabin.decision_receipt',
+              title: '决策已转达',
+              taskId: 't1',
+              payload: { decisionReceipt: { choice: '只绑 phase 1' } },
+            },
+          },
+          {
+            // 别的任务卡不能混进来。
+            id: 'card-2',
+            session_id: 'sess-main',
+            role: 'user',
+            content: '[任务状态 · running] 别的任务',
+            created_at: '2026-11-13T14:31:00.000Z',
+            is_summary: false,
+            is_compressed: false,
+            is_edited: false,
+            displayType: 'event',
+            activity: { kind: 'task.running', title: '别的任务', taskId: 't2' },
+          },
+        ],
+        has_more: false,
+        next_cursor: null,
+        total: 3,
+      },
+    } as never)
+
+    render(<Harness />)
+    fireEvent.click(await screen.findByTestId('cockpit-tab-relay'))
+    const row = await screen.findByTestId('cabin-relay-event-mirror-card-1')
+    expect(row.textContent).toContain('汐音 → 你')
+    expect(row.textContent).toContain('产物已就绪')
+    expect(row.textContent).toContain('请验收')
+    expect(screen.queryByTestId('cabin-relay-event-mirror-card-2')).toBeNull()
+    // 决策回执带的是选择本身，不是「决策已转达」四个字。
+    const receipt = await screen.findByTestId('cabin-relay-event-mirror-card-3')
+    expect(receipt.textContent).toContain('只绑 phase 1')
+    // 完整链路条与三方计数都在（汐音：派发 1 + 回告 2）。
+    expect(screen.getByTestId('cabin-relay-chain').textContent).toContain('完整链路')
+    expect(screen.getByTestId('cabin-relay-map').textContent).toContain('调度 · 3 条')
+  })
+
   it('对接：连续的「提优先」折叠成一条，并写明区间与次数', async () => {
-    const bump = (id: string, priority: number, at: string) => ({
+    const bump = (id: string, priority: number, at: string): CabinJobEvent => ({
       id, job_id: 'j1', cabin_id: 'cabin-1', kind: 'human_input', actor: 'human',
       payload: { action: 'priority', priority }, created_at: at,
     })
@@ -327,7 +445,7 @@ describe('JobFace（cockpit）', () => {
       job: {
         id: 'j1', cabin_id: 'cabin-1', kind: 'workflow', ref_id: null,
         session_id: null, title: '审计工作流',
-        mandate: null, prompt: null, priority: 6,
+        mandate: null, prompt: null,
         created_at: '2026-11-13T14:00:00.000Z', ended_at: null,
       },
       events: [
@@ -398,25 +516,31 @@ describe('JobFace（cockpit）· 加载容错', () => {
 })
 
 describe('JobFace（window 回归形状）', () => {
-  it('旧窗根 testid/页签 testid 保持不变，且不渲染 cockpit 头部', async () => {
-    mockJob()
+  it('旧窗根 testid/页签 testid 保持不变，且不渲染 cockpit 头部', async () => {    mockJob()
     render(
       <JobFace
         cabinId="cabin-1"
-        cabinVersion={1}
         workspaceId="ws-1"
         jobId="j1"
         variant="window"
         entryCabinId="cabin-1"
         mainSessionId="sess-main"
-        focusedJobId={null}
       />,
     )
     const root = await screen.findByTestId('cabin-job-detail')
     expect(root.textContent).toContain('接入渠道')
     expect(screen.getByTestId('cabin-job-tab-overview')).toBeInTheDocument()
     expect(screen.getByTestId('cabin-job-tab-accept')).toBeInTheDocument()
+    // v21（2026-11-17 用户）：classic 作业窗也要能查 task home 文件。
+    fireEvent.click(screen.getByTestId('cabin-job-tab-files'))
+    expect(await screen.findByTestId('cabin-job-files')).toBeInTheDocument()
+    // debug 仍只在全域面出现，classic 窗没有这一页。
+    expect(screen.queryByTestId('cabin-job-tab-debug')).toBeNull()
     expect(screen.queryByTestId('cockpit-job-header')).toBeNull()
     expect(screen.queryByTestId('cockpit-job-close')).toBeNull()
+    // 2026-11-17 用户：提优先/聚焦/备注日常看不到效果，动作按钮已摘除。
+    expect(screen.queryByTestId('cabin-job-priority')).toBeNull()
+    expect(screen.queryByTestId('cabin-job-focus')).toBeNull()
+    expect(screen.queryByTestId('cabin-job-note')).toBeNull()
   })
 })

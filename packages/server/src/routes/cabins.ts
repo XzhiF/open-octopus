@@ -60,7 +60,7 @@ function toDTO(row: CabinRow) {
     workspace_id: row.workspace_id, main_session_id: row.main_session_id,
     requirements: row.requirements, status: row.status,
     mainline_strategy: row.mainline_strategy, org: row.org,
-    focused_job_id: row.focused_job_id, version: row.version,
+    version: row.version,
     created_at: row.created_at, updated_at: row.updated_at,
     last_active_at: row.last_active_at, archived_at: row.archived_at,
     cockpit_prefs: cockpitPrefs,
@@ -145,12 +145,6 @@ const jobBodySchema = z.object({
   title: z.string().min(1),
   mandate: CabinMandateSchema.optional(),
   prompt: z.string().nullable().optional(),
-  priority: z.number().int().optional(),
-})
-
-const focusBodySchema = z.object({
-  version: z.number().int(),
-  job_id: z.string().nullable(),
 })
 
 const decisionBodySchema = z.object({
@@ -645,41 +639,7 @@ export function createCabinRoutes(
     }
   })
 
-  router.patch("/:id/jobs/:jid", async (c) => {
-    const body = await safeJson(c)
-    if (!body) return c.json({ error: "Invalid or missing JSON body" }, 400)
-    try {
-      const input = z.object({ priority: z.number().int() }).parse(body)
-      const job = service.getJob(c.req.param("jid"))
-      if (!job || job.cabin_id !== c.req.param("id")) {
-        return c.json({ error: `job not found: ${c.req.param("jid")}` }, 404)
-      }
-      await service.bumpJobPriority(c.req.param("id"), job.id, input.priority)
-      service.appendEvent(job.id, c.req.param("id"), "human_input", "human", { action: "priority", priority: input.priority })
-      return c.json({ ok: true })
-    } catch (err) {
-      const { status, message } = classifyError(err)
-      return c.json({ error: message }, status as 400)
-    }
-  })
-
-  // ── comm protocol (C9/D6): note 不授权 / resume 恢复 ─────────────────
-  router.post("/:id/jobs/:jid/note", async (c) => {
-    const body = await safeJson(c)
-    if (!body) return c.json({ error: "Invalid or missing JSON body" }, 400)
-    try {
-      const input = z.object({
-        text: z.string().min(1),
-        actor: z.enum(["orchestrator", "human"]).optional(),
-      }).parse(body)
-      if (!comm) return c.json({ error: "comm service not wired" }, 501)
-      const event = comm.note(c.req.param("id"), c.req.param("jid"), input.text, input.actor ?? "human")
-      return c.json({ event: toEventDTO(event) }, 201)
-    } catch (err) {
-      const { status, message } = classifyError(err)
-      return c.json({ error: message }, status as 400)
-    }
-  })
+  // ── comm protocol (D6): resume 恢复 ────────────────────────────────
 
   router.post("/:id/jobs/:jid/resume", async (c) => {
     try {
@@ -708,35 +668,6 @@ export function createCabinRoutes(
   router.get("/:id/trace", (c) => {
     try {
       return c.json({ events: service.listTrace(c.req.param("id")).map(toEventDTO) })
-    } catch (err) {
-      const { status, message } = classifyError(err)
-      return c.json({ error: message }, status as 400)
-    }
-  })
-
-  // ── focus (C8) ─────────────────────────────────────────────────────
-
-  router.post("/:id/focus", async (c) => {
-    const body = await safeJson(c)
-    if (!body) return c.json({ error: "Invalid or missing JSON body" }, 400)
-    try {
-      const input = focusBodySchema.parse(body)
-      const cabin = service.setFocus(c.req.param("id"), input.version, input.job_id)
-      if (input.job_id) {
-        service.appendEvent(input.job_id, c.req.param("id"), "human_input", "human", { action: "focus" })
-      }
-      return c.json({ cabin: toDTO(cabin) })
-    } catch (err) {
-      const { status, message } = classifyError(err)
-      return c.json({ error: message }, status as 400)
-    }
-  })
-
-  router.delete("/:id/focus", (c) => {
-    try {
-      const version = Number(c.req.query("version"))
-      if (!Number.isInteger(version)) return c.json({ error: "version query param required (integer)" }, 400)
-      return c.json({ cabin: toDTO(service.setFocus(c.req.param("id"), version, null)) })
     } catch (err) {
       const { status, message } = classifyError(err)
       return c.json({ error: message }, status as 400)

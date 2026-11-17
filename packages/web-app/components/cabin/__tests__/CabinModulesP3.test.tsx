@@ -10,8 +10,6 @@ vi.mock('@/lib/cabin-api', async (importOriginal) => {
     ...actual,
     listCabinJobs: vi.fn(),
     getCabinJob: vi.fn(),
-    setCabinJobPriority: vi.fn(),
-    setCabinFocus: vi.fn(),
     getCabinTrace: vi.fn(),
     listCabinRepos: vi.fn(),
     listCabinWorktrees: vi.fn(),
@@ -24,7 +22,7 @@ vi.mock('@/lib/tasks-api', async (importOriginal) => {
 
 import { useCabin } from '@/hooks/use-cabin'
 import {
-  listCabinJobs, getCabinJob, setCabinJobPriority, setCabinFocus, getCabinTrace, listCabinRepos, listCabinWorktrees,
+  listCabinJobs, getCabinJob, getCabinTrace, listCabinRepos, listCabinWorktrees,
 } from '@/lib/cabin-api'
 import { listTasks, getTask } from '@/lib/tasks-api'
 import { CabinProvider, useCabinContext } from '../cabin-provider'
@@ -39,7 +37,7 @@ function makeView(overrides: Partial<CabinView> = {}): CabinView {
     cabin: {
       id: 'cabin-1', name: 'Aurora', path: '/tmp/a', workspace_id: 'ws-1', main_session_id: 'sess-1',
       requirements: '', status: 'active', mainline_strategy: 'clean-main', org: null,
-      focused_job_id: null, version: 1, created_at: '', updated_at: '', last_active_at: null, archived_at: null,
+      version: 1, created_at: '', updated_at: '', last_active_at: null, archived_at: null,
     },
     attention: [],
     health: { running: 0, queued: 0, dormant: 0, workers: 0, max: 5 },
@@ -181,25 +179,25 @@ describe('CabinTasks — 四列 kanban（classic-v3）', () => {
   })
 })
 
-describe('CabinJobDetail — 提优先/聚焦/对接', () => {
+describe('CabinJobDetail — 动作按钮已摘除 / 对接', () => {
   function JobOpener() {
     const { openJobDetail } = useCabinContext()
     return <button data-testid="open-job-probe" onClick={() => openJobDetail('j1')}>open</button>
   }
 
-  it('提优先 priority+1；聚焦调 setFocus；对接 tab 展示三方', async () => {
+  it('详情头部不再有提优先/聚焦/备注；对接 tab 展示三方与派发原文', async () => {
     mockCabin(makeView())
     vi.mocked(listCabinJobs).mockResolvedValue([
       {
         id: 'j1', cabin_id: 'cabin-1', kind: 'task', ref_id: 't1', session_id: null,
-        title: '接入渠道', mandate: null, prompt: '把渠道接进来', priority: 2,
+        title: '接入渠道', mandate: null, prompt: '把渠道接进来',
         created_at: '', ended_at: null, status: 'running', transport: 'task-thread',
       },
     ])
     vi.mocked(getCabinJob).mockResolvedValue({
       job: {
         id: 'j1', cabin_id: 'cabin-1', kind: 'task', ref_id: 't1', session_id: null,
-        title: '接入渠道', mandate: null, prompt: '把渠道接进来', priority: 2,
+        title: '接入渠道', mandate: null, prompt: '把渠道接进来',
         created_at: '2026-11-13T14:00:00.000Z', ended_at: null,
       },
       events: [
@@ -209,8 +207,6 @@ describe('CabinJobDetail — 提优先/聚焦/对接', () => {
         },
       ],
     })
-    vi.mocked(setCabinJobPriority).mockResolvedValue({ ok: true })
-    vi.mocked(setCabinFocus).mockResolvedValue(makeView().cabin as never)
     render(
       <CabinProvider cabinId="cabin-1">
         <JobOpener />
@@ -221,10 +217,9 @@ describe('CabinJobDetail — 提优先/聚焦/对接', () => {
     fireEvent.click(screen.getByTestId('open-job-probe'))
     await screen.findByTestId('cabin-job-detail')
     expect(screen.getByTestId('cabin-job-detail').textContent).toContain('接入渠道')
-    fireEvent.click(await screen.findByTestId('cabin-job-priority'))
-    await waitFor(() => expect(setCabinJobPriority).toHaveBeenCalledWith('cabin-1', 'j1', 3))
-    fireEvent.click(screen.getByTestId('cabin-job-focus'))
-    await waitFor(() => expect(setCabinFocus).toHaveBeenCalledWith('cabin-1', 1, 'j1'))
+    expect(screen.queryByTestId('cabin-job-priority')).toBeNull()
+    expect(screen.queryByTestId('cabin-job-focus')).toBeNull()
+    expect(screen.queryByTestId('cabin-job-note')).toBeNull()
     fireEvent.click(screen.getByTestId('cabin-job-tab-relay'))
     expect((await screen.findByTestId('cabin-job-relay')).textContent).toContain('汐音')
     expect(screen.getByTestId('cabin-job-relay').textContent).toContain('把渠道接进来')
@@ -235,8 +230,8 @@ describe('CabinQueue — 单线程路由（C4）', () => {
   it('attention 派生排队行；优先路由打开任务；第二条不打断当前（已优先）', async () => {
     const view = makeView({
       attention: [
-        { id: 'a1', job_id: null, stage: 'review', awaiting: 'person', title: '任务A 待验收', task_id: 't1', repo: 'pay', wt: null, deep_link: null, priority: 0 },
-        { id: 'a2', job_id: null, stage: 'answer', awaiting: 'person', title: '问题B', task_id: null, repo: null, wt: null, deep_link: null, priority: 0 },
+        { id: 'a1', job_id: null, stage: 'review', awaiting: 'person', title: '任务A 待验收', task_id: 't1', repo: 'pay', wt: null, deep_link: null },
+        { id: 'a2', job_id: null, stage: 'answer', awaiting: 'person', title: '问题B', task_id: null, repo: null, wt: null, deep_link: null },
       ],
     })
     mockCabin(view)

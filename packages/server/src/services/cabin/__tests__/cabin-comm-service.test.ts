@@ -36,7 +36,7 @@ beforeEach(() => {
     id: "c1", name: "舱", path: "C:/tmp/cabin-comm", workspace_id: "ws-cabin",
     main_session_id: "s-main", requirements: "", status: "active",
     mainline_strategy: "clean-main", org: "org", init_state: null, cockpit_prefs: null,
-    focused_job_id: null, version: 1, created_at: NOW, updated_at: NOW,
+    version: 1, created_at: NOW, updated_at: NOW,
     last_active_at: NOW, archived_at: null, deleted_at: null,
   })
   fetchMock = vi.fn(async () => ({
@@ -113,15 +113,6 @@ describe("CabinCommService", () => {
     expect(body.message).toContain("clarify=auto")
     expect(body.message).toContain("看着办")
     expect(body.message).not.toContain("先澄清：")
-  })
-
-  it("note：task 落痕+steer wake；subagent 只留痕（C9 风险12）", async () => {
-    const job = comm.dispatch("c1", { kind: "subagent", title: "临时调研", ref_id: "run-1" })
-    fetchMock.mockClear()
-    comm.note("c1", job.id, "只留痕")
-    expect(cabin.listEvents(job.id).map((e) => e.kind)).toEqual(["dispatch", "note"])
-    await new Promise((r) => setTimeout(r, 10))
-    expect(fetchMock).not.toHaveBeenCalled()
   })
 
   it("resume：ready 任务触发 + resume 事件", async () => {

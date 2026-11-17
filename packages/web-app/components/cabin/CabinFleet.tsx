@@ -93,7 +93,7 @@ export function CabinFleet() {
       }
       const live = jobs
         .filter((j) => !isEndedJob(j.status))
-        .sort((a, b) => rank(a) - rank(b) || b.priority - a.priority)
+        .sort((a, b) => rank(a) - rank(b))
       const ended = jobs
         .filter((j) => isEndedJob(j.status))
         .sort((a, b) => (b.ended_at ?? '').localeCompare(a.ended_at ?? ''))

@@ -33,7 +33,7 @@ function cabin(id: string, name: string, path: string): CabinDetail {
   return {
     id, name, path, workspace_id: 'ws', main_session_id: 'sess',
     requirements: '', status: 'active', mainline_strategy: 'clean-main', org: null,
-    focused_job_id: null, version: 1, created_at: '', updated_at: '',
+    version: 1, created_at: '', updated_at: '',
     last_active_at: null, archived_at: null,
   }
 }

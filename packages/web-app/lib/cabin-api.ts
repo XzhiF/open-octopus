@@ -368,7 +368,6 @@ export interface DispatchCabinJobInput {
   title: string
   mandate?: CabinMandate
   prompt?: string | null
-  priority?: number
 }
 
 export async function dispatchCabinJob(id: string, input: DispatchCabinJobInput): Promise<CabinJob> {
@@ -394,15 +393,6 @@ export async function getCabinJob(
   return handleResponse<{ job: CabinJob; events: CabinJobEvent[] }>(res)
 }
 
-export async function setCabinJobPriority(id: string, jobId: string, priority: number): Promise<{ ok: true }> {
-  const res = await fetch(url(`/${id}/jobs/${jobId}`), {
-    method: "PATCH",
-    headers: JSON_HEADERS,
-    body: JSON.stringify({ priority }),
-  })
-  return handleResponse<{ ok: true }>(res)
-}
-
 export async function getCabinJobTrace(id: string, jobId: string): Promise<CabinJobEvent[]> {
   const res = await fetch(url(`/${id}/jobs/${jobId}/trace`))
   const body = await handleResponse<{ events: CabinJobEvent[] }>(res)
@@ -415,17 +405,7 @@ export async function getCabinTrace(id: string): Promise<CabinJobEvent[]> {
   return body.events
 }
 
-// ============ Comm protocol (C9/D6) ============
-
-export async function noteCabinJob(id: string, jobId: string, text: string): Promise<CabinJobEvent> {
-  const res = await fetch(url(`/${id}/jobs/${jobId}/note`), {
-    method: "POST",
-    headers: JSON_HEADERS,
-    body: JSON.stringify({ text, actor: "human" }),
-  })
-  const body = await handleResponse<{ event: CabinJobEvent }>(res)
-  return body.event
-}
+// ============ Comm protocol (D6) ============
 
 export async function resumeCabinJob(id: string, jobId: string): Promise<CabinJobEvent> {
   const res = await fetch(url(`/${id}/jobs/${jobId}/resume`), { method: "POST" })
@@ -538,24 +518,6 @@ export interface CabinUsagePayload {
 export async function getCabinUsage(id: string, signal?: AbortSignal): Promise<CabinUsagePayload> {
   const res = await fetch(url(`/${id}/usage`), { cache: "no-store", signal })
   return handleResponse<CabinUsagePayload>(res)
-}
-
-// ============ Focus (C8) ============
-
-export async function setCabinFocus(id: string, version: number, jobId: string | null): Promise<CabinDetail> {
-  const res = await fetch(url(`/${id}/focus`), {
-    method: "POST",
-    headers: JSON_HEADERS,
-    body: JSON.stringify({ version, job_id: jobId }),
-  })
-  const body = await handleResponse<{ cabin: CabinDetail }>(res)
-  return body.cabin
-}
-
-export async function clearCabinFocus(id: string, version: number): Promise<CabinDetail> {
-  const res = await fetch(url(`/${id}/focus?version=${version}`), { method: "DELETE" })
-  const body = await handleResponse<{ cabin: CabinDetail }>(res)
-  return body.cabin
 }
 
 // ============ SSE ============

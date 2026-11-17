@@ -243,12 +243,6 @@ export class TaskLifecycleService {
     let launched = 0
     for (const row of this.execDAO.listClaimableTaskLaunches(limit)) {
       if (this.runDAO.countActiveWork() >= MAX_PARALLEL_WORKSPACES) {
-        // C8 focus 抢占：舱聚焦作业可多用一个 slot（全局上限 MAX+1，防饥饿——
-        // 每舱至多一个 focused_job，额外 slot 只放行一条，其余作业照常排队）。
-        if (this.runDAO.countActiveWork() < MAX_PARALLEL_WORKSPACES + 1) {
-          const focused = this.execDAO.focusedClaimableTaskLaunch()
-          if (focused && this.claimAndStart(focused)) launched++
-        }
         return { launched, capped: true }
       }
       if (this.claimAndStart(row)) launched++

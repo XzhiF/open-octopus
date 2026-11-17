@@ -44,7 +44,7 @@ function workStatusLabel(status: string): string {
 /**
  * 每回合编队摘要（design 25 §6.3）：派生自 CabinView + listWorkView，不持久。
  *
- * 这是汐音「统筹帷幄」的自我认知来源：谁在跑、卡在哪、我管着几条线、哪条是焦点、
+ * 这是汐音「统筹帷幄」的自我认知来源：谁在跑、卡在哪、我管着几条线、
  * 哪些决定还没转达。它随用户消息 transient 注入，不进系统提示（不污染缓存）。
  */
 export function buildCabinSummaryReminder(
@@ -59,8 +59,6 @@ export function buildCabinSummaryReminder(
     const autonomyRule = autonomy === "auto"
       ? "inferred 可自决"
       : autonomy === "observe" ? "inferred 先向人确认" : "inferred 不派发，只记录建议"
-    const focusedJobId = cabin.focused_job_id
-    const focused = focusedJobId ? works.find((w) => w.job_id === focusedJobId || w.id === focusedJobId) : null
 
     // attention 逐条列出（已有 handle / subject），最多 8 条。
     const attentionLines = view.attention.slice(0, 8).map((a) => {
@@ -68,10 +66,9 @@ export function buildCabinSummaryReminder(
       return `${head}${a.title} [${a.stage}/${a.awaiting}]`
     })
 
-    const fleetLines = works.slice(0, 10).map((w) => {
-      const isFocus = focused && focused.id === w.id
-      return `${w.handle} ${w.title}  ${workStatusLabel(w.status)}${isFocus ? "   ← 焦点" : ""}`
-    })
+    const fleetLines = works.slice(0, 10).map((w) =>
+      `${w.handle} ${w.title}  ${workStatusLabel(w.status)}`,
+    )
 
     // 决策：待人答 vs 已答待转达（后者是汐音这回合必须处理的事）。
     const pendingDecisions = decisions?.pendingRelays(cabinId) ?? []
@@ -160,7 +157,6 @@ export function createCabinToolServer(cabinId: string) {
         title: z.string().min(1).describe("任务显示名"),
         prompt: z.string().min(1).describe("用户需求原文（逐字，权威）"),
         brief: briefSchema.optional().describe("汐音编译的可执行意图；原文另存，不可被覆盖"),
-        priority: z.number().int().optional().describe("数字优先级，默认 0"),
         mandate_strength: z.enum(["explicit", "inferred"]).optional().describe("授权强度，默认 explicit"),
         clarify: z.enum(["ask", "auto"]).optional().describe("规格澄清：ask 默认先问人；auto = 用户明确说「看着办/直接做」"),
       },
@@ -188,7 +184,6 @@ export function createCabinToolServer(cabinId: string) {
           kind: "task",
           title: input.title,
           prompt: input.prompt,
-          priority: input.priority ?? 0,
           brief: (input.brief ?? null) as CabinBriefInput | null,
           mandate: { strength, scope: "task", basis: "orchestrator-dispatch", policyVersion: 1, clarify },
         })
@@ -266,7 +261,7 @@ export function createCabinToolServer(cabinId: string) {
     ),
     tool(
       "cabin_list_jobs",
-      "统一作业账本（task/workflow/subagent）+ 独立委派：派发事实+派生 status+句柄+优先级+聚焦。监督读。",
+      "统一作业账本（task/workflow/subagent）+ 独立委派：派发事实+派生 status+句柄。监督读。",
       {},
       async () => {
         const { service } = must()
@@ -277,7 +272,7 @@ export function createCabinToolServer(cabinId: string) {
     ),
     tool(
       "cabin_job_trace",
-      "读某作业的审计时间线（dispatch/brief/report/attention/handback/note/decision/human_input/resume）。",
+      "读某作业的审计时间线（dispatch/brief/report/attention/handback/decision/human_input/resume）。",
       { job_id: z.string().min(1) },
       async (input) => {
         const { service } = must()
@@ -287,16 +282,6 @@ export function createCabinToolServer(cabinId: string) {
         }
         const events = service.listEvents(job.id)
         return { content: [{ type: "text" as const, text: JSON.stringify(events, null, 2) }] }
-      },
-    ),
-    tool(
-      "cabin_note_job",
-      "给作业 doer 发备注（steer，不授权）。subagent 一次性无 mid-run input，只留痕。",
-      { job_id: z.string().min(1), text: z.string().min(1) },
-      async (input) => {
-        const { comm } = must()
-        const event = comm.note(cabinId, input.job_id, input.text)
-        return { content: [{ type: "text" as const, text: JSON.stringify({ event_id: event.id, kind: "note" }) }] }
       },
     ),
     tool(

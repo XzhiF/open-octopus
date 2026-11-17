@@ -175,7 +175,7 @@ describe("编队摘要（design 25 §6.3）：汐音知道自己管着几条线"
 
 describe("deriveCabinView：委派进入同一套 attention", () => {
   const base = {
-    cabin: { id: CABIN, status: "active" as const, focused_job_id: null },
+    cabin: { id: CABIN, status: "active" as const },
     tasks: [], executions: [], incidents: [], asks: [], findings: [], jobs: [], maxWorkers: 4,
   }
 
@@ -200,7 +200,7 @@ describe("deriveCabinView：委派进入同一套 attention", () => {
     const view = deriveCabinView({
       ...base,
       tasks: [{ id: "t1", name: "支付回调", status: "awaiting_review", handle: "#1", color: 1 }],
-      jobs: [{ id: "j1", kind: "task", ref_id: "t1", title: "支付回调", priority: 0 }],
+      jobs: [{ id: "j1", kind: "task", ref_id: "t1", title: "支付回调" }],
     })
     expect(view.attention[0]).toMatchObject({
       handle: "#1", color: 1, subject: { kind: "task", id: "t1" },

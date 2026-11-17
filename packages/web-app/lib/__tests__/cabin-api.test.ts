@@ -5,7 +5,7 @@ vi.mock("@/lib/server-config", () => ({ getServerUrl: () => "http://localhost:30
 import {
   listCabins, createCabin, attachCabin, getCabin, patchCabin, deleteCabin,
   initCabin, getCabinInit, retryCabinInit, wakeCabin, archiveCabin, reopenCabin,
-  listCabinRepos, dispatchCabinJob, setCabinFocus, clearCabinFocus, cabinEventsUrl,
+  listCabinRepos, dispatchCabinJob, cabinEventsUrl,
   CabinApiError,
 } from "../cabin-api"
 
@@ -23,7 +23,7 @@ const cabinRow = {
   id: "cabin-1", name: "Aurora 结算平台", path: "/tmp/aurora",
   workspace_id: "ws-1", main_session_id: "sess-1", requirements: "",
   status: "active", mainline_strategy: "clean-main", org: "xzf",
-  focused_job_id: null, version: 1,
+  version: 1,
   created_at: "2026-11-12T00:00:00Z", updated_at: "2026-11-12T00:00:00Z",
   last_active_at: null, archived_at: null, cockpit_prefs: null,
 }
@@ -138,30 +138,19 @@ describe("cabin-api init / lifecycle", () => {
   })
 })
 
-describe("cabin-api repos / jobs / focus / SSE", () => {
+describe("cabin-api repos / jobs / SSE", () => {
   it("listCabinRepos unwraps repos[] with git enrichment", async () => {
     mockFetchOnce({ repos: [{ name: "a", worktree_path: "/tmp/wt", git: { branch: "cabin-cabin-1", detached: false, commit: "abcd1234" } }] })
     const repos = await listCabinRepos("cabin-1")
     expect(repos[0].git?.branch).toBe("cabin-cabin-1")
   })
 
-  it("dispatchCabinJob POSTs mandate + priority", async () => {
+  it("dispatchCabinJob POSTs mandate", async () => {
     mockFetchOnce({ job: { id: "job-1" } }, { status: 201 })
-    await dispatchCabinJob("cabin-1", { kind: "task", title: "接入渠道", mandate: { strength: "explicit" }, priority: 3 })
+    await dispatchCabinJob("cabin-1", { kind: "task", title: "接入渠道", mandate: { strength: "explicit" } })
     const [url, init] = (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls[0]
     expect(url).toBe("http://localhost:3001/api/cabins/cabin-1/jobs")
-    expect(JSON.parse(init.body)).toMatchObject({ kind: "task", priority: 3, mandate: { strength: "explicit" } })
-  })
-
-  it("setCabinFocus POSTs version + job_id; clearCabinFocus DELETEs with ?version=", async () => {
-    mockFetchOnce({ cabin: cabinRow })
-    await setCabinFocus("cabin-1", 2, "job-1")
-    mockFetchOnce({ cabin: cabinRow })
-    await clearCabinFocus("cabin-1", 3)
-    const calls = (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls
-    expect(JSON.parse(calls[0][1].body)).toEqual({ version: 2, job_id: "job-1" })
-    expect(calls[1][0]).toBe("http://localhost:3001/api/cabins/cabin-1/focus?version=3")
-    expect(calls[1][1].method).toBe("DELETE")
+    expect(JSON.parse(init.body)).toMatchObject({ kind: "task", mandate: { strength: "explicit" } })
   })
 
   it("cabinEventsUrl points at the SSE endpoint", () => {

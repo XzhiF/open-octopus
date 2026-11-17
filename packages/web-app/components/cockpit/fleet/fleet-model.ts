@@ -107,11 +107,6 @@ export function groupOf(row: CockpitRow): CockpitRowGroup {
   return 'queue'
 }
 
-function priorityOf(row: CockpitRow): number {
-  if (row.kind === 'attention') return row.item.priority
-  if (row.kind === 'job') return row.attention?.priority ?? row.job.priority
-  return 0
-}
 function timeOf(iso: string | null | undefined): number | null {
   if (!iso) return null
   const at = Date.parse(iso)
@@ -140,8 +135,8 @@ function endedAtOf(row: CockpitRow): number | null {
 
 /**
  * 返回新数组（入参不动），组序 need → run → queue → done：
- *   · need：job/task 行在前、纯 attention 行在后，组内 attention 优先级降序；
- *   · run：priority 降序，同优先级先开始的在前；
+ *   · need：job/task 行在前、纯 attention 行在后，组内保持编队顺序；
+ *   · run：先开始的在前；
  *   · queue：FIFO（created_at 升序，缺时间放最后）；
  *   · done：ended_at 降序，只留前 3。
  */
@@ -153,11 +148,9 @@ export function sortRows(rows: readonly CockpitRow[]): CockpitRow[] {
 
   buckets.need.sort((a, b) =>
     Number(a.kind === 'attention') - Number(b.kind === 'attention') ||
-    priorityOf(b) - priorityOf(a) ||
     stable(a, b))
 
   buckets.run.sort((a, b) =>
-    priorityOf(b) - priorityOf(a) ||
     (createdAtOf(a) ?? Number.POSITIVE_INFINITY) - (createdAtOf(b) ?? Number.POSITIVE_INFINITY) ||
     stable(a, b))
 
@@ -181,8 +174,8 @@ export interface CockpitCabinRef {
 
 /**
  * attention ↔ job 合并：
- *   · job_id 命中的 attention 挂到对应 job 行（同一 job 多条时行上放 priority
- *     最高的一条，其余**保留**为独立 `attn:` 行 —— 并发待办不能丢，人要能选择）；
+ *   · job_id 命中的 attention 挂到对应 job 行（同一 job 多条时行上放第一条，
+ *     其余**保留**为独立 `attn:` 行 —— 并发待办不能丢，人要能选择）；
  *   · 未命中（含 job_id=null 的 finding / 裁决类）单独成 `attn:` 行，保留全部。
  * `cabin` 用于给未命中行标归属舱；省略时从首行推断（全空舱请显式传入）。
  * 返回值是新数组，入参对象不被修改。
@@ -201,13 +194,10 @@ export function mergeAttention(
     if (item.job_id && jobIds.has(item.job_id)) {
       const prev = bestByJob.get(item.job_id)
       if (!prev) bestByJob.set(item.job_id, item)
-      else if (item.priority > prev.priority) {
+      else {
         // 2026-11-16：编队并发时同一作业可能有两条以上待办（如同时有提问与
-        // 审批）；被压下去的那条**不能丢**，转成独立 attention 行，人才能选择
+        // 审批）；压在后面的那条**不能丢**，转成独立 attention 行，人才能选择
         // 先处理哪一条。
-        extras.push(prev)
-        bestByJob.set(item.job_id, item)
-      } else {
         extras.push(item)
       }
     } else {

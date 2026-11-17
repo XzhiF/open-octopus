@@ -245,7 +245,6 @@ export function CabinOverview() {
                       )}
                     </span>
                     <span className={cn('shrink-0 rounded-full px-1.5 py-0.5 text-[9.5px] font-bold', awaiting.tone)}>{awaiting.label}</span>
-                    {item.priority > 0 && <span className="shrink-0 text-[9.5px] font-bold text-pop-dim">P{item.priority}</span>}
                     <ChevronRight className="size-3 shrink-0 text-pop-dim" />
                   </button>
                 </li>

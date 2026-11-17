@@ -44,7 +44,7 @@ function makeView(overrides: Partial<CabinView> = {}): CabinView {
     cabin: {
       id: 'cabin-1', name: 'Aurora', path: '/tmp/a', workspace_id: 'ws-1', main_session_id: 'sess-1',
       requirements: '', status: 'active', mainline_strategy: 'clean-main', org: null,
-      focused_job_id: null, version: 1, created_at: '', updated_at: '', last_active_at: null, archived_at: null,
+      version: 1, created_at: '', updated_at: '', last_active_at: null, archived_at: null,
     },
     attention: [],
     health: { running: 1, queued: 0, dormant: 0, workers: 1, max: 5 },
@@ -74,7 +74,7 @@ function task(id: string, over: Record<string, unknown> = {}) {
 function job(id: string, over: Record<string, unknown> = {}) {
   return {
     id, cabin_id: 'cabin-1', kind: 'task', ref_id: 't1', session_id: null,
-    title: `作业${id}`, mandate: null, prompt: null, priority: 0, created_at: '2026-11-13T10:00:00.000Z',
+    title: `作业${id}`, mandate: null, prompt: null, created_at: '2026-11-13T10:00:00.000Z',
     ended_at: null, status: 'running', transport: 'task-thread', ...over,
   }
 }
@@ -254,7 +254,6 @@ const ASK_ATTENTION: CabinAttentionItem[] = [{
   repo: null,
   wt: null,
   deep_link: 'ask:a1',
-  priority: 1,
   ask: { ask_id: 'a1', message_id: 'm1', decision: '接哪个渠道' },
 }]
 

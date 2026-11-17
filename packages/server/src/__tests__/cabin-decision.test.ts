@@ -100,8 +100,8 @@ beforeAll(() => {
     VALUES (?, 'org', '支付回调', 'running', ?, '{"format":"v4"}', ?, ?, ?)
   `).run(TASK, TASK_THREAD, CABIN, NOW, NOW)
   db.prepare(`
-    INSERT INTO cabin_jobs (id, cabin_id, kind, ref_id, session_id, title, priority, created_at)
-    VALUES ('j-1', ?, 'task', ?, ?, '支付回调', 0, ?)
+    INSERT INTO cabin_jobs (id, cabin_id, kind, ref_id, session_id, title, created_at)
+    VALUES ('j-1', ?, 'task', ?, ?, '支付回调', ?)
   `).run(CABIN, TASK, TASK_THREAD, NOW)
 
   dao = new CabinDAO(db)

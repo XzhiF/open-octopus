@@ -45,7 +45,7 @@ function makeView(overrides: Partial<CabinView> = {}): CabinView {
     cabin: {
       id: 'cabin-1', name: 'Aurora', path: '/tmp/a', workspace_id: 'ws-1', main_session_id: 'sess-1',
       requirements: '', status: 'active', mainline_strategy: 'clean-main', org: null,
-      focused_job_id: null, version: 1, created_at: '', updated_at: '', last_active_at: null, archived_at: null,
+      version: 1, created_at: '', updated_at: '', last_active_at: null, archived_at: null,
     },
     attention: [],
     health: { running: 0, queued: 0, dormant: 0, workers: 0, max: 5 },
@@ -282,7 +282,7 @@ describe('CabinCrew（汐音浮舱）', () => {
   })
   it('待人 attention → alert 形态 + 徽章计数', () => {
     renderCabin(<CabinCrew />, makeView({
-      attention: [{ id: 'a1', job_id: 'j1', stage: 'review', awaiting: 'person', title: '验收', task_id: 't1', repo: 'r', wt: 'w', deep_link: '', priority: 0 }],
+      attention: [{ id: 'a1', job_id: 'j1', stage: 'review', awaiting: 'person', title: '验收', task_id: 't1', repo: 'r', wt: 'w', deep_link: '' }],
     }))
     expect(screen.getByTestId('cabin-crew-pod').getAttribute('data-state')).toBe('alert')
   })

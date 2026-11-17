@@ -7,7 +7,7 @@
 import { useMemo, useState, type ReactNode } from 'react'
 import type { AgentMessage, MessageTimelineEntry, ToolCallRecord } from '@/lib/agent/types'
 import type { StreamTimelineItem } from '@/hooks/useAgentChat'
-import { displayContentFor, endsOnAsk } from '@/lib/agent/display-content'
+import { displayContentFor, endsOnAsk, proxyTurnOf } from '@/lib/agent/display-content'
 import { formatCost, formatDuration, formatTokenCount } from '@/lib/format'
 import { useBillingCurrency } from '@/lib/billing-currency'
 import { THINKING_TONE, TOOL_TONE } from '@/lib/agent/chat-colors'
@@ -586,17 +586,11 @@ export function RoleSwitchCard({ payload }: { payload: NonNullable<AgentMessage[
  *
  *  `[决策 · …]` 有两种落点：主对话里人自己的决定（结构化用户消息，普通气泡），
  *  以及汐音代述到 doer 线程的转达。后者一定带 `用户回答了以下问题：` 兼容行
- *  （formatRelayMessage 的固定形状）—— 用它区分，避免把人自己的决定画成「代你」。 */
-export function proxyTurnOf(content: string): { kind: 'decision' | 'brief' | 'note'; verbatim?: string } | null {
-  const text = content.trimStart()
-  if (/^\[决策\s*·[^\]]*\]/.test(text) && text.includes('用户回答了以下问题')) {
-    const verbatim = /（逐字）\s*(.+)/.exec(text)?.[1]?.trim()
-    return { kind: 'decision', ...(verbatim ? { verbatim } : {}) }
-  }
-  if (/^\[汐音\s*·\s*代用户转达\]/.test(text)) return { kind: 'brief' }
-  if (/^\[舱派发\s*·/.test(text)) return { kind: 'brief' }
-  return null
-}
+ *  （formatRelayMessage 的固定形状）—— 用它区分，避免把人自己的决定画成「代你」。
+ *
+ *  实现搬去 lib/agent/display-content（用户输入历史也要用），这里保留导出，
+ *  现有 import 路径不变。 */
+export { proxyTurnOf } from '@/lib/agent/display-content'
 
 function ProxyTurnLine({ message, proxy }: {
   message: AgentMessage

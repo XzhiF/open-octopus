@@ -156,13 +156,11 @@ export function CockpitFace({ entryCabinId }: CockpitFaceProps) {
       return (
         <JobFace
           cabinId={attentionOnJob.cabinId}
-          cabinVersion={selectedCabin?.version ?? 0}
           workspaceId={selectedCabin?.workspace_id ?? null}
           jobId={attentionOnJob.job.id}
           variant="cockpit"
           entryCabinId={entryCabinId}
           mainSessionId={selectedCabin?.main_session_id ?? null}
-          focusedJobId={selectedCabin ? selectedCabin.focused_job_id : undefined}
           onMutated={refetch}
           cockpit={{
             cabinName,
@@ -182,13 +180,11 @@ export function CockpitFace({ entryCabinId }: CockpitFaceProps) {
       return (
         <JobFace
           cabinId={selection.cabinId}
-          cabinVersion={selectedCabin?.version ?? 0}
           workspaceId={selectedCabin?.workspace_id ?? null}
           jobId={selection.id}
           variant="cockpit"
           entryCabinId={entryCabinId}
           mainSessionId={selectedCabin?.main_session_id ?? null}
-          focusedJobId={selectedCabin ? selectedCabin.focused_job_id : undefined}
           onMutated={refetch}
           cockpit={{
             cabinName,

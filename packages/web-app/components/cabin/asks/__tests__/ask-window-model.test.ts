@@ -23,7 +23,6 @@ function attn(over: Partial<CabinAttentionItem> = {}): CabinAttentionItem {
     repo: null,
     wt: null,
     deep_link: 'ask:a1',
-    priority: 1,
     ask: {
       ask_id: 'a1',
       message_id: 'm1',

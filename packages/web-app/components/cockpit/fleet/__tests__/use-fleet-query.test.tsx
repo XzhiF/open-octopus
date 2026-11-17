@@ -39,7 +39,6 @@ function cabin(id: string, name = `舱${id}`, status: CabinDetail['status'] = 'a
     status,
     mainline_strategy: 'clean-main',
     org: null,
-    focused_job_id: null,
     version: 1,
     created_at: '2026-11-14T00:00:00.000Z',
     updated_at: '2026-11-14T00:00:00.000Z',
@@ -67,7 +66,6 @@ function job(id: string, over: Partial<CabinJobView> = {}): CabinJobView {
     title: `作业${id}`,
     mandate: null,
     prompt: null,
-    priority: 0,
     created_at: '2026-11-14T00:00:00.000Z',
     ended_at: null,
     status: 'running',
@@ -106,7 +104,6 @@ function attention(id: string, over: Partial<CabinAttentionItem> = {}): CabinAtt
     repo: null,
     wt: null,
     deep_link: null,
-    priority: 0,
     ...over,
   }
 }
@@ -228,7 +225,7 @@ describe('useFleetQuery — attention 合并 / arrivals', () => {
         cabin: cabin('c1'),
         jobs: [job('j1', { status: 'running' })],
         attention: [
-          attention('a-matched', { job_id: 'j1', priority: 4 }),
+          attention('a-matched', { job_id: 'j1' }),
           attention('finding-1', { job_id: null, stage: 'adjudicate' }),
         ],
       },

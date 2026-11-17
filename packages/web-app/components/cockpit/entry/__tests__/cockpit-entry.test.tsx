@@ -50,7 +50,6 @@ function job(id: string, over: Partial<CabinJobView> = {}, cabinId = 'c1'): Cabi
     title: `作业 ${id}`,
     mandate: null,
     prompt: null,
-    priority: 0,
     created_at: '2026-11-14T09:00:00.000Z',
     ended_at: null,
     status: 'running',
@@ -120,18 +119,18 @@ beforeEach(() => {
 })
 
 describe('CockpitUrlSync — 默认选中 / 无效 ref 回退 / 跨舱', () => {
-  it('无 ref：编队首次加载完成后落 need（priority 降序）', async () => {
+  it('无 ref：编队首次加载完成后落第一条 need', async () => {
     const rows = [
       jobRow(job('run1', { status: 'running' })),
-      jobRow(job('need-low', { status: 'awaiting_review', priority: 2 })),
-      jobRow(job('need-high', { status: 'awaiting_review', priority: 9 })),
+      jobRow(job('need-first', { status: 'awaiting_review' })),
+      jobRow(job('need-second', { status: 'awaiting_review' })),
     ]
     const { load } = renderSync('/cabin/c1/cockpit', fleet([], false))
     expect(screen.getByTestId('selection').textContent).toBe('none')
 
     load(rows)
-    await waitFor(() => expect(screen.getByTestId('selection').textContent).toBe('job:c1:need-high'))
-    await waitFor(() => expect(screen.getByTestId('url').textContent).toBe('/cabin/c1/cockpit?job=need-high'))
+    await waitFor(() => expect(screen.getByTestId('selection').textContent).toBe('job:c1:need-first'))
+    await waitFor(() => expect(screen.getByTestId('url').textContent).toBe('/cabin/c1/cockpit?job=need-first'))
   })
 
   it('默认选中只落一次：收面后不会被自动弹回', async () => {
@@ -186,7 +185,6 @@ describe('CockpitUrlSync — 默认选中 / 无效 ref 回退 / 跨舱', () => {
       repo: null,
       wt: null,
       deep_link: null,
-      priority: 4,
     }
     const rows: CockpitRow[] = [{ ...jobRow(job('j1')), attention } as CockpitRow]
     const { load } = renderSync('/cabin/c1/cockpit?attn=a1', fleet([], false))

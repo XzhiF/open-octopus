@@ -209,8 +209,6 @@ async function enrichTaskRows(
   if (targets.length === 0) return [...rows]
 
   targets.sort((a, b) =>
-    (b.row.attention?.priority ?? b.row.job.priority) -
-      (a.row.attention?.priority ?? a.row.job.priority) ||
     (Date.parse(a.row.job.created_at) || 0) - (Date.parse(b.row.job.created_at) || 0))
 
   const next = [...rows]

@@ -41,7 +41,6 @@ function jobView(id: string, over: Partial<CabinJobView> = {}): CabinJobView {
     title: `作业 ${id}`,
     mandate: null,
     prompt: null,
-    priority: 0,
     created_at: '2026-11-14T09:00:00.000Z',
     ended_at: null,
     status: 'running',
@@ -76,7 +75,6 @@ function attention(id: string, over: Partial<CabinAttentionItem> = {}): CabinAtt
     repo: null,
     wt: null,
     deep_link: null,
-    priority: 1,
     ...over,
   }
 }

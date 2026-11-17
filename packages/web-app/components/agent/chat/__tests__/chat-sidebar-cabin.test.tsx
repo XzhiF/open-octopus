@@ -8,7 +8,7 @@ function cabin(id: string, name: string, status: CabinDetail['status']): CabinDe
   return {
     id, name, path: `/tmp/${id}`, workspace_id: 'ws', main_session_id: 'sess',
     requirements: '', status, mainline_strategy: 'clean-main', org: null,
-    focused_job_id: null, version: 1, created_at: '', updated_at: '',
+    version: 1, created_at: '', updated_at: '',
     last_active_at: null, archived_at: null,
   }
 }

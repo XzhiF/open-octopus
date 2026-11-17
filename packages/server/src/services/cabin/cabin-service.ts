@@ -459,7 +459,7 @@ export class CabinService {
       requirements: input.requirements ?? "",
       status: "draft", mainline_strategy: "clean-main",
       org, init_state: null, cockpit_prefs: null,
-      focused_job_id: null, version: 1,
+      version: 1,
       created_at: ts, updated_at: ts, last_active_at: ts, archived_at: null, deleted_at: null,
     }
     this.cabin.insert(row)
@@ -528,7 +528,7 @@ export class CabinService {
               workspace_id: null, main_session_id: null,
               requirements, status, mainline_strategy: "clean-main",
               org: m.org ?? null, init_state: null, cockpit_prefs: null,
-              focused_job_id: null, version: 1,
+              version: 1,
               created_at: m.createdAt ?? ts, updated_at: ts, last_active_at: ts, archived_at: null,
               deleted_at: null,
             })
@@ -777,9 +777,6 @@ export class CabinService {
   updateCockpitPrefs(id: string, version: number, prefs: unknown): CabinRow {
     return this.patch(id, version, { cockpit_prefs: JSON.stringify(prefs) })
   }
-  setFocus(id: string, version: number, jobId: string | null): CabinRow {
-    return this.patch(id, version, { focused_job_id: jobId })
-  }
   touch(id: string): void {
     const row = this.mustGet(id)
     this.cabin.updateFields(id, row.version, { last_active_at: now() }, now())
@@ -824,12 +821,12 @@ export class CabinService {
       delegationRows.map((d) => ({ id: d.id, created_at: d.created_at })), "delegation",
     )
     const view = deriveCabinView({
-      cabin: { id: row.id, status: row.status, focused_job_id: row.focused_job_id },
+      cabin: { id: row.id, status: row.status },
       tasks, executions,
       incidents: this.gatherIncidents(taskRows.map((t) => t.id), execToTask),
       asks: this.gatherAsks(row, executions, execToTask, sessionToTask),
       findings: this.listFindings(id, "open").map((f) => ({ id: f.id, title: f.title, status: f.status })),
-      jobs: jobs.map((j) => ({ id: j.id, kind: j.kind, ref_id: j.ref_id, title: j.title, priority: j.priority })),
+      jobs: jobs.map((j) => ({ id: j.id, kind: j.kind, ref_id: j.ref_id, title: j.title })),
       delegations: delegationRows.map((d) => {
         const h = delegationHandles.get(d.id)
         return {
@@ -1203,7 +1200,7 @@ export class CabinService {
   getJob(id: string): CabinJobRow | undefined { return this.cabin.findJob(id) }
   dispatchJob(cabinId: string, input: {
     kind: CabinJobKind; ref_id?: string | null; session_id?: string | null
-    title: string; mandate?: unknown; prompt?: string | null; priority?: number
+    title: string; mandate?: unknown; prompt?: string | null
   }): CabinJobRow {
     this.mustGet(cabinId)
     const row: CabinJobRow = {
@@ -1211,36 +1208,12 @@ export class CabinService {
       ref_id: input.ref_id ?? null, session_id: input.session_id ?? null,
       title: input.title,
       mandate: input.mandate ? JSON.stringify(input.mandate) : null,
-      prompt: input.prompt ?? null, priority: input.priority ?? 0,
+      prompt: input.prompt ?? null,
       created_at: now(), ended_at: null,
     }
     this.cabin.insertJob(row)
     this.appendEvent(row.id, cabinId, "dispatch", "orchestrator", { title: row.title, mandate: input.mandate ?? null })
     return row
-  }
-  setJobPriority(id: string, priority: number): void { this.cabin.updateJobPriority(id, priority) }
-
-  /** C8 提优先：priority + 任务类 bump next_fire_at（ready 才可触发；其余状态
-   *  仅 claim 排序生效，不炸）。 */
-  async bumpJobPriority(cabinId: string, jobId: string, priority: number): Promise<void> {
-    const job = this.mustJobInCabin(cabinId, jobId)
-    this.cabin.updateJobPriority(jobId, priority)
-    if (job.kind === "task" && job.ref_id && this.infra?.tasksService) {
-      const task = this.infra.taskDAO.getById(job.ref_id)
-      if (task?.status === "ready") {
-        try {
-          await this.infra.tasksService.triggerTask(job.ref_id)
-        } catch (err) {
-          console.warn(`[CabinService] priority bump trigger skipped: ${errMsg(err)}`)
-        }
-      }
-    }
-  }
-
-  private mustJobInCabin(cabinId: string, jobId: string): CabinJobRow {
-    const job = this.cabin.findJob(jobId)
-    if (!job || job.cabin_id !== cabinId) throw new CabinNotFoundError(`${cabinId}/job:${jobId}`)
-    return job
   }
 
   /** C2 agent 可知：舱内任务清单（派生状态，单写者=任务行）。 */
@@ -1329,7 +1302,7 @@ export class CabinService {
           id: j.ref_id as string, kind: "task" as const,
           handle: h?.handle ?? "#?", color: h?.color ?? 0,
           title: j.title, status: j.status,
-          session_id: j.session_id, job_id: j.id, priority: j.priority,
+          session_id: j.session_id, job_id: j.id,
         } satisfies CabinWorkRow
       }),
       ...delegations.map((d) => {
@@ -1338,7 +1311,7 @@ export class CabinService {
           id: d.id, kind: "delegation" as const,
           handle: h?.handle ?? "D?", color: h?.color ?? 0,
           title: d.title, status: d.state,
-          session_id: d.doer_session_id, job_id: d.id, priority: 0,
+          session_id: d.doer_session_id, job_id: d.id,
         } satisfies CabinWorkRow
       }),
     ]

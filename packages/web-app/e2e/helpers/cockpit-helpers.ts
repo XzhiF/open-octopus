@@ -187,7 +187,6 @@ export async function seedCockpitCabin(): Promise<SeededCockpit> {
         kind: "workflow",
         title: "E2E-Cockpit · 工作流作业",
         prompt: "E2E fixture: workflow job with no execution attached.",
-        priority: 0,
       },
       headers: { "Content-Type": "application/json" },
     })
@@ -201,7 +200,6 @@ export async function seedCockpitCabin(): Promise<SeededCockpit> {
         // `inferred` keeps the server-side wake on the confirmation path instead
         // of the "explicit self-approve and execute" path.
         mandate: { strength: "inferred", scope: "e2e" },
-        priority: 0,
       },
       headers: { "Content-Type": "application/json" },
     })

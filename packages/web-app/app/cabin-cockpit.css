@@ -436,3 +436,144 @@ body.float-holo [data-testid="cabin-window"]::after {
 .ck-fleet-gh b { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 9.5px }
 .ck-fleet-gh[data-group='ask'], .ck-fleet-gh[data-group='ask'] b { color: var(--pop-amber) }
 .ck-frow.askrow .s { color: var(--pop-amber); opacity: .8; overflow: hidden; text-overflow: ellipsis; white-space: nowrap }
+
+/* ════════════ 作业详情（classic 窗）· v21 统计概览 / 三方对接 / 文件树 ════════════
+   概览与对接只读 cabin_job_events + 任务实体（不新造数）：概览给统计读数，
+   对接按「你 → 汐音 → 执行者」三方发言铺开。文件页复用全域的 ck12 文件树控件，
+   classic 窗不在 .ck12-app 里，所以这里补同一组 token 别名。 */
+.cabin-job-scope {
+  --ck12-ink: var(--pop-ink);
+  --ck12-dim: var(--pop-dim);
+  --ck12-faint: color-mix(in srgb, var(--pop-dim) 62%, transparent);
+  --ck12-bd: color-mix(in srgb, var(--pop-ink) 9%, transparent);
+  --ck12-bd2: color-mix(in srgb, var(--pop-ink) 14%, transparent);
+  --ck12-green: var(--pop-green);
+  --ck12-amber: var(--pop-amber);
+  --ck12-red: var(--pop-red);
+  --ck12-cyan: var(--pop-cyan);
+  --ck12-violet: var(--pop-violet);
+  --ck12-glow: var(--ck-glow, 1);
+}
+.cabin-job-scope .ck12-jstat { background: color-mix(in srgb, var(--pop-idle) 72%, transparent) }
+.cabin-job-overview { min-height: 0 }
+
+/* 验收标准列表（概览 · 任务摘要） */
+.ck12-jac { display: flex; flex-direction: column; gap: 3px; margin: 6px 0 0; padding: 0; list-style: none }
+.ck12-jac li { display: flex; gap: 6px; font-size: 10.5px; line-height: 1.6; color: var(--ck12-dim) }
+.ck12-jac li span { flex: none; color: var(--ck12-cyan) }
+
+/* 对接：三方在场 + 发言气泡（原型 classic-v5 .relay-map / .rm） */
+.cabin-relay { height: 100%; min-height: 0; display: flex }
+.cabin-relay-pane { flex: 1; min-width: 0; min-height: 0; display: flex; flex-direction: column }
+.cabin-relay-h {
+  flex: none; display: flex; align-items: center; gap: 8px; padding-bottom: 8px;
+  font-size: 11px; color: var(--pop-dim);
+}
+.cabin-relay-h b { font-size: 12px; color: var(--pop-ink) }
+.cabin-relay-count { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 9.5px }
+.cabin-relay-go {
+  display: inline-flex; align-items: center; gap: 4px; margin-left: auto;
+  font-size: 10px; color: var(--pop-cyan);
+}
+.cabin-relay-go + .cabin-relay-go { margin-left: 0 }
+.cabin-relay-go:hover { text-decoration: underline }
+.cabin-relay-body { flex: 1; min-height: 0; overflow: auto; padding-right: 2px }
+
+.cabin-relay-map {
+  display: flex; align-items: center; flex-wrap: wrap; gap: 7px;
+  margin-bottom: 10px; padding: 7px 10px;
+  border: 1px dashed var(--w12); border-radius: 10px;
+  font-size: 10.5px; color: var(--pop-dim);
+}
+.cabin-relay-map .party { display: inline-flex; align-items: baseline; gap: 5px }
+.cabin-relay-map .party b { font-size: 11px; font-weight: 700 }
+.cabin-relay-map .party em {
+  font-style: normal; font-size: 8.5px; color: rgba(150, 152, 163, .72);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+.cabin-relay-map .party.is-you b { color: var(--pop-cyan) }
+.cabin-relay-map .party.is-xiyin b { color: var(--pop-violet) }
+.cabin-relay-map .party.is-doer b { color: var(--pop-ink); opacity: .82 }
+.cabin-relay-map .party i {
+  width: 5px; height: 5px; border-radius: 50%;
+  background: var(--pop-violet); box-shadow: 0 0 6px var(--pop-violet);
+}
+.cabin-relay-map .link { width: 12px; height: 12px; color: var(--pop-dim); opacity: .7 }
+.cabin-relay-map .tail { margin-left: auto; font-size: 9.5px; color: rgba(150, 152, 163, .6) }
+
+.cabin-relay-flow { display: flex; flex-direction: column; gap: 9px }
+.cabin-rm {
+  max-width: 86%; padding: 6px 10px; border-radius: 9px;
+  font-size: 11.5px; line-height: 1.6;
+}
+.cabin-rm.is-you {
+  align-self: flex-end;
+  background: color-mix(in srgb, var(--pop-cyan) 10%, transparent);
+  border: 1px solid color-mix(in srgb, var(--pop-cyan) 28%, transparent);
+}
+.cabin-rm.is-xiyin {
+  align-self: flex-start;
+  background: color-mix(in srgb, var(--pop-violet) 8%, transparent);
+  border: 1px solid color-mix(in srgb, var(--pop-violet) 30%, transparent);
+}
+.cabin-rm.is-doer {
+  align-self: flex-start; margin-left: 20px;
+  background: rgba(255, 255, 255, .025); border: 1px dashed var(--w12);
+}
+.cabin-rm-h {
+  display: flex; align-items: baseline; gap: 6px; margin-bottom: 3px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 8px; color: rgba(150, 152, 163, .72);
+}
+.cabin-rm.is-you .cabin-rm-h b { color: var(--pop-cyan) }
+.cabin-rm.is-xiyin .cabin-rm-h b { color: var(--pop-violet) }
+.cabin-rm.is-doer .cabin-rm-h b { color: var(--pop-dim) }
+.cabin-rm-h .k {
+  padding: 0 4px; border: 1px solid var(--w12); border-radius: 4px; font-size: 8px;
+}
+.cabin-rm-h .t { margin-left: auto }
+.cabin-rm p { margin: 0; white-space: pre-wrap; word-break: break-word; color: var(--pop-ink) }
+.cabin-rm.is-doer p { color: rgba(245, 245, 242, .72) }
+.cabin-rm p.is-clamp {
+  display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden;
+}
+.cabin-rm-more { padding: 0; border: 0; background: none; font-size: 9.5px; color: var(--pop-cyan) }
+.cabin-rm-more:hover { text-decoration: underline }
+.cabin-relay-empty { padding: 18px 12px; font-size: 10.5px; color: var(--pop-dim); text-align: center }
+.cabin-relay-foot {
+  flex: none; margin-top: 8px; padding-top: 8px;
+  border-top: 1px dashed var(--w10); font-size: 10px; color: var(--pop-dim);
+}
+
+/* 概览 · 阶段统计（每 phase 一行：P# / 名字 / 当前轮 / 派生态） */
+.ck12-jphase { display: flex; flex-direction: column; gap: 4px; margin: 6px 0 0; padding: 0; list-style: none }
+.ck12-jphase li { display: flex; align-items: center; gap: 7px; font-size: 10px; color: var(--ck12-dim) }
+.ck12-jphase .p {
+  flex: none; width: 22px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 9px; color: var(--ck12-faint);
+}
+.ck12-jphase .n {
+  flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--ck12-ink);
+}
+.ck12-jphase .r {
+  flex: none; font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 9px; color: var(--ck12-faint);
+}
+.ck12-jphase .s { flex: none; padding: 0 6px; border-radius: 999px; font-size: 8.5px }
+
+/* 对接 · 完整链路（执行者回报汐音 → 汐音汇总给人）与「汐音 → 你」回告气泡 */
+.cabin-relay-chain {
+  display: flex; align-items: center; flex-wrap: wrap; gap: 5px;
+  margin: -3px 0 10px; padding: 4px 10px;
+  border-radius: 8px; border: 1px solid var(--w8); background: rgba(255, 255, 255, .02);
+  font-size: 9px; color: var(--pop-dim);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+.cabin-relay-chain > span { margin-right: 3px; letter-spacing: .08em; color: rgba(150, 152, 163, .72) }
+.cabin-relay-chain b { color: var(--pop-ink); font-weight: 700 }
+.cabin-relay-chain i { font-style: normal; color: var(--pop-dim); opacity: .65 }
+.cabin-rm.is-mirror {
+  border-style: solid;
+  border-color: color-mix(in srgb, var(--pop-violet) 34%, transparent);
+  box-shadow: inset 2px 0 0 var(--pop-violet);
+}

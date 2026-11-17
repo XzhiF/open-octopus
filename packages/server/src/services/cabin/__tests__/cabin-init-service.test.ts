@@ -20,7 +20,7 @@ function makeRow(over: Partial<CabinRow> & { id: string; path: string }): CabinR
     name: "测试舱", workspace_id: null, main_session_id: "sess-1",
     requirements: "# 需求\n\n做一个结算平台", status: "initializing",
     mainline_strategy: "clean-main", org: null, init_state: null, cockpit_prefs: null,
-    focused_job_id: null, version: 1,
+    version: 1,
     created_at: ts, updated_at: ts, last_active_at: ts, archived_at: null, deleted_at: null,
     ...over,
   }

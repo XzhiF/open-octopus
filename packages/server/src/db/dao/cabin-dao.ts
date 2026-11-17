@@ -30,12 +30,12 @@ export class CabinDAO extends BaseDAO {
   insert(row: CabinRow): void {
     this.stmt(`
       INSERT INTO cabins (id, name, path, workspace_id, main_session_id, requirements, status,
-        mainline_strategy, org, init_state, cockpit_prefs, focused_job_id, version,
+        mainline_strategy, org, init_state, cockpit_prefs, version,
         created_at, updated_at, last_active_at, archived_at, deleted_at)
-      VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+      VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
     `).run(
       row.id, row.name, row.path, row.workspace_id, row.main_session_id, row.requirements, row.status,
-      row.mainline_strategy, row.org, row.init_state, row.cockpit_prefs, row.focused_job_id, row.version,
+      row.mainline_strategy, row.org, row.init_state, row.cockpit_prefs, row.version,
       row.created_at, row.updated_at, row.last_active_at, row.archived_at, row.deleted_at,
     )
   }
@@ -76,7 +76,7 @@ export class CabinDAO extends BaseDAO {
 
   /** Optimistic-lock field update; returns false on version conflict. */
   updateFields(id: string, expectedVersion: number, fields: Partial<Pick<CabinRow,
-    "name" | "requirements" | "mainline_strategy" | "org" | "init_state" | "cockpit_prefs" | "focused_job_id" | "last_active_at" | "archived_at"
+    "name" | "requirements" | "mainline_strategy" | "org" | "init_state" | "cockpit_prefs" | "last_active_at" | "archived_at"
   >>, now: string): boolean {
     const sets: string[] = []
     const vals: unknown[] = []
@@ -118,9 +118,10 @@ export class CabinDAO extends BaseDAO {
   }
 
   // ── jobs (dispatch ledger; status derived elsewhere, K3) ──
+  /** 作业账本按派发顺序（FIFO）；作业状态/提醒排序读侧派生，不靠这张表。 */
   insertJob(row: CabinJobRow): void {
-    this.stmt(`INSERT INTO cabin_jobs (id, cabin_id, kind, ref_id, session_id, title, mandate, prompt, priority, created_at, ended_at)
-      VALUES (?,?,?,?,?,?,?,?,?,?,?)`).run(row.id, row.cabin_id, row.kind, row.ref_id, row.session_id, row.title, row.mandate, row.prompt, row.priority, row.created_at, row.ended_at)
+    this.stmt(`INSERT INTO cabin_jobs (id, cabin_id, kind, ref_id, session_id, title, mandate, prompt, created_at, ended_at)
+      VALUES (?,?,?,?,?,?,?,?,?,?)`).run(row.id, row.cabin_id, row.kind, row.ref_id, row.session_id, row.title, row.mandate, row.prompt, row.created_at, row.ended_at)
   }
 
   findJob(id: string): CabinJobRow | undefined {
@@ -133,11 +134,7 @@ export class CabinDAO extends BaseDAO {
   }
 
   listJobs(cabinId: string): CabinJobRow[] {
-    return this.stmt("SELECT * FROM cabin_jobs WHERE cabin_id = ? ORDER BY priority DESC, created_at").all(cabinId) as CabinJobRow[]
-  }
-
-  updateJobPriority(id: string, priority: number): void {
-    this.stmt("UPDATE cabin_jobs SET priority = ? WHERE id = ?").run(priority, id)
+    return this.stmt("SELECT * FROM cabin_jobs WHERE cabin_id = ? ORDER BY created_at").all(cabinId) as CabinJobRow[]
   }
 
   endJob(id: string, now: string): void {

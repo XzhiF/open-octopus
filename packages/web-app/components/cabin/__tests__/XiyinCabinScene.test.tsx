@@ -32,14 +32,14 @@ const mockUseCabin = vi.mocked(useCabin)
 
 const attentionItem = (over: Record<string, unknown> = {}) => ({
   id: 'a1', job_id: 'j1', stage: 'review', awaiting: 'person', title: '验收',
-  task_id: 't1', repo: 'r', wt: 'w', deep_link: '', priority: 0,
+  task_id: 't1', repo: 'r', wt: 'w', deep_link: '',
   ...over,
 })
 
 const cabinOf = (id: string, name: string, status: CabinDetail['status'] = 'active') => ({
   id, name, path: `/tmp/${id}`, workspace_id: 'ws-1', main_session_id: 's1',
   requirements: '', status, mainline_strategy: 'clean-main', org: null,
-  focused_job_id: null, version: 1, created_at: '', updated_at: '',
+  version: 1, created_at: '', updated_at: '',
   last_active_at: null, archived_at: null, cockpit_prefs: null,
 } as unknown as CabinDetail)
 

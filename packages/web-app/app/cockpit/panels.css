@@ -149,7 +149,6 @@
 .ck12-ops-go:hover { background: color-mix(in srgb, var(--ck-a) 14%, transparent); }
 .ck12-ops-detail { border-color: var(--ck12-bd); color: var(--ck12-dim); }
 .ck12-ops-detail:hover { color: var(--ck12-ink); background: rgba(255, 255, 255, 0.05); }
-.ck12-ops-pri { margin-left: auto; font-family: var(--font-mono); font-size: 9px; color: var(--ck12-faint); }
 .ck12-ops-foot { margin-top: 12px; font-size: 9.5px; color: var(--ck12-faint); text-align: center; }
 
 @media (max-width: 900px) {

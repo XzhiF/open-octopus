@@ -59,7 +59,6 @@ function cabin(id: string, name = `舱${id}`): CabinDetail {
     status: 'active',
     mainline_strategy: 'clean-main',
     org: null,
-    focused_job_id: null,
     version: 3,
     created_at: '2026-11-14T00:00:00.000Z',
     updated_at: '2026-11-14T00:00:00.000Z',
@@ -87,7 +86,6 @@ function jobView(cabinId: string, over: Partial<CabinJobView> = {}): CabinJobVie
     title: '审计工作流',
     mandate: null,
     prompt: '跑一遍审计',
-    priority: 1,
     created_at: '2026-11-14T00:00:00.000Z',
     ended_at: null,
     status: 'running',
@@ -109,7 +107,6 @@ function attentionItem(over: Partial<CabinAttentionItem> = {}): CabinAttentionIt
     repo: 'pay',
     wt: '/wt/pay',
     deep_link: null,
-    priority: 5,
     ...over,
   }
 }
@@ -129,7 +126,6 @@ function mockJob(cabinId = 'cabin-1', over: Partial<CabinJobView> = {}) {
       title: job.title,
       mandate: null,
       prompt: job.prompt,
-      priority: job.priority,
       created_at: job.created_at,
       ended_at: job.ended_at,
     },

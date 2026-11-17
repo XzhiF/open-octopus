@@ -39,7 +39,7 @@ function insertCabin(id: string): void {
     id, name: `舱${id}`, path: path.join(tmpDir, id), workspace_id: "ws-1",
     main_session_id: "s-main", requirements: "", status: "active",
     mainline_strategy: "clean-main", org: "org", init_state: null, cockpit_prefs: null,
-    focused_job_id: null, version: 1, created_at: NOW, updated_at: NOW,
+    version: 1, created_at: NOW, updated_at: NOW,
     last_active_at: NOW, archived_at: null, deleted_at: null,
   })
 }
@@ -392,13 +392,13 @@ describe("attention gather（P4-3 / C4）", () => {
     expect(adj?.deep_link).toBe("finding:f1")
   })
 
-  it("person-first + priority 排序：高优先作业排前", () => {
+  it("person-first：待人的作业排在纯 attention 前，组内保持输入顺序", () => {
     insertTask("t1", "c1", "awaiting_review")
     insertTask("t2", "c1", "awaiting_review")
-    svc.dispatchJob("c1", { kind: "task", ref_id: "t2", title: "高优先", priority: 5 })
+    svc.dispatchJob("c1", { kind: "task", ref_id: "t1", title: "先" })
+    svc.dispatchJob("c1", { kind: "task", ref_id: "t2", title: "后" })
     const { view } = svc.getView("c1")
-    expect(view.attention[0].task_id).toBe("t2")
-    expect(view.attention[0].priority).toBe(5)
+    expect(view.attention.map((a) => a.task_id)).toEqual(["t1", "t2"])
   })
 })
 
@@ -453,38 +453,17 @@ describe("usage 聚合（P4-5 / C7）", () => {
   })
 })
 
-describe("claim 优先级 + 聚焦（P4-6 / C8）", () => {
-  it("priority DESC 优先，同级 FIFO；无舱作业行为同旧", () => {
-    insertTask("t-low", "c1")
-    insertTask("t-high", "c1")
-    insertTask("t-plain", "c1")
-    svc.dispatchJob("c1", { kind: "task", ref_id: "t-low", title: "低", priority: 1 })
-    svc.dispatchJob("c1", { kind: "task", ref_id: "t-high", title: "高", priority: 9 })
-    insertExecution("e-low", "t-low", "pending", "2026-11-12T09:00:00.000Z")
-    insertExecution("e-high", "t-high", "pending", "2026-11-12T09:30:00.000Z")
-    insertExecution("e-plain", "t-plain", "pending", "2026-11-12T08:00:00.000Z")
+describe("claim 队列（P4-6）", () => {
+  it("FIFO：按 created_at 升序领取", () => {
+    insertTask("t-early", "c1")
+    insertTask("t-mid", "c1")
+    insertTask("t-late", "c1")
+    insertExecution("e-late", "t-late", "pending", "2026-11-12T09:30:00.000Z")
+    insertExecution("e-early", "t-early", "pending", "2026-11-12T08:00:00.000Z")
+    insertExecution("e-mid", "t-mid", "pending", "2026-11-12T09:00:00.000Z")
 
     const rows = executionDAO.listClaimableTaskLaunches(10)
-    expect(rows.map((r) => r.id)).toEqual(["e-high", "e-low", "e-plain"])
-  })
-
-  it("聚焦作业最先 + focusedClaimableTaskLaunch 命中", () => {
-    insertTask("t1", "c1")
-    insertTask("t2", "c1")
-    const j1 = svc.dispatchJob("c1", { kind: "task", ref_id: "t1", title: "一", priority: 9 })
-    svc.dispatchJob("c1", { kind: "task", ref_id: "t2", title: "二", priority: 0 })
-    insertExecution("e1", "t1", "pending", "2026-11-12T09:00:00.000Z")
-    insertExecution("e2", "t2", "pending", "2026-11-12T08:00:00.000Z")
-
-    svc.setFocus("c1", 1, j1.id)
-    // e2 虽早且无聚焦，但聚焦的 e1 排最前（即使 priority 低于其他聚焦外作业也抢占）
-    const rows = executionDAO.listClaimableTaskLaunches(10)
-    expect(rows[0].id).toBe("e1")
-    expect(executionDAO.focusedClaimableTaskLaunch()?.id).toBe("e1")
-
-    svc.setFocus("c1", 2, null)
-    expect(executionDAO.focusedClaimableTaskLaunch()).toBeNull()
-    expect(executionDAO.listClaimableTaskLaunches(10)[0].id).toBe("e1") // priority 9 仍最先
+    expect(rows.map((r) => r.id)).toEqual(["e-early", "e-mid", "e-late"])
   })
 })
 
@@ -512,7 +491,7 @@ describe("listJobsView · agent_running（编队「作者在推进」）", () =>
     insertTask("t1", "c1", "ready")
     cabinDAO.insertJob({
       id: "j1", cabin_id: "c1", kind: "task", ref_id: "t1", session_id: "s-author",
-      title: "作业一", mandate: null, prompt: null, priority: 0,
+      title: "作业一", mandate: null, prompt: null,
       created_at: NOW, ended_at: null,
     })
 

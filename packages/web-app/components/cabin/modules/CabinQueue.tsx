@@ -161,7 +161,7 @@ export function CabinQueue() {
         <span>
           主 chat 单线程：一次只路由一条，处理完等你点下一条。点击队列项可<b className="text-pop-ink">优先派发</b>；
           分身 / 工作树回流会先反馈给汐音，再由她报给你。kind 映射 cabin_job_events
-          （review/answer/finding/approval=attention · result=report · progress=内部不 wake），prio 映射 cabin_jobs.priority。
+          （review/answer/finding/approval=attention · result=report · progress=内部不 wake）。
         </span>
       </WbNote>
 

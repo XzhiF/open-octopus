@@ -7,7 +7,7 @@ import type { CabinRow } from "../../types"
 const row = (id: string, path: string): CabinRow => ({
   id, name: id, path, workspace_id: null, main_session_id: null,
   requirements: "", status: "draft", mainline_strategy: "clean-main",
-  org: null, init_state: null, cockpit_prefs: null, focused_job_id: null,
+  org: null, init_state: null, cockpit_prefs: null,
   version: 1, created_at: "t0", updated_at: "t0", last_active_at: null, archived_at: null, deleted_at: null,
 })
 
@@ -52,7 +52,7 @@ describe("CabinDAO", () => {
     dao.insert(row("c1", "/a"))
     dao.insertJob({
       id: "j1", cabin_id: "c1", kind: "task", ref_id: "t1", session_id: null,
-      title: "job", mandate: null, prompt: null, priority: 0,
+      title: "job", mandate: null, prompt: null,
       created_at: "t0", ended_at: null,
     })
     dao.appendEvent({ id: "e1", job_id: "j1", cabin_id: "c1", kind: "dispatch", actor: "orchestrator", payload: "{}", created_at: "t0" })
@@ -62,7 +62,7 @@ describe("CabinDAO", () => {
 
   it("cascade delete removes events/jobs/cabin", () => {
     dao.insert(row("c1", "/a"))
-    dao.insertJob({ id: "j1", cabin_id: "c1", kind: "task", ref_id: null, session_id: null, title: "j", mandate: null, prompt: null, priority: 0, created_at: "t0", ended_at: null })
+    dao.insertJob({ id: "j1", cabin_id: "c1", kind: "task", ref_id: null, session_id: null, title: "j", mandate: null, prompt: null, created_at: "t0", ended_at: null })
     dao.appendEvent({ id: "e1", job_id: "j1", cabin_id: "c1", kind: "dispatch", actor: "orchestrator", payload: "{}", created_at: "t0" })
     dao.deleteEventsByCabin("c1")
     dao.deleteJobsByCabin("c1")

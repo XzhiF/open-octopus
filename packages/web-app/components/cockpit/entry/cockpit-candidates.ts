@@ -7,7 +7,7 @@
 //   · use-cockpit-url-sync：默认选中（§1.3）与无效 ref 回退；
 //   · CockpitShortcuts 的 ⌥1「最紧要的一条」。
 //
-// 数字纪律：这里只读行上已有的真字段（priority / group），不造优先级。
+// 数字纪律：这里只读行上已有的真字段（group），不造优先级。
 
 import { groupOf, type CockpitRow } from '../fleet/fleet-model'
 import type { CockpitRef } from '../state/cockpit-state'
@@ -20,14 +20,8 @@ export function rowCockpitRef(row: CockpitRow): CockpitRef {
   return { kind: 'attention', cabinId: row.cabinId, id: row.item.id }
 }
 
-function priorityOf(row: CockpitRow): number {
-  if (row.kind === 'attention') return row.item.priority
-  if (row.kind === 'job') return row.attention?.priority ?? row.job.priority
-  return 0
-}
-
 export function rowCandidate(row: CockpitRow): CockpitCandidate {
-  return { ref: rowCockpitRef(row), group: groupOf(row), priority: priorityOf(row) }
+  return { ref: rowCockpitRef(row), group: groupOf(row) }
 }
 
 export function candidatesOf(rows: readonly CockpitRow[]): CockpitCandidate[] {

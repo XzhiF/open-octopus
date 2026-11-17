@@ -49,7 +49,7 @@ function mockCabinState(initItems: CabinInitItem[], status = 'initializing') {
     cabin: {
       id: 'cabin-1', name: 'Aurora', path: '/tmp/a', workspace_id: 'ws-1', main_session_id: 'sess-1',
       requirements: '', status: status as never, mainline_strategy: 'clean-main', org: null,
-      focused_job_id: null, version: 1, created_at: '', updated_at: '', last_active_at: null, archived_at: null,
+      version: 1, created_at: '', updated_at: '', last_active_at: null, archived_at: null,
     },
     view: null,
     initState: { items: initItems },

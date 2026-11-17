@@ -56,7 +56,7 @@ function cabin(id: string, name: string): CabinDetail {
   return {
     id, name, path: `/tmp/${id}`, workspace_id: `ws-${id}`, main_session_id: `s-${id}`,
     requirements: '', status: 'active', mainline_strategy: 'clean-main', org: null,
-    focused_job_id: null, version: 3,
+    version: 3,
     created_at: '2026-11-14T00:00:00.000Z', updated_at: '2026-11-14T00:00:00.000Z',
     last_active_at: null, archived_at: null,
   }
@@ -114,14 +114,14 @@ beforeEach(() => {
   vi.mocked(listCabinJobs).mockResolvedValue([
     {
       id: 'j1', cabin_id: 'c1', kind: 'task', ref_id: 't1', session_id: null,
-      title: '对齐尾差', mandate: null, prompt: null, priority: 0,
+      title: '对齐尾差', mandate: null, prompt: null,
       created_at: '2026-11-15T01:00:00.000Z', ended_at: null,
       status: 'running', transport: 'task-thread',
       project_keys: ['org:XzhiF/ledger'],
     },
     {
       id: 'j2', cabin_id: 'c1', kind: 'workflow', ref_id: null, session_id: null,
-      title: '杂活', mandate: null, prompt: null, priority: 0,
+      title: '杂活', mandate: null, prompt: null,
       created_at: '2026-11-15T01:00:00.000Z', ended_at: null,
       status: 'pending', transport: 'workflow-engine',
       project_keys: [],

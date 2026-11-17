@@ -144,10 +144,10 @@ describe("/api/cabins routes", () => {
     expect((await reopened.json()).cabin.status).toBe("active")
   })
 
-  it("jobs: dispatch leaves a trace; priority patch; focus set/clear", async () => {
+  it("jobs: dispatch leaves a trace", async () => {
     const cabin = await createCabin()
     const jobRes = await post(`/api/cabins/${cabin.id}/jobs`, {
-      kind: "task", title: "接入渠道", priority: 2,
+      kind: "task", title: "接入渠道",
       mandate: { strength: "explicit", scope: "渠道接入" },
     })
     expect(jobRes.status).toBe(201)
@@ -160,14 +160,8 @@ describe("/api/cabins routes", () => {
     expect(events[0].kind).toBe("dispatch")
     expect(events[0].actor).toBe("orchestrator")
 
-    expect((await patch(`/api/cabins/${cabin.id}/jobs/${job.id}`, { priority: 9 })).status).toBe(200)
     const jobs = await app.request(`/api/cabins/${cabin.id}/jobs`)
-    expect((await jobs.json()).jobs[0].priority).toBe(9)
-
-    const focused = await post(`/api/cabins/${cabin.id}/focus`, { version: cabin.version, job_id: job.id })
-    expect((await focused.json()).cabin.focused_job_id).toBe(job.id)
-    const unfocused = await app.request(`/api/cabins/${cabin.id}/focus?version=${cabin.version + 1}`, { method: "DELETE" })
-    expect((await unfocused.json()).cabin.focused_job_id).toBeNull()
+    expect((await jobs.json()).jobs.map((j: { id: string }) => j.id)).toEqual([job.id])
   })
 
   it("DELETE /:id 软删：默认留本地目录；?delete_files=1 才删", async () => {

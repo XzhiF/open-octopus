@@ -31,7 +31,6 @@ function jobRow(id: string, over: Partial<Extract<CockpitRow, { kind: 'job' }>['
       title: `作业 ${id}`,
       mandate: null,
       prompt: null,
-      priority: 0,
       created_at: '2026-11-17T00:00:00Z',
       ended_at: null,
       status: 'running',
@@ -78,7 +77,6 @@ function attention(over: Partial<CabinAttentionItem> = {}): CabinAttentionItem {
     repo: null,
     wt: null,
     deep_link: null,
-    priority: 5,
     ...over,
   }
 }

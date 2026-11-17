@@ -29,7 +29,7 @@ function makeView(overrides: Partial<CabinView> = {}): CabinView {
     cabin: {
       id: 'cabin-1', name: 'Aurora', path: '/tmp/a', workspace_id: 'ws-1', main_session_id: 'sess-1',
       requirements: '', status: 'active', mainline_strategy: 'clean-main', org: null,
-      focused_job_id: null, version: 1, created_at: '', updated_at: '', last_active_at: null, archived_at: null,
+      version: 1, created_at: '', updated_at: '', last_active_at: null, archived_at: null,
     },
     attention: [],
     health: { running: 2, queued: 1, dormant: 0, workers: 2, max: 5 },
@@ -76,8 +76,8 @@ describe('CabinOverview — serial inbox', () => {
   it('renders attention in server order with person-first focus marker', () => {
     const view = makeView({
       attention: [
-        { id: 'review-t1', job_id: null, stage: 'review', awaiting: 'person', title: '任务A · 待验收', task_id: 't1', repo: 'pay', wt: 'cabin-cabin-1', deep_link: 'task:t1', priority: 0, question: '验收吗？' },
-        { id: 'run-t2', job_id: null, stage: 'blocked', awaiting: 'working', title: '任务B · 运行中', task_id: 't2', repo: null, wt: null, deep_link: null, priority: 3 },
+        { id: 'review-t1', job_id: null, stage: 'review', awaiting: 'person', title: '任务A · 待验收', task_id: 't1', repo: 'pay', wt: 'cabin-cabin-1', deep_link: 'task:t1', question: '验收吗？' },
+        { id: 'run-t2', job_id: null, stage: 'blocked', awaiting: 'working', title: '任务B · 运行中', task_id: 't2', repo: null, wt: null, deep_link: null },
       ],
     })
     renderOverview(view)
@@ -86,7 +86,6 @@ describe('CabinOverview — serial inbox', () => {
     expect(rows[0].querySelector('[data-focused="true"]')).not.toBeNull()
     expect(rows[1].querySelector('[data-focused="true"]')).toBeNull()
     expect(screen.getByTestId('cabin-person-count').textContent).toContain('1')
-    expect(screen.getByText('P3')).toBeInTheDocument()
   })
 
   it('clicking a review item opens the task acceptance in the chat base', () => {
@@ -94,7 +93,7 @@ describe('CabinOverview — serial inbox', () => {
     window.addEventListener('octopus:open-task', spy)
     const view = makeView({
       attention: [
-        { id: 'review-t1', job_id: null, stage: 'review', awaiting: 'person', title: '任务A · 待验收', task_id: 't1', repo: null, wt: null, deep_link: null, priority: 0 },
+        { id: 'review-t1', job_id: null, stage: 'review', awaiting: 'person', title: '任务A · 待验收', task_id: 't1', repo: null, wt: null, deep_link: null },
       ],
     })
     renderOverview(view)
@@ -110,7 +109,7 @@ describe('CabinOverview — serial inbox', () => {
     const attention = [{
       id: 'ask-a1', job_id: null, stage: 'answer' as const, awaiting: 'person' as const,
       title: '接入支付宝 · 待回答', question: '接哪个渠道？', task_id: 't1',
-      repo: null, wt: null, deep_link: 'ask:a1', priority: 1,
+      repo: null, wt: null, deep_link: 'ask:a1',
       ask: { ask_id: 'a1', message_id: 'm1', decision: '接哪个渠道' },
     }]
     mockCabin(makeView({ attention }))

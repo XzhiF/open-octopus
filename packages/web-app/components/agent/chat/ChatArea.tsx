@@ -26,7 +26,8 @@ import { QuestionCard } from '@/components/workspace/chat/question-card'
 import type { ChatMessage } from '@/lib/types'
 import { DangerConfirmCard } from './DangerConfirmCard'
 import { EvolutionConfirmCard } from './EvolutionConfirmCard'
-import { ChatTimeline, type ChatTimelineItem } from './chat-timeline'
+import { ChatTimeline } from './chat-timeline'
+import { userPromptTurns } from '@/lib/agent/user-turns'
 import { useChatSlot } from '@/components/cockpit/chat/chat-slots'
 import { AgentEmptyState } from '../shared/AgentEmptyState'
 import { ReviewCard } from '../knowledge/cards/ReviewCard'
@@ -582,13 +583,9 @@ export function ChatArea({
 
   // ── 用户输入历史（右侧时间线）────────────────────────────────────────
   // 折叠态 = 每轮一条短横；悬停展开截断的提示词列表；点击滚动到该轮。
-  const userTurns = useMemo<ChatTimelineItem[]>(
-    () =>
-      messages
-        .filter((m) => m.role === 'user' && m.content.trim())
-        .map((m) => ({ id: m.id, text: m.content.trim() })),
-    [messages],
-  )
+  // 只收真人输入：任务提问/状态事件卡（role=user + displayType=event）与
+  // 汐音代你转达的回执不是「我打的字」，点它们只会跳到一张卡（2026-11-17 用户）。
+  const userTurns = useMemo(() => userPromptTurns(messages), [messages])
   const [activeTurnId, setActiveTurnId] = useState<string | null>(null)
   useEffect(() => {
     const el = scrollRef.current

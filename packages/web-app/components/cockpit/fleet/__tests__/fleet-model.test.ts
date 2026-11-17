@@ -26,7 +26,6 @@ function job(id: string, over: Partial<CabinJobView> = {}): CabinJobView {
     title: `作业${id}`,
     mandate: null,
     prompt: null,
-    priority: 0,
     created_at: '2026-11-14T00:00:00.000Z',
     ended_at: null,
     status: 'running',
@@ -72,7 +71,6 @@ function attention(id: string, over: Partial<CabinAttentionItem> = {}): CabinAtt
     repo: null,
     wt: null,
     deep_link: null,
-    priority: 0,
     ...over,
   }
 }
@@ -108,7 +106,7 @@ describe('groupOf', () => {
 
   it('job 挂上 attention：即使 running 也归 need', () => {
     const row = jobRow('j1', { status: 'running' })
-    const [merged] = mergeAttention([row], [attention('a1', { job_id: 'j1', priority: 3 })], {
+    const [merged] = mergeAttention([row], [attention('a1', { job_id: 'j1' })], {
       cabinId: 'c1',
       cabinName: 'A舱',
     })
@@ -135,22 +133,22 @@ describe('groupOf', () => {
 describe('mergeAttention', () => {
   const cabin = { cabinId: 'c1', cabinName: 'A舱' }
 
-  it('job_id 命中 → 最高优先挂到 job 行，其余并发待办保留为 attn: 行（不丢）', () => {
+  it('job_id 命中 → 第一条挂到 job 行，其余并发待办保留为 attn: 行（不丢）', () => {
     const rows = [jobRow('j1', { status: 'running' })]
     const merged = mergeAttention(
       rows,
       [
-        attention('a-low', { job_id: 'j1', priority: 1 }),
-        attention('a-high', { job_id: 'j1', priority: 9 }),
+        attention('a-first', { job_id: 'j1' }),
+        attention('a-second', { job_id: 'j1' }),
       ],
       cabin,
     )
     expect(merged).toHaveLength(2)
     const job = merged.find((row) => row.kind === 'job')
     expect(job?.kind).toBe('job')
-    if (job?.kind === 'job') expect(job.attention?.id).toBe('a-high')
+    if (job?.kind === 'job') expect(job.attention?.id).toBe('a-first')
     const extra = merged.find((row) => row.kind === 'attention')
-    if (extra?.kind === 'attention') expect(extra.item.id).toBe('a-low')
+    if (extra?.kind === 'attention') expect(extra.item.id).toBe('a-second')
   })
 
   it('job_id 不存在 / job_id=null → 各自保留为 attn: 行', () => {
@@ -193,7 +191,7 @@ describe('sortRows', () => {
   it('组序 need → run → queue → done；need 里 job 行在纯 attention 行之前', () => {
     const rows = [
       jobRow('done', { status: 'done', ended_at: '2026-11-14T01:00:00.000Z' }),
-      attnRow('a1', { priority: 99 }),
+      attnRow('a1'),
       jobRow('queue', { status: 'pending', created_at: '2026-11-14T00:00:00.000Z' }),
       jobRow('run', { status: 'running' }),
       jobRow('need-job', { status: 'awaiting_review' }),
@@ -208,26 +206,26 @@ describe('sortRows', () => {
     ])
   })
 
-  it('need 组内按 attention.priority 降序', () => {
+  it('need 组内保持编队顺序', () => {
     const rows = [
-      jobRow('low', { status: 'awaiting_review' }),
-      jobRow('high', { status: 'awaiting_review' }),
+      jobRow('first', { status: 'awaiting_review' }),
+      jobRow('second', { status: 'awaiting_review' }),
     ]
     const withAttention = mergeAttention(
       rows,
       [
-        attention('a-low', { job_id: 'low', priority: 1 }),
-        attention('a-high', { job_id: 'high', priority: 8 }),
+        attention('a-first', { job_id: 'first' }),
+        attention('a-second', { job_id: 'second' }),
       ],
       { cabinId: 'c1', cabinName: 'A舱' },
     )
-    expect(sortRows(withAttention).map((row) => row.key)).toEqual(['job:high', 'job:low'])
+    expect(sortRows(withAttention).map((row) => row.key)).toEqual(['job:first', 'job:second'])
   })
 
-  it('run 按 priority 降序；queue FIFO；done 最近结束在前且只留 3 条', () => {
+  it('run 保持编队顺序；queue FIFO；done 最近结束在前且只留 3 条', () => {
     const rows = [
-      jobRow('r-low', { status: 'running', priority: 1 }),
-      jobRow('r-high', { status: 'running', priority: 5 }),
+      jobRow('r1', { status: 'running' }),
+      jobRow('r2', { status: 'running' }),
       jobRow('q2', { status: 'pending', created_at: '2026-11-14T00:02:00.000Z' }),
       jobRow('q1', { status: 'pending', created_at: '2026-11-14T00:01:00.000Z' }),
       jobRow('d1', { status: 'done', ended_at: '2026-11-14T01:00:00.000Z' }),
@@ -236,8 +234,8 @@ describe('sortRows', () => {
       jobRow('d4', { status: 'done', ended_at: '2026-11-14T04:00:00.000Z' }),
     ]
     expect(sortRows(rows).map((row) => row.key)).toEqual([
-      'job:r-high',
-      'job:r-low',
+      'job:r1',
+      'job:r2',
       'job:q1',
       'job:q2',
       'job:d4',
@@ -247,7 +245,7 @@ describe('sortRows', () => {
   })
 
   it('纯函数：不改入参顺序', () => {
-    const rows = [jobRow('b', { status: 'running', priority: 0 }), jobRow('a', { status: 'running', priority: 9 })]
+    const rows = [jobRow('b', { status: 'running' }), jobRow('a', { status: 'running' })]
     const before = rows.map((row) => row.key)
     sortRows(rows)
     expect(rows.map((row) => row.key)).toEqual(before)
@@ -262,7 +260,7 @@ describe('buildCounts', () => {
       jobRow('j3', { status: 'pending' }, { cabinId: 'c2', cabinName: 'B舱' }),
       jobRow('j4', { status: 'done' }, { cabinId: 'c2', cabinName: 'B舱' }),
       taskRow('t1', 'running'),
-      attnRow('a1', { priority: 2 }),
+      attnRow('a1'),
     ]
     expect(buildCounts(rows, 4)).toEqual({
       need: 2, // j2 + attn

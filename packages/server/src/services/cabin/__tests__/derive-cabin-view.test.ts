@@ -2,7 +2,7 @@ import { describe, it, expect } from "vitest"
 import { deriveCabinView, type DeriveCabinInput } from "../derive-cabin-view"
 
 const base = (over: Partial<DeriveCabinInput> = {}): DeriveCabinInput => ({
-  cabin: { id: "c1", status: "active", focused_job_id: null },
+  cabin: { id: "c1", status: "active" },
   tasks: [], executions: [], incidents: [], asks: [], findings: [], jobs: [],
   maxWorkers: 4,
   ...over,
@@ -58,25 +58,20 @@ describe("deriveCabinView", () => {
     expect(plain?.ask).toBeUndefined()
   })
 
-  it("sorts person-first then priority desc", () => {
+  it("sorts person-first，组内保持输入顺序", () => {
     const v = deriveCabinView(base({
       tasks: [
-        { id: "t1", name: "low", status: "awaiting_review" },
-        { id: "t2", name: "high", status: "awaiting_review" },
+        { id: "t1", name: "first", status: "awaiting_review" },
+        { id: "t2", name: "second", status: "awaiting_review" },
       ],
-      jobs: [
-        { id: "j1", kind: "task", ref_id: "t1", title: "low", priority: 1 },
-        { id: "j2", kind: "task", ref_id: "t2", title: "high", priority: 5 },
-      ],
+      executions: [{ id: "e1", task_id: "tx", status: "running" }],
     }))
-    expect(v.attention[0].task_id).toBe("t2")
-    expect(v.attention[0].priority).toBe(5)
-    expect(v.attention[1].task_id).toBe("t1")
+    expect(v.attention.map(a => a.task_id)).toEqual(["t1", "t2"])
   })
 
   it("health counts running/queued and dormant flag", () => {
     const v = deriveCabinView(base({
-      cabin: { id: "c1", status: "dormant", focused_job_id: null },
+      cabin: { id: "c1", status: "dormant" },
       executions: [
         { id: "e1", task_id: null, status: "running" },
         { id: "e2", task_id: null, status: "pending" },

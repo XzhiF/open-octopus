@@ -707,7 +707,6 @@ export interface CabinRow {
   org: string | null
   init_state: string | null
   cockpit_prefs: string | null
-  focused_job_id: string | null
   version: number
   created_at: string
   updated_at: string
@@ -728,12 +727,11 @@ export interface CabinJobRow {
   title: string
   mandate: string | null
   prompt: string | null
-  priority: number
   created_at: string
   ended_at: string | null
 }
 
-export type CabinJobEventKind = 'dispatch' | 'report' | 'attention' | 'handback' | 'note' | 'human_input' | 'resume' | 'brief' | 'decision'
+export type CabinJobEventKind = 'dispatch' | 'report' | 'attention' | 'handback' | 'human_input' | 'resume' | 'brief' | 'decision'
 
 export interface CabinJobEventRow {
   id: string

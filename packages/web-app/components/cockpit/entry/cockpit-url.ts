@@ -100,7 +100,7 @@ export function cockpitHrefPreserving(
   return merged ? `${cockpitPath(entryCabinId)}?${merged}` : cockpitPath(entryCabinId)
 }
 
-// ── 默认选中（plans §1.3）─────────────────────────────────────────────// 需要你（attention priority 降序）→ 运行中第一条 → 排队第一条 → 空态。
+// ── 默认选中（plans §1.3）─────────────────────────────────────────────// 需要你（编队顺序）→ 运行中第一条 → 排队第一条 → 空态。
 // S2 的 CockpitRow 由调用方投影成这个最小形状，避免 S1 依赖编队模型。
 
 export type CockpitCandidateGroup = 'need' | 'run' | 'queue' | 'done'
@@ -108,16 +108,10 @@ export type CockpitCandidateGroup = 'need' | 'run' | 'queue' | 'done'
 export interface CockpitCandidate {
   ref: CockpitRef
   group: CockpitCandidateGroup
-  /** 仅 need 组使用：attention 的 priority。 */
-  priority?: number
 }
 
 export function resolveDefaultRef(candidates: readonly CockpitCandidate[]): CockpitRef | null {
-  let need: CockpitCandidate | null = null
-  for (const candidate of candidates) {
-    if (candidate.group !== 'need') continue
-    if (!need || (candidate.priority ?? 0) > (need.priority ?? 0)) need = candidate
-  }
+  const need = candidates.find((candidate) => candidate.group === 'need')
   if (need) return need.ref
 
   const running = candidates.find((candidate) => candidate.group === 'run')

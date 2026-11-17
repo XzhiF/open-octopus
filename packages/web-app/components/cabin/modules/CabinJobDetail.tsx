@@ -22,13 +22,11 @@ export function CabinJobDetail() {
   return (
     <JobFace
       cabinId={cabinId}
-      cabinVersion={cabin?.version ?? 0}
       workspaceId={cabin?.workspace_id ?? null}
       jobId={selectedJobId}
       variant="window"
       entryCabinId={cabinId}
       mainSessionId={cabin?.main_session_id ?? null}
-      focusedJobId={cabin ? cabin.focused_job_id : undefined}
       onMutated={() => { void refresh() }}
     />
   )
