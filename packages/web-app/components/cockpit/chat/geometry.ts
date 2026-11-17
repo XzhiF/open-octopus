@@ -154,3 +154,44 @@ export function nextCockpitAlpha(alpha: number): number {
   if (index < 0) return CHAT_ALPHA_STEPS[0]
   return CHAT_ALPHA_STEPS[(index + 1) % CHAT_ALPHA_STEPS.length]
 }
+
+// ── v21（design 31 §2.1 / §5.4）：通讯台默认几何 ─────────────────────────
+//
+// 左缘 = 立绘右缘 − 22（贴住立绘、重叠 22px）；右缘让出右栏（--railr）；
+// top 66（HUD 54 + 12）；底部停在底栏上沿 − 8 —— 底栏（舰桥 + 输入）就是
+// 通讯台的下半截，视觉上连成一台。
+// ≤900 变底部 sheet：左 52 / 右 92 / 高 56vh（≤560：左 46 / 右 80 / 52vh），
+// 顶端 = 底栏上沿 − 8 − sheet，与原型「立绘从 sheet 上方探出」一致。
+
+export interface ConsoleEnv {
+  viewport: Viewport
+  /** 底栏（.ck12-cmd）上沿的视口 y；量不到时按视口 − 56 兜底。 */
+  footerTop: number | null
+}
+
+export function cockpitConsoleRect({ viewport, footerTop }: ConsoleEnv): CockpitRect {
+  const vw = Math.max(1, Math.round(viewport.width))
+  const vh = Math.max(1, Math.round(viewport.height))
+  const railw = vw <= 1240 ? 64 : vw <= 1320 ? 186 : 198
+  const railr = vw <= 560 ? 80 : vw <= 900 ? 92 : vw <= 1320 ? 104 : 100
+  const charh = vh * (vw <= 560 ? 0.32 : vw <= 900 ? 0.34 : vw <= 1240 ? 0.66 : vw <= 1320 ? 0.7 : 0.74)
+  const charw = (charh * 2) / 3
+  const bottom = Math.round((footerTop ?? vh - 56) - 8)
+
+  let left: number
+  let top: number
+  let height: number
+  if (vw <= 900) {
+    left = vw <= 560 ? 46 : 52
+    const sheet = vh * (vw <= 560 ? 0.52 : 0.56)
+    height = Math.max(CHAT_MIN_HEIGHT, Math.min(sheet, bottom - 66))
+    top = Math.max(56, bottom - height)
+  } else {
+    left = Math.round(railw + 16 + charw - 22)
+    top = 66
+    height = Math.max(CHAT_MIN_HEIGHT, bottom - top)
+  }
+
+  const width = Math.max(CHAT_MIN_WIDTH, vw - left - railr)
+  return clampCockpitRect({ x: left, y: top, w: width, h: height }, viewport)
+}

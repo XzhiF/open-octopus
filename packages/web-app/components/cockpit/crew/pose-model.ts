@@ -81,9 +81,9 @@ export const POSE_META: Record<PoseKey, PoseMeta> = {
   typing: { cn: '键入', en: 'TYPE', desc: '全息键盘', line: '（全息键盘敲击中……）', fps: 16, fx: 'keys' },
 }
 
-/** mood → pose：boot 用敬礼报到；其余同名。 */
+/** mood → pose：v21 开机不再敬礼，待命起步（design 31 §3.5）。 */
 export const MOOD_POSE: Record<MoodKey, PoseKey> = {
-  boot: 'salute',
+  boot: 'idle',
   idle: 'idle',
   working: 'working',
   alert: 'alert',

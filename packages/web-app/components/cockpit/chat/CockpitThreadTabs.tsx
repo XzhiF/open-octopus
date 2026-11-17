@@ -34,15 +34,6 @@ export function CockpitThreadTabs() {
               }
             }}
           >
-            <span className="ck12-tab-emo" aria-hidden="true">
-              {thread.kind === 'main' ? '✦' : THREAD_EMO[thread.state]}
-            </span>
-            <span className="ck12-tab-name">{thread.short}</span>
-            {unread > 0 && (
-              <i className="ck12-tab-unread" data-testid={`cockpit-tab-unread-${thread.key}`}>
-                {unread > 9 ? '9+' : unread}
-              </i>
-            )}
             {thread.key !== 'main' && (
               <button
                 type="button"
@@ -56,6 +47,15 @@ export function CockpitThreadTabs() {
               >
                 ✕
               </button>
+            )}
+            <span className="ck12-tab-emo" aria-hidden="true">
+              {thread.kind === 'main' ? '✦' : THREAD_EMO[thread.state]}
+            </span>
+            <span className="ck12-tab-name">{thread.short}</span>
+            {unread > 0 && (
+              <i className="ck12-tab-unread" data-testid={`cockpit-tab-unread-${thread.key}`}>
+                {unread > 9 ? '9+' : unread}
+              </i>
             )}
           </div>
         )

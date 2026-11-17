@@ -35,6 +35,8 @@ export interface CockpitBriefItem {
   color: string
   time: string
   demo?: boolean
+  /** v21：点 banner 直接打开 inbox 对应回复卡（不强制切线程）。 */
+  attentionId?: string
   /** 点开现场的目标：job → 作业面；无 job_id 的 attention → 只开对话。 */
   ref?: CockpitRef
 }
@@ -67,6 +69,7 @@ export function briefItemOf(item: CabinAttentionItem): CockpitBriefItem {
     detail: item.question || item.detail || '已进编队 · 不用点',
     color: attentionColor(item.stage),
     time: '刚刚 · 汐音整理',
+    attentionId: item.id,
   }
 }
 
@@ -146,7 +149,7 @@ export function CockpitBrief() {
   const { prefs } = useCockpit()
   const {
     fx, layer, select, chatWindow, chat, wins,
-    threads: threadApi, markArrival,
+    threads: threadApi, markArrival, openInbox,
   } = useCockpitState()
   const [brief, setBrief] = useState<BriefView | null>(null)
   /** 同一批 arrivals 的签名：provider 每 tick 都给新数组，用它挡住重复触发。 */
@@ -204,15 +207,20 @@ export function CockpitBrief() {
   // ── Esc：注册进唯一的 layer 栈，可提前收 ─────────────────────────────
   const closeBrief = useCallback(() => setBrief(null), [])
 
-  /* v13：点消息任意处 = 激活（作业面 + 对话窗 + 焦点进 composer）。 */
+  /* v21（design 31 §3.6）：点 banner = 直接打开 inbox 对应回复卡，**不强制切线程**。
+     演示条没有真实 attention，退回旧的「选中 + 开对话」路径。 */
   const activate = useCallback((item: CockpitBriefItem) => {
     setBrief(null)
+    if (item.attentionId) {
+      openInbox(item.attentionId)
+      return
+    }
     if (item.ref) select(item.ref)
     chatWindow.openWithFocus()
     requestAnimationFrame(() => {
       getChatSlot('composer')?.querySelector<HTMLTextAreaElement>('textarea')?.focus()
     })
-  }, [select, chatWindow])
+  }, [openInbox, select, chatWindow])
   useEffect(() => {
     if (!brief) return
     return layer.register('brief', BRIEF_LAYER_PRIORITY, closeBrief)
@@ -272,6 +280,18 @@ export function CockpitBrief() {
           data-demo={brief.demo ? '1' : undefined}
         >
           <div className="ck12-brief-h">
+            <button
+              type="button"
+              className="ck12-brief-x"
+              aria-label="关闭简报"
+              title="关闭（Esc）"
+              onClick={(event) => {
+                event.stopPropagation()
+                setBrief(null)
+              }}
+            >
+              ✕
+            </button>
             <span className="ck12-brief-av" aria-hidden="true">
               <img src={moodPortrait(brief.demo ? 'wink' : 'alert')} alt="" />
             </span>

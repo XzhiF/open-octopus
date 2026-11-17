@@ -6,16 +6,36 @@
    控制条 portal 到 body，所以这里的 button 需要自带 reset。
    ═══════════════════════════════════════════════════════════════════════ */
 
-/* ───────────────────────── 立绘容器 / 舱体 ───────────────────────── */
+/* ───────────────────────── 立绘容器（v21：无框 · 贴左栏右侧 · 74vh） ───────────────────────── */
 .ck12-crew {
-  position: absolute;
-  left: 6px;
-  bottom: 6px;
-  width: 344px;
-  height: min(60vh, 548px);
+  position: fixed;
+  left: calc(var(--ck12-railw) + 16px);
+  bottom: 2vh;
+  width: auto;
+  height: var(--ck12-charh);
+  aspect-ratio: 2 / 3;
   z-index: 3;
   pointer-events: none;
+  filter: drop-shadow(0 0 34px color-mix(in srgb, var(--ck12-violet) 34%, transparent));
   transition: opacity 0.35s;
+}
+.ck12-crew::after {
+  content: '';
+  position: absolute;
+  left: 50%;
+  bottom: -6px;
+  width: 70%;
+  height: 26px;
+  transform: translateX(-50%);
+  border-radius: 50%;
+  background: radial-gradient(ellipse, rgba(46, 230, 214, 0.4), transparent 70%);
+  filter: blur(2px);
+  animation: ck12-ringp 3s ease-in-out infinite;
+  pointer-events: none;
+}
+@keyframes ck12-ringp {
+  0%, 100% { opacity: 0.5; transform: translateX(-50%) scaleX(0.9); }
+  50% { opacity: 0.95; transform: translateX(-50%) scaleX(1.08); }
 }
 
 .ck12-pod {
@@ -25,26 +45,19 @@
   width: 100%;
   height: 100%;
   overflow: hidden;
-  border-radius: 18px;
-  border: 1px solid color-mix(in srgb, var(--ck-b) 40%, transparent);
-  background: radial-gradient(130% 90% at 50% 0%, #1a1b28, #07080d 72%);
-  box-shadow:
-    0 0 calc(54px * var(--ck-glow, 1)) color-mix(in srgb, var(--ck-b) 20%, transparent),
-    0 26px 64px rgba(0, 0, 0, 0.62),
-    inset 0 0 46px rgba(0, 0, 0, 0.66);
+  border: 0;
+  border-radius: 0;
+  background: none;
+  box-shadow: none;
   cursor: pointer;
   text-align: left;
   pointer-events: auto;
-  transition: box-shadow 0.22s, border-color 0.22s;
-  animation: ck12-crew-float 5.2s ease-in-out infinite;
+  animation: none;
 }
 .ck12-pod:hover,
 .ck12-pod:focus-visible {
-  border-color: color-mix(in srgb, var(--ck-b) 68%, transparent);
-  box-shadow:
-    0 0 calc(66px * var(--ck-glow, 1)) color-mix(in srgb, var(--ck-b) 26%, transparent),
-    0 26px 64px rgba(0, 0, 0, 0.62),
-    inset 0 0 46px rgba(0, 0, 0, 0.66);
+  border-color: transparent;
+  box-shadow: none;
 }
 .ck12-pod img {
   position: absolute;
@@ -55,88 +68,81 @@
   object-position: 50% 16%;
   filter: saturate(1.04);
 }
-.ck12-pod-scan {
-  position: absolute;
-  inset: 0;
-  pointer-events: none;
-  mix-blend-mode: screen;
-  opacity: 0.5;
-  background: repeating-linear-gradient(
-    180deg,
-    color-mix(in srgb, var(--ck-a) 9%, transparent) 0 1px,
-    transparent 1px 4px
-  );
-}
+.ck12-pod-scan { display: none; }
 .ck12-pod-vg {
   position: absolute;
   inset: 0;
   pointer-events: none;
-  background:
-    linear-gradient(180deg, color-mix(in srgb, var(--ck-b) 14%, transparent), transparent 26%),
-    linear-gradient(180deg, transparent 52%, rgba(4, 5, 9, 0.86) 92%);
+  background: linear-gradient(180deg, transparent 52%, rgba(4, 5, 9, 0.78) 96%);
 }
-.ck12-pod-tag {
-  position: absolute;
-  left: 12px;
-  top: 11px;
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  font-size: 8.5px;
-  letter-spacing: 0.18em;
-  font-weight: 800;
-  color: color-mix(in srgb, var(--ck-a) 85%, #fff);
-  text-shadow: 0 0 10px color-mix(in srgb, var(--ck-a) 60%, transparent);
-}
-.ck12-pod-tag i {
-  width: 5px;
-  height: 5px;
-  border-radius: 50%;
-  background: var(--ck12-green, var(--pop-green));
-  box-shadow: 0 0 8px var(--ck12-green, var(--pop-green));
-  font-style: normal;
-}
+.ck12-pod-tag { display: none; }
 .ck12-pod-name {
   position: absolute;
-  left: 14px;
-  right: 14px;
-  bottom: 12px;
-  display: flex;
-  align-items: baseline;
-  gap: 7px;
-  font-family: var(--font-ui);
-  font-size: 15px;
-  font-weight: 800;
-  letter-spacing: 0.04em;
-  color: var(--ck12-ink, var(--pop-ink));
-  text-shadow: 0 2px 12px rgba(0, 0, 0, 0.8);
+  left: 50%;
+  right: auto;
+  bottom: -2px;
+  transform: translateX(-50%);
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 12px;
+  clip-path: var(--ck12-cut);
+  background: var(--ck12-glass2);
+  backdrop-filter: blur(8px);
+  border: 1px solid var(--ck12-edge);
+  white-space: nowrap;
+  font-family: var(--font-mono);
+  font-size: 9.5px;
+  font-weight: 600;
+  letter-spacing: 0.12em;
+  color: var(--ck12-teal);
+  text-shadow: none;
   pointer-events: none;
 }
 .ck12-pod-name small {
   font-size: 9px;
-  letter-spacing: 0.18em;
-  font-weight: 700;
-  color: var(--ck-a);
+  letter-spacing: 0.12em;
+  font-weight: 600;
+  color: var(--ck12-teal);
 }
 .ck12-pod-name em {
-  margin-left: 5px;
+  margin-left: 4px;
   font-style: normal;
-  font-size: 8.5px;
-  letter-spacing: 0.14em;
-  color: var(--ck-a);
+  font-size: 9px;
+  letter-spacing: 0.12em;
+  color: var(--ck12-teal);
   opacity: 0.9;
 }
-.ck12-pod::after {
+.ck12-pod-name::before {
   content: '';
-  position: absolute;
-  inset: 0;
-  border-radius: 18px;
-  pointer-events: none;
-  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--ck-b) 16%, transparent);
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--ck12-green);
+  box-shadow: 0 0 8px var(--ck12-green);
+  flex: none;
 }
+.ck12-pod::after { display: none; }
 @keyframes ck12-crew-float {
   0%, 100% { transform: translateY(0); }
   50% { transform: translateY(-8px); }
+}
+
+@media (max-width: 900px) {
+  .ck12-crew {
+    left: 6px;
+    bottom: calc(56vh + 8px);
+    height: 34vh;
+  }
+  /* 窄屏作业面占满宽度：选中作业时立绘会被面压住，只露一条边 —— 直接隐去，
+     回到干净的面 / 通讯台双层。 */
+  .ck12-arena.is-open .ck12-crew { opacity: 0; pointer-events: none; }
+}
+@media (max-width: 560px) {
+  .ck12-crew {
+    bottom: calc(52vh - 10px);
+    height: 32vh;
+  }
 }
 
 /* ───────────────────────── 头顶漫画气泡 ───────────────────────── */
@@ -502,11 +508,9 @@
 }
 
 .ck12-pod[data-listening='true'] {
-  border-color: color-mix(in srgb, var(--ck-b) 62%, transparent);
-  box-shadow:
-    0 0 calc(60px * var(--ck-glow, 1)) color-mix(in srgb, var(--ck-b) 24%, transparent),
-    0 26px 64px rgba(0, 0, 0, 0.62),
-    inset 0 0 46px rgba(0, 0, 0, 0.66);
+  /* v21 立绘无框：倾听不再给矩形舱体发光，只留右下呼吸点。 */
+  border-color: transparent;
+  box-shadow: none;
 }
 
 /* 倾听：右下角三颗呼吸点，表示她在等你把话说完（不进布局）。 */

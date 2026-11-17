@@ -107,6 +107,8 @@ export function CockpitStateProvider({ entryCabinId, children }: CockpitStatePro
   const [panel, setPanel] = useState<CockpitPanelKind | null>(null)
   const [panelArg, setPanelArg] = useState<string | null>(null)
   const [flash, setFlash] = useState<CockpitFlash>({ key: null, at: 0, nonce: 0 })
+  const [inboxOpen, setInboxOpen] = useState(false)
+  const [inboxSel, setInboxSel] = useState<string | null>(null)
   const [pose, setPose] = useState('idle')
   const [autoWarp, setAutoWarp] = useState(true)
   const receiptSeqRef = useRef(0)
@@ -235,10 +237,27 @@ export function CockpitStateProvider({ entryCabinId, children }: CockpitStatePro
   const openPanel = useCallback((kind: CockpitPanelKind, arg: string | null = null) => {
     setPanelArg(arg)
     setPanel(kind)
+    // v21（design 31 §3.2.2）：打开面板时自动收起 inbox。
+    setInboxOpen(false)
+    setInboxSel(null)
   }, [])
   const closePanel = useCallback(() => setPanel(null), [])
   const markArrival = useCallback((key: string) => {
     setFlash((prev) => ({ key, at: Date.now(), nonce: prev.nonce + 1 }))
+  }, [])
+
+  // ── v21 右栏 inbox 浮层 ──────────────────────────────────────────────
+  const openInbox = useCallback((attentionId: string | null = null) => {
+    setInboxOpen(true)
+    setInboxSel(attentionId ?? null)
+  }, [])
+  const closeInbox = useCallback(() => {
+    setInboxOpen(false)
+    setInboxSel(null)
+  }, [])
+  const selectInbox = useCallback((attentionId: string | null) => {
+    setInboxSel(attentionId)
+    setInboxOpen(true)
   }, [])
   const reportPose = useCallback((next: string) => setPose(next), [])
 
@@ -355,6 +374,11 @@ export function CockpitStateProvider({ entryCabinId, children }: CockpitStatePro
       closePanel,
       flash,
       markArrival,
+      inboxOpen,
+      inboxSel,
+      openInbox,
+      closeInbox,
+      selectInbox,
       pose,
       reportPose,
       autoWarp,
@@ -367,6 +391,7 @@ export function CockpitStateProvider({ entryCabinId, children }: CockpitStatePro
       chat, reportChat, chatWindow,
       railOpen, setRailOpen,
       threads, wins, panel, panelArg, openPanel, closePanel, flash, markArrival,
+      inboxOpen, inboxSel, openInbox, closeInbox, selectInbox,
       pose, reportPose, autoWarp,
       fx, layer,
     ],

@@ -220,6 +220,15 @@ export interface CockpitState {
   flash: CockpitFlash
   markArrival(key: string): void
 
+  /** v21（design 31 §3.2）：右栏「要我处理」浮层状态。 */
+  inboxOpen: boolean
+  /** 回复卡当前那条 attention item id；null = 只看列表。 */
+  inboxSel: string | null
+  /** 打开浮层；带 id 时直接进那条的回复卡（banner / 回传点击）。 */
+  openInbox(attentionId?: string | null): void
+  closeInbox(): void
+  selectInbox(attentionId: string | null): void
+
   /** v20：汐音当前姿态（图鉴金边 / 验收锚点），由 CockpitCrew 上报。 */
   pose: string
   reportPose(pose: string): void

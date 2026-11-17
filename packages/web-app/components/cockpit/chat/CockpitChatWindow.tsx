@@ -34,8 +34,7 @@ import {
   CHAT_MINI_HEIGHT,
   cascadeWinRect,
   clampCockpitRect,
-  cockpitChatPadding,
-  cockpitChatRect,
+  cockpitConsoleRect,
   miniCockpitRect,
   moveCockpitRect,
   nextCockpitAlpha,
@@ -114,17 +113,14 @@ export function CockpitChatWindow() {
   useEffect(() => () => setChatSlot('index', null), [])
 
   const computeDefaultRect = useCallback((): CockpitRect | null => {
-    const arena = document.getElementById('ck12-arena')
-    if (!arena) return null
-    const box = arena.getBoundingClientRect()
-    if (box.width < 2 || box.height < 2) return null
-    // S4 的 .ck12-scene 还没有落地时退回断点值（366 / 334 / 300）。
-    const scene = arena.querySelector<HTMLElement>('.ck12-scene')
-    const scenePad = scene ? Number.parseFloat(getComputedStyle(scene).paddingLeft) : Number.NaN
-    const pad = Number.isFinite(scenePad) && scenePad > 0
-      ? scenePad
-      : cockpitChatPadding(window.innerWidth)
-    return clampCockpitRect(cockpitChatRect(box, pad), viewportSize())
+    // v21（design 31 §2.1）：几何直接按视口量，不再从 arena / .ck12-scene 推 ——
+    // 左缘贴立绘右缘 −22、右缘让出右栏；底部停在底栏上沿（通讯台 + 底栏连成一台）。
+    const footer = document.querySelector<HTMLElement>('.ck12-cmd')
+    const footerTop = footer ? footer.getBoundingClientRect().top : null
+    return cockpitConsoleRect({
+      viewport: viewportSize(),
+      footerTop: footerTop && footerTop > 0 ? footerTop : null,
+    })
   }, [])
 
   // 第一次开窗：量 arena 落默认几何；之后只在用户没动过时跟随布局（rAF 让
@@ -290,6 +286,16 @@ export function CockpitChatWindow() {
     })
   }, [])
 
+  // v21：「更多 → 日志」= 展开通讯台并切全日志（⌃）。
+  useEffect(() => {
+    const onTall = () => {
+      setRef.current({ open: true, mini: false, docked: false })
+      requestAnimationFrame(() => toggleTall())
+    }
+    window.addEventListener('octopus:chat-tall', onTall)
+    return () => window.removeEventListener('octopus:chat-tall', onTall)
+  }, [toggleTall])
+
   /** v20 ⧉ 弹出：仅用户主动；同线程已存在则聚焦；上限 5 toast 拒绝。 */
   const popOut = useCallback(() => {
     if (active.key === 'main') return
@@ -326,6 +332,8 @@ export function CockpitChatWindow() {
         ['--oa' as string]: String(alpha),
       }}
     >
+      <span className="ck12-cbr is-tl" aria-hidden="true" />
+      <span className="ck12-cbr is-br" aria-hidden="true" />
       <header
         className="ck12-comms-head"
         onPointerDown={(event) => beginDrag(event, 'move')}
@@ -367,17 +375,20 @@ export function CockpitChatWindow() {
           </button>
         </div>
 
-        <span className="ck12-comms-title" data-testid="cockpit-comms-title">
-          {active.kind === 'main' ? '汐音 · 对话' : active.short}
+        <span className="ck12-comms-glyph" aria-hidden="true">⬢</span>
+        <span className="ck12-comms-ident">
+          <b className="ck12-comms-title" data-testid="cockpit-comms-title">
+            {active.kind === 'main' ? '主对话' : active.short}
+          </b>
+          <span className="ck12-comms-sub2">
+            {active.kind === 'main'
+              ? '汐音 · 舰桥频道'
+              : `${THREAD_STATE_LABEL[active.state]} · ${active.short}`}
+          </span>
         </span>
         <span className="ck12-comms-status" data-state={chat?.streaming ? 'streaming' : 'idle'}>
           {statusText}
         </span>
-        {active.kind !== 'main' && (
-          <span className="ck12-comms-sub">
-            {THREAD_STATE_LABEL[active.state]}
-          </span>
-        )}
         {/* 对话索引（用户输入历史）挂在标题栏里，由 ChatTimeline 的 compact 档
             portal 进来；正文区零常驻控件。mini（47px）时整槽隐藏。 */}
         <span

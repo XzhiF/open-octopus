@@ -23,6 +23,7 @@ import { CockpitQuiet } from './CockpitQuiet'
 import { AskWindowsProvider, useAskWindows } from '@/components/cabin/asks/ask-windows-provider'
 import { AskWindowLayer } from '@/components/cabin/asks/ask-window-layer'
 import { CockpitFleetRail } from '../rail/CockpitFleetRail'
+import { CockpitRightRail } from '../rail/CockpitRightRail'
 import { CockpitFace } from '../face/CockpitFace'
 import { CockpitChatHost } from '../chat/CockpitChatHost'
 import { CockpitChatWindow } from '../chat/CockpitChatWindow'
@@ -133,6 +134,8 @@ function CockpitSurface({ cabin }: { cabin: CabinDetail }) {
 
       <CockpitHud />
       <CockpitStatusBanner cabin={cabin} />
+      {/* v21（design 31 §3.2/§3.3）：右栏紧凑待办 + 主按钮组。 */}
+      <CockpitRightRail />
 
       <main className="ck12-stage">
         <CockpitFleetRail />

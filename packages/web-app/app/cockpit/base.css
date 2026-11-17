@@ -22,6 +22,28 @@
   --ck12-glow: var(--ck-glow, 1);
 }
 
+/* v21（design 31 §1/§2）：三栏几何 + 逐字 token。
+   左编队 198 · 右紧凑 100 · 立绘 74vh（2:3）· HUD 54。 */
+.ck12-app {
+  --ck12-railw: 198px;
+  --ck12-railr: 100px;
+  --ck12-charh: 74vh;
+  --ck12-charw: calc(var(--ck12-charh) * 2 / 3);
+  --ck12-teal: #2EE6D6;
+  --ck12-sky: #35C7F0;
+  --ck12-pink: #FF5C8A;
+  --ck12-gold: #F5C542;
+  --ck12-hazard: #FFB020;
+  --ck12-metal: #B9B3D9;
+  --ck12-metal2: #8D86B8;
+  --ck12-ink2: #A9A3C8;
+  --ck12-glass: rgba(16, 13, 40, 0.46);
+  --ck12-glass2: rgba(20, 16, 48, 0.56);
+  --ck12-edge: rgba(46, 230, 214, 0.38);
+  --ck12-hex: polygon(50% 0, 100% 25%, 100% 75%, 50% 100%, 0 75%, 0 25%);
+  --ck12-cut: polygon(14px 0, 100% 0, 100% calc(100% - 14px), calc(100% - 14px) 100%, 0 100%, 0 14px);
+}
+
 .ck12-app {
   position: relative;
   flex: 1;
@@ -254,20 +276,18 @@
   box-shadow: inset 0 0 200px 40px rgba(0, 0, 0, 0.6);
 }
 
-/* ───────────────────────── HUD（48px） ───────────────────────── */
+/* ───────────────────────── HUD（54px · v21） ───────────────────────── */
 .ck12-hud {
   position: relative;
-  z-index: 20;
-  height: 48px;
+  z-index: 50;
+  height: 54px;
   flex: none;
   display: flex;
   align-items: center;
-  gap: 14px;
-  padding: 0 20px;
-  border-bottom: 1px solid var(--ck12-bd);
-  background: linear-gradient(180deg, rgba(7, 9, 14, 0.92), rgba(7, 9, 14, 0.25));
-  /* 2026-11-16 性能：贴近不透明的底板不再吃 backdrop-filter ——
-     底板后面是每帧都在动的星野/星云，模糊会让合成器每帧重算。 */
+  gap: 10px;
+  padding: 0 14px;
+  border-bottom: 1px solid rgba(46, 230, 214, 0.1);
+  background: linear-gradient(180deg, rgba(7, 9, 14, 0.82), rgba(7, 9, 14, 0.18));
   min-width: 0;
   overflow: hidden;
 }
@@ -390,7 +410,7 @@
   align-items: center;
   justify-content: center;
   gap: 14px;
-  padding-left: 366px;
+  padding-left: calc(var(--ck12-railw) + var(--ck12-charw) + 10px);
   pointer-events: none;
   transition: opacity 0.3s;
   z-index: 1;
@@ -456,7 +476,8 @@
   color: var(--ck12-dim);
 }
 
-/* ───────────────────────── 底栏外层（10 20 16） ───────────────────────── */
+/* ───────────────────────── 底栏外层（54px）+ 与通讯台同宽 ─────────────────────────
+   v21：底栏（舰桥 + 输入）就是通讯台的下半截 —— 左缘贴立绘右缘 −22，右缘让出右栏。 */
 .ck12-cmd {
   position: relative;
   z-index: 20;
@@ -464,8 +485,8 @@
   display: flex;
   flex-direction: column;
   align-items: stretch;
-  gap: 8px;
-  padding: 10px 20px 16px;
+  gap: 6px;
+  padding: 8px var(--ck12-railr) 14px calc(var(--ck12-railw) + 16px + var(--ck12-charw) - 22px);
 }
 
 /* ───────────────────────── 状态横幅（草稿 / 无主会话） ───────────────────────── */
@@ -514,7 +535,7 @@
   z-index: 6;
   display: grid;
   place-items: center;
-  padding-left: 366px;
+  padding-left: calc(var(--ck12-railw) + var(--ck12-charw) + 10px);
   color: var(--ck12-faint);
   font-size: 12px;
   letter-spacing: 0.08em;
@@ -601,34 +622,53 @@
   background: rgba(255, 255, 255, 0.06);
 }
 
-/* ───────────────────────── 响应式（1360 / 1120 / 900） ───────────────────────── */
-@media (max-width: 1360px) {
-  .ck12-quiet,
-  .ck12-face-loading { padding-left: 334px; }
+/* ───────────────────────── 响应式（v21：1320 / 1240 / 900 / 560） ───────────────────────── */
+@media (max-width: 1320px) {
+  .ck12-app {
+    --ck12-railw: 186px;
+    --ck12-railr: 104px;
+    --ck12-charh: 70vh;
+  }
 }
 
 @media (max-width: 1240px) {
-  .ck12-hud { gap: 10px; padding: 0 14px; }
+  .ck12-app {
+    --ck12-railw: 64px;
+    --ck12-railr: 104px;
+    --ck12-charh: 66vh;
+  }
+  .ck12-hud { gap: 8px; padding: 0 12px; }
   .ck12-opt1 { display: none; }
 }
 
 @media (max-width: 1120px) {
-  /* 窄屏：左栏变成可拉出的浮层（rail.css / S3），HUD 上给一枚「☰ 编队」。 */
+  /* 窄屏：HUD 上给一枚「☰ 编队」（≤900 左栏才真正隐藏成抽屉）。 */
   .ck12-fleetbtn { display: inline-flex; }
-  .ck12-quiet,
-  .ck12-face-loading { padding-left: 334px; }
   .ck12-opt2 { display: none; }
 }
 
 @media (max-width: 900px) {
-  .ck12-hud { gap: 8px; padding: 0 12px; }
+  .ck12-app {
+    --ck12-charh: 34vh;
+    --ck12-railr: 92px;
+  }
+  .ck12-hud { gap: 6px; padding: 0 10px; }
   .ck12-brand small { display: none; }
   .ck12-quiet,
-  .ck12-face-loading { padding-left: 300px; }
+  .ck12-face-loading { padding-left: 0; }
   .ck12-clock { font-size: 38px; }
-  .ck12-cmd { padding: 8px 12px 12px; }
-  .ck12-stage { padding: 10px 12px 0; gap: 10px; }
+  .ck12-cmd { padding: 8px 92px 12px 52px; }
+  .ck12-stage { padding: 8px 10px 0; }
   .ck12-skel-rail { display: none; }
+}
+
+@media (max-width: 560px) {
+  .ck12-app {
+    --ck12-charh: 32vh;
+    --ck12-railr: 80px;
+  }
+  .ck12-cmd { padding: 6px 80px 10px 46px; }
+  .ck12-stage { padding: 6px 8px 0; }
 }
 
 /* ───────────────────────── reduced motion ───────────────────────── */
