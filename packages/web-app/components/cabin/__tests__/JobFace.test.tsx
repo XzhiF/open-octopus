@@ -243,6 +243,66 @@ describe('JobFace（cockpit）', () => {
     expect(screen.queryByTestId('cockpit-relay-main-chat')).toBeNull()
   })
 
+  it('对接默认贴底（跟 chat 逻辑）', async () => {
+    mockJob()
+    const scrollHeight = vi.spyOn(Element.prototype, 'scrollHeight', 'get').mockReturnValue(1200)
+    const clientHeight = vi.spyOn(Element.prototype, 'clientHeight', 'get').mockReturnValue(400)
+    try {
+      render(<Harness />)
+      fireEvent.click(await screen.findByTestId('cockpit-tab-relay'))
+      const body = await screen.findByTestId('cabin-relay-body')
+      await waitFor(() => expect(body.scrollTop).toBe(1200))
+    } finally {
+      scrollHeight.mockRestore()
+      clientHeight.mockRestore()
+    }
+  })
+
+  it('「我的回复」下拉列出派发原文 + 本人输入，点一条滚到对应记录', async () => {
+    mockJob()
+    vi.mocked(getCabinJob).mockResolvedValue({
+      job: {
+        id: 'j1', cabin_id: 'cabin-1', kind: 'task', ref_id: 't1',
+        session_id: 'sess-abcdefgh', title: '接入渠道', mandate: null,
+        prompt: '把渠道接进来', created_at: '2026-11-13T14:00:00.000Z', ended_at: null,
+      },
+      events: [
+        {
+          id: 'e1', job_id: 'j1', cabin_id: 'cabin-1', kind: 'dispatch', actor: 'orchestrator',
+          payload: { summary: '派发接入渠道' }, created_at: '2026-11-13T14:00:00.000Z',
+        },
+        {
+          id: 'e3', job_id: 'j1', cabin_id: 'cabin-1', kind: 'human_input', actor: 'principal',
+          payload: { summary: '先保支付宝' }, created_at: '2026-11-13T14:10:00.000Z',
+        },
+        {
+          id: 'e2', job_id: 'j1', cabin_id: 'cabin-1', kind: 'report', actor: 'doer',
+          payload: { summary: '正在跑 node-2' }, created_at: '2026-11-13T14:05:00.000Z',
+        },
+      ],
+    })
+    const scrollIntoView = vi.fn()
+    const original = HTMLElement.prototype.scrollIntoView
+    HTMLElement.prototype.scrollIntoView = scrollIntoView
+    try {
+      render(<Harness />)
+      fireEvent.click(await screen.findByTestId('cockpit-tab-relay'))
+
+      const jump = await screen.findByTestId('cabin-relay-jump')
+      expect(jump.textContent).toContain('我的回复 2')
+      fireEvent.click(jump)
+      const pop = await screen.findByTestId('cabin-relay-jump-pop')
+      expect(pop.textContent).toContain('派发原文')
+      expect(pop.textContent).toContain('先保支付宝')
+
+      fireEvent.click(screen.getByTestId('cabin-relay-jump-e3'))
+      await waitFor(() => expect(scrollIntoView).toHaveBeenCalled())
+      expect(screen.queryByTestId('cabin-relay-jump-pop')).toBeNull()
+    } finally {
+      HTMLElement.prototype.scrollIntoView = original
+    }
+  })
+
   it('task 动作：暂停/中止走 lib/tasks-api 现有函数并 refetch', async () => {
     mockJob()
     const onMutated = vi.fn()

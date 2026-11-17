@@ -13,9 +13,9 @@
 // （派生 status）；task 类作业再取任务实体（运行/变更/验收都要）。
 // 本文件**不读 useCabinContext()**（§3.4 的 critical 修正）。
 
-import { useCallback, useEffect, useState, type ReactNode } from 'react'
+import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
 import {
-  ArrowRight, Bot, GitBranch, ListTodo, MessageSquare,
+  ArrowRight, Bot, ChevronDown, GitBranch, ListTodo, MessageSquare,
 } from 'lucide-react'
 import { toast } from 'sonner'
 import type { CabinAttentionItem, CabinJob, CabinJobEvent, CabinJobKind } from '@octopus/shared'
@@ -321,6 +321,14 @@ export function JobFace({
   const [loadError, setLoadError] = useState<string | null>(null)
   /** 对接页签：派发原文默认收 3 行（原文往往是整段需求）。 */
   const [promptOpen, setPromptOpen] = useState(false)
+  /** 对接页签：「我的回复」下拉（跳转到对应记录）。 */
+  const [jumpOpen, setJumpOpen] = useState(false)
+  const [jumpFlash, setJumpFlash] = useState<string | null>(null)
+  /** 对接滚动容器：跟 chat 一样默认贴底；人往上翻后不抢滚动。 */
+  const relayBodyRef = useRef<HTMLDivElement | null>(null)
+  const jumpWrapRef = useRef<HTMLDivElement | null>(null)
+  const relayStuckRef = useRef(true)
+  const lastRelayScrollTopRef = useRef(0)
 
   const tab: CockpitTab = controlled && cockpit ? cockpit.tab : innerTab
   const changeTab = useCallback((next: CockpitTab) => {
@@ -424,6 +432,47 @@ export function JobFace({
     const timer = window.setInterval(pull, 10_000)
     return () => { alive = false; window.clearInterval(timer) }
   }, [mainSessionId, taskId, tab])
+
+  // 对接默认落到最新一条（与 chat 同逻辑）：打开页签 → 贴底；
+  // 人往上翻后新内容不抢滚动，翻回底部才继续跟。
+  useEffect(() => {
+    if (tab !== 'relay') { relayStuckRef.current = true; return }
+    relayStuckRef.current = true
+    lastRelayScrollTopRef.current = 0
+    const el = relayBodyRef.current
+    if (!el) return
+    const frame = window.requestAnimationFrame(() => { el.scrollTop = el.scrollHeight })
+    return () => window.cancelAnimationFrame(frame)
+  }, [tab])
+
+  useEffect(() => {
+    if (tab !== 'relay') return
+    const el = relayBodyRef.current
+    if (!el) return
+    const frame = window.requestAnimationFrame(() => {
+      if (relayStuckRef.current) el.scrollTop = el.scrollHeight
+    })
+    return () => window.cancelAnimationFrame(frame)
+  }, [tab, events.length, mainMessages.length, promptOpen, job?.prompt])
+
+  // 「我的回复」下拉：点空白 / Esc 收起；离开对接页签也收起。
+  useEffect(() => {
+    if (!jumpOpen) return
+    const onDown = (event: MouseEvent) => {
+      if (jumpWrapRef.current && !jumpWrapRef.current.contains(event.target as Node)) setJumpOpen(false)
+    }
+    const onKey = (event: KeyboardEvent) => { if (event.key === 'Escape') setJumpOpen(false) }
+    document.addEventListener('mousedown', onDown)
+    document.addEventListener('keydown', onKey)
+    return () => {
+      document.removeEventListener('mousedown', onDown)
+      document.removeEventListener('keydown', onKey)
+    }
+  }, [jumpOpen])
+
+  useEffect(() => {
+    if (tab !== 'relay') setJumpOpen(false)
+  }, [tab])
 
   /** task 类作业的暂停/恢复/中止：只用 lib/tasks-api 现有函数。 */
   const runTaskAction = async (action: 'pause' | 'resume' | 'abort') => {
@@ -849,6 +898,30 @@ export function JobFace({
   const lastXiyin = lastOf(xiyinLines)
   const lastDoer = lastOf(doerLines)
 
+  /** 「我的回复」= 派发原文 + 你 → 汐音 的 human_input / decision 行。
+   *  下拉里按时间排；点一条滚到对应记录并闪一下。 */
+  const youEntries = [
+    ...(job.prompt
+      ? [{ key: 'prompt', at: job.created_at, kindLabel: '派发原文', text: job.prompt }]
+      : []),
+    ...youLines.map((line) => ({
+      key: line.key, at: line.at, kindLabel: line.kindLabel, text: line.text,
+    })),
+  ]
+
+  const jumpToReply = (key: string) => {
+    setJumpOpen(false)
+    // 人主动跳到某条记录：先解除「贴底」，别让下一次事件把视口拽回最新。
+    relayStuckRef.current = false
+    const target = relayBodyRef.current?.querySelector<HTMLElement>(`[data-relay-key="${key}"]`)
+    if (!target) return
+    if (typeof target.scrollIntoView === 'function') {
+      target.scrollIntoView({ block: 'center', behavior: 'smooth' })
+    }
+    setJumpFlash(key)
+    window.setTimeout(() => setJumpFlash((current) => (current === key ? null : current)), 1400)
+  }
+
   const panes = (
     <>
       {tab === 'overview' && (cockpitMode ? (
@@ -923,6 +996,41 @@ export function JobFace({
               <span className={cockpitMode ? 'ck12-pane-tag' : 'cabin-relay-count'}>
                 {relayLines.length + (job.prompt ? 1 : 0)} 条
               </span>
+              {/* 我的回复：下拉跳转（派发原文 + human_input / decision），
+                  不改变时间线本身 —— 只负责滚到对应记录。 */}
+              {youEntries.length > 0 && (
+                <div className="cabin-relay-jump" ref={jumpWrapRef}>
+                  <button
+                    type="button"
+                    className="cabin-relay-jump-btn"
+                    data-testid="cabin-relay-jump"
+                    aria-expanded={jumpOpen}
+                    onClick={() => setJumpOpen((open) => !open)}
+                  >
+                    <MessageSquare className="size-3" />
+                    我的回复 {youEntries.length}
+                    <ChevronDown className="size-3" aria-hidden="true" />
+                  </button>
+                  {jumpOpen && (
+                    <div className="cabin-relay-jump-pop" role="menu" data-testid="cabin-relay-jump-pop">
+                      {youEntries.map((entry) => (
+                        <button
+                          key={entry.key}
+                          type="button"
+                          role="menuitem"
+                          className="cabin-relay-jump-row"
+                          data-testid={`cabin-relay-jump-${entry.key}`}
+                          onClick={() => jumpToReply(entry.key)}
+                        >
+                          <span className="t">{clockLabel(entry.at)}</span>
+                          <span className="k">{entry.kindLabel}</span>
+                          <span className="x" title={entry.text}>{entry.text}</span>
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
               {/* 跨舱只读：投递只对入口舱开放，不给用户「能投到别的舱」的错觉。 */}
               {cabinId === entryCabinId && job.kind === 'task' && job.ref_id && (
                 <button
@@ -950,7 +1058,20 @@ export function JobFace({
               )}
             </header>
 
-            <div className={cockpitMode ? 'ck12-pane-b is-tight' : 'cabin-relay-body'}>
+            <div
+              ref={relayBodyRef}
+              className={cockpitMode ? 'ck12-pane-b is-tight' : 'cabin-relay-body'}
+              data-testid="cabin-relay-body"
+              onScroll={(event) => {
+                const el = event.currentTarget
+                const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 32
+                // 只把「向上翻」当人想离开最新；程序性贴底（scrollTop 增大）
+                // 不能让 onScroll 把 sticky 关掉，否则数据后到就停在半截。
+                if (atBottom) relayStuckRef.current = true
+                else if (el.scrollTop < lastRelayScrollTopRef.current - 2) relayStuckRef.current = false
+                lastRelayScrollTopRef.current = el.scrollTop
+              }}
+            >
               {/* 三方在场：角色 + 发言数 + 最后一句时间（title 里带时间，不挤版面）。 */}
               <div className="cabin-relay-map" data-testid="cabin-relay-map">
                 <span className="party is-you" title={lastYou ? `最后一句 ${clockLabel(lastYou)}` : undefined}>
@@ -980,7 +1101,11 @@ export function JobFace({
               <div className="cabin-relay-flow" data-testid="cockpit-relay-timeline">
                 {/* 派发原文 = 第 0 条（你 → 汐音），长文默认收 3 行，可展开。 */}
                 {job.prompt && (
-                  <div className="cabin-rm is-you" data-testid="cabin-relay-prompt">
+                  <div
+                    className={cn('cabin-rm is-you', jumpFlash === 'prompt' && 'is-jump-flash')}
+                    data-testid="cabin-relay-prompt"
+                    data-relay-key="prompt"
+                  >
                     <div className="cabin-rm-h">
                       <b>你 → 汐音</b>
                       <span className="k">派发原文</span>
@@ -1011,8 +1136,9 @@ export function JobFace({
                     const toLabel = line.to === 'doer' ? doerLabel : RELAY_ROLE[line.to].label
                     return (
                       <div
-                        className={cn('cabin-rm', `is-${line.from}`, line.mirror && 'is-mirror')}
+                        className={cn('cabin-rm', `is-${line.from}`, line.mirror && 'is-mirror', jumpFlash === line.key && 'is-jump-flash')}
                         key={line.key}
+                        data-relay-key={line.key}
                         data-testid={`cabin-relay-event-${line.key}`}
                       >
                         <div className="cabin-rm-h">
