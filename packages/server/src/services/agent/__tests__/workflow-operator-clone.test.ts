@@ -74,8 +74,8 @@ describe('workflow-operator built-in clone (LLM-WIKI ticket 09)', () => {
   })
 
   it('is the 8th entry appended to the registry roster (after workflow-author)', () => {
-    expect(BUILTIN_CLONES).toHaveLength(8)
     expect(BUILTIN_CLONES[7].name).toBe('workflow-operator')
+    expect(BUILTIN_CLONES).toHaveLength(9) // + cabin-orchestrator (Cabin P1)
   })
 })
 

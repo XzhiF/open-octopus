@@ -15,10 +15,12 @@ import {
   ScheduleRunDAO, ChatDAO, OrgDAO, AgentSessionDAO, EvolutionDAO,
   CloneDAO, SafetyDAO,
   KnowledgeEffectivenessDAO, ArchiveDAO,
-  TaskDAO, WikiArticleDAO, TodayDAO,
+  TaskDAO, WikiArticleDAO, TodayDAO, CabinDAO, AcceptanceDAO,
 } from "./db/dao"
 import { ArchiveDraftDAO } from "./db/dao/archive-draft-dao"
 import { InteractionMessageDAO } from "./db/dao/interaction-message-dao"
+import { ExecutionLinkDAO } from "./db/dao/execution-link-dao"
+import { IncidentStore } from "./services/supervision/incident-store"
 import { AgentVersionDAO } from "./db/dao/agent-version-dao"
 import { HarnessDAO } from "./db/dao/harness-dao"
 import { createIngestRoutes } from "./routes/ingest"
@@ -101,6 +103,7 @@ import { eventRoutes } from "./routes/events"
 import scheduleRoutes, { setScheduleService } from "./routes/schedule"
 import { createSchedulerRoutes } from "./routes/scheduler"
 import { createTasksRoutes, createSessionUsageRoutes } from "./routes/tasks"
+import { createCabinRoutes } from "./routes/cabins"
 import { createTaskWorkflowDevRoutes } from "./routes/task-workflow-dev"
 import { initWorkflowDevService } from "./services/tasks/workflow-dev-service"
 import { TASK_STATUS_EVENT } from "@octopus/shared"
@@ -133,11 +136,18 @@ import { registerProvider, ClaudeSDKProvider, PiAgentProvider } from "@octopus/p
 import { isPortInUse, findPidOnPort, killPid, waitForPort } from "./port-utils"
 import { globalErrorTracker, setupDataRetention } from "./services/error-tracker"
 import { initExecutionServiceRegistry, getExecutionService } from "./services/execution-service-registry"
-import { initChatEventBridge } from "./services/activity/chat-event-bridge"
+import { initChatEventBridge, getChatEventBridge } from "./services/activity/chat-event-bridge"
 import { WorkspaceScheduleService } from "./services/schedule"
 import { SchedulerService } from "./services/scheduler/scheduler-service"
 import { SchedulerEngine } from "./services/scheduler/scheduler-engine"
 import { TasksService, type TaskArchiveFinding } from "./services/tasks/tasks-service"
+import { CabinService } from "./services/cabin/cabin-service"
+import { CabinInitService } from "./services/cabin/cabin-init-service"
+import { CabinCommService } from "./services/cabin/cabin-comm-service"
+import { CabinDecisionService } from "./services/cabin/cabin-decision-service"
+import { CabinDelegationService } from "./services/cabin/cabin-delegation-service"
+import { CabinDelegationDAO } from "./db/dao/cabin-delegation-dao"
+import { setCabinToolsProvider } from "./services/chat/cabin-tools"
 import { TaskHomeService, setTaskHomeResolver } from "./services/tasks/task-home-service"
 import { PluginMaterializer } from "./services/tasks/plugin-materializer"
 import { WorkflowPresetsService } from "./services/workflow-presets-service"
@@ -211,6 +221,8 @@ interface AllDAOs {
   task: TaskDAO
   /** 「今日」页只读聚合（当天窗口，无写入）。 */
   today: TodayDAO
+  /** Cabin：目录级长期座舱（四表 + 链接列回填）。 */
+  cabin: CabinDAO
 }
 
 function createAllDAOs(db: ReturnType<typeof initDb>): AllDAOs {
@@ -235,6 +247,7 @@ function createAllDAOs(db: ReturnType<typeof initDb>): AllDAOs {
     harness: new HarnessDAO(db),
     task: new TaskDAO(db),
     today: new TodayDAO(db),
+    cabin: new CabinDAO(db),
   }
 }
 
@@ -1272,8 +1285,8 @@ if (shouldServe) {
       // 关联的全部工作流执行（任务轮 + 辅助执行 + 主对话直接跑的工作流），
       // 不再只是聊天行。路由先于 TasksService 装配，故晚绑定。
       setSessionLedgerSummaryProvider((sessionId) => tasksService.sessionUsage(sessionId).summary)
-      // 2026-11-03: 用户在对话里明确说「立即执行 / 入列 / 开跑」后，主 Chat 直接
-      // 执行启动动作（与看板点卡同一组合），不再被卡在「只能提议」。
+      // 2026-11-03; 2026-11-17 去人工门：规格与 phase 绑定齐后，主 Chat 可自行
+      // 启动 / 入列 / 触发（与看板点卡同一组合），不再要求用户另行表态。
       setTaskLaunchToolsProvider(() => ({
         readyTask: (id, opts) => tasksService.readyTask(id, opts),
         triggerTask: (id) => tasksService.triggerTaskWithPrebuild(id),
@@ -1458,6 +1471,99 @@ if (shouldServe) {
       app.route('/api/skill-groups', createSkillGroupsRoutes(resourceRegistry.get()))
       ;(global as any).__octopus_tasks_service = tasksService
 
+      // Cabin P1：目录绑定的长期座舱 —— 组合现有 workspace/session/task 基建。
+      // AcceptanceDAO 不入 AllDAOs（同 TasksService 先例，就地构造）。
+      const cabinService = new CabinService(daos!.cabin)
+      const cabinInitService = new CabinInitService({ cabin: daos!.cabin, sse })
+      // design 25 §4.2：独立委派实体（无 phase / worktree / 验收 / 归档）。
+      const cabinDelegationDAO = new CabinDelegationDAO(db)
+      // 状态变更即时广播：自动打盹 / 活动唤醒都不能等前端 30s 轮询才换态。
+      cabinService.setStatusHook((cabinId, status) => {
+        sse.emit(`cabin:${cabinId}`, { event: "cabin_status", data: { cabin_id: cabinId, status } })
+      })
+      // 派生视图（attention / 编队 / 待你数）变脏：新提问、决策、委派状态都走
+      // 这条即时广播，前端 useCabin 收到后重拉一次，不再等 30s 轮询。
+      cabinService.setViewHook((cabinId) => {
+        sse.emit(`cabin:${cabinId}`, { event: "cabin_view", data: { cabin_id: cabinId } })
+      })
+      cabinService.bindInfra({
+        workspaceService: workspaceService!,
+        workspaceDAO: daos!.workspace,
+        agentSessionDAO: daos!.agentSession,
+        taskDAO: daos!.task,
+        executionDAO: daos!.execution,
+        acceptanceDAO: new AcceptanceDAO(db),
+        tasksService,
+        repoSync: repoSyncService,
+        initService: cabinInitService,
+        roundEvidence,
+        incidentStore: new IncidentStore(db),
+        findingOps: getFindingOps(),
+        tokenUsageDAO: daos!.tokenUsage,
+        execLinks: new ExecutionLinkDAO(db),
+        cabinDelegationDAO,
+      })
+      // Cabin P3（C6/C9）：通信语义层 + G2 入站审计 hook + 舱主会话工具集。
+      const cabinComm = new CabinCommService({
+        cabin: daos!.cabin,
+        taskDAO: daos!.task,
+        agentSessionDAO: daos!.agentSession,
+        tasksService,
+        // 派发 / doer 信号都是「舱里有人干活」：同样重置打盹计时，睡着则叫醒。
+        onActivity: (cabinId) => cabinService.activity(cabinId),
+      })
+      getChatEventBridge().setCabinSignalHook((taskId, status, summary) => {
+        cabinComm.recordTaskSignal(taskId, status, summary)
+      })
+      // design 25：决策票据 / 账本 / 转达 + 独立委派。
+      const cabinDelegationService = new CabinDelegationService({
+        cabin: daos!.cabin,
+        delegations: cabinDelegationDAO,
+        service: cabinService,
+        comm: cabinComm,
+        onAppend: (sessionId, workspaceId) => {
+          if (!workspaceId) return
+          sse.emit(workspaceId, {
+            event: "session_updated",
+            data: { sessionId, wake: false, phase: "event" },
+          })
+        },
+      })
+      const cabinDecisionService = new CabinDecisionService({
+        cabin: daos!.cabin,
+        service: cabinService,
+        onAppend: (sessionId, workspaceId) => {
+          if (!workspaceId) return
+          sse.emit(workspaceId, {
+            event: "session_updated",
+            data: { sessionId, wake: false, phase: "event" },
+          })
+        },
+        // 委派的提问被转达后回到 running（否则编队里会一直挂着「在问你」）。
+        onDelegationRelayed: (delegationId) => cabinDelegationService.markRunning(delegationId),
+      })
+      getChatEventBridge().setDelegationStateHook((delegationId, state) => {
+        if (state === "waiting_input") cabinDelegationService.markWaitingInput(delegationId)
+        else cabinDelegationService.markRunning(delegationId)
+      })
+      // Cabin P5（G3）：软封存触发舱级知识沉淀 —— 逐任务复用 ArchiveIngest（冻结素材包
+      // → summary → archive-compile → 判例/技能草案）。fire-and-forget，不阻塞封存。
+      cabinService.setArchiveHook(async (cabinId) => {
+        for (const t of daos!.task.findByCabinId(cabinId)) {
+          await archiveIngest.ingestTask(t.id)
+        }
+      })
+      setCabinToolsProvider(() => ({
+        service: cabinService,
+        comm: cabinComm,
+        decisions: cabinDecisionService,
+        delegations: cabinDelegationService,
+      }))
+      app.route('/api/cabins', createCabinRoutes(
+        cabinService, cabinInitService, sse, cabinComm,
+        cabinDecisionService, cabinDelegationService,
+      ))
+
       // ★ Initialize Scheduler Engine with executors
       if (getFlag('scheduler')) {
         const scheduleService = new WorkspaceScheduleService(
@@ -1505,6 +1611,12 @@ if (shouldServe) {
             // + 通知卡进对话流（先斩后奏可逆；失败显形不炸作业，记账同律）。
             autoRetire: async () => { await getAutoRetire().run() },
           }),
+          // C11：舱休眠自动阈值 sweep —— 舱域 handler，组合根注入（scheduler 不 import 舱域）。
+          // 默认 30 分钟空闲阈值；舱 cockpit_prefs.dormantMinutes 可覆盖（0=关闭自动休眠）。
+          async () => {
+            const dormited = cabinService.sweepDormant(Date.now(), 30 * 60_000)
+            return { summary: `cabin-dormant：${dormited.length} 舱自动休眠`, metrics: { dormited: dormited.length } }
+          },
         )
         if (seeded.created.length || seeded.repaired.length) {
           console.log(

@@ -1,0 +1,193 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Octopus · 舱外 · classic</title>
+<style>
+/* ═══════════ 舱外 · classic ═══════════
+   和现网同一风格：左栏作战舱 / 任务 / 会话 + chat。
+   点「进舱 →」进入 cabin.html；舱内点「出舱」回到这里。*/
+:root{
+  --ink:#EDF0F7; --dim:#8790A6; --faint:#5C6479;
+  --bd:rgba(255,255,255,.09); --bd2:rgba(255,255,255,.16);
+  --bg0:#05060A; --a:#4FD1D9; --green:#7EE787; --amber:#FFC857; --red:#FF5C5C;
+  --ui:-apple-system,BlinkMacSystemFont,'SF Pro Text','Helvetica Neue','PingFang SC','Hiragino Sans GB','Microsoft YaHei',sans-serif;
+  --mono:'SF Mono','JetBrains Mono',Menlo,Consolas,ui-monospace,monospace;
+  color-scheme:dark;
+}
+*{box-sizing:border-box}
+html,body{height:100%;margin:0}
+body{background:var(--bg0);color:var(--ink);font-family:var(--ui);font-size:13px;line-height:1.5;display:flex;flex-direction:column;-webkit-font-smoothing:antialiased}
+button{font:inherit;color:inherit;border:0;background:none;padding:0;cursor:pointer}
+input{font:inherit;color:inherit}
+::-webkit-scrollbar{width:8px;height:8px}
+::-webkit-scrollbar-thumb{background:#343B4A;border-radius:4px;border:2px solid transparent;background-clip:content-box}
+
+.top{flex:none;height:48px;display:flex;align-items:center;gap:12px;padding:0 14px;border-bottom:1px solid var(--bd);background:rgba(8,10,16,.7)}
+.top .brand{display:flex;align-items:center;gap:7px;font-size:11px;font-weight:800;letter-spacing:.14em;color:var(--a)}
+.top .brand .mark{font-size:15px}
+.top .title{font-size:12px;font-weight:700}
+.top .sp{flex:1}
+.top .ghost{font-size:10px;color:var(--dim);border:1px solid var(--bd);border-radius:7px;padding:4px 9px}
+.top .ghost:hover{color:var(--ink);border-color:var(--bd2)}
+
+.body{flex:1;min-height:0;display:flex}
+.side{flex:none;width:236px;min-height:0;overflow:auto;border-right:1px solid var(--bd);background:rgba(9,11,17,.45);padding:10px 8px 14px;display:flex;flex-direction:column;gap:2px}
+.new{height:28px;border-radius:8px;background:rgba(255,255,255,.08);font-size:11.5px;font-weight:600;margin-bottom:8px}
+.new:hover{background:rgba(255,255,255,.13)}
+.sec{display:flex;align-items:center;gap:6px;padding:10px 8px 4px;font-size:9px;letter-spacing:.14em;color:var(--faint);font-weight:800}
+.sec .n{color:var(--faint);font-family:var(--mono);letter-spacing:0}
+.row{display:flex;align-items:center;gap:8px;width:100%;text-align:left;padding:6px 8px;border-radius:8px;color:var(--dim);font-size:11px;transition:.12s}
+.row:hover{background:rgba(255,255,255,.05);color:var(--ink)}
+.row.on{background:rgba(255,255,255,.07);color:var(--ink)}
+.row .dot{width:6px;height:6px;border-radius:50%;background:var(--faint);flex:none}
+.row .dot.run{background:var(--green);box-shadow:0 0 8px var(--green)}
+.row .dot.rev{background:var(--amber)}
+.row .dot.blocked{background:var(--red);box-shadow:0 0 8px rgba(255,92,92,.6)}
+.row .nm{flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.row .tag{font-size:8.5px;color:var(--faint);font-family:var(--mono)}
+.cabin{position:relative;border:1px solid rgba(255,200,87,.28);background:rgba(255,200,87,.05)}
+.cabin .dot{background:var(--green);box-shadow:0 0 8px var(--green)}
+.cabin .enter{margin-left:auto;font-size:9px;color:var(--amber);opacity:.55;transition:.15s}
+.cabin:hover .enter{opacity:1}
+.cabin .sub{display:block;padding:0 8px 6px 22px;font-size:9px;color:var(--faint)}
+.cabin .sub b{color:var(--dim);font-family:var(--mono);font-weight:600}
+
+.chat{flex:1;min-width:0;display:flex;flex-direction:column;background:rgba(7,9,14,.35)}
+.msgs{flex:1;min-height:0;overflow:auto;padding:18px 22px 10px;display:flex;flex-direction:column;gap:10px}
+.m{max-width:min(720px,88%);font-size:12px;line-height:1.65}
+.m.user{align-self:flex-end;background:rgba(79,209,217,.10);border:1px solid rgba(79,209,217,.24);border-radius:10px;padding:7px 11px}
+.m.asst{padding:2px 2px}
+.m.asst .who{display:block;font-size:9px;letter-spacing:.1em;color:var(--a);font-weight:800;margin-bottom:2px}
+.cinput{flex:none;display:flex;align-items:center;gap:8px;margin:0 18px 14px;padding:8px 10px;border:1px solid var(--bd);border-radius:11px;background:rgba(255,255,255,.03)}
+.cinput .p{color:var(--a);font-family:var(--mono)}
+.cinput input{flex:1;min-width:0;height:24px;border:0;background:none;outline:none;font-size:12px}
+.cinput .send{font-size:10px;padding:3px 10px;border-radius:7px;background:var(--a);color:#05070B;font-weight:800}
+
+/* 进舱过渡 */
+.warp{position:fixed;inset:0;z-index:200;pointer-events:none;opacity:0;background:radial-gradient(circle at 50% 55%,rgba(79,209,217,.38),#04050A 62%)}
+.warp.go{animation:warp .6s ease-out}
+@keyframes warp{0%{opacity:0;transform:scale(1.6)}30%{opacity:1}100%{opacity:0;transform:scale(1)}}
+</style>
+</head>
+<body>
+
+<header class="top">
+  <span class="brand"><span class="mark">🐙</span>OCTOPUS</span>
+  <span class="title" id="title">主对话</span>
+  <span class="sp"></span>
+</header>
+
+<div class="body">
+  <aside class="side">
+    <button class="new">＋ 开启新对话</button>
+
+    <div class="sec">作战舱 <span class="n">1</span></div>
+    <button class="row cabin" id="cabinRow" title="进入作战舱">
+      <span class="dot"></span><span class="nm">Aurora 结算平台</span><span class="tag">活跃</span><span class="enter">进舱 →</span>
+    </button>
+    <span class="sub" id="cabinSub"></span>
+
+    <div class="sec">任务 <span class="n" id="taskN">5</span></div>
+    <div id="taskList"></div>
+
+    <div class="sec">会话 <span class="n" id="sessN">3</span></div>
+    <div id="sessList"></div>
+  </aside>
+
+  <main class="chat">
+    <div class="msgs" id="msgs"></div>
+    <div class="cinput"><span class="p">❯</span><input id="input" placeholder="问主 Agent…" /><button class="send" id="send">发送</button></div>
+  </main>
+</div>
+
+<div class="warp" id="warp"></div>
+
+<script>
+"use strict";
+const $=(s,r=document)=>r.querySelector(s);
+const esc=s=>String(s).replace(/[&<>"]/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[m]));
+
+const TASKS=[
+  {id:'t1',name:'接入支付宝渠道',status:'run',label:'运行中'},
+  {id:'t2',name:'对账核心引擎',status:'rev',label:'待验收'},
+  {id:'t3',name:'结算台差异看板',status:'run',label:'运行中'},
+  {id:'t4',name:'对账修复工作流开发',status:'run',label:'运行中'},
+  {id:'t5',name:'旧渠道迁移',status:'blocked',label:'受阻'},
+];
+const SESSIONS=[
+  {id:'s1',name:'主对话',msgs:[
+    ['asst','舰长，Aurora 编队 6 条：4 条在跑，2 条等你。要进舱看吗？'],
+    ['user','先在任务里看，不急。'],
+    ['asst','好。舱里我只留汐音、编队和指令条，细节按需拉开，不再堆面板。'],
+  ]},
+  {id:'s2',name:'feat-alipay-channel · 执行者',msgs:[
+    ['asst','幂等骨架完成，正在补回调验签。'],
+    ['user','验签边界注意老版本回调。'],
+    ['asst','收到，我会加兼容分支。'],
+  ]},
+  {id:'s3',name:'feat-recon-core · 执行者',msgs:[
+    ['asst','round 2 完成：99.6% 命中，9 commits，等你验收。'],
+  ]},
+];
+
+/* 舱内编队存 sessionStorage，出舱回来还能看到刚派发的作业 */
+function fleetSummary(){
+  let jobs=null;
+  try{ jobs=JSON.parse(sessionStorage.getItem('pair.jobs')||'null'); }catch(e){}
+  if(!Array.isArray(jobs)||!jobs.length) return '6 条作业 · 4 运行';
+  const run=jobs.filter(j=>j.status==='running').length;
+  const wait=jobs.filter(j=>j.status==='review'||j.status==='blocked').length;
+  return jobs.length+' 条作业 · '+run+' 运行'+(wait?' · '+wait+' 等你':'');
+}
+
+let cur='s1';
+try{ cur=sessionStorage.getItem('pair.session')||'s1'; }catch(e){}
+if(!SESSIONS.some(s=>s.id===cur)) cur='s1';
+
+function render(){
+  $('#taskList').innerHTML=TASKS.map(t=>
+    `<button class="row" data-task="${t.id}"><span class="dot ${t.status}"></span><span class="nm">${esc(t.name)}</span><span class="tag">${t.label}</span></button>`).join('');
+  $('#sessList').innerHTML=SESSIONS.map(s=>
+    `<button class="row ${cur===s.id?'on':''}" data-sess="${s.id}"><span class="nm">${esc(s.name)}</span></button>`).join('');
+  const s=SESSIONS.find(x=>x.id===cur)||SESSIONS[0];
+  $('#title').textContent=s.name;
+  $('#msgs').innerHTML=s.msgs.map(([role,text])=>role==='user'
+    ? `<div class="m user">${esc(text)}</div>`
+    : `<div class="m asst"><span class="who">汐音</span>${esc(text)}</div>`).join('');
+  $('#msgs').scrollTop=$('#msgs').scrollHeight;
+  $('#cabinSub').innerHTML='<b>'+fleetSummary()+'</b>';
+}
+
+$('#sessList').addEventListener('click',e=>{
+  const b=e.target.closest('[data-sess]'); if(!b) return;
+  cur=b.dataset.sess;
+  try{ sessionStorage.setItem('pair.session',cur); }catch(err){}
+  render();
+});
+$('#taskList').addEventListener('click',e=>{
+  const b=e.target.closest('[data-task]'); if(!b) return;
+  b.blur();
+  $('#cabinRow').focus();
+});
+$('#cabinRow').addEventListener('click',()=>{
+  const w=$('#warp');
+  w.classList.remove('go'); void w.offsetWidth; w.classList.add('go');
+  const s=SESSIONS.find(x=>x.id===cur)||SESSIONS[0];
+  try{ sessionStorage.setItem('pair.session',cur); sessionStorage.setItem('pair.title',s.name); }catch(err){}
+  setTimeout(()=>{ location.href='cabin.html'; }, 380);
+});
+$('#send').addEventListener('click',()=>{
+  const inp=$('#input'); const text=inp.value.trim(); if(!text) return; inp.value='';
+  const s=SESSIONS.find(x=>x.id===cur)||SESSIONS[0];
+  s.msgs.push(['user',text]);
+  s.msgs.push(['asst','收到。要进舱就说一声，编队和待办都在甲板上。']);
+  render(); inp.focus();
+});
+$('#input').addEventListener('keydown',e=>{ if(e.key==='Enter') $('#send').click(); });
+
+render();
+</script>
+</body>
+</html>

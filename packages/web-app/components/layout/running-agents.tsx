@@ -4,6 +4,8 @@ import { Bot, Workflow } from 'lucide-react'
 import type { RunningAgentSession, RunningExecution } from '@/lib/agent/api'
 import { systemWorkflowLabel } from '@/lib/run-labels'
 import { useChatSessions } from '@/components/providers/chat-sessions'
+import { useCabinMode } from '@/components/cabin/cabin-mode'
+import { useCabins } from '@/hooks/use-cabins'
 import { useDesktopWindows } from '@/lib/desktop-windows'
 import { useRunningAgents } from '@/hooks/use-running-agents'
 import { useRunningExecutions } from '@/hooks/use-running-executions'
@@ -37,6 +39,8 @@ export function RunningAgents() {
   const agents = useRunningAgents()
   const executions = useRunningExecutions()
   const { setActiveSessionId } = useChatSessions()
+  const { cabins } = useCabins()
+  const cabinMode = useCabinMode()
   const { minimizeAll, focusDesktop } = useDesktopWindows()
 
   if (agents.length === 0 && executions.length === 0) return null
@@ -47,6 +51,15 @@ export function RunningAgents() {
   const total = executions.length + agents.length
 
   const openAgent = (id: string) => {
+    // 舱主对话是舱绑定的单线程，不在会话列表里；点它的运行 chip = 回到那个舱
+    // （2026-11-13），否则会掉进一个没有会话元数据的普通 chat。
+    const cabin = cabins.find((item) => item.main_session_id === id)
+    if (cabin) {
+      cabinMode.openCabin(cabin.id)
+      minimizeAll()
+      focusDesktop()
+      return
+    }
     setActiveSessionId(id)
     minimizeAll()
     focusDesktop()

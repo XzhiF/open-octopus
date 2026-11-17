@@ -16,6 +16,7 @@ export type ActivityKind =
   | "task.review"
   | "task.completed"
   | "task.failed"
+  | "cabin.init"
 
 export interface ActivityEvent {
   id: string

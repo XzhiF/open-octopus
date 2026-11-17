@@ -21,6 +21,8 @@ export interface WorkspaceRow {
    *  Replaces the old `source_schedule_id → schedules.origin_id` reverse lookup. */
   task_id: string | null
   archive_status: string | null
+  /** Cabin (S2 no FK): directory-bound cockpit ownership. Additive/optional. */
+  cabin_id?: string | null
 }
 
 export interface ExecutionRow {
@@ -69,6 +71,10 @@ export interface ExecutionRow {
    *  through the scheduler's tables. NULL = not a task launch. A task-bound row is also
    *  the task-side launch queue ('pending' = armed, waiting behind the concurrency gate). */
   task_id: string | null
+  /** Cabin ownership (2026-11-17, write-once): the cabin this execution was
+   *  launched from — snapshot at insert (task.cabin_id → workspace.cabin_id).
+   *  NULL = outside any cabin. Distinct from workspace_id (where it runs). */
+  cabin_id?: string | null
   started_at: string | null
   completed_at: string | null
   duration: number | null
@@ -407,6 +413,8 @@ export interface TaskRow {
    *  （schema.sql CREATE + schema.ts ensureColumn 双落）。历史已归档 task 无摘要 = null
    *  （宽容读：DAO 读出 null、搜索 LIKE 跳过不报错）。非生命周期列，写面不碰 status/version。 */
   semantic_summary: string | null
+  /** Cabin (S2 no FK): cockpit ownership. Additive/optional. */
+  cabin_id?: string | null
   // ── schema v41 (ADR-0021): WHEN this task wants to run — the task's own data. ──
   // Before v41 the due time lived on a private `schedules` row that readyTask
   // pre-created and parked ('draft'); arming a task meant flipping that row, which
@@ -460,6 +468,8 @@ export interface SessionRow {
   cwd: string | null
   /** v58: bound workspace (main-agent / user / task workspace). */
   workspace_id: string | null
+  /** Cabin (S2 no FK): cabin orchestrator main session or task author/doer session. Additive/optional. */
+  cabin_id?: string | null
   /** Last provider-reported context-window usage (JSON) — see AgentSession.context_usage. */
   context_usage: string | null
   last_message_at: string | null
@@ -684,4 +694,74 @@ export interface LeaderboardEntry {
   workflow_name: string
   metric_value: number
   execution_count: number
+}
+
+// ── Cabin (directory-bound long-lived cockpit) ──
+export type CabinStatus = 'draft' | 'initializing' | 'active' | 'dormant' | 'archived'
+
+export interface CabinRow {
+  id: string
+  name: string
+  path: string
+  workspace_id: string | null
+  main_session_id: string | null
+  requirements: string
+  status: CabinStatus
+  mainline_strategy: string
+  org: string | null
+  init_state: string | null
+  cockpit_prefs: string | null
+  version: number
+  created_at: string
+  updated_at: string
+  last_active_at: string | null
+  archived_at: string | null
+  /** 软删除时间（2026-11-15）：非空 = 已删。计费与历史行保留，只是不再出现在列表/接口。 */
+  deleted_at: string | null
+}
+
+export type CabinJobKind = 'task' | 'workflow' | 'subagent'
+
+export interface CabinJobRow {
+  id: string
+  cabin_id: string
+  kind: CabinJobKind
+  ref_id: string | null
+  session_id: string | null
+  title: string
+  mandate: string | null
+  prompt: string | null
+  created_at: string
+  ended_at: string | null
+}
+
+export type CabinJobEventKind = 'dispatch' | 'report' | 'attention' | 'handback' | 'human_input' | 'resume' | 'brief' | 'decision'
+
+export interface CabinJobEventRow {
+  id: string
+  job_id: string
+  cabin_id: string
+  kind: CabinJobEventKind
+  actor: string | null
+  payload: string | null
+  created_at: string
+}
+
+/** 独立委派（design 25 §4.2）：不是任务 —— 没有 phase / worktree / 验收 / 归档。
+ *  与 cabin_jobs 账本不合并（CHECK 约束不可扩值），读侧归一化。 */
+export type CabinDelegationState = 'queued' | 'running' | 'waiting_input' | 'done' | 'failed' | 'cancelled'
+
+export interface CabinDelegationRow {
+  id: string
+  cabin_id: string
+  title: string
+  intent_text: string
+  brief: string | null
+  autonomy: 'approve' | 'checkpoint' | 'hands-off'
+  state: CabinDelegationState
+  doer_session_id: string | null
+  result_summary: string | null
+  created_at: string
+  updated_at: string
+  ended_at: string | null
 }

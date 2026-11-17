@@ -39,7 +39,12 @@ import {
 } from '@/lib/chat-split'
 import { cn } from '@/lib/utils'
 import { Sheet, SheetContent } from '@/components/ui/sheet'
+import type { CabinDetail } from '@/lib/cabin-api'
+import type { CabinDraft } from '@/lib/cabin-draft'
+import { CabinCreateHero } from '@/components/cabin/CabinCreateHero'
 import { ChatSidebar } from './chat-sidebar'
+import { SidebarResizer } from './sidebar-resizer'
+import { useSidebarWidth } from './sidebar-width'
 import {
   ChatPane,
   type ChatPaneAction,
@@ -48,17 +53,30 @@ import {
   type PendingTaskSession,
 } from './ChatPane'
 
-const SIDEBAR_WIDTH_KEY = 'octopus.chat.sidebarWidth.v1'
 const SIDEBAR_COLLAPSED_KEY = 'octopus.chat.sidebarCollapsed.v1'
-const SIDEBAR_DEFAULT = 236
-const SIDEBAR_MIN = 200
-const SIDEBAR_MAX = 380
 
-function clampSidebarWidth(width: number): number {
-  return Math.min(SIDEBAR_MAX, Math.max(SIDEBAR_MIN, Math.round(width)))
+/**
+ * 桌面壳注入的作战舱桥（2026-11-13，v4 2026-11-15）：左栏作战舱段 + 新建页。
+ * 缺省 undefined = 独立渲染（单测等）保持原来的两段侧栏。
+ */
+export interface ChatTabCabinBridge {
+  cabins: CabinDetail[]
+  /** 新建草稿（左栏一行）；null = 没有草稿。 */
+  draft: CabinDraft | null
+  /** 右页是否停在新建页。 */
+  draftOpen: boolean
+  onSelectCabin: (id: string) => void
+  onCreateCabin: () => void
+  onUpdateDraft: (patch: Partial<CabinDraft>) => void
+  onCloseDraft: () => void
+  onCancelDraft: () => void
+  onCabinCreated: (id: string) => void
+  /** 舱行「⋯」：重命名 / 删除（2026-11-15；软删除 + 可勾「同时删除本地文件」）。 */
+  onRenameCabin: (cabin: CabinDetail, name: string) => Promise<void>
+  onDeleteCabin: (cabin: CabinDetail, opts: { deleteFiles: boolean }) => Promise<void>
 }
 
-export function ChatTab() {
+export function ChatTab({ cabinBridge }: { cabinBridge?: ChatTabCabinBridge } = {}) {
   const {
     sessions, activeSessionId, setActiveSessionId,
     loading: sessionsLoading, createNewSession, renameSession, removeSession,
@@ -118,13 +136,28 @@ export function ChatTab() {
     setRegionNode(node)
   }, [])
 
+  // 新建作战舱右页（CabinCreateHero）会整块接管对话区，ChatPane 这时是**卸载**的。
+  // 侧栏 / 顶栏的任何导航都必须先收起这页（草稿仍留在左栏），否则指令发给一个
+  // 不存在的 ChatPane，用户看到的就是「点了没反应」。
+  const draftPageOpen = !!cabinBridge?.draftOpen
+  const closeDraftPage = cabinBridge?.onCloseDraft
+  // 同一次点击里 handleSelectX 与 issueCommand 都会调它：用 ref 保证只收一次。
+  const draftPageVisibleRef = useRef(false)
+  draftPageVisibleRef.current = draftPageOpen
+  const leaveDraftPage = useCallback(() => {
+    if (!draftPageVisibleRef.current) return
+    draftPageVisibleRef.current = false
+    closeDraftPage?.()
+  }, [closeDraftPage])
+
   const issueCommand = useCallback((pane: ChatPaneId, action: ChatPaneAction) => {
+    leaveDraftPage()
     userNavigatedRef.current = true
     nonceRef.current += 1
     const command: ChatPaneCommand = { ...action, nonce: nonceRef.current }
     if (pane === 'left') setLeftCommand(command)
     else setRightCommand(command)
-  }, [])
+  }, [leaveDraftPage])
 
   const collapseSplit = useCallback(() => {
     // 关闭分屏 = 保留焦点栏：焦点在右时把右栏的内容搬到剩下的一栏。
@@ -371,10 +404,13 @@ export function ChatTab() {
   }, [split, leftSession, rightSession, issueCommand])
 
   const handleSelectSession = useCallback((id: string) => {
+    leaveDraftPage()
     openSessionInPane(split ? focus : 'left', id)
-  }, [split, focus, openSessionInPane])
+  }, [split, focus, openSessionInPane, leaveDraftPage])
 
   const handleSelectTask = useCallback((task: TaskView, opts?: { module?: TaskModule }) => {
+    // 分屏下「已在某栏打开」会提前 return，所以这里先收新建页。
+    leaveDraftPage()
     if (!split) {
       issueCommand('left', { type: 'select-task', task, ...(opts?.module ? { module: opts.module } : {}) })
       return
@@ -396,7 +432,7 @@ export function ChatTab() {
       return
     }
     issueCommand(focus, { type: 'select-task', task, ...(opts?.module ? { module: opts.module } : {}) })
-  }, [split, leftTask, rightTask, leftSession, rightSession, focus, issueCommand])
+  }, [split, leftTask, rightTask, leftSession, rightSession, focus, issueCommand, leaveDraftPage])
 
   const handleCreateSession = useCallback(() => {
     issueCommand(split ? focus : 'left', { type: 'new-session' })
@@ -407,6 +443,8 @@ export function ChatTab() {
   }, [split, focus, issueCommand])
 
   const openInOtherPane = useCallback((target: { kind: 'session' | 'task'; id: string; task?: TaskView }) => {
+    // 「已在某栏打开」也提前 return；新建页同样要收起来。
+    leaveDraftPage()
     if (!split) return
     const other: ChatPaneId = focus === 'left' ? 'right' : 'left'
     if (target.kind === 'session') {
@@ -420,7 +458,7 @@ export function ChatTab() {
     if (rightTask?.id === target.id) { setFocus('right'); toast.message('已在右栏打开'); return }
     setFocus(other)
     if (target.task) issueCommand(other, { type: 'select-task', task: target.task })
-  }, [split, focus, leftSession, rightSession, leftTask, rightTask, issueCommand])
+  }, [split, focus, leftSession, rightSession, leftTask, rightTask, issueCommand, leaveDraftPage])
 
   const handleDeleteSession = useCallback(async (id: string) => {
     await removeSession(id)
@@ -486,27 +524,14 @@ export function ChatTab() {
   }, [runningAgents, streamingByPane])
 
   // ── 侧栏宽度 / 折叠 / 搜索 / 移动端抽屉 ─────────────────────────────
-  const [sidebarWidth, setSidebarWidth] = useState(() => {
-    if (typeof window === 'undefined') return SIDEBAR_DEFAULT
-    const saved = Number(window.localStorage.getItem(SIDEBAR_WIDTH_KEY))
-    return Number.isFinite(saved) && saved > 0 ? clampSidebarWidth(saved) : SIDEBAR_DEFAULT
-  })
-  const [resizingSidebar, setResizingSidebar] = useState(false)
-  const sidebarDragRef = useRef<{ startX: number; startWidth: number } | null>(null)
+  // 宽度与舱内对话共用（sidebar-width.ts）：拖出的值两个视图都认。
+  const { width: sidebarWidth, resizing: resizingSidebar, resizeHandlers } = useSidebarWidth()
   const [sidebarCollapsed, setSidebarCollapsed] = useState(() => {
     if (typeof window === 'undefined') return false
     return window.localStorage.getItem(SIDEBAR_COLLAPSED_KEY) === '1'
   })
   const [sidebarSearchOpen, setSidebarSearchOpen] = useState(false)
   const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false)
-
-  useEffect(() => {
-    try {
-      window.localStorage.setItem(SIDEBAR_WIDTH_KEY, String(sidebarWidth))
-    } catch {
-      /* storage unavailable */
-    }
-  }, [sidebarWidth])
 
   useEffect(() => {
     try {
@@ -520,34 +545,6 @@ export function ChatTab() {
     setSidebarCollapsed(false)
     if (opts?.focusSearch) setSidebarSearchOpen(true)
   }, [])
-
-  const handleSidebarResizeStart = (event: ReactPointerEvent<HTMLDivElement>) => {
-    event.preventDefault()
-    sidebarDragRef.current = { startX: event.clientX, startWidth: sidebarWidth }
-    setResizingSidebar(true)
-    try {
-      event.currentTarget.setPointerCapture(event.pointerId)
-    } catch {
-      /* pointer capture unavailable */
-    }
-  }
-
-  const handleSidebarResizeMove = (event: ReactPointerEvent<HTMLDivElement>) => {
-    const drag = sidebarDragRef.current
-    if (!drag) return
-    setSidebarWidth(clampSidebarWidth(drag.startWidth + event.clientX - drag.startX))
-  }
-
-  const handleSidebarResizeEnd = (event: ReactPointerEvent<HTMLDivElement>) => {
-    if (!sidebarDragRef.current) return
-    sidebarDragRef.current = null
-    setResizingSidebar(false)
-    try {
-      event.currentTarget.releasePointerCapture(event.pointerId)
-    } catch {
-      /* pointer capture unavailable */
-    }
-  }
 
   // ── 分屏线拖拽 ─────────────────────────────────────────────────────
   const handleDividerDown = (event: ReactPointerEvent<HTMLDivElement>) => {
@@ -650,6 +647,23 @@ export function ChatTab() {
   }, [leftSession, rightSession, focus, issueCommand])
 
   const sidebarProps = {
+    // 桌面内的作战舱段（原型三段左栏：作战舱 · 任务 · 会话）。
+    ...(cabinBridge
+      ? {
+          cabins: cabinBridge.cabins,
+          activeCabinId: null,
+          onSelectCabin: cabinBridge.onSelectCabin,
+          onCreateCabin: cabinBridge.onCreateCabin,
+          pendingCabin: cabinBridge.draft
+            ? { name: cabinBridge.draft.name.trim() || '未命名舱' }
+            : null,
+          activePendingCabin: cabinBridge.draftOpen,
+          onOpenDraft: cabinBridge.onCreateCabin,
+          onCancelDraft: cabinBridge.onCancelDraft,
+          onRenameCabin: cabinBridge.onRenameCabin,
+          onDeleteCabin: cabinBridge.onDeleteCabin,
+        }
+      : {}),
     tasks: sidebarTasks,
     tasksLoading: chatTasksLoading,
     activeTaskId: focusedTask?.id ?? null,
@@ -695,22 +709,7 @@ export function ChatTab() {
             {...sidebarProps}
             onCollapse={() => setSidebarCollapsed(true)}
           />
-          <div
-            role="separator"
-            aria-orientation="vertical"
-            aria-label="调整侧栏宽度"
-            title="拖动调整宽度 · 双击复位"
-            data-testid="chat-sidebar-resizer"
-            onPointerDown={handleSidebarResizeStart}
-            onPointerMove={handleSidebarResizeMove}
-            onPointerUp={handleSidebarResizeEnd}
-            onPointerCancel={handleSidebarResizeEnd}
-            onDoubleClick={() => setSidebarWidth(SIDEBAR_DEFAULT)}
-            className={cn(
-              'absolute -right-1 top-0 z-20 hidden h-full w-2 cursor-col-resize touch-none md:block',
-              resizingSidebar ? 'bg-white/[0.12]' : 'hover:bg-white/[0.06]',
-            )}
-          />
+          <SidebarResizer resizing={resizingSidebar} handlers={resizeHandlers} />
         </aside>
       )}
 
@@ -764,7 +763,15 @@ export function ChatTab() {
         data-split={split ? 'true' : undefined}
         className={cn('relative flex min-w-0 flex-1', resizing && 'cursor-col-resize select-none [&_*]:cursor-col-resize')}
       >
-        {split ? (
+        {cabinBridge?.draftOpen && cabinBridge.draft ? (
+          <CabinCreateHero
+            draft={cabinBridge.draft}
+            cabins={cabinBridge.cabins}
+            onChange={cabinBridge.onUpdateDraft}
+            onCancel={cabinBridge.onCancelDraft}
+            onCreated={cabinBridge.onCabinCreated}
+          />
+        ) : split ? (
           <>
             <div
               className="flex min-w-0"

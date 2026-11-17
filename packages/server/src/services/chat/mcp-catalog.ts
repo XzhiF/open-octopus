@@ -72,6 +72,18 @@ const TASK_TOOL_NAMES = [
 
 const MEMORY_TOOL_NAMES = ["record_daily", "remember"] as const
 
+const CABIN_TOOL_NAMES = [
+  "cabin_list_tasks",
+  "cabin_dispatch_task",
+  "cabin_delegate_task",
+  "cabin_relay_decision",
+  "cabin_list_jobs",
+  "cabin_job_trace",
+  "cabin_resume_job",
+] as const
+
+const CABIN_DOER_TOOL_NAMES = ["cabin_delegation_done"] as const
+
 export function buildMcpCatalog(): McpServerMeta[] {
   return [
     {
@@ -95,7 +107,35 @@ export function buildMcpCatalog(): McpServerMeta[] {
       when: "自由主对话挂载（任务线程除外）",
       tools: MEMORY_TOOL_NAMES.map((name) => ({ name, description: MEMORY_TOOL_DESC[name] })),
     },
+    {
+      server: "octopus-cabin",
+      label: "舱调度",
+      description: "作战舱主对话的调度工具集：列舱内任务/作业、派发真实任务、派发轻量委派、转达用户决策、读审计 trace、恢复作业。只调度不执行。",
+      when: "会话绑定作战舱（cabin_id）且非任务线程、非委派 doer 时挂载",
+      tools: CABIN_TOOL_NAMES.map((name) => ({ name, description: CABIN_TOOL_DESC[name] })),
+    },
+    {
+      server: "octopus-cabin-doer",
+      label: "委派执行",
+      description: "独立委派 doer 的收口工具：交一句话结论 + 产物引用。不能派任务、不能开工作树。",
+      when: "会话是某条独立委派（cabin_delegations）的 doer 时挂载",
+      tools: CABIN_DOER_TOOL_NAMES.map((name) => ({ name, description: CABIN_DOER_TOOL_DESC[name] })),
+    },
   ]
+}
+
+const CABIN_TOOL_DESC: Record<string, string> = {
+  cabin_list_tasks: "列出本舱全部任务（派生状态/会话），监督读。",
+  cabin_dispatch_task: "派发真实 Octopus 任务进舱（建任务+作者线程+授权 wake），brief 是编译后的意图、原文逐字附后；执行在独立 worktree。",
+  cabin_delegate_task: "派发一次轻量委派（无 phase / worktree / 验收 / 归档）：一份 brief + 一个 doer 会话，编队显示 D1。",
+  cabin_relay_decision: "把用户在舱主对话里做的决定代述给 doer；verbatim 逐字、幂等，framing 只补边界不改选择。",
+  cabin_list_jobs: "统一作业账本（task/workflow/subagent）+ 独立委派 + 派生 status + 句柄。",
+  cabin_job_trace: "读某作业的 append-only 审计时间线。",
+  cabin_resume_job: "恢复作业（ready 触发 / paused 恢复）。",
+}
+
+const CABIN_DOER_TOOL_DESC: Record<string, string> = {
+  cabin_delegation_done: "交委派结论（一句话 + 产物路径/链接）；ok=false 表示没做成并说明卡在哪。",
 }
 
 const MEMORY_TOOL_DESC: Record<string, string> = {
@@ -125,10 +165,10 @@ const WORKFLOW_TOOL_DESC: Record<string, string> = {
 const TASK_TOOL_DESC: Record<string, string> = {
   get_task_status: "读取绑定任务的当前状态、phase/轮次、工作空间与可用动作。",
   update_task_spec_field: "（作者身份）写入 task_spec 的单个字段，走服务端校验与版本管线。",
-  propose_launch: "（作者身份）向用户发起运行选择卡：立即执行 / 入列待触发 / 定时。",
-  launch_task: "（作者身份）用户本轮明确说「立即执行」后，真实入列并开跑（confirmed=true）。",
-  enqueue_task: "（作者身份）用户本轮明确说「入列」后，真实入列待触发，不上卡（confirmed=true）。",
-  trigger_task: "（执行者身份）用户本轮明确说「开跑/触发」且任务已 ready 时，直接触发执行（confirmed=true）。",
+  propose_launch: "（可选）向用户发起运行选择卡：立即执行 / 入列待触发 / 定时；规格已齐时优先直接 launch_task。",
+  launch_task: "（作者身份）规格与 phase 绑定齐后，直接入列并开跑 —— 不需要人工确认。",
+  enqueue_task: "（作者身份）只入列、不马上跑；仅在用户要求先入列 / 等待 / 定时时使用。",
+  trigger_task: "（执行者身份）任务已 ready 且该开跑时直接触发 —— 不需要人工确认。",
   request_task_action: "（执行者身份）请人类确认一个任务动作（暂停/恢复/中止/触发…），只出确认卡、不执行。",
   propose_wiki_entries: "把本轮沉淀提炼成 wiki 条目提案，逐条交给人在对话里决定。",
   get_acceptance_plan: "读取本轮验收方案：cases 是人验场景（1–3 条），checks 是机器证据表。",

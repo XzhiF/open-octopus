@@ -14,7 +14,9 @@
 //   · 收尾状态（本轮完成 · 待验收 / 归档中 / 已归档 / 中止 / 失败）→ 收尾只读卡，
 //     和「启动方式选完」的决策卡同一套观感：降噪、无按钮，操作回主 chat / 作业坞。
 //
-// 卡片永远没有动作按钮 —— 用户明确要求操作走主 chat 或作业坞对应窗口。
+// 卡片永远没有「操作」按钮 —— 用户明确要求操作走主 chat 或作业坞对应窗口。
+// 2026-11-16（design 23 §2 续）：新增「规格 / 运行 / 验收」**查看**页签，
+// 模块直接内嵌在消息流里（任务线程与舱主会话都有），不需要为看规格再切会话。
 
 import { useEffect, useRef, useState } from 'react'
 import { getTask, type TaskDetail, type TaskExecutionBadge } from '@/lib/tasks-api'
@@ -22,6 +24,7 @@ import { fetchExecutionDetail } from '@/lib/api-client'
 import type { StepExecution } from '@/lib/types'
 import type { AgentMessage } from '@/lib/agent/types'
 import { formatRunClock } from '@/lib/format'
+import { TaskModuleInline, INLINE_MODULE_LABEL, type InlineTaskModule } from './task-module-inline'
 
 const LIVE_TASK_STATUS = new Set(['running', 'paused'])
 const TERMINAL_EXEC_STATUS = new Set([
@@ -158,12 +161,52 @@ const SETTLED_HINT: Record<string, string> = {
   failed: '完整日志在作业坞「运行」',
 }
 
-export function TaskStatusCard({ message }: { message: AgentMessage }) {
+/** 双会话查看入口：规格 / 运行 / 验收内嵌展开，纯查看，不改任务状态。 */
+function ModuleTabs({ taskId }: { taskId: string }) {
+  const [open, setOpen] = useState<InlineTaskModule | null>(null)
+  return (
+    <>
+      <div className="mt-1.5 flex items-center gap-1 pl-6" data-testid="task-module-tabs">
+        <span className="text-[9.5px] text-pop-dim/60">在对话里看</span>
+        {(['plan', 'run', 'acceptance'] as const).map((key) => (
+          <button
+            key={key}
+            type="button"
+            data-testid={`task-module-tab-${key}`}
+            aria-pressed={open === key}
+            onClick={() => setOpen((cur) => (cur === key ? null : key))}
+            className={[
+              'rounded border px-1.5 py-0.5 text-[10px] transition-colors',
+              open === key
+                ? 'border-pop-cyan/50 bg-pop-cyan/10 font-bold text-pop-cyan'
+                : 'border-pop-bd/70 bg-black/10 text-pop-dim hover:bg-white/[0.06] hover:text-pop-ink',
+            ].join(' ')}
+          >
+            {INLINE_MODULE_LABEL[key]}
+          </button>
+        ))}
+      </div>
+      {open && <TaskModuleInline taskId={taskId} module={open} onClose={() => setOpen(null)} />}
+    </>
+  )
+}
+
+export function TaskStatusCard({ message, compact = false }: { message: AgentMessage; compact?: boolean }) {
   const activity = message.activity
   const taskId = activity?.taskId ?? null
   const executionId = activity?.executionId ?? null
   const cardStatus = activity?.status ?? ''
   const isRunCard = LIVE_TASK_STATUS.has(cardStatus)
+  // 人工「暂停 / 继续运行」的轻量转场卡（2026-11-14）：只报状态与坐标，
+  // 不再拉同一 execution 的节点摘要 —— 否则和「任务开始执行」那张运行卡
+  // 长得一模一样，任务 chat / 舱 chat 里都会出现两张重复的运行卡。
+  // compact = 同一 execution 的运行卡已经画过一张（历史数据也可能出现），
+  // 后到的卡同样降级成转场卡。
+  const runState = (activity?.payload as { runState?: 'paused' | 'resumed' } | undefined)?.runState
+  const transfer = !!runState || compact
+  const coord = activity?.phaseIndex != null
+    ? `P${activity.phaseIndex}${activity.roundIndex != null ? ` · R${activity.roundIndex}` : ''}`
+    : ''
 
   const [exec, setExec] = useState<ExecSnapshot | null>(null)
   const [run, setRun] = useState<TaskExecutionBadge | null>(null)
@@ -171,7 +214,8 @@ export function TaskStatusCard({ message }: { message: AgentMessage }) {
   const stoppedRef = useRef(false)
 
   useEffect(() => {
-    if (!taskId) return
+    // 转场卡不绑运行摘要：不取任务 / 执行详情，也不轮询。
+    if (!taskId || transfer) return
     let alive = true
     stoppedRef.current = false
     const load = async () => {
@@ -205,7 +249,7 @@ export function TaskStatusCard({ message }: { message: AgentMessage }) {
       if (!stoppedRef.current) void load()
     }, 3000)
     return () => { alive = false; window.clearInterval(timer) }
-  }, [taskId, executionId, isRunCard, activity?.workspaceId])
+  }, [taskId, executionId, isRunCard, transfer, activity?.workspaceId])
 
   // 收尾（执行终态）后计时停住 —— 只在还活着时每秒推一格。
   const execStatus = exec?.status ?? null
@@ -248,9 +292,42 @@ export function TaskStatusCard({ message }: { message: AgentMessage }) {
         ? Math.max(0, now - startedMs)
         : lastStepEnd > startedMs ? lastStepEnd - startedMs : null
 
-  const coord = activity?.phaseIndex != null
-    ? `P${activity.phaseIndex}${activity.roundIndex != null ? ` · R${activity.roundIndex}` : ''}`
-    : ''
+  // ── 运行状态转场卡（人工暂停 / 继续运行；不带节点摘要） ──
+  if (transfer) {
+    const isPaused = runState === 'paused' || (!runState && cardStatus === 'paused')
+    return (
+      <div
+        data-tui-msg="event"
+        data-message-id={message.id}
+        data-testid="activity-event-card"
+        data-card-tone={isPaused ? 'paused' : 'settled'}
+        className={[
+          'rounded-md border px-3 py-2 font-mono text-[11.5px]',
+          'shadow-[inset_0_0_0_1px_rgba(255,255,255,0.03)]',
+          isPaused ? 'border-pop-amber/35 bg-pop-amber/[0.05]' : 'border-pop-bd/70 bg-white/[0.015]',
+        ].join(' ')}
+      >
+        <div className="flex items-center gap-2">
+          <span
+            className={`grid size-4 shrink-0 place-items-center rounded-full border border-current text-[9px] ${
+              isPaused ? 'text-pop-amber' : 'text-pop-green'
+            }`}
+          >
+            {isPaused ? '⏸' : '▶'}
+          </span>
+          <span className={`min-w-0 flex-1 truncate font-semibold ${isPaused ? 'text-pop-amber' : 'text-pop-ink/80'}`}>
+            {activity?.title ?? (isPaused ? '任务已暂停' : '任务已继续运行')}
+          </span>
+          {coord && <span className="shrink-0 text-[10.5px] text-pop-dim">{coord}</span>}
+          <span className="shrink-0 text-[10px] text-pop-dim/70">运行窗看节点明细</span>
+        </div>
+        {activity?.message && (
+          <div className="mt-1 pl-6 text-[10.5px] text-pop-dim">{activity.message}</div>
+        )}
+        {taskId && <ModuleTabs taskId={taskId} />}
+      </div>
+    )
+  }
 
   // ── 收尾状态卡（本轮完成 · 待验收 / 归档 / 中止 / 失败 / 其它终态） ──
   if (!isRunCard) {
@@ -285,6 +362,7 @@ export function TaskStatusCard({ message }: { message: AgentMessage }) {
         {SETTLED_HINT[cardStatus] && (
           <div className="mt-0.5 pl-6 text-[10px] text-pop-dim/70">{SETTLED_HINT[cardStatus]}</div>
         )}
+        {taskId && <ModuleTabs taskId={taskId} />}
       </div>
     )
   }
@@ -463,6 +541,8 @@ export function TaskStatusCard({ message }: { message: AgentMessage }) {
           </div>
         </>
       )}
+
+      {taskId && <ModuleTabs taskId={taskId} />}
     </div>
   )
 }

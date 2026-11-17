@@ -144,6 +144,28 @@ export class IncidentStore {
     return rows.map((r) => this.toRecord(r))
   }
 
+  /** C4 cabin attention: waiting-human incidents across a set of tasks
+   *  (runtime_incidents has no task_id — reach it through executions). */
+  listWaitingHumanByTasks(taskIds: readonly string[]): IncidentRecord[] {
+    if (taskIds.length === 0) return []
+    const out: IncidentRecord[] = []
+    const CHUNK = 400
+    for (let i = 0; i < taskIds.length; i += CHUNK) {
+      const ids = taskIds.slice(i, i + CHUNK)
+      const ph = ids.map(() => "?").join(",")
+      const rows = this.db
+        .prepare(
+          `SELECT i.* FROM runtime_incidents i
+           JOIN executions e ON e.id = i.execution_id
+           WHERE i.status = 'waiting_human' AND e.task_id IN (${ph})
+           ORDER BY i.created_at ASC`,
+        )
+        .all(...ids) as IncidentRow[]
+      for (const r of rows) out.push(this.toRecord(r))
+    }
+    return out
+  }
+
   /** Open incidents for one node (used by the failure hook to choose pause). */
   findOpenForNode(executionId: string, nodeId: string): IncidentRecord | null {
     const row = this.db

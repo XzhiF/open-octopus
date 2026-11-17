@@ -121,3 +121,12 @@ octopus repos update/pull/clone/rebuild-index
 - 浏览清单: `octopus resource list`（CLI）· `GET /api/resources`（服务端）
 - 搜索与安装: octo-resource-manager skill
 - 全量清单快照: [docs/resources.md](./docs/resources.md) — 静态快照，资源装卸不再自动改写任何文档
+
+## 汇报约定（用户偏好 · 记忆）
+
+- **原型类 / 文档类 / 产物类输出，面向用户汇报时一律给 Windows 绝对全路径**（盘符开头），不要只给相对路径或裸文件名。
+  例：`C:\xzf\ai\open-octopus\docs\cabin-design\cockpit-v16.html`。多个产物逐条列全路径（原型 / 设计稿 / 验证脚本 / 截图目录 / 索引）。
+- 需要打开时直接用全路径打开（浏览器 / 资源管理器），并在回复里复述该全路径。
+- 此约定只约束面向用户的汇报文本；代码内部引用与 git 操作仍可用相对路径。
+- 舱系原型（cockpit / cabin / classic）为暗色舰桥科幻风，沿用 `docs/cabin-design/` 既有 token 与立绘 `crew/`；
+  用户级 memory 中「白色系原型」一条仅适用于 report-web 后台类方案，不适用于舱系原型。

@@ -500,6 +500,9 @@ export interface Task {
   semantic_summary?: string | null
   /** Soft-delete marker (discard draft/ready = soft delete, not status). */
   deleted_at: string | null
+  /** Cabin dispatch link (C2, S2 no-FK): the cabin this task was dispatched from.
+   *  NULL = standalone task. Wire rows carry it (SELECT *); optional for older fixtures. */
+  cabin_id?: string | null
   created_at: string
   updated_at: string
   /** Set when status reaches a terminal done/failed/aborted. */

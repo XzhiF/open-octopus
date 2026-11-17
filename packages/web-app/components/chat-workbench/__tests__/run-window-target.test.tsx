@@ -4,11 +4,13 @@ import type { TaskView } from '@/lib/tasks-api'
 
 // 指定执行路径：运行窗要能渲染 task_id=NULL 的系统运行（验收规划），
 // 不依赖 getTask 的 executions 列表；失败系统运行不给「重跑」。
-vi.mock('@/lib/tasks-api', () => ({ getTask: vi.fn() }))
+vi.mock('@/lib/tasks-api', () => ({ getTask: vi.fn(), resumeTask: vi.fn(), pauseTask: vi.fn() }))
 vi.mock('@/lib/api-client', () => ({
   fetchExecutionDetail: vi.fn(),
   fetchExecutionIncidents: vi.fn(async () => []),
   cancelExecution: vi.fn(),
+  resumeExecution: vi.fn(),
+  pauseExecution: vi.fn(),
   rerunExecution: vi.fn(),
 }))
 vi.mock('@/components/workspace/workflow-flow-viewer-with-status', () => ({
@@ -16,8 +18,8 @@ vi.mock('@/components/workspace/workflow-flow-viewer-with-status', () => ({
 }))
 vi.mock('@/components/workspace/run-log/run-log-console', () => ({ RunLogConsole: () => null }))
 
-import { getTask } from '@/lib/tasks-api'
-import { cancelExecution, fetchExecutionDetail } from '@/lib/api-client'
+import { getTask, pauseTask, resumeTask } from '@/lib/tasks-api'
+import { cancelExecution, fetchExecutionDetail, pauseExecution, resumeExecution } from '@/lib/api-client'
 import { RunWindow } from '../run-window'
 
 const task = { id: 't1', name: 'T', status: 'awaiting_review' } as unknown as TaskView
@@ -89,6 +91,54 @@ describe('运行窗口 · 指定执行（作业坞运行列表）', () => {
     await mount()
     fireEvent.click(screen.getByTestId('run-abort'))
     expect(cancelExecution).toHaveBeenCalledWith('ws-1', 'plan-exec')
+  })
+
+  it('running 指定执行给「暂停」并走执行接口（2026-11-14 用户要求）', async () => {
+    vi.mocked(pauseExecution).mockResolvedValue({ ok: true } as never)
+    await mount({ runTarget: { ...target, system: false } })
+    fireEvent.click(screen.getByTestId('run-pause'))
+    expect(pauseExecution).toHaveBeenCalledWith('ws-1', 'plan-exec')
+    expect(screen.getByTestId('run-abort')).toBeTruthy()
+  })
+
+  it('任务绑定的运行暂停走任务暂停接口（带任务卡）', async () => {
+    vi.mocked(pauseTask).mockResolvedValue({ id: 't1' } as never)
+    await mount({ runTarget: { ...target, system: false, taskId: 't1' } })
+    fireEvent.click(screen.getByTestId('run-pause'))
+    expect(pauseTask).toHaveBeenCalledWith('t1')
+    expect(pauseExecution).not.toHaveBeenCalled()
+  })
+
+  it('系统运行不给「暂停」', async () => {
+    await mount()
+    expect(screen.queryByTestId('run-pause')).toBeNull()
+  })
+
+  it('paused 指定执行给「继续运行」并走执行恢复接口（2026-11-14 用户反馈）', async () => {
+    vi.mocked(fetchExecutionDetail).mockResolvedValue(execWire({ status: 'paused' }) as never)
+    vi.mocked(resumeExecution).mockResolvedValue({ ok: true } as never)
+    await mount({ runTarget: { ...target, system: false, status: 'paused' } })
+    const resume = screen.getByTestId('run-resume')
+    expect(resume.textContent).toContain('继续运行')
+    fireEvent.click(resume)
+    expect(resumeExecution).toHaveBeenCalledWith('ws-1', 'plan-exec')
+    // 暂停态仍保留中止出口。
+    expect(screen.getByTestId('run-abort')).toBeTruthy()
+  })
+
+  it('系统运行的暂停不给「继续运行」', async () => {
+    vi.mocked(fetchExecutionDetail).mockResolvedValue(execWire({ status: 'paused' }) as never)
+    await mount({ runTarget: { ...target, status: 'paused' } })
+    expect(screen.queryByTestId('run-resume')).toBeNull()
+  })
+
+  it('任务绑定的暂停走任务恢复接口（重挂 callbacks），不走裸执行接口', async () => {
+    vi.mocked(fetchExecutionDetail).mockResolvedValue(execWire({ status: 'paused' }) as never)
+    vi.mocked(resumeTask).mockResolvedValue({ id: 't1' } as never)
+    await mount({ runTarget: { ...target, system: false, status: 'paused', taskId: 't1' } })
+    fireEvent.click(screen.getByTestId('run-resume'))
+    expect(resumeTask).toHaveBeenCalledWith('t1')
+    expect(resumeExecution).not.toHaveBeenCalled()
   })
 
   it('头部 YAML 按钮回传当前执行目标（不改变运行窗本身）', async () => {

@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useMemo } from "react"
+import { useState, useMemo, useEffect } from "react"
 import type { ChatMessage } from "@/lib/types"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
@@ -21,6 +21,13 @@ interface AskUserQuestionCardProps {
   message: ChatMessage
   onAnswer: (content: string) => void
   disabled?: boolean
+  /** 跨线程复用（舱主会话的作者提问卡）时关掉「先讨论」——它会把讨论请求
+   *  转发到另一个线程，而回答正文不会回到当前对话，语义会断。 */
+  hideChatAbout?: boolean
+  /** design 25 §5.3：决策队列的键盘导航。传 askId 后，本卡监听窗口级
+   *  `octopus:ask-key` 事件（只处理 askId 匹配的），`1/2/3` 选选项、`↵` 提交。
+   *  归属仍由提交体里的 askId 决定，键盘只影响「当前这张卡」的 UI。 */
+  hotkeyId?: string
 }
 
 function parseQuestions(input: unknown): QuestionItem[] {
@@ -107,21 +114,11 @@ function formatChatAboutContent(
   return lines.join("\n")
 }
 
-export function AskUserQuestionCard({ message, onAnswer, disabled }: AskUserQuestionCardProps) {
+export function AskUserQuestionCard({ message, onAnswer, disabled, hideChatAbout, hotkeyId }: AskUserQuestionCardProps) {
   const questions = useMemo(() => parseQuestions(message.toolInput), [message.toolInput])
   const [answers, setAnswers] = useState<Record<number, string | string[]>>({})
   const [otherInputs, setOtherInputs] = useState<Record<string, string>>({})
   const [submitted, setSubmitted] = useState(false)
-
-  if (questions.length === 0) {
-    return (
-      <div className="mb-4">
-        <div className="bg-pop-paper text-pop-ink rounded-[14px] border-[2.5px] border-pop-bd shadow-pop-sm px-4 py-3 text-sm text-muted-foreground max-w-[90%]">
-          无法解析问题数据
-        </div>
-      </div>
-    )
-  }
 
   const allAnswered = questions.every((q, i) => answerFor(q, i, answers, otherInputs) !== null)
 
@@ -171,6 +168,40 @@ export function AskUserQuestionCard({ message, onAnswer, disabled }: AskUserQues
   const handleChatAbout = () => {
     if (submitted || disabled) return
     onAnswer(formatChatAboutContent(questions, answers, otherInputs))
+  }
+
+  // design 25 §5.3：1/2/3 选当前卡的选项，↵ 提交。只处理本卡（hotkeyId 匹配）；
+  // 归属永远由提交体里的 askId 决定，键盘不参与「这条答案属于谁」。
+  useEffect(() => {
+    if (!hotkeyId) return
+    const onKey = (event: Event) => {
+      const detail = (event as CustomEvent<{ askId?: string; key?: string }>).detail
+      if (!detail || detail.askId !== hotkeyId || submitted || disabled) return
+      const first = questions[0]
+      if (!first) return
+      if (detail.key === "Enter") {
+        if (allAnswered) handleSubmit()
+        return
+      }
+      const index = Number(detail.key) - 1
+      if (!Number.isInteger(index) || index < 0) return
+      const opt = normalOptionsOf(first)[index]
+      if (!opt) return
+      if (first.multiSelect) handleMultiSelect(0, opt.label)
+      else handleSingleSelect(0, opt.label)
+    }
+    window.addEventListener("octopus:ask-key", onKey)
+    return () => window.removeEventListener("octopus:ask-key", onKey)
+  })
+
+  if (questions.length === 0) {
+    return (
+      <div className="mb-4">
+        <div className="bg-pop-paper text-pop-ink rounded-[14px] border-[2.5px] border-pop-bd shadow-pop-sm px-4 py-3 text-sm text-muted-foreground max-w-[90%]">
+          无法解析问题数据
+        </div>
+      </div>
+    )
   }
 
   return (
@@ -320,6 +351,11 @@ export function AskUserQuestionCard({ message, onAnswer, disabled }: AskUserQues
                                   — {opt.description}
                                 </span>
                               )}
+                              {hotkeyId && !submitted && !disabled && optIndex < 9 && (
+                                <span className="ml-1.5 rounded border border-pop-bd px-1 font-mono text-[9.5px] text-pop-dim">
+                                  {optIndex + 1}
+                                </span>
+                              )}
                             </div>
                           </label>
                         )
@@ -395,7 +431,7 @@ export function AskUserQuestionCard({ message, onAnswer, disabled }: AskUserQues
         )}
 
         {/* Chat about this（CLI 同款，仅单选出现）：不回答，交回 Agent 澄清 */}
-        {!submitted && !disabled && canChatAbout && (
+        {!submitted && !disabled && canChatAbout && !hideChatAbout && (
           <div className="mt-2 border-t border-dashed border-white/10 pt-2">
             <button
               type="button"

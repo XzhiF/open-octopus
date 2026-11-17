@@ -145,10 +145,12 @@ function wikiFindingService(): WikiFindingToolsService | null {
   }
 }
 
-// ── 启动 / 入列执行工具（2026-11-03）────────────────────────────────
-// 用户在对话里**明确说**「立即执行 / 入列 / 开跑」后，主 Chat 直接执行，
-// 不再要求回看板点启动卡；没有明确表态时仍只能 propose_launch 出卡。
+// ── 启动 / 入列执行工具（2026-11-03；2026-11-17 去人工门）────────────
+// 2026-11-17 用户口径：**不要「必须人点卡」的约束** —— 规格与 phase 绑定齐了，
+// Agent 可以自己 launch / enqueue / trigger，不必等用户另行表态。
 // 执行顺序与看板一致：立即执行 = 静默 ready → trigger；入列 = ready。
+// 状态门用**任务行原始状态**（draft / ready）：v4 的 raw draft + phase 全绑
+// 派生出来是 ready，旧实现拿派生态判 draft，反而把这个最常见的启动口挡死。
 
 export type LaunchActionId = "launch_now" | "enqueue" | "trigger"
 
@@ -171,29 +173,25 @@ function launchService(): TaskLaunchToolsService | null {
   }
 }
 
-/** Pure gate shared by the tools and tests. */
+/** Pure gate shared by the tools and tests.
+ *  2026-11-17：不再要求 confirmed —— 人和 Agent 都可以发起；只校验身份 + 原始状态。
+ *  用 `task.status`（raw）而不是 `displayStatus`：v4 raw draft + phase 全绑派生
+ *  出来是 ready，用派生态会把「待入列 → 立即开跑」这条主路径挡死。 */
 export function canExecuteLaunch(
   identity: TaskThreadIdentity,
-  displayStatus: string,
+  rawStatus: string,
   action: LaunchActionId,
-  confirmed: boolean,
 ): { ok: boolean; reason?: string } {
-  if (!confirmed) {
-    return {
-      ok: false,
-      reason: "必须等用户在本轮对话里明确说「立即执行 / 入列 / 开跑」后才能执行（confirmed=true）—— 不要替用户决定。",
-    }
-  }
   if (action === "trigger") {
     if (identity !== "doer") return { ok: false, reason: "只有执行者身份可以触发已入列任务。" }
-    if (displayStatus !== "ready") return { ok: false, reason: `只有已入列(ready)任务可以触发（当前 ${displayStatus}）。` }
+    if (rawStatus !== "ready") return { ok: false, reason: `只有已入列(ready)任务可以触发（当前 ${rawStatus}）。` }
     return { ok: true }
   }
   if (identity !== "author") return { ok: false, reason: "只有任务作者身份可以启动或入列。" }
-  if (displayStatus !== "draft") {
+  if (rawStatus !== "draft") {
     return {
       ok: false,
-      reason: `只有草稿(draft)任务可以${action === "enqueue" ? "入列" : "立即执行"}（当前 ${displayStatus}）。`,
+      reason: `只有草稿(draft)任务可以${action === "enqueue" ? "入列" : "立即执行"}（当前 ${rawStatus}）。`,
     }
   }
   return { ok: true }
@@ -1225,7 +1223,7 @@ export function createTaskToolServer(input: TaskToolServerInput) {
     ),
     tool(
       "propose_launch",
-      "Author identity only. Show the user the three launch choices (run now / enqueue and wait / schedule). This appends a decision card; it does NOT start anything. When the human explicitly tells you in chat to launch or enqueue, call launch_task / enqueue_task(confirmed=true) instead.",
+      "Optional. Show the user the launch choices (run now / enqueue and wait / schedule) as a decision card. It does NOT start anything. When the spec and phase bindings are already complete, prefer launch_task and tell the user in one line — the card is only for cases where you genuinely need them to choose the mode.",
       { note: z.string().max(500).optional().describe("Optional one-line summary shown on the card") },
       async ({ note }) => {
         if (identity !== "author") {
@@ -1237,12 +1235,10 @@ export function createTaskToolServer(input: TaskToolServerInput) {
     ),
     tool(
       "launch_task",
-      "Author identity only. Actually start the draft task now (ready → trigger in one step). Call ONLY when the human explicitly said 立即执行 / 开始跑 / 现在就做 in THIS chat, and pass confirmed=true. If they have not decided, use propose_launch instead. This starts the bound workflow for real.",
-      {
-        confirmed: z.boolean().describe("true only when the human explicitly said 立即执行/开始跑 in this chat — never infer"),
-      },
-      async ({ confirmed }) => {
-        const gate = canExecuteLaunch(identity, task.displayStatus, "launch_now", confirmed)
+      "Author identity only. Start the draft task now (ready → trigger in one step). Once the spec and every phase binding are complete you may decide this yourself — do NOT wait for the human to click a card or say 立即执行. Say one line in chat after it starts. Use propose_launch only if the launch mode is genuinely unclear.",
+      {},
+      async () => {
+        const gate = canExecuteLaunch(identity, task.status, "launch_now")
         if (!gate.ok) return text({ ok: false, error: gate.reason })
         const svc = launchService()
         if (!svc) return text({ ok: false, error: "任务服务未就绪" })
@@ -1258,12 +1254,10 @@ export function createTaskToolServer(input: TaskToolServerInput) {
     ),
     tool(
       "enqueue_task",
-      "Author identity only. Enqueue the draft task (draft → ready) and wait for a manual trigger. Call ONLY when the human explicitly said 入列 / 排队 / 先入队 in THIS chat, and pass confirmed=true. If they have not decided, use propose_launch instead.",
-      {
-        confirmed: z.boolean().describe("true only when the human explicitly said 入列/排队 in this chat — never infer"),
-      },
-      async ({ confirmed }) => {
-        const gate = canExecuteLaunch(identity, task.displayStatus, "enqueue", confirmed)
+      "Author identity only. Enqueue the draft task (draft → ready) without starting it. Use this only when the human asked to queue it / wait / schedule; otherwise launch_task is the default. No extra confirmation flag is needed.",
+      {},
+      async () => {
+        const gate = canExecuteLaunch(identity, task.status, "enqueue")
         if (!gate.ok) return text({ ok: false, error: gate.reason })
         const svc = launchService()
         if (!svc) return text({ ok: false, error: "任务服务未就绪" })
@@ -1273,18 +1267,16 @@ export function createTaskToolServer(input: TaskToolServerInput) {
           ok: true,
           action: "enqueue",
           task: out.task,
-          next: "任务已入列（ready），等用户手动触发；用户说「开跑」时再调 trigger_task。",
+          next: "任务已入列（ready）；要开跑时直接调 trigger_task，不必再问用户。",
         })
       },
     ),
     tool(
       "trigger_task",
-      "Doer identity only. Trigger an already-enqueued (ready) task immediately. Call ONLY when the human explicitly said 触发 / 开跑 / 现在执行 in THIS chat, and pass confirmed=true. If they have not decided, use request_task_action(action=\"trigger\") to show a confirmation card instead.",
-      {
-        confirmed: z.boolean().describe("true only when the human explicitly said 触发/开跑 in this chat — never infer"),
-      },
-      async ({ confirmed }) => {
-        const gate = canExecuteLaunch(identity, task.displayStatus, "trigger", confirmed)
+      "Doer identity only. Trigger an already-enqueued (ready) task immediately. Decide this yourself when the workflow should start — do NOT wait for the human to click a card or say 开跑.",
+      {},
+      async () => {
+        const gate = canExecuteLaunch(identity, task.status, "trigger")
         if (!gate.ok) return text({ ok: false, error: gate.reason })
         const svc = launchService()
         if (!svc) return text({ ok: false, error: "任务服务未就绪" })
@@ -1363,7 +1355,7 @@ export function createTaskToolServer(input: TaskToolServerInput) {
     name: "octopus-task",
     version: "1.0.0",
     instructions:
-      "These tools operate on the task bound to this chat. Read status freely. Spec writes are author-only. Launch/enqueue/trigger EXECUTE for real when the human explicitly asked in this chat and you pass confirmed=true (draft: launch_task / enqueue_task; ready: trigger_task); if they have not decided, use propose_launch / request_task_action to show a card. Other actions only append a confirmation card — the human decides; never claim an action happened without a tool result.",
+      "These tools operate on the task bound to this chat. Read status freely. Spec writes are author-only. Launch/enqueue/trigger EXECUTE for real and do NOT require human confirmation: launch_task / enqueue_task once the spec and phase bindings are complete (draft), trigger_task when the task is ready. Use propose_launch only when the launch mode genuinely needs the human to choose. Pause / abort / retry / inject still only append a confirmation card — the human decides. Never claim an action happened without a tool result.",
     tools,
     alwaysLoad: true,
   })

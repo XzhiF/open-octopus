@@ -41,6 +41,8 @@ export interface AgentSession {
   /** v58: chat cwd + bound workspace. */
   cwd?: string | null
   workspace_id?: string | null
+  /** 归属舱（写一次）：NULL = 舱外。列表过滤 / 行 chip 用。 */
+  cabin_id?: string | null
   /** Server-persisted last context usage (Session column). Only the
    *  session-detail endpoint fills it — it is the cold-load source for the
    *  composer's ctx chip (refresh / server restart / another browser). */

@@ -38,6 +38,25 @@ describe("mcp-catalog ↔ tools 源码 集合一致", () => {
     )
   })
 
+  it("octopus-cabin 工具集合 = cabin-tools.ts 的舱调度部分", () => {
+    // cabin-tools.ts 里有两个 in-process server：舱调度（octopus-cabin）与
+    // 委派 doer（octopus-cabin-doer）。按 createCabinDelegationToolServer 切分，
+    // 两边各自对账，避免把 doer 工具算进主调度集。
+    const text = readFileSync(join(SRC_DIR, "cabin-tools.ts"), "utf-8")
+    const split = text.indexOf("export function createCabinDelegationToolServer")
+    const mainPart = split >= 0 ? text.slice(0, split) : text
+    const doerPart = split >= 0 ? text.slice(split) : ""
+    const namesIn = (source: string): string[] => {
+      const names = new Set<string>()
+      const re = /tool\(\s*"([a-z_]+)"/g
+      let m: RegExpExecArray | null
+      while ((m = re.exec(source))) names.add(m[1])
+      return [...names].sort()
+    }
+    expect([...(byServer.get("octopus-cabin") ?? [])].sort()).toEqual(namesIn(mainPart))
+    expect([...(byServer.get("octopus-cabin-doer") ?? [])].sort()).toEqual(namesIn(doerPart))
+  })
+
   it("每个工具都配了非空描述", () => {
     for (const server of catalog) {
       for (const t of server.tools) {

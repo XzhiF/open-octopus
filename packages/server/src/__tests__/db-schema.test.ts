@@ -43,7 +43,11 @@ describe("DB Schema", () => {
       //   modelUsage 的差分校准点（每会话上一份累计快照）。
       "agent_events", "agent_versions", "archive_drafts",
       "billing_price_config", "billing_setting",
-      "branch_executions", "chat_messages", "chat_sessions",
+      "branch_executions",
+      // Cabin P1（作战舱）：cabins + 作业台账 / 审计事件。此前漏计本清单。
+      // design 25 §4.2：独立委派（第二种工作实体，不并入 cabin_jobs）。
+      "cabin_delegations", "cabin_job_events", "cabin_jobs", "cabins",
+      "chat_messages", "chat_sessions",
       "clones", "effectiveness_cursors", "evolution_log", "execution_archive", "execution_links", "execution_summaries", "executions", "experiences",
       "findings",
       "harness_events",
@@ -93,7 +97,11 @@ describe("DB Schema", () => {
     // + 2026-11-04 作业坞子代理: idx_subagent_runs_session = 93.
     // + 2026-11-07 runtime supervision: − harness_config (no index) +
     //   idx_runtime_incidents_exec + idx_runtime_incidents_status = 95.
-    expect(rows.length).toBe(95)
+    // + Cabin P1（作战舱）3 条：idx_cabins_status / idx_cabin_jobs_cabin /
+    //   idx_cabin_job_events_job = 98（此前漏计，与表清单同上）。迭代退役后 −1。
+    // + design 25 §4.2 独立委派 2 条：idx_cabin_delegations_cabin / _doer = 100。
+    // + 2026-11-17 舱归属：idx_executions_cabin = 101。
+    expect(rows.length).toBe(101)
   })
 
   it("workspaces table has correct columns", () => {

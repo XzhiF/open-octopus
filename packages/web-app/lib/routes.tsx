@@ -13,7 +13,7 @@ export type ViewId =
   | 'system'
   | 'settings'
 
-export type RouteKind = 'view' | 'detail' | 'redirect' | 'standalone' | 'not-found'
+export type RouteKind = 'view' | 'detail' | 'redirect' | 'standalone' | 'cabin' | 'not-found'
 export type RouteParams = Record<string, string>
 
 export interface ViewRoute {
@@ -51,6 +51,28 @@ export interface StandaloneRoute {
   title: string
 }
 
+/** 作战舱兄弟壳：/cabin/:cabinId 渲染 CabinShell（不是桌面浮窗）。
+ *  cabinId='new' 是新建向导（S1），其余是已存在的舱。 */
+export interface CabinShellRouteDecl {
+  kind: 'cabin'
+  id: 'cabin'
+  path: '/cabin/:cabinId'
+  componentKey: 'cabin-shell'
+  title: (params: RouteParams) => string
+}
+
+/** 全域座舱：/cabin/:cabinId/cockpit（cabinId 永远是入口舱，面由 ?job/?task/?attn 决定）。 */
+export interface CabinCockpitRouteDecl {
+  kind: 'cabin'
+  id: 'cabin-cockpit'
+  path: '/cabin/:cabinId/cockpit'
+  componentKey: 'cabin-cockpit'
+  title: (params: RouteParams) => string
+}
+
+/** 两个字面量形状的联合：放宽成 string 会丢掉 path/componentKey 的约束。 */
+export type CabinRoute = CabinShellRouteDecl | CabinCockpitRouteDecl
+
 export interface NotFoundRoute {
   kind: 'not-found'
   id: 'not-found'
@@ -58,7 +80,7 @@ export interface NotFoundRoute {
   title: string
 }
 
-export type AppRoute = ViewRoute | DetailRoute | RedirectRoute | StandaloneRoute | NotFoundRoute
+export type AppRoute = ViewRoute | DetailRoute | RedirectRoute | StandaloneRoute | CabinRoute | NotFoundRoute
 
 export interface RouteMatch {
   route: AppRoute
@@ -126,10 +148,29 @@ const STANDALONE_ROUTES: StandaloneRoute[] = [
   { kind: 'standalone', id: 'dev-swarm', path: '/dev/swarm-test', componentKey: 'dev-swarm', title: 'Swarm Test' },
 ]
 
-/** 顺序即优先级：redirect → 长详情 → 短详情 → 视图 → standalone。 */
+const CABIN_ROUTES: CabinRoute[] = [
+  // end:true → 两条路径互不吞并；cockpit 放前面只为可读。
+  {
+    kind: 'cabin',
+    id: 'cabin-cockpit',
+    path: '/cabin/:cabinId/cockpit',
+    componentKey: 'cabin-cockpit',
+    title: (params) => `全域座舱 · ${shortId(params.cabinId)}`,
+  },
+  {
+    kind: 'cabin',
+    id: 'cabin',
+    path: '/cabin/:cabinId',
+    componentKey: 'cabin-shell',
+    title: (params) => (params.cabinId === 'new' ? '新建作战舱' : `作战舱 · ${shortId(params.cabinId)}`),
+  },
+]
+
+/** 顺序即优先级：redirect → 长详情 → 短详情 → 舱壳 → 视图 → standalone。 */
 const ROUTES: AppRoute[] = [
   ...REDIRECT_ROUTES,
   ...DETAIL_ROUTES,
+  ...CABIN_ROUTES,
   ...VIEW_ROUTES,
   ...STANDALONE_ROUTES,
 ]
@@ -174,6 +215,7 @@ export function viewIdFromPath(pathname: string): ViewId | null {
 
 export function titleForRoute(route: AppRoute, params: RouteParams): string {
   if (route.kind === 'detail') return route.title(params)
+  if (route.kind === 'cabin') return route.title(params)
   if (route.kind === 'redirect') return '跳转中'
   return route.title
 }

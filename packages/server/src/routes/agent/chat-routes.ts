@@ -37,7 +37,10 @@ import { TurnDebugRecorder, type TurnDebugIdentity } from '../../services/agent/
 import { expertName } from '@octopus/shared'
 import { createWorkflowToolServer } from '../../services/chat/workflow-tools'
 import { createTaskToolServer } from '../../services/chat/task-tools'
+import { getChatEventBridge } from '../../services/activity/chat-event-bridge'
 import { createMemoryToolServer, resolveLongTermConsent } from '../../services/chat/memory-tools'
+import { createCabinToolServer, createCabinDelegationToolServer, getCabinToolsProvider, buildCabinSummaryReminder } from '../../services/chat/cabin-tools'
+import { parseDecisionEnvelope } from '../../services/cabin/cabin-brief'
 import { getSlashCommands, rememberSlashCommands } from '../../services/chat/slash-commands'
 import type { TokenUsageDAO } from '../../db/dao/token-usage-dao'
 import type { EffortLevel } from '@octopus/shared'
@@ -230,6 +233,14 @@ export function createChatRoutes(deps: ChatRouteDeps): Hono {
       return c.json(createAgentError('NOT_FOUND', `Session ${id} not found`), 404)
     }
 
+    // C11 重做：舱里发消息 = 人来了 —— 打盹中的舱静默叫醒 + 重置空闲计时。
+    // 只认真实用户消息；服务端 wake turn / 事件卡不算人。失败不影响本轮对话。
+    if (!body.ephemeral && !body.wake && session.cabin_id) {
+      try {
+        getCabinToolsProvider()?.service.activity(session.cabin_id)
+      } catch { /* 活性信号尽力而为 */ }
+    }
+
     // 同一会话只容一条生成流（2026-11-10 用户事故，克隆路由早有这道闸）：
     // 上一轮还在跑时再 POST，第二条查询会拿同一个 provider_session_id 并发
     // resume —— SDK 给出的第一条 result 常常是上一轮累计结果的回放（没有
@@ -256,6 +267,10 @@ export function createChatRoutes(deps: ChatRouteDeps): Hono {
           : {}),
       })
       sessionDao.updateLastMessageAt(id, now)
+      // 双会话同步：在任务线程里直接答了问题卡 → 舱主会话的镜像卡变只读。
+      if (body.message.includes('用户回答了以下问题')) {
+        try { getChatEventBridge().markAuthorAskAnswered(id) } catch { /* bridge off */ }
+      }
     }
 
     // ── Safety: detect dangerous commands in user message (B5 fix) ────
@@ -365,7 +380,13 @@ export function createChatRoutes(deps: ChatRouteDeps): Hono {
     const playbookReminder = thread
       ? buildTaskPlaybookReminder(thread, cacheCtx.getPlaybookHash(id))
       : null
-    const turnReminder = [roleCard, mentionReminder, playbookReminder?.text].filter(Boolean).join('\n\n')
+    // Cabin P3（C2）：舱主会话每回合注入派生舱摘要（attention/迭代/作业），
+    // 关系单写者=任务行，摘要只读不持久。
+    const cabinProvider = getCabinToolsProvider()
+    const cabinReminder = !thread && session.cabin_id && cabinProvider
+      ? buildCabinSummaryReminder(cabinProvider.service, session.cabin_id, cabinProvider.decisions)
+      : null
+    const turnReminder = [roleCard, mentionReminder, playbookReminder?.text, cabinReminder].filter(Boolean).join('\n\n')
     const providerMessage = withTransientReminder(body.message!, turnReminder)
     // Workflow control tools (list/run/status/cancel/approve/retry) are
     // registered as an in-process MCP server bound to this chat's workspace.
@@ -397,6 +418,20 @@ export function createChatRoutes(deps: ChatRouteDeps): Hono {
         { sessionId: id, org },
         { longTermConsent: resolveLongTermConsent(body.message ?? '') },
       )
+    }
+    // Cabin P3（C3）：舱主会话挂调度工具集（只调度不执行）。
+    // design 25 §4.2：委派 doer 只挂「交结论」这一个工具，不能派任务 / 建任务。
+    if (!thread && session.cabin_id && cabinProvider) {
+      let delegationId: string | null = null
+      try {
+        const row = sessionDao.getDb().prepare(
+          "SELECT id FROM cabin_delegations WHERE doer_session_id = ? LIMIT 1",
+        ).get(id) as { id?: string } | undefined
+        delegationId = row?.id ?? null
+      } catch { /* old DB without cabin_delegations — feature off */ }
+      toolServers[delegationId ? 'octopus-cabin-doer' : 'octopus-cabin'] = delegationId
+        ? createCabinDelegationToolServer(delegationId)
+        : createCabinToolServer(session.cabin_id)
     }
     const mcpServers = Object.keys(toolServers).length > 0 ? toolServers : undefined
 
@@ -688,6 +723,12 @@ export function createChatRoutes(deps: ChatRouteDeps): Hono {
     let fullContent = ''
     let fullThinking = ''
     const currentToolCalls: Array<{ id: string; name: string; input?: unknown; result?: unknown; status?: string }> = []
+    /** AskUserQuestion 的 questions（2026-11-16，design 23 §2）：interactionSession
+     *  deny 后本轮就此收尾，把问题正文随 assistant 行一并落库 —— 舱的 attention
+     *  推导（cabin-service.gatherAsks）只认 metadata.displayType，缺了它作者提问
+     *  就永远进不了「需要你」。落的是 provider 的原始 wrapper
+     *  `{ questions: [...] }`（与 tool input / SSE 逐字一致）。 */
+    let askQuestions: unknown = null
     // 流式时间线（与客户端 StreamTimelineItem 同形）：thinking/text 段 + 工具 id，
     // 按到达顺序。写进 partial 的 metadata，切走再切回的会话据此原样重建实时块
     // （2026-10-29 用户：切回来只见一条「已完成」外观的消息 +「Agent 思考中」）。
@@ -742,10 +783,18 @@ export function createChatRoutes(deps: ChatRouteDeps): Hono {
           timeline?: TurnTimelineEntry[]
           interrupted?: boolean
           error?: TurnErrorInfo
+          displayType?: 'ask_user_question'
+          questions?: unknown
         } = {}
         if (turnTimeline.length > 0) meta.timeline = turnTimeline
         if (interrupted) meta.interrupted = true
         if (error) meta.error = error
+        // 与 clone / main-agent / InteractionService 同构：问题卡重开可恢复，
+        // 舱 attention 也能从 metadata 直接推导出「待回答」。
+        if (askQuestions) {
+          meta.displayType = 'ask_user_question'
+          meta.questions = askQuestions
+        }
         const metadata = Object.keys(meta).length > 0 ? JSON.stringify(meta) : null
         if (partialRowId) {
           sessionDao.updateMessage(assistantMsgId, {
@@ -787,6 +836,7 @@ export function createChatRoutes(deps: ChatRouteDeps): Hono {
           const metadata = JSON.stringify({
             streaming: true,
             ...(turnTimeline.length > 0 ? { timeline: turnTimeline } : {}),
+            ...(askQuestions ? { displayType: 'ask_user_question', questions: askQuestions } : {}),
           })
           if (!partialRowId) {
             sessionDao.insertMessage({
@@ -899,7 +949,22 @@ export function createChatRoutes(deps: ChatRouteDeps): Hono {
               // interactionSession deny 后的显式问题标记（2026-11-02）：
               // 与 clone / main-agent 路由同构，前端据此补全 AskUserQuestion
               // toolCall，回合结束后渲染可回答的问题卡。
+              askQuestions = chunk.questions
               await stream.writeSSE({ event: 'ask_user_question', data: JSON.stringify({ tool_call_id: chunk.toolCallId, questions: chunk.questions }) })
+              // 2026-11-16 延迟修复：提问瞬间就把镜像卡投到舱主会话（最小信封），
+              // 不等人把整轮输出完再落卡。askMessageId 用稳定的 assistantMsgId；
+              // 回合收尾再用同一个 id 补齐「决策 / 建议 / 选项影响」（幂等）。
+              try {
+                const early = parseDecisionEnvelope(fullContent, askQuestions)
+                getChatEventBridge().requestAuthorAskCard({
+                  authorSessionId: sessionId,
+                  askMessageId: assistantMsgId,
+                  questions: askQuestions,
+                  ...(early.decision ? { decision: early.decision } : {}),
+                  ...(early.recommendation ? { recommendation: early.recommendation } : {}),
+                  ...(early.options.length ? { options: early.options } : {}),
+                })
+              } catch { /* bridge not attached (unit tests) — attention still works */ }
               break
             case 'tool_result': {
               const tc = currentToolCalls.find(t => t.id === chunk.toolCallId)
@@ -1127,6 +1192,23 @@ export function createChatRoutes(deps: ChatRouteDeps): Hono {
           )
         }
         if (partialRowId) finalizePartial(false)
+        // design 23 §2：舱任务的作者提问同时投一张卡到舱主会话 —— 用户不切
+        // 对话就能就地回答（答案由 web 卡片转回本线程）。零 LLM，幂等。
+        if (askQuestions && partialRowId) {
+          try {
+            // design 24 §3 / 25 §5：信封由「作者正文约定 + 服务端结构化搬运」构成，
+            // 不改 AskUserQuestion 的工具 schema。缺少「决策 / 建议」行时按缺失降级。
+            const envelope = parseDecisionEnvelope(fullContent, askQuestions)
+            getChatEventBridge().requestAuthorAskCard({
+              authorSessionId: sessionId,
+              askMessageId: assistantMsgId,
+              questions: askQuestions,
+              ...(envelope.decision ? { decision: envelope.decision } : {}),
+              ...(envelope.recommendation ? { recommendation: envelope.recommendation } : {}),
+              ...(envelope.options.length ? { options: envelope.options } : {}),
+            })
+          } catch { /* bridge not attached (unit tests) — attention still works */ }
+        }
         turnDebug?.finish({ status: 'ok', assistantMessageId: partialRowId })
         return {
           generated,

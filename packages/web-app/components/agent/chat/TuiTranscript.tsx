@@ -7,7 +7,7 @@
 import { useMemo, useState, type ReactNode } from 'react'
 import type { AgentMessage, MessageTimelineEntry, ToolCallRecord } from '@/lib/agent/types'
 import type { StreamTimelineItem } from '@/hooks/useAgentChat'
-import { displayContentFor, endsOnAsk } from '@/lib/agent/display-content'
+import { displayContentFor, endsOnAsk, proxyTurnOf } from '@/lib/agent/display-content'
 import { formatCost, formatDuration, formatTokenCount } from '@/lib/format'
 import { useBillingCurrency } from '@/lib/billing-currency'
 import { THINKING_TONE, TOOL_TONE } from '@/lib/agent/chat-colors'
@@ -17,6 +17,8 @@ import { WorkflowRunCard } from './workflow-run-card'
 import { IncidentCard } from './incident-card'
 import { AcceptanceCheckCard } from './acceptance-check-card'
 import { ArchiveSummaryCard } from './archive-summary-card'
+import { AuthorAskCard } from './author-ask-card'
+import { CabinInitGateCard } from '@/components/cabin/CabinInitGateCard'
 
 /** mini-markdown：`**bold**` / `行内 code` / 行首 # 标题 —— 消灭字面星号。 */
 function mdInline(text: string): ReactNode {
@@ -333,8 +335,75 @@ function TuiMeta({ thinking, toolCalls, timeline, stats, interrupted, hideTextFr
 /** Server-originated activity card (workflow approval/failure/completion, task
  *  terminal states). Append-only in the transcript; never mutates the system
  *  prompt, so the cached prefix stays intact. */
-function ActivityEventCard({ message }: { message: AgentMessage }) {
+function ActivityEventCard({ message, compactEvent }: { message: AgentMessage; compactEvent?: boolean }) {
   const activity = message.activity
+  // 作者提问卡（design 23 §2）：任务线程的问题被投到舱主会话，就地作答后由
+  // 卡片转发回作者线程。必须排在通用状态卡之前（它也带 taskId/status）。
+  if ((activity?.payload as { authorAsk?: boolean } | undefined)?.authorAsk) {
+    return <AuthorAskCard message={message} />
+  }
+  // 回执（design 24 §5 / 25 §5.1）：答完 / 转达完各留一条单行，不占决策位。
+  const receiptPayload = activity?.payload as {
+    decisionReceipt?: { handle?: string; taskName?: string; choice?: string; relayed?: string }
+    authorAskReceipt?: { handle?: string; taskName?: string; label?: string }
+  } | undefined
+  if (receiptPayload?.decisionReceipt) {
+    const r = receiptPayload.decisionReceipt
+    return (
+      <div
+        data-testid="decision-receipt"
+        className="mb-2 flex items-center gap-2 rounded-md border border-pop-green/40 bg-pop-green-soft px-2.5 py-1 text-[11.5px] text-pop-ink"
+      >
+        <span className="text-pop-green">✓</span>
+        <span className="font-mono text-[10.5px] font-bold text-pop-green">{r.handle ?? ''}</span>
+        <span className="min-w-0 flex-1 truncate">
+          {r.taskName ?? '作业'} · 按「{r.choice ?? ''}」
+          {r.relayed === 'fallback' ? '直接转达（汐音未参与）' : '交代下去'}
+        </span>
+      </div>
+    )
+  }
+  if (receiptPayload?.authorAskReceipt) {
+    const r = receiptPayload.authorAskReceipt
+    return (
+      <div
+        data-testid="decision-receipt"
+        className="mb-2 flex items-center gap-2 rounded-md border border-pop-green/40 bg-pop-green-soft px-2.5 py-1 text-[11.5px] text-pop-ink"
+      >
+        <span className="text-pop-green">✓</span>
+        <span className="font-mono text-[10.5px] font-bold text-pop-green">{r.handle ?? ''}</span>
+        <span className="min-w-0 flex-1 truncate">
+          已答 · {r.taskName ?? '作业'}：{r.label ?? ''}
+        </span>
+      </div>
+    )
+  }
+  // 委派收尾（design 25 §11.9）：结论 + 产物引用，单行；不是验收、不建任务。
+  const delegationDone = (activity?.payload as {
+    delegationDone?: {
+      handle?: string; title?: string; summary?: string; ok?: boolean
+    }
+  } | undefined)?.delegationDone
+  if (delegationDone) {
+    return (
+      <div
+        data-testid="delegation-done"
+        className={`mb-2 flex items-center gap-2 rounded-md border px-2.5 py-1 text-[11.5px] ${
+          delegationDone.ok === false
+            ? 'border-pop-red/40 bg-pop-red-soft text-pop-ink'
+            : 'border-pop-cyan/40 bg-pop-cyan-soft text-pop-ink'
+        }`}
+      >
+        <span className={delegationDone.ok === false ? 'text-pop-red' : 'text-pop-cyan'}>
+          {delegationDone.ok === false ? '✕' : '✓'}
+        </span>
+        <span className="font-mono text-[10.5px] font-bold">{delegationDone.handle ?? 'D?'}</span>
+        <span className="min-w-0 flex-1 truncate">
+          {delegationDone.title ?? '委派'} · {delegationDone.summary ?? ''}
+        </span>
+      </div>
+    )
+  }
   // 运行事件卡（2026-11-07）：runtime supervision 的 incident。必须在
   // WorkflowRunCard 之前 —— 两者都带 activity.executionId/status。
   if ((activity?.payload as { incident?: boolean } | undefined)?.incident) {
@@ -352,10 +421,14 @@ function ActivityEventCard({ message }: { message: AgentMessage }) {
   if (isArchiveSummary) {
     return <ArchiveSummaryCard message={message} />
   }
+  // 舱初始化门禁卡（Cabin P2）：7 项门禁 + 去修/重试，舱壳内读实时 initState。
+  if ((activity?.payload as { cabinInit?: boolean } | undefined)?.cabinInit) {
+    return <CabinInitGateCard message={message} />
+  }
   // 任务状态卡（执行中 / 已暂停 / 收尾）交给运行卡组件：它自己走表、按需轮询
   // 执行详情，收尾后定格成只读（2026-10-30 用户定稿）。
   if (activity?.status && activity?.taskId && !isAcceptanceCard) {
-    return <TaskStatusCard message={message} />
+    return <TaskStatusCard message={message} compact={compactEvent} />
   }
   const severity = activity?.severity
   // 决策卡选过就只读：所选按钮高亮，其余禁用；卡片整体降噪（与启动决策一致）。
@@ -508,7 +581,46 @@ export function RoleSwitchCard({ payload }: { payload: NonNullable<AgentMessage[
   )
 }
 
-export function TuiMessage({ message }: { message: AgentMessage }) {
+/** 代理发言识别（design 25 §2）：doer 线程里的系统代述消息统一带方括号前缀。
+ *  识别是**格式契约**，不是语义猜测 —— 改格式必须同时改这里与 cabin-brief。
+ *
+ *  `[决策 · …]` 有两种落点：主对话里人自己的决定（结构化用户消息，普通气泡），
+ *  以及汐音代述到 doer 线程的转达。后者一定带 `用户回答了以下问题：` 兼容行
+ *  （formatRelayMessage 的固定形状）—— 用它区分，避免把人自己的决定画成「代你」。
+ *
+ *  实现搬去 lib/agent/display-content（用户输入历史也要用），这里保留导出，
+ *  现有 import 路径不变。 */
+export { proxyTurnOf } from '@/lib/agent/display-content'
+
+function ProxyTurnLine({ message, proxy }: {
+  message: AgentMessage
+  proxy: { kind: 'decision' | 'brief' | 'note'; verbatim?: string }
+}) {
+  return (
+    <div
+      data-tui-msg="proxy"
+      data-proxy-kind={proxy.kind}
+      data-message-id={message.id}
+      className="scroll-mt-6 rounded-md border-l-[3px] border-pop-amber bg-pop-amber-soft/40 px-3 py-1.5 shadow-[inset_0_0_0_1px_var(--pop-bd)]"
+    >
+      <div className="mb-0.5 flex items-center gap-1.5 text-[10px] font-bold text-pop-amber">
+        <span>汐音 · 代你</span>
+        <span className="font-normal text-pop-dim/70">
+          {proxy.kind === 'decision' ? '决策已逐字转达' : '意图已转达'}
+        </span>
+      </div>
+      <div className="break-words whitespace-pre-wrap text-pop-ink/90">
+        {message.content.split('\n').map((line, i) => (
+          <span key={i} className={line.startsWith('（逐字）') ? 'font-semibold text-pop-ink' : undefined}>
+            {i > 0 && '\n'}{line}
+          </span>
+        ))}
+      </div>
+    </div>
+  )
+}
+
+export function TuiMessage({ message, compactEvent }: { message: AgentMessage; compactEvent?: boolean }) {
   const isUser = message.role === 'user'
   const timeline = !isUser ? message.timeline : undefined
   const hasTimeline = !!timeline && timeline.length > 0
@@ -527,10 +639,14 @@ export function TuiMessage({ message }: { message: AgentMessage }) {
   }
 
   if (message.displayType === 'event') {
-    return <ActivityEventCard message={message} />
+    return <ActivityEventCard message={message} compactEvent={compactEvent} />
   }
 
   if (isUser) {
+    // 代理发言（design 25 §2 / §5.5）：doer 侧收到的每条 user 消息都要能看出
+    // 「这是汐音代我说的」。样式可区分 + 逐字块保留，否则追溯时分不清谁是谁。
+    const proxy = proxyTurnOf(message.content)
+    if (proxy) return <ProxyTurnLine message={message} proxy={proxy} />
     return (
       <div
         className="scroll-mt-6 rounded-md bg-pop-paper px-3 py-1.5 shadow-[inset_0_0_0_1px_var(--pop-bd)]"

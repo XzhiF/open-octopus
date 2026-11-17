@@ -23,7 +23,15 @@ export class AgentSessionDAO extends BaseDAO {
    *  too, but that filter needs the task list — while it is loading, or if its
    *  fetch fails, every task thread would otherwise "fall into" 会话 (2026-10-30).
    *  A soft-deleted task releases its session back into the list (same rule as
-   *  the clone-session route). */
+   *  the clone-session route).
+   *
+   *  Cabin main sessions (`cabins.main_session_id`) get the same treatment
+   *  (2026-11-13): the cabin's orchestrator chat is one thread bound to the
+   *  cabin row, not a conversation in the left 会话 list. Listing it there made
+   *  the cabin chat look like a normal session that "syncs" with whatever was
+   *  open in 会话 — users read that as two chats sharing one history. The cabin
+   *  row is the only entry point; the chat pane still resolves the session by
+   *  id. */
   listSessions(filters?: {
     clone?: string; session_type?: string; limit?: number; cursor?: string
   }): { items: SessionRow[]; has_more: boolean; next_cursor: string | null } {
@@ -33,6 +41,10 @@ export class AgentSessionDAO extends BaseDAO {
         SELECT 1 FROM tasks t
          WHERE t.source_chat_session_id = sessions.id
            AND t.deleted_at IS NULL
+      )
+      AND NOT EXISTS (
+        SELECT 1 FROM cabins c
+         WHERE c.main_session_id = sessions.id
       )`
     const params: unknown[] = []
     if (filters?.clone) { sql += ` AND clone_name = ?`; params.push(filters.clone) }
@@ -47,20 +59,27 @@ export class AgentSessionDAO extends BaseDAO {
     return { items, has_more: hasMore, next_cursor: hasMore ? items[items.length - 1].created_at : null }
   }
 
+  /** Cabin (C2/G2): all live sessions belonging to a cabin (main + task author/doer). */
+  listByCabinId(cabinId: string): SessionRow[] {
+    return this.stmt(
+      "SELECT * FROM sessions WHERE cabin_id = ? AND is_deleted = 0 ORDER BY created_at",
+    ).all(cabinId) as SessionRow[]
+  }
+
   insertSession(row: Omit<SessionRow, "is_active" | "is_deleted" | "perspective_clone_name" | "last_message_at" | "scope_id" | "provider_session_id" | "cwd" | "workspace_id" | "context_usage"> & {
     is_active?: number; is_deleted?: number; perspective_clone_name?: string | null;
     scope_id?: string | null; provider_session_id?: string | null
     cwd?: string | null; workspace_id?: string | null; context_usage?: string | null
   }): Database.RunResult {
     return this.stmt(`
-      INSERT INTO sessions (id, title, clone_name, perspective_clone_name, session_type, is_active, is_deleted, scope_id, provider_session_id, cwd, workspace_id, last_message_at, created_at, updated_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO sessions (id, title, clone_name, perspective_clone_name, session_type, is_active, is_deleted, scope_id, provider_session_id, cwd, workspace_id, cabin_id, last_message_at, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       row.id, row.title, row.clone_name,
       row.perspective_clone_name ?? null, row.session_type,
       row.is_active ?? 1, row.is_deleted ?? 0,
       row.scope_id ?? null, row.provider_session_id ?? null,
-      row.cwd ?? null, row.workspace_id ?? null,
+      row.cwd ?? null, row.workspace_id ?? null, row.cabin_id ?? null,
       null,
       row.created_at, row.updated_at,
     )

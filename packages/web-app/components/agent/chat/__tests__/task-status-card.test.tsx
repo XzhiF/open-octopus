@@ -2,7 +2,9 @@
 //
 // 2026-10-30 对话里的运行卡：
 //   · 执行中的卡自己走表（服务端 started_at 起算）、显示进度与当前节点，且没有按钮；
-//   · 本轮完成 · 待验收的卡是收尾只读卡（降噪、无按钮、带「在作业坞·验收」提示）。
+//   · 本轮完成 · 待验收的卡是收尾只读卡（降噪、无**动作**按钮、带「在作业坞·验收」提示）。
+//     2026-11-16：新增「规格 / 运行 / 验收」查看页签（不是动作按钮）——
+//     双会话内嵌模块，见 design 23 §2 续。
 
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { render, screen, waitFor } from '@testing-library/react'
@@ -72,7 +74,7 @@ describe('TaskStatusCard', () => {
     expect(screen.getByText('code-review')).toBeTruthy()
     expect(screen.getByText(/⏱/)).toBeTruthy()
     // 运行卡只有读数，没有按钮（操作走主 chat / 作业坞）。
-    expect(screen.queryAllByRole('button')).toHaveLength(0)
+    expect(screen.queryAllByRole('button').filter((b) => !b.getAttribute('data-testid')?.startsWith('task-module-tab-'))).toHaveLength(0)
   })
 
   it('跑完定格：标题转「本轮执行完成」、圈 ✓、子工作流聚合回父节点', async () => {
@@ -118,7 +120,7 @@ describe('TaskStatusCard', () => {
     expect(screen.queryByText('ticket-dag:ticket-01')).toBeNull()
     expect(screen.queryByText('__engine_init__')).toBeNull()
     expect(screen.getByText('code-review')).toBeTruthy()
-    expect(screen.queryAllByRole('button')).toHaveLength(0)
+    expect(screen.queryAllByRole('button').filter((b) => !b.getAttribute('data-testid')?.startsWith('task-module-tab-'))).toHaveLength(0)
   })
 
   it('执行失败：标题「本轮执行失败」、红圈 ✕，失败节点红字', async () => {
@@ -186,7 +188,7 @@ describe('TaskStatusCard', () => {
     expect(screen.getByText('本轮完成 · 待验收')).toBeTruthy()
     expect(screen.getByText(/任务：待验收任务 · P1R1/)).toBeTruthy()
     expect(screen.getByText(/用时 06:00/)).toBeTruthy()
-    expect(screen.queryAllByRole('button')).toHaveLength(0)
+    expect(screen.queryAllByRole('button').filter((b) => !b.getAttribute('data-testid')?.startsWith('task-module-tab-'))).toHaveLength(0)
   })
 
   it('末 phase 通过 · 待归档：收尾只读卡，提示在对话里说「归档」', async () => {
@@ -208,7 +210,7 @@ describe('TaskStatusCard', () => {
     expect(card.getAttribute('data-card-tone')).toBe('settled')
     expect(card.textContent).toContain('待归档')
     expect(card.textContent).toContain('暂不归档')
-    expect(screen.queryAllByRole('button')).toHaveLength(0)
+    expect(screen.queryAllByRole('button').filter((b) => !b.getAttribute('data-testid')?.startsWith('task-module-tab-'))).toHaveLength(0)
   })
 
   it('验收方案生成失败：同一张收尾卡，打 ✕ / 红色，不打绿勾', async () => {
@@ -232,5 +234,25 @@ describe('TaskStatusCard', () => {
     expect(card.textContent).toContain('✕')
     expect(card.textContent).not.toContain('✓')
     expect(screen.getByText(/cases\.0\.evidenceRefs\.2\.kind 非法/)).toBeTruthy()
+  })
+
+  // 2026-11-14：暂停/继续是轻量转场卡 —— 不再拉同一 execution 的节点摘要，
+  // 否则「任务开始执行」和「任务已继续运行」会画成两张一模一样的运行卡。
+  it('暂停/继续转场卡：不取执行详情、不带节点摘要，只报状态与坐标', async () => {
+    render(<TaskStatusCard message={eventMessage({
+      kind: 'task.status', title: '任务已继续运行', status: 'running',
+      taskId: 't-run', executionId: 'e-run', workspaceId: 'w-1',
+      phaseIndex: 1, roundIndex: 1,
+      payload: { status: 'running', runState: 'resumed', actions: [] },
+    }, 'm-resume')} />)
+
+    const card = screen.getByTestId('activity-event-card')
+    expect(card.textContent).toContain('任务已继续运行')
+    expect(card.textContent).toContain('P1 · R1')
+    expect(card.textContent).toContain('▶')
+    expect(card.textContent).not.toContain('节点 ·')
+    expect(card.textContent).not.toContain('matt-spec-dev')
+    expect(getTask).not.toHaveBeenCalled()
+    expect(fetchExecutionDetail).not.toHaveBeenCalled()
   })
 })

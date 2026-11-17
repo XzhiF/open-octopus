@@ -136,6 +136,34 @@ class ChatEventBridge {
   private archiveConsentGuided = new Set<string>()
   /** 归档完成播报去重（taskId → 已播报）。 */
   private archiveDoneGuided = new Set<string>()
+  /** 舱初始化门禁卡去重：cabinId:status → 已落卡（start/done/failed 各一张）。 */
+  private cabinInitCarded = new Set<string>()
+
+  /** Cabin P3（G2/C6）：doer 高信号 → 舱派发账本审计 hook（组合根注入）。 */
+  private cabinSignalHook: ((taskId: string, status: string, summary: string) => void) | null = null
+
+  setCabinSignalHook(hook: (taskId: string, status: string, summary: string) => void): void {
+    this.cabinSignalHook = hook
+  }
+
+  /** design 25 §4.2：委派 / 任务的提问状态回流（组合根注入，避免桥依赖服务层）。 */
+  private delegationStateHook: ((delegationId: string, state: "waiting_input" | "running") => void) | null = null
+
+  setDelegationStateHook(hook: (delegationId: string, state: "waiting_input" | "running") => void): void {
+    this.delegationStateHook = hook
+  }
+
+  /** G2：舱任务的人-facing 单线程 = 舱主会话（doer 回报汇聚，C4）。 */
+  private cabinMainSession(cabinId: string): string | null {
+    if (!this.db) return null
+    try {
+      const row = this.db.prepare("SELECT main_session_id FROM cabins WHERE id = ?")
+        .get(cabinId) as { main_session_id?: string | null } | undefined
+      return row?.main_session_id ?? null
+    } catch {
+      return null
+    }
+  }
 
   attach(db: SqliteLike): void {
     this.db = db
@@ -291,24 +319,34 @@ class ChatEventBridge {
       repo_group?: string | null
       source_chat_session_id?: string | null
       workspace_id?: string | null
+      cabin_id?: string | null
     } | undefined
     try {
       row = this.db.prepare(
-        "SELECT name, repo_group, source_chat_session_id, workspace_id FROM tasks WHERE id = ?",
+        "SELECT name, repo_group, source_chat_session_id, workspace_id, cabin_id FROM tasks WHERE id = ?",
       ).get(taskId) as typeof row
     } catch {
       return
     }
     if (!row) return
 
+    // 2026-11-14 用户口径修订 G2：运行态卡属于**任务自己的 chat**（task thread），
+    // 不再汇进舱主会话 —— 否则任务 chat 看不到工作流状态，舱 chat 反而把同一次
+    // 执行重复画几遍（开始执行 / 继续运行各一张，都绑同一 execution）。
+    // 舱主会话仍保留 wake（cabin 单线程收件箱的「舰长知道」路径）+ 账本信号。
+    const cardSessionId = row.source_chat_session_id
+      ?? (row.cabin_id ? this.cabinMainSession(row.cabin_id) : null)
+    const wakeSessionId = (row.cabin_id ? this.cabinMainSession(row.cabin_id) : null)
+      ?? row.source_chat_session_id
+
     // A task thread is a MAIN session bound to the task. Legacy task-author
     // clone sessions keep the old high-signal-wake-only behavior.
     let threadSession: { clone_name: string | null; workspace_id: string | null } | undefined
-    if (row.source_chat_session_id) {
+    if (cardSessionId) {
       try {
         threadSession = this.db.prepare(
           "SELECT clone_name, workspace_id FROM sessions WHERE id = ?",
-        ).get(row.source_chat_session_id) as typeof threadSession
+        ).get(cardSessionId) as typeof threadSession
       } catch {
         /* no sessions table in a stripped test DB — treat as legacy */
       }
@@ -356,7 +394,7 @@ class ChatEventBridge {
       workspaceId,
       taskId,
       executionId: latest?.id ?? null,
-      sessionId: row.source_chat_session_id ?? null,
+      sessionId: cardSessionId ?? null,
       payload: {
         status,
         actions,
@@ -365,6 +403,9 @@ class ChatEventBridge {
       },
     })
 
+    // C6 inbound：doer 高信号落舱派发账本（report/attention/handback）。
+    if (row.cabin_id && high) this.cabinSignalHook?.(taskId, status, `${title} · ${detail}`)
+
     // 2026-10-31 AI-native 归档：archiving / done 不再追加通用状态卡，也不会
     // 在这里唤醒 —— 入口是 beginArchiving 的总框引导与 endArchiving 的完成播报。
     // 否则一张任务会出现「归档中 + 归档总框 + 已完成」三张卡，与「只留一个总框」冲突。
@@ -372,9 +413,9 @@ class ChatEventBridge {
     const archiveHandled = isThread &&
       (status === "archiving" || status === "done" || status === "awaiting_archive")
 
-    if (isThread && row.source_chat_session_id && !archiveHandled) {
+    if (isThread && cardSessionId && !archiveHandled) {
       this.appendTaskCard({
-        sessionId: row.source_chat_session_id,
+        sessionId: cardSessionId,
         workspaceId,
         title,
         detail,
@@ -382,15 +423,35 @@ class ChatEventBridge {
         status,
         actions,
       })
-      this.notifySession(row.source_chat_session_id, workspaceId)
+      this.notifySession(cardSessionId, workspaceId)
     }
 
-    if (high && row.source_chat_session_id && !archiveHandled) {
+    // 2026-11-16（design 23 §2 续）：用户要「双会话都可追溯」——舱任务的里程碑
+    // 卡同时落**舱主会话**，人在汐音这条对话里也能直接展开规格 / 运行 / 验收；
+    // 任务线程保留自己的一份（上面）。只落卡、不额外唤醒（wake 已在下面由
+    // 同一事件负责，避免一条转场烧两次 token）。
+    if (row.cabin_id && !archiveHandled && cardSessionId) {
+      this.mirrorCardToCabinMain({
+        cabinId: row.cabin_id,
+        excludeSessionId: cardSessionId,
+        workspaceId,
+        title,
+        detail,
+        event,
+        status,
+        actions,
+        contentPrefix: "任务动态",
+      })
+    }
+
+    if (high && wakeSessionId && !archiveHandled) {
       void this.wake(
-        { sessionId: row.source_chat_session_id, org: row.repo_group ?? '', workspaceId },
+        { sessionId: wakeSessionId, org: row.repo_group ?? '', workspaceId },
         event,
         // The thread already has the deterministic card; the wake turn is the
         // model seeing the same event without persisting a duplicate message.
+        // 卡在任务线程、wake 在舱主会话时也必须 ephemeral —— 否则舱 chat 又会
+        // 落一条同样的状态消息（2026-11-14 重复显示的根因之一）。
         isThread ? { ephemeral: true } : undefined,
       )
     }
@@ -452,6 +513,61 @@ class ChatEventBridge {
     }
   }
 
+  /** 舱任务里程碑卡 → 舱主会话（双会话可追溯）。零 LLM、不唤醒。 */
+  private mirrorCardToCabinMain(input: {
+    cabinId: string
+    excludeSessionId: string
+    workspaceId: string | null
+    title: string
+    detail: string
+    event: ActivityEvent
+    status: string
+    actions: TaskCardAction[]
+    contentPrefix?: string
+  }): void {
+    const main = this.cabinMainSession(input.cabinId)
+    if (!main || main === input.excludeSessionId) return
+    this.appendTaskCard({
+      sessionId: main,
+      workspaceId: input.workspaceId,
+      title: input.title,
+      detail: input.detail,
+      event: input.event,
+      status: input.status,
+      actions: input.actions,
+      contentPrefix: input.contentPrefix,
+    })
+    this.notifySession(main, input.workspaceId)
+    this.emitCabinView(input.cabinId)
+  }
+
+  /** 引导类卡（验收 / 归档）在舱里默认落主会话；这里把同一张卡补进任务自己的
+   *  线程，保证「原会话」也能单独追溯（design 23 §2 续）。 */
+  private mirrorCardToTaskThread(input: {
+    sessionId: string | null
+    excludeSessionId: string | null
+    workspaceId: string | null
+    title: string
+    detail: string
+    event: ActivityEvent
+    status: string
+    actions: TaskCardAction[]
+    contentPrefix?: string
+  }): void {
+    if (!input.sessionId || input.sessionId === input.excludeSessionId) return
+    this.appendTaskCard({
+      sessionId: input.sessionId,
+      workspaceId: input.workspaceId,
+      title: input.title,
+      detail: input.detail,
+      event: input.event,
+      status: input.status,
+      actions: input.actions,
+      contentPrefix: input.contentPrefix,
+    })
+    this.notifySession(input.sessionId, input.workspaceId)
+  }
+
   /** 归档前的明确同意（2026-10-31 archive-consent）：末 phase 已通过但归档
    *  尚未启动。只插一张「待归档」卡、只唤醒一次，让主 Chat 问「现在归档吗？」；
    *  用户明确说「归档」后才允许 start_archive。 */
@@ -463,13 +579,21 @@ class ChatEventBridge {
       repo_group?: string | null
       source_chat_session_id?: string | null
       workspace_id?: string | null
+      cabin_id?: string | null
     } | undefined
     try {
       row = this.db.prepare(
-        "SELECT name, repo_group, source_chat_session_id, workspace_id FROM tasks WHERE id = ?",
+        "SELECT name, repo_group, source_chat_session_id, workspace_id, cabin_id FROM tasks WHERE id = ?",
       ).get(taskId) as typeof row
     } catch {
       return
+    }
+    // G2：舱任务的引导卡/wake 同样汇聚舱主会话（C4 单线程）。
+    // 双会话：任务线程也补同一张卡（design 23 §2 续）。
+    const threadSessionId = row?.source_chat_session_id ?? null
+    if (row?.cabin_id) {
+      const main = this.cabinMainSession(row.cabin_id)
+      if (main) row.source_chat_session_id = main
     }
     if (!row?.source_chat_session_id) return
     let session: { clone_name?: string | null } | undefined
@@ -509,6 +633,13 @@ class ChatEventBridge {
         actions,
       })
       this.notifySession(row.source_chat_session_id, row.workspace_id ?? null)
+      this.emitCabinView(row.cabin_id)
+      this.mirrorCardToTaskThread({
+        sessionId: threadSessionId,
+        excludeSessionId: row.source_chat_session_id,
+        workspaceId: row.workspace_id ?? null,
+        title, detail, event, status: "awaiting_archive", actions,
+      })
     }
 
     const message = [
@@ -539,13 +670,21 @@ class ChatEventBridge {
       repo_group?: string | null
       source_chat_session_id?: string | null
       workspace_id?: string | null
+      cabin_id?: string | null
     } | undefined
     try {
       row = this.db.prepare(
-        "SELECT name, repo_group, source_chat_session_id, workspace_id FROM tasks WHERE id = ?",
+        "SELECT name, repo_group, source_chat_session_id, workspace_id, cabin_id FROM tasks WHERE id = ?",
       ).get(taskId) as typeof row
     } catch {
       return
+    }
+    // G2：舱任务的引导卡/wake 同样汇聚舱主会话（C4 单线程）。
+    // 双会话：任务线程也补同一张卡（design 23 §2 续）。
+    const threadSessionId = row?.source_chat_session_id ?? null
+    if (row?.cabin_id) {
+      const main = this.cabinMainSession(row.cabin_id)
+      if (main) row.source_chat_session_id = main
     }
     if (!row?.source_chat_session_id) return
     let session: { clone_name?: string | null } | undefined
@@ -583,6 +722,13 @@ class ChatEventBridge {
         actions,
       })
       this.notifySession(row.source_chat_session_id, row.workspace_id ?? null)
+      this.emitCabinView(row.cabin_id)
+      this.mirrorCardToTaskThread({
+        sessionId: threadSessionId,
+        excludeSessionId: row.source_chat_session_id,
+        workspaceId: row.workspace_id ?? null,
+        title, detail, event, status: "archiving", actions, contentPrefix: "归档",
+      })
     }
 
     const message = [
@@ -613,13 +759,21 @@ class ChatEventBridge {
       repo_group?: string | null
       source_chat_session_id?: string | null
       workspace_id?: string | null
+      cabin_id?: string | null
     } | undefined
     try {
       row = this.db.prepare(
-        "SELECT name, repo_group, source_chat_session_id, workspace_id FROM tasks WHERE id = ?",
+        "SELECT name, repo_group, source_chat_session_id, workspace_id, cabin_id FROM tasks WHERE id = ?",
       ).get(taskId) as typeof row
     } catch {
       return
+    }
+    // G2：舱任务的引导卡/wake 同样汇聚舱主会话（C4 单线程）。
+    // 双会话：任务线程也补同一张卡（design 23 §2 续）。
+    const threadSessionId = row?.source_chat_session_id ?? null
+    if (row?.cabin_id) {
+      const main = this.cabinMainSession(row.cabin_id)
+      if (main) row.source_chat_session_id = main
     }
     if (!row?.source_chat_session_id) return
     let session: { clone_name?: string | null } | undefined
@@ -655,6 +809,18 @@ class ChatEventBridge {
         actions: [{ id: "open_archive", label: "打开归档台看明细" }],
       })
       this.notifySession(row.source_chat_session_id, row.workspace_id ?? null)
+      this.emitCabinView(row.cabin_id)
+      this.mirrorCardToTaskThread({
+        sessionId: threadSessionId,
+        excludeSessionId: row.source_chat_session_id,
+        workspaceId: row.workspace_id ?? null,
+        title: "归档 · 总览",
+        detail: `任务：${row.name ?? taskId.slice(0, 8)} · 已完成`,
+        event,
+        status: "done",
+        actions: [{ id: "open_archive", label: "打开归档台看明细" }],
+        contentPrefix: "归档",
+      })
     }
     const message = [
       `[归档完成] 任务 ${taskId} 的全部 project 已归档成功，服务端已把任务状态写为 done。`,
@@ -737,14 +903,21 @@ class ChatEventBridge {
       name?: string
       source_chat_session_id?: string | null
       workspace_id?: string | null
+      cabin_id?: string | null
     } | undefined
     if (input.taskId) {
       try {
         row = this.db.prepare(
-          "SELECT name, source_chat_session_id, workspace_id FROM tasks WHERE id = ?",
+          "SELECT name, source_chat_session_id, workspace_id, cabin_id FROM tasks WHERE id = ?",
         ).get(input.taskId) as typeof row
       } catch {
         return
+      }
+      // 2026-11-14 用户口径修订 G2：工作流运行卡跟任务自己的 chat 走；只有
+      // 任务线程缺失时才回落到舱主会话（不能反过来把舱 chat 当默认落点）。
+      if (row?.cabin_id && !row.source_chat_session_id) {
+        const main = this.cabinMainSession(row.cabin_id)
+        if (main) row.source_chat_session_id = main
       }
       if (!row?.source_chat_session_id) return
     }
@@ -796,6 +969,494 @@ class ChatEventBridge {
       contentPrefix: "工作流运行",
     })
     this.notifySession(sessionId, workspaceId)
+  }
+
+  /**
+   * 人工暂停 / 恢复运行（POST /api/tasks/:id/pause|resume）→ 任务线程落一张确定性卡。
+   *
+   * 任务的持久状态在运行/暂停/恢复之间都是 'running'（「已暂停」由执行行派生），
+   * 所以不会再来一帧 task_status；TASK_EXECUTION_EVENT 只让前端刷新、不写 transcript。
+   * 结果就是点了按钮在 chat 里看不到任何提示（2026-11-14 用户反馈）。
+   * 零 LLM：只落卡 + 通知会话刷新。
+   */
+  notifyTaskRunState(taskId: string, executionId: string, state: "running" | "paused"): void {
+    if (!this.db) return
+    let row: {
+      name?: string
+      source_chat_session_id?: string | null
+      workspace_id?: string | null
+      cabin_id?: string | null
+    } | undefined
+    try {
+      row = this.db.prepare(
+        "SELECT name, source_chat_session_id, workspace_id, cabin_id FROM tasks WHERE id = ?",
+      ).get(taskId) as typeof row
+    } catch {
+      return
+    }
+    if (!row) return
+    // 2026-11-14 用户口径修订 G2：暂停/继续卡落任务自己的 chat（与
+    // handleTaskStatus 同口径），舱 chat 不再重复显示同一 execution 的运行摘要。
+    const sessionId = row.source_chat_session_id
+      ?? (row.cabin_id ? this.cabinMainSession(row.cabin_id) : null)
+    if (!sessionId) return
+    let session: { clone_name?: string | null } | undefined
+    try {
+      session = this.db.prepare("SELECT clone_name FROM sessions WHERE id = ?")
+        .get(sessionId) as typeof session
+    } catch {
+      return
+    }
+    if (!session || session.clone_name) return // 旧版 clone 线程不落卡
+
+    let latest: { phase_index?: number | null; round_index?: number | null } | undefined
+    try {
+      latest = this.db.prepare("SELECT phase_index, round_index FROM executions WHERE id = ?")
+        .get(executionId) as typeof latest
+    } catch {
+      /* 坐标缺失就不显示 */
+    }
+    const coord = latest?.phase_index != null
+      ? `P${latest.phase_index}${latest.round_index != null ? ` · R${latest.round_index}` : ""}`
+      : ""
+    const title = state === "paused" ? "任务已暂停" : "任务已继续运行"
+    const severity: ActivitySeverity = state === "paused" ? "warn" : "info"
+    const actions = TASK_STATUS_ACTIONS[state] ?? []
+    const detail = `任务：${row.name ?? taskId.slice(0, 8)}${coord ? ` · ${coord}` : ""}`
+    const workspaceId = row.workspace_id ?? null
+    const event = getActivityBus().publish({
+      kind: "task.status",
+      severity,
+      title,
+      message: detail,
+      workspaceId,
+      taskId,
+      executionId,
+      sessionId,
+      payload: {
+        status: state,
+        actions,
+        // 轻量「运行状态」卡：暂停 / 继续只是状态转场，不再把同一 execution 的
+        // 完整节点摘要重画一遍（否则开始执行 + 继续运行 = 两张一模一样的卡）。
+        runState: state === "paused" ? "paused" : "resumed",
+        phaseIndex: latest?.phase_index ?? null,
+        roundIndex: latest?.round_index ?? null,
+      },
+    })
+    this.appendTaskCard({
+      sessionId,
+      workspaceId,
+      title,
+      detail,
+      event,
+      status: state,
+      actions,
+    })
+    this.notifySession(sessionId, workspaceId)
+    // 双会话：暂停 / 继续同样在舱主会话留一张（design 23 §2 续）。
+    if (row.cabin_id) {
+      this.mirrorCardToCabinMain({
+        cabinId: row.cabin_id,
+        excludeSessionId: sessionId,
+        workspaceId,
+        title, detail, event, status: state, actions,
+      })
+    }
+  }
+
+  /**
+   * 舱初始化门禁卡（Cabin P1）：零 LLM，append-only。start/done/failed 各一张
+   * （cabinId:status 去重）；逐项进度走 SSE `cabin:<id>` 频道，卡片只落里程碑。
+   * payload.cabinInit=true + items 供前端 CabinInitGateCard 渲染（P2）。
+   */
+  requestCabinInitGateCard(input: {
+    sessionId: string
+    workspaceId: string | null
+    cabinId: string
+    cabinName: string
+    status: "running" | "done" | "failed"
+    items: Array<{ key: string; label: string; state: string; error?: string; fix_hint?: string }>
+  }): void {
+    if (!this.db) return
+    const dedupKey = `${input.cabinId}:${input.status}`
+    if (this.cabinInitCarded.has(dedupKey)) return
+    this.cabinInitCarded.add(dedupKey)
+
+    const failed = input.items.filter((i) => i.state === "failed")
+    const title = `舱初始化 · ${input.cabinName}`
+    const detail = input.status === "done"
+      ? "门禁全部通过，舱已就绪"
+      : input.status === "failed"
+        ? `${failed.length} 项门禁失败：${failed.map((f) => f.label).join("、")}`
+        : "门禁进行中…"
+    const event = getActivityBus().publish({
+      kind: "cabin.init",
+      severity: input.status === "failed" ? "warn" : "info",
+      title,
+      message: detail,
+      workspaceId: input.workspaceId,
+      sessionId: input.sessionId,
+      payload: { cabinInit: true, cabinId: input.cabinId, status: input.status, items: input.items },
+    })
+    this.appendTaskCard({
+      sessionId: input.sessionId,
+      workspaceId: input.workspaceId,
+      title,
+      detail,
+      event,
+      status: input.status,
+      actions: input.status === "failed" ? [{ id: "cabin_init_retry", label: "重试门禁" }] : [],
+      contentPrefix: "舱初始化",
+    })
+    this.notifySession(input.sessionId, input.workspaceId)
+  }
+
+  /**
+   * 作者提问卡（design 23 §2 就地作答 + design 24 信封 + design 25 §4.2 两种实体）：
+   * 任务作者 / 委派 doer 在会话里 AskUserQuestion 时，把同一组问题投一张卡到舱主会话，
+   * 用户不用切对话就能答。卡片是 append-only 事件（零 LLM）；答案由决策端点 /
+   * web 卡片转发回 doer 线程，本服务不代答。
+   *
+   * 只对「绑了舱的任务或委派」生效；同一张提问（askMessageId）幂等。
+   */
+  requestAuthorAskCard(input: {
+    authorSessionId: string
+    askMessageId: string
+    questions: unknown
+    /** design 24 §3：必填最小集的富化字段，缺了就降级（不占位、不空块）。 */
+    decision?: string
+    recommendation?: { label?: string; reason?: string }
+    options?: Array<{ label?: string; impact?: string }>
+    origin?: string
+    blocking?: boolean
+    intent?: string
+    phase?: { index?: number; round?: number } | null
+  }): void {
+    if (!this.db) return
+    const subject = this.resolveAskSubject(input.authorSessionId)
+    if (!subject?.mainSessionId) return
+    const dup = this.db.prepare(
+      "SELECT id, metadata FROM messages WHERE session_id = ? AND metadata LIKE ? LIMIT 1",
+    ).get(subject.mainSessionId, `%"askMessageId":"${input.askMessageId}"%`) as
+      { id: string; metadata: string | null } | undefined
+    // 2026-11-16：提问瞬间先落一张最小卡（降低延迟），回合收尾再用同一
+    // askMessageId 补齐信封字段（决策 / 建议 / 选项影响）。幂等键不变。
+    if (dup) {
+      if (this.enrichAskCard(dup.id, dup.metadata, input)) {
+        this.emitCabinView(subject.cabinId)
+      }
+      return
+    }
+
+    const questions = Array.isArray(input.questions)
+      ? input.questions
+      : (input.questions as { questions?: unknown } | null)?.questions
+    const first = Array.isArray(questions)
+      ? questions[0] as { question?: unknown } | undefined
+      : undefined
+    const questionText = typeof first?.question === "string" ? first.question : ""
+    const prefix = subject.handle ? `${subject.handle} ` : ""
+    const title = `${prefix}${subject.title} 在问你`
+    const activity = {
+      kind: "cabin.author_ask",
+      severity: "info",
+      title,
+      message: questionText,
+      workspaceId: subject.workspaceId,
+      taskId: subject.subject.kind === "task" ? subject.subject.id : null,
+      status: "awaiting_input",
+      payload: {
+        authorAsk: true,
+        askMessageId: input.askMessageId,
+        authorSessionId: input.authorSessionId,
+        cabinId: subject.cabinId,
+        taskId: subject.subject.kind === "task" ? subject.subject.id : null,
+        taskName: subject.title,
+        subject: subject.subject,
+        handle: subject.handle,
+        taskHandle: subject.handle,
+        blocking: input.blocking ?? true,
+        ...(input.decision ? { decision: input.decision } : {}),
+        ...(input.recommendation ? { recommendation: input.recommendation } : {}),
+        ...(input.options?.length ? { options: input.options } : {}),
+        ...(input.origin ? { origin: input.origin } : {}),
+        ...(input.intent ? { intent: input.intent } : {}),
+        ...(input.phase ? { phase: input.phase } : {}),
+        questions: input.questions,
+      },
+    }
+    const now = new Date().toISOString()
+    try {
+      this.db.prepare(
+        "INSERT INTO messages (id, session_id, role, content, metadata, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+      ).run(
+        randomUUID(),
+        subject.mainSessionId,
+        "user",
+        `[任务提问 · 待回答] ${title}\n${questionText}`,
+        JSON.stringify({ displayType: "event", activity }),
+        now,
+      )
+      this.db.prepare(
+        "UPDATE sessions SET last_message_at = ?, updated_at = ? WHERE id = ?",
+      ).run(now, now, subject.mainSessionId)
+      this.notifySession(subject.mainSessionId, subject.workspaceId)
+      this.emitCabinView(subject.cabinId)
+    } catch (err: unknown) {
+      if (process.env.NODE_ENV !== "test") {
+        console.warn("[ChatEventBridge] author-ask card append failed:", err instanceof Error ? err.message : String(err))
+      }
+      return
+    }
+    // 委派：提问即 waiting_input（编队里能看到「D1 在问你」）。
+    if (subject.subject.kind === "delegation") {
+      try { this.delegationStateHook?.(subject.subject.id, "waiting_input") } catch { /* best effort */ }
+    }
+  }
+
+  /** 回合收尾补信封：只补空字段，不覆盖提问瞬间已有的值（幂等）。
+   *  返回是否真的改了 metadata（调用方据此决定是否广播）。 */
+  private enrichAskCard(
+    messageId: string,
+    metadata: string | null,
+    input: {
+      decision?: string
+      recommendation?: { label?: string; reason?: string }
+      options?: Array<{ label?: string; impact?: string }>
+      origin?: string
+      blocking?: boolean
+      intent?: string
+      phase?: { index?: number; round?: number } | null
+    },
+  ): boolean {
+    if (!this.db || !metadata) return false
+    try {
+      const meta = JSON.parse(metadata) as {
+        activity?: { payload?: Record<string, unknown> }
+      }
+      const payload = meta.activity?.payload
+      if (!payload) return false
+      let changed = false
+      const fill = (key: string, value: unknown) => {
+        if (value === undefined || value === null) return
+        if (payload[key] === undefined || payload[key] === null) {
+          payload[key] = value
+          changed = true
+        }
+      }
+      fill("decision", input.decision)
+      fill("recommendation", input.recommendation)
+      fill("origin", input.origin)
+      fill("blocking", input.blocking)
+      fill("intent", input.intent)
+      fill("phase", input.phase)
+      // options：提问瞬间只有 label，收尾带上 impact —— 只有旧值缺影响时才替换。
+      const next = input.options ?? []
+      const old = Array.isArray(payload.options)
+        ? (payload.options as Array<{ label?: string; impact?: string }>)
+        : []
+      const oldHasImpact = old.some((o) => !!o?.impact)
+      if (next.length > 0 && !oldHasImpact && next.some((o) => !!o?.impact)) {
+        payload.options = next
+        changed = true
+      }
+      if (!changed) return false
+      this.db.prepare("UPDATE messages SET metadata = ? WHERE id = ?")
+        .run(JSON.stringify(meta), messageId)
+      return true
+    } catch {
+      return false
+    }
+  }
+
+  /** 提问者会话 → 归属实体（task / delegation）+ 舱主会话 + handle。 */
+  private resolveAskSubject(authorSessionId: string): {
+    cabinId: string
+    mainSessionId: string | null
+    workspaceId: string | null
+    subject: { kind: "task" | "delegation"; id: string }
+    title: string
+    handle: string
+  } | null {
+    if (!this.db) return null
+    // 1) 任务：作者主线程（source）或 doer 会话都算它的提问面。
+    try {
+      const task = this.db.prepare(
+        `SELECT t.id AS id, t.name AS title, t.cabin_id AS cabin_id,
+                c.main_session_id AS main_session_id, c.workspace_id AS workspace_id
+           FROM tasks t JOIN cabins c ON c.id = t.cabin_id
+          WHERE (t.source_chat_session_id = ? OR t.doer_session_id = ?)
+            AND t.deleted_at IS NULL
+          ORDER BY t.created_at DESC LIMIT 1`,
+      ).get(authorSessionId, authorSessionId) as {
+        id: string; title: string; cabin_id: string
+        main_session_id: string | null; workspace_id: string | null
+      } | undefined
+      if (task) {
+        return {
+          cabinId: task.cabin_id,
+          mainSessionId: task.main_session_id,
+          workspaceId: task.workspace_id,
+          subject: { kind: "task", id: task.id },
+          title: task.title,
+          handle: this.handleFor("task", task.cabin_id, task.id),
+        }
+      }
+    } catch { /* tasks/cabins absent on very old DBs */ }
+
+    // 2) 独立委派（design 25 §4.2）：doer 会话就是它的提问面。
+    try {
+      const row = this.db.prepare(
+        `SELECT d.id AS id, d.title AS title, d.cabin_id AS cabin_id,
+                c.main_session_id AS main_session_id, c.workspace_id AS workspace_id
+           FROM cabin_delegations d JOIN cabins c ON c.id = d.cabin_id
+          WHERE d.doer_session_id = ?
+          ORDER BY d.created_at DESC LIMIT 1`,
+      ).get(authorSessionId) as {
+        id: string; title: string; cabin_id: string
+        main_session_id: string | null; workspace_id: string | null
+      } | undefined
+      if (row) {
+        return {
+          cabinId: row.cabin_id,
+          mainSessionId: row.main_session_id,
+          workspaceId: row.workspace_id,
+          subject: { kind: "delegation", id: row.id },
+          title: row.title,
+          handle: this.handleFor("delegation", row.cabin_id, row.id),
+        }
+      }
+    } catch { /* old DB */ }
+    return null
+  }
+
+  /** 派生句柄（design 25 §4.1）：按创建顺序；不落库。 */
+  private handleFor(kind: "task" | "delegation", cabinId: string, id: string): string {
+    try {
+      const rows = kind === "task"
+        ? this.db!.prepare(
+          "SELECT id FROM tasks WHERE cabin_id = ? AND deleted_at IS NULL ORDER BY created_at, id",
+        ).all(cabinId) as Array<{ id: string }>
+        : this.db!.prepare(
+          "SELECT id FROM cabin_delegations WHERE cabin_id = ? ORDER BY created_at, id",
+        ).all(cabinId) as Array<{ id: string }>
+      const index = rows.findIndex((r) => r.id === id)
+      return index >= 0 ? `${kind === "task" ? "#" : "D"}${index + 1}` : (kind === "task" ? "#?" : "D?")
+    } catch {
+      return kind === "task" ? "#?" : "D?"
+    }
+  }
+
+  /**
+   * 作者提问已被回答（2026-11-16 双会话同步）：用户在**任务线程**里直接答了
+   * 一张问题卡时，舱主会话里镜像的那张 authorAsk 卡也要变成只读 —— 否则
+   * 主会话的「待回答」队列永远挂着一条已经答过的问题。
+   *
+   * 判据：作者线程收到「用户回答了以下问题」用户消息 → 把该线程在舱主会话
+   * 里最新一张无 decision 的 authorAsk 卡写回 activity.decision。
+   */
+  markAuthorAskAnswered(authorSessionId: string): void {
+    if (!this.db) return
+    const subject = this.resolveAskSubject(authorSessionId)
+    if (!subject?.mainSessionId) return
+    let cards: Array<{ id: string; metadata: string | null }> = []
+    try {
+      cards = this.db.prepare(
+        `SELECT id, metadata FROM messages
+          WHERE session_id = ? AND metadata LIKE '%"authorAsk":true%'
+          ORDER BY created_at DESC, rowid DESC LIMIT 20`,
+      ).all(subject.mainSessionId) as typeof cards
+    } catch {
+      return
+    }
+    for (const card of cards) {
+      if (!card.metadata) continue
+      let meta: Record<string, unknown>
+      try { meta = JSON.parse(card.metadata) as Record<string, unknown> } catch { continue }
+      const activity = meta.activity as Record<string, unknown> | undefined
+      if (!activity || typeof activity !== "object") continue
+      const payload = activity.payload as Record<string, unknown> | undefined
+      if (!payload?.authorAsk || payload.authorSessionId !== authorSessionId) continue
+      if (activity.decision) return // 最新一张已经答过，不同步更早的
+      activity.decision = {
+        id: "answer_from_thread",
+        label: "已回答",
+        at: new Date().toISOString(),
+      }
+      meta.activity = activity
+      try {
+        this.db.prepare("UPDATE messages SET metadata = ? WHERE id = ?")
+          .run(JSON.stringify(meta), card.id)
+      } catch { /* best effort */ }
+      this.appendAskReceipt({
+        sessionId: subject.mainSessionId,
+        workspaceId: subject.workspaceId,
+        askMessageId: String(payload.askMessageId ?? card.id),
+        subject: (payload.subject as { kind: "task" | "delegation"; id: string } | undefined)
+          ?? subject.subject,
+        handle: typeof payload.handle === "string" ? payload.handle : subject.handle,
+        title: typeof payload.taskName === "string" ? payload.taskName : subject.title,
+        label: "已回答（任务线程兜底）",
+      })
+      if (subject.subject.kind === "delegation") {
+        try { this.delegationStateHook?.(subject.subject.id, "running") } catch { /* best effort */ }
+      }
+      this.notifySession(subject.mainSessionId, subject.workspaceId)
+      this.emitCabinView(subject.cabinId)
+      return
+    }
+  }
+
+  /** design 24 §5：答完留一条回执（幂等键 = askMessageId），刷新/换设备也在。 */
+  private appendAskReceipt(input: {
+    sessionId: string
+    workspaceId: string | null
+    askMessageId: string
+    subject: { kind: "task" | "delegation"; id: string }
+    handle: string
+    title: string
+    label: string
+  }): void {
+    if (!this.db) return
+    try {
+      const dup = this.db.prepare(
+        "SELECT 1 FROM messages WHERE session_id = ? AND metadata LIKE ? LIMIT 1",
+      ).get(input.sessionId, `%"askReceiptFor":"${input.askMessageId}"%`)
+      if (dup) return
+      const now = new Date().toISOString()
+      const line = `✓ 已答 · ${input.handle} ${input.title}：${input.label}`
+      this.db.prepare(
+        "INSERT INTO messages (id, session_id, role, content, metadata, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+      ).run(
+        randomUUID(), input.sessionId, "user", line,
+        JSON.stringify({
+          displayType: "event",
+          activity: {
+            kind: "cabin.author_ask_receipt",
+            severity: "info",
+            title: "已答",
+            workspaceId: input.workspaceId,
+            taskId: input.subject.kind === "task" ? input.subject.id : null,
+            status: "ok",
+            payload: {
+              askReceiptFor: input.askMessageId,
+              authorAskReceipt: {
+                askId: input.askMessageId,
+                subject: input.subject,
+                handle: input.handle,
+                taskName: input.title,
+                label: input.label,
+                at: now,
+              },
+            },
+          },
+        }),
+        now,
+      )
+      this.db.prepare(
+        "UPDATE sessions SET last_message_at = ?, updated_at = ? WHERE id = ?",
+      ).run(now, now, input.sessionId)
+    } catch { /* best effort */ }
   }
 
   /**
@@ -955,13 +1616,22 @@ class ChatEventBridge {
       repo_group?: string | null
       source_chat_session_id?: string | null
       workspace_id?: string | null
+      cabin_id?: string | null
     } | undefined
     try {
       row = this.db.prepare(
-        "SELECT name, repo_group, source_chat_session_id, workspace_id FROM tasks WHERE id = ?",
+        "SELECT name, repo_group, source_chat_session_id, workspace_id, cabin_id FROM tasks WHERE id = ?",
       ).get(taskId) as typeof row
     } catch {
       return
+    }
+    // G2：舱任务的引导卡/wake 同样汇聚舱主会话（C4 单线程）。
+    // 2026-11-16（design 23 §2 续）：主会话之外，任务自己的线程也补同一张卡，
+    // 两条线各自可追溯。先把原线程记下来再覆写。
+    const threadSessionId = row?.source_chat_session_id ?? null
+    if (row?.cabin_id) {
+      const main = this.cabinMainSession(row.cabin_id)
+      if (main) row.source_chat_session_id = main
     }
     if (!row?.source_chat_session_id) return
     let session: { clone_name?: string | null } | undefined
@@ -973,6 +1643,12 @@ class ChatEventBridge {
     }
     if (!session || session.clone_name) return // legacy clone thread — untouched
     this.acceptanceGuided.add(key)
+
+    // C6：v4 的 awaiting_review 不走 task_status 高信号（持久态仍 running），
+    // 验收引导才是规范公告点 → 舱派发账本在这里落 attention。
+    if (row.cabin_id) {
+      this.cabinSignalHook?.(taskId, "awaiting_review", `任务：${row.name ?? taskId.slice(0, 8)} · 待验收`)
+    }
 
     const title = `验收方案已就绪 · ${info.caseCount} 个场景`
     const detail = `任务：${row.name ?? taskId.slice(0, 8)} · P${info.phaseIndex} · R${info.roundIndex}` +
@@ -1008,6 +1684,13 @@ class ChatEventBridge {
       actions,
     })
     this.notifySession(row.source_chat_session_id, row.workspace_id ?? null)
+    // 双会话：舱里落主会话时，任务线程也留一张同样的验收卡。
+    this.mirrorCardToTaskThread({
+      sessionId: threadSessionId,
+      excludeSessionId: row.source_chat_session_id,
+      workspaceId: row.workspace_id ?? null,
+      title, detail, event, status: "awaiting_review", actions,
+    })
     const message = [
       `[验收引导] 任务 ${taskId} 本轮（P${info.phaseIndex} R${info.roundIndex}）已交付，验收方案已生成：人验收 ${info.caseCount} 条场景、机器证据 ${info.checkCount} 项。`,
       "1. 调 get_acceptance_plan：`cases` 是要人验的场景（打开 → 操作 → 看什么），`checks` 是本轮已经验证过的机器证据。",
@@ -1035,13 +1718,21 @@ class ChatEventBridge {
       name?: string
       source_chat_session_id?: string | null
       workspace_id?: string | null
+      cabin_id?: string | null
     } | undefined
     try {
       row = this.db.prepare(
-        "SELECT name, source_chat_session_id, workspace_id FROM tasks WHERE id = ?",
+        "SELECT name, source_chat_session_id, workspace_id, cabin_id FROM tasks WHERE id = ?",
       ).get(taskId) as typeof row
     } catch {
       return
+    }
+    // G2：舱任务的引导卡/wake 同样汇聚舱主会话（C4 单线程）。
+    // 双会话：原任务线程也补一张（design 23 §2 续）。
+    const threadSessionId = row?.source_chat_session_id ?? null
+    if (row?.cabin_id) {
+      const main = this.cabinMainSession(row.cabin_id)
+      if (main) row.source_chat_session_id = main
     }
     if (!row?.source_chat_session_id) return
     let session: { clone_name?: string | null } | undefined
@@ -1079,14 +1770,43 @@ class ChatEventBridge {
       actions,
     })
     this.notifySession(row.source_chat_session_id, row.workspace_id ?? null)
+    this.mirrorCardToTaskThread({
+      sessionId: threadSessionId,
+      excludeSessionId: row.source_chat_session_id,
+      workspaceId: row.workspace_id ?? null,
+      title, detail, event, status: "awaiting_review", actions,
+    })
   }
 
-  /** Tell an open chat to reload its transcript (no wake turn). */
+  /** Tell an open chat to reload its transcript (no wake turn).
+   *
+   *  2026-11-16 修复：调用方经常把「舱主会话 + 任务 workspace」一起传进来
+   *  （archive / acceptance 引导先把 session 换成 main）。SSE 是按 workspace
+   *  频道分发的，发错频道 = 主对话收不到，只能等 F5。以会话行自己的
+   *  workspace_id 为准，调用方给的值仅作兜底。 */
   private notifySession(sessionId: string, workspaceId: string | null): void {
-    if (!this.sse || !workspaceId) return
-    this.sse.emit(workspaceId, {
+    if (!this.sse) return
+    let resolved: string | null = null
+    try {
+      const row = this.db?.prepare("SELECT workspace_id FROM sessions WHERE id = ?")
+        .get(sessionId) as { workspace_id?: string | null } | undefined
+      resolved = row?.workspace_id ?? null
+    } catch { /* old DB — fall back to hint */ }
+    const target = resolved ?? workspaceId
+    if (!target) return
+    this.sse.emit(target, {
       event: "session_updated",
       data: { sessionId, wake: false, phase: "event" },
+    })
+  }
+
+  /** 舱级视图变脏（attention / 编队 / 待你数）：让开着的舱壳立即重拉派生视图，
+   *  而不是等 useCabin 的 30s 轮询。零 LLM。 */
+  private emitCabinView(cabinId: string | null | undefined): void {
+    if (!cabinId || !this.sse) return
+    this.sse.emit(`cabin:${cabinId}`, {
+      event: "cabin_view",
+      data: { cabin_id: cabinId },
     })
   }
 
@@ -1106,13 +1826,19 @@ class ChatEventBridge {
       repo_group?: string | null
       source_chat_session_id?: string | null
       workspace_id?: string | null
+      cabin_id?: string | null
     } | undefined
     try {
       row = this.db.prepare(
-        "SELECT name, repo_group, source_chat_session_id, workspace_id FROM tasks WHERE id = ?",
+        "SELECT name, repo_group, source_chat_session_id, workspace_id, cabin_id FROM tasks WHERE id = ?",
       ).get(taskId) as typeof row
     } catch {
       return
+    }
+    // G2：舱任务的引导卡/wake 同样汇聚舱主会话（C4 单线程）。
+    if (row?.cabin_id) {
+      const main = this.cabinMainSession(row.cabin_id)
+      if (main) row.source_chat_session_id = main
     }
     if (!row?.source_chat_session_id) return
     let session: { clone_name?: string | null } | undefined
@@ -1155,13 +1881,19 @@ class ChatEventBridge {
       repo_group?: string | null
       source_chat_session_id?: string | null
       workspace_id?: string | null
+      cabin_id?: string | null
     } | undefined
     try {
       row = this.db.prepare(
-        "SELECT name, repo_group, source_chat_session_id, workspace_id FROM tasks WHERE id = ?",
+        "SELECT name, repo_group, source_chat_session_id, workspace_id, cabin_id FROM tasks WHERE id = ?",
       ).get(taskId) as typeof row
     } catch {
       return
+    }
+    // G2：舱任务的引导卡/wake 同样汇聚舱主会话（C4 单线程）。
+    if (row?.cabin_id) {
+      const main = this.cabinMainSession(row.cabin_id)
+      if (main) row.source_chat_session_id = main
     }
     if (!row?.source_chat_session_id) return
     let session: { clone_name?: string | null } | undefined

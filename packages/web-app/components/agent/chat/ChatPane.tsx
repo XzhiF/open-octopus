@@ -25,12 +25,13 @@ import * as agentApi from '@/lib/agent/api'
 import type { AgentSession, AgentMessage } from '@/lib/agent/types'
 import type { RunningAgentSession } from '@/lib/agent/api'
 import { CwdPicker, type CwdChoice } from './cwd-picker'
-import { ChatArea } from './ChatArea'
+import { ChatArea, type ChatComposerBridge } from './ChatArea'
+import { AuthorAskInbox } from './author-ask-inbox'
 import { TaskModulesLayer } from '@/components/chat-workbench/task-modules-layer'
 import { TriggerDialog } from '@/components/tasks/trigger-dialog'
 import type { RunTarget, SubagentTarget, TaskModule, TaskWindowMap, YamlTarget } from '@/components/chat-workbench/task-window-types'
 import { TaskProjectChip } from '@/components/chat-workbench/task-project-chip'
-import { WorkspaceExplorerDock } from '@/components/workspace/workspace-explorer-dock'
+import { WorkspaceExplorerDock, type CabinDockModule } from '@/components/workspace/workspace-explorer-dock'
 import { useActivitySnapshot } from '@/components/chat-workbench/inspector-activity'
 import { WorkflowWindow } from '@/components/chat-workbench/workflow-window'
 import { WorkflowYamlWindow } from '@/components/chat-workbench/workflow-yaml-window'
@@ -63,6 +64,9 @@ import {
   type KcIngestCardData,
 } from '@/lib/knowledge-center/card-protocol'
 import { ChatPanePicker } from './chat-pane-picker'
+import type { CockpitChatApi } from '@/components/cockpit/state/cockpit-state'
+import { useChatTelemetry } from '@/components/cockpit/chat/use-chat-telemetry'
+import { CABIN_MAIN_IDENTITY } from '@/components/cabin/cabin-meta'
 
 export type ChatPaneSide = 'left' | 'right'
 
@@ -141,6 +145,28 @@ export interface ChatPaneProps {
   onExitSplit: () => void
   onSwapPanes: () => void
   canSwap: boolean
+  /** 舱壳注入的 dock 舱模块段（Cabin P2）；桌面缺省不传。
+   *  只在舱主对话上给：舱内点开任务线程时由舱壳传 undefined，坞退回原样。 */
+  dockCabinModules?: CabinDockModule[]
+  dockCabinMoreModules?: CabinDockModule[]
+  /** 舱壳：坞层级压在舱浮窗层之上（舱内任何线程都成立，与坞内容无关）。 */
+  dockElevated?: boolean
+  /** 舱壳注入（Cabin P3）：舱内新建任务绑 cabin_id + 复用舱 workspace。 */
+  cabinId?: string | null
+  cabinWorkspaceId?: string | null
+  /** 全域座舱（S5）：composer 搬到全域底栏时的 portal 目标；缺省 = 行内 composer。 */
+  composerSlot?: HTMLElement | null
+  /** 全域座舱：隐藏已搬到舰桥的模型/上下文读数（其余交互不变）。 */
+  composerVariant?: 'full' | 'cockpit'
+  /** 全域座舱：把这一栏的对话能力上报给 CockpitState（值变化才上报）。 */
+  onTelemetry?: (api: CockpitChatApi | null) => void
+  /** 全域座舱：隐藏右侧竖排作业坞（浮窗里只留 transcript，坞的功能在作业面上）。 */
+  hideDock?: boolean
+  /** 舱主会话 id（CockpitChatHost 注入）。当前看的是任务线程时，顶部常驻
+   *  「← 回主对话」——用户从任务对话里答完题后不用再绕作业面找入口。 */
+  cabinMainSessionId?: string | null
+  /** 直连切换到主会话（缺省退回 octopus:cabin-main-chat 事件）。 */
+  onBackToCabinMain?: () => void
 }
 
 /** 决策卡上「选择即写回卡片」的按钮 id。其余按钮（打开规格/运行窗…）只是导航，
@@ -174,6 +200,17 @@ export function ChatPane({
   onExitSplit,
   onSwapPanes,
   canSwap,
+  dockCabinModules,
+  dockCabinMoreModules,
+  dockElevated,
+  cabinId,
+  cabinWorkspaceId,
+  composerSlot,
+  composerVariant,
+  onTelemetry,
+  hideDock,
+  cabinMainSessionId,
+  onBackToCabinMain,
 }: ChatPaneProps) {
   const {
     sessions, sessionsLoading, createNewSession, updateSessionTitle,
@@ -336,6 +373,54 @@ export function ChatPane({
     context: maxContext, setContext: setMaxContext,
     presets: modelPresets,
   } = useComposerSettings()
+
+  // ── 全域座舱 telemetry（S5）────────────────────────────────────────────
+  // 只读地把这一栏的对话能力交给 CockpitState。三条纪律：
+  //   1. 值变化才上报（telemetry 对象 useMemo，依赖都是原始值/稳定回调）；
+  //   2. 所有函数入口都走 ref 稳定，绝不把每次渲染新建的 setter 放进 deps ——
+  //      否则 reportChat → Provider 重渲染 → 本组件重渲染 → 新 telemetry → 再上报；
+  //   3. submit 走 ChatArea 暴露的 composer bridge（同一条提交管线）。
+  const composerBridgeRef = useRef<ChatComposerBridge | null>(null)
+  const [queueDepth, setQueueDepth] = useState(0)
+  const composerApiRef = useRef({ setModel, setEffort, setMaxContext, stopGenerate })
+  useEffect(() => {
+    composerApiRef.current = { setModel, setEffort, setMaxContext, stopGenerate }
+  })
+  const submitFromComposer = useCallback((text: string) => {
+    composerBridgeRef.current?.submit(text)
+  }, [])
+  const stopFromComposer = useCallback(() => {
+    void composerApiRef.current.stopGenerate()
+  }, [])
+  const setModelStable = useCallback((id: string) => {
+    composerApiRef.current.setModel(id)
+  }, [])
+  const setEffortStable = useCallback((next: CockpitChatApi['effort']) => {
+    composerApiRef.current.setEffort(next)
+  }, [])
+  const setContextStable = useCallback((next: CockpitChatApi['contextWindow']) => {
+    composerApiRef.current.setMaxContext(next)
+  }, [])
+  const reportQueueDepth = useCallback((depth: number) => setQueueDepth(depth), [])
+  const chatTelemetry = useMemo<CockpitChatApi>(() => ({
+    model,
+    effort,
+    contextWindow: maxContext,
+    streaming,
+    queueDepth,
+    canSend: !!sessionId,
+    contextUsage: contextUsage ?? null,
+    usage: sessionUsage ?? null,
+    submit: submitFromComposer,
+    stop: stopFromComposer,
+    setModel: setModelStable,
+    setEffort: setEffortStable,
+    setContext: setContextStable,
+  }), [
+    model, effort, maxContext, streaming, queueDepth, sessionId, contextUsage, sessionUsage,
+    submitFromComposer, stopFromComposer, setModelStable, setEffortStable, setContextStable,
+  ])
+  useChatTelemetry(chatTelemetry, onTelemetry)
 
   // ── 票10 投喂泛化：会话策展卡回流呈现 ──
   // 卡片回流原会话的普通侧宿主：Lane A fenced 块剥块渲染（注册表复用=零新卡类），
@@ -590,8 +675,9 @@ export function ChatPane({
           source_chat_session_id: sid,
           task_spec: { format: 'v4', ...(session.kind ? { kind: session.kind } : {}) },
           project_ids: session.projectIds,
+          ...(cabinId ? { cabin_id: cabinId } : {}),
           ...(taskCwd.kind === 'default'
-            ? {}
+            ? (cabinWorkspaceId ? { workspace_id: cabinWorkspaceId } : {})
             : { workspace_id: taskCwd.workspaceId, cwd: taskCwd.path }),
         })
         // The org this task landed in is the user's working org — reuse it for
@@ -618,6 +704,7 @@ export function ChatPane({
   }, [
     pendingTaskSession, creatingTask, sessionId, setSessionId, sendMessage, createNewSession,
     model, effort, maxContext, refreshChatTasks, refreshSessions, mainCwd, taskCwd, setActiveTask, setPendingTaskSession,
+    cabinId, cabinWorkspaceId,
   ])
 
   const handleSelectSession = useCallback((id: string) => {
@@ -1060,6 +1147,12 @@ export function ChatPane({
         if (data.task_id !== activeTask.id) return
         void loadMessages()
         void refreshChatTasks()
+        // 任务事件也可能来自运行窗外的手工动作（例如运行窗里点「继续运行」后的
+        // 暂停→运行转场）：把 activeTask 详情一并刷新，任务头/状态卡不会停在旧态。
+        const id = activeTask.id
+        void getTask(id)
+          .then((next) => { setActiveTask((prev) => (prev?.id === next.id ? next : prev)) })
+          .catch(() => { /* 详情刷新失败不阻断事件处理 */ })
       } catch {
         /* malformed frame */
       }
@@ -1071,7 +1164,7 @@ export function ChatPane({
       subscribeSSE(url, TASK_ACCEPTANCE_CHECK_EVENT, onTask),
     ]
     return () => offs.forEach((off) => off())
-  }, [activeTask?.id, loadMessages, refreshChatTasks])
+  }, [activeTask?.id, loadMessages, refreshChatTasks, setActiveTask])
 
   // 运行窗（YAML / DAG）是栏内浮层：只有焦点栏响应（点击来源先聚焦该栏；
   // 顶栏「运行中 Agent」也落到焦点栏）。新建/打开任务的全局入口在 ChatTab 壳里。
@@ -1088,6 +1181,18 @@ export function ChatPane({
     }
     window.addEventListener('octopus:open-workflow', onOpenWorkflow)
     return () => window.removeEventListener('octopus:open-workflow', onOpenWorkflow)
+  }, [])
+
+  // 作业详情「打开运行 →」：开作业坞同款运行窗（RunWindow：DAG + 日志 + YAML），
+  // 与作业坞运行列表点进来的那条路径同一个模块窗，不另做只给 DAG 的弹层。
+  useEffect(() => {
+    const onOpenRunWindow = (event: Event) => {
+      const detail = (event as CustomEvent<RunTarget>).detail
+      if (!detail?.workspaceId || !detail?.executionId) return
+      setTaskModuleRequest({ module: 'run', nonce: Date.now(), runTarget: detail })
+    }
+    window.addEventListener('octopus:open-run-window', onOpenRunWindow)
+    return () => window.removeEventListener('octopus:open-run-window', onOpenRunWindow)
   }, [])
 
   // 项目绑定入口（2026-10-28 用户定稿：项目是任务维度资产）：
@@ -1139,7 +1244,9 @@ export function ChatPane({
 
   // 停靠态主对话：只有「自定义工作区」才留下名字；默认 main-agent 工作区
   // 不渲染任何字（需求 1）。身份由 ＋ 面板接管，不再单占一个文字 chip。
-  const mainLead = !taskThread && sessionId && workspaceLabel ? (
+  // 作战舱（classic-v3）：舱主对话的身份固定为汐音舰长、目录归左栏舱行承载，
+  // 输入框下方不再重复目录名与可选身份。
+  const mainLead = !taskThread && !cabinId && sessionId && workspaceLabel ? (
     <span
       data-session-workspace
       title={`工作区：${workspaceLabel}`}
@@ -1162,6 +1269,16 @@ export function ChatPane({
   //   · 普通会话：显示当前分身身份，悬停 ✕ 清除回主身份；
   //   · hero 新会话：身份由下方单选选择器承担，不重复挂贴纸。
   const identityDisplay: ComposerIdentityDisplay | undefined = (() => {
+    // 作战舱（classic-v3）：舱主对话只有一个身份 —— 汐音舰长，只读（不可切）。
+    // 舱内打开的任务线程仍走下面按任务状态派生的只读身份。
+    if (cabinId && !taskThread) {
+      return {
+        label: CABIN_MAIN_IDENTITY,
+        active: true,
+        readOnly: true,
+        title: `舱主对话身份固定为${CABIN_MAIN_IDENTITY}，不可切换`,
+      }
+    }
     if (taskThread) {
       const status = activeTask?.status
       if (pendingTaskSession || status === 'draft') {
@@ -1224,7 +1341,9 @@ export function ChatPane({
   // to the task's workspace. Without it the chat never subscribes to
   // `session_updated`, and server-appended cards (run / completion / acceptance
   // failure) only appear after F5 (2026-11-02 user bug).
-  const activeWorkspaceId = activeTask?.workspace_id ?? activeSession?.workspace_id ?? null
+  // 舱主对话不在会话列表里时，`activeSession` 可能晚一拍才由 shared.sessions
+  // 补上；舱壳已经知道 workspace，直接兜底，避免 session_updated 订阅短暂缺失。
+  const activeWorkspaceId = activeTask?.workspace_id ?? activeSession?.workspace_id ?? cabinWorkspaceId ?? null
   useEffect(() => {
     if (!activeWorkspaceId || !sessionId) return
     const off = subscribeSSE(
@@ -1279,6 +1398,18 @@ export function ChatPane({
   const paneWorkspace = explorerWorkspaceId && explorerWorkspaceName && explorerWorkspaceName !== paneTitle
     ? explorerWorkspaceName
     : ''
+
+  // 任务线程 → 主对话：直接可见的回头路（2026-11-16 用户反馈：从任务对话里
+  // 答完题后没有入口回汐音）。缺省回调时退回作业面同一条事件。
+  const showBackToMain = !!cabinMainSessionId && !!sessionId && sessionId !== cabinMainSessionId
+  const backToMain = () => {
+    if (onBackToCabinMain) onBackToCabinMain()
+    else window.dispatchEvent(new CustomEvent('octopus:cabin-main-chat'))
+  }
+  // design 25 §5.5：任务线程默认只读 —— 决定都在主对话做；「在此处回答」是
+  // 显式打开的兜底路径（例外，不是主路径）。切会话时复位。
+  const [threadComposerEnabled, setThreadComposerEnabled] = useState(false)
+  useEffect(() => { setThreadComposerEnabled(false) }, [sessionId])
 
   return (
     <div
@@ -1364,6 +1495,27 @@ export function ChatPane({
       </button>
 
       <div className={cn('flex min-h-0 flex-1 flex-col', split && 'pt-[34px]')}>
+        {showBackToMain && (
+          <div
+            data-testid="chat-back-main-bar"
+            className="flex shrink-0 items-center gap-2 border-b border-pop-bd/60 bg-pop-amber-soft/60 px-3 py-1.5 text-[11px]"
+          >
+            <span className="min-w-0 truncate font-semibold text-pop-ink">{paneTitle}</span>
+            <span className="shrink-0 text-pop-dim/70">任务线程 · 证据面</span>
+            <span className="hidden min-w-0 flex-1 truncate text-[10.5px] text-pop-dim/60 sm:block">
+              汐音代你在与作者对话 · 你的决定都在主对话
+            </span>
+            <span className="flex-1 sm:hidden" />
+            <button
+              type="button"
+              data-testid="chat-back-to-main"
+              onClick={backToMain}
+              className="shrink-0 rounded-full border border-pop-cyan/40 bg-pop-cyan/10 px-2 py-0.5 font-bold text-pop-cyan transition-colors hover:bg-pop-cyan/20"
+            >
+              ← 回主对话
+            </button>
+          </div>
+        )}
         {/* 顶部状态条已移除（2026-10-28 用户定稿）：状态/身份/工作区信息
             由侧栏任务行与作业坞承载，对话区保持纯净转录。 */}
         {showPicker ? (
@@ -1379,6 +1531,7 @@ export function ChatPane({
         ) : (
           <ChatArea
             messages={viewMessages}
+            composerDock={<AuthorAskInbox messages={viewMessages} />}
             streaming={streaming}
             streamContent={streamContent}
             streamThinking={streamThinking}
@@ -1413,6 +1566,10 @@ export function ChatPane({
             })}
             steerActiveRef={steeringRef}
             resumeTailing={resumeStreaming}
+            composerHidden={showBackToMain && !threadComposerEnabled}
+            composerHiddenHint="汐音代你在与作者对话 · 你的决定都在主对话"
+            composerEnableLabel="在此处回答（兜底）"
+            onEnableComposer={() => setThreadComposerEnabled(true)}
             emptyStateTitle={draftScope ? (workflowDraft ? '描述要开发的工作流' : '描述要开发的任务') : undefined}
             emptyStateDescription={draftScope
               ? (workflowDraft
@@ -1424,7 +1581,11 @@ export function ChatPane({
               ? (workflowDraft
                 ? '描述要开发或修改的工作流…　⏎ 发送'
                 : '描述要开发的任务…　⏎ 发送')
-              : '问主 Agent…　⏎ 发送 · ⇧⏎ 排队 · Alt⏎ 换行'}
+              : cabinId && !taskThread
+                // classic-v3：舱主对话固定问汐音舰长（不再露出「主 Agent」）。
+                // 全域座舱（v13）⇧⏎ 是换行、不是排队。
+                ? `问${CABIN_MAIN_IDENTITY}…\u3000⏎ 发送 · ${composerVariant === 'cockpit' ? '⇧⏎ 换行' : '⇧⏎ 排队 · Alt⏎ 换行'}`
+                : '问主 Agent…　⏎ 发送 · ⇧⏎ 排队 · Alt⏎ 换行'}
             // hero：新建对话 = 空主会话；新建开发任务 = 未落盘的 pendingTask（同一套
             // 居中 composer + 第二行控件，2026-10-28 看齐）。
             heroEmpty={heroActive}
@@ -1442,7 +1603,7 @@ export function ChatPane({
             )}
             workspaceContext={composerWorkspaceContext}
             identityDisplay={identityDisplay}
-            identity={!taskThread ? (
+            identity={!taskThread && !cabinId ? (
               sessionId
                 ? {
                     activeName: identity.activeName,
@@ -1461,6 +1622,10 @@ export function ChatPane({
             transcriptTail={tail}
             timelineClearDock={!!explorerWorkspaceId}
             dockGutter={split}
+            composerSlot={composerSlot}
+            composerVariant={composerVariant}
+            onQueueDepthChange={reportQueueDepth}
+            composerBridgeRef={composerBridgeRef}
           />
         )}
       </div>
@@ -1497,11 +1662,15 @@ export function ChatPane({
         layerRoot,
       )}
 
+      {!hideDock && (
       <WorkspaceExplorerDock
         workspaceId={explorerWorkspaceId}
         workspaceName={explorerWorkspaceName}
         task={activeTask}
         taskProject={dockProject}
+        cabinModules={dockCabinModules}
+        cabinMoreModules={dockCabinMoreModules}
+        elevated={dockElevated}
         taskWindows={activeTask ? (taskWindows[activeTask.id] ?? {}) : {}}
         usageWindow={activeTask ? (taskWindows[activeTask.id]?.usage ?? null) : (sessionUsageWindows.usage ?? null)}
         onOpenUsage={() => setTaskModuleRequest({ module: 'usage', nonce: Date.now() })}
@@ -1535,6 +1704,7 @@ export function ChatPane({
               phaseIndex: run.phaseIndex,
               roundIndex: run.roundIndex,
               status: run.status,
+              taskId: run.taskId,
               system: run.isSystem,
             },
           })
@@ -1557,6 +1727,7 @@ export function ChatPane({
         sidebarWidth={sidebarWidth}
         compact={split}
       />
+      )}
 
       {yamlTarget && (
         <WorkflowYamlWindow target={yamlTarget} onClose={() => setYamlTarget(null)} />

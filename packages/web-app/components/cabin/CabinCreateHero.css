@@ -1,0 +1,988 @@
+/* ── 新建作战舱 v4 · 高保真样式（原型 docs/cabin-design/cabin-new-v4.html） ──
+   只作用在 .cc-root 子树；色板全部取 globals.css 的 pop token。 */
+
+.cc-root {
+  --cc-bd2: #454550;
+  --cc-dialog: #14141a;
+  display: flex;
+  min-width: 0;
+  min-height: 0;
+  flex: 1;
+  flex-direction: column;
+  background: var(--pop-bg);
+  color: var(--pop-ink);
+  font-size: 13px;
+  line-height: 1.55;
+}
+/* 浏览器默认按钮居中；原型是全局 text-align:left（列表项靠左）。 */
+.cc-root button {
+  text-align: left;
+}
+
+/* ── 右页头（tab 条） ─────────────────────────────────────────────── */
+.cc-head {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  height: 44px;
+  padding: 0 14px;
+  border-bottom: 1px solid var(--pop-bd);
+}
+.cc-tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  height: 28px;
+  padding: 0 8px 0 10px;
+  border-radius: 8px;
+  border: 1px solid var(--pop-bd);
+  background: rgba(255, 255, 255, 0.05);
+  font-size: 12px;
+  font-weight: 600;
+}
+.cc-tab .cc-tico {
+  width: 12px;
+  height: 12px;
+  color: var(--pop-yellow);
+}
+.cc-tab .cc-chip {
+  font-size: 9.5px;
+  font-weight: 600;
+  color: var(--pop-cyan);
+  background: color-mix(in srgb, var(--pop-cyan) 12%, transparent);
+  border-radius: 4px;
+  padding: 1px 5px;
+}
+.cc-tab .cc-chip[data-tone='done'] {
+  color: var(--pop-green);
+  background: color-mix(in srgb, var(--pop-green) 12%, transparent);
+}
+.cc-tab .cc-tx {
+  display: grid;
+  place-items: center;
+  width: 18px;
+  height: 18px;
+  margin-left: 2px;
+  border-radius: 4px;
+  color: var(--pop-dim);
+}
+.cc-tab .cc-tx:hover {
+  background: rgba(255, 255, 255, 0.1);
+  color: var(--pop-ink);
+}
+.cc-crumb {
+  font-size: 10.5px;
+  color: var(--pop-dim);
+  font-family: var(--font-mono, ui-monospace, monospace);
+}
+.cc-crumb b {
+  color: var(--pop-ink);
+  font-weight: 500;
+}
+
+/* ── 页面体 ───────────────────────────────────────────────────────── */
+.cc-body {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  background:
+    radial-gradient(60% 44% at 50% 0%, rgba(167, 139, 250, 0.1), transparent 70%),
+    radial-gradient(46% 34% at 50% 100%, rgba(79, 209, 217, 0.06), transparent 70%),
+    var(--pop-bg);
+}
+.cc-stage {
+  position: relative;
+  display: flex;
+  min-height: 100%;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 22px 24px 30px;
+}
+
+/* ── 汐音立绘 ─────────────────────────────────────────────────────── */
+.cc-crew {
+  position: relative;
+  flex: none;
+  width: 286px;
+  height: 330px;
+  margin-bottom: 6px;
+}
+.cc-crew::before {
+  content: '';
+  position: absolute;
+  left: 50%;
+  top: 46%;
+  width: 420px;
+  height: 420px;
+  transform: translate(-50%, -50%);
+  border-radius: 50%;
+  pointer-events: none;
+  background: radial-gradient(closest-side, rgba(167, 139, 250, 0.2), rgba(79, 209, 217, 0.07) 58%, transparent 78%);
+  filter: blur(18px);
+}
+.cc-crew .cc-aura {
+  position: absolute;
+  left: 50%;
+  bottom: -26px;
+  width: 360px;
+  height: 250px;
+  transform: translateX(-50%);
+  background: radial-gradient(closest-side, rgba(167, 139, 250, 0.3), rgba(79, 209, 217, 0.1) 55%, transparent 76%);
+  filter: blur(14px);
+  pointer-events: none;
+}
+.cc-crew img {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  object-position: 50% 6%;
+  mix-blend-mode: screen;
+  -webkit-mask-image: radial-gradient(ellipse 60% 66% at 50% 42%, #000 50%, rgba(0, 0, 0, 0.72) 72%, transparent 90%);
+  mask-image: radial-gradient(ellipse 60% 66% at 50% 42%, #000 50%, rgba(0, 0, 0, 0.72) 72%, transparent 90%);
+}
+.cc-crew .cc-ring {
+  position: absolute;
+  left: 50%;
+  top: 52%;
+  width: 300px;
+  height: 300px;
+  transform: translate(-50%, -50%);
+  border-radius: 50%;
+  border: 1px solid rgba(167, 139, 250, 0.35);
+  opacity: 0;
+  pointer-events: none;
+}
+.cc-crew-img {
+  transition: opacity 0.18s ease;
+}
+.cc-stage[data-intro='true'] .cc-crew img {
+  animation: cc-crew-in 0.75s cubic-bezier(0.16, 0.84, 0.3, 1) both;
+}
+.cc-stage[data-intro='true'] .cc-crew .cc-ring {
+  animation: cc-ring-out 1.35s cubic-bezier(0.2, 0.6, 0.2, 1) 0.12s;
+}
+.cc-stage[data-intro='true'] .cc-crew .cc-aura {
+  animation: cc-aura-in 1.1s ease-out both;
+}
+.cc-crew[data-nudge='true'] img {
+  animation: cc-nudge 0.5s ease;
+}
+@keyframes cc-crew-in {
+  from { opacity: 0; transform: translateY(18px) scale(0.97); }
+  to { opacity: 1; transform: none; }
+}
+@keyframes cc-ring-out {
+  0% { opacity: 0.55; transform: translate(-50%, -50%) scale(0.72); }
+  70% { opacity: 0.12; }
+  100% { opacity: 0; transform: translate(-50%, -50%) scale(1.28); }
+}
+@keyframes cc-aura-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+@keyframes cc-nudge {
+  0%, 100% { transform: translateY(0); }
+  40% { transform: translateY(-5px); }
+}
+
+.cc-sparks {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  overflow: visible;
+}
+.cc-spark {
+  position: absolute;
+  font-size: 11px;
+  color: #d8c7ff;
+  opacity: 0;
+  text-shadow: 0 0 10px rgba(167, 139, 250, 0.8);
+  animation: cc-spark-up 1.5s ease-out forwards;
+}
+@keyframes cc-spark-up {
+  0% { opacity: 0; transform: translate(0, 0) scale(0.6); }
+  22% { opacity: 0.95; }
+  100% { opacity: 0; transform: translate(var(--dx), var(--dy)) scale(1.05); }
+}
+
+.cc-bubble {
+  max-width: 560px;
+  margin-top: 4px;
+  text-align: center;
+  font-size: 15.5px;
+  font-weight: 700;
+  letter-spacing: 0.005em;
+  min-height: 24px;
+}
+.cc-bubble[data-typing='true']::after {
+  content: '';
+  display: inline-block;
+  width: 1.5px;
+  height: 14px;
+  margin-left: 2px;
+  vertical-align: -2px;
+  background: var(--pop-violet);
+  animation: cc-caret 0.9s steps(2) infinite;
+}
+@keyframes cc-caret {
+  50% { opacity: 0; }
+}
+.cc-subline {
+  margin-top: 7px;
+  max-width: 520px;
+  text-align: center;
+  font-size: 11.5px;
+  line-height: 1.7;
+  color: var(--pop-dim);
+}
+
+/* ── 大输入框 ─────────────────────────────────────────────────────── */
+.cc-composer {
+  position: relative;
+  width: min(760px, 100%);
+  margin-top: 20px;
+  border: 1.5px solid var(--cc-bd2);
+  border-radius: 14px;
+  background: rgba(28, 28, 34, 0.92);
+  box-shadow: 0 20px 48px -26px rgba(0, 0, 0, 0.95);
+  transition: border-color 0.18s, box-shadow 0.18s;
+}
+.cc-composer:focus-within {
+  border-color: color-mix(in srgb, var(--pop-violet) 46%, var(--cc-bd2));
+  box-shadow: 0 22px 54px -26px rgba(0, 0, 0, 0.95), 0 0 0 3px color-mix(in srgb, var(--pop-violet) 10%, transparent);
+}
+.cc-composer textarea {
+  display: block;
+  width: 100%;
+  min-height: 74px;
+  max-height: 220px;
+  resize: none;
+  border: 0;
+  background: none;
+  outline: 0;
+  padding: 14px 15px 4px;
+  font-size: 13.5px;
+  line-height: 1.7;
+  color: var(--pop-ink);
+}
+.cc-composer textarea::placeholder {
+  color: color-mix(in srgb, var(--pop-dim) 72%, transparent);
+}
+.cc-crow {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 6px 10px 9px;
+  flex-wrap: wrap;
+}
+.cc-attach {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 27px;
+  max-width: 260px;
+  padding: 0 10px;
+  border-radius: 8px;
+  border: 1px solid var(--pop-bd);
+  background: rgba(255, 255, 255, 0.03);
+  font-size: 11.5px;
+  color: var(--pop-dim);
+  transition: 0.14s;
+}
+.cc-attach:hover {
+  color: var(--pop-ink);
+  border-color: var(--cc-bd2);
+  background: rgba(255, 255, 255, 0.06);
+}
+.cc-attach[data-on='true'] {
+  color: var(--pop-ink);
+  border-color: color-mix(in srgb, var(--pop-yellow) 38%, var(--pop-bd));
+  background: color-mix(in srgb, var(--pop-yellow) 8%, transparent);
+}
+.cc-attach svg {
+  width: 12px;
+  height: 12px;
+  flex: none;
+}
+.cc-attach .cc-txt {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.cc-namefield {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 27px;
+  max-width: 250px;
+  padding: 0 9px;
+  border-radius: 8px;
+  border: 1px dashed var(--cc-bd2);
+  background: transparent;
+  transition: 0.14s;
+}
+.cc-namefield:hover {
+  background: rgba(255, 255, 255, 0.04);
+}
+.cc-namefield:focus-within {
+  border-style: solid;
+  border-color: color-mix(in srgb, var(--pop-cyan) 45%, var(--pop-bd));
+  background: rgba(255, 255, 255, 0.06);
+}
+.cc-namefield[data-filled='true'] {
+  border-style: solid;
+  border-color: color-mix(in srgb, var(--pop-cyan) 32%, var(--pop-bd));
+  background: color-mix(in srgb, var(--pop-cyan) 8%, transparent);
+}
+.cc-namefield svg {
+  width: 12px;
+  height: 12px;
+  flex: none;
+  color: color-mix(in srgb, var(--pop-dim) 70%, transparent);
+}
+.cc-namefield[data-filled='true'] svg {
+  color: var(--pop-cyan);
+}
+.cc-namefield input {
+  width: 104px;
+  border: 0;
+  background: none;
+  outline: 0;
+  font-size: 11.5px;
+  color: var(--pop-ink);
+}
+.cc-namefield input::placeholder {
+  color: color-mix(in srgb, var(--pop-dim) 65%, transparent);
+}
+.cc-grow {
+  flex: 1;
+}
+.cc-hintk {
+  font-size: 10px;
+  color: color-mix(in srgb, var(--pop-dim) 70%, transparent);
+  font-family: var(--font-mono, ui-monospace, monospace);
+}
+.cc-send {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  height: 30px;
+  padding: 0 12px;
+  border-radius: 8px;
+  border: 1.5px solid var(--pop-bd);
+  background: var(--pop-ink);
+  color: #0a0a0c;
+  font-size: 12px;
+  font-weight: 800;
+  transition: background 0.14s, opacity 0.14s, transform 0.1s;
+}
+.cc-send:hover:not(:disabled) {
+  background: #fff;
+}
+.cc-send:active:not(:disabled) {
+  transform: translateY(1px);
+}
+.cc-send[disabled] {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+.cc-send kbd {
+  border: 1px solid rgba(0, 0, 0, 0.14);
+  border-radius: 4px;
+  padding: 0 4px;
+  font-size: 9.5px;
+  font-family: var(--font-mono, ui-monospace, monospace);
+  background: rgba(0, 0, 0, 0.1);
+  color: rgba(10, 10, 12, 0.6);
+}
+.cc-ghost {
+  display: inline-flex;
+  align-items: center;
+  height: 30px;
+  padding: 0 11px;
+  border-radius: 8px;
+  border: 1px solid var(--pop-bd);
+  background: rgba(255, 255, 255, 0.03);
+  font-size: 11.5px;
+  color: var(--pop-dim);
+}
+.cc-ghost:hover {
+  color: var(--pop-ink);
+  background: rgba(255, 255, 255, 0.07);
+}
+.cc-foot2 {
+  margin: 12px 0 0;
+  font-size: 10.5px;
+  text-align: center;
+  color: color-mix(in srgb, var(--pop-dim) 65%, transparent);
+}
+
+/* 同一目录已有舱：在输入框里拦住 */
+.cc-conflict {
+  display: flex;
+  align-items: flex-start;
+  gap: 7px;
+  margin: 0 10px 6px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  border: 1px solid color-mix(in srgb, var(--pop-amber) 26%, transparent);
+  background: color-mix(in srgb, var(--pop-amber) 8%, transparent);
+  font-size: 11.5px;
+  line-height: 1.6;
+  color: var(--pop-amber);
+}
+.cc-conflict b {
+  color: var(--pop-ink);
+  font-weight: 700;
+}
+
+/* ── 下拉（目录 / 绑定项目） ──────────────────────────────────────── */
+.cc-pop {
+  position: absolute;
+  bottom: calc(100% + 8px);
+  left: 0;
+  z-index: 30;
+  width: min(392px, 100%);
+  padding: 6px;
+  border: 1px solid var(--cc-bd2);
+  border-radius: 12px;
+  background: var(--cc-dialog);
+  box-shadow: 0 26px 60px -18px rgba(0, 0, 0, 0.95);
+}
+.cc-pop .cc-ph {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 8px 6px;
+  font-size: 10.5px;
+  color: color-mix(in srgb, var(--pop-dim) 72%, transparent);
+}
+.cc-pop .cc-it {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  height: 30px;
+  padding: 0 8px;
+  border-radius: 7px;
+  font-size: 12px;
+  color: var(--pop-dim);
+}
+.cc-pop .cc-it:hover {
+  background: rgba(255, 255, 255, 0.05);
+  color: var(--pop-ink);
+}
+.cc-pop .cc-it .cc-p {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: 11.5px;
+}
+.cc-pop .cc-it .cc-tag {
+  flex: none;
+  font-size: 9.5px;
+  color: color-mix(in srgb, var(--pop-dim) 75%, transparent);
+  border: 1px solid var(--pop-bd);
+  border-radius: 4px;
+  padding: 0 4px;
+}
+.cc-pop .cc-it .cc-ck {
+  margin-left: auto;
+  width: 13px;
+  height: 13px;
+  border-radius: 4px;
+  border: 1px solid var(--cc-bd2);
+  position: relative;
+  flex: none;
+}
+.cc-pop .cc-it[data-on='true'] {
+  color: var(--pop-ink);
+}
+.cc-pop .cc-it[data-on='true'] .cc-ck {
+  background: color-mix(in srgb, var(--pop-cyan) 20%, transparent);
+  border-color: color-mix(in srgb, var(--pop-cyan) 62%, transparent);
+}
+.cc-pop .cc-it[data-on='true'] .cc-ck::after {
+  content: '';
+  position: absolute;
+  left: 3.5px;
+  top: 1px;
+  width: 4px;
+  height: 7px;
+  border: 1.5px solid var(--pop-cyan);
+  border-top: 0;
+  border-left: 0;
+  transform: rotate(42deg);
+}
+.cc-pop .cc-sep {
+  height: 1px;
+  margin: 5px 4px;
+  background: var(--pop-bd);
+}
+.cc-pop .cc-org {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 7px 8px 3px;
+  font-size: 9.5px;
+  letter-spacing: 0.06em;
+  color: color-mix(in srgb, var(--pop-dim) 70%, transparent);
+}
+.cc-pop .cc-org .n {
+  color: color-mix(in srgb, var(--pop-dim) 55%, transparent);
+  font-family: var(--font-mono, ui-monospace, monospace);
+}
+/* org 分组标题现在是折叠按钮（默认展开）。 */
+.cc-pop .cc-org-btn {
+  width: 100%;
+  border: 0;
+  background: none;
+  cursor: pointer;
+  text-align: left;
+}
+.cc-pop .cc-org-btn:hover {
+  color: var(--pop-ink);
+}
+.cc-pop .cc-org-chev {
+  flex: none;
+  transition: transform 0.15s ease;
+  transform: rotate(90deg);
+}
+.cc-pop .cc-org-chev[data-open='false'] {
+  transform: rotate(0deg);
+}
+.cc-pop .cc-list {
+  max-height: 248px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+.cc-pop .cc-search {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 2px 4px 4px;
+  padding: 0 7px;
+  height: 30px;
+  border-radius: 8px;
+  border: 1px solid var(--pop-bd);
+  background: rgba(0, 0, 0, 0.32);
+}
+.cc-pop .cc-search:focus-within {
+  border-color: color-mix(in srgb, var(--pop-cyan) 40%, transparent);
+}
+.cc-pop .cc-search svg {
+  width: 12px;
+  height: 12px;
+  flex: none;
+  color: color-mix(in srgb, var(--pop-dim) 70%, transparent);
+}
+.cc-pop .cc-search input {
+  flex: 1;
+  min-width: 0;
+  height: 100%;
+  border: 0;
+  background: none;
+  outline: 0;
+  font-size: 11.5px;
+  color: var(--pop-ink);
+}
+.cc-pop .cc-search input::placeholder {
+  color: color-mix(in srgb, var(--pop-dim) 62%, transparent);
+}
+.cc-pop .cc-search .cc-clr {
+  flex: none;
+  font-size: 10px;
+  color: color-mix(in srgb, var(--pop-dim) 72%, transparent);
+  padding: 0 2px;
+}
+.cc-pop .cc-search .cc-clr:hover {
+  color: var(--pop-ink);
+}
+.cc-selbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-bottom: 4px;
+  padding: 2px 4px 6px;
+  border-bottom: 1px solid var(--pop-bd);
+}
+.cc-selbar .cc-sc {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 20px;
+  padding: 0 5px 0 7px;
+  border-radius: 999px;
+  border: 1px solid color-mix(in srgb, var(--pop-cyan) 32%, var(--pop-bd));
+  background: color-mix(in srgb, var(--pop-cyan) 10%, transparent);
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: 10px;
+  color: var(--pop-ink);
+}
+.cc-selbar .cc-sc b {
+  font-weight: 400;
+  font-size: 9px;
+  color: color-mix(in srgb, var(--pop-dim) 72%, transparent);
+}
+.cc-selbar .cc-sc button {
+  color: color-mix(in srgb, var(--pop-dim) 72%, transparent);
+}
+.cc-selbar .cc-sc button:hover {
+  color: var(--pop-ink);
+}
+.cc-pop .cc-none {
+  padding: 10px 8px;
+  font-size: 11px;
+  color: color-mix(in srgb, var(--pop-dim) 68%, transparent);
+}
+.cc-pop .cc-echo {
+  padding: 5px 8px;
+  font-size: 10.5px;
+  color: var(--pop-cyan);
+}
+.cc-pop .cc-note {
+  padding: 6px 8px;
+  font-size: 10.5px;
+  line-height: 1.6;
+  color: color-mix(in srgb, var(--pop-dim) 62%, transparent);
+}
+.cc-pop mark {
+  background: color-mix(in srgb, var(--pop-yellow) 26%, transparent);
+  color: var(--pop-yellow);
+  border-radius: 2px;
+  padding: 0 1px;
+}
+
+/* ── 目录选择窗（系统式） ─────────────────────────────────────────── */
+/* Radix dialog 挂到 body portal，拿不到 .cc-root 上的局部变量 —— 这里自带一份。 */
+.cc-dlg {
+  --cc-bd2: #454550;
+  --cc-dialog: #14141a;
+  display: flex;
+  flex-direction: column;
+  width: min(520px, 100%);
+  max-height: min(620px, 86vh);
+  border: 1px solid var(--cc-bd2);
+  border-radius: 14px;
+  background: var(--cc-dialog);
+  box-shadow: 0 32px 80px -24px rgba(0, 0, 0, 0.95);
+}
+.cc-dlg button {
+  text-align: left;
+}
+.cc-dlg-h {
+  display: flex;
+  align-items: center;
+  height: 44px;
+  padding: 0 14px;
+  border-bottom: 1px solid var(--pop-bd);
+  font-size: 12.5px;
+  font-weight: 700;
+}
+.cc-dlg-x {
+  margin-left: auto;
+  display: grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 6px;
+  font-size: 11px;
+  color: color-mix(in srgb, var(--pop-dim) 72%, transparent);
+}
+.cc-dlg-x:hover {
+  background: rgba(255, 255, 255, 0.08);
+  color: var(--pop-ink);
+}
+.cc-dlg-path {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 10px 14px 6px;
+}
+.cc-dlg-path .cc-up {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  border-radius: 6px;
+  border: 1px solid var(--pop-bd);
+  font-size: 12px;
+  color: var(--pop-dim);
+}
+.cc-dlg-path .cc-up:hover:not(:disabled) {
+  color: var(--pop-ink);
+  border-color: var(--cc-bd2);
+}
+.cc-dlg-path .cc-up:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+.cc-dlg-path .cc-pth {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: 11.5px;
+  color: var(--pop-ink);
+}
+.cc-dlg-roots {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  padding: 0 14px 8px;
+}
+.cc-dlg-roots .cc-rt {
+  height: 22px;
+  padding: 0 8px;
+  border-radius: 999px;
+  border: 1px solid var(--pop-bd);
+  font-size: 10.5px;
+  color: var(--pop-dim);
+}
+.cc-dlg-roots .cc-rt:hover {
+  color: var(--pop-ink);
+  border-color: var(--cc-bd2);
+}
+.cc-dlg-roots .cc-rt[data-on='true'] {
+  border-color: var(--pop-ink);
+  background: var(--pop-ink);
+  color: var(--pop-bg);
+  font-weight: 700;
+}
+.cc-dlg-list {
+  flex: 1;
+  min-height: 120px;
+  margin: 0 8px;
+  overflow-y: auto;
+  border: 1px solid var(--pop-bd);
+  border-radius: 9px;
+  background: rgba(0, 0, 0, 0.22);
+}
+.cc-dlg-list .cc-de {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  height: 32px;
+  padding: 0 10px;
+  font-size: 12px;
+  color: var(--pop-dim);
+}
+.cc-dlg-list .cc-de:hover {
+  background: rgba(255, 255, 255, 0.05);
+  color: var(--pop-ink);
+}
+.cc-dlg-list .cc-de .cc-p {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.cc-dlg-list .cc-de .cc-tag {
+  flex: none;
+  font-size: 9.5px;
+  color: var(--pop-yellow);
+  border: 1px solid color-mix(in srgb, var(--pop-yellow) 34%, transparent);
+  border-radius: 4px;
+  padding: 0 4px;
+}
+.cc-dlg-list .cc-de .cc-go {
+  flex: none;
+  font-size: 11px;
+  color: color-mix(in srgb, var(--pop-dim) 62%, transparent);
+}
+.cc-dlg-list .cc-empty {
+  padding: 12px 10px;
+  font-size: 11px;
+  color: color-mix(in srgb, var(--pop-dim) 65%, transparent);
+}
+.cc-dlg-note {
+  padding: 9px 14px 0;
+  font-size: 11px;
+  line-height: 1.6;
+  color: var(--pop-amber);
+}
+.cc-dlg-f {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 12px 14px 14px;
+}
+.cc-dlg-f .cc-ghost {
+  margin-left: auto;
+}
+/* 新建文件夹按钮留在左侧；只有「取消」吃 auto。 */
+.cc-dlg-f .cc-mkdir-btn {
+  margin-left: 0;
+  gap: 4px;
+}
+
+/* 内联「新建文件夹」一行（建舱 / 建会话的目录选择窗共用） */
+.cc-mkdir {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 10px 14px 0;
+}
+.cc-mkdir input {
+  flex: 1;
+  min-width: 0;
+  height: 30px;
+  padding: 0 9px;
+  border-radius: 8px;
+  border: 1px solid var(--cc-bd2);
+  background: rgba(0, 0, 0, 0.24);
+  font-size: 12px;
+  color: var(--pop-ink);
+  outline: none;
+}
+.cc-mkdir input:focus {
+  border-color: color-mix(in srgb, var(--pop-violet) 46%, var(--cc-bd2));
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--pop-violet) 10%, transparent);
+}
+.cc-mkdir .cc-send {
+  height: 30px;
+  padding: 0 12px;
+  font-size: 11.5px;
+}
+.cc-mkdir .cc-ghost {
+  height: 30px;
+}
+.cc-mkdir-err {
+  padding: 6px 14px 0;
+  font-size: 11px;
+  color: var(--pop-red);
+}
+
+/* ── 窄屏 / 减少动效 ─────────────────────────────────────────────── */
+@media (max-width: 900px) {
+  .cc-crumb {
+    display: none;
+  }
+  .cc-crew {
+    width: 240px;
+    height: 280px;
+  }
+}
+@media (max-width: 640px) {
+  .cc-stage {
+    padding: 16px 14px 24px;
+  }
+  .cc-crew {
+    width: 196px;
+    height: 230px;
+  }
+  .cc-crow {
+    row-gap: 6px;
+  }
+  .cc-hintk {
+    display: none;
+  }
+  .cc-head {
+    padding: 0 10px;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .cc-stage[data-intro='true'] .cc-crew img,
+  .cc-stage[data-intro='true'] .cc-crew .cc-ring,
+  .cc-stage[data-intro='true'] .cc-crew .cc-aura,
+  .cc-crew[data-nudge='true'] img,
+  .cc-spark {
+    animation: none !important;
+  }
+  .cc-bubble[data-typing='true']::after {
+    animation: none;
+    opacity: 0.6;
+  }
+}
+/* ── 舱籍第三轮：本地目录映射 / 舱外登记（2026-11-15）───────────── */
+.cc-pop .cc-group + .cc-group {
+  margin-top: 2px;
+}
+.cc-pop .cc-it[data-local='true'] {
+  height: auto;
+  min-height: 34px;
+  display: grid;
+  grid-template-columns: 1fr auto auto;
+  grid-template-areas:
+    'p tag ck'
+    'sub sub ck';
+  row-gap: 1px;
+  padding: 4px 8px;
+}
+.cc-pop .cc-it[data-local='true'] .cc-p { grid-area: p; }
+.cc-pop .cc-it[data-local='true'] .cc-tag { grid-area: tag; }
+.cc-pop .cc-it[data-local='true'] .cc-ck { grid-area: ck; align-self: center; }
+.cc-pop .cc-it .cc-sub {
+  grid-area: sub;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: 9.5px;
+  color: color-mix(in srgb, var(--pop-dim) 62%, transparent);
+}
+.cc-pop .cc-none-sm {
+  padding: 4px 10px 6px;
+  font-size: 10px;
+}
+.cc-pop .cc-spin {
+  margin-left: auto;
+}
+.cc-pop .cc-ext {
+  padding: 6px 4px 2px;
+}
+.cc-pop .cc-ext-btn {
+  width: 100%;
+  text-align: left;
+  padding: 5px 8px;
+  border-radius: 7px;
+  font-size: 10.5px;
+  color: color-mix(in srgb, var(--pop-dim) 78%, transparent);
+}
+.cc-pop .cc-ext-btn:hover {
+  background: rgba(255, 255, 255, 0.05);
+  color: var(--pop-ink);
+}
+.cc-pop .cc-ext-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.cc-pop .cc-ext-input {
+  flex: 1;
+  min-width: 0;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid var(--pop-bd);
+  border-radius: 6px;
+  padding: 4px 7px;
+  font-size: 10.5px;
+  font-family: var(--font-mono, ui-monospace, monospace);
+  color: var(--pop-ink);
+}
+.cc-pop .cc-ext-ok,
+.cc-pop .cc-ext-cancel {
+  flex: none;
+  font-size: 10.5px;
+  padding: 3px 8px;
+  border-radius: 6px;
+  border: 1px solid var(--pop-bd);
+  color: var(--pop-dim);
+}
+.cc-pop .cc-ext-ok {
+  color: var(--pop-cyan);
+  border-color: color-mix(in srgb, var(--pop-cyan) 45%, transparent);
+}

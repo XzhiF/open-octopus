@@ -1,0 +1,2666 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Octopus · 作战舱 v9 — 全域编队</title>
+<style>
+/* ───────────────────────── tokens ───────────────────────── */
+:root{
+  --ink:#EDF0F7; --dim:#8790A6; --faint:#5C6479;
+  --bd:rgba(255,255,255,.09); --bd2:rgba(255,255,255,.14);
+  --bg0:#05060A; --paper:rgba(17,21,30,.78);
+  --a:#4FD1D9; --b:#A78BFA; --c:#FFC857;
+  --green:#7EE787; --amber:#FFC857; --red:#FF5C5C; --cyan:#4FD1D9; --violet:#A78BFA; --pink:#FF855C;
+  --glow:1;
+  --font-ui:-apple-system,BlinkMacSystemFont,'SF Pro Text','Helvetica Neue','PingFang SC','Hiragino Sans GB','Microsoft YaHei',sans-serif;
+  --font-mono:'SF Mono','JetBrains Mono',Menlo,Consolas,ui-monospace,monospace;
+  color-scheme:dark;
+}
+body[data-theme="hyperion"]{ --a:#38BDF8; --b:#60A5FA; --c:#FFC857; }
+body[data-theme="crimson"]{ --a:#FF5C5C; --b:#F472B6; --c:#FFC857; }
+body[data-theme="terminal"]{ --a:#4FD1D9; --b:#A78BFA; --c:#FF855C; }
+*{box-sizing:border-box}
+html,body{height:100%;margin:0}
+body{background:var(--bg0);color:var(--ink);font-family:var(--font-mono);font-size:13px;line-height:1.55;
+  overflow:hidden;-webkit-font-smoothing:antialiased}
+button{font:inherit;color:inherit;border:0;background:none;padding:0;cursor:pointer}
+input{font:inherit}
+::-webkit-scrollbar{width:8px;height:8px}
+::-webkit-scrollbar-thumb{background:#3A4152;border-radius:4px;border:2px solid transparent;background-clip:content-box}
+::-webkit-scrollbar-track{background:transparent}
+.ui{font-family:var(--font-ui)}
+.dim{color:var(--dim)}
+
+/* ───────────────────────── backdrop ───────────────────────── */
+.app{position:relative;height:100vh;display:flex;flex-direction:column;isolation:isolate;overflow:hidden}
+.bg{position:absolute;inset:0;z-index:0;pointer-events:none;overflow:hidden;
+  background:
+    radial-gradient(120% 80% at 50% -18%, color-mix(in srgb,var(--b) 15%,transparent), transparent 62%),
+    radial-gradient(90% 70% at 112% 108%, color-mix(in srgb,var(--a) 12%,transparent), transparent 62%),
+    var(--bg0)}
+.bg .floor{position:absolute;left:-40%;right:-40%;bottom:-42%;height:118%;
+  background-image:
+    linear-gradient(color-mix(in srgb,var(--a) 15%,transparent) 1px, transparent 1px),
+    linear-gradient(90deg, color-mix(in srgb,var(--a) 15%,transparent) 1px, transparent 1px);
+  background-size:64px 64px;transform:perspective(700px) rotateX(66deg);transform-origin:50% 0;
+  mask-image:radial-gradient(ellipse at 50% 0%, #000 0%, rgba(0,0,0,.5) 45%, transparent 78%);opacity:.4}
+.bg .horizon{position:absolute;left:0;right:0;top:58%;height:1px;
+  background:linear-gradient(90deg,transparent,color-mix(in srgb,var(--a) 55%,transparent),transparent);
+  filter:drop-shadow(0 0 12px var(--a));opacity:.35}
+.bg .scan{position:absolute;left:0;right:0;height:190px;
+  background:linear-gradient(180deg,transparent,color-mix(in srgb,var(--a) 8%,transparent) 45%,color-mix(in srgb,var(--b) 6%,transparent) 55%,transparent);
+  animation:scan 12s linear infinite}
+@keyframes scan{0%{top:-200px}100%{top:100%}}
+.bg .p{position:absolute;bottom:-10px;width:2px;height:2px;border-radius:50%;background:var(--a);opacity:0;animation:drift linear infinite}
+@keyframes drift{0%{transform:translateY(0) translateX(0);opacity:0}12%{opacity:.55}88%{opacity:.3}100%{transform:translateY(-104vh) translateX(26px);opacity:0}}
+.vignette{position:absolute;inset:0;pointer-events:none;box-shadow:inset 0 0 200px 40px rgba(0,0,0,.6)}
+
+/* ───────────────────────── HUD ───────────────────────── */
+.hud{position:relative;z-index:20;height:48px;flex:none;display:flex;align-items:center;gap:14px;
+  padding:0 20px;border-bottom:1px solid var(--bd);
+  background:linear-gradient(180deg,rgba(7,9,14,.92),rgba(7,9,14,.25));backdrop-filter:blur(10px)}
+.brand{display:flex;align-items:center;gap:9px;font-size:10.5px;font-weight:800;letter-spacing:.18em;color:var(--a);white-space:nowrap}
+.brand .hex{width:20px;height:20px;display:grid;place-items:center;border:1px solid color-mix(in srgb,var(--a) 55%,transparent);
+  border-radius:6px;font-size:11px;box-shadow:0 0 12px color-mix(in srgb,var(--a) 35%,transparent)}
+.brand small{color:var(--faint);font-weight:500;letter-spacing:.06em}
+.hsep{width:1px;height:18px;background:var(--bd);flex:none}
+.stat{display:flex;align-items:baseline;gap:6px;font-size:9.5px;letter-spacing:.12em;color:var(--faint);white-space:nowrap}
+.stat b{font-size:15px;letter-spacing:0;color:var(--ink);font-variant-numeric:tabular-nums;font-weight:800}
+.stat b.g{color:var(--green)} .stat b.m{color:var(--amber)} .stat b.c{color:var(--cyan)}
+.hud .right{margin-left:auto;display:flex;align-items:center;gap:7px}
+.ghost{display:inline-flex;align-items:center;gap:6px;height:26px;padding:0 10px;border-radius:8px;
+  border:1px solid var(--bd);color:var(--dim);font-size:10.5px;font-family:var(--font-ui);transition:.14s;
+  background:rgba(255,255,255,.02);white-space:nowrap}
+.ghost:hover{color:var(--ink);border-color:var(--bd2);background:rgba(255,255,255,.06)}
+.ghost.pri{color:var(--bg0);background:linear-gradient(135deg,var(--a),color-mix(in srgb,var(--a) 60%,#fff));
+  border-color:transparent;font-weight:800;box-shadow:0 0 18px color-mix(in srgb,var(--a) 30%,transparent)}
+.ghost.pri:hover{filter:brightness(1.08)}
+.dot{width:5px;height:5px;border-radius:50%;background:currentColor;box-shadow:0 0 6px currentColor}
+
+/* ───────────────────────── stage ───────────────────────── */
+.stage{position:relative;z-index:2;flex:1;min-height:0;display:flex;gap:16px;padding:12px 20px 0}
+.rail{flex:none;width:300px;display:flex;flex-direction:column;gap:10px;min-height:0;z-index:7}
+.rail-h{display:flex;align-items:center;gap:8px;font-size:9.5px;letter-spacing:.18em;color:var(--faint);padding:2px 2px 0}
+.rail-h .ln{flex:1;height:1px;background:linear-gradient(90deg,color-mix(in srgb,var(--a) 40%,transparent),transparent)}
+.rail-list{display:flex;flex-direction:column;gap:10px;overflow:auto;padding-bottom:8px}
+
+.attn{position:relative;text-align:left;border:1px solid var(--bd);border-left:2px solid var(--accent,var(--a));
+  border-radius:12px;padding:11px 12px 10px 14px;background:linear-gradient(180deg,rgba(20,24,34,.8),rgba(13,16,23,.7));
+  backdrop-filter:blur(9px);box-shadow:0 8px 24px rgba(0,0,0,.36);transition:.18s;overflow:hidden}
+.attn:hover{transform:translateX(4px);border-color:color-mix(in srgb,var(--accent) 50%,transparent);
+  box-shadow:0 10px 30px rgba(0,0,0,.46),0 0 0 1px color-mix(in srgb,var(--accent) 18%,transparent)}
+.attn .k{font-size:8.5px;letter-spacing:.18em;font-weight:800;color:var(--accent)}
+.attn .k .pj{letter-spacing:.08em;font-weight:600;color:var(--faint)}
+.attn .t{font-size:13px;font-weight:750;margin-top:4px;color:var(--ink);line-height:1.35}
+.attn .s{font-size:10.5px;color:var(--dim);margin-top:3px;line-height:1.45}
+.attn .go{display:inline-flex;align-items:center;gap:6px;margin-top:9px;font-size:10.5px;font-weight:800;
+  color:var(--accent);font-family:var(--font-ui)}
+.attn .go .ar{transition:transform .16s}
+.attn:hover .go .ar{transform:translateX(3px)}
+.attn.new{animation:arrive .55s cubic-bezier(.2,.9,.2,1)}
+@keyframes arrive{0%{transform:translateX(-26px);opacity:0;filter:blur(6px)}100%{transform:none;opacity:1;filter:none}}
+.attn.active{border-color:color-mix(in srgb,var(--accent) 62%,transparent);
+  box-shadow:0 0 0 1px color-mix(in srgb,var(--accent) 25%,transparent),0 0 28px color-mix(in srgb,var(--accent) 14%,transparent)}
+.attn .pulse{position:absolute;right:12px;top:12px;width:6px;height:6px;border-radius:50%;background:var(--accent);
+  box-shadow:0 0 10px var(--accent);animation:pulse 1.8s ease-in-out infinite}
+@keyframes pulse{0%,100%{opacity:.35;transform:scale(.8)}50%{opacity:1;transform:scale(1.25)}}
+.rail-empty{border:1px dashed var(--bd);border-radius:12px;padding:16px 14px;color:var(--faint);font-size:11px;
+  text-align:center;line-height:1.6;background:rgba(255,255,255,.015)}
+
+/* arena */
+.arena{position:relative;flex:1;min-width:0;min-height:0}
+.crew{position:absolute;left:6px;bottom:6px;width:344px;height:min(60vh,548px);z-index:3;pointer-events:none;
+  transition:opacity .35s}
+.pod{position:absolute;inset:0;border-radius:18px;overflow:hidden;
+  border:1px solid color-mix(in srgb,var(--b) 40%,transparent);
+  background:radial-gradient(130% 90% at 50% 0%, #1A1B28, #07080D 72%);
+  box-shadow:0 0 calc(54px*var(--glow)) color-mix(in srgb,var(--b) 20%,transparent),
+             0 26px 64px rgba(0,0,0,.62),inset 0 0 46px rgba(0,0,0,.66);
+  animation:float 5.2s ease-in-out infinite}
+@keyframes float{0%,100%{transform:translateY(0)}50%{transform:translateY(-8px)}}
+.pod img{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;object-position:50% 16%;filter:saturate(1.04)}
+.pod-scan{position:absolute;inset:0;pointer-events:none;mix-blend-mode:screen;opacity:.5;
+  background:repeating-linear-gradient(180deg, color-mix(in srgb,var(--a) 9%,transparent) 0 1px, transparent 1px 4px)}
+.pod-vg{position:absolute;inset:0;pointer-events:none;
+  background:linear-gradient(180deg, color-mix(in srgb,var(--b) 14%,transparent), transparent 26%),
+             linear-gradient(180deg, transparent 52%, rgba(4,5,9,.86) 92%)}
+.pod-tag{position:absolute;left:12px;top:11px;display:flex;align-items:center;gap:6px;
+  font-size:8.5px;letter-spacing:.18em;color:color-mix(in srgb,var(--a) 85%,#fff);font-weight:800;
+  text-shadow:0 0 10px color-mix(in srgb,var(--a) 60%,transparent)}
+.pod-tag i{width:5px;height:5px;border-radius:50%;background:var(--green);box-shadow:0 0 8px var(--green);font-style:normal}
+.pod-name{position:absolute;left:14px;right:14px;bottom:12px;display:flex;align-items:baseline;gap:7px;
+  font-size:15px;font-weight:800;color:var(--ink);font-family:var(--font-ui);letter-spacing:.04em;
+  text-shadow:0 2px 12px rgba(0,0,0,.8)}
+.pod-name small{font-size:9px;letter-spacing:.18em;color:var(--a);font-weight:700}
+.pod::after{content:"";position:absolute;inset:0;border-radius:18px;pointer-events:none;
+  box-shadow:inset 0 0 0 1px color-mix(in srgb,var(--b) 16%,transparent)}
+
+/* speech */
+.speech{position:absolute;left:50%;top:0;transform:translate(-50%,calc(-100% - 14px)) translateY(10px);width:296px;
+  border:1px solid color-mix(in srgb,var(--b) 42%,transparent);border-radius:14px;
+  background:linear-gradient(180deg,rgba(24,22,36,.94),rgba(16,15,24,.9));
+  padding:11px 13px 12px;backdrop-filter:blur(12px);box-shadow:0 14px 40px rgba(0,0,0,.5),0 0 24px color-mix(in srgb,var(--b) 12%,transparent);
+  opacity:0;pointer-events:none;transition:.3s;z-index:8}
+.speech.show{opacity:1;transform:translate(-50%,calc(-100% - 14px)) translateY(0);pointer-events:auto}
+.speech::after{content:"";position:absolute;bottom:-7px;left:50%;margin-left:-7px;width:12px;height:12px;transform:rotate(45deg);
+  background:rgba(18,17,28,.95);border-right:1px solid color-mix(in srgb,var(--b) 42%,transparent);
+  border-bottom:1px solid color-mix(in srgb,var(--b) 42%,transparent)}
+.speech .who{display:flex;align-items:center;gap:7px;font-size:10px;letter-spacing:.1em;color:var(--b);font-weight:800}
+.speech .who i{width:5px;height:5px;border-radius:50%;background:var(--b);box-shadow:0 0 8px var(--b);font-style:normal}
+.speech .txt{margin-top:5px;font-size:12px;line-height:1.6;color:var(--ink);font-family:var(--font-ui)}
+.speech .txt .cur{color:var(--b);animation:blink 1s steps(1) infinite}
+@keyframes blink{50%{opacity:0}}
+
+/* quiet layer */
+.quiet{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;
+  gap:14px;padding-left:366px;pointer-events:none;transition:opacity .3s;z-index:1}
+.arena.scene-open .quiet{opacity:0}
+.clock{font-size:46px;font-weight:200;letter-spacing:.14em;color:color-mix(in srgb,var(--ink) 86%,transparent);
+  font-variant-numeric:tabular-nums;text-shadow:0 0 30px color-mix(in srgb,var(--a) 26%,transparent)}
+.clock small{font-size:11px;letter-spacing:.3em;color:var(--faint);display:block;text-align:center;margin-top:6px;font-weight:600}
+.arcs{display:flex;align-items:center;gap:18px;margin-top:6px}
+.arc{display:flex;flex-direction:column;align-items:center;gap:5px;font-size:9px;letter-spacing:.16em;color:var(--faint)}
+.arc b{font-size:17px;color:var(--ink);letter-spacing:0;font-variant-numeric:tabular-nums}
+.quiet .hintline{margin-top:10px;font-size:10.5px;color:var(--faint);letter-spacing:.06em;text-align:center;line-height:1.8}
+.quiet .hintline kbd{border:1px solid var(--bd);border-radius:5px;padding:1px 6px;font-size:10px;color:var(--dim)}
+
+/* scene shell */
+.scene{position:absolute;inset:0;z-index:6;display:none;padding-left:366px;padding-bottom:8px;overflow:hidden}
+.scene.open{display:flex;flex-direction:column;gap:9px;animation:materialize .34s ease}
+@keyframes materialize{0%{opacity:0;transform:translateY(8px) scale(.995);filter:blur(4px)}100%{opacity:1;transform:none;filter:none}}
+.sgrid{flex:1;min-height:0;display:grid;gap:12px}
+.sg-ops{grid-template-columns:1.16fr .84fr;grid-template-rows:auto .96fr 1.04fr auto}
+.sg-ops .g1{grid-column:1;grid-row:2/4}
+.sg-ops .g2{grid-column:2;grid-row:2}
+.sg-ops .g3{grid-column:2;grid-row:3}
+.sg-ops .g4{grid-column:1/3;grid-row:4}
+.sg-run{grid-template-columns:270px 1fr;grid-template-rows:1.22fr .78fr}
+.sg-run .g1{grid-column:1;grid-row:1/3}
+.sg-run .g2{grid-column:2;grid-row:1}
+.sg-run .g3{grid-column:2;grid-row:2}
+.sg-task{grid-template-columns:1.04fr .96fr;grid-template-rows:1.18fr .82fr}
+.sg-task .g1{grid-column:1;grid-row:1/3}
+.sg-task .g2{grid-column:2;grid-row:1}
+.sg-task .g3{grid-column:2;grid-row:2}
+.sg-changes{grid-template-columns:.8fr 1.2fr;grid-template-rows:1.32fr .68fr}
+.sg-changes .g1{grid-column:1;grid-row:1/3}
+.sg-changes .g2{grid-column:2;grid-row:1}
+.sg-changes .g3{grid-column:2;grid-row:2}
+.sg-session{grid-template-columns:1.16fr .84fr;grid-template-rows:1.2fr .8fr}
+.sg-session .g1{grid-column:1;grid-row:1/3}
+.sg-session .g2{grid-column:2;grid-row:1}
+.sg-session .g3{grid-column:2;grid-row:2}
+.sg-review{grid-template-columns:1.16fr .84fr;grid-template-rows:1fr 1fr}
+.sg-review .g1{grid-row:1/3}
+.sg-decision{grid-template-columns:1.1fr .9fr;grid-template-rows:1fr 1fr}
+.sg-decision .g1{grid-row:1/3}
+.sg-triage{grid-template-columns:1.12fr .88fr;grid-template-rows:1.05fr .95fr}
+.sg-triage .g1{grid-row:1/3}
+.sg-knowledge{grid-template-columns:1fr 1fr;grid-template-rows:1.1fr .9fr}
+.sg-knowledge .g1{grid-column:1/3}
+.sg-assets{grid-template-columns:1fr 1fr;grid-template-rows:1.15fr .85fr}
+.sg-assets .g1{grid-column:1/3}
+
+/* deckbar：导航走对象关系，不走目录 */
+.deckbar{flex:none;display:flex;align-items:center;gap:8px;height:30px;padding:0 2px;
+  font-size:10.5px;font-family:var(--font-ui);color:var(--faint);min-width:0}
+.deckbar .back{display:inline-flex;align-items:center;gap:5px;height:24px;padding:0 9px;border-radius:7px;flex:none;
+  border:1px solid var(--bd);color:var(--dim);font-size:10px;transition:.14s;background:rgba(255,255,255,.02)}
+.deckbar .back:hover{color:var(--ink);border-color:var(--bd2);background:rgba(255,255,255,.06)}
+.deckbar .crumb{color:var(--dim);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.deckbar .crumb.here{color:var(--ink);font-weight:750;flex:none}
+.deckbar .crumb.lk{border-bottom:1px dashed var(--bd2);padding:0 1px;transition:.14s;flex:none}
+.deckbar .crumb.lk:hover{color:var(--a);border-color:color-mix(in srgb,var(--a) 55%,transparent)}
+.deckbar .sep{color:var(--faint);opacity:.55;flex:none}
+.deckbar .olinks{margin-left:auto;display:flex;align-items:center;gap:6px;flex:none}
+.deckbar .olink{display:inline-flex;align-items:center;gap:4px;height:22px;padding:0 8px;border-radius:999px;
+  border:1px dashed var(--bd2);color:var(--dim);font-size:9.5px;transition:.14s;white-space:nowrap}
+.deckbar .olink:hover{color:var(--a);border-color:color-mix(in srgb,var(--a) 45%,transparent);
+  background:color-mix(in srgb,var(--a) 7%,transparent)}
+.deckbar .olink.demo{color:var(--amber);border-color:color-mix(in srgb,var(--amber) 35%,transparent)}
+.deckbar .olink.demo:hover{color:var(--amber);border-color:color-mix(in srgb,var(--amber) 60%,transparent);
+  background:color-mix(in srgb,var(--amber) 8%,transparent)}
+
+/* ───────────────────────── comms layer ───────────────────────── */
+.comms{position:absolute;inset:0;z-index:6;display:none;flex-direction:column;
+  padding-left:366px;padding-bottom:8px}
+.comms.open{display:flex;animation:materialize .3s ease}
+.arena.comms-open .quiet{opacity:0}
+.ch{flex:none;display:flex;align-items:center;gap:9px;padding:10px 13px;border-radius:13px 13px 0 0;
+  border:1px solid color-mix(in srgb,var(--a) 24%,transparent);
+  background:linear-gradient(180deg,rgba(16,20,29,.92),rgba(10,12,19,.84));backdrop-filter:blur(12px)}
+.ch .ct{font-size:9px;letter-spacing:.18em;color:var(--a);font-weight:800}
+.ch b{font-size:11.5px;font-family:var(--font-ui);color:var(--ink)}
+.ch .note{font-size:10px;color:var(--faint)}
+.ch .pin{margin-left:auto;display:inline-flex;align-items:center;gap:5px;height:24px;padding:0 9px;
+  border-radius:7px;border:1px solid var(--bd);color:var(--dim);font-size:10px;font-family:var(--font-ui);transition:.14s}
+.ch .pin:hover{color:var(--ink);border-color:var(--bd2);background:rgba(255,255,255,.05)}
+.ch .pin.on{color:var(--a);border-color:color-mix(in srgb,var(--a) 50%,transparent);
+  background:color-mix(in srgb,var(--a) 10%,transparent);box-shadow:0 0 14px color-mix(in srgb,var(--a) 14%,transparent)}
+.ch .x{width:24px;height:24px;border-radius:7px;display:grid;place-items:center;color:var(--dim);border:1px solid var(--bd)}
+.ch .x:hover{color:var(--ink);background:rgba(255,255,255,.06)}
+
+.flow{flex:1;min-height:0;overflow:auto;display:flex;flex-direction:column;gap:10px;padding:14px;
+  border-left:1px solid color-mix(in srgb,var(--a) 22%,transparent);
+  border-right:1px solid color-mix(in srgb,var(--a) 22%,transparent);
+  background:linear-gradient(180deg,rgba(12,15,23,.78),rgba(8,10,16,.72));backdrop-filter:blur(12px)}
+.comms .cfoot{flex:none;display:flex;align-items:center;gap:7px;padding:8px 13px;border-radius:0 0 13px 13px;
+  border:1px solid color-mix(in srgb,var(--a) 22%,transparent);border-top:0;
+  background:rgba(9,11,17,.8);font-size:10px;color:var(--faint);font-family:var(--font-ui)}
+.comms .cfoot kbd{border:1px solid var(--bd);border-radius:4px;padding:0 4px;font-size:9px;color:var(--dim)}
+.msg{display:flex;gap:9px;align-items:flex-start;max-width:84%}
+.msg .av{width:26px;height:26px;border-radius:8px;overflow:hidden;flex:none;
+  border:1px solid color-mix(in srgb,var(--b) 32%,transparent);background:#0c0e15}
+.msg .av img{width:100%;height:100%;object-fit:cover;object-position:50% 12%}
+.msg .bubble{border:1px solid var(--bd);border-radius:3px 12px 12px 12px;padding:8px 11px 9px;
+  background:linear-gradient(180deg,rgba(23,27,38,.92),rgba(15,18,26,.9));font-size:12px;line-height:1.62;
+  color:var(--ink);font-family:var(--font-ui)}
+.msg .who{font-size:8.5px;letter-spacing:.12em;color:var(--faint);margin-bottom:3px;display:flex;gap:6px}
+.msg.me{align-self:flex-end;flex-direction:row-reverse;max-width:76%}
+.msg.me .bubble{border-radius:12px 3px 12px 12px;
+  border-color:color-mix(in srgb,var(--a) 38%,transparent);
+  background:linear-gradient(180deg,color-mix(in srgb,var(--a) 17%,#10141d),color-mix(in srgb,var(--a) 9%,#0b0e16))}
+.msg.me .who{justify-content:flex-end;color:color-mix(in srgb,var(--a) 78%,var(--faint))}
+.typing{display:inline-flex;gap:4px;padding:3px 0}
+.typing i{width:5px;height:5px;border-radius:50%;background:var(--dim);animation:tb 1s infinite}
+.typing i:nth-child(2){animation-delay:.15s}
+.typing i:nth-child(3){animation-delay:.3s}
+@keyframes tb{0%,60%,100%{opacity:.3;transform:translateY(0)}30%{opacity:1;transform:translateY(-2px)}}
+
+.card{position:relative;align-self:stretch;border:1px solid var(--bd);
+  border-left:2px solid var(--accent,var(--a));border-radius:12px;padding:10px 12px 11px;
+  background:linear-gradient(180deg,rgba(20,24,34,.92),rgba(13,16,23,.86));
+  box-shadow:0 8px 24px rgba(0,0,0,.32);transition:.2s}
+.card .k{font-size:8.5px;letter-spacing:.18em;font-weight:800;color:var(--accent)}
+.card .t{font-size:13px;font-weight:750;color:var(--ink);margin-top:3px;font-family:var(--font-ui);line-height:1.4}
+.card .s{font-size:10.5px;color:var(--dim);margin-top:3px;line-height:1.5}
+.card.done{opacity:.55;border-left-color:var(--bd)}
+.card.done .k{color:var(--faint)}
+.card .cf{display:flex;align-items:center;gap:10px;margin-top:8px;padding-top:7px;
+  border-top:1px dashed rgba(255,255,255,.07)}
+.card .hint{flex:1;min-width:0;font-size:10px;line-height:1.45;color:var(--faint)}
+.card .lnk{flex:none;font-size:10px;font-weight:700;color:var(--a);font-family:var(--font-ui);letter-spacing:.02em}
+.card .lnk:hover{text-decoration:underline}
+
+/* 面板里的动作只是兜底：去色、缩小、加一个「兜底」前缀 */
+.scene .acts{margin-top:9px;padding-top:8px;border-top:1px dashed rgba(255,255,255,.08);gap:6px}
+.scene .acts::before{content:"兜底";align-self:center;margin-right:2px;
+  font-size:8.5px;letter-spacing:.16em;color:var(--faint)}
+.scene .acts .btn{height:26px;padding:0 10px;font-size:10.5px;font-weight:600;
+  color:var(--dim);border-color:var(--bd);background:transparent;box-shadow:none}
+.scene .acts .btn:hover{color:var(--ink);border-color:var(--bd2);background:rgba(255,255,255,.05)}
+.scene .acts .btn.pri{color:var(--a);border-color:color-mix(in srgb,var(--a) 38%,transparent);
+  background:color-mix(in srgb,var(--a) 10%,transparent);
+  box-shadow:0 0 0 1px color-mix(in srgb,var(--a) 55%,transparent),0 0 16px color-mix(in srgb,var(--a) 14%,transparent)}
+.scene .acts .btn.pri::after{content:"推荐";margin-left:5px;font-size:8px;letter-spacing:.08em;
+  color:var(--a);border:1px solid color-mix(in srgb,var(--a) 45%,transparent);border-radius:999px;padding:0 5px}
+.scene .acts .btn.danger{color:var(--dim);border-color:var(--bd)}
+
+/* ── ticker：指令条上方的一行回执 ── */
+.ticker{display:flex;align-items:center;gap:9px;height:30px;padding:0 12px;border-radius:9px;
+  border:1px solid var(--bd);background:linear-gradient(180deg,rgba(13,16,24,.82),rgba(9,11,17,.78));
+  backdrop-filter:blur(10px);font-size:11px;color:var(--dim);cursor:pointer;transition:.16s;
+  font-family:var(--font-ui);overflow:hidden}
+.ticker:hover{border-color:color-mix(in srgb,var(--b) 42%,transparent);background:rgba(255,255,255,.045)}
+.ticker.hide{display:none}
+.ticker .av{width:18px;height:18px;border-radius:5px;overflow:hidden;flex:none;
+  border:1px solid color-mix(in srgb,var(--b) 35%,transparent);background:#0c0e15}
+.ticker .av img{width:100%;height:100%;object-fit:cover;object-position:50% 12%}
+.ticker .who{font-size:9px;letter-spacing:.14em;color:var(--b);font-weight:800;flex:none}
+.ticker .tx{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--ink)}
+.ticker .tm{font-size:9.5px;color:var(--faint);flex:none;font-variant-numeric:tabular-nums}
+.ticker .go{flex:none;font-size:9.5px;font-weight:800;color:var(--a);letter-spacing:.04em}
+.ticker.unread{border-color:color-mix(in srgb,var(--b) 38%,transparent);
+  box-shadow:0 0 0 1px color-mix(in srgb,var(--b) 16%,transparent),0 0 22px color-mix(in srgb,var(--b) 12%,transparent)}
+.ticker.unread .who{color:var(--b);text-shadow:0 0 10px color-mix(in srgb,var(--b) 55%,transparent)}
+.ticker.unread .who::after{content:"";display:inline-block;width:5px;height:5px;border-radius:50%;margin-left:6px;
+  vertical-align:middle;background:var(--b);box-shadow:0 0 9px var(--b);animation:pulse 1.8s ease-in-out infinite}
+.ticker.flash{animation:tkin .5s ease}
+@keyframes tkin{0%{transform:translateY(6px);opacity:.2}100%{transform:none;opacity:1}}
+
+/* ───────────────────────── pane ───────────────────────── */
+.pane{position:relative;display:flex;flex-direction:column;min-height:0;min-width:0;overflow:hidden;
+  border:1px solid color-mix(in srgb,var(--a) 24%,transparent);border-radius:12px;
+  background:linear-gradient(180deg,rgba(16,20,29,.88),rgba(10,12,19,.8));backdrop-filter:blur(11px);
+  box-shadow:0 0 calc(26px*var(--glow)) color-mix(in srgb,var(--a) 8%,transparent),0 12px 34px rgba(0,0,0,.42)}
+.pane::before,.pane::after{content:"";position:absolute;width:14px;height:14px;pointer-events:none;
+  border-color:color-mix(in srgb,var(--a) 70%,transparent);filter:drop-shadow(0 0 4px color-mix(in srgb,var(--a) 45%,transparent))}
+.pane::before{left:-1px;top:-1px;border-left:2px solid;border-top:2px solid;border-top-left-radius:12px}
+.pane::after{right:-1px;bottom:-1px;border-right:2px solid;border-bottom:2px solid;border-bottom-right-radius:12px}
+.pane-h{display:flex;align-items:center;gap:8px;padding:9px 13px;border-bottom:1px solid var(--bd);
+  font-size:9.5px;letter-spacing:.16em;color:var(--faint);flex:none;min-height:36px}
+.pane-h b{font-size:11.5px;letter-spacing:.04em;color:var(--ink);font-weight:750;font-family:var(--font-ui)}
+.pane-h .tag{margin-left:auto;font-size:9px;letter-spacing:.1em;padding:2px 7px;border-radius:999px;
+  border:1px solid color-mix(in srgb,var(--a) 40%,transparent);color:var(--a);white-space:nowrap}
+.pane-h .tag.g{color:var(--green);border-color:color-mix(in srgb,var(--green) 45%,transparent)}
+.pane-h .tag.r{color:var(--red);border-color:color-mix(in srgb,var(--red) 45%,transparent)}
+.pane-h .tag.live{color:var(--cyan);border-color:color-mix(in srgb,var(--cyan) 42%,transparent)}
+.pane-h .tag.live::before{content:"";display:inline-block;width:5px;height:5px;border-radius:50%;background:var(--cyan);
+  margin-right:5px;vertical-align:1px;box-shadow:0 0 7px var(--cyan);animation:pulse 1.6s ease-in-out infinite}
+.pane-b{flex:1;min-height:0;overflow:auto;padding:11px 13px}
+.pane-b.tight{padding:8px 10px}
+.pane-b.flush{padding:8px;overflow:hidden;display:flex}
+.pane-b.flush .stream{flex:1;height:auto}
+
+/* ───────────────────────── v6 · 指挥台 ───────────────────────── */
+.fleet{grid-column:1/3;display:flex;gap:9px;min-height:0}
+.fleet .all{flex:none;width:46px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;
+  border:1px dashed var(--bd);border-radius:12px;color:var(--faint);font-size:9px;transition:.15s;
+  background:rgba(255,255,255,.015);font-family:var(--font-ui)}
+.fleet .all b{font-size:13px;color:var(--ink);font-variant-numeric:tabular-nums}
+.fleet .all:hover{color:var(--ink);border-color:var(--bd2)}
+.fleet .all.on{color:var(--a);border-color:color-mix(in srgb,var(--a) 45%,transparent);
+  background:color-mix(in srgb,var(--a) 7%,transparent)}
+.fleet .proj{flex:1;min-width:0;text-align:left;position:relative;border:1px solid var(--bd);
+  border-left:2px solid var(--accent,var(--a));border-radius:12px;padding:8px 10px 9px;
+  background:linear-gradient(180deg,rgba(20,24,34,.82),rgba(13,16,23,.72));transition:.16s;overflow:hidden}
+.fleet .proj:hover{transform:translateY(-2px);border-color:color-mix(in srgb,var(--accent) 45%,transparent)}
+.fleet .proj.on{border-color:color-mix(in srgb,var(--accent) 65%,transparent);
+  box-shadow:0 0 0 1px color-mix(in srgb,var(--accent) 30%,transparent),0 0 22px color-mix(in srgb,var(--accent) 10%,transparent)}
+.fleet .proj .pn{display:flex;align-items:center;gap:6px;font-size:11.5px;font-weight:800;
+  font-family:var(--font-ui);color:var(--ink);line-height:1.25}
+.fleet .proj .pn i{width:6px;height:6px;border-radius:50%;background:var(--accent);box-shadow:0 0 8px var(--accent);flex:none}
+.fleet .proj .pm{display:block;margin-top:1px;font-size:8.5px;color:var(--faint);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.fleet .proj .pb{display:block;height:3px;border-radius:2px;background:rgba(255,255,255,.07);margin:6px 0 4px;overflow:hidden}
+.fleet .proj .pb i{display:block;height:100%;border-radius:2px;
+  background:linear-gradient(90deg,var(--accent),color-mix(in srgb,var(--accent) 45%,var(--b)))}
+.fleet .proj .ps{font-size:8.5px;color:var(--dim);white-space:nowrap}
+.fleet .proj .ps b{color:var(--ink);font-variant-numeric:tabular-nums}
+
+.runrow{display:flex;flex-direction:column;gap:4px;width:100%;text-align:left;padding:8px 9px;border-radius:9px;
+  border:1px solid var(--bd);background:rgba(255,255,255,.02);margin-bottom:7px;transition:.15s;position:relative}
+.runrow:last-child{margin-bottom:0}
+.runrow:hover{border-color:color-mix(in srgb,var(--accent,var(--a)) 42%,transparent);
+  background:color-mix(in srgb,var(--accent,var(--a)) 5%,transparent);transform:translateX(2px)}
+.rr-top{display:flex;align-items:center;gap:6px;min-width:0}
+.rr-id{font-size:8.5px;letter-spacing:.06em;color:var(--faint);font-variant-numeric:tabular-nums;flex:none}
+.rr-wf{font-size:8.5px;padding:1px 6px;border-radius:999px;flex:none;
+  border:1px solid color-mix(in srgb,var(--accent,var(--a)) 36%,transparent);color:var(--accent,var(--a))}
+.rr-task{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:11px;
+  font-weight:700;color:var(--ink);font-family:var(--font-ui)}
+.rr-state{font-size:8px;padding:1px 6px;border-radius:999px;border:1px solid var(--bd);color:var(--dim);flex:none}
+.rr-state.run{color:var(--cyan);border-color:color-mix(in srgb,var(--cyan) 40%,transparent)}
+.rr-state.wait{color:var(--amber);border-color:color-mix(in srgb,var(--amber) 40%,transparent)}
+.rr-state.fail{color:var(--red);border-color:color-mix(in srgb,var(--red) 40%,transparent)}
+.rr-state.done{color:var(--green);border-color:color-mix(in srgb,var(--green) 40%,transparent)}
+.rr-nodes{display:flex;align-items:center;gap:4px}
+.nd{width:7px;height:7px;border-radius:50%;background:rgba(255,255,255,.13);flex:none;display:inline-block}
+.nd.done{background:var(--green);box-shadow:0 0 6px color-mix(in srgb,var(--green) 55%,transparent)}
+.nd.run{background:var(--cyan);box-shadow:0 0 8px var(--cyan);animation:pulse 1.6s ease-in-out infinite}
+.nd.fail{background:var(--red);box-shadow:0 0 7px color-mix(in srgb,var(--red) 60%,transparent)}
+.nd.wait{background:rgba(255,255,255,.13)}
+.rr-prog{font-size:8.5px;color:var(--faint);margin-left:3px;font-variant-numeric:tabular-nums}
+.rr-meta{display:flex;align-items:center;gap:5px;font-size:8.5px;color:var(--faint);
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.rr-meta .sepdot{width:2px;height:2px;border-radius:50%;background:var(--faint);flex:none}
+
+.arow{display:flex;align-items:flex-start;gap:8px;width:100%;text-align:left;padding:7px 8px;border-radius:9px;
+  border:1px solid var(--bd);border-left:2px solid var(--accent,var(--a));background:rgba(255,255,255,.02);
+  margin-bottom:7px;transition:.14s}
+.arow:last-child{margin-bottom:0}
+.arow:hover{background:color-mix(in srgb,var(--accent) 6%,transparent);
+  border-color:color-mix(in srgb,var(--accent) 38%,transparent)}
+.arow .ab{flex:1;min-width:0}
+.arow .ak{display:block;font-size:8px;letter-spacing:.16em;color:var(--accent);font-weight:800}
+.arow .at{display:block;font-size:10.5px;font-weight:700;color:var(--ink);font-family:var(--font-ui);
+  line-height:1.35;margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.arow .as{display:block;font-size:8.5px;color:var(--dim);margin-top:1px;
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.arow .ap{font-size:8px;color:var(--faint);flex:none;padding-top:1px}
+
+.lane{display:flex;align-items:center;gap:7px;width:100%;text-align:left;padding:2px 5px;
+  border-bottom:1px dashed rgba(255,255,255,.06);transition:.13s}
+.lane:last-child{border-bottom:0}
+.lane:hover{background:rgba(255,255,255,.035);border-radius:7px}
+.lane .lav{width:22px;height:22px;border-radius:7px;display:grid;place-items:center;flex:none;
+  font-size:8px;font-weight:800;font-family:var(--font-mono);border:1px solid var(--bd);color:var(--dim);
+  background:rgba(255,255,255,.03)}
+.lane.run .lav{color:var(--cyan);border-color:color-mix(in srgb,var(--cyan) 38%,transparent)}
+.lane.wait .lav{color:var(--amber);border-color:color-mix(in srgb,var(--amber) 38%,transparent)}
+.lane.fail .lav{color:var(--red);border-color:color-mix(in srgb,var(--red) 38%,transparent)}
+.lane .lm{flex:1;min-width:0}
+.lane .lm b{display:block;font-size:10px;color:var(--ink);font-family:var(--font-ui);line-height:1.25}
+.lane .lm span{display:block;font-size:8px;color:var(--dim);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.lane .ls{width:5px;height:5px;border-radius:50%;flex:none;background:var(--dim)}
+.lane.run .ls{background:var(--cyan);box-shadow:0 0 7px var(--cyan)}
+.lane.wait .ls{background:var(--amber);box-shadow:0 0 7px var(--amber)}
+.lane.fail .ls{background:var(--red);box-shadow:0 0 7px var(--red)}
+.lane .lt{font-size:8.5px;color:var(--faint);flex:none;font-variant-numeric:tabular-nums}
+
+.mrow.tr{width:100%;text-align:left;background:none;border:0;border-bottom:1px dashed rgba(255,255,255,.06);
+  font:inherit;color:inherit;transition:.13s;cursor:pointer}
+.mrow.tr:hover{background:rgba(255,255,255,.035);border-radius:8px}
+.mrow .pill.red{color:var(--red);border-color:color-mix(in srgb,var(--red) 40%,transparent)}
+.mrow .pill.done{color:var(--green);border-color:color-mix(in srgb,var(--green) 40%,transparent)}
+
+/* ───────────────────────── v6 · 运行详情 ───────────────────────── */
+.runhead{display:flex;align-items:center;gap:8px;padding:2px 3px 9px;margin-bottom:7px;
+  font-size:9px;color:var(--faint);border-bottom:1px dashed rgba(255,255,255,.07);font-variant-numeric:tabular-nums}
+.runhead b{color:var(--ink);font-size:11px}
+.runhead .rp{flex:1;height:3px;border-radius:2px;background:rgba(255,255,255,.07);overflow:hidden}
+.runhead .rp i{display:block;height:100%;border-radius:2px;background:linear-gradient(90deg,var(--a),var(--b))}
+.runmeta{display:grid;grid-template-columns:auto 1fr;gap:3px 8px;margin-top:10px;padding-top:9px;
+  border-top:1px dashed rgba(255,255,255,.08);font-size:8.5px}
+.runmeta .l{color:var(--faint);letter-spacing:.12em}
+.runmeta .v{color:var(--dim);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+
+/* ───────────────────────── v6 · Trace：座舱拓扑 + 交互流 + 消耗 ───────────────────────── */
+.sg-trace{grid-template-columns:1.16fr .84fr;grid-template-rows:minmax(230px,.92fr) 1.08fr}
+.sg-trace .g1{grid-column:1/3;grid-row:1}
+.sg-trace .g2{grid-column:1;grid-row:2}
+.sg-trace .g3{grid-column:2;grid-row:2}
+.pane-b.dagbody{padding:2px 4px;overflow:hidden;display:flex}
+.dag{flex:1;min-width:0;min-height:0;width:100%;height:100%;font-family:var(--font-ui)}
+.dag .edge{fill:none;stroke-width:1.1;opacity:.62;transition:.18s}
+.dag .edge.dispatch{stroke:var(--violet)}
+.dag .edge.run{stroke:var(--cyan);stroke-dasharray:4 4;opacity:.5}
+.dag .edge.on{opacity:1;stroke-width:1.7;filter:drop-shadow(0 0 3px currentColor)}
+.dag .edge.dim{opacity:.1}
+.dag .node rect{fill:rgba(255,255,255,.028);stroke:rgba(255,255,255,.12);stroke-width:1;transition:.16s}
+.dag .node:hover rect{stroke:color-mix(in srgb,var(--a) 60%,transparent);fill:rgba(255,255,255,.05)}
+.dag .node.root rect{fill:color-mix(in srgb,var(--a) 9%,transparent);
+  stroke:color-mix(in srgb,var(--a) 58%,transparent);stroke-width:1.3;
+  filter:drop-shadow(0 0 10px color-mix(in srgb,var(--a) 22%,transparent))}
+.dag .node.wf rect{fill:color-mix(in srgb,var(--violet) 7%,transparent)}
+.dag .node.on rect{stroke:var(--a);stroke-width:1.6;
+  filter:drop-shadow(0 0 9px color-mix(in srgb,var(--a) 32%,transparent))}
+.dag .node.dim{opacity:.28}
+.dag .node .nm{fill:var(--ink);font-size:10.5px;font-weight:800;letter-spacing:.01em}
+.dag .node.root .nm{font-size:13px}
+.dag .node .sub{fill:var(--faint);font-size:7.2px;font-weight:400}
+.dag .node .cost{fill:var(--dim);font-size:8px;font-weight:700;font-variant-numeric:tabular-nums}
+.dag .node .sdot{fill:var(--dim)}
+.dag .node .sdot.run{fill:var(--cyan);filter:drop-shadow(0 0 3px var(--cyan))}
+.dag .node .sdot.wait{fill:var(--amber);filter:drop-shadow(0 0 3px var(--amber))}
+.dag .node .sdot.fail{fill:var(--red);filter:drop-shadow(0 0 3px var(--red))}
+.dag .node .sdot.done{fill:var(--green)}
+.dag .legend{fill:var(--dim);font-size:7.5px;letter-spacing:.04em}
+.dag .legend .lg{stroke-width:1.4;fill:none}
+.dag .hint{fill:var(--faint);font-size:7.2px}
+
+.tev{padding:5px 6px 6px;border-bottom:1px dashed rgba(255,255,255,.06);border-left:2px solid transparent;transition:.13s}
+.tev:last-child{border-bottom:0}
+.tev:hover{background:rgba(255,255,255,.03)}
+.tev.human{border-left-color:var(--green)}
+.tev.dispatch{border-left-color:var(--violet)}
+.tev.report{border-left-color:var(--cyan)}
+.tev.attention{border-left-color:var(--amber)}
+.tev.tool{border-left-color:rgba(255,255,255,.1)}
+.tev.note{border-left-color:rgba(255,255,255,.06)}
+.tev .th{display:flex;align-items:center;gap:5px;min-width:0}
+.tev .tt{font-size:8px;color:var(--faint);flex:none;font-variant-numeric:tabular-nums}
+.tev .tk{font-size:7.5px;padding:0 5px;border-radius:999px;flex:none;border:1px solid var(--bd);color:var(--faint);line-height:14px}
+.tk.human{color:var(--green);border-color:color-mix(in srgb,var(--green) 40%,transparent)}
+.tk.dispatch{color:var(--violet);border-color:color-mix(in srgb,var(--violet) 45%,transparent)}
+.tk.report{color:var(--cyan);border-color:color-mix(in srgb,var(--cyan) 40%,transparent)}
+.tk.attention{color:var(--amber);border-color:color-mix(in srgb,var(--amber) 45%,transparent)}
+.tk.tool{color:var(--dim)}
+.tk.note{color:var(--faint)}
+.tev .tr{font-size:9px;color:var(--dim);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0}
+.tev .tr b{color:var(--ink);font-weight:700}
+.tev .tr i{font-style:normal;color:var(--faint);margin:0 3px}
+.tev .ts{font-size:8.5px;color:var(--dim);line-height:1.45;margin-top:1px;padding-left:1px}
+.tfilter{display:flex;align-items:center;gap:6px;font-size:8.5px;color:var(--dim);margin-bottom:6px;
+  padding:4px 7px;border-radius:6px;border:1px solid color-mix(in srgb,var(--a) 24%,transparent);
+  background:color-mix(in srgb,var(--a) 5%,transparent)}
+.tfilter b{color:var(--ink)}
+.tfilter .ulink{margin-left:auto;font-size:8px;color:var(--a)}
+
+.urow{display:grid;grid-template-columns:1fr 52px 44px 36px;align-items:center;gap:5px;
+  padding:2px 4px;border-radius:5px;font-size:8px;transition:.13s}
+.urow.on{background:color-mix(in srgb,var(--a) 8%,transparent);
+  box-shadow:inset 0 0 0 1px color-mix(in srgb,var(--a) 26%,transparent)}
+.urow .un{color:var(--dim);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.urow.on .un{color:var(--ink)}
+.urow .ub{height:3px;border-radius:2px;background:rgba(255,255,255,.07);overflow:hidden;display:block}
+.urow .ub i{display:block;height:100%;border-radius:2px;opacity:.9}
+.urow .uc{text-align:right;color:var(--ink);font-variant-numeric:tabular-nums;font-size:8.5px}
+.urow .ut{text-align:right;color:var(--faint);font-variant-numeric:tabular-nums;font-size:7.5px}
+.ubar{display:flex;height:4px;border-radius:3px;overflow:hidden;background:rgba(255,255,255,.06);margin:5px 0 4px}
+.ubar i{display:block;height:100%}
+.ulegend{display:flex;gap:9px;font-size:7.5px;color:var(--faint);flex-wrap:wrap}
+.ulegend .l{display:inline-flex;align-items:center;gap:3px}
+.ulegend .l i{width:5px;height:5px;border-radius:50%}
+.unote{font-size:8px;color:var(--faint);line-height:1.5;margin-top:6px;
+  padding-top:5px;border-top:1px dashed rgba(255,255,255,.06)}
+.uspark{display:flex;align-items:flex-end;gap:2px;height:12px;margin:5px 0 3px}
+.uspark i{flex:1;min-height:2px;border-radius:1px;opacity:.65;
+  background:linear-gradient(180deg,var(--a),color-mix(in srgb,var(--a) 30%,transparent))}
+.usl{display:flex;justify-content:space-between;font-size:7.5px;color:var(--faint);margin-bottom:1px}
+.usel{display:flex;align-items:center;gap:5px;font-size:8px;color:var(--dim);margin-bottom:3px}
+.usel b{color:var(--ink)}
+.usel .ulink{font-size:8px;color:var(--a);margin-left:auto}
+.nflow{position:relative}
+.nnode{display:flex;align-items:flex-start;gap:8px;width:100%;text-align:left;padding:6px 6px;border-radius:8px;
+  border:1px solid transparent;transition:.14s;position:relative}
+.nnode:hover{background:rgba(255,255,255,.04);border-color:var(--bd)}
+.nnode.sel{background:color-mix(in srgb,var(--a) 7%,transparent);border-color:color-mix(in srgb,var(--a) 32%,transparent)}
+.nnode:not(:last-child)::after{content:"";position:absolute;left:13px;top:25px;bottom:-3px;width:1px;
+  background:linear-gradient(180deg,var(--bd2),rgba(255,255,255,.03))}
+.nnode .ni{width:16px;height:16px;border-radius:50%;display:grid;place-items:center;font-size:8px;flex:none;
+  margin-top:1px;border:1px solid var(--bd);color:var(--faint);background:#0b0e15;position:relative;z-index:1;
+  font-family:var(--font-mono)}
+.nnode.done .ni{color:var(--green);border-color:color-mix(in srgb,var(--green) 50%,transparent);
+  background:color-mix(in srgb,var(--green) 12%,#0b0e15)}
+.nnode.run .ni{color:var(--cyan);border-color:color-mix(in srgb,var(--cyan) 55%,transparent);
+  background:color-mix(in srgb,var(--cyan) 13%,#0b0e15);animation:pulse 1.8s ease-in-out infinite}
+.nnode.fail .ni{color:var(--red);border-color:color-mix(in srgb,var(--red) 55%,transparent);
+  background:color-mix(in srgb,var(--red) 13%,#0b0e15)}
+.nnode .nb{flex:1;min-width:0}
+.nnode .nb b{display:block;font-size:10.5px;color:var(--ink);font-family:var(--font-ui);line-height:1.35}
+.nnode .nb span{display:block;font-size:8.5px;color:var(--faint);margin-top:1px;line-height:1.4}
+.nnode .nt{font-size:8.5px;color:var(--faint);flex:none;font-variant-numeric:tabular-nums;margin-top:1px}
+
+.stream{font-size:9.5px;line-height:1.62;font-family:var(--font-mono);background:rgba(0,0,0,.28);
+  border:1px solid var(--bd);border-radius:9px;padding:7px 9px;overflow:auto;height:100%;min-height:0}
+.sl{display:flex;gap:6px;white-space:pre-wrap;color:var(--dim);align-items:flex-start}
+.sl .st{color:var(--faint);flex:none;font-size:8.5px;padding-top:1px;font-variant-numeric:tabular-nums}
+.sl .tag{flex:none;font-size:8px;letter-spacing:.04em;padding:0 4px;border-radius:4px;line-height:15px;height:15px;
+  border:1px solid var(--bd);color:var(--faint);margin-top:1px}
+.sl .tag.tool{color:var(--violet);border-color:color-mix(in srgb,var(--violet) 40%,transparent)}
+.sl .tag.ok{color:var(--green);border-color:color-mix(in srgb,var(--green) 40%,transparent)}
+.sl .tag.err{color:var(--red);border-color:color-mix(in srgb,var(--red) 40%,transparent)}
+.sl .tag.think{color:var(--b);border-color:color-mix(in srgb,var(--b) 40%,transparent)}
+.sl.ok{color:#9EE6A4}.sl.err{color:#FFA1A1}
+.sl .cr{display:inline-block;width:5px;height:11px;background:var(--a);animation:blink 1s steps(1) infinite;
+  vertical-align:-1px;margin-top:3px}
+
+/* ───────────────────────── v6 · 任务交付 ───────────────────────── */
+.phases{position:relative;padding-left:1px}
+.phases::before{content:"";position:absolute;left:9px;top:14px;bottom:16px;width:1px;
+  background:linear-gradient(180deg,color-mix(in srgb,var(--a) 45%,transparent),rgba(255,255,255,.05))}
+.phase{display:flex;gap:9px;padding:5px 2px 9px;position:relative;align-items:flex-start}
+.ph-d{width:18px;height:18px;border-radius:50%;flex:none;display:grid;place-items:center;font-size:8px;
+  border:1px solid var(--bd);color:var(--faint);background:#0b0e15;position:relative;z-index:1;margin-top:1px}
+.phase.done .ph-d{color:var(--green);border-color:color-mix(in srgb,var(--green) 50%,transparent);
+  background:color-mix(in srgb,var(--green) 12%,#0b0e15)}
+.phase.now .ph-d{color:var(--amber);border-color:color-mix(in srgb,var(--amber) 55%,transparent);
+  background:color-mix(in srgb,var(--amber) 12%,#0b0e15);animation:pulse 1.8s ease-in-out infinite}
+.phase.warn .ph-d{color:var(--amber);border-color:color-mix(in srgb,var(--amber) 50%,transparent)}
+.phase.fail .ph-d{color:var(--red);border-color:color-mix(in srgb,var(--red) 55%,transparent);
+  background:color-mix(in srgb,var(--red) 12%,#0b0e15)}
+.phase .ph-b{flex:1;min-width:0}
+.phase .ph-b b{display:block;font-size:11px;color:var(--ink);font-family:var(--font-ui);line-height:1.35}
+.phase.wait .ph-b b{color:var(--dim)}
+.phase .ph-b span{display:block;font-size:9px;color:var(--dim);line-height:1.45;margin-top:1px}
+.phase .ph-w{font-size:8.5px;color:var(--faint);flex:none;padding-left:6px;font-variant-numeric:tabular-nums;margin-top:1px}
+
+.prrow{display:flex;align-items:center;gap:7px;padding:7px 8px;border-radius:8px;border:1px solid var(--bd);
+  background:rgba(255,255,255,.02);margin-bottom:8px;font-size:10px;min-width:0}
+.prrow .pnum{font-family:var(--font-mono);color:var(--a);font-weight:700;flex:none}
+.prrow .pd{flex:1;min-width:0;color:var(--dim);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.prrow .pill{flex:none}
+
+.cmt{display:flex;align-items:center;gap:7px;padding:5px 3px;border-bottom:1px dashed rgba(255,255,255,.06);font-size:9.5px}
+.cmt:last-child{border-bottom:0}
+.cmt .sha{font-family:var(--font-mono);font-size:8.5px;color:var(--a);flex:none}
+.cmt .msg{flex:1;min-width:0;color:var(--ink);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.cmt .tm{font-size:8.5px;color:var(--faint);flex:none}
+
+/* ───────────────────────── v6 · 变更 ───────────────────────── */
+.file{cursor:pointer}
+.file.sel{border-color:color-mix(in srgb,var(--a) 45%,transparent);background:color-mix(in srgb,var(--a) 8%,transparent)}
+.file .st{font-size:8.5px;width:13px;text-align:center;flex:none;font-weight:800}
+.file .st.M{color:var(--amber)} .file .st.A{color:var(--green)} .file .st.D{color:var(--red)}
+.diff .dh .path{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.dnote{font-size:8.5px;letter-spacing:.06em;color:var(--faint);margin:9px 2px 5px}
+
+/* ───────────────────────── v6 · 会话 ───────────────────────── */
+.sess{display:flex;align-items:center;gap:9px;padding:2px 2px 9px;margin-bottom:8px;
+  border-bottom:1px dashed rgba(255,255,255,.08)}
+.sess .sav{width:32px;height:32px;border-radius:9px;display:grid;place-items:center;font-size:10px;font-weight:800;
+  border:1px solid color-mix(in srgb,var(--a) 35%,transparent);color:var(--a);
+  background:color-mix(in srgb,var(--a) 8%,transparent);flex:none;font-family:var(--font-mono)}
+.sess .sm{flex:1;min-width:0}
+.sess .sm b{display:block;font-size:12px;color:var(--ink);font-family:var(--font-ui)}
+.sess .sm span{display:block;font-size:9px;color:var(--faint);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.sess .sst{font-size:8.5px;padding:2px 8px;border-radius:999px;border:1px solid var(--bd);color:var(--dim);flex:none}
+.sess .sst.run{color:var(--cyan);border-color:color-mix(in srgb,var(--cyan) 40%,transparent)}
+.sess .sst.wait{color:var(--amber);border-color:color-mix(in srgb,var(--amber) 40%,transparent)}
+.sess .sst.fail{color:var(--red);border-color:color-mix(in srgb,var(--red) 40%,transparent)}
+.sess .sst.me{color:var(--green);border-color:color-mix(in srgb,var(--green) 40%,transparent)}
+.tools{display:flex;flex-wrap:wrap;gap:5px;margin-top:6px}
+.tool{font-size:8.5px;padding:1px 6px;border-radius:5px;border:1px solid var(--bd);color:var(--faint);
+  font-family:var(--font-mono)}
+.empty{border:1px dashed var(--bd);border-radius:9px;padding:14px 12px;color:var(--faint);font-size:10.5px;
+  text-align:center;line-height:1.6;background:rgba(255,255,255,.015)}
+
+/* ───────────────────────── old scene parts ───────────────────────── */
+.file{display:flex;align-items:center;gap:8px;padding:6px 8px;border-radius:8px;font-size:10.5px;
+  border:1px solid transparent;transition:.12s}
+.file:hover{background:rgba(255,255,255,.04);border-color:var(--bd)}
+.file .fn{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--ink);font-size:10px}
+.file .fn span{color:var(--faint)}
+.file .add{color:var(--green);font-variant-numeric:tabular-nums;font-size:10px}
+.file .del{color:var(--red);font-variant-numeric:tabular-nums;font-size:10px}
+.diff{margin-top:8px;border:1px solid var(--bd);border-radius:9px;overflow:hidden;font-size:9.5px;line-height:1.6;background:rgba(0,0,0,.22)}
+.diff .dh{display:flex;gap:8px;padding:5px 9px;border-bottom:1px solid var(--bd);color:var(--faint);font-size:8.5px;letter-spacing:.06em}
+.diff .dl{display:flex;gap:9px;padding:0 9px;white-space:pre;overflow-x:auto}
+.diff .dl .n{width:20px;text-align:right;color:var(--faint);flex:none}
+.diff .dl.add{background:rgba(126,231,135,.07);color:#B8F5BE}
+.diff .dl.del{background:rgba(255,92,92,.07);color:#FFB3B3}
+.diff .dl.ctx{color:var(--dim)}
+
+.chk{display:flex;gap:9px;padding:7px 4px;border-bottom:1px dashed rgba(255,255,255,.06);font-size:10.5px;line-height:1.5}
+.chk:last-child{border-bottom:0}
+.chk .box{width:15px;height:15px;border-radius:4px;flex:none;display:grid;place-items:center;font-size:9px;margin-top:1px}
+.chk.ok .box{background:color-mix(in srgb,var(--green) 18%,transparent);color:var(--green);border:1px solid color-mix(in srgb,var(--green) 50%,transparent)}
+.chk.warn .box{background:color-mix(in srgb,var(--amber) 16%,transparent);color:var(--amber);border:1px solid color-mix(in srgb,var(--amber) 50%,transparent)}
+.chk.no .box{background:rgba(255,255,255,.04);color:var(--faint);border:1px solid var(--bd)}
+.chk .ct{flex:1;min-width:0;color:var(--ink)}
+.chk .ct small{display:block;color:var(--dim);font-size:9px;margin-top:1px}
+.chk.warn .ct{color:#FFE1A3}
+
+.ev{display:grid;grid-template-columns:1fr 1fr;gap:6px}
+.ev .cell{border:1px solid var(--bd);border-radius:8px;padding:6px 8px;background:rgba(255,255,255,.02);min-width:0}
+.ev .cell .l{font-size:8px;letter-spacing:.12em;color:var(--faint);white-space:nowrap}
+.ev .cell .v{font-size:11px;font-weight:700;margin-top:1px;font-variant-numeric:tabular-nums;
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.ev .cell .v.g{color:var(--green)} .ev .cell .v.c{color:var(--cyan)} .ev .cell .v.m{color:var(--amber)}
+
+.trace{position:relative;padding-left:16px}
+.trace::before{content:"";position:absolute;left:4px;top:4px;bottom:4px;width:1px;background:linear-gradient(180deg,var(--bd2),transparent)}
+.trow{position:relative;padding:5px 0 7px 8px;font-size:10px;color:var(--dim)}
+.trow::before{content:"";position:absolute;left:-16px;top:9px;width:7px;height:7px;border-radius:50%;
+  background:#0B0E15;border:1px solid var(--a);box-shadow:0 0 6px color-mix(in srgb,var(--a) 50%,transparent)}
+.trow b{color:var(--ink);font-weight:600}
+.trow .tm{color:var(--faint);margin-right:6px;font-size:9px}
+
+.opts{display:flex;flex-direction:column;gap:7px;margin-top:4px}
+.opt{display:flex;gap:10px;padding:9px 11px;border-radius:10px;border:1px solid var(--bd);
+  background:rgba(255,255,255,.02);text-align:left;transition:.15s;cursor:pointer}
+.opt:hover{border-color:color-mix(in srgb,var(--a) 45%,transparent);background:color-mix(in srgb,var(--a) 6%,transparent);transform:translateX(2px)}
+.opt.sel{border-color:color-mix(in srgb,var(--a) 65%,transparent);background:color-mix(in srgb,var(--a) 10%,transparent);
+  box-shadow:0 0 0 1px color-mix(in srgb,var(--a) 20%,transparent)}
+.opt .radio{width:15px;height:15px;border-radius:50%;border:1px solid var(--bd2);flex:none;margin-top:2px;display:grid;place-items:center}
+.opt.sel .radio{border-color:var(--a)}
+.opt.sel .radio::after{content:"";width:7px;height:7px;border-radius:50%;background:var(--a);box-shadow:0 0 8px var(--a)}
+.opt .ot{flex:1;min-width:0}
+.opt .ot b{display:block;font-size:11.5px;color:var(--ink);font-family:var(--font-ui)}
+.opt .ot span{display:block;font-size:9.5px;color:var(--dim);margin-top:1px;line-height:1.45}
+.opt .rec{font-size:8px;letter-spacing:.1em;color:var(--a);border:1px solid color-mix(in srgb,var(--a) 40%,transparent);
+  border-radius:999px;padding:1px 6px;height:fit-content;flex:none}
+.qhead{font-size:13px;font-weight:750;line-height:1.45;margin-bottom:8px;color:var(--ink);font-family:var(--font-ui)}
+.qsub{font-size:10px;color:var(--dim);margin-bottom:9px}
+
+.log{font-size:10px;line-height:1.65;background:rgba(0,0,0,.25);border:1px solid var(--bd);border-radius:9px;padding:8px 10px}
+.log .ln{white-space:pre-wrap;color:var(--dim)}
+.log .ln .t{color:var(--faint);margin-right:7px}
+.log .ln.ok{color:#9EE6A4}.log .ln.err{color:#FFA1A1}
+.log .ln.sel{background:rgba(255,92,92,.1);border-radius:4px;margin:0 -5px;padding:0 5px}
+
+.acts{display:flex;gap:7px;flex-wrap:wrap;margin-top:9px}
+.btn{display:inline-flex;align-items:center;gap:6px;height:28px;padding:0 12px;border-radius:8px;
+  border:1px solid var(--bd);font-size:10.5px;font-family:var(--font-ui);font-weight:650;color:var(--dim);transition:.14s}
+.btn:hover{color:var(--ink);border-color:var(--bd2);background:rgba(255,255,255,.05)}
+.btn.pri{background:linear-gradient(135deg,var(--a),color-mix(in srgb,var(--a) 55%,#fff));color:#05070B;border-color:transparent;
+  box-shadow:0 0 18px color-mix(in srgb,var(--a) 26%,transparent)}
+.btn.pri:hover{filter:brightness(1.08);color:#05070B}
+.btn.danger{color:var(--red);border-color:color-mix(in srgb,var(--red) 40%,transparent)}
+.btn.danger:hover{background:color-mix(in srgb,var(--red) 10%,transparent);color:var(--red)}
+.btn.sm{height:24px;padding:0 9px;font-size:9.5px}
+
+.mrow{display:flex;align-items:center;gap:9px;padding:7px 5px;border-bottom:1px dashed rgba(255,255,255,.06)}
+.mrow:last-child{border-bottom:0}
+.mrow .code{width:32px;height:22px;border-radius:6px;display:grid;place-items:center;font-size:9.5px;font-weight:800;
+  color:var(--a);background:color-mix(in srgb,var(--a) 12%,transparent);border:1px solid color-mix(in srgb,var(--a) 30%,transparent);flex:none}
+.mrow .mn{flex:1;min-width:0}
+.mrow .mn b{display:block;font-size:11px;color:var(--ink);font-family:var(--font-ui)}
+.mrow .mn span{display:block;font-size:8.5px;color:var(--faint);margin-top:1px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.mrow .bar{width:96px;height:4px;border-radius:2px;background:rgba(255,255,255,.07);overflow:hidden;flex:none}
+.mrow .bar i{display:block;height:100%;border-radius:2px;background:linear-gradient(90deg,var(--a),var(--b))}
+.mrow .pct{width:32px;text-align:right;font-size:9.5px;color:var(--dim);font-variant-numeric:tabular-nums;flex:none}
+.mrow .pill{font-size:8.5px;padding:1px 7px;border-radius:999px;flex:none;border:1px solid var(--bd);color:var(--dim);white-space:nowrap}
+.mrow .pill.run{color:var(--cyan);border-color:color-mix(in srgb,var(--cyan) 40%,transparent)}
+.mrow .pill.wait{color:var(--amber);border-color:color-mix(in srgb,var(--amber) 40%,transparent)}
+.mrow .pill.ok{color:var(--green);border-color:color-mix(in srgb,var(--green) 40%,transparent)}
+
+.find{border:1px solid var(--bd);border-radius:10px;padding:9px 10px;margin-bottom:7px;background:rgba(255,255,255,.02)}
+.find .fh{display:flex;align-items:center;gap:7px;font-size:11px;font-weight:700;color:var(--ink);font-family:var(--font-ui)}
+.find .fp{margin-left:auto;font-size:8.5px;color:var(--amber);border:1px solid color-mix(in srgb,var(--amber) 40%,transparent);
+  border-radius:999px;padding:1px 7px;white-space:nowrap}
+.find .fc{font-size:10px;color:var(--dim);margin-top:5px;line-height:1.55}
+.find .fc b{color:var(--ink);font-weight:600}
+
+/* command bar */
+.cmd{position:relative;z-index:20;flex:none;display:flex;flex-direction:column;align-items:stretch;gap:8px;
+  padding:10px 20px 16px}
+.cmd .box{flex:none;display:flex;align-items:center;gap:10px;height:54px;padding:0 8px 0 16px;border-radius:15px;
+  border:1px solid color-mix(in srgb,var(--a) 26%,transparent);
+  background:linear-gradient(180deg,rgba(16,20,29,.9),rgba(9,11,17,.86));backdrop-filter:blur(12px);
+  box-shadow:0 0 30px color-mix(in srgb,var(--a) 7%,transparent),0 10px 30px rgba(0,0,0,.45);transition:.18s}
+.cmd .box:focus-within{border-color:color-mix(in srgb,var(--a) 55%,transparent);
+  box-shadow:0 0 0 1px color-mix(in srgb,var(--a) 18%,transparent),0 0 36px color-mix(in srgb,var(--a) 12%,transparent)}
+.cmd .pr{color:var(--a);font-size:15px;font-weight:700;filter:drop-shadow(0 0 6px color-mix(in srgb,var(--a) 60%,transparent))}
+.cmd input{flex:1;min-width:0;background:none;border:0;outline:none;color:var(--ink);font-size:13px}
+.cmd input::placeholder{color:var(--faint)}
+.cmd .chips{display:flex;align-items:center;gap:6px;flex:none}
+.chip{display:inline-flex;align-items:center;gap:5px;height:26px;padding:0 9px;border-radius:7px;border:1px solid var(--bd);
+  color:var(--dim);font-size:10px;font-family:var(--font-ui);white-space:nowrap;transition:.13s}
+.chip:hover{color:var(--ink);border-color:var(--bd2);background:rgba(255,255,255,.05)}
+.chip .k{color:var(--faint);font-size:9px;letter-spacing:.08em}
+.send{display:grid;place-items:center;width:38px;height:38px;border-radius:11px;flex:none;
+  background:linear-gradient(135deg,var(--a),color-mix(in srgb,var(--a) 55%,#fff));color:#05070B;
+  font-size:15px;font-weight:800;box-shadow:0 0 20px color-mix(in srgb,var(--a) 30%,transparent);transition:.15s}
+.send:hover{filter:brightness(1.1);transform:translateY(-1px)}
+
+/* briefing toast */
+.brief{position:fixed;right:26px;top:66px;width:340px;z-index:50;border-radius:14px;
+  border:1px solid color-mix(in srgb,var(--amber) 42%,transparent);
+  background:linear-gradient(180deg,rgba(30,26,20,.96),rgba(18,16,14,.94));backdrop-filter:blur(14px);
+  box-shadow:0 20px 50px rgba(0,0,0,.55),0 0 30px color-mix(in srgb,var(--amber) 10%,transparent);
+  transform:translateX(380px);opacity:0;transition:transform .42s cubic-bezier(.2,.9,.2,1),opacity .3s;
+  overflow:hidden}
+.brief.show{transform:none;opacity:1}
+.brief .bh{display:flex;align-items:center;gap:9px;padding:11px 13px 8px}
+.brief .av{width:34px;height:34px;border-radius:9px;overflow:hidden;border:1px solid color-mix(in srgb,var(--amber) 40%,transparent);
+  background:#111;flex:none}
+.brief .av img{width:100%;height:100%;object-fit:cover;object-position:50% 12%}
+.brief .bid b{display:block;font-size:11.5px;color:var(--ink);font-family:var(--font-ui)}
+.brief .bid span{display:block;font-size:9px;letter-spacing:.1em;color:var(--amber)}
+.brief .bx{position:absolute;right:8px;top:8px;width:20px;height:20px;border-radius:6px;display:grid;place-items:center;color:var(--faint)}
+.brief .bx:hover{background:rgba(255,255,255,.07);color:var(--ink)}
+.brief .bt{padding:0 13px 10px;font-size:12px;line-height:1.55;color:var(--ink);font-family:var(--font-ui)}
+.brief .bt b{color:var(--amber)}
+.brief .bf{display:flex;align-items:center;gap:8px;padding:9px 13px 12px;border-top:1px solid rgba(255,255,255,.07)}
+.brief .bf .btn{margin-left:auto}
+
+/* overlay: panel map */
+/* ── 入口示意：作战舱里的「全域」按钮 ── */
+.cabin-mock{border:1px solid var(--bd2);border-radius:12px;overflow:hidden;background:linear-gradient(180deg,#0d1017,#080a10)}
+.cm-top{display:flex;align-items:center;gap:8px;padding:8px 10px;border-bottom:1px solid var(--bd);background:rgba(255,255,255,.03)}
+.cm-top b{font-size:11px;font-family:var(--font-ui);color:var(--ink)}
+.cm-top .cm-tag{font-size:8.5px;color:var(--faint)}
+.cm-top .cm-btn{margin-left:auto;display:inline-flex;align-items:center;gap:6px;height:26px;padding:0 11px;border-radius:8px;
+  border:1px solid color-mix(in srgb,var(--a) 55%,transparent);color:var(--a);background:color-mix(in srgb,var(--a) 10%,transparent);
+  font-size:10px;font-weight:700;animation:cmPulse 2s ease-in-out infinite}
+@keyframes cmPulse{50%{box-shadow:0 0 0 4px color-mix(in srgb,var(--a) 10%,transparent)}}
+.cm-body{display:grid;grid-template-columns:92px minmax(0,1fr) 124px;gap:8px;padding:10px;height:240px}
+.cm-side,.cm-fleet{display:flex;flex-direction:column;gap:6px;padding:7px;border:1px solid var(--bd);border-radius:8px;background:rgba(255,255,255,.02);overflow:hidden}
+.cm-line{height:6px;border-radius:3px;background:rgba(255,255,255,.07)}
+.cm-line.w40{width:40%}.cm-line.w50{width:50%}.cm-line.w55{width:55%}.cm-line.w60{width:60%}.cm-line.w70{width:70%}.cm-line.w85{width:85%}
+.cm-chat{display:flex;flex-direction:column;gap:8px;padding:9px;border:1px solid var(--bd);border-radius:8px;background:rgba(255,255,255,.012);overflow:hidden}
+.cm-bub{max-width:72%;font-size:8.5px;line-height:1.5;padding:5px 8px;border-radius:7px;background:rgba(255,255,255,.04);
+  border:1px solid var(--bd);color:var(--dim);font-family:var(--font-ui)}
+.cm-bub.me{align-self:flex-end;background:color-mix(in srgb,var(--a) 8%,transparent);border-color:color-mix(in srgb,var(--a) 22%,transparent)}
+.cm-row{display:flex;align-items:center;gap:5px;font-size:8px;color:var(--dim);padding:4px 5px;border-radius:5px;
+  border-left:2px solid var(--accent);background:rgba(255,255,255,.015);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.cm-row i{flex:none;width:5px;height:5px;border-radius:50%;background:var(--accent)}
+.cm-note{font-size:9px;color:var(--faint);line-height:1.7;margin-top:9px}
+
+.overlay{position:fixed;inset:0;z-index:80;display:none;align-items:center;justify-content:center;padding:40px;
+  background:rgba(3,4,8,.82);backdrop-filter:blur(8px)}
+.overlay.open{display:flex}
+.map{width:min(1000px,100%);max-height:100%;overflow:auto;border-radius:16px;border:1px solid var(--bd2);
+  background:linear-gradient(180deg,rgba(18,22,31,.98),rgba(10,12,18,.98));box-shadow:0 30px 90px rgba(0,0,0,.7)}
+.map-h{display:flex;align-items:center;gap:10px;padding:16px 20px;border-bottom:1px solid var(--bd);position:sticky;top:0;
+  background:rgba(14,17,24,.96);backdrop-filter:blur(8px);z-index:2}
+.map-h b{font-size:13px;font-family:var(--font-ui)}
+.map-h span{font-size:10px;color:var(--faint);letter-spacing:.1em}
+.map-h .x{margin-left:auto;width:26px;height:26px;border-radius:8px;display:grid;place-items:center;color:var(--dim);border:1px solid var(--bd)}
+.map-h .x:hover{color:var(--ink);background:rgba(255,255,255,.06)}
+.map-b{padding:16px 20px 22px}
+.mgroup{margin-bottom:16px}
+.mgroup .gt{font-size:9.5px;letter-spacing:.16em;color:var(--faint);margin-bottom:8px;display:flex;align-items:center;gap:8px}
+.mgroup .gt .ln{flex:1;height:1px;background:var(--bd)}
+.mgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(210px,1fr));gap:8px}
+.mcard{border:1px solid var(--bd);border-radius:10px;padding:9px 11px;background:rgba(255,255,255,.02)}
+.mcard b{display:block;font-size:11.5px;color:var(--ink);font-family:var(--font-ui)}
+.mcard span{display:block;font-size:10px;color:var(--dim);margin-top:2px;line-height:1.5}
+.mcard.cut{opacity:.55;border-style:dashed}
+.mcard.cut b{text-decoration:line-through;text-decoration-color:var(--red)}
+.map-note{margin-top:6px;padding:12px 14px;border-radius:10px;border:1px solid color-mix(in srgb,var(--a) 24%,transparent);
+  background:color-mix(in srgb,var(--a) 5%,transparent);font-size:11px;line-height:1.65;color:var(--dim)}
+.map-note b{color:var(--ink)}
+
+@media (max-width:1360px){
+  .rail{width:264px}
+  .crew{width:312px;height:min(58vh,520px)}
+  .comms,.scene,.quiet{padding-left:334px}
+}
+@media (max-width:1240px){
+  .hud{gap:10px;padding:0 14px}
+  .hud .opt1{display:none}
+}
+@media (max-width:1120px){
+  .rail{display:none}
+  .comms,.scene,.quiet{padding-left:334px}
+  .hud .opt2{display:none}
+}
+@media (max-width:900px){
+  .crew{width:280px;height:min(52vh,440px)}
+  .comms,.scene,.quiet{padding-left:300px}
+  .sgrid{display:block;overflow:auto}
+  .pane-b.dagbody{overflow:auto}
+  .dag{min-width:640px}
+  .sgrid > .pane,.sgrid > .fleet{min-height:210px;margin-bottom:10px}
+  .fleet{flex-wrap:wrap}
+  .fleet .proj{flex:1 1 150px}
+}
+
+/* ═══════════════════════════════════════════════════════════
+   v9 · 编队（点）/ 作业全集（面）
+   ═══════════════════════════════════════════════════════════ */
+.pod-name em{font-style:normal;font-size:8.5px;letter-spacing:.14em;color:var(--a);opacity:.9;margin-left:5px}
+.fhead{flex:none;display:flex;flex-direction:column;gap:2px;padding:6px 22px 0 2px}
+.fhead .h1{display:flex;align-items:baseline;gap:9px}
+.fhead h2{margin:0;font-size:20px;font-weight:800;color:var(--ink);font-family:var(--font-ui);letter-spacing:.04em}
+.fhead .cnt{font-size:10.5px;color:var(--faint);font-variant-numeric:tabular-nums}
+.fhead .spacer{flex:1}
+.fhead .h2{font-size:9.5px;color:var(--faint);letter-spacing:.05em}
+.jgrid{flex:1;min-height:0;overflow:auto;display:grid;grid-template-columns:repeat(2,minmax(0,1fr));
+  gap:12px;padding:12px 2px 10px 0;align-content:start}
+.jcard{position:relative;display:flex;flex-direction:column;gap:6px;text-align:left;
+  min-height:150px;padding:14px 16px 12px;border-radius:14px;overflow:hidden;
+  border:1px solid var(--bd);background:linear-gradient(180deg,rgba(18,22,32,.76),rgba(10,12,19,.62));
+  backdrop-filter:blur(10px);transition:.18s}
+.jcard::before{content:"";position:absolute;inset:0;pointer-events:none;
+  background:radial-gradient(95% 75% at 0% 0%, color-mix(in srgb,var(--accent) 12%,transparent), transparent 62%)}
+.jcard:hover{transform:translateY(-3px);border-color:color-mix(in srgb,var(--accent) 45%,transparent);
+  box-shadow:0 16px 38px rgba(0,0,0,.44),0 0 0 1px color-mix(in srgb,var(--accent) 16%,transparent)}
+.jcard.wait{border-color:color-mix(in srgb,var(--amber) 22%,var(--bd))}
+.jcard.blocked{border-color:color-mix(in srgb,var(--red) 24%,var(--bd))}
+.jcard.done{opacity:.62}
+.jcard.abort{opacity:.55}
+.jcard .jh{display:flex;align-items:center;gap:6px;font-size:8.5px;letter-spacing:.12em;color:var(--faint)}
+.jcard .jg{font-size:15px;line-height:1}
+.jcard .jpj{display:inline-flex;align-items:center;gap:4px;color:var(--dim);letter-spacing:.04em}
+.jcard .jpj i{width:5px;height:5px;border-radius:50%}
+.jcard .jneed{margin-left:auto;font-size:8px;letter-spacing:.04em;color:var(--amber);
+  border:1px solid color-mix(in srgb,var(--amber) 42%,transparent);border-radius:999px;padding:1px 7px;
+  background:color-mix(in srgb,var(--amber) 9%,transparent)}
+.jcard .jt{font-size:16px;font-weight:800;color:var(--ink);font-family:var(--font-ui);letter-spacing:.01em;margin-top:1px}
+.jcard .jd{font-size:10px;color:var(--dim);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.jcard .jf{display:flex;align-items:center;gap:9px;margin-top:auto;padding-top:9px}
+.jcard .jbar{flex:1;height:3px;border-radius:2px;background:rgba(255,255,255,.07);overflow:hidden}
+.jcard .jbar i{display:block;height:100%;border-radius:2px;opacity:.78}
+.jcard .jp{font-size:9.5px;color:var(--dim);font-variant-numeric:tabular-nums}
+.jcard .jm{font-size:8.5px;color:var(--faint);font-variant-numeric:tabular-nums}
+.jpill{display:inline-flex;align-items:center;height:18px;padding:0 7px;border-radius:999px;
+  border:1px solid var(--bd);font-size:8.5px;font-weight:800;letter-spacing:.04em;color:var(--dim);white-space:nowrap}
+.jpill.run{color:var(--cyan);border-color:color-mix(in srgb,var(--cyan) 42%,transparent)}
+.jpill.wait{color:var(--amber);border-color:color-mix(in srgb,var(--amber) 42%,transparent)}
+.jpill.blocked{color:var(--red);border-color:color-mix(in srgb,var(--red) 42%,transparent)}
+.jpill.done{color:var(--green);border-color:color-mix(in srgb,var(--green) 38%,transparent)}
+.jpill.queue{color:var(--b);border-color:color-mix(in srgb,var(--b) 38%,transparent)}
+.jpill.abort{color:var(--faint);border-color:var(--bd)}
+
+.jobhead{flex:none;display:flex;flex-direction:column;gap:4px;padding:6px 22px 0 2px}
+.jobhead .h1{display:flex;align-items:center;gap:9px;min-width:0}
+.jobhead .back{flex:none;display:inline-flex;align-items:center;height:24px;padding:0 9px;border-radius:7px;
+  border:1px solid var(--bd);color:var(--dim);font-size:9.5px;font-family:var(--font-ui);transition:.14s}
+.jobhead .back:hover{color:var(--ink);border-color:var(--bd2);background:rgba(255,255,255,.06)}
+.jobhead .jk{flex:none;font-size:8px;font-weight:800;letter-spacing:.08em;padding:1px 6px;border-radius:999px;border:1px solid currentColor}
+.jobhead h2{margin:0;font-size:19px;font-weight:800;color:var(--ink);font-family:var(--font-ui);letter-spacing:.02em;white-space:nowrap}
+.jobhead .spacer{flex:1}
+.jobhead .jcap{font-size:9px;color:var(--faint);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0;max-width:46%}
+.jobhead .h2{display:flex;align-items:center;gap:8px;font-size:9.5px;color:var(--faint);min-width:0}
+.jobhead .h2 > span:not(.spacer):not(.acts){white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.jobhead .h2 .sep{opacity:.6}
+.jobhead .acts{display:flex;gap:6px;flex:none}
+.jobtabs{flex:none;display:flex;gap:2px;padding:0 2px;margin-top:8px;border-bottom:1px solid var(--bd)}
+.jtab{height:32px;padding:0 15px;font-size:11px;color:var(--dim);font-family:var(--font-ui);
+  border-bottom:2px solid transparent;transition:.14s;letter-spacing:.02em}
+.jtab:hover{color:var(--ink)}
+.jtab.on{color:var(--ink);border-bottom-color:var(--a);font-weight:700;text-shadow:0 0 14px color-mix(in srgb,var(--a) 35%,transparent)}
+.jobbody{flex:1;min-height:0;display:flex;flex-direction:column;padding:10px 2px 8px 0}
+.jobbody > .sgrid{flex:1;min-height:0}
+.sgrid.jg-one{grid-template-columns:1fr}
+.sgrid.jg-over{grid-template-columns:minmax(0,1.32fr) minmax(0,.92fr)}
+.sgrid.jg-run{grid-template-columns:minmax(0,.92fr) minmax(0,1.2fr)}
+.sgrid.jg-chg{grid-template-columns:minmax(0,.86fr) minmax(0,1.18fr)}
+.sgrid.jg-acc{grid-template-columns:minmax(0,1.22fr) minmax(0,.92fr)}
+
+.jtl{display:flex;flex-direction:column}
+.jrow{display:grid;grid-template-columns:8px 52px 64px 54px minmax(0,1fr);gap:9px;align-items:baseline;
+  padding:9px 0;border-bottom:1px solid rgba(255,255,255,.05);font-size:11.5px;font-family:var(--font-ui)}
+.jrow:last-child{border-bottom:0}
+.jrow .d{width:6px;height:6px;border-radius:50%;align-self:center}
+.jrow .t{font-size:8.5px;color:var(--faint);font-family:var(--font-mono);font-variant-numeric:tabular-nums}
+.jrow .a{font-size:9.5px;font-weight:700;white-space:nowrap}
+.jrow .k{font-size:8px;color:var(--dim);border:1px solid var(--bd);border-radius:4px;padding:0 3px;text-align:center;white-space:nowrap}
+.jrow .x{color:rgba(245,245,242,.84);min-width:0;overflow:hidden;text-overflow:ellipsis}
+
+.jstats{display:grid;grid-template-columns:1fr 1fr;gap:1px;background:var(--bd);border:1px solid var(--bd);
+  border-radius:10px;overflow:hidden}
+.jstats .cell{background:rgba(12,15,22,.92);padding:8px 10px;min-width:0}
+.jstats .cell .l{font-size:8px;letter-spacing:.14em;color:var(--faint);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.jstats .cell .v{margin-top:2px;font-size:13px;font-weight:800;color:var(--ink);font-variant-numeric:tabular-nums;
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.jstats .cell .v.c{color:var(--cyan)} .jstats .cell .v.m{color:var(--amber)}
+.jfacts{display:flex;flex-wrap:wrap;gap:12px;margin-top:9px;font-size:9px;color:var(--faint)}
+.jfacts b{color:var(--dim);font-weight:600}
+.jbar2{height:4px;border-radius:2px;background:rgba(255,255,255,.07);overflow:hidden;margin-top:10px}
+.jbar2 i{display:block;height:100%;border-radius:2px;background:linear-gradient(90deg,var(--a),var(--b))}
+.jchips{display:flex;flex-wrap:wrap;gap:6px;margin-top:10px}
+.jchips span{font-size:8.5px;color:var(--dim);border:1px solid var(--bd);border-radius:999px;padding:2px 8px}
+.jchips b{color:var(--ink)}
+.jnow{margin-top:11px;padding-top:9px;border-top:1px dashed rgba(255,255,255,.08);font-size:10px;line-height:1.65;color:var(--dim);font-family:var(--font-ui)}
+
+.relaymap{display:flex;align-items:center;gap:8px;padding:9px 11px;border:1px dashed var(--bd2);border-radius:10px;
+  margin-bottom:12px;font-size:10.5px;color:var(--dim);font-family:var(--font-ui);flex-wrap:wrap}
+.relaymap b{color:var(--ink);font-weight:700}
+.relaymap .hub{display:inline-flex;align-items:center;gap:4px;color:var(--b);font-weight:800}
+.relaymap .hub i{width:5px;height:5px;border-radius:50%;background:var(--b);box-shadow:0 0 6px var(--b)}
+.relaymap em{margin-left:auto;font-style:normal;font-size:9px;color:var(--faint)}
+.relayflow{display:flex;flex-direction:column;gap:10px}
+.rm{max-width:82%;font-size:11.5px;line-height:1.65;font-family:var(--font-ui)}
+.rm .h{display:block;font-size:8px;letter-spacing:.08em;color:var(--faint);margin-bottom:2px}
+.rm p{margin:0}
+.rm.you{align-self:flex-end;background:rgba(79,209,217,.1);border:1px solid rgba(79,209,217,.28);border-radius:10px;padding:7px 11px}
+.rm.xy{background:color-mix(in srgb,var(--b) 9%,transparent);border:1px solid color-mix(in srgb,var(--b) 26%,transparent);border-radius:10px;padding:7px 11px}
+.rm.doer{background:rgba(255,255,255,.03);border:1px solid var(--bd);border-radius:10px;padding:7px 11px}
+.jb-note{font-size:9.5px;color:var(--faint);margin-top:10px;font-family:var(--font-ui);line-height:1.6}
+.pane-b.col{display:flex;flex-direction:column;gap:8px;overflow:hidden;padding:8px}
+.jobhead .acts::before,.jobbody .acts::before{display:none}
+.jobhead .acts .btn.pri::after,.jobbody .acts .btn.pri::after{display:none}
+.jrun-dec{flex:none;border:1px solid color-mix(in srgb,var(--amber) 34%,transparent);border-radius:11px;
+  padding:10px 12px 11px;background:color-mix(in srgb,var(--amber) 4%,transparent);margin:0 0 10px}
+.jrun-dec .dhead{display:flex;align-items:baseline;gap:9px;margin-bottom:8px;flex-wrap:wrap}
+.jrun-dec .dhead b{font-size:12.5px;font-family:var(--font-ui);color:var(--ink)}
+.jrun-dec .dhead span{font-size:9px;color:var(--dim)}
+.jrun-dec .dopts{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px}
+.jrun-dec .opt{padding:8px 10px;gap:8px}
+.jrun-dec .opt .ot b{font-size:10.5px}
+.jrun-dec .opt .ot span{font-size:8.5px}
+@media (max-width:1180px){ .jrun-dec .dopts{grid-template-columns:1fr} }
+.pane-b.col .stream{flex:1;min-height:0}
+
+@media (max-width:1360px){
+  .jgrid{gap:10px}
+  .jcard{min-height:140px;padding:12px 14px 11px}
+}
+@media (max-width:1120px){
+  .jgrid{grid-template-columns:1fr}
+  .jcard{min-height:118px}
+}
+@media (max-width:900px){
+  .sgrid.jg-over,.sgrid.jg-run,.sgrid.jg-chg,.sgrid.jg-acc{grid-template-columns:1fr}
+  .jobbody{overflow:auto}
+  .jobbody > .sgrid{flex:none;min-height:auto}
+}
+
+</style>
+</head>
+<body data-theme="hyperion">
+<div class="app">
+  <div class="bg"><div class="floor"></div><div class="horizon"></div><div class="scan"></div><div id="particles"></div></div>
+  <div class="vignette"></div>
+
+  <header class="hud">
+    <div class="brand"><span class="hex">⬢</span>OCTOPUS <small>· 作战舱 · 全域</small></div>
+    <div class="hsep"></div>
+    <div class="stat"><b class="c" id="hRunning">3</b>运行中</div>
+    <div class="stat"><b class="m" id="hNeed">3</b>需要你</div>
+    <div class="stat"><b id="hJobs">8</b>编队</div>
+    <div class="stat opt1"><b id="hSess">4</b>分身</div>
+    <div class="stat opt2"><b id="hCost">¥1.28</b>本舱</div>
+    <div class="hsep opt1"></div>
+    <div class="stat opt1" style="color:var(--faint)"><span class="dot" style="color:var(--green)"></span>3 舱在线 · 全域编队</div>
+    <div class="right">
+      <button class="ghost" id="btnSim">✦ 模拟回流</button>
+      <button class="ghost opt2" id="btnMap">▦ 模式说明</button>
+      <button class="ghost opt2" id="btnTheme">◐ 换色</button>
+      <button class="ghost" id="btnBackCabin">← 返回作战舱</button>
+      <button class="ghost pri" id="btnNewTask">＋ 下达指令</button>
+    </div>
+  </header>
+
+  <main class="stage">
+    <aside class="rail">
+      <div class="rail-h">ATTENTION <span class="ln"></span><span id="railCount">1</span></div>
+      <div class="rail-list" id="railList"></div>
+    </aside>
+
+    <section class="arena" id="arena">
+      <div class="quiet" id="quiet">
+        <div class="clock" id="clock">09:42<small>MISSION CLOCK · 舱内时间</small></div>
+        <div class="arcs">
+          <div class="arc"><b id="qRun">3</b>执行中</div>
+          <div class="arc"><b id="qNeed">3</b>需要你</div>
+          <div class="arc"><b id="qJobs">8</b>编队</div>
+          <div class="arc"><b id="qCost">¥1.28</b>消耗</div>
+        </div>
+        <div class="hintline">没有要你决定的事 · 汐音在盯着<br /><kbd>⌥1</kbd> 看编队 · <kbd>⌘K</kbd> 随时下指令</div>
+      </div>
+
+      <div class="scene" id="sceneHost"></div>
+
+      <div class="comms" id="commsHost">
+        <div class="ch">
+          <span class="ct">COMMS</span>
+          <b>与汐音的对话</b>
+          <span class="note">派发、回执、拍板都在这条线上</span>
+          <button class="pin" id="commsPin">📌 钉住</button>
+          <button class="x" id="commsClose">✕</button>
+        </div>
+        <div class="flow" id="flow"></div>
+        <div class="cfoot">在下方指令条回我一句就行 · 面板打开时这条线会收起，回来还在</div>
+      </div>
+
+      <div class="crew" id="crew">
+        <div class="pod">
+          <img id="portrait" src="./crew/xiyin-idle.png" alt="汐音" />
+          <span class="pod-scan"></span>
+          <span class="pod-vg"></span>
+          <span class="pod-tag"><i></i>XIYIN-07 · 在线</span>
+          <span class="pod-name">汐音 <small>· 全域助理</small><em id="moodLabel">待命</em></span>
+        </div>
+        <div class="speech" id="speech">
+          <div class="who"><i></i>汐音 · 助理</div>
+          <div class="txt" id="speechText"></div>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <footer class="cmd">
+    <div class="ticker" id="ticker">
+      <span class="av"><img id="tickAv" src="./crew/xiyin-idle.png" alt="" /></span>
+      <span class="who">汐音</span>
+      <span class="tx" id="tickText">舱面就绪</span>
+      <span class="tm" id="tickTime"></span>
+      <span class="go">展开对话 ⌄</span>
+    </div>
+    <div class="box">
+      <span class="pr">❯</span>
+      <input id="cmdInput" placeholder="下指令，或者描述要开发的事…（⌘K）" />
+      <div class="chips">
+        <button class="chip" data-act="fleet"><span class="k">⌥1</span>编队</button>
+        <button class="chip" data-act="quiet"><span class="k">⌥2</span>安静</button>
+        <button class="chip" data-act="comms"><span class="k">⌘K</span>对话</button>
+      </div>
+      <button class="send" id="btnSend">⏎</button>
+    </div>
+  </footer>
+</div>
+
+<div class="overlay" id="cabinModal">
+  <div class="map" style="width:min(700px,94vw)">
+    <div class="map-h">
+      <b>作战舱 · 旧模式</b>
+      <span>入口示意：舱面右上「⛶ 全域」，会话与布局都不动</span>
+      <button class="x" id="cabinClose">✕</button>
+    </div>
+    <div class="map-b">
+      <div class="cabin-mock">
+        <div class="cm-top">
+          <span class="dot" style="color:var(--green)"></span><b>作战舱 · 账务中台</b>
+          <span class="cm-tag">/cabin/ledger · ledger-2 在执行</span>
+          <button class="cm-btn" id="enterGlobal">⛶ 全域</button>
+        </div>
+        <div class="cm-body">
+          <div class="cm-side">
+            <div class="cm-line w70"></div><div class="cm-line w85"></div><div class="cm-line w55"></div>
+            <div style="height:6px"></div>
+            <div class="cm-line w70"></div><div class="cm-line w40"></div><div class="cm-line w60"></div>
+            <div class="cm-line w50"></div><div class="cm-line w70"></div>
+          </div>
+          <div class="cm-chat">
+            <div class="cm-bub">指挥官，M2 的结算对账跑完了，改动和验收单我都摊好了。</div>
+            <div class="cm-bub me">M2 的验收跑完叫我</div>
+            <div class="cm-bub">收到。AC-4 大额差异还没覆盖，你决定本轮补不补。</div>
+            <div style="margin-top:auto" class="cm-line w40"></div>
+          </div>
+          <div class="cm-fleet">
+            <div class="cm-row" style="--accent:var(--green)"><i></i>M2 结算对账 · 等你</div>
+            <div class="cm-row" style="--accent:var(--cyan)"><i></i>合规审计 · 运行</div>
+            <div class="cm-row" style="--accent:var(--violet)"><i></i>发布脚本 · 运行</div>
+            <div class="cm-row" style="--accent:var(--red)"><i></i>M1 退款 · 受阻</div>
+          </div>
+        </div>
+      </div>
+      <div class="cm-note">点「⛶ 全域」进入全域座舱；⌥G 同效。返回时舱内会话、编队选择、聊天滚动位置都不变——全域模式是另一个模式，不是舱内的一次跳转。</div>
+    </div>
+  </div>
+</div>
+
+<div class="brief" id="brief">
+  <div class="bh">
+    <span class="av"><img src="./crew/xiyin-alert.png" alt="" /></span>
+    <span class="bid"><b>汐音 · 简报</b><span id="briefK">等你验收</span></span>
+    <button class="bx" id="briefClose">✕</button>
+  </div>
+  <div class="bt" id="briefText"></div>
+  <div class="bf">
+    <span class="dim" style="font-size:10px" id="briefMeta"></span>
+    <button class="btn pri" id="briefGo">查看 →</button>
+  </div>
+</div>
+
+<div class="overlay" id="overlay">
+  <div class="map">
+    <div class="map-h">
+      <b>作战舱 · 全域编队</b>
+      <span>编队是点，作业全集是面；聊天收放自如</span>
+      <button class="x" id="mapClose">✕</button>
+    </div>
+    <div class="map-b">
+      <div class="mgroup">
+        <div class="gt">两级<span class="ln"></span></div>
+        <div class="mgrid">
+          <div class="mcard"><b>编队（点）</b><span>3 个舱的并行作业同一张卡：类型 / 舱 / 状态 / 进度 / 谁在做。点一张，开它的全集。</span></div>
+          <div class="mcard"><b>作业全集（面）</b><span>概览 / 对接 / 运行 / 变更 / 验收五个页签，同一扇窗里看完，不跳走、不再开第二个窗。</span></div>
+        </div>
+      </div>
+      <div class="mgroup">
+        <div class="gt">场<span class="ln"></span></div>
+        <div class="mgrid">
+          <div class="mcard"><b>安静</b><span>关掉编队，只剩汐音、任务钟和遥测；⌥1 或点钟回编队。</span></div>
+          <div class="mcard"><b>通讯层</b><span>⌘K / 点 ticker 展开；与编队共用同一块内容区，可钉住；关掉不丢。</span></div>
+          <div class="mcard"><b>在场</b><span>汐音立绘随状态换表情（调度 / 推演 / 满意 / 担心），头顶对白与 ticker 同步。</span></div>
+          <div class="mcard"><b>回流</b><span>模拟回流：attention 落左栏、编队卡变「等你」、简报卡滑入，点开直达对应页签。</span></div>
+        </div>
+      </div>
+      <div class="mgroup">
+        <div class="gt">入口 / 退出<span class="ln"></span></div>
+        <div class="mgrid">
+          <div class="mcard"><b>从作战舱进入</b><span>舱面右上「⛶ 全域」；⌥G。旧舱面与舱内会话不动。</span></div>
+          <div class="mcard"><b>退出</b><span>「← 返回作战舱」或 Esc 先收编队、再收对话。</span></div>
+        </div>
+      </div>
+      <div class="map-note">
+        <b>规则：</b>一次只开一扇面；左栏永远在。编队是唯一索引，面是这一条作业的全部；
+        动作仍然回落到一句对话（通过 / 打回 / 接管 / 600），按钮只是兜底。
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+/* ─────────────────────── 基础 ─────────────────────── */
+const $ = (s) => document.querySelector(s)
+const esc = (s) => String(s == null ? '' : s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]))
+const pad = (n) => String(n).padStart(2, '0')
+const nowHM = () => { const d = new Date(); return pad(d.getHours()) + ':' + pad(d.getMinutes()) }
+const nowHMS = () => { const d = new Date(); return nowHM() + ':' + pad(d.getSeconds()) }
+function timeAt(i, total, stepSec = 40) {
+  const d = new Date(Date.now() - (total - 1 - i) * stepSec * 1000)
+  return pad(d.getHours()) + ':' + pad(d.getMinutes()) + ':' + pad(d.getSeconds())
+}
+const THEMES = ['hyperion', 'terminal', 'crimson']
+const PORTRAIT = {
+  idle: './crew/xiyin-idle.png', alert: './crew/xiyin-alert.png', working: './crew/xiyin-working.png',
+  thinking: './crew/xiyin-thinking.png', worried: './crew/xiyin-worried.png', happy: './crew/xiyin-happy.png',
+  cheer: './crew/xiyin-cheer.png', wink: './crew/xiyin-wink.png', sleep: './crew/xiyin-sleep.png',
+}
+const MOOD_LABEL = {
+  idle: '待命', alert: '提醒', working: '调度中', thinking: '推演中',
+  worried: '担心', happy: '满意', cheer: '欢呼', wink: '俏皮', sleep: '休眠',
+}
+
+/* ─────────────────────── 作业仓数据（沿用 v6） ─────────────────────── */
+const PROJECTS = [
+  { id: 'ledger', repo: 'XzhiF/ledger', branch: 'main', color: 'var(--green)', trees: 2, prog: 78 },
+  { id: 'gateway', repo: 'XzhiF/gateway', branch: 'main', color: 'var(--cyan)', trees: 2, prog: 32 },
+  { id: 'risk', repo: 'XzhiF/risk', branch: 'main', color: 'var(--violet)', trees: 0, prog: 0 },
+]
+
+const RUNS = [
+  {
+    id: 'r-118', wf: 'spec-dev', wfName: '规格开发流', proj: 'ledger',
+    task: 'M2 · 结算对账', taskId: 'm2', branch: 'fix/reconcile', session: 's-42',
+    state: 'run', elapsed: '18m12s', cost: '¥0.42',
+    nodes: [
+      { key: 'spec', label: 'spec · 规格', s: 'done', d: '1m12s', agent: 'ledger-2', tok: '18k', art: 'spec.md',
+        note: 'spec.md · 3 phase · AC 1–4', log: [
+          ['read', 'tool', '读 task m2 · brief + 3 条历史 finding'],
+          ['think', 'think', '拆成 3 个 phase：对账 / 幂等 / 差异告警'],
+          ['write', 'tool', '写 spec.md · AC 1–4 · 验收方式绑定'],
+          ['done', 'ok', 'spec 定稿 · 1m12s'] ] },
+      { key: 'issues', label: 'issues · 拆解', s: 'done', d: '48s', agent: 'ledger-2', tok: '9k', art: 'issues/',
+        note: '4 个 ticket · 依赖已排', log: [
+          ['read', 'tool', '读 spec.md'],
+          ['write', 'tool', 'issues/01-reconcile.md … 04-large-diff.md'],
+          ['done', 'ok', '拆解完成 · 4 tickets · 无环依赖'] ] },
+      { key: 'impl', label: 'impl · 实现', s: 'done', d: '11m04s', agent: 'ledger-2', tok: '84k', art: '2 files',
+        note: '4/4 AC · 2 文件 +184/−32', log: [
+          ['bash', 'tool', 'git checkout -b fix/reconcile'],
+          ['edit', 'tool', 'src/settlement/reconcile.ts'],
+          ['test', 'ok', 'pnpm vitest settlement → 42 passed'],
+          ['edit', 'tool', 'src/settlement/reconcile.test.ts'],
+          ['done', 'ok', '实现完成 · +184/−32'] ] },
+      { key: 'verify', label: 'verify · 验收', s: 'run', d: '3m20s', agent: 'ledger-2', tok: '17k', art: 'evidence.json',
+        note: '3/5 用例 · AC-4 未覆盖', log: [
+          ['bash', 'tool', 'pnpm vitest settlement.reconcile'],
+          ['ok', 'ok', '42 passed · 5 cases · 0 failed'],
+          ['bash', 'tool', 'git diff --stat main...HEAD'],
+          ['ok', 'ok', '2 files changed · +184 −32'],
+          ['warn', 'err', 'AC-4 大额差异（>10 万）无覆盖用例'],
+          ['write', 'tool', 'acceptance-evidence.json · 3 场景 / 12 checks'],
+          ['read', 'tool', 'acceptance-plan-r3.json'],
+          ['ok', 'ok', 'checks 11/12 · 1 warn'],
+          ['run', 'think', '生成验收单，等你决定是否本轮补 AC-4'] ] },
+      { key: 'deliver', label: 'deliver · 交付', s: 'wait', d: '—', agent: 'ledger-2',
+        note: '等 verify 完成 · 验收后自动开 PR', log: [['wait', '', '尚未执行']] },
+    ],
+  },
+  {
+    id: 'r-117', wf: 'rate-limit', wfName: '限流实施流', proj: 'gateway',
+    task: 'M2 · 限流阈值', taskId: 'm2g', branch: 'feat/rate-limit', session: 's-37',
+    state: 'wait', elapsed: '12m40s', cost: '¥0.31',
+    nodes: [
+      { key: 'spec', label: 'spec · 规格', s: 'done', d: '52s', agent: 'gateway-1', note: '阈值 3 方案', log: [
+        ['read', 'tool', '读网关容量基线'], ['done', 'ok', 'spec 定稿 · 3 方案'] ] },
+      { key: 'probe', label: 'probe · 压测', s: 'done', d: '9m00s', agent: 'gateway-1', note: '600 / 900 / 1200 三档曲线', log: [
+        ['bash', 'tool', 'wrk -c200 -d1800s'], ['ok', 'ok', '三档曲线已出 · 拐点约 700 rps'] ] },
+      { key: 'decide', label: 'decide · 拍板', s: 'wait', d: '等 12m', agent: 'gateway-1', note: '等你选阈值',
+        log: [['wait', '', '暂停 · 等指挥拍板']] },
+      { key: 'impl', label: 'impl · 落配置', s: 'wait', d: '—', agent: 'gateway-1', note: '依赖 decide', log: [] },
+      { key: 'rollout', label: 'rollout · 灰度', s: 'wait', d: '—', agent: 'gateway-1', note: '依赖 impl', log: [] },
+    ],
+  },
+  {
+    id: 'r-115', wf: 'refund-flow', wfName: '退款链修复', proj: 'gateway',
+    task: 'M1 · 退款链路', taskId: 'm1', branch: 'feat/refund-flow', session: 's-33',
+    state: 'fail', elapsed: '9m03s', cost: '¥0.27',
+    nodes: [
+      { key: 'spec', label: 'spec · 规格', s: 'done', d: '44s', agent: 'gateway-2', note: 'AC 1–3', log: [
+        ['read', 'tool', '读退款链路 spec'], ['done', 'ok', 'spec 定稿'] ] },
+      { key: 'impl', label: 'impl · 实现', s: 'done', d: '7m40s', agent: 'gateway-2', note: '2 文件 +96/−41', log: [
+        ['edit', 'tool', 'refund/replay.ts'], ['edit', 'tool', 'refund/replay.test.ts'], ['done', 'ok', '实现完成'] ] },
+      { key: 'verify', label: 'verify · 验收', s: 'fail', d: '0m48s', agent: 'gateway-2', note: 'idempotent replay 断言失败', log: [
+        ['bash', 'tool', 'pnpm test'],
+        ['err', 'err', 'AssertionError: expected 1 but got 2'],
+        ['err', 'err', 'at reconcile.test.ts:90:22'],
+        ['stop', 'err', 'CI stopped · 等你处置'] ] },
+      { key: 'deliver', label: 'deliver · 交付', s: 'wait', d: '—', agent: 'gateway-2', note: 'CI 绿后才能进', log: [] },
+    ],
+  },
+  {
+    id: 'r-119', wf: 'risk-scan', wfName: '风控扫描', proj: 'risk',
+    task: 'M3 · 风控告警', taskId: 'm3', branch: '—', session: '—',
+    state: 'queue', elapsed: '—', cost: '¥0.00',
+    nodes: [ { key: 'scan', label: 'scan · 扫描', s: 'wait', d: '—', agent: 'risk-1', note: '排队中', log: [] } ],
+  },
+]
+
+const SESSIONS = [
+  { id: 's-42', name: 'ledger-2', proj: 'ledger', run: 'r-118', task: 'M2 · 结算对账', taskId: 'm2', status: 'run',
+    model: 'opus-5', tok: '128k / 200k', elapsed: '18m', worktree: 'fix/reconcile',
+    doing: '跑 verify · settlement.reconcile', tools: ['bash', 'edit', 'read', 'write'],
+    log: [
+      ['read', 'tool', '读 spec.md + issues/01…04'],
+      ['edit', 'tool', 'reconcile.ts · 幂等键 (日期, 账户)'],
+      ['edit', 'tool', 'reconcile.test.ts · 补同日重复用例'],
+      ['bash', 'tool', 'pnpm vitest settlement.reconcile'],
+      ['ok', 'ok', '42 passed · 0 failed'],
+      ['think', 'think', 'AC-4 的用例不在 ticket 里，先记一笔'],
+      ['write', 'tool', 'acceptance-evidence.json · 3 场景 / 12 checks'],
+      ['bash', 'tool', 'git diff --stat main...HEAD'],
+      ['ok', 'ok', '2 files · +184 −32'],
+      ['read', 'tool', 'round-report.md · round 3'],
+      ['run', 'think', '生成验收单，等指挥确认'],
+    ] },
+  { id: 's-31', name: 'ledger-1', proj: 'ledger', run: null, task: 'M2 · 结算对账', taskId: 'm2', status: 'run',
+    model: 'haiku-4.5', tok: '34k / 200k', elapsed: '6m', worktree: 'archive/m2',
+    doing: '归档沉淀 · 编译 wiki', tools: ['read', 'write'],
+    log: [
+      ['read', 'tool', '读 round-report.md'],
+      ['think', 'think', '抽 2 条可复用结论'],
+      ['write', 'tool', 'wiki/entities/结算对账.md'],
+      ['read', 'tool', 'wiki/INDEX.md'],
+      ['write', 'tool', 'wiki/INDEX.md · 新增 1 条'],
+      ['run', 'think', '检查术语冲突：幂等键 1 处'],
+    ] },
+  { id: 's-37', name: 'gateway-1', proj: 'gateway', run: 'r-117', task: 'M2 · 限流阈值', taskId: null, status: 'wait',
+    model: 'sonnet-5', tok: '96k / 200k', elapsed: '12m', worktree: 'feat/rate-limit',
+    doing: '决策点已就绪 · 等汐音举牌', tools: ['bash', 'read'],
+    log: [
+      ['probe', 'ok', '压测完成 · 三档曲线已出'],
+      ['write', 'tool', 'decision/threshold.md · 3 方案'],
+      ['wait', '', '已暂停 · 等指挥回复 600 / 900 / 再压测'],
+    ] },
+  { id: 's-33', name: 'gateway-2', proj: 'gateway', run: 'r-115', task: 'M1 · 退款链路', taskId: 'm1', status: 'fail',
+    model: 'sonnet-5', tok: '71k / 200k', elapsed: '9m', worktree: 'feat/refund-flow',
+    doing: 'CI 红 · 现场已冻结', tools: ['bash', 'edit'],
+    log: [
+      ['bash', 'tool', 'pnpm test'],
+      ['err', 'err', 'AssertionError: expected 1 but got 2'],
+      ['stop', 'err', '已停止 · 现场保留'],
+    ] },
+]
+
+const TASKS = [
+  { id: 'm2', code: 'M2', name: '结算对账', proj: 'ledger', pct: 78, status: '待验收', pillCls: 'wait',
+    phases: [
+      { t: '规格', s: 'done', d: 'spec.md · 3 phase · AC 1–4', when: '昨天 22:10' },
+      { t: '拆解', s: 'done', d: '4 个 ticket · 依赖无环', when: '昨天 22:24' },
+      { t: '实现', s: 'done', d: 'round 3 · 42 passed · +184/−32', when: '今天 09:38' },
+      { t: '验收', s: 'warn', d: 'AC-4 未覆盖 · 等你决定是否本轮补', when: '今天 09:41' },
+      { t: '交付', s: 'now', d: '可先开 draft · 验收通过后转 ready', when: '—' },
+    ],
+    delivery: { pr: null, state: '待验收后开', branch: 'fix/reconcile', commits: 2, files: 2, add: 184, del: 32 },
+    ac: [
+      { s: 'ok', t: '对账单按日聚合，跨零点不重复', d: 'AC-1 · 单测覆盖' },
+      { s: 'ok', t: '差异 > 1 分自动挂起并告警', d: 'AC-2 · round 3 验证' },
+      { s: 'ok', t: '补跑幂等：同日重复执行结果一致', d: 'AC-3 · 新增用例通过' },
+      { s: 'warn', t: '大额差异（>10 万）需人工复核', d: 'AC-4 · 未覆盖，建议下一轮补' },
+    ] },
+  { id: 'm1', code: 'M1', name: '退款链路', proj: 'gateway', pct: 32, status: '阻塞', pillCls: 'red',
+    phases: [
+      { t: '规格', s: 'done', d: 'spec.md · AC 1–3', when: '昨天 18:02' },
+      { t: '实现', s: 'done', d: 'round 1 · 2 文件 +96/−41', when: '今天 09:21' },
+      { t: '验收', s: 'fail', d: 'CI 红 · idempotent replay', when: '今天 09:38' },
+      { t: '交付', s: 'wait', d: 'CI 绿后自动发起', when: '—' },
+    ],
+    delivery: { pr: null, state: 'CI 红阻断', branch: 'feat/refund-flow', commits: 1, files: 2, add: 96, del: 41 },
+    ac: [
+      { s: 'ok', t: '退款幂等重放', d: 'AC-1 · 单测覆盖' },
+      { s: 'no', t: '并发同单只退一次', d: 'AC-2 · CI 红 · idempotent replay' },
+    ] },
+  { id: 'm3', code: 'M3', name: '风控告警', proj: 'risk', pct: 0, status: '待启动', pillCls: '',
+    phases: [
+      { t: '规格', s: 'wait', d: '提案 · 等你启动', when: '—' },
+      { t: '实现', s: 'wait', d: '—', when: '—' },
+      { t: '验收', s: 'wait', d: '—', when: '—' },
+      { t: '交付', s: 'wait', d: '—', when: '—' },
+    ],
+    delivery: { pr: null, state: '未开始', branch: '—', commits: 0, files: 0, add: 0, del: 0 },
+    ac: [] },
+]
+
+const CHANGES = {
+  branch: 'fix/reconcile', base: 'main', ahead: 2, pr: null,
+  commits: [
+    { sha: 'a1f9c2e', msg: 'fix(settle): 幂等键改为 (日期, 账户)', when: '09:34' },
+    { sha: '7d2b410', msg: 'test(settle): 补同日重复执行用例', when: '09:38' },
+  ],
+  files: [
+    { id: 'reconcile', path: 'ledger/src/settlement/reconcile.ts', state: 'M', add: 142, del: 18, hunk: '@@ −41,7 +41,12 @@', diff: [
+      ['ctx', '41', 'export function reconcile(day: string) {'],
+      ['del', '42', "-  const rows = loadRows(day)"],
+      ['add', '42', "+  const key = day + ':' + accountId"],
+      ['add', '43', '+  if (seen.has(key)) return { skipped: true }'],
+      ['add', '44', '+  const rows = loadRows(day, { dedupeBy: key })'],
+      ['ctx', '45', '  return settle(rows)'],
+      ['ctx', '46', '}'],
+      ['', '…', ''],
+      ['ctx', '88', 'export function settle(rows: Row[]) {'],
+      ['add', '89', '+  return rows.filter((r) => !r.skipped)'],
+      ['ctx', '90', '}'],
+    ] },
+    { id: 'test', path: 'ledger/src/settlement/reconcile.test.ts', state: 'M', add: 42, del: 14, hunk: '@@ −86,7 +86,8 @@', diff: [
+      ['ctx', '86', "describe('reconcile', () => {"],
+      ['add', '88', "+  it('replays the same day idempotently', () => {"],
+      ['add', '89', "+    reconcile('2026-11-12'); reconcile('2026-11-12')"],
+      ['add', '90', '+    expect(settlements()).toHaveLength(1)'],
+      ['add', '91', '+  })'],
+      ['ctx', '92', '})'],
+    ] },
+  ],
+  checks: [
+    { s: 'ok', t: '单元测试 42 passed', d: 'settlement.reconcile · 5 cases' },
+    { s: 'ok', t: 'lint 0 error', d: 'pnpm lint · 2 files changed' },
+    { s: 'ok', t: '变更范围 = 2 文件', d: '没有越界改动' },
+    { s: 'warn', t: 'AC-4 缺 1 条覆盖用例', d: '大额差异人工复核' },
+    { s: 'ok', t: '验收单已生成', d: '3 场景 / 12 checks' },
+  ],
+}
+
+/* ─────────────────────── Trace / 消耗 ───────────────────────
+   座舱是主体：汐音在左，中间是各类 Agent，右边是它们执行的工作流。
+   右侧交互流是追加式时间线；消耗按主体分列，防止 chat / subagent 双算。 */
+const TRACE = {
+  nodes: [
+    { id: 'root', kind: 'root', name: '汐音', sub: '座舱 · orchestrator', x: 44, y: 136, w: 132, h: 46, cost: 0.18, tok: '42k', state: 'run' },
+    { id: 'chat', kind: 'chat', name: '对话 Agent', sub: 'comms · 意图 / 回执', x: 320, y: 26, w: 156, h: 38, cost: 0.05, tok: '18k', state: 'run' },
+    { id: 'ledger-2', kind: 'agent', name: 'ledger-2', sub: '任务 Agent · M2', x: 320, y: 90, w: 156, h: 38, cost: 0.42, tok: '128k', state: 'run' },
+    { id: 'gateway-1', kind: 'agent', name: 'gateway-1', sub: '任务 Agent · 限流', x: 320, y: 154, w: 156, h: 38, cost: 0.31, tok: '96k', state: 'wait' },
+    { id: 'gateway-2', kind: 'agent', name: 'gateway-2', sub: '任务 Agent · 退款', x: 320, y: 218, w: 156, h: 38, cost: 0.27, tok: '71k', state: 'fail' },
+    { id: 'ledger-1', kind: 'agent', name: 'ledger-1', sub: '归档 Agent · wiki', x: 320, y: 282, w: 156, h: 38, cost: 0.05, tok: '34k', state: 'run' },
+    { id: 'r-118', kind: 'wf', name: 'spec-dev', sub: 'r-118 · 3/5 节点', x: 650, y: 58, w: 150, h: 38, state: 'run' },
+    { id: 'r-117', kind: 'wf', name: 'rate-limit', sub: 'r-117 · 3/5 节点', x: 650, y: 123, w: 150, h: 38, state: 'wait' },
+    { id: 'r-115', kind: 'wf', name: 'refund-flow', sub: 'r-115 · 3/4 节点', x: 650, y: 188, w: 150, h: 38, state: 'fail' },
+  ],
+  edges: [
+    { a: 'root', b: 'chat', kind: 'dispatch' },
+    { a: 'root', b: 'ledger-2', kind: 'dispatch' },
+    { a: 'root', b: 'gateway-1', kind: 'dispatch' },
+    { a: 'root', b: 'gateway-2', kind: 'dispatch' },
+    { a: 'root', b: 'ledger-1', kind: 'dispatch' },
+    { a: 'ledger-2', b: 'r-118', kind: 'run' },
+    { a: 'gateway-1', b: 'r-117', kind: 'run' },
+    { a: 'gateway-2', b: 'r-115', kind: 'run' },
+  ],
+}
+
+const TRACE_KIND = {
+  human: { label: '人输入', cls: 'human' },
+  dispatch: { label: '派发', cls: 'dispatch' },
+  report: { label: '回报', cls: 'report' },
+  attention: { label: '需注意', cls: 'attention' },
+  tool: { label: '工具', cls: 'tool' },
+  note: { label: '备注', cls: 'note' },
+}
+
+const TRACE_EVENTS = [
+  { t: '09:31', k: 'human', from: '指挥官', to: '汐音', s: 'M2 的验收跑完叫我', nodes: ['root'] },
+  { t: '09:31', k: 'dispatch', from: '汐音', to: 'ledger-2', s: '接 M2 结算对账，走 spec-dev · AC 1–4', nodes: ['root', 'ledger-2', 'r-118'] },
+  { t: '09:31', k: 'dispatch', from: '汐音', to: 'gateway-1', s: '接限流实施，先出三档压测；到拍板点停下', nodes: ['root', 'gateway-1', 'r-117'] },
+  { t: '09:31', k: 'dispatch', from: '汐音', to: 'gateway-2', s: '接 M1 退款链，修 idempotent replay', nodes: ['root', 'gateway-2', 'r-115'] },
+  { t: '09:32', k: 'report', from: 'ledger-2', to: '汐音', s: 'spec 定稿 · 3 phase · 1m12s', nodes: ['ledger-2', 'root', 'r-118'] },
+  { t: '09:33', k: 'report', from: 'ledger-2', to: '汐音', s: '拆解完成 · 4 tickets · 依赖无环', nodes: ['ledger-2', 'root', 'r-118'] },
+  { t: '09:36', k: 'tool', from: 'ledger-2', to: 'spec-dev', s: 'pnpm vitest settlement → 42 passed', nodes: ['ledger-2', 'r-118'] },
+  { t: '09:38', k: 'attention', from: 'gateway-2', to: '汐音', s: 'CI 红：AssertionError expected 1 got 2', nodes: ['gateway-2', 'root', 'r-115'] },
+  { t: '09:38', k: 'report', from: '汐音', to: 'gateway-2', s: '先停住、现场保留；我评估 rebase 还是回滚', nodes: ['root', 'gateway-2'] },
+  { t: '09:40', k: 'report', from: 'gateway-1', to: '汐音', s: '三档压测已出，拐点约 700 rps，到拍板点', nodes: ['gateway-1', 'root', 'r-117'] },
+  { t: '09:41', k: 'attention', from: 'ledger-2', to: '汐音', s: 'AC-4 大额差异未覆盖，等你决定本轮补不补', nodes: ['ledger-2', 'root', 'r-118'] },
+  { t: '09:41', k: 'report', from: '汐音', to: '指挥官', s: 'M2 可以验收；证据与变更已摊好', nodes: ['root', 'chat'] },
+  { t: '09:42', k: 'human', from: '指挥官', to: '汐音', s: '把 limit 的决策也一起摊开', nodes: ['root', 'chat'] },
+  { t: '09:42', k: 'report', from: '汐音', to: 'gateway-1', s: '已升级给指挥官，等 600 / 900', nodes: ['root', 'gateway-1', 'r-117'] },
+  { t: '09:44', k: 'tool', from: 'ledger-1', to: 'wiki', s: '编译 wiki/entities/结算对账.md', nodes: ['ledger-1'] },
+  { t: '09:45', k: 'note', from: '汐音', to: 'risk-scan', s: '风控扫描排队，等 M2 让出并发位', nodes: ['root', 'r-119'] },
+]
+
+const USAGE = {
+  total: 1.28, window: 1.02, calls: 42, tokIn: '312k', tokOut: '48k',
+  rows: [
+    { id: 'root', name: '汐音 · 主对话', sub: 'chat · execution_id IS NULL', cost: 0.18, tok: '42k', color: 'var(--b)' },
+    { id: 'ledger-2', name: 'ledger-2', sub: '任务 Agent · M2', cost: 0.42, tok: '128k', color: 'var(--cyan)' },
+    { id: 'gateway-1', name: 'gateway-1', sub: '任务 Agent · 限流', cost: 0.31, tok: '96k', color: 'var(--cyan)' },
+    { id: 'gateway-2', name: 'gateway-2', sub: '任务 Agent · 退款', cost: 0.27, tok: '71k', color: 'var(--cyan)' },
+    { id: 'ledger-1', name: 'ledger-1', sub: '归档 Agent · wiki', cost: 0.05, tok: '34k', color: 'var(--green)' },
+    { id: 'chat', name: '对话 Agent', sub: 'comms · 意图 / 回执', cost: 0.05, tok: '18k', color: 'var(--violet)' },
+  ],
+  models: [
+    { name: 'opus-5', pct: 64, cost: 0.82, color: 'var(--violet)' },
+    { name: 'sonnet-5', pct: 30, cost: 0.38, color: 'var(--cyan)' },
+    { name: 'haiku-4.5', pct: 6, cost: 0.08, color: 'var(--green)' },
+  ],
+  ticks: [2, 4, 3, 6, 5, 8, 7, 11],
+}
+
+
+
+/* ─────────────────────── v9 · 编队 / 作业全集 ─────────────────────── */
+const JOB_STATUS = { run: '运行中', wait: '等你', blocked: '受阻', queue: '排队', done: '完成', abort: '已停' }
+const JOB_KIND = {
+  task: { label: '任务', glyph: '▣', color: 'var(--green)' },
+  workflow: { label: '工作流', glyph: '◈', color: 'var(--cyan)' },
+  wfdev: { label: '流开发', glyph: '⌥', color: 'var(--violet)' },
+  subagent: { label: '子代理', glyph: '✦', color: 'var(--pink)' },
+  external: { label: '外部 agent', glyph: '⇥', color: 'var(--amber)' },
+}
+const PROJ_NAME = { ledger: '账务中台', gateway: '网关', risk: '风控' }
+const ACTORS = {
+  '汐音': { label: '汐音', color: 'var(--b)' },
+  '指挥官': { label: '指挥官', color: 'var(--green)' },
+  'ledger-2': { label: 'ledger-2', color: 'var(--cyan)' },
+  'ledger-1': { label: 'ledger-1', color: 'var(--green)' },
+  'gateway-1': { label: 'gateway-1', color: 'var(--cyan)' },
+  'gateway-2': { label: 'gateway-2', color: 'var(--cyan)' },
+  'claude-code': { label: 'claude-code', color: 'var(--amber)' },
+}
+const actor = (n) => ACTORS[n] || { label: n || '—', color: 'var(--dim)' }
+
+const JOBS_INIT = [
+  { id: 'j-m2', proj: 'ledger', kind: 'task', title: 'M2 · 结算对账', status: 'wait', pct: 100,
+    doing: '停在验收 · AC-4 待决定', agent: 'ledger-2', branch: 'fix/reconcile', clock: '41m12s', cost: 0.42,
+    run: 'r-118', task: 'm2', session: 's-42' },
+  { id: 'j-m2g', proj: 'gateway', kind: 'workflow', title: 'M2 · 限流阈值', status: 'wait', pct: 60,
+    doing: 'decide 节点暂停 · 等你选阈值', agent: 'gateway-1', branch: 'feat/rate-limit', clock: '12m40s', cost: 0.31,
+    run: 'r-117', session: 's-37' },
+  { id: 'j-m1', proj: 'gateway', kind: 'workflow', title: 'M1 · 退款链路', status: 'blocked', pct: 72,
+    doing: 'CI 红 · 现场冻结', agent: 'gateway-2', branch: 'feat/refund-flow', clock: '9m03s', cost: 0.27,
+    run: 'r-115', task: 'm1', session: 's-33' },
+  { id: 'j-arch', proj: 'ledger', kind: 'subagent', title: '归档沉淀 · M2', status: 'run', pct: 40,
+    doing: '编译 wiki/entities/结算对账.md', agent: 'ledger-1', branch: 'archive/m2', clock: '6m10s', cost: 0.05,
+    session: 's-31' },
+  { id: 'j-ext', proj: 'gateway', kind: 'external', title: '合规审计 · 网关', status: 'run', pct: 65,
+    doing: '扫描配置 · 2 处偏差', agent: 'claude-code', branch: 'audit/gateway', clock: '22m', cost: 0.10 },
+  { id: 'j-m2x', proj: 'ledger', kind: 'wfdev', title: '发布脚本迁移', status: 'run', pct: 55,
+    doing: '迁移第 4/7 个发布脚本', agent: 'ledger-2', branch: 'feat/release-scripts', clock: '8m', cost: 0.05 },
+  { id: 'j-m3', proj: 'risk', kind: 'task', title: 'M3 · 风控告警', status: 'queue', pct: 0,
+    doing: '排队 · 等并发位', agent: '—', branch: '—', clock: '—', cost: 0, task: 'm3' },
+  { id: 'j-m2a', proj: 'ledger', kind: 'workflow', title: 'M1 · 幂等修复', status: 'done', pct: 100,
+    doing: '已验收归档 · 报告在产物', agent: 'ledger-2', branch: 'fix/idempotent', clock: '34m', cost: 0.08 },
+]
+
+const ATTENTION_INIT = [
+  { id: 'a1', job: 'j-m2', tab: 'accept', k: '等你验收', t: 'M2 · 结算对账 做完了',
+    s: 'ledger · 2 文件 +184/−32 · 3 轮通过', color: 'var(--green)', cta: '看证据',
+    line: '指挥官，M2 的结算对账跑完了，改动和验收单我都摊好了。' },
+  { id: 'a2', job: 'j-m2g', tab: 'run', k: '等你拍板', t: '网关限流阈值定多少？',
+    s: 'gateway · 三档压测已出 · 3 个方案', color: 'var(--cyan)', cta: '看方案',
+    line: '指挥官，分身卡在一个决策上：网关限流阈值。三个方案我替你评估过了。' },
+  { id: 'a3', job: 'j-m1', tab: 'run', k: '阻塞', t: 'M1 · 退款链路 CI 红了',
+    s: 'gateway · 已停 3 分钟 · idempotent replay 断言失败', color: 'var(--red)', cta: '看现场',
+    line: '指挥官，M1 那边红了，我先停住了。要不要回滚到上一个绿提交？' },
+]
+
+const QUEUE_INIT = [
+  { id: 'a4', job: 'j-ext', tab: 'accept', k: '等你验收', t: '合规审计 · 网关 回传了',
+    s: 'gateway · 外部 agent · 2 处配置偏差', color: 'var(--amber)', pct: 100,
+    line: '外部 agent 的合规审计回传了，2 处配置偏差，我按证据整理好了。',
+    chat: '外部 agent 的审计回传了：staging 突发 1800、prod 1200，两处对不上。要统一吗？' },
+  { id: 'a5', job: 'j-m2x', tab: 'run', k: '等你确认', t: '发布脚本迁移 跑到一半',
+    s: 'ledger · 4/7 脚本已迁 · 需要你定回滚策略', color: 'var(--violet)', pct: 55,
+    line: '发布脚本迁移到第 4 个了，回滚策略要你定一下，我停在安全点上。',
+    chat: '迁移到第 4 个脚本时遇到回滚边界：要按脚本级回滚，还是整批回滚？' },
+]
+
+const JOB_EVENTS = {
+  'j-m2': [
+    ['09:31', '汐音', 'dispatch', '接 M2 结算对账，走 spec-dev · AC 1–4'],
+    ['09:32', 'ledger-2', 'report', 'spec 定稿 · 3 phase · 1m12s'],
+    ['09:33', 'ledger-2', 'report', '拆解完成 · 4 tickets · 依赖无环'],
+    ['09:36', 'ledger-2', 'tool', 'pnpm vitest settlement → 42 passed'],
+    ['09:41', 'ledger-2', 'attention', 'AC-4 大额差异未覆盖，等你决定本轮补不补'],
+    ['09:41', '汐音', 'report', 'M2 可以验收；证据与变更已摊好'],
+  ],
+  'j-m2g': [
+    ['09:31', '汐音', 'dispatch', '接限流实施，先出三档压测；到拍板点停下'],
+    ['09:40', 'gateway-1', 'report', '三档压测已出，拐点约 700 rps，到拍板点'],
+    ['09:40', 'gateway-1', 'attention', '阈值 600 / 900 / 再压测，等你选'],
+    ['09:41', '汐音', 'report', '已升级给指挥官，停在 decide 节点'],
+  ],
+  'j-m1': [
+    ['09:31', '汐音', 'dispatch', '接 M1 退款链，修 idempotent replay'],
+    ['09:38', 'gateway-2', 'report', 'impl 完成 · 2 文件 +96/−41'],
+    ['09:38', 'gateway-2', 'attention', 'CI 红：AssertionError expected 1 but got 2'],
+    ['09:39', '汐音', 'report', '先停住、现场保留；我评估 rebase 还是回滚'],
+  ],
+  'j-arch': [
+    ['09:31', '汐音', 'dispatch', 'M2 归档沉淀 · 编译 wiki'],
+    ['09:34', 'ledger-1', 'report', '抽 2 条可复用结论 · 1 处术语冲突'],
+    ['09:36', 'ledger-1', 'tool', '写 wiki/entities/结算对账.md'],
+  ],
+  'j-ext': [
+    ['09:20', '汐音', 'dispatch', '派外部 agent 做合规审计 · 只回报结果'],
+    ['09:36', 'claude-code', 'tool', '扫描 12 个配置文件 · 2 处偏差'],
+    ['09:38', 'claude-code', 'report', '审计报告回传 · 无越权改动'],
+  ],
+  'j-m2x': [
+    ['09:31', '汐音', 'dispatch', '发布脚本迁移 · 4/7'],
+    ['09:39', 'ledger-2', 'report', '前 3 个脚本已迁 · 第 4 个遇到回滚边界'],
+    ['09:40', 'ledger-2', 'attention', '回滚策略要你定 · 停在安全点'],
+  ],
+  'j-m3': [
+    ['09:31', '汐音', 'note', '风控扫描排队 · 等并发位'],
+  ],
+  'j-m2a': [
+    ['08:42', '汐音', 'dispatch', 'M1 幂等修复 · 上一轮已收束'],
+    ['08:58', 'ledger-2', 'report', '2 文件 +96/−41 · 42 passed'],
+    ['09:02', 'ledger-2', 'report', '验收通过 · 已归档'],
+  ],
+}
+
+const JOB_RELAY = {
+  'j-m2': [
+    ['you', '指挥官', '汐音', 'M2 的验收跑完叫我'],
+    ['xy', '汐音', 'ledger-2', '接 M2 结算对账，走 spec-dev；AC 1–4 逐条对齐'],
+    ['doer', 'ledger-2', '汐音', 'spec 定稿 · 3 phase · AC 1–4'],
+    ['doer', 'ledger-2', '汐音', 'impl 完成 · 2 文件 +184/−32 · 42 passed'],
+    ['doer', 'ledger-2', '汐音', 'AC-4 大额差异缺覆盖，要指挥决定本轮补不补'],
+    ['xy', '汐音', '指挥官', 'M2 可以验收；AC-4 建议下一轮补，证据已摊好'],
+  ],
+  'j-m2g': [
+    ['you', '指挥官', '汐音', '限流方案先压测，别急着上'],
+    ['xy', '汐音', 'gateway-1', '接限流实施，三档压测；到拍板点停下等我'],
+    ['doer', 'gateway-1', '汐音', '三档曲线已出：拐点约 700 rps'],
+    ['doer', 'gateway-1', '汐音', 'decide 节点暂停 · 600 / 900 / 再压测'],
+    ['xy', '汐音', '指挥官', '压测结果和三个方案都摊好了，你拍板我就改配置跑回归'],
+  ],
+  'j-m1': [
+    ['you', '指挥官', '汐音', 'M1 退款链路修一下，跑完告诉我'],
+    ['xy', '汐音', 'gateway-2', '接 M1 退款链，修 idempotent replay；AC 1–3'],
+    ['doer', 'gateway-2', '汐音', 'impl 完成 · 2 文件 +96/−41'],
+    ['doer', 'gateway-2', '汐音', 'verify 红了：expected 1 but got 2 · reconcile.test.ts:90'],
+    ['xy', '汐音', '指挥官', '已停住、现场保留；像是没 rebase 到最新的幂等修复，等你一句话'],
+  ],
+}
+
+const CHANGES_M1 = {
+  branch: 'feat/refund-flow', base: 'main', ahead: 1,
+  commits: [{ sha: '3c81ab4', msg: 'fix(refund): 重放时复用幂等键', when: '09:21' }],
+  files: [
+    { id: 'replay', path: 'gateway/src/refund/replay.ts', state: 'M', add: 71, del: 33, hunk: '@@ −18,5 +18,6 @@', diff: [
+      ['ctx', '18', 'export function replay(orderId: string) {'],
+      ['del', '19', '  if (seen.has(orderId)) return'],
+      ['add', '19', "  const key = orderId + ':' + idempotencyKey"],
+      ['add', '20', '  if (seen.has(key)) return { skipped: true }'],
+      ['ctx', '21', '  return refund(orderId)'],
+      ['ctx', '22', '}'],
+    ] },
+    { id: 'replaytest', path: 'gateway/src/refund/replay.test.ts', state: 'M', add: 25, del: 8, hunk: '@@ −88,4 +88,4 @@', diff: [
+      ['ctx', '88', "it('replays idempotently', () => {"],
+      ['add', '89', '  replay(order); replay(order)'],
+      ['add', '90', '  expect(refunds()).toHaveLength(1)'],
+      ['ctx', '91', '})'],
+    ] },
+  ],
+}
+
+const CHANGES_M2G = {
+  branch: 'feat/rate-limit', base: 'main', ahead: 1,
+  commits: [{ sha: 'c0a91fe', msg: 'feat(gateway): 限流阈值落配置中心', when: '09:20' }],
+  files: [
+    { id: 'limit', path: 'gateway/config/rate-limit.yaml', state: 'M', add: 3, del: 1, hunk: '@@ −1,4 +1,5 @@', diff: [
+      ['ctx', '1', 'limits:'],
+      ['del', '2', '  rps: 1200'],
+      ['add', '2', '  rps: 600'],
+      ['add', '3', '  burst: 1200'],
+      ['ctx', '4', '  window: 1s'],
+    ] },
+  ],
+}
+
+const CHANGES_M2A = {
+  branch: 'fix/idempotent', base: 'main', ahead: 2,
+  commits: [
+    { sha: '9be17c3', msg: 'fix(settle): 同日重复执行只落一笔', when: '08:55' },
+    { sha: '4a0e812', msg: 'test(settle): 补重放用例', when: '08:57' },
+  ],
+  files: [
+    { id: 'settle', path: 'ledger/src/settlement/reconcile.ts', state: 'M', add: 58, del: 21, hunk: '@@ −41,5 +41,5 @@', diff: [
+      ['ctx', '41', 'export function reconcile(day: string) {'],
+      ['add', '42', "  const key = day + ':' + accountId"],
+      ['add', '43', '  if (seen.has(key)) return { skipped: true }'],
+      ['ctx', '44', '  return settle(loadRows(day))'],
+      ['ctx', '45', '}'],
+    ] },
+  ],
+}
+
+const AC_GENERIC = ['产物写入任务目录', '没有越权改动', '日志里没有未处理告警']
+
+/* ─────────────────────── state ─────────────────────── */
+const state = {
+  scene: null,
+  jobId: null,
+  tab: 'overview',
+  mood: 'idle',
+  pinned: false,
+  themeIdx: 0,
+  selNode: null,
+  selFile: null,
+  opt: '600',
+  jobs: JOBS_INIT.map((x) => ({ ...x })),
+  attention: ATTENTION_INIT.map((x) => ({ ...x })),
+  queue: QUEUE_INIT.map((x) => ({ ...x })),
+}
+const jobOf = (id) => state.jobs.find((j) => j.id === id)
+const runOf = (j) => (j.run ? RUNS.find((r) => r.id === j.run) : null)
+const taskOf = (j) => (j.task ? TASKS.find((t) => t.id === j.task) : null)
+const sessionOf = (j) => (j.session ? SESSIONS.find((s) => s.id === j.session) : null)
+const attnOf = (j) => state.attention.find((a) => a.job === j.id)
+const projOf = (id) => PROJECTS.find((p) => p.id === id) || PROJECTS[0]
+const kindOf = (j) => JOB_KIND[j.kind] || JOB_KIND.task
+const PRIORITY = { wait: 0, blocked: 1, run: 2, queue: 3, done: 4, abort: 5 }
+function orderedJobs() {
+  return state.jobs.slice().sort((a, b) => {
+    const d = (PRIORITY[a.status] ?? 9) - (PRIORITY[b.status] ?? 9)
+    if (d) return d
+    const an = attnOf(a) ? 0 : 1
+    const bn = attnOf(b) ? 0 : 1
+    return an - bn
+  })
+}
+
+/* ─────────────────────── HUD / 编队 ─────────────────────── */
+function syncHud() {
+  const run = state.jobs.filter((j) => j.status === 'run').length
+  const need = state.attention.length
+  const cost = USAGE.total
+  $('#hRunning').textContent = String(run)
+  $('#hNeed').textContent = String(need)
+  $('#hJobs').textContent = String(state.jobs.length)
+  $('#hSess').textContent = String(SESSIONS.filter((s) => s.status !== 'idle').length)
+  if ($('#hCost')) $('#hCost').textContent = '¥' + cost.toFixed(2)
+  if ($('#qRun')) $('#qRun').textContent = String(run)
+  if ($('#qNeed')) $('#qNeed').textContent = String(need)
+  if ($('#qJobs')) $('#qJobs').textContent = String(state.jobs.length)
+  if ($('#qCost')) $('#qCost').textContent = '¥' + cost.toFixed(2)
+}
+
+function renderRail() {
+  const list = $('#railList')
+  $('#railCount').textContent = String(state.attention.length)
+  syncHud()
+  updatePrompt()
+  if (!state.attention.length) {
+    list.innerHTML = '<div class="rail-empty">没有需要你的事。<br />汐音在盯着，有事会举牌。</div>'
+    return
+  }
+  list.innerHTML = state.attention.map((a) => {
+    const j = jobOf(a.job)
+    return `<button class="attn ${state.scene === 'job' && state.jobId === a.job ? 'active' : ''}"
+      style="--accent:${a.color}" data-attn="${a.id}">
+      <span class="pulse"></span>
+      <div class="k">${esc(a.k)} <span class="pj">${esc(j ? (PROJ_NAME[j.proj] || j.proj) : '')} · ${esc(j ? j.agent : '')}</span></div>
+      <div class="t">${esc(a.t)}</div>
+      <div class="s">${esc(a.s)}</div>
+      <div class="go">${esc(a.cta || '看全集')} <span class="ar">→</span></div>
+    </button>`
+  }).join('')
+}
+
+function updatePrompt() {
+  const j = jobOf(state.jobId)
+  let hint = '下指令，或者描述要开发的事…（⌘K）'
+  if (state.scene === 'job' && j) {
+    if (state.tab === 'accept') hint = '回汐音一句 · 通过 / 打回'
+    else if (j.id === 'j-m2g') hint = '回汐音一句 · 600 / 900 / 再压测'
+    else if (j.status === 'blocked') hint = '回汐音一句 · rebase 再跑 / 回滚'
+    else hint = '回汐音一句 · 概览 / 对接 / 运行 / 变更 / 验收'
+  } else if (state.scene === 'fleet') {
+    hint = '看 M1 / 编队 / 安静 · 或者描述要开发的事…'
+  }
+  $('#cmdInput').placeholder = hint
+}
+
+/* ─────────────────────── 渲染零件（沿用 v6） ─────────────────────── */
+const PANE = (title, tag, tagCls, body, paneCls = '', bodyCls = '') => `
+  <div class="pane ${paneCls}">
+    <div class="pane-h">${title}${tag ? `<span class="tag ${tagCls}">${tag}</span>` : ''}</div>
+    <div class="pane-b ${bodyCls}">${body}</div>
+  </div>`
+
+function logHTML(l, i = 0, total = 1, stepSec = 40) {
+  const [tag, cls, text] = l
+  const tg = tag ? `<span class="tag ${cls}">${esc(tag)}</span>` : ''
+  const lc = cls === 'err' ? 'err' : cls === 'ok' ? 'ok' : ''
+  return `<div class="sl ${lc}"><span class="st">${timeAt(i, total, stepSec)}</span>${tg}<span>${esc(text)}</span></div>`
+}
+function streamHTML(node, id = 'streamBody', stepSec = 40) {
+  const logs = node && node.log && node.log.length ? node.log : [['—', '', '没有输出']]
+  return `<div class="stream" id="${id}">${logs.map((l, i) => logHTML(l, i, logs.length, stepSec)).join('')}
+    <div class="sl"><span class="st">›</span><span class="cr"></span></div></div>`
+}
+
+/* ─────────────────────── 编队（点） ─────────────────────── */
+function sceneFleet() {
+  const jobs = orderedJobs()
+  const run = state.jobs.filter((j) => j.status === 'run').length
+  const done = state.jobs.filter((j) => j.status === 'done').length
+  const head = `
+    <div class="fhead">
+      <div class="h1">
+        <h2>编队</h2><span class="cnt">${jobs.length} 条</span>
+        <span class="spacer"></span>
+        <button class="btn sm" data-act="comms">对话 ⌘K</button>
+        <button class="btn sm" data-act="quiet">安静 ⌥2</button>
+      </div>
+      <div class="h2">3 个舱 · ${run} 运行 · ${state.attention.length} 等你 · ${done} 完成 — 点一张，它的全部就在一扇窗里</div>
+    </div>
+    <div class="jgrid">${jobs.map(jobCard).join('')}</div>`
+  return { html: head }
+}
+
+function jobCard(j) {
+  const k = kindOf(j)
+  const p = projOf(j.proj)
+  const a = attnOf(j)
+  return `<button class="jcard ${j.status}" data-job="${j.id}" style="--accent:${k.color}">
+    <div class="jh">
+      <span class="jg" style="color:${k.color}">${k.glyph}</span>
+      <span>${k.label}</span>
+      <span class="jpj"><i style="background:${p.color}"></i>${esc(PROJ_NAME[j.proj] || j.proj)}</span>
+      ${a ? `<span class="jneed">${esc(a.k)}</span>` : ''}
+    </div>
+    <div class="jt">${esc(j.title)}</div>
+    <div class="jd">${esc(j.doing)}</div>
+    <div class="jf">
+      <span class="jpill ${j.status}">${JOB_STATUS[j.status] || j.status}</span>
+      <span class="jbar"><i style="width:${j.pct}%;background:${k.color}"></i></span>
+      <span class="jp">${j.pct}%</span>
+    </div>
+    <div class="jm">⏱ ${esc(j.clock)} · ¥${(j.cost || 0).toFixed(2)} · ${esc(j.agent)}</div>
+  </button>`
+}
+
+/* ─────────────────────── 作业全集（面） ─────────────────────── */
+const TABS = [['overview', '概览'], ['relay', '对接'], ['run', '运行'], ['changes', '变更'], ['accept', '验收']]
+
+function sceneJob(arg) {
+  const j = jobOf(arg) || jobOf(state.jobId) || orderedJobs()[0]
+  state.jobId = j.id
+  if (!state.tab) state.tab = 'overview'
+  const k = kindOf(j)
+  return { html: `
+    <div class="jobhead">
+      <div class="h1">
+        <button class="back" data-open="fleet">← 编队</button>
+        <span class="jk" style="color:${k.color}">${k.label}</span>
+        <h2>${esc(j.title)}</h2>
+        <span class="jpill ${j.status}">${JOB_STATUS[j.status] || j.status}</span>
+        <span class="spacer"></span>
+        <span class="jcap">${esc(PROJ_NAME[j.proj] || j.proj)} · ${esc(j.agent)} · ⏱ ${esc(j.clock)} · ¥${(j.cost || 0).toFixed(2)}</span>
+      </div>
+      <div class="h2">
+        <span>${esc(j.branch)}</span><span class="sep">·</span><span>${esc(j.doing)}</span>
+        <span class="spacer"></span>
+        <span class="acts">${jobActions(j)}<button class="btn" data-act="discuss">对话</button></span>
+      </div>
+    </div>
+    <div class="jobtabs">${TABS.map(([id, label]) => `<button class="jtab ${state.tab === id ? 'on' : ''}" data-tab="${id}">${label}</button>`).join('')}</div>
+    <div class="jobbody">${jobTabHTML(j)}</div>` }
+}
+
+function jobActions(j) {
+  const acs = jobAcs(j)
+  if (j.status === 'wait' && acs.length) {
+    return `<button class="btn pri" data-act="accept">通过验收</button><button class="btn" data-act="reject">打回</button>`
+  }
+  if (j.status === 'wait' && j.id === 'j-m2g') {
+    return `<button class="btn pri" data-act="decide">按 ${state.opt} 拍板</button>`
+  }
+  if (j.status === 'blocked') return `<button class="btn pri" data-act="reject">打回重跑</button>`
+  if (j.status === 'run') return `<button class="btn" data-act="takeover">接管</button><button class="btn danger" data-act="abort">中止</button>`
+  if (j.status === 'queue') return `<button class="btn pri" data-act="start">启动任务</button>`
+  return ''
+}
+
+function jobTabHTML(j) {
+  if (state.tab === 'relay') return relayTab(j)
+  if (state.tab === 'run') return runTab(j)
+  if (state.tab === 'changes') return changesTab(j)
+  if (state.tab === 'accept') return acceptTab(j)
+  return overviewTab(j)
+}
+
+function eventsOf(j) {
+  if (JOB_EVENTS[j.id]) return JOB_EVENTS[j.id]
+  const ev = [['09:31', '汐音', 'dispatch', '接「' + j.title + '」 · ' + j.branch]]
+  if (j.pct > 0) ev.push(['09:36', j.agent, 'report', '进度 ' + j.pct + '% · ' + j.doing])
+  if (j.status === 'wait') ev.push(['09:41', j.agent, 'attention', '产物已就绪，等你确认'])
+  else if (j.status === 'blocked') ev.push(['09:41', j.agent, 'attention', '执行受阻，现场已冻结'])
+  else if (j.status === 'run') ev.push(['09:42', j.agent, 'tool', '正在跑 · ' + j.doing])
+  else if (j.status === 'done') ev.push(['09:48', '汐音', 'report', '已验收归档 · 报告在产物里'])
+  else ev.push(['09:31', '汐音', 'note', '排队中 · 等前面的作业让出并发位'])
+  return ev
+}
+
+function relayOf(j) {
+  if (JOB_RELAY[j.id]) return JOB_RELAY[j.id]
+  const doer = j.kind === 'external' ? '外部 agent' : j.kind === 'subagent' ? '子代理' : '执行者'
+  return [
+    ['you', '指挥官', '汐音', '盯一下「' + j.title + '」'],
+    ['xy', '汐音', j.agent || doer, '接这条作业，按 ' + j.branch + ' 推进；需要你时停住'],
+    ['doer', j.agent || doer, '汐音', '进度 ' + j.pct + '% · ' + j.doing],
+    ['xy', '汐音', '指挥官', j.status === 'blocked' ? '受阻了，现场保留，等你一句话' : '有回流我第一时间报你'],
+  ]
+}
+
+function jobAcs(j) {
+  const t = taskOf(j)
+  if (t) return t.ac
+  if (j.id === 'j-m2g' || j.status === 'queue') return []
+  const ok = Math.min(3, Math.max(1, Math.round((j.pct / 100) * 3)))
+  return AC_GENERIC.map((t, i) => ({
+    s: i < ok ? 'ok' : 'wait',
+    t,
+    d: i < ok ? '已验 · 证据在运行窗' : '待验',
+  }))
+}
+
+function changeSet(j) {
+  if (j.id === 'j-m2') return CHANGES
+  if (j.id === 'j-m1') return CHANGES_M1
+  if (j.id === 'j-m2g') return CHANGES_M2G
+  if (j.id === 'j-m2a') return CHANGES_M2A
+  return null
+}
+
+function genericNodes(j, names) {
+  const n = names.length
+  const done = Math.min(n, Math.floor((j.pct / 100) * n))
+  return names.map((label, i) => {
+    const s = i < done ? 'done' : i === done && j.status === 'run' ? 'run' : i === done && j.status === 'blocked' ? 'fail' : 'wait'
+    return {
+      key: 'n' + i, label, s, d: '—',
+      note: i < done ? '完成' : s === 'run' ? '进行中' : s === 'fail' ? '受阻' : '等待',
+      log: i < done ? [['ok', 'ok', label + ' 完成']] : s === 'run' ? [['run', 'think', '正在执行 · ' + j.doing]] : s === 'fail' ? [['err', 'err', '执行失败 · 现场保留']] : [['wait', '', '尚未执行']],
+    }
+  })
+}
+
+function extNodes(j) {
+  return [
+    { key: 'scan', label: 'scan · 扫描', s: j.status === 'wait' ? 'done' : 'run', d: '22m', note: '配置与权限', log: [
+      ['read', 'tool', '读 gateway/config/*.yaml'],
+      ['scan', 'tool', '权限矩阵比对'],
+      ['warn', 'err', '2 处偏差 · staging 突发 1800 vs prod 1200'],
+      ['write', 'tool', 'audit-report.md · 12 files'],
+    ] },
+    { key: 'relay', label: 'relay · 回传', s: 'done', d: '1m', note: '报告已回传', log: [['ok', 'ok', '审计报告已回传 · 无越权改动']] },
+    { key: 'close', label: 'close · 收尾', s: 'wait', d: '—', note: '等你验收', log: [['wait', '', '等你确认']] },
+  ]
+}
+
+function runView(j) {
+  const r = runOf(j)
+  if (r) return { kind: 'run', nodes: r.nodes, run: r }
+  if (j.kind === 'subagent' && sessionOf(j)) return { kind: 'session', session: sessionOf(j) }
+  if (j.kind === 'external') return { kind: 'run', nodes: extNodes(j), run: null }
+  if (j.kind === 'wfdev') return { kind: 'run', nodes: genericNodes(j, ['schema · 结构', 'nodes · 节点引用', 'vars · 变量', 'dry-run · 试跑']), run: null }
+  const t = taskOf(j)
+  if (t) return { kind: 'phases', task: t }
+  return { kind: 'run', nodes: genericNodes(j, ['接手', '执行', '回报', '收尾']), run: null }
+}
+
+function overviewTab(j) {
+  const events = eventsOf(j)
+  const acs = jobAcs(j)
+  const ok = acs.filter((a) => a.s === 'ok').length
+  const rv = runView(j)
+  const nodes = rv.nodes || []
+  const done = nodes.filter((n) => n.s === 'done').length
+  const ch = changeSet(j)
+  const rows = events.map((e) => {
+    const [t, who, kind, text] = e
+    const a = actor(who)
+    const kk = TRACE_KIND[kind] || { label: kind }
+    return `<div class="jrow"><span class="d" style="background:${a.color}"></span><span class="t">${esc(t)}</span>
+      <span class="a" style="color:${a.color}">${esc(a.label)}</span><span class="k">${esc(kk.label)}</span>
+      <span class="x">${esc(text)}</span></div>`
+  }).join('')
+  const stats = `
+    <div class="jstats">
+      <div class="cell"><div class="l">状态</div><div class="v">${JOB_STATUS[j.status] || j.status}</div></div>
+      <div class="cell"><div class="l">进度</div><div class="v c">${j.pct}%</div></div>
+      <div class="cell"><div class="l">耗时</div><div class="v">${esc(j.clock)}</div></div>
+      <div class="cell"><div class="l">消耗</div><div class="v m">¥${(j.cost || 0).toFixed(2)}</div></div>
+    </div>
+    <div class="jfacts">
+      <span>舱 <b>${esc(PROJ_NAME[j.proj] || j.proj)}</b></span>
+      <span>执行者 <b>${esc(j.agent)}</b></span>
+      <span>分支 <b>${esc(j.branch)}</b></span>
+    </div>
+    <div class="jbar2"><i style="width:${j.pct}%"></i></div>
+    <div class="jchips">
+      <span>AC <b>${acs.length ? ok + '/' + acs.length : '—'}</b></span>
+      <span>节点 <b>${nodes.length ? done + '/' + nodes.length : '—'}</b></span>
+      <span>变更 <b>${ch ? ch.files.length + ' 文件' : '—'}</b></span>
+    </div>
+    <div class="jnow">汐音：${esc(noteFor(j))}</div>`
+  return `<div class="sgrid jg-over">
+    ${PANE('汐音 ↔ 作业', `${events.length} EVENTS`, '', `<div class="jtl">${rows}</div>`, 'g1', 'tight')}
+    ${PANE('作业状态', '', '', stats, 'g2', 'tight')}
+  </div>`
+}
+
+function noteFor(j) {
+  if (j.id === 'j-m2') return '验收单和改动都在这儿；AC-4 我建议下一轮补。'
+  if (j.id === 'j-m2g') return '三个阈值方案压过一遍了，你拍板我就落配置。'
+  if (j.id === 'j-m1') return '像是没 rebase 到最新的幂等修复；你说一句我就动。'
+  if (j.status === 'run') return '在跑，有回流我第一时间报你。'
+  if (j.status === 'done') return '已归档，报告在产物里。'
+  if (j.status === 'queue') return '排队等并发位；前面的作业一让位我就起跑。'
+  return '有事我举牌。'
+}
+
+function relayTab(j) {
+  const doer = j.kind === 'external' ? '外部 agent' : j.kind === 'subagent' ? '子代理' : '执行者'
+  const msgs = relayOf(j).map((r) => {
+    const [lane, from, to, text] = r
+    const hdr = lane === 'you' ? '你 → 汐音' : lane === 'xy' ? `汐音 → ${to}` : `${from} → 汐音`
+    return `<div class="rm ${lane}"><span class="h">${esc(hdr)}</span><p>${esc(text)}</p></div>`
+  }).join('')
+  return `<div class="sgrid jg-one">${PANE('对接', '三方同屏', '', `
+    <div class="relaymap"><b>你</b><span>⇄</span><span class="hub"><i></i>汐音</span><span>⇄</span><span>${esc(doer)}</span>
+      <em>你在指挥汐音；汐音在调度执行者</em></div>
+    <div class="relayflow">${msgs}</div>
+    <div class="jb-note">执行者不直接找你：它的回报先到汐音，汐音汇总后再找你；要它做什么，也由汐音转达。</div>
+  `, 'g1', 'tight')}</div>`
+}
+
+function runTab(j) {
+  const rv = runView(j)
+  if (rv.kind === 'session') return sessionTab(j, rv.session)
+  if (rv.kind === 'phases') return phasesTab(j, rv.task)
+
+  const nodes = rv.nodes
+  if (!nodes.some((n) => n.key === state.selNode)) {
+    const pick = nodes.find((n) => n.s === 'run') || nodes.find((n) => n.s === 'fail') || nodes.find((n) => n.s === 'wait') || nodes[0]
+    state.selNode = pick ? pick.key : null
+  }
+  const sel = nodes.find((n) => n.key === state.selNode) || nodes[0]
+  const done = nodes.filter((n) => n.s === 'done').length
+  const live = j.status === 'run'
+  const head = `<div class="runhead"><b>${done}/${nodes.length}</b> 节点
+    <span class="rp"><i style="width:${Math.round((done / nodes.length) * 100)}%"></i></span>
+    <span>${esc(j.clock)}</span><span>·</span><span>¥${(j.cost || 0).toFixed(2)}</span></div>`
+  const list = nodes.map((n) => `
+    <button class="nnode ${n.s} ${n.key === sel.key ? 'sel' : ''}" data-node="${n.key}">
+      <span class="ni">${n.s === 'done' ? '✓' : n.s === 'run' ? '●' : n.s === 'fail' ? '✕' : '○'}</span>
+      <span class="nb"><b>${esc(n.label)}</b><span>${esc(n.note || '')}</span></span>
+      <span class="nt">${esc(n.d || '—')}</span>
+    </button>`).join('')
+  const wfLabel = rv.run ? `${rv.run.wf} · ${rv.run.wfName}` : j.branch
+  const meta = `<div class="runmeta">
+    <span>WORKFLOW <b>${esc(wfLabel)}</b></span>
+    <span>WORKTREE <b>${esc(j.branch)}</b></span>
+    <span>DISPATCH <b>${esc(j.agent)}</b></span>
+  </div>`
+  const detail = `<div class="jstats">
+      <div class="cell"><div class="l">AGENT</div><div class="v" style="font-size:10px">${esc(sel.agent || j.agent)}</div></div>
+      <div class="cell"><div class="l">DURATION</div><div class="v c">${esc(sel.d || '—')}</div></div>
+      <div class="cell"><div class="l">TOKENS</div><div class="v" style="font-size:10px">${esc(sel.tok || '—')}</div></div>
+      <div class="cell"><div class="l">ARTIFACT</div><div class="v" style="font-size:10px">${esc(sel.art || '—')}</div></div>
+    </div>
+    <div class="find" style="margin-top:7px"><div class="fc">${esc(sel.note || '')}</div></div>`
+  const decision = j.id === 'j-m2g' && j.status === 'wait' ? decisionHTML() : ''
+  return `${decision}<div class="sgrid jg-run">
+    ${PANE('节点 <b>' + esc(j.title) + '</b>', JOB_STATUS[j.status], live ? 'live' : '', head + `<div class="nflow">${list}</div>` + meta, 'g1', 'tight')}
+    ${PANE('实时流', live ? 'LIVE' : 'PAUSED', live ? 'live' : '', `${detail}${streamHTML(sel)}`, 'g2', 'col')}
+  </div>`
+}
+
+function decisionHTML() {
+  return `<div class="jrun-dec">
+    <div class="dhead"><b>拍板 · 网关限流阈值</b><span>三个方案压过一遍了；选完我直接改配置跑回归。</span></div>
+    <div class="dopts">
+      <button class="opt ${state.opt === '600' ? 'sel' : ''}" data-opt="600"><span class="radio"></span><span class="ot"><b>600 rps / 突发 1200</b><span>保守档 · P99 抖动最小，DB 峰值 62%</span></span><span class="rec">推荐</span></button>
+      <button class="opt ${state.opt === '900' ? 'sel' : ''}" data-opt="900"><span class="radio"></span><span class="ot"><b>900 rps / 突发 1800</b><span>吞吐高 50%，峰值可能打到 DB</span></span></button>
+      <button class="opt ${state.opt === 'more' ? 'sel' : ''}" data-opt="more"><span class="radio"></span><span class="ot"><b>再跑 20 分钟全链路压测</b><span>拿到拐点再定，多等一轮</span></span></button>
+    </div>
+  </div>`
+}
+
+function phaseRows(t) {
+  return `<div class="phases">${t.phases.map((p) => `
+    <div class="phase ${p.s}">
+      <span class="ph-d">${p.s === 'done' ? '✓' : p.s === 'fail' ? '✕' : p.s === 'wait' ? '○' : '●'}</span>
+      <span class="ph-b"><b>${esc(p.t)}</b><span>${esc(p.d)}</span></span>
+      <span class="ph-w">${esc(p.when || '')}</span>
+    </div>`).join('')}</div>`
+}
+
+function phasesTab(j, t) {
+  return `<div class="sgrid jg-one">${PANE('交付阶段 <b>' + esc(t.code) + ' ' + esc(t.name) + '</b>', `${t.pct}%`, '', `
+    ${phaseRows(t)}
+    <div class="find" style="margin-top:6px"><div class="fc">阶段产物：<b>spec.md</b> · <b>issues/</b> · <b>round-report.md</b> · <b>acceptance-evidence.json</b></div></div>
+    <div class="jb-note">${esc(noteFor(j))}</div>
+  `, 'g1', 'tight')}</div>`
+}
+
+function sessionTab(j, s) {
+  const head = `<div class="sess">
+    <span class="sav">${esc(s.name.split('-').map((x) => x[0].toUpperCase()).join(''))}</span>
+    <span class="sm"><b>${esc(s.name)}</b><span>${esc(s.worktree)} · ${esc(s.task)}</span></span>
+    <span class="sst ${s.status}">${s.status === 'run' ? '在执行' : s.status === 'wait' ? '等指令' : s.status === 'fail' ? '已中止' : '空闲'}</span>
+  </div>`
+  const stats = `<div class="jstats">
+      <div class="cell"><div class="l">MODEL</div><div class="v" style="font-size:10px">${esc(s.model)}</div></div>
+      <div class="cell"><div class="l">ELAPSED</div><div class="v c">${esc(s.elapsed)}</div></div>
+      <div class="cell"><div class="l">TOKENS</div><div class="v" style="font-size:10px">${esc(s.tok)}</div></div>
+      <div class="cell"><div class="l">WORKTREE</div><div class="v" style="font-size:10px">${esc(s.worktree)}</div></div>
+    </div>
+    <div class="find" style="margin-top:7px"><div class="fc">${esc(s.doing)}</div></div>`
+  return `<div class="sgrid jg-run">
+    ${PANE('分身', esc(s.model), '', head + stats, 'g1', 'tight')}
+    ${PANE('会话流', s.status === 'run' ? 'LIVE' : 'STREAM', s.status === 'run' ? 'live' : '', streamHTML({ log: s.log }, 'streamBodyS', 115), 'g2', 'flush')}
+  </div>`
+}
+
+function changesTab(j) {
+  const ch = changeSet(j)
+  if (!ch) {
+    return `<div class="sgrid jg-one">${PANE('变更', '', '', `<div class="jb-note">这条作业不产出代码变更；执行现场在「运行」里。外部 agent 在它自己的工作树里工作，这里只看回传。</div>`, 'g1', 'tight')}</div>`
+  }
+  if (!ch.files.some((f) => f.id === state.selFile)) state.selFile = ch.files[0].id
+  const file = ch.files.find((f) => f.id === state.selFile) || ch.files[0]
+  const commits = ch.commits.map((c) => `<div class="cmt"><span class="sha">${esc(c.sha)}</span><span class="msg">${esc(c.msg)}</span><span class="tm">${esc(c.when)}</span></div>`).join('')
+  const files = ch.files.map((f) => `<div class="file ${f.id === file.id ? 'sel' : ''}" data-file="${f.id}">
+      <span class="st ${f.state}">${esc(f.state)}</span><span class="fn">${esc(f.path.replace(/^[^/]+\//, ''))}</span>
+      <span class="add">+${f.add}</span><span class="del">−${f.del}</span></div>`).join('')
+  const diff = `<div class="diff" style="margin-top:0">
+    <div class="dh"><span class="path">${esc(file.path)}</span><span>${esc(file.hunk || '@@ −1 +1 @@')}</span></div>
+    ${file.diff.map((d) => `<div class="dl ${d[0]}"><span class="n">${esc(d[1])}</span><span>${esc(d[2])}</span></div>`).join('')}
+  </div>
+  <div class="dnote">只展开选中的文件 · 点左侧切换</div>`
+  return `<div class="sgrid jg-chg">
+    ${PANE('改动文件', `${ch.files.length} FILES`, '', commits + files, 'g1', 'tight')}
+    ${PANE('diff', esc(file.path.split('/').pop()), '', diff, 'g2', 'tight')}
+  </div>`
+}
+
+function acceptTab(j) {
+  const acs = jobAcs(j)
+  const ok = acs.filter((a) => a.s === 'ok').length
+  const checks = acs.length
+    ? acs.map((a) => `<div class="chk ${a.s}"><span class="box">${a.s === 'ok' ? '✓' : a.s === 'warn' ? '!' : a.s === 'no' ? '×' : '◇'}</span>
+        <span class="ct">${esc(a.t)}<small>${esc(a.d || '')}</small></span></div>`).join('')
+    : `<div class="jb-note">${j.id === 'j-m2g' ? '停在拍板点，验收单还没生成；拍板、实现、灰度之后我先把证据摆这里。' : '验收单还没生成；到点我先把证据摆这里。'}</div>`
+  const ch = changeSet(j)
+  const nodes = runView(j).nodes || []
+  const ev = `<div class="jstats">
+      <div class="cell"><div class="l">状态</div><div class="v">${JOB_STATUS[j.status] || j.status}</div></div>
+      <div class="cell"><div class="l">节点</div><div class="v c">${nodes.length ? nodes.filter((n) => n.s === 'done').length + '/' + nodes.length : '—'}</div></div>
+      <div class="cell"><div class="l">变更</div><div class="v" style="font-size:10px">${ch ? ch.files.length + ' 文件' : '—'}</div></div>
+      <div class="cell"><div class="l">消耗</div><div class="v m">¥${(j.cost || 0).toFixed(2)}</div></div>
+    </div>
+    <div class="jfacts"><span>执行者 <b>${esc(j.agent)}</b></span><span>分支 <b>${esc(j.branch)}</b></span></div>`
+  return `<div class="sgrid jg-acc">
+    ${PANE('验收清单', acs.length ? `${ok}/${acs.length}` : '—', '', checks, 'g1', 'tight')}
+    ${PANE('证据', 'EVIDENCE', '', ev + `<div class="jb-note">通过 / 打回都回落到一句对话；按钮只是兜底。</div>`, 'g2', 'tight')}
+  </div>`
+}
+
+/* ─────────────────────── 场景切换 ─────────────────────── */
+let commsBack = false
+const SCENES = { fleet: sceneFleet, job: sceneJob }
+
+function openScene(id, arg, tab) {
+  if (id === 'job') {
+    const j = jobOf(arg) || jobOf(state.jobId) || orderedJobs()[0]
+    const changed = state.jobId !== j.id
+    state.jobId = j.id
+    if (tab) state.tab = tab
+    else if (changed) state.tab = 'overview'
+    if (!state.tab) state.tab = 'overview'
+    state.selNode = null
+    state.selFile = null
+  }
+  if (id === 'fleet') { state.jobId = null; state.tab = 'overview' }
+  const def = SCENES[id] ? SCENES[id](arg) : SCENES.fleet()
+  state.scene = id
+  commsBack = commsOpen()
+  hideComms()
+  hideBrief()
+  const host = $('#sceneHost')
+  host.className = 'scene open'
+  host.innerHTML = def.html
+  $('#arena').classList.add('scene-open')
+  renderRail()
+  updatePrompt()
+}
+
+function renderScene() {
+  if (!state.scene) return
+  const host = $('#sceneHost')
+  if (state.scene === 'fleet') host.innerHTML = sceneFleet().html
+  else if (state.scene === 'job') host.innerHTML = sceneJob(state.jobId).html
+  updatePrompt()
+}
+
+function closeScene() {
+  state.scene = null
+  state.jobId = null
+  $('#sceneHost').className = 'scene'
+  $('#sceneHost').innerHTML = ''
+  $('#arena').classList.remove('scene-open')
+  renderRail()
+  updatePrompt()
+  if (state.pinned || commsBack) openComms()
+  commsBack = false
+}
+
+/* ─────────────────────── 事件 ─────────────────────── */
+$('#railList').addEventListener('click', (e) => {
+  const btn = e.target.closest('[data-attn]')
+  if (!btn) return
+  const item = state.attention.find((a) => a.id === btn.dataset.attn)
+  if (!item) return
+  openScene('job', item.job, item.tab)
+  say(item.line, 'working', 6000)
+})
+
+$('#sceneHost').addEventListener('click', (e) => {
+  const open = e.target.closest('[data-open]')
+  if (open) { openScene(open.dataset.open, open.dataset.arg, open.dataset.tab); return }
+  const job = e.target.closest('[data-job]')
+  if (job) { openScene('job', job.dataset.job); setMood('working', 1800); return }
+  const tab = e.target.closest('[data-tab]')
+  if (tab) {
+    state.tab = tab.dataset.tab
+    state.selNode = null
+    state.selFile = null
+    renderScene()
+    return
+  }
+  const node = e.target.closest('[data-node]')
+  if (node) { state.selNode = node.dataset.node; renderScene(); return }
+  const file = e.target.closest('[data-file]')
+  if (file) { state.selFile = file.dataset.file; renderScene(); return }
+  const opt = e.target.closest('[data-opt]')
+  if (opt) { state.opt = opt.dataset.opt; renderScene(); return }
+  const act = e.target.closest('[data-act]')
+  if (act) { runAct(act.dataset.act); return }
+})
+
+function runAct(name) {
+  if (name === 'accept') return applyAct('accept')
+  if (name === 'reject') return applyAct('reject')
+  if (name === 'abort') return applyAct('abort')
+  if (name === 'takeover') return applyAct('takeover')
+  if (name === 'start') return applyAct('start')
+  if (name === 'decide') return applyAct('decide')
+  if (name === 'discuss') return discuss()
+  if (name === 'comms') return openComms()
+  if (name === 'quiet') {
+    closeScene()
+    say('安静。编队我盯着，有事我举牌。', 'idle', 4800)
+    return
+  }
+  if (name === 'fleet') return openScene('fleet')
+}
+
+function applyAct(kind) {
+  const j = jobOf(state.jobId)
+  if (!j) return
+  if (kind === 'accept') {
+    j.status = 'done'
+    j.pct = 100
+    state.attention = state.attention.filter((a) => a.job !== j.id)
+    setMood('happy', 6000)
+    say('通过。「' + j.title + '」已归入归档，报告在产物里。', 'happy', 6500)
+    setTicker('通过 · ' + j.title + ' 已归档', 'happy')
+    renderRail()
+    renderScene()
+    setTimeout(() => {
+      if (state.scene === 'job' && state.jobId === j.id) openScene('fleet')
+    }, 1000)
+    return
+  }
+  if (kind === 'reject') {
+    j.status = 'run'
+    j.pct = Math.max(25, j.pct - 35)
+    state.attention = state.attention.filter((a) => a.job !== j.id)
+    say('打回了，按验收单补齐再跑一轮；有回流我报你。', 'working', 6200)
+    setTicker('打回 · ' + j.title + ' 重新排队', 'working')
+  } else if (kind === 'abort') {
+    j.status = 'abort'
+    state.attention = state.attention.filter((a) => a.job !== j.id)
+    say('已中止。运行现场和日志都留着，随时可以重跑。', 'worried', 6000)
+    setTicker('中止 · ' + j.title, 'worried')
+  } else if (kind === 'takeover') {
+    say('好，我把执行者的会话交给你；它转入只读，我继续盯回流。', 'working', 6200)
+    setTicker('接管 · ' + j.title, 'working')
+    renderRail()
+    renderScene()
+    return
+  } else if (kind === 'start') {
+    j.status = 'run'
+    j.pct = 8
+    say('好，M3 起跑了；第一步出 spec，有结果我回你。', 'working', 6200)
+    setTicker('启动 · ' + j.title, 'working')
+  } else if (kind === 'decide') {
+    j.status = 'run'
+    j.pct = 75
+    const r = runOf(j)
+    if (r) {
+      const d = r.nodes.find((n) => n.key === 'decide')
+      const impl = r.nodes.find((n) => n.key === 'impl')
+      if (d) d.s = 'done'
+      if (impl) impl.s = 'run'
+    }
+    state.attention = state.attention.filter((a) => a.job !== j.id)
+    say('按 ' + state.opt + ' 走，我改配置并跑回归；灰度时我盯指标。', 'happy', 6500)
+    setTicker('拍板 · ' + state.opt + ' rps', 'happy')
+  }
+  renderRail()
+  renderScene()
+}
+
+function discuss() {
+  const j = jobOf(state.jobId)
+  openComms()
+  const input = $('#cmdInput')
+  input.value = j ? '关于「' + j.title + '」：' : ''
+  input.focus()
+  say('你说，我接着调度。', 'working', 4200)
+}
+
+/* ─────────────────────── 通讯层 ─────────────────────── */
+const flow = () => $('#flow')
+function scrollFlow() { const f = flow(); if (f) f.scrollTop = f.scrollHeight }
+function commsOpen() { return $('#commsHost').classList.contains('open') }
+
+function openComms() {
+  if (commsOpen()) { scrollFlow(); return }
+  hideBrief()
+  $('#commsHost').classList.add('open')
+  $('#arena').classList.add('comms-open')
+  $('#ticker').classList.add('hide')
+  $('#ticker').classList.remove('unread')
+  scrollFlow()
+  $('#cmdInput').focus()
+}
+function hideComms() {
+  $('#commsHost').classList.remove('open')
+  $('#arena').classList.remove('comms-open')
+  $('#ticker').classList.remove('hide')
+  $('#ticker').classList.remove('unread')
+}
+function closeComms() {
+  state.pinned = false
+  $('#commsPin').classList.remove('on')
+  $('#commsPin').textContent = '📌 钉住'
+  hideComms()
+}
+function togglePin() {
+  state.pinned = !state.pinned
+  $('#commsPin').classList.toggle('on', state.pinned)
+  $('#commsPin').textContent = state.pinned ? '📌 已钉住' : '📌 钉住'
+  if (state.pinned) openComms()
+}
+
+function setTicker(text, mood = 'idle') {
+  $('#tickText').textContent = text
+  $('#tickTime').textContent = nowHM()
+  $('#tickAv').src = PORTRAIT[mood] || PORTRAIT.idle
+  const t = $('#ticker')
+  t.classList.remove('flash'); void t.offsetWidth; t.classList.add('flash')
+  if (!commsOpen()) t.classList.add('unread')
+}
+
+function botHTML(text, mood) {
+  return `<span class="av"><img src="${PORTRAIT[mood] || PORTRAIT.idle}" alt="" /></span>
+    <div class="bubble"><div class="who">汐音 · 助理 <span>${nowHM()}</span></div>${esc(text)}</div>`
+}
+function pushBot(text, mood = 'idle', delay = 420) {
+  if (!delay) {
+    const el = document.createElement('div')
+    el.className = 'msg bot'
+    el.innerHTML = botHTML(text, mood)
+    flow().appendChild(el); scrollFlow()
+    setTicker(text, mood)
+    return
+  }
+  const typing = document.createElement('div')
+  typing.className = 'msg bot'
+  typing.innerHTML = `<span class="av"><img src="${PORTRAIT[mood] || PORTRAIT.idle}" alt="" /></span>
+    <div class="bubble"><span class="typing"><i></i><i></i><i></i></span></div>`
+  flow().appendChild(typing); scrollFlow()
+  setTimeout(() => {
+    typing.remove()
+    const el = document.createElement('div')
+    el.className = 'msg bot'
+    el.innerHTML = botHTML(text, mood)
+    flow().appendChild(el); scrollFlow()
+    setTicker(text, mood)
+  }, delay)
+}
+function pushMe(text) {
+  const el = document.createElement('div')
+  el.className = 'msg me'
+  el.innerHTML = `<div class="bubble"><div class="who">指挥官 <span>${nowHM()}</span></div>${esc(text)}</div>`
+  flow().appendChild(el); scrollFlow()
+}
+function pushCard(c) {
+  const el = document.createElement('div')
+  el.className = 'card'
+  el.style.setProperty('--accent', c.color)
+  el.innerHTML = `
+    <div class="k">${esc(c.k)}</div>
+    <div class="t">${esc(c.t)}</div>
+    <div class="s">${esc(c.s)}</div>
+    <div class="cf"><span class="hint">${esc(c.hint || '点开看它的全部')}</span>
+      <button class="lnk" data-card-job="${c.job}" data-card-tab="${c.tab || 'overview'}">${esc(c.cta || '看全集')} →</button></div>`
+  flow().appendChild(el); scrollFlow()
+}
+
+function setMood(m, hold = 0) {
+  state.mood = m
+  $('#portrait').src = PORTRAIT[m] || PORTRAIT.idle
+  const ml = $('#moodLabel')
+  if (ml) ml.textContent = MOOD_LABEL[m] || '待命'
+  if (hold) { clearTimeout(moodTimer); moodTimer = setTimeout(() => setMood('idle'), hold) }
+}
+let moodTimer = null
+let sayTimer = null
+let typeTimer = null
+function say(text, mood = 'idle', hold = 6500) {
+  const box = $('#speech'), el = $('#speechText')
+  box.classList.add('show')
+  if (mood) setMood(mood, hold)
+  clearInterval(typeTimer); clearTimeout(sayTimer)
+  let i = 0
+  el.innerHTML = '<span class="cur">▸</span>'
+  typeTimer = setInterval(() => {
+    i++
+    el.innerHTML = esc(text.slice(0, i)) + '<span class="cur">▸</span>'
+    if (i >= text.length) clearInterval(typeTimer)
+  }, 24)
+  sayTimer = setTimeout(() => box.classList.remove('show'), hold)
+}
+
+/* ─────────────────────── 简报 / 回流 ─────────────────────── */
+function showBrief(item) {
+  $('#briefK').textContent = item.k
+  $('#briefText').innerHTML = `<b>${esc(item.t)}</b><br />${esc(item.s)}`
+  $('#briefMeta').textContent = '刚刚 · 汐音整理'
+  $('#briefGo').textContent = (item.cta || '看全集') + ' →'
+  $('#brief').classList.add('show')
+  $('#brief').dataset.job = item.job || ''
+  $('#brief').dataset.tab = item.tab || 'overview'
+}
+function hideBrief() { $('#brief').classList.remove('show') }
+
+function simulateArrival() {
+  if (!state.queue.length) {
+    say('回流都处理完了。要不要我造一个？', 'wink', 4200)
+    return
+  }
+  const item = state.queue.shift()
+  const j = jobOf(item.job)
+  if (j) { j.status = 'wait'; j.pct = Math.max(j.pct, item.pct || 55) }
+  state.attention.unshift({ ...item })
+  renderRail()
+  if (state.scene) renderScene()
+  setMood(item.mood || 'alert', 6200)
+  say(item.line, item.mood || 'alert', 7200)
+  showBrief(item)
+  pushCard({ job: item.job, tab: item.tab, k: item.k, t: item.t, s: item.s, color: item.color, cta: item.cta })
+  pushBot(item.chat || item.line, item.mood || 'alert', 0)
+  $('#hNeed').animate?.([{ transform: 'scale(1)' }, { transform: 'scale(1.35)' }, { transform: 'scale(1)' }], { duration: 500 })
+}
+
+/* ─────────────────────── 指令条 ─────────────────────── */
+function sendCommand() {
+  const input = $('#cmdInput')
+  const v = input.value.trim()
+  if (!v) { input.focus(); return }
+  input.value = ''
+  openComms()
+  pushMe(v)
+  setMood('thinking', 2400)
+  setTimeout(() => {
+    if (interpret(v)) return
+    pushBot('收到。说「编队」看全部，或者「看 M1」直接开一条作业。', 'idle', 420)
+  }, 320)
+}
+
+function interpret(text) {
+  const t = text.trim()
+  const low = t.toLowerCase()
+  const j = jobOf(state.jobId)
+  if (/安静|收起/.test(t)) {
+    closeScene()
+    pushBot('好，收起编队。', 'idle', 300)
+    return true
+  }
+  if (/编队|列表|fleet/.test(t)) {
+    openScene('fleet')
+    pushBot('编队摊开了：点一张，它的全部就在一扇窗里。', 'working', 300)
+    return true
+  }
+  if (j) {
+    const tabMap = { '概览': 'overview', '对接': 'relay', '运行': 'run', '变更': 'changes', '验收': 'accept' }
+    for (const k in tabMap) {
+      if (t.includes(k) && t.length <= 6) {
+        state.tab = tabMap[k]
+        renderScene()
+        pushBot('切到「' + k + '」。', 'working', 260)
+        return true
+      }
+    }
+  }
+  if (/通过|验收通过/.test(t) && j && j.status === 'wait' && jobAcs(j).length) {
+    applyAct('accept')
+    pushBot('收到，验过。归档我接着跑。', 'happy', 300)
+    return true
+  }
+  if (/打回|退回|reject/.test(t) && j) {
+    applyAct('reject')
+    pushBot('打回了，按验收单补齐再跑。', 'working', 300)
+    return true
+  }
+  if (/中止|停掉|abort/.test(t) && j) {
+    applyAct('abort')
+    pushBot('已中止，现场保留。', 'worried', 300)
+    return true
+  }
+  if (/接管|takeover/.test(t) && j) {
+    applyAct('takeover')
+    pushBot('会话转给你了，它转入只读。', 'working', 300)
+    return true
+  }
+  if (/^(600|900|再压测|more)/.test(low)) {
+    state.opt = /900/.test(low) ? '900' : /再压测|more/.test(low) ? 'more' : '600'
+    if (j && j.id === 'j-m2g') {
+      applyAct('decide')
+      pushBot('收到，按 ' + state.opt + ' 走。', 'happy', 300)
+    } else {
+      pushBot('这是 M2 限流的决策；先打开「M2 · 限流阈值」再说一句。', 'idle', 300)
+    }
+    return true
+  }
+  const q = t.replace(/^(看|打开|切到)\s*/, '').trim()
+  if (q) {
+    const hit = state.jobs.find((x) => x.title.includes(q) || x.id === q)
+    if (hit) {
+      openScene('job', hit.id)
+      pushBot('「' + hit.title + '」的全集摆出来了。', 'working', 300)
+      return true
+    }
+  }
+  return false
+}
+
+/* ─────────────────────── 杂项 ─────────────────────── */
+function seedParticles() {
+  const box = $('#particles')
+  for (let i = 0; i < 24; i++) {
+    const p = document.createElement('span')
+    p.className = 'p'
+    p.style.left = Math.random() * 100 + '%'
+    p.style.animationDuration = 9 + Math.random() * 14 + 's'
+    p.style.animationDelay = -Math.random() * 20 + 's'
+    box.appendChild(p)
+  }
+}
+function tickClock() {
+  const d = new Date()
+  const el = $('#clock')
+  if (el && el.childNodes[0]) el.childNodes[0].nodeValue = nowHM()
+}
+
+const LIVE_TAIL = [
+  ['bash', 'tool', 'pnpm vitest settlement.reconcile --run'],
+  ['ok', 'ok', '42 passed · 0 failed'],
+  ['write', 'tool', 'acceptance-evidence.json · scenario 2/3'],
+  ['think', 'think', 'AC-4 仍缺覆盖，等指挥定'],
+  ['ok', 'ok', 'checks 11/12'],
+]
+let liveI = 0
+setInterval(() => {
+  if (state.scene !== 'job' || state.tab !== 'run') return
+  const box = document.getElementById('streamBody')
+  if (!box) return
+  const j = jobOf(state.jobId)
+  if (!j) return
+  const rv = runView(j)
+  if (!rv.nodes) return
+  const sel = rv.nodes.find((n) => n.key === state.selNode) || rv.nodes.find((n) => n.s === 'run')
+  if (!sel || sel.s !== 'run') return
+  const [tag, cls, text] = LIVE_TAIL[liveI++ % LIVE_TAIL.length]
+  const el = document.createElement('div')
+  el.className = 'sl ' + (cls === 'ok' ? 'ok' : cls === 'err' ? 'err' : '')
+  el.innerHTML = `<span class="st">${nowHMS()}</span><span class="tag ${cls}">${esc(tag)}</span><span>${esc(text)}</span>`
+  const caret = box.lastElementChild
+  box.insertBefore(el, caret)
+  while (box.children.length > 70) box.firstElementChild.remove()
+  box.scrollTop = box.scrollHeight
+}, 4200)
+
+/* ─────────────────────── 绑定 ─────────────────────── */
+$('#cmdInput').addEventListener('keydown', (e) => {
+  if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendCommand() }
+})
+$('#btnSend').addEventListener('click', sendCommand)
+$('#btnSim').addEventListener('click', simulateArrival)
+$('#btnMap').addEventListener('click', () => $('#overlay').classList.add('open'))
+$('#mapClose').addEventListener('click', () => $('#overlay').classList.remove('open'))
+$('#overlay').addEventListener('click', (e) => { if (e.target === $('#overlay')) $('#overlay').classList.remove('open') })
+$('#btnTheme').addEventListener('click', () => {
+  state.themeIdx = (state.themeIdx + 1) % THEMES.length
+  document.body.dataset.theme = THEMES[state.themeIdx]
+  setTicker('色调 · ' + THEMES[state.themeIdx])
+})
+$('#btnNewTask').addEventListener('click', () => {
+  openComms()
+  $('#cmdInput').focus()
+  setMood('wink', 2600)
+  say('说说要做什么——我负责拆任务、派分身、盯回流。', 'wink', 5200)
+})
+$('#btnBackCabin') && $('#btnBackCabin').addEventListener('click', () => {
+  $('#cabinModal').classList.add('open')
+  say('好，回作战舱。全域模式不动舱里的会话、编队和布局。', 'wink', 5200)
+  setTicker('返回作战舱 · 旧模式保持原样')
+})
+$('#cabinClose').addEventListener('click', () => $('#cabinModal').classList.remove('open'))
+$('#enterGlobal').addEventListener('click', () => {
+  $('#cabinModal').classList.remove('open')
+  setTicker('从作战舱进入全域座舱')
+  say('全域座舱。编队是点，作业全集是面；点开哪一条，它的全部就在那一扇窗里。', 'wink', 7000)
+})
+$('#cabinModal').addEventListener('click', (e) => { if (e.target.id === 'cabinModal') e.currentTarget.classList.remove('open') })
+document.querySelectorAll('.chip').forEach((b) => b.addEventListener('click', () => runAct(b.dataset.act)))
+$('#commsPin').addEventListener('click', togglePin)
+$('#commsClose').addEventListener('click', closeComms)
+$('#ticker').addEventListener('click', openComms)
+$('#briefGo').addEventListener('click', () => {
+  const b = $('#brief')
+  hideBrief()
+  openScene('job', b.dataset.job, b.dataset.tab || 'overview')
+  say('都在这儿了。', 'working', 4500)
+})
+$('#briefClose').addEventListener('click', hideBrief)
+document.addEventListener('click', (e) => {
+  const c = e.target.closest('[data-card-job]')
+  if (!c) return
+  openScene('job', c.dataset.cardJob, c.dataset.cardTab || 'overview')
+})
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape') {
+    if ($('#cabinModal').classList.contains('open')) { $('#cabinModal').classList.remove('open'); return }
+    if ($('#overlay').classList.contains('open')) { $('#overlay').classList.remove('open'); return }
+    if (state.scene) { closeScene(); return }
+    if (commsOpen()) { closeComms(); return }
+  }
+  if (e.key === 'k' && (e.metaKey || e.ctrlKey)) { e.preventDefault(); openComms(); $('#cmdInput').focus() }
+  if (e.altKey && e.code === 'Digit1') { e.preventDefault(); openScene('fleet') }
+  if (e.altKey && e.code === 'Digit2') { e.preventDefault(); closeScene() }
+  if (e.altKey && e.code === 'Digit3') { e.preventDefault(); openComms() }
+  if (e.altKey && state.scene === 'job' && (e.key === 'ArrowLeft' || e.key === 'ArrowRight')) {
+    e.preventDefault()
+    const i = TABS.findIndex(([id]) => id === state.tab)
+    const next = (i + (e.key === 'ArrowRight' ? 1 : TABS.length - 1)) % TABS.length
+    state.tab = TABS[next][0]
+    state.selNode = null
+    state.selFile = null
+    renderScene()
+  }
+})
+
+/* ─────────────────────── boot ─────────────────────── */
+seedParticles()
+tickClock()
+setInterval(tickClock, 30000)
+renderRail()
+syncHud()
+openScene('fleet')
+pushBot('指挥官，编队在这儿。左边是等你的事，中间一张一张是作业；点开任意一张，它的全部都在一扇窗里。', 'idle', 0)
+pushBot('M2 结算对账等你验收；网关限流等你拍板；M1 退款链路阻塞。', 'idle', 0)
+setTimeout(() => {
+  say('指挥官，我是汐音。编队我盯着，有事我举牌。', 'wink', 8000)
+}, 700)
+
+</script>
+</body>
+</html>

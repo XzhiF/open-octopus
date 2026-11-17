@@ -57,6 +57,9 @@ export interface AgentSession {
   cwd?: string | null
   /** v58: bound workspace id (main-agent / user / task). */
   workspace_id?: string | null
+  /** Cabin ownership (2026-11-17, write-once): the cabin this session was born
+   *  in. NULL = outside any cabin. Never reassigned. */
+  cabin_id?: string | null
   /** Last provider-reported context-window usage (SDK `context_usage` payload).
    *  Turn-granular data the client cannot recompute, persisted so the composer's
    *  ctx chip survives page reloads, server restarts and browser-profile changes

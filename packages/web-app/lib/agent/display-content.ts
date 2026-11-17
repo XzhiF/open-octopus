@@ -19,6 +19,20 @@ export function endsOnAsk(message: AgentMessage): boolean {
   return toolCalls.some((tc) => tc.name === 'AskUserQuestion')
 }
 
+/** 代理发言（design 25 §2 / §5.5）：doer 侧收到的 user 消息里，由汐音代用户
+ *  转达的那几类。TuiTranscript 用它把回执渲染成「汐音 · 代你」，用户输入
+ *  历史用它把这些系统写入的行排除（不是用户亲手打的字）。 */
+export function proxyTurnOf(content: string): { kind: 'decision' | 'brief' | 'note'; verbatim?: string } | null {
+  const text = content.trimStart()
+  if (/^\[决策\s*·[^\]]*\]/.test(text) && text.includes('用户回答了以下问题')) {
+    const verbatim = /（逐字）\s*(.+)/.exec(text)?.[1]?.trim()
+    return { kind: 'decision', ...(verbatim ? { verbatim } : {}) }
+  }
+  if (/^\[汐音\s*·\s*代用户转达\]/.test(text)) return { kind: 'brief' }
+  if (/^\[舱派发\s*·/.test(text)) return { kind: 'brief' }
+  return null
+}
+
 /** 历史态要显示的正文。 */
 export function displayContentFor(message: AgentMessage): string {
   const timeline = message.role === 'user' || !Array.isArray(message.timeline)

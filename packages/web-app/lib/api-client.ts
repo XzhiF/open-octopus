@@ -66,6 +66,22 @@ export async function browseDirectories(path?: string): Promise<BrowseResult> {
   return handleResponse<BrowseResult>(res)
 }
 
+export interface CreateDirectoryResult {
+  path: string
+  /** 新目录自己的 browse DTO —— 建完直接落进去，不用再拉一次。 */
+  browse: BrowseResult
+}
+
+/** 在目录浏览器的当前目录下新建文件夹（单段名字，重名 409）。 */
+export async function createDirectory(parent: string, name: string): Promise<CreateDirectoryResult> {
+  const res = await apiFetch(`${getServerUrl()}/api/agent/fs/mkdir`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Authorization: "Bearer agent" },
+    body: JSON.stringify({ parent, name }),
+  })
+  return handleResponse<CreateDirectoryResult>(res)
+}
+
 export interface WorkspaceSkillInfo {
   name: string
   source: "workspace"
@@ -446,6 +462,22 @@ export async function retryExecution(workspaceId: string, executionId: string, f
 
 export async function cancelExecution(workspaceId: string, executionId: string) {
   const res = await apiFetch(`${getServerUrl()}/api/workspaces/${workspaceId}/executions/${executionId}/cancel`, {
+    method: "POST",
+  })
+  return handleResponse(res)
+}
+
+/** 执行级恢复（暂停 → 继续）。服务端对 harness-delegate 暂停会自动从失败节点重跑。 */
+export async function resumeExecution(workspaceId: string, executionId: string) {
+  const res = await apiFetch(`${getServerUrl()}/api/workspaces/${workspaceId}/executions/${executionId}/resume`, {
+    method: "POST",
+  })
+  return handleResponse(res)
+}
+
+/** 执行级暂停（运行 → 暂停）。节点之间没有可冻结的目标时服务端会 400 拒绝。 */
+export async function pauseExecution(workspaceId: string, executionId: string) {
+  const res = await apiFetch(`${getServerUrl()}/api/workspaces/${workspaceId}/executions/${executionId}/pause`, {
     method: "POST",
   })
   return handleResponse(res)

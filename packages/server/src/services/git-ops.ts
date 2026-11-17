@@ -91,6 +91,23 @@ export class GitOps {
     return stdout
   }
 
+  /** Cabin P3（S5 仓库卡）：HEAD 的 sha/subject/author-date 一次读出。 */
+  async getHeadCommitInfo(projectPath: string): Promise<{ sha: string; msg: string; at: string }> {
+    const { stdout } = await runGit(projectPath, ["log", "-1", "--format=%H%x00%s%x00%aI"])
+    const [sha, msg, at] = stdout.split("\0")
+    return { sha: sha ?? "", msg: msg ?? "", at: at ?? "" }
+  }
+
+  /** Cabin P3（S5 仓库卡）：origin remote URL（无 origin → null）。 */
+  async getRemoteUrl(projectPath: string): Promise<string | null> {
+    try {
+      const { stdout } = await runGit(projectPath, ["remote", "get-url", "origin"])
+      return stdout || null
+    } catch {
+      return null
+    }
+  }
+
   async getCurrentBranch(projectPath: string): Promise<string> {
     const { stdout } = await runGit(projectPath, ["rev-parse", "--abbrev-ref", "HEAD"])
     return stdout
@@ -254,6 +271,19 @@ export class GitOps {
     const branch = defaultBranch.replace("refs/remotes/origin/", "")
     await runGit(projectPath, ["merge", `origin/${branch}`, "--no-edit"])
     return this.getHeadCommit(projectPath)
+  }
+
+  /**
+   * 只读主仓的拉取：fetch + merge --ff-only（分支落后才成功，分叉直接抛）。
+   * 舱籍第三轮门槛（design 21 §1.6 ⑤）：ORG 主仓只允许这一种写向动作。
+   */
+  async pullFastForward(projectPath: string): Promise<{ branch: string; commit: string }> {
+    await runGit(projectPath, ["fetch", "origin"], 120_000)
+    const { stdout } = await runGit(projectPath, ["symbolic-ref", "--short", "HEAD"])
+    const branch = stdout.trim()
+    await runGit(projectPath, ["merge", "--ff-only", `origin/${branch}`])
+    const commit = await this.getHeadCommit(projectPath)
+    return { branch, commit }
   }
 
   /**

@@ -28,7 +28,9 @@ CREATE TABLE IF NOT EXISTS workspaces (
   -- old `source_schedule_id → schedules.origin_id` reverse lookup.
   -- No FK (S2 polymorphic convention).
   task_id TEXT,
-  archive_status TEXT DEFAULT NULL
+  archive_status TEXT DEFAULT NULL,
+  -- Cabin (S2 no FK): directory-bound long-lived cockpit ownership.
+  cabin_id TEXT
 );
 
 -- 2. Executions
@@ -83,6 +85,12 @@ CREATE TABLE IF NOT EXISTS executions (
   -- No FK (S2 convention: app-level integrity, so a tasks rebuild can't strand the
   -- ledger).
   task_id TEXT,
+  -- 舱归属（2026-11-17）：执行在点火那一刻快照自己属于哪个作战舱 —— 单值、写一次、
+  -- 不可改（见下方 trg_executions_cabin_write_once）。来源优先级：
+  --   executions.task_id → tasks.cabin_id，其次 workspaces.cabin_id。
+  -- NULL = 舱外执行（CLI / 全局 chat / 历史数据）。这是账本归属，不是 cwd 分组：
+  -- 执行实际跑在哪个 workspace / 目录，由 workspace_id 决定。
+  cabin_id TEXT,
   started_at TEXT,
   completed_at TEXT,
   duration INTEGER,
@@ -90,6 +98,7 @@ CREATE TABLE IF NOT EXISTS executions (
   updated_at TEXT NOT NULL,
   FOREIGN KEY (workspace_id) REFERENCES workspaces(id)
 );
+CREATE INDEX IF NOT EXISTS idx_executions_cabin ON executions(cabin_id);
 
 -- 2b. Execution ⇄ 归属会话/任务（2026-11-03 消耗口径）
 -- 任务轮靠 executions.task_id 归集，但两类执行拿不到 task_id：
@@ -620,6 +629,8 @@ CREATE TABLE IF NOT EXISTS sessions (
   provider_session_id TEXT,
   cwd TEXT,
   workspace_id TEXT,
+  -- Cabin (S2 no FK): cabin main/orchestrator or task author/doer session.
+  cabin_id TEXT,
   -- Last provider-reported context usage (JSON, SDK context_usage payload).
   -- Turn-granular; persisted so the composer ctx chip paints on a cold load.
   context_usage TEXT,
@@ -696,6 +707,8 @@ CREATE TABLE IF NOT EXISTS tasks (
   -- 历史已归档 task 无摘要 = NULL（宽容读、搜索不崩）。走 ensureColumn 补列（既有库），
   -- 新库由本 CREATE 直接带上。
   semantic_summary TEXT,
+  -- Cabin (S2 no FK): cockpit ownership.
+  cabin_id TEXT,
   FOREIGN KEY (source_chat_session_id) REFERENCES sessions(id)
 );
 
@@ -1360,3 +1373,103 @@ CREATE TABLE IF NOT EXISTS subagent_runs (
 
 CREATE INDEX IF NOT EXISTS idx_subagent_runs_session
   ON subagent_runs(session_id, started_at DESC);
+
+-- ── Cabin (directory-bound long-lived cockpit) ──
+-- S2 convention: cross-domain links carry NO foreign key; app-level cascade.
+CREATE TABLE IF NOT EXISTS cabins (
+  id TEXT PRIMARY KEY,
+  name TEXT NOT NULL,
+  path TEXT NOT NULL,
+  workspace_id TEXT,
+  main_session_id TEXT,
+  requirements TEXT NOT NULL DEFAULT '',
+  status TEXT NOT NULL DEFAULT 'draft'
+    CHECK (status IN ('draft','initializing','active','dormant','archived')),
+  mainline_strategy TEXT NOT NULL DEFAULT 'clean-main',
+  org TEXT,
+  init_state TEXT,
+  cockpit_prefs TEXT,
+  version INTEGER NOT NULL DEFAULT 1,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  last_active_at TEXT,
+  archived_at TEXT,
+  -- 软删除（2026-11-15）：删舱不清账 —— 行留在表里，计费 / Trace / 验收历史都还在，
+  -- 只是不再出现在列表和接口里。一个目录一个舱的唯一约束只约束「活着的舱」，
+  -- 所以软删之后同一个目录还能再建新舱。
+  deleted_at TEXT
+);
+CREATE UNIQUE INDEX IF NOT EXISTS ux_cabins_path ON cabins(path) WHERE deleted_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_cabins_status ON cabins(status);
+
+CREATE TABLE IF NOT EXISTS cabin_jobs (
+  id TEXT PRIMARY KEY,
+  cabin_id TEXT NOT NULL,
+  kind TEXT NOT NULL CHECK (kind IN ('task','workflow','subagent')),
+  ref_id TEXT,
+  session_id TEXT,
+  title TEXT NOT NULL,
+  mandate TEXT,
+  prompt TEXT,
+  created_at TEXT NOT NULL,
+  ended_at TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_cabin_jobs_cabin ON cabin_jobs(cabin_id, created_at);
+
+CREATE TABLE IF NOT EXISTS cabin_job_events (
+  id TEXT PRIMARY KEY,
+  job_id TEXT NOT NULL,
+  cabin_id TEXT NOT NULL,
+  kind TEXT NOT NULL,
+  actor TEXT,
+  payload TEXT,
+  created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_cabin_job_events_job ON cabin_job_events(job_id, created_at);
+CREATE TRIGGER IF NOT EXISTS trg_cabin_job_events_no_update
+BEFORE UPDATE ON cabin_job_events BEGIN SELECT RAISE(ABORT, 'cabin_job_events is append-only'); END;
+-- DELETE is reserved for cabin cascade cleanup (app-level, S2); no app path deletes events otherwise.
+
+-- 独立委派（design 25 §4.2）：轻量工作实体，不是任务 —— 没有 phase / worktree /
+-- 验收 / 归档。不复用 cabin_jobs：那一列 kind 带 CHECK（不可扩值），账本不合并，
+-- 读侧归一化成同一种 WorkRow。CREATE ... IF NOT EXISTS 让老库 applySchema 时自动补表。
+CREATE TABLE IF NOT EXISTS cabin_delegations (
+  id TEXT PRIMARY KEY,
+  cabin_id TEXT NOT NULL,
+  title TEXT NOT NULL,
+  intent_text TEXT NOT NULL,
+  brief TEXT,
+  autonomy TEXT NOT NULL DEFAULT 'checkpoint'
+    CHECK (autonomy IN ('approve','checkpoint','hands-off')),
+  state TEXT NOT NULL DEFAULT 'queued'
+    CHECK (state IN ('queued','running','waiting_input','done','failed','cancelled')),
+  doer_session_id TEXT,
+  result_summary TEXT,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  ended_at TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_cabin_delegations_cabin ON cabin_delegations(cabin_id, created_at);
+CREATE INDEX IF NOT EXISTS idx_cabin_delegations_doer ON cabin_delegations(doer_session_id);
+
+-- ── 舱归属写一次（2026-11-17）────────────────────────────────────────────
+-- 工作区 / 任务 / 会话 / 执行出生在哪个舱就永远属于哪个舱。
+-- NULL → 值 允许（认领 / 历史回填），值 → 别的值 或 值 → NULL 一律 ABORT。
+-- 与 cabin_job_events 的 append-only 同一套纪律：归属是账本，不重算、不转移。
+-- 必须放在文件末尾：CREATE TRIGGER 会校验目标表存在，而这几张表在文件中段才建。
+CREATE TRIGGER IF NOT EXISTS trg_workspaces_cabin_write_once
+BEFORE UPDATE OF cabin_id ON workspaces
+WHEN OLD.cabin_id IS NOT NULL AND (NEW.cabin_id IS NULL OR NEW.cabin_id <> OLD.cabin_id)
+BEGIN SELECT RAISE(ABORT, 'workspaces.cabin_id is write-once (cabin ownership cannot be transferred)'); END;
+CREATE TRIGGER IF NOT EXISTS trg_tasks_cabin_write_once
+BEFORE UPDATE OF cabin_id ON tasks
+WHEN OLD.cabin_id IS NOT NULL AND (NEW.cabin_id IS NULL OR NEW.cabin_id <> OLD.cabin_id)
+BEGIN SELECT RAISE(ABORT, 'tasks.cabin_id is write-once (cabin ownership cannot be transferred)'); END;
+CREATE TRIGGER IF NOT EXISTS trg_sessions_cabin_write_once
+BEFORE UPDATE OF cabin_id ON sessions
+WHEN OLD.cabin_id IS NOT NULL AND (NEW.cabin_id IS NULL OR NEW.cabin_id <> OLD.cabin_id)
+BEGIN SELECT RAISE(ABORT, 'sessions.cabin_id is write-once (cabin ownership cannot be transferred)'); END;
+CREATE TRIGGER IF NOT EXISTS trg_executions_cabin_write_once
+BEFORE UPDATE OF cabin_id ON executions
+WHEN OLD.cabin_id IS NOT NULL AND (NEW.cabin_id IS NULL OR NEW.cabin_id <> OLD.cabin_id)
+BEGIN SELECT RAISE(ABORT, 'executions.cabin_id is write-once (cabin ownership cannot be transferred)'); END;

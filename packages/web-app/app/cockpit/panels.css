@@ -1,0 +1,241 @@
+/* v20（design 29 §6）：模态面板壳 + 决断队列。
+   壳：居中玻璃 overlay + scrim；z 160/159 压住浮窗域（nextZ 100+）与 WINDOWS 条(140)。
+   Esc 走 CockpitLayerStack（priority 85），壳不自己监听键。 */
+
+.ck12-pscrim {
+  position: fixed;
+  inset: 0;
+  z-index: 159;
+  background: rgba(4, 6, 10, 0.55);
+  animation: ck12-pscrim-in 0.16s ease-out;
+}
+@keyframes ck12-pscrim-in { from { opacity: 0; } to { opacity: 1; } }
+
+.ck12-panel {
+  position: fixed;
+  left: 50%;
+  top: 58px;
+  bottom: 30px;
+  transform: translateX(-50%);
+  z-index: 160;
+  width: min(760px, 94vw);
+  display: flex;
+  flex-direction: column;
+  border-radius: 16px;
+  border: 1px solid color-mix(in srgb, var(--ck-a) 30%, transparent);
+  background: linear-gradient(180deg, rgba(16, 20, 29, 0.97), rgba(9, 11, 17, 0.96));
+  box-shadow: 0 30px 80px rgba(0, 0, 0, 0.6), 0 0 44px color-mix(in srgb, var(--ck-a) 9%, transparent);
+  overflow: hidden;
+  animation: ck12-panel-in 0.2s cubic-bezier(0.2, 0.9, 0.2, 1);
+}
+.ck12-panel.is-wide { width: min(980px, 96vw); }
+@keyframes ck12-panel-in {
+  from { opacity: 0; transform: translateX(-50%) translateY(10px) scale(0.98); }
+  to { opacity: 1; transform: translateX(-50%) translateY(0) scale(1); }
+}
+
+.ck12-panel-h {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  height: 44px;
+  padding: 0 12px 0 16px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.07);
+}
+.ck12-panel-h b { font-size: 12.5px; letter-spacing: 0.06em; color: var(--ck12-ink); }
+.ck12-panel-en { font-size: 9px; letter-spacing: 0.16em; color: var(--ck12-faint); }
+.ck12-panel-ln { flex: 1; height: 1px; background: var(--ck12-bd); }
+.ck12-panel-x {
+  display: grid;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  border-radius: 7px;
+  color: var(--ck12-dim);
+  transition: color 0.14s, background 0.14s;
+}
+.ck12-panel-x:hover { color: var(--pop-red, #ff6b81); background: rgba(255, 255, 255, 0.06); }
+
+.ck12-panel-b {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 12px 14px 16px;
+}
+
+/* ── 决断队列（ops）────────────────────────────────────────────────── */
+.ck12-ops-empty {
+  padding: 26px 10px;
+  text-align: center;
+  color: var(--ck12-dim);
+  font-size: 11.5px;
+}
+.ck12-ops-empty b { display: block; margin-bottom: 6px; color: var(--pop-green); font-size: 13px; }
+
+.ck12-ops-card {
+  border: 1px solid var(--ck12-bd);
+  border-left: 3px solid color-mix(in srgb, var(--pop-amber) 60%, transparent);
+  border-radius: 11px;
+  background: rgba(255, 255, 255, 0.025);
+  padding: 10px 12px;
+}
+.ck12-ops-card + .ck12-ops-card { margin-top: 9px; }
+.ck12-ops-card.is-done {
+  border-left-color: color-mix(in srgb, var(--pop-green) 60%, transparent);
+  opacity: 0.85;
+  animation: ck12-ops-done-in 0.24s ease-out;
+}
+@keyframes ck12-ops-done-in { from { opacity: 0; transform: translateY(6px); } to { opacity: 0.85; transform: none; } }
+
+/* 回传入场（design 29 §7.2 cardArr）：上浮 + scale + 辉光衰减。 */
+.ck12-ops-card.is-arrived-0 { animation: ck12-card-arr 1.4s cubic-bezier(0.2, 0.9, 0.2, 1); }
+.ck12-ops-card.is-arrived-1 { animation: ck12-card-arr-b 1.4s cubic-bezier(0.2, 0.9, 0.2, 1); }
+@keyframes ck12-card-arr {
+  0% { opacity: 0.2; transform: translateY(10px) scale(0.96); box-shadow: 0 0 0 0 color-mix(in srgb, var(--ck-a) 45%, transparent); }
+  35% { opacity: 1; transform: none; box-shadow: 0 0 26px 2px color-mix(in srgb, var(--ck-a) 30%, transparent); }
+  100% { box-shadow: 0 0 0 0 transparent; }
+}
+@keyframes ck12-card-arr-b {
+  0% { opacity: 0.2; transform: translateY(10px) scale(0.96); box-shadow: 0 0 0 0 color-mix(in srgb, var(--ck-a) 45%, transparent); }
+  35% { opacity: 1; transform: none; box-shadow: 0 0 26px 2px color-mix(in srgb, var(--ck-a) 30%, transparent); }
+  100% { box-shadow: 0 0 0 0 transparent; }
+}
+
+.ck12-ops-h { display: flex; align-items: baseline; gap: 7px; flex-wrap: wrap; }
+.ck12-ops-h b { font-size: 12px; color: var(--ck12-ink); }
+.ck12-ops-no { font-family: var(--font-mono); font-size: 9.5px; color: var(--ck12-faint); }
+.ck12-ops-handle {
+  padding: 0 5px;
+  border-radius: 4px;
+  border: 1px solid color-mix(in srgb, var(--ck-a) 40%, transparent);
+  color: var(--ck-a);
+  font-family: var(--font-mono);
+  font-size: 9px;
+}
+.ck12-ops-emo { font-size: 11px; }
+.ck12-ops-stage { margin-left: auto; font-size: 9.5px; color: var(--pop-amber); }
+.ck12-ops-ok { color: var(--pop-green); font-weight: 800; }
+.ck12-ops-choice { font-size: 10px; color: var(--pop-green); }
+.ck12-ops-q { margin-top: 6px; font-size: 11px; line-height: 1.5; color: var(--ck12-dim); }
+.ck12-ops-opts { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 7px; }
+.ck12-ops-opt {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  border: 1px solid var(--ck12-bd);
+  font-size: 10px;
+  color: var(--ck12-dim);
+}
+.ck12-ops-opt i {
+  font-style: normal;
+  font-size: 8px;
+  letter-spacing: 0.08em;
+  color: var(--pop-amber);
+}
+.ck12-ops-f { display: flex; align-items: center; gap: 8px; margin-top: 9px; }
+.ck12-ops-go,
+.ck12-ops-detail {
+  padding: 3px 10px;
+  border-radius: 7px;
+  border: 1px solid color-mix(in srgb, var(--ck-a) 40%, transparent);
+  color: var(--ck-a);
+  font-size: 10.5px;
+  transition: background 0.14s, color 0.14s;
+}
+.ck12-ops-go:hover { background: color-mix(in srgb, var(--ck-a) 14%, transparent); }
+.ck12-ops-detail { border-color: var(--ck12-bd); color: var(--ck12-dim); }
+.ck12-ops-detail:hover { color: var(--ck12-ink); background: rgba(255, 255, 255, 0.05); }
+.ck12-ops-foot { margin-top: 12px; font-size: 9.5px; color: var(--ck12-faint); text-align: center; }
+
+@media (max-width: 900px) {
+  .ck12-panel { top: 50px; bottom: 16px; width: 96vw; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .ck12-pscrim, .ck12-panel, .ck12-ops-card.is-done,
+  .ck12-ops-card.is-arrived-0, .ck12-ops-card.is-arrived-1 { animation: none; }
+}
+
+/* ── SESSION LEDGER（usage）────────────────────────────────────────── */
+.ck12-ledger-top {
+  display: flex; flex-wrap: wrap; align-items: baseline; gap: 14px;
+  padding: 4px 2px 10px; font-size: 10.5px; color: var(--ck12-dim);
+}
+.ck12-ledger-top b { font-size: 15px; color: var(--ck12-ink); font-variant-numeric: tabular-nums; }
+.ck12-ledger-stale { font-style: normal; font-size: 9px; color: var(--pop-amber); }
+.ck12-ledger-cells { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; }
+.ck12-ledger-cell {
+  display: flex; flex-direction: column; gap: 3px; padding: 8px 10px;
+  border: 1px solid var(--ck12-bd); border-radius: 10px;
+  background: rgba(255, 255, 255, 0.025);
+}
+.ck12-ledger-cell b { font-size: 13px; color: var(--ck-a); font-variant-numeric: tabular-nums; }
+.ck12-ledger-cell span { font-size: 9px; letter-spacing: 0.08em; color: var(--ck12-faint); }
+.ck12-ledger-sec {
+  margin: 14px 0 6px; font-size: 9px; font-weight: 800;
+  letter-spacing: 0.14em; color: var(--ck12-faint);
+}
+.ck12-ledger-row {
+  display: flex; align-items: baseline; gap: 10px; width: 100%;
+  padding: 5px 8px; border-radius: 8px; text-align: left;
+  font-size: 10.5px; color: var(--ck12-dim);
+}
+.ck12-ledger-row.is-job:hover { background: rgba(255, 255, 255, 0.05); color: var(--ck12-ink); }
+.ck12-ledger-name {
+  flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  font-family: var(--font-mono); font-size: 10.5px; color: var(--ck12-ink);
+}
+.ck12-ledger-cost { margin-left: auto; color: var(--pop-amber); font-variant-numeric: tabular-nums; }
+.ck12-ledger-none { padding: 6px 8px; font-size: 10px; color: var(--ck12-faint); }
+.ck12-ledger-none.is-err { color: var(--pop-red, #ff6b81); }
+
+/* ── 作战舱文件（ws）───────────────────────────────────────────────── */
+.ck12-ws-note {
+  margin-bottom: 8px; padding: 4px 9px; border-radius: 7px;
+  border: 1px dashed color-mix(in srgb, var(--pop-green) 40%, transparent);
+  color: var(--pop-green); font-size: 9.5px;
+}
+.ck12-ws-chips { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 8px; }
+.ck12-ws-chip {
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 3px 10px; border-radius: 999px;
+  border: 1px solid var(--ck12-bd); color: var(--ck12-dim); font-size: 10px;
+}
+.ck12-ws-chip i { font-style: normal; font-size: 8.5px; color: var(--ck12-faint); font-family: var(--font-mono); }
+.ck12-ws-chip.is-on {
+  border-color: color-mix(in srgb, var(--ck-a) 55%, transparent);
+  background: color-mix(in srgb, var(--ck-a) 12%, transparent);
+  color: var(--ck12-ink);
+}
+.ck12-ws-b { min-height: 320px; }
+.ck12-ws-jump {
+  flex: none; padding: 1px 8px; border-radius: 6px;
+  border: 1px solid color-mix(in srgb, var(--ck-a) 40%, transparent);
+  color: var(--ck-a); font-size: 9.5px;
+}
+.ck12-ws-jump:hover { background: color-mix(in srgb, var(--ck-a) 12%, transparent); }
+
+@media (max-width: 560px) {
+  .ck12-ledger-cells { grid-template-columns: repeat(2, 1fr); }
+}
+
+/* ── 动作图鉴（poses）──────────────────────────────────────────────── */
+.ck12-poses { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; }
+.ck12-pose-card {
+  display: flex; flex-direction: column; gap: 4px; padding: 8px;
+  border: 1px solid var(--ck12-bd); border-radius: 12px;
+  background: rgba(255, 255, 255, 0.025); text-align: left;
+  transition: border-color 0.14s, transform 0.14s;
+}
+.ck12-pose-card:hover { transform: translateY(-2px); border-color: color-mix(in srgb, var(--ck-a) 45%, transparent); }
+.ck12-pose-card.is-on { border-color: var(--pop-amber); box-shadow: 0 0 0 1px var(--pop-amber), 0 0 18px color-mix(in srgb, var(--pop-amber) 25%, transparent); }
+.ck12-pose-thumb { display: block; height: 150px; width: 100%; overflow: hidden; border-radius: 8px; background: rgba(0, 0, 0, 0.25); }
+.ck12-pose-thumb img { width: 100%; height: 100%; object-fit: cover; object-position: 50% 12%; }
+.ck12-pose-card b { font-size: 11px; color: var(--ck12-ink); }
+.ck12-pose-card b small { margin-left: 5px; font-size: 8.5px; letter-spacing: 0.1em; color: var(--ck12-faint); }
+.ck12-pose-desc { font-size: 9px; color: var(--ck12-dim); }
+@media (max-width: 900px) { .ck12-poses { grid-template-columns: repeat(3, 1fr); } }
+@media (max-width: 560px) { .ck12-poses { grid-template-columns: repeat(2, 1fr); } .ck12-pose-thumb { height: 120px; } }

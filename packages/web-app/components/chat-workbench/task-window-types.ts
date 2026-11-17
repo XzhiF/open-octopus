@@ -11,6 +11,8 @@ export interface RunTarget {
   phaseIndex?: number | null
   roundIndex?: number | null
   status?: string
+  /** 任务绑定执行 = 任务 id；恢复要走任务动作（重挂 callbacks），不能只走执行接口。 */
+  taskId?: string | null
   /** 系统运行 —— 不给「重跑」（那会误解成业务重跑）。 */
   system?: boolean
 }

@@ -36,7 +36,7 @@ export interface AppNavigationValue {
   pathname: string
   searchParams: URLSearchParams
   params: RouteParams
-  mode: 'view' | 'detail' | 'standalone' | 'not-found' | 'redirect'
+  mode: 'view' | 'detail' | 'standalone' | 'cabin' | 'not-found' | 'redirect'
   view: ViewId | null
   route: AppRoute
   active: boolean

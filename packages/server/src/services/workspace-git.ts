@@ -20,6 +20,8 @@ export interface SpecWorktreeEntry {
   main_path: string
   worktree_path: string
   branch: string
+  /** 仓库所属 org（作战舱跨 org 绑定用；老路径不填 = 舱级 org）。 */
+  group?: string
 }
 
 export class WorkspaceGit {
@@ -179,6 +181,7 @@ export class WorkspaceGit {
     proj: { name: string; source_path?: string; group?: string },
     branchName: string,
     org: string,
+    opts: { clobber?: boolean; worktreePath?: string } = {},
   ): SpecWorktreeEntry {
     const { spawnSync } = require("child_process") as typeof import("child_process")
     const projectsDir = path.join(workspacePath, "projects")
@@ -189,15 +192,25 @@ export class WorkspaceGit {
       ? rawSource.replace(/^~/, os.homedir())
       : this.resolveRepoPath(org, proj.name, proj.group ?? "")
 
-    const wtDir = path.join(projectsDir, proj.name)
+    // Cabin 并行实例传显式目录（projects/<instance>/<name>）；默认保持老落点。
+    const wtDir = opts.worktreePath ?? path.join(projectsDir, proj.name)
 
     if (!fs.existsSync(sourcePath) || !fs.existsSync(path.join(sourcePath, ".git"))) {
       throw new Error(`source path unreachable for '${proj.name}': ${sourcePath}`)
     }
 
     spawnSync("git", ["worktree", "prune"], { cwd: sourcePath, timeout: 10000 })
-    if (fs.existsSync(wtDir)) fs.rmSync(wtDir, { recursive: true, force: true })
+    if (fs.existsSync(wtDir)) {
+      // clobber:false — 活的 worktree 绝不删（同名并行会互删生产物），直接报冲突；
+      // 只有「目录在但不是活 worktree」才清理。默认 true 保持任务路径逐字行为。
+      const alive = spawnSync("git", ["-C", wtDir, "rev-parse", "--git-dir"], { timeout: 10000 }).status === 0
+      if (alive && opts.clobber === false) {
+        throw new Error(`worktree_exists: ${wtDir} 已经是活的工作树`)
+      }
+      fs.rmSync(wtDir, { recursive: true, force: true })
+    }
 
+    fs.mkdirSync(path.dirname(wtDir), { recursive: true })
     const result = spawnSync("git", ["worktree", "add", "-f", wtDir, "--detach"], {
       cwd: sourcePath, timeout: 60000,
     })
@@ -213,7 +226,10 @@ export class WorkspaceGit {
       }
     }
 
-    return { name: proj.name, main_path: sourcePath, worktree_path: wtDir, branch: branchName }
+    return {
+      name: proj.name, main_path: sourcePath, worktree_path: wtDir, branch: branchName,
+      ...(proj.group ? { group: proj.group } : {}),
+    }
   }
 
   /** worktree 目录是否仍是活的 git worktree（自愈检测用，trigger-prebuild
@@ -240,6 +256,7 @@ export class WorkspaceGit {
     const config = JSON.parse(fs.readFileSync(configPath, "utf-8"))
     config.repos = entries.map(e => ({
       name: e.name, main_path: e.main_path, worktree_path: e.worktree_path, branch: e.branch,
+      ...(e.group ? { group: e.group } : {}),
     }))
     fs.writeFileSync(configPath, JSON.stringify(config, null, 2), "utf-8")
 

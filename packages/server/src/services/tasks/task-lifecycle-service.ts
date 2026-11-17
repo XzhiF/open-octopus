@@ -67,6 +67,9 @@ import {
   resolveTaskLaunchStep,
   type TaskV4PhaseConfig,
 } from "./task-materialize"
+// design 23 §3.2：舱本地/外部项目的 source_path 必须在建 worktree 前解析出来，
+// 否则 initWorktreeOne 只会走 org 注册表（本地项目找不到）。
+import { resolveTaskProjectPath } from "./task-project-resolver"
 import { computeTaskWsLaunchParams } from "../scheduler/ws-launch"
 import { calculateNextExecutions } from "../cron-utils"
 import { getChatEventBridge } from "../activity/chat-event-bridge"
@@ -242,27 +245,30 @@ export class TaskLifecycleService {
       if (this.runDAO.countActiveWork() >= MAX_PARALLEL_WORKSPACES) {
         return { launched, capped: true }
       }
-      // Guarded flip: two overlapping rounds can both see the same queued row, and only
-      // the one whose UPDATE lands gets to start it. Without this guard a wake() racing
-      // the 60s tick launches a task twice — the concurrency case the whole design is
-      // gated on. The token is the started_at this claim wrote; it goes to the engine's
-      // start so the launcher can prove WHICH claim it holds (see ExecutionLifecycle.start).
-      const leaseAt = new Date().toISOString()
-      if (this.execDAO.claimLaunch(row.id, leaseAt).changes === 0) continue
-      try {
-        this.startRow(row, leaseAt)
-        launched++
-      } catch (err: unknown) {
-        const message = err instanceof Error ? err.message : String(err)
-        console.error(`[task-lifecycle] launch failed for execution ${row.id}:`, message)
-        this.execDAO.setLaunchStatus(row.id, "failed", {
-          completedAt: new Date().toISOString(),
-          error: `领取后启动失败: ${message}`,
-        })
-        this.finishTaskOutcome(row.task_id as string, "failed")
-      }
+      if (this.claimAndStart(row)) launched++
     }
     return { launched, capped: false }
+  }
+
+  /** Guarded flip + start：两个重叠回合可能看到同一 queued 行，只有 UPDATE
+   *  落地的拿到启动权。token 是 claim 写入的 started_at，engine start 用它证明
+   *  持有的是哪一次 claim（见 ExecutionLifecycle.start）。 */
+  private claimAndStart(row: ExecutionRow): boolean {
+    const leaseAt = new Date().toISOString()
+    if (this.execDAO.claimLaunch(row.id, leaseAt).changes === 0) return false
+    try {
+      this.startRow(row, leaseAt)
+      return true
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : String(err)
+      console.error(`[task-lifecycle] launch failed for execution ${row.id}:`, message)
+      this.execDAO.setLaunchStatus(row.id, "failed", {
+        completedAt: new Date().toISOString(),
+        error: `领取后启动失败: ${message}`,
+      })
+      this.finishTaskOutcome(row.task_id as string, "failed")
+      return false
+    }
   }
 
   /**
@@ -406,9 +412,17 @@ export class TaskLifecycleService {
       v4Phases = phases
     }
 
+    const launchProjectIds = parseJSON<string[]>(task.project_ids, [])
+    // 舱本地 / 外部项目不在 org 注册表里 —— 把解析出的绝对路径带进
+    // workspace_spec.projects[].source_path，initWorktreeOne 会优先用它。
+    const projectSources: Record<string, string> = {}
+    for (const projectId of launchProjectIds) {
+      const resolved = resolveTaskProjectPath(this.deps.db, task, projectId)
+      if (resolved) projectSources[projectId] = resolved
+    }
     const plan = buildTaskLaunchConfig(
       spec,
-      parseJSON<string[]>(task.project_ids, []),
+      launchProjectIds,
       task.repo_group ?? "",
       task.workflow_ref ?? undefined,
       parseJSON<string[]>(task.skills, []),
@@ -416,6 +430,7 @@ export class TaskLifecycleService {
       artifactsDir,
       workflowsDir,
       v4Phases,
+      projectSources,
     )
 
     const wantsPhase = spec.format === "v4"

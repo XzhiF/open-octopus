@@ -19,6 +19,8 @@ export type PathPolicyCode =
   | 'PATH_NOT_FOUND'
   | 'PATH_NOT_DIRECTORY'
   | 'PATH_UNREADABLE'
+  | 'PATH_EXISTS'
+  | 'PATH_INVALID_NAME'
 
 export class PathPolicyError extends Error {
   readonly code: PathPolicyCode
@@ -200,6 +202,67 @@ export function resolveSelectableDirectory(input: string): string {
     throw new PathPolicyError('PATH_BLOCKED', `系统敏感目录不能作为工作目录: ${real}`)
   }
   return real
+}
+
+/** Windows 保留设备名（不区分大小写，带扩展名也算：`CON.txt`）。 */
+const WINDOWS_RESERVED = new Set([
+  'con', 'prn', 'aux', 'nul',
+  'com1', 'com2', 'com3', 'com4', 'com5', 'com6', 'com7', 'com8', 'com9',
+  'lpt1', 'lpt2', 'lpt3', 'lpt4', 'lpt5', 'lpt6', 'lpt7', 'lpt8', 'lpt9',
+])
+
+/** 新文件夹只允许单段名字：不带路径分隔符、不是 . / ..、不越过父目录。 */
+function assertFolderName(raw: string): string {
+  const name = raw.trim()
+  const invalid = (why: string): never => {
+    throw new PathPolicyError('PATH_INVALID_NAME', `文件夹名不可用（${why}）: ${raw}`)
+  }
+  if (!name) invalid('空名字')
+  if (name === '.' || name === '..') invalid('不能是 . 或 ..')
+  if (Buffer.byteLength(name) > 255) invalid('名字过长')
+  if (/[\\/\0]/.test(name)) invalid('不能包含路径分隔符')
+  if (process.platform === 'win32') {
+    if (/[<>:"|?*]/.test(name)) invalid('不能包含 < > : " | ? *')
+    if (/[. ]$/.test(name)) invalid('不能以点或空格结尾')
+    if (WINDOWS_RESERVED.has(name.split('.')[0]!.toLowerCase())) invalid('系统保留名')
+  }
+  return name
+}
+
+export interface CreateDirectoryResult {
+  path: string
+  /** 新建后的目录列表 DTO —— 前端可以直接落到新目录，不用再请求一次。 */
+  browse: BrowseResult
+}
+
+/**
+ * 在可浏览的父目录下新建一个文件夹（目录浏览器 / 工作空间选择用）。
+ * 父目录必须存在且可浏览；系统敏感目录、重名、非法名字都会被拒绝。
+ */
+export function createDirectory(parentInput: string, rawName: string): CreateDirectoryResult {
+  const requested = expandHome(parentInput.trim())
+  const resolvedParent = normalize(requested)
+  statDirectory(resolvedParent)
+  const realParent = realpath(resolvedParent)
+  if (!isBrowsable(realParent)) {
+    throw new PathPolicyError('PATH_BLOCKED', `系统敏感目录不能新建文件夹: ${realParent}`)
+  }
+
+  const name = assertFolderName(rawName)
+  const target = path.join(realParent, name)
+  if (isSensitivePath(target)) {
+    throw new PathPolicyError('PATH_BLOCKED', `系统敏感目录不能新建文件夹: ${target}`)
+  }
+  try {
+    fs.mkdirSync(target)
+  } catch (err: unknown) {
+    if ((err as NodeJS.ErrnoException)?.code === 'EEXIST') {
+      throw new PathPolicyError('PATH_EXISTS', `同名文件或文件夹已存在: ${name}`)
+    }
+    throw new PathPolicyError('PATH_UNREADABLE', `创建文件夹失败: ${name}`)
+  }
+
+  return { path: fs.realpathSync(target), browse: browseDirectory(target) }
 }
 
 export interface BrowseRoot {

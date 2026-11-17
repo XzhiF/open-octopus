@@ -117,8 +117,8 @@ export interface RunningAgentSession {
   /** 非空 = 这轮在等后台任务（chip 上显示「后台：在跑什么」）。 */
   background_tasks?: BackgroundTaskInfo[]
 }
-export function listRunningSessions(limit = 50) {
-  return request<{ items: RunningAgentSession[] }>(`/sessions/running?limit=${limit}`)
+export function listRunningSessions(limit = 50, signal?: AbortSignal) {
+  return request<{ items: RunningAgentSession[] }>(`/sessions/running?limit=${limit}`, { signal })
 }
 
 // ── Subagents（作业坞「子代理」，2026-11-04）───────────────────────────
@@ -197,12 +197,14 @@ export interface RunningExecution {
 export function listRunningExecutions(limit = 50) {
   return request<{ runs: RunningExecution[] }>(`/executions/running?limit=${limit}`)
 }
+/** Session detail. The server spreads the session row at the top level and adds
+ *  `messages` (it does NOT wrap them in `{ session, messages }`). */
 export function getSession(id: string, query?: { limit?: number; cursor?: string }) {
   const params = new URLSearchParams()
   if (query?.limit) params.set('limit', String(query.limit))
   if (query?.cursor) params.set('cursor', query.cursor)
   const qs = params.toString()
-  return request<{ session: AgentSession; messages: PaginatedResponse<AgentMessage> }>(
+  return request<AgentSession & { messages: PaginatedResponse<AgentMessage> }>(
     `/sessions/${id}${qs ? `?${qs}` : ''}`,
   ).then((raw) => ({
     ...raw,
@@ -213,7 +215,9 @@ export function getSession(id: string, query?: { limit?: number; cursor?: string
   }))
 }
 export function updateSession(id: string, data: { title: string }) {
-  return request<void>(`/sessions/${id}`, { method: 'PATCH', body: JSON.stringify(data) })
+  // 服务端会话路由是 PUT /sessions/:id（packages/server/src/routes/agent/sessions.ts）；
+  // 这里曾写成 PATCH，Hono 无匹配路由直接 404 —— 重命名看起来「没反应」。
+  return request<void>(`/sessions/${id}`, { method: 'PUT', body: JSON.stringify(data) })
 }
 
 /**

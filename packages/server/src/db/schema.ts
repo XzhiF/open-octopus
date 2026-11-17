@@ -22,6 +22,43 @@ const _dirname: string =
  * Idempotent — every statement uses IF NOT EXISTS.
  */
 export function applySchema(db: Database.Database): void {
+  // Additive columns must exist BEFORE schema.sql runs: the file below creates
+  // partial indexes / triggers that reference them (e.g. ux_cabins_path on
+  // cabins.deleted_at, trg_*_cabin_write_once). Fresh databases get the same
+  // columns from CREATE TABLE; on existing databases these ALTERs are the only
+  // way in (there is no versioned migration path). Each is wrapped because the
+  // table may not exist yet on a fresh DB.
+  //
+  // executions.cabin_id was added 2026-11-17. Detect the pre-migration shape so
+  // the one-time backfill below runs exactly once per database, not on every boot.
+  const execCols = db.prepare("PRAGMA table_info(executions)").all() as Array<{ name: string }>
+  const executionsCabinMissing = execCols.length > 0 && !execCols.some((c) => c.name === "cabin_id")
+
+  for (const [table, column] of [
+    ["workspaces", "cabin_id"],
+    ["tasks", "cabin_id"],
+    ["sessions", "cabin_id"],
+    ["executions", "cabin_id"],
+    ["cabins", "deleted_at"],
+  ] as const) {
+    try { db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} TEXT`) } catch { /* table absent or column exists */ }
+  }
+
+  // 历史执行回填（只在新列刚加时跑一次）：task 优先，其次 workspace。
+  // 归属是账本，回填完就不再变（后续由 trg_executions_cabin_write_once 兜底）。
+  if (executionsCabinMissing) {
+    db.exec(`
+      UPDATE executions
+         SET cabin_id = (SELECT t.cabin_id FROM tasks t WHERE t.id = executions.task_id)
+       WHERE cabin_id IS NULL AND task_id IS NOT NULL
+         AND (SELECT t.cabin_id FROM tasks t WHERE t.id = executions.task_id) IS NOT NULL;
+      UPDATE executions
+         SET cabin_id = (SELECT w.cabin_id FROM workspaces w WHERE w.id = executions.workspace_id)
+       WHERE cabin_id IS NULL
+         AND (SELECT w.cabin_id FROM workspaces w WHERE w.id = executions.workspace_id) IS NOT NULL;
+    `)
+  }
+
   const sql = fs.readFileSync(path.join(_dirname, "schema.sql"), "utf-8")
   db.exec(sql)
 

@@ -26,11 +26,21 @@ type Tab = 'overview' | 'prompt' | 'identity' | 'sdk' | 'timeline'
 type Filter = 'all' | 'switch' | 'anomaly'
 type UserView = 'raw' | 'sent'
 
+/** 过滤 chips 单源：窗档侧栏与 v20 inline 单行共用。 */
+const FILTER_CHIPS: readonly (readonly [Filter, string])[] = [
+  ['all', '全部'],
+  ['switch', '切换'],
+  ['anomaly', '异常'],
+]
+
 interface DebugInspectorWindowProps {
   sessionId: string | null
   /** Bumped by the chat (message count / streaming state) to refresh an open
    *  inspector without waiting for the running-turn poll. */
   refreshKey?: string | number
+  /** v20（design 29 §6）：嵌进作业面「调试」页签 —— 统计与过滤合并单行，
+   *  隐藏窗档的左侧统计列与侧栏过滤行；classic 模块窗不传，逐字不变。 */
+  inline?: boolean
 }
 
 const IDENTITY_COLORS = [
@@ -220,7 +230,7 @@ function Empty({ title, detail }: { title: string; detail?: string }) {
   )
 }
 
-export function DebugInspectorWindow({ sessionId, refreshKey }: DebugInspectorWindowProps) {
+export function DebugInspectorWindow({ sessionId, refreshKey, inline }: DebugInspectorWindowProps) {
   const currency = useBillingCurrency()
   const [turns, setTurns] = useState<TurnDebugSummary[]>([])
   const [listLoading, setListLoading] = useState(false)
@@ -442,6 +452,7 @@ export function DebugInspectorWindow({ sessionId, refreshKey }: DebugInspectorWi
     <div className="flex h-full min-h-0 flex-col bg-pop-paper text-pop-ink">
       {/* ── 轨迹头：统计 + 轮次尺 ─────────────────────────────── */}
       <div className="flex min-h-[58px] shrink-0 items-stretch border-b border-[#26262e] bg-[#1a1a20]">
+        {!inline && (
         <div className="flex w-[214px] shrink-0 flex-col justify-center gap-0.5 border-r border-[#26262e] px-2.5 py-1.5">
           <span className="text-[8px] font-bold tracking-[0.1em] text-[#5f616c]">SESSION TRAJECTORY</span>
           <span className="flex items-baseline gap-1.5 text-[10px] text-[#8b8d98]">
@@ -501,6 +512,7 @@ export function DebugInspectorWindow({ sessionId, refreshKey }: DebugInspectorWi
             </button>
           </div>
         </div>
+        )}
 
         <div className="flex min-w-0 flex-1 flex-col gap-1 px-3 py-1.5">
           <div className="flex h-[26px] items-end gap-px">
@@ -552,6 +564,64 @@ export function DebugInspectorWindow({ sessionId, refreshKey }: DebugInspectorWi
         </div>
       </div>
 
+      {/* ── v20 inline：统计 + 过滤单行（design 29 三轮①）───────────── */}
+      {inline && (
+        <div
+          className="flex shrink-0 flex-wrap items-center gap-2 border-b border-[#26262e] bg-[#1a1a20] px-3 py-1.5"
+          data-testid="cockpit-dbg-h"
+        >
+          <span className="flex items-baseline gap-1.5 text-[10px] text-[#8b8d98]">
+            <b className="text-[12px] text-pop-ink">{turns.length}</b>
+            <span>轮</span>
+            <span className="text-pop-purple">{switches} 次切换</span>
+            <span className="text-pop-amber">{anomalies} 异常</span>
+            {latestIndex != null && <span>最新 {turnLabel(latestIndex)}</span>}
+            <span className="font-bold text-pop-amber">{formatCost(totalCost, totalCostComplete, currency)}</span>
+          </span>
+          <span className="ml-auto flex items-center gap-1">
+            {FILTER_CHIPS.map(([key, label]) => (
+              <button
+                key={key}
+                type="button"
+                onClick={() => changeFilter(key)}
+                className={cn(
+                  'h-[17px] whitespace-nowrap rounded-[4px] border px-1.5 text-[8.5px] transition-colors',
+                  filter === key
+                    ? 'border-pop-purple/35 bg-pop-purple-soft text-pop-purple'
+                    : 'border-[#2d2d36] text-[#7f818c] hover:text-pop-ink',
+                )}
+              >
+                {label} {counts[key]}
+              </button>
+            ))}
+            <button
+              type="button"
+              onClick={jumpLatest}
+              className="h-[17px] rounded-[4px] border border-pop-purple/30 px-1.5 text-[8.5px] text-pop-purple hover:bg-pop-purple-soft"
+            >
+              ↑ 最新
+            </button>
+            <button
+              type="button"
+              title="复制本轮快照 JSON"
+              onClick={copySnapshot}
+              disabled={!detail}
+              className="grid h-[17px] place-items-center rounded-[4px] px-1.5 text-[8.5px] text-pop-dim hover:bg-white/[0.07] hover:text-pop-ink disabled:opacity-30"
+            >
+              {'{ }'}
+            </button>
+            <button
+              type="button"
+              title="刷新"
+              onClick={() => setRefreshNonce((n) => n + 1)}
+              className="grid h-[17px] place-items-center rounded-[4px] px-1 text-[9px] text-pop-dim hover:bg-white/[0.07] hover:text-pop-ink"
+            >
+              ↻
+            </button>
+          </span>
+        </div>
+      )}
+
       {/* ── 列表 + 详情 ──────────────────────────────────────── */}
       <div className="flex min-h-0 flex-1">
         <aside className="flex w-[214px] shrink-0 flex-col border-r border-[#26262e] bg-[#18181d]">
@@ -570,12 +640,9 @@ export function DebugInspectorWindow({ sessionId, refreshKey }: DebugInspectorWi
             </div>
           </div>
 
+          {!inline && (
           <div className="flex shrink-0 gap-1 border-b border-[#232329] px-2 py-1.5">
-            {([
-              ['all', '全部', counts.all],
-              ['switch', '切换', counts.switch],
-              ['anomaly', '异常', counts.anomaly],
-            ] as const).map(([key, label, count]) => (
+            {FILTER_CHIPS.map(([key, label]) => (
               <button
                 key={key}
                 type="button"
@@ -587,10 +654,11 @@ export function DebugInspectorWindow({ sessionId, refreshKey }: DebugInspectorWi
                     : 'border-[#2d2d36] text-[#7f818c] hover:text-pop-ink',
                 )}
               >
-                {label} {count}
+                {label} {counts[key]}
               </button>
             ))}
           </div>
+          )}
 
           <div ref={listRef} className="min-h-0 flex-1 overflow-y-auto px-1.5 py-1.5">
             {listError && (

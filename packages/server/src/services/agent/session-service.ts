@@ -27,7 +27,14 @@ export class SessionService {
   /**
    * Create a new session.
    */
-  createSession(opts?: { clone_name?: string; cwd?: string | null; workspace_id?: string | null }): AgentSession {
+  createSession(opts?: {
+    clone_name?: string
+    cwd?: string | null
+    workspace_id?: string | null
+    /** Cabin ownership (2026-11-17, write-once): set at birth by cabin-owned
+     *  creators (main/delegation/task session). NULL = outside any cabin. */
+    cabin_id?: string | null
+  }): AgentSession {
     const id = crypto.randomUUID()
     const now = new Date().toISOString()
 
@@ -38,6 +45,7 @@ export class SessionService {
       session_type: opts?.clone_name ? 'clone_direct' : 'main',
       cwd: opts?.cwd ?? null,
       workspace_id: opts?.workspace_id ?? null,
+      cabin_id: opts?.cabin_id ?? null,
       created_at: now,
       updated_at: now,
     })
@@ -115,6 +123,7 @@ export class SessionService {
       last_message_at: row.last_message_at ?? null,
       cwd: row.cwd ?? null,
       workspace_id: row.workspace_id ?? null,
+      cabin_id: row.cabin_id ?? null,
       created_at: row.created_at,
       updated_at: row.updated_at,
       ...(opts?.withContextUsage ? { context_usage: parseContextUsage(row.context_usage) } : {}),

@@ -1,0 +1,233 @@
+// packages/server/src/services/cabin/cabin-delegation-service.ts
+//
+// design 25 §4.2：轻量委派 —— 「替我跑一件事，回来告诉我」。
+//
+// 明确边界：不做多 phase、不做 spec 票、不做 worktree 隔离、不接验收 / 归档。
+// 一份 brief + 一个 doer 会话 + 一句话结论。
+//
+// 与 cabin_jobs 的关系：账本不合并，视图统一（读侧归一化）。
+// 委派句柄用 `D1`，任务用 `#1` —— 扫一眼就能区分「立项的」与「跑一趟的」。
+
+import { randomUUID } from "crypto"
+import type { CabinDAO } from "../../db/dao/cabin-dao"
+import type { CabinDelegationDAO } from "../../db/dao/cabin-delegation-dao"
+import type { CabinDelegationRow, CabinDelegationState } from "../../db/types"
+import type { CabinService } from "./cabin-service"
+import type { CabinCommService } from "./cabin-comm-service"
+import { getSessionService } from "../agent/session-service"
+import { briefLines, normalizeBrief, type CabinBriefInput, type NormalizedBrief } from "./cabin-brief"
+
+const now = () => new Date().toISOString()
+
+export class CabinDelegationNotFoundError extends Error {
+  constructor(id: string) { super(`cabin delegation not found: ${id}`); this.name = "CabinDelegationNotFoundError" }
+}
+
+export interface CabinDelegationDeps {
+  cabin: CabinDAO
+  delegations: CabinDelegationDAO
+  service: CabinService
+  comm: CabinCommService
+  /** 主会话消息落库后的即时通知（SSE session_updated），否则回执要等轮询。 */
+  onAppend?: (sessionId: string, workspaceId: string | null) => void
+}
+
+export interface DelegateInput {
+  title: string
+  /** 用户原话（逐字，永不覆盖 —— I4）。 */
+  intent: string
+  brief?: CabinBriefInput | null
+  autonomy?: "approve" | "checkpoint" | "hands-off"
+  /** 只登记不唤醒（测试 / 导入路径）。 */
+  noWake?: boolean
+}
+
+export class CabinDelegationService {
+  constructor(private readonly deps: CabinDelegationDeps) {}
+
+  private mustCabin(cabinId: string) {
+    const row = this.deps.cabin.findById(cabinId)
+    if (!row) throw new Error(`cabin not found: ${cabinId}`)
+    return row
+  }
+
+  list(cabinId: string): CabinDelegationRow[] {
+    return this.deps.delegations.listByCabin(cabinId)
+  }
+
+  get(id: string): CabinDelegationRow | undefined {
+    return this.deps.delegations.getById(id)
+  }
+
+  findByDoerSession(sessionId: string): CabinDelegationRow | undefined {
+    return this.deps.delegations.findByDoerSession(sessionId)
+  }
+
+  /** 创建并派发。会话是它的证据面（点开看过程），不是任务线程。 */
+  delegate(cabinId: string, input: DelegateInput): CabinDelegationRow {
+    const cabin = this.mustCabin(cabinId)
+    const brief = normalizeBrief(input.brief ?? null)
+    const autonomy = input.autonomy ?? brief?.autonomy ?? "checkpoint"
+    const title = input.title.trim() || input.intent.trim().slice(0, 40)
+    const intent = input.intent.trim()
+    if (!intent) throw new Error("intent 不能为空（用户原话是权威）")
+
+    const session = getSessionService().createSession({ cwd: cabin.path, cabin_id: cabinId })
+    const ts = now()
+    const row: CabinDelegationRow = {
+      id: randomUUID(),
+      cabin_id: cabinId,
+      title,
+      intent_text: intent,
+      brief: brief ? JSON.stringify(brief) : null,
+      autonomy,
+      state: "running",
+      doer_session_id: session.id,
+      result_summary: null,
+      created_at: ts,
+      updated_at: ts,
+      ended_at: null,
+    }
+    this.deps.delegations.insert(row)
+    try {
+      this.deps.cabin.getDb().prepare(
+        "UPDATE sessions SET cabin_id = ?, title = ?, updated_at = ? WHERE id = ?",
+      ).run(cabinId, `D · ${title}`, ts, session.id)
+    } catch { /* session columns best effort */ }
+
+    this.appendAudit(cabinId, row, "delegate", { title, autonomy })
+    try { this.deps.service.notifyViewChanged(cabinId) } catch { /* view hook optional */ }
+    if (!input.noWake) {
+      void this.deps.comm.wakeSessionPublic(session.id, cabin.org ?? "", this.wakeMessage(row, brief, intent))
+    }
+    return row
+  }
+
+  private wakeMessage(row: CabinDelegationRow, brief: NormalizedBrief | null, intent: string): string {
+    return [
+      `[汐音 · 代用户转达] 轻量委派「${row.title}」`,
+      `授权：autonomy=${row.autonomy} · 这是一次委派，不是一个立项任务 —— 没有 phase / worktree / 验收流程。`,
+      "",
+      ...(brief ? ["## 意图（汐音编译，可执行）", briefLines(brief), ""] : []),
+      "## 用户原文（逐字，权威）",
+      intent,
+      "",
+      "冲突时以「用户原文」为准；brief 与原文有出入，先问，不要自行取舍。",
+      "完成后调用 cabin_delegation_done 交一句话结论（含产物路径 / 链接）。不要建任务、不要开工作树。",
+    ].join("\n")
+  }
+
+  private appendAudit(
+    cabinId: string,
+    row: CabinDelegationRow,
+    stage: string,
+    extra: Record<string, unknown> = {},
+  ): void {
+    try {
+      this.deps.service.appendEvent(row.id, cabinId, "dispatch", "orchestrator", {
+        delegation: true,
+        delegationId: row.id,
+        stage,
+        title: row.title,
+        autonomy: row.autonomy,
+        ...extra,
+      })
+    } catch { /* 审计尽力而为 */ }
+  }
+
+  // ── 状态迁移 ─────────────────────────────────────────────────────
+
+  setState(id: string, state: CabinDelegationState, extra: { result_summary?: string | null; ended_at?: string | null } = {}): CabinDelegationRow | undefined {
+    const row = this.deps.delegations.getById(id)
+    if (!row) return undefined
+    this.deps.delegations.updateState(id, state, extra)
+    try { this.deps.service.notifyViewChanged(row.cabin_id) } catch { /* view hook optional */ }
+    const ended = state === "done" || state === "failed" || state === "cancelled"
+    return {
+      ...row, state, updated_at: now(),
+      ...(extra.result_summary !== undefined ? { result_summary: extra.result_summary } : {}),
+      ...(ended ? { ended_at: extra.ended_at ?? now() } : {}),
+    }
+  }
+
+  markWaitingInput(id: string): void {
+    const row = this.deps.delegations.getById(id)
+    if (!row || row.state === "done" || row.state === "failed" || row.state === "cancelled") return
+    this.deps.delegations.updateState(id, "waiting_input")
+    try { this.deps.service.notifyViewChanged(row.cabin_id) } catch { /* view hook optional */ }
+  }
+
+  markRunning(id: string): void {
+    const row = this.deps.delegations.getById(id)
+    if (row?.state === "waiting_input") {
+      this.deps.delegations.updateState(id, "running")
+      try { this.deps.service.notifyViewChanged(row.cabin_id) } catch { /* view hook optional */ }
+    }
+  }
+
+  finish(id: string, summary: string, ok = true): CabinDelegationRow | undefined {
+    const row = this.deps.delegations.getById(id)
+    if (!row) return undefined
+    const next = this.setState(id, ok ? "done" : "failed", { result_summary: summary, ended_at: now() })
+    this.appendAudit(row.cabin_id, row, ok ? "done" : "failed", { summary })
+    // design 25 §11.9：跑完在主对话留一条结论 + 产物引用（不建任务、不进验收）。
+    this.announceToMain(row, summary, ok)
+    return next
+  }
+
+  /** 委派收尾 → 舱主会话一条结论卡（零 LLM）。 */
+  private announceToMain(row: CabinDelegationRow, summary: string, ok: boolean): void {
+    const cabin = this.deps.cabin.findById(row.cabin_id)
+    const sessionId = cabin?.main_session_id
+    if (!sessionId) return
+    const ts = now()
+    const handle = this.handleOf(row.cabin_id, row.id)
+    try {
+      this.deps.cabin.getDb().prepare(
+        "INSERT INTO messages (id, session_id, role, content, metadata, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+      ).run(
+        randomUUID(), sessionId, "user",
+        `${ok ? "✓" : "✕"} ${handle} ${row.title} · ${summary}`,
+        JSON.stringify({
+          displayType: "event",
+          activity: {
+            kind: "cabin.delegation_done",
+            severity: ok ? "info" : "warn",
+            title: ok ? "委派完成" : "委派失败",
+            workspaceId: cabin?.workspace_id ?? null,
+            taskId: null,
+            status: ok ? "done" : "failed",
+            payload: {
+              delegationDone: {
+                delegationId: row.id,
+                handle,
+                title: row.title,
+                summary,
+                ok,
+                sessionId: row.doer_session_id,
+                at: ts,
+              },
+            },
+          },
+        }),
+        ts,
+      )
+      this.deps.cabin.getDb().prepare(
+        "UPDATE sessions SET last_message_at = ?, updated_at = ? WHERE id = ?",
+      ).run(ts, ts, sessionId)
+      // 回执已落库：立即通知打开着的主对话刷新，不等下一次轮询。
+      this.deps.onAppend?.(sessionId, cabin?.workspace_id ?? null)
+    } catch { /* best effort */ }
+  }
+
+  /** D1 段位（与 `#1` 区分）：按创建顺序派生，不落库。 */
+  private handleOf(cabinId: string, delegationId: string): string {
+    const rows = this.deps.delegations.listByCabin(cabinId)
+    const index = rows.findIndex((r) => r.id === delegationId)
+    return index >= 0 ? `D${index + 1}` : "D?"
+  }
+
+  cancel(id: string): CabinDelegationRow | undefined {
+    return this.setState(id, "cancelled", { ended_at: now() })
+  }
+}
