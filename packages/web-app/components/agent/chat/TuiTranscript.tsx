@@ -604,9 +604,11 @@ function ProxyTurnLine({ message, proxy }: {
       className="scroll-mt-6 rounded-md border-l-[3px] border-pop-amber bg-pop-amber-soft/40 px-3 py-1.5 shadow-[inset_0_0_0_1px_var(--pop-bd)]"
     >
       <div className="mb-0.5 flex items-center gap-1.5 text-[10px] font-bold text-pop-amber">
-        <span>汐音 · 代你</span>
+        <span>{proxy.kind === 'note' ? '汐音 · 备注' : '汐音 · 代你'}</span>
         <span className="font-normal text-pop-dim/70">
-          {proxy.kind === 'decision' ? '决策已逐字转达' : '意图已转达'}
+          {proxy.kind === 'decision'
+            ? '决策已逐字转达'
+            : proxy.kind === 'note' ? '不授权 · 仅转达' : '意图已转达'}
         </span>
       </div>
       <div className="break-words whitespace-pre-wrap text-pop-ink/90">

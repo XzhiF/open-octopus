@@ -18,6 +18,7 @@ export const TRACE_KIND_META: Record<string, TraceKindMeta> = {
   human_input: { label: '人输入', dot: 'bg-pop-green', badge: 'green' },
   decision: { label: '决策', dot: 'bg-pop-purple', badge: 'purple' },
   resume: { label: '恢复', dot: 'bg-pop-green', badge: 'green' },
+  note: { label: '备注', dot: 'bg-pop-dim', badge: 'dim' },
 }
 
 export function traceKind(kind: string): TraceKindMeta {

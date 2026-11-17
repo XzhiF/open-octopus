@@ -2,7 +2,7 @@
 //
 // Cabin P3（C6/C9/D6）：orchestrator ↔ doer 通信语义层。传输层复用现有异构通道
 // （task 主线程 / 内部 chat wake），语义层统一落 cabin_jobs + cabin_job_events：
-//   outbound dispatch/resume → 建真实任务/触发 + 审计事件
+//   outbound dispatch/note/resume → 建真实任务/留痕/触发 + 审计事件
 //   inbound  report/attention/handback  → bridge G2 hook 落审计（wake 由 bridge 负责）
 // 派生纪律 K3：不镜像任务状态，status 一律读底层实体。
 
@@ -164,19 +164,68 @@ export class CabinCommService {
     return this.wakeSession(sessionId, org, message)
   }
 
-  /** D6 resume：task → ready 触发 / paused 恢复；其余只留痕 + wake。 */
+  /** 作业备注 / 范围变更：不授权 steer，只写审计时间线（作战详情「对接」可见）。
+   *  默认只留痕；notify=true 才唤醒对应会话转达 —— 避免对空闲任务产生意外回合。 */
+  note(cabinId: string, jobId: string, text: string, opts: {
+    actor?: "orchestrator" | "human"
+    notify?: boolean
+  } = {}): CabinJobEventRow {
+    this.mustCabin(cabinId)
+    const job = this.mustJob(cabinId, jobId)
+    this.deps.onActivity?.(cabinId)
+    const event = this.appendEvent(jobId, cabinId, "note", opts.actor ?? "orchestrator", { summary: text })
+    if (opts.notify && job.kind !== "subagent" && job.session_id) {
+      void this.wakeSession(job.session_id, this.mustCabin(cabinId).org ?? "", `[舱备注 · 不授权] ${text}`)
+    }
+    return event
+  }
+
+  /** D6 resume：task 草稿 → 入列并触发 / ready → 触发 / 运行中暂停 → 恢复；
+   *  其余只留痕 + wake。动作结果（action / from_status / to_status）写进 resume
+   *  事件；失败也落痕并原样抛出 —— 不允许「事件说恢复了，任务其实没动」。 */
   async resume(cabinId: string, jobId: string): Promise<CabinJobEventRow> {
     this.mustCabin(cabinId)
     const job = this.mustJob(cabinId, jobId)
+    let action = "notify"
+    let fromStatus: string | null = null
+    let toStatus: string | null = null
+
     if (job.kind === "task" && job.ref_id) {
       const task = this.deps.taskDAO.getById(job.ref_id)
       if (task) {
-        if (task.status === "ready") await this.deps.tasksService.triggerTask(task.id)
-        else if (task.status === "running") await this.deps.tasksService.resumeTask(task.id)
+        fromStatus = task.status
+        try {
+          if (task.status === "draft") {
+            // v4：raw draft 先过 ready gate（入列），再触发；缺项会抛 409。
+            this.deps.tasksService.readyTask(task.id)
+            await this.deps.tasksService.triggerTask(task.id)
+            action = "enqueue+trigger"
+          } else if (task.status === "ready") {
+            await this.deps.tasksService.triggerTask(task.id)
+            action = "trigger"
+          } else if (task.status === "running" || task.status === "paused") {
+            await this.deps.tasksService.resumeTask(task.id)
+            action = "resume"
+          } else {
+            action = "noop"
+          }
+          toStatus = this.deps.taskDAO.getById(job.ref_id)?.status ?? null
+        } catch (err) {
+          this.appendEvent(jobId, cabinId, "resume", "orchestrator", {
+            ref_id: job.ref_id, action: "error", from_status: fromStatus,
+            error: err instanceof Error ? err.message : String(err),
+            missing: (err as { missing?: unknown }).missing ?? null,
+            detail: (err as { detail?: unknown }).detail ?? null,
+          })
+          throw err
+        }
       }
     }
-    const event = this.appendEvent(jobId, cabinId, "resume", "orchestrator", { ref_id: job.ref_id })
-    if (job.kind !== "subagent" && job.session_id) {
+
+    const event = this.appendEvent(jobId, cabinId, "resume", "orchestrator", {
+      ref_id: job.ref_id, action, from_status: fromStatus, to_status: toStatus,
+    })
+    if (action !== "noop" && job.kind !== "subagent" && job.session_id) {
       void this.wakeSession(job.session_id, this.mustCabin(cabinId).org ?? "", "[舱恢复] 阻塞解除后自主恢复推进；完成后回报舱主对话。")
     }
     return event

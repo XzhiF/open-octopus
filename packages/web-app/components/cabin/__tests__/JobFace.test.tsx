@@ -388,6 +388,39 @@ describe('JobFace（cockpit）', () => {
     expect(screen.getByTestId('cabin-job-relay').textContent).toContain('把渠道接进来')
   })
 
+  it('对接：作业备注（note）作为汐音→执行者一跳出现', async () => {
+    vi.mocked(listCabinJobs).mockResolvedValue([
+      jobView({ kind: 'workflow', ref_id: null, title: '审计工作流' }),
+    ])
+    vi.mocked(getCabinJob).mockResolvedValue({
+      job: {
+        id: 'j1', cabin_id: 'cabin-1', kind: 'workflow', ref_id: null,
+        session_id: null, title: '审计工作流',
+        mandate: null, prompt: null,
+        created_at: '2026-11-13T14:00:00.000Z', ended_at: null,
+      },
+      events: [
+        {
+          id: 'e1', job_id: 'j1', cabin_id: 'cabin-1', kind: 'dispatch', actor: 'orchestrator',
+          payload: { summary: '派发执行' }, created_at: '2026-11-13T14:10:00.000Z',
+        },
+        {
+          id: 'e2', job_id: 'j1', cabin_id: 'cabin-1', kind: 'note', actor: 'orchestrator',
+          payload: { summary: 'phase 2 产物已删除' }, created_at: '2026-11-13T14:20:00.000Z',
+        },
+      ],
+    })
+
+    render(<Harness />)
+    fireEvent.click(await screen.findByTestId('cockpit-tab-relay'))
+
+    const row = await screen.findByTestId('cabin-relay-event-e2')
+    expect(row.textContent).toContain('备注')
+    expect(row.textContent).toContain('汐音')
+    expect(row.textContent).toContain('执行者')
+    expect(row.textContent).toContain('phase 2 产物已删除')
+  })
+
   it('对接：同一决策的 decided / relayed 两行只算一次发言', async () => {
     const dec = (id: string, stage: string, at: string) => ({
       id, job_id: 'j1', cabin_id: 'cabin-1', kind: 'decision' as const, actor: 'human',

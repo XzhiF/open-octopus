@@ -272,7 +272,7 @@ export function createCabinToolServer(cabinId: string) {
     ),
     tool(
       "cabin_job_trace",
-      "读某作业的审计时间线（dispatch/brief/report/attention/handback/decision/human_input/resume）。",
+      "读某作业的审计时间线（dispatch/brief/report/attention/handback/note/decision/human_input/resume）。",
       { job_id: z.string().min(1) },
       async (input) => {
         const { service } = must()
@@ -285,13 +285,45 @@ export function createCabinToolServer(cabinId: string) {
       },
     ),
     tool(
+      "cabin_note_job",
+      "给作业留一条备注 / 范围变更（不授权）：写进审计时间线，作战详情的「对接」能看到。默认只留痕；notify=true 才唤醒对应会话转达。你直接改了任务 home、删了产物或调整了范围后，必须留一条。",
+      {
+        job_id: z.string().min(1),
+        text: z.string().min(1),
+        notify: z.boolean().optional().describe("是否唤醒对应会话转达；默认 false 只留痕"),
+      },
+      async (input) => {
+        const { comm } = must()
+        const event = comm.note(cabinId, input.job_id, input.text, { notify: input.notify ?? false })
+        return { content: [{ type: "text" as const, text: JSON.stringify({
+          event_id: event.id, kind: "note", notified: input.notify ?? false,
+        }) }] }
+      },
+    ),
+    tool(
       "cabin_resume_job",
-      "恢复作业：task ready→触发、paused→恢复；阻塞解除后自主推进。",
+      "恢复作业：task 草稿 → 入列并触发、ready → 触发、运行中暂停 → 恢复；其余只留痕。gate 缺项会原样报错，不会假装已启动。",
       { job_id: z.string().min(1) },
       async (input) => {
         const { comm } = must()
-        const event = await comm.resume(cabinId, input.job_id)
-        return { content: [{ type: "text" as const, text: JSON.stringify({ event_id: event.id, kind: "resume" }) }] }
+        try {
+          const event = await comm.resume(cabinId, input.job_id)
+          const payload = JSON.parse(event.payload ?? "{}") as Record<string, unknown>
+          return { content: [{ type: "text" as const, text: JSON.stringify({
+            event_id: event.id, kind: "resume",
+            action: payload.action ?? "notify",
+            from_status: payload.from_status ?? null,
+            to_status: payload.to_status ?? null,
+          }) }] }
+        } catch (err) {
+          return { content: [{ type: "text" as const, text: JSON.stringify({
+            status: "failed",
+            error: err instanceof Error ? err.message : String(err),
+            missing: (err as { missing?: unknown }).missing ?? null,
+            detail: (err as { detail?: unknown }).detail ?? null,
+            message: "恢复动作没有完成：按 missing / detail 里的缺项补规格后再试；不要把这条当作已启动。",
+          }) }] }
+        }
       },
     ),
   ]
@@ -300,7 +332,7 @@ export function createCabinToolServer(cabinId: string) {
     name: "octopus-cabin",
     version: "1.1.0",
     instructions:
-      "舱调度者工具集：只调度不执行。派发=建真实任务（执行在 doer/worktree）；轻活=独立委派（无 phase/验收）；决策用 cabin_relay_decision 代述，逐字不改。监督读派生视图；一次只问人一个结构化问题。",
+      "舱调度者工具集：只调度不执行。派发=建真实任务（执行在 doer/worktree）；轻活=独立委派（无 phase/验收）；决策用 cabin_relay_decision 代述，逐字不改。监督读派生视图；一次只问人一个结构化问题。直接改了任务 home 或范围变更后，用 cabin_note_job 留痕，不要让它只存在于主对话。",
     tools,
     alwaysLoad: true,
   })
