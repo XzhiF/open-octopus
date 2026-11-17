@@ -32,7 +32,7 @@ function stat(value: number | null | undefined): string {
 
 export function CockpitHud() {
   const { prefs, applyPrefs } = useCockpit()
-  const { entryCabinId, railOpen, setRailOpen, fx } = useCockpitState()
+  const { entryCabinId, railOpen, setRailOpen, fx, openPanel } = useCockpitState()
   const { exitCockpit } = useCockpitEntry()
   const { counts } = useCockpitFleet()
   const cabinCtx = useCabinOptional()
@@ -107,6 +107,26 @@ export function CockpitHud() {
         <span className="ck12-ghost ck12-ghost-static" aria-current="page" title="当前就在全域视图">
           ⛶ 全域
         </span>
+        {/* v20（design 29 §6）：作战舱文件（工作树只读查阅）入口。 */}
+        <button
+          type="button"
+          className="ck12-ghost ck12-opt2"
+          onClick={() => openPanel('ws')}
+          title="作战舱文件 · 工作树只读查阅"
+          data-testid="cockpit-ws-open"
+        >
+          ⌗ 文件
+        </button>
+        {/* v20：动作图鉴（12 姿态 playPose）。 */}
+        <button
+          type="button"
+          className="ck12-ghost ck12-opt2"
+          onClick={() => openPanel('poses')}
+          title="动作图鉴 · 12 姿态"
+          data-testid="cockpit-poses-open"
+        >
+          ✦ 动作
+        </button>
         <button
           type="button"
           className="ck12-ghost ck12-opt2"

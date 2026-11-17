@@ -26,7 +26,7 @@ import { nextBridgeModel } from './rig-model'
 import { useCabinUsage } from './use-cabin-usage'
 
 export function CockpitBridge() {
-  const { entryCabinId, chat } = useCockpitState()
+  const { entryCabinId, chat, openPanel } = useCockpitState()
   const { usage, stale } = useCabinUsage(entryCabinId)
   const currency = useBillingCurrency()
 
@@ -120,19 +120,27 @@ export function CockpitBridge() {
       <span className="ck12-rig-sep ck12-rig-sep-hide" />
 
       {chat ? (
-        <span className="ck12-rig-num ck12-rig-cost" data-testid="ck12-rig-cost" title={costTitle}>
+        <button
+          type="button"
+          className="ck12-rig-num ck12-rig-cost"
+          data-testid="ck12-rig-cost"
+          title={`${costTitle} · 点开 SESSION LEDGER`}
+          onClick={() => openPanel('ledger')}
+        >
           <b>{costLabel}</b>
           <span className="ck12-rig-lbl">本舱</span>
-        </span>
+        </button>
       ) : (
-        <span
+        <button
+          type="button"
           className="ck12-rig-num ck12-rig-cost is-off"
-          aria-disabled="true"
           data-testid="ck12-rig-cost-off"
+          title="点开 SESSION LEDGER（舱账本不依赖主会话）"
+          onClick={() => openPanel('ledger')}
         >
           <b>未就绪</b>
           <span className="ck12-rig-lbl">本舱</span>
-        </span>
+        </button>
       )}
 
       <span className="ck12-rig-spacer" />

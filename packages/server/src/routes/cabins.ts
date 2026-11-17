@@ -83,6 +83,12 @@ function toEventDTO(row: CabinJobEventRow) {
   return { ...row, payload }
 }
 
+/** v20 工作树只读查阅上限（design 29 §6 ws）：与 home-content 同口径。 */
+const REPO_TREE_SKIP = new Set([".git", "node_modules", "dist", ".next", "target", "__pycache__", ".venv"])
+const REPO_TREE_MAX_DEPTH = 6
+const REPO_TREE_MAX_ENTRIES = 2000
+const REPO_FILE_MAX_BYTES = 512 * 1024
+
 const createBodySchema = z.object({
   /** v5：可选。空名先落「未命名舱」，init 开头按需求取名（一次请求就建）。 */
   name: z.string().max(64).optional(),
@@ -519,6 +525,81 @@ export function createCabinRoutes(
         }
       }
       return c.json({ worktrees: result })
+    } catch (err) {
+      const { status, message } = classifyError(err)
+      return c.json({ error: message }, status as 400)
+    }
+  })
+
+  // ── v20（design 29 §6 ws）：工作树只读查阅（ff-only 纪律：只读不写）──
+  // tree = 磁盘直扫（跳 .git/node_modules 等，depth≤6 / 2000 条上限）；
+  // file = 任意常规文件（守卫不出工作树根 + 512KB 上限，与 home-content 同码）。
+
+  router.get("/:id/repos/:name/tree", (c) => {
+    try {
+      const repo = service.listRepos(c.req.param("id")).find((r) => r.name === c.req.param("name"))
+      if (!repo) return c.json({ error: "repo not bound to cabin" }, 404)
+      const root = repo.worktree_path ?? repo.main_path
+      if (!root) return c.json({ error: "repo has no local path" }, 409)
+      const resolvedRoot = path.resolve(root)
+      const entries: Array<{ path: string; type: "dir" | "file"; bytes: number }> = []
+      const walk = (dir: string, rel: string, depth: number): void => {
+        if (depth > REPO_TREE_MAX_DEPTH || entries.length >= REPO_TREE_MAX_ENTRIES) return
+        let names: fs.Dirent[]
+        try {
+          names = fs.readdirSync(dir, { withFileTypes: true })
+        } catch {
+          return
+        }
+        names.sort((a, b) => a.name.localeCompare(b.name))
+        for (const n of names) {
+          if (entries.length >= REPO_TREE_MAX_ENTRIES) return
+          const relPath = rel ? `${rel}/${n.name}` : n.name
+          if (n.isDirectory()) {
+            if (REPO_TREE_SKIP.has(n.name)) continue
+            entries.push({ path: `${relPath}/`, type: "dir", bytes: 0 })
+            walk(path.join(dir, n.name), relPath, depth + 1)
+          } else if (n.isFile()) {
+            let bytes = 0
+            try {
+              bytes = fs.statSync(path.join(dir, n.name)).size
+            } catch {
+              bytes = 0
+            }
+            entries.push({ path: relPath, type: "file", bytes })
+          }
+        }
+      }
+      walk(resolvedRoot, "", 0)
+      return c.json({ dir: resolvedRoot, entries })
+    } catch (err) {
+      const { status, message } = classifyError(err)
+      return c.json({ error: message }, status as 400)
+    }
+  })
+
+  router.get("/:id/repos/:name/file", (c) => {
+    const rel = c.req.query("path")
+    if (!rel || !rel.trim()) return c.json({ error: "Query param 'path' is required" }, 400)
+    try {
+      const repo = service.listRepos(c.req.param("id")).find((r) => r.name === c.req.param("name"))
+      if (!repo) return c.json({ error: "repo not bound to cabin" }, 404)
+      const root = repo.worktree_path ?? repo.main_path
+      if (!root) return c.json({ error: "repo has no local path" }, 409)
+      const resolvedRoot = path.resolve(root)
+      const abs = path.resolve(resolvedRoot, rel)
+      if (abs !== resolvedRoot && !abs.startsWith(resolvedRoot + path.sep)) {
+        return c.json({ error: "path escapes worktree root" }, 403)
+      }
+      let st: fs.Stats
+      try {
+        st = fs.statSync(abs)
+      } catch {
+        return c.json({ error: "file not found" }, 404)
+      }
+      if (!st.isFile()) return c.json({ error: "not a regular file" }, 404)
+      if (st.size > REPO_FILE_MAX_BYTES) return c.json({ error: "file too large to read" }, 413)
+      return c.json({ path: rel, content: fs.readFileSync(abs, "utf8") })
     } catch (err) {
       const { status, message } = classifyError(err)
       return c.json({ error: message }, status as 400)

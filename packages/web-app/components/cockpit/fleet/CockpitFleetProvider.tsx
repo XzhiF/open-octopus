@@ -11,6 +11,8 @@ import type { CockpitFleetCounts, CockpitRow } from './fleet-model'
 
 export interface CockpitFleetContextValue {
   rows: CockpitRow[]
+  /** v20：舱主会话 id（线程 tab 主对话锚点；null = 还没接上）。 */
+  mainSessionId: string | null
   /** null = 还没接上真值。**不是 0** —— HUD 显示「—」，绝不冒充空编队。 */
   counts: CockpitFleetCounts | null
   /** 新增 attention id（S8 简报 + 行 pop 消费）。 */
@@ -22,6 +24,7 @@ export interface CockpitFleetContextValue {
 
 const EMPTY_FLEET: CockpitFleetContextValue = {
   rows: [],
+  mainSessionId: null,
   counts: null,
   arrivals: [],
   loading: false,

@@ -195,6 +195,20 @@ export interface ChatComposerBridge {
   focus(): void
 }
 
+/** v20 全域 TUI 行：时间戳 gutter（HH:MM）与角色符签（design 29 §3.1）。 */
+function cockpitRowTime(iso: string | null | undefined): string {
+  if (!iso) return ''
+  const at = new Date(iso)
+  if (Number.isNaN(at.getTime())) return ''
+  return `${String(at.getHours()).padStart(2, '0')}:${String(at.getMinutes()).padStart(2, '0')}`
+}
+const COCKPIT_ROW_ROLE: Record<string, string> = {
+  user: '❯ YOU',
+  assistant: '✦ 汐音',
+  system: '⌁ SYS',
+  tool: '⚙ doer',
+}
+
 /** ⇧⏎ 排队上限（原型 chat-tui.html 拍板）。 */
 const TUI_QUEUE_MAX = 3
 const TUI_SPIN = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏']
@@ -706,7 +720,19 @@ export function ChatArea({
             )}
             {renderMessages.map(({ msg, compactEvent }) => (
               <Fragment key={msg.id}>
-                {tui ? <TuiMessage message={msg} compactEvent={compactEvent} /> : <ChatBubble message={msg} />}
+                {tui ? (
+                  isCockpitVariant ? (
+                    // v20（design 29 §3.1）：TUI 转录加时间戳 gutter + 角色符签列；
+                    // 只在全域变体生效，classic / 桌面逐字不变。
+                    <div className="ck12-tui-row" data-tui-row={msg.role}>
+                      <span className="ck12-tui-time">{cockpitRowTime(msg.created_at)}</span>
+                      <span className="ck12-tui-role">{COCKPIT_ROW_ROLE[msg.role] ?? '⌁ SYS'}</span>
+                      <div className="ck12-tui-cell">
+                        <TuiMessage message={msg} compactEvent={compactEvent} />
+                      </div>
+                    </div>
+                  ) : <TuiMessage message={msg} compactEvent={compactEvent} />
+                ) : <ChatBubble message={msg} />}
                 {messageExtras?.(msg)}
               </Fragment>
             ))}

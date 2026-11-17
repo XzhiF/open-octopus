@@ -22,8 +22,11 @@ import { ChatPane } from '@/components/agent/chat/ChatPane'
 import { useCabinContext } from '@/components/cabin/cabin-provider'
 import { useCockpit } from '@/components/cabin/CockpitProvider'
 import { useCabinChatWiring } from '@/components/cabin/use-cabin-chat-wiring'
+import { getTask } from '@/lib/tasks-api'
 import { useCockpitState } from '../state/CockpitStateProvider'
+import { threadKeyOfSession } from '../fleet/threads-model'
 import { useChatSlot } from './chat-slots'
+import { useCockpitThreads } from './use-cockpit-threads'
 
 export interface CockpitChatHostProps {
   entryCabinId: string
@@ -103,6 +106,36 @@ export function CockpitChatHost({ entryCabinId }: CockpitChatHostProps) {
   const backToCabinMain = useCallback(() => {
     if (mainSessionId) issueCommand({ type: 'select-session', sessionId: mainSessionId })
   }, [issueCommand, mainSessionId])
+
+  // ── v20（design 29 §3.2）：线程 tab ↔ 真会话双向同步 ─────────────────
+  // tab 激活 → 切 ChatPane 会话（task 线程走 select-task 带任务上下文）；
+  // 会话被别处切换（卡片 / 事件）→ 反写 tab 高亮 + 消未读。
+  const { threads: threadApi } = useCockpitState()
+  const { threads, byKey } = useCockpitThreads()
+  const activeThread = byKey.get(threadApi.activeThread)
+  const activeSessionId = activeThread?.sessionId ?? null
+  const activeTaskId = activeThread?.taskId ?? null
+
+  useEffect(() => {
+    if (!activeSessionId || activeSessionId === sessionId) return
+    if (activeTaskId) {
+      let cancelled = false
+      getTask(activeTaskId)
+        .then((task) => {
+          if (!cancelled) issueCommand({ type: 'select-task', task })
+        })
+        .catch(() => {
+          if (!cancelled) issueCommand({ type: 'select-session', sessionId: activeSessionId })
+        })
+      return () => { cancelled = true }
+    }
+    issueCommand({ type: 'select-session', sessionId: activeSessionId })
+  }, [activeSessionId, activeTaskId, sessionId, issueCommand])
+
+  useEffect(() => {
+    const key = threadKeyOfSession(threads, sessionId)
+    if (key && key !== threadApi.activeThread) threadApi.activateThread(key)
+  }, [sessionId, threads, threadApi])
 
   if (!mainSessionId) return null
 

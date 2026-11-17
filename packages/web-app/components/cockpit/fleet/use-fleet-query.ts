@@ -56,6 +56,8 @@ const LIVE_TASK_STATUSES = new Set(['running', 'paused', 'awaiting_review', 'awa
 
 export interface FleetQueryState {
   rows: CockpitRow[]
+  /** v20：舱主会话 id（getCabin 顺带带回，线程 tab 的主对话锚点）。 */
+  mainSessionId: string | null
   /** null = 还没成功接过真值。**不是 0**。 */
   counts: CockpitFleetCounts | null
   /** 与上一份快照比新增的 attention id；首次加载恒为空。 */
@@ -71,6 +73,7 @@ export interface FleetQuery extends FleetQueryState {
 interface CabinSnapshot {
   cabinId: string
   cabinName: string
+  mainSessionId: string | null
   rows: CockpitRow[]
   attentionIds: string[]
   /** 详情接口这次没回来时沿用上一份 attention（不能把「需要你」瞬间清零）。 */
@@ -145,6 +148,7 @@ async function loadCabin(
     cabinId,
     cabinName: detail?.cabin.name ?? previous?.cabinName ?? cabinId,
   }
+  const mainSessionId = detail?.cabin.main_session_id ?? previous?.mainSessionId ?? null
   const attentionIds = attention.map((item) => item.id)
   const delegationRows = delegationViews
     .filter((d) => d.state !== 'cancelled')
@@ -153,6 +157,7 @@ async function loadCabin(
   if (jobs.length > 0) {
     return {
       ...base,
+      mainSessionId,
       rows: mergeAttention([...jobs.map((job) => jobRow(base, job)), ...delegationRows], attention, base),
       attentionIds,
       attention,
@@ -174,6 +179,7 @@ async function loadCabin(
   ]
   return {
     ...base,
+    mainSessionId,
     rows: mergeAttention(rows, attention, base),
     attentionIds,
     attention,
@@ -245,6 +251,7 @@ export function useFleetQuery(cabinId: string): FleetQuery {
     arrivals: [],
     loading: true,
     error: null,
+    mainSessionId: null,
   })
 
   const mountedRef = useRef(true)
@@ -325,6 +332,7 @@ export function useFleetQuery(cabinId: string): FleetQuery {
           arrivals,
           loading: false,
           error: null,
+          mainSessionId: fresh.mainSessionId,
         })
       }
 
@@ -355,6 +363,7 @@ export function useFleetQuery(cabinId: string): FleetQuery {
         arrivals,
         loading: false,
         error: null,
+        mainSessionId: fresh.mainSessionId,
       })
     } catch (err) {
       if (!mountedRef.current) return
@@ -388,7 +397,7 @@ export function useFleetQuery(cabinId: string): FleetQuery {
     prevAttentionRef.current = null
     cacheRef.current.clear()
     sessionsRef.current = null
-    setState({ rows: [], counts: null, arrivals: [], loading: true, error: null })
+    setState({ rows: [], counts: null, arrivals: [], loading: true, error: null, mainSessionId: null })
     void tick()
     const timer = window.setInterval(() => { void tick() }, POLL_MS)
     // 人答完决策 → 答案转达给作者、主线程流启动。等 1.2s 补一拍，编队立刻

@@ -21,6 +21,8 @@ import { isEndedJob, jobStatusLabel } from '@/components/cabin/job-status'
 import { useCockpitFleet } from '../fleet/CockpitFleetProvider'
 import type { CockpitTab } from '../state/cockpit-state'
 import { CockpitElapsed, CockpitJobHeader, TaskRunActions } from './CockpitJobHeader'
+import { CockpitJobFiles } from './CockpitJobFiles'
+import { CockpitJobDebug } from './CockpitJobDebug'
 
 /** 执行记录行的小圆点：只按真实 status 上色，不猜阶段。 */
 function executionTone(status: string): string {
@@ -85,6 +87,7 @@ export function CockpitTaskFace({
 
   const currency = useBillingCurrency()
   const view: TaskView | null = detail ?? row?.task ?? null
+  const doerSessionId = view?.doer_session_id ?? null
   const status = row ? taskDisplayStatus(row.task) : (detail?.derived?.taskStatus ?? detail?.status ?? null)
   const executions = detail?.executions ?? []
   const currentExecution =
@@ -326,6 +329,17 @@ export function CockpitTaskFace({
           )}
         </div>
       )}
+
+      {tab === 'files' && (
+        <div data-testid="cockpit-face-task-files">
+          <CockpitJobFiles taskId={taskId} />
+        </div>
+      )}
+      {tab === 'debug' && (
+        <div data-testid="cockpit-face-task-debug">
+          <CockpitJobDebug sessionId={view?.doer_session_id ?? row?.task.doer_session_id ?? null} />
+        </div>
+      )}
     </>
   )
 
@@ -346,13 +360,36 @@ export function CockpitTaskFace({
         endedAt={endedAt}
         costLabel={costLabel}
         actions={
-          <TaskRunActions
-            status={status}
-            busy={busy}
-            onPause={() => { void runAction('pause') }}
-            onResume={() => { void runAction('resume') }}
-            onAbort={() => { void runAction('abort') }}
-          />
+          <>
+            <TaskRunActions
+              status={status}
+              busy={busy}
+              onPause={() => { void runAction('pause') }}
+              onResume={() => { void runAction('resume') }}
+              onAbort={() => { void runAction('abort') }}
+            />
+            <button
+              type="button"
+              className="ck12-jh-btn"
+              data-testid="cockpit-task-talk"
+              disabled={!doerSessionId}
+              title="💬 直达该作战线程"
+              onClick={() => window.dispatchEvent(new CustomEvent('octopus:open-session', {
+                detail: { sessionId: doerSessionId },
+              }))}
+            >
+              💬 谈
+            </button>
+            <button
+              type="button"
+              className="ck12-jh-btn"
+              data-testid="cockpit-task-debug-tab"
+              title="⚙ 调试 inspect"
+              onClick={() => onTabChange('debug')}
+            >
+              ⚙ 调试
+            </button>
+          </>
         }
       />
       <div className="ck12-face-body" data-testid="cockpit-face-task">

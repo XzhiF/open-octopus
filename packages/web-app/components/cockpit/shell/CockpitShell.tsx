@@ -27,10 +27,17 @@ import { CockpitFace } from '../face/CockpitFace'
 import { CockpitChatHost } from '../chat/CockpitChatHost'
 import { CockpitChatWindow } from '../chat/CockpitChatWindow'
 import { CockpitCommandBar } from '../chat/CockpitCommandBar'
+import { CockpitDock } from '../chat/CockpitDock'
+import { CockpitPopWindows } from '../chat/CockpitPopWindows'
+import { CockpitWinBar } from '../chat/CockpitWinBar'
+import { CockpitThreadActivity } from '../chat/CockpitThreadActivity'
 import { CockpitBridge } from '../bridge/CockpitBridge'
 import { CockpitCrew } from '../crew/CockpitCrew'
 import { CockpitBrief } from '../fx/CockpitBrief'
 import { CockpitEffects } from '../fx/CockpitEffects'
+import { CockpitWarpScheduler } from '../fx/CockpitWarpScheduler'
+import { CockpitSim } from '../fx/CockpitSim'
+import { CockpitPanels } from '../panels/CockpitPanels'
 
 export function CockpitShell({ cabinId }: { cabinId: string }) {
   if (!cabinId) {
@@ -147,10 +154,18 @@ function CockpitSurface({ cabin }: { cabin: CabinDetail }) {
 
       <CockpitChatHost entryCabinId={entryCabinId} />
       <CockpitChatWindow />
+      {/* v20：用户自开弹出窗 + WINDOWS 切换条 + 通讯台停靠 pill + 线程活动接线。 */}
+      <CockpitPopWindows />
+      <CockpitWinBar />
+      <CockpitDock />
+      <CockpitThreadActivity />
       {/* 任务模块窗（运行 / YAML / 子代理）的挂载层：与 app 同大、z 高于聊天浮窗。
           pointer-events:none —— 空层不吃点击，窗本身自带事件。见 chat/CockpitChatHost.tsx。 */}
       <div id="ck12-layer-root" className="ck12-layerroot" />
       <CockpitBrief />
+      <CockpitPanels />
+      <CockpitWarpScheduler />
+      <CockpitSim />
 
       <div className="ck12-vignette" aria-hidden="true" />
     </div>

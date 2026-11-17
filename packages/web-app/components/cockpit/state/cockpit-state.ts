@@ -23,9 +23,9 @@ export type CockpitRef =
 
 export type CockpitRefKind = CockpitRef['kind']
 
-export type CockpitTab = 'overview' | 'relay' | 'run' | 'changes' | 'accept'
+export type CockpitTab = 'overview' | 'relay' | 'run' | 'changes' | 'accept' | 'files' | 'debug'
 
-export const COCKPIT_TABS: readonly CockpitTab[] = ['overview', 'relay', 'run', 'changes', 'accept']
+export const COCKPIT_TABS: readonly CockpitTab[] = ['overview', 'relay', 'run', 'changes', 'accept', 'files', 'debug']
 
 export const COCKPIT_TAB_LABELS: Record<CockpitTab, string> = {
   overview: '概览',
@@ -33,6 +33,8 @@ export const COCKPIT_TAB_LABELS: Record<CockpitTab, string> = {
   run: '运行',
   changes: '变更',
   accept: '验收',
+  files: '文件',
+  debug: '调试',
 }
 
 export function isCockpitTab(value: string | null | undefined): value is CockpitTab {
@@ -83,6 +85,8 @@ export interface CockpitChatWindowState {
   alpha: number
   /** null = 还没量过，由 S5 按 arena 计算默认几何。 */
   rect: CockpitRect | null
+  /** v20（design 29 §5）：整台收起成停靠 pill（比 mini 更彻底：DOM 隐藏）。 */
+  docked: boolean
 }
 
 export type CockpitChatWindowPatch = Partial<CockpitChatWindowState>
@@ -128,6 +132,57 @@ export interface CockpitLayerApi {
   closeTop(): boolean
 }
 
+// ── v20（design 29）：多作战线程 / 弹出窗 / 面板 / 回传 flash ─────────────
+
+/** 模态面板四 kind（编队/详情沿用左栏与作业面，不另起模态）。 */
+export type CockpitPanelKind = 'ops' | 'ledger' | 'ws' | 'poses'
+
+/** 用户自开的作战弹出窗（design 29 §4）：上限 5，最小化进 WINDOWS 条。 */
+export interface CockpitPopWin {
+  id: string
+  threadKey: string
+  rect: CockpitRect
+  min: boolean
+}
+
+/** 本地回执（双模式同步的 sys 行）：只进 overlay，不写服务端转录。 */
+export interface CockpitReceipt {
+  id: number
+  text: string
+  at: number
+}
+
+/** 回传入场动画锚点：渲染侧按 Date.now()-at < 1400 命中行/卡。 */
+export interface CockpitFlash {
+  key: string | null
+  at: number
+  nonce: number
+}
+
+export interface CockpitThreadsApi {
+  activeThread: string
+  closedTabs: string[]
+  unread: Record<string, number>
+  receipts: Record<string, CockpitReceipt[]>
+  /** 切线程 + 消未读（tab 点击 / 回传立即激活 / 会话被别处切换）。 */
+  activateThread(key: string): void
+  closeTab(key: string): void
+  reopenTab(key: string): void
+  bumpUnread(key: string, n?: number): void
+  pushReceipt(key: string, text: string): void
+}
+
+export interface CockpitWindowsApi {
+  windows: CockpitPopWin[]
+  /** 已存在同线程窗 → 聚焦不新建；超上限返回 false（调用方 toast）。 */
+  openWindow(threadKey: string, rect: CockpitRect): boolean
+  closeWindow(id: string): void
+  setWindowMin(id: string, min: boolean): void
+  patchWindowRect(id: string, rect: CockpitRect): void
+}
+
+export const COCKPIT_WIN_LIMIT = 5
+
 export interface CockpitState {
   entryCabinId: string
 
@@ -147,6 +202,31 @@ export interface CockpitState {
 
   railOpen: boolean
   setRailOpen(open: boolean): void
+
+  /** v20：多作战线程 tab / 未读 / 本地同步回执。 */
+  threads: CockpitThreadsApi
+
+  /** v20：用户自开的弹出窗集合 + WINDOWS 条数据源。 */
+  wins: CockpitWindowsApi
+
+  /** v20：模态面板（ops / ledger / ws / poses），null = 无。 */
+  panel: CockpitPanelKind | null
+  /** 面板入参（ws = 项目 name；其余 null）。 */
+  panelArg: string | null
+  openPanel(kind: CockpitPanelKind, arg?: string | null): void
+  closePanel(): void
+
+  /** v20：回传入场 flash（编队行 / 决断卡 arrived 动画锚点）。 */
+  flash: CockpitFlash
+  markArrival(key: string): void
+
+  /** v20：汐音当前姿态（图鉴金边 / 验收锚点），由 CockpitCrew 上报。 */
+  pose: string
+  reportPose(pose: string): void
+
+  /** v20（design 29 §7.4）：随机跃迁开关（45–105s），默认开。 */
+  autoWarp: boolean
+  setAutoWarp(on: boolean): void
 
   fx: CockpitFx
 

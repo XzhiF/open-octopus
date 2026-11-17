@@ -494,3 +494,441 @@
 @media (prefers-reduced-motion: reduce) {
   .ck12-cmdbar.is-draft [data-composer-block] { animation: none; }
 }
+
+/* ═══════════════ v20（design 29）· 通讯台增量 ═══════════════
+   多作战 tab 条 / TUI 选项行 / 本地回执 / 停靠 pill / 边缘 grip /
+   TUI 转录 gutter。全部只在 .ck12-comms 与全域底栏内生效。 */
+
+/* transcript wrapper：只多一层 relative 上下文，回执 overlay 住里面。 */
+.ck12-comms-bodywrap {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  display: flex;
+}
+.ck12-comms-bodywrap .ck12-comms-body { flex: 1; }
+
+/* ── 多作战 tab 条（§3.2）───────────────────────────────────────────── */
+.ck12-comms-tabstrip {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 5px 8px;
+  overflow-x: auto;
+  overscroll-behavior-x: contain;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+  scrollbar-width: thin;
+}
+.ck12-tab {
+  position: relative;
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  max-width: 168px;
+  padding: 3px 8px;
+  border-radius: 8px;
+  border: 1px solid var(--ck12-bd);
+  color: var(--ck12-dim);
+  font-size: 10px;
+  cursor: pointer;
+  user-select: none;
+  transition: color 0.14s, border-color 0.14s, background 0.14s;
+}
+.ck12-tab:hover { color: var(--ck12-ink); border-color: color-mix(in srgb, var(--ck-a) 35%, transparent); }
+.ck12-tab.is-on {
+  color: var(--ck12-ink);
+  border-color: color-mix(in srgb, var(--ck-a) 55%, transparent);
+  background: color-mix(in srgb, var(--ck-a) 12%, transparent);
+}
+.ck12-tab:focus-visible { outline: 1px solid color-mix(in srgb, var(--ck-a) 60%, transparent); outline-offset: -1px; }
+.ck12-tab-emo { font-size: 10px; line-height: 1; }
+.ck12-tab-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ck12-tab-unread {
+  flex: none;
+  min-width: 14px;
+  padding: 0 3px;
+  border-radius: 999px;
+  background: var(--pop-red, #ff6b81);
+  color: #14060a;
+  font-style: normal;
+  font-size: 8.5px;
+  font-weight: 800;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+}
+.ck12-tab.has-unread { animation: ck12-tab-ping 1.6s ease-in-out infinite; }
+@keyframes ck12-tab-ping {
+  0%, 100% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--pop-red, #ff6b81) 0%, transparent); }
+  50% { box-shadow: 0 0 0 3px color-mix(in srgb, var(--pop-red, #ff6b81) 22%, transparent); }
+}
+.ck12-tab-x {
+  flex: none;
+  width: 14px;
+  height: 14px;
+  display: grid;
+  place-items: center;
+  border-radius: 4px;
+  color: var(--ck12-faint);
+  font-size: 8px;
+  opacity: 0;
+  transition: opacity 0.12s, color 0.12s, background 0.12s;
+}
+.ck12-tab:hover .ck12-tab-x,
+.ck12-tab.is-on .ck12-tab-x,
+.ck12-tab:focus-within .ck12-tab-x { opacity: 1; }
+.ck12-tab-x:hover { color: var(--pop-red, #ff6b81); background: rgba(255, 255, 255, 0.07); }
+
+/* ── TUI 选项行（§3.1）──────────────────────────────────────────────── */
+.ck12-comms-choices {
+  flex: none;
+  max-height: 34%;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 6px 10px 8px;
+  border-top: 1px solid color-mix(in srgb, var(--ck-a) 22%, transparent);
+  background: color-mix(in srgb, var(--ck-a) 5%, transparent);
+  font-family: var(--font-mono);
+}
+.ck12-choices-h {
+  padding: 2px 0 5px;
+  font-size: 9px;
+  letter-spacing: 0.1em;
+  color: var(--ck-a);
+}
+.ck12-choice-item + .ck12-choice-item { margin-top: 6px; }
+.ck12-choice-head,
+.ck12-choice-row {
+  display: flex;
+  align-items: baseline;
+  gap: 7px;
+  width: 100%;
+  padding: 4px 8px;
+  border-left: 2px solid color-mix(in srgb, var(--ck-a) 45%, transparent);
+  border-radius: 0 6px 6px 0;
+  text-align: left;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--ck12-ink);
+  transition: transform 0.12s, background 0.12s, box-shadow 0.12s;
+}
+.ck12-choice-head { color: var(--ck12-dim); border-left-color: var(--ck12-bd); }
+.ck12-choice-row:hover,
+.ck12-choice-head:hover {
+  transform: translateX(3px);
+  background: color-mix(in srgb, var(--ck-a) 10%, transparent);
+  box-shadow: 0 0 14px color-mix(in srgb, var(--ck-a) 14%, transparent);
+}
+.ck12-choice-row:disabled { opacity: 0.55; cursor: wait; }
+.ck12-choice-no { flex: none; color: var(--ck-a); font-size: 10px; }
+.ck12-choice-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ck12-choice-impact {
+  min-width: 0;
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--ck12-faint);
+  font-size: 9.5px;
+}
+.ck12-choice-rec {
+  flex: none;
+  padding: 0 5px;
+  border-radius: 4px;
+  border: 1px solid color-mix(in srgb, var(--pop-amber) 50%, transparent);
+  color: var(--pop-amber);
+  font-size: 8.5px;
+  letter-spacing: 0.08em;
+}
+
+/* ── 本地同步回执 overlay（§3.3）────────────────────────────────────── */
+.ck12-comms-receipts {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 6px;
+  z-index: 3;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  padding: 0 14px;
+  pointer-events: none;
+}
+.ck12-receipt {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  padding: 1px 9px;
+  border-radius: 999px;
+  background: rgba(8, 10, 16, 0.82);
+  border: 1px solid rgba(255, 255, 255, 0.07);
+  color: var(--ck12-dim);
+  font-family: var(--font-mono);
+  font-size: 9.5px;
+}
+
+/* ── 停靠 pill（§5）─────────────────────────────────────────────────── */
+.ck12-condock {
+  position: fixed;
+  left: 12px;
+  bottom: 64px;
+  z-index: 55;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 6px 12px;
+  border-radius: 999px;
+  border: 1px solid color-mix(in srgb, var(--ck-a) 40%, transparent);
+  background: linear-gradient(180deg, rgba(16, 20, 29, 0.94), rgba(9, 11, 17, 0.92));
+  box-shadow: 0 10px 26px rgba(0, 0, 0, 0.45), 0 0 22px color-mix(in srgb, var(--ck-a) 10%, transparent);
+  color: var(--ck12-ink);
+  font-size: 10.5px;
+  transition: border-color 0.14s, transform 0.14s;
+}
+.ck12-condock:hover { transform: translateY(-1px); border-color: color-mix(in srgb, var(--ck-a) 65%, transparent); }
+.ck12-condock.is-right { left: auto; right: 12px; }
+.ck12-condock-name { max-width: 130px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ck12-condock-hint { color: var(--ck12-faint); font-size: 9px; }
+.ck12-condock-unread {
+  min-width: 15px;
+  padding: 0 4px;
+  border-radius: 999px;
+  background: var(--pop-red, #ff6b81);
+  color: #14060a;
+  font-style: normal;
+  font-size: 9px;
+  font-weight: 800;
+  text-align: center;
+}
+.ck12-condock.has-unread { animation: ck12-tab-ping 1.6s ease-in-out infinite; }
+
+/* ── 边缘 grip（§5）─────────────────────────────────────────────────── */
+.ck12-comms-grip-l,
+.ck12-comms-grip-t {
+  position: absolute;
+  z-index: 4;
+  opacity: 0;
+  transition: opacity 0.14s;
+  touch-action: none;
+}
+.ck12-comms-grip-l { left: 0; top: 46px; bottom: 0; width: 6px; cursor: ew-resize; }
+.ck12-comms-grip-t { left: 0; right: 0; top: 0; height: 5px; cursor: ns-resize; }
+.ck12-comms:hover .ck12-comms-grip-l,
+.ck12-comms:hover .ck12-comms-grip-t { opacity: 1; }
+.ck12-comms-grip-l { background: linear-gradient(90deg, color-mix(in srgb, var(--ck-a) 45%, transparent), transparent); }
+.ck12-comms-grip-t { background: linear-gradient(180deg, color-mix(in srgb, var(--ck-a) 45%, transparent), transparent); }
+.ck12-comms.is-mini .ck12-comms-grip-l,
+.ck12-comms.is-mini .ck12-comms-grip-t,
+.ck12-comms.is-pinned .ck12-comms-grip-l,
+.ck12-comms.is-pinned .ck12-comms-grip-t { display: none; }
+
+/* head 增量按钮 / 副标题 */
+.ck12-comms-act { font-size: 11px; }
+.ck12-comms-sub {
+  flex: none;
+  font-size: 9px;
+  letter-spacing: 0.06em;
+  color: var(--ck12-faint);
+}
+
+/* ── TUI 转录 gutter（§3.1）：时间戳 38px + 角色符签 74px + 正文 ─────── */
+.ck12-tui-row {
+  display: grid;
+  grid-template-columns: 38px 74px minmax(0, 1fr);
+  gap: 6px;
+  align-items: baseline;
+}
+.ck12-tui-time {
+  font-family: var(--font-mono);
+  font-size: 9px;
+  color: var(--ck12-faint);
+  font-variant-numeric: tabular-nums;
+}
+.ck12-tui-role {
+  font-family: var(--font-mono);
+  font-size: 9.5px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  color: var(--ck12-dim);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.ck12-tui-row[data-tui-row='user'] .ck12-tui-role { color: var(--pop-pink); }
+.ck12-tui-row[data-tui-row='assistant'] .ck12-tui-role { color: var(--ck-a); }
+.ck12-tui-row[data-tui-row='tool'] .ck12-tui-role { color: var(--pop-green); }
+.ck12-tui-cell { min-width: 0; }
+/* 全域通讯台内转录走 mono（TUI 主体），用户行去掉卡片感改左 gutter 线。 */
+.ck12-comms [data-tui-col] { font-family: var(--font-mono); }
+.ck12-comms [data-tui-msg='user'] {
+  background: transparent;
+  box-shadow: none;
+  border-left: 2px solid color-mix(in srgb, var(--pop-pink) 40%, transparent);
+  border-radius: 0;
+  padding-left: 8px;
+}
+
+@media (max-width: 900px) {
+  .ck12-comms-dbg, .ck12-comms-tall { display: none; }
+  .ck12-condock { bottom: 58px; }
+  .ck12-condock-hint { display: none; }
+  .ck12-tui-row { grid-template-columns: 34px 58px minmax(0, 1fr); }
+}
+@media (max-width: 560px) {
+  .ck12-comms-sub, .ck12-comms-grip { display: none; }
+  .ck12-tui-row { grid-template-columns: 30px 44px minmax(0, 1fr); gap: 4px; }
+  .ck12-tui-role { font-size: 8.5px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .ck12-tab.has-unread, .ck12-condock.has-unread { animation: none; }
+}
+
+/* ── 弹出窗（§4）────────────────────────────────────────────────────── */
+.ck12-cwin {
+  position: fixed;
+  display: flex;
+  flex-direction: column;
+  min-width: 280px;
+  min-height: 220px;
+  border-radius: 13px;
+  border: 1px solid color-mix(in srgb, var(--ck-a) 34%, transparent);
+  background: linear-gradient(180deg, rgba(15, 19, 27, 0.96), rgba(8, 10, 16, 0.95));
+  box-shadow: 0 18px 48px rgba(0, 0, 0, 0.55), 0 0 30px color-mix(in srgb, var(--ck-a) 9%, transparent);
+  overflow: hidden;
+}
+.ck12-cwin-head {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  height: 34px;
+  padding: 0 6px 0 10px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+  cursor: grab;
+  user-select: none;
+  touch-action: none;
+}
+.ck12-cwin-emo { font-size: 11px; }
+.ck12-cwin-title {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 10.5px;
+  font-weight: 700;
+  color: var(--ck12-ink);
+}
+.ck12-cwin-unread {
+  flex: none;
+  min-width: 14px;
+  padding: 0 3px;
+  border-radius: 999px;
+  background: var(--pop-red, #ff6b81);
+  color: #14060a;
+  font-style: normal;
+  font-size: 8.5px;
+  font-weight: 800;
+  text-align: center;
+}
+.ck12-cwin-btn {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 20px;
+  height: 20px;
+  border-radius: 6px;
+  color: var(--ck12-dim);
+  transition: color 0.14s, background 0.14s;
+}
+.ck12-cwin-btn:hover { color: var(--ck12-ink); background: rgba(255, 255, 255, 0.06); }
+.ck12-cwin-close:hover { color: var(--pop-red, #ff6b81); }
+.ck12-cwin-ico { width: 12px; height: 12px; }
+.ck12-cwin-body {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  display: flex;
+}
+.ck12-cwin-body > [data-chat-pane] { flex: 1; min-width: 0; min-height: 0; background: transparent; }
+.ck12-cwin-body [data-tui-col] { font-family: var(--font-mono); }
+.ck12-cwin-resize {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  width: 16px;
+  height: 16px;
+  cursor: nwse-resize;
+  touch-action: none;
+  background:
+    linear-gradient(135deg, transparent 44%, var(--ck12-faint) 46%, var(--ck12-faint) 52%, transparent 54%),
+    linear-gradient(135deg, transparent 64%, var(--ck12-faint) 66%, var(--ck12-faint) 72%, transparent 74%);
+  opacity: 0.55;
+}
+.ck12-cwin-resize:hover { opacity: 1; }
+
+/* ── WINDOWS 切换条（§4）────────────────────────────────────────────── */
+.ck12-winbar {
+  position: fixed;
+  left: 12px;
+  bottom: 64px;
+  z-index: 140;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  max-width: min(62vw, 640px);
+  padding: 5px 9px;
+  border-radius: 999px;
+  border: 1px solid var(--ck12-bd);
+  background: linear-gradient(180deg, rgba(14, 18, 26, 0.94), rgba(8, 10, 16, 0.92));
+  box-shadow: 0 10px 26px rgba(0, 0, 0, 0.45);
+  overflow-x: auto;
+  scrollbar-width: thin;
+}
+.ck12-winbar-label {
+  flex: none;
+  font-size: 8.5px;
+  font-weight: 800;
+  letter-spacing: 0.14em;
+  color: var(--ck12-faint);
+}
+.ck12-wbchip {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 9px;
+  border-radius: 999px;
+  border: 1px solid var(--ck12-bd);
+  color: var(--ck12-dim);
+  font-size: 10px;
+  transition: color 0.14s, border-color 0.14s;
+}
+.ck12-wbchip:hover { color: var(--ck12-ink); border-color: color-mix(in srgb, var(--ck-a) 45%, transparent); }
+.ck12-wbchip.is-main { border-color: color-mix(in srgb, var(--ck-a) 40%, transparent); color: var(--ck12-ink); }
+.ck12-wbchip.is-min { border-style: dashed; opacity: 0.75; }
+.ck12-wbchip-name { max-width: 110px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ck12-wbchip-unread {
+  min-width: 13px;
+  padding: 0 3px;
+  border-radius: 999px;
+  background: var(--pop-red, #ff6b81);
+  color: #14060a;
+  font-style: normal;
+  font-size: 8px;
+  font-weight: 800;
+  text-align: center;
+}
+/* dock 与 bar 同槽位：有窗时 dock 让到右下（§1.3），z 与 bar 同域压浮窗。 */
+.ck12-condock { z-index: 140; }
+
+@media (max-width: 900px) {
+  .ck12-winbar { bottom: 58px; max-width: calc(100vw - 150px); }
+}
+@media (max-width: 560px) {
+  .ck12-winbar { left: 8px; bottom: 56px; max-width: calc(100vw - 120px); }
+  .ck12-wbchip-name { max-width: 64px; }
+}

@@ -109,6 +109,45 @@ export function moveCockpitRect(
   return clampCockpitRect({ ...start, x: start.x + delta.dx, y: start.y + delta.dy }, viewport)
 }
 
+/** v20（design 29 §5）左缘 grip：右缘钉住，x/w 反向联动。 */
+export function resizeCockpitRectLeft(
+  start: CockpitRect,
+  delta: { dx: number; dy: number },
+  viewport: Viewport,
+): CockpitRect {
+  const vw = Math.max(1, Math.round(viewport.width))
+  const right = start.x + start.w
+  const minX = CHAT_MARGIN
+  const maxX = Math.max(minX, right - Math.min(CHAT_MIN_WIDTH, vw - CHAT_MARGIN * 2))
+  const x = clamp(Math.round(start.x + delta.dx), minX, maxX)
+  return { ...start, x, w: right - x }
+}
+
+/** v20 上缘 grip：底缘钉住，y/h 反向联动。 */
+export function resizeCockpitRectTop(
+  start: CockpitRect,
+  delta: { dx: number; dy: number },
+  viewport: Viewport,
+): CockpitRect {
+  const vh = Math.max(1, Math.round(viewport.height))
+  const bottom = start.y + start.h
+  const minY = CHAT_MARGIN
+  const maxY = Math.max(minY, bottom - Math.min(CHAT_MIN_HEIGHT, vh - CHAT_MARGIN * 2))
+  const y = clamp(Math.round(start.y + delta.dy), minY, maxY)
+  return { ...start, y, h: bottom - y }
+}
+
+/** v20 弹出窗级联几何（design 29 §4）：x=120+n*64, y=84+n*34，夹回视口。 */
+export function cascadeWinRect(index: number, viewport: Viewport): CockpitRect {
+  const vw = Math.max(1, Math.round(viewport.width))
+  const vh = Math.max(1, Math.round(viewport.height))
+  const w = Math.min(380, vw - 24)
+  const h = Math.min(440, vh - 140)
+  const x = clamp(120 + index * 64, CHAT_MARGIN, Math.max(CHAT_MARGIN, vw - w - CHAT_MARGIN))
+  const y = clamp(84 + index * 34, CHAT_MARGIN, Math.max(CHAT_MARGIN, vh - h - CHAT_MARGIN))
+  return { x, y, w, h }
+}
+
 /** 五档循环：94 → 82 → 70 → 55 → 100 → 94 … */
 export function nextCockpitAlpha(alpha: number): number {
   const index = CHAT_ALPHA_STEPS.findIndex((step) => Math.abs(step - alpha) < 0.005)

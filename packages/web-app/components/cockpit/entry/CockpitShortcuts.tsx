@@ -19,6 +19,7 @@ import { useEffect, useRef } from 'react'
 import { useCockpitFleet } from '../fleet/CockpitFleetProvider'
 import { useCockpitState } from '../state/CockpitStateProvider'
 import { getChatSlot } from '../chat/chat-slots'
+import { useCockpitThreads } from '../chat/use-cockpit-threads'
 import { toggleCrewSettings } from '../crew/crew-settings'
 import { candidatesOf } from './cockpit-candidates'
 import { resolveDefaultRef } from './cockpit-url'
@@ -31,12 +32,16 @@ function isEditableTarget(target: EventTarget | null): boolean {
 }
 
 /** Alt + 哪个键（不认识返回 null）。兼容 event.code 缺失的合成事件与测试。 */
-function altKeyOf(event: KeyboardEvent): '1' | '2' | 'w' | 'x' | null {
+function altKeyOf(event: KeyboardEvent): '1' | '2' | 'w' | 'x' | 'c' | 'd' | 'left' | 'right' | null {
   if (!event.altKey || event.metaKey || event.ctrlKey || event.shiftKey) return null
   if (event.code === 'Digit1' || event.code === 'Numpad1' || event.key === '1') return '1'
   if (event.code === 'Digit2' || event.code === 'Numpad2' || event.key === '2') return '2'
   if (event.code === 'KeyW' || event.key.toLowerCase() === 'w') return 'w'
   if (event.code === 'KeyX' || event.key.toLowerCase() === 'x') return 'x'
+  if (event.code === 'KeyC' || event.key.toLowerCase() === 'c') return 'c'
+  if (event.code === 'KeyD' || event.key.toLowerCase() === 'd') return 'd'
+  if (event.code === 'ArrowLeft' || event.key === 'ArrowLeft') return 'left'
+  if (event.code === 'ArrowRight' || event.key === 'ArrowRight') return 'right'
   return null
 }
 
@@ -48,7 +53,8 @@ function isCommandK(event: KeyboardEvent): boolean {
 export function CockpitShortcuts() {
   const active = useOptionalIsActiveRoute()
   const { rows } = useCockpitFleet()
-  const { select, chatWindow, fx } = useCockpitState()
+  const { select, chatWindow, fx, threads: threadApi } = useCockpitState()
+  const { visible, byKey } = useCockpitThreads()
 
   // 监听只挂一次（active 变化时重挂）；其余可变值走 ref，避免每 10s 轮询
   // 都重装一次 window 监听。
@@ -56,10 +62,18 @@ export function CockpitShortcuts() {
   const selectRef = useRef(select)
   const openRef = useRef(chatWindow.openWithFocus)
   const jumpRef = useRef(fx.jump)
+  const cwRef = useRef(chatWindow)
+  const taRef = useRef(threadApi)
+  const visRef = useRef(visible)
+  const byKeyRef = useRef(byKey)
   rowsRef.current = rows
   selectRef.current = select
   openRef.current = chatWindow.openWithFocus
   jumpRef.current = fx.jump
+  cwRef.current = chatWindow
+  taRef.current = threadApi
+  visRef.current = visible
+  byKeyRef.current = byKey
 
   useEffect(() => {
     if (!active) return
@@ -88,6 +102,9 @@ export function CockpitShortcuts() {
         if (!ref) return
         event.preventDefault()
         selectRef.current(ref)
+        // v20：最紧要的一条同时激活它的作战线程（有会话才切）。
+        const threadKey = `${ref.kind}:${ref.id}`
+        if (byKeyRef.current.has(threadKey)) taRef.current.activateThread(threadKey)
         return
       }
 
@@ -106,6 +123,34 @@ export function CockpitShortcuts() {
       if (key === 'x') {
         event.preventDefault()
         toggleCrewSettings()
+        return
+      }
+
+      // v20（design 29 §10）：⌥C 收起/展开停靠 · ⌥D 当前线程调试 · ⌥←/→ 切 tab。
+      if (key === 'c') {
+        event.preventDefault()
+        const cw = cwRef.current
+        if (cw.docked) cw.openWithFocus()
+        else cw.set({ docked: true })
+        return
+      }
+
+      if (key === 'd') {
+        const thread = byKeyRef.current.get(taRef.current.activeThread)
+        if (!thread?.ref) return
+        event.preventDefault()
+        selectRef.current(thread.ref, 'debug')
+        return
+      }
+
+      if (key === 'left' || key === 'right') {
+        const list = visRef.current
+        if (list.length < 2) return
+        event.preventDefault()
+        const index = list.findIndex((t) => t.key === taRef.current.activeThread)
+        const delta = key === 'right' ? 1 : -1
+        const next = list[(index + delta + list.length) % list.length]
+        taRef.current.activateThread(next.key)
         return
       }
     }

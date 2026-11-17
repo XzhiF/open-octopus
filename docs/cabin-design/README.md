@@ -58,7 +58,7 @@
   （星流加速 + 三层环 + 扫描带 + 网格脉冲 + 中心柔光 + 四边流光，`screen` 叠加只提亮、不挡点击）；
   跃迁多了 HUD「⟳ 跃迁」入口；**消息按 Esc 关，点任意处 = 激活**（作业面 + 对话窗 + 编队高亮）。
   铁律：**布局恒定**——任何开关 / 弹层 / 消息 / 草稿都不改舱面与底栏几何（开对话时 ticker 不再收起，只换文案）。
-- `cockpit-v20.html` — **指挥舱 v20 · 多作战回传 + 调试inspect + 模型账本 + 舱籍 + 文件树（2026-11-16 · 当前稿）**：
+- `cockpit-v20.html` — **指挥舱 v20 · 多作战回传 + 调试inspect + 模型账本 + 舱籍 + 文件树（2026-11-17 · 当前稿，设计：`design/29-cockpit-v20.md`）**：
   v19 底座上加七件事——① **作业坞同款调试**：详情「调试」页签 + 左hex，轮次尺（ok/异常/中止/记录中）+ 全部/切换/异常滤 +
   概览/Prompt/身份/SDK/时间线五页 + TOKEN 拆分 + 上下文占用 + 复制本轮快照 JSON；② **换模型/ctx/token/费用**：HUD model 弹层
   （pro-max/pro/se × 思考强度 × 200k/1M，切换重建缓存 toast），token/ctx/¥ 实时读数 + 「消耗」SESSION LEDGER（四 token 格 + 按模型 + 作战账本）；
@@ -84,6 +84,11 @@
   union bbox 对齐→480×720×12 多帧 sprite sheet（`assets/motion-sheet-*.png`）；运行时单 rAF ping-pong 帧播放器（每姿态独立 fps 6–16，隐藏页暂停、reduced-motion 静帧），
   循环首尾相接无跳变；视频缺失自动回退双帧 sheet。另合成 4 个主姿态无缝 GIF 供直接预览：`assets/gifs/xiyin-motion-{idle,typing,cheer,command}.gif`（22 帧 ping-pong @12fps）。
   入库边界：立绘/双帧 sheet/多帧 sheet/GIF/管线脚本入库；绿幕 raw 帧、alt 帧、motion mp4、vibe_* 与 shots-v20 为可再生中间产物（.gitignore）。
+- **全舱 v20 已落地 `packages/web-app`**（2026-11-17 · 设计/差异/验证：`design/30-cockpit-v20-webapp.md`）：
+  多作战 tab + TUI gutter + 选项行拍板（真决策管线）+ 本地同步回执、停靠 pill/边缘 grip、用户自开弹出窗×5 + WINDOWS 条、
+  决断面板 / SESSION LEDGER / 工作树只读查阅（新增服务端只读 tree/file 路由）/ 详情文件+调试页签、12 姿态帧播放器 + 图鉴 + 粒子、
+  回传入场动画 + 随机跃迁 + DEV 模拟弹层。真数据纪律：不假造 relay/不代答决断；classic 逐字不变。
+  验证：web-app 1614 单元 / 0 lint error / build ✓；server 舱域 441 ✓；e2e `cockpit-v20` 9/9 + `cockpit-global` 11/11（真 backend）。
 - `cockpit-v19.html` — **指挥舱 v19 · 星穿梭多场景 + 汐音动作替换 + TUI 玻璃通讯台（迭代稿，设计：`design/28-cockpit-v19.md`）**：
   按四条反馈重做——① **透明感**：低 alpha 玻璃 + blur(10~14) saturate，场景清晰透出；② **对话移到人物右侧**常驻 TUI 通讯台
   （mono 角色色签 + 时间戳 + 扫描线 + 打字机主述 + galgame 选项 + ❯ 输入），不再空；③ **星空穿梭 + 多场景**：三张场景板 crossfade +

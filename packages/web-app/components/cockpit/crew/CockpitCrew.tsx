@@ -41,7 +41,6 @@ import { useCockpit } from '@/components/cabin/CockpitProvider'
 import {
   CREW,
   XY_LINES,
-  moodPortrait,
   type MoodKey,
 } from '@/components/cabin/cockpit'
 import { useCockpitState } from '../state/CockpitStateProvider'
@@ -50,6 +49,8 @@ import { getChatSlot } from '../chat/chat-slots'
 import {
   doneLine, listenLine, waitingLine,
 } from './chat-reactions'
+import { MOOD_POSE, POSE_META, type PoseKey } from './pose-model'
+import { CockpitPoseSprite, PoseFX } from './CockpitPoseSprite'
 
 const TYPE_MS = 22
 /** 首点（对话窗原本是关的）说这一句；之后连点按 XY_LINES 顺序轮播。 */
@@ -111,7 +112,7 @@ export function CockpitCrew() {
     setMoodOverride,
     setCrewBusy,
   } = useCockpit()
-  const { chat, fx, chatWindow } = useCockpitState()
+  const { chat, fx, chatWindow, reportPose } = useCockpitState()
   const reduce = usePrefersReducedMotion()
 
   const [speech, setSpeech] = useState<Speech | null>(null)
@@ -165,7 +166,16 @@ export function CockpitCrew() {
       : listening
         ? '倾听'
         : (CREW[shownMood]?.label ?? CREW.idle.label)
-  const portrait = moodPortrait(shownMood)
+  /** v20：动作姿态 override（派单 command / 图鉴 playPose / 报到 salute），
+   *  期间 mood 不覆盖 pose；结束回落 mood pose（design 29 §9.1）。 */
+  const [actionPose, setActionPose] = useState<PoseKey | null>(null)
+  const actionTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const shownPose: PoseKey = actionPose
+    ?? (phase === 'waiting' ? 'typing' : MOOD_POSE[shownMood])
+  useEffect(() => { reportPose(shownPose) }, [shownPose, reportPose])
+  useEffect(() => () => {
+    if (actionTimerRef.current) clearTimeout(actionTimerRef.current)
+  }, [])
   const tagText = phase === 'waiting'
     ? `XIYIN-07 · 回复中 ${waitSeconds}s`
     : phase === 'done'
@@ -448,6 +458,28 @@ export function CockpitCrew() {
 
   useEffect(() => subscribeCrewPoke(interact), [interact])
 
+  // ── v20：姿态事件（图鉴 playPose / 委派 relay command）─────────────────
+  useEffect(() => {
+    const onPose = (event: Event) => {
+      const detail = (event as CustomEvent<{ pose?: PoseKey; ms?: number }>).detail
+      const pose = detail?.pose
+      if (!pose || !(pose in POSE_META)) return
+      const ms = detail.ms ?? 2600
+      setActionPose(pose)
+      if (actionTimerRef.current) clearTimeout(actionTimerRef.current)
+      actionTimerRef.current = setTimeout(() => setActionPose(null), ms)
+      const meta = POSE_META[pose]
+      const mood: MoodKey = pose === 'command' || pose === 'typing'
+        ? 'working'
+        : pose === 'salute' ? 'boot' : (pose as MoodKey)
+      present(meta.line, mood, ms, 'poke')
+      fx.say(meta.line, mood)
+      cabinAudio.chime()
+    }
+    window.addEventListener('octopus:crew-pose', onPose)
+    return () => window.removeEventListener('octopus:crew-pose', onPose)
+  }, [present, fx])
+
   return (
     <div className="ck12-crew" data-testid="cockpit-crew">
       <button
@@ -460,7 +492,8 @@ export function CockpitCrew() {
         aria-label={`汐音 · ${label} · 点击跟她说话`}
         onClick={talkToXiyin}
       >
-        <img src={portrait} alt="汐音" />
+        <CockpitPoseSprite pose={shownPose} reduce={reduce} />
+        <PoseFX pose={shownPose} reduce={reduce} />
         <span className="ck12-pod-scan" aria-hidden="true" />
         <span className="ck12-pod-vg" aria-hidden="true" />
         {listening && phase === 'idle' && (

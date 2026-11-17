@@ -42,6 +42,11 @@ import {
 import {
   CockpitElapsed, CockpitJobHeader, TaskRunActions, tabForAttentionStage,
 } from '@/components/cockpit/face/CockpitJobHeader'
+import { CockpitJobFiles } from '@/components/cockpit/face/CockpitJobFiles'
+import { CockpitJobDebug } from '@/components/cockpit/face/CockpitJobDebug'
+
+/** classic 作业窗页签保持 v12 五页签；files/debug 只在全域面出现（design 29）。 */
+const WINDOW_TABS: readonly CockpitTab[] = ['overview', 'relay', 'run', 'changes', 'accept']
 
 /** 作业面（详情 + 派生状态）的单请求预算：接口吊死时给出错误与重试，
  *  不能永远停在「载入作业…」（2026-11-14 用户）。 */
@@ -527,6 +532,54 @@ export function JobFace({
           子代理 →
         </button>
       )}
+      {/* v20（design 29 §6）：标题行 hex 动作 —— 💬谈 / ◈去决断 / ⚙调试 / ⧉舱籍。 */}
+      <button
+        type="button"
+        className="ck12-jh-btn"
+        data-testid="cockpit-job-talk"
+        disabled={!job.session_id}
+        title="💬 直达该作战线程"
+        onClick={() => window.dispatchEvent(new CustomEvent('octopus:open-session', {
+          detail: { sessionId: job.session_id },
+        }))}
+      >
+        💬 谈
+      </button>
+      {cockpit?.attention && (
+        <button
+          type="button"
+          className="ck12-jh-btn"
+          data-testid="cockpit-job-ops"
+          title="◈ 去决断队列"
+          onClick={() => window.dispatchEvent(new CustomEvent('octopus:cockpit-action', {
+            detail: { action: 'ops' },
+          }))}
+        >
+          ◈ 决断
+        </button>
+      )}
+      <button
+        type="button"
+        className="ck12-jh-btn"
+        data-testid="cockpit-job-debug-tab"
+        title="⚙ 调试 inspect"
+        onClick={() => changeTab('debug')}
+      >
+        ⚙ 调试
+      </button>
+      {(jobView?.project_keys?.length ?? 0) > 0 && (
+        <button
+          type="button"
+          className="ck12-jh-btn"
+          data-testid="cockpit-job-project"
+          title="⧉ 看舱籍项目"
+          onClick={() => window.dispatchEvent(new CustomEvent('octopus:cockpit-action', {
+            detail: { action: 'project', key: jobView?.project_keys?.[0] },
+          }))}
+        >
+          ⧉ 舱籍
+        </button>
+      )}
     </>
   )
 
@@ -842,6 +895,16 @@ export function JobFace({
           )}
         </div>
       )}
+      {tab === 'files' && cockpitMode && (
+        <div data-testid="cockpit-job-files" className={frameOf()}>
+          <CockpitJobFiles taskId={job.kind === 'task' ? job.ref_id : null} />
+        </div>
+      )}
+      {tab === 'debug' && cockpitMode && (
+        <div data-testid="cockpit-job-debug" className={frameOf()}>
+          <CockpitJobDebug sessionId={job.session_id} />
+        </div>
+      )}
     </>
   )
 
@@ -948,7 +1011,7 @@ export function JobFace({
       )}
 
       <div className="mb-2.5 flex shrink-0 gap-1 border-b-[1.5px] border-pop-bd" role="tablist">
-        {COCKPIT_TABS.map((key) => (
+        {WINDOW_TABS.map((key) => (
           <button
             key={key}
             type="button"

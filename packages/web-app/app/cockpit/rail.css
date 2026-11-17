@@ -452,3 +452,78 @@
 /* ── 「等你答」组（design 26 §3.1）：一条提问一行，排在编队最前 ── */
 .ck12-rail-g[data-group='ask'],
 .ck12-rail-g[data-group='ask'] b { color: var(--pop-amber); }
+
+/* ═══════════════ v20（design 29）· 编队增量 ═══════════════
+   决断入口（红点 + 回传 hex 环）/ 状态表情签 / 💬 直达 / 回传 rowArr。 */
+
+.ck12-rail-ops {
+  position: relative;
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  margin-left: 6px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  border: 1px solid color-mix(in srgb, var(--pop-amber) 45%, transparent);
+  color: var(--pop-amber);
+  font-size: 9.5px;
+  letter-spacing: 0.06em;
+  transition: background 0.14s, color 0.14s;
+}
+.ck12-rail-ops:hover { background: color-mix(in srgb, var(--pop-amber) 14%, transparent); }
+.ck12-rail-ops i {
+  min-width: 14px;
+  padding: 0 3px;
+  border-radius: 999px;
+  background: var(--pop-red, #ff6b81);
+  color: #14060a;
+  font-style: normal;
+  font-size: 8.5px;
+  font-weight: 800;
+  text-align: center;
+}
+/* 回传 hex 环（design 29 §7.2 hexRing）：inset 边 + 外扩环衰减，1.3s。 */
+.ck12-rail-ops.is-ring-0 { animation: ck12-hex-ring 1.3s ease-out; }
+.ck12-rail-ops.is-ring-1 { animation: ck12-hex-ring-b 1.3s ease-out; }
+@keyframes ck12-hex-ring {
+  0% { box-shadow: inset 0 0 0 1px var(--pop-amber), 0 0 0 0 color-mix(in srgb, var(--pop-amber) 55%, transparent); }
+  100% { box-shadow: inset 0 0 0 0 transparent, 0 0 0 26px transparent; }
+}
+@keyframes ck12-hex-ring-b {
+  0% { box-shadow: inset 0 0 0 1px var(--pop-amber), 0 0 0 0 color-mix(in srgb, var(--pop-amber) 55%, transparent); }
+  100% { box-shadow: inset 0 0 0 0 transparent, 0 0 0 26px transparent; }
+}
+
+.ck12-rail-emo { font-size: 10px; line-height: 1; }
+.ck12-rail-talk {
+  flex: none;
+  width: 20px;
+  height: 20px;
+  display: grid;
+  place-items: center;
+  border-radius: 6px;
+  font-size: 10px;
+  opacity: 0;
+  transition: opacity 0.12s, background 0.12s;
+}
+.ck12-rail-row:hover .ck12-rail-talk,
+.ck12-rail-row.is-on .ck12-rail-talk,
+.ck12-rail-row:focus-within .ck12-rail-talk { opacity: 1; }
+.ck12-rail-talk:hover { background: rgba(255, 255, 255, 0.08); }
+
+/* 回传 rowArr（design 29 §7.2）：accent 底 + 右移 7px + 辉光衰减。 */
+.ck12-rail-row.is-arrived-0 { animation: ck12-row-arr 1.4s cubic-bezier(0.2, 0.9, 0.2, 1); }
+.ck12-rail-row.is-arrived-1 { animation: ck12-row-arr-b 1.4s cubic-bezier(0.2, 0.9, 0.2, 1); }
+@keyframes ck12-row-arr {
+  0% { background: color-mix(in srgb, var(--ck-a) 34%, transparent); transform: translateX(7px); box-shadow: 0 0 22px color-mix(in srgb, var(--ck-a) 35%, transparent); }
+  100% { background: transparent; transform: none; box-shadow: 0 0 0 transparent; }
+}
+@keyframes ck12-row-arr-b {
+  0% { background: color-mix(in srgb, var(--ck-a) 34%, transparent); transform: translateX(7px); box-shadow: 0 0 22px color-mix(in srgb, var(--ck-a) 35%, transparent); }
+  100% { background: transparent; transform: none; box-shadow: 0 0 0 transparent; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .ck12-rail-ops.is-ring-0, .ck12-rail-ops.is-ring-1,
+  .ck12-rail-row.is-arrived-0, .ck12-rail-row.is-arrived-1 { animation: none; }
+}

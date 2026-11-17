@@ -15,6 +15,7 @@ import { moodPortrait } from '@/components/cabin/cockpit'
 import { useCockpit } from '@/components/cabin/CockpitProvider'
 import { useCockpitFleet } from '../fleet/CockpitFleetProvider'
 import type { CockpitRow } from '../fleet/fleet-model'
+import { isThreadVisible, threadKeyOfAttention } from '../fleet/threads-model'
 import { useCockpitState } from '../state/CockpitStateProvider'
 import type { CockpitRef } from '../state/cockpit-state'
 import { getChatSlot } from '../chat/chat-slots'
@@ -143,12 +144,15 @@ export function demoArrivalEnabled(): boolean {
 export function CockpitBrief() {
   const { rows, arrivals } = useCockpitFleet()
   const { prefs } = useCockpit()
-  const { fx, layer, select, chatWindow } = useCockpitState()
+  const {
+    fx, layer, select, chatWindow, chat, wins,
+    threads: threadApi, markArrival,
+  } = useCockpitState()
   const [brief, setBrief] = useState<BriefView | null>(null)
   /** 同一批 arrivals 的签名：provider 每 tick 都给新数组，用它挡住重复触发。 */
   const handledRef = useRef('')
 
-  // ── 到达 → 脉冲 + 边缘流光 + 台词 + 简报 ────────────────────────────
+  // ── 到达 → 脉冲 + 边缘流光 + 台词 + 简报 + v20 线程立即激活 ───────────
   useEffect(() => {
     if (arrivals.length === 0) {
       // 空 tick 重置签名：同一条 attention 被移除后再次到达时还能再报一次。
@@ -170,7 +174,25 @@ export function CockpitBrief() {
     fx.jump()
     fx.say(arrivalLine(first), 'alert')
     setBrief({ items, demo: false })
-  }, [arrivals, rows, fx, prefs.fxLevel])
+
+    // v20（design 29 §7.1）：flash 先设 → 行/卡 arrived + hex 环；线程重开 +
+    // 立即激活（流式中不打断当前会话，只累未读）；不可见才 unread++。
+    const view = {
+      activeThread: threadApi.activeThread,
+      chatWindow,
+      windows: wins.windows,
+    }
+    for (const id of arrivals) {
+      const attention = findAttention(rows, id)
+      if (!attention) continue
+      const key = threadKeyOfAttention(rows, attention)
+      if (!key) continue
+      markArrival(key)
+      threadApi.reopenTab(key)
+      if (!isThreadVisible(key, view)) threadApi.bumpUnread(key)
+      if (!chat?.streaming) threadApi.activateThread(key)
+    }
+  }, [arrivals, rows, fx, prefs.fxLevel, chatWindow, wins.windows, threadApi, markArrival, chat])
 
   // ── 10s 自动收（新简报会重置计时）────────────────────────────────────
   useEffect(() => {
@@ -205,6 +227,14 @@ export function CockpitBrief() {
     fx.say('演示到达：一条新回流已进编队。', 'alert')
     setBrief({ items: [DEMO_ITEM], demo: true })
   }, [fx])
+
+  // v20 模拟弹层（DEV）经事件触发演示简报，连发时每条重置 10s 计时。
+  useEffect(() => {
+    if (!demoArrivalEnabled()) return
+    const onDemo = () => runDemo()
+    window.addEventListener('octopus:demo-arrival', onDemo)
+    return () => window.removeEventListener('octopus:demo-arrival', onDemo)
+  }, [runDemo])
 
   const extra = brief ? brief.items.length - 1 : 0
   const first = brief?.items[0]

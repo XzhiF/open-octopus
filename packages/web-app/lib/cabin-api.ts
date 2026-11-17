@@ -454,6 +454,27 @@ export async function pullCabinRepo(id: string, name: string): Promise<{ branch:
   return handleResponse<{ branch: string; commit: string }>(res)
 }
 
+// ============ v20 工作树只读查阅（design 29 §6 ws）============
+
+/** 工作树磁盘直扫节点：dir 带尾 "/"；path 为工作树相对 posix。 */
+export interface RepoTreeEntry {
+  path: string
+  type: "dir" | "file"
+  bytes: number
+}
+
+/** GET /api/cabins/:id/repos/:name/tree — 只读 ff-only 目录树（depth≤6 / 2000 条）。 */
+export async function getRepoTree(id: string, name: string): Promise<{ dir: string; entries: RepoTreeEntry[] }> {
+  const res = await fetch(url(`/${id}/repos/${encodeURIComponent(name)}/tree`))
+  return handleResponse<{ dir: string; entries: RepoTreeEntry[] }>(res)
+}
+
+/** GET /api/cabins/:id/repos/:name/file?path= — 只读常规文件（不出根 / 512KB）。 */
+export async function getRepoFile(id: string, name: string, relPath: string): Promise<{ path: string; content: string }> {
+  const res = await fetch(url(`/${id}/repos/${encodeURIComponent(name)}/file?path=${encodeURIComponent(relPath)}`))
+  return handleResponse<{ path: string; content: string }>(res)
+}
+
 // ============ Knowledge (S7 / G4) / Usage (C7) ============
 
 /** G4 读时 scoping 后的 findings（与全局 findingView 同形）。裁决复用全局

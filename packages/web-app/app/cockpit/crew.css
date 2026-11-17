@@ -592,3 +592,105 @@
   .ck12-speech-cur { animation: none; }
   .ck12-xset { animation: none; }
 }
+
+/* ═══════════════ v20（design 29 §9）· 帧播放器 + 姿态粒子 ═══════════════ */
+/* 裁切窗：sheet 1:3 与窗 2:3×frames 精确同比例（img height 由 JS 写 frames*100%）。 */
+.ck12-pod .ck12-spr {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  pointer-events: none;
+}
+.ck12-pod .ck12-spr img {
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 100%;
+  object-fit: fill;
+  object-position: 50% 50%;
+  filter: saturate(1.04);
+  will-change: transform;
+  user-select: none;
+}
+
+/* 粒子层：与帧动画解耦，loop 类常驻至换 pose；reduced 全禁（组件不渲染）。 */
+.ck12-pfx { position: absolute; inset: 0; pointer-events: none; overflow: hidden; }
+.ck12-pfx i {
+  position: absolute;
+  left: calc(12% + var(--i) * 10%);
+  top: 55%;
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--ck-a);
+  opacity: 0;
+  animation-delay: calc(var(--i) * -0.4s);
+}
+.ck12-pfx-bubble i { animation: ck12-pfx-rise 3.2s linear infinite; }
+.ck12-pfx-spark i { background: var(--ck-b); animation: ck12-pfx-spark 1.8s ease-out infinite; }
+.ck12-pfx-ring i {
+  left: 50%; top: 62%; width: 30px; height: 30px; margin: -15px;
+  background: transparent; border: 1px solid var(--ck-a);
+  animation: ck12-pfx-ring 2.4s ease-out infinite;
+}
+.ck12-pfx-sweat i { background: var(--pop-cyan, #67e8f9); border-radius: 0 50% 50% 50%; animation: ck12-pfx-fall 2.2s ease-in infinite; }
+.ck12-pfx-heart i { background: transparent; width: auto; height: auto; animation: ck12-pfx-rise 2.6s ease-out infinite; }
+.ck12-pfx-heart i::after { content: '♡'; color: var(--pop-pink); font-size: 11px; }
+.ck12-pfx-confetti i { border-radius: 1px; width: 6px; height: 4px; background: var(--ck-c); animation: ck12-pfx-confetti 2.1s linear infinite; }
+.ck12-pfx-confetti i:nth-child(2n) { background: var(--ck-a); }
+.ck12-pfx-confetti i:nth-child(3n) { background: var(--pop-pink); }
+.ck12-pfx-zzz i { background: transparent; width: auto; height: auto; animation: ck12-pfx-rise 3.6s ease-out infinite; }
+.ck12-pfx-zzz i::after { content: 'z'; color: var(--ck12-dim); font-size: 10px; font-family: var(--font-mono); }
+.ck12-pfx-shine i {
+  left: -20%; top: 0; width: 26%; height: 100%; border-radius: 0;
+  background: linear-gradient(100deg, transparent, color-mix(in srgb, var(--ck-a) 22%, transparent), transparent);
+  animation: ck12-pfx-shine 2.8s ease-in-out infinite;
+}
+.ck12-pfx-beam i {
+  left: 0; top: calc(30% + var(--i) * 6%); width: 100%; height: 1px; border-radius: 0;
+  background: linear-gradient(90deg, transparent, var(--ck-a), transparent);
+  animation: ck12-pfx-beam 1.6s ease-in-out infinite;
+}
+.ck12-pfx-keys i {
+  top: auto; bottom: 12%; width: 7px; height: 5px; border-radius: 2px;
+  background: color-mix(in srgb, var(--ck-a) 70%, transparent);
+  animation: ck12-pfx-keys 0.9s steps(2, end) infinite;
+}
+@keyframes ck12-pfx-rise {
+  0% { opacity: 0; transform: translateY(0); }
+  18% { opacity: 0.85; }
+  100% { opacity: 0; transform: translateY(-130px); }
+}
+@keyframes ck12-pfx-spark {
+  0% { opacity: 0; transform: translate(0, 0) scale(0.6); }
+  25% { opacity: 1; }
+  100% { opacity: 0; transform: translate(calc(var(--i) * 6px - 24px), -70px) scale(1.1); }
+}
+@keyframes ck12-pfx-ring {
+  0% { opacity: 0.7; transform: scale(0.4); }
+  100% { opacity: 0; transform: scale(2.6); }
+}
+@keyframes ck12-pfx-fall {
+  0% { opacity: 0; transform: translateY(-20px); }
+  20% { opacity: 0.9; }
+  100% { opacity: 0; transform: translateY(70px); }
+}
+@keyframes ck12-pfx-confetti {
+  0% { opacity: 0; transform: translateY(-60px) rotate(0deg); }
+  15% { opacity: 1; }
+  100% { opacity: 0; transform: translateY(120px) rotate(340deg); }
+}
+@keyframes ck12-pfx-shine {
+  0% { opacity: 0; transform: translateX(0); }
+  30% { opacity: 1; }
+  100% { opacity: 0; transform: translateX(480%); }
+}
+@keyframes ck12-pfx-beam {
+  0%, 100% { opacity: 0; transform: scaleX(0.2); }
+  50% { opacity: 0.8; transform: scaleX(1); }
+}
+@keyframes ck12-pfx-keys {
+  0% { opacity: 0.25; transform: translateY(0); }
+  50% { opacity: 1; transform: translateY(2px); }
+  100% { opacity: 0.25; transform: translateY(0); }
+}

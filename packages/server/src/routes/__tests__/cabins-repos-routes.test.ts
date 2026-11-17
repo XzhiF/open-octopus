@@ -153,4 +153,42 @@ describe("/api/cabins repos routes · 舱籍第三轮", () => {
     expect(res.status).toBe(400)
     expect((await res.json()).error).toContain("external")
   })
+
+  // ── v20（design 29 §6 ws）：工作树只读查阅 tree / file ────────────────
+  it("GET /repos/:name/tree 磁盘直扫（跳 node_modules/.git）；未绑定 404", async () => {
+    await addLocalViaApi()
+    const root = path.join(cabin.path, "apps", "console")
+    fs.mkdirSync(path.join(root, "src"), { recursive: true })
+    fs.writeFileSync(path.join(root, "src", "b.ts"), "export {}\n")
+    fs.mkdirSync(path.join(root, "node_modules", "x"), { recursive: true })
+    fs.writeFileSync(path.join(root, "node_modules", "x", "hide.js"), "no\n")
+
+    const res = await app.request(`/api/cabins/${cabin.id}/repos/console/tree`)
+    expect(res.status).toBe(200)
+    const body = await res.json()
+    const paths = body.entries.map((e: { path: string }) => e.path)
+    expect(paths).toContain("a.txt")
+    expect(paths).toContain("src/")
+    expect(paths).toContain("src/b.ts")
+    expect(paths.some((p: string) => p.startsWith("node_modules"))).toBe(false)
+    expect(paths.some((p: string) => p.startsWith(".git"))).toBe(false)
+
+    expect((await app.request(`/api/cabins/${cabin.id}/repos/nope/tree`)).status).toBe(404)
+  })
+
+  it("GET /repos/:name/file 只读常规文件；出根 403 / 目录 404 / 缺参 400 / 超大 413", async () => {
+    await addLocalViaApi()
+    const root = path.join(cabin.path, "apps", "console")
+    fs.mkdirSync(path.join(root, "src"), { recursive: true })
+    const ok = await app.request(`/api/cabins/${cabin.id}/repos/console/file?path=a.txt`)
+    expect(ok.status).toBe(200)
+    expect((await ok.json()).content).toBe("hello\n")
+
+    expect((await app.request(`/api/cabins/${cabin.id}/repos/console/file?path=../escape`)).status).toBe(403)
+    expect((await app.request(`/api/cabins/${cabin.id}/repos/console/file?path=src`)).status).toBe(404)
+    expect((await app.request(`/api/cabins/${cabin.id}/repos/console/file`)).status).toBe(400)
+
+    fs.writeFileSync(path.join(root, "big.bin"), Buffer.alloc(512 * 1024 + 1))
+    expect((await app.request(`/api/cabins/${cabin.id}/repos/console/file?path=big.bin`)).status).toBe(413)
+  })
 })

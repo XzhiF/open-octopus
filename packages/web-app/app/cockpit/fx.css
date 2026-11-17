@@ -440,3 +440,49 @@
   .ck12-bgfx,
   .ck12-bgfx-top { display: none; }
 }
+
+/* ═══════════════ v20（design 29 §1.1/§7.1）· 简报落空白天空 ═══════════════
+   从右上（会压通讯台默认几何）移到立绘头顶左、通讯台左外的空白天空：
+   left = 编队宽 + 12；右缘 ≤ 通讯台左缘 - 12（宽 = min(340, scenePad - 24)）。
+   ≤900 顶中 92vw（通知优先，10s 自隐，与原型移动端同口径）。 */
+.ck12-brief {
+  right: auto;
+  left: 312px;
+  top: 78px;
+  width: min(340px, 342px);
+}
+@media (max-width: 1360px) {
+  .ck12-brief { left: 276px; width: min(340px, 310px); }
+}
+@media (max-width: 900px) {
+  .ck12-brief { left: 4vw; top: 70px; width: 92vw; }
+}
+
+/* ═══════════════ v20（design 29 §7.3）· 模拟弹层（仅 DEV）═══════════════ */
+.ck12-sim { position: fixed; left: 12px; bottom: 100px; z-index: 140; }
+.ck12-sim-btn {
+  padding: 4px 11px; border-radius: 999px;
+  border: 1px dashed color-mix(in srgb, var(--pop-violet) 55%, transparent);
+  background: rgba(14, 18, 26, 0.92); color: var(--pop-violet);
+  font-size: 10px; letter-spacing: 0.06em;
+}
+.ck12-sim-btn:hover { background: color-mix(in srgb, var(--pop-violet) 14%, transparent); }
+.ck12-sim-pop {
+  position: absolute; left: 0; bottom: 30px;
+  display: flex; flex-direction: column; gap: 4px;
+  width: 168px; padding: 8px;
+  border-radius: 12px; border: 1px solid var(--ck12-bd);
+  background: rgba(10, 12, 19, 0.97);
+  box-shadow: 0 18px 44px rgba(0, 0, 0, 0.5);
+}
+.ck12-sim-pop button {
+  padding: 4px 8px; border-radius: 7px; text-align: left;
+  border: 1px solid var(--ck12-bd); color: var(--ck12-dim); font-size: 10px;
+}
+.ck12-sim-pop button:hover { color: var(--ck12-ink); background: rgba(255, 255, 255, 0.05); }
+.ck12-sim-pop button[aria-pressed='true'] {
+  border-color: color-mix(in srgb, var(--ck-a) 50%, transparent);
+  color: var(--ck-a); background: color-mix(in srgb, var(--ck-a) 10%, transparent);
+}
+.ck12-sim-note { font-size: 8.5px; color: var(--ck12-faint); line-height: 1.4; }
+@media (max-width: 900px) { .ck12-sim { bottom: 92px; } }

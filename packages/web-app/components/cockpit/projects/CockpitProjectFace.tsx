@@ -179,6 +179,17 @@ export function CockpitProjectFace({ cabinId, projectKey, onClose }: CockpitProj
           <button type="button" className="ck12-pj-act" disabled={busy !== null} onClick={openWorktree}>
             {busy === 'worktree' ? '开中…' : '开工作树'}
           </button>
+          {/* v20（design 29 §6）：⌗ 工作区文件 → ws 面板（只读查阅）。 */}
+          <button
+            type="button"
+            className="ck12-pj-act"
+            data-testid="project-ws-open"
+            onClick={() => window.dispatchEvent(new CustomEvent('octopus:cockpit-action', {
+              detail: { action: 'ws', key: project.name },
+            }))}
+          >
+            ⌗ 工作区文件
+          </button>
         </div>
         <div className="ck12-jh-h2">
           <span>{project.git ? `${project.git.branch} → ${project.git.commit}` : '未检出'}</span>

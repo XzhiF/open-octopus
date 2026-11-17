@@ -868,3 +868,69 @@
     transition: none;
   }
 }
+
+/* ═══════════════ v20（design 29 §6）· 文件树 / 调试嵌入 ═══════════════ */
+.ck12-files { display: flex; flex-direction: column; height: 100%; min-height: 0; gap: 8px; }
+.ck12-files-h { display: flex; align-items: center; gap: 8px; flex: none; }
+.ck12-files-dir {
+  flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  font-family: var(--font-mono); font-size: 9.5px; color: var(--ck12-faint);
+}
+.ck12-files-q {
+  flex: none; width: 200px; height: 24px; padding: 0 8px;
+  border-radius: 7px; border: 1px solid var(--ck12-bd);
+  background: rgba(255, 255, 255, 0.03); color: var(--ck12-ink);
+  font-family: var(--font-mono); font-size: 10px; outline: none;
+}
+.ck12-files-q:focus { border-color: color-mix(in srgb, var(--ck-a) 50%, transparent); }
+.ck12-files-re {
+  flex: none; width: 24px; height: 24px; border-radius: 7px;
+  border: 1px solid var(--ck12-bd); color: var(--ck12-dim); font-size: 11px;
+}
+.ck12-files-re:hover { color: var(--ck12-ink); }
+.ck12-files-b { flex: 1; min-height: 0; display: flex; gap: 10px; }
+.ck12-files-tree {
+  flex: none; width: 46%; min-width: 220px; overflow-y: auto; overscroll-behavior: contain;
+  border: 1px solid var(--ck12-bd); border-radius: 10px; padding: 6px 4px;
+  background: rgba(255, 255, 255, 0.02);
+}
+.ck12-tree-row {
+  display: flex; align-items: center; gap: 6px; width: 100%;
+  padding: 2px 8px; border-radius: 6px; text-align: left;
+  font-family: var(--font-mono); font-size: 10.5px; color: var(--ck12-dim);
+}
+.ck12-tree-row:hover { background: rgba(255, 255, 255, 0.05); color: var(--ck12-ink); }
+.ck12-tree-row.is-on { background: color-mix(in srgb, var(--ck-a) 14%, transparent); color: var(--ck-a); }
+.ck12-tree-row.is-dir { color: var(--ck12-ink); font-weight: 600; }
+.ck12-tree-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ck12-tree-tag {
+  flex: none; font-style: normal; font-size: 8px; padding: 0 4px; border-radius: 4px;
+  border: 1px solid color-mix(in srgb, var(--pop-violet) 45%, transparent); color: var(--pop-violet);
+}
+.ck12-tree-bytes { margin-left: auto; flex: none; font-size: 8.5px; color: var(--ck12-faint); }
+.ck12-files-preview {
+  flex: 1; min-width: 0; display: flex; flex-direction: column;
+  border: 1px solid var(--ck12-bd); border-radius: 10px; overflow: hidden;
+  background: rgba(255, 255, 255, 0.02);
+}
+.ck12-files-ph {
+  flex: none; display: flex; align-items: baseline; gap: 8px; padding: 6px 10px;
+  border-bottom: 1px solid var(--ck12-bd);
+}
+.ck12-files-ph b { font-family: var(--font-mono); font-size: 10px; color: var(--ck12-ink); }
+.ck12-files-ph span { margin-left: auto; font-size: 8.5px; color: var(--ck12-faint); }
+.ck12-files-pre {
+  flex: 1; min-height: 0; overflow: auto; margin: 0; padding: 8px 10px;
+  font-family: var(--font-mono); font-size: 10.5px; line-height: 1.55;
+  color: var(--ck12-dim); white-space: pre-wrap; word-break: break-word;
+}
+.ck12-files-empty { padding: 18px 12px; font-size: 10.5px; color: var(--ck12-faint); text-align: center; }
+.ck12-files-empty.is-err { color: var(--pop-red, #ff6b81); }
+.ck12-dbg { height: 100%; min-height: 320px; display: flex; flex-direction: column; }
+.ck12-dbg > * { flex: 1; min-height: 0; }
+
+@media (max-width: 900px) {
+  .ck12-files-b { flex-direction: column; }
+  .ck12-files-tree { width: 100%; min-width: 0; max-height: 40%; }
+  .ck12-files-q { width: 130px; }
+}

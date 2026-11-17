@@ -22,6 +22,8 @@ import { projectNameFromKey, rowProjectKeys } from '../projects/project-model'
 import { useCockpitState } from '../state/CockpitStateProvider'
 import { useAskWindows } from '@/components/cabin/asks/ask-windows-provider'
 import { askWindowTitle } from '@/components/cabin/asks/ask-window-model'
+import { THREAD_EMO, threadStateOf } from '../fleet/threads-model'
+import { useCockpitThreads } from '../chat/use-cockpit-threads'
 
 const RAIL_LAYER_PRIORITY = 70
 const POP_MS = 900
@@ -137,7 +139,11 @@ function isEditableTarget(target: EventTarget | null): boolean {
 
 export function CockpitFleetRail() {
   const { rows, counts, arrivals, loading, error, refetch } = useCockpitFleet()
-  const { selection, select, railOpen, setRailOpen, layer, projectFilter, setProjectFilter } = useCockpitState()
+  const {
+    selection, select, railOpen, setRailOpen, layer, projectFilter, setProjectFilter,
+    flash, openPanel, threads: threadApi, chatWindow,
+  } = useCockpitState()
+  const { byKey } = useCockpitThreads()
   const askWindows = useAskWindows()
   const asks = askWindows.asks
 
@@ -323,6 +329,17 @@ export function CockpitFleetRail() {
         <span className="ck12-rail-en">FLEET</span>
         <span className="ck12-rail-ln" aria-hidden="true" />
         <b className="ck12-rail-count">{visible.length}</b>
+        {/* v20（design 29 §6）：决断入口在编队下面 —— 红点计数 + 回传 hex 环。 */}
+        <button
+          type="button"
+          className={`ck12-rail-ops${flash.key ? ` is-ring-${flash.nonce % 2}` : ''}`}
+          data-testid="cockpit-rail-ops"
+          title="决断队列（待你拍板的事）"
+          onClick={() => openPanel('ops')}
+        >
+          ◈ 决断
+          {(counts?.need ?? 0) > 0 && <i data-testid="cockpit-rail-ops-count">{counts?.need}</i>}
+        </button>
       </div>
 
       {counts && (
@@ -478,7 +495,7 @@ export function CockpitFleetRail() {
                       title={`${title} · ${status}`}
                       className={`ck12-rail-row${selected ? ' is-on' : ''}${
                         popped.has(row.key) ? ' is-pop' : ''
-                      }`}
+                      }${flash.key === row.key ? ` is-arrived-${flash.nonce % 2}` : ''}`}
                       onClick={() => activate(row, ref)}
                       onKeyDown={(event) => {
                         if (event.key === 'Enter' || event.key === ' ') {
@@ -537,6 +554,10 @@ export function CockpitFleetRail() {
                           </span>
                         )}
                         <span className="ck12-rail-facts">
+                          {/* v20 状态表情签（design 29 §2.2 STATE_EMO 同语义）。 */}
+                          <span className="ck12-rail-emo" aria-hidden="true">
+                            {THREAD_EMO[threadStateOf(row)]}
+                          </span>
                           <span className="ck12-rail-status">{status}</span>
                           {pct !== null && <span className="ck12-rail-pct">{pct}%</span>}
                         </span>
@@ -544,6 +565,22 @@ export function CockpitFleetRail() {
                           <span className="ck12-rail-bar" aria-hidden="true">
                             <i style={{ width: `${Math.max(0, Math.min(100, pct))}%` }} />
                           </span>
+                        )}
+                        {byKey.has(row.key) && (
+                          <button
+                            type="button"
+                            className="ck12-rail-talk"
+                            aria-label={`谈 ${title}`}
+                            title="💬 直达该作战线程"
+                            data-testid={`cockpit-rail-talk-${row.key}`}
+                            onClick={(event) => {
+                              event.stopPropagation()
+                              threadApi.activateThread(row.key)
+                              chatWindow.openWithFocus()
+                            }}
+                          >
+                            💬
+                          </button>
                         )}
                       </span>
                     </div>
