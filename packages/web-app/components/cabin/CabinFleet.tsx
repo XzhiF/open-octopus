@@ -1,7 +1,10 @@
 'use client'
 
-// classic-v3 编队面板（原型 .v3-fleet）：右侧 184px 悬浮列表，≥1321px 显示。
+// classic-v3 编队面板（原型 .v3-fleet → v6）：右侧悬浮列表，≥1321px 显示。
 // 行 = cabin_jobs（派发事实 + 派生 status），点一行开「作业详情」。
+// v6（2026-11-17）：**只放作战实体**（任务 / 工作流 / 分身）。「要我处理」
+// （待你定 / 待验收 / 受阻）已拆到编队上方的独立 inbox（CabinInbox），
+// 这里不再混入提问行 —— 编队点行 = 看详情，inbox 点行 = 去处理。
 // 历史舱没有 job 时回退为「运行中 / 待验收的任务」合成行（点击回任务线程）。
 
 import { useEffect, useMemo, useRef, useState } from 'react'
@@ -11,8 +14,6 @@ import { cn } from '@/lib/utils'
 import { useCabinContext } from './cabin-provider'
 import { isEndedJob, jobStatusLabel, jobTone } from './job-status'
 import { openTaskInChat, taskDisplayStatus, useCabinTasks, type CabinTaskRow } from './modules/ui'
-import { useAskWindows } from './asks/ask-windows-provider'
-import { askWindowTitle } from './asks/ask-window-model'
 
 const JOB_ICON = { task: ListTodo, workflow: GitBranch, subagent: Bot } as const
 
@@ -48,8 +49,6 @@ function taskPct(task: CabinTaskRow | undefined): number {
 export function CabinFleet() {
   const { cabinId, cabin, openJobDetail } = useCabinContext()
   const { tasks } = useCabinTasks(cabinId)
-  // 等你答（design 26 §3.1）：组在右侧编队面板顶部，点一行在面板左侧开窗。
-  const { asks, open: openAsk } = useAskWindows()
   const [jobs, setJobs] = useState<CabinJobView[]>([])
   const prevIdsRef = useRef<Set<string> | null>(null)
   const [popped, setPopped] = useState<Set<string>>(new Set())
@@ -141,52 +140,26 @@ export function CabinFleet() {
     return () => window.clearTimeout(timer)
   }, [rows])
 
-  if (!cabin || (rows.length === 0 && asks.length === 0)) return null
+  if (!cabin || rows.length === 0) return null
+
+  const runningCount = rows.filter((r) => r.live || (!isEndedJob(r.status) && jobTone(r.status) === 'run')).length
 
   return (
     <aside className="ck-fleet" data-testid="cabin-fleet" aria-label="编队">
       <div className="ck-fleet-h">
-        <span>编队</span>
-        <b>{rows.length + asks.length}</b>
+        <span className="lh">
+          {runningCount > 0 && <i className="live" />}
+          编队
+        </span>
+        <b>{rows.length}</b>
       </div>
       <div className="ck-fleet-list">
-        {asks.length > 0 && (
-          <div className="ck-fleet-asks" data-testid="cabin-fleet-asks">
-            <div className="ck-fleet-gh" data-group="ask">
-              <span>等你答</span>
-              <b>{asks.length}</b>
-            </div>
-            {asks.map((ask) => (
-              <button
-                key={ask.askId}
-                type="button"
-                data-testid={`cabin-fleet-ask-${ask.askId}`}
-                data-ask-open={ask.askId}
-                title={`${askWindowTitle(ask.item)} · 等你答`}
-                onClick={() => openAsk(ask.askId)}
-                className="ck-frow wait askrow"
-              >
-                <span className="g">◉</span>
-                <span className="n">{askWindowTitle(ask.item)}</span>
-                <span className="s">
-                  <i className="d" />
-                  {ask.item.question ?? ask.env.decision ?? '在问你'}
-                </span>
-              </button>
-            ))}
-          </div>
-        )}
-        {rows.length > 0 && (
-          <div className="ck-fleet-gh" data-group="fleet">
-            <span>编队</span>
-            <b>{rows.length}</b>
-          </div>
-        )}
         {rows.map((row) => {
           const Icon = JOB_ICON[row.kind]
           const isLive = row.live && row.status !== 'running'
+          const isDone = ['done', 'completed', 'completed_with_failures'].includes(row.status)
           const statusText = isLive ? '作者在推进' : jobStatusLabel(row.status)
-          const tone = row.live ? 'run' : jobTone(row.status)
+          const tone = row.live ? 'run' : isDone ? 'done' : jobTone(row.status)
           // 作者在写方案 / 澄清时，执行进度还没开始：不画 0% 的假进度。
           const showPct = !isLive
           return (
@@ -214,6 +187,7 @@ export function CabinFleet() {
           )
         })}
       </div>
+      <div className="ck-fleet-foot">点行 = 详情 · 不作答</div>
     </aside>
   )
 }

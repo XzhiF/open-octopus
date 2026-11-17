@@ -345,9 +345,9 @@ body.float-holo [data-testid="cabin-window"]::after {
 
 /* ── 编队悬浮区（≥1321px 才出现）：正文/输入条收窄让位，输入历史左移出编队 ──
    原型 `.v3-cabin .tui-col{max-width:756px;margin-left:0}`；此处再叠一层
-   「可用宽度 − 240px（编队右缘 84 + 宽 148 + 8 间距）」的兜底，窄屏也不会
-   钻到编队下面。输入历史整条（含展开列表 264px）左移到 240px 处，排在
-   正文与编队之间，东西再多也遮不到。
+   「可用宽度 − 284px（编队右缘 84 + 宽 192 + 8 间距）」的兜底，窄屏也不会
+   钻到编队下面（v6 编队从 148 加宽到 192）。输入历史整条（含展开列表 264px）
+   左移到 284px 处，排在正文与编队之间，东西再多也遮不到。
 
    注意选择器要带 [data-cabin-thread="true"]，与上面 1281 那条同权重 ——
    只给上面加舱线程限定会让 860 反压 756（860 > 756 → 正文重新钻到编队下面，
@@ -355,14 +355,14 @@ body.float-holo [data-testid="cabin-window"]::after {
    居中列生效。 */
 @media (min-width: 1321px) {
   [data-testid="cabin-chat-region"][data-cabin-thread="true"] [data-tui-col]:not([data-tui-hero="true"]) {
-    max-width: min(756px, calc(100% - 240px));
-    /* 轨道右缘 right:240 + 容器 28，杠杠落在列右缘内 22px 处；32px 留白刚好错开。 */
+    max-width: min(756px, calc(100% - 284px));
+    /* 轨道右缘 right:284 + 容器 28，杠杠落在列右缘内 22px 处；32px 留白刚好错开。 */
     padding-right: 32px;
   }
   [data-testid="cabin-chat-region"][data-cabin-thread="true"] [data-tui-dock]:not([data-tui-hero="true"]) [data-tui-composer] {
     max-width: min(756px, calc(100% - 144px));
   }
-  [data-testid="cabin-chat-region"][data-cabin-thread="true"] [data-testid="chat-timeline"] { right: 240px }
+  [data-testid="cabin-chat-region"][data-cabin-thread="true"] [data-testid="chat-timeline"] { right: 284px }
 }
 @media (max-width: 1280px) {
   .crew-pod, .xy-dialog, .crew-hub { display: none }
@@ -378,64 +378,193 @@ body.float-holo [data-testid="cabin-window"]::after {
     animation: none !important;
   }
 }
-/* ════════════ classic-v3 · 编队面板（悬浮，原型 .v3-fleet） ════════════ */
+/* ════════════ classic-v3 · 编队面板（v6：只放作战实体） ════════════
+   v6（2026-11-17）：提问行从编队拆到上方 inbox；这里只剩任务 / 工作流 / 分身。
+   点行 = 只读详情；作答 / 验收 / 解阻都去 inbox。 */
 .ck-fleet {
-  position: absolute; top: 52px; right: 84px; z-index: 24; width: 148px;
-  max-height: calc(100% - 200px); display: flex; flex-direction: column;
+  position: absolute; top: 112px; right: 84px; z-index: 24; width: 192px;
+  max-height: calc(100% - 252px); display: flex; flex-direction: column;
   border: 1px solid var(--w10); border-radius: 12px; overflow: hidden;
   background: color-mix(in srgb, var(--pop-paper) 82%, transparent);
   backdrop-filter: blur(12px); box-shadow: 0 10px 30px rgba(0, 0, 0, .32);
 }
 .ck-fleet-h {
   display: flex; align-items: center; justify-content: space-between; flex: none;
-  padding: 7px 9px 6px; border-bottom: 1px solid var(--w6);
+  padding: 7px 10px 6px; border-bottom: 1px solid var(--w6);
   font-size: 9.5px; font-weight: 700; letter-spacing: .08em; color: var(--pop-dim);
+}
+.ck-fleet-h .lh { display: flex; align-items: center; gap: 5px }
+.ck-fleet-h .live {
+  width: 5px; height: 5px; border-radius: 50%; background: var(--pop-green);
+  box-shadow: 0 0 6px var(--pop-green); animation: ckPulse 1.6s infinite;
 }
 .ck-fleet-h b { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 10px; color: var(--pop-ink) }
 .ck-fleet-list { overflow-y: auto; padding: 4px }
 .ck-frow {
   display: grid; grid-template-columns: 16px minmax(0, 1fr); gap: 2px 7px; align-items: center;
-  width: 100%; padding: 6px 7px; border-radius: 8px; text-align: left; transition: background .15s;
-  color: var(--pop-dim);
+  width: 100%; padding: 6px 7px; border-radius: 8px; text-align: left;
+  transition: background .15s, box-shadow .15s; color: var(--pop-dim);
 }
-.ck-frow:hover { background: var(--w6) }
+.ck-frow:hover { background: var(--w6); box-shadow: inset 2px 0 0 rgba(79, 209, 217, .55) }
 .ck-frow.run { color: var(--pop-green) }
 .ck-frow.wait { color: var(--pop-amber) }
 .ck-frow.blocked { color: var(--pop-red) }
+.ck-frow.done { color: var(--pop-green) }
 .ck-frow.ended { opacity: .45 }
-.ck-frow .g { grid-row: 1 / span 2; display: grid; place-items: center; line-height: 1 }
+.ck-frow .g { grid-row: 1 / span 2; display: grid; place-items: center; line-height: 1; color: var(--pop-cyan) }
 .ck-frow .n {
   min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-  font-size: 10.5px; line-height: 1.3; color: rgba(245, 245, 242, .92); font-family: var(--font-ui, inherit);
+  font-size: 11px; line-height: 1.3; color: rgba(245, 245, 242, .92); font-family: var(--font-ui, inherit);
 }
-.ck-frow .s { display: flex; align-items: center; gap: 4px; font-size: 8.5px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace }
+.ck-frow .s { display: flex; align-items: center; gap: 4px; font-size: 9px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace }
 .ck-frow .d { width: 5px; height: 5px; border-radius: 50%; flex: none; background: var(--pop-dim) }
 .ck-frow.run .d { background: var(--pop-green); box-shadow: 0 0 6px var(--pop-green) }
 .ck-frow.wait .d { background: var(--pop-amber); animation: ckPulse 1.5s infinite }
 .ck-frow.blocked .d { background: var(--pop-red); animation: ckPulse 1s infinite }
+.ck-frow.done .d { background: var(--pop-green) }
 .ck-frow .bar { grid-column: 1 / -1; height: 2px; margin-top: 3px; border-radius: 1px; background: var(--w8); overflow: hidden }
 .ck-frow .bar i { display: block; height: 100%; background: currentColor; opacity: .6 }
+.ck-frow.done .bar i { opacity: .45 }
 .ck-frow.pop { animation: ckFleetPop .6s cubic-bezier(.34, 1.56, .64, 1) }
 @keyframes ckFleetPop {
   0% { transform: translateX(26px) scale(.94); opacity: 0 }
   100% { transform: none; opacity: 1 }
 }
+.ck-fleet-foot {
+  flex: none; padding: 6px 10px; border-top: 1px solid var(--w6);
+  font-size: 9px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  color: rgba(150, 152, 163, .55); line-height: 1.5;
+}
+
+/* ════════════ classic-v3 · inbox（v6：编队上方独立悬浮） ════════════
+   常驻 chip 给「要我处理 N」+ 三色计数；点开在**图标左边**出待办列表。
+   与编队同一断点：≤1320 一起隐藏。 */
+.ck-inbox { position: absolute; top: 52px; right: 84px; z-index: 26; width: 192px }
+.ck-inbox-chip {
+  position: relative; display: flex; align-items: center; gap: 8px; width: 100%;
+  padding: 8px 9px; border-radius: 12px; border: 1px solid rgba(255, 200, 87, .32);
+  background: color-mix(in srgb, var(--pop-paper) 84%, transparent);
+  backdrop-filter: blur(12px); box-shadow: 0 8px 24px rgba(0, 0, 0, .3);
+  text-align: left; cursor: pointer; transition: background .15s, border-color .15s;
+}
+.ck-inbox-chip:hover { background: rgba(255, 200, 87, .09) }
+.ck-inbox-chip[data-open='true'] {
+  background: rgba(255, 200, 87, .14); border-color: rgba(255, 200, 87, .6);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, .3), 0 0 0 1px rgba(255, 200, 87, .18) inset;
+}
+.ck-inbox-chip .ic {
+  width: 24px; height: 24px; border-radius: 7px; display: grid; place-items: center;
+  flex: none; background: rgba(255, 200, 87, .14); color: var(--pop-amber);
+}
+.ck-inbox-chip .mid { flex: 1; min-width: 0 }
+.ck-inbox-chip .t {
+  display: flex; align-items: center; gap: 5px; font-size: 10.5px; font-weight: 700;
+  color: var(--pop-ink); letter-spacing: .02em;
+}
+.ck-inbox-chip .dot {
+  width: 5px; height: 5px; border-radius: 50%; background: var(--pop-amber);
+  box-shadow: 0 0 6px var(--pop-amber); animation: ckPulse 1.6s infinite;
+}
+.ck-inbox-chip .brk {
+  display: flex; align-items: center; gap: 4px; margin-top: 2px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 8.5px; white-space: nowrap; overflow: hidden;
+}
+.ck-inbox-chip .bq { display: inline-flex; align-items: center; gap: 3px; color: rgba(245, 245, 242, .75) }
+.ck-inbox-chip .bq i { width: 5px; height: 5px; border-radius: 50%; background: currentColor; flex: none }
+.ck-inbox-chip .bq.ask { color: var(--pop-amber) }
+.ck-inbox-chip .bq.review { color: var(--pop-violet) }
+.ck-inbox-chip .bq.blocked { color: var(--pop-red) }
+.ck-inbox-chip .bq.off { opacity: .38 }
+.ck-inbox-chip .bq.none { color: rgba(150, 152, 163, .6) }
+.ck-inbox-chip .n {
+  flex: none; min-width: 20px; height: 20px; padding: 0 5px; border-radius: 999px;
+  display: grid; place-items: center; font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 10px; font-weight: 800; color: var(--pop-bg); background: var(--pop-amber);
+}
+.ck-inbox-chip[data-zero='true'] { border-color: var(--w10) }
+.ck-inbox-chip[data-zero='true'] .ic { background: var(--w8); color: var(--pop-dim) }
+.ck-inbox-chip[data-zero='true'] .n { background: var(--w10); color: var(--pop-dim) }
+
+.ck-inboxpop {
+  position: absolute; top: 0; right: 200px; width: 380px; max-height: 70vh;
+  display: flex; flex-direction: column; border: 1px solid var(--w12); border-radius: 12px;
+  background: rgba(24, 24, 30, .985); backdrop-filter: blur(14px);
+  box-shadow: 0 18px 48px rgba(0, 0, 0, .55); overflow: hidden; z-index: 1;
+  animation: ckInboxPop .14s ease;
+}
+@keyframes ckInboxPop {
+  from { opacity: 0; transform: translateX(6px) }
+  to { opacity: 1; transform: none }
+}
+.ck-inboxpop::after {
+  content: ''; position: absolute; right: -5px; top: 20px; width: 9px; height: 9px;
+  background: rgba(24, 24, 30, .985); border-right: 1px solid var(--w12);
+  border-top: 1px solid var(--w12); transform: rotate(45deg);
+}
+.ck-inboxpop-h {
+  display: flex; align-items: center; gap: 7px; flex: none; padding: 9px 11px 8px;
+  border-bottom: 1px solid var(--w6);
+}
+.ck-inboxpop-h .t {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 9.5px; font-weight: 800; letter-spacing: .1em; color: var(--pop-amber);
+}
+.ck-inboxpop-h b { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 10px; color: var(--pop-ink) }
+.ck-inboxpop-h .brk {
+  flex: 1; min-width: 0; text-align: right; font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 8.5px; color: rgba(150, 152, 163, .65); white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.ck-inboxpop-body { overflow-y: auto; padding: 5px 6px 7px }
+.ck-inboxpop-group {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 5px 6px 3px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 8.5px; font-weight: 800; letter-spacing: .12em; color: var(--pop-dim);
+}
+.ck-inboxpop-group b { font-size: 8.5px; font-weight: 800; color: rgba(150, 152, 163, .55) }
+.ck-inboxpop-group[data-type='ask'] { color: var(--pop-amber) }
+.ck-inboxpop-group[data-type='review'] { color: var(--pop-violet) }
+.ck-inboxpop-group[data-type='blocked'] { color: var(--pop-red) }
+.ck-inboxpop-row {
+  display: flex; flex-direction: column; gap: 2px; width: 100%; padding: 6px 7px;
+  border-radius: 7px; text-align: left; cursor: pointer;
+}
+.ck-inboxpop-row:hover { background: rgba(255, 255, 255, .05) }
+.ck-inboxpop-row .r1 { display: flex; align-items: center; gap: 6px; min-width: 0 }
+.ck-inboxpop-type {
+  flex: none; font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 8px; font-weight: 800; letter-spacing: .04em;
+  border: 1px solid currentColor; border-radius: 4px; padding: 0 4px; line-height: 13px;
+}
+.ck-inboxpop-type[data-type='ask'] { color: var(--pop-amber) }
+.ck-inboxpop-type[data-type='review'] { color: var(--pop-violet) }
+.ck-inboxpop-type[data-type='blocked'] { color: var(--pop-red) }
+.ck-inboxpop-name {
+  flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  font-size: 11px; font-weight: 600; font-family: var(--font-ui, inherit); color: rgba(245, 245, 242, .92);
+}
+.ck-inboxpop-go { flex: none; font-family: var(--font-ui, inherit); font-size: 9.5px; font-weight: 700; color: var(--pop-cyan) }
+.ck-inboxpop-q {
+  padding-left: 2px; font-size: 10.5px; line-height: 1.45; color: var(--pop-dim);
+  font-family: var(--font-ui, inherit); overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.ck-inboxpop-foot {
+  flex: none; padding: 6px 11px 7px; border-top: 1px solid var(--w6);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 8.5px; color: rgba(150, 152, 163, .55);
+}
+.ck-inboxpop-empty {
+  display: flex; flex-direction: column; align-items: center; gap: 5px; padding: 26px 0 22px;
+  font-family: var(--font-ui, inherit); font-size: 11px; color: rgba(150, 152, 163, .7);
+}
+.ck-inboxpop-empty b { font-size: 18px; line-height: 1; color: var(--pop-green); font-weight: 700 }
+
 @media (max-width: 1320px) {
-  .ck-fleet { display: none }
+  .ck-fleet, .ck-inbox { display: none }
 }
 @media (prefers-reduced-motion: reduce) {
-  .ck-frow.pop { animation: none }
+  .ck-frow.pop, .ck-inboxpop, .ck-inbox-chip .dot { animation: none !important }
 }
-/* 编队面板 ·「等你答」组（design 26 §3.1）：排在作业行之前。 */
-.ck-fleet-asks { border-bottom: 1px solid var(--w6); margin-bottom: 3px; padding-bottom: 3px }
-.ck-fleet-gh {
-  display: flex; align-items: center; justify-content: space-between;
-  padding: 5px 7px 3px; font-size: 8.5px; font-weight: 800; letter-spacing: .14em;
-  color: var(--pop-dim);
-}
-.ck-fleet-gh b { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 9.5px }
-.ck-fleet-gh[data-group='ask'], .ck-fleet-gh[data-group='ask'] b { color: var(--pop-amber) }
-.ck-frow.askrow .s { color: var(--pop-amber); opacity: .8; overflow: hidden; text-overflow: ellipsis; white-space: nowrap }
 
 /* ════════════ 作业详情（classic 窗）· v21 统计概览 / 三方对接 / 文件树 ════════════
    概览与对接只读 cabin_job_events + 任务实体（不新造数）：概览给统计读数，

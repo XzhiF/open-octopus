@@ -28,12 +28,15 @@ function readRailRight(): number | null {
   return rect.width > 0 ? rect.right : null
 }
 
-/** classic 编队面板左缘：面板只在有行时挂载，≤1320 由 CSS 隐藏。 */
+/** classic 编队面板左缘：面板只在有行时挂载，≤1320 由 CSS 隐藏。
+ *  v6：编队只放作战实体，提问行在编队上方 inbox —— 没有作业行时编队不挂载，
+ *  退到 inbox 的左缘，窗仍然落在右侧这条悬浮列左边，不会盖住 inbox 自己。 */
 function readFleetLeft(): number | null {
   if (typeof document === 'undefined') return null
-  const fleet = document.querySelector<HTMLElement>('.ck-fleet')
-  if (!fleet) return null
-  const rect = fleet.getBoundingClientRect()
+  const rail = document.querySelector<HTMLElement>('.ck-fleet')
+    ?? document.querySelector<HTMLElement>('.ck-inbox')
+  if (!rail) return null
+  const rect = rail.getBoundingClientRect()
   return rect.width > 0 && rect.height > 0 ? rect.left : null
 }
 

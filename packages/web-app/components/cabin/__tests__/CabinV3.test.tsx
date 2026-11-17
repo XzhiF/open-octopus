@@ -33,6 +33,7 @@ import { listTasks, getTask } from '@/lib/tasks-api'
 import { CabinProvider, useCabinContext } from '../cabin-provider'
 import { CabinOverview } from '../CabinOverview'
 import { CabinFleet } from '../CabinFleet'
+import { CabinInbox } from '../CabinInbox'
 import { AskWindowsProvider, useAskWindows } from '../asks/ask-windows-provider'
 import { CabinEngineering } from '../modules/CabinEngineering'
 import { CabinRecords } from '../modules/CabinRecords'
@@ -242,7 +243,7 @@ describe('CabinFleet — 编队面板', () => {
   })
 })
 
-// ── 等你答（design 26 §3.1 · classic）────────────────────────────────
+// ── 要我处理（classic 编队 v6：inbox 独立悬浮）────────────────────────
 const ASK_ATTENTION: CabinAttentionItem[] = [{
   id: 'ask-a1',
   job_id: null,
@@ -256,56 +257,158 @@ const ASK_ATTENTION: CabinAttentionItem[] = [{
   deep_link: 'ask:a1',
   ask: { ask_id: 'a1', message_id: 'm1', decision: '接哪个渠道' },
 }]
+const REVIEW_ATTENTION: CabinAttentionItem = {
+  id: 'review-t2',
+  job_id: null,
+  stage: 'review',
+  awaiting: 'person',
+  title: '结算台 UI · 待验收',
+  detail: '4 个 phase 全过',
+  task_id: 't2',
+  repo: null,
+  wt: null,
+  deep_link: 'task:t2',
+}
+const BLOCKED_ATTENTION: CabinAttentionItem = {
+  id: 'blocked-t9',
+  job_id: null,
+  stage: 'blocked',
+  awaiting: 'person',
+  title: '收银台回归 · 失败已升级',
+  question: '同一组用例反复失败',
+  task_id: 't9',
+  repo: null,
+  wt: null,
+  deep_link: 'task:t9',
+}
+const ALL_ATTENTION = [...ASK_ATTENTION, REVIEW_ATTENTION, BLOCKED_ATTENTION]
 
 function AskWindowsProbe() {
   const { windows } = useAskWindows()
   return <div data-testid="ask-probe">{windows.map((w) => w.askId).join(',')}</div>
 }
 
-describe('CabinFleet · 等你答', () => {
-  it('组在编队面板顶部；点行开窗，不切作业详情', async () => {
-    mockCabin(makeView({ attention: ASK_ATTENTION }))
+function captureTaskOpens() {
+  const opened: Array<{ taskId: string; view?: string }> = []
+  const onOpen = (event: Event) => {
+    opened.push((event as CustomEvent<{ taskId: string; view?: string }>).detail)
+  }
+  window.addEventListener('octopus:open-task', onOpen)
+  return { opened, dispose: () => window.removeEventListener('octopus:open-task', onOpen) }
+}
+
+describe('CabinInbox · 要我处理', () => {
+  it('chip 给总数 + 三色计数；点开在左侧出分组列表，点待你定开问答窗', async () => {
+    mockCabin(makeView({ attention: ALL_ATTENTION }))
+    render(
+      <CabinProvider cabinId="cabin-1">
+        <AskWindowsProvider attention={ALL_ATTENTION}>
+          <CabinInbox />
+          <AskWindowsProbe />
+        </AskWindowsProvider>
+      </CabinProvider>,
+    )
+
+    const chip = screen.getByTestId('cabin-inbox-chip')
+    expect(chip.textContent).toContain('要我处理')
+    expect(chip.textContent).toContain('待你定 1')
+    expect(chip.textContent).toContain('验收 1')
+    expect(chip.textContent).toContain('受阻 1')
+    expect(chip.textContent).toContain('3')
+
+    expect(screen.queryByTestId('cabin-inbox-pop')).toBeNull()
+    fireEvent.click(chip)
+    expect(screen.getByTestId('cabin-inbox-pop')).toBeInTheDocument()
+    expect(screen.getByTestId('cabin-inbox-row-ask-a1').textContent).toContain('接入支付宝')
+    expect(screen.getByTestId('cabin-inbox-row-review-t2').textContent).toContain('结算台 UI')
+    expect(screen.getByTestId('cabin-inbox-row-blocked-t9').textContent).toContain('收银台回归')
+
+    fireEvent.click(screen.getByTestId('cabin-inbox-row-ask-a1'))
+    await waitFor(() => expect(screen.getByTestId('ask-probe').textContent).toBe('a1'))
+    expect(screen.queryByTestId('cabin-inbox-pop')).toBeNull()
+  })
+
+  it('待验收开验收视图，受阻开对应任务', async () => {
+    mockCabin(makeView({ attention: ALL_ATTENTION }))
+    const capture = captureTaskOpens()
+    try {
+      render(
+        <CabinProvider cabinId="cabin-1">
+          <AskWindowsProvider attention={ALL_ATTENTION}>
+            <CabinInbox />
+          </AskWindowsProvider>
+        </CabinProvider>,
+      )
+
+      fireEvent.click(screen.getByTestId('cabin-inbox-chip'))
+      fireEvent.click(screen.getByTestId('cabin-inbox-row-review-t2'))
+      expect(capture.opened[0]).toEqual({ taskId: 't2', view: 'acceptance' })
+
+      fireEvent.click(screen.getByTestId('cabin-inbox-chip'))
+      fireEvent.click(screen.getByTestId('cabin-inbox-row-blocked-t9'))
+      expect(capture.opened[1]).toEqual({ taskId: 't9' })
+    } finally {
+      capture.dispose()
+    }
+  })
+
+  it('没有待办：chip 变灰、显示暂无待办，点开是「都处理完了」', () => {
+    mockCabin(makeView())
+    render(
+      <CabinProvider cabinId="cabin-1">
+        <AskWindowsProvider attention={[]}>
+          <CabinInbox />
+        </AskWindowsProvider>
+      </CabinProvider>,
+    )
+    const chip = screen.getByTestId('cabin-inbox-chip')
+    expect(chip.textContent).toContain('暂无待办')
+    expect(chip.getAttribute('data-zero')).toBe('true')
+    fireEvent.click(chip)
+    expect(screen.getByTestId('cabin-inbox-empty').textContent).toContain('都处理完了')
+  })
+})
+
+describe('CabinFleet · 只放作战实体', () => {
+  it('提问行不再混进编队；编队行点开作业详情', async () => {
+    mockCabin(makeView({ attention: ALL_ATTENTION }))
     vi.mocked(listCabinJobs).mockResolvedValue([job('j1', { title: '接入支付宝' })] as never)
     vi.mocked(listTasks).mockResolvedValue({ items: [task('t1')] as never })
 
     render(
       <CabinProvider cabinId="cabin-1">
-        <AskWindowsProvider attention={ASK_ATTENTION}>
+        <AskWindowsProvider attention={ALL_ATTENTION}>
           <CabinFleet />
-          <AskWindowsProbe />
           <WindowProbe />
         </AskWindowsProvider>
       </CabinProvider>,
     )
 
-    await screen.findByTestId('cabin-fleet-asks')
-    const askRow = screen.getByTestId('cabin-fleet-ask-a1')
-    expect(askRow.textContent).toContain('接入支付宝')
-    expect(askRow.textContent).toContain('接哪个渠道？')
-    // 组在作业行之前
-    const fleetList = document.querySelector('.ck-fleet-list') as HTMLElement
-    expect(fleetList.firstElementChild).toContainElement(askRow)
+    const rows = await screen.findAllByTestId(/^cabin-fleet-row-/)
+    expect(rows).toHaveLength(1)
+    expect(screen.queryByTestId('cabin-fleet-asks')).toBeNull()
+    expect(screen.queryByTestId('cabin-fleet-ask-a1')).toBeNull()
 
-    fireEvent.click(askRow)
-    await waitFor(() => expect(screen.getByTestId('ask-probe').textContent).toBe('a1'))
-    // 没有打开作业详情窗
-    expect(screen.getByTestId('window-probe').textContent).not.toContain('job')
+    fireEvent.click(rows[0])
+    await waitFor(() => expect(screen.getByTestId('window-probe').textContent).toContain('job'))
   })
 
-  it('只有提问、没有作业行时面板仍渲染', async () => {
-    mockCabin(makeView({ attention: ASK_ATTENTION }))
+  it('只有待办、没有作业行时编队不渲染（inbox 自己独立显示）', async () => {
+    mockCabin(makeView({ attention: ALL_ATTENTION }))
     vi.mocked(listCabinJobs).mockResolvedValue([])
     vi.mocked(listTasks).mockResolvedValue({ items: [] })
 
     render(
       <CabinProvider cabinId="cabin-1">
-        <AskWindowsProvider attention={ASK_ATTENTION}>
+        <AskWindowsProvider attention={ALL_ATTENTION}>
           <CabinFleet />
+          <CabinInbox />
         </AskWindowsProvider>
       </CabinProvider>,
     )
-    expect(await screen.findByTestId('cabin-fleet')).toBeInTheDocument()
-    expect(screen.getByTestId('cabin-fleet-ask-a1')).toBeInTheDocument()
-    expect(screen.queryAllByTestId(/^cabin-fleet-row-/)).toHaveLength(0)
+
+    await waitFor(() => expect(screen.queryByTestId('cabin-fleet')).toBeNull())
+    expect(screen.getByTestId('cabin-inbox')).toBeInTheDocument()
+    expect(screen.getByTestId('cabin-inbox-chip').textContent).toContain('3')
   })
 })

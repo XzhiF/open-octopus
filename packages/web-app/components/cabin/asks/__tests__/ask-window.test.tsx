@@ -83,7 +83,7 @@ describe('AskWindow', () => {
     expect(win).not.toHaveTextContent('去作业面')
   })
 
-  it('窗内作答 → 回执、行消项、窗不自动关', async () => {
+  it('窗内作答 → 回执、行消项、回执后自动关窗', async () => {
     submit.mockResolvedValue({
       decision: { askId: 'a1' } as never,
       already: false,
@@ -118,9 +118,13 @@ describe('AskWindow', () => {
     expect(submit).toHaveBeenCalledWith('c1', expect.objectContaining({
       askId: 'a1', choice: '支付宝', source: 'card', taskId: 't1',
     }))
-    // 窗保留（不自动关），标题胶囊变「已答」。
-    expect(screen.getByTestId('ask-window-a1')).toBeInTheDocument()
+    // 回执当场：标题胶囊先变「已答」，窗还在。
     expect(screen.getByTestId('ask-window-a1')).toHaveTextContent('已答')
+    // 1.5s 后自动关窗（v6 口径：处理完自己消失）。
+    await waitFor(
+      () => expect(screen.queryByTestId('ask-window-a1')).toBeNull(),
+      { timeout: 3_000 },
+    )
     // 编队行已乐观消项（provider 的 asks 变空 → Harness 无行可开）。
     expect(screen.getByText('open')).toBeInTheDocument()
   })

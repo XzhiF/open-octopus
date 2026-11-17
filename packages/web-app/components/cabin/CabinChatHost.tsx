@@ -42,6 +42,7 @@ import { AskWindowLayer } from './asks/ask-window-layer'
 import { CabinAtmosphere } from './CabinAtmosphere'
 import { CabinCrew } from './CabinCrew'
 import { CabinFleet } from './CabinFleet'
+import { CabinInbox } from './CabinInbox'
 import { useCockpitEntry } from '@/components/cockpit/entry/use-cockpit-entry'
 import { useCockpit } from './CockpitProvider'
 import { CABIN_DOCK_PRIMARY } from './cabin-meta'
@@ -225,7 +226,7 @@ export function CabinChatHost({ onSelectCabin, onCreateCabin, onExitCabin }: Cab
       {/* 全域座舱的**唯一**入口（classic 侧）。方向是单向的：
           这套 classic 界面不因全域而改变任何行为（编队行仍是作业详情窗），
           只有这个按钮把人送到 /cabin/:id/cockpit；那边的「← 返回作战舱」回来。
-          右上角在编队面板（top 52 / right 84）与作业坞图标之上，不重叠。 */}
+          右上角在 inbox / 编队悬浮列（top 52 / right 84）与作业坞图标之上，不重叠。 */}
       <button
         type="button"
         data-testid="cabin-enter-cockpit"
@@ -322,6 +323,7 @@ export function CabinChatHost({ onSelectCabin, onCreateCabin, onExitCabin }: Cab
           cabinId={cabinId}
           cabinWorkspaceId={cabin?.workspace_id ?? null}
         />
+        {showingCabinThread && <CabinInbox />}
         {showingCabinThread && <CabinFleet />}
         {showingCabinThread && <CabinCrew />}
         <CabinModulesLayer onNewTask={() => issueCommand({ type: 'new-task' })} />

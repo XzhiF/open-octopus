@@ -6,7 +6,8 @@
 // 状态胶囊 + 右侧上下文；底部只有一个「关闭」，不放「去作业面看过程」。
 // 内容：信封（要定的事 / 原始要求 / 选项影响 / 作者建议）+ AskUserQuestionCard。
 // 作答：复用 useAskSubmit（与主 chat 那张卡同一票据、同一账本），成功后原地
-// 变回执、窗不自动关。
+// 变回执，短暂展示后**自动关窗**（v6 口径，2026-11-17 用户反馈：之前停在
+// 「已答」不消失，和设计稿不一致）；在别处答掉的窗仍保留，由人确认后手动关。
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { CheckCircle2, ChevronDown, MessageSquare, X } from 'lucide-react'
@@ -82,7 +83,7 @@ export function AskWindow({ entry, left, top, width, className, onMove, onFocus,
     const outcome = await submit(content)
     if (outcome.ok) {
       markAnswered(entry.askId)
-      setReceipt(outcome.receipt ?? `✓ 已答 · ${outcome.choice ?? ''} —— 已从编队消项，窗口可手动关闭`)
+      setReceipt(outcome.receipt ?? `✓ 已答 · ${outcome.choice ?? ''} —— 已从「要我处理」消项，窗自动收起`)
     } else if (outcome.needsThread) {
       setNeedsThread(true)
     }
@@ -120,6 +121,18 @@ export function AskWindow({ entry, left, top, width, className, onMove, onFocus,
     const timer = window.setTimeout(() => setFlashing(false), 700)
     return () => window.clearTimeout(timer)
   }, [entry.flash])
+
+  // 已答（本人作答，含在主 chat 卡上答掉）→ 回执停 1.5s 后自动关窗（v6 口径）。
+  // external（attention 消失、不是本地答的）不自动关，留给人看清「已在别处答过」。
+  // onClose 每次渲染都是新函数，用 ref 固定。
+  const onCloseRef = useRef(onClose)
+  onCloseRef.current = onClose
+  const autoClose = answered && !external
+  useEffect(() => {
+    if (!autoClose) return
+    const timer = window.setTimeout(() => onCloseRef.current(), 1_500)
+    return () => window.clearTimeout(timer)
+  }, [autoClose])
 
   // ── 拖动（标题栏；不缩放）────────────────────────────────────────────
   const dragRef = useRef<{ pointerId: number; x: number; y: number; left: number; top: number } | null>(null)
@@ -287,8 +300,8 @@ export function AskWindow({ entry, left, top, width, className, onMove, onFocus,
             <CheckCircle2 className="size-4 shrink-0 text-pop-green" aria-hidden="true" />
             <span>
               {receipt ?? (external
-                ? '已在别处答过 —— 窗可手动关闭'
-                : '✓ 已答 —— 已从编队消项，窗口可手动关闭')}
+                ? '已在别处答过 —— 可手动关闭'
+                : '✓ 已答 —— 已从「要我处理」消项，窗自动收起')}
             </span>
           </div>
         ) : synthetic ? (
@@ -376,7 +389,7 @@ export function AskWindow({ entry, left, top, width, className, onMove, onFocus,
       <footer className="ck-askwin-foot">
         <span className="ck-askwin-sig">
           <MessageSquare className="size-3" aria-hidden="true" />
-          答完汐音会转达，窗口不会自动关
+          答完汐音会转达，回执 1.5s 后自动收起
         </span>
         {!answered && (
           <button
