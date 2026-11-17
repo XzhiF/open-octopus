@@ -46,6 +46,7 @@ import {
 import type { CockpitRect } from '../state/cockpit-state'
 import { THREAD_STATE_LABEL } from '../fleet/threads-model'
 import { CockpitThreadTabs } from './CockpitThreadTabs'
+import { CockpitConsoleFooter } from './CockpitConsoleFooter'
 import { CockpitChoices } from './CockpitChoices'
 import { CockpitReceipts } from './CockpitReceipts'
 import { useCockpitThreads } from './use-cockpit-threads'
@@ -67,7 +68,7 @@ interface DragState {
 }
 
 export function CockpitChatWindow() {
-  const { chatWindow, chat, layer, wins, select } = useCockpitState()
+  const { chatWindow, chat, layer, wins, select, threads: threadApi } = useCockpitState()
   const { active } = useCockpitThreads()
   const {
     open, mini, pinned, alpha, rect, docked,
@@ -114,12 +115,16 @@ export function CockpitChatWindow() {
 
   const computeDefaultRect = useCallback((): CockpitRect | null => {
     // v21（design 31 §2.1）：几何直接按视口量，不再从 arena / .ck12-scene 推 ——
-    // 左缘贴立绘右缘 −22、右缘让出右栏；底部停在底栏上沿（通讯台 + 底栏连成一台）。
+    // 左缘贴立绘右缘 −22、右缘让出右栏；底缘贴 composer 输入槽上沿（底栏高度
+    // 随断点 / 控件换行变，固定 56 会露缝或被盖住）。
     const footer = document.querySelector<HTMLElement>('.ck12-cmd')
     const footerTop = footer ? footer.getBoundingClientRect().top : null
+    const composer = document.querySelector<HTMLElement>('[data-testid="cockpit-command-bar"]')
+    const composerTop = composer ? composer.getBoundingClientRect().top : null
     return cockpitConsoleRect({
       viewport: viewportSize(),
       footerTop: footerTop && footerTop > 0 ? footerTop : null,
+      composerTop: composerTop && composerTop > 0 ? composerTop : null,
     })
   }, [])
 
@@ -397,28 +402,18 @@ export function CockpitChatWindow() {
           data-testid="cockpit-chat-index-slot"
         />
         <span className="ck12-comms-grip" aria-hidden="true">⠿</span>
+        {/* v21（design 31 §3.2）：头按钮组按原型从左到右
+            ← 主对话 / ⚙ 调试 / ▦ 详情 / ⧉ 弹出 / ⌄ 收起 / ⌃ 全日志。 */}
         {active.key !== 'main' && (
           <button
             type="button"
             className="ck12-comms-btn ck12-comms-act"
-            aria-label="弹出作战窗"
-            title="⧉ 弹出成独立窗（最多 5 个）"
-            data-testid="cockpit-popout"
-            onClick={popOut}
+            aria-label="回到主对话"
+            title="← 回到主对话"
+            data-testid="cockpit-comms-back"
+            onClick={() => threadApi.activateThread('main')}
           >
-            ⧉
-          </button>
-        )}
-        {active.ref && (
-          <button
-            type="button"
-            className="ck12-comms-btn ck12-comms-act"
-            aria-label="看作战详情"
-            title="▦ 作战详情"
-            data-testid="cockpit-comms-detail"
-            onClick={() => select(active.ref)}
-          >
-            ▦
+            ← 主对话
           </button>
         )}
         {active.ref && (
@@ -430,18 +425,33 @@ export function CockpitChatWindow() {
             data-testid="cockpit-comms-debug"
             onClick={() => select(active.ref, 'debug')}
           >
-            ⚙
+            ⚙ 调试
           </button>
         )}
-        <button
-          type="button"
-          className="ck12-comms-btn ck12-comms-act ck12-comms-tall"
-          aria-label="加高通讯台"
-          title="⌃ 全日志加高 / 还原"
-          onClick={toggleTall}
-        >
-          ⌃
-        </button>
+        {active.ref && (
+          <button
+            type="button"
+            className="ck12-comms-btn ck12-comms-act"
+            aria-label="看作战详情"
+            title="▦ 作战详情"
+            data-testid="cockpit-comms-detail"
+            onClick={() => select(active.ref)}
+          >
+            ▦ 详情
+          </button>
+        )}
+        {active.key !== 'main' && (
+          <button
+            type="button"
+            className="ck12-comms-btn ck12-comms-act"
+            aria-label="弹出作战窗"
+            title="⧉ 弹出成独立窗（最多 5 个）"
+            data-testid="cockpit-popout"
+            onClick={popOut}
+          >
+            ⧉ 弹出
+          </button>
+        )}
         <button
           type="button"
           className="ck12-comms-btn ck12-comms-act"
@@ -450,7 +460,16 @@ export function CockpitChatWindow() {
           data-testid="cockpit-comms-dock"
           onClick={() => setRef.current({ docked: true })}
         >
-          ⌄
+          ⌄ 收起
+        </button>
+        <button
+          type="button"
+          className="ck12-comms-btn ck12-comms-act ck12-comms-tall"
+          aria-label="加高通讯台"
+          title="⌃ 全日志加高 / 还原"
+          onClick={toggleTall}
+        >
+          ⌃ 全日志
         </button>
         <button
           type="button"
@@ -480,6 +499,8 @@ export function CockpitChatWindow() {
       </div>
 
       {bodyVisible && <CockpitChoices />}
+
+      {!mini && <CockpitConsoleFooter />}
 
       <div
         className="ck12-comms-resize"

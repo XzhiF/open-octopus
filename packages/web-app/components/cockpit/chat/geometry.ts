@@ -158,25 +158,30 @@ export function nextCockpitAlpha(alpha: number): number {
 // ── v21（design 31 §2.1 / §5.4）：通讯台默认几何 ─────────────────────────
 //
 // 左缘 = 立绘右缘 − 22（贴住立绘、重叠 22px）；右缘让出右栏（--railr）；
-// top 66（HUD 54 + 12）；底部停在底栏上沿 − 8 —— 底栏（舰桥 + 输入）就是
-// 通讯台的下半截，视觉上连成一台。
+// top 66（HUD 54 + 12）；底部 = 视口 − 56（原型 844 @900），与底栏上沿严丝合缝
+// —— 底栏（composer）视觉上就是通讯台的输入行（v21 ⑤A）。
 // ≤900 变底部 sheet：左 52 / 右 92 / 高 56vh（≤560：左 46 / 右 80 / 52vh），
-// 顶端 = 底栏上沿 − 8 − sheet，与原型「立绘从 sheet 上方探出」一致。
+// 顶端 = 底栏上沿 − sheet，与原型「立绘从 sheet 上方探出」一致。
 
 export interface ConsoleEnv {
   viewport: Viewport
-  /** 底栏（.ck12-cmd）上沿的视口 y；量不到时按视口 − 56 兜底。 */
-  footerTop: number | null
+  /** 底栏（.ck12-cmd）上沿；只在量不到 composer 时兜底。 */
+  footerTop?: number | null
+  /** composer 输入槽上沿：通讯台底缘直接贴它，保证「同一台」的无缝观感。 */
+  composerTop?: number | null
 }
 
-export function cockpitConsoleRect({ viewport, footerTop }: ConsoleEnv): CockpitRect {
+export function cockpitConsoleRect({ viewport, footerTop, composerTop }: ConsoleEnv): CockpitRect {
   const vw = Math.max(1, Math.round(viewport.width))
   const vh = Math.max(1, Math.round(viewport.height))
   const railw = vw <= 1240 ? 64 : vw <= 1320 ? 186 : 198
   const railr = vw <= 560 ? 80 : vw <= 900 ? 92 : vw <= 1320 ? 104 : 100
   const charh = vh * (vw <= 560 ? 0.32 : vw <= 900 ? 0.34 : vw <= 1240 ? 0.66 : vw <= 1320 ? 0.7 : 0.74)
   const charw = (charh * 2) / 3
-  const bottom = Math.round((footerTop ?? vh - 56) - 8)
+  // 宽屏：底缘 = composer 上沿（量不到时按 视口 − 56 / 底栏上沿取小者）。
+  // 窄屏：sheet 底缘同样让开 composer（底栏高度随断点变）。
+  const fallback = Math.min(vh - 56, footerTop && footerTop > 0 ? Math.round(footerTop) : vh - 56)
+  const bottom = composerTop && composerTop > 0 ? Math.round(composerTop) : fallback
 
   let left: number
   let top: number

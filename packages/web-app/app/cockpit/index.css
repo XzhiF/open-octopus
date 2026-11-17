@@ -1,6 +1,7 @@
 /* cockpit-v12 · S1 一次写全 import。
    S3–S8 各自填自己的 css 文件，壳与 import 都不再改。 */
 @import './base.css';
+@import './scene.css';
 @import './rail.css';
 @import './rightrail.css';
 @import './face.css';

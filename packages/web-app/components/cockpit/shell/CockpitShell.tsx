@@ -16,9 +16,11 @@ import { CockpitStateProvider, useCockpitState } from '../state/CockpitStateProv
 import { CockpitLayerStack } from '../state/CockpitLayerStack'
 import { CockpitUrlSync } from '../entry/use-cockpit-url-sync'
 import { CockpitShortcuts } from '../entry/CockpitShortcuts'
-import { CockpitFleetProvider } from '../fleet/CockpitFleetProvider'
+import { CockpitFleetProvider, useCockpitFleet } from '../fleet/CockpitFleetProvider'
 import { CockpitHud } from './CockpitHud'
+import { CockpitClock } from './CockpitClock'
 import { CockpitStarfield } from './CockpitStarfield'
+import { CockpitScene } from '../scene/CockpitScene'
 import { CockpitQuiet } from './CockpitQuiet'
 import { AskWindowsProvider, useAskWindows } from '@/components/cabin/asks/ask-windows-provider'
 import { AskWindowLayer } from '@/components/cabin/asks/ask-window-layer'
@@ -32,7 +34,6 @@ import { CockpitDock } from '../chat/CockpitDock'
 import { CockpitPopWindows } from '../chat/CockpitPopWindows'
 import { CockpitWinBar } from '../chat/CockpitWinBar'
 import { CockpitThreadActivity } from '../chat/CockpitThreadActivity'
-import { CockpitBridge } from '../bridge/CockpitBridge'
 import { CockpitCrew } from '../crew/CockpitCrew'
 import { CockpitBrief } from '../fx/CockpitBrief'
 import { CockpitEffects } from '../fx/CockpitEffects'
@@ -108,6 +109,7 @@ function CockpitSurface({ cabin }: { cabin: CabinDetail }) {
     <CockpitAskDeepLink />
     <div className="ck12-app" data-testid="cockpit-shell">
       <div className="ck12-bg" aria-hidden="true">
+        <CockpitScene />
         <div className="ck12-nebula ck12-n1" />
         <div className="ck12-nebula ck12-n2" />
         <div className="ck12-nebula ck12-n3" />
@@ -133,6 +135,7 @@ function CockpitSurface({ cabin }: { cabin: CabinDetail }) {
       <CockpitEffects />
 
       <CockpitHud />
+      <CockpitClock />
       <CockpitStatusBanner cabin={cabin} />
       {/* v21（design 31 §3.2/§3.3）：右栏紧凑待办 + 主按钮组。 */}
       <CockpitRightRail />
@@ -151,7 +154,6 @@ function CockpitSurface({ cabin }: { cabin: CabinDetail }) {
       </main>
 
       <footer className="ck12-cmd">
-        <CockpitBridge />
         <CockpitCommandBar entryCabinId={entryCabinId} />
       </footer>
 
@@ -206,11 +208,16 @@ function CockpitAskDeepLink() {
   return null
 }
 
-/** 载入 / 草稿·初始化 / 无主会话 —— 只做渲染层提示，聊天禁用态留给 S5。 */
+/** 载入 / 草稿·初始化 / 无主会话 —— 只做渲染层提示，聊天禁用态留给 S5。
+ *  v21：编队已有行时不再显示草稿文案（9 条作业还挂着「没有编队」的横幅
+ *  是假消息）；只有真的空编队才提示去初始化。 */
 function CockpitStatusBanner({ cabin }: { cabin: CabinDetail }) {
   const router = useRouter()
+  const { rows, loading } = useCockpitFleet()
+  const hasFleet = rows.length > 0
 
   if (cabin.status === 'draft' || cabin.status === 'initializing') {
+    if (hasFleet || loading) return null
     return (
       <div className="ck12-banner" role="status" data-testid="cockpit-status-banner">
         <span className="ck12-banner-dot" aria-hidden="true" />

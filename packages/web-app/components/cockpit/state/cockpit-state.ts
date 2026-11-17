@@ -237,6 +237,13 @@ export interface CockpitState {
   autoWarp: boolean
   setAutoWarp(on: boolean): void
 
+  /** v21（design 31 §3.4.7）：舱景三幕。sceneIndex = 当前幕（SCENES 下标）。 */
+  sceneIndex: number
+  /** 直接点名某一幕（场景点）。 */
+  setScene(index: number): void
+  /** 跃迁：切下一幕 + 星流/闪光（自动跃迁、⌥W、右栏「跃迁」共用）。 */
+  travel(): void
+
   fx: CockpitFx
 
   layer: CockpitLayerApi

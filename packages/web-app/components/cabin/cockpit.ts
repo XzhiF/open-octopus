@@ -40,7 +40,8 @@ export interface CockpitPrefs {
 }
 
 export const THEMES: Record<CockpitTheme, { name: string; a: string; b: string; c: string }> = {
-  terminal: { name: '净黑终端', a: '#4FD1D9', b: '#A78BFA', c: '#FF855C' },
+  // v21（design 31 §1.1 / 32 §1.3）：默认「净黑终端」校准到原型三主色。
+  terminal: { name: '净黑终端', a: '#2EE6D6', b: '#7B4DFF', c: '#F5C542' },
   hyperion: { name: '休伯利安', a: '#38BDF8', b: '#60A5FA', c: '#FFC857' },
   luna: { name: '月光王座', a: '#D2A8FF', b: '#F472B6', c: '#FFC857' },
   amber: { name: '琥珀纪元', a: '#FFC857', b: '#FF855C', c: '#4FD1D9' },

@@ -169,11 +169,12 @@
   display: flex;
   align-items: center;
   gap: 10px;
-  min-height: 54px;
+  min-height: 52px;
   padding: 3px 8px 3px 16px;
-  border-radius: 15px;
-  border: 1px solid color-mix(in srgb, var(--ck-a) 26%, transparent);
-  background: linear-gradient(180deg, rgba(16, 20, 29, 0.9), rgba(9, 11, 17, 0.86));
+  border-radius: 0;
+  clip-path: var(--ck12-cut);
+  border: 1px solid rgba(46, 230, 214, 0.22);
+  background: rgba(6, 5, 16, 0.55);
   /* 同上：底栏横跨整屏，去掉 backdrop-filter。 */
   box-shadow:
     0 0 30px color-mix(in srgb, var(--ck-a) 7%, transparent),
@@ -520,7 +521,7 @@
   border-bottom: 1px solid rgba(255, 255, 255, 0.06);
   scrollbar-width: thin;
 }
-.ck12-tab {
+.ck12-ctab {
   position: relative;
   flex: none;
   display: inline-flex;
@@ -536,16 +537,24 @@
   user-select: none;
   transition: color 0.14s, border-color 0.14s, background 0.14s;
 }
-.ck12-tab:hover { color: var(--ck12-ink); border-color: color-mix(in srgb, var(--ck-a) 35%, transparent); }
-.ck12-tab.is-on {
+.ck12-ctab:hover { color: var(--ck12-ink); border-color: color-mix(in srgb, var(--ck-a) 35%, transparent); }
+.ck12-ctab.is-on {
   color: var(--ck12-ink);
   border-color: color-mix(in srgb, var(--ck-a) 55%, transparent);
   background: color-mix(in srgb, var(--ck-a) 12%, transparent);
 }
-.ck12-tab:focus-visible { outline: 1px solid color-mix(in srgb, var(--ck-a) 60%, transparent); outline-offset: -1px; }
-.ck12-tab-emo { font-size: 10px; line-height: 1; }
-.ck12-tab-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.ck12-tab-unread {
+.ck12-ctab:focus-visible { outline: 1px solid color-mix(in srgb, var(--ck-a) 60%, transparent); outline-offset: -1px; }
+.ck12-ctab-emo { flex: none; font-size: 10px; line-height: 1; }
+/* 名称是唯一可压缩项：占满剩余宽度，ellipsis 裁切；行高独立，不被父级 flex 压塌。 */
+.ck12-ctab-name {
+  flex: 1 1 auto;
+  min-width: 0;
+  line-height: 1.4;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.ck12-ctab-unread {
   flex: none;
   min-width: 14px;
   padding: 0 3px;
@@ -558,12 +567,12 @@
   text-align: center;
   font-variant-numeric: tabular-nums;
 }
-.ck12-tab.has-unread { animation: ck12-tab-ping 1.6s ease-in-out infinite; }
+.ck12-ctab.has-unread { animation: ck12-tab-ping 1.6s ease-in-out infinite; }
 @keyframes ck12-tab-ping {
   0%, 100% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--pop-red, #ff6b81) 0%, transparent); }
   50% { box-shadow: 0 0 0 3px color-mix(in srgb, var(--pop-red, #ff6b81) 22%, transparent); }
 }
-.ck12-tab-x {
+.ck12-ctab-x {
   flex: none;
   width: 14px;
   height: 14px;
@@ -575,10 +584,10 @@
   opacity: 0;
   transition: opacity 0.12s, color 0.12s, background 0.12s;
 }
-.ck12-tab:hover .ck12-tab-x,
-.ck12-tab.is-on .ck12-tab-x,
-.ck12-tab:focus-within .ck12-tab-x { opacity: 1; }
-.ck12-tab-x:hover { color: var(--pop-red, #ff6b81); background: rgba(255, 255, 255, 0.07); }
+.ck12-ctab:hover .ck12-ctab-x,
+.ck12-ctab.is-on .ck12-ctab-x,
+.ck12-ctab:focus-within .ck12-ctab-x { opacity: 1; }
+.ck12-ctab-x:hover { color: var(--pop-red, #ff6b81); background: rgba(255, 255, 255, 0.07); }
 
 /* ── TUI 选项行（§3.1）──────────────────────────────────────────────── */
 .ck12-comms-choices {
@@ -783,7 +792,7 @@
   .ck12-tui-role { font-size: 8.5px; }
 }
 @media (prefers-reduced-motion: reduce) {
-  .ck12-tab.has-unread, .ck12-condock.has-unread { animation: none; }
+  .ck12-ctab.has-unread, .ck12-condock.has-unread { animation: none; }
 }
 
 /* ── 弹出窗（§4）────────────────────────────────────────────────────── */

@@ -1,6 +1,11 @@
 'use client'
 
-// v20（design 29 §3.2）：多作战 tab 条 —— 状态表情 + 短名 + 未读红点 + 悬停 ✕。
+// v20（design 29 §3.2）+ v21（design 31 §3.2）· 多作战 tab 条。
+//
+// v21 修正：通讯台 tab 曾复用 `.ck12-tab`，与作业面页签（face.css 的
+// `.ck12-tab { flex-direction: column }`）撞名，名称被压成 0 高。这里改用
+// 独立命名空间 `ck12-ctab*`，并按原型 `.ctab` 的顺序排：✕ → 状态表情 → 名称 → 未读。
+// 名称占满剩余宽度、ellipsis 裁切；✕ 常态低透明，悬停/激活才亮（位移不变）。
 // 关闭只是隐藏（历史/未读保留），回传会自动重开；主对话不可关。
 
 import { THREAD_EMO, THREAD_STATE_LABEL } from '../fleet/threads-model'
@@ -22,7 +27,7 @@ export function CockpitThreadTabs() {
             role="tab"
             tabIndex={0}
             aria-selected={on}
-            className={`ck12-tab${on ? ' is-on' : ''}${unread > 0 ? ' has-unread' : ''}`}
+            className={`ck12-ctab${on ? ' is-on' : ''}${unread > 0 ? ' has-unread' : ''}`}
             data-thread={thread.key}
             data-testid={`cockpit-tab-${thread.key}`}
             title={`${thread.title} · ${thread.kind === 'main' ? '舱主对话' : THREAD_STATE_LABEL[thread.state]}`}
@@ -37,7 +42,7 @@ export function CockpitThreadTabs() {
             {thread.key !== 'main' && (
               <button
                 type="button"
-                className="ck12-tab-x"
+                className="ck12-ctab-x"
                 aria-label={`关闭页签 ${thread.short}`}
                 title="关闭页签（历史保留）"
                 onClick={(event) => {
@@ -48,12 +53,12 @@ export function CockpitThreadTabs() {
                 ✕
               </button>
             )}
-            <span className="ck12-tab-emo" aria-hidden="true">
+            <span className="ck12-ctab-emo" aria-hidden="true">
               {thread.kind === 'main' ? '✦' : THREAD_EMO[thread.state]}
             </span>
-            <span className="ck12-tab-name">{thread.short}</span>
+            <span className="ck12-ctab-name">{thread.short}</span>
             {unread > 0 && (
-              <i className="ck12-tab-unread" data-testid={`cockpit-tab-unread-${thread.key}`}>
+              <i className="ck12-ctab-unread" data-testid={`cockpit-tab-unread-${thread.key}`}>
                 {unread > 9 ? '9+' : unread}
               </i>
             )}

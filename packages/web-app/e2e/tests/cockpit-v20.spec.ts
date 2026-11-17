@@ -154,7 +154,9 @@ test.describe("全域座舱 v20 · 真数据 E2E", () => {
   test("决断面板 + SESSION LEDGER：开/空态/四格/Esc", async ({ page }) => {
     const audit = attachConsoleAudit(page)
     await gotoCockpit(page, seed!.cabin.id)
-    await page.getByTestId("cockpit-rail-ops").click()
+    // v21：决断面板入口从 HUD 的 rail-ops 迁到 inbox 浮层底部的「全部决断 →」。
+    await page.getByTestId("cockpit-inbox-chip").click()
+    await page.getByRole("button", { name: /全部决断/ }).click()
     const ops = page.getByTestId("cockpit-panel-ops")
     await expect(ops).toBeVisible()
     await expect(page.getByTestId("cockpit-ops-empty")).toBeVisible()
@@ -188,7 +190,9 @@ test.describe("全域座舱 v20 · 真数据 E2E", () => {
     expect(bind.status()).toBe(201)
 
     await gotoCockpit(page, seed!.cabin.id)
-    await page.getByTestId("cockpit-ws-open").click()
+    // v21：文件入口从 HUD 移到右栏「更多 → 文件」。
+    await page.getByTestId("cockpit-menu-more").click()
+    await page.getByTestId("cockpit-fan-files").click()
     const ws = page.getByTestId("cockpit-panel-ws")
     await expect(ws).toBeVisible()
     await expect(page.getByTestId("cockpit-ws-chip-demo")).toBeVisible({ timeout: 15_000 })

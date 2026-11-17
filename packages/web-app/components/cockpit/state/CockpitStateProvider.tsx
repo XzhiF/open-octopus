@@ -35,6 +35,7 @@ import {
   type CockpitWindowsApi,
 } from './cockpit-state'
 import { MAIN_THREAD_KEY } from '../fleet/threads-model'
+import { SCENE_COUNT } from '../scene/scene-model'
 
 const CockpitStateContext = createContext<CockpitState | null>(null)
 
@@ -111,6 +112,9 @@ export function CockpitStateProvider({ entryCabinId, children }: CockpitStatePro
   const [inboxSel, setInboxSel] = useState<string | null>(null)
   const [pose, setPose] = useState('idle')
   const [autoWarp, setAutoWarp] = useState(true)
+  // v21：舱景三幕。跃迁与换色共用 fx.jump 的星流闪光，但只有 travel() 会切幕
+  // —— 换色 / 回传入场不该把船开走。
+  const [sceneIndex, setSceneIndex] = useState(0)
   const receiptSeqRef = useRef(0)
   const winSeqRef = useRef(0)
 
@@ -282,6 +286,16 @@ export function CockpitStateProvider({ entryCabinId, children }: CockpitStatePro
     setFxState((prev) => ({ ...prev, jumpNonce: prev.jumpNonce + 1 }))
   }, [])
 
+  // ── v21 舱景：点某一幕 / 跃迁到下一幕 ────────────────────────────────
+  const setScene = useCallback((index: number) => {
+    setSceneIndex(((index % SCENE_COUNT) + SCENE_COUNT) % SCENE_COUNT)
+  }, [])
+
+  const travel = useCallback(() => {
+    setSceneIndex((prev) => (prev + 1) % SCENE_COUNT)
+    jump()
+  }, [jump])
+
   const feedback = useCallback((color?: string, level: 'full' | 'lite' | 'off' = 'full') => {
     setFxState((prev) => ({
       ...prev,
@@ -383,6 +397,9 @@ export function CockpitStateProvider({ entryCabinId, children }: CockpitStatePro
       reportPose,
       autoWarp,
       setAutoWarp,
+      sceneIndex,
+      setScene,
+      travel,
       fx,
       layer,
     }),
@@ -393,6 +410,7 @@ export function CockpitStateProvider({ entryCabinId, children }: CockpitStatePro
       threads, wins, panel, panelArg, openPanel, closePanel, flash, markArrival,
       inboxOpen, inboxSel, openInbox, closeInbox, selectInbox,
       pose, reportPose, autoWarp,
+      sceneIndex, setScene, travel,
       fx, layer,
     ],
   )

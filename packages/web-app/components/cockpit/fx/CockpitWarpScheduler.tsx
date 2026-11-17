@@ -11,8 +11,7 @@ const WARP_MIN_MS = 45_000
 const WARP_SPAN_MS = 60_000
 
 export function CockpitWarpScheduler() {
-  const { fx, autoWarp } = useCockpitState()
-  const jump = fx.jump
+  const { fx, autoWarp, travel } = useCockpitState()
   const nonce = fx.jumpNonce
 
   useEffect(() => {
@@ -22,13 +21,13 @@ export function CockpitWarpScheduler() {
       timer = window.setTimeout(() => {
         const reduce = typeof window.matchMedia === 'function'
           && window.matchMedia('(prefers-reduced-motion: reduce)').matches
-        if (!document.hidden && !reduce) jump()
+        if (!document.hidden && !reduce) travel()
         schedule()
       }, WARP_MIN_MS + Math.random() * WARP_SPAN_MS)
     }
     schedule()
     return () => window.clearTimeout(timer)
-  }, [autoWarp, jump, nonce])
+  }, [autoWarp, travel, nonce])
 
   return null
 }

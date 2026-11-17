@@ -12,7 +12,9 @@
   flex-direction: column;
   gap: 3px;
   min-width: 0;
-  padding: 2px 2px 8px calc(var(--ck12-railw) + var(--ck12-charw) + 10px);
+  /* 左让位立绘；右让出右栏（--railr + 10）—— 作业面不再伸到 inbox chip /
+     主菜单底下，否则右栏会挡住页签与正文的点击（v21 保真：层叠收口）。 */
+  padding: 2px calc(var(--ck12-railr) + 14px) 8px calc(var(--ck12-railw) + var(--ck12-charw) + 10px);
   /* 透明让位区不挡立绘点击；内容子节点各自恢复可交互。 */
   pointer-events: none;
 }

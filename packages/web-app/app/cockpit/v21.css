@@ -110,7 +110,9 @@
   background: rgba(46, 230, 214, 0.1);
 }
 
-/* tab 条：✕ 在内容最左（DOM 已改），未读红点、激活天蓝→紫 */
+/* tab 条：✕ 在内容最左（DOM 已改），未读红点、激活天蓝→紫。
+   命名空间用 ck12-ctab*：旧 ck12-tab 与作业面页签（face.css，flex column）
+   撞名，名称盒被压成 0 高（v21 缺陷 3.1 根因）。 */
 .ck12-comms-tabstrip {
   gap: 5px;
   padding: 6px 12px;
@@ -119,7 +121,8 @@
   scrollbar-width: thin;
 }
 .ck12-comms-tabstrip::-webkit-scrollbar { height: 4px; }
-.ck12-tab {
+.ck12-ctab {
+  flex-direction: row;
   height: 26px;
   padding: 0 10px;
   border-radius: 0;
@@ -132,28 +135,27 @@
   font-family: var(--font-ui);
   max-width: 150px;
 }
-.ck12-tab:hover { color: #fff; border-color: var(--ck12-teal); }
-.ck12-tab.is-on {
+.ck12-ctab:hover { color: #fff; border-color: var(--ck12-teal); }
+.ck12-ctab.is-on {
   background: linear-gradient(90deg, rgba(53, 199, 240, 0.3), rgba(123, 77, 255, 0.3));
   color: #fff;
   border-color: var(--ck12-teal);
   box-shadow: 0 0 12px rgba(46, 230, 214, 0.25);
 }
-.ck12-tab-unread { background: #FF3B5C; color: #fff; }
-.ck12-tab.has-unread { animation: ck12-tping 0.9s ease; }
+.ck12-ctab-unread { background: #FF3B5C; color: #fff; }
+.ck12-ctab.has-unread { animation: ck12-tping 0.9s ease; }
 @keyframes ck12-tping {
   0% { box-shadow: 0 0 0 0 rgba(255, 59, 92, 0.7); }
   100% { box-shadow: 0 0 0 12px rgba(255, 59, 92, 0); }
 }
-.ck12-tab-x {
-  order: -1;
+.ck12-ctab-x {
   width: 14px;
   height: 14px;
   border-radius: 3px;
   color: var(--ck12-metal2);
   font-size: 9px;
 }
-.ck12-tab-x:hover { color: #fff; background: #FF3B5C; }
+.ck12-ctab-x:hover { color: #fff; background: #FF3B5C; }
 
 /* 转录区 = 舱内终端屏：内嵌暗屏 + 32px 细网格 + 顶部投影，底部对齐 */
 .ck12-comms-body,
@@ -344,5 +346,111 @@
 }
 @media (prefers-reduced-motion: reduce) {
   .ck12-tui-row { animation: none; }
-  .ck12-tab.has-unread { animation: none; }
+  .ck12-ctab.has-unread { animation: none; }
+}
+
+/* ── v21 阶段 3.2/3.3 · 头按钮文字 chip + 底缘状态行 ───────────────────── */
+.ck12-comms-act {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  width: auto;
+  height: 24px;
+  padding: 0 8px;
+  border-radius: 0;
+  border: 1px solid rgba(185, 179, 217, 0.22);
+  color: var(--ck12-ink2);
+  font-size: 9.5px;
+  font-family: var(--font-ui);
+  white-space: nowrap;
+}
+.ck12-comms-act:hover {
+  color: #fff;
+  border-color: var(--ck12-teal);
+  background: rgba(46, 230, 214, 0.08);
+}
+.ck12-comms-act.ck12-comms-tall { color: var(--ck12-gold); border-color: rgba(245, 197, 66, 0.4); }
+.ck12-comms-act.ck12-comms-tall:hover { border-color: var(--ck12-gold); background: rgba(245, 197, 66, 0.1); }
+
+/* 原型 .con-f：SCENE / POSE / CTX / MODEL / TUI + 场景点 */
+.ck12-con-f {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 6px 16px;
+  border-top: 1px solid rgba(185, 179, 217, 0.12);
+  font-size: 9px;
+  color: var(--ck12-metal2);
+  letter-spacing: 0.06em;
+  background: rgba(6, 5, 16, 0.42);
+}
+.ck12-con-f b { color: var(--ck12-teal); font-weight: 700; }
+.ck12-con-sp { flex: 1; }
+.ck12-sdot {
+  width: 9px;
+  height: 10px;
+  flex: none;
+  clip-path: var(--ck12-hex);
+  background: rgba(185, 179, 217, 0.3);
+  transition: 0.15s;
+}
+.ck12-sdot.is-on { background: var(--ck12-teal); box-shadow: 0 0 8px var(--ck12-teal); }
+.ck12-sdot:hover { background: var(--ck12-gold); }
+
+/* 右下舰桥时钟（原型 .clockwidget） */
+.ck12-clockwidget {
+  position: absolute;
+  right: 10px;
+  bottom: 10px;
+  z-index: 20;
+  display: flex;
+  gap: 9px;
+  align-items: center;
+  padding: 6px 13px;
+  clip-path: var(--ck12-cut);
+  background: var(--ck12-glass2);
+  backdrop-filter: blur(10px);
+  border: 1px solid rgba(61, 220, 151, 0.4);
+}
+.ck12-cw {
+  font-size: 16px;
+  font-weight: 800;
+  color: var(--ck12-green, #3DDC97);
+  text-shadow: 0 0 10px rgba(61, 220, 151, 0.6);
+  font-variant-numeric: tabular-nums;
+  font-family: var(--font-mono);
+}
+.ck12-cs {
+  font-size: 9px;
+  color: var(--ck12-ink2);
+  letter-spacing: 0.08em;
+}
+@media (max-width: 900px) {
+  .ck12-clockwidget { display: none; }
+}
+
+/* v21：模型/上下文读数已进 HUD，composer 只留输入行（原型 .con-in 没有控制条）；
+   少一行也让底栏稳定 52px，通讯台底缘贴得上。 */
+.ck12-cmd-slot [data-tui-ctrlbar] { display: none; }
+
+/* ── HUD 断点（原型 §2.2 的 .hud 压缩规则）────────────────────────────── */
+@media (max-width: 1320px) {
+  .ck12-hudcur.is-tok { display: none; }
+  .ck12-sceneread span { display: none; }
+}
+@media (max-width: 900px) {
+  .ck12-sceneread { display: none; }
+  .ck12-hudcur.is-ctx { display: none; }
+  .ck12-hud .ck12-pjname { display: none; }
+  .ck12-hud-settings { display: none; }
+}
+@media (max-width: 560px) {
+  .ck12-hud { gap: 6px; padding: 0 8px; }
+  .ck12-player-n span { display: none; }
+  .ck12-player-n b { font-size: 11px; max-width: 84px; overflow: hidden; text-overflow: ellipsis; }
+  .ck12-hudhex.is-theme,
+  .ck12-hudhex.is-poses { display: none; }
+  .ck12-hudcur.is-cost b { font-size: 12px; }
+  .ck12-hud .ck12-pjbtn { padding: 0 8px; }
 }

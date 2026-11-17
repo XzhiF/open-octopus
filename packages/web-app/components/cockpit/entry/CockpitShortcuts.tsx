@@ -5,7 +5,7 @@
 //   ⌥1  最紧要的一条（need 优先级降序 → run → queue）
 //   ⌥2  收面（select(null)）
 //   ⌘K  打开聊天浮窗并聚焦真 composer（输入框里也生效 —— 唯一例外）
-//   ⌥W  跃迁特效（fx.jump）
+//   ⌥W  跃迁特效 + 切下一幕舱景（travel）
 //   ⌥X  打开 / 收起汐音设置（HUD「◐ 汐音」同一个开关）
 //   ⌥G  不处理：全域入口是 classic 舱壳上的按钮（单向切换），这里没有对应动作。
 //   ↑↓  不在这里 —— S3 的 CockpitFleetRail 已在可见行内处理。
@@ -53,7 +53,7 @@ function isCommandK(event: KeyboardEvent): boolean {
 export function CockpitShortcuts() {
   const active = useOptionalIsActiveRoute()
   const { rows } = useCockpitFleet()
-  const { select, chatWindow, fx, threads: threadApi } = useCockpitState()
+  const { select, chatWindow, threads: threadApi, travel } = useCockpitState()
   const { visible, byKey } = useCockpitThreads()
 
   // 监听只挂一次（active 变化时重挂）；其余可变值走 ref，避免每 10s 轮询
@@ -61,7 +61,7 @@ export function CockpitShortcuts() {
   const rowsRef = useRef(rows)
   const selectRef = useRef(select)
   const openRef = useRef(chatWindow.openWithFocus)
-  const jumpRef = useRef(fx.jump)
+  const jumpRef = useRef(travel)
   const cwRef = useRef(chatWindow)
   const taRef = useRef(threadApi)
   const visRef = useRef(visible)
@@ -69,7 +69,7 @@ export function CockpitShortcuts() {
   rowsRef.current = rows
   selectRef.current = select
   openRef.current = chatWindow.openWithFocus
-  jumpRef.current = fx.jump
+  jumpRef.current = travel
   cwRef.current = chatWindow
   taRef.current = threadApi
   visRef.current = visible

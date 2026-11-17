@@ -276,7 +276,10 @@
   box-shadow: inset 0 0 200px 40px rgba(0, 0, 0, 0.6);
 }
 
-/* ───────────────────────── HUD（54px · v21） ───────────────────────── */
+/* ───────────────────────── HUD（54px · v21 原型抬头条） ─────────────────────────
+   结构：← │ 指挥官徽 │ 舱籍 chip │ SCENE pill(居中) │ model │ ▤tok │ ◈ctx │
+        ¥消耗 │ ♪ ◐ ✦ │ ⋯设置。样式逐字对照 cockpit-v21.html .hud / .player /
+        .projchip / .sceneread / .modelchip / .cur / .hudhex。 */
 .ck12-hud {
   position: relative;
   z-index: 50;
@@ -286,101 +289,227 @@
   align-items: center;
   gap: 10px;
   padding: 0 14px;
-  border-bottom: 1px solid rgba(46, 230, 214, 0.1);
-  background: linear-gradient(180deg, rgba(7, 9, 14, 0.82), rgba(7, 9, 14, 0.18));
   min-width: 0;
-  overflow: hidden;
 }
 
-.ck12-brand {
+/* 造型件统一用 clip-path 斜切；背景走 glass2（原型 --glass2）。 */
+.ck12-player,
+.ck12-sceneread,
+.ck12-hudhex,
+.ck12-hud-model > span > button,
+.ck12-hud-model .ck12-rig-model > button {
+  backdrop-filter: blur(10px);
+}
+
+.ck12-hud-back {
+  flex: none;
+  width: 26px;
+  height: 26px;
+  display: grid;
+  place-items: center;
+  border-radius: 6px;
+  border: 1px solid var(--ck12-bd2);
+  color: var(--ck12-metal);
+  font-size: 13px;
+  line-height: 1;
+  background: var(--ck12-glass);
+  transition: 0.14s;
+}
+.ck12-hud-back:hover {
+  color: #fff;
+  border-color: var(--ck12-teal);
+  box-shadow: 0 0 12px rgba(46, 230, 214, 0.25);
+}
+
+/* 指挥官徽（原型 .player） */
+.ck12-player {
   display: flex;
   align-items: center;
   gap: 9px;
-  font-size: 10.5px;
-  font-weight: 800;
-  letter-spacing: 0.18em;
-  color: var(--ck-a);
+  padding: 4px 14px 4px 5px;
+  clip-path: var(--ck12-cut);
+  background: var(--ck12-glass2);
+  border: 1px solid var(--ck12-edge);
   white-space: nowrap;
 }
-.ck12-brand small {
-  color: var(--ck12-faint);
-  font-weight: 500;
-  letter-spacing: 0.06em;
-}
-.ck12-hex {
-  width: 20px;
-  height: 20px;
+.ck12-player-lv {
+  width: 32px;
+  height: 36px;
+  flex: none;
+  clip-path: var(--ck12-hex);
   display: grid;
   place-items: center;
-  border: 1px solid color-mix(in srgb, var(--ck-a) 55%, transparent);
-  border-radius: 6px;
-  font-size: 11px;
-  box-shadow: 0 0 12px color-mix(in srgb, var(--ck-a) 35%, transparent);
-}
-.ck12-hsep {
-  width: 1px;
-  height: 18px;
-  background: var(--ck12-bd);
-  flex: none;
-}
-.ck12-stat {
-  display: flex;
-  align-items: baseline;
-  gap: 6px;
-  font-size: 9.5px;
-  letter-spacing: 0.12em;
-  color: var(--ck12-faint);
-  white-space: nowrap;
-}
-.ck12-stat b {
-  font-size: 15px;
-  letter-spacing: 0;
-  color: var(--ck12-ink);
-  font-variant-numeric: tabular-nums;
+  background: linear-gradient(160deg, var(--ck12-sky), #7B4DFF);
+  color: #fff;
   font-weight: 800;
+  font-size: 12px;
+  font-family: var(--font-ui);
 }
-.ck12-stat b.ck12-c { color: var(--ck12-cyan); }
-.ck12-stat b.ck12-m { color: var(--ck12-amber); }
+.ck12-player-n {
+  display: flex;
+  flex-direction: column;
+  line-height: 1.15;
+}
+.ck12-player-n b {
+  font-size: 12.5px;
+  font-weight: 800;
+  font-family: var(--font-ui);
+  color: #fff;
+}
+.ck12-player-n span {
+  font-size: 8.5px;
+  color: var(--ck12-ink2);
+  letter-spacing: 0.1em;
+}
 
-.ck12-hud-right {
-  margin-left: auto;
+/* 舱籍 chip（复用 CockpitProjectsPopover 的 .ck12-pjbtn，重排成原型 .projchip） */
+.ck12-hud .ck12-pjbtn {
   display: flex;
   align-items: center;
   gap: 7px;
-  flex: none;
+  height: 32px;
+  padding: 0 12px;
+  border-radius: 0;
+  clip-path: var(--ck12-cut);
+  background: var(--ck12-glass2);
+  border: 1px solid rgba(53, 199, 240, 0.45);
+  color: var(--ck12-sky);
+  font-size: 10.5px;
+  font-weight: 700;
+  font-family: var(--font-ui);
+  white-space: nowrap;
+  transition: 0.15s;
 }
+.ck12-hud .ck12-pjbtn:hover {
+  border-color: var(--ck12-teal);
+  color: #fff;
+  box-shadow: 0 0 14px rgba(53, 199, 240, 0.35);
+}
+.ck12-hud .ck12-pjhex {
+  font-size: 13px;
+  width: auto;
+  height: auto;
+  border: 0;
+  background: none;
+  box-shadow: none;
+  clip-path: none;
+}
+.ck12-hud .ck12-pjname { color: #fff; max-width: 150px; overflow: hidden; text-overflow: ellipsis; }
 
-.ck12-ghost {
+/* SCENE pill（居中；原型 .sceneread） */
+.ck12-sceneread {
+  margin: 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 16px;
+  border-radius: 999px;
+  background: var(--ck12-glass);
+  border: 1px solid rgba(185, 179, 217, 0.22);
+  font-size: 10px;
+  color: var(--ck12-ink2);
+  letter-spacing: 0.08em;
+  white-space: nowrap;
+}
+.ck12-sceneread b { color: var(--ck12-teal); font-weight: 700; }
+.ck12-sceneread:hover { border-color: var(--ck12-edge); color: #fff; }
+
+/* model chip（原型 .modelchip；宿主里是共享的 ComposerModelPopover 触发钮） */
+.ck12-hud-model { flex: none; display: flex; }
+.ck12-hud .ck12-rig-model > button,
+.ck12-hud-model > span > button {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: 32px;
+  padding: 0 11px;
+  border-radius: 0;
+  clip-path: var(--ck12-cut);
+  background: var(--ck12-glass2);
+  border: 1px solid rgba(123, 77, 255, 0.55);
+  color: #C9BFFF;
+  font-size: 11px;
+  font-weight: 800;
+  white-space: nowrap;
+}
+.ck12-hud .ck12-rig-model > button:hover { border-color: #7B4DFF; box-shadow: 0 0 14px rgba(123, 77, 255, 0.4); }
+.ck12-hud-modeloff {
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  height: 26px;
-  padding: 0 10px;
-  border-radius: 8px;
-  border: 1px solid var(--ck12-bd);
-  color: var(--ck12-dim);
-  font-size: 10.5px;
-  font-family: var(--font-ui);
-  transition: 0.14s;
-  background: rgba(255, 255, 255, 0.02);
+  height: 32px;
+  padding: 0 11px;
+  clip-path: var(--ck12-cut);
+  background: var(--ck12-glass2);
+  border: 1px solid rgba(123, 77, 255, 0.35);
+  color: var(--ck12-metal2);
+  font-size: 11px;
   white-space: nowrap;
 }
-.ck12-ghost:hover {
-  color: var(--ck12-ink);
-  border-color: var(--ck12-bd2);
-  background: rgba(255, 255, 255, 0.06);
+.ck12-hud-modeloff b { color: var(--ck12-ink2); font-weight: 800; }
+
+/* 读数（原型 .cur：24×27 六角 + 数字） */
+.ck12-hudcur {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: none;
+  color: #fff;
 }
-.ck12-ghost-static {
-  cursor: default;
-  color: color-mix(in srgb, var(--ck-a) 78%, var(--ck12-dim));
-  border-color: color-mix(in srgb, var(--ck-a) 26%, transparent);
+.ck12-hudcur-i {
+  width: 24px;
+  height: 27px;
+  clip-path: var(--ck12-hex);
+  display: grid;
+  place-items: center;
+  font-size: 11px;
+  color: #fff;
+  font-family: var(--font-mono);
 }
-.ck12-ghost-static:hover {
-  color: color-mix(in srgb, var(--ck-a) 78%, var(--ck12-dim));
-  border-color: color-mix(in srgb, var(--ck-a) 26%, transparent);
-  background: rgba(255, 255, 255, 0.02);
+.ck12-hudcur.is-tok .ck12-hudcur-i { background: linear-gradient(160deg, var(--ck12-teal), var(--ck12-sky)); }
+.ck12-hudcur.is-ctx .ck12-hudcur-i { background: linear-gradient(160deg, var(--ck12-sky), #7B4DFF); }
+.ck12-hudcur.is-cost .ck12-hudcur-i { background: linear-gradient(160deg, var(--ck12-gold), #FF8A3D); color: #100D28; }
+.ck12-hudcur b {
+  font-size: 14px;
+  font-weight: 800;
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  text-shadow: 0 1px 6px rgba(16, 13, 40, 0.8);
 }
-.ck12-fleetbtn { display: none; }
+.ck12-hudcur.is-cost b { color: var(--ck12-gold); }
+.ck12-hudcur.is-ctx b { color: var(--ck12-ink); }
+
+/* 右侧三个 32×36 六角按钮（原型 .hudhex） */
+.ck12-hudhex {
+  flex: none;
+  width: 32px;
+  height: 36px;
+  clip-path: var(--ck12-hex);
+  display: grid;
+  place-items: center;
+  background: var(--ck12-glass2);
+  border: 1px solid rgba(185, 179, 217, 0.3);
+  color: var(--ck12-ink2);
+  font-size: 13px;
+  transition: 0.15s;
+}
+.ck12-hudhex:hover { color: #fff; border-color: var(--ck12-teal); }
+.ck12-hudhex.is-on { color: var(--ck12-teal); border-color: var(--ck12-teal); }
+.ck12-hudhex.is-off { opacity: 0.55; }
+
+/* 设置入口：与 ✦ 同高但更窄、无边框，避免抢视线。 */
+.ck12-hud-settings {
+  flex: none;
+  width: 20px;
+  height: 26px;
+  display: grid;
+  place-items: center;
+  color: var(--ck12-metal2);
+  font-size: 14px;
+  line-height: 1;
+  border-radius: 4px;
+}
+.ck12-hud-settings:hover { color: #fff; background: rgba(255, 255, 255, 0.06); }
 
 /* ───────────────────────── stage / arena ───────────────────────── */
 .ck12-stage {
@@ -485,8 +614,10 @@
   display: flex;
   flex-direction: column;
   align-items: stretch;
-  gap: 6px;
-  padding: 8px var(--ck12-railr) 14px calc(var(--ck12-railw) + 16px + var(--ck12-charw) - 22px);
+  gap: 0;
+  /* v21 ⑤A：底栏 = 通讯台的输入行。总高固定 56（0 + 52 + 4），
+     上沿 = console 下沿 = 视口 − 56；不再有 8px 黑断层。 */
+  padding: 0 var(--ck12-railr) 4px calc(var(--ck12-railw) + 16px + var(--ck12-charw) - 22px);
 }
 
 /* ───────────────────────── 状态横幅（草稿 / 无主会话） ───────────────────────── */

@@ -31,7 +31,7 @@ const FAN_ITEMS = [
 
 export function CockpitMenuRail() {
   const {
-    chatWindow, openPanel, select, selection, setRailOpen, fx,
+    chatWindow, openPanel, select, selection, setRailOpen, fx, travel,
   } = useCockpitState()
   const { rows } = useCockpitFleet()
   const { active } = useCockpitThreads()
@@ -118,9 +118,9 @@ export function CockpitMenuRail() {
       <button
         type="button"
         className="ck12-rhex is-warp"
-        title="跃迁 · 星穿梭重新对齐（⌥W）"
+        title="跃迁 · 星穿梭切下一幕（⌥W）"
         data-testid="cockpit-menu-warp"
-        onClick={() => fx.jump()}
+        onClick={() => travel()}
       >
         <span className="ck12-rhex-i" aria-hidden="true">⟳</span>
         <span className="ck12-rhex-l">跃迁</span>
@@ -165,8 +165,10 @@ export function CockpitMenuRail() {
           data-testid="cockpit-menu-more"
           onClick={(event) => {
             event.stopPropagation()
-            if (fanOpen) setFanOpen(false)
-            else openFan()
+            // 指针悬停已经打开过一次；再点一下不能把它关掉（Playwright /
+            // 真实鼠标都是 hover→click，旧版 toggle 会让「点击展开」变成
+            // 展开后立即收起）。收起只走 pointerleave。
+            openFan()
           }}
         >
           <span className="ck12-rhex-i" aria-hidden="true">⋯</span>

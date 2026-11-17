@@ -339,10 +339,27 @@
 
 ### 5.4 通讯台
 
-- 几何：`chat/CockpitChatWindow.tsx` + `chat/geometry.ts` 默认左边 = 立绘右缘 − 22px；右缘让出右栏；≤900 切底部 sheet。
+- 几何：`chat/CockpitChatWindow.tsx` + `chat/geometry.ts` 默认左边 = 立绘右缘 − 22px；右缘让出右栏；**底缘 = composer 条上沿**（宽屏通常 844 @900，等于原型；底栏变高时跟随）。≤900 切底部 sheet，底缘让开实测的底栏上沿。
 - 皮肤：`app/cockpit/chat.css`（纯附加样式，classic 不加载）；转录内容仍走 `ChatArea`（`tui` + `composerVariant='cockpit'`）。
 - 变更点：用户行去气泡（`border-left` 金线）；live 行颜色改汐音紫；全屏背景改深色终端屏；弹出窗 `.ck12-cwin` 同皮肤。
 - **不改内容**：不新造气泡 / 表格 / 卡片；工具调用仍是 TUI 行；同一消息在所有窗口同步。
+
+### 5.9 舱景 / HUD / 时钟（2026-11-17 落地）
+
+- 舱景：`scene/scene-model.ts`（三幕定义）+ `scene/CockpitScene.tsx`（双层 img crossfade .9s、指针视差 ±12/8、空闲预取下一幕、reduced-motion 关闭）+ `app/cockpit/scene.css`（.grade / .grain 逐字照原型）。星流仍由 `CockpitStarfield` 订阅 `fx.jumpNonce`。
+- 切幕：`CockpitStateProvider.travel()` = 「下一幕 + jump 星流」，自动跃迁 / ⌥W / 右栏跃迁 / SCENE pill 共用；换色、回传入场只 jump 不切幕。
+- 场景点：`chat/CockpitConsoleFooter.tsx` 右侧三枚 9×10 hex（`cockpit-scene-dot-*`），直选某幕。
+- HUD：`shell/CockpitHud.tsx` 重写为原型抬头条（指挥官徽 / 舱籍 / SCENE pill / model / ▤tok / ◈ctx / ¥cost / ♪◐✦ / ⋯设置）；导航入口只留最左 ←。读数复用真源：`CockpitModelPopover`、`chat.contextUsage`、`chat.usage`、`useCabinUsage`；缺值写「未就绪」，不写 0。
+- 底缘状态行：`chat/CockpitConsoleFooter.tsx`（SCENE / POSE / CTX / MODEL / TUI + 场景点），读数同源。
+- 时钟：`shell/CockpitClock.tsx`（右下 10，16/800 绿 + 副行；分钟对齐刷新；≤900 隐藏）。在场读数放进 title（原型副行只有「舰桥时间 · 全舱正常」）。
+- 配色：`THEMES.terminal` 校准为原型三主色（a `#2EE6D6` / b `#7B4DFF` / c `#F5C542`）；存量舱一次性迁移脚本 `docs/cabin-design/_migrate-v21-theme.mjs`（dry-run 默认，`--apply` 才写，幂等）。
+- 断点：HUD 按原型压缩（≤1320 隐 tok/坐标；≤900 隐 SCENE/ctx/舱名；≤560 隐 ◐✦、缩玩家名与间距）。
+
+### 5.10 对照工具（不入库）
+
+- `docs/cabin-design/_fixture-v21.mjs`：固定样板舱（9 作业 / 2 task-kind 带 v4 phases / 真实 attention），跑完即删。
+- `docs/cabin-design/_fidelity-v21.mjs`：原型 ⇄ 生产同视口四档截图 + 30/28/20/20 项几何与样式断言，`shots-fidelity/diff.json`；任一失败退出码 1。
+
 
 ### 5.5 立绘
 
@@ -423,8 +440,15 @@ OCTOPUS_E2E_WEB_PORT=<port> pnpm --filter @octopus/web-app test:e2e cockpit-v21
 | 帧资产 | 原型本地 PNG | 单源 import `docs/cabin-design/assets` | 避免复制与漂移 |
 | `classic` | — | 不改一行 | 硬约束 |
 | 左栏「全部 →」 | 打开 v20 编队面板 | 就地展开全部行（再点收起） | web-app 没有独立「编队面板」；折叠/展开是同一信息量的最近入口，不新造模态 |
-| 通讯台底缘 | 视口底 − 56 | 停在底栏（舰桥 + 输入）上沿 − 8 | 应用保留常驻 composer（关窗后仍能输入，plans §2.4）；底栏与通讯台同宽同皮肤，视觉连成一台。≤900 的 56vh sheet 同样落在底栏之上 |
+| 通讯台底缘 | 视口底 − 56（composer 在壳内） | 宽屏 = composer 条上沿（通常 844 @900，±10 随底栏行数）；≤900 sheet 停在底栏上沿 | 应用保留常驻 composer（关窗后仍能输入，plans §2.4）；两者同皮肤、无断层，视觉连成一台 |
 | 通讯台输入行 | `.con-in` 在壳内 | 真 composer 在底栏槽（通讯台正下方） | 同上：composer 是跨树 portal，关窗/收起不能丢输入 |
+| 窄屏 sheet | bottom 10（composer 在壳内） | 停在底栏上沿（让出 56–80px） | 生产 composer 独立成条，覆盖它会让输入行不可用 |
+| 返回入口 | 无 | HUD 最左极简 ← | 应用需要退出舱；其余导航入口全在右栏「更多」 |
+| 右下钟副行 | 「舰桥时间 · 全舱正常」 | 同文案；在场档位进 title | 原型副行没有在场读数；visible 宽度超出会压住 composer |
+| HUD 读数缺值 | mock 恒有值 | 「未就绪」占位 | 真数据纪律（不写 0 冒充） |
+| HUD 舱籍 chip | `账务中台 · 4 项目` | 舱名 + 项目数（真实舱籍） | 真数据；无项目时给「＋ 绑定项目」入口 |
+| 指挥官徽 | 等级 16 + CMDR 编号 | `CABIN_MAIN_IDENTITY` + `CMDR · <org/全域>` | 应用没有「玩家等级」数据；用真实舱主身份，不编造编号 |
+| 跃迁切幕 | 每次 gotoScene | `travel()` 切幕；换色/回传只 jump | 同一物理动作才换场景，避免换色把船开走 |
 | 通讯台底色 | 原型渐变（alpha .8–.92） | 同渐变 + 一层近黑底（alpha .62） | 全舱背后常是明亮作业面；纯 .8 渐变会透字，终端屏读不清（用户 2026-11-17 强调可读） |
 | 右栏 z 序 | 22（在 app 下、通讯台 10 之上） | 160（压在 chat / 问答窗之上） | 本应用通讯台是 z100+ 浮窗；右栏与 inbox 浮层必须始终可点 |
 | ≤900 作业面打开时 | 原型无作业面 | 隐藏立绘 | 面在窄屏占满宽度，立绘只剩一条边；隐去比露边干净 |
