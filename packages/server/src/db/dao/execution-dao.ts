@@ -363,8 +363,8 @@ export class ExecutionDAO extends BaseDAO {
         progress, triggered_by, started_at, completed_at, duration,
         created_at, updated_at, node_type, branch, start_commit_id, end_commit_id,
         name, global_session_id, approval_metadata, interaction_metadata, chain_retry_count, preset_inputs,
-        phase_index, round_index, task_id
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        phase_index, round_index, task_id, cabin_id
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       row.id, row.workspace_id, row.parent_id ?? "0", row.child_index ?? 0,
       row.workflow_ref ?? "", row.workflow_name ?? "",
@@ -384,6 +384,8 @@ export class ExecutionDAO extends BaseDAO {
       // ADR-0021: NULL = not a task launch (cron jobs, ad-hoc runs, chain children).
       // Set = this row IS a task instance; ux_exec_task_active then serializes it.
       row.task_id ?? null,
+      // 舱归属写一次（2026-11-17）：执行点火时快照，之后不允许改（trigger 兜底）。
+      row.cabin_id ?? null,
     )
   }
 

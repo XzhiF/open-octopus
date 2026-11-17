@@ -482,7 +482,9 @@ export class CabinService {
         .map((n) => ({ group: "", name: n, repoName: n }))
       const repoEntries = projectEntries.length > 0 ? projectEntries : legacyEntries
       if (repoEntries.length > 0) writeCabinConfigRepos(cabinPath, repoEntries)
-      const session = getSessionService().createSession({ cwd: cabinPath, workspace_id: ws.id })
+      const session = getSessionService().createSession({
+        cwd: cabinPath, workspace_id: ws.id, cabin_id: id,
+      })
       this.infra.agentSessionDAO.updateSession(session.id, {
         cabin_id: id, title: `${name} · 舱主对话`,
       })

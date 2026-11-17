@@ -72,7 +72,7 @@ export class CabinDelegationService {
     const intent = input.intent.trim()
     if (!intent) throw new Error("intent 不能为空（用户原话是权威）")
 
-    const session = getSessionService().createSession({ cwd: cabin.path })
+    const session = getSessionService().createSession({ cwd: cabin.path, cabin_id: cabinId })
     const ts = now()
     const row: CabinDelegationRow = {
       id: randomUUID(),

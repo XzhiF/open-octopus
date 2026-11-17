@@ -100,7 +100,8 @@ describe("DB Schema", () => {
     // + Cabin P1（作战舱）3 条：idx_cabins_status / idx_cabin_jobs_cabin /
     //   idx_cabin_job_events_job = 98（此前漏计，与表清单同上）。迭代退役后 −1。
     // + design 25 §4.2 独立委派 2 条：idx_cabin_delegations_cabin / _doer = 100。
-    expect(rows.length).toBe(100)
+    // + 2026-11-17 舱归属：idx_executions_cabin = 101。
+    expect(rows.length).toBe(101)
   })
 
   it("workspaces table has correct columns", () => {

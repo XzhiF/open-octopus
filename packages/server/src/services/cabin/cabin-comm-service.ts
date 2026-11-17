@@ -86,7 +86,7 @@ export class CabinCommService {
       // 的 task home = `<workspace>/.task`，复用舱 ws 会让同舱所有任务共用一个
       // home（context.md / manifest.json / .scratch 互相覆盖）。让 createTask 建
       // 任务自己的 shell，worktree 也落在它自己的 projects/ 下。
-      const session = getSessionService().createSession({ cwd: cabin.path })
+      const session = getSessionService().createSession({ cwd: cabin.path, cabin_id: cabinId })
       const task = this.deps.tasksService.createTask({
         name: input.title,
         repo_group: cabin.org ?? undefined,

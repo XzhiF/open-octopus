@@ -132,6 +132,34 @@ function SectionLabel({ label, count, action }: { label: string; count: number; 
   )
 }
 
+/** 范围：当前舱 / 外部 / 全部。只在有「当前舱」时出现。 */
+type CabinScope = 'cabin' | 'external' | 'all'
+
+const SCOPE_LABEL: Record<CabinScope, string> = {
+  cabin: '当前舱',
+  external: '外部',
+  all: '全部',
+}
+
+/**
+ * 行上的舱归属 chip（2026-11-17）：只在「全部」范围、且这一行真的属于某个舱时
+ * 显示。舱外行不挂「外部」牌子 —— 默认就是舱外，逐行重复只会挤掉标题；
+ * 规则写在范围开关的 title 里（有 ⌂ = 舱内，没有 = 外部）。
+ */
+function CabinChip({ cabin, cabinId }: { cabin?: CabinDetail; cabinId: string }) {
+  const label = cabin?.name ?? '已归档舱'
+  return (
+    <span
+      data-cabin-chip={cabinId}
+      title={`归属作战舱：${cabin?.name ?? cabinId}`}
+      className="flex max-w-[78px] shrink-0 items-center gap-1 rounded-full border border-white/[0.08] bg-white/[0.04] px-1.5 text-[9px] leading-[15px] text-pop-dim/80"
+    >
+      <span aria-hidden className="text-[8px]">⌂</span>
+      <span className="truncate">{label}</span>
+    </span>
+  )
+}
+
 function dateLabel(value?: string | null): string {
   if (!value) return ''
   const date = new Date(value)
@@ -307,6 +335,24 @@ export function ChatSidebar({
     (session) => !session.clone_name && !boundSessionIds.has(session.id),
   )
 
+  // 归属范围（2026-11-17）：舱内默认只看本舱；「外部」= 不属于任何舱的活动；
+  // 「全部」= 不筛，行上补一枚舱 chip。归属是写一次的服务端字段（tasks /
+  // sessions.cabin_id），这里只做视图过滤，不推算。
+  const [scope, setScope] = useState<CabinScope>('cabin')
+  useEffect(() => { setScope('cabin') }, [activeCabinId])
+  const scopeEligible = !!activeCabinId && !!cabins
+  const cabinById = useMemo(
+    () => new Map((cabins ?? []).map((cabin) => [cabin.id, cabin] as const)),
+    [cabins],
+  )
+  const inScope = (cabinId?: string | null) => {
+    if (!scopeEligible || scope === 'all') return true
+    if (scope === 'cabin') return cabinId === activeCabinId
+    return !cabinId
+  }
+  const scopedTasks = tasks.filter((task) => inScope(task.cabin_id))
+  const scopedSessions = visibleSessions.filter((session) => inScope(session.cabin_id))
+
   useEffect(() => {
     if (searchOpen) searchInputRef.current?.focus()
   }, [searchOpen])
@@ -329,13 +375,19 @@ export function ChatSidebar({
 
   const needle = query.trim().toLowerCase()
   const filteredTasks = needle
-    ? tasks.filter((task) => task.name.toLowerCase().includes(needle))
-    : tasks
+    ? scopedTasks.filter((task) => task.name.toLowerCase().includes(needle))
+    : scopedTasks
   const pendingMatches = !!pendingTask && (!needle || pendingTask.title.toLowerCase().includes(needle))
   const pendingKind: TaskKind = pendingTask?.kind === 'workflow-dev' ? 'workflow-dev' : 'dev'
   const filteredSessions = needle
-    ? visibleSessions.filter((session) => session.title.toLowerCase().includes(needle))
-    : visibleSessions
+    ? scopedSessions.filter((session) => session.title.toLowerCase().includes(needle))
+    : scopedSessions
+  // 「当前舱」范围下，被折叠掉的活动数（其它舱 + 外部）。不做静默隐藏：给一个
+  // 可点的出口，避免以后找不到 CLI / 调度跑出来的东西。
+  const outsideCount = scopeEligible && scope === 'cabin'
+    ? tasks.filter((task) => task.cabin_id !== activeCabinId).length
+      + visibleSessions.filter((session) => session.cabin_id !== activeCabinId).length
+    : 0
   const filteredCabins = useMemo(() => {
     if (!cabins) return []
     return needle ? cabins.filter((c) => c.name.toLowerCase().includes(needle)) : cabins
@@ -548,6 +600,33 @@ export function ChatSidebar({
         </div>
       )}
 
+      {scopeEligible && (
+        <div className="shrink-0 px-3 pb-1.5" data-testid="chat-scope-switch">
+          <div className="flex items-center gap-0.5 rounded-[8px] border border-white/[0.06] bg-white/[0.02] p-0.5">
+            {(['cabin', 'external', 'all'] as const).map((id) => (
+              <button
+                key={id}
+                type="button"
+                data-scope={id}
+                data-active={scope === id ? 'true' : undefined}
+                title={id === 'cabin'
+                  ? `只看当前作战舱${cabinById.get(activeCabinId!) ? `：${cabinById.get(activeCabinId!)!.name}` : ''}`
+                  : id === 'external' ? '只看不属于任何作战舱的活动' : '全部活动（带 ⌂ 的是舱内，没有标识的是外部）'}
+                onClick={() => setScope(id)}
+                className={cn(
+                  'h-[22px] flex-1 rounded-[6px] text-[11px] transition-colors',
+                  scope === id
+                    ? 'bg-white/[0.08] text-pop-ink'
+                    : 'text-pop-dim hover:text-pop-ink',
+                )}
+              >
+                {SCOPE_LABEL[id]}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+
       <ScrollArea className="min-h-0 flex-1 [&_[data-slot=scroll-area-viewport]>div]:block!">
         <div className="px-2.5 pb-4">
           {cabins && (
@@ -724,7 +803,13 @@ export function ChatSidebar({
               </div>
             ) : filteredTasks.length === 0 && !pendingMatches ? (
               <p className="px-2 py-1 text-[12px] text-pop-dim/60">
-                {needle ? '未找到匹配任务' : '暂无任务'}
+                {needle
+                  ? '未找到匹配任务'
+                  : scopeEligible && scope === 'cabin'
+                    ? '当前舱暂无任务'
+                    : scopeEligible && scope === 'external'
+                      ? '没有舱外任务'
+                      : '暂无任务'}
               </p>
             ) : (
               <div className="space-y-px">
@@ -793,6 +878,12 @@ export function ChatSidebar({
                           )}
                         />
                         <span className="min-w-0 flex-1 truncate">{task.name}</span>
+                        {scopeEligible && scope === 'all' && task.cabin_id && (
+                          <CabinChip
+                            cabinId={task.cabin_id}
+                            cabin={cabinById.get(task.cabin_id)}
+                          />
+                        )}
                         {running && <RunningPill />}
                         {paneMark ? (
                           <PaneMark pane={paneMark} />
@@ -860,7 +951,13 @@ export function ChatSidebar({
             </div>
           ) : filteredSessions.length === 0 ? (
             <p className="px-2 py-1 text-[12px] text-pop-dim/60">
-              {needle ? '未找到匹配对话' : '暂无对话'}
+              {needle
+                ? '未找到匹配对话'
+                : scopeEligible && scope === 'cabin'
+                  ? '当前舱暂无对话'
+                  : scopeEligible && scope === 'external'
+                    ? '没有舱外对话'
+                    : '暂无对话'}
             </p>
           ) : (
             <nav aria-label="会话列表" className="space-y-px">
@@ -919,7 +1016,13 @@ export function ChatSidebar({
                         <span className="truncate">{session.title}</span>
                       )}
                     </div>
-                    <div className="ml-auto flex shrink-0 items-center">
+                    <div className="ml-auto flex shrink-0 items-center gap-1.5">
+                      {scopeEligible && scope === 'all' && session.cabin_id && (
+                        <CabinChip
+                          cabinId={session.cabin_id}
+                          cabin={cabinById.get(session.cabin_id)}
+                        />
+                      )}
                       {running ? (
                         <RunningPill />
                       ) : !splitMode ? (
@@ -985,6 +1088,18 @@ export function ChatSidebar({
                 )
               })}
             </nav>
+          )}
+          {outsideCount > 0 && (
+            <button
+              type="button"
+              data-testid="chat-scope-outside"
+              onClick={() => setScope('all')}
+              className="mt-1 flex w-full items-center gap-1.5 rounded-[7px] px-2 py-1.5 text-left text-[11px] text-pop-dim/70 transition-colors hover:bg-white/[0.035] hover:text-pop-ink"
+            >
+              <span className="text-pop-dim/50">另有</span>
+              <b className="font-medium tabular-nums">{outsideCount}</b>
+              <span>条舱外活动 · 看全部</span>
+            </button>
           )}
         </div>
       </ScrollArea>

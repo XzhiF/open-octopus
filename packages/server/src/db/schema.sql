@@ -85,6 +85,12 @@ CREATE TABLE IF NOT EXISTS executions (
   -- No FK (S2 convention: app-level integrity, so a tasks rebuild can't strand the
   -- ledger).
   task_id TEXT,
+  -- 舱归属（2026-11-17）：执行在点火那一刻快照自己属于哪个作战舱 —— 单值、写一次、
+  -- 不可改（见下方 trg_executions_cabin_write_once）。来源优先级：
+  --   executions.task_id → tasks.cabin_id，其次 workspaces.cabin_id。
+  -- NULL = 舱外执行（CLI / 全局 chat / 历史数据）。这是账本归属，不是 cwd 分组：
+  -- 执行实际跑在哪个 workspace / 目录，由 workspace_id 决定。
+  cabin_id TEXT,
   started_at TEXT,
   completed_at TEXT,
   duration INTEGER,
@@ -92,6 +98,7 @@ CREATE TABLE IF NOT EXISTS executions (
   updated_at TEXT NOT NULL,
   FOREIGN KEY (workspace_id) REFERENCES workspaces(id)
 );
+CREATE INDEX IF NOT EXISTS idx_executions_cabin ON executions(cabin_id);
 
 -- 2b. Execution ⇄ 归属会话/任务（2026-11-03 消耗口径）
 -- 任务轮靠 executions.task_id 归集，但两类执行拿不到 task_id：
@@ -1444,3 +1451,25 @@ CREATE TABLE IF NOT EXISTS cabin_delegations (
 );
 CREATE INDEX IF NOT EXISTS idx_cabin_delegations_cabin ON cabin_delegations(cabin_id, created_at);
 CREATE INDEX IF NOT EXISTS idx_cabin_delegations_doer ON cabin_delegations(doer_session_id);
+
+-- ── 舱归属写一次（2026-11-17）────────────────────────────────────────────
+-- 工作区 / 任务 / 会话 / 执行出生在哪个舱就永远属于哪个舱。
+-- NULL → 值 允许（认领 / 历史回填），值 → 别的值 或 值 → NULL 一律 ABORT。
+-- 与 cabin_job_events 的 append-only 同一套纪律：归属是账本，不重算、不转移。
+-- 必须放在文件末尾：CREATE TRIGGER 会校验目标表存在，而这几张表在文件中段才建。
+CREATE TRIGGER IF NOT EXISTS trg_workspaces_cabin_write_once
+BEFORE UPDATE OF cabin_id ON workspaces
+WHEN OLD.cabin_id IS NOT NULL AND (NEW.cabin_id IS NULL OR NEW.cabin_id <> OLD.cabin_id)
+BEGIN SELECT RAISE(ABORT, 'workspaces.cabin_id is write-once (cabin ownership cannot be transferred)'); END;
+CREATE TRIGGER IF NOT EXISTS trg_tasks_cabin_write_once
+BEFORE UPDATE OF cabin_id ON tasks
+WHEN OLD.cabin_id IS NOT NULL AND (NEW.cabin_id IS NULL OR NEW.cabin_id <> OLD.cabin_id)
+BEGIN SELECT RAISE(ABORT, 'tasks.cabin_id is write-once (cabin ownership cannot be transferred)'); END;
+CREATE TRIGGER IF NOT EXISTS trg_sessions_cabin_write_once
+BEFORE UPDATE OF cabin_id ON sessions
+WHEN OLD.cabin_id IS NOT NULL AND (NEW.cabin_id IS NULL OR NEW.cabin_id <> OLD.cabin_id)
+BEGIN SELECT RAISE(ABORT, 'sessions.cabin_id is write-once (cabin ownership cannot be transferred)'); END;
+CREATE TRIGGER IF NOT EXISTS trg_executions_cabin_write_once
+BEFORE UPDATE OF cabin_id ON executions
+WHEN OLD.cabin_id IS NOT NULL AND (NEW.cabin_id IS NULL OR NEW.cabin_id <> OLD.cabin_id)
+BEGIN SELECT RAISE(ABORT, 'executions.cabin_id is write-once (cabin ownership cannot be transferred)'); END;

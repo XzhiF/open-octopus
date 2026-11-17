@@ -979,3 +979,66 @@ describe("ExecutionLifecycle.start budget_snapshot", () => {
     expect(row!.budget_snapshot).toBeNull()
   }, 30000)
 })
+
+// ==================== 舱归属（2026-11-17） ====================
+//
+// 执行在点火时快照归属舱：task.cabin_id → workspace.cabin_id。
+// 归属写一次；任务与 workspace 不同舱 = 拒绝（任务不许跑在别的舱的工作区里）。
+
+describe("ExecutionLifecycle.create · 舱归属", () => {
+  function seedTask(id: string, cabinId: string | null): void {
+    const now = new Date().toISOString()
+    db.prepare(
+      "INSERT INTO tasks (id, repo_group, name, status, task_spec, cabin_id, created_at, updated_at) VALUES (?, ?, ?, 'running', '{}', ?, ?, ?)",
+    ).run(id, ORG, id, cabinId, now, now)
+  }
+
+  function setWorkspaceCabin(cabinId: string | null): void {
+    db.prepare("UPDATE workspaces SET cabin_id = ? WHERE id = ?").run(cabinId, workspaceId)
+  }
+
+  it("任务带舱 → 执行快照该舱", () => {
+    setWorkspaceCabin("c-1")
+    seedTask("t-cabin", "c-1")
+    const exec = lifecycle.create(workspaceId, { workflow_ref: "test.yaml", task_id: "t-cabin" }, ORG)
+    expect(exec.cabin_id).toBe("c-1")
+    expect(dao.findById(exec.id)?.cabin_id).toBe("c-1")
+  })
+
+  it("无任务 → 继承 workspace 的舱", () => {
+    setWorkspaceCabin("c-2")
+    const withCabin = lifecycle.create(workspaceId, { workflow_ref: "test.yaml", allow_existing_root: true }, ORG)
+    expect(withCabin.cabin_id).toBe("c-2")
+  })
+
+  it("workspace 无舱 → 执行 NULL（舱外）", () => {
+    const noCabin = lifecycle.create(workspaceId, { workflow_ref: "test.yaml", allow_existing_root: true }, ORG)
+    expect(noCabin.cabin_id).toBeNull()
+  })
+
+  it("任务与 workspace 不同舱 → 拒绝", () => {
+    setWorkspaceCabin("c-2")
+    seedTask("t-mismatch", "c-1")
+    expect(() => lifecycle.create(workspaceId, { workflow_ref: "test.yaml", task_id: "t-mismatch" }, ORG))
+      .toThrow(/Cabin mismatch/)
+    // 拒绝时不留半行。
+    expect(dao.listByWorkspace(workspaceId)).toHaveLength(0)
+  })
+
+  it("任务有舱、workspace 无舱（历史数据）→ 回填 workspace，保持不变量", () => {
+    seedTask("t-legacy", "c-3")
+    const exec = lifecycle.create(workspaceId, { workflow_ref: "test.yaml", task_id: "t-legacy" }, ORG)
+    expect(exec.cabin_id).toBe("c-3")
+    const ws = db.prepare("SELECT cabin_id FROM workspaces WHERE id = ?").get(workspaceId) as { cabin_id: string }
+    expect(ws.cabin_id).toBe("c-3")
+  })
+
+  it("任务无舱、workspace 有舱 → 认领任务（NULL → 值，写一次允许）", () => {
+    setWorkspaceCabin("c-4")
+    seedTask("t-claim", null)
+    const exec = lifecycle.create(workspaceId, { workflow_ref: "test.yaml", task_id: "t-claim" }, ORG)
+    expect(exec.cabin_id).toBe("c-4")
+    const t = db.prepare("SELECT cabin_id FROM tasks WHERE id = ?").get("t-claim") as { cabin_id: string }
+    expect(t.cabin_id).toBe("c-4")
+  })
+})

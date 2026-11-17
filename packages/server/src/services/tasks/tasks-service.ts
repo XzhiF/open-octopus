@@ -1297,6 +1297,34 @@ export class TasksService {
     return created.id
   }
 
+  /**
+   * 舱归属不变量（2026-11-17）：任务与它的 workspace 同舱，且归属写一次。
+   *  · 两边都有且不同 → 抛错（任务不许跑在别的舱的工作区里）；
+   *  · 一边为空 → 用另一边认领（NULL → 值；trigger 允许）。
+   * 只做「创建期」 reconcile；运行期由 ExecutionLifecycle 再校验一遍。
+   */
+  private bindWorkspaceCabin(taskId: string, workspaceId: string): void {
+    const db = this.taskDAO.getDb()
+    const task = db.prepare("SELECT cabin_id FROM tasks WHERE id = ?")
+      .get(taskId) as { cabin_id?: string | null } | undefined
+    const ws = db.prepare("SELECT cabin_id FROM workspaces WHERE id = ?")
+      .get(workspaceId) as { cabin_id?: string | null } | undefined
+    const taskCabin = task?.cabin_id ?? null
+    const wsCabin = ws?.cabin_id ?? null
+    if (taskCabin && wsCabin && taskCabin !== wsCabin) {
+      throw new Error(
+        `Cabin mismatch: task ${taskId} belongs to cabin ${taskCabin}, ` +
+        `workspace ${workspaceId} belongs to cabin ${wsCabin}.`,
+      )
+    }
+    if (!taskCabin && wsCabin) {
+      db.prepare("UPDATE tasks SET cabin_id = ? WHERE id = ? AND cabin_id IS NULL").run(wsCabin, taskId)
+    }
+    if (taskCabin && !wsCabin) {
+      db.prepare("UPDATE workspaces SET cabin_id = ? WHERE id = ? AND cabin_id IS NULL").run(taskCabin, workspaceId)
+    }
+  }
+
   /** POST /api/tasks — explicit draft creation. The autosave seam (04) may
    *  also create a draft implicitly; both paths converge here. SG3: if a
    *  source_chat_session_id is provided, link the session's scope_id to the
@@ -1409,6 +1437,9 @@ export class TasksService {
             .getDb()
             .prepare("UPDATE tasks SET workspace_id = ?, updated_at = ? WHERE id = ?")
             .run(workspaceId, now, id)
+          // 舱归属不变量（2026-11-17）：任务与它自己的 workspace 同舱。
+          // 两边都有且不同 → 抛错（外层 softDelete 回滚）；一边空就认领另一边。
+          this.bindWorkspaceCabin(id, workspaceId)
           // v58: the task-author chat runs in the task workspace; bind the
           // session so the UI cwd chip / file explorer have a workspace.
           if (input.source_chat_session_id) {
@@ -3181,6 +3212,8 @@ export class TasksService {
     const created = this.createTask({
       repo_group: src.repo_group,
       name: copyName,
+      // 复制发生在哪个舱就留在哪个舱（归属写一次；老数据 NULL 照样复制成舱外）。
+      cabin_id: src.cabin_id ?? undefined,
       task_spec: specForInput,
       ...(taskType ? { task_type: taskType, skill_groups: skillGroups ?? [] } : {}),
       project_ids: parseJSON<string[]>(src.project_ids, []),

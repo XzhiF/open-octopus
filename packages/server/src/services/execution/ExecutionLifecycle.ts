@@ -1450,6 +1450,40 @@ export class ExecutionLifecycle {
 
   // ==================== CRUD delegation (from Facade) ====================
 
+  /**
+   * 舱归属（2026-11-17）：执行在点火那一刻钉死归属舱，优先级 task → workspace。
+   * 归属是账本（写一次、不转移），执行实际跑在哪由 workspace_id 决定。
+   *
+   * 三种历史/边界情况：
+   *  · 任务有舱、工作区无舱 → 回填工作区（保持 task == workspace 不变量）；
+   *  · 任务无舱、工作区有舱 → 认领任务（NULL → 值，写一次规则允许）；
+   *  · 两边都有且不同 → 拒绝：任务永远不许跑在别的舱的工作区里。
+   */
+  private resolveExecutionCabin(workspaceId: string, taskId: string | null): string | null {
+    const db = this.dao.getDb()
+    const ws = db.prepare("SELECT cabin_id FROM workspaces WHERE id = ?")
+      .get(workspaceId) as { cabin_id?: string | null } | undefined
+    let wsCabin = ws?.cabin_id ?? null
+    if (!taskId) return wsCabin
+    const task = db.prepare("SELECT cabin_id FROM tasks WHERE id = ?")
+      .get(taskId) as { cabin_id?: string | null } | undefined
+    const taskCabin = task?.cabin_id ?? null
+    if (taskCabin && wsCabin && taskCabin !== wsCabin) {
+      throw new Error(
+        `Cabin mismatch: task ${taskId} belongs to cabin ${taskCabin}, ` +
+        `workspace ${workspaceId} belongs to cabin ${wsCabin}.`,
+      )
+    }
+    if (taskCabin && !wsCabin) {
+      db.prepare("UPDATE workspaces SET cabin_id = ? WHERE id = ? AND cabin_id IS NULL").run(taskCabin, workspaceId)
+      wsCabin = taskCabin
+    }
+    if (!taskCabin && wsCabin) {
+      db.prepare("UPDATE tasks SET cabin_id = ? WHERE id = ? AND cabin_id IS NULL").run(wsCabin, taskId)
+    }
+    return taskCabin ?? wsCabin
+  }
+
   create(
     workspaceId: string,
     input: {
@@ -1491,6 +1525,8 @@ export class ExecutionLifecycle {
 
     const varPoolJson = input.initial_var_pool ? JSON.stringify(input.initial_var_pool) : "{}"
     const inputValuesJson = JSON.stringify(input.input_values ?? {})
+    // 舱归属快照：同一次 INSERT 落库，之后只读（trigger 兜底）。
+    const cabinId = this.resolveExecutionCabin(workspaceId, input.task_id ?? null)
 
     this.dao.insertExecution({
       id, workspace_id: workspaceId, parent_id: input.parent_id ?? "0",
@@ -1506,6 +1542,7 @@ export class ExecutionLifecycle {
       // The unit tests missed this for a whole ticket because they stub create() and do the
       // INSERT themselves; this is the seam that has to be tested unstubbed.
       task_id: input.task_id ?? null,
+      cabin_id: cabinId,
       phase_index: input.phase_index ?? null,
       round_index: input.round_index ?? null,
       created_at: now, updated_at: now,

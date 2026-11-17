@@ -71,6 +71,10 @@ export interface ExecutionRow {
    *  through the scheduler's tables. NULL = not a task launch. A task-bound row is also
    *  the task-side launch queue ('pending' = armed, waiting behind the concurrency gate). */
   task_id: string | null
+  /** Cabin ownership (2026-11-17, write-once): the cabin this execution was
+   *  launched from — snapshot at insert (task.cabin_id → workspace.cabin_id).
+   *  NULL = outside any cabin. Distinct from workspace_id (where it runs). */
+  cabin_id?: string | null
   started_at: string | null
   completed_at: string | null
   duration: number | null

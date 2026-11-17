@@ -72,14 +72,14 @@ export class AgentSessionDAO extends BaseDAO {
     cwd?: string | null; workspace_id?: string | null; context_usage?: string | null
   }): Database.RunResult {
     return this.stmt(`
-      INSERT INTO sessions (id, title, clone_name, perspective_clone_name, session_type, is_active, is_deleted, scope_id, provider_session_id, cwd, workspace_id, last_message_at, created_at, updated_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO sessions (id, title, clone_name, perspective_clone_name, session_type, is_active, is_deleted, scope_id, provider_session_id, cwd, workspace_id, cabin_id, last_message_at, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       row.id, row.title, row.clone_name,
       row.perspective_clone_name ?? null, row.session_type,
       row.is_active ?? 1, row.is_deleted ?? 0,
       row.scope_id ?? null, row.provider_session_id ?? null,
-      row.cwd ?? null, row.workspace_id ?? null,
+      row.cwd ?? null, row.workspace_id ?? null, row.cabin_id ?? null,
       null,
       row.created_at, row.updated_at,
     )
