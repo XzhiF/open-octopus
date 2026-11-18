@@ -1193,6 +1193,9 @@ button.ck12-ev:hover { background: rgba(255, 255, 255, 0.04); }
   border-left-color: var(--ck-a);
 }
 .ck12-pjrow:disabled { opacity: 0.55; cursor: default; }
+/* classic 作业窗没有目录树宿主：同一行只报读数，不做点击无反应的假入口。 */
+.ck12-pjrow.is-static { cursor: default; }
+.ck12-pjrow.is-static:hover { background: rgba(255, 255, 255, 0.05); border-color: rgba(185, 179, 217, 0.16); border-left-color: var(--ck-a); }
 .ck12-pjrow-g { flex: none; font-size: 13px; color: var(--ck-a); }
 .ck12-pjrow-m { flex: 1; min-width: 0; }
 .ck12-pjrow-m b {

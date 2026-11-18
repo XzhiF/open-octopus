@@ -1,13 +1,13 @@
 'use client'
 
-// S4 owns this file —— 从 CabinJobDetail 抽出的五页签主体（props 驱动）。
+// S4 owns this file —— 从 CabinJobDetail 抽出的页签主体（props 驱动）。
 //
-// 两种宿主：
-//   · variant="window"  —— classic-v3 作业详情窗。DOM/行为与抽取前逐字一致
+// 两种宿主（2026-11-19 用户：页签同步成同一套 COCKPIT_TABS，不再各维护一份）：
+//   · variant="window"  —— classic-v3「作战详情」窗。页签清单/首签与全域面一致
 //     （CabinV3 / CabinModulesP3 是回归闸门），所有 useCabinContext() 的读取
 //     都变成了 props。
 //   · variant="cockpit" —— 全域座舱的作业面：头部换成 CockpitJobHeader，
-//     五页签主体原样复用；页签是受控的（CockpitState 的 tab/URL 同步）。
+//     页签主体原样复用；页签是受控的（CockpitState 的 tab/URL 同步）。
 //
 // 数据：GET /api/cabins/:id/jobs/:jid（job + events，10s 轮询）+ listCabinJobs
 // （派生 status）；task 类作业再取任务实体（运行/变更/验收都要）。
@@ -50,9 +50,10 @@ import { CockpitJobProject } from '@/components/cockpit/face/CockpitJobProject'
 import { projectNameFromKey } from '@/components/cockpit/projects/project-model'
 import { PHASE_PILL, PHASE_STATUS_LABEL } from '@/components/tasks/run-console/phase-status'
 
-/** classic 作业窗页签 = v12 五页签 + 文件（2026-11-17 用户：作战详情要能像
- *  作业坞那样查 task home）。debug 仍只在全域面出现。 */
-const WINDOW_TABS: readonly CockpitTab[] = ['overview', 'relay', 'run', 'changes', 'accept', 'files']
+// 2026-11-19 用户：classic 作业窗改名「作战详情」，页签与全域面完全同一套
+// （对话 / 对接 / 运行 / 变更 / 验收 / 文件 / 调试 / 项目）—— 两种宿主不再各
+// 维护一份清单。`overview` 已在 v21 七轮退役（不在 COCKPIT_TABS 里），它的
+// 统计读数仍在 `panes` 里保留给旧深链，页签栏不再出现。
 
 /** 作业面（详情 + 派生状态）的单请求预算：接口吊死时给出错误与重试，
  *  不能永远停在「载入作业…」（2026-11-14 用户）。 */
@@ -322,7 +323,7 @@ export function JobFace({
   const [job, setJob] = useState<CabinJob | null>(null)
   const [jobView, setJobView] = useState<CabinJobView | null>(null)
   const [events, setEvents] = useState<CabinJobEvent[]>([])
-  const [innerTab, setInnerTab] = useState<CockpitTab>('overview')
+  const [innerTab, setInnerTab] = useState<CockpitTab>('dialog')
   const [taskEntity, setTaskEntity] = useState<TaskDetail | null>(null)
   /** 舱主会话消息：对接里「汐音 → 你」那一跳的原始来源（任务卡）。 */
   const [mainMessages, setMainMessages] = useState<AgentMessage[]>([])
@@ -352,7 +353,7 @@ export function JobFace({
     // 详情明明已经到了，面还在「载入作业…」（2026-11-14 用户）。
     let detail: { job: CabinJob; events: CabinJobEvent[] }
     try {
-      detail = await withDeadline(null, JOB_FACE_TIMEOUT_MS, '作业详情', (s) => getCabinJob(cabinId, jobId, s))
+      detail = await withDeadline(null, JOB_FACE_TIMEOUT_MS, '作战详情', (s) => getCabinJob(cabinId, jobId, s))
     } catch (err) {
       // 保留上一份快照；没有快照时界面显示这句原因 + 重试。
       setLoadError(err instanceof Error ? err.message : '作业加载失败')
@@ -374,8 +375,9 @@ export function JobFace({
     setJobView(null)
     setEvents([])
     setLoadError(null)
-    // 旧窗行为：换作业回到概览。cockpit 的页签是受控的（URL 决定），不重置。
-    if (!controlled) setInnerTab('overview')
+    // 旧窗行为：换作业回到首签（2026-11-19 起跟全域面一致 = 对话）。
+    // cockpit 的页签是受控的（URL 决定），不重置。
+    if (!controlled) setInnerTab('dialog')
     void load()
   }, [load, controlled])
 
@@ -1171,12 +1173,12 @@ export function JobFace({
           <CockpitJobFiles taskId={job.kind === 'task' ? job.ref_id : null} />
         </div>
       )}
-      {tab === 'debug' && cockpitMode && (
-        <div data-testid="cockpit-job-debug" className={frameOf()}>
+      {tab === 'debug' && (
+        <div data-testid="cockpit-job-debug" className={frameOf('min-h-0 flex-1 flex flex-col')}>
           <CockpitJobDebug sessionId={job.session_id} />
         </div>
       )}
-      {tab === 'project' && cockpitMode && (
+      {tab === 'project' && (
         <div data-testid="cockpit-job-project-pane" className={frameOf()}>
           <CockpitJobProject
             cabinId={cabinId}
@@ -1238,8 +1240,8 @@ export function JobFace({
         {jobView?.transport && <span className="font-mono text-[10px] text-pop-dim">· {jobView.transport}</span>}
       </div>
 
-      <div className="mb-2.5 flex shrink-0 gap-1 border-b-[1.5px] border-pop-bd" role="tablist">
-        {WINDOW_TABS.map((key) => (
+      <div className="mb-2.5 flex shrink-0 gap-1 overflow-x-auto border-b-[1.5px] border-pop-bd" role="tablist" aria-label="作战页签">
+        {COCKPIT_TABS.map((key) => (
           <button
             key={key}
             type="button"
@@ -1259,7 +1261,9 @@ export function JobFace({
         ))}
       </div>
 
-      <div className={cn('min-h-0 flex-1', !cockpitMode && 'cabin-job-scope')}>{panes}</div>
+      {/* flex-col：对话/调试这类自撑满的页签（.ck12-dcon / .ck12-dbg）要一个
+          有确定高度的父级；放行页签自带的 500/520px 不受影响。 */}
+      <div className={cn('flex min-h-0 flex-1 flex-col', !cockpitMode && 'cabin-job-scope')}>{panes}</div>
     </div>
   )
 }

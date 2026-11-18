@@ -443,7 +443,7 @@ OCTOPUS_E2E_WEB_PORT=<port> pnpm --filter @octopus/web-app test:e2e cockpit-v21
 | 说明/演示 | 模拟回流、自动收口 | 仅 DEV + `?demo=1`；不代答决断 | design 12 #8 / design 30 §0 |
 | 多窗口内容 | 转录快照 | 真 ChatPane | v20 已定，v21 不改 |
 | 帧资产 | 原型本地 PNG | 单源 import `docs/cabin-design/assets` | 避免复制与漂移 |
-| `classic` | — | 不改一行 | 硬约束 |
+| `classic` | — | 舱面不改；**作业窗例外**（2026-11-19 用户）：改名「作战详情」，页签同步为全域面同一套 | 用户要求两种宿主的详情页签不再各维护一份 |
 | 左栏「全部 →」 | 打开 v20 编队面板 | 就地展开全部行（再点收起） | web-app 没有独立「编队面板」；折叠/展开是同一信息量的最近入口，不新造模态 |
 | 通讯台底缘 | 视口底 − 56（composer 在壳内） | 宽屏 = composer 条上沿（通常 844 @900，±10 随底栏行数）；≤900 sheet 停在底栏上沿 | 应用保留常驻 composer（关窗后仍能输入，plans §2.4）；两者同皮肤、无断层，视觉连成一台 |
 | 通讯台输入行 | `.con-in` 在壳内 | 真 composer 在底栏槽（通讯台正下方） | 同上：composer 是跨树 portal，关窗/收起不能丢输入 |
@@ -460,6 +460,15 @@ OCTOPUS_E2E_WEB_PORT=<port> pnpm --filter @octopus/web-app test:e2e cockpit-v21
 | 立绘启动姿态 | 待命 | 待命（`MOOD_POSE.boot='idle'`） | 已对齐；有 pending 待办时 mood 派生为 alert，属真实状态 |
 | 项目色 | 原型手写 4 色 | 项目 key 稳定 hash → 同一 4 色 | 真数据里没有颜色字段，hash 不新增接口且跨刷新稳定 |
 
+### 7.1 classic 作业窗同步（2026-11-19 用户）
+
+- 窗名「作业详情」→「作战详情」（`CABIN_WIN_TITLE.job`）。
+- 页签清单不再单独维护 `WINDOW_TABS`，直接用全域面的 `COCKPIT_TABS`：
+  对话 / 对接 / 运行 / 变更 / 验收 / 文件 / 调试 / 项目（首签 = 对话，换作业也回首签）。
+- 「概览」退出页签栏（v21 七轮已在全域面退役）；统计/阶段读数由「运行」「验收」承接。
+- 调试 / 项目两签对 classic 解禁；classic 窗不在 `.ck12-app` 里，缺的 v21 token
+  在 `.cabin-job-scope` 补同一组别名。项目签在 classic 没有目录树宿主 →
+  只报读数（不做点击后无反应的假入口）。
 ---
 
 ## 8. 已知边界

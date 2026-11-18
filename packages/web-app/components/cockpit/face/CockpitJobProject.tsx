@@ -29,7 +29,10 @@ export function CockpitJobProject({ cabinId, projects, branch }: CockpitJobProje
   return (
     <div data-testid="cabin-job-project">
       <div className="ck12-pnote">
-        任务指向 git worktree · 只读 · 点项目看目录树；只列本作战自己的项目（会话只列会话的项目）。
+        {tree
+          ? '任务指向 git worktree · 只读 · 点项目看目录树；只列本作战自己的项目（会话只列会话的项目）。'
+          // classic 作业窗没有目录树宿主：只报读数，不做点击后没反应的假入口。
+          : '任务指向 git worktree · 只读；只列本作战自己的项目（会话只列会话的项目）。'}
       </div>
 
       {projects.length === 0 ? (
@@ -42,19 +45,8 @@ export function CockpitJobProject({ cabinId, projects, branch }: CockpitJobProje
           const label = repo?.name ?? projectNameFromKey(key)
           const branchName = repo?.git?.branch ?? repo?.branch ?? branch ?? null
           const path = repo?.worktree_path ?? repo?.main_path ?? null
-          return (
-            <button
-              key={key}
-              type="button"
-              className="ck12-pjrow"
-              data-testid={`cabin-job-project-row-${label}`}
-              disabled={!repo}
-              title={path ?? undefined}
-              onClick={() => {
-                if (!repo) return
-                tree?.open({ cabinId, projects: [...projects], active: key })
-              }}
-            >
+          const body = (
+            <>
               <span className="ck12-pjrow-g" aria-hidden="true">⌗</span>
               <span className="ck12-pjrow-m">
                 <b>{label}</b>
@@ -65,8 +57,33 @@ export function CockpitJobProject({ cabinId, projects, branch }: CockpitJobProje
                 </span>
               </span>
               <span className="ck12-pjrow-ro">只读</span>
-              <span className="ck12-pjrow-go">目录树 →</span>
+              {tree && <span className="ck12-pjrow-go">目录树 →</span>}
+            </>
+          )
+          return tree ? (
+            <button
+              key={key}
+              type="button"
+              className="ck12-pjrow"
+              data-testid={`cabin-job-project-row-${label}`}
+              disabled={!repo}
+              title={path ?? undefined}
+              onClick={() => {
+                if (!repo) return
+                tree.open({ cabinId, projects: [...projects], active: key })
+              }}
+            >
+              {body}
             </button>
+          ) : (
+            <div
+              key={key}
+              className="ck12-pjrow is-static"
+              data-testid={`cabin-job-project-row-${label}`}
+              title={path ?? undefined}
+            >
+              {body}
+            </div>
           )
         })
       )}

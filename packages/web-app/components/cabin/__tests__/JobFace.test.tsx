@@ -529,7 +529,7 @@ describe('JobFace（cockpit）', () => {
 })
 
 describe('JobFace（cockpit）· 加载容错', () => {
-  it('作业详情吊死：到预算显示失败 + 重试，重试成功即出图', async () => {
+  it('作战详情吊死：到预算显示失败 + 重试，重试成功即出图', async () => {
     vi.useFakeTimers()
     try {
       vi.mocked(getCabinJob).mockImplementation(() => new Promise(() => {}))
@@ -540,7 +540,7 @@ describe('JobFace（cockpit）· 加载容错', () => {
       await act(async () => { await vi.advanceTimersByTimeAsync(JOB_FACE_TIMEOUT_MS) })
 
       const err = screen.getByTestId('cockpit-face-job-error')
-      expect(err.textContent).toContain('作业详情超时')
+      expect(err.textContent).toContain('作战详情超时')
 
       // 接口恢复后点重试：同一份界面不再卡在「载入作业…」。
       mockJob({ kind: 'workflow', ref_id: null, title: '接入渠道' })
@@ -593,13 +593,24 @@ describe('JobFace（window 回归形状）', () => {
     )
     const root = await screen.findByTestId('cabin-job-detail')
     expect(root.textContent).toContain('接入渠道')
-    expect(screen.getByTestId('cabin-job-tab-overview')).toBeInTheDocument()
-    expect(screen.getByTestId('cabin-job-tab-accept')).toBeInTheDocument()
+    // 2026-11-19 用户：classic 作业窗跟全域面同一套页签 —— 首签「对话」，
+    // 八枚页签（含调试/项目）全在，旧的「概览」退役。
+    const tabs = [
+      'dialog', 'relay', 'run', 'changes', 'accept', 'files', 'debug', 'project',
+    ]
+    for (const key of tabs) {
+      expect(screen.getByTestId(`cabin-job-tab-${key}`)).toBeInTheDocument()
+    }
+    expect(screen.queryByTestId('cabin-job-tab-overview')).toBeNull()
+    expect(await screen.findByTestId('cockpit-dialog')).toBeInTheDocument()
     // v21（2026-11-17 用户）：classic 作业窗也要能查 task home 文件。
     fireEvent.click(screen.getByTestId('cabin-job-tab-files'))
     expect(await screen.findByTestId('cabin-job-files')).toBeInTheDocument()
-    // debug 仍只在全域面出现，classic 窗没有这一页。
-    expect(screen.queryByTestId('cabin-job-tab-debug')).toBeNull()
+    // 2026-11-19 用户：调试 / 项目也同步进来（同一套页签，不再只在全域面出现）。
+    fireEvent.click(screen.getByTestId('cabin-job-tab-debug'))
+    expect(await screen.findByTestId('cockpit-job-debug')).toBeInTheDocument()
+    fireEvent.click(screen.getByTestId('cabin-job-tab-project'))
+    expect(await screen.findByTestId('cabin-job-project')).toBeInTheDocument()
     expect(screen.queryByTestId('cockpit-job-header')).toBeNull()
     expect(screen.queryByTestId('cockpit-job-close')).toBeNull()
     // 2026-11-17 用户：提优先/聚焦/备注日常看不到效果，动作按钮已摘除。

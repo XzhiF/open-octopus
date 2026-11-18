@@ -25,9 +25,9 @@ export type CockpitRefKind = CockpitRef['kind']
 
 /** 座舱页签。v21 七轮（用户）：详情首签「概览」→「对话」—— 概览不需要，
  *  对话 = 这条作战的 chat 记录（只读，TUI 转录同肤）。
- *  `overview` 仍留在类型里，但只服务 classic 作业窗（job-face 的 WINDOW_TABS）；
- *  它不在 COCKPIT_TABS / isCockpitTab 里，所以 `?tab=overview` 旧深链会自然
- *  落回默认「对话」。 */
+ *  `overview` 仍留在类型里，但已无页签入口（2026-11-19 起 classic 作业窗也用
+ *  这一套 COCKPIT_TABS）；它不在 COCKPIT_TABS / isCockpitTab 里，`?tab=overview`
+ *  旧深链会自然落回默认「对话」。 */
 export type CockpitTab = 'dialog' | 'overview' | 'relay' | 'run' | 'changes' | 'accept' | 'files' | 'debug' | 'project'
 
 /** 面来源（v22.3）：inbox = 从「要我处理」打开 → 详情让到浮层左侧；

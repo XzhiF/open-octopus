@@ -19,6 +19,20 @@ vi.mock('@/lib/tasks-api', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@/lib/tasks-api')>()
   return { ...actual, listTasks: vi.fn(), getTask: vi.fn(), triggerTask: vi.fn() }
 })
+// 2026-11-19：作业窗首签改成「对话」—— 详情面板会拉任务主会话与账本，
+// 这里给空记录（本文件验的是窗 chrome 与页签，不验对话内容）。
+vi.mock('@/hooks/useSessionLedger', () => ({
+  useSessionLedger: () => ({ aggregates: null, calls: [] }),
+}))
+vi.mock('@/lib/agent/api', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/lib/agent/api')>()
+  return {
+    ...actual,
+    getSession: vi.fn(async () => ({
+      messages: { items: [], has_more: false, next_cursor: null, total: 0 },
+    })),
+  }
+})
 
 import { useCabin } from '@/hooks/use-cabin'
 import {
