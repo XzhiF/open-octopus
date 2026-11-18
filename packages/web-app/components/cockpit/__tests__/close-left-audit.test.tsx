@@ -139,9 +139,7 @@ describe('关灯组：关闭按钮在左（DOM 顺序）', () => {
         kind="task"
         title="接入支付宝"
         status="running"
-        tab="overview"
         onClose={() => {}}
-        onTabChange={() => {}}
       />,
     )
     const header = screen.getByTestId('cockpit-job-header')

@@ -149,4 +149,58 @@ test.describe("全域座舱 v21 · 高保真", () => {
     expect(audit.filtered).toEqual([])
     audit.dispose()
   })
+
+  test("详情 dossier：居中 760 · 8 页签在正文里 · ⛶ 全屏 / 还原 · 右下缩放柄", async ({ page }) => {
+    const audit = attachConsoleAudit(page)
+    await gotoCockpit(page, seed!.cabin.id)
+    await expect.poll(async () => page.locator('[data-testid^="cockpit-rail-row-"]').count(), {
+      timeout: 20_000,
+    }).toBeGreaterThan(0)
+
+    // 点编队行 = 原型「点一条 → 开玻璃 dossier」。
+    await page.locator('[data-testid^="cockpit-rail-row-"]').first().click()
+    const face = page.getByTestId("cockpit-face")
+    await expect(face).toBeVisible({ timeout: 15_000 })
+    await expect(page.getByTestId("cockpit-face-scrim")).toBeVisible()
+    // 入场动画（原型 pin：translateY 12 → 0）在无头页里会被限速 —— 等它归零再量。
+    await expect.poll(async () => Math.round((await face.boundingBox())!.y), {
+      timeout: 15_000,
+    }).toBe(58)
+
+    // 原型 .panel：居中 760，top 58 / bottom 30（1600×900 → 420 / 58 / 760 / 812）。
+    const box = await face.boundingBox()
+    expect(Math.round(box!.width)).toBe(760)
+    expect(Math.round(box!.x)).toBe(420)
+    expect(Math.round(box!.y)).toBe(58)
+    expect(Math.round(box!.height)).toBe(812)
+
+    // 页签在滚动正文（原型 .pb）里：八个（概览…调试 · 项目）。
+    await expect(face.locator(".ck12-face-body .ck12-dtabs")).toHaveCount(1)
+    await expect(face.locator(".ck12-dtab")).toHaveCount(8)
+    await expect(page.getByTestId("cockpit-tab-project")).toBeVisible()
+
+    // 右上只有 ✕ + ⛶（原型 .ph）：项目签 / 中止 / 谈 / 决断 / 调试 / 去处理都撤。
+    await expect(face.locator(".ck12-dh button")).toHaveCount(2)
+
+    // 窗口化：右下缩放柄 + ⛶ 全屏（原型 5 / 52 / vw-10 / vh-58），再点还原。
+    await expect(page.getByTestId("cockpit-dossier-grip")).toBeVisible()
+    await page.getByTestId("cockpit-dossier-max").click()
+    await expect(face).toHaveAttribute("data-maximized", "1")
+    const maxed = await face.boundingBox()
+    expect(Math.round(maxed!.x)).toBe(5)
+    expect(Math.round(maxed!.y)).toBe(52)
+    expect(Math.round(maxed!.width)).toBe(1590)
+    expect(Math.round(maxed!.height)).toBe(842)
+
+    await page.getByTestId("cockpit-dossier-max").click()
+    await expect(face).not.toHaveAttribute("data-maximized", "1")
+    const restored = await face.boundingBox()
+    expect(Math.round(restored!.x)).toBe(420)
+    expect(Math.round(restored!.width)).toBe(760)
+
+    await page.keyboard.press("Escape")
+    await expect(face).toHaveCount(0)
+    expect(audit.filtered).toEqual([])
+    audit.dispose()
+  })
 })

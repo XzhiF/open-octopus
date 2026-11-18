@@ -717,6 +717,35 @@ kbd{border:1px solid rgba(185,179,217,.35);border-bottom-width:2px;border-radius
 .pcard .go2{margin-top:6px;font-size:9.5px;font-weight:800;color:var(--sky)}
 .pnote{font-size:9.5px;color:var(--amber);border:1px dashed rgba(255,176,32,.4);padding:6px 10px;margin-bottom:9px;clip-path:var(--cut);background:rgba(255,176,32,.07)}
 
+/* ═══ 项目页签：一行一个项目（任务 = 它的 worktree；点击弹目录树窗口） ═══ */
+.pjrow{display:flex;align-items:center;gap:10px;width:100%;text-align:left;padding:9px 12px;margin-bottom:7px;clip-path:var(--cut);background:rgba(255,255,255,.05);border:1px solid rgba(185,179,217,.16);border-left:3px solid var(--accent,var(--sky));transition:.13s}
+.pjrow:hover{background:rgba(255,255,255,.1);border-color:rgba(46,230,214,.45);border-left-color:var(--accent,var(--sky))}
+.pjrow .pg3{flex:none;font-size:13px;color:var(--accent,var(--sky))}
+.pjrow .pm3{flex:1;min-width:0}
+.pjrow .pm3 b{display:block;font-size:12px;font-weight:800;font-family:var(--font-ui);color:#fff}
+.pjrow .pm3 span{display:block;font-size:9px;color:var(--ink2);margin-top:2px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-family:var(--font-mono)}
+.pjrow .pm3 span b{display:inline;color:var(--teal);font-weight:800}
+.pjrow .ro3{flex:none;font-size:8px;letter-spacing:.1em;color:var(--metal2);border:1px solid rgba(185,179,217,.22);padding:1px 6px;clip-path:polygon(4px 0,100% 0,calc(100% - 4px) 100%,0 100%)}
+.pjrow .go3{flex:none;font-size:9.5px;font-weight:800;color:var(--sky)}
+
+/* ═══ 目录树窗口（第二窗口 · 叠在 dossier 上） ═══ */
+.twin{position:absolute;z-index:46;left:50%;top:96px;transform:translateX(-50%);width:min(900px,92vw);height:min(620px,calc(100vh - 186px));display:none;flex-direction:column;min-height:0;border-radius:var(--wrad);overflow:hidden;opacity:var(--winop,1);background:var(--glass2);backdrop-filter:blur(14px) saturate(1.3);border:1px solid var(--edge);box-shadow:0 28px 80px rgba(16,13,40,.65)}
+.twin.open{display:flex;animation:pin .24s cubic-bezier(.2,.8,.2,1)}
+.twin.geo.open{animation:none}
+.twin::before{content:"";position:absolute;left:0;right:0;top:0;height:2px;background:linear-gradient(90deg,var(--teal),var(--sky),var(--violet))}
+#twin .ph{cursor:grab;user-select:none;touch-action:none}
+#twin .ph:active{cursor:grabbing}
+.twin .pb{display:flex;flex-direction:column;min-height:0;overflow:hidden}
+.wsb{flex:none;display:flex;gap:10px;align-items:center;padding:6px 10px;margin-bottom:8px;border:1px solid rgba(46,230,214,.25);background:rgba(46,230,214,.06);clip-path:var(--cut);font-size:9.5px;color:var(--ink2)}
+.wsb .br{flex:none;font-weight:800;color:var(--teal)}
+.wsb .p{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--metal2)}
+.wsb .ro{flex:none;font-size:8px;letter-spacing:.1em;color:var(--metal2)}
+.wsplit{display:flex;gap:10px;flex:1;min-height:0}
+.wcol{flex:none;width:300px;display:flex;flex-direction:column;min-height:0}
+.wcol .fsearch{margin-bottom:6px}
+.wsplit .ftree{width:100%;flex:1;min-height:0}
+.wsplit .tprev{min-height:0}
+
 /* ═══ 回传全息 banner（空白天空处） ═══ */
 .banner{position:absolute;top:58px;left:calc(var(--railw) + 16px + var(--charw) / 2);z-index:45;width:min(390px,calc(var(--charw) - 54px));min-width:260px;border-radius:14px;overflow:hidden;background:var(--glass2);backdrop-filter:blur(14px);border:1px solid color-mix(in srgb,var(--accent,var(--sun)) 60%,transparent);box-shadow:0 14px 40px rgba(16,13,40,.5),0 0 24px color-mix(in srgb,var(--accent,var(--sun)) 22%,transparent);padding:9px 14px;cursor:pointer;opacity:0;pointer-events:none;transition:.3s;transform:translateX(-50%) translateY(-12px)}
 @keyframes bfloat{0%,100%{margin-top:0}50%{margin-top:-5px}}
@@ -888,6 +917,9 @@ kbd{border:1px solid rgba(185,179,217,.35);border-bottom-width:2px;border-radius
   .inboxpop.two{width:min(380px,92vw)}
   .inboxpop.two .ip-listwrap{display:none}
   .panel{top:60px;bottom:10px;width:96vw}
+  .twin{top:64px;width:96vw;height:calc(100vh - 130px)}
+  .wsplit{flex-direction:column}
+  .wcol{width:100%;height:180px}
   .cur.opt1{display:none}
   .banner{left:50%;top:60px;transform:translateX(-50%) translateY(-12px);width:min(440px,92vw);min-width:0}
   .banner.show{transform:translateX(-50%)}
@@ -991,6 +1023,7 @@ kbd{border:1px solid rgba(185,179,217,.35);border-bottom-width:2px;border-radius
 
   <div class="pscrim" id="pscrim"></div>
   <section class="panel" id="panel"></section>
+  <section class="twin" id="twin" aria-label="目录树"></section>
 
   <section class="console" id="console" aria-label="TUI 通讯台">
     <div class="con-h">
@@ -1080,6 +1113,9 @@ const PROJECTS=[
  {id:'risk',name:'风控引擎',color:'#FFB020',org:'octo-finance',group:'risk',branch:'main',head:'ec8a626',commit:'1d 前',dirty:false},
  {id:'edge',name:'边缘节点',color:'#3DDC97',org:'octo-edge',group:'edge',branch:'main',head:'3acd561',commit:'3d 前',dirty:false}];
 const projOf=id=>PROJECTS.find(p=>p.id===id)||PROJECTS[0];
+/* 工作树根（演示用绝对路径）：项目页签与目录树窗口都显示完整路径。 */
+const WS_ROOT='D:/octopus-ws/cabin';
+const wsPath=id=>WS_ROOT+'/projects/'+id;
 const KIND={task:{g:'◆',label:'任务'},workflow:{g:'⬡',label:'工作流'},subagent:{g:'◈',label:'分身'},external:{g:'⧉',label:'外部'},wfdev:{g:'⚙',label:'流程开发'}};
 const STATE_LABEL={run:'作战中',wait:'等你答',blocked:'受阻',queue:'待命',done:'已归档'};
 const STATE_EMO={run:'⚡',wait:'❗',blocked:'💦',queue:'💤',done:'✅'};
@@ -1092,7 +1128,7 @@ const modelOf=id=>MODELS.find(m=>m.id===id)||MODELS[1];
 const JOBS_INIT=[
  {id:'j-m1',proj:'gateway',kind:'workflow',title:'M1 · 退款链路',short:'M1 退款',status:'blocked',pct:72,doing:'CI 红 · 现场冻结',agent:'gateway-2',branch:'feat/refund-flow',clock:'9m03s',cost:0.27,tok:86000,rarity:3,tid:'t-2641',slug:'refund-flow',born:9},
  {id:'j-m2g',proj:'gateway',kind:'workflow',title:'M2 · 限流阈值',short:'M2 限流',status:'wait',pct:60,doing:'decide 暂停 · 等你选阈值',agent:'gateway-1',branch:'feat/rate-limit',clock:'12m40s',cost:0.31,tok:104000,rarity:3,tid:'t-2642',slug:'rate-limit',born:13},
- {id:'j-m2',proj:'ledger',kind:'task',title:'M2 · 结算对账',short:'M2 对账',status:'wait',pct:100,doing:'停在验收 · AC-4 待决定',agent:'ledger-2',branch:'fix/reconcile',clock:'41m12s',cost:0.42,tok:152000,rarity:4,tid:'t-2638',slug:'reconcile',born:41},
+ {id:'j-m2',proj:'ledger',projs:['ledger','risk','edge'],kind:'task',title:'M2 · 结算对账',short:'M2 对账',status:'wait',pct:100,doing:'停在验收 · AC-4 待决定',agent:'ledger-2',branch:'fix/reconcile',clock:'41m12s',cost:0.42,tok:152000,rarity:4,tid:'t-2638',slug:'reconcile',born:41},
  {id:'j-arch',proj:'ledger',kind:'subagent',title:'归档沉淀 · M2',short:'归档 M2',status:'run',pct:40,doing:'编译 wiki/结算对账.md',agent:'ledger-1',branch:'archive/m2',clock:'6m10s',cost:0.05,tok:18000,rarity:2,tid:'t-2643',slug:'archive-m2',born:6},
  {id:'j-ext',proj:'gateway',kind:'external',title:'合规审计 · 网关',short:'合规审计',status:'run',pct:65,doing:'扫描配置 · 2 处偏差',agent:'claude-code',branch:'audit/gateway',clock:'22m',cost:0.10,tok:31000,rarity:2,tid:'t-2640',slug:'audit-gateway',born:22},
  {id:'j-m2x',proj:'ledger',kind:'wfdev',title:'发布脚本迁移',short:'脚本迁移',status:'run',pct:55,doing:'迁移第 4/7 个脚本',agent:'ledger-2',branch:'feat/release-scripts',clock:'8m',cost:0.05,tok:22000,rarity:2,tid:'t-2644',slug:'release-scripts',born:8},
@@ -1154,6 +1190,7 @@ const state={sound:true,theme:0,winAlpha:1,thread:'main',panel:null,detailJob:nu
  model:'pro',effort:'标准',ctxMax:1e6,tokens:420000,tokIn:96000,tokOut:38000,tokCR:262000,tokCW:24000,requests:47,cacheHit:78,
  unread:{},focusJob:null,fleetFilter:'all',treeOpen:{},fileSel:{},fileQ:{},dbgTurn:{},dbgTab:'overview',dbgFilter:'all',
  simAuto:true,pop:null,handleSeq:7,wsProj:'gateway',wsOpen:{},wsSel:{},wsQ:'',
+ twin:null,twinQ:'',twinGeo:null,twinMax:false,
  flash:{job:null,op:null,at:0},autoWarp:true,conMin:false,conLeft:null,conTop:null,conGeo:null,wins:[],winSeq:0,zTop:30,
  inboxOpen:false,inboxSel:null,inboxPick:null,fanOpen:false,fleetOpen:false,relayJump:false,panelGeo:null,panelMax:false,
  conTurns:false,conTurnSel:0};
@@ -1727,7 +1764,7 @@ function panelHeadChrome(){const p=$('#panel'),h=p.querySelector('.ph');if(!h)re
   p.appendChild(g);}
 }
 function openPanel(k){state.panel=k;closePops();closeConPop();if(state.inboxOpen){state.inboxOpen=false;state.inboxSel=null;state.inboxPick=null;renderInbox();}$('#pscrim').classList.add('on');renderPanel();renderFleetRail();Audio.sfx('open');}
-function closePanel(){state.panel=null;state.relayJump=false;$('#pscrim').classList.remove('on');$('#panel').classList.remove('open');renderFleetRail();Audio.sfx('close');}
+function closePanel(){state.panel=null;state.relayJump=false;if(state.twin){state.twin=null;$('#twin').classList.remove('open');}$('#pscrim').classList.remove('on');$('#panel').classList.remove('open');renderFleetRail();Audio.sfx('close');}
 function evHTML(e){return `<div class="ev ${e[2]==='attention'?'attention':''}"><span class="t">${e[0]}</span><span class="w">${esc(e[1])}</span><span class="x">${esc(e[3])}</span></div>`;}
 /* ── 详情 · 对接：对齐 classic 作业详情的「对接」页签 ——
    三跳（你 → 汐音 / 汐音 → 执行者 / 执行者 → 汐音 / 汐音 → 你）按时间合流。 */
@@ -1757,16 +1794,14 @@ function renderRelay(j){
    <div class="rl-flow">${lines.length?lines.map(l=>`<div class="rm is-${l.from}${l.head?' head':''}" data-relay-key="${l.key}"><div class="rm-h"><b>${esc(roleName(l.from))} → ${esc(roleName(l.to))}</b><span class="k">${esc(l.kind)}</span><span class="t">${esc(l.at)}</span></div><p>${esc(l.text)}</p></div>`).join(''):'<div class="pempty">还没有交接事件 · 派发后这里留痕</div>'}</div>
    <div class="rl-foot">${esc(doer)}不直接找你：它的回报先到汐音，汐音汇总后再找你；要它做什么，也由汐音转达。</div>`;
 }
-/* ── 详情 · 项目：本作战绑定的舱籍读数 + 跳转（原头部 ⧉ 按钮收编进页签） ── */
+/* ── 详情 · 项目：只摆本作战的 worktree（任务 = 任务绑定的项目集；会话 = 会话锚点）。
+      一行一个项目：名称 / 分支 / 路径；点击在 dossier 之上弹「目录树」窗口（只读）。 ── */
+function jobProjIds(j){return (j.projs&&j.projs.length)?j.projs:[j.proj];}
 function renderJobProject(j){
-  const pr=projOf(j.proj),js=state.jobs.filter(x=>x.proj===pr.id);
-  const run=js.filter(x=>x.status==='run'||x.status==='wait'||x.status==='blocked').length;
-  const wt=js.filter(x=>x.status!=='queue'&&x.status!=='done').length;
-  const cost=js.reduce((s,x)=>s+x.cost,0);
-  return `<div class="pnote">ORG 主仓只读 · 只能拉主线（ff-only）· worktree 按作业开，建舱不预建。</div>
-   <div class="pcard" style="--accent:${pr.color}"><div class="pt2"><b>${esc(pr.name)}</b><span class="og">${pr.org}/${pr.group}</span><span class="dirty ${pr.dirty?'dirty':'clean'}">${pr.dirty?'dirty':'clean'}</span></div><div class="git"><b>${esc(pr.branch)}</b> · HEAD ${esc(pr.head)} · ${esc(pr.commit)}</div><div class="stats"><span>作战 <b>${js.length}</b></span><span>在跑 <b>${run}</b></span><span>工作树 <b>${wt}</b></span><span>消耗 <b>¥${cost.toFixed(2)}</b></span></div><div class="wt">&lt;ws&gt;/projects/${esc(pr.id)} · 本源 worktree：${esc(j.slug)}</div><div style="display:flex;gap:14px"><button class="go2" data-fproj-go="${pr.id}">看该项目作战 →</button><button class="go2" data-ws-go="${pr.id}">⌗ 工作区文件 →</button></div></div>
-   <div class="sect">本作战的项目坐标</div>
-   <div class="kv"><div class="kvi"><div class="k">项目</div><div class="v">${esc(pr.name)}</div></div><div class="kvi"><div class="k">分支</div><div class="v g">${esc(j.branch)}</div></div><div class="kvi"><div class="k">执行者</div><div class="v">${esc(j.agent)}</div></div><div class="kvi"><div class="k">任务编号</div><div class="v">${esc(j.tid)}</div></div></div>`;
+ const ids=jobProjIds(j);
+ return `<div class="pnote">任务指向 git worktree · 只读 · 点项目看目录树；只列本作战自己的项目（会话只列会话的项目），不列全舱舱籍。</div>`+
+  ids.map(id=>{const pr=projOf(id);const br=j.branch&&j.branch!=='—'?j.branch:'（未开工）';
+   return `<button class="pjrow" data-jtree="${esc(j.id)}" data-jtree-proj="${esc(id)}" style="--accent:${pr.color}"><span class="pg3">⌗</span><span class="pm3"><b>${esc(pr.name)}</b><span>⎇ <b>${esc(br)}</b> · ${esc(wsPath(id))}</span></span><span class="ro3">只读</span><span class="go3">目录树 →</span></button>`;}).join('');
 }
 function renderPanel(){const p=$('#panel');if(!state.panel){p.classList.remove('open');return;}p.classList.add('open');applyPanelGeo();
  const sig=state.panel+'|'+state.detailJob+'|'+state.detailTab+'|'+state.fleetFilter;
@@ -1840,9 +1875,67 @@ function bindPanel(){const p=$('#panel');
  $('[data-ws-job]',p)?.addEventListener('click',e=>{state.detailJob=e.currentTarget.dataset.wsJob;state.detailTab='changes';state.panel='detail';renderPanel();Audio.sfx('click');});
  $('[data-ops-jump]',p)?.addEventListener('click',()=>{state.panel='ops';renderPanel();Audio.sfx('click');});
  $$('[data-ws-go]',p).forEach(b=>b.addEventListener('click',()=>{state.wsProj=b.dataset.wsGo;state.panel='ws';renderPanel();Audio.sfx('click');}));
+ $$('[data-jtree]',p).forEach(b=>b.addEventListener('click',()=>openTree(b.dataset.jtree,b.dataset.jtreeProj)));
  const wq=$('#wsQ',p);if(wq)wq.addEventListener('input',()=>{state.wsQ=wq.value;const pos=wq.selectionStart;renderPanel();const nq=$('#wsQ');if(nq){nq.focus();nq.setSelectionRange(pos,pos);}});
  $$('[data-pose-play]',p).forEach(b=>b.addEventListener('click',()=>playPose(b.dataset.posePlay)));
  panelHeadChrome();}
+
+/* ── 目录树窗口：任务的 git worktree 只读树，叠在 dossier 之上（第二窗口）。
+      左树 = 筛选 + 独立滚动；右内容 = 独立滚动；可拖标题栏 / 双击全屏 / ✕ 关。 ── */
+function applyTwinGeo(){const w=$('#twin');if(!w)return;
+ w.classList.toggle('geo',!!(state.twinGeo||state.twinMax));
+ if(state.twinMax){w.style.left='5px';w.style.top='52px';w.style.width=Math.max(420,innerWidth-10)+'px';w.style.height=Math.max(300,innerHeight-58)+'px';w.style.transform='none';return;}
+ const g=state.twinGeo;
+ if(!g){w.style.left='';w.style.top='';w.style.width='';w.style.height='';w.style.transform='';return;}
+ w.style.left=g.x+'px';w.style.top=g.y+'px';w.style.width=g.w+'px';w.style.height=g.h+'px';w.style.transform='none';}
+function toggleTwinMax(){const w=$('#twin');if(!w)return;
+ if(!state.twinMax){const r=w.getBoundingClientRect();state.twinGeo={x:r.left,y:r.top,w:r.width,h:r.height};state.twinMax=true;}
+ else state.twinMax=false;
+ applyTwinGeo();const b=w.querySelector('[data-tmax]');if(b)b.textContent=state.twinMax?'⤡':'⛶';Audio.sfx('click');}
+function openTree(jid,pid){const j=jobOf(jid);if(!j)return;const ids=jobProjIds(j);
+ state.twinQ='';state.twin={job:jid,proj:pid&&ids.includes(pid)?pid:ids[0]};renderTwin();Audio.sfx('open');}
+function closeTree(){if(!state.twin)return;state.twin=null;$('#twin').classList.remove('open');Audio.sfx('close');}
+function renderTwin(){const w=$('#twin');const t=state.twin;if(!t){w.classList.remove('open');return;}
+ const j=jobOf(t.job);if(!j){state.twin=null;w.classList.remove('open');return;}
+ const ids=jobProjIds(j);const pid=ids.includes(t.proj)?t.proj:ids[0];t.proj=pid;const pr=projOf(pid);
+ const open=wsOpenSet(pid);const q=state.twinQ.toLowerCase();const rows=[];let count=0;
+ const walk=(node,path,depth)=>{const p=path?path+'/'+node.n:node.n;
+  if(node.d){const matchQ=q&&node.c.some(c=>!c.d&&(c.n.toLowerCase().includes(q)||c.p.toLowerCase().includes(q)));
+   const isOpen=open.has(p)||!!matchQ;
+   if(q&&!matchQ&&!node.c.some(c=>c.d))return;
+   rows.push(`<button class="trow dir" data-ttree="${esc(p)}" style="padding-left:${7+depth*13}px"><span class="tw">${isOpen?'▾':'▸'}</span><span class="ti2">📁</span><span class="tn">${esc(node.n)}</span></button>`);
+   if(isOpen)node.c.forEach(c=>walk(c,p,depth+1));}
+  else{if(q&&!node.n.toLowerCase().includes(q)&&!node.p.toLowerCase().includes(q))return;count++;
+   const key=pid+':'+node.p;const sel=state.wsSel[pid]===key;
+   rows.push(`<button class="trow${sel?' sel':''}" data-tfile="${esc(key)}" style="padding-left:${7+depth*13}px"><span class="tw"></span><span class="ti2">📄</span><span class="tn">${esc(node.n)}</span>${node.b?`<span class="tb tk" title="被作战「${esc(node.b)}」改过">${esc(node.b)}</span>`:''}</button>`);}};
+ walk(wsTree(pid),'',0);
+ const selKey=state.wsSel[pid];let selNode=null;
+ const find=(node,path)=>{const p=path?path+'/'+node.n:node.n;if(!node.d&&pid+':'+node.p===selKey)selNode=node;if(node.d)node.c.forEach(c=>find(c,p));};
+ if(selKey)find(wsTree(pid),'');
+ if(!selNode){const first=[];const ff=(node,path)=>{const p=path?path+'/'+node.n:node.n;if(!node.d)first.push([pid+':'+node.p,node]);else node.c.forEach(c=>ff(c,p));};ff(wsTree(pid),'');if(first.length){state.wsSel[pid]=first[0][0];selNode=first[0][1];}}
+ const prev=selNode?`<div class="tprev"><div class="tph"><span class="p">${esc(selNode.p)}</span>${selNode.jid?`<button class="cbtn" data-tws-job="${selNode.jid}">▦ 看作战变更</button>`:''}<span class="ro">worktree · 只读</span></div><pre>${esc(selNode.txt)}</pre></div>`:'<div class="tprev"><pre class="m">选择左侧文件查阅。</pre></div>';
+ const branch=j.branch&&j.branch!=='—'?j.branch:'（未开工）';
+ w.innerHTML=`<div class="ph"><button class="phx" data-tclose title="关闭">✕</button><span class="pt"><b>⌗ 目录树 · ${esc(pr.name)}</b><span>⎇ ${esc(branch)} · ${esc(wsPath(pid))} · worktree 只读</span></span><span class="sp"></span><button class="pwin" data-tmax title="全屏 / 还原（也可双击标题栏）">${state.twinMax?'⤡':'⛶'}</button></div>
+ <div class="pb"><div class="fchips">${ids.map(id=>{const p2=projOf(id);return `<button class="fchip${pid===id?' on':''}" data-tproj="${esc(id)}">⌗ ${esc(p2.name)}</button>`;}).join('')}</div>
+ <div class="wsb"><span class="br">⎇ ${esc(branch)}</span><span class="p">${esc(wsPath(pid))}</span><span class="ro">worktree · 只读</span></div>
+ <div class="fsearch"><input id="twinQ" placeholder="筛选文件…" value="${esc(state.twinQ)}"/><span class="scope">worktree · ${count} 文件</span></div>
+ <div class="wsplit"><div class="wcol"><div class="ftree">${rows.join('')||'<div class="pempty">无匹配文件</div>'}</div></div>${prev}</div></div>`;
+ bindTwin();applyTwinGeo();w.classList.add('open');}
+function bindTwin(){const w=$('#twin');
+ $('[data-tclose]',w)?.addEventListener('click',closeTree);
+ $('[data-tmax]',w)?.addEventListener('click',e=>{e.stopPropagation();toggleTwinMax();});
+ $$('[data-tproj]',w).forEach(b=>b.addEventListener('click',()=>{state.twin.proj=b.dataset.tproj;renderTwin();Audio.sfx('click');}));
+ $$('[data-ttree]',w).forEach(b=>b.addEventListener('click',()=>{const set=wsOpenSet(state.twin.proj);const path=b.dataset.ttree;set.has(path)?set.delete(path):set.add(path);renderTwin();Audio.sfx('click');}));
+ $$('[data-tfile]',w).forEach(b=>b.addEventListener('click',()=>{state.wsSel[state.twin.proj]=b.dataset.tfile;renderTwin();Audio.sfx('click');}));
+ $('[data-tws-job]',w)?.addEventListener('click',e=>{const jid=e.currentTarget.dataset.twsJob;state.twin=null;w.classList.remove('open');state.detailJob=jid;state.detailTab='changes';state.panel='detail';renderPanel();Audio.sfx('click');});
+ const tq=$('#twinQ',w);if(tq)tq.addEventListener('input',()=>{state.twinQ=tq.value;const pos=tq.selectionStart;renderTwin();const nq=$('#twinQ');if(nq){nq.focus();nq.setSelectionRange(pos,pos);}});}
+function bindTwinWin(){const w=$('#twin');
+ w.addEventListener('pointerdown',e=>{if(state.twinMax||e.target.closest('button,input,textarea,a,select'))return;if(!e.target.closest('.ph'))return;e.preventDefault();
+  const r=w.getBoundingClientRect(),sx=e.clientX,sy=e.clientY;
+  const mv=ev=>{state.twinGeo={x:clamp(r.left+ev.clientX-sx,4,Math.max(4,innerWidth-r.width-4)),y:clamp(r.top+ev.clientY-sy,52,Math.max(52,innerHeight-r.height-4)),w:r.width,h:r.height};applyTwinGeo();};
+  const up=()=>{removeEventListener('pointermove',mv);removeEventListener('pointerup',up);};
+  addEventListener('pointermove',mv);addEventListener('pointerup',up);});
+ w.addEventListener('dblclick',e=>{if(e.target.closest('button,input,textarea,a,select'))return;if(e.target.closest('.ph'))toggleTwinMax();});}
 function fallbackCopy(txt,done){const ta=document.createElement('textarea');ta.value=txt;ta.style.position='fixed';ta.style.opacity='0';document.body.appendChild(ta);ta.select();try{document.execCommand('copy');done();}catch(e){toast('复制失败 · 请手动选择');}ta.remove();}
 $('#pscrim').addEventListener('click',closePanel);
 
@@ -2084,7 +2177,7 @@ addEventListener('keydown',e=>{const inIn=e.target.closest('textarea,input');
  if(e.altKey&&e.key.toLowerCase()==='c'){e.preventDefault();setConMin(!state.conMin);return;}
  if(e.altKey&&e.key.toLowerCase()==='i'){e.preventDefault();toggleInbox();return;}
  if(e.altKey&&e.key==='1'){e.preventDefault();const f=[...openOps()].sort((a,b)=>OP_KIND[a.kind].pri-OP_KIND[b.kind].pri)[0];if(f){state.inboxOpen=true;state.inboxSel=f.id;state.inboxPick=null;renderInbox();Audio.sfx('open');}else toggleInbox(true);return;}
- if(e.key==='Escape'){if(state.settings){closeSettings();return;}if(state.conPop){closeConPop();return;}if(state.pop){closePops();return;}if(state.inboxOpen){if(state.inboxSel){state.inboxSel=null;state.inboxPick=null;renderInbox();}else toggleInbox(false);return;}if(state.brief){hideBanner();return;}if(state.relayJump){state.relayJump=false;renderPanel();return;}if(state.panel){closePanel();return;}}
+ if(e.key==='Escape'){if(state.settings){closeSettings();return;}if(state.twin){closeTree();return;}if(state.conPop){closeConPop();return;}if(state.pop){closePops();return;}if(state.inboxOpen){if(state.inboxSel){state.inboxSel=null;state.inboxPick=null;renderInbox();}else toggleInbox(false);return;}if(state.brief){hideBanner();return;}if(state.relayJump){state.relayJump=false;renderPanel();return;}if(state.panel){closePanel();return;}}
  if(!inIn&&state.inboxOpen&&state.inboxSel&&state.inboxPick!=null&&e.key==='Enter'){e.preventDefault();submitInbox(false);return;}
  if(!inIn&&state.inboxOpen&&state.inboxSel&&/^[1-9]$/.test(e.key)){const o=opOf(state.inboxSel);if(o&&o.status==='open'){const i=+e.key-1;if(o.options[i]){e.preventDefault();state.inboxPick=i;renderInbox();Audio.sfx('click');}}return;}
  if(!inIn&&/^[1-9]$/.test(e.key)&&state.thread!=='main'){const o=opForJob(state.thread);if(o){const i=+e.key-1;if(o.options[i]){e.preventDefault();resolveOp(o.id,o.options[i].label);}}}});
@@ -2092,7 +2185,7 @@ addEventListener('keydown',e=>{const inIn=e.target.closest('textarea,input');
 /* ── boot ── */
 sizeWarp();seed();startWarp();renderDots();renderHUD();renderConsole();renderInbox();setMood('idle');
 mo.frames=framesFor(state.pose);$('#charImg').style.height=(mo.frames*100)+'%';
-bindGrips();bindPanelWin();renderBar();applyWinAlpha();
+bindGrips();bindPanelWin();bindTwinWin();renderBar();applyWinAlpha();
 $('#charImg').addEventListener('error',()=>{const img=$('#charImg');if(!img.src.includes('motion-sheet'))return;const fb=SHEET_SRC[state.pose]||POSE_SRC[state.pose];if(!fb)return;img.src=fb;mo.frames=framesFor(state.pose);img.style.height=(mo.frames*100)+'%';img.style.transform='translateY(0)';});
 requestAnimationFrame(tickMo);
 $('#scA').dataset.init='1';

@@ -77,6 +77,7 @@ vi.mock('@/components/agent/chat/ChatPane', async () => {
 })
 
 import { CockpitStateProvider, useCockpitState } from '../../state/CockpitStateProvider'
+import { CockpitLayerStack } from '../../state/CockpitLayerStack'
 import { CockpitChatHost } from '../CockpitChatHost'
 import { CockpitChatWindow } from '../CockpitChatWindow'
 import { resetChatSlots } from '../chat-slots'
@@ -87,6 +88,7 @@ function Controls() {
     <div>
       <button type="button" onClick={() => chatWindow.set({ open: true })}>open</button>
       <button type="button" onClick={() => chatWindow.set({ open: false })}>close</button>
+      <button type="button" onClick={() => chatWindow.openWithFocus()}>openFocus</button>
       <button type="button" onClick={() => chatWindow.set({ mini: true })}>mini</button>
       <span data-testid="telemetry-model">{chat?.model ?? 'null'}</span>
     </div>
@@ -96,9 +98,11 @@ function Controls() {
 function renderShell() {
   return render(
     <CockpitStateProvider entryCabinId="cabin-1">
-      <Controls />
-      <CockpitChatHost entryCabinId="cabin-1" />
-      <CockpitChatWindow />
+      <CockpitLayerStack>
+        <Controls />
+        <CockpitChatHost entryCabinId="cabin-1" />
+        <CockpitChatWindow />
+      </CockpitLayerStack>
     </CockpitStateProvider>,
   )
 }
@@ -133,6 +137,22 @@ describe('CockpitChatHost / CockpitChatWindow — 全程挂载', () => {
     // 关窗后 transcript / composer 节点仍在（只是 display:none）。
     expect(screen.getByTestId('cockpit-chat-transcript')).toBeTruthy()
     expect(screen.getByTestId('cockpit-composer-slot').getAttribute('data-has-composer')).toBe('true')
+  })
+
+  it('Esc 收起 = 停靠（data-docked），与 ✕ / ⌄ 同义 —— 底栏一定有 pill 能展开回来', async () => {
+    renderShell()
+    await waitFor(() => expect(screen.getByTestId('chat-pane-mock')).toBeTruthy())
+    const win = screen.getByTestId('cockpit-chat-window')
+    expect(win.getAttribute('data-docked')).toBe('false')
+
+    fireEvent.keyDown(window, { key: 'Escape' })
+    await waitFor(() => expect(win.getAttribute('data-docked')).toBe('true'))
+    // 不是只藏起来（open:false 且 docked:false 的样子）。
+    expect(win.getAttribute('data-open')).toBe('true')
+
+    // 从停靠回来：openWithFocus 清 docked（停靠 pill 的点击）。
+    fireEvent.click(screen.getByText('openFocus'))
+    await waitFor(() => expect(win.getAttribute('data-docked')).toBe('false'))
   })
 
   it('onTelemetry 透传到 CockpitState（舰桥/底栏读的 chat）', async () => {

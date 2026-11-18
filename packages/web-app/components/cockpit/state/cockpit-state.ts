@@ -23,9 +23,10 @@ export type CockpitRef =
 
 export type CockpitRefKind = CockpitRef['kind']
 
-export type CockpitTab = 'overview' | 'relay' | 'run' | 'changes' | 'accept' | 'files' | 'debug'
+export type CockpitTab = 'overview' | 'relay' | 'run' | 'changes' | 'accept' | 'files' | 'debug' | 'project'
 
-export const COCKPIT_TABS: readonly CockpitTab[] = ['overview', 'relay', 'run', 'changes', 'accept', 'files', 'debug']
+/** 页签顺序 = 原型 .dtabs（v21 五轮补齐第 8 个「项目」）。 */
+export const COCKPIT_TABS: readonly CockpitTab[] = ['overview', 'relay', 'run', 'changes', 'accept', 'files', 'debug', 'project']
 
 export const COCKPIT_TAB_LABELS: Record<CockpitTab, string> = {
   overview: '概览',
@@ -35,6 +36,7 @@ export const COCKPIT_TAB_LABELS: Record<CockpitTab, string> = {
   accept: '验收',
   files: '文件',
   debug: '调试',
+  project: '项目',
 }
 
 export function isCockpitTab(value: string | null | undefined): value is CockpitTab {

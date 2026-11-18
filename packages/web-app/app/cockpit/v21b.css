@@ -843,6 +843,9 @@
   from { opacity: 0; transform: translateX(-50%) translateY(12px); }
   to { opacity: 1; transform: translateX(-50%); }
 }
+/* 原型 .panel.geo.open{animation:none}：拖过 / 全屏过就按几何直接呈现，
+   不再播入场动画（否则每帧都被 translateX(-50%) 拽回中间）。 */
+.ck12-face.is-geo { animation: none; }
 .ck12-face::before {
   content: '';
   position: absolute;
@@ -855,7 +858,11 @@
   background: linear-gradient(90deg, var(--ck12-teal), var(--ck12-sky), var(--ck12-violet), var(--ck12-pink, #ff5c8a));
 }
 
-/* 头部（原型 .ph）：✕ 左置 + 表情标题 / 项目·分支·编号 副行 + 右侧动作。 */
+/* 头部（原型 .ph）：✕ 左置 + 表情标题 / 项目·分支·编号 副行 + 右侧动作。
+   v21 五轮：去掉老 chrome 的 2px 内衬，行高节奏按原型（标题 17 / 副行 13 / 间距 3）。 */
+.ck12-face .ck12-jh { padding: 0; gap: 0; }
+/* face.css 的旧 chrome 给关闭钮留了 2px 左边距；dossier 里按原型紧贴 14px 内衬。 */
+.ck12-face .ck12-jh-x { margin-left: 0; }
 .ck12-dh {
   flex: none;
   display: flex;
@@ -876,9 +883,10 @@
   color: var(--ck12-ink2);
 }
 .ck12-jh-x:hover { background: var(--ck12-red); color: #fff; border-color: var(--ck12-red); }
-.ck12-dh-pt { display: flex; flex-direction: column; min-width: 0; line-height: 1.25; }
+.ck12-dh-pt { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
 .ck12-dh-pt b {
   font-size: 13px;
+  line-height: 1.3;
   font-weight: 800;
   font-family: var(--font-ui);
   color: #fff;
@@ -889,6 +897,7 @@
 .ck12-dh-pt span {
   display: block;
   font-size: 8.5px;
+  line-height: 1.5;
   color: var(--ck12-ink2);
   letter-spacing: 0.1em;
   white-space: nowrap;
@@ -898,13 +907,46 @@
 .ck12-dh-sp { flex: 1; }
 .ck12-dh-acts { flex: none; display: flex; align-items: center; gap: 6px; }
 
-/* 页签（原型 .dtabs / .dtab）：24px 平行四边形。 */
+/* 原型 .pwin：右上角六角「全屏 / 还原」；.pgrip：右下角拖拽缩放。 */
+.ck12-pwin {
+  flex: none;
+  width: 26px;
+  height: 29px;
+  display: grid;
+  place-items: center;
+  clip-path: var(--ck12-hex);
+  background: rgba(255, 255, 255, 0.08);
+  border: 1px solid rgba(185, 179, 217, 0.28);
+  color: var(--ck12-ink2);
+  font-size: 11px;
+  line-height: 1;
+  transition: 0.14s;
+}
+.ck12-pwin:hover { color: #fff; border-color: var(--ck12-teal); background: rgba(46, 230, 214, 0.2); }
+.ck12-pgrip {
+  position: absolute;
+  right: 14px;
+  bottom: 0;
+  width: 24px;
+  height: 14px;
+  z-index: 6;
+  cursor: nwse-resize;
+  background: linear-gradient(135deg, transparent 52%, rgba(46, 230, 214, 0.6) 52%);
+  opacity: 0.55;
+  transition: 0.15s;
+  touch-action: none;
+}
+.ck12-pgrip:hover { opacity: 1; }
+.ck12-face[data-maximized='1'] .ck12-pgrip { display: none; }
+
+/* 页签（原型 .dtabs / .dtab）：v21 五轮起放进滚动正文（.pb），
+   不再是一条常驻页签栏 —— margin-bottom 8 与原型一致。 */
 .ck12-dtabs {
   flex: none;
   display: flex;
   gap: 5px;
   flex-wrap: wrap;
-  padding: 8px 14px 0;
+  margin-bottom: 8px;
 }
 .ck12-dtab {
   height: 24px;
@@ -982,6 +1024,163 @@
   color: var(--ck12-ink2);
   font-size: 11.5px;
   font-family: var(--font-ui);
+}
+
+/* 详情 · 项目页签（原型 .pnote / .pcard）：本作战绑定的舱籍读数 + 跳转。 */
+.ck12-pnote {
+  padding: 6px 10px;
+  margin-bottom: 9px;
+  font-size: 9.5px;
+  color: var(--ck12-amber);
+  border: 1px dashed rgba(255, 176, 32, 0.4);
+  background: rgba(255, 176, 32, 0.07);
+}
+.ck12-pcard {
+  padding: 10px 12px;
+  margin-bottom: 8px;
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(185, 179, 217, 0.16);
+  border-left: 3px solid var(--ck12-sky);
+}
+.ck12-pcard-h { display: flex; align-items: center; gap: 8px; }
+.ck12-pcard-h b { font-size: 12.5px; font-weight: 800; font-family: var(--font-ui); color: #fff; }
+.ck12-pcard-og { font-size: 9px; color: var(--ck12-ink2); }
+.ck12-pcard-git { margin-top: 3px; font-size: 9.5px; color: var(--ck12-ink2); }
+.ck12-pcard-git b { color: var(--ck12-teal); font-weight: 700; }
+.ck12-pcard-stats {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin-top: 6px;
+  font-size: 9.5px;
+  color: var(--ck12-ink2);
+}
+.ck12-pcard-stats b { color: #fff; }
+.ck12-pcard-wt { margin-top: 4px; font-size: 8.5px; color: var(--ck12-metal2); word-break: break-all; }
+.ck12-pcard-acts { display: flex; flex-wrap: wrap; gap: 14px; margin-top: 6px; }
+.ck12-pcard-acts button {
+  font-size: 9.5px;
+  font-weight: 800;
+  color: var(--ck12-sky);
+}
+.ck12-pcard-acts button:hover { color: #fff; }
+.ck12-pcard-acts button.is-danger { color: var(--ck12-red); }
+.ck12-pcard-acts button:disabled { opacity: 0.45; cursor: default; }
+.ck12-pcard-src {
+  margin-left: auto;
+  padding: 1px 7px;
+  font-size: 8px;
+  font-weight: 800;
+  letter-spacing: 0.06em;
+  clip-path: polygon(0 0, 100% 0, calc(100% - 4px) 100%, 0 100%);
+  background: rgba(53, 199, 240, 0.18);
+  color: var(--ck12-sky);
+}
+.ck12-pcard-src[data-source='local'] {
+  background: rgba(255, 255, 255, 0.08);
+  color: var(--ck12-ink2);
+}
+/* 项目面里的作战行：沿用 .ck12-ev 的一行三段，但整体是按钮。 */
+button.ck12-ev { width: 100%; text-align: left; background: none; }
+button.ck12-ev:hover { background: rgba(255, 255, 255, 0.04); }
+.ck12-pcard.is-clickable { cursor: pointer; transition: 0.14s; }
+.ck12-pcard.is-clickable:hover { background: rgba(255, 255, 255, 0.08); }
+
+/* 项目页签（v21 六轮，原型 .pjrow）：一行一个项目 —— 名称 / 分支 / 完整路径 / 只读。 */
+.ck12-pjrow {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 9px 12px;
+  margin-bottom: 7px;
+  text-align: left;
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(185, 179, 217, 0.16);
+  border-left: 3px solid var(--ck-a);
+  transition: 0.13s;
+}
+.ck12-pjrow:hover {
+  background: rgba(255, 255, 255, 0.1);
+  border-color: rgba(46, 230, 214, 0.45);
+  border-left-color: var(--ck-a);
+}
+.ck12-pjrow:disabled { opacity: 0.55; cursor: default; }
+.ck12-pjrow-g { flex: none; font-size: 13px; color: var(--ck-a); }
+.ck12-pjrow-m { flex: 1; min-width: 0; }
+.ck12-pjrow-m b {
+  display: block;
+  font-size: 12px;
+  font-weight: 800;
+  font-family: var(--font-ui);
+  color: #fff;
+}
+.ck12-pjrow-m span {
+  display: block;
+  margin-top: 2px;
+  font-family: var(--font-mono);
+  font-size: 9px;
+  color: var(--ck12-ink2);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.ck12-pjrow-m span b { display: inline; color: var(--ck12-teal); font-weight: 800; }
+.ck12-pjrow-ro {
+  flex: none;
+  padding: 1px 7px;
+  border-radius: 999px;
+  border: 1px solid var(--ck12-bd);
+  font-size: 8px;
+  letter-spacing: 0.1em;
+  color: var(--ck12-faint);
+}
+.ck12-pjrow-go { flex: none; font-size: 9.5px; font-weight: 800; color: var(--ck12-sky); }
+
+/* 目录树窗口（v21 六轮，原型 #twin）：叠在 dossier（201）之上的第二窗口。
+   左树（.ck12-files-tree）与右内容（.ck12-files-pre）各自独立滚动。 */
+.ck12-treewin {
+  position: fixed;
+  left: 50%;
+  top: 96px;
+  transform: translateX(-50%);
+  width: min(900px, 92vw);
+  height: min(620px, calc(100vh - 186px));
+  z-index: 202;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  border-radius: var(--ck12-wrad);
+  overflow: hidden;
+  opacity: var(--ck12-winop, 1);
+  background: var(--ck12-glass2);
+  backdrop-filter: blur(14px) saturate(1.3);
+  border: 1px solid var(--ck12-edge);
+  box-shadow: 0 28px 80px rgba(16, 13, 40, 0.65);
+  animation: ck12-panel-in 0.24s cubic-bezier(0.2, 0.8, 0.2, 1) both;
+}
+.ck12-treewin.is-geo { animation: none; }
+.ck12-treewin::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 0;
+  height: 2px;
+  z-index: 4;
+  pointer-events: none;
+  background: linear-gradient(90deg, var(--ck12-teal), var(--ck12-sky), var(--ck12-violet));
+}
+.ck12-treewin .ck12-jh { padding: 0; gap: 0; }
+.ck12-treewin .ck12-jh-x { margin-left: 0; }
+.ck12-treewin-b {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px 14px;
 }
 
 /* 六角图标按钮的 hover 统一：红 = 关闭，青 = 常规 */
@@ -1208,6 +1407,7 @@
   .ck12-condock-hint { display: inline; }
   /* 原型 ≤900：详情面板 96vw、上下更贴边。 */
   .ck12-face { top: 60px; bottom: 10px; width: 96vw; }
+  .ck12-treewin { top: 64px; width: 96vw; height: calc(100vh - 130px); }
 }
 @media (max-width: 560px) {
   .ck12-comms-act { padding: 0 7px; }

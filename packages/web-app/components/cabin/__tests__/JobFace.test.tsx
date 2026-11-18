@@ -41,7 +41,7 @@ vi.mock('@/lib/tasks-api', async (importOriginal) => {
 import {
   getCabinJob, getCabinUsage, listCabinJobs, type CabinJobView,
 } from '@/lib/cabin-api'
-import { abortTask, getHomeTree, getTask, pauseTask, resumeTask } from '@/lib/tasks-api'
+import { getHomeTree, getTask } from '@/lib/tasks-api'
 import { getSession } from '@/lib/agent/api'
 import { JobFace, JOB_FACE_TIMEOUT_MS } from '../job-face'
 import type { CockpitTab } from '../../cockpit/state/cockpit-state'
@@ -150,9 +150,6 @@ function Harness({
 
 beforeEach(() => {
   vi.clearAllMocks()
-  vi.mocked(pauseTask).mockResolvedValue({} as never)
-  vi.mocked(resumeTask).mockResolvedValue({} as never)
-  vi.mocked(abortTask).mockResolvedValue({} as never)
   vi.mocked(getHomeTree).mockResolvedValue({ dir: '/tmp/task-home', entries: [] })
   vi.mocked(getSession).mockResolvedValue({
     messages: { items: [], has_more: false, next_cursor: null, total: 0 },
@@ -160,17 +157,18 @@ beforeEach(() => {
 })
 
 describe('JobFace（cockpit）', () => {
-  it('五页签渲染与切换；概览给统计读数（不再铺事件流）', async () => {
-    // workflow + 无 ref：运行/变更/验收都是轻量空态，只验页签与真统计。
+  it('五页签渲染与切换；概览按原型 kv 给读数（不再铺事件流）', async () => {
+    // workflow + 无 ref：运行/变更/验收都是轻量空态，只验页签与真读数。
     mockJob({ kind: 'workflow', ref_id: null, title: '接入渠道' })
     render(<Harness />)
     await screen.findByTestId('cockpit-job-header')
     const overview = await screen.findByTestId('cabin-job-overview')
-    // 统计来自真事件：2 条交接（派发 1 / 回报 1），最近一条写「正在跑 node-2」。
-    expect(overview.textContent).toContain('交接 2')
-    expect(overview.textContent).toContain('派发 1')
-    expect(overview.textContent).toContain('最近交接')
+    // v21 dossier 概览：kv 读数 + 当前在做 + 最近事件（最近一条来自真事件）。
+    expect(overview.textContent).toContain('状态')
+    expect(overview.textContent).toContain('执行者')
+    expect(overview.textContent).toContain('当前在做')
     expect(overview.textContent).toContain('正在跑 node-2')
+    expect(overview.textContent).toContain('最近事件')
     // 事件流已从概览移走：概览里不再逐条列 event。
     expect(screen.queryByTestId('cabin-job-event-e1')).toBeNull()
 
@@ -182,44 +180,31 @@ describe('JobFace（cockpit）', () => {
     expect(await screen.findByTestId('cabin-job-changes')).toBeInTheDocument()
     fireEvent.click(screen.getByTestId('cockpit-tab-accept'))
     expect(await screen.findByTestId('cabin-job-accept')).toBeInTheDocument()
+    // v21 五轮：第八个页签「项目」与原型一致（没有锚点时给明确空态）。
+    fireEvent.click(screen.getByTestId('cockpit-tab-project'))
+    expect(await screen.findByTestId('cabin-job-project')).toBeInTheDocument()
     fireEvent.click(screen.getByTestId('cockpit-tab-overview'))
     expect(await screen.findByTestId('cabin-job-overview')).toBeInTheDocument()
   })
 
-  it('行2 用 §1.5 派生：分支 / 在做 / 执行者短 id / 舱名 / 用时 / ¥', async () => {
+  it('头部副行按原型：项目/舱名 · 分支 · 编号（执行者与耗时只在概览 kv）', async () => {
     mockJob({}, { branch: 'feat-cabin' })
-    vi.mocked(getCabinUsage).mockResolvedValue({
-      summary: {},
-      byJob: [
-        {
-          job_id: 'j1',
-          kind: 'task',
-          label: '接入渠道',
-          ref_id: 't1',
-          totalCalls: 1,
-          usage: { inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheCreationTokens: 0 },
-          totals: { tokens: 0, cost: { usd: 0.18, complete: true }, cacheHitRate: null },
-        },
-      ],
-      subagents: { runs: [] },
-      grand: {},
-      timing: {},
-    } as never)
 
     render(<Harness />)
     const header = await screen.findByTestId('cockpit-job-header')
     await waitFor(() => expect(header.textContent).toContain('feat-cabin'))
-    expect(header.textContent).toContain('正在跑 node-2') // 最后一条 event summary
-    expect(header.textContent).toContain('sess-abc') // session_id 短 id
-    expect(header.textContent).toContain('⏱')
-    await waitFor(() => expect(header.textContent).toContain('¥1.26'))
+    expect(header.textContent).toContain('Aurora') // 无项目锚点 → 舱名
+    expect(header.textContent).toContain('t1') // 编号 = ref 短号
+    expect(header.textContent).not.toContain('sess-abc') // 执行者短 id 不再挤进头部
+    expect(header.textContent).not.toContain('¥') // 消耗读数只在概览 kv
   })
 
-  it('§1.5 缺值不留占位：无 branch/成本时行2 只剩真实段', async () => {
+  it('§1.5 缺值不留占位：无 branch 时副行只剩 舱名 · 编号', async () => {
     mockJob()
     render(<Harness />)
     const header = await screen.findByTestId('cockpit-job-header')
-    await waitFor(() => expect(header.textContent).toContain('sess-abc'))
+    await waitFor(() => expect(header.textContent).toContain('t1'))
+    expect(header.textContent).toContain('Aurora')
     expect(header.textContent).not.toContain('¥')
     expect(header.textContent).not.toContain('--')
   })
@@ -303,24 +288,26 @@ describe('JobFace（cockpit）', () => {
     }
   })
 
-  it('task 动作：暂停/中止走 lib/tasks-api 现有函数并 refetch', async () => {
+  it('头部右上不再有任何动作按钮（v21 五轮：项目签 / 中止 / 谈 / 决断 / 调试 / 去处理全撤）', async () => {
     mockJob()
-    const onMutated = vi.fn()
-    render(<Harness onMutated={onMutated} />)
-    fireEvent.click(await screen.findByTestId('cockpit-job-pause'))
-    await waitFor(() => expect(pauseTask).toHaveBeenCalledWith('t1'))
-    fireEvent.click(screen.getByTestId('cockpit-job-abort'))
-    await waitFor(() => expect(abortTask).toHaveBeenCalledWith('t1'))
-    await waitFor(() => expect(onMutated).toHaveBeenCalled())
-  })
-
-  it('paused 时只给「继续」，调用 resumeTask', async () => {
-    mockJob({ status: 'paused' })
-    render(<Harness />)
-    expect(await screen.findByTestId('cockpit-job-resume')).toBeInTheDocument()
-    expect(screen.queryByTestId('cockpit-job-pause')).toBeNull()
-    fireEvent.click(screen.getByTestId('cockpit-job-resume'))
-    await waitFor(() => expect(resumeTask).toHaveBeenCalledWith('t1'))
+    render(
+      <Harness
+        attention={{
+          id: 'a1', job_id: 'j1', stage: 'review', awaiting: 'person', title: '产物已就绪',
+          task_id: 't1', repo: 'pay', wt: null, deep_link: null,
+        }}
+      />,
+    )
+    const header = await screen.findByTestId('cockpit-job-header')
+    for (const id of [
+      'cockpit-job-pause', 'cockpit-job-abort', 'cockpit-job-resume',
+      'cockpit-job-talk', 'cockpit-job-ops', 'cockpit-job-debug-tab',
+      'cockpit-job-project', 'cockpit-job-project-tag', 'cockpit-job-go',
+    ]) {
+      expect(screen.queryByTestId(id), `${id} 不该再出现`).toBeNull()
+    }
+    // 只有关闭（dossier 外无 ⛶ —— 那是 CockpitFace 通过 Provider 给的）。
+    expect(header.querySelectorAll('.ck12-dh button')).toHaveLength(1)
   })
 
   it('非 task 作业：变更/验收是明确空态（不伪造）', async () => {
@@ -332,20 +319,6 @@ describe('JobFace（cockpit）', () => {
     fireEvent.click(screen.getByTestId('cockpit-tab-accept'))
     expect((await screen.findByTestId('cabin-job-accept')).textContent)
       .toContain('这条工作流作业没有交付验收单')
-  })
-
-  it('有 attention 时「去处理 →」按 stage 切页签（review → 验收）', async () => {
-    mockJob({ kind: 'workflow', ref_id: null, status: 'awaiting_review' })
-    render(
-      <Harness
-        attention={{
-          id: 'a1', job_id: 'j1', stage: 'review', awaiting: 'person', title: '产物已就绪',
-          task_id: 't1', repo: 'pay', wt: null, deep_link: null,
-        }}
-      />,
-    )
-    fireEvent.click(await screen.findByTestId('cockpit-job-go'))
-    expect(await screen.findByTestId('cabin-job-accept')).toBeInTheDocument()
   })
 
   it('对接：一条按时间排的交接时间线，每行标出这一跳的方向', async () => {
@@ -584,7 +557,7 @@ describe('JobFace（cockpit）· 加载容错', () => {
     }
   })
 
-  it('载入中：头部就用编队行摘要画（标题/类型/状态），不是空白占位', () => {
+  it('载入中：头部就用编队行摘要画（标题/状态表情/舱名），不是空白占位', () => {
     vi.mocked(getCabinJob).mockImplementation(() => new Promise(() => {}))
     vi.mocked(listCabinJobs).mockImplementation(() => new Promise(() => {}))
     render(
@@ -592,8 +565,9 @@ describe('JobFace（cockpit）· 加载容错', () => {
     )
     const header = screen.getByTestId('cockpit-job-header')
     expect(header.textContent).toContain('C 端用户体系')
-    expect(header.textContent).toContain('任务')
-    expect(header.textContent).toContain('已中止')
+    // 原型 .ph 行：状态表情 + 标题；副行给真实段（舱名），空段省略。
+    expect(header.textContent).toContain('✅')
+    expect(header.textContent).toContain('Aurora')
     // 载入态带秒数自证：不是一动不动的「载入作业…」。
     expect(screen.getByTestId('cockpit-face-job').textContent).toMatch(/载入作业.*已 \d+s/)
   })

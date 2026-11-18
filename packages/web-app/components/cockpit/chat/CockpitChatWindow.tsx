@@ -194,14 +194,16 @@ export function CockpitChatWindow() {
     return () => observer.disconnect()
   }, [open, computeDefaultRect])
 
-  // Esc 栈：流式中先停流，再按一次才收窗。docked 时不注册（pill 不是交互层）。
+  // Esc 栈：流式中先停流，再按一次才收台。收起 = 停靠 pill（与 ✕ / ⌄ 同义）——
+  // 只置 open:false 会把台藏掉却不给底栏展开控件，整台就找不回来了（用户反馈）。
+  // docked 时不注册（pill 不是交互层）。
   const closeLayer = useCallback(() => {
     const current = chatRef.current
     if (current?.streaming) {
       current.stop()
       return
     }
-    setRef.current({ open: false })
+    setRef.current({ docked: true })
   }, [])
   useEffect(() => {
     if (!open || docked) return

@@ -339,3 +339,52 @@
 `cockpit-panel-debug` + `cockpit-main-debug-inspector`）；HUD 六项实测 32px / 同一 y 对齐；
 原型 `.hud` 六项同样 32px 对齐、`.player` 计数 0；`_fidelity-v21.mjs` 四档 PASS，新增
 `hud.items32 / itemsAligned / items32_vs_proto` 与 `composer.ta.h(36) / ta.h_vs_proto`。
+
+### 9.8 五轮收口（2026-11-18 · 编队详情弹窗 → 原型 .panel）
+
+用户反馈「编队的详情弹窗，生产的实现没跟原型对齐」。对照实测后按原型 `.panel / .pscrim`
+逐项收口（此前三轮只做了外观，结构/窗口化仍缺）：
+
+| 差异（改前实测） | 原型 | 生产落地 |
+|---|---|---|
+| 页签是头部下的一条常驻带（`dtabs` 高 32，滚不走） | `.dtabs` 在滚动正文 `.pb` 里，`margin-bottom:8` | `CockpitJobTabs` 渲进 `.ck12-face-body` 首位；页签随内容滚走。实测 `dtabs.top` 120、`dtab.h` 24 与原型同值 |
+| 页签 7 个（缺「项目」） | 8 个：概览/对接/运行/变更/验收/文件/调试/项目 | `CockpitTab` 增 `project`；新增 `CockpitJobProject`：`.pnote` 说明 + `.pcard` 项目卡（名称/org·group/分支·HEAD/作战·在跑·工作树/路径/看项目作战→、工作区文件→）+「本作战的项目坐标」kv |
+| 头部 47px、标题与副行贴死；关闭钮被旧 2px 边距顶开 | `.ph` 51px：标题 17 + 间距 3 + 副行 13 | `.ck12-dh-pt` gap 4 / 副行 line-height 1.5；`.ck12-face .ck12-jh{padding:0}`、`.ck12-face .ck12-jh-x{margin-left:0}`。实测 head 51、关闭钮 435/69、副行 88–101 与原型逐值相等 |
+| 右上挤着一排动作：项目签 / 暂停·中止 / 💬谈 / ◈决断 / ⚙调试 / ⧉舱籍 / 去处理 → | 右上只有 `.pwin` ⛶ | **全部撤除**（用户点名的最大不齐）：头部只剩 ✕ + 标题/副行 + ⛶。操作回到各自入口 —— 谈 = 左栏行 💬、决断 = 右栏「要我处理」、调试 = 详情页签、舱籍 = HUD 舱籍 chip、暂停/中止 = 作业坞。`TaskRunActions` / `onGoHandle` / `actions` / `projectTag` 四个 prop 一并从 `CockpitJobHeader` 删掉 |
+| 副行 `舱名 · 分支 · 执行者短 id` | 项目 · 分支 · 编号 | 副行改「项目（编队行 project_keys 派生，缺省回落舱名）· 分支 · 编号（job.ref_id 短号）」；执行者仍只在概览 kv |
+| 无窗口化：不能拖、不能缩放、没有全屏钮 | 标题栏拖动 / 双击全屏 / `.pwin` ⛶ / 右下 `.pgrip` 缩放，几何会话内保留 | `CockpitFace` 持有 `savedGeo/savedMax`（模块级，关面再开仍回上次几何）；`DossierWindowContext` 把 ⛶ 交给 `CockpitJobHeader`（`.ck12-pwin`，最右）；拖拽 clamp 4/52、缩放 min 420×300、全屏 5/52/vw−10/vh−58，全部照搬原型 |
+| 「项目」页签的项目数量不对：同一条任务 classic 显示 4 个，全舱只有 1 个 | 项目清单来自任务的 `project_ids` | `CockpitJobProject` 改吃 `projects: string[]`：task 用 `taskEntity.project_ids`（与 classic 的「N 项目」同源），workflow/subagent 退回编队行 `project_keys`；每个项目一张 `.pcard`（名称 / org·group / 来源签 / 分支·HEAD / 作战·在跑·工作树 / 路径 / 看该项目作战→、工作区文件→），kv 写「N 个 · 首名 +n」 |
+| 点「看一个项目」显示完全不对，没跟原型样式 | 原型 projects 面板 = `.pnote` + `.pcard` 列表 | `CockpitProjectFace` / `CockpitManifestFace` 整面按原型 `.pnote` + `.pcard` 重画（真实动作收进 `.ck12-pcard-acts`，不再用旧 `.ck12-pj-pane` 两栏）；两面与 attention 面统一换 `CockpitFaceHead`（`.ck12-dh`：✕ 左置 + 标题/副行 + 唯一 ⛶） |
+
+门禁：`vitest components/cockpit + JobFace` 25 文件 / **244 例全绿**（JobFace 里三条 v12 时代的
+旧断言借此改到 v21 契约：概览 kv、副行取项目/编号、载入态不再断言类型 chip）；
+`tsc` 改动文件 0 error；`eslint` 改动文件 0 error；
+`_fidelity-v21.mjs` 四档 PASS（1600 新增 20 项 dossier 断言：panel 六边、head.h=51、页签在正文 /
+8 个 / 24px / top=120、缩放柄、⛶ 全屏四边 + 与原型同值）；
+e2e `cockpit-v21-fidelity` 新增「详情 dossier」用例（居中 760 / 8 页签在正文 / ⛶ 全屏与还原 / 缩放柄）。
+
+**§7 差异追加**：无（本轮新增的「项目」页签与头部动作都按原型收齐；头部不再有生产独有的按钮）。
+
+### 9.9 六轮（2026-11-18 · 项目页签重设计 · 原型确认后已落地生产）
+
+用户：项目这块**原型和生产都太复杂**。任务必然指向 git worktree —— 点击只看该 worktree 的目录树，
+**再弹一个窗口**叠在 dossier 上；只关注任务 / 会话**自己的**项目；全部只读；左树带筛选、左右各自独立滚动条。
+原型改完经用户确认，另点一条：**路径要显示完整路径**。
+
+| 项 | 旧 | 新（原型 `cockpit-v21.html` + 生产） |
+|---|---|---|
+| 项目页签 | `.pcard`（名称/org/dirty/HEAD/stats/消耗/路径）+「本作战的项目坐标」kv + 跳转 | `.pnote` 一行说明 + 一行一个 `.pjrow` / `.ck12-pjrow`：`⌗ 名称 · ⎇ 分支 · 完整路径 · 只读 · 目录树 →`；只列本作战项目（任务 = 任务绑定项目集，会话 = 会话锚点），不列全舱舱籍 |
+| 目录树 | 舱级 `ws` 面板，与其它面板共用同一个 `#panel` | 第二窗口：原型 `#twin`（z 46，叠在 dossier 40 上）/ 生产 `CockpitTreeWindow`（z 202，叠在 dossier 201 上）—— `.ph`/`.ck12-dh` = ✕ +「⌗ 目录树 · 项目」+ 副行「⎇ 分支 · 完整路径 · worktree 只读」+ ⛶；chips 只列本作战项目；左 `.ftree`/`.ck12-files-tree`（筛选 + 独立滚动）右 `.tprev`/`.ck12-files-pre`（独立滚动）；标题栏可拖、双击全屏；Esc 先关树窗（层栈 68 > dossier 65）；换选中项 / 关 dossier 连带关树窗 |
+| 路径 | `<ws>/projects/<id>` 占位 | **完整路径**：原型 `D:/octopus-ws/cabin/projects/<id>`；生产以 `/repos/:name/tree` 返回的绝对 `dir` 为准（未加载时退回舱籍 `worktree_path ?? main_path`） |
+| 数据 | 原型 mock、生产读 `project_keys` / 统计卡 | 生产：项目锚点仍与 classic 同源（task `project_ids`），树/文件走既有只读接口 `GET /api/cabins/:id/repos/:name/tree|file`（ff-only、不出根、512KB），沿用 `buildTree/TreeRows/ancestorsOf` |
+| 夹具 | `j-m2` 单项目 | 原型 `j-m2` 加 `projs:['ledger','risk','edge']`，演示任务多项目 |
+
+生产落地文件：`CockpitJobProject.tsx`（重写为 `.ck12-pjrow` 行）、新增 `CockpitTreeWindow.tsx` +
+`tree-window.tsx`（作用域 context）、`CockpitFace.tsx`（挂 provider / 渲染第二窗口 / 换选中项收窗）、
+`project-model.ts`（`matchRepoEntry`）、`v21b.css`（`.ck12-pjrow*` / `.ck12-treewin*`）。
+
+门禁：新增 `CockpitTreeWindow.test.tsx` 4 例（行数据 + scope、头部完整路径、chips 只列本作战、
+筛选与预览、chip 切换、Esc 只收树窗、⛶ 全屏还原）；`vitest components/cockpit + JobFace`
+26 文件 / **245 例全绿**；`tsc` 改动文件 0 error；`eslint` 改动文件 0 error。
+
+

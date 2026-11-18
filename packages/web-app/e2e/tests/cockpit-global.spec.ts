@@ -98,7 +98,7 @@ test.describe("全局座舱 · 真数据 E2E", () => {
     await expect(page.getByTestId("cockpit-job-header")).toBeVisible({ timeout: 30_000 })
 
     // ── 返回：回到进入前的 classic 路径，编队仍在 ──────────────────────
-    await page.getByRole("button", { name: "← 返回作战舱" }).click()
+    await page.getByTestId("cockpit-back").click()
     await expect(page).toHaveURL(new RegExp(`/cabin/${cabinId}(\\?|$)`), { timeout: 30_000 })
     await expect(page.getByTestId("cabin-fleet")).toBeVisible({ timeout: 30_000 })
 
@@ -119,7 +119,7 @@ test.describe("全局座舱 · 真数据 E2E", () => {
       "true",
     )
 
-    await page.getByRole("button", { name: "← 返回作战舱" }).click()
+    await page.getByTestId("cockpit-back").click()
     await expect(page).toHaveURL(new RegExp(`/cabin/${cabinId}(\\?|$)`), { timeout: 30_000 })
 
     expect(audit.filtered, `console errors: ${JSON.stringify(audit.raw, null, 2)}`).toEqual([])
@@ -371,7 +371,7 @@ test.describe("全局座舱 · 真数据 E2E", () => {
     // the canvas loop is alive while the cockpit is mounted.
     expect(inFlight, "starfield did not run while mounted").toBeGreaterThan(5)
 
-    await page.getByRole("button", { name: "← 返回作战舱" }).click()
+    await page.getByTestId("cockpit-back").click()
     await expect(page.getByTestId("cockpit-shell")).toHaveCount(0, { timeout: 20_000 })
     // Let unmount-time one-shots and route transitions drain.
     await page.waitForTimeout(600)

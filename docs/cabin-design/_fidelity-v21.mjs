@@ -261,6 +261,69 @@ function compare(proto, prod, vw) {
   return rows
 }
 
+// ── 详情 dossier（原型 .panel / .pscrim；v21 五轮）─────────────────────
+// proto 用 openPanel('detail') 直接开；prod 点编队第一行（真实入口）。
+
+const protoDossier = () => {
+  const box = (sel) => {
+    const el = document.querySelector(sel)
+    if (!el) return null
+    const r = el.getBoundingClientRect()
+    return { l: Math.round(r.left), t: Math.round(r.top), r: Math.round(r.right), b: Math.round(r.bottom), w: Math.round(r.width), h: Math.round(r.height) }
+  }
+  return {
+    open: document.querySelector('#panel')?.classList.contains('open') ?? false,
+    rect: box('#panel'),
+    head: box('#panel .ph'),
+    tabs: box('#panel .dtabs'),
+    tabH: box('#panel .dtab')?.h ?? null,
+    tabCount: document.querySelectorAll('#panel .dtab').length,
+    tabsInBody: !!document.querySelector('#panel .pb .dtabs'),
+    grip: box('#panel .pgrip'),
+  }
+}
+
+const prodDossier = () => {
+  const box = (sel) => {
+    const el = document.querySelector(sel)
+    if (!el) return null
+    const r = el.getBoundingClientRect()
+    return { l: Math.round(r.left), t: Math.round(r.top), r: Math.round(r.right), b: Math.round(r.bottom), w: Math.round(r.width), h: Math.round(r.height) }
+  }
+  return {
+    open: !!document.querySelector('[data-testid="cockpit-face"]'),
+    rect: box('[data-testid="cockpit-face"]'),
+    head: box('[data-testid="cockpit-face"] .ck12-dh'),
+    tabs: box('[data-testid="cockpit-face"] .ck12-dtabs'),
+    tabH: box('[data-testid="cockpit-tab-overview"]')?.h ?? null,
+    tabCount: document.querySelectorAll('[data-testid^="cockpit-tab-"]').length,
+    tabsInBody: !!document.querySelector('.ck12-face-body .ck12-dtabs'),
+    grip: box('[data-testid="cockpit-dossier-grip"]'),
+    headButtons: document.querySelectorAll('[data-testid="cockpit-face"] .ck12-dh button').length,
+  }
+}
+
+function compareDossier(proto, prod) {
+  const rows = []
+  const push = (key, expected, actual, ok, note) => rows.push({ key, expected, actual, ok, ...(note ? { note } : {}) })
+  const near = (key, expected, actual, tol = 2) => push(key, expected, actual,
+    typeof expected === 'number' && typeof actual === 'number' && Math.abs(expected - actual) <= tol, `±${tol}`)
+  push('dossier.open', true, prod.open, proto.open === true && prod.open === true)
+  for (const side of ['l', 't', 'r', 'b', 'w', 'h']) {
+    near(`dossier.panel.${side}`, proto.rect?.[side], prod.rect?.[side])
+  }
+  near('dossier.head.h', proto.head?.h, prod.head?.h)
+  push('dossier.tabs.inBody', true, [proto.tabsInBody, prod.tabsInBody],
+    proto.tabsInBody === true && prod.tabsInBody === true, '页签在滚动正文（原型 .pb）里')
+  push('dossier.tabs.count', proto.tabCount, prod.tabCount, proto.tabCount === prod.tabCount)
+  near('dossier.tab.h', proto.tabH, prod.tabH, 0)
+  near('dossier.tabs.t', proto.tabs?.t, prod.tabs?.t)
+  push('dossier.grip.present', true, !!prod.grip?.w, (prod.grip?.w ?? 0) > 0, '右下角拖拽缩放')
+  push('dossier.head.buttons', 2, prod.headButtons, prod.headButtons === 2,
+    '右上只有 ✕ + ⛶（项目签/中止/谈/决断/调试/去处理全撤）')
+  return rows
+}
+
 // ── 主流程 ─────────────────────────────────────────────────────────────
 
 const browser = await chromium.launch({ args: ['--disable-gpu'] })
@@ -317,6 +380,59 @@ try {
     const p = await protoPage.evaluate(protoSample)
     const q = await prodPage.evaluate(prodSample)
     const rows = compare(p, q, w)
+
+    // 详情 dossier（原型 .panel）：宽档才验（≤1240 编队是图标栏 / 抽屉，入口不同）。
+    if (w > 1240) {
+      await protoPage.evaluate(() => {
+        state.detailJob = state.jobs[0].id
+        state.detailTab = 'overview'
+        openPanel('detail')
+      })
+      await prodPage.locator('[data-testid^="cockpit-rail-row-"]').first().click()
+      // 入场动画（原型 pin：translateY 12 → 0）在无头/后台页里会被限速，
+      // 只能等它真的归零再采样（实测 600ms 可能还差 12px）。
+      const settled = (page, selector) => page.waitForFunction((sel) => {
+        const el = document.querySelector(sel)
+        if (!el) return false
+        const t = getComputedStyle(el).transform
+        if (t === 'none') return true
+        try { return Math.abs(new DOMMatrixReadOnly(t).m42) < 0.5 } catch { return true }
+      }, selector, { timeout: 20_000 }).catch(() => {})
+      await protoPage.bringToFront()
+      await settled(protoPage, '#panel')
+      await prodPage.bringToFront()
+      await settled(prodPage, '[data-testid="cockpit-face"]')
+      const dp0 = await protoPage.evaluate(protoDossier)
+      rows.push(...compareDossier(dp0, await prodPage.evaluate(prodDossier)))
+
+      // ⛶ 全屏：原型 togglePanelMax / 生产 .pwin，几何应同为 5 / 52 / vw-10 / vh-58。
+      await protoPage.evaluate(() => togglePanelMax())
+      await prodPage.getByTestId('cockpit-dossier-max').click()
+      await protoPage.waitForTimeout(350)
+      await prodPage.waitForTimeout(350)
+      const pmax = await protoPage.evaluate(protoDossier)
+      const qmax = await prodPage.evaluate(prodDossier)
+      for (const side of ['l', 't', 'w', 'h']) {
+        const expected = side === 'w' ? Math.max(360, w - 10) : side === 'h' ? Math.max(260, h - 58) : side === 'l' ? 5 : 52
+        const ok = Math.abs((qmax.rect?.[side] ?? -999) - expected) <= 2
+        rows.push({ key: `dossier.max.${side}`, expected, actual: qmax.rect?.[side], ok, note: '⛶ 全屏几何' })
+      }
+      rows.push({
+        key: 'dossier.max.vs_proto',
+        expected: pmax.rect,
+        actual: qmax.rect,
+        ok: !!pmax.rect && !!qmax.rect && ['l', 't', 'w', 'h'].every((k) => Math.abs(pmax.rect[k] - qmax.rect[k]) <= 2),
+      })
+
+      // 还原 + 收面（下一次循环重新从安静舰桥开始）。
+      await protoPage.evaluate(() => { togglePanelMax(); closePanel() })
+      await prodPage.getByTestId('cockpit-dossier-max').click()
+      await prodPage.waitForTimeout(250)
+      await prodPage.keyboard.press('Escape')
+      await protoPage.waitForTimeout(250)
+      await prodPage.waitForTimeout(350)
+    }
+
     const failed = rows.filter((r) => !r.ok)
     report.viewports[key] = { proto: p, prod: q, rows, failed: failed.length }
     report.failures += failed.length

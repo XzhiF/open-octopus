@@ -2,16 +2,18 @@
 
 // S4 owns this file —— 作业头（variant="cockpit"）。
 // v21 三轮（原型 cockpit-v21.html .panel / .ph / .dtabs）：
-//   行1：✕（左置）→ 状态表情 + 标题 / 副行「项目 · 分支 · 编号」→ 右侧动作；
-//   行2：平行四边形页签（.dtab）。
-// 视觉真源：docs/cabin-design/cockpit-v21.html 的 .ph / .dtabs；样式在 v21b.css。
+//   行1：✕（左置）→ 状态表情 + 标题 / 副行「项目 · 分支 · 编号」→ 右侧只有 ⛶；
+//   行2：平行四边形页签（.dtab）—— 五轮起按原型放进滚动正文（.pb），
+//   由 <CockpitJobTabs> 渲染，不再挂在头部。
+// v21 五轮（用户）：右上不再放任何动作按钮 —— 项目签 / 中止 / 谈 / 决断 / 调试 /
+//   去处理全撤（原型 .ph 只有 ⛶）。作业操作走它自己的入口：
+//   谈 = 左栏行 💬，决断 = 右栏「要我处理」，调试 = 详情页签，舱籍 = HUD 舱籍 chip。
 //
-// 本组件只做呈现：数据由 JobFace / CockpitTaskFace 派生后传入，动作节点
-// （暂停/恢复/中止等）也由调用方拼好放进 `actions`，这里不碰任何 API。
+// 视觉真源：docs/cabin-design/cockpit-v21.html 的 .ph / .dtabs；样式在 v21b.css。
 
-import { useEffect, useState, type ReactNode } from 'react'
-import { ArrowRight, X } from 'lucide-react'
-import type { CabinAttentionItem, CabinJobKind } from '@octopus/shared'
+import { useEffect, useState } from 'react'
+import { X } from 'lucide-react'
+import type { CabinJobKind } from '@octopus/shared'
 import { cn } from '@/lib/utils'
 import { formatDuration } from '@/lib/format'
 import { jobTone, type JobTone } from '@/components/cabin/job-status'
@@ -20,6 +22,7 @@ import {
   COCKPIT_TAB_LABELS,
   type CockpitTab,
 } from '../state/cockpit-state'
+import { useDossierWindow } from './dossier-window'
 
 /** 原型 STATE_EMO：状态表情跟着 tone 走（字面量逐字取自原型）。 */
 const TONE_EMOJI: Record<JobTone, string> = {
@@ -31,24 +34,7 @@ const TONE_EMOJI: Record<JobTone, string> = {
 }
 
 /**
- * attention 阶段 → 主操作落到的页签（plans Step 4 task 2）：
- * review→验收、answer/adjudicate→对接、blocked→运行。
- * approval 是运行中的审批闸，同样落在运行页签（不另造第四种去处）。
- */
-export function tabForAttentionStage(stage: CabinAttentionItem['stage']): CockpitTab {
-  switch (stage) {
-    case 'review':
-      return 'accept'
-    case 'answer':
-    case 'adjudicate':
-      return 'relay'
-    case 'blocked':
-    case 'approval':
-      return 'run'
-  }
-}
-
-/** created_at → ended_at ?? now 的紧凑时长；任一值非法 → null（整段省略）。
+ * created_at → ended_at ?? now 的紧凑时长；任一值非法 → null（整段省略）。
  *  格式化走 `lib/format.formatDuration` 的 compact 档（全站单源，C4 门禁）。 */
 export function elapsedLabel(
   startISO: string | null | undefined,
@@ -83,13 +69,15 @@ export interface CockpitJobHeaderProps {
   kind?: CabinJobKind | null
   title?: string | null
   status?: string | null
-  tab?: CockpitTab | null
-  onTabChange?: (tab: CockpitTab) => void
   /** 关闭 = 收面（select(null)）；必须由调用方接到 CockpitState。 */
   onClose: () => void
 
   /** 行2：分支（task_spec.branch） */
   branch?: string | null
+  /** 行2：项目名（编队行的 project_keys 派生；缺省回落舱名）。 */
+  projectName?: string | null
+  /** 行2：任务 / 作业编号短号（原型 t-2641）。 */
+  jobNo?: string | null
   /** 行2：正在做什么（最后一条 event summary / attention.title / 状态文案） */
   doing?: string | null
   /** 行2：执行者短 id，缺省回落到舱名（§1.5） */
@@ -99,33 +87,25 @@ export interface CockpitJobHeaderProps {
   endedAt?: string | null
   /** 行2：本作业消耗（已按计费设置格式化；null = 省略该段） */
   costLabel?: string | null
-
-  /** 有 attention 才给：渲染「去处理 →」，点击切到对应页签。 */
-  onGoHandle?: () => void
-  /** 按 kind 的真实动作（JobFace/CockpitTaskFace 拼好）。 */
-  actions?: ReactNode
-  /** 项目签（作业有项目锚点才给）：点它打开项目面。 */
-  projectTag?: ReactNode
 }
 
 export function CockpitJobHeader({
   loading = false,
   title,
   status,
-  tab,
-  onTabChange,
   onClose,
   branch,
+  projectName,
+  jobNo,
   executor,
   cabinName,
-  onGoHandle,
-  actions,
-  projectTag,
 }: CockpitJobHeaderProps) {
+  const win = useDossierWindow()
   const tone = jobTone(status)
   const emoji = TONE_EMOJI[tone]
   // 原型 .ph 副行：项目 · 分支 · 编号（拿不到的段整段省略）。
-  const subtitle = [cabinName, branch, executor].filter(Boolean).join(' · ')
+  // 项目优先用编队行派生名，没有锚点才退回舱名；编号缺省退回执行者短 id。
+  const subtitle = [projectName ?? cabinName, branch, jobNo ?? executor].filter(Boolean).join(' · ')
 
   return (
     <div className="ck12-jh" data-testid="cockpit-job-header" data-loading={loading ? '1' : '0'}>
@@ -148,112 +128,49 @@ export function CockpitJobHeader({
         </span>
 
         <span className="ck12-dh-sp" />
-        {!loading && (
-          <span className="ck12-dh-acts">
-            {projectTag}
-            {actions}
-            {onGoHandle && (
-              <button
-                type="button"
-                className="ck12-jh-go"
-                data-testid="cockpit-job-go"
-                onClick={onGoHandle}
-              >
-                去处理 <ArrowRight className="ck12-jh-go-arrow" aria-hidden="true" />
-              </button>
-            )}
-          </span>
+        {/* v21 五轮：右上只有原型 .pwin 的 ⛶（全屏 / 还原，也可双击标题栏）。
+            不再有项目签 / 中止 / 谈 / 决断 / 调试 / 去处理 —— 那些都回到各自入口。 */}
+        {!loading && win && (
+          <button
+            type="button"
+            className="ck12-pwin"
+            data-testid="cockpit-dossier-max"
+            aria-label={win.maximized ? '还原面板' : '全屏面板'}
+            title="全屏 / 还原（也可双击标题栏）"
+            onClick={win.toggleMax}
+          >
+            {win.maximized ? '⤡' : '⛶'}
+          </button>
         )}
       </div>
-
-      {!loading && (
-        <div className="ck12-dtabs" role="tablist" aria-label="作业页签">
-          {COCKPIT_TABS.map((key) => (
-            <button
-              key={key}
-              type="button"
-              role="tab"
-              aria-selected={tab === key}
-              data-testid={`cockpit-tab-${key}`}
-              className={cn('ck12-dtab', tab === key && 'on')}
-              onClick={() => onTabChange?.(key)}
-            >
-              {COCKPIT_TAB_LABELS[key]}
-            </button>
-          ))}
-        </div>
-      )}
     </div>
   )
 }
 
-/**
- * task 类作业的真实动作（暂停 / 恢复 / 中止）—— 只用 lib/tasks-api 现有函数。
- * 只在服务端真会接受的组合上出现（running：暂停+中止；paused：继续；
- * ready：中止），不新写状态机。
- */
-export function TaskRunActions({
-  status,
-  busy,
-  onPause,
-  onResume,
-  onAbort,
+/** 详情页签（原型 .dtabs）：v21 五轮按原型放进滚动正文，和内容一起滚走。
+ *  受控组件 —— tab / onTabChange 由宿主（URL 同步的 CockpitState）给。 */
+export function CockpitJobTabs({
+  tab,
+  onTabChange,
 }: {
-  status: string | null | undefined
-  busy?: string | null
-  onPause: () => void
-  onResume: () => void
-  onAbort: () => void
+  tab?: CockpitTab | null
+  onTabChange?: (tab: CockpitTab) => void
 }) {
-  if (status === 'running') {
-    return (
-      <>
+  return (
+    <div className="ck12-dtabs" role="tablist" aria-label="作业页签">
+      {COCKPIT_TABS.map((key) => (
         <button
+          key={key}
           type="button"
-          className="ck12-jh-btn"
-          data-testid="cockpit-job-pause"
-          disabled={!!busy}
-          onClick={onPause}
+          role="tab"
+          aria-selected={tab === key}
+          data-testid={`cockpit-tab-${key}`}
+          className={cn('ck12-dtab', tab === key && 'on')}
+          onClick={() => onTabChange?.(key)}
         >
-          暂停
+          {COCKPIT_TAB_LABELS[key]}
         </button>
-        <button
-          type="button"
-          className="ck12-jh-btn is-danger"
-          data-testid="cockpit-job-abort"
-          disabled={!!busy}
-          onClick={onAbort}
-        >
-          中止
-        </button>
-      </>
-    )
-  }
-  if (status === 'paused') {
-    return (
-      <button
-        type="button"
-        className="ck12-jh-btn"
-        data-testid="cockpit-job-resume"
-        disabled={!!busy}
-        onClick={onResume}
-      >
-        继续
-      </button>
-    )
-  }
-  if (status === 'ready' || status === 'pending') {
-    return (
-      <button
-        type="button"
-        className="ck12-jh-btn is-danger"
-        data-testid="cockpit-job-abort"
-        disabled={!!busy}
-        onClick={onAbort}
-      >
-        中止
-      </button>
-    )
-  }
-  return null
+      ))}
+    </div>
+  )
 }

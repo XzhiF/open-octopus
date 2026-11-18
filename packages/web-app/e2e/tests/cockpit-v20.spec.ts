@@ -154,7 +154,13 @@ test.describe("全域座舱 v20 · 真数据 E2E", () => {
     await page.getByRole("button", { name: /全部决断/ }).click()
     const ops = page.getByTestId("cockpit-panel-ops")
     await expect(ops).toBeVisible()
-    await expect(page.getByTestId("cockpit-ops-empty")).toBeVisible()
+    // 两种诚实态都算通过：没有待办 → 空态；seed 的 task 派发偶尔会真产出一条
+    // 「待放行」attention（作者进程 SIGTERM 之前落盘）→ 至少一张决策卡。
+    await expect.poll(async () => {
+      const empty = await page.getByTestId("cockpit-ops-empty").count()
+      const cards = await page.locator('[data-testid^="cockpit-ops-card-"]').count()
+      return empty + cards
+    }, { timeout: 10_000 }).toBeGreaterThan(0)
     await page.keyboard.press("Escape")
     await expect(ops).toHaveCount(0)
 

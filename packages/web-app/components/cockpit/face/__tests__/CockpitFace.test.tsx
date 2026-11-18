@@ -261,7 +261,8 @@ describe('CockpitFace — attention 面', () => {
     const face = await screen.findByTestId('cockpit-face')
     await waitFor(() => expect(face.textContent).toContain('finding: 权限漂移'))
     expect(screen.queryByTestId('cockpit-attn-open-task')).toBeNull()
-    expect(face.querySelectorAll('button').length).toBe(1) // 只有关闭
+    // 右上只有关闭 + ⛶（v21 五轮：dossier 头不再放动作按钮）。
+    expect(face.querySelectorAll('button').length).toBe(2)
     window.removeEventListener('octopus:open-task', spy)
   })
 
@@ -278,9 +279,10 @@ describe('CockpitFace — attention 面', () => {
 
     await screen.findByTestId('cockpit-job-header')
     expect(screen.getByTestId('cockpit-face-job')).toBeInTheDocument()
-    // answer → 对接
-    fireEvent.click(screen.getByTestId('cockpit-job-go'))
-    expect(await screen.findByTestId('cabin-job-relay')).toBeInTheDocument()
+    // v21 五轮：头部不再有「去处理 →」捷径（用户：右上按钮多余）；
+    // 待办入口在右栏「要我处理」，详情里按页签自己切。
+    expect(screen.queryByTestId('cockpit-job-go')).toBeNull()
+    expect(screen.getByTestId('cockpit-tab-overview')).toHaveAttribute('aria-selected', 'true')
   })
 })
 

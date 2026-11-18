@@ -7,9 +7,8 @@
 // 空态。数据只从 useCockpitFleet() 的行 + GET /api/tasks/:id（10s 轮询）来。
 
 import { useCallback, useEffect, useState } from 'react'
-import { toast } from 'sonner'
 import { getCabinUsage, type CabinUsagePayload } from '@/lib/cabin-api'
-import { abortTask, getTask, pauseTask, resumeTask, type TaskDetail, type TaskView } from '@/lib/tasks-api'
+import { getTask, type TaskDetail, type TaskView } from '@/lib/tasks-api'
 import { useBillingCurrency } from '@/lib/billing-currency'
 import { formatCost } from '@/lib/format'
 import { ChangesWindow } from '@/components/chat-workbench/changes-window'
@@ -20,9 +19,11 @@ import { clockLabel, openTaskInChat, taskDisplayStatus } from '@/components/cabi
 import { isEndedJob, jobStatusLabel } from '@/components/cabin/job-status'
 import { useCockpitFleet } from '../fleet/CockpitFleetProvider'
 import type { CockpitTab } from '../state/cockpit-state'
-import { CockpitElapsed, CockpitJobHeader, TaskRunActions } from './CockpitJobHeader'
+import { CockpitElapsed, CockpitJobHeader, CockpitJobTabs } from './CockpitJobHeader'
 import { CockpitJobFiles } from './CockpitJobFiles'
 import { CockpitJobDebug } from './CockpitJobDebug'
+import { CockpitJobProject } from './CockpitJobProject'
+import { projectNameFromKey } from '../projects/project-model'
 
 /** 执行记录行的小圆点：只按真实 status 上色，不猜阶段。 */
 function executionTone(status: string): string {
@@ -39,6 +40,8 @@ export interface CockpitTaskFaceProps {
   taskId: string
   entryCabinId: string
   cabinName?: string | null
+  /** 项目名（编队行 project_keys 派生；副行「项目 · 分支 · 编号」第一段）。 */
+  projectName?: string | null
   tab: CockpitTab
   onTabChange(tab: CockpitTab): void
   onClose: () => void
@@ -51,6 +54,7 @@ export function CockpitTaskFace({
   taskId,
   entryCabinId,
   cabinName,
+  projectName,
   tab,
   onTabChange,
   onClose,
@@ -62,7 +66,6 @@ export function CockpitTaskFace({
   const row = found && found.kind === 'task' ? found : null
   const [detail, setDetail] = useState<TaskDetail | null>(null)
   const [usage, setUsage] = useState<CabinUsagePayload | null>(null)
-  const [busy, setBusy] = useState<string | null>(null)
 
   const load = useCallback(async () => {
     try {
@@ -87,7 +90,10 @@ export function CockpitTaskFace({
 
   const currency = useBillingCurrency()
   const view: TaskView | null = detail ?? row?.task ?? null
-  const doerSessionId = view?.doer_session_id ?? null
+  // 项目锚点与副行「项目」段：classic 同源（task.project_ids）。
+  const taskProjects = view?.project_ids ?? []
+  const headerProjectName = projectName
+    ?? (taskProjects.length > 0 ? projectNameFromKey(taskProjects[0]) : null)
   const status = row ? taskDisplayStatus(row.task) : (detail?.derived?.taskStatus ?? detail?.status ?? null)
   const executions = detail?.executions ?? []
   const currentExecution =
@@ -105,24 +111,6 @@ export function CockpitTaskFace({
         taskId,
       }
     : null
-
-  const runAction = async (action: 'pause' | 'resume' | 'abort') => {
-    setBusy(action)
-    try {
-      if (action === 'pause') await pauseTask(taskId)
-      else if (action === 'resume') await resumeTask(taskId)
-      else await abortTask(taskId)
-      toast.success(
-        action === 'pause' ? '已暂停这一轮' : action === 'resume' ? '已继续运行' : '已中止任务',
-      )
-      await load()
-      onMutated?.()
-    } catch (err) {
-      toast.error(err instanceof Error ? err.message : '操作失败')
-    } finally {
-      setBusy(null)
-    }
-  }
 
   const usageRow = usage?.byJob.find((entry) => entry.ref_id === taskId) ?? null
   const costLabel = usageRow && usageRow.totals.cost.usd != null
@@ -340,6 +328,15 @@ export function CockpitTaskFace({
           <CockpitJobDebug sessionId={view?.doer_session_id ?? row?.task.doer_session_id ?? null} />
         </div>
       )}
+      {tab === 'project' && (
+        <div data-testid="cockpit-face-task-project">
+          <CockpitJobProject
+            cabinId={cabinId}
+            projects={taskProjects}
+            branch={detail?.task_spec?.branch ?? null}
+          />
+        </div>
+      )}
     </>
   )
 
@@ -350,50 +347,26 @@ export function CockpitTaskFace({
         kind="task"
         title={view?.name}
         status={status}
-        tab={tab}
-        onTabChange={onTabChange}
         onClose={onClose}
         branch={detail?.task_spec?.branch ?? null}
+        projectName={headerProjectName}
+        jobNo={taskId.slice(0, 8)}
         doing={doing}
         cabinName={cabinName ?? null}
         startedAt={startedAt}
         endedAt={endedAt}
         costLabel={costLabel}
-        actions={
-          <>
-            <TaskRunActions
-              status={status}
-              busy={busy}
-              onPause={() => { void runAction('pause') }}
-              onResume={() => { void runAction('resume') }}
-              onAbort={() => { void runAction('abort') }}
-            />
-            <button
-              type="button"
-              className="ck12-jh-btn"
-              data-testid="cockpit-task-talk"
-              disabled={!doerSessionId}
-              title="💬 直达该作战线程"
-              onClick={() => window.dispatchEvent(new CustomEvent('octopus:open-session', {
-                detail: { sessionId: doerSessionId },
-              }))}
-            >
-              💬 谈
-            </button>
-            <button
-              type="button"
-              className="ck12-jh-btn"
-              data-testid="cockpit-task-debug-tab"
-              title="⚙ 调试 inspect"
-              onClick={() => onTabChange('debug')}
-            >
-              ⚙ 调试
-            </button>
-          </>
-        }
       />
       <div className="ck12-face-body" data-testid="cockpit-face-task">
-        {view ? panes : <div className="ck12-face-empty">载入任务…</div>}
+        {view ? (
+          <>
+            {/* 原型 .dtabs 在滚动正文里（.pb）—— 页签跟内容一起滚走。 */}
+            <CockpitJobTabs tab={tab} onTabChange={onTabChange} />
+            {panes}
+          </>
+        ) : (
+          <div className="ck12-face-empty">载入任务…</div>
+        )}
       </div>
     </>
   )
