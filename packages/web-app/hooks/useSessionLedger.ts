@@ -22,6 +22,8 @@ export interface SessionLedger {
 export function useSessionLedger(
   sessionId: string | null | undefined,
   streaming = false,
+  /** 额外刷新信号（如只读转录的轮询条数）：变化即重拉一次账本。 */
+  refreshNonce = 0,
 ): SessionLedger {
   const [aggregates, setAggregates] = useState<LlmUsageAggregates | null>(null)
   const [calls, setCalls] = useState<LLMCallData[]>([])
@@ -66,7 +68,7 @@ export function useSessionLedger(
       cancelled = true
       if (retryTimer) clearTimeout(retryTimer)
     }
-  }, [sessionId, nonce])
+  }, [sessionId, nonce, refreshNonce])
 
   return { aggregates, calls }
 }

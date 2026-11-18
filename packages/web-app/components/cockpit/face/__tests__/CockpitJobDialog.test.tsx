@@ -5,12 +5,18 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { render, screen, waitFor } from '@testing-library/react'
 
 vi.mock('@/lib/server-config', () => ({ getServerUrl: () => 'http://localhost:3001' }))
+vi.mock('@/lib/billing-currency', () => ({
+  useBillingCurrency: () => ({ currency: 'CNY', rate: 7 }),
+}))
+vi.mock('@/hooks/useSessionLedger', () => ({ useSessionLedger: vi.fn() }))
 vi.mock('@/lib/agent/api', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@/lib/agent/api')>()
   return { ...actual, getSession: vi.fn() }
 })
 
 import { getSession } from '@/lib/agent/api'
+import { useSessionLedger } from '@/hooks/useSessionLedger'
+import type { LLMCallData } from '@/lib/types'
 import type { AgentMessage } from '@/lib/agent/types'
 import { CockpitJobDialog } from '../CockpitJobDialog'
 
@@ -35,7 +41,27 @@ function sessionWith(items: AgentMessage[]) {
 
 beforeEach(() => {
   vi.clearAllMocks()
+  vi.mocked(useSessionLedger).mockReturnValue({ aggregates: null, calls: [] })
 })
+
+function ledgerCall(over: Partial<LLMCallData> = {}): LLMCallData {
+  return {
+    id: 'c1',
+    node_execution_id: '',
+    execution_id: '',
+    turn_index: 1,
+    call_index: 0,
+    duration_ms: 30_000,
+    timestamp: Date.parse('2026-11-18T01:00:20.000Z'),
+    model: 'claude-opus-5',
+    input_tokens: 1000,
+    output_tokens: 200,
+    cache_read_tokens: 800,
+    cache_creation_tokens: 100,
+    cost_usd: 0.02,
+    ...over,
+  }
+}
 
 describe('CockpitJobDialog · 对话页签', () => {
   it('拉任务主会话，按 TUI 转录渲染（❯ 你 / ✳ 汐音），头部给条数与轮数', async () => {
@@ -61,6 +87,57 @@ describe('CockpitJobDialog · 对话页签', () => {
     const log = screen.getByTestId('cockpit-dialog-log')
     expect(log.querySelector('[data-tui-msg="user"]')).not.toBeNull()
     expect(log.querySelector('[data-tui-msg="assistant"]')).not.toBeNull()
+  })
+
+  it('逐轮 meta 挂上 token 与费用（与通讯台同一账本口径）', async () => {
+    vi.mocked(useSessionLedger).mockReturnValue({ aggregates: null, calls: [ledgerCall()] })
+    vi.mocked(getSession).mockResolvedValue(sessionWith([
+      message({ id: 'm1', role: 'user', content: 'M2 的验收跑完叫我。' }),
+      message({
+        id: 'm2',
+        role: 'assistant',
+        content: '收到，我盯到收口。',
+        created_at: '2026-11-18T01:00:05.000Z',
+        thinking: 'plan',
+        timeline: [{ kind: 'thinking', text: 'plan' }],
+        tool_calls: [],
+      }),
+    ]))
+
+    render(<CockpitJobDialog sessionId="sess-1" />)
+
+    const log = await screen.findByTestId('cockpit-dialog-log')
+    await waitFor(() => expect(log.textContent).toContain('2.1K tok'))
+    // 0.02 USD × 7（计费币种 CNY）
+    expect(log.textContent).toContain('¥0.14')
+    expect(log.querySelector('[data-tui-meta="closed"]')).not.toBeNull()
+  })
+
+  it('委托线程（user 行全是事件卡）也照常显示 tok/费用', async () => {
+    vi.mocked(useSessionLedger).mockReturnValue({ aggregates: null, calls: [ledgerCall()] })
+    vi.mocked(getSession).mockResolvedValue(sessionWith([
+      message({
+        id: 'm1',
+        role: 'user',
+        displayType: 'event',
+        content: '[汐音 · 代用户转达] 任务「支付回调」',
+      }),
+      message({
+        id: 'm2',
+        role: 'assistant',
+        content: '收到，先读舱需求。',
+        created_at: '2026-11-18T01:00:05.000Z',
+        thinking: 'plan',
+        timeline: [{ kind: 'thinking', text: 'plan' }],
+        tool_calls: [],
+      }),
+    ]))
+
+    render(<CockpitJobDialog sessionId="sess-1" />)
+
+    const log = await screen.findByTestId('cockpit-dialog-log')
+    await waitFor(() => expect(log.textContent).toContain('2.1K tok'))
+    expect(log.textContent).toContain('¥0.14')
   })
 
   it('事件卡不是提问：轮数只数人说的话', async () => {

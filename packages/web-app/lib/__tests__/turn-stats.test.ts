@@ -163,6 +163,68 @@ describe("buildTurnStats — 账本归属", () => {
     expect(stats.get("a-2")!.calls).toBe(1)
   })
 
+  it("委托线程（user 行全是汐音代转达的事件卡）：没有真人边界也把账归回该轮", () => {
+    // 2026-11-19 真机：舱调度者派发的任务线程，user 行全是 displayType=event
+    // 的派发卡 / 任务状态卡，userStarts 为空 → 整条线程每轮 tok/¥ 全空，
+    // 而 llm_calls 有账（结果 chunk 在状态卡之后才落库）。
+    const messages = [
+      msg({
+        id: "ev-dispatch", role: "user", displayType: "event",
+        content: "[汐音 · 代用户转达] 任务「支付回调」", created_at: iso(T0),
+      }),
+      assistantWithProcess(T0 + 2_500),
+      msg({
+        id: "ev-status", role: "user", displayType: "event",
+        content: "[任务状态 · launch_proposal] 启动方式待选择", created_at: iso(T0 + 120_000),
+      }),
+    ]
+    const calls = [
+      call({
+        id: "c1", timestamp: T0 + 123_000, duration_ms: 120_500,
+        input_tokens: 900, output_tokens: 30, cache_read_tokens: 500, cost_usd: 0.01,
+      }),
+    ]
+    const stats = buildTurnStats(messages, calls).get("a-1")!
+    expect(stats).toBeDefined()
+    expect(stats.inputTokens).toBe(900)
+    expect(stats.tokens).toBe(1430)
+    expect(stats.costUsd).toBeCloseTo(0.01, 10)
+  })
+
+  it("多轮委托线程：按 assistant 分段起点分账，事件卡不切轮", () => {
+    const messages = [
+      msg({ id: "ev-1", role: "user", displayType: "event", content: "[代用户转达] 第一轮", created_at: iso(T0) }),
+      assistantWithProcess(T0 + 5_000),
+      msg({ id: "ev-2", role: "user", displayType: "event", content: "[代用户转达] 第二轮", created_at: iso(T0 + 100_000) }),
+      { ...assistantWithProcess(T0 + 105_000), id: "a-2" },
+    ]
+    const calls = [
+      call({ id: "c1", timestamp: T0 + 90_000, duration_ms: 85_000, input_tokens: 1000 }),
+      call({ id: "c2", timestamp: T0 + 120_000, duration_ms: 15_000, input_tokens: 500 }),
+    ]
+    const stats = buildTurnStats(messages, calls)
+    expect(stats.get("a-1")!.inputTokens).toBe(1000)
+    expect(stats.get("a-1")!.calls).toBe(1)
+    expect(stats.get("a-2")!.inputTokens).toBe(500)
+    expect(stats.get("a-2")!.calls).toBe(1)
+  })
+
+  it("委托前缀 + 之后有真人发言：前缀轮走对话开头兜底，之后仍按真人边界切", () => {
+    const messages = [
+      msg({ id: "ev-1", role: "user", displayType: "event", content: "[代用户转达]", created_at: iso(T0) }),
+      assistantWithProcess(T0 + 5_000),
+      msg({ id: "u-1", role: "user", content: "继续", created_at: iso(T0 + 100_000) }),
+      { ...assistantWithProcess(T0 + 105_000), id: "a-2" },
+    ]
+    const calls = [
+      call({ id: "c1", timestamp: T0 + 90_000, duration_ms: 85_000, input_tokens: 1000 }),
+      call({ id: "c2", timestamp: T0 + 120_000, duration_ms: 15_000, input_tokens: 500 }),
+    ]
+    const stats = buildTurnStats(messages, calls)
+    expect(stats.get("a-1")!.inputTokens).toBe(1000)
+    expect(stats.get("a-2")!.inputTokens).toBe(500)
+  })
+
   it("有 message_id 的行精确归属，优先于时间窗", () => {
     const messages = [
       msg({ id: "u-1", role: "user", created_at: iso(T0) }),

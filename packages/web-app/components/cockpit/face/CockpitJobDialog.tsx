@@ -6,10 +6,17 @@
 // TUI 转录件（TuiMessage）渲染 —— 转录只是换了个宿主，格式不另造。
 // 只读：在这里不接 composer；要接着聊去通讯台（任务线程）。
 // 没有主会话的作战（workflow / subagent）给明确空态，不拿执行账本冒充对话。
+//
+// 2026-11-19（用户：委托任务的 TUI chat 看不到 token/费用）：转录件的过程 meta
+// 靠 message.turnStats，通讯台是 ChatPane 用会话账本算出来的；这里只拉消息，
+// 于是 tok/¥ 永远不出现。现在同一节奏拉 /api/sessions/:id/llm-calls，用同一
+// 个 buildTurnStats 挂回去 —— 换宿主不换口径。
 
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { getSession } from '@/lib/agent/api'
 import type { AgentMessage } from '@/lib/agent/types'
+import { useSessionLedger } from '@/hooks/useSessionLedger'
+import { buildTurnStats } from '@/lib/turn-stats'
 import { TuiMessage } from '@/components/agent/chat/TuiTranscript'
 
 /** 与详情其它页签同节奏：10s 拉一次快照（运行中的作战也能看到新记录）。 */
@@ -28,6 +35,8 @@ export function CockpitJobDialog({ sessionId }: CockpitJobDialogProps) {
   const [error, setError] = useState<string | null>(null)
   const bodyRef = useRef<HTMLDivElement | null>(null)
   const stuckRef = useRef(true)
+  // 逐轮 token/费用：账本按会话拉，消息条数变化（轮询发现新轮）即重拉一次。
+  const { calls } = useSessionLedger(sessionId, false, messages.length)
 
   const load = useCallback(async () => {
     if (!sessionId) return
@@ -72,6 +81,17 @@ export function CockpitJobDialog({ sessionId }: CockpitJobDialogProps) {
     (message) => message.role === 'user' && message.displayType !== 'event',
   ).length
 
+  // 挂回逐轮统计（与通讯台同一口径）；账本还没到位时原样渲染，不闪占位。
+  const viewMessages = useMemo(() => {
+    if (messages.length === 0 || calls.length === 0) return messages
+    const stats = buildTurnStats(messages, calls)
+    if (stats.size === 0) return messages
+    return messages.map((message) => {
+      const turnStats = stats.get(message.id)
+      return turnStats ? { ...message, turnStats } : message
+    })
+  }, [messages, calls])
+
   return (
     <div className="ck12-dcon" data-testid="cockpit-dialog">
       <div className="ck12-dcon-h">
@@ -92,10 +112,10 @@ export function CockpitJobDialog({ sessionId }: CockpitJobDialogProps) {
           <div className="ck12-face-empty">{error}</div>
         ) : loading && messages.length === 0 ? (
           <div className="ck12-face-empty">载入对话记录…</div>
-        ) : messages.length === 0 ? (
+        ) : viewMessages.length === 0 ? (
           <div className="ck12-face-empty">这条作战还没有对话记录。</div>
         ) : (
-          messages.map((message) => <TuiMessage key={message.id} message={message} />)
+          viewMessages.map((message) => <TuiMessage key={message.id} message={message} />)
         )}
       </div>
     </div>
