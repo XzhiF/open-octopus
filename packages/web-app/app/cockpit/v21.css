@@ -181,11 +181,16 @@
   font-size: 12.5px;
 }
 
-/* TUI 行：标记 → 正文 → 时间戳；角色列变成行首标记 */
+/* TUI 行：标记 → 正文 → 时间戳；角色列变成行首标记。
+ * 2026-11-19 用户：「✦ 汐音」比正文首行「已完成 …」高出一截，不像一行。
+ * ① 基线对齐（不是 flex-start）：助手消息首块是 meta 行（my-1 + py-[2px]），
+ *    顶对齐会让符签浮在正文上方 6px；按基线对齐后无论首块有没有外边距，
+ *    符签 / 时间戳 / 正文首行都落在同一条基线上。
+ * ② 符签列定宽（见 .ck12-tui-role）：四种符签宽度不同，不锁列正文左缘会错位。 */
 .ck12-tui-row {
   display: flex;
   gap: 8px;
-  align-items: flex-start;
+  align-items: baseline;
   line-height: 1.6;
   animation: ck12-mi 0.3s ease;
 }
@@ -197,7 +202,6 @@
   order: 3;
   flex: none;
   margin-left: auto;
-  padding-top: 3px;
   font-family: var(--font-mono);
   font-size: 8.5px;
   color: rgba(141, 134, 184, 0.55);
@@ -206,6 +210,10 @@
 .ck12-tui-role {
   order: 1;
   flex: none;
+  /* 符签列定宽：❯ YOU 34.6 / ✦ 汐音 37.3 / ⌁ SYS 34.6 / ⚙ doer 41.6（11.5px 粗体 mono）。
+   * 原来的 flex:none 让每行按签宽自带列宽 → 正文左缘逐行错位（YOU 713 / 汐音 715 /
+   * doer 721）。3.8em 盖住最长签，随断点字号一起缩放。 */
+  min-width: 3.8em;
   font-family: var(--font-mono);
   font-size: 11.5px;
   font-weight: 800;
