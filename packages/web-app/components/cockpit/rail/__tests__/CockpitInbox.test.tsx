@@ -177,6 +177,22 @@ describe('CockpitRightRail · v21 待办', () => {
     expect(card.querySelector('.ck12-ipd-opt')).toBeNull()
   })
 
+  it('「去处理」→ 详情落对话页签，浮层不关并回到列表（详情从左侧顺势打开）', () => {
+    fleetState.value = fleet([row('a2', { stage: 'review', title: 'M2 · 结算对账' })])
+    render(ui())
+    fireEvent.click(screen.getByTestId('cockpit-inbox-chip'))
+    fireEvent.click(screen.getByTestId('cockpit-inbox-row-a2'))
+
+    fireEvent.click(screen.getByTestId('cockpit-inbox-deal'))
+
+    expect(screen.getByTestId('probe-selection')).toHaveTextContent('attention:a2:dialog')
+    // 与放行卡「看任务详情」一致：浮层留着（详情靠 is-aside-inbox 让到左侧），
+    // 回复卡收起回单栏列表，把宽度留给详情。
+    expect(screen.getByTestId('cockpit-inbox-popover')).toBeInTheDocument()
+    expect(screen.queryByTestId('cockpit-inbox-reply')).toBeNull()
+    expect(screen.getByTestId('cockpit-inbox-row-a2')).toBeInTheDocument()
+  })
+
   it('待放行行 → 浮层里就地展开（选项 + 确认执行），不再弹独立放行窗', () => {
     fleetState.value = fleet([
       row('s1', {
