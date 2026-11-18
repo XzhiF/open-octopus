@@ -114,6 +114,7 @@ export function CockpitStateProvider({ entryCabinId, children }: CockpitStatePro
   const [inboxOpen, setInboxOpen] = useState(false)
   const [inboxSel, setInboxSel] = useState<string | null>(null)
   const [pose, setPose] = useState('idle')
+  const [clip, setClip] = useState(0)
   const [autoWarp, setAutoWarp] = useState(true)
   // v21：舱景三幕。跃迁与换色共用 fx.jump 的星流闪光，但只有 travel() 会切幕
   // —— 换色 / 回传入场不该把船开走。
@@ -261,7 +262,10 @@ export function CockpitStateProvider({ entryCabinId, children }: CockpitStatePro
     setInboxSel(attentionId)
     setInboxOpen(true)
   }, [])
-  const reportPose = useCallback((next: string) => setPose(next), [])
+  const reportPose = useCallback((next: string, clipIndex?: number) => {
+    setPose(next)
+    if (typeof clipIndex === 'number' && Number.isFinite(clipIndex)) setClip(clipIndex)
+  }, [])
 
   // ── 特效：只递增 nonce（useState，不用 ref 绕过渲染）─────────────────
   const pulse = useCallback((color?: string) => {
@@ -399,6 +403,7 @@ export function CockpitStateProvider({ entryCabinId, children }: CockpitStatePro
       closeInbox,
       selectInbox,
       pose,
+      clip,
       reportPose,
       autoWarp,
       setAutoWarp,
@@ -415,7 +420,7 @@ export function CockpitStateProvider({ entryCabinId, children }: CockpitStatePro
       railOpen, setRailOpen,
       threads, wins, panel, panelArg, openPanel, closePanel, flash, markArrival,
       inboxOpen, inboxSel, openInbox, closeInbox, selectInbox,
-      pose, reportPose, autoWarp,
+      pose, clip, reportPose, autoWarp,
       sceneIndex, setScene, travel, travelRandom,
       fx, layer,
     ],

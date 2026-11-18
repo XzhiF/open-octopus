@@ -1,20 +1,19 @@
-// v21 姿态模型单测：12 套新键 + mood 双向映射 + 静态阶段帧数。
-// 立绘真源在 docs/cabin-design/assets（vite 把 png import 变成 URL 字符串）。
+// v22 姿态/片段模型单测：13 支视频片段 + 12 个语义姿态 + mood 双向映射。
+// 立绘真源在 docs/cabin-design/assets/v22（vite 把 webm/png import 变成 URL 字符串）。
 
 import { describe, it, expect } from 'vitest'
 import {
   ACTION_POSES,
-  FALLBACK_SHEETS,
-  MOTION_SHEETS,
+  CLIPS,
   MOOD_POSE,
+  POSE_CLIP,
   POSE_META,
   POSE_MOOD,
   POSE_ORDER,
   POSE_SRC,
-  POSE_THUMBS,
-  fallbackSource,
-  framesFor,
-  poseSource,
+  clipPose,
+  nextClip,
+  poseClip,
   type PoseFx,
   type PoseKey,
 } from '../pose-model'
@@ -29,7 +28,7 @@ const FX: PoseFx[] = [
   'confetti', 'sparkle', 'zzz', 'shine', 'beam', 'keys',
 ]
 
-describe('pose-model · v21 12 套立绘', () => {
+describe('pose-model · v22 纯视频立绘', () => {
   it('图鉴顺序 = 12 个新键，旧键（happy/worried/salute）已剔除', () => {
     expect(POSE_ORDER).toEqual(V21_KEYS)
     expect(new Set(POSE_ORDER).size).toBe(12)
@@ -38,7 +37,31 @@ describe('pose-model · v21 12 套立绘', () => {
     }
   })
 
-  it('每个姿态都有元数据、单帧资产、缩略图与粒子效果', () => {
+  it('13 支片段 = 用户指定顺序（旧 3 + 新 10，重复姿态各自保留）', () => {
+    expect(CLIPS).toHaveLength(13)
+    expect(CLIPS.map((c) => c.no)).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13])
+    expect(CLIPS.map((c) => c.pose)).toEqual([
+      'wink', 'thinking', 'command',
+      'alert', 'concerned', 'command', 'idle', 'ready', 'smile', 'thinking', 'typing', 'wink', 'working',
+    ])
+    expect(CLIPS.filter((c) => c.batch === '旧')).toHaveLength(3)
+    expect(CLIPS.filter((c) => c.batch === '新')).toHaveLength(10)
+    // command / thinking / wink 各出现两次（图鉴不合并）。
+    for (const dup of ['command', 'thinking', 'wink'] as PoseKey[]) {
+      expect(CLIPS.filter((c) => c.pose === dup), dup).toHaveLength(2)
+    }
+  })
+
+  it('每支片段都有 webm 与缩略图 URL，序号与文件名对齐', () => {
+    for (const [index, clip] of CLIPS.entries()) {
+      expect(clip.src, String(clip.no)).toMatch(/v22\/\d{2}-[a-z]+\.webm$/)
+      expect(clip.thumb, String(clip.no)).toMatch(/v22\/thumbs\/\d{2}-[a-z]+\.png$/)
+      expect(clip.src).toContain(`${String(index + 1).padStart(2, '0')}-${clip.pose}.webm`)
+      expect(clip.thumb).toContain(`${String(index + 1).padStart(2, '0')}-${clip.pose}.png`)
+    }
+  })
+
+  it('每个姿态都有元数据、兜底静图与粒子效果', () => {
     for (const key of POSE_ORDER) {
       const meta = POSE_META[key]
       expect(meta, key).toBeTruthy()
@@ -48,8 +71,29 @@ describe('pose-model · v21 12 套立绘', () => {
       expect(meta.fps, key).toBeGreaterThan(0)
       expect(FX, key).toContain(meta.fx)
       expect(POSE_SRC[key], key).toMatch(/pose-.+\.png/)
-      expect(POSE_THUMBS[key], key).toBe(POSE_SRC[key])
     }
+  })
+
+  it('pose → 片段：12 个姿态都落在有效下标；重复姿态取最早一支', () => {
+    for (const key of POSE_ORDER) {
+      const index = poseClip(key)
+      expect(index, key).toBeGreaterThanOrEqual(0)
+      expect(index, key).toBeLessThan(CLIPS.length)
+      expect(POSE_CLIP[key], key).toBe(index)
+    }
+    expect(poseClip('wink')).toBe(0)
+    expect(poseClip('thinking')).toBe(1)
+    expect(poseClip('command')).toBe(2)
+    // 没有专属片段的姿态落到语义最近的片段。
+    expect(poseClip('cheer')).toBe(poseClip('smile'))
+    expect(poseClip('sleep')).toBe(poseClip('idle'))
+    expect(clipPose(poseClip('ready'))).toBe('ready')
+  })
+
+  it('片段回环：nextClip 13 → 0，-1 → 12', () => {
+    expect(nextClip(12)).toBe(0)
+    expect(nextClip(0, -1)).toBe(12)
+    expect(nextClip(5, 3)).toBe(8)
   })
 
   it('mood → pose：happy→smile、worried→concerned、boot→idle（开机待命）', () => {
@@ -70,17 +114,5 @@ describe('pose-model · v21 12 套立绘', () => {
 
   it('动作姿态 = cheer / command / ready（敬礼换成待令）', () => {
     expect(ACTION_POSES).toEqual(['cheer', 'command', 'ready'])
-  })
-
-  it('静态阶段：motion/fallback 为空 → 全部单帧，回退链已到终点', () => {
-    expect(Object.keys(MOTION_SHEETS)).toHaveLength(0)
-    expect(Object.keys(FALLBACK_SHEETS)).toHaveLength(0)
-    for (const key of POSE_ORDER) {
-      expect(framesFor(key), key).toBe(1)
-      const source = poseSource(key)
-      expect(source.frames, key).toBe(1)
-      expect(source.src, key).toBe(POSE_SRC[key])
-      expect(fallbackSource(key, source.src), key).toBeNull()
-    }
   })
 })

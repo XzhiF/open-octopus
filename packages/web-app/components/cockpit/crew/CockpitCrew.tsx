@@ -50,7 +50,7 @@ import { getChatSlot } from '../chat/chat-slots'
 import {
   doneLine, listenLine, waitingLine,
 } from './chat-reactions'
-import { MOOD_POSE, POSE_META, POSE_MOOD, type PoseKey } from './pose-model'
+import { CLIPS, MOOD_POSE, POSE_META, POSE_MOOD, clipPose, poseClip, type PoseKey } from './pose-model'
 import { CockpitPoseSprite, PoseFX } from './CockpitPoseSprite'
 
 const TYPE_MS = 22
@@ -169,14 +169,17 @@ export function CockpitCrew() {
       : listening
         ? '倾听'
         : (CREW[shownMood]?.label ?? CREW.idle.label)
-  /** v20/v21：动作姿态 override（派单 command / 图鉴 playPose / 报到 ready），
+  /** v22：动作姿态 override（派单 command / 图鉴 playClip / 报到 ready），
    *  期间 mood 不覆盖 pose；结束回落 mood pose（design 29 §9.1）。
-   *  typing 只属于作业阶段：对话回复中（phase=waiting）走 typing。 */
+   *  actionClip 记录图鉴点名的精确片段（同 pose 有多支片段时不合并）。 */
   const [actionPose, setActionPose] = useState<PoseKey | null>(null)
+  const [actionClip, setActionClip] = useState<number | null>(null)
   const actionTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const shownPose: PoseKey = actionPose
     ?? (phase === 'waiting' ? 'typing' : MOOD_POSE[shownMood])
-  useEffect(() => { reportPose(shownPose) }, [shownPose, reportPose])
+  /** v22：立绘永远视频；pose 只决定语义，clip 决定具体片段。 */
+  const shownClip = actionClip !== null && Number.isInteger(actionClip) ? actionClip : poseClip(shownPose)
+  useEffect(() => { reportPose(shownPose, shownClip) }, [shownPose, shownClip, reportPose])
   useEffect(() => () => {
     if (actionTimerRef.current) clearTimeout(actionTimerRef.current)
   }, [])
@@ -462,12 +465,17 @@ export function CockpitCrew() {
 
   useEffect(() => subscribeCrewPoke(interact), [interact])
 
-  // ── v21：动作姿态（图鉴 playPose / 委派 relay command / 报到 ready）──────
-  const playAction = useCallback((pose: PoseKey, ms = 2600) => {
+  // ── v22：动作片段（图鉴 playClip / 委派 relay command / 报到 ready）──────
+  // clip 指定图鉴点名的精确片段；不传则按 pose 映射到首选片段。
+  const playAction = useCallback((pose: PoseKey, ms = 2600, clip?: number) => {
     if (!(pose in POSE_META)) return
     setActionPose(pose)
+    setActionClip(Number.isInteger(clip) ? (clip as number) : null)
     if (actionTimerRef.current) clearTimeout(actionTimerRef.current)
-    actionTimerRef.current = setTimeout(() => setActionPose(null), ms)
+    actionTimerRef.current = setTimeout(() => {
+      setActionPose(null)
+      setActionClip(null)
+    }, ms)
     const meta = POSE_META[pose]
     const lineMood = POSE_MOOD[pose]
     present(meta.line, lineMood, ms, 'poke')
@@ -477,10 +485,11 @@ export function CockpitCrew() {
 
   useEffect(() => {
     const onPose = (event: Event) => {
-      const detail = (event as CustomEvent<{ pose?: PoseKey; ms?: number }>).detail
-      const pose = detail?.pose
+      const detail = (event as CustomEvent<{ pose?: PoseKey; ms?: number; clip?: number }>).detail
+      const clip = Number.isInteger(detail?.clip) ? (detail?.clip as number) : undefined
+      const pose = detail?.pose ?? (clip !== undefined ? clipPose(clip) : undefined)
       if (!pose || !(pose in POSE_META)) return
-      playAction(pose, detail.ms ?? 2600)
+      playAction(pose, detail?.ms ?? 2600, clip)
     }
     window.addEventListener('octopus:crew-pose', onPose)
     return () => window.removeEventListener('octopus:crew-pose', onPose)
@@ -516,11 +525,13 @@ export function CockpitCrew() {
         data-state={shownMood}
         data-phase={phase}
         data-listening={listening ? 'true' : 'false'}
+        data-clip={shownClip}
+        data-clip-no={CLIPS[shownClip]?.no}
         data-testid="cockpit-crew-pod"
         aria-label={`汐音 · ${label} · 点击跟她说话`}
         onClick={talkToXiyin}
       >
-        <CockpitPoseSprite pose={shownPose} reduce={reduce} />
+        <CockpitPoseSprite pose={shownPose} clip={shownClip} reduce={reduce} />
         <PoseFX pose={shownPose} reduce={reduce} />
         <span className="ck12-pod-scan" aria-hidden="true" />
         <span className="ck12-pod-vg" aria-hidden="true" />
@@ -546,7 +557,9 @@ export function CockpitCrew() {
         <span className="ck12-pod-tag"><i aria-hidden="true" />{tagText}</span>
         <span className="ck12-pod-name">
           汐音 <small>· 全域助理</small>
-          <em data-testid="cockpit-crew-mood">{label}</em>
+          <em data-testid="cockpit-crew-mood">
+            {label} · {String(shownClip + 1).padStart(2, '0')}/{CLIPS.length}
+          </em>
         </span>
       </button>
 

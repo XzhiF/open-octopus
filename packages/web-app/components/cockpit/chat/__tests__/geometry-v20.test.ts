@@ -47,18 +47,19 @@ describe('v20 弹出窗级联', () => {
 // v21（design 31 §2.1 / §5.4）：通讯台默认几何 —— 左缘贴立绘右缘 −22、
 // 右缘让出右栏、底缘 = 视口 − 56（与 56px 底栏同一条上沿）；≤900 变 56vh /
 // 52vh 底部 sheet，底缘让开实测的底栏上沿（footerTop）。
-describe('v21 通讯台默认几何', () => {
-  it('1600×900：left = 198+16+444−22=636；right 让出 100；top 66 / bottom 844', () => {
+// v22（design 33 §5）：宽屏再左移 36（--ck12-charshift），宽度全给通讯台。
+describe('v21/v22 通讯台默认几何', () => {
+  it('1600×900：left = 198+16+444−22−36=600；right 让出 100；top 66 / bottom 844', () => {
     const rect = cockpitConsoleRect({ viewport: { width: 1600, height: 900 }, footerTop: 844 })
-    expect(rect.x).toBe(636)
+    expect(rect.x).toBe(600)
     expect(rect.y).toBe(66)
     expect(rect.x + rect.w).toBe(1500)
     expect(rect.y + rect.h).toBe(844)
   })
 
-  it('1200×800：左栏收 64，立绘 66vh；右栏 104', () => {
+  it('1200×800：左栏收 64，立绘 66vh；右栏 104（同样左移 36）', () => {
     const rect = cockpitConsoleRect({ viewport: { width: 1200, height: 800 }, footerTop: 700 })
-    expect(rect.x).toBe(410)
+    expect(rect.x).toBe(374)
     expect(rect.x + rect.w).toBe(1096)
     expect(rect.y).toBe(66)
   })

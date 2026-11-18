@@ -76,6 +76,7 @@ packages/desktop/release/
 # cockpit prototype regenerable intermediates (video/greenscreen sources, QA shots)
 vibe_images/
 vibe_videos/
+vibe_videos_2/
 docs/cabin-design/assets/raw-v20/
 docs/cabin-design/assets/raw-v21/
 docs/cabin-design/assets/alt-*.png

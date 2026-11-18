@@ -28,6 +28,9 @@
   --ck12-railw: 198px;
   --ck12-railr: 100px;
   --ck12-charh: 74vh;
+  /* v22：立绘整体左移，把让出的宽度给主通讯台（同一变量喂给 crew / 通讯台 /
+     banner / 作业面，不与左侧编队重合）。原型 cockpit-v22.html --charshift:36px。 */
+  --ck12-charshift: 36px;
   --ck12-charw: calc(var(--ck12-charh) * 2 / 3);
   --ck12-teal: #2EE6D6;
   --ck12-sky: #35C7F0;
@@ -572,7 +575,7 @@
   align-items: center;
   justify-content: center;
   gap: 14px;
-  padding-left: calc(var(--ck12-railw) + var(--ck12-charw) + 10px);
+  padding-left: calc(var(--ck12-railw) + var(--ck12-charw) + 10px - var(--ck12-charshift));
   pointer-events: none;
   transition: opacity 0.3s;
   z-index: 1;
@@ -650,7 +653,7 @@
   gap: 0;
   /* v21 ⑤A：底栏 = 通讯台的输入行。总高固定 56（0 + 52 + 4），
      上沿 = console 下沿 = 视口 − 56；不再有 8px 黑断层。 */
-  padding: 0 var(--ck12-railr) 4px calc(var(--ck12-railw) + 16px + var(--ck12-charw) - 22px);
+  padding: 0 var(--ck12-railr) 4px calc(var(--ck12-railw) + 16px + var(--ck12-charw) - 22px - var(--ck12-charshift));
 }
 
 /* ───────────────────────── 状态横幅（草稿 / 无主会话） ───────────────────────── */
@@ -699,7 +702,7 @@
   z-index: 6;
   display: grid;
   place-items: center;
-  padding-left: calc(var(--ck12-railw) + var(--ck12-charw) + 10px);
+  padding-left: calc(var(--ck12-railw) + var(--ck12-charw) + 10px - var(--ck12-charshift));
   color: var(--ck12-faint);
   font-size: 12px;
   letter-spacing: 0.08em;

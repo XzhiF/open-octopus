@@ -237,9 +237,11 @@ export interface CockpitState {
   closeInbox(): void
   selectInbox(attentionId: string | null): void
 
-  /** v20：汐音当前姿态（图鉴金边 / 验收锚点），由 CockpitCrew 上报。 */
+  /** v20：汐音当前姿态（图鉴金边 / 验收锚点），由 CockpitCrew 上报。
+   *  v22：clip = 当前视频片段下标（13 支；同一 pose 可能有多支）。 */
   pose: string
-  reportPose(pose: string): void
+  clip: number
+  reportPose(pose: string, clip?: number): void
 
   /** v20（design 29 §7.4）：随机跃迁开关（15–45s），默认开。 */
   autoWarp: boolean

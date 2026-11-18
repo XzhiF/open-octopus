@@ -1,7 +1,7 @@
 // packages/web-app/e2e/tests/cockpit-v20.spec.ts
 //
 // v20（design 29）真数据 E2E：多作战 tab / 停靠 / grip / 弹出窗 + WINDOWS 条 /
-// 决断面板 / SESSION LEDGER / 工作树只读查阅 / 详情文件+调试页签 / 12 姿态帧播放器 /
+// 决断面板 / SESSION LEDGER / 工作树只读查阅 / 详情文件+调试页签 / 13 视频片段立绘 /
 // DEV 模拟弹层 / 响应式。纪律同 cockpit-global：不发聊天消息（不烧 LLM），
 // 播种舱 REST 建、afterAll 删；backend 不在 → 全 skip。
 
@@ -233,40 +233,31 @@ test.describe("全域座舱 v20 · 真数据 E2E", () => {
     audit.dispose()
   })
 
-  test("12 姿态：图鉴 12 卡 + playPose（v21 静态阶段单帧）", async ({ page }) => {
+  test("13 视频片段：立绘 <video> + 图鉴 13 卡 + playClip（v22 纯视频）", async ({ page }) => {
     const audit = attachConsoleAudit(page)
     await gotoCockpit(page, seed!.cabin.id)
     const sprite = page.getByTestId("cockpit-pose-sprite")
     await expect(sprite).toBeVisible()
-    // v21 先静态确认人设：motion sheet 未接，frames=1、立绘走单帧 pose PNG。
-    // sheet 补齐后这里会退化成 12 帧，所以两种形态都接受，只断言「不是空图」。
-    const frames = Number(await sprite.getAttribute("data-frames"))
-    expect(frames).toBeGreaterThanOrEqual(1)
-    if (frames > 1) {
-      // 帧推进：5 次采样 transform 不全相同（ping-pong 别名防护）。
-      const samples = new Set<string>()
-      for (let i = 0; i < 5; i += 1) {
-        samples.add(await sprite.locator("img").evaluate((el) => el.style.transform))
-        await page.waitForTimeout(130)
-      }
-      expect(samples.size).toBeGreaterThan(1)
-    } else {
-      await expect(sprite.locator("img")).toHaveAttribute("src", /pose-.+\.png/)
-    }
+    // v22：立绘走 VP9 alpha webm。开机待命 → 07-idle（新批次）。
+    await expect(sprite).toHaveAttribute("data-clip-no", "7")
+    await expect(sprite).toHaveAttribute("data-batch", "新")
+    const video = sprite.locator("video")
+    await expect(video).toHaveAttribute("src", /07-idle.*\.webm/)
+    await expect.poll(() => video.evaluate((el) => (el as HTMLVideoElement).paused)).toBe(false)
 
-    // v21 二轮：动作图鉴入口在「更多 → 动作」。
+    // 动作图鉴入口在「更多 → 动作」；13 支按用户指定顺序，旧/新角标逐卡对应。
     await page.getByTestId("cockpit-menu-more").click()
     await page.getByTestId("cockpit-fan-poses").click()
     const gallery = page.getByTestId("cockpit-poses-gallery")
     await expect(gallery).toBeVisible()
-    await expect(gallery.locator(".ck12-pose-card")).toHaveCount(12)
-    // v21 新键就位，旧键（happy/worried/salute）不再出现在图鉴。
-    await expect(page.getByTestId("cockpit-pose-card-smile")).toBeVisible()
-    await expect(page.getByTestId("cockpit-pose-card-concerned")).toBeVisible()
-    await expect(page.getByTestId("cockpit-pose-card-ready")).toBeVisible()
-    await page.getByTestId("cockpit-pose-card-cheer").click()
+    await expect(gallery.locator(".ck12-pose-card")).toHaveCount(13)
+    await expect(page.getByTestId("cockpit-clip-card-1")).toContainText("01 · 旧")
+    await expect(page.getByTestId("cockpit-clip-card-13")).toContainText("13 · 新")
+    await page.getByTestId("cockpit-clip-card-9").click()
     await expect(gallery).toHaveCount(0)
-    await expect(sprite).toHaveAttribute("data-pose", "cheer")
+    await expect(sprite).toHaveAttribute("data-pose", "smile")
+    await expect(sprite).toHaveAttribute("data-clip-no", "9")
+    await expect(sprite.locator("video")).toHaveAttribute("src", /09-smile.*\.webm/)
     await expect(page.getByTestId("cockpit-pose-fx")).toBeVisible()
     expect(audit.filtered).toEqual([])
     audit.dispose()

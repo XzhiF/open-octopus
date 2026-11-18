@@ -1,21 +1,21 @@
-// v21（design 31 §3.5 / §5.5）：汐音 12 姿态元数据 + 资产单源。
+// v22（原型 design 33 / cockpit-v22.html）：汐音 **纯视频立绘** + 13 支动作片段单源。
 //
-// 资产真源在 docs/cabin-design/assets（原型与全舱共用一份，不复制进 public）：
-//   · pose-*.png        —— 单帧 1024×1536 透明底，v21 重绘的 12 套（运行时真源）；
-//   · motion-sheet-*.png —— 12 帧竖叠 sheet（480×8640），v21 静态阶段暂空；
-//   · sheet-*.png       —— 双帧回退，v21 静态阶段暂空。
+// 资产真源在 docs/cabin-design/assets/v22（原型与全舱共用一份，不复制进 public）：
+//   · NN-pose.webm       —— 768×1152 VP9 alpha，13 支（旧批次 3 + 新批次 10）；
+//   · thumbs/NN-pose.png —— 图鉴缩略图（视频 1.2s 抽帧，320×480）。
+// 13 支由 _motion-v22.mjs 抠像后**统一归一化**：人物高 1040 / 脚底 1105 /
+// 躯干中轴 384，切换片段不跳位、比例一致（design 33 §2）。
 //
-// 2026-11-17 v21：整套立绘按 pose-command 的修长比例重画，剔除闭眼 worried/salute
-// 与矮胖 happy；姿态键改为 idle/working/thinking/alert/smile/concerned/cheer/wink/
-// sleep/ready/command/typing。动画 sheet 由后续 VideoGen 管线补齐（handoff
-// xiyin-12-poses）——**先静态确认，再动画化**，所以这里 MOTION/FALLBACK 留空，
-// framesFor() 对全部姿态返回 1（单帧静图）。sheet 就绪后只需填这两个表。
+// 片段顺序就是用户指定顺序（点击图鉴卡片 / 真实事件都按 pose → 片段映射）：
+//   wink thinking command | alert concerned command idle ready smile thinking typing wink working
+// 前 3 支旧批次、后 10 支新批次；command / thinking / wink 各出现两次，图鉴按
+// 片段各自保留，互不合并。
 //
-// mood 是语义键（数据层大量 mood:'happy'|'worried'），**不要跟着 pose 改名**；
-// 二者经 MOOD_POSE / POSE_MOOD 双向映射。
+// mood 仍是语义键（数据层大量 mood:'happy'|'worried'），**不要跟着 pose 改名**；
+// 二者经 MOOD_POSE / POSE_MOOD 双向映射。立绘渲染 = mood → pose → 片段。
+// 没有专属片段的 pose（cheer / sleep）映射到语义最近的片段（smile / idle）。
 //
-// 静态 import 只把 URL 进 bundle；图片字节只在 <img src> 真正用到时才下载/解码
-// （单激活 sheet ≈16MB 解码内存，换 pose 释放旧图 —— design 29 §14）。
+// 静态 import 只把 URL 进 bundle；webm 字节只在 <video src> 真正用到时才下载。
 
 import type { MoodKey } from '@/components/cabin/cockpit'
 
@@ -32,11 +32,39 @@ import poseReady from '../../../../../docs/cabin-design/assets/pose-ready.png'
 import poseCommand from '../../../../../docs/cabin-design/assets/pose-command.png'
 import poseTyping from '../../../../../docs/cabin-design/assets/pose-typing.png'
 
+import clip01 from '../../../../../docs/cabin-design/assets/v22/01-wink.webm'
+import clip02 from '../../../../../docs/cabin-design/assets/v22/02-thinking.webm'
+import clip03 from '../../../../../docs/cabin-design/assets/v22/03-command.webm'
+import clip04 from '../../../../../docs/cabin-design/assets/v22/04-alert.webm'
+import clip05 from '../../../../../docs/cabin-design/assets/v22/05-concerned.webm'
+import clip06 from '../../../../../docs/cabin-design/assets/v22/06-command.webm'
+import clip07 from '../../../../../docs/cabin-design/assets/v22/07-idle.webm'
+import clip08 from '../../../../../docs/cabin-design/assets/v22/08-ready.webm'
+import clip09 from '../../../../../docs/cabin-design/assets/v22/09-smile.webm'
+import clip10 from '../../../../../docs/cabin-design/assets/v22/10-thinking.webm'
+import clip11 from '../../../../../docs/cabin-design/assets/v22/11-typing.webm'
+import clip12 from '../../../../../docs/cabin-design/assets/v22/12-wink.webm'
+import clip13 from '../../../../../docs/cabin-design/assets/v22/13-working.webm'
+
+import thumb01 from '../../../../../docs/cabin-design/assets/v22/thumbs/01-wink.png'
+import thumb02 from '../../../../../docs/cabin-design/assets/v22/thumbs/02-thinking.png'
+import thumb03 from '../../../../../docs/cabin-design/assets/v22/thumbs/03-command.png'
+import thumb04 from '../../../../../docs/cabin-design/assets/v22/thumbs/04-alert.png'
+import thumb05 from '../../../../../docs/cabin-design/assets/v22/thumbs/05-concerned.png'
+import thumb06 from '../../../../../docs/cabin-design/assets/v22/thumbs/06-command.png'
+import thumb07 from '../../../../../docs/cabin-design/assets/v22/thumbs/07-idle.png'
+import thumb08 from '../../../../../docs/cabin-design/assets/v22/thumbs/08-ready.png'
+import thumb09 from '../../../../../docs/cabin-design/assets/v22/thumbs/09-smile.png'
+import thumb10 from '../../../../../docs/cabin-design/assets/v22/thumbs/10-thinking.png'
+import thumb11 from '../../../../../docs/cabin-design/assets/v22/thumbs/11-typing.png'
+import thumb12 from '../../../../../docs/cabin-design/assets/v22/thumbs/12-wink.png'
+import thumb13 from '../../../../../docs/cabin-design/assets/v22/thumbs/13-working.png'
+
 export type PoseKey =
   | 'idle' | 'working' | 'thinking' | 'alert' | 'smile' | 'concerned'
   | 'cheer' | 'wink' | 'sleep' | 'ready' | 'command' | 'typing'
 
-/** 图鉴顺序（原型 v21 POSE_ORDER）。 */
+/** 12 个语义姿态（图鉴/映射仍以姿态为单位；13 支视频是表现层）。 */
 export const POSE_ORDER: readonly PoseKey[] = [
   'idle', 'working', 'thinking', 'alert', 'smile', 'concerned',
   'cheer', 'wink', 'sleep', 'ready', 'command', 'typing',
@@ -57,7 +85,7 @@ export interface PoseMeta {
   fx: PoseFx
 }
 
-/** 文案与粒子沿用原型 v21 的 POSE_META / MO_FPS（逐字对齐 cockpit-v21.html）。 */
+/** 文案与粒子沿用原型 v21 的 POSE_META / MO_FPS（逐字对齐 cockpit-v22.html）。 */
 export const POSE_META: Record<PoseKey, PoseMeta> = {
   idle: { cn: '待命', en: 'IDLE', desc: '静默呼吸 · 随时接单', line: '我在。您说。', fps: 10, fx: 'ambient' },
   working: { cn: '作业', en: 'WORK', desc: '盯执行 · 推进度', line: '这条我在盯，进度实时举给您。', fps: 12, fx: 'spark' },
@@ -106,59 +134,74 @@ export const POSE_MOOD: Record<PoseKey, MoodKey> = {
 /** 动作姿态期间 mood 不覆盖 pose（design 29 §9.1）；结束回落 mood pose。 */
 export const ACTION_POSES: readonly PoseKey[] = ['cheer', 'command', 'ready']
 
-/** 单帧立绘：v21 静态真源，也是图鉴缩略图。 */
+/** 单帧立绘：**仅作视频解码失败的兜底**（正常路径全程视频，design 33 §3）。
+ *  cheer / sleep 没有专属片段，兜底图也让画面不至于空白。 */
 export const POSE_SRC: Record<PoseKey, string> = {
   idle: poseIdle, working: poseWorking, thinking: poseThinking, alert: poseAlert,
   smile: poseSmile, concerned: poseConcerned, cheer: poseCheer, wink: poseWink,
   sleep: poseSleep, ready: poseReady, command: poseCommand, typing: poseTyping,
 }
 
-/** 12 帧动画 sheet：**v21 静态阶段留空**，VideoGen 补齐后按 pose 填入即可启用。 */
-export const MOTION_SHEETS: Partial<Record<PoseKey, string>> = {}
+export type ClipBatch = '旧' | '新'
 
-/** 双帧回退：motion 源缺/解码失败时用；v21 静态阶段同样留空。 */
-export const FALLBACK_SHEETS: Partial<Record<PoseKey, string>> = {}
-
-export const POSE_THUMBS: Record<PoseKey, string> = POSE_SRC
-
-export const MOTION_FRAMES = 12
-export const FALLBACK_FRAMES = 2
-/** 回退双帧的步频（防眨闪，design 29 §9.3）。 */
-export const FALLBACK_FPS = 1.6
-
-export interface PoseSource {
+export interface Clip {
+  /** 1-based 序号（图鉴角标 01…13）。 */
+  no: number
+  pose: PoseKey
+  batch: ClipBatch
+  /** VP9 alpha webm（768×1152，归一化后）。 */
   src: string
-  frames: number
-  fps: number
+  /** 图鉴缩略图（320×480 png）。 */
+  thumb: string
 }
 
-/** 帧数：motion 12 → 双帧 2 → 单帧 1（原型 v21 framesFor）。 */
-export function framesFor(pose: PoseKey): number {
-  if (MOTION_SHEETS[pose]) return MOTION_FRAMES
-  if (FALLBACK_SHEETS[pose]) return FALLBACK_FRAMES
-  return 1
+/** 用户指定顺序，逐条对应 assets/v22/NN-pose.webm（design 33 §1）。 */
+export const CLIPS: readonly Clip[] = [
+  { no: 1, pose: 'wink', batch: '旧', src: clip01, thumb: thumb01 },
+  { no: 2, pose: 'thinking', batch: '旧', src: clip02, thumb: thumb02 },
+  { no: 3, pose: 'command', batch: '旧', src: clip03, thumb: thumb03 },
+  { no: 4, pose: 'alert', batch: '新', src: clip04, thumb: thumb04 },
+  { no: 5, pose: 'concerned', batch: '新', src: clip05, thumb: thumb05 },
+  { no: 6, pose: 'command', batch: '新', src: clip06, thumb: thumb06 },
+  { no: 7, pose: 'idle', batch: '新', src: clip07, thumb: thumb07 },
+  { no: 8, pose: 'ready', batch: '新', src: clip08, thumb: thumb08 },
+  { no: 9, pose: 'smile', batch: '新', src: clip09, thumb: thumb09 },
+  { no: 10, pose: 'thinking', batch: '新', src: clip10, thumb: thumb10 },
+  { no: 11, pose: 'typing', batch: '新', src: clip11, thumb: thumb11 },
+  { no: 12, pose: 'wink', batch: '新', src: clip12, thumb: thumb12 },
+  { no: 13, pose: 'working', batch: '新', src: clip13, thumb: thumb13 },
+]
+
+/** 语义姿态 → 首选片段下标（重复姿态取最早出现的一支，与原型 findIndex 一致）。
+ *  cheer / sleep 无专属片段：落到语义最近的 smile / idle。 */
+export const POSE_CLIP: Record<PoseKey, number> = {
+  wink: 0,
+  thinking: 1,
+  command: 2,
+  alert: 3,
+  concerned: 4,
+  idle: 6,
+  ready: 7,
+  smile: 8,
+  typing: 10,
+  working: 12,
+  cheer: 8,
+  sleep: 6,
 }
 
-/** 某姿态的当前帧源：motion sheet → 双帧 → 单帧 pose PNG。 */
-export function poseSource(pose: PoseKey): PoseSource {
-  const motion = MOTION_SHEETS[pose]
-  if (motion) return { src: motion, frames: MOTION_FRAMES, fps: POSE_META[pose].fps }
-  const fallback = FALLBACK_SHEETS[pose]
-  if (fallback) return { src: fallback, frames: FALLBACK_FRAMES, fps: FALLBACK_FPS }
-  return { src: POSE_SRC[pose], frames: 1, fps: POSE_META[pose].fps }
+/** 姿态 → 片段下标（越界/未知一律回闲置）。 */
+export function poseClip(pose: PoseKey): number {
+  const index = POSE_CLIP[pose]
+  return Number.isInteger(index) && index >= 0 && index < CLIPS.length ? index : POSE_CLIP.idle
 }
 
-/** 解码失败后的下一级回退源：motion → 双帧 → 单帧；已在单帧则返回 null。 */
-export function fallbackSource(pose: PoseKey, current: string): PoseSource | null {
-  const motion = MOTION_SHEETS[pose]
-  const fallback = FALLBACK_SHEETS[pose]
-  if (motion && current === motion) {
-    return fallback
-      ? { src: fallback, frames: FALLBACK_FRAMES, fps: FALLBACK_FPS }
-      : { src: POSE_SRC[pose], frames: 1, fps: POSE_META[pose].fps }
-  }
-  if (fallback && current === fallback) {
-    return { src: POSE_SRC[pose], frames: 1, fps: POSE_META[pose].fps }
-  }
-  return null
+/** 片段下标 → 姿态（图鉴点击/状态上报共用）。 */
+export function clipPose(index: number): PoseKey {
+  return CLIPS[index]?.pose ?? 'idle'
+}
+
+/** 片段连续轮播（图鉴的「下一支」/ 键盘体验用），越界回环。 */
+export function nextClip(index: number, step = 1): number {
+  const n = CLIPS.length
+  return ((index + step) % n + n) % n
 }

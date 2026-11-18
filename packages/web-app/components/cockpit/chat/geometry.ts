@@ -158,6 +158,8 @@ export function nextCockpitAlpha(alpha: number): number {
 // ── v21（design 31 §2.1 / §5.4）：通讯台默认几何 ─────────────────────────
 //
 // 左缘 = 立绘右缘 − 22（贴住立绘、重叠 22px）；右缘让出右栏（--railr）；
+// v22 起再整体左移 36（--ck12-charshift），让出的宽度全给通讯台 —— 与立绘左右
+// 空隙对称，且不压左侧编队（原型 cockpit-v22.html .console）；
 // top 66（HUD 54 + 12）；底部 = 视口 − 56（原型 844 @900），与底栏上沿严丝合缝
 // —— 底栏（composer）视觉上就是通讯台的输入行（v21 ⑤A）。
 // ≤900 变底部 sheet：左 52 / 右 92 / 高 56vh（≤560：左 46 / 右 80 / 52vh），
@@ -178,6 +180,8 @@ export function cockpitConsoleRect({ viewport, footerTop, composerTop }: Console
   const railr = vw <= 560 ? 80 : vw <= 900 ? 92 : vw <= 1320 ? 104 : 100
   const charh = vh * (vw <= 560 ? 0.32 : vw <= 900 ? 0.34 : vw <= 1240 ? 0.66 : vw <= 1320 ? 0.7 : 0.74)
   const charw = (charh * 2) / 3
+  /** v22：立绘左移量（与 base.css --ck12-charshift 同步）。 */
+  const charshift = 36
   // 宽屏：底缘 = composer 上沿（量不到时按 视口 − 56 / 底栏上沿取小者）。
   // 窄屏：sheet 底缘同样让开 composer（底栏高度随断点变）。
   const fallback = Math.min(vh - 56, footerTop && footerTop > 0 ? Math.round(footerTop) : vh - 56)
@@ -192,7 +196,7 @@ export function cockpitConsoleRect({ viewport, footerTop, composerTop }: Console
     height = Math.max(CHAT_MIN_HEIGHT, Math.min(sheet, bottom - 66))
     top = Math.max(56, bottom - height)
   } else {
-    left = Math.round(railw + 16 + charw - 22)
+    left = Math.round(railw + 16 + charw - 22 - charshift)
     top = 66
     height = Math.max(CHAT_MIN_HEIGHT, bottom - top)
   }

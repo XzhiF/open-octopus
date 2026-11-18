@@ -7,7 +7,11 @@
 /* ═══════════════ 到达简报（v21：汐音头顶的空白天空 · 10s 自收） ═══════════════ */
 .ck12-brief {
   position: fixed;
-  left: calc(var(--ck12-railw) + 16px + var(--ck12-charw) / 2);
+  /* v22：随立绘左移；再夹一条下界，保证提示条左缘不压左侧编队。 */
+  left: max(
+    calc(var(--ck12-railw) + 12px + min(390px, calc(var(--ck12-charw) - 54px)) / 2),
+    calc(var(--ck12-railw) + 16px - var(--ck12-charshift) + var(--ck12-charw) / 2)
+  );
   top: 58px;
   width: min(390px, calc(var(--ck12-charw) - 54px));
   min-width: 260px;

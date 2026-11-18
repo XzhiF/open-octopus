@@ -7,10 +7,11 @@
    控制条 portal 到 body，所以这里的 button 需要自带 reset。
    ═══════════════════════════════════════════════════════════════════════ */
 
-/* ───────────────────────── 立绘容器（v21：无框 · 贴左栏右侧 · 74vh） ───────────────────────── */
+/* ───────────────────────── 立绘容器（v22：纯视频 · 贴左栏右侧 · 74vh · 左移 36） ───────────────────────── */
 .ck12-crew {
   position: fixed;
-  left: calc(var(--ck12-railw) + 16px);
+  /* v22：整体左移 --ck12-charshift，左右空隙对称；让出宽度给通讯台/作业面。 */
+  left: calc(var(--ck12-railw) + 16px - var(--ck12-charshift));
   bottom: 2vh;
   width: auto;
   height: var(--ck12-charh);
@@ -487,7 +488,8 @@
   to { background-position: 0 8px; }
 }
 
-.ck12-pod[data-phase='done'] img {
+.ck12-pod[data-phase='done'] img,
+.ck12-pod[data-phase='done'] video {
   animation: ck12-crew-cheer 0.9s ease-out;
 }
 @keyframes ck12-crew-cheer {
@@ -576,6 +578,7 @@
   .ck12-pod { animation: none; }
   .ck12-pod[data-phase='waiting'] .ck12-pod-scan,
   .ck12-pod[data-phase='done'] img,
+  .ck12-pod[data-phase='done'] video,
   .ck12-pod-listen i,
   .ck12-speech-dots i { animation: none; }
   .ck12-heart { display: none; }
@@ -585,24 +588,32 @@
   .ck12-xset { animation: none; }
 }
 
-/* ═══════════════ v20（design 29 §9）· 帧播放器 + 姿态粒子 ═══════════════ */
-/* 裁切窗：sheet 1:3 与窗 2:3×frames 精确同比例（img height 由 JS 写 frames*100%）。 */
+/* ═══════════════ v22（design 33 §3）· 纯视频立绘 ═══════════════ */
+/* 裁切窗：视频画布 768×1152（2:3）与立绘框同比例，object-fit:fill 精确铺满；
+   img 只在视频解码失败时兜底，同一套尺寸。 */
 .ck12-pod .ck12-spr {
   position: absolute;
   inset: 0;
   overflow: hidden;
   pointer-events: none;
 }
-.ck12-pod .ck12-spr img {
+.ck12-pod .ck12-spr img,
+.ck12-pod .ck12-spr .ck12-mv {
   position: absolute;
   left: 0;
   top: 0;
   width: 100%;
+  height: 100%;
   object-fit: fill;
   object-position: 50% 50%;
   filter: saturate(1.04);
-  will-change: transform;
   user-select: none;
+}
+/* 起播才淡入（playing 事件写 opacity:1），切段先压回 0，避免闪黑。 */
+.ck12-pod .ck12-spr .ck12-mv {
+  transition: opacity 0.22s ease;
+  pointer-events: none;
+  background: transparent;
 }
 
 /* 粒子层：与帧动画解耦，loop 类常驻至换 pose；reduced 全禁（组件不渲染）。 */
