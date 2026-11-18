@@ -21,6 +21,7 @@ import { useCockpitState } from '../state/CockpitStateProvider'
 import { useCabinOptional } from '@/components/cabin/cabin-provider'
 import { CockpitProjectsPopover } from '../projects/CockpitProjectsPopover'
 import { CockpitRepoBinder } from '../projects/CockpitRepoBinder'
+import { HudClock } from './HudClock'
 import { useCabinProjects } from '../projects/use-cabin-projects'
 import { useCabinUsage } from '../bridge/use-cabin-usage'
 import { SCENES } from '../scene/scene-model'
@@ -90,16 +91,25 @@ export function CockpitHud() {
         onBind={() => setBindOpen(true)}
       />
 
-      <button
-        type="button"
-        className="ck12-sceneread"
-        onClick={() => travel()}
-        title={`当前 ${scene.name} · 点击跃迁到下一幕`}
-        data-testid="cockpit-scene-pill"
-      >
-        SCENE <b>{scene.name}</b>
-        <span>{scene.coord}</span>
-      </button>
+      <div className="ck12-sceneread" role="group" aria-label="舱景与当前时间">
+        <span className="ck12-sr-k" aria-hidden="true">SCENE</span>
+        <button
+          type="button"
+          className="ck12-sr-scene"
+          onClick={() => travel()}
+          title={`当前 ${scene.name} · 点击跃迁到下一幕`}
+          data-testid="cockpit-scene-pill"
+        >
+          <span className="ck12-sr-dot" aria-hidden="true" />
+          <b>{scene.name}</b>
+        </button>
+        <span className="ck12-sr-sep" aria-hidden="true" />
+        <HudClock />
+      </div>
+
+      {/* pill 是绝对定位（与底部通讯停靠 pill 同一条视口中轴），
+          用弹性占位把右侧三读数钉回右缘。 */}
+      <span className="ck12-hud-sp" aria-hidden="true" />
 
       <span
         className="ck12-hudcur is-tok"

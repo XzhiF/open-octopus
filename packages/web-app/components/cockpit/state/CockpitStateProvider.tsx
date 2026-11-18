@@ -294,6 +294,13 @@ export function CockpitStateProvider({ entryCabinId, children }: CockpitStatePro
     jump()
   }, [jump])
 
+  // v21 八轮：自动轮换 = 随机计时 + 随机另一幕（保证不原地重切；手动跃迁仍顺序，
+  // 方便人把 12 幕挨个看完）。
+  const travelRandom = useCallback(() => {
+    setSceneIndex((prev) => (prev + 1 + Math.floor(Math.random() * (SCENE_COUNT - 1))) % SCENE_COUNT)
+    jump()
+  }, [jump])
+
   const feedback = useCallback((color?: string, level: 'full' | 'lite' | 'off' = 'full') => {
     setFxState((prev) => ({
       ...prev,
@@ -398,6 +405,7 @@ export function CockpitStateProvider({ entryCabinId, children }: CockpitStatePro
       sceneIndex,
       setScene,
       travel,
+      travelRandom,
       fx,
       layer,
     }),
@@ -408,7 +416,7 @@ export function CockpitStateProvider({ entryCabinId, children }: CockpitStatePro
       threads, wins, panel, panelArg, openPanel, closePanel, flash, markArrival,
       inboxOpen, inboxSel, openInbox, closeInbox, selectInbox,
       pose, reportPose, autoWarp,
-      sceneIndex, setScene, travel,
+      sceneIndex, setScene, travel, travelRandom,
       fx, layer,
     ],
   )

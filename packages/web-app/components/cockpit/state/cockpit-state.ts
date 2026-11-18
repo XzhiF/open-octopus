@@ -241,16 +241,18 @@ export interface CockpitState {
   pose: string
   reportPose(pose: string): void
 
-  /** v20（design 29 §7.4）：随机跃迁开关（45–105s），默认开。 */
+  /** v20（design 29 §7.4）：随机跃迁开关（15–45s），默认开。 */
   autoWarp: boolean
   setAutoWarp(on: boolean): void
 
-  /** v21（design 31 §3.4.7）：舱景三幕。sceneIndex = 当前幕（SCENES 下标）。 */
+  /** v21（design 31 §3.4.7）：舱景（SCENES 12 幕）。sceneIndex = 当前幕下标。 */
   sceneIndex: number
   /** 直接点名某一幕（场景点）。 */
   setScene(index: number): void
-  /** 跃迁：切下一幕 + 星流/闪光（自动跃迁、⌥W、右栏「跃迁」共用）。 */
+  /** 跃迁：切下一幕 + 星流/闪光（⌥W、右栏「跃迁」、HUD 场景名共用）。 */
   travel(): void
+  /** 自动轮换（v21 八轮）：切到**随机另一幕** + 星流/闪光（15–45s 随机计时）。 */
+  travelRandom(): void
 
   fx: CockpitFx
 

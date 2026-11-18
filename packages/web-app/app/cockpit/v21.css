@@ -437,7 +437,7 @@
 /* ── HUD 断点（原型 §2.2 的 .hud 压缩规则）────────────────────────────── */
 @media (max-width: 1320px) {
   .ck12-hudcur.is-tok { display: none; }
-  .ck12-sceneread span { display: none; }
+  .ck12-sr-k { display: none; }
 }
 @media (max-width: 900px) {
   .ck12-sceneread { display: none; }

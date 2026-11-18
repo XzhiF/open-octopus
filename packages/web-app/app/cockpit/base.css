@@ -366,14 +366,20 @@
 }
 .ck12-hud .ck12-pjname { color: #fff; max-width: 150px; overflow: hidden; text-overflow: ellipsis; }
 
-/* SCENE pill（居中；原型 .sceneread）—— 32px 高，与左右两侧 chip 对齐 */
+/* SCENE pill（原型 .sceneread）—— 左段 = 舱景名（点击跃迁），右段 = 当前时间。
+   居中口径与底部「💬 主对话 · 通讯停靠」pill（.ck12-condock：left 50% +
+   translateX(-50%)）完全一致 —— 两者在同一条视口中轴上。不要用 flex 的
+   `margin:auto`：左组/右组宽度不等，会偏出中轴。 */
 .ck12-sceneread {
-  margin: 0 auto;
+  position: absolute;
+  left: 50%;
+  transform: translateX(-50%);
+  top: 11px;
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 9px;
   height: 32px;
-  padding: 0 16px;
+  padding: 0 14px;
   border-radius: 999px;
   background: var(--ck12-glass);
   border: 1px solid rgba(185, 179, 217, 0.22);
@@ -381,9 +387,64 @@
   color: var(--ck12-ink2);
   letter-spacing: 0.08em;
   white-space: nowrap;
+  min-width: 0;
 }
-.ck12-sceneread b { color: var(--ck12-teal); font-weight: 700; }
-.ck12-sceneread:hover { border-color: var(--ck12-edge); color: #fff; }
+/* 绝对定位后 pill 不再占 flex 位：用弹性占位把右侧三读数钉回右缘。 */
+.ck12-hud-sp { flex: 1; }
+.ck12-sr-k {
+  flex: none;
+  font-size: 8.5px;
+  font-weight: 800;
+  letter-spacing: 0.14em;
+  color: var(--ck12-metal2);
+  font-family: var(--font-mono);
+}
+.ck12-sr-scene {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  border: 0;
+  background: none;
+  padding: 0;
+  color: inherit;
+  font: inherit;
+  letter-spacing: inherit;
+  cursor: pointer;
+}
+.ck12-sr-scene b {
+  color: var(--ck12-teal);
+  font-weight: 700;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.ck12-sr-scene:hover b { color: #fff; }
+.ck12-sr-dot {
+  flex: none;
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--ck12-teal);
+  box-shadow: 0 0 7px var(--ck12-teal);
+}
+.ck12-sr-sep {
+  flex: none;
+  width: 1px;
+  height: 14px;
+  background: rgba(185, 179, 217, 0.28);
+}
+.ck12-sr-clock {
+  display: flex;
+  align-items: baseline;
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.04em;
+  color: #EDEBFA;
+  cursor: default;
+}
+.ck12-sr-clock b { font-weight: 700; }
+.ck12-sr-ss { color: var(--ck12-metal2); font-weight: 700; }
 
 /* model chip（原型 .modelchip；宿主里是共享的 ComposerModelPopover 触发钮） */
 .ck12-hud-model { flex: none; display: flex; }

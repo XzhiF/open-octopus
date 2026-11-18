@@ -7,6 +7,7 @@ import { useEffect, type ReactNode } from 'react'
 import { matchAppRoute } from '@/lib/routes'
 import { CockpitStateProvider, useCockpitState } from '../CockpitStateProvider'
 import { CockpitLayerStack } from '../CockpitLayerStack'
+import { SCENE_COUNT } from '../../scene/scene-model'
 import {
   cockpitHrefPreserving,
   parseCockpitUrl,
@@ -246,5 +247,31 @@ describe('CockpitLayerStack', () => {
   it('closeTop 在空栈返回 false', () => {
     const { result } = renderHook(() => useCockpitState(), { wrapper })
     expect(result.current.layer.closeTop()).toBe(false)
+  })
+})
+
+describe('舱景轮换', () => {
+  it('travel 顺序切下一幕并环绕', () => {
+    const { result } = renderHook(() => useCockpitState(), { wrapper })
+    expect(result.current.sceneIndex).toBe(0)
+    act(() => result.current.travel())
+    expect(result.current.sceneIndex).toBe(1)
+    act(() => result.current.setScene(SCENE_COUNT - 1))
+    act(() => result.current.travel())
+    expect(result.current.sceneIndex).toBe(0)
+  })
+
+  it('travelRandom 每次换到随机另一幕（不原地重切），且触发星流', () => {
+    const { result } = renderHook(() => useCockpitState(), { wrapper })
+    let nonce = result.current.fx.jumpNonce
+    for (let i = 0; i < 40; i += 1) {
+      const before = result.current.sceneIndex
+      act(() => result.current.travelRandom())
+      expect(result.current.sceneIndex).not.toBe(before)
+      expect(result.current.sceneIndex).toBeGreaterThanOrEqual(0)
+      expect(result.current.sceneIndex).toBeLessThan(SCENE_COUNT)
+      expect(result.current.fx.jumpNonce).toBeGreaterThan(nonce)
+      nonce = result.current.fx.jumpNonce
+    }
   })
 })

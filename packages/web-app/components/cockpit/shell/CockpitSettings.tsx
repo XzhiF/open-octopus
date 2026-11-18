@@ -133,7 +133,7 @@ export function CockpitSettings() {
           <div className="ck12-srow">
             <span className="ck12-sk">
               <b>随机跃迁</b>
-              <span>每 45–105 秒自动切下一幕（⌥W 手动跃迁）</span>
+              <span>每 15–45 秒随机切到另一幕（⌥W 手动切下一幕）</span>
             </span>
             <button
               type="button"

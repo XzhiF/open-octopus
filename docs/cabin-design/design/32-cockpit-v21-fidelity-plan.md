@@ -446,3 +446,46 @@ e2e `cockpit-v21-fidelity` 新增「详情 dossier」用例（居中 760 / 8 页
 
 门禁：`components/cockpit + JobFace` **27 文件 / 252 例全绿**；改动文件 `tsc` / `eslint` 0 error；
 原型 jsdom 冒烟：点外面浮层仍开、详情 left 290/width 760、z 45 > 44、Esc 依次回列表 → 收浮层 → 收详情。
+
+### 9.11 八轮（2026-11-18 · HUD 中间 pill 去假坐标 + 舱景扩到 12 幕）
+
+用户：中间 `SCENE 星空 · 巡航 RA 05h35m · DEC −05°` 是演示假数据、没有真实信息（代码注释本就
+写明「纯氛围，不是天文数据」）；先想过几种替代读数（链路健康 / 舱况一句话 / 汐音在场 / 三幕点），
+最终拍板：**保留场景名 + 加当前时间，按秒变动**。随后场景从 3 张扩到 12 张，并要求
+**场景清单只留一个真源、不要在原型与生产各写一份**。
+
+| 项 | 旧 | 新 |
+|---|---|---|
+| pill 结构 | 单按钮 `SCENE <名> <RA/DEC>`，整颗点击跃迁 | 两段：左「● 场景名」（点击跃迁）+ 分隔线 + 右「当前时间 HH:MM:SS」（只读，每秒走字） |
+| 假数据 | `coord`（RA/DEC）在 `SCENES` 与 HUD 里各存一份 | 整体删除；`CockpitSceneDef` 不再有 `coord` |
+| 场景数 | 3（舰桥·日落 / 星空·巡航 / 星云·门） | **12**（新增 极光·冰原 / 黑洞·吸积盘 / 星环·巨行星 / 太空港·夜航 / 日冕·风暴 / 冰月·深渊 / 星门·跃迁 / 地出·家园 / 深空·孤舰），`travel()` 顺序轮换、空闲预取下一张 |
+| 清单真源 | 原型 HTML 与 `scene-model.ts` 各写一份 | **`docs/cabin-design/assets/scenes.json`**（key/name/short/file）；生产 `scene-model.ts` 直接 import 它（图片仍走静态 import 供 Vite 打包）；原型块由 `assets/sync-scenes.mjs` 生成；`scene-model.test.ts` 守三边一致 |
+| 时钟 | 安静层大时钟（仅无选中时显示） | HUD 右段常驻；抽成 `HudClock` 独立组件，只有这一块按秒重渲染 |
+
+生产落地：`scene/scene-model.ts`（JSON 真源 + 12 张静态 import）；新增 `shell/HudClock.tsx`；
+`shell/CockpitHud.tsx`（pill 拆两段）；`app/cockpit/base.css`（`.ck12-sr-*`）；
+`app/cockpit/v21.css`（≤1320 只隐藏 `SCENE` 小标，时钟保留）。
+原型：同一结构（`.sr-k/.sr-scene/.sr-sep/.sr-clock`），`renderClock()` 每秒走字；
+`SCENES` 由 sync 脚本生成，`coord` 字段删除。
+
+门禁：新增 `scene-model.test.ts` 4 例（生产↔清单同序同 key、12 幕 key 唯一、原型块↔清单一致、
+`sceneAt` 环绕）+ `HudClock.test.tsx` 2 例（系统时间格式、每秒走字）；
+`components/cockpit + JobFace` **29 文件 / 258 例**（257 绿 + Crew 既有加载波动 1 例，单跑 19/19 绿）；
+`tsc` 改动文件 0 error、`eslint` 0 error；原型 jsdom 冒烟 12 幕下仍通过。
+
+**八轮补丁（同日 · 用户：自动轮换随机时间 + 随机切幕）：**
+- 自动轮换不再顺序切下一幕：`travelRandom()` = 随机选**另一幕**（保证不原地重切）+ 星流/闪光；
+  计时改为 **15–45s** 随机（用户：15-45 就可以跳动了）。生产 `CockpitState.travelRandom`（`CockpitWarpScheduler` 消费），
+  原型 `travelRandom()` / `scheduleWarp()` 同口径。手动跃迁（⌥W / 右栏「跃迁」/ HUD 场景名）
+  仍顺序，方便把 12 幕挨个看完；设置文案改为「每 15–45 秒随机切到另一幕」。
+- 测试：`cockpit-state.test.tsx` 新增「舱景轮换」2 例（travel 顺序环绕；travelRandom 40 次
+  每次换幕、范围合法、jumpNonce 递增）。
+- **中轴对齐**（用户：上面 SCENE 跟下面「💬 主对话 · 通讯停靠」要在同一条 x 轴、都放正中间）：
+  pill 不再 `margin:auto`（flex 自由空间居中，左右组宽度不等会偏出中轴），改为
+  `position:absolute; left:50%; transform:translateX(-50%)` —— 与底部停靠 pill
+  `.ck12-condock` 的居中口径完全一致（同一条视口中轴）；HUD 加 `.ck12-hud-sp`
+  弹性占位把右侧三读数钉回右缘。原型 `.sceneread` / `.hudsp` 同口径。
+- **原型 Esc 收起主通讯台**（用户：原型主 chat 按 Esc 收不起来）：原型 Esc 链补最后一级
+  `if(!state.conMin){setConMin(true)}` —— 与生产一致（`CockpitChatWindow` 的 Esc 层
+  `docked:true`，收起成底部「💬 主对话 · 通讯停靠」pill）。层级顺序：设置 → 树窗 → 会话下拉 →
+  弹层 → 要我处理（选中→列表→收）→ 简报 → relay → 面板 → **通讯台**；再按 Esc 不动（停靠 pill 不是层）。

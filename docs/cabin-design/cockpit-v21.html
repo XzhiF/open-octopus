@@ -114,8 +114,22 @@ kbd{border:1px solid rgba(185,179,217,.35);border-bottom-width:2px;border-radius
 .projchip:hover{border-color:var(--teal);color:#fff;box-shadow:0 0 14px rgba(53,199,240,.35)}
 .projchip .pg2{font-size:13px}
 .projchip b{color:#fff}
-.sceneread{margin:0 auto;display:flex;align-items:center;gap:8px;height:32px;padding:0 16px;border-radius:999px;background:var(--glass);backdrop-filter:blur(10px);border:1px solid rgba(185,179,217,.22);font-size:10px;color:var(--ink2);letter-spacing:.08em}
-.sceneread b{color:var(--teal);font-weight:700}
+/* 中间读数 pill（2026-11-18 八轮）：左段 = 舱景名（真实背景，点击跃迁），
+   右段 = 当前时间（每秒变动）；点左段换幕。
+   原「RA 05h35m · DEC −05°」是纯氛围假坐标，已撤掉。
+   居中口径与底部 #conDock（left 50% + translateX(-50%)）一致 —— 同一条视口中轴；
+   不要用 flex 的 margin:auto（左右组宽度不等会偏出中轴）。 */
+.sceneread{position:absolute;left:50%;transform:translateX(-50%);top:11px;display:flex;align-items:center;gap:9px;height:32px;padding:0 14px;border-radius:999px;background:var(--glass);backdrop-filter:blur(10px);border:1px solid rgba(185,179,217,.22);font-size:10px;color:var(--ink2);letter-spacing:.08em;white-space:nowrap;min-width:0}
+.hudsp{flex:1}
+.sr-k{flex:none;font-size:8.5px;font-weight:800;letter-spacing:.14em;color:var(--metal2);font-family:var(--font-mono)}
+.sr-scene{display:flex;align-items:center;gap:6px;min-width:0;border:0;background:none;padding:0;color:var(--ink2);font:inherit;letter-spacing:inherit;cursor:pointer}
+.sr-scene b{color:var(--teal);font-weight:700;overflow:hidden;text-overflow:ellipsis}
+.sr-scene:hover b{color:#fff}
+.sr-dot{flex:none;width:5px;height:5px;border-radius:50%;background:var(--teal);box-shadow:0 0 7px var(--teal)}
+.sr-sep{flex:none;width:1px;height:14px;background:rgba(185,179,217,.28)}
+.sr-clock{display:flex;align-items:baseline;font-family:var(--font-mono);font-size:10.5px;font-variant-numeric:tabular-nums;letter-spacing:.04em;color:#EDEBFA;cursor:default}
+.sr-clock b{font-weight:700}
+.sr-clock .ss{color:var(--metal2);font-weight:700}
 .cur{display:flex;align-items:center;gap:6px;height:32px;cursor:default}
 .cur .ci{width:24px;height:27px;clip-path:var(--hex);display:grid;place-items:center;font-size:11px;color:#fff}
 .cur.gold .ci{background:linear-gradient(160deg,var(--gold),var(--sun))}
@@ -892,7 +906,7 @@ kbd{border:1px solid rgba(185,179,217,.35);border-bottom-width:2px;border-radius
   .rhex.more{width:70px;height:80px}
   .inboxchip{width:78px}
   .cur.tok{display:none}
-  .sceneread span{display:none}
+  .sr-k{display:none}
 }
 @media (max-width:1240px){
   :root{--railw:64px;--railr:104px;--charh:66vh}
@@ -997,7 +1011,13 @@ kbd{border:1px solid rgba(185,179,217,.35);border-bottom-width:2px;border-radius
   <header class="hud">
     <button class="backchip" id="btnClassic" title="返回 classic 模式（作战舱）"><span class="pg2">←</span><b>经典模式</b></button>
     <button class="projchip" id="btnProj" title="舱籍 · 绑定项目"><span class="pg2">⧉</span><span class="pn2">账务中台 · <b>4</b> 项目</span></button>
-    <div class="sceneread">SCENE <b id="sceneName">舰桥 · 日落</b><span id="sceneCoord">RA 17h42m · DEC −28°</span></div>
+    <div class="sceneread" id="sceneRead" role="group" aria-label="舱景与当前时间">
+      <span class="sr-k" aria-hidden="true">SCENE</span>
+      <button type="button" class="sr-scene" id="srScene" title="跃迁 · 切下一幕（也可用右栏 ⌥W）"><span class="sr-dot" aria-hidden="true"></span><b id="sceneName">舰桥 · 日落</b></button>
+      <span class="sr-sep" aria-hidden="true"></span>
+      <span class="sr-clock" id="srClock" title="当前时间"><b id="srClockHM">--:--</b><span class="ss" id="srClockSec">:--</span></span>
+    </div>
+    <span class="hudsp" aria-hidden="true"></span>
     <div class="cur tok" id="curTok" title="本会话 token · 只读（明细在通讯台头部 TOKEN）"><span class="ci">▤</span><b id="hTok">420k</b></div>
     <div class="cur cry opt1" id="curCtx" title="上下文占用 · 只读（明细在通讯台头部 CTX）"><span class="ci">◈</span><b id="hCtx">42%</b></div>
     <div class="cur gold" id="curCost" title="本会话费用 · 只读（完整账在右栏 消耗）"><span class="ci">¥</span><b id="hCost">1.28</b></div>
@@ -1119,9 +1139,18 @@ const POSE_META={
  ready:{cn:'待令',en:'READY',desc:'舰桥接管 · 报到',line:'汐音报到，舰桥接管完毕，全舱正常。',fx:'shine'},
  command:{cn:'指挥',en:'CMD',desc:'派单 relay · 出击',line:'收到，派进编队，出击！',fx:'beam'},
  typing:{cn:'键入',en:'TYPE',desc:'全息键盘 · 编译',line:'我在编译产物，键声就是进度。',fx:'keys'}};
-const SCENES=[{name:'舰桥 · 日落',short:'舰桥·日落',file:'./assets/scene-bridge.png',coord:'RA 17h42m · DEC −28°'},
- {name:'星空 · 巡航',short:'星空·巡航',file:'./assets/scene-cruise.png',coord:'RA 05h35m · DEC −05°'},
- {name:'星云 · 门',short:'星云·门',file:'./assets/scene-nebula.png',coord:'RA 18h20m · DEC +38°'}];
+const SCENES=[{name:'舰桥 · 日落',short:'舰桥·日落',file:'./assets/scene-bridge.png'},
+ {name:'星空 · 巡航',short:'星空·巡航',file:'./assets/scene-cruise.png'},
+ {name:'星云 · 门',short:'星云·门',file:'./assets/scene-nebula.png'},
+ {name:'极光 · 冰原',short:'极光·冰原',file:'./assets/scene-aurora.png'},
+ {name:'黑洞 · 吸积盘',short:'黑洞·吸积',file:'./assets/scene-blackhole.png'},
+ {name:'星环 · 巨行星',short:'星环·巨行星',file:'./assets/scene-ring.png'},
+ {name:'太空港 · 夜航',short:'太空港·夜航',file:'./assets/scene-port.png'},
+ {name:'日冕 · 风暴',short:'日冕·风暴',file:'./assets/scene-solar.png'},
+ {name:'冰月 · 深渊',short:'冰月·深渊',file:'./assets/scene-icemoon.png'},
+ {name:'星门 · 跃迁',short:'星门·跃迁',file:'./assets/scene-gate.png'},
+ {name:'地出 · 家园',short:'地出·家园',file:'./assets/scene-earthrise.png'},
+ {name:'深空 · 孤舰',short:'深空·孤舰',file:'./assets/scene-deepspace.png'}];
 const PROJECTS=[
  {id:'ledger',name:'账务核心',color:'#35C7F0',org:'octo-finance',group:'ledger',branch:'main',head:'a74bee6',commit:'2h 前',dirty:false},
  {id:'gateway',name:'API 网关',color:'#8B7CF6',org:'octo-finance',group:'gateway',branch:'main',head:'de29609',commit:'35m 前',dirty:true},
@@ -1281,9 +1310,11 @@ function flash(c){const e=$('#flash');e.style.setProperty('--fx',c);e.classList.
 function gotoScene(idx){idx=(idx+SCENES.length)%SCENES.length;if(idx===state.scene&&$('#scA').dataset.init)return;state.scene=idx;
  const front=state.sceneFront==='A'?$('#scA'):$('#scB');const back=state.sceneFront==='A'?$('#scB'):$('#scA');
  back.src=SCENES[idx].file;back.dataset.init='1';void back.offsetWidth;back.style.opacity=1;front.style.opacity=0;state.sceneFront=state.sceneFront==='A'?'B':'A';
- $('#sceneName').textContent=SCENES[idx].name;$('#sceneCoord').textContent=SCENES[idx].coord;
+ $('#sceneName').textContent=SCENES[idx].name;
  state.warp=1;flash('var(--teal)');Audio.sfx('warp');scheduleWarp();}
 function travel(){gotoScene(state.scene+1);}
+/* v21 八轮：自动轮换 = 随机时间 + 随机另一幕（不原地重切）；手动跃迁仍顺序。 */
+function travelRandom(){let idx=Math.floor(Math.random()*(SCENES.length-1));if(idx>=state.scene)idx++;gotoScene(idx);}
 
 /* ── mood / say ── */
 let moodT=null,curT=null;
@@ -1416,6 +1447,10 @@ function toggleInbox(open){
   renderInbox();
   Audio.sfx(state.inboxOpen?'open':'close');
 }
+/* 中间读数 pill 右段：当前时间（真源 = 系统时钟，每秒更新；不随 HUD tick）。 */
+function renderClock(){const hm=$('#srClockHM'),sec=$('#srClockSec');if(!hm)return;const d=new Date();
+ hm.textContent=String(d.getHours()).padStart(2,'0')+':'+String(d.getMinutes()).padStart(2,'0');
+ sec.textContent=':'+String(d.getSeconds()).padStart(2,'0');}
 function renderHUD(){$('#hCost').textContent=state.cost.toFixed(2);
  const pct=Math.min(100,Math.round(state.tokens/state.ctxMax*100));
  $('#hCtx').textContent=pct+'%';
@@ -2062,7 +2097,7 @@ function simResolveAll(){const open=[...openOps()];if(!open.length){toast('全�
  open.forEach((o,i)=>setTimeout(()=>resolveOp(o.id,o.rec),i*450));toast('自动收口 '+open.length+' 条 · 按 REC 建议');}
 /* ── 随机跃迁 ── */
 let warpT=null;
-function scheduleWarp(){clearTimeout(warpT);if(state.autoWarp)warpT=setTimeout(()=>{if(!document.hidden)travel();scheduleWarp();},45000+Math.random()*60000);}
+function scheduleWarp(){clearTimeout(warpT);if(state.autoWarp)warpT=setTimeout(()=>{if(!document.hidden)travelRandom();scheduleWarp();},15000+Math.random()*30000);}
 
 /* ── popovers：模型 / 模拟 ── */
 function closePops(){state.pop=null;$('#popSim').classList.remove('open');}
@@ -2075,7 +2110,7 @@ function openPop(kind){if(state.pop===kind){closePops();return;}closePops();stat
   <button class="pbtn" data-sim="burst"><span class="ic">✦×N</span>连发回流 · 连续多条消息</button>
   <button class="pbtn" data-sim="all"><span class="ic">✓</span>全部按 REC 自动收口</button>
   <button class="pbtn" data-sim="auto"><span class="ic">${state.simAuto?'◉':'○'}</span>自动回流 ${state.simAuto?'开（34s·偶发连发）':'关'}</button>
-  <button class="pbtn" data-sim="warp"><span class="ic">${state.autoWarp?'◉':'○'}</span>随机跃迁 ${state.autoWarp?'开（45–105s）':'关'}</button>
+  <button class="pbtn" data-sim="warp"><span class="ic">${state.autoWarp?'◉':'○'}</span>随机跃迁 ${state.autoWarp?'开（15–45s）':'关'}</button>
   <div class="pnote2">回传立即进「要我处理」并在编队 / 决断标红；未读计数，处理完自动消项。编队/决断收到回传会有入场动画。自动回流 / 随机跃迁也可在「设置」里开关。</div>`;
  e.classList.add('open');
  $$('[data-sim]',e).forEach(b=>b.addEventListener('click',()=>{const k=b.dataset.sim;
@@ -2098,7 +2133,7 @@ function renderSettings(){const b=$('#setBody');if(!b)return;
   <div class="srow"><span class="sk"><b>主题色</b><span>按钮高亮 / 星流 / 跃迁光效跟随主题</span></span><span class="swatches">${['默认','玫瑰','森绿'].map((n,i)=>`<button class="tsw${state.theme===i?' on':''}" data-theme="${i}" title="${n}" aria-label="主题 ${n}" style="background:linear-gradient(135deg,${THEMES[i][0]},${THEMES[i][1]} 55%,${THEMES[i][2]})"></button>`).join('')}</span></div>
   <div class="srow"><span class="sk"><b>窗口透明度</b><span>通讯台 / 面板 / 弹窗的整体不透明度</span></span><span class="slider"><input type="range" min="40" max="100" step="2" value="${Math.round(state.winAlpha*100)}" data-alpha aria-label="窗口透明度"><b id="setAlphaV">${Math.round(state.winAlpha*100)}%</b></span></div>
   <div class="sgrp">场景</div>
-  <div class="srow"><span class="sk"><b>随机跃迁</b><span>每 45–105 秒自动切下一幕（⌥W 手动跃迁）</span></span><button class="sw${state.autoWarp?' on':''}" data-set="warp" aria-pressed="${state.autoWarp}" title="${state.autoWarp?'关闭随机跃迁':'开启随机跃迁'}"></button></div>
+  <div class="srow"><span class="sk"><b>随机跃迁</b><span>每 15–45 秒随机切到另一幕（⌥W 手动切下一幕）</span></span><button class="sw${state.autoWarp?' on':''}" data-set="warp" aria-pressed="${state.autoWarp}" title="${state.autoWarp?'关闭随机跃迁':'开启随机跃迁'}"></button></div>
   <div class="sgrp">原型演练</div>
   <div class="srow"><span class="sk"><b>自动回流</b><span>约 34 秒一次随机回传 · 开发期能力，正式版不出现</span></span><button class="sw${state.simAuto?' on':''}" data-set="simauto" aria-pressed="${state.simAuto}" title="${state.simAuto?'关闭自动回流':'开启自动回流'}"></button></div>
   <div class="snote">手动单条 / 连发回流在「更多 → 模拟」。设置即时生效，原型只存内存；正式版落到舱内偏好（本机）。</div>`;
@@ -2144,6 +2179,9 @@ setInterval(()=>{if(document.hidden)return;const runs=state.jobs.filter(j=>j.sta
 /* ── events ── */
 $('#rCmd').addEventListener('click',()=>{openThread('main');state.warp=Math.max(state.warp,.5);$('#cmdInput').focus();});
 $('#rWarp').addEventListener('click',travel);
+/* 中间读数 pill：左段 = 跃迁；右段 = 当前时间（只读，每秒走字）。 */
+$('#srScene').addEventListener('click',travel);
+renderClock();setInterval(renderClock,1000);
 $('#inboxchip').addEventListener('click',()=>toggleInbox());
 $('#rMore').addEventListener('click',e=>{e.stopPropagation();if(state.fanOpen)closeFan();else openFan();Audio.sfx('click');});
 addEventListener('pointerdown',e=>{if(!state.fanOpen)return;if(e.target.closest('#morewrap'))return;closeFan();});
@@ -2203,7 +2241,7 @@ addEventListener('keydown',e=>{const inIn=e.target.closest('textarea,input');
  if(e.altKey&&e.key.toLowerCase()==='c'){e.preventDefault();setConMin(!state.conMin);return;}
  if(e.altKey&&e.key.toLowerCase()==='i'){e.preventDefault();toggleInbox();return;}
  if(e.altKey&&e.key==='1'){e.preventDefault();const f=[...openOps()].sort((a,b)=>OP_KIND[a.kind].pri-OP_KIND[b.kind].pri)[0];if(f){state.inboxOpen=true;state.inboxSel=f.id;state.inboxPick=null;renderInbox();Audio.sfx('open');}else toggleInbox(true);return;}
- if(e.key==='Escape'){if(state.settings){closeSettings();return;}if(state.twin){closeTree();return;}if(state.conPop){closeConPop();return;}if(state.pop){closePops();return;}if(state.inboxOpen){if(state.inboxSel){state.inboxSel=null;state.inboxPick=null;renderInbox();}else toggleInbox(false);return;}if(state.brief){hideBanner();return;}if(state.relayJump){state.relayJump=false;renderPanel();return;}if(state.panel){closePanel();return;}}
+ if(e.key==='Escape'){if(state.settings){closeSettings();return;}if(state.twin){closeTree();return;}if(state.conPop){closeConPop();return;}if(state.pop){closePops();return;}if(state.inboxOpen){if(state.inboxSel){state.inboxSel=null;state.inboxPick=null;renderInbox();}else toggleInbox(false);return;}if(state.brief){hideBanner();return;}if(state.relayJump){state.relayJump=false;renderPanel();return;}if(state.panel){closePanel();return;}if(!state.conMin){setConMin(true);return;}}
  if(!inIn&&state.inboxOpen&&state.inboxSel&&state.inboxPick!=null&&e.key==='Enter'){e.preventDefault();submitInbox(false);return;}
  if(!inIn&&state.inboxOpen&&state.inboxSel&&/^[1-9]$/.test(e.key)){const o=opOf(state.inboxSel);if(o&&o.status==='open'){const i=+e.key-1;if(o.options[i]){e.preventDefault();state.inboxPick=i;renderInbox();Audio.sfx('click');}}return;}
  if(!inIn&&/^[1-9]$/.test(e.key)&&state.thread!=='main'){const o=opForJob(state.thread);if(o){const i=+e.key-1;if(o.options[i]){e.preventDefault();resolveOp(o.id,o.options[i].label);}}}});
