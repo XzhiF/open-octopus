@@ -1586,7 +1586,7 @@ export function ChatPane({
                 // 全域座舱（v21 三轮）：逐字用原型 .con-in 的 placeholder。
                 ? composerVariant === 'cockpit'
                   ? '回应汐音 / 下达新指令…（⏎ 发送 · ⇧⏎ 换行）'
-                  : `问${CABIN_MAIN_IDENTITY}…　⏎ 发送 · ⇧⏎ 排队 · Alt⏎ 换行`
+                  : `问${CABIN_MAIN_IDENTITY}…\u3000⏎ 发送 · ⇧⏎ 排队 · Alt⏎ 换行`
                 : '问主 Agent…　⏎ 发送 · ⇧⏎ 排队 · Alt⏎ 换行'}
             // hero：新建对话 = 空主会话；新建开发任务 = 未落盘的 pendingTask（同一套
             // 居中 composer + 第二行控件，2026-10-28 看齐）。
