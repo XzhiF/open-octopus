@@ -117,7 +117,7 @@ beforeEach(() => {
 })
 
 describe('关灯组：关闭按钮在左（DOM 顺序）', () => {
-  it('聊天浮窗：✕ 是灯组第一颗，也是 header 第一个可聚焦元素', async () => {
+  it('聊天浮窗：✕ 是 header 第一个可聚焦元素（v21 二轮：单灯组，左置）', async () => {
     render(
       <CockpitStateProvider entryCabinId="c1">
         <OpenWindow />
@@ -127,19 +127,13 @@ describe('关灯组：关闭按钮在左（DOM 顺序）', () => {
     const root = await screen.findByTestId('cockpit-chat-window')
     await waitFor(() => expect(root.getAttribute('data-open')).toBe('true'))
 
-    const close = screen.getByLabelText('关闭对话窗')
+    const close = screen.getByTestId('cockpit-comms-close')
+    expect(close.getAttribute('aria-label')).toBe('收起通讯台')
     expect(focusables(root)[0]).toBe(close)
-    const lights = root.querySelector('.ck12-comms-lights')
-    expect(lights?.firstElementChild).toBe(close)
-    // classic 顺序 ✕ → — → 📌（图标版：关闭 / 收起 / 锁定，DOM 顺序即视觉顺序）
-    expect([...(lights?.children ?? [])].map((el) => el.getAttribute('aria-label'))).toEqual([
-      '关闭对话窗',
-      '收起对话窗',
-      '锁定位置',
-    ])
+    expect(root.querySelector('.ck12-comms-head')?.firstElementChild).toBe(close)
   })
 
-  it('作业面 header：✕ 是第一个可聚焦元素，也是 h1 的第一个子元素', () => {
+  it('作业面 header：✕ 是第一个可聚焦元素，也是 .ck12-dh 的第一个子元素', () => {
     render(
       <CockpitJobHeader
         kind="task"
@@ -153,7 +147,7 @@ describe('关灯组：关闭按钮在左（DOM 顺序）', () => {
     const header = screen.getByTestId('cockpit-job-header')
     const close = screen.getByTestId('cockpit-job-close')
     expect(focusables(header)[0]).toBe(close)
-    expect(header.querySelector('.ck12-jh-h1')?.firstElementChild).toBe(close)
+    expect(header.querySelector('.ck12-dh')?.firstElementChild).toBe(close)
   })
 
   it('编队抽屉：✕ 是 aside 第一个可聚焦元素，也是 header 第一个子元素', () => {

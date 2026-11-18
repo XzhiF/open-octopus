@@ -229,9 +229,10 @@
 }
 .ck12-cmd-slot [data-composer-block]:focus-within { border-color: transparent; }
 .ck12-cmd-slot textarea {
+  /* v21 二轮：默认一行、最多四行（AutoResizeTextarea 写行内 height；
+     这里只给上下限，不再用 !important 把高度钉死）。 */
   min-height: 24px !important;
-  max-height: 24px !important;
-  height: 24px !important;
+  max-height: 96px !important;
   padding-top: 0;
   padding-bottom: 0;
   overflow-y: auto;
@@ -242,9 +243,11 @@
    2026-11-14 用户：「输入框左边的图标跟文字上下没有居中对齐」。 */
 .ck12-cmd-slot [data-tui-prompt] {
   display: flex;
-  align-items: center;
+  align-items: flex-end;
+  align-self: flex-end;
   height: 24px;
   padding-top: 0;
+  padding-bottom: 0;
   line-height: 24px;
 }
 .ck12-cmd-slot [data-tui-attach-inline] {
@@ -500,14 +503,23 @@
    多作战 tab 条 / TUI 选项行 / 本地回执 / 停靠 pill / 边缘 grip /
    TUI 转录 gutter。全部只在 .ck12-comms 与全域底栏内生效。 */
 
-/* transcript wrapper：只多一层 relative 上下文，回执 overlay 住里面。 */
+/* transcript wrapper：只多一层 relative 上下文，回执 overlay 住里面。
+   v21 三轮：纵向排 —— 转录 / 选项行 / 输入行都在通讯台里（原型 .con-*）。 */
 .ck12-comms-bodywrap {
   position: relative;
   flex: 1;
   min-height: 0;
   display: flex;
+  flex-direction: column;
 }
-.ck12-comms-bodywrap .ck12-comms-body { flex: 1; }
+.ck12-comms-bodywrap .ck12-comms-body { flex: 1; min-height: 0; }
+
+/* 输入行容器（原型 .con-in）：媒体查询外只在结构上有意义，造型见 v21b.css。 */
+.ck12-comms-in {
+  flex: none;
+  min-width: 0;
+}
+.ck12-comms-inslot { min-width: 0; }
 
 /* ── 多作战 tab 条（§3.2）───────────────────────────────────────────── */
 .ck12-comms-tabstrip {

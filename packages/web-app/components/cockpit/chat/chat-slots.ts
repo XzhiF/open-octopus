@@ -2,15 +2,14 @@
 
 // S5 owns this file —— 壳里三个兄弟节点之间交换 DOM 挂载点。
 //
-// CockpitShell 里 `CockpitChatHost` / `CockpitChatWindow` / `CockpitCommandBar`
-// 是**平级**的两个兄弟（Host 在 footer 之后）。Host 拿不到 Window/CommandBar 的
-// ref，所以用模块级 registry：
+// CockpitShell 里 `CockpitChatHost` / `CockpitChatWindow` 是**平级**的兄弟。
+// Host 拿不到 Window 的 ref，所以用模块级 registry：
 //   · Window 注册 transcript 挂载点（ChatPane 的转录区 portal 进去）；
 //   · Window 注册 index 挂载点（标题栏的「对话索引」，ChatTimeline portal 进去）；
-//   · CommandBar 注册 composer 槽（真 composer 的 portal 目标，见 §2.4）。
+//   · v21 三轮：composer 槽也由 Window 注册（原型 .con-in，通讯台内）。
 //
 // 用 useSyncExternalStore：注册/注销在 commit 阶段发生，消费方安全重渲染。
-// 槽节点在 Window/CommandBar 的整个生命周期内保持同一个 DOM 节点（关窗只切
+// 槽节点在 Window 的整个生命周期内保持同一个 DOM 节点（关窗只切
 // `display:none`），所以 ChatPane 不会因为开/关窗被卸载。
 
 import { useSyncExternalStore } from 'react'

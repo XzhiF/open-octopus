@@ -319,7 +319,7 @@ describe('CockpitFace — task 选中（历史舱合成行）', () => {
 
     const header = await screen.findByTestId('cockpit-job-header')
     await waitFor(() => expect(header.textContent).toContain('接入渠道'))
-    expect(header.textContent).toContain('任务')
+    expect(header.textContent).toContain('接入渠道')
     for (const key of ['overview', 'relay', 'run', 'changes', 'accept']) {
       expect(screen.getByTestId(`cockpit-tab-${key}`)).toBeInTheDocument()
     }

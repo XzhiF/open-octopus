@@ -25,9 +25,11 @@ import { CockpitManifestFace } from '../projects/CockpitManifestFace'
 import { CockpitProjectFace } from '../projects/CockpitProjectFace'
 import { PROJECT_ROSTER_ID, projectNameFromKey } from '../projects/project-model'
 
-/** 作业面的 Esc 层 id / 优先级：最低（其它层都先关）。 */
+/** 作业详情的 Esc 层 id / 优先级。
+ *  v21 三轮：详情是覆盖在通讯台之上的模态 dossier —— Esc 必须先收它
+ *  （priority 65：压过通讯台 60，低于问答窗 75 / 模态面板 85）。 */
 export const FACE_LAYER_ID = 'cockpit-face'
-export const FACE_LAYER_PRIORITY = 1
+export const FACE_LAYER_PRIORITY = 65
 
 export interface CockpitFaceProps {
   /** 入口舱（全域单舱化后 = selection.cabinId；保留给 JobFace 的投递门禁）。 */
@@ -229,13 +231,22 @@ export function CockpitFace({ entryCabinId }: CockpitFaceProps) {
   })()
 
   return (
-    <div
-      className="ck12-face"
-      data-testid="cockpit-face"
-      data-entry-cabin={entryCabinId}
-      data-selected-cabin={selection.cabinId}
-    >
-      {body}
-    </div>
+    <>
+      {/* 原型 .pscrim：作业详情是覆盖舱面的玻璃 dossier，不是把舞台撑满的窗口。 */}
+      <div
+        className="ck12-face-scrim"
+        data-testid="cockpit-face-scrim"
+        onClick={close}
+        aria-hidden="true"
+      />
+      <div
+        className="ck12-face"
+        data-testid="cockpit-face"
+        data-entry-cabin={entryCabinId}
+        data-selected-cabin={selection.cabinId}
+      >
+        {body}
+      </div>
+    </>
   )
 }

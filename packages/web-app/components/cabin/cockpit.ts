@@ -37,6 +37,8 @@ export interface CockpitPrefs {
   presenceRate: PresenceRate
   /** 反馈背景特效强度。 */
   fxLevel: PresenceFxLevel
+  /** v21 二轮：窗口整体不透明度（0.4–1，设置滑杆；只作用于舱系窗口）。 */
+  winAlpha: number
 }
 
 export const THEMES: Record<CockpitTheme, { name: string; a: string; b: string; c: string }> = {
@@ -53,7 +55,7 @@ export const DEFAULT_COCKPIT: CockpitPrefs = {
   theme: 'terminal', float: 'glass', floatAmp: 5, hud: true, scan: 5, grid: 30,
   glow: 1, particles: 18, blur: 3, charScale: 1, mood: 'auto', sound: true,
   autonomy: 'auto', dormantMinutes: 30, presenceOn: true, presenceRate: 'active',
-  fxLevel: 'full',
+  fxLevel: 'full', winAlpha: 1,
 }
 
 export const PRESENCE_RATES: Record<PresenceRate, { label: string; seconds: number }> = {
@@ -163,6 +165,7 @@ export function normalizePrefs(raw: unknown): CockpitPrefs {
     sound: typeof p.sound === 'boolean' ? p.sound : DEFAULT_COCKPIT.sound,
     dormantMinutes: clamp(p.dormantMinutes, 0, 1440, DEFAULT_COCKPIT.dormantMinutes),
     presenceOn: typeof p.presenceOn === 'boolean' ? p.presenceOn : DEFAULT_COCKPIT.presenceOn,
+    winAlpha: clamp(p.winAlpha, 0.4, 1, DEFAULT_COCKPIT.winAlpha),
   }
 }
 
@@ -173,6 +176,7 @@ export function cockpitCssVars(prefs: CockpitPrefs): Record<string, string> {
     '--ck-a': th.a, '--ck-b': th.b, '--ck-c': th.c,
     '--ck-glow': String(prefs.glow),
     '--ck-grid': `${prefs.grid}px`,
+    '--ck12-winop': String(prefs.winAlpha),
     '--ck-blur': `${prefs.blur}px`,
     '--ck-float': `${prefs.floatAmp}px`,
     '--ck-char-scale': String(prefs.charScale),

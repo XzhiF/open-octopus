@@ -1,10 +1,10 @@
 'use client'
 
 // S4 owns this file —— 作业头（variant="cockpit"）。
-// 行1：关闭钮（X 图标，第一个可聚焦元素）→ 类型 → 标题 → 状态 → spacer → 5 页签；
-// 行2：按 §1.5 派生表拼 分支 · 在做 · 舱/执行者 · ⏱ · ¥，空值整段省略。
-// 视觉真源：docs/cabin-design/cockpit-v12.html 的 .jobhead（h1 28px / h2 20px /
-// gap 3 / .jtab 24px 胶囊）；类名统一 ck12-jh-*，样式在 app/cockpit/face.css。
+// v21 三轮（原型 cockpit-v21.html .panel / .ph / .dtabs）：
+//   行1：✕（左置）→ 状态表情 + 标题 / 副行「项目 · 分支 · 编号」→ 右侧动作；
+//   行2：平行四边形页签（.dtab）。
+// 视觉真源：docs/cabin-design/cockpit-v21.html 的 .ph / .dtabs；样式在 v21b.css。
 //
 // 本组件只做呈现：数据由 JobFace / CockpitTaskFace 派生后传入，动作节点
 // （暂停/恢复/中止等）也由调用方拼好放进 `actions`，这里不碰任何 API。
@@ -14,23 +14,20 @@ import { ArrowRight, X } from 'lucide-react'
 import type { CabinAttentionItem, CabinJobKind } from '@octopus/shared'
 import { cn } from '@/lib/utils'
 import { formatDuration } from '@/lib/format'
-import { jobStatusLabel, jobTone } from '@/components/cabin/job-status'
+import { jobTone, type JobTone } from '@/components/cabin/job-status'
 import {
   COCKPIT_TABS,
   COCKPIT_TAB_LABELS,
   type CockpitTab,
 } from '../state/cockpit-state'
 
-const KIND_LABEL: Record<CabinJobKind, string> = {
-  task: '任务',
-  workflow: '工作流',
-  subagent: '子代理',
-}
-
-const KIND_CLASS: Record<CabinJobKind, string> = {
-  task: 'is-task',
-  workflow: 'is-workflow',
-  subagent: 'is-subagent',
+/** 原型 STATE_EMO：状态表情跟着 tone 走（字面量逐字取自原型）。 */
+const TONE_EMOJI: Record<JobTone, string> = {
+  run: '⚡',
+  wait: '❗',
+  blocked: '💦',
+  ended: '✅',
+  idle: '●',
 }
 
 /**
@@ -113,70 +110,26 @@ export interface CockpitJobHeaderProps {
 
 export function CockpitJobHeader({
   loading = false,
-  kind,
   title,
   status,
   tab,
   onTabChange,
   onClose,
   branch,
-  doing,
   executor,
   cabinName,
-  startedAt,
-  endedAt,
-  costLabel,
   onGoHandle,
   actions,
   projectTag,
 }: CockpitJobHeaderProps) {
-  // 走表：作业还在跑时 ⏱ 每秒刷新；终态/未开始不挂定时器。
-  const [now, setNow] = useState(() => Date.now())
-  useEffect(() => {
-    if (loading || !startedAt || endedAt) return
-    setNow(Date.now())
-    const timer = window.setInterval(() => setNow(Date.now()), 1000)
-    return () => window.clearInterval(timer)
-  }, [loading, startedAt, endedAt])
-
-  // 「行2」按 §1.5 派生表拼段：空值整段省略，分隔符只在两段之间出现。
-  // 左组可截断（分支 · 在做），右侧元信息不换行（舱/执行者 · ⏱ · ¥）。
-  const left: ReactNode[] = []
-  const meta: ReactNode[] = []
-  const push = (
-    bucket: ReactNode[],
-    key: string,
-    text: string | null | undefined,
-    className?: string,
-  ) => {
-    if (!text) return
-    bucket.push(
-      <span key={key} className={className} title={text}>{text}</span>,
-    )
-  }
-  if (projectTag) {
-    left.push(<span key="project" className="ck12-jh-project">{projectTag}</span>)
-  }
-  push(left, 'branch', branch, 'ck12-jh-branch')
-  push(left, 'doing', doing, 'ck12-jh-doing')
-  push(meta, 'who', executor || cabinName, 'ck12-jh-who')
-  const elapsed = elapsedLabel(startedAt, endedAt, now)
-  push(meta, 'elapsed', elapsed ? `⏱ ${elapsed}` : null, 'ck12-jh-time')
-  push(meta, 'cost', costLabel, 'ck12-jh-cost')
-
-  const renderSegs = (items: ReactNode[]) =>
-    items.map((item, index) => (
-      <span key={index} className="ck12-jh-seg">
-        {index > 0 && <span className="ck12-jh-sep" aria-hidden="true">·</span>}
-        {item}
-      </span>
-    ))
-
-  const hasRow2 = left.length > 0 || meta.length > 0 || !!actions || !!onGoHandle
+  const tone = jobTone(status)
+  const emoji = TONE_EMOJI[tone]
+  // 原型 .ph 副行：项目 · 分支 · 编号（拿不到的段整段省略）。
+  const subtitle = [cabinName, branch, executor].filter(Boolean).join(' · ')
 
   return (
     <div className="ck12-jh" data-testid="cockpit-job-header" data-loading={loading ? '1' : '0'}>
-      <div className="ck12-jh-h1">
+      <div className="ck12-dh">
         {/* header 的第一个可聚焦元素 = 关闭，且视觉在左（§1.6 硬要求）。 */}
         <button
           type="button"
@@ -189,47 +142,15 @@ export function CockpitJobHeader({
           <X className="size-3" aria-hidden="true" />
         </button>
 
-        {loading ? (
-          <h2 className="ck12-jh-title is-loading">载入作业…</h2>
-        ) : (
-          <>
-            {kind && (
-              <span className={cn('ck12-jh-kind', KIND_CLASS[kind])}>
-                {KIND_LABEL[kind]}
-              </span>
-            )}
-            <h2 className="ck12-jh-title" title={title ?? undefined}>{title ?? '—'}</h2>
-            {status && (
-              <span className={cn('ck12-jh-status', `is-${jobTone(status)}`)}>
-                {jobStatusLabel(status)}
-              </span>
-            )}
-            <span className="ck12-jh-spacer" />
-            <div className="ck12-jh-tabs" role="tablist" aria-label="作业页签">
-              {COCKPIT_TABS.map((key) => (
-                <button
-                  key={key}
-                  type="button"
-                  role="tab"
-                  aria-selected={tab === key}
-                  data-testid={`cockpit-tab-${key}`}
-                  className={cn('ck12-jh-tab', tab === key && 'on')}
-                  onClick={() => onTabChange?.(key)}
-                >
-                  {COCKPIT_TAB_LABELS[key]}
-                </button>
-              ))}
-            </div>
-          </>
-        )}
-      </div>
+        <span className="ck12-dh-pt">
+          <b title={title ?? undefined}>{loading ? '载入作业…' : `${emoji} ${title ?? '—'}`}</b>
+          {!loading && subtitle && <span>{subtitle}</span>}
+        </span>
 
-      {!loading && hasRow2 && (
-        <div className="ck12-jh-h2">
-          {left.length > 0 && <div className="ck12-jh-left">{renderSegs(left)}</div>}
-          <span className="ck12-jh-spacer" />
-          {meta.length > 0 && <div className="ck12-jh-meta">{renderSegs(meta)}</div>}
-          <span className="ck12-jh-acts">
+        <span className="ck12-dh-sp" />
+        {!loading && (
+          <span className="ck12-dh-acts">
+            {projectTag}
             {actions}
             {onGoHandle && (
               <button
@@ -242,6 +163,24 @@ export function CockpitJobHeader({
               </button>
             )}
           </span>
+        )}
+      </div>
+
+      {!loading && (
+        <div className="ck12-dtabs" role="tablist" aria-label="作业页签">
+          {COCKPIT_TABS.map((key) => (
+            <button
+              key={key}
+              type="button"
+              role="tab"
+              aria-selected={tab === key}
+              data-testid={`cockpit-tab-${key}`}
+              className={cn('ck12-dtab', tab === key && 'on')}
+              onClick={() => onTabChange?.(key)}
+            >
+              {COCKPIT_TAB_LABELS[key]}
+            </button>
+          ))}
         </div>
       )}
     </div>

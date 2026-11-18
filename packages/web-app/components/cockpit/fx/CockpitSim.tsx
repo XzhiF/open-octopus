@@ -10,13 +10,14 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useCockpitState } from '../state/CockpitStateProvider'
 import { demoArrivalEnabled } from '../fx/CockpitBrief'
+import { setSimAuto, useSimAuto } from './sim-auto'
 
 const AUTO_MS = 34_000
 
 export function CockpitSim() {
   const { fx, autoWarp, setAutoWarp } = useCockpitState()
   const [open, setOpen] = useState(false)
-  const [autoArrival, setAutoArrival] = useState(false)
+  const autoArrival = useSimAuto()
   const timersRef = useRef<number[]>([])
   const enabled = demoArrivalEnabled()
 
@@ -74,7 +75,7 @@ export function CockpitSim() {
             type="button"
             data-testid="cockpit-sim-auto"
             aria-pressed={autoArrival}
-            onClick={() => setAutoArrival(!autoArrival)}
+            onClick={() => setSimAuto(!autoArrival)}
           >
             自动回流 {autoArrival ? '开' : '关'}
           </button>

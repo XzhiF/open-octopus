@@ -1,11 +1,13 @@
 // S5 · 开/关浮窗不卸载 ChatPane。
 //
-// 结构：CockpitShell 里 Host / Window / CommandBar 是三个兄弟节点；Host 通过
-// 模块级 chat-slots 拿到 Window 的 transcript 挂载点。Window 的 ✕/— 只改
-// chatWindow 状态（root display:none），所以挂载点节点不换 → ChatPane 只挂一次。
+// 结构：CockpitShell 里 Host / Window 是兄弟节点；Host 通过模块级 chat-slots
+// 拿到 Window 的 transcript / composer 挂载点。Window 的 ✕/⌄ 只改 chatWindow
+// 状态（root display:none），所以挂载点节点不换 → ChatPane 只挂一次。
+//
+// v21 三轮：composer 槽搬进通讯台（原型 .con-in），默认开窗 —— 底栏不再常驻。
 //
 // 这里 ChatPane 用挂载计数器替身（真实 composer/portal 由 composer-portal.test
-// 覆盖）；Window / CommandBar / Provider 都是真组件。
+// 覆盖）；Window / Provider 都是真组件。
 
 import { render, screen, fireEvent, waitFor } from '@testing-library/react'
 import { describe, it, expect, vi, beforeEach } from 'vitest'
@@ -77,7 +79,6 @@ vi.mock('@/components/agent/chat/ChatPane', async () => {
 import { CockpitStateProvider, useCockpitState } from '../../state/CockpitStateProvider'
 import { CockpitChatHost } from '../CockpitChatHost'
 import { CockpitChatWindow } from '../CockpitChatWindow'
-import { CockpitCommandBar } from '../CockpitCommandBar'
 import { resetChatSlots } from '../chat-slots'
 
 function Controls() {
@@ -98,7 +99,6 @@ function renderShell() {
       <Controls />
       <CockpitChatHost entryCabinId="cabin-1" />
       <CockpitChatWindow />
-      <CockpitCommandBar entryCabinId="cabin-1" />
     </CockpitStateProvider>,
   )
 }
@@ -118,18 +118,19 @@ describe('CockpitChatHost / CockpitChatWindow — 全程挂载', () => {
     expect(h.mounts).toBe(1)
 
     const win = screen.getByTestId('cockpit-chat-window')
-    expect(win.getAttribute('data-open')).toBe('false')
+    // v21 三轮：通讯台默认展开（输入框住在台内）。
+    expect(win.getAttribute('data-open')).toBe('true')
 
-    fireEvent.click(screen.getByText('open'))
-    await waitFor(() => expect(win.getAttribute('data-open')).toBe('true'))
     fireEvent.click(screen.getByText('close'))
     await waitFor(() => expect(win.getAttribute('data-open')).toBe('false'))
+    fireEvent.click(screen.getByText('open'))
+    await waitFor(() => expect(win.getAttribute('data-open')).toBe('true'))
     fireEvent.click(screen.getByText('mini'))
     await waitFor(() => expect(win.getAttribute('data-mini')).toBe('true'))
 
     expect(h.mounts).toBe(1)
     expect(h.unmounts).toBe(0)
-    // 关窗后 transcript 节点仍在（只是 display:none），composer 槽也还在。
+    // 关窗后 transcript / composer 节点仍在（只是 display:none）。
     expect(screen.getByTestId('cockpit-chat-transcript')).toBeTruthy()
     expect(screen.getByTestId('cockpit-composer-slot').getAttribute('data-has-composer')).toBe('true')
   })
@@ -139,12 +140,11 @@ describe('CockpitChatHost / CockpitChatWindow — 全程挂载', () => {
     await waitFor(() => expect(screen.getByTestId('telemetry-model')).toHaveTextContent('pro'))
   })
 
-  it('底栏槽 pointerdown → 展开浮窗（跨 React 树 portal，靠原生 DOM 监听）', async () => {
+  it('composer 槽住在通讯台内（原型的 .con-in）', async () => {
     renderShell()
     const win = screen.getByTestId('cockpit-chat-window')
-    expect(win.getAttribute('data-open')).toBe('false')
-    fireEvent.pointerDown(screen.getByTestId('cockpit-composer-slot'))
-    await waitFor(() => expect(win.getAttribute('data-open')).toBe('true'))
+    const slot = screen.getByTestId('cockpit-composer-slot')
+    expect(win.contains(slot)).toBe(true)
   })
 
   it('octopus:open-task（去处理 / 去任务对话）→ 自动展开浮窗', async () => {
@@ -152,7 +152,8 @@ describe('CockpitChatHost / CockpitChatWindow — 全程挂载', () => {
     // 线程切过去了、人只看到一张没反应的作业面。
     renderShell()
     const win = screen.getByTestId('cockpit-chat-window')
-    expect(win.getAttribute('data-open')).toBe('false')
+    fireEvent.click(screen.getByText('close'))
+    await waitFor(() => expect(win.getAttribute('data-open')).toBe('false'))
     fireEvent(window, new CustomEvent('octopus:open-task', { detail: { taskId: 'task-1' } }))
     await waitFor(() => expect(win.getAttribute('data-open')).toBe('true'))
   })
@@ -161,7 +162,8 @@ describe('CockpitChatHost / CockpitChatWindow — 全程挂载', () => {
     // 2026-11-16 用户反馈：作业面「去主对话」只切会话不开窗，看起来像点了没反应。
     renderShell()
     const win = screen.getByTestId('cockpit-chat-window')
-    expect(win.getAttribute('data-open')).toBe('false')
+    fireEvent.click(screen.getByText('close'))
+    await waitFor(() => expect(win.getAttribute('data-open')).toBe('false'))
     fireEvent(window, new CustomEvent('octopus:cabin-main-chat'))
     await waitFor(() => expect(win.getAttribute('data-open')).toBe('true'))
   })

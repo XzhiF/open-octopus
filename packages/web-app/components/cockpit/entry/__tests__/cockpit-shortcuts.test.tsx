@@ -167,6 +167,7 @@ describe('CockpitShortcuts', () => {
     fireEvent.keyDown(window, { key: '1', code: 'Digit1', altKey: true })
     fireEvent.keyDown(window, { key: 'k', code: 'KeyK', metaKey: true })
     expect(screen.getByTestId('selection').textContent).toBe('none')
-    expect(screen.getByTestId('chat-open').textContent).toBe('closed')
+    // v21 三轮：通讯台默认展开；不抢键 = 状态保持原样。
+    expect(screen.getByTestId('chat-open').textContent).toBe('open')
   })
 })

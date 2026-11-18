@@ -69,24 +69,19 @@ test.describe("全域座舱 v20 · 真数据 E2E", () => {
     await cleanupCabin(seed.cabin.id)
   })
 
-  test("线程 tab：主对话恒在 + 作战线程出现 + 激活 + ⌥←/→ + 关闭", async ({ page }) => {
+  test("作战线程：编队 💬 切线程 + ⌥← 回主对话（v21 二轮去 tab 条）", async ({ page }) => {
     const audit = attachConsoleAudit(page)
     await gotoCockpit(page, seed!.cabin.id)
     await openComms(page)
-    const tabs = page.getByTestId("cockpit-thread-tabs")
-    await expect(tabs).toBeVisible()
-    await expect(page.getByTestId("cockpit-tab-main")).toBeVisible()
-    // 播种的 task job 带真会话 → 编队轮询后作战 tab 出现。
-    const jobTab = page.getByTestId(`cockpit-tab-job:${seed!.taskJob.id}`)
-    await expect(jobTab).toBeVisible({ timeout: 20_000 })
-    await jobTab.click()
-    await expect(page.getByTestId("cockpit-comms-title")).not.toHaveText("汐音 · 对话")
+    // v21 二轮：通讯台不再有 tab 条，作战线程从编队行 💬 进。
+    await expect(page.getByTestId("cockpit-thread-tabs")).toHaveCount(0)
+    await expect(page.getByTestId("cockpit-comms-title")).toHaveText("主对话")
+    const talk = page.getByTestId(`cockpit-rail-talk-job:${seed!.taskJob.id}`)
+    await expect(talk).toBeVisible({ timeout: 20_000 })
+    await talk.click()
+    await expect(page.getByTestId("cockpit-comms-title")).not.toHaveText("主对话")
     await page.keyboard.press("Alt+ArrowLeft")
-    await expect(page.getByTestId("cockpit-tab-main")).toHaveAttribute("aria-selected", "true")
-    await page.keyboard.press("Alt+ArrowRight")
-    await expect(jobTab).toHaveAttribute("aria-selected", "true")
-    await jobTab.getByRole("button", { name: /关闭页签/ }).click()
-    await expect(jobTab).toHaveCount(0)
+    await expect(page.getByTestId("cockpit-comms-title")).toHaveText("主对话")
     expect(audit.filtered).toEqual([])
     audit.dispose()
   })
@@ -129,9 +124,9 @@ test.describe("全域座舱 v20 · 真数据 E2E", () => {
     const audit = attachConsoleAudit(page)
     await gotoCockpit(page, seed!.cabin.id)
     await openComms(page)
-    const jobTab = page.getByTestId(`cockpit-tab-job:${seed!.taskJob.id}`)
-    await expect(jobTab).toBeVisible({ timeout: 20_000 })
-    await jobTab.click()
+    const talk = page.getByTestId(`cockpit-rail-talk-job:${seed!.taskJob.id}`)
+    await expect(talk).toBeVisible({ timeout: 20_000 })
+    await talk.click()
     await page.getByTestId("cockpit-popout").click()
     const win = page.locator(".ck12-cwin").first()
     await expect(win).toBeVisible()
@@ -163,7 +158,8 @@ test.describe("全域座舱 v20 · 真数据 E2E", () => {
     await page.keyboard.press("Escape")
     await expect(ops).toHaveCount(0)
 
-    await page.getByTestId("ck12-rig-cost").click()
+    // v21 二轮：HUD 读数只读，完整账本从右栏「消耗」进。
+    await page.getByTestId("cockpit-menu-usage").click()
     const ledger = page.getByTestId("cockpit-panel-ledger")
     await expect(ledger).toBeVisible()
     await expect(page.getByTestId("cockpit-ledger-top")).toBeVisible()
@@ -242,7 +238,9 @@ test.describe("全域座舱 v20 · 真数据 E2E", () => {
       await expect(sprite.locator("img")).toHaveAttribute("src", /pose-.+\.png/)
     }
 
-    await page.getByTestId("cockpit-poses-open").click()
+    // v21 二轮：动作图鉴入口在「更多 → 动作」。
+    await page.getByTestId("cockpit-menu-more").click()
+    await page.getByTestId("cockpit-fan-poses").click()
     const gallery = page.getByTestId("cockpit-poses-gallery")
     await expect(gallery).toBeVisible()
     await expect(gallery.locator(".ck12-pose-card")).toHaveCount(12)

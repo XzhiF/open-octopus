@@ -11,7 +11,6 @@
 
 import { ArrowRight, X } from 'lucide-react'
 import type { CabinAttentionItem } from '@octopus/shared'
-import { cn } from '@/lib/utils'
 import { openAuthorAskInChat, openTaskInChat } from '@/components/cabin/modules/ui'
 import { useCockpitFleet } from '../fleet/CockpitFleetProvider'
 
@@ -53,7 +52,7 @@ export function CockpitAttentionFace({ attentionId, onClose }: CockpitAttentionF
     return (
       <>
         <div className="ck12-jh" data-testid="cockpit-face-attention">
-          <div className="ck12-jh-h1">
+          <div className="ck12-dh">
             <button
               type="button"
               className="ck12-jh-x"
@@ -64,7 +63,7 @@ export function CockpitAttentionFace({ attentionId, onClose }: CockpitAttentionF
             >
               <X className="size-3" aria-hidden="true" />
             </button>
-            <h2 className="ck12-jh-title">这条待办已经处理掉了</h2>
+            <span className="ck12-dh-pt"><b>这条待办已经处理掉了</b></span>
           </div>
         </div>
         <div className="ck12-face-body">
@@ -80,7 +79,7 @@ export function CockpitAttentionFace({ attentionId, onClose }: CockpitAttentionF
   return (
     <>
       <div className="ck12-jh" data-testid="cockpit-face-attention">
-        <div className="ck12-jh-h1">
+        <div className="ck12-dh">
           <button
             type="button"
             className="ck12-jh-x"
@@ -91,20 +90,17 @@ export function CockpitAttentionFace({ attentionId, onClose }: CockpitAttentionF
           >
             <X className="size-3" aria-hidden="true" />
           </button>
-          <span className={cn('ck12-stage-badge', `is-${item.stage}`)}>
-            {STAGE_LABEL[item.stage]}
+          <span className="ck12-dh-pt">
+            <b title={item.title}>❗ {item.title}</b>
+            <span>
+              {[STAGE_LABEL[item.stage], AWAITING_LABEL[item.awaiting], repo]
+                .filter(Boolean)
+                .join(' · ')}
+            </span>
           </span>
-          <h2 className="ck12-jh-title" title={item.title}>{item.title}</h2>
-          <span className="ck12-jh-status is-wait">{AWAITING_LABEL[item.awaiting]}</span>
-          <span className="ck12-jh-spacer" />
-        </div>
-        {(repo || item.task_id) && (
-          <div className="ck12-jh-h2">
-            <div className="ck12-jh-segs">
-              {repo && <span className="ck12-jh-seg ck12-jh-who" title={repo}>{repo}</span>}
-            </div>
-            <span className="ck12-jh-spacer" />
-            <span className="ck12-jh-acts">
+          <span className="ck12-dh-sp" />
+          {(repo || item.task_id) && (
+            <span className="ck12-dh-acts">
               {/* 2026-11-16：并发提问时每条 ask 都能就地处理 —— 开浮窗并把
                   舱主会话里对应的作答卡滚进视野，不切任务线程。 */}
               {item.stage === 'answer' && item.deep_link?.startsWith('ask:') && (
@@ -133,8 +129,8 @@ export function CockpitAttentionFace({ attentionId, onClose }: CockpitAttentionF
                 </button>
               )}
             </span>
-          </div>
-        )}
+          )}
+        </div>
       </div>
 
       <div className="ck12-face-body" data-testid="cockpit-attn-body">

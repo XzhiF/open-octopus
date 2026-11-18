@@ -212,7 +212,8 @@ describe('CockpitBrief · 到达', () => {
     expect(screen.getByTestId('inbox').dataset.open).toBe('1')
     expect(screen.getByTestId('inbox').dataset.sel).toBe('a9')
     expect(screen.getByTestId('sel').dataset.key).toBe('')
-    expect(screen.getByTestId('win').dataset.open).toBe('0')
+    // v21 三轮：通讯台默认展开；点简报只开 inbox，不收台。
+    expect(screen.getByTestId('win').dataset.open).toBe('1')
     expect(screen.queryByTestId('cockpit-brief')).toBeNull()
   })
 

@@ -37,14 +37,14 @@ describe('ChatTimeline compact（全域标题栏索引）', () => {
 
     const trigger = host.querySelector<HTMLButtonElement>('[data-testid="chat-timeline-handle"]')
     expect(trigger).not.toBeNull()
-    expect(trigger?.textContent).toContain('3轮')
+    expect(trigger?.textContent).toContain('3 轮')
     expect(trigger?.getAttribute('aria-expanded')).toBe('false')
 
     fireEvent.click(trigger!)
     expect(trigger?.getAttribute('aria-expanded')).toBe('true')
     const list = screen.getByTestId('chat-timeline-list')
     const labels = [...list.querySelectorAll('[data-timeline-id]')].map((node) => node.textContent)
-    expect(labels).toEqual(['03拆 M1 迭代', '02五个仓库先摸一遍', '01先把需求落盘'])
+    expect(labels).toEqual(['#3拆 M1 迭代', '#2五个仓库先摸一遍', '#1先把需求落盘'])
   })
 
   it('点条目跳轮并收起；Esc 也能收', () => {

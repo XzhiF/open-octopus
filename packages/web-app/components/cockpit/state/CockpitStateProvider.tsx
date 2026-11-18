@@ -65,7 +65,8 @@ interface FxState {
 }
 
 const INITIAL_CHAT_WINDOW: CockpitChatWindowState = {
-  open: false,
+  // v21 三轮：输入框住进通讯台，通讯台就是原型里常驻的 TUI 面板 —— 默认展开。
+  open: true,
   mini: false,
   pinned: false,
   alpha: 0.94,
@@ -122,14 +123,9 @@ export function CockpitStateProvider({ entryCabinId, children }: CockpitStatePro
   const select = useCallback((ref: CockpitRef | null, nextTab?: CockpitTab) => {
     setSelection((current) => (sameCockpitRef(current, ref) ? current : ref))
     if (nextTab) setTabState(nextTab)
-    // 2026-11-15 用户：对话浮窗展开时会整个盖住作业面，点编队 / 项目切面看不到
-    // 变化，必须手动缩窗或关窗。切面（ref 非空）一律把对话窗收回去 —— 收窗只
-    // 隐藏 DOM（ChatPane 常驻、transcript 不丢），底栏 composer 仍可继续输入；
-    // 点 ticker / 立绘 / 输入框随时能再展开。select(null) 收面不动对话。
-    // v13 简报激活也是「先 select 再 openWithFocus」，两次更新批处理后仍是展开态。
-    if (ref) {
-      setChatWindowState((prev) => (prev.open ? { ...prev, open: false } : prev))
-    }
+    // v21 三轮：详情是覆盖在舱面上的玻璃面板（原型 .panel），不再需要为了
+    // 看见作业面而把通讯台收起来 —— 选面不再动 chatWindow（连输入框一起消失
+    // 是原型的反直觉点）。
   }, [])
 
   const setTab = useCallback((next: CockpitTab) => setTabState(next), [])

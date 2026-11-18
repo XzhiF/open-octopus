@@ -54,7 +54,7 @@ export function ChatTimeline({
   const [open, setOpen] = useState(false)
   // 面板挂在浮窗本体上（不在标题栏槽里），这样宽度能按窗宽夹住 —— 槽只有
   // 52px 宽，右对齐弹 300px 会从窗左缘漏出去被 overflow:hidden 裁掉。
-  const [panelGeom, setPanelGeom] = useState<{ left: number; width: number } | null>(null)
+  const [panelGeom, setPanelGeom] = useState<{ left: number; top: number; width: number; maxHeight: number } | null>(null)
   const listId = useId()
   const dashes = items.length > MAX_DASHES ? items.slice(-MAX_DASHES) : items
   // 最新的在前：打开索引先看到刚说过的那几句；编号仍是原始轮次。
@@ -88,9 +88,13 @@ export function ChatTimeline({
       if (!trigger) return
       const host = windowHost.getBoundingClientRect()
       const btn = trigger.getBoundingClientRect()
-      const width = Math.max(180, Math.min(300, host.width - 24))
-      const left = Math.max(12, Math.min(btn.left - host.left, host.width - width - 12))
-      setPanelGeom({ left, width })
+      // v21 二轮：以按钮为中心向下展开，宽度 / 位置夹在通讯台内（原型 posDrop）。
+      const width = Math.max(220, Math.min(300, host.width - 12))
+      let left = btn.left + btn.width / 2 - width / 2 - host.left
+      left = Math.max(6, Math.min(left, host.width - width - 6))
+      const top = btn.bottom - host.top + 6
+      const maxHeight = Math.max(120, Math.min(262, host.bottom - btn.bottom - 16))
+      setPanelGeom({ left, top, width, maxHeight })
     }
     place()
     const observer = typeof ResizeObserver !== 'undefined' ? new ResizeObserver(place) : null
@@ -127,7 +131,9 @@ export function ChatTimeline({
     nodes[next].scrollIntoView({ block: 'nearest' })
   }, [])
 
-  if (items.length <= 1) return null
+  // 非 compact（classic 竖轨）单轮没有导航意义；compact（舱内 ≡ N 轮）恒显示，
+  // 与原型一致（0 轮也给出「还没有你的输入」空态）。
+  if (!compact && items.length <= 1) return null
 
   // ── 全域：标题栏索引（正文区不渲染任何东西）─────────────────────────
   if (compact) {
@@ -153,7 +159,7 @@ export function ChatTimeline({
               onClick={() => setOpen((value) => !value)}
             >
               <span className="ck12-idx-glyph" aria-hidden="true">≡</span>
-              <span className="ck12-idx-count">{items.length}轮</span>
+              <span className="ck12-idx-count">{items.length} 轮</span>
             </button>
           </div>,
           portalHost,
@@ -164,11 +170,16 @@ export function ChatTimeline({
             ref={panelRef}
             className="ck12-idx-panel"
             data-testid="chat-timeline-panel"
-            style={{ left: panelGeom?.left ?? 12, width: panelGeom?.width ?? 300 }}
+            style={{
+              left: panelGeom?.left ?? 6,
+              top: panelGeom?.top ?? 34,
+              width: panelGeom?.width ?? 300,
+              maxHeight: panelGeom?.maxHeight,
+            }}
           >
             <div className="ck12-idx-head">
-              <b>对话索引 · {items.length} 轮</b>
-              <span>↑↓ 选 · ⏎ 跳转 · Esc 收起</span>
+              <b>用户输入历史 · {items.length} 轮</b>
+              <span>↑↓ 选 · ⏎ 跳 · Esc 收</span>
             </div>
             <div
               ref={listRef}
@@ -187,6 +198,9 @@ export function ChatTimeline({
                 }
               }}
             >
+              {entries.length === 0 && (
+                <div className="ck12-idx-empty">还没有你的输入</div>
+              )}
               {entries.map(({ item, no }) => {
                 const active = item.id === activeId
                 return (
@@ -205,7 +219,7 @@ export function ChatTimeline({
                     className={cn('ck12-idx-item', active && 'on')}
                   >
                     <span className="ck12-idx-no" aria-hidden="true">
-                      {String(no).padStart(2, '0')}
+                      #{no}
                     </span>
                     <span className="ck12-idx-text">{item.text}</span>
                   </button>

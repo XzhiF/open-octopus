@@ -58,6 +58,10 @@ const protoSample = () => {
     const r = el.getBoundingClientRect()
     return cs.display !== 'none' && cs.visibility !== 'hidden' && r.width > 0 && r.height > 0
   }
+  const pseudo = (sel, which, prop) => {
+    const el = document.querySelector(sel)
+    return el ? getComputedStyle(el, which)[prop] : null
+  }
   return {
     bodyFont: getComputedStyle(document.body).fontFamily,
     hud: box('header.hud'),
@@ -69,15 +73,25 @@ const protoSample = () => {
     fleetPct: document.querySelector('#fleetrail .flpct')?.textContent ?? null,
     fleetBarH: box('#fleetrail .flbar')?.h ?? null,
     console: box('#console'),
+    consoleRadius: style('#console', ['borderRadius', 'clipPath']),
     composer: box('#conIn'),
-    tabName: box('.ctab.on .tt2'),
+    telemChips: document.querySelectorAll('#console .telem .tc').length,
+    telemModel: document.querySelector('#conModel')?.textContent ?? null,
+    telemDrop: box('#modelPop:not([hidden])'),
+    turnBtn: box('#conTurns'),
+    turnText: document.querySelector('#conTurns')?.textContent ?? null,
     chip: box('#inboxchip'),
-    clock: box('.clockwidget'),
-    clockRight: (() => { const el = document.querySelector('.clockwidget'); if (!el) return null; const r = el.getBoundingClientRect(); return { r: Math.round(innerWidth - r.right), b: Math.round(innerHeight - r.bottom) } })(),
+    clock: null,
+    clockRight: null,
+    rhexFilter: style('#rCmd', ['filter'])?.filter ?? null,
+    rhexRim: pseudo('#rCmd', '::before', 'boxShadow'),
+    rhexFace: pseudo('#rCmd', '::after', 'boxShadow'),
+    fleetRadius: style('#fleetrail', ['borderRadius', 'clipPath']),
+    flrowRadius: style('#fleetrail .flrow', ['borderRadius', 'clipPath']),
     bannerVisible: visible('#banner'),
     teal: getComputedStyle(document.documentElement).getPropertyValue('--teal').trim(),
     accent: getComputedStyle(document.documentElement).getPropertyValue('--ck-a').trim() || null,
-    uiFont: style('.ctab', ['fontFamily'])?.fontFamily ?? null,
+    uiFont: style('.player .pn b', ['fontFamily'])?.fontFamily ?? null,
     monoFont: style('.con-log', ['fontFamily'])?.fontFamily ?? null,
     overflow: document.documentElement.scrollWidth - document.documentElement.clientWidth,
     fleetRows: document.querySelectorAll('#fleetrail [data-rail-job]').length,
@@ -106,6 +120,10 @@ const prodSample = () => {
     const r = el.getBoundingClientRect()
     return cs.display !== 'none' && cs.visibility !== 'hidden' && r.width > 0 && r.height > 0
   }
+  const pseudo = (sel, which, prop) => {
+    const el = document.querySelector(sel)
+    return el ? getComputedStyle(el, which)[prop] : null
+  }
   const app = document.querySelector('.ck12-app')
   return {
     bodyFont: getComputedStyle(document.body).fontFamily,
@@ -118,11 +136,21 @@ const prodSample = () => {
     fleetPct: document.querySelector('[data-testid="cockpit-fleet-rail"] .ck12-flpct')?.textContent ?? null,
     fleetBarH: box('[data-testid="cockpit-fleet-rail"] .ck12-flbar')?.h ?? null,
     console: box('[data-testid="cockpit-chat-window"]'),
-    composer: box('[data-testid="cockpit-command-bar"]'),
-    tabName: box('.ck12-ctab.is-on .ck12-ctab-name'),
+    consoleRadius: style('[data-testid="cockpit-chat-window"]', ['borderRadius', 'clipPath']),
+    composer: box('.ck12-comms-in'),
+    telemChips: document.querySelectorAll('[data-testid="cockpit-chat-window"] .ck12-tc').length,
+    telemModel: document.querySelector('[data-testid="cockpit-con-model"] b')?.textContent ?? null,
+    telemDrop: box('[data-testid="cockpit-con-drop-model"]'),
+    turnBtn: box('[data-testid="chat-timeline-handle"]'),
+    turnText: document.querySelector('[data-testid="chat-timeline-handle"]')?.textContent ?? null,
     chip: box('[data-testid="cockpit-inbox-chip"]'),
     clock: box('[data-testid="cockpit-clock"]'),
-    clockRight: (() => { const el = document.querySelector('[data-testid="cockpit-clock"]'); if (!el) return null; const r = el.getBoundingClientRect(); return { r: Math.round(innerWidth - r.right), b: Math.round(innerHeight - r.bottom) } })(),
+    clockRight: null,
+    rhexFilter: style('[data-testid="cockpit-menu-command"]', ['filter'])?.filter ?? null,
+    rhexRim: pseudo('[data-testid="cockpit-menu-command"]', '::before', 'boxShadow'),
+    rhexFace: pseudo('[data-testid="cockpit-menu-command"]', '::after', 'boxShadow'),
+    fleetRadius: style('[data-testid="cockpit-fleet-rail"]', ['borderRadius', 'clipPath']),
+    flrowRadius: style('[data-testid="cockpit-fleet-rail"] .ck12-flrow', ['borderRadius', 'clipPath']),
     bannerVisible: visible('[data-testid="cockpit-status-banner"]'),
     teal: app ? getComputedStyle(app).getPropertyValue('--ck12-teal').trim() : null,
     accent: app ? getComputedStyle(app).getPropertyValue('--ck-a').trim() : null,
@@ -175,31 +203,39 @@ function compare(proto, prod, vw) {
   }
 
   if (wide) {
-    // 左/右/顶/宽逐像素；底缘跟随 composer 上沿 —— 底栏高度随 composer 内容
-    // 行数（排队/草稿条）±10px 浮动，底缘随之浮动是设计不是漂移。
+    // v21 三轮：输入行回到 console 内部（原型 .con-in），通讯台四边逐像素钉死。
     for (const side of ['l', 'r', 't', 'w']) near(`console.${side}`, proto.console?.[side], prod.console?.[side])
-    near('console.b', proto.console?.b, prod.console?.b, 10)
-    near('console.h', proto.console?.h, prod.console?.h, 10)
-    near('composer.gap', 0, (prod.composer && prod.console) ? prod.composer.t - prod.console.b : null, 8)
+    near('console.b', proto.console?.b, prod.console?.b, 2)
+    near('console.h', proto.console?.h, prod.console?.h, 2)
+    // 输入行必须落在通讯台内（顶 ≥ console 顶、底 ≤ console 底）。
+    push('composer.inside', true,
+      (prod.composer && prod.console) ? [prod.composer.t, prod.composer.b] : null,
+      !!prod.composer && !!prod.console && prod.composer.t >= prod.console.t && prod.composer.b <= prod.console.b + 1,
+      '输入行在 console 内')
   } else {
-    // 窄屏 sheet 让出 56px 底栏 + 10px 间距（原型 composer 在 console 内部，
-    // 生产是独立 portal —— §7 登记）；只比对左右缘与宽度。
+    // 窄屏同样：composer 在 sheet 内部（原型 .con-in），只比对左右缘与宽度。
     for (const side of ['l', 'r', 'w']) {
       near(`console.${side}`, proto.console?.[side], prod.console?.[side])
     }
-    push('composer.clear', true, (prod.composer && prod.console) ? prod.composer.t >= prod.console.b : null,
-      !!prod.composer && !!prod.console && prod.composer.t >= prod.console.b, '输入行不被 sheet 盖住')
+    push('composer.inside', true,
+      (prod.composer && prod.console) ? [prod.composer.t, prod.composer.b] : null,
+      !!prod.composer && !!prod.console && prod.composer.t >= prod.console.t && prod.composer.b <= prod.console.b + 1,
+      '输入行在 sheet 内')
   }
-  push('tab.name.h', '≥12', prod.tabName?.h ?? null, (prod.tabName?.h ?? 0) >= 12)
+  // v21 二轮：通讯台头部遥测（MODEL / CTX / TOKEN）+ ≡ N 轮；tab 条与底缘状态行退役。
+  push('telem.chips', 3, prod.telemChips, prod.telemChips === 3, 'MODEL / CTX / TOKEN')
+  push('telem.model', true, !!prod.telemModel, !!prod.telemModel, prod.telemModel ?? 'null')
+  push('turn.button', true, !!prod.turnBtn, (prod.turnBtn?.h ?? 0) > 0, prod.turnText ?? 'null')
+  push('tabstrip.retired', 0, (prod.tabName?.h ?? 0), (prod.tabName?.h ?? 0) === 0)
+  push('clock.present', false, !!prod.clock?.w, !(prod.clock?.w > 0), '右下时间横条已撤除')
+  // 统一造型：窗口圆角无缺角；右栏六角 = 同色系两层（金属边无描边、内面有 inset 高光/阴影）。
+  push('console.rounded', true, prod.consoleRadius, (prod.consoleRadius?.borderRadius ?? '0') !== '0px' && (prod.consoleRadius?.clipPath ?? 'none') === 'none', JSON.stringify(prod.consoleRadius))
+  push('fleet.rounded', true, prod.fleetRadius, (prod.fleetRadius?.clipPath ?? 'none') === 'none' && (prod.fleetRadius?.borderRadius ?? '0') !== '0px', JSON.stringify(prod.fleetRadius))
+  push('flrow.rounded', true, prod.flrowRadius, (prod.flrowRadius?.clipPath ?? 'none') === 'none', JSON.stringify(prod.flrowRadius))
+  push('rhex.shadow', true, prod.rhexFilter, /drop-shadow/.test(prod.rhexFilter ?? ''), prod.rhexFilter ?? 'null')
+  push('rhex.rim.none', true, prod.rhexRim, (prod.rhexRim ?? 'none') === 'none', prod.rhexRim ?? 'null')
+  push('rhex.face.inset', true, prod.rhexFace, /inset/.test(prod.rhexFace ?? ''), prod.rhexFace ?? 'null')
   near('chip.w_vs_proto', proto.chip?.w, prod.chip?.w)
-  if (wide) {
-    push('clock.present', true, !!prod.clock?.w, (prod.clock?.w ?? 0) > 0)
-    near('clock.right', 10, prod.clockRight?.r, 2)
-    near('clock.bottom', 10, prod.clockRight?.b, 2)
-  } else {
-    // 原型 ≤900 隐藏右下钟；生产同步隐藏（宽高 0 = display:none）。
-    push('clock.hidden', 0, prod.clock?.w ?? 0, (prod.clock?.w ?? 0) === 0)
-  }
   push('banner.hidden', false, prod.bannerVisible, prod.bannerVisible === false, '有编队时不显示草稿 banner')
   push('font.ui.sans', true, prod.uiFont, SANS.test(prod.uiFont ?? ''), prod.uiFont ?? 'null')
   push('font.mono', true, prod.monoFont, MONO.test(prod.monoFont ?? ''), prod.monoFont ?? 'null')

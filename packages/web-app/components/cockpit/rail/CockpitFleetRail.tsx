@@ -342,7 +342,7 @@ export function CockpitFleetRail() {
               tabIndex={-1}
               data-testid={`cockpit-rail-row-${row.key}`}
               data-tone={status}
-              title={`${title} · ${statusTextOf(row, status)}`}
+              title={`${title} · ${statusTextOf(row, status)} · 点击看详情`}
               className={`ck12-flrow is-${status}${selected ? ' is-on' : ''}${
                 popped.has(row.key) ? ' is-pop' : ''
               }${flash.key === row.key ? ` is-arrived-${flash.nonce % 2}` : ''}`}

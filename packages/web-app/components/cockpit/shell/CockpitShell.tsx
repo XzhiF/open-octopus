@@ -18,7 +18,7 @@ import { CockpitUrlSync } from '../entry/use-cockpit-url-sync'
 import { CockpitShortcuts } from '../entry/CockpitShortcuts'
 import { CockpitFleetProvider, useCockpitFleet } from '../fleet/CockpitFleetProvider'
 import { CockpitHud } from './CockpitHud'
-import { CockpitClock } from './CockpitClock'
+import { CockpitSettings } from './CockpitSettings'
 import { CockpitStarfield } from './CockpitStarfield'
 import { CockpitScene } from '../scene/CockpitScene'
 import { CockpitQuiet } from './CockpitQuiet'
@@ -29,7 +29,6 @@ import { CockpitRightRail } from '../rail/CockpitRightRail'
 import { CockpitFace } from '../face/CockpitFace'
 import { CockpitChatHost } from '../chat/CockpitChatHost'
 import { CockpitChatWindow } from '../chat/CockpitChatWindow'
-import { CockpitCommandBar } from '../chat/CockpitCommandBar'
 import { CockpitDock } from '../chat/CockpitDock'
 import { CockpitPopWindows } from '../chat/CockpitPopWindows'
 import { CockpitWinBar } from '../chat/CockpitWinBar'
@@ -135,7 +134,6 @@ function CockpitSurface({ cabin }: { cabin: CabinDetail }) {
       <CockpitEffects />
 
       <CockpitHud />
-      <CockpitClock />
       <CockpitStatusBanner cabin={cabin} />
       {/* v21（design 31 §3.2/§3.3）：右栏紧凑待办 + 主按钮组。 */}
       <CockpitRightRail />
@@ -148,14 +146,17 @@ function CockpitSurface({ cabin }: { cabin: CabinDetail }) {
           data-testid="cockpit-arena"
         >
           <CockpitQuiet />
-          <CockpitFace entryCabinId={entryCabinId} />
           <CockpitCrew />
         </section>
       </main>
 
-      <footer className="ck12-cmd">
-        <CockpitCommandBar entryCabinId={entryCabinId} />
-      </footer>
+      {/* v21 三轮：作业详情是覆盖整舱的玻璃 dossier（原型 .panel/.pscrim）。
+          必须挂在 arena 之外 —— arena 自带 z-index:2 的层叠上下文，放在里面
+          会永远压在通讯台（共享 z 栈 31+）下面。 */}
+      <CockpitFace entryCabinId={entryCabinId} />
+
+      {/* 原型没有屏幕级底栏：输入框在通讯台内（.con-in）。这里不再留 footer，
+          通讯台底缘按视口 − 56 量（geometry 的 fallback）。 */}
 
       <CockpitChatHost entryCabinId={entryCabinId} />
       <CockpitChatWindow />
@@ -169,6 +170,7 @@ function CockpitSurface({ cabin }: { cabin: CabinDetail }) {
       <div id="ck12-layer-root" className="ck12-layerroot" />
       <CockpitBrief />
       <CockpitPanels />
+      <CockpitSettings />
       <CockpitWarpScheduler />
       <CockpitSim />
 

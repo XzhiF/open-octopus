@@ -59,18 +59,21 @@ test.describe("全域座舱 v21 · 高保真", () => {
     await expect(page.getByTestId("cockpit-player")).toBeVisible()
     await expect(page.getByTestId("cockpit-projects-btn")).toBeVisible()
     await expect(page.getByTestId("cockpit-scene-pill")).toContainText("SCENE")
-    await expect(page.getByTestId("cockpit-hud-model")).toBeVisible()
+
+    // v21 二轮：右上只剩三枚只读读数（模型切换 / ♪◐✦ / 时间横条全部撤除）。
     await expect(page.getByTestId("ck12-rig-tokens")).toBeVisible()
     await expect(page.getByTestId("ck12-rig-context")).toBeVisible()
-    await expect(page.getByTestId("cockpit-sound")).toBeVisible()
-    await expect(page.getByTestId("cockpit-theme")).toBeVisible()
-    await expect(page.getByTestId("cockpit-poses-open")).toBeVisible()
+    await expect(page.getByTestId("ck12-rig-cost")).toBeVisible()
+    await expect(page.getByTestId("cockpit-hud-model")).toHaveCount(0)
+    await expect(page.getByTestId("cockpit-sound")).toHaveCount(0)
+    await expect(page.getByTestId("cockpit-theme")).toHaveCount(0)
+    await expect(page.getByTestId("cockpit-poses-open")).toHaveCount(0)
+    await expect(page.getByTestId("cockpit-clock")).toHaveCount(0)
 
-    // 消耗读数点开账本（原底栏 ck12-rig-cost 的入口语义保留）。
+    // 三枚读数只读：点消耗不再弹账本（完整账走右栏「消耗」）。
     await page.getByTestId("ck12-rig-cost").click()
-    await expect(page.getByTestId("cockpit-panel-ledger")).toBeVisible()
-    await page.keyboard.press("Escape")
-    expect(audit.filtered).toEqual([])
+    await expect(page.getByTestId("cockpit-panel-ledger")).toHaveCount(0)
+    expect(audit.filtered, `console: ${JSON.stringify(audit.raw)}`).toEqual([])
     audit.dispose()
   })
 
@@ -89,7 +92,7 @@ test.describe("全域座舱 v21 · 高保真", () => {
     audit.dispose()
   })
 
-  test("通讯台：tab 名称完整 · 底缘状态行 · 底栏焊接 · 右下钟", async ({ page }) => {
+  test("通讯台：头部遥测 · 轮次下拉 · 底栏焊接 · 无 tab/状态行/时钟", async ({ page }) => {
     const audit = attachConsoleAudit(page)
     await gotoCockpit(page, seed!.cabin.id)
 
@@ -110,36 +113,35 @@ test.describe("全域座舱 v21 · 高保真", () => {
       return a > 100 && Math.abs(a - b) < 2 ? a : 0
     }, { timeout: 15_000 }).toBeGreaterThan(100)
 
-    // v21 缺陷 3.1：作业 tab 名称不再被压成 0 高。
-    const jobTab = page.getByTestId(`cockpit-tab-job:${seed!.taskJob.id}`)
-    await expect(jobTab).toBeVisible({ timeout: 20_000 })
-    const nameBox = await jobTab.locator(".ck12-ctab-name").boundingBox()
-    expect(nameBox!.height).toBeGreaterThanOrEqual(12)
+    // v21 二轮：头部遥测 MODEL / CTX / TOKEN（对齐 classic 的上下文与账本弹层来源）。
+    await expect(page.getByTestId("cockpit-comms-title")).toHaveText("主对话")
+    await expect(page.getByTestId("cockpit-con-model")).toContainText("MODEL")
+    await expect(page.getByTestId("cockpit-con-ctx")).toContainText("CTX")
+    await expect(page.getByTestId("cockpit-con-token")).toContainText("TOKEN")
 
-    // 底缘状态行：SCENE / POSE / CTX / MODEL / TUI + 3 枚场景点。
-    const footer = page.getByTestId("cockpit-console-footer")
-    await expect(footer).toBeVisible()
-    await expect(footer).toContainText("SCENE")
-    await expect(footer).toContainText("TUI")
-    await expect(footer.locator(".ck12-sdot")).toHaveCount(3)
-    // 场景点直选：点第三幕，场景图跟到 nebula。
-    await page.getByTestId("cockpit-scene-dot-nebula").click()
-    await expect(page.locator('[data-testid="cockpit-scene"] [data-scene="in"]'))
-      .toHaveAttribute("src", /scene-nebula/, { timeout: 10_000 })
+    // 多 tab 条 / 底缘状态行 / 右下钟全部退役。
+    await expect(page.getByTestId("cockpit-thread-tabs")).toHaveCount(0)
+    await expect(page.getByTestId("cockpit-console-footer")).toHaveCount(0)
+    await expect(page.getByTestId("cockpit-clock")).toHaveCount(0)
 
-    // 底栏焊接：console 底缘与 composer 条上沿 ≤8px（无黑断层）。
-    // 量 bar 而不是内部 slot —— slot 在真 composer portal 挂上之前是居中占位，
-    // 位置不代表视觉上的输入行。
+    // MODEL 下拉：以芯片为中心向下展开、夹在台内；Esc 收起。
+    await page.getByTestId("cockpit-con-model").click()
+    const drop = page.getByTestId("cockpit-con-drop-model")
+    await expect(drop).toBeVisible()
+    const dropBox = await drop.boundingBox()
+    const winBox = await win.boundingBox()
+    expect(dropBox!.x).toBeGreaterThanOrEqual(winBox!.x - 1)
+    expect(dropBox!.x + dropBox!.width).toBeLessThanOrEqual(winBox!.x + winBox!.width + 1)
+    expect(dropBox!.y).toBeGreaterThanOrEqual(winBox!.y + 30)
+    await page.keyboard.press("Escape")
+    await expect(drop).toHaveCount(0)
+    await expect(win).toHaveAttribute("data-open", "true")
+
+    // v21 三轮：输入行回到通讯台内部（原型 .con-in），不再是屏幕底栏。
     const consoleBox = await win.boundingBox()
-    const barBox = await page.getByTestId("cockpit-command-bar").boundingBox()
-    expect(barBox!.y - (consoleBox!.y + consoleBox!.height)).toBeLessThanOrEqual(8)
-
-    // 右下钟：right/bottom = 10。
-    const clock = page.getByTestId("cockpit-clock")
-    await expect(clock).toBeVisible()
-    const clockBox = await clock.boundingBox()
-    expect(Math.round(VIEWPORT.width - (clockBox!.x + clockBox!.width))).toBe(10)
-    expect(Math.round(VIEWPORT.height - (clockBox!.y + clockBox!.height))).toBe(10)
+    const barBox = await page.getByTestId("cockpit-composer-slot").boundingBox()
+    expect(barBox!.y).toBeGreaterThanOrEqual(consoleBox!.y)
+    expect(barBox!.y + barBox!.height).toBeLessThanOrEqual(consoleBox!.y + consoleBox!.height + 1)
 
     // 有编队时不显示「舱还是草稿…」横幅（v21 收口）。
     await expect(page.getByTestId("cockpit-status-banner")).toHaveCount(0)

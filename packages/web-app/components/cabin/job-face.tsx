@@ -89,6 +89,14 @@ function actorLabel(actor: string | null | undefined): string {
   return actor
 }
 
+/** 事件时间 HH:MM（原型 .ev .t；非法时间给 —，不猜）。 */
+function hmOf(iso: string | null | undefined): string {
+  if (!iso) return '—'
+  const d = new Date(iso)
+  if (Number.isNaN(d.getTime())) return '—'
+  return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`
+}
+
 /** 概览「交接统计」的固定词序：先派发后回报，人输入/决策单列。 */
 const STAT_KINDS = ['dispatch', 'brief', 'report', 'attention', 'handback', 'human_input', 'decision', 'resume'] as const
 
@@ -619,6 +627,7 @@ export function JobFace({
   const pct = pctFromPhases(phaseViews)
   const acceptedPhases = phaseViews.filter((phase) => phase.status === 'accepted').length
   const jobStatusText = jobStatusLabel(status)
+  const toneEmoji = ({ run: '⚡', wait: '❗', blocked: '💦', ended: '✅', idle: '●' } as const)[tone]
 
   // ── 概览统计（2026-11-17 用户：概览不看事件流，看统计）────────────────
   // 每个数都是真账本/真任务实体；缺数据就不出那一格，不补 0、不猜。
@@ -925,48 +934,65 @@ export function JobFace({
   const panes = (
     <>
       {tab === 'overview' && (cockpitMode ? (
-        // 全域概览（v12 .sgrid.jg-over）：左「作战统计」（交接/执行/最近交接/
-        // 任务摘要），右「作业状态」读数（KPI + 舱/执行者/分支 + 派发授权）。
-        <div data-testid="cabin-job-overview" className="ck12-sgrid ck12-jg-over">
-          <section className="ck12-pane">
-            <header className="ck12-pane-h">
-              <b>作战统计</b>
-              <span className="ck12-pane-tag">{kindTotal} 交接 · {execs.length} 执行</span>
-            </header>
-            <div className="ck12-pane-b is-tight">
-              {kindChips}
-              {phaseList}
-              {lastHandoff}
-              {taskSummary}
-              {timeline.length === 0 && execs.length === 0 && (
-                <div className="ck12-face-empty" style={{ marginTop: 10 }}>
-                  还没有交接事件 · 派发后这里开始累计统计。
-                </div>
-              )}
+        // v21 三轮（原型 .panel 详情·概览）：kv 读数 + 当前在做 + 最近事件。
+        <div data-testid="cabin-job-overview" className="ck12-dossier-ov">
+          <div className="ck12-kv">
+            <div className="ck12-kvi">
+              <div className="k">状态</div>
+              <div className="v is-a">{toneEmoji} {jobStatusText}</div>
             </div>
-          </section>
-
-          <section className="ck12-pane">
-            <header className="ck12-pane-h">
-              <b>作业状态</b>
-              <span className="ck12-pane-tag" data-tone={tone}>{jobStatusText}</span>
-            </header>
-            <div className="ck12-pane-b is-tight">
-              {kpiGrid}
-
-              {(cockpit?.cabinName || executor || branch) && (
-                <div className="ck12-jfacts">
-                  {cockpit?.cabinName && <span>舱 <b>{cockpit.cabinName}</b></span>}
-                  {executor && <span>执行者 <b>{executor}</b></span>}
-                  {branch && <span>分支 <b>{branch}</b></span>}
-                </div>
-              )}
-
-              {progressBar}
-              {phaseChips}
-              {mandateBlock}
+            {pct !== null && (
+              <div className="ck12-kvi">
+                <div className="k">进度</div>
+                <div className="v">{Math.round(pct)}%</div>
+              </div>
+            )}
+            {executor && (
+              <div className="ck12-kvi">
+                <div className="k">执行者</div>
+                <div className="v">{executor}</div>
+              </div>
+            )}
+            {branch && (
+              <div className="ck12-kvi">
+                <div className="k">分支</div>
+                <div className="v is-g">{branch}</div>
+              </div>
+            )}
+            <div className="ck12-kvi">
+              <div className="k">用时</div>
+              <div className="v"><CockpitElapsed start={job.created_at} end={job.ended_at} /></div>
             </div>
-          </section>
+            {costLabel && (
+              <div className="ck12-kvi">
+                <div className="k">消耗</div>
+                <div className="v is-gr">{costLabel}</div>
+              </div>
+            )}
+          </div>
+
+          {doing && (
+            <>
+              <div className="ck12-sect">当前在做</div>
+              <div className="ck12-doing">{doing}</div>
+            </>
+          )}
+
+          <div className="ck12-sect">最近事件</div>
+          {timeline.length === 0 ? (
+            <div className="ck12-dossier-empty">暂无事件</div>
+          ) : (
+            timeline.slice(-4).map((event) => (
+              <div
+                key={event.id}
+                className={`ck12-ev${event.kind === 'attention' ? ' is-attention' : ''}`}
+              >
+                <span className="t">{hmOf(event.created_at)}</span>
+                <span className="w">{actorLabel(event.actor)}</span>
+                <span className="x">{summaryOf(event)}</span>
+              </div>
+            ))
+          )}
         </div>
       ) : (
         // classic 作业窗：同一条统计主线，单列往下排。不再画事件流 ——

@@ -8,7 +8,7 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
-import { useEffect, type ReactNode } from 'react'
+import { useEffect, useRef, type ReactNode } from 'react'
 import { cabinAudio } from '@/lib/cabin-audio'
 import type { MoodKey } from '@/components/cabin/cockpit'
 import {
@@ -53,6 +53,16 @@ function WindowProbe() {
   )
 }
 
+/** v21 三轮：通讯台默认展开（输入框在台里）；这些用例先把它收起，再验证
+ *  「点立绘 = 开窗」的语义。 */
+function WindowCloser() {
+  const { chatWindow } = useCockpitState()
+  const setRef = useRef(chatWindow.set)
+  setRef.current = chatWindow.set
+  useEffect(() => { setRef.current({ open: false }) }, [])
+  return null
+}
+
 function ChatSeeder({ streaming }: { streaming: boolean }) {
   const { reportChat } = useCockpitState()
   useEffect(() => {
@@ -92,6 +102,7 @@ function tree(cockpit: CockpitContextValue, extra?: ReactNode) {
       <CockpitStateProvider entryCabinId="c1">
         <CockpitLayerStack>
           <CockpitCrew />
+          <WindowCloser />
           <FxProbe />
           <WindowProbe />
           <div data-testid="cockpit-chat-transcript" />

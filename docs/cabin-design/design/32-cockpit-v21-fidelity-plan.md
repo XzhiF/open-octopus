@@ -270,3 +270,55 @@
 - `build`：通过。
 - e2e：`cockpit-v20` 9/9、`cockpit-v21-fidelity` 3/3、`cockpit-global` 相关用例通过。
 - `_fidelity-v21.mjs`：四档 PASS。
+
+### 9.5 二轮收口（2026-11-18 · 原型 A–E 反馈 → 生产）
+
+原型二轮改完后重跑对照，生产同步改到「完全按原型」：
+
+| 原型反馈 | 生产落地 |
+|---|---|
+| 输入框默认 1 行 | cockpit 变体 `AutoResizeTextarea minRows=1`；多行仍走 v13 草稿浮层（§7 登记） |
+| 轮次下拉向下居中、跳转不动整页 | `ChatTimeline compact` 面板按按钮中心定位并夹在通讯台内；`jumpToTurn` 改容器内滚动，不再 `scrollIntoView` |
+| 删右上模型切换 / 三枚只读读数 | HUD 只留 token / ctx / 费用（span，不可点）；模型切换进通讯台头部 MODEL |
+| CTX / TOKEN 明细对齐 classic | 新增 `chat/CockpitConsoleTelemetry.tsx`：ContextUsagePanel + SessionCostLedger（`hideFooter`）单源复用 |
+| 两套账本划清 | 通讯台下拉 = 本会话；`CockpitLedgerPanel` 改名「本舱账本 · 全域只读」并加说明条 |
+| 设置弹窗（音效 / 主题 / 透明度 / 跃迁 / 回流） | 新增 `shell/CockpitSettings.tsx` + `settings-store`；`CockpitPrefs.winAlpha`（40–100%）写 `--ck12-winop`，全部舱系窗口跟随 |
+| 更多 = 点击开合、图标放大、入口含设置 | `CockpitMenuRail` 去 hover 开合；7 项 = 汐音/动作/日志/文件/模拟/设置/编队；`fitem` 44px / hex 32×36 |
+| 窗口/按钮/弹窗统一造型 | 新增 `app/cockpit/v21b.css`：窗口圆角去缺角去括线；图标钮六角（`--ck12-hex`）；文本钮平行四边形（`--ck12-btncut`）；✕ 一律左置无徽记 |
+| 编队 / inbox 圆角 + 右栏六角拟物 | `fleetrail/flrow/ip-row/ipd-opt` 圆角；`rhex` 两层同色系（金属边 + 内面高光/内阴影/内圈辉光），去 2px 撞色描边 |
+| 去多 tab / 底缘状态行 / 右下时间横条 | 删除 `CockpitThreadTabs` / `CockpitConsoleFooter` / `CockpitClock`；作战线程从编队 💬 进 |
+
+二轮门禁：`vitest components/cockpit` 222 例全绿；`tsc` 改动文件 0 error；`eslint` 0 error；`vite build` 通过；
+`_fidelity-v21.mjs` 四档 **37/37 · 35/35 · 29/29 · 29/29 PASS**（新增断言：遥测 3 芯片 / ≡N 轮 / tab 与时钟退役 /
+窗口圆角无缺角 / 编队与行圆角 / rhex 外形投影 + 无撞色描边 + 内面 inset）。
+
+**二轮新增 §7 差异**：① 多行输入仍走 v13 草稿浮层（生产把草稿浮成编辑层，原型原地长到 4 行）；
+② 输入框上方「待你定」条占高（原型无此条，通讯台底缘随数据 ±16px 浮动）；
+③ 设置里主题色 6 套（原型 3 枚示意）。
+
+### 9.6 三轮收口（2026-11-18 · 用户逐项点名 → 生产）
+
+用户在二轮验收后点名五处与原型不一致，按「完全按原型」重做：
+
+| 反馈 | 生产落地 |
+|---|---|
+| 从编队点一条，要按原型出「编队详情」 | 作业面改为原型 `.panel` 玻璃 dossier：整屏 `.pscrim`（blur 3px + rgba(16,13,40,.4)）+ 居中 `min(760px,94vw)` 面板（top 58 / bottom 30）；头部 `.ph` = ✕ 左置 + 状态表情标题 +「项目 · 分支 · 编号」副行 + 右侧动作；页签改平行四边形 `.dtab`（24px）；概览改原型 kv（状态/进度/执行者/分支/用时/消耗 + 当前在做 + 最近事件 4 条） |
+| 输入框、对话框都按原型 | composer + 「待你定」dock 搬进通讯台输入行（原型 `.con-in` / `.con-choices`）：❯(14px teal) + 36px 起高、最多 4 行、mono 12.5 的边框 textarea + 金色六角 ⏎(38×34)；删除屏幕底栏 `CockpitCommandBar` 与多行草稿浮层；placeholder 逐字用原型；通讯台默认展开；作者提问卡在舱内拉平成 `.vchoice` 语言（方角 + 左琥珀脊，选项行同款） |
+| 左上方一大一小 | 退出舱的 ← 从「小 chip」退成极简箭号（无边框/无底色），左上只剩一枚指挥官徽（原型 .player） |
+| 汐音背景多一层 | 撤掉 `.ck12-pod-vg` 矩形压暗层 —— 立绘脚下只有落地光环（原型 .character） |
+| 左下「停靠展开」不对 | 停靠 pill 回到底部居中（`left:50%; bottom:10px`；有弹出窗 → 右下 12/52；≤900 右下 10），补绿点 `.dl`，文案与顺序同原型 `#conDock` |
+
+伴随的契约调整：
+- **首载不再自动选中** need 行：详情是「点编队行才开的模态 dossier」（原型一进舱是安静舰桥）；
+  无效深链/作业被移出编队 → 收面并清参数，不再自动弹另一条。
+- **选面不再收通讯台**（输入框在台里，收台等于把输入藏了）。
+- 详情 Esc 优先级 60 → 65：盖过通讯台，低于问答窗 75 / 面板 85。
+- z 序：dossier 201 / scrim 200 / HUD 210（原型 panel 40 < hud 50，抬头条在模态上仍可点）。
+
+三轮门禁：`vitest components/cockpit` 221 例全绿；`_fidelity-v21.mjs` 四档 PASS
+（1600 档 `console.b/h` 改为 ±2、新增 `composer.inside`；通讯台底缘不再随底栏浮动）；
+`cockpit-v21-fidelity` 3/3、`cockpit-global` 全绿；e2e/单测同步更新。
+
+**§7 差异追加**：① 作者提问卡的选项仍是当前应答管线的单选控件（radio），视觉按 `.vchoice` 拉平；
+② 详情页签 7 个（原型多一个「项目」页签，生产用头部项目签 + 项目面承载）；
+③ HUD ← 为生产独有（原型无退出舱入口）。
