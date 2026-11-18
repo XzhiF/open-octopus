@@ -441,16 +441,16 @@ export function CockpitInboxPopover({ entries, counts, answered, onAnswered, onS
 
   const deal = useCallback((entry: InboxEntry) => {
     // v21 七轮：详情首签 = 对话（任务的 chat 记录）——「去处理」也落到这里。
-    // v22.2：与放行卡「看任务详情」同一手感 —— **不关浮层**，详情让到浮层左侧
-    // 顺势打开（.ck12-face.is-aside-inbox）；回到单栏列表，把宽度留给详情。
-    select(entry.ref, 'dialog')
+    // v22.3：来源标成 inbox —— 详情固定让到浮层左侧顺势打开（.is-aside-inbox），
+    // 与放行卡「看任务详情」同一手感；回单栏列表，把宽度留给详情。
+    select(entry.ref, 'dialog', 'inbox')
     selectInbox(null)
   }, [select, selectInbox])
 
   // 放行卡「看任务详情」：只开作战详情，**不关浮层** —— 人还能接着在这张卡上
   // 确认执行；浮层是 popover，点外面再收（用户反馈：点一下详情就把选中的窗口关了）。
   const openDetail = useCallback((entry: InboxEntry) => {
-    select(entry.ref, 'dialog')
+    select(entry.ref, 'dialog', 'inbox')
   }, [select])
 
   return (

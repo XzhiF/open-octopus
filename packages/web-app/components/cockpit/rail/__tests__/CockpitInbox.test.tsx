@@ -83,11 +83,11 @@ function fleet(rows: CockpitRow[]): CockpitFleetContextValue {
   return { rows, mainSessionId: null, counts: null, arrivals: [], loading: false, error: null, refetch: () => {} }
 }
 
-/** 读状态探针：放行窗「打开任务详情」这类跨层动作落到哪条选中 / 哪个页签。 */
+/** 读状态探针：放行窗「打开任务详情」这类跨层动作落到哪条选中 / 哪个页签 / 落位来源。 */
 function Probe() {
-  const { selection, tab } = useCockpitState()
+  const { selection, tab, detailSource } = useCockpitState()
   return (
-    <span data-testid="probe-selection">
+    <span data-testid="probe-selection" data-source={detailSource}>
       {selection ? `${selection.kind}:${selection.id}:${tab}` : `none:${tab}`}
     </span>
   )
@@ -186,6 +186,7 @@ describe('CockpitRightRail · v21 待办', () => {
     fireEvent.click(screen.getByTestId('cockpit-inbox-deal'))
 
     expect(screen.getByTestId('probe-selection')).toHaveTextContent('attention:a2:dialog')
+    expect(screen.getByTestId('probe-selection')).toHaveAttribute('data-source', 'inbox')
     // 与放行卡「看任务详情」一致：浮层留着（详情靠 is-aside-inbox 让到左侧），
     // 回复卡收起回单栏列表，把宽度留给详情。
     expect(screen.getByTestId('cockpit-inbox-popover')).toBeInTheDocument()

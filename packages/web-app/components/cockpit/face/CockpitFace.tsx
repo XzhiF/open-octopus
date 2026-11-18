@@ -15,7 +15,7 @@
 // 主会话直接从入口舱的 CabinProvider 拿，不再按选中项另拉一次舱详情。
 
 import {
-  useCallback, useEffect, useMemo, useRef, useState,
+  useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState,
   type CSSProperties, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent,
 } from 'react'
 import { useCabinOptional } from '@/components/cabin/cabin-provider'
@@ -82,7 +82,7 @@ function hintOf(row: CockpitRow | null) {
 }
 
 export function CockpitFace({ entryCabinId }: CockpitFaceProps) {
-  const { selection, tab, setTab, select, layer, inboxOpen, inboxSel } = useCockpitState()
+  const { selection, tab, setTab, select, layer, inboxOpen, inboxSel, detailSource } = useCockpitState()
   const { rows, counts, error, refetch } = useCockpitFleet()
   const cabinCtx = useCabinOptional()
   // counts !== null = 编队至少成功接过一次真值（FleetProvider 契约）。
@@ -107,6 +107,23 @@ export function CockpitFace({ entryCabinId }: CockpitFaceProps) {
   const dragCleanupRef = useRef<(() => void) | null>(null)
   const [geo, setGeo] = useState<DossierGeo | null>(savedGeo)
   const [maxed, setMaxed] = useState(savedMax)
+  /** v22.3：从「要我处理」打开 = 固定让到浮层左侧（aside）。
+   *  不受会话内保存的拖拽几何影响 —— 否则拖过一次之后，inbox 打开的详情
+   *  又会回到居中（用户反馈：只有编队点开的才该居中）。 */
+  const asideInbox = detailSource === 'inbox' && !maxed
+  /** 每次「新开一条面」时：inbox 来源要回到 aside —— 上一次全屏记住的 savedMax
+   *  不能把这一条也顶成全屏（用户规则：只有编队点开的才居中/全屏）。 */
+  const openedKeyRef = useRef<string | null>(null)
+  useLayoutEffect(() => {
+    const key = selection ? cockpitRefKey(selection) : null
+    if (!key) { openedKeyRef.current = null; return }
+    if (openedKeyRef.current === key) return
+    openedKeyRef.current = key
+    if (detailSource === 'inbox' && maxed) {
+      savedMax = false
+      setMaxed(false)
+    }
+  }, [selection, detailSource, maxed])
   const [viewport, setViewport] = useState(() => ({
     w: typeof window === 'undefined' ? 1600 : window.innerWidth,
     h: typeof window === 'undefined' ? 900 : window.innerHeight,
@@ -145,7 +162,8 @@ export function CockpitFace({ entryCabinId }: CockpitFaceProps) {
 
   // 标题栏拖动：原型 bindPanelWin 的 clamp 逐字照搬。
   const startDrag = useCallback((event: ReactPointerEvent<HTMLDivElement>) => {
-    if (maxed) return
+    // aside 是自动落位（贴浮层左侧），不接受手动拖拽；拖了就失去并排语义。
+    if (maxed || asideInbox) return
     const target = event.target as HTMLElement
     if (target.closest('button, textarea, input, select, a, [data-no-drag]')) return
     // 原型 #panel .ph 可拖；项目/舱籍面走旧 chrome 的 .ck12-jh-h1，同样可拖。
@@ -175,11 +193,11 @@ export function CockpitFace({ entryCabinId }: CockpitFaceProps) {
     window.addEventListener('pointermove', move)
     window.addEventListener('pointerup', up)
     dragCleanupRef.current = up
-  }, [maxed])
+  }, [maxed, asideInbox])
 
   // 右下角缩放：最小 420×300，右/下留 8px（原型 .pgrip）。
   const startResize = useCallback((event: ReactPointerEvent<HTMLSpanElement>) => {
-    if (maxed) return
+    if (maxed || asideInbox) return
     event.preventDefault()
     event.stopPropagation()
     const el = faceRef.current
@@ -206,7 +224,7 @@ export function CockpitFace({ entryCabinId }: CockpitFaceProps) {
     window.addEventListener('pointermove', move)
     window.addEventListener('pointerup', up)
     dragCleanupRef.current = up
-  }, [maxed])
+  }, [maxed, asideInbox])
 
   // 双击标题栏 = 全屏 / 还原（原型 dblclick，按钮与输入控件除外）。
   const onHeaderDoubleClick = useCallback((event: ReactMouseEvent<HTMLDivElement>) => {
@@ -261,8 +279,9 @@ export function CockpitFace({ entryCabinId }: CockpitFaceProps) {
       return ref !== null && cockpitRefKey(ref) !== key
     })
     const nextRef = next ? refOfRow(next) : null
-    if (nextRef) select(nextRef, 'dialog')
-  }, [rows, select])
+    // 验收通过后落下一行：保持在同一种落位（inbox 开的继续在左侧，编队开的居中）。
+    if (nextRef) select(nextRef, 'dialog', detailSource)
+  }, [rows, select, detailSource])
 
   if (!selection) return null
 
@@ -384,9 +403,11 @@ export function CockpitFace({ entryCabinId }: CockpitFaceProps) {
 
   return (
     <>
-      {/* 原型 .pscrim：作业详情是覆盖舱面的玻璃 dossier，不是把舞台撑满的窗口。 */}
+      {/* 原型 .pscrim：作业详情是覆盖舱面的玻璃 dossier，不是把舞台撑满的窗口。
+          v22.3：从 inbox 打开的 aside 不压右侧 —— scrim 透明且不吃点击，
+          浮层与详情真正并排可操作。 */}
       <div
-        className="ck12-face-scrim"
+        className={cn('ck12-face-scrim', asideInbox && 'is-aside-inbox')}
         data-testid="cockpit-face-scrim"
         onClick={close}
         aria-hidden="true"
@@ -395,13 +416,13 @@ export function CockpitFace({ entryCabinId }: CockpitFaceProps) {
         ref={faceRef}
         className={cn(
           'ck12-face',
-          (maxed || geo) && 'is-geo',
-          // 从「要我处理」里开详情：让到 inbox 左侧排布（不遮挡；详情层级更高，
-          // 但几何上错开）。inbox 单栏 378 / 两栏 764，由 CSS 按 data 区分。
-          inboxOpen && !maxed && !geo && 'is-aside-inbox',
+          (maxed || (geo && !asideInbox)) && 'is-geo',
+          // 从「要我处理」里开详情：固定让到 inbox 左侧（不遮挡、不居中）。
+          // 单栏 378 / 两栏 764，由 data-inbox-two 区分。
+          asideInbox && 'is-aside-inbox',
         )}
         data-inbox-two={inboxOpen && inboxSel ? '1' : undefined}
-        style={panelStyle}
+        style={asideInbox ? undefined : panelStyle}
         data-testid="cockpit-face"
         data-entry-cabin={entryCabinId}
         data-selected-cabin={selection.cabinId}

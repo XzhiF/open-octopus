@@ -29,6 +29,7 @@ import {
   type CockpitReceipt,
   type CockpitRef,
   type CockpitSaid,
+  type CockpitSelectSource,
   type CockpitState,
   type CockpitTab,
   type CockpitThreadsApi,
@@ -97,6 +98,8 @@ export function CockpitStateProvider({ entryCabinId, children }: CockpitStatePro
   // v21 七轮：默认页签 = 对话（概览退役；链接里旧的 tab=overview 由
   // isCockpitTab 丢掉 → 自然落回这里）。
   const [tab, setTabState] = useState<CockpitTab>('dialog')
+  /** v22.3：面来源 —— 从「要我处理」打开的面让到浮层左侧，其余居中。 */
+  const [detailSource, setDetailSource] = useState<CockpitSelectSource>('fleet')
   const [chat, setChat] = useState<CockpitChatApi | null>(null)
   const [chatWindowState, setChatWindowState] = useState<CockpitChatWindowState>(INITIAL_CHAT_WINDOW)
   const [railOpen, setRailOpenState] = useState(false)
@@ -123,9 +126,12 @@ export function CockpitStateProvider({ entryCabinId, children }: CockpitStatePro
   const winSeqRef = useRef(0)
 
   // ── selection / tab ────────────────────────────────────────────────
-  const select = useCallback((ref: CockpitRef | null, nextTab?: CockpitTab) => {
+  const select = useCallback((ref: CockpitRef | null, nextTab?: CockpitTab, source: CockpitSelectSource = 'fleet') => {
     setSelection((current) => (sameCockpitRef(current, ref) ? current : ref))
     if (nextTab) setTabState(nextTab)
+    // 来源跟着这次选中走：同一条作业从编队点（居中）后再从 inbox 点「去处理」，
+    // 也要切成左侧 aside。
+    setDetailSource(ref ? source : 'fleet')
     // v21 三轮：详情是覆盖在舱面上的玻璃面板（原型 .panel），不再需要为了
     // 看见作业面而把通讯台收起来 —— 选面不再动 chatWindow（连输入框一起消失
     // 是原型的反直觉点）。
@@ -380,6 +386,7 @@ export function CockpitStateProvider({ entryCabinId, children }: CockpitStatePro
       entryCabinId,
       selection,
       tab,
+      detailSource,
       select,
       setTab,
       projectFilter,
@@ -415,7 +422,7 @@ export function CockpitStateProvider({ entryCabinId, children }: CockpitStatePro
       layer,
     }),
     [
-      entryCabinId, selection, tab, select, setTab, projectFilter, setProjectFilter,
+      entryCabinId, selection, tab, detailSource, select, setTab, projectFilter, setProjectFilter,
       chat, reportChat, chatWindow,
       railOpen, setRailOpen,
       threads, wins, panel, panelArg, openPanel, closePanel, flash, markArrival,

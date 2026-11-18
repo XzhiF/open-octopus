@@ -30,6 +30,10 @@ export type CockpitRefKind = CockpitRef['kind']
  *  落回默认「对话」。 */
 export type CockpitTab = 'dialog' | 'overview' | 'relay' | 'run' | 'changes' | 'accept' | 'files' | 'debug' | 'project'
 
+/** 面来源（v22.3）：inbox = 从「要我处理」打开 → 详情让到浮层左侧；
+ *  fleet / url / acceptance = 从编队 / 深链 / 验收流转打开 → 居中。 */
+export type CockpitSelectSource = 'fleet' | 'inbox' | 'url' | 'acceptance'
+
 /** 页签顺序 = 原型 .dtabs（v21 七轮：首签「对话」）。 */
 export const COCKPIT_TABS: readonly CockpitTab[] = ['dialog', 'relay', 'run', 'changes', 'accept', 'files', 'debug', 'project']
 
@@ -196,7 +200,9 @@ export interface CockpitState {
 
   selection: CockpitRef | null
   tab: CockpitTab
-  select(ref: CockpitRef | null, tab?: CockpitTab): void
+  /** 面来源：决定详情落位（inbox 左侧 aside / 其余居中）。 */
+  detailSource: CockpitSelectSource
+  select(ref: CockpitRef | null, tab?: CockpitTab, source?: CockpitSelectSource): void
   setTab(tab: CockpitTab): void
 
   /** 左栏「只看这个项目」：只筛编队，不换面。null = 不筛。 */

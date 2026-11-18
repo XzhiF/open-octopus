@@ -813,6 +813,13 @@
   animation: ck12-scrim-in 0.25s ease both;
 }
 @keyframes ck12-scrim-in { from { opacity: 0; } to { opacity: 1; } }
+/* aside：右侧浮层要继续可见、可点 —— 背幕退成不可见且不吃事件。 */
+.ck12-face-scrim.is-aside-inbox {
+  background: transparent;
+  backdrop-filter: none;
+  pointer-events: none;
+  animation: none;
+}
 
 .ck12-face {
   position: fixed;
@@ -865,8 +872,12 @@
   from { opacity: 0; transform: translateY(12px); }
   to { opacity: 1; transform: none; }
 }
-/* 窄屏放不下并排两扇：退回居中（详情层级更高，浮层在它下面；仍不因失焦关闭）。 */
-@media (max-width: 1300px) {
+/* aside 是自动落位：不给右下角缩放把手（拖拽/缩放已在组件里禁用）。 */
+.ck12-face.is-aside-inbox .ck12-pgrip { display: none; }
+/* 窄屏放不下并排两扇：退回居中（详情层级更高，浮层在它下面；仍不因失焦关闭）。
+   v22.3：阈值从 1300 降到 1024 —— 1280 笔记本也要能并排，详情宽度由右侧
+   calc 自适应（100vw − railr − 392），1024 时仍有约 528px。 */
+@media (max-width: 1024px) {
   .ck12-face.is-aside-inbox {
     left: 50%;
     right: auto;

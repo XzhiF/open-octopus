@@ -45,7 +45,7 @@ import { listRunningSessions } from '@/lib/agent/api'
 import { CockpitStateProvider, useCockpitState } from '../../state/CockpitStateProvider'
 import { CockpitLayerStack } from '../../state/CockpitLayerStack'
 import { CockpitFleetProvider } from '../../fleet/CockpitFleetProvider'
-import type { CockpitRef } from '../../state/cockpit-state'
+import type { CockpitRef, CockpitSelectSource } from '../../state/cockpit-state'
 import { CockpitFace } from '../CockpitFace'
 
 function cabin(id: string, name = `舱${id}`): CabinDetail {
@@ -133,17 +133,21 @@ function mockJob(cabinId = 'cabin-1', over: Partial<CabinJobView> = {}) {
   })
 }
 
-function SelectProbe({ target }: { target: CockpitRef }) {
+function SelectProbe({ target, source }: { target: CockpitRef; source?: CockpitSelectSource }) {
   const { select } = useCockpitState()
-  return <button data-testid="select-probe" onClick={() => select(target)}>select</button>
+  return (
+    <button data-testid="select-probe" onClick={() => select(target, undefined, source)}>
+      select
+    </button>
+  )
 }
 
-function Harness({ target }: { target: CockpitRef }) {
+function Harness({ target, source }: { target: CockpitRef; source?: CockpitSelectSource }) {
   return (
     <CockpitStateProvider entryCabinId="cabin-1">
       <CockpitLayerStack>
         <CockpitFleetProvider>
-          <SelectProbe target={target} />
+          <SelectProbe target={target} source={source} />
           <CockpitFace entryCabinId="cabin-1" />
         </CockpitFleetProvider>
       </CockpitLayerStack>
@@ -192,6 +196,26 @@ describe('CockpitFace — job 选中', () => {
 
     fireEvent.click(screen.getByTestId('cockpit-job-close'))
     await waitFor(() => expect(screen.queryByTestId('cockpit-face')).toBeNull())
+  })
+
+  it('落位：inbox 来源 → 左侧 aside；编队来源 → 居中', async () => {
+    mockJob()
+    const aside = render(
+      <Harness target={{ kind: 'job', cabinId: 'cabin-1', id: 'j1' }} source="inbox" />,
+    )
+    await pick()
+    await screen.findByTestId('cockpit-job-header')
+    const face = screen.getByTestId('cockpit-face')
+    expect(face.className).toContain('is-aside-inbox')
+    // 不套会话内保存的拖拽几何（否则拖过一次就回中间）。
+    expect(face.className).not.toContain('is-geo')
+    expect(face.getAttribute('style')).toBeNull()
+    aside.unmount()
+
+    render(<Harness target={{ kind: 'job', cabinId: 'cabin-1', id: 'j1' }} />)
+    await pick()
+    const centered = await screen.findByTestId('cockpit-face')
+    expect(centered.className).not.toContain('is-aside-inbox')
   })
 
   it('Esc 只收面（走 CockpitLayerStack）', async () => {
