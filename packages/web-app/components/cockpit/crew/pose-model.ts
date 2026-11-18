@@ -42,9 +42,10 @@ export const POSE_ORDER: readonly PoseKey[] = [
   'cheer', 'wink', 'sleep', 'ready', 'command', 'typing',
 ]
 
-/** 粒子层效果名（对应 crew.css 的 .ck12-pfx-<fx>）。 */
+/** 粒子层效果名（对应 crew.css 的 .ck12-pfx-<fx>）。
+ *  v21 四轮：去掉 'ring'（立绘正中的小圆环，用户要求移除）；alert 姿态改用 none。 */
 export type PoseFx =
-  | 'ambient' | 'spark' | 'bubble' | 'ring' | 'sweat' | 'heart'
+  | 'none' | 'ambient' | 'spark' | 'bubble' | 'sweat' | 'heart'
   | 'confetti' | 'sparkle' | 'zzz' | 'shine' | 'beam' | 'keys'
 
 export interface PoseMeta {
@@ -61,7 +62,7 @@ export const POSE_META: Record<PoseKey, PoseMeta> = {
   idle: { cn: '待命', en: 'IDLE', desc: '静默呼吸 · 随时接单', line: '我在。您说。', fps: 10, fx: 'ambient' },
   working: { cn: '作业', en: 'WORK', desc: '盯执行 · 推进度', line: '这条我在盯，进度实时举给您。', fps: 12, fx: 'spark' },
   thinking: { cn: '思考', en: 'THINK', desc: '整理证据 · 给建议', line: '嗯……我把证据摊开想一下，马上给您建议。', fps: 8, fx: 'bubble' },
-  alert: { cn: '警觉', en: 'ALERT', desc: '发现异常 · 举牌', line: '指挥官，有情况，我举上来了。', fps: 10, fx: 'ring' },
+  alert: { cn: '警觉', en: 'ALERT', desc: '发现异常 · 举牌', line: '指挥官，有情况，我举上来了。', fps: 10, fx: 'none' },
   smile: { cn: '愉悦', en: 'SMILE', desc: '消项回执 · 开心', line: '收到～这条消项了，我盯到收口。', fps: 12, fx: 'heart' },
   concerned: { cn: '担忧', en: 'CONCERN', desc: '现场冻结 · 等你', line: '别担心，现场我先停住保留了。', fps: 8, fx: 'sweat' },
   cheer: { cn: '振奋', en: 'CHEER', desc: '验收通过 · 欢呼', line: '验收通过！指挥官，这一轮漂亮！', fps: 14, fx: 'confetti' },

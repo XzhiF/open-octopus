@@ -157,16 +157,16 @@ describe('CockpitCrew · v13 点立绘 = 说话', () => {
   })
 
   // v13.1 · 点击即时反馈（对齐 classic 点立绘的手感）
-  it('点立绘同一拍就给反馈：表情 + 台词 + 星光 + 涟漪，然后才开窗', async () => {
+  it('点立绘同一拍就给反馈：表情 + 台词 + 星光，然后才开窗（无描边涟漪）', async () => {
     const { cockpit } = renderCrew()
 
     fireEvent.click(screen.getByTestId('cockpit-crew-pod'))
 
     // 表情立即换（首点 = 招呼句 wink）
     expect(cockpit.setMoodOverride).toHaveBeenCalledWith('wink', expect.any(Number))
-    // 触感：6 颗星光 + 一圈涟漪 + 点击音
+    // 触感：6 颗星光 + 点击音；v21 四轮起立绘周边不再出现描边涟漪。
     expect(screen.getAllByTestId('cockpit-crew-spark')).toHaveLength(6)
-    expect(screen.getByTestId('cockpit-crew-tapring')).toBeInTheDocument()
+    expect(screen.queryByTestId('cockpit-crew-tapring')).toBeNull()
     expect(cabinAudio.blip).toHaveBeenCalled()
     // 台词逐字打完（不打进 chat DOM）
     await waitFor(() =>
@@ -199,7 +199,7 @@ describe('CockpitCrew · v13 点立绘 = 说话', () => {
     )
   })
 
-  it('reduced-motion 下点击：台词照出，星光/涟漪不出', () => {
+  it('reduced-motion 下点击：台词照出，星光不出', () => {
     window.matchMedia = vi.fn().mockImplementation((query: string) => ({
       matches: true,
       media: query,

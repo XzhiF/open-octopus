@@ -104,10 +104,12 @@ export function CockpitPoseSprite({ pose, reduce }: { pose: PoseKey; reduce: boo
   )
 }
 
-/** 姿态粒子层：loop 类常驻至换 pose；reduced 全禁（design 29 §9.3）。 */
+/** 姿态粒子层：loop 类常驻至换 pose；reduced 全禁（design 29 §9.3）。
+ *  v21 四轮：fx='none'（alert）不再渲染任何粒子层。 */
 export function PoseFX({ pose, reduce }: { pose: PoseKey; reduce: boolean }) {
   if (reduce) return null
   const fx = POSE_META[pose].fx
+  if (fx === 'none') return null
   return (
     <span className={`ck12-pfx ck12-pfx-${fx}`} key={pose} aria-hidden="true" data-testid="cockpit-pose-fx">
       {Array.from({ length: 8 }, (_, i) => (

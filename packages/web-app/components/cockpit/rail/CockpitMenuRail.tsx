@@ -5,17 +5,15 @@
 // 「更多」= **纯点击开合**（再点收回；点外面也收），向左横排展开 7 项
 // （汐音 / 动作 / 日志 / 文件 / 模拟 / 设置 / 编队）。不再用悬停开合。
 //
-// 动作全部复用既有入口（不新造面板）：账本 = ledger 面板、调试 = 当前线程作业面
-// debug 页签、文件 = ws 面板、动作 = poses 面板、设置 = CockpitSettings 弹窗。
+// 动作全部复用既有入口（不新造面板）：账本 = ledger 面板、调试 = 本舱主会话
+// debug 面板（不是某条作业）、文件 = ws 面板、动作 = poses 面板、
+// 设置 = CockpitSettings 弹窗。作业自身的调试在作业面「调试」页签。
 
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { toast } from 'sonner'
 import { toggleCrewSettings } from '../crew/crew-settings'
-import { useCockpitFleet } from '../fleet/CockpitFleetProvider'
 import { useCockpitState } from '../state/CockpitStateProvider'
-import { useCockpitThreads } from '../chat/use-cockpit-threads'
 import { setCockpitSettingsOpen } from '../shell/settings-store'
-import type { CockpitRef } from '../state/cockpit-state'
 
 const FAN_ITEMS = [
   { id: 'xiyin', glyph: '♡', label: '汐音' },
@@ -29,10 +27,8 @@ const FAN_ITEMS = [
 
 export function CockpitMenuRail() {
   const {
-    chatWindow, openPanel, select, selection, setRailOpen, travel,
+    chatWindow, openPanel, setRailOpen, travel,
   } = useCockpitState()
-  const { rows } = useCockpitFleet()
-  const { active } = useCockpitThreads()
   const [fanOpen, setFanOpen] = useState(false)
   const wrapRef = useRef<HTMLDivElement | null>(null)
 
@@ -48,16 +44,8 @@ export function CockpitMenuRail() {
     return () => document.removeEventListener('pointerdown', onPointerDown, true)
   }, [fanOpen])
 
-  /** 调试目标：当前线程的作业 → 当前选中 → 编队第一条有 ref 的行。 */
-  const debugTarget = useCallback((): CockpitRef | null => {
-    if (active.ref) return active.ref
-    if (selection) return selection
-    for (const row of rows) {
-      if (row.kind === 'job') return { kind: 'job', cabinId: row.cabinId, id: row.job.id }
-      if (row.kind === 'task') return { kind: 'task', cabinId: row.cabinId, id: row.task.id }
-    }
-    return null
-  }, [active.ref, selection, rows])
+  /** 调试目标 = 本舱主会话（跟汐音的主 chat）。作业调试走它自己的详情页签。 */
+  const openDebug = useCallback(() => openPanel('debug'), [openPanel])
 
   const fanAction = useCallback((id: string) => {
     setFanOpen(false)
@@ -131,13 +119,9 @@ export function CockpitMenuRail() {
       <button
         type="button"
         className="ck12-rhex"
-        title="调试 inspect（常驻 · ⌥D）"
+        title="调试 inspect · 本舱主会话（常驻 · ⌥D）"
         data-testid="cockpit-menu-debug"
-        onClick={() => {
-          const ref = debugTarget()
-          if (!ref) { toast('编队里还没有可调试的作业'); return }
-          select(ref, 'debug')
-        }}
+        onClick={openDebug}
       >
         <span className="ck12-rhex-i" aria-hidden="true">⚙</span>
         <span className="ck12-rhex-l">调试</span>

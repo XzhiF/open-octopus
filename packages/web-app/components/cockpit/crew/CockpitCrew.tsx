@@ -7,11 +7,12 @@
 // 「◐ 汐音」（CockpitCrewSettings）；本组件不再承载控制条。
 //
 // 2026-11-15 v13.1 · 点击的**即时反馈**（对齐 classic 点立绘的手感）：
-//   一次点击在同一拍里出四样东西 —— 表情换图（mood override）、立绘上浮星光、
-//   一圈边框涟漪、点击音；随后气泡说一句（首点「我在。你说。」，之后按 XY_LINES
+//   一次点击在同一拍里出三样东西 —— 表情换图（mood override）、立绘上浮星光、
+//   点击音；随后气泡说一句（首点「我在。你说。」，之后按 XY_LINES
 //   顺序轮播）。全仓再叠 `fx.edge` 四边流光，炫档加背景扫描/环（`fx.feedback`）。
-//   900ms 内的连点只重复「星光 + 涟漪 + 音效」，不重启打字机、不重复台词 ——
+//   900ms 内的连点只重复「星光 + 音效」，不重启打字机、不重复台词 ——
 //   否则连点会看到字一闪一闪地从头打。
+//   v21 四轮：去掉立绘周边那圈矩形描边涟漪（原型立绘无框）。
 //   反馈全部是绝对定位，`.ck12-crew` 的尺寸一键不变（见 design/13 §1.5 铁律）。
 //
 // 2026-11-16 · 对话联动（chat-reactions.ts）：
@@ -55,7 +56,7 @@ import { CockpitPoseSprite, PoseFX } from './CockpitPoseSprite'
 const TYPE_MS = 22
 /** 首点（对话窗原本是关的）说这一句；之后连点按 XY_LINES 顺序轮播。 */
 const GREET = '我在。你说。'
-/** 连点节流：这段时间内只重复触感（星光/涟漪/音效），不重开打字机。 */
+/** 连点节流：这段时间内只重复触感（星光/音效），不重开打字机。 */
 const TALK_GAP_MS = 900
 /** 等待回答的气泡保持到下一次轮换/收尾；长回答中途不会空掉。 */
 const WAIT_HOLD_MS = 60_000
@@ -122,7 +123,6 @@ export function CockpitCrew() {
   const [typed, setTyped] = useState('')
   const [heart, setHeart] = useState(0)
   const [sparks, setSparks] = useState<Spark[]>([])
-  const [tap, setTap] = useState(0)
   /** 对话联动：空闲 / 正在回复 / 刚回完。 */
   const [phase, setPhase] = useState<ChatPhase>('idle')
   /** 对话联动带来的表情（思考 / 完成 / 倾听）；null = 用舱面的派生 mood。 */
@@ -227,9 +227,9 @@ export function CockpitCrew() {
     const fresh = now - lastTalkRef.current > TALK_GAP_MS
     lastTalkRef.current = now
 
-    // 1) 手感：星光 + 边框涟漪 + 点击音 —— 每次都出，连点也出。
+    // 1) 手感：星光 + 点击音 —— 每次都出，连点也出。
+    //    v21 四轮：立绘周边不再画矩形描边涟漪（原型无此边，点完会闪一圈边）。
     sparkle()
-    setTap((n) => n + 1)
     cabinAudio.blip(920, 0.05)
 
     // 2) 台词（节流）：首点招呼，之后按 XY_LINES 顺序轮播；表情跟着台词换。
@@ -550,10 +550,7 @@ export function CockpitCrew() {
         </span>
       </button>
 
-      {/* 点击涟漪：一圈边框向外淡出（纯装饰，不吃事件、不占布局） */}
-      {tap > 0 && (
-        <span key={tap} className="ck12-tapring" aria-hidden="true" data-testid="cockpit-crew-tapring" />
-      )}
+      {/* 点击涟漪已移除（v21 四轮）：立绘无框，点击只留星光，不再闪一圈边。 */}
 
       <div
         className={`ck12-speech${speech ? ' show' : ''}`}

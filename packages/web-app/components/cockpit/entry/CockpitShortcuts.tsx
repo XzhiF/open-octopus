@@ -53,7 +53,7 @@ function isCommandK(event: KeyboardEvent): boolean {
 export function CockpitShortcuts() {
   const active = useOptionalIsActiveRoute()
   const { rows } = useCockpitFleet()
-  const { select, chatWindow, threads: threadApi, travel } = useCockpitState()
+  const { select, chatWindow, openPanel, threads: threadApi, travel } = useCockpitState()
   const { visible, byKey } = useCockpitThreads()
 
   // 监听只挂一次（active 变化时重挂）；其余可变值走 ref，避免每 10s 轮询
@@ -63,6 +63,7 @@ export function CockpitShortcuts() {
   const openRef = useRef(chatWindow.openWithFocus)
   const jumpRef = useRef(travel)
   const cwRef = useRef(chatWindow)
+  const panelRef = useRef(openPanel)
   const taRef = useRef(threadApi)
   const visRef = useRef(visible)
   const byKeyRef = useRef(byKey)
@@ -71,6 +72,7 @@ export function CockpitShortcuts() {
   openRef.current = chatWindow.openWithFocus
   jumpRef.current = travel
   cwRef.current = chatWindow
+  panelRef.current = openPanel
   taRef.current = threadApi
   visRef.current = visible
   byKeyRef.current = byKey
@@ -126,7 +128,7 @@ export function CockpitShortcuts() {
         return
       }
 
-      // v20（design 29 §10）：⌥C 收起/展开停靠 · ⌥D 当前线程调试 · ⌥←/→ 切 tab。
+      // v20（design 29 §10）：⌥C 收起/展开停靠 · ⌥D 本舱主会话调试 · ⌥←/→ 切 tab。
       if (key === 'c') {
         event.preventDefault()
         const cw = cwRef.current
@@ -136,10 +138,8 @@ export function CockpitShortcuts() {
       }
 
       if (key === 'd') {
-        const thread = byKeyRef.current.get(taRef.current.activeThread)
-        if (!thread?.ref) return
         event.preventDefault()
-        selectRef.current(thread.ref, 'debug')
+        panelRef.current('debug')
         return
       }
 

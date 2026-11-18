@@ -25,7 +25,7 @@ const V21_KEYS: PoseKey[] = [
 ]
 
 const FX: PoseFx[] = [
-  'ambient', 'spark', 'bubble', 'ring', 'sweat', 'heart',
+  'none', 'ambient', 'spark', 'bubble', 'sweat', 'heart',
   'confetti', 'sparkle', 'zzz', 'shine', 'beam', 'keys',
 ]
 

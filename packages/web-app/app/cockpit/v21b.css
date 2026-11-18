@@ -527,27 +527,9 @@
    （← 退出舱不能被 scrim 拦掉）。生产窗口 z 是动态栈，HUD 需要抬到 dossier 之上。 */
 .ck12-hud { z-index: 210; }
 .ck12-hudcur { cursor: default; }
-.ck12-player { border-radius: 12px; clip-path: none; }
 .ck12-hud .ck12-pjbtn { border-radius: 10px; clip-path: none; }
-/* 原型左上角只有一枚指挥官徽（.player）。退出舱的 ← 保留，但退成一根
-   极简箭号 —— 不再长成一枚与徽章并排的小 chip（那样左上角会「一大一小」）。 */
-.ck12-hud-back {
-  width: auto;
-  height: 32px;
-  padding: 0 4px;
-  border: 0;
-  background: none;
-  border-radius: 0;
-  color: var(--ck12-metal2);
-  font-size: 15px;
-  text-shadow: none;
-}
-.ck12-hud-back:hover {
-  color: var(--ck12-teal);
-  border: 0;
-  box-shadow: none;
-  text-shadow: 0 0 12px color-mix(in srgb, var(--ck12-teal) 70%, transparent);
-}
+/* v21 四轮：原型的指挥官徽（.ck12-player）已删除；左上只留「经典模式」返回钮，
+   高度与舱籍 chip 一致（32px），左组/右组同一条中线。 */
 .ck12-hudhex,
 .ck12-hud-settings,
 .ck12-hud-model { display: none; }

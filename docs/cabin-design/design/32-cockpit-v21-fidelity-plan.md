@@ -321,4 +321,21 @@
 
 **§7 差异追加**：① 作者提问卡的选项仍是当前应答管线的单选控件（radio），视觉按 `.vchoice` 拉平；
 ② 详情页签 7 个（原型多一个「项目」页签，生产用头部项目签 + 项目面承载）；
-③ HUD ← 为生产独有（原型无退出舱入口）。
+③ 三轮时 HUD ← 为生产独有（原型无退出舱入口）—— 四轮已同步进原型（见 §9.7）。
+
+### 9.7 四轮收口（2026-11-18 · 用户反馈 → 原型 + 生产同步）
+
+| 反馈 | 原型 | 生产 |
+|---|---|---|
+| 右栏「调试」看的是某条作业 | —（原型按老逻辑指作业） | 新增 `panels/CockpitDebugPanel`：右栏 调试 / ⌥D → **本舱主会话**（与汐音的主 chat）per-turn inspector；某条作业的调试留在详情「调试」页签 |
+| 点汐音周边闪一圈边 | —（原型本就没有） | 删除点击描边涟漪 `.ck12-tapring`（星光 / 表情 / 台词 / 开窗保留） |
+| 立绘正中粉色小圆圈放大消失 | —（原型 `alert` 姿态有 ring 粒子，一并删） | `alert` 姿态 fx 改 `none`；删除 `.ck12-pfx-ring`（8 连圆 + keyframes） |
+| 左上「16 指挥官 / CMDR·ID」太高、无信息量 | 删 `.player`；新增 `.backchip`「← 经典模式」（点击 toast 示意） | 删 `.ck12-player` 与 `CABIN_MAIN_IDENTITY` 行；`←` 改成同高 32px「经典模式」chip，仍走 `exitCockpit` |
+| 两边对齐 | `.sceneread` / `.cur` 定高 32px | `.ck12-sceneread` / `.ck12-hudcur` 定高 32px；左组（经典 / 舱籍）与右组读数同一条中线 |
+| 输入框默认显示两行 | 原型 `rows=1` / `min-height:36` | `AutoResizeTextarea`：空框恒占 `minRows` 行（窄窗 placeholder 折行不再被 Chromium 算进 scrollHeight）；宽度变化按真实内容重量。cockpit 实测 36px，classic（minRows=2）仍 60px |
+| 待放行（待入列/触发/恢复）在全舱只给「去处理」 | classic 点行直接开放行窗 | cockpit inbox 的 `stage='start'` 行 → 同一 `StartWindow`（立即开跑 / 先入列 / 立即触发 / 恢复推进）：`mode='cockpit'` 落点贴**右栏「要我处理」左侧**（与 classic 贴 inbox 左侧同义，右缘留 10px），Esc 走层栈 priority 125，执行成功按 `startDecisionKey` 乐观消项并刷新编队 |
+
+门禁：crew 单测 27 例全绿、cockpit 221 例全绿；`cockpit-v20` 面板用例通过（新增右栏调试断言：
+`cockpit-panel-debug` + `cockpit-main-debug-inspector`）；HUD 六项实测 32px / 同一 y 对齐；
+原型 `.hud` 六项同样 32px 对齐、`.player` 计数 0；`_fidelity-v21.mjs` 四档 PASS，新增
+`hud.items32 / itemsAligned / items32_vs_proto` 与 `composer.ta.h(36) / ta.h_vs_proto`。

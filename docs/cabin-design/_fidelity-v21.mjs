@@ -75,6 +75,7 @@ const protoSample = () => {
     console: box('#console'),
     consoleRadius: style('#console', ['borderRadius', 'clipPath']),
     composer: box('#conIn'),
+    composerTaH: box('#cmdInput')?.h ?? null,
     telemChips: document.querySelectorAll('#console .telem .tc').length,
     telemModel: document.querySelector('#conModel')?.textContent ?? null,
     telemDrop: box('#modelPop:not([hidden])'),
@@ -91,8 +92,10 @@ const protoSample = () => {
     bannerVisible: visible('#banner'),
     teal: getComputedStyle(document.documentElement).getPropertyValue('--teal').trim(),
     accent: getComputedStyle(document.documentElement).getPropertyValue('--ck-a').trim() || null,
-    uiFont: style('.player .pn b', ['fontFamily'])?.fontFamily ?? null,
+    uiFont: style('.backchip b', ['fontFamily'])?.fontFamily ?? null,
     monoFont: style('.con-log', ['fontFamily'])?.fontFamily ?? null,
+    hudHeights: ['.backchip', '.projchip', '.sceneread', '#curCost'].map((s) => (visible(s) ? (box(s)?.h ?? null) : null)),
+    hudTops: ['.backchip', '.projchip', '.sceneread', '#curCost'].map((s) => (visible(s) ? (box(s)?.t ?? null) : null)),
     overflow: document.documentElement.scrollWidth - document.documentElement.clientWidth,
     fleetRows: document.querySelectorAll('#fleetrail [data-rail-job]').length,
   }
@@ -128,7 +131,7 @@ const prodSample = () => {
   return {
     bodyFont: getComputedStyle(document.body).fontFamily,
     hud: box('[data-testid="cockpit-hud"]'),
-    hudNavGhosts: document.querySelectorAll('[data-testid="cockpit-hud"] .ck12-hud-back').length,
+    hudNavGhosts: document.querySelectorAll('[data-testid="cockpit-hud"] .ck12-hud-classic').length,
     sceneCount: document.querySelectorAll('.ck12-scene img, .ck12-bg img[data-scene]').length,
     sceneSrc: document.querySelector('.ck12-scene img, .ck12-bg img[data-scene]')?.getAttribute('src') ?? null,
     fleet: box('[data-testid="cockpit-fleet-rail"]'),
@@ -138,6 +141,7 @@ const prodSample = () => {
     console: box('[data-testid="cockpit-chat-window"]'),
     consoleRadius: style('[data-testid="cockpit-chat-window"]', ['borderRadius', 'clipPath']),
     composer: box('.ck12-comms-in'),
+    composerTaH: box('[data-testid="cockpit-composer-slot"] textarea')?.h ?? null,
     telemChips: document.querySelectorAll('[data-testid="cockpit-chat-window"] .ck12-tc').length,
     telemModel: document.querySelector('[data-testid="cockpit-con-model"] b')?.textContent ?? null,
     telemDrop: box('[data-testid="cockpit-con-drop-model"]'),
@@ -154,8 +158,10 @@ const prodSample = () => {
     bannerVisible: visible('[data-testid="cockpit-status-banner"]'),
     teal: app ? getComputedStyle(app).getPropertyValue('--ck12-teal').trim() : null,
     accent: app ? getComputedStyle(app).getPropertyValue('--ck-a').trim() : null,
-    uiFont: style('.ck12-player-n b', ['fontFamily'])?.fontFamily ?? null,
+    uiFont: style('.ck12-hud-classic b', ['fontFamily'])?.fontFamily ?? null,
     monoFont: style('.ck12-comms-body, [data-tui-col]', ['fontFamily'])?.fontFamily ?? null,
+    hudHeights: ['[data-testid="cockpit-back"]', '.ck12-pjbtn', '.ck12-sceneread', '[data-testid="ck12-rig-cost"]'].map((s) => (visible(s) ? (box(s)?.h ?? null) : null)),
+    hudTops: ['[data-testid="cockpit-back"]', '.ck12-pjbtn', '.ck12-sceneread', '[data-testid="ck12-rig-cost"]'].map((s) => (visible(s) ? (box(s)?.t ?? null) : null)),
     overflow: document.documentElement.scrollWidth - document.documentElement.clientWidth,
     fleetRows: document.querySelectorAll('[data-testid^="cockpit-rail-row-"]').length,
   }
@@ -185,7 +191,16 @@ function compare(proto, prod, vw) {
 
   near('hud.h', 54, prod.hud?.h, 0)
   near('hud.h_vs_proto', proto.hud?.h, prod.hud?.h)
-  push('hud.navGhosts', 1, prod.hudNavGhosts, prod.hudNavGhosts === 1, '允许 ← 一个')
+  push('hud.navGhosts', 1, prod.hudNavGhosts, prod.hudNavGhosts === 1, '允许 ← / 经典模式 一个')
+  // v21 四轮：HUD 各项同高 32px、同一条中线（可见项才比）。
+  push('hud.items32', true, prod.hudHeights, prod.hudHeights.every((h) => h == null || h === 32))
+  push('hud.itemsAligned', true, prod.hudTops, new Set(prod.hudTops.filter((t) => t != null)).size === 1)
+  push('hud.items32_vs_proto', proto.hudHeights, prod.hudHeights,
+    JSON.stringify(proto.hudHeights) === JSON.stringify(prod.hudHeights))
+  // v21 四轮：输入框默认一行（原型 rows=1 / min-height 36）。
+  push('composer.ta.h', proto.composerTaH, prod.composerTaH,
+    typeof prod.composerTaH === 'number' && Math.abs(prod.composerTaH - 36) <= 2)
+  near('composer.ta.h_vs_proto', proto.composerTaH, prod.composerTaH, 2)
   push('scene.count', 1, prod.sceneCount, prod.sceneCount === 1)
   push('scene.src.bridge', true, /scene-bridge/.test(prod.sceneSrc ?? ''), /scene-bridge/.test(prod.sceneSrc ?? ''), prod.sceneSrc ?? 'null')
 

@@ -2,8 +2,7 @@
 
 // v21 二轮（原型 cockpit-v21.html · HUD）—— 54px 抬头条：
 //
-//   ← │ 指挥官徽(32×36) + 身份 + CMDR 行 │ 舱籍 chip(32) │ SCENE pill(居中)
-//     │ ▤ tok │ ◈ ctx │ ¥ 消耗（三枚只读读数）
+//   [← 经典模式] │ 舱籍 chip(32) │ SCENE pill(居中) │ ▤ tok │ ◈ ctx │ ¥ 消耗
 //
 // 纪律：
 //   · 读数全部来自真源（chat 遥测 / getCabinUsage / 舱籍）；拿不到就写「未就绪」，
@@ -11,12 +10,12 @@
 //   · 右上不再有模型切换与 ♪ ◐ ✦：模型 / 上下文 / 会话 token 明细都在通讯台头部
 //     （MODEL / CTX / TOKEN 下拉），消耗完整账在右栏「消耗」；设置从「更多 → 设置」进。
 //   · 三枚读数只读：不可点、无所指弹层（原型 .cur cursor:default）。
-//   · 导航入口只留最左 ←（应用需要退出舱）。
+//   · v21 四轮：删掉原型左上的指挥官徽（16 / 指挥官 / CMDR·ID —— 偏高且无信息量，
+//     与右侧 32px chip 不齐）；导航只留一枚同高的「经典模式」返回钮。
 
 import { useCallback, useState } from 'react'
 import { useBillingCurrency } from '@/lib/billing-currency'
 import { formatCost, formatTokenCount } from '@/lib/format'
-import { CABIN_MAIN_IDENTITY } from '@/components/cabin/cabin-meta'
 import { useCockpitEntry } from '../entry/use-cockpit-entry'
 import { useCockpitState } from '../state/CockpitStateProvider'
 import { useCabinOptional } from '@/components/cabin/cabin-provider'
@@ -38,7 +37,6 @@ export function CockpitHud() {
   const { exitCockpit } = useCockpitEntry()
   const cabinCtx = useCabinOptional()
   const cabinName = cabinCtx?.cabin?.name ?? '作战舱'
-  const org = cabinCtx?.cabin?.org ?? null
   const { usage, stale } = useCabinUsage(entryCabinId)
   const currency = useBillingCurrency()
 
@@ -68,25 +66,19 @@ export function CockpitHud() {
 
   return (
     <header className="ck12-hud" data-testid="cockpit-hud">
-      {/* 唯一保留的导航入口：退出舱（原型没有，应用需要）。 */}
+      {/* 唯一保留的导航入口：回 classic 舱页。高度与舱籍 chip 同为 32px，
+          左组（经典 / 舱籍）与右组（SCENE / 三读数）在同一条中线上。 */}
       <button
         type="button"
-        className="ck12-hud-back"
+        className="ck12-hud-classic"
         onClick={() => exitCockpit(entryCabinId)}
-        title="返回作战舱"
-        aria-label="← 返回作战舱"
+        title="返回 classic 模式（作战舱）"
+        aria-label="返回 classic 模式（作战舱）"
         data-testid="cockpit-back"
       >
-        ←
+        <span className="ck12-hud-classic-i" aria-hidden="true">←</span>
+        <b>经典模式</b>
       </button>
-
-      <div className="ck12-player" data-testid="cockpit-player">
-        <span className="ck12-player-lv" aria-hidden="true">{CABIN_MAIN_IDENTITY.slice(0, 1)}</span>
-        <span className="ck12-player-n">
-          <b>{CABIN_MAIN_IDENTITY}</b>
-          <span>CMDR · {org ?? '全域'}</span>
-        </span>
-      </div>
 
       <CockpitProjectsPopover
         cabinId={entryCabinId}

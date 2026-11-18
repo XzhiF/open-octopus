@@ -7,18 +7,24 @@
 // attention 里已经消失的 id 会被清出集合，避免无限增长。
 
 import { useCallback, useEffect, useMemo, useState } from 'react'
+import type { CabinAttentionItem } from '@octopus/shared'
+import { StartWindow, startDecisionKey } from '@/components/cabin/asks/start-window'
 import { useCockpitFleet } from '../fleet/CockpitFleetProvider'
 import { useCockpitState } from '../state/CockpitStateProvider'
 import { CockpitAttentionChip } from './CockpitAttentionChip'
 import { CockpitInboxPopover } from './CockpitInboxPopover'
 import { CockpitMenuRail } from './CockpitMenuRail'
-import { collectInbox, inboxCounts } from './inbox-model'
+import { collectInbox, inboxCounts, type InboxEntry } from './inbox-model'
 
 export function CockpitRightRail() {
-  const { rows } = useCockpitFleet()
-  const { inboxOpen } = useCockpitState()
+  const { rows, refetch } = useCockpitFleet()
+  const { inboxOpen, closeInbox, layer } = useCockpitState()
   const entries = useMemo(() => collectInbox(rows), [rows])
   const [answered, setAnswered] = useState<ReadonlySet<string>>(() => new Set())
+  /** 待放行：已执行成功的 decision key（同一 attention id 换动作时不能一起藏）。 */
+  const [startDecided, setStartDecided] = useState<ReadonlySet<string>>(() => new Set())
+  /** 打开中的放行窗（快照 attention 项，刷新不腾空窗内选项）。 */
+  const [startItem, setStartItem] = useState<CabinAttentionItem | null>(null)
 
   const markAnswered = useCallback((id: string) => {
     setAnswered((prev) => {
@@ -60,17 +66,65 @@ export function CockpitRightRail() {
     })
   }, [entries])
 
-  const counts = useMemo(() => inboxCounts(entries, answered), [entries, answered])
+  // 待放行的乐观消项键含动作：入列后 attention 同一 id 变成「待触发」时不能被旧键藏住。
+  useEffect(() => {
+    setStartDecided((prev) => {
+      if (prev.size === 0) return prev
+      const live = new Set(
+        entries
+          .filter((entry) => entry.item.stage === 'start')
+          .map((entry) => startDecisionKey(entry.item)),
+      )
+      const next = new Set([...prev].filter((key) => live.has(key)))
+      return next.size === prev.size ? prev : next
+    })
+  }, [entries])
+
+  const visible = useMemo(
+    () => entries.filter((entry) => !(
+      entry.item.stage === 'start' && startDecided.has(startDecisionKey(entry.item))
+    )),
+    [entries, startDecided],
+  )
+
+  const counts = useMemo(() => inboxCounts(visible, answered), [visible, answered])
+
+  // 待放行与 classic 对齐：点行直接开放行窗（立即开跑 / 先入列 → 当场 ready/trigger）。
+  const openStart = useCallback((entry: InboxEntry) => {
+    closeInbox()
+    setStartItem(entry.item)
+  }, [closeInbox])
+
+  const handleStartDecided = useCallback((decisionKey: string) => {
+    setStartDecided((prev) => {
+      if (prev.has(decisionKey)) return prev
+      const next = new Set(prev)
+      next.add(decisionKey)
+      return next
+    })
+    void refetch()
+  }, [refetch])
 
   return (
     <aside className="ck12-rightrail" aria-label="待办与主菜单" data-testid="cockpit-right-rail">
       <CockpitAttentionChip counts={counts} />
       {inboxOpen && (
         <CockpitInboxPopover
-          entries={entries}
+          entries={visible}
           counts={counts}
           answered={answered}
           onAnswered={(id) => markAnswered(id)}
+          onOpenStart={openStart}
+        />
+      )}
+      {startItem && (
+        <StartWindow
+          key={startItem.id}
+          item={startItem}
+          mode="cockpit"
+          escLayer={layer}
+          onClose={() => setStartItem(null)}
+          onDecided={handleStartDecided}
         />
       )}
       <CockpitMenuRail />

@@ -155,6 +155,29 @@ describe('CockpitRightRail · v21 待办', () => {
     expect(card.querySelector('.ck12-ipd-opt')).toBeNull()
   })
 
+  it('待放行行 → 直接开与 classic 同款的放行窗（立即开跑 / 先入列）', () => {
+    fleetState.value = fleet([
+      row('s1', {
+        stage: 'start',
+        start_kind: 'enqueue',
+        task_id: 't1',
+        title: 'app-user 与 admin-user 体系分离 · 待入列',
+      }),
+    ])
+    render(ui())
+    fireEvent.click(screen.getByTestId('cockpit-inbox-chip'))
+    fireEvent.click(screen.getByTestId('cockpit-inbox-row-s1'))
+
+    // 浮层收起，放行窗按 cockpit 落点打开。
+    expect(screen.queryByTestId('cockpit-inbox-popover')).toBeNull()
+    const win = screen.getByTestId('cabin-start-window-s1')
+    expect(win.className).toMatch(/ck-askwin--cockpit/)
+    expect(win).toHaveTextContent('要现在放行吗？')
+    expect(within(win).getByTestId('cabin-start-window-opt-launch')).toHaveTextContent('立即开跑')
+    expect(within(win).getByTestId('cabin-start-window-opt-launch')).toHaveTextContent('入列并马上触发 phase 1')
+    expect(within(win).getByTestId('cabin-start-window-opt-enqueue')).toHaveTextContent('先入列')
+  })
+
   it('点浮层外收起；Esc 走 layer 栈', () => {
     fleetState.value = fleet([row('a1')])
     render(ui())

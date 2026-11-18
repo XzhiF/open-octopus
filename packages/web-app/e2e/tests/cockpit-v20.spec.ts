@@ -166,6 +166,16 @@ test.describe("全域座舱 v20 · 真数据 E2E", () => {
     await expect(page.getByTestId("cockpit-ledger-cells").locator(".ck12-ledger-cell")).toHaveCount(4)
     await page.keyboard.press("Escape")
     await expect(ledger).toHaveCount(0)
+
+    // v21 四轮：右栏「调试」= 本舱主会话（跟汐音的主 chat），不再落到某条作业。
+    await page.getByTestId("cockpit-menu-debug").click()
+    const debugPanel = page.getByTestId("cockpit-panel-debug")
+    await expect(debugPanel).toBeVisible()
+    await expect(debugPanel).toContainText("本舱调试")
+    await expect(page.getByTestId("cockpit-main-debug-inspector")).toBeVisible()
+    await page.keyboard.press("Escape")
+    await expect(debugPanel).toHaveCount(0)
+
     expect(audit.filtered).toEqual([])
     audit.dispose()
   })

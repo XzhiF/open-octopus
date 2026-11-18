@@ -293,7 +293,6 @@
 }
 
 /* 造型件统一用 clip-path 斜切；背景走 glass2（原型 --glass2）。 */
-.ck12-player,
 .ck12-sceneread,
 .ck12-hudhex,
 .ck12-hud-model > span > button,
@@ -301,66 +300,37 @@
   backdrop-filter: blur(10px);
 }
 
-.ck12-hud-back {
+/* 回 classic 舱页（v21 四轮：替掉原型的指挥官徽；与舱籍 chip 同高 32px）。 */
+.ck12-hud-classic {
   flex: none;
-  width: 26px;
-  height: 26px;
-  display: grid;
-  place-items: center;
-  border-radius: 6px;
-  border: 1px solid var(--ck12-bd2);
-  color: var(--ck12-metal);
-  font-size: 13px;
-  line-height: 1;
-  background: var(--ck12-glass);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: 32px;
+  padding: 0 12px;
+  border-radius: 10px;
+  background: var(--ck12-glass2);
+  backdrop-filter: blur(10px);
+  border: 1px solid var(--ck12-edge);
+  color: var(--ck12-metal2);
+  font-size: 10.5px;
+  font-weight: 700;
+  font-family: var(--font-ui);
+  white-space: nowrap;
   transition: 0.14s;
 }
-.ck12-hud-back:hover {
+.ck12-hud-classic-i {
+  color: var(--ck12-teal);
+  font-size: 13px;
+  line-height: 1;
+}
+.ck12-hud-classic b { color: var(--ck12-ink2); font-weight: 700; }
+.ck12-hud-classic:hover {
   color: #fff;
   border-color: var(--ck12-teal);
   box-shadow: 0 0 12px rgba(46, 230, 214, 0.25);
 }
-
-/* 指挥官徽（原型 .player） */
-.ck12-player {
-  display: flex;
-  align-items: center;
-  gap: 9px;
-  padding: 4px 14px 4px 5px;
-  clip-path: var(--ck12-cut);
-  background: var(--ck12-glass2);
-  border: 1px solid var(--ck12-edge);
-  white-space: nowrap;
-}
-.ck12-player-lv {
-  width: 32px;
-  height: 36px;
-  flex: none;
-  clip-path: var(--ck12-hex);
-  display: grid;
-  place-items: center;
-  background: linear-gradient(160deg, var(--ck12-sky), #7B4DFF);
-  color: #fff;
-  font-weight: 800;
-  font-size: 12px;
-  font-family: var(--font-ui);
-}
-.ck12-player-n {
-  display: flex;
-  flex-direction: column;
-  line-height: 1.15;
-}
-.ck12-player-n b {
-  font-size: 12.5px;
-  font-weight: 800;
-  font-family: var(--font-ui);
-  color: #fff;
-}
-.ck12-player-n span {
-  font-size: 8.5px;
-  color: var(--ck12-ink2);
-  letter-spacing: 0.1em;
-}
+.ck12-hud-classic:hover b { color: #fff; }
 
 /* 舱籍 chip（复用 CockpitProjectsPopover 的 .ck12-pjbtn，重排成原型 .projchip） */
 .ck12-hud .ck12-pjbtn {
@@ -396,13 +366,14 @@
 }
 .ck12-hud .ck12-pjname { color: #fff; max-width: 150px; overflow: hidden; text-overflow: ellipsis; }
 
-/* SCENE pill（居中；原型 .sceneread） */
+/* SCENE pill（居中；原型 .sceneread）—— 32px 高，与左右两侧 chip 对齐 */
 .ck12-sceneread {
   margin: 0 auto;
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 4px 16px;
+  height: 32px;
+  padding: 0 16px;
   border-radius: 999px;
   background: var(--ck12-glass);
   border: 1px solid rgba(185, 179, 217, 0.22);
@@ -448,11 +419,12 @@
 }
 .ck12-hud-modeloff b { color: var(--ck12-ink2); font-weight: 800; }
 
-/* 读数（原型 .cur：24×27 六角 + 数字） */
+/* 读数（原型 .cur：24×27 六角 + 数字）—— 32px 高，与左组 chip 中线对齐 */
 .ck12-hudcur {
   display: flex;
   align-items: center;
   gap: 6px;
+  height: 32px;
   flex: none;
   color: #fff;
 }

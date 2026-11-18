@@ -1,7 +1,8 @@
 /* ═══════════════════════════════════════════════════════════════════════
    cockpit-v12 · S7 立绘 / 台词 / 在场
    逐块对照 docs/cabin-design/cockpit-v12.html 的 .crew / .pod / .speech /
-   .xset（HUD「◐ 汐音」）/ .spark / .tapring / .heart（尺寸取原型：344 × min(60vh,548)，left:6 bottom:6）。
+   .xset（HUD「◐ 汐音」）/ .spark / .heart（尺寸取原型：344 × min(60vh,548)，left:6 bottom:6）。
+   v21 四轮：点击描边涟漪 .tapring 已移除 —— 立绘无框，点击只留星光。
    类名统一 ck12- 前缀；颜色走 --ck-a/b 与 pop-* token（CockpitProvider 实时写入）。
    控制条 portal 到 body，所以这里的 button 需要自带 reset。
    ═══════════════════════════════════════════════════════════════════════ */
@@ -450,8 +451,8 @@
 }
 
 /* ───────────────────── 点击即时反馈（v13.1） ─────────────────────
-   星光在舱体里（跟着 overflow:hidden 裁），涟漪在舱体外一圈；两者都是
-   absolute + pointer-events:none，绝不参与 .ck12-crew 的尺寸。 */
+   星光在舱体里（跟着 overflow:hidden 裁）；absolute + pointer-events:none，
+   绝不参与 .ck12-crew 的尺寸。v21 四轮起不再画描边涟漪。 */
 .ck12-spark {
   position: absolute;
   z-index: 4;
@@ -468,20 +469,8 @@
   100% { opacity: 0; transform: translate(var(--dx, 0), var(--dy, -60px)) scale(1.05); }
 }
 
-.ck12-tapring {
-  position: absolute;
-  inset: 0;
-  z-index: 7;
-  border-radius: 18px;
-  border: 1px solid color-mix(in srgb, var(--ck-b) 72%, transparent);
-  box-shadow: 0 0 22px color-mix(in srgb, var(--ck-b) 34%, transparent);
-  pointer-events: none;
-  animation: ck12-tapring 0.52s ease-out forwards;
-}
-@keyframes ck12-tapring {
-  0% { opacity: 0.9; transform: scale(1); }
-  100% { opacity: 0; transform: scale(1.045); }
-}
+/* v21 四轮：点击立绘不再画矩形描边涟漪（原型立绘无框，点完闪一圈边）。
+   星光保留 —— 它只在身上浮起，不围边。 */
 
 /* 按下去的那一下也要有回应（触感；不改变几何）。 */
 .ck12-pod:active {
@@ -590,8 +579,7 @@
   .ck12-pod-listen i,
   .ck12-speech-dots i { animation: none; }
   .ck12-heart { display: none; }
-  .ck12-spark,
-  .ck12-tapring { display: none; }
+  .ck12-spark { display: none; }
   .ck12-speech { transition: none; }
   .ck12-speech-cur { animation: none; }
   .ck12-xset { animation: none; }
@@ -632,11 +620,7 @@
 }
 .ck12-pfx-bubble i { animation: ck12-pfx-rise 3.2s linear infinite; }
 .ck12-pfx-spark i { background: var(--ck-b); animation: ck12-pfx-spark 1.8s ease-out infinite; }
-.ck12-pfx-ring i {
-  left: 50%; top: 62%; width: 30px; height: 30px; margin: -15px;
-  background: transparent; border: 1px solid var(--ck-a);
-  animation: ck12-pfx-ring 2.4s ease-out infinite;
-}
+/* v21 四轮：不再画立绘正中的圆环（.ck12-pfx-ring 已删除，原型/用户都不要）。 */
 .ck12-pfx-sweat i { background: var(--pop-cyan, #67e8f9); border-radius: 0 50% 50% 50%; animation: ck12-pfx-fall 2.2s ease-in infinite; }
 .ck12-pfx-heart i { background: transparent; width: auto; height: auto; animation: ck12-pfx-rise 2.6s ease-out infinite; }
 .ck12-pfx-heart i::after { content: '♡'; color: var(--pop-pink); font-size: 11px; }
@@ -675,10 +659,6 @@
   0% { opacity: 0; transform: translate(0, 0) scale(0.6); }
   25% { opacity: 1; }
   100% { opacity: 0; transform: translate(calc(var(--i) * 6px - 24px), -70px) scale(1.1); }
-}
-@keyframes ck12-pfx-ring {
-  0% { opacity: 0.7; transform: scale(0.4); }
-  100% { opacity: 0; transform: scale(2.6); }
 }
 @keyframes ck12-pfx-fall {
   0% { opacity: 0; transform: translateY(-20px); }

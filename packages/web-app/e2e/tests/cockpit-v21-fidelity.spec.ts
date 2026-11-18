@@ -43,7 +43,7 @@ test.describe("全域座舱 v21 · 高保真", () => {
     await cleanupCabin(seed.cabin.id)
   })
 
-  test("HUD：54px · 唯一导航入口 ← · 指挥官徽 / 舱籍 / SCENE / 读数 / ♪◐✦", async ({ page }) => {
+  test("HUD：54px · 经典模式返回钮 · 舱籍 / SCENE / 读数 / ♪◐✦", async ({ page }) => {
     const audit = attachConsoleAudit(page)
     await gotoCockpit(page, seed!.cabin.id)
     const hud = page.getByTestId("cockpit-hud")
@@ -51,12 +51,13 @@ test.describe("全域座舱 v21 · 高保真", () => {
     const box = await hud.boundingBox()
     expect(Math.round(box!.height)).toBe(54)
 
-    // 唯一导航入口是 ←（其余入口都迁到右栏「更多」）。
+    // 唯一导航入口 = 「← 经典模式」（其余入口都迁到右栏「更多」）；指挥官徽已删。
     await expect(hud.getByTestId("cockpit-back")).toBeVisible()
+    await expect(hud.getByTestId("cockpit-back")).toContainText("经典模式")
+    await expect(page.getByTestId("cockpit-player")).toHaveCount(0)
     await expect(page.getByTestId("cockpit-ws-open")).toHaveCount(0)
     await expect(page.getByTestId("cockpit-jump")).toHaveCount(0)
 
-    await expect(page.getByTestId("cockpit-player")).toBeVisible()
     await expect(page.getByTestId("cockpit-projects-btn")).toBeVisible()
     await expect(page.getByTestId("cockpit-scene-pill")).toContainText("SCENE")
 

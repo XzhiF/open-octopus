@@ -9,17 +9,25 @@
 //   enqueue → draft：立即开跑（静默 ready → trigger）/ 先入列
 //   trigger → ready：立即触发
 //   resume  → paused：恢复推进
-// 落点与问答窗一致（classic：贴编队左缘），复用 .ck-askwin chrome。
+// 落点与问答窗同一纪律：classic 贴编队 / inbox 左侧；cockpit 贴右栏
+// 「要我处理」左侧（与 classic 同义 —— 挨着待办悬浮，不跑回左侧编队）。
 
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { CheckCircle2, Loader2, X, Zap } from 'lucide-react'
 import type { CabinAttentionItem } from '@octopus/shared'
+import type { CockpitLayerApi } from '@/components/cockpit/state/cockpit-state'
 import { readyTask, resumeTask, triggerTask } from '@/lib/tasks-api'
 import { openTaskInChat } from '../modules/ui'
 import { nextZ } from '../z-order'
-import { readFleetLeft } from './ask-window-layer'
-import { askRect, askWindowContext, type AskPlacement } from './ask-window-model'
+import { readFleetLeft, readRightRailLeft } from './ask-window-layer'
+import {
+  askRect,
+  askWindowContext,
+  clampLeft,
+  windowWidthFor,
+  type AskPlacement,
+} from './ask-window-model'
 import './ask-window.css'
 
 type StartKind = 'enqueue' | 'trigger' | 'resume'
@@ -86,14 +94,31 @@ function errorText(err: unknown): string {
   return String(err)
 }
 
+/** 放行窗落点（v21 四轮）：classic 贴编队 / inbox 左侧；cockpit 贴右栏
+ *  「要我处理」左侧 —— 与 classic 同义，挨着待办悬浮，守住 10px 间距。 */
+function placementFor(mode: 'classic' | 'cockpit'): AskPlacement {
+  const viewport = { w: window.innerWidth, h: window.innerHeight }
+  if (mode === 'cockpit') {
+    const width = windowWidthFor('cockpit', viewport.w)
+    const railLeft = readRightRailLeft()
+    const left = railLeft == null ? viewport.w - width - 24 : railLeft - width - 10
+    return { left: clampLeft(left, width, viewport.w), top: 62, width }
+  }
+  return askRect('classic', { fleetLeft: readFleetLeft(), openCount: 0, viewport })
+}
+
 export interface StartWindowProps {
   item: CabinAttentionItem
   onClose: () => void
-  /** 执行成功：inbox 立即乐观消项（键含动作，见 startDecisionKey），并触发一次 view 刷新。 */
+  /** 执行成功：inbox 立即乐观消项（键含动作，见 startDecisionKey），并触发一次刷新。 */
   onDecided: (decisionKey: string) => void
+  /** 放置模式：classic 贴编队左缘、cockpit 贴编队右缘（默认 classic，行为不变）。 */
+  mode?: 'classic' | 'cockpit'
+  /** cockpit：Esc 走唯一层栈（priority 125 —— 先于 inbox 120 收放行窗）。 */
+  escLayer?: CockpitLayerApi
 }
 
-export function StartWindow({ item, onClose, onDecided }: StartWindowProps) {
+export function StartWindow({ item, onClose, onDecided, mode = 'classic', escLayer }: StartWindowProps) {
   const taskId = item.task_id
   const kind = kindOf(item)
   const options = optionsOf(kind)
@@ -107,11 +132,7 @@ export function StartWindow({ item, onClose, onDecided }: StartWindowProps) {
 
   const [pos, setPos] = useState<AskPlacement>(() => {
     if (typeof window === 'undefined') return { left: 0, top: 56, width: 520 }
-    return askRect('classic', {
-      fleetLeft: readFleetLeft(),
-      openCount: 0,
-      viewport: { w: window.innerWidth, h: window.innerHeight },
-    })
+    return placementFor(mode)
   })
 
   const rootRef = useRef<HTMLElement | null>(null)
@@ -121,8 +142,12 @@ export function StartWindow({ item, onClose, onDecided }: StartWindowProps) {
   useEffect(() => setMounted(true), [])
   useEffect(() => { rootRef.current?.focus() }, [])
 
-  // Esc：只关这一扇；若问答窗已处理（preventDefault）则让位。
+  // Esc：cockpit 走唯一层栈（125 > inbox 120）；classic 只关这一扇，
+  // 若问答窗已处理（preventDefault）则让位。
   useEffect(() => {
+    if (escLayer) {
+      return escLayer.register('cabin-start-window', 125, () => closeRef.current())
+    }
     const onKey = (event: KeyboardEvent) => {
       if (event.key !== 'Escape' || event.defaultPrevented) return
       event.preventDefault()
@@ -130,20 +155,22 @@ export function StartWindow({ item, onClose, onDecided }: StartWindowProps) {
     }
     document.addEventListener('keydown', onKey, true)
     return () => document.removeEventListener('keydown', onKey, true)
-  }, [])
+  }, [escLayer])
 
-  // resize：只夹 x（与问答窗同纪律）。
+  // resize：只夹 x（与问答窗同纪律）；宽度按模式重取。
   useEffect(() => {
     const onResize = () => {
       setPos((prev) => {
-        const width = Math.min(520, Math.max(240, window.innerWidth - 24))
-        const left = Math.max(8, Math.min(prev.left, Math.max(8, window.innerWidth - width - 8)))
+        const width = mode === 'cockpit'
+          ? windowWidthFor('cockpit', window.innerWidth)
+          : Math.min(520, Math.max(240, window.innerWidth - 24))
+        const left = clampLeft(prev.left, width, window.innerWidth)
         return { left, top: prev.top, width }
       })
     }
     window.addEventListener('resize', onResize)
     return () => window.removeEventListener('resize', onResize)
-  }, [])
+  }, [mode])
 
   // 成功回执停 1.5s 后自动关窗（与问答窗同口径）。
   useEffect(() => {
@@ -221,7 +248,7 @@ export function StartWindow({ item, onClose, onDecided }: StartWindowProps) {
     <section
       ref={rootRef}
       tabIndex={-1}
-      className="ck-askwin ck-startwin ck-askwin--classic"
+      className={`ck-askwin ck-startwin ck-askwin--${mode}`}
       style={{ left: pos.left, top: pos.top, width: pos.width, zIndex: z }}
       data-testid={`cabin-start-window-${item.id}`}
       role="dialog"

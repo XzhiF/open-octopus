@@ -443,12 +443,11 @@
   .ck12-sceneread { display: none; }
   .ck12-hudcur.is-ctx { display: none; }
   .ck12-hud .ck12-pjname { display: none; }
+  .ck12-hud-classic b { display: none; }
   .ck12-hud-settings { display: none; }
 }
 @media (max-width: 560px) {
   .ck12-hud { gap: 6px; padding: 0 8px; }
-  .ck12-player-n span { display: none; }
-  .ck12-player-n b { font-size: 11px; max-width: 84px; overflow: hidden; text-overflow: ellipsis; }
   .ck12-hudhex.is-theme,
   .ck12-hudhex.is-poses { display: none; }
   .ck12-hudcur.is-cost b { font-size: 12px; }

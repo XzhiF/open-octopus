@@ -103,7 +103,8 @@ export function canAnswerInline(item: CabinAttentionItem): boolean {
   return !!item.ask?.ask_id && (item.ask.options?.length ?? 0) > 0
 }
 
-/** 原型 `.ip-row` 右侧动词。 */
+/** 原型 `.ip-row` 右侧动词。待放行与 classic 同：直接开「放行窗」。 */
 export function inboxVerb(item: CabinAttentionItem): string {
+  if (item.stage === 'start') return '放行 →'
   return inboxGroupOf(item) === 'rev' ? '验收 →' : '回答 →'
 }

@@ -103,17 +103,20 @@ kbd{border:1px solid rgba(185,179,217,.35);border-bottom-width:2px;border-radius
 
 /* ═══ HUD ═══ */
 .hud{position:absolute;left:0;right:0;top:0;z-index:50;height:54px;display:flex;align-items:center;gap:10px;padding:0 14px}
-.player{display:flex;align-items:center;gap:9px;padding:4px 14px 4px 5px;border-radius:12px;background:var(--glass2);backdrop-filter:blur(10px);border:1px solid var(--edge)}
-.player .lv{width:32px;height:36px;clip-path:var(--hex);display:grid;place-items:center;background:linear-gradient(160deg,var(--sky),var(--violet));color:#fff;font-weight:800;font-size:12px}
-.player .pn b{font-size:12.5px;font-weight:800;font-family:var(--font-ui)}
-.player .pn span{display:block;font-size:8.5px;color:var(--ink2);letter-spacing:.1em}
+/* v21 四轮：删掉“指挥官徽”（.player：16 / 指挥官 / CMDR·ID）—— 偏高、无信息量、
+   与右侧 32px chip 不齐。左上只留「返回 classic 模式」按钮，与舱籍 chip 同高。 */
+.backchip{display:flex;align-items:center;gap:6px;height:32px;padding:0 12px;border-radius:10px;background:var(--glass2);backdrop-filter:blur(10px);border:1px solid var(--edge);color:var(--metal2);font-size:10.5px;font-weight:700;font-family:var(--font-ui);transition:.15s;white-space:nowrap}
+.backchip .pg2{color:var(--teal);font-size:13px;line-height:1}
+.backchip b{color:var(--ink2);font-weight:700}
+.backchip:hover{border-color:var(--teal);color:#fff;box-shadow:0 0 14px rgba(46,230,214,.25)}
+.backchip:hover b{color:#fff}
 .projchip{display:flex;align-items:center;gap:7px;height:32px;padding:0 12px;border-radius:10px;background:var(--glass2);backdrop-filter:blur(10px);border:1px solid rgba(53,199,240,.45);color:var(--sky);font-size:10.5px;font-weight:700;font-family:var(--font-ui);transition:.15s;white-space:nowrap}
 .projchip:hover{border-color:var(--teal);color:#fff;box-shadow:0 0 14px rgba(53,199,240,.35)}
 .projchip .pg2{font-size:13px}
 .projchip b{color:#fff}
-.sceneread{margin:0 auto;display:flex;align-items:center;gap:8px;padding:4px 16px;border-radius:999px;background:var(--glass);backdrop-filter:blur(10px);border:1px solid rgba(185,179,217,.22);font-size:10px;color:var(--ink2);letter-spacing:.08em}
+.sceneread{margin:0 auto;display:flex;align-items:center;gap:8px;height:32px;padding:0 16px;border-radius:999px;background:var(--glass);backdrop-filter:blur(10px);border:1px solid rgba(185,179,217,.22);font-size:10px;color:var(--ink2);letter-spacing:.08em}
 .sceneread b{color:var(--teal);font-weight:700}
-.cur{display:flex;align-items:center;gap:6px;cursor:default}
+.cur{display:flex;align-items:center;gap:6px;height:32px;cursor:default}
 .cur .ci{width:24px;height:27px;clip-path:var(--hex);display:grid;place-items:center;font-size:11px;color:#fff}
 .cur.gold .ci{background:linear-gradient(160deg,var(--gold),var(--sun))}
 .cur.cry .ci{background:linear-gradient(160deg,var(--sky),var(--violet))}
@@ -871,6 +874,7 @@ kbd{border:1px solid rgba(185,179,217,.35);border-bottom-width:2px;border-radius
 }
 @media (max-width:900px){
   .sceneread{display:none}
+  .backchip b{display:none}
   .character{height:34vh;left:6px;bottom:calc(56vh + 8px)}
   .fleetrail{display:none}
   .rightrail{top:58px;bottom:10px;right:6px}
@@ -899,7 +903,6 @@ kbd{border:1px solid rgba(185,179,217,.35);border-bottom-width:2px;border-radius
   .tprev{min-height:220px}
 }
 @media (max-width:560px){
-  .player .pn span{display:none}
   .character{height:32vh}
   .character{bottom:calc(52vh - 10px)}
   .rightrail{right:4px}
@@ -924,6 +927,7 @@ kbd{border:1px solid rgba(185,179,217,.35);border-bottom-width:2px;border-radius
   #winBar{bottom:calc(52vh + 16px)}
   .con-cur .line{font-size:13.5px;min-height:42px}
   .projchip{padding:0 8px}
+  .backchip{padding:0 8px}
   .hud{gap:6px;padding:0 8px}
   .tokcells{grid-template-columns:repeat(2,1fr)}
 }
@@ -944,7 +948,7 @@ kbd{border:1px solid rgba(185,179,217,.35);border-bottom-width:2px;border-radius
   </div>
 
   <header class="hud">
-    <div class="player"><span class="lv">16</span><span class="pn"><b>指挥官</b><span>CMDR · 264570764</span></span></div>
+    <button class="backchip" id="btnClassic" title="返回 classic 模式（作战舱）"><span class="pg2">←</span><b>经典模式</b></button>
     <button class="projchip" id="btnProj" title="舱籍 · 绑定项目"><span class="pg2">⧉</span><span class="pn2">账务中台 · <b>4</b> 项目</span></button>
     <div class="sceneread">SCENE <b id="sceneName">舰桥 · 日落</b><span id="sceneCoord">RA 17h42m · DEC −28°</span></div>
     <div class="cur tok" id="curTok" title="本会话 token · 只读（明细在通讯台头部 TOKEN）"><span class="ci">▤</span><b id="hTok">420k</b></div>
@@ -2030,6 +2034,8 @@ $('#setClose').addEventListener('click',closeSettings);
 $('#setwrap').addEventListener('pointerdown',e=>{if(e.target===$('#setwrap'))closeSettings();});
 addEventListener('resize',()=>{renderFan();});
 $('#lUsage').addEventListener('click',()=>openPanel('usage'));
+/* v21 四轮：左上「经典模式」= 回 classic 舱页（真实产品走 /cabin/:id；原型只做提示）。 */
+$('#btnClassic').addEventListener('click',()=>toast('返回 classic 模式 · 作战舱'));
 $('#lDebug').addEventListener('click',()=>{const jid=state.thread!=='main'?state.thread:(state.focusJob||state.jobs.find(j=>j.status==='blocked')?.id||state.jobs[0].id);state.detailJob=jid;state.detailTab='debug';openPanel('detail');});
 $('#btnProj').addEventListener('click',()=>openPanel('projects'));
 /* 原型验收入口：连点立绘按 POSE_ORDER 顺序轮播 12 个动作，方便一次看全。

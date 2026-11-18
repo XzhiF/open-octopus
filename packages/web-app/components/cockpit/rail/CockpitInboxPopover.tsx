@@ -241,9 +241,11 @@ export interface CockpitInboxPopoverProps {
   counts: InboxCounts
   answered: ReadonlySet<string>
   onAnswered: (id: string, choice: string) => void
+  /** 待放行（stage=start）：不在回复卡里假造选项，直接开与 classic 同款的放行窗。 */
+  onOpenStart: (entry: InboxEntry) => void
 }
 
-export function CockpitInboxPopover({ entries, counts, answered, onAnswered }: CockpitInboxPopoverProps) {
+export function CockpitInboxPopover({ entries, counts, answered, onAnswered, onOpenStart }: CockpitInboxPopoverProps) {
   const { inboxSel, selectInbox, closeInbox, openPanel, select, layer } = useCockpitState()
   const rootRef = useRef<HTMLDivElement | null>(null)
   const [receipt, setReceipt] = useState<{ entry: InboxEntry; choice: string } | null>(null)
@@ -257,6 +259,13 @@ export function CockpitInboxPopover({ entries, counts, answered, onAnswered }: C
   useEffect(() => {
     if (inboxSel && !selected) selectInbox(null)
   }, [inboxSel, selected, selectInbox])
+
+  // 待放行即使被深链（openInbox(id)）选中，也转成放行窗，不在回复卡里给「去处理」。
+  useEffect(() => {
+    if (!selected || selected.item.stage !== 'start') return
+    selectInbox(null)
+    onOpenStart(selected)
+  }, [selected, selectInbox, onOpenStart])
 
   // Esc：只走唯一 layer 栈。
   useEffect(() => layer.register('cockpit-inbox', INBOX_LAYER_PRIORITY, closeInbox), [layer, closeInbox])
@@ -356,7 +365,10 @@ export function CockpitInboxPopover({ entries, counts, answered, onAnswered }: C
                     className={`ck12-ip-row${on ? ' is-on' : ''}`}
                     data-testid={`cockpit-inbox-row-${entry.item.id}`}
                     data-group={groupClass(entry)}
-                    onClick={() => selectInbox(entry.item.id)}
+                    onClick={() => {
+                      if (entry.item.stage === 'start') onOpenStart(entry)
+                      else selectInbox(entry.item.id)
+                    }}
                   >
                     <span className="ck12-ip-r1">
                       <span className={`ck12-ip-type is-${groupClass(entry)}`}>
