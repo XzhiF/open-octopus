@@ -247,3 +247,35 @@ export function nextAmbientClip(current: number | null): number {
   if (!pool.length) return AMBIENT_CLIPS[0] ?? poseClip('idle')
   return pool[Math.floor(Math.random() * pool.length)]
 }
+
+/** 「等你在场」轮播序列（2026-11-19 用户：有需要我处理的任务时，她一直循环
+ *  同一支 alert 摇头动作，显得呆）。pose 语义保持 alert（举牌等你），但视频
+ *  片段按固定序列穿插：以 alert（04）为主拍，中间换成 idle / smile / wink /
+ *  thinking / ready / working。固定序列（不用随机池）保证「警觉 → 小动作 →
+ *  警觉」的节奏，不会连着几支都不是 alert。 */
+export const WAITING_CLIPS: readonly number[] = [
+  3,  // 04-alert（主拍）
+  6,  // 07-idle
+  3,  // 04-alert
+  8,  // 09-smile
+  3,  // 04-alert
+  11, // 12-wink
+  3,  // 04-alert
+  9,  // 10-thinking
+  3,  // 04-alert
+  7,  // 08-ready
+  3,  // 04-alert
+  12, // 13-working
+  3,  // 04-alert
+  1,  // 02-thinking（旧）
+]
+
+/** 等待穿插的第 `step` 拍（0 起、自动回环）。**必须用步进游标，不能用
+ *  「当前片段找下标再 +1」**：序列里 alert 出现多次，indexOf 永远命中第一处，
+ *  结果只会 04 ↔ 07 两支来回（2026-11-19 真机实测踩到）。 */
+export function waitingClipAt(step: number): number {
+  if (WAITING_CLIPS.length === 0) return poseClip('alert')
+  const n = WAITING_CLIPS.length
+  const at = ((Math.trunc(step) % n) + n) % n
+  return WAITING_CLIPS[at] ?? poseClip('alert')
+}

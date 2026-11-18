@@ -13,11 +13,13 @@ import {
   POSE_MOOD,
   POSE_ORDER,
   POSE_SRC,
+  WAITING_CLIPS,
   clipPose,
   clipVariants,
   nextAmbientClip,
   nextClip,
   poseClip,
+  waitingClipAt,
   type PoseFx,
   type PoseKey,
 } from '../pose-model'
@@ -131,6 +133,35 @@ describe('pose-model · v22 纯视频立绘', () => {
     } finally {
       spy.mockRestore()
     }
+  })
+
+  it('等待穿插序列：以 alert 为主拍，日常片段不会连排', () => {
+    // 2026-11-19 用户：有待办时她一直循环同一支摇头动作，很呆。
+    expect(WAITING_CLIPS[0]).toBe(poseClip('alert'))
+    const alertCount = WAITING_CLIPS.filter((index) => index === poseClip('alert')).length
+    expect(alertCount).toBeGreaterThanOrEqual(WAITING_CLIPS.length / 2)
+    // 非 alert 的片段两侧都必须是 alert —— 保证「警觉 → 小动作 → 警觉」的节奏。
+    for (let i = 0; i < WAITING_CLIPS.length; i++) {
+      if (WAITING_CLIPS[i] === poseClip('alert')) continue
+      expect(WAITING_CLIPS[i - 1]).toBe(poseClip('alert'))
+      expect(WAITING_CLIPS[(i + 1) % WAITING_CLIPS.length]).toBe(poseClip('alert'))
+    }
+  })
+
+  it('等待穿插按步进游标前进：走完一轮能看到多支不同动作', () => {
+    expect(waitingClipAt(0)).toBe(WAITING_CLIPS[0])
+    expect(waitingClipAt(1)).toBe(WAITING_CLIPS[1])
+    // 回环 / 负数都落在序列内。
+    expect(waitingClipAt(WAITING_CLIPS.length)).toBe(WAITING_CLIPS[0])
+    expect(waitingClipAt(-1)).toBe(WAITING_CLIPS[WAITING_CLIPS.length - 1])
+
+    // 真机 bug 回归（2026-11-19）：旧实现用「当前片段 indexOf 再 +1」推下一拍，
+    // 序列里 alert 重复出现 → 永远 04 ↔ 07 两支来回。步进游标必须走遍整轮。
+    const seen = new Set<number>()
+    for (let step = 0; step < WAITING_CLIPS.length; step++) seen.add(waitingClipAt(step))
+    expect(seen.size).toBeGreaterThan(3)
+    const actions = [...seen].filter((index) => index !== poseClip('alert'))
+    expect(actions.length).toBeGreaterThanOrEqual(3)
   })
 
   it('mood → pose：happy→smile、worried→concerned、boot→idle（开机待命）', () => {

@@ -29,11 +29,19 @@
 //   · 「互动一下」由设置面经 crew-events 发信号，这里执行（台词取 XY_LINES）；
 //   · prefers-reduced-motion：心形 / 浮动 / 星光关掉，打字机直接出全文。
 //
+// 2026-11-19 · 等你在场（用户：有待办时一直摇头、既呆又没信息）：
+//   · 派生 mood = alert（有 attention 挂在你这里）时，片段不再锁死一支 ——
+//     WAITING_CLIPS 以 alert 为主拍穿插日常动作，姿态语义仍是「警觉」；
+//   · 头顶气泡按 18–27s 轮播真实清单（buildWaitNudges：条数 / 待验收 / 待拍板 /
+//     受阻 + 具体标题），正在回复 / 倾听 / 别的台词在播时让位；
+//   · 尊敬既有开关：在场关闭或静默中不提醒。
+//
 // 布局纪律：气泡 / 心形都是绝对定位，不参与任何 flex 高度计算。
 
 import {
   useCallback,
   useEffect,
+  useMemo,
   useRef,
   useState,
 } from 'react'
@@ -45,13 +53,17 @@ import {
   type MoodKey,
 } from '@/components/cabin/cockpit'
 import { useCockpitState } from '../state/CockpitStateProvider'
+import { useCockpitFleet } from '../fleet/CockpitFleetProvider'
+import { collectInbox } from '../rail/inbox-model'
 import { subscribeCrewPoke } from './crew-events'
+import { buildWaitNudges } from './wait-nudges'
 import { getChatSlot } from '../chat/chat-slots'
 import {
   doneLine, listenLine, waitingLine,
 } from './chat-reactions'
 import {
-  CLIPS, MOOD_POSE, POSE_META, POSE_MOOD, clipPose, clipVariants, nextAmbientClip, poseClip,
+  CLIPS, MOOD_POSE, POSE_META, POSE_MOOD, clipPose, clipVariants, nextAmbientClip,
+  poseClip, waitingClipAt,
   type PoseKey,
 } from './pose-model'
 import { CockpitPoseSprite, PoseFX } from './CockpitPoseSprite'
@@ -69,10 +81,17 @@ const WAIT_REFRESH_MS = 15_000
 const DONE_MOOD_MS = 3_200
 /** 报到（ready）停留时长：台词比普通动作长，给足打字 + 停留。 */
 const READY_MS = 4_200
+/** 等你在场：首条提醒在进入待办态多久后开口；之后 18–27s 一条。 */
+const WAIT_NUDGE_FIRST_MS = 7_000
+const WAIT_NUDGE_GAP_MS = 18_000
+const WAIT_NUDGE_JITTER_MS = 9_000
+/** 提醒被占用（正在回复 / 倾听 / 别的台词在播）时，多久再看一眼。 */
+const WAIT_NUDGE_RETRY_MS = 6_000
 
 type ChatPhase = 'idle' | 'waiting' | 'done'
 /** 气泡来源：等待轮换只覆盖自己，不打断点击/在场/倾听的台词。 */
-type SpeechSource = 'chat-wait' | 'chat-done' | 'listen' | 'click' | 'presence' | 'poke'
+type SpeechSource =
+  | 'chat-wait' | 'chat-done' | 'listen' | 'click' | 'presence' | 'poke' | 'attention'
 
 interface Speech {
   id: number
@@ -114,12 +133,19 @@ export function CockpitCrew() {
     mood,
     moodOverride,
     presenceLine,
+    presenceSnoozeUntil,
     dismissPresence,
     setMoodOverride,
     setCrewBusy,
     scene,
   } = useCockpit()
   const { chat, fx, chatWindow, reportPose } = useCockpitState()
+  // 待办清单（与右栏「要我处理」同一份 collectInbox 结果）：等待穿插与头顶提醒
+  // 都读它 —— 提醒里的条数 / 标题是真实的 attention，不另拉接口。
+  const { rows } = useCockpitFleet()
+  const inboxEntries = useMemo(() => collectInbox(rows), [rows])
+  const inboxRef = useRef(inboxEntries)
+  useEffect(() => { inboxRef.current = inboxEntries }, [inboxEntries])
   const reduce = usePrefersReducedMotion()
 
   const [speech, setSpeech] = useState<Speech | null>(null)
@@ -142,6 +168,11 @@ export function CockpitCrew() {
   const sparkIdRef = useRef(0)
   const sparkTimersRef = useRef<Array<ReturnType<typeof setTimeout>>>([])
   const lineIdxRef = useRef(0)
+  /** 待办提醒轮播下标（每条说一次再回环）。 */
+  const nudgeIdxRef = useRef(0)
+  /** 等待穿插的步进游标：从第二拍起步（第一拍就换一支日常动作）。
+   *  WAITING_CLIPS 里 alert 重复出现，不能用「当前片段找下标」推下一拍。 */
+  const waitingStepRef = useRef(1)
   const lastTalkRef = useRef(0)
   // 对话联动用 ref 读最新值，避免把 streaming 过渡做成「每次渲染重新触发」。
   const streamingRef = useRef(false)
@@ -184,11 +215,17 @@ export function CockpitCrew() {
     ?? (phase === 'waiting' ? 'typing' : MOOD_POSE[shownMood])
   /** 真空闲 = 没有动作 override / 不在回复或倾听 / 语义姿态就是待命。 */
   const idleFree = !actionPose && phase === 'idle' && !listening && shownPose === 'idle'
+  /** 等你在场（2026-11-19）：有 attention 挂在你这里 → 语义姿态 alert。此时
+   *  片段也不能一支死循环（用户：一直左右摇头很呆）—— 按 WAITING_CLIPS 穿插。 */
+  const waitingFree = !actionPose && phase === 'idle' && !listening && shownPose === 'alert'
+  const rotateMode: 'ambient' | 'waiting' | null = idleFree
+    ? 'ambient'
+    : waitingFree ? 'waiting' : null
   /** v22：立绘永远视频；pose 只决定语义，clip 决定具体片段。
-   *  优先级：动作点名 > 待命自走 > pose 首选片段。 */
+   *  优先级：动作点名 > 待命/等待轮播 > pose 首选片段。 */
   const shownClip = actionClip !== null && Number.isInteger(actionClip)
     ? actionClip
-    : idleFree && ambientClip !== null
+    : rotateMode !== null && ambientClip !== null
       ? ambientClip
       : poseClip(shownPose)
   const shownClipRef = useRef(shownClip)
@@ -197,24 +234,36 @@ export function CockpitCrew() {
   // v22.1 待命自走：真空闲时随机换日常小动作。首支 3.5–6s 就换（进舱后马上
   // 能看出她在动），之后 7–11s 一换；任何动作 / 对话 / 倾听 / reduced-motion
   // 打断即停，回到 idle 后重新起算。
+  // 2026-11-19：有待办时（waiting 模式）按固定序列 4.2–6s / 5.2–7.8s 穿插，
+  // 节奏比待命自走略快 —— 你正等着处理，她的动作要能看出「在场」。
   useEffect(() => {
-    if (reduce || !idleFree) {
+    if (reduce || rotateMode === null) {
       setAmbientClip(null)
       return
     }
     let first = true
     let timer: ReturnType<typeof setTimeout>
     const schedule = () => {
-      const delay = first ? 3500 + Math.random() * 2500 : 7000 + Math.random() * 4000
+      const delay = rotateMode === 'waiting'
+        ? first ? 4200 + Math.random() * 1800 : 5200 + Math.random() * 2600
+        : first ? 3500 + Math.random() * 2500 : 7000 + Math.random() * 4000
       first = false
       timer = setTimeout(() => {
-        setAmbientClip((prev) => nextAmbientClip(prev))
+        if (rotateMode === 'waiting') {
+          // 游标步进（不在 setState updater 里改 ref：StrictMode 会双调用）。
+          setAmbientClip(waitingClipAt(waitingStepRef.current))
+          waitingStepRef.current += 1
+        } else {
+          // prev 为 null（本轮第一次轮播）= 画面还停在 pose 首选片段 —— 用
+          // shownClipRef 当基准，保证第一拍确实换了一支（否则随机可能抽回同一支）。
+          setAmbientClip((prev) => nextAmbientClip(prev ?? shownClipRef.current))
+        }
         schedule()
       }, delay)
     }
     schedule()
     return () => clearTimeout(timer)
-  }, [reduce, idleFree])
+  }, [reduce, rotateMode])
   useEffect(() => () => {
     if (actionTimerRef.current) clearTimeout(actionTimerRef.current)
   }, [])
@@ -315,6 +364,44 @@ export function CockpitCrew() {
     fx.edge('var(--ck-b)')
     dismissPresence()
   }, [presenceLine, present, setMoodOverride, fx, dismissPresence, prefs.fxLevel])
+
+  // ── 等你在场：待办提醒（2026-11-19 用户）────────────────────────────────
+  // 有 attention 挂着 → 隔一阵在头顶报一条真实清单（条数 / 分组 / 标题），
+  // 让她不只是摇头，还能把「要你处理什么」说出来。
+  // 让位规则：正在回复（waiting）/ 倾听 / 页面隐藏 / 别的来源台词正在播时
+  // 不抢麦，6s 后再看；在场关闭或静默期内完全不打扰。
+  const hasPending = inboxEntries.length > 0
+  useEffect(() => {
+    if (!hasPending || !prefs.presenceOn) return
+    let cancelled = false
+    let timer: ReturnType<typeof setTimeout>
+    const schedule = (ms: number) => { timer = setTimeout(fire, ms) }
+    const fire = () => {
+      if (cancelled) return
+      const busy = streamingRef.current || listeningRef.current
+        || presenceSnoozeUntil > Date.now()
+        || (typeof document !== 'undefined' && document.hidden)
+        || (speechRef.current !== null && speechRef.current.source !== 'attention')
+      if (busy) {
+        schedule(WAIT_NUDGE_RETRY_MS)
+        return
+      }
+      const lines = buildWaitNudges(inboxRef.current)
+      if (lines.length === 0) {
+        schedule(WAIT_NUDGE_RETRY_MS)
+        return
+      }
+      const line = lines[nudgeIdxRef.current % lines.length]!
+      nudgeIdxRef.current += 1
+      present(line.text, 'alert', line.hold, 'attention')
+      schedule(WAIT_NUDGE_GAP_MS + Math.random() * WAIT_NUDGE_JITTER_MS)
+    }
+    schedule(WAIT_NUDGE_FIRST_MS)
+    return () => {
+      cancelled = true
+      clearTimeout(timer)
+    }
+  }, [hasPending, prefs.presenceOn, presenceSnoozeUntil, present])
 
   // 打字机：新台词重开；reduced-motion 直接出全文。
   useEffect(() => {

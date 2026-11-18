@@ -87,6 +87,19 @@ mood（语义，数据层不改名）
 
 优先级：`动作点名（图鉴/事件） > 待命自走 > pose 首选片段`。任何对话、动作、倾听、reduced-motion 都会立即结束自走；回到 idle 后重新起算。
 
+### 3.2 等你在场（2026-11-19：有待办时不能只会摇头）
+
+派生 mood = `alert`（有 attention 挂在人这里）时，旧行为是一支 04-alert 片段永远循环
+（左右摇头），既呆又没有信息。增加两条：
+
+| 机制 | 规则 |
+|---|---|
+| 等待穿插 | 语义姿态仍是 **alert**（标签/pose 不变），片段按 `WAITING_CLIPS` 固定序列轮播：`04 alert` 主拍，中间插 07 idle / 09 smile / 12 wink / 10 thinking / 08 ready / 13 working / 02 thinking(旧)。首拍 4.2–6s、之后 5.2–7.8s；任何动作/对话/倾听/reduced-motion 打断即停。 |
+| 头顶清单提醒 | 有 inbox entries 时，首条 7s、之后 18–27s 在气泡里轮播**真实清单**（`buildWaitNudges`）：总数+前两条标题 / 待验收 / 待拍板 / 受阻 / 逐条标题+动作。正在回复、倾听、页面隐藏、别的来源台词在播时让位（6s 后再看）；`presenceOn=false` 或静默期内完全不提醒。 |
+
+数据源与右栏一致（`collectInbox(rows)`），不另拉接口。提醒台词排进气泡时不改
+mood override，等她说完继续按等待序列换动作。
+
 ## 4. 图鉴（CockpitPosesPanel）
 
 - 标题：`汐音动作视频` / `CLIP GALLERY · 13`。
