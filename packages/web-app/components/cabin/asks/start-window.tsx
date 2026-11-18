@@ -30,29 +30,29 @@ import {
 } from './ask-window-model'
 import './ask-window.css'
 
-type StartKind = 'enqueue' | 'trigger' | 'resume'
-type Choice = 'launch' | 'enqueue' | 'trigger' | 'resume'
+export type StartKind = 'enqueue' | 'trigger' | 'resume'
+export type StartChoice = 'launch' | 'enqueue' | 'trigger' | 'resume'
 
-interface Option {
-  id: Choice
+export interface StartOption {
+  id: StartChoice
   label: string
   impact: string
 }
 
-const SUMMARY: Record<StartKind, string> = {
+export const START_SUMMARY: Record<StartKind, string> = {
   enqueue: '规格和 phase 绑定已经齐了，可以开跑 phase 1。',
   trigger: '任务已入列，下一步就是触发执行。',
   resume: '这一轮被暂停了，可以从暂停点恢复推进。',
 }
 
-const RECEIPT: Record<Choice, string> = {
+export const START_RECEIPT: Record<StartChoice, string> = {
   launch: '✓ 已开跑 · 入列并触发 phase 1，已从「要我处理」消项',
   enqueue: '✓ 已入列 · 等你触发，已从「要我处理」消项',
   trigger: '✓ 已触发执行，已从「要我处理」消项',
   resume: '✓ 已恢复推进，已从「要我处理」消项',
 }
 
-function kindOf(item: CabinAttentionItem): StartKind {
+export function startKindOf(item: CabinAttentionItem): StartKind {
   if (item.start_kind) return item.start_kind
   // 兼容旧服务端：从标题后缀兜底（新服务端一定带 start_kind）。
   if (item.title.includes('· 待触发')) return 'trigger'
@@ -60,7 +60,7 @@ function kindOf(item: CabinAttentionItem): StartKind {
   return 'enqueue'
 }
 
-function optionsOf(kind: StartKind): Option[] {
+export function startOptionsOf(kind: StartKind): StartOption[] {
   if (kind === 'trigger') {
     return [{ id: 'trigger', label: '立即触发', impact: '马上开跑当前 phase' }]
   }
@@ -73,17 +73,17 @@ function optionsOf(kind: StartKind): Option[] {
   ]
 }
 
-function itemName(item: CabinAttentionItem): string {
+export function startItemName(item: CabinAttentionItem): string {
   return item.title.replace(/\s*·\s*待(入列|触发|恢复)$/, '') || item.title
 }
 
 /** 乐观消项键：同一任务从「待入列」变成「待触发」时 attention id 不变，
  *  必须把动作一起算进键里，否则先入列后的新待办会被旧回执一起藏住。 */
 export function startDecisionKey(item: CabinAttentionItem): string {
-  return `${item.id}:${item.start_kind ?? kindOf(item)}`
+  return `${item.id}:${item.start_kind ?? startKindOf(item)}`
 }
 
-function errorText(err: unknown): string {
+export function startErrorText(err: unknown): string {
   if (err instanceof Error) {
     const missing = (err as Error & { missing?: unknown }).missing
     const suffix = Array.isArray(missing) && missing.length > 0
@@ -120,11 +120,11 @@ export interface StartWindowProps {
 
 export function StartWindow({ item, onClose, onDecided, mode = 'classic', escLayer }: StartWindowProps) {
   const taskId = item.task_id
-  const kind = kindOf(item)
-  const options = optionsOf(kind)
+  const kind = startKindOf(item)
+  const options = startOptionsOf(kind)
 
   const [mounted, setMounted] = useState(false)
-  const [choice, setChoice] = useState<Choice>(options[0]?.id ?? 'enqueue')
+  const [choice, setChoice] = useState<StartChoice>(options[0]?.id ?? 'enqueue')
   const [busy, setBusy] = useState(false)
   const [receipt, setReceipt] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
@@ -230,9 +230,9 @@ export function StartWindow({ item, onClose, onDecided, mode = 'classic', escLay
         await resumeTask(taskId)
       }
       onDecided(startDecisionKey(item))
-      setReceipt(RECEIPT[choice])
+      setReceipt(START_RECEIPT[choice])
     } catch (err) {
-      setError(errorText(err))
+      setError(startErrorText(err))
     } finally {
       setBusy(false)
     }
@@ -240,7 +240,7 @@ export function StartWindow({ item, onClose, onDecided, mode = 'classic', escLay
 
   if (!mounted) return null
 
-  const name = itemName(item)
+  const name = startItemName(item)
   const ctx = askWindowContext(item, { ask_id: '' })
   const done = !!receipt
 
@@ -290,7 +290,7 @@ export function StartWindow({ item, onClose, onDecided, mode = 'classic', escLay
       <div className="ck-askwin-body">
         <div className="ck-askwin-from">
           <span className="ck-askwin-av" aria-hidden="true">汐</span>
-          <span><b>汐音</b> · {SUMMARY[kind]}</span>
+          <span><b>汐音</b> · {START_SUMMARY[kind]}</span>
         </div>
 
         {item.detail && <div className="ck-startwin-detail">{item.detail}</div>}

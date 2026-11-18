@@ -23,12 +23,18 @@ export type CockpitRef =
 
 export type CockpitRefKind = CockpitRef['kind']
 
-export type CockpitTab = 'overview' | 'relay' | 'run' | 'changes' | 'accept' | 'files' | 'debug' | 'project'
+/** 座舱页签。v21 七轮（用户）：详情首签「概览」→「对话」—— 概览不需要，
+ *  对话 = 这条作战的 chat 记录（只读，TUI 转录同肤）。
+ *  `overview` 仍留在类型里，但只服务 classic 作业窗（job-face 的 WINDOW_TABS）；
+ *  它不在 COCKPIT_TABS / isCockpitTab 里，所以 `?tab=overview` 旧深链会自然
+ *  落回默认「对话」。 */
+export type CockpitTab = 'dialog' | 'overview' | 'relay' | 'run' | 'changes' | 'accept' | 'files' | 'debug' | 'project'
 
-/** 页签顺序 = 原型 .dtabs（v21 五轮补齐第 8 个「项目」）。 */
-export const COCKPIT_TABS: readonly CockpitTab[] = ['overview', 'relay', 'run', 'changes', 'accept', 'files', 'debug', 'project']
+/** 页签顺序 = 原型 .dtabs（v21 七轮：首签「对话」）。 */
+export const COCKPIT_TABS: readonly CockpitTab[] = ['dialog', 'relay', 'run', 'changes', 'accept', 'files', 'debug', 'project']
 
 export const COCKPIT_TAB_LABELS: Record<CockpitTab, string> = {
+  dialog: '对话',
   overview: '概览',
   relay: '对接',
   run: '运行',

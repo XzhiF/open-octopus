@@ -1,11 +1,11 @@
 // v21（design 31 §3.2）右栏待办：chip 计数 / 浮层分组 / 就地回复卡 / 去处理。
 
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { fireEvent, render, screen, within } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import type { CabinAttentionItem } from '@octopus/shared'
 import type { CockpitRow } from '../../fleet/fleet-model'
 import type { CockpitFleetContextValue } from '../../fleet/CockpitFleetProvider'
-import { CockpitStateProvider } from '../../state/CockpitStateProvider'
+import { CockpitStateProvider, useCockpitState } from '../../state/CockpitStateProvider'
 import { CockpitContext, type CockpitContextValue } from '@/components/cabin/CockpitProvider'
 import { DEFAULT_COCKPIT } from '@/components/cabin/cockpit'
 import { CockpitRightRail } from '../CockpitRightRail'
@@ -24,6 +24,17 @@ vi.mock('../../chat/use-cockpit-threads', () => ({
   }),
 }))
 vi.mock('sonner', () => ({ toast: { success: vi.fn(), error: vi.fn(), message: vi.fn() } }))
+vi.mock('@/lib/tasks-api', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/lib/tasks-api')>()
+  return {
+    ...actual,
+    readyTask: vi.fn(async () => ({})),
+    triggerTask: vi.fn(async () => ({})),
+    resumeTask: vi.fn(async () => ({})),
+  }
+})
+
+import { readyTask, triggerTask } from '@/lib/tasks-api'
 
 function cockpit(): CockpitContextValue {
   return {
@@ -69,7 +80,17 @@ function row(id: string, over: Partial<CabinAttentionItem> = {}): CockpitRow {
 }
 
 function fleet(rows: CockpitRow[]): CockpitFleetContextValue {
-  return { rows, counts: null, arrivals: [], loading: false, error: null, refetch: () => {} }
+  return { rows, mainSessionId: null, counts: null, arrivals: [], loading: false, error: null, refetch: () => {} }
+}
+
+/** 读状态探针：放行窗「打开任务详情」这类跨层动作落到哪条选中 / 哪个页签。 */
+function Probe() {
+  const { selection, tab } = useCockpitState()
+  return (
+    <span data-testid="probe-selection">
+      {selection ? `${selection.kind}:${selection.id}:${tab}` : `none:${tab}`}
+    </span>
+  )
 }
 
 function ui() {
@@ -77,6 +98,7 @@ function ui() {
     <CockpitContext.Provider value={cockpit()}>
       <CockpitStateProvider entryCabinId="c1">
         <CockpitRightRail />
+        <Probe />
       </CockpitStateProvider>
     </CockpitContext.Provider>
   )
@@ -155,7 +177,7 @@ describe('CockpitRightRail · v21 待办', () => {
     expect(card.querySelector('.ck12-ipd-opt')).toBeNull()
   })
 
-  it('待放行行 → 直接开与 classic 同款的放行窗（立即开跑 / 先入列）', () => {
+  it('待放行行 → 浮层里就地展开（选项 + 确认执行），不再弹独立放行窗', () => {
     fleetState.value = fleet([
       row('s1', {
         stage: 'start',
@@ -168,23 +190,73 @@ describe('CockpitRightRail · v21 待办', () => {
     fireEvent.click(screen.getByTestId('cockpit-inbox-chip'))
     fireEvent.click(screen.getByTestId('cockpit-inbox-row-s1'))
 
-    // 浮层收起，放行窗按 cockpit 落点打开。
-    expect(screen.queryByTestId('cockpit-inbox-popover')).toBeNull()
-    const win = screen.getByTestId('cabin-start-window-s1')
-    expect(win.className).toMatch(/ck-askwin--cockpit/)
-    expect(win).toHaveTextContent('要现在放行吗？')
-    expect(within(win).getByTestId('cabin-start-window-opt-launch')).toHaveTextContent('立即开跑')
-    expect(within(win).getByTestId('cabin-start-window-opt-launch')).toHaveTextContent('入列并马上触发 phase 1')
-    expect(within(win).getByTestId('cabin-start-window-opt-enqueue')).toHaveTextContent('先入列')
+    // v21 七轮：一步一步展开 —— 浮层仍在，左栏换成放行卡（两栏）。
+    const pop = screen.getByTestId('cockpit-inbox-popover')
+    expect(pop.className).toMatch(/is-two/)
+    expect(screen.queryByTestId('cabin-start-window-s1')).toBeNull()
+
+    const card = screen.getByTestId('cockpit-inbox-start')
+    expect(card).toHaveTextContent('要现在放行吗？')
+    expect(within(card).getByTestId('cockpit-inbox-start-opt-launch')).toHaveTextContent('立即开跑')
+    expect(within(card).getByTestId('cockpit-inbox-start-opt-launch')).toHaveTextContent('入列并马上触发 phase 1')
+    expect(within(card).getByTestId('cockpit-inbox-start-opt-enqueue')).toHaveTextContent('先入列')
+    expect(within(card).getByTestId('cockpit-inbox-start-exec')).toHaveTextContent('确认执行')
   })
 
-  it('点浮层外收起；Esc 走 layer 栈', () => {
+  it('放行卡「看任务详情」→ 弹作战详情并落在「对话」页签；浮层不关、卡片仍在', () => {
+    fleetState.value = fleet([
+      row('s1', {
+        stage: 'start',
+        start_kind: 'enqueue',
+        task_id: 't1',
+        title: 'app-user 与 admin-user 体系分离 · 待入列',
+      }),
+    ])
+    render(ui())
+    fireEvent.click(screen.getByTestId('cockpit-inbox-chip'))
+    fireEvent.click(screen.getByTestId('cockpit-inbox-row-s1'))
+
+    fireEvent.click(screen.getByTestId('cockpit-inbox-start-detail'))
+    // 选中 = 这条待办在编队里的行（job/task/attention），页签 = 对话；
+    // 浮层保持打开，人还能接着确认执行（用户反馈：别把选中的窗口关掉）。
+    expect(screen.getByTestId('probe-selection')).toHaveTextContent('attention:s1:dialog')
+    expect(screen.getByTestId('cockpit-inbox-popover')).toBeInTheDocument()
+    expect(screen.getByTestId('cockpit-inbox-start')).toBeInTheDocument()
+  })
+
+  it('放行卡「确认执行」（立即开跑）→ ready(silent) + trigger，回执照常出现', async () => {
+    fleetState.value = fleet([
+      row('s1', {
+        stage: 'start',
+        start_kind: 'enqueue',
+        task_id: 't1',
+        title: 'app-user 与 admin-user 体系分离 · 待入列',
+      }),
+    ])
+    render(ui())
+    fireEvent.click(screen.getByTestId('cockpit-inbox-chip'))
+    fireEvent.click(screen.getByTestId('cockpit-inbox-row-s1'))
+
+    fireEvent.click(screen.getByTestId('cockpit-inbox-start-exec'))
+    await waitFor(() => expect(vi.mocked(readyTask)).toHaveBeenCalledWith('t1', { silentCard: true }))
+    expect(vi.mocked(triggerTask)).toHaveBeenCalledWith('t1')
+    const receipt = await screen.findByTestId('cockpit-inbox-receipt')
+    expect(receipt).toHaveTextContent('已放行')
+    expect(receipt).toHaveTextContent('已开跑')
+  })
+
+  it('点外面不自动收起 —— 只有主动 ✕（或 Esc，走 layer 栈）才关', () => {
     fleetState.value = fleet([row('a1')])
     render(ui())
     fireEvent.click(screen.getByTestId('cockpit-inbox-chip'))
+    const pop = screen.getByTestId('cockpit-inbox-popover')
+
+    // 丢焦点不关：点页面空白处，浮层仍在（用户：要主动关闭 / Esc）。
+    fireEvent.pointerDown(document.body)
     expect(screen.getByTestId('cockpit-inbox-popover')).toBeInTheDocument()
 
-    fireEvent.pointerDown(document.body)
+    // 主动关：✕（头部最左那颗）。
+    fireEvent.click(within(pop).getAllByLabelText('收起要我处理')[0])
     expect(screen.queryByTestId('cockpit-inbox-popover')).toBeNull()
   })
 })

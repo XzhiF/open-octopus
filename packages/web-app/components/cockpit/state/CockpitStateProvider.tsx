@@ -94,7 +94,9 @@ export interface CockpitStateProviderProps {
 export function CockpitStateProvider({ entryCabinId, children }: CockpitStateProviderProps) {
   const [selection, setSelection] = useState<CockpitRef | null>(null)
   const [projectFilter, setProjectFilterState] = useState<string | null>(null)
-  const [tab, setTabState] = useState<CockpitTab>('overview')
+  // v21 七轮：默认页签 = 对话（概览退役；链接里旧的 tab=overview 由
+  // isCockpitTab 丢掉 → 自然落回这里）。
+  const [tab, setTabState] = useState<CockpitTab>('dialog')
   const [chat, setChat] = useState<CockpitChatApi | null>(null)
   const [chatWindowState, setChatWindowState] = useState<CockpitChatWindowState>(INITIAL_CHAT_WINDOW)
   const [railOpen, setRailOpenState] = useState(false)

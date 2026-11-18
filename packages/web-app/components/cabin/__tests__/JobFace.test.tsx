@@ -126,7 +126,7 @@ function Harness({
   hint?: { title: string; kind: CabinJobView['kind']; status?: string | null } | null
   onMutated?: () => void
 }) {
-  const [tab, setTab] = useState<CockpitTab>('overview')
+  const [tab, setTab] = useState<CockpitTab>('dialog')
   return (
     <JobFace
       cabinId={cabinId}
@@ -157,20 +157,17 @@ beforeEach(() => {
 })
 
 describe('JobFace（cockpit）', () => {
-  it('五页签渲染与切换；概览按原型 kv 给读数（不再铺事件流）', async () => {
+  it('页签渲染与切换；首签「对话」= 任务 chat 记录（本作业无主会话给明确空态）', async () => {
     // workflow + 无 ref：运行/变更/验收都是轻量空态，只验页签与真读数。
     mockJob({ kind: 'workflow', ref_id: null, title: '接入渠道' })
     render(<Harness />)
     await screen.findByTestId('cockpit-job-header')
-    const overview = await screen.findByTestId('cabin-job-overview')
-    // v21 dossier 概览：kv 读数 + 当前在做 + 最近事件（最近一条来自真事件）。
-    expect(overview.textContent).toContain('状态')
-    expect(overview.textContent).toContain('执行者')
-    expect(overview.textContent).toContain('当前在做')
-    expect(overview.textContent).toContain('正在跑 node-2')
-    expect(overview.textContent).toContain('最近事件')
-    // 事件流已从概览移走：概览里不再逐条列 event。
-    expect(screen.queryByTestId('cabin-job-event-e1')).toBeNull()
+    // v21 七轮：概览退役，首签换成对话 —— 转录件 ck12-dcon 就位，
+    // 没有关联主会话时给明确空态，不拿执行账本冒充对话。
+    const dialog = await screen.findByTestId('cockpit-dialog')
+    expect(dialog.textContent).toContain('任务对话')
+    expect(dialog.textContent).toContain('没有关联的对话会话')
+    expect(screen.queryByTestId('cabin-job-overview')).toBeNull()
 
     fireEvent.click(screen.getByTestId('cockpit-tab-relay'))
     expect(await screen.findByTestId('cabin-job-relay')).toBeInTheDocument()
@@ -183,8 +180,8 @@ describe('JobFace（cockpit）', () => {
     // v21 五轮：第八个页签「项目」与原型一致（没有锚点时给明确空态）。
     fireEvent.click(screen.getByTestId('cockpit-tab-project'))
     expect(await screen.findByTestId('cabin-job-project')).toBeInTheDocument()
-    fireEvent.click(screen.getByTestId('cockpit-tab-overview'))
-    expect(await screen.findByTestId('cabin-job-overview')).toBeInTheDocument()
+    fireEvent.click(screen.getByTestId('cockpit-tab-dialog'))
+    expect(await screen.findByTestId('cockpit-dialog')).toBeInTheDocument()
   })
 
   it('头部副行按原型：项目/舱名 · 分支 · 编号（执行者与耗时只在概览 kv）', async () => {
@@ -576,7 +573,7 @@ describe('JobFace（cockpit）· 加载容错', () => {
     mockJob({ kind: 'workflow', ref_id: null, title: '接入渠道' })
     vi.mocked(listCabinJobs).mockImplementation(() => new Promise(() => {}))
     render(<Harness />)
-    expect(await screen.findByTestId('cabin-job-overview')).toBeInTheDocument()
+    expect(await screen.findByTestId('cockpit-dialog')).toBeInTheDocument()
     expect(screen.queryByTestId('cockpit-face-job-error')).toBeNull()
     // 列表没回来时状态退回编队行摘要（没有就省略），面本身照常可用。
   })

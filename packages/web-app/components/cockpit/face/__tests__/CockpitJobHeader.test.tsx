@@ -43,8 +43,8 @@ describe('CockpitJobHeader', () => {
     const { container: head } = renderHeader()
     expect(head.querySelector('.ck12-dtab')).toBeNull()
 
-    const { container } = render(<CockpitJobTabs tab="overview" onTabChange={onTabChange} />)
-    for (const key of ['overview', 'relay', 'run', 'changes', 'accept', 'files', 'debug', 'project']) {
+    const { container } = render(<CockpitJobTabs tab="dialog" onTabChange={onTabChange} />)
+    for (const key of ['dialog', 'relay', 'run', 'changes', 'accept', 'files', 'debug', 'project']) {
       expect(screen.getByTestId(`cockpit-tab-${key}`)).toBeInTheDocument()
     }
     expect(container.querySelectorAll('.ck12-dtab').length).toBe(8)

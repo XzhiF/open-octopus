@@ -109,7 +109,7 @@ function ChoiceItemBlock({
       openAsk(env.ask_id)
       return
     }
-    select(refOfItem(item, entryCabinId), item.stage === 'review' ? 'accept' : 'overview')
+    select(refOfItem(item, entryCabinId), item.stage === 'review' ? 'accept' : 'dialog')
   }
 
   return (
@@ -171,7 +171,7 @@ export function CockpitChoices({ threadKey, interactive = true }: { threadKey?: 
         return
       }
       if (action.item.ask) openAsk(action.item.ask.ask_id)
-      else select(refOfItem(action.item, entryCabinId), action.item.stage === 'review' ? 'accept' : 'overview')
+      else select(refOfItem(action.item, entryCabinId), action.item.stage === 'review' ? 'accept' : 'dialog')
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)

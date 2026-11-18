@@ -82,7 +82,7 @@ function hintOf(row: CockpitRow | null) {
 }
 
 export function CockpitFace({ entryCabinId }: CockpitFaceProps) {
-  const { selection, tab, setTab, select, layer } = useCockpitState()
+  const { selection, tab, setTab, select, layer, inboxOpen, inboxSel } = useCockpitState()
   const { rows, counts, error, refetch } = useCockpitFleet()
   const cabinCtx = useCabinOptional()
   // counts !== null = 编队至少成功接过一次真值（FleetProvider 契约）。
@@ -261,7 +261,7 @@ export function CockpitFace({ entryCabinId }: CockpitFaceProps) {
       return ref !== null && cockpitRefKey(ref) !== key
     })
     const nextRef = next ? refOfRow(next) : null
-    if (nextRef) select(nextRef, 'overview')
+    if (nextRef) select(nextRef, 'dialog')
   }, [rows, select])
 
   if (!selection) return null
@@ -393,7 +393,14 @@ export function CockpitFace({ entryCabinId }: CockpitFaceProps) {
       />
       <div
         ref={faceRef}
-        className={cn('ck12-face', (maxed || geo) && 'is-geo')}
+        className={cn(
+          'ck12-face',
+          (maxed || geo) && 'is-geo',
+          // 从「要我处理」里开详情：让到 inbox 左侧排布（不遮挡；详情层级更高，
+          // 但几何上错开）。inbox 单栏 378 / 两栏 764，由 CSS 按 data 区分。
+          inboxOpen && !maxed && !geo && 'is-aside-inbox',
+        )}
+        data-inbox-two={inboxOpen && inboxSel ? '1' : undefined}
         style={panelStyle}
         data-testid="cockpit-face"
         data-entry-cabin={entryCabinId}

@@ -36,11 +36,14 @@ describe('cockpit URL 契约', () => {
       id: 'a1',
     })
     expect(parseCockpitUrl('?tab=nope', 'c1')).toEqual({ ref: null, tab: null })
+    // v21 七轮：overview 退役 —— 旧深链的 tab=overview 不当合法页签，落回默认对话。
+    expect(parseCockpitUrl('?tab=overview', 'c1')).toEqual({ ref: null, tab: null })
+    expect(parseCockpitUrl('?tab=dialog', 'c1')).toEqual({ ref: null, tab: 'dialog' })
     expect(parseCockpitUrl('', 'c1')).toEqual({ ref: null, tab: null })
   })
 
   it('serialize：attention 用 attn，默认页签省略，空选中回裸路径', () => {
-    expect(serializeCockpitHref('c1', { kind: 'job', cabinId: 'c1', id: 'j1' }, 'overview'))
+    expect(serializeCockpitHref('c1', { kind: 'job', cabinId: 'c1', id: 'j1' }, 'dialog'))
       .toBe('/cabin/c1/cockpit?job=j1')
     expect(serializeCockpitHref('c1', { kind: 'attention', cabinId: 'c1', id: 'a1' }, 'run'))
       .toBe('/cabin/c1/cockpit?attn=a1&tab=run')
@@ -151,7 +154,7 @@ describe('CockpitStateProvider', () => {
     const { result } = renderHook(() => useCockpitState(), { wrapper })
     expect(result.current.entryCabinId).toBe('c1')
     expect(result.current.selection).toBeNull()
-    expect(result.current.tab).toBe('overview')
+    expect(result.current.tab).toBe('dialog')
     expect(result.current.chat).toBeNull()
     expect(result.current.railOpen).toBe(false)
     expect(result.current.chatWindow).toMatchObject({

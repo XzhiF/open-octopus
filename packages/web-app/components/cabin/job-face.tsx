@@ -45,6 +45,7 @@ import {
 } from '@/components/cockpit/face/CockpitJobHeader'
 import { CockpitJobFiles } from '@/components/cockpit/face/CockpitJobFiles'
 import { CockpitJobDebug } from '@/components/cockpit/face/CockpitJobDebug'
+import { CockpitJobDialog } from '@/components/cockpit/face/CockpitJobDialog'
 import { CockpitJobProject } from '@/components/cockpit/face/CockpitJobProject'
 import { projectNameFromKey } from '@/components/cockpit/projects/project-model'
 import { PHASE_PILL, PHASE_STATUS_LABEL } from '@/components/tasks/run-console/phase-status'
@@ -411,6 +412,9 @@ export function JobFace({
 
   // 运行/变更/验收都要任务实体（RunWindow 自己解析当前轮）。
   const taskId = job?.kind === 'task' ? job.ref_id : null
+  // v21 七轮：「对话」页签读任务主会话（= 通讯台里这条任务的线程）。
+  // workflow / subagent 没有主会话 → null，页签给明确空态。
+  const dialogSessionId = taskEntity?.source_chat_session_id ?? null
   useEffect(() => {
     let alive = true
     setTaskEntity(null)
@@ -840,6 +844,7 @@ export function JobFace({
 
   const panes = (
     <>
+      {tab === 'dialog' && <CockpitJobDialog sessionId={dialogSessionId} />}
       {tab === 'overview' && (cockpitMode ? (
         // v21 三轮（原型 .panel 详情·概览）：kv 读数 + 当前在做 + 最近事件。
         <div data-testid="cabin-job-overview" className="ck12-dossier-ov">

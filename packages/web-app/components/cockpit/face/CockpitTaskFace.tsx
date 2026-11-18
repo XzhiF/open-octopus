@@ -14,26 +14,16 @@ import { formatCost } from '@/lib/format'
 import { ChangesWindow } from '@/components/chat-workbench/changes-window'
 import { AcceptanceWindow } from '@/components/chat-workbench/acceptance-window'
 import { CabinRunSummary, type CabinRunTarget } from '@/components/cabin/modules/CabinRunSummary'
-import { pctFromPhases } from '@/components/cabin/job-progress'
-import { clockLabel, openTaskInChat, taskDisplayStatus } from '@/components/cabin/modules/ui'
+import { openTaskInChat, taskDisplayStatus } from '@/components/cabin/modules/ui'
 import { isEndedJob, jobStatusLabel } from '@/components/cabin/job-status'
 import { useCockpitFleet } from '../fleet/CockpitFleetProvider'
 import type { CockpitTab } from '../state/cockpit-state'
-import { CockpitElapsed, CockpitJobHeader, CockpitJobTabs } from './CockpitJobHeader'
+import { CockpitJobHeader, CockpitJobTabs } from './CockpitJobHeader'
 import { CockpitJobFiles } from './CockpitJobFiles'
 import { CockpitJobDebug } from './CockpitJobDebug'
+import { CockpitJobDialog } from './CockpitJobDialog'
 import { CockpitJobProject } from './CockpitJobProject'
 import { projectNameFromKey } from '../projects/project-model'
-
-/** 执行记录行的小圆点：只按真实 status 上色，不猜阶段。 */
-function executionTone(status: string): string {
-  if (status === 'failed' || status === 'cancelled' || status === 'aborted' || status === 'interrupted' || status === 'rejected') {
-    return 'bg-pop-red'
-  }
-  if (status === 'completed' || status === 'completed_with_failures') return 'bg-pop-green'
-  if (status === 'running') return 'bg-pop-violet'
-  return 'bg-pop-dim'
-}
 
 export interface CockpitTaskFaceProps {
   cabinId: string
@@ -125,133 +115,10 @@ export function CockpitTaskFace({
     ? (detail?.completed_at ?? detail?.updated_at ?? null)
     : null
 
-  // 概览右栏读数：进度只来自 v4 phaseViews，缺就整段省略（不猜）。
-  const phaseViews = detail?.derived?.phaseViews ?? []
-  const pct = pctFromPhases(phaseViews)
-  const acceptedPhases = phaseViews.filter((phase) => phase.status === 'accepted').length
-  const statusText = status ? jobStatusLabel(status) : null
-  const acList = detail?.task_spec?.ac ?? []
-
   const panes = (
     <>
-      {tab === 'overview' && (
-        // 合成 task 行同样按 v12 两栏：左摘要（目标 + 验收标准），右状态（读数 +
-        // 执行记录）。没有作业账本，所以左栏不是事件轨迹。
-        <div data-testid="cockpit-face-task-overview" className="ck12-sgrid ck12-jg-over">
-          <section className="ck12-pane">
-            <header className="ck12-pane-h">
-              <b>任务摘要</b>
-              <span className="ck12-pane-tag">
-                {acList.length > 0 ? `AC ${acList.length}` : 'AC —'}
-              </span>
-            </header>
-            <div className="ck12-pane-b is-tight">
-              {detail?.task_spec?.goal ? (
-                <div className="ck12-attn-card">
-                  <div className="ck12-attn-label">目标</div>
-                  <div className="ck12-attn-text">{detail.task_spec.goal}</div>
-                </div>
-              ) : null}
-              {acList.length > 0 ? (
-                <div className="ck12-attn-card">
-                  <div className="ck12-attn-label">验收标准 · {acList.length}</div>
-                  <ul className="ck12-attn-list">
-                    {acList.map((item, index) => (
-                      <li key={index}>{item}</li>
-                    ))}
-                  </ul>
-                </div>
-              ) : null}
-              {!detail?.task_spec?.goal && acList.length === 0 && (
-                <div className="ck12-face-empty">这条任务还没有写目标与验收标准。</div>
-              )}
-            </div>
-          </section>
-
-          <section className="ck12-pane">
-            <header className="ck12-pane-h">
-              <b>作业状态</b>
-              {statusText && <span className="ck12-pane-tag">{statusText}</span>}
-            </header>
-            <div className="ck12-pane-b is-tight">
-              <div className="ck12-jstats">
-                <div className="ck12-jstat">
-                  <div className="l">状态</div>
-                  <div className="v">{statusText ?? '—'}</div>
-                </div>
-                {pct !== null && (
-                  <div className="ck12-jstat">
-                    <div className="l">进度</div>
-                    <div className="v is-cyan">{pct}%</div>
-                  </div>
-                )}
-                <div className="ck12-jstat">
-                  <div className="l">耗时</div>
-                  <div className="v"><CockpitElapsed start={startedAt} end={endedAt} /></div>
-                </div>
-                {costLabel && (
-                  <div className="ck12-jstat">
-                    <div className="l">消耗</div>
-                    <div className="v is-amber">{costLabel}</div>
-                  </div>
-                )}
-              </div>
-
-              {(view?.repo_group || view?.workflow_ref || detail?.task_spec?.branch || startedAt) && (
-                <div className="ck12-jfacts">
-                  {view?.repo_group && <span>仓库 <b>{view.repo_group}</b></span>}
-                  {view?.workflow_ref && <span>工作流 <b>{view.workflow_ref}</b></span>}
-                  {detail?.task_spec?.branch && <span>分支 <b>{detail.task_spec.branch}</b></span>}
-                  {startedAt && <span>创建 <b>{clockLabel(startedAt)}</b></span>}
-                </div>
-              )}
-
-              {phaseViews.length > 0 && (
-                <div className="ck12-jchips">
-                  <span>阶段 <b>{acceptedPhases}/{phaseViews.length}</b></span>
-                </div>
-              )}
-
-              {executions.length === 0 ? (
-                <div className="ck12-face-empty" style={{ marginTop: 11 }}>
-                  这一轮还没有执行 · 跑起来后这里留执行记录。
-                </div>
-              ) : (
-                <div className="ck12-jtl" data-testid="cockpit-face-task-executions" style={{ marginTop: 9 }}>
-                  {executions.map((execution) => (
-                    <div key={execution.id} className="ck12-jrow">
-                      <i className={`ck12-jrow-d ${executionTone(execution.status)}`} aria-hidden="true" />
-                      <span className="ck12-jrow-t">{clockLabel(execution.created_at)}</span>
-                      <span className="ck12-jrow-a" title={execution.id}>
-                        {execution.id.slice(0, 8)}
-                      </span>
-                      <span className="ck12-jrow-k">{jobStatusLabel(execution.status)}</span>
-                      <span
-                        className="ck12-jrow-x"
-                        title={[execution.name ?? execution.workflow_ref, execution.phase_index != null ? `P${execution.phase_index}` : null, execution.round_index != null ? `R${execution.round_index}` : null].filter(Boolean).join(' · ')}
-                      >
-                        {[execution.name ?? execution.workflow_ref, execution.phase_index != null ? `P${execution.phase_index}` : null, execution.round_index != null ? `R${execution.round_index}` : null].filter(Boolean).join(' · ')}
-                      </span>
-                    </div>
-                  ))}
-                </div>
-              )}
-
-              {cabinId === entryCabinId && (
-                <div className="ck12-face-actions">
-                  <button
-                    type="button"
-                    className="ck12-jh-go"
-                    data-testid="cockpit-task-main-chat"
-                    onClick={() => openTaskInChat(taskId)}
-                  >
-                    去任务对话 →
-                  </button>
-                </div>
-              )}
-            </div>
-          </section>
-        </div>
+      {tab === 'dialog' && (
+        <CockpitJobDialog sessionId={view?.source_chat_session_id ?? null} />
       )}
 
       {tab === 'relay' && (

@@ -186,7 +186,7 @@ describe('CockpitFace — job 选中', () => {
     expect(focusables[0]).toBe(screen.getByTestId('cockpit-job-close'))
 
     // 五个页签都在
-    for (const key of ['overview', 'relay', 'run', 'changes', 'accept']) {
+    for (const key of ['dialog', 'relay', 'run', 'changes', 'accept']) {
       expect(screen.getByTestId(`cockpit-tab-${key}`)).toBeInTheDocument()
     }
 
@@ -282,7 +282,7 @@ describe('CockpitFace — attention 面', () => {
     // v21 五轮：头部不再有「去处理 →」捷径（用户：右上按钮多余）；
     // 待办入口在右栏「要我处理」，详情里按页签自己切。
     expect(screen.queryByTestId('cockpit-job-go')).toBeNull()
-    expect(screen.getByTestId('cockpit-tab-overview')).toHaveAttribute('aria-selected', 'true')
+    expect(screen.getByTestId('cockpit-tab-dialog')).toHaveAttribute('aria-selected', 'true')
   })
 })
 
@@ -322,11 +322,14 @@ describe('CockpitFace — task 选中（历史舱合成行）', () => {
     const header = await screen.findByTestId('cockpit-job-header')
     await waitFor(() => expect(header.textContent).toContain('接入渠道'))
     expect(header.textContent).toContain('接入渠道')
-    for (const key of ['overview', 'relay', 'run', 'changes', 'accept']) {
+    for (const key of ['dialog', 'relay', 'run', 'changes', 'accept']) {
       expect(screen.getByTestId(`cockpit-tab-${key}`)).toBeInTheDocument()
     }
-    expect((await screen.findByTestId('cockpit-face-task-overview')).textContent)
-      .toContain('接入渠道')
+    // v21 七轮：首签「对话」= 任务 chat 记录；没有 source_chat_session_id
+    // 给明确空态，不拿别的东西冒充对话。
+    const dialog = await screen.findByTestId('cockpit-dialog')
+    expect(dialog.textContent).toContain('任务对话')
+    expect(dialog.textContent).toContain('没有关联的对话会话')
 
     fireEvent.click(screen.getByTestId('cockpit-tab-relay'))
     expect((await screen.findByTestId('cockpit-face-task-relay')).textContent)

@@ -846,6 +846,35 @@
 /* 原型 .panel.geo.open{animation:none}：拖过 / 全屏过就按几何直接呈现，
    不再播入场动画（否则每帧都被 translateX(-50%) 拽回中间）。 */
 .ck12-face.is-geo { animation: none; }
+
+/* 从「要我处理」里开详情：浮层继续开着，详情按几何让到它左侧（不遮挡）。
+   层级仍是详情更高（201 > 右栏 160）；这里只做错位 —— inbox 单栏 378 /
+   两栏 764，右缘与浮层之间留 12px。 */
+.ck12-face.is-aside-inbox {
+  left: auto;
+  right: calc(var(--ck12-railr) + 384px);
+  transform: none;
+  width: min(760px, calc(100vw - var(--ck12-railr) - 392px));
+  animation: ck12-aside-in 0.28s cubic-bezier(0.2, 0.8, 0.2, 1) both;
+}
+.ck12-face.is-aside-inbox[data-inbox-two='1'] {
+  right: calc(var(--ck12-railr) + 770px);
+  width: min(760px, calc(100vw - var(--ck12-railr) - 778px));
+}
+@keyframes ck12-aside-in {
+  from { opacity: 0; transform: translateY(12px); }
+  to { opacity: 1; transform: none; }
+}
+/* 窄屏放不下并排两扇：退回居中（详情层级更高，浮层在它下面；仍不因失焦关闭）。 */
+@media (max-width: 1300px) {
+  .ck12-face.is-aside-inbox {
+    left: 50%;
+    right: auto;
+    transform: translateX(-50%);
+    width: min(760px, 94vw);
+    animation: ck12-panel-in 0.28s cubic-bezier(0.2, 0.8, 0.2, 1) both;
+  }
+}
 .ck12-face::before {
   content: '';
   position: absolute;
@@ -968,6 +997,52 @@
 }
 
 .ck12-face-body { padding: 10px 14px; }
+
+/* ── 详情 · 对话页签（v21 七轮 · 原型 .dcon / .dcon-log）──
+   任务 chat 记录：TUI 转录同肤（TuiMessage），只读；转录取终端屏底纹，
+   自带独立滚动（贴底跟 chat 一致）。 */
+.ck12-dcon {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.ck12-dcon-h {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-family: var(--font-ui);
+  font-size: 9.5px;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  color: var(--ck12-teal);
+}
+.ck12-dcon-h b { font-size: 10px; letter-spacing: 0.14em; }
+.ck12-dcon-h .n {
+  color: var(--ck12-ink2);
+  font-weight: 400;
+  letter-spacing: 0.04em;
+}
+.ck12-dcon-log {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  padding: 12px 14px;
+  border: 1px solid rgba(46, 230, 214, 0.12);
+  box-shadow: inset 0 8px 22px rgba(4, 3, 12, 0.3);
+  background:
+    radial-gradient(120% 70% at 50% 0%, rgba(46, 230, 214, 0.07), transparent 62%),
+    linear-gradient(180deg, rgba(6, 5, 16, 0.42), rgba(6, 5, 16, 0.2)),
+    linear-gradient(rgba(46, 230, 214, 0.035) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(46, 230, 214, 0.035) 1px, transparent 1px);
+  background-size: auto, auto, 32px 32px, 32px 32px;
+}
+.ck12-dcon-log .ck12-face-empty { margin: auto; }
 
 /* 概览 kv / 分组 / 事件行（原型 .kv / .sect / .ev）。 */
 .ck12-kv {
@@ -1407,6 +1482,7 @@ button.ck12-ev:hover { background: rgba(255, 255, 255, 0.04); }
   .ck12-condock-hint { display: inline; }
   /* 原型 ≤900：详情面板 96vw、上下更贴边。 */
   .ck12-face { top: 60px; bottom: 10px; width: 96vw; }
+  .ck12-face.is-aside-inbox { width: 96vw; }
   .ck12-treewin { top: 64px; width: 96vw; height: calc(100vh - 130px); }
 }
 @media (max-width: 560px) {

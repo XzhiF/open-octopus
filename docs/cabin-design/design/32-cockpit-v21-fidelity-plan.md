@@ -388,3 +388,61 @@ e2e `cockpit-v21-fidelity` 新增「详情 dossier」用例（居中 760 / 8 页
 26 文件 / **245 例全绿**；`tsc` 改动文件 0 error；`eslint` 改动文件 0 error。
 
 
+
+### 9.10 七轮（2026-11-18 · 「概览」→「对话」· 原型确认后已落地生产）
+
+用户：作战详情里的**「概览」页签不需要了**，直接改成**「对话」**——显示这条作战的 chat 记录，
+基本跟 chat 一样的展示。先在原型改、确认后进生产；ops 面板点「▦ 详情」要直接落在这个对话页签。
+确认时另点一条：**不要「到通讯台继续」按钮**。
+
+| 项 | 旧 | 新（原型 `cockpit-v21.html` + 生产） |
+|---|---|---|
+| 首签 | `overview`「概览」：kv 读数 + 当前在做 + 最近事件 | `dialog`「对话」：任务 chat 记录；其余页签顺序不变（对接/运行/变更/验收/文件/调试/项目） |
+| 转录 | — | 原型复用通讯台 `tlHTML`（`❯` 你 / `✦`+meta 汐音 / `▸ tool [✓]` / sys）；生产复用 `TuiMessage`（与 ChatPane 同一渲染件，TUI 语法不另造）。转录区终端屏底纹 + **独立滚动**，默认贴底、上翻不抢滚动 |
+| 数据 | 原型 `JOB_EVENTS` | 生产 = 任务主会话 `task.source_chat_session_id` 的消息（`GET /api/sessions/:id?limit=200`，10s 刷新）；workflow / subagent 作业没有主会话 → 明确空态，不拿执行账本冒充对话 |
+| 落点 | ops「▦ 详情」→ overview | ops「▦ 详情」/ inbox「▦ 去处理」→ **dialog**；默认页签、URL 默认省略值同步改为 `dialog`；`?tab=overview` 旧深链被 `isCockpitTab` 丢弃、自然落回对话 |
+| classic 作业窗 | — | 保持不变：`WINDOW_TABS` 仍含 `overview`（「概览」标签保留），本次只动 v21 cockpit |
+
+生产落地文件：新增 `CockpitJobDialog.tsx`；`CockpitTaskFace.tsx`（首签换对话，删概览台账）；
+`job-face.tsx`（cockpit 首签接对话，classic 分支原样）；`cockpit-state.ts`（`COCKPIT_TABS` /
+默认 `dialog`）；`CockpitStateProvider.tsx`；`cockpit-url.ts`（默认值省略口径）；`CockpitOpsPanel.tsx` /
+`CockpitChoices.tsx` / `CockpitInboxPopover.tsx`（详情落点）；`v21b.css`（`.ck12-dcon*`）。
+
+门禁：新增 `CockpitJobDialog.test.tsx` 4 例（TUI 转录 + 条数/轮数、事件卡不计提问、无主会话空态、
+接口失败提示）；`vitest components/cockpit + JobFace` **26 文件 / 250 例**（249 绿 + Crew 既有
+加载波动 1 例，单跑 19/19 绿）；改动文件 `tsc` 0 error、`eslint` 0 error。
+
+**七轮补丁（同日 · 用户实测两处）：**
+1. **「要我处理」待放行不再跳独立放行窗** —— 原型是「点开 → 就地一步展开」；生产此前点行即关浮层、另开
+   `StartWindow`，跳变不对。现改为浮层左栏就地渲染 `StartReplyCard`（与问答卡同骨架：⚑ 标题 / 要现在放行吗？/
+   选项「立即开跑 · 先入列」/ 确认执行 / 回执），动作仍走真管线（`readyTask` / `triggerTask` / `resumeTask`），
+   成功后走 rail 的 `startDecided` 乐观消项 + 回执卡（`已放行`）。classic 舱的放行窗（`CabinInbox`）不动。
+2. **放行卡「▦ 看任务详情」** —— 以前只切聊天线程（用户：点了不像有反应）。现在 = `select(entry.ref, 'dialog')`：
+   弹作战详情、直接落在「对话」页签（该舱 attention 带 `job_id` → 落到 job 面；任务主会话渲染 chat 记录）。
+
+生产落地：`CockpitInboxPopover.tsx`（`StartReplyCard` / 收 `onStartDecided` / 去掉 start→放行窗跳转）、
+`CockpitRightRail.tsx`（撤 cockpit `StartWindow` 挂载）、`start-window.tsx`（放行选项/摘要/回执/错误文案
+导出给就地卡复用，classic 行为不变）。
+测试：`CockpitInbox.test.tsx` 8 例全绿（就地展开、看详情落对话页签、确认执行 ready+trigger 回执）。
+
+**七轮补丁 2（同日 · 用户：点详情别把选中的窗口关掉）：**
+- 生产：放行卡「▦ 看任务详情」只 `select(entry.ref,'dialog')`，**不再 `closeInbox()`** —— 浮层与展开卡保持，
+  人还能接着点「确认执行」；浮层仍是 popover（点详情之外的地方再收）。「要我处理」整栏 z 160 → **210**
+  （压过 dossier 201 / 树窗 202），详情打开后背幕不会把浮层盖住 —— 对齐原型 `.inboxpop(44) > .panel(40)`。
+- 原型同步：inbox 增加「待放行」条目（`OP_KIND.start` / `op-start` · M3 待入列）：点行 → 两栏就地展开 →
+  选项「立即开跑 / 先入列」+「▦ 看任务详情」+「确认执行」；`openPanel(k, keepInbox)` 让详情面板打开时保留浮层，
+  回执显示「✓ 已放行」。jsdom 冒烟：start 行可见、两栏展开、点详情后浮层仍 `on` 且面板 `dtab.on=对话`、
+  提交后回执含「已放行」。
+
+**七轮补丁 3（同日 · 用户：详情别遮挡 / 别失焦自动关 / 新窗口层级更高）：**
+- **几何让位**：从「要我处理」开详情时，详情排到浮层左侧（不遮挡）——生产 `CockpitFace` 在 `inboxOpen`
+  且未拖拽/未全屏时加 `is-aside-inbox`：`right = railr + 6 + inbox宽 + 12`（单栏 378 / 两栏 764 由
+  `data-inbox-two` 区分），宽度 `min(760px, 剩余)`；≤1300px 退回居中。原型 `applyPanelGeo` 同口径
+  （1920 下 left 290 / width 760），放不下（<420 余量）时也退回居中。
+- **层级**：新开窗口更高 —— 生产右栏回 160、详情 201 / 树窗 202；原型 `.panel` 40 → **45**（`.inboxpop` 44）。
+  两扇靠几何错开，不靠层级遮挡。
+- **不因失焦关闭**：「要我处理」去掉点外面自动收起（生产删 `pointerdown` outside-close；原型删同名
+  全局监听），只在用户 **✕ / Esc** 时关；全部处理完的 0.7s 自动收起保留。
+
+门禁：`components/cockpit + JobFace` **27 文件 / 252 例全绿**；改动文件 `tsc` / `eslint` 0 error；
+原型 jsdom 冒烟：点外面浮层仍开、详情 left 290/width 760、z 45 > 44、Esc 依次回列表 → 收浮层 → 收详情。
