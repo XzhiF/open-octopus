@@ -110,7 +110,7 @@ beforeEach(() => {
   vi.clearAllMocks()
   invalidateCabinProjects('c1')
   vi.mocked(listCabins).mockResolvedValue([cabin('c1', '账务中台')])
-  vi.mocked(getCabin).mockImplementation(async (id: string) => ({ cabin: cabin(id, '账务中台'), view: {} as never }))
+  vi.mocked(getCabin).mockImplementation(async (id: string) => ({ cabin: cabin(id, '账务中台'), view: { attention: [] } as never }))
   vi.mocked(listCabinJobs).mockResolvedValue([
     {
       id: 'j1', cabin_id: 'c1', kind: 'task', ref_id: 't1', session_id: null,
@@ -217,12 +217,11 @@ describe('CockpitProjectFace · 点项目看仓库', () => {
       </Harness>,
     )
     expect(await screen.findByTestId('cockpit-project-face')).toBeInTheDocument()
-    expect(screen.getAllByText('仓库').length).toBeGreaterThan(0)
-    expect(screen.getByText('门槛')).toBeInTheDocument()
+    // v21 五轮：整面按原型 .pnote / .pcard 重画（不再有 .ck12-pj-line 那种两栏）。
     expect(screen.getByText(/主仓只读/)).toBeInTheDocument()
     expect(screen.getByText('/repos/ledger')).toBeInTheDocument()
-    // 项目上的作业
-    expect(screen.getByText('对齐尾差')).toBeInTheDocument()
+    // 项目上的作业（编队行异步；按 .ck12-ev 的标题段找，避开 pcard 的 commit msg）。
+    expect(await screen.findByText('对齐尾差', { selector: '.ck12-ev .w' })).toBeInTheDocument()
     // 未归属的作业不硬塞进来
     expect(screen.queryByText('杂活')).toBeNull()
 

@@ -8,7 +8,7 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
-import { useEffect, type ReactNode } from 'react'
+import { useEffect, useRef, type ReactNode } from 'react'
 import { cabinAudio } from '@/lib/cabin-audio'
 import type { MoodKey } from '@/components/cabin/cockpit'
 import {
@@ -34,6 +34,27 @@ vi.mock('@/lib/cabin-audio', () => ({
   cabinAudio: { blip: vi.fn(), chime: vi.fn(), setOn: vi.fn(), resume: vi.fn() },
 }))
 
+// 待办轮播 / 清单提醒的数据源（与右栏同一份 collectInbox 输入）。
+const fleetState = vi.hoisted(() => ({ rows: [] as unknown[] }))
+vi.mock('../../fleet/CockpitFleetProvider', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../fleet/CockpitFleetProvider')>()
+  return {
+    ...actual,
+    useCockpitFleet: () => ({
+      rows: fleetState.rows,
+      mainSessionId: null,
+      counts: null,
+      arrivals: [],
+      loading: false,
+      error: null,
+      refetch: () => {},
+    }),
+  }
+})
+
+import type { CabinAttentionItem } from '@octopus/shared'
+import type { CockpitRow } from '../../fleet/fleet-model'
+
 let said: { line: string; mood?: MoodKey } | null = null
 
 function FxProbe() {
@@ -51,6 +72,16 @@ function WindowProbe() {
       data-mini={chatWindow.mini ? '1' : '0'}
     />
   )
+}
+
+/** v21 三轮：通讯台默认展开（输入框在台里）；这些用例先把它收起，再验证
+ *  「点立绘 = 开窗」的语义。 */
+function WindowCloser() {
+  const { chatWindow } = useCockpitState()
+  const setRef = useRef(chatWindow.set)
+  setRef.current = chatWindow.set
+  useEffect(() => { setRef.current({ open: false }) }, [])
+  return null
 }
 
 function ChatSeeder({ streaming }: { streaming: boolean }) {
@@ -92,6 +123,7 @@ function tree(cockpit: CockpitContextValue, extra?: ReactNode) {
       <CockpitStateProvider entryCabinId="c1">
         <CockpitLayerStack>
           <CockpitCrew />
+          <WindowCloser />
           <FxProbe />
           <WindowProbe />
           <div data-testid="cockpit-chat-transcript" />
@@ -116,6 +148,7 @@ function renderCrew(overrides: Partial<CockpitContextValue> = {}, extra?: ReactN
 beforeEach(() => {
   said = null
   resetCrewPoke()
+  fleetState.rows = []
   vi.restoreAllMocks()
 })
 
@@ -146,16 +179,16 @@ describe('CockpitCrew · v13 点立绘 = 说话', () => {
   })
 
   // v13.1 · 点击即时反馈（对齐 classic 点立绘的手感）
-  it('点立绘同一拍就给反馈：表情 + 台词 + 星光 + 涟漪，然后才开窗', async () => {
+  it('点立绘同一拍就给反馈：表情 + 台词 + 星光，然后才开窗（无描边涟漪）', async () => {
     const { cockpit } = renderCrew()
 
     fireEvent.click(screen.getByTestId('cockpit-crew-pod'))
 
     // 表情立即换（首点 = 招呼句 wink）
     expect(cockpit.setMoodOverride).toHaveBeenCalledWith('wink', expect.any(Number))
-    // 触感：6 颗星光 + 一圈涟漪 + 点击音
+    // 触感：6 颗星光 + 点击音；v21 四轮起立绘周边不再出现描边涟漪。
     expect(screen.getAllByTestId('cockpit-crew-spark')).toHaveLength(6)
-    expect(screen.getByTestId('cockpit-crew-tapring')).toBeInTheDocument()
+    expect(screen.queryByTestId('cockpit-crew-tapring')).toBeNull()
     expect(cabinAudio.blip).toHaveBeenCalled()
     // 台词逐字打完（不打进 chat DOM）
     await waitFor(() =>
@@ -188,7 +221,7 @@ describe('CockpitCrew · v13 点立绘 = 说话', () => {
     )
   })
 
-  it('reduced-motion 下点击：台词照出，星光/涟漪不出', () => {
+  it('reduced-motion 下点击：台词照出，星光不出', () => {
     window.matchMedia = vi.fn().mockImplementation((query: string) => ({
       matches: true,
       media: query,
@@ -441,5 +474,151 @@ describe('CockpitCrewSettings · v13', () => {
     const { onClose } = renderSettings()
     fireEvent.keyDown(window, { key: 'Escape' })
     expect(onClose).toHaveBeenCalled()
+  })
+})
+describe('CockpitCrew · v21 ready 报到（真实事件驱动）', () => {
+  const sprite = () => screen.getByTestId('cockpit-pose-sprite')
+
+  it('首次进舱保持待命，不播报到（design 31 §3.5：开机=待命）', () => {
+    renderCrew()
+    expect(sprite()).toHaveAttribute('data-pose', 'idle')
+    expect(screen.getByTestId('cockpit-crew-speech')).not.toHaveTextContent('舰桥接管')
+  })
+
+  it('从休眠唤醒（mood sleep → idle）→ 报到', async () => {
+    const { rerender } = renderCrew({ mood: 'sleep' })
+    expect(sprite()).toHaveAttribute('data-pose', 'sleep')
+
+    rerender({ mood: 'idle' })
+
+    expect(sprite()).toHaveAttribute('data-pose', 'ready')
+    // 台词逐字打出，等打字机推进到「舰桥接管」这一拍。
+    await waitFor(() =>
+      expect(screen.getByTestId('cockpit-crew-speech')).toHaveTextContent('舰桥接管'),
+    )
+  })
+
+  it('接管另一间舱（scene.key 变化）→ 报到；同舱内不变则不播', () => {
+    const { rerender } = renderCrew()
+    expect(sprite()).toHaveAttribute('data-pose', 'idle')
+
+    rerender({ scene: { key: 'cabin-2' } as unknown as CockpitContextValue['scene'] })
+    expect(sprite()).toHaveAttribute('data-pose', 'ready')
+  })
+})
+
+describe('CockpitCrew · v22.1 待命自走轮播', () => {
+  const sprite = () => screen.getByTestId('cockpit-pose-sprite')
+
+  beforeEach(() => vi.useFakeTimers())
+  afterEach(() => vi.useRealTimers())
+
+  it('真空闲 12s 后换一支日常片段，姿态语义仍是待命', () => {
+    renderCrew()
+    expect(sprite()).toHaveAttribute('data-pose', 'idle')
+    expect(sprite()).toHaveAttribute('data-clip', '6')
+
+    act(() => { vi.advanceTimersByTime(12_000) })
+
+    expect(sprite()).toHaveAttribute('data-pose', 'idle')
+    expect(sprite().getAttribute('data-clip')).not.toBe('6')
+  })
+
+  it('作业/动作期间不自走（片段跟随真实状态）', () => {
+    renderCrew({ mood: 'working' })
+    expect(sprite()).toHaveAttribute('data-clip', '12')
+
+    act(() => { vi.advanceTimersByTime(12_000) })
+
+    expect(sprite()).toHaveAttribute('data-pose', 'working')
+    expect(sprite()).toHaveAttribute('data-clip', '12')
+  })
+})
+
+// 2026-11-19 用户：有需要我处理的任务时，她一直循环同一支摇头动作，显得呆；
+// 希望等得久时穿插别的动作，并且头顶时不时报一条真实清单。
+describe('CockpitCrew · 等你在场（有待办）', () => {
+  const sprite = () => screen.getByTestId('cockpit-pose-sprite')
+
+  function attentionRow(id: string, over: Partial<CabinAttentionItem> = {}): CockpitRow {
+    return {
+      key: `attn:${id}`,
+      kind: 'attention',
+      cabinId: 'c1',
+      cabinName: '舱一',
+      item: {
+        id,
+        job_id: null,
+        stage: 'review',
+        awaiting: 'person',
+        title: `事项 ${id}`,
+        task_id: null,
+        repo: null,
+        wt: null,
+        deep_link: null,
+        ...over,
+      },
+    }
+  }
+
+  beforeEach(() => vi.useFakeTimers())
+  afterEach(() => vi.useRealTimers())
+
+  it('等待时片段在 alert 与日常动作之间穿插（姿态语义仍是警觉）', () => {
+    fleetState.rows = [attentionRow('a1', { stage: 'review', title: 'M2 · 结算对账' })]
+    renderCrew({ mood: 'alert' })
+
+    expect(sprite()).toHaveAttribute('data-pose', 'alert')
+    expect(sprite()).toHaveAttribute('data-clip', '3')
+
+    // 首拍 4.2–6s：换成第一支日常动作。
+    act(() => { vi.advanceTimersByTime(6_500) })
+    expect(sprite()).toHaveAttribute('data-pose', 'alert')
+    expect(sprite()).toHaveAttribute('data-clip', '6')
+
+    // 下一拍 5.2–7.8s：回到 alert 主拍。
+    act(() => { vi.advanceTimersByTime(8_000) })
+    expect(sprite()).toHaveAttribute('data-pose', 'alert')
+    expect(sprite()).toHaveAttribute('data-clip', '3')
+
+    // 第三拍：换到另一支动作 —— 不能只在 04 ↔ 07 两支之间来回（真机回归）。
+    act(() => { vi.advanceTimersByTime(8_000) })
+    expect(sprite()).toHaveAttribute('data-pose', 'alert')
+    expect(sprite()).toHaveAttribute('data-clip', '8')
+  })
+
+  it('待办一直在：头顶气泡隔一阵报真实清单（标题来自编队行）', () => {
+    fleetState.rows = [attentionRow('a1', { stage: 'review', title: 'M2 · 结算对账' })]
+    renderCrew({ mood: 'alert' })
+
+    expect(screen.getByTestId('cockpit-crew-speech')).not.toHaveTextContent('结算对账')
+
+    act(() => { vi.advanceTimersByTime(9_000) })
+    // 提醒在 7s 落库 → React 落地后打字机才起 interval：再推进一拍让它打完。
+    act(() => { vi.advanceTimersByTime(800) })
+
+    const speech = screen.getByTestId('cockpit-crew-speech')
+    expect(speech.className).toContain('show')
+    expect(speech).toHaveTextContent('结算对账')
+    expect(speech).toHaveTextContent('验收')
+  })
+
+  it('在场关闭时不打扰（只有动作穿插，不乱说话）', () => {
+    fleetState.rows = [attentionRow('a1', { stage: 'review', title: 'M2 · 结算对账' })]
+    renderCrew({ mood: 'alert', prefs: { ...DEFAULT_COCKPIT, presenceOn: false } })
+
+    act(() => { vi.advanceTimersByTime(20_000) })
+
+    expect(screen.getByTestId('cockpit-crew-speech')).not.toHaveTextContent('结算对账')
+    // 动作穿插不依赖在场开关（立绘本来就在场）。
+    expect(sprite()).toHaveAttribute('data-pose', 'alert')
+  })
+
+  it('没有待办时不自作多情：不报清单，片段走原 pose 首选', () => {
+    renderCrew({ mood: 'alert' })
+
+    act(() => { vi.advanceTimersByTime(20_000) })
+
+    expect(screen.getByTestId('cockpit-crew-speech')).not.toHaveTextContent('结算对账')
   })
 })

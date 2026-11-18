@@ -29,12 +29,14 @@ import {
   type CockpitReceipt,
   type CockpitRef,
   type CockpitSaid,
+  type CockpitSelectSource,
   type CockpitState,
   type CockpitTab,
   type CockpitThreadsApi,
   type CockpitWindowsApi,
 } from './cockpit-state'
 import { MAIN_THREAD_KEY } from '../fleet/threads-model'
+import { SCENE_COUNT } from '../scene/scene-model'
 
 const CockpitStateContext = createContext<CockpitState | null>(null)
 
@@ -64,7 +66,8 @@ interface FxState {
 }
 
 const INITIAL_CHAT_WINDOW: CockpitChatWindowState = {
-  open: false,
+  // v21 三轮：输入框住进通讯台，通讯台就是原型里常驻的 TUI 面板 —— 默认展开。
+  open: true,
   mini: false,
   pinned: false,
   alpha: 0.94,
@@ -92,7 +95,11 @@ export interface CockpitStateProviderProps {
 export function CockpitStateProvider({ entryCabinId, children }: CockpitStateProviderProps) {
   const [selection, setSelection] = useState<CockpitRef | null>(null)
   const [projectFilter, setProjectFilterState] = useState<string | null>(null)
-  const [tab, setTabState] = useState<CockpitTab>('overview')
+  // v21 七轮：默认页签 = 对话（概览退役；链接里旧的 tab=overview 由
+  // isCockpitTab 丢掉 → 自然落回这里）。
+  const [tab, setTabState] = useState<CockpitTab>('dialog')
+  /** v22.3：面来源 —— 从「要我处理」打开的面让到浮层左侧，其余居中。 */
+  const [detailSource, setDetailSource] = useState<CockpitSelectSource>('fleet')
   const [chat, setChat] = useState<CockpitChatApi | null>(null)
   const [chatWindowState, setChatWindowState] = useState<CockpitChatWindowState>(INITIAL_CHAT_WINDOW)
   const [railOpen, setRailOpenState] = useState(false)
@@ -107,23 +114,27 @@ export function CockpitStateProvider({ entryCabinId, children }: CockpitStatePro
   const [panel, setPanel] = useState<CockpitPanelKind | null>(null)
   const [panelArg, setPanelArg] = useState<string | null>(null)
   const [flash, setFlash] = useState<CockpitFlash>({ key: null, at: 0, nonce: 0 })
+  const [inboxOpen, setInboxOpen] = useState(false)
+  const [inboxSel, setInboxSel] = useState<string | null>(null)
   const [pose, setPose] = useState('idle')
+  const [clip, setClip] = useState(0)
   const [autoWarp, setAutoWarp] = useState(true)
+  // v21：舱景三幕。跃迁与换色共用 fx.jump 的星流闪光，但只有 travel() 会切幕
+  // —— 换色 / 回传入场不该把船开走。
+  const [sceneIndex, setSceneIndex] = useState(0)
   const receiptSeqRef = useRef(0)
   const winSeqRef = useRef(0)
 
   // ── selection / tab ────────────────────────────────────────────────
-  const select = useCallback((ref: CockpitRef | null, nextTab?: CockpitTab) => {
+  const select = useCallback((ref: CockpitRef | null, nextTab?: CockpitTab, source: CockpitSelectSource = 'fleet') => {
     setSelection((current) => (sameCockpitRef(current, ref) ? current : ref))
     if (nextTab) setTabState(nextTab)
-    // 2026-11-15 用户：对话浮窗展开时会整个盖住作业面，点编队 / 项目切面看不到
-    // 变化，必须手动缩窗或关窗。切面（ref 非空）一律把对话窗收回去 —— 收窗只
-    // 隐藏 DOM（ChatPane 常驻、transcript 不丢），底栏 composer 仍可继续输入；
-    // 点 ticker / 立绘 / 输入框随时能再展开。select(null) 收面不动对话。
-    // v13 简报激活也是「先 select 再 openWithFocus」，两次更新批处理后仍是展开态。
-    if (ref) {
-      setChatWindowState((prev) => (prev.open ? { ...prev, open: false } : prev))
-    }
+    // 来源跟着这次选中走：同一条作业从编队点（居中）后再从 inbox 点「去处理」，
+    // 也要切成左侧 aside。
+    setDetailSource(ref ? source : 'fleet')
+    // v21 三轮：详情是覆盖在舱面上的玻璃面板（原型 .panel），不再需要为了
+    // 看见作业面而把通讯台收起来 —— 选面不再动 chatWindow（连输入框一起消失
+    // 是原型的反直觉点）。
   }, [])
 
   const setTab = useCallback((next: CockpitTab) => setTabState(next), [])
@@ -235,12 +246,32 @@ export function CockpitStateProvider({ entryCabinId, children }: CockpitStatePro
   const openPanel = useCallback((kind: CockpitPanelKind, arg: string | null = null) => {
     setPanelArg(arg)
     setPanel(kind)
+    // v21（design 31 §3.2.2）：打开面板时自动收起 inbox。
+    setInboxOpen(false)
+    setInboxSel(null)
   }, [])
   const closePanel = useCallback(() => setPanel(null), [])
   const markArrival = useCallback((key: string) => {
     setFlash((prev) => ({ key, at: Date.now(), nonce: prev.nonce + 1 }))
   }, [])
-  const reportPose = useCallback((next: string) => setPose(next), [])
+
+  // ── v21 右栏 inbox 浮层 ──────────────────────────────────────────────
+  const openInbox = useCallback((attentionId: string | null = null) => {
+    setInboxOpen(true)
+    setInboxSel(attentionId ?? null)
+  }, [])
+  const closeInbox = useCallback(() => {
+    setInboxOpen(false)
+    setInboxSel(null)
+  }, [])
+  const selectInbox = useCallback((attentionId: string | null) => {
+    setInboxSel(attentionId)
+    setInboxOpen(true)
+  }, [])
+  const reportPose = useCallback((next: string, clipIndex?: number) => {
+    setPose(next)
+    if (typeof clipIndex === 'number' && Number.isFinite(clipIndex)) setClip(clipIndex)
+  }, [])
 
   // ── 特效：只递增 nonce（useState，不用 ref 绕过渲染）─────────────────
   const pulse = useCallback((color?: string) => {
@@ -262,6 +293,23 @@ export function CockpitStateProvider({ entryCabinId, children }: CockpitStatePro
   const jump = useCallback(() => {
     setFxState((prev) => ({ ...prev, jumpNonce: prev.jumpNonce + 1 }))
   }, [])
+
+  // ── v21 舱景：点某一幕 / 跃迁到下一幕 ────────────────────────────────
+  const setScene = useCallback((index: number) => {
+    setSceneIndex(((index % SCENE_COUNT) + SCENE_COUNT) % SCENE_COUNT)
+  }, [])
+
+  const travel = useCallback(() => {
+    setSceneIndex((prev) => (prev + 1) % SCENE_COUNT)
+    jump()
+  }, [jump])
+
+  // v21 八轮：自动轮换 = 随机计时 + 随机另一幕（保证不原地重切；手动跃迁仍顺序，
+  // 方便人把 12 幕挨个看完）。
+  const travelRandom = useCallback(() => {
+    setSceneIndex((prev) => (prev + 1 + Math.floor(Math.random() * (SCENE_COUNT - 1))) % SCENE_COUNT)
+    jump()
+  }, [jump])
 
   const feedback = useCallback((color?: string, level: 'full' | 'lite' | 'off' = 'full') => {
     setFxState((prev) => ({
@@ -338,6 +386,7 @@ export function CockpitStateProvider({ entryCabinId, children }: CockpitStatePro
       entryCabinId,
       selection,
       tab,
+      detailSource,
       select,
       setTab,
       projectFilter,
@@ -355,19 +404,31 @@ export function CockpitStateProvider({ entryCabinId, children }: CockpitStatePro
       closePanel,
       flash,
       markArrival,
+      inboxOpen,
+      inboxSel,
+      openInbox,
+      closeInbox,
+      selectInbox,
       pose,
+      clip,
       reportPose,
       autoWarp,
       setAutoWarp,
+      sceneIndex,
+      setScene,
+      travel,
+      travelRandom,
       fx,
       layer,
     }),
     [
-      entryCabinId, selection, tab, select, setTab, projectFilter, setProjectFilter,
+      entryCabinId, selection, tab, detailSource, select, setTab, projectFilter, setProjectFilter,
       chat, reportChat, chatWindow,
       railOpen, setRailOpen,
       threads, wins, panel, panelArg, openPanel, closePanel, flash, markArrival,
-      pose, reportPose, autoWarp,
+      inboxOpen, inboxSel, openInbox, closeInbox, selectInbox,
+      pose, clip, reportPose, autoWarp,
+      sceneIndex, setScene, travel, travelRandom,
       fx, layer,
     ],
   )

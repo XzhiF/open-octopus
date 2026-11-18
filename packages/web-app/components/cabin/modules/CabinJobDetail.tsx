@@ -1,9 +1,10 @@
 'use client'
 
-// classic-v3 作业详情窗 —— 薄容器（S4 抽取后）：
+// classic-v3 作战详情窗 —— 薄容器（S4 抽取后）：
 //   只从 CabinProvider 读 cabinId / cabin / selectedJobId / refresh，
-//   其余（五页签、10s 轮询、任务实体、动作）全部在 components/cabin/job-face.tsx。
-//   variant="window" 保证旧窗 DOM/行为逐字不变（CabinV3 / CabinModulesP3 回归）。
+//   其余（页签主体、10s 轮询、任务实体、动作）全部在 components/cabin/job-face.tsx。
+//   variant="window" 决定外壳（窗 chrome）；页签清单 2026-11-19 起与全域面同一套
+//   （CabinV3 / CabinModulesP3 仍是回归闸门）。
 
 import { useCabinContext } from '../cabin-provider'
 import { JobFace } from '../job-face'

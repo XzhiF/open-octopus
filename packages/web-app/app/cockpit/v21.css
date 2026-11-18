@@ -1,0 +1,463 @@
+/* ═══════════════════════════════════════════════════════════════════════
+   v21（design 31 §3.4）· 通讯台终端屏皮肤
+   内容仍是 TUI 语法（❯ / ✦+meta / ▸tool / sys），这里只换外壳：
+   深色终端屏 + 青色网格 + 扫描线 + 面板同色顶线 + 四角括线。
+   用户行去气泡改金线；live 行用汐音紫 + 青色光标；弹出窗同源同皮肤。
+   （作为 chat.css 之后的覆盖层，classic 不加载本文件。）
+   ═══════════════════════════════════════════════════════════════════════ */
+
+.ck12-comms {
+  border-radius: 0;
+  border: 1px solid var(--ck12-edge);
+  clip-path: var(--ck12-cut);
+  background:
+    radial-gradient(120% 80% at 82% 0%, rgba(123, 77, 255, 0.16), transparent 55%),
+    linear-gradient(180deg, rgba(22, 17, 50, 0.8), rgba(11, 8, 26, 0.9) 38%, rgba(8, 6, 20, 0.92)),
+    /* 底下再压一层近黑：全舱里通讯台背后常常是明亮的作业面，纯原型渐变
+       （alpha .8）会让面上文字透上来，终端屏读不清。 */
+    linear-gradient(rgba(8, 6, 20, 0.62), rgba(8, 6, 20, 0.62));
+  backdrop-filter: blur(16px) saturate(1.2);
+  box-shadow:
+    0 20px 60px rgba(16, 13, 40, 0.55),
+    0 0 30px rgba(46, 230, 214, 0.08),
+    inset 0 1px 0 rgba(255, 255, 255, 0.08);
+}
+.ck12-comms::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 0;
+  height: 2px;
+  background: linear-gradient(90deg, var(--ck12-teal), var(--ck12-sky), var(--ck12-violet), var(--ck12-pink));
+  opacity: 0.8;
+  z-index: 4;
+  pointer-events: none;
+}
+.ck12-comms::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  opacity: 0.05;
+  background: repeating-linear-gradient(180deg, var(--ck12-teal) 0 1px, transparent 1px 4px);
+  z-index: 3;
+}
+.ck12-cbr {
+  position: absolute;
+  width: 16px;
+  height: 16px;
+  pointer-events: none;
+  border-color: var(--ck12-teal);
+  opacity: 0.8;
+  z-index: 4;
+}
+.ck12-cbr.is-tl { left: 0; top: 0; border-left: 2px solid; border-top: 2px solid; }
+.ck12-cbr.is-br { right: 0; bottom: 0; border-right: 2px solid; border-bottom: 2px solid; }
+
+/* 头：灯组（✕ — 📌 在左）→ 六角标 → 线程名 + 副行 → 状态 */
+.ck12-comms-head {
+  height: 48px;
+  gap: 9px;
+  padding: 9px 14px 7px;
+  border-bottom: 1px solid rgba(46, 230, 214, 0.2);
+  background: linear-gradient(180deg, rgba(46, 230, 214, 0.055), transparent);
+}
+.ck12-comms-glyph {
+  flex: none;
+  width: 26px;
+  height: 30px;
+  clip-path: var(--ck12-hex);
+  display: grid;
+  place-items: center;
+  background: linear-gradient(160deg, var(--ck12-sky), var(--ck12-violet));
+  color: #fff;
+  font-size: 12px;
+}
+.ck12-comms-ident {
+  display: flex;
+  flex-direction: column;
+  line-height: 1.2;
+  min-width: 0;
+}
+.ck12-comms-title {
+  font-size: 12.5px;
+  font-weight: 800;
+  font-family: var(--font-ui);
+  color: #fff;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.ck12-comms-sub2 {
+  font-size: 8.5px;
+  color: var(--ck12-ink2);
+  letter-spacing: 0.1em;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.ck12-comms-status {
+  border-radius: 0;
+  border-color: rgba(46, 230, 214, 0.3);
+  color: var(--ck12-ink2);
+  font-family: var(--font-mono);
+  font-size: 8.5px;
+}
+.ck12-comms-status[data-state='streaming'] {
+  color: var(--ck12-teal);
+  border-color: rgba(46, 230, 214, 0.45);
+  background: rgba(46, 230, 214, 0.1);
+}
+
+/* tab 条：✕ 在内容最左（DOM 已改），未读红点、激活天蓝→紫。
+   命名空间用 ck12-ctab*：旧 ck12-tab 与作业面页签（face.css，flex column）
+   撞名，名称盒被压成 0 高（v21 缺陷 3.1 根因）。 */
+.ck12-comms-tabstrip {
+  gap: 5px;
+  padding: 6px 12px;
+  background: rgba(6, 5, 16, 0.35);
+  border-bottom: 1px solid rgba(46, 230, 214, 0.16);
+  scrollbar-width: thin;
+}
+.ck12-comms-tabstrip::-webkit-scrollbar { height: 4px; }
+.ck12-ctab {
+  flex-direction: row;
+  height: 26px;
+  padding: 0 10px;
+  border-radius: 0;
+  clip-path: polygon(6px 0, 100% 0, calc(100% - 6px) 100%, 0 100%);
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(185, 179, 217, 0.2);
+  color: var(--ck12-ink2);
+  font-size: 10px;
+  font-weight: 700;
+  font-family: var(--font-ui);
+  max-width: 150px;
+}
+.ck12-ctab:hover { color: #fff; border-color: var(--ck12-teal); }
+.ck12-ctab.is-on {
+  background: linear-gradient(90deg, rgba(53, 199, 240, 0.3), rgba(123, 77, 255, 0.3));
+  color: #fff;
+  border-color: var(--ck12-teal);
+  box-shadow: 0 0 12px rgba(46, 230, 214, 0.25);
+}
+.ck12-ctab-unread { background: #FF3B5C; color: #fff; }
+.ck12-ctab.has-unread { animation: ck12-tping 0.9s ease; }
+@keyframes ck12-tping {
+  0% { box-shadow: 0 0 0 0 rgba(255, 59, 92, 0.7); }
+  100% { box-shadow: 0 0 0 12px rgba(255, 59, 92, 0); }
+}
+.ck12-ctab-x {
+  width: 14px;
+  height: 14px;
+  border-radius: 3px;
+  color: var(--ck12-metal2);
+  font-size: 9px;
+}
+.ck12-ctab-x:hover { color: #fff; background: #FF3B5C; }
+
+/* 转录区 = 舱内终端屏：内嵌暗屏 + 32px 细网格 + 顶部投影，底部对齐 */
+.ck12-comms-body,
+.ck12-comms-bodywrap {
+  background:
+    radial-gradient(120% 70% at 50% 0%, rgba(46, 230, 214, 0.07), transparent 62%),
+    linear-gradient(180deg, rgba(6, 5, 16, 0.42), rgba(6, 5, 16, 0.2)),
+    linear-gradient(rgba(46, 230, 214, 0.035) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(46, 230, 214, 0.035) 1px, transparent 1px);
+  background-size: auto, auto, 32px 32px, 32px 32px;
+  border-top: 1px solid rgba(46, 230, 214, 0.1);
+  box-shadow:
+    inset 0 10px 26px rgba(4, 3, 12, 0.35),
+    inset 0 -10px 26px rgba(4, 3, 12, 0.22);
+}
+.ck12-comms-body [data-chat-pane] { background: transparent; }
+.ck12-comms [data-tui-col] {
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+  min-height: 100%;
+  font-family: var(--font-mono);
+  font-size: 12.5px;
+}
+
+/* TUI 行：标记 → 正文 → 时间戳；角色列变成行首标记。
+ * 2026-11-19 用户：「✦ 汐音」比正文首行「已完成 …」高出一截，不像一行。
+ * ① 基线对齐（不是 flex-start）：助手消息首块是 meta 行（my-1 + py-[2px]），
+ *    顶对齐会让符签浮在正文上方 6px；按基线对齐后无论首块有没有外边距，
+ *    符签 / 时间戳 / 正文首行都落在同一条基线上。
+ * ② 符签列定宽（见 .ck12-tui-role）：四种符签宽度不同，不锁列正文左缘会错位。 */
+.ck12-tui-row {
+  display: flex;
+  gap: 8px;
+  align-items: baseline;
+  line-height: 1.6;
+  animation: ck12-mi 0.3s ease;
+}
+@keyframes ck12-mi {
+  0% { opacity: 0; transform: translateY(6px); }
+  100% { opacity: 1; transform: none; }
+}
+.ck12-tui-time {
+  order: 3;
+  flex: none;
+  margin-left: auto;
+  font-family: var(--font-mono);
+  font-size: 8.5px;
+  color: rgba(141, 134, 184, 0.55);
+  font-variant-numeric: tabular-nums;
+}
+.ck12-tui-role {
+  order: 1;
+  flex: none;
+  /* 符签列定宽：❯ YOU 34.6 / ✦ 汐音 37.3 / ⌁ SYS 34.6 / ⚙ doer 41.6（11.5px 粗体 mono）。
+   * 原来的 flex:none 让每行按签宽自带列宽 → 正文左缘逐行错位（YOU 713 / 汐音 715 /
+   * doer 721）。3.8em 盖住最长签，随断点字号一起缩放。 */
+  min-width: 3.8em;
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  font-weight: 800;
+  letter-spacing: 0;
+  color: #C9BFFF;
+  overflow: visible;
+  white-space: nowrap;
+  text-shadow: 0 0 10px rgba(201, 191, 255, 0.5);
+}
+.ck12-tui-row[data-tui-row='user'] .ck12-tui-role {
+  color: var(--ck12-gold);
+  text-shadow: 0 0 10px rgba(245, 197, 66, 0.45);
+}
+.ck12-tui-row[data-tui-row='tool'] .ck12-tui-role {
+  color: var(--ck12-teal);
+  text-shadow: 0 0 10px rgba(46, 230, 214, 0.45);
+}
+.ck12-tui-row[data-tui-row='system'] .ck12-tui-role {
+  color: var(--ck12-metal2);
+  text-shadow: none;
+}
+.ck12-tui-cell {
+  order: 2;
+  flex: 1;
+  min-width: 0;
+  color: #EDEBFA;
+}
+.ck12-tui-cell [data-tui-msg='user'] {
+  background: transparent;
+  box-shadow: none;
+  border-left: 2px solid rgba(245, 197, 66, 0.5);
+  border-radius: 0;
+  padding: 1px 10px;
+  color: #fff;
+}
+.ck12-comms [data-tui-msg='user'] {
+  background: transparent;
+  box-shadow: none;
+  border-left: 2px solid rgba(245, 197, 66, 0.5);
+  border-radius: 0;
+  padding: 1px 10px;
+}
+
+/* 选项行：金/amber 左条 + REC 金标 */
+.ck12-comms-choices {
+  border-top: 1px solid rgba(185, 179, 217, 0.12);
+  background: rgba(6, 5, 16, 0.35);
+  padding: 2px 18px 8px;
+}
+.ck12-choice-row,
+.ck12-choice-head {
+  border-left: 3px solid var(--ck12-gold);
+  border-radius: 0;
+  padding: 5px 10px;
+  background: rgba(10, 8, 24, 0.5);
+  border-top: 1px solid rgba(185, 179, 217, 0.22);
+  border-right: 1px solid rgba(185, 179, 217, 0.22);
+  border-bottom: 1px solid rgba(185, 179, 217, 0.22);
+  font-size: 11px;
+}
+.ck12-choice-row:hover,
+.ck12-choice-head:hover {
+  transform: translateX(2px);
+  background: color-mix(in srgb, var(--ck12-gold) 18%, rgba(10, 8, 24, 0.6));
+  box-shadow: 0 0 14px rgba(245, 197, 66, 0.26);
+}
+.ck12-choice-no { color: var(--ck12-gold); }
+.ck12-choice-rec {
+  border-radius: 3px;
+  border: 0;
+  background: var(--ck12-gold);
+  color: #100D28;
+}
+
+/* 底栏（舰桥 + 输入）= 通讯台下半截：同一块终端屏 */
+.ck12-cmdbar {
+  border-radius: 0;
+  border: 1px solid rgba(46, 230, 214, 0.22);
+  clip-path: var(--ck12-cut);
+  background: rgba(6, 5, 16, 0.55);
+  box-shadow:
+    0 18px 48px rgba(16, 13, 40, 0.45),
+    inset 0 1px 0 rgba(255, 255, 255, 0.06);
+}
+.ck12-cmdbar:focus-within {
+  border-color: var(--ck12-teal);
+  box-shadow:
+    0 0 0 1px rgba(46, 230, 214, 0.35),
+    0 0 18px rgba(46, 230, 214, 0.18);
+}
+.ck12-cmd-slot [data-tui-prompt] {
+  color: var(--ck12-teal);
+  text-shadow: 0 0 12px rgba(46, 230, 214, 0.7);
+}
+.ck12-cmd-slot textarea { color: #fff; font-family: var(--font-mono); }
+.ck12-cmd-slot textarea::placeholder { color: var(--ck12-metal2); }
+.ck12-cmdbar.is-draft [data-composer-block] {
+  border: 1px solid var(--ck12-teal);
+  border-radius: 0;
+  clip-path: var(--ck12-cut);
+  background: linear-gradient(180deg, rgba(22, 17, 50, 0.97), rgba(8, 6, 20, 0.97));
+}
+.ck12-cmdbar.is-draft [data-composer-block]::before { color: var(--ck12-teal); }
+
+/* 弹出窗：同源同皮肤 */
+.ck12-cwin {
+  border-radius: 0;
+  border: 1px solid var(--ck12-edge);
+  clip-path: var(--ck12-cut);
+  background: linear-gradient(180deg, rgba(20, 16, 48, 0.86), rgba(10, 8, 24, 0.9) 40%, rgba(8, 6, 20, 0.92));
+  box-shadow: 0 18px 50px rgba(16, 13, 40, 0.6);
+}
+.ck12-cwin-head {
+  height: 38px;
+  padding: 7px 10px;
+  border-bottom: 1px solid rgba(46, 230, 214, 0.22);
+}
+.ck12-cwin-close:hover { background: #FF3B5C; color: #fff; }
+.ck12-cwin-body {
+  background:
+    linear-gradient(180deg, rgba(6, 5, 16, 0.4), rgba(6, 5, 16, 0.22)),
+    linear-gradient(rgba(46, 230, 214, 0.03) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(46, 230, 214, 0.03) 1px, transparent 1px);
+  background-size: auto, 28px 28px, 28px 28px;
+  box-shadow: inset 0 8px 20px rgba(4, 3, 12, 0.32);
+}
+
+@media (max-width: 900px) {
+  .ck12-comms-sub2, .ck12-comms-glyph { display: none; }
+  .ck12-comms-head { height: 44px; padding: 6px 10px; }
+  .ck12-tui-row { gap: 6px; }
+  .ck12-tui-role { font-size: 10px; }
+}
+@media (max-width: 560px) {
+  .ck12-comms-status { display: none; }
+  .ck12-tui-role { font-size: 9px; }
+  .ck12-tui-time { font-size: 8px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .ck12-tui-row { animation: none; }
+  .ck12-ctab.has-unread { animation: none; }
+}
+
+/* ── v21 阶段 3.2/3.3 · 头按钮文字 chip + 底缘状态行 ───────────────────── */
+.ck12-comms-act {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  width: auto;
+  height: 24px;
+  padding: 0 8px;
+  border-radius: 0;
+  border: 1px solid rgba(185, 179, 217, 0.22);
+  color: var(--ck12-ink2);
+  font-size: 9.5px;
+  font-family: var(--font-ui);
+  white-space: nowrap;
+}
+.ck12-comms-act:hover {
+  color: #fff;
+  border-color: var(--ck12-teal);
+  background: rgba(46, 230, 214, 0.08);
+}
+.ck12-comms-act.ck12-comms-tall { color: var(--ck12-gold); border-color: rgba(245, 197, 66, 0.4); }
+.ck12-comms-act.ck12-comms-tall:hover { border-color: var(--ck12-gold); background: rgba(245, 197, 66, 0.1); }
+
+/* 原型 .con-f：SCENE / POSE / CTX / MODEL / TUI + 场景点 */
+.ck12-con-f {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 6px 16px;
+  border-top: 1px solid rgba(185, 179, 217, 0.12);
+  font-size: 9px;
+  color: var(--ck12-metal2);
+  letter-spacing: 0.06em;
+  background: rgba(6, 5, 16, 0.42);
+}
+.ck12-con-f b { color: var(--ck12-teal); font-weight: 700; }
+.ck12-con-sp { flex: 1; }
+.ck12-sdot {
+  width: 9px;
+  height: 10px;
+  flex: none;
+  clip-path: var(--ck12-hex);
+  background: rgba(185, 179, 217, 0.3);
+  transition: 0.15s;
+}
+.ck12-sdot.is-on { background: var(--ck12-teal); box-shadow: 0 0 8px var(--ck12-teal); }
+.ck12-sdot:hover { background: var(--ck12-gold); }
+
+/* 右下舰桥时钟（原型 .clockwidget） */
+.ck12-clockwidget {
+  position: absolute;
+  right: 10px;
+  bottom: 10px;
+  z-index: 20;
+  display: flex;
+  gap: 9px;
+  align-items: center;
+  padding: 6px 13px;
+  clip-path: var(--ck12-cut);
+  background: var(--ck12-glass2);
+  backdrop-filter: blur(10px);
+  border: 1px solid rgba(61, 220, 151, 0.4);
+}
+.ck12-cw {
+  font-size: 16px;
+  font-weight: 800;
+  color: var(--ck12-green, #3DDC97);
+  text-shadow: 0 0 10px rgba(61, 220, 151, 0.6);
+  font-variant-numeric: tabular-nums;
+  font-family: var(--font-mono);
+}
+.ck12-cs {
+  font-size: 9px;
+  color: var(--ck12-ink2);
+  letter-spacing: 0.08em;
+}
+@media (max-width: 900px) {
+  .ck12-clockwidget { display: none; }
+}
+
+/* v21：模型/上下文读数已进 HUD，composer 只留输入行（原型 .con-in 没有控制条）；
+   少一行也让底栏稳定 52px，通讯台底缘贴得上。 */
+.ck12-cmd-slot [data-tui-ctrlbar] { display: none; }
+
+/* ── HUD 断点（原型 §2.2 的 .hud 压缩规则）────────────────────────────── */
+@media (max-width: 1320px) {
+  .ck12-hudcur.is-tok { display: none; }
+  .ck12-sr-k { display: none; }
+}
+@media (max-width: 900px) {
+  .ck12-sceneread { display: none; }
+  .ck12-hudcur.is-ctx { display: none; }
+  .ck12-hud .ck12-pjname { display: none; }
+  .ck12-hud-classic b { display: none; }
+  .ck12-hud-settings { display: none; }
+}
+@media (max-width: 560px) {
+  .ck12-hud { gap: 6px; padding: 0 8px; }
+  .ck12-hudhex.is-theme,
+  .ck12-hudhex.is-poses { display: none; }
+  .ck12-hudcur.is-cost b { font-size: 12px; }
+  .ck12-hud .ck12-pjbtn { padding: 0 8px; }
+}

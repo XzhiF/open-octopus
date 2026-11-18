@@ -27,6 +27,18 @@ export function projectNameFromKey(key: string): string {
   return key
 }
 
+/** 项目锚点 ↔ 舱籍条目：task.project_ids 存名字，编队行存 `org:…` / `local:…` key。 */
+export function matchRepoEntry(
+  entries: readonly CabinRepoEntry[],
+  keyOrName: string,
+): CabinRepoEntry | null {
+  return entries.find((entry) =>
+    entry.key === keyOrName ||
+    entry.name === keyOrName ||
+    entry.key.endsWith(`/${keyOrName}`) ||
+    entry.key.endsWith(`:${keyOrName}`)) ?? null
+}
+
 export function projectRef(cabinId: string, id: string): CockpitRef {
   return { kind: 'project', cabinId, id }
 }

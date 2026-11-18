@@ -20,8 +20,8 @@ import { useEffect, useRef, useState } from 'react'
 import { useAppNavigation } from '@/lib/app-navigation'
 import { useCockpitFleet } from '../fleet/CockpitFleetProvider'
 import { useCockpitState } from '../state/CockpitStateProvider'
-import { candidatesOf, refInRows } from './cockpit-candidates'
-import { cockpitHrefPreserving, parseCockpitUrl, resolveDefaultRef } from './cockpit-url'
+import { refInRows } from './cockpit-candidates'
+import { cockpitHrefPreserving, parseCockpitUrl } from './cockpit-url'
 
 export function CockpitUrlSync() {
   const nav = useAppNavigation()
@@ -40,22 +40,19 @@ export function CockpitUrlSync() {
     setHydrated(true)
   }, [hydrated, nav, entryCabinId, select])
 
-  // 默认选中：只在首次加载完成后的一次。深链带了有效 ref 时这里不动
-  // （只把 defaultSettled 标记掉，避免以后收面又被弹回来）。
+  // v21 三轮：不再「首载自动选中 need 行」。作业详情是按编队行点开的模态
+  // dossier（原型没有一进舱就压住全屏的面板），默认落点是安静舰桥。
   useEffect(() => {
     if (!hydrated || !loadedOnce) return
-    if (defaultSettledRef.current) return
     defaultSettledRef.current = true
-    if (selection) return
-    const fallback = resolveDefaultRef(candidatesOf(rows))
-    if (fallback) select(fallback)
-  }, [hydrated, loadedOnce, selection, rows, select])
+  }, [hydrated, loadedOnce])
 
   // 无效 ref 回退：编队已经是入口舱单舱；merged attention 命中 job 行时也算有效。
+  // 作业被移出编队 / 深链失效 → 收面回到舰桥，不自动弹另一条详情。
   useEffect(() => {
     if (!hydrated || !loadedOnce || !selection) return
     if (refInRows(selection, rows)) return
-    select(resolveDefaultRef(candidatesOf(rows)))
+    select(null)
   }, [hydrated, loadedOnce, selection, rows, select])
 
   useEffect(() => {

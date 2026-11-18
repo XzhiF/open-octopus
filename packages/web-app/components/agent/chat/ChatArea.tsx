@@ -623,12 +623,21 @@ export function ChatArea({
   }, [userTurns])
 
   const jumpToTurn = (id: string) => {
-    const node = scrollRef.current?.querySelector<HTMLElement>(`[data-message-id="${id}"]`)
-    if (!node) return
+    const container = scrollRef.current
+    const node = container?.querySelector<HTMLElement>(`[data-message-id="${id}"]`)
+    if (!container || !node) return
     // Jumping away from the bottom ends follow-mode; scrolling back re-arms it
     // (the scroll handler above re-sticks within 40px of the bottom).
     stickBottomRef.current = false
-    node.scrollIntoView({ behavior: 'smooth', block: 'start' })
+    // v21 二轮：只滚转录容器自身，绝不用 scrollIntoView —— 它会把 body / 祖先
+    // 一起滚走，整个界面跟着上移（原型实测 bug）。
+    const box = container.getBoundingClientRect()
+    const target = node.getBoundingClientRect()
+    const top = container.scrollTop + (target.top - box.top)
+    container.scrollTo({
+      top: Math.max(0, Math.min(top, container.scrollHeight - container.clientHeight)),
+      behavior: 'smooth',
+    })
   }
 
   // hero 态（2026-10-27 原型 v2）：空会话把 composer 居中，像一个空白工作台；
@@ -1068,13 +1077,14 @@ export function ChatArea({
                 {/* minRows=2 / maxRows=5（2026-10-30 用户定稿：默认两行高，
                     最长五行，再超出内滚）。行数下限走 rows 属性、上限走 JS ——
                     不写 CSS min/max-height：max-height 会钳住 scrollHeight，
-                    几行就不再长高（原型 v2 实测 bug）。 */}
+                    几行就不再长高（原型 v2 实测 bug）。
+                    v21 二轮：全域通讯台默认一行、最多四行（原型 1→4 行，超出内滚）。 */}
                 <AutoResizeTextarea
                   value={input}
                   onChange={(e) => setInput(e.target.value)}
                   onKeyDown={handleTuiKeyDown}
-                  minRows={2}
-                  maxRows={5}
+                  minRows={isCockpitVariant ? 1 : 2}
+                  maxRows={isCockpitVariant ? 4 : 5}
                   disabled={!!pendingConfirm}
                   placeholder={
                     queue.length > 0

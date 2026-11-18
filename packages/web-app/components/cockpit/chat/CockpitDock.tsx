@@ -22,6 +22,7 @@ export function CockpitDock() {
       title="通讯停靠 · 点击展开（⌥C）"
       onClick={() => chatWindow.openWithFocus()}
     >
+      <span className="ck12-condock-dot" aria-hidden="true" />
       <span className="ck12-condock-ico" aria-hidden="true">💬</span>
       <span className="ck12-condock-name">{active.short}</span>
       {total > 0 && <i className="ck12-condock-unread">{total > 9 ? '9+' : total}</i>}

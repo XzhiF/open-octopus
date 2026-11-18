@@ -12,7 +12,9 @@
   flex-direction: column;
   gap: 3px;
   min-width: 0;
-  padding: 2px 2px 8px 366px;
+  /* 左让位立绘；右让出右栏（--railr + 10）—— 作业面不再伸到 inbox chip /
+     主菜单底下，否则右栏会挡住页签与正文的点击（v21 保真：层叠收口）。 */
+  padding: 2px calc(var(--ck12-railr) + 14px) 8px calc(var(--ck12-railw) + var(--ck12-charw) + 10px - var(--ck12-charshift));
   /* 透明让位区不挡立绘点击；内容子节点各自恢复可交互。 */
   pointer-events: none;
 }
@@ -831,19 +833,14 @@
   font-family: var(--font-ui);
 }
 
-/* ───────────────────────── 响应式（对齐 .ck12-quiet 让位） ───────────────────────── */
-@media (max-width: 1360px) {
-  .ck12-face { padding-left: 334px; }
-}
-
-@media (max-width: 1120px) {
-  .ck12-face { padding-left: 334px; }
+/* ───────────────────────── 响应式（v21：让位立绘，宽度随手算） ───────────────────────── */
+@media (max-width: 1240px) {
   .ck12-jh-meta { max-width: 40%; }
 }
 
 @media (max-width: 900px) {
   .ck12-face {
-    padding-left: 300px;
+    padding-left: 0;
   }
   .ck12-jh-title { font-size: 15px; }
   .ck12-jh-tab { padding: 0 7px; }

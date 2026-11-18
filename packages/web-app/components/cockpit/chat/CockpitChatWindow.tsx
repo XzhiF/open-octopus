@@ -18,35 +18,30 @@
 //
 // **常驻挂载**：关闭只把 root 切成 display:none，header/body 两个 DOM 节点不动 ——
 // body 是 ChatPane transcript 的 portal 挂载点（模块级 chat-slots），节点一换
-// ChatPane 就会重挂。composer 已 portal 到底栏，不受隐藏祖先影响，关窗后底栏
-// 仍能输入（plans §2.4）。
+// ChatPane 就会重挂。v21 三轮：composer 也 portal 进台内输入行（原型 .con-in），
+// 关窗即整台停靠，输入随台一起隐藏（点 dock pill 展开）。
 //
 // Esc：由 CockpitLayerStack 统一处理（priority 60 = 作业面之上、其它弹层之下）。
 // 流式中先停流（与 composer 内 Esc 同语义），再按一次才收窗。
 
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { Minus, Pin, PinOff, X } from 'lucide-react'
+import { X } from 'lucide-react'
 import { toast } from 'sonner'
 import { useCockpitState } from '../state/CockpitStateProvider'
 import { nextZ } from '@/components/cabin/z-order'
-import { setChatSlot } from './chat-slots'
+import { setChatSlot, useChatSlot } from './chat-slots'
 import {
-  CHAT_MINI_HEIGHT,
   cascadeWinRect,
   clampCockpitRect,
-  cockpitChatPadding,
-  cockpitChatRect,
-  miniCockpitRect,
+  cockpitConsoleRect,
   moveCockpitRect,
-  nextCockpitAlpha,
   resizeCockpitRect,
   resizeCockpitRectLeft,
   resizeCockpitRectTop,
   type Viewport,
 } from './geometry'
 import type { CockpitRect } from '../state/cockpit-state'
-import { THREAD_STATE_LABEL } from '../fleet/threads-model'
-import { CockpitThreadTabs } from './CockpitThreadTabs'
+import { CockpitConsoleTelemetry } from './CockpitConsoleTelemetry'
 import { CockpitChoices } from './CockpitChoices'
 import { CockpitReceipts } from './CockpitReceipts'
 import { useCockpitThreads } from './use-cockpit-threads'
@@ -68,7 +63,7 @@ interface DragState {
 }
 
 export function CockpitChatWindow() {
-  const { chatWindow, chat, layer, wins, select } = useCockpitState()
+  const { chatWindow, chat, layer, wins, select, threads: threadApi } = useCockpitState()
   const { active } = useCockpitThreads()
   const {
     open, mini, pinned, alpha, rect, docked,
@@ -79,7 +74,6 @@ export function CockpitChatWindow() {
   const [z, setZ] = useState<number | null>(null)
   const bumpZ = useCallback(() => setZ(nextZ()), [])
   const dragRef = useRef<DragState | null>(null)
-  const restoreHeightRef = useRef<number | null>(null)
   const tallRestoreRef = useRef<CockpitRect | null>(null)
   const userAdjustedRef = useRef(false)
   const rectRef = useRef<CockpitRect | null>(rect)
@@ -106,6 +100,14 @@ export function CockpitChatWindow() {
   }, [])
   useEffect(() => () => setChatSlot('transcript', null), [])
 
+  // v21 三轮：输入框回到通讯台里（原型 .con-in）—— 底栏不再常驻。
+  // 槽节点常驻（关窗只 display:none），ChatPane 的 composer portal 不重挂。
+  const attachComposer = useCallback((node: HTMLDivElement | null) => {
+    setChatSlot('composer', node)
+  }, [])
+  useEffect(() => () => setChatSlot('composer', null), [])
+  const composerSlot = useChatSlot('composer')
+
   // 标题栏「对话索引」挂载点：ChatTimeline（compact）portal 进来。
   // 正文右侧不再有任何常驻控件 —— 索引只存在于窗框里。
   const attachIndex = useCallback((node: HTMLSpanElement | null) => {
@@ -114,17 +116,13 @@ export function CockpitChatWindow() {
   useEffect(() => () => setChatSlot('index', null), [])
 
   const computeDefaultRect = useCallback((): CockpitRect | null => {
-    const arena = document.getElementById('ck12-arena')
-    if (!arena) return null
-    const box = arena.getBoundingClientRect()
-    if (box.width < 2 || box.height < 2) return null
-    // S4 的 .ck12-scene 还没有落地时退回断点值（366 / 334 / 300）。
-    const scene = arena.querySelector<HTMLElement>('.ck12-scene')
-    const scenePad = scene ? Number.parseFloat(getComputedStyle(scene).paddingLeft) : Number.NaN
-    const pad = Number.isFinite(scenePad) && scenePad > 0
-      ? scenePad
-      : cockpitChatPadding(window.innerWidth)
-    return clampCockpitRect(cockpitChatRect(box, pad), viewportSize())
+    // v21 三轮：原型没有屏幕级底栏，通讯台底缘固定为 视口 − 56（geometry 的
+    // fallback 口径），不再从 footer / composer 上沿反推。
+    return cockpitConsoleRect({
+      viewport: viewportSize(),
+      footerTop: null,
+      composerTop: null,
+    })
   }, [])
 
   // 第一次开窗：量 arena 落默认几何；之后只在用户没动过时跟随布局（rAF 让
@@ -196,14 +194,16 @@ export function CockpitChatWindow() {
     return () => observer.disconnect()
   }, [open, computeDefaultRect])
 
-  // Esc 栈：流式中先停流，再按一次才收窗。docked 时不注册（pill 不是交互层）。
+  // Esc 栈：流式中先停流，再按一次才收台。收起 = 停靠 pill（与 ✕ / ⌄ 同义）——
+  // 只置 open:false 会把台藏掉却不给底栏展开控件，整台就找不回来了（用户反馈）。
+  // docked 时不注册（pill 不是交互层）。
   const closeLayer = useCallback(() => {
     const current = chatRef.current
     if (current?.streaming) {
       current.stop()
       return
     }
-    setRef.current({ open: false })
+    setRef.current({ docked: true })
   }, [])
   useEffect(() => {
     if (!open || docked) return
@@ -254,25 +254,6 @@ export function CockpitChatWindow() {
     setRef.current({ rect: null })
   }, [])
 
-  const toggleMini = useCallback(() => {
-    const current = rectRef.current
-    if (!current) {
-      setRef.current({ mini: !mini })
-      return
-    }
-    if (!mini) {
-      restoreHeightRef.current = current.h
-      setRef.current({ mini: true, rect: miniCockpitRect(current) })
-      return
-    }
-    const restored = restoreHeightRef.current ?? Math.max(CHAT_MINI_HEIGHT, current.h)
-    setRef.current({
-      mini: false,
-      rect: clampCockpitRect({ ...current, h: restored }, viewportSize()),
-    })
-  }, [mini])
-
-  /** v20 ⌃ 加高：顶到 HUD 下沿、底贴舱壁；再点还原。 */
   const toggleTall = useCallback(() => {
     const current = rectRef.current
     if (!current) return
@@ -290,6 +271,16 @@ export function CockpitChatWindow() {
     })
   }, [])
 
+  // v21：「更多 → 日志」= 展开通讯台并切全日志（⌃）。
+  useEffect(() => {
+    const onTall = () => {
+      setRef.current({ open: true, mini: false, docked: false })
+      requestAnimationFrame(() => toggleTall())
+    }
+    window.addEventListener('octopus:chat-tall', onTall)
+    return () => window.removeEventListener('octopus:chat-tall', onTall)
+  }, [toggleTall])
+
   /** v20 ⧉ 弹出：仅用户主动；同线程已存在则聚焦；上限 5 toast 拒绝。 */
   const popOut = useCallback(() => {
     if (active.key === 'main') return
@@ -298,13 +289,6 @@ export function CockpitChatWindow() {
   }, [active.key, wins])
 
   const bodyVisible = open && !mini && !docked
-  const statusText = !chat
-    ? '未就绪'
-    : chat.streaming
-      ? '流式中'
-      : chat.queueDepth > 0
-        ? `排队 ${chat.queueDepth}`
-        : '待命'
 
   return (
     <div
@@ -333,126 +317,93 @@ export function CockpitChatWindow() {
         onPointerUp={endDrag}
         onPointerCancel={endDrag}
       >
-        <div className="ck12-comms-lights">
-          <button
-            type="button"
-            className="ck12-comms-btn ck12-comms-close"
-            aria-label="关闭对话窗"
-            title="关闭（Esc）"
-            onClick={() => setRef.current({ open: false })}
-          >
-            <X className="ck12-comms-ico" aria-hidden="true" />
-          </button>
-          <button
-            type="button"
-            className="ck12-comms-btn ck12-comms-min"
-            aria-label={mini ? '展开对话窗' : '收起对话窗'}
-            aria-pressed={mini}
-            title={mini ? '展开（47px）' : '收起（47px）'}
-            onClick={toggleMini}
-          >
-            <Minus className="ck12-comms-ico" aria-hidden="true" />
-          </button>
-          <button
-            type="button"
-            className="ck12-comms-btn ck12-comms-pin"
-            aria-label="锁定位置"
-            aria-pressed={pinned}
-            title={pinned ? '解除锁定' : '锁定位置与大小'}
-            onClick={() => setRef.current({ pinned: !pinned })}
-          >
-            {pinned
-              ? <PinOff className="ck12-comms-ico" aria-hidden="true" />
-              : <Pin className="ck12-comms-ico" aria-hidden="true" />}
-          </button>
-        </div>
+        <button
+          type="button"
+          className="ck12-comms-close"
+          aria-label="收起通讯台"
+          title="收起通讯台（停靠 pill 点击展开）"
+          data-testid="cockpit-comms-close"
+          onClick={() => setRef.current({ docked: true })}
+        >
+          <X className="ck12-comms-ico" aria-hidden="true" />
+        </button>
+        <span className="ck12-comms-ident">
+          <b className="ck12-comms-title" data-testid="cockpit-comms-title">
+            {active.kind === 'main' ? '主对话' : `▦ ${active.short}`}
+          </b>
+        </span>
 
-        <span className="ck12-comms-title" data-testid="cockpit-comms-title">
-          {active.kind === 'main' ? '汐音 · 对话' : active.short}
-        </span>
-        <span className="ck12-comms-status" data-state={chat?.streaming ? 'streaming' : 'idle'}>
-          {statusText}
-        </span>
-        {active.kind !== 'main' && (
-          <span className="ck12-comms-sub">
-            {THREAD_STATE_LABEL[active.state]}
-          </span>
-        )}
-        {/* 对话索引（用户输入历史）挂在标题栏里，由 ChatTimeline 的 compact 档
-            portal 进来；正文区零常驻控件。mini（47px）时整槽隐藏。 */}
+        {/* 遥测：MODEL / CTX / TOKEN —— 都以芯片为中心向下展开、夹在台内。 */}
+        <CockpitConsoleTelemetry />
+
+        {/* 对话索引（≡ N 轮）：用户输入历史，点开在头部下方弹编号列表。 */}
         <span
           ref={attachIndex}
           className="ck12-comms-index-slot"
           data-testid="cockpit-chat-index-slot"
         />
-        <span className="ck12-comms-grip" aria-hidden="true">⠿</span>
+
+        <span className="ck12-comms-spacer" />
+        {/* 原型头按钮组（左 → 右）：← 主对话 / ⚙ 调试 / ▦ 详情 / ⧉ 弹出 / ⌄ 收起。 */}
         {active.key !== 'main' && (
           <button
             type="button"
-            className="ck12-comms-btn ck12-comms-act"
-            aria-label="弹出作战窗"
-            title="⧉ 弹出成独立窗（最多 5 个）"
-            data-testid="cockpit-popout"
-            onClick={popOut}
+            className="ck12-comms-act"
+            aria-label="回到主对话"
+            title="← 回到主对话"
+            data-testid="cockpit-comms-back"
+            onClick={() => threadApi.activateThread('main')}
           >
-            ⧉
+            ← 主对话
           </button>
         )}
         {active.ref && (
           <button
             type="button"
-            className="ck12-comms-btn ck12-comms-act"
-            aria-label="看作战详情"
-            title="▦ 作战详情"
-            data-testid="cockpit-comms-detail"
-            onClick={() => select(active.ref)}
-          >
-            ▦
-          </button>
-        )}
-        {active.ref && (
-          <button
-            type="button"
-            className="ck12-comms-btn ck12-comms-act ck12-comms-dbg"
+            className="ck12-comms-act ck12-comms-dbg"
             aria-label="看调试 inspect"
             title="⚙ 调试 inspect"
             data-testid="cockpit-comms-debug"
             onClick={() => select(active.ref, 'debug')}
           >
-            ⚙
+            ⚙ 调试
+          </button>
+        )}
+        {active.ref && (
+          <button
+            type="button"
+            className="ck12-comms-act"
+            aria-label="看作战详情"
+            title="▦ 作战详情"
+            data-testid="cockpit-comms-detail"
+            onClick={() => select(active.ref)}
+          >
+            ▦ 详情
+          </button>
+        )}
+        {active.key !== 'main' && (
+          <button
+            type="button"
+            className="ck12-comms-act"
+            aria-label="弹出作战窗"
+            title="⧉ 弹出成独立窗（最多 5 个）"
+            data-testid="cockpit-popout"
+            onClick={popOut}
+          >
+            ⧉ 弹出
           </button>
         )}
         <button
           type="button"
-          className="ck12-comms-btn ck12-comms-act ck12-comms-tall"
-          aria-label="加高通讯台"
-          title="⌃ 全日志加高 / 还原"
-          onClick={toggleTall}
-        >
-          ⌃
-        </button>
-        <button
-          type="button"
-          className="ck12-comms-btn ck12-comms-act"
+          className="ck12-comms-act"
           aria-label="收起成停靠 pill"
           title="⌄ 收起停靠（⌥C）"
           data-testid="cockpit-comms-dock"
           onClick={() => setRef.current({ docked: true })}
         >
-          ⌄
-        </button>
-        <button
-          type="button"
-          className="ck12-comms-alpha"
-          aria-label="调整不透明度"
-          title={`不透明度 ${Math.round(alpha * 100)}%`}
-          onClick={() => setRef.current({ alpha: nextCockpitAlpha(alpha) })}
-        >
-          ◍ {Math.round(alpha * 100)}
+          ⌄ 收起
         </button>
       </header>
-
-      {!mini && <CockpitThreadTabs />}
 
       {/* 常驻节点：关窗/收起只隐藏，不卸载 —— ChatPane 的 transcript portal 目标。
           wrapper 只多一层 relative 定位上下文，回执 overlay 住在里面。 */}
@@ -466,9 +417,18 @@ export function CockpitChatWindow() {
           data-testid="cockpit-chat-transcript"
         />
         <CockpitReceipts threadKey={active.key} />
+        {bodyVisible && <CockpitChoices />}
+        {/* 原型 .con-in：❯ + 输入框 + 金色六角 ⏎；「待你定」dock 由 composer
+            自带的 composerDock 渲染在这行之上。 */}
+        <div className="ck12-comms-in">
+          <div
+            ref={attachComposer}
+            className="ck12-comms-inslot"
+            data-testid="cockpit-composer-slot"
+            data-has-composer={composerSlot ? 'true' : 'false'}
+          />
+        </div>
       </div>
-
-      {bodyVisible && <CockpitChoices />}
 
       <div
         className="ck12-comms-resize"

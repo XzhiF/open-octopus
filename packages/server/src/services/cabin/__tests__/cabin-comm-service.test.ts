@@ -23,6 +23,7 @@ let taskDAO: TaskDAO
 let comm: CabinCommService
 let fetchMock: ReturnType<typeof vi.fn>
 let triggerMock: ReturnType<typeof vi.fn>
+let readyMock: ReturnType<typeof vi.fn>
 let resumeMock: ReturnType<typeof vi.fn>
 let createTaskMock: ReturnType<typeof vi.fn>
 let updateSessionMock: ReturnType<typeof vi.fn>
@@ -45,6 +46,7 @@ beforeEach(() => {
   }))
   vi.stubGlobal("fetch", fetchMock)
   triggerMock = vi.fn(async () => ({}))
+  readyMock = vi.fn(() => ({}))
   resumeMock = vi.fn(async () => ({}))
   createTaskMock = vi.fn(() => ({ id: "task-1", workspace_id: "ws-task" }))
   updateSessionMock = vi.fn()
@@ -56,6 +58,7 @@ beforeEach(() => {
     } as never,
     tasksService: {
       createTask: createTaskMock,
+      readyTask: readyMock,
       triggerTask: triggerMock,
       resumeTask: resumeMock,
     } as unknown as TasksService,
@@ -120,7 +123,54 @@ describe("CabinCommService", () => {
     const job = comm.dispatch("c1", { kind: "task", title: "T", ref_id: "task-r" })
     await comm.resume("c1", job.id)
     expect(triggerMock).toHaveBeenCalledWith("task-r")
-    expect(cabin.listEvents(job.id).map((e) => e.kind)).toContain("resume")
+    const event = cabin.listEvents(job.id).find((e) => e.kind === "resume")!
+    expect(JSON.parse(event.payload!)).toMatchObject({ action: "trigger", from_status: "ready" })
+  })
+
+  it("resume：v4 草稿先过 ready gate 入列，再触发", async () => {
+    readyMock.mockImplementation((id: string) => {
+      db.prepare("UPDATE tasks SET status = 'ready' WHERE id = ?").run(id)
+      return {}
+    })
+    insertTask("task-d", "draft", "c1")
+    const job = comm.dispatch("c1", { kind: "task", title: "T", ref_id: "task-d" })
+    await comm.resume("c1", job.id)
+    expect(readyMock).toHaveBeenCalledWith("task-d")
+    expect(triggerMock).toHaveBeenCalledWith("task-d")
+    const event = cabin.listEvents(job.id).find((e) => e.kind === "resume")!
+    expect(JSON.parse(event.payload!)).toMatchObject({
+      action: "enqueue+trigger", from_status: "draft", to_status: "ready",
+    })
+  })
+
+  it("resume：gate 缺项时落 error 事件并原样抛出（不假装已触发）", async () => {
+    const gate = Object.assign(new Error("phase:2:workflow-ref"), {
+      missing: ["phase:2:workflow-ref"],
+    })
+    readyMock.mockImplementationOnce(() => { throw gate })
+    insertTask("task-g", "draft", "c1")
+    const job = comm.dispatch("c1", { kind: "task", title: "T", ref_id: "task-g" })
+    await expect(comm.resume("c1", job.id)).rejects.toThrow("phase:2:workflow-ref")
+    expect(triggerMock).not.toHaveBeenCalled()
+    const event = cabin.listEvents(job.id).find((e) => e.kind === "resume")!
+    expect(JSON.parse(event.payload!)).toMatchObject({
+      action: "error", from_status: "draft", missing: ["phase:2:workflow-ref"],
+    })
+  })
+
+  it("note：默认只留痕进审计；notify=true 才唤醒会话转达", async () => {
+    // workflow job 的 dispatch 不 wake，能干净地观察 note 自己的唤醒开关。
+    const job = comm.dispatch("c1", { kind: "workflow", title: "T", ref_id: "wf-1", session_id: "sess-note" })
+    const event = comm.note("c1", job.id, "phase 2 产物已删除")
+    expect(event.kind).toBe("note")
+    expect(JSON.parse(event.payload!)).toEqual({ summary: "phase 2 产物已删除" })
+    expect(fetchMock).not.toHaveBeenCalled()
+
+    comm.note("c1", job.id, "请作者不要恢复", { notify: true })
+    await vi.waitFor(() => expect(fetchMock).toHaveBeenCalled())
+    const body = JSON.parse(String(fetchMock.mock.calls[0][1].body)) as { message: string }
+    expect(body.message).toContain("[舱备注 · 不授权]")
+    expect(cabin.listEvents(job.id).filter((e) => e.kind === "note")).toHaveLength(2)
   })
 
   it("recordTaskSignal：自动登记 job + attention/report/handback + 终态 endJob", () => {

@@ -16,6 +16,13 @@
 //   ④ 同一个用户窗内可能有多条 assistant（事件卡之后的续写、多段回复）→ 再按
 //      各 assistant 自己的 created_at 切一刀，每条只拿自己那段，否则同轮账被重复算。
 //   ⑤ session_compress 行是后台压缩，不属于任何对话 turn，两者都排除。
+//   ⑥ 委托 / 系统唤醒线程（2026-11-19）：汐音「[汐音 · 代用户转达]」派发的任务
+//      线程，user 行全是事件卡，**一条真人发言都没有** → ①②的窗口一条都建不
+//      出来，整条线程每轮 tok/¥ 全空（而 llm_calls 明明有账）。这类线程退回
+//      「对话开头 + assistant 分段起点」：不能拿事件卡当边界 —— 任务状态卡常在
+//      长轮中途落库，会把该轮迟到的 result 挤出窗口（③的真机事故）。分段交给
+//      ④的 assistantStarts，最后一段开到会话末尾。新数据已带 message_id（服务端
+//      chat 路由落账补传），委托线程走①精确归属，不依赖这段兜底。
 //
 // 时长取账本：max(timestamp) - min(timestamp - duration_ms)，重试产生的新行
 // 自然把跨度拉长；无账本行（旧轮 / 还没落账）→ 不显示时长，不拿首字延迟冒充。
@@ -136,15 +143,25 @@ export function buildTurnStats(
     .map((m) => tsOf(m.created_at))
     .filter((t): t is number => t != null)
     .sort((a, b) => a - b)
+  // 无真人发言的线程（委托 / 系统唤醒）退回到「对话开头」当第一条边界（⑥）。
+  let fallbackStart: number | null = null
+  for (const m of messages) {
+    const t = tsOf(m.created_at)
+    if (t != null && (fallbackStart == null || t < fallbackStart)) fallbackStart = t
+  }
+  const isHumanStart = (start: number): boolean => userStarts.includes(start)
   const turnStartOf = (t: number): number | null => {
     let start: number | null = null
     for (const s of userStarts) {
       if (s <= t) start = s
       else break
     }
-    return start
+    if (start != null) return start
+    return fallbackStart != null && fallbackStart <= t ? fallbackStart : null
   }
   const turnEndOf = (start: number): number => {
+    // 无真人边界：不按事件卡切轮，窗口开到会话末尾，由 assistant 分段起点收口（⑥）。
+    if (!isHumanStart(start)) return Number.POSITIVE_INFINITY
     for (const s of userStarts) if (s > start) return s
     return Number.POSITIVE_INFINITY
   }

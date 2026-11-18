@@ -1,29 +1,28 @@
 'use client'
 
-// S4 owns this file —— 从 CabinJobDetail 抽出的五页签主体（props 驱动）。
+// S4 owns this file —— 从 CabinJobDetail 抽出的页签主体（props 驱动）。
 //
-// 两种宿主：
-//   · variant="window"  —— classic-v3 作业详情窗。DOM/行为与抽取前逐字一致
+// 两种宿主（2026-11-19 用户：页签同步成同一套 COCKPIT_TABS，不再各维护一份）：
+//   · variant="window"  —— classic-v3「作战详情」窗。页签清单/首签与全域面一致
 //     （CabinV3 / CabinModulesP3 是回归闸门），所有 useCabinContext() 的读取
 //     都变成了 props。
 //   · variant="cockpit" —— 全域座舱的作业面：头部换成 CockpitJobHeader，
-//     五页签主体原样复用；页签是受控的（CockpitState 的 tab/URL 同步）。
+//     页签主体原样复用；页签是受控的（CockpitState 的 tab/URL 同步）。
 //
 // 数据：GET /api/cabins/:id/jobs/:jid（job + events，10s 轮询）+ listCabinJobs
 // （派生 status）；task 类作业再取任务实体（运行/变更/验收都要）。
 // 本文件**不读 useCabinContext()**（§3.4 的 critical 修正）。
 
-import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import {
   ArrowRight, Bot, ChevronDown, GitBranch, ListTodo, MessageSquare,
 } from 'lucide-react'
-import { toast } from 'sonner'
 import type { CabinAttentionItem, CabinJob, CabinJobEvent, CabinJobKind } from '@octopus/shared'
 import {
   getCabinJob, getCabinUsage, listCabinJobs,
   type CabinJobView,
 } from '@/lib/cabin-api'
-import { abortTask, getTask, pauseTask, resumeTask, type TaskDetail } from '@/lib/tasks-api'
+import { getTask, type TaskDetail } from '@/lib/tasks-api'
 import { getSession } from '@/lib/agent/api'
 import type { AgentMessage } from '@/lib/agent/types'
 import { withDeadline } from '@/lib/with-deadline'
@@ -42,15 +41,19 @@ import {
   COCKPIT_TABS, COCKPIT_TAB_LABELS, type CockpitTab,
 } from '@/components/cockpit/state/cockpit-state'
 import {
-  CockpitElapsed, CockpitJobHeader, TaskRunActions, tabForAttentionStage,
+  CockpitElapsed, CockpitJobHeader, CockpitJobTabs,
 } from '@/components/cockpit/face/CockpitJobHeader'
 import { CockpitJobFiles } from '@/components/cockpit/face/CockpitJobFiles'
 import { CockpitJobDebug } from '@/components/cockpit/face/CockpitJobDebug'
+import { CockpitJobDialog } from '@/components/cockpit/face/CockpitJobDialog'
+import { CockpitJobProject } from '@/components/cockpit/face/CockpitJobProject'
+import { projectNameFromKey } from '@/components/cockpit/projects/project-model'
 import { PHASE_PILL, PHASE_STATUS_LABEL } from '@/components/tasks/run-console/phase-status'
 
-/** classic 作业窗页签 = v12 五页签 + 文件（2026-11-17 用户：作战详情要能像
- *  作业坞那样查 task home）。debug 仍只在全域面出现。 */
-const WINDOW_TABS: readonly CockpitTab[] = ['overview', 'relay', 'run', 'changes', 'accept', 'files']
+// 2026-11-19 用户：classic 作业窗改名「作战详情」，页签与全域面完全同一套
+// （对话 / 对接 / 运行 / 变更 / 验收 / 文件 / 调试 / 项目）—— 两种宿主不再各
+// 维护一份清单。`overview` 已在 v21 七轮退役（不在 COCKPIT_TABS 里），它的
+// 统计读数仍在 `panes` 里保留给旧深链，页签栏不再出现。
 
 /** 作业面（详情 + 派生状态）的单请求预算：接口吊死时给出错误与重试，
  *  不能永远停在「载入作业…」（2026-11-14 用户）。 */
@@ -87,6 +90,14 @@ function actorLabel(actor: string | null | undefined): string {
   if (actor === 'doer') return '执行者'
   if (actor === 'system') return '系统'
   return actor
+}
+
+/** 事件时间 HH:MM（原型 .ev .t；非法时间给 —，不猜）。 */
+function hmOf(iso: string | null | undefined): string {
+  if (!iso) return '—'
+  const d = new Date(iso)
+  if (Number.isNaN(d.getTime())) return '—'
+  return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`
 }
 
 /** 概览「交接统计」的固定词序：先派发后回报，人输入/决策单列。 */
@@ -269,7 +280,9 @@ function shortId(value: string | null | undefined): string | null {
 export interface JobFaceCockpitControls {
   /** 舱名（由 CockpitFace 从 fleet 行带下来；缺省时行2 省略该段）。 */
   cabinName?: string | null
-  /** 本作业的 attention（fleet 已按 job_id 合并；没有就不显示「去处理」）。 */
+  /** 项目名（编队行 project_keys 派生；有它时副行写「项目 · 分支 · 编号」）。 */
+  projectName?: string | null
+  /** 本作业的 attention（fleet 已按 job_id 合并；只用于「当前在做」文案）。 */
   attention?: CabinAttentionItem | null
   /** 编队行里**已经**有的作业摘要：详情接口回来之前就拿它画头部。
    *  没有它时载入态只能写「载入作业…」——用户分不清「哪件作业在载入」和
@@ -281,8 +294,6 @@ export interface JobFaceCockpitControls {
   onClose(): void
   /** 验收通过/打回后（CockpitFace 用来落下一行「需要你」）。 */
   onAcceptanceMutated?(): void
-  /** 项目签（作业有项目锚点才给）。 */
-  projectTag?: ReactNode
 }
 
 export interface JobFaceProps {
@@ -312,8 +323,7 @@ export function JobFace({
   const [job, setJob] = useState<CabinJob | null>(null)
   const [jobView, setJobView] = useState<CabinJobView | null>(null)
   const [events, setEvents] = useState<CabinJobEvent[]>([])
-  const [innerTab, setInnerTab] = useState<CockpitTab>('overview')
-  const [busy, setBusy] = useState<string | null>(null)
+  const [innerTab, setInnerTab] = useState<CockpitTab>('dialog')
   const [taskEntity, setTaskEntity] = useState<TaskDetail | null>(null)
   /** 舱主会话消息：对接里「汐音 → 你」那一跳的原始来源（任务卡）。 */
   const [mainMessages, setMainMessages] = useState<AgentMessage[]>([])
@@ -343,7 +353,7 @@ export function JobFace({
     // 详情明明已经到了，面还在「载入作业…」（2026-11-14 用户）。
     let detail: { job: CabinJob; events: CabinJobEvent[] }
     try {
-      detail = await withDeadline(null, JOB_FACE_TIMEOUT_MS, '作业详情', (s) => getCabinJob(cabinId, jobId, s))
+      detail = await withDeadline(null, JOB_FACE_TIMEOUT_MS, '作战详情', (s) => getCabinJob(cabinId, jobId, s))
     } catch (err) {
       // 保留上一份快照；没有快照时界面显示这句原因 + 重试。
       setLoadError(err instanceof Error ? err.message : '作业加载失败')
@@ -365,8 +375,9 @@ export function JobFace({
     setJobView(null)
     setEvents([])
     setLoadError(null)
-    // 旧窗行为：换作业回到概览。cockpit 的页签是受控的（URL 决定），不重置。
-    if (!controlled) setInnerTab('overview')
+    // 旧窗行为：换作业回到首签（2026-11-19 起跟全域面一致 = 对话）。
+    // cockpit 的页签是受控的（URL 决定），不重置。
+    if (!controlled) setInnerTab('dialog')
     void load()
   }, [load, controlled])
 
@@ -403,6 +414,9 @@ export function JobFace({
 
   // 运行/变更/验收都要任务实体（RunWindow 自己解析当前轮）。
   const taskId = job?.kind === 'task' ? job.ref_id : null
+  // v21 七轮：「对话」页签读任务主会话（= 通讯台里这条任务的线程）。
+  // workflow / subagent 没有主会话 → null，页签给明确空态。
+  const dialogSessionId = taskEntity?.source_chat_session_id ?? null
   useEffect(() => {
     let alive = true
     setTaskEntity(null)
@@ -474,26 +488,6 @@ export function JobFace({
     if (tab !== 'relay') setJumpOpen(false)
   }, [tab])
 
-  /** task 类作业的暂停/恢复/中止：只用 lib/tasks-api 现有函数。 */
-  const runTaskAction = async (action: 'pause' | 'resume' | 'abort') => {
-    if (!taskId) return
-    setBusy(action)
-    try {
-      if (action === 'pause') await pauseTask(taskId)
-      else if (action === 'resume') await resumeTask(taskId)
-      else await abortTask(taskId)
-      toast.success(
-        action === 'pause' ? '已暂停这一轮' : action === 'resume' ? '已继续运行' : '已中止任务',
-      )
-      await load()
-      onMutated?.()
-    } catch (err) {
-      toast.error(err instanceof Error ? err.message : '操作失败')
-    } finally {
-      setBusy(null)
-    }
-  }
-
   const cockpitMode = variant === 'cockpit'
   const onClose = cockpit?.onClose ?? (() => {})
   // 全域作业面：五个页签**统一等高**（面体高度固定，内容撑满它）——
@@ -529,11 +523,9 @@ export function JobFace({
               kind={hint.kind}
               title={hint.title}
               status={hint.status ?? null}
-              tab={tab}
-              onTabChange={changeTab}
               onClose={onClose}
               cabinName={cockpit?.cabinName ?? null}
-              projectTag={cockpit?.projectTag}
+              projectName={cockpit?.projectName ?? null}
             />
           ) : (
             <CockpitJobHeader loading onClose={onClose} />
@@ -619,6 +611,7 @@ export function JobFace({
   const pct = pctFromPhases(phaseViews)
   const acceptedPhases = phaseViews.filter((phase) => phase.status === 'accepted').length
   const jobStatusText = jobStatusLabel(status)
+  const toneEmoji = ({ run: '⚡', wait: '❗', blocked: '💦', ended: '✅', idle: '●' } as const)[tone]
 
   // ── 概览统计（2026-11-17 用户：概览不看事件流，看统计）────────────────
   // 每个数都是真账本/真任务实体；缺数据就不出那一格，不补 0、不猜。
@@ -642,90 +635,19 @@ export function JobFace({
   const doing = (lastEvent ? summaryOf(lastEvent) : '') || cockpit?.attention?.title || null
   const branch = job.kind === 'task' ? (taskEntity?.task_spec?.branch ?? null) : null
   const executor = shortId(job.session_id ?? job.ref_id)
+  // 原型 .ph 副行的「编号」：任务 / 作业自己的 ref 短号（不是会话 id）。
+  const jobNo = shortId(job.ref_id ?? job.id)
+  // 项目锚点：task 用 project_ids（classic 的「N 项目」同源）；其它用编队行 keys。
+  const taskProjects = taskEntity?.project_ids ?? []
+  const jobProjects = job.kind === 'task' && taskProjects.length > 0
+    ? taskProjects
+    : (jobView?.project_keys ?? [])
+  const projectName = cockpit?.projectName
+    ?? (jobProjects.length > 0 ? projectNameFromKey(jobProjects[0]) : null)
   const costLabel = usageCost ? formatCost(usageCost.usd, usageCost.complete, currency) : null
-  const goTab = cockpit?.attention ? tabForAttentionStage(cockpit.attention.stage) : null
 
-  const cockpitActions = (
-    <>
-      {job.kind === 'task' && (
-        <TaskRunActions
-          status={status}
-          busy={busy}
-          onPause={() => { void runTaskAction('pause') }}
-          onResume={() => { void runTaskAction('resume') }}
-          onAbort={() => { void runTaskAction('abort') }}
-        />
-      )}
-      {job.kind === 'workflow' && (
-        <button
-          type="button"
-          className="ck12-jh-btn"
-          data-testid="cockpit-job-open-run"
-          onClick={() => changeTab('run')}
-        >
-          看运行 →
-        </button>
-      )}
-      {job.kind === 'subagent' && (
-        <button
-          type="button"
-          className="ck12-jh-btn"
-          data-testid="cockpit-job-open-subagent"
-          onClick={() => changeTab('run')}
-        >
-          子代理 →
-        </button>
-      )}
-      {/* v20（design 29 §6）：标题行 hex 动作 —— 💬谈 / ◈去决断 / ⚙调试 / ⧉舱籍。 */}
-      <button
-        type="button"
-        className="ck12-jh-btn"
-        data-testid="cockpit-job-talk"
-        disabled={!job.session_id}
-        title="💬 直达该作战线程"
-        onClick={() => window.dispatchEvent(new CustomEvent('octopus:open-session', {
-          detail: { sessionId: job.session_id },
-        }))}
-      >
-        💬 谈
-      </button>
-      {cockpit?.attention && (
-        <button
-          type="button"
-          className="ck12-jh-btn"
-          data-testid="cockpit-job-ops"
-          title="◈ 去决断队列"
-          onClick={() => window.dispatchEvent(new CustomEvent('octopus:cockpit-action', {
-            detail: { action: 'ops' },
-          }))}
-        >
-          ◈ 决断
-        </button>
-      )}
-      <button
-        type="button"
-        className="ck12-jh-btn"
-        data-testid="cockpit-job-debug-tab"
-        title="⚙ 调试 inspect"
-        onClick={() => changeTab('debug')}
-      >
-        ⚙ 调试
-      </button>
-      {(jobView?.project_keys?.length ?? 0) > 0 && (
-        <button
-          type="button"
-          className="ck12-jh-btn"
-          data-testid="cockpit-job-project"
-          title="⧉ 看舱籍项目"
-          onClick={() => window.dispatchEvent(new CustomEvent('octopus:cockpit-action', {
-            detail: { action: 'project', key: jobView?.project_keys?.[0] },
-          }))}
-        >
-          ⧉ 舱籍
-        </button>
-      )}
-    </>
-  )
+  // v21 五轮（用户）：详情头部右上不再放任何动作按钮 —— 暂停/中止 / 谈 / 决断 /
+  // 调试 / 舱籍都回到各自入口（作业坞、左栏行 💬、右栏「要我处理」、详情页签、HUD 舱籍）。
 
   // ── 概览块（两种宿主共用；2026-11-17 用户：概览看统计，不再铺事件流）──
   // 统计只读真账本：kind 计数来自 cabin_job_events，执行/阶段来自任务实体。
@@ -924,49 +846,67 @@ export function JobFace({
 
   const panes = (
     <>
+      {tab === 'dialog' && <CockpitJobDialog sessionId={dialogSessionId} cabinId={cabinId} taskId={taskId} />}
       {tab === 'overview' && (cockpitMode ? (
-        // 全域概览（v12 .sgrid.jg-over）：左「作战统计」（交接/执行/最近交接/
-        // 任务摘要），右「作业状态」读数（KPI + 舱/执行者/分支 + 派发授权）。
-        <div data-testid="cabin-job-overview" className="ck12-sgrid ck12-jg-over">
-          <section className="ck12-pane">
-            <header className="ck12-pane-h">
-              <b>作战统计</b>
-              <span className="ck12-pane-tag">{kindTotal} 交接 · {execs.length} 执行</span>
-            </header>
-            <div className="ck12-pane-b is-tight">
-              {kindChips}
-              {phaseList}
-              {lastHandoff}
-              {taskSummary}
-              {timeline.length === 0 && execs.length === 0 && (
-                <div className="ck12-face-empty" style={{ marginTop: 10 }}>
-                  还没有交接事件 · 派发后这里开始累计统计。
-                </div>
-              )}
+        // v21 三轮（原型 .panel 详情·概览）：kv 读数 + 当前在做 + 最近事件。
+        <div data-testid="cabin-job-overview" className="ck12-dossier-ov">
+          <div className="ck12-kv">
+            <div className="ck12-kvi">
+              <div className="k">状态</div>
+              <div className="v is-a">{toneEmoji} {jobStatusText}</div>
             </div>
-          </section>
-
-          <section className="ck12-pane">
-            <header className="ck12-pane-h">
-              <b>作业状态</b>
-              <span className="ck12-pane-tag" data-tone={tone}>{jobStatusText}</span>
-            </header>
-            <div className="ck12-pane-b is-tight">
-              {kpiGrid}
-
-              {(cockpit?.cabinName || executor || branch) && (
-                <div className="ck12-jfacts">
-                  {cockpit?.cabinName && <span>舱 <b>{cockpit.cabinName}</b></span>}
-                  {executor && <span>执行者 <b>{executor}</b></span>}
-                  {branch && <span>分支 <b>{branch}</b></span>}
-                </div>
-              )}
-
-              {progressBar}
-              {phaseChips}
-              {mandateBlock}
+            {pct !== null && (
+              <div className="ck12-kvi">
+                <div className="k">进度</div>
+                <div className="v">{Math.round(pct)}%</div>
+              </div>
+            )}
+            {executor && (
+              <div className="ck12-kvi">
+                <div className="k">执行者</div>
+                <div className="v">{executor}</div>
+              </div>
+            )}
+            {branch && (
+              <div className="ck12-kvi">
+                <div className="k">分支</div>
+                <div className="v is-g">{branch}</div>
+              </div>
+            )}
+            <div className="ck12-kvi">
+              <div className="k">用时</div>
+              <div className="v"><CockpitElapsed start={job.created_at} end={job.ended_at} /></div>
             </div>
-          </section>
+            {costLabel && (
+              <div className="ck12-kvi">
+                <div className="k">消耗</div>
+                <div className="v is-gr">{costLabel}</div>
+              </div>
+            )}
+          </div>
+
+          {doing && (
+            <>
+              <div className="ck12-sect">当前在做</div>
+              <div className="ck12-doing">{doing}</div>
+            </>
+          )}
+
+          <div className="ck12-sect">最近事件</div>
+          {timeline.length === 0 ? (
+            <div className="ck12-dossier-empty">暂无事件</div>
+          ) : (
+            timeline.slice(-4).map((event) => (
+              <div
+                key={event.id}
+                className={`ck12-ev${event.kind === 'attention' ? ' is-attention' : ''}`}
+              >
+                <span className="t">{hmOf(event.created_at)}</span>
+                <span className="w">{actorLabel(event.actor)}</span>
+                <span className="x">{summaryOf(event)}</span>
+              </div>
+            ))
+          )}
         </div>
       ) : (
         // classic 作业窗：同一条统计主线，单列往下排。不再画事件流 ——
@@ -1233,9 +1173,18 @@ export function JobFace({
           <CockpitJobFiles taskId={job.kind === 'task' ? job.ref_id : null} />
         </div>
       )}
-      {tab === 'debug' && cockpitMode && (
-        <div data-testid="cockpit-job-debug" className={frameOf()}>
+      {tab === 'debug' && (
+        <div data-testid="cockpit-job-debug" className={frameOf('min-h-0 flex-1 flex flex-col')}>
           <CockpitJobDebug sessionId={job.session_id} />
+        </div>
+      )}
+      {tab === 'project' && (
+        <div data-testid="cockpit-job-project-pane" className={frameOf()}>
+          <CockpitJobProject
+            cabinId={cabinId}
+            projects={jobProjects}
+            branch={branch}
+          />
         </div>
       )}
     </>
@@ -1248,21 +1197,22 @@ export function JobFace({
           kind={job.kind}
           title={job.title}
           status={status}
-          tab={tab}
-          onTabChange={changeTab}
           onClose={onClose}
           branch={branch}
+          projectName={projectName}
+          jobNo={jobNo}
           doing={doing}
           executor={executor}
           cabinName={cockpit?.cabinName ?? null}
           startedAt={job.created_at}
           endedAt={job.ended_at}
           costLabel={costLabel}
-          onGoHandle={goTab ? () => changeTab(goTab) : undefined}
-          actions={cockpitActions}
-          projectTag={cockpit?.projectTag}
         />
-        <div className="ck12-face-body" data-testid="cockpit-face-job">{panes}</div>
+        <div className="ck12-face-body" data-testid="cockpit-face-job">
+          {/* 原型 .dtabs 在滚动正文里（.pb）—— 页签跟着内容滚走，不是常驻条。 */}
+          <CockpitJobTabs tab={tab} onTabChange={changeTab} />
+          {panes}
+        </div>
       </>
     )
   }
@@ -1290,8 +1240,8 @@ export function JobFace({
         {jobView?.transport && <span className="font-mono text-[10px] text-pop-dim">· {jobView.transport}</span>}
       </div>
 
-      <div className="mb-2.5 flex shrink-0 gap-1 border-b-[1.5px] border-pop-bd" role="tablist">
-        {WINDOW_TABS.map((key) => (
+      <div className="mb-2.5 flex shrink-0 gap-1 overflow-x-auto border-b-[1.5px] border-pop-bd" role="tablist" aria-label="作战页签">
+        {COCKPIT_TABS.map((key) => (
           <button
             key={key}
             type="button"
@@ -1311,7 +1261,9 @@ export function JobFace({
         ))}
       </div>
 
-      <div className={cn('min-h-0 flex-1', !cockpitMode && 'cabin-job-scope')}>{panes}</div>
+      {/* flex-col：对话/调试这类自撑满的页签（.ck12-dcon / .ck12-dbg）要一个
+          有确定高度的父级；放行页签自带的 500/520px 不受影响。 */}
+      <div className={cn('flex min-h-0 flex-1 flex-col', !cockpitMode && 'cabin-job-scope')}>{panes}</div>
     </div>
   )
 }

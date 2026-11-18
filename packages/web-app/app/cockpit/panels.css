@@ -222,8 +222,10 @@
   .ck12-ledger-cells { grid-template-columns: repeat(2, 1fr); }
 }
 
-/* ── 动作图鉴（poses）──────────────────────────────────────────────── */
-.ck12-poses { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; }
+/* ── 动作图鉴（poses · v22 纯视频 13 支）───────────────────────────────
+   卡片 = 缩略图 + 悬停视频层 + 旧/新角标；比例与立绘源一致（2:3），
+   object-fit: contain 保证全身不裁切（13 支归一化后人物位置一致）。 */
+.ck12-poses { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 10px; }
 .ck12-pose-card {
   display: flex; flex-direction: column; gap: 4px; padding: 8px;
   border: 1px solid var(--ck12-bd); border-radius: 12px;
@@ -232,10 +234,32 @@
 }
 .ck12-pose-card:hover { transform: translateY(-2px); border-color: color-mix(in srgb, var(--ck-a) 45%, transparent); }
 .ck12-pose-card.is-on { border-color: var(--pop-amber); box-shadow: 0 0 0 1px var(--pop-amber), 0 0 18px color-mix(in srgb, var(--pop-amber) 25%, transparent); }
-.ck12-pose-thumb { display: block; height: 150px; width: 100%; overflow: hidden; border-radius: 8px; background: rgba(0, 0, 0, 0.25); }
-.ck12-pose-thumb img { width: 100%; height: 100%; object-fit: cover; object-position: 50% 12%; }
+.ck12-pose-thumb {
+  position: relative; display: block; width: 100%; aspect-ratio: 2 / 3;
+  overflow: hidden; border-radius: 8px; background: rgba(0, 0, 0, 0.25);
+}
+.ck12-pose-thumb img,
+.ck12-pose-video {
+  position: absolute; inset: 0; width: 100%; height: 100%;
+  object-fit: contain; object-position: 50% 100%;
+}
+.ck12-pose-thumb img { z-index: 1; transition: opacity 0.2s ease; }
+.ck12-pose-video { z-index: 2; opacity: 0; pointer-events: none; transition: opacity 0.22s ease; }
+.ck12-pose-card:hover .ck12-pose-video,
+.ck12-pose-card:focus-visible .ck12-pose-video { opacity: 1; }
+.ck12-pose-card:hover .ck12-pose-thumb img,
+.ck12-pose-card:focus-visible .ck12-pose-thumb img { opacity: 0; }
+.ck12-pose-badge {
+  position: absolute; top: 5px; right: 5px; z-index: 3;
+  padding: 1px 5px; border-radius: 5px;
+  font-family: var(--font-mono); font-size: 8px; letter-spacing: 0.1em;
+  color: var(--ck12-teal); background: rgba(8, 14, 26, 0.62);
+  border: 1px solid color-mix(in srgb, var(--ck12-teal) 35%, transparent);
+}
 .ck12-pose-card b { font-size: 11px; color: var(--ck12-ink); }
 .ck12-pose-card b small { margin-left: 5px; font-size: 8.5px; letter-spacing: 0.1em; color: var(--ck12-faint); }
 .ck12-pose-desc { font-size: 9px; color: var(--ck12-dim); }
-@media (max-width: 900px) { .ck12-poses { grid-template-columns: repeat(3, 1fr); } }
-@media (max-width: 560px) { .ck12-poses { grid-template-columns: repeat(2, 1fr); } .ck12-pose-thumb { height: 120px; } }
+@media (prefers-reduced-motion: reduce) {
+  .ck12-pose-video { display: none; }
+  .ck12-pose-card:hover .ck12-pose-thumb img { opacity: 1; }
+}

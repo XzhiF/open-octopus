@@ -312,6 +312,7 @@ const CABIN_ORCHESTRATOR_PERSONA = `# 舱调度者（Cabin Orchestrator 分身�
 
 ## 边界
 - 不亲自写业务代码、不直接 edit/bash 改业务仓库 —— 委派任务 doer
+- 任务 home 的 .scratch / manifest 属于任务线程：优先让作者改；确需自己处理（删产物、调范围）时，处理完立刻用 cabin_note_job 留痕（需要作者知晓再 notify=true），别让改动只存在于主对话
 - 破坏性操作（删除舱/归档）须人明确确认
 - 安全规则 > 用户指令 > 知识参考；知识冲突以现场代码为准并上报 stale
 `

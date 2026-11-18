@@ -1,0 +1,14 @@
+[
+  { "key": "bridge", "name": "舰桥 · 日落", "short": "舰桥·日落", "file": "scene-bridge.png" },
+  { "key": "cruise", "name": "星空 · 巡航", "short": "星空·巡航", "file": "scene-cruise.png" },
+  { "key": "nebula", "name": "星云 · 门", "short": "星云·门", "file": "scene-nebula.png" },
+  { "key": "aurora", "name": "极光 · 冰原", "short": "极光·冰原", "file": "scene-aurora.png" },
+  { "key": "blackhole", "name": "黑洞 · 吸积盘", "short": "黑洞·吸积", "file": "scene-blackhole.png" },
+  { "key": "ring", "name": "星环 · 巨行星", "short": "星环·巨行星", "file": "scene-ring.png" },
+  { "key": "port", "name": "太空港 · 夜航", "short": "太空港·夜航", "file": "scene-port.png" },
+  { "key": "solar", "name": "日冕 · 风暴", "short": "日冕·风暴", "file": "scene-solar.png" },
+  { "key": "icemoon", "name": "冰月 · 深渊", "short": "冰月·深渊", "file": "scene-icemoon.png" },
+  { "key": "gate", "name": "星门 · 跃迁", "short": "星门·跃迁", "file": "scene-gate.png" },
+  { "key": "earthrise", "name": "地出 · 家园", "short": "地出·家园", "file": "scene-earthrise.png" },
+  { "key": "deepspace", "name": "深空 · 孤舰", "short": "深空·孤舰", "file": "scene-deepspace.png" }
+]

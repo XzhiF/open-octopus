@@ -23,11 +23,22 @@ export type CockpitRef =
 
 export type CockpitRefKind = CockpitRef['kind']
 
-export type CockpitTab = 'overview' | 'relay' | 'run' | 'changes' | 'accept' | 'files' | 'debug'
+/** 座舱页签。v21 七轮（用户）：详情首签「概览」→「对话」—— 概览不需要，
+ *  对话 = 这条作战的 chat 记录（只读，TUI 转录同肤）。
+ *  `overview` 仍留在类型里，但已无页签入口（2026-11-19 起 classic 作业窗也用
+ *  这一套 COCKPIT_TABS）；它不在 COCKPIT_TABS / isCockpitTab 里，`?tab=overview`
+ *  旧深链会自然落回默认「对话」。 */
+export type CockpitTab = 'dialog' | 'overview' | 'relay' | 'run' | 'changes' | 'accept' | 'files' | 'debug' | 'project'
 
-export const COCKPIT_TABS: readonly CockpitTab[] = ['overview', 'relay', 'run', 'changes', 'accept', 'files', 'debug']
+/** 面来源（v22.3）：inbox = 从「要我处理」打开 → 详情让到浮层左侧；
+ *  fleet / url / acceptance = 从编队 / 深链 / 验收流转打开 → 居中。 */
+export type CockpitSelectSource = 'fleet' | 'inbox' | 'url' | 'acceptance'
+
+/** 页签顺序 = 原型 .dtabs（v21 七轮：首签「对话」）。 */
+export const COCKPIT_TABS: readonly CockpitTab[] = ['dialog', 'relay', 'run', 'changes', 'accept', 'files', 'debug', 'project']
 
 export const COCKPIT_TAB_LABELS: Record<CockpitTab, string> = {
+  dialog: '对话',
   overview: '概览',
   relay: '对接',
   run: '运行',
@@ -35,6 +46,7 @@ export const COCKPIT_TAB_LABELS: Record<CockpitTab, string> = {
   accept: '验收',
   files: '文件',
   debug: '调试',
+  project: '项目',
 }
 
 export function isCockpitTab(value: string | null | undefined): value is CockpitTab {
@@ -134,8 +146,8 @@ export interface CockpitLayerApi {
 
 // ── v20（design 29）：多作战线程 / 弹出窗 / 面板 / 回传 flash ─────────────
 
-/** 模态面板四 kind（编队/详情沿用左栏与作业面，不另起模态）。 */
-export type CockpitPanelKind = 'ops' | 'ledger' | 'ws' | 'poses'
+/** 模态面板五 kind（编队/详情沿用左栏与作业面，不另起模态）。 */
+export type CockpitPanelKind = 'ops' | 'ledger' | 'ws' | 'poses' | 'debug'
 
 /** 用户自开的作战弹出窗（design 29 §4）：上限 5，最小化进 WINDOWS 条。 */
 export interface CockpitPopWin {
@@ -188,7 +200,9 @@ export interface CockpitState {
 
   selection: CockpitRef | null
   tab: CockpitTab
-  select(ref: CockpitRef | null, tab?: CockpitTab): void
+  /** 面来源：决定详情落位（inbox 左侧 aside / 其余居中）。 */
+  detailSource: CockpitSelectSource
+  select(ref: CockpitRef | null, tab?: CockpitTab, source?: CockpitSelectSource): void
   setTab(tab: CockpitTab): void
 
   /** 左栏「只看这个项目」：只筛编队，不换面。null = 不筛。 */
@@ -209,7 +223,7 @@ export interface CockpitState {
   /** v20：用户自开的弹出窗集合 + WINDOWS 条数据源。 */
   wins: CockpitWindowsApi
 
-  /** v20：模态面板（ops / ledger / ws / poses），null = 无。 */
+  /** v20：模态面板（ops / ledger / ws / poses / debug），null = 无。 */
   panel: CockpitPanelKind | null
   /** 面板入参（ws = 项目 name；其余 null）。 */
   panelArg: string | null
@@ -220,13 +234,33 @@ export interface CockpitState {
   flash: CockpitFlash
   markArrival(key: string): void
 
-  /** v20：汐音当前姿态（图鉴金边 / 验收锚点），由 CockpitCrew 上报。 */
-  pose: string
-  reportPose(pose: string): void
+  /** v21（design 31 §3.2）：右栏「要我处理」浮层状态。 */
+  inboxOpen: boolean
+  /** 回复卡当前那条 attention item id；null = 只看列表。 */
+  inboxSel: string | null
+  /** 打开浮层；带 id 时直接进那条的回复卡（banner / 回传点击）。 */
+  openInbox(attentionId?: string | null): void
+  closeInbox(): void
+  selectInbox(attentionId: string | null): void
 
-  /** v20（design 29 §7.4）：随机跃迁开关（45–105s），默认开。 */
+  /** v20：汐音当前姿态（图鉴金边 / 验收锚点），由 CockpitCrew 上报。
+   *  v22：clip = 当前视频片段下标（13 支；同一 pose 可能有多支）。 */
+  pose: string
+  clip: number
+  reportPose(pose: string, clip?: number): void
+
+  /** v20（design 29 §7.4）：随机跃迁开关（15–45s），默认开。 */
   autoWarp: boolean
   setAutoWarp(on: boolean): void
+
+  /** v21（design 31 §3.4.7）：舱景（SCENES 12 幕）。sceneIndex = 当前幕下标。 */
+  sceneIndex: number
+  /** 直接点名某一幕（场景点）。 */
+  setScene(index: number): void
+  /** 跃迁：切下一幕 + 星流/闪光（⌥W、右栏「跃迁」、HUD 场景名共用）。 */
+  travel(): void
+  /** 自动轮换（v21 八轮）：切到**随机另一幕** + 星流/闪光（15–45s 随机计时）。 */
+  travelRandom(): void
 
   fx: CockpitFx
 

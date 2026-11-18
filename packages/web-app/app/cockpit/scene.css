@@ -1,0 +1,73 @@
+/* ═══════════════════════════════════════════════════════════════════════
+   v21（design 31 §3.4.7）· 舱景层
+   三幕桥景（scene-bridge / cruise / nebula）+ 0.9s crossfade + 指针视差；
+   色罩与颗粒逐字照原型 cockpit-v21.html 的 .scene / .grade / .grain。
+   星流由 .ck12-starfield 负责，这里不再叠 canvas。
+   ═══════════════════════════════════════════════════════════════════════ */
+
+.ck12-scene {
+  position: absolute;
+  inset: -20px;
+  z-index: 0;
+  transition: transform 0.6s cubic-bezier(0.2, 0.8, 0.2, 1);
+  pointer-events: none;
+}
+
+.ck12-scene-img {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  object-position: 50% 44%;
+  animation: ck12-scene-breath 18s ease-in-out infinite;
+}
+
+.ck12-scene-img[data-scene='in'] {
+  animation:
+    ck12-scene-fade-in 0.9s ease both,
+    ck12-scene-breath 18s ease-in-out 0.9s infinite;
+}
+
+.ck12-scene-img[data-scene='out'] {
+  animation: ck12-scene-fade-out 0.9s ease forwards;
+}
+
+@keyframes ck12-scene-breath {
+  0%, 100% { transform: scale(1); }
+  50% { transform: scale(1.03); }
+}
+@keyframes ck12-scene-fade-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+@keyframes ck12-scene-fade-out {
+  from { opacity: 1; }
+  to { opacity: 0; }
+}
+
+/* 色罩：上下压暗 + 中心微暗（原型 .grade）。 */
+.ck12-grade {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background:
+    linear-gradient(180deg, rgba(16, 13, 40, 0.5), transparent 16%, transparent 72%, rgba(16, 13, 40, 0.55)),
+    radial-gradient(120% 80% at 50% 50%, transparent 55%, rgba(16, 13, 40, 0.36));
+}
+
+/* 颗粒：原型 .grain（内联 SVG 噪声，5% overlay）。 */
+.ck12-grain {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  opacity: 0.05;
+  mix-blend-mode: overlay;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='120' height='120'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.9' numOctaves='2'/%3E%3C/filter%3E%3Crect width='120' height='120' filter='url(%23n)'/%3E%3C/svg%3E");
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ck12-scene { transition: none; transform: none !important; }
+  .ck12-scene-img,
+  .ck12-scene-img[data-scene='in'] { animation: none; }
+}

@@ -1,48 +1,96 @@
 'use client'
 
-// v20（design 29 §6 poses）：动作图鉴 —— 12 卡（缩略图 + 中英名 + 描述）。
-// 点卡 playPose：关面板就地演（姿态事件 → 帧播放器 + 粒子 + 台词 + toast）；
-// 当前姿态金边（state.pose 由 CockpitCrew 上报）。缩略图 = 单帧 pose-*.png。
+// v22（design 33 §4）：动作图鉴 = **13 支视频片段**（不是 12 张静图）。
+//
+//   · 顺序 = 用户指定顺序（旧批次 3 + 新批次 10，command/thinking/wink 各两支）；
+//   · 缩略图 = 视频 1.2s 抽帧 PNG，角标 `NN · 旧/新`；
+//   · 悬停/聚焦起播该支片段（preload=none，不悬停不下载），离开暂停；
+//   · 点卡 playClip：关面板就地演（片段下标 + pose 事件 → 视频立绘 + 粒子 + 台词 + toast）；
+//   · 当前片段金边（state.clip 由 CockpitCrew 上报，重复姿态按片段区分）。
+//
+// 立绘与图鉴共用同一份 CLIPS（pose-model），没有第二套资产表。
 
 import { toast } from 'sonner'
 import { useCockpitState } from '../state/CockpitStateProvider'
-import { POSE_META, POSE_ORDER, POSE_THUMBS, type PoseKey } from '../crew/pose-model'
+import { CLIPS, POSE_META } from '../crew/pose-model'
 import { CockpitPanelShell } from './CockpitPanelShell'
 
-export function CockpitPosesPanel() {
-  const { pose, closePanel } = useCockpitState()
+/** 悬停预览：pointer/focus 进 → 起播，出 → 暂停。 */
+function preview(card: HTMLElement | null, on: boolean) {
+  const video = card?.querySelector<HTMLVideoElement>('video')
+  if (!video) return
+  if (on) {
+    try {
+      const p = video.play()
+      if (p && typeof p.catch === 'function') p.catch(() => {})
+    } catch {
+      /* 自动播放被拦：停在缩略图 */
+    }
+  } else {
+    try {
+      video.pause()
+    } catch {
+      /* jsdom */
+    }
+  }
+}
 
-  const play = (key: PoseKey) => {
+export function CockpitPosesPanel() {
+  const { clip, closePanel } = useCockpitState()
+
+  const play = (index: number) => {
+    const item = CLIPS[index]
+    if (!item) return
     closePanel()
-    window.dispatchEvent(new CustomEvent('octopus:crew-pose', { detail: { pose: key, ms: 2600 } }))
-    toast.success(`汐音 · ${POSE_META[key].cn}：${POSE_META[key].line}`)
+    window.dispatchEvent(new CustomEvent('octopus:crew-pose', {
+      detail: { pose: item.pose, clip: index, ms: 2600 },
+    }))
+    toast.success(`汐音 · ${POSE_META[item.pose].cn}：${POSE_META[item.pose].line}`)
   }
 
   return (
-    <CockpitPanelShell kind="poses" title="动作图鉴" en="POSE GALLERY · 12" wide>
+    <CockpitPanelShell kind="poses" title="汐音动作视频" en={`CLIP GALLERY · ${CLIPS.length}`} wide>
       <div className="ck12-poses" data-testid="cockpit-poses-gallery">
-        {POSE_ORDER.map((key) => {
-          const meta = POSE_META[key]
+        {CLIPS.map((item, index) => {
+          const meta = POSE_META[item.pose]
+          const no = String(item.no).padStart(2, '0')
           return (
             <button
-              key={key}
+              key={item.src}
               type="button"
-              className={`ck12-pose-card${pose === key ? ' is-on' : ''}`}
-              data-testid={`cockpit-pose-card-${key}`}
-              onClick={() => play(key)}
-              title={`${meta.cn} · ${meta.desc} · ${meta.fps}fps`}
+              className={`ck12-pose-card${clip === index ? ' is-on' : ''}`}
+              data-testid={`cockpit-clip-card-${item.no}`}
+              data-clip={index}
+              data-batch={item.batch}
+              onClick={() => play(index)}
+              onPointerEnter={(event) => preview(event.currentTarget, true)}
+              onPointerLeave={(event) => preview(event.currentTarget, false)}
+              onFocus={(event) => preview(event.currentTarget, true)}
+              onBlur={(event) => preview(event.currentTarget, false)}
+              title={`${no} · ${meta.cn} · ${meta.desc} · ${item.batch}批次`}
             >
               <span className="ck12-pose-thumb">
-                <img src={POSE_THUMBS[key]} alt="" loading="lazy" />
+                <img src={item.thumb} alt="" loading="lazy" />
+                <video
+                  className="ck12-pose-video"
+                  src={item.src}
+                  muted
+                  playsInline
+                  loop
+                  preload="none"
+                  aria-hidden="true"
+                />
+                <span className="ck12-pose-badge">{no} · {item.batch}</span>
               </span>
               <b>{meta.cn} <small>{meta.en}</small></b>
-              <span className="ck12-pose-desc">{meta.desc} · {meta.fps}fps</span>
+              <span className="ck12-pose-desc">{meta.desc}</span>
             </button>
           )
         })}
       </div>
       <div className="ck12-ops-foot">
-        帧源 = 12 帧竖叠 PNG sheet · ping-pong 循环 · 每姿态独立 fps · 隐藏页暂停 · reduced-motion 静帧
+        {CLIPS.length} 支动作片段（768×1152 VP9 alpha · 旧批次 3 + 新批次 10）· 人物高 / 脚底 / 中轴已统一 ·
+        悬停预览 · 点击就地演 · 动作由真实状态驱动 · reduced-motion 停在单帧
       </div>
     </CockpitPanelShell>
   )

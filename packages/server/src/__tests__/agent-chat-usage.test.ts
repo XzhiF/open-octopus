@@ -147,6 +147,12 @@ describe("主对话 ctx / tok 数据链路", () => {
       cache_read_tokens: 200,
       cache_creation_tokens: 100,
     })
+    // 2026-11-19：落账带 assistant 消息 id —— 委托线程没有真人 user 边界，
+    // 逐轮统计只能靠 message_id 精确归属（否则 tok/¥ 整轮为空）。
+    const assistantRow = db.prepare(
+      "SELECT id FROM messages WHERE role='assistant' ORDER BY created_at DESC LIMIT 1",
+    ).get() as { id: string }
+    expect(rows[0]?.message_id).toBe(assistantRow.id)
     expect(tokenDao.findLlmCallsBySession("s-1")).toHaveLength(1)
   })
 

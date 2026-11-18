@@ -40,18 +40,18 @@ export function CockpitPanelShell({
         onClick={(event) => event.stopPropagation()}
       >
         <header className="ck12-panel-h">
-          <b>{title}</b>
-          <span className="ck12-panel-en">{en}</span>
-          <span className="ck12-panel-ln" aria-hidden="true" />
           <button
             type="button"
-            className="ck12-panel-x"
+            className="ck12-panel-x ck12-hexbtn"
             aria-label={`关闭${title}`}
             title="关闭（Esc）"
             onClick={closePanel}
           >
             <X className="size-3.5" aria-hidden="true" />
           </button>
+          <b>{title}</b>
+          <span className="ck12-panel-en">{en}</span>
+          <span className="ck12-panel-ln" aria-hidden="true" />
         </header>
         <div className="ck12-panel-b">{children}</div>
       </section>

@@ -1,7 +1,7 @@
 // 全域座舱 URL 纯函数（S1；S9 在此之上补 origin 规则）。
 //
 // 契约（plans §1.1）：
-//   /cabin/:cabinId/cockpit?job=<jobId>&tab=<overview|relay|run|changes|accept>
+//   /cabin/:cabinId/cockpit?job=<jobId>&tab=<dialog|relay|run|changes|accept>
 //   /cabin/:cabinId/cockpit?task=<taskId>
 //   /cabin/:cabinId/cockpit?attn=<attentionId>
 // 参数优先级 job > task > attn；都缺 → 由 resolveDefaultRef 决定。
@@ -62,7 +62,7 @@ export function parseCockpitUrl(
   return { ref: null, tab }
 }
 
-/** 序列化选中项 + 页签。overview 是默认页签，省略以保持 URL 干净。 */
+/** 序列化选中项 + 页签。dialog 是默认页签，省略以保持 URL 干净。 */
 export function serializeCockpitHref(
   entryCabinId: string,
   ref: CockpitRef | null,
@@ -73,7 +73,7 @@ export function serializeCockpitHref(
     const key = ref.kind === 'attention' ? 'attn' : ref.kind
     params.set(key, ref.id)
   }
-  if (tab && tab !== 'overview') params.set('tab', tab)
+  if (tab && tab !== 'dialog') params.set('tab', tab)
   const query = params.toString()
   const base = cockpitPath(entryCabinId)
   return query ? `${base}?${query}` : base

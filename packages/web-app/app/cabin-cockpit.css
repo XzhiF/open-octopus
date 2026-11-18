@@ -583,6 +583,23 @@ body.float-holo [data-testid="cabin-window"]::after {
   --ck12-cyan: var(--pop-cyan);
   --ck12-violet: var(--pop-violet);
   --ck12-glow: var(--ck-glow, 1);
+  /* 2026-11-19：classic 作业窗改用全域面同一套页签（对话/调试/项目也进来），
+     这些页签的控件用自己的 v21 token，别处只定义在 .ck12-app 里 —— 补同一组
+     别名（逐字取自 app/cockpit/base.css 的 .ck12-app）。 */
+  --ck12-teal: #2EE6D6;
+  --ck12-sky: #35C7F0;
+  --ck12-pink: #FF5C8A;
+  --ck12-gold: #F5C542;
+  --ck12-hazard: #FFB020;
+  --ck12-metal: #B9B3D9;
+  --ck12-metal2: #8D86B8;
+  --ck12-ink2: #A9A3C8;
+  --ck12-glass: rgba(16, 13, 40, 0.46);
+  --ck12-glass2: rgba(20, 16, 48, 0.56);
+  --ck12-edge: rgba(46, 230, 214, 0.38);
+  /* 强调色（项目页签行首竖条 / 匣签着色）：classic 不用 CockpitProvider 的
+     实时 accent，取其青默认值。 */
+  --ck-a: var(--pop-cyan);
 }
 .cabin-job-scope .ck12-jstat { background: color-mix(in srgb, var(--pop-idle) 72%, transparent) }
 .cabin-job-overview { min-height: 0 }

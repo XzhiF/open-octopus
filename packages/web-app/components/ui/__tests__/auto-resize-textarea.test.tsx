@@ -30,4 +30,32 @@ describe("AutoResizeTextarea —— minRows 下限", () => {
     rerender(<AutoResizeTextarea value="" minRows={2} maxRows={5} />)
     expect(el).toHaveStyle({ height: `${2 * LINE}px` })
   })
+
+  it("空框恒占 minRows：占位折行 / 窄窗首帧都不会把它撑高", () => {
+    let fire: (() => void) | null = null
+    const Original = globalThis.ResizeObserver
+    class StubRO {
+      constructor(fn: () => void) { fire = fn }
+      observe() {}
+      unobserve() {}
+      disconnect() {}
+    }
+    // @ts-expect-error 测试替身只提供最小接口
+    globalThis.ResizeObserver = StubRO
+    try {
+      const { container } = render(<AutoResizeTextarea value="" />)
+      const el = container.querySelector("textarea")!
+      // 窄窗首帧：窗宽 ~188px，占位文案折成两行被算进 scrollHeight。
+      Object.defineProperty(el, "clientWidth", { configurable: true, value: 188 })
+      Object.defineProperty(el, "scrollHeight", { configurable: true, value: 2 * LINE })
+      fire!()
+      expect(heightOf(el)).toBe(LINE)
+      // 几何落定变宽也不跳。
+      Object.defineProperty(el, "clientWidth", { configurable: true, value: 520 })
+      fire!()
+      expect(heightOf(el)).toBe(LINE)
+    } finally {
+      globalThis.ResizeObserver = Original
+    }
+  })
 })
