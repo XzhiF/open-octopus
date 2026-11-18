@@ -24,6 +24,13 @@ vi.mock('../../chat/use-cockpit-threads', () => ({
   }),
 }))
 vi.mock('sonner', () => ({ toast: { success: vi.fn(), error: vi.fn(), message: vi.fn() } }))
+vi.mock('@/lib/cabin-api', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/lib/cabin-api')>()
+  return {
+    ...actual,
+    submitCabinDecision: vi.fn(async () => ({ already: false, receipt: { line: '✓ 已答 · 单 phase' } })),
+  }
+})
 vi.mock('@/lib/tasks-api', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@/lib/tasks-api')>()
   return {
@@ -34,6 +41,7 @@ vi.mock('@/lib/tasks-api', async (importOriginal) => {
   }
 })
 
+import { submitCabinDecision } from '@/lib/cabin-api'
 import { readyTask, triggerTask } from '@/lib/tasks-api'
 
 function cockpit(): CockpitContextValue {
@@ -175,6 +183,86 @@ describe('CockpitRightRail · v21 待办', () => {
     const card = screen.getByTestId('cockpit-inbox-reply')
     expect(card).toHaveTextContent('去处理')
     expect(card.querySelector('.ck12-ipd-opt')).toBeNull()
+  })
+
+  it('只有 AskUserQuestion 原问题体 → 就地渲染同款卡片（可勾选）＋ 看任务详情', () => {
+    // 2026-11-19 用户：全舱点「待你定」只给「去处理」，classic 却能直接勾选。
+    // 真数据里任务作者的提问只带 ask.questions（没有扁平 options）。
+    fleetState.value = fleet([
+      row('q1', {
+        stage: 'answer',
+        ask: {
+          ask_id: 'q1',
+          message_id: 'q1',
+          questions: {
+            questions: [{
+              header: '任务范围',
+              multiSelect: false,
+              question: '只交付规格还是连实现一起？',
+              options: [
+                { label: '单 phase', description: '只冻结规格' },
+                { label: '多 phase', description: '连实现一起' },
+              ],
+            }],
+          },
+        },
+      }),
+    ])
+    render(ui())
+    fireEvent.click(screen.getByTestId('cockpit-inbox-chip'))
+    fireEvent.click(screen.getByTestId('cockpit-inbox-row-q1'))
+
+    const card = screen.getByTestId('cockpit-inbox-reply')
+    expect(within(card).getByTestId('cockpit-inbox-askcard')).toBeInTheDocument()
+    expect(card).toHaveTextContent('只交付规格还是连实现一起？')
+    expect(card).toHaveTextContent('单 phase')
+    expect(card).toHaveTextContent('多 phase')
+    // 卡片自带「提交答案」，浮层不再重复一颗提交按钮。
+    expect(card.querySelector('.ck12-ipd-foot button.ck12-ipd-pri')).toBeNull()
+
+    // 详情入口仍在：开详情、浮层与卡片都留着（可先看再答）。
+    fireEvent.click(screen.getByTestId('cockpit-inbox-ask-detail'))
+    expect(screen.getByTestId('probe-selection')).toHaveTextContent('attention:q1:dialog')
+    expect(screen.getByTestId('cockpit-inbox-askcard')).toBeInTheDocument()
+  })
+
+  it('卡片里勾选 → 提交走真决策管线（票据 askId 原样带上）', async () => {
+    vi.mocked(submitCabinDecision).mockClear()
+    fleetState.value = fleet([
+      row('q1', {
+        stage: 'answer',
+        ask: {
+          ask_id: 'ask-q1',
+          message_id: 'msg-q1',
+          questions: {
+            questions: [{
+              header: '任务范围',
+              multiSelect: false,
+              question: '只交付规格还是连实现一起？',
+              options: [
+                { label: '单 phase', description: '只冻结规格' },
+                { label: '多 phase', description: '连实现一起' },
+              ],
+            }],
+          },
+        },
+      }),
+    ])
+    render(ui())
+    fireEvent.click(screen.getByTestId('cockpit-inbox-chip'))
+    fireEvent.click(screen.getByTestId('cockpit-inbox-row-q1'))
+
+    fireEvent.click(screen.getByRole('radio', { name: /单 phase/ }))
+    fireEvent.click(screen.getByRole('button', { name: '提交答案' }))
+
+    await waitFor(() => expect(vi.mocked(submitCabinDecision)).toHaveBeenCalledTimes(1))
+    const [cabinId, body] = vi.mocked(submitCabinDecision).mock.calls[0] as unknown as [string, Record<string, unknown>]
+    expect(cabinId).toBe('c1')
+    expect(body.askId).toBe('ask-q1')
+    expect(body.choice).toBe('单 phase')
+    expect(body.source).toBe('card')
+    // 回执出现 = 与 classic 同一套「已答 → 回列表」节奏。
+    expect(await screen.findByTestId('cockpit-inbox-receipt')).toHaveTextContent('已答')
   })
 
   it('「去处理」→ 详情落对话页签，浮层不关并回到列表（详情从左侧顺势打开）', () => {

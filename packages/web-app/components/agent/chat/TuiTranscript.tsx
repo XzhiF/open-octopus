@@ -6,8 +6,10 @@
 
 import { useMemo, useState, type ReactNode } from 'react'
 import type { AgentMessage, MessageTimelineEntry, ToolCallRecord } from '@/lib/agent/types'
+import type { ChatMessage } from '@/lib/types'
 import type { StreamTimelineItem } from '@/hooks/useAgentChat'
 import { displayContentFor, endsOnAsk, proxyTurnOf } from '@/lib/agent/display-content'
+import { AskUserQuestionCard } from '@/components/workspace/chat/ask-user-question-card'
 import { formatCost, formatDuration, formatTokenCount } from '@/lib/format'
 import { useBillingCurrency } from '@/lib/billing-currency'
 import { THINKING_TONE, TOOL_TONE } from '@/lib/agent/chat-colors'
@@ -622,7 +624,56 @@ function ProxyTurnLine({ message, proxy }: {
   )
 }
 
-export function TuiMessage({ message, compactEvent }: { message: AgentMessage; compactEvent?: boolean }) {
+/** 一条消息里最后一个 AskUserQuestion 调用 —— 就是这张待答卡的原问题体。
+ *  持久化的提问只落在 tool_calls 里（metadata 不一定带 displayType），
+ *  而作者可能在一轮里问过多次，取最后一次才是还挂着的那张。 */
+export function lastAskCallOf(message: AgentMessage): ToolCallRecord | null {
+  const calls = Array.isArray(message.tool_calls) ? message.tool_calls : []
+  for (let i = calls.length - 1; i >= 0; i -= 1) {
+    const call = calls[i]
+    if (call?.name === 'AskUserQuestion' && call.input) return call
+  }
+  return null
+}
+
+/** 原问题体里的第一题（已答态用一行字回显）。 */
+export function firstAskQuestionOf(input: unknown): string {
+  const list = (input as { questions?: unknown } | null)?.questions
+  const first = Array.isArray(list) ? list[0] as { question?: unknown } | undefined : undefined
+  return typeof first?.question === 'string' ? first.question : ''
+}
+
+/** 答题绑定由宿主给（TuiMessage 只负责画）：宿主用 useAskSubmit 接决策管线。 */
+export interface TuiAskBinding {
+  onAnswer: (content: string) => void
+  busy?: boolean
+  /** 记录里后面已经有人回话：只留一行 ✓ 已答，不再铺可交互卡片。 */
+  answered?: boolean
+  error?: string | null
+}
+
+/** 把持久化消息里的 AskUserQuestion 调用翻成卡组件要的 ChatMessage。 */
+function askCardMessage(message: AgentMessage, call: ToolCallRecord): ChatMessage {
+  return {
+    id: `${message.id}::ask`,
+    sessionId: message.session_id,
+    role: 'assistant',
+    displayType: 'ask_user_question',
+    content: '',
+    timestamp: message.created_at,
+    toolCallId: call.id,
+    toolName: 'AskUserQuestion',
+    toolInput: call.input,
+    toolStatus: 'done',
+  }
+}
+
+export function TuiMessage({ message, compactEvent, ask }: {
+  message: AgentMessage
+  compactEvent?: boolean
+  /** 传了才把消息里的 AskUserQuestion 画成可答卡片（详情/线程宿主接管线）。 */
+  ask?: TuiAskBinding
+}) {
   const isUser = message.role === 'user'
   const timeline = !isUser ? message.timeline : undefined
   const hasTimeline = !!timeline && timeline.length > 0
@@ -635,6 +686,7 @@ export function TuiMessage({ message, compactEvent }: { message: AgentMessage; c
   // hook order (React: "Rendered fewer hooks than expected").
   const askTurn = endsOnAsk(message)
   const displayContent = useMemo(() => displayContentFor(message), [message])
+  const askCall = useMemo(() => lastAskCallOf(message), [message])
 
   if (message.roleSwitch) {
     return <RoleSwitchCard payload={message.roleSwitch} />
@@ -682,6 +734,27 @@ export function TuiMessage({ message, compactEvent }: { message: AgentMessage; c
           </div>
         )
         : metaCount > 0 && <div className="text-pop-dim"><TuiMark />（未生成文本回复）</div>}
+      {ask && askCall && (
+        ask.answered ? (
+          <div
+            className="mt-2 rounded-md border border-pop-bd/40 px-3 py-1.5 text-[11.5px] text-pop-dim"
+            data-tui-ask="answered"
+          >
+            <span className="font-bold text-pop-green">✓ 已回答</span>
+            {firstAskQuestionOf(askCall.input) && <span> · {firstAskQuestionOf(askCall.input)}</span>}
+          </div>
+        ) : (
+          <div className="mt-2" data-tui-ask="open">
+            <AskUserQuestionCard
+              message={askCardMessage(message, askCall)}
+              onAnswer={ask.onAnswer}
+              disabled={!!ask.busy}
+              hideChatAbout
+            />
+            {ask.error && <div className="text-[11px] text-pop-red">{ask.error}</div>}
+          </div>
+        )
+      )}
       {message.interrupted && (
         <div className="text-pop-red" data-tui-interrupted>（本轮被截断）</div>
       )}

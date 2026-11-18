@@ -10,9 +10,17 @@
 // v21 七轮（用户：「一步一步展开」）：待放行也不再弹独立放行窗 —— 和问答一样
 // 在浮层左栏就地展开（选项 + 确认执行 + 回执），关掉再开窗的跳变不符合原型。
 // 卡片底部保留「▦ 看任务详情」→ 弹作战详情、落在「对话」页签。
+//
+// 2026-11-19（用户：全舱点「待你定」只能看详情，classic 却能直接勾选）：
+// 任务作者的提问常常只带 AskUserQuestion 原问题体（`ask.questions`，没有扁平
+// `ask.options`），旧判定只看 options → 一律落到「去处理」。现在有原问题体就
+// 直接渲染 classic 同一张 AskUserQuestionCard（多选 / 其他 / 逐字选项），
+// 同时保留「▦ 看任务详情」入口。
 
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { X } from 'lucide-react'
+import type { ChatMessage } from '@/lib/types'
+import { AskUserQuestionCard } from '@/components/workspace/chat/ask-user-question-card'
 import { useAskSubmit } from '@/components/cabin/asks/ask-submit'
 import {
   START_SUMMARY,
@@ -26,6 +34,7 @@ import { readyTask, resumeTask, triggerTask } from '@/lib/tasks-api'
 import { useCockpitState } from '../state/CockpitStateProvider'
 import { attentionStageLabel } from '../fx/CockpitBrief'
 import {
+  askQuestionsOf,
   canAnswerInline,
   groupedInbox,
   inboxGroupOf,
@@ -60,13 +69,25 @@ interface ReplyCardProps {
   onAnswered: (id: string, choice: string) => void
   onDone: () => void
   onDeal: (entry: InboxEntry) => void
+  onOpenDetail: (entry: InboxEntry) => void
 }
 
-function ReplyCard({ entry, onAnswered, onDone, onDeal }: ReplyCardProps) {
+function ReplyCard({ entry, onAnswered, onDone, onDeal, onOpenDetail }: ReplyCardProps) {
   const { closeInbox, selectInbox, entryCabinId } = useCockpitState()
   const { item } = entry
   const env = item.ask
   const options = useMemo(() => env?.options ?? [], [env?.options])
+  // AskUserQuestion 原问题体：任务作者的提问多数只带这个（没有扁平 options）。
+  // 有它就用 classic 问答窗同一张卡，不再退化成「去处理」。
+  const questionBody = useMemo(() => askQuestionsOf(env?.questions), [env?.questions])
+  const useAskCard = questionBody.length > 0
+  const questionLabels = useMemo(() => {
+    const first = questionBody[0] as { options?: Array<{ label?: unknown }> } | undefined
+    if (!Array.isArray(first?.options)) return [] as string[]
+    return first.options
+      .map((option) => (typeof option?.label === 'string' ? option.label : ''))
+      .filter((label): label is string => !!label)
+  }, [questionBody])
   const [pick, setPick] = useState<number | null>(null)
   const [free, setFree] = useState('')
   const [busyChoice, setBusyChoice] = useState<string | null>(null)
@@ -77,24 +98,46 @@ function ReplyCard({ entry, onAnswered, onDone, onDeal }: ReplyCardProps) {
     ...(env?.author_session_id ? { authorSessionId: env.author_session_id } : {}),
     ...(item.handle ? { handle: item.handle } : {}),
     ...(item.task_id ? { taskId: item.task_id } : {}),
-    optionLabels: options.map((option) => option.label),
+    optionLabels: options.length > 0 ? options.map((option) => option.label) : questionLabels,
     ...(env?.message_id ? { messageId: env.message_id } : {}),
     // 就地回复不偷偷转发：旧服务端只提示去线程。
     threadFallback: false,
   })
 
-  const send = useCallback(async (label: string) => {
-    if (!label.trim() || busy) return
-    setBusyChoice(label)
-    const outcome = await submit(`用户回答了以下问题：\n\n1. [要定的事] ${env?.decision ?? item.question ?? '选择'}\n   → ${label}`)
+  /** 提交正文（扁平选项与卡片都汇到这里）：卡片自带 `用户回答了以下问题：…` 正文。 */
+  const send = useCallback(async (content: string) => {
+    if (!content.trim() || busy) return
+    setBusyChoice(content)
+    const outcome = await submit(content)
     setBusyChoice(null)
     if (outcome.ok) {
-      onAnswered(item.id, outcome.choice ?? label)
+      onAnswered(item.id, outcome.choice ?? content)
       onDone()
     }
-  }, [busy, env?.decision, item.id, item.question, onAnswered, onDone, submit])
+  }, [busy, item.id, onAnswered, onDone, submit])
+
+  /** 扁平选项 / 自由输入 → 与 classic 问答窗同一段提交正文。 */
+  const sendLabel = useCallback((label: string) => {
+    void send(`用户回答了以下问题：\n\n1. [要定的事] ${env?.decision ?? item.question ?? '选择'}\n   → ${label}`)
+  }, [env?.decision, item.question, send])
 
   const canInline = canAnswerInline(item)
+
+  const synthetic = useMemo<ChatMessage | null>(() => {
+    if (!useAskCard) return null
+    return {
+      id: `cockpit-inbox-ask-${item.id}`,
+      sessionId: env?.author_session_id ?? '',
+      role: 'assistant',
+      displayType: 'ask_user_question',
+      content: '',
+      timestamp: '',
+      toolCallId: `cockpit-inbox-ask-${item.id}`,
+      toolName: 'AskUserQuestion',
+      toolInput: env?.questions,
+      toolStatus: 'done',
+    }
+  }, [useAskCard, item.id, env?.author_session_id, env?.questions])
 
   return (
     <div className="ck12-ipd" data-testid="cockpit-inbox-reply">
@@ -125,14 +168,32 @@ function ReplyCard({ entry, onAnswered, onDone, onDeal }: ReplyCardProps) {
 
       <div className="ck12-ipd-body">
         <div className="ck12-ipd-job">{item.title}</div>
-        {(item.repo || item.wt || item.question) && (
+        {/* 卡片自己会印问题正文：这里不再重复一遍（repo / wt 照旧保留）。 */}
+        {(item.repo || item.wt || (!useAskCard && item.question)) && (
           <div className="ck12-ipd-ctx">
-            {[item.repo, item.wt, item.question].filter(Boolean).join(' · ')}
+            {[item.repo, item.wt, useAskCard ? null : item.question].filter(Boolean).join(' · ')}
           </div>
         )}
-        <div className="ck12-ipd-q">{env?.decision ?? item.question ?? attentionStageLabel(item)}</div>
+        {!useAskCard && (
+          <div className="ck12-ipd-q">{env?.decision ?? item.question ?? attentionStageLabel(item)}</div>
+        )}
 
-        {canInline ? (
+        {useAskCard ? (
+          <>
+            <div className="ck12-ipd-qa" data-testid="cockpit-inbox-askcard">
+              {synthetic && (
+                <AskUserQuestionCard
+                  message={synthetic}
+                  onAnswer={(content) => void send(content)}
+                  disabled={busy}
+                  hideChatAbout
+                  hotkeyId={item.id}
+                />
+              )}
+            </div>
+            <div className="ck12-ipn">勾选后提交；不跳作战线程，汐音就地转达执行者。</div>
+          </>
+        ) : canInline ? (
           <>
             <div className="ck12-ipd-opts" role="radiogroup" aria-label="选项">
               {options.map((option, index) => {
@@ -168,11 +229,11 @@ function ReplyCard({ entry, onAnswered, onDone, onDeal }: ReplyCardProps) {
                 onKeyDown={(event) => {
                   if (event.key === 'Enter' && !event.shiftKey) {
                     event.preventDefault()
-                    void send(free)
+                    sendLabel(free)
                   }
                 }}
               />
-              <button type="button" disabled={busy || !free.trim()} onClick={() => void send(free)}>
+              <button type="button" disabled={busy || !free.trim()} onClick={() => sendLabel(free)}>
                 发送
               </button>
             </div>
@@ -205,17 +266,30 @@ function ReplyCard({ entry, onAnswered, onDone, onDeal }: ReplyCardProps) {
       <div className="ck12-ipd-foot">
         <button type="button" onClick={() => selectInbox(null)}>稍后</button>
         <span className="ck12-ipd-sp" />
+        {canInline && (
+          <button
+            type="button"
+            className="ck12-ipd-deal"
+            data-testid="cockpit-inbox-ask-detail"
+            onClick={() => onOpenDetail(entry)}
+          >
+            ▦ 看任务详情
+          </button>
+        )}
         <span className="ck12-ipd-cap">
-          {canInline ? (pick == null && !free.trim() ? '先选一项' : '已选 · 可提交') : '去处理 ▦'}
+          {useAskCard ? '在卡片上勾选' : canInline ? (pick == null && !free.trim() ? '先选一项' : '已选 · 可提交') : '去处理 ▦'}
         </span>
-        <button
-          type="button"
-          className="ck12-ipd-pri"
-          disabled={!canInline || busy || (pick == null && !free.trim())}
-          onClick={() => void send(pick != null ? options[pick].label : free)}
-        >
-          {busy ? '提交中…' : '提交回答'}
-        </button>
+        {/* AskUserQuestion 卡自带「提交答案」；扁平选项才用这张按钮，避免双提交。 */}
+        {!useAskCard && (
+          <button
+            type="button"
+            className="ck12-ipd-pri"
+            disabled={!canInline || busy || (pick == null && !free.trim())}
+            onClick={() => sendLabel(pick != null ? options[pick].label : free)}
+          >
+            {busy ? '提交中…' : '提交回答'}
+          </button>
+        )}
       </div>
     </div>
   )
@@ -491,6 +565,7 @@ export function CockpitInboxPopover({ entries, counts, answered, onAnswered, onS
                 }}
                 onDone={() => selectInbox(null)}
                 onDeal={deal}
+                onOpenDetail={openDetail}
               />
             )
           )

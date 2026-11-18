@@ -153,6 +153,89 @@ describe('CockpitJobDialog · 对话页签', () => {
     expect(head?.textContent).toContain('1 轮提问')
   })
 
+  // 2026-11-19 用户：全舱「作战详情 → 对话」里没渲染出 AskUserQuestion。
+  function askCall(id = 'call-ask') {
+    return {
+      id,
+      name: 'AskUserQuestion',
+      status: 'start',
+      input: {
+        questions: [{
+          header: '任务范围',
+          multiSelect: false,
+          question: '本任务只交付规格冻结，还是把后续实现也纳入？',
+          options: [
+            { label: '单 phase：只冻结规格', description: '不写业务代码' },
+            { label: '多 phase：规格 + 实现', description: '验收周期变长' },
+          ],
+        }],
+      },
+    }
+  }
+
+  it('未答的 AskUserQuestion 渲染成可勾选的卡片（不再只是正文）', async () => {
+    vi.mocked(getSession).mockResolvedValue(sessionWith([
+      message({ id: 'm1', role: 'user', content: '开始吧' }),
+      message({
+        id: 'm2',
+        role: 'assistant',
+        content: '等待你的选择。',
+        created_at: '2026-11-18T01:00:05.000Z',
+        tool_calls: [askCall()],
+      }),
+    ]))
+
+    render(<CockpitJobDialog sessionId="sess-1" cabinId="c1" taskId="t1" />)
+
+    const log = await screen.findByTestId('cockpit-dialog-log')
+    await waitFor(() => expect(log.querySelector('[data-tui-ask="open"]')).not.toBeNull())
+    expect(log.textContent).toContain('本任务只交付规格冻结，还是把后续实现也纳入？')
+    expect(log.textContent).toContain('单 phase：只冻结规格')
+  })
+
+  it('后面已经有人回话 → 提问卡收成一行「✓ 已回答」', async () => {
+    vi.mocked(getSession).mockResolvedValue(sessionWith([
+      message({
+        id: 'm2',
+        role: 'assistant',
+        content: '等待你的选择。',
+        created_at: '2026-11-18T01:00:05.000Z',
+        tool_calls: [askCall()],
+      }),
+      message({
+        id: 'm3',
+        role: 'user',
+        content: '用户回答了以下问题：\n\n1. [任务范围] …\n   → 单 phase：只冻结规格',
+        created_at: '2026-11-18T01:00:10.000Z',
+      }),
+    ]))
+
+    render(<CockpitJobDialog sessionId="sess-1" cabinId="c1" taskId="t1" />)
+
+    const log = await screen.findByTestId('cockpit-dialog-log')
+    await waitFor(() => expect(log.querySelector('[data-tui-ask="answered"]')).not.toBeNull())
+    expect(log.querySelector('[data-tui-ask="open"]')).toBeNull()
+    expect(log.textContent).toContain('已回答')
+  })
+
+  it('没有舱上下文（旧宿主）不铺提问卡，转录保持只读', async () => {
+    vi.mocked(getSession).mockResolvedValue(sessionWith([
+      message({
+        id: 'm2',
+        role: 'assistant',
+        content: '等待你的选择。',
+        created_at: '2026-11-18T01:00:05.000Z',
+        tool_calls: [askCall()],
+      }),
+    ]))
+
+    render(<CockpitJobDialog sessionId="sess-1" />)
+
+    const log = await screen.findByTestId('cockpit-dialog-log')
+    await waitFor(() => expect(log.textContent).toContain('等待你的选择。'))
+    expect(log.querySelector('[data-tui-ask]')).toBeNull()
+  })
+
   it('没有主会话（workflow / subagent 作业）：明确空态，不发请求', async () => {
     render(<CockpitJobDialog sessionId={null} />)
     expect(screen.getByTestId('cockpit-dialog').textContent).toContain('没有关联的对话会话')

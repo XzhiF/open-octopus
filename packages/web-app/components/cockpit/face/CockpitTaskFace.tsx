@@ -118,7 +118,7 @@ export function CockpitTaskFace({
   const panes = (
     <>
       {tab === 'dialog' && (
-        <CockpitJobDialog sessionId={view?.source_chat_session_id ?? null} />
+        <CockpitJobDialog sessionId={view?.source_chat_session_id ?? null} cabinId={cabinId} taskId={taskId} />
       )}
 
       {tab === 'relay' && (

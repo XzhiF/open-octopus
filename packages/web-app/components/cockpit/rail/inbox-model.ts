@@ -98,9 +98,19 @@ export function findInbox(entries: readonly InboxEntry[], id: string | null): In
   return entries.find((entry) => entry.item.id === id) ?? null
 }
 
-/** 有决策信封（可选项 / 自由作答）才画就地回复卡；否则只给「去处理」。 */
+/** AskUserQuestion 原问题体（`{ questions: [...] }` 或裸数组）—— 历史形态两种都要认。 */
+export function askQuestionsOf(value: unknown): unknown[] {
+  if (Array.isArray(value)) return value
+  const list = (value as { questions?: unknown } | null)?.questions
+  return Array.isArray(list) ? list : []
+}
+
+/** 有决策信封（扁平可选项 / AskUserQuestion 原问题体）才画就地回复卡；
+ *  两条都给不出选项的行（验收 / 受阻 / 工作流提问）只给「去处理」。 */
 export function canAnswerInline(item: CabinAttentionItem): boolean {
-  return !!item.ask?.ask_id && (item.ask.options?.length ?? 0) > 0
+  if (!item.ask?.ask_id) return false
+  if ((item.ask.options?.length ?? 0) > 0) return true
+  return askQuestionsOf(item.ask.questions).length > 0
 }
 
 /** 原型 `.ip-row` 右侧动词。待放行与 classic 同：直接开「放行窗」。 */

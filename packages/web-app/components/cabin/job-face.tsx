@@ -844,7 +844,7 @@ export function JobFace({
 
   const panes = (
     <>
-      {tab === 'dialog' && <CockpitJobDialog sessionId={dialogSessionId} />}
+      {tab === 'dialog' && <CockpitJobDialog sessionId={dialogSessionId} cabinId={cabinId} taskId={taskId} />}
       {tab === 'overview' && (cockpitMode ? (
         // v21 三轮（原型 .panel 详情·概览）：kv 读数 + 当前在做 + 最近事件。
         <div data-testid="cabin-job-overview" className="ck12-dossier-ov">

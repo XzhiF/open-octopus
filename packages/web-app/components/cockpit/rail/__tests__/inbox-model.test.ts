@@ -118,4 +118,33 @@ describe('inbox-model', () => {
     }))).toBe(true)
     expect(canAnswerInline(attn('a2', { stage: 'review' }))).toBe(false)
   })
+
+  it('只有 AskUserQuestion 原问题体（任务作者提问）也能就地作答', () => {
+    // 2026-11-19 用户：全舱点「待你定」只给「去处理」，classic 能直接勾选。
+    // 真数据里任务作者的提问只带 ask.questions，没有扁平 options。
+    const withQuestions = attn('a3', {
+      stage: 'answer',
+      ask: {
+        ask_id: 'a3',
+        message_id: 'a3',
+        questions: {
+          questions: [{
+            header: '任务范围',
+            multiSelect: false,
+            question: '只交付规格还是连实现一起？',
+            options: [{ label: '单 phase', description: '只冻结规格' }],
+          }],
+        },
+      },
+    })
+    expect(canAnswerInline(withQuestions)).toBe(true)
+    // 裸数组形态（历史数据）同样认。
+    expect(canAnswerInline(attn('a4', {
+      stage: 'answer',
+      ask: { ask_id: 'a4', questions: [{ question: 'q', options: [] }] },
+    }))).toBe(true)
+    // 空问题体 / 没票据：不加戏。
+    expect(canAnswerInline(attn('a5', { stage: 'answer', ask: { ask_id: 'a5', questions: { questions: [] } } }))).toBe(false)
+    expect(canAnswerInline(attn('a6', { stage: 'answer', ask: { questions: { questions: [{ question: 'q' }] } } }))).toBe(false)
+  })
 })

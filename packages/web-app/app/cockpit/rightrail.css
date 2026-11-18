@@ -529,6 +529,11 @@
   line-height: 1.4;
   margin-top: 2px;
 }
+/* AskUserQuestion 原问题体（任务作者提问）：classic 同款卡片嵌进回复卡。
+   卡组件自带 mb-4 / max-w-[90%]（聊天流里的节奏），这里拉满左窗宽度。 */
+.ck12-ipd-qa { min-width: 0; }
+.ck12-ipd-qa > div { margin-bottom: 0; }
+.ck12-ipd-qa > div > div { max-width: none; }
 .ck12-ipd-opts { display: flex; flex-direction: column; gap: 5px; }
 .ck12-ipd-opt {
   display: flex;
