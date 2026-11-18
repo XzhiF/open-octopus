@@ -484,3 +484,31 @@ describe('CockpitCrew · v21 ready 报到（真实事件驱动）', () => {
     expect(sprite()).toHaveAttribute('data-pose', 'ready')
   })
 })
+
+describe('CockpitCrew · v22.1 待命自走轮播', () => {
+  const sprite = () => screen.getByTestId('cockpit-pose-sprite')
+
+  beforeEach(() => vi.useFakeTimers())
+  afterEach(() => vi.useRealTimers())
+
+  it('真空闲 12s 后换一支日常片段，姿态语义仍是待命', () => {
+    renderCrew()
+    expect(sprite()).toHaveAttribute('data-pose', 'idle')
+    expect(sprite()).toHaveAttribute('data-clip', '6')
+
+    act(() => { vi.advanceTimersByTime(12_000) })
+
+    expect(sprite()).toHaveAttribute('data-pose', 'idle')
+    expect(sprite().getAttribute('data-clip')).not.toBe('6')
+  })
+
+  it('作业/动作期间不自走（片段跟随真实状态）', () => {
+    renderCrew({ mood: 'working' })
+    expect(sprite()).toHaveAttribute('data-clip', '12')
+
+    act(() => { vi.advanceTimersByTime(12_000) })
+
+    expect(sprite()).toHaveAttribute('data-pose', 'working')
+    expect(sprite()).toHaveAttribute('data-clip', '12')
+  })
+})

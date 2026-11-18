@@ -50,7 +50,10 @@ import { getChatSlot } from '../chat/chat-slots'
 import {
   doneLine, listenLine, waitingLine,
 } from './chat-reactions'
-import { CLIPS, MOOD_POSE, POSE_META, POSE_MOOD, clipPose, poseClip, type PoseKey } from './pose-model'
+import {
+  CLIPS, MOOD_POSE, POSE_META, POSE_MOOD, clipPose, clipVariants, nextAmbientClip, poseClip,
+  type PoseKey,
+} from './pose-model'
 import { CockpitPoseSprite, PoseFX } from './CockpitPoseSprite'
 
 const TYPE_MS = 22
@@ -174,12 +177,44 @@ export function CockpitCrew() {
    *  actionClip 记录图鉴点名的精确片段（同 pose 有多支片段时不合并）。 */
   const [actionPose, setActionPose] = useState<PoseKey | null>(null)
   const [actionClip, setActionClip] = useState<number | null>(null)
+  /** v22.1：待命自走片段 —— 只在「真空闲」时生效，7–12s 换一支日常小动作。 */
+  const [ambientClip, setAmbientClip] = useState<number | null>(null)
   const actionTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const shownPose: PoseKey = actionPose
     ?? (phase === 'waiting' ? 'typing' : MOOD_POSE[shownMood])
-  /** v22：立绘永远视频；pose 只决定语义，clip 决定具体片段。 */
-  const shownClip = actionClip !== null && Number.isInteger(actionClip) ? actionClip : poseClip(shownPose)
+  /** 真空闲 = 没有动作 override / 不在回复或倾听 / 语义姿态就是待命。 */
+  const idleFree = !actionPose && phase === 'idle' && !listening && shownPose === 'idle'
+  /** v22：立绘永远视频；pose 只决定语义，clip 决定具体片段。
+   *  优先级：动作点名 > 待命自走 > pose 首选片段。 */
+  const shownClip = actionClip !== null && Number.isInteger(actionClip)
+    ? actionClip
+    : idleFree && ambientClip !== null
+      ? ambientClip
+      : poseClip(shownPose)
+  const shownClipRef = useRef(shownClip)
+  useEffect(() => { shownClipRef.current = shownClip }, [shownClip])
   useEffect(() => { reportPose(shownPose, shownClip) }, [shownPose, shownClip, reportPose])
+  // v22.1 待命自走：真空闲时随机换日常小动作。首支 3.5–6s 就换（进舱后马上
+  // 能看出她在动），之后 7–11s 一换；任何动作 / 对话 / 倾听 / reduced-motion
+  // 打断即停，回到 idle 后重新起算。
+  useEffect(() => {
+    if (reduce || !idleFree) {
+      setAmbientClip(null)
+      return
+    }
+    let first = true
+    let timer: ReturnType<typeof setTimeout>
+    const schedule = () => {
+      const delay = first ? 3500 + Math.random() * 2500 : 7000 + Math.random() * 4000
+      first = false
+      timer = setTimeout(() => {
+        setAmbientClip((prev) => nextAmbientClip(prev))
+        schedule()
+      }, delay)
+    }
+    schedule()
+    return () => clearTimeout(timer)
+  }, [reduce, idleFree])
   useEffect(() => () => {
     if (actionTimerRef.current) clearTimeout(actionTimerRef.current)
   }, [])
@@ -226,6 +261,8 @@ export function CockpitCrew() {
   // ── 点她 = 说话（v13.1：点击同一拍就给反馈，然后才开窗）──────────────
   const talkToXiyin = useCallback(() => {
     const wasOpen = chatWindow.open
+    // 点她先结束待命自走，让台词表情（mood override）立刻接管立绘。
+    setAmbientClip(null)
     const now = Date.now()
     const fresh = now - lastTalkRef.current > TALK_GAP_MS
     lastTalkRef.current = now
@@ -466,11 +503,15 @@ export function CockpitCrew() {
   useEffect(() => subscribeCrewPoke(interact), [interact])
 
   // ── v22：动作片段（图鉴 playClip / 委派 relay command / 报到 ready）──────
-  // clip 指定图鉴点名的精确片段；不传则按 pose 映射到首选片段。
+  // clip 指定图鉴点名的精确片段；不传则在该姿态的变体间交替（同 pose 两支时
+  // 这次播 A、下次播 B），待命自走立即让位。
   const playAction = useCallback((pose: PoseKey, ms = 2600, clip?: number) => {
     if (!(pose in POSE_META)) return
+    const variants = clipVariants(pose)
+    const nextVariant = variants[(variants.indexOf(shownClipRef.current) + 1) % variants.length] ?? variants[0]
     setActionPose(pose)
-    setActionClip(Number.isInteger(clip) ? (clip as number) : null)
+    setActionClip(Number.isInteger(clip) ? (clip as number) : nextVariant)
+    setAmbientClip(null)
     if (actionTimerRef.current) clearTimeout(actionTimerRef.current)
     actionTimerRef.current = setTimeout(() => {
       setActionPose(null)

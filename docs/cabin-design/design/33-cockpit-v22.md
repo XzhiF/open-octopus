@@ -76,6 +76,17 @@ mood（语义，数据层不改名）
   - 失败不永久降级：`failedSrc === src` 才用静图，换段自动重试。
 - `octopus:crew-pose` 事件 payload 扩展 `clip?: number`：图鉴点卡可精确播放重复姿态的第二支。
 
+### 3.1 待命自走（v22.1：让她“动起来”）
+
+只靠 mood 驱动时，待命会一直循环 07-idle，观感固定。增加两条动效：
+
+| 机制 | 规则 |
+|---|---|
+| 待命自走 | **真空闲**（无动作 override / 不在回复或倾听 / 语义姿态 = idle）时，首支 3.5–6s、之后 7–11s 随机换一支日常片段；池 = 07 idle / 09 smile / 12 wink / 10 thinking / 08 ready / 13 working / 02 thinking(旧) / 03 command(旧)，**不含 alert / concerned / typing** |
+| 重复姿态交替 | command / thinking / wink 各两支片段，事件生成时在变体间交替（这次 A、下次 B），不再每次都同一支 |
+
+优先级：`动作点名（图鉴/事件） > 待命自走 > pose 首选片段`。任何对话、动作、倾听、reduced-motion 都会立即结束自走；回到 idle 后重新起算。
+
 ## 4. 图鉴（CockpitPosesPanel）
 
 - 标题：`汐音动作视频` / `CLIP GALLERY · 13`。

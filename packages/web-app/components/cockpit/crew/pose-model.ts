@@ -205,3 +205,45 @@ export function nextClip(index: number, step = 1): number {
   const n = CLIPS.length
   return ((index + step) % n + n) % n
 }
+
+/** 同一姿态的全部片段（顺序 = CLIPS 顺序）：command/thinking/wink 各两支。
+ *  动作事件生成时在变体间交替，避免每次都是同一个动作。 */
+export const POSE_CLIP_VARIANTS: Record<PoseKey, readonly number[]> = {
+  wink: [0, 11],
+  thinking: [1, 9],
+  command: [2, 5],
+  alert: [3],
+  concerned: [4],
+  idle: [6],
+  ready: [7],
+  smile: [8],
+  typing: [10],
+  working: [12],
+  cheer: [8],
+  sleep: [6],
+}
+
+export function clipVariants(pose: PoseKey): readonly number[] {
+  const variants = POSE_CLIP_VARIANTS[pose]
+  return variants && variants.length ? variants : [poseClip(pose)]
+}
+
+/** 待命自走轮播池：只放「日常小动作」，不含 alert / concerned / typing
+ *  这类强事件语义的片段。idle 保留在池里，让她多数时候仍是待命。 */
+export const AMBIENT_CLIPS: readonly number[] = [
+  6,  // 07-idle
+  8,  // 09-smile
+  11, // 12-wink
+  9,  // 10-thinking
+  7,  // 08-ready
+  12, // 13-working
+  1,  // 02-thinking（旧）
+  2,  // 03-command（旧）
+]
+
+/** 下一支自走片段：随机且不与当前重复（单元素池时原样返回）。 */
+export function nextAmbientClip(current: number | null): number {
+  const pool = AMBIENT_CLIPS.filter((index) => index !== current)
+  if (!pool.length) return AMBIENT_CLIPS[0] ?? poseClip('idle')
+  return pool[Math.floor(Math.random() * pool.length)]
+}
