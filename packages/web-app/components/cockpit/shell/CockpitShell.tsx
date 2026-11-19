@@ -36,6 +36,7 @@ import { CockpitPopWindows } from '../chat/CockpitPopWindows'
 import { CockpitWinBar } from '../chat/CockpitWinBar'
 import { CockpitThreadActivity } from '../chat/CockpitThreadActivity'
 import { CockpitCrew } from '../crew/CockpitCrew'
+import { CockpitCrewSettingsLayer } from '../crew/CockpitCrewSettings'
 import { CockpitBrief } from '../fx/CockpitBrief'
 import { CockpitEffects } from '../fx/CockpitEffects'
 import { CockpitWarpScheduler } from '../fx/CockpitWarpScheduler'
@@ -179,6 +180,8 @@ function CockpitSurface({ cabin }: { cabin: CabinDetail }) {
       <CockpitBrief />
       <CockpitPanels />
       <CockpitSettings />
+      {/* 2026-11-19 用户 #7：「更多 → ♡ 汐音」= 她的 AGENT 档案 + 既有在场设置。 */}
+      <CockpitCrewSettingsLayer />
       <CockpitWarpScheduler />
       <CockpitSim />
 

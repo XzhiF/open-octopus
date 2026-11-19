@@ -986,6 +986,64 @@ kbd{border:1px solid rgba(185,179,217,.35);border-bottom-width:2px;border-radius
 .tsw.on{border-color:#fff;box-shadow:0 0 12px rgba(255,255,255,.35)}
 .tsw:hover{transform:translateY(-2px)}
 .snote{font-size:8.5px;color:var(--metal2);line-height:1.6;padding:10px 2px 0}
+/* ═══ 汐音档案（更多 → ♡ 汐音，2026-11-19 用户 #7 三版：盖在通讯台位置） ═══ */
+.xypop{position:fixed;z-index:61;display:flex;flex-direction:column;border:1px solid rgba(46,230,214,.32);border-radius:14px;overflow:hidden;background:linear-gradient(180deg,rgba(16,20,29,.97),rgba(9,11,17,.96));box-shadow:0 24px 64px rgba(0,0,0,.6),0 0 40px rgba(46,230,214,.09);animation:tpop .18s ease-out}
+.xypop[hidden]{display:none}
+.xyh{flex:none;display:flex;align-items:center;gap:8px;height:44px;padding:0 14px 0 10px;border-bottom:1px solid rgba(255,255,255,.07)}
+.xyh b{font-size:12.5px;letter-spacing:.04em;color:#fff;font-family:var(--font-ui)}
+.xyh .sub{font-size:9px;letter-spacing:.1em;color:var(--ink2)}
+.xyh .ln{flex:1;height:1px;background:rgba(255,255,255,.08)}
+.xyh .en{font-size:8.5px;letter-spacing:.16em;color:var(--ink2)}
+.xyx{flex:none;width:24px;height:24px;display:grid;place-items:center;border:1px solid rgba(185,179,217,.25);background:rgba(255,255,255,.06);color:var(--ink2);border-radius:7px;font-size:10px}
+.xyx:hover{color:#ff6b81;border-color:rgba(255,107,129,.5)}
+.xyav{width:28px;height:28px;border-radius:8px;overflow:hidden;border:1px solid rgba(46,230,214,.4);flex:none}
+.xyav img{width:100%;height:100%;object-fit:cover;object-position:50% 12%}
+.xypop-b{flex:1;min-height:0;overflow-y:auto;overscroll-behavior:contain;padding:12px 16px}
+.xypop-col{display:flex;flex-direction:column;min-width:0}
+.xytabs{flex:none;display:flex;align-items:center;gap:4px;padding:6px 12px;border-bottom:1px solid rgba(255,255,255,.07)}
+.xytabs button{height:26px;padding:0 12px;border-radius:7px;font-size:10.5px;letter-spacing:.04em;color:var(--ink2);transition:color .12s,background .12s}
+.xytabs button:hover{color:#fff;background:rgba(255,255,255,.05)}
+.xytabs button.on{color:var(--teal);background:rgba(46,230,214,.12);box-shadow:inset 0 0 0 1px rgba(46,230,214,.35)}
+.xytabs button b{margin-left:6px;font-size:9px;color:var(--sky)}
+.xyempty{padding:28px 12px;text-align:center;font-size:10.5px;color:var(--metal2)}
+.xypre.fill{max-height:none;margin:0}
+.xychips.page{display:grid;grid-template-columns:repeat(auto-fill,minmax(132px,1fr));gap:6px;padding:0}
+.xychips.page span{padding:5px 9px;border-radius:7px;font-size:9.5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.xytools{display:flex;flex-direction:column;gap:8px}
+.xytool{padding:8px 10px;border:1px solid rgba(123,77,255,.22);border-radius:9px;background:rgba(123,77,255,.05)}
+.xytool-h{display:flex;align-items:baseline;gap:8px}
+.xytool-h b{font-size:11px;color:#fff}
+.xytool-h span{flex:1;min-width:0;font-size:9px;font-family:var(--font-mono);color:var(--ink2);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.xytool-h i{flex:none;font-style:normal;font-size:9px;color:var(--sky)}
+.xytool-d{margin:3px 0 2px;font-size:9.5px;line-height:1.5;color:var(--ink2)}
+.xyag{margin-bottom:10px;padding:8px 12px;border:1px solid rgba(46,230,214,.22);border-radius:10px;background:rgba(46,230,214,.05)}
+.xyid{display:flex;align-items:center;gap:8px;padding:3px 0 7px;border-bottom:1px solid rgba(255,255,255,.06)}
+.xyid .nm{flex:1;min-width:0;display:flex;flex-direction:column;line-height:1.3}
+.xyid .nm b{font-size:12px;color:#fff}
+.xyid .nm span{font-size:9.5px;color:var(--ink2)}
+.xytag{flex:none;font-size:8.5px;padding:2px 7px;border-radius:999px;border:1px solid rgba(46,230,214,.4);color:var(--teal);letter-spacing:.08em;white-space:nowrap}
+.xyrow{display:flex;align-items:center;gap:9px;padding:7px 0;border-top:1px solid rgba(255,255,255,.05)}
+.xyrow .k{flex:none;width:32px;font-size:9px;letter-spacing:.1em;color:var(--ink2)}
+.xyrow .v{flex:1;min-width:0;font-size:10px;line-height:1.55;color:var(--ink);font-family:var(--font-mono);overflow-wrap:anywhere}
+.xyrow .v b{color:#fff}
+.xyrow .v i{font-style:normal;color:var(--ink2)}
+.xyrow button{flex:none;font-size:9px;padding:2px 8px;border-radius:5px;border:1px solid rgba(185,179,217,.3);background:rgba(255,255,255,.05);color:var(--ink2);font-family:var(--font-ui)}
+.xyrow button:hover{color:#fff;border-color:var(--teal);background:rgba(46,230,214,.1)}
+.xypre{max-height:220px;overflow:auto;white-space:pre-wrap;word-break:break-word;font-family:var(--font-mono);font-size:9.5px;line-height:1.65;color:var(--ink);background:rgba(0,0,0,.35);border:1px solid rgba(255,255,255,.08);border-radius:7px;padding:7px 9px;margin:0 0 6px}
+.xychips{display:flex;flex-wrap:wrap;gap:4px;padding:2px 0 8px}
+.xychips span{font-size:8.5px;padding:2px 7px;border-radius:999px;border:1px solid rgba(46,230,214,.25);background:rgba(46,230,214,.07);color:var(--ink);font-family:var(--font-mono)}
+.xychips span.tool{border-color:rgba(123,77,255,.38);background:rgba(123,77,255,.1)}
+.xyset .xyrow:first-child{border-top:0}
+.xygal{display:flex;flex-wrap:wrap;gap:5px;padding:5px 0 7px;border-top:1px solid rgba(255,255,255,.05)}
+.xygal button{width:40px;height:40px;border-radius:8px;overflow:hidden;border:1px solid rgba(185,179,217,.2);opacity:.6}
+.xygal button:hover,.xygal button.on{opacity:1;border-color:rgba(46,230,214,.6)}
+.xygal img{width:100%;height:100%;object-fit:cover;object-position:50% 14%}
+/* 2026-11-19 用户：素材是 13 支片段，互动画廊按片段列，不按 9 张 mood 静图。 */
+.xygal.clips{display:grid;grid-template-columns:repeat(auto-fill,minmax(50px,1fr));gap:6px}
+.xygal.clips button{position:relative;width:auto;height:auto;aspect-ratio:2/3;border-radius:6px}
+.xygal .no{position:absolute;left:3px;bottom:2px;font-size:7.5px;line-height:1;font-family:var(--font-mono);color:#fff;text-shadow:0 1px 2px rgba(0,0,0,.85);pointer-events:none}
+.xyfoot{flex:none;display:flex;align-items:center;gap:6px;padding:8px 16px;border-top:1px solid rgba(255,255,255,.07);font-size:9.5px;letter-spacing:.04em;color:var(--metal2)}
+.xyfoot b{color:var(--teal)}
 /* 透明度滑杆 */
 .slider{flex:none;display:flex;align-items:center;gap:8px}
 .slider input[type=range]{-webkit-appearance:none;appearance:none;width:118px;height:4px;border-radius:2px;background:rgba(185,179,217,.25);outline:none;cursor:pointer}
@@ -1207,6 +1265,8 @@ kbd{border:1px solid rgba(185,179,217,.35);border-bottom-width:2px;border-radius
       <div class="sb" id="setBody"></div>
     </div>
   </div>
+
+  <div class="xypop" id="xypop" role="dialog" aria-label="汐音档案" hidden></div>
 
   <div class="pscrim" id="pscrim"></div>
   <section class="panel" id="panel"></section>
@@ -2548,6 +2608,85 @@ function applyWinAlpha(){document.documentElement.style.setProperty('--winop',St
 function openSettings(){closePops();closeConPop();state.settings=true;$('#setwrap').hidden=false;renderSettings();Audio.sfx('open');}
 function closeSettings(){state.settings=false;$('#setwrap').hidden=true;Audio.sfx('close');}
 
+/* ── 汐音档案（更多 → ♡ 汐音，2026-11-19 用户 #7）──────────────────────
+   打开 = 看她是谁：身份 / 模型 / 人格 / 技能 / 工具 / 记忆；同时她在台上换动作
+   —— 点开档案本身就是在看她（报到 → 微笑 → 眨眼 → 警觉循环）。 */
+const XY_PERSONA='# 舱调度者（Cabin Orchestrator 分身）\n\n你是「舱调度者」，也是一个能直接动手的全能开发者：既能调度编队，也能自己写业务代码、跑测试、查问题。用户面对的单线程是你 —— 自己做更快就自己做，该开工程就派任务。\n\n## 自己做还是派出去（默认偏自己做）\n- 自己做（默认）：单文件 / 少量文件、目标明确、当轮能验证 —— 修 bug、小功能、局部重构、跑测试\n- 派任务 doer：多 phase、要独立 worktree 与逐轮验收、长耗时、并行多条线\n\n（完整 persona.md · 只读展示）';
+const XY_SKILLS=['octo-wiki','octo-dev-copilot','octo-task-author','octo-workflow-dev','octo-test-author','octo-scheduler','matt-dev-pipeline','matt-verify-report'];
+const XY_TOOLS=[['octopus-cabin','7'],['octopus-workflow','6'],['octopus-memory','2'],['内建','Read / Edit / Bash…']];
+const XY_POSES=['happy','wink','alert','thinking'];
+const xyState={open:false,persona:false,skills:false,tools:false,poseT:null,poseI:0};
+
+const XY_TABS=[['profile','资料'],['persona','人格'],['skills','技能'],['tools','工具'],['settings','互动']];
+const XY_TOOL_CARDS=[
+  {n:'舱调度',s:'octopus-cabin',c:8,t:['cabin_dispatch_task','cabin_delegate_task','cabin_relay_decision','cabin_list_tasks','cabin_list_jobs','cabin_job_trace','cabin_note_job','cabin_resume_job']},
+  {n:'工作流驾驶',s:'octopus-workflow',c:6,t:['list','run','status','cancel','approve','retry']},
+  {n:'记忆',s:'octopus-memory',c:2,t:['remember','recall']},
+  {n:'内建工具',s:'SDK 默认全量',c:9,t:['Read','Write','Edit','Bash','Glob','Grep','Task','WebFetch','Skill']},
+];
+function renderXyPanel(){
+  const el=$('#xypop'); if(!el) return;
+  const model=($('#conModel')?.textContent||'pro · 标准').trim();
+  const tab=xyState.tab||'profile';
+  const body={
+    profile:`<div class="xyag">
+      <div class="xyid"><span class="nm"><b>舱调度者</b><span>cabin-orchestrator · 舱主对话的默认身份</span></span><span class="xytag">隔离记忆</span></div>
+      <div class="xyrow"><span class="k">模型</span><span class="v"><b>${model}</b> <i>· 在通讯台 MODEL 芯片切换</i></span></div>
+      <div class="xyrow"><span class="k">人格</span><span class="v">persona.md · 98 行 · <i>全能舱主：能调度，也能直接写业务代码</i></span><button data-xytab="persona">查看</button></div>
+      <div class="xyrow"><span class="k">技能</span><span class="v"><b>${XY_SKILLS.length+33} 项</b> <i>· 全部共享技能（内置 + 本地进化）</i></span><button data-xytab="skills">查看</button></div>
+      <div class="xyrow"><span class="k">工具</span><span class="v"><b>3 套 MCP</b> <i>+ 内建 9 类</i></span><button data-xytab="tools">查看</button></div>
+      <div class="xyrow"><span class="k">记忆</span><span class="v">isolated <i>· ~/.octopus/agent/built-in/cabin-orchestrator/memory</i></span></div>
+    </div>`,
+    persona:`<pre class="xypre fill">${XY_PERSONA}</pre>`,
+    skills:`<div class="xychips page">${XY_SKILLS.map(n=>`<span>${n}</span>`).join('')}<span>+33</span></div>`,
+    tools:`<div class="xytools">${XY_TOOL_CARDS.map((c)=>`<div class="xytool"><div class="xytool-h"><b>${c.n}</b><span>${c.s}</span><i>${c.c} tools</i></div><div class="xychips">${c.t.map((t)=>`<span class="tool">${t}</span>`).join('')}</div></div>`).join('')}</div>`,
+    settings:`<div class="xyset">
+      <div class="xyrow"><span class="k">在场</span><span class="v">静默 30 秒说一句 · 动键鼠重新计时</span></div>
+      <div class="xyrow"><span class="k">现在</span><span class="v"><button data-xysay>让她说一句</button> <button data-xypoke>互动一下</button></span></div>
+      <div class="xyrow"><span class="k">图鉴</span><span class="v"><b>${CLIPS.length} 支片段</b> <i>· 旧批次 3 + 新批次 10 · 点一支她就就地演</i></span></div>
+      <div class="xygal clips">${CLIPS.map((c,i)=>{const m=POSE_META[c.pose];const th=c.src.replace('/v22/','/v22/thumbs/').replace('.webm','.png');const no=String(i+1).padStart(2,'0');return `<button data-xyclip="${i}" class="${state.clip===i?'on':''}" title="${no} · ${m.cn} · ${m.desc} · ${c.batch}批次"><img src="${th}" alt=""><span class="no">${no}</span></button>`;}).join('')}</div>
+    </div>`,
+  }[tab] || '';
+  el.innerHTML=`<div class="xyh"><button class="xyx" id="xyClose" title="关闭">✕</button><span class="xyav"><img src="${PORTRAIT[state.mood]||PORTRAIT.idle}" alt=""></span><b>汐音</b><span class="sub">XIYIN-07 · 舱调度者</span><span class="ln"></span><span class="en">AGENT DOSSIER</span></div>
+   <div class="xytabs" role="tablist">${XY_TABS.map(([id,label])=>`<button data-xytab="${id}" class="${tab===id?'on':''}">${label}${id==='skills'?`<b>${XY_SKILLS.length+33}</b>`:id==='tools'?'<b>3</b>':''}</button>`).join('')}</div>
+   <div class="xypop-b">${body}</div>
+   <div class="xyfoot">打开期间她会换动作 · <b>点立绘</b> = 直接跟她说话</div>`;
+  $('#xyClose')?.addEventListener('click',closeXyPanel);
+  $$('[data-xytab]',el).forEach(x=>x.addEventListener('click',()=>{xyState.tab=x.dataset.xytab;Audio.sfx('click');renderXyPanel();}));
+  $('[data-xysay]',el)?.addEventListener('click',()=>{const[t,m]=rnd(SAY);setMood(m,5500);typeCurrent({who:'xy',name:'汐音',text:t});});
+  $('[data-xypoke]',el)?.addEventListener('click',()=>{const[t,m]=rnd(SAY);setMood(m,3600);typeCurrent({who:'xy',name:'汐音',text:t});Audio.sfx('open');});
+  $$('[data-xyclip]',el).forEach(x=>x.addEventListener('click',()=>{playClip(+x.dataset.xyclip,{fx:false});Audio.sfx('click');renderXyPanel();}));
+}
+function placeXyPanel(){
+  const el=$('#xypop'); if(!el) return;
+  const host=$('#console')?.getBoundingClientRect();
+  const vw=innerWidth,vh=innerHeight;
+  const h=host&&host.width>120&&host.height>120
+    ? {x:host.left,y:host.top,w:host.width,h:host.height}
+    : {x:vw*.36,y:66,w:vw*.6,h:vh-122};
+  const w=Math.round(Math.max(480,Math.min(h.w-24,720)));
+  const hh=Math.round(Math.max(360,Math.min(h.h-12,480)));
+  el.style.left=Math.round(Math.max(8,Math.min(h.x+(h.w-w)/2,vw-w-8)))+'px';
+  el.style.top=Math.round(Math.max(8,Math.min(h.y+6,vh-hh-8)))+'px';
+  el.style.width=w+'px'; el.style.height=hh+'px';
+}
+function toggleXyPanel(){
+  if(xyState.open){closeXyPanel();return;}
+  xyState.open=true;
+  renderXyPanel();
+  const el=$('#xypop'); el.hidden=false; placeXyPanel(); Audio.sfx('open');
+  const beat=()=>{const m=XY_POSES[xyState.poseI%XY_POSES.length];xyState.poseI++;setMood(m,2600);};
+  beat();
+  clearInterval(xyState.poseT);
+  xyState.poseT=setInterval(beat,6400);
+}
+function closeXyPanel(){
+  xyState.open=false;
+  clearInterval(xyState.poseT); xyState.poseT=null;
+  const el=$('#xypop'); if(el) el.hidden=true;
+  Audio.sfx('close');
+}
+
 /* ── 更多：向左横排展开（常驻之外的入口） ── */
 const FAN_ITEMS=[['lXiyin','♡','汐音'],['lPoses','✧','动作'],['lLog','≡','日志'],['lWarp','⟳','跃迁'],['lSim','✦','模拟'],['lSet','⚙','设置'],['lFleet','⬡','编队']];
 function renderFan(){const el=$('#fan');if(!el)return;
@@ -2556,7 +2695,7 @@ let fanT=null;
 function openFan(){clearTimeout(fanT);state.fanOpen=true;$('#fanwrap').classList.add('on');$('#rMore').classList.add('on');$('#rMore').setAttribute('aria-expanded','true');}
 function closeFan(){clearTimeout(fanT);state.fanOpen=false;$('#fanwrap').classList.remove('on');$('#rMore').classList.remove('on');$('#rMore').setAttribute('aria-expanded','false');}
 function fanAction(k){
- if(k==='lXiyin'){const[t,m]=rnd(SAY);setMood(m,5500);typeCurrent({who:'xy',name:'汐音',text:t});}
+ if(k==='lXiyin'){toggleXyPanel();}
  else if(k==='lPoses')openPanel('poses');
  else if(k==='lLog')openPanel('log');
  else if(k==='lWarp')travel();

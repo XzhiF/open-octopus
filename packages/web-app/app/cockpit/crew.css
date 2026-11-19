@@ -344,6 +344,334 @@
   background: color-mix(in srgb, var(--pop-red, #ff6b81) 10%, transparent);
 }
 
+/* ── 汐音档案 · 盖在通讯台位置（2026-11-19 用户 #7 三版：不压立绘、更小）── */
+.ck12-xy {
+  position: fixed;
+  z-index: 170;
+  display: flex;
+  flex-direction: column;
+  border-radius: 14px;
+  border: 1px solid color-mix(in srgb, var(--ck-b) 32%, transparent);
+  background: linear-gradient(180deg, rgba(16, 20, 29, 0.97), rgba(9, 11, 17, 0.96));
+  box-shadow:
+    0 24px 64px rgba(0, 0, 0, 0.6),
+    0 0 40px color-mix(in srgb, var(--ck-b) 9%, transparent);
+  overflow: hidden;
+  animation: ck12-pm-in 0.18s ease-out;
+  color: var(--pop-ink);
+  font-family: var(--font-ui);
+}
+.ck12-xy-h {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 44px;
+  padding: 0 14px 0 10px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.07);
+}
+.ck12-xy-h b { font-size: 12.5px; letter-spacing: 0.04em; color: #fff; }
+.ck12-xy-sub { font-size: 9px; letter-spacing: 0.1em; color: var(--ck12-faint, var(--pop-dim)); }
+.ck12-xy-ln { flex: 1; height: 1px; background: rgba(255, 255, 255, 0.08); }
+.ck12-xy-en { font-size: 8.5px; letter-spacing: 0.16em; color: var(--ck12-faint, var(--pop-dim)); }
+.ck12-xy-av {
+  width: 28px;
+  height: 28px;
+  flex: none;
+  border-radius: 8px;
+  overflow: hidden;
+  border: 1px solid color-mix(in srgb, var(--ck-b) 40%, transparent);
+}
+.ck12-xy-av img { width: 100%; height: 100%; object-fit: cover; object-position: 50% 12%; }
+.ck12-xy-x {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  border-radius: 7px;
+  color: var(--pop-dim);
+  transition: color 0.14s, background 0.14s;
+}
+.ck12-xy-x:hover { color: #ff6b81; background: rgba(255, 255, 255, 0.06); }
+.ck12-xy button { font: inherit; color: inherit; border: 0; background: none; padding: 0; cursor: pointer; }
+.ck12-xy button:focus-visible { outline: 1px solid var(--ck-a); outline-offset: 2px; }
+
+.ck12-xy-b {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 12px 16px;
+}
+.ck12-xy-col { display: flex; flex-direction: column; min-width: 0; }
+.ck12-xy-empty {
+  padding: 28px 12px;
+  text-align: center;
+  font-size: 10.5px;
+  color: var(--ck12-faint, var(--pop-dim));
+}
+
+/* 上 tab 下内容（2026-11-19 用户：技能多，别堆一屏）。 */
+.ck12-xy-tabs {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 6px 12px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.07);
+}
+.ck12-xy-tabs button {
+  height: 26px;
+  padding: 0 12px;
+  border-radius: 7px;
+  font-size: 10.5px;
+  letter-spacing: 0.04em;
+  color: var(--pop-dim);
+  transition: color 0.12s, background 0.12s;
+}
+.ck12-xy-tabs button:hover { color: #fff; background: rgba(255, 255, 255, 0.05); }
+.ck12-xy-tabs button.is-on {
+  color: var(--ck-a);
+  background: color-mix(in srgb, var(--ck-a) 12%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--ck-a) 35%, transparent);
+}
+.ck12-xy-tabs button b {
+  margin-left: 6px;
+  font-size: 9px;
+  color: var(--ck-b);
+}
+
+/* 人格页：整页只放全文。 */
+.ck12-xset-ag-pre.is-fill { max-height: none; margin: 0; }
+
+/* 技能页：网格铺满，长名可换行。 */
+.ck12-xset-ag-chips.is-page {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(132px, 1fr));
+  gap: 6px;
+  padding: 0;
+}
+.ck12-xset-ag-chips.is-page span {
+  padding: 5px 9px;
+  border-radius: 7px;
+  font-size: 9.5px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* 工具页：一个 MCP 一张小卡。 */
+.ck12-xy-tools { display: flex; flex-direction: column; gap: 8px; }
+.ck12-xy-tool {
+  padding: 8px 10px;
+  border: 1px solid rgba(123, 77, 255, 0.22);
+  border-radius: 9px;
+  background: rgba(123, 77, 255, 0.05);
+}
+.ck12-xy-tool-h { display: flex; align-items: baseline; gap: 8px; }
+.ck12-xy-tool-h b { font-size: 11px; color: #fff; }
+.ck12-xy-tool-h span {
+  flex: 1;
+  min-width: 0;
+  font-size: 9px;
+  font-family: var(--font-mono);
+  color: var(--pop-dim);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.ck12-xy-tool-h i { flex: none; font-style: normal; font-size: 9px; color: var(--ck-b); }
+.ck12-xy-tool-d {
+  margin: 3px 0 2px;
+  font-size: 9.5px;
+  line-height: 1.5;
+  color: var(--pop-dim);
+}
+
+/* 面内字号比小浮层大一档，但不按 880 的 dossier 放大。 */
+.ck12-xy .ck12-xset-row { padding: 8px 2px; gap: 9px; }
+.ck12-xy .ck12-xset-l { width: 36px; font-size: 10px; }
+.ck12-xy .ck12-xset-toggle { height: 22px; padding: 0 10px; font-size: 9.5px; }
+.ck12-xy .ck12-xset-seg button { height: 22px; padding: 0 9px; font-size: 9.5px; }
+.ck12-xy .ck12-xset-note { font-size: 9.5px; line-height: 1.55; padding: 0 2px 8px; }
+.ck12-xy .ck12-xset-btn { height: 26px; padding: 0 10px; font-size: 10px; }
+.ck12-xy .ck12-xset-gal { gap: 5px; padding: 5px 1px 7px; }
+.ck12-xy .ck12-xset-gal button { border-radius: 8px; }
+/* 2026-11-19 用户：素材是 13 支动作片段，画廊不能只列 9 张 mood 静图。
+   13 张 2:3 缩略图铺网格，点一支走 `octopus:crew-pose`（带 clip 下标）就地演。 */
+.ck12-xy .ck12-xset-gal.is-clips {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(54px, 1fr));
+  gap: 6px;
+  padding: 4px 1px 8px;
+}
+.ck12-xy .ck12-xset-gal.is-clips button {
+  position: relative;
+  flex: none;
+  min-width: 0;
+  aspect-ratio: 2 / 3;
+  opacity: 0.6;
+}
+.ck12-xy .ck12-xset-gal.is-clips button:hover { opacity: 1; }
+.ck12-galb {
+  position: absolute;
+  left: 3px;
+  bottom: 2px;
+  font-size: 7.5px;
+  font-family: var(--font-mono);
+  line-height: 1;
+  color: #fff;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.85);
+  opacity: 0.85;
+  pointer-events: none;
+}
+.ck12-xy .ck12-xset-foot { padding: 8px 16px; border-top: 1px solid rgba(255, 255, 255, 0.07); font-size: 9.5px; }
+.ck12-xy .ck12-xset-ag { margin-bottom: 10px; padding: 8px 12px; }
+.ck12-xy .ck12-xset-ag-name b { font-size: 12px; }
+.ck12-xy .ck12-xset-ag-name span { font-size: 9.5px; }
+.ck12-xy .ck12-xset-ag-tag { font-size: 8.5px; padding: 2px 7px; }
+.ck12-xy .ck12-xset-ag-row { padding: 7px 0; gap: 9px; }
+.ck12-xy .ck12-xset-ag-k { width: 32px; font-size: 9px; }
+.ck12-xy .ck12-xset-ag-v { font-size: 10px; }
+.ck12-xy .ck12-xset-ag-row button { font-size: 9px; padding: 2px 8px; }
+.ck12-xy .ck12-xset-ag-pre { max-height: 220px; font-size: 9.5px; line-height: 1.65; }
+.ck12-xy .ck12-xset-ag-chips span { font-size: 8.5px; padding: 2px 7px; }
+
+/* ── 2026-11-19 用户 #7：AGENT 档案（更多 → ♡ 汐音）────────────────── */
+.ck12-xset-scroll {
+  max-height: min(72vh, 600px);
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding-right: 2px;
+  scrollbar-width: thin;
+}
+.ck12-xset-ag {
+  margin-bottom: 8px;
+  padding: 6px 9px;
+  border: 1px solid color-mix(in srgb, var(--ck-b) 26%, transparent);
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--ck-b) 5%, transparent);
+}
+.ck12-xset-ag-id {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 3px 0 7px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+}
+.ck12-xset-ag-av {
+  width: 30px;
+  height: 30px;
+  flex: none;
+  border-radius: 8px;
+  overflow: hidden;
+  border: 1px solid color-mix(in srgb, var(--ck-b) 40%, transparent);
+}
+.ck12-xset-ag-av img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  object-position: 50% 12%;
+}
+.ck12-xset-ag-name {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  line-height: 1.3;
+}
+.ck12-xset-ag-name b {
+  font-size: 11px;
+  color: var(--pop-ink);
+}
+.ck12-xset-ag-name span {
+  font-size: 8.5px;
+  color: var(--pop-dim);
+}
+.ck12-xset-ag-tag {
+  flex: none;
+  font-size: 8px;
+  padding: 2px 6px;
+  border-radius: 999px;
+  border: 1px solid color-mix(in srgb, var(--ck-b) 40%, transparent);
+  color: var(--ck-b);
+  letter-spacing: 0.08em;
+}
+.ck12-xset-ag-row {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 5px 0;
+  border-top: 1px solid rgba(255, 255, 255, 0.05);
+}
+.ck12-xset-ag-row:first-of-type { border-top: 0; }
+.ck12-xset-ag-k {
+  flex: none;
+  width: 28px;
+  font-size: 8.5px;
+  letter-spacing: 0.1em;
+  color: var(--pop-dim);
+}
+.ck12-xset-ag-v {
+  flex: 1;
+  min-width: 0;
+  font-size: 9px;
+  line-height: 1.5;
+  color: var(--pop-ink);
+  font-family: var(--font-mono);
+  overflow-wrap: anywhere;
+}
+.ck12-xset-ag-v b { color: #fff; }
+.ck12-xset-ag-v i { font-style: normal; color: var(--pop-dim); }
+.ck12-xset-ag-row button {
+  flex: none;
+  font-size: 8.5px;
+  padding: 2px 7px;
+  border-radius: 5px;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  color: var(--pop-dim);
+}
+.ck12-xset-ag-row button:hover {
+  color: #fff;
+  border-color: var(--ck-a);
+  background: color-mix(in srgb, var(--ck-a) 10%, transparent);
+}
+.ck12-xset-ag-pre {
+  max-height: 150px;
+  overflow: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-family: var(--font-mono);
+  font-size: 9px;
+  line-height: 1.6;
+  color: var(--pop-ink);
+  background: rgba(0, 0, 0, 0.35);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 7px;
+  padding: 7px 8px;
+  margin: 0 0 5px;
+}
+.ck12-xset-ag-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  padding: 2px 0 7px;
+}
+.ck12-xset-ag-chips span {
+  font-size: 8px;
+  padding: 2px 6px;
+  border-radius: 999px;
+  border: 1px solid color-mix(in srgb, var(--ck-b) 25%, transparent);
+  background: color-mix(in srgb, var(--ck-b) 7%, transparent);
+  color: var(--pop-ink);
+  font-family: var(--font-mono);
+}
+.ck12-xset-ag-chips span.is-tool {
+  border-color: rgba(123, 77, 255, 0.38);
+  background: rgba(123, 77, 255, 0.1);
+}
+
 .ck12-xset-row {
   display: flex;
   align-items: center;
