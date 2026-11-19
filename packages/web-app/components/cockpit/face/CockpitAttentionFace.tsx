@@ -23,6 +23,7 @@ const STAGE_LABEL: Record<CabinAttentionItem['stage'], string> = {
   approval: '待审批',
   blocked: '受阻',
   start: '待放行',
+  notice: '已完成',
 }
 
 const AWAITING_LABEL: Record<CabinAttentionItem['awaiting'], string> = {

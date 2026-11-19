@@ -286,6 +286,7 @@ const ATTENTION_STAGE_LABEL: Record<CabinAttentionItem['stage'], string> = {
   approval: '待审批',
   blocked: '受阻',
   start: '待放行',
+  notice: '已完成',
 }
 
 /** 行状态文案（S3/S4 可直接用；词表复用既有 job / task 映射，不另造一套）。 */

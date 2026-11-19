@@ -104,7 +104,11 @@ export function CockpitRightRail() {
           entries={visible}
           counts={counts}
           answered={answered}
-          onAnswered={(id) => markAnswered(id)}
+          onAnswered={(id) => {
+            markAnswered(id)
+            // 2026-11-19 用户 #9：完成项收下要等服务端 ack 生效，顺手刷一次编队。
+            void refetch()
+          }}
           onStartDecided={handleStartDecided}
         />
       )}

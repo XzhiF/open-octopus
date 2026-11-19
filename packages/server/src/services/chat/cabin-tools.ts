@@ -327,13 +327,23 @@ export function createCabinToolServer(cabinId: string) {
         }
       },
     ),
+    tool(
+      "cabin_ack_attention",
+      "把一条已完成回流从「要我处理」收掉（不回复任务/会话、不唤醒执行者）。只在审阅判断『不需要人回复、已用提示信息告知』后调用；item_id 形如 done-task-<任务id> / done-delegation-<委派id>。",
+      { item_id: z.string().min(1) },
+      async (input) => {
+        const { service } = must()
+        const res = service.ackAttention(cabinId, input.item_id, "orchestrator")
+        return { content: [{ type: "text" as const, text: JSON.stringify({ item_id: input.item_id, ...res }) }] }
+      },
+    ),
   ]
 
   return createSdkMcpServer({
     name: "octopus-cabin",
     version: "1.1.0",
     instructions:
-      "舱主的调度工具集（自己动手用通用的 Read/Edit/Bash，不在这里）。派发=建真实任务（执行在 doer/worktree）；轻活=独立委派（无 phase/验收）；决策用 cabin_relay_decision 代述，逐字不改。监督读派生视图；一次只问人一个结构化问题。直接改了任务 home 或范围变更后，用 cabin_note_job 留痕，不要让它只存在于主对话。",
+      "舱主的调度工具集（自己动手用通用的 Read/Edit/Bash，不在这里）。派发=建真实任务（执行在 doer/worktree）；轻活=独立委派（无 phase/验收）；决策用 cabin_relay_decision 代述，逐字不改。监督读派生视图；一次只问人一个结构化问题。完成回流先审一道：需要人回复就 AskUserQuestion，不需要就一句提示 + cabin_ack_attention 收项（不回复执行者）。直接改了任务 home 或范围变更后，用 cabin_note_job 留痕，不要让它只存在于主对话。",
     tools,
     alwaysLoad: true,
   })

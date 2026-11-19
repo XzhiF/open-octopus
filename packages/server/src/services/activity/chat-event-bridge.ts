@@ -831,6 +831,11 @@ class ChatEventBridge {
       "若用户明确要求清理剩余 ignored 目录：先把 cleanup.projects[].leftovers 的路径列给人确认，再调 clean_archive_leftovers(confirmed=true)；服务端会再次校验，不要自己决定删哪些。",
       "如果还有未决的反思条目，只提醒一次（例如「还有 N 条没决定，要落/跳过随时说」），不要逐条再问。",
       "若用户想补充/修正归档内容：用 record_archive_amendment(confirmed=true) 追加只增不改的记录；若用户想再改代码/继续开发：用 open_followup_task(confirmed=true) 开跟进任务，旧任务保持 done 不可变。",
+      // 2026-11-19 用户 #9：任务 done 同样先回流进「要我处理」——汐音审一道。
+      ...(row.cabin_id ? [
+        "完成回流：这次 done 已自动进「要我处理」的「已完成」。判断要不要人回复 —— 需要就用 AskUserQuestion 一次一问（会投到本对话与 inbox）；不需要就按上面的播报说完，再调 " +
+        `cabin_ack_attention(item_id="done-task-${taskId}") 把完成项收掉。`,
+      ] : []),
     ].join("\n")
     void this.wake(
       { sessionId: row.source_chat_session_id, org: row.repo_group ?? '', workspaceId: row.workspace_id ?? null },

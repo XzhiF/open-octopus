@@ -79,23 +79,25 @@ describe('sortFleet（v21 左栏排序）', () => {
 })
 
 describe('inbox-model', () => {
-  it('分组：受阻 / 待验收 / 待你定；机器在跑的不收', () => {
+  it('分组：受阻 / 待验收 / 已完成 / 待你定；机器在跑的不收', () => {
     expect(inboxGroupOf(attn('a', { stage: 'blocked' }))).toBe('blk')
     expect(inboxGroupOf(attn('b', { stage: 'review' }))).toBe('rev')
     expect(inboxGroupOf(attn('c', { stage: 'answer' }))).toBe('ask')
     expect(inboxGroupOf(attn('d', { stage: 'adjudicate' }))).toBe('ask')
+    expect(inboxGroupOf(attn('e', { stage: 'notice' }))).toBe('done')
 
     const rows: CockpitRow[] = [
       job('j1', { status: 'awaiting_review' }, 100),
       attnRow('a1', { stage: 'answer' }),
       attnRow('a2', { stage: 'blocked' }),
       attnRow('a3', { stage: 'review', awaiting: 'working' }),
+      attnRow('a4', { stage: 'notice' }),
     ]
     // job 行上挂 attention 的情况由 fleet 合并；这里单独测纯 attention 行。
     const entries = collectInbox(rows)
-    expect(entries.map((entry) => entry.item.id)).toEqual(['a1', 'a2'])
-    expect(inboxCounts(entries)).toEqual({ total: 2, ask: 1, rev: 0, blk: 1 })
-    expect(groupedInbox(entries).map((group) => group.group)).toEqual(['ask', 'blk'])
+    expect(entries.map((entry) => entry.item.id)).toEqual(['a1', 'a2', 'a4'])
+    expect(inboxCounts(entries)).toEqual({ total: 3, ask: 1, rev: 0, blk: 1, done: 1 })
+    expect(groupedInbox(entries).map((group) => group.group)).toEqual(['ask', 'blk', 'done'])
   })
 
   it('job 行上的 attention 优先取 job 面作为「去处理」目标', () => {

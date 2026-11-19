@@ -2,7 +2,7 @@
 //
 // 重点不是「多一张表」，而是「两种工作实体在编队 / attention 里共存」：
 // 任务用 #N、委派用 DN；委派的 waiting_input 要变成 answer attention，
-// failed 要变成 blocked，done 不产 attention。
+// failed 要变成 blocked；done 进 notice（完成回流，人可确认无需回复收项）。
 import { describe, it, expect, beforeAll, afterAll, beforeEach } from "vitest"
 import Database from "better-sqlite3"
 import { applySchema } from "../db/schema"
@@ -119,6 +119,22 @@ describe("CabinDelegationService：一份 brief + 一个 doer 会话", () => {
     expect(delegations.get(row.id)?.state).toBe("cancelled")
   })
 
+  // 2026-11-19 用户 #9：完成回流先进 inbox（notice），人可确认「无需回复」收项。
+  it("done 委派进 attention notice；ack 只收项，不再写消息/唤醒", () => {
+    const row = delegations.delegate(CABIN, { title: "完成态", intent: "i", noWake: true })
+    delegations.finish(row.id, "结论：OK", true)
+    const noticeId = `done-delegation-${row.id}`
+    expect(service.getView(CABIN).view.attention.find(a => a.id === noticeId)?.stage).toBe("notice")
+
+    const before = (db.prepare("SELECT COUNT(*) AS n FROM messages").get() as { n: number }).n
+    expect(service.ackAttention(CABIN, noticeId)).toEqual({ acked: true })
+    expect(service.getView(CABIN).view.attention.some(a => a.id === noticeId)).toBe(false)
+    const after = (db.prepare("SELECT COUNT(*) AS n FROM messages").get() as { n: number }).n
+    expect(after).toBe(before)
+    // 幂等：重复收项不报错
+    expect(service.ackAttention(CABIN, noticeId)).toEqual({ acked: true })
+  })
+
   it("找不到 doer 会话时返回 undefined（不猜）", () => {
     expect(delegations.findByDoerSession("s-nope")).toBeUndefined()
   })
@@ -179,7 +195,7 @@ describe("deriveCabinView：委派进入同一套 attention", () => {
     tasks: [], executions: [], incidents: [], asks: [], findings: [], jobs: [], maxWorkers: 4,
   }
 
-  it("waiting_input → answer / failed → blocked / done 不产 attention", () => {
+  it("waiting_input → answer / failed → blocked / done → notice", () => {
     const view = deriveCabinView({
       ...base,
       delegations: [
@@ -189,7 +205,7 @@ describe("deriveCabinView：委派进入同一套 attention", () => {
       ],
     })
     expect(view.attention.map((a) => `${a.handle}:${a.stage}`)).toEqual([
-      "D1:answer", "D2:blocked",
+      "D1:answer", "D2:blocked", "D3:notice",
     ])
     for (const item of view.attention) {
       expect(item.subject?.kind).toBe("delegation")

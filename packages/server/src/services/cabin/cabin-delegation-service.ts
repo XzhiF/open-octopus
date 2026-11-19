@@ -172,7 +172,29 @@ export class CabinDelegationService {
     this.appendAudit(row.cabin_id, row, ok ? "done" : "failed", { summary })
     // design 25 §11.9：跑完在主对话留一条结论 + 产物引用（不建任务、不进验收）。
     this.announceToMain(row, summary, ok)
+    // 2026-11-19 用户 #9：完成回流先让汐音审一道 —— 需要回复就出 AskUserQuestion，
+    // 不需要就提示一句并把「已完成」项收掉。失败仍走「受阻」，不在这里唤审。
+    if (ok) this.wakeTriage(row, summary)
     return next
+  }
+
+  /** 完成审阅唤醒：读结论 → 判断要不要人回复 → ack（见 cabin_ack_attention 工具）。 */
+  private wakeTriage(row: CabinDelegationRow, summary: string): void {
+    const cabin = this.deps.cabin.findById(row.cabin_id)
+    const main = cabin?.main_session_id
+    if (!main) return
+    const handle = this.handleOf(row.cabin_id, row.id)
+    const message = [
+      `[完成回流 · 请你先审] ${handle}「${row.title}」已完成。`,
+      `结论：${summary}`,
+      "判断要不要人回复：",
+      "- 需要 → 用 AskUserQuestion 一次一问（卡片会投到本对话与 inbox），问题里说清依据；",
+      "- 不需要 → 用一两句提示信息告诉我哪个任务完成了（不要重做、不要回复执行者），" +
+        `然后调用 cabin_ack_attention(item_id="done-delegation-${row.id}") 把这条完成项收掉。`,
+    ].join("\n")
+    try {
+      void this.deps.comm.wakeSessionPublic(main, cabin?.org ?? "", message)
+    } catch { /* 唤醒失败不影响回执与完成态 */ }
   }
 
   /** 委派收尾 → 舱主会话一条结论卡（零 LLM）。 */

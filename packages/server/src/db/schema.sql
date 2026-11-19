@@ -1452,6 +1452,20 @@ CREATE TABLE IF NOT EXISTS cabin_delegations (
 CREATE INDEX IF NOT EXISTS idx_cabin_delegations_cabin ON cabin_delegations(cabin_id, created_at);
 CREATE INDEX IF NOT EXISTS idx_cabin_delegations_doer ON cabin_delegations(doer_session_id);
 
+-- 完成回流 ack（2026-11-19 用户 #9）：任务 / 委派正常完成后先进「要我处理」，
+-- 汐音先审一道；人点「无需回复」只在此表留痕，**不回写任务 / 会话、不唤醒执行者**。
+-- 读侧 derive 按 (cabin_id, item_id) 过滤；item_id 形如 done-task-<id> /
+-- done-delegation-<id>，同一实体重新完成会换 id，不会被旧 ack 误吞。
+CREATE TABLE IF NOT EXISTS cabin_attention_acks (
+  id TEXT PRIMARY KEY,
+  cabin_id TEXT NOT NULL,
+  item_id TEXT NOT NULL,
+  actor TEXT NOT NULL DEFAULT 'person',
+  created_at TEXT NOT NULL,
+  UNIQUE (cabin_id, item_id)
+);
+CREATE INDEX IF NOT EXISTS idx_cabin_attention_acks_cabin ON cabin_attention_acks(cabin_id);
+
 -- ── 舱归属写一次（2026-11-17）────────────────────────────────────────────
 -- 工作区 / 任务 / 会话 / 执行出生在哪个舱就永远属于哪个舱。
 -- NULL → 值 允许（认领 / 历史回填），值 → 别的值 或 值 → NULL 一律 ABORT。

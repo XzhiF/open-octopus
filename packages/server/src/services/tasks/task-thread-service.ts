@@ -522,6 +522,7 @@ export class TaskThreadService {
           `[执行工作区] ${info.wsPath ?? "尚未绑定（等待触发）"}${info.branch ? ` · 分支 ${info.branch}` : ""}`,
           readOnlyLine,
           quickEditLine,
+          "[提问] 执行期遇到必须人拍板的阻断问题（授权边界 / 取舍 / 冲突处理 / 范围变更）用 AskUserQuestion 一次一问 —— 卡片会自动投到舱主对话与 inbox，人答完你继续；验收的逐场景引导仍用对话正文，不要用 AskUserQuestion。",
           `[改计划] 改 spec/票只能走计划回写：${planCmd}（批次目录只读，直接改会被硬闸拒绝）。`,
           "[动作] 触发：任务已入列(ready)且该开跑时，**直接调 trigger_task**，不必等用户明确说「开跑」，也不必用确认卡；开跑后一句话告知。暂停 / 恢复 / 中止 / 重试归档仍默认用 request_task_action 落确认卡（破坏性或方向性动作由人拍板）；用户明确表态后可直接执行。验收的通过/打回在用户明确表态后调 submit_acceptance_decision 收口（人点验收台是兜底）。",
           "[状态感知] 任务状态变化会以事件卡出现在本会话；每轮也会刷新上面这行状态。",

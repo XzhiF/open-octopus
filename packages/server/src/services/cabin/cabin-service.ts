@@ -843,9 +843,11 @@ export class CabinService {
         const h = delegationHandles.get(d.id)
         return {
           id: d.id, title: d.title, state: d.state,
+          ...(d.result_summary ? { summary: d.result_summary } : {}),
           ...(h ? { handle: h.handle, color: h.color } : {}),
         }
       }),
+      acked: [...this.ackedAttentionIds(id)],
       maxWorkers: MAX_PARALLEL_WORKSPACES,
     })
     return { cabin: row, view }
@@ -999,6 +1001,33 @@ export class CabinService {
       }
     }
     return asks
+  }
+
+  /** 完成回流 ack（2026-11-19 用户 #9）：只写 cabin_attention_acks，**不发消息、
+   *  不唤醒任务/会话** —— 「确认不会回复了」就是把这条从待处理态收掉。
+   *  幂等；未知 item_id 也照存（读侧只按 id 过滤 notice）。 */
+  ackAttention(cabinId: string, itemId: string, actor: "person" | "orchestrator" = "person"): { acked: boolean } {
+    this.mustGet(cabinId)
+    const db = this.cabin.getDb()
+    const result = db.prepare(
+      "INSERT OR IGNORE INTO cabin_attention_acks (id, cabin_id, item_id, actor, created_at) VALUES (?, ?, ?, ?, ?)",
+    ).run(randomUUID(), cabinId, itemId, actor, now())
+    if (Number(result.changes ?? 0) > 0) {
+      try { this.notifyViewChanged(cabinId) } catch { /* view hook optional */ }
+    }
+    return { acked: true }
+  }
+
+  /** 本舱已收项的 attention id（derive 读侧过滤用）。老库缺表时返回空集。 */
+  private ackedAttentionIds(cabinId: string): Set<string> {
+    const out = new Set<string>()
+    try {
+      const rows = this.cabin.getDb().prepare(
+        "SELECT item_id FROM cabin_attention_acks WHERE cabin_id = ?",
+      ).all(cabinId) as Array<{ item_id: string }>
+      for (const r of rows) if (r.item_id) out.add(r.item_id)
+    } catch { /* old DB — table added by applySchema on next start */ }
+    return out
   }
 
   /** 人主动忽略一条提问（旧卡 / 不再需要回答的那条）。把 decision 写回原消息

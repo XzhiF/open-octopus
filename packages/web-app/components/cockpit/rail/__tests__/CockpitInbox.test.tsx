@@ -29,6 +29,7 @@ vi.mock('@/lib/cabin-api', async (importOriginal) => {
   return {
     ...actual,
     submitCabinDecision: vi.fn(async () => ({ already: false, receipt: { line: '✓ 已答 · 单 phase' } })),
+    ackCabinAttention: vi.fn(async () => ({ acked: true })),
   }
 })
 vi.mock('@/lib/tasks-api', async (importOriginal) => {
@@ -41,7 +42,7 @@ vi.mock('@/lib/tasks-api', async (importOriginal) => {
   }
 })
 
-import { submitCabinDecision } from '@/lib/cabin-api'
+import { submitCabinDecision, ackCabinAttention } from '@/lib/cabin-api'
 import { readyTask, triggerTask } from '@/lib/tasks-api'
 
 function cockpit(): CockpitContextValue {
@@ -363,5 +364,33 @@ describe('CockpitRightRail · v21 待办', () => {
     // 主动关：✕（头部最左那颗）。
     fireEvent.click(within(pop).getAllByLabelText('收起要我处理')[0])
     expect(screen.queryByTestId('cockpit-inbox-popover')).toBeNull()
+  })
+
+  // 2026-11-19 用户 #9：完成回流进 inbox → 人可确认「无需回复」收项（纯 ack）。
+  it('已完成分组：收下调 ack、不再回复任务/会话，回执照常出现', async () => {
+    fleetState.value = fleet([
+      row('done-task-t1', {
+        stage: 'notice',
+        title: '任务A · 已完成',
+        detail: '执行与归档已收口，确认无需回复就收下',
+        handle: '#1',
+        task_id: 't1',
+      }),
+    ])
+    render(ui())
+
+    expect(screen.getByTestId('cockpit-inbox-count')).toHaveTextContent('1')
+    fireEvent.click(screen.getByTestId('cockpit-inbox-chip'))
+    expect(screen.getByText('已完成')).toBeInTheDocument()
+    fireEvent.click(screen.getByTestId('cockpit-inbox-row-done-task-t1'))
+
+    const card = screen.getByTestId('cockpit-inbox-notice')
+    expect(card).toHaveTextContent('任务A · 已完成')
+    fireEvent.click(within(card).getByTestId('cockpit-inbox-notice-ack'))
+
+    await waitFor(() => expect(vi.mocked(ackCabinAttention)).toHaveBeenCalledWith('c1', 'done-task-t1'))
+    const receipt = await screen.findByTestId('cockpit-inbox-receipt')
+    expect(receipt).toHaveTextContent('已收下')
+    expect(receipt).toHaveTextContent('没有回复任务/会话')
   })
 })

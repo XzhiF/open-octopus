@@ -657,6 +657,20 @@ export async function dismissCabinAsk(
   return handleResponse<{ dismissed: number }>(res)
 }
 
+/** 完成回流收项（2026-11-19 用户 #9）：只写 ack，不回写任务/会话。 */
+export async function ackCabinAttention(
+  cabinId: string,
+  itemId: string,
+  actor: 'person' | 'orchestrator' = 'person',
+): Promise<{ acked: boolean }> {
+  const res = await fetch(url(`/${cabinId}/attention/${encodeURIComponent(itemId)}/ack`), {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ actor }),
+  })
+  return handleResponse<{ acked: boolean }>(res)
+}
+
 export async function fetchCabinDecisions(cabinId: string, signal?: AbortSignal): Promise<{  decisions: CabinDecisionRecord[]
   pending: CabinDecisionRecord[]
   asks: Array<{

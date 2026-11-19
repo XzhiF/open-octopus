@@ -951,6 +951,19 @@ export function createCabinRoutes(
     }
   })
 
+  /** 完成回流收项（2026-11-19 用户 #9）：「确认不会回复了」只写 ack 表，
+   *  不回写任务 / 会话、不唤醒执行者。 */
+  router.post("/:id/attention/:itemId/ack", async (c) => {
+    try {
+      const body = await c.req.json().catch(() => ({})) as { actor?: unknown }
+      const actor = body.actor === "orchestrator" ? "orchestrator" as const : "person" as const
+      return c.json(service.ackAttention(c.req.param("id"), c.req.param("itemId"), actor))
+    } catch (err) {
+      const { status, message } = classifyError(err)
+      return c.json({ error: message }, status as 400)
+    }
+  })
+
   /** 决策账本（可重放）：state = decided | relayed | fallback_relayed | expired。 */
   router.get("/:id/decisions", (c) => {
     if (!decisions) return c.json({ decisions: [], pending: [] })

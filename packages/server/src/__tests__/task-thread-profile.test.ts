@@ -156,6 +156,10 @@ describe("TaskThreadService — identity / cwd / guard", () => {
     expect(profile.cwd).toBe(wsDir)
     expect(profile.autoCommit).toBe(true)
     expect(profile.context).toContain(wsDir)
+    // 2026-11-19 用户 #9：执行期的阻断提问走 AskUserQuestion（卡片进舱主对话 / inbox），
+    // 验收逐场景引导仍留在正文。
+    expect(profile.contextPlaybook).toContain("[提问]")
+    expect(profile.contextPlaybook).toContain("AskUserQuestion")
     // normal project write allowed
     await expect(profile.guard!("Write", { file_path: path.join(wsDir, "projects", "app", "x.ts") })).resolves.toBeUndefined()
     // batch mirror blocked
