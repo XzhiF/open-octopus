@@ -81,9 +81,12 @@ function startSidecar(): void {
   if (!fs.existsSync(nodeBin)) throw new Error(`bundled node missing: ${nodeBin}`)
   if (!fs.existsSync(path.join(webDir, 'index.html'))) throw new Error(`web dist missing: ${webDir}`)
 
+  // 2026-11-19 用户口径：桌面壳 = 对外分发的 prod 形态，数据也跟 prod 走同一份库
+  // （dev 的 octopus.db 留给 `pnpm dev` / CLI）。要指回 dev 库用
+  // OCTOPUS_DESKTOP_DB_PATH 覆盖。
   const dbPath =
     process.env.OCTOPUS_DESKTOP_DB_PATH ??
-    path.join(os.homedir(), '.octopus', 'db', 'octopus.db')
+    path.join(os.homedir(), '.octopus', 'db', 'octopus-prod.db')
   fs.mkdirSync(path.dirname(dbPath), { recursive: true })
 
   const logDir = path.join(app.getPath('userData'), 'logs')

@@ -24,7 +24,8 @@ packages/desktop/
 
 - **固定 loopback 端口** `47820`：`loadURL('http://127.0.0.1:47820')`。origin 稳定，localStorage/窗口状态不会因动态端口漂移。
 - **同源**：server 设置 `OCTOPUS_HOST=127.0.0.1`，同时托管 `web/dist` 与 `/api`；前端 `getServerUrl()` 生产态返回 `window.location.origin`。
-- **共享数据**：默认 DB 为 `~/.octopus/db/octopus.db`，与 CLI 共用；可用 `OCTOPUS_DESKTOP_DB_PATH` 覆盖。
+- **共享数据**：默认 DB 为 `~/.octopus/db/octopus-prod.db`（与 `pnpm prod` 同一份，
+  dev 的 `octopus.db` 留给 `pnpm dev`）；可用 `OCTOPUS_DESKTOP_DB_PATH` 覆盖。
 - **独立 Node runtime**：sidecar 用 `resources/runtime/node` 启动，不使用 `ELECTRON_RUN_AS_NODE`。因此 better-sqlite3 保持 Node ABI，无需按 Electron ABI 重建，也不会污染 `pnpm dev` 使用的 pnpm store。
 - **server 依赖**：`pnpm deploy --prod --legacy` 生成自包含依赖树，再重命名为 `vendor/`，sidecar 通过 `NODE_PATH` 解析（electron-builder 会过滤 extraResources 里的 `node_modules`）。
 - **单实例**：`requestSingleInstanceLock()`；第二实例聚焦已有窗口。
