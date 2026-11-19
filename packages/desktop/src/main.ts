@@ -14,6 +14,28 @@ let sidecar: ChildProcess | null = null
 let sidecarLog: fs.WriteStream | null = null
 let quitting = false
 
+// 冷启动时后端 routesReady 之前不接请求（packages/server/src/index.ts 里
+// listen 回调那段同步初始化，本机实测 40–75s）。窗口必须在这个等待之前就出现，
+// 否则用户双击后几十秒里既无窗口也无任务栏图标，只会判定「打不开」。
+const LOADING_HTML = `<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><style>
+html,body{margin:0;height:100%;background:#0A0A0C;color:#c8c8d0;
+  font:14px/1.6 -apple-system,"Segoe UI","Microsoft YaHei",sans-serif;
+  display:flex;align-items:center;justify-content:center;user-select:none}
+.box{text-align:center}
+.ring{width:34px;height:34px;margin:0 auto 18px;border:2px solid rgba(255,255,255,.12);
+  border-top-color:#7aa2ff;border-radius:50%;animation:spin .9s linear infinite}
+@keyframes spin{to{transform:rotate(360deg)}}
+.t{font-size:15px;letter-spacing:.4px}
+.s{margin-top:8px;font-size:12px;color:#6b6b78}
+</style></head><body><div class="box"><div class="ring"></div>
+<div class="t">Octopus 正在启动…</div><div class="s" id="s">正在初始化本地服务</div></div>
+<script>let n=0;setInterval(()=>{n++;document.getElementById('s').textContent='正在初始化本地服务 · '+n+'s'},1000)</script>
+</body></html>`
+
+function loadingUrl(): string {
+  return `data:text/html;charset=utf-8,${encodeURIComponent(LOADING_HTML)}`
+}
+
 function windowStatePath(): string {
   return path.join(app.getPath('userData'), 'window-state.json')
 }
@@ -140,7 +162,10 @@ async function waitFor(url: string, timeoutMs: number): Promise<void> {
       throw new Error(`后端进程提前退出（code=${sidecar.exitCode}）`)
     }
     try {
-      const response = await fetch(url)
+      // 单次请求必须有上限：后端事件循环被初始化卡住时，连接会被 accept 队列
+      // 接住却迟迟不回包，没有 signal 的 fetch 会把整个等待循环钉死在这一次调用上，
+      // 总超时形同虚设（2026-11-19 桌面壳冷启动实测）。
+      const response = await fetch(url, { signal: AbortSignal.timeout(2000) })
       if (response.ok) return
     } catch {
       // keep polling
@@ -213,11 +238,19 @@ function createWindow(): BrowserWindow {
 }
 
 async function bootstrap(): Promise<void> {
+  // 先开窗、先给反馈：下面的 sidecar + waitFor 冷启动要几十秒，窗口必须已经立起来。
+  const win = createWindow()
+  mainWindow = win
+  await win.loadURL(loadingUrl())
+  if (win.isDestroyed()) return
+  win.show()
+
   if (isDev) {
     await waitFor(DEV_URL, 15_000)
   } else {
     startSidecar()
-    await waitFor(`${BASE_URL}/api/actuator/ready`, 30_000)
+    // 本机冷启动实测 44–75s（见文件头 LOADING_HTML 注释），30s 会把正常启动判成失败。
+    await waitFor(`${BASE_URL}/api/actuator/ready`, 120_000)
   }
 
   session.defaultSession.on('will-download', (_event, item) => {
@@ -225,10 +258,10 @@ async function bootstrap(): Promise<void> {
     item.setSavePath(target)
   })
 
-  mainWindow = createWindow()
-  await mainWindow.loadURL(isDev ? DEV_URL : BASE_URL)
+  if (win.isDestroyed()) return
+  await win.loadURL(isDev ? DEV_URL : BASE_URL)
   if (isDev && process.env.OCTOPUS_DESKTOP_DEVTOOLS === '1') {
-    mainWindow.webContents.openDevTools({ mode: 'detach' })
+    win.webContents.openDevTools({ mode: 'detach' })
   }
 }
 

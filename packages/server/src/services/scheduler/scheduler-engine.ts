@@ -115,7 +115,21 @@ export class SchedulerEngine {
       this.auxiliaryTick()
     }, AUXILIARY_TICK_INTERVAL)
 
-    this.detectMissed()
+    // detectMissed 是同步 CPU 活（cron 逐点推进 + luxon 时区换算 + DB 查重）。
+    // 在 listen 回调里同步跑，会把同一拍的 /api/actuator/ready 一起钉住 ——
+    // 桌面壳等不到 ready 就不建窗口（2026-11-19 冷启动 40–90s「双击没反应」）。
+    // 挪到下一拍：路由先就绪，补记漏跑再慢慢做；失败不影响调度主循环。
+    setImmediate(() => {
+      if (!this.running) return
+      try {
+        this.detectMissed()
+      } catch (err: unknown) {
+        console.error(
+          '[SchedulerEngine] detectMissed failed:',
+          err instanceof Error ? err.message : String(err),
+        )
+      }
+    })
   }
 
   stop(): void {
@@ -526,7 +540,13 @@ export class SchedulerEngine {
     const enabledSchedules = this.configDAO.findEnabledSchedulesForMissed() as ScheduleRow[]
 
     let totalMissed = 0
+    let scanned = 0
     const MAX_MISSED = 100
+    // 逐点枚举必须有硬上限：lastExec 可能停在很久以前，一个停跑多日的每分钟
+    // 作业就是两万多个候选点，每个 next() 都要走 luxon 时区换算（本机实测
+    // 单次启动 140s+ 全烧在这里）。上限与总超时都要在循环**内**生效 ——
+    // 旧实现先把全部候选点堆进数组再截断，超时检查也只在 schedule 之间做。
+    const MAX_SCAN = 2_000
     const startTime = Date.now()
     const TIMEOUT_MS = 30_000
 
@@ -546,26 +566,25 @@ export class SchedulerEngine {
           endDate: new Date(),
         })
 
-        const expectedTimes: Date[] = []
-        while (true) {
+        while (totalMissed < MAX_MISSED && scanned < MAX_SCAN) {
+          if (Date.now() - startTime > TIMEOUT_MS) break
+          scanned++
+
+          let next
           try {
-            const next = interval.next()
-            if (next.getTime() >= Date.now()) break
-            expectedTimes.push(next.toDate())
+            next = interval.next()
           } catch {
             break
           }
-        }
+          if (next.getTime() >= Date.now()) break
 
-        for (const expectedTime of expectedTimes) {
-          if (totalMissed >= MAX_MISSED) break
-
-          const exists = this.configDAO.findExecutionNearTime(schedule.id, expectedTime.toISOString())
+          const expectedTime = next.toDate().toISOString()
+          const exists = this.configDAO.findExecutionNearTime(schedule.id, expectedTime)
 
           if (!exists) {
             this.runDAO.insertMissedExecution(
               randomUUID(), schedule.id,
-              expectedTime.toISOString(), schedule.timezone,
+              expectedTime, schedule.timezone,
             )
             totalMissed++
           }
