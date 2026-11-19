@@ -13,6 +13,12 @@ extraResources:
     to: web
   - from: resources/server
     to: server
+  # electron-builder 的 copy filter 会无条件跳过 extraResources 源目录根级的
+  # node_modules（util/filter.js: relative === "node_modules" → false）。
+  # 依赖树必须保留 node_modules 原名（ESM 裸模块解析不认 NODE_PATH），
+  # 所以单独映射一次：此时源根就是这个目录本身，不受那条规则影响。
+  - from: resources/server/node_modules
+    to: server/node_modules
   - from: resources/packages/core-pack
     to: packages/core-pack
 asar: true

@@ -76,7 +76,11 @@ function startSidecar(): void {
   const resources = process.resourcesPath
   const entry = path.join(resources, 'server', 'dist', 'index.js')
   const webDir = path.join(resources, 'web')
-  const nodeBin = path.join(resources, 'runtime', 'node')
+  const nodeBin = path.join(
+    resources,
+    'runtime',
+    process.platform === 'win32' ? 'node.exe' : 'node',
+  )
   if (!fs.existsSync(entry)) throw new Error(`sidecar missing: ${entry}`)
   if (!fs.existsSync(nodeBin)) throw new Error(`bundled node missing: ${nodeBin}`)
   if (!fs.existsSync(path.join(webDir, 'index.html'))) throw new Error(`web dist missing: ${webDir}`)
@@ -104,7 +108,9 @@ function startSidecar(): void {
       OCTOPUS_BRANCH: 'desktop',
       OCTOPUS_HOST_PID: String(process.pid),
       OCTOPUS_HOST_PORTS: String(DESKTOP_PORT),
-      NODE_PATH: path.join(resources, 'server', 'vendor'),
+      // 依赖树保留 node_modules 原名（ESM 的裸模块解析不认 NODE_PATH）；
+      // NODE_PATH 只作为 CJS 兜底，与部署树保持一致。
+      NODE_PATH: path.join(resources, 'server', 'node_modules'),
     },
     stdio: ['ignore', 'pipe', 'pipe'],
   })
