@@ -115,6 +115,13 @@ export function CockpitChatWindow() {
   }, [])
   useEffect(() => () => setChatSlot('index', null), [])
 
+  // v22 十轮：「星核」挂载入口 —— ChatArea 的 ComposerAttachPopover 原样
+  // portal 进标题栏（技能 / 分身 / MCP），输入行不再放 ＋。
+  const attachAttach = useCallback((node: HTMLSpanElement | null) => {
+    setChatSlot('attach', node)
+  }, [])
+  useEffect(() => () => setChatSlot('attach', null), [])
+
   const computeDefaultRect = useCallback((): CockpitRect | null => {
     // v21 三轮：原型没有屏幕级底栏，通讯台底缘固定为 视口 − 56（geometry 的
     // fallback 口径），不再从 footer / composer 上沿反推。
@@ -327,8 +334,19 @@ export function CockpitChatWindow() {
         >
           <X className="ck12-comms-ico" aria-hidden="true" />
         </button>
+        {/* v22 十轮：挂载入口（星核）—— 主线程时它就是原「主对话」标题的位置；
+            作业线程仍保留 ▦ 标题。ChatArea portal 真面板进来。 */}
+        <span
+          ref={attachAttach}
+          className="ck12-comms-attach-slot"
+          data-testid="cockpit-attach-slot"
+        />
         <span className="ck12-comms-ident">
-          <b className="ck12-comms-title" data-testid="cockpit-comms-title">
+          <b
+            className="ck12-comms-title"
+            data-testid="cockpit-comms-title"
+            hidden={active.kind === 'main'}
+          >
             {active.kind === 'main' ? '主对话' : `▦ ${active.short}`}
           </b>
         </span>

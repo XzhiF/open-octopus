@@ -555,6 +555,17 @@ export function ChatArea({
   // 全域：标题栏「对话索引」槽（CockpitChatWindow 注册）。classic 拿到 null，
   // 继续用正文右侧那排短杠，行为逐字不变。
   const cockpitIndexSlot = useChatSlot('index')
+  // 全域：标题栏「星核」槽（v22 十轮）—— 挂载面板 portal 进台头。
+  const cockpitAttachSlot = useChatSlot('attach')
+
+  // ⌥A 开合星核面板（原型口径，由 CockpitShortcuts 发事件）。classic 不响应：
+  // 那里的入口在控件条，不抢这个键。
+  useEffect(() => {
+    if (!isCockpitVariant) return
+    const onToggle = () => setAttachOpen((open) => !open)
+    window.addEventListener('octopus:composer-attach', onToggle)
+    return () => window.removeEventListener('octopus:composer-attach', onToggle)
+  }, [isCockpitVariant])
 
   const busyStartedAt = turnStartedAt ?? (turnStartedAtRef.current || null)
   const busyElapsed = streaming && busyStartedAt ? Math.max(0, (Date.now() - busyStartedAt) / 1000) : 0
@@ -644,9 +655,10 @@ export function ChatArea({
   // 只对 tui + 显式开启的宿主生效（主对话），草稿工作台行为不变。
   const heroMode = !!tui && !!heroEmpty && !streaming && messages.length === 0
 
-  // ＋ 挂载（SKILL / 分身）：普通布局挂在控件条；全域座舱把控件条整体收掉，
-  // 这个按钮并进输入行 —— 底栏保持 v12 的单行 54px（2026-11-14 用户）。
-  const composerAttach = showComposerAttach ? (
+  // 挂载（SKILL / 分身）：普通布局挂在控件条；全域座舱的入口搬到通讯台标题栏
+  // 「星核」钮（v22 十轮）—— 同一个子树只渲染一次，portal 进 attach 槽；槽
+  // 还没注册（宿主未挂）时退回输入行，功能不丢。
+  const attachNode = showComposerAttach ? (
     <ComposerAttachPopover
       skill={attachedSkill}
       expert={attachedExpert}
@@ -663,8 +675,12 @@ export function ChatArea({
       workspaceContext={workspaceContext}
       open={attachOpen}
       onOpenChange={setAttachOpen}
+      triggerVariant={isCockpitVariant ? 'core' : 'inline'}
     />
   ) : null
+  const composerAttach = attachNode && isCockpitVariant && cockpitAttachSlot
+    ? createPortal(attachNode, cockpitAttachSlot)
+    : attachNode
 
   return (
     <div className={cn('relative flex flex-col flex-1 min-h-0', heroMode && 'justify-center')}>
@@ -1099,7 +1115,10 @@ export function ChatArea({
                   <span className="shrink-0 whitespace-nowrap pt-1.5 text-[9.5px] text-pop-red" data-tui-hint>{queueHint}</span>
                 )}
                 {isCockpitVariant && composerAttach && (
-                  <span className="shrink-0 pt-1" data-tui-attach-inline>{composerAttach}</span>
+                  cockpitAttachSlot
+                    // 已 portal 进台头槽：这里只留 React 挂载位（渲染结果在槽里）。
+                    ? composerAttach
+                    : <span className="shrink-0 pt-1" data-tui-attach-inline>{composerAttach}</span>
                 )}
                 <span className="shrink-0 pt-1" data-tui-send-wrap>
                   {streaming ? (

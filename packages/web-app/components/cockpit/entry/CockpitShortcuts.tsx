@@ -9,12 +9,13 @@
 //   ⌥D  本舱主会话调试面
 //   ⌥F  打开 / 收起本舱目录窗（当前 cwd 只读树）
 //   ⌥X  打开 / 收起汐音设置（HUD「◐ 汐音」同一个开关）
+//   ⌥A  开合通讯台标题栏「星核」挂载面板（技能 / 分身 / MCP）
 //   ⌥G  不处理：全域入口是 classic 舱壳上的按钮（单向切换），这里没有对应动作。
 //   ↑↓  不在这里 —— S3 的 CockpitFleetRail 已在可见行内处理。
 //
 // 约定（与仓库桌面快捷键一致）：
 //   · 先过 useIsActiveRoute：隐藏窗口 / 后台标签不抢键；
-//   · 输入框 / textarea / select / contenteditable 聚焦时不抢键（⌘K 除外）；
+//   · 输入框 / textarea / select / contenteditable 聚焦时不抢键（⌘K / ⌥A 除外）；
 //   · macOS 上 Alt+字母会得到特殊字符（Alt+W = ∑），所以优先看 event.code。
 
 import { useEffect, useRef } from 'react'
@@ -35,7 +36,7 @@ function isEditableTarget(target: EventTarget | null): boolean {
 }
 
 /** Alt + 哪个键（不认识返回 null）。兼容 event.code 缺失的合成事件与测试。 */
-function altKeyOf(event: KeyboardEvent): '1' | '2' | 'w' | 'x' | 'c' | 'd' | 'f' | 'left' | 'right' | null {
+function altKeyOf(event: KeyboardEvent): '1' | '2' | 'w' | 'x' | 'c' | 'd' | 'f' | 'a' | 'left' | 'right' | null {
   if (!event.altKey || event.metaKey || event.ctrlKey || event.shiftKey) return null
   if (event.code === 'Digit1' || event.code === 'Numpad1' || event.key === '1') return '1'
   if (event.code === 'Digit2' || event.code === 'Numpad2' || event.key === '2') return '2'
@@ -44,6 +45,7 @@ function altKeyOf(event: KeyboardEvent): '1' | '2' | 'w' | 'x' | 'c' | 'd' | 'f'
   if (event.code === 'KeyC' || event.key.toLowerCase() === 'c') return 'c'
   if (event.code === 'KeyD' || event.key.toLowerCase() === 'd') return 'd'
   if (event.code === 'KeyF' || event.key.toLowerCase() === 'f') return 'f'
+  if (event.code === 'KeyA' || event.key.toLowerCase() === 'a') return 'a'
   if (event.code === 'ArrowLeft' || event.key === 'ArrowLeft') return 'left'
   if (event.code === 'ArrowRight' || event.key === 'ArrowRight') return 'right'
   return null
@@ -98,7 +100,15 @@ export function CockpitShortcuts() {
         return
       }
 
-      if (isEditableTarget(event.target)) return
+      if (isEditableTarget(event.target)) {
+        // ⌥A 是唯一的例外（原型口径：面板搜索框里再按一次也能收起）；
+        // Alt+A 不是打字键，AltGr 组合（带 ctrl）已在 altKeyOf 里排除。
+        if (altKeyOf(event) === 'a') {
+          event.preventDefault()
+          window.dispatchEvent(new Event('octopus:composer-attach'))
+        }
+        return
+      }
 
       const key = altKeyOf(event)
       if (!key) return
@@ -151,6 +161,13 @@ export function CockpitShortcuts() {
       if (key === 'f') {
         event.preventDefault()
         toggleCabinTree()
+        return
+      }
+
+      // v22 十轮：⌥A 开合通讯台「星核」挂载面板（面板本体在 ChatArea）。
+      if (key === 'a') {
+        event.preventDefault()
+        window.dispatchEvent(new Event('octopus:composer-attach'))
         return
       }
 

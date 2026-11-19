@@ -158,6 +158,19 @@ describe('CockpitShortcuts', () => {
     await waitFor(() => expect(screen.getByTestId('cabin-tree').textContent).toBe('closed'))
   })
 
+  it('⌥A 通知 ChatArea 开合星核挂载面板（输入框里也生效）', () => {
+    renderShortcuts()
+    const onAttach = vi.fn()
+    window.addEventListener('octopus:composer-attach', onAttach)
+    const notPrevented = fireEvent.keyDown(window, { key: 'a', code: 'KeyA', altKey: true })
+    const input = screen.getByTestId('typing')
+    input.focus()
+    fireEvent.keyDown(input, { key: 'a', code: 'KeyA', altKey: true })
+    window.removeEventListener('octopus:composer-attach', onAttach)
+    expect(notPrevented).toBe(false)
+    expect(onAttach).toHaveBeenCalledTimes(2)
+  })
+
   it('输入框聚焦时 ⌥1 / ⌥W 不抢键', async () => {
     fleetState.current = fleet([row(job('run1'))])
     renderShortcuts()

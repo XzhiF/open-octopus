@@ -852,6 +852,67 @@ kbd{border:1px solid rgba(185,179,217,.35);border-bottom-width:2px;border-radius
   .ck-side{width:100%;height:190px}
 }
 
+/* ═══ 通讯台 ＋（v22 十轮）：头部「主对话」→ ＋，开「技能 / 分身 / MCP」面板。
+       技能选中 = 随本条消息生效；分身 = 委派一轮；MCP = 只读展开。不在这里切身份。 ═══ */
+.con-add{position:relative;flex:none;width:26px;height:26px;display:grid;place-items:center;border-radius:50%;border:1px solid rgba(46,230,214,.5);background:rgba(46,230,214,.1);color:#9ff7ee;transition:.16s}
+.con-add svg{width:15px;height:15px;display:block;overflow:visible}
+.con-add:hover,.con-add.on{border-color:rgba(46,230,214,.95);background:rgba(46,230,214,.24);color:#eafffd;box-shadow:0 0 14px rgba(46,230,214,.45)}
+.con-add .orbit{transform-origin:12px 12px;opacity:.55;transition:.16s}
+.con-add.on .orbit{opacity:.85;animation:addspin 2.6s linear infinite}
+.con-add.on .pulse{animation:addpulse 1.6s ease-in-out infinite;transform-origin:12px 12px}
+.con-add.on .core{filter:drop-shadow(0 0 4px rgba(46,230,214,.95))}
+@keyframes addspin{to{transform:rotate(360deg)}}
+@keyframes addpulse{0%,100%{opacity:.45;transform:scale(.92)}50%{opacity:1;transform:scale(1.08)}}
+.con-add i{position:absolute;right:-3px;top:-3px;min-width:14px;height:14px;padding:0 3px;display:grid;place-items:center;border-radius:999px;background:var(--sky);color:#04121c;font-size:8.5px;font-style:normal;font-weight:900}
+.con-add i[hidden]{display:none}
+.addpop{position:absolute;left:38px;top:48px;z-index:58;width:min(430px,calc(100% - 20px));max-height:min(432px,calc(100% - 60px));display:flex;flex-direction:column;min-height:0;border-radius:var(--wrad);overflow:hidden;background:var(--glass2);backdrop-filter:blur(16px) saturate(1.3);border:1px solid var(--edge);box-shadow:0 20px 60px rgba(16,13,40,.6)}
+.addpop[hidden]{display:none}
+.ap-h{flex:none;display:flex;align-items:center;gap:8px;padding:8px 12px;border-bottom:1px solid rgba(46,230,214,.22);background:linear-gradient(180deg,rgba(46,230,214,.06),transparent)}
+.ap-h b{font-size:12px;font-family:var(--font-ui);color:#fff}
+.ap-h .sp{flex:1}
+.ap-esc{font-size:9px;color:var(--metal2);border:1px solid rgba(185,179,217,.25);padding:1px 6px;clip-path:polygon(4px 0,100% 0,calc(100% - 4px) 100%,0 100%)}
+.ap-chip{display:inline-flex;height:19px;align-items:center;gap:4px;padding:0 7px;border-radius:5px;border:1px solid rgba(123,77,255,.5);background:rgba(123,77,255,.18);color:#c9b6ff;font-size:9.5px;font-weight:700}
+.ap-search{flex:none;padding:7px 10px 4px}
+.ap-search input{width:100%;height:27px;padding:0 10px;border:1px solid rgba(46,230,214,.25);background:rgba(10,8,24,.55);color:#fff;font-size:11px}
+.ap-search input:focus{outline:none;border-color:var(--teal)}
+.ap-tabs{flex:none;display:flex;gap:5px;padding:2px 10px 6px;border-bottom:1px solid rgba(185,179,217,.12)}
+.ap-tabs button{flex:none;height:24px;padding:0 10px;border:1px solid transparent;background:none;color:var(--ink2);font-size:10px;font-weight:700;border-radius:6px;display:inline-flex;align-items:center;gap:5px}
+.ap-tabs button b{font-size:8.5px;font-family:var(--font-mono);color:var(--metal2);font-weight:700}
+.ap-tabs button.on{border-color:rgba(46,230,214,.4);background:rgba(46,230,214,.1);color:#fff}
+.ap-tabs button.on b{color:var(--teal)}
+.ap-body{flex:1;min-height:0;overflow:auto;padding:2px 8px 8px}
+.ap-grp{font-size:8.5px;font-weight:800;letter-spacing:.12em;color:var(--teal);padding:7px 4px 3px}
+.ap-grp span{color:var(--metal2);font-weight:700;letter-spacing:.04em}
+.ap-row{display:flex;align-items:center;gap:8px;width:100%;text-align:left;padding:6px 7px;border-radius:5px;color:var(--ink2);font-size:10.5px;transition:.12s}
+.ap-row:hover{background:rgba(46,230,214,.08);color:#fff}
+.ap-row.on{background:linear-gradient(90deg,rgba(53,199,240,.22),rgba(123,77,255,.18));color:#fff}
+.ap-row .ck2{flex:none;width:15px;height:15px;display:grid;place-items:center;border:1px solid rgba(185,179,217,.35);border-radius:4px;font-size:9px;color:transparent}
+.ap-row.on .ck2{border-color:var(--teal);background:rgba(46,230,214,.22);color:var(--teal)}
+.ap-row .nm{flex:none;font-family:var(--font-mono);font-weight:700;font-size:10.5px;color:var(--sky)}
+.ap-row.on .nm{color:#fff}
+.ap-row .ds{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:9px;color:var(--metal2)}
+.ap-row.ro{cursor:default}
+.ap-row.ro:hover{background:rgba(255,255,255,.04)}
+.ap-row .tk{flex:none;font-size:8.5px;font-family:var(--font-mono);color:var(--metal2)}
+.ap-row .go2{flex:none;height:21px;padding:0 8px;border:1px solid rgba(123,77,255,.45);background:rgba(123,77,255,.12);color:#c9b6ff;font-size:9px;font-weight:800;border-radius:5px}
+.ap-row .go2.on{border-color:var(--teal);background:rgba(46,230,214,.16);color:var(--teal)}
+.ap-row .cl{flex:none;width:22px;height:22px;display:grid;place-items:center;border-radius:50%;background:rgba(123,77,255,.16);color:#c9b6ff;font-size:11px}
+.ap-row .sub{display:block;font-size:9px;color:var(--metal2);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.ap-tool{display:flex;gap:8px;padding:3px 8px 3px 34px;font-size:9px;color:var(--metal2)}
+.ap-tool code{color:var(--sky);font-family:var(--font-mono)}
+.ap-empty{font-size:9.5px;color:var(--metal2);padding:12px 8px;text-align:center}
+.ap-foot{flex:none;display:flex;gap:10px;align-items:center;padding:6px 12px;border-top:1px solid rgba(185,179,217,.14);font-size:8.5px;color:var(--metal2)}
+.ap-foot b{color:var(--teal);font-weight:800}
+.con-attach{flex:none;display:flex;gap:6px;flex-wrap:wrap;padding:2px 14px 5px}
+.con-attach[hidden]{display:none}
+.con-attach .ch{display:inline-flex;align-items:center;gap:5px;height:22px;padding:0 4px 0 8px;border:1px solid rgba(46,230,214,.4);background:rgba(46,230,214,.1);color:var(--teal);font-size:9.5px;font-weight:800;clip-path:var(--btncut)}
+.con-attach .ch.exp{border-color:rgba(123,77,255,.5);background:rgba(123,77,255,.16);color:#c9b6ff}
+.con-attach .ch button{width:16px;height:16px;display:grid;place-items:center;color:var(--metal2);font-size:9px}
+.con-attach .ch button:hover{color:var(--red)}
+@media (max-width:900px){
+  .addpop{left:8px;width:calc(100% - 16px)}
+}
+
 /* ═══ 回传全息 banner（空白天空处） ═══ */
 .banner{position:absolute;top:58px;left:max(calc(var(--railw) + 12px + min(390px,calc(var(--charw) - 54px)) / 2),calc(var(--railw) + 16px - var(--charshift) + var(--charw) / 2));z-index:45;width:min(390px,calc(var(--charw) - 54px));min-width:260px;border-radius:14px;overflow:hidden;background:var(--glass2);backdrop-filter:blur(14px);border:1px solid color-mix(in srgb,var(--accent,var(--sun)) 60%,transparent);box-shadow:0 14px 40px rgba(16,13,40,.5),0 0 24px color-mix(in srgb,var(--accent,var(--sun)) 22%,transparent);padding:9px 14px;cursor:pointer;opacity:0;pointer-events:none;transition:.3s;transform:translateX(-50%) translateY(-12px)}
 @keyframes bfloat{0%,100%{margin-top:0}50%{margin-top:-5px}}
@@ -1140,7 +1201,8 @@ kbd{border:1px solid rgba(185,179,217,.35);border-bottom-width:2px;border-radius
   <section class="console" id="console" aria-label="TUI 通讯台">
     <div class="con-h">
       <button class="cbtn" id="conClose" title="关闭 / 收起通讯台（⌥C · 停靠 pill 点击展开）">✕</button>
-      <span class="ct"><b id="conThread">主对话</b></span>
+      <button class="con-add" id="conAdd" title="添加：技能 / 分身 / MCP（⌥A）" aria-haspopup="dialog" aria-expanded="false"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3.4l1.75 5.6 5.6 1.75-5.6 1.75L12 18.1l-1.75-5.6-5.6-1.75 5.6-1.75z" fill="none" stroke="currentColor" stroke-width="1.25" stroke-linejoin="round" class="pulse"/><g class="orbit" fill="none" stroke="currentColor" stroke-width=".9"><ellipse cx="12" cy="12" rx="9" ry="3.4" transform="rotate(-28 12 12)"/></g><circle cx="20.2" cy="7.6" r="1" fill="currentColor" class="core"/></svg><i id="conAddN" hidden>0</i></button>
+      <span class="ct"><b id="conThread" hidden>主对话</b></span>
       <span class="telem">
         <button class="tc tcc" id="conModelBtn" title="模型设置 · 模型 / 思考强度 / 最大上下文" aria-expanded="false"><i>MODEL</i><b id="conModel">pro · 标准</b></button>
         <button class="tc tcc" id="conCtxBtn" title="上下文占用 · 点击看构成与压缩" aria-expanded="false"><i>CTX</i><b id="conCtx">42%</b></button>
@@ -1160,6 +1222,7 @@ kbd{border:1px solid rgba(185,179,217,.35);border-bottom-width:2px;border-radius
       <button class="cbtn" id="conPop" hidden title="弹出为独立窗口（可多开）">⧉ 弹出</button>
       <button class="cbtn" id="conMin" title="收起通讯台（⌥C）· 停靠pill 点击展开">⌄ 收起</button>
     </div>
+    <div class="addpop" id="addPop" hidden role="dialog" aria-label="添加技能 / 分身 / MCP"></div>
     <span class="grip grip-l" id="gripL" title="拖拽调左边 · 双击复位"></span>
     <span class="grip grip-t" id="gripT" title="拖拽调上边 · 双击复位"></span>
     <span class="grip grip-r" id="gripR" title="拖拽调右边 · 双击复位"></span>
@@ -1167,6 +1230,7 @@ kbd{border:1px solid rgba(185,179,217,.35);border-bottom-width:2px;border-radius
     <div class="con-log" id="conLog"></div>
     <div class="con-cur"><div class="spk"><i></i><span id="curSpeaker">汐音</span></div><div class="line" id="curLine"></div></div>
     <div class="con-choices" id="conChoices" hidden></div>
+    <div class="con-attach" id="conAttach" hidden></div>
     <div class="con-in" id="conIn"><span class="pr">❯</span><textarea id="cmdInput" rows="1" placeholder="回应汐音 / 下达新指令…（⏎ 发送 · ⇧⏎ 换行）"></textarea><button class="send" id="btnSend">⏎</button></div>
   </section>
 
@@ -1314,6 +1378,7 @@ const state={sound:true,theme:0,winAlpha:1,thread:'main',panel:null,detailJob:nu
  unread:{},focusJob:null,fleetFilter:'all',treeOpen:{},fileSel:{},fileQ:{},dbgTurn:{},dbgTab:'overview',dbgFilter:'all',
  simAuto:true,pop:null,handleSeq:7,wsProj:'gateway',wsOpen:{},wsSel:{},wsQ:'',
  twin:null,twinQ:'',twinGeo:null,twinMax:false,cabinQ:'',cabinOpen:null,cabinTabs:[],cabinTab:null,
+ addOpen:false,addTab:'skill',addQ:'',attSkill:null,attExpert:null,attLb:null,apMcp:null,
  flash:{job:null,op:null,at:0},autoWarp:true,conMin:false,conLeft:null,conTop:null,conGeo:null,wins:[],winSeq:0,zTop:30,
  inboxOpen:false,inboxSel:null,inboxPick:null,fanOpen:false,fleetOpen:false,relayJump:false,panelGeo:null,panelMax:false,panelAside:false,
  conTurns:false,conTurnSel:0};
@@ -1567,6 +1632,7 @@ function tlHTML(m){
 }
 function renderConsole(){const isMain=state.thread==='main';const j=isMain?null:jobOf(state.thread);
  $('#conThread').textContent=isMain?'主对话':(j?'▦ '+j.title:'对话');
+ $('#conThread').hidden=isMain;
  $('#conBack').hidden=isMain;$('#conDetail').hidden=isMain;$('#conDebug').hidden=isMain;
  $('#conPop').hidden=isMain;
  applyGeo();renderDock();
@@ -1580,6 +1646,82 @@ function renderConsole(){const isMain=state.thread==='main';const j=isMain?null:
  else{ch.hidden=true;ch.innerHTML='';}
  $('#cmdInput').placeholder=isMain?'回应汐音 / 下达新指令…（⏎ 发送 · ⇧⏎ 换行）':`回应 ${j?j.agent:''} / 给这条作战下指令…（上方选项即拍板）`;
  renderFleetRail();}
+
+/* ── 通讯台 ＋（v22 十轮）：技能 / 分身 / MCP。技能 = 随本条消息生效（发出去时加 /skill 前缀）；
+      分身 = 委派一轮；MCP = 只读展开。身份切换不在这里（用户后续再定）。 ── */
+const AP_WS=[
+ ['octo-dev-copilot','2.0K','微服务生态编码助手：多仓工作空间、跨项目模式搜索、接口发现。'],
+ ['octo-resource-manager','616','从源仓库安装 skills / agents / workflows 到全局资源库。'],
+ ['octo-source-analyzer','726','分析 git 仓库结构，识别 skills / agents / workflows，生成安装计划。'],
+ ['octo-workflow-dev','3.1K','创建 / 编辑 / 校验 / 模拟 / 运行 / 调试 Octopus YAML 工作流。']];
+const AP_SKILLS=[
+ ['matt-e2e-test-methodology','1.5K'],['octo-acceptance-plan','1.6K'],['octo-actuator-guide','2.8K'],
+ ['octo-agent-clones','412'],['octo-agent-config','336'],['octo-agent-debug','467'],['octo-agent-memory','356'],
+ ['octo-agent-orchestrator','581'],['octo-agent-safety','445'],['octo-agent-sessions','385'],['octo-agent-workspace','433'],
+ ['octo-dev-copilot','2.0K'],['octo-guide','935'],['octo-notify','729'],['octo-resource-manager','616'],
+ ['octo-scheduler','2.3K'],['octo-skill-creator','1.6K'],['octo-skill-evolution','1.7K'],['octo-source-analyzer','726'],
+ ['octo-swarm-dev','4.0K'],['octo-wiki','413'],['octo-workflow-dev','3.1K'],['octo-workflow-ops','542'],
+ ['octo-workflow-repair','1.8K'],['octo-workflow-supervisor','553'],['octo-workflow-test','4.2K'],['task-author','6.3K']];
+const AP_CLONES=[
+ ['workspace','全栈开发助手','系统分身'],['scheduler','定时任务管理','SKILL octo-schedule-manager'],
+ ['archive','工程分析师','SKILL octo-archive-analyst'],['resource','资源操作专家','SKILL octo-resource-manager'],
+ ['task-author','任务规格作者','SKILL task-author'],
+ ['task-doer','任务执行者','SKILL octo-dev-copilot · matt-e2e-test-methodology'],
+ ['workflow-author','工作流开发者','SKILL octo-workflow-dev · octo-workflow-test · octo-workflow-ops'],
+ ['workflow-operator','工作流工程师','SKILL octo-wiki'],['cabin-orchestrator','舱调度者','SKILL octo-wiki']];
+const AP_MCP=[
+ ['octopus-workflow','工作流驾驶',16,'在当前工作空间里跑 / 查 / 停工作流：列定义、执行、看节点进度、取消、答审批、重试。'],
+ ['octopus-task','任务线程',30,'任务的规格 / 相位 / 执行 / 验收 / 归档。'],
+ ['octopus-memory','记忆',2,'读写长期记忆与当日工作记忆。'],
+ ['octopus-cabin','舱调度',8,'派作业、列作业、转达决定、催办。'],
+ ['octopus-cabin-doer','委派执行',1,'把一条作业交给执行分身跑一轮。']];
+function openAdd(force){const open=force===undefined?!state.addOpen:force;state.addOpen=open;
+ $('#addPop').hidden=!open;$('#conAdd').classList.toggle('on',open);$('#conAdd').setAttribute('aria-expanded',String(open));
+ if(open){state.addQ='';state.addTab='skill';renderAddPop();requestAnimationFrame(()=>$('#apQ')?.focus());Audio.sfx('open');}
+ else Audio.sfx('close');}
+function renderAddPop(){const p=$('#addPop');if(!p)return;
+ const q=state.addQ.trim().toLowerCase();const hit=t=>!q||String(t).toLowerCase().includes(q);const tab=state.addTab;
+ let body='';
+ if(tab==='skill'){
+  const ws=AP_WS.filter(x=>hit(x[0])||hit(x[2]));const all=AP_SKILLS.filter(x=>hit(x[0]));
+  body+=`<div class="ap-grp">工作区自带 · ${ws.length}<span> · 随工作区生效 · 只读</span></div>`;
+  body+=ws.map(([n,tok,d])=>`<div class="ap-row ro"><span class="ck2">✓</span><span class="nm">${esc(n)}</span><span class="ds">${esc(d)}</span><span class="tk">${esc(tok)}</span></div>`).join('');
+  body+=`<div class="ap-grp">全部 SKILL · ${all.length}${state.attSkill?`<span style="float:right;color:var(--sky)">已挂载 ${esc(state.attSkill)}</span>`:''}</div>`;
+  body+=all.length?all.map(([n,tok])=>{const on=state.attSkill===n;const wsHit=AP_WS.some(w=>w[0]===n);
+   return `<button class="ap-row${on?' on':''}" data-apskill="${esc(n)}"><span class="ck2">✓</span><span class="nm">${esc(n)}</span>${wsHit?'<span class="ds">工作区自带</span>':'<span class="ds"></span>'}<span class="tk">${esc(tok)}</span></button>`;}).join('')
+   :'<div class="ap-empty">未找到匹配的 SKILL</div>';
+ } else if(tab==='clone'){
+  const arr=AP_CLONES.filter(c=>hit(c[0])||hit(c[1])||hit(c[2]));
+  body+=`<div class="ap-grp">分身 · ${arr.length}<span> · 选中 = 这条消息委派给它跑一轮</span></div>`;
+  body+=arr.length?arr.map(([n,lb,sub])=>{const on=state.attExpert===n;
+   return `<div class="ap-row${on?' on':''}"><span class="cl">◈</span><span style="flex:1;min-width:0"><span class="nm" style="color:inherit">${esc(lb)}</span><span class="sub">${esc(n)} · ${esc(sub)}</span></span><button class="go2${on?' on':''}" data-apclone="${esc(n)}" data-aplb="${esc(lb)}">${on?'已委派':'委派'}</button></div>`;}).join('')
+   :'<div class="ap-empty">未找到匹配的分身</div>';
+ } else {
+  const arr=AP_MCP.filter(m=>hit(m[0])||hit(m[1])||hit(m[3]));
+  body+=`<div class="ap-grp">MCP · ${arr.length}<span> · 只读 · 点一行看工具</span></div>`;
+  body+=arr.length?arr.map(([n,lb,cnt,d])=>{const open=state.apMcp===n;
+   return `<button class="ap-row${open?' on':''}" data-apmcp="${esc(n)}"><span class="cl" style="background:rgba(46,230,214,.14);color:var(--teal)">▦</span><span style="flex:1;min-width:0"><span class="nm" style="color:inherit">${esc(lb)}</span><span class="sub">${esc(n)} · ${cnt} tools</span></span><span class="tk">${open?'▾':'▸'}</span></button>${open?`<div class="ap-tool"><code>${esc(n)}</code><span>${esc(d)}</span></div>`:''}`;}).join('')
+   :'<div class="ap-empty">未找到匹配的 MCP</div>';
+ }
+ p.innerHTML=`<div class="ap-h"><b>添加</b><span class="ap-chip">◈ 汐音</span><span class="sp"></span><span class="ap-esc">Esc</span></div>
+ <div class="ap-search"><input id="apQ" placeholder="搜索技能 / 分身 / MCP…" value="${esc(state.addQ)}" aria-label="搜索技能 / 分身 / MCP"/></div>
+ <div class="ap-tabs" role="tablist"><button data-apt="skill" class="${tab==='skill'?'on':''}">✦ 技能 <b>${AP_SKILLS.length}</b></button><button data-apt="clone" class="${tab==='clone'?'on':''}">◈ 分身 <b>${AP_CLONES.length}</b></button><button data-apt="mcp" class="${tab==='mcp'?'on':''}">▦ MCP <b>${AP_MCP.length}</b></button></div>
+ <div class="ap-body">${body}</div>
+ <div class="ap-foot"><b>技能</b>随本条消息生效 · <b>分身</b>委派一轮 · <b>MCP</b>只读</div>`;
+ bindAddPop();}
+function bindAddPop(){const p=$('#addPop');
+ $$('[data-apt]',p).forEach(b=>b.addEventListener('click',()=>{state.addTab=b.dataset.apt;renderAddPop();Audio.sfx('click');}));
+ $$('[data-apskill]',p).forEach(b=>b.addEventListener('click',()=>{const n=b.dataset.apskill;state.attSkill=state.attSkill===n?null:n;renderAddPop();renderAttach();Audio.sfx('click');}));
+ $$('[data-apclone]',p).forEach(b=>b.addEventListener('click',()=>{const n=b.dataset.apclone;const on=state.attExpert===n;state.attExpert=on?null:n;state.attLb=on?null:b.dataset.aplb;renderAddPop();renderAttach();Audio.sfx('click');}));
+ $$('[data-apmcp]',p).forEach(b=>b.addEventListener('click',()=>{const n=b.dataset.apmcp;state.apMcp=state.apMcp===n?null:n;renderAddPop();Audio.sfx('click');}));
+ const q=$('#apQ',p);if(q)q.addEventListener('input',()=>{state.addQ=q.value;const pos=q.selectionStart;renderAddPop();const nq=$('#apQ');if(nq){nq.focus();nq.setSelectionRange(pos,pos);}});}
+function renderAttach(){const el=$('#conAttach');if(!el)return;const chips=[];
+ if(state.attSkill)chips.push(`<span class="ch">✦ /${esc(state.attSkill)}<button data-apclear="skill" title="取消技能（本条不再挂）">✕</button></span>`);
+ if(state.attExpert)chips.push(`<span class="ch exp">◈ 分身 · ${esc(state.attLb||state.attExpert)}<button data-apclear="clone" title="取消委派">✕</button></span>`);
+ el.hidden=chips.length===0;el.innerHTML=chips.join('');
+ const b=$('#conAddN');if(b){b.hidden=chips.length===0;b.textContent=String(chips.length);}
+ $$('[data-apclear]',el).forEach(x=>x.addEventListener('click',()=>{if(x.dataset.apclear==='skill')state.attSkill=null;else{state.attExpert=null;state.attLb=null;}renderAttach();if(state.addOpen)renderAddPop();Audio.sfx('click');}));}
+
 /* ── 通讯台遥测（model / ctx / token·费用）+ 轮次历史（≡ N轮 → 下拉跳转） ── */
 function renderConTelemetry(){const pct=Math.min(100,Math.round(state.tokens/state.ctxMax*100));
  $('#conModel').textContent=state.model+' · '+state.effort;
@@ -1689,7 +1831,10 @@ function openThread(jid){state.thread=jid;state.unread[jid]=0;state.conTurns=fal
 /* ── send / spawn / resolve ── */
 function autoGrowEl(t){const win=!!t.closest('.cwi');t.style.height='auto';const min=win?28:36,max=win?70:92;const h=Math.max(min,Math.min(t.scrollHeight,max));t.style.height=h+'px';t.style.overflowY=t.scrollHeight>max?'auto':'hidden';}
 function autoGrow(){autoGrowEl($('#cmdInput'));}
-function sendCommand(){sendFrom(state.thread,$('#cmdInput'));}
+function sendCommand(){const t=$('#cmdInput');const raw=t.value.trim();
+ if(raw&&state.attSkill&&!raw.startsWith('/'))t.value='/'+state.attSkill+' '+raw;
+ sendFrom(state.thread,t);
+ if(raw&&(state.attSkill||state.attExpert)){state.attSkill=null;state.attExpert=null;state.attLb=null;renderAttach();}}
 function sendFrom(th,t){const text=t.value.trim();if(!text){const box=t.closest('.con-in')||t.closest('.cwi');if(box){box.classList.remove('shake');void box.offsetWidth;box.classList.add('shake');}Audio.sfx('deny');return;}
  pushMsg(th,{who:'you',name:'指挥官',text,t:nowHM()});t.value='';autoGrowEl(t);Audio.sfx('send');state.cost+=.01*modelMult();renderHUD();
  const o=th!=='main'?opForJob(th):null;if(o){const hit=o.options.find(x=>text.includes(x.label)||x.label.includes(text));if(hit){resolveOp(o.id,hit.label,text===hit.label?'':text);return;}}
@@ -2400,6 +2545,8 @@ $('#conDetail').addEventListener('click',()=>{state.detailJob=state.thread;state
 $('#conDebug').addEventListener('click',()=>{state.detailJob=state.thread;state.detailTab='debug';openPanel('detail');});
 $('#conClose').addEventListener('click',()=>setConMin(true));
 $('#conMin').addEventListener('click',()=>setConMin(!state.conMin));
+$('#conAdd').addEventListener('click',e=>{e.stopPropagation();openAdd();});
+addEventListener('pointerdown',e=>{if(!state.addOpen)return;if(e.target.closest('#addPop,#conAdd'))return;openAdd(false);});
 $('#conTurns').addEventListener('click',e=>{e.stopPropagation();closeConPop();state.conTurns=!state.conTurns;state.conTurnSel=0;renderTurnDrop();Audio.sfx('click');});
 $('#turnDrop').addEventListener('click',e=>{const b=e.target.closest('[data-mt]');if(b)jumpConTurn(+b.dataset.mt);});
 $('#conModelBtn').addEventListener('click',e=>{e.stopPropagation();toggleConPop('model');});
@@ -2435,10 +2582,11 @@ addEventListener('keydown',e=>{const inIn=e.target.closest('textarea,input');
  if(e.altKey&&e.key.toLowerCase()==='w'){e.preventDefault();travel();return;}
  if(e.altKey&&e.key.toLowerCase()==='d'){e.preventDefault();$('#lDebug').click();return;}
  if(e.altKey&&e.key.toLowerCase()==='f'){e.preventDefault();$('#rDir').click();return;}
+ if(e.altKey&&e.key.toLowerCase()==='a'){e.preventDefault();$('#conAdd').click();return;}
  if(e.altKey&&e.key.toLowerCase()==='c'){e.preventDefault();setConMin(!state.conMin);return;}
  if(e.altKey&&e.key.toLowerCase()==='i'){e.preventDefault();toggleInbox();return;}
  if(e.altKey&&e.key==='1'){e.preventDefault();const f=[...openOps()].sort((a,b)=>OP_KIND[a.kind].pri-OP_KIND[b.kind].pri)[0];if(f){state.inboxOpen=true;state.inboxSel=f.id;state.inboxPick=null;renderInbox();Audio.sfx('open');}else toggleInbox(true);return;}
- if(e.key==='Escape'){if(state.settings){closeSettings();return;}if(state.twin){closeTree();return;}if(state.conPop){closeConPop();return;}if(state.pop){closePops();return;}if(state.inboxOpen){if(state.inboxSel){state.inboxSel=null;state.inboxPick=null;renderInbox();}else toggleInbox(false);return;}if(state.brief){hideBanner();return;}if(state.relayJump){state.relayJump=false;renderPanel();return;}if(state.panel){closePanel();return;}if(!state.conMin){setConMin(true);return;}}
+ if(e.key==='Escape'){if(state.addOpen){openAdd(false);return;}if(state.settings){closeSettings();return;}if(state.twin){closeTree();return;}if(state.conPop){closeConPop();return;}if(state.pop){closePops();return;}if(state.inboxOpen){if(state.inboxSel){state.inboxSel=null;state.inboxPick=null;renderInbox();}else toggleInbox(false);return;}if(state.brief){hideBanner();return;}if(state.relayJump){state.relayJump=false;renderPanel();return;}if(state.panel){closePanel();return;}if(!state.conMin){setConMin(true);return;}}
  if(!inIn&&state.inboxOpen&&state.inboxSel&&state.inboxPick!=null&&e.key==='Enter'){e.preventDefault();submitInbox(false);return;}
  if(!inIn&&state.inboxOpen&&state.inboxSel&&/^[1-9]$/.test(e.key)){const o=opOf(state.inboxSel);if(o&&o.status==='open'){const i=+e.key-1;if(o.options[i]){e.preventDefault();state.inboxPick=i;renderInbox();Audio.sfx('click');}}return;}
  if(!inIn&&/^[1-9]$/.test(e.key)&&state.thread!=='main'){const o=opForJob(state.thread);if(o){const i=+e.key-1;if(o.options[i]){e.preventDefault();resolveOp(o.id,o.options[i].label);}}}});

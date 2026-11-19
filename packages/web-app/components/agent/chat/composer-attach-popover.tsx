@@ -68,6 +68,9 @@ interface ComposerAttachPopoverProps {
   /** 受控开合（hero 态的身份 chip 也要能打开同一个面板）。 */
   open?: boolean
   onOpenChange?: (open: boolean) => void
+  /** 触发器形态：inline = 输入区里的 ＋（默认）；core = 通讯台头部的「星核」钮
+   *  （v22 十轮：全域座舱把挂载入口搬到台头，面板内容 / 行为完全同一份）。 */
+  triggerVariant?: 'inline' | 'core'
 }
 
 type AttachCategory = 'skill' | 'clone' | 'mcp'
@@ -93,6 +96,7 @@ export function ComposerAttachPopover({
   workspaceContext,
   open: controlledOpen,
   onOpenChange,
+  triggerVariant = 'inline',
 }: ComposerAttachPopoverProps) {
   const [innerOpen, setInnerOpen] = useState(false)
   const open = controlledOpen ?? innerOpen
@@ -204,6 +208,37 @@ export function ComposerAttachPopover({
   return (
     <Popover open={open} onOpenChange={setOpen}>
       <PopoverTrigger asChild>
+        {triggerVariant === 'core' ? (
+          /* 星核（v22 十轮原型拍板）：闭合 = 细环静态星芒；开启 = 环亮 + 星芒
+             呼吸 + 轨道旋转 + 外发光。右上角角标 = 本条消息挂的条目数。 */
+          <button
+            type="button"
+            aria-haspopup="dialog"
+            aria-expanded={open}
+            aria-label="添加：技能 / 分身 / MCP"
+            title="添加：技能 / 分身 / MCP（⌥A）"
+            data-testid="cockpit-attach"
+            className={cn('ck12-comms-add', open && 'on')}
+          >
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <path
+                className="pulse"
+                d="M12 3.4l1.75 5.6 5.6 1.75-5.6 1.75L12 18.1l-1.75-5.6-5.6-1.75 5.6-1.75z"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth={1.25}
+                strokeLinejoin="round"
+              />
+              <g className="orbit" fill="none" stroke="currentColor" strokeWidth={0.9}>
+                <ellipse cx="12" cy="12" rx="9" ry="3.4" transform="rotate(-28 12 12)" />
+              </g>
+              <circle className="core" cx="20.2" cy="7.6" r="1" fill="currentColor" />
+            </svg>
+            {activeCount > 0 && (
+              <i data-testid="cockpit-attach-count">{activeCount}</i>
+            )}
+          </button>
+        ) : (
         <button
           type="button"
           aria-label={identityActive ? `当前身份 ${identity?.label ?? ''}` : '添加'}
@@ -239,13 +274,19 @@ export function ComposerAttachPopover({
             </>
           )}
         </button>
+        )}
       </PopoverTrigger>
       <PopoverContent
-        side="top"
+        side={triggerVariant === 'core' ? 'bottom' : 'top'}
         align="start"
         sideOffset={8}
         data-testid="composer-plus-panel"
-        className="flex h-[452px] w-[490px] max-w-[calc(100vw_-_24px)] max-h-[var(--radix-popover-content-available-height,80vh)] flex-col overflow-hidden rounded-[14px] border-[1.5px] border-pop-bd bg-pop-paper p-0 shadow-pop"
+        className={cn(
+          'flex h-[452px] w-[490px] max-w-[calc(100vw_-_24px)] max-h-[var(--radix-popover-content-available-height,80vh)] flex-col overflow-hidden rounded-[14px] border-[1.5px] border-pop-bd bg-pop-paper p-0 shadow-pop',
+          // 全域：面板跟着舱内皮肤走（深空底板 / 青边 / 青色分组字），
+          // 样式在 app/cockpit/chat.css 的 .ck12-attach-pop 里。
+          triggerVariant === 'core' && 'ck12-attach-pop',
+        )}
         onOpenAutoFocus={(event) => {
           event.preventDefault()
           searchRef.current?.focus()

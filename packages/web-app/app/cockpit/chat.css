@@ -93,6 +93,170 @@
   letter-spacing: 0.08em;
   color: var(--ck12-ink);
 }
+
+/* v22 十轮：标题栏「星核」挂载入口（技能 / 分身 / MCP）—— 主线程时它占的
+   就是原「主对话」标题位；作业线程在那之后仍显示 ▦ 标题。闭合 = 细环静态
+   星芒；开启 = 环亮 + 星芒呼吸 + 轨道旋转 + 外发光。 */
+.ck12-comms-attach-slot {
+  display: inline-flex;
+  flex: none;
+  min-width: 0;
+}
+.ck12-comms-add {
+  position: relative;
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  border: 1px solid color-mix(in srgb, var(--ck12-teal) 50%, transparent);
+  background: color-mix(in srgb, var(--ck12-teal) 10%, transparent);
+  color: #9ff7ee;
+  transition: border-color 0.16s, background 0.16s, color 0.16s, box-shadow 0.16s;
+}
+.ck12-comms-add svg { width: 15px; height: 15px; display: block; overflow: visible; }
+.ck12-comms-add:hover,
+.ck12-comms-add.on {
+  border-color: color-mix(in srgb, var(--ck12-teal) 95%, transparent);
+  background: color-mix(in srgb, var(--ck12-teal) 24%, transparent);
+  color: #eafffd;
+  box-shadow: 0 0 14px color-mix(in srgb, var(--ck12-teal) 45%, transparent);
+}
+.ck12-comms-add .orbit {
+  transform-origin: 12px 12px;
+  opacity: 0.55;
+  transition: opacity 0.16s;
+}
+.ck12-comms-add.on .orbit {
+  opacity: 0.85;
+  animation: ck12-add-spin 2.6s linear infinite;
+}
+.ck12-comms-add.on .pulse {
+  animation: ck12-add-pulse 1.6s ease-in-out infinite;
+  transform-origin: 12px 12px;
+}
+.ck12-comms-add.on .core { filter: drop-shadow(0 0 4px var(--ck12-teal)); }
+@keyframes ck12-add-spin { to { transform: rotate(360deg); } }
+@keyframes ck12-add-pulse {
+  0%, 100% { opacity: 0.45; transform: scale(0.92); }
+  50% { opacity: 1; transform: scale(1.08); }
+}
+.ck12-comms-add > i {
+  position: absolute;
+  right: -3px;
+  top: -3px;
+  min-width: 14px;
+  height: 14px;
+  padding: 0 3px;
+  display: grid;
+  place-items: center;
+  border-radius: 999px;
+  background: var(--ck12-sky);
+  color: #04121c;
+  font-size: 8.5px;
+  font-style: normal;
+  font-weight: 900;
+}
+
+/* ── 星核面板的舱内皮肤（triggerVariant=core）─────────────────────────
+   面板本体是 composer 的既有挂载面板（技能 / 分身 / MCP 一份实现），classic
+   皮肤不动；这里只把容器与骨架控件换成舱内口径：深空底板、青色发丝边、
+   青色小号分组标题、mono 名称。 */
+.ck12-attach-pop {
+  /* 面板 portal 到 body，出了 .ck12-app 的 token 作用域 —— 舱内变量在这里
+     补齐；否则 color-mix(var(--ck12-teal)) 失效，边框会落回文字色。 */
+  --ck12-teal: #2ee6d6;
+  --ck12-sky: #35c7f0;
+  --ck12-ink: var(--pop-ink);
+  --ck12-ink2: #a9a3c8;
+  --ck12-metal2: #8d86b8;
+  width: 430px;
+  height: 432px;
+  max-width: calc(100vw - 20px);
+  border-radius: 12px;
+  border: 1px solid color-mix(in srgb, var(--ck12-teal) 30%, transparent);
+  background: linear-gradient(180deg, rgba(17, 21, 30, 0.985), rgba(9, 11, 17, 0.985));
+  box-shadow:
+    0 20px 60px rgba(0, 0, 0, 0.6),
+    0 0 26px color-mix(in srgb, var(--ck12-teal) 12%, transparent);
+  color: var(--ck12-ink);
+}
+/* 头部：「添加」+ 身份 chip + Esc */
+.ck12-attach-pop > div:first-child {
+  border-bottom-color: rgba(46, 230, 214, 0.22);
+  background: linear-gradient(180deg, rgba(46, 230, 214, 0.06), transparent);
+}
+.ck12-attach-pop > div:first-child > span:first-child {
+  font-family: var(--font-ui);
+  font-size: 12px;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  color: #fff;
+}
+.ck12-attach-pop [data-testid="attach-identity-chip"] {
+  border-color: rgba(123, 77, 255, 0.5);
+  background: rgba(123, 77, 255, 0.18);
+  color: #c9b6ff;
+}
+.ck12-attach-pop > div:first-child > span:last-child {
+  color: var(--ck12-metal2);
+  border: 1px solid rgba(185, 179, 217, 0.25);
+  padding: 1px 6px;
+  clip-path: polygon(4px 0, 100% 0, calc(100% - 4px) 100%, 0 100%);
+}
+/* 搜索 */
+.ck12-attach-pop [data-testid="attach-search"] {
+  border-color: rgba(46, 230, 214, 0.25);
+  background: rgba(10, 8, 24, 0.55);
+  color: #fff;
+}
+.ck12-attach-pop [data-testid="attach-search"]:focus {
+  border-color: var(--ck12-teal);
+  box-shadow: 0 0 0 1px rgba(46, 230, 214, 0.3);
+}
+/* 类别页签：选中 = 青边 + 青色计数 */
+.ck12-attach-pop [data-testid^="attach-tab-"] {
+  font-size: 10px;
+  color: var(--ck12-ink2);
+}
+.ck12-attach-pop [data-testid^="attach-tab-"]:hover {
+  background: rgba(255, 255, 255, 0.05);
+  color: #fff;
+}
+.ck12-attach-pop [data-testid^="attach-tab-"] span { color: var(--ck12-metal2); }
+.ck12-attach-pop [data-testid^="attach-tab-"][aria-selected="true"] {
+  border-color: rgba(46, 230, 214, 0.4);
+  background: rgba(46, 230, 214, 0.1);
+  color: #fff;
+}
+.ck12-attach-pop [data-testid^="attach-tab-"][aria-selected="true"] span { color: var(--ck12-teal); }
+/* 分组标题（全部 SKILL / 分身 / MCP 服务）：青色小号字，底板与面板同色 */
+.ck12-attach-pop [data-plus-group] .sticky {
+  background: #0d111a;
+}
+.ck12-attach-pop [data-plus-group] .sticky > span:first-child {
+  color: color-mix(in srgb, var(--ck12-teal) 80%, transparent);
+  letter-spacing: 0.12em;
+}
+.ck12-attach-pop [data-plus-group] .sticky > span:last-child { color: var(--ck12-metal2); }
+/* 行：悬停青色微光；名称走 mono */
+.ck12-attach-pop [data-plus-group] button.w-full:hover {
+  background: rgba(46, 230, 214, 0.08);
+}
+.ck12-attach-pop [data-plus-group] button.w-full .truncate:not(.block) {
+  font-family: var(--font-mono);
+}
+/* 底部提示 */
+.ck12-attach-pop > div:last-child {
+  border-top-color: rgba(185, 179, 217, 0.14);
+  font-size: 9px;
+  color: var(--ck12-metal2);
+}
+.ck12-attach-pop > div:last-child b {
+  color: var(--ck12-teal);
+  font-weight: 800;
+}
 .ck12-comms-status {
   flex: none;
   padding: 1px 7px;
