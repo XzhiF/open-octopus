@@ -40,6 +40,16 @@ export function readFleetLeft(): number | null {
   return rect.width > 0 && rect.height > 0 ? rect.left : null
 }
 
+/** cockpit 右栏（「要我处理」chip / 主菜单列）左缘：放行窗贴它左侧打开，
+ *  与 classic 贴 inbox 左侧同义。 */
+export function readRightRailLeft(): number | null {
+  if (typeof document === 'undefined') return null
+  const rail = document.querySelector<HTMLElement>('[data-testid="cockpit-right-rail"]')
+  if (!rail) return null
+  const rect = rail.getBoundingClientRect()
+  return rect.width > 0 ? rect.left : null
+}
+
 export interface AskWindowLayerProps {
   mode: AskWindowMode
   /** cockpit 传入 CockpitLayerStack，让 Esc 与其他层统一排队。 */

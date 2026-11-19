@@ -312,3 +312,49 @@ const DELEGATION_STATE_LABEL: Record<CabinDelegationView['state'], string> = {
   failed: '失败',
   cancelled: '已取消',
 }
+
+// ── v21（design 31 §3.1.1）：左栏单列编队的排序 ─────────────────────────
+//
+// 状态优先（受阻 → 等你 → 在跑 → 待命 → 已归档），同状态按创建时间升序
+// （旧 → 新落地：created_at 数值小 = 更早创建，排在上面）。纯 attention 行
+// 不进编队 —— 它们是「要我处理」，归右栏 inbox（design 31 §0 #2）。
+
+export const FLEET_STATUS_RANK = {
+  blocked: 0,
+  wait: 1,
+  run: 2,
+  queue: 3,
+  done: 4,
+} as const
+
+export type FleetStatus = keyof typeof FLEET_STATUS_RANK
+
+/** 行 → 排序状态。语义与 threads-model 的 threadStateOf 一致（那边是 tab 表情）。 */
+export function fleetStatusOf(row: CockpitRow): FleetStatus {
+  const group = groupOf(row)
+  if (group === 'need') {
+    if (row.kind === 'attention') return row.item.stage === 'blocked' ? 'blocked' : 'wait'
+    if (row.kind === 'delegation') return row.delegation.state === 'failed' ? 'blocked' : 'wait'
+    if (row.kind === 'job' && (row.job.status === 'blocked' || row.job.status === 'failed')) {
+      return 'blocked'
+    }
+    return 'wait'
+  }
+  if (group === 'run') return 'run'
+  if (group === 'done') return 'done'
+  return 'queue'
+}
+
+/**
+ * 左栏编队顺序：状态 rank → 创建时间升序。attention-only 行剔除（归 inbox）。
+ * 入参不动，返回新数组。
+ */
+export function sortFleet(rows: readonly CockpitRow[]): CockpitRow[] {
+  const order = new Map(rows.map((row, index) => [row, index] as const))
+  return rows
+    .filter((row) => row.kind !== 'attention')
+    .sort((a, b) =>
+      FLEET_STATUS_RANK[fleetStatusOf(a)] - FLEET_STATUS_RANK[fleetStatusOf(b)] ||
+      (createdAtOf(a) ?? Number.POSITIVE_INFINITY) - (createdAtOf(b) ?? Number.POSITIVE_INFINITY) ||
+      (order.get(a) ?? 0) - (order.get(b) ?? 0))
+}

@@ -1,30 +1,29 @@
-// S4 — CockpitJobHeader 呈现层测试：DOM 顺序（关闭第一）、五行页签切换、
-// 行2 的空值整段省略、纯函数派生。
+// S4 — CockpitJobHeader 呈现层测试（v21 五轮：原型 .ph / .dtabs）：
+// DOM 顺序（关闭第一）、页签改由 CockpitJobTabs 渲染（v21 五轮进正文）、
+// 副行「项目 · 分支 · 编号」空值省略、dossier ⛶ 只在 Provider 下出现、纯函数派生。
 
 import { describe, it, expect, vi } from 'vitest'
 import { render, screen, fireEvent } from '@testing-library/react'
 import {
   CockpitJobHeader,
+  CockpitJobTabs,
   elapsedLabel,
-  tabForAttentionStage,
 } from '../CockpitJobHeader'
+import { DossierWindowContext } from '../dossier-window'
 
 describe('CockpitJobHeader', () => {
   function renderHeader(overrides: Partial<Parameters<typeof CockpitJobHeader>[0]> = {}) {
     const onClose = vi.fn()
-    const onTabChange = vi.fn()
     const utils = render(
       <CockpitJobHeader
         kind="task"
         title="接入渠道"
         status="running"
-        tab="overview"
-        onTabChange={onTabChange}
         onClose={onClose}
         {...overrides}
       />,
     )
-    return { ...utils, onClose, onTabChange }
+    return { ...utils, onClose }
   }
 
   it('header 的第一个可聚焦元素是关闭（DOM 顺序，不用 CSS order 伪装）', () => {
@@ -34,63 +33,99 @@ describe('CockpitJobHeader', () => {
     )
     expect(focusables.length).toBeGreaterThan(0)
     expect(focusables[0]).toBe(screen.getByTestId('cockpit-job-close'))
-    // 关闭在视觉上也在最左：它是 h1 的第一个子元素。
-    const h1 = container.querySelector('.ck12-jh-h1')
-    expect(h1?.firstElementChild).toBe(screen.getByTestId('cockpit-job-close'))
+    // 关闭在视觉上也在最左：它是 .ck12-dh（原型 .ph）的第一个子元素。
+    const head = container.querySelector('.ck12-dh')
+    expect(head?.firstElementChild).toBe(screen.getByTestId('cockpit-job-close'))
   })
 
-  it('五个页签都渲染，点击回传对应 tab', () => {
-    const { onTabChange } = renderHeader()
-    for (const key of ['overview', 'relay', 'run', 'changes', 'accept']) {
+  it('页签不在头部（原型 .pb 内），由 CockpitJobTabs 渲染八个平行四边形 .dtab', () => {
+    const onTabChange = vi.fn()
+    const { container: head } = renderHeader()
+    expect(head.querySelector('.ck12-dtab')).toBeNull()
+
+    const { container } = render(<CockpitJobTabs tab="dialog" onTabChange={onTabChange} />)
+    for (const key of ['dialog', 'relay', 'run', 'changes', 'accept', 'files', 'debug', 'project']) {
       expect(screen.getByTestId(`cockpit-tab-${key}`)).toBeInTheDocument()
     }
+    expect(container.querySelectorAll('.ck12-dtab').length).toBe(8)
     fireEvent.click(screen.getByTestId('cockpit-tab-run'))
     expect(onTabChange).toHaveBeenCalledWith('run')
   })
 
-  it('行2 空值整段省略：全空时整行不出现', () => {
+  it('副行空值整段省略：全空时没有副行', () => {
     const { container } = renderHeader()
-    expect(container.querySelector('.ck12-jh-h2')).toBeNull()
+    expect(container.querySelector('.ck12-dh-pt span')).toBeNull()
   })
 
-  it('行2 只在有值的段之间放分隔符（不留空分隔符）', () => {
+  it('副行「项目 · 分支 · 编号」按有值段拼，空段不占分隔符', () => {
     const { container } = renderHeader({
+      cabinName: 'Aurora',
       branch: 'feat-cabin',
-      doing: '正在跑 node-2',
       executor: 'a1b2c3d4',
-      costLabel: '¥1.28',
     })
-    const h2 = container.querySelector('.ck12-jh-h2')
-    expect(h2).not.toBeNull()
-    expect(h2?.textContent).toContain('feat-cabin')
-    expect(h2?.textContent).toContain('正在跑 node-2')
-    expect(h2?.textContent).toContain('a1b2c3d4')
-    expect(h2?.textContent).toContain('¥1.28')
-    // 左组 2 段 → 1 个分隔符；右组 2 段 → 1 个（⏱ 没有 startedAt，不出现）。
-    // 组与组之间是空格 + spacer，不放「·」。
-    expect(container.querySelectorAll('.ck12-jh-sep').length).toBe(2)
-    expect(h2?.textContent).not.toContain('⏱')
+    const sub = container.querySelector('.ck12-dh-pt span')
+    // 没有项目名 / 编号时退回舱名 / 执行者短 id（旧调用方行为不变）。
+    expect(sub?.textContent).toBe('Aurora · feat-cabin · a1b2c3d4')
+
+    const onlyBranch = renderHeader({ branch: 'feat-cabin' })
+    expect(onlyBranch.container.querySelector('.ck12-dh-pt span')?.textContent).toBe('feat-cabin')
   })
 
-  it('执行者缺省回落到舱名；两者都无则省略', () => {
-    const withCabin = render(
-      <CockpitJobHeader kind="task" title="t" onClose={() => {}} cabinName="Aurora" />,
+  it('副行优先用项目名与作业编号（原型顺序：项目 · 分支 · 编号）', () => {
+    const { container } = renderHeader({
+      cabinName: 'Aurora',
+      projectName: 'API 网关',
+      branch: 'feat/refund-flow',
+      jobNo: 't-2641',
+      executor: 'a1b2c3d4',
+    })
+    expect(container.querySelector('.ck12-dh-pt span')?.textContent)
+      .toBe('API 网关 · feat/refund-flow · t-2641')
+  })
+
+  it('标题带状态表情（原型 STATE_EMO）', () => {
+    const { container } = renderHeader({ status: 'running' })
+    expect(container.querySelector('.ck12-dh-pt b')?.textContent).toContain('⚡')
+    expect(container.querySelector('.ck12-dh-pt b')?.textContent).toContain('接入渠道')
+  })
+
+  it('dossier 内（有 Provider）才有 ⛶ 全屏钮，点击走 toggleMax', () => {
+    const toggleMax = vi.fn()
+    const { rerender } = render(
+      <DossierWindowContext.Provider value={{ maximized: false, toggleMax }}>
+        <CockpitJobHeader kind="task" title="t" onClose={() => {}} />
+      </DossierWindowContext.Provider>,
     )
-    expect(withCabin.container.querySelector('.ck12-jh-h2')?.textContent).toContain('Aurora')
-    withCabin.unmount()
+    fireEvent.click(screen.getByTestId('cockpit-dossier-max'))
+    expect(toggleMax).toHaveBeenCalledTimes(1)
 
-    const empty = render(<CockpitJobHeader kind="task" title="t" onClose={() => {}} />)
-    expect(empty.container.querySelector('.ck12-jh-h2')).toBeNull()
+    // 全屏态图标翻转
+    rerender(
+      <DossierWindowContext.Provider value={{ maximized: true, toggleMax }}>
+        <CockpitJobHeader kind="task" title="t" onClose={() => {}} />
+      </DossierWindowContext.Provider>,
+    )
+    expect(screen.getByTestId('cockpit-dossier-max').textContent).toBe('⤡')
+
+    // 不在 dossier（无 Provider）→ 不渲染
+    render(<CockpitJobHeader kind="task" title="t2" onClose={() => {}} />)
+    expect(screen.getAllByTestId('cockpit-job-header')).toHaveLength(2)
+    expect(screen.queryAllByTestId('cockpit-dossier-max')).toHaveLength(1)
   })
 
-  it('有 attention 去处理按钮 → 点击回调；没有就不渲染', () => {
-    const onGoHandle = vi.fn()
-    const { rerender } = renderHeader({ onGoHandle })
-    fireEvent.click(screen.getByTestId('cockpit-job-go'))
-    expect(onGoHandle).toHaveBeenCalledTimes(1)
-
-    rerender(<CockpitJobHeader kind="task" title="t" onClose={() => {}} />)
-    expect(screen.queryByTestId('cockpit-job-go')).toBeNull()
+  it('右上只有 ⛶：不再有项目签 / 中止 / 谈 / 决断 / 调试 / 去处理（v21 五轮）', () => {
+    const { container } = render(
+      <DossierWindowContext.Provider value={{ maximized: false, toggleMax: () => {} }}>
+        <CockpitJobHeader kind="task" title="t" status="running" onClose={() => {}} />
+      </DossierWindowContext.Provider>,
+    )
+    const buttons = [...container.querySelectorAll('.ck12-dh button')]
+    // 关闭 + ⛶，就这两枚。
+    expect(buttons.map((b) => b.getAttribute('data-testid'))).toEqual([
+      'cockpit-job-close',
+      'cockpit-dossier-max',
+    ])
+    expect(container.querySelector('.ck12-dh-acts')).toBeNull()
   })
 
   it('载入态：关闭仍在第一位，页签/动作不渲染', () => {
@@ -103,13 +138,6 @@ describe('CockpitJobHeader', () => {
 })
 
 describe('作业头纯函数', () => {
-  it('tabForAttentionStage 按 stage 落页签', () => {
-    expect(tabForAttentionStage('review')).toBe('accept')
-    expect(tabForAttentionStage('answer')).toBe('relay')
-    expect(tabForAttentionStage('adjudicate')).toBe('relay')
-    expect(tabForAttentionStage('blocked')).toBe('run')
-  })
-
   it('elapsedLabel 缺值/非法值返回 null（整段省略）', () => {
     expect(elapsedLabel(null, null, Date.now())).toBeNull()
     expect(elapsedLabel('not-a-date', null, Date.now())).toBeNull()

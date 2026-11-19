@@ -1,92 +1,89 @@
 'use client'
 
-// HUD（v12 .hud，48px）：
-//   左起：← 返回作战舱（第一个可聚焦元素，关闭/退出永远在左）→ 品牌 → 四统计；
-//   右侧：☰ 编队（≤1120 才出现，只切 railOpen）· ⛶ 全域（当前视图标记）· ◐ 换色。
+// v21 二轮（原型 cockpit-v21.html · HUD）—— 54px 抬头条：
 //
-// 数字纪律（plans §1.5）：S1 没有编队数据 → 四统计一律「—」。绝不能写 0 冒充。
-// counts.sessions 为 null（拿不到 /api/agent/sessions/running）时隐藏「分身」统计。
+//   [← 经典模式] │ 舱籍 chip(32) │ SCENE pill(居中) │ ▤ tok │ ◈ ctx │ ¥ 消耗
+//
+// 纪律：
+//   · 读数全部来自真源（chat 遥测 / getCabinUsage / 舱籍）；拿不到就写「未就绪」，
+//     绝不把缺失值写成 0。
+//   · 右上不再有模型切换与 ♪ ◐ ✦：模型 / 上下文 / 会话 token 明细都在通讯台头部
+//     （MODEL / CTX / TOKEN 下拉），消耗完整账在右栏「消耗」；设置从「更多 → 设置」进。
+//   · 三枚读数只读：不可点、无所指弹层（原型 .cur cursor:default）。
+//   · v21 四轮：删掉原型左上的指挥官徽（16 / 指挥官 / CMDR·ID —— 偏高且无信息量，
+//     与右侧 32px chip 不齐）；导航只留一枚同高的「经典模式」返回钮。
 
-import { useCallback, useRef, useState } from 'react'
-import { THEMES, type CockpitTheme } from '@/components/cabin/cockpit'
-import { useCockpit } from '@/components/cabin/CockpitProvider'
-import { useCockpitFleet } from '../fleet/CockpitFleetProvider'
+import { useCallback, useState } from 'react'
+import { useBillingCurrency } from '@/lib/billing-currency'
+import { formatCost, formatTokenCount } from '@/lib/format'
 import { useCockpitEntry } from '../entry/use-cockpit-entry'
 import { useCockpitState } from '../state/CockpitStateProvider'
 import { useCabinOptional } from '@/components/cabin/cabin-provider'
 import { CockpitProjectsPopover } from '../projects/CockpitProjectsPopover'
 import { CockpitRepoBinder } from '../projects/CockpitRepoBinder'
+import { HudClock } from './HudClock'
 import { useCabinProjects } from '../projects/use-cabin-projects'
-import { CockpitCrewSettings } from '../crew/CockpitCrewSettings'
-import {
-  setCrewSettingsOpen,
-  toggleCrewSettings,
-  useCrewSettingsOpen,
-} from '../crew/crew-settings'
+import { useCabinUsage } from '../bridge/use-cabin-usage'
+import { SCENES } from '../scene/scene-model'
 
-const THEME_ORDER = Object.keys(THEMES) as CockpitTheme[]
-
-function stat(value: number | null | undefined): string {
-  return typeof value === 'number' && Number.isFinite(value) ? String(value) : '—'
+/** 金额读数拆成「符号进六角、数字进 b」——原型 ¥ 徽 + 1.28。 */
+function splitCost(label: string): { unit: string; value: string } {
+  const match = label.match(/^(≈)?([¥$])(.+)$/)
+  if (!match) return { unit: '¥', value: label }
+  return { unit: `${match[1] ?? ''}${match[2]}`, value: match[3] }
 }
 
 export function CockpitHud() {
-  const { prefs, applyPrefs } = useCockpit()
-  const { entryCabinId, railOpen, setRailOpen, fx, openPanel } = useCockpitState()
+  const { entryCabinId, chat, sceneIndex, travel } = useCockpitState()
   const { exitCockpit } = useCockpitEntry()
-  const { counts } = useCockpitFleet()
   const cabinCtx = useCabinOptional()
-  // 全域只属于入口舱（2026-11-15）：读数 / 舱籍 / 绑定入口永远说这一个舱。
-  const currentCabinId = entryCabinId
-  const currentCabinName = cabinCtx?.cabin?.name ?? '作战舱'
+  const cabinName = cabinCtx?.cabin?.name ?? '作战舱'
+  const { usage, stale } = useCabinUsage(entryCabinId)
+  const currency = useBillingCurrency()
+
   const {
     projects, loading: projectsLoading, error: projectsError, refetch: refetchProjects,
-  } = useCabinProjects(currentCabinId)
+  } = useCabinProjects(entryCabinId)
   const [bindOpen, setBindOpen] = useState(false)
-  const settingsOpen = useCrewSettingsOpen()
-  const xiyinBtnRef = useRef<HTMLButtonElement>(null)
-  const closeSettings = useCallback(() => setCrewSettingsOpen(false), [])
+  const closeBinder = useCallback(() => setBindOpen(false), [])
 
-  const cycleTheme = () => {
-    const index = THEME_ORDER.indexOf(prefs.theme)
-    const next = THEME_ORDER[(index + 1) % THEME_ORDER.length]
-    applyPrefs({ ...prefs, theme: next })
-    fx.jump()
-  }
+  // ── 读数（真源，缺值 → 未就绪）────────────────────────────────────────
+  const tokenTotal = chat?.usage?.totals.tokens ?? null
+  const tokenLabel = tokenTotal == null ? '未就绪' : formatTokenCount(tokenTotal)
+  const ctxPct = chat?.contextUsage?.percentage ?? null
+  const ctxLabel = ctxPct == null ? '未就绪' : `${Math.round(ctxPct)}%`
+  const ctxTitle = chat?.contextUsage
+    ? `上下文 ${formatTokenCount(chat.contextUsage.totalTokens)} / ${formatTokenCount(chat.contextUsage.maxTokens, 0)} · 只读（明细在通讯台头部 CTX）`
+    : '上下文占用 · 未就绪（明细在通讯台头部 CTX）'
 
-  // counts 为 null（S1 / 还没接上）时保留「—」占位；有真值但没有分身来源时隐藏。
-  const showSessions = counts === null || counts.sessions !== null
+  const costUsd = usage?.grand.totals.cost.usd ?? null
+  const costComplete = usage?.grand.totals.cost.complete ?? true
+  const cost = splitCost(costUsd == null ? '—' : formatCost(costUsd, costComplete, currency))
+  const costTitle = stale
+    ? '本舱累计消耗 · 上次读取失败，显示上次成功值'
+    : '本舱累计消耗 · 只读（完整账在右栏 消耗）'
+
+  const scene = SCENES[sceneIndex] ?? SCENES[0]
 
   return (
     <header className="ck12-hud" data-testid="cockpit-hud">
+      {/* 唯一保留的导航入口：回 classic 舱页。高度与舱籍 chip 同为 32px，
+          左组（经典 / 舱籍）与右组（SCENE / 三读数）在同一条中线上。 */}
       <button
         type="button"
-        className="ck12-ghost ck12-back"
+        className="ck12-hud-classic"
         onClick={() => exitCockpit(entryCabinId)}
-        title="返回作战舱"
+        title="返回 classic 模式（作战舱）"
+        aria-label="返回 classic 模式（作战舱）"
+        data-testid="cockpit-back"
       >
-        ← 返回作战舱
+        <span className="ck12-hud-classic-i" aria-hidden="true">←</span>
+        <b>经典模式</b>
       </button>
 
-      <div className="ck12-brand">
-        <span className="ck12-hex" aria-hidden="true">⬢</span>
-        OCTOPUS
-        <small>· 作战舱 · 全域</small>
-      </div>
-
-      <div className="ck12-hsep" />
-
-      <div className="ck12-stat"><b className="ck12-c">{stat(counts?.run)}</b>运行中</div>
-      <div className="ck12-stat"><b className="ck12-m">{stat(counts?.need)}</b>需要你</div>
-      <div className="ck12-stat"><b>{stat(counts?.jobs)}</b>编队</div>
-      {showSessions && (
-        <div className="ck12-stat ck12-opt1"><b>{stat(counts?.sessions)}</b>分身</div>
-      )}
-
-      {/* 舱籍读数（v14）：当前舱关联了几个项目；0 项目 = 绑定入口。 */}
       <CockpitProjectsPopover
-        cabinId={currentCabinId}
-        cabinName={currentCabinName}
+        cabinId={entryCabinId}
+        cabinName={cabinName}
         projects={projects}
         loading={projectsLoading}
         error={projectsError}
@@ -94,85 +91,52 @@ export function CockpitHud() {
         onBind={() => setBindOpen(true)}
       />
 
-      <div className="ck12-hud-right">
+      <div className="ck12-sceneread" role="group" aria-label="舱景与当前时间">
+        <span className="ck12-sr-k" aria-hidden="true">SCENE</span>
         <button
           type="button"
-          className="ck12-ghost ck12-fleetbtn"
-          aria-expanded={railOpen}
-          aria-controls="ck12-fleet-rail"
-          onClick={() => setRailOpen(!railOpen)}
+          className="ck12-sr-scene"
+          onClick={() => travel()}
+          title={`当前 ${scene.name} · 点击跃迁到下一幕`}
+          data-testid="cockpit-scene-pill"
         >
-          ☰ 编队
+          <span className="ck12-sr-dot" aria-hidden="true" />
+          <b>{scene.name}</b>
         </button>
-        <span className="ck12-ghost ck12-ghost-static" aria-current="page" title="当前就在全域视图">
-          ⛶ 全域
-        </span>
-        {/* v20（design 29 §6）：作战舱文件（工作树只读查阅）入口。 */}
-        <button
-          type="button"
-          className="ck12-ghost ck12-opt2"
-          onClick={() => openPanel('ws')}
-          title="作战舱文件 · 工作树只读查阅"
-          data-testid="cockpit-ws-open"
-        >
-          ⌗ 文件
-        </button>
-        {/* v20：动作图鉴（12 姿态 playPose）。 */}
-        <button
-          type="button"
-          className="ck12-ghost ck12-opt2"
-          onClick={() => openPanel('poses')}
-          title="动作图鉴 · 12 姿态"
-          data-testid="cockpit-poses-open"
-        >
-          ✦ 动作
-        </button>
-        <button
-          type="button"
-          className="ck12-ghost ck12-opt2"
-          onClick={cycleTheme}
-          title={`换色 · 当前 ${THEMES[prefs.theme].name}`}
-        >
-          ◐ 换色
-        </button>
-        {/* v13：跃迁有了看得见的入口（原来只有 ⌥W / 指令） */}
-        <button
-          type="button"
-          className="ck12-ghost ck12-opt2"
-          onClick={() => fx.jump()}
-          title="跃迁：星流重新对齐（⌥W）"
-          data-testid="cockpit-jump"
-        >
-          ⟳ 跃迁
-        </button>
-        {/* v13：汐音的设置唯一的入口；点立绘只负责说话 */}
-        <button
-          ref={xiyinBtnRef}
-          type="button"
-          className={`ck12-ghost${settingsOpen ? ' is-on' : ''}`}
-          aria-haspopup="dialog"
-          aria-expanded={settingsOpen}
-          onClick={() => toggleCrewSettings()}
-          title="汐音的设置（⌥X）"
-          data-testid="cockpit-crew-settings-btn"
-        >
-          ◐ 汐音
-        </button>
+        <span className="ck12-sr-sep" aria-hidden="true" />
+        <HudClock />
       </div>
 
-      <CockpitCrewSettings
-        open={settingsOpen}
-        anchor={xiyinBtnRef.current}
-        onClose={closeSettings}
-      />
+      {/* pill 是绝对定位（与底部通讯停靠 pill 同一条视口中轴），
+          用弹性占位把右侧三读数钉回右缘。 */}
+      <span className="ck12-hud-sp" aria-hidden="true" />
+
+      <span
+        className="ck12-hudcur is-tok"
+        title={tokenTotal == null ? '本会话 token · 未就绪（明细在通讯台头部 TOKEN）' : `本会话 ${tokenTotal.toLocaleString()} tokens · 只读（明细在通讯台头部 TOKEN）`}
+        data-testid="ck12-rig-tokens"
+      >
+        <span className="ck12-hudcur-i" aria-hidden="true">▤</span>
+        <b>{tokenLabel}</b>
+      </span>
+
+      <span className="ck12-hudcur is-ctx" title={ctxTitle} data-testid="ck12-rig-context">
+        <span className="ck12-hudcur-i" aria-hidden="true">◈</span>
+        <b>{ctxLabel}</b>
+      </span>
+
+      <span className="ck12-hudcur is-cost" title={costTitle} data-testid="ck12-rig-cost">
+        <span className="ck12-hudcur-i" aria-hidden="true">{cost.unit}</span>
+        <b>{cost.value}</b>
+      </span>
 
       <CockpitRepoBinder
         open={bindOpen}
-        cabinId={currentCabinId}
-        cabinPath={currentCabinId === entryCabinId ? cabinCtx?.cabin?.path ?? null : null}
+        cabinId={entryCabinId}
+        cabinPath={entryCabinId === cabinCtx?.cabin?.id ? cabinCtx?.cabin?.path ?? null : null}
         projects={projects}
-        onClose={() => setBindOpen(false)}
-        onSaved={() => { refetchProjects(); fx.jump() }}
+        onClose={closeBinder}
+        onSaved={() => { refetchProjects() }}
       />
     </header>
   )

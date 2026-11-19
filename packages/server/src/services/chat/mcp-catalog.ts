@@ -79,6 +79,7 @@ const CABIN_TOOL_NAMES = [
   "cabin_relay_decision",
   "cabin_list_jobs",
   "cabin_job_trace",
+  "cabin_note_job",
   "cabin_resume_job",
 ] as const
 
@@ -131,7 +132,8 @@ const CABIN_TOOL_DESC: Record<string, string> = {
   cabin_relay_decision: "把用户在舱主对话里做的决定代述给 doer；verbatim 逐字、幂等，framing 只补边界不改选择。",
   cabin_list_jobs: "统一作业账本（task/workflow/subagent）+ 独立委派 + 派生 status + 句柄。",
   cabin_job_trace: "读某作业的 append-only 审计时间线。",
-  cabin_resume_job: "恢复作业（ready 触发 / paused 恢复）。",
+  cabin_note_job: "给作业留一条备注 / 范围变更（不授权），进审计时间线与作战详情「对接」；默认只留痕，notify=true 才唤醒会话。",
+  cabin_resume_job: "恢复作业（草稿入列并触发 / ready 触发 / 暂停恢复）；gate 缺项原样报错。",
 }
 
 const CABIN_DOER_TOOL_DESC: Record<string, string> = {

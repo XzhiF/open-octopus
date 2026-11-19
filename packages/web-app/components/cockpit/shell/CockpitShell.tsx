@@ -16,22 +16,23 @@ import { CockpitStateProvider, useCockpitState } from '../state/CockpitStateProv
 import { CockpitLayerStack } from '../state/CockpitLayerStack'
 import { CockpitUrlSync } from '../entry/use-cockpit-url-sync'
 import { CockpitShortcuts } from '../entry/CockpitShortcuts'
-import { CockpitFleetProvider } from '../fleet/CockpitFleetProvider'
+import { CockpitFleetProvider, useCockpitFleet } from '../fleet/CockpitFleetProvider'
 import { CockpitHud } from './CockpitHud'
+import { CockpitSettings } from './CockpitSettings'
 import { CockpitStarfield } from './CockpitStarfield'
+import { CockpitScene } from '../scene/CockpitScene'
 import { CockpitQuiet } from './CockpitQuiet'
 import { AskWindowsProvider, useAskWindows } from '@/components/cabin/asks/ask-windows-provider'
 import { AskWindowLayer } from '@/components/cabin/asks/ask-window-layer'
 import { CockpitFleetRail } from '../rail/CockpitFleetRail'
+import { CockpitRightRail } from '../rail/CockpitRightRail'
 import { CockpitFace } from '../face/CockpitFace'
 import { CockpitChatHost } from '../chat/CockpitChatHost'
 import { CockpitChatWindow } from '../chat/CockpitChatWindow'
-import { CockpitCommandBar } from '../chat/CockpitCommandBar'
 import { CockpitDock } from '../chat/CockpitDock'
 import { CockpitPopWindows } from '../chat/CockpitPopWindows'
 import { CockpitWinBar } from '../chat/CockpitWinBar'
 import { CockpitThreadActivity } from '../chat/CockpitThreadActivity'
-import { CockpitBridge } from '../bridge/CockpitBridge'
 import { CockpitCrew } from '../crew/CockpitCrew'
 import { CockpitBrief } from '../fx/CockpitBrief'
 import { CockpitEffects } from '../fx/CockpitEffects'
@@ -107,6 +108,7 @@ function CockpitSurface({ cabin }: { cabin: CabinDetail }) {
     <CockpitAskDeepLink />
     <div className="ck12-app" data-testid="cockpit-shell">
       <div className="ck12-bg" aria-hidden="true">
+        <CockpitScene />
         <div className="ck12-nebula ck12-n1" />
         <div className="ck12-nebula ck12-n2" />
         <div className="ck12-nebula ck12-n3" />
@@ -133,6 +135,8 @@ function CockpitSurface({ cabin }: { cabin: CabinDetail }) {
 
       <CockpitHud />
       <CockpitStatusBanner cabin={cabin} />
+      {/* v21（design 31 §3.2/§3.3）：右栏紧凑待办 + 主按钮组。 */}
+      <CockpitRightRail />
 
       <main className="ck12-stage">
         <CockpitFleetRail />
@@ -142,15 +146,17 @@ function CockpitSurface({ cabin }: { cabin: CabinDetail }) {
           data-testid="cockpit-arena"
         >
           <CockpitQuiet />
-          <CockpitFace entryCabinId={entryCabinId} />
           <CockpitCrew />
         </section>
       </main>
 
-      <footer className="ck12-cmd">
-        <CockpitBridge />
-        <CockpitCommandBar entryCabinId={entryCabinId} />
-      </footer>
+      {/* v21 三轮：作业详情是覆盖整舱的玻璃 dossier（原型 .panel/.pscrim）。
+          必须挂在 arena 之外 —— arena 自带 z-index:2 的层叠上下文，放在里面
+          会永远压在通讯台（共享 z 栈 31+）下面。 */}
+      <CockpitFace entryCabinId={entryCabinId} />
+
+      {/* 原型没有屏幕级底栏：输入框在通讯台内（.con-in）。这里不再留 footer，
+          通讯台底缘按视口 − 56 量（geometry 的 fallback）。 */}
 
       <CockpitChatHost entryCabinId={entryCabinId} />
       <CockpitChatWindow />
@@ -164,6 +170,7 @@ function CockpitSurface({ cabin }: { cabin: CabinDetail }) {
       <div id="ck12-layer-root" className="ck12-layerroot" />
       <CockpitBrief />
       <CockpitPanels />
+      <CockpitSettings />
       <CockpitWarpScheduler />
       <CockpitSim />
 
@@ -203,11 +210,16 @@ function CockpitAskDeepLink() {
   return null
 }
 
-/** 载入 / 草稿·初始化 / 无主会话 —— 只做渲染层提示，聊天禁用态留给 S5。 */
+/** 载入 / 草稿·初始化 / 无主会话 —— 只做渲染层提示，聊天禁用态留给 S5。
+ *  v21：编队已有行时不再显示草稿文案（9 条作业还挂着「没有编队」的横幅
+ *  是假消息）；只有真的空编队才提示去初始化。 */
 function CockpitStatusBanner({ cabin }: { cabin: CabinDetail }) {
   const router = useRouter()
+  const { rows, loading } = useCockpitFleet()
+  const hasFleet = rows.length > 0
 
   if (cabin.status === 'draft' || cabin.status === 'initializing') {
+    if (hasFleet || loading) return null
     return (
       <div className="ck12-banner" role="status" data-testid="cockpit-status-banner">
         <span className="ck12-banner-dot" aria-hidden="true" />

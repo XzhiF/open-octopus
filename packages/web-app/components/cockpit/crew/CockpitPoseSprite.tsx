@@ -1,109 +1,137 @@
 'use client'
 
-// v20（design 29 §9.3）：sprite-sheet 帧播放器 —— 真·连续动作。
+// v22（design 33 §3）：汐音立绘 = **纯视频**。
 //
-//   · 单 rAF：dt 累积 → 每 1000/fps 步 idx+=dir，端点折返（ping-pong 保证任意
-//     视频片段首尾相接循环无跳变）→ transform translateY(-idx*100/frames%)；
-//   · .ck12-spr 裁切窗 + img height=frames*100%（sheet 1:3 与窗 2:3×frames 同比）；
-//   · document.hidden 暂停；prefers-reduced-motion 静帧 0；
-//   · motion 源 onerror → 双帧回退（fps 降 1.6 防眨闪）；
-//   · 粒子层与帧动画解耦（PoseFX 按 POSE_META.fx 发射）。
+//   · 片段由 `clip`（图鉴点击精确到段）或 `pose`（mood / 动作姿态）决定；
+//     有 clip 用 clip，否则 poseClip(pose) 取该姿态的首选片段。
+//   · 每个片段都是 768×1152 VP9 alpha WebM（_motion-v22.mjs 统一归一化：
+//     人物高 1040 / 脚底 1105 / 躯干中轴 384），所以换段不跳位、比例一致。
+//   · `playing` 才淡入（防切段时闪黑）；切段先压回 0。解码失败 → 单帧 pose PNG
+//     兜底（仅错误路径，正常全程视频）。
+//   · prefers-reduced-motion：不自动播，停在 0.5s 一帧（仍是视频真源，不是静态图）。
+//   · document.hidden 暂停，回来续播，省电且不丢帧。
+//
+// 粒子层与视频解耦（PoseFX 按 POSE_META.fx 发射），点击/台词手感与 v21 一致。
 
 import { useEffect, useRef, useState, type CSSProperties } from 'react'
 import {
-  FALLBACK_FPS,
-  FALLBACK_FRAMES,
-  FALLBACK_SHEETS,
-  MOTION_FRAMES,
-  MOTION_SHEETS,
+  CLIPS,
   POSE_META,
+  POSE_SRC,
+  poseClip,
   type PoseKey,
 } from './pose-model'
 
-interface MoState {
-  idx: number
-  dir: 1 | -1
-  acc: number
-  last: number
+interface SpriteProps {
+  pose: PoseKey
+  /** 图鉴点名的精确片段下标；不传则按 pose 映射。 */
+  clip?: number | null
+  reduce: boolean
 }
 
-export function CockpitPoseSprite({ pose, reduce }: { pose: PoseKey; reduce: boolean }) {
-  const [src, setSrc] = useState(MOTION_SHEETS[pose])
-  const [frames, setFrames] = useState(MOTION_FRAMES)
-  const [fps, setFps] = useState(POSE_META[pose].fps)
-  const imgRef = useRef<HTMLImageElement>(null)
-  const moRef = useRef<MoState>({ idx: 0, dir: 1, acc: 0, last: 0 })
+export function CockpitPoseSprite({ pose, clip, reduce }: SpriteProps) {
+  const index = Number.isInteger(clip) && (clip as number) >= 0 && (clip as number) < CLIPS.length
+    ? (clip as number)
+    : poseClip(pose)
+  const item = CLIPS[index]
+  const src = item.src
+  const vidRef = useRef<HTMLVideoElement>(null)
+  /** 只记住「已起播」的 src：换段瞬间 opacity 立即回 0，不用等 effect，避免闪帧。 */
+  const [liveSrc, setLiveSrc] = useState<string | null>(null)
+  const live = liveSrc === src
+  /** 只记住失败的 src：换段后自动重试，不会一次失败就永久退回静图。 */
+  const [failedSrc, setFailedSrc] = useState<string | null>(null)
+  const failed = failedSrc === src
 
   useEffect(() => {
-    setSrc(MOTION_SHEETS[pose])
-    setFrames(MOTION_FRAMES)
-    setFps(POSE_META[pose].fps)
-    moRef.current = { idx: 0, dir: 1, acc: 0, last: 0 }
-  }, [pose])
-
-  useEffect(() => {
-    const apply = (idx: number) => {
-      const el = imgRef.current
-      if (el) el.style.transform = `translateY(-${(idx * 100) / frames}%)`
-    }
+    const v = vidRef.current
+    if (!v) return
     if (reduce) {
-      apply(0)
+      try {
+        v.pause()
+        v.currentTime = 0.5
+      } catch {
+        /* jsdom / 未解码时忽略 */
+      }
+      setLiveSrc(src)
       return
     }
-    let raf = 0
-    const loop = (t: number) => {
-      raf = requestAnimationFrame(loop)
-      const mo = moRef.current
-      if (document.hidden) {
-        mo.last = t
-        return
-      }
-      if (!mo.last) mo.last = t
-      mo.acc += t - mo.last
-      mo.last = t
-      const step = 1000 / (frames > FALLBACK_FRAMES ? fps : FALLBACK_FPS)
-      while (mo.acc >= step) {
-        mo.acc -= step
-        mo.idx += mo.dir
-        if (mo.idx >= frames - 1) {
-          mo.idx = frames - 1
-          mo.dir = -1
-        } else if (mo.idx <= 0) {
-          mo.idx = 0
-          mo.dir = 1
+    try {
+      v.load()
+      const p = v.play()
+      if (p && typeof p.catch === 'function') p.catch(() => {})
+    } catch {
+      /* 自动播放被策略拦下时等用户手势；opacity 保持 0，不闪黑 */
+    }
+  }, [src, reduce])
+
+  useEffect(() => {
+    const onVisibility = () => {
+      const v = vidRef.current
+      if (!v || reduce) return
+      if (document.hidden) v.pause()
+      else {
+        try {
+          const p = v.play()
+          if (p && typeof p.catch === 'function') p.catch(() => {})
+        } catch {
+          /* 同上 */
         }
       }
-      apply(mo.idx)
     }
-    raf = requestAnimationFrame(loop)
-    return () => cancelAnimationFrame(raf)
-  }, [frames, fps, reduce, src])
+    document.addEventListener('visibilitychange', onVisibility)
+    return () => document.removeEventListener('visibilitychange', onVisibility)
+  }, [reduce])
+
+  if (failed) {
+    return (
+      <span
+        className="ck12-spr"
+        data-testid="cockpit-pose-sprite"
+        data-pose={pose}
+        data-clip={index}
+        data-clip-no={item.no}
+        data-source="still-fallback"
+      >
+        <img src={POSE_SRC[pose]} alt="汐音" draggable={false} />
+      </span>
+    )
+  }
 
   return (
-    <span className="ck12-spr" data-testid="cockpit-pose-sprite" data-pose={pose} data-frames={frames}>
-      <img
-        ref={imgRef}
+    <span
+      className="ck12-spr"
+      data-testid="cockpit-pose-sprite"
+      data-pose={pose}
+      data-clip={index}
+      data-clip-no={item.no}
+      data-batch={item.batch}
+      data-live={live ? 'true' : 'false'}
+    >
+      <video
+        ref={vidRef}
+        className="ck12-mv"
         src={src}
-        alt="汐音"
-        draggable={false}
-        style={{ height: `${frames * 100}%` }}
-        onError={() => {
-          if (src === MOTION_SHEETS[pose]) {
-            setSrc(FALLBACK_SHEETS[pose])
-            setFrames(FALLBACK_FRAMES)
-            setFps(FALLBACK_FPS)
-            moRef.current = { idx: 0, dir: 1, acc: 0, last: 0 }
-          }
-        }}
+        muted
+        playsInline
+        loop
+        preload="auto"
+        autoPlay={!reduce}
+        aria-hidden="true"
+        style={{ opacity: live ? 1 : 0 }}
+        onPlaying={() => setLiveSrc(src)}
+        onError={() => setFailedSrc(src)}
       />
     </span>
   )
 }
 
-/** 姿态粒子层：loop 类常驻至换 pose；reduced 全禁（design 29 §9.3）。 */
+/** 姿态粒子层：loop 类常驻至换 pose；reduced 全禁（design 29 §9.3）。
+ *  v21 四轮：fx='none'（alert）不再渲染任何粒子层。 */
 export function PoseFX({ pose, reduce }: { pose: PoseKey; reduce: boolean }) {
   if (reduce) return null
   const fx = POSE_META[pose].fx
+  if (fx === 'none') return null
   return (
     <span className={`ck12-pfx ck12-pfx-${fx}`} key={pose} aria-hidden="true" data-testid="cockpit-pose-fx">
       {Array.from({ length: 8 }, (_, i) => (

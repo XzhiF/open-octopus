@@ -23,7 +23,7 @@
  * Visibility budget (2026-11-14): every page opens ~3 长连接 to the same origin
  * (舱事件 / 任务事件 / 工作区会话). Browsers allow only 6 HTTP/1.1 connections per
  * origin, so **two open pages exhaust the pool** and every ordinary request after
- * that queues forever — surfacing as "编队请求超时（15s）" / "作业详情超时（8s）"
+ * that queues forever — surfacing as "编队请求超时（15s）" / "作战详情超时（8s）"
  * (2026-11-14 用户 bug)。隐藏页不需要实时流：页面 hidden 时关闭全部连接，可见时
  * 重连（`reconnected: true` → 消费方各自 refetch）。
  */

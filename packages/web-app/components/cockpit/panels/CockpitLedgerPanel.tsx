@@ -41,7 +41,10 @@ export function CockpitLedgerPanel() {
   }
 
   return (
-    <CockpitPanelShell kind="ledger" title="SESSION LEDGER" en="USAGE · CABIN">
+    <CockpitPanelShell kind="ledger" title="本舱账本" en="CABIN LEDGER · 全域只读">
+      <div className="ck12-ledger-note" data-testid="cockpit-ledger-note">
+        本舱账本 = 全域累计（各作战汇总，只读）；本会话明细看通讯台头部 <b>CTX / TOKEN</b> 下拉。
+      </div>
       {!usage && (
         <div className="ck12-ops-empty">{stale ? '账本读取失败 · 稍后重试' : '读账本…'}</div>
       )}

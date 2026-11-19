@@ -13,7 +13,7 @@ export type CabinJobKind = z.infer<typeof CabinJobKindSchema>
 /** `brief` / `decision` 是 design 25 加的两类审计事件（追加，不改旧值）。 */
 export const CabinJobEventKindSchema = z.enum([
   "dispatch", "report", "attention", "handback", "human_input", "resume",
-  "brief", "decision",
+  "brief", "decision", "note",
 ])
 export type CabinJobEventKind = z.infer<typeof CabinJobEventKindSchema>
 

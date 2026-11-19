@@ -38,6 +38,10 @@ describe('proxyTurnOf', () => {
     expect(proxyTurnOf('[舱派发 · mandate=explicit] 任务「x」')).toEqual({ kind: 'brief' })
   })
 
+  it('识别舱备注（不授权转达）', () => {
+    expect(proxyTurnOf('[舱备注 · 不授权] phase 2 产物已删除')).toEqual({ kind: 'note' })
+  })
+
   it('普通用户消息不误判（不靠语义猜）', () => {
     expect(proxyTurnOf('帮我看下这个 []')).toBeNull()
     expect(proxyTurnOf('[决策] 这是我自己打的字')).toBeNull()

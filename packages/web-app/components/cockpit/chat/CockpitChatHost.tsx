@@ -5,16 +5,14 @@
 // 从 CabinChatHost 抽出的会话解析 / shared / command / 事件桥（见
 // components/cabin/use-cabin-chat-wiring.ts），这里只负责全域这一侧的接线：
 //   · 渲染**真的** ChatPane，并把 transcript portal 进浮窗的 body；
-//   · composer 通过 composerSlot portal 到底栏 54px 输入区（plans §2.4）；
+//   · composer 通过 composerSlot portal 到通讯台输入行（v21 三轮：原型 .con-in）；
 //   · onTelemetry → CockpitState.reportChat（舰桥 / ticker 读它）；
 //   · layerRoot = #ck12-arena（任务模块窗浮在整个舱面上，不夹在 320px 浮窗里）；
 //   · **全程挂载**：浮窗关闭/收起只改 chatWindow 状态，ChatPane 不卸载 —— 底下
-//     ChatPane 的 UI 由浮窗的 display:none 隐藏，composer 已 portal 到底栏，
-//     不受隐藏祖先影响。
+//     ChatPane 的 UI 由浮窗的 display:none 隐藏（含 portal 进台内的 composer）。
 //
 // 无主会话时**不挂** ChatPane：否则回到空会话时 composer 会在第一次发送时懒建
-// 一个新会话，绕开舱主对话的绑定。此时 telemetry 保持 null（舰桥显示未就绪），
-// 底栏由 CockpitCommandBar 显示禁用文案。
+// 一个新会话，绕开舱主对话的绑定。此时 telemetry 保持 null（舰桥显示未就绪）。
 
 import { memo, useCallback, useEffect, useState } from 'react'
 import { createPortal } from 'react-dom'

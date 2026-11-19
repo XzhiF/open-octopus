@@ -9,42 +9,50 @@
 //   enqueue → draft：立即开跑（静默 ready → trigger）/ 先入列
 //   trigger → ready：立即触发
 //   resume  → paused：恢复推进
-// 落点与问答窗一致（classic：贴编队左缘），复用 .ck-askwin chrome。
+// 落点与问答窗同一纪律：classic 贴编队 / inbox 左侧；cockpit 贴右栏
+// 「要我处理」左侧（与 classic 同义 —— 挨着待办悬浮，不跑回左侧编队）。
 
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { CheckCircle2, Loader2, X, Zap } from 'lucide-react'
 import type { CabinAttentionItem } from '@octopus/shared'
+import type { CockpitLayerApi } from '@/components/cockpit/state/cockpit-state'
 import { readyTask, resumeTask, triggerTask } from '@/lib/tasks-api'
 import { openTaskInChat } from '../modules/ui'
 import { nextZ } from '../z-order'
-import { readFleetLeft } from './ask-window-layer'
-import { askRect, askWindowContext, type AskPlacement } from './ask-window-model'
+import { readFleetLeft, readRightRailLeft } from './ask-window-layer'
+import {
+  askRect,
+  askWindowContext,
+  clampLeft,
+  windowWidthFor,
+  type AskPlacement,
+} from './ask-window-model'
 import './ask-window.css'
 
-type StartKind = 'enqueue' | 'trigger' | 'resume'
-type Choice = 'launch' | 'enqueue' | 'trigger' | 'resume'
+export type StartKind = 'enqueue' | 'trigger' | 'resume'
+export type StartChoice = 'launch' | 'enqueue' | 'trigger' | 'resume'
 
-interface Option {
-  id: Choice
+export interface StartOption {
+  id: StartChoice
   label: string
   impact: string
 }
 
-const SUMMARY: Record<StartKind, string> = {
+export const START_SUMMARY: Record<StartKind, string> = {
   enqueue: '规格和 phase 绑定已经齐了，可以开跑 phase 1。',
   trigger: '任务已入列，下一步就是触发执行。',
   resume: '这一轮被暂停了，可以从暂停点恢复推进。',
 }
 
-const RECEIPT: Record<Choice, string> = {
+export const START_RECEIPT: Record<StartChoice, string> = {
   launch: '✓ 已开跑 · 入列并触发 phase 1，已从「要我处理」消项',
   enqueue: '✓ 已入列 · 等你触发，已从「要我处理」消项',
   trigger: '✓ 已触发执行，已从「要我处理」消项',
   resume: '✓ 已恢复推进，已从「要我处理」消项',
 }
 
-function kindOf(item: CabinAttentionItem): StartKind {
+export function startKindOf(item: CabinAttentionItem): StartKind {
   if (item.start_kind) return item.start_kind
   // 兼容旧服务端：从标题后缀兜底（新服务端一定带 start_kind）。
   if (item.title.includes('· 待触发')) return 'trigger'
@@ -52,7 +60,7 @@ function kindOf(item: CabinAttentionItem): StartKind {
   return 'enqueue'
 }
 
-function optionsOf(kind: StartKind): Option[] {
+export function startOptionsOf(kind: StartKind): StartOption[] {
   if (kind === 'trigger') {
     return [{ id: 'trigger', label: '立即触发', impact: '马上开跑当前 phase' }]
   }
@@ -65,17 +73,17 @@ function optionsOf(kind: StartKind): Option[] {
   ]
 }
 
-function itemName(item: CabinAttentionItem): string {
+export function startItemName(item: CabinAttentionItem): string {
   return item.title.replace(/\s*·\s*待(入列|触发|恢复)$/, '') || item.title
 }
 
 /** 乐观消项键：同一任务从「待入列」变成「待触发」时 attention id 不变，
  *  必须把动作一起算进键里，否则先入列后的新待办会被旧回执一起藏住。 */
 export function startDecisionKey(item: CabinAttentionItem): string {
-  return `${item.id}:${item.start_kind ?? kindOf(item)}`
+  return `${item.id}:${item.start_kind ?? startKindOf(item)}`
 }
 
-function errorText(err: unknown): string {
+export function startErrorText(err: unknown): string {
   if (err instanceof Error) {
     const missing = (err as Error & { missing?: unknown }).missing
     const suffix = Array.isArray(missing) && missing.length > 0
@@ -86,20 +94,37 @@ function errorText(err: unknown): string {
   return String(err)
 }
 
+/** 放行窗落点（v21 四轮）：classic 贴编队 / inbox 左侧；cockpit 贴右栏
+ *  「要我处理」左侧 —— 与 classic 同义，挨着待办悬浮，守住 10px 间距。 */
+function placementFor(mode: 'classic' | 'cockpit'): AskPlacement {
+  const viewport = { w: window.innerWidth, h: window.innerHeight }
+  if (mode === 'cockpit') {
+    const width = windowWidthFor('cockpit', viewport.w)
+    const railLeft = readRightRailLeft()
+    const left = railLeft == null ? viewport.w - width - 24 : railLeft - width - 10
+    return { left: clampLeft(left, width, viewport.w), top: 62, width }
+  }
+  return askRect('classic', { fleetLeft: readFleetLeft(), openCount: 0, viewport })
+}
+
 export interface StartWindowProps {
   item: CabinAttentionItem
   onClose: () => void
-  /** 执行成功：inbox 立即乐观消项（键含动作，见 startDecisionKey），并触发一次 view 刷新。 */
+  /** 执行成功：inbox 立即乐观消项（键含动作，见 startDecisionKey），并触发一次刷新。 */
   onDecided: (decisionKey: string) => void
+  /** 放置模式：classic 贴编队左缘、cockpit 贴编队右缘（默认 classic，行为不变）。 */
+  mode?: 'classic' | 'cockpit'
+  /** cockpit：Esc 走唯一层栈（priority 125 —— 先于 inbox 120 收放行窗）。 */
+  escLayer?: CockpitLayerApi
 }
 
-export function StartWindow({ item, onClose, onDecided }: StartWindowProps) {
+export function StartWindow({ item, onClose, onDecided, mode = 'classic', escLayer }: StartWindowProps) {
   const taskId = item.task_id
-  const kind = kindOf(item)
-  const options = optionsOf(kind)
+  const kind = startKindOf(item)
+  const options = startOptionsOf(kind)
 
   const [mounted, setMounted] = useState(false)
-  const [choice, setChoice] = useState<Choice>(options[0]?.id ?? 'enqueue')
+  const [choice, setChoice] = useState<StartChoice>(options[0]?.id ?? 'enqueue')
   const [busy, setBusy] = useState(false)
   const [receipt, setReceipt] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
@@ -107,11 +132,7 @@ export function StartWindow({ item, onClose, onDecided }: StartWindowProps) {
 
   const [pos, setPos] = useState<AskPlacement>(() => {
     if (typeof window === 'undefined') return { left: 0, top: 56, width: 520 }
-    return askRect('classic', {
-      fleetLeft: readFleetLeft(),
-      openCount: 0,
-      viewport: { w: window.innerWidth, h: window.innerHeight },
-    })
+    return placementFor(mode)
   })
 
   const rootRef = useRef<HTMLElement | null>(null)
@@ -121,8 +142,12 @@ export function StartWindow({ item, onClose, onDecided }: StartWindowProps) {
   useEffect(() => setMounted(true), [])
   useEffect(() => { rootRef.current?.focus() }, [])
 
-  // Esc：只关这一扇；若问答窗已处理（preventDefault）则让位。
+  // Esc：cockpit 走唯一层栈（125 > inbox 120）；classic 只关这一扇，
+  // 若问答窗已处理（preventDefault）则让位。
   useEffect(() => {
+    if (escLayer) {
+      return escLayer.register('cabin-start-window', 125, () => closeRef.current())
+    }
     const onKey = (event: KeyboardEvent) => {
       if (event.key !== 'Escape' || event.defaultPrevented) return
       event.preventDefault()
@@ -130,20 +155,22 @@ export function StartWindow({ item, onClose, onDecided }: StartWindowProps) {
     }
     document.addEventListener('keydown', onKey, true)
     return () => document.removeEventListener('keydown', onKey, true)
-  }, [])
+  }, [escLayer])
 
-  // resize：只夹 x（与问答窗同纪律）。
+  // resize：只夹 x（与问答窗同纪律）；宽度按模式重取。
   useEffect(() => {
     const onResize = () => {
       setPos((prev) => {
-        const width = Math.min(520, Math.max(240, window.innerWidth - 24))
-        const left = Math.max(8, Math.min(prev.left, Math.max(8, window.innerWidth - width - 8)))
+        const width = mode === 'cockpit'
+          ? windowWidthFor('cockpit', window.innerWidth)
+          : Math.min(520, Math.max(240, window.innerWidth - 24))
+        const left = clampLeft(prev.left, width, window.innerWidth)
         return { left, top: prev.top, width }
       })
     }
     window.addEventListener('resize', onResize)
     return () => window.removeEventListener('resize', onResize)
-  }, [])
+  }, [mode])
 
   // 成功回执停 1.5s 后自动关窗（与问答窗同口径）。
   useEffect(() => {
@@ -203,9 +230,9 @@ export function StartWindow({ item, onClose, onDecided }: StartWindowProps) {
         await resumeTask(taskId)
       }
       onDecided(startDecisionKey(item))
-      setReceipt(RECEIPT[choice])
+      setReceipt(START_RECEIPT[choice])
     } catch (err) {
-      setError(errorText(err))
+      setError(startErrorText(err))
     } finally {
       setBusy(false)
     }
@@ -213,7 +240,7 @@ export function StartWindow({ item, onClose, onDecided }: StartWindowProps) {
 
   if (!mounted) return null
 
-  const name = itemName(item)
+  const name = startItemName(item)
   const ctx = askWindowContext(item, { ask_id: '' })
   const done = !!receipt
 
@@ -221,7 +248,7 @@ export function StartWindow({ item, onClose, onDecided }: StartWindowProps) {
     <section
       ref={rootRef}
       tabIndex={-1}
-      className="ck-askwin ck-startwin ck-askwin--classic"
+      className={`ck-askwin ck-startwin ck-askwin--${mode}`}
       style={{ left: pos.left, top: pos.top, width: pos.width, zIndex: z }}
       data-testid={`cabin-start-window-${item.id}`}
       role="dialog"
@@ -263,7 +290,7 @@ export function StartWindow({ item, onClose, onDecided }: StartWindowProps) {
       <div className="ck-askwin-body">
         <div className="ck-askwin-from">
           <span className="ck-askwin-av" aria-hidden="true">汐</span>
-          <span><b>汐音</b> · {SUMMARY[kind]}</span>
+          <span><b>汐音</b> · {START_SUMMARY[kind]}</span>
         </div>
 
         {item.detail && <div className="ck-startwin-detail">{item.detail}</div>}

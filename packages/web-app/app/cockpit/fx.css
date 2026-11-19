@@ -4,30 +4,70 @@
    S1 的 index.css 已经 import，本文件只增不改壳。
    ─────────────────────────────────────────────────────────────────────── */
 
-/* ═══════════════ 到达简报（340 宽 / 无按钮 / 10s 自收） ═══════════════ */
+/* ═══════════════ 到达简报（v21：汐音头顶的空白天空 · 10s 自收） ═══════════════ */
 .ck12-brief {
   position: fixed;
-  right: 26px;
-  top: 66px;
-  width: 340px;
-  z-index: 50;
-  border-radius: 14px;
-  border: 1px solid color-mix(in srgb, var(--ck12-brief-tone, var(--ck12-amber)) 42%, transparent);
-  background: linear-gradient(180deg, rgba(30, 26, 20, 0.96), rgba(18, 16, 14, 0.94));
+  /* v22：随立绘左移；再夹一条下界，保证提示条左缘不压左侧编队。 */
+  left: max(
+    calc(var(--ck12-railw) + 12px + min(390px, calc(var(--ck12-charw) - 54px)) / 2),
+    calc(var(--ck12-railw) + 16px - var(--ck12-charshift) + var(--ck12-charw) / 2)
+  );
+  top: 58px;
+  width: min(390px, calc(var(--ck12-charw) - 54px));
+  min-width: 260px;
+  transform: translateX(-50%);
+  z-index: 45;
+  padding: 9px 14px;
+  border-radius: 0;
+  clip-path: var(--ck12-cut);
+  border: 1px solid color-mix(in srgb, var(--ck12-brief-tone, var(--ck12-amber)) 60%, transparent);
+  background: var(--ck12-glass2);
   backdrop-filter: blur(14px);
   box-shadow:
-    0 20px 50px rgba(0, 0, 0, 0.55),
-    0 0 30px color-mix(in srgb, var(--ck12-brief-tone, var(--ck12-amber)) 12%, transparent);
-  overflow: hidden;
-  /* 入场只在挂载时播一次（元素随 state 卸载/重挂，不靠 transition） */
-  animation: ck12-brief-in 0.42s cubic-bezier(0.2, 0.9, 0.2, 1);
+    0 14px 40px rgba(16, 13, 40, 0.5),
+    0 0 24px color-mix(in srgb, var(--ck12-brief-tone, var(--ck12-amber)) 22%, transparent);
+  overflow: visible;
+  animation: ck12-brief-in 0.3s ease;
+}
+.ck12-brief::after {
+  content: '';
+  position: absolute;
+  left: 50%;
+  bottom: -14px;
+  width: 140px;
+  height: 14px;
+  transform: translateX(-50%);
+  background: linear-gradient(
+    180deg,
+    color-mix(in srgb, var(--ck12-brief-tone, var(--ck12-amber)) 34%, transparent),
+    transparent
+  );
+  clip-path: polygon(0 0, 100% 0, 72% 100%, 28% 100%);
+  pointer-events: none;
 }
 
 .ck12-brief-h {
   display: flex;
   align-items: center;
-  gap: 9px;
-  padding: 11px 13px 8px;
+  gap: 8px;
+  padding: 0;
+}
+.ck12-brief-x {
+  flex: none;
+  width: 20px;
+  height: 22px;
+  clip-path: var(--ck12-hex);
+  display: grid;
+  place-items: center;
+  color: var(--ck12-ink2);
+  border: 1px solid rgba(185, 179, 217, 0.25);
+  font-size: 10px;
+  line-height: 1;
+}
+.ck12-brief-x:hover {
+  color: #fff;
+  background: var(--ck12-red);
+  border-color: var(--ck12-red);
 }
 
 .ck12-brief-av {
@@ -90,9 +130,9 @@
 }
 
 .ck12-brief-tx {
-  padding: 0 13px 10px;
-  font-size: 12px;
-  line-height: 1.55;
+  padding: 6px 0 0;
+  font-size: 12.5px;
+  line-height: 1.5;
   color: var(--ck12-ink);
   font-family: var(--font-ui);
   overflow-wrap: anywhere;
@@ -110,7 +150,8 @@
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 9px 13px 12px;
+  padding: 6px 0 0;
+  margin-top: 6px;
   border-top: 1px solid rgba(255, 255, 255, 0.07);
 }
 .ck12-brief-time {
@@ -127,12 +168,30 @@
 @keyframes ck12-brief-in {
   from {
     opacity: 0;
-    transform: translateX(380px);
+    transform: translateX(-50%) translateY(-18px);
   }
   to {
     opacity: 1;
-    transform: none;
+    transform: translateX(-50%);
   }
+}
+
+@media (max-width: 900px) {
+  .ck12-brief {
+    left: 50%;
+    top: 60px;
+    width: min(440px, 92vw);
+    min-width: 0;
+  }
+}
+
+@media (max-width: 560px) {
+  .ck12-brief { padding: 7px 12px; }
+  .ck12-brief-tx { font-size: 11.5px; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ck12-brief { animation: none; }
 }
 
 /* 演示触发器：仅 DEV + ?demo=1 渲染（生产构建里不存在）。极小、半透明。 */
@@ -441,22 +500,10 @@
   .ck12-bgfx-top { display: none; }
 }
 
-/* ═══════════════ v20（design 29 §1.1/§7.1）· 简报落空白天空 ═══════════════
-   从右上（会压通讯台默认几何）移到立绘头顶左、通讯台左外的空白天空：
-   left = 编队宽 + 12；右缘 ≤ 通讯台左缘 - 12（宽 = min(340, scenePad - 24)）。
-   ≤900 顶中 92vw（通知优先，10s 自隐，与原型移动端同口径）。 */
-.ck12-brief {
-  right: auto;
-  left: 312px;
-  top: 78px;
-  width: min(340px, 342px);
-}
-@media (max-width: 1360px) {
-  .ck12-brief { left: 276px; width: min(340px, 310px); }
-}
-@media (max-width: 900px) {
-  .ck12-brief { left: 4vw; top: 70px; width: 92vw; }
-}
+/* ═══════════════ v21（design 31 §3.6）· 简报落立绘头顶 ═══════════════
+   v20 的 312/78（编队右、通讯台左）已被 v21 规则取代：
+   left = railw + 16 + charw/2（立绘中线）、top 58、宽 min(390, charw-54)，
+   右缘永远 ≤ 通讯台左缘。≤900 顶中 92vw（见上）。 */
 
 /* ═══════════════ v20（design 29 §7.3）· 模拟弹层（仅 DEV）═══════════════ */
 .ck12-sim { position: fixed; left: 12px; bottom: 100px; z-index: 140; }

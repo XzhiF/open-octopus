@@ -45,7 +45,7 @@ import { listRunningSessions } from '@/lib/agent/api'
 import { CockpitStateProvider, useCockpitState } from '../../state/CockpitStateProvider'
 import { CockpitLayerStack } from '../../state/CockpitLayerStack'
 import { CockpitFleetProvider } from '../../fleet/CockpitFleetProvider'
-import type { CockpitRef } from '../../state/cockpit-state'
+import type { CockpitRef, CockpitSelectSource } from '../../state/cockpit-state'
 import { CockpitFace } from '../CockpitFace'
 
 function cabin(id: string, name = `舱${id}`): CabinDetail {
@@ -133,17 +133,21 @@ function mockJob(cabinId = 'cabin-1', over: Partial<CabinJobView> = {}) {
   })
 }
 
-function SelectProbe({ target }: { target: CockpitRef }) {
+function SelectProbe({ target, source }: { target: CockpitRef; source?: CockpitSelectSource }) {
   const { select } = useCockpitState()
-  return <button data-testid="select-probe" onClick={() => select(target)}>select</button>
+  return (
+    <button data-testid="select-probe" onClick={() => select(target, undefined, source)}>
+      select
+    </button>
+  )
 }
 
-function Harness({ target }: { target: CockpitRef }) {
+function Harness({ target, source }: { target: CockpitRef; source?: CockpitSelectSource }) {
   return (
     <CockpitStateProvider entryCabinId="cabin-1">
       <CockpitLayerStack>
         <CockpitFleetProvider>
-          <SelectProbe target={target} />
+          <SelectProbe target={target} source={source} />
           <CockpitFace entryCabinId="cabin-1" />
         </CockpitFleetProvider>
       </CockpitLayerStack>
@@ -186,12 +190,32 @@ describe('CockpitFace — job 选中', () => {
     expect(focusables[0]).toBe(screen.getByTestId('cockpit-job-close'))
 
     // 五个页签都在
-    for (const key of ['overview', 'relay', 'run', 'changes', 'accept']) {
+    for (const key of ['dialog', 'relay', 'run', 'changes', 'accept']) {
       expect(screen.getByTestId(`cockpit-tab-${key}`)).toBeInTheDocument()
     }
 
     fireEvent.click(screen.getByTestId('cockpit-job-close'))
     await waitFor(() => expect(screen.queryByTestId('cockpit-face')).toBeNull())
+  })
+
+  it('落位：inbox 来源 → 左侧 aside；编队来源 → 居中', async () => {
+    mockJob()
+    const aside = render(
+      <Harness target={{ kind: 'job', cabinId: 'cabin-1', id: 'j1' }} source="inbox" />,
+    )
+    await pick()
+    await screen.findByTestId('cockpit-job-header')
+    const face = screen.getByTestId('cockpit-face')
+    expect(face.className).toContain('is-aside-inbox')
+    // 不套会话内保存的拖拽几何（否则拖过一次就回中间）。
+    expect(face.className).not.toContain('is-geo')
+    expect(face.getAttribute('style')).toBeNull()
+    aside.unmount()
+
+    render(<Harness target={{ kind: 'job', cabinId: 'cabin-1', id: 'j1' }} />)
+    await pick()
+    const centered = await screen.findByTestId('cockpit-face')
+    expect(centered.className).not.toContain('is-aside-inbox')
   })
 
   it('Esc 只收面（走 CockpitLayerStack）', async () => {
@@ -261,7 +285,8 @@ describe('CockpitFace — attention 面', () => {
     const face = await screen.findByTestId('cockpit-face')
     await waitFor(() => expect(face.textContent).toContain('finding: 权限漂移'))
     expect(screen.queryByTestId('cockpit-attn-open-task')).toBeNull()
-    expect(face.querySelectorAll('button').length).toBe(1) // 只有关闭
+    // 右上只有关闭 + ⛶（v21 五轮：dossier 头不再放动作按钮）。
+    expect(face.querySelectorAll('button').length).toBe(2)
     window.removeEventListener('octopus:open-task', spy)
   })
 
@@ -278,9 +303,10 @@ describe('CockpitFace — attention 面', () => {
 
     await screen.findByTestId('cockpit-job-header')
     expect(screen.getByTestId('cockpit-face-job')).toBeInTheDocument()
-    // answer → 对接
-    fireEvent.click(screen.getByTestId('cockpit-job-go'))
-    expect(await screen.findByTestId('cabin-job-relay')).toBeInTheDocument()
+    // v21 五轮：头部不再有「去处理 →」捷径（用户：右上按钮多余）；
+    // 待办入口在右栏「要我处理」，详情里按页签自己切。
+    expect(screen.queryByTestId('cockpit-job-go')).toBeNull()
+    expect(screen.getByTestId('cockpit-tab-dialog')).toHaveAttribute('aria-selected', 'true')
   })
 })
 
@@ -319,12 +345,15 @@ describe('CockpitFace — task 选中（历史舱合成行）', () => {
 
     const header = await screen.findByTestId('cockpit-job-header')
     await waitFor(() => expect(header.textContent).toContain('接入渠道'))
-    expect(header.textContent).toContain('任务')
-    for (const key of ['overview', 'relay', 'run', 'changes', 'accept']) {
+    expect(header.textContent).toContain('接入渠道')
+    for (const key of ['dialog', 'relay', 'run', 'changes', 'accept']) {
       expect(screen.getByTestId(`cockpit-tab-${key}`)).toBeInTheDocument()
     }
-    expect((await screen.findByTestId('cockpit-face-task-overview')).textContent)
-      .toContain('接入渠道')
+    // v21 七轮：首签「对话」= 任务 chat 记录；没有 source_chat_session_id
+    // 给明确空态，不拿别的东西冒充对话。
+    const dialog = await screen.findByTestId('cockpit-dialog')
+    expect(dialog.textContent).toContain('任务对话')
+    expect(dialog.textContent).toContain('没有关联的对话会话')
 
     fireEvent.click(screen.getByTestId('cockpit-tab-relay'))
     expect((await screen.findByTestId('cockpit-face-task-relay')).textContent)

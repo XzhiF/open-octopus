@@ -85,6 +85,11 @@ function SelectionProbe() {
   return <div data-testid="sel" data-key={selection ? `${selection.kind}:${selection.id}` : ''} />
 }
 
+function InboxProbe() {
+  const { inboxOpen, inboxSel } = useCockpitState()
+  return <div data-testid="inbox" data-open={inboxOpen ? '1' : '0'} data-sel={inboxSel ?? ''} />
+}
+
 function makeCockpit(): CockpitContextValue {
   return {
     prefs: DEFAULT_COCKPIT,
@@ -130,6 +135,7 @@ function Harness({ children }: { children?: ReactNode }) {
           <Probe />
           <WindowProbe />
           <SelectionProbe />
+          <InboxProbe />
         </CockpitLayerStack>
       </CockpitStateProvider>
     </CockpitContext.Provider>
@@ -149,7 +155,7 @@ afterEach(() => {
 })
 
 describe('CockpitBrief · 到达', () => {
-  it('到达 → 简报出现：阶段色点/标签/标题/说明，且 0 个按钮', () => {
+  it('到达 → 简报出现：阶段色点/标签/标题/说明，只有「关闭」一个按钮', () => {
     fleet.rows = [attentionRow(attention('a1', { title: 'M2 结算对账' }))]
     fleet.arrivals = ['a1']
 
@@ -159,7 +165,10 @@ describe('CockpitBrief · 到达', () => {
     expect(brief).toHaveTextContent('M2 结算对账')
     expect(brief).toHaveTextContent('等你验收')
     expect(brief).toHaveTextContent('刚刚 · 汐音整理')
-    expect(brief.querySelectorAll('button')).toHaveLength(0)
+    // v21（design 31 §3.6）：✕ 在左，是唯一按钮。
+    const buttons = brief.querySelectorAll('button')
+    expect(buttons).toHaveLength(1)
+    expect(buttons[0]).toHaveAttribute('aria-label', '关闭简报')
   })
 
   it('到达同时触发 fx.pulse / fx.edge / fx.say（颜色取阶段色）', () => {
@@ -181,7 +190,7 @@ describe('CockpitBrief · 到达', () => {
     expect(probe.dataset.feedbackColor).toBe('var(--pop-green)')
   })
 
-  it('点简报任意处 = 激活：选中该作业并打开对话窗，卡片收起', () => {
+  it('点简报任意处 = 打开 inbox 回复卡，不强制切线程 / 不选面', () => {
     fleet.rows = [
       {
         key: 'job:j1',
@@ -200,20 +209,24 @@ describe('CockpitBrief · 到达', () => {
 
     fireEvent.click(screen.getByTestId('cockpit-brief'))
 
-    expect(screen.getByTestId('sel').dataset.key).toBe('job:j1')
+    expect(screen.getByTestId('inbox').dataset.open).toBe('1')
+    expect(screen.getByTestId('inbox').dataset.sel).toBe('a9')
+    expect(screen.getByTestId('sel').dataset.key).toBe('')
+    // v21 三轮：通讯台默认展开；点简报只开 inbox，不收台。
     expect(screen.getByTestId('win').dataset.open).toBe('1')
     expect(screen.queryByTestId('cockpit-brief')).toBeNull()
   })
 
-  it('没有 job_id 的 attention：点开只开对话，不选作业面', () => {
+  it('没有 job_id 的 attention：点开同样进 inbox 回复卡', () => {
     fleet.rows = [attentionRow(attention('a1'))]
     fleet.arrivals = ['a1']
 
     render(<Harness />)
     fireEvent.click(screen.getByTestId('cockpit-brief'))
 
-    expect(screen.getByTestId('sel').dataset.key).toBe('attention:a1')
-    expect(screen.getByTestId('win').dataset.open).toBe('1')
+    expect(screen.getByTestId('inbox').dataset.open).toBe('1')
+    expect(screen.getByTestId('inbox').dataset.sel).toBe('a1')
+    expect(screen.getByTestId('sel').dataset.key).toBe('')
   })
 
   it('job 行上挂的 attention 也能定位到 title/stage', () => {
@@ -387,7 +400,7 @@ describe('CockpitBrief · 演示触发器', () => {
     const brief = screen.getByTestId('cockpit-brief')
     expect(brief).toHaveTextContent('演示')
     expect(brief).toHaveTextContent('没有写入编队数据')
-    expect(brief.querySelectorAll('button')).toHaveLength(0)
+    expect(brief.querySelectorAll('button')).toHaveLength(1)
 
     const probe = screen.getByTestId('probe')
     expect(probe.dataset.pulse).toBe('1')

@@ -35,7 +35,8 @@ export const CABIN_WIN_TITLE: Record<string, string> = {
   engineering: '工程',
   records: '记录',
   tasks: '任务',
-  job: '作业详情',
+  // 2026-11-19 用户：classic 作业窗跟全域面同一叫法 —— 「作战详情」。
+  job: '作战详情',
   missions: '作战清单',
   run: '运行',
   tuning: '舱面调校',

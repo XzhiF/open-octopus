@@ -1037,12 +1037,16 @@ export function createChatRoutes(deps: ChatRouteDeps): Hono {
               // /api/sessions/:id/llm-calls 恒空 → chip 永远 tok --。
               // Claude SDK 的 modelUsage 是跨 turn 的会话累计 —— helper 按持久化
               // 基线差分成增量（2026-11-09：逐轮相加曾把 11M 的会话记成 87M）。
+              // 2026-11-19：带上 messageId —— 逐轮统计优先按消息精确归属。委托任务
+              // 线程的 user 行全是「汐音 · 代用户转达」事件卡，没有真人消息边界，
+              // 仅靠时间窗会把整条线程的账本行全部漏掉（真机：tok/¥ 整轮为空）。
               if (tokenUsageDao) {
                 recordProviderResultUsage({
                   sourcePath: 'global_chat',
                   nodeExecutionId: null,
                   executionId: null,
                   sessionId,
+                  messageId: assistantMsgId,
                   org,
                   startedAtMs: turnStartedAtMs,
                   modelUsages: chunk.modelUsages,
@@ -1067,6 +1071,7 @@ export function createChatRoutes(deps: ChatRouteDeps): Hono {
                   nodeExecutionId: null,
                   executionId: null,
                   sessionId,
+                  messageId: assistantMsgId,
                   org,
                   startedAtMs: turnStartedAtMs,
                   modelUsages: chunk.modelUsages,

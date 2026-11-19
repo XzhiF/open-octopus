@@ -21,6 +21,24 @@ if (typeof globalThis.EventSource === 'undefined') {
   globalThis.EventSource = EventSourceStub
 }
 
+// jsdom 的 HTMLMediaElement.play/pause/load 是 not-implemented（会往 console 刷
+// jsdomError）。v22 起汐音立绘与动作图鉴都用 <video>，给最小可播桩：
+// play 返回 resolved promise（组件里的 autoplay 降级分支照常走），pause/load 空实现。
+if (typeof HTMLMediaElement !== 'undefined') {
+  const proto = HTMLMediaElement.prototype
+  try {
+    Object.defineProperty(proto, 'play', {
+      configurable: true,
+      writable: true,
+      value: function play() { return Promise.resolve() },
+    })
+    Object.defineProperty(proto, 'pause', { configurable: true, writable: true, value: function pause() {} })
+    Object.defineProperty(proto, 'load', { configurable: true, writable: true, value: function load() {} })
+  } catch {
+    /* 老 jsdom 不可重定义时保持原样：组件已包 try/catch */
+  }
+}
+
 // jsdom 也没有 ResizeObserver：靠容器尺寸驱动的组件（DAG 自动拟合、任务坞几何）
 // 在测试里会直接 ReferenceError。给一个**可驱动**的最小桩 —— 注册的回调收进
 // globalThis.__resizeObservers，测试改完尺寸后手动 fire，模拟「日志台展开把 DAG pane

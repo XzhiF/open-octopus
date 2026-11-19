@@ -1,21 +1,43 @@
 /* ═══════════════════════════════════════════════════════════════════════
    cockpit-v12 · S7 立绘 / 台词 / 在场
    逐块对照 docs/cabin-design/cockpit-v12.html 的 .crew / .pod / .speech /
-   .xset（HUD「◐ 汐音」）/ .spark / .tapring / .heart（尺寸取原型：344 × min(60vh,548)，left:6 bottom:6）。
+   .xset（HUD「◐ 汐音」）/ .spark / .heart（尺寸取原型：344 × min(60vh,548)，left:6 bottom:6）。
+   v21 四轮：点击描边涟漪 .tapring 已移除 —— 立绘无框，点击只留星光。
    类名统一 ck12- 前缀；颜色走 --ck-a/b 与 pop-* token（CockpitProvider 实时写入）。
    控制条 portal 到 body，所以这里的 button 需要自带 reset。
    ═══════════════════════════════════════════════════════════════════════ */
 
-/* ───────────────────────── 立绘容器 / 舱体 ───────────────────────── */
+/* ───────────────────────── 立绘容器（v22：纯视频 · 贴左栏右侧 · 74vh · 左移 36） ───────────────────────── */
 .ck12-crew {
-  position: absolute;
-  left: 6px;
-  bottom: 6px;
-  width: 344px;
-  height: min(60vh, 548px);
+  position: fixed;
+  /* v22：整体左移 --ck12-charshift，左右空隙对称；让出宽度给通讯台/作业面。 */
+  left: calc(var(--ck12-railw) + 16px - var(--ck12-charshift));
+  bottom: 2vh;
+  width: auto;
+  height: var(--ck12-charh);
+  aspect-ratio: 2 / 3;
   z-index: 3;
   pointer-events: none;
+  filter: drop-shadow(0 0 34px color-mix(in srgb, var(--ck12-violet) 34%, transparent));
   transition: opacity 0.35s;
+}
+.ck12-crew::after {
+  content: '';
+  position: absolute;
+  left: 50%;
+  bottom: -6px;
+  width: 70%;
+  height: 26px;
+  transform: translateX(-50%);
+  border-radius: 50%;
+  background: radial-gradient(ellipse, rgba(46, 230, 214, 0.4), transparent 70%);
+  filter: blur(2px);
+  animation: ck12-ringp 3s ease-in-out infinite;
+  pointer-events: none;
+}
+@keyframes ck12-ringp {
+  0%, 100% { opacity: 0.5; transform: translateX(-50%) scaleX(0.9); }
+  50% { opacity: 0.95; transform: translateX(-50%) scaleX(1.08); }
 }
 
 .ck12-pod {
@@ -25,26 +47,19 @@
   width: 100%;
   height: 100%;
   overflow: hidden;
-  border-radius: 18px;
-  border: 1px solid color-mix(in srgb, var(--ck-b) 40%, transparent);
-  background: radial-gradient(130% 90% at 50% 0%, #1a1b28, #07080d 72%);
-  box-shadow:
-    0 0 calc(54px * var(--ck-glow, 1)) color-mix(in srgb, var(--ck-b) 20%, transparent),
-    0 26px 64px rgba(0, 0, 0, 0.62),
-    inset 0 0 46px rgba(0, 0, 0, 0.66);
+  border: 0;
+  border-radius: 0;
+  background: none;
+  box-shadow: none;
   cursor: pointer;
   text-align: left;
   pointer-events: auto;
-  transition: box-shadow 0.22s, border-color 0.22s;
-  animation: ck12-crew-float 5.2s ease-in-out infinite;
+  animation: none;
 }
 .ck12-pod:hover,
 .ck12-pod:focus-visible {
-  border-color: color-mix(in srgb, var(--ck-b) 68%, transparent);
-  box-shadow:
-    0 0 calc(66px * var(--ck-glow, 1)) color-mix(in srgb, var(--ck-b) 26%, transparent),
-    0 26px 64px rgba(0, 0, 0, 0.62),
-    inset 0 0 46px rgba(0, 0, 0, 0.66);
+  border-color: transparent;
+  box-shadow: none;
 }
 .ck12-pod img {
   position: absolute;
@@ -55,88 +70,81 @@
   object-position: 50% 16%;
   filter: saturate(1.04);
 }
-.ck12-pod-scan {
-  position: absolute;
-  inset: 0;
-  pointer-events: none;
-  mix-blend-mode: screen;
-  opacity: 0.5;
-  background: repeating-linear-gradient(
-    180deg,
-    color-mix(in srgb, var(--ck-a) 9%, transparent) 0 1px,
-    transparent 1px 4px
-  );
-}
+.ck12-pod-scan { display: none; }
 .ck12-pod-vg {
   position: absolute;
   inset: 0;
   pointer-events: none;
-  background:
-    linear-gradient(180deg, color-mix(in srgb, var(--ck-b) 14%, transparent), transparent 26%),
-    linear-gradient(180deg, transparent 52%, rgba(4, 5, 9, 0.86) 92%);
+  background: linear-gradient(180deg, transparent 52%, rgba(4, 5, 9, 0.78) 96%);
 }
-.ck12-pod-tag {
-  position: absolute;
-  left: 12px;
-  top: 11px;
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  font-size: 8.5px;
-  letter-spacing: 0.18em;
-  font-weight: 800;
-  color: color-mix(in srgb, var(--ck-a) 85%, #fff);
-  text-shadow: 0 0 10px color-mix(in srgb, var(--ck-a) 60%, transparent);
-}
-.ck12-pod-tag i {
-  width: 5px;
-  height: 5px;
-  border-radius: 50%;
-  background: var(--ck12-green, var(--pop-green));
-  box-shadow: 0 0 8px var(--ck12-green, var(--pop-green));
-  font-style: normal;
-}
+.ck12-pod-tag { display: none; }
 .ck12-pod-name {
   position: absolute;
-  left: 14px;
-  right: 14px;
-  bottom: 12px;
-  display: flex;
-  align-items: baseline;
-  gap: 7px;
-  font-family: var(--font-ui);
-  font-size: 15px;
-  font-weight: 800;
-  letter-spacing: 0.04em;
-  color: var(--ck12-ink, var(--pop-ink));
-  text-shadow: 0 2px 12px rgba(0, 0, 0, 0.8);
+  left: 50%;
+  right: auto;
+  bottom: -2px;
+  transform: translateX(-50%);
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 12px;
+  clip-path: var(--ck12-cut);
+  background: var(--ck12-glass2);
+  backdrop-filter: blur(8px);
+  border: 1px solid var(--ck12-edge);
+  white-space: nowrap;
+  font-family: var(--font-mono);
+  font-size: 9.5px;
+  font-weight: 600;
+  letter-spacing: 0.12em;
+  color: var(--ck12-teal);
+  text-shadow: none;
   pointer-events: none;
 }
 .ck12-pod-name small {
   font-size: 9px;
-  letter-spacing: 0.18em;
-  font-weight: 700;
-  color: var(--ck-a);
+  letter-spacing: 0.12em;
+  font-weight: 600;
+  color: var(--ck12-teal);
 }
 .ck12-pod-name em {
-  margin-left: 5px;
+  margin-left: 4px;
   font-style: normal;
-  font-size: 8.5px;
-  letter-spacing: 0.14em;
-  color: var(--ck-a);
+  font-size: 9px;
+  letter-spacing: 0.12em;
+  color: var(--ck12-teal);
   opacity: 0.9;
 }
-.ck12-pod::after {
+.ck12-pod-name::before {
   content: '';
-  position: absolute;
-  inset: 0;
-  border-radius: 18px;
-  pointer-events: none;
-  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--ck-b) 16%, transparent);
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--ck12-green);
+  box-shadow: 0 0 8px var(--ck12-green);
+  flex: none;
 }
+.ck12-pod::after { display: none; }
 @keyframes ck12-crew-float {
   0%, 100% { transform: translateY(0); }
   50% { transform: translateY(-8px); }
+}
+
+@media (max-width: 900px) {
+  .ck12-crew {
+    left: 6px;
+    bottom: calc(56vh + 8px);
+    height: 34vh;
+  }
+  /* 窄屏作业面占满宽度：选中作业时立绘会被面压住，只露一条边 —— 直接隐去，
+     回到干净的面 / 通讯台双层。 */
+  .ck12-arena.is-open .ck12-crew { opacity: 0; pointer-events: none; }
+}
+@media (max-width: 560px) {
+  .ck12-crew {
+    bottom: calc(52vh - 10px);
+    height: 32vh;
+  }
 }
 
 /* ───────────────────────── 头顶漫画气泡 ───────────────────────── */
@@ -444,8 +452,8 @@
 }
 
 /* ───────────────────── 点击即时反馈（v13.1） ─────────────────────
-   星光在舱体里（跟着 overflow:hidden 裁），涟漪在舱体外一圈；两者都是
-   absolute + pointer-events:none，绝不参与 .ck12-crew 的尺寸。 */
+   星光在舱体里（跟着 overflow:hidden 裁）；absolute + pointer-events:none，
+   绝不参与 .ck12-crew 的尺寸。v21 四轮起不再画描边涟漪。 */
 .ck12-spark {
   position: absolute;
   z-index: 4;
@@ -462,20 +470,8 @@
   100% { opacity: 0; transform: translate(var(--dx, 0), var(--dy, -60px)) scale(1.05); }
 }
 
-.ck12-tapring {
-  position: absolute;
-  inset: 0;
-  z-index: 7;
-  border-radius: 18px;
-  border: 1px solid color-mix(in srgb, var(--ck-b) 72%, transparent);
-  box-shadow: 0 0 22px color-mix(in srgb, var(--ck-b) 34%, transparent);
-  pointer-events: none;
-  animation: ck12-tapring 0.52s ease-out forwards;
-}
-@keyframes ck12-tapring {
-  0% { opacity: 0.9; transform: scale(1); }
-  100% { opacity: 0; transform: scale(1.045); }
-}
+/* v21 四轮：点击立绘不再画矩形描边涟漪（原型立绘无框，点完闪一圈边）。
+   星光保留 —— 它只在身上浮起，不围边。 */
 
 /* 按下去的那一下也要有回应（触感；不改变几何）。 */
 .ck12-pod:active {
@@ -492,7 +488,8 @@
   to { background-position: 0 8px; }
 }
 
-.ck12-pod[data-phase='done'] img {
+.ck12-pod[data-phase='done'] img,
+.ck12-pod[data-phase='done'] video {
   animation: ck12-crew-cheer 0.9s ease-out;
 }
 @keyframes ck12-crew-cheer {
@@ -502,11 +499,9 @@
 }
 
 .ck12-pod[data-listening='true'] {
-  border-color: color-mix(in srgb, var(--ck-b) 62%, transparent);
-  box-shadow:
-    0 0 calc(60px * var(--ck-glow, 1)) color-mix(in srgb, var(--ck-b) 24%, transparent),
-    0 26px 64px rgba(0, 0, 0, 0.62),
-    inset 0 0 46px rgba(0, 0, 0, 0.66);
+  /* v21 立绘无框：倾听不再给矩形舱体发光，只留右下呼吸点。 */
+  border-color: transparent;
+  box-shadow: none;
 }
 
 /* 倾听：右下角三颗呼吸点，表示她在等你把话说完（不进布局）。 */
@@ -583,34 +578,42 @@
   .ck12-pod { animation: none; }
   .ck12-pod[data-phase='waiting'] .ck12-pod-scan,
   .ck12-pod[data-phase='done'] img,
+  .ck12-pod[data-phase='done'] video,
   .ck12-pod-listen i,
   .ck12-speech-dots i { animation: none; }
   .ck12-heart { display: none; }
-  .ck12-spark,
-  .ck12-tapring { display: none; }
+  .ck12-spark { display: none; }
   .ck12-speech { transition: none; }
   .ck12-speech-cur { animation: none; }
   .ck12-xset { animation: none; }
 }
 
-/* ═══════════════ v20（design 29 §9）· 帧播放器 + 姿态粒子 ═══════════════ */
-/* 裁切窗：sheet 1:3 与窗 2:3×frames 精确同比例（img height 由 JS 写 frames*100%）。 */
+/* ═══════════════ v22（design 33 §3）· 纯视频立绘 ═══════════════ */
+/* 裁切窗：视频画布 768×1152（2:3）与立绘框同比例，object-fit:fill 精确铺满；
+   img 只在视频解码失败时兜底，同一套尺寸。 */
 .ck12-pod .ck12-spr {
   position: absolute;
   inset: 0;
   overflow: hidden;
   pointer-events: none;
 }
-.ck12-pod .ck12-spr img {
+.ck12-pod .ck12-spr img,
+.ck12-pod .ck12-spr .ck12-mv {
   position: absolute;
   left: 0;
   top: 0;
   width: 100%;
+  height: 100%;
   object-fit: fill;
   object-position: 50% 50%;
   filter: saturate(1.04);
-  will-change: transform;
   user-select: none;
+}
+/* 起播才淡入（playing 事件写 opacity:1），切段先压回 0，避免闪黑。 */
+.ck12-pod .ck12-spr .ck12-mv {
+  transition: opacity 0.22s ease;
+  pointer-events: none;
+  background: transparent;
 }
 
 /* 粒子层：与帧动画解耦，loop 类常驻至换 pose；reduced 全禁（组件不渲染）。 */
@@ -628,11 +631,7 @@
 }
 .ck12-pfx-bubble i { animation: ck12-pfx-rise 3.2s linear infinite; }
 .ck12-pfx-spark i { background: var(--ck-b); animation: ck12-pfx-spark 1.8s ease-out infinite; }
-.ck12-pfx-ring i {
-  left: 50%; top: 62%; width: 30px; height: 30px; margin: -15px;
-  background: transparent; border: 1px solid var(--ck-a);
-  animation: ck12-pfx-ring 2.4s ease-out infinite;
-}
+/* v21 四轮：不再画立绘正中的圆环（.ck12-pfx-ring 已删除，原型/用户都不要）。 */
 .ck12-pfx-sweat i { background: var(--pop-cyan, #67e8f9); border-radius: 0 50% 50% 50%; animation: ck12-pfx-fall 2.2s ease-in infinite; }
 .ck12-pfx-heart i { background: transparent; width: auto; height: auto; animation: ck12-pfx-rise 2.6s ease-out infinite; }
 .ck12-pfx-heart i::after { content: '♡'; color: var(--pop-pink); font-size: 11px; }
@@ -656,6 +655,12 @@
   background: color-mix(in srgb, var(--ck-a) 70%, transparent);
   animation: ck12-pfx-keys 0.9s steps(2, end) infinite;
 }
+/* v21：idle 的环境微尘 —— 比 bubble 更慢、更低估（静默呼吸感）。 */
+.ck12-pfx-ambient i { animation: ck12-pfx-rise 5.2s linear infinite; }
+.ck12-pfx-ambient i:nth-child(odd) { background: var(--ck-b); }
+/* v21：wink 的星光 —— ✦ 字符，金色，短促上浮。 */
+.ck12-pfx-sparkle i { background: transparent; width: auto; height: auto; animation: ck12-pfx-sparkle 1.4s ease-out infinite; }
+.ck12-pfx-sparkle i::after { content: '✦'; color: var(--ck-c); font-size: 10px; }
 @keyframes ck12-pfx-rise {
   0% { opacity: 0; transform: translateY(0); }
   18% { opacity: 0.85; }
@@ -665,10 +670,6 @@
   0% { opacity: 0; transform: translate(0, 0) scale(0.6); }
   25% { opacity: 1; }
   100% { opacity: 0; transform: translate(calc(var(--i) * 6px - 24px), -70px) scale(1.1); }
-}
-@keyframes ck12-pfx-ring {
-  0% { opacity: 0.7; transform: scale(0.4); }
-  100% { opacity: 0; transform: scale(2.6); }
 }
 @keyframes ck12-pfx-fall {
   0% { opacity: 0; transform: translateY(-20px); }
@@ -693,4 +694,9 @@
   0% { opacity: 0.25; transform: translateY(0); }
   50% { opacity: 1; transform: translateY(2px); }
   100% { opacity: 0.25; transform: translateY(0); }
+}
+@keyframes ck12-pfx-sparkle {
+  0% { opacity: 0; transform: translateY(6px) scale(0.6); }
+  30% { opacity: 1; }
+  100% { opacity: 0; transform: translateY(-26px) scale(1.1); }
 }

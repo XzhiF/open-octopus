@@ -154,3 +154,53 @@ export function nextCockpitAlpha(alpha: number): number {
   if (index < 0) return CHAT_ALPHA_STEPS[0]
   return CHAT_ALPHA_STEPS[(index + 1) % CHAT_ALPHA_STEPS.length]
 }
+
+// ── v21（design 31 §2.1 / §5.4）：通讯台默认几何 ─────────────────────────
+//
+// 左缘 = 立绘右缘 − 22（贴住立绘、重叠 22px）；右缘让出右栏（--railr）；
+// v22 起再整体左移 36（--ck12-charshift），让出的宽度全给通讯台 —— 与立绘左右
+// 空隙对称，且不压左侧编队（原型 cockpit-v22.html .console）；
+// top 66（HUD 54 + 12）；底部 = 视口 − 56（原型 844 @900），与底栏上沿严丝合缝
+// —— 底栏（composer）视觉上就是通讯台的输入行（v21 ⑤A）。
+// ≤900 变底部 sheet：左 52 / 右 92 / 高 56vh（≤560：左 46 / 右 80 / 52vh），
+// 顶端 = 底栏上沿 − sheet，与原型「立绘从 sheet 上方探出」一致。
+
+export interface ConsoleEnv {
+  viewport: Viewport
+  /** 底栏（.ck12-cmd）上沿；只在量不到 composer 时兜底。 */
+  footerTop?: number | null
+  /** composer 输入槽上沿：通讯台底缘直接贴它，保证「同一台」的无缝观感。 */
+  composerTop?: number | null
+}
+
+export function cockpitConsoleRect({ viewport, footerTop, composerTop }: ConsoleEnv): CockpitRect {
+  const vw = Math.max(1, Math.round(viewport.width))
+  const vh = Math.max(1, Math.round(viewport.height))
+  const railw = vw <= 1240 ? 64 : vw <= 1320 ? 186 : 198
+  const railr = vw <= 560 ? 80 : vw <= 900 ? 92 : vw <= 1320 ? 104 : 100
+  const charh = vh * (vw <= 560 ? 0.32 : vw <= 900 ? 0.34 : vw <= 1240 ? 0.66 : vw <= 1320 ? 0.7 : 0.74)
+  const charw = (charh * 2) / 3
+  /** v22：立绘左移量（与 base.css --ck12-charshift 同步）。 */
+  const charshift = 36
+  // 宽屏：底缘 = composer 上沿（量不到时按 视口 − 56 / 底栏上沿取小者）。
+  // 窄屏：sheet 底缘同样让开 composer（底栏高度随断点变）。
+  const fallback = Math.min(vh - 56, footerTop && footerTop > 0 ? Math.round(footerTop) : vh - 56)
+  const bottom = composerTop && composerTop > 0 ? Math.round(composerTop) : fallback
+
+  let left: number
+  let top: number
+  let height: number
+  if (vw <= 900) {
+    left = vw <= 560 ? 46 : 52
+    const sheet = vh * (vw <= 560 ? 0.52 : 0.56)
+    height = Math.max(CHAT_MIN_HEIGHT, Math.min(sheet, bottom - 66))
+    top = Math.max(56, bottom - height)
+  } else {
+    left = Math.round(railw + 16 + charw - 22 - charshift)
+    top = 66
+    height = Math.max(CHAT_MIN_HEIGHT, bottom - top)
+  }
+
+  const width = Math.max(CHAT_MIN_WIDTH, vw - left - railr)
+  return clampCockpitRect({ x: left, y: top, w: width, h: height }, viewport)
+}

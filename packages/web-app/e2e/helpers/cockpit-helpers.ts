@@ -404,6 +404,8 @@ export function attachConsoleAudit(page: Page): ConsoleAudit {
     const text = msg.text()
     audit.raw.push(text)
     if (isNavigationAbort(text)) return
+    // dev server 没有 favicon.ico：浏览器自动请求固定 404，与业务无关。
+    if (/status of 404/i.test(text) && /favicon/i.test(msg.location().url ?? "")) return
     if (/status of 404/i.test(text) && allowed404 > 0) {
       allowed404 -= 1
       return

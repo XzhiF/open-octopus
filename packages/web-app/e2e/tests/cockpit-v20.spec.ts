@@ -1,7 +1,7 @@
 // packages/web-app/e2e/tests/cockpit-v20.spec.ts
 //
 // v20（design 29）真数据 E2E：多作战 tab / 停靠 / grip / 弹出窗 + WINDOWS 条 /
-// 决断面板 / SESSION LEDGER / 工作树只读查阅 / 详情文件+调试页签 / 12 姿态帧播放器 /
+// 决断面板 / SESSION LEDGER / 工作树只读查阅 / 详情文件+调试页签 / 13 视频片段立绘 /
 // DEV 模拟弹层 / 响应式。纪律同 cockpit-global：不发聊天消息（不烧 LLM），
 // 播种舱 REST 建、afterAll 删；backend 不在 → 全 skip。
 
@@ -69,24 +69,19 @@ test.describe("全域座舱 v20 · 真数据 E2E", () => {
     await cleanupCabin(seed.cabin.id)
   })
 
-  test("线程 tab：主对话恒在 + 作战线程出现 + 激活 + ⌥←/→ + 关闭", async ({ page }) => {
+  test("作战线程：编队 💬 切线程 + ⌥← 回主对话（v21 二轮去 tab 条）", async ({ page }) => {
     const audit = attachConsoleAudit(page)
     await gotoCockpit(page, seed!.cabin.id)
     await openComms(page)
-    const tabs = page.getByTestId("cockpit-thread-tabs")
-    await expect(tabs).toBeVisible()
-    await expect(page.getByTestId("cockpit-tab-main")).toBeVisible()
-    // 播种的 task job 带真会话 → 编队轮询后作战 tab 出现。
-    const jobTab = page.getByTestId(`cockpit-tab-job:${seed!.taskJob.id}`)
-    await expect(jobTab).toBeVisible({ timeout: 20_000 })
-    await jobTab.click()
-    await expect(page.getByTestId("cockpit-comms-title")).not.toHaveText("汐音 · 对话")
+    // v21 二轮：通讯台不再有 tab 条，作战线程从编队行 💬 进。
+    await expect(page.getByTestId("cockpit-thread-tabs")).toHaveCount(0)
+    await expect(page.getByTestId("cockpit-comms-title")).toHaveText("主对话")
+    const talk = page.getByTestId(`cockpit-rail-talk-job:${seed!.taskJob.id}`)
+    await expect(talk).toBeVisible({ timeout: 20_000 })
+    await talk.click()
+    await expect(page.getByTestId("cockpit-comms-title")).not.toHaveText("主对话")
     await page.keyboard.press("Alt+ArrowLeft")
-    await expect(page.getByTestId("cockpit-tab-main")).toHaveAttribute("aria-selected", "true")
-    await page.keyboard.press("Alt+ArrowRight")
-    await expect(jobTab).toHaveAttribute("aria-selected", "true")
-    await jobTab.getByRole("button", { name: /关闭页签/ }).click()
-    await expect(jobTab).toHaveCount(0)
+    await expect(page.getByTestId("cockpit-comms-title")).toHaveText("主对话")
     expect(audit.filtered).toEqual([])
     audit.dispose()
   })
@@ -129,9 +124,9 @@ test.describe("全域座舱 v20 · 真数据 E2E", () => {
     const audit = attachConsoleAudit(page)
     await gotoCockpit(page, seed!.cabin.id)
     await openComms(page)
-    const jobTab = page.getByTestId(`cockpit-tab-job:${seed!.taskJob.id}`)
-    await expect(jobTab).toBeVisible({ timeout: 20_000 })
-    await jobTab.click()
+    const talk = page.getByTestId(`cockpit-rail-talk-job:${seed!.taskJob.id}`)
+    await expect(talk).toBeVisible({ timeout: 20_000 })
+    await talk.click()
     await page.getByTestId("cockpit-popout").click()
     const win = page.locator(".ck12-cwin").first()
     await expect(win).toBeVisible()
@@ -154,20 +149,39 @@ test.describe("全域座舱 v20 · 真数据 E2E", () => {
   test("决断面板 + SESSION LEDGER：开/空态/四格/Esc", async ({ page }) => {
     const audit = attachConsoleAudit(page)
     await gotoCockpit(page, seed!.cabin.id)
-    await page.getByTestId("cockpit-rail-ops").click()
+    // v21：决断面板入口从 HUD 的 rail-ops 迁到 inbox 浮层底部的「全部决断 →」。
+    await page.getByTestId("cockpit-inbox-chip").click()
+    await page.getByRole("button", { name: /全部决断/ }).click()
     const ops = page.getByTestId("cockpit-panel-ops")
     await expect(ops).toBeVisible()
-    await expect(page.getByTestId("cockpit-ops-empty")).toBeVisible()
+    // 两种诚实态都算通过：没有待办 → 空态；seed 的 task 派发偶尔会真产出一条
+    // 「待放行」attention（作者进程 SIGTERM 之前落盘）→ 至少一张决策卡。
+    await expect.poll(async () => {
+      const empty = await page.getByTestId("cockpit-ops-empty").count()
+      const cards = await page.locator('[data-testid^="cockpit-ops-card-"]').count()
+      return empty + cards
+    }, { timeout: 10_000 }).toBeGreaterThan(0)
     await page.keyboard.press("Escape")
     await expect(ops).toHaveCount(0)
 
-    await page.getByTestId("ck12-rig-cost").click()
+    // v21 二轮：HUD 读数只读，完整账本从右栏「消耗」进。
+    await page.getByTestId("cockpit-menu-usage").click()
     const ledger = page.getByTestId("cockpit-panel-ledger")
     await expect(ledger).toBeVisible()
     await expect(page.getByTestId("cockpit-ledger-top")).toBeVisible()
     await expect(page.getByTestId("cockpit-ledger-cells").locator(".ck12-ledger-cell")).toHaveCount(4)
     await page.keyboard.press("Escape")
     await expect(ledger).toHaveCount(0)
+
+    // v21 四轮：右栏「调试」= 本舱主会话（跟汐音的主 chat），不再落到某条作业。
+    await page.getByTestId("cockpit-menu-debug").click()
+    const debugPanel = page.getByTestId("cockpit-panel-debug")
+    await expect(debugPanel).toBeVisible()
+    await expect(debugPanel).toContainText("本舱调试")
+    await expect(page.getByTestId("cockpit-main-debug-inspector")).toBeVisible()
+    await page.keyboard.press("Escape")
+    await expect(debugPanel).toHaveCount(0)
+
     expect(audit.filtered).toEqual([])
     audit.dispose()
   })
@@ -188,7 +202,9 @@ test.describe("全域座舱 v20 · 真数据 E2E", () => {
     expect(bind.status()).toBe(201)
 
     await gotoCockpit(page, seed!.cabin.id)
-    await page.getByTestId("cockpit-ws-open").click()
+    // v21：文件入口从 HUD 移到右栏「更多 → 文件」。
+    await page.getByTestId("cockpit-menu-more").click()
+    await page.getByTestId("cockpit-fan-files").click()
     const ws = page.getByTestId("cockpit-panel-ws")
     await expect(ws).toBeVisible()
     await expect(page.getByTestId("cockpit-ws-chip-demo")).toBeVisible({ timeout: 15_000 })
@@ -217,26 +233,31 @@ test.describe("全域座舱 v20 · 真数据 E2E", () => {
     audit.dispose()
   })
 
-  test("12 姿态：图鉴 12 卡 + playPose + 帧推进", async ({ page }) => {
+  test("13 视频片段：立绘 <video> + 图鉴 13 卡 + playClip（v22 纯视频）", async ({ page }) => {
     const audit = attachConsoleAudit(page)
     await gotoCockpit(page, seed!.cabin.id)
     const sprite = page.getByTestId("cockpit-pose-sprite")
     await expect(sprite).toBeVisible()
-    // 帧推进：5 次采样 transform 不全相同（ping-pong 别名防护）。
-    const samples = new Set<string>()
-    for (let i = 0; i < 5; i += 1) {
-      samples.add(await sprite.locator("img").evaluate((el) => el.style.transform))
-      await page.waitForTimeout(130)
-    }
-    expect(samples.size).toBeGreaterThan(1)
+    // v22：立绘走 VP9 alpha webm。开机待命 → 07-idle（新批次）。
+    await expect(sprite).toHaveAttribute("data-clip-no", "7")
+    await expect(sprite).toHaveAttribute("data-batch", "新")
+    const video = sprite.locator("video")
+    await expect(video).toHaveAttribute("src", /07-idle.*\.webm/)
+    await expect.poll(() => video.evaluate((el) => (el as HTMLVideoElement).paused)).toBe(false)
 
-    await page.getByTestId("cockpit-poses-open").click()
+    // 动作图鉴入口在「更多 → 动作」；13 支按用户指定顺序，旧/新角标逐卡对应。
+    await page.getByTestId("cockpit-menu-more").click()
+    await page.getByTestId("cockpit-fan-poses").click()
     const gallery = page.getByTestId("cockpit-poses-gallery")
     await expect(gallery).toBeVisible()
-    await expect(gallery.locator(".ck12-pose-card")).toHaveCount(12)
-    await page.getByTestId("cockpit-pose-card-cheer").click()
+    await expect(gallery.locator(".ck12-pose-card")).toHaveCount(13)
+    await expect(page.getByTestId("cockpit-clip-card-1")).toContainText("01 · 旧")
+    await expect(page.getByTestId("cockpit-clip-card-13")).toContainText("13 · 新")
+    await page.getByTestId("cockpit-clip-card-9").click()
     await expect(gallery).toHaveCount(0)
-    await expect(sprite).toHaveAttribute("data-pose", "cheer")
+    await expect(sprite).toHaveAttribute("data-pose", "smile")
+    await expect(sprite).toHaveAttribute("data-clip-no", "9")
+    await expect(sprite.locator("video")).toHaveAttribute("src", /09-smile.*\.webm/)
     await expect(page.getByTestId("cockpit-pose-fx")).toBeVisible()
     expect(audit.filtered).toEqual([])
     audit.dispose()
@@ -268,7 +289,7 @@ test.describe("全域座舱 v20 · 真数据 E2E", () => {
       const box = await dock.boundingBox()
       expect(box!.x).toBeGreaterThanOrEqual(0)
       expect(box!.x + box!.width).toBeLessThanOrEqual(width)
-      await expectNoHorizontalOverflow(page)
+      await expectNoHorizontalOverflow(page, `${width}px 视口`)
     }
     expect(audit.filtered).toEqual([])
     audit.dispose()

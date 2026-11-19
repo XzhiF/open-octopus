@@ -30,6 +30,7 @@ export function proxyTurnOf(content: string): { kind: 'decision' | 'brief' | 'no
   }
   if (/^\[汐音\s*·\s*代用户转达\]/.test(text)) return { kind: 'brief' }
   if (/^\[舱派发\s*·/.test(text)) return { kind: 'brief' }
+  if (/^\[舱备注\s*·/.test(text)) return { kind: 'note' }
   return null
 }
 

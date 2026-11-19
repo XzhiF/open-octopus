@@ -7,6 +7,7 @@ import { useEffect, type ReactNode } from 'react'
 import { matchAppRoute } from '@/lib/routes'
 import { CockpitStateProvider, useCockpitState } from '../CockpitStateProvider'
 import { CockpitLayerStack } from '../CockpitLayerStack'
+import { SCENE_COUNT } from '../../scene/scene-model'
 import {
   cockpitHrefPreserving,
   parseCockpitUrl,
@@ -36,11 +37,14 @@ describe('cockpit URL 契约', () => {
       id: 'a1',
     })
     expect(parseCockpitUrl('?tab=nope', 'c1')).toEqual({ ref: null, tab: null })
+    // v21 七轮：overview 退役 —— 旧深链的 tab=overview 不当合法页签，落回默认对话。
+    expect(parseCockpitUrl('?tab=overview', 'c1')).toEqual({ ref: null, tab: null })
+    expect(parseCockpitUrl('?tab=dialog', 'c1')).toEqual({ ref: null, tab: 'dialog' })
     expect(parseCockpitUrl('', 'c1')).toEqual({ ref: null, tab: null })
   })
 
   it('serialize：attention 用 attn，默认页签省略，空选中回裸路径', () => {
-    expect(serializeCockpitHref('c1', { kind: 'job', cabinId: 'c1', id: 'j1' }, 'overview'))
+    expect(serializeCockpitHref('c1', { kind: 'job', cabinId: 'c1', id: 'j1' }, 'dialog'))
       .toBe('/cabin/c1/cockpit?job=j1')
     expect(serializeCockpitHref('c1', { kind: 'attention', cabinId: 'c1', id: 'a1' }, 'run'))
       .toBe('/cabin/c1/cockpit?attn=a1&tab=run')
@@ -103,8 +107,8 @@ describe('默认选中解析', () => {
   })
 })
 
-describe('切面时让出作业面', () => {
-  it('选作业 / 项目（ref 非空）会收起展开的对话浮窗；选中同一项也生效', () => {
+describe('切面不再收起通讯台（v21 三轮：详情是覆盖层）', () => {
+  it('选作业 / 项目（ref 非空）保持通讯台展开 —— 输入框住在台里', () => {
     const { result } = renderHook(() => useCockpitState(), { wrapper })
 
     act(() => result.current.chatWindow.openWithFocus())
@@ -112,20 +116,13 @@ describe('切面时让出作业面', () => {
 
     act(() => result.current.select({ kind: 'job', cabinId: 'c1', id: 'j1' }))
     expect(result.current.selection).toEqual({ kind: 'job', cabinId: 'c1', id: 'j1' })
-    expect(result.current.chatWindow.open).toBe(false)
+    expect(result.current.chatWindow.open).toBe(true)
 
-    // 已经选中这条时再点一下编队行（select 同一个 ref）也要让出作业面。
-    act(() => result.current.chatWindow.openWithFocus())
-    act(() => result.current.select({ kind: 'job', cabinId: 'c1', id: 'j1' }))
-    expect(result.current.chatWindow.open).toBe(false)
-
-    // 项目面同理。
-    act(() => result.current.chatWindow.openWithFocus())
     act(() => result.current.select({ kind: 'project', cabinId: 'c1', id: 'org:demo' }))
-    expect(result.current.chatWindow.open).toBe(false)
+    expect(result.current.chatWindow.open).toBe(true)
   })
 
-  it('收面（select(null)）不动对话浮窗', () => {
+  it('收面（select(null)）同样不动对话浮窗', () => {
     const { result } = renderHook(() => useCockpitState(), { wrapper })
     act(() => result.current.chatWindow.openWithFocus())
     act(() => result.current.select(null))
@@ -158,11 +155,11 @@ describe('CockpitStateProvider', () => {
     const { result } = renderHook(() => useCockpitState(), { wrapper })
     expect(result.current.entryCabinId).toBe('c1')
     expect(result.current.selection).toBeNull()
-    expect(result.current.tab).toBe('overview')
+    expect(result.current.tab).toBe('dialog')
     expect(result.current.chat).toBeNull()
     expect(result.current.railOpen).toBe(false)
     expect(result.current.chatWindow).toMatchObject({
-      open: false,
+      open: true,
       mini: false,
       pinned: false,
       alpha: 0.94,
@@ -250,5 +247,31 @@ describe('CockpitLayerStack', () => {
   it('closeTop 在空栈返回 false', () => {
     const { result } = renderHook(() => useCockpitState(), { wrapper })
     expect(result.current.layer.closeTop()).toBe(false)
+  })
+})
+
+describe('舱景轮换', () => {
+  it('travel 顺序切下一幕并环绕', () => {
+    const { result } = renderHook(() => useCockpitState(), { wrapper })
+    expect(result.current.sceneIndex).toBe(0)
+    act(() => result.current.travel())
+    expect(result.current.sceneIndex).toBe(1)
+    act(() => result.current.setScene(SCENE_COUNT - 1))
+    act(() => result.current.travel())
+    expect(result.current.sceneIndex).toBe(0)
+  })
+
+  it('travelRandom 每次换到随机另一幕（不原地重切），且触发星流', () => {
+    const { result } = renderHook(() => useCockpitState(), { wrapper })
+    let nonce = result.current.fx.jumpNonce
+    for (let i = 0; i < 40; i += 1) {
+      const before = result.current.sceneIndex
+      act(() => result.current.travelRandom())
+      expect(result.current.sceneIndex).not.toBe(before)
+      expect(result.current.sceneIndex).toBeGreaterThanOrEqual(0)
+      expect(result.current.sceneIndex).toBeLessThan(SCENE_COUNT)
+      expect(result.current.fx.jumpNonce).toBeGreaterThan(nonce)
+      nonce = result.current.fx.jumpNonce
+    }
   })
 })

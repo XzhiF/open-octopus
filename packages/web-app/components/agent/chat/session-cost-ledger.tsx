@@ -18,6 +18,8 @@ export interface SessionCostLedgerProps {
   usage: LlmUsageAggregates
   /** 窗口占用（SSE context_usage）—— 只进明细，不参与账本口径。 */
   contextUsage?: ContextUsageData | null
+  /** 全域通讯台：底注与「完整台账」入口换成本舱账本跳转，body 不再自带脚注。 */
+  hideFooter?: boolean
   /** 头标语境限定（spec③）：ready 右栏角标传「草稿期会话」—— 账本数据源是
    *  task.source_chat_session_id 那个草稿期会话；草稿 chip 不传（「本会话」
    *  本就指会话自身，加限定反而绕）。 */
@@ -34,7 +36,7 @@ const SWATCH: Record<string, string> = {
   cacheWrite: 'bg-pop-navy',
 }
 
-export function SessionCostLedger({ usage, contextUsage, titleSuffix }: SessionCostLedgerProps) {
+export function SessionCostLedger({ usage, contextUsage, titleSuffix, hideFooter }: SessionCostLedgerProps) {
   const currency = useBillingCurrency()
   const { totals, usage: u } = usage
   const models = Object.entries(usage.modelBreakdown)
@@ -101,10 +103,12 @@ export function SessionCostLedger({ usage, contextUsage, titleSuffix }: SessionC
           ))}
         </>
       )}
-      <div className="mt-2 flex items-center gap-2 border-t border-dashed border-pop-bd pt-2 text-[10px] text-pop-dim">
-        <span>单价 = 每 1M token · 现算不落库</span>
-        <Link href="/system/billing" target="_blank" rel="noopener" className="ml-auto text-pop-cyan hover:underline">完整台账 →</Link>
-      </div>
+      {!hideFooter && (
+        <div className="mt-2 flex items-center gap-2 border-t border-dashed border-pop-bd pt-2 text-[10px] text-pop-dim">
+          <span>单价 = 每 1M token · 现算不落库</span>
+          <Link href="/system/billing" target="_blank" rel="noopener" className="ml-auto text-pop-cyan hover:underline">完整台账 →</Link>
+        </div>
+      )}
     </>
   )
 }
