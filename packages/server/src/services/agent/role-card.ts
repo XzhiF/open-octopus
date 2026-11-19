@@ -50,9 +50,13 @@ export function buildCloneRoleCard(cloneName: string, revision: number): string 
   const pack = resolveCloneRolePack(cloneName)
   if (!pack) return null
 
+  // ADR-006：CloneDef.skills 只是声明性意图 —— 运行时每个分身都继承全部共享
+  // 技能，白名单不参与发现。卡片若只写声明列表，模型会误以为自己技能很少
+  // （2026-11-19 用户 #6：汐音被误认为只会 octo-wiki）。所以先讲事实，声明
+  // 列表降级为「岗位常用」。
   const skillsLine = pack.skills.length > 0
-    ? pack.skills.join("、")
-    : "全部全局技能"
+    ? `全部共享技能都可用；岗位常用：${pack.skills.join("、")}。`
+    : "全部共享技能都可用。"
   const head = pack.persona ?? `（该分身暂无岗位包文本，按基础人设工作；可在分身配置里补充 persona）`
   const body = head.length > MAX_CLONE_INLINE_CHARS
     ? [
@@ -72,7 +76,8 @@ export function buildCloneRoleCard(cloneName: string, revision: number): string 
     "",
     `<clone name="${pack.name}" display="${pack.displayName}" revision="${revision}">`,
     "## 可用技能",
-    `${skillsLine}。需要时先用 Read 打开对应 SKILL.md 再动作（内置技能：packages/core-pack/skills/<名>/SKILL.md；本地进化技能：~/.octopus/{org}/agent/skills/<名>/SKILL.md）。`,
+    skillsLine,
+    "需要时先用 Read 打开对应 SKILL.md 再动作（内置技能：packages/core-pack/skills/<名>/SKILL.md；本地进化技能：~/.octopus/{org}/agent/skills/<名>/SKILL.md）。",
     "## 边界",
     "- 基础安全、写权边界、任务纪律永远优先于岗位包",
     `- 长期记忆范围：${pack.memoryScope === "shared" ? "shared（跨会话共享）" : "isolated（本分身独立）"}`,

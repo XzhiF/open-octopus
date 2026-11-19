@@ -16,6 +16,7 @@ import {
   CloneDAO, SafetyDAO,
   KnowledgeEffectivenessDAO, ArchiveDAO,
   TaskDAO, WikiArticleDAO, TodayDAO, CabinDAO, AcceptanceDAO,
+  SessionCacheContextDAO,
 } from "./db/dao"
 import { ArchiveDraftDAO } from "./db/dao/archive-draft-dao"
 import { InteractionMessageDAO } from "./db/dao/interaction-message-dao"
@@ -382,6 +383,20 @@ if (!process.env.VITEST && daos) {
     const initResult = cloneInitService.initBuiltInClones(defaultOrg, daos.clone)
     if (initResult.dirsCreated.length > 0 || initResult.dbRegistered.length > 0) {
       console.log(`[server] Built-in clones initialized: ${initResult.dbRegistered.length} registered, ${initResult.dirsCreated.length} dirs created`)
+    }
+    // 2026-11-19 用户 #6/#8：内置分身的人格模板升级后，已存在的会话手里还是
+    // 旧角色卡（角色卡只在 revision 变化时下发）。对本次被刷新的模板清掉投递
+    // 标记 —— 下一轮重新下发；revision 不变，不是换身份。手改过 persona.md
+    // 的安装不会出现在 filesRefreshed 里，保持原样。
+    const refreshedPersonas = ((initResult.filesRefreshed ?? []) as string[])
+      .map((key: string) => /^built-in\/([^/]+)\/persona\.md$/.exec(key)?.[1])
+      .filter((name): name is string => !!name)
+    if (refreshedPersonas.length > 0) {
+      const cacheCtx = new SessionCacheContextDAO(getDb())
+      for (const name of refreshedPersonas) {
+        const sessions = cacheCtx.resetRoleDeliveryForExpert(name)
+        console.log(`[startup] persona refreshed: 「${name}」role card will be re-sent to ${sessions} session(s)`)
+      }
     }
     // LLM-WIKI 票 09: built-in clones marked config.versioned (workflow-operator)
     // get their initial agent_versions publish right after the dual-track landing,

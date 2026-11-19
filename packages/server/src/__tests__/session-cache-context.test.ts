@@ -167,6 +167,25 @@ describe("SessionCacheContextDAO — role state", () => {
     expect(dao.getRoleState("s-role-2").deliveredRevision).toBe(0)
   })
 
+  // 2026-11-19 用户 #6/#8：内置分身人格模板升级后，已存在会话要重新收到角色卡。
+  it("built-in persona upgrade re-arms delivery for that clone only (revision unchanged)", () => {
+    dao.setActiveExpert("s-refresh-a", "cabin-orchestrator")
+    dao.markRoleDelivered("s-refresh-a", 1)
+    dao.setActiveExpert("s-refresh-b", "workspace")
+    dao.markRoleDelivered("s-refresh-b", 1)
+
+    expect(dao.resetRoleDeliveryForExpert("cabin-orchestrator")).toBe(1)
+    expect(dao.getRoleState("s-refresh-a")).toMatchObject({ revision: 1, deliveredRevision: 0 })
+    expect(dao.getRoleState("s-refresh-b").deliveredRevision).toBe(1)
+    // Next turn builds the card again; same revision — same identity, new text.
+    const card = pendingRoleCard(dao.getRoleState("s-refresh-a"))
+    expect(card).toContain('clone: cabin-orchestrator')
+    expect(card).toContain('全能开发者')
+    expect(card).toContain('全部共享技能都可用')
+    // Already-unarmed sessions are not re-counted.
+    expect(dao.resetRoleDeliveryForExpert("cabin-orchestrator")).toBe(0)
+  })
+
   it("builds a role card only for an undelivered revision", () => {
     dao.setActiveExpert("s-role-3", "engineering-sre", "expert")
     const card = pendingRoleCard(dao.getRoleState("s-role-3"))
@@ -188,6 +207,9 @@ describe("SessionCacheContextDAO — role state", () => {
     expect(card).toContain("clone: workspace")
     expect(card).toContain(`<clone name="workspace"`)
     expect(card).toContain("## 可用技能")
+    // ADR-006 事实：运行时全部共享技能都可用；声明列表只是「岗位常用」
+    // （2026-11-19 用户 #6：卡片曾让汐音误以为自己只会 octo-wiki）。
+    expect(card).toContain("全部共享技能都可用")
     expect(card).toContain("## 边界")
     expect(card).toContain("## 岗位包")
     // Full persona inline — head and tail both present (nothing sliced off).
