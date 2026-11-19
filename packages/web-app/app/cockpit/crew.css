@@ -148,11 +148,23 @@
 }
 
 /* ───────────────────────── 头顶漫画气泡 ───────────────────────── */
+/* 响应式（2026-11-19，1080p@125% 气泡压编队）：气泡不再写死 296 居中，
+   宽度与左缘跟着立绘一起缩 —— 立绘是 74vh(2:3)，窗口一矮就变窄，
+   而气泡固定 296 居中，左缘会一路压进左侧编队。
+     立绘左缘 = railw + 16 − charshift，编队右缘 = railw + 10
+     → 气泡离编队 ≥8px 在立绘坐标系里恒为 charshift + 2（与断点无关）；
+     通讯台左缘 = 立绘左缘 + charw − 22
+     → 气泡可用宽 = charw − charshift − 32（再夹到 180…296）。 */
 .ck12-speech {
+  --ck12-speech-w: clamp(
+    180px,
+    calc(var(--ck12-charw) - var(--ck12-charshift) - 32px),
+    296px
+  );
   position: absolute;
-  left: 50%;
+  left: max(calc(var(--ck12-charshift) + 2px), calc(50% - var(--ck12-speech-w) * 0.5));
   top: 0;
-  width: 296px;
+  width: var(--ck12-speech-w);
   max-width: calc(100vw - 24px);
   padding: 11px 13px 12px;
   border: 1px solid color-mix(in srgb, var(--ck-b) 42%, transparent);
@@ -164,14 +176,27 @@
     0 0 24px color-mix(in srgb, var(--ck-b) 12%, transparent);
   opacity: 0;
   pointer-events: none;
-  transform: translate(-50%, calc(-100% - 14px)) translateY(10px);
+  transform: translateY(calc(-100% - 14px)) translateY(10px);
   transition: 0.3s;
   z-index: 8;
 }
 .ck12-speech.show {
   opacity: 1;
-  transform: translate(-50%, calc(-100% - 14px)) translateY(0);
+  transform: translateY(calc(-100% - 14px)) translateY(0);
   pointer-events: auto;
+}
+/* ≤900：立绘缩到左下角、编队收成抽屉（不占横向空间），气泡不必再让位 ——
+   恢复 296 宽贴立绘居中，但立绘本身贴屏幕左缘，居中会让气泡伸到视口外，
+   所以左缘再夹一条 8px（相对立绘）的下界。 */
+@media (max-width: 900px) {
+  .ck12-speech {
+    --ck12-speech-w: min(296px, calc(100vw - 24px));
+    left: max(8px, calc(50% - var(--ck12-speech-w) * 0.5));
+    transform: translateY(calc(-100% - 14px)) translateY(10px);
+  }
+  .ck12-speech.show {
+    transform: translateY(calc(-100% - 14px));
+  }
 }
 .ck12-speech::after {
   content: '';
