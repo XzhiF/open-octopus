@@ -28,6 +28,7 @@ import { CockpitFleetRail } from '../rail/CockpitFleetRail'
 import { CockpitRightRail } from '../rail/CockpitRightRail'
 import { CockpitFace } from '../face/CockpitFace'
 import { CockpitCabinTree } from '../face/CockpitCabinTree'
+import { CockpitDocWindow } from '../face/CockpitDocWindow'
 import { CockpitChatHost } from '../chat/CockpitChatHost'
 import { CockpitChatWindow } from '../chat/CockpitChatWindow'
 import { CockpitDock } from '../chat/CockpitDock'
@@ -158,6 +159,9 @@ function CockpitSurface({ cabin }: { cabin: CabinDetail }) {
 
       {/* v22 九轮：右栏「目录」= 本舱 cwd 只读目录窗（详情面没开也能开）。 */}
       <CockpitCabinTree cabinId={entryCabinId} />
+
+      {/* 2026-11-19 用户 #4：聊天正文里的产物绝对路径点开 → 只读文档窗。 */}
+      <CockpitDocWindow />
 
       {/* 原型没有屏幕级底栏：输入框在通讯台内（.con-in）。这里不再留 footer，
           通讯台底缘按视口 − 56 量（geometry 的 fallback）。 */}

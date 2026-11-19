@@ -750,7 +750,7 @@ export function ChatArea({
                       <span className="ck12-tui-time">{cockpitRowTime(msg.created_at)}</span>
                       <span className="ck12-tui-role">{COCKPIT_ROW_ROLE[msg.role] ?? '⌁ SYS'}</span>
                       <div className="ck12-tui-cell">
-                        <TuiMessage message={msg} compactEvent={compactEvent} />
+                        <TuiMessage message={msg} compactEvent={compactEvent} docLinks />
                       </div>
                     </div>
                   ) : <TuiMessage message={msg} compactEvent={compactEvent} />

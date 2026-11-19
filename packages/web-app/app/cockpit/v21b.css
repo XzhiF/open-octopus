@@ -196,6 +196,60 @@
   font-variant-numeric: tabular-nums;
 }
 .ck12-tc.is-tok b { color: var(--ck12-gold); }
+
+/* CTX 芯片（2026-11-19 用户）：与 classic ContextUsageChip 同形 ——
+   `80.1K / 1M · 8.0%` 一行读全，芯片内用淡填充 + 底边 2px 条表达占用。 */
+.ck12-tc.is-ctx {
+  position: relative;
+  overflow: hidden;
+  padding-bottom: 5px;
+}
+.ck12-tc.is-ctx i,
+.ck12-tc.is-ctx b { position: relative; z-index: 1; }
+.ck12-ctx-val {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 5px;
+}
+.ck12-ctx-tok { color: var(--ck12-ink2); font-weight: 700; }
+.ck12-ctx-pct { color: var(--ck12-teal); }
+.ck12-tc.is-ctx[data-tone='warn'] .ck12-ctx-pct { color: var(--ck12-hazard); }
+.ck12-tc.is-ctx[data-tone='hot'] .ck12-ctx-pct { color: var(--ck12-red); }
+.ck12-ctx-fill {
+  position: absolute;
+  inset: 0 auto 0 0;
+  z-index: 0;
+  pointer-events: none;
+  background: rgba(46, 230, 214, 0.09);
+  transition: width 0.25s;
+}
+.ck12-tc.is-ctx[data-tone='warn'] .ck12-ctx-fill { background: rgba(255, 176, 32, 0.1); }
+.ck12-tc.is-ctx[data-tone='hot'] .ck12-ctx-fill { background: rgba(255, 92, 112, 0.12); }
+.ck12-ctx-bar {
+  position: absolute;
+  left: 9px;
+  right: 9px;
+  bottom: 2px;
+  height: 2px;
+  z-index: 1;
+  overflow: hidden;
+  background: rgba(185, 179, 217, 0.16);
+}
+.ck12-ctx-bar > i {
+  display: block;
+  height: 100%;
+  background: var(--ck12-teal);
+  box-shadow: 0 0 6px rgba(46, 230, 214, 0.55);
+  transition: width 0.25s;
+}
+.ck12-tc.is-ctx[data-tone='warn'] .ck12-ctx-bar > i {
+  background: var(--ck12-hazard);
+  box-shadow: 0 0 6px rgba(255, 176, 32, 0.55);
+}
+.ck12-tc.is-ctx[data-tone='hot'] .ck12-ctx-bar > i {
+  background: var(--ck12-red);
+  box-shadow: 0 0 6px rgba(255, 92, 112, 0.6);
+}
 .ck12-tcc {
   cursor: pointer;
   padding: 2px 9px;
@@ -1271,6 +1325,55 @@ button.ck12-ev:hover { background: rgba(255, 255, 255, 0.04); }
   gap: 8px;
   padding: 10px 14px;
 }
+
+/* ═══ 文档查看器（2026-11-19 用户 #4）：聊天正文里的产物绝对路径点开。
+       与目录窗同一套壳（.ck12-treewin），单文件、无标签；正文按格式渲染。 ═══ */
+.ck12-docwin {
+  width: min(760px, 92vw);
+  height: min(560px, calc(100vh - 186px));
+}
+.ck12-docwin .ck12-jh { padding: 0; gap: 0; }
+.ck12-docwin .ck12-jh-x { margin-left: 0; }
+.ck12-docwin-b {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px 14px;
+}
+.ck12-docwin-main {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  border-radius: 10px;
+  border: 1px solid var(--ck12-bd);
+  overflow: hidden;
+  background: rgba(255, 255, 255, 0.02);
+}
+.ck12-docwin-view {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: 9px 12px;
+}
+.ck12-doc-media {
+  display: block;
+  max-width: 100%;
+  max-height: calc(100vh - 330px);
+  margin: 0 auto;
+  border-radius: 8px;
+  background: #000;
+}
+.ck12-doc-audio {
+  display: block;
+  width: 100%;
+  max-width: 520px;
+  margin: 10px auto 0;
+}
+.ck12-docwin .ck12-ckt-img { max-height: calc(100vh - 330px); }
+.ck12-docwin .ck12-ckt-empty { min-height: 140px; }
 
 /* ═══ v22 九轮 · 本舱目录窗（右栏「目录」）：
        cwd 绝对路径常显 + 左树（筛选 / 全展全收）+ 右多标签查看器（只读，不编辑）。 ═══ */

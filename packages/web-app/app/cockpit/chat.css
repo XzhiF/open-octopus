@@ -1117,3 +1117,52 @@
   .ck12-winbar { left: 8px; bottom: 56px; max-width: calc(100vw - 120px); }
   .ck12-wbchip-name { max-width: 64px; }
 }
+
+/* ═══ 文档路径（2026-11-19 用户 #4）：正文里的产物绝对路径点开 → 文档查看器。
+       路径本身是纯文本（可选中复制），不包框；只有右侧「↗」小按钮可点。
+       classic 不渲染这套（docLinks 只在 cockpit 变体开）。 ═══ */
+.ck12-app .doc-ref {
+  display: inline-flex;
+  align-items: flex-start;
+  gap: 5px;
+  max-width: 100%;
+  vertical-align: -3px;
+}
+.ck12-app .doc-ref-path {
+  min-width: 0;
+  /* 2026-11-19 用户：完整绝对路径必须整条露出 —— 不省略，放不下就折行。 */
+  white-space: normal;
+  overflow-wrap: anywhere;
+  color: #9ff6ec;
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  line-height: 16px;
+}
+.ck12-app .doc-ref > :first-child {
+  flex: none;
+  line-height: 16px;
+}
+.ck12-app .doc-ref-open {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 17px;
+  height: 17px;
+  padding: 0;
+  border-radius: 3px;
+  border: 1px solid rgba(46, 230, 214, 0.38);
+  background: rgba(46, 230, 214, 0.09);
+  color: #bffcf6;
+  font-size: 10.5px;
+  font-weight: 700;
+  line-height: 1;
+  cursor: pointer;
+  transition: 0.14s;
+}
+.ck12-app .doc-ref-open:hover {
+  border-color: rgba(46, 230, 214, 0.9);
+  background: rgba(46, 230, 214, 0.2);
+  color: #fff;
+  box-shadow: 0 0 12px rgba(46, 230, 214, 0.35);
+}

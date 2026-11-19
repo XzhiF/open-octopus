@@ -1247,6 +1247,22 @@ export class CabinService {
     })
   }
 
+  /** 文档查看器（2026-11-19 用户 #4）：本舱可读文档根。
+   *  = 舱目录 + 本舱任务 workspace（产物写在 workspace 与它的 `.task` 里）。
+   *  UI 只把聊天里出现的绝对路径交给 /doc；根外一律 403，不做任意路径读取。 */
+  docRoots(cabinId: string): string[] {
+    const row = this.mustGet(cabinId)
+    const roots: string[] = []
+    if (row.path) roots.push(path.resolve(row.path))
+    if (this.infra) {
+      for (const t of this.infra.taskDAO.findByCabinId(cabinId)) {
+        const wsPath = t.workspace_id ? this.infra.workspaceDAO.findPathById(t.workspace_id) : null
+        if (wsPath) roots.push(path.resolve(wsPath.replace(/^~/, os.homedir())))
+      }
+    }
+    return [...new Set(roots)]
+  }
+
   /** C2/K3：作业 status 派生自底层实体（task→deriveTaskView / execution /
    *  subagent_runs），不镜像存储。transport = 传输层通道（D6）。
    *

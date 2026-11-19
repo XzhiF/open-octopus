@@ -793,6 +793,20 @@ kbd{border:1px solid rgba(185,179,217,.35);border-bottom-width:2px;border-radius
 .wsplit .ftree{width:100%;flex:1;min-height:0}
 .wsplit .tprev{min-height:0}
 
+/* ═══ 文档查看器（v22 十一轮 · 2026-11-19 用户）：正文里的文档名（`xxx.md`）可点，
+       点开就是这个窗 —— 与目录窗（.twin）同一套壳：✕ 左置 · 玻璃底 · 渐变发丝顶线 ·
+       cwd 同款路径条 · 右栏同款标签 + Markdown。只读，不做编辑。 ═══ */
+#docwin{width:min(760px,92vw);height:min(560px,calc(100vh - 186px))}
+#docwin .ph{cursor:grab;user-select:none;touch-action:none}
+#docwin .ph:active{cursor:grabbing}
+/* 2026-11-19 用户修正：路径是纯文本（不包框，可选中复制），只有右侧「↗」小按钮可点开。
+   完整绝对路径必须整条露出 —— 不省略，放不下就折行。 */
+.docref{display:inline-flex;align-items:flex-start;gap:5px;max-width:100%;vertical-align:-3px}
+.docref .ic{flex:none;line-height:16px;font-size:9.5px;opacity:.9}
+.docref .p{min-width:0;white-space:normal;overflow-wrap:anywhere;color:#9ff6ec;font-family:var(--font-mono);font-size:10.5px;line-height:16px}
+.docref .go{flex:none;display:inline-flex;align-items:center;justify-content:center;width:17px;height:17px;padding:0;border:1px solid rgba(46,230,214,.38);background:rgba(46,230,214,.09);color:#bffcf6;font-family:inherit;font-size:10.5px;font-weight:700;line-height:1;cursor:pointer;transition:.14s}
+.docref .go:hover{border-color:rgba(46,230,214,.9);background:rgba(46,230,214,.2);color:#fff;box-shadow:0 0 12px rgba(46,230,214,.35)}
+
 /* ═══ 本舱目录窗（v22 九轮）：右栏「目录」= 当前 cwd 只读目录树。
        cwd 绝对路径常显在标题条，可复制 / 桌面壳里直接在资源管理器打开。 ═══ */
 .wsb.cwd{background:linear-gradient(100deg,rgba(53,199,240,.13),rgba(123,77,255,.1));border-color:rgba(53,199,240,.42)}
@@ -1197,6 +1211,7 @@ kbd{border:1px solid rgba(185,179,217,.35);border-bottom-width:2px;border-radius
   <div class="pscrim" id="pscrim"></div>
   <section class="panel" id="panel"></section>
   <section class="twin" id="twin" aria-label="目录树"></section>
+  <section class="twin" id="docwin" aria-label="文档查看器"></section>
 
   <section class="console" id="console" aria-label="TUI 通讯台">
     <div class="con-h">
@@ -1337,7 +1352,9 @@ const THREADS_INIT={
   {who:'you',name:'指挥官',text:'早。今天先把 M1、M2 收口，限流压测完再上。',t:'09:31'},
   {who:'xy',name:'汐音',text:'收到，指挥官。M1 退款链、M2 结算对账我已经派下去，限流先压测不急着上。有要您拍板的我第一时间举上来。',t:'09:31',mood:'idle'},
   {who:'you',name:'指挥官',text:'好。需要我决定的别攒着，来一条举一条。',t:'09:33'},
-  {who:'xy',name:'汐音',text:'明白。编队点一条先出详情，聊起来就从「对接」进作战对话；回传会进右边「要我处理」。',t:'09:33',mood:'wink'}],
+  {who:'xy',name:'汐音',text:'明白。编队点一条先出详情，聊起来就从「对接」进作战对话；回传会进右边「要我处理」。',t:'09:33',mood:'wink'},
+  {who:'xy',name:'汐音',text:'M1 的验收报告写好了：`.octopus/tasks/t-2641/reports/2026-11-19-M1验收报告.md` —— 结论 2/3 通过、AC-3 还红着，证据与命令都在里面。点文件名直接打开看。',t:'09:42',mood:'worried'},
+  {who:'xy',name:'汐音',text:'AC-3 那条红等您一句话：回滚还是原地修。',t:'09:43',mood:'worried'}],
  'j-m1':[{who:'sys',text:'—— M1 · 退款链路 ——'},{who:'you',name:'指挥官',text:'M1 退款链路修一下，跑完告诉我。',t:'09:31'},{who:'xy',name:'汐音',text:'接 M1 退款链，修 idempotent replay，AC 1–3 逐条对齐。',t:'09:31',mood:'working'},{who:'doer',name:'gateway-2',text:'impl 完成 · 2 文件 +96/−41。',t:'09:38'},{who:'doer',name:'gateway-2',text:'verify 红了：expected 1 but got 2 · reconcile.test.ts:90。',t:'09:38'},{who:'xy',name:'汐音',text:'已停住、现场保留。等您一句话：回滚还是原地修。',t:'09:39',mood:'worried'}],
  'j-m2g':[{who:'sys',text:'—— M2 · 限流阈值 ——'},{who:'you',name:'指挥官',text:'限流方案先压测，别急着上。',t:'09:31'},{who:'xy',name:'汐音',text:'接限流实施，三档压测；到拍板点停下等您。',t:'09:31',mood:'working'},{who:'doer',name:'gateway-1',text:'三档曲线已出：600 稳、900 余量 12%、1200 拐点后排队。',t:'09:40'},{who:'xy',name:'汐音',text:'压测结果和三个方案都摊好了。您拍板我就改配置跑回归，建议 900。',t:'09:41',mood:'thinking'}],
  'j-m2':[{who:'sys',text:'—— M2 · 结算对账 ——'},{who:'you',name:'指挥官',text:'M2 的验收跑完叫我。',t:'09:31'},{who:'xy',name:'汐音',text:'接 M2 结算对账，走 spec-dev，AC 1–4 逐条对齐。',t:'09:31',mood:'working'},{who:'doer',name:'ledger-2',text:'impl 完成 · 2 文件 +184/−32 · 42 passed。',t:'09:36'},{who:'doer',name:'ledger-2',text:'AC-4 大额差异缺覆盖，要指挥决定本轮补不补。',t:'09:41'},{who:'xy',name:'汐音',text:'M2 可以验收了，证据与变更都摊好了。AC-4 我建议下一轮补，您定。',t:'09:41',mood:'happy'}],
@@ -1378,6 +1395,7 @@ const state={sound:true,theme:0,winAlpha:1,thread:'main',panel:null,detailJob:nu
  unread:{},focusJob:null,fleetFilter:'all',treeOpen:{},fileSel:{},fileQ:{},dbgTurn:{},dbgTab:'overview',dbgFilter:'all',
  simAuto:true,pop:null,handleSeq:7,wsProj:'gateway',wsOpen:{},wsSel:{},wsQ:'',
  twin:null,twinQ:'',twinGeo:null,twinMax:false,cabinQ:'',cabinOpen:null,cabinTabs:[],cabinTab:null,
+ doc:null,
  addOpen:false,addTab:'skill',addQ:'',attSkill:null,attExpert:null,attLb:null,apMcp:null,
  flash:{job:null,op:null,at:0},autoWarp:true,conMin:false,conLeft:null,conTop:null,conGeo:null,wins:[],winSeq:0,zTop:30,
  inboxOpen:false,inboxSel:null,inboxPick:null,fanOpen:false,fleetOpen:false,relayJump:false,panelGeo:null,panelMax:false,panelAside:false,
@@ -1618,6 +1636,15 @@ function tuiMeta(m){
  const cost=(tok/1000*0.03).toFixed(2);
  return `<div class="tmeta"><span class="ok">已完成</span><span>·</span><span>${dur}s</span><span>·</span><span>${steps} 步</span><span>·</span><span>工具 ${tools}</span><span>·</span><span>思考 ${thinks}</span><span>·</span><span>${tokTxt} tok</span><span>·</span><span>¥${cost}</span><span class="tm">${esc(m.t||nowHM())}</span></div>`;
 }
+/* ── 文档名可点（v22 十一轮）：正文里 `xxx.md` 命中本舱文件 → chip，点开文档窗。
+      只认反引号里的文档路径（与真实实现同口径：只对文档扩展名生效，工具行不动）。 ── */
+const DOC_REF_RE=/`([^`<>\s]+\.(?:md|txt|json|csv|log|html?))`/gi;
+function docByRef(ref){const clean=String(ref).replace(/^`|`$/g,'').replace(/\\/g,'/');let hit=null;
+ const walk=n=>{if(hit)return;if(!n.d){if(n.p===clean||('.'+n.p).endsWith('/'+clean.replace(/^\.\//,''))||n.n===clean)hit=n;return;}
+  n.c.forEach(walk);};
+ cabinTree().c.forEach(walk);return hit;}
+function linkDocs(text){return esc(text).replace(DOC_REF_RE,(m,ref)=>{const node=docByRef(ref);if(!node)return m;
+ return `<span class="docref"><span class="ic">${cabinGlyph(node.n)}</span><span class="p" title="${esc(node.abs)}">${esc(node.abs)}</span><button class="go" data-doc="${esc(node.p)}" title="打开 · ${esc(node.abs)}">↗</button></span>`;});}
 function tlHTML(m){
  if(m.who==='sys')return `<div class="tline sys">${esc(m.text)}</div>`;
  const tm=`<span class="tm">${esc(m.t||nowHM())}</span>`;
@@ -1628,7 +1655,7 @@ function tlHTML(m){
   const st=bad?'err':good?'ok':'run';
   return `<div class="tline tool"><span class="ar">▸</span><span class="nm">${esc(m.name||'tool')}</span><span class="tx">${esc(m.text)}</span><span class="st ${st}">[${st==='err'?'✗':st==='ok'?'✓':'…'}]</span>${tm}</div>`;
  }
- return `<div class="tasst">${tuiMeta(m)}<div class="tline xy"><span class="mark">✦</span><span class="tx">${esc(m.text)}</span></div></div>`;
+ return `<div class="tasst">${tuiMeta(m)}<div class="tline xy"><span class="mark">✦</span><span class="tx">${linkDocs(m.text)}</span></div></div>`;
 }
 function renderConsole(){const isMain=state.thread==='main';const j=isMain?null:jobOf(state.thread);
  $('#conThread').textContent=isMain?'主对话':(j?'▦ '+j.title:'对话');
@@ -1975,7 +2002,9 @@ const CABIN_FILES=[
  ['AGENTS.md','skill','# 本舱执行约束\n\n- 主仓只读，只能拉主线（ff-only）\n- 产物写入 ~/.octopus/tasks/<id>/\n- 每轮落 diff / 测试 / 报告，变更窗 = commit 区间\n'],
  ['README.md','', '# 账务中台\n\n账务核心 / API 网关 / 风控引擎 / 边缘节点，四个项目同驻本舱。\n'],
  ['docs/架构总览.png','','',null,'./assets/scene-earthrise.png'],
- ['docs/接口约定.md','', '# 接口约定\n\n## 退款\n- 幂等键 = orderId + idempotencyKey\n- 重复请求返回 `{ skipped: true }`\n\n## 结算对账\n- 同日同账户只落一笔\n- 差异走人工复核队列\n\n```json\n{ "window": "1d", "retry": 3 }\n```\n']
+ ['docs/接口约定.md','', '# 接口约定\n\n## 退款\n- 幂等键 = orderId + idempotencyKey\n- 重复请求返回 `{ skipped: true }`\n\n## 结算对账\n- 同日同账户只落一笔\n- 差异走人工复核队列\n\n```json\n{ "window": "1d", "retry": 3 }\n```\n'],
+ /* v22 十一轮：正文里的文档名可点 → 文档查看器（内容为报告样例） */
+ ['.octopus/tasks/t-2641/reports/2026-11-19-M1验收报告.md','task', '# M1 验收报告 · 2026-11-19\n\n范围：账务中台舱 · 任务 t-2641「M1 · 退款链路」。证据窗 = `a1c2f3d..e9f8a7b`。\n\n## 结论\n- **AC-1 / AC-2 通过**：复用幂等键，退款不重复\n- **AC-3 未过**：CI 红 · expected 1 but got 2（reconcile.test.ts:90）\n- 遗留 1 项：重放幂等补测，已开跟进票\n\n## 证据\n- 幂等键复用 ✓ · e2e scenario A\n- 重复退款拦截 ✓ · unit 41 例\n- CI 全绿 ✗ · reconcile.test.ts:90\n\n## 命令\n```bash\npnpm -F gateway test -- refund\n# 39 passed · 1 failed · 12.8s\n```\n\n> 下一步：等指挥说「回滚 / 原地修」，我再动。\n']
 ];
 function cabinTree(){const root={n:'cabin',d:true,c:[]};
  const add=(p,txt,b,jid,img)=>{const segs=p.split('/');let cur=root;
@@ -2068,6 +2097,34 @@ function bindCabinTwin(){const w=$('#twin');
  $('[data-creveal]',w)?.addEventListener('click',()=>toast('桌面壳 · 在资源管理器打开 '+CABIN_CWD));
  $('[data-cws-job]',w)?.addEventListener('click',e=>{const jid=e.currentTarget.dataset.cwsJob;state.twin=null;w.classList.remove('open');state.detailJob=jid;state.detailTab='changes';state.panel='detail';renderPanel();Audio.sfx('click');});
  const cq=$('#cabinQ',w);if(cq)cq.addEventListener('input',()=>{state.cabinQ=cq.value;const pos=cq.selectionStart;renderCabinTwin();const nq=$('#cabinQ');if(nq){nq.focus();nq.setSelectionRange(pos,pos);}});}
+
+/* ── 文档查看器（v22 十一轮）：通讯台正文里点文档名 → 这个窗。
+      与目录窗同一套壳（.twin / .ph / .wsb.cwd / .ck-*），只读；⌗ 跳回目录窗看位置。 ── */
+function openDoc(p){const node=docByRef(p);if(!node){toast('文档不在本舱目录里 · '+p);return;}state.doc=node.p;renderDoc();Audio.sfx('open');}
+function closeDocView(){if(!state.doc)return;state.doc=null;const w=$('#docwin');if(w)w.classList.remove('open');Audio.sfx('close');}
+function renderDoc(){const w=$('#docwin');const node=state.doc?docByRef(state.doc):null;if(!node){w.classList.remove('open');return;}
+ const name=node.n;const ext=cabinExt(name);
+ const body=ext==='md'?`<div class="ck-doc">${mdHTML(node.txt||'')}</div>`:`<pre class="ck-code">${esc(node.txt||'')}</pre>`;
+ w.innerHTML=`<div class="ph"><button class="phx" data-dclose title="关闭（Esc）">✕</button><span class="pt"><b>${cabinGlyph(name)} ${esc(name)}</b><span>DOCUMENT · 只读 · 来自通讯台</span></span><span class="sp"></span><button class="pwin" data-dtree title="在本舱目录窗里看位置">⌗</button></div>
+ <div class="pb">
+ <div class="wsb cwd"><span class="br">📄 文档</span><span class="p" title="${esc(node.abs)}">${esc(node.abs)}</span><span class="ro">只读</span><span class="acts"><button class="cbtn" data-dcopy="${esc(node.abs)}" title="复制完整路径">⧉ 复制路径</button><button class="cbtn" data-dreveal title="桌面壳：在资源管理器中定位">▦ 资源管理器</button></span></div>
+ <div class="ck-main" style="flex:1;min-height:0">
+  <div class="ck-view">${body}</div>
+ </div>
+ </div>`;
+ bindDocView();w.classList.add('open');}
+function bindDocView(){const w=$('#docwin');
+ $$('[data-dclose]',w).forEach(b=>b.addEventListener('click',e=>{e.stopPropagation();closeDocView();}));
+ $('[data-dcopy]',w)?.addEventListener('click',e=>{e.stopPropagation();const p=e.currentTarget.dataset.dcopy||'';fallbackCopy(p,()=>toast('已复制 · '+p));Audio.sfx('click');});
+ $('[data-dreveal]',w)?.addEventListener('click',()=>toast('桌面壳 · 在资源管理器定位 '+(state.doc||'')));
+ $('[data-dtree]',w)?.addEventListener('click',()=>{const p=state.doc;if(!p)return;closeDocView();state.twin={mode:'cabin'};state.cabinQ='';state.cabinTabs=[p];state.cabinTab=p;renderTwin();Audio.sfx('click');});}
+function bindDocDrag(){const w=$('#docwin');if(!w||w.dataset.drag)return;w.dataset.drag='1';
+ w.addEventListener('pointerdown',e=>{if(e.target.closest('button,input,textarea,a,select'))return;if(!e.target.closest('.ph'))return;e.preventDefault();
+  w.classList.add('geo'); /* 拖过就别再播入场动画 —— 否则 pin 的 translateX(-50%) 每帧把窗拽回中间 */
+  const r=w.getBoundingClientRect();const sx=e.clientX,sy=e.clientY;
+  const mv=ev=>{w.style.left=clamp(r.left+ev.clientX-sx,4,Math.max(4,innerWidth-r.width-4))+'px';w.style.top=clamp(r.top+ev.clientY-sy,52,Math.max(52,innerHeight-r.height-4))+'px';w.style.transform='none';};
+  const up=()=>{removeEventListener('pointermove',mv);removeEventListener('pointerup',up);};
+  addEventListener('pointermove',mv);addEventListener('pointerup',up);});}
 
 /* ── 调试 inspect（作业坞同款） ── */
 function turnsFor(j){const seedN=j.id.length*7+j.title.length;const n=j.status==='blocked'?4:j.status==='done'?5:3;
@@ -2586,7 +2643,7 @@ addEventListener('keydown',e=>{const inIn=e.target.closest('textarea,input');
  if(e.altKey&&e.key.toLowerCase()==='c'){e.preventDefault();setConMin(!state.conMin);return;}
  if(e.altKey&&e.key.toLowerCase()==='i'){e.preventDefault();toggleInbox();return;}
  if(e.altKey&&e.key==='1'){e.preventDefault();const f=[...openOps()].sort((a,b)=>OP_KIND[a.kind].pri-OP_KIND[b.kind].pri)[0];if(f){state.inboxOpen=true;state.inboxSel=f.id;state.inboxPick=null;renderInbox();Audio.sfx('open');}else toggleInbox(true);return;}
- if(e.key==='Escape'){if(state.addOpen){openAdd(false);return;}if(state.settings){closeSettings();return;}if(state.twin){closeTree();return;}if(state.conPop){closeConPop();return;}if(state.pop){closePops();return;}if(state.inboxOpen){if(state.inboxSel){state.inboxSel=null;state.inboxPick=null;renderInbox();}else toggleInbox(false);return;}if(state.brief){hideBanner();return;}if(state.relayJump){state.relayJump=false;renderPanel();return;}if(state.panel){closePanel();return;}if(!state.conMin){setConMin(true);return;}}
+ if(e.key==='Escape'){if(state.addOpen){openAdd(false);return;}if(state.settings){closeSettings();return;}if(state.doc){closeDocView();return;}if(state.twin){closeTree();return;}if(state.conPop){closeConPop();return;}if(state.pop){closePops();return;}if(state.inboxOpen){if(state.inboxSel){state.inboxSel=null;state.inboxPick=null;renderInbox();}else toggleInbox(false);return;}if(state.brief){hideBanner();return;}if(state.relayJump){state.relayJump=false;renderPanel();return;}if(state.panel){closePanel();return;}if(!state.conMin){setConMin(true);return;}}
  if(!inIn&&state.inboxOpen&&state.inboxSel&&state.inboxPick!=null&&e.key==='Enter'){e.preventDefault();submitInbox(false);return;}
  if(!inIn&&state.inboxOpen&&state.inboxSel&&/^[1-9]$/.test(e.key)){const o=opOf(state.inboxSel);if(o&&o.status==='open'){const i=+e.key-1;if(o.options[i]){e.preventDefault();state.inboxPick=i;renderInbox();Audio.sfx('click');}}return;}
  if(!inIn&&/^[1-9]$/.test(e.key)&&state.thread!=='main'){const o=opForJob(state.thread);if(o){const i=+e.key-1;if(o.options[i]){e.preventDefault();resolveOp(o.id,o.options[i].label);}}}});
@@ -2598,7 +2655,9 @@ const CHARV=$('#charVid');
 CHARV.addEventListener('playing',()=>{if(!CHARV.currentSrc.endsWith(CLIPS[state.clip].src.replace('./','')))return;CHARV.style.opacity=1;$('#character').classList.add('live');});
 CHARV.addEventListener('error',()=>{CHARV.style.opacity=0;});
 playClip(0,{fx:false});
-bindGrips();bindPanelWin();bindTwinWin();renderBar();applyWinAlpha();
+bindGrips();bindPanelWin();bindTwinWin();bindDocDrag();renderBar();applyWinAlpha();
+/* 通讯台里点文档 chip → 打开文档查看器（事件委托，重渲染后仍然有效） */
+$('#conLog').addEventListener('click',e=>{const chip=e.target.closest('[data-doc]');if(!chip)return;e.preventDefault();e.stopPropagation();openDoc(chip.dataset.doc);});
 $('#scA').dataset.init='1';
 arrT=setTimeout(arriveNext,16000);
 scheduleWarp();

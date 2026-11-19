@@ -475,6 +475,35 @@ export function cabinRawUrl(id: string, relPath: string): string {
   return url(`/${id}/raw?path=${encodeURIComponent(relPath)}`)
 }
 
+// ── 文档查看器（2026-11-19 用户 #4）：聊天里的产物绝对路径 ──────────────
+// 后端只放行本舱文档根（舱 cwd / 本舱任务 workspace）；文本回 content，
+// 图片 / 视频 / 音频回 kind（字节走 doc-raw），其余二进制 kind=binary。
+
+export type CabinDocKind = "text" | "image" | "video" | "audio" | "binary"
+
+export interface CabinDocResult {
+  /** 解析后的绝对路径（与请求一致）。 */
+  path: string
+  ext: string
+  size: number
+  kind: CabinDocKind
+  /** kind=text 才有 */
+  content?: string
+  /** 媒体类的 MIME */
+  mime?: string
+}
+
+/** GET /api/cabins/:id/doc?path=<绝对路径> — 只读查阅一份文档。 */
+export async function getCabinDoc(id: string, absPath: string): Promise<CabinDocResult> {
+  const res = await fetch(url(`/${id}/doc?path=${encodeURIComponent(absPath)}`))
+  return handleResponse<CabinDocResult>(res)
+}
+
+/** GET /api/cabins/:id/doc-raw?path= — 图片 / 视频 / 音频字节流（支持 Range）。 */
+export function cabinDocRawUrl(id: string, absPath: string): string {
+  return url(`/${id}/doc-raw?path=${encodeURIComponent(absPath)}`)
+}
+
 // ============ Knowledge (S7 / G4) / Usage (C7) ============
 
 /** G4 读时 scoping 后的 findings（与全局 findingView 同形）。裁决复用全局
