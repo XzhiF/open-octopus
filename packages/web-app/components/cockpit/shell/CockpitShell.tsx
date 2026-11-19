@@ -27,6 +27,7 @@ import { AskWindowLayer } from '@/components/cabin/asks/ask-window-layer'
 import { CockpitFleetRail } from '../rail/CockpitFleetRail'
 import { CockpitRightRail } from '../rail/CockpitRightRail'
 import { CockpitFace } from '../face/CockpitFace'
+import { CockpitCabinTree } from '../face/CockpitCabinTree'
 import { CockpitChatHost } from '../chat/CockpitChatHost'
 import { CockpitChatWindow } from '../chat/CockpitChatWindow'
 import { CockpitDock } from '../chat/CockpitDock'
@@ -154,6 +155,9 @@ function CockpitSurface({ cabin }: { cabin: CabinDetail }) {
           必须挂在 arena 之外 —— arena 自带 z-index:2 的层叠上下文，放在里面
           会永远压在通讯台（共享 z 栈 31+）下面。 */}
       <CockpitFace entryCabinId={entryCabinId} />
+
+      {/* v22 九轮：右栏「目录」= 本舱 cwd 只读目录窗（详情面没开也能开）。 */}
+      <CockpitCabinTree cabinId={entryCabinId} />
 
       {/* 原型没有屏幕级底栏：输入框在通讯台内（.con-in）。这里不再留 footer，
           通讯台底缘按视口 − 56 量（geometry 的 fallback）。 */}

@@ -1,4 +1,4 @@
-import { app, BrowserWindow, dialog, screen, session, shell } from 'electron'
+import { app, BrowserWindow, dialog, ipcMain, screen, session, shell } from 'electron'
 import { spawn, type ChildProcess } from 'node:child_process'
 import fs from 'node:fs'
 import os from 'node:os'
@@ -234,6 +234,21 @@ async function bootstrap(): Promise<void> {
 
 app.setName('Octopus')
 app.setAppUserModelId('com.octopus.desktop')
+
+// 渲染层 → 系统文件管理器（本舱目录窗「资源管理器」）。只接受绝对路径：
+// 渲染层拿到的是服务端 tree 接口的 dir，这里再兜一次，避免变成任意打开入口。
+ipcMain.handle('octopus:reveal-path', async (_event, target: unknown) => {
+  if (typeof target !== 'string' || !target.trim()) return false
+  if (!path.isAbsolute(target)) return false
+  try {
+    const stats = fs.statSync(target)
+    if (stats.isDirectory()) await shell.openPath(target)
+    else shell.showItemInFolder(target)
+    return true
+  } catch {
+    return false
+  }
+})
 
 const gotLock = app.requestSingleInstanceLock()
 if (!gotLock) {

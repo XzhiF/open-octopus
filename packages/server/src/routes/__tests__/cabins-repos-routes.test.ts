@@ -191,4 +191,53 @@ describe("/api/cabins repos routes · 舱籍第三轮", () => {
     fs.writeFileSync(path.join(root, "big.bin"), Buffer.alloc(512 * 1024 + 1))
     expect((await app.request(`/api/cabins/${cabin.id}/repos/console/file?path=big.bin`)).status).toBe(413)
   })
+
+  // ── v22 九轮：本舱 cwd 只读目录树（右栏「目录」）────────────────────
+  it("GET /tree 以舱目录为根（跳 node_modules）；GET /file 文本只读", async () => {
+    const root = cabin.path
+    fs.mkdirSync(path.join(root, "docs"), { recursive: true })
+    fs.writeFileSync(path.join(root, "cabin.md"), "# 本舱\n")
+    fs.writeFileSync(path.join(root, "docs", "接口约定.md"), "- 只读\n")
+    fs.mkdirSync(path.join(root, "node_modules", "x"), { recursive: true })
+    fs.writeFileSync(path.join(root, "node_modules", "x", "hide.js"), "no\n")
+
+    const tree = await app.request(`/api/cabins/${cabin.id}/tree`)
+    expect(tree.status).toBe(200)
+    const body = await tree.json()
+    expect(body.dir).toBe(path.resolve(root))
+    const paths = body.entries.map((e: { path: string }) => e.path)
+    expect(paths).toContain("cabin.md")
+    expect(paths).toContain("docs/")
+    expect(paths).toContain("docs/接口约定.md")
+    expect(paths.some((p: string) => p.startsWith("node_modules"))).toBe(false)
+
+    const file = await app.request(`/api/cabins/${cabin.id}/file?path=cabin.md`)
+    expect(file.status).toBe(200)
+    expect((await file.json()).content).toBe("# 本舱\n")
+  })
+
+  it("GET /file 守卫：缺参 400 / 出根 403 / 目录 404 / 超大 413", async () => {
+    fs.mkdirSync(cabin.path, { recursive: true })
+    fs.writeFileSync(path.join(cabin.path, "big.md"), Buffer.alloc(512 * 1024 + 1))
+    expect((await app.request(`/api/cabins/${cabin.id}/file`)).status).toBe(400)
+    expect((await app.request(`/api/cabins/${cabin.id}/file?path=../escape`)).status).toBe(403)
+    expect((await app.request(`/api/cabins/${cabin.id}/file?path=.`)).status).toBe(404)
+    expect((await app.request(`/api/cabins/${cabin.id}/file?path=big.md`)).status).toBe(413)
+  })
+
+  it("GET /raw 只给图片（含 nosniff）；非图片 415 / 出根 403", async () => {
+    const png = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])
+    fs.mkdirSync(path.join(cabin.path, "docs"), { recursive: true })
+    fs.writeFileSync(path.join(cabin.path, "docs", "a.png"), png)
+    fs.writeFileSync(path.join(cabin.path, "cabin.md"), "# 本舱\n")
+
+    const res = await app.request(`/api/cabins/${cabin.id}/raw?path=docs/a.png`)
+    expect(res.status).toBe(200)
+    expect(res.headers.get("content-type")).toBe("image/png")
+    expect(res.headers.get("x-content-type-options")).toBe("nosniff")
+    expect(new Uint8Array(await res.arrayBuffer()).byteLength).toBe(png.byteLength)
+
+    expect((await app.request(`/api/cabins/${cabin.id}/raw?path=cabin.md`)).status).toBe(415)
+    expect((await app.request(`/api/cabins/${cabin.id}/raw?path=../x.png`)).status).toBe(403)
+  })
 })

@@ -455,6 +455,26 @@ export async function getRepoFile(id: string, name: string, relPath: string): Pr
   return handleResponse<{ path: string; content: string }>(res)
 }
 
+// ── v22 九轮：本舱 cwd（右栏「目录」）──────────────────────────────────
+// 一目录一舱：根 = cabin.path。tree/file 与 repo 版同口径；raw 只出图片字节。
+
+/** GET /api/cabins/:id/tree — 本舱 cwd 只读目录树（depth≤6 / 2000 条）。 */
+export async function getCabinTree(id: string): Promise<{ dir: string; entries: RepoTreeEntry[] }> {
+  const res = await fetch(url(`/${id}/tree`))
+  return handleResponse<{ dir: string; entries: RepoTreeEntry[] }>(res)
+}
+
+/** GET /api/cabins/:id/file?path= — 本舱 cwd 只读文本文件（不出根 / 512KB）。 */
+export async function getCabinFile(id: string, relPath: string): Promise<{ path: string; content: string }> {
+  const res = await fetch(url(`/${id}/file?path=${encodeURIComponent(relPath)}`))
+  return handleResponse<{ path: string; content: string }>(res)
+}
+
+/** GET /api/cabins/:id/raw?path= — 图片原始字节（<img src> 直接用，8MB 上限）。 */
+export function cabinRawUrl(id: string, relPath: string): string {
+  return url(`/${id}/raw?path=${encodeURIComponent(relPath)}`)
+}
+
 // ============ Knowledge (S7 / G4) / Usage (C7) ============
 
 /** G4 读时 scoping 后的 findings（与全局 findingView 同形）。裁决复用全局

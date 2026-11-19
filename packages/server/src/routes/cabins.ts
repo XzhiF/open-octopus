@@ -89,6 +89,57 @@ const REPO_TREE_MAX_DEPTH = 6
 const REPO_TREE_MAX_ENTRIES = 2000
 const REPO_FILE_MAX_BYTES = 512 * 1024
 
+/** 本舱目录里允许直出原始字节的类型（v22 九轮：图片预览）；其余走 /file 文本接口。 */
+const CABIN_RAW_IMAGE_MIME: Record<string, string> = {
+  ".png": "image/png",
+  ".jpg": "image/jpeg",
+  ".jpeg": "image/jpeg",
+  ".gif": "image/gif",
+  ".webp": "image/webp",
+  ".avif": "image/avif",
+  ".svg": "image/svg+xml",
+  ".bmp": "image/bmp",
+  ".ico": "image/x-icon",
+}
+const CABIN_RAW_MAX_BYTES = 8 * 1024 * 1024
+
+interface LocalTreeEntry { path: string; type: "dir" | "file"; bytes: number }
+
+/** 磁盘直扫（跳 .git/node_modules 等，depth≤6 / 2000 条上限）。repo tree 与 cabin tree 同口径。 */
+function scanLocalTree(root: string): LocalTreeEntry[] {
+  const resolvedRoot = path.resolve(root)
+  const entries: LocalTreeEntry[] = []
+  const walk = (dir: string, rel: string, depth: number): void => {
+    if (depth > REPO_TREE_MAX_DEPTH || entries.length >= REPO_TREE_MAX_ENTRIES) return
+    let names: fs.Dirent[]
+    try {
+      names = fs.readdirSync(dir, { withFileTypes: true })
+    } catch {
+      return
+    }
+    names.sort((a, b) => a.name.localeCompare(b.name))
+    for (const n of names) {
+      if (entries.length >= REPO_TREE_MAX_ENTRIES) return
+      const relPath = rel ? `${rel}/${n.name}` : n.name
+      if (n.isDirectory()) {
+        if (REPO_TREE_SKIP.has(n.name)) continue
+        entries.push({ path: `${relPath}/`, type: "dir", bytes: 0 })
+        walk(path.join(dir, n.name), relPath, depth + 1)
+      } else if (n.isFile()) {
+        let bytes = 0
+        try {
+          bytes = fs.statSync(path.join(dir, n.name)).size
+        } catch {
+          bytes = 0
+        }
+        entries.push({ path: relPath, type: "file", bytes })
+      }
+    }
+  }
+  walk(resolvedRoot, "", 0)
+  return entries
+}
+
 const createBodySchema = z.object({
   /** v5：可选。空名先落「未命名舱」，init 开头按需求取名（一次请求就建）。 */
   name: z.string().max(64).optional(),
@@ -529,6 +580,82 @@ export function createCabinRoutes(
   // tree = 磁盘直扫（跳 .git/node_modules 等，depth≤6 / 2000 条上限）；
   // file = 任意常规文件（守卫不出工作树根 + 512KB 上限，与 home-content 同码）。
 
+  // ── v22 九轮：本舱 cwd 只读目录树（右栏「目录」）──
+  // 一目录一舱：根 = cabin.path（不是某个项目的 worktree）。tree 与 repo tree 同口径；
+  // file 只出常规文本（512KB）；raw 只给图片（8MB），UI 用 <img src> 直接预览。
+
+  router.get("/:id/tree", (c) => {
+    try {
+      const cabin = service.get(c.req.param("id"))
+      if (!cabin.path) return c.json({ error: "cabin has no local path" }, 409)
+      const resolvedRoot = path.resolve(cabin.path)
+      return c.json({ dir: resolvedRoot, entries: scanLocalTree(resolvedRoot) })
+    } catch (err) {
+      const { status, message } = classifyError(err)
+      return c.json({ error: message }, status as 400)
+    }
+  })
+
+  router.get("/:id/file", (c) => {
+    const rel = c.req.query("path")
+    if (!rel || !rel.trim()) return c.json({ error: "Query param 'path' is required" }, 400)
+    try {
+      const cabin = service.get(c.req.param("id"))
+      if (!cabin.path) return c.json({ error: "cabin has no local path" }, 409)
+      const resolvedRoot = path.resolve(cabin.path)
+      const abs = path.resolve(resolvedRoot, rel)
+      if (abs !== resolvedRoot && !abs.startsWith(resolvedRoot + path.sep)) {
+        return c.json({ error: "path escapes cabin root" }, 403)
+      }
+      let st: fs.Stats
+      try {
+        st = fs.statSync(abs)
+      } catch {
+        return c.json({ error: "file not found" }, 404)
+      }
+      if (!st.isFile()) return c.json({ error: "not a regular file" }, 404)
+      if (st.size > REPO_FILE_MAX_BYTES) return c.json({ error: "file too large to read" }, 413)
+      return c.json({ path: rel, content: fs.readFileSync(abs, "utf8") })
+    } catch (err) {
+      const { status, message } = classifyError(err)
+      return c.json({ error: message }, status as 400)
+    }
+  })
+
+  router.get("/:id/raw", (c) => {
+    const rel = c.req.query("path")
+    if (!rel || !rel.trim()) return c.json({ error: "Query param 'path' is required" }, 400)
+    try {
+      const cabin = service.get(c.req.param("id"))
+      if (!cabin.path) return c.json({ error: "cabin has no local path" }, 409)
+      const mime = CABIN_RAW_IMAGE_MIME[path.extname(rel).toLowerCase()]
+      if (!mime) return c.json({ error: "unsupported raw file type" }, 415)
+      const resolvedRoot = path.resolve(cabin.path)
+      const abs = path.resolve(resolvedRoot, rel)
+      if (abs !== resolvedRoot && !abs.startsWith(resolvedRoot + path.sep)) {
+        return c.json({ error: "path escapes cabin root" }, 403)
+      }
+      let st: fs.Stats
+      try {
+        st = fs.statSync(abs)
+      } catch {
+        return c.json({ error: "file not found" }, 404)
+      }
+      if (!st.isFile()) return c.json({ error: "not a regular file" }, 404)
+      if (st.size > CABIN_RAW_MAX_BYTES) return c.json({ error: "file too large" }, 413)
+      const body = fs.readFileSync(abs)
+      return c.body(new Uint8Array(body), 200, {
+        "Content-Type": mime,
+        "Content-Length": String(body.byteLength),
+        "Cache-Control": "no-store",
+        "X-Content-Type-Options": "nosniff",
+      })
+    } catch (err) {
+      const { status, message } = classifyError(err)
+      return c.json({ error: message }, status as 400)
+    }
+  })
+
   router.get("/:id/repos/:name/tree", (c) => {
     try {
       const repo = service.listRepos(c.req.param("id")).find((r) => r.name === c.req.param("name"))
@@ -536,36 +663,7 @@ export function createCabinRoutes(
       const root = repo.worktree_path ?? repo.main_path
       if (!root) return c.json({ error: "repo has no local path" }, 409)
       const resolvedRoot = path.resolve(root)
-      const entries: Array<{ path: string; type: "dir" | "file"; bytes: number }> = []
-      const walk = (dir: string, rel: string, depth: number): void => {
-        if (depth > REPO_TREE_MAX_DEPTH || entries.length >= REPO_TREE_MAX_ENTRIES) return
-        let names: fs.Dirent[]
-        try {
-          names = fs.readdirSync(dir, { withFileTypes: true })
-        } catch {
-          return
-        }
-        names.sort((a, b) => a.name.localeCompare(b.name))
-        for (const n of names) {
-          if (entries.length >= REPO_TREE_MAX_ENTRIES) return
-          const relPath = rel ? `${rel}/${n.name}` : n.name
-          if (n.isDirectory()) {
-            if (REPO_TREE_SKIP.has(n.name)) continue
-            entries.push({ path: `${relPath}/`, type: "dir", bytes: 0 })
-            walk(path.join(dir, n.name), relPath, depth + 1)
-          } else if (n.isFile()) {
-            let bytes = 0
-            try {
-              bytes = fs.statSync(path.join(dir, n.name)).size
-            } catch {
-              bytes = 0
-            }
-            entries.push({ path: relPath, type: "file", bytes })
-          }
-        }
-      }
-      walk(resolvedRoot, "", 0)
-      return c.json({ dir: resolvedRoot, entries })
+      return c.json({ dir: resolvedRoot, entries: scanLocalTree(resolvedRoot) })
     } catch (err) {
       const { status, message } = classifyError(err)
       return c.json({ error: message }, status as 400)

@@ -1,17 +1,20 @@
 'use client'
 
 // v21 二轮（原型 .rmenu / .fanwrap）· 右栏主按钮组：
-//   下指令（big）→ 跃迁 → 消耗 → 调试 → 更多。
+//   下指令（big）→ 目录 → 消耗 → 调试 → 更多。
+// v22 九轮：「目录」取代原位的「跃迁」，打开本舱 cwd 只读目录窗（⌥F）；
+//   跃迁挪进「更多」（⌥W / 点顶部场景名仍可跃迁）。
 // 「更多」= **纯点击开合**（再点收回；点外面也收），向左横排展开 7 项
-// （汐音 / 动作 / 日志 / 文件 / 模拟 / 设置 / 编队）。不再用悬停开合。
+// （汐音 / 动作 / 日志 / 跃迁 / 模拟 / 设置 / 编队）。不再用悬停开合。
 //
 // 动作全部复用既有入口（不新造面板）：账本 = ledger 面板、调试 = 本舱主会话
-// debug 面板（不是某条作业）、文件 = ws 面板、动作 = poses 面板、
+// debug 面板（不是某条作业）、目录 = 本舱 cwd 只读窗、动作 = poses 面板、
 // 设置 = CockpitSettings 弹窗。作业自身的调试在作业面「调试」页签。
 
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { toast } from 'sonner'
 import { toggleCrewSettings } from '../crew/crew-settings'
+import { toggleCabinTree } from '../face/cabin-tree-store'
 import { useCockpitState } from '../state/CockpitStateProvider'
 import { setCockpitSettingsOpen } from '../shell/settings-store'
 
@@ -19,7 +22,7 @@ const FAN_ITEMS = [
   { id: 'xiyin', glyph: '♡', label: '汐音' },
   { id: 'poses', glyph: '✧', label: '动作' },
   { id: 'log', glyph: '≡', label: '日志' },
-  { id: 'files', glyph: '⌗', label: '文件' },
+  { id: 'warp', glyph: '⟳', label: '跃迁' },
   { id: 'sim', glyph: '✦', label: '模拟' },
   { id: 'settings', glyph: '⚙', label: '设置' },
   { id: 'fleet', glyph: '⬡', label: '编队' },
@@ -56,7 +59,7 @@ export function CockpitMenuRail() {
         chatWindow.openWithFocus()
         window.dispatchEvent(new CustomEvent('octopus:chat-tall'))
         break
-      case 'files': openPanel('ws'); break
+      case 'warp': travel(); break
       case 'sim':
         if (import.meta.env.DEV) {
           window.dispatchEvent(new CustomEvent('octopus:demo-arrival'))
@@ -69,7 +72,7 @@ export function CockpitMenuRail() {
       case 'fleet': setRailOpen(true); break
       default: break
     }
-  }, [chatWindow, openPanel, setRailOpen])
+  }, [chatWindow, openPanel, setRailOpen, travel])
 
   const openCommand = useCallback(() => {
     chatWindow.openWithFocus()
@@ -96,13 +99,13 @@ export function CockpitMenuRail() {
 
       <button
         type="button"
-        className="ck12-rhex is-warp"
-        title="跃迁 · 星穿梭切下一幕（⌥W）"
-        data-testid="cockpit-menu-warp"
-        onClick={() => travel()}
+        className="ck12-rhex"
+        title="本舱目录 · 当前 cwd 目录树（⌥F，只读）"
+        data-testid="cockpit-menu-cabin-tree"
+        onClick={() => toggleCabinTree()}
       >
-        <span className="ck12-rhex-i" aria-hidden="true">⟳</span>
-        <span className="ck12-rhex-l">跃迁</span>
+        <span className="ck12-rhex-i" aria-hidden="true">⌗</span>
+        <span className="ck12-rhex-l">目录</span>
       </button>
 
       <button

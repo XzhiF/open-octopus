@@ -793,6 +793,65 @@ kbd{border:1px solid rgba(185,179,217,.35);border-bottom-width:2px;border-radius
 .wsplit .ftree{width:100%;flex:1;min-height:0}
 .wsplit .tprev{min-height:0}
 
+/* ═══ 本舱目录窗（v22 九轮）：右栏「目录」= 当前 cwd 只读目录树。
+       cwd 绝对路径常显在标题条，可复制 / 桌面壳里直接在资源管理器打开。 ═══ */
+.wsb.cwd{background:linear-gradient(100deg,rgba(53,199,240,.13),rgba(123,77,255,.1));border-color:rgba(53,199,240,.42)}
+.wsb.cwd .br{color:var(--sky)}
+.wsb.cwd .p{color:#fff;font-family:var(--font-mono);font-weight:700}
+.wsb .acts{flex:none;display:flex;gap:6px}
+.wsb .acts .cbtn{height:22px;padding:0 9px;font-size:9px}
+
+/* ═══ 本舱目录：左树（筛选 / 全展全收）+ 右多标签查看器（只读，不编辑） ═══ */
+.ck-tree{display:flex;gap:10px;flex:1;min-height:0}
+.ck-side{flex:none;width:268px;display:flex;flex-direction:column;min-height:0;border:1px solid rgba(185,179,217,.16);background:rgba(10,8,24,.4);padding:6px;clip-path:var(--cut)}
+.ck-side-h{flex:none;display:flex;gap:5px;align-items:center;margin-bottom:5px}
+.ck-side-h input{flex:1;min-width:0;height:26px;border:1px solid rgba(46,230,214,.3);background:rgba(10,8,24,.55);color:#fff;padding:0 8px;font-size:10.5px}
+.ck-side-h input:focus{outline:none;border-color:var(--teal)}
+.ck-ib{flex:none;width:26px;height:26px;display:grid;place-items:center;border:1px solid rgba(185,179,217,.25);background:rgba(255,255,255,.06);color:var(--ink2);font-size:11px}
+.ck-ib:hover{color:#fff;border-color:var(--teal);background:rgba(46,230,214,.16)}
+.ck-scope{flex:none;font-size:8.5px;font-weight:800;letter-spacing:.08em;color:var(--teal);padding:0 2px 5px}
+.ck-scroll{flex:1;min-height:0;overflow:auto}
+.ck-main{flex:1;min-width:0;display:flex;flex-direction:column;min-height:0;border:1px solid rgba(185,179,217,.16);background:rgba(10,8,24,.4);clip-path:var(--cut)}
+.ck-tabs{flex:none;display:flex;gap:4px;overflow-x:auto;padding:5px 6px;border-bottom:1px solid rgba(185,179,217,.16);min-height:36px;align-items:center}
+.ck-tabs-empty{font-size:9px;color:var(--metal2);padding:0 4px}
+.ck-tab{flex:none;display:flex;align-items:center;gap:5px;height:24px;max-width:190px;padding:0 6px 0 8px;border:1px solid rgba(185,179,217,.22);background:rgba(255,255,255,.05);color:var(--ink2);font-size:10px;clip-path:var(--btncut);cursor:pointer}
+.ck-tab:hover{color:#fff;border-color:rgba(46,230,214,.4)}
+.ck-tab.on{background:linear-gradient(90deg,rgba(53,199,240,.26),rgba(123,77,255,.22));color:#fff;border-color:rgba(53,199,240,.55)}
+.ck-tab .nm{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.ck-tab .cx{flex:none;width:14px;text-align:center;color:var(--metal2);font-size:9px}
+.ck-tab .cx:hover{color:var(--red)}
+.ck-view{flex:1;min-height:0;overflow:auto;padding:9px 12px}
+.ck-meta{display:flex;gap:8px;align-items:center;margin-bottom:8px;font-size:9.5px;color:var(--metal2)}
+.ck-meta .p{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:#fff;font-family:var(--font-mono)}
+.ck-meta .ro{flex:none;font-size:8px;letter-spacing:.1em}
+.ck-code{margin:0;font-size:10.5px;line-height:1.65;color:var(--ink);font-family:var(--font-mono);white-space:pre-wrap;word-break:break-word}
+.ck-doc{font-size:11px;line-height:1.75;color:var(--ink)}
+.ck-doc h1{font-size:16px;color:#fff;margin:2px 0 8px;font-family:var(--font-ui)}
+.ck-doc h2{font-size:13px;color:var(--teal);margin:14px 0 6px;font-family:var(--font-ui)}
+.ck-doc h3{font-size:11.5px;color:var(--sky);margin:10px 0 4px}
+.ck-doc p{margin:0 0 7px}
+.ck-doc ul{margin:0 0 8px;padding-left:16px}
+.ck-doc li{margin:2px 0}
+.ck-doc blockquote{margin:0 0 8px;padding:4px 10px;border-left:2px solid var(--teal);color:var(--ink2);background:rgba(46,230,214,.06)}
+.ck-doc code{font-family:var(--font-mono);font-size:10px;background:rgba(46,230,214,.12);color:var(--teal);padding:0 4px}
+.ck-doc .ck-fence{background:rgba(10,8,24,.6);border:1px solid rgba(185,179,217,.18);padding:8px 10px;margin:0 0 8px;overflow:auto}
+.ck-doc .ck-fence code{background:none;color:var(--ink);padding:0;font-size:10px;line-height:1.6}
+.ck-imgwrap{display:grid;place-items:center;min-height:120px;padding:8px;border:1px dashed rgba(185,179,217,.2);background:rgba(255,255,255,.03)}
+.ck-img{max-width:100%;max-height:calc(100vh - 330px);display:block}
+.ck-imgcap{text-align:center;font-size:9px;color:var(--metal2);margin-top:6px}
+.ck-empty{flex:1;min-height:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:4px;font-size:10.5px;color:var(--ink2);text-align:center;padding:20px}
+.ck-empty span{font-size:9px;color:var(--metal2)}
+@media (max-width:900px){
+  /* 窄屏：cwd 条折成三行，路径独占一行，动作按钮不再顶出窗口右缘。 */
+  .wsb.cwd{flex-wrap:wrap;row-gap:6px}
+  .wsb.cwd .p{flex:1 1 100%;order:9;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .wsb.cwd .ro{order:8;margin-left:auto}
+  .wsb .acts{order:10;width:100%;justify-content:flex-end}
+  /* 窄屏：目录窗改成上下布局，左树让出高度。 */
+  .ck-tree{flex-direction:column}
+  .ck-side{width:100%;height:190px}
+}
+
 /* ═══ 回传全息 banner（空白天空处） ═══ */
 .banner{position:absolute;top:58px;left:max(calc(var(--railw) + 12px + min(390px,calc(var(--charw) - 54px)) / 2),calc(var(--railw) + 16px - var(--charshift) + var(--charw) / 2));z-index:45;width:min(390px,calc(var(--charw) - 54px));min-width:260px;border-radius:14px;overflow:hidden;background:var(--glass2);backdrop-filter:blur(14px);border:1px solid color-mix(in srgb,var(--accent,var(--sun)) 60%,transparent);box-shadow:0 14px 40px rgba(16,13,40,.5),0 0 24px color-mix(in srgb,var(--accent,var(--sun)) 22%,transparent);padding:9px 14px;cursor:pointer;opacity:0;pointer-events:none;transition:.3s;transform:translateX(-50%) translateY(-12px)}
 @keyframes bfloat{0%,100%{margin-top:0}50%{margin-top:-5px}}
@@ -1049,7 +1108,7 @@ kbd{border:1px solid rgba(185,179,217,.35);border-bottom-width:2px;border-radius
     <button class="inboxchip" id="inboxchip" aria-expanded="false" aria-label="要我处理"></button>
     <nav class="rmenu">
       <button class="rhex big" id="rCmd" title="下指令 · 回主对话（⌘K）"><span class="ri">❯</span><span class="rl">下指令</span></button>
-      <button class="rhex warp" id="rWarp" title="跃迁 · 星穿梭换场景（⌥W）"><span class="ri">⟳</span><span class="rl">跃迁</span></button>
+      <button class="rhex" id="rDir" title="本舱目录 · 当前 cwd 目录树（⌥F，只读）"><span class="ri">⌗</span><span class="rl">目录</span></button>
       <button class="rhex" id="lUsage" title="本舱账本（全域累计 · 只读）"><span class="ri">¥</span><span class="rl">消耗</span></button>
       <button class="rhex" id="lDebug" title="调试 inspect（常驻 · ⌥D）"><span class="ri">⚙</span><span class="rl">调试</span></button>
       <div class="morewrap" id="morewrap">
@@ -1254,7 +1313,7 @@ const state={sound:true,theme:0,winAlpha:1,thread:'main',panel:null,detailJob:nu
  model:'pro',effort:'标准',ctxMax:1e6,tokens:420000,tokIn:96000,tokOut:38000,tokCR:262000,tokCW:24000,requests:47,cacheHit:78,
  unread:{},focusJob:null,fleetFilter:'all',treeOpen:{},fileSel:{},fileQ:{},dbgTurn:{},dbgTab:'overview',dbgFilter:'all',
  simAuto:true,pop:null,handleSeq:7,wsProj:'gateway',wsOpen:{},wsSel:{},wsQ:'',
- twin:null,twinQ:'',twinGeo:null,twinMax:false,
+ twin:null,twinQ:'',twinGeo:null,twinMax:false,cabinQ:'',cabinOpen:null,cabinTabs:[],cabinTab:null,
  flash:{job:null,op:null,at:0},autoWarp:true,conMin:false,conLeft:null,conTop:null,conGeo:null,wins:[],winSeq:0,zTop:30,
  inboxOpen:false,inboxSel:null,inboxPick:null,fanOpen:false,fleetOpen:false,relayJump:false,panelGeo:null,panelMax:false,panelAside:false,
  conTurns:false,conTurnSel:0};
@@ -1757,6 +1816,114 @@ function renderWS(){const pid=state.wsProj;const open=wsOpenSet(pid);const q=sta
  <div class="fsearch"><input id="wsQ" placeholder="筛选文件…" value="${esc(state.wsQ)}"/><span class="scope">worktree · ${count} 文件</span></div>
  <div class="fwrap"><div class="ftree">${rows.join('')||'<div class="pempty">无匹配文件</div>'}</div>${prev}</div>`;}
 
+/* ── 本舱目录（v22 九轮 · 右栏「目录」）：以本舱 cwd 为根，只读。
+      一个目录一个舱：会话 / 任务都开在 cwd 下；projects/ 里是各项目，命中作业的文件带徽标。
+      设置 / 更多里原来的「文件」看的是任务 worktree，看不到本舱根路径 —— 这里补上。 ── */
+/* ── 本舱目录（v22 九轮 · 右栏「目录」）：以本舱 cwd 为根，只读。
+      左 = 筛选 + 全展/全收 + 树；右 = 多标签查看器（代码 / Markdown / JSON / 图片），不编辑。
+      设置 / 更多里原来的「文件」看的是任务 worktree，看不到本舱根路径 —— 这里补上。 ── */
+const CABIN_CWD='D:/octopus-ws/cabin';
+const CABIN_FILES=[
+ ['.octopus/cabin.json','cabin','{\n  "cabin_id": "cab-fin-01",\n  "name": "账务中台",\n  "cwd": "D:/octopus-ws/cabin",\n  "projects": ["ledger", "gateway", "risk", "edge"]\n}\n'],
+ ['.octopus/tasks/t-2641/manifest.json','task','{\n  "id": "t-2641",\n  "title": "M1 · 退款链路",\n  "cabin_id": "cab-fin-01",\n  "workflow_ref": "refund-flow",\n  "status": "running"\n}\n'],
+ ['cabin.md','', '# 账务中台 · 本舱\n\ncwd: D:/octopus-ws/cabin\n\n一个目录一个舱：会话与任务都在这下面开，worktree 按作业另开。\n主仓只读 · ff-only · 脏树会导致空变更。\n\n## 目录约定\n- **projects/** 四个项目的检出（只读主仓）\n- **.octopus/** 本舱运行数据（cabin.json / tasks/）\n- **docs/** 架构与接口说明\n\n> 只读查阅：这里不改文件，改动走会话与任务。\n'],
+ ['AGENTS.md','skill','# 本舱执行约束\n\n- 主仓只读，只能拉主线（ff-only）\n- 产物写入 ~/.octopus/tasks/<id>/\n- 每轮落 diff / 测试 / 报告，变更窗 = commit 区间\n'],
+ ['README.md','', '# 账务中台\n\n账务核心 / API 网关 / 风控引擎 / 边缘节点，四个项目同驻本舱。\n'],
+ ['docs/架构总览.png','','',null,'./assets/scene-earthrise.png'],
+ ['docs/接口约定.md','', '# 接口约定\n\n## 退款\n- 幂等键 = orderId + idempotencyKey\n- 重复请求返回 `{ skipped: true }`\n\n## 结算对账\n- 同日同账户只落一笔\n- 差异走人工复核队列\n\n```json\n{ "window": "1d", "retry": 3 }\n```\n']
+];
+function cabinTree(){const root={n:'cabin',d:true,c:[]};
+ const add=(p,txt,b,jid,img)=>{const segs=p.split('/');let cur=root;
+  segs.forEach((s,i)=>{if(i===segs.length-1){cur.c.push({n:s,d:false,txt,b:b||null,jid:jid||null,img:img||null,p,abs:CABIN_CWD+'/'+p});}
+   else{let d=cur.c.find(x=>x.d&&x.n===s);if(!d){d={n:s,d:true,c:[]};cur.c.push(d);}cur=d;}});};
+ CABIN_FILES.forEach(([p,b,txt,jid,img])=>add(p,txt,b,jid,img));
+ for(const pid of Object.keys(WS_FILES)){const pr=projOf(pid);
+  if(!WS_FILES[pid].some(([p])=>p==='README.md'))add('projects/'+pid+'/README.md','# '+pr.name+'\n\n项目检出：'+wsPath(pid)+'\n分支 '+pr.branch+' · HEAD '+pr.head+' · '+pr.commit+(pr.dirty?' · dirty':' · clean')+'\n',null);
+  for(const [p,txt,jid] of WS_FILES[pid])add('projects/'+pid+'/'+p,txt,jid?(jobOf(jid)||{}).short:null,jid);}
+ const sortn=n=>{n.c.sort((a,b)=>(b.d-a.d)||a.n.localeCompare(b.n));n.c.forEach(c=>c.d&&sortn(c));};sortn(root);return root;}
+function cabinOpenSet(){if(!state.cabinOpen)state.cabinOpen=new Set(['projects']);return state.cabinOpen;}
+function openCabinTree(){state.cabinQ='';state.cabinTabs=['cabin.md'];state.cabinTab='cabin.md';state.twin={mode:'cabin'};renderTwin();Audio.sfx('open');}
+const cabinExt=n=>(n.split('.').pop()||'').toLowerCase();
+const cabinGlyph=n=>{const e=cabinExt(n);return e==='md'?'📜':['png','jpg','jpeg','gif','webp','svg','avif'].includes(e)?'🖼':'📄';};
+function cabinNode(p){let hit=null;const find=(n,path)=>{const q=path?path+'/'+n.n:n.n;if(!n.d&&q===p)hit=n;if(n.d)n.c.forEach(c=>find(c,q));};cabinTree().c.forEach(c=>find(c,''));return hit;}
+function cabinAllDirs(){const out=[];const walk=(n,p)=>{const q=p?p+'/'+n.n:n.n;if(n.d){out.push(q);n.c.forEach(c=>walk(c,q));}};cabinTree().c.forEach(c=>walk(c,''));return out;}
+function openCabinFile(p){if(!state.cabinTabs.includes(p))state.cabinTabs.push(p);state.cabinTab=p;renderCabinTwin();Audio.sfx('click');}
+function closeCabinTab(p){const i=state.cabinTabs.indexOf(p);if(i<0)return;state.cabinTabs.splice(i,1);if(state.cabinTab===p)state.cabinTab=state.cabinTabs[Math.max(0,i-1)]||null;renderCabinTwin();Audio.sfx('close');}
+/* Markdown 只做查看用的一小撮语法；先 esc 再套标签。 */
+const mdInline=s=>s.replace(/\*\*(.+?)\*\*/g,'<b>$1</b>').replace(/`([^`]+)`/g,'<code>$1</code>');
+function mdHTML(src){const lines=esc(src).split('\n');const out=[];let list=false,code=false;
+ const closeList=()=>{if(list){out.push('</ul>');list=false;}};
+ for(const ln of lines){
+  if(/^\s*```/.test(ln)){closeList();out.push(code?'</code></pre>':'<pre class="ck-fence"><code>');code=!code;continue;}
+  if(code){out.push(ln);continue;}
+  const h=ln.match(/^(#{1,3})\s+(.*)$/);
+  if(h){closeList();const n=h[1].length;out.push(`<h${n}>${mdInline(h[2])}</h${n}>`);continue;}
+  const li=ln.match(/^\s*[-*]\s+(.*)$/);
+  if(li){if(!list){out.push('<ul>');list=true;}out.push(`<li>${mdInline(li[1])}</li>`);continue;}
+  const bq=ln.match(/^&gt;\s?(.*)$/);
+  if(bq){closeList();out.push(`<blockquote>${mdInline(bq[1])}</blockquote>`);continue;}
+  closeList();
+  if(!ln.trim()){out.push('');continue;}
+  out.push(`<p>${mdInline(ln)}</p>`);
+ }
+ if(code)out.push('</code></pre>');
+ closeList();return out.join('\n');}
+function cabinView(node){
+ if(!node)return '<div class="ck-empty">左边点一个文件，在这里按标签页打开 · 只读<span>代码 / Markdown / JSON 直接看，图片出预览；不做编辑</span></div>';
+ const ext=cabinExt(node.n);const abs=node.abs;
+ const meta=`<div class="ck-meta"><span class="p" title="${esc(abs)}">${esc(abs)}</span><button class="cbtn" data-ccopy="${esc(abs)}" title="复制绝对路径">⧉ 复制路径</button>${node.jid?`<button class="cbtn" data-cws-job="${esc(node.jid)}">▦ 看作战变更</button>`:''}<span class="ro">本舱 · 只读</span></div>`;
+ if(['png','jpg','jpeg','gif','webp','svg','avif'].includes(ext))return `<div class="ck-view">${meta}<div class="ck-imgwrap"><img class="ck-img" src="${esc(node.img||'')}" alt="${esc(node.n)}"/></div><div class="ck-imgcap">${esc(node.n)} · 图片预览</div></div>`;
+ if(ext==='md')return `<div class="ck-view">${meta}<div class="ck-doc">${mdHTML(node.txt)}</div></div>`;
+ let txt=node.txt;if(ext==='json'){try{txt=JSON.stringify(JSON.parse(node.txt),null,2);}catch(e){}}
+ return `<div class="ck-view">${meta}<pre class="ck-code">${esc(txt)}</pre></div>`;
+}
+function renderCabinTwin(){const w=$('#twin');const open=cabinOpenSet();const q=state.cabinQ.toLowerCase();const tree=cabinTree();
+ const node=cabinNode(state.cabinTab);
+ const rows=[`<button class="trow dir" style="padding-left:7px"><span class="tw">▾</span><span class="ti2">📁</span><span class="tn">${esc(tree.n)}</span></button>`];let count=0;
+ /* 深层匹配：筛选要能命中 projects/<项目>/src/… 里的文件，并把沿途目录自动展开。 */
+ const deepMatch=n=>n.d?n.c.some(deepMatch):(n.n.toLowerCase().includes(q)||(n.p||'').toLowerCase().includes(q));
+ const walk=(node,path,depth)=>{const p=path?path+'/'+node.n:node.n;
+  if(node.d){const matchQ=!!q&&deepMatch(node);
+   const isOpen=open.has(p)||matchQ;
+   if(q&&!matchQ)return;
+   const badge=p==='projects'?`<span class="tb">${Object.keys(WS_FILES).length} 项目</span>`:p==='.octopus'?'<span class="tb">本舱</span>':'';
+   rows.push(`<button class="trow dir" data-ctree="${esc(p)}" style="padding-left:${7+depth*13}px"><span class="tw">${isOpen?'▾':'▸'}</span><span class="ti2">📁</span><span class="tn">${esc(node.n)}</span>${badge}</button>`);
+   if(isOpen)node.c.forEach(c=>walk(c,p,depth+1));}
+  else{if(q&&!node.n.toLowerCase().includes(q)&&!(node.p||'').toLowerCase().includes(q))return;count++;
+   const sel=state.cabinTab===p;
+   rows.push(`<button class="trow${sel?' sel':''}" data-cfile="${esc(p)}" style="padding-left:${7+depth*13}px"><span class="tw"></span><span class="ti2">${cabinGlyph(node.n)}</span><span class="tn">${esc(node.n)}</span>${node.b?`<span class="tb${node.b==='skill'||node.b==='task'||node.b==='cabin'?' tk':''}" title="关联：${esc(node.b)}">${esc(node.b)}</span>`:''}</button>`);}};
+ tree.c.forEach(c=>walk(c,'',1));
+ const tabs=state.cabinTabs.map(p=>{const nd=cabinNode(p);const name=nd?nd.n:(p.split('/').pop()||p);const on=state.cabinTab===p;
+  return `<span class="ck-tab${on?' on':''}" data-ctab="${esc(p)}" title="${esc(p)}"><span class="tic">${cabinGlyph(name)}</span><span class="nm">${esc(name)}</span><span class="cx" data-ctabx="${esc(p)}" title="关闭标签">✕</span></span>`;}).join('');
+ w.innerHTML=`<div class="ph"><button class="phx" data-tclose title="关闭">✕</button><span class="pt"><b>⌗ 本舱目录 · 账务中台</b><span>CABIN CWD · 只读 · 一个目录一个舱</span></span><span class="sp"></span><button class="pwin" data-tmax title="全屏 / 还原（也可双击标题栏）">${state.twinMax?'⤡':'⛶'}</button></div>
+ <div class="pb">
+ <div class="wsb cwd"><span class="br">⌂ 本舱 cwd</span><span class="p">${esc(CABIN_CWD)}</span><span class="ro">只读</span><span class="acts"><button class="cbtn" data-ccopy="${esc(CABIN_CWD)}" title="复制本舱 cwd 绝对路径">⧉ 复制路径</button><button class="cbtn" data-creveal title="桌面壳：在资源管理器里打开本舱目录">▦ 资源管理器</button></span></div>
+ <div class="ck-tree">
+  <div class="ck-side">
+   <div class="ck-side-h"><input id="cabinQ" placeholder="筛文件…" value="${esc(state.cabinQ)}" aria-label="筛选本舱文件"/><button class="ck-ib" data-cexp="1" title="全部展开">⊞</button><button class="ck-ib" data-cexp="0" title="全部收起">⊟</button></div>
+   <div class="ck-scope">本舱 · ${count} 文件</div>
+   <div class="ck-scroll" role="tree">${q&&!count?'<div class="pempty">无匹配文件</div>':rows.join('')}</div>
+  </div>
+  <div class="ck-main">
+   <div class="ck-tabs" role="tablist">${tabs||'<span class="ck-tabs-empty">没有打开的标签 · 点左边文件</span>'}</div>
+   ${cabinView(node)}
+  </div>
+ </div>
+ </div>`;
+ bindCabinTwin();applyTwinGeo();w.classList.add('open');}
+function bindCabinTwin(){const w=$('#twin');
+ $('[data-tclose]',w)?.addEventListener('click',closeTree);
+ $('[data-tmax]',w)?.addEventListener('click',e=>{e.stopPropagation();toggleTwinMax();});
+ $$('[data-ctree]',w).forEach(b=>b.addEventListener('click',()=>{const set=cabinOpenSet();const p=b.dataset.ctree;set.has(p)?set.delete(p):set.add(p);renderCabinTwin();Audio.sfx('click');}));
+ $$('[data-cfile]',w).forEach(b=>b.addEventListener('click',()=>openCabinFile(b.dataset.cfile)));
+ $$('[data-ctab]',w).forEach(b=>b.addEventListener('click',e=>{if(e.target.closest('[data-ctabx]'))return;state.cabinTab=b.dataset.ctab;renderCabinTwin();Audio.sfx('click');}));
+ $$('[data-ctabx]',w).forEach(b=>b.addEventListener('click',e=>{e.stopPropagation();closeCabinTab(b.dataset.ctabx);}));
+ $$('[data-cexp]',w).forEach(b=>b.addEventListener('click',()=>{state.cabinOpen=new Set(b.dataset.cexp==='1'?cabinAllDirs():[]);renderCabinTwin();Audio.sfx('click');}));
+ $$('[data-ccopy]',w).forEach(b=>b.addEventListener('click',e=>{e.stopPropagation();const p=b.dataset.ccopy||CABIN_CWD;fallbackCopy(p,()=>toast('已复制 · '+p));Audio.sfx('click');}));
+ $('[data-creveal]',w)?.addEventListener('click',()=>toast('桌面壳 · 在资源管理器打开 '+CABIN_CWD));
+ $('[data-cws-job]',w)?.addEventListener('click',e=>{const jid=e.currentTarget.dataset.cwsJob;state.twin=null;w.classList.remove('open');state.detailJob=jid;state.detailTab='changes';state.panel='detail';renderPanel();Audio.sfx('click');});
+ const cq=$('#cabinQ',w);if(cq)cq.addEventListener('input',()=>{state.cabinQ=cq.value;const pos=cq.selectionStart;renderCabinTwin();const nq=$('#cabinQ');if(nq){nq.focus();nq.setSelectionRange(pos,pos);}});}
+
 /* ── 调试 inspect（作业坞同款） ── */
 function turnsFor(j){const seedN=j.id.length*7+j.title.length;const n=j.status==='blocked'?4:j.status==='done'?5:3;
  const switchAt=j.id==='j-m2g'?2:j.id==='j-m2'?3:0;const arr=[];
@@ -1987,6 +2154,7 @@ function openTree(jid,pid){const j=jobOf(jid);if(!j)return;const ids=jobProjIds(
  state.twinQ='';state.twin={job:jid,proj:pid&&ids.includes(pid)?pid:ids[0]};renderTwin();Audio.sfx('open');}
 function closeTree(){if(!state.twin)return;state.twin=null;$('#twin').classList.remove('open');Audio.sfx('close');}
 function renderTwin(){const w=$('#twin');const t=state.twin;if(!t){w.classList.remove('open');return;}
+ if(t.mode==='cabin'){renderCabinTwin();return;}
  const j=jobOf(t.job);if(!j){state.twin=null;w.classList.remove('open');return;}
  const ids=jobProjIds(j);const pid=ids.includes(t.proj)?t.proj:ids[0];t.proj=pid;const pr=projOf(pid);
  const open=wsOpenSet(pid);const q=state.twinQ.toLowerCase();const rows=[];let count=0;
@@ -2179,7 +2347,7 @@ function openSettings(){closePops();closeConPop();state.settings=true;$('#setwra
 function closeSettings(){state.settings=false;$('#setwrap').hidden=true;Audio.sfx('close');}
 
 /* ── 更多：向左横排展开（常驻之外的入口） ── */
-const FAN_ITEMS=[['lXiyin','♡','汐音'],['lPoses','✧','动作'],['lLog','≡','日志'],['lFiles','⌗','文件'],['lSim','✦','模拟'],['lSet','⚙','设置'],['lFleet','⬡','编队']];
+const FAN_ITEMS=[['lXiyin','♡','汐音'],['lPoses','✧','动作'],['lLog','≡','日志'],['lWarp','⟳','跃迁'],['lSim','✦','模拟'],['lSet','⚙','设置'],['lFleet','⬡','编队']];
 function renderFan(){const el=$('#fan');if(!el)return;
  el.innerHTML=FAN_ITEMS.map(([id,g,l],i)=>`<button id="${id}" class="fitem" data-fan="${id}" style="--d:${i*24}ms" title="${l}"><span class="ah">${g}</span><span class="al">${l}</span></button>`).join('');}
 let fanT=null;
@@ -2189,7 +2357,7 @@ function fanAction(k){
  if(k==='lXiyin'){const[t,m]=rnd(SAY);setMood(m,5500);typeCurrent({who:'xy',name:'汐音',text:t});}
  else if(k==='lPoses')openPanel('poses');
  else if(k==='lLog')openPanel('log');
- else if(k==='lFiles')openPanel('ws');
+ else if(k==='lWarp')travel();
  else if(k==='lUsage')openPanel('usage');
  else if(k==='lDebug'){const jid=state.thread!=='main'?state.thread:(state.focusJob||state.jobs.find(j=>j.status==='blocked')?.id||state.jobs[0].id);state.detailJob=jid;state.detailTab='debug';openPanel('detail');}
  else if(k==='lSim')openPop('sim');
@@ -2207,7 +2375,7 @@ setInterval(()=>{if(document.hidden)return;const runs=state.jobs.filter(j=>j.sta
 
 /* ── events ── */
 $('#rCmd').addEventListener('click',()=>{openThread('main');state.warp=Math.max(state.warp,.5);$('#cmdInput').focus();});
-$('#rWarp').addEventListener('click',travel);
+$('#rDir').addEventListener('click',openCabinTree);
 /* 中间读数 pill：左段 = 跃迁；右段 = 当前时间（只读，每秒走字）。 */
 $('#srScene').addEventListener('click',travel);
 renderClock();setInterval(renderClock,1000);
@@ -2266,6 +2434,7 @@ addEventListener('keydown',e=>{const inIn=e.target.closest('textarea,input');
  if(e.altKey&&e.key.toLowerCase()==='m'){e.preventDefault();setSoundOn(!state.sound);return;}
  if(e.altKey&&e.key.toLowerCase()==='w'){e.preventDefault();travel();return;}
  if(e.altKey&&e.key.toLowerCase()==='d'){e.preventDefault();$('#lDebug').click();return;}
+ if(e.altKey&&e.key.toLowerCase()==='f'){e.preventDefault();$('#rDir').click();return;}
  if(e.altKey&&e.key.toLowerCase()==='c'){e.preventDefault();setConMin(!state.conMin);return;}
  if(e.altKey&&e.key.toLowerCase()==='i'){e.preventDefault();toggleInbox();return;}
  if(e.altKey&&e.key==='1'){e.preventDefault();const f=[...openOps()].sort((a,b)=>OP_KIND[a.kind].pri-OP_KIND[b.kind].pri)[0];if(f){state.inboxOpen=true;state.inboxSel=f.id;state.inboxPick=null;renderInbox();Audio.sfx('open');}else toggleInbox(true);return;}
