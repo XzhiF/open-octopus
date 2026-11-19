@@ -79,6 +79,24 @@ export function useCabinProjects(cabinId: string | null | undefined): CabinProje
     }
   }, [cabinId])
 
+  // 2026-11-19 用户 #5：绑定 / 解绑可能发生在另一个窗口或对话里（汐音直接写舱配置）。
+  // 页面重新可见 / 获得焦点时补拉一次；缓存还新就不打接口（/repos?enrich=1 会跑 git）。
+  useEffect(() => {
+    if (!cabinId) return
+    const maybeRefresh = () => {
+      if (document.visibilityState !== 'visible') return
+      const hit = cache.get(cabinId)
+      if (hit && Date.now() - hit.at < TTL_MS) return
+      setTick((v) => v + 1)
+    }
+    window.addEventListener('focus', maybeRefresh)
+    document.addEventListener('visibilitychange', maybeRefresh)
+    return () => {
+      window.removeEventListener('focus', maybeRefresh)
+      document.removeEventListener('visibilitychange', maybeRefresh)
+    }
+  }, [cabinId])
+
   useEffect(() => {
     aliveRef.current = true
     if (!cabinId) {
