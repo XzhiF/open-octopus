@@ -21,7 +21,6 @@ import { CockpitHud } from './CockpitHud'
 import { CockpitSettings } from './CockpitSettings'
 import { CockpitStarfield } from './CockpitStarfield'
 import { CockpitScene } from '../scene/CockpitScene'
-import { CockpitQuiet } from './CockpitQuiet'
 import { AskWindowsProvider, useAskWindows } from '@/components/cabin/asks/ask-windows-provider'
 import { AskWindowLayer } from '@/components/cabin/asks/ask-window-layer'
 import { CockpitFleetRail } from '../rail/CockpitFleetRail'
@@ -148,7 +147,6 @@ function CockpitSurface({ cabin }: { cabin: CabinDetail }) {
           className={`ck12-arena${selection ? ' is-open' : ''}`}
           data-testid="cockpit-arena"
         >
-          <CockpitQuiet />
           <CockpitCrew />
         </section>
       </main>
