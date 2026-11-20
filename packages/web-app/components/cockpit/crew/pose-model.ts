@@ -228,8 +228,9 @@ export function clipVariants(pose: PoseKey): readonly number[] {
   return variants && variants.length ? variants : [poseClip(pose)]
 }
 
-/** 待命自走轮播池：只放「日常小动作」，不含 alert / concerned / typing
- *  这类强事件语义的片段。idle 保留在池里，让她多数时候仍是待命。 */
+/** 待命自走候选（2026-11-20 用户 #14 二改）：13 支全部参与，抽法用「洗牌袋」——
+ *  每轮随机排列一次、抽完再洗。顺序仍是随机的，但一轮内每支必出现一次，
+ *  不会像纯随机那样长期漏掉某支。 */
 export const AMBIENT_CLIPS: readonly number[] = [
   6,  // 07-idle
   8,  // 09-smile
@@ -239,43 +240,91 @@ export const AMBIENT_CLIPS: readonly number[] = [
   12, // 13-working
   1,  // 02-thinking（旧）
   2,  // 03-command（旧）
+  0,  // 01-wink（旧）
+  3,  // 04-alert
+  4,  // 05-concerned
+  5,  // 06-command
+  10, // 11-typing
 ]
 
-/** 下一支自走片段：随机且不与当前重复（单元素池时原样返回）。 */
-export function nextAmbientClip(current: number | null): number {
-  const pool = AMBIENT_CLIPS.filter((index) => index !== current)
-  if (!pool.length) return AMBIENT_CLIPS[0] ?? poseClip('idle')
-  return pool[Math.floor(Math.random() * pool.length)]
+/** 等待穿插的小动作位：除 alert 主拍外的 12 支（主拍按节奏位单独插入）。
+ *  2026-11-19 用户：有待办时一直循环同一支 alert 摇头很呆；2026-11-20 #14：
+ *  其余 12 支都要看得到 —— 小动作位从这 12 支里洗牌袋抽取。 */
+export const WAITING_OTHERS: readonly number[] = [
+  6,  // 07-idle
+  8,  // 09-smile
+  11, // 12-wink
+  9,  // 10-thinking
+  7,  // 08-ready
+  12, // 13-working
+  1,  // 02-thinking（旧）
+  0,  // 01-wink（旧）
+  2,  // 03-command（旧）
+  10, // 11-typing
+  5,  // 06-command
+  4,  // 05-concerned
+]
+
+/** 作业穿插的小动作位：除 working 主拍外的 12 支。长时间跑任务时她原本冻在
+ *  13-working 一支，其余表情整段看不到（2026-11-20 用户 #14）。 */
+export const WORKING_OTHERS: readonly number[] = [
+  6,  // 07-idle
+  8,  // 09-smile
+  11, // 12-wink
+  9,  // 10-thinking
+  7,  // 08-ready
+  1,  // 02-thinking（旧）
+  0,  // 01-wink（旧）
+  2,  // 03-command（旧）
+  10, // 11-typing
+  3,  // 04-alert
+  5,  // 06-command
+  4,  // 05-concerned
+]
+
+/** 洗牌袋状态：order 是本轮随机排列，index 是抽到第几支。 */
+export interface ClipBag {
+  order: number[]
+  index: number
 }
 
-/** 「等你在场」轮播序列（2026-11-19 用户：有需要我处理的任务时，她一直循环
- *  同一支 alert 摇头动作，显得呆）。pose 语义保持 alert（举牌等你），但视频
- *  片段按固定序列穿插：以 alert（04）为主拍，中间换成 idle / smile / wink /
- *  thinking / ready / working。固定序列（不用随机池）保证「警觉 → 小动作 →
- *  警觉」的节奏，不会连着几支都不是 alert。 */
-export const WAITING_CLIPS: readonly number[] = [
-  3,  // 04-alert（主拍）
-  6,  // 07-idle
-  3,  // 04-alert
-  8,  // 09-smile
-  3,  // 04-alert
-  11, // 12-wink
-  3,  // 04-alert
-  9,  // 10-thinking
-  3,  // 04-alert
-  7,  // 08-ready
-  3,  // 04-alert
-  12, // 13-working
-  3,  // 04-alert
-  1,  // 02-thinking（旧）
-]
+export function createClipBag(): ClipBag {
+  return { order: [], index: 0 }
+}
 
-/** 等待穿插的第 `step` 拍（0 起、自动回环）。**必须用步进游标，不能用
- *  「当前片段找下标再 +1」**：序列里 alert 出现多次，indexOf 永远命中第一处，
- *  结果只会 04 ↔ 07 两支来回（2026-11-19 真机实测踩到）。 */
-export function waitingClipAt(step: number): number {
-  if (WAITING_CLIPS.length === 0) return poseClip('alert')
-  const n = WAITING_CLIPS.length
-  const at = ((Math.trunc(step) % n) + n) % n
-  return WAITING_CLIPS[at] ?? poseClip('alert')
+/** Fisher–Yates 洗牌（rnd 可注入，测试用）。 */
+export function shuffleClips(
+  candidates: readonly number[],
+  rnd: () => number = Math.random,
+): number[] {
+  const order = [...candidates]
+  for (let i = order.length - 1; i > 0; i--) {
+    const j = Math.floor(rnd() * (i + 1))
+    const swap = order[i]!
+    order[i] = order[j]!
+    order[j] = swap
+  }
+  return order
+}
+
+/** 从袋里抽下一支：抽完一轮才重洗；新一轮第一支不与当前画面重复。 */
+export function nextFromBag(
+  bag: ClipBag,
+  candidates: readonly number[],
+  current: number | null,
+  rnd: () => number = Math.random,
+): number {
+  if (bag.order.length === 0 || bag.index >= bag.order.length) {
+    bag.order = shuffleClips(candidates, rnd)
+    bag.index = 0
+    if (current !== null && bag.order.length > 1 && bag.order[0] === current) {
+      const swapWith = 1 + Math.floor(rnd() * (bag.order.length - 1))
+      const first = bag.order[0]!
+      bag.order[0] = bag.order[swapWith]!
+      bag.order[swapWith] = first
+    }
+  }
+  const pick = bag.order[bag.index] ?? candidates[0] ?? poseClip('idle')
+  bag.index += 1
+  return pick
 }

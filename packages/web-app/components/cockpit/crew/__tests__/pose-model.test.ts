@@ -1,7 +1,7 @@
 // v22 姿态/片段模型单测：13 支视频片段 + 12 个语义姿态 + mood 双向映射。
 // 立绘真源在 docs/cabin-design/assets/v22（vite 把 webm/png import 变成 URL 字符串）。
 
-import { describe, it, expect, vi } from 'vitest'
+import { describe, it, expect } from 'vitest'
 import {
   ACTION_POSES,
   AMBIENT_CLIPS,
@@ -13,13 +13,15 @@ import {
   POSE_MOOD,
   POSE_ORDER,
   POSE_SRC,
-  WAITING_CLIPS,
+  WAITING_OTHERS,
+  WORKING_OTHERS,
   clipPose,
   clipVariants,
-  nextAmbientClip,
+  createClipBag,
   nextClip,
+  nextFromBag,
   poseClip,
-  waitingClipAt,
+  shuffleClips,
   type PoseFx,
   type PoseKey,
 } from '../pose-model'
@@ -116,52 +118,33 @@ describe('pose-model · v22 纯视频立绘', () => {
     }
   })
 
-  it('待命自走池只含日常片段，且不会连续重复当前段', () => {
-    // alert / concerned / typing 是强事件语义，不进自走池。
-    expect(AMBIENT_CLIPS).not.toContain(3)
-    expect(AMBIENT_CLIPS).not.toContain(4)
-    expect(AMBIENT_CLIPS).not.toContain(10)
-    expect(AMBIENT_CLIPS).toContain(6)
+  it('待命自走：13 支全部参与，洗牌袋一轮各出现一次、顺序随机', () => {
+    // 2026-11-20 用户 #14：所有表情都要有机会且经常看到；但不要固定扫 —— 要随机。
+    expect([...AMBIENT_CLIPS].sort((a, b) => a - b))
+      .toEqual(CLIPS.map((_, index) => index))
 
-    const spy = vi.spyOn(Math, 'random').mockReturnValue(0)
-    try {
-      const first = AMBIENT_CLIPS.find((index) => index !== 6)
-      expect(nextAmbientClip(6)).toBe(first)
-      expect(nextAmbientClip(6)).not.toBe(6)
-      spy.mockReturnValue(0.999)
-      expect(nextAmbientClip(6)).not.toBe(6)
-    } finally {
-      spy.mockRestore()
-    }
+    // 洗牌是随机的：注入不同 rnd 得到不同顺序（rnd=0 → 逐位交换；rnd≈1 → 原序）。
+    expect(shuffleClips([0, 1, 2, 3], () => 0)).toEqual([1, 2, 3, 0])
+    expect(shuffleClips([0, 1, 2, 3], () => 0.999_999)).toEqual([0, 1, 2, 3])
+
+    // 一轮抽完 = 13 支各一次；抽完自动重洗。
+    const bag = createClipBag()
+    const drawn = AMBIENT_CLIPS.map(() => nextFromBag(bag, AMBIENT_CLIPS, null, () => 0.999_999))
+    expect([...drawn].sort((a, b) => a - b)).toEqual(CLIPS.map((_, index) => index))
+    // 新一轮第一支不与上一轮最后一支连播。
+    expect(nextFromBag(bag, AMBIENT_CLIPS, drawn[drawn.length - 1]!, () => 0.999_999))
+      .not.toBe(drawn[drawn.length - 1])
   })
 
-  it('等待穿插序列：以 alert 为主拍，日常片段不会连排', () => {
-    // 2026-11-19 用户：有待办时她一直循环同一支摇头动作，很呆。
-    expect(WAITING_CLIPS[0]).toBe(poseClip('alert'))
-    const alertCount = WAITING_CLIPS.filter((index) => index === poseClip('alert')).length
-    expect(alertCount).toBeGreaterThanOrEqual(WAITING_CLIPS.length / 2)
-    // 非 alert 的片段两侧都必须是 alert —— 保证「警觉 → 小动作 → 警觉」的节奏。
-    for (let i = 0; i < WAITING_CLIPS.length; i++) {
-      if (WAITING_CLIPS[i] === poseClip('alert')) continue
-      expect(WAITING_CLIPS[i - 1]).toBe(poseClip('alert'))
-      expect(WAITING_CLIPS[(i + 1) % WAITING_CLIPS.length]).toBe(poseClip('alert'))
-    }
-  })
-
-  it('等待穿插按步进游标前进：走完一轮能看到多支不同动作', () => {
-    expect(waitingClipAt(0)).toBe(WAITING_CLIPS[0])
-    expect(waitingClipAt(1)).toBe(WAITING_CLIPS[1])
-    // 回环 / 负数都落在序列内。
-    expect(waitingClipAt(WAITING_CLIPS.length)).toBe(WAITING_CLIPS[0])
-    expect(waitingClipAt(-1)).toBe(WAITING_CLIPS[WAITING_CLIPS.length - 1])
-
-    // 真机 bug 回归（2026-11-19）：旧实现用「当前片段 indexOf 再 +1」推下一拍，
-    // 序列里 alert 重复出现 → 永远 04 ↔ 07 两支来回。步进游标必须走遍整轮。
-    const seen = new Set<number>()
-    for (let step = 0; step < WAITING_CLIPS.length; step++) seen.add(waitingClipAt(step))
-    expect(seen.size).toBeGreaterThan(3)
-    const actions = [...seen].filter((index) => index !== poseClip('alert'))
-    expect(actions.length).toBeGreaterThanOrEqual(3)
+  it('等待 / 作业穿插：主拍固定，其余 12 支随机轮换（一轮覆盖 13 支）', () => {
+    // 2026-11-19 用户：有待办时一直循环同一支摇头动作很呆。
+    // 2026-11-20 #14：等待 / 作业里其余 12 支也要看到，但顺序随机。
+    expect(WAITING_OTHERS).toHaveLength(12)
+    expect(new Set(WAITING_OTHERS).size).toBe(12)
+    expect(WAITING_OTHERS).not.toContain(poseClip('alert'))
+    expect(WORKING_OTHERS).toHaveLength(12)
+    expect(new Set(WORKING_OTHERS).size).toBe(12)
+    expect(WORKING_OTHERS).not.toContain(poseClip('working'))
   })
 
   it('mood → pose：happy→smile、worried→concerned、boot→idle（开机待命）', () => {

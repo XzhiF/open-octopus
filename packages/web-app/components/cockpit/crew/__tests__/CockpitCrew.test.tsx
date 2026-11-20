@@ -665,23 +665,27 @@ describe('CockpitCrew · v22.1 待命自走轮播', () => {
   beforeEach(() => vi.useFakeTimers())
   afterEach(() => vi.useRealTimers())
 
-  it('真空闲 12s 后换一支日常片段，姿态语义仍是待命', () => {
+  it('真空闲 7s 后换一支小动作（不与当前段重复），姿态语义仍是待命', () => {
     renderCrew()
     expect(sprite()).toHaveAttribute('data-pose', 'idle')
     expect(sprite()).toHaveAttribute('data-clip', '6')
 
-    act(() => { vi.advanceTimersByTime(12_000) })
+    act(() => { vi.advanceTimersByTime(7_000) })
 
     expect(sprite()).toHaveAttribute('data-pose', 'idle')
     expect(sprite().getAttribute('data-clip')).not.toBe('6')
   })
 
-  it('作业/动作期间不自走（片段跟随真实状态）', () => {
+  it('作业期也穿插小动作：主拍隔拍回归，其余片段轮换', () => {
+    // 2026-11-20 用户 #14：跑任务时她不再冻在 13-working 一支。
     renderCrew({ mood: 'working' })
     expect(sprite()).toHaveAttribute('data-clip', '12')
 
-    act(() => { vi.advanceTimersByTime(12_000) })
+    act(() => { vi.advanceTimersByTime(7_000) })
+    expect(sprite()).toHaveAttribute('data-pose', 'working')
+    expect(sprite().getAttribute('data-clip')).not.toBe('12')
 
+    act(() => { vi.advanceTimersByTime(10_000) })
     expect(sprite()).toHaveAttribute('data-pose', 'working')
     expect(sprite()).toHaveAttribute('data-clip', '12')
   })
@@ -716,27 +720,34 @@ describe('CockpitCrew · 等你在场（有待办）', () => {
   beforeEach(() => vi.useFakeTimers())
   afterEach(() => vi.useRealTimers())
 
-  it('等待时片段在 alert 与日常动作之间穿插（姿态语义仍是警觉）', () => {
+  it('等待时 alert 主拍隔拍穿插随机小动作；一轮能看到全部 13 支', () => {
     fleetState.rows = [attentionRow('a1', { stage: 'review', title: 'M2 · 结算对账' })]
     renderCrew({ mood: 'alert' })
 
     expect(sprite()).toHaveAttribute('data-pose', 'alert')
     expect(sprite()).toHaveAttribute('data-clip', '3')
 
-    // 首拍 4.2–6s：换成第一支日常动作。
+    // 首拍 4.2–6s：换一支小动作（不是 alert 主拍）。
     act(() => { vi.advanceTimersByTime(6_500) })
     expect(sprite()).toHaveAttribute('data-pose', 'alert')
-    expect(sprite()).toHaveAttribute('data-clip', '6')
+    expect(sprite().getAttribute('data-clip')).not.toBe('3')
 
     // 下一拍 5.2–7.8s：回到 alert 主拍。
     act(() => { vi.advanceTimersByTime(8_000) })
     expect(sprite()).toHaveAttribute('data-pose', 'alert')
     expect(sprite()).toHaveAttribute('data-clip', '3')
 
-    // 第三拍：换到另一支动作 —— 不能只在 04 ↔ 07 两支之间来回（真机回归）。
-    act(() => { vi.advanceTimersByTime(8_000) })
+    // 2026-11-20 用户 #14：一轮（24 拍，约 2.5 分钟）里 13 支各出现一次，
+    // 顺序随机 —— 不能像旧序列那样只轮 8 支。采样跨到第二轮开头，
+    // 兜住「首拍在采样前已经播过」的那一支。
+    const seen = new Set<string>()
+    for (let second = 0; second < 300; second++) {
+      act(() => { vi.advanceTimersByTime(1_000) })
+      const clip = sprite().getAttribute('data-clip')
+      if (clip) seen.add(clip)
+    }
+    expect(seen.size).toBe(13)
     expect(sprite()).toHaveAttribute('data-pose', 'alert')
-    expect(sprite()).toHaveAttribute('data-clip', '8')
   })
 
   it('待办一直在：头顶气泡隔一阵报真实清单（标题来自编队行）', () => {

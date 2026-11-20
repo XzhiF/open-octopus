@@ -62,9 +62,9 @@ import {
   doneLine, listenLine, waitingLine,
 } from './chat-reactions'
 import {
-  CLIPS, MOOD_POSE, POSE_META, POSE_MOOD, clipPose, clipVariants, nextAmbientClip,
-  poseClip, waitingClipAt,
-  type PoseKey,
+  AMBIENT_CLIPS, CLIPS, MOOD_POSE, POSE_META, POSE_MOOD, WAITING_OTHERS, WORKING_OTHERS,
+  clipPose, clipVariants, createClipBag, nextFromBag, poseClip,
+  type ClipBag, type PoseKey,
 } from './pose-model'
 import { CockpitPoseSprite, PoseFX } from './CockpitPoseSprite'
 
@@ -170,9 +170,14 @@ export function CockpitCrew() {
   const lineIdxRef = useRef(0)
   /** 待办提醒轮播下标（每条说一次再回环）。 */
   const nudgeIdxRef = useRef(0)
-  /** 等待穿插的步进游标：从第二拍起步（第一拍就换一支日常动作）。
-   *  WAITING_CLIPS 里 alert 重复出现，不能用「当前片段找下标」推下一拍。 */
-  const waitingStepRef = useRef(1)
+  /** 自走 / 等待 / 作业三只「洗牌袋」：每轮随机洗一次、抽完再洗 —— 顺序随机，
+   *  但一轮内每支各出现一次，不会长期漏掉某支（2026-11-20 用户 #14）。 */
+  const ambientBagRef = useRef<ClipBag>(createClipBag())
+  const waitingBagRef = useRef<ClipBag>(createClipBag())
+  const workingBagRef = useRef<ClipBag>(createClipBag())
+  /** 主拍隔拍标记（等待 = alert、作业 = working）：false 先抽小动作，true 播主拍。 */
+  const waitingMainRef = useRef(false)
+  const workingMainRef = useRef(false)
   const lastTalkRef = useRef(0)
   // 对话联动用 ref 读最新值，避免把 streaming 过渡做成「每次渲染重新触发」。
   const streamingRef = useRef(false)
@@ -216,11 +221,14 @@ export function CockpitCrew() {
   /** 真空闲 = 没有动作 override / 不在回复或倾听 / 语义姿态就是待命。 */
   const idleFree = !actionPose && phase === 'idle' && !listening && shownPose === 'idle'
   /** 等你在场（2026-11-19）：有 attention 挂在你这里 → 语义姿态 alert。此时
-   *  片段也不能一支死循环（用户：一直左右摇头很呆）—— 按 WAITING_CLIPS 穿插。 */
+   *  片段也不能一支死循环（用户：一直左右摇头很呆）—— alert 主拍间穿插小动作。 */
   const waitingFree = !actionPose && phase === 'idle' && !listening && shownPose === 'alert'
-  const rotateMode: 'ambient' | 'waiting' | null = idleFree
+  /** 作业期（2026-11-20 #14）：跑任务时原本冻在 13-working 一支，其余表情整段
+   *  看不到 —— 同样用 working 主拍隔拍穿插小动作。 */
+  const workingFree = !actionPose && phase === 'idle' && !listening && shownPose === 'working'
+  const rotateMode: 'ambient' | 'waiting' | 'working' | null = idleFree
     ? 'ambient'
-    : waitingFree ? 'waiting' : null
+    : waitingFree ? 'waiting' : workingFree ? 'working' : null
   /** v22：立绘永远视频；pose 只决定语义，clip 决定具体片段。
    *  优先级：动作点名 > 待命/等待轮播 > pose 首选片段。 */
   const shownClip = actionClip !== null && Number.isInteger(actionClip)
@@ -231,32 +239,48 @@ export function CockpitCrew() {
   const shownClipRef = useRef(shownClip)
   useEffect(() => { shownClipRef.current = shownClip }, [shownClip])
   useEffect(() => { reportPose(shownPose, shownClip) }, [shownPose, shownClip, reportPose])
-  // v22.1 待命自走：真空闲时随机换日常小动作。首支 3.5–6s 就换（进舱后马上
-  // 能看出她在动），之后 7–11s 一换；任何动作 / 对话 / 倾听 / reduced-motion
-  // 打断即停，回到 idle 后重新起算。
-  // 2026-11-19：有待办时（waiting 模式）按固定序列 4.2–6s / 5.2–7.8s 穿插，
-  // 节奏比待命自走略快 —— 你正等着处理，她的动作要能看出「在场」。
+  // v22.1 待命自走：空闲时换小动作。首支 3.5–6s 就换（进舱后马上能看出她在动），
+  // 之后 5.5–8.5s 一换；任何动作 / 对话 / 倾听 / reduced-motion 打断即停。
+  // 2026-11-19：有待办时（waiting 模式）4.2–6s / 5.2–7.8s 穿插，节奏比待命自走
+  // 略快 —— 你正等着处理，她的动作要能看出「在场」。
+  // 2026-11-20 #14：等待 / 作业都改成「主拍隔拍 + 小动作位从 12 支里洗牌袋抽取」，
+  // 13 支一轮各出现一次；顺序仍是随机的（用户：不要固定扫，要有点随机）。
   useEffect(() => {
     if (reduce || rotateMode === null) {
       setAmbientClip(null)
       return
     }
+    // 小动作位：洗牌袋抽一支；不与当前画面重复（袋满轮时在 nextFromBag 里规避）。
+    const draw = (bag: ClipBag, candidates: readonly number[]) =>
+      nextFromBag(bag, candidates, shownClipRef.current)
     let first = true
     let timer: ReturnType<typeof setTimeout>
     const schedule = () => {
       const delay = rotateMode === 'waiting'
         ? first ? 4200 + Math.random() * 1800 : 5200 + Math.random() * 2600
-        : first ? 3500 + Math.random() * 2500 : 7000 + Math.random() * 4000
+        : rotateMode === 'working'
+          ? first ? 5000 + Math.random() * 2000 : 6500 + Math.random() * 3000
+          : first ? 3500 + Math.random() * 2500 : 5500 + Math.random() * 3000
       first = false
       timer = setTimeout(() => {
         if (rotateMode === 'waiting') {
-          // 游标步进（不在 setState updater 里改 ref：StrictMode 会双调用）。
-          setAmbientClip(waitingClipAt(waitingStepRef.current))
-          waitingStepRef.current += 1
+          if (waitingMainRef.current) {
+            waitingMainRef.current = false
+            setAmbientClip(poseClip('alert'))
+          } else {
+            waitingMainRef.current = true
+            setAmbientClip(draw(waitingBagRef.current, WAITING_OTHERS))
+          }
+        } else if (rotateMode === 'working') {
+          if (workingMainRef.current) {
+            workingMainRef.current = false
+            setAmbientClip(poseClip('working'))
+          } else {
+            workingMainRef.current = true
+            setAmbientClip(draw(workingBagRef.current, WORKING_OTHERS))
+          }
         } else {
-          // prev 为 null（本轮第一次轮播）= 画面还停在 pose 首选片段 —— 用
-          // shownClipRef 当基准，保证第一拍确实换了一支（否则随机可能抽回同一支）。
-          setAmbientClip((prev) => nextAmbientClip(prev ?? shownClipRef.current))
+          setAmbientClip(draw(ambientBagRef.current, AMBIENT_CLIPS))
         }
         schedule()
       }, delay)
