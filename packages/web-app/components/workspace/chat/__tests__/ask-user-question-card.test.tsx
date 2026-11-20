@@ -201,6 +201,41 @@ describe("AskUserQuestionCard", () => {
     expect(content).not.toContain("用户回答了以下问题")
   })
 
+  // 2026-11-20 用户 #20：AskUserQuestion 增「还需讨论」——宿主给了 onChatAbout
+  // 就走讨论端点（提问仍待答），不该再把「讨论正文」当答案提交。
+  it("onChatAbout：即使 hideChatAbout 也出按钮，把已勾选摘要交回宿主、不提交答案", async () => {
+    const onAnswer = vi.fn()
+    const onChatAbout = vi.fn()
+    const user = userEvent.setup()
+    render(
+      <AskUserQuestionCard
+        message={makeMessage(singleSelectQuestions)}
+        onAnswer={onAnswer}
+        onChatAbout={onChatAbout}
+        hideChatAbout
+      />,
+    )
+
+    const button = screen.getByTestId("aq-chat-about")
+    expect(button.textContent).toContain("还需讨论")
+
+    await user.click(button)
+    expect(onChatAbout).toHaveBeenCalledWith(undefined)
+    expect(onAnswer).not.toHaveBeenCalled()
+
+    await user.click(screen.getByText("工作流定义"))
+    await user.click(button)
+    expect(onChatAbout).toHaveBeenLastCalledWith("已勾选 YAML 类型: 工作流定义")
+    expect(onAnswer).not.toHaveBeenCalled()
+  })
+
+  it("hideChatAbout 且没有 onChatAbout → 不渲染讨论入口", () => {
+    render(
+      <AskUserQuestionCard message={makeMessage(singleSelectQuestions)} onAnswer={vi.fn()} hideChatAbout />,
+    )
+    expect(screen.queryByTestId("aq-chat-about")).toBeNull()
+  })
+
   it("disables all inputs after submission", async () => {
     const user = userEvent.setup()
     render(<AskUserQuestionCard message={makeMessage(singleSelectQuestions)} onAnswer={vi.fn()} />)

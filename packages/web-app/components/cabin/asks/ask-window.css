@@ -295,6 +295,30 @@
 .ck-askwin-send:disabled { opacity: 0.45; cursor: default; }
 .ck-askwin-send:not(:disabled):hover { opacity: 0.88; }
 
+/* 还需讨论（用户 #20）：回执用中性青色一行，不当错误展示。 */
+.ck-askwin-note {
+  border-radius: 8px;
+  border: 1px solid color-mix(in srgb, var(--pop-cyan) 34%, transparent);
+  background: color-mix(in srgb, var(--pop-cyan) 8%, transparent);
+  padding: 6px 9px;
+  color: var(--pop-cyan);
+  font-size: 11px;
+}
+.ck-askwin-discuss {
+  margin-right: auto;
+  padding: 5px 10px;
+  border-radius: 8px;
+  border: 1px dashed color-mix(in srgb, var(--pop-purple) 45%, transparent);
+  color: var(--pop-dim);
+  font-size: 11px;
+  transition: color 0.14s, border-color 0.14s;
+}
+.ck-askwin-discuss:hover:not(:disabled) {
+  color: var(--pop-purple);
+  border-color: color-mix(in srgb, var(--pop-purple) 70%, transparent);
+}
+.ck-askwin-discuss:disabled { opacity: 0.5; }
+
 /* 错误 / 回退入口 */
 .ck-askwin-err {
   display: flex;

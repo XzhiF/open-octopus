@@ -30,6 +30,11 @@ vi.mock('@/lib/cabin-api', async (importOriginal) => {
     ...actual,
     submitCabinDecision: vi.fn(async () => ({ already: false, receipt: { line: '✓ 已答 · 单 phase' } })),
     ackCabinAttention: vi.fn(async () => ({ acked: true })),
+    discussCabinAsk: vi.fn(async () => ({
+      target: 'thread',
+      delivered: true,
+      receipt: '已请对方先把这几个选项讲清楚 —— 到对话里继续',
+    })),
   }
 })
 vi.mock('@/lib/tasks-api', async (importOriginal) => {
@@ -42,7 +47,7 @@ vi.mock('@/lib/tasks-api', async (importOriginal) => {
   }
 })
 
-import { submitCabinDecision, ackCabinAttention } from '@/lib/cabin-api'
+import { submitCabinDecision, ackCabinAttention, discussCabinAsk } from '@/lib/cabin-api'
 import { readyTask, triggerTask } from '@/lib/tasks-api'
 
 function cockpit(): CockpitContextValue {
@@ -264,6 +269,39 @@ describe('CockpitRightRail · v21 待办', () => {
     expect(body.source).toBe('card')
     // 回执出现 = 与 classic 同一套「已答 → 回列表」节奏。
     expect(await screen.findByTestId('cockpit-inbox-receipt')).toHaveTextContent('已答')
+  })
+
+  it('卡片里点「还需讨论」→ 走讨论端点，提问仍待答（不提交答案）', async () => {
+    vi.mocked(discussCabinAsk).mockClear()
+    vi.mocked(submitCabinDecision).mockClear()
+    fleetState.value = fleet([
+      row('q1', {
+        stage: 'answer',
+        ask: {
+          ask_id: 'ask-q1',
+          message_id: 'msg-q1',
+          questions: {
+            questions: [{
+              header: '任务范围',
+              multiSelect: false,
+              question: '只交付规格还是连实现一起？',
+              options: [{ label: '单 phase' }, { label: '多 phase' }],
+            }],
+          },
+        },
+      }),
+    ])
+    render(ui())
+    fireEvent.click(screen.getByTestId('cockpit-inbox-chip'))
+    fireEvent.click(screen.getByTestId('cockpit-inbox-row-q1'))
+
+    fireEvent.click(screen.getByTestId('aq-chat-about'))
+    await waitFor(() => expect(discussCabinAsk).toHaveBeenCalledTimes(1))
+    expect(discussCabinAsk).toHaveBeenCalledWith('c1', { askId: 'ask-q1' })
+    expect(submitCabinDecision).not.toHaveBeenCalled()
+    await waitFor(() => {
+      expect(screen.getByTestId('cockpit-inbox-discuss-note')).toHaveTextContent('已请对方先把这几个选项讲清楚')
+    })
   })
 
   it('「去处理」→ 详情落对话页签，浮层不关并回到列表（详情从左侧顺势打开）', () => {

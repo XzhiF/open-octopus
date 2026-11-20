@@ -643,6 +643,30 @@ export async function submitCabinDecision(
 }
 
 /**
+ * 「还需讨论」（2026-11-20 用户 #20）：不作答，把讨论请求送进提问所在会话，
+ * 请对方先把选项讲清楚；提问仍然待答（服务端不写决策账本）。
+ */
+export async function discussCabinAsk(
+  cabinId: string,
+  input: { askId: string; note?: string },
+): Promise<{ target: "main" | "thread"; delivered: boolean; receipt: string }> {
+  const res = await fetch(url(`/${cabinId}/decisions/discuss`), {
+    method: "POST",
+    headers: JSON_HEADERS,
+    body: JSON.stringify(input),
+  })
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({} as Record<string, unknown>))
+    throw new CabinDecisionError(
+      typeof body.error === "string" ? body.error : `HTTP ${res.status}`,
+      res.status,
+      body.detail,
+    )
+  }
+  return res.json() as Promise<{ target: "main" | "thread"; delivered: boolean; receipt: string }>
+}
+
+/**
  * 忽略一条提问（旧卡 / 不再需要回答）。服务端把 decision 写回消息 metadata，
  * 派生的 attention 与「等你答」随即消项；不转达、不写决策账本。
  * `dismissed: 0` = 没找到对应会话消息（如工作流 pending_interaction）。

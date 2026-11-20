@@ -5,12 +5,12 @@ import type { CabinAttentionItem } from '@octopus/shared'
 import { AskWindowsProvider, useAskWindows } from '../ask-windows-provider'
 import { AskWindowLayer } from '../ask-window-layer'
 import type { CockpitLayerApi } from '@/components/cockpit/state/cockpit-state'
-import { submitCabinDecision, dismissCabinAsk, CabinDecisionError } from '@/lib/cabin-api'
+import { submitCabinDecision, dismissCabinAsk, discussCabinAsk, CabinDecisionError } from '@/lib/cabin-api'
 
 vi.mock('sonner', () => ({ toast: { success: vi.fn(), error: vi.fn() } }))
 vi.mock('@/lib/cabin-api', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@/lib/cabin-api')>()
-  return { ...actual, submitCabinDecision: vi.fn(), dismissCabinAsk: vi.fn() }
+  return { ...actual, submitCabinDecision: vi.fn(), dismissCabinAsk: vi.fn(), discussCabinAsk: vi.fn() }
 })
 // 窗在舱外也要能提交：给出一个舱 id（真实实现里由 CabinProvider 提供）。
 vi.mock('@/components/cabin/cabin-provider', async (importOriginal) => {
@@ -20,6 +20,7 @@ vi.mock('@/components/cabin/cabin-provider', async (importOriginal) => {
 
 const submit = vi.mocked(submitCabinDecision)
 const dismiss = vi.mocked(dismissCabinAsk)
+const discuss = vi.mocked(discussCabinAsk)
 
 function attn(over: Partial<CabinAttentionItem> = {}): CabinAttentionItem {
   return {
@@ -67,6 +68,7 @@ function renderWindow(item: CabinAttentionItem) {
 beforeEach(() => {
   submit.mockReset()
   dismiss.mockReset()
+  discuss.mockReset()
 })
 
 describe('AskWindow', () => {
@@ -127,6 +129,26 @@ describe('AskWindow', () => {
     )
     // 编队行已乐观消项（provider 的 asks 变空 → Harness 无行可开）。
     expect(screen.getByText('open')).toBeInTheDocument()
+  })
+
+  it('「还需讨论」→ 走讨论端点（不提交答案），窗不关、回执照常', async () => {
+    discuss.mockResolvedValue({
+      target: 'thread',
+      delivered: true,
+      receipt: '已请对方先把这几个选项讲清楚 —— 到对话里继续',
+    })
+    renderWindow(attn())
+    fireEvent.click(screen.getByText('open'))
+
+    fireEvent.click(screen.getByTestId('ask-window-discuss'))
+    await waitFor(() => expect(discuss).toHaveBeenCalledWith('c1', { askId: 'a1' }))
+    expect(submit).not.toHaveBeenCalled()
+    await waitFor(() => {
+      expect(screen.getByTestId('ask-window-discuss-note')).toHaveTextContent('已请对方先把这几个选项讲清楚')
+    })
+    // 提问仍待答：窗还在，没有「已答」回执。
+    expect(screen.getByTestId('ask-window-a1')).toBeInTheDocument()
+    expect(screen.queryByTestId('ask-window-receipt')).toBeNull()
   })
 
   it('旧服务端 404：窗内给「去任务线程回答 →」，不偷偷转发', async () => {

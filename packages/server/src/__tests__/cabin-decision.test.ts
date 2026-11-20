@@ -297,6 +297,61 @@ describe("submitDecision：原生提问（没有镜像卡）", () => {
   })
 })
 
+// 用户 #20：「还需讨论」—— 不作答，先请提问的 agent 解释选项。
+// 提问必须仍然待答：账本里不能出现 decision 事件（derive 用账本判「已答」）。
+describe("discussAsk：还需讨论", () => {
+  it("主对话原生提问 → 讨论请求落库并唤醒主对话，账本不记决策", async () => {
+    insertNativeAsk("ask_native_main", MAIN, ["短信", "邮件"])
+    const res = await decisions.discussAsk(CABIN, { askId: "ask_native_main" })
+    expect(res.target).toBe("main")
+    expect(res.delivered).toBe(true)
+
+    const row = messages(MAIN).find((m) => m.content.startsWith("[讨论 ·"))
+    expect(row?.content).toContain("[讨论 · #? 舱主对话 · ask_native_main]")
+    expect(row?.content).toContain("（选项）短信 / 邮件")
+    expect(row?.content).toContain("讲清楚")
+    // 提问仍未答：没有 decision 账本事件，也没有 decision 元数据。
+    expect(decisionEvents()).toHaveLength(0)
+    const meta = db.prepare("SELECT metadata FROM messages WHERE id = ?")
+      .get("ask_native_main") as { metadata: string }
+    expect((JSON.parse(meta.metadata) as { activity?: { decision?: unknown } }).activity?.decision)
+      .toBeUndefined()
+    // 唤醒走主会话。
+    expect(posts.some((p) => p.url.includes(MAIN) && p.message.includes("[讨论 ·"))).toBe(true)
+  })
+
+  it("任务线程里的原生提问 → 讨论请求送进该线程", async () => {
+    insertNativeAsk("ask_native_thread", TASK_THREAD, ["A", "B"])
+    posts = []
+    const res = await decisions.discussAsk(CABIN, { askId: "ask_native_thread" })
+    expect(res.target).toBe("thread")
+    const toThread = posts.find((p) => p.url.includes(TASK_THREAD))
+    expect(toThread?.message).toContain("[讨论 · #? 任务线程 · ask_native_thread]")
+    expect(decisionEvents()).toHaveLength(0)
+  })
+
+  it("带上用户的说明 → 原样带进讨论请求", async () => {
+    insertNativeAsk("ask_native_main", MAIN)
+    await decisions.discussAsk(CABIN, { askId: "ask_native_main", note: "先说说各自的代价" })
+    const row = messages(MAIN).find((m) => m.content.startsWith("[讨论 ·"))
+    expect(row?.content).toContain("（用户说明）先说说各自的代价")
+  })
+
+  it("已经答过 → 409，不再发讨论请求", async () => {
+    insertNativeAsk("ask_native_main", MAIN)
+    await decisions.submitDecision(CABIN, { askId: "ask_native_main", choice: "A" })
+    posts = []
+    await expect(decisions.discussAsk(CABIN, { askId: "ask_native_main" }))
+      .rejects.toMatchObject({ status: 409 })
+    expect(posts).toHaveLength(0)
+  })
+
+  it("不存在的票据 → 404", async () => {
+    await expect(decisions.discussAsk(CABIN, { askId: "nope" }))
+      .rejects.toMatchObject({ status: 404 })
+  })
+})
+
 describe("relayDecision：汐音主路径", () => {
   it("转达 doer：verbatim 逐字 + 结构化块 + 回执", async () => {
     insertAskCard("ask_1")

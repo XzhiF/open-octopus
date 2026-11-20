@@ -265,6 +265,12 @@ const decisionBodySchema = z.object({
   taskId: z.string().optional(),
 })
 
+/** 「还需讨论」：不作答，先请提问的 agent 解释选项（不写决策账本）。 */
+const discussBodySchema = z.object({
+  askId: z.string().min(1),
+  note: z.string().optional(),
+})
+
 const delegationBodySchema = z.object({
   title: z.string().min(1),
   intent: z.string().min(1),
@@ -941,8 +947,22 @@ export function createCabinRoutes(
     }
   })
 
-  /** 忽略一条提问（旧卡 / 不再需要回答）：写回消息 decision，attention 随即消项。 */
-  router.post("/:id/asks/:askId/dismiss", (c) => {
+  /** 「还需讨论」（用户 #20）：不作答，把讨论请求送进提问所在会话 ——
+   *  提问仍待答，不写决策账本；agent 解释选项后人在对话里继续。 */
+  router.post("/:id/decisions/discuss", async (c) => {
+    if (!decisions) return c.json({ error: "decision service not wired" }, 503)
+    const body = await safeJson(c)
+    if (!body) return c.json({ error: "Invalid or missing JSON body" }, 400)
+    try {
+      const input = discussBodySchema.parse(body)
+      return c.json(await decisions.discussAsk(c.req.param("id"), input))
+    } catch (err) {
+      const { status, message } = classifyError(err)
+      return c.json({ error: message }, status as 400)
+    }
+  })
+
+  /** 忽略一条提问（旧卡 / 不再需要回答）：写回消息 decision，attention 随即消项。 */  router.post("/:id/asks/:askId/dismiss", (c) => {
     try {
       return c.json(service.dismissAsk(c.req.param("id"), c.req.param("askId")))
     } catch (err) {

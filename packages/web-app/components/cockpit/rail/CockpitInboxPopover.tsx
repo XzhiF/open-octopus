@@ -20,7 +20,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { X } from 'lucide-react'
 import type { ChatMessage } from '@/lib/types'
-import { ackCabinAttention } from '@/lib/cabin-api'
+import { ackCabinAttention, discussCabinAsk } from '@/lib/cabin-api'
 import { AskUserQuestionCard } from '@/components/workspace/chat/ask-user-question-card'
 import { useAskSubmit } from '@/components/cabin/asks/ask-submit'
 import {
@@ -93,6 +93,9 @@ function ReplyCard({ entry, onAnswered, onDone, onDeal, onOpenDetail }: ReplyCar
   const [pick, setPick] = useState<number | null>(null)
   const [free, setFree] = useState('')
   const [busyChoice, setBusyChoice] = useState<string | null>(null)
+  // 「还需讨论」（用户 #20）：不作答，请提问的 agent 先解释选项；提问仍待答。
+  const [discussBusy, setDiscussBusy] = useState(false)
+  const [discussNote, setDiscussNote] = useState<string | null>(null)
 
   const { submit, busy, failed } = useAskSubmit({
     cabinId: entry.cabinId || entryCabinId,
@@ -122,6 +125,25 @@ function ReplyCard({ entry, onAnswered, onDone, onDeal, onOpenDetail }: ReplyCar
   const sendLabel = useCallback((label: string) => {
     void send(`用户回答了以下问题：\n\n1. [要定的事] ${env?.decision ?? item.question ?? '选择'}\n   → ${label}`)
   }, [env?.decision, item.question, send])
+
+  /** 还需讨论：不提交答案，把讨论请求送进提问所在会话（提问仍待答）。 */
+  const chatAbout = useCallback(async (summary?: string) => {
+    const target = entry.cabinId || entryCabinId
+    if (!target || discussBusy || busy) return
+    setDiscussBusy(true)
+    setDiscussNote(null)
+    try {
+      const res = await discussCabinAsk(target, {
+        askId: env?.ask_id ?? item.id,
+        ...(summary ? { note: summary } : {}),
+      })
+      setDiscussNote(res.receipt)
+    } catch (err) {
+      setDiscussNote(err instanceof Error ? err.message : '讨论请求没有发出去')
+    } finally {
+      setDiscussBusy(false)
+    }
+  }, [busy, discussBusy, entry.cabinId, entryCabinId, env?.ask_id, item.id])
 
   const canInline = canAnswerInline(item)
 
@@ -187,13 +209,17 @@ function ReplyCard({ entry, onAnswered, onDone, onDeal, onOpenDetail }: ReplyCar
                 <AskUserQuestionCard
                   message={synthetic}
                   onAnswer={(content) => void send(content)}
-                  disabled={busy}
+                  onChatAbout={(summary) => void chatAbout(summary)}
+                  disabled={busy || discussBusy}
                   hideChatAbout
                   hotkeyId={item.id}
                 />
               )}
             </div>
             <div className="ck12-ipn">勾选后提交；不跳作战线程，汐音就地转达执行者。</div>
+            {discussNote && (
+              <div className="ck12-ipn" data-testid="cockpit-inbox-discuss-note">{discussNote}</div>
+            )}
           </>
         ) : canInline ? (
           <>
@@ -239,6 +265,20 @@ function ReplyCard({ entry, onAnswered, onDone, onDeal, onOpenDetail }: ReplyCar
                 发送
               </button>
             </div>
+            <div className="ck12-ipd-free">
+              <button
+                type="button"
+                className="ck12-ipd-deal"
+                data-testid="cockpit-inbox-discuss"
+                disabled={busy || discussBusy}
+                onClick={() => void chatAbout(pick != null ? `已勾选 ${options[pick].label}` : undefined)}
+              >
+                {discussBusy ? '发送讨论请求…' : '还需讨论 —— 先让对方解释这几个选项'}
+              </button>
+            </div>
+            {discussNote && (
+              <div className="ck12-ipn" data-testid="cockpit-inbox-discuss-note">{discussNote}</div>
+            )}
             <div className="ck12-ipn">选一项 → 提交；不跳作战线程，汐音就地转达执行者。</div>
           </>
         ) : (

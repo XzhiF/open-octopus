@@ -13,7 +13,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { CheckCircle2, ChevronDown, MessageSquare, X } from 'lucide-react'
 import type { ChatMessage } from '@/lib/types'
 import { useCabinOptional } from '@/components/cabin/cabin-provider'
-import { dismissCabinAsk } from '@/lib/cabin-api'
+import { dismissCabinAsk, discussCabinAsk } from '@/lib/cabin-api'
 import { AskUserQuestionCard } from '@/components/workspace/chat/ask-user-question-card'
 import { openTaskInChat } from '@/components/cabin/modules/ui'
 import { useAskWindows, type AskWindowEntry } from './ask-windows-provider'
@@ -56,6 +56,9 @@ export function AskWindow({ entry, left, top, width, className, onMove, onFocus,
   const [flashing, setFlashing] = useState(false)
   const [dismissing, setDismissing] = useState(false)
   const [dismissErr, setDismissErr] = useState<string | null>(null)
+  // 「还需讨论」（用户 #20）：不作答，请提问方先解释选项；提问仍待答。
+  const [discussBusy, setDiscussBusy] = useState(false)
+  const [discussNote, setDiscussNote] = useState<string | null>(null)
 
   const options = useMemo(() => env.options ?? [], [env.options])
   const optionLabels = useMemo(() => {
@@ -88,6 +91,24 @@ export function AskWindow({ entry, left, top, width, className, onMove, onFocus,
       setNeedsThread(true)
     }
   }, [entry.askId, markAnswered, submit])
+
+  /** 还需讨论：不作答，把讨论请求送进提问所在会话（提问仍待答，窗不关）。 */
+  const handleDiscuss = useCallback(async (summary?: string) => {
+    if (!cabin?.cabinId || discussBusy || busy) return
+    setDiscussBusy(true)
+    setDiscussNote(null)
+    try {
+      const res = await discussCabinAsk(cabin.cabinId, {
+        askId: entry.askId,
+        ...(summary ? { note: summary } : {}),
+      })
+      setDiscussNote(res.receipt)
+    } catch (err) {
+      setDiscussNote(err instanceof Error ? err.message : '讨论请求没有发出去')
+    } finally {
+      setDiscussBusy(false)
+    }
+  }, [busy, cabin?.cabinId, discussBusy, entry.askId])
 
   // 忽略旧卡 / 不再需要回答的那条：只改消息 decision，不转达、不写账本。
   const handleDismiss = useCallback(async () => {
@@ -309,7 +330,8 @@ export function AskWindow({ entry, left, top, width, className, onMove, onFocus,
             <AskUserQuestionCard
               message={synthetic}
               onAnswer={(content) => void handleAnswer(content)}
-              disabled={busy}
+              onChatAbout={(summary) => void handleDiscuss(summary)}
+              disabled={busy || discussBusy}
               hideChatAbout
               hotkeyId={entry.askId}
             />
@@ -360,6 +382,15 @@ export function AskWindow({ entry, left, top, width, className, onMove, onFocus,
             <div className="ck-askwin-sendrow">
               <button
                 type="button"
+                className="ck-askwin-discuss"
+                data-testid="ask-window-discuss"
+                disabled={busy || discussBusy}
+                onClick={() => void handleDiscuss(choice ? `已勾选 ${choice}` : undefined)}
+              >
+                {discussBusy ? '发送讨论请求…' : '还需讨论 —— 先让对方解释这几个选项'}
+              </button>
+              <button
+                type="button"
                 className="ck-askwin-send"
                 disabled={busy || !(choice ?? text.trim())}
                 onClick={answerByFallback}
@@ -368,6 +399,10 @@ export function AskWindow({ entry, left, top, width, className, onMove, onFocus,
               </button>
             </div>
           </div>
+        )}
+
+        {discussNote && (
+          <div className="ck-askwin-note" data-testid="ask-window-discuss-note">{discussNote}</div>
         )}
 
         {(failed || needsThread || dismissErr) && (

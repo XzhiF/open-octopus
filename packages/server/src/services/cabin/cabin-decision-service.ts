@@ -410,6 +410,113 @@ export class CabinDecisionService {
     return native.isMain ? "舱主对话" : "任务线程"
   }
 
+  /**
+   * 用户 #20：「还需讨论」—— 不作答，先请提问的 agent 把选项讲清楚。
+   *
+   * 语义（对齐 Claude Code 的 Chat about this）：提问**仍然待答**，不写决策账本；
+   * 只把一段讨论请求送进提问所在会话（主对话 → 落库 + 唤醒；任务线程 → 直发）。
+   * agent 解释完再请人选择，人在对话里接着输入。
+   */
+  async discussAsk(cabinId: string, input: { askId: string; note?: string }): Promise<{
+    ok: true
+    target: "main" | "thread"
+    delivered: boolean
+    receipt: string
+  }> {
+    const askId = input.askId?.trim()
+    if (!askId) throw new CabinDecisionError("缺少 askId", 400)
+    const main = this.mainSession(cabinId)
+    const answered = this.recordForAsk(cabinId, askId)
+    if (answered) {
+      throw new CabinDecisionError(`这条提问已经答过了（${answered.choice}）`, 409)
+    }
+
+    const card = this.findAskCard(cabinId, askId)
+    const native = card ? null : this.findNativeAsk(cabinId, askId)
+    if (!card && !native) {
+      throw new CabinDecisionError(`ask ${askId} 不在本舱里（可能已过期，或不属于这个舱）`, 404)
+    }
+
+    const questions = card ? (card.payload.questions ?? null) : this.questionsOfMessage(native!.id)
+    const first = firstAskQuestion(questions)
+    const decision = card?.payload.decision
+      ?? (typeof first?.question === "string" ? first.question : "")
+    const labels = card ? this.optionLabels(card.payload) : askOptionLabels(questions)
+    const authorSessionId = card?.payload.authorSessionId ?? native?.sessionId ?? ""
+    if (!authorSessionId) throw new CabinDecisionError("这条提问没有可送达的作者线程", 409)
+    const target: "main" | "thread" = authorSessionId === main.sessionId ? "main" : "thread"
+    const handle = card?.payload.handle ?? "#?"
+    const taskName = card?.payload.taskName
+      ?? this.nativeAskLabel({ isMain: target === "main" })
+
+    const content = [
+      `[讨论 · ${handle} ${taskName} · ${askId}] 用户想先讨论，暂不选择`,
+      ...(decision ? [`（问题）${decision}`] : []),
+      ...(labels.length > 0 ? [`（选项）${labels.join(" / ")}`] : []),
+      ...(input.note?.trim() ? [`（用户说明）${input.note.trim()}`] : []),
+      "",
+      "请先把这几个选项分别是什么意思、影响与取舍讲清楚；缺关键信息就指出需要用户补充什么。",
+      "说明完再请用户做选择（重新 AskUserQuestion，或让用户直接回复都可以）。用户会接着输入。",
+    ].join("\n")
+
+    let delivered = false
+    if (target === "main") {
+      // 落库 + 唤醒（与决策消息同一条路，但**没有** decisionTicket —— 提问仍未答）。
+      const ts = now()
+      try {
+        this.db().prepare(
+          "INSERT INTO messages (id, session_id, role, content, metadata, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+        ).run(
+          randomUUID(), main.sessionId, "user", content,
+          JSON.stringify({ cabinDiscuss: { askId } }), ts,
+        )
+        this.db().prepare("UPDATE sessions SET last_message_at = ?, updated_at = ? WHERE id = ?")
+          .run(ts, ts, main.sessionId)
+        this.deps.onAppend?.(main.sessionId, main.workspaceId)
+      } catch (err) {
+        console.warn("[CabinDecision] discuss message insert failed:", err instanceof Error ? err.message : String(err))
+      }
+      delivered = (await this.postTurn(main.sessionId, main.org, content)).ok
+    } else {
+      delivered = (await this.postTurn(authorSessionId, main.org, content)).ok
+    }
+    try { this.deps.service.notifyViewChanged(cabinId) } catch { /* view hook optional */ }
+
+    return {
+      ok: true,
+      target,
+      delivered,
+      receipt: delivered
+        ? (target === "main"
+          ? "已请汐音先把这几个选项讲清楚 —— 到对话里继续"
+          : `已请${taskName}先把这几个选项讲清楚 —— 切到「${taskName}」线程继续`)
+        : "讨论请求已记下，对方忙完这一轮就会看到",
+    }
+  }
+
+  /** 原生提问行里的 questions（tool_calls → AskUserQuestion.input.questions）。 */
+  private questionsOfMessage(messageId: string): unknown {
+    try {
+      const row = this.db().prepare("SELECT tool_calls FROM messages WHERE id = ?")
+        .get(messageId) as { tool_calls?: string | null } | undefined
+      if (!row?.tool_calls) return null
+      const parsed = JSON.parse(row.tool_calls) as unknown
+      const list = Array.isArray(parsed)
+        ? parsed
+        : (parsed as { tool_calls?: unknown } | null)?.tool_calls
+      if (!Array.isArray(list)) return null
+      for (const entry of list) {
+        const tc = entry as { name?: unknown; input?: unknown; result?: unknown } | null
+        if (tc?.name !== "AskUserQuestion") continue
+        const questions = ((tc.input ?? tc.result) as { questions?: unknown } | null)?.questions
+        return Array.isArray(questions) ? questions : null
+      }
+      return null
+    } catch {
+      return null
+    }
+  }
+
   /** 原生提问行上已写的 decision（幂等 / already 回执用）。 */
   private readAskDecision(askId: string): { label?: string } | null {
     try {
