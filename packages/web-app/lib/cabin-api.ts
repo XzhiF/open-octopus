@@ -455,6 +455,55 @@ export async function getRepoFile(id: string, name: string, relPath: string): Pr
   return handleResponse<{ path: string; content: string }>(res)
 }
 
+// ── v22 九轮：本舱 cwd（右栏「目录」）──────────────────────────────────
+// 一目录一舱：根 = cabin.path。tree/file 与 repo 版同口径；raw 只出图片字节。
+
+/** GET /api/cabins/:id/tree — 本舱 cwd 只读目录树（depth≤6 / 2000 条）。 */
+export async function getCabinTree(id: string): Promise<{ dir: string; entries: RepoTreeEntry[] }> {
+  const res = await fetch(url(`/${id}/tree`))
+  return handleResponse<{ dir: string; entries: RepoTreeEntry[] }>(res)
+}
+
+/** GET /api/cabins/:id/file?path= — 本舱 cwd 只读文本文件（不出根 / 512KB）。 */
+export async function getCabinFile(id: string, relPath: string): Promise<{ path: string; content: string }> {
+  const res = await fetch(url(`/${id}/file?path=${encodeURIComponent(relPath)}`))
+  return handleResponse<{ path: string; content: string }>(res)
+}
+
+/** GET /api/cabins/:id/raw?path= — 图片原始字节（<img src> 直接用，8MB 上限）。 */
+export function cabinRawUrl(id: string, relPath: string): string {
+  return url(`/${id}/raw?path=${encodeURIComponent(relPath)}`)
+}
+
+// ── 文档查看器（2026-11-19 用户 #4）：聊天里的产物绝对路径 ──────────────
+// 后端只放行本舱文档根（舱 cwd / 本舱任务 workspace）；文本回 content，
+// 图片 / 视频 / 音频回 kind（字节走 doc-raw），其余二进制 kind=binary。
+
+export type CabinDocKind = "text" | "image" | "video" | "audio" | "binary"
+
+export interface CabinDocResult {
+  /** 解析后的绝对路径（与请求一致）。 */
+  path: string
+  ext: string
+  size: number
+  kind: CabinDocKind
+  /** kind=text 才有 */
+  content?: string
+  /** 媒体类的 MIME */
+  mime?: string
+}
+
+/** GET /api/cabins/:id/doc?path=<绝对路径> — 只读查阅一份文档。 */
+export async function getCabinDoc(id: string, absPath: string): Promise<CabinDocResult> {
+  const res = await fetch(url(`/${id}/doc?path=${encodeURIComponent(absPath)}`))
+  return handleResponse<CabinDocResult>(res)
+}
+
+/** GET /api/cabins/:id/doc-raw?path= — 图片 / 视频 / 音频字节流（支持 Range）。 */
+export function cabinDocRawUrl(id: string, absPath: string): string {
+  return url(`/${id}/doc-raw?path=${encodeURIComponent(absPath)}`)
+}
+
 // ============ Knowledge (S7 / G4) / Usage (C7) ============
 
 /** G4 读时 scoping 后的 findings（与全局 findingView 同形）。裁决复用全局
@@ -594,6 +643,30 @@ export async function submitCabinDecision(
 }
 
 /**
+ * 「还需讨论」（2026-11-20 用户 #20）：不作答，把讨论请求送进提问所在会话，
+ * 请对方先把选项讲清楚；提问仍然待答（服务端不写决策账本）。
+ */
+export async function discussCabinAsk(
+  cabinId: string,
+  input: { askId: string; note?: string },
+): Promise<{ target: "main" | "thread"; delivered: boolean; receipt: string }> {
+  const res = await fetch(url(`/${cabinId}/decisions/discuss`), {
+    method: "POST",
+    headers: JSON_HEADERS,
+    body: JSON.stringify(input),
+  })
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({} as Record<string, unknown>))
+    throw new CabinDecisionError(
+      typeof body.error === "string" ? body.error : `HTTP ${res.status}`,
+      res.status,
+      body.detail,
+    )
+  }
+  return res.json() as Promise<{ target: "main" | "thread"; delivered: boolean; receipt: string }>
+}
+
+/**
  * 忽略一条提问（旧卡 / 不再需要回答）。服务端把 decision 写回消息 metadata，
  * 派生的 attention 与「等你答」随即消项；不转达、不写决策账本。
  * `dismissed: 0` = 没找到对应会话消息（如工作流 pending_interaction）。
@@ -606,6 +679,20 @@ export async function dismissCabinAsk(
     method: "POST",
   })
   return handleResponse<{ dismissed: number }>(res)
+}
+
+/** 完成回流收项（2026-11-19 用户 #9）：只写 ack，不回写任务/会话。 */
+export async function ackCabinAttention(
+  cabinId: string,
+  itemId: string,
+  actor: 'person' | 'orchestrator' = 'person',
+): Promise<{ acked: boolean }> {
+  const res = await fetch(url(`/${cabinId}/attention/${encodeURIComponent(itemId)}/ack`), {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ actor }),
+  })
+  return handleResponse<{ acked: boolean }>(res)
 }
 
 export async function fetchCabinDecisions(cabinId: string, signal?: AbortSignal): Promise<{  decisions: CabinDecisionRecord[]

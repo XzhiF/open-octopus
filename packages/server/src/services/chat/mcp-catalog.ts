@@ -111,7 +111,7 @@ export function buildMcpCatalog(): McpServerMeta[] {
     {
       server: "octopus-cabin",
       label: "舱调度",
-      description: "作战舱主对话的调度工具集：列舱内任务/作业、派发真实任务、派发轻量委派、转达用户决策、读审计 trace、恢复作业。只调度不执行。",
+      description: "作战舱主对话的调度工具集：列舱内任务/作业、派发真实任务、派发轻量委派、转达用户决策、读审计 trace、恢复作业。自己动手改代码走通用 Read/Edit/Bash，不在这套工具里。",
       when: "会话绑定作战舱（cabin_id）且非任务线程、非委派 doer 时挂载",
       tools: CABIN_TOOL_NAMES.map((name) => ({ name, description: CABIN_TOOL_DESC[name] })),
     },

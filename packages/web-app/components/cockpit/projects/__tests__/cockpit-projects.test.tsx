@@ -3,7 +3,7 @@
 // 只筛左栏不换面、空态诚实。
 
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { render, screen, fireEvent, waitFor } from '@testing-library/react'
+import { render, screen, fireEvent, waitFor, act } from '@testing-library/react'
 import { useEffect, type ReactNode } from 'react'
 
 vi.mock('@/lib/server-config', () => ({ getServerUrl: () => 'http://localhost:3001' }))
@@ -46,7 +46,7 @@ import type { CockpitRef } from '../../state/cockpit-state'
 import { CockpitManifestFace } from '../CockpitManifestFace'
 import { CockpitProjectFace } from '../CockpitProjectFace'
 import { CockpitProjectsPopover } from '../CockpitProjectsPopover'
-import { invalidateCabinProjects } from '../use-cabin-projects'
+import { invalidateCabinProjects, useCabinProjects } from '../use-cabin-projects'
 import {
   projectNameFromKey, projectRef, projectStats, rosterRef, rowProjectKeys,
 } from '../project-model'
@@ -286,5 +286,58 @@ describe('CockpitProjectsPopover · HUD 读数', () => {
     expect(screen.getByTestId('cockpit-projects-btn').textContent).toContain('＋ 绑定项目')
     fireEvent.click(screen.getByTestId('cockpit-projects-btn'))
     expect(await screen.findByTestId('cockpit-projects-empty')).toBeInTheDocument()
+  })
+
+  // 2026-11-19 用户 #5：别处（对话里让汐音绑 / 另一个窗口）绑了项目 —— 打开浮层即补拉。
+  it('打开浮层触发一次 onRefetch', async () => {
+    const onRefetch = vi.fn()
+    render(
+      <Harness>
+        <CockpitProjectsPopover
+          cabinId="c1"
+          cabinName="账务中台"
+          projects={[]}
+          loading={false}
+          error={null}
+          onRefetch={onRefetch}
+          onBind={() => {}}
+        />
+      </Harness>,
+    )
+    fireEvent.click(screen.getByTestId('cockpit-projects-btn'))
+    expect(await screen.findByTestId('cockpit-projects-pop')).toBeInTheDocument()
+    expect(onRefetch).toHaveBeenCalledTimes(1)
+  })
+})
+
+describe('useCabinProjects · 外部绑定后自动补拉', () => {
+  function ProjectsProbe({ sink }: { sink: (p: CabinRepoEntry[]) => void }) {
+    const { projects } = useCabinProjects('c1')
+    useEffect(() => { sink(projects) }, [projects, sink])
+    return null
+  }
+
+  it('缓存过期后窗口重新获得焦点 → 重拉 /repos（不用整页刷新）', async () => {
+    let latest: CabinRepoEntry[] = []
+    render(<ProjectsProbe sink={(p) => { latest = p }} />)
+    await waitFor(() => expect(latest).toHaveLength(2))
+    expect(fetchCabinRepos).toHaveBeenCalledTimes(1)
+
+    // 汐音在对话里绑了新项目（服务端已落盘），本地缓存仍是旧的。
+    vi.mocked(fetchCabinRepos).mockResolvedValue([
+      repo({ key: 'org:XzhiF/ledger', name: 'ledger' }),
+      repo({ key: 'org:XzhiF/risk', name: 'risk' }),
+      repo({
+        key: 'local:apps/console', name: 'console', source: 'local', org: null,
+        group: null, local_path: 'apps/console', main_path: '/tmp/c1/apps/console',
+      }),
+    ])
+    // 把「现在」拨过 TTL —— focus 只在缓存过期时补拉（/repos?enrich=1 会跑 git）。
+    const spy = vi.spyOn(Date, 'now').mockReturnValue(Date.now() + 31_000)
+    act(() => { window.dispatchEvent(new Event('focus')) })
+    spy.mockRestore()
+
+    await waitFor(() => expect(latest.map((p) => p.name)).toContain('risk'))
+    expect(fetchCabinRepos).toHaveBeenCalledTimes(2)
   })
 })

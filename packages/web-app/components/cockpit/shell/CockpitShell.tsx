@@ -20,13 +20,15 @@ import { CockpitFleetProvider, useCockpitFleet } from '../fleet/CockpitFleetProv
 import { CockpitHud } from './CockpitHud'
 import { CockpitSettings } from './CockpitSettings'
 import { CockpitStarfield } from './CockpitStarfield'
+import { useCockpitCloseGuard } from './use-cockpit-close-guard'
 import { CockpitScene } from '../scene/CockpitScene'
-import { CockpitQuiet } from './CockpitQuiet'
 import { AskWindowsProvider, useAskWindows } from '@/components/cabin/asks/ask-windows-provider'
 import { AskWindowLayer } from '@/components/cabin/asks/ask-window-layer'
 import { CockpitFleetRail } from '../rail/CockpitFleetRail'
 import { CockpitRightRail } from '../rail/CockpitRightRail'
 import { CockpitFace } from '../face/CockpitFace'
+import { CockpitCabinTree } from '../face/CockpitCabinTree'
+import { CockpitDocWindow } from '../face/CockpitDocWindow'
 import { CockpitChatHost } from '../chat/CockpitChatHost'
 import { CockpitChatWindow } from '../chat/CockpitChatWindow'
 import { CockpitDock } from '../chat/CockpitDock'
@@ -34,6 +36,7 @@ import { CockpitPopWindows } from '../chat/CockpitPopWindows'
 import { CockpitWinBar } from '../chat/CockpitWinBar'
 import { CockpitThreadActivity } from '../chat/CockpitThreadActivity'
 import { CockpitCrew } from '../crew/CockpitCrew'
+import { CockpitCrewSettingsLayer } from '../crew/CockpitCrewSettings'
 import { CockpitBrief } from '../fx/CockpitBrief'
 import { CockpitEffects } from '../fx/CockpitEffects'
 import { CockpitWarpScheduler } from '../fx/CockpitWarpScheduler'
@@ -91,6 +94,8 @@ function CockpitGate() {
 function CockpitSurface({ cabin }: { cabin: CabinDetail }) {
   const { entryCabinId, selection, layer } = useCockpitState()
   const { view } = useCabinContext()
+  // 用户 #18：本舱有 agent 在跑时，关浏览器 / 窗口先确认，确认后先停流再走。
+  useCockpitCloseGuard()
 
   // 背景漂浮粒子（原型 seedParticles：24 颗，随机时长/相位）。
   const particles = useMemo(
@@ -145,7 +150,6 @@ function CockpitSurface({ cabin }: { cabin: CabinDetail }) {
           className={`ck12-arena${selection ? ' is-open' : ''}`}
           data-testid="cockpit-arena"
         >
-          <CockpitQuiet />
           <CockpitCrew />
         </section>
       </main>
@@ -154,6 +158,12 @@ function CockpitSurface({ cabin }: { cabin: CabinDetail }) {
           必须挂在 arena 之外 —— arena 自带 z-index:2 的层叠上下文，放在里面
           会永远压在通讯台（共享 z 栈 31+）下面。 */}
       <CockpitFace entryCabinId={entryCabinId} />
+
+      {/* v22 九轮：右栏「目录」= 本舱 cwd 只读目录窗（详情面没开也能开）。 */}
+      <CockpitCabinTree cabinId={entryCabinId} />
+
+      {/* 2026-11-19 用户 #4：聊天正文里的产物绝对路径点开 → 只读文档窗。 */}
+      <CockpitDocWindow />
 
       {/* 原型没有屏幕级底栏：输入框在通讯台内（.con-in）。这里不再留 footer，
           通讯台底缘按视口 − 56 量（geometry 的 fallback）。 */}
@@ -171,6 +181,8 @@ function CockpitSurface({ cabin }: { cabin: CabinDetail }) {
       <CockpitBrief />
       <CockpitPanels />
       <CockpitSettings />
+      {/* 2026-11-19 用户 #7：「更多 → ♡ 汐音」= 她的 AGENT 档案 + 既有在场设置。 */}
+      <CockpitCrewSettingsLayer />
       <CockpitWarpScheduler />
       <CockpitSim />
 

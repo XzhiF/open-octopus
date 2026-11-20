@@ -15,7 +15,7 @@
 // 键盘语义（2026-09-24 用户改判「不要必然从列表抓一个命令」）：
 //   - Enter：仅当输入「精确等于」某个命令名时提交该命令；否则只收起下拉、
 //     原样保留用户敲的字（我输入什么就是什么），再按一次 Enter 才发送。
-//   - Tab：取消（收起下拉），不改文本。
+//   - Tab：补全当前高亮的命令（与点击同义，2026-11-19 用户追加）。
 //   - 点击某行：插入该命令（保留的显式选择路径）。
 //   - Alt+Enter：换行（由宿主 ChatArea 消费，不进本组件）。
 
@@ -182,9 +182,12 @@ export function SlashCommandAutocomplete({
         e.stopPropagation()  // Prevent Dialog from closing — only dismiss the dropdown
         notifyOpen(false)
       } else if (e.key === 'Tab') {
-        // 取消：只收起下拉，不改用户已敲的文本。
+        // 补全高亮项（2026-11-19 用户）：Tab = 插入当前高亮命令，与点击同义。
+        // 高亮项来自 order（已按 query 过滤），↑↓ 可先换目标再按 Tab。
+        const picked = order[selectedIndex]
         e.preventDefault()
         e.stopPropagation()
+        if (picked) onSelect(picked.name)
         notifyOpen(false)
       } else if (e.key === 'Enter' && !e.altKey && !e.shiftKey && !e.metaKey && !e.ctrlKey) {
         // 不再「必然选中高亮项」。以 inputValue（受控事实源，query state 可能
@@ -239,7 +242,7 @@ export function SlashCommandAutocomplete({
       )}
     >
       <div className="px-3 py-1.5 text-[10px] text-muted-foreground border-b">
-        / 调用命令 — 点击插入 · ↑↓ 浏览 · Enter 保留输入 · Tab 取消
+        / 调用命令 — 点击 / Tab 插入 · ↑↓ 浏览 · Enter 保留输入 · Esc 取消
       </div>
       {builtins.length > 0 && (
         <>

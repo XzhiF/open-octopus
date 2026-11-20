@@ -22,6 +22,7 @@ import { useCabinOptional } from '@/components/cabin/cabin-provider'
 import { AskUserQuestionCard } from '@/components/workspace/chat/ask-user-question-card'
 import { openTaskInChat } from '@/components/cabin/modules/ui'
 import { useAskSubmit } from '@/components/cabin/asks/ask-submit'
+import { discussCabinAsk } from '@/lib/cabin-api'
 
 interface AuthorAskOption {
   label?: string
@@ -101,6 +102,26 @@ export function AuthorAskCard({ message }: { message: AgentMessage }) {
     setAnswered(true)
     if (outcome.receipt) setReceipt(outcome.receipt)
   }, [submit])
+
+  // 「还需讨论」（用户 #20）：不作答，请作者先把选项讲清楚；提问仍待答。
+  const [discussBusy, setDiscussBusy] = useState(false)
+  const [discussNote, setDiscussNote] = useState<string | null>(null)
+  const chatAbout = useCallback(async (summary?: string) => {
+    if (!effectiveCabinId || discussBusy || busy) return
+    setDiscussBusy(true)
+    setDiscussNote(null)
+    try {
+      const res = await discussCabinAsk(effectiveCabinId, {
+        askId,
+        ...(summary ? { note: summary } : {}),
+      })
+      setDiscussNote(res.receipt)
+    } catch (err) {
+      setDiscussNote(err instanceof Error ? err.message : '讨论请求没有发出去')
+    } finally {
+      setDiscussBusy(false)
+    }
+  }, [askId, busy, discussBusy, effectiveCabinId])
 
   if (answered) {
     return (
@@ -233,7 +254,19 @@ export function AuthorAskCard({ message }: { message: AgentMessage }) {
         </details>
       )}
 
-      <AskUserQuestionCard message={synthetic} onAnswer={answer} disabled={busy} hideChatAbout hotkeyId={askId} />
+      <AskUserQuestionCard
+        message={synthetic}
+        onAnswer={answer}
+        onChatAbout={(summary) => void chatAbout(summary)}
+        disabled={busy || discussBusy}
+        hideChatAbout
+        hotkeyId={askId}
+      />
+      {discussNote && (
+        <div data-testid="author-ask-discuss-note" className="mt-1 text-[11px] text-pop-cyan">
+          {discussNote}
+        </div>
+      )}
       {failed && (
         <div data-testid="author-ask-failed" className="mt-1 text-[11px] text-pop-red">
           {failed}

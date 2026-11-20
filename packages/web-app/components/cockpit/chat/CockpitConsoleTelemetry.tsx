@@ -1,7 +1,7 @@
 'use client'
 
 // v21 二轮（原型 cockpit-v21.html · 通讯台头部遥测）：
-//   MODEL <模型 · 思考档> │ CTX <占用%> │ TOKEN <tok · ¥>
+//   MODEL <模型 · 思考档> │ CTX <占用K / 上限 · 占用% + 内部进度条> │ TOKEN <tok · ¥>
 //   三枚都以芯片为中心向下展开，宽度 / 位置夹在通讯台内（prototype posDrop）。
 //
 // 数据全部真源：
@@ -140,8 +140,16 @@ export function CockpitConsoleTelemetry() {
   const sessionCostLabel = sessionCost == null
     ? '—'
     : formatCost(sessionCost, chat?.usage?.totals.cost.complete ?? true, currency)
-  const ctxPct = chat?.contextUsage?.percentage ?? null
-  const ctxLabel = ctxPct == null ? '未就绪' : `${Math.round(ctxPct)}%`
+  // 上下文芯片（2026-11-19 用户）：与 classic ContextUsageChip 同形 ——
+  // `80.1K / 1M · 8.0%` + 芯片内进度条，不再只显示百分比。
+  const ctx = chat?.contextUsage ?? null
+  const ctxPct = ctx == null
+    ? null
+    : Math.min(100, Math.max(0, Number.isFinite(ctx.percentage) ? ctx.percentage : 0))
+  const ctxTone = ctxPct == null ? 'ok' : ctxPct >= 85 ? 'hot' : ctxPct >= 60 ? 'warn' : 'ok'
+  const ctxTokensLabel = ctx == null
+    ? ''
+    : `${formatTokenCount(ctx.totalTokens)} / ${formatTokenCount(ctx.maxTokens, 0)}`
   const modelLabel = chat
     ? `${chat.model} · ${effortLabelOf(chat.effort)}`
     : '未就绪'
@@ -168,14 +176,35 @@ export function CockpitConsoleTelemetry() {
       <button
         ref={(node) => { chipRefs.current.ctx = node }}
         type="button"
-        className="ck12-tc ck12-tcc"
+        className="ck12-tc ck12-tcc is-ctx"
+        data-tone={ctxTone}
         aria-expanded={open === 'ctx'}
-        title="上下文占用 · 点击看构成与压缩"
+        title={ctx
+          ? `上下文占用 ${ctxTokensLabel} · 点击看构成与压缩`
+          : '上下文占用 · 未就绪 · 点击看构成与压缩'}
         data-testid="cockpit-con-ctx"
         onClick={() => toggle('ctx')}
       >
         <i>CTX</i>
-        <b>{ctxLabel}</b>
+        {ctx && ctxPct != null ? (
+          <b className="ck12-ctx-val" data-testid="cockpit-con-ctx-value">
+            <span className="ck12-ctx-tok">{ctxTokensLabel}</span>
+            <span className="ck12-ctx-pct">
+              {ctx.estimated ? '~' : ''}
+              {ctxPct.toFixed(1)}%
+            </span>
+          </b>
+        ) : (
+          <b>未就绪</b>
+        )}
+        {ctx && ctxPct != null && (
+          <>
+            <span className="ck12-ctx-fill" aria-hidden="true" style={{ width: `${ctxPct}%` }} />
+            <span className="ck12-ctx-bar" aria-hidden="true">
+              <i style={{ width: `${ctxPct}%` }} />
+            </span>
+          </>
+        )}
       </button>
       <button
         ref={(node) => { chipRefs.current.tok = node }}

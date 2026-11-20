@@ -20,6 +20,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { X } from 'lucide-react'
 import type { ChatMessage } from '@/lib/types'
+import { ackCabinAttention, discussCabinAsk } from '@/lib/cabin-api'
 import { AskUserQuestionCard } from '@/components/workspace/chat/ask-user-question-card'
 import { useAskSubmit } from '@/components/cabin/asks/ask-submit'
 import {
@@ -41,6 +42,7 @@ import {
   inboxVerb,
   type InboxCounts,
   type InboxEntry,
+  type InboxGroup,
 } from './inbox-model'
 
 /** 比聊天浮窗（60）/ 编队抽屉（70）/ 问答窗（100）都高：Esc 先收这张浮层。 */
@@ -56,7 +58,7 @@ const START_RECEIPT_TEXT: Record<StartChoice, string> = {
   resume: '已恢复推进',
 }
 
-function groupClass(entry: InboxEntry): 'ask' | 'rev' | 'blk' {
+function groupClass(entry: InboxEntry): InboxGroup {
   return inboxGroupOf(entry.item)
 }
 
@@ -91,6 +93,9 @@ function ReplyCard({ entry, onAnswered, onDone, onDeal, onOpenDetail }: ReplyCar
   const [pick, setPick] = useState<number | null>(null)
   const [free, setFree] = useState('')
   const [busyChoice, setBusyChoice] = useState<string | null>(null)
+  // 「还需讨论」（用户 #20）：不作答，请提问的 agent 先解释选项；提问仍待答。
+  const [discussBusy, setDiscussBusy] = useState(false)
+  const [discussNote, setDiscussNote] = useState<string | null>(null)
 
   const { submit, busy, failed } = useAskSubmit({
     cabinId: entry.cabinId || entryCabinId,
@@ -120,6 +125,25 @@ function ReplyCard({ entry, onAnswered, onDone, onDeal, onOpenDetail }: ReplyCar
   const sendLabel = useCallback((label: string) => {
     void send(`用户回答了以下问题：\n\n1. [要定的事] ${env?.decision ?? item.question ?? '选择'}\n   → ${label}`)
   }, [env?.decision, item.question, send])
+
+  /** 还需讨论：不提交答案，把讨论请求送进提问所在会话（提问仍待答）。 */
+  const chatAbout = useCallback(async (summary?: string) => {
+    const target = entry.cabinId || entryCabinId
+    if (!target || discussBusy || busy) return
+    setDiscussBusy(true)
+    setDiscussNote(null)
+    try {
+      const res = await discussCabinAsk(target, {
+        askId: env?.ask_id ?? item.id,
+        ...(summary ? { note: summary } : {}),
+      })
+      setDiscussNote(res.receipt)
+    } catch (err) {
+      setDiscussNote(err instanceof Error ? err.message : '讨论请求没有发出去')
+    } finally {
+      setDiscussBusy(false)
+    }
+  }, [busy, discussBusy, entry.cabinId, entryCabinId, env?.ask_id, item.id])
 
   const canInline = canAnswerInline(item)
 
@@ -185,13 +209,17 @@ function ReplyCard({ entry, onAnswered, onDone, onDeal, onOpenDetail }: ReplyCar
                 <AskUserQuestionCard
                   message={synthetic}
                   onAnswer={(content) => void send(content)}
-                  disabled={busy}
+                  onChatAbout={(summary) => void chatAbout(summary)}
+                  disabled={busy || discussBusy}
                   hideChatAbout
                   hotkeyId={item.id}
                 />
               )}
             </div>
             <div className="ck12-ipn">勾选后提交；不跳作战线程，汐音就地转达执行者。</div>
+            {discussNote && (
+              <div className="ck12-ipn" data-testid="cockpit-inbox-discuss-note">{discussNote}</div>
+            )}
           </>
         ) : canInline ? (
           <>
@@ -237,6 +265,20 @@ function ReplyCard({ entry, onAnswered, onDone, onDeal, onOpenDetail }: ReplyCar
                 发送
               </button>
             </div>
+            <div className="ck12-ipd-free">
+              <button
+                type="button"
+                className="ck12-ipd-deal"
+                data-testid="cockpit-inbox-discuss"
+                disabled={busy || discussBusy}
+                onClick={() => void chatAbout(pick != null ? `已勾选 ${options[pick].label}` : undefined)}
+              >
+                {discussBusy ? '发送讨论请求…' : '还需讨论 —— 先让对方解释这几个选项'}
+              </button>
+            </div>
+            {discussNote && (
+              <div className="ck12-ipn" data-testid="cockpit-inbox-discuss-note">{discussNote}</div>
+            )}
             <div className="ck12-ipn">选一项 → 提交；不跳作战线程，汐音就地转达执行者。</div>
           </>
         ) : (
@@ -425,6 +467,103 @@ function StartReplyCard({
   )
 }
 
+/** 完成回流卡（2026-11-19 用户 #9）：执行完先进 inbox，汐音审一道；
+ *  人也可以直接确认「不会回复了」——纯 ack，不回写任务/会话。 */
+function NoticeReplyCard({
+  entry,
+  onAcked,
+  onOpenDetail,
+}: {
+  entry: InboxEntry
+  onAcked: (entry: InboxEntry) => void
+  onOpenDetail: (entry: InboxEntry) => void
+}) {
+  const { closeInbox, selectInbox, entryCabinId } = useCockpitState()
+  const { item } = entry
+  const cabinId = entry.cabinId || entryCabinId
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+
+  const ack = useCallback(async () => {
+    if (busy || !cabinId) return
+    setBusy(true)
+    setError(null)
+    try {
+      await ackCabinAttention(cabinId, item.id)
+      onAcked(entry)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : '收项失败')
+    } finally {
+      setBusy(false)
+    }
+  }, [busy, cabinId, item.id, entry, onAcked])
+
+  return (
+    <div className="ck12-ipd" data-testid="cockpit-inbox-notice">
+      <div className="ck12-ipd-h">
+        <button
+          type="button"
+          className="ck12-ipx ck12-ipd-x"
+          aria-label="收起要我处理"
+          title="收起（Esc）"
+          onClick={closeInbox}
+        >
+          <X className="size-3" aria-hidden="true" />
+        </button>
+        <button
+          type="button"
+          className="ck12-ipd-back"
+          aria-label="回到列表"
+          title="回到列表"
+          onClick={() => selectInbox(null)}
+        >
+          ←
+        </button>
+        <span className="ck12-ipd-k" data-kind={groupClass(entry)}>
+          {item.handle ?? '完成'} · 已完成
+        </span>
+        <span className="ck12-ipd-sp" />
+      </div>
+
+      <div className="ck12-ipd-body">
+        <div className="ck12-ipd-job">{item.title}</div>
+        {(item.repo || item.wt || item.detail) && (
+          <div className="ck12-ipd-ctx">
+            {[item.repo, item.wt, item.detail].filter(Boolean).join(' · ')}
+          </div>
+        )}
+        <div className="ck12-ipn">
+          汐音已经审过这一条。确认不用回复 → 直接收下；不会回复任务/会话，也不会唤醒执行者。
+          还想要个说法，就看详情或直接去主对话跟她说。
+        </div>
+        {error && <div className="ck12-ipd-err" data-testid="cockpit-inbox-error">{error}</div>}
+      </div>
+
+      <div className="ck12-ipd-foot">
+        <button type="button" onClick={() => selectInbox(null)}>稍后</button>
+        <span className="ck12-ipd-sp" />
+        <button
+          type="button"
+          className="ck12-ipd-deal"
+          data-testid="cockpit-inbox-notice-detail"
+          onClick={() => onOpenDetail(entry)}
+        >
+          ▦ 看详情
+        </button>
+        <button
+          type="button"
+          className="ck12-ipd-pri"
+          data-testid="cockpit-inbox-notice-ack"
+          disabled={busy}
+          onClick={() => void ack()}
+        >
+          {busy ? '收下中…' : '无需回复 · 收下'}
+        </button>
+      </div>
+    </div>
+  )
+}
+
 function ReceiptCard({
   entry,
   choice,
@@ -433,11 +572,12 @@ function ReceiptCard({
 }: {
   entry: InboxEntry
   choice: string
-  /** start = 放行回执（同一张卡，措辞换掉）。 */
-  kind?: 'answer' | 'start'
+  /** start = 放行回执；notice = 完成项已收下（未回复执行者）。 */
+  kind?: 'answer' | 'start' | 'notice'
   onClose: () => void
 }) {
   const started = kind === 'start'
+  const noticed = kind === 'notice'
   return (
     <div className="ck12-ipd" data-testid="cockpit-inbox-receipt">
       <div className="ck12-ipd-h">
@@ -451,18 +591,20 @@ function ReceiptCard({
           <X className="size-3" aria-hidden="true" />
         </button>
         <span className="ck12-ipd-k" data-kind={groupClass(entry)}>
-          {entry.item.handle ?? '待办'} · {started ? '已放行' : '已答'}
+          {entry.item.handle ?? '待办'} · {noticed ? '已收下' : started ? '已放行' : '已答'}
         </span>
         <span className="ck12-ipd-sp" />
       </div>
       <div className="ck12-ipd-body">
         <div className="ck12-ipd-receipt">
-          <div className="ck12-ipd-ok">✓ {started ? '已放行' : '已答'} · {choice}</div>
+          <div className="ck12-ipd-ok">✓ {noticed ? '已收下' : started ? '已放行' : '已答'} · {choice}</div>
           <div className="ck12-ipd-ans">{entry.item.question ?? entry.item.title}</div>
           <div className="ck12-ipn">
-            {started
-              ? '已按你的决定放行；这条从「要我处理」消项，编队状态跟着更新。'
-              : '已转达执行者并写入账本；这条从「要我处理」消项，编队状态跟着更新。'}
+            {noticed
+              ? '已从「要我处理」收项；没有回复任务/会话，执行者继续空闲。'
+              : started
+                ? '已按你的决定放行；这条从「要我处理」消项，编队状态跟着更新。'
+                : '已转达执行者并写入账本；这条从「要我处理」消项，编队状态跟着更新。'}
           </div>
         </div>
       </div>
@@ -484,7 +626,7 @@ export function CockpitInboxPopover({ entries, counts, answered, onAnswered, onS
   const [receipt, setReceipt] = useState<{
     entry: InboxEntry
     choice: string
-    kind: 'answer' | 'start'
+    kind: 'answer' | 'start' | 'notice'
   } | null>(null)
 
   const groups = useMemo(() => groupedInbox(entries, answered), [entries, answered])
@@ -555,6 +697,16 @@ export function CockpitInboxPopover({ entries, counts, answered, onAnswered, onS
                 }}
                 onOpenDetail={openDetail}
               />
+            ) : selected.item.stage === 'notice' ? (
+              <NoticeReplyCard
+                key={`notice-${selected.item.id}`}
+                entry={selected}
+                onAcked={(entry) => {
+                  onAnswered(entry.item.id, '无需回复')
+                  setReceipt({ entry, choice: '无需回复', kind: 'notice' })
+                }}
+                onOpenDetail={openDetail}
+              />
             ) : (
               <ReplyCard
                 key={selected.item.id}
@@ -585,7 +737,7 @@ export function CockpitInboxPopover({ entries, counts, answered, onAnswered, onS
           <span className="ck12-ip-t">要我处理</span>
           <b className="ck12-ip-total">{counts.total}</b>
           <span className="ck12-ip-brk">
-            待你定 {counts.ask} · 验收 {counts.rev} · 受阻 {counts.blk}
+            待你定 {counts.ask} · 验收 {counts.rev} · 受阻 {counts.blk} · 完成 {counts.done}
           </span>
         </div>
 

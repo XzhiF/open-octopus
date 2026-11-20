@@ -302,6 +302,7 @@ export function ChatPane({
     messages, streaming, streamContent, streamThinking, streamTimeline, isThinking, toolCalls, pendingConfirm,
     error: chatError, statusMessage, backgroundTasks, contextUsage, slashCommands,
     sendMessage, stopGenerate, handleConfirm, loadMessages,
+    hasMoreMessages, loadingOlderMessages, loadOlderMessages,
     steer, steeringRef, resumeStreaming, checkAndResume, streamingSessionId, turnStartedAt,
   } = useAgentChat(sessionId, {
     onTitleUpdate: handleTitleUpdate,
@@ -1531,6 +1532,9 @@ export function ChatPane({
         ) : (
           <ChatArea
             messages={viewMessages}
+            hasMoreMessages={hasMoreMessages}
+            loadingOlderMessages={loadingOlderMessages}
+            onLoadOlder={loadOlderMessages}
             composerDock={<AuthorAskInbox messages={viewMessages} />}
             streaming={streaming}
             streamContent={streamContent}

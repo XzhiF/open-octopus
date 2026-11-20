@@ -4,7 +4,7 @@
 // 原型 = public/prototype/chat-tui.html：`❯` 用户行 / `✳` agent 行 /
 // `◌ 过程（时间序）· N 步` 折叠 meta（对话完成后思考、步骤收起，沿用原交互）。
 
-import { useMemo, useState, type ReactNode } from 'react'
+import { Fragment, useMemo, useState, type ReactNode } from 'react'
 import type { AgentMessage, MessageTimelineEntry, ToolCallRecord } from '@/lib/agent/types'
 import type { ChatMessage } from '@/lib/types'
 import type { StreamTimelineItem } from '@/hooks/useAgentChat'
@@ -22,19 +22,82 @@ import { ArchiveSummaryCard } from './archive-summary-card'
 import { AuthorAskCard } from './author-ask-card'
 import { CabinInitGateCard } from '@/components/cabin/CabinInitGateCard'
 
+/** 文档扩展名（与服务端 GET /api/cabins/:id/doc 同一张表）：命中才渲染成可点 chip。 */
+const DOC_EXT_PATTERN = 'md|markdown|mdx|txt|json|jsonc|ya?ml|toml|ini|conf|csv|tsv|log|xml|html?|css|scss|less|js|mjs|cjs|ts|tsx|jsx|vue|svelte|py|go|rs|java|kt|kts|sh|bash|zsh|ps1|sql|graphql|proto|diff|patch|rst|adoc|png|jpe?g|gif|webp|avif|svg|bmp|ico|mp4|m4v|webm|ogv|mov|mp3|m4a|wav|ogg'
+
+/** 绝对路径判定（行内 code 里的整段）：`C:\…\x.md` / `C:/…/x.md` / `/Users|home|tmp|…/x.md`。
+ *  POSIX 只认常见家目录 / 临时根，避免把 `/api/x.md` 这类正文片段误判成产物。 */
+const DOC_ABS_RE = new RegExp(
+  `^(?:[A-Za-z]:[\\\\/]|\\/(?:Users|home|tmp|var|opt|mnt|media|root)\\/).+\\.(?:${DOC_EXT_PATTERN})$`,
+  'i',
+)
+
+/** 正文里的裸路径（不包 code）：只认盘符开头（`/api/x.md` 这类 URL/片段不误判）。 */
+const DOC_PLAIN_RE = new RegExp(
+  `([A-Za-z]:[\\\\/][^\\s\`<>"']+?\\.(?:${DOC_EXT_PATTERN}))(?=$|[\\s，。；：、)\\]】"'\`])`,
+  'gi',
+)
+
+/** 文档路径（2026-11-19 用户 #4）：正文里的产物绝对路径 —— 路径本身是纯文本
+ *  （可选中复制），只有右侧「↗」小按钮可点，打开座舱文档查看器。
+ *  只在 cockpit 变体渲染（TuiMessage docLinks）；classic / 桌面转录逐字不变。 */
+function DocRef({ path }: { path: string }) {
+  return (
+    <span className="doc-ref inline-flex max-w-full items-center gap-1 font-mono text-[10.5px]" data-doc-path={path}>
+      <span aria-hidden="true" className="shrink-0">📄</span>
+      <span className="doc-ref-path" title={path}>{path}</span>
+      <button
+        type="button"
+        className="doc-ref-open shrink-0"
+        title={`打开 · ${path}`}
+        data-testid="chat-doc-chip"
+        onClick={(event) => {
+          event.stopPropagation()
+          window.dispatchEvent(new CustomEvent('octopus:open-doc', { detail: { path } }))
+        }}
+      >
+        ↗
+      </button>
+    </span>
+  )
+}
+
+/** 一段纯文本里把盘符绝对路径切成 chip（其余原样）。 */
+function withDocChips(text: string, keyBase: number): ReactNode {
+  if (!text) return text
+  const parts: ReactNode[] = []
+  let last = 0
+  for (const match of text.matchAll(DOC_PLAIN_RE)) {
+    const path = match[1]
+    const index = match.index ?? 0
+    if (index > last) parts.push(text.slice(last, index))
+    parts.push(<DocRef key={`doc-${keyBase}-${index}`} path={path} />)
+    last = index + path.length
+  }
+  if (!parts.length) return text
+  if (last < text.length) parts.push(text.slice(last))
+  return <>{parts}</>
+}
+
 /** mini-markdown：`**bold**` / `行内 code` / 行首 # 标题 —— 消灭字面星号。 */
-function mdInline(text: string): ReactNode {
+function mdInline(text: string, docLinks = false): ReactNode {
   return text.split(/(\*\*[^*\n]+\*\*|`[^`\n]+`)/g).map((p, i) => {
     if (/^\*\*[^*]+\*\*$/.test(p)) return <strong key={i} className="font-bold text-pop-pink">{p.slice(2, -2)}</strong>
-    if (/^`[^`]+`$/.test(p)) return <code key={i} className="rounded-[3px] bg-pop-bd/50 px-1 text-pop-green">{p.slice(1, -1)}</code>
+    if (/^`[^`]+`$/.test(p)) {
+      const inner = p.slice(1, -1)
+      // 2026-11-19 用户 #4：code 里是产物绝对路径 → 渲染成可点 chip（悬停给完整路径）。
+      if (docLinks && DOC_ABS_RE.test(inner.trim())) return <DocRef key={i} path={inner.trim()} />
+      return <code key={i} className="rounded-[3px] bg-pop-bd/50 px-1 text-pop-green">{inner}</code>
+    }
+    if (docLinks) return <Fragment key={i}>{withDocChips(p, i)}</Fragment>
     return p
   })
 }
 
-function mdLine(line: string): ReactNode {
+function mdLine(line: string, docLinks = false): ReactNode {
   const h = line.match(/^(#{1,4})\s+(.*)$/)
-  if (h) return <span className="font-bold text-pop-ink">{mdInline(h[2])}</span>
-  return mdInline(line)
+  if (h) return <span className="font-bold text-pop-ink">{mdInline(h[2], docLinks)}</span>
+  return mdInline(line, docLinks)
 }
 
 /** 段首小 ✳：每段回复仅一个，缩小提亮（原型 v4.3 拍板）。 */
@@ -188,7 +251,7 @@ function ToolLine({ tc }: { tc: ToolCallRecord }) {
 /** 折叠的过程 meta：thinking / tool 按时间序（timeline 缺失时用字段兜底）。 */
 type MetaRow = { key: string; node: 'think' | 'tool' | 'frag'; text?: string; tc?: ToolCallRecord }
 
-function TuiMeta({ thinking, toolCalls, timeline, stats, interrupted, hideTextFrags }: {
+function TuiMeta({ thinking, toolCalls, timeline, stats, interrupted, hideTextFrags, lead, trail }: {
   thinking?: string
   toolCalls?: ToolCallRecord[]
   timeline?: MessageTimelineEntry[]
@@ -197,6 +260,10 @@ function TuiMeta({ thinking, toolCalls, timeline, stats, interrupted, hideTextFr
   interrupted?: boolean
   /** 正文段已在 body 全量显示（ask 回合）→ meta 展开时不再重复。 */
   hideTextFrags?: boolean
+  /** 行头（全域座舱的 `✦ 汐音`）：跟统计挤同一行，不额外占一行。 */
+  lead?: ReactNode
+  /** 行尾（全域座舱的时间 + 复制）：同一行最右，常显。 */
+  trail?: ReactNode
 }) {
   const [open, setOpen] = useState(false)
   // 费用按计费设置折算（默认 CNY / 7）：与任务看板、计费页同一枚 formatCost。
@@ -238,7 +305,7 @@ function TuiMeta({ thinking, toolCalls, timeline, stats, interrupted, hideTextFr
   // 一行都没有，但账本里有真实用量 —— 此时仍要渲染摘要，否则用户只看到
   // 「（本轮被截断）」却看不到这轮花了多少（2026-11-04 用户反馈）。
   const statsOnly = rows.length === 0
-  if (statsOnly && !stats) return null
+  if (statsOnly && !stats && !lead && !trail) return null
 
   const duration = stats?.durationMs != null && stats.durationMs > 0
     ? formatDuration(stats.durationMs)
@@ -255,17 +322,19 @@ function TuiMeta({ thinking, toolCalls, timeline, stats, interrupted, hideTextFr
 
   return (
     <div className="my-1" data-tui-meta-root>
-      <button
-        type="button"
-        onClick={() => { if (!statsOnly) setOpen((v) => !v) }}
-        className="flex w-full select-none flex-wrap items-center gap-x-1.5 gap-y-1 py-[2px] text-left text-pop-dim transition-colors hover:text-pop-ink"
-        data-tui-meta={open ? 'open' : 'closed'}
-        title={
-          'turn = 一条用户消息 + 助手这一整段回复。步数 = 思考段 + 工具调用 + 正文段；时长 / token / 费用来自会话账本，旧轮没有账本行时只显示步数与次数。'
-        }
-      >
-        {/* 收起 / 展开同一行摘要（2026-10-29 用户：展开不要重复上面的信息）。 */}
-        <span className={`font-semibold ${status.cls}`} data-tui-status>{status.label}</span>
+      <div className="flex items-baseline gap-2">
+        <button
+          type="button"
+          onClick={() => { if (!statsOnly) setOpen((v) => !v) }}
+          className="flex min-w-0 flex-1 select-none flex-wrap items-center gap-x-1.5 gap-y-1 py-[2px] text-left text-pop-dim transition-colors hover:text-pop-ink"
+          data-tui-meta={open ? 'open' : 'closed'}
+          title={
+            'turn = 一条用户消息 + 助手这一整段回复。步数 = 思考段 + 工具调用 + 正文段；时长 / token / 费用来自会话账本，旧轮没有账本行时只显示步数与次数。'
+          }
+        >
+          {/* 收起 / 展开同一行摘要（2026-10-29 用户：展开不要重复上面的信息）。 */}
+          {lead}
+          <span className={`font-semibold ${status.cls}`} data-tui-status>{status.label}</span>
         {duration && (
           <>
             <span>·</span>
@@ -308,7 +377,9 @@ function TuiMeta({ thinking, toolCalls, timeline, stats, interrupted, hideTextFr
         )}
         {/* 箭头紧跟最后一个数字（2026-10-29 用户：不要再被推到最右） */}
         {!statsOnly && <span aria-hidden>{open ? '▾' : '▸'}</span>}
-      </button>
+        </button>
+        {trail}
+      </div>
       {!statsOnly && open && (
         <div className="mt-1" data-tui-meta-body>
           {/* 展开态只有步骤列表（2026-10-29 用户：输入/输出/缓存/模型这些明细不必再显示）。
@@ -668,11 +739,19 @@ function askCardMessage(message: AgentMessage, call: ToolCallRecord): ChatMessag
   }
 }
 
-export function TuiMessage({ message, compactEvent, ask }: {
+export function TuiMessage({ message, compactEvent, ask, docLinks = false, lead, trail, userLead }: {
   message: AgentMessage
   compactEvent?: boolean
   /** 传了才把消息里的 AskUserQuestion 画成可答卡片（详情/线程宿主接管线）。 */
   ask?: TuiAskBinding
+  /** 正文里的产物绝对路径渲染成可点文档 chip（2026-11-19，仅 cockpit 传 true）。 */
+  docLinks?: boolean
+  /** 助手行头（全域座舱的 `✦ 汐音`）：与统计行同一行，不单独占行。 */
+  lead?: ReactNode
+  /** 助手行尾（全域座舱的时间 + 复制）：统计行最右，常显。 */
+  trail?: ReactNode
+  /** 用户行首（全域座舱的 `❯ YOU`）：取代默认的 `❯`，与正文同一行。 */
+  userLead?: ReactNode
 }) {
   const isUser = message.role === 'user'
   const timeline = !isUser ? message.timeline : undefined
@@ -707,7 +786,7 @@ export function TuiMessage({ message, compactEvent, ask }: {
         data-tui-msg="user"
         data-message-id={message.id}
       >
-        <span className="font-bold text-pop-pink">❯ </span>
+        {userLead ? <>{userLead} </> : <span className="font-bold text-pop-pink">❯ </span>}
         <span className="break-words whitespace-pre-wrap">{message.content}</span>
       </div>
     )
@@ -723,13 +802,15 @@ export function TuiMessage({ message, compactEvent, ask }: {
         stats={message.turnStats}
         interrupted={message.interrupted}
         hideTextFrags={askTurn}
+        lead={lead}
+        trail={trail}
       />
       {displayContent
         ? (
           <div className="break-words whitespace-pre-wrap">
             <TuiMark />
             {displayContent.split('\n').map((line, i) => (
-              <span key={i}>{i > 0 && '\n'}{mdLine(line)}</span>
+              <span key={i}>{i > 0 && '\n'}{mdLine(line, docLinks)}</span>
             ))}
           </div>
         )

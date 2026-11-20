@@ -16,11 +16,14 @@ vi.mock('@/lib/cabin-api', async (importOriginal) => {
     fetchCabinRepos: vi.fn(),
     getRepoTree: vi.fn(),
     getRepoFile: vi.fn(),
+    getCabinTree: vi.fn(),
+    getCabinFile: vi.fn(),
+    cabinRawUrl: vi.fn(),
   }
 })
 
 import {
-  fetchCabinRepos, getRepoFile, getRepoTree,
+  fetchCabinRepos, getCabinFile, getCabinTree, getRepoFile, getRepoTree, cabinRawUrl,
   type CabinRepoEntry,
 } from '@/lib/cabin-api'
 import { CockpitStateProvider } from '../../state/CockpitStateProvider'
@@ -81,6 +84,23 @@ beforeEach(() => {
     ],
   }))
   vi.mocked(getRepoFile).mockResolvedValue({ path: 'src/reconcile.ts', content: 'export const reconcile = 1' })
+  vi.mocked(getCabinTree).mockResolvedValue({
+    dir: 'D:/ws/cabin',
+    entries: [
+      { path: 'docs/', type: 'dir', bytes: 0 },
+      { path: 'docs/接口约定.md', type: 'file', bytes: 46 },
+      { path: 'docs/架构总览.png', type: 'file', bytes: 999 },
+      { path: 'projects/', type: 'dir', bytes: 0 },
+      { path: 'projects/ledger/', type: 'dir', bytes: 0 },
+      { path: 'projects/ledger/src.ts', type: 'file', bytes: 10 },
+      { path: 'cabin.md', type: 'file', bytes: 18 },
+    ],
+  })
+  vi.mocked(getCabinFile).mockImplementation(async (_id: string, relPath: string) => ({
+    path: relPath,
+    content: relPath === 'cabin.md' ? '# 本舱\n\n- 只读\n' : '# 接口约定\n\n## 退款\n- 幂等\n',
+  }))
+  vi.mocked(cabinRawUrl).mockImplementation((_id: string, relPath: string) => `http://raw/${relPath}`)
 })
 
 describe('CockpitJobProject · 项目页签', () => {
@@ -176,5 +196,79 @@ describe('CockpitTreeWindow · 目录树窗口', () => {
     expect(win.getAttribute('data-maximized')).toBe('1')
     fireEvent.click(screen.getByTestId('cockpit-dossier-max'))
     expect(win.getAttribute('data-maximized')).toBeNull()
+  })
+})
+
+// ── v22 九轮：右栏「目录」= 本舱 cwd 只读树 + 多标签查看器（不编辑） ──
+const CABIN_SCOPE: CockpitTreeScope = { cabinId: 'c1', projects: [], active: '', mode: 'cabin' }
+
+describe('CockpitTreeWindow · 本舱目录（cabin 模式）', () => {
+  it('cwd 绝对路径常显；默认开 cabin.md 并按 Markdown 渲染；不出 chips/分支', async () => {
+    render(
+      <Wrap>
+        <CockpitTreeWindow scope={CABIN_SCOPE} onClose={vi.fn()} />
+      </Wrap>,
+    )
+
+    await waitFor(() => expect(getCabinTree).toHaveBeenCalledWith('c1'))
+    expect(screen.getByTestId('cockpit-cabin-cwd').textContent).toContain('D:/ws/cabin')
+    const head = screen.getByTestId('cockpit-treewin-head')
+    expect(head.textContent).toContain('本舱目录')
+    expect(head.textContent).toContain('D:/ws/cabin')
+    expect(screen.queryByTestId('cockpit-treewin-chips')).toBeNull()
+
+    // 默认标签 = cabin.md；md 渲染成标题 + 列表。
+    expect(await screen.findByRole('heading', { level: 1, name: '本舱' })).toBeInTheDocument()
+    expect(screen.getByRole('list').textContent).toContain('只读')
+    expect(screen.getAllByRole('tab')).toHaveLength(1)
+  })
+
+  it('点文件开新标签（Markdown 渲染）；✕ 关标签回落到相邻；图片走 /raw', async () => {
+    render(
+      <Wrap>
+        <CockpitTreeWindow scope={CABIN_SCOPE} onClose={vi.fn()} />
+      </Wrap>,
+    )
+    await screen.findByRole('heading', { level: 1, name: '本舱' })
+
+    fireEvent.click(screen.getByText('接口约定.md'))
+    await waitFor(() => expect(getCabinFile).toHaveBeenCalledWith('c1', 'docs/接口约定.md'))
+    expect(await screen.findByRole('heading', { level: 2, name: '退款' })).toBeInTheDocument()
+    expect(screen.getAllByRole('tab')).toHaveLength(2)
+
+    fireEvent.click(screen.getByText('架构总览.png'))
+    const img = await screen.findByAltText('docs/架构总览.png')
+    expect(img.getAttribute('src')).toBe('http://raw/docs/架构总览.png')
+    expect(getCabinFile).not.toHaveBeenCalledWith('c1', 'docs/架构总览.png')
+    expect(screen.getAllByRole('tab')).toHaveLength(3)
+
+    fireEvent.click(screen.getByLabelText('关闭 架构总览.png'))
+    await waitFor(() => expect(screen.getAllByRole('tab')).toHaveLength(2))
+    expect(screen.queryByAltText('docs/架构总览.png')).toBeNull()
+    // 关闭活动标签 → 回落到相邻（接口约定.md）。
+    expect(await screen.findByRole('heading', { level: 2, name: '退款' })).toBeInTheDocument()
+  })
+
+  it('全展 / 全收 + 深层筛选（自动展开祖先链）', async () => {
+    render(
+      <Wrap>
+        <CockpitTreeWindow scope={CABIN_SCOPE} onClose={vi.fn()} />
+      </Wrap>,
+    )
+    await screen.findByRole('heading', { level: 1, name: '本舱' })
+    const treeBox = screen.getByRole('tree', { name: '本舱目录树' })
+
+    // 默认只展开顶层目录：projects/ledger/src.ts 还收着。
+    expect(treeBox.textContent).toContain('projects/')
+    expect(treeBox.textContent).not.toContain('src.ts')
+
+    fireEvent.click(screen.getByLabelText('全部展开'))
+    expect(treeBox.textContent).toContain('src.ts')
+    fireEvent.click(screen.getByLabelText('全部收起'))
+    await waitFor(() => expect(screen.getByRole('tree', { name: '本舱目录树' }).textContent).not.toContain('src.ts'))
+
+    fireEvent.change(screen.getByLabelText('筛选本舱文件'), { target: { value: 'src.ts' } })
+    await waitFor(() => expect(screen.getByRole('tree', { name: '本舱目录树' }).textContent).toContain('src.ts'))
+    expect(screen.getByRole('tree', { name: '本舱目录树' }).textContent).not.toContain('cabin.md')
   })
 })

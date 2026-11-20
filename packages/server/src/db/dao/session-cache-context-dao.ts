@@ -166,6 +166,22 @@ export class SessionCacheContextDAO extends BaseDAO {
     ).run(new Date().toISOString(), sessionId)
   }
 
+  /**
+   * A built-in clone's persona template was upgraded on disk (CloneInitService
+   * refreshed `built-in/<name>/persona.md`): every session currently wearing
+   * that identity still holds the OLD role card. Clear the delivery mark so the
+   * next turn re-sends the card — revision stays put (same identity, new text).
+   * Returns the number of sessions that will re-receive it.
+   */
+  resetRoleDeliveryForExpert(expertId: string): number {
+    const result = this.stmt(`
+      UPDATE session_role_states
+      SET delivered_revision = 0, updated_at = ?
+      WHERE active_expert = ? AND expert_kind = 'clone' AND delivered_revision > 0
+    `).run(new Date().toISOString(), expertId)
+    return Number(result.changes ?? 0)
+  }
+
   // ── Task-thread playbook delivery (schema v61) ────────────────────
 
   /** The playbook body the provider transcript already holds (null = never

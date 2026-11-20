@@ -13,7 +13,7 @@
 //   · v21 四轮：删掉原型左上的指挥官徽（16 / 指挥官 / CMDR·ID —— 偏高且无信息量，
 //     与右侧 32px chip 不齐）；导航只留一枚同高的「经典模式」返回钮。
 
-import { useCallback, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { useBillingCurrency } from '@/lib/billing-currency'
 import { formatCost, formatTokenCount } from '@/lib/format'
 import { useCockpitEntry } from '../entry/use-cockpit-entry'
@@ -46,6 +46,15 @@ export function CockpitHud() {
   } = useCabinProjects(entryCabinId)
   const [bindOpen, setBindOpen] = useState(false)
   const closeBinder = useCallback(() => setBindOpen(false), [])
+
+  // 2026-11-19 用户 #5：绑定新项目可能是在对话里让汐音做的 —— 本轮结束时补拉舱籍，
+  // 左上角「N 项目」chip / 浮层不用整页刷新就能变。
+  const streaming = chat?.streaming ?? false
+  const wasStreaming = useRef(false)
+  useEffect(() => {
+    if (wasStreaming.current && !streaming) refetchProjects()
+    wasStreaming.current = streaming
+  }, [streaming, refetchProjects])
 
   // ── 读数（真源，缺值 → 未就绪）────────────────────────────────────────
   const tokenTotal = chat?.usage?.totals.tokens ?? null

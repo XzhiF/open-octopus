@@ -29,6 +29,12 @@ vi.mock('@/lib/cabin-api', async (importOriginal) => {
   return {
     ...actual,
     submitCabinDecision: vi.fn(async () => ({ already: false, receipt: { line: '✓ 已答 · 单 phase' } })),
+    ackCabinAttention: vi.fn(async () => ({ acked: true })),
+    discussCabinAsk: vi.fn(async () => ({
+      target: 'thread',
+      delivered: true,
+      receipt: '已请对方先把这几个选项讲清楚 —— 到对话里继续',
+    })),
   }
 })
 vi.mock('@/lib/tasks-api', async (importOriginal) => {
@@ -41,7 +47,7 @@ vi.mock('@/lib/tasks-api', async (importOriginal) => {
   }
 })
 
-import { submitCabinDecision } from '@/lib/cabin-api'
+import { submitCabinDecision, ackCabinAttention, discussCabinAsk } from '@/lib/cabin-api'
 import { readyTask, triggerTask } from '@/lib/tasks-api'
 
 function cockpit(): CockpitContextValue {
@@ -265,6 +271,39 @@ describe('CockpitRightRail · v21 待办', () => {
     expect(await screen.findByTestId('cockpit-inbox-receipt')).toHaveTextContent('已答')
   })
 
+  it('卡片里点「还需讨论」→ 走讨论端点，提问仍待答（不提交答案）', async () => {
+    vi.mocked(discussCabinAsk).mockClear()
+    vi.mocked(submitCabinDecision).mockClear()
+    fleetState.value = fleet([
+      row('q1', {
+        stage: 'answer',
+        ask: {
+          ask_id: 'ask-q1',
+          message_id: 'msg-q1',
+          questions: {
+            questions: [{
+              header: '任务范围',
+              multiSelect: false,
+              question: '只交付规格还是连实现一起？',
+              options: [{ label: '单 phase' }, { label: '多 phase' }],
+            }],
+          },
+        },
+      }),
+    ])
+    render(ui())
+    fireEvent.click(screen.getByTestId('cockpit-inbox-chip'))
+    fireEvent.click(screen.getByTestId('cockpit-inbox-row-q1'))
+
+    fireEvent.click(screen.getByTestId('aq-chat-about'))
+    await waitFor(() => expect(discussCabinAsk).toHaveBeenCalledTimes(1))
+    expect(discussCabinAsk).toHaveBeenCalledWith('c1', { askId: 'ask-q1' })
+    expect(submitCabinDecision).not.toHaveBeenCalled()
+    await waitFor(() => {
+      expect(screen.getByTestId('cockpit-inbox-discuss-note')).toHaveTextContent('已请对方先把这几个选项讲清楚')
+    })
+  })
+
   it('「去处理」→ 详情落对话页签，浮层不关并回到列表（详情从左侧顺势打开）', () => {
     fleetState.value = fleet([row('a2', { stage: 'review', title: 'M2 · 结算对账' })])
     render(ui())
@@ -363,5 +402,33 @@ describe('CockpitRightRail · v21 待办', () => {
     // 主动关：✕（头部最左那颗）。
     fireEvent.click(within(pop).getAllByLabelText('收起要我处理')[0])
     expect(screen.queryByTestId('cockpit-inbox-popover')).toBeNull()
+  })
+
+  // 2026-11-19 用户 #9：完成回流进 inbox → 人可确认「无需回复」收项（纯 ack）。
+  it('已完成分组：收下调 ack、不再回复任务/会话，回执照常出现', async () => {
+    fleetState.value = fleet([
+      row('done-task-t1', {
+        stage: 'notice',
+        title: '任务A · 已完成',
+        detail: '执行与归档已收口，确认无需回复就收下',
+        handle: '#1',
+        task_id: 't1',
+      }),
+    ])
+    render(ui())
+
+    expect(screen.getByTestId('cockpit-inbox-count')).toHaveTextContent('1')
+    fireEvent.click(screen.getByTestId('cockpit-inbox-chip'))
+    expect(screen.getByText('已完成')).toBeInTheDocument()
+    fireEvent.click(screen.getByTestId('cockpit-inbox-row-done-task-t1'))
+
+    const card = screen.getByTestId('cockpit-inbox-notice')
+    expect(card).toHaveTextContent('任务A · 已完成')
+    fireEvent.click(within(card).getByTestId('cockpit-inbox-notice-ack'))
+
+    await waitFor(() => expect(vi.mocked(ackCabinAttention)).toHaveBeenCalledWith('c1', 'done-task-t1'))
+    const receipt = await screen.findByTestId('cockpit-inbox-receipt')
+    expect(receipt).toHaveTextContent('已收下')
+    expect(receipt).toHaveTextContent('没有回复任务/会话')
   })
 })

@@ -93,6 +93,170 @@
   letter-spacing: 0.08em;
   color: var(--ck12-ink);
 }
+
+/* v22 十轮：标题栏「星核」挂载入口（技能 / 分身 / MCP）—— 主线程时它占的
+   就是原「主对话」标题位；作业线程在那之后仍显示 ▦ 标题。闭合 = 细环静态
+   星芒；开启 = 环亮 + 星芒呼吸 + 轨道旋转 + 外发光。 */
+.ck12-comms-attach-slot {
+  display: inline-flex;
+  flex: none;
+  min-width: 0;
+}
+.ck12-comms-add {
+  position: relative;
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  border: 1px solid color-mix(in srgb, var(--ck12-teal) 50%, transparent);
+  background: color-mix(in srgb, var(--ck12-teal) 10%, transparent);
+  color: #9ff7ee;
+  transition: border-color 0.16s, background 0.16s, color 0.16s, box-shadow 0.16s;
+}
+.ck12-comms-add svg { width: 15px; height: 15px; display: block; overflow: visible; }
+.ck12-comms-add:hover,
+.ck12-comms-add.on {
+  border-color: color-mix(in srgb, var(--ck12-teal) 95%, transparent);
+  background: color-mix(in srgb, var(--ck12-teal) 24%, transparent);
+  color: #eafffd;
+  box-shadow: 0 0 14px color-mix(in srgb, var(--ck12-teal) 45%, transparent);
+}
+.ck12-comms-add .orbit {
+  transform-origin: 12px 12px;
+  opacity: 0.55;
+  transition: opacity 0.16s;
+}
+.ck12-comms-add.on .orbit {
+  opacity: 0.85;
+  animation: ck12-add-spin 2.6s linear infinite;
+}
+.ck12-comms-add.on .pulse {
+  animation: ck12-add-pulse 1.6s ease-in-out infinite;
+  transform-origin: 12px 12px;
+}
+.ck12-comms-add.on .core { filter: drop-shadow(0 0 4px var(--ck12-teal)); }
+@keyframes ck12-add-spin { to { transform: rotate(360deg); } }
+@keyframes ck12-add-pulse {
+  0%, 100% { opacity: 0.45; transform: scale(0.92); }
+  50% { opacity: 1; transform: scale(1.08); }
+}
+.ck12-comms-add > i {
+  position: absolute;
+  right: -3px;
+  top: -3px;
+  min-width: 14px;
+  height: 14px;
+  padding: 0 3px;
+  display: grid;
+  place-items: center;
+  border-radius: 999px;
+  background: var(--ck12-sky);
+  color: #04121c;
+  font-size: 8.5px;
+  font-style: normal;
+  font-weight: 900;
+}
+
+/* ── 星核面板的舱内皮肤（triggerVariant=core）─────────────────────────
+   面板本体是 composer 的既有挂载面板（技能 / 分身 / MCP 一份实现），classic
+   皮肤不动；这里只把容器与骨架控件换成舱内口径：深空底板、青色发丝边、
+   青色小号分组标题、mono 名称。 */
+.ck12-attach-pop {
+  /* 面板 portal 到 body，出了 .ck12-app 的 token 作用域 —— 舱内变量在这里
+     补齐；否则 color-mix(var(--ck12-teal)) 失效，边框会落回文字色。 */
+  --ck12-teal: #2ee6d6;
+  --ck12-sky: #35c7f0;
+  --ck12-ink: var(--pop-ink);
+  --ck12-ink2: #a9a3c8;
+  --ck12-metal2: #8d86b8;
+  width: 430px;
+  height: 432px;
+  max-width: calc(100vw - 20px);
+  border-radius: 12px;
+  border: 1px solid color-mix(in srgb, var(--ck12-teal) 30%, transparent);
+  background: linear-gradient(180deg, rgba(17, 21, 30, 0.985), rgba(9, 11, 17, 0.985));
+  box-shadow:
+    0 20px 60px rgba(0, 0, 0, 0.6),
+    0 0 26px color-mix(in srgb, var(--ck12-teal) 12%, transparent);
+  color: var(--ck12-ink);
+}
+/* 头部：「添加」+ 身份 chip + Esc */
+.ck12-attach-pop > div:first-child {
+  border-bottom-color: rgba(46, 230, 214, 0.22);
+  background: linear-gradient(180deg, rgba(46, 230, 214, 0.06), transparent);
+}
+.ck12-attach-pop > div:first-child > span:first-child {
+  font-family: var(--font-ui);
+  font-size: 12px;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  color: #fff;
+}
+.ck12-attach-pop [data-testid="attach-identity-chip"] {
+  border-color: rgba(123, 77, 255, 0.5);
+  background: rgba(123, 77, 255, 0.18);
+  color: #c9b6ff;
+}
+.ck12-attach-pop > div:first-child > span:last-child {
+  color: var(--ck12-metal2);
+  border: 1px solid rgba(185, 179, 217, 0.25);
+  padding: 1px 6px;
+  clip-path: polygon(4px 0, 100% 0, calc(100% - 4px) 100%, 0 100%);
+}
+/* 搜索 */
+.ck12-attach-pop [data-testid="attach-search"] {
+  border-color: rgba(46, 230, 214, 0.25);
+  background: rgba(10, 8, 24, 0.55);
+  color: #fff;
+}
+.ck12-attach-pop [data-testid="attach-search"]:focus {
+  border-color: var(--ck12-teal);
+  box-shadow: 0 0 0 1px rgba(46, 230, 214, 0.3);
+}
+/* 类别页签：选中 = 青边 + 青色计数 */
+.ck12-attach-pop [data-testid^="attach-tab-"] {
+  font-size: 10px;
+  color: var(--ck12-ink2);
+}
+.ck12-attach-pop [data-testid^="attach-tab-"]:hover {
+  background: rgba(255, 255, 255, 0.05);
+  color: #fff;
+}
+.ck12-attach-pop [data-testid^="attach-tab-"] span { color: var(--ck12-metal2); }
+.ck12-attach-pop [data-testid^="attach-tab-"][aria-selected="true"] {
+  border-color: rgba(46, 230, 214, 0.4);
+  background: rgba(46, 230, 214, 0.1);
+  color: #fff;
+}
+.ck12-attach-pop [data-testid^="attach-tab-"][aria-selected="true"] span { color: var(--ck12-teal); }
+/* 分组标题（全部 SKILL / 分身 / MCP 服务）：青色小号字，底板与面板同色 */
+.ck12-attach-pop [data-plus-group] .sticky {
+  background: #0d111a;
+}
+.ck12-attach-pop [data-plus-group] .sticky > span:first-child {
+  color: color-mix(in srgb, var(--ck12-teal) 80%, transparent);
+  letter-spacing: 0.12em;
+}
+.ck12-attach-pop [data-plus-group] .sticky > span:last-child { color: var(--ck12-metal2); }
+/* 行：悬停青色微光；名称走 mono */
+.ck12-attach-pop [data-plus-group] button.w-full:hover {
+  background: rgba(46, 230, 214, 0.08);
+}
+.ck12-attach-pop [data-plus-group] button.w-full .truncate:not(.block) {
+  font-family: var(--font-mono);
+}
+/* 底部提示 */
+.ck12-attach-pop > div:last-child {
+  border-top-color: rgba(185, 179, 217, 0.14);
+  font-size: 9px;
+  color: var(--ck12-metal2);
+}
+.ck12-attach-pop > div:last-child b {
+  color: var(--ck12-teal);
+  font-weight: 800;
+}
 .ck12-comms-status {
   flex: none;
   padding: 1px 7px;
@@ -500,11 +664,13 @@
 }
 
 /* ═══════════════ v20（design 29）· 通讯台增量 ═══════════════
-   多作战 tab 条 / TUI 选项行 / 本地回执 / 停靠 pill / 边缘 grip /
-   TUI 转录 gutter。全部只在 .ck12-comms 与全域底栏内生效。 */
+   多作战 tab 条 / 本地回执 / 停靠 pill / 边缘 grip / TUI 转录 gutter。
+   全部只在 .ck12-comms 与全域底栏内生效。
+   （TUI 选项行「待你决断 · 键 1–9」2026-11-20 按用户要求移除：与 chat 内
+   提问卡、右栏 inbox 重复。） */
 
 /* transcript wrapper：只多一层 relative 上下文，回执 overlay 住里面。
-   v21 三轮：纵向排 —— 转录 / 选项行 / 输入行都在通讯台里（原型 .con-*）。 */
+   v21 三轮：纵向排 —— 转录 / 输入行都在通讯台里（原型 .con-*）。 */
 .ck12-comms-bodywrap {
   position: relative;
   flex: 1;
@@ -601,68 +767,6 @@
 .ck12-ctab:focus-within .ck12-ctab-x { opacity: 1; }
 .ck12-ctab-x:hover { color: var(--pop-red, #ff6b81); background: rgba(255, 255, 255, 0.07); }
 
-/* ── TUI 选项行（§3.1）──────────────────────────────────────────────── */
-.ck12-comms-choices {
-  flex: none;
-  max-height: 34%;
-  overflow-y: auto;
-  overscroll-behavior: contain;
-  padding: 6px 10px 8px;
-  border-top: 1px solid color-mix(in srgb, var(--ck-a) 22%, transparent);
-  background: color-mix(in srgb, var(--ck-a) 5%, transparent);
-  font-family: var(--font-mono);
-}
-.ck12-choices-h {
-  padding: 2px 0 5px;
-  font-size: 9px;
-  letter-spacing: 0.1em;
-  color: var(--ck-a);
-}
-.ck12-choice-item + .ck12-choice-item { margin-top: 6px; }
-.ck12-choice-head,
-.ck12-choice-row {
-  display: flex;
-  align-items: baseline;
-  gap: 7px;
-  width: 100%;
-  padding: 4px 8px;
-  border-left: 2px solid color-mix(in srgb, var(--ck-a) 45%, transparent);
-  border-radius: 0 6px 6px 0;
-  text-align: left;
-  font-family: var(--font-mono);
-  font-size: 11px;
-  color: var(--ck12-ink);
-  transition: transform 0.12s, background 0.12s, box-shadow 0.12s;
-}
-.ck12-choice-head { color: var(--ck12-dim); border-left-color: var(--ck12-bd); }
-.ck12-choice-row:hover,
-.ck12-choice-head:hover {
-  transform: translateX(3px);
-  background: color-mix(in srgb, var(--ck-a) 10%, transparent);
-  box-shadow: 0 0 14px color-mix(in srgb, var(--ck-a) 14%, transparent);
-}
-.ck12-choice-row:disabled { opacity: 0.55; cursor: wait; }
-.ck12-choice-no { flex: none; color: var(--ck-a); font-size: 10px; }
-.ck12-choice-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.ck12-choice-impact {
-  min-width: 0;
-  flex: 1;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  color: var(--ck12-faint);
-  font-size: 9.5px;
-}
-.ck12-choice-rec {
-  flex: none;
-  padding: 0 5px;
-  border-radius: 4px;
-  border: 1px solid color-mix(in srgb, var(--pop-amber) 50%, transparent);
-  color: var(--pop-amber);
-  font-size: 8.5px;
-  letter-spacing: 0.08em;
-}
-
 /* ── 本地同步回执 overlay（§3.3）────────────────────────────────────── */
 .ck12-comms-receipts {
   position: absolute;
@@ -755,33 +859,8 @@
   color: var(--ck12-faint);
 }
 
-/* ── TUI 转录 gutter（§3.1）：时间戳 38px + 角色符签 74px + 正文 ─────── */
-.ck12-tui-row {
-  display: grid;
-  grid-template-columns: 38px 74px minmax(0, 1fr);
-  gap: 6px;
-  align-items: baseline;
-}
-.ck12-tui-time {
-  font-family: var(--font-mono);
-  font-size: 9px;
-  color: var(--ck12-faint);
-  font-variant-numeric: tabular-nums;
-}
-.ck12-tui-role {
-  font-family: var(--font-mono);
-  font-size: 9.5px;
-  font-weight: 700;
-  letter-spacing: 0.04em;
-  color: var(--ck12-dim);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.ck12-tui-row[data-tui-row='user'] .ck12-tui-role { color: var(--pop-pink); }
-.ck12-tui-row[data-tui-row='assistant'] .ck12-tui-role { color: var(--ck-a); }
-.ck12-tui-row[data-tui-row='tool'] .ck12-tui-role { color: var(--pop-green); }
-.ck12-tui-cell { min-width: 0; }
+/* ── TUI 转录（2026-11-20 用户 #10 改版：标签列 / 时间 gutter 已移除，
+ *    行头与行尾（时间 + 复制）样式见 v21.css 的 .ck12-tui-msg / .ck12-msgacts）── */
 /* 全域通讯台内转录走 mono（TUI 主体），用户行去掉卡片感改左 gutter 线。 */
 .ck12-comms [data-tui-col] { font-family: var(--font-mono); }
 .ck12-comms [data-tui-msg='user'] {
@@ -796,12 +875,9 @@
   .ck12-comms-dbg, .ck12-comms-tall { display: none; }
   .ck12-condock { bottom: 58px; }
   .ck12-condock-hint { display: none; }
-  .ck12-tui-row { grid-template-columns: 34px 58px minmax(0, 1fr); }
 }
 @media (max-width: 560px) {
   .ck12-comms-sub, .ck12-comms-grip { display: none; }
-  .ck12-tui-row { grid-template-columns: 30px 44px minmax(0, 1fr); gap: 4px; }
-  .ck12-tui-role { font-size: 8.5px; }
 }
 @media (prefers-reduced-motion: reduce) {
   .ck12-ctab.has-unread, .ck12-condock.has-unread { animation: none; }
@@ -952,4 +1028,53 @@
 @media (max-width: 560px) {
   .ck12-winbar { left: 8px; bottom: 56px; max-width: calc(100vw - 120px); }
   .ck12-wbchip-name { max-width: 64px; }
+}
+
+/* ═══ 文档路径（2026-11-19 用户 #4）：正文里的产物绝对路径点开 → 文档查看器。
+       路径本身是纯文本（可选中复制），不包框；只有右侧「↗」小按钮可点。
+       classic 不渲染这套（docLinks 只在 cockpit 变体开）。 ═══ */
+.ck12-app .doc-ref {
+  display: inline-flex;
+  align-items: flex-start;
+  gap: 5px;
+  max-width: 100%;
+  vertical-align: -3px;
+}
+.ck12-app .doc-ref-path {
+  min-width: 0;
+  /* 2026-11-19 用户：完整绝对路径必须整条露出 —— 不省略，放不下就折行。 */
+  white-space: normal;
+  overflow-wrap: anywhere;
+  color: #9ff6ec;
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  line-height: 16px;
+}
+.ck12-app .doc-ref > :first-child {
+  flex: none;
+  line-height: 16px;
+}
+.ck12-app .doc-ref-open {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 17px;
+  height: 17px;
+  padding: 0;
+  border-radius: 3px;
+  border: 1px solid rgba(46, 230, 214, 0.38);
+  background: rgba(46, 230, 214, 0.09);
+  color: #bffcf6;
+  font-size: 10.5px;
+  font-weight: 700;
+  line-height: 1;
+  cursor: pointer;
+  transition: 0.14s;
+}
+.ck12-app .doc-ref-open:hover {
+  border-color: rgba(46, 230, 214, 0.9);
+  background: rgba(46, 230, 214, 0.2);
+  color: #fff;
+  box-shadow: 0 0 12px rgba(46, 230, 214, 0.35);
 }

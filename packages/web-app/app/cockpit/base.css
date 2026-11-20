@@ -1,7 +1,7 @@
 /* ═══════════════════════════════════════════════════════════════════════
    cockpit-v12 · S1 视觉底座
    逐块对照 docs/cabin-design/cockpit-v12.html 的 token / .bg / .hud /
-   .stage / .quiet / .cmd 外层 / .ticker。类名统一 ck12- 前缀，
+   .stage / .cmd 外层 / .ticker。类名统一 ck12- 前缀，
    颜色改走 --ck-a/b/c（CockpitProvider 实时写入）与 pop-* 语义 token。
    尺寸以原型为准：HUD 48 · stage padding 12 20 0 · 左栏 300 + gap 16 ·
    立绘让位 366 / 334 / 300 · ticker 30 · 底栏 10 20 16 · 简报区留给 S8。
@@ -566,80 +566,8 @@
   overflow: hidden;
 }
 
-/* ───────────────────────── 安静层 ───────────────────────── */
-.ck12-quiet {
-  position: absolute;
-  inset: 0;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  gap: 14px;
-  padding-left: calc(var(--ck12-railw) + var(--ck12-charw) + 10px - var(--ck12-charshift));
-  pointer-events: none;
-  transition: opacity 0.3s;
-  z-index: 1;
-}
-.ck12-arena.is-open .ck12-quiet { opacity: 0; }
-
-.ck12-clock {
-  font-size: 46px;
-  font-weight: 200;
-  letter-spacing: 0.14em;
-  color: color-mix(in srgb, var(--ck12-ink) 86%, transparent);
-  font-variant-numeric: tabular-nums;
-  text-shadow: 0 0 30px color-mix(in srgb, var(--ck-a) 26%, transparent);
-}
-.ck12-clock-sec {
-  font-size: 0.46em;
-  letter-spacing: 0.12em;
-  color: var(--ck12-faint);
-}
-.ck12-clock small {
-  font-size: 11px;
-  letter-spacing: 0.3em;
-  color: var(--ck12-faint);
-  display: block;
-  text-align: center;
-  margin-top: 6px;
-  font-weight: 600;
-}
-.ck12-arcs {
-  display: flex;
-  align-items: center;
-  gap: 18px;
-  margin-top: 6px;
-}
-.ck12-arc {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 5px;
-  font-size: 9px;
-  letter-spacing: 0.16em;
-  color: var(--ck12-faint);
-}
-.ck12-arc b {
-  font-size: 17px;
-  color: var(--ck12-ink);
-  letter-spacing: 0;
-  font-variant-numeric: tabular-nums;
-}
-.ck12-hintline {
-  margin-top: 10px;
-  font-size: 10.5px;
-  color: var(--ck12-faint);
-  letter-spacing: 0.06em;
-  text-align: center;
-  line-height: 1.8;
-}
-.ck12-hintline kbd {
-  border: 1px solid var(--ck12-bd);
-  border-radius: 5px;
-  padding: 1px 6px;
-  font-size: 10px;
-  color: var(--ck12-dim);
-}
+/* 安静层已整层撤掉（2026-11-20 用户 #12：上方 HUD 已有 SCENE 与时钟，
+   背景保持纯空）。 */
 
 /* ───────────────────────── 底栏外层（54px）+ 与通讯台同宽 ─────────────────────────
    v21：底栏（舰桥 + 输入）就是通讯台的下半截 —— 左缘贴立绘右缘 −22，右缘让出右栏。 */
@@ -821,9 +749,7 @@
   }
   .ck12-hud { gap: 6px; padding: 0 10px; }
   .ck12-brand small { display: none; }
-  .ck12-quiet,
   .ck12-face-loading { padding-left: 0; }
-  .ck12-clock { font-size: 38px; }
   .ck12-cmd { padding: 8px 92px 12px 52px; }
   .ck12-stage { padding: 8px 10px 0; }
   .ck12-skel-rail { display: none; }
@@ -846,7 +772,6 @@
   .ck12-p { animation: none; opacity: 0; }
   .ck12-skel-rail,
   .ck12-skel-arena { animation: none; }
-  .ck12-quiet { transition: none; }
 }
 
 /* ─────────── 座舱内的共享窗口灯组（任务模块窗 / 运行窗 / YAML） ───────────

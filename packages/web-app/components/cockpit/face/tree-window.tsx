@@ -16,6 +16,8 @@ export interface CockpitTreeScope {
   projects: readonly string[]
   /** 打开时的项目锚点。 */
   active: string
+  /** 'cabin' = 本舱 cwd 只读树（右栏「目录」）；缺省 = 作业的项目 worktree。 */
+  mode?: 'cabin'
 }
 
 export interface CockpitTreeApi {

@@ -69,6 +69,8 @@ export interface DeriveDelegationInput {
   id: string
   title: string
   state: "queued" | "running" | "waiting_input" | "done" | "failed" | "cancelled"
+  /** 完成结论（state=done 时进「已完成」条目的正文）。 */
+  summary?: string | null
   /** 派生句柄：`D1`。由调用方按创建顺序分配。 */
   handle?: string
   color?: number
@@ -83,6 +85,8 @@ export interface DeriveCabinInput {
   findings: DeriveFindingInput[]
   jobs: DeriveJobInput[]
   delegations?: DeriveDelegationInput[]
+  /** 已 ack 的 attention id（cabin_attention_acks）：只过滤 notice 类完成项。 */
+  acked?: readonly string[]
   maxWorkers: number
 }
 
@@ -98,6 +102,7 @@ const AWAITING_ORDER: Record<CabinAttentionItem["awaiting"], number> = {
 
 export function deriveCabinView(input: DeriveCabinInput): DerivedCabinView {
   const { cabin, tasks, executions, incidents, asks, findings, jobs, delegations = [], maxWorkers } = input
+  const acked = new Set(input.acked ?? [])
   const jobByTask = new Map<string, DeriveJobInput>()
   for (const j of jobs) if (j.kind === "task" && j.ref_id) jobByTask.set(j.ref_id, j)
   const taskById = new Map(tasks.map(t => [t.id, t]))
@@ -146,6 +151,18 @@ export function deriveCabinView(input: DeriveCabinInput): DerivedCabinView {
         title: `${t.name} · 失败已升级`, task_id: t.id, repo: t.repo ?? null, wt: t.branch ?? null,
         deep_link: `task:${t.id}`, ...subject,
       })
+    } else if (t.status === "done") {
+      // 2026-11-19 用户 #9：执行完先回流进 inbox，汐音审一道 / 人可确认无需回复。
+      // 重新完成会换 id（重新开写用后续任务，不会复用 done），旧 ack 不误吞。
+      const noticeId = `done-task-${t.id}`
+      if (!acked.has(noticeId)) {
+        push({
+          id: noticeId, job_id: job?.id ?? null, stage: "notice", awaiting: "person",
+          title: `${t.name} · 已完成`, detail: "执行与归档已收口，确认无需回复就收下",
+          task_id: t.id, repo: t.repo ?? null, wt: t.branch ?? null,
+          deep_link: `task:${t.id}`, ...subject,
+        })
+      }
     } else if (t.rawStatus && (t.status === "paused" || t.status === "ready")) {
       // 待放行（start）：任务停在「等人给一脚」的门上。
       //   · paused            → 待恢复
@@ -237,6 +254,17 @@ export function deriveCabinView(input: DeriveCabinInput): DerivedCabinView {
         title: `${d.title} · 委派在问你`, task_id: null, repo: null, wt: null,
         deep_link: `delegation:${d.id}`, ...subject,
       })
+    } else if (d.state === "done") {
+      // 2026-11-19 用户 #9：完成回流进 inbox；汐音审一道 / 人可确认无需回复。
+      const noticeId = `done-delegation-${d.id}`
+      if (!acked.has(noticeId)) {
+        push({
+          id: noticeId, job_id: null, stage: "notice", awaiting: "person",
+          title: `${d.title} · 已完成`, ...(d.summary ? { detail: d.summary } : {}),
+          task_id: null, repo: null, wt: null,
+          deep_link: `delegation:${d.id}`, ...subject,
+        })
+      }
     } else if (d.state === "failed") {
       push({
         id: `delegation-failed-${d.id}`, job_id: null, stage: "blocked", awaiting: "person",

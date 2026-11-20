@@ -295,6 +295,38 @@ describe('CockpitBrief · 到达', () => {
     expect(screen.queryByTestId('cockpit-brief')).toBeNull()
   })
 
+  // 2026-11-20 用户 #21：后台 / 最小化时不倒计时，回到前台重新给满 10s ——
+  // 否则回流到了、窗在后台烧完，人回来一张都看不到。
+  it('页面隐藏时不倒计时；回到前台重新给满 10s', () => {
+    vi.useFakeTimers()
+    fleet.rows = [attentionRow(attention('a1'))]
+    fleet.arrivals = ['a1']
+    const hidden = vi.spyOn(document, 'hidden', 'get').mockReturnValue(true)
+
+    render(<Harness />)
+    expect(screen.queryByTestId('cockpit-brief')).not.toBeNull()
+
+    act(() => {
+      vi.advanceTimersByTime(BRIEF_MS * 3)
+    })
+    expect(screen.queryByTestId('cockpit-brief')).not.toBeNull()
+
+    hidden.mockReturnValue(false)
+    act(() => {
+      document.dispatchEvent(new Event('visibilitychange'))
+    })
+    act(() => {
+      vi.advanceTimersByTime(BRIEF_MS - 1)
+    })
+    expect(screen.queryByTestId('cockpit-brief')).not.toBeNull()
+
+    act(() => {
+      vi.advanceTimersByTime(1)
+    })
+    expect(screen.queryByTestId('cockpit-brief')).toBeNull()
+    hidden.mockRestore()
+  })
+
   it('Esc 提前收（走 CockpitLayerStack）', () => {
     fleet.rows = [attentionRow(attention('a1'))]
     fleet.arrivals = ['a1']

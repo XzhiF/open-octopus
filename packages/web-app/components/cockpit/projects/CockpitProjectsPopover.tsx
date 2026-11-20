@@ -48,7 +48,15 @@ export function CockpitProjectsPopover({
   }
 
   return (
-    <Popover open={open} onOpenChange={setOpen}>
+    <Popover
+      open={open}
+      onOpenChange={(next) => {
+        setOpen(next)
+        // 2026-11-19 用户 #5：绑定可能发生在别处（对话里让汐音绑 / 另一个窗口）——
+        // 每次打开浮层强制拉一次真值，不再等 30s 缓存自然过期。
+        if (next) onRefetch()
+      }}
+    >
       <PopoverTrigger asChild>
         <button
           type="button"

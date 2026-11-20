@@ -11,7 +11,7 @@
 //
 // v20（design 29 §3/§5）增量：
 //   · 多作战 tab 条（状态表情 / 未读 / ✕ 关闭 / 回传重开）；
-//   · TUI 选项行（当前线程待决断，键 1–9）+ 本地同步回执 overlay；
+//   · 本地同步回执 overlay；
 //   · 左缘 / 上缘 grip 缩放（双击复位默认几何）；
 //   · ⌄ 整台收起成停靠 pill（docked，比 mini 更彻底）；
 //   · ⧉ 弹出作战窗（仅用户主动，上限 5）· ▦ 详情 · ⚙ 调试 · ⌃ 加高。
@@ -42,7 +42,6 @@ import {
 } from './geometry'
 import type { CockpitRect } from '../state/cockpit-state'
 import { CockpitConsoleTelemetry } from './CockpitConsoleTelemetry'
-import { CockpitChoices } from './CockpitChoices'
 import { CockpitReceipts } from './CockpitReceipts'
 import { useCockpitThreads } from './use-cockpit-threads'
 
@@ -114,6 +113,13 @@ export function CockpitChatWindow() {
     setChatSlot('index', node)
   }, [])
   useEffect(() => () => setChatSlot('index', null), [])
+
+  // v22 十轮：「星核」挂载入口 —— ChatArea 的 ComposerAttachPopover 原样
+  // portal 进标题栏（技能 / 分身 / MCP），输入行不再放 ＋。
+  const attachAttach = useCallback((node: HTMLSpanElement | null) => {
+    setChatSlot('attach', node)
+  }, [])
+  useEffect(() => () => setChatSlot('attach', null), [])
 
   const computeDefaultRect = useCallback((): CockpitRect | null => {
     // v21 三轮：原型没有屏幕级底栏，通讯台底缘固定为 视口 − 56（geometry 的
@@ -327,8 +333,19 @@ export function CockpitChatWindow() {
         >
           <X className="ck12-comms-ico" aria-hidden="true" />
         </button>
+        {/* v22 十轮：挂载入口（星核）—— 主线程时它就是原「主对话」标题的位置；
+            作业线程仍保留 ▦ 标题。ChatArea portal 真面板进来。 */}
+        <span
+          ref={attachAttach}
+          className="ck12-comms-attach-slot"
+          data-testid="cockpit-attach-slot"
+        />
         <span className="ck12-comms-ident">
-          <b className="ck12-comms-title" data-testid="cockpit-comms-title">
+          <b
+            className="ck12-comms-title"
+            data-testid="cockpit-comms-title"
+            hidden={active.kind === 'main'}
+          >
             {active.kind === 'main' ? '主对话' : `▦ ${active.short}`}
           </b>
         </span>
@@ -417,7 +434,8 @@ export function CockpitChatWindow() {
           data-testid="cockpit-chat-transcript"
         />
         <CockpitReceipts threadKey={active.key} />
-        {bodyVisible && <CockpitChoices />}
+        {/* 2026-11-20 用户：输入框上方的「待你决断 · N 项 · 键 1–9 直达」条已移除 ——
+            聊天内容里有提问卡、右栏也有 inbox，三条入口重复。 */}
         {/* 原型 .con-in：❯ + 输入框 + 金色六角 ⏎；「待你定」dock 由 composer
             自带的 composerDock 渲染在这行之上。 */}
         <div className="ck12-comms-in">

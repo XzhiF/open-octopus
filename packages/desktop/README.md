@@ -12,9 +12,9 @@ packages/desktop/
   scripts/prepare-resources.mjs  构建并打包 sidecar/web/core-pack/Node runtime
   electron-builder.yml
   resources/              生成物（gitignored）
-    runtime/node          随包携带的 Node 24
+    runtime/node(.exe)    随包携带的 Node 24（Windows 为 node.exe）
     server/dist           @octopus/server 构建产物
-    server/vendor         sidecar 的生产依赖（原 node_modules，NODE_PATH 解析）
+    server/node_modules   sidecar 的生产依赖（hoisted 扁平布局，保留原名）
     web/                  Vite SPA dist
     packages/core-pack/   skills/agents/presets/clones/... 数据
   release/                electron-builder 输出（gitignored）
@@ -24,9 +24,10 @@ packages/desktop/
 
 - **固定 loopback 端口** `47820`：`loadURL('http://127.0.0.1:47820')`。origin 稳定，localStorage/窗口状态不会因动态端口漂移。
 - **同源**：server 设置 `OCTOPUS_HOST=127.0.0.1`，同时托管 `web/dist` 与 `/api`；前端 `getServerUrl()` 生产态返回 `window.location.origin`。
-- **共享数据**：默认 DB 为 `~/.octopus/db/octopus.db`，与 CLI 共用；可用 `OCTOPUS_DESKTOP_DB_PATH` 覆盖。
-- **独立 Node runtime**：sidecar 用 `resources/runtime/node` 启动，不使用 `ELECTRON_RUN_AS_NODE`。因此 better-sqlite3 保持 Node ABI，无需按 Electron ABI 重建，也不会污染 `pnpm dev` 使用的 pnpm store。
-- **server 依赖**：`pnpm deploy --prod --legacy` 生成自包含依赖树，再重命名为 `vendor/`，sidecar 通过 `NODE_PATH` 解析（electron-builder 会过滤 extraResources 里的 `node_modules`）。
+- **共享数据**：默认 DB 为 `~/.octopus/db/octopus-prod.db`（与 `pnpm prod` 同一份，
+  dev 的 `octopus.db` 留给 `pnpm dev`）；可用 `OCTOPUS_DESKTOP_DB_PATH` 覆盖。
+- **独立 Node runtime**：sidecar 用 `resources/runtime/node`（Windows 为 `node.exe`）启动，不使用 `ELECTRON_RUN_AS_NODE`。因此 better-sqlite3 保持 Node ABI，无需按 Electron ABI 重建，也不会污染 `pnpm dev` 使用的 pnpm store。
+- **server 依赖**：`pnpm deploy --prod --legacy --config.node-linker=hoisted --config.ignore-scripts=true` 生成自包含依赖树。必须用 hoisted 布局并保留 `node_modules` 目录名 —— isolated 布局在 Windows 上是绝对路径 junction，换目录/换机器即断链；而 ESM 的裸模块解析不认 `NODE_PATH`。deploy 跳过了 install 脚本，编译好的 `better-sqlite3` 二进制由脚本从工作区补入。
 - **单实例**：`requestSingleInstanceLock()`；第二实例聚焦已有窗口。
 - **外链**：同源链接回到主窗口；http(s)/mailto 交给系统浏览器；下载落到系统 Downloads。
 - **退出**：窗口关闭 → SIGTERM sidecar → 最多 3s 后 SIGKILL；主进程等待后退出。

@@ -1,7 +1,7 @@
 /* S4 owns this file —— 作业面 CockpitFace / CockpitJobHeader / CockpitAttentionFace。
    v12 .jobhead（行1 28px + 行2 20px）、.jobtabs（24px 胶囊）、.jobbody / .sgrid。
    尺寸取原型：docs/cabin-design/cockpit-v12.html 的 .jobhead / .jtab / .jobbody；
-   左让位 366 / ≤1360 334 / ≤900 300（与 .ck12-quiet 一致，立绘不被压字）。 */
+   左让位 366 / ≤1360 334 / ≤900 300（立绘不被压字）。 */
 
 /* ───────────────────────── 面容器 ───────────────────────── */
 .ck12-face {

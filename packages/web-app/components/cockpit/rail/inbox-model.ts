@@ -11,7 +11,7 @@ import type { CabinAttentionItem } from '@octopus/shared'
 import type { CockpitRow } from '../fleet/fleet-model'
 import type { CockpitRef } from '../state/cockpit-state'
 
-export type InboxGroup = 'ask' | 'rev' | 'blk'
+export type InboxGroup = 'ask' | 'rev' | 'blk' | 'done'
 
 export interface InboxEntry {
   item: CabinAttentionItem
@@ -27,17 +27,20 @@ export interface InboxCounts {
   ask: number
   rev: number
   blk: number
+  done: number
 }
 
 export const INBOX_GROUP_LABEL: Record<InboxGroup, string> = {
   ask: '待你定',
   rev: '待验收',
   blk: '受阻',
+  done: '已完成',
 }
 
 export function inboxGroupOf(item: CabinAttentionItem): InboxGroup {
   if (item.stage === 'blocked') return 'blk'
   if (item.stage === 'review') return 'rev'
+  if (item.stage === 'notice') return 'done'
   return 'ask'
 }
 
@@ -70,7 +73,7 @@ export function collectInbox(rows: readonly CockpitRow[]): InboxEntry[] {
 }
 
 export function inboxCounts(entries: readonly InboxEntry[], answered?: ReadonlySet<string>): InboxCounts {
-  const counts: InboxCounts = { total: 0, ask: 0, rev: 0, blk: 0 }
+  const counts: InboxCounts = { total: 0, ask: 0, rev: 0, blk: 0, done: 0 }
   for (const entry of entries) {
     if (answered?.has(entry.item.id)) continue
     counts.total += 1
@@ -83,12 +86,12 @@ export function groupedInbox(
   entries: readonly InboxEntry[],
   answered?: ReadonlySet<string>,
 ): Array<{ group: InboxGroup; label: string; items: InboxEntry[] }> {
-  const buckets: Record<InboxGroup, InboxEntry[]> = { ask: [], rev: [], blk: [] }
+  const buckets: Record<InboxGroup, InboxEntry[]> = { ask: [], rev: [], blk: [], done: [] }
   for (const entry of entries) {
     if (answered?.has(entry.item.id)) continue
     buckets[inboxGroupOf(entry.item)].push(entry)
   }
-  return (['ask', 'rev', 'blk'] as const)
+  return (['ask', 'rev', 'blk', 'done'] as const)
     .filter((group) => buckets[group].length > 0)
     .map((group) => ({ group, label: INBOX_GROUP_LABEL[group], items: buckets[group] }))
 }
@@ -116,5 +119,6 @@ export function canAnswerInline(item: CabinAttentionItem): boolean {
 /** 原型 `.ip-row` 右侧动词。待放行与 classic 同：直接开「放行窗」。 */
 export function inboxVerb(item: CabinAttentionItem): string {
   if (item.stage === 'start') return '放行 →'
+  if (item.stage === 'notice') return '确认 →'
   return inboxGroupOf(item) === 'rev' ? '验收 →' : '回答 →'
 }

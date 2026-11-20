@@ -1,4 +1,4 @@
-import { app, BrowserWindow, dialog, screen, session, shell } from 'electron'
+import { app, BrowserWindow, dialog, ipcMain, screen, session, shell } from 'electron'
 import { spawn, type ChildProcess } from 'node:child_process'
 import fs from 'node:fs'
 import os from 'node:os'
@@ -13,6 +13,28 @@ let mainWindow: BrowserWindow | null = null
 let sidecar: ChildProcess | null = null
 let sidecarLog: fs.WriteStream | null = null
 let quitting = false
+
+// 冷启动时后端 routesReady 之前不接请求（packages/server/src/index.ts 里
+// listen 回调那段同步初始化，本机实测 40–75s）。窗口必须在这个等待之前就出现，
+// 否则用户双击后几十秒里既无窗口也无任务栏图标，只会判定「打不开」。
+const LOADING_HTML = `<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><style>
+html,body{margin:0;height:100%;background:#0A0A0C;color:#c8c8d0;
+  font:14px/1.6 -apple-system,"Segoe UI","Microsoft YaHei",sans-serif;
+  display:flex;align-items:center;justify-content:center;user-select:none}
+.box{text-align:center}
+.ring{width:34px;height:34px;margin:0 auto 18px;border:2px solid rgba(255,255,255,.12);
+  border-top-color:#7aa2ff;border-radius:50%;animation:spin .9s linear infinite}
+@keyframes spin{to{transform:rotate(360deg)}}
+.t{font-size:15px;letter-spacing:.4px}
+.s{margin-top:8px;font-size:12px;color:#6b6b78}
+</style></head><body><div class="box"><div class="ring"></div>
+<div class="t">Octopus 正在启动…</div><div class="s" id="s">正在初始化本地服务</div></div>
+<script>let n=0;setInterval(()=>{n++;document.getElementById('s').textContent='正在初始化本地服务 · '+n+'s'},1000)</script>
+</body></html>`
+
+function loadingUrl(): string {
+  return `data:text/html;charset=utf-8,${encodeURIComponent(LOADING_HTML)}`
+}
 
 function windowStatePath(): string {
   return path.join(app.getPath('userData'), 'window-state.json')
@@ -76,14 +98,21 @@ function startSidecar(): void {
   const resources = process.resourcesPath
   const entry = path.join(resources, 'server', 'dist', 'index.js')
   const webDir = path.join(resources, 'web')
-  const nodeBin = path.join(resources, 'runtime', 'node')
+  const nodeBin = path.join(
+    resources,
+    'runtime',
+    process.platform === 'win32' ? 'node.exe' : 'node',
+  )
   if (!fs.existsSync(entry)) throw new Error(`sidecar missing: ${entry}`)
   if (!fs.existsSync(nodeBin)) throw new Error(`bundled node missing: ${nodeBin}`)
   if (!fs.existsSync(path.join(webDir, 'index.html'))) throw new Error(`web dist missing: ${webDir}`)
 
+  // 2026-11-19 用户口径：桌面壳 = 对外分发的 prod 形态，数据也跟 prod 走同一份库
+  // （dev 的 octopus.db 留给 `pnpm dev` / CLI）。要指回 dev 库用
+  // OCTOPUS_DESKTOP_DB_PATH 覆盖。
   const dbPath =
     process.env.OCTOPUS_DESKTOP_DB_PATH ??
-    path.join(os.homedir(), '.octopus', 'db', 'octopus.db')
+    path.join(os.homedir(), '.octopus', 'db', 'octopus-prod.db')
   fs.mkdirSync(path.dirname(dbPath), { recursive: true })
 
   const logDir = path.join(app.getPath('userData'), 'logs')
@@ -101,7 +130,9 @@ function startSidecar(): void {
       OCTOPUS_BRANCH: 'desktop',
       OCTOPUS_HOST_PID: String(process.pid),
       OCTOPUS_HOST_PORTS: String(DESKTOP_PORT),
-      NODE_PATH: path.join(resources, 'server', 'vendor'),
+      // 依赖树保留 node_modules 原名（ESM 的裸模块解析不认 NODE_PATH）；
+      // NODE_PATH 只作为 CJS 兜底，与部署树保持一致。
+      NODE_PATH: path.join(resources, 'server', 'node_modules'),
     },
     stdio: ['ignore', 'pipe', 'pipe'],
   })
@@ -131,7 +162,10 @@ async function waitFor(url: string, timeoutMs: number): Promise<void> {
       throw new Error(`后端进程提前退出（code=${sidecar.exitCode}）`)
     }
     try {
-      const response = await fetch(url)
+      // 单次请求必须有上限：后端事件循环被初始化卡住时，连接会被 accept 队列
+      // 接住却迟迟不回包，没有 signal 的 fetch 会把整个等待循环钉死在这一次调用上，
+      // 总超时形同虚设（2026-11-19 桌面壳冷启动实测）。
+      const response = await fetch(url, { signal: AbortSignal.timeout(2000) })
       if (response.ok) return
     } catch {
       // keep polling
@@ -185,6 +219,24 @@ function createWindow(): BrowserWindow {
   win.once('ready-to-show', () => win.show())
   win.on('close', () => saveWindowState(win))
   win.on('closed', () => { mainWindow = null })
+  // 渲染层装了「agent 在跑就拦关闭」的 beforeunload 守卫（web-app
+  // cockpit/shell/use-cockpit-close-guard）。Chromium 默认对「拦了 unload」
+  // 静默取消关闭，窗口像卡死一样 —— 这里补一个真确框：
+  // 「关闭并中断」放行（渲染层 pagehide 会先发停流请求），其余保持窗口原样。
+  win.webContents.on('will-prevent-unload', (event) => {
+    if (win.isDestroyed()) return
+    const quit = dialog.showMessageBoxSync(win, {
+      type: 'warning',
+      buttons: ['关闭并中断', '取消'],
+      defaultId: 1,
+      cancelId: 1,
+      noLink: true,
+      title: 'Agent 正在工作',
+      message: '还有 agent 正在工作，关闭窗口会先中断它。',
+      detail: '被中断的这一轮会以「已中断」收尾，已经产出的内容保留在会话里。',
+    })
+    if (quit === 0) event.preventDefault()
+  })
   win.webContents.setWindowOpenHandler(({ url }) => {
     openFromRenderer(url)
     return { action: 'deny' }
@@ -204,11 +256,19 @@ function createWindow(): BrowserWindow {
 }
 
 async function bootstrap(): Promise<void> {
+  // 先开窗、先给反馈：下面的 sidecar + waitFor 冷启动要几十秒，窗口必须已经立起来。
+  const win = createWindow()
+  mainWindow = win
+  await win.loadURL(loadingUrl())
+  if (win.isDestroyed()) return
+  win.show()
+
   if (isDev) {
     await waitFor(DEV_URL, 15_000)
   } else {
     startSidecar()
-    await waitFor(`${BASE_URL}/api/actuator/ready`, 30_000)
+    // 本机冷启动实测 44–75s（见文件头 LOADING_HTML 注释），30s 会把正常启动判成失败。
+    await waitFor(`${BASE_URL}/api/actuator/ready`, 120_000)
   }
 
   session.defaultSession.on('will-download', (_event, item) => {
@@ -216,15 +276,30 @@ async function bootstrap(): Promise<void> {
     item.setSavePath(target)
   })
 
-  mainWindow = createWindow()
-  await mainWindow.loadURL(isDev ? DEV_URL : BASE_URL)
+  if (win.isDestroyed()) return
+  await win.loadURL(isDev ? DEV_URL : BASE_URL)
   if (isDev && process.env.OCTOPUS_DESKTOP_DEVTOOLS === '1') {
-    mainWindow.webContents.openDevTools({ mode: 'detach' })
+    win.webContents.openDevTools({ mode: 'detach' })
   }
 }
 
 app.setName('Octopus')
 app.setAppUserModelId('com.octopus.desktop')
+
+// 渲染层 → 系统文件管理器（本舱目录窗「资源管理器」）。只接受绝对路径：
+// 渲染层拿到的是服务端 tree 接口的 dir，这里再兜一次，避免变成任意打开入口。
+ipcMain.handle('octopus:reveal-path', async (_event, target: unknown) => {
+  if (typeof target !== 'string' || !target.trim()) return false
+  if (!path.isAbsolute(target)) return false
+  try {
+    const stats = fs.statSync(target)
+    if (stats.isDirectory()) await shell.openPath(target)
+    else shell.showItemInFolder(target)
+    return true
+  } catch {
+    return false
+  }
+})
 
 const gotLock = app.requestSingleInstanceLock()
 if (!gotLock) {

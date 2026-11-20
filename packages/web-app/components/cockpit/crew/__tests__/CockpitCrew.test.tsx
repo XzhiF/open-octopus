@@ -14,7 +14,6 @@ import type { MoodKey } from '@/components/cabin/cockpit'
 import {
   DEFAULT_COCKPIT,
   PRESENCE_RATES,
-  XY_FORMS,
   XY_LINES,
 } from '@/components/cabin/cockpit'
 import {
@@ -26,8 +25,11 @@ import type { CockpitChatApi } from '../../state/cockpit-state'
 import { CockpitStateProvider, useCockpitState } from '../../state/CockpitStateProvider'
 import { CockpitLayerStack } from '../../state/CockpitLayerStack'
 import { CockpitCrew } from '../CockpitCrew'
-import { CockpitCrewSettings } from '../CockpitCrewSettings'
+import { CockpitCrewSettings, CockpitCrewSettingsLayer } from '../CockpitCrewSettings'
 import { requestCrewPoke, resetCrewPoke, subscribeCrewPoke } from '../crew-events'
+import { resetCrewSettings, setCrewSettingsOpen } from '../crew-settings'
+import { resetCrewAgentInfoCache } from '../use-crew-agent-info'
+import { CLIPS } from '../pose-model'
 import { CHAT_DONE, CHAT_LISTEN, CHAT_WAIT_EARLY } from '../chat-reactions'
 
 vi.mock('@/lib/cabin-audio', () => ({
@@ -52,14 +54,42 @@ vi.mock('../../fleet/CockpitFleetProvider', async (importOriginal) => {
   }
 })
 
+// 2026-11-19 用户 #7：AGENT 档案的三条真源（只覆写这三个，其余走真实模块）。
+vi.mock('@/lib/agent/api', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/lib/agent/api')>()
+  return {
+    ...actual,
+    getCloneFile: vi.fn(async () => ({
+      content: '# 舱调度者\n\n你是全能舱主：能调度，也能直接写业务代码。',
+      path: 'persona.md',
+      size: 40,
+      readonly: true,
+    })),
+    listSkills: vi.fn(async () => ({
+      items: [{ name: 'octo-wiki' }, { name: 'octo-dev-copilot' }],
+    })),
+    listMcpServers: vi.fn(async () => ({
+      servers: [
+        { server: 'octopus-cabin', label: '舱调度', description: 'x', when: 'x', tools: [{ name: 'a', description: 'a' }] },
+        { server: 'octopus-workflow', label: '工作流', description: 'x', when: 'x', tools: [{ name: 'b', description: 'b' }] },
+        { server: 'octopus-memory', label: '记忆', description: 'x', when: 'x', tools: [] },
+        // 不是她主对话挂的 server —— 必须被过滤掉。
+        { server: 'octopus-task', label: '任务', description: 'x', when: 'x', tools: [] },
+      ],
+    })),
+  }
+})
+
 import type { CabinAttentionItem } from '@octopus/shared'
 import type { CockpitRow } from '../../fleet/fleet-model'
 
 let said: { line: string; mood?: MoodKey } | null = null
+let jumpNonce = 0
 
 function FxProbe() {
   const { fx } = useCockpitState()
   said = fx.lastSaid
+  jumpNonce = fx.jumpNonce
   return null
 }
 
@@ -90,6 +120,19 @@ function ChatSeeder({ streaming }: { streaming: boolean }) {
     reportChat({ streaming } as unknown as CockpitChatApi)
   }, [reportChat, streaming])
   return null
+}
+
+/** 外部台词源：简报 / 演练走 fx.say 通道（与 CockpitBrief 同一路径）。 */
+function SayProbe() {
+  const { fx } = useCockpitState()
+  return (
+    <button
+      type="button"
+      onClick={() => fx.say('有新回流：M2 结算对账 · 等你验收，已进编队。', 'alert')}
+    >
+      say
+    </button>
+  )
 }
 
 function makeCockpit(overrides: Partial<CockpitContextValue> = {}): CockpitContextValue {
@@ -147,6 +190,7 @@ function renderCrew(overrides: Partial<CockpitContextValue> = {}, extra?: ReactN
 
 beforeEach(() => {
   said = null
+  jumpNonce = 0
   resetCrewPoke()
   fleetState.rows = []
   vi.restoreAllMocks()
@@ -307,6 +351,33 @@ describe('CockpitCrew · 在场台词', () => {
   })
 })
 
+describe('CockpitCrew · 消息回流（外部台词）', () => {
+  // 2026-11-20 用户 #21：消息回流时只有简报窗、立绘没反应。fx.say 是简报
+  // 写台词的通道，这里补上消费端 —— 气泡 + 表情 override + 星光。
+  it('简报写 lastSaid → 立绘跟着开口：气泡 + alert 表情 + 星光', async () => {
+    const { cockpit } = renderCrew({}, <SayProbe />)
+
+    fireEvent.click(screen.getByText('say'))
+
+    expect(cockpit.setMoodOverride).toHaveBeenCalledWith('alert', expect.any(Number))
+    expect(screen.getAllByTestId('cockpit-crew-spark').length).toBeGreaterThan(0)
+    await waitFor(
+      () => expect(screen.getByTestId('cockpit-crew-speech')).toHaveTextContent('有新回流：M2 结算对账'),
+      { timeout: 3000 },
+    )
+  })
+
+  it('她自己说过的同一句不会被消费端重复开口', () => {
+    const { cockpit } = renderCrew()
+    // 互动一下：present + fx.say 同一句（模拟她自己的台词写进公共通道）。
+    act(() => requestCrewPoke())
+    const lineCalls = vi.mocked(cockpit.setMoodOverride).mock.calls
+    // poke 一次（3000ms）+ 消费端跳过 —— 只有一次 override。
+    expect(lineCalls.filter(([, ms]) => ms === 3000)).toHaveLength(1)
+    expect(lineCalls).toHaveLength(1)
+  })
+})
+
 describe('CockpitCrew · 闸门', () => {
   it('setCrewBusy 跟随 chat.streaming（null → false）', async () => {
     const setCrewBusy = vi.fn()
@@ -365,6 +436,37 @@ describe('CockpitCrew · 对话联动（2026-11-16）', () => {
     view.unmount()
   })
 
+  it('回答结束同步一次跃迁（星流 + 跃迁环）；克制档不跑', async () => {
+    vi.spyOn(Math, 'random').mockReturnValue(0) // doneLine = CHAT_DONE[0]
+    const view = render(tree(makeCockpit(), <ChatSeeder streaming />))
+    await waitFor(() =>
+      expect(screen.getByTestId('cockpit-crew-mood')).toHaveTextContent('回复中'),
+    )
+
+    view.rerender(tree(makeCockpit(), <ChatSeeder streaming={false} />))
+
+    await waitFor(() => expect(jumpNonce).toBeGreaterThan(0))
+    view.unmount()
+
+    // 克制档（只留四边流光）：收尾照常，但不跃迁。
+    jumpNonce = 0
+    const litePrefs = { ...DEFAULT_COCKPIT, fxLevel: 'lite' as const }
+    const lite = render(
+      tree(makeCockpit({ prefs: litePrefs }), <ChatSeeder streaming />),
+    )
+    await waitFor(() =>
+      expect(screen.getByTestId('cockpit-crew-mood')).toHaveTextContent('回复中'),
+    )
+
+    lite.rerender(tree(makeCockpit({ prefs: litePrefs }), <ChatSeeder streaming={false} />))
+
+    await waitFor(() =>
+      expect(screen.getByTestId('cockpit-crew-mood')).toHaveTextContent('庆祝'),
+    )
+    expect(jumpNonce).toBe(0)
+    lite.unmount()
+  })
+
   it('用户输入草稿 → 倾听表情 +「我在听」+ 呼吸点；清空即退', async () => {
     vi.spyOn(Math, 'random').mockReturnValue(0) // listenLine = CHAT_LISTEN[0]
     const view = render(
@@ -418,7 +520,10 @@ describe('CockpitCrew · 对话联动（2026-11-16）', () => {
 })
 
 // ── v13 汐音设置 ────────────────────────────────────────────────────
-function renderSettings(overrides: Partial<CockpitContextValue> = {}) {
+function renderSettings(
+  overrides: Partial<CockpitContextValue> = {},
+  tab: 'profile' | 'settings' = 'profile',
+) {
   const cockpit = makeCockpit(overrides)
   const onClose = vi.fn()
   render(
@@ -430,12 +535,14 @@ function renderSettings(overrides: Partial<CockpitContextValue> = {}) {
       </CockpitStateProvider>
     </CockpitContext.Provider>,
   )
+  // 2026-11-19 用户：档案改成上 tab 下内容；在场/特效/互动在「互动」页。
+  if (tab === 'settings') fireEvent.click(screen.getByTestId('cockpit-crew-tab-settings'))
   return { cockpit, onClose }
 }
 
 describe('CockpitCrewSettings · v13', () => {
   it('在场节奏是秒级三档 + 关闭开关；默认活跃 30 秒', () => {
-    const { cockpit } = renderSettings()
+    const { cockpit } = renderSettings({}, 'settings')
 
     const panel = screen.getByTestId('cockpit-crew-settings')
     expect(panel).toHaveTextContent('30 秒')
@@ -450,7 +557,7 @@ describe('CockpitCrewSettings · v13', () => {
   })
 
   it('特效强度三档写进 prefs；说一句 / 互动 / 表情都走既有动作', () => {
-    const { cockpit } = renderSettings()
+    const { cockpit } = renderSettings({}, 'settings')
 
     fireEvent.click(screen.getByTestId('cockpit-crew-fx-lite'))
     expect(cockpit.setPref).toHaveBeenCalledWith('fxLevel', 'lite')
@@ -464,16 +571,101 @@ describe('CockpitCrewSettings · v13', () => {
     expect(onPoke).toHaveBeenCalledTimes(1)
     unsubscribe()
 
+    // 用户 2026-11-19：素材是 13 支片段，画廊必须 13 张；点卡带 clip 下标就地演。
     const gallery = within(screen.getByTestId('cockpit-crew-gallery')).getAllByRole('button')
-    expect(gallery).toHaveLength(XY_FORMS.length)
-    fireEvent.click(gallery[0])
-    expect(cockpit.setMoodOverride).toHaveBeenCalledWith(XY_FORMS[0].k)
+    expect(gallery).toHaveLength(CLIPS.length)
+    expect(CLIPS).toHaveLength(13)
+    const poses: Array<{ pose?: string; clip?: number }> = []
+    const onPose = (event: Event) => {
+      poses.push((event as CustomEvent<{ pose?: string; clip?: number }>).detail)
+    }
+    window.addEventListener('octopus:crew-pose', onPose)
+    fireEvent.click(gallery[5])
+    window.removeEventListener('octopus:crew-pose', onPose)
+    expect(poses).toHaveLength(1)
+    expect(poses[0]).toMatchObject({ pose: CLIPS[5].pose, clip: 5, ms: 2600 })
+    expect(cockpit.setMoodOverride).not.toHaveBeenCalled()
   })
 
   it('Esc 关设置面（走同一层栈）', () => {
     const { onClose } = renderSettings()
     fireEvent.keyDown(window, { key: 'Escape' })
     expect(onClose).toHaveBeenCalled()
+  })
+
+  // 2026-11-19 用户 #7：面板是她是谁（AGENT 档案），不是只有在场开关；
+  // 二改（用户：技能多）改成上 tab 下内容 —— 资料 / 人格 / 技能 / 工具 / 互动。
+  it('AGENT 档案：资料页 + 人格 / 技能 / 工具三个 tab', async () => {
+    renderSettings()
+    const panel = screen.getByTestId('cockpit-crew-settings')
+    const agent = within(panel).getByTestId('cockpit-crew-agent')
+    expect(agent).toHaveTextContent('舱调度者')
+    expect(agent).toHaveTextContent('cabin-orchestrator')
+    expect(agent).toHaveTextContent('隔离记忆')
+
+    await waitFor(() => expect(agent).toHaveTextContent('2 项'))
+    expect(agent).toHaveTextContent('3 套 MCP')
+
+    // tab 头写真实计数：技能 2 / 工具 3
+    expect(within(panel).getByTestId('cockpit-crew-tab-skills')).toHaveTextContent('2')
+    expect(within(panel).getByTestId('cockpit-crew-tab-tools')).toHaveTextContent('3')
+
+    fireEvent.click(within(panel).getByTestId('cockpit-crew-agent-persona'))
+    expect(screen.getByTestId('cockpit-crew-agent-persona-text')).toHaveTextContent('全能舱主')
+
+    fireEvent.click(within(panel).getByTestId('cockpit-crew-tab-skills'))
+    const skillChips = screen.getByTestId('cockpit-crew-agent-skill-chips')
+    expect(skillChips).toHaveTextContent('octo-wiki')
+    expect(skillChips).toHaveTextContent('octo-dev-copilot')
+
+    fireEvent.click(within(panel).getByTestId('cockpit-crew-tab-tools'))
+    const toolChips = screen.getByTestId('cockpit-crew-agent-tool-chips')
+    expect(toolChips).toHaveTextContent('舱调度')
+    expect(toolChips).toHaveTextContent('工作流')
+    expect(toolChips).toHaveTextContent('记忆')
+    // octopus-task 不在她主对话的挂载集里 —— 不能拿来充数。
+    expect(toolChips).not.toHaveTextContent('任务')
+    // 每个 server 的真实工具名也在（cabin 只有 a，workflow 只有 b）。
+    expect(toolChips).toHaveTextContent('a')
+    expect(toolChips).toHaveTextContent('b')
+  })
+})
+
+describe('CockpitCrewSettingsLayer · 更多 → ♡ 汐音', () => {
+  beforeEach(() => {
+    resetCrewSettings()
+    resetCrewAgentInfoCache()
+  })
+  afterEach(() => resetCrewSettings())
+
+  function renderLayer() {
+    render(
+      <CockpitContext.Provider value={makeCockpit()}>
+        <CockpitStateProvider entryCabinId="c1">
+          <CockpitLayerStack>
+            <CockpitCrewSettingsLayer />
+          </CockpitLayerStack>
+        </CockpitStateProvider>
+      </CockpitContext.Provider>,
+    )
+  }
+
+  it('store 打开 → 面板出现，并让她做动作（octopus:crew-pose）', async () => {
+    const onPose = vi.fn()
+    window.addEventListener('octopus:crew-pose', onPose as EventListener)
+    try {
+      renderLayer()
+      expect(screen.queryByTestId('cockpit-crew-settings')).toBeNull()
+
+      act(() => { setCrewSettingsOpen(true) })
+
+      expect(await screen.findByTestId('cockpit-crew-settings')).toBeInTheDocument()
+      expect(onPose).toHaveBeenCalled()
+      const detail = (onPose.mock.calls[0][0] as CustomEvent<{ pose: string }>).detail
+      expect(detail.pose).toBe('ready')
+    } finally {
+      window.removeEventListener('octopus:crew-pose', onPose as EventListener)
+    }
   })
 })
 describe('CockpitCrew · v21 ready 报到（真实事件驱动）', () => {
@@ -513,25 +705,86 @@ describe('CockpitCrew · v22.1 待命自走轮播', () => {
   beforeEach(() => vi.useFakeTimers())
   afterEach(() => vi.useRealTimers())
 
-  it('真空闲 12s 后换一支日常片段，姿态语义仍是待命', () => {
+  it('真空闲 7s 后换一支小动作（不与当前段重复），姿态语义仍是待命', () => {
     renderCrew()
     expect(sprite()).toHaveAttribute('data-pose', 'idle')
     expect(sprite()).toHaveAttribute('data-clip', '6')
 
-    act(() => { vi.advanceTimersByTime(12_000) })
+    act(() => { vi.advanceTimersByTime(7_000) })
 
     expect(sprite()).toHaveAttribute('data-pose', 'idle')
     expect(sprite().getAttribute('data-clip')).not.toBe('6')
   })
 
-  it('作业/动作期间不自走（片段跟随真实状态）', () => {
+  it('作业期也穿插小动作：主拍隔拍回归，其余片段轮换', () => {
+    // 2026-11-20 用户 #14：跑任务时她不再冻在 13-working 一支。
     renderCrew({ mood: 'working' })
     expect(sprite()).toHaveAttribute('data-clip', '12')
 
-    act(() => { vi.advanceTimersByTime(12_000) })
+    act(() => { vi.advanceTimersByTime(7_000) })
+    expect(sprite()).toHaveAttribute('data-pose', 'working')
+    expect(sprite().getAttribute('data-clip')).not.toBe('12')
 
+    act(() => { vi.advanceTimersByTime(10_000) })
     expect(sprite()).toHaveAttribute('data-pose', 'working')
     expect(sprite()).toHaveAttribute('data-clip', '12')
+  })
+
+  it('待命换动作时补一句旁白（2026-11-20 用户：纯动作太单调）', () => {
+    renderCrew()
+    expect(screen.getByTestId('cockpit-crew-speech')).not.toHaveClass('show')
+
+    // 首拍 3.5–6s 内必换一次动作，届时补一句
+    act(() => { vi.advanceTimersByTime(7_000) })
+    const speech = screen.getByTestId('cockpit-crew-speech')
+    expect(speech).toHaveClass('show')
+    expect((speech.textContent ?? '').trim().length).toBeGreaterThan(0)
+  })
+})
+
+// 2026-11-20 用户：连点她会冒出「双手举起、开心」的立绘 —— 那是 v21 的
+// pose-cheer.png 静图（cheer 没有专属片段，旧逻辑在视频起播前垫了它）。
+// 立绘只允许 13 支视频，任何姿态都不准垫 v21 静图。
+describe('CockpitCrew · 立绘只用 13 支视频（不垫 v21 静图）', () => {
+  const sprite = () => screen.getByTestId('cockpit-pose-sprite')
+
+  it('切到 cheer（无专属片段）也只渲染 video，不出现 img', () => {
+    renderCrew()
+    act(() => {
+      window.dispatchEvent(new CustomEvent('octopus:crew-pose', { detail: { pose: 'cheer', ms: 1000 } }))
+    })
+    expect(sprite()).toHaveAttribute('data-pose', 'cheer')
+    // cheer 落到 09-smile 视频，仍是 13 支之内
+    expect(sprite()).toHaveAttribute('data-clip-no', '9')
+    expect(sprite().querySelector('img')).toBeNull()
+    // 双层交叉淡入：A/B 两支 video 常驻，但都不含旧静图
+    expect(sprite().querySelectorAll('video')).toHaveLength(2)
+  })
+})
+
+// 2026-11-20 用户：chat 里 agent 干活时，02-thinking / 11-typing / 13-working
+// 应该随机切；原先回复期固定 11-typing，回多久就冻多久。
+describe('CockpitCrew · 回复中轮换（thinking / typing / working）', () => {
+  const sprite = () => screen.getByTestId('cockpit-pose-sprite')
+
+  beforeEach(() => vi.useFakeTimers())
+  afterEach(() => vi.useRealTimers())
+
+  it('回复中在三支里轮换，不冻在 11-typing', async () => {
+    render(tree(makeCockpit(), <ChatSeeder streaming />))
+    await act(async () => { await vi.advanceTimersByTimeAsync(0) })
+
+    // 首拍仍是 typing（第一支洗牌前）
+    expect(sprite()).toHaveAttribute('data-clip-no', '11')
+
+    const seen = new Set<string | null>([sprite().getAttribute('data-clip-no')])
+    for (let i = 0; i < 5; i++) {
+      await act(async () => { await vi.advanceTimersByTimeAsync(6_000) })
+      seen.add(sprite().getAttribute('data-clip-no'))
+    }
+    // 只允许 02-thinking / 11-typing / 13-working 三支
+    expect([...seen].every((no) => no !== null && ['2', '11', '13'].includes(no))).toBe(true)
+    expect(seen.size).toBeGreaterThan(1)
   })
 })
 
@@ -564,27 +817,34 @@ describe('CockpitCrew · 等你在场（有待办）', () => {
   beforeEach(() => vi.useFakeTimers())
   afterEach(() => vi.useRealTimers())
 
-  it('等待时片段在 alert 与日常动作之间穿插（姿态语义仍是警觉）', () => {
+  it('等待时 alert 主拍隔拍穿插随机小动作；一轮能看到全部 13 支', () => {
     fleetState.rows = [attentionRow('a1', { stage: 'review', title: 'M2 · 结算对账' })]
     renderCrew({ mood: 'alert' })
 
     expect(sprite()).toHaveAttribute('data-pose', 'alert')
     expect(sprite()).toHaveAttribute('data-clip', '3')
 
-    // 首拍 4.2–6s：换成第一支日常动作。
+    // 首拍 4.2–6s：换一支小动作（不是 alert 主拍）。
     act(() => { vi.advanceTimersByTime(6_500) })
     expect(sprite()).toHaveAttribute('data-pose', 'alert')
-    expect(sprite()).toHaveAttribute('data-clip', '6')
+    expect(sprite().getAttribute('data-clip')).not.toBe('3')
 
     // 下一拍 5.2–7.8s：回到 alert 主拍。
     act(() => { vi.advanceTimersByTime(8_000) })
     expect(sprite()).toHaveAttribute('data-pose', 'alert')
     expect(sprite()).toHaveAttribute('data-clip', '3')
 
-    // 第三拍：换到另一支动作 —— 不能只在 04 ↔ 07 两支之间来回（真机回归）。
-    act(() => { vi.advanceTimersByTime(8_000) })
+    // 2026-11-20 用户 #14：一轮（24 拍，约 2.5 分钟）里 13 支各出现一次，
+    // 顺序随机 —— 不能像旧序列那样只轮 8 支。采样跨到第二轮开头，
+    // 兜住「首拍在采样前已经播过」的那一支。
+    const seen = new Set<string>()
+    for (let second = 0; second < 300; second++) {
+      act(() => { vi.advanceTimersByTime(1_000) })
+      const clip = sprite().getAttribute('data-clip')
+      if (clip) seen.add(clip)
+    }
+    expect(seen.size).toBe(13)
     expect(sprite()).toHaveAttribute('data-pose', 'alert')
-    expect(sprite()).toHaveAttribute('data-clip', '8')
   })
 
   it('待办一直在：头顶气泡隔一阵报真实清单（标题来自编队行）', () => {

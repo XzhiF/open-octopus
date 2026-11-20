@@ -22,8 +22,14 @@ interface AskUserQuestionCardProps {
   onAnswer: (content: string) => void
   disabled?: boolean
   /** 跨线程复用（舱主会话的作者提问卡）时关掉「先讨论」——它会把讨论请求
-   *  转发到另一个线程，而回答正文不会回到当前对话，语义会断。 */
+   *  转发到另一个线程，而回答正文不会回到当前对话，语义会断。
+   *  2026-11-20 起有 `onChatAbout` 时不再需要它：讨论请求交给服务端
+   *  （POST /decisions/discuss）送到提问所在会话，不走本卡的作答正文。 */
   hideChatAbout?: boolean
+  /** 「还需讨论」：不回答，请提问的 agent 先把选项解释清楚（用户 #20）。
+   *  summary = 当前已勾选/已填写的答案摘要（没填就是 undefined），
+   *  由宿主带给服务端，补进讨论请求。 */
+  onChatAbout?: (summary?: string) => void
   /** design 25 §5.3：决策队列的键盘导航。传 askId 后，本卡监听窗口级
    *  `octopus:ask-key` 事件（只处理 askId 匹配的），`1/2/3` 选选项、`↵` 提交。
    *  归属仍由提交体里的 askId 决定，键盘只影响「当前这张卡」的 UI。 */
@@ -114,7 +120,21 @@ function formatChatAboutContent(
   return lines.join("\n")
 }
 
-export function AskUserQuestionCard({ message, onAnswer, disabled, hideChatAbout, hotkeyId }: AskUserQuestionCardProps) {
+/** 「还需讨论」的摘要：只把用户已经勾选 / 填过的答案压成一行（没填返回 undefined）。 */
+function formatChatAboutSummary(
+  questions: QuestionItem[],
+  answers: Record<number, string | string[]>,
+  otherInputs: Record<string, string>,
+): string | undefined {
+  const parts: string[] = []
+  questions.forEach((q, i) => {
+    const value = answerFor(q, i, answers, otherInputs)
+    if (value) parts.push(`${q.header}: ${value}`)
+  })
+  return parts.length > 0 ? `已勾选 ${parts.join("；")}` : undefined
+}
+
+export function AskUserQuestionCard({ message, onAnswer, disabled, hideChatAbout, onChatAbout, hotkeyId }: AskUserQuestionCardProps) {
   const questions = useMemo(() => parseQuestions(message.toolInput), [message.toolInput])
   const [answers, setAnswers] = useState<Record<number, string | string[]>>({})
   const [otherInputs, setOtherInputs] = useState<Record<string, string>>({})
@@ -430,17 +450,25 @@ export function AskUserQuestionCard({ message, onAnswer, disabled, hideChatAbout
           </div>
         )}
 
-        {/* Chat about this（CLI 同款，仅单选出现）：不回答，交回 Agent 澄清 */}
-        {!submitted && !disabled && canChatAbout && !hideChatAbout && (
+        {/* 还需讨论（用户 #20，Claude Code 的 Chat about this 同语义）：
+            不回答，把问题交回 agent 先解释选项。宿主给了 onChatAbout 就走
+            server 的讨论端点（提问仍待答）；否则退回「把讨论正文当作答发出去」。 */}
+        {!submitted && !disabled && canChatAbout && (onChatAbout || !hideChatAbout) && (
           <div className="mt-2 border-t border-dashed border-white/10 pt-2">
             <button
               type="button"
-              onClick={handleChatAbout}
+              onClick={() => {
+                if (onChatAbout) {
+                  onChatAbout(formatChatAboutSummary(questions, answers, otherInputs))
+                  return
+                }
+                handleChatAbout()
+              }}
               data-testid="aq-chat-about"
               className="flex w-full items-center gap-1.5 rounded-md px-2 py-1.5 text-left text-xs text-muted-foreground transition-colors hover:bg-white/5 hover:text-foreground"
             >
               <PencilLine className="size-3 shrink-0 text-pop-purple" />
-              先和 Claude 聊聊这些问题
+              还需讨论 —— 先让对方解释这几个选项
             </button>
           </div>
         )}

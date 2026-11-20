@@ -37,7 +37,7 @@ export function CockpitAttentionChip({ counts }: { counts: InboxCounts }) {
       data-testid="cockpit-inbox-chip"
       aria-expanded={inboxOpen}
       aria-label={zero ? '要我处理 · 暂无待办' : `要我处理 ${counts.total} 条`}
-      title={zero ? '要我处理 · 暂无待办' : `要我处理 · 待你定 ${counts.ask} · 验收 ${counts.rev} · 受阻 ${counts.blk}`}
+      title={zero ? '要我处理 · 暂无待办' : `要我处理 · 待你定 ${counts.ask} · 验收 ${counts.rev} · 受阻 ${counts.blk} · 完成 ${counts.done}`}
       onClick={() => (inboxOpen ? closeInbox() : openInbox(null))}
     >
       <span className="ck12-inboxchip-ic" aria-hidden="true">✉</span>

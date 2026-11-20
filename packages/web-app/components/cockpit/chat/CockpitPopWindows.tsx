@@ -17,7 +17,6 @@ import { moveCockpitRect, resizeCockpitRect, type Viewport } from './geometry'
 import { useCockpitState } from '../state/CockpitStateProvider'
 import type { CockpitPopWin, CockpitRect } from '../state/cockpit-state'
 import { THREAD_EMO } from '../fleet/threads-model'
-import { CockpitChoices } from './CockpitChoices'
 import { CockpitReceipts } from './CockpitReceipts'
 import { useCockpitThreads } from './use-cockpit-threads'
 
@@ -175,8 +174,6 @@ function CockpitPopWinView({ win }: { win: CockpitPopWin }) {
         />
         <CockpitReceipts threadKey={win.threadKey} />
       </div>
-
-      <CockpitChoices threadKey={win.threadKey} interactive={false} />
 
       <div
         className="ck12-cwin-resize"

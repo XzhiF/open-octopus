@@ -238,7 +238,7 @@ export type CabinAskEnvelope = z.infer<typeof CabinAskEnvelopeSchema>
 export const CabinAttentionItemSchema = z.object({
   id: z.string(),
   job_id: z.string().nullable(),
-  stage: z.enum(["review", "answer", "adjudicate", "approval", "blocked", "start"]),
+  stage: z.enum(["review", "answer", "adjudicate", "approval", "blocked", "start", "notice"]),
   awaiting: z.enum(["person", "working", "idle", "ended"]),
   title: z.string(),
   question: z.string().optional(),

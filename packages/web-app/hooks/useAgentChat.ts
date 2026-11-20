@@ -34,6 +34,22 @@ export type ChatSendOptions = {
 /** Transcript reload banner text — cleared by any later successful load. */
 const LOAD_MESSAGES_ERROR = 'Failed to load messages'
 
+/** 转录分页（2026-11-20 用户 #11）：首屏只取最近一页，往上拉再按游标要更早
+ *  的一页。1000 轮的会话不会一次性铺满 DOM。服务端单页上限 200。 */
+export const MESSAGE_PAGE_SIZE = 100
+
+/** 合并「最新一页」与已加载的更早历史：切会话回来 / 轮末补拉时，别把用户
+ *  上翻加载过的历史冲掉。只保留严格早于新页首条的旧行；乐观 temp- 行永不
+ *  保留（它只是本地的占位，服务端落库后由同一页里的真行取代），同 id 去重。 */
+function mergeLatestPage(prev: AgentMessage[], latest: AgentMessage[]): AgentMessage[] {
+  if (latest.length === 0) return latest
+  const cutoff = latest[0].created_at
+  const latestIds = new Set(latest.map((m) => m.id))
+  const older = prev.filter((m) =>
+    !m.id.startsWith('temp-') && !latestIds.has(m.id) && m.created_at < cutoff)
+  return older.length > 0 ? [...older, ...latest] : latest
+}
+
 /** Last known context usage for a session. localStorage (not sessionStorage) so
  *  the value survives tab closes and browser restarts; legacy sessionStorage
  *  entries stay readable AND get promoted to localStorage on first read so a
@@ -139,6 +155,15 @@ export function useAgentChat(sessionId: string | null, options?: {
   }) => void
 }) {
   const [messages, setMessages] = useState<AgentMessage[]>([])
+  /** 服务端还有更早的消息没加载（分页游标仍在）。 */
+  const [hasMoreMessages, setHasMoreMessages] = useState(false)
+  /** 正在向更早翻页（转录顶部显示「加载更早的消息…」）。 */
+  const [loadingOlderMessages, setLoadingOlderMessages] = useState(false)
+  const hasMoreMessagesRef = useRef(false)
+  const loadingOlderMessagesRef = useRef(false)
+  // loadOlderMessages 回调里要读当前最早一条做游标，不进依赖数组。
+  const messagesRef = useRef<AgentMessage[]>([])
+  messagesRef.current = messages
   const [streaming, setStreaming] = useState(false)
   // Session that actually owns the live stream. The sidebar's「运行中」badge must
   // key off THIS, not the active session: on a switch render `streaming` is still
@@ -253,6 +278,11 @@ export function useAgentChat(sessionId: string | null, options?: {
     // Never carry another session's transcript/error into this one. The caller
     // reloads the active session right after the switch.
     setMessages([])
+    messagesRef.current = []
+    hasMoreMessagesRef.current = false
+    setHasMoreMessages(false)
+    loadingOlderMessagesRef.current = false
+    setLoadingOlderMessages(false)
     setError(null)
     pendingSendRef.current = null
     setStatusMessage('')
@@ -332,12 +362,12 @@ export function useAgentChat(sessionId: string | null, options?: {
     // question card. 4xx is deterministic, so it skips the retry.
     const fetchSession = async () => {
       try {
-        return await getSessionFn(sessionId, { limit: 50 })
+        return await getSessionFn(sessionId, { limit: MESSAGE_PAGE_SIZE })
       } catch (err) {
         const status = (err as { status?: number }).status
         if (status && status >= 400 && status < 500) throw err
         await new Promise((resolve) => setTimeout(resolve, 200))
-        return getSessionFn(sessionId, { limit: 50 })
+        return getSessionFn(sessionId, { limit: MESSAGE_PAGE_SIZE })
       }
     }
     try {
@@ -349,6 +379,12 @@ export function useAgentChat(sessionId: string | null, options?: {
       if (opts?.onlyWhenIdle && (streamingRef.current || resumeModeRef.current)) return
       const items = res.messages.items
       if (opts?.expectMessageId && !items.some((m) => m.id === opts.expectMessageId)) return
+      // 分页游标：这一页之外还有更早的消息 → 转录顶部允许上翻加载。
+      const more = !!(res.messages as { has_more?: boolean }).has_more
+      hasMoreMessagesRef.current = more
+      setHasMoreMessages(more)
+      // 已上翻加载过的历史要留住（轮末补拉 / 切回会话都只拿最新一页）。
+      const applyLatest = (latest: AgentMessage[]) => setMessages((prev) => mergeLatestPage(prev, latest))
       // While tailing a server-side turn, its streaming partial belongs to the
       // live area (metadata.streaming). Rendering it as history made a switch
       // mid-turn collapse the output into a settled message with a lone
@@ -368,14 +404,14 @@ export function useAgentChat(sessionId: string | null, options?: {
       }
       if (partial) {
         hydrateFromPartial(partial)
-        setMessages(items.filter((m) => m !== partial))
+        applyLatest(items.filter((m) => m !== partial))
       } else if (resumeModeRef.current || streamingRef.current) {
-        setMessages(items)
+        applyLatest(items)
       } else {
         // 冷加载：没有任何 stream 在跑，却还挂着 metadata.streaming 的行 =
         // 上一次中断 / 进程退出留下的残行。落成「已中断」，否则它会以普通
         // 消息的样子出现，用户看不出那一轮是被打断的（2026-10-29 用户 bug）。
-        setMessages(items.map((m) => (m.streaming ? { ...m, streaming: false, interrupted: true } : m)))
+        applyLatest(items.map((m) => (m.streaming ? { ...m, streaming: false, interrupted: true } : m)))
       }
       // ctx chip source of truth on a cold load: the session row carries the
       // last provider-reported usage, so a refresh / server restart / another
@@ -390,6 +426,53 @@ export function useAgentChat(sessionId: string | null, options?: {
       setError(LOAD_MESSAGES_ERROR)
     }
   }, [sessionId, setContextUsage, hydrateFromPartial])
+
+  /** 上翻一页更早的消息（2026-11-20 用户 #11）。游标 = 当前最早一条的
+   *  created_at，服务端取 `created_at < cursor` 并页内正序返回。到最早已无
+   *  更早时置 hasMore=false；同秒并列导致整页重复时也收口，避免空转请求。 */
+  const loadOlderMessages = useCallback(async () => {
+    if (!sessionId || loadingOlderMessagesRef.current || !hasMoreMessagesRef.current) return
+    const oldest = messagesRef.current[0]
+    if (!oldest) return
+    const requestedSessionId = sessionId
+    const getSessionFn = apiOverrideRef.current?.getSession ?? api.getSession
+    loadingOlderMessagesRef.current = true
+    setLoadingOlderMessages(true)
+    try {
+      const fetchPage = () => getSessionFn(sessionId, {
+        limit: MESSAGE_PAGE_SIZE,
+        cursor: oldest.created_at,
+      })
+      let res: Awaited<ReturnType<typeof fetchPage>>
+      try {
+        res = await fetchPage()
+      } catch (err) {
+        const status = (err as { status?: number }).status
+        if (status && status >= 400 && status < 500) throw err
+        await new Promise((resolve) => setTimeout(resolve, 200))
+        res = await fetchPage()
+      }
+      if (sessionIdRef.current !== requestedSessionId) return
+      const known = new Set(messagesRef.current.map((m) => m.id))
+      const older = res.messages.items.filter((m) => !known.has(m.id))
+      if (older.length > 0) {
+        setMessages((prev) => {
+          const have = new Set(prev.map((m) => m.id))
+          const fresh = older.filter((m) => !have.has(m.id))
+          return fresh.length > 0 ? [...fresh, ...prev] : prev
+        })
+      }
+      // 空页 / 整页重复 = 游标已到尽头（同秒并列），不再发下一枪。
+      const more = !!(res.messages as { has_more?: boolean }).has_more && older.length > 0
+      hasMoreMessagesRef.current = more
+      setHasMoreMessages(more)
+    } catch {
+      // 网络抖动：保留 hasMore，用户滚到顶上会再试。
+    } finally {
+      loadingOlderMessagesRef.current = false
+      setLoadingOlderMessages(false)
+    }
+  }, [sessionId])
 
   const stopResumePolling = useCallback(() => {
     if (resumePollRef.current) { clearInterval(resumePollRef.current); resumePollRef.current = null }
@@ -944,6 +1027,10 @@ export function useAgentChat(sessionId: string | null, options?: {
 
   return {
     messages,
+    /** 首屏只载最近 MESSAGE_PAGE_SIZE 条；这两个状态驱动转录顶部「上翻加载」。 */
+    hasMoreMessages,
+    loadingOlderMessages,
+    loadOlderMessages,
     streaming,
     /** Session that owns the live stream (null when idle). Sidebars must use
      *  this — not the active session — to paint「运行中」. */

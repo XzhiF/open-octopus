@@ -168,6 +168,28 @@ describe("/api/cabins decisions + delegations", () => {
     expect(body.asks).toHaveLength(0)
   })
 
+  it("POST /decisions/discuss：缺 askId → 400，未知票据 → 404", async () => {
+    expect((await post(`/api/cabins/${cabinId}/decisions/discuss`, {})).status).toBe(400)
+    expect((await post(`/api/cabins/${cabinId}/decisions/discuss`, { askId: "ask_x" })).status).toBe(404)
+  })
+
+  it("POST /decisions/discuss：送到作者线程，提问仍待答（不写决策账本）", async () => {
+    askCard("ask_1")
+    const res = await post(`/api/cabins/${cabinId}/decisions/discuss`, { askId: "ask_1" })
+    expect(res.status).toBe(200)
+    const body = await res.json() as { target: string; delivered: boolean; receipt: string }
+    expect(body.target).toBe("thread")
+    expect(body.delivered).toBe(true)
+
+    const ledger = await app.request(`/api/cabins/${cabinId}/decisions`)
+    const view = await ledger.json() as {
+      decisions: Array<{ askId: string }>
+      asks: Array<{ askId: string }>
+    }
+    expect(view.decisions).toHaveLength(0)
+    expect(view.asks.map((a) => a.askId)).toEqual(["ask_1"])
+  })
+
   it("委派端点：创建 → 列表（带 handle）→ 取消", async () => {
     const created = await post(`/api/cabins/${cabinId}/delegations`, {
       title: "方案对比", intent: "帮我对比三个方案", autonomy: "hands-off",

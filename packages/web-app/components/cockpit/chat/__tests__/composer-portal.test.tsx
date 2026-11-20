@@ -2,11 +2,12 @@
 // 能输入、能 ⏎ 提交、流式中能排队 / steer、bridge.submit 走同一条管线，
 // 并且 DOM 里永远只有一个 textarea（不能出现两份 composer）。
 
-import { useState, type ComponentProps, type MutableRefObject } from 'react'
+import { useEffect, useState, type ComponentProps, type MutableRefObject } from 'react'
 import { render, fireEvent, screen, act } from '@testing-library/react'
-import { describe, it, expect, vi } from 'vitest'
+import { describe, it, expect, afterEach, vi } from 'vitest'
 import { ChatArea, type ChatComposerBridge } from '@/components/agent/chat/ChatArea'
 import type { ToolCallRecord } from '@/lib/agent/types'
+import { resetChatSlots, setChatSlot } from '../chat-slots'
 
 const baseProps = {
   messages: [],
@@ -44,6 +45,24 @@ function SlotHarness({ bridgeRef, ...props }: Omit<Props, 'composerSlot'> & {
     </div>
   )
 }
+
+/** 台头 attach 槽 + ChatArea 的组合（v22 十轮：星核挂载入口搬到标题栏）。 */
+function AttachSlotHarness(props: Omit<Props, 'composerVariant'>) {
+  const [slot, setSlot] = useState<HTMLSpanElement | null>(null)
+  useEffect(() => setChatSlot('attach', slot), [slot])
+  return (
+    <div>
+      <div data-testid="window-head">
+        <span data-testid="attach-slot" ref={setSlot} />
+      </div>
+      <div data-testid="chat-area-host">
+        <ChatArea {...props} composerVariant="cockpit" showComposerAttach />
+      </div>
+    </div>
+  )
+}
+
+afterEach(() => resetChatSlots())
 
 function typeAndEnter(scope: HTMLElement, text: string) {
   const ta = scope.querySelector('textarea')!
@@ -126,5 +145,14 @@ describe('ChatArea — composerSlot portal（全域座舱）', () => {
     const { container } = render(<ChatArea {...baseProps} />)
     expect(container.querySelectorAll('textarea')).toHaveLength(1)
     expect(container.querySelector('[data-testid="footer-slot"]')).toBeNull()
+  })
+
+  it('星核挂载入口 portal 进台头槽，输入行不再有内联 ＋', () => {
+    render(<AttachSlotHarness {...baseProps} />)
+    const head = screen.getByTestId('window-head')
+    const host = screen.getByTestId('chat-area-host')
+    expect(head.querySelector('[data-testid="cockpit-attach"]')).toBeTruthy()
+    expect(head.querySelector('[data-testid="composer-plus"]')).toBeNull()
+    expect(host.querySelector('[data-tui-attach-inline]')).toBeNull()
   })
 })

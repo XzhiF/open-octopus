@@ -34,20 +34,31 @@ function findStoreBin(packageName, relativeBin) {
   throw new Error(`cannot locate ${packageName}/${relativeBin} in pnpm store`)
 }
 
-const run = (command, args, cwd) => {
+const run = (command, args, cwd, opts = {}) => {
   console.log(`\n$ ${command} ${args.join(' ')}`)
   execFileSync(command, args, {
     cwd,
     stdio: 'inherit',
+    // Windows 上 pnpm 只有 pnpm.cmd，execFile 不走 PATHEXT —— 必须经 shell 解析，
+    // 否则 `spawnSync pnpm ENOENT`（2026-11-19 首次 Windows 打包复现）。
+    shell: opts.shell ?? false,
     env: {
       ...process.env,
       CI: 'true',
       npm_config_confirm_modules_purge: 'false',
+      ...(opts.env ?? {}),
     },
   })
 }
 
-fs.rmSync(resources, { recursive: true, force: true })
+/** pnpm 的调用别名：Windows 用 .cmd + shell，其它平台直接可执行。 */
+const runPnpm = (args, cwd) =>
+  run(process.platform === 'win32' ? 'pnpm.cmd' : 'pnpm', args, cwd, {
+    shell: process.platform === 'win32',
+  })
+
+// Windows：杀软/资源管理器/终端 cwd 都可能短暂占住目录，重试几次再放弃。
+fs.rmSync(resources, { recursive: true, force: true, maxRetries: 8, retryDelay: 250 })
 fs.mkdirSync(resources, { recursive: true })
 
 const tsupCli = findStoreBin('tsup', 'dist/cli-default.js')
@@ -59,7 +70,32 @@ run(process.execPath, [tsupCli, 'src/index.ts', '--format', 'esm,cjs', '--dts'],
 run(process.execPath, [viteBin, 'build'], webAppDir)
 
 const deployDir = path.join(resources, 'server')
-run('pnpm', ['--filter', '@octopus/server', 'deploy', '--prod', '--legacy', deployDir], repoRoot)
+// Windows 上 pnpm 的默认 isolated 布局用「绝对路径 junction」连向 .pnpm，
+// 一旦把 node_modules 改名/搬进打包产物全部断链；hoisted 布局铺平为真实目录，
+// 才可能跨机器自包含。ignore-scripts 避免 deploy 重新 node-gyp 编译
+// better-sqlite3（本机没有 VS 工具链）；编译好的 .node 在下面手动补进去。
+runPnpm(
+  [
+    '--config.node-linker=hoisted',
+    '--config.ignore-scripts=true',
+    '--filter', '@octopus/server',
+    'deploy', '--prod', '--legacy', deployDir,
+  ],
+  repoRoot,
+)
+
+// better-sqlite3 的源码包不含预编译二进制（store 里那份才带 build/Release）。
+// 从工作区的 node_modules 直接拷编译产物，保证随包 Node 能 require。
+const sqliteBuilt = path.join(
+  serverDir, 'node_modules', 'better-sqlite3', 'build', 'Release',
+)
+const sqliteDest = path.join(deployDir, 'node_modules', 'better-sqlite3', 'build', 'Release')
+if (!fs.existsSync(sqliteBuilt)) {
+  throw new Error(`better-sqlite3 build output missing: ${sqliteBuilt}`)
+}
+fs.mkdirSync(path.dirname(sqliteDest), { recursive: true })
+fs.cpSync(sqliteBuilt, sqliteDest, { recursive: true })
+console.log(`✓ better-sqlite3 binary: ${sqliteDest}`)
 
 // Drop links that escape the deploy tree; they would break in the packaged app
 // and let tooling walk into the source workspace.
@@ -87,19 +123,20 @@ function removeExternalSymlinks(rootDir) {
 }
 removeExternalSymlinks(deployDir)
 
-// electron-builder filters node_modules out of extraResources. Rename the
-// self-contained dependency tree; the sidecar resolves it via NODE_PATH.
-const vendorDir = path.join(deployDir, 'vendor')
-fs.renameSync(path.join(deployDir, 'node_modules'), vendorDir)
+// 依赖树必须保留 `node_modules` 这个目录名：Node 只在名为 node_modules 的祖先目录里
+// 解析裸模块，ESM 更是不认 NODE_PATH。改名成 vendor 后 chokidar→readdirp 这类
+// 扁平布局的 ESM 依赖会直接 ERR_MODULE_NOT_FOUND（Windows hoisted 布局实测）。
+const modulesDir = path.join(deployDir, 'node_modules')
 for (const entry of ['src', 'scripts', 'tsconfig.json', 'tsup.config.ts', 'vitest.config.ts']) {
   fs.rmSync(path.join(deployDir, entry), { recursive: true, force: true })
 }
-console.log(`✓ vendored deps: ${vendorDir}`)
+console.log(`✓ deployed deps: ${modulesDir}`)
 
 // Bundle the Node runtime that runs the sidecar.
+// Windows 只能执行带 .exe 的可执行文件 —— 复制成无扩展名的 `node` 会 spawn ENOENT。
 const runtimeDir = path.join(resources, 'runtime')
 fs.mkdirSync(runtimeDir, { recursive: true })
-const nodeDest = path.join(runtimeDir, 'node')
+const nodeDest = path.join(runtimeDir, process.platform === 'win32' ? 'node.exe' : 'node')
 fs.copyFileSync(process.execPath, nodeDest)
 fs.chmodSync(nodeDest, 0o755)
 console.log(`✓ node runtime: ${nodeDest}`)
@@ -118,20 +155,24 @@ for (const entry of fs.readdirSync(corePackSrc)) {
 }
 
 // Prove the bundled runtime can load the deployed native module and the SPA exists.
-run(nodeDest, [
-  '-e',
+run(
+  nodeDest,
   [
-    `const Database = require(${JSON.stringify(path.join(vendorDir, 'better-sqlite3'))});`,
-    `const db = new Database(':memory:');`,
-    `db.prepare('select 1 as x').get();`,
-    `db.close();`,
-    `console.log('sidecar runtime OK');`,
-  ].join(''),
-], resources)
+    '-e',
+    [
+      `const Database = require(${JSON.stringify(path.join(modulesDir, 'better-sqlite3'))});`,
+      `const db = new Database(':memory:');`,
+      `db.prepare('select 1 as x').get();`,
+      `db.close();`,
+      `console.log('sidecar runtime OK');`,
+    ].join(''),
+  ],
+  resources,
+)
 
 for (const [label, file] of [
   ['server entry', path.join(deployDir, 'dist', 'index.js')],
-  ['better-sqlite3', path.join(vendorDir, 'better-sqlite3', 'build', 'Release', 'better_sqlite3.node')],
+  ['better-sqlite3', path.join(modulesDir, 'better-sqlite3', 'build', 'Release', 'better_sqlite3.node')],
   ['node runtime', nodeDest],
   ['web index', path.join(webDest, 'index.html')],
   ['core-pack skills', path.join(corePackDest, 'skills')],

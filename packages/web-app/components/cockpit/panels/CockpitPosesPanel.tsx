@@ -13,19 +13,30 @@
 import { toast } from 'sonner'
 import { useCockpitState } from '../state/CockpitStateProvider'
 import { CLIPS, POSE_META } from '../crew/pose-model'
+import { clipMediaUrl } from '../crew/clip-blob'
 import { CockpitPanelShell } from './CockpitPanelShell'
 
-/** 悬停预览：pointer/focus 进 → 起播，出 → 暂停。 */
-function preview(card: HTMLElement | null, on: boolean) {
+/** 悬停预览：pointer/focus 进 → 抓成 blob 再起播（桌面端媒体 HTTP 管线慢，
+ *  见 clip-blob；同一支与立绘共用缓存），出 → 暂停。 */
+function preview(card: HTMLElement | null, on: boolean, src: string) {
   const video = card?.querySelector<HTMLVideoElement>('video')
-  if (!video) return
+  if (!card || !video) return
+  card.dataset.preview = on ? '1' : '0'
   if (on) {
-    try {
-      const p = video.play()
-      if (p && typeof p.catch === 'function') p.catch(() => {})
-    } catch {
-      /* 自动播放被拦：停在缩略图 */
-    }
+    void clipMediaUrl(src).then((url) => {
+      // 抓包期间指针已经离开：不要再起播。
+      if (!video.isConnected || card.dataset.preview !== '1') return
+      if (video.getAttribute('src') !== url) {
+        video.src = url
+        video.load()
+      }
+      try {
+        const p = video.play()
+        if (p && typeof p.catch === 'function') p.catch(() => {})
+      } catch {
+        /* 自动播放被拦：停在缩略图 */
+      }
+    })
   } else {
     try {
       video.pause()
@@ -63,10 +74,10 @@ export function CockpitPosesPanel() {
               data-clip={index}
               data-batch={item.batch}
               onClick={() => play(index)}
-              onPointerEnter={(event) => preview(event.currentTarget, true)}
-              onPointerLeave={(event) => preview(event.currentTarget, false)}
-              onFocus={(event) => preview(event.currentTarget, true)}
-              onBlur={(event) => preview(event.currentTarget, false)}
+              onPointerEnter={(event) => preview(event.currentTarget, true, item.src)}
+              onPointerLeave={(event) => preview(event.currentTarget, false, item.src)}
+              onFocus={(event) => preview(event.currentTarget, true, item.src)}
+              onBlur={(event) => preview(event.currentTarget, false, item.src)}
               title={`${no} · ${meta.cn} · ${meta.desc} · ${item.batch}批次`}
             >
               <span className="ck12-pose-thumb">

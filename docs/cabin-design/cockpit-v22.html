@@ -793,6 +793,140 @@ kbd{border:1px solid rgba(185,179,217,.35);border-bottom-width:2px;border-radius
 .wsplit .ftree{width:100%;flex:1;min-height:0}
 .wsplit .tprev{min-height:0}
 
+/* ═══ 文档查看器（v22 十一轮 · 2026-11-19 用户）：正文里的文档名（`xxx.md`）可点，
+       点开就是这个窗 —— 与目录窗（.twin）同一套壳：✕ 左置 · 玻璃底 · 渐变发丝顶线 ·
+       cwd 同款路径条 · 右栏同款标签 + Markdown。只读，不做编辑。 ═══ */
+#docwin{width:min(760px,92vw);height:min(560px,calc(100vh - 186px))}
+#docwin .ph{cursor:grab;user-select:none;touch-action:none}
+#docwin .ph:active{cursor:grabbing}
+/* 2026-11-19 用户修正：路径是纯文本（不包框，可选中复制），只有右侧「↗」小按钮可点开。
+   完整绝对路径必须整条露出 —— 不省略，放不下就折行。 */
+.docref{display:inline-flex;align-items:flex-start;gap:5px;max-width:100%;vertical-align:-3px}
+.docref .ic{flex:none;line-height:16px;font-size:9.5px;opacity:.9}
+.docref .p{min-width:0;white-space:normal;overflow-wrap:anywhere;color:#9ff6ec;font-family:var(--font-mono);font-size:10.5px;line-height:16px}
+.docref .go{flex:none;display:inline-flex;align-items:center;justify-content:center;width:17px;height:17px;padding:0;border:1px solid rgba(46,230,214,.38);background:rgba(46,230,214,.09);color:#bffcf6;font-family:inherit;font-size:10.5px;font-weight:700;line-height:1;cursor:pointer;transition:.14s}
+.docref .go:hover{border-color:rgba(46,230,214,.9);background:rgba(46,230,214,.2);color:#fff;box-shadow:0 0 12px rgba(46,230,214,.35)}
+
+/* ═══ 本舱目录窗（v22 九轮）：右栏「目录」= 当前 cwd 只读目录树。
+       cwd 绝对路径常显在标题条，可复制 / 桌面壳里直接在资源管理器打开。 ═══ */
+.wsb.cwd{background:linear-gradient(100deg,rgba(53,199,240,.13),rgba(123,77,255,.1));border-color:rgba(53,199,240,.42)}
+.wsb.cwd .br{color:var(--sky)}
+.wsb.cwd .p{color:#fff;font-family:var(--font-mono);font-weight:700}
+.wsb .acts{flex:none;display:flex;gap:6px}
+.wsb .acts .cbtn{height:22px;padding:0 9px;font-size:9px}
+
+/* ═══ 本舱目录：左树（筛选 / 全展全收）+ 右多标签查看器（只读，不编辑） ═══ */
+.ck-tree{display:flex;gap:10px;flex:1;min-height:0}
+.ck-side{flex:none;width:268px;display:flex;flex-direction:column;min-height:0;border:1px solid rgba(185,179,217,.16);background:rgba(10,8,24,.4);padding:6px;clip-path:var(--cut)}
+.ck-side-h{flex:none;display:flex;gap:5px;align-items:center;margin-bottom:5px}
+.ck-side-h input{flex:1;min-width:0;height:26px;border:1px solid rgba(46,230,214,.3);background:rgba(10,8,24,.55);color:#fff;padding:0 8px;font-size:10.5px}
+.ck-side-h input:focus{outline:none;border-color:var(--teal)}
+.ck-ib{flex:none;width:26px;height:26px;display:grid;place-items:center;border:1px solid rgba(185,179,217,.25);background:rgba(255,255,255,.06);color:var(--ink2);font-size:11px}
+.ck-ib:hover{color:#fff;border-color:var(--teal);background:rgba(46,230,214,.16)}
+.ck-scope{flex:none;font-size:8.5px;font-weight:800;letter-spacing:.08em;color:var(--teal);padding:0 2px 5px}
+.ck-scroll{flex:1;min-height:0;overflow:auto}
+.ck-main{flex:1;min-width:0;display:flex;flex-direction:column;min-height:0;border:1px solid rgba(185,179,217,.16);background:rgba(10,8,24,.4);clip-path:var(--cut)}
+.ck-tabs{flex:none;display:flex;gap:4px;overflow-x:auto;padding:5px 6px;border-bottom:1px solid rgba(185,179,217,.16);min-height:36px;align-items:center}
+.ck-tabs-empty{font-size:9px;color:var(--metal2);padding:0 4px}
+.ck-tab{flex:none;display:flex;align-items:center;gap:5px;height:24px;max-width:190px;padding:0 6px 0 8px;border:1px solid rgba(185,179,217,.22);background:rgba(255,255,255,.05);color:var(--ink2);font-size:10px;clip-path:var(--btncut);cursor:pointer}
+.ck-tab:hover{color:#fff;border-color:rgba(46,230,214,.4)}
+.ck-tab.on{background:linear-gradient(90deg,rgba(53,199,240,.26),rgba(123,77,255,.22));color:#fff;border-color:rgba(53,199,240,.55)}
+.ck-tab .nm{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.ck-tab .cx{flex:none;width:14px;text-align:center;color:var(--metal2);font-size:9px}
+.ck-tab .cx:hover{color:var(--red)}
+.ck-view{flex:1;min-height:0;overflow:auto;padding:9px 12px}
+.ck-meta{display:flex;gap:8px;align-items:center;margin-bottom:8px;font-size:9.5px;color:var(--metal2)}
+.ck-meta .p{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:#fff;font-family:var(--font-mono)}
+.ck-meta .ro{flex:none;font-size:8px;letter-spacing:.1em}
+.ck-code{margin:0;font-size:10.5px;line-height:1.65;color:var(--ink);font-family:var(--font-mono);white-space:pre-wrap;word-break:break-word}
+.ck-doc{font-size:11px;line-height:1.75;color:var(--ink)}
+.ck-doc h1{font-size:16px;color:#fff;margin:2px 0 8px;font-family:var(--font-ui)}
+.ck-doc h2{font-size:13px;color:var(--teal);margin:14px 0 6px;font-family:var(--font-ui)}
+.ck-doc h3{font-size:11.5px;color:var(--sky);margin:10px 0 4px}
+.ck-doc p{margin:0 0 7px}
+.ck-doc ul{margin:0 0 8px;padding-left:16px}
+.ck-doc li{margin:2px 0}
+.ck-doc blockquote{margin:0 0 8px;padding:4px 10px;border-left:2px solid var(--teal);color:var(--ink2);background:rgba(46,230,214,.06)}
+.ck-doc code{font-family:var(--font-mono);font-size:10px;background:rgba(46,230,214,.12);color:var(--teal);padding:0 4px}
+.ck-doc .ck-fence{background:rgba(10,8,24,.6);border:1px solid rgba(185,179,217,.18);padding:8px 10px;margin:0 0 8px;overflow:auto}
+.ck-doc .ck-fence code{background:none;color:var(--ink);padding:0;font-size:10px;line-height:1.6}
+.ck-imgwrap{display:grid;place-items:center;min-height:120px;padding:8px;border:1px dashed rgba(185,179,217,.2);background:rgba(255,255,255,.03)}
+.ck-img{max-width:100%;max-height:calc(100vh - 330px);display:block}
+.ck-imgcap{text-align:center;font-size:9px;color:var(--metal2);margin-top:6px}
+.ck-empty{flex:1;min-height:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:4px;font-size:10.5px;color:var(--ink2);text-align:center;padding:20px}
+.ck-empty span{font-size:9px;color:var(--metal2)}
+@media (max-width:900px){
+  /* 窄屏：cwd 条折成三行，路径独占一行，动作按钮不再顶出窗口右缘。 */
+  .wsb.cwd{flex-wrap:wrap;row-gap:6px}
+  .wsb.cwd .p{flex:1 1 100%;order:9;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .wsb.cwd .ro{order:8;margin-left:auto}
+  .wsb .acts{order:10;width:100%;justify-content:flex-end}
+  /* 窄屏：目录窗改成上下布局，左树让出高度。 */
+  .ck-tree{flex-direction:column}
+  .ck-side{width:100%;height:190px}
+}
+
+/* ═══ 通讯台 ＋（v22 十轮）：头部「主对话」→ ＋，开「技能 / 分身 / MCP」面板。
+       技能选中 = 随本条消息生效；分身 = 委派一轮；MCP = 只读展开。不在这里切身份。 ═══ */
+.con-add{position:relative;flex:none;width:26px;height:26px;display:grid;place-items:center;border-radius:50%;border:1px solid rgba(46,230,214,.5);background:rgba(46,230,214,.1);color:#9ff7ee;transition:.16s}
+.con-add svg{width:15px;height:15px;display:block;overflow:visible}
+.con-add:hover,.con-add.on{border-color:rgba(46,230,214,.95);background:rgba(46,230,214,.24);color:#eafffd;box-shadow:0 0 14px rgba(46,230,214,.45)}
+.con-add .orbit{transform-origin:12px 12px;opacity:.55;transition:.16s}
+.con-add.on .orbit{opacity:.85;animation:addspin 2.6s linear infinite}
+.con-add.on .pulse{animation:addpulse 1.6s ease-in-out infinite;transform-origin:12px 12px}
+.con-add.on .core{filter:drop-shadow(0 0 4px rgba(46,230,214,.95))}
+@keyframes addspin{to{transform:rotate(360deg)}}
+@keyframes addpulse{0%,100%{opacity:.45;transform:scale(.92)}50%{opacity:1;transform:scale(1.08)}}
+.con-add i{position:absolute;right:-3px;top:-3px;min-width:14px;height:14px;padding:0 3px;display:grid;place-items:center;border-radius:999px;background:var(--sky);color:#04121c;font-size:8.5px;font-style:normal;font-weight:900}
+.con-add i[hidden]{display:none}
+.addpop{position:absolute;left:38px;top:48px;z-index:58;width:min(430px,calc(100% - 20px));max-height:min(432px,calc(100% - 60px));display:flex;flex-direction:column;min-height:0;border-radius:var(--wrad);overflow:hidden;background:var(--glass2);backdrop-filter:blur(16px) saturate(1.3);border:1px solid var(--edge);box-shadow:0 20px 60px rgba(16,13,40,.6)}
+.addpop[hidden]{display:none}
+.ap-h{flex:none;display:flex;align-items:center;gap:8px;padding:8px 12px;border-bottom:1px solid rgba(46,230,214,.22);background:linear-gradient(180deg,rgba(46,230,214,.06),transparent)}
+.ap-h b{font-size:12px;font-family:var(--font-ui);color:#fff}
+.ap-h .sp{flex:1}
+.ap-esc{font-size:9px;color:var(--metal2);border:1px solid rgba(185,179,217,.25);padding:1px 6px;clip-path:polygon(4px 0,100% 0,calc(100% - 4px) 100%,0 100%)}
+.ap-chip{display:inline-flex;height:19px;align-items:center;gap:4px;padding:0 7px;border-radius:5px;border:1px solid rgba(123,77,255,.5);background:rgba(123,77,255,.18);color:#c9b6ff;font-size:9.5px;font-weight:700}
+.ap-search{flex:none;padding:7px 10px 4px}
+.ap-search input{width:100%;height:27px;padding:0 10px;border:1px solid rgba(46,230,214,.25);background:rgba(10,8,24,.55);color:#fff;font-size:11px}
+.ap-search input:focus{outline:none;border-color:var(--teal)}
+.ap-tabs{flex:none;display:flex;gap:5px;padding:2px 10px 6px;border-bottom:1px solid rgba(185,179,217,.12)}
+.ap-tabs button{flex:none;height:24px;padding:0 10px;border:1px solid transparent;background:none;color:var(--ink2);font-size:10px;font-weight:700;border-radius:6px;display:inline-flex;align-items:center;gap:5px}
+.ap-tabs button b{font-size:8.5px;font-family:var(--font-mono);color:var(--metal2);font-weight:700}
+.ap-tabs button.on{border-color:rgba(46,230,214,.4);background:rgba(46,230,214,.1);color:#fff}
+.ap-tabs button.on b{color:var(--teal)}
+.ap-body{flex:1;min-height:0;overflow:auto;padding:2px 8px 8px}
+.ap-grp{font-size:8.5px;font-weight:800;letter-spacing:.12em;color:var(--teal);padding:7px 4px 3px}
+.ap-grp span{color:var(--metal2);font-weight:700;letter-spacing:.04em}
+.ap-row{display:flex;align-items:center;gap:8px;width:100%;text-align:left;padding:6px 7px;border-radius:5px;color:var(--ink2);font-size:10.5px;transition:.12s}
+.ap-row:hover{background:rgba(46,230,214,.08);color:#fff}
+.ap-row.on{background:linear-gradient(90deg,rgba(53,199,240,.22),rgba(123,77,255,.18));color:#fff}
+.ap-row .ck2{flex:none;width:15px;height:15px;display:grid;place-items:center;border:1px solid rgba(185,179,217,.35);border-radius:4px;font-size:9px;color:transparent}
+.ap-row.on .ck2{border-color:var(--teal);background:rgba(46,230,214,.22);color:var(--teal)}
+.ap-row .nm{flex:none;font-family:var(--font-mono);font-weight:700;font-size:10.5px;color:var(--sky)}
+.ap-row.on .nm{color:#fff}
+.ap-row .ds{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:9px;color:var(--metal2)}
+.ap-row.ro{cursor:default}
+.ap-row.ro:hover{background:rgba(255,255,255,.04)}
+.ap-row .tk{flex:none;font-size:8.5px;font-family:var(--font-mono);color:var(--metal2)}
+.ap-row .go2{flex:none;height:21px;padding:0 8px;border:1px solid rgba(123,77,255,.45);background:rgba(123,77,255,.12);color:#c9b6ff;font-size:9px;font-weight:800;border-radius:5px}
+.ap-row .go2.on{border-color:var(--teal);background:rgba(46,230,214,.16);color:var(--teal)}
+.ap-row .cl{flex:none;width:22px;height:22px;display:grid;place-items:center;border-radius:50%;background:rgba(123,77,255,.16);color:#c9b6ff;font-size:11px}
+.ap-row .sub{display:block;font-size:9px;color:var(--metal2);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.ap-tool{display:flex;gap:8px;padding:3px 8px 3px 34px;font-size:9px;color:var(--metal2)}
+.ap-tool code{color:var(--sky);font-family:var(--font-mono)}
+.ap-empty{font-size:9.5px;color:var(--metal2);padding:12px 8px;text-align:center}
+.ap-foot{flex:none;display:flex;gap:10px;align-items:center;padding:6px 12px;border-top:1px solid rgba(185,179,217,.14);font-size:8.5px;color:var(--metal2)}
+.ap-foot b{color:var(--teal);font-weight:800}
+.con-attach{flex:none;display:flex;gap:6px;flex-wrap:wrap;padding:2px 14px 5px}
+.con-attach[hidden]{display:none}
+.con-attach .ch{display:inline-flex;align-items:center;gap:5px;height:22px;padding:0 4px 0 8px;border:1px solid rgba(46,230,214,.4);background:rgba(46,230,214,.1);color:var(--teal);font-size:9.5px;font-weight:800;clip-path:var(--btncut)}
+.con-attach .ch.exp{border-color:rgba(123,77,255,.5);background:rgba(123,77,255,.16);color:#c9b6ff}
+.con-attach .ch button{width:16px;height:16px;display:grid;place-items:center;color:var(--metal2);font-size:9px}
+.con-attach .ch button:hover{color:var(--red)}
+@media (max-width:900px){
+  .addpop{left:8px;width:calc(100% - 16px)}
+}
+
 /* ═══ 回传全息 banner（空白天空处） ═══ */
 .banner{position:absolute;top:58px;left:max(calc(var(--railw) + 12px + min(390px,calc(var(--charw) - 54px)) / 2),calc(var(--railw) + 16px - var(--charshift) + var(--charw) / 2));z-index:45;width:min(390px,calc(var(--charw) - 54px));min-width:260px;border-radius:14px;overflow:hidden;background:var(--glass2);backdrop-filter:blur(14px);border:1px solid color-mix(in srgb,var(--accent,var(--sun)) 60%,transparent);box-shadow:0 14px 40px rgba(16,13,40,.5),0 0 24px color-mix(in srgb,var(--accent,var(--sun)) 22%,transparent);padding:9px 14px;cursor:pointer;opacity:0;pointer-events:none;transition:.3s;transform:translateX(-50%) translateY(-12px)}
 @keyframes bfloat{0%,100%{margin-top:0}50%{margin-top:-5px}}
@@ -852,6 +986,64 @@ kbd{border:1px solid rgba(185,179,217,.35);border-bottom-width:2px;border-radius
 .tsw.on{border-color:#fff;box-shadow:0 0 12px rgba(255,255,255,.35)}
 .tsw:hover{transform:translateY(-2px)}
 .snote{font-size:8.5px;color:var(--metal2);line-height:1.6;padding:10px 2px 0}
+/* ═══ 汐音档案（更多 → ♡ 汐音，2026-11-19 用户 #7 三版：盖在通讯台位置） ═══ */
+.xypop{position:fixed;z-index:61;display:flex;flex-direction:column;border:1px solid rgba(46,230,214,.32);border-radius:14px;overflow:hidden;background:linear-gradient(180deg,rgba(16,20,29,.97),rgba(9,11,17,.96));box-shadow:0 24px 64px rgba(0,0,0,.6),0 0 40px rgba(46,230,214,.09);animation:tpop .18s ease-out}
+.xypop[hidden]{display:none}
+.xyh{flex:none;display:flex;align-items:center;gap:8px;height:44px;padding:0 14px 0 10px;border-bottom:1px solid rgba(255,255,255,.07)}
+.xyh b{font-size:12.5px;letter-spacing:.04em;color:#fff;font-family:var(--font-ui)}
+.xyh .sub{font-size:9px;letter-spacing:.1em;color:var(--ink2)}
+.xyh .ln{flex:1;height:1px;background:rgba(255,255,255,.08)}
+.xyh .en{font-size:8.5px;letter-spacing:.16em;color:var(--ink2)}
+.xyx{flex:none;width:24px;height:24px;display:grid;place-items:center;border:1px solid rgba(185,179,217,.25);background:rgba(255,255,255,.06);color:var(--ink2);border-radius:7px;font-size:10px}
+.xyx:hover{color:#ff6b81;border-color:rgba(255,107,129,.5)}
+.xyav{width:28px;height:28px;border-radius:8px;overflow:hidden;border:1px solid rgba(46,230,214,.4);flex:none}
+.xyav img{width:100%;height:100%;object-fit:cover;object-position:50% 12%}
+.xypop-b{flex:1;min-height:0;overflow-y:auto;overscroll-behavior:contain;padding:12px 16px}
+.xypop-col{display:flex;flex-direction:column;min-width:0}
+.xytabs{flex:none;display:flex;align-items:center;gap:4px;padding:6px 12px;border-bottom:1px solid rgba(255,255,255,.07)}
+.xytabs button{height:26px;padding:0 12px;border-radius:7px;font-size:10.5px;letter-spacing:.04em;color:var(--ink2);transition:color .12s,background .12s}
+.xytabs button:hover{color:#fff;background:rgba(255,255,255,.05)}
+.xytabs button.on{color:var(--teal);background:rgba(46,230,214,.12);box-shadow:inset 0 0 0 1px rgba(46,230,214,.35)}
+.xytabs button b{margin-left:6px;font-size:9px;color:var(--sky)}
+.xyempty{padding:28px 12px;text-align:center;font-size:10.5px;color:var(--metal2)}
+.xypre.fill{max-height:none;margin:0}
+.xychips.page{display:grid;grid-template-columns:repeat(auto-fill,minmax(132px,1fr));gap:6px;padding:0}
+.xychips.page span{padding:5px 9px;border-radius:7px;font-size:9.5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.xytools{display:flex;flex-direction:column;gap:8px}
+.xytool{padding:8px 10px;border:1px solid rgba(123,77,255,.22);border-radius:9px;background:rgba(123,77,255,.05)}
+.xytool-h{display:flex;align-items:baseline;gap:8px}
+.xytool-h b{font-size:11px;color:#fff}
+.xytool-h span{flex:1;min-width:0;font-size:9px;font-family:var(--font-mono);color:var(--ink2);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.xytool-h i{flex:none;font-style:normal;font-size:9px;color:var(--sky)}
+.xytool-d{margin:3px 0 2px;font-size:9.5px;line-height:1.5;color:var(--ink2)}
+.xyag{margin-bottom:10px;padding:8px 12px;border:1px solid rgba(46,230,214,.22);border-radius:10px;background:rgba(46,230,214,.05)}
+.xyid{display:flex;align-items:center;gap:8px;padding:3px 0 7px;border-bottom:1px solid rgba(255,255,255,.06)}
+.xyid .nm{flex:1;min-width:0;display:flex;flex-direction:column;line-height:1.3}
+.xyid .nm b{font-size:12px;color:#fff}
+.xyid .nm span{font-size:9.5px;color:var(--ink2)}
+.xytag{flex:none;font-size:8.5px;padding:2px 7px;border-radius:999px;border:1px solid rgba(46,230,214,.4);color:var(--teal);letter-spacing:.08em;white-space:nowrap}
+.xyrow{display:flex;align-items:center;gap:9px;padding:7px 0;border-top:1px solid rgba(255,255,255,.05)}
+.xyrow .k{flex:none;width:32px;font-size:9px;letter-spacing:.1em;color:var(--ink2)}
+.xyrow .v{flex:1;min-width:0;font-size:10px;line-height:1.55;color:var(--ink);font-family:var(--font-mono);overflow-wrap:anywhere}
+.xyrow .v b{color:#fff}
+.xyrow .v i{font-style:normal;color:var(--ink2)}
+.xyrow button{flex:none;font-size:9px;padding:2px 8px;border-radius:5px;border:1px solid rgba(185,179,217,.3);background:rgba(255,255,255,.05);color:var(--ink2);font-family:var(--font-ui)}
+.xyrow button:hover{color:#fff;border-color:var(--teal);background:rgba(46,230,214,.1)}
+.xypre{max-height:220px;overflow:auto;white-space:pre-wrap;word-break:break-word;font-family:var(--font-mono);font-size:9.5px;line-height:1.65;color:var(--ink);background:rgba(0,0,0,.35);border:1px solid rgba(255,255,255,.08);border-radius:7px;padding:7px 9px;margin:0 0 6px}
+.xychips{display:flex;flex-wrap:wrap;gap:4px;padding:2px 0 8px}
+.xychips span{font-size:8.5px;padding:2px 7px;border-radius:999px;border:1px solid rgba(46,230,214,.25);background:rgba(46,230,214,.07);color:var(--ink);font-family:var(--font-mono)}
+.xychips span.tool{border-color:rgba(123,77,255,.38);background:rgba(123,77,255,.1)}
+.xyset .xyrow:first-child{border-top:0}
+.xygal{display:flex;flex-wrap:wrap;gap:5px;padding:5px 0 7px;border-top:1px solid rgba(255,255,255,.05)}
+.xygal button{width:40px;height:40px;border-radius:8px;overflow:hidden;border:1px solid rgba(185,179,217,.2);opacity:.6}
+.xygal button:hover,.xygal button.on{opacity:1;border-color:rgba(46,230,214,.6)}
+.xygal img{width:100%;height:100%;object-fit:cover;object-position:50% 14%}
+/* 2026-11-19 用户：素材是 13 支片段，互动画廊按片段列，不按 9 张 mood 静图。 */
+.xygal.clips{display:grid;grid-template-columns:repeat(auto-fill,minmax(50px,1fr));gap:6px}
+.xygal.clips button{position:relative;width:auto;height:auto;aspect-ratio:2/3;border-radius:6px}
+.xygal .no{position:absolute;left:3px;bottom:2px;font-size:7.5px;line-height:1;font-family:var(--font-mono);color:#fff;text-shadow:0 1px 2px rgba(0,0,0,.85);pointer-events:none}
+.xyfoot{flex:none;display:flex;align-items:center;gap:6px;padding:8px 16px;border-top:1px solid rgba(255,255,255,.07);font-size:9.5px;letter-spacing:.04em;color:var(--metal2)}
+.xyfoot b{color:var(--teal)}
 /* 透明度滑杆 */
 .slider{flex:none;display:flex;align-items:center;gap:8px}
 .slider input[type=range]{-webkit-appearance:none;appearance:none;width:118px;height:4px;border-radius:2px;background:rgba(185,179,217,.25);outline:none;cursor:pointer}
@@ -1049,7 +1241,7 @@ kbd{border:1px solid rgba(185,179,217,.35);border-bottom-width:2px;border-radius
     <button class="inboxchip" id="inboxchip" aria-expanded="false" aria-label="要我处理"></button>
     <nav class="rmenu">
       <button class="rhex big" id="rCmd" title="下指令 · 回主对话（⌘K）"><span class="ri">❯</span><span class="rl">下指令</span></button>
-      <button class="rhex warp" id="rWarp" title="跃迁 · 星穿梭换场景（⌥W）"><span class="ri">⟳</span><span class="rl">跃迁</span></button>
+      <button class="rhex" id="rDir" title="本舱目录 · 当前 cwd 目录树（⌥F，只读）"><span class="ri">⌗</span><span class="rl">目录</span></button>
       <button class="rhex" id="lUsage" title="本舱账本（全域累计 · 只读）"><span class="ri">¥</span><span class="rl">消耗</span></button>
       <button class="rhex" id="lDebug" title="调试 inspect（常驻 · ⌥D）"><span class="ri">⚙</span><span class="rl">调试</span></button>
       <div class="morewrap" id="morewrap">
@@ -1074,14 +1266,18 @@ kbd{border:1px solid rgba(185,179,217,.35);border-bottom-width:2px;border-radius
     </div>
   </div>
 
+  <div class="xypop" id="xypop" role="dialog" aria-label="汐音档案" hidden></div>
+
   <div class="pscrim" id="pscrim"></div>
   <section class="panel" id="panel"></section>
   <section class="twin" id="twin" aria-label="目录树"></section>
+  <section class="twin" id="docwin" aria-label="文档查看器"></section>
 
   <section class="console" id="console" aria-label="TUI 通讯台">
     <div class="con-h">
       <button class="cbtn" id="conClose" title="关闭 / 收起通讯台（⌥C · 停靠 pill 点击展开）">✕</button>
-      <span class="ct"><b id="conThread">主对话</b></span>
+      <button class="con-add" id="conAdd" title="添加：技能 / 分身 / MCP（⌥A）" aria-haspopup="dialog" aria-expanded="false"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3.4l1.75 5.6 5.6 1.75-5.6 1.75L12 18.1l-1.75-5.6-5.6-1.75 5.6-1.75z" fill="none" stroke="currentColor" stroke-width="1.25" stroke-linejoin="round" class="pulse"/><g class="orbit" fill="none" stroke="currentColor" stroke-width=".9"><ellipse cx="12" cy="12" rx="9" ry="3.4" transform="rotate(-28 12 12)"/></g><circle cx="20.2" cy="7.6" r="1" fill="currentColor" class="core"/></svg><i id="conAddN" hidden>0</i></button>
+      <span class="ct"><b id="conThread" hidden>主对话</b></span>
       <span class="telem">
         <button class="tc tcc" id="conModelBtn" title="模型设置 · 模型 / 思考强度 / 最大上下文" aria-expanded="false"><i>MODEL</i><b id="conModel">pro · 标准</b></button>
         <button class="tc tcc" id="conCtxBtn" title="上下文占用 · 点击看构成与压缩" aria-expanded="false"><i>CTX</i><b id="conCtx">42%</b></button>
@@ -1101,6 +1297,7 @@ kbd{border:1px solid rgba(185,179,217,.35);border-bottom-width:2px;border-radius
       <button class="cbtn" id="conPop" hidden title="弹出为独立窗口（可多开）">⧉ 弹出</button>
       <button class="cbtn" id="conMin" title="收起通讯台（⌥C）· 停靠pill 点击展开">⌄ 收起</button>
     </div>
+    <div class="addpop" id="addPop" hidden role="dialog" aria-label="添加技能 / 分身 / MCP"></div>
     <span class="grip grip-l" id="gripL" title="拖拽调左边 · 双击复位"></span>
     <span class="grip grip-t" id="gripT" title="拖拽调上边 · 双击复位"></span>
     <span class="grip grip-r" id="gripR" title="拖拽调右边 · 双击复位"></span>
@@ -1108,6 +1305,7 @@ kbd{border:1px solid rgba(185,179,217,.35);border-bottom-width:2px;border-radius
     <div class="con-log" id="conLog"></div>
     <div class="con-cur"><div class="spk"><i></i><span id="curSpeaker">汐音</span></div><div class="line" id="curLine"></div></div>
     <div class="con-choices" id="conChoices" hidden></div>
+    <div class="con-attach" id="conAttach" hidden></div>
     <div class="con-in" id="conIn"><span class="pr">❯</span><textarea id="cmdInput" rows="1" placeholder="回应汐音 / 下达新指令…（⏎ 发送 · ⇧⏎ 换行）"></textarea><button class="send" id="btnSend">⏎</button></div>
   </section>
 
@@ -1214,7 +1412,9 @@ const THREADS_INIT={
   {who:'you',name:'指挥官',text:'早。今天先把 M1、M2 收口，限流压测完再上。',t:'09:31'},
   {who:'xy',name:'汐音',text:'收到，指挥官。M1 退款链、M2 结算对账我已经派下去，限流先压测不急着上。有要您拍板的我第一时间举上来。',t:'09:31',mood:'idle'},
   {who:'you',name:'指挥官',text:'好。需要我决定的别攒着，来一条举一条。',t:'09:33'},
-  {who:'xy',name:'汐音',text:'明白。编队点一条先出详情，聊起来就从「对接」进作战对话；回传会进右边「要我处理」。',t:'09:33',mood:'wink'}],
+  {who:'xy',name:'汐音',text:'明白。编队点一条先出详情，聊起来就从「对接」进作战对话；回传会进右边「要我处理」。',t:'09:33',mood:'wink'},
+  {who:'xy',name:'汐音',text:'M1 的验收报告写好了：`.octopus/tasks/t-2641/reports/2026-11-19-M1验收报告.md` —— 结论 2/3 通过、AC-3 还红着，证据与命令都在里面。点文件名直接打开看。',t:'09:42',mood:'worried'},
+  {who:'xy',name:'汐音',text:'AC-3 那条红等您一句话：回滚还是原地修。',t:'09:43',mood:'worried'}],
  'j-m1':[{who:'sys',text:'—— M1 · 退款链路 ——'},{who:'you',name:'指挥官',text:'M1 退款链路修一下，跑完告诉我。',t:'09:31'},{who:'xy',name:'汐音',text:'接 M1 退款链，修 idempotent replay，AC 1–3 逐条对齐。',t:'09:31',mood:'working'},{who:'doer',name:'gateway-2',text:'impl 完成 · 2 文件 +96/−41。',t:'09:38'},{who:'doer',name:'gateway-2',text:'verify 红了：expected 1 but got 2 · reconcile.test.ts:90。',t:'09:38'},{who:'xy',name:'汐音',text:'已停住、现场保留。等您一句话：回滚还是原地修。',t:'09:39',mood:'worried'}],
  'j-m2g':[{who:'sys',text:'—— M2 · 限流阈值 ——'},{who:'you',name:'指挥官',text:'限流方案先压测，别急着上。',t:'09:31'},{who:'xy',name:'汐音',text:'接限流实施，三档压测；到拍板点停下等您。',t:'09:31',mood:'working'},{who:'doer',name:'gateway-1',text:'三档曲线已出：600 稳、900 余量 12%、1200 拐点后排队。',t:'09:40'},{who:'xy',name:'汐音',text:'压测结果和三个方案都摊好了。您拍板我就改配置跑回归，建议 900。',t:'09:41',mood:'thinking'}],
  'j-m2':[{who:'sys',text:'—— M2 · 结算对账 ——'},{who:'you',name:'指挥官',text:'M2 的验收跑完叫我。',t:'09:31'},{who:'xy',name:'汐音',text:'接 M2 结算对账，走 spec-dev，AC 1–4 逐条对齐。',t:'09:31',mood:'working'},{who:'doer',name:'ledger-2',text:'impl 完成 · 2 文件 +184/−32 · 42 passed。',t:'09:36'},{who:'doer',name:'ledger-2',text:'AC-4 大额差异缺覆盖，要指挥决定本轮补不补。',t:'09:41'},{who:'xy',name:'汐音',text:'M2 可以验收了，证据与变更都摊好了。AC-4 我建议下一轮补，您定。',t:'09:41',mood:'happy'}],
@@ -1254,7 +1454,9 @@ const state={sound:true,theme:0,winAlpha:1,thread:'main',panel:null,detailJob:nu
  model:'pro',effort:'标准',ctxMax:1e6,tokens:420000,tokIn:96000,tokOut:38000,tokCR:262000,tokCW:24000,requests:47,cacheHit:78,
  unread:{},focusJob:null,fleetFilter:'all',treeOpen:{},fileSel:{},fileQ:{},dbgTurn:{},dbgTab:'overview',dbgFilter:'all',
  simAuto:true,pop:null,handleSeq:7,wsProj:'gateway',wsOpen:{},wsSel:{},wsQ:'',
- twin:null,twinQ:'',twinGeo:null,twinMax:false,
+ twin:null,twinQ:'',twinGeo:null,twinMax:false,cabinQ:'',cabinOpen:null,cabinTabs:[],cabinTab:null,
+ doc:null,
+ addOpen:false,addTab:'skill',addQ:'',attSkill:null,attExpert:null,attLb:null,apMcp:null,
  flash:{job:null,op:null,at:0},autoWarp:true,conMin:false,conLeft:null,conTop:null,conGeo:null,wins:[],winSeq:0,zTop:30,
  inboxOpen:false,inboxSel:null,inboxPick:null,fanOpen:false,fleetOpen:false,relayJump:false,panelGeo:null,panelMax:false,panelAside:false,
  conTurns:false,conTurnSel:0};
@@ -1494,6 +1696,15 @@ function tuiMeta(m){
  const cost=(tok/1000*0.03).toFixed(2);
  return `<div class="tmeta"><span class="ok">已完成</span><span>·</span><span>${dur}s</span><span>·</span><span>${steps} 步</span><span>·</span><span>工具 ${tools}</span><span>·</span><span>思考 ${thinks}</span><span>·</span><span>${tokTxt} tok</span><span>·</span><span>¥${cost}</span><span class="tm">${esc(m.t||nowHM())}</span></div>`;
 }
+/* ── 文档名可点（v22 十一轮）：正文里 `xxx.md` 命中本舱文件 → chip，点开文档窗。
+      只认反引号里的文档路径（与真实实现同口径：只对文档扩展名生效，工具行不动）。 ── */
+const DOC_REF_RE=/`([^`<>\s]+\.(?:md|txt|json|csv|log|html?))`/gi;
+function docByRef(ref){const clean=String(ref).replace(/^`|`$/g,'').replace(/\\/g,'/');let hit=null;
+ const walk=n=>{if(hit)return;if(!n.d){if(n.p===clean||('.'+n.p).endsWith('/'+clean.replace(/^\.\//,''))||n.n===clean)hit=n;return;}
+  n.c.forEach(walk);};
+ cabinTree().c.forEach(walk);return hit;}
+function linkDocs(text){return esc(text).replace(DOC_REF_RE,(m,ref)=>{const node=docByRef(ref);if(!node)return m;
+ return `<span class="docref"><span class="ic">${cabinGlyph(node.n)}</span><span class="p" title="${esc(node.abs)}">${esc(node.abs)}</span><button class="go" data-doc="${esc(node.p)}" title="打开 · ${esc(node.abs)}">↗</button></span>`;});}
 function tlHTML(m){
  if(m.who==='sys')return `<div class="tline sys">${esc(m.text)}</div>`;
  const tm=`<span class="tm">${esc(m.t||nowHM())}</span>`;
@@ -1504,10 +1715,11 @@ function tlHTML(m){
   const st=bad?'err':good?'ok':'run';
   return `<div class="tline tool"><span class="ar">▸</span><span class="nm">${esc(m.name||'tool')}</span><span class="tx">${esc(m.text)}</span><span class="st ${st}">[${st==='err'?'✗':st==='ok'?'✓':'…'}]</span>${tm}</div>`;
  }
- return `<div class="tasst">${tuiMeta(m)}<div class="tline xy"><span class="mark">✦</span><span class="tx">${esc(m.text)}</span></div></div>`;
+ return `<div class="tasst">${tuiMeta(m)}<div class="tline xy"><span class="mark">✦</span><span class="tx">${linkDocs(m.text)}</span></div></div>`;
 }
 function renderConsole(){const isMain=state.thread==='main';const j=isMain?null:jobOf(state.thread);
  $('#conThread').textContent=isMain?'主对话':(j?'▦ '+j.title:'对话');
+ $('#conThread').hidden=isMain;
  $('#conBack').hidden=isMain;$('#conDetail').hidden=isMain;$('#conDebug').hidden=isMain;
  $('#conPop').hidden=isMain;
  applyGeo();renderDock();
@@ -1521,6 +1733,82 @@ function renderConsole(){const isMain=state.thread==='main';const j=isMain?null:
  else{ch.hidden=true;ch.innerHTML='';}
  $('#cmdInput').placeholder=isMain?'回应汐音 / 下达新指令…（⏎ 发送 · ⇧⏎ 换行）':`回应 ${j?j.agent:''} / 给这条作战下指令…（上方选项即拍板）`;
  renderFleetRail();}
+
+/* ── 通讯台 ＋（v22 十轮）：技能 / 分身 / MCP。技能 = 随本条消息生效（发出去时加 /skill 前缀）；
+      分身 = 委派一轮；MCP = 只读展开。身份切换不在这里（用户后续再定）。 ── */
+const AP_WS=[
+ ['octo-dev-copilot','2.0K','微服务生态编码助手：多仓工作空间、跨项目模式搜索、接口发现。'],
+ ['octo-resource-manager','616','从源仓库安装 skills / agents / workflows 到全局资源库。'],
+ ['octo-source-analyzer','726','分析 git 仓库结构，识别 skills / agents / workflows，生成安装计划。'],
+ ['octo-workflow-dev','3.1K','创建 / 编辑 / 校验 / 模拟 / 运行 / 调试 Octopus YAML 工作流。']];
+const AP_SKILLS=[
+ ['matt-e2e-test-methodology','1.5K'],['octo-acceptance-plan','1.6K'],['octo-actuator-guide','2.8K'],
+ ['octo-agent-clones','412'],['octo-agent-config','336'],['octo-agent-debug','467'],['octo-agent-memory','356'],
+ ['octo-agent-orchestrator','581'],['octo-agent-safety','445'],['octo-agent-sessions','385'],['octo-agent-workspace','433'],
+ ['octo-dev-copilot','2.0K'],['octo-guide','935'],['octo-notify','729'],['octo-resource-manager','616'],
+ ['octo-scheduler','2.3K'],['octo-skill-creator','1.6K'],['octo-skill-evolution','1.7K'],['octo-source-analyzer','726'],
+ ['octo-swarm-dev','4.0K'],['octo-wiki','413'],['octo-workflow-dev','3.1K'],['octo-workflow-ops','542'],
+ ['octo-workflow-repair','1.8K'],['octo-workflow-supervisor','553'],['octo-workflow-test','4.2K'],['task-author','6.3K']];
+const AP_CLONES=[
+ ['workspace','全栈开发助手','系统分身'],['scheduler','定时任务管理','SKILL octo-schedule-manager'],
+ ['archive','工程分析师','SKILL octo-archive-analyst'],['resource','资源操作专家','SKILL octo-resource-manager'],
+ ['task-author','任务规格作者','SKILL task-author'],
+ ['task-doer','任务执行者','SKILL octo-dev-copilot · matt-e2e-test-methodology'],
+ ['workflow-author','工作流开发者','SKILL octo-workflow-dev · octo-workflow-test · octo-workflow-ops'],
+ ['workflow-operator','工作流工程师','SKILL octo-wiki'],['cabin-orchestrator','舱调度者','SKILL octo-wiki']];
+const AP_MCP=[
+ ['octopus-workflow','工作流驾驶',16,'在当前工作空间里跑 / 查 / 停工作流：列定义、执行、看节点进度、取消、答审批、重试。'],
+ ['octopus-task','任务线程',30,'任务的规格 / 相位 / 执行 / 验收 / 归档。'],
+ ['octopus-memory','记忆',2,'读写长期记忆与当日工作记忆。'],
+ ['octopus-cabin','舱调度',8,'派作业、列作业、转达决定、催办。'],
+ ['octopus-cabin-doer','委派执行',1,'把一条作业交给执行分身跑一轮。']];
+function openAdd(force){const open=force===undefined?!state.addOpen:force;state.addOpen=open;
+ $('#addPop').hidden=!open;$('#conAdd').classList.toggle('on',open);$('#conAdd').setAttribute('aria-expanded',String(open));
+ if(open){state.addQ='';state.addTab='skill';renderAddPop();requestAnimationFrame(()=>$('#apQ')?.focus());Audio.sfx('open');}
+ else Audio.sfx('close');}
+function renderAddPop(){const p=$('#addPop');if(!p)return;
+ const q=state.addQ.trim().toLowerCase();const hit=t=>!q||String(t).toLowerCase().includes(q);const tab=state.addTab;
+ let body='';
+ if(tab==='skill'){
+  const ws=AP_WS.filter(x=>hit(x[0])||hit(x[2]));const all=AP_SKILLS.filter(x=>hit(x[0]));
+  body+=`<div class="ap-grp">工作区自带 · ${ws.length}<span> · 随工作区生效 · 只读</span></div>`;
+  body+=ws.map(([n,tok,d])=>`<div class="ap-row ro"><span class="ck2">✓</span><span class="nm">${esc(n)}</span><span class="ds">${esc(d)}</span><span class="tk">${esc(tok)}</span></div>`).join('');
+  body+=`<div class="ap-grp">全部 SKILL · ${all.length}${state.attSkill?`<span style="float:right;color:var(--sky)">已挂载 ${esc(state.attSkill)}</span>`:''}</div>`;
+  body+=all.length?all.map(([n,tok])=>{const on=state.attSkill===n;const wsHit=AP_WS.some(w=>w[0]===n);
+   return `<button class="ap-row${on?' on':''}" data-apskill="${esc(n)}"><span class="ck2">✓</span><span class="nm">${esc(n)}</span>${wsHit?'<span class="ds">工作区自带</span>':'<span class="ds"></span>'}<span class="tk">${esc(tok)}</span></button>`;}).join('')
+   :'<div class="ap-empty">未找到匹配的 SKILL</div>';
+ } else if(tab==='clone'){
+  const arr=AP_CLONES.filter(c=>hit(c[0])||hit(c[1])||hit(c[2]));
+  body+=`<div class="ap-grp">分身 · ${arr.length}<span> · 选中 = 这条消息委派给它跑一轮</span></div>`;
+  body+=arr.length?arr.map(([n,lb,sub])=>{const on=state.attExpert===n;
+   return `<div class="ap-row${on?' on':''}"><span class="cl">◈</span><span style="flex:1;min-width:0"><span class="nm" style="color:inherit">${esc(lb)}</span><span class="sub">${esc(n)} · ${esc(sub)}</span></span><button class="go2${on?' on':''}" data-apclone="${esc(n)}" data-aplb="${esc(lb)}">${on?'已委派':'委派'}</button></div>`;}).join('')
+   :'<div class="ap-empty">未找到匹配的分身</div>';
+ } else {
+  const arr=AP_MCP.filter(m=>hit(m[0])||hit(m[1])||hit(m[3]));
+  body+=`<div class="ap-grp">MCP · ${arr.length}<span> · 只读 · 点一行看工具</span></div>`;
+  body+=arr.length?arr.map(([n,lb,cnt,d])=>{const open=state.apMcp===n;
+   return `<button class="ap-row${open?' on':''}" data-apmcp="${esc(n)}"><span class="cl" style="background:rgba(46,230,214,.14);color:var(--teal)">▦</span><span style="flex:1;min-width:0"><span class="nm" style="color:inherit">${esc(lb)}</span><span class="sub">${esc(n)} · ${cnt} tools</span></span><span class="tk">${open?'▾':'▸'}</span></button>${open?`<div class="ap-tool"><code>${esc(n)}</code><span>${esc(d)}</span></div>`:''}`;}).join('')
+   :'<div class="ap-empty">未找到匹配的 MCP</div>';
+ }
+ p.innerHTML=`<div class="ap-h"><b>添加</b><span class="ap-chip">◈ 汐音</span><span class="sp"></span><span class="ap-esc">Esc</span></div>
+ <div class="ap-search"><input id="apQ" placeholder="搜索技能 / 分身 / MCP…" value="${esc(state.addQ)}" aria-label="搜索技能 / 分身 / MCP"/></div>
+ <div class="ap-tabs" role="tablist"><button data-apt="skill" class="${tab==='skill'?'on':''}">✦ 技能 <b>${AP_SKILLS.length}</b></button><button data-apt="clone" class="${tab==='clone'?'on':''}">◈ 分身 <b>${AP_CLONES.length}</b></button><button data-apt="mcp" class="${tab==='mcp'?'on':''}">▦ MCP <b>${AP_MCP.length}</b></button></div>
+ <div class="ap-body">${body}</div>
+ <div class="ap-foot"><b>技能</b>随本条消息生效 · <b>分身</b>委派一轮 · <b>MCP</b>只读</div>`;
+ bindAddPop();}
+function bindAddPop(){const p=$('#addPop');
+ $$('[data-apt]',p).forEach(b=>b.addEventListener('click',()=>{state.addTab=b.dataset.apt;renderAddPop();Audio.sfx('click');}));
+ $$('[data-apskill]',p).forEach(b=>b.addEventListener('click',()=>{const n=b.dataset.apskill;state.attSkill=state.attSkill===n?null:n;renderAddPop();renderAttach();Audio.sfx('click');}));
+ $$('[data-apclone]',p).forEach(b=>b.addEventListener('click',()=>{const n=b.dataset.apclone;const on=state.attExpert===n;state.attExpert=on?null:n;state.attLb=on?null:b.dataset.aplb;renderAddPop();renderAttach();Audio.sfx('click');}));
+ $$('[data-apmcp]',p).forEach(b=>b.addEventListener('click',()=>{const n=b.dataset.apmcp;state.apMcp=state.apMcp===n?null:n;renderAddPop();Audio.sfx('click');}));
+ const q=$('#apQ',p);if(q)q.addEventListener('input',()=>{state.addQ=q.value;const pos=q.selectionStart;renderAddPop();const nq=$('#apQ');if(nq){nq.focus();nq.setSelectionRange(pos,pos);}});}
+function renderAttach(){const el=$('#conAttach');if(!el)return;const chips=[];
+ if(state.attSkill)chips.push(`<span class="ch">✦ /${esc(state.attSkill)}<button data-apclear="skill" title="取消技能（本条不再挂）">✕</button></span>`);
+ if(state.attExpert)chips.push(`<span class="ch exp">◈ 分身 · ${esc(state.attLb||state.attExpert)}<button data-apclear="clone" title="取消委派">✕</button></span>`);
+ el.hidden=chips.length===0;el.innerHTML=chips.join('');
+ const b=$('#conAddN');if(b){b.hidden=chips.length===0;b.textContent=String(chips.length);}
+ $$('[data-apclear]',el).forEach(x=>x.addEventListener('click',()=>{if(x.dataset.apclear==='skill')state.attSkill=null;else{state.attExpert=null;state.attLb=null;}renderAttach();if(state.addOpen)renderAddPop();Audio.sfx('click');}));}
+
 /* ── 通讯台遥测（model / ctx / token·费用）+ 轮次历史（≡ N轮 → 下拉跳转） ── */
 function renderConTelemetry(){const pct=Math.min(100,Math.round(state.tokens/state.ctxMax*100));
  $('#conModel').textContent=state.model+' · '+state.effort;
@@ -1630,7 +1918,10 @@ function openThread(jid){state.thread=jid;state.unread[jid]=0;state.conTurns=fal
 /* ── send / spawn / resolve ── */
 function autoGrowEl(t){const win=!!t.closest('.cwi');t.style.height='auto';const min=win?28:36,max=win?70:92;const h=Math.max(min,Math.min(t.scrollHeight,max));t.style.height=h+'px';t.style.overflowY=t.scrollHeight>max?'auto':'hidden';}
 function autoGrow(){autoGrowEl($('#cmdInput'));}
-function sendCommand(){sendFrom(state.thread,$('#cmdInput'));}
+function sendCommand(){const t=$('#cmdInput');const raw=t.value.trim();
+ if(raw&&state.attSkill&&!raw.startsWith('/'))t.value='/'+state.attSkill+' '+raw;
+ sendFrom(state.thread,t);
+ if(raw&&(state.attSkill||state.attExpert)){state.attSkill=null;state.attExpert=null;state.attLb=null;renderAttach();}}
 function sendFrom(th,t){const text=t.value.trim();if(!text){const box=t.closest('.con-in')||t.closest('.cwi');if(box){box.classList.remove('shake');void box.offsetWidth;box.classList.add('shake');}Audio.sfx('deny');return;}
  pushMsg(th,{who:'you',name:'指挥官',text,t:nowHM()});t.value='';autoGrowEl(t);Audio.sfx('send');state.cost+=.01*modelMult();renderHUD();
  const o=th!=='main'?opForJob(th):null;if(o){const hit=o.options.find(x=>text.includes(x.label)||x.label.includes(text));if(hit){resolveOp(o.id,hit.label,text===hit.label?'':text);return;}}
@@ -1756,6 +2047,144 @@ function renderWS(){const pid=state.wsProj;const open=wsOpenSet(pid);const q=sta
  return `<div class="fchips">${PROJECTS.map(pr=>`<button class="fchip${pid===pr.id?' on':''}" data-wsproj="${pr.id}">${pr.name}</button>`).join('')}</div>
  <div class="fsearch"><input id="wsQ" placeholder="筛选文件…" value="${esc(state.wsQ)}"/><span class="scope">worktree · ${count} 文件</span></div>
  <div class="fwrap"><div class="ftree">${rows.join('')||'<div class="pempty">无匹配文件</div>'}</div>${prev}</div>`;}
+
+/* ── 本舱目录（v22 九轮 · 右栏「目录」）：以本舱 cwd 为根，只读。
+      一个目录一个舱：会话 / 任务都开在 cwd 下；projects/ 里是各项目，命中作业的文件带徽标。
+      设置 / 更多里原来的「文件」看的是任务 worktree，看不到本舱根路径 —— 这里补上。 ── */
+/* ── 本舱目录（v22 九轮 · 右栏「目录」）：以本舱 cwd 为根，只读。
+      左 = 筛选 + 全展/全收 + 树；右 = 多标签查看器（代码 / Markdown / JSON / 图片），不编辑。
+      设置 / 更多里原来的「文件」看的是任务 worktree，看不到本舱根路径 —— 这里补上。 ── */
+const CABIN_CWD='D:/octopus-ws/cabin';
+const CABIN_FILES=[
+ ['.octopus/cabin.json','cabin','{\n  "cabin_id": "cab-fin-01",\n  "name": "账务中台",\n  "cwd": "D:/octopus-ws/cabin",\n  "projects": ["ledger", "gateway", "risk", "edge"]\n}\n'],
+ ['.octopus/tasks/t-2641/manifest.json','task','{\n  "id": "t-2641",\n  "title": "M1 · 退款链路",\n  "cabin_id": "cab-fin-01",\n  "workflow_ref": "refund-flow",\n  "status": "running"\n}\n'],
+ ['cabin.md','', '# 账务中台 · 本舱\n\ncwd: D:/octopus-ws/cabin\n\n一个目录一个舱：会话与任务都在这下面开，worktree 按作业另开。\n主仓只读 · ff-only · 脏树会导致空变更。\n\n## 目录约定\n- **projects/** 四个项目的检出（只读主仓）\n- **.octopus/** 本舱运行数据（cabin.json / tasks/）\n- **docs/** 架构与接口说明\n\n> 只读查阅：这里不改文件，改动走会话与任务。\n'],
+ ['AGENTS.md','skill','# 本舱执行约束\n\n- 主仓只读，只能拉主线（ff-only）\n- 产物写入 ~/.octopus/tasks/<id>/\n- 每轮落 diff / 测试 / 报告，变更窗 = commit 区间\n'],
+ ['README.md','', '# 账务中台\n\n账务核心 / API 网关 / 风控引擎 / 边缘节点，四个项目同驻本舱。\n'],
+ ['docs/架构总览.png','','',null,'./assets/scene-earthrise.png'],
+ ['docs/接口约定.md','', '# 接口约定\n\n## 退款\n- 幂等键 = orderId + idempotencyKey\n- 重复请求返回 `{ skipped: true }`\n\n## 结算对账\n- 同日同账户只落一笔\n- 差异走人工复核队列\n\n```json\n{ "window": "1d", "retry": 3 }\n```\n'],
+ /* v22 十一轮：正文里的文档名可点 → 文档查看器（内容为报告样例） */
+ ['.octopus/tasks/t-2641/reports/2026-11-19-M1验收报告.md','task', '# M1 验收报告 · 2026-11-19\n\n范围：账务中台舱 · 任务 t-2641「M1 · 退款链路」。证据窗 = `a1c2f3d..e9f8a7b`。\n\n## 结论\n- **AC-1 / AC-2 通过**：复用幂等键，退款不重复\n- **AC-3 未过**：CI 红 · expected 1 but got 2（reconcile.test.ts:90）\n- 遗留 1 项：重放幂等补测，已开跟进票\n\n## 证据\n- 幂等键复用 ✓ · e2e scenario A\n- 重复退款拦截 ✓ · unit 41 例\n- CI 全绿 ✗ · reconcile.test.ts:90\n\n## 命令\n```bash\npnpm -F gateway test -- refund\n# 39 passed · 1 failed · 12.8s\n```\n\n> 下一步：等指挥说「回滚 / 原地修」，我再动。\n']
+];
+function cabinTree(){const root={n:'cabin',d:true,c:[]};
+ const add=(p,txt,b,jid,img)=>{const segs=p.split('/');let cur=root;
+  segs.forEach((s,i)=>{if(i===segs.length-1){cur.c.push({n:s,d:false,txt,b:b||null,jid:jid||null,img:img||null,p,abs:CABIN_CWD+'/'+p});}
+   else{let d=cur.c.find(x=>x.d&&x.n===s);if(!d){d={n:s,d:true,c:[]};cur.c.push(d);}cur=d;}});};
+ CABIN_FILES.forEach(([p,b,txt,jid,img])=>add(p,txt,b,jid,img));
+ for(const pid of Object.keys(WS_FILES)){const pr=projOf(pid);
+  if(!WS_FILES[pid].some(([p])=>p==='README.md'))add('projects/'+pid+'/README.md','# '+pr.name+'\n\n项目检出：'+wsPath(pid)+'\n分支 '+pr.branch+' · HEAD '+pr.head+' · '+pr.commit+(pr.dirty?' · dirty':' · clean')+'\n',null);
+  for(const [p,txt,jid] of WS_FILES[pid])add('projects/'+pid+'/'+p,txt,jid?(jobOf(jid)||{}).short:null,jid);}
+ const sortn=n=>{n.c.sort((a,b)=>(b.d-a.d)||a.n.localeCompare(b.n));n.c.forEach(c=>c.d&&sortn(c));};sortn(root);return root;}
+function cabinOpenSet(){if(!state.cabinOpen)state.cabinOpen=new Set(['projects']);return state.cabinOpen;}
+function openCabinTree(){state.cabinQ='';state.cabinTabs=['cabin.md'];state.cabinTab='cabin.md';state.twin={mode:'cabin'};renderTwin();Audio.sfx('open');}
+const cabinExt=n=>(n.split('.').pop()||'').toLowerCase();
+const cabinGlyph=n=>{const e=cabinExt(n);return e==='md'?'📜':['png','jpg','jpeg','gif','webp','svg','avif'].includes(e)?'🖼':'📄';};
+function cabinNode(p){let hit=null;const find=(n,path)=>{const q=path?path+'/'+n.n:n.n;if(!n.d&&q===p)hit=n;if(n.d)n.c.forEach(c=>find(c,q));};cabinTree().c.forEach(c=>find(c,''));return hit;}
+function cabinAllDirs(){const out=[];const walk=(n,p)=>{const q=p?p+'/'+n.n:n.n;if(n.d){out.push(q);n.c.forEach(c=>walk(c,q));}};cabinTree().c.forEach(c=>walk(c,''));return out;}
+function openCabinFile(p){if(!state.cabinTabs.includes(p))state.cabinTabs.push(p);state.cabinTab=p;renderCabinTwin();Audio.sfx('click');}
+function closeCabinTab(p){const i=state.cabinTabs.indexOf(p);if(i<0)return;state.cabinTabs.splice(i,1);if(state.cabinTab===p)state.cabinTab=state.cabinTabs[Math.max(0,i-1)]||null;renderCabinTwin();Audio.sfx('close');}
+/* Markdown 只做查看用的一小撮语法；先 esc 再套标签。 */
+const mdInline=s=>s.replace(/\*\*(.+?)\*\*/g,'<b>$1</b>').replace(/`([^`]+)`/g,'<code>$1</code>');
+function mdHTML(src){const lines=esc(src).split('\n');const out=[];let list=false,code=false;
+ const closeList=()=>{if(list){out.push('</ul>');list=false;}};
+ for(const ln of lines){
+  if(/^\s*```/.test(ln)){closeList();out.push(code?'</code></pre>':'<pre class="ck-fence"><code>');code=!code;continue;}
+  if(code){out.push(ln);continue;}
+  const h=ln.match(/^(#{1,3})\s+(.*)$/);
+  if(h){closeList();const n=h[1].length;out.push(`<h${n}>${mdInline(h[2])}</h${n}>`);continue;}
+  const li=ln.match(/^\s*[-*]\s+(.*)$/);
+  if(li){if(!list){out.push('<ul>');list=true;}out.push(`<li>${mdInline(li[1])}</li>`);continue;}
+  const bq=ln.match(/^&gt;\s?(.*)$/);
+  if(bq){closeList();out.push(`<blockquote>${mdInline(bq[1])}</blockquote>`);continue;}
+  closeList();
+  if(!ln.trim()){out.push('');continue;}
+  out.push(`<p>${mdInline(ln)}</p>`);
+ }
+ if(code)out.push('</code></pre>');
+ closeList();return out.join('\n');}
+function cabinView(node){
+ if(!node)return '<div class="ck-empty">左边点一个文件，在这里按标签页打开 · 只读<span>代码 / Markdown / JSON 直接看，图片出预览；不做编辑</span></div>';
+ const ext=cabinExt(node.n);const abs=node.abs;
+ const meta=`<div class="ck-meta"><span class="p" title="${esc(abs)}">${esc(abs)}</span><button class="cbtn" data-ccopy="${esc(abs)}" title="复制绝对路径">⧉ 复制路径</button>${node.jid?`<button class="cbtn" data-cws-job="${esc(node.jid)}">▦ 看作战变更</button>`:''}<span class="ro">本舱 · 只读</span></div>`;
+ if(['png','jpg','jpeg','gif','webp','svg','avif'].includes(ext))return `<div class="ck-view">${meta}<div class="ck-imgwrap"><img class="ck-img" src="${esc(node.img||'')}" alt="${esc(node.n)}"/></div><div class="ck-imgcap">${esc(node.n)} · 图片预览</div></div>`;
+ if(ext==='md')return `<div class="ck-view">${meta}<div class="ck-doc">${mdHTML(node.txt)}</div></div>`;
+ let txt=node.txt;if(ext==='json'){try{txt=JSON.stringify(JSON.parse(node.txt),null,2);}catch(e){}}
+ return `<div class="ck-view">${meta}<pre class="ck-code">${esc(txt)}</pre></div>`;
+}
+function renderCabinTwin(){const w=$('#twin');const open=cabinOpenSet();const q=state.cabinQ.toLowerCase();const tree=cabinTree();
+ const node=cabinNode(state.cabinTab);
+ const rows=[`<button class="trow dir" style="padding-left:7px"><span class="tw">▾</span><span class="ti2">📁</span><span class="tn">${esc(tree.n)}</span></button>`];let count=0;
+ /* 深层匹配：筛选要能命中 projects/<项目>/src/… 里的文件，并把沿途目录自动展开。 */
+ const deepMatch=n=>n.d?n.c.some(deepMatch):(n.n.toLowerCase().includes(q)||(n.p||'').toLowerCase().includes(q));
+ const walk=(node,path,depth)=>{const p=path?path+'/'+node.n:node.n;
+  if(node.d){const matchQ=!!q&&deepMatch(node);
+   const isOpen=open.has(p)||matchQ;
+   if(q&&!matchQ)return;
+   const badge=p==='projects'?`<span class="tb">${Object.keys(WS_FILES).length} 项目</span>`:p==='.octopus'?'<span class="tb">本舱</span>':'';
+   rows.push(`<button class="trow dir" data-ctree="${esc(p)}" style="padding-left:${7+depth*13}px"><span class="tw">${isOpen?'▾':'▸'}</span><span class="ti2">📁</span><span class="tn">${esc(node.n)}</span>${badge}</button>`);
+   if(isOpen)node.c.forEach(c=>walk(c,p,depth+1));}
+  else{if(q&&!node.n.toLowerCase().includes(q)&&!(node.p||'').toLowerCase().includes(q))return;count++;
+   const sel=state.cabinTab===p;
+   rows.push(`<button class="trow${sel?' sel':''}" data-cfile="${esc(p)}" style="padding-left:${7+depth*13}px"><span class="tw"></span><span class="ti2">${cabinGlyph(node.n)}</span><span class="tn">${esc(node.n)}</span>${node.b?`<span class="tb${node.b==='skill'||node.b==='task'||node.b==='cabin'?' tk':''}" title="关联：${esc(node.b)}">${esc(node.b)}</span>`:''}</button>`);}};
+ tree.c.forEach(c=>walk(c,'',1));
+ const tabs=state.cabinTabs.map(p=>{const nd=cabinNode(p);const name=nd?nd.n:(p.split('/').pop()||p);const on=state.cabinTab===p;
+  return `<span class="ck-tab${on?' on':''}" data-ctab="${esc(p)}" title="${esc(p)}"><span class="tic">${cabinGlyph(name)}</span><span class="nm">${esc(name)}</span><span class="cx" data-ctabx="${esc(p)}" title="关闭标签">✕</span></span>`;}).join('');
+ w.innerHTML=`<div class="ph"><button class="phx" data-tclose title="关闭">✕</button><span class="pt"><b>⌗ 本舱目录 · 账务中台</b><span>CABIN CWD · 只读 · 一个目录一个舱</span></span><span class="sp"></span><button class="pwin" data-tmax title="全屏 / 还原（也可双击标题栏）">${state.twinMax?'⤡':'⛶'}</button></div>
+ <div class="pb">
+ <div class="wsb cwd"><span class="br">⌂ 本舱 cwd</span><span class="p">${esc(CABIN_CWD)}</span><span class="ro">只读</span><span class="acts"><button class="cbtn" data-ccopy="${esc(CABIN_CWD)}" title="复制本舱 cwd 绝对路径">⧉ 复制路径</button><button class="cbtn" data-creveal title="桌面壳：在资源管理器里打开本舱目录">▦ 资源管理器</button></span></div>
+ <div class="ck-tree">
+  <div class="ck-side">
+   <div class="ck-side-h"><input id="cabinQ" placeholder="筛文件…" value="${esc(state.cabinQ)}" aria-label="筛选本舱文件"/><button class="ck-ib" data-cexp="1" title="全部展开">⊞</button><button class="ck-ib" data-cexp="0" title="全部收起">⊟</button></div>
+   <div class="ck-scope">本舱 · ${count} 文件</div>
+   <div class="ck-scroll" role="tree">${q&&!count?'<div class="pempty">无匹配文件</div>':rows.join('')}</div>
+  </div>
+  <div class="ck-main">
+   <div class="ck-tabs" role="tablist">${tabs||'<span class="ck-tabs-empty">没有打开的标签 · 点左边文件</span>'}</div>
+   ${cabinView(node)}
+  </div>
+ </div>
+ </div>`;
+ bindCabinTwin();applyTwinGeo();w.classList.add('open');}
+function bindCabinTwin(){const w=$('#twin');
+ $('[data-tclose]',w)?.addEventListener('click',closeTree);
+ $('[data-tmax]',w)?.addEventListener('click',e=>{e.stopPropagation();toggleTwinMax();});
+ $$('[data-ctree]',w).forEach(b=>b.addEventListener('click',()=>{const set=cabinOpenSet();const p=b.dataset.ctree;set.has(p)?set.delete(p):set.add(p);renderCabinTwin();Audio.sfx('click');}));
+ $$('[data-cfile]',w).forEach(b=>b.addEventListener('click',()=>openCabinFile(b.dataset.cfile)));
+ $$('[data-ctab]',w).forEach(b=>b.addEventListener('click',e=>{if(e.target.closest('[data-ctabx]'))return;state.cabinTab=b.dataset.ctab;renderCabinTwin();Audio.sfx('click');}));
+ $$('[data-ctabx]',w).forEach(b=>b.addEventListener('click',e=>{e.stopPropagation();closeCabinTab(b.dataset.ctabx);}));
+ $$('[data-cexp]',w).forEach(b=>b.addEventListener('click',()=>{state.cabinOpen=new Set(b.dataset.cexp==='1'?cabinAllDirs():[]);renderCabinTwin();Audio.sfx('click');}));
+ $$('[data-ccopy]',w).forEach(b=>b.addEventListener('click',e=>{e.stopPropagation();const p=b.dataset.ccopy||CABIN_CWD;fallbackCopy(p,()=>toast('已复制 · '+p));Audio.sfx('click');}));
+ $('[data-creveal]',w)?.addEventListener('click',()=>toast('桌面壳 · 在资源管理器打开 '+CABIN_CWD));
+ $('[data-cws-job]',w)?.addEventListener('click',e=>{const jid=e.currentTarget.dataset.cwsJob;state.twin=null;w.classList.remove('open');state.detailJob=jid;state.detailTab='changes';state.panel='detail';renderPanel();Audio.sfx('click');});
+ const cq=$('#cabinQ',w);if(cq)cq.addEventListener('input',()=>{state.cabinQ=cq.value;const pos=cq.selectionStart;renderCabinTwin();const nq=$('#cabinQ');if(nq){nq.focus();nq.setSelectionRange(pos,pos);}});}
+
+/* ── 文档查看器（v22 十一轮）：通讯台正文里点文档名 → 这个窗。
+      与目录窗同一套壳（.twin / .ph / .wsb.cwd / .ck-*），只读；⌗ 跳回目录窗看位置。 ── */
+function openDoc(p){const node=docByRef(p);if(!node){toast('文档不在本舱目录里 · '+p);return;}state.doc=node.p;renderDoc();Audio.sfx('open');}
+function closeDocView(){if(!state.doc)return;state.doc=null;const w=$('#docwin');if(w)w.classList.remove('open');Audio.sfx('close');}
+function renderDoc(){const w=$('#docwin');const node=state.doc?docByRef(state.doc):null;if(!node){w.classList.remove('open');return;}
+ const name=node.n;const ext=cabinExt(name);
+ const body=ext==='md'?`<div class="ck-doc">${mdHTML(node.txt||'')}</div>`:`<pre class="ck-code">${esc(node.txt||'')}</pre>`;
+ w.innerHTML=`<div class="ph"><button class="phx" data-dclose title="关闭（Esc）">✕</button><span class="pt"><b>${cabinGlyph(name)} ${esc(name)}</b><span>DOCUMENT · 只读 · 来自通讯台</span></span><span class="sp"></span><button class="pwin" data-dtree title="在本舱目录窗里看位置">⌗</button></div>
+ <div class="pb">
+ <div class="wsb cwd"><span class="br">📄 文档</span><span class="p" title="${esc(node.abs)}">${esc(node.abs)}</span><span class="ro">只读</span><span class="acts"><button class="cbtn" data-dcopy="${esc(node.abs)}" title="复制完整路径">⧉ 复制路径</button><button class="cbtn" data-dreveal title="桌面壳：在资源管理器中定位">▦ 资源管理器</button></span></div>
+ <div class="ck-main" style="flex:1;min-height:0">
+  <div class="ck-view">${body}</div>
+ </div>
+ </div>`;
+ bindDocView();w.classList.add('open');}
+function bindDocView(){const w=$('#docwin');
+ $$('[data-dclose]',w).forEach(b=>b.addEventListener('click',e=>{e.stopPropagation();closeDocView();}));
+ $('[data-dcopy]',w)?.addEventListener('click',e=>{e.stopPropagation();const p=e.currentTarget.dataset.dcopy||'';fallbackCopy(p,()=>toast('已复制 · '+p));Audio.sfx('click');});
+ $('[data-dreveal]',w)?.addEventListener('click',()=>toast('桌面壳 · 在资源管理器定位 '+(state.doc||'')));
+ $('[data-dtree]',w)?.addEventListener('click',()=>{const p=state.doc;if(!p)return;closeDocView();state.twin={mode:'cabin'};state.cabinQ='';state.cabinTabs=[p];state.cabinTab=p;renderTwin();Audio.sfx('click');});}
+function bindDocDrag(){const w=$('#docwin');if(!w||w.dataset.drag)return;w.dataset.drag='1';
+ w.addEventListener('pointerdown',e=>{if(e.target.closest('button,input,textarea,a,select'))return;if(!e.target.closest('.ph'))return;e.preventDefault();
+  w.classList.add('geo'); /* 拖过就别再播入场动画 —— 否则 pin 的 translateX(-50%) 每帧把窗拽回中间 */
+  const r=w.getBoundingClientRect();const sx=e.clientX,sy=e.clientY;
+  const mv=ev=>{w.style.left=clamp(r.left+ev.clientX-sx,4,Math.max(4,innerWidth-r.width-4))+'px';w.style.top=clamp(r.top+ev.clientY-sy,52,Math.max(52,innerHeight-r.height-4))+'px';w.style.transform='none';};
+  const up=()=>{removeEventListener('pointermove',mv);removeEventListener('pointerup',up);};
+  addEventListener('pointermove',mv);addEventListener('pointerup',up);});}
 
 /* ── 调试 inspect（作业坞同款） ── */
 function turnsFor(j){const seedN=j.id.length*7+j.title.length;const n=j.status==='blocked'?4:j.status==='done'?5:3;
@@ -1987,6 +2416,7 @@ function openTree(jid,pid){const j=jobOf(jid);if(!j)return;const ids=jobProjIds(
  state.twinQ='';state.twin={job:jid,proj:pid&&ids.includes(pid)?pid:ids[0]};renderTwin();Audio.sfx('open');}
 function closeTree(){if(!state.twin)return;state.twin=null;$('#twin').classList.remove('open');Audio.sfx('close');}
 function renderTwin(){const w=$('#twin');const t=state.twin;if(!t){w.classList.remove('open');return;}
+ if(t.mode==='cabin'){renderCabinTwin();return;}
  const j=jobOf(t.job);if(!j){state.twin=null;w.classList.remove('open');return;}
  const ids=jobProjIds(j);const pid=ids.includes(t.proj)?t.proj:ids[0];t.proj=pid;const pr=projOf(pid);
  const open=wsOpenSet(pid);const q=state.twinQ.toLowerCase();const rows=[];let count=0;
@@ -2178,18 +2608,97 @@ function applyWinAlpha(){document.documentElement.style.setProperty('--winop',St
 function openSettings(){closePops();closeConPop();state.settings=true;$('#setwrap').hidden=false;renderSettings();Audio.sfx('open');}
 function closeSettings(){state.settings=false;$('#setwrap').hidden=true;Audio.sfx('close');}
 
+/* ── 汐音档案（更多 → ♡ 汐音，2026-11-19 用户 #7）──────────────────────
+   打开 = 看她是谁：身份 / 模型 / 人格 / 技能 / 工具 / 记忆；同时她在台上换动作
+   —— 点开档案本身就是在看她（报到 → 微笑 → 眨眼 → 警觉循环）。 */
+const XY_PERSONA='# 舱调度者（Cabin Orchestrator 分身）\n\n你是「舱调度者」，也是一个能直接动手的全能开发者：既能调度编队，也能自己写业务代码、跑测试、查问题。用户面对的单线程是你 —— 自己做更快就自己做，该开工程就派任务。\n\n## 自己做还是派出去（默认偏自己做）\n- 自己做（默认）：单文件 / 少量文件、目标明确、当轮能验证 —— 修 bug、小功能、局部重构、跑测试\n- 派任务 doer：多 phase、要独立 worktree 与逐轮验收、长耗时、并行多条线\n\n（完整 persona.md · 只读展示）';
+const XY_SKILLS=['octo-wiki','octo-dev-copilot','octo-task-author','octo-workflow-dev','octo-test-author','octo-scheduler','matt-dev-pipeline','matt-verify-report'];
+const XY_TOOLS=[['octopus-cabin','7'],['octopus-workflow','6'],['octopus-memory','2'],['内建','Read / Edit / Bash…']];
+const XY_POSES=['happy','wink','alert','thinking'];
+const xyState={open:false,persona:false,skills:false,tools:false,poseT:null,poseI:0};
+
+const XY_TABS=[['profile','资料'],['persona','人格'],['skills','技能'],['tools','工具'],['settings','互动']];
+const XY_TOOL_CARDS=[
+  {n:'舱调度',s:'octopus-cabin',c:8,t:['cabin_dispatch_task','cabin_delegate_task','cabin_relay_decision','cabin_list_tasks','cabin_list_jobs','cabin_job_trace','cabin_note_job','cabin_resume_job']},
+  {n:'工作流驾驶',s:'octopus-workflow',c:6,t:['list','run','status','cancel','approve','retry']},
+  {n:'记忆',s:'octopus-memory',c:2,t:['remember','recall']},
+  {n:'内建工具',s:'SDK 默认全量',c:9,t:['Read','Write','Edit','Bash','Glob','Grep','Task','WebFetch','Skill']},
+];
+function renderXyPanel(){
+  const el=$('#xypop'); if(!el) return;
+  const model=($('#conModel')?.textContent||'pro · 标准').trim();
+  const tab=xyState.tab||'profile';
+  const body={
+    profile:`<div class="xyag">
+      <div class="xyid"><span class="nm"><b>舱调度者</b><span>cabin-orchestrator · 舱主对话的默认身份</span></span><span class="xytag">隔离记忆</span></div>
+      <div class="xyrow"><span class="k">模型</span><span class="v"><b>${model}</b> <i>· 在通讯台 MODEL 芯片切换</i></span></div>
+      <div class="xyrow"><span class="k">人格</span><span class="v">persona.md · 98 行 · <i>全能舱主：能调度，也能直接写业务代码</i></span><button data-xytab="persona">查看</button></div>
+      <div class="xyrow"><span class="k">技能</span><span class="v"><b>${XY_SKILLS.length+33} 项</b> <i>· 全部共享技能（内置 + 本地进化）</i></span><button data-xytab="skills">查看</button></div>
+      <div class="xyrow"><span class="k">工具</span><span class="v"><b>3 套 MCP</b> <i>+ 内建 9 类</i></span><button data-xytab="tools">查看</button></div>
+      <div class="xyrow"><span class="k">记忆</span><span class="v">isolated <i>· ~/.octopus/agent/built-in/cabin-orchestrator/memory</i></span></div>
+    </div>`,
+    persona:`<pre class="xypre fill">${XY_PERSONA}</pre>`,
+    skills:`<div class="xychips page">${XY_SKILLS.map(n=>`<span>${n}</span>`).join('')}<span>+33</span></div>`,
+    tools:`<div class="xytools">${XY_TOOL_CARDS.map((c)=>`<div class="xytool"><div class="xytool-h"><b>${c.n}</b><span>${c.s}</span><i>${c.c} tools</i></div><div class="xychips">${c.t.map((t)=>`<span class="tool">${t}</span>`).join('')}</div></div>`).join('')}</div>`,
+    settings:`<div class="xyset">
+      <div class="xyrow"><span class="k">在场</span><span class="v">静默 30 秒说一句 · 动键鼠重新计时</span></div>
+      <div class="xyrow"><span class="k">现在</span><span class="v"><button data-xysay>让她说一句</button> <button data-xypoke>互动一下</button></span></div>
+      <div class="xyrow"><span class="k">图鉴</span><span class="v"><b>${CLIPS.length} 支片段</b> <i>· 旧批次 3 + 新批次 10 · 点一支她就就地演</i></span></div>
+      <div class="xygal clips">${CLIPS.map((c,i)=>{const m=POSE_META[c.pose];const th=c.src.replace('/v22/','/v22/thumbs/').replace('.webm','.png');const no=String(i+1).padStart(2,'0');return `<button data-xyclip="${i}" class="${state.clip===i?'on':''}" title="${no} · ${m.cn} · ${m.desc} · ${c.batch}批次"><img src="${th}" alt=""><span class="no">${no}</span></button>`;}).join('')}</div>
+    </div>`,
+  }[tab] || '';
+  el.innerHTML=`<div class="xyh"><button class="xyx" id="xyClose" title="关闭">✕</button><span class="xyav"><img src="${PORTRAIT[state.mood]||PORTRAIT.idle}" alt=""></span><b>汐音</b><span class="sub">XIYIN-07 · 舱调度者</span><span class="ln"></span><span class="en">AGENT DOSSIER</span></div>
+   <div class="xytabs" role="tablist">${XY_TABS.map(([id,label])=>`<button data-xytab="${id}" class="${tab===id?'on':''}">${label}${id==='skills'?`<b>${XY_SKILLS.length+33}</b>`:id==='tools'?'<b>3</b>':''}</button>`).join('')}</div>
+   <div class="xypop-b">${body}</div>
+   <div class="xyfoot">打开期间她会换动作 · <b>点立绘</b> = 直接跟她说话</div>`;
+  $('#xyClose')?.addEventListener('click',closeXyPanel);
+  $$('[data-xytab]',el).forEach(x=>x.addEventListener('click',()=>{xyState.tab=x.dataset.xytab;Audio.sfx('click');renderXyPanel();}));
+  $('[data-xysay]',el)?.addEventListener('click',()=>{const[t,m]=rnd(SAY);setMood(m,5500);typeCurrent({who:'xy',name:'汐音',text:t});});
+  $('[data-xypoke]',el)?.addEventListener('click',()=>{const[t,m]=rnd(SAY);setMood(m,3600);typeCurrent({who:'xy',name:'汐音',text:t});Audio.sfx('open');});
+  $$('[data-xyclip]',el).forEach(x=>x.addEventListener('click',()=>{playClip(+x.dataset.xyclip,{fx:false});Audio.sfx('click');renderXyPanel();}));
+}
+function placeXyPanel(){
+  const el=$('#xypop'); if(!el) return;
+  const host=$('#console')?.getBoundingClientRect();
+  const vw=innerWidth,vh=innerHeight;
+  const h=host&&host.width>120&&host.height>120
+    ? {x:host.left,y:host.top,w:host.width,h:host.height}
+    : {x:vw*.36,y:66,w:vw*.6,h:vh-122};
+  const w=Math.round(Math.max(480,Math.min(h.w-24,720)));
+  const hh=Math.round(Math.max(360,Math.min(h.h-12,480)));
+  el.style.left=Math.round(Math.max(8,Math.min(h.x+(h.w-w)/2,vw-w-8)))+'px';
+  el.style.top=Math.round(Math.max(8,Math.min(h.y+6,vh-hh-8)))+'px';
+  el.style.width=w+'px'; el.style.height=hh+'px';
+}
+function toggleXyPanel(){
+  if(xyState.open){closeXyPanel();return;}
+  xyState.open=true;
+  renderXyPanel();
+  const el=$('#xypop'); el.hidden=false; placeXyPanel(); Audio.sfx('open');
+  const beat=()=>{const m=XY_POSES[xyState.poseI%XY_POSES.length];xyState.poseI++;setMood(m,2600);};
+  beat();
+  clearInterval(xyState.poseT);
+  xyState.poseT=setInterval(beat,6400);
+}
+function closeXyPanel(){
+  xyState.open=false;
+  clearInterval(xyState.poseT); xyState.poseT=null;
+  const el=$('#xypop'); if(el) el.hidden=true;
+  Audio.sfx('close');
+}
+
 /* ── 更多：向左横排展开（常驻之外的入口） ── */
-const FAN_ITEMS=[['lXiyin','♡','汐音'],['lPoses','✧','动作'],['lLog','≡','日志'],['lFiles','⌗','文件'],['lSim','✦','模拟'],['lSet','⚙','设置'],['lFleet','⬡','编队']];
+const FAN_ITEMS=[['lXiyin','♡','汐音'],['lPoses','✧','动作'],['lLog','≡','日志'],['lWarp','⟳','跃迁'],['lSim','✦','模拟'],['lSet','⚙','设置'],['lFleet','⬡','编队']];
 function renderFan(){const el=$('#fan');if(!el)return;
  el.innerHTML=FAN_ITEMS.map(([id,g,l],i)=>`<button id="${id}" class="fitem" data-fan="${id}" style="--d:${i*24}ms" title="${l}"><span class="ah">${g}</span><span class="al">${l}</span></button>`).join('');}
 let fanT=null;
 function openFan(){clearTimeout(fanT);state.fanOpen=true;$('#fanwrap').classList.add('on');$('#rMore').classList.add('on');$('#rMore').setAttribute('aria-expanded','true');}
 function closeFan(){clearTimeout(fanT);state.fanOpen=false;$('#fanwrap').classList.remove('on');$('#rMore').classList.remove('on');$('#rMore').setAttribute('aria-expanded','false');}
 function fanAction(k){
- if(k==='lXiyin'){const[t,m]=rnd(SAY);setMood(m,5500);typeCurrent({who:'xy',name:'汐音',text:t});}
+ if(k==='lXiyin'){toggleXyPanel();}
  else if(k==='lPoses')openPanel('poses');
  else if(k==='lLog')openPanel('log');
- else if(k==='lFiles')openPanel('ws');
+ else if(k==='lWarp')travel();
  else if(k==='lUsage')openPanel('usage');
  else if(k==='lDebug'){const jid=state.thread!=='main'?state.thread:(state.focusJob||state.jobs.find(j=>j.status==='blocked')?.id||state.jobs[0].id);state.detailJob=jid;state.detailTab='debug';openPanel('detail');}
  else if(k==='lSim')openPop('sim');
@@ -2207,7 +2716,7 @@ setInterval(()=>{if(document.hidden)return;const runs=state.jobs.filter(j=>j.sta
 
 /* ── events ── */
 $('#rCmd').addEventListener('click',()=>{openThread('main');state.warp=Math.max(state.warp,.5);$('#cmdInput').focus();});
-$('#rWarp').addEventListener('click',travel);
+$('#rDir').addEventListener('click',openCabinTree);
 /* 中间读数 pill：左段 = 跃迁；右段 = 当前时间（只读，每秒走字）。 */
 $('#srScene').addEventListener('click',travel);
 renderClock();setInterval(renderClock,1000);
@@ -2232,6 +2741,8 @@ $('#conDetail').addEventListener('click',()=>{state.detailJob=state.thread;state
 $('#conDebug').addEventListener('click',()=>{state.detailJob=state.thread;state.detailTab='debug';openPanel('detail');});
 $('#conClose').addEventListener('click',()=>setConMin(true));
 $('#conMin').addEventListener('click',()=>setConMin(!state.conMin));
+$('#conAdd').addEventListener('click',e=>{e.stopPropagation();openAdd();});
+addEventListener('pointerdown',e=>{if(!state.addOpen)return;if(e.target.closest('#addPop,#conAdd'))return;openAdd(false);});
 $('#conTurns').addEventListener('click',e=>{e.stopPropagation();closeConPop();state.conTurns=!state.conTurns;state.conTurnSel=0;renderTurnDrop();Audio.sfx('click');});
 $('#turnDrop').addEventListener('click',e=>{const b=e.target.closest('[data-mt]');if(b)jumpConTurn(+b.dataset.mt);});
 $('#conModelBtn').addEventListener('click',e=>{e.stopPropagation();toggleConPop('model');});
@@ -2266,10 +2777,12 @@ addEventListener('keydown',e=>{const inIn=e.target.closest('textarea,input');
  if(e.altKey&&e.key.toLowerCase()==='m'){e.preventDefault();setSoundOn(!state.sound);return;}
  if(e.altKey&&e.key.toLowerCase()==='w'){e.preventDefault();travel();return;}
  if(e.altKey&&e.key.toLowerCase()==='d'){e.preventDefault();$('#lDebug').click();return;}
+ if(e.altKey&&e.key.toLowerCase()==='f'){e.preventDefault();$('#rDir').click();return;}
+ if(e.altKey&&e.key.toLowerCase()==='a'){e.preventDefault();$('#conAdd').click();return;}
  if(e.altKey&&e.key.toLowerCase()==='c'){e.preventDefault();setConMin(!state.conMin);return;}
  if(e.altKey&&e.key.toLowerCase()==='i'){e.preventDefault();toggleInbox();return;}
  if(e.altKey&&e.key==='1'){e.preventDefault();const f=[...openOps()].sort((a,b)=>OP_KIND[a.kind].pri-OP_KIND[b.kind].pri)[0];if(f){state.inboxOpen=true;state.inboxSel=f.id;state.inboxPick=null;renderInbox();Audio.sfx('open');}else toggleInbox(true);return;}
- if(e.key==='Escape'){if(state.settings){closeSettings();return;}if(state.twin){closeTree();return;}if(state.conPop){closeConPop();return;}if(state.pop){closePops();return;}if(state.inboxOpen){if(state.inboxSel){state.inboxSel=null;state.inboxPick=null;renderInbox();}else toggleInbox(false);return;}if(state.brief){hideBanner();return;}if(state.relayJump){state.relayJump=false;renderPanel();return;}if(state.panel){closePanel();return;}if(!state.conMin){setConMin(true);return;}}
+ if(e.key==='Escape'){if(state.addOpen){openAdd(false);return;}if(state.settings){closeSettings();return;}if(state.doc){closeDocView();return;}if(state.twin){closeTree();return;}if(state.conPop){closeConPop();return;}if(state.pop){closePops();return;}if(state.inboxOpen){if(state.inboxSel){state.inboxSel=null;state.inboxPick=null;renderInbox();}else toggleInbox(false);return;}if(state.brief){hideBanner();return;}if(state.relayJump){state.relayJump=false;renderPanel();return;}if(state.panel){closePanel();return;}if(!state.conMin){setConMin(true);return;}}
  if(!inIn&&state.inboxOpen&&state.inboxSel&&state.inboxPick!=null&&e.key==='Enter'){e.preventDefault();submitInbox(false);return;}
  if(!inIn&&state.inboxOpen&&state.inboxSel&&/^[1-9]$/.test(e.key)){const o=opOf(state.inboxSel);if(o&&o.status==='open'){const i=+e.key-1;if(o.options[i]){e.preventDefault();state.inboxPick=i;renderInbox();Audio.sfx('click');}}return;}
  if(!inIn&&/^[1-9]$/.test(e.key)&&state.thread!=='main'){const o=opForJob(state.thread);if(o){const i=+e.key-1;if(o.options[i]){e.preventDefault();resolveOp(o.id,o.options[i].label);}}}});
@@ -2281,7 +2794,9 @@ const CHARV=$('#charVid');
 CHARV.addEventListener('playing',()=>{if(!CHARV.currentSrc.endsWith(CLIPS[state.clip].src.replace('./','')))return;CHARV.style.opacity=1;$('#character').classList.add('live');});
 CHARV.addEventListener('error',()=>{CHARV.style.opacity=0;});
 playClip(0,{fx:false});
-bindGrips();bindPanelWin();bindTwinWin();renderBar();applyWinAlpha();
+bindGrips();bindPanelWin();bindTwinWin();bindDocDrag();renderBar();applyWinAlpha();
+/* 通讯台里点文档 chip → 打开文档查看器（事件委托，重渲染后仍然有效） */
+$('#conLog').addEventListener('click',e=>{const chip=e.target.closest('[data-doc]');if(!chip)return;e.preventDefault();e.stopPropagation();openDoc(chip.dataset.doc);});
 $('#scA').dataset.init='1';
 arrT=setTimeout(arriveNext,16000);
 scheduleWarp();

@@ -12,6 +12,7 @@ import type { CabinJobView } from '@/lib/cabin-api'
 import type { AppNavigationValue } from '@/lib/app-navigation'
 import { AppNavigationScope } from '@/lib/app-navigation'
 import { CockpitStateProvider, useCockpitState } from '../../state/CockpitStateProvider'
+import { resetCabinTree, useCabinTreeOpen } from '../../face/cabin-tree-store'
 import { buildCounts, type CockpitRow } from '../../fleet/fleet-model'
 import type { CockpitFleetContextValue } from '../../fleet/CockpitFleetProvider'
 import { CockpitShortcuts } from '../CockpitShortcuts'
@@ -75,11 +76,16 @@ function Probe() {
   )
 }
 
+function CabinTreeProbe() {
+  return <output data-testid="cabin-tree">{useCabinTreeOpen() ? 'open' : 'closed'}</output>
+}
+
 function renderShortcuts(active = true) {
   const tree = (
     <CockpitStateProvider entryCabinId="c1">
       <CockpitShortcuts />
       <Probe />
+      <CabinTreeProbe />
       <input data-testid="typing" aria-label="聊天输入" />
     </CockpitStateProvider>
   )
@@ -93,6 +99,7 @@ function renderShortcuts(active = true) {
 
 beforeEach(() => {
   fleetState.current = fleet([])
+  resetCabinTree()
 })
 
 describe('CockpitShortcuts', () => {
@@ -140,6 +147,28 @@ describe('CockpitShortcuts', () => {
     expect(screen.getByTestId('jumps').textContent).toBe('0')
     fireEvent.keyDown(window, { key: 'w', code: 'KeyW', altKey: true })
     await waitFor(() => expect(screen.getByTestId('jumps').textContent).toBe('1'))
+  })
+
+  it('⌥F 打开 / 收起本舱目录窗', async () => {
+    renderShortcuts()
+    expect(screen.getByTestId('cabin-tree').textContent).toBe('closed')
+    fireEvent.keyDown(window, { key: 'f', code: 'KeyF', altKey: true })
+    await waitFor(() => expect(screen.getByTestId('cabin-tree').textContent).toBe('open'))
+    fireEvent.keyDown(window, { key: 'f', code: 'KeyF', altKey: true })
+    await waitFor(() => expect(screen.getByTestId('cabin-tree').textContent).toBe('closed'))
+  })
+
+  it('⌥A 通知 ChatArea 开合星核挂载面板（输入框里也生效）', () => {
+    renderShortcuts()
+    const onAttach = vi.fn()
+    window.addEventListener('octopus:composer-attach', onAttach)
+    const notPrevented = fireEvent.keyDown(window, { key: 'a', code: 'KeyA', altKey: true })
+    const input = screen.getByTestId('typing')
+    input.focus()
+    fireEvent.keyDown(input, { key: 'a', code: 'KeyA', altKey: true })
+    window.removeEventListener('octopus:composer-attach', onAttach)
+    expect(notPrevented).toBe(false)
+    expect(onAttach).toHaveBeenCalledTimes(2)
   })
 
   it('输入框聚焦时 ⌥1 / ⌥W 不抢键', async () => {

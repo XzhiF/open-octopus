@@ -119,4 +119,43 @@ describe("deriveCabinView", () => {
     expect(v.attention.some(a => a.stage === "answer")).toBe(true)
     expect(v.attention.some(a => a.stage === "blocked")).toBe(true)
   })
+
+  // ── notice（完成回流，2026-11-19 用户 #9）──────────────────────────
+  it("done 任务 → notice；acked 后收项；提问类不受 ack 影响", () => {
+    const input = base({
+      tasks: [{ id: "t1", name: "收口", status: "done" }],
+      asks: [{ id: "a1", task_id: null, title: "ask", question: "q?" }],
+    })
+    let v = deriveCabinView(input)
+    const notice = v.attention.find(a => a.id === "done-task-t1")
+    expect(notice?.stage).toBe("notice")
+    expect(notice?.awaiting).toBe("person")
+    expect(notice?.deep_link).toBe("task:t1")
+
+    v = deriveCabinView({ ...input, acked: ["done-task-t1"] })
+    expect(v.attention.some(a => a.id === "done-task-t1")).toBe(false)
+    // ack 只过滤完成项；提问仍按原判据
+    expect(v.attention.some(a => a.id === "ask-a1")).toBe(true)
+  })
+
+  it("done 委派 → notice（带结论摘要）；failed 仍是 blocked；acked 收项", () => {
+    const v = deriveCabinView(base({
+      delegations: [
+        { id: "d1", title: "对比", state: "done", summary: "结论：选 B", handle: "D1" },
+        { id: "d2", title: "失败", state: "failed" },
+      ],
+    }))
+    const done = v.attention.find(a => a.id === "done-delegation-d1")
+    expect(done?.stage).toBe("notice")
+    expect(done?.title).toContain("对比")
+    expect(done?.detail).toBe("结论：选 B")
+    expect(done?.handle).toBe("D1")
+    expect(v.attention.find(a => a.id === "delegation-failed-d2")?.stage).toBe("blocked")
+
+    const acked = deriveCabinView(base({
+      delegations: [{ id: "d1", title: "对比", state: "done", summary: "结论：选 B" }],
+      acked: ["done-delegation-d1"],
+    }))
+    expect(acked.attention).toEqual([])
+  })
 })
