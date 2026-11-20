@@ -1629,8 +1629,7 @@ button.ck12-ev:hover { background: rgba(255, 255, 255, 0.04); }
   background: rgba(46, 230, 214, 0.14);
 }
 .ck12-comms-in [data-tui-send-wrap] { align-self: flex-end; height: 34px; padding: 0; }
-.ck12-comms-in [data-tui-send],
-.ck12-comms-in [data-tui-stop] {
+.ck12-comms-in [data-tui-send] {
   width: 38px;
   height: 34px;
   border: 0;
@@ -1647,10 +1646,25 @@ button.ck12-ev:hover { background: rgba(255, 255, 255, 0.04); }
 }
 .ck12-comms-in [data-tui-send]:hover:not(:disabled) { filter: brightness(1.1); }
 .ck12-comms-in [data-tui-send]:disabled { opacity: 0.4; }
+/* 中断键（用户 #19 二轮：「六角里套方块看着变形，来个方型、圆角的停止图标」）——
+   不再跟发送键共用六角外形：圆角方按钮 + 居中的圆角方停止符，与 classic 的
+   ■ 语义一致。尺寸跟发送键同高（34），方形 34×34 让输入行右端齐平。 */
 .ck12-comms-in [data-tui-stop] {
-  color: #fff;
-  background: linear-gradient(160deg, var(--ck12-red, #ff3b5c), #8e1530);
-  box-shadow: 0 0 14px rgba(255, 59, 92, 0.35);
+  width: 34px;
+  height: 34px;
+  border: 1px solid rgba(255, 59, 92, 0.55);
+  border-radius: 10px;
+  clip-path: none;
+  display: grid;
+  place-items: center;
+  background: rgba(255, 59, 92, 0.14);
+  box-shadow: 0 0 12px rgba(255, 59, 92, 0.18);
+  color: var(--ck12-red, #ff3b5c);
+  transition: border-color 0.15s, background 0.15s;
+}
+.ck12-comms-in [data-tui-stop]:hover {
+  border-color: var(--ck12-red, #ff3b5c);
+  background: rgba(255, 59, 92, 0.24);
 }
 /* 「待你定」dock（composerDock）：原型 .con-choices —— 不做面板，贴着输入行。 */
 .ck12-comms-in [data-testid='author-ask-inbox'] {

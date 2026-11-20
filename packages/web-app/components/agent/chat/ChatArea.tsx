@@ -1244,10 +1244,19 @@ export function ChatArea({
                       type="button"
                       onClick={onStop}
                       title="停止（esc 同效）"
+                      aria-label="停止生成"
                       data-tui-stop
                       className="grid size-6 place-items-center rounded-md border border-pop-bd text-[10px] text-pop-red transition-colors hover:border-pop-red"
                     >
-                      ■
+                      {/* 方块用元素画，不用「■」字形（用户 #19：中断键变形、没居中）。
+                          等宽字体里 ■ 的墨迹不在字身中心，再叠 font-weight:800 的
+                          合成加粗，方块会被拉歪 —— 几何方块由 grid 居中，跨字体稳定。
+                          v21b.css 里这条键的外形也从六角改成了圆角方按钮。 */}
+                      <span
+                        aria-hidden
+                        data-tui-stop-glyph
+                        className="block h-3 w-3 rounded-[2.5px] bg-current"
+                      />
                     </button>
                   ) : (
                     <button
