@@ -29,6 +29,7 @@ import { CockpitCrewSettings, CockpitCrewSettingsLayer } from '../CockpitCrewSet
 import { requestCrewPoke, resetCrewPoke, subscribeCrewPoke } from '../crew-events'
 import { resetCrewSettings, setCrewSettingsOpen } from '../crew-settings'
 import { resetCrewAgentInfoCache } from '../use-crew-agent-info'
+import { __resetBootHandover, enterBootLayer } from '../boot-handover'
 import { CLIPS } from '../pose-model'
 import { CHAT_DONE, CHAT_LISTEN, CHAT_WAIT_EARLY } from '../chat-reactions'
 
@@ -192,6 +193,7 @@ beforeEach(() => {
   said = null
   jumpNonce = 0
   resetCrewPoke()
+  __resetBootHandover()
   fleetState.rows = []
   vi.restoreAllMocks()
 })
@@ -828,6 +830,18 @@ describe('CockpitCrew · 立绘只用 13 支视频（不垫 v21 静图）', () =
     act(() => { vi.advanceTimersByTime(500) })
     expect(sprite()).not.toHaveAttribute('data-enter')
     vi.useRealTimers()
+  })
+
+  // 2026-11-20 用户：门禁期的 boot 立绘已经演过出场 —— 真立绘别再扫一遍
+  // （重播就是「上来人物闪两下」的来源）。boot 层在屏时直接以已显影接入。
+  it('boot 层在屏时真立绘直接以已显影接入，不重播扫描', () => {
+    enterBootLayer()
+    renderCrew()
+    const video = sprite().querySelector('video') as HTMLVideoElement
+    act(() => { fireEvent.loadedData(video) })
+
+    expect(sprite()).toHaveAttribute('data-live', 'true')
+    expect(sprite()).not.toHaveAttribute('data-enter')
   })
 })
 

@@ -40,6 +40,22 @@
   50% { opacity: 0.95; transform: translateX(-50%) scaleX(1.08); }
 }
 
+/* ───────────────────── boot 立绘（舱数据门禁期 · 2026-11-20 用户） ─────────────────────
+   骨架屏之上先挂一支 08-ready；真立绘首帧可画后 0.28s 淡出卸载。
+   与真立绘同一坑位 / 同一支视频 —— 交接时看不出「换人」。
+   整层不吃指针事件：它盖在骨架屏之上，绝不能让点击打空。 */
+.ck12-app.ck12-boot-layer {
+  z-index: 26;
+  background: transparent;
+  pointer-events: none;
+  transition: opacity 0.28s ease;
+}
+.ck12-boot-layer.is-fading { opacity: 0; }
+.ck12-boot-layer .ck12-pod {
+  pointer-events: none;
+  cursor: default;
+}
+
 .ck12-pod {
   position: absolute;
   inset: 0;

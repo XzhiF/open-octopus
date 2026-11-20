@@ -37,6 +37,7 @@ import { CockpitWinBar } from '../chat/CockpitWinBar'
 import { CockpitThreadActivity } from '../chat/CockpitThreadActivity'
 import { CockpitCrew } from '../crew/CockpitCrew'
 import { CockpitCrewSettingsLayer } from '../crew/CockpitCrewSettings'
+import { CockpitBootLayer } from './CockpitBootLayer'
 import { CLIPS, poseClip } from '../crew/pose-model'
 import { clipMediaUrl } from '../crew/clip-blob'
 import { CockpitBrief } from '../fx/CockpitBrief'
@@ -77,29 +78,34 @@ export function CockpitShell({ cabinId }: { cabinId: string }) {
 
 function CockpitGate() {
   const { cabin, loading, error } = useCabinContext()
+  const failed = !loading && !cabin
 
-  if (loading) return <CockpitSkeleton />
-  if (!cabin) {
-    return (
-      <CockpitMissing
-        message="舱不在了"
-        detail={error === 'not-found' ? '舱不存在或已被删除。' : (error ?? '舱加载失败。')}
-      />
-    )
-  }
-
+  // boot 立绘与门禁分支并列：loading → 舱面这段切换里**不重挂**，
+  // 否则换分支时 video 重来一遍，交接处会闪空档（见 CockpitBootLayer）。
   return (
-    <CockpitProvider>
-      <CockpitStateProvider entryCabinId={cabin.id}>
-        <CockpitLayerStack>
-          <CockpitFleetProvider>
-            <CockpitUrlSync />
-            <CockpitShortcuts />
-            <CockpitSurface cabin={cabin} />
-          </CockpitFleetProvider>
-        </CockpitLayerStack>
-      </CockpitStateProvider>
-    </CockpitProvider>
+    <>
+      {loading ? (
+        <CockpitSkeleton />
+      ) : !cabin ? (
+        <CockpitMissing
+          message="舱不在了"
+          detail={error === 'not-found' ? '舱不存在或已被删除。' : (error ?? '舱加载失败。')}
+        />
+      ) : (
+        <CockpitProvider>
+          <CockpitStateProvider entryCabinId={cabin.id}>
+            <CockpitLayerStack>
+              <CockpitFleetProvider>
+                <CockpitUrlSync />
+                <CockpitShortcuts />
+                <CockpitSurface cabin={cabin} />
+              </CockpitFleetProvider>
+            </CockpitLayerStack>
+          </CockpitStateProvider>
+        </CockpitProvider>
+      )}
+      <CockpitBootLayer gateOpen={!loading} gateFailed={failed} />
+    </>
   )
 }
 
