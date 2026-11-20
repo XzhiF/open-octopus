@@ -219,6 +219,24 @@ function createWindow(): BrowserWindow {
   win.once('ready-to-show', () => win.show())
   win.on('close', () => saveWindowState(win))
   win.on('closed', () => { mainWindow = null })
+  // 渲染层装了「agent 在跑就拦关闭」的 beforeunload 守卫（web-app
+  // cockpit/shell/use-cockpit-close-guard）。Chromium 默认对「拦了 unload」
+  // 静默取消关闭，窗口像卡死一样 —— 这里补一个真确框：
+  // 「关闭并中断」放行（渲染层 pagehide 会先发停流请求），其余保持窗口原样。
+  win.webContents.on('will-prevent-unload', (event) => {
+    if (win.isDestroyed()) return
+    const quit = dialog.showMessageBoxSync(win, {
+      type: 'warning',
+      buttons: ['关闭并中断', '取消'],
+      defaultId: 1,
+      cancelId: 1,
+      noLink: true,
+      title: 'Agent 正在工作',
+      message: '还有 agent 正在工作，关闭窗口会先中断它。',
+      detail: '被中断的这一轮会以「已中断」收尾，已经产出的内容保留在会话里。',
+    })
+    if (quit === 0) event.preventDefault()
+  })
   win.webContents.setWindowOpenHandler(({ url }) => {
     openFromRenderer(url)
     return { action: 'deny' }

@@ -20,6 +20,7 @@ import { CockpitFleetProvider, useCockpitFleet } from '../fleet/CockpitFleetProv
 import { CockpitHud } from './CockpitHud'
 import { CockpitSettings } from './CockpitSettings'
 import { CockpitStarfield } from './CockpitStarfield'
+import { useCockpitCloseGuard } from './use-cockpit-close-guard'
 import { CockpitScene } from '../scene/CockpitScene'
 import { AskWindowsProvider, useAskWindows } from '@/components/cabin/asks/ask-windows-provider'
 import { AskWindowLayer } from '@/components/cabin/asks/ask-window-layer'
@@ -93,6 +94,8 @@ function CockpitGate() {
 function CockpitSurface({ cabin }: { cabin: CabinDetail }) {
   const { entryCabinId, selection, layer } = useCockpitState()
   const { view } = useCabinContext()
+  // 用户 #18：本舱有 agent 在跑时，关浏览器 / 窗口先确认，确认后先停流再走。
+  useCockpitCloseGuard()
 
   // 背景漂浮粒子（原型 seedParticles：24 颗，随机时长/相位）。
   const particles = useMemo(
