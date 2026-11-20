@@ -15,22 +15,13 @@
 // 二者经 MOOD_POSE / POSE_MOOD 双向映射。立绘渲染 = mood → pose → 片段。
 // 没有专属片段的 pose（cheer / sleep）映射到语义最近的片段（smile / idle）。
 //
+// 2026-11-20 用户：立绘一旦垫 v21 的 pose-*.png 静图，cheer 就会露出「双手举起」
+// 那张旧画，像第 14 个动作 —— 那批静图与 13 支视频不是同一套画，已整体移出
+// cockpit 渲染链（本文件不再 import），立绘只用 CLIPS 里的视频。
+//
 // 静态 import 只把 URL 进 bundle；webm 字节只在 <video src> 真正用到时才下载。
 
 import type { MoodKey } from '@/components/cabin/cockpit'
-
-import poseIdle from '../../../../../docs/cabin-design/assets/pose-idle.png'
-import poseWorking from '../../../../../docs/cabin-design/assets/pose-working.png'
-import poseThinking from '../../../../../docs/cabin-design/assets/pose-thinking.png'
-import poseAlert from '../../../../../docs/cabin-design/assets/pose-alert.png'
-import poseSmile from '../../../../../docs/cabin-design/assets/pose-smile.png'
-import poseConcerned from '../../../../../docs/cabin-design/assets/pose-concerned.png'
-import poseCheer from '../../../../../docs/cabin-design/assets/pose-cheer.png'
-import poseWink from '../../../../../docs/cabin-design/assets/pose-wink.png'
-import poseSleep from '../../../../../docs/cabin-design/assets/pose-sleep.png'
-import poseReady from '../../../../../docs/cabin-design/assets/pose-ready.png'
-import poseCommand from '../../../../../docs/cabin-design/assets/pose-command.png'
-import poseTyping from '../../../../../docs/cabin-design/assets/pose-typing.png'
 
 import clip01 from '../../../../../docs/cabin-design/assets/v22/01-wink.webm'
 import clip02 from '../../../../../docs/cabin-design/assets/v22/02-thinking.webm'
@@ -134,14 +125,6 @@ export const POSE_MOOD: Record<PoseKey, MoodKey> = {
 /** 动作姿态期间 mood 不覆盖 pose（design 29 §9.1）；结束回落 mood pose。 */
 export const ACTION_POSES: readonly PoseKey[] = ['cheer', 'command', 'ready']
 
-/** 单帧立绘：**仅作视频解码失败的兜底**（正常路径全程视频，design 33 §3）。
- *  cheer / sleep 没有专属片段，兜底图也让画面不至于空白。 */
-export const POSE_SRC: Record<PoseKey, string> = {
-  idle: poseIdle, working: poseWorking, thinking: poseThinking, alert: poseAlert,
-  smile: poseSmile, concerned: poseConcerned, cheer: poseCheer, wink: poseWink,
-  sleep: poseSleep, ready: poseReady, command: poseCommand, typing: poseTyping,
-}
-
 export type ClipBatch = '旧' | '新'
 
 export interface Clip {
@@ -227,6 +210,14 @@ export function clipVariants(pose: PoseKey): readonly number[] {
   const variants = POSE_CLIP_VARIANTS[pose]
   return variants && variants.length ? variants : [poseClip(pose)]
 }
+
+/** 回复中（agent 在干活）的轮换候选（2026-11-20 用户）：02-thinking / 11-typing /
+ *  13-working 三支随机切。原先回复期冻在 11-typing 一支，看着像卡住了。 */
+export const CHAT_CLIPS: readonly number[] = [
+  1,  // 02-thinking
+  10, // 11-typing
+  12, // 13-working
+]
 
 /** 待命自走候选（2026-11-20 用户 #14 二改）：13 支全部参与，抽法用「洗牌袋」——
  *  每轮随机排列一次、抽完再洗。顺序仍是随机的，但一轮内每支必出现一次，

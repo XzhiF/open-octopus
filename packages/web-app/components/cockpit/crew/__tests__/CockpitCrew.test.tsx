@@ -689,6 +689,63 @@ describe('CockpitCrew · v22.1 待命自走轮播', () => {
     expect(sprite()).toHaveAttribute('data-pose', 'working')
     expect(sprite()).toHaveAttribute('data-clip', '12')
   })
+
+  it('待命换动作时补一句旁白（2026-11-20 用户：纯动作太单调）', () => {
+    renderCrew()
+    expect(screen.getByTestId('cockpit-crew-speech')).not.toHaveClass('show')
+
+    // 首拍 3.5–6s 内必换一次动作，届时补一句
+    act(() => { vi.advanceTimersByTime(7_000) })
+    const speech = screen.getByTestId('cockpit-crew-speech')
+    expect(speech).toHaveClass('show')
+    expect((speech.textContent ?? '').trim().length).toBeGreaterThan(0)
+  })
+})
+
+// 2026-11-20 用户：连点她会冒出「双手举起、开心」的立绘 —— 那是 v21 的
+// pose-cheer.png 静图（cheer 没有专属片段，旧逻辑在视频起播前垫了它）。
+// 立绘只允许 13 支视频，任何姿态都不准垫 v21 静图。
+describe('CockpitCrew · 立绘只用 13 支视频（不垫 v21 静图）', () => {
+  const sprite = () => screen.getByTestId('cockpit-pose-sprite')
+
+  it('切到 cheer（无专属片段）也只渲染 video，不出现 img', () => {
+    renderCrew()
+    act(() => {
+      window.dispatchEvent(new CustomEvent('octopus:crew-pose', { detail: { pose: 'cheer', ms: 1000 } }))
+    })
+    expect(sprite()).toHaveAttribute('data-pose', 'cheer')
+    // cheer 落到 09-smile 视频，仍是 13 支之内
+    expect(sprite()).toHaveAttribute('data-clip-no', '9')
+    expect(sprite().querySelector('img')).toBeNull()
+    // 双层交叉淡入：A/B 两支 video 常驻，但都不含旧静图
+    expect(sprite().querySelectorAll('video')).toHaveLength(2)
+  })
+})
+
+// 2026-11-20 用户：chat 里 agent 干活时，02-thinking / 11-typing / 13-working
+// 应该随机切；原先回复期固定 11-typing，回多久就冻多久。
+describe('CockpitCrew · 回复中轮换（thinking / typing / working）', () => {
+  const sprite = () => screen.getByTestId('cockpit-pose-sprite')
+
+  beforeEach(() => vi.useFakeTimers())
+  afterEach(() => vi.useRealTimers())
+
+  it('回复中在三支里轮换，不冻在 11-typing', async () => {
+    render(tree(makeCockpit(), <ChatSeeder streaming />))
+    await act(async () => { await vi.advanceTimersByTimeAsync(0) })
+
+    // 首拍仍是 typing（第一支洗牌前）
+    expect(sprite()).toHaveAttribute('data-clip-no', '11')
+
+    const seen = new Set<string | null>([sprite().getAttribute('data-clip-no')])
+    for (let i = 0; i < 5; i++) {
+      await act(async () => { await vi.advanceTimersByTimeAsync(6_000) })
+      seen.add(sprite().getAttribute('data-clip-no'))
+    }
+    // 只允许 02-thinking / 11-typing / 13-working 三支
+    expect([...seen].every((no) => no !== null && ['2', '11', '13'].includes(no))).toBe(true)
+    expect(seen.size).toBeGreaterThan(1)
+  })
 })
 
 // 2026-11-19 用户：有需要我处理的任务时，她一直循环同一支摇头动作，显得呆；

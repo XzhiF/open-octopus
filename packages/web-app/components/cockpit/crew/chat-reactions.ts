@@ -9,10 +9,28 @@
 // 台词不长、带 ✦/☕ 这类轻表情；不写进 chat（不花 token），只在立绘气泡里出现。
 
 import type { MoodKey } from '@/components/cabin/cockpit'
+import type { PoseKey } from './pose-model'
 
 export interface ChatReactionLine {
   text: string
   mood: MoodKey
+}
+
+/** 空闲轮播换动作时的一句旁白（2026-11-20 用户：纯动作变化太单调）。
+ *  只表达「在场感」，不冒充事件播报 —— 每句都对得上此刻的姿态，但不声称有事发生。 */
+export const IDLE_POSE_LINES: Record<PoseKey, readonly string[]> = {
+  idle: ['我在。 ✦', '舱面安静，正好。', '有事先忙，我守着。'],
+  working: ['手上的都顺 ✦', '进度我盯着。', '嗯，都在轨道上。'],
+  thinking: ['在想一件事…', '让我理一理。', '这条线索有点意思。'],
+  alert: ['四下都看过了，稳。', '没有异常。', '有情况我会先举牌。'],
+  smile: ['状态不错 ✦', '今天挺好。', '嗯哼～'],
+  concerned: ['这里我会多看一眼。', '小心驶得万年船。', '有我在，别担心。'],
+  cheer: ['继续加油 ✦', '这一下精神了！', '嘿嘿。'],
+  wink: ['别绷太紧。', '看我一眼就够啦 ✦', '嘿。'],
+  sleep: ['困了…', '让我眯一下。', '……Zzz'],
+  ready: ['随时可以出发。', '舰桥接管完毕。', '指令到，我动。'],
+  command: ['按节奏来。', '听我口令 ✦', '保持队形。'],
+  typing: ['键声就是进度 ✦', '在整理记录。', '打字中…'],
 }
 
 /** 刚开始生成（0–12s）。 */
@@ -70,4 +88,10 @@ export function doneLine(rnd: () => number = Math.random): ChatReactionLine {
 
 export function listenLine(rnd: () => number = Math.random): ChatReactionLine {
   return pick(CHAT_LISTEN, rnd)
+}
+
+/** 空闲换动作时的旁白：跟着新片段的姿态挑一句（同一姿态 3 句里随机）。 */
+export function idlePoseLine(pose: PoseKey, rnd: () => number = Math.random): string {
+  const pool = IDLE_POSE_LINES[pose] ?? IDLE_POSE_LINES.idle
+  return pool[Math.min(pool.length - 1, Math.floor(rnd() * pool.length))] ?? pool[0]!
 }

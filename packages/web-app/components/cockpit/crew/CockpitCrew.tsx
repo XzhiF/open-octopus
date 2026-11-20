@@ -60,10 +60,10 @@ import { collectInbox } from '../rail/inbox-model'
 import { subscribeCrewPoke } from './crew-events'
 import { buildWaitNudges } from './wait-nudges'
 import {
-  doneLine, listenLine, waitingLine,
+  doneLine, idlePoseLine, listenLine, waitingLine,
 } from './chat-reactions'
 import {
-  AMBIENT_CLIPS, CLIPS, MOOD_POSE, POSE_META, POSE_MOOD, WAITING_OTHERS, WORKING_OTHERS,
+  AMBIENT_CLIPS, CHAT_CLIPS, CLIPS, MOOD_POSE, POSE_META, POSE_MOOD, WAITING_OTHERS, WORKING_OTHERS,
   clipPose, clipVariants, createClipBag, nextFromBag, poseClip,
   type ClipBag, type PoseKey,
 } from './pose-model'
@@ -88,11 +88,14 @@ const WAIT_NUDGE_GAP_MS = 18_000
 const WAIT_NUDGE_JITTER_MS = 9_000
 /** 提醒被占用（正在回复 / 倾听 / 别的台词在播）时，多久再看一眼。 */
 const WAIT_NUDGE_RETRY_MS = 6_000
+/** 空闲换动作时补旁白的节流：换得再勤，气泡也不刷屏。 */
+const IDLE_LINE_GAP_MS = 16_000
+const IDLE_LINE_HOLD_MS = 3_800
 
 type ChatPhase = 'idle' | 'waiting' | 'done'
 /** 气泡来源：等待轮换只覆盖自己，不打断点击/在场/倾听的台词。 */
 type SpeechSource =
-  | 'chat-wait' | 'chat-done' | 'listen' | 'click' | 'presence' | 'poke' | 'attention'
+  | 'chat-wait' | 'chat-done' | 'listen' | 'click' | 'presence' | 'poke' | 'attention' | 'idle'
 
 interface Speech {
   id: number
@@ -171,11 +174,13 @@ export function CockpitCrew() {
   const lineIdxRef = useRef(0)
   /** 待办提醒轮播下标（每条说一次再回环）。 */
   const nudgeIdxRef = useRef(0)
-  /** 自走 / 等待 / 作业三只「洗牌袋」：每轮随机洗一次、抽完再洗 —— 顺序随机，
-   *  但一轮内每支各出现一次，不会长期漏掉某支（2026-11-20 用户 #14）。 */
+  /** 自走 / 等待 / 作业 / 回复中 四只「洗牌袋」：每轮随机洗一次、抽完再洗 ——
+   *  顺序随机，但一轮内每支各出现一次，不会长期漏掉某支（2026-11-20 用户 #14）。 */
   const ambientBagRef = useRef<ClipBag>(createClipBag())
   const waitingBagRef = useRef<ClipBag>(createClipBag())
   const workingBagRef = useRef<ClipBag>(createClipBag())
+  /** 回复中轮换（02-thinking / 11-typing / 13-working）。 */
+  const chatBagRef = useRef<ClipBag>(createClipBag())
   /** 主拍隔拍标记（等待 = alert、作业 = working）：false 先抽小动作，true 播主拍。 */
   const waitingMainRef = useRef(false)
   const workingMainRef = useRef(false)
@@ -187,10 +192,17 @@ export function CockpitCrew() {
   const listeningRef = useRef(false)
   const phaseRef = useRef<ChatPhase>('idle')
   const doneTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  /** 空闲旁白：上次开口时间 / 在场开关快照（present 定义在后面，走 ref 调用）。 */
+  const lastIdleLineRef = useRef(0)
+  const presenceOnRef = useRef(prefs.presenceOn)
+  const presentRef = useRef<
+    (text: string, mood: MoodKey, hold: number, source: SpeechSource) => void
+  >(() => {})
 
   const streaming = chat?.streaming ?? false
   useEffect(() => { streamingRef.current = streaming }, [streaming])
   useEffect(() => { phaseRef.current = phase }, [phase])
+  useEffect(() => { presenceOnRef.current = prefs.presenceOn }, [prefs.presenceOn])
 
   // 对话联动表情只在「自动心情」且没有点击/在场瞬时 override 时生效：
   // 点她一下仍然是 wink，不会被「思考」压住。
@@ -217,8 +229,17 @@ export function CockpitCrew() {
   /** v22.1：待命自走片段 —— 只在「真空闲」时生效，7–12s 换一支日常小动作。 */
   const [ambientClip, setAmbientClip] = useState<number | null>(null)
   const actionTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  /** 回复中（agent 在干活）：02-thinking / 11-typing / 13-working 随机切
+   *  （2026-11-20 用户：原先回复期固定 11-typing，回多久就冻多久，太呆）。 */
+  const chatWorking = !actionPose && phase === 'waiting'
+  /** 只有当前画面正好是这三支之一才沿用，避免把待命轮播的片段带进回复期。 */
+  const chatClip = chatWorking && ambientClip !== null && CHAT_CLIPS.includes(ambientClip)
+    ? ambientClip
+    : null
   const shownPose: PoseKey = actionPose
-    ?? (phase === 'waiting' ? 'typing' : MOOD_POSE[shownMood])
+    ?? (phase === 'waiting'
+      ? (chatClip !== null ? clipPose(chatClip) : 'typing')
+      : MOOD_POSE[shownMood])
   /** 真空闲 = 没有动作 override / 不在回复或倾听 / 语义姿态就是待命。 */
   const idleFree = !actionPose && phase === 'idle' && !listening && shownPose === 'idle'
   /** 等你在场（2026-11-19）：有 attention 挂在你这里 → 语义姿态 alert。此时
@@ -227,16 +248,20 @@ export function CockpitCrew() {
   /** 作业期（2026-11-20 #14）：跑任务时原本冻在 13-working 一支，其余表情整段
    *  看不到 —— 同样用 working 主拍隔拍穿插小动作。 */
   const workingFree = !actionPose && phase === 'idle' && !listening && shownPose === 'working'
-  const rotateMode: 'ambient' | 'waiting' | 'working' | null = idleFree
+  const rotateMode: 'ambient' | 'waiting' | 'working' | 'chat' | null = idleFree
     ? 'ambient'
-    : waitingFree ? 'waiting' : workingFree ? 'working' : null
+    : waitingFree ? 'waiting'
+      : workingFree ? 'working'
+        : chatWorking ? 'chat' : null
   /** v22：立绘永远视频；pose 只决定语义，clip 决定具体片段。
-   *  优先级：动作点名 > 待命/等待轮播 > pose 首选片段。 */
+   *  优先级：动作点名 > 回复中轮换 > 待命/等待轮播 > pose 首选片段。 */
   const shownClip = actionClip !== null && Number.isInteger(actionClip)
     ? actionClip
-    : rotateMode !== null && ambientClip !== null
-      ? ambientClip
-      : poseClip(shownPose)
+    : chatClip !== null
+      ? chatClip
+      : rotateMode !== null && ambientClip !== null
+        ? ambientClip
+        : poseClip(shownPose)
   const shownClipRef = useRef(shownClip)
   useEffect(() => { shownClipRef.current = shownClip }, [shownClip])
   useEffect(() => { reportPose(shownPose, shownClip) }, [shownPose, shownClip, reportPose])
@@ -246,6 +271,8 @@ export function CockpitCrew() {
   // 略快 —— 你正等着处理，她的动作要能看出「在场」。
   // 2026-11-20 #14：等待 / 作业都改成「主拍隔拍 + 小动作位从 12 支里洗牌袋抽取」，
   // 13 支一轮各出现一次；顺序仍是随机的（用户：不要固定扫，要有点随机）。
+  // 2026-11-20：回复期（chat 流式）不再是固定 typing —— 02-thinking / 11-typing /
+  // 13-working 三支洗牌袋随机切，agent 干得久也看得出她还在忙。
   useEffect(() => {
     if (reduce || rotateMode === null) {
       setAmbientClip(null)
@@ -254,6 +281,20 @@ export function CockpitCrew() {
     // 小动作位：洗牌袋抽一支；不与当前画面重复（袋满轮时在 nextFromBag 里规避）。
     const draw = (bag: ClipBag, candidates: readonly number[]) =>
       nextFromBag(bag, candidates, shownClipRef.current)
+    // 2026-11-20 用户：纯动作变化太单调 —— 换动作时补一句旁白。
+    // 在场关闭不闲聊；有待办时不抢麦（清单提醒优先）；别的台词正在说、
+    // 页面隐藏、刚说过 16s 内都让位。
+    const narrate = (clipIndex: number) => {
+      const now = Date.now()
+      const hidden = typeof document !== 'undefined' && document.hidden
+      if (!presenceOnRef.current || hidden) return
+      if (inboxRef.current.length > 0) return
+      if (speechRef.current !== null) return
+      if (now - lastIdleLineRef.current < IDLE_LINE_GAP_MS) return
+      lastIdleLineRef.current = now
+      const nextPose = clipPose(clipIndex)
+      presentRef.current(idlePoseLine(nextPose), POSE_MOOD[nextPose], IDLE_LINE_HOLD_MS, 'idle')
+    }
     let first = true
     let timer: ReturnType<typeof setTimeout>
     const schedule = () => {
@@ -261,27 +302,43 @@ export function CockpitCrew() {
         ? first ? 4200 + Math.random() * 1800 : 5200 + Math.random() * 2600
         : rotateMode === 'working'
           ? first ? 5000 + Math.random() * 2000 : 6500 + Math.random() * 3000
-          : first ? 3500 + Math.random() * 2500 : 5500 + Math.random() * 3000
+          : rotateMode === 'chat'
+            ? first ? 2400 + Math.random() * 1600 : 3800 + Math.random() * 2200
+            : first ? 3500 + Math.random() * 2500 : 5500 + Math.random() * 3000
       first = false
       timer = setTimeout(() => {
         if (rotateMode === 'waiting') {
           if (waitingMainRef.current) {
             waitingMainRef.current = false
-            setAmbientClip(poseClip('alert'))
+            const next = poseClip('alert')
+            setAmbientClip(next)
+            narrate(next)
           } else {
             waitingMainRef.current = true
-            setAmbientClip(draw(waitingBagRef.current, WAITING_OTHERS))
+            const next = draw(waitingBagRef.current, WAITING_OTHERS)
+            setAmbientClip(next)
+            narrate(next)
           }
         } else if (rotateMode === 'working') {
           if (workingMainRef.current) {
             workingMainRef.current = false
-            setAmbientClip(poseClip('working'))
+            const next = poseClip('working')
+            setAmbientClip(next)
+            narrate(next)
           } else {
             workingMainRef.current = true
-            setAmbientClip(draw(workingBagRef.current, WORKING_OTHERS))
+            const next = draw(workingBagRef.current, WORKING_OTHERS)
+            setAmbientClip(next)
+            narrate(next)
           }
+        } else if (rotateMode === 'chat') {
+          const next = draw(chatBagRef.current, CHAT_CLIPS)
+          setAmbientClip(next)
+          narrate(next)
         } else {
-          setAmbientClip(draw(ambientBagRef.current, AMBIENT_CLIPS))
+          const next = draw(ambientBagRef.current, AMBIENT_CLIPS)
+          setAmbientClip(next)
+          narrate(next)
         }
         schedule()
       }, delay)
@@ -311,6 +368,8 @@ export function CockpitCrew() {
     speechRef.current = next
     setSpeech(next)
   }, [])
+  // 轮换定时器挂在 present 之前，用 ref 拿最新实现（不影响 hooks 顺序）。
+  useEffect(() => { presentRef.current = present }, [present])
 
   // ── 触感：立绘上浮星光（对齐 classic .xy-spark）──────────────────────
   const sparkle = useCallback(() => {

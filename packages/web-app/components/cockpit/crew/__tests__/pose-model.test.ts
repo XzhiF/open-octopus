@@ -12,7 +12,6 @@ import {
   POSE_META,
   POSE_MOOD,
   POSE_ORDER,
-  POSE_SRC,
   WAITING_OTHERS,
   WORKING_OTHERS,
   clipPose,
@@ -69,7 +68,7 @@ describe('pose-model · v22 纯视频立绘', () => {
     }
   })
 
-  it('每个姿态都有元数据、兜底静图与粒子效果', () => {
+  it('每个姿态都有元数据与粒子效果（立绘不再有静图源）', () => {
     for (const key of POSE_ORDER) {
       const meta = POSE_META[key]
       expect(meta, key).toBeTruthy()
@@ -78,7 +77,6 @@ describe('pose-model · v22 纯视频立绘', () => {
       expect(meta.line.length, key).toBeGreaterThan(0)
       expect(meta.fps, key).toBeGreaterThan(0)
       expect(FX, key).toContain(meta.fx)
-      expect(POSE_SRC[key], key).toMatch(/pose-.+\.png/)
     }
   })
 
