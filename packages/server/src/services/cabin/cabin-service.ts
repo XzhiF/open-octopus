@@ -82,6 +82,42 @@ export interface CabinRepoView {
   worktrees: Array<{ path: string; branch: string; instance: string; created_at?: string }>
 }
 
+/** 本舱变更窗的文件行（DiffFileEntry 同形 + 未跟踪标记）。 */
+export interface CabinWorktreeChangeFile {
+  path: string
+  /** rename/copy 来源（status R/C）。 */
+  oldPath?: string
+  /** M / A / D / R / C / T；未跟踪的新文件 = "?"。 */
+  status: string
+  adds: number
+  dels: number
+  binary?: boolean
+  untracked?: boolean
+}
+
+/** 本舱变更窗的单个受管目录（= config.json.repos 里登记的一个项目）。 */
+export interface CabinWorktreeChangeRepo {
+  name: string
+  /** 比对目录 = worktree_path ?? main_path；都没有 = null。 */
+  dir: string | null
+  branch: string | null
+  /** HEAD 短 SHA；空仓（还没提交）= null，此时只列未跟踪文件。 */
+  head: string | null
+  /** 单仓失败原因（目录不在 / 不是 git 仓）——其它仓照常上报。 */
+  error: string | null
+  truncated: boolean
+  files: CabinWorktreeChangeFile[]
+}
+
+export interface CabinWorktreeChanges {
+  /** 本舱 cwd 绝对路径。 */
+  dir: string
+  repos: CabinWorktreeChangeRepo[]
+}
+
+/** 单仓文件列表上限（与回合变更面板 REPO_FILE_CAP 同口径）。 */
+const WORKTREE_CHANGE_FILE_CAP = 3000
+
 /** 仍占用项目锚点的任务状态（解绑前必须收尾）。 */
 const LIVE_TASK_STATUSES = new Set([
   "running", "ready", "queued", "pending", "paused", "awaiting_review", "awaiting_archive",
@@ -1495,6 +1531,95 @@ export class CabinService {
       repos: [...perRepo.entries()].map(([name, v]) => ({ name, ...v })),
       tasks,
     }
+  }
+
+  /**
+   * v22 十三轮（问题 #1）：本舱变更窗 —— 受管目录的工作区改动。
+   *
+   * 口径 = 每个登记项目 `worktree_path ?? main_path` 的 `git diff HEAD`（已提交 +
+   * 未提交净额）+ 未跟踪新文件（状态记 "?"，.gitignore 已排除）。与编队
+   * 「作战详情 → 变更」同一套语义（状态 / ±行 / 懒拉 patch），范围换成这个舱的目录。
+   *
+   * 只读：不提交、不暂存、不写任何文件。单仓失败（目录不在 / 不是 git 仓 / 空仓）
+   * 写进该仓的 error / head=null，不连累其它仓。
+   */
+  async worktreeChanges(cabinId: string): Promise<CabinWorktreeChanges> {
+    const row = this.mustGet(cabinId)
+    const repos: CabinWorktreeChangeRepo[] = []
+    for (const entry of readCabinConfig(row.path).repos) {
+      if (!entry.name) continue
+      const { mainPath } = resolveCabinRepo(row.path, entry)
+      const root = entry.worktree_path || mainPath
+      const view: CabinWorktreeChangeRepo = {
+        name: entry.name, dir: root ?? null, branch: null, head: null,
+        error: null, truncated: false, files: [],
+      }
+      try {
+        if (!root) throw new Error("没有可用于比对的目录")
+        if (!fs.existsSync(root)) throw new Error("工作区不存在")
+        if (!isGitRepo(root)) throw new Error("不是 git 仓库")
+        // 分支 / HEAD 是 best-effort：空仓（还没有提交）两者都会失败，但仍要列未跟踪文件。
+        try {
+          const info = await gitOps.getBranchInfo(root)
+          view.branch = info.detached ? "detached" : info.branch
+        } catch {
+          view.branch = entry.branch ?? null
+        }
+        let head: string | null = null
+        try {
+          head = (await gitOps.getHeadCommit(root)).slice(0, 7)
+        } catch {
+          head = null // 空仓：还没有提交，下面只列未跟踪文件
+        }
+        view.head = head
+        if (head) {
+          const stat = await gitOps.diffStatWorktree(root, "HEAD", WORKTREE_CHANGE_FILE_CAP)
+          view.files.push(...stat.files)
+          view.truncated = stat.truncated
+        }
+        // 未跟踪文件不在 `git diff` 里 —— 单独列出（读不到不等于没改动，best-effort）。
+        let untracked: string[] = []
+        try {
+          untracked = await gitOps.listUntracked(root)
+        } catch {
+          untracked = []
+        }
+        for (const p of untracked) {
+          if (view.files.length >= WORKTREE_CHANGE_FILE_CAP) { view.truncated = true; break }
+          const st = await gitOps.statUntracked(root, p)
+          view.files.push({ ...st, status: "?", untracked: true })
+        }
+      } catch (err) {
+        view.error = errMsg(err)
+      }
+      repos.push(view)
+    }
+    return { dir: path.resolve(row.path), repos }
+  }
+
+  /** 本舱变更窗：单文件 unified patch（点开才拉）。untracked=true 走 /dev/null 一侧。 */
+  async worktreeChangePatch(
+    cabinId: string,
+    repoName: string,
+    relPath: string,
+    untracked: boolean,
+  ): Promise<{ patch: string; truncated: boolean }> {
+    const row = this.mustGet(cabinId)
+    const entry = readCabinConfig(row.path).repos.find((r) => r.name === repoName)
+    if (!entry) throw new CabinNotFoundError(`repo not in cabin: ${repoName}`)
+    const { mainPath } = resolveCabinRepo(row.path, entry)
+    const root = entry.worktree_path || mainPath
+    if (!root) throw new Error(`repo 没有可用于比对的目录：${repoName}`)
+    if (!relPath || relPath.includes("\0") || path.isAbsolute(relPath)) {
+      throw new CabinRepoInputError(`非法文件路径: ${relPath}`)
+    }
+    const resolvedRoot = path.resolve(root)
+    const abs = path.resolve(resolvedRoot, relPath)
+    if (abs !== resolvedRoot && !abs.startsWith(resolvedRoot + path.sep)) {
+      throw new CabinRepoInputError(`路径越出仓库根: ${relPath}`)
+    }
+    if (untracked) return gitOps.diffPatchForUntracked(resolvedRoot, relPath)
+    return gitOps.diffPatchForWorktree(resolvedRoot, "HEAD", relPath)
   }
   appendEvent(jobId: string, cabinId: string, kind: CabinJobEventKind, actor: string, payload: unknown): CabinJobEventRow {
     const row: CabinJobEventRow = {

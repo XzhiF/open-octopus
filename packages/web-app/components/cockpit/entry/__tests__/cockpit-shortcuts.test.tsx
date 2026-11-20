@@ -1,6 +1,6 @@
 // S9 全域座舱键盘：
 //   · ⌥1 最紧要（need→run→queue）；⌥2 收面；⌘K 开聊天窗；⌥W 跃迁；
-//   · ⌥G 不处理（两套界面的切换只走 classic 右上角按钮 / 全域「← 返回作战舱」）；
+//   · ⌥G 打开 / 收起本舱变更窗（受管目录工作区改动）；
 //   · 输入框聚焦时不抢键（⌘K 是唯一例外）；
 //   · 隐藏窗口 / 后台标签（active=false）不抢键；
 //   · ↑↓ 不在这里（S3 的 CockpitFleetRail 负责）。
@@ -13,6 +13,7 @@ import type { AppNavigationValue } from '@/lib/app-navigation'
 import { AppNavigationScope } from '@/lib/app-navigation'
 import { CockpitStateProvider, useCockpitState } from '../../state/CockpitStateProvider'
 import { resetCabinTree, useCabinTreeOpen } from '../../face/cabin-tree-store'
+import { resetChanges, useChangesOpen } from '../../face/changes-store'
 import { buildCounts, type CockpitRow } from '../../fleet/fleet-model'
 import type { CockpitFleetContextValue } from '../../fleet/CockpitFleetProvider'
 import { CockpitShortcuts } from '../CockpitShortcuts'
@@ -80,12 +81,17 @@ function CabinTreeProbe() {
   return <output data-testid="cabin-tree">{useCabinTreeOpen() ? 'open' : 'closed'}</output>
 }
 
+function ChangesProbe() {
+  return <output data-testid="changes-win">{useChangesOpen() ? 'open' : 'closed'}</output>
+}
+
 function renderShortcuts(active = true) {
   const tree = (
     <CockpitStateProvider entryCabinId="c1">
       <CockpitShortcuts />
       <Probe />
       <CabinTreeProbe />
+      <ChangesProbe />
       <input data-testid="typing" aria-label="聊天输入" />
     </CockpitStateProvider>
   )
@@ -100,6 +106,7 @@ function renderShortcuts(active = true) {
 beforeEach(() => {
   fleetState.current = fleet([])
   resetCabinTree()
+  resetChanges()
 })
 
 describe('CockpitShortcuts', () => {
@@ -182,12 +189,14 @@ describe('CockpitShortcuts', () => {
     expect(screen.getByTestId('jumps').textContent).toBe('0')
   })
 
-  it('⌥G 不处理（不抢键、不改状态）', () => {
-    fleetState.current = fleet([row(job('run1'))])
+  it('⌥G 打开 / 收起本舱变更窗（问题 #1）', async () => {
     renderShortcuts()
-    const notPrevented = fireEvent.keyDown(window, { key: 'g', code: 'KeyG', altKey: true })
-    expect(notPrevented).toBe(true)
-    expect(screen.getByTestId('selection').textContent).toBe('none')
+    expect(screen.getByTestId('changes-win').textContent).toBe('closed')
+    const prevented = fireEvent.keyDown(window, { key: 'g', code: 'KeyG', altKey: true })
+    await waitFor(() => expect(screen.getByTestId('changes-win').textContent).toBe('open'))
+    expect(prevented).toBe(false)
+    fireEvent.keyDown(window, { key: 'g', code: 'KeyG', altKey: true })
+    await waitFor(() => expect(screen.getByTestId('changes-win').textContent).toBe('closed'))
   })
 
   it('active=false（隐藏窗口/后台标签）不抢任何键', async () => {

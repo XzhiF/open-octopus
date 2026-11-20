@@ -28,6 +28,7 @@ import { CockpitFleetRail } from '../rail/CockpitFleetRail'
 import { CockpitRightRail } from '../rail/CockpitRightRail'
 import { CockpitFace } from '../face/CockpitFace'
 import { CockpitCabinTree } from '../face/CockpitCabinTree'
+import { CockpitCabinChanges } from '../face/CockpitCabinChanges'
 import { CockpitDocWindow } from '../face/CockpitDocWindow'
 import { CockpitChatHost } from '../chat/CockpitChatHost'
 import { CockpitChatWindow } from '../chat/CockpitChatWindow'
@@ -180,6 +181,9 @@ function CockpitSurface({ cabin }: { cabin: CabinDetail }) {
 
       {/* v22 九轮：右栏「目录」= 本舱 cwd 只读目录窗（详情面没开也能开）。 */}
       <CockpitCabinTree cabinId={entryCabinId} />
+
+      {/* v22 十三轮（问题 #1）：右栏「变更」= 本舱受管目录的工作区改动（只读）。 */}
+      <CockpitCabinChanges cabinId={entryCabinId} />
 
       {/* 2026-11-19 用户 #4：聊天正文里的产物绝对路径点开 → 只读文档窗。 */}
       <CockpitDocWindow />

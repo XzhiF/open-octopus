@@ -597,6 +597,31 @@ export function createCabinRoutes(
     }
   })
 
+  // v22 十三轮（问题 #1）：本舱变更窗 —— 受管目录的工作区改动（worktree vs HEAD + 未跟踪）。
+  router.get("/:id/worktree-changes", async (c) => {
+    try {
+      return c.json(await service.worktreeChanges(c.req.param("id")))
+    } catch (err) {
+      const { status, message } = classifyError(err)
+      return c.json({ error: message }, status as 400)
+    }
+  })
+
+  // 单文件 unified patch（点开才拉；untracked=1 时按新文件 diff /dev/null）。
+  router.get("/:id/worktree-changes/patch", async (c) => {
+    const repo = c.req.query("repo")
+    const rel = c.req.query("path")
+    if (!repo || !rel) return c.json({ error: "Query params 'repo' and 'path' are required" }, 400)
+    try {
+      return c.json(await service.worktreeChangePatch(
+        c.req.param("id"), repo, rel, c.req.query("untracked") === "1",
+      ))
+    } catch (err) {
+      const { status, message } = classifyError(err)
+      return c.json({ error: message }, status as 400)
+    }
+  })
+
   // ── knowledge (S7 / G4) / usage (C7) ───────────────────────────────
 
   // G4 读时 scoping；裁决复用全局 /api/knowledge/findings/:id/adopt|ignore。

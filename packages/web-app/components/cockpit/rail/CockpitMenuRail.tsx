@@ -4,6 +4,7 @@
 //   下指令（big）→ 目录 → 消耗 → 调试 → 更多。
 // v22 九轮：「目录」取代原位的「跃迁」，打开本舱 cwd 只读目录窗（⌥F）；
 //   跃迁挪进「更多」（⌥W / 点顶部场景名仍可跃迁）。
+// v22 十三轮（问题 #1）：「目录」下新增「变更」—— 本舱受管目录的工作区改动（⌥G，只读）。
 // 「更多」= **纯点击开合**（再点收回；点外面也收），向左横排展开 7 项
 // （汐音 / 动作 / 日志 / 跃迁 / 模拟 / 设置 / 编队）。不再用悬停开合。
 //
@@ -15,6 +16,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { toast } from 'sonner'
 import { toggleCrewSettings } from '../crew/crew-settings'
 import { toggleCabinTree } from '../face/cabin-tree-store'
+import { toggleChanges } from '../face/changes-store'
 import { useCockpitState } from '../state/CockpitStateProvider'
 import { setCockpitSettingsOpen } from '../shell/settings-store'
 
@@ -106,6 +108,17 @@ export function CockpitMenuRail() {
       >
         <span className="ck12-rhex-i" aria-hidden="true">⌗</span>
         <span className="ck12-rhex-l">目录</span>
+      </button>
+
+      <button
+        type="button"
+        className="ck12-rhex"
+        title="本舱变更 · 受管目录的工作区改动（⌥G，只读）"
+        data-testid="cockpit-menu-changes"
+        onClick={() => toggleChanges()}
+      >
+        <span className="ck12-rhex-i" aria-hidden="true">±</span>
+        <span className="ck12-rhex-l">变更</span>
       </button>
 
       <button

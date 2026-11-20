@@ -1490,6 +1490,84 @@ button.ck12-ev:hover { background: rgba(255, 255, 255, 0.04); }
   .ck12-ckt-cwd-p { flex: 1 1 100%; order: 9; }
 }
 
+/* ═══ v22 十三轮（问题 #1）· 本舱变更窗（右栏「变更」/ ⌥G）：
+       口径 = 受管目录的工作区改动（worktree vs HEAD + 未跟踪）；
+       壳复用目录窗（.ck12-treewin / .ck12-ckt-*），这里只补统计条 / 状态 / diff。 ═══ */
+.ck12-chgwin {
+  width: min(980px, 94vw);
+  height: min(680px, calc(100vh - 166px));
+}
+.ck12-chg-stats {
+  flex: none; display: flex; flex-wrap: wrap; gap: 12px; align-items: center;
+  padding: 5px 10px; border-radius: 8px; border: 1px solid var(--ck12-bd);
+  background: rgba(10, 8, 24, 0.42);
+  font-family: var(--font-mono); font-size: 9.5px; color: var(--ck12-dim);
+}
+.ck12-chg-stats b { font-weight: 800; color: var(--ck12-ink); }
+.ck12-chg-stats .is-c { color: var(--ck12-sky); }
+.ck12-chg-stats .is-err { color: var(--pop-red); }
+.ck12-chg-stats-sp { flex: 1; }
+.ck12-chg-live {
+  flex: none; display: inline-flex; align-items: center; gap: 5px;
+  font-size: 8px; letter-spacing: 0.1em; color: var(--ck12-teal);
+}
+.ck12-chg-live i {
+  width: 5px; height: 5px; border-radius: 50%;
+  background: var(--ck12-teal); box-shadow: 0 0 7px var(--ck12-teal);
+  animation: ck12-rig-pulse 1.8s infinite;
+}
+.ck12-chg-add { flex: none; font-family: var(--font-mono); font-size: 8.5px; color: var(--pop-green); }
+.ck12-chg-del { flex: none; font-family: var(--font-mono); font-size: 8.5px; color: var(--pop-red); }
+/* 状态徽标：A 绿 / D 红 / R·C 青 / M·T 琥珀 / ? 灰（未跟踪）。 */
+.ck12-chg-st {
+  flex: none; width: 10px; text-align: center;
+  font-family: var(--font-mono); font-size: 8.5px; font-weight: 900;
+}
+.ck12-chg-st.is-a { color: var(--pop-green); }
+.ck12-chg-st.is-d { color: var(--pop-red); }
+.ck12-chg-st.is-r { color: var(--ck12-sky); }
+.ck12-chg-st.is-m { color: var(--pop-amber); }
+.ck12-chg-st.is-q { color: var(--ck12-faint); }
+.ck12-chg-file { gap: 5px; }
+.ck12-chg-file.is-on .ck12-tree-name { color: inherit; }
+.ck12-chg-repohead .ck12-tree-bytes b { font-weight: 800; }
+.ck12-chg-repoerr {
+  padding: 3px 8px 5px 22px; font-family: var(--font-mono);
+  font-size: 9px; color: var(--pop-amber);
+}
+.ck12-chg-clean {
+  padding: 9px 2px 0; font-family: var(--font-mono);
+  font-size: 8.5px; letter-spacing: 0.06em; color: var(--ck12-faint);
+}
+.ck12-chg-clean b { color: var(--ck12-sky); font-weight: 800; }
+.ck12-chg-note {
+  display: flex; align-items: center; gap: 8px;
+  padding: 6px 2px; font-family: var(--font-mono);
+  font-size: 10px; color: var(--ck12-faint);
+}
+.ck12-chg-note.is-err { color: var(--pop-red); }
+/* unified diff：双行号 + @@ 青 + 加绿删红（与 FilesTab 同一套语义，舱系配色）。 */
+.ck12-chg-diff {
+  border: 1px solid var(--ck12-bd); border-radius: 8px; overflow-x: auto;
+  background: rgba(10, 8, 24, 0.55);
+}
+.ck12-chg-ln {
+  display: flex; white-space: pre;
+  font-family: var(--font-mono); font-size: 10px; line-height: 1.55;
+}
+.ck12-chg-ln.is-add { background: rgba(126, 231, 135, 0.09); color: var(--pop-green); }
+.ck12-chg-ln.is-del { background: rgba(255, 92, 92, 0.1); color: var(--pop-red); }
+.ck12-chg-ln.is-hunk { background: rgba(53, 199, 240, 0.08); color: var(--ck12-sky); }
+.ck12-chg-ln.is-meta { color: var(--ck12-faint); font-weight: 700; }
+.ck12-chg-ln.is-ctx { color: var(--ck12-dim); }
+.ck12-chg-ln.is-trunc { padding: 3px 8px; color: var(--pop-amber); font-weight: 800; }
+.ck12-chg-no {
+  flex: none; width: 34px; padding-right: 6px; text-align: right;
+  color: var(--ck12-faint); opacity: 0.65; user-select: none;
+}
+.ck12-chg-tx { padding-right: 8px; white-space: pre-wrap; word-break: break-all; }
+
+
 /* 六角图标按钮的 hover 统一：红 = 关闭，青 = 常规 */
 .ck12-panel-x:focus-visible,
 .ck12-jh-x:focus-visible,

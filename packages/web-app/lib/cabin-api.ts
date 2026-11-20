@@ -475,6 +475,59 @@ export function cabinRawUrl(id: string, relPath: string): string {
   return url(`/${id}/raw?path=${encodeURIComponent(relPath)}`)
 }
 
+// ── v22 十三轮（问题 #1）：本舱变更窗 —— 受管目录工作区改动（只读）──
+// 口径 = 每个登记项目的 `git diff HEAD` + 未跟踪文件；与编队「作战详情 → 变更」同构。
+
+export interface CabinWorktreeChangeFile {
+  path: string
+  /** rename/copy 来源（status R/C）。 */
+  oldPath?: string
+  /** M / A / D / R / C / T；未跟踪的新文件 = "?"。 */
+  status: string
+  adds: number
+  dels: number
+  binary?: boolean
+  untracked?: boolean
+}
+
+export interface CabinWorktreeChangeRepo {
+  name: string
+  /** 比对目录 = worktree_path ?? main_path；都没有 = null。 */
+  dir: string | null
+  branch: string | null
+  /** HEAD 短 SHA；空仓 = null（此时只有未跟踪文件）。 */
+  head: string | null
+  /** 单仓失败原因（目录不在 / 不是 git 仓）——其它仓照常。 */
+  error: string | null
+  truncated: boolean
+  files: CabinWorktreeChangeFile[]
+}
+
+export interface CabinWorktreeChanges {
+  /** 本舱 cwd 绝对路径。 */
+  dir: string
+  repos: CabinWorktreeChangeRepo[]
+}
+
+/** GET /api/cabins/:id/worktree-changes — 本舱受管目录的工作区改动。 */
+export async function getCabinWorktreeChanges(id: string): Promise<CabinWorktreeChanges> {
+  const res = await fetch(url(`/${id}/worktree-changes`))
+  return handleResponse<CabinWorktreeChanges>(res)
+}
+
+/** GET /api/cabins/:id/worktree-changes/patch — 单文件 unified patch（点开才拉）。 */
+export async function getCabinWorktreeChangePatch(
+  id: string,
+  repo: string,
+  relPath: string,
+  untracked: boolean,
+): Promise<{ patch: string; truncated: boolean }> {
+  const query = new URLSearchParams({ repo, path: relPath })
+  if (untracked) query.set('untracked', '1')
+  const res = await fetch(url(`/${id}/worktree-changes/patch?${query.toString()}`))
+  return handleResponse<{ patch: string; truncated: boolean }>(res)
+}
+
 // ── 文档查看器（2026-11-19 用户 #4）：聊天里的产物绝对路径 ──────────────
 // 后端只放行本舱文档根（舱 cwd / 本舱任务 workspace）；文本回 content，
 // 图片 / 视频 / 音频回 kind（字节走 doc-raw），其余二进制 kind=binary。
