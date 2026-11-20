@@ -713,23 +713,23 @@ describe('CockpitCrew · v22.1 待命自走轮播', () => {
   it('真空闲 7s 后换一支小动作（不与当前段重复），姿态语义仍是待命', () => {
     renderCrew()
     expect(sprite()).toHaveAttribute('data-pose', 'idle')
-    // 出场先播 08-ready（index 7），旋转首拍后换掉
-    expect(sprite()).toHaveAttribute('data-clip', '7')
+    // 出场先播动作 01「眨眼」（index 0），旋转首拍后换掉
+    expect(sprite()).toHaveAttribute('data-clip', '0')
 
     act(() => { vi.advanceTimersByTime(7_000) })
 
     expect(sprite()).toHaveAttribute('data-pose', 'idle')
-    expect(sprite().getAttribute('data-clip')).not.toBe('7')
+    expect(sprite().getAttribute('data-clip')).not.toBe('0')
   })
 
   it('作业期也穿插小动作：主拍隔拍回归，其余片段轮换', () => {
     // 2026-11-20 用户 #14：跑任务时她不再冻在 13-working 一支。
     renderCrew({ mood: 'working' })
-    expect(sprite()).toHaveAttribute('data-clip', '7')
+    expect(sprite()).toHaveAttribute('data-clip', '0')
 
     act(() => { vi.advanceTimersByTime(7_000) })
     expect(sprite()).toHaveAttribute('data-pose', 'working')
-    expect(sprite().getAttribute('data-clip')).not.toBe('7')
+    expect(sprite().getAttribute('data-clip')).not.toBe('0')
     expect(sprite().getAttribute('data-clip')).not.toBe('12')
 
     act(() => { vi.advanceTimersByTime(10_000) })
@@ -753,12 +753,12 @@ describe('CockpitCrew · v22.1 待命自走轮播', () => {
   // rotateMode 变 null，画面冻在该 pose 的首选片段。
   it('派生 mood 不是 idle（worried）也持续轮播，不冻在首选片段', () => {
     renderCrew({ mood: 'worried' })
-    // 出场是 08-ready；首拍之后才回到轮播
-    expect(sprite()).toHaveAttribute('data-clip', '7')
+    // 出场是动作 01「眨眼」；首拍之后才回到轮播
+    expect(sprite()).toHaveAttribute('data-clip', '0')
 
     act(() => { vi.advanceTimersByTime(7_000) })
     const firstClip = sprite().getAttribute('data-clip')
-    expect(firstClip).not.toBe('7')
+    expect(firstClip).not.toBe('0')
 
     act(() => { vi.advanceTimersByTime(9_000) })
     expect(sprite().getAttribute('data-clip')).not.toBe(firstClip)
@@ -905,13 +905,13 @@ describe('CockpitCrew · 等你在场（有待办）', () => {
     renderCrew({ mood: 'alert' })
 
     expect(sprite()).toHaveAttribute('data-pose', 'alert')
-    // 出场先播 08-ready（index 7）；首拍小动作之后才轮到 alert 主拍
-    expect(sprite()).toHaveAttribute('data-clip', '7')
+    // 出场先播动作 01「眨眼」；首拍小动作之后才轮到 alert 主拍
+    expect(sprite()).toHaveAttribute('data-clip', '0')
 
     // 首拍 4.2–6s：换一支小动作（不是出场片，也不是 alert 主拍）。
     act(() => { vi.advanceTimersByTime(6_500) })
     expect(sprite()).toHaveAttribute('data-pose', 'alert')
-    expect(sprite().getAttribute('data-clip')).not.toBe('7')
+    expect(sprite().getAttribute('data-clip')).not.toBe('0')
     expect(sprite().getAttribute('data-clip')).not.toBe('3')
 
     // 下一拍 5.2–7.8s：回到 alert 主拍。

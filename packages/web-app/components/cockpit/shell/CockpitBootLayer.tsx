@@ -2,7 +2,7 @@
 
 // 舱数据门禁期的出场立绘（2026-11-20 用户：一打开全域就要见到汐音）。
 //
-// 骨架屏（CockpitSkeleton）之上先挂一支 08-ready —— 和真立绘同一个
+// 骨架屏（CockpitSkeleton）之上先挂一支出场片（动作 01「眨眼」）—— 和真立绘同一个
 // CockpitPoseSprite，位置 / 尺寸 / 显影动画全部同一套；舱数据到位、真舱面挂载后，
 // 等真立绘首帧可画（notifyRealSpriteLive）再 0.28s 淡出卸载。
 //
@@ -12,6 +12,7 @@
 
 import { useEffect, useState } from 'react'
 import { CockpitPoseSprite } from '../crew/CockpitPoseSprite'
+import { ENTRY_CLIP } from '../crew/pose-model'
 import { enterBootLayer, leaveBootLayer, onRealSpriteLive } from '../crew/boot-handover'
 
 /** 舱面放行后仍没有真立绘可画，最多再盖这么久（防止异常时一直挡着舱面）。 */
@@ -77,11 +78,11 @@ export function CockpitBootLayer({
     >
       <div className="ck12-crew ck12-crew-boot" data-testid="cockpit-boot-crew">
         <div className="ck12-pod" data-state="ready">
-          <CockpitPoseSprite pose="ready" reduce={reduce} boot />
+          <CockpitPoseSprite pose="wink" clip={ENTRY_CLIP} reduce={reduce} boot />
           <span className="ck12-pod-vg" />
           <span className="ck12-pod-name">
             汐音 <small>· 全域助理</small>
-            <em>待命 · 08/13</em>
+            <em>待命 · 01/13</em>
           </span>
         </div>
       </div>

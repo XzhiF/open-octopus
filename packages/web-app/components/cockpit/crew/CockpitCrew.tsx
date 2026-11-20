@@ -64,7 +64,7 @@ import {
 } from './chat-reactions'
 import {
   AMBIENT_CLIPS, CHAT_CLIPS, CLIPS, MOOD_POSE, POSE_META, POSE_MOOD, WAITING_OTHERS, WORKING_OTHERS,
-  clipPose, clipVariants, createClipBag, nextFromBag, poseClip,
+  clipPose, clipVariants, createClipBag, nextFromBag, poseClip, ENTRY_CLIP,
   type ClipBag, type PoseKey,
 } from './pose-model'
 import { CockpitPoseSprite, PoseFX } from './CockpitPoseSprite'
@@ -230,7 +230,7 @@ export function CockpitCrew() {
   const [actionClip, setActionClip] = useState<number | null>(null)
   /** v22.1：待命自走片段 —— 只在「真空闲」时生效，7–12s 换一支日常小动作。 */
   const [ambientClip, setAmbientClip] = useState<number | null>(null)
-  /** 出场（2026-11-20 用户）：一打开全舱先播 08-ready（报到达）当出场视频，
+  /** 出场（2026-11-20 用户）：一打开全舱先播动作 01「眨眼」当出场视频，
    *  旋转的第一拍（3.5–6s）再接管。只在挂载后第一次生效。 */
   const entryPlayedRef = useRef(false)
   const actionTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
@@ -278,11 +278,11 @@ export function CockpitCrew() {
   useEffect(() => { shownClipRef.current = shownClip }, [shownClip])
   useEffect(() => { reportPose(shownPose, shownClip) }, [shownPose, shownClip, reportPose])
 
-  // 出场视频：进舱第一拍播 08-ready（报到达），不塞任何静止帧；旋转首拍接管。
+  // 出场视频：进舱第一拍播动作 01「眨眼」，不塞任何静止帧；旋转首拍接管。
   useEffect(() => {
     if (entryPlayedRef.current) return
     entryPlayedRef.current = true
-    setAmbientClip(poseClip('ready'))
+    setAmbientClip(ENTRY_CLIP)
   }, [])
   // v22.1 待命自走：空闲时换小动作。首支 3.5–6s 就换（进舱后马上能看出她在动），
   // 之后 5.5–8.5s 一换；任何动作 / 对话 / 倾听 / reduced-motion 打断即停。

@@ -38,7 +38,7 @@ import { CockpitThreadActivity } from '../chat/CockpitThreadActivity'
 import { CockpitCrew } from '../crew/CockpitCrew'
 import { CockpitCrewSettingsLayer } from '../crew/CockpitCrewSettings'
 import { CockpitBootLayer } from './CockpitBootLayer'
-import { CLIPS, poseClip } from '../crew/pose-model'
+import { CLIPS, poseClip, ENTRY_CLIP } from '../crew/pose-model'
 import { clipMediaUrl } from '../crew/clip-blob'
 import { CockpitBrief } from '../fx/CockpitBrief'
 import { CockpitEffects } from '../fx/CockpitEffects'
@@ -48,10 +48,11 @@ import { CockpitPanels } from '../panels/CockpitPanels'
 
 export function CockpitShell({ cabinId }: { cabinId: string }) {
   // 2026-11-20 用户：进舱 4–5s 看不到汐音。立绘要等 blob 抓包 + 解码，而舱详情
-  // 还在加载时立绘组件还没挂载 —— 先在壳层预热：出场片 08-ready 优先，其次
+  // 还在加载时立绘组件还没挂载 —— 先在壳层预热：出场片（动作 01）最先，其次
   // 待命 / 有待办两种最可能的首拍；等 CockpitGate 放行时字节已在路上。
   useEffect(() => {
     if (!cabinId || cabinId === 'new') return
+    void clipMediaUrl(CLIPS[ENTRY_CLIP]!.src)
     void clipMediaUrl(CLIPS[poseClip('ready')]!.src)
     void clipMediaUrl(CLIPS[poseClip('idle')]!.src)
     void clipMediaUrl(CLIPS[poseClip('alert')]!.src)
