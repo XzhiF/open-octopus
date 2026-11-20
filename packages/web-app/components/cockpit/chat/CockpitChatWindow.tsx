@@ -11,7 +11,7 @@
 //
 // v20（design 29 §3/§5）增量：
 //   · 多作战 tab 条（状态表情 / 未读 / ✕ 关闭 / 回传重开）；
-//   · TUI 选项行（当前线程待决断，键 1–9）+ 本地同步回执 overlay；
+//   · 本地同步回执 overlay；
 //   · 左缘 / 上缘 grip 缩放（双击复位默认几何）；
 //   · ⌄ 整台收起成停靠 pill（docked，比 mini 更彻底）；
 //   · ⧉ 弹出作战窗（仅用户主动，上限 5）· ▦ 详情 · ⚙ 调试 · ⌃ 加高。
@@ -42,7 +42,6 @@ import {
 } from './geometry'
 import type { CockpitRect } from '../state/cockpit-state'
 import { CockpitConsoleTelemetry } from './CockpitConsoleTelemetry'
-import { CockpitChoices } from './CockpitChoices'
 import { CockpitReceipts } from './CockpitReceipts'
 import { useCockpitThreads } from './use-cockpit-threads'
 
@@ -435,7 +434,8 @@ export function CockpitChatWindow() {
           data-testid="cockpit-chat-transcript"
         />
         <CockpitReceipts threadKey={active.key} />
-        {bodyVisible && <CockpitChoices />}
+        {/* 2026-11-20 用户：输入框上方的「待你决断 · N 项 · 键 1–9 直达」条已移除 ——
+            聊天内容里有提问卡、右栏也有 inbox，三条入口重复。 */}
         {/* 原型 .con-in：❯ + 输入框 + 金色六角 ⏎；「待你定」dock 由 composer
             自带的 composerDock 渲染在这行之上。 */}
         <div className="ck12-comms-in">

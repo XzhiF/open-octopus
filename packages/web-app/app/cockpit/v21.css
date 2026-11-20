@@ -266,37 +266,6 @@
   color: #fff;
 }
 
-/* 选项行：金/amber 左条 + REC 金标 */
-.ck12-comms-choices {
-  border-top: 1px solid rgba(185, 179, 217, 0.12);
-  background: rgba(6, 5, 16, 0.35);
-  padding: 2px 18px 8px;
-}
-.ck12-choice-row,
-.ck12-choice-head {
-  border-left: 3px solid var(--ck12-gold);
-  border-radius: 0;
-  padding: 5px 10px;
-  background: rgba(10, 8, 24, 0.5);
-  border-top: 1px solid rgba(185, 179, 217, 0.22);
-  border-right: 1px solid rgba(185, 179, 217, 0.22);
-  border-bottom: 1px solid rgba(185, 179, 217, 0.22);
-  font-size: 11px;
-}
-.ck12-choice-row:hover,
-.ck12-choice-head:hover {
-  transform: translateX(2px);
-  background: color-mix(in srgb, var(--ck12-gold) 18%, rgba(10, 8, 24, 0.6));
-  box-shadow: 0 0 14px rgba(245, 197, 66, 0.26);
-}
-.ck12-choice-no { color: var(--ck12-gold); }
-.ck12-choice-rec {
-  border-radius: 3px;
-  border: 0;
-  background: var(--ck12-gold);
-  color: #100D28;
-}
-
 /* 底栏（舰桥 + 输入）= 通讯台下半截：同一块终端屏 */
 .ck12-cmdbar {
   border-radius: 0;

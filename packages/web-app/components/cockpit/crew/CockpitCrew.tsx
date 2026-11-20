@@ -91,6 +91,8 @@ const WAIT_NUDGE_RETRY_MS = 6_000
 /** 空闲换动作时补旁白的节流：换得再勤，气泡也不刷屏。 */
 const IDLE_LINE_GAP_MS = 16_000
 const IDLE_LINE_HOLD_MS = 3_800
+/** 外部台词（回传到场 / 演练）气泡停留：比闲聊长一点，够读完一条回流。 */
+const SAID_HOLD_MS = 5_200
 
 type ChatPhase = 'idle' | 'waiting' | 'done'
 /** 气泡来源：等待轮换只覆盖自己，不打断点击/在场/倾听的台词。 */
@@ -446,6 +448,23 @@ export function CockpitCrew() {
     fx.edge('var(--ck-b)')
     dismissPresence()
   }, [presenceLine, present, setMoodOverride, fx, dismissPresence, prefs.fxLevel])
+
+  // ── 外部台词消费（2026-11-20 用户 #21）：消息回流时立绘也要有反馈 ─────────
+  // fx.say 是「谁刚说了一句」的公共通道：回传到场（CockpitBrief）、演示回流
+  // （CockpitSim）都只写 lastSaid —— 之前没有消费端，所以回流时只有简报窗、
+  // 立绘毫无反应。这里接上：新台词 → 气泡逐字 + 表情 override + 星光。
+  // 她自己 present 过的同一句（点击 / 在场 / 互动 / 动作）跳过，避免重复开口。
+  const consumedSaidRef = useRef<number | null>(null)
+  useEffect(() => {
+    const said = fx.lastSaid
+    if (!said || consumedSaidRef.current === said.nonce) return
+    consumedSaidRef.current = said.nonce
+    if (speechRef.current?.text === said.line) return
+    const saidMood = said.mood ?? 'alert'
+    present(said.line, saidMood, SAID_HOLD_MS, 'attention')
+    setMoodOverride(saidMood, SAID_HOLD_MS + 400)
+    sparkle()
+  }, [fx, present, setMoodOverride, sparkle])
 
   // ── 等你在场：待办提醒（2026-11-19 用户）────────────────────────────────
   // 有 attention 挂着 → 隔一阵在头顶报一条真实清单（条数 / 分组 / 标题），

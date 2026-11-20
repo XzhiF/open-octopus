@@ -664,11 +664,13 @@
 }
 
 /* ═══════════════ v20（design 29）· 通讯台增量 ═══════════════
-   多作战 tab 条 / TUI 选项行 / 本地回执 / 停靠 pill / 边缘 grip /
-   TUI 转录 gutter。全部只在 .ck12-comms 与全域底栏内生效。 */
+   多作战 tab 条 / 本地回执 / 停靠 pill / 边缘 grip / TUI 转录 gutter。
+   全部只在 .ck12-comms 与全域底栏内生效。
+   （TUI 选项行「待你决断 · 键 1–9」2026-11-20 按用户要求移除：与 chat 内
+   提问卡、右栏 inbox 重复。） */
 
 /* transcript wrapper：只多一层 relative 上下文，回执 overlay 住里面。
-   v21 三轮：纵向排 —— 转录 / 选项行 / 输入行都在通讯台里（原型 .con-*）。 */
+   v21 三轮：纵向排 —— 转录 / 输入行都在通讯台里（原型 .con-*）。 */
 .ck12-comms-bodywrap {
   position: relative;
   flex: 1;
@@ -764,68 +766,6 @@
 .ck12-ctab.is-on .ck12-ctab-x,
 .ck12-ctab:focus-within .ck12-ctab-x { opacity: 1; }
 .ck12-ctab-x:hover { color: var(--pop-red, #ff6b81); background: rgba(255, 255, 255, 0.07); }
-
-/* ── TUI 选项行（§3.1）──────────────────────────────────────────────── */
-.ck12-comms-choices {
-  flex: none;
-  max-height: 34%;
-  overflow-y: auto;
-  overscroll-behavior: contain;
-  padding: 6px 10px 8px;
-  border-top: 1px solid color-mix(in srgb, var(--ck-a) 22%, transparent);
-  background: color-mix(in srgb, var(--ck-a) 5%, transparent);
-  font-family: var(--font-mono);
-}
-.ck12-choices-h {
-  padding: 2px 0 5px;
-  font-size: 9px;
-  letter-spacing: 0.1em;
-  color: var(--ck-a);
-}
-.ck12-choice-item + .ck12-choice-item { margin-top: 6px; }
-.ck12-choice-head,
-.ck12-choice-row {
-  display: flex;
-  align-items: baseline;
-  gap: 7px;
-  width: 100%;
-  padding: 4px 8px;
-  border-left: 2px solid color-mix(in srgb, var(--ck-a) 45%, transparent);
-  border-radius: 0 6px 6px 0;
-  text-align: left;
-  font-family: var(--font-mono);
-  font-size: 11px;
-  color: var(--ck12-ink);
-  transition: transform 0.12s, background 0.12s, box-shadow 0.12s;
-}
-.ck12-choice-head { color: var(--ck12-dim); border-left-color: var(--ck12-bd); }
-.ck12-choice-row:hover,
-.ck12-choice-head:hover {
-  transform: translateX(3px);
-  background: color-mix(in srgb, var(--ck-a) 10%, transparent);
-  box-shadow: 0 0 14px color-mix(in srgb, var(--ck-a) 14%, transparent);
-}
-.ck12-choice-row:disabled { opacity: 0.55; cursor: wait; }
-.ck12-choice-no { flex: none; color: var(--ck-a); font-size: 10px; }
-.ck12-choice-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.ck12-choice-impact {
-  min-width: 0;
-  flex: 1;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  color: var(--ck12-faint);
-  font-size: 9.5px;
-}
-.ck12-choice-rec {
-  flex: none;
-  padding: 0 5px;
-  border-radius: 4px;
-  border: 1px solid color-mix(in srgb, var(--pop-amber) 50%, transparent);
-  color: var(--pop-amber);
-  font-size: 8.5px;
-  letter-spacing: 0.08em;
-}
 
 /* ── 本地同步回执 overlay（§3.3）────────────────────────────────────── */
 .ck12-comms-receipts {

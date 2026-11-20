@@ -122,6 +122,19 @@ function ChatSeeder({ streaming }: { streaming: boolean }) {
   return null
 }
 
+/** 外部台词源：简报 / 演练走 fx.say 通道（与 CockpitBrief 同一路径）。 */
+function SayProbe() {
+  const { fx } = useCockpitState()
+  return (
+    <button
+      type="button"
+      onClick={() => fx.say('有新回流：M2 结算对账 · 等你验收，已进编队。', 'alert')}
+    >
+      say
+    </button>
+  )
+}
+
 function makeCockpit(overrides: Partial<CockpitContextValue> = {}): CockpitContextValue {
   return {
     prefs: DEFAULT_COCKPIT,
@@ -335,6 +348,33 @@ describe('CockpitCrew · 在场台词', () => {
     expect(screen.getByTestId('cockpit-crew-speech')).toHaveTextContent(XY_LINES[0][0])
     expect(screen.queryByTestId('cockpit-crew-heart')).toBeNull()
     unmount()
+  })
+})
+
+describe('CockpitCrew · 消息回流（外部台词）', () => {
+  // 2026-11-20 用户 #21：消息回流时只有简报窗、立绘没反应。fx.say 是简报
+  // 写台词的通道，这里补上消费端 —— 气泡 + 表情 override + 星光。
+  it('简报写 lastSaid → 立绘跟着开口：气泡 + alert 表情 + 星光', async () => {
+    const { cockpit } = renderCrew({}, <SayProbe />)
+
+    fireEvent.click(screen.getByText('say'))
+
+    expect(cockpit.setMoodOverride).toHaveBeenCalledWith('alert', expect.any(Number))
+    expect(screen.getAllByTestId('cockpit-crew-spark').length).toBeGreaterThan(0)
+    await waitFor(
+      () => expect(screen.getByTestId('cockpit-crew-speech')).toHaveTextContent('有新回流：M2 结算对账'),
+      { timeout: 3000 },
+    )
+  })
+
+  it('她自己说过的同一句不会被消费端重复开口', () => {
+    const { cockpit } = renderCrew()
+    // 互动一下：present + fx.say 同一句（模拟她自己的台词写进公共通道）。
+    act(() => requestCrewPoke())
+    const lineCalls = vi.mocked(cockpit.setMoodOverride).mock.calls
+    // poke 一次（3000ms）+ 消费端跳过 —— 只有一次 override。
+    expect(lineCalls.filter(([, ms]) => ms === 3000)).toHaveLength(1)
+    expect(lineCalls).toHaveLength(1)
   })
 })
 

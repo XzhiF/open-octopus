@@ -198,10 +198,30 @@ export function CockpitBrief() {
   }, [arrivals, rows, fx, prefs.fxLevel, chatWindow, wins.windows, threadApi, markArrival, chat])
 
   // ── 10s 自动收（新简报会重置计时）────────────────────────────────────
+  // 2026-11-20 用户 #21：页面在后台 / 桌面窗最小化时不计时 —— 否则回流到达、
+  // 窗在 10s 内烧完，人回来时一张都看不到，像是「生产里没有这个消息窗」。
+  // 回到前台后重新给满 10s；消息本身不丢（inbox 计数照常累加）。
   useEffect(() => {
     if (!brief) return
-    const timer = window.setTimeout(() => setBrief(null), BRIEF_MS)
-    return () => window.clearTimeout(timer)
+    let timer: number | null = null
+    const disarm = () => {
+      if (timer !== null) {
+        window.clearTimeout(timer)
+        timer = null
+      }
+    }
+    const arm = () => {
+      disarm()
+      if (typeof document !== 'undefined' && document.hidden) return
+      timer = window.setTimeout(() => setBrief(null), BRIEF_MS)
+    }
+    arm()
+    const onVisibility = () => arm()
+    document.addEventListener('visibilitychange', onVisibility)
+    return () => {
+      disarm()
+      document.removeEventListener('visibilitychange', onVisibility)
+    }
   }, [brief])
 
   // ── Esc：注册进唯一的 layer 栈，可提前收 ─────────────────────────────
