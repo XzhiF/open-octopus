@@ -61,36 +61,52 @@ export function CockpitPoseSprite({ pose, clip, reduce }: SpriteProps) {
   /** 只记住失败的 src：换段后自动重试，不会一次失败就永久退到兜底图。 */
   const [failedSrc, setFailedSrc] = useState<string | null>(null)
   const failed = failedSrc === src
+  /** 首帧真正可画（loadeddata）。出场「全息显影」在这个时刻才启动 ——
+   *  2026-11-20 用户：不要先怼一张静止帧，要一开全舱就看到视频本身显影出来。 */
+  const [live, setLive] = useState(false)
+  /** 显影 / 扫描跑完。`entering` 由 live 同步派生 —— 若先进「可见态」再在 effect
+   *  里补 data-enter，中间会露一帧完整画面，看起来就是先闪一下再显影。 */
+  const [entered, setEntered] = useState(false)
+  const entering = live && !entered
+  useEffect(() => {
+    if (!live || entered) return
+    // 与 crew.css 对齐：2.3s 扫描走完后摘掉 data-enter。
+    const timer = setTimeout(() => setEntered(true), 2_400)
+    return () => clearTimeout(timer)
+  }, [live, entered])
 
-  // 新片段装进后层：片段字节先 fetch 成 blob（同源，实测 <0.5s，桌面端媒体管线
-  // 慢的机器也能秒起）。旧片段继续在前层播，等后层 playing 再交叉淡入。
+  // 新片段：字节先 fetch 成 blob（同源实测 ~0.2s；桌面端媒体 HTTP 管线慢的机器
+  // 也能秒起）。**第一支直接进前层**（可见）：没有旧帧可留，进后层只会让出场
+  // 多等一次 opacity 翻转；之后的新片段仍进后层预载，等 playing 再交叉淡入。
   useEffect(() => {
     if (shownRef.current === src || wantRef.current === src) return
     wantRef.current = src
     let alive = true
     void clipMediaUrl(src).then((url) => {
       if (!alive) return
-      const back = flip(frontRef.current)
-      slotSrcRef.current[back] = src
-      setSlots((prev) => ({ ...prev, [back]: url }))
+      const slot = shownRef.current === null ? frontRef.current : flip(frontRef.current)
+      slotSrcRef.current[slot] = src
+      setSlots((prev) => ({ ...prev, [slot]: url }))
     })
     return () => { alive = false }
   }, [src])
 
-  // 后层就绪 → 起播；playing 事件里再把它翻到前层（见 handlePlaying）。
+  // 新片段就绪 → 起播；playing 事件里再把它翻到前层（见 handlePlaying）。
   useEffect(() => {
-    const back = flip(frontRef.current)
-    const media = slots[back]
-    const v = (back === 'a' ? aRef : bRef).current
+    const target: Slot | null = slotSrcRef.current.a === src ? 'a'
+      : slotSrcRef.current.b === src ? 'b' : null
+    if (!target) return
+    const media = slots[target]
+    const v = (target === 'a' ? aRef : bRef).current
     if (!media || !v) return
     try {
       v.load()
       if (reduce) {
         v.pause()
         v.currentTime = 0.5
-        frontRef.current = back
-        shownRef.current = slotSrcRef.current[back]
-        setFront(back)
+        frontRef.current = target
+        shownRef.current = slotSrcRef.current[target]
+        setFront(target)
         return
       }
       const p = v.play()
@@ -98,7 +114,7 @@ export function CockpitPoseSprite({ pose, clip, reduce }: SpriteProps) {
     } catch {
       /* 自动播放被策略拦下时等用户手势；前层保持可见，不闪黑 */
     }
-  }, [slots, reduce])
+  }, [slots, reduce, src])
 
   const handlePlaying = (slot: Slot) => {
     if (frontRef.current === slot) return
@@ -163,6 +179,9 @@ export function CockpitPoseSprite({ pose, clip, reduce }: SpriteProps) {
       aria-hidden="true"
       style={{ opacity: front === slot ? 1 : 0 }}
       onPlaying={() => handlePlaying(slot)}
+      // 首帧真正可画（loadeddata）才撤兜底图：某些环境 playing 先到、解码后到，
+      // 只认 playing 会在中间露出一段空白。
+      onLoadedData={() => setLive(true)}
       onError={() => {
         if (slotSrcRef.current[slot] === src) setFailedSrc(src)
       }}
@@ -177,7 +196,8 @@ export function CockpitPoseSprite({ pose, clip, reduce }: SpriteProps) {
       data-clip={index}
       data-clip-no={item.no}
       data-batch={item.batch}
-      data-live={slots[front] ? 'true' : 'false'}
+      data-live={live ? 'true' : 'false'}
+      data-enter={entering ? 'true' : undefined}
     >
       {layer('a')}
       {layer('b')}

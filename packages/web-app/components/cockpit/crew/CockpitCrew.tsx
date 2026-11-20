@@ -88,8 +88,8 @@ const WAIT_NUDGE_GAP_MS = 18_000
 const WAIT_NUDGE_JITTER_MS = 9_000
 /** 提醒被占用（正在回复 / 倾听 / 别的台词在播）时，多久再看一眼。 */
 const WAIT_NUDGE_RETRY_MS = 6_000
-/** 空闲换动作时补旁白的节流：换得再勤，气泡也不刷屏。 */
-const IDLE_LINE_GAP_MS = 16_000
+/** 空闲换动作时补旁白的节流：换得再勤，气泡也不刷屏；9s 让多数换动作都带一句。 */
+const IDLE_LINE_GAP_MS = 9_000
 const IDLE_LINE_HOLD_MS = 3_800
 /** 外部台词（回传到场 / 演练）气泡停留：比闲聊长一点，够读完一条回流。 */
 const SAID_HOLD_MS = 5_200
@@ -230,6 +230,9 @@ export function CockpitCrew() {
   const [actionClip, setActionClip] = useState<number | null>(null)
   /** v22.1：待命自走片段 —— 只在「真空闲」时生效，7–12s 换一支日常小动作。 */
   const [ambientClip, setAmbientClip] = useState<number | null>(null)
+  /** 出场（2026-11-20 用户）：一打开全舱先播 08-ready（报到达）当出场视频，
+   *  旋转的第一拍（3.5–6s）再接管。只在挂载后第一次生效。 */
+  const entryPlayedRef = useRef(false)
   const actionTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   /** 回复中（agent 在干活）：02-thinking / 11-typing / 13-working 随机切
    *  （2026-11-20 用户：原先回复期固定 11-typing，回多久就冻多久，太呆）。 */
@@ -242,18 +245,24 @@ export function CockpitCrew() {
     ?? (phase === 'waiting'
       ? (chatClip !== null ? clipPose(chatClip) : 'typing')
       : MOOD_POSE[shownMood])
-  /** 真空闲 = 没有动作 override / 不在回复或倾听 / 语义姿态就是待命。 */
-  const idleFree = !actionPose && phase === 'idle' && !listening && shownPose === 'idle'
+  /** 待命自走 = 没有动作 override、不在回复或倾听、也不在「待办 / 作业」两种
+   *  主拍节奏里。2026-11-20 用户：待机久了最后会一直重复同一支动画 —— 旧条件
+   *  只在 shownPose==='idle' 时轮播，派生 mood 一旦落到 smile / concerned /
+   *  sleep / wink 等姿态，rotateMode 变成 null，画面就冻在该 pose 的首选片段。
+   *  现在除 alert / working 外一律走 ambient 洗牌袋（13 支全参与）。 */
+  const idleFree = !actionPose && phase === 'idle' && !listening
   /** 等你在场（2026-11-19）：有 attention 挂在你这里 → 语义姿态 alert。此时
    *  片段也不能一支死循环（用户：一直左右摇头很呆）—— alert 主拍间穿插小动作。 */
   const waitingFree = !actionPose && phase === 'idle' && !listening && shownPose === 'alert'
   /** 作业期（2026-11-20 #14）：跑任务时原本冻在 13-working 一支，其余表情整段
    *  看不到 —— 同样用 working 主拍隔拍穿插小动作。 */
   const workingFree = !actionPose && phase === 'idle' && !listening && shownPose === 'working'
-  const rotateMode: 'ambient' | 'waiting' | 'working' | 'chat' | null = idleFree
-    ? 'ambient'
-    : waitingFree ? 'waiting'
-      : workingFree ? 'working'
+  // alert / working 的主拍节奏优先；其余姿态一律 ambient（idleFree 已经覆盖
+  // 它们，所以顺序不能反过来 —— 否则 waiting/working 两个分支永远轮不到）。
+  const rotateMode: 'ambient' | 'waiting' | 'working' | 'chat' | null = waitingFree
+    ? 'waiting'
+    : workingFree ? 'working'
+      : idleFree ? 'ambient'
         : chatWorking ? 'chat' : null
   /** v22：立绘永远视频；pose 只决定语义，clip 决定具体片段。
    *  优先级：动作点名 > 回复中轮换 > 待命/等待轮播 > pose 首选片段。 */
@@ -261,12 +270,20 @@ export function CockpitCrew() {
     ? actionClip
     : chatClip !== null
       ? chatClip
-      : rotateMode !== null && ambientClip !== null
+      // 回复中只允许 CHAT_CLIPS（ambientClip 可能还是出场片，不能漏进聊天期）。
+      : rotateMode !== null && rotateMode !== 'chat' && ambientClip !== null
         ? ambientClip
         : poseClip(shownPose)
   const shownClipRef = useRef(shownClip)
   useEffect(() => { shownClipRef.current = shownClip }, [shownClip])
   useEffect(() => { reportPose(shownPose, shownClip) }, [shownPose, shownClip, reportPose])
+
+  // 出场视频：进舱第一拍播 08-ready（报到达），不塞任何静止帧；旋转首拍接管。
+  useEffect(() => {
+    if (entryPlayedRef.current) return
+    entryPlayedRef.current = true
+    setAmbientClip(poseClip('ready'))
+  }, [])
   // v22.1 待命自走：空闲时换小动作。首支 3.5–6s 就换（进舱后马上能看出她在动），
   // 之后 5.5–8.5s 一换；任何动作 / 对话 / 倾听 / reduced-motion 打断即停。
   // 2026-11-19：有待办时（waiting 模式）4.2–6s / 5.2–7.8s 穿插，节奏比待命自走
@@ -284,13 +301,12 @@ export function CockpitCrew() {
     const draw = (bag: ClipBag, candidates: readonly number[]) =>
       nextFromBag(bag, candidates, shownClipRef.current)
     // 2026-11-20 用户：纯动作变化太单调 —— 换动作时补一句旁白。
-    // 在场关闭不闲聊；有待办时不抢麦（清单提醒优先）；别的台词正在说、
-    // 页面隐藏、刚说过 16s 内都让位。
+    // 在场关闭不闲聊；页面隐藏、别的台词正在说、刚说过 9s 内让位。
+    // 有待办时也照说（清单提醒会优先把它顶掉，不让动作变成哑剧）。
     const narrate = (clipIndex: number) => {
       const now = Date.now()
       const hidden = typeof document !== 'undefined' && document.hidden
       if (!presenceOnRef.current || hidden) return
-      if (inboxRef.current.length > 0) return
       if (speechRef.current !== null) return
       if (now - lastIdleLineRef.current < IDLE_LINE_GAP_MS) return
       lastIdleLineRef.current = now
@@ -482,7 +498,10 @@ export function CockpitCrew() {
       const busy = streamingRef.current || listeningRef.current
         || presenceSnoozeUntil > Date.now()
         || (typeof document !== 'undefined' && document.hidden)
-        || (speechRef.current !== null && speechRef.current.source !== 'attention')
+        // 清单提醒可以顶掉换动作旁白（'idle'），但让位给点击 / 在场 / 对话台词。
+        || (speechRef.current !== null
+          && speechRef.current.source !== 'attention'
+          && speechRef.current.source !== 'idle')
       if (busy) {
         schedule(WAIT_NUDGE_RETRY_MS)
         return
