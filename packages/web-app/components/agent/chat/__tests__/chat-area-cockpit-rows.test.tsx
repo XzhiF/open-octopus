@@ -60,7 +60,19 @@ const aiMsg: AgentMessage = {
   is_summary: false,
   is_compressed: false,
   is_edited: false,
-  turnStats: { durationMs: 1200, tokens: 245, costUsd: 0.001, costComplete: true, calls: [] },
+  turnStats: {
+    durationMs: 1200,
+    calls: 1,
+    tokens: 245,
+    inputTokens: 245,
+    outputTokens: 0,
+    cacheReadTokens: 0,
+    cacheCreationTokens: 0,
+    cacheHitRate: null,
+    costUsd: 0.001,
+    costComplete: true,
+    models: ['pro'],
+  },
 }
 
 describe('ChatArea · 全域座舱主 chat 行（C 版）', () => {

@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useRef, useEffect, useCallback, useMemo, Fragment, type ReactNode, type MutableRefObject } from 'react'
+import { useState, useRef, useEffect, useLayoutEffect, useCallback, useMemo, Fragment, type ReactNode, type MutableRefObject } from 'react'
 import { createPortal } from 'react-dom'
 import { Send, Square, MessageSquare, Sparkles, Users, X, Check, Copy } from 'lucide-react'
 import type { AgentMessage, ToolCallRecord, ContextUsageData } from '@/lib/agent/types'
@@ -55,6 +55,13 @@ const RIBBON_THEME: Record<'running' | 'waiting' | 'done' | 'error', {
 
 interface ChatAreaProps {
   messages: AgentMessage[]
+  /** 服务端还有更早的消息没加载（useAgentChat 分页游标）。转录顶部给提示，
+   *  滚到顶自动向更早翻一页（2026-11-20 用户 #11：长会话不一次性铺满）。 */
+  hasMoreMessages?: boolean
+  /** 正在上翻加载（顶部提示换成「加载更早的消息…」）。 */
+  loadingOlderMessages?: boolean
+  /** 请求更早一页（useAgentChat.loadOlderMessages）。 */
+  onLoadOlder?: () => void
   streaming: boolean
   streamContent: string
   streamThinking: string
@@ -261,6 +268,7 @@ interface QueuedComposerMessage {
 
 export function ChatArea({
   messages, streaming, streamContent, streamThinking, isThinking, toolCalls, streamTimeline, turnStartedAt, pendingConfirm,
+  hasMoreMessages, loadingOlderMessages, onLoadOlder,
   error, statusMessage, backgroundTasks, onSend, onStop, onConfirm, hasSession, currentCloneName,
   reviewItems, onReviewAction,
   emptyStateTitle, emptyStateDescription, hideEmptyState,
@@ -310,6 +318,7 @@ export function ChatArea({
     if (!node || typeof ResizeObserver === 'undefined') return
     const observer = new ResizeObserver(() => {
       if (stickBottomRef.current) node.scrollTop = node.scrollHeight
+      autoFillRef.current()
     })
     observer.observe(node)
     scrollObserverRef.current = observer
@@ -374,6 +383,44 @@ export function ChatArea({
     // streamTimeline / streamThinking in deps: thinking deltas (not just text)
     // should follow-scroll, in both timeline and legacy layouts.
   }, [messages, streamContent, toolCalls, streamTimeline, streamThinking])
+
+  // 上翻分页（2026-11-20 用户 #11）：滚到顶 → 记下当前内容高度，向更早要一页；
+  // 新行前插后用 scrollHeight 差值把视口钉回原位，正在看的那条不会往下跳。
+  const olderAnchorRef = useRef<{ firstId: string; height: number; top: number } | null>(null)
+  const requestOlder = useCallback(() => {
+    const el = scrollRef.current
+    const first = messages[0]
+    if (!onLoadOlder || !hasMoreMessages || !el || !first || olderAnchorRef.current) return
+    olderAnchorRef.current = { firstId: first.id, height: el.scrollHeight, top: el.scrollTop }
+    onLoadOlder()
+  }, [onLoadOlder, hasMoreMessages, messages])
+  useLayoutEffect(() => {
+    const anchor = olderAnchorRef.current
+    if (!anchor) return
+    // 请求还在飞：原样等。
+    if (loadingOlderMessages) return
+    const el = scrollRef.current
+    // 跟随态（在底部）不钉位置 —— 让下面贴底 effect 继续跟最新一条。
+    if (el && !stickBottomRef.current && messages[0]?.id !== anchor.firstId) {
+      el.scrollTop = anchor.top + (el.scrollHeight - anchor.height)
+    }
+    // 成功（首条已变）/ 失败（首条没变）/ 已无更早 —— 都清门槛，允许再触发。
+    olderAnchorRef.current = null
+  }, [messages, loadingOlderMessages])
+  // 首屏没铺满容器时滚不动（没有 scroll 事件），这里补一次自动上翻，直到填满
+  // 或到最早一条。容器还隐藏着（clientHeight=0）时不动，交给下面的 resize 观察。
+  useEffect(() => {
+    const el = scrollRef.current
+    if (!el || !hasMoreMessages || loadingOlderMessages) return
+    if (el.clientHeight > 0 && el.scrollHeight <= el.clientHeight + 40) requestOlder()
+  }, [messages, hasMoreMessages, loadingOlderMessages, requestOlder])
+  // 弹窗从隐藏恢复尺寸时同样补一次（ref 转发，避免 attachScroller 的依赖风暴）。
+  const autoFillRef = useRef<() => void>(() => {})
+  autoFillRef.current = () => {
+    const el = scrollRef.current
+    if (!el || !hasMoreMessages || loadingOlderMessages) return
+    if (el.scrollHeight <= el.clientHeight + 40) requestOlder()
+  }
 
   // 「+ 挂载」的选中项只消费一次：SKILL → `/name` 前缀（显式 / 或 @@ 开头时让位）；
   // 分身 → 本轮子代理会诊（subagents）。返回 expert 供 TUI 队列退回时恢复 chip。
@@ -756,6 +803,7 @@ export function ChatArea({
           onScroll={(e) => {
             const el = e.currentTarget
             stickBottomRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < 40
+            if (el.scrollTop < 80) requestOlder()
           }}
           className="flex-1 overflow-y-auto"
         >
@@ -782,6 +830,17 @@ export function ChatArea({
                   <span>⏎ 发送 · ⇧⏎ 排队 · Alt⏎ 换行</span>
                 </div>
               </div>
+            )}
+            {messages.length > 0 && (hasMoreMessages || loadingOlderMessages) && (
+              <button
+                type="button"
+                data-testid="chat-load-older"
+                onClick={requestOlder}
+                disabled={loadingOlderMessages}
+                className="block w-full select-none py-1 text-center text-[10.5px] text-pop-dim/55 transition-colors hover:text-pop-dim disabled:cursor-default"
+              >
+                {loadingOlderMessages ? '加载更早的消息…' : '↑ 加载更早的消息'}
+              </button>
             )}
             {renderMessages.map(({ msg, compactEvent }) => (
               <Fragment key={msg.id}>
