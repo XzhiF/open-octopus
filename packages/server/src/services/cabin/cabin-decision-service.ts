@@ -137,6 +137,29 @@ export class CabinDecisionService {
     return null
   }
 
+  /** 舱内会话里的原生 AskUserQuestion 行（没有镜像卡的提问）：汐音主对话
+   *  自己问的不走 requestAuthorAskCard，旧载的镜像卡也可能已被清理。
+   *  消息 id 就是 derive 侧用的 askId（authorAskId 的兜底规则）。 */
+  private findNativeAsk(cabinId: string, askId: string): {
+    id: string
+    sessionId: string
+    isMain: boolean
+  } | null {
+    try {
+      const main = this.mainSession(cabinId)
+      const row = this.db().prepare(
+        `SELECT m.id, m.session_id FROM messages m
+           JOIN sessions s ON s.id = m.session_id
+          WHERE m.id = ? AND s.cabin_id = ? AND m.tool_calls LIKE '%AskUserQuestion%'
+          LIMIT 1`,
+      ).get(askId, cabinId) as { id: string; session_id: string } | undefined
+      if (!row) return null
+      return { id: row.id, sessionId: row.session_id, isMain: row.session_id === main.sessionId }
+    } catch {
+      return null
+    }
+  }
+
   /** 舱主会话里所有「已投卡、未答」的提问（reminder / 队列用）。 */
   listAskCards(cabinId: string): Array<{
     askId: string
@@ -242,8 +265,19 @@ export class CabinDecisionService {
     const choice = input.choice?.trim()
     if (!choice) throw new CabinDecisionError("缺少 choice", 400)
 
+    // 幂等：同一 askId 只认第一条。先查账本 —— 镜像卡可能已过期/被清理，
+    // 但账本里的决定仍然是权威答案。
+    const existing = this.recordForAsk(cabinId, askId)
+    if (existing) return { record: existing, already: true }
+
     const card = this.findAskCard(cabinId, askId)
     if (!card) {
+      // 没有镜像卡的原生提问：汐音主对话自己问的（requestAuthorAskCard 只覆盖
+      // 任务/委派作者），或镜像卡已被清理的旧载。derive 侧会用最小信封把这类
+      // 提问列进「等你答」，所以提交必须同样认得它 —— 否则 inbox 里点了就报
+      // 「还不在决策端点」（2026-11-20 用户 #17）。
+      const native = this.findNativeAsk(cabinId, askId)
+      if (native) return this.submitNativeAsk(cabinId, native, input, choice)
       throw new CabinDecisionError(
         `ask ${askId} 不在本舱主对话里（可能已过期，或不属于这个舱）`,
         404,
@@ -277,9 +311,7 @@ export class CabinDecisionService {
       )
     }
 
-    // 幂等：同一 askId 只认第一条。
-    const existing = this.recordForAsk(cabinId, askId)
-    if (existing) return { record: existing, already: true }
+    // 幂等已在入口处按账本判过（镜像卡不一定还在）。
 
     const record: DecisionRecord = {
       decisionId: `d-${randomUUID().slice(0, 8)}`,
@@ -316,6 +348,105 @@ export class CabinDecisionService {
 
     this.armWatchdog(cabinId, record)
     return { record, already: false }
+  }
+
+  /** 原生提问就地作答：答案落回提问所在会话（主对话的就是它自己），
+   *  账本照记、消息 metadata 写 decision（attention 立刻消项）。 */
+  private async submitNativeAsk(
+    cabinId: string,
+    native: { id: string; sessionId: string; isMain: boolean },
+    input: SubmitDecisionInput,
+    choice: string,
+  ): Promise<{ record: DecisionRecord; already: boolean }> {
+    const prev = this.readAskDecision(native.id)
+    if (prev) {
+      return {
+        record: {
+          decisionId: `d-answered-${native.id.slice(0, 8)}`,
+          askId: native.id,
+          subject: { kind: "task", id: native.id },
+          handle: "#?",
+          taskName: this.nativeAskLabel(native),
+          choice: prev.label ?? choice,
+          source: input.source ?? "card",
+          submittedAt: now(),
+          stage: "decided",
+        },
+        already: true,
+      }
+    }
+
+    const main = this.mainSession(cabinId)
+    const record: DecisionRecord = {
+      decisionId: `d-${randomUUID().slice(0, 8)}`,
+      askId: native.id,
+      // 原生提问没有任务/委派主体：审计分区用 askId 自身（委派同款做法）。
+      subject: { kind: "task", id: native.id },
+      handle: "#?",
+      taskName: this.nativeAskLabel(native),
+      choice,
+      ...(input.note?.trim() ? { note: input.note.trim() } : {}),
+      source: input.source ?? "card",
+      focusAtSubmit: input.focusAtSubmit ?? null,
+      submittedAt: now(),
+      stage: "decided",
+    }
+
+    this.writeAskDecision(native.id, record)
+    this.appendDecisionEvent(cabinId, record, "decided")
+    try { this.deps.service.notifyViewChanged(cabinId) } catch { /* view hook optional */ }
+
+    if (native.isMain) {
+      // 提问者就是主对话：结构化消息 + 唤醒同一套（不给自己再转发一轮）。
+      await this.injectDecisionMessage(cabinId, record)
+    } else {
+      const delivered = await this.postTurn(native.sessionId, main.org, this.decisionMessageText(record))
+      if (delivered.ok) this.appendDecisionEvent(cabinId, record, "relayed", { channel: "fallback" })
+    }
+    return { record, already: false }
+  }
+
+  private nativeAskLabel(native: { isMain: boolean }): string {
+    return native.isMain ? "舱主对话" : "任务线程"
+  }
+
+  /** 原生提问行上已写的 decision（幂等 / already 回执用）。 */
+  private readAskDecision(askId: string): { label?: string } | null {
+    try {
+      const row = this.db().prepare("SELECT metadata FROM messages WHERE id = ?")
+        .get(askId) as { metadata?: string | null } | undefined
+      if (!row?.metadata) return null
+      const meta = JSON.parse(row.metadata) as { activity?: { decision?: unknown } }
+      const d = meta.activity?.decision
+      return d && typeof d === "object" ? d as { label?: string } : null
+    } catch {
+      return null
+    }
+  }
+
+  /** 把 decision 写回提问消息（derive 的 attention 判据之一）。 */
+  private writeAskDecision(askId: string, record: DecisionRecord): void {
+    try {
+      const row = this.db().prepare("SELECT metadata FROM messages WHERE id = ?")
+        .get(askId) as { metadata?: string | null } | undefined
+      if (!row) return
+      let meta: Record<string, unknown> = {}
+      try { meta = row.metadata ? JSON.parse(row.metadata) as Record<string, unknown> : {} } catch { meta = {} }
+      const activity = (meta.activity && typeof meta.activity === "object")
+        ? meta.activity as Record<string, unknown>
+        : {}
+      if (activity.decision) return
+      activity.decision = {
+        id: record.decisionId,
+        label: record.choice,
+        note: record.note ?? null,
+        source: record.source,
+        at: record.submittedAt,
+      }
+      meta.activity = activity
+      this.db().prepare("UPDATE messages SET metadata = ? WHERE id = ?")
+        .run(JSON.stringify(meta), askId)
+    } catch { /* best effort：置灰失败不阻断决策 */ }
   }
 
   private optionLabels(payload: AskCardPayload): string[] {
