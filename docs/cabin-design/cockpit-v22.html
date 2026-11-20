@@ -855,6 +855,27 @@ kbd{border:1px solid rgba(185,179,217,.35);border-bottom-width:2px;border-radius
 .ck-imgcap{text-align:center;font-size:9px;color:var(--metal2);margin-top:6px}
 .ck-empty{flex:1;min-height:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:4px;font-size:10.5px;color:var(--ink2);text-align:center;padding:20px}
 .ck-empty span{font-size:9px;color:var(--metal2)}
+
+/* ═══ 本舱变更窗（v22 十二轮 · 2026-11-20 用户 #1）：右栏「变更」。
+       口径 = 本舱受管目录（cwd 自身与登记项目）的工作区改动（worktree vs HEAD，
+       含未跟踪）—— 跟编队「作战详情 → 变更」同一套读法：统计条 / 左树 / 右 diff，
+       只是范围改成这个舱的目录。只读。没有受管目录时右栏不出现这枚按钮。 ═══ */
+.chgstats{flex:none;display:flex;flex-wrap:wrap;gap:12px;align-items:center;padding:5px 10px;margin-bottom:8px;border:1px solid rgba(185,179,217,.16);background:rgba(10,8,24,.42);clip-path:var(--cut);font-size:9.5px;color:var(--ink2)}
+.chgstats b{font-weight:800;color:#fff}
+.chgstats .g{color:var(--green)}.chgstats .r{color:var(--red)}.chgstats .c{color:var(--sky)}
+.chgstats .sp{flex:1}
+.chgstats .live{flex:none;display:inline-flex;align-items:center;gap:5px;font-size:8px;letter-spacing:.1em;color:var(--teal)}
+.chgstats .live i{width:5px;height:5px;border-radius:50%;background:var(--teal);box-shadow:0 0 7px var(--teal);animation:holoPulse 1.8s infinite}
+.trow .tst{flex:none;width:9px;text-align:center;font-size:8px;font-weight:900}
+.trow .tst.m{color:var(--amber)}.trow .tst.a{color:var(--green)}.trow .tst.d{color:var(--red)}.trow .tst.q{color:var(--metal2)}
+.trow .tad{flex:none;margin-left:auto;font-size:8.5px;color:var(--green)}
+.trow .tdl{flex:none;font-size:8.5px;color:var(--red)}
+.chg-clean{padding:9px 2px 0;font-size:8.5px;letter-spacing:.06em;color:var(--metal2)}
+.chg-clean b{color:var(--sky);font-weight:800}
+.chg-file{border:1px solid rgba(185,179,217,.14);background:rgba(255,255,255,.04);clip-path:var(--cut);overflow:hidden}
+.chg-file .fh{border-bottom:1px solid rgba(185,179,217,.14)}
+.chg-file .fh .ro{flex:none;font-size:8px;letter-spacing:.08em;color:var(--metal2)}
+.chg-file .diff{max-height:none}
 @media (max-width:900px){
   /* 窄屏：cwd 条折成三行，路径独占一行，动作按钮不再顶出窗口右缘。 */
   .wsb.cwd{flex-wrap:wrap;row-gap:6px}
@@ -1242,6 +1263,7 @@ kbd{border:1px solid rgba(185,179,217,.35);border-bottom-width:2px;border-radius
     <nav class="rmenu">
       <button class="rhex big" id="rCmd" title="下指令 · 回主对话（⌘K）"><span class="ri">❯</span><span class="rl">下指令</span></button>
       <button class="rhex" id="rDir" title="本舱目录 · 当前 cwd 目录树（⌥F，只读）"><span class="ri">⌗</span><span class="rl">目录</span></button>
+      <button class="rhex" id="rChanges" title="本舱变更 · 受管目录的工作区改动（⌥G，只读）"><span class="ri">±</span><span class="rl">变更</span></button>
       <button class="rhex" id="lUsage" title="本舱账本（全域累计 · 只读）"><span class="ri">¥</span><span class="rl">消耗</span></button>
       <button class="rhex" id="lDebug" title="调试 inspect（常驻 · ⌥D）"><span class="ri">⚙</span><span class="rl">调试</span></button>
       <div class="morewrap" id="morewrap">
@@ -1455,6 +1477,7 @@ const state={sound:true,theme:0,winAlpha:1,thread:'main',panel:null,detailJob:nu
  unread:{},focusJob:null,fleetFilter:'all',treeOpen:{},fileSel:{},fileQ:{},dbgTurn:{},dbgTab:'overview',dbgFilter:'all',
  simAuto:true,pop:null,handleSeq:7,wsProj:'gateway',wsOpen:{},wsSel:{},wsQ:'',
  twin:null,twinQ:'',twinGeo:null,twinMax:false,cabinQ:'',cabinOpen:null,cabinTabs:[],cabinTab:null,
+ chgQ:'',chgSel:null,chgOpen:null,chgTabs:[],
  doc:null,
  addOpen:false,addTab:'skill',addQ:'',attSkill:null,attExpert:null,attLb:null,apMcp:null,
  flash:{job:null,op:null,at:0},autoWarp:true,conMin:false,conLeft:null,conTop:null,conGeo:null,wins:[],winSeq:0,zTop:30,
@@ -2158,6 +2181,124 @@ function bindCabinTwin(){const w=$('#twin');
  $('[data-cws-job]',w)?.addEventListener('click',e=>{const jid=e.currentTarget.dataset.cwsJob;state.twin=null;w.classList.remove('open');state.detailJob=jid;state.detailTab='changes';state.panel='detail';renderPanel();Audio.sfx('click');});
  const cq=$('#cabinQ',w);if(cq)cq.addEventListener('input',()=>{state.cabinQ=cq.value;const pos=cq.selectionStart;renderCabinTwin();const nq=$('#cabinQ');if(nq){nq.focus();nq.setSelectionRange(pos,pos);}});}
 
+/* ═══ 本舱变更（v22 十二轮 · 2026-11-20 用户 #1）：右栏「变更」。
+       口径 = 本舱受管目录（cwd 自身 / 登记项目）的工作区改动：worktree vs HEAD + 未跟踪。
+       显示与编队「作战详情 → 变更」同构 —— 统计条 / 左树（项目 → 目录 → 文件，状态 + ±）
+       / 右多标签 diff；范围换成这个舱的目录。只读，不提交、不暂存。 ═══ */
+const CABIN_CHANGES=[
+ {id:'ledger',name:'ledger',branch:'fix/reconcile',head:'8ab30d2',files:[
+  {path:'src/settlement/reconcile.ts',state:'M',add:58,del:21,diff:[
+   ['ctx','41','export function reconcile(day: string) {'],
+   ['del','42','  const key = day'],
+   ['add','42',"  const key = day + ':' + accountId"],
+   ['add','43','  if (seen.has(key)) return { skipped: true }'],
+   ['ctx','44','  return settle(loadRows(day))'],
+   ['ctx','45','}']]},
+  {path:'src/ledger/post.ts',state:'?',add:26,del:0,diff:[
+   ['ctx','1','// 新文件 · 还没 git add（未跟踪）'],
+   ['add','1','export const post = (entry: Entry) =>'],
+   ['add','2','  journal.append(idempotent(entry))']]}]},
+ {id:'gateway',name:'gateway',branch:'feat/refund-flow',head:'24f1c9a',files:[
+  {path:'src/refund/replay.ts',state:'M',add:71,del:33,diff:[
+   ['ctx','18','export function replay(orderId: string) {'],
+   ['del','19','  if (seen.has(orderId)) return'],
+   ['add','19',"  const key = orderId + ':' + idempotencyKey"],
+   ['add','20','  if (seen.has(key)) return { skipped: true }'],
+   ['ctx','21','  return refund(orderId)']]},
+  {path:'src/refund/replay.test.ts',state:'M',add:25,del:8,diff:[
+   ['ctx','88',"it('replays idempotently', () => {"],
+   ['add','89','  replay(order); replay(order)'],
+   ['add','90','  expect(refunds()).toHaveLength(1)']]},
+  {path:'config/rate-limit.yaml',state:'M',add:3,del:1,diff:[
+   ['ctx','1','limits:'],
+   ['del','2','  rps: 1200'],
+   ['add','2','  rps: 600'],
+   ['add','3','  burst: 1200']]}]},
+ {id:'risk',name:'risk',branch:'main',head:'5c7e1a4',files:[
+  {path:'src/alert/rules.ts',state:'M',add:12,del:4,diff:[
+   ['ctx','7','export const rules = ['],
+   ['del','8',"  { id: 'R-01', expr: 'amt > 50000' },"],
+   ['add','8',"  { id: 'R-01', expr: 'amt > 50000', severity: 'high' },"],
+   ['add','9',"  { id: 'R-02', expr: 'count > 200 / 5m' },"],
+   ['ctx','10',']']]}]},
+ {id:'edge',name:'edge',branch:'feat/canary',head:'9d02f77',files:[]}];
+const CHG_ST_CLASS={M:'m',A:'a',D:'d','?':'q'};
+function chgTotals(){let files=0,add=0,del=0,unt=0,dirs=0;
+ for(const d of CABIN_CHANGES){if(d.files.length)dirs++;files+=d.files.length;
+  for(const f of d.files){add+=f.add;del+=f.del;if(f.state==='?')unt++;}}
+ return {files,add,del,unt,dirs,clean:CABIN_CHANGES.length-dirs};}
+function chgProjTree(d){const root={n:d.name,d:true,c:[]};
+ for(const f of d.files){const segs=f.path.split('/');let cur=root;
+  segs.forEach((s,i)=>{if(i===segs.length-1)cur.c.push({n:s,d:false,f});
+   else{let nx=cur.c.find(x=>x.d&&x.n===s);if(!nx){nx={n:s,d:true,c:[]};cur.c.push(nx);}cur=nx;}});}
+ return root;}
+function chgFileOf(key){for(const d of CABIN_CHANGES){for(const f of d.files){if(d.id+':'+f.path===key)return {dir:d,file:f};}}return null;}
+function chgAllDirKeys(){const out=[];
+ for(const d of CABIN_CHANGES){out.push('p:'+d.id);
+  const walk=(n,p)=>{const q=p?p+'/'+n.n:n.n;if(n.d){out.push('d:'+d.id+':'+q);n.c.forEach(c=>walk(c,q));}};walk(chgProjTree(d),'');}
+ return out;}
+function chgOpenSet(){if(!state.chgOpen)state.chgOpen=new Set(chgAllDirKeys());return state.chgOpen;}
+function openChanges(){state.chgQ='';
+ if(!state.chgSel){state.chgSel='ledger:src/settlement/reconcile.ts';state.chgTabs=['ledger:src/settlement/reconcile.ts','gateway:src/refund/replay.ts'];state.chgOpen=null;}
+ state.twin={mode:'changes'};renderTwin();Audio.sfx('open');}
+function chgPick(key){if(!state.chgTabs.includes(key))state.chgTabs.push(key);state.chgSel=key;renderChgTwin();Audio.sfx('click');}
+function chgCloseTab(key){const i=state.chgTabs.indexOf(key);if(i<0)return;state.chgTabs.splice(i,1);if(state.chgSel===key)state.chgSel=state.chgTabs[Math.max(0,i-1)]||null;renderChgTwin();Audio.sfx('close');}
+function chgDiffHTML(f){return f.diff.map(l=>`<div class="ln ${l[0]}"><span class="n">${l[1]}</span><span>${l[0]==='add'?'+':l[0]==='del'?'−':' '} ${esc(l[2])}</span></div>`).join('');}
+function renderChgTwin(){const w=$('#twin');const q=state.chgQ.toLowerCase();const open=chgOpenSet();const tot=chgTotals();
+ if(!state.chgSel){const first=CABIN_CHANGES.find(d=>d.files.length);if(first){state.chgSel=first.id+':'+first.files[0].path;state.chgTabs=[state.chgSel];}}
+ const rows=[];let count=0;
+ for(const d of CABIN_CHANGES){
+  if(!d.files.length)continue;
+  const projKey='p:'+d.id;
+  if(q&&!d.files.some(f=>(d.name+'/'+f.path).toLowerCase().includes(q)))continue;
+  const isOpen=open.has(projKey)||!!q;
+  rows.push(`<button class="trow dir" data-chgdir="${esc(projKey)}" style="padding-left:7px"><span class="tw">${isOpen?'▾':'▸'}</span><span class="ti2">📦</span><span class="tn">${esc(d.name)}</span><span class="tb tk" title="worktree 分支">⎇ ${esc(d.branch)}</span></button>`);
+  if(!isOpen)continue;
+  const walk=(node,path,depth)=>{const p=path?path+'/'+node.n:node.n;
+   if(node.d){const key='d:'+d.id+':'+p;const o=open.has(key)||!!q;
+    rows.push(`<button class="trow dir" data-chgdir="${esc(key)}" style="padding-left:${7+depth*13}px"><span class="tw">${o?'▾':'▸'}</span><span class="ti2">📁</span><span class="tn">${esc(node.n)}</span></button>`);
+    if(o)node.c.forEach(c=>walk(c,p,depth+1));}
+   else{const f=node.f;if(q&&!(d.name+'/'+f.path).toLowerCase().includes(q))return;count++;
+    const key=d.id+':'+f.path;const sel=state.chgSel===key;
+    rows.push(`<button class="trow${sel?' sel':''}" data-chgfile="${esc(key)}" style="padding-left:${7+(depth+1)*13}px" title="${esc(f.path)}"><span class="tw"></span><span class="tst ${CHG_ST_CLASS[f.state]||'m'}">${esc(f.state)}</span><span class="tn">${esc(node.n)}</span><span class="tad">+${f.add}</span><span class="tdl">−${f.del}</span></button>`);}};
+  walk(chgProjTree(d),'',0);}
+ const tabs=state.chgTabs.map(key=>{const hit=chgFileOf(key);if(!hit)return '';const on=state.chgSel===key;
+  return `<span class="ck-tab${on?' on':''}" data-chgtab="${esc(key)}" title="${esc(hit.dir.name+'/'+hit.file.path)}"><span class="nm">${esc(hit.file.path.split('/').pop())}</span><span class="cx" data-chgtabx="${esc(key)}" title="关闭标签">✕</span></span>`;}).join('');
+ const hit=state.chgSel?chgFileOf(state.chgSel):null;
+ const view=hit?`<div class="ck-view">
+  <div class="ck-meta"><span class="p">${esc(hit.dir.name+'/'+hit.file.path)}</span><span class="ro">worktree vs HEAD · ${esc(hit.dir.head)}</span></div>
+  <div class="chg-file"><div class="fh"><span class="st">${esc(hit.file.state)}</span><span class="p">${esc(hit.file.path)}</span><span class="ad">+${hit.file.add}</span><span class="dl">−${hit.file.del}</span><span class="ro">未提交</span></div><div class="diff">${chgDiffHTML(hit.file)}</div></div>
+ </div>`:'<div class="ck-empty">左边点一个文件，看逐行 diff<span>口径 = 本舱受管目录的工作区改动 · 只读</span></div>';
+ const clean=CABIN_CHANGES.filter(d=>!d.files.length).map(d=>d.name).join(' / ');
+ w.innerHTML=`<div class="ph"><button class="phx" data-tclose title="关闭">✕</button><span class="pt"><b>± 本舱变更 · 账务中台</b><span>CABIN CHANGES · 受管目录工作区 · 只读</span></span><span class="sp"></span><button class="pwin" data-tmax title="全屏 / 还原（也可双击标题栏）">${state.twinMax?'⤡':'⛶'}</button></div>
+ <div class="pb">
+ <div class="wsb cwd"><span class="br">⌂ 本舱 cwd</span><span class="p">${esc(CABIN_CWD)}</span><span class="ro">${tot.dirs} / ${CABIN_CHANGES.length} 受管目录有改动</span><span class="acts"><button class="cbtn" data-chgrefresh title="重新读各目录工作区">⟳ 刷新</button><button class="cbtn" data-ccopy="${esc(CABIN_CWD)}" title="复制本舱 cwd 绝对路径">⧉ 复制路径</button></span></div>
+ <div class="chgstats"><span class="c"><b>${tot.dirs}</b> 目录有改动</span><span><b>${tot.files}</b> 文件</span><span class="g">+${tot.add}</span><span class="r">−${tot.del}</span><span><b>${tot.unt}</b> 未跟踪</span><span class="sp"></span><span class="live"><i></i>工作区实时</span></div>
+ <div class="ck-tree">
+  <div class="ck-side">
+   <div class="ck-side-h"><input id="chgQ" placeholder="筛文件…" value="${esc(state.chgQ)}" aria-label="筛选变更文件"/><button class="ck-ib" data-chgexp="1" title="全部展开">⊞</button><button class="ck-ib" data-chgexp="0" title="全部收起">⊟</button></div>
+   <div class="ck-scope">本舱 · ${count} 文件${tot.clean?` · 另 ${tot.clean} 目录干净`:''}</div>
+   <div class="ck-scroll" role="tree">${rows.join('')||'<div class="pempty">无匹配文件</div>'}${clean?`<div class="chg-clean">干净 · <b>${esc(clean)}</b></div>`:''}</div>
+  </div>
+  <div class="ck-main">
+   <div class="ck-tabs" role="tablist">${tabs||'<span class="ck-tabs-empty">没有打开的标签 · 点左边文件</span>'}</div>
+   ${view}
+  </div>
+ </div>
+ </div>`;
+ bindChgTwin();applyTwinGeo();w.classList.add('open');}
+function bindChgTwin(){const w=$('#twin');
+ $('[data-tclose]',w)?.addEventListener('click',closeTree);
+ $('[data-tmax]',w)?.addEventListener('click',e=>{e.stopPropagation();toggleTwinMax();});
+ $$('[data-chgdir]',w).forEach(b=>b.addEventListener('click',()=>{const k=b.dataset.chgdir;const set=chgOpenSet();set.has(k)?set.delete(k):set.add(k);renderChgTwin();Audio.sfx('click');}));
+ $$('[data-chgfile]',w).forEach(b=>b.addEventListener('click',()=>chgPick(b.dataset.chgfile)));
+ $$('[data-chgtab]',w).forEach(b=>b.addEventListener('click',e=>{if(e.target.closest('[data-chgtabx]'))return;state.chgSel=b.dataset.chgtab;renderChgTwin();Audio.sfx('click');}));
+ $$('[data-chgtabx]',w).forEach(b=>b.addEventListener('click',e=>{e.stopPropagation();chgCloseTab(b.dataset.chgtabx);}));
+ $$('[data-chgexp]',w).forEach(b=>b.addEventListener('click',()=>{state.chgOpen=new Set(b.dataset.chgexp==='1'?chgAllDirKeys():[]);renderChgTwin();Audio.sfx('click');}));
+ $('[data-chgrefresh]',w)?.addEventListener('click',()=>{renderChgTwin();toast('已重读本舱受管目录 · '+chgTotals().files+' 个文件有改动');Audio.sfx('click');});
+ $$('[data-ccopy]',w).forEach(b=>b.addEventListener('click',e=>{e.stopPropagation();const p=b.dataset.ccopy||CABIN_CWD;fallbackCopy(p,()=>toast('已复制 · '+p));Audio.sfx('click');}));
+ const cq=$('#chgQ',w);if(cq)cq.addEventListener('input',()=>{state.chgQ=cq.value;const pos=cq.selectionStart;renderChgTwin();const nq=$('#chgQ');if(nq){nq.focus();nq.setSelectionRange(pos,pos);}});}
+
 /* ── 文档查看器（v22 十一轮）：通讯台正文里点文档名 → 这个窗。
       与目录窗同一套壳（.twin / .ph / .wsb.cwd / .ck-*），只读；⌗ 跳回目录窗看位置。 ── */
 function openDoc(p){const node=docByRef(p);if(!node){toast('文档不在本舱目录里 · '+p);return;}state.doc=node.p;renderDoc();Audio.sfx('open');}
@@ -2417,6 +2558,7 @@ function openTree(jid,pid){const j=jobOf(jid);if(!j)return;const ids=jobProjIds(
 function closeTree(){if(!state.twin)return;state.twin=null;$('#twin').classList.remove('open');Audio.sfx('close');}
 function renderTwin(){const w=$('#twin');const t=state.twin;if(!t){w.classList.remove('open');return;}
  if(t.mode==='cabin'){renderCabinTwin();return;}
+ if(t.mode==='changes'){renderChgTwin();return;}
  const j=jobOf(t.job);if(!j){state.twin=null;w.classList.remove('open');return;}
  const ids=jobProjIds(j);const pid=ids.includes(t.proj)?t.proj:ids[0];t.proj=pid;const pr=projOf(pid);
  const open=wsOpenSet(pid);const q=state.twinQ.toLowerCase();const rows=[];let count=0;
@@ -2717,6 +2859,7 @@ setInterval(()=>{if(document.hidden)return;const runs=state.jobs.filter(j=>j.sta
 /* ── events ── */
 $('#rCmd').addEventListener('click',()=>{openThread('main');state.warp=Math.max(state.warp,.5);$('#cmdInput').focus();});
 $('#rDir').addEventListener('click',openCabinTree);
+$('#rChanges').addEventListener('click',openChanges);
 /* 中间读数 pill：左段 = 跃迁；右段 = 当前时间（只读，每秒走字）。 */
 $('#srScene').addEventListener('click',travel);
 renderClock();setInterval(renderClock,1000);
@@ -2778,6 +2921,7 @@ addEventListener('keydown',e=>{const inIn=e.target.closest('textarea,input');
  if(e.altKey&&e.key.toLowerCase()==='w'){e.preventDefault();travel();return;}
  if(e.altKey&&e.key.toLowerCase()==='d'){e.preventDefault();$('#lDebug').click();return;}
  if(e.altKey&&e.key.toLowerCase()==='f'){e.preventDefault();$('#rDir').click();return;}
+ if(e.altKey&&e.key.toLowerCase()==='g'){e.preventDefault();$('#rChanges').click();return;}
  if(e.altKey&&e.key.toLowerCase()==='a'){e.preventDefault();$('#conAdd').click();return;}
  if(e.altKey&&e.key.toLowerCase()==='c'){e.preventDefault();setConMin(!state.conMin);return;}
  if(e.altKey&&e.key.toLowerCase()==='i'){e.preventDefault();toggleInbox();return;}
