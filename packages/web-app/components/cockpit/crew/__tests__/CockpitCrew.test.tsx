@@ -84,10 +84,12 @@ import type { CabinAttentionItem } from '@octopus/shared'
 import type { CockpitRow } from '../../fleet/fleet-model'
 
 let said: { line: string; mood?: MoodKey } | null = null
+let jumpNonce = 0
 
 function FxProbe() {
   const { fx } = useCockpitState()
   said = fx.lastSaid
+  jumpNonce = fx.jumpNonce
   return null
 }
 
@@ -175,6 +177,7 @@ function renderCrew(overrides: Partial<CockpitContextValue> = {}, extra?: ReactN
 
 beforeEach(() => {
   said = null
+  jumpNonce = 0
   resetCrewPoke()
   fleetState.rows = []
   vi.restoreAllMocks()
@@ -391,6 +394,37 @@ describe('CockpitCrew · 对话联动（2026-11-16）', () => {
     expect(screen.getAllByTestId('cockpit-crew-spark').length).toBeGreaterThan(0)
 
     view.unmount()
+  })
+
+  it('回答结束同步一次跃迁（星流 + 跃迁环）；克制档不跑', async () => {
+    vi.spyOn(Math, 'random').mockReturnValue(0) // doneLine = CHAT_DONE[0]
+    const view = render(tree(makeCockpit(), <ChatSeeder streaming />))
+    await waitFor(() =>
+      expect(screen.getByTestId('cockpit-crew-mood')).toHaveTextContent('回复中'),
+    )
+
+    view.rerender(tree(makeCockpit(), <ChatSeeder streaming={false} />))
+
+    await waitFor(() => expect(jumpNonce).toBeGreaterThan(0))
+    view.unmount()
+
+    // 克制档（只留四边流光）：收尾照常，但不跃迁。
+    jumpNonce = 0
+    const litePrefs = { ...DEFAULT_COCKPIT, fxLevel: 'lite' as const }
+    const lite = render(
+      tree(makeCockpit({ prefs: litePrefs }), <ChatSeeder streaming />),
+    )
+    await waitFor(() =>
+      expect(screen.getByTestId('cockpit-crew-mood')).toHaveTextContent('回复中'),
+    )
+
+    lite.rerender(tree(makeCockpit({ prefs: litePrefs }), <ChatSeeder streaming={false} />))
+
+    await waitFor(() =>
+      expect(screen.getByTestId('cockpit-crew-mood')).toHaveTextContent('庆祝'),
+    )
+    expect(jumpNonce).toBe(0)
+    lite.unmount()
   })
 
   it('用户输入草稿 → 倾听表情 +「我在听」+ 呼吸点；清空即退', async () => {

@@ -468,6 +468,10 @@ export function CockpitCrew() {
     present(line.text, line.mood, 4600, 'chat-done')
     sparkle()
     fx.edge('var(--ck-a)')
+    // 用户 #13（2026-11-20）：收尾同步来一次跃迁 —— 星流拉线 + 跃迁环，
+    // 与她的收尾表情同一拍。只放效果不切幕（换景仍是 travel 的事）；
+    // 克制档（只留四边流光）与 reduced-motion 不跑。
+    if (!reduce && prefs.fxLevel !== 'lite') fx.jump()
     if (prefs.fxLevel === 'full') fx.feedback('var(--ck-a)', 'lite')
     cabinAudio.chime()
     if (doneTimerRef.current) clearTimeout(doneTimerRef.current)
@@ -476,7 +480,7 @@ export function CockpitCrew() {
       setPhase('idle')
       setReactMood(null)
     }, DONE_MOOD_MS)
-  }, [streaming, present, sparkle, fx, prefs.fxLevel])
+  }, [streaming, present, sparkle, fx, prefs.fxLevel, reduce])
 
   // 回复中的秒表 + 台词轮换（只在气泡仍属于等待、或已收起时换）。
   useEffect(() => {
