@@ -8,6 +8,9 @@
 //     人物高 1040 / 脚底 1105 / 躯干中轴 384），所以换段不跳位、比例一致。
 //   · `playing` 才淡入（防切段时闪黑）；切段先压回 0。解码失败 → 单帧 pose PNG
 //     兜底（仅错误路径，正常全程视频）。
+//   · 片段字节先 fetch 成 blob URL 再交给 <video>（clip-blob.ts）：桌面端媒体
+//     HTTP 管线在个别机器上 3MB ≈ 18s，blob 本地解码 <20ms；起播前垫同姿态静图，
+//     加载慢也不会出现「背景还在、人没了」的透明空档（2026-11-20 用户 #15）。
 //   · prefers-reduced-motion：不自动播，停在 0.5s 一帧（仍是视频真源，不是静态图）。
 //   · document.hidden 暂停，回来续播，省电且不丢帧。
 //
@@ -21,6 +24,7 @@ import {
   poseClip,
   type PoseKey,
 } from './pose-model'
+import { clipMediaUrl } from './clip-blob'
 
 interface SpriteProps {
   pose: PoseKey
@@ -36,16 +40,30 @@ export function CockpitPoseSprite({ pose, clip, reduce }: SpriteProps) {
   const item = CLIPS[index]
   const src = item.src
   const vidRef = useRef<HTMLVideoElement>(null)
-  /** 只记住「已起播」的 src：换段瞬间 opacity 立即回 0，不用等 effect，避免闪帧。 */
+  /** 实际交给 <video> 的地址：片段字节先 fetch 成 blob（见 clip-blob.ts）。
+   *  桌面端媒体 HTTP 管线个别机器上极慢（3MB ≈ 18s），换段永远起不来。 */
+  const [mediaSrc, setMediaSrc] = useState<string | null>(null)
+  /** 只记住「已起播」的地址：换段瞬间 opacity 立即回 0，不用等 effect，避免闪帧。 */
   const [liveSrc, setLiveSrc] = useState<string | null>(null)
-  const live = liveSrc === src
+  const live = mediaSrc !== null && liveSrc === mediaSrc
   /** 只记住失败的 src：换段后自动重试，不会一次失败就永久退回静图。 */
   const [failedSrc, setFailedSrc] = useState<string | null>(null)
   const failed = failedSrc === src
 
+  // 片段字节先走 fetch（同源，实测 <0.5s），再挂 blob URL 给 <video>；
+  // fetch 失败 / 环境不支持时退回原始 URL，仍是原来的加载路径。
+  useEffect(() => {
+    let alive = true
+    setMediaSrc(null)
+    void clipMediaUrl(src).then((url) => {
+      if (alive) setMediaSrc(url)
+    })
+    return () => { alive = false }
+  }, [src])
+
   useEffect(() => {
     const v = vidRef.current
-    if (!v) return
+    if (!v || !mediaSrc) return
     if (reduce) {
       try {
         v.pause()
@@ -53,7 +71,7 @@ export function CockpitPoseSprite({ pose, clip, reduce }: SpriteProps) {
       } catch {
         /* jsdom / 未解码时忽略 */
       }
-      setLiveSrc(src)
+      setLiveSrc(mediaSrc)
       return
     }
     try {
@@ -63,7 +81,7 @@ export function CockpitPoseSprite({ pose, clip, reduce }: SpriteProps) {
     } catch {
       /* 自动播放被策略拦下时等用户手势；opacity 保持 0，不闪黑 */
     }
-  }, [src, reduce])
+  }, [mediaSrc, reduce])
 
   useEffect(() => {
     const onVisibility = () => {
@@ -108,10 +126,13 @@ export function CockpitPoseSprite({ pose, clip, reduce }: SpriteProps) {
       data-batch={item.batch}
       data-live={live ? 'true' : 'false'}
     >
+      {/* 起播前垫一张同姿态静图：媒体加载慢时也不会出现「背景还在、人没了」的透明空档
+          （2026-11-20 用户 #15：桌面端个别动作一直透明）。视频起播后静图立即撤掉。 */}
+      {!live && <img src={POSE_SRC[pose]} alt="汐音" draggable={false} />}
       <video
         ref={vidRef}
         className="ck12-mv"
-        src={src}
+        src={mediaSrc ?? undefined}
         muted
         playsInline
         loop
@@ -119,7 +140,7 @@ export function CockpitPoseSprite({ pose, clip, reduce }: SpriteProps) {
         autoPlay={!reduce}
         aria-hidden="true"
         style={{ opacity: live ? 1 : 0 }}
-        onPlaying={() => setLiveSrc(src)}
+        onPlaying={() => setLiveSrc(mediaSrc)}
         onError={() => setFailedSrc(src)}
       />
     </span>

@@ -2,8 +2,10 @@
 
 // S7 · 汐音立绘 / 台词 / 在场（cockpit-v13 .crew / .pod / .speech / .heart）。
 //
-// 2026-11-15 v13：**点立绘 = 跟她说话**（打开对话浮窗并把焦点送进 composer），
-// 与 classic 同义。表情画廊 / 在场节奏 / 互动 / 说一句这些设置全部搬到 HUD 的
+// 2026-11-15 v13：**点立绘 = 跟她说话**（打开对话浮窗），与 classic 同义。
+// 2026-11-20 用户：点击不再把焦点送进 composer —— 连点时焦点跳进输入框既跟她
+// 这一拍的动作/表情打架，也会把「倾听」态顶掉点击动作；点立绘只做她的反馈。
+// 表情画廊 / 在场节奏 / 互动 / 说一句这些设置全部搬到 HUD 的
 // 「◐ 汐音」（CockpitCrewSettings）；本组件不再承载控制条。
 //
 // 2026-11-15 v13.1 · 点击的**即时反馈**（对齐 classic 点立绘的手感）：
@@ -57,7 +59,6 @@ import { useCockpitFleet } from '../fleet/CockpitFleetProvider'
 import { collectInbox } from '../rail/inbox-model'
 import { subscribeCrewPoke } from './crew-events'
 import { buildWaitNudges } from './wait-nudges'
-import { getChatSlot } from '../chat/chat-slots'
 import {
   doneLine, listenLine, waitingLine,
 } from './chat-reactions'
@@ -367,11 +368,9 @@ export function CockpitCrew() {
       if (prefs.fxLevel === 'full') fx.feedback('var(--ck-b)', 'lite')
     }
 
-    // 4) 正事：开对话窗 + 焦点送进 composer（槽是跨树 portal 的）。
+    // 4) 正事：开对话窗，但**不抢焦点**（2026-11-20 用户：连点立绘时焦点立刻跳进
+    //    输入框，既跟她这一拍的动作/表情打架，又把「倾听」态顶上来）。
     chatWindow.openWithFocus()
-    requestAnimationFrame(() => {
-      getChatSlot('composer')?.querySelector<HTMLTextAreaElement>('textarea')?.focus()
-    })
   }, [chatWindow, fx, prefs.fxLevel, present, setMoodOverride, sparkle])
 
   useEffect(() => {
