@@ -2,7 +2,7 @@
 
 import { useState, useRef, useEffect, useCallback, useMemo, Fragment, type ReactNode, type MutableRefObject } from 'react'
 import { createPortal } from 'react-dom'
-import { Send, Square, MessageSquare, Sparkles, Users, X } from 'lucide-react'
+import { Send, Square, MessageSquare, Sparkles, Users, X, Check, Copy } from 'lucide-react'
 import type { AgentMessage, ToolCallRecord, ContextUsageData } from '@/lib/agent/types'
 import type { LlmUsageAggregates } from '@octopus/shared'
 import type { StreamTimelineItem } from '@/hooks/useAgentChat'
@@ -10,7 +10,7 @@ import { AutoResizeTextarea } from '@/components/ui/auto-resize-textarea'
 import { Button } from '@/components/ui/button'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { toast } from 'sonner'
-import { cn } from '@/lib/utils'
+import { cn, copyToClipboard } from '@/lib/utils'
 import { formatStopwatch, formatTokenCount } from '@/lib/format'
 import { ChatBubble } from './ChatBubble'
 import { SessionCostChip } from './session-cost-chip'
@@ -19,6 +19,7 @@ import { ContextUsagePanel } from './context-usage-panel'
 import { TaskCostChip } from './task-cost-chip'
 import type { TaskUsagePayload } from '@/lib/tasks-api'
 import { TuiLive, TuiMessage } from './TuiTranscript'
+import { displayContentFor } from '@/lib/agent/display-content'
 import { ToolCallCard } from './ToolCallCard'
 import { TaskProgressPanel } from './task-progress-panel'
 import { deriveTaskProgress } from '@/lib/agent/task-progress'
@@ -203,11 +204,49 @@ function cockpitRowTime(iso: string | null | undefined): string {
   if (Number.isNaN(at.getTime())) return ''
   return `${String(at.getHours()).padStart(2, '0')}:${String(at.getMinutes()).padStart(2, '0')}`
 }
-const COCKPIT_ROW_ROLE: Record<string, string> = {
-  user: '❯ YOU',
-  assistant: '✦ 汐音',
-  system: '⌁ SYS',
-  tool: '⚙ doer',
+
+/** 全域座舱 · 消息行尾（2026-11-20 用户 #10）：时间 + 复制，常显在最右。
+ *  用户行由浮动的这一块贴住首行右侧（正文换行回同一左缘）；助手行由
+ *  TuiMeta 的 trail 位承载，跟统计同一行。 */
+function CockpitMessageActs({ message }: { message: AgentMessage }) {
+  const [copied, setCopied] = useState(false)
+  const timerRef = useRef<number | null>(null)
+  useEffect(() => () => {
+    if (timerRef.current) window.clearTimeout(timerRef.current)
+  }, [])
+  // 助手正文按历史态口径（有 timeline 时只算真正展示的正文），用户行整条。
+  const text = message.role === 'assistant' ? displayContentFor(message) : message.content
+  const time = cockpitRowTime(message.created_at)
+  const copy = async () => {
+    const ok = copyToClipboard(text)
+    if (!ok) {
+      // 局域网 HTTP 等非安全上下文：clipboard API 缺席，给出明确失败而不是静默。
+      try {
+        await navigator.clipboard.writeText(text)
+      } catch {
+        toast.error('复制失败，请手动选择文本')
+        return
+      }
+    }
+    setCopied(true)
+    if (timerRef.current) window.clearTimeout(timerRef.current)
+    timerRef.current = window.setTimeout(() => setCopied(false), 1500)
+  }
+  return (
+    <span className={`ck12-msgacts${copied ? ' is-copied' : ''}`} data-testid="cockpit-msgacts">
+      <button
+        type="button"
+        className="ck12-msgacts-copy"
+        title={copied ? '已复制' : '复制这条消息'}
+        aria-label="复制这条消息"
+        data-testid="cockpit-msgacts-copy"
+        onClick={() => void copy()}
+      >
+        {copied ? <Check className="size-[11px]" aria-hidden /> : <Copy className="size-[11px]" aria-hidden />}
+      </button>
+      {time && <span className="ck12-msgacts-time">{time}</span>}
+    </span>
+  )
 }
 
 /** ⇧⏎ 排队上限（原型 chat-tui.html 拍板）。 */
@@ -721,7 +760,11 @@ export function ChatArea({
           className="flex-1 overflow-y-auto"
         >
           <div className={tui
-            ? cn('mx-auto max-w-4xl px-5 py-4 space-y-1.5 text-[12.5px] leading-relaxed', dockGutter && 'pr-[68px]')
+            ? (isCockpitVariant
+              // 全域座舱（用户 #10）：不再居中、不再 896 上限 —— 内容贴左、
+              // 随窗口一起变宽（左内边距 = 1 个字宽，24px）。
+              ? cn('w-full px-6 py-4 text-[12.5px] leading-relaxed space-y-2', dockGutter && 'pr-[68px]')
+              : cn('mx-auto max-w-4xl px-5 py-4 space-y-1.5 text-[12.5px] leading-relaxed', dockGutter && 'pr-[68px]'))
             : 'max-w-3xl mx-auto px-4 py-4 space-y-2.5'}
             data-tui-col={tui ? '' : undefined}
             data-tui-hero={heroMode ? 'true' : undefined}>
@@ -744,14 +787,24 @@ export function ChatArea({
               <Fragment key={msg.id}>
                 {tui ? (
                   isCockpitVariant ? (
-                    // v20（design 29 §3.1）：TUI 转录加时间戳 gutter + 角色符签列；
-                    // 只在全域变体生效，classic / 桌面逐字不变。
-                    <div className="ck12-tui-row" data-tui-row={msg.role}>
-                      <span className="ck12-tui-time">{cockpitRowTime(msg.created_at)}</span>
-                      <span className="ck12-tui-role">{COCKPIT_ROW_ROLE[msg.role] ?? '⌁ SYS'}</span>
-                      <div className="ck12-tui-cell">
-                        <TuiMessage message={msg} compactEvent={compactEvent} docLinks />
-                      </div>
+                    // 2026-11-20 用户 #10（C 版 · classic TUI）：去掉左侧标签列与
+                    // 时间 gutter。用户行 `❯ YOU` 与正文同行；助手 `✦ 汐音` 并入
+                    // 统计行；正文 / thinking / tool 贴同一条左缘；时间 + 复制常显
+                    // 在首行最右（用户行浮在首行右侧，助手行走 TuiMeta 的 trail）。
+                    <div className="ck12-tui-msg" data-tui-row={msg.role}>
+                      {msg.role === 'user' && !msg.roleSwitch && msg.displayType !== 'event' && (
+                        <CockpitMessageActs message={msg} />
+                      )}
+                      <TuiMessage
+                        message={msg}
+                        compactEvent={compactEvent}
+                        docLinks
+                        lead={msg.role === 'assistant' ? <span className="ck12-tui-tag">✦ 汐音</span> : undefined}
+                        userLead={msg.role === 'user' ? <span className="ck12-tui-tag is-you">❯ YOU</span> : undefined}
+                        trail={msg.role === 'assistant' && !msg.roleSwitch && msg.displayType !== 'event'
+                          ? <CockpitMessageActs message={msg} />
+                          : undefined}
+                      />
                     </div>
                   ) : <TuiMessage message={msg} compactEvent={compactEvent} />
                 ) : <ChatBubble message={msg} />}
@@ -767,7 +820,13 @@ export function ChatArea({
                 thinking into its collapsible meta. TUI: same arrival order,
                 terminal lines (◌ thinking / ▸ tool / ✳ text▊). */}
             {streaming && streamTimeline && streamTimeline.length > 0 && (tui ? (
-              <TuiLive items={streamTimeline} toolCalls={toolCalls} />
+              isCockpitVariant ? (
+                // 流式过程同款行头：thinking / tool / 正文与历史态同一条左缘。
+                <div className="ck12-tui-msg" data-tui-row="assistant">
+                  <div className="ck12-tui-livehead"><span className="ck12-tui-tag">✦ 汐音</span><span className="ck12-tui-livehint">输出中…</span></div>
+                  <TuiLive items={streamTimeline} toolCalls={toolCalls} />
+                </div>
+              ) : <TuiLive items={streamTimeline} toolCalls={toolCalls} />
             ) : (
               <>
                 {streamTimeline.map((item) => {
@@ -999,7 +1058,7 @@ export function ChatArea({
           data-tui-dock
           data-tui-hero={heroMode ? 'true' : undefined}
         >
-          <div className="relative mx-auto max-w-4xl" data-tui-composer>
+          <div className={cn('relative', isCockpitVariant ? 'w-full' : 'mx-auto max-w-4xl')} data-tui-composer>
             {/* 挂在 composer 列内部：宽度自动继承列宽（舱里被 CSS 收窄到
                 min(756px, 100% - 144px)，外置会成为另一条宽带）。 */}
             {composerDock && <div className="-mb-px">{composerDock}</div>}

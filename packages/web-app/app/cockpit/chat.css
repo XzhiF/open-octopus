@@ -919,33 +919,8 @@
   color: var(--ck12-faint);
 }
 
-/* ── TUI 转录 gutter（§3.1）：时间戳 38px + 角色符签 74px + 正文 ─────── */
-.ck12-tui-row {
-  display: grid;
-  grid-template-columns: 38px 74px minmax(0, 1fr);
-  gap: 6px;
-  align-items: baseline;
-}
-.ck12-tui-time {
-  font-family: var(--font-mono);
-  font-size: 9px;
-  color: var(--ck12-faint);
-  font-variant-numeric: tabular-nums;
-}
-.ck12-tui-role {
-  font-family: var(--font-mono);
-  font-size: 9.5px;
-  font-weight: 700;
-  letter-spacing: 0.04em;
-  color: var(--ck12-dim);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.ck12-tui-row[data-tui-row='user'] .ck12-tui-role { color: var(--pop-pink); }
-.ck12-tui-row[data-tui-row='assistant'] .ck12-tui-role { color: var(--ck-a); }
-.ck12-tui-row[data-tui-row='tool'] .ck12-tui-role { color: var(--pop-green); }
-.ck12-tui-cell { min-width: 0; }
+/* ── TUI 转录（2026-11-20 用户 #10 改版：标签列 / 时间 gutter 已移除，
+ *    行头与行尾（时间 + 复制）样式见 v21.css 的 .ck12-tui-msg / .ck12-msgacts）── */
 /* 全域通讯台内转录走 mono（TUI 主体），用户行去掉卡片感改左 gutter 线。 */
 .ck12-comms [data-tui-col] { font-family: var(--font-mono); }
 .ck12-comms [data-tui-msg='user'] {
@@ -960,12 +935,9 @@
   .ck12-comms-dbg, .ck12-comms-tall { display: none; }
   .ck12-condock { bottom: 58px; }
   .ck12-condock-hint { display: none; }
-  .ck12-tui-row { grid-template-columns: 34px 58px minmax(0, 1fr); }
 }
 @media (max-width: 560px) {
   .ck12-comms-sub, .ck12-comms-grip { display: none; }
-  .ck12-tui-row { grid-template-columns: 30px 44px minmax(0, 1fr); gap: 4px; }
-  .ck12-tui-role { font-size: 8.5px; }
 }
 @media (prefers-reduced-motion: reduce) {
   .ck12-ctab.has-unread, .ck12-condock.has-unread { animation: none; }

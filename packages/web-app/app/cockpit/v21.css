@@ -181,80 +181,89 @@
   font-size: 12.5px;
 }
 
-/* TUI 行：标记 → 正文 → 时间戳；角色列变成行首标记。
- * 2026-11-19 用户：「✦ 汐音」比正文首行「已完成 …」高出一截，不像一行。
- * ① 基线对齐（不是 flex-start）：助手消息首块是 meta 行（my-1 + py-[2px]），
- *    顶对齐会让符签浮在正文上方 6px；按基线对齐后无论首块有没有外边距，
- *    符签 / 时间戳 / 正文首行都落在同一条基线上。
- * ② 符签列定宽（见 .ck12-tui-role）：四种符签宽度不同，不锁列正文左缘会错位。 */
-.ck12-tui-row {
-  display: flex;
-  gap: 8px;
-  align-items: baseline;
-  line-height: 1.6;
+/* 全域座舱 · 消息行（2026-11-20 用户 #10 · C 版 classic TUI）：
+ * 去掉左侧「❯ YOU / ✦ 汐音」标签列与时间 gutter。用户 `❯ YOU` 与正文同
+ * 一行；助手 `✦ 汐音` 并入统计行；正文 / thinking / tool 贴同一条左缘
+ * （容器 px-6 = 24px ≈ 1 个字宽）。时间 + 复制常显在首行最右。 */
+.ck12-tui-msg {
+  position: relative;
   animation: ck12-mi 0.3s ease;
+}
+/* 用户行的时间+复制是浮动块：清除浮动，避免下一条绕进来。 */
+.ck12-tui-msg::after {
+  content: '';
+  display: block;
+  clear: both;
 }
 @keyframes ck12-mi {
   0% { opacity: 0; transform: translateY(6px); }
   100% { opacity: 1; transform: none; }
 }
-.ck12-tui-time {
-  order: 3;
-  flex: none;
-  margin-left: auto;
-  font-family: var(--font-mono);
-  font-size: 8.5px;
-  color: rgba(141, 134, 184, 0.55);
-  font-variant-numeric: tabular-nums;
-}
-.ck12-tui-role {
-  order: 1;
-  flex: none;
-  /* 符签列定宽：❯ YOU 34.6 / ✦ 汐音 37.3 / ⌁ SYS 34.6 / ⚙ doer 41.6（11.5px 粗体 mono）。
-   * 原来的 flex:none 让每行按签宽自带列宽 → 正文左缘逐行错位（YOU 713 / 汐音 715 /
-   * doer 721）。3.8em 盖住最长签，随断点字号一起缩放。 */
-  min-width: 3.8em;
+.ck12-tui-tag {
   font-family: var(--font-mono);
   font-size: 11.5px;
   font-weight: 800;
-  letter-spacing: 0;
-  color: #C9BFFF;
-  overflow: visible;
   white-space: nowrap;
+  color: #C9BFFF;
   text-shadow: 0 0 10px rgba(201, 191, 255, 0.5);
 }
-.ck12-tui-row[data-tui-row='user'] .ck12-tui-role {
+.ck12-tui-tag.is-you {
   color: var(--ck12-gold);
   text-shadow: 0 0 10px rgba(245, 197, 66, 0.45);
 }
-.ck12-tui-row[data-tui-row='tool'] .ck12-tui-role {
+/* 行尾（时间 + 复制）：用户行浮在首行右侧；助手行作为统计行的 trail 项。
+ * 浮动在 flex 项上会被忽略 —— 同一个类两处复用。 */
+.ck12-msgacts {
+  float: right;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-left: 12px;
+  padding-left: 10px;
+  font-family: var(--font-mono);
+  font-size: 8.5px;
+  line-height: 1.6;
+  color: rgba(141, 134, 184, 0.62);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.ck12-msgacts-copy {
+  display: grid;
+  place-items: center;
+  width: 16px;
+  height: 14px;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: rgba(141, 134, 184, 0.72);
+  cursor: pointer;
+}
+.ck12-msgacts-copy:hover { color: #EDEBFA; }
+.ck12-msgacts.is-copied .ck12-msgacts-copy { color: var(--pop-green, #4ade80); }
+.ck12-tui-livehead {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  padding: 2px 0;
+}
+.ck12-tui-livehint {
+  font-size: 9px;
+  letter-spacing: 0.04em;
   color: var(--ck12-teal);
-  text-shadow: 0 0 10px rgba(46, 230, 214, 0.45);
 }
-.ck12-tui-row[data-tui-row='system'] .ck12-tui-role {
-  color: var(--ck12-metal2);
-  text-shadow: none;
-}
-.ck12-tui-cell {
-  order: 2;
-  flex: 1;
-  min-width: 0;
-  color: #EDEBFA;
-}
-.ck12-tui-cell [data-tui-msg='user'] {
-  background: transparent;
+.ck12-comms [data-tui-msg='user'] {
+  /* 2026-11-20 用户 #10：我的发言加一层很淡的金色底，从金条一侧向右渐隐，
+     在终端屏上更醒目；仍是方形、无气泡感。 */
+  background: linear-gradient(
+    90deg,
+    color-mix(in srgb, var(--ck12-gold) 11%, transparent),
+    color-mix(in srgb, var(--ck12-gold) 4%, transparent) 72%
+  );
   box-shadow: none;
   border-left: 2px solid rgba(245, 197, 66, 0.5);
   border-radius: 0;
   padding: 1px 10px;
   color: #fff;
-}
-.ck12-comms [data-tui-msg='user'] {
-  background: transparent;
-  box-shadow: none;
-  border-left: 2px solid rgba(245, 197, 66, 0.5);
-  border-radius: 0;
-  padding: 1px 10px;
 }
 
 /* 选项行：金/amber 左条 + REC 金标 */
@@ -344,16 +353,15 @@
 @media (max-width: 900px) {
   .ck12-comms-sub2, .ck12-comms-glyph { display: none; }
   .ck12-comms-head { height: 44px; padding: 6px 10px; }
-  .ck12-tui-row { gap: 6px; }
-  .ck12-tui-role { font-size: 10px; }
+  .ck12-tui-tag { font-size: 10px; }
 }
 @media (max-width: 560px) {
   .ck12-comms-status { display: none; }
-  .ck12-tui-role { font-size: 9px; }
-  .ck12-tui-time { font-size: 8px; }
+  .ck12-tui-tag { font-size: 9px; }
+  .ck12-msgacts { font-size: 8px; }
 }
 @media (prefers-reduced-motion: reduce) {
-  .ck12-tui-row { animation: none; }
+  .ck12-tui-msg { animation: none; }
   .ck12-ctab.has-unread { animation: none; }
 }
 

@@ -251,7 +251,7 @@ function ToolLine({ tc }: { tc: ToolCallRecord }) {
 /** 折叠的过程 meta：thinking / tool 按时间序（timeline 缺失时用字段兜底）。 */
 type MetaRow = { key: string; node: 'think' | 'tool' | 'frag'; text?: string; tc?: ToolCallRecord }
 
-function TuiMeta({ thinking, toolCalls, timeline, stats, interrupted, hideTextFrags }: {
+function TuiMeta({ thinking, toolCalls, timeline, stats, interrupted, hideTextFrags, lead, trail }: {
   thinking?: string
   toolCalls?: ToolCallRecord[]
   timeline?: MessageTimelineEntry[]
@@ -260,6 +260,10 @@ function TuiMeta({ thinking, toolCalls, timeline, stats, interrupted, hideTextFr
   interrupted?: boolean
   /** 正文段已在 body 全量显示（ask 回合）→ meta 展开时不再重复。 */
   hideTextFrags?: boolean
+  /** 行头（全域座舱的 `✦ 汐音`）：跟统计挤同一行，不额外占一行。 */
+  lead?: ReactNode
+  /** 行尾（全域座舱的时间 + 复制）：同一行最右，常显。 */
+  trail?: ReactNode
 }) {
   const [open, setOpen] = useState(false)
   // 费用按计费设置折算（默认 CNY / 7）：与任务看板、计费页同一枚 formatCost。
@@ -301,7 +305,7 @@ function TuiMeta({ thinking, toolCalls, timeline, stats, interrupted, hideTextFr
   // 一行都没有，但账本里有真实用量 —— 此时仍要渲染摘要，否则用户只看到
   // 「（本轮被截断）」却看不到这轮花了多少（2026-11-04 用户反馈）。
   const statsOnly = rows.length === 0
-  if (statsOnly && !stats) return null
+  if (statsOnly && !stats && !lead && !trail) return null
 
   const duration = stats?.durationMs != null && stats.durationMs > 0
     ? formatDuration(stats.durationMs)
@@ -318,17 +322,19 @@ function TuiMeta({ thinking, toolCalls, timeline, stats, interrupted, hideTextFr
 
   return (
     <div className="my-1" data-tui-meta-root>
-      <button
-        type="button"
-        onClick={() => { if (!statsOnly) setOpen((v) => !v) }}
-        className="flex w-full select-none flex-wrap items-center gap-x-1.5 gap-y-1 py-[2px] text-left text-pop-dim transition-colors hover:text-pop-ink"
-        data-tui-meta={open ? 'open' : 'closed'}
-        title={
-          'turn = 一条用户消息 + 助手这一整段回复。步数 = 思考段 + 工具调用 + 正文段；时长 / token / 费用来自会话账本，旧轮没有账本行时只显示步数与次数。'
-        }
-      >
-        {/* 收起 / 展开同一行摘要（2026-10-29 用户：展开不要重复上面的信息）。 */}
-        <span className={`font-semibold ${status.cls}`} data-tui-status>{status.label}</span>
+      <div className="flex items-baseline gap-2">
+        <button
+          type="button"
+          onClick={() => { if (!statsOnly) setOpen((v) => !v) }}
+          className="flex min-w-0 flex-1 select-none flex-wrap items-center gap-x-1.5 gap-y-1 py-[2px] text-left text-pop-dim transition-colors hover:text-pop-ink"
+          data-tui-meta={open ? 'open' : 'closed'}
+          title={
+            'turn = 一条用户消息 + 助手这一整段回复。步数 = 思考段 + 工具调用 + 正文段；时长 / token / 费用来自会话账本，旧轮没有账本行时只显示步数与次数。'
+          }
+        >
+          {/* 收起 / 展开同一行摘要（2026-10-29 用户：展开不要重复上面的信息）。 */}
+          {lead}
+          <span className={`font-semibold ${status.cls}`} data-tui-status>{status.label}</span>
         {duration && (
           <>
             <span>·</span>
@@ -371,7 +377,9 @@ function TuiMeta({ thinking, toolCalls, timeline, stats, interrupted, hideTextFr
         )}
         {/* 箭头紧跟最后一个数字（2026-10-29 用户：不要再被推到最右） */}
         {!statsOnly && <span aria-hidden>{open ? '▾' : '▸'}</span>}
-      </button>
+        </button>
+        {trail}
+      </div>
       {!statsOnly && open && (
         <div className="mt-1" data-tui-meta-body>
           {/* 展开态只有步骤列表（2026-10-29 用户：输入/输出/缓存/模型这些明细不必再显示）。
@@ -731,13 +739,19 @@ function askCardMessage(message: AgentMessage, call: ToolCallRecord): ChatMessag
   }
 }
 
-export function TuiMessage({ message, compactEvent, ask, docLinks = false }: {
+export function TuiMessage({ message, compactEvent, ask, docLinks = false, lead, trail, userLead }: {
   message: AgentMessage
   compactEvent?: boolean
   /** 传了才把消息里的 AskUserQuestion 画成可答卡片（详情/线程宿主接管线）。 */
   ask?: TuiAskBinding
   /** 正文里的产物绝对路径渲染成可点文档 chip（2026-11-19，仅 cockpit 传 true）。 */
   docLinks?: boolean
+  /** 助手行头（全域座舱的 `✦ 汐音`）：与统计行同一行，不单独占行。 */
+  lead?: ReactNode
+  /** 助手行尾（全域座舱的时间 + 复制）：统计行最右，常显。 */
+  trail?: ReactNode
+  /** 用户行首（全域座舱的 `❯ YOU`）：取代默认的 `❯`，与正文同一行。 */
+  userLead?: ReactNode
 }) {
   const isUser = message.role === 'user'
   const timeline = !isUser ? message.timeline : undefined
@@ -772,7 +786,7 @@ export function TuiMessage({ message, compactEvent, ask, docLinks = false }: {
         data-tui-msg="user"
         data-message-id={message.id}
       >
-        <span className="font-bold text-pop-pink">❯ </span>
+        {userLead ? <>{userLead} </> : <span className="font-bold text-pop-pink">❯ </span>}
         <span className="break-words whitespace-pre-wrap">{message.content}</span>
       </div>
     )
@@ -788,6 +802,8 @@ export function TuiMessage({ message, compactEvent, ask, docLinks = false }: {
         stats={message.turnStats}
         interrupted={message.interrupted}
         hideTextFrags={askTurn}
+        lead={lead}
+        trail={trail}
       />
       {displayContent
         ? (
