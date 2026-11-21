@@ -23,6 +23,9 @@ import type {
 /** Wire DTO = shared CabinDTO + the UI-prefs JSON the route parses out. */
 export type CabinDetail = CabinDTO & {
   cockpit_prefs?: Record<string, unknown> | null
+  /** 本舱 cwd 本身是不是一个独立 git 仓库（详情路由富化；列表不带）。
+   *  右栏「变更」只在 true 时出现。 */
+  cwd_git?: boolean
 }
 
 /** 并行 worktree 实例（同一项目多条分支并行）。 */
@@ -475,8 +478,9 @@ export function cabinRawUrl(id: string, relPath: string): string {
   return url(`/${id}/raw?path=${encodeURIComponent(relPath)}`)
 }
 
-// ── v22 十三轮（问题 #1）：本舱变更窗 —— 受管目录工作区改动（只读）──
-// 口径 = 每个登记项目的 `git diff HEAD` + 未跟踪文件；与编队「作战详情 → 变更」同构。
+// ── v22 十三轮（问题 #1）：本舱变更窗 —— 本舱 cwd 工作区改动（只读）──
+// 口径 = 本舱 cwd（cabin.path）这一个 git 仓库的 `git diff HEAD` + 未跟踪文件；
+// 只在 cwd 本身是独立 git 仓库时出现（CabinDetail.cwd_git）。
 
 export interface CabinWorktreeChangeFile {
   path: string
@@ -492,12 +496,12 @@ export interface CabinWorktreeChangeFile {
 
 export interface CabinWorktreeChangeRepo {
   name: string
-  /** 比对目录 = worktree_path ?? main_path；都没有 = null。 */
+  /** 比对目录 = 本舱 cwd。 */
   dir: string | null
   branch: string | null
   /** HEAD 短 SHA；空仓 = null（此时只有未跟踪文件）。 */
   head: string | null
-  /** 单仓失败原因（目录不在 / 不是 git 仓）——其它仓照常。 */
+  /** 失败原因（目录不在 / 不是 git 仓）。 */
   error: string | null
   truncated: boolean
   files: CabinWorktreeChangeFile[]
@@ -506,10 +510,11 @@ export interface CabinWorktreeChangeRepo {
 export interface CabinWorktreeChanges {
   /** 本舱 cwd 绝对路径。 */
   dir: string
+  /** 单元素（= 本舱 cwd 这一个仓库）；数组形态与变更树模型同构。 */
   repos: CabinWorktreeChangeRepo[]
 }
 
-/** GET /api/cabins/:id/worktree-changes — 本舱受管目录的工作区改动。 */
+/** GET /api/cabins/:id/worktree-changes — 本舱 cwd 的工作区改动。 */
 export async function getCabinWorktreeChanges(id: string): Promise<CabinWorktreeChanges> {
   const res = await fetch(url(`/${id}/worktree-changes`))
   return handleResponse<CabinWorktreeChanges>(res)

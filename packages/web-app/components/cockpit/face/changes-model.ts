@@ -1,7 +1,7 @@
 // 本舱变更窗的纯数据模型（v22 十三轮 · 2026-11-20 用户 #1）：
 //   统计条 / 左目录树 / 键映射 —— 与 React 无关，单测钉住语义。
-// 口径 = 受管目录的工作区改动（worktree vs HEAD + 未跟踪），与编队
-// 「作战详情 → 变更」同一套语义（状态 + ±行 + 懒拉 patch）。
+// 口径 = 本舱 cwd 这一个 git 仓库的工作区改动（worktree vs HEAD + 未跟踪）；
+// 模型按 repos 数组通用（实际只有一个元素）。
 
 import type { CabinWorktreeChangeFile, CabinWorktreeChangeRepo } from '@/lib/cabin-api'
 
@@ -25,7 +25,7 @@ export function changeKey(repo: string, path: string): string {
   return `${repo}:${path}`
 }
 
-/** 所有受管目录的改动文件拍平成一张表（过滤 / 树 / 统计同源）。 */
+/** 所有仓库（实际只有本舱 cwd 一个）的改动文件拍平成一张表（过滤 / 树 / 统计同源）。 */
 export function collectChangeFiles(repos: readonly CabinWorktreeChangeRepo[]): ChangeEntry[] {
   const out: ChangeEntry[] = []
   for (const repo of repos) {

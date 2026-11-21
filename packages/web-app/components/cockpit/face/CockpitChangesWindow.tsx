@@ -2,10 +2,11 @@
 
 // 本舱变更窗（v22 十三轮 · 2026-11-20 用户 #1）：右栏「变更」/ ⌥G 打开。
 //
-// 口径 = 本舱受管目录（config.json.repos，worktree_path ?? main_path）的工作区改动：
-// `git diff HEAD` + 未跟踪新文件。显示与编队「作战详情 → 变更」同构 ——
-// 统计条 / 左树（目录 → 文件，状态 + ±行）/ 右多标签 diff（点开才拉 patch）。
-// 只读：不提交、不暂存、不写任何文件。
+// 口径 = 本舱 cwd（cabin.path）这一个 git 仓库的工作区改动：
+// `git diff HEAD` + 未跟踪新文件。只在 cwd 本身是独立 git 仓库时出现
+// （右栏按钮 / ⌥G 都按 CabinDetail.cwd_git 判定）。
+// 显示与编队「作战详情 → 变更」同构 —— 统计条 / 左树（目录 → 文件，状态 + ±行）/
+// 右多标签 diff（点开才拉 patch）。只读：不提交、不暂存、不写任何文件。
 //
 // 窗口壳与「目录」窗同一套（ck12-treewin / CockpitFaceHead），几何各自独立：
 // 两个窗可以同时开着，Esc 只收最上面一层（层栈 68）。
@@ -116,6 +117,8 @@ export function CockpitChangesWindow({ cabinId, onClose }: { cabinId: string; on
   const entries = useMemo(() => collectChangeFiles(data?.repos ?? []), [data])
   const entryByKey = useMemo(() => new Map(entries.map((e) => [e.key, e])), [entries])
   const totals = useMemo(() => changeTotals(data?.repos ?? []), [data])
+  /** 单元素：本舱 cwd 这一个仓库。 */
+  const cwdRepo = data?.repos[0] ?? null
   const filtered = useMemo(() => filterChanges(entries, q), [entries, q])
   const visibleKeys = useMemo(() => new Set(filtered.files.map((e) => e.key)), [filtered])
 
@@ -376,14 +379,14 @@ export function CockpitChangesWindow({ cabinId, onClose }: { cabinId: string; on
   }
 
   const renderTree = () => {
-    if (loading && !data) return <div className="ck12-ckt-empty">扫各目录工作区…</div>
+    if (loading && !data) return <div className="ck12-ckt-empty">读本舱 cwd 工作区…</div>
     if (error && !data) return <div className="ck12-ckt-empty is-err">{error}</div>
     if (!data) return null
     if (filtering && filtered.files.length === 0) {
       return <div className="ck12-ckt-empty">没有匹配「{q.trim()}」的文件</div>
     }
     if (data.repos.length === 0) {
-      return <div className="ck12-ckt-empty">本舱还没有登记受管目录<span>在舱里绑定项目后，这里显示它们的工作区改动</span></div>
+      return <div className="ck12-ckt-empty">本舱 cwd 不是 git 仓库<span>变更入口只在 cwd 本身是独立 git 仓库时出现</span></div>
     }
     const cleanNames = data.repos.filter((r) => !r.files.length && !r.error).map((r) => r.name)
     const dirty = data.repos.filter((r) => r.files.length || r.error)
@@ -430,7 +433,7 @@ export function CockpitChangesWindow({ cabinId, onClose }: { cabinId: string; on
       return (
         <div className="ck12-ckt-empty">
           左边点一个文件，看逐行 diff
-          <span>口径 = 本舱受管目录的工作区改动 · 只读</span>
+          <span>口径 = 本舱 cwd 的工作区改动 · 只读</span>
         </div>
       )
     }
@@ -493,7 +496,7 @@ export function CockpitChangesWindow({ cabinId, onClose }: { cabinId: string; on
           closeTestId="cockpit-chgwin-close"
           glyph="±"
           title={`本舱变更 · ${cabinName}`}
-          sub={`${totals.dirs}/${data?.repos.length ?? 0} 受管目录有改动 · 只读`}
+          sub={cwdRepo?.branch ? `cwd · ⎇ ${cwdRepo.branch} · 只读` : '本舱 cwd 工作区改动 · 只读'}
           onClose={onClose}
           closeLabel="关闭本舱变更"
         />
@@ -503,11 +506,13 @@ export function CockpitChangesWindow({ cabinId, onClose }: { cabinId: string; on
         <div className="ck12-ckt-cwd" data-testid="cockpit-chg-cwd">
           <span className="ck12-ckt-cwd-k">⌂ 本舱 cwd</span>
           <span className="ck12-ckt-cwd-p" title={data?.dir}>{data?.dir ?? '—'}</span>
-          <span className="ck12-ckt-ro">{totals.dirs} / {data?.repos.length ?? 0} 受管目录有改动</span>
+          <span className="ck12-ckt-ro">
+            {totals.files > 0 ? `${totals.files} 文件有改动` : '工作区干净'}
+          </span>
           <button
             type="button"
             className="ck12-ckt-ib"
-            title="重新读各目录工作区"
+            title="重新读 cwd 工作区"
             data-testid="cockpit-chg-refresh"
             onClick={refresh}
           >
@@ -558,7 +563,7 @@ export function CockpitChangesWindow({ cabinId, onClose }: { cabinId: string; on
               </button>
             </div>
             <div className="ck12-ckt-scope">
-              本舱 · {filtered.files.length} 文件{totals.clean ? ` · 另 ${totals.clean} 目录干净` : ''}
+              本舱 cwd · {filtered.files.length} 文件{totals.files === 0 ? ' · 工作区干净' : ''}
             </div>
             <div className="ck12-ckt-scroll" role="tree" aria-label="本舱变更文件树">
               {renderTree()}

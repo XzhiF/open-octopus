@@ -1,6 +1,6 @@
 // S9 全域座舱键盘：
 //   · ⌥1 最紧要（need→run→queue）；⌥2 收面；⌘K 开聊天窗；⌥W 跃迁；
-//   · ⌥G 打开 / 收起本舱变更窗（受管目录工作区改动）；
+//   · ⌥G 打开 / 收起本舱变更窗（cwd 工作区改动；仅 cwd 是独立 git 仓库时）；
 //   · 输入框聚焦时不抢键（⌘K 是唯一例外）；
 //   · 隐藏窗口 / 后台标签（active=false）不抢键；
 //   · ↑↓ 不在这里（S3 的 CockpitFleetRail 负责）。
@@ -19,9 +19,15 @@ import type { CockpitFleetContextValue } from '../../fleet/CockpitFleetProvider'
 import { CockpitShortcuts } from '../CockpitShortcuts'
 
 const fleetState = vi.hoisted(() => ({ current: null as unknown }))
+/** 本舱 cwd 是否为独立 git 仓库 —— ⌥G 的出现条件。 */
+const cabinState = vi.hoisted(() => ({ cwdGit: true }))
 
 vi.mock('../../fleet/CockpitFleetProvider', () => ({
   useCockpitFleet: () => fleetState.current,
+}))
+
+vi.mock('@/components/cabin/cabin-provider', () => ({
+  useCabinOptional: () => ({ cabin: { cwd_git: cabinState.cwdGit } }),
 }))
 
 function job(id: string, over: Partial<CabinJobView> = {}): CabinJobView {
@@ -105,6 +111,7 @@ function renderShortcuts(active = true) {
 
 beforeEach(() => {
   fleetState.current = fleet([])
+  cabinState.cwdGit = true
   resetCabinTree()
   resetChanges()
 })
@@ -197,6 +204,37 @@ describe('CockpitShortcuts', () => {
     expect(prevented).toBe(false)
     fireEvent.keyDown(window, { key: 'g', code: 'KeyG', altKey: true })
     await waitFor(() => expect(screen.getByTestId('changes-win').textContent).toBe('closed'))
+  })
+
+  it('⌥G 在 cwd 不是独立 git 仓库时不生效、也不抢键', async () => {
+    cabinState.cwdGit = false
+    renderShortcuts()
+    const prevented = fireEvent.keyDown(window, { key: 'g', code: 'KeyG', altKey: true })
+    expect(screen.getByTestId('changes-win').textContent).toBe('closed')
+    expect(prevented).toBe(true)
+  })
+
+  it('⌥V 点右栏「活动」按钮；按钮不存在（没有运行中活动）时不抢键', () => {
+    const onClick = vi.fn()
+    render(
+      <CockpitStateProvider entryCabinId="c1">
+        <CockpitShortcuts />
+        <button type="button" data-testid="cockpit-menu-activity" onClick={onClick}>活动</button>
+      </CockpitStateProvider>,
+    )
+    const prevented = fireEvent.keyDown(window, { key: 'v', code: 'KeyV', altKey: true })
+    expect(onClick).toHaveBeenCalledTimes(1)
+    expect(prevented).toBe(false)
+  })
+
+  it('⌥V 在按钮不存在时什么都不做', () => {
+    render(
+      <CockpitStateProvider entryCabinId="c1">
+        <CockpitShortcuts />
+      </CockpitStateProvider>,
+    )
+    const prevented = fireEvent.keyDown(window, { key: 'v', code: 'KeyV', altKey: true })
+    expect(prevented).toBe(true)
   })
 
   it('active=false（隐藏窗口/后台标签）不抢任何键', async () => {

@@ -243,6 +243,15 @@ export interface CockpitState {
   closeInbox(): void
   selectInbox(attentionId: string | null): void
 
+  /** v22 十四轮：右栏「活动」浮层（汐音主会话的子代理 + 后台作业，只读）。
+   *  与 inbox 互斥；没有运行中的活动时按钮不出现。 */
+  activityOpen: boolean
+  /** 详情窗当前那条活动 id（`subagent:<id>` / `background:<id>`）；null = 只看列表。 */
+  activitySel: string | null
+  openActivity(): void
+  closeActivity(): void
+  selectActivity(activityId: string | null): void
+
   /** v20：汐音当前姿态（图鉴金边 / 验收锚点），由 CockpitCrew 上报。
    *  v22：clip = 当前视频片段下标（13 支；同一 pose 可能有多支）。 */
   pose: string

@@ -1819,3 +1819,216 @@ button.ck12-ev:hover { background: rgba(255, 255, 255, 0.04); }
   .ck12-fitem { height: 30px; font-size: 9px; padding: 0 6px 0 3px; }
   .ck12-fitem-h { width: 22px; height: 25px; font-size: 12px; }
 }
+
+/* ═══ 右栏「活动」（v22 十四轮 · 2026-11-21 用户）══════════════════════════
+   原型 docs/cabin-design/cockpit-v22.html 的 .actpop / .actwin / .act-*。
+   一级 = 与「要我处理」同一套 378 宽 inbox 浮层（纵向对齐「活动」按钮）；
+   二级 = 贴着一级左缘的大窗，从右缘向左展开；一级宽度全程不变。 ═══ */
+
+/* 按钮徽标：运行中总数（与原型 .rhex .rnb 同位置）。 */
+.ck12-rnb {
+  position: absolute;
+  right: 5px;
+  top: 5px;
+  z-index: 2;
+  min-width: 15px;
+  height: 15px;
+  padding: 0 3px;
+  display: grid;
+  place-items: center;
+  border-radius: 999px;
+  background: var(--ck12-violet);
+  color: #fff;
+  font-size: 8.5px;
+  font-style: normal;
+  font-weight: 900;
+  font-family: var(--font-mono);
+  box-shadow: 0 0 10px rgba(123, 77, 255, 0.75);
+}
+
+/* ── 一级浮层：inbox 壳 + 活动配色 ─────────────────────────────────── */
+/* 固定定位到视口：纵向要对齐「活动」按钮（组件算 top），而 rightrail 本身
+   有 top:64 / right:10 —— absolute 会把算好的视口值再叠一层偏移。
+   视口右距 = rail 自身 right(10) + 浮层在 rail 内 right(railr−6)。 */
+.ck12-actpop {
+  position: fixed;
+  right: calc(var(--ck12-railr) + 4px);
+  top: 62px;
+}
+.ck12-actpop .ck12-ip-h { border-bottom-color: rgba(123, 77, 255, 0.24); }
+.ck12-actpop .ck12-ip-t { color: #c9b6ff; }
+.ck12-actpop .ck12-ip-brk { color: #b9a7e8; }
+.ck12-actpop .ck12-ip-body { padding-top: 3px; }
+.ck12-actpop .ck12-ip-group { color: #c9b6ff; }
+.ck12-actpop .ck12-ip-group b { color: #c9b6ff; }
+.ck12-actpop .ck12-ip-row.is-on {
+  background: linear-gradient(90deg, rgba(123, 77, 255, 0.24), rgba(53, 199, 240, 0.1));
+  box-shadow: inset 2px 0 0 var(--ck12-violet);
+}
+.ck12-actpop .ck12-ip-go { color: #c9b6ff; }
+.ck12-actpop .ck12-ip-go.is-live { color: var(--ck12-green); }
+.ck12-actpop .ck12-ip-foot button { color: #c9b6ff; }
+.ck12-actpop .ck12-ip-foot button:hover { color: #fff; }
+.ck12-ip-type.is-sub { color: #c9b6ff; }
+.ck12-ip-type.is-bg { color: var(--ck12-sky); }
+.ck12-act-err { color: var(--ck12-amber); }
+
+/* 详情开着时，一级左缘拉平（不留切角），与二级大窗无缝相接。 */
+.ck12-actpop.is-detail {
+  clip-path: polygon(0 0, 100% 0, 100% calc(100% - 14px), calc(100% - 14px) 100%, 0 100%);
+  border-left-color: transparent;
+  border-top-left-radius: 0;
+  border-bottom-left-radius: 0;
+}
+
+/* ── 二级大窗：右侧与一级浮层左缘齐平，从右缘向左展开 ─────────────── */
+.ck12-actwin {
+  left: auto;
+  /* 右缘贴住一级浮层左缘：浮层在 rightrail 内 right=(railr−6)，rail 自身 right=10，
+     所以视口口径 = railr + 382。宽度按左侧留 46px 余量收。 */
+  right: calc(var(--ck12-railr) + 382px);
+  top: 52px;
+  bottom: 52px;
+  height: auto;
+  width: min(952px, calc(100vw - var(--ck12-railr) - 428px));
+  transform: none;
+  border-top-right-radius: 0;
+  border-bottom-right-radius: 0;
+  border-right: none;
+  z-index: 203;
+  animation: ck12-actwin-unfold 0.42s cubic-bezier(0.33, 0, 0.2, 1) both;
+}
+@keyframes ck12-actwin-unfold {
+  from { clip-path: inset(0 0 0 100%); opacity: 0.35; }
+  to { clip-path: inset(0); opacity: 1; }
+}
+/* 展开时一条紫色扫描边从右扫到左，扫完淡出（只做视觉引导，不吃点击）。 */
+.ck12-actwin::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 2px;
+  z-index: 9;
+  pointer-events: none;
+  background: linear-gradient(180deg, transparent, color-mix(in srgb, var(--ck12-violet) 85%, #fff), transparent);
+  box-shadow: 0 0 18px var(--ck12-violet);
+  animation: ck12-actwin-edge 0.42s cubic-bezier(0.33, 0, 0.2, 1) both;
+}
+@keyframes ck12-actwin-edge {
+  from { left: 100%; opacity: 1; }
+  to { left: 0; opacity: 0; }
+}
+.ck12-actwin-b {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+.ck12-actwin-b > * { flex: 1; min-height: 0; }
+
+/* 后台作业详情（子代理走作业坞 SubagentWindow，不在这里造样式）。 */
+.ck12-act-meta {
+  flex: none;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  align-items: center;
+  padding: 8px 14px 0;
+  font-family: var(--font-mono);
+  font-size: 9px;
+  color: var(--ck12-ink2);
+}
+.ck12-act-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 18px;
+  padding: 0 6px;
+  border: 1px solid rgba(185, 179, 217, 0.22);
+  background: rgba(255, 255, 255, 0.04);
+  color: var(--ck12-ink2);
+  font-family: var(--font-mono);
+  font-size: 8px;
+  white-space: nowrap;
+}
+.ck12-act-chip.is-run {
+  border-color: rgba(123, 77, 255, 0.45);
+  background: rgba(123, 77, 255, 0.16);
+  color: #d3c4ff;
+}
+.ck12-act-chip-id {
+  max-width: 240px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.ck12-act-sp { flex: 1; }
+.ck12-act-body {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: 10px 14px 14px;
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  line-height: 1.62;
+  color: var(--ck12-ink2);
+}
+.ck12-act-prompt {
+  flex: none;
+  border: 1px solid rgba(123, 77, 255, 0.32);
+  background: rgba(123, 77, 255, 0.08);
+  border-radius: 8px;
+  padding: 7px 9px;
+  margin: 0 0 9px;
+}
+.ck12-act-prompt .k {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  margin-bottom: 4px;
+  font-size: 8px;
+  font-weight: 800;
+  letter-spacing: 0.1em;
+  color: #c9b6ff;
+}
+.ck12-act-prompt pre {
+  margin: 0;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-size: 10px;
+  line-height: 1.6;
+  color: rgba(255, 255, 255, 0.9);
+}
+.ck12-act-note {
+  border: 1px dashed rgba(185, 179, 217, 0.26);
+  background: rgba(10, 8, 24, 0.42);
+  padding: 7px 9px;
+  font-size: 9.5px;
+  line-height: 1.6;
+  color: var(--ck12-metal2);
+}
+.ck12-act-tfoot {
+  flex: none;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 5px;
+  padding: 6px 14px;
+  border-top: 1px solid rgba(46, 230, 214, 0.16);
+  background: rgba(13, 10, 30, 0.4);
+  font-size: 8px;
+  color: var(--ck12-metal2);
+  font-family: var(--font-mono);
+}
+
+@media (max-width: 900px) {
+  /* 窄屏右栏放不下并排两扇：活动入口整体退场（原型同）。 */
+  .ck12-rhex.is-activity { display: none; }
+  .ck12-actwin {
+    right: 2vw;
+    left: auto;
+    top: 64px;
+    bottom: 10px;
+    width: 96vw;
+  }
+}

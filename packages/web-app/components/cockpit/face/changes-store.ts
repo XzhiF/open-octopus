@@ -1,6 +1,6 @@
 'use client'
 
-// 右栏「变更」的开关状态（本舱受管目录工作区改动窗 · 问题 #1）。
+// 右栏「变更」的开关状态（本舱 cwd 工作区改动窗 · 问题 #1）。
 // 与 cabin-tree-store / settings-store 同模式：极小外部 store。
 // 窗口需要挂在 CockpitFace 之外 —— 详情面没选中时也要能开。
 

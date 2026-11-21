@@ -3,6 +3,7 @@ import Database from "better-sqlite3"
 import fs from "fs"
 import path from "path"
 import os from "os"
+import { spawnSync } from "child_process"
 import { Hono } from "hono"
 import { applySchema } from "../../db/schema"
 import {
@@ -75,8 +76,16 @@ describe("/api/cabins routes", () => {
     expect(one.status).toBe(200)
     const body = await one.json()
     expect(body.cabin.id).toBe(cabin.id)
+    expect(body.cabin.cwd_git).toBe(false)
     expect(body.view.attention).toEqual([])
     expect(body.view.health.running).toBe(0)
+  })
+
+  it("GET /:id 富化 cwd_git：cwd 本身是独立 git 仓库 → true", async () => {
+    const cabin = await createCabin()
+    expect(spawnSync("git", ["init"], { cwd: tmpDir }).status).toBe(0)
+    const one = await app.request(`/api/cabins/${cabin.id}`)
+    expect((await one.json()).cabin.cwd_git).toBe(true)
   })
 
   it("POST / with invalid body → 400; unknown id → 404", async () => {

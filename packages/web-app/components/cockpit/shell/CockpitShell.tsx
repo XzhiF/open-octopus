@@ -26,6 +26,8 @@ import { AskWindowsProvider, useAskWindows } from '@/components/cabin/asks/ask-w
 import { AskWindowLayer } from '@/components/cabin/asks/ask-window-layer'
 import { CockpitFleetRail } from '../rail/CockpitFleetRail'
 import { CockpitRightRail } from '../rail/CockpitRightRail'
+import { CockpitActivityProvider } from '../rail/activity-feed'
+import { CockpitActivityWindow } from '../rail/CockpitActivityWindow'
 import { CockpitFace } from '../face/CockpitFace'
 import { CockpitCabinTree } from '../face/CockpitCabinTree'
 import { CockpitCabinChanges } from '../face/CockpitCabinChanges'
@@ -130,6 +132,9 @@ function CockpitSurface({ cabin }: { cabin: CabinDetail }) {
 
   return (
     <AskWindowsProvider attention={view?.attention ?? null}>
+    {/* v22 十四轮：右栏「活动」的数据源（汐音主会话的子代理 + 后台作业）。
+        包住右栏与详情窗 —— 按钮徽标 / 列表 / 详情共用同一次轮询。 */}
+    <CockpitActivityProvider>
     <CockpitAskDeepLink />
     <div className="ck12-app" data-testid="cockpit-shell">
       <div className="ck12-bg" aria-hidden="true">
@@ -182,8 +187,11 @@ function CockpitSurface({ cabin }: { cabin: CabinDetail }) {
       {/* v22 九轮：右栏「目录」= 本舱 cwd 只读目录窗（详情面没开也能开）。 */}
       <CockpitCabinTree cabinId={entryCabinId} />
 
-      {/* v22 十三轮（问题 #1）：右栏「变更」= 本舱受管目录的工作区改动（只读）。 */}
+      {/* v22 十三轮（问题 #1）：右栏「变更」= 本舱 cwd 的工作区改动（只读）。 */}
       <CockpitCabinChanges cabinId={entryCabinId} />
+
+      {/* v22 十四轮：右栏「活动」二级大窗（贴在一级浮层左侧，只读）。 */}
+      <CockpitActivityWindow />
 
       {/* 2026-11-19 用户 #4：聊天正文里的产物绝对路径点开 → 只读文档窗。 */}
       <CockpitDocWindow />
@@ -211,6 +219,7 @@ function CockpitSurface({ cabin }: { cabin: CabinDetail }) {
 
       <div className="ck12-vignette" aria-hidden="true" />
     </div>
+    </CockpitActivityProvider>
     {/* 问答窗 portal 到 body；Esc 走 CockpitLayerStack（priority 75）。 */}
     <AskWindowLayer mode="cockpit" escLayer={layer} />
     </AskWindowsProvider>

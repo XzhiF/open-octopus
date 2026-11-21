@@ -13,11 +13,14 @@ import { useCockpitState } from '../state/CockpitStateProvider'
 import { CockpitAttentionChip } from './CockpitAttentionChip'
 import { CockpitInboxPopover } from './CockpitInboxPopover'
 import { CockpitMenuRail } from './CockpitMenuRail'
+import { CockpitActivityPopover } from './CockpitActivityPopover'
+import { useCockpitActivityFeed } from './activity-feed'
 import { collectInbox, inboxCounts } from './inbox-model'
 
 export function CockpitRightRail() {
   const { rows, refetch } = useCockpitFleet()
-  const { inboxOpen } = useCockpitState()
+  const { inboxOpen, activityOpen } = useCockpitState()
+  const activity = useCockpitActivityFeed()
   const entries = useMemo(() => collectInbox(rows), [rows])
   const [answered, setAnswered] = useState<ReadonlySet<string>>(() => new Set())
   /** 待放行：已执行成功的 decision key（同一 attention id 换动作时不能一起藏）。 */
@@ -112,7 +115,8 @@ export function CockpitRightRail() {
           onStartDecided={handleStartDecided}
         />
       )}
-      <CockpitMenuRail />
+      {activityOpen && <CockpitActivityPopover />}
+      <CockpitMenuRail activityLive={activity.liveCount} />
     </aside>
   )
 }

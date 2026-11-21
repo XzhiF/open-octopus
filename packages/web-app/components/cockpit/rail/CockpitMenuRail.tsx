@@ -1,10 +1,15 @@
 'use client'
 
 // v21 二轮（原型 .rmenu / .fanwrap）· 右栏主按钮组：
-//   下指令（big）→ 目录 → 消耗 → 调试 → 更多。
+//   下指令（big）→ 目录 → 活动 → 消耗 → 调试 → 变更 → 更多。
 // v22 九轮：「目录」取代原位的「跃迁」，打开本舱 cwd 只读目录窗（⌥F）；
 //   跃迁挪进「更多」（⌥W / 点顶部场景名仍可跃迁）。
-// v22 十三轮（问题 #1）：「目录」下新增「变更」—— 本舱受管目录的工作区改动（⌥G，只读）。
+// v22 十三轮（问题 #1）：「变更」—— 本舱 cwd 的工作区改动（⌥G，只读）。
+//   位置在「更多」正上方（倒数第二）；**只有 cwd 本身是独立 git 仓库时才出现**
+//   （CabinDetail.cwd_git，服务端按 cabin.path 下有没有 .git 判）。
+// v22 十四轮（2026-11-21 用户）：「活动」—— 汐音主会话里正在跑的子代理 /
+//   后台作业（⌥V，只读）。**常住按钮**（2026-11-21 用户：不用像「变更」那样
+//   按条件出现）；徽标只在有运行中活动时显示。没有活动时点开是空态。
 // 「更多」= **纯点击开合**（再点收回；点外面也收），向左横排展开 7 项
 // （汐音 / 动作 / 日志 / 跃迁 / 模拟 / 设置 / 编队）。不再用悬停开合。
 //
@@ -14,6 +19,7 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { toast } from 'sonner'
+import { useCabinOptional } from '@/components/cabin/cabin-provider'
 import { toggleCrewSettings } from '../crew/crew-settings'
 import { toggleCabinTree } from '../face/cabin-tree-store'
 import { toggleChanges } from '../face/changes-store'
@@ -30,10 +36,19 @@ const FAN_ITEMS = [
   { id: 'fleet', glyph: '⬡', label: '编队' },
 ] as const
 
-export function CockpitMenuRail() {
+export interface CockpitMenuRailProps {
+  /** 运行中的活动数（子代理 + 后台作业）；只影响徽标，不影响按钮常驻。 */
+  activityLive?: number
+}
+
+export function CockpitMenuRail({ activityLive = 0 }: CockpitMenuRailProps) {
   const {
     chatWindow, openPanel, setRailOpen, travel,
+    activityOpen, openActivity, closeActivity,
   } = useCockpitState()
+  const cabin = useCabinOptional()?.cabin
+  /** 变更 = 本舱 cwd 这一个 git 仓库的工作区改动 —— cwd 不是独立仓就不出这个按钮。 */
+  const showChanges = cabin?.cwd_git === true
   const [fanOpen, setFanOpen] = useState(false)
   const wrapRef = useRef<HTMLDivElement | null>(null)
 
@@ -110,15 +125,24 @@ export function CockpitMenuRail() {
         <span className="ck12-rhex-l">目录</span>
       </button>
 
+      {/* v22 十四轮：活动（汐音主会话的后台作业 + 子代理）—— 常住入口。 */}
       <button
         type="button"
-        className="ck12-rhex"
-        title="本舱变更 · 受管目录的工作区改动（⌥G，只读）"
-        data-testid="cockpit-menu-changes"
-        onClick={() => toggleChanges()}
+        className={`ck12-rhex is-activity${activityOpen ? ' is-on' : ''}`}
+        title={
+          activityLive > 0
+            ? `活动 · ${activityLive} 项后台运行中（⌥V，只读）`
+            : '活动 · 当前没有后台作业或子代理（⌥V，只读）'
+        }
+        aria-expanded={activityOpen}
+        data-testid="cockpit-menu-activity"
+        onClick={() => (activityOpen ? closeActivity() : openActivity())}
       >
-        <span className="ck12-rhex-i" aria-hidden="true">±</span>
-        <span className="ck12-rhex-l">变更</span>
+        <span className="ck12-rhex-i" aria-hidden="true">◉</span>
+        <span className="ck12-rhex-l">活动</span>
+        {activityLive > 0 && (
+          <i className="ck12-rnb" data-testid="cockpit-menu-activity-count">{activityLive}</i>
+        )}
       </button>
 
       <button
@@ -142,6 +166,20 @@ export function CockpitMenuRail() {
         <span className="ck12-rhex-i" aria-hidden="true">⚙</span>
         <span className="ck12-rhex-l">调试</span>
       </button>
+
+      {/* 问题 #1：变更挨着「更多」（倒数第二），且只在 cwd 是独立 git 仓库时出现。 */}
+      {showChanges && (
+        <button
+          type="button"
+          className="ck12-rhex"
+          title="本舱变更 · cwd 的工作区改动（⌥G，只读）"
+          data-testid="cockpit-menu-changes"
+          onClick={() => toggleChanges()}
+        >
+          <span className="ck12-rhex-i" aria-hidden="true">±</span>
+          <span className="ck12-rhex-l">变更</span>
+        </button>
+      )}
 
       <div className="ck12-morewrap" ref={wrapRef}>
         <button
