@@ -3,7 +3,8 @@
 // v21（design 31 §3.2.2）· 「要我处理」浮层：列表在右、回复卡在左。
 //
 // 就地回：点一条 → 左侧开回复卡（两栏）→ 选项 / 自由输入 → 走 useAskSubmit
-// 真决策管线 → 回执 1.4s → 回列表；全清后 0.7s 自动收起。
+// 真决策管线 → 回执 1.4s → 回列表。浮层**只手动关**（✕ / Esc），不自动收起
+// （2026-11-21 用户：待办为 0 时点开看过空态，不能被计时器关掉）。
 // **不跳作战线程** —— 这是 v21 与 v20 决断面板的关键区别（面板仍作为「全部决断」）。
 // 没有决策信封的行不假造选项，只给「去处理 ▦」（打开作业面 / attention 面）。
 //
@@ -48,7 +49,6 @@ import {
 /** 比聊天浮窗（60）/ 编队抽屉（70）/ 问答窗（100）都高：Esc 先收这张浮层。 */
 const INBOX_LAYER_PRIORITY = 120
 const RECEIPT_MS = 1400
-const AUTO_CLOSE_MS = 700
 
 /** 放行回执卡正文（浮层皮肤里不再重复 ✓ 前缀，由卡片统一加）。 */
 const START_RECEIPT_TEXT: Record<StartChoice, string> = {
@@ -642,18 +642,13 @@ export function CockpitInboxPopover({ entries, counts, answered, onAnswered, onS
   // Esc：只走唯一 layer 栈。
   useEffect(() => layer.register('cockpit-inbox', INBOX_LAYER_PRIORITY, closeInbox), [layer, closeInbox])
 
-  // 回执 1.4s 后回列表；全清后 0.7s 自动收起。
+  // 回执 1.4s 后回列表。浮层**只手动关**（✕ / Esc）—— 2026-11-21 用户：
+  // 待办为 0 时点开看过空态，不应被计时器自动收起。
   useEffect(() => {
     if (!receipt) return
     const back = window.setTimeout(() => setReceipt(null), RECEIPT_MS)
     return () => window.clearTimeout(back)
   }, [receipt])
-
-  useEffect(() => {
-    if (receipt || counts.total > 0) return
-    const close = window.setTimeout(() => closeInbox(), AUTO_CLOSE_MS)
-    return () => window.clearTimeout(close)
-  }, [receipt, counts.total, closeInbox])
 
   const deal = useCallback((entry: InboxEntry) => {
     // v21 七轮：详情首签 = 对话（任务的 chat 记录）——「去处理」也落到这里。
