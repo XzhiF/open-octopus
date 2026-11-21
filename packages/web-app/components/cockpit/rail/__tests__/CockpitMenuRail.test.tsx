@@ -3,7 +3,7 @@
 //   · 「变更」只在 cwd 本身是独立 git 仓库（CabinDetail.cwd_git）时出现。
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { fireEvent, render, screen } from '@testing-library/react'
-import { CockpitStateProvider } from '../../state/CockpitStateProvider'
+import { CockpitStateProvider, useCockpitState } from '../../state/CockpitStateProvider'
 import { CockpitMenuRail } from '../CockpitMenuRail'
 
 const cabinState = vi.hoisted(() => ({ cwdGit: true }))
@@ -18,6 +18,12 @@ function renderRail() {
       <CockpitMenuRail />
     </CockpitStateProvider>,
   )
+}
+
+/** 读当前面板 kind —— 验证「更多 → 日志」确实开的是 log 面板。 */
+function PanelProbe() {
+  const { panel } = useCockpitState()
+  return <span data-testid="probe-panel">{panel ?? 'none'}</span>
 }
 
 /** 主按钮组里带 data-testid 的顺序（「更多」的风琴项不算）。 */
@@ -92,8 +98,7 @@ describe('CockpitMenuRail · 活动按钮', () => {
 })
 
 describe('CockpitMenuRail · 更多', () => {
-  it('生产代码只留 汐音 / 动作 / 日志 / 设置；跃迁 / 模拟 / 编队已下线', () => {
-    renderRail()
+  it('生产代码只留 汐音 / 动作 / 日志 / 设置；跃迁 / 模拟 / 编队已下线', () => {    renderRail()
     fireEvent.click(screen.getByTestId('cockpit-menu-more'))
     const fan = screen.getByTestId('cockpit-menu-fan')
     const items = [...fan.querySelectorAll<HTMLElement>('[data-testid^="cockpit-fan-"]')]
@@ -107,5 +112,18 @@ describe('CockpitMenuRail · 更多', () => {
     expect(screen.queryByTestId('cockpit-fan-warp')).toBeNull()
     expect(screen.queryByTestId('cockpit-fan-sim')).toBeNull()
     expect(screen.queryByTestId('cockpit-fan-fleet')).toBeNull()
+  })
+
+  it('点「日志」开指令时间线面板（log），并收起横排入口', () => {
+    render(
+      <CockpitStateProvider entryCabinId="c1">
+        <CockpitMenuRail />
+        <PanelProbe />
+      </CockpitStateProvider>,
+    )
+    fireEvent.click(screen.getByTestId('cockpit-menu-more'))
+    fireEvent.click(screen.getByTestId('cockpit-fan-log'))
+    expect(screen.getByTestId('probe-panel')).toHaveTextContent('log')
+    expect(screen.getByTestId('cockpit-menu-fan').className).not.toContain('is-on')
   })
 })

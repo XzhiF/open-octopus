@@ -146,8 +146,8 @@ export interface CockpitLayerApi {
 
 // ── v20（design 29）：多作战线程 / 弹出窗 / 面板 / 回传 flash ─────────────
 
-/** 模态面板五 kind（编队/详情沿用左栏与作业面，不另起模态）。 */
-export type CockpitPanelKind = 'ops' | 'ledger' | 'ws' | 'poses' | 'debug'
+/** 模态面板六 kind（编队/详情沿用左栏与作业面，不另起模态）。 */
+export type CockpitPanelKind = 'ops' | 'ledger' | 'ws' | 'poses' | 'debug' | 'log'
 
 /** 用户自开的作战弹出窗（design 29 §4）：上限 5，最小化进 WINDOWS 条。 */
 export interface CockpitPopWin {

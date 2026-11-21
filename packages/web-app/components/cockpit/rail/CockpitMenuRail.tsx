@@ -12,8 +12,9 @@
 //   按条件出现）；徽标只在有运行中活动时显示。没有活动时点开是空态。
 // 「更多」= **纯点击开合**（再点收回；点外面也收），向左横排展开
 // （汐音 / 动作 / 日志 / 设置）。不再用悬停开合。
-// 2026-11-21 用户：生产代码不再提供「跃迁 / 模拟 / 编队」三项（原型保留）；
-// 「日志」后续还要改，先留着。
+// 2026-11-21 用户：生产代码不再提供「跃迁 / 模拟 / 编队」三项（原型保留）。
+// v22 十五轮（2026-11-21 用户）：「日志」= 主会话指令时间线面板（关键词搜索 +
+//   顶部统计 + 每条 prompt 的 TUI 摘要行），不再把主对话拉高。
 //
 // 动作全部复用既有入口（不新造面板）：账本 = ledger 面板、调试 = 本舱主会话
 // debug 面板（不是某条作业）、目录 = 本舱 cwd 只读窗、动作 = poses 面板、
@@ -70,14 +71,11 @@ export function CockpitMenuRail({ activityLive = 0 }: CockpitMenuRailProps) {
     switch (id) {
       case 'xiyin': toggleCrewSettings(); break
       case 'poses': openPanel('poses'); break
-      case 'log':
-        chatWindow.openWithFocus()
-        window.dispatchEvent(new CustomEvent('octopus:chat-tall'))
-        break
+      case 'log': openPanel('log'); break
       case 'settings': setCockpitSettingsOpen(true); break
       default: break
     }
-  }, [chatWindow, openPanel])
+  }, [openPanel])
 
   const openCommand = useCallback(() => {
     chatWindow.openWithFocus()

@@ -669,6 +669,51 @@ kbd{border:1px solid rgba(185,179,217,.35);border-bottom-width:2px;border-radius
 .loglm.me .bb{background:rgba(245,197,66,.14);border-color:rgba(245,197,66,.4)}
 .loglm.sys .bb{background:none;border:0;text-align:center;font-size:9px;color:var(--metal2);font-family:var(--font-mono)}
 
+/* ═══ 对话日志（v22 十五轮 · 2026-11-21 用户）═══
+   我的 prompt 时间线：倒序；每条只留两行 —— prompt 原文 + 主对话 TUI 摘要行
+   （✦ 汐音 · 已完成 · 耗时 · 步数 · 工具 · 思考 · token · 费用 · 时间）。
+   过程明细不在这里回放。顶部一条紧凑统计 + 关键词搜索，不铺大卡片。 */
+.logp{display:flex;flex-direction:column;gap:10px}
+.logp-search{display:flex;align-items:center;gap:8px;height:30px;padding:0 10px;border:1px solid rgba(46,230,214,.3);background:rgba(10,8,24,.55);clip-path:var(--cut)}
+.logp-search .lf{flex:none;color:var(--teal);font-size:12px}
+.logp-search input{flex:1;min-width:0;border:0;background:none;outline:none;font-size:11px;color:#fff}
+.logp-search input::placeholder{color:var(--metal2)}
+.logp-search .n{flex:none;font-size:8.5px;letter-spacing:.08em;color:var(--metal2);font-variant-numeric:tabular-nums}
+.logp-search .n b{color:var(--teal);font-weight:800}
+.logp-clr{flex:none;width:18px;height:18px;display:grid;place-items:center;color:var(--metal2);font-size:10px}
+.logp-clr:hover{color:var(--red)}
+.logp-stats{display:grid;grid-template-columns:repeat(4,1fr);clip-path:var(--cut);border:1px solid rgba(185,179,217,.16);background:rgba(255,255,255,.035)}
+.logp-stat{min-width:0;padding:5px 10px 6px;border-right:1px solid rgba(185,179,217,.12)}
+.logp-stat:last-child{border-right:0}
+.logp-stat .k{display:block;font-size:7.5px;letter-spacing:.14em;color:var(--metal2);white-space:nowrap}
+.logp-stat .v{display:block;font-size:12.5px;line-height:1.35;color:#fff;font-variant-numeric:tabular-nums;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.logp-stat .v em{font-style:normal;font-size:8px;color:var(--metal2);margin-left:3px}
+.logp-stat.hot .v{color:var(--pink)}
+.logp-list{margin-top:1px}
+.logp-day{display:flex;align-items:center;gap:9px;margin:9px 0 1px;font-size:8px;letter-spacing:.16em;color:var(--metal2);font-family:var(--font-mono)}
+.logp-day:first-child{margin-top:0}
+.logp-day i{flex:1;height:1px;background:linear-gradient(90deg,rgba(46,230,214,.22),transparent)}
+.logp-row{position:relative;margin-left:5px;padding:6px 10px 7px 17px;border-left:1px solid rgba(46,230,214,.16);transition:background .12s}
+.logp-row::before{content:"";position:absolute;left:-4px;top:15px;width:7px;height:7px;border-radius:50%;background:var(--gold);box-shadow:0 0 8px rgba(245,197,66,.5)}
+.logp-row:hover{background:rgba(46,230,214,.055)}
+.logp-row .lp{font-size:11.5px;line-height:1.5;color:#fff;font-family:var(--font-ui);word-break:break-word}
+.logp-row .lp .pr{color:var(--gold);font-weight:800;margin-right:6px;font-family:var(--font-mono)}
+.logp-row .lm{display:flex;flex-wrap:wrap;align-items:center;gap:5px;margin-top:2px;font-size:9px;line-height:1.5;color:var(--metal2);font-family:var(--font-mono);font-variant-numeric:tabular-nums}
+.logp-row .lm .nm{color:#C9BFFF;font-weight:800}
+.logp-row .lm .ok{color:var(--green);font-weight:800}
+.logp-row .lm .dur{color:var(--pink)}
+.logp-row .lm .stp{color:var(--ink)}
+.logp-row .lm .tl{color:var(--sky)}
+.logp-row .lm .th{color:#B9A6FF}
+.logp-row .lm .tk{color:var(--green)}
+.logp-row .lm .cst{color:var(--amber)}
+.logp-row .lm .tm{margin-left:auto;color:rgba(141,134,184,.6)}
+.logp-row mark.hit{background:rgba(245,197,66,.26);color:var(--gold);padding:0 1px}
+.logp-empty{display:flex;align-items:center;justify-content:center;gap:8px;padding:28px 10px;font-size:10.5px;color:var(--metal2);border:1px dashed rgba(185,179,217,.2);clip-path:var(--cut)}
+.logp-empty b{color:var(--teal);font-size:14px}
+.logp-foot{display:flex;align-items:center;gap:8px;padding-top:2px;font-size:8.5px;color:var(--metal2)}
+.logp-foot .sp{flex:1}
+
 /* ═══ 文件目录树 ═══ */
 .fsearch{display:flex;gap:8px;align-items:center;margin-bottom:9px}
 .fsearch input{flex:1;min-width:0;height:28px;border:1px solid rgba(46,230,214,.3);background:rgba(10,8,24,.55);color:#fff;padding:0 10px;font-size:11px}
@@ -1561,6 +1606,7 @@ const state={sound:true,theme:0,winAlpha:1,thread:'main',panel:null,detailJob:nu
  simAuto:true,pop:null,handleSeq:7,wsProj:'gateway',wsOpen:{},wsSel:{},wsQ:'',
  twin:null,twinQ:'',twinGeo:null,twinMax:false,cabinQ:'',cabinOpen:null,cabinTabs:[],cabinTab:null,
  chgQ:'',chgSel:null,chgOpen:null,chgTabs:[],
+ logQ:'',
  actOpen:false,actSel:null,
  doc:null,
  addOpen:false,addTab:'skill',addQ:'',attSkill:null,attExpert:null,attLb:null,apMcp:null,
@@ -1929,6 +1975,50 @@ function tuiMeta(m){
  const cost=(tok/1000*0.03).toFixed(2);
  return `<div class="tmeta"><span class="ok">已完成</span><span>·</span><span>${dur}s</span><span>·</span><span>${steps} 步</span><span>·</span><span>工具 ${tools}</span><span>·</span><span>思考 ${thinks}</span><span>·</span><span>${tokTxt} tok</span><span>·</span><span>¥${cost}</span><span class="tm">${esc(m.t||nowHM())}</span></div>`;
 }
+/* ── 对话日志（v22 十五轮 · 2026-11-21 用户）：
+      我的 prompt 时间线 = 倒序；每条只留两行 —— prompt 原文 + TUI 摘要行
+      （✦ 汐音 · 已完成 · 耗时 · 步数 · 工具 · 思考 · token · 费用 · 时间）。
+      摘要行口径照抄主对话 TUI（TuiTranscript 的 meta 行），过程明细不回放。
+      旧记录用种子数据；本次会话里我发的 prompt 实时并入（按时间倒序合并）。 ── */
+const LOG_SEED=[
+ {at:'2026-11-21 09:20',day:'今天',text:'把 M2 的验收证据摊开，AC-4 缺覆盖先记着。',dur:186,steps:9,tools:6,thinks:3,tok:11200,cost:0.05},
+ {at:'2026-11-21 08:58',day:'今天',text:'M1 退款链路修一下，跑完告诉我。',dur:412,steps:14,tools:9,thinks:4,tok:26800,cost:0.11},
+ {at:'2026-11-20 21:14',day:'昨天',text:'右栏「活动」要常住，不要像「变更」那样按条件出现。',dur:96,steps:7,tools:5,thinks:2,tok:6400,cost:0.03},
+ {at:'2026-11-20 20:02',day:'昨天',text:'更多里的跃迁、模拟、编队在生产代码里下线，原型保留。',dur:134,steps:8,tools:6,thinks:2,tok:7900,cost:0.04},
+ {at:'2026-11-20 18:47',day:'昨天',text:'变更窗只列本舱 cwd 的改动，不要列全舱舱籍。',dur:220,steps:11,tools:8,thinks:3,tok:14600,cost:0.06},
+ {at:'2026-11-20 16:31',day:'昨天',text:'先看 reconcile.test.ts 为什么 expected 1 got 2。',dur:64,steps:5,tools:4,thinks:1,tok:3200,cost:0.02},
+ {at:'2026-11-20 15:08',day:'昨天',text:'限流三档压测跑一遍，别急着上配置。',dur:758,steps:16,tools:11,thinks:5,tok:34200,cost:0.15},
+ {at:'2026-11-19 22:26',day:'11-19',text:'发布脚本迁移到第 4 个停在安全点，回滚按脚本级。',dur:305,steps:12,tools:9,thinks:3,tok:18900,cost:0.08},
+ {at:'2026-11-19 21:03',day:'11-19',text:'把知识库里结算对账的结论捞出来给我看。',dur:52,steps:4,tools:3,thinks:1,tok:2100,cost:0.01},
+ {at:'2026-11-19 19:40',day:'11-19',text:'边缘灰度 5 个节点逐个放，探针抖就暂停。',dur:601,steps:15,tools:10,thinks:5,tok:22400,cost:0.09},
+ {at:'2026-11-19 17:12',day:'11-19',text:'M1 幂等修复归档，wiki 抽两条可复用结论。',dur:241,steps:10,tools:7,thinks:3,tok:12300,cost:0.05},
+ {at:'2026-11-19 15:56',day:'11-19',text:'给我一份今天的编队快照，谁在跑谁在等。',dur:31,steps:3,tools:2,thinks:1,tok:900,cost:0.004},
+];
+/** 本次会话我发的 prompt → 一条日志（统计口径同 tuiMeta，确定性模拟）。 */
+function logEntryOf(m){
+ const n=[...String(m.text||'')].length;
+ const steps=3+(n%6),tools=1+(n%4),thinks=1+(n%3);
+ const tok=Math.round((180+n*17)/100)*100;
+ return {at:'2026-11-21 '+(m.t||nowHM()),day:'今天',text:m.text,
+  dur:+(0.6+(n%9)/10).toFixed(1),steps,tools,thinks,tok,cost:+(tok/1000*0.03).toFixed(2)};
+}
+/** 倒序合并：本次会话 prompt + 种子历史。 */
+function logEntries(){
+ const dyn=(state.threads.main||[]).filter(m=>m.who==='you').map(logEntryOf);
+ return [...dyn,...LOG_SEED].sort((a,b)=>b.at.localeCompare(a.at));
+}
+function fmtDur(sec){
+ if(sec>=3600){const h=Math.floor(sec/3600),m=Math.round(sec%3600/60);return h+'h'+String(m).padStart(2,'0')+'m';}
+ if(sec>=60){const m=Math.floor(sec/60),s=Math.round(sec%60);return m+'m'+String(s).padStart(2,'0')+'s';}
+ return (Number.isInteger(sec)?sec:sec.toFixed(1))+'s';
+}
+/** 搜索高亮：先 esc 再包 <mark>，查询词里的正则元字符转义。 */
+function logHi(text,q){
+ const safe=esc(text);if(!q)return safe;
+ const pat=esc(q).replace(/[.*+?^${}()|[\]\\]/g,'\\$&');
+ return safe.replace(new RegExp(pat,'gi'),m=>`<mark class="hit">${m}</mark>`);
+}
+
 /* ── 文档名可点（v22 十一轮）：正文里 `xxx.md` 命中本舱文件 → chip，点开文档窗。
       只认反引号里的文档路径（与真实实现同口径：只对文档扩展名生效，工具行不动）。 ── */
 const DOC_REF_RE=/`([^`<>\s]+\.(?:md|txt|json|csv|log|html?))`/gi;
@@ -2715,10 +2805,10 @@ function renderJobProject(j){
    return `<button class="pjrow" data-jtree="${esc(j.id)}" data-jtree-proj="${esc(id)}" style="--accent:${pr.color}"><span class="pg3">⌗</span><span class="pm3"><b>${esc(pr.name)}</b><span>⎇ <b>${esc(br)}</b> · ${esc(wsPath(id))}</span></span><span class="ro3">只读</span><span class="go3">目录树 →</span></button>`;}).join('');
 }
 function renderPanel(){const p=$('#panel');if(!state.panel){p.classList.remove('open');return;}p.classList.add('open');applyPanelGeo();
- const sig=state.panel+'|'+state.detailJob+'|'+state.detailTab+'|'+state.fleetFilter;
+ const sig=state.panel+'|'+state.detailJob+'|'+state.detailTab+'|'+state.fleetFilter+'|'+(state.logQ||'');
  const keepScroll=sig===state._panelSig?(p.querySelector('.pb')?.scrollTop||0):0;state._panelSig=sig;
  const restore=()=>{const pb=p.querySelector('.pb');if(pb)pb.scrollTop=keepScroll;};
- const T={fleet:['⬡','编队','FLEET · 全部作战'],ops:['◈','待你决断','ONLY YOU'],detail:['▦','作战详情','HOLO DOSSIER'],log:['≡','对话日志','COMMS LOG'],usage:['¥','本舱账本','CABIN LEDGER · 全域只读'],projects:['⧉','舱籍 · 绑定项目','CABIN REGISTRY'],ws:['⌗','作战舱文件','WORKSPACE TREE'],poses:['✧','汐音动作视频','CLIP GALLERY · '+CLIPS.length]}[state.panel];
+ const T={fleet:['⬡','编队','FLEET · 全部作战'],ops:['◈','待你决断','ONLY YOU'],detail:['▦','作战详情','HOLO DOSSIER'],log:['≡','对话日志','COMMS LOG · 指令时间线'],usage:['¥','本舱账本','CABIN LEDGER · 全域只读'],projects:['⧉','舱籍 · 绑定项目','CABIN REGISTRY'],ws:['⌗','作战舱文件','WORKSPACE TREE'],poses:['✧','汐音动作视频','CLIP GALLERY · '+CLIPS.length]}[state.panel];
  let body='';
  if(state.panel==='fleet'){const order={blocked:0,wait:1,run:2,queue:3,done:4};
   const js=[...state.jobs].filter(j=>state.fleetFilter==='all'||j.proj===state.fleetFilter).sort((a,b)=>order[a.status]-order[b.status]);
@@ -2743,6 +2833,28 @@ function renderPanel(){const p=$('#panel');if(!state.panel){p.classList.remove('
   p.innerHTML=`<div class="ph"><button class="phx" data-close title="关闭">✕</button><span class="pt"><b>${STATE_EMO[j.status]} ${esc(j.title)}</b><span>${esc(pr.name)} · ${esc(j.branch)} · ${esc(j.tid)}</span></span></div><div class="pb${state.detailTab==='dialog'?' dcon-on':''}">${body}</div>`;
   const dlog=p.querySelector('.dcon-log');if(dlog)dlog.scrollTop=dlog.scrollHeight;
   bindPanel();restore();return;}
+ else if(state.panel==='log'){
+  const all=logEntries(),q=(state.logQ||'').trim(),ql=q.toLowerCase();
+  const hits=q?all.filter(e=>String(e.text).toLowerCase().includes(ql)):all;
+  const totalTok=all.reduce((s,e)=>s+e.tok,0),totalCost=all.reduce((s,e)=>s+e.cost,0);
+  const maxDur=all.reduce((m,e)=>Math.max(m,e.dur),0);
+  let day='';
+  const rows=hits.map(e=>{
+   const dsep=e.day!==day?(day=e.day,`<div class="logp-day"><span>${esc(e.day)}</span><i></i></div>`):'';
+   return `${dsep}<div class="logp-row"><div class="lp"><span class="pr">❯</span>${logHi(e.text,q)}</div>
+    <div class="lm"><span class="nm">✦ 汐音</span><span>·</span><span class="ok">已完成</span><span>·</span><span class="dur">${fmtDur(e.dur)}</span><span>·</span><span class="stp">${e.steps} 步</span><span>·</span><span class="tl">工具 ${e.tools}</span><span>·</span><span class="th">思考 ${e.thinks}</span><span>·</span><span class="tk">${fmtK(e.tok)} tok</span><span>·</span><span class="cst">¥${e.cost.toFixed(2)}</span><span class="tm">${esc(e.at.slice(11))}</span></div></div>`;
+  }).join('');
+  body=`<div class="logp">
+   <div class="logp-search"><span class="lf">⌕</span><input id="logQ" placeholder="搜索我的指令…（关键词）" value="${esc(state.logQ||'')}" aria-label="搜索我的指令"/><span class="n">${q?`<b>${hits.length}</b> / ${all.length}`:`${all.length} 条`}</span>${q?'<button class="logp-clr" data-log-clear title="清空搜索">✕</button>':''}</div>
+   <div class="logp-stats">
+    <div class="logp-stat"><span class="k">指令</span><span class="v">${all.length}<em>轮</em></span></div>
+    <div class="logp-stat"><span class="k">总 TOKEN</span><span class="v">${fmtK(totalTok)}</span></div>
+    <div class="logp-stat hot"><span class="k">最长耗时</span><span class="v">${fmtDur(maxDur)}</span></div>
+    <div class="logp-stat"><span class="k">总费用</span><span class="v">¥${totalCost.toFixed(2)}</span></div>
+   </div>
+   <div class="logp-list">${rows||'<div class="logp-empty"><b>⌕</b>没有匹配的指令 · 换个关键词</div>'}</div>
+   <div class="logp-foot"><span>只列我发出的 prompt · 摘要行口径同主对话 TUI</span><span class="sp"></span><span>倒序 · 最新在前</span></div>
+  </div>`;}
  else if(state.panel==='usage'){const perModel={};state.jobs.forEach(j=>{const m=j.kind==='external'?'se':'pro';perModel[m]=perModel[m]||{calls:0,tok:0,cost:0};perModel[m].calls+=j.status==='queue'?0:3;perModel[m].tok+=j.tok;perModel[m].cost+=j.cost;});
   const cabTok=state.jobs.reduce((s,j)=>s+j.tok,0),cabCost=state.jobs.reduce((s,j)=>s+j.cost,0);
   body=`<div class="pnote">本舱账本 = 全域累计（各作战汇总，只读）；本会话明细看通讯台头部 <b>CTX / TOKEN</b> 下拉。</div>
@@ -2783,6 +2895,9 @@ function bindPanel(){const p=$('#panel');
  $$('[data-tree]',p).forEach(b=>b.addEventListener('click',()=>{const set=treeOpenSet(jobOf(state.detailJob));const path=b.dataset.tree;set.has(path)?set.delete(path):set.add(path);renderPanel();Audio.sfx('click');}));
  $$('[data-file]',p).forEach(b=>b.addEventListener('click',()=>{state.fileSel[state.detailJob]=b.dataset.file;renderPanel();Audio.sfx('click');}));
  const fq=$('#fileQ',p);if(fq)fq.addEventListener('input',()=>{state.fileQ[state.detailJob]=fq.value;const pos=fq.selectionStart;renderPanel();const nq=$('#fileQ');if(nq){nq.focus();nq.setSelectionRange(pos,pos);}});
+ /* 对话日志：关键词即时过滤（重渲染后回填焦点与光标，与文件筛选同套路）。 */
+ const lq=$('#logQ',p);if(lq)lq.addEventListener('input',()=>{state.logQ=lq.value;const pos=lq.selectionStart;renderPanel();const nq=$('#logQ');if(nq){nq.focus();nq.setSelectionRange(pos,pos);}});
+ $('[data-log-clear]',p)?.addEventListener('click',()=>{state.logQ='';renderPanel();$('#logQ')?.focus();Audio.sfx('click');});
  $$('[data-wsproj]',p).forEach(b=>b.addEventListener('click',()=>{state.wsProj=b.dataset.wsproj;renderPanel();Audio.sfx('click');}));
  $$('[data-wtree]',p).forEach(b=>b.addEventListener('click',()=>{const set=wsOpenSet(state.wsProj);const path=b.dataset.wtree;set.has(path)?set.delete(path):set.add(path);renderPanel();Audio.sfx('click');}));
  $$('[data-wfile]',p).forEach(b=>b.addEventListener('click',()=>{state.wsSel[state.wsProj]=b.dataset.wfile;renderPanel();Audio.sfx('click');}));

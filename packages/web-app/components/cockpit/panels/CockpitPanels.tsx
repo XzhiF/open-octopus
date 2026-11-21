@@ -12,6 +12,7 @@ import { CockpitLedgerPanel } from './CockpitLedgerPanel'
 import { CockpitWsPanel } from './CockpitWsPanel'
 import { CockpitPosesPanel } from './CockpitPosesPanel'
 import { CockpitDebugPanel } from './CockpitDebugPanel'
+import { CockpitLogPanel } from './CockpitLogPanel'
 
 export function CockpitPanels() {
   const { panel, openPanel, select, entryCabinId } = useCockpitState()
@@ -34,5 +35,6 @@ export function CockpitPanels() {
   if (panel === 'ws') return <CockpitWsPanel />
   if (panel === 'poses') return <CockpitPosesPanel />
   if (panel === 'debug') return <CockpitDebugPanel />
+  if (panel === 'log') return <CockpitLogPanel />
   return null
 }

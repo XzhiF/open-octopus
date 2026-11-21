@@ -192,6 +192,119 @@
 .ck12-ledger-none { padding: 6px 8px; font-size: 10px; color: var(--ck12-faint); }
 .ck12-ledger-none.is-err { color: var(--pop-red, #ff6b81); }
 
+/* ── 对话日志（log · v22 十五轮）──────────────────────────────────────
+   我的 prompt 时间线：顶部关键词搜索 + 一行紧凑统计；每条只两行 ——
+   prompt 原文 + 主对话 TUI 摘要行。过程明细不回放（要看过程回主对话）。 */
+.ck12-log { display: flex; flex-direction: column; gap: 10px; }
+.ck12-log-search {
+  display: flex; align-items: center; gap: 8px; height: 32px; padding: 0 10px;
+  border: 1px solid color-mix(in srgb, var(--ck-a) 35%, transparent);
+  border-radius: 10px; background: rgba(255, 255, 255, 0.03);
+}
+.ck12-log-search:focus-within { border-color: var(--ck-a); }
+.ck12-log-search-i { flex: none; color: var(--ck12-faint); }
+.ck12-log-search input {
+  flex: 1; min-width: 0; border: 0; outline: none; background: none;
+  font-size: 11.5px; color: var(--ck12-ink);
+}
+.ck12-log-search input::placeholder { color: var(--ck12-faint); }
+.ck12-log-search input::-webkit-search-cancel-button { display: none; }
+.ck12-log-count {
+  flex: none; font-size: 9px; letter-spacing: 0.08em;
+  color: var(--ck12-faint); font-variant-numeric: tabular-nums;
+}
+.ck12-log-count b { color: var(--ck-a); font-weight: 800; }
+.ck12-log-clear {
+  flex: none; display: grid; place-items: center; width: 18px; height: 18px;
+  border-radius: 5px; color: var(--ck12-faint);
+}
+.ck12-log-clear:hover { color: var(--pop-red, #ff6b81); background: rgba(255, 255, 255, 0.06); }
+
+.ck12-log-stats {
+  display: grid; grid-template-columns: repeat(4, 1fr);
+  border: 1px solid var(--ck12-bd); border-radius: 10px;
+  background: rgba(255, 255, 255, 0.025); overflow: hidden;
+}
+.ck12-log-stat { min-width: 0; padding: 5px 10px 6px; border-right: 1px solid var(--ck12-bd); }
+.ck12-log-stat:last-child { border-right: 0; }
+.ck12-log-stat span {
+  display: block; font-size: 7.5px; letter-spacing: 0.14em;
+  color: var(--ck12-faint); white-space: nowrap;
+}
+.ck12-log-stat b {
+  display: block; font-size: 12.5px; line-height: 1.35; color: var(--ck12-ink);
+  font-variant-numeric: tabular-nums; white-space: nowrap;
+  overflow: hidden; text-overflow: ellipsis;
+}
+.ck12-log-stat b em { font-style: normal; font-size: 8px; color: var(--ck12-faint); margin-left: 3px; }
+.ck12-log-stat.is-hot b { color: var(--pop-pink); }
+
+.ck12-log-list { margin-top: 1px; }
+.ck12-log-day {
+  display: flex; align-items: center; gap: 9px; margin: 9px 0 1px;
+  font-size: 8px; letter-spacing: 0.16em; color: var(--ck12-faint);
+}
+.ck12-log-day:first-child { margin-top: 0; }
+.ck12-log-day i {
+  flex: 1; height: 1px;
+  background: linear-gradient(90deg, color-mix(in srgb, var(--ck-a) 24%, transparent), transparent);
+}
+.ck12-log-row {
+  position: relative; margin-left: 5px; padding: 6px 10px 7px 17px;
+  border-left: 1px solid color-mix(in srgb, var(--ck-a) 18%, transparent);
+}
+.ck12-log-row::before {
+  content: ""; position: absolute; left: -4px; top: 15px; width: 7px; height: 7px;
+  border-radius: 50%; background: var(--pop-amber);
+  box-shadow: 0 0 8px color-mix(in srgb, var(--pop-amber) 55%, transparent);
+}
+.ck12-log-row:hover { background: color-mix(in srgb, var(--ck-a) 6%, transparent); }
+.ck12-log-p { font-size: 11.5px; line-height: 1.5; color: var(--ck12-ink); word-break: break-word; }
+.ck12-log-pr {
+  margin-right: 6px; color: var(--pop-amber); font-weight: 800;
+  font-family: var(--font-mono);
+}
+.ck12-log-meta {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 5px; margin-top: 2px;
+  font-size: 9px; line-height: 1.5; color: var(--ck12-faint);
+  font-variant-numeric: tabular-nums;
+}
+.ck12-log-nm { color: #C9BFFF; font-weight: 800; }
+.ck12-log-st { font-weight: 800; }
+.ck12-log-st.is-done { color: var(--pop-green); }
+.ck12-log-st.is-interrupted { color: var(--pop-red, #ff6b81); }
+.ck12-log-st.is-pending { color: var(--pop-amber); }
+.ck12-log-dur { color: var(--pop-pink); }
+.ck12-log-stp { color: var(--ck12-ink); }
+.ck12-log-tl { color: var(--pop-cyan); }
+.ck12-log-th { color: #B9A6FF; }
+.ck12-log-tk { color: var(--pop-green); }
+.ck12-log-cst { color: var(--pop-amber); }
+.ck12-log-tm { margin-left: auto; color: var(--ck12-faint); }
+.ck12-log-hit {
+  padding: 0 1px; border-radius: 2px; color: var(--pop-amber);
+  background: color-mix(in srgb, var(--pop-amber) 28%, transparent);
+}
+
+.ck12-log-empty {
+  display: flex; align-items: center; justify-content: center; gap: 8px;
+  padding: 28px 10px; border: 1px dashed var(--ck12-bd); border-radius: 10px;
+  font-size: 10.5px; color: var(--ck12-dim);
+}
+.ck12-log-empty b { color: var(--ck-a); font-size: 14px; }
+.ck12-log-foot {
+  display: flex; align-items: center; gap: 8px; padding-top: 2px;
+  font-size: 8.5px; color: var(--ck12-faint);
+}
+.ck12-log-err { color: var(--pop-amber); }
+.ck12-log-sp { flex: 1; }
+
+@media (max-width: 560px) {
+  .ck12-log-stats { grid-template-columns: repeat(2, 1fr); }
+  .ck12-log-stat:nth-child(2) { border-right: 0; }
+  .ck12-log-stat:nth-child(-n + 2) { border-bottom: 1px solid var(--ck12-bd); }
+}
+
 /* ── 作战舱文件（ws）───────────────────────────────────────────────── */
 .ck12-ws-note {
   margin-bottom: 8px; padding: 4px 9px; border-radius: 7px;
