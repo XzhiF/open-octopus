@@ -10,15 +10,16 @@
 // v22 十四轮（2026-11-21 用户）：「活动」—— 汐音主会话里正在跑的子代理 /
 //   后台作业（⌥V，只读）。**常住按钮**（2026-11-21 用户：不用像「变更」那样
 //   按条件出现）；徽标只在有运行中活动时显示。没有活动时点开是空态。
-// 「更多」= **纯点击开合**（再点收回；点外面也收），向左横排展开 7 项
-// （汐音 / 动作 / 日志 / 跃迁 / 模拟 / 设置 / 编队）。不再用悬停开合。
+// 「更多」= **纯点击开合**（再点收回；点外面也收），向左横排展开
+// （汐音 / 动作 / 日志 / 设置）。不再用悬停开合。
+// 2026-11-21 用户：生产代码不再提供「跃迁 / 模拟 / 编队」三项（原型保留）；
+// 「日志」后续还要改，先留着。
 //
 // 动作全部复用既有入口（不新造面板）：账本 = ledger 面板、调试 = 本舱主会话
 // debug 面板（不是某条作业）、目录 = 本舱 cwd 只读窗、动作 = poses 面板、
 // 设置 = CockpitSettings 弹窗。作业自身的调试在作业面「调试」页签。
 
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { toast } from 'sonner'
 import { useCabinOptional } from '@/components/cabin/cabin-provider'
 import { toggleCrewSettings } from '../crew/crew-settings'
 import { toggleCabinTree } from '../face/cabin-tree-store'
@@ -30,10 +31,7 @@ const FAN_ITEMS = [
   { id: 'xiyin', glyph: '♡', label: '汐音' },
   { id: 'poses', glyph: '✧', label: '动作' },
   { id: 'log', glyph: '≡', label: '日志' },
-  { id: 'warp', glyph: '⟳', label: '跃迁' },
-  { id: 'sim', glyph: '✦', label: '模拟' },
   { id: 'settings', glyph: '⚙', label: '设置' },
-  { id: 'fleet', glyph: '⬡', label: '编队' },
 ] as const
 
 export interface CockpitMenuRailProps {
@@ -43,7 +41,7 @@ export interface CockpitMenuRailProps {
 
 export function CockpitMenuRail({ activityLive = 0 }: CockpitMenuRailProps) {
   const {
-    chatWindow, openPanel, setRailOpen, travel,
+    chatWindow, openPanel,
     activityOpen, openActivity, closeActivity,
   } = useCockpitState()
   const cabin = useCabinOptional()?.cabin
@@ -76,20 +74,10 @@ export function CockpitMenuRail({ activityLive = 0 }: CockpitMenuRailProps) {
         chatWindow.openWithFocus()
         window.dispatchEvent(new CustomEvent('octopus:chat-tall'))
         break
-      case 'warp': travel(); break
-      case 'sim':
-        if (import.meta.env.DEV) {
-          window.dispatchEvent(new CustomEvent('octopus:demo-arrival'))
-          toast('演示回流已发出（仅 DEV）')
-        } else {
-          toast('模拟回流仅在开发模式可用')
-        }
-        break
       case 'settings': setCockpitSettingsOpen(true); break
-      case 'fleet': setRailOpen(true); break
       default: break
     }
-  }, [chatWindow, openPanel, setRailOpen, travel])
+  }, [chatWindow, openPanel])
 
   const openCommand = useCallback(() => {
     chatWindow.openWithFocus()

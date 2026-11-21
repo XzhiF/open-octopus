@@ -2,7 +2,7 @@
 //   · 顺序 = 下指令 → 目录 → 消耗 → 调试 → 变更 → 更多（变更倒数第二）；
 //   · 「变更」只在 cwd 本身是独立 git 仓库（CabinDetail.cwd_git）时出现。
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { render, screen } from '@testing-library/react'
+import { fireEvent, render, screen } from '@testing-library/react'
 import { CockpitStateProvider } from '../../state/CockpitStateProvider'
 import { CockpitMenuRail } from '../CockpitMenuRail'
 
@@ -88,5 +88,24 @@ describe('CockpitMenuRail · 活动按钮', () => {
     renderRail()
     expect(screen.getByTestId('cockpit-menu-activity').textContent).toContain('活动')
     expect(screen.queryByTestId('cockpit-menu-activity-count')).toBeNull()
+  })
+})
+
+describe('CockpitMenuRail · 更多', () => {
+  it('生产代码只留 汐音 / 动作 / 日志 / 设置；跃迁 / 模拟 / 编队已下线', () => {
+    renderRail()
+    fireEvent.click(screen.getByTestId('cockpit-menu-more'))
+    const fan = screen.getByTestId('cockpit-menu-fan')
+    const items = [...fan.querySelectorAll<HTMLElement>('[data-testid^="cockpit-fan-"]')]
+      .map((el) => el.dataset.testid!)
+    expect(items).toEqual([
+      'cockpit-fan-xiyin',
+      'cockpit-fan-poses',
+      'cockpit-fan-log',
+      'cockpit-fan-settings',
+    ])
+    expect(screen.queryByTestId('cockpit-fan-warp')).toBeNull()
+    expect(screen.queryByTestId('cockpit-fan-sim')).toBeNull()
+    expect(screen.queryByTestId('cockpit-fan-fleet')).toBeNull()
   })
 })
