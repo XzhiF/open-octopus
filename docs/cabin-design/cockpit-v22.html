@@ -669,6 +669,51 @@ kbd{border:1px solid rgba(185,179,217,.35);border-bottom-width:2px;border-radius
 .loglm.me .bb{background:rgba(245,197,66,.14);border-color:rgba(245,197,66,.4)}
 .loglm.sys .bb{background:none;border:0;text-align:center;font-size:9px;color:var(--metal2);font-family:var(--font-mono)}
 
+/* ═══ 对话日志（v22 十五轮 · 2026-11-21 用户）═══
+   我的 prompt 时间线：倒序；每条只留两行 —— prompt 原文 + 主对话 TUI 摘要行
+   （✦ 汐音 · 已完成 · 耗时 · 步数 · 工具 · 思考 · token · 费用 · 时间）。
+   过程明细不在这里回放。顶部一条紧凑统计 + 关键词搜索，不铺大卡片。 */
+.logp{display:flex;flex-direction:column;gap:10px}
+.logp-search{display:flex;align-items:center;gap:8px;height:30px;padding:0 10px;border:1px solid rgba(46,230,214,.3);background:rgba(10,8,24,.55);clip-path:var(--cut)}
+.logp-search .lf{flex:none;color:var(--teal);font-size:12px}
+.logp-search input{flex:1;min-width:0;border:0;background:none;outline:none;font-size:11px;color:#fff}
+.logp-search input::placeholder{color:var(--metal2)}
+.logp-search .n{flex:none;font-size:8.5px;letter-spacing:.08em;color:var(--metal2);font-variant-numeric:tabular-nums}
+.logp-search .n b{color:var(--teal);font-weight:800}
+.logp-clr{flex:none;width:18px;height:18px;display:grid;place-items:center;color:var(--metal2);font-size:10px}
+.logp-clr:hover{color:var(--red)}
+.logp-stats{display:grid;grid-template-columns:repeat(4,1fr);clip-path:var(--cut);border:1px solid rgba(185,179,217,.16);background:rgba(255,255,255,.035)}
+.logp-stat{min-width:0;padding:5px 10px 6px;border-right:1px solid rgba(185,179,217,.12)}
+.logp-stat:last-child{border-right:0}
+.logp-stat .k{display:block;font-size:7.5px;letter-spacing:.14em;color:var(--metal2);white-space:nowrap}
+.logp-stat .v{display:block;font-size:12.5px;line-height:1.35;color:#fff;font-variant-numeric:tabular-nums;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.logp-stat .v em{font-style:normal;font-size:8px;color:var(--metal2);margin-left:3px}
+.logp-stat.hot .v{color:var(--pink)}
+.logp-list{margin-top:1px}
+.logp-day{display:flex;align-items:center;gap:9px;margin:9px 0 1px;font-size:8px;letter-spacing:.16em;color:var(--metal2);font-family:var(--font-mono)}
+.logp-day:first-child{margin-top:0}
+.logp-day i{flex:1;height:1px;background:linear-gradient(90deg,rgba(46,230,214,.22),transparent)}
+.logp-row{position:relative;margin-left:5px;padding:6px 10px 7px 17px;border-left:1px solid rgba(46,230,214,.16);transition:background .12s}
+.logp-row::before{content:"";position:absolute;left:-4px;top:15px;width:7px;height:7px;border-radius:50%;background:var(--gold);box-shadow:0 0 8px rgba(245,197,66,.5)}
+.logp-row:hover{background:rgba(46,230,214,.055)}
+.logp-row .lp{font-size:11.5px;line-height:1.5;color:#fff;font-family:var(--font-ui);word-break:break-word}
+.logp-row .lp .pr{color:var(--gold);font-weight:800;margin-right:6px;font-family:var(--font-mono)}
+.logp-row .lm{display:flex;flex-wrap:wrap;align-items:center;gap:5px;margin-top:2px;font-size:9px;line-height:1.5;color:var(--metal2);font-family:var(--font-mono);font-variant-numeric:tabular-nums}
+.logp-row .lm .nm{color:#C9BFFF;font-weight:800}
+.logp-row .lm .ok{color:var(--green);font-weight:800}
+.logp-row .lm .dur{color:var(--pink)}
+.logp-row .lm .stp{color:var(--ink)}
+.logp-row .lm .tl{color:var(--sky)}
+.logp-row .lm .th{color:#B9A6FF}
+.logp-row .lm .tk{color:var(--green)}
+.logp-row .lm .cst{color:var(--amber)}
+.logp-row .lm .tm{margin-left:auto;color:rgba(141,134,184,.6)}
+.logp-row mark.hit{background:rgba(245,197,66,.26);color:var(--gold);padding:0 1px}
+.logp-empty{display:flex;align-items:center;justify-content:center;gap:8px;padding:28px 10px;font-size:10.5px;color:var(--metal2);border:1px dashed rgba(185,179,217,.2);clip-path:var(--cut)}
+.logp-empty b{color:var(--teal);font-size:14px}
+.logp-foot{display:flex;align-items:center;gap:8px;padding-top:2px;font-size:8.5px;color:var(--metal2)}
+.logp-foot .sp{flex:1}
+
 /* ═══ 文件目录树 ═══ */
 .fsearch{display:flex;gap:8px;align-items:center;margin-bottom:9px}
 .fsearch input{flex:1;min-width:0;height:28px;border:1px solid rgba(46,230,214,.3);background:rgba(10,8,24,.55);color:#fff;padding:0 10px;font-size:11px}
@@ -855,6 +900,27 @@ kbd{border:1px solid rgba(185,179,217,.35);border-bottom-width:2px;border-radius
 .ck-imgcap{text-align:center;font-size:9px;color:var(--metal2);margin-top:6px}
 .ck-empty{flex:1;min-height:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:4px;font-size:10.5px;color:var(--ink2);text-align:center;padding:20px}
 .ck-empty span{font-size:9px;color:var(--metal2)}
+
+/* ═══ 本舱变更窗（v22 十二轮 · 2026-11-20 用户 #1）：右栏「变更」。
+       口径 = 本舱受管目录（cwd 自身与登记项目）的工作区改动（worktree vs HEAD，
+       含未跟踪）—— 跟编队「作战详情 → 变更」同一套读法：统计条 / 左树 / 右 diff，
+       只是范围改成这个舱的目录。只读。没有受管目录时右栏不出现这枚按钮。 ═══ */
+.chgstats{flex:none;display:flex;flex-wrap:wrap;gap:12px;align-items:center;padding:5px 10px;margin-bottom:8px;border:1px solid rgba(185,179,217,.16);background:rgba(10,8,24,.42);clip-path:var(--cut);font-size:9.5px;color:var(--ink2)}
+.chgstats b{font-weight:800;color:#fff}
+.chgstats .g{color:var(--green)}.chgstats .r{color:var(--red)}.chgstats .c{color:var(--sky)}
+.chgstats .sp{flex:1}
+.chgstats .live{flex:none;display:inline-flex;align-items:center;gap:5px;font-size:8px;letter-spacing:.1em;color:var(--teal)}
+.chgstats .live i{width:5px;height:5px;border-radius:50%;background:var(--teal);box-shadow:0 0 7px var(--teal);animation:holoPulse 1.8s infinite}
+.trow .tst{flex:none;width:9px;text-align:center;font-size:8px;font-weight:900}
+.trow .tst.m{color:var(--amber)}.trow .tst.a{color:var(--green)}.trow .tst.d{color:var(--red)}.trow .tst.q{color:var(--metal2)}
+.trow .tad{flex:none;margin-left:auto;font-size:8.5px;color:var(--green)}
+.trow .tdl{flex:none;font-size:8.5px;color:var(--red)}
+.chg-clean{padding:9px 2px 0;font-size:8.5px;letter-spacing:.06em;color:var(--metal2)}
+.chg-clean b{color:var(--sky);font-weight:800}
+.chg-file{border:1px solid rgba(185,179,217,.14);background:rgba(255,255,255,.04);clip-path:var(--cut);overflow:hidden}
+.chg-file .fh{border-bottom:1px solid rgba(185,179,217,.14)}
+.chg-file .fh .ro{flex:none;font-size:8px;letter-spacing:.08em;color:var(--metal2)}
+.chg-file .diff{max-height:none}
 @media (max-width:900px){
   /* 窄屏：cwd 条折成三行，路径独占一行，动作按钮不再顶出窗口右缘。 */
   .wsb.cwd{flex-wrap:wrap;row-gap:6px}
@@ -1202,6 +1268,86 @@ kbd{border:1px solid rgba(185,179,217,.35);border-bottom-width:2px;border-radius
   .hud{gap:6px;padding:0 8px}
   .tokcells{grid-template-columns:repeat(2,1fr)}
 }
+
+/* ═══ 活动（v22 十四轮 · rev2）：右栏「活动」—— 与「要我处理」同一套浮层。
+       一级 = 浮层列表（运行中子代理 / 后台作业优先）；二级 = 列表左边再出一栏详情
+       （.inboxpop.two）；点「←」回列表，Esc 先回列表再收起。 ═══ */
+.rhex[hidden]{display:none}
+.rhex .rnb{position:absolute;right:5px;top:5px;z-index:2;min-width:15px;height:15px;padding:0 3px;display:grid;place-items:center;border-radius:999px;background:var(--violet);color:#fff;font-size:8.5px;font-style:normal;font-weight:900;font-family:var(--font-mono);box-shadow:0 0 10px rgba(123,77,255,.75)}
+.rhex .rnb[hidden]{display:none}
+.actpop{top:auto}
+/* 二级详情 = 独立大窗，右侧与活动浮层齐平（无缝），从右缘向左展开。 */
+.actwin{left:auto;right:calc(var(--railr) - 6px + 378px);top:52px;bottom:52px;height:auto;transform:none;width:min(952px,calc(100vw - var(--railr) - 418px));
+  border-top-right-radius:0;border-bottom-right-radius:0}
+.actwin.open{animation:actWinUnfold .42s cubic-bezier(.33,0,.2,1) both}
+@keyframes actWinUnfold{
+  from{clip-path:inset(0 0 0 100%);opacity:.35}
+  to{clip-path:inset(0);opacity:1}
+}
+.actwin.open::after{content:"";position:absolute;top:0;bottom:0;width:2px;pointer-events:none;
+  background:linear-gradient(180deg,transparent,color-mix(in srgb,var(--violet) 85%,#fff),transparent);
+  box-shadow:0 0 18px var(--violet);animation:actWinEdge .42s cubic-bezier(.33,0,.2,1) both}
+@keyframes actWinEdge{from{left:100%;opacity:1}to{left:0;opacity:0}}
+.actpop.has-detail{border-top-left-radius:0;border-bottom-left-radius:0}
+.actwin .pb{gap:0;overflow:hidden}
+.actwin .act-body{flex:1;min-height:0;overflow:auto;padding:2px 16px 14px;font-family:var(--font-mono);font-size:10.5px;line-height:1.62;color:var(--ink2)}
+.actpop .ip-h{border-bottom-color:rgba(123,77,255,.24)}
+.actpop .ip-h .t{color:#c9b6ff}
+.actpop .ip-h .brk{color:#b9a7e8}
+.actpop .ip-body{padding-top:3px}
+.ip-group.vio{color:#c9b6ff}
+.ip-group.vio b{color:#c9b6ff}
+.actpop .ip-row.on{background:linear-gradient(90deg,rgba(123,77,255,.24),rgba(53,199,240,.1));box-shadow:inset 2px 0 0 var(--violet)}
+.actpop .ip-go{color:#c9b6ff}
+.actpop .ip-go.live{color:var(--green)}
+.actpop .ip-foot button{color:#c9b6ff}
+.actpop .ip-foot button:hover{color:#fff}
+.ap-kind{flex:none;font-size:8px;font-weight:800;letter-spacing:.04em;border:1px solid currentColor;padding:0 4px;line-height:13px;clip-path:polygon(3px 0,100% 0,calc(100% - 3px) 100%,0 100%)}
+.ap-kind.sub{color:#c9b6ff}
+.ap-kind.bg{color:var(--sky)}
+/* 二级详情：复用 .ipd 壳，内容沿用作业坞「子代理」的 TUI 读法 */
+.ipd .act-meta{margin:0 0 8px}
+.act-meta{flex:none;display:flex;flex-wrap:wrap;gap:5px;align-items:center;padding:5px 8px;border:1px solid rgba(185,179,217,.16);background:rgba(10,8,24,.42);clip-path:var(--cut);font-size:9px;color:var(--ink2)}
+.act-meta .chip{display:inline-flex;align-items:center;gap:4px;height:18px;padding:0 6px;border:1px solid rgba(185,179,217,.22);background:rgba(255,255,255,.04);color:var(--ink2);font-family:var(--font-mono);font-size:8px}
+.act-meta .chip.run{border-color:rgba(123,77,255,.45);background:rgba(123,77,255,.16);color:#d3c4ff}
+.act-meta .chip.done{border-color:rgba(61,220,151,.4);background:rgba(61,220,151,.12);color:var(--green)}
+.act-meta .chip.failed{border-color:rgba(255,59,92,.4);background:rgba(255,59,92,.12);color:var(--red)}
+.act-meta .sp{flex:1}
+.act-meta .src{flex:none;height:19px;padding:0 7px;border:1px solid rgba(46,230,214,.35);background:rgba(46,230,214,.1);color:var(--teal);font-size:8px;font-weight:800;clip-path:var(--btncut)}
+.act-meta .src:hover{background:rgba(46,230,214,.2);color:#fff}
+.act-prompt{flex:none;border:1px solid rgba(123,77,255,.32);background:rgba(123,77,255,.08);border-radius:8px;padding:7px 9px;margin:0 0 9px}
+.act-prompt .k{display:flex;align-items:center;gap:5px;margin-bottom:4px;font-size:8px;font-weight:800;letter-spacing:.1em;color:#c9b6ff}
+.act-prompt pre{margin:0;white-space:pre-wrap;word-break:break-word;font-size:10px;line-height:1.6;color:rgba(255,255,255,.9)}
+.act-log{display:flex;flex-direction:column;gap:2px}
+.act-tl{color:var(--ink2)}
+.act-tl summary{display:block;cursor:pointer;list-style:none;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;transition:color .13s}
+.act-tl summary::-webkit-details-marker{display:none}
+.act-tl summary:hover{color:#fff}
+.act-tl .g{flex:none;font-weight:800}
+.act-tl.think .g{color:var(--violet)}
+.act-tl.tool .g{color:var(--sky)}
+.act-tl.tool b{color:var(--sky);font-weight:800}
+.act-tl.tool .ok{color:var(--green)}
+.act-tl .hint{margin-left:5px;font-size:8.5px;color:var(--metal2)}
+.act-tl.text{display:flex;gap:6px;white-space:pre-wrap;word-break:break-word}
+.act-tl.text .g{color:var(--pink)}
+.act-tl .box{margin:2px 0 4px 14px;padding-left:8px;border-left:1px solid rgba(185,179,217,.3)}
+.act-tl .box .k{font-size:9px;font-weight:800;color:var(--sky)}
+.act-tl .box pre{margin:1px 0 6px;white-space:pre-wrap;word-break:break-word;font-size:9.5px;line-height:1.58;color:var(--ink2)}
+.act-sum{flex:none;border:1px solid rgba(61,220,151,.32);background:rgba(61,220,151,.08);border-radius:8px;padding:7px 9px;margin-top:10px}
+.act-sum .k{display:flex;align-items:center;gap:5px;margin-bottom:4px;font-size:8px;font-weight:800;letter-spacing:.1em;color:var(--green)}
+.act-sum pre{margin:0;white-space:pre-wrap;word-break:break-word;font-size:10px;line-height:1.6;color:rgba(255,255,255,.9)}
+.act-out{flex:none;border:1px solid rgba(53,199,240,.28);background:rgba(6,14,26,.72);border-radius:8px;overflow:hidden;margin:0 0 8px}
+.act-out .oh{display:flex;align-items:center;gap:6px;padding:5px 9px;border-bottom:1px solid rgba(53,199,240,.22);background:rgba(53,199,240,.08);font-size:8px;font-weight:800;letter-spacing:.1em;color:var(--sky)}
+.act-out .oh i{width:5px;height:5px;border-radius:50%;background:var(--green);box-shadow:0 0 7px var(--green);animation:np 1.6s infinite}
+.act-out pre{margin:0;padding:8px 9px;white-space:pre-wrap;word-break:break-word;font-size:9.5px;line-height:1.6;color:var(--ink2)}
+.act-tfoot{flex:none;display:flex;flex-wrap:wrap;align-items:center;gap:5px;padding:6px 10px;border-top:1px solid rgba(46,230,214,.16);background:rgba(13,10,30,.4);font-size:8px;color:var(--metal2);font-family:var(--font-mono)}
+.act-tfoot .chip{padding:1px 5px;border:1px solid rgba(185,179,217,.2);background:rgba(255,255,255,.04);color:var(--ink2)}
+.act-tfoot .chip b{color:#fff;font-weight:800}
+.act-tfoot .sp{flex:1}
+@media (max-width:900px){
+  #rActivity{display:none}
+}
 </style>
 </head>
 <body>
@@ -1236,14 +1382,17 @@ kbd{border:1px solid rgba(185,179,217,.35);border-bottom-width:2px;border-radius
   <aside class="fleetrail" id="fleetrail" aria-label="编队"></aside>
 
   <div class="inboxpop" id="inboxPop"></div>
+  <div class="inboxpop actpop" id="actPop"></div>
 
   <aside class="rightrail" aria-label="待办与主菜单">
     <button class="inboxchip" id="inboxchip" aria-expanded="false" aria-label="要我处理"></button>
     <nav class="rmenu">
       <button class="rhex big" id="rCmd" title="下指令 · 回主对话（⌘K）"><span class="ri">❯</span><span class="rl">下指令</span></button>
       <button class="rhex" id="rDir" title="本舱目录 · 当前 cwd 目录树（⌥F，只读）"><span class="ri">⌗</span><span class="rl">目录</span></button>
+      <button class="rhex" id="rActivity" title="活动 · 后台作业与子代理（⌥V，只读）" hidden><span class="ri">◉</span><span class="rl">活动</span><i class="rnb" id="rActivityN" hidden>0</i></button>
       <button class="rhex" id="lUsage" title="本舱账本（全域累计 · 只读）"><span class="ri">¥</span><span class="rl">消耗</span></button>
       <button class="rhex" id="lDebug" title="调试 inspect（常驻 · ⌥D）"><span class="ri">⚙</span><span class="rl">调试</span></button>
+      <button class="rhex" id="rChanges" title="本舱变更 · cwd 的工作区改动（⌥G，只读）"><span class="ri">±</span><span class="rl">变更</span></button>
       <div class="morewrap" id="morewrap">
         <button class="rhex more" id="rMore" title="更多 · 悬停向左横排展开" aria-expanded="false"><span class="ri">⋯</span><span class="rl">更多</span></button>
         <div class="fanwrap" id="fanwrap"><span class="fanlead">MORE</span><div class="fan" id="fan"></div></div>
@@ -1272,6 +1421,7 @@ kbd{border:1px solid rgba(185,179,217,.35);border-bottom-width:2px;border-radius
   <section class="panel" id="panel"></section>
   <section class="twin" id="twin" aria-label="目录树"></section>
   <section class="twin" id="docwin" aria-label="文档查看器"></section>
+  <section class="twin actwin" id="actWin" aria-label="活动详情"></section>
 
   <section class="console" id="console" aria-label="TUI 通讯台">
     <div class="con-h">
@@ -1455,6 +1605,9 @@ const state={sound:true,theme:0,winAlpha:1,thread:'main',panel:null,detailJob:nu
  unread:{},focusJob:null,fleetFilter:'all',treeOpen:{},fileSel:{},fileQ:{},dbgTurn:{},dbgTab:'overview',dbgFilter:'all',
  simAuto:true,pop:null,handleSeq:7,wsProj:'gateway',wsOpen:{},wsSel:{},wsQ:'',
  twin:null,twinQ:'',twinGeo:null,twinMax:false,cabinQ:'',cabinOpen:null,cabinTabs:[],cabinTab:null,
+ chgQ:'',chgSel:null,chgOpen:null,chgTabs:[],
+ logQ:'',
+ actOpen:false,actSel:null,
  doc:null,
  addOpen:false,addTab:'skill',addQ:'',attSkill:null,attExpert:null,attLb:null,apMcp:null,
  flash:{job:null,op:null,at:0},autoWarp:true,conMin:false,conLeft:null,conTop:null,conGeo:null,wins:[],winSeq:0,zTop:30,
@@ -1597,6 +1750,130 @@ function tickFleetRail(){const el=$('#fleetrail');if(!el)return;
     const bar=row.querySelector('.flbar i');if(bar)bar.style.width=Math.round(j.pct)+'%';
     row.style.setProperty('--p',Math.round(j.pct));});}
 
+/* ── 右栏「活动」（v22 十四轮 · rev2 · 2026-11-21 用户）：
+      与「要我处理」同一套浮层 —— 一级 = 列表；点一条 → 浮层变两栏，列表左边出详情；
+      「←」回列表，Esc 先回列表再收起。出现条件 = 有运行中的子代理 / 后台作业。 ── */
+function renderActivityButton(){
+  const btn=$('#rActivity');if(!btn)return;
+  const live=actLive();
+  btn.hidden=live.length===0;
+  btn.classList.toggle('on',state.actOpen);
+  const n=$('#rActivityN');
+  if(n){n.hidden=live.length===0;n.textContent=String(live.length);}
+  btn.title=live.length?`活动 · ${live.length} 项后台运行中（⌥V，只读）`:'活动 · 当前没有后台作业或子代理';
+}
+function positionActPop(){
+  const pop=$('#actPop'),btn=$('#rActivity');
+  if(!pop||!btn||!state.actOpen)return;
+  const r=btn.getBoundingClientRect(),h=pop.offsetHeight||0;
+  pop.style.top=clamp(Math.round(r.top+r.height/2-h/2),52,Math.max(52,innerHeight-h-8))+'px';
+}
+function toggleActPop(open){
+  const next=open==null?!state.actOpen:open;
+  if(next&&actLive().length===0)return;
+  if(next&&innerWidth<=900)return; // 窄屏右栏按钮隐藏，浮层也不出
+  state.actOpen=next;
+  if(!state.actOpen)state.actSel=null;
+  if(next&&state.inboxOpen)toggleInbox(false);
+  renderActivityPop();
+  Audio.sfx(state.actOpen?'open':'close');
+}
+function actListRow(a){
+  const live=a.status==='run';
+  return `<button class="ip-row${state.actSel===a.id?' on':''}" data-act-item="${esc(a.id)}" title="${esc(a.title)} · ${actStatusLabel(a.status)}">
+    <span class="r1"><span class="ap-kind ${a.kind==='subagent'?'sub':'bg'}">${a.kind==='subagent'?'◈ 子代理':'⌁ 后台'}</span><span class="ip-name">${esc(a.title)}</span><span class="ip-go${live?' live':''}">${live?'运行 · ':''}${esc(a.elapsed||'—')}</span></span>
+    <span class="ip-q">${esc(a.by)} · ${esc(actKindMeta(a))}</span></button>`;
+}
+function renderActivityPop(){
+  const pop=$('#actPop');if(!pop)return;
+  pop.classList.remove('two');
+  pop.classList.toggle('on',state.actOpen);
+  pop.classList.toggle('has-detail',state.actOpen&&!!state.actSel);
+  renderActivityButton();
+  if(!state.actOpen){pop.innerHTML='';renderActWin();return;}
+  const live=actLive();
+  const subs=ACTIVITY.filter(a=>a.kind==='subagent');
+  const bgs=ACTIVITY.filter(a=>a.kind==='background');
+  const subLive=subs.filter(a=>a.status==='run').length;
+  const bgLive=bgs.filter(a=>a.status==='run').length;
+  const sorted=arr=>[...arr].sort((x,y)=>(x.status==='run'?0:1)-(y.status==='run'?0:1));
+  const list=`<div class="ip-listwrap">
+    <div class="ip-h"><button class="ipx" data-act-close title="收起">✕</button><span class="t">活动</span><b>${live.length}</b><span class="brk">子代理 ${subs.length} · 后台 ${bgs.length} · 运行中 ${live.length}</span></div>
+    <div class="ip-body">
+      <div class="ip-group vio"><span>子代理</span><b>${subLive}/${subs.length}</b></div>
+      ${sorted(subs).map(actListRow).join('')||'<div class="ip-empty"><b>◈</b>本会话还没有子代理</div>'}
+      <div class="ip-group vio"><span>后台作业</span><b>${bgLive}/${bgs.length}</b></div>
+      ${sorted(bgs).map(actListRow).join('')||'<div class="ip-empty"><b>⌁</b>没有后台程序在跑</div>'}
+    </div>
+    <div class="ip-foot"><span>点一条看 指令 / 日志 / token</span><span class="sp"></span><button data-act-sim title="演示：把运行中活动全部收口，右栏按钮随之隐藏">模拟收口</button><span>Esc 收起</span></div>
+  </div>`;
+  pop.innerHTML=list;
+  bindActPop();
+  requestAnimationFrame(positionActPop);
+  renderActWin();
+}
+function renderActWin(){
+  const w=$('#actWin');if(!w)return;
+  const a=state.actSel?actOf(state.actSel):null;
+  if(!a||!state.actOpen){w.classList.remove('open');w.innerHTML='';return;}
+  const live=a.status==='run';
+  const isBg=a.kind==='background';
+  const src=a.src?jobOf(a.src):null;
+  const head=`${isBg?'⌁ 后台作业':'◈ 子代理详情'} · ${esc(a.title)}`;
+  const sub=`${isBg?'BACKGROUND TASK':'SUBAGENT'} · ${esc(a.by)} · 只读`;
+  const meta=`<div class="act-meta">
+    <span class="chip ${actStatusCls(a.status)}">${live?'●':'✓'} ${actStatusLabel(a.status)}</span>
+    <span class="chip">${esc(a.type||(isBg?'bash':'subagent'))}</span>
+    <span class="chip">${isBg?`pid ${esc(a.pid||'—')}`:`${a.steps||0} 步`}</span>
+    <span class="chip">${esc(a.started||'')} 起 · ${esc(a.elapsed||'—')}</span>
+    ${isBg?'':`<span class="chip">${esc(a.model||'—')}</span>`}
+    ${src?`<button class="src" data-act-src="${esc(src.id)}" title="回到编队里这条作业">▦ ${esc(src.short)}</button>`:''}
+  </div>`;
+  const prompt=`<div class="act-prompt"><div class="k">${isBg?'⌁ 启动命令':'✦ 主 Agent 的指令'}</div><pre>${esc(isBg?(a.command||''):(a.prompt||'（SDK 未回传指令正文）'))}</pre></div>`;
+  const body=isBg
+    ?`${prompt}${actLogHTML(a)}`
+    :`${prompt}${actLogHTML(a)}${a.summary?`<div class="act-sum"><div class="k">✓ 最终汇报</div><pre>${esc(a.summary)}</pre></div>`:''}`;
+  const foot=isBg
+    ?`<div class="act-tfoot"><span class="chip">退出码 <b>${a.exit==null?'—':a.exit}</b></span><span class="chip">pid <b>${esc(a.pid||'—')}</b></span><span class="chip">run_in_background</span><span class="sp"></span>${live?'实时输出中 · 只读':'已结束 · 留档只读'}</div>`
+    :`<div class="act-tfoot"><span class="chip">输入 <b>${fmtK(a.tin||0)}</b></span><span class="chip">输出 <b>${fmtK(a.tout||0)}</b></span><span class="chip">缓存读 <b>${fmtK(a.tcache||0)}</b></span><span class="chip">合计 <b>${fmtK(actTok(a))}</b> tok</span><span class="chip">费用 <b>${a.cost==null?'—':'¥'+a.cost.toFixed(2)}</b></span><span class="chip">${a.steps||0} 步</span><span class="sp"></span>${live?'↻ 实时更新中 · 只读':'已结束 · 留档只读'}</div>`;
+  w.innerHTML=`<div class="ph"><button class="phx" data-actwin-close title="关闭详情（Esc）">✕</button><span class="pt"><b>${head}</b><span>${sub}</span></span><span class="sp"></span></div>
+   <div class="pb">${meta}<div class="act-body">${body}</div>${foot}</div>`;
+  $('[data-actwin-close]',w)?.addEventListener('click',()=>{state.actSel=null;renderActivityPop();Audio.sfx('close');});
+  w.classList.add('open');
+}
+function actLogHTML(a){
+  if(a.kind==='background'){
+    return `<div class="act-out"><div class="oh">${a.status==='run'?'<i></i>':''}实时输出 · 只读</div><pre>${esc(a.output||'')}</pre></div>`;
+  }
+  const rows=(a.log||[]).map(l=>{
+    if(l.k==='think'){
+      return `<details class="act-tl think"><summary><span class="g">◌ 思考</span><span class="hint">▸ 展开</span></summary><div class="box"><pre>${esc(l.t||'')}</pre></div></details>`;
+    }
+    if(l.k==='text'){
+      return `<div class="act-tl text"><span class="g">✳</span><span>${esc(l.t||'')}</span></div>`;
+    }
+    const name=esc(l.name||'tool'),arg=esc(l.arg||''),res=esc(l.res||'');
+    return `<details class="act-tl tool"><summary><span class="g">▸</span><b>${name}</b> ${arg} <span class="ok">[✓] ${res}</span><span class="hint">▸ 展开</span></summary><div class="box"><div class="k">input · ${name}</div><pre>${arg||'（无参数）'}</pre><div class="k">result</div><pre>${res||'（无输出）'}</pre></div></details>`;
+  }).join('');
+  return `<div class="act-log">${rows||'<div class="act-tl text"><span class="g">·</span><span>已启动，等待第一条输出…</span></div>'}</div>`;
+}
+function bindActPop(){
+  const pop=$('#actPop');if(!pop)return;
+  $$('[data-act-item]',pop).forEach(b=>b.addEventListener('click',()=>{state.actSel=b.dataset.actItem;renderActivityPop();Audio.sfx('click');}));
+  $$('[data-act-close]',pop).forEach(b=>b.addEventListener('click',()=>toggleActPop(false)));
+  $('[data-act-src]',pop)?.addEventListener('click',e=>{
+    const jid=e.currentTarget.dataset.actSrc;
+    toggleActPop(false);
+    state.detailJob=jid;state.detailTab='dialog';openPanel('detail');Audio.sfx('click');
+  });
+  $('[data-act-sim]',pop)?.addEventListener('click',()=>{
+    ACTIVITY.forEach(a=>{if(a.status==='run'){a.status='done';a.exit=a.exit??0;}});
+    state.actSel=null;
+    toggleActPop(false);
+    toast('活动已全部收口 · 右栏按钮随之隐藏');
+  });
+}
+
 /* ── 右栏待办 inbox：计数 + 悬浮列表 + 就地回复卡（不跳作战线程） ── */
 const OP_GROUP={block:{key:'blk',label:'受阻'},start:{key:'ask',label:'待你定'},decide:{key:'ask',label:'待你定'},confirm:{key:'ask',label:'待你定'},accept:{key:'rev',label:'待验收'}};
 function inboxCounts(){const list=openOps();let ask=0,rev=0,blk=0;for(const o of list){const g=OP_GROUP[o.kind];if(g.key==='ask')ask++;else if(g.key==='rev')rev++;else blk++;}return {total:list.length,ask,rev,blk};}
@@ -1670,6 +1947,8 @@ function submitInbox(fromFree){
 function toggleInbox(open){
   state.inboxOpen=open==null?!state.inboxOpen:open;
   if(!state.inboxOpen){state.inboxSel=null;state.inboxPick=null;}
+  // 「要我处理」与「活动」共用一个浮层位置：开一个就收另一个。
+  if(state.inboxOpen&&state.actOpen){state.actOpen=false;state.actSel=null;renderActivityPop();}
   renderInbox();
   Audio.sfx(state.inboxOpen?'open':'close');
 }
@@ -1696,6 +1975,50 @@ function tuiMeta(m){
  const cost=(tok/1000*0.03).toFixed(2);
  return `<div class="tmeta"><span class="ok">已完成</span><span>·</span><span>${dur}s</span><span>·</span><span>${steps} 步</span><span>·</span><span>工具 ${tools}</span><span>·</span><span>思考 ${thinks}</span><span>·</span><span>${tokTxt} tok</span><span>·</span><span>¥${cost}</span><span class="tm">${esc(m.t||nowHM())}</span></div>`;
 }
+/* ── 对话日志（v22 十五轮 · 2026-11-21 用户）：
+      我的 prompt 时间线 = 倒序；每条只留两行 —— prompt 原文 + TUI 摘要行
+      （✦ 汐音 · 已完成 · 耗时 · 步数 · 工具 · 思考 · token · 费用 · 时间）。
+      摘要行口径照抄主对话 TUI（TuiTranscript 的 meta 行），过程明细不回放。
+      旧记录用种子数据；本次会话里我发的 prompt 实时并入（按时间倒序合并）。 ── */
+const LOG_SEED=[
+ {at:'2026-11-21 09:20',day:'今天',text:'把 M2 的验收证据摊开，AC-4 缺覆盖先记着。',dur:186,steps:9,tools:6,thinks:3,tok:11200,cost:0.05},
+ {at:'2026-11-21 08:58',day:'今天',text:'M1 退款链路修一下，跑完告诉我。',dur:412,steps:14,tools:9,thinks:4,tok:26800,cost:0.11},
+ {at:'2026-11-20 21:14',day:'昨天',text:'右栏「活动」要常住，不要像「变更」那样按条件出现。',dur:96,steps:7,tools:5,thinks:2,tok:6400,cost:0.03},
+ {at:'2026-11-20 20:02',day:'昨天',text:'更多里的跃迁、模拟、编队在生产代码里下线，原型保留。',dur:134,steps:8,tools:6,thinks:2,tok:7900,cost:0.04},
+ {at:'2026-11-20 18:47',day:'昨天',text:'变更窗只列本舱 cwd 的改动，不要列全舱舱籍。',dur:220,steps:11,tools:8,thinks:3,tok:14600,cost:0.06},
+ {at:'2026-11-20 16:31',day:'昨天',text:'先看 reconcile.test.ts 为什么 expected 1 got 2。',dur:64,steps:5,tools:4,thinks:1,tok:3200,cost:0.02},
+ {at:'2026-11-20 15:08',day:'昨天',text:'限流三档压测跑一遍，别急着上配置。',dur:758,steps:16,tools:11,thinks:5,tok:34200,cost:0.15},
+ {at:'2026-11-19 22:26',day:'11-19',text:'发布脚本迁移到第 4 个停在安全点，回滚按脚本级。',dur:305,steps:12,tools:9,thinks:3,tok:18900,cost:0.08},
+ {at:'2026-11-19 21:03',day:'11-19',text:'把知识库里结算对账的结论捞出来给我看。',dur:52,steps:4,tools:3,thinks:1,tok:2100,cost:0.01},
+ {at:'2026-11-19 19:40',day:'11-19',text:'边缘灰度 5 个节点逐个放，探针抖就暂停。',dur:601,steps:15,tools:10,thinks:5,tok:22400,cost:0.09},
+ {at:'2026-11-19 17:12',day:'11-19',text:'M1 幂等修复归档，wiki 抽两条可复用结论。',dur:241,steps:10,tools:7,thinks:3,tok:12300,cost:0.05},
+ {at:'2026-11-19 15:56',day:'11-19',text:'给我一份今天的编队快照，谁在跑谁在等。',dur:31,steps:3,tools:2,thinks:1,tok:900,cost:0.004},
+];
+/** 本次会话我发的 prompt → 一条日志（统计口径同 tuiMeta，确定性模拟）。 */
+function logEntryOf(m){
+ const n=[...String(m.text||'')].length;
+ const steps=3+(n%6),tools=1+(n%4),thinks=1+(n%3);
+ const tok=Math.round((180+n*17)/100)*100;
+ return {at:'2026-11-21 '+(m.t||nowHM()),day:'今天',text:m.text,
+  dur:+(0.6+(n%9)/10).toFixed(1),steps,tools,thinks,tok,cost:+(tok/1000*0.03).toFixed(2)};
+}
+/** 倒序合并：本次会话 prompt + 种子历史。 */
+function logEntries(){
+ const dyn=(state.threads.main||[]).filter(m=>m.who==='you').map(logEntryOf);
+ return [...dyn,...LOG_SEED].sort((a,b)=>b.at.localeCompare(a.at));
+}
+function fmtDur(sec){
+ if(sec>=3600){const h=Math.floor(sec/3600),m=Math.round(sec%3600/60);return h+'h'+String(m).padStart(2,'0')+'m';}
+ if(sec>=60){const m=Math.floor(sec/60),s=Math.round(sec%60);return m+'m'+String(s).padStart(2,'0')+'s';}
+ return (Number.isInteger(sec)?sec:sec.toFixed(1))+'s';
+}
+/** 搜索高亮：先 esc 再包 <mark>，查询词里的正则元字符转义。 */
+function logHi(text,q){
+ const safe=esc(text);if(!q)return safe;
+ const pat=esc(q).replace(/[.*+?^${}()|[\]\\]/g,'\\$&');
+ return safe.replace(new RegExp(pat,'gi'),m=>`<mark class="hit">${m}</mark>`);
+}
+
 /* ── 文档名可点（v22 十一轮）：正文里 `xxx.md` 命中本舱文件 → chip，点开文档窗。
       只认反引号里的文档路径（与真实实现同口径：只对文档扩展名生效，工具行不动）。 ── */
 const DOC_REF_RE=/`([^`<>\s]+\.(?:md|txt|json|csv|log|html?))`/gi;
@@ -2158,6 +2481,172 @@ function bindCabinTwin(){const w=$('#twin');
  $('[data-cws-job]',w)?.addEventListener('click',e=>{const jid=e.currentTarget.dataset.cwsJob;state.twin=null;w.classList.remove('open');state.detailJob=jid;state.detailTab='changes';state.panel='detail';renderPanel();Audio.sfx('click');});
  const cq=$('#cabinQ',w);if(cq)cq.addEventListener('input',()=>{state.cabinQ=cq.value;const pos=cq.selectionStart;renderCabinTwin();const nq=$('#cabinQ');if(nq){nq.focus();nq.setSelectionRange(pos,pos);}});}
 
+/* ═══ 本舱变更（v22 十二轮 · 2026-11-20 用户 #1）：右栏「变更」。
+       口径 = 本舱受管目录（cwd 自身 / 登记项目）的工作区改动：worktree vs HEAD + 未跟踪。
+       显示与编队「作战详情 → 变更」同构 —— 统计条 / 左树（项目 → 目录 → 文件，状态 + ±）
+       / 右多标签 diff；范围换成这个舱的目录。只读，不提交、不暂存。 ═══ */
+const CABIN_CHANGES=[
+ {id:'ledger',name:'ledger',branch:'fix/reconcile',head:'8ab30d2',files:[
+  {path:'src/settlement/reconcile.ts',state:'M',add:58,del:21,diff:[
+   ['ctx','41','export function reconcile(day: string) {'],
+   ['del','42','  const key = day'],
+   ['add','42',"  const key = day + ':' + accountId"],
+   ['add','43','  if (seen.has(key)) return { skipped: true }'],
+   ['ctx','44','  return settle(loadRows(day))'],
+   ['ctx','45','}']]},
+  {path:'src/ledger/post.ts',state:'?',add:26,del:0,diff:[
+   ['ctx','1','// 新文件 · 还没 git add（未跟踪）'],
+   ['add','1','export const post = (entry: Entry) =>'],
+   ['add','2','  journal.append(idempotent(entry))']]}]},
+ {id:'gateway',name:'gateway',branch:'feat/refund-flow',head:'24f1c9a',files:[
+  {path:'src/refund/replay.ts',state:'M',add:71,del:33,diff:[
+   ['ctx','18','export function replay(orderId: string) {'],
+   ['del','19','  if (seen.has(orderId)) return'],
+   ['add','19',"  const key = orderId + ':' + idempotencyKey"],
+   ['add','20','  if (seen.has(key)) return { skipped: true }'],
+   ['ctx','21','  return refund(orderId)']]},
+  {path:'src/refund/replay.test.ts',state:'M',add:25,del:8,diff:[
+   ['ctx','88',"it('replays idempotently', () => {"],
+   ['add','89','  replay(order); replay(order)'],
+   ['add','90','  expect(refunds()).toHaveLength(1)']]},
+  {path:'config/rate-limit.yaml',state:'M',add:3,del:1,diff:[
+   ['ctx','1','limits:'],
+   ['del','2','  rps: 1200'],
+   ['add','2','  rps: 600'],
+   ['add','3','  burst: 1200']]}]},
+ {id:'risk',name:'risk',branch:'main',head:'5c7e1a4',files:[
+  {path:'src/alert/rules.ts',state:'M',add:12,del:4,diff:[
+   ['ctx','7','export const rules = ['],
+   ['del','8',"  { id: 'R-01', expr: 'amt > 50000' },"],
+   ['add','8',"  { id: 'R-01', expr: 'amt > 50000', severity: 'high' },"],
+   ['add','9',"  { id: 'R-02', expr: 'count > 200 / 5m' },"],
+   ['ctx','10',']']]}]},
+ {id:'edge',name:'edge',branch:'feat/canary',head:'9d02f77',files:[]}];
+/* ═══ 活动（v22 十四轮 · 2026-11-21 用户）：汐音的后台作业 + 子代理。
+       右栏「活动」只在有运行中活动时出现；点开左侧换出活动栏，点一条开详情窗。
+       口径与作业坞「子代理」一致：主 Agent 指令 / 操作日志（可展开）/ token。 ═══ */
+const ACTIVITY_INIT=[
+ {id:'a-sa-1',kind:'subagent',title:'对账差异定位',type:'Explore',by:'汐音 · 主会话',status:'run',started:'09:38',elapsed:'3m12s',steps:18,
+  tin:12400,tout:14800,tcache:9600,cost:0.06,model:'qwen3.7-plus',src:'j-m2',
+  prompt:'在 ledger 项目里定位 M2 结算对账的金额差异：比对 src/settlement 的计算链路与 11-18 的对账快照，给出最小修复点。只读，不改文件。',
+  log:[
+   {k:'think',t:'先看 reconcile.test.ts 现有的失败断言，确认差异出现在哪一层。'},
+   {k:'tool',name:'Bash',arg:'pnpm vitest run src/settlement/reconcile.test.ts',res:'3 failed · expected 1 got 2'},
+   {k:'text',t:'失败集中在 amount = 0 的边界：回放时把已结算订单重复计了一次。'},
+   {k:'tool',name:'Read',arg:'src/settlement/reconcile.ts:41-88',res:'48 lines'},
+   {k:'tool',name:'Grep',arg:'"seen.has" src/settlement',res:'4 hits'},
+   {k:'text',t:'根因：去重 key 只用 day，没带 accountId，跨账户去重互相污染。'},
+   {k:'tool',name:'Bash',arg:'git diff --stat HEAD',res:'2 files +58 −21'},
+  ],summary:null},
+ {id:'a-sa-2',kind:'subagent',title:'术语冲突梳理',type:'general-purpose',by:'汐音 · 主会话',status:'run',started:'09:41',elapsed:'48s',steps:6,
+  tin:3200,tout:2100,tcache:0,cost:0.01,model:'qwen3.6-plus',src:'j-m2',
+  prompt:'把 M2 归档里「结算日 / 对账日 / 账期」三个术语的用法对齐 wiki 现有定义，列出冲突与建议口径。',
+  log:[
+   {k:'think',t:'先读 wiki/结算对账.md 与 M2 验收报告，再逐条比用词。'},
+   {k:'tool',name:'Read',arg:'wiki/结算对账.md',res:'74 lines'},
+   {k:'text',t:'「结算日」在 wiki 指 T+1 入账日，M2 报告里却指交易发生日 —— 这是一处真冲突。'},
+  ],summary:null},
+ {id:'a-bg-1',kind:'background',title:'vitest --run src/settlement',type:'bash',by:'汐音 · 主会话',status:'run',started:'09:40',elapsed:'1m05s',pid:'4412',src:'j-m2',
+  command:'pnpm vitest run src/settlement --reporter=dot',
+  output:'RUN  v2.1.9  D:/octopus-ws/cabin/projects/ledger\n\n❯ src/settlement/reconcile.test.ts (14 tests | 3 failed) 812ms\n   × reconciles cross-account replay\n     → expected 1 but got 2\n   ✓ settles T+1 boundary\n   ✓ ignores duplicate events\n\nTest Files  1 failed (1)\n     Tests  3 failed | 11 passed (14)\n  Start at  09:40:12\n  Duration  1.05s\n\n[watch] waiting for file changes…'},
+ {id:'a-bg-2',kind:'background',title:'pnpm build --filter @octo/ledger',type:'bash',by:'ledger-2 · M2',status:'done',started:'09:36',elapsed:'2m11s',pid:'4388',exit:0,src:'j-m2',
+  command:'pnpm --filter @octo/ledger build',
+  output:'@octo/ledger build$ tsup src/index.ts --format esm,cjs --dts\nESM dist/index.mjs 412.08 KB\nDTS dist/index.d.ts 175.00 B\n✔ build success in 2.11s\n\n[exit 0]'},
+ {id:'a-sa-3',kind:'subagent',title:'M1 回滚影响面核对',type:'Explore',by:'gateway-2 · M1',status:'done',started:'09:32',elapsed:'4m36s',steps:24,
+  tin:21000,tout:9000,tcache:15000,cost:0.07,model:'qwen3.7-plus',src:'j-m1',
+  prompt:'核对回滚到上一个绿提交 a74bee6 会丢掉哪些改动，给出影响面清单与建议。',
+  log:[
+   {k:'tool',name:'Bash',arg:'git log --oneline a74bee6..HEAD',res:'3 commits'},
+   {k:'tool',name:'Bash',arg:'git diff --stat a74bee6..HEAD',res:'6 files +214 −88'},
+   {k:'text',t:'回滚会丢掉 3 个测试用例的覆盖，但 CI 红点已定位在断言层。'},
+  ],summary:'回滚到 a74bee6 会丢掉 3 个测试用例的覆盖；建议原地修断言，估计 12 分钟。'},
+];
+const ACTIVITY=ACTIVITY_INIT.map(a=>({...a,log:(a.log||[]).slice()}));
+const actOf=id=>ACTIVITY.find(a=>a.id===id)||null;
+const actLive=()=>ACTIVITY.filter(a=>a.status==='run');
+const actStatusLabel=s=>s==='run'?'运行中':s==='failed'?'失败':'已结束';
+const actStatusCls=s=>s==='run'?'run':s==='failed'?'failed':'done';
+const actTok=a=>((a.tin||0)+(a.tout||0)+(a.tcache||0));
+const actKindMeta=a=>a.kind==='subagent'
+ ? `${a.type||'subagent'} · ${a.steps||0} 步 · ${fmtK(actTok(a))} tok`
+ : `${a.type||'bash'} · run_in_background · pid ${a.pid||'—'}`;
+const CHG_ST_CLASS={M:'m',A:'a',D:'d','?':'q'};
+function chgTotals(){let files=0,add=0,del=0,unt=0,dirs=0;
+ for(const d of CABIN_CHANGES){if(d.files.length)dirs++;files+=d.files.length;
+  for(const f of d.files){add+=f.add;del+=f.del;if(f.state==='?')unt++;}}
+ return {files,add,del,unt,dirs,clean:CABIN_CHANGES.length-dirs};}
+function chgProjTree(d){const root={n:d.name,d:true,c:[]};
+ for(const f of d.files){const segs=f.path.split('/');let cur=root;
+  segs.forEach((s,i)=>{if(i===segs.length-1)cur.c.push({n:s,d:false,f});
+   else{let nx=cur.c.find(x=>x.d&&x.n===s);if(!nx){nx={n:s,d:true,c:[]};cur.c.push(nx);}cur=nx;}});}
+ return root;}
+function chgFileOf(key){for(const d of CABIN_CHANGES){for(const f of d.files){if(d.id+':'+f.path===key)return {dir:d,file:f};}}return null;}
+function chgAllDirKeys(){const out=[];
+ for(const d of CABIN_CHANGES){out.push('p:'+d.id);
+  const walk=(n,p)=>{const q=p?p+'/'+n.n:n.n;if(n.d){out.push('d:'+d.id+':'+q);n.c.forEach(c=>walk(c,q));}};walk(chgProjTree(d),'');}
+ return out;}
+function chgOpenSet(){if(!state.chgOpen)state.chgOpen=new Set(chgAllDirKeys());return state.chgOpen;}
+function openChanges(){state.chgQ='';
+ if(!state.chgSel){state.chgSel='ledger:src/settlement/reconcile.ts';state.chgTabs=['ledger:src/settlement/reconcile.ts','gateway:src/refund/replay.ts'];state.chgOpen=null;}
+ state.twin={mode:'changes'};renderTwin();Audio.sfx('open');}
+function chgPick(key){if(!state.chgTabs.includes(key))state.chgTabs.push(key);state.chgSel=key;renderChgTwin();Audio.sfx('click');}
+function chgCloseTab(key){const i=state.chgTabs.indexOf(key);if(i<0)return;state.chgTabs.splice(i,1);if(state.chgSel===key)state.chgSel=state.chgTabs[Math.max(0,i-1)]||null;renderChgTwin();Audio.sfx('close');}
+function chgDiffHTML(f){return f.diff.map(l=>`<div class="ln ${l[0]}"><span class="n">${l[1]}</span><span>${l[0]==='add'?'+':l[0]==='del'?'−':' '} ${esc(l[2])}</span></div>`).join('');}
+function renderChgTwin(){const w=$('#twin');const q=state.chgQ.toLowerCase();const open=chgOpenSet();const tot=chgTotals();
+ if(!state.chgSel){const first=CABIN_CHANGES.find(d=>d.files.length);if(first){state.chgSel=first.id+':'+first.files[0].path;state.chgTabs=[state.chgSel];}}
+ const rows=[];let count=0;
+ for(const d of CABIN_CHANGES){
+  if(!d.files.length)continue;
+  const projKey='p:'+d.id;
+  if(q&&!d.files.some(f=>(d.name+'/'+f.path).toLowerCase().includes(q)))continue;
+  const isOpen=open.has(projKey)||!!q;
+  rows.push(`<button class="trow dir" data-chgdir="${esc(projKey)}" style="padding-left:7px"><span class="tw">${isOpen?'▾':'▸'}</span><span class="ti2">📦</span><span class="tn">${esc(d.name)}</span><span class="tb tk" title="worktree 分支">⎇ ${esc(d.branch)}</span></button>`);
+  if(!isOpen)continue;
+  const walk=(node,path,depth)=>{const p=path?path+'/'+node.n:node.n;
+   if(node.d){const key='d:'+d.id+':'+p;const o=open.has(key)||!!q;
+    rows.push(`<button class="trow dir" data-chgdir="${esc(key)}" style="padding-left:${7+depth*13}px"><span class="tw">${o?'▾':'▸'}</span><span class="ti2">📁</span><span class="tn">${esc(node.n)}</span></button>`);
+    if(o)node.c.forEach(c=>walk(c,p,depth+1));}
+   else{const f=node.f;if(q&&!(d.name+'/'+f.path).toLowerCase().includes(q))return;count++;
+    const key=d.id+':'+f.path;const sel=state.chgSel===key;
+    rows.push(`<button class="trow${sel?' sel':''}" data-chgfile="${esc(key)}" style="padding-left:${7+(depth+1)*13}px" title="${esc(f.path)}"><span class="tw"></span><span class="tst ${CHG_ST_CLASS[f.state]||'m'}">${esc(f.state)}</span><span class="tn">${esc(node.n)}</span><span class="tad">+${f.add}</span><span class="tdl">−${f.del}</span></button>`);}};
+  walk(chgProjTree(d),'',0);}
+ const tabs=state.chgTabs.map(key=>{const hit=chgFileOf(key);if(!hit)return '';const on=state.chgSel===key;
+  return `<span class="ck-tab${on?' on':''}" data-chgtab="${esc(key)}" title="${esc(hit.dir.name+'/'+hit.file.path)}"><span class="nm">${esc(hit.file.path.split('/').pop())}</span><span class="cx" data-chgtabx="${esc(key)}" title="关闭标签">✕</span></span>`;}).join('');
+ const hit=state.chgSel?chgFileOf(state.chgSel):null;
+ const view=hit?`<div class="ck-view">
+  <div class="ck-meta"><span class="p">${esc(hit.dir.name+'/'+hit.file.path)}</span><span class="ro">worktree vs HEAD · ${esc(hit.dir.head)}</span></div>
+  <div class="chg-file"><div class="fh"><span class="st">${esc(hit.file.state)}</span><span class="p">${esc(hit.file.path)}</span><span class="ad">+${hit.file.add}</span><span class="dl">−${hit.file.del}</span><span class="ro">未提交</span></div><div class="diff">${chgDiffHTML(hit.file)}</div></div>
+ </div>`:'<div class="ck-empty">左边点一个文件，看逐行 diff<span>口径 = 本舱受管目录的工作区改动 · 只读</span></div>';
+ const clean=CABIN_CHANGES.filter(d=>!d.files.length).map(d=>d.name).join(' / ');
+ w.innerHTML=`<div class="ph"><button class="phx" data-tclose title="关闭">✕</button><span class="pt"><b>± 本舱变更 · 账务中台</b><span>CABIN CHANGES · 受管目录工作区 · 只读</span></span><span class="sp"></span><button class="pwin" data-tmax title="全屏 / 还原（也可双击标题栏）">${state.twinMax?'⤡':'⛶'}</button></div>
+ <div class="pb">
+ <div class="wsb cwd"><span class="br">⌂ 本舱 cwd</span><span class="p">${esc(CABIN_CWD)}</span><span class="ro">${tot.dirs} / ${CABIN_CHANGES.length} 受管目录有改动</span><span class="acts"><button class="cbtn" data-chgrefresh title="重新读各目录工作区">⟳ 刷新</button><button class="cbtn" data-ccopy="${esc(CABIN_CWD)}" title="复制本舱 cwd 绝对路径">⧉ 复制路径</button></span></div>
+ <div class="chgstats"><span class="c"><b>${tot.dirs}</b> 目录有改动</span><span><b>${tot.files}</b> 文件</span><span class="g">+${tot.add}</span><span class="r">−${tot.del}</span><span><b>${tot.unt}</b> 未跟踪</span><span class="sp"></span><span class="live"><i></i>工作区实时</span></div>
+ <div class="ck-tree">
+  <div class="ck-side">
+   <div class="ck-side-h"><input id="chgQ" placeholder="筛文件…" value="${esc(state.chgQ)}" aria-label="筛选变更文件"/><button class="ck-ib" data-chgexp="1" title="全部展开">⊞</button><button class="ck-ib" data-chgexp="0" title="全部收起">⊟</button></div>
+   <div class="ck-scope">本舱 · ${count} 文件${tot.clean?` · 另 ${tot.clean} 目录干净`:''}</div>
+   <div class="ck-scroll" role="tree">${rows.join('')||'<div class="pempty">无匹配文件</div>'}${clean?`<div class="chg-clean">干净 · <b>${esc(clean)}</b></div>`:''}</div>
+  </div>
+  <div class="ck-main">
+   <div class="ck-tabs" role="tablist">${tabs||'<span class="ck-tabs-empty">没有打开的标签 · 点左边文件</span>'}</div>
+   ${view}
+  </div>
+ </div>
+ </div>`;
+ bindChgTwin();applyTwinGeo();w.classList.add('open');}
+function bindChgTwin(){const w=$('#twin');
+ $('[data-tclose]',w)?.addEventListener('click',closeTree);
+ $('[data-tmax]',w)?.addEventListener('click',e=>{e.stopPropagation();toggleTwinMax();});
+ $$('[data-chgdir]',w).forEach(b=>b.addEventListener('click',()=>{const k=b.dataset.chgdir;const set=chgOpenSet();set.has(k)?set.delete(k):set.add(k);renderChgTwin();Audio.sfx('click');}));
+ $$('[data-chgfile]',w).forEach(b=>b.addEventListener('click',()=>chgPick(b.dataset.chgfile)));
+ $$('[data-chgtab]',w).forEach(b=>b.addEventListener('click',e=>{if(e.target.closest('[data-chgtabx]'))return;state.chgSel=b.dataset.chgtab;renderChgTwin();Audio.sfx('click');}));
+ $$('[data-chgtabx]',w).forEach(b=>b.addEventListener('click',e=>{e.stopPropagation();chgCloseTab(b.dataset.chgtabx);}));
+ $$('[data-chgexp]',w).forEach(b=>b.addEventListener('click',()=>{state.chgOpen=new Set(b.dataset.chgexp==='1'?chgAllDirKeys():[]);renderChgTwin();Audio.sfx('click');}));
+ $('[data-chgrefresh]',w)?.addEventListener('click',()=>{renderChgTwin();toast('已重读本舱受管目录 · '+chgTotals().files+' 个文件有改动');Audio.sfx('click');});
+ $$('[data-ccopy]',w).forEach(b=>b.addEventListener('click',e=>{e.stopPropagation();const p=b.dataset.ccopy||CABIN_CWD;fallbackCopy(p,()=>toast('已复制 · '+p));Audio.sfx('click');}));
+ const cq=$('#chgQ',w);if(cq)cq.addEventListener('input',()=>{state.chgQ=cq.value;const pos=cq.selectionStart;renderChgTwin();const nq=$('#chgQ');if(nq){nq.focus();nq.setSelectionRange(pos,pos);}});}
+
 /* ── 文档查看器（v22 十一轮）：通讯台正文里点文档名 → 这个窗。
       与目录窗同一套壳（.twin / .ph / .wsb.cwd / .ck-*），只读；⌗ 跳回目录窗看位置。 ── */
 function openDoc(p){const node=docByRef(p);if(!node){toast('文档不在本舱目录里 · '+p);return;}state.doc=node.p;renderDoc();Audio.sfx('open');}
@@ -2316,10 +2805,10 @@ function renderJobProject(j){
    return `<button class="pjrow" data-jtree="${esc(j.id)}" data-jtree-proj="${esc(id)}" style="--accent:${pr.color}"><span class="pg3">⌗</span><span class="pm3"><b>${esc(pr.name)}</b><span>⎇ <b>${esc(br)}</b> · ${esc(wsPath(id))}</span></span><span class="ro3">只读</span><span class="go3">目录树 →</span></button>`;}).join('');
 }
 function renderPanel(){const p=$('#panel');if(!state.panel){p.classList.remove('open');return;}p.classList.add('open');applyPanelGeo();
- const sig=state.panel+'|'+state.detailJob+'|'+state.detailTab+'|'+state.fleetFilter;
+ const sig=state.panel+'|'+state.detailJob+'|'+state.detailTab+'|'+state.fleetFilter+'|'+(state.logQ||'');
  const keepScroll=sig===state._panelSig?(p.querySelector('.pb')?.scrollTop||0):0;state._panelSig=sig;
  const restore=()=>{const pb=p.querySelector('.pb');if(pb)pb.scrollTop=keepScroll;};
- const T={fleet:['⬡','编队','FLEET · 全部作战'],ops:['◈','待你决断','ONLY YOU'],detail:['▦','作战详情','HOLO DOSSIER'],log:['≡','对话日志','COMMS LOG'],usage:['¥','本舱账本','CABIN LEDGER · 全域只读'],projects:['⧉','舱籍 · 绑定项目','CABIN REGISTRY'],ws:['⌗','作战舱文件','WORKSPACE TREE'],poses:['✧','汐音动作视频','CLIP GALLERY · '+CLIPS.length]}[state.panel];
+ const T={fleet:['⬡','编队','FLEET · 全部作战'],ops:['◈','待你决断','ONLY YOU'],detail:['▦','作战详情','HOLO DOSSIER'],log:['≡','对话日志','COMMS LOG · 指令时间线'],usage:['¥','本舱账本','CABIN LEDGER · 全域只读'],projects:['⧉','舱籍 · 绑定项目','CABIN REGISTRY'],ws:['⌗','作战舱文件','WORKSPACE TREE'],poses:['✧','汐音动作视频','CLIP GALLERY · '+CLIPS.length]}[state.panel];
  let body='';
  if(state.panel==='fleet'){const order={blocked:0,wait:1,run:2,queue:3,done:4};
   const js=[...state.jobs].filter(j=>state.fleetFilter==='all'||j.proj===state.fleetFilter).sort((a,b)=>order[a.status]-order[b.status]);
@@ -2344,6 +2833,28 @@ function renderPanel(){const p=$('#panel');if(!state.panel){p.classList.remove('
   p.innerHTML=`<div class="ph"><button class="phx" data-close title="关闭">✕</button><span class="pt"><b>${STATE_EMO[j.status]} ${esc(j.title)}</b><span>${esc(pr.name)} · ${esc(j.branch)} · ${esc(j.tid)}</span></span></div><div class="pb${state.detailTab==='dialog'?' dcon-on':''}">${body}</div>`;
   const dlog=p.querySelector('.dcon-log');if(dlog)dlog.scrollTop=dlog.scrollHeight;
   bindPanel();restore();return;}
+ else if(state.panel==='log'){
+  const all=logEntries(),q=(state.logQ||'').trim(),ql=q.toLowerCase();
+  const hits=q?all.filter(e=>String(e.text).toLowerCase().includes(ql)):all;
+  const totalTok=all.reduce((s,e)=>s+e.tok,0),totalCost=all.reduce((s,e)=>s+e.cost,0);
+  const maxDur=all.reduce((m,e)=>Math.max(m,e.dur),0);
+  let day='';
+  const rows=hits.map(e=>{
+   const dsep=e.day!==day?(day=e.day,`<div class="logp-day"><span>${esc(e.day)}</span><i></i></div>`):'';
+   return `${dsep}<div class="logp-row"><div class="lp"><span class="pr">❯</span>${logHi(e.text,q)}</div>
+    <div class="lm"><span class="nm">✦ 汐音</span><span>·</span><span class="ok">已完成</span><span>·</span><span class="dur">${fmtDur(e.dur)}</span><span>·</span><span class="stp">${e.steps} 步</span><span>·</span><span class="tl">工具 ${e.tools}</span><span>·</span><span class="th">思考 ${e.thinks}</span><span>·</span><span class="tk">${fmtK(e.tok)} tok</span><span>·</span><span class="cst">¥${e.cost.toFixed(2)}</span><span class="tm">${esc(e.at.slice(11))}</span></div></div>`;
+  }).join('');
+  body=`<div class="logp">
+   <div class="logp-search"><span class="lf">⌕</span><input id="logQ" placeholder="搜索我的指令…（关键词）" value="${esc(state.logQ||'')}" aria-label="搜索我的指令"/><span class="n">${q?`<b>${hits.length}</b> / ${all.length}`:`${all.length} 条`}</span>${q?'<button class="logp-clr" data-log-clear title="清空搜索">✕</button>':''}</div>
+   <div class="logp-stats">
+    <div class="logp-stat"><span class="k">指令</span><span class="v">${all.length}<em>轮</em></span></div>
+    <div class="logp-stat"><span class="k">总 TOKEN</span><span class="v">${fmtK(totalTok)}</span></div>
+    <div class="logp-stat hot"><span class="k">最长耗时</span><span class="v">${fmtDur(maxDur)}</span></div>
+    <div class="logp-stat"><span class="k">总费用</span><span class="v">¥${totalCost.toFixed(2)}</span></div>
+   </div>
+   <div class="logp-list">${rows||'<div class="logp-empty"><b>⌕</b>没有匹配的指令 · 换个关键词</div>'}</div>
+   <div class="logp-foot"><span>只列我发出的 prompt · 摘要行口径同主对话 TUI</span><span class="sp"></span><span>倒序 · 最新在前</span></div>
+  </div>`;}
  else if(state.panel==='usage'){const perModel={};state.jobs.forEach(j=>{const m=j.kind==='external'?'se':'pro';perModel[m]=perModel[m]||{calls:0,tok:0,cost:0};perModel[m].calls+=j.status==='queue'?0:3;perModel[m].tok+=j.tok;perModel[m].cost+=j.cost;});
   const cabTok=state.jobs.reduce((s,j)=>s+j.tok,0),cabCost=state.jobs.reduce((s,j)=>s+j.cost,0);
   body=`<div class="pnote">本舱账本 = 全域累计（各作战汇总，只读）；本会话明细看通讯台头部 <b>CTX / TOKEN</b> 下拉。</div>
@@ -2384,6 +2895,9 @@ function bindPanel(){const p=$('#panel');
  $$('[data-tree]',p).forEach(b=>b.addEventListener('click',()=>{const set=treeOpenSet(jobOf(state.detailJob));const path=b.dataset.tree;set.has(path)?set.delete(path):set.add(path);renderPanel();Audio.sfx('click');}));
  $$('[data-file]',p).forEach(b=>b.addEventListener('click',()=>{state.fileSel[state.detailJob]=b.dataset.file;renderPanel();Audio.sfx('click');}));
  const fq=$('#fileQ',p);if(fq)fq.addEventListener('input',()=>{state.fileQ[state.detailJob]=fq.value;const pos=fq.selectionStart;renderPanel();const nq=$('#fileQ');if(nq){nq.focus();nq.setSelectionRange(pos,pos);}});
+ /* 对话日志：关键词即时过滤（重渲染后回填焦点与光标，与文件筛选同套路）。 */
+ const lq=$('#logQ',p);if(lq)lq.addEventListener('input',()=>{state.logQ=lq.value;const pos=lq.selectionStart;renderPanel();const nq=$('#logQ');if(nq){nq.focus();nq.setSelectionRange(pos,pos);}});
+ $('[data-log-clear]',p)?.addEventListener('click',()=>{state.logQ='';renderPanel();$('#logQ')?.focus();Audio.sfx('click');});
  $$('[data-wsproj]',p).forEach(b=>b.addEventListener('click',()=>{state.wsProj=b.dataset.wsproj;renderPanel();Audio.sfx('click');}));
  $$('[data-wtree]',p).forEach(b=>b.addEventListener('click',()=>{const set=wsOpenSet(state.wsProj);const path=b.dataset.wtree;set.has(path)?set.delete(path):set.add(path);renderPanel();Audio.sfx('click');}));
  $$('[data-wfile]',p).forEach(b=>b.addEventListener('click',()=>{state.wsSel[state.wsProj]=b.dataset.wfile;renderPanel();Audio.sfx('click');}));
@@ -2417,6 +2931,7 @@ function openTree(jid,pid){const j=jobOf(jid);if(!j)return;const ids=jobProjIds(
 function closeTree(){if(!state.twin)return;state.twin=null;$('#twin').classList.remove('open');Audio.sfx('close');}
 function renderTwin(){const w=$('#twin');const t=state.twin;if(!t){w.classList.remove('open');return;}
  if(t.mode==='cabin'){renderCabinTwin();return;}
+ if(t.mode==='changes'){renderChgTwin();return;}
  const j=jobOf(t.job);if(!j){state.twin=null;w.classList.remove('open');return;}
  const ids=jobProjIds(j);const pid=ids.includes(t.proj)?t.proj:ids[0];t.proj=pid;const pr=projOf(pid);
  const open=wsOpenSet(pid);const q=state.twinQ.toLowerCase();const rows=[];let count=0;
@@ -2717,6 +3232,8 @@ setInterval(()=>{if(document.hidden)return;const runs=state.jobs.filter(j=>j.sta
 /* ── events ── */
 $('#rCmd').addEventListener('click',()=>{openThread('main');state.warp=Math.max(state.warp,.5);$('#cmdInput').focus();});
 $('#rDir').addEventListener('click',openCabinTree);
+$('#rActivity').addEventListener('click',()=>toggleActPop());
+$('#rChanges').addEventListener('click',openChanges);
 /* 中间读数 pill：左段 = 跃迁；右段 = 当前时间（只读，每秒走字）。 */
 $('#srScene').addEventListener('click',travel);
 renderClock();setInterval(renderClock,1000);
@@ -2778,17 +3295,20 @@ addEventListener('keydown',e=>{const inIn=e.target.closest('textarea,input');
  if(e.altKey&&e.key.toLowerCase()==='w'){e.preventDefault();travel();return;}
  if(e.altKey&&e.key.toLowerCase()==='d'){e.preventDefault();$('#lDebug').click();return;}
  if(e.altKey&&e.key.toLowerCase()==='f'){e.preventDefault();$('#rDir').click();return;}
+ if(e.altKey&&e.key.toLowerCase()==='v'){e.preventDefault();$('#rActivity').click();return;}
+ if(e.altKey&&e.key.toLowerCase()==='g'){e.preventDefault();$('#rChanges').click();return;}
  if(e.altKey&&e.key.toLowerCase()==='a'){e.preventDefault();$('#conAdd').click();return;}
  if(e.altKey&&e.key.toLowerCase()==='c'){e.preventDefault();setConMin(!state.conMin);return;}
  if(e.altKey&&e.key.toLowerCase()==='i'){e.preventDefault();toggleInbox();return;}
  if(e.altKey&&e.key==='1'){e.preventDefault();const f=[...openOps()].sort((a,b)=>OP_KIND[a.kind].pri-OP_KIND[b.kind].pri)[0];if(f){state.inboxOpen=true;state.inboxSel=f.id;state.inboxPick=null;renderInbox();Audio.sfx('open');}else toggleInbox(true);return;}
- if(e.key==='Escape'){if(state.addOpen){openAdd(false);return;}if(state.settings){closeSettings();return;}if(state.doc){closeDocView();return;}if(state.twin){closeTree();return;}if(state.conPop){closeConPop();return;}if(state.pop){closePops();return;}if(state.inboxOpen){if(state.inboxSel){state.inboxSel=null;state.inboxPick=null;renderInbox();}else toggleInbox(false);return;}if(state.brief){hideBanner();return;}if(state.relayJump){state.relayJump=false;renderPanel();return;}if(state.panel){closePanel();return;}if(!state.conMin){setConMin(true);return;}}
+ if(e.key==='Escape'){if(state.addOpen){openAdd(false);return;}if(state.settings){closeSettings();return;}if(state.doc){closeDocView();return;}if(state.twin){closeTree();return;}if(state.actOpen){if(state.actSel){state.actSel=null;renderActivityPop();}else toggleActPop(false);return;}if(state.conPop){closeConPop();return;}if(state.pop){closePops();return;}if(state.inboxOpen){if(state.inboxSel){state.inboxSel=null;state.inboxPick=null;renderInbox();}else toggleInbox(false);return;}if(state.brief){hideBanner();return;}if(state.relayJump){state.relayJump=false;renderPanel();return;}if(state.panel){closePanel();return;}if(!state.conMin){setConMin(true);return;}}
  if(!inIn&&state.inboxOpen&&state.inboxSel&&state.inboxPick!=null&&e.key==='Enter'){e.preventDefault();submitInbox(false);return;}
  if(!inIn&&state.inboxOpen&&state.inboxSel&&/^[1-9]$/.test(e.key)){const o=opOf(state.inboxSel);if(o&&o.status==='open'){const i=+e.key-1;if(o.options[i]){e.preventDefault();state.inboxPick=i;renderInbox();Audio.sfx('click');}}return;}
  if(!inIn&&/^[1-9]$/.test(e.key)&&state.thread!=='main'){const o=opForJob(state.thread);if(o){const i=+e.key-1;if(o.options[i]){e.preventDefault();resolveOp(o.id,o.options[i].label);}}}});
 
 /* ── boot ── */
-sizeWarp();seed();startWarp();renderDots();renderHUD();renderConsole();renderInbox();state.mood='idle';
+sizeWarp();seed();startWarp();renderDots();renderHUD();renderFleetRail();renderConsole();renderInbox();renderActivityButton();state.mood='idle';
+addEventListener('resize',()=>{if(state.actOpen)positionActPop();});
 /* v22 · 纯视频立绘：起播才淡入（防切段时闪黑）；解码失败保持透明 */
 const CHARV=$('#charVid');
 CHARV.addEventListener('playing',()=>{if(!CHARV.currentSrc.endsWith(CLIPS[state.clip].src.replace('./','')))return;CHARV.style.opacity=1;$('#character').classList.add('live');});

@@ -10,7 +10,8 @@
 //   ⌥F  打开 / 收起本舱目录窗（当前 cwd 只读树）
 //   ⌥X  打开 / 收起汐音设置（HUD「◐ 汐音」同一个开关）
 //   ⌥A  开合通讯台标题栏「星核」挂载面板（技能 / 分身 / MCP）
-//   ⌥G  不处理：全域入口是 classic 舱壳上的按钮（单向切换），这里没有对应动作。
+//   ⌥G  打开 / 收起本舱变更窗（cwd 工作区改动；仅 cwd 是独立 git 仓库时生效）
+//   ⌥V  开合右栏「活动」（有运行中的子代理 / 后台作业时才有按钮）
 //   ↑↓  不在这里 —— S3 的 CockpitFleetRail 已在可见行内处理。
 //
 // 约定（与仓库桌面快捷键一致）：
@@ -19,12 +20,14 @@
 //   · macOS 上 Alt+字母会得到特殊字符（Alt+W = ∑），所以优先看 event.code。
 
 import { useEffect, useRef } from 'react'
+import { useCabinOptional } from '@/components/cabin/cabin-provider'
 import { useCockpitFleet } from '../fleet/CockpitFleetProvider'
 import { useCockpitState } from '../state/CockpitStateProvider'
 import { getChatSlot } from '../chat/chat-slots'
 import { useCockpitThreads } from '../chat/use-cockpit-threads'
 import { toggleCrewSettings } from '../crew/crew-settings'
 import { toggleCabinTree } from '../face/cabin-tree-store'
+import { toggleChanges } from '../face/changes-store'
 import { candidatesOf } from './cockpit-candidates'
 import { resolveDefaultRef } from './cockpit-url'
 import { useOptionalIsActiveRoute } from './safe-navigation'
@@ -36,7 +39,7 @@ function isEditableTarget(target: EventTarget | null): boolean {
 }
 
 /** Alt + 哪个键（不认识返回 null）。兼容 event.code 缺失的合成事件与测试。 */
-function altKeyOf(event: KeyboardEvent): '1' | '2' | 'w' | 'x' | 'c' | 'd' | 'f' | 'a' | 'left' | 'right' | null {
+function altKeyOf(event: KeyboardEvent): '1' | '2' | 'w' | 'x' | 'c' | 'd' | 'f' | 'g' | 'v' | 'a' | 'left' | 'right' | null {
   if (!event.altKey || event.metaKey || event.ctrlKey || event.shiftKey) return null
   if (event.code === 'Digit1' || event.code === 'Numpad1' || event.key === '1') return '1'
   if (event.code === 'Digit2' || event.code === 'Numpad2' || event.key === '2') return '2'
@@ -45,6 +48,8 @@ function altKeyOf(event: KeyboardEvent): '1' | '2' | 'w' | 'x' | 'c' | 'd' | 'f'
   if (event.code === 'KeyC' || event.key.toLowerCase() === 'c') return 'c'
   if (event.code === 'KeyD' || event.key.toLowerCase() === 'd') return 'd'
   if (event.code === 'KeyF' || event.key.toLowerCase() === 'f') return 'f'
+  if (event.code === 'KeyG' || event.key.toLowerCase() === 'g') return 'g'
+  if (event.code === 'KeyV' || event.key.toLowerCase() === 'v') return 'v'
   if (event.code === 'KeyA' || event.key.toLowerCase() === 'a') return 'a'
   if (event.code === 'ArrowLeft' || event.key === 'ArrowLeft') return 'left'
   if (event.code === 'ArrowRight' || event.key === 'ArrowRight') return 'right'
@@ -61,6 +66,7 @@ export function CockpitShortcuts() {
   const { rows } = useCockpitFleet()
   const { select, chatWindow, openPanel, threads: threadApi, travel } = useCockpitState()
   const { visible, byKey } = useCockpitThreads()
+  const cabin = useCabinOptional()?.cabin
 
   // 监听只挂一次（active 变化时重挂）；其余可变值走 ref，避免每 10s 轮询
   // 都重装一次 window 监听。
@@ -73,6 +79,8 @@ export function CockpitShortcuts() {
   const taRef = useRef(threadApi)
   const visRef = useRef(visible)
   const byKeyRef = useRef(byKey)
+  /** ⌥G 只在本舱 cwd 是独立 git 仓库时生效 —— 与右栏「变更」按钮同一出现条件。 */
+  const cwdGitRef = useRef(false)
   rowsRef.current = rows
   selectRef.current = select
   openRef.current = chatWindow.openWithFocus
@@ -82,6 +90,7 @@ export function CockpitShortcuts() {
   taRef.current = threadApi
   visRef.current = visible
   byKeyRef.current = byKey
+  cwdGitRef.current = cabin?.cwd_git === true
 
   useEffect(() => {
     if (!active) return
@@ -161,6 +170,26 @@ export function CockpitShortcuts() {
       if (key === 'f') {
         event.preventDefault()
         toggleCabinTree()
+        return
+      }
+
+      // v22 十三轮（问题 #1）：⌥G 打开 / 收起本舱变更窗（cwd 工作区改动）。
+      // 出现条件同右栏按钮：cwd 本身不是独立 git 仓库 → 不抢这个键。
+      if (key === 'g') {
+        if (!cwdGitRef.current) return
+        event.preventDefault()
+        toggleChanges()
+        return
+      }
+
+      // v22 十四轮：⌥V 开合右栏「活动」。按钮只在该有活动时渲染，
+      // 窄屏（≤900）按钮退场 —— 这里点不到就什么也不做。
+      if (key === 'v') {
+        if (window.innerWidth <= 900) return
+        const button = document.querySelector<HTMLButtonElement>('[data-testid="cockpit-menu-activity"]')
+        if (!button) return
+        event.preventDefault()
+        button.click()
         return
       }
 

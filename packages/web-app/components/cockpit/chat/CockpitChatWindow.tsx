@@ -277,16 +277,6 @@ export function CockpitChatWindow() {
     })
   }, [])
 
-  // v21：「更多 → 日志」= 展开通讯台并切全日志（⌃）。
-  useEffect(() => {
-    const onTall = () => {
-      setRef.current({ open: true, mini: false, docked: false })
-      requestAnimationFrame(() => toggleTall())
-    }
-    window.addEventListener('octopus:chat-tall', onTall)
-    return () => window.removeEventListener('octopus:chat-tall', onTall)
-  }, [toggleTall])
-
   /** v20 ⧉ 弹出：仅用户主动；同线程已存在则聚焦；上限 5 toast 拒绝。 */
   const popOut = useCallback(() => {
     if (active.key === 'main') return

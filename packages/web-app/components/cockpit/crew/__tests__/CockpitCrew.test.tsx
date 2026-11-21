@@ -29,6 +29,7 @@ import { CockpitCrewSettings, CockpitCrewSettingsLayer } from '../CockpitCrewSet
 import { requestCrewPoke, resetCrewPoke, subscribeCrewPoke } from '../crew-events'
 import { resetCrewSettings, setCrewSettingsOpen } from '../crew-settings'
 import { resetCrewAgentInfoCache } from '../use-crew-agent-info'
+import { __resetBootHandover, enterBootLayer } from '../boot-handover'
 import { CLIPS } from '../pose-model'
 import { CHAT_DONE, CHAT_LISTEN, CHAT_WAIT_EARLY } from '../chat-reactions'
 
@@ -192,6 +193,7 @@ beforeEach(() => {
   said = null
   jumpNonce = 0
   resetCrewPoke()
+  __resetBootHandover()
   fleetState.rows = []
   vi.restoreAllMocks()
 })
@@ -293,10 +295,13 @@ describe('CockpitCrew · v13 点立绘 = 说话', () => {
     act(() => requestCrewPoke())
 
     expect(cockpit.setMoodOverride).toHaveBeenCalledWith(expected[1], 3000)
-    await waitFor(() =>
-      expect(screen.getByTestId('cockpit-crew-speech')).toHaveTextContent(expected[0]),
-    )
+    // 心形只亮 1.1s：先断言它，再等打字机 —— 并发跑时 waitFor 可能把它等没了。
     expect(screen.getByTestId('cockpit-crew-heart')).toBeInTheDocument()
+    // 打字机按 22ms/字推进；整套并发跑时定时器会被拖慢，给足余量。
+    await waitFor(
+      () => expect(screen.getByTestId('cockpit-crew-speech')).toHaveTextContent(expected[0]),
+      { timeout: 3_000 },
+    )
     expect(said).toEqual(expect.objectContaining({ line: expected[0], mood: expected[1] }))
     unmount()
   })
@@ -708,21 +713,23 @@ describe('CockpitCrew · v22.1 待命自走轮播', () => {
   it('真空闲 7s 后换一支小动作（不与当前段重复），姿态语义仍是待命', () => {
     renderCrew()
     expect(sprite()).toHaveAttribute('data-pose', 'idle')
-    expect(sprite()).toHaveAttribute('data-clip', '6')
+    // 出场先播动作 01「眨眼」（index 0），旋转首拍后换掉
+    expect(sprite()).toHaveAttribute('data-clip', '0')
 
     act(() => { vi.advanceTimersByTime(7_000) })
 
     expect(sprite()).toHaveAttribute('data-pose', 'idle')
-    expect(sprite().getAttribute('data-clip')).not.toBe('6')
+    expect(sprite().getAttribute('data-clip')).not.toBe('0')
   })
 
   it('作业期也穿插小动作：主拍隔拍回归，其余片段轮换', () => {
     // 2026-11-20 用户 #14：跑任务时她不再冻在 13-working 一支。
     renderCrew({ mood: 'working' })
-    expect(sprite()).toHaveAttribute('data-clip', '12')
+    expect(sprite()).toHaveAttribute('data-clip', '0')
 
     act(() => { vi.advanceTimersByTime(7_000) })
     expect(sprite()).toHaveAttribute('data-pose', 'working')
+    expect(sprite().getAttribute('data-clip')).not.toBe('0')
     expect(sprite().getAttribute('data-clip')).not.toBe('12')
 
     act(() => { vi.advanceTimersByTime(10_000) })
@@ -740,15 +747,58 @@ describe('CockpitCrew · v22.1 待命自走轮播', () => {
     expect(speech).toHaveClass('show')
     expect((speech.textContent ?? '').trim().length).toBeGreaterThan(0)
   })
+
+  // 2026-11-20 用户：待机久了最后会一直重复同一支动画。根因是轮播只在
+  // shownPose==='idle' 时启动 —— worried / happy / sleep 等派生 mood 会让
+  // rotateMode 变 null，画面冻在该 pose 的首选片段。
+  it('派生 mood 不是 idle（worried）也持续轮播，不冻在首选片段', () => {
+    renderCrew({ mood: 'worried' })
+    // 出场是动作 01「眨眼」；首拍之后才回到轮播
+    expect(sprite()).toHaveAttribute('data-clip', '0')
+
+    act(() => { vi.advanceTimersByTime(7_000) })
+    const firstClip = sprite().getAttribute('data-clip')
+    expect(firstClip).not.toBe('0')
+
+    act(() => { vi.advanceTimersByTime(9_000) })
+    expect(sprite().getAttribute('data-clip')).not.toBe(firstClip)
+  })
+
+  it('有待办时换动作照样补旁白（清单提醒优先，但动作不再是哑剧）', () => {
+    fleetState.rows = [{
+      key: 'attn:a1',
+      kind: 'attention',
+      cabinId: 'c1',
+      cabinName: '舱一',
+      item: {
+        id: 'a1',
+        job_id: null,
+        stage: 'review',
+        awaiting: 'person',
+        title: 'M2 · 结算对账',
+        task_id: null,
+        repo: null,
+        wt: null,
+        deep_link: null,
+      },
+    } as CockpitRow]
+    renderCrew({ mood: 'alert' })
+
+    // alert 主拍首拍 4.2–6s 换小动作；清单提醒 7s 才开口 —— 6.5s 时只有旁白。
+    act(() => { vi.advanceTimersByTime(6_500) })
+    const speech = screen.getByTestId('cockpit-crew-speech')
+    expect(speech).toHaveClass('show')
+    expect((speech.textContent ?? '').trim().length).toBeGreaterThan(0)
+  })
 })
 
 // 2026-11-20 用户：连点她会冒出「双手举起、开心」的立绘 —— 那是 v21 的
 // pose-cheer.png 静图（cheer 没有专属片段，旧逻辑在视频起播前垫了它）。
-// 立绘只允许 13 支视频，任何姿态都不准垫 v21 静图。
+// 立绘只允许 13 支视频，任何静态 img 都不允许（出场也只让视频自己显影）。
 describe('CockpitCrew · 立绘只用 13 支视频（不垫 v21 静图）', () => {
   const sprite = () => screen.getByTestId('cockpit-pose-sprite')
 
-  it('切到 cheer（无专属片段）也只渲染 video，不出现 img', () => {
+  it('切到 cheer（无专属片段）也只渲染 video，不出现任何 img', () => {
     renderCrew()
     act(() => {
       window.dispatchEvent(new CustomEvent('octopus:crew-pose', { detail: { pose: 'cheer', ms: 1000 } }))
@@ -757,8 +807,41 @@ describe('CockpitCrew · 立绘只用 13 支视频（不垫 v21 静图）', () =
     // cheer 落到 09-smile 视频，仍是 13 支之内
     expect(sprite()).toHaveAttribute('data-clip-no', '9')
     expect(sprite().querySelector('img')).toBeNull()
-    // 双层交叉淡入：A/B 两支 video 常驻，但都不含旧静图
+    // 双层交叉淡入：A/B 两支 video 常驻
     expect(sprite().querySelectorAll('video')).toHaveLength(2)
+  })
+
+  // 2026-11-20 用户：不要静止帧兜底；首帧可画（loadeddata）时视频自己
+  // 「全息显影」出来（容器 data-enter 触发 1.2s 淡入 + 2.3s 扫描光带），
+  // 2.4s 后摘掉。解码前 data-live=false，避免先露一帧再显影的双闪。
+  it('首帧可画时触发全息显影，2.4s 后摘掉', () => {
+    vi.useFakeTimers()
+    renderCrew()
+    expect(sprite()).not.toHaveAttribute('data-enter')
+    expect(sprite()).toHaveAttribute('data-live', 'false')
+
+    const video = sprite().querySelector('video') as HTMLVideoElement
+    act(() => { fireEvent.loadedData(video) })
+
+    expect(sprite()).toHaveAttribute('data-enter', 'true')
+    expect(sprite()).toHaveAttribute('data-live', 'true')
+    act(() => { vi.advanceTimersByTime(2_000) })
+    expect(sprite()).toHaveAttribute('data-enter', 'true')
+    act(() => { vi.advanceTimersByTime(500) })
+    expect(sprite()).not.toHaveAttribute('data-enter')
+    vi.useRealTimers()
+  })
+
+  // 2026-11-20 用户：门禁期的 boot 立绘已经演过出场 —— 真立绘别再扫一遍
+  // （重播就是「上来人物闪两下」的来源）。boot 层在屏时直接以已显影接入。
+  it('boot 层在屏时真立绘直接以已显影接入，不重播扫描', () => {
+    enterBootLayer()
+    renderCrew()
+    const video = sprite().querySelector('video') as HTMLVideoElement
+    act(() => { fireEvent.loadedData(video) })
+
+    expect(sprite()).toHaveAttribute('data-live', 'true')
+    expect(sprite()).not.toHaveAttribute('data-enter')
   })
 })
 
@@ -822,11 +905,13 @@ describe('CockpitCrew · 等你在场（有待办）', () => {
     renderCrew({ mood: 'alert' })
 
     expect(sprite()).toHaveAttribute('data-pose', 'alert')
-    expect(sprite()).toHaveAttribute('data-clip', '3')
+    // 出场先播动作 01「眨眼」；首拍小动作之后才轮到 alert 主拍
+    expect(sprite()).toHaveAttribute('data-clip', '0')
 
-    // 首拍 4.2–6s：换一支小动作（不是 alert 主拍）。
+    // 首拍 4.2–6s：换一支小动作（不是出场片，也不是 alert 主拍）。
     act(() => { vi.advanceTimersByTime(6_500) })
     expect(sprite()).toHaveAttribute('data-pose', 'alert')
+    expect(sprite().getAttribute('data-clip')).not.toBe('0')
     expect(sprite().getAttribute('data-clip')).not.toBe('3')
 
     // 下一拍 5.2–7.8s：回到 alert 主拍。

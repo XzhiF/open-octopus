@@ -19,7 +19,7 @@ import {
   CabinService, CabinNotFoundError, CabinVersionConflictError, CabinStatusConflictError,
   WorktreeConflictError, CabinRepoInputError,
 } from "../services/cabin/cabin-service"
-import { scanLocalProjects } from "../services/cabin/cabin-repos"
+import { scanLocalProjects, isGitRepo } from "../services/cabin/cabin-repos"
 import type { CabinInitService } from "../services/cabin/cabin-init-service"
 import { CabinCommService, CabinJobNotFoundError } from "../services/cabin/cabin-comm-service"
 import { CabinDecisionService, CabinDecisionError } from "../services/cabin/cabin-decision-service"
@@ -355,7 +355,12 @@ export function createCabinRoutes(
   router.get("/:id", (c) => {
     try {
       const { cabin, view } = service.getView(c.req.param("id"))
-      return c.json({ cabin: toDTO(cabin), view })
+      // 右栏「变更」的出现条件：本舱 cwd 本身是一个独立 git 仓库。前端据此隐藏按钮，
+      // 不靠额外探测请求（详情随 cabin_status 一起重拉，条件始终新鲜）。
+      return c.json({
+        cabin: { ...toDTO(cabin), cwd_git: isGitRepo(cabin.path) },
+        view,
+      })
     } catch (err) {
       const { status, message } = classifyError(err)
       return c.json({ error: message }, status as 400)
@@ -591,6 +596,31 @@ export function createCabinRoutes(
   router.get("/:id/changes", async (c) => {
     try {
       return c.json(await service.changesSummary(c.req.param("id")))
+    } catch (err) {
+      const { status, message } = classifyError(err)
+      return c.json({ error: message }, status as 400)
+    }
+  })
+
+  // v22 十三轮（问题 #1）：本舱变更窗 —— cwd 的工作区改动（worktree vs HEAD + 未跟踪）。
+  router.get("/:id/worktree-changes", async (c) => {
+    try {
+      return c.json(await service.worktreeChanges(c.req.param("id")))
+    } catch (err) {
+      const { status, message } = classifyError(err)
+      return c.json({ error: message }, status as 400)
+    }
+  })
+
+  // 单文件 unified patch（点开才拉；untracked=1 时按新文件 diff /dev/null）。
+  router.get("/:id/worktree-changes/patch", async (c) => {
+    const repo = c.req.query("repo")
+    const rel = c.req.query("path")
+    if (!repo || !rel) return c.json({ error: "Query params 'repo' and 'path' are required" }, 400)
+    try {
+      return c.json(await service.worktreeChangePatch(
+        c.req.param("id"), repo, rel, c.req.query("untracked") === "1",
+      ))
     } catch (err) {
       const { status, message } = classifyError(err)
       return c.json({ error: message }, status as 400)

@@ -116,6 +116,8 @@ export function CockpitStateProvider({ entryCabinId, children }: CockpitStatePro
   const [flash, setFlash] = useState<CockpitFlash>({ key: null, at: 0, nonce: 0 })
   const [inboxOpen, setInboxOpen] = useState(false)
   const [inboxSel, setInboxSel] = useState<string | null>(null)
+  const [activityOpen, setActivityOpen] = useState(false)
+  const [activitySel, setActivitySel] = useState<string | null>(null)
   const [pose, setPose] = useState('idle')
   const [clip, setClip] = useState(0)
   const [autoWarp, setAutoWarp] = useState(true)
@@ -249,6 +251,9 @@ export function CockpitStateProvider({ entryCabinId, children }: CockpitStatePro
     // v21（design 31 §3.2.2）：打开面板时自动收起 inbox。
     setInboxOpen(false)
     setInboxSel(null)
+    // v22 十四轮：活动浮层同样让位。
+    setActivityOpen(false)
+    setActivitySel(null)
   }, [])
   const closePanel = useCallback(() => setPanel(null), [])
   const markArrival = useCallback((key: string) => {
@@ -259,6 +264,9 @@ export function CockpitStateProvider({ entryCabinId, children }: CockpitStatePro
   const openInbox = useCallback((attentionId: string | null = null) => {
     setInboxOpen(true)
     setInboxSel(attentionId ?? null)
+    // v22 十四轮：两个右栏浮层互斥，同一时间只开一个。
+    setActivityOpen(false)
+    setActivitySel(null)
   }, [])
   const closeInbox = useCallback(() => {
     setInboxOpen(false)
@@ -267,6 +275,26 @@ export function CockpitStateProvider({ entryCabinId, children }: CockpitStatePro
   const selectInbox = useCallback((attentionId: string | null) => {
     setInboxSel(attentionId)
     setInboxOpen(true)
+    setActivityOpen(false)
+    setActivitySel(null)
+  }, [])
+
+  // ── v22 十四轮 右栏 activity 浮层 ─────────────────────────────────────
+  const openActivity = useCallback(() => {
+    setActivityOpen(true)
+    setInboxOpen(false)
+    setInboxSel(null)
+  }, [])
+  const closeActivity = useCallback(() => {
+    setActivityOpen(false)
+    setActivitySel(null)
+  }, [])
+  const selectActivity = useCallback((activityId: string | null) => {
+    setActivitySel(activityId)
+    setActivityOpen(true)
+    // 详情窗开着时不能同时开 inbox。
+    setInboxOpen(false)
+    setInboxSel(null)
   }, [])
   const reportPose = useCallback((next: string, clipIndex?: number) => {
     setPose(next)
@@ -409,6 +437,11 @@ export function CockpitStateProvider({ entryCabinId, children }: CockpitStatePro
       openInbox,
       closeInbox,
       selectInbox,
+      activityOpen,
+      activitySel,
+      openActivity,
+      closeActivity,
+      selectActivity,
       pose,
       clip,
       reportPose,
@@ -427,6 +460,7 @@ export function CockpitStateProvider({ entryCabinId, children }: CockpitStatePro
       railOpen, setRailOpen,
       threads, wins, panel, panelArg, openPanel, closePanel, flash, markArrival,
       inboxOpen, inboxSel, openInbox, closeInbox, selectInbox,
+      activityOpen, activitySel, openActivity, closeActivity, selectActivity,
       pose, clip, reportPose, autoWarp,
       sceneIndex, setScene, travel, travelRandom,
       fx, layer,

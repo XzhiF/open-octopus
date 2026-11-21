@@ -211,6 +211,10 @@ export function clipVariants(pose: PoseKey): readonly number[] {
   return variants && variants.length ? variants : [poseClip(pose)]
 }
 
+/** 出场片段（2026-11-20 用户：改成动作 01「眨眼」）。进舱第一拍播它；
+ *  boot 立绘（舱数据门禁期）也用它 —— 两边同一支，交接才看不出换人。 */
+export const ENTRY_CLIP = 0
+
 /** 回复中（agent 在干活）的轮换候选（2026-11-20 用户）：02-thinking / 11-typing /
  *  13-working 三支随机切。原先回复期冻在 11-typing 一支，看着像卡住了。 */
 export const CHAT_CLIPS: readonly number[] = [

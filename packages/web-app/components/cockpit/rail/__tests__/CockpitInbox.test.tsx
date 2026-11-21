@@ -404,6 +404,17 @@ describe('CockpitRightRail · v21 待办', () => {
     expect(screen.queryByTestId('cockpit-inbox-popover')).toBeNull()
   })
 
+  it('零待办点开：空态常驻，不被计时器自动收起（只手动 ✕ / Esc）', async () => {
+    fleetState.value = fleet([])
+    render(ui())
+    fireEvent.click(screen.getByTestId('cockpit-inbox-chip'))
+    expect(screen.getByTestId('cockpit-inbox-empty')).toHaveTextContent('都处理完了')
+
+    // 2026-11-21 用户：0 条时点开看过空态，不能过一会儿自己关掉。
+    await new Promise((resolve) => setTimeout(resolve, 900))
+    expect(screen.getByTestId('cockpit-inbox-popover')).toBeInTheDocument()
+  })
+
   // 2026-11-19 用户 #9：完成回流进 inbox → 人可确认「无需回复」收项（纯 ack）。
   it('已完成分组：收下调 ack、不再回复任务/会话，回执照常出现', async () => {
     fleetState.value = fleet([

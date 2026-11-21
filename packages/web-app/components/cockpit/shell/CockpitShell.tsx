@@ -26,8 +26,11 @@ import { AskWindowsProvider, useAskWindows } from '@/components/cabin/asks/ask-w
 import { AskWindowLayer } from '@/components/cabin/asks/ask-window-layer'
 import { CockpitFleetRail } from '../rail/CockpitFleetRail'
 import { CockpitRightRail } from '../rail/CockpitRightRail'
+import { CockpitActivityProvider } from '../rail/activity-feed'
+import { CockpitActivityWindow } from '../rail/CockpitActivityWindow'
 import { CockpitFace } from '../face/CockpitFace'
 import { CockpitCabinTree } from '../face/CockpitCabinTree'
+import { CockpitCabinChanges } from '../face/CockpitCabinChanges'
 import { CockpitDocWindow } from '../face/CockpitDocWindow'
 import { CockpitChatHost } from '../chat/CockpitChatHost'
 import { CockpitChatWindow } from '../chat/CockpitChatWindow'
@@ -37,6 +40,9 @@ import { CockpitWinBar } from '../chat/CockpitWinBar'
 import { CockpitThreadActivity } from '../chat/CockpitThreadActivity'
 import { CockpitCrew } from '../crew/CockpitCrew'
 import { CockpitCrewSettingsLayer } from '../crew/CockpitCrewSettings'
+import { CockpitBootLayer } from './CockpitBootLayer'
+import { CLIPS, poseClip, ENTRY_CLIP } from '../crew/pose-model'
+import { clipMediaUrl } from '../crew/clip-blob'
 import { CockpitBrief } from '../fx/CockpitBrief'
 import { CockpitEffects } from '../fx/CockpitEffects'
 import { CockpitWarpScheduler } from '../fx/CockpitWarpScheduler'
@@ -44,6 +50,17 @@ import { CockpitSim } from '../fx/CockpitSim'
 import { CockpitPanels } from '../panels/CockpitPanels'
 
 export function CockpitShell({ cabinId }: { cabinId: string }) {
+  // 2026-11-20 用户：进舱 4–5s 看不到汐音。立绘要等 blob 抓包 + 解码，而舱详情
+  // 还在加载时立绘组件还没挂载 —— 先在壳层预热：出场片（动作 01）最先，其次
+  // 待命 / 有待办两种最可能的首拍；等 CockpitGate 放行时字节已在路上。
+  useEffect(() => {
+    if (!cabinId || cabinId === 'new') return
+    void clipMediaUrl(CLIPS[ENTRY_CLIP]!.src)
+    void clipMediaUrl(CLIPS[poseClip('ready')]!.src)
+    void clipMediaUrl(CLIPS[poseClip('idle')]!.src)
+    void clipMediaUrl(CLIPS[poseClip('alert')]!.src)
+  }, [cabinId])
+
   if (!cabinId) {
     return <CockpitMissing message="缺少舱 id" detail="全域座舱需要一个已存在的舱。" />
   }
@@ -65,29 +82,34 @@ export function CockpitShell({ cabinId }: { cabinId: string }) {
 
 function CockpitGate() {
   const { cabin, loading, error } = useCabinContext()
+  const failed = !loading && !cabin
 
-  if (loading) return <CockpitSkeleton />
-  if (!cabin) {
-    return (
-      <CockpitMissing
-        message="舱不在了"
-        detail={error === 'not-found' ? '舱不存在或已被删除。' : (error ?? '舱加载失败。')}
-      />
-    )
-  }
-
+  // boot 立绘与门禁分支并列：loading → 舱面这段切换里**不重挂**，
+  // 否则换分支时 video 重来一遍，交接处会闪空档（见 CockpitBootLayer）。
   return (
-    <CockpitProvider>
-      <CockpitStateProvider entryCabinId={cabin.id}>
-        <CockpitLayerStack>
-          <CockpitFleetProvider>
-            <CockpitUrlSync />
-            <CockpitShortcuts />
-            <CockpitSurface cabin={cabin} />
-          </CockpitFleetProvider>
-        </CockpitLayerStack>
-      </CockpitStateProvider>
-    </CockpitProvider>
+    <>
+      {loading ? (
+        <CockpitSkeleton />
+      ) : !cabin ? (
+        <CockpitMissing
+          message="舱不在了"
+          detail={error === 'not-found' ? '舱不存在或已被删除。' : (error ?? '舱加载失败。')}
+        />
+      ) : (
+        <CockpitProvider>
+          <CockpitStateProvider entryCabinId={cabin.id}>
+            <CockpitLayerStack>
+              <CockpitFleetProvider>
+                <CockpitUrlSync />
+                <CockpitShortcuts />
+                <CockpitSurface cabin={cabin} />
+              </CockpitFleetProvider>
+            </CockpitLayerStack>
+          </CockpitStateProvider>
+        </CockpitProvider>
+      )}
+      <CockpitBootLayer gateOpen={!loading} gateFailed={failed} />
+    </>
   )
 }
 
@@ -110,6 +132,9 @@ function CockpitSurface({ cabin }: { cabin: CabinDetail }) {
 
   return (
     <AskWindowsProvider attention={view?.attention ?? null}>
+    {/* v22 十四轮：右栏「活动」的数据源（汐音主会话的子代理 + 后台作业）。
+        包住右栏与详情窗 —— 按钮徽标 / 列表 / 详情共用同一次轮询。 */}
+    <CockpitActivityProvider>
     <CockpitAskDeepLink />
     <div className="ck12-app" data-testid="cockpit-shell">
       <div className="ck12-bg" aria-hidden="true">
@@ -162,6 +187,12 @@ function CockpitSurface({ cabin }: { cabin: CabinDetail }) {
       {/* v22 九轮：右栏「目录」= 本舱 cwd 只读目录窗（详情面没开也能开）。 */}
       <CockpitCabinTree cabinId={entryCabinId} />
 
+      {/* v22 十三轮（问题 #1）：右栏「变更」= 本舱 cwd 的工作区改动（只读）。 */}
+      <CockpitCabinChanges cabinId={entryCabinId} />
+
+      {/* v22 十四轮：右栏「活动」二级大窗（贴在一级浮层左侧，只读）。 */}
+      <CockpitActivityWindow />
+
       {/* 2026-11-19 用户 #4：聊天正文里的产物绝对路径点开 → 只读文档窗。 */}
       <CockpitDocWindow />
 
@@ -188,6 +219,7 @@ function CockpitSurface({ cabin }: { cabin: CabinDetail }) {
 
       <div className="ck12-vignette" aria-hidden="true" />
     </div>
+    </CockpitActivityProvider>
     {/* 问答窗 portal 到 body；Esc 走 CockpitLayerStack（priority 75）。 */}
     <AskWindowLayer mode="cockpit" escLayer={layer} />
     </AskWindowsProvider>

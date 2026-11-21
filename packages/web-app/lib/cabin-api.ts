@@ -23,6 +23,9 @@ import type {
 /** Wire DTO = shared CabinDTO + the UI-prefs JSON the route parses out. */
 export type CabinDetail = CabinDTO & {
   cockpit_prefs?: Record<string, unknown> | null
+  /** 本舱 cwd 本身是不是一个独立 git 仓库（详情路由富化；列表不带）。
+   *  右栏「变更」只在 true 时出现。 */
+  cwd_git?: boolean
 }
 
 /** 并行 worktree 实例（同一项目多条分支并行）。 */
@@ -473,6 +476,61 @@ export async function getCabinFile(id: string, relPath: string): Promise<{ path:
 /** GET /api/cabins/:id/raw?path= — 图片原始字节（<img src> 直接用，8MB 上限）。 */
 export function cabinRawUrl(id: string, relPath: string): string {
   return url(`/${id}/raw?path=${encodeURIComponent(relPath)}`)
+}
+
+// ── v22 十三轮（问题 #1）：本舱变更窗 —— 本舱 cwd 工作区改动（只读）──
+// 口径 = 本舱 cwd（cabin.path）这一个 git 仓库的 `git diff HEAD` + 未跟踪文件；
+// 只在 cwd 本身是独立 git 仓库时出现（CabinDetail.cwd_git）。
+
+export interface CabinWorktreeChangeFile {
+  path: string
+  /** rename/copy 来源（status R/C）。 */
+  oldPath?: string
+  /** M / A / D / R / C / T；未跟踪的新文件 = "?"。 */
+  status: string
+  adds: number
+  dels: number
+  binary?: boolean
+  untracked?: boolean
+}
+
+export interface CabinWorktreeChangeRepo {
+  name: string
+  /** 比对目录 = 本舱 cwd。 */
+  dir: string | null
+  branch: string | null
+  /** HEAD 短 SHA；空仓 = null（此时只有未跟踪文件）。 */
+  head: string | null
+  /** 失败原因（目录不在 / 不是 git 仓）。 */
+  error: string | null
+  truncated: boolean
+  files: CabinWorktreeChangeFile[]
+}
+
+export interface CabinWorktreeChanges {
+  /** 本舱 cwd 绝对路径。 */
+  dir: string
+  /** 单元素（= 本舱 cwd 这一个仓库）；数组形态与变更树模型同构。 */
+  repos: CabinWorktreeChangeRepo[]
+}
+
+/** GET /api/cabins/:id/worktree-changes — 本舱 cwd 的工作区改动。 */
+export async function getCabinWorktreeChanges(id: string): Promise<CabinWorktreeChanges> {
+  const res = await fetch(url(`/${id}/worktree-changes`))
+  return handleResponse<CabinWorktreeChanges>(res)
+}
+
+/** GET /api/cabins/:id/worktree-changes/patch — 单文件 unified patch（点开才拉）。 */
+export async function getCabinWorktreeChangePatch(
+  id: string,
+  repo: string,
+  relPath: string,
+  untracked: boolean,
+): Promise<{ patch: string; truncated: boolean }> {
+  const query = new URLSearchParams({ repo, path: relPath })
+  if (untracked) query.set('untracked', '1')
+  const res = await fetch(url(`/${id}/worktree-changes/patch?${query.toString()}`))
+  return handleResponse<{ patch: string; truncated: boolean }>(res)
 }
 
 // ── 文档查看器（2026-11-19 用户 #4）：聊天里的产物绝对路径 ──────────────
