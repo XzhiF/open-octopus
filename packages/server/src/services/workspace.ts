@@ -16,6 +16,7 @@ import {
   pipelineGuidePath,
   readWorkspaceConfig,
   workspaceConfigMarker,
+  workspaceRuntimeBase,
   writeWorkspaceConfig,
 } from "./workspace-paths"
 
@@ -272,9 +273,10 @@ export class WorkspaceService {
       fs.mkdirSync(resolvedPath, { recursive: true })
     }
 
+    const runtimeBase = workspaceRuntimeBase(resolvedPath)
     const subdirs = ["projects", "workflows", "logs", "state"]
     for (const dir of subdirs) {
-      const dirPath = path.join(resolvedPath, dir)
+      const dirPath = path.join(runtimeBase, dir)
       if (!fs.existsSync(dirPath)) {
         fs.mkdirSync(dirPath, { recursive: true })
       }
@@ -394,9 +396,10 @@ export class WorkspaceService {
     }
     fs.mkdirSync(wsDir, { recursive: true })
 
-    // Create subdirectories
+    // Create subdirectories under the runtime base (.octopus/ for new workspaces)
+    const runtimeBase = workspaceRuntimeBase(wsDir)
     for (const dir of ["projects", "workflows", "logs", "state"]) {
-      fs.mkdirSync(path.join(wsDir, dir), { recursive: true })
+      fs.mkdirSync(path.join(runtimeBase, dir), { recursive: true })
     }
 
     // Create .octopus directory structure

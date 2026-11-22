@@ -95,13 +95,14 @@ describe("WorkspaceService", () => {
     expect(await service.delete("nonexistent")).toBe(false)
   })
 
-  it("creates standard subdirectories", () => {
+  it("creates standard subdirectories under .octopus/", () => {
     const ws = service.create({ name: "SubTest", repo_group: "xzf", path: "/tmp/ws-subdirs" })
     const resolvedPath = "/tmp/ws-subdirs"
-    expect(fs.existsSync(path.join(resolvedPath, "projects"))).toBe(true)
-    expect(fs.existsSync(path.join(resolvedPath, "workflows"))).toBe(true)
-    expect(fs.existsSync(path.join(resolvedPath, "logs"))).toBe(true)
-    expect(fs.existsSync(path.join(resolvedPath, "state"))).toBe(true)
+    expect(fs.existsSync(path.join(resolvedPath, ".octopus", "projects"))).toBe(true)
+    expect(fs.existsSync(path.join(resolvedPath, ".octopus", "workflows"))).toBe(true)
+    expect(fs.existsSync(path.join(resolvedPath, ".octopus", "logs"))).toBe(true)
+    expect(fs.existsSync(path.join(resolvedPath, ".octopus", "state"))).toBe(true)
+    expect(fs.existsSync(path.join(resolvedPath, "projects"))).toBe(false)
     fs.rmSync(resolvedPath, { recursive: true, force: true })
   })
 
@@ -169,7 +170,7 @@ describe("WorkspaceService", () => {
           workflow_chain: [{ workflow_ref: "wf.yaml", input_values: {} }],
         })
 
-        expect(fs.existsSync(path.join(ws.path, "projects", "demo", ".git"))).toBe(true)
+        expect(fs.existsSync(path.join(ws.path, ".octopus", "projects", "demo", ".git"))).toBe(true)
       } finally {
         if (fs.existsSync(repoDir)) fs.rmSync(repoDir, { recursive: true, force: true })
       }
@@ -247,12 +248,12 @@ describe("WorkspaceService · one-workspace model", () => {
         "smoke",
       )
       expect(result.created).toEqual(["repo"])
-      expect(fs.existsSync(path.join(wsPath, "projects", "repo", ".git"))).toBe(true)
+      expect(fs.existsSync(path.join(wsPath, ".octopus", "projects", "repo", ".git"))).toBe(true)
       const config = JSON.parse(fs.readFileSync(path.join(wsPath, ".octopus", "workspace.json"), "utf-8"))
       expect(config.repos).toHaveLength(1)
       expect(config.repos[0]).toMatchObject({ name: "repo", branch: "feat-smoke" })
 
-      execFileSync("git", ["worktree", "remove", "--force", path.join(wsPath, "projects", "repo")], { cwd: repo })
+      execFileSync("git", ["worktree", "remove", "--force", path.join(wsPath, ".octopus", "projects", "repo")], { cwd: repo })
     } finally {
       fs.rmSync(base, { recursive: true, force: true })
     }

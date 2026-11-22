@@ -341,6 +341,13 @@ function writeWorkspaceConfigFile(configFile: string, data: ConfigData): void {
   fs.writeFileSync(configFile, JSON.stringify(data, null, 2), "utf-8");
 }
 
+/** Runtime dirs (projects/workflows/logs/state) follow the layout of the config file. */
+function runtimeBase(wsDir: string): string {
+  return workspaceConfigFile(wsDir) === path.join(wsDir, "config.json")
+    ? wsDir
+    : path.join(wsDir, ".octopus");
+}
+
 function worktreeDirName(group: string, name: string): string {
   return `${group}-${name}`;
 }
@@ -528,17 +535,18 @@ function workspaceGuide(): string[] {
     "```",
     "<workspace>/",
     "├── CLAUDE.md           ← 工作空间指令（已存在则只追加管理块，不覆写）",
-    "├── .octopus/           ← Octopus 运行时数据（不在目录根生成 config.json / pipeline.yaml）",
-    "│   └── workspace.json    ← 工作空间配置（名称、关联仓库、创建时间、初始分支）",
+    "├── .octopus/           ← Octopus 运行时基座（不在目录根生成 config.json / pipeline.yaml）",
+    "│   ├── workspace.json    ← 工作空间配置（名称、关联仓库、创建时间、初始分支）",
+    "│   ├── pipeline.yaml     ← Pipeline 配置",
+    "│   ├── projects/         ← 项目代码（每个子目录是一个 git worktree）",
+    "│   ├── workflows/        ← 工作流 YAML 定义（octopus workflow run 的执行目标）",
+    "│   ├── state/            ← 执行状态记录",
+    "│   │   ├── executions.json   ← 执行索引（所有执行的注册表）",
+    "│   │   ├── {uuid}.json       ← 单次执行结果快照（含每个节点的 status/duration/outputs）",
+    "│   │   └── {uuid}-{name}.yaml ← 工作流 YAML 快照",
+    "│   └── logs/             ← 执行日志",
+    "│       └── {uuid}/         ← 每次执行的日志目录",
     "├── .claude/skills/     ← 已安装的 Claude Code Skills（从 core-pack 复制）",
-    "├── projects/           ← 项目代码（每个子目录是一个 git worktree）",
-    "├── workflows/          ← 工作流 YAML 定义（octopus workflow run 的执行目标）",
-    "├── state/              ← 执行状态记录",
-    "│   ├── executions.json   ← 执行索引（所有执行的注册表）",
-    "│   ├── {uuid}.json       ← 单次执行结果快照（含每个节点的 status/duration/outputs）",
-    "│   └── {uuid}-{name}.yaml ← 工作流 YAML 快照",
-    "├── logs/               ← 执行日志",
-    "│   └── {uuid}/           ← 每次执行的日志目录",
     "│       ├── {node-id}.jsonl ← 按节点 ID 命名的 JSONL 日志",
     "│       └── final-summary.jsonl",
     "└── dependencies/       ← 外部依赖（如 agency-agents-zh 克隆）",
@@ -722,7 +730,7 @@ function cmdInit(wsName: string, repos: string[], org: string, serverUrl?: strin
     if (!dirExisted) {
       fs.rmSync(wsDir, { recursive: true, force: true });
     } else {
-      const projectsDir = path.join(wsDir, "projects");
+      const projectsDir = path.join(runtimeBase(wsDir), "projects");
       if (fs.existsSync(projectsDir)) {
         fs.rmSync(projectsDir, { recursive: true, force: true });
       }

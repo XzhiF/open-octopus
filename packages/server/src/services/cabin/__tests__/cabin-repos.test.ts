@@ -91,17 +91,26 @@ describe("cabin-repos · 本地扫描与路径", () => {
     expect(isPathInside(path.join(root, "a"), path.join(root, "ab"))).toBe(false)
   })
 
-  it("worktreeDirFor：主实例 projects/<name>，并行实例 projects/<instance>/<name>", () => {
-    expect(worktreeDirFor("/c", "ledger")).toBe(path.join("/c", "projects", "ledger"))
+  it("worktreeDirFor：新布局 .octopus/projects/<name>，旧布局 projects/<name>", () => {
+    expect(worktreeDirFor("/c", "ledger")).toBe(path.join("/c", ".octopus", "projects", "ledger"))
     expect(worktreeDirFor("/c", "ledger", "job-9")).toBe(
-      path.join("/c", "projects", "job-9", "ledger"),
+      path.join("/c", ".octopus", "projects", "job-9", "ledger"),
     )
-    expect(worktreeDirFor("/c", "ledger", "  ")).toBe(path.join("/c", "projects", "ledger"))
+    expect(worktreeDirFor("/c", "ledger", "  ")).toBe(path.join("/c", ".octopus", "projects", "ledger"))
     // 路径穿越：instance / name 里的分隔符与 .. 一律清洗掉。
     expect(worktreeDirFor("/c", "ledger", "../../etc")).toBe(
-      path.join("/c", "projects", "etc", "ledger"),
+      path.join("/c", ".octopus", "projects", "etc", "ledger"),
     )
-    expect(worktreeDirFor("/c", "../evil")).toBe(path.join("/c", "projects", "evil"))
+    expect(worktreeDirFor("/c", "../evil")).toBe(path.join("/c", ".octopus", "projects", "evil"))
+
+    // 旧工作空间（根 config.json）继续落在根 projects/。
+    const legacy = fs.mkdtempSync(path.join(os.tmpdir(), "legacy-cabin-"))
+    try {
+      fs.writeFileSync(path.join(legacy, "config.json"), JSON.stringify({ name: "old", repos: [] }))
+      expect(worktreeDirFor(legacy, "ledger")).toBe(path.join(legacy, "projects", "ledger"))
+    } finally {
+      fs.rmSync(legacy, { recursive: true, force: true })
+    }
   })
 })
 

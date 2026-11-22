@@ -23,6 +23,7 @@ import type { gitOps } from "../git-ops"
 import type { TaskHomeService } from "./task-home-service"
 import type { MaterialItemKind } from "../knowledge/material-pack"
 import { resolveProjectDir } from "./archive-delta"
+import { workspaceSubdir } from "../workspace-paths"
 
 type GitLike = Pick<typeof gitOps, "diffStat" | "diffPatchFor" | "countCommits" | "getHeadCommit" | "logSubjects">
 
@@ -195,7 +196,7 @@ function extractJsonlExcerpt(deps: ArchiveMaterialDeps, taskId: string): string 
   let totalKept = 0
   for (const exec of execs) {
     const wsPath = workspacePath(deps.db, exec.workspace_id)
-    const logDir = wsPath ? path.join(wsPath, "logs", exec.id) : null
+    const logDir = wsPath ? path.join(workspaceSubdir(wsPath, "logs"), exec.id) : null
     lines.push(`## exec ${exec.id}（phase ${exec.phase_index ?? "?"} · round ${exec.round_index ?? "?"}）`)
     lines.push("")
     lines.push(`- 全量回源指针：${logDir ?? `（workspace ${exec.workspace_id} 不在册）`}/ · executions.id=${exec.id}`)

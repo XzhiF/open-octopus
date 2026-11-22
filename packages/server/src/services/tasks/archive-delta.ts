@@ -18,7 +18,7 @@ import fs from "fs"
 import path from "path"
 import { spawn } from "child_process"
 import type Database from "better-sqlite3"
-import { readWorkspaceConfig } from "../workspace-paths"
+import { readWorkspaceConfig, workspaceSubdir } from "../workspace-paths"
 
 export interface CommandResult {
   code: number
@@ -154,7 +154,7 @@ export function resolveProjectDir(wsPath: string | null, project: string): Resol
     repos?: Array<{ name?: string; worktree_path?: string }>
   } | null
   const configured = cfg?.repos?.find((r) => r.name === project)?.worktree_path ?? null
-  const candidates = [configured, path.join(wsPath, "projects", project)].filter(
+  const candidates = [configured, path.join(workspaceSubdir(wsPath, "projects"), project)].filter(
     (p): p is string => typeof p === "string" && p.length > 0,
   )
   for (const dir of candidates) {
@@ -164,7 +164,7 @@ export function resolveProjectDir(wsPath: string | null, project: string): Resol
       /* try next */
     }
   }
-  return { dir: null, error: `worktree 不在盘: ${candidates[0] ?? path.join(wsPath, "projects", project)}` }
+  return { dir: null, error: `worktree 不在盘: ${candidates[0] ?? path.join(workspaceSubdir(wsPath, "projects"), project)}` }
 }
 
 /** Inspect every project of a task: commits since the last round end + dirty files. */

@@ -12,6 +12,7 @@ import { join } from "path"
 import type { HarnessDAO } from "../../db/dao/harness-dao"
 import type { SSEService } from "../sse"
 import { BaseDetector } from "../harness/base-detector"
+import { workspaceSubdir } from "../workspace-paths"
 import type { HarnessCallbackEvent } from "../harness/base-detector"
 import { StupidRetryDetector } from "../harness/detectors/stupid-retry"
 import { DeterministicErrorDetector } from "../harness/detectors/deterministic-error"
@@ -201,7 +202,7 @@ export class SignalPipeline {
   private writeHarnessLog(event: Record<string, unknown>): void {
     if (!this.workspacePath) return
     try {
-      const logDir = join(this.workspacePath, "logs", this.executionId)
+      const logDir = join(workspaceSubdir(this.workspacePath, "logs"), this.executionId)
       if (!existsSync(logDir)) mkdirSync(logDir, { recursive: true })
       appendFileSync(join(logDir, "harness.jsonl"), JSON.stringify({ ts: Date.now(), ...event }) + "\n", "utf-8")
     } catch {

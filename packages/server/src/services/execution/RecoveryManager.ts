@@ -7,6 +7,7 @@ import { BashExecutor, AgentExecutor, AgentNodeRunner } from "@octopus/engine"
 import { getProvider } from "@octopus/providers"
 import { join } from "path"
 import { existsSync, readFileSync } from "fs"
+import { workspaceSubdir } from "../workspace-paths"
 
 export class RecoveryManager {
   constructor(
@@ -151,7 +152,7 @@ export class RecoveryManager {
 
         const workspacePath = wsPath.replace(/^~/, process.env.HOME || process.env.USERPROFILE || "~")
 
-        const stateDir = join(workspacePath, "state")
+        const stateDir = workspaceSubdir(workspacePath, "state")
         const snapshotPath = join(stateDir, `${exec.id}-${WorkflowRef.sanitize(exec.workflow_ref)}`)
         let parsed: any = null
 
@@ -163,7 +164,7 @@ export class RecoveryManager {
         }
 
         if (!parsed) {
-          const wfPath = WorkflowRef.toPath(join(workspacePath, "workflows"), exec.workflow_ref)
+          const wfPath = WorkflowRef.toPath(workspaceSubdir(workspacePath, "workflows"), exec.workflow_ref)
           if (existsSync(wfPath)) {
             try {
               const content = readFileSync(wfPath, "utf-8")

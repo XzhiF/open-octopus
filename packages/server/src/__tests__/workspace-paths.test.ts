@@ -5,11 +5,14 @@ import path from "path"
 import {
   findWorkspaceConfigFile,
   isWorkspaceConfigLike,
+  octopusRuntimeDir,
   pipelineConfigPath,
   readWorkspaceConfig,
   resolvePipelineConfigPath,
   updateWorkspaceConfig,
   workspaceConfigPath,
+  workspaceRuntimeBase,
+  workspaceSubdir,
   writeWorkspaceConfig,
 } from "../services/workspace-paths"
 
@@ -79,5 +82,36 @@ describe("pipeline config path", () => {
     fs.mkdirSync(path.dirname(canonical), { recursive: true })
     fs.writeFileSync(canonical, "apiVersion: octopus/v2\nkind: Pipeline\n")
     expect(resolvePipelineConfigPath(root)).toBe(canonical)
+  })
+})
+
+describe("runtime subdirectories", () => {
+  it("new workspaces use .octopus/{projects,workflows,logs,state}", () => {
+    expect(workspaceRuntimeBase(root)).toBe(octopusRuntimeDir(root))
+    expect(workspaceSubdir(root, "projects")).toBe(path.join(root, ".octopus", "projects"))
+    expect(workspaceSubdir(root, "workflows")).toBe(path.join(root, ".octopus", "workflows"))
+    expect(workspaceSubdir(root, "logs")).toBe(path.join(root, ".octopus", "logs"))
+    expect(workspaceSubdir(root, "state")).toBe(path.join(root, ".octopus", "state"))
+  })
+
+  it("legacy workspaces (root config.json) keep the root runtime dirs", () => {
+    fs.writeFileSync(path.join(root, "config.json"), JSON.stringify({ name: "old", repos: [] }))
+    expect(workspaceRuntimeBase(root)).toBe(root)
+    expect(workspaceSubdir(root, "projects")).toBe(path.join(root, "projects"))
+  })
+
+  it("a root config.json from a business project does not claim root runtime dirs", () => {
+    fs.writeFileSync(path.join(root, "config.json"), JSON.stringify({ name: "app", scripts: { dev: "vite" } }))
+    expect(workspaceRuntimeBase(root)).toBe(octopusRuntimeDir(root))
+  })
+
+  it("canonical config wins after migration", () => {
+    fs.writeFileSync(path.join(root, "config.json"), JSON.stringify({ name: "old", repos: [] }))
+    fs.mkdirSync(path.join(root, ".octopus"), { recursive: true })
+    fs.writeFileSync(
+      workspaceConfigPath(root),
+      JSON.stringify({ kind: "octopus/workspace", name: "old", repos: [] }),
+    )
+    expect(workspaceRuntimeBase(root)).toBe(octopusRuntimeDir(root))
   })
 })

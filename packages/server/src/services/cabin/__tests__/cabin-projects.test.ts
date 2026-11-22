@@ -75,7 +75,7 @@ describe("CabinService · 项目关联 / 工作树 / 锚点", () => {
     expect(entry.branch).toBeUndefined()
     expect(entry.mainline_branch).toBe("feat/console")
     // workspace.create 会先 scaffold 空 projects/；关键是没有这个项目的工作树。
-    expect(fs.existsSync(path.join(cabinPath, "projects", "console"))).toBe(false)
+    expect(fs.existsSync(path.join(cabinPath, ".octopus", "projects", "console"))).toBe(false)
 
     const view = svc.repoViews(cabinId)[0]
     expect(view.key).toBe("local:apps/console")
@@ -99,7 +99,7 @@ describe("CabinService · 项目关联 / 工作树 / 锚点", () => {
   it("openRepoWorktree：主实例落 projects/<name>，source/local 字段不丢", () => {
     addLocal()
     const entry = svc.openRepoWorktree(cabinId, "console")
-    expect(entry.worktree_path).toBe(path.join(cabinPath, "projects", "console"))
+    expect(entry.worktree_path).toBe(path.join(cabinPath, ".octopus", "projects", "console"))
     expect(entry.branch).toMatch(/^cabin-/)
     expect(entry.source).toBe("local")
     expect(entry.local_path).toBe("apps/console")
@@ -123,11 +123,11 @@ describe("CabinService · 项目关联 / 工作树 / 锚点", () => {
     expect(second.worktrees).toHaveLength(1)
     expect(second.worktrees![0].instance).toBe("job-7")
     expect(second.worktrees![0].path).toBe(
-      path.join(cabinPath, "projects", "job-7", "console"),
+      path.join(cabinPath, ".octopus", "projects", "job-7", "console"),
     )
     expect(fs.existsSync(path.join(second.worktrees![0].path, "a.txt"))).toBe(true)
     // 主实例还在。
-    expect(fs.existsSync(path.join(cabinPath, "projects", "console", "a.txt"))).toBe(true)
+    expect(fs.existsSync(path.join(cabinPath, ".octopus", "projects", "console", "a.txt"))).toBe(true)
   })
 
   it("removeRepo：无活跃任务时只删 config，不动磁盘", () => {

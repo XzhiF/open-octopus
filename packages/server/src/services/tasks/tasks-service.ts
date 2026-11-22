@@ -136,6 +136,7 @@ import { resolveWorkflowRef, isWorkflowRefResolvable } from "./workflow-ref-reso
 import type { WorkflowResolverDeps } from "./workflow-ref-resolver"
 // task-workflow-presets (T5): template resolver for required inputs check.
 import { resolveInputValues, parseWorkflowInputDefs } from "../scheduler/template-resolver"
+import { workspaceSubdir } from "../workspace-paths"
 
 /** Default task name when the caller provides none. NOT user-owned — the
  *  autosave seam (routes/clone/autosave.ts) may still adopt a smart title
@@ -4820,7 +4821,7 @@ export class TasksService {
     if (!ws) return out
     const wsPath = ws.path.replace(/^~/, os.homedir())
     for (const name of Object.keys(starts)) {
-      const dir = path.join(wsPath, "projects", name)
+      const dir = path.join(workspaceSubdir(wsPath, "projects"), name)
       if (!fs.existsSync(path.join(dir, ".git"))) continue
       try {
         const head = await gitOps.getHeadCommit(dir)

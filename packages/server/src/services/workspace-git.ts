@@ -7,7 +7,7 @@ import fs from "fs"
 import path from "path"
 import os from "os"
 import { workspaceGuide } from "./workspace-scaffold"
-import { updateWorkspaceConfig } from "./workspace-paths"
+import { updateWorkspaceConfig, workspaceSubdir } from "./workspace-paths"
 
 /** Escape a literal string for safe interpolation into a RegExp source. */
 function escapeRegex(s: string): string {
@@ -87,7 +87,8 @@ export class WorkspaceGit {
   ): { created: number; failed: string[] } {
     const failed: string[] = []
     const { spawnSync } = require("child_process") as typeof import("child_process")
-    const projectsDir = path.join(workspacePath, "projects")
+    const projectsDir = workspaceSubdir(workspacePath, "projects")
+    fs.mkdirSync(projectsDir, { recursive: true })
     const entries: { name: string; group: string; main_path: string; worktree_path: string }[] = []
 
     for (const spec of repoSpecs) {
@@ -185,7 +186,8 @@ export class WorkspaceGit {
     opts: { clobber?: boolean; worktreePath?: string } = {},
   ): SpecWorktreeEntry {
     const { spawnSync } = require("child_process") as typeof import("child_process")
-    const projectsDir = path.join(workspacePath, "projects")
+    const projectsDir = workspaceSubdir(workspacePath, "projects")
+    fs.mkdirSync(projectsDir, { recursive: true })
 
     // Explicit source_path wins; empty → repos/index.md lookup by name (+group).
     const rawSource = proj.source_path ?? ""

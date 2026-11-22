@@ -11,6 +11,7 @@ import { WorkflowRef } from "@octopus/shared"
 import { parseLogFilename } from "@octopus/engine"
 import { join } from "path"
 import { existsSync, readdirSync, readFileSync } from "fs"
+import { workspaceSubdir } from "../workspace-paths"
 
 export type WorkflowContentSource = "snapshot" | "workspace" | "builtin"
 
@@ -50,7 +51,7 @@ export class ExecutionQueryService {
   }
 
   getAgentEvents(executionId: string, nodeId?: string, loopId?: string, iteration?: number): any[] {
-    const logDir = join(this.workspacePath, "logs", executionId)
+    const logDir = join(workspaceSubdir(this.workspacePath, "logs"), executionId)
     if (!existsSync(logDir)) return []
 
     const events: any[] = []
@@ -80,7 +81,7 @@ export class ExecutionQueryService {
   }
 
   getLoopIterationSummary(executionId: string): Record<string, any> {
-    const logDir = join(this.workspacePath, "logs", executionId)
+    const logDir = join(workspaceSubdir(this.workspacePath, "logs"), executionId)
     if (!existsSync(logDir)) return {}
 
     const files = readdirSync(logDir).filter(f => f.endsWith(".jsonl"))
@@ -159,7 +160,7 @@ export class ExecutionQueryService {
     const exec = this.dao.findById(executionId)
     if (!exec) return { content: null, source: null }
 
-    const snapshotPath = join(this.workspacePath, "state", `${executionId}-${WorkflowRef.sanitize(exec.workflow_ref)}`)
+    const snapshotPath = join(workspaceSubdir(this.workspacePath, "state"), `${executionId}-${WorkflowRef.sanitize(exec.workflow_ref)}`)
     if (existsSync(snapshotPath)) {
       return { content: readFileSync(snapshotPath, "utf-8"), source: "snapshot" }
     }

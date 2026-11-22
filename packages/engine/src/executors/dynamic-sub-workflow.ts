@@ -295,7 +295,7 @@ export class DynamicSubWorkflowExecutor implements NodeExecutor {
 
     // 1. Resolve file name
     const workflowName = this.resolveWorkflowName()
-    const outputDir = this.config.outputDir ?? join(this.config.cwd, "workflows")
+    const outputDir = this.config.outputDir ?? join(this.config.runtimeDir ?? this.config.cwd, "workflows")
     const yamlPath = join(outputDir, `${workflowName}.yaml`)
     const metaPath = join(outputDir, `${workflowName}.meta.json`)
 
@@ -587,7 +587,7 @@ export class DynamicSubWorkflowExecutor implements NodeExecutor {
     // Write execution-scoped snapshot (prevents overwrites on repeated executions)
     // Use base workflow name (without executionId) so API can find it by ref
     if (this.config.executionId) {
-      const snapshotDir = join(this.config.cwd, "state", "dynamic-workflows", this.config.executionId)
+      const snapshotDir = join(this.config.runtimeDir ?? this.config.cwd, "state", "dynamic-workflows", this.config.executionId)
       mkdirSync(snapshotDir, { recursive: true })
 
       const baseName = this.node.workflow ?? `${this.config.workflow?.name ?? "workflow"}__${this.node.id}`
@@ -716,6 +716,8 @@ export class DynamicSubWorkflowExecutor implements NodeExecutor {
         this.config.inputs,
         undefined, // executionName
         undefined, // crossExecResolver
+        undefined, // agentResolver
+        this.config.runtimeDir,
       )
 
       childEngine.updateVarPool(childPool.snapshot())

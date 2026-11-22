@@ -36,7 +36,7 @@ import { ResourcePreFlight } from "../resource-preflight"
 import { ResourceProvisioner } from "../resource-provisioner"
 import { getResourceRegistry } from "../resource-registry"
 import { SupervisionService } from "../supervision/supervision-service"
-import { readWorkspaceConfig, resolvePipelineConfigPath } from "../workspace-paths"
+import { readWorkspaceConfig, resolvePipelineConfigPath, workspaceSubdir } from "../workspace-paths"
 
 export class ExecutionLifecycle {
   private enginePool: EnginePool
@@ -193,7 +193,7 @@ export class ExecutionLifecycle {
     const wf = this.getWorkflow(exec.workflow_ref)
     if (!wf) throw Object.assign(new Error("Workflow not found"), { status: 404 })
 
-    const stateDir = join(this.workspacePath, "state")
+    const stateDir = workspaceSubdir(this.workspacePath, "state")
     if (!existsSync(stateDir)) mkdirSync(stateDir, { recursive: true })
     const snapshotName = `${id}-${WorkflowRef.sanitize(exec.workflow_ref)}`
     writeFileSync(join(stateDir, snapshotName), wf.content, "utf-8")

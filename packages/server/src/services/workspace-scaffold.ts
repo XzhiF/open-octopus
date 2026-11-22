@@ -6,7 +6,7 @@
 import fs from "fs"
 import path from "path"
 import os from "os"
-import { findWorkspaceConfigFile, workspaceConfigPath, workspaceConfigMarker } from "./workspace-paths"
+import { findWorkspaceConfigFile, workspaceConfigPath, workspaceConfigMarker, workspaceSubdir } from "./workspace-paths"
 
 /**
  * Default pipeline.yaml template — auto-generated for new workspaces.
@@ -61,22 +61,22 @@ export function workspaceGuide(): string[] {
     "<workspace>/",
     "├── CLAUDE.md             ← 工作空间指令（已存在则只追加管理块，不覆写）",
     "├── .claude/skills/       ← 已安装的 Claude Code Skills（从 core-pack 复制）",
-    "├── .octopus/             ← Octopus 运行时数据（不在目录根生成 config.json / pipeline.yaml）",
+    "├── .octopus/             ← Octopus 运行时基座（不在目录根生成 config.json / pipeline.yaml）",
     "│   ├── workspace.json      ← 工作空间配置（名称、关联仓库、创建时间、初始分支）",
     "│   ├── pipeline.yaml       ← Pipeline 配置（失败策略/重试/Checkpoint）",
     "│   ├── pipeline-guide.md   ← Pipeline 配置完整参考文档",
     "│   ├── checkpoints/        ← Checkpoint 中断恢复（每 execution 一个子目录）",
-    "│   └── code-dev-copilot-rules/ ← 代码规范模板",
-    "├── projects/             ← 项目代码（每个子目录是一个 git worktree）",
-    "├── workflows/          ← 工作流 YAML 定义（octopus workflow run 的执行目标）",
-    "├── state/              ← 执行状态记录",
-    "│   ├── executions.json   ← 执行索引（所有执行的注册表）",
-    "│   ├── {uuid}.json       ← 单次执行结果快照（含每个节点的 status/duration/outputs）",
-    "│   └── {uuid}-{name}.yaml ← 工作流 YAML 快照",
-    "├── logs/               ← 执行日志",
-    "│   └── {uuid}/           ← 每次执行的日志目录",
-    "│       ├── {node-id}.jsonl ← 按节点 ID 命名的 JSONL 日志",
-    "│       └── final-summary.jsonl",
+    "│   ├── code-dev-copilot-rules/ ← 代码规范模板",
+    "│   ├── projects/           ← 项目代码（每个子目录是一个 git worktree）",
+    "│   ├── workflows/          ← 工作流 YAML 定义（octopus workflow run 的执行目标）",
+    "│   ├── state/              ← 执行状态记录",
+    "│   │   ├── executions.json   ← 执行索引（所有执行的注册表）",
+    "│   │   ├── {uuid}.json       ← 单次执行结果快照（含每个节点的 status/duration/outputs）",
+    "│   │   └── {uuid}-{name}.yaml ← 工作流 YAML 快照",
+    "│   └── logs/               ← 执行日志",
+    "│       └── {uuid}/           ← 每次执行的日志目录",
+    "│           ├── {node-id}.jsonl ← 按节点 ID 命名的 JSONL 日志",
+    "│           └── final-summary.jsonl",
     "└── dependencies/       ← 外部依赖（如 agency-agents-zh 克隆）",
     "```",
     "",
@@ -87,8 +87,9 @@ export class WorkspaceScaffold {
   /** Copy built-in workflow YAML files from ~/.octopus/workflows/ to workspace. */
   copyBuiltInWorkflows(workspacePath: string): void {
     const srcDir = path.join(os.homedir(), ".octopus", "workflows")
-    const destDir = path.join(workspacePath, "workflows")
+    const destDir = workspaceSubdir(workspacePath, "workflows")
     if (!fs.existsSync(srcDir)) return
+    fs.mkdirSync(destDir, { recursive: true })
 
     const files = fs.readdirSync(srcDir).filter(f => f.endsWith('.yaml') || f.endsWith('.yml'))
     for (const file of files) {

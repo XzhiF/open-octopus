@@ -12,6 +12,7 @@ import { selectAndInstallAgents } from "../resource-agent-service"
 import { buildPhaseExpertContext, injectPhaseExpertContext } from "../tasks/phase-expert-context"
 import { existsSync, readFileSync } from "fs"
 import { join } from "path"
+import { workspaceRuntimeBase, workspaceSubdir } from "../workspace-paths"
 
 export class EngineFactory implements IEngineFactory {
   constructor(
@@ -26,7 +27,7 @@ export class EngineFactory implements IEngineFactory {
    */
   resolveWorkflowWithSnapshot(executionId: string, workflowRef: string): { parsed: any; content: string } | undefined {
     // Try snapshot first
-    const snapshotPath = join(this.workspacePath, "state", `${executionId}-${WorkflowRef.sanitize(workflowRef)}`)
+    const snapshotPath = join(workspaceSubdir(this.workspacePath, "state"), `${executionId}-${WorkflowRef.sanitize(workflowRef)}`)
     if (existsSync(snapshotPath)) {
       const content = readFileSync(snapshotPath, "utf-8")
       try {
@@ -95,6 +96,7 @@ export class EngineFactory implements IEngineFactory {
       execution.id, inputValues,
       execution.name || undefined, crossExecResolver,
       agentResolver,
+      workspaceRuntimeBase(this.workspacePath),
     )
 
     // Set workflow resolver for sub_workflow nodes

@@ -274,6 +274,9 @@ function writeWorkspaceConfigFile(configFile, data) {
   fs.mkdirSync(path.dirname(configFile), { recursive: true });
   fs.writeFileSync(configFile, JSON.stringify(data, null, 2), "utf-8");
 }
+function runtimeBase(wsDir) {
+  return workspaceConfigFile(wsDir) === path.join(wsDir, "config.json") ? wsDir : path.join(wsDir, ".octopus");
+}
 function worktreeDirName(group, name) {
   return `${group}-${name}`;
 }
@@ -428,17 +431,18 @@ function workspaceGuide() {
     "```",
     "<workspace>/",
     "\u251C\u2500\u2500 CLAUDE.md           \u2190 \u5DE5\u4F5C\u7A7A\u95F4\u6307\u4EE4\uFF08\u5DF2\u5B58\u5728\u5219\u53EA\u8FFD\u52A0\u7BA1\u7406\u5757\uFF0C\u4E0D\u8986\u5199\uFF09",
-    "\u251C\u2500\u2500 .octopus/           \u2190 Octopus \u8FD0\u884C\u65F6\u6570\u636E\uFF08\u4E0D\u5728\u76EE\u5F55\u6839\u751F\u6210 config.json / pipeline.yaml\uFF09",
-    "\u2502   \u2514\u2500\u2500 workspace.json    \u2190 \u5DE5\u4F5C\u7A7A\u95F4\u914D\u7F6E\uFF08\u540D\u79F0\u3001\u5173\u8054\u4ED3\u5E93\u3001\u521B\u5EFA\u65F6\u95F4\u3001\u521D\u59CB\u5206\u652F\uFF09",
+    "\u251C\u2500\u2500 .octopus/           \u2190 Octopus \u8FD0\u884C\u65F6\u57FA\u5EA7\uFF08\u4E0D\u5728\u76EE\u5F55\u6839\u751F\u6210 config.json / pipeline.yaml\uFF09",
+    "\u2502   \u251C\u2500\u2500 workspace.json    \u2190 \u5DE5\u4F5C\u7A7A\u95F4\u914D\u7F6E\uFF08\u540D\u79F0\u3001\u5173\u8054\u4ED3\u5E93\u3001\u521B\u5EFA\u65F6\u95F4\u3001\u521D\u59CB\u5206\u652F\uFF09",
+    "\u2502   \u251C\u2500\u2500 pipeline.yaml     \u2190 Pipeline \u914D\u7F6E",
+    "\u2502   \u251C\u2500\u2500 projects/         \u2190 \u9879\u76EE\u4EE3\u7801\uFF08\u6BCF\u4E2A\u5B50\u76EE\u5F55\u662F\u4E00\u4E2A git worktree\uFF09",
+    "\u2502   \u251C\u2500\u2500 workflows/        \u2190 \u5DE5\u4F5C\u6D41 YAML \u5B9A\u4E49\uFF08octopus workflow run \u7684\u6267\u884C\u76EE\u6807\uFF09",
+    "\u2502   \u251C\u2500\u2500 state/            \u2190 \u6267\u884C\u72B6\u6001\u8BB0\u5F55",
+    "\u2502   \u2502   \u251C\u2500\u2500 executions.json   \u2190 \u6267\u884C\u7D22\u5F15\uFF08\u6240\u6709\u6267\u884C\u7684\u6CE8\u518C\u8868\uFF09",
+    "\u2502   \u2502   \u251C\u2500\u2500 {uuid}.json       \u2190 \u5355\u6B21\u6267\u884C\u7ED3\u679C\u5FEB\u7167\uFF08\u542B\u6BCF\u4E2A\u8282\u70B9\u7684 status/duration/outputs\uFF09",
+    "\u2502   \u2502   \u2514\u2500\u2500 {uuid}-{name}.yaml \u2190 \u5DE5\u4F5C\u6D41 YAML \u5FEB\u7167",
+    "\u2502   \u2514\u2500\u2500 logs/             \u2190 \u6267\u884C\u65E5\u5FD7",
+    "\u2502       \u2514\u2500\u2500 {uuid}/         \u2190 \u6BCF\u6B21\u6267\u884C\u7684\u65E5\u5FD7\u76EE\u5F55",
     "\u251C\u2500\u2500 .claude/skills/     \u2190 \u5DF2\u5B89\u88C5\u7684 Claude Code Skills\uFF08\u4ECE core-pack \u590D\u5236\uFF09",
-    "\u251C\u2500\u2500 projects/           \u2190 \u9879\u76EE\u4EE3\u7801\uFF08\u6BCF\u4E2A\u5B50\u76EE\u5F55\u662F\u4E00\u4E2A git worktree\uFF09",
-    "\u251C\u2500\u2500 workflows/          \u2190 \u5DE5\u4F5C\u6D41 YAML \u5B9A\u4E49\uFF08octopus workflow run \u7684\u6267\u884C\u76EE\u6807\uFF09",
-    "\u251C\u2500\u2500 state/              \u2190 \u6267\u884C\u72B6\u6001\u8BB0\u5F55",
-    "\u2502   \u251C\u2500\u2500 executions.json   \u2190 \u6267\u884C\u7D22\u5F15\uFF08\u6240\u6709\u6267\u884C\u7684\u6CE8\u518C\u8868\uFF09",
-    "\u2502   \u251C\u2500\u2500 {uuid}.json       \u2190 \u5355\u6B21\u6267\u884C\u7ED3\u679C\u5FEB\u7167\uFF08\u542B\u6BCF\u4E2A\u8282\u70B9\u7684 status/duration/outputs\uFF09",
-    "\u2502   \u2514\u2500\u2500 {uuid}-{name}.yaml \u2190 \u5DE5\u4F5C\u6D41 YAML \u5FEB\u7167",
-    "\u251C\u2500\u2500 logs/               \u2190 \u6267\u884C\u65E5\u5FD7",
-    "\u2502   \u2514\u2500\u2500 {uuid}/           \u2190 \u6BCF\u6B21\u6267\u884C\u7684\u65E5\u5FD7\u76EE\u5F55",
     "\u2502       \u251C\u2500\u2500 {node-id}.jsonl \u2190 \u6309\u8282\u70B9 ID \u547D\u540D\u7684 JSONL \u65E5\u5FD7",
     "\u2502       \u2514\u2500\u2500 final-summary.jsonl",
     "\u2514\u2500\u2500 dependencies/       \u2190 \u5916\u90E8\u4F9D\u8D56\uFF08\u5982 agency-agents-zh \u514B\u9686\uFF09",
@@ -596,7 +600,7 @@ function cmdInit(wsName, repos, org, serverUrl, overrideBranch) {
     if (!dirExisted) {
       fs.rmSync(wsDir, { recursive: true, force: true });
     } else {
-      const projectsDir = path.join(wsDir, "projects");
+      const projectsDir = path.join(runtimeBase(wsDir), "projects");
       if (fs.existsSync(projectsDir)) {
         fs.rmSync(projectsDir, { recursive: true, force: true });
       }

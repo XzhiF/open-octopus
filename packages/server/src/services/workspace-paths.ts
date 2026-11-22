@@ -130,3 +130,22 @@ export function resolvePipelineConfigPath(root: string): string {
 export function pipelineGuidePath(root: string): string {
   return path.join(root, OCTOPUS_RUNTIME_DIR, "pipeline-guide.md")
 }
+
+// ── runtime subdirectories (projects / workflows / logs / state) ─────
+// New workspaces keep them under <root>/.octopus/. Older workspaces still
+// use the repo root; we detect that from where the workspace identity lives
+// (a legacy root config.json), never by the mere presence of a same-named
+// business directory.
+
+export const WORKSPACE_RUNTIME_SUBDIRS = ["projects", "workflows", "logs", "state"] as const
+export type WorkspaceRuntimeSubdir = (typeof WORKSPACE_RUNTIME_SUBDIRS)[number]
+
+export function workspaceRuntimeBase(root: string): string {
+  const configFile = findWorkspaceConfigFile(root)
+  if (configFile === path.join(root, "config.json")) return root
+  return octopusRuntimeDir(root)
+}
+
+export function workspaceSubdir(root: string, name: WorkspaceRuntimeSubdir): string {
+  return path.join(workspaceRuntimeBase(root), name)
+}

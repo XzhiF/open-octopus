@@ -22,6 +22,7 @@ import {
   WORKSPACE_CONFIG_KIND,
   readWorkspaceConfig,
   updateWorkspaceConfig,
+  workspaceSubdir,
 } from "../workspace-paths"
 
 export function getOctopusHome(): string {
@@ -389,10 +390,11 @@ function safeSegment(raw: string, fallback: string): string {
 
 export function worktreeDirFor(cabinPath: string, name: string, instance?: string): string {
   const safeName = safeSegment(name, "repo")
+  const projectsDir = workspaceSubdir(cabinPath, "projects")
   if (instance && instance.trim() !== "") {
-    return path.join(cabinPath, "projects", safeSegment(instance, "wt"), safeName)
+    return path.join(projectsDir, safeSegment(instance, "wt"), safeName)
   }
-  return path.join(cabinPath, "projects", safeName)
+  return path.join(projectsDir, safeName)
 }
 
 // ── 克隆 ────────────────────────────────────────────────────────────

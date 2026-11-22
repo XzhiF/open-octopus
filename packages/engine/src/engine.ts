@@ -165,6 +165,8 @@ export class WorkflowEngine {
    *  Injectable seam (setIdentityResolver, setVersionResolver precedent);
    *  production leaves it undefined — ExecutorFactory builds one. */
   private identityResolver?: import("./executors/identity-resolver").IdentityResolver
+  /** Where logs/state/workflows runtime output goes. Defaults to orgDir. */
+  private runtimeDir?: string
 
   constructor(
     private workflow: WorkflowDef,
@@ -179,6 +181,8 @@ export class WorkflowEngine {
     crossExecResolver?: CrossExecResolver,
     /** Dynamic agent resolver for swarm nodes: selects and installs agents from ResourceManager */
     agentResolver?: (topic: string, maxExperts: number) => Promise<Array<{ role: string; agent_file: string; description: string }>>,
+    /** Runtime output base (logs/state/workflows). Defaults to orgDir. */
+    runtimeDir?: string,
   ) {
     this.pool = new VarPool(workflow.variables ?? {})
 
@@ -235,8 +239,9 @@ export class WorkflowEngine {
     // and use it as fallback when resolving model for agent/swarm nodes
     this.workflowDefaultModel = workflow.model
 
-    if (orgDir) {
-      this.logger = new JsonlLogger(orgDir, this.executionId)
+    this.runtimeDir = runtimeDir ?? orgDir
+    if (this.runtimeDir) {
+      this.logger = new JsonlLogger(this.runtimeDir, this.executionId)
     }
 
     // Initialize notify system
@@ -264,6 +269,7 @@ export class WorkflowEngine {
       logger: this.logger,
       callbacks: this.callbacks,
       cwd: this.cwd,
+      runtimeDir: this.runtimeDir,
       crossExecResolver: this.crossExecResolver,
       executionId: this.executionId,
       providers: this.providers,
@@ -412,7 +418,7 @@ export class WorkflowEngine {
     }
 
     // Write State JSON
-    if (this.orgDir) {
+    if (this.runtimeDir) {
       this.writeStateJson(result, durationMs)
     }
 
@@ -661,7 +667,7 @@ export class WorkflowEngine {
     if (opts?.intervention) {
       // ★ 记录干预 prompt 到日志文件，便于查看
       try {
-        const logDir = join(this.orgDir!, "logs", this.executionId!)
+        const logDir = join(this.runtimeDir!, "logs", this.executionId!)
         if (!existsSync(logDir)) mkdirSync(logDir, { recursive: true })
         const interventionLog = {
           type: "intervention",
@@ -715,7 +721,7 @@ export class WorkflowEngine {
 
           // ★ 记录干预结果到日志
           try {
-            const logDir = join(this.orgDir!, "logs", this.executionId!)
+            const logDir = join(this.runtimeDir!, "logs", this.executionId!)
             const resultLog = {
               type: "intervention_result",
               timestamp: new Date().toISOString(),
@@ -766,7 +772,7 @@ export class WorkflowEngine {
   }
 
   private writeStateJson(result: { status: string }, durationMs: number): void {
-    const stateDir = join(this.orgDir!, "state")
+    const stateDir = join(this.runtimeDir!, "state")
     mkdirSync(stateDir, { recursive: true })
     const state = {
       executionId: this.executionId,
@@ -824,8 +830,8 @@ export class WorkflowEngine {
 
   /** Infer the last iteration number from existing JSONL log files. Used as fallback when nodeResults are lost (server restart). */
   private inferIterationFromLogs(loopNodeId: string): number | undefined {
-    if (!this.orgDir || !this.executionId) return undefined
-    const logDir = join(this.orgDir, "logs", this.executionId)
+    if (!this.runtimeDir || !this.executionId) return undefined
+    const logDir = join(this.runtimeDir, "logs", this.executionId)
     if (!existsSync(logDir)) return undefined
     try {
       const prefix = `${sanitizeId(loopNodeId)}-iter-`

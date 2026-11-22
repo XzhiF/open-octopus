@@ -28,6 +28,7 @@ import {
   readLocalRepoInfo, isGitRepo, projectKey, type CabinRepoEntry,
 } from "./cabin-repos"
 import { nameForRequirements, UNNAMED_CABIN_NAME } from "./cabin-naming"
+import { workspaceSubdir } from "../workspace-paths"
 
 /** Managed block markers — the only region of a pre-existing CLAUDE.md we touch. */
 export const CABIN_CLAUDE_BEGIN = "<!-- cabin:begin -->"
@@ -448,7 +449,7 @@ export class CabinInitService {
       lines.push(`  - 主线：${entry.mainline_branch ?? "（未探测）"}`)
       lines.push(
         `  - 要改：开工作树 —— \`git -C "${mainPath ?? ""}" worktree add ` +
-        `"${row.path}/projects/<instance>/${entry.name}" -b <branch>\``,
+        `"${workspaceSubdir(row.path, "projects")}/<instance>/${entry.name}" -b <branch>\``,
       )
     }
     lines.push(

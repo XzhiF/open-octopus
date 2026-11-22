@@ -49,6 +49,8 @@ export interface EngineServices {
   callbacks?: EngineCallbacks
   logger?: JsonlLogger
   signal?: AbortSignal
+  /** Runtime output base (logs/state/workflows). Defaults to cwd. */
+  runtimeDir?: string
   checkpointStore?: ICheckpointStore
   executionId?: string
   modelAliasConfig?: ModelAliasConfig

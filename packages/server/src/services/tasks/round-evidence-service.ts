@@ -51,7 +51,7 @@ import { BashExecutor, killProcessTree } from "@octopus/engine"
 import { ExecutionDAO } from "../../db/dao"
 import type { ExecutionRow } from "../../db/types"
 import { gitOps, type DiffFileEntry } from "../git-ops"
-import { readWorkspaceConfig } from "../workspace-paths"
+import { readWorkspaceConfig, workspaceSubdir } from "../workspace-paths"
 import type { SSEService } from "../sse"
 import type { WorkspaceService } from "../workspace"
 import { TaskStatusConflictError } from "./tasks-service"
@@ -602,7 +602,7 @@ export class RoundEvidenceService {
    *  clone shares the object store, so a deleted worktree still resolves SHAs. */
   private resolveRepoDir(wsPath: string | undefined, name: string): string | null {
     if (!wsPath) return null
-    const primary = path.join(wsPath, "projects", name)
+    const primary = path.join(workspaceSubdir(wsPath, "projects"), name)
     if (existsSync(path.join(primary, ".git"))) return primary
     const cfg = readWorkspaceConfig(wsPath) as {
       repos?: Array<{ name: string; worktree_path?: string; main_path?: string }>

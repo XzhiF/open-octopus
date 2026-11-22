@@ -8,6 +8,7 @@ import type { ExecutionRow } from "./types"
 import type { ExecutionDAO } from "../../db/dao/execution-dao"
 import { readFileSync, writeFileSync, existsSync, mkdirSync } from "fs"
 import { join } from "path"
+import { workspaceSubdir } from "../workspace-paths"
 
 export class StateFileManager implements IStateFileManager {
   private stateDir: string
@@ -17,7 +18,7 @@ export class StateFileManager implements IStateFileManager {
     private workspaceDbId: string,
     private dao: ExecutionDAO,
   ) {
-    this.stateDir = join(workspacePath, "state")
+    this.stateDir = workspaceSubdir(workspacePath, "state")
     if (!existsSync(this.stateDir)) {
       mkdirSync(this.stateDir, { recursive: true })
     }

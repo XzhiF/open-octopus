@@ -260,7 +260,7 @@ describe("触发预建 workspace+worktree（票03: 预建搬进 job 的 armTask�
     const ws = wsService.getById(row.workspace_id!)!
     expect(ws.name).toMatch(/^task-E2E_TD-prebuild.*-\d{4}-\d{6}$/) // 禁中文命名 (2026-09-20)：展示名＝合法英文名，空格→连字符
     expect(ws.task_id).toBe("t-ok") // v41 反向指针，取代 source_schedule_id→origin_id 反查
-    const wt = join(ws.path, "projects", REPO)
+    const wt = join(ws.path, ".octopus", "projects", REPO)
     expect(existsSync(join(wt, ".git"))).toBe(true)
     expect(existsSync(join(wt, "README.md"))).toBe(true)
     const branch = execFileSync("git", ["-C", wt, "branch", "--show-current"]).toString().trim()
@@ -313,7 +313,7 @@ describe("触发预建 workspace+worktree（票03: 预建搬进 job 的 armTask�
     await service.triggerTask("t-re")
     const boundId = taskRow("t-re").workspace_id!
     const ws = wsService.getById(boundId)!
-    rmSync(join(ws.path, "projects", REPO), { recursive: true, force: true }) // 带外删 worktree
+    rmSync(join(ws.path, ".octopus", "projects", REPO), { recursive: true, force: true }) // 带外删 worktree
 
     // 上一轮收尾 + 人重新入队（票03：释放槽位的唯一方式是行走终态）
     db.prepare("UPDATE executions SET status='completed' WHERE task_id='t-re'").run()
@@ -323,7 +323,7 @@ describe("触发预建 workspace+worktree（票03: 预建搬进 job 的 armTask�
     await service.triggerTask("t-re")
     expect(spy).not.toHaveBeenCalled()
     expect(taskRow("t-re").workspace_id).toBe(boundId) // 不换绑
-    expect(existsSync(join(ws.path, "projects", REPO, ".git"))).toBe(true) // 自愈重建
+    expect(existsSync(join(ws.path, ".octopus", "projects", REPO, ".git"))).toBe(true) // 自愈重建
     expect(taskRow("t-re").status).toBe("running")
     // 复用路径零新建目录：只有一个 ws 行
     expect(db.prepare("SELECT COUNT(*) c FROM workspaces WHERE task_id='t-re'").get()).toEqual({ c: 1 })
