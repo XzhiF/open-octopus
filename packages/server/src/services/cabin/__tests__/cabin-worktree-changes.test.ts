@@ -116,8 +116,8 @@ describe("CabinService · 本舱变更（cwd 自身的工作区）", () => {
     expect(view.repos).toHaveLength(1)
     const repo = view.repos[0]!
     expect(repo.dir).toBe(path.resolve(cabinPath))
-    // 只有 cwd 自己因登记项目而改的 config.json；外部仓的 a.txt / reconcile.ts 不出现。
-    expect(repo.files.map((f) => f.path)).toEqual(["config.json"])
+    // 只有 cwd 自己因登记项目而改的 workspace 配置；外部仓的 a.txt / reconcile.ts 不出现。
+    expect(repo.files.map((f) => f.path)).toEqual([".octopus/workspace.json"])
   })
 
   it("cwd 不是 git 仓：error 如实上报，files 为空", async () => {

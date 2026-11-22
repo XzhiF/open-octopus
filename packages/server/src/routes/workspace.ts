@@ -7,6 +7,7 @@ import { join } from "path"
 import os from "os"
 import { getArchiveService, ArchivePartialFailure } from "../services/archive/archive-service"
 import { listWorkspaceSkills } from "../services/workspace-skills"
+import { readWorkspaceConfig } from "../services/workspace-paths"
 
 export function createWorkspaceRoutes(workspaceService: WorkspaceService, orgDAO: OrgDAO, workspaceDAO: WorkspaceDAO, executionDAO?: ExecutionDAO): Hono {
   const workspaceRoutes = new Hono()
@@ -89,20 +90,23 @@ export function createWorkspaceRoutes(workspaceService: WorkspaceService, orgDAO
     try {
       for (const entry of readdirSync(workspacesDir, { withFileTypes: true })) {
         if (!entry.isDirectory()) continue
-        const configPath = join(workspacesDir, entry.name, "config.json")
-        if (!existsSync(configPath)) continue
+        const config = readWorkspaceConfig(join(workspacesDir, entry.name))
+        if (!config) continue
         const wsPath = `~/.octopus/workspaces/${entry.name}`
         if (dbPaths.has(wsPath)) continue
 
         try {
-          const config = JSON.parse(readFileSync(configPath, "utf-8"))
+          const repos = Array.isArray(config.repos) ? config.repos : []
+          const branch = typeof config.branch === "string"
+            ? config.branch
+            : typeof config.init_branch_name === "string" ? config.init_branch_name : null
           importable.push({
             name: entry.name,
             path: wsPath,
-            repoCount: (config.repos || []).length,
-            branch: config.branch || null,
+            repoCount: repos.length,
+            branch,
           })
-        } catch { /* skip broken config.json */ }
+        } catch { /* skip broken workspace config */ }
       }
     } catch { /* directory read error */ }
 
@@ -118,10 +122,10 @@ export function createWorkspaceRoutes(workspaceService: WorkspaceService, orgDAO
     }
     const wsPath = `~/.octopus/workspaces/${body.name}`
     const resolvedPath = wsPath.replace(/^~/, os.homedir())
-    const configPath = join(resolvedPath, "config.json")
+    const config = readWorkspaceConfig(resolvedPath)
 
-    if (!existsSync(configPath)) {
-      return c.json({ error: "config.json not found for this workspace" }, 404)
+    if (!config) {
+      return c.json({ error: "workspace 配置不存在（.octopus/workspace.json 或旧 config.json）" }, 404)
     }
 
     const existing = workspaceDAO.findByPath(wsPath)
@@ -130,13 +134,13 @@ export function createWorkspaceRoutes(workspaceService: WorkspaceService, orgDAO
     }
 
     try {
-      const config = JSON.parse(readFileSync(configPath, "utf-8"))
+      const repos = Array.isArray(config.repos) ? config.repos as Array<{ group?: string; name?: string }> : []
       const workspace = workspaceService.create({
         name: body.name,
         repo_group: body.repo_group ?? null,
-        description: config.description,
+        description: typeof config.description === "string" ? config.description : undefined,
         path: wsPath,
-        repos: (config.repos || []).map((r: any) => `${r.group}/${r.name}`),
+        repos: repos.map((r) => `${r.group ?? ""}/${r.name ?? ""}`),
       })
       return c.json(workspace, 201)
     } catch (e: any) {

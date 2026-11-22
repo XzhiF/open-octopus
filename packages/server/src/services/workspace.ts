@@ -11,6 +11,13 @@ import { WorkspaceScaffold, DEFAULT_PIPELINE_YAML } from "./workspace-scaffold"
 import { WorkspaceGit, type SpecWorktreeEntry } from "./workspace-git"
 import { getAgentDir } from "./agent/paths"
 import { resolveSelectableDirectory } from "./path-policy"
+import {
+  pipelineConfigPath,
+  pipelineGuidePath,
+  readWorkspaceConfig,
+  workspaceConfigMarker,
+  writeWorkspaceConfig,
+} from "./workspace-paths"
 
 /**
  * Pipeline Guide — detailed reference for pipeline.yaml configuration.
@@ -20,7 +27,7 @@ const PIPELINE_GUIDE_MD = `# Pipeline v2 配置指南
 
 ## 快速开始
 
-\`pipeline.yaml\` 位于工作空间根目录，控制工作流的执行行为。
+\`pipeline.yaml\` 位于工作空间根目录的 \`.octopus/\` 下，控制工作流的执行行为。
 没有此文件时，引擎使用 **fail_fast + 无重试** 的默认行为。
 
 修改后下次执行自动生效，**无需重启服务**。
@@ -283,19 +290,17 @@ export class WorkspaceService {
       fs.mkdirSync(checkpointsDir, { recursive: true })
     }
 
-    // Auto-generate pipeline.yaml with production-ready defaults
-    const pipelinePath = path.join(resolvedPath, "pipeline.yaml")
+    // Auto-generate pipeline.yaml (under .octopus/, never at the repo root)
+    const pipelinePath = pipelineConfigPath(resolvedPath)
     if (!fs.existsSync(pipelinePath)) {
+      fs.mkdirSync(path.dirname(pipelinePath), { recursive: true })
       fs.writeFileSync(pipelinePath, DEFAULT_PIPELINE_YAML, "utf-8")
     }
 
     // Auto-generate pipeline-guide.md — detailed reference for pipeline.yaml
-    const docsDir = path.join(resolvedPath, "docs", "octopus")
-    if (!fs.existsSync(docsDir)) {
-      fs.mkdirSync(docsDir, { recursive: true })
-    }
-    const guidePath = path.join(docsDir, "pipeline-guide.md")
+    const guidePath = pipelineGuidePath(resolvedPath)
     if (!fs.existsSync(guidePath)) {
+      fs.mkdirSync(path.dirname(guidePath), { recursive: true })
       fs.writeFileSync(guidePath, PIPELINE_GUIDE_MD, "utf-8")
     }
 
@@ -397,8 +402,9 @@ export class WorkspaceService {
     // Create .octopus directory structure
     fs.mkdirSync(path.join(wsDir, ".octopus", "checkpoints"), { recursive: true })
 
-    // Auto-generate pipeline.yaml
-    const pipelinePath = path.join(wsDir, "pipeline.yaml")
+    // Auto-generate pipeline.yaml (under .octopus/)
+    const pipelinePath = pipelineConfigPath(wsDir)
+    fs.mkdirSync(path.dirname(pipelinePath), { recursive: true })
     fs.writeFileSync(pipelinePath, DEFAULT_PIPELINE_YAML, "utf-8")
 
     // Copy rules templates
@@ -413,8 +419,9 @@ export class WorkspaceService {
     // Copy built-in workflows from ~/.octopus/resources/installed/workflows/
     this.scaffold.copyBuiltInWorkflows(wsDir)
 
-    // Write config.json with scheduler-specific fields
+    // Write workspace config under .octopus/ with scheduler-specific fields
     const configData: Record<string, unknown> = {
+      ...workspaceConfigMarker(),
       name: input.name,
       repo_group: input.repo_group ?? null,
       source: input.source,
@@ -426,7 +433,7 @@ export class WorkspaceService {
       repos: [],
       created: now,
     }
-    fs.writeFileSync(path.join(wsDir, "config.json"), JSON.stringify(configData, null, 2), "utf-8")
+    writeWorkspaceConfig(wsDir, configData)
 
     // Write base CLAUDE.md
     this.scaffold.writeBaseClaudeMd(wsDir, input.name)
@@ -480,14 +487,11 @@ export class WorkspaceService {
    * 的 catch 归入 error_summary / 409）。
    */
   ensureWorktreesForReuse(ws: WorkspaceRow): { rebuilt: string[] } {
-    const configPath = path.join(ws.path, "config.json")
-    let entries: Array<{ name: string; main_path?: string; worktree_path?: string; branch?: string; group?: string }>
-    try {
-      const raw = JSON.parse(fs.readFileSync(configPath, "utf-8")) as { repos?: unknown }
-      entries = Array.isArray(raw.repos) ? raw.repos as typeof entries : []
-    } catch {
-      return { rebuilt: [] } // 坏 config.json：无从核对，留给既有失败通道
+    const raw = readWorkspaceConfig(ws.path)
+    if (!raw) {
+      return { rebuilt: [] } // 无可用 workspace 配置：无从核对，留给既有失败通道
     }
+    const entries = Array.isArray(raw.repos) ? (raw.repos as Array<{ name: string; main_path?: string; worktree_path?: string; branch?: string; group?: string }>) : []
 
     const resolved: SpecWorktreeEntry[] = []
     const rebuilt: string[] = []
@@ -525,14 +529,9 @@ export class WorkspaceService {
     const wanted = projects.filter((p) => p.name && p.name !== "default")
     if (wanted.length === 0) return { created: [] }
 
-    const configPath = path.join(ws.path, "config.json")
-    let entries: Array<{ name: string; main_path?: string; worktree_path?: string; branch?: string; group?: string }> = []
-    try {
-      const raw = JSON.parse(fs.readFileSync(configPath, "utf-8")) as { repos?: unknown }
-      entries = Array.isArray(raw.repos) ? raw.repos as typeof entries : []
-    } catch {
-      entries = []
-    }
+    const raw = readWorkspaceConfig(ws.path)
+    const entries: Array<{ name: string; main_path?: string; worktree_path?: string; branch?: string; group?: string }> =
+      raw && Array.isArray(raw.repos) ? (raw.repos as Array<{ name: string; main_path?: string; worktree_path?: string; branch?: string; group?: string }>) : []
 
     const branchName = `${branchPrefix}-${branchSuffix}`
     const resolved: SpecWorktreeEntry[] = []

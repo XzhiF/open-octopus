@@ -30,7 +30,7 @@
 // schema change, no new table, on purpose: the round is terminal and tiny;
 // the batch dir + derived view already own its bookkeeping.
 
-import { existsSync, readFileSync } from "fs"
+import { existsSync } from "fs"
 import os from "os"
 import path from "path"
 import type Database from "better-sqlite3"
@@ -51,6 +51,7 @@ import { BashExecutor, killProcessTree } from "@octopus/engine"
 import { ExecutionDAO } from "../../db/dao"
 import type { ExecutionRow } from "../../db/types"
 import { gitOps, type DiffFileEntry } from "../git-ops"
+import { readWorkspaceConfig } from "../workspace-paths"
 import type { SSEService } from "../sse"
 import type { WorkspaceService } from "../workspace"
 import { TaskStatusConflictError } from "./tasks-service"
@@ -603,14 +604,12 @@ export class RoundEvidenceService {
     if (!wsPath) return null
     const primary = path.join(wsPath, "projects", name)
     if (existsSync(path.join(primary, ".git"))) return primary
-    try {
-      const cfg = JSON.parse(readFileSync(path.join(wsPath, "config.json"), "utf-8")) as {
-        repos?: Array<{ name: string; worktree_path?: string; main_path?: string }>
-      }
-      const entry = cfg.repos?.find((r) => r.name === name)
-      if (entry?.worktree_path && existsSync(entry.worktree_path)) return entry.worktree_path
-      if (entry?.main_path && existsSync(entry.main_path)) return entry.main_path
-    } catch { /* no/odd config.json — the primary probe already failed */ }
+    const cfg = readWorkspaceConfig(wsPath) as {
+      repos?: Array<{ name: string; worktree_path?: string; main_path?: string }>
+    } | null
+    const entry = cfg?.repos?.find((r) => r.name === name)
+    if (entry?.worktree_path && existsSync(entry.worktree_path)) return entry.worktree_path
+    if (entry?.main_path && existsSync(entry.main_path)) return entry.main_path
     // a bare projects/<name> dir without .git marker file (fresh clone layout) —
     // still the right cwd if it IS a worktree root; commitExists below decides.
     return existsSync(primary) ? primary : null

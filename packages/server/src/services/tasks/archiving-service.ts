@@ -37,6 +37,7 @@ import path from "path"
 import type Database from "better-sqlite3"
 import { TaskDAO } from "../../db/dao"
 import type { TaskHomeService } from "./task-home-service"
+import { readWorkspaceConfig } from "../workspace-paths"
 import {
   defaultRun,
   dirtyFingerprint,
@@ -543,10 +544,9 @@ async function resolveWorktree(
   projectName: string,
   run: CommandRunner,
 ): Promise<WorktreeRef> {
-  const cfg = parseJSONSafe<{ repos?: Array<{ name?: string; worktree_path?: string; branch?: string }> }>(
-    fs.existsSync(path.join(wsPath, "config.json")) ? fs.readFileSync(path.join(wsPath, "config.json"), "utf-8") : "",
-    {},
-  )
+  const cfg = (readWorkspaceConfig(wsPath) ?? {}) as {
+    repos?: Array<{ name?: string; worktree_path?: string; branch?: string }>
+  }
   const entry = (cfg.repos ?? []).find((r) => r.name === projectName)
   const dir = entry?.worktree_path || path.join(wsPath, "projects", projectName)
   if (!fs.existsSync(dir)) {

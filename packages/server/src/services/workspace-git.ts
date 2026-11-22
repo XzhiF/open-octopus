@@ -7,6 +7,7 @@ import fs from "fs"
 import path from "path"
 import os from "os"
 import { workspaceGuide } from "./workspace-scaffold"
+import { updateWorkspaceConfig } from "./workspace-paths"
 
 /** Escape a literal string for safe interpolation into a RegExp source. */
 function escapeRegex(s: string): string {
@@ -252,13 +253,12 @@ export class WorkspaceGit {
     wsName: string,
   ): void {
     if (entries.length === 0) return
-    const configPath = path.join(workspacePath, "config.json")
-    const config = JSON.parse(fs.readFileSync(configPath, "utf-8"))
-    config.repos = entries.map(e => ({
-      name: e.name, main_path: e.main_path, worktree_path: e.worktree_path, branch: e.branch,
-      ...(e.group ? { group: e.group } : {}),
-    }))
-    fs.writeFileSync(configPath, JSON.stringify(config, null, 2), "utf-8")
+    updateWorkspaceConfig(workspacePath, (config) => {
+      config.repos = entries.map(e => ({
+        name: e.name, main_path: e.main_path, worktree_path: e.worktree_path, branch: e.branch,
+        ...(e.group ? { group: e.group } : {}),
+      }))
+    })
 
     const claudeLines = [
       `# 工作空间: ${wsName}`, "",
@@ -276,10 +276,9 @@ export class WorkspaceGit {
     workspacePath: string,
     entries: { name: string; group: string; main_path: string; worktree_path: string }[],
   ): void {
-    const configPath = path.join(workspacePath, "config.json")
-    const config = JSON.parse(fs.readFileSync(configPath, "utf-8"))
-    config.repos = entries.map(e => ({ name: e.name, group: e.group, main_path: e.main_path, worktree_path: e.worktree_path }))
-    fs.writeFileSync(configPath, JSON.stringify(config, null, 2), "utf-8")
+    updateWorkspaceConfig(workspacePath, (config) => {
+      config.repos = entries.map(e => ({ name: e.name, group: e.group, main_path: e.main_path, worktree_path: e.worktree_path }))
+    })
   }
 
   private writeProjectClaudeMd(
