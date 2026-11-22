@@ -6,7 +6,7 @@
 import fs from "fs"
 import path from "path"
 import os from "os"
-import { workspaceConfigPath, workspaceConfigMarker } from "./workspace-paths"
+import { findWorkspaceConfigFile, workspaceConfigPath, workspaceConfigMarker } from "./workspace-paths"
 
 /**
  * Default pipeline.yaml template — auto-generated for new workspaces.
@@ -113,8 +113,8 @@ export class WorkspaceScaffold {
 
   /** Write workspace config under .octopus/ (never at the directory root). */
   writeConfigJson(workspacePath: string, name: string, repos: string[], branch?: string): void {
+    if (findWorkspaceConfigFile(workspacePath)) return
     const configPath = workspaceConfigPath(workspacePath)
-    if (fs.existsSync(configPath)) return
     const config: Record<string, unknown> = {
       ...workspaceConfigMarker(),
       name,
