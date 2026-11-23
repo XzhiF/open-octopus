@@ -43,7 +43,11 @@ vi.mock('../../chat/use-cockpit-threads', () => ({
 vi.mock('sonner', () => ({ toast: { success: vi.fn(), error: vi.fn(), message: vi.fn() } }))
 vi.mock('@/lib/cabin-api', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@/lib/cabin-api')>()
-  return { ...actual, ackCabinAttention: vi.fn(async () => ({ acked: true })) }
+  return {
+    ...actual,
+    ackCabinAttention: vi.fn(async () => ({ acked: true })),
+    dismissCabinAsk: vi.fn(async () => ({ dismissed: 1 })),
+  }
 })
 vi.mock('@/lib/tasks-api', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@/lib/tasks-api')>()
@@ -55,7 +59,7 @@ vi.mock('@/lib/tasks-api', async (importOriginal) => {
   }
 })
 
-import { ackCabinAttention } from '@/lib/cabin-api'
+import { ackCabinAttention, dismissCabinAsk } from '@/lib/cabin-api'
 import { readyTask, triggerTask } from '@/lib/tasks-api'
 
 function cockpit(): CockpitContextValue {
@@ -183,6 +187,24 @@ describe('CockpitRightRail · 待办（v22 #5 一级动作）', () => {
     const probe = screen.getByTestId('probe-selection')
     expect(probe).toHaveAttribute('data-wins', '1')
     expect(probe).toHaveAttribute('data-inbox-open', '0')
+  })
+
+  it('待你定一级行「忽略」：dismiss 消息卡 + ack 收项，行与计数立即消失（v22 #9）', async () => {
+    fleetState.value = fleet([row('a1', { stage: 'answer', ask: { ask_id: 'ask-77' } })])
+    render(ui())
+    expect(screen.getByTestId('cockpit-inbox-count')).toHaveTextContent('1')
+    fireEvent.click(screen.getByTestId('cockpit-inbox-chip'))
+
+    const pop = screen.getByTestId('cockpit-inbox-popover')
+    const ignore = within(pop).getByTestId('cockpit-inbox-ignore-a1')
+    expect(ignore).toHaveTextContent('忽略')
+
+    fireEvent.click(ignore)
+    await waitFor(() => expect(vi.mocked(dismissCabinAsk)).toHaveBeenCalledWith('c1', 'ask-77'))
+    expect(vi.mocked(ackCabinAttention)).toHaveBeenCalledWith('c1', 'a1')
+    // 乐观消项：行与 chip 计数都不等下一轮轮询。
+    await waitFor(() => expect(screen.queryByTestId('cockpit-inbox-row-a1')).toBeNull())
+    expect(screen.getByTestId('cockpit-inbox-count')).toHaveTextContent('0')
   })
 
   it('没有会话的行：行体点击退回详情（运行页签）；💬 按钮同样退回详情', () => {

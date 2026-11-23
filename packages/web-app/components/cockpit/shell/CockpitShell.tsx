@@ -33,6 +33,7 @@ import { CockpitFace } from '../face/CockpitFace'
 import { CockpitCabinTree } from '../face/CockpitCabinTree'
 import { CockpitCabinChanges } from '../face/CockpitCabinChanges'
 import { CockpitDocWindow } from '../face/CockpitDocWindow'
+import { CockpitKnowledgeWindow } from '../face/CockpitKnowledgeWindow'
 import { CockpitChatHost } from '../chat/CockpitChatHost'
 import { CockpitChatWindow } from '../chat/CockpitChatWindow'
 import { CockpitDock } from '../chat/CockpitDock'
@@ -196,6 +197,9 @@ function CockpitSurface({ cabin }: { cabin: CabinDetail }) {
 
       {/* 2026-11-19 用户 #4：聊天正文里的产物绝对路径点开 → 只读文档窗。 */}
       <CockpitDocWindow />
+
+      {/* 2026-11-23 用户 #7：知识中心窗（classic knowledge 换皮搬进全舱）。 */}
+      <CockpitKnowledgeWindow />
 
       {/* 2026-11-23 用户 #3：便签窗（classic 快速便签迁入）。HUD 最右「✎ 便签」开合。 */}
       <CockpitNotesWindow />

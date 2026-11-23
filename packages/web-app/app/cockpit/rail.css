@@ -343,6 +343,30 @@
   overflow: hidden;
   text-overflow: ellipsis;
 }
+/* v22 #6（2026-11-23 用户）：作战中行的活秒表 —— 同流式卡 ⏱ 读数，每秒走字；
+   归位副行最右（doing 文本先截断），绿点呼吸 = 还活着。 */
+.ck12-fltime {
+  margin-left: auto;
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  font-family: var(--font-mono);
+  font-size: 8.5px;
+  font-weight: 700;
+  color: var(--ck12-sky);
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.02em;
+}
+.ck12-fltime::before {
+  content: '';
+  width: 4px;
+  height: 4px;
+  border-radius: 50%;
+  background: var(--ck12-green);
+  box-shadow: 0 0 6px var(--ck12-green);
+  animation: ck12-np 1.6s infinite;
+}
 .ck12-flrow.is-wait .ck12-flsub { color: color-mix(in srgb, var(--ck12-amber) 80%, var(--ck12-ink2)); }
 .ck12-flrow.is-blocked .ck12-flsub { color: color-mix(in srgb, var(--ck12-red) 75%, var(--ck12-ink2)); }
 
@@ -621,6 +645,7 @@
   .ck12-flrow.is-arrived-0,
   .ck12-flrow.is-arrived-1 { animation: none; }
   .ck12-flrow.is-blocked::after,
+  .ck12-fltime::before,
   .ck12-fr-live { animation: none; }
   .ck12-rail { transition: none; }
 }

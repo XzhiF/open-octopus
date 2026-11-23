@@ -8,12 +8,15 @@
 //   · v22 #5（2026-11-23 用户）：行体 / 💬 = 打开这条作战的独立 chat 窗（默认
 //     和主通讯台一样大、盖在上面）；▦ = 作战详情。行不再切换主通讯台。
 //   · 数字纪律：pct 只在真实拿到时画条；null 一律不画，不猜。
+//   · v22 #6（2026-11-23 用户）：作战中行副行最右挂活秒表（⏱ mm:ss，每秒走字）
+//     —— 与流式卡的计时同一套读数，一眼看出它没卡住；只这一格每秒重渲染。
 //
 // 数据只从 useCockpitFleet() 来（已经是入口舱单舱），不自己 fetch。
 
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { X } from 'lucide-react'
 import type { CabinDelegationView } from '@/lib/cabin-api'
+import { formatRunClock } from '@/lib/format'
 import { useCockpitFleet } from '../fleet/CockpitFleetProvider'
 import {
   fleetStatusOf,
@@ -107,6 +110,38 @@ function statusTextOf(row: CockpitRow, status: FleetStatus): string {
   if (row.kind === 'job' && row.attention) return attentionStageLabel(row.attention)
   if (status === 'wait') return '等你答'
   return STATUS_LABEL[status]
+}
+
+/** 行的起跑时刻（attention 行没有）。作战中秒表的起点；非法/缺失 → null（不画）。 */
+function startedAtOf(row: CockpitRow): number | null {
+  if (row.kind === 'attention') return null
+  const iso = row.kind === 'job' ? row.job.created_at
+    : row.kind === 'task' ? row.task.created_at
+      : row.delegation.created_at
+  if (!iso) return null
+  const at = Date.parse(iso)
+  return Number.isNaN(at) ? null : at
+}
+
+/** v22 #6（2026-11-23 用户）：作战中的活秒表 —— 每秒 +1，同流式卡的 ⏱ 读数。
+ *  自带 interval，只有这一格文本重渲染，整条编队不跟着每秒重建。 */
+function RunClock({ start }: { start: number }) {
+  const [now, setNow] = useState(() => Date.now())
+  useEffect(() => {
+    setNow(Date.now())
+    const timer = window.setInterval(() => setNow(Date.now()), 1000)
+    return () => window.clearInterval(timer)
+  }, [start])
+  const label = formatRunClock(Math.max(0, now - start))
+  return (
+    <span
+      className="ck12-fltime"
+      data-testid="cockpit-rail-clock"
+      title={`已作战 ${label} · 每秒走字 = 还活着`}
+    >
+      ⏱ {label}
+    </span>
+  )
 }
 
 function isEditableTarget(target: EventTarget | null): boolean {
@@ -335,6 +370,7 @@ export function CockpitFleetRail() {
           const selected = ref ? sameCockpitRef(selection, ref) : false
           const status = fleetStatusOf(row)
           const pct = pctOf(row)
+          const startedAt = status === 'run' ? startedAtOf(row) : null
           const accent = accentOf(row)
           const title = titleOf(row)
           const talkable = byKey.has(row.key)
@@ -380,6 +416,7 @@ export function CockpitFleetRail() {
                 <span className="ck12-flsub">
                   <span className={`ck12-flst is-${status}`}>{statusTextOf(row, status)}</span>
                   <span className="ck12-flsub-t">{subOf(row, status)}</span>
+                  {startedAt !== null && <RunClock start={startedAt} />}
                 </span>
                 {pct !== null && status !== 'done' && (
                   <span className="ck12-flbar" aria-hidden="true">

@@ -335,6 +335,14 @@
 }
 .ck12-hud-classic:hover b { color: #fff; }
 
+/* v22 #7：知识中心入口 —— 与返回钮同高同壳，紫色描边（knowledge / 星空）。 */
+.ck12-hud-kc { border-color: rgba(139, 124, 246, 0.42); }
+.ck12-hud-kc .ck12-hud-classic-i { color: var(--ck12-violet); }
+.ck12-hud-kc:hover {
+  border-color: var(--ck12-violet);
+  box-shadow: 0 0 12px rgba(139, 124, 246, 0.28);
+}
+
 /* 舱籍 chip（复用 CockpitProjectsPopover 的 .ck12-pjbtn，重排成原型 .projchip） */
 .ck12-hud .ck12-pjbtn {
   display: flex;

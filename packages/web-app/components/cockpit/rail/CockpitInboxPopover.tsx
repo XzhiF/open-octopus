@@ -14,7 +14,8 @@
 
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { X } from 'lucide-react'
-import { ackCabinAttention } from '@/lib/cabin-api'
+import { toast } from 'sonner'
+import { ackCabinAttention, dismissCabinAsk } from '@/lib/cabin-api'
 import {
   START_SUMMARY,
   startDecisionKey,
@@ -368,6 +369,7 @@ export interface CockpitInboxPopoverProps {
 export function CockpitInboxPopover({ entries, counts, answered, onAnswered, onStartDecided }: CockpitInboxPopoverProps) {
   const {
     inboxSel, selectInbox, closeInbox, openPanel, select, layer, wins, chatWindow, threads: threadApi,
+    entryCabinId,
   } = useCockpitState()
   const { rows } = useCockpitFleet()
   const { byKey } = useCockpitThreads()
@@ -414,6 +416,21 @@ export function CockpitInboxPopover({ entries, counts, answered, onAnswered, onS
     }
     select(entry.ref, 'run', 'inbox')
   }, [rows, byKey, closeInbox, wins, threadApi, chatWindow, select])
+
+  /** 忽略提问（v22 #9）：不回复、不转达。消息卡写 decision（dismiss）+ attention
+   *  收项（ack）—— 状态派生的委派行 / 工作流提问没有消息卡，只靠 ack 也能立刻
+   *  从「要我处理」收起；人若改主意，去这条作战的对话里直接说就行。 */
+  const ignoreAsk = useCallback(async (entry: InboxEntry) => {
+    const cabinId = entry.cabinId || entryCabinId
+    const askId = entry.item.ask?.ask_id
+    try {
+      if (askId) await dismissCabinAsk(cabinId, askId)
+      await ackCabinAttention(cabinId, entry.item.id)
+      onAnswered(entry.item.id, '已忽略')
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : '忽略失败')
+    }
+  }, [entryCabinId, onAnswered])
 
   /** 行体默认动作（原型 inboxGo）。 */
   const go = useCallback((entry: InboxEntry) => {
@@ -606,6 +623,20 @@ export function CockpitInboxPopover({ entries, counts, answered, onAnswered, onS
                     >
                       💬 对话
                     </button>
+                    {groupKey === 'ask' && (
+                      <button
+                        type="button"
+                        className="ck12-ipa"
+                        title="忽略这条提问（不回复 · 从要我处理收起）"
+                        data-testid={`cockpit-inbox-ignore-${entry.item.id}`}
+                        onClick={(event) => {
+                          event.stopPropagation()
+                          void ignoreAsk(entry)
+                        }}
+                      >
+                        忽略
+                      </button>
+                    )}
                     <button
                       type="button"
                       className="ck12-ipa"

@@ -1,0 +1,146 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<title>知识中心图标选型 · cockpit HUD</title>
+<style>
+  :root{
+    --bg:#0b0918; --bg2:#131029; --ink:#EDEBFA; --ink2:#B9B3D9; --metal2:#7E7899;
+    --violet:#8B7CF6; --teal:#2EE6D6; --sky:#35C7F0; --gold:#FFB020; --green:#3DDC97;
+    --edge:rgba(185,179,217,.22); --glass:rgba(22,18,44,.72);
+    --font-mono:ui-monospace,"Cascadia Mono","Consolas","SFMono-Regular",monospace;
+    --font-ui:"Segoe UI","Microsoft YaHei",system-ui,sans-serif;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{
+    min-height:100vh;background:
+      radial-gradient(1100px 520px at 78% -8%, rgba(139,124,246,.18), transparent 60%),
+      radial-gradient(900px 500px at 8% 108%, rgba(53,199,240,.12), transparent 60%),
+      radial-gradient(1px 1px at 12% 22%, rgba(255,255,255,.7), transparent 40%),
+      radial-gradient(1px 1px at 34% 66%, rgba(255,255,255,.5), transparent 40%),
+      radial-gradient(1.5px 1.5px at 61% 18%, rgba(255,255,255,.8), transparent 40%),
+      radial-gradient(1px 1px at 82% 47%, rgba(255,255,255,.55), transparent 40%),
+      radial-gradient(1px 1px at 71% 84%, rgba(255,255,255,.6), transparent 40%),
+      radial-gradient(1.5px 1.5px at 91% 72%, rgba(255,255,255,.5), transparent 40%),
+      linear-gradient(160deg,var(--bg),var(--bg2));
+    color:var(--ink);font-family:var(--font-ui);padding:34px 26px 60px;
+  }
+  .wrap{max-width:1080px;margin:0 auto}
+  h1{font-size:18px;font-weight:800;letter-spacing:.02em}
+  .sub{margin-top:6px;font-size:12px;color:var(--metal2);line-height:1.7}
+  .sub b{color:var(--ink2)}
+
+  .preview{
+    position:sticky;top:0;z-index:5;margin:22px 0 26px;padding:16px 18px;
+    background:linear-gradient(180deg,rgba(20,16,42,.94),rgba(20,16,42,.82));
+    backdrop-filter:blur(12px);border:1px solid var(--edge);border-radius:14px;
+    box-shadow:0 18px 50px rgba(0,0,0,.45);
+  }
+  .preview .cap{font-size:10px;font-weight:800;letter-spacing:.14em;color:var(--metal2);margin-bottom:12px}
+  .hudrow{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+  .chip{display:flex;align-items:center;gap:6px;height:32px;padding:0 12px;border-radius:10px;
+    background:var(--glass);border:1px solid var(--edge);color:var(--metal2);
+    font-size:10.5px;font-weight:700;white-space:nowrap}
+  .chip .ic{font-size:13px;line-height:1;color:var(--teal)}
+  .chip.back .ic{color:var(--teal)}
+  .chip.kc{border-color:rgba(139,124,246,.5);background:rgba(139,124,246,.1)}
+  .chip.kc .ic{color:var(--violet);font-size:14px}
+  .chip b{color:#fff;font-weight:700}
+  .preview .picked{margin-left:auto;font-size:11px;color:var(--metal2)}
+  .preview .picked b{color:var(--violet);font-family:var(--font-mono)}
+
+  .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(230px,1fr));gap:14px}
+  .card{
+    text-align:left;background:rgba(255,255,255,.035);border:1px solid var(--edge);
+    border-radius:14px;padding:16px 16px 14px;cursor:pointer;transition:.16s;color:inherit;
+    font:inherit;position:relative;
+  }
+  .card:hover{transform:translateY(-2px);border-color:rgba(139,124,246,.55);background:rgba(139,124,246,.07)}
+  .card.on{border-color:var(--violet);background:linear-gradient(160deg,rgba(139,124,246,.18),rgba(53,199,240,.06));
+    box-shadow:0 0 0 1px rgba(139,124,246,.35),0 12px 32px rgba(139,124,246,.18)}
+  .card .no{position:absolute;top:12px;right:14px;font-size:10px;font-family:var(--font-mono);color:var(--metal2)}
+  .card.on .no{color:var(--violet);font-weight:800}
+  .glyph{font-size:30px;line-height:1;height:40px;display:flex;align-items:center;color:#fff;margin-bottom:10px}
+  .card.kc-violet .glyph{color:var(--violet)}
+  .nm{font-size:12.5px;font-weight:800;color:var(--ink)}
+  .cp{margin-top:2px;font-size:9.5px;font-family:var(--font-mono);color:var(--metal2)}
+  .mini{margin-top:12px;padding-top:11px;border-top:1px dashed rgba(185,179,217,.16);display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+  .mini .chip{height:28px;padding:0 10px;font-size:10px}
+  .mini .chip .ic{font-size:12px}
+  .check{display:none;position:absolute;bottom:12px;right:14px;font-size:10px;font-weight:800;color:var(--violet)}
+  .card.on .check{display:block}
+  .foot{margin-top:28px;font-size:11.5px;color:var(--metal2);line-height:1.8}
+  .foot b{color:var(--ink2)}
+  .foot code{font-family:var(--font-mono);font-size:10.5px;color:var(--teal)}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>知识中心图标选型</h1>
+  <div class="sub">全舱模式 HUD 左上、紧挨「← 经典模式」的那枚 chip。点一张卡 = 选中，顶部会实时预览。
+    <b>看完回我编号（1–12）即可。</b></div>
+
+  <div class="preview">
+    <div class="cap">HUD 预览 · 左上角</div>
+    <div class="hudrow">
+      <span class="chip back"><span class="ic">←</span><b>经典模式</b></span>
+      <span class="chip kc"><span class="ic" id="pvIc">✷</span><b>知识中心</b></span>
+      <span class="picked">当前选择：<b id="pvName">1 · ✷ 星芒</b></span>
+    </div>
+  </div>
+
+  <div class="grid" id="grid"></div>
+
+  <div class="foot">
+    说明：<br/>
+    · 1–8 是单色字形，跟 HUD 现有符号（⬡ ◈ ⌗ ± ◉）同一路数，颜色可控，跟星空 UI 最协调。<br/>
+    · 9–12 是 emoji / 原子符号，辨识度高但自带颜色，可能和暗色舰桥有点跳。<br/>
+    · 选定后窗口标题、左树根节点会统一用同一枚图标。
+  </div>
+</div>
+
+<script>
+const ICONS=[
+  {no:1, ch:'✷', name:'星芒',      cp:'U+2737', cls:'kc-violet'},
+  {no:2, ch:'✦', name:'四芒星·实',  cp:'U+2726', cls:'kc-violet'},
+  {no:3, ch:'✧', name:'四芒星·空',  cp:'U+2727', cls:'kc-violet'},
+  {no:4, ch:'✺', name:'十六芒星',   cp:'U+273A', cls:'kc-violet'},
+  {no:5, ch:'✶', name:'六芒星',     cp:'U+2736', cls:'kc-violet'},
+  {no:6, ch:'⁂', name:'三星座',     cp:'U+2042', cls:'kc-violet'},
+  {no:7, ch:'⋆', name:'星算子',     cp:'U+22C6', cls:'kc-violet'},
+  {no:8, ch:'✩', name:'空心五角星', cp:'U+2729', cls:'kc-violet'},
+  {no:9, ch:'⚛', name:'原子',       cp:'U+269B', cls:''},
+  {no:10,ch:'🪐', name:'行星',      cp:'emoji',  cls:''},
+  {no:11,ch:'🛰', name:'卫星',      cp:'emoji',  cls:''},
+  {no:12,ch:'🌌', name:'银河',      cp:'emoji',  cls:''},
+];
+const $=s=>document.querySelector(s);
+const grid=$('#grid');
+let picked=ICONS[0];
+
+function render(){
+  grid.innerHTML=ICONS.map(ic=>`
+    <button type="button" class="card ${ic.cls}${picked.no===ic.no?' on':''}" data-no="${ic.no}">
+      <span class="no">${String(ic.no).padStart(2,'0')}</span>
+      <span class="glyph">${ic.ch}</span>
+      <div class="nm">${ic.name}</div>
+      <div class="cp">${ic.cp}</div>
+      <div class="mini">
+        <span class="chip"><span class="ic">←</span><b>经典模式</b></span>
+        <span class="chip kc"><span class="ic">${ic.ch}</span><b>知识中心</b></span>
+      </div>
+      <span class="check">✓ 选它</span>
+    </button>`).join('');
+  $('#pvIc').textContent=picked.ch;
+  $('#pvIc').style.color=picked.cls==='kc-violet'?'var(--violet)':'initial';
+  $('#pvName').textContent=`${picked.no} · ${picked.ch} ${picked.name}`;
+  grid.querySelectorAll('.card').forEach(c=>c.addEventListener('click',()=>{
+    picked=ICONS.find(i=>i.no===Number(c.dataset.no))||ICONS[0];
+    render();
+  }));
+}
+render();
+</script>
+</body>
+</html>

@@ -1557,6 +1557,9 @@ if (shouldServe) {
         // 委派的提问被转达后回到 running（否则编队里会一直挂着「在问你」）。
         onDelegationRelayed: (delegationId) => cabinDelegationService.markRunning(delegationId),
       })
+      // v22 #9：任务 / 委派收尾时把该主体名下未决卡收口（unanswered 镜像卡也置灰）。
+      cabinComm.setSubjectEndHook((cabinId, subjectId) => cabinDecisionService.expireForSubject(cabinId, subjectId))
+      cabinDelegationService.setSubjectEndHook((cabinId, subjectId) => cabinDecisionService.expireForSubject(cabinId, subjectId))
       getChatEventBridge().setDelegationStateHook((delegationId, state) => {
         if (state === "waiting_input") cabinDelegationService.markWaitingInput(delegationId)
         else cabinDelegationService.markRunning(delegationId)

@@ -130,6 +130,49 @@ describe("作者提问卡（design 23 §2 · 舱主会话就地作答）", () =>
     const again = cards("s-cabin")[0] as { activity?: { decision?: { id?: string } } }
     expect(again.activity?.decision?.id).toBe("answer_from_thread")
   })
+
+  it("编队 chat 里直接回复（via=direct）同样销账，回执文案区分来源（v22 #9）", () => {
+    const bridge = getChatEventBridge()
+    bridge.requestAuthorAskCard({
+      authorSessionId: "s-task", askMessageId: "ask-direct-1", questions: QUESTIONS,
+    })
+    bridge.markAuthorAskAnswered("s-task", { via: "direct" })
+
+    const rows = cards("s-cabin") as Array<{
+      activity?: { decision?: { label?: string }; payload?: Record<string, unknown> }
+    }>
+    const card = rows.find((r) => r.activity?.payload?.askMessageId === "ask-direct-1")
+    expect(card?.activity?.decision?.label).toBe("对话里直接回复")
+    const receipt = rows.find((r) => JSON.stringify(r).includes("authorAskReceipt")) as {
+      activity?: { payload?: { authorAskReceipt?: { label?: string } } }
+    } | undefined
+    expect(receipt?.activity?.payload?.authorAskReceipt?.label).toBe("已回答（对话里直接回复）")
+  })
+
+  it("委派的提问被直接回复 → 委派回 running（不再挂着「在问你」）", () => {
+    db.prepare(`
+      INSERT INTO cabin_delegations
+        (id, cabin_id, title, intent_text, autonomy, state, doer_session_id, created_at, updated_at)
+      VALUES ('d-direct', 'c1', '直接答复', '帮我看看', 'checkpoint', 'waiting_input', 's-deleg-direct', ?, ?)
+    `).run(NOW, NOW)
+    insertSession("s-deleg-direct")
+    try {
+      const states: Array<{ id: string; state: string }> = []
+      const bridge = getChatEventBridge()
+      bridge.setDelegationStateHook((id, state) => { states.push({ id, state }) })
+      bridge.requestAuthorAskCard({
+        authorSessionId: "s-deleg-direct", askMessageId: "ask-direct-del", questions: QUESTIONS,
+      })
+      bridge.markAuthorAskAnswered("s-deleg-direct", { via: "direct" })
+      expect(states).toEqual([
+        { id: "d-direct", state: "waiting_input" },
+        { id: "d-direct", state: "running" },
+      ])
+    } finally {
+      // 句柄按创建顺序派生：不清掉会抢走后续用例的 D1。
+      db.prepare("DELETE FROM cabin_delegations WHERE id = 'd-direct'").run()
+    }
+  })
 })
 
 describe("决策信封 / 句柄 / 回执（design 24 §3 + design 25 §4.1 / §5.1）", () => {

@@ -441,3 +441,32 @@ describe("两种工作实体：委派也走同一套票据", () => {
     expect(relayed).toEqual(["d1"])
   })
 })
+
+describe("expireForSubject：主体收尾时收口提问（v22 #9）", () => {
+  it("没人答的镜像卡 → activity.decision=expired；别的 subject 不动", () => {
+    insertAskCard("ask_live")
+    insertAskCard("ask_other", { subject: { kind: "task", id: "t-other" } })
+    decisions.expireForSubject(CABIN, TASK)
+
+    const live = messages(MAIN).find((m) => m.metadata?.includes('"ask_live"'))!
+    const liveMeta = JSON.parse(live.metadata!) as {
+      activity?: { decision?: { id?: string; label?: string } }
+    }
+    expect(liveMeta.activity?.decision?.id).toBe("expired")
+    expect(liveMeta.activity?.decision?.label).toBe("已结束")
+
+    const other = messages(MAIN).find((m) => m.metadata?.includes('"ask_other"'))!
+    const otherMeta = JSON.parse(other.metadata!) as { activity?: { decision?: unknown } }
+    expect(otherMeta.activity?.decision).toBeUndefined()
+  })
+
+  it("已答未转达 → 账本 expired，不再催转达（答案不丢）", async () => {
+    insertAskCard("ask_dec")
+    await decisions.submitDecision(CABIN, { askId: "ask_dec", choice: "短信" })
+    expect(decisions.pendingRelays(CABIN)).toHaveLength(1)
+
+    decisions.expireForSubject(CABIN, TASK)
+    expect(decisions.pendingRelays(CABIN)).toHaveLength(0)
+    expect(decisionEvents().at(-1)?.stage).toBe("expired")
+  })
+})

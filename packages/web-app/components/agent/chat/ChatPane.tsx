@@ -26,7 +26,6 @@ import type { AgentSession, AgentMessage } from '@/lib/agent/types'
 import type { RunningAgentSession } from '@/lib/agent/api'
 import { CwdPicker, type CwdChoice } from './cwd-picker'
 import { ChatArea, type ChatComposerBridge } from './ChatArea'
-import { AuthorAskInbox } from './author-ask-inbox'
 import { TaskModulesLayer } from '@/components/chat-workbench/task-modules-layer'
 import { TriggerDialog } from '@/components/tasks/trigger-dialog'
 import type { RunTarget, SubagentTarget, TaskModule, TaskWindowMap, YamlTarget } from '@/components/chat-workbench/task-window-types'
@@ -1571,7 +1570,8 @@ export function ChatPane({
             hasMoreMessages={hasMoreMessages}
             loadingOlderMessages={loadingOlderMessages}
             onLoadOlder={loadOlderMessages}
-            composerDock={<AuthorAskInbox messages={viewMessages} />}
+            // v22 #9（2026-11-23 用户）：输入框上方的「待你定」浮条整体退役 ——
+            // 全舱与 classic 都不再挂；提问统一进 inbox / 会话里的提问卡。
             streaming={streaming}
             streamContent={streamContent}
             streamThinking={streamThinking}

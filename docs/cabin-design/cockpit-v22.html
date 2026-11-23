@@ -128,6 +128,13 @@ kbd{border:1px solid rgba(185,179,217,.35);border-bottom-width:2px;border-radius
 .backchip b{color:var(--ink2);font-weight:700}
 .backchip:hover{border-color:var(--teal);color:#fff;box-shadow:0 0 14px rgba(46,230,214,.25)}
 .backchip:hover b{color:#fff}
+/* #7（2026-11-23 用户）：知识中心入口 —— 紧挨「经典模式」右边，与它同高同壳；
+   点开 = 全舱内的 knowledge 窗（左树 / 中文章 / 右目录·反链）。 */
+.kcchip{border-color:rgba(139,124,246,.42)}
+.kcchip .pg2{color:var(--violet)}
+.kcchip:hover{border-color:var(--violet);box-shadow:0 0 14px rgba(139,124,246,.28)}
+.kcchip.on{border-color:var(--violet);color:#fff;background:rgba(139,124,246,.14);box-shadow:0 0 14px rgba(139,124,246,.3)}
+.kcchip.on b{color:#fff}
 .projchip{display:flex;align-items:center;gap:7px;height:32px;padding:0 12px;border-radius:10px;background:var(--glass2);backdrop-filter:blur(10px);border:1px solid rgba(53,199,240,.45);color:var(--sky);font-size:10.5px;font-weight:700;font-family:var(--font-ui);transition:.15s;white-space:nowrap}
 .projchip:hover{border-color:var(--teal);color:#fff;box-shadow:0 0 14px rgba(53,199,240,.35)}
 .projchip .pg2{font-size:13px}
@@ -207,6 +214,12 @@ kbd{border:1px solid rgba(185,179,217,.35);border-bottom-width:2px;border-radius
 .flst.done{background:rgba(61,220,151,.18);color:var(--green)}
 .flsub{display:flex;align-items:center;gap:4px;min-width:0;margin-top:1px;font-size:8.5px;color:var(--ink2);white-space:nowrap}
 .flsub-t{min-width:0;overflow:hidden;text-overflow:ellipsis}
+/* #6（2026-11-23 用户）：作战中行挂活秒表 —— 每秒往上走（同流式卡 ⏱ 读数），
+   一眼看出它没卡住；绿点呼吸 = 还活着。归位副行最右，doing 文本先截断。 */
+.fltime{margin-left:auto;flex:none;display:inline-flex;align-items:center;gap:3px;
+  font-family:var(--font-mono);font-size:8.5px;font-weight:700;color:var(--sky);
+  font-variant-numeric:tabular-nums;letter-spacing:.02em}
+.fltime::before{content:"";width:4px;height:4px;border-radius:50%;background:var(--green);box-shadow:0 0 6px var(--green);animation:np 1.6s infinite}
 .flrow.wait .flsub{color:color-mix(in srgb,var(--amber) 80%,var(--ink2))}
 .flrow.blocked .flsub{color:color-mix(in srgb,var(--red) 75%,var(--ink2))}
 .flbar{display:block;height:3px;margin-top:5px;background:rgba(255,255,255,.07);overflow:hidden}
@@ -1040,6 +1053,63 @@ kbd{border:1px solid rgba(185,179,217,.35);border-bottom-width:2px;border-radius
 @media (max-width:900px){.nt-side{width:170px}}
 @media (max-width:720px){.ntw{flex-direction:column}.nt-side{width:100%;height:170px}}
 
+/* ═══ 知识中心窗（2026-11-23 用户 #7）：全舱模式左上「⚛」→ 全局 wiki 只读浏览。
+       与目录窗 / 便签窗同一套 .twin 壳（✕ 左置 · 玻璃底 · 可拖可全屏）；
+       左 = wiki 目录树，中 = 文章阅读，右 = 本页目录 / 反链 / 实效账。 ═══ */
+#kcWin{width:min(1080px,94vw);height:min(680px,calc(100vh - 150px));top:84px}
+#kcWin::before{background:linear-gradient(90deg,var(--violet),var(--sky),var(--teal))}
+#kcWin .ph{cursor:grab;user-select:none;touch-action:none}
+#kcWin .ph:active{cursor:grabbing}
+.kc-tools{flex:none;display:flex;align-items:center;gap:7px;padding:0 12px 8px}
+.kc-search{display:flex;align-items:center;gap:6px;width:300px;height:28px;padding:0 9px;border:1px solid rgba(185,179,217,.22);background:rgba(255,255,255,.04);color:var(--metal2);font-size:10px;clip-path:var(--cut);cursor:text}
+.kc-search b{color:var(--ink2);font-weight:700}
+.kc-search kbd{margin-left:auto;font-family:var(--font-mono);font-size:8.5px;color:var(--metal2)}
+.kc-nav{display:flex;gap:4px}
+.kc-nav button{width:26px;height:26px;display:grid;place-items:center;border:1px solid rgba(185,179,217,.22);background:rgba(255,255,255,.05);color:var(--ink2);font-size:11px;clip-path:var(--cut)}
+.kc-nav button:hover:not(:disabled){color:#fff;border-color:var(--teal);background:rgba(46,230,214,.14)}
+.kc-nav button:disabled{opacity:.35}
+.kc-scope-chip{margin-left:auto;display:flex;align-items:center;gap:8px}
+.kc-pill{flex:none;font-size:8.5px;font-weight:800;letter-spacing:.08em;color:var(--violet);border:1px solid rgba(139,124,246,.45);background:rgba(139,124,246,.1);padding:2px 8px;clip-path:var(--cut)}
+.kc-health{flex:none;font-size:9px;color:var(--green);font-family:var(--font-mono)}
+.kc-body{display:flex;gap:10px;flex:1;min-height:0;padding:0 12px 12px}
+.kc-tree{flex:none;width:216px;display:flex;flex-direction:column;min-height:0;border:1px solid rgba(185,179,217,.16);background:rgba(10,8,24,.4);padding:6px;clip-path:var(--cut)}
+.kc-tree-h{flex:none;font-size:8.5px;font-weight:800;letter-spacing:.1em;color:var(--violet);padding:2px 4px 6px}
+.kc-scroll{flex:1;min-height:0;overflow:auto}
+.kc-row{display:flex;align-items:center;gap:5px;width:100%;text-align:left;padding:4px 6px;border:1px solid transparent;border-radius:7px;color:var(--ink2);font-size:10.5px;cursor:pointer;transition:.12s}
+.kc-row:hover{background:rgba(255,255,255,.05);color:#fff}
+.kc-row.on{background:linear-gradient(90deg,rgba(139,124,246,.2),rgba(53,199,240,.08));border-color:rgba(139,124,246,.4);color:#fff}
+.kc-row .g{flex:none;width:13px;text-align:center;font-size:9.5px}
+.kc-row .n{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+/* 真实目录树（同 classic）：▸/▾ + 📁/📄 + 缩进；目录行点击展开/收起。 */
+.kc-row .tw{flex:none;width:10px;text-align:center;font-size:8px;color:var(--metal2)}
+.kc-row .ti{flex:none;font-size:10px;opacity:.9}
+.kc-row .tb{flex:none;font-size:8px;color:var(--metal2);font-family:var(--font-mono)}
+.kc-row.dir2{font-weight:800;color:var(--ink2)}
+.kc-row.dir2:hover{background:rgba(255,255,255,.05);color:#fff}
+.kc-row.dir2 .ti{opacity:1}
+.kc-row.dir2 .n{color:inherit}
+.kc-main{flex:1;min-width:0;display:flex;flex-direction:column;min-height:0;border:1px solid rgba(185,179,217,.16);background:rgba(10,8,24,.34);clip-path:var(--cut)}
+.kc-crumb{flex:none;display:flex;align-items:center;gap:6px;padding:7px 12px;border-bottom:1px solid rgba(185,179,217,.12);font-size:9px;color:var(--metal2);font-family:var(--font-mono)}
+.kc-crumb b{color:var(--sky);font-weight:700;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.kc-art{flex:1;min-height:0;overflow:auto;padding:10px 16px 16px}
+.kc-art h1{font-size:16px;color:#fff;font-weight:800;margin-bottom:2px}
+.kc-art .meta{font-size:8.5px;color:var(--metal2);font-family:var(--font-mono);margin-bottom:10px}
+.kc-art h2{font-size:11px;color:var(--teal);font-weight:800;letter-spacing:.06em;margin:12px 0 4px}
+.kc-art p{font-size:11px;line-height:1.8;color:var(--ink2);margin-bottom:6px}
+.kc-art .lnk{color:var(--gold);border-bottom:1px dashed rgba(255,176,32,.5);cursor:pointer}
+.kc-art .lnk:hover{color:#fff}
+.kc-art blockquote{border-left:2px solid rgba(139,124,246,.55);background:rgba(139,124,246,.08);padding:6px 10px;font-size:10.5px;color:var(--ink2);margin:8px 0;line-height:1.7}
+.kc-art code{font-family:var(--font-mono);font-size:10px;color:#9ff6ec;background:rgba(46,230,214,.08);padding:0 4px}
+.kc-rail{flex:none;width:168px;display:flex;flex-direction:column;min-height:0;border:1px solid rgba(185,179,217,.16);background:rgba(10,8,24,.4);padding:6px 8px;clip-path:var(--cut);overflow:auto}
+.kc-rail .rh{font-size:8.5px;font-weight:800;letter-spacing:.1em;color:var(--metal2);padding:6px 0 3px;border-top:1px solid rgba(185,179,217,.12);margin-top:4px}
+.kc-rail .rh:first-child{border-top:0;margin-top:0;padding-top:2px}
+.kc-rail .ri2{display:block;width:100%;text-align:left;font-size:10px;color:var(--ink2);padding:3px 2px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;cursor:pointer}
+.kc-rail .ri2:hover{color:var(--gold)}
+.kc-rail .kv{display:flex;justify-content:space-between;gap:6px;font-size:9px;color:var(--metal2);padding:2px 0;font-family:var(--font-mono)}
+.kc-rail .kv b{color:var(--ink2);font-weight:700}
+@media (max-width:900px){.kc-rail{display:none}}
+@media (max-width:720px){.kc-tree{width:168px}.kc-search{width:200px}}
+
 /* ═══ 本舱目录窗（v22 九轮）：右栏「目录」= 当前 cwd 只读目录树。
        cwd 绝对路径常显在标题条，可复制 / 桌面壳里直接在资源管理器打开。 ═══ */
 .wsb.cwd{background:linear-gradient(100deg,rgba(53,199,240,.13),rgba(123,77,255,.1));border-color:rgba(53,199,240,.42)}
@@ -1590,6 +1660,7 @@ kbd{border:1px solid rgba(185,179,217,.35);border-bottom-width:2px;border-radius
 
   <header class="hud">
     <button class="backchip" id="btnClassic" title="返回 classic 模式（作战舱）"><span class="pg2">←</span><b>经典模式</b></button>
+    <button class="backchip kcchip" id="btnKc" title="知识中心 · 星空知识库（全局 wiki · 只读）" aria-expanded="false" aria-haspopup="dialog"><span class="pg2">⚛</span><b>知识中心</b></button>
     <button class="projchip" id="btnProj" title="舱籍 · 绑定项目"><span class="pg2">⧉</span><span class="pn2">账务中台 · <b>4</b> 项目</span></button>
     <div class="sceneread" id="sceneRead" role="group" aria-label="舱景与当前时间">
       <span class="sr-k" aria-hidden="true">SCENE</span>
@@ -1648,6 +1719,7 @@ kbd{border:1px solid rgba(185,179,217,.35);border-bottom-width:2px;border-radius
   <section class="twin" id="docwin" aria-label="文档查看器"></section>
   <section class="twin" id="actWin" aria-label="活动详情"></section>
   <section class="twin" id="notesWin" aria-label="便签 · 快速记事"></section>
+  <section class="twin" id="kcWin" aria-label="知识中心"></section>
 
   <section class="console" id="console" aria-label="TUI 通讯台">
     <div class="con-h">
@@ -1854,6 +1926,8 @@ const state={sound:true,theme:0,winAlpha:1,thread:'main',panel:null,detailJob:nu
  inboxOpen:false,inboxSel:null,inboxPick:null,fanOpen:false,fleetOpen:false,relayJump:false,panelGeo:null,panelMax:false,panelAside:false,
  pjPop:false,projFocus:null,pjDiff:null,pjTab:'files',pjChgOpen:{},
  notes:NOTES_SEED.map(n=>({...n})),notesOpen:false,noteSel:'nt1',noteQ:'',noteUndo:null,notesGeo:null,notesMax:false,
+ kcOpen:false,kcMax:false,kcGeo:null,kcSel:'con-compiled-rag',kcQ:'',
+ kcDirs:['knowledge','knowledge/wiki','knowledge/wiki/concepts','knowledge/wiki/topics','knowledge/wiki/cases'],
  conTurns:false,conTurnSel:0};
 let conMsgs=[];
 const jobOf=id=>state.jobs.find(j=>j.id===id);
@@ -1957,6 +2031,14 @@ function renderDots(){renderInboxChip();}
 
 /* ── 左栏编队：单列，状态优先 + 创建时间（新→旧）；待办只在右栏 inbox，不重复分组 ── */
 const STATUS_RANK={blocked:0,wait:1,run:2,queue:3,done:4};
+/* #6：作战中秒表 —— 每条 run 行首次渲染时把 clock 串（'6m10s'）折成起点，
+   之后由 1s ticker 只改这一格的 textContent，不重建整条 rail。 */
+function clockSecOf(s){const m=/^(?:(\d+)m)?(?:(\d+)s)?$/.exec(String(s||''));if(!m||(!m[1]&&!m[2]))return null;return (+m[1]||0)*60+(+m[2]||0);}
+function fmtClock(sec){const t=Math.max(0,Math.floor(sec));const h=Math.floor(t/3600),m=Math.floor(t%3600/60),s=t%60;
+  return (h?h+':':'')+String(m).padStart(2,'0')+':'+String(s).padStart(2,'0');}
+function runClockOf(j){if(j.status!=='run')return null;
+  if(!j._startedAt){const base=clockSecOf(j.clock);j._startedAt=Date.now()-(base??0)*1000;}
+  return fmtClock((Date.now()-j._startedAt)/1000);}
 function fleetSorted(){return [...state.jobs].sort((a,b)=>(STATUS_RANK[a.status]??9)-(STATUS_RANK[b.status]??9)||((a.born??999)-(b.born??999)));}
 function renderFleetRail(){
   const el=$('#fleetrail');if(!el)return;
@@ -1965,11 +2047,11 @@ function renderFleetRail(){
   const queue=state.jobs.filter(j=>j.status==='queue').length;
   const done=state.jobs.filter(j=>j.status==='done').length;
   const openSet=new Set(state.wins.filter(w=>!w.min).map(w=>w.job));
-  const row=j=>{const pr=projOf(j.proj);const un=state.unread[j.id]||0;
+  const row=j=>{const pr=projOf(j.proj);const un=state.unread[j.id]||0;const rc=runClockOf(j);
     return `<div class="flrow ${j.status}${openSet.has(j.id)?' is-chat':''}" role="option" tabindex="0" data-rail-job="${j.id}" style="--accent:${pr.color};--p:${Math.round(j.pct)}" title="${esc(j.title)} · ${STATE_LABEL[j.status]} · 点行进对话">
       <span class="flhw"><span class="flhg">${KIND[j.kind].g}</span></span>
       <span class="flbody"><span class="fltop"><b>${esc(j.short)}</b>${j.status!=='done'?`<span class="flpct">${Math.round(j.pct)}%</span>`:''}</span>
-      <span class="flsub"><span class="flst ${j.status}">${STATE_LABEL[j.status]}</span><span class="flsub-t">${esc(j.doing)}</span></span>
+      <span class="flsub"><span class="flst ${j.status}">${STATE_LABEL[j.status]}</span><span class="flsub-t">${esc(j.doing)}</span>${rc?`<span class="fltime" data-fltime="${j.id}" title="已作战 ${rc}">⏱ ${rc}</span>`:''}</span>
       ${j.status==='done'?'':`<span class="flbar"><i style="width:${Math.round(j.pct)}%"></i></span>`}</span>
       <span class="flacts">
         <button class="flact pri" data-rail-chat="${j.id}" title="💬 对话 · 这条作战的 chat 窗" aria-label="对话">💬${un?`<i class="und">${un>9?'9+':un}</i>`:''}</button>
@@ -2000,6 +2082,10 @@ function tickFleetRail(){const el=$('#fleetrail');if(!el)return;
     const pct=row.querySelector('.flpct');if(pct)pct.textContent=Math.round(j.pct)+'%';
     const bar=row.querySelector('.flbar i');if(bar)bar.style.width=Math.round(j.pct)+'%';
     row.style.setProperty('--p',Math.round(j.pct));});}
+/* #6：作战中秒表每秒走字 —— 只改读数，不动整行（悬停/点击都不闪）。 */
+setInterval(()=>{if(document.hidden)return;const el=$('#fleetrail');if(!el)return;
+  state.jobs.forEach(j=>{if(j.status!=='run')return;const t=el.querySelector(`[data-fltime="${j.id}"]`);
+    if(!t)return;const rc=runClockOf(j);t.textContent='⏱ '+rc;t.title='已作战 '+rc;});},1000);
 
 /* ── 右栏「活动」（v22 十四轮 · rev2 · 2026-11-21 用户）：
       与「要我处理」同一套浮层 —— 一级 = 列表；点一条 → 浮层变两栏，列表左边出详情；
@@ -2144,12 +2230,15 @@ function inboxGroups(){return [
 /* #5（2026-11-23 用户）：一级列表直接给动作 ——
    💬 对话 = 去这条作战的独立 chat 里回答（AskUserQuestion 原样在 chat 里）；
    ▦ 详情 = 作战详情；待放行（start）聊天里答不了，仍给一张就地放行卡。
+   #9（2026-11-23 用户）：待你定行加「忽略」—— 不回复、不转达，只从要我处理收起；
+   人若在 chat 里直接说了，服务端对账会自动销账。
    不再有二级「回复卡」包装。 */
 function inboxAction(o){
   const j=jobOf(o.job);
   if(o.kind==='accept')return `<button class="ipa pri" data-inbox-detail="${o.job}" data-detail-tab="accept" title="看验收（作战详情）">▦ 验收</button><button class="ipa" data-inbox-chat="${o.job}" title="去这条作战的对话">💬</button>`;
   if(o.kind==='start')return `<button class="ipa pri" data-inbox-start="${o.id}" title="放行 / 入列 / 恢复">⚑ 放行</button><button class="ipa" data-inbox-detail="${o.job}" title="作战详情">▦</button>`;
-  return `<button class="ipa pri" data-inbox-chat="${o.job}" title="直接去这条作战的 chat 里回答">💬 对话</button><button class="ipa" data-inbox-detail="${o.job}" title="作战详情">▦</button>`;
+  const ign=o.kind==='block'?'':`<button class="ipa" data-inbox-ignore="${o.id}" title="忽略这条提问（不回复 · 从要我处理收起）">忽略</button>`;
+  return `<button class="ipa pri" data-inbox-chat="${o.job}" title="直接去这条作战的 chat 里回答">💬 对话</button>${ign}<button class="ipa" data-inbox-detail="${o.job}" title="作战详情">▦</button>`;
 }
 /** 一级行的默认动作。 */
 function inboxGo(o){
@@ -2195,6 +2284,13 @@ function bindInbox(){
     r.addEventListener('keydown',e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();go();}});
   });
   $$('[data-inbox-chat]',pop).forEach(b=>b.addEventListener('click',e=>{e.stopPropagation();toggleInbox(false);openJobChat(b.dataset.inboxChat);}));
+  /* #9：忽略 —— 不回复、不转达，只从「要我处理」收起（服务端 = dismiss + ack）。 */
+  $$('[data-inbox-ignore]',pop).forEach(b=>b.addEventListener('click',e=>{
+    e.stopPropagation();
+    const o=opOf(b.dataset.inboxIgnore);
+    if(o&&o.status==='open'){o.status='ignored';o.choice='已忽略';o.at=nowHM();toast('已忽略 · 去对话里直接回复也算答过');}
+    renderInbox();
+  }));
   $$('[data-inbox-start]',pop).forEach(b=>b.addEventListener('click',e=>{e.stopPropagation();state.inboxSel=b.dataset.inboxStart;state.inboxPick=null;renderInbox();Audio.sfx('click');}));
   $$('[data-inbox-detail]',pop).forEach(b=>b.addEventListener('click',e=>{e.stopPropagation();openDetail(b.dataset.inboxDetail,b.dataset.detailTab||'run',true);}));
   /* 放行卡里的两个跳转（浮层留着，详情开在左侧 / 对话开成独立窗）。 */
@@ -3044,6 +3140,144 @@ function bindNotesFrame(){const w=$('#notesWin');if(!w||w.dataset.drag)return;w.
   addEventListener('pointermove',mv);addEventListener('pointerup',up);});
  w.addEventListener('dblclick',e=>{if(e.target.closest('button,input,textarea,a,select'))return;if(e.target.closest('.ph'))toggleNotesMax();});}
 
+/* ── 知识中心（#7 · 2026-11-23 用户）：全舱内的 global wiki 只读窗 —— classic 知识中心换皮。
+      左树 = 知识根真实目录（▸/▾ 展开收起，同 classic 的 KcKnowledgeTree）；
+      中部读文章，右栏目录 / 反链 / 实效账。真实产品直接渲染 /knowledge 组件。 ── */
+const KC_TREE={name:'knowledge',d:true,path:'knowledge',c:[
+ {name:'drafts',d:true,path:'knowledge/drafts',c:[
+  {name:'skills',d:true,path:'knowledge/drafts/skills',c:[
+   {name:'code-review-standards-fallback',d:true,path:'knowledge/drafts/skills/code-review-standards-fallback'},
+   {name:'cross-repo-reuse-probe',d:true,path:'knowledge/drafts/skills/cross-repo-reuse-probe'},
+   {name:'java-service-api-e2e',d:true,path:'knowledge/drafts/skills/java-service-api-e2e'},
+  ]},
+ ]},
+ {name:'raw',d:true,path:'knowledge/raw',c:[
+  {name:'archives',d:true,path:'knowledge/raw/archives',c:[
+   {name:'task-87f2… · 素材包',path:'knowledge/raw/archives/task-87f2'},
+   {name:'task-1d38… · 素材包',path:'knowledge/raw/archives/task-1d38'},
+  ]},
+  {name:'inbox',d:true,path:'knowledge/raw/inbox'},
+  {name:'research',d:true,path:'knowledge/raw/research'},
+ ]},
+ {name:'wiki',d:true,path:'knowledge/wiki',c:[
+  {name:'_retired',d:true,path:'knowledge/wiki/_retired'},
+  {name:'cases',d:true,path:'knowledge/wiki/cases',c:[
+   {name:'2026-11-08-case-acceptance-two-tier.md',path:'knowledge/wiki/cases/2026-11-08-case-acceptance-two-tier.md',id:'case-acceptance-two-tier',rules:1},
+   {name:'2026-10-29-case-cabin-single-owner.md',path:'knowledge/wiki/cases/2026-10-29-case-cabin-single-owner.md',id:'case-cabin-single-owner',rules:1},
+  ]},
+  {name:'concepts',d:true,path:'knowledge/wiki/concepts',c:[
+   {name:'con-compiled-rag.md',path:'knowledge/wiki/concepts/con-compiled-rag.md',id:'con-compiled-rag',rules:1},
+   {name:'con-context-layers.md',path:'knowledge/wiki/concepts/con-context-layers.md',id:'con-context-layers',rules:2},
+   {name:'con-bearer-token-auth.md',path:'knowledge/wiki/concepts/con-bearer-token-auth.md'},
+   {name:'con-rbac-permission-model.md',path:'knowledge/wiki/concepts/con-rbac-permission-model.md'},
+   {name:'con-testcontainers-real-db-testing.md',path:'knowledge/wiki/concepts/con-testcontainers-real-db-testing.md'},
+  ]},
+  {name:'entities',d:true,path:'knowledge/wiki/entities',c:[
+   {name:'ent-octopus-demo-web-admin.md',path:'knowledge/wiki/entities/ent-octopus-demo-web-admin.md'},
+   {name:'ent-java-common-auth.md',path:'knowledge/wiki/entities/ent-java-common-auth.md'},
+  ]},
+  {name:'sources',d:true,path:'knowledge/wiki/sources'},
+  {name:'topics',d:true,path:'knowledge/wiki/topics',c:[
+   {name:'top-knowledge-injection.md',path:'knowledge/wiki/topics/top-knowledge-injection.md',id:'top-knowledge-injection',rules:1},
+   {name:'top-task-states.md',path:'knowledge/wiki/topics/top-task-states.md',id:'top-task-states',rules:3},
+  ]},
+  {name:'INDEX.md',path:'knowledge/wiki/INDEX.md',id:'kc-index'},
+  {name:'LOG.md',path:'knowledge/wiki/LOG.md',id:'kc-log'},
+ ]},
+ {name:'SCHEMA.md',path:'knowledge/SCHEMA.md'},
+]};
+const KC_DOCS={
+ 'con-compiled-rag':{title:'编译式 RAG',path:'wiki/concepts/con-compiled-rag.md',kind:'concept',stability:'stable',rules:1,updated:'2026-11-18',
+  heads:['定义','与注入式的差别','适用边界'],backlinks:[['top-knowledge-injection','知识注入沿革']],
+  body:`<h2>定义</h2><p>检索的重活从 query 时挪到维护编译时：把分散的素材编译成策展后的 wiki 条目，查询时只做路由与拼装，不再现场召回。</p><blockquote>oct-008 · 编译产物必须可回滚：每次编译落 <code>LOG.md</code> 与素材包指针。</blockquote><h2>与注入式的差别</h2><p>注入式把原文塞进上下文，靠模型现场判断；编译式先由策展人裁成规则，再按需注入。见 <span class="lnk" data-kclink="top-knowledge-injection">知识注入沿革</span>。</p><h2>适用边界</h2><p>素材变动频繁、同一结论会被反复问到的领域收益最大；一次性检索题不需要进 wiki。</p>`},
+ 'con-context-layers':{title:'上下文分层',path:'wiki/concepts/con-context-layers.md',kind:'concept',stability:'stable',rules:2,updated:'2026-11-12',
+  heads:['三层','丢弃顺序','compact 之后'],backlinks:[['top-knowledge-injection','知识注入沿革']],
+  body:`<h2>三层</h2><p>系统层（CLAUDE.md / 技能）常驻 → 任务层（spec / issues / 报告）按 phase 注入 → 回合层（工具输出）随窗口滚动裁掉。压缩永远先砍回合层。</p><h2>丢弃顺序</h2><p>工具原文 → 中间轮次 → 任务层细节；系统层与当前 spec 不压。上下文百分比常被 compact，所以 HUD 不再常显。</p><h2>compact 之后</h2><p>压缩后从磁盘回灌 spec 与最近一轮证据，会话记忆不承载唯一真相。</p>`},
+ 'top-knowledge-injection':{title:'知识注入沿革',path:'wiki/topics/top-knowledge-injection.md',kind:'topic',stability:'stable',rules:1,updated:'2026-11-18',
+  heads:['注入式','编译式','迁移'],backlinks:[['con-compiled-rag','编译式 RAG']],
+  body:`<h2>注入式</h2><p>早期把整包素材塞进 system prompt，换来的是上下文膨胀与规则打架。</p><h2>编译式</h2><p>2026 起素材先进 <code>raw/</code>，由策展人编译成 wiki 条目与规则编号（oct-NNN），注入只带条目摘要与编号。</p><blockquote>规则冲突在编译时裁决，不在对话里现场投票。</blockquote><h2>迁移</h2><p>旧档案整体退役，入库路径只剩「归档沉淀 → 编译队列」。见 <span class="lnk" data-kclink="con-compiled-rag">编译式 RAG</span>。</p>`},
+ 'top-task-states':{title:'任务状态机与人工闸门',path:'wiki/topics/top-task-states.md',kind:'topic',stability:'stable',rules:3,updated:'2026-11-20',
+  heads:['状态','人工闸门','paused'],backlinks:[['case-acceptance-two-tier','验收方案两层化']],
+  body:`<h2>状态</h2><p><code>draft → ready → running → awaiting_review → awaiting_archive → archiving → done</code>；paused 是派生值，真相在 <code>executions.status</code>。</p><h2>人工闸门</h2><p>只有三处：入列（draft→ready）、验收、归档。启动 / 触发可自动。</p><blockquote>验收 ≠ 归档：末 phase 通过后停在 awaiting_archive，人说「归档」才启动 git / PR / 知识沉淀。</blockquote><h2>paused</h2><p>派生不是存储：执行停下即派生 paused，恢复走 resume，不新增状态。</p>`},
+ 'case-acceptance-two-tier':{title:'验收方案两层化',path:'wiki/cases/case-acceptance-two-tier.md',kind:'case',stability:'stable',rules:1,updated:'2026-11-08',
+  heads:['两层','不逐项签','无方案时'],backlinks:[['top-task-states','任务状态机与人工闸门']],
+  body:`<h2>两层</h2><p>1–3 条人验收场景（<code>acceptance-plan-rN.json</code>）+ 机器证据表（diff / 测试 / 报告）。人只看场景，证据给机器核。</p><h2>不逐项签</h2><p>已知证据不自动重跑、不逐条签字；证据齐了就拍板。</p><h2>无方案时</h2><p>没有验收方案仍显示状态卡，人可以直接放行或打回，闸门不因缺文件卡死。</p>`},
+ 'case-cabin-single-owner':{title:'作战舱归属单值',path:'wiki/cases/case-cabin-single-owner.md',kind:'case',stability:'stable',rules:1,updated:'2026-10-29',
+  heads:['单值','外部行','不搬目录'],backlinks:[],
+  body:`<h2>单值</h2><p>一目录一舱：任务 / 会话 / 执行只记单一 <code>cabin_id</code>，写一次，不跨舱引用。</p><h2>外部行</h2><p>不在本舱目录下的旧会话在左栏标「外部」，可读但不迁入。</p><h2>不搬目录</h2><p>归属调整靠重新绑定，不搬工作目录；目录是身份。</p>`},
+ 'kc-index':{title:'INDEX 总览',path:'wiki/INDEX.md',kind:'index',stability:'stable',rules:0,updated:'2026-11-20',
+  heads:['领域','最近变更'],backlinks:[],
+  body:`<h2>领域</h2><p>concepts 4 · topics 6 · cases 9 · 规则 42 条（oct-001…oct-042）。</p><h2>最近变更</h2><p>11-20 新增「任务状态机与人工闸门」；11-18 编译式 RAG 补「适用边界」。</p>`},
+ 'kc-log':{title:'LOG 时间线',path:'wiki/LOG.md',kind:'log',stability:'stable',rules:0,updated:'2026-11-20',
+  heads:['今日','回滚'],backlinks:[],
+  body:`<h2>今日</h2><p><code>11-23 18:02</code> 编译队列空转 · 0 待编译<br/><code>11-23 16:40</code> 归档沉淀 recompile · 素材包 #218 → 3 条目<br/><code>11-23 11:15</code> 冲突裁决 · schema-v4 保留</p><h2>回滚</h2><p>每次编译带素材包指针，可在知识中心按指针回退到上一版条目，不受归档影响。</p>`},
+};
+function kcDoc(){
+ const sel=state.kcSel;
+ if(KC_DOCS[sel])return KC_DOCS[sel];
+ /* 未收录正文的叶子：诚实占位，不伪造内容。 */
+ const path=String(sel||'').replace(/^knowledge\//,'');
+ const name=(path.split('/').pop()||path||'条目');
+ return {title:name.replace(/\.md$/,''),path,kind:'doc',stability:'stable',rules:0,updated:'—',heads:[],backlinks:[],
+  body:`<h2>正文</h2><p>这篇的正文由 <code>/api/knowledge</code> 读入；原型只收录了左树里的几篇示范条目。</p>`};
+}
+function kcDirOpen(p){return state.kcDirs.includes(p);}
+function kcToggleDir(p){const i=state.kcDirs.indexOf(p);if(i<0)state.kcDirs.push(p);else state.kcDirs.splice(i,1);renderKcWin();Audio.sfx('click');}
+/** 左树（classic KcKnowledgeTree 换皮）：▸/▾ 展开收起 + 📁/📄 + 缩进 + 规则徽标。 */
+function kcTreeRows(node,depth,out){
+ const pad=6+depth*12;
+ if(node.d){
+  const open=kcDirOpen(node.path);
+  out.push(`<button type="button" class="kc-row dir2" data-kcdir="${esc(node.path)}" aria-expanded="${open}" style="padding-left:${pad}px"><span class="tw">${open?'▾':'▸'}</span><span class="ti">📁</span><span class="n">${esc(node.name)}</span></button>`);
+  if(open)(node.c||[]).forEach(c=>kcTreeRows(c,depth+1,out));
+  return;
+ }
+ const sel=state.kcSel===(node.id||node.path);
+ out.push(`<button type="button" class="kc-row${sel?' on':''}" data-kckey="${esc(node.id||node.path)}" data-kcpath="${esc(node.path)}" title="${esc(node.path)}" aria-current="${sel?'page':'false'}" style="padding-left:${pad+12}px"><span class="tw"></span><span class="ti">📄</span><span class="n">${esc(node.name)}</span>${node.rules?`<span class="tb">约束×${node.rules}</span>`:''}</button>`);
+}
+function applyKcGeo(){const w=$('#kcWin');if(!w)return;w.classList.toggle('geo',!!(state.kcGeo||state.kcMax));
+ if(state.kcMax){w.style.left='5px';w.style.top='52px';w.style.width=Math.max(420,innerWidth-10)+'px';w.style.height=Math.max(300,innerHeight-58)+'px';w.style.transform='none';return;}
+ const g=state.kcGeo;
+ if(!g){w.style.left='';w.style.top='';w.style.width='';w.style.height='';w.style.transform='';return;}
+ w.style.left=g.x+'px';w.style.top=g.y+'px';w.style.width=g.w+'px';w.style.height=g.h+'px';w.style.transform='none';}
+function toggleKcMax(){const w=$('#kcWin');if(!w)return;
+ if(!state.kcMax){const r=w.getBoundingClientRect();state.kcGeo={x:r.left,y:r.top,w:r.width,h:r.height};state.kcMax=true;}else state.kcMax=false;
+ applyKcGeo();const b=w.querySelector('[data-kcmax]');if(b)b.textContent=state.kcMax?'⤡':'⛶';Audio.sfx('click');}
+function toggleKc(open){const next=open==null?!state.kcOpen:open;state.kcOpen=next;renderKcWin();Audio.sfx(next?'open':'close');}
+function renderKcWin(){
+ const w=$('#kcWin');if(!w)return;
+ const btn=$('#btnKc');
+ if(btn){btn.classList.toggle('on',state.kcOpen);btn.setAttribute('aria-expanded',state.kcOpen?'true':'false');}
+ if(!state.kcOpen){w.classList.remove('open');return;}
+ const doc=kcDoc();
+ const treeRows=[];kcTreeRows(KC_TREE,0,treeRows);const tree=treeRows.join('');
+ const rail=`<div class="rh">本页目录</div>${doc.heads.map(h=>`<span class="ri2">${esc(h)}</span>`).join('')}<div class="rh">反链 · ${doc.backlinks.length}</div>${doc.backlinks.map(([id,n])=>`<button type="button" class="ri2" data-kclink="${id}">${esc(n)}</button>`).join('')||'<span class="kv">暂无</span>'}<div class="rh">实效账</div><div class="kv"><span>稳定度</span><b>${esc(doc.stability)}</b></div><div class="kv"><span>规则</span><b>${doc.rules} 条</b></div><div class="kv"><span>更新</span><b>${esc(doc.updated)}</b></div><div class="kv"><span>来源</span><b>global wiki</b></div>`;
+ w.innerHTML=`<div class="ph"><button class="phx" data-kcclose title="关闭知识中心（Esc）">✕</button><span class="pt"><b>⚛ 知识中心</b><span>GLOBAL WIKI · 只读 · 策展人维护</span></span><span class="sp"></span><button class="pwin" data-kcmax title="全屏 / 还原（也可双击标题栏）">${state.kcMax?'⤡':'⛶'}</button></div>
+ <div class="pb">
+  <div class="kc-tools"><div class="kc-search" role="search">🔍 <b>搜索知识…</b><kbd>Ctrl K</kbd></div>
+   <div class="kc-nav"><button type="button" disabled title="没有可后退的页面">←</button><button type="button" disabled title="没有可前进的页面">→</button></div>
+   <div class="kc-scope-chip"><span class="kc-pill">GLOBAL WIKI</span><span class="kc-health" title="知识库健康 · 编译队列">● 健康 98%</span></div></div>
+  <div class="kc-body">
+   <aside class="kc-tree"><div class="kc-tree-h">KNOWLEDGE · 知识根</div><div class="kc-scroll" role="tree">${tree}</div></aside>
+   <section class="kc-main"><div class="kc-crumb">知识根 / <b>${esc(doc.path)}</b> · 只读</div><div class="kc-art"><h1>${esc(doc.title)}</h1><div class="meta">${esc(doc.kind)} · ${esc(doc.stability)} · ${doc.rules} 条规则 · 更新 ${esc(doc.updated)}</div>${doc.body}</div></section>
+   <aside class="kc-rail">${rail}</aside>
+  </div>
+ </div>`;
+ applyKcGeo();bindKcWin();w.classList.add('open');}
+function bindKcWin(){const w=$('#kcWin');if(!w)return;
+ $('[data-kcclose]',w)?.addEventListener('click',e=>{e.stopPropagation();toggleKc(false);});
+ $('[data-kcmax]',w)?.addEventListener('click',e=>{e.stopPropagation();toggleKcMax();});
+ $$('[data-kcdir]',w).forEach(b=>b.addEventListener('click',()=>kcToggleDir(b.dataset.kcdir)));
+ $$('[data-kckey]',w).forEach(b=>b.addEventListener('click',()=>{state.kcSel=b.dataset.kckey;renderKcWin();Audio.sfx('click');}));
+ $$('[data-kclink]',w).forEach(b=>b.addEventListener('click',()=>{state.kcSel=b.dataset.kclink;renderKcWin();Audio.sfx('click');}));}
+function bindKcFrame(){const w=$('#kcWin');if(!w||w.dataset.drag)return;w.dataset.drag='1';
+ w.addEventListener('pointerdown',e=>{if(state.kcMax||e.target.closest('button,input,textarea,a,select'))return;if(!e.target.closest('.ph'))return;e.preventDefault();
+  const r=w.getBoundingClientRect(),sx=e.clientX,sy=e.clientY;
+  const mv=ev=>{state.kcGeo={x:clamp(r.left+ev.clientX-sx,4,Math.max(4,innerWidth-r.width-4)),y:clamp(r.top+ev.clientY-sy,52,Math.max(52,innerHeight-r.height-4)),w:r.width,h:r.height};applyKcGeo();};
+  const up=()=>{removeEventListener('pointermove',mv);removeEventListener('pointerup',up);};
+  addEventListener('pointermove',mv);addEventListener('pointerup',up);});
+ w.addEventListener('dblclick',e=>{if(e.target.closest('button,input,textarea,a,select'))return;if(e.target.closest('.ph'))toggleKcMax();});}
+
 /* ── 调试 inspect（作业坞同款） ── */
 function turnsFor(j){const seedN=j.id.length*7+j.title.length;const n=j.status==='blocked'?4:j.status==='done'?5:3;
  const switchAt=j.id==='j-m2g'?2:j.id==='j-m2'?3:0;const arr=[];
@@ -3782,6 +4016,8 @@ addEventListener('resize',()=>{renderFan();});
 $('#lUsage').addEventListener('click',()=>openPanel('usage'));
 /* v21 四轮：左上「经典模式」= 回 classic 舱页（真实产品走 /cabin/:id；原型只做提示）。 */
 $('#btnClassic').addEventListener('click',()=>toast('返回 classic 模式 · 作战舱'));
+/* #7：知识中心 —— 全舱内开窗（Esc 先收它，再收别的层）。 */
+$('#btnKc').addEventListener('click',()=>toggleKc());
 $('#lDebug').addEventListener('click',()=>{const jid=state.thread!=='main'?state.thread:(state.focusJob||state.jobs.find(j=>j.status==='blocked')?.id||state.jobs[0].id);state.detailJob=jid;state.detailTab='debug';openPanel('detail');});
 $('#btnProj').addEventListener('click',e=>{e.stopPropagation();togglePjPop();});
 /* 原型验收入口：点立绘 = 按 CLIPS 顺序播下一支（13 支循环）。
@@ -3833,7 +4069,7 @@ addEventListener('keydown',e=>{const inIn=e.target.closest('textarea,input');
  if(e.altKey&&e.key.toLowerCase()==='c'){e.preventDefault();setConMin(!state.conMin);return;}
  if(e.altKey&&e.key.toLowerCase()==='i'){e.preventDefault();toggleInbox();return;}
  if(e.altKey&&e.key==='1'){e.preventDefault();const f=[...openOps()].sort((a,b)=>OP_KIND[a.kind].pri-OP_KIND[b.kind].pri)[0];if(f){state.inboxOpen=true;state.inboxSel=f.id;state.inboxPick=null;renderInbox();Audio.sfx('open');}else toggleInbox(true);return;}
- if(e.key==='Escape'){if(state.addOpen){openAdd(false);return;}if(state.settings){closeSettings();return;}if(state.doc){closeDocView();return;}if(state.notesOpen){toggleNotesWin(false);return;}if(state.twin){closeTree();return;}if(state.actOpen){if(state.actSel){state.actSel=null;renderActivityPop();}else toggleActPop(false);return;}if(state.conPop){closeConPop();return;}if(state.pjPop){state.pjPop=false;renderPjPop();return;}if(state.pop){closePops();return;}if(state.inboxOpen){if(state.inboxSel){state.inboxSel=null;state.inboxPick=null;renderInbox();}else toggleInbox(false);return;}if(state.brief){hideBanner();return;}if(state.relayJump){state.relayJump=false;renderPanel();return;}if(state.panel){closePanel();return;}if(!state.conMin){setConMin(true);return;}}
+ if(e.key==='Escape'){if(state.addOpen){openAdd(false);return;}if(state.settings){closeSettings();return;}if(state.kcOpen){toggleKc(false);return;}if(state.doc){closeDocView();return;}if(state.notesOpen){toggleNotesWin(false);return;}if(state.twin){closeTree();return;}if(state.actOpen){if(state.actSel){state.actSel=null;renderActivityPop();}else toggleActPop(false);return;}if(state.conPop){closeConPop();return;}if(state.pjPop){state.pjPop=false;renderPjPop();return;}if(state.pop){closePops();return;}if(state.inboxOpen){if(state.inboxSel){state.inboxSel=null;state.inboxPick=null;renderInbox();}else toggleInbox(false);return;}if(state.brief){hideBanner();return;}if(state.relayJump){state.relayJump=false;renderPanel();return;}if(state.panel){closePanel();return;}if(!state.conMin){setConMin(true);return;}}
  if(!inIn&&state.inboxOpen&&state.inboxSel&&state.inboxPick!=null&&e.key==='Enter'){e.preventDefault();submitInbox(false);return;}
  if(!inIn&&state.inboxOpen&&state.inboxSel&&/^[1-9]$/.test(e.key)){const o=opOf(state.inboxSel);if(o&&o.status==='open'){const i=+e.key-1;if(o.options[i]){e.preventDefault();state.inboxPick=i;renderInbox();Audio.sfx('click');}}return;}
  if(!inIn&&/^[1-9]$/.test(e.key)&&state.thread!=='main'){const o=opForJob(state.thread);if(o){const i=+e.key-1;if(o.options[i]){e.preventDefault();resolveOp(o.id,o.options[i].label);}}}});
@@ -3846,7 +4082,7 @@ const CHARV=$('#charVid');
 CHARV.addEventListener('playing',()=>{if(!CHARV.currentSrc.endsWith(CLIPS[state.clip].src.replace('./','')))return;CHARV.style.opacity=1;$('#character').classList.add('live');});
 CHARV.addEventListener('error',()=>{CHARV.style.opacity=0;});
 playClip(0,{fx:false});
-bindGrips();bindPanelWin();bindTwinWin();bindDocDrag();bindNotesFrame();renderBar();applyWinAlpha();
+bindGrips();bindPanelWin();bindTwinWin();bindDocDrag();bindNotesFrame();bindKcFrame();renderBar();applyWinAlpha();
 /* 通讯台里点文档 chip → 打开文档查看器（事件委托，重渲染后仍然有效） */
 $('#conLog').addEventListener('click',e=>{const chip=e.target.closest('[data-doc]');if(!chip)return;e.preventDefault();e.stopPropagation();openDoc(chip.dataset.doc);});
 $('#scA').dataset.init='1';

@@ -1353,17 +1353,23 @@ class ChatEventBridge {
   }
 
   /**
-   * 作者提问已被回答（2026-11-16 双会话同步）：用户在**任务线程**里直接答了
-   * 一张问题卡时，舱主会话里镜像的那张 authorAsk 卡也要变成只读 —— 否则
-   * 主会话的「待回答」队列永远挂着一条已经答过的问题。
+   * 作者提问已被回答（2026-11-16 双会话同步 + v22 #9）：作者线程里出现真人
+   * 消息（决策代述 / 编队 chat 直接回复都算）时，舱主会话里镜像的那张
+   * authorAsk 卡也要变成只读 —— 否则「待你定」永远挂着一条已经答过的问题。
    *
-   * 判据：作者线程收到「用户回答了以下问题」用户消息 → 把该线程在舱主会话
-   * 里最新一张无 decision 的 authorAsk 卡写回 activity.decision。
+   * 判据：把该线程在舱主会话里最新一张无 decision 的 authorAsk 卡写回
+   * activity.decision + 一条回执；委派同时回 running。via 只区分回执文案。
    */
-  markAuthorAskAnswered(authorSessionId: string): void {
+  markAuthorAskAnswered(
+    authorSessionId: string,
+    opts: { via?: "thread" | "direct" } = {},
+  ): void {
     if (!this.db) return
     const subject = this.resolveAskSubject(authorSessionId)
     if (!subject?.mainSessionId) return
+    // v22 #9（2026-11-23 用户）：判据不再只认决策代述那一句固定文案 ——
+    // 人在编队 chat 里直接说话同样算「这条提问已经答了」；via 只影响回执文案。
+    const direct = opts.via === "direct"
     let cards: Array<{ id: string; metadata: string | null }> = []
     try {
       cards = this.db.prepare(
@@ -1385,7 +1391,7 @@ class ChatEventBridge {
       if (activity.decision) return // 最新一张已经答过，不同步更早的
       activity.decision = {
         id: "answer_from_thread",
-        label: "已回答",
+        label: direct ? "对话里直接回复" : "已回答",
         at: new Date().toISOString(),
       }
       meta.activity = activity
@@ -1401,7 +1407,7 @@ class ChatEventBridge {
           ?? subject.subject,
         handle: typeof payload.handle === "string" ? payload.handle : subject.handle,
         title: typeof payload.taskName === "string" ? payload.taskName : subject.title,
-        label: "已回答（任务线程兜底）",
+        label: direct ? "已回答（对话里直接回复）" : "已回答（任务线程兜底）",
       })
       if (subject.subject.kind === "delegation") {
         try { this.delegationStateHook?.(subject.subject.id, "running") } catch { /* best effort */ }

@@ -3,7 +3,7 @@
 // 数据全部走 useCockpitFleet mock，不 fetch；selection 用真实的 CockpitStateProvider。
 
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { fireEvent, render, screen, within } from '@testing-library/react'
+import { act, fireEvent, render, screen, within } from '@testing-library/react'
 import type { CabinAttentionItem } from '@octopus/shared'
 import type { CabinJobView } from '@/lib/cabin-api'
 import type { CabinTaskRow } from '@/components/cabin/modules/ui'
@@ -296,6 +296,38 @@ describe('CockpitFleetRail · v21 单列编队', () => {
 
     expect(row('job:j1').className).toMatch(/is-pop|is-arrived/)
     expect(row('job:j2').className).not.toMatch(/is-pop|is-arrived/)
+  })
+
+  // v22 #6（2026-11-23 用户）：作战中要有计时，跟流式结果一样每秒走字。
+  it('作战中行挂活秒表（⏱ mm:ss 每秒走字）；待命/等你答行不画', () => {
+    vi.useFakeTimers()
+    try {
+      vi.setSystemTime(new Date('2026-11-14T09:01:05.000Z'))
+      const run = jobRow(jobView('j1', { status: 'running', created_at: '2026-11-14T09:00:00.000Z' }))
+      const authoring = jobRow(jobView('j3', {
+        status: 'ready',
+        agent_running: true,
+        created_at: '2026-11-14T09:00:05.000Z',
+      }))
+      const queue = jobRow(jobView('j2', {
+        status: 'pending',
+        created_at: '2026-11-14T09:00:00.000Z',
+      }))
+      renderRail({ rows: sortRows([run, authoring, queue]) })
+
+      const clock = within(row('job:j1')).getByTestId('cockpit-rail-clock')
+      expect(clock).toHaveTextContent('⏱ 01:05')
+      expect(clock).toHaveAttribute('title', expect.stringContaining('01:05'))
+      // 作者在推进（job 还没进 running）同样算作战中。
+      expect(within(row('job:j3')).getByTestId('cockpit-rail-clock')).toHaveTextContent('⏱ 01:00')
+      // 待命行不画秒表。
+      expect(within(row('job:j2')).queryByTestId('cockpit-rail-clock')).toBeNull()
+
+      act(() => { vi.advanceTimersByTime(1000) })
+      expect(within(row('job:j1')).getByTestId('cockpit-rail-clock')).toHaveTextContent('⏱ 01:06')
+    } finally {
+      vi.useRealTimers()
+    }
   })
 
   it('↑↓ 在可见行内移动并 select；输入框聚焦时不抢键', () => {

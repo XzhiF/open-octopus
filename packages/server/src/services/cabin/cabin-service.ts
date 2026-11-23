@@ -866,12 +866,25 @@ export class CabinService {
     const delegationHandles = assignHandles(
       delegationRows.map((d) => ({ id: d.id, created_at: d.created_at })), "delegation",
     )
+    // v22 #9：doer 会话 → 委派归属 —— 消息派生的 ask 自带 subject/handle，
+    // derive 侧据此不再重复产 delegation-ask-* 状态行。
+    const delegationBySession = new Map<string, {
+      id: string; title: string; handle?: string; color?: number
+    }>()
+    for (const d of delegationRows) {
+      if (!d.doer_session_id) continue
+      const h = delegationHandles.get(d.id)
+      delegationBySession.set(d.doer_session_id, {
+        id: d.id, title: d.title,
+        ...(h ? { handle: h.handle, color: h.color } : {}),
+      })
+    }
     const isStreaming = this.infra?.isSessionStreaming ?? isStreamActive
     const view = deriveCabinView({
       cabin: { id: row.id, status: row.status },
       tasks, executions,
       incidents: this.gatherIncidents(taskRows.map((t) => t.id), execToTask),
-      asks: this.gatherAsks(row, executions, execToTask, sessionToTask),
+      asks: this.gatherAsks(row, executions, execToTask, sessionToTask, delegationBySession),
       findings: this.listFindings(id, "open").map((f) => ({ id: f.id, title: f.title, status: f.status })),
       jobs: jobs.map((j) => ({
         id: j.id, kind: j.kind, ref_id: j.ref_id, title: j.title,
@@ -914,6 +927,9 @@ export class CabinService {
     executions: DeriveCabinInput["executions"],
     execToTask: Map<string, string>,
     sessionToTask: Map<string, string>,
+    delegationBySession: ReadonlyMap<string, {
+      id: string; title: string; handle?: string; color?: number
+    }> = new Map(),
   ): DeriveCabinInput["asks"] {
     const infra = this.infra
     if (!infra) return []
@@ -1031,10 +1047,17 @@ export class CabinService {
           message_id: rows[i].id,
           ...(clipQuestions(questions) ? { questions: clipQuestions(questions) } : {}),
         }
+        const deleg = delegationBySession.get(sessionId)
         asks.push({
-          id: askId, task_id: info.taskId,
-          title: `${info.label} · 待回答`, question: firstQuestionText(questions),
+          id: askId, task_id: deleg ? null : info.taskId,
+          title: deleg ? `${deleg.title} · 委派在问你` : `${info.label} · 待回答`,
+          question: firstQuestionText(questions),
           ask: envelope,
+          ...(deleg ? {
+            subject: { kind: "delegation" as const, id: deleg.id },
+            ...(deleg.handle ? { handle: deleg.handle } : {}),
+            ...(deleg.color !== undefined ? { color: deleg.color } : {}),
+          } : {}),
         })
       }
     }

@@ -267,9 +267,16 @@ export function createChatRoutes(deps: ChatRouteDeps): Hono {
           : {}),
       })
       sessionDao.updateLastMessageAt(id, now)
-      // 双会话同步：在任务线程里直接答了问题卡 → 舱主会话的镜像卡变只读。
-      if (body.message.includes('用户回答了以下问题')) {
-        try { getChatEventBridge().markAuthorAskAnswered(id) } catch { /* bridge off */ }
+      // 双会话同步（v22 #9，2026-11-23 用户）：在作者线程里说话 = 这条提问
+      // 已经答了 —— 决策代述（「用户回答了以下问题」）和编队 chat 里的直接
+      // 回复走同一个销账入口，只是回执文案不同。服务端 wake 不是人，跳过。
+      if (!body.wake) {
+        try {
+          getChatEventBridge().markAuthorAskAnswered(
+            id,
+            body.message.includes('用户回答了以下问题') ? undefined : { via: 'direct' },
+          )
+        } catch { /* bridge off */ }
       }
     }
 

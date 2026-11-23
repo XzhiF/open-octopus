@@ -45,6 +45,14 @@ export interface DelegateInput {
 export class CabinDelegationService {
   constructor(private readonly deps: CabinDelegationDeps) {}
 
+  /** 委派收尾（done/failed/cancelled）：决策服务据此把该委派名下未决卡收口
+   *  （v22 #9 —— 之前 expireForSubject 没有任何调用方）。 */
+  private subjectEndHook: ((cabinId: string, subjectId: string) => void) | null = null
+
+  setSubjectEndHook(hook: ((cabinId: string, subjectId: string) => void) | null): void {
+    this.subjectEndHook = hook
+  }
+
   private mustCabin(cabinId: string) {
     const row = this.deps.cabin.findById(cabinId)
     if (!row) throw new Error(`cabin not found: ${cabinId}`)
@@ -170,6 +178,7 @@ export class CabinDelegationService {
     if (!row) return undefined
     const next = this.setState(id, ok ? "done" : "failed", { result_summary: summary, ended_at: now() })
     this.appendAudit(row.cabin_id, row, ok ? "done" : "failed", { summary })
+    try { this.subjectEndHook?.(row.cabin_id, row.id) } catch { /* 收口失败不影响完成态 */ }
     // design 25 §11.9：跑完在主对话留一条结论 + 产物引用（不建任务、不进验收）。
     this.announceToMain(row, summary, ok)
     // 2026-11-19 用户 #9：完成回流先让汐音审一道 —— 需要回复就出 AskUserQuestion，
@@ -250,6 +259,11 @@ export class CabinDelegationService {
   }
 
   cancel(id: string): CabinDelegationRow | undefined {
-    return this.setState(id, "cancelled", { ended_at: now() })
+    const row = this.deps.delegations.getById(id)
+    const next = this.setState(id, "cancelled", { ended_at: now() })
+    if (row) {
+      try { this.subjectEndHook?.(row.cabin_id, row.id) } catch { /* 收口失败不影响取消态 */ }
+    }
+    return next
   }
 }

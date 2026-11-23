@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>Octopus · 作战舱 · 编队 v6 —— 编队看任务/会话 · inbox 独立悬浮 · 待你定挂件不变</title>
+<title>Octopus · 作战舱 · 编队 v6 —— 编队看任务/会话 · inbox 独立悬浮 · 输入框上方无待你定浮条</title>
 <style>
 /* ── 净黑终端 TUI · pop 色板（verbatim classic-v5） ── */
 :root{
@@ -374,7 +374,7 @@ html::-webkit-scrollbar-thumb{background:#46464E;border-radius:5px;border:2px so
         <div class="transcript"><div class="tui-col">
           <div class="tmsg xy"><span class="who">汐音</span><div class="bub">右侧 <b>编队</b> 只放任务和会话，显示在跑还是中止；要看细节点一行。要你拍板 / 验收 / 解阻的事，收在编队上方的 <b>inbox</b>。</div></div>
           <div class="tmsg me"><span class="who">你</span><div class="bub">inbox 点开是弹窗吗？</div></div>
-          <div class="tmsg xy"><span class="who">汐音</span><div class="bub">不是弹窗：点 inbox 图标，<b>图标左边</b>会出来一列待办和计数，你在里面选一条，才打开对应的待办窗；处理完自动回到这列，接着点下一条。输入框上方的「待你定」保持原样，随时能直接答。 <b>待放行</b>不用跳任务线程 —— 浮窗里我总结好、给选项，选完当场执行。</div></div>
+          <div class="tmsg xy"><span class="who">汐音</span><div class="bub">不是弹窗：点 inbox 图标，<b>图标左边</b>会出来一列待办和计数，你在里面选一条，才打开对应的待办窗；处理完自动回到这列，接着点下一条。输入框上方不再挂「待你定」——问题在会话里的提问卡或右栏 inbox 里处理。 <b>待放行</b>不用跳任务线程 —— 浮窗里我总结好、给选项，选完当场执行。</div></div>
         </div></div>
       </div>
 
@@ -408,7 +408,7 @@ html::-webkit-scrollbar-thumb{background:#46464E;border-radius:5px;border:2px so
 /* ════════════════════════════════════════════════════════════════
    classic · 编队 v6（2026-11-17 重做）
    用户口径：
-     ① 输入框上方「待你定」挂件保持原样；
+     ① 输入框上方不再挂「待你定」浮条（v22 #9 退役），问题在会话提问卡 / 右栏 inbox 处理；
      ② 编队上方加一个独立悬浮 inbox：点开在图标左边出列表（带计数），
         在里面选一条，才打开对应的待办窗；
      ③ 编队只展示任务 / 会话，能看在运行中还是已中止。
@@ -717,37 +717,11 @@ function renderFleet() {
     <div class="fleet-foot">点行 = 详情 · 不作答</div>`;
 }
 
-/* ───────────── 主 chat 的「待你定」挂件（原样保留） ───────────── */
+/* ───────────── 主 chat 的「待你定」挂件（v22 #9 退役：输入框上方不再有浮条） ─────────────
+   提问统一进右栏 inbox / 会话里的提问卡；宿主仍留着 #dock 空壳，渲染层不再产出 DOM。 */
 function renderDock() {
   const el = $('#dock');
-  const open = openAsks();
-  if (!open.length) { el.innerHTML = ''; return; }
-  if (!open.some((a) => a.id === state.dockActive)) state.dockActive = open[0].id;
-  const active = open.find((a) => a.id === state.dockActive) || open[0];
-  const task = taskOf(active.taskId);
-  const listOpen = state.dockOpen && open.length > 1;
-  el.innerHTML = `
-    <div class="askdock">
-      ${listOpen ? `<div class="askdock-list">${open.map((a) => {
-        const t = taskOf(a.taskId);
-        return `<button class="askdock-row${a.id === active.id ? ' on' : ''}" data-open-ask="${a.id}">
-          <span class="h">${a.handle}</span>
-          <span class="q">${fmt(t.name)} · ${fmt(a.question)}</span>
-          <span class="st">${a.id === active.id ? '◉ 回答中' : '回答 →'}</span>
-        </button>`;
-      }).join('')}</div>` : ''}
-      <div class="askdock-line">
-        <i class="g"></i>
-        <b class="cnt">待你定 ${open.length}</b>
-        <span class="h">${active.handle}</span>
-        <button class="go" data-open-ask="${active.id}" style="display:flex;align-items:center;gap:8px;min-width:0;flex:1;text-align:left;background:none">
-          <span class="t">${fmt(task.name)}</span>
-          <span class="q">${fmt(active.question)}</span>
-        </button>
-        <button class="go" data-open-ask="${active.id}">回答 →</button>
-        ${open.length > 1 ? `<button class="more" data-dock-more>${listOpen ? '收起' : open.length + ' 条 ⌃'}</button>` : ''}
-      </div>
-    </div>`;
+  if (el) el.innerHTML = '';
 }
 
 /* ───────────── 单一窗口槽 ───────────── */

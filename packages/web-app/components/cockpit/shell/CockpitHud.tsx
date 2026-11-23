@@ -14,6 +14,8 @@
 //   · 2026-11-23 用户 #3：最右新增「✎ 便签」—— classic 快速便签的入口（带条数徽标）。
 //   · v21 四轮：删掉原型左上的指挥官徽（16 / 指挥官 / CMDR·ID —— 偏高且无信息量，
 //     与右侧 32px chip 不齐）；导航只留一枚同高的「经典模式」返回钮。
+//   · v22 #7（2026-11-23 用户）：返回钮右边加「⚛ 知识中心」—— classic 的
+//     knowledge 搬进全舱（点开是舱内知识窗，不换页、不丢作战现场）。
 
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useBillingCurrency } from '@/lib/billing-currency'
@@ -25,6 +27,7 @@ import { CockpitProjectsPopover } from '../projects/CockpitProjectsPopover'
 import { CockpitRepoBinder } from '../projects/CockpitRepoBinder'
 import { HudClock } from './HudClock'
 import { useCabinProjects } from '../projects/use-cabin-projects'
+import { openCockpitKnowledge } from '../face/CockpitKnowledgeWindow'
 import { useCabinUsage } from '../bridge/use-cabin-usage'
 import { SCENES } from '../scene/scene-model'
 import { cabinAudio } from '@/lib/cabin-audio'
@@ -89,6 +92,20 @@ export function CockpitHud() {
       >
         <span className="ck12-hud-classic-i" aria-hidden="true">←</span>
         <b>经典模式</b>
+      </button>
+
+      {/* v22 #7：知识中心（classic Octopus 菜单里的那一项，换皮搬到全舱）。
+          与返回钮同高同壳；点开是舱内窗口，作战现场不中断。 */}
+      <button
+        type="button"
+        className="ck12-hud-classic ck12-hud-kc"
+        onClick={() => openCockpitKnowledge()}
+        title="知识中心 · 星空知识库（全局 wiki · 只读）"
+        aria-label="打开知识中心"
+        data-testid="cockpit-knowledge"
+      >
+        <span className="ck12-hud-classic-i" aria-hidden="true">⚛</span>
+        <b>知识中心</b>
       </button>
 
       <CockpitProjectsPopover

@@ -354,8 +354,8 @@ export function CockpitChatWindow() {
         <CockpitReceipts threadKey={MAIN_THREAD_KEY} />
         {/* 2026-11-20 用户：输入框上方的「待你决断 · N 项 · 键 1–9 直达」条已移除 ——
             聊天内容里有提问卡、右栏也有 inbox，三条入口重复。 */}
-        {/* 原型 .con-in：❯ + 输入框 + 金色六角 ⏎；「待你定」dock 由 composer
-            自带的 composerDock 渲染在这行之上。 */}
+        {/* v22 #9（2026-11-23 用户）：输入框上方不再有任何「待你定」浮条 ——
+            提问只看转录里的卡片与右栏 inbox。原型 .con-in：❯ + 输入框 + ⏎。 */}
         <div className="ck12-comms-in">
           <div
             ref={attachComposer}

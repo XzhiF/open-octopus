@@ -134,8 +134,10 @@ describe("deriveCabinView", () => {
 
     v = deriveCabinView({ ...input, acked: ["done-task-t1"] })
     expect(v.attention.some(a => a.id === "done-task-t1")).toBe(false)
-    // ack 只过滤完成项；提问仍按原判据
+    // 只 ack 完成项时提问仍在；提问被 ack（「✓ 忽略」）后同样收项 —— v22 #9。
     expect(v.attention.some(a => a.id === "ask-a1")).toBe(true)
+    const ackedAsk = deriveCabinView({ ...input, acked: ["done-task-t1", "ask-a1"] })
+    expect(ackedAsk.attention.some(a => a.id === "ask-a1")).toBe(false)
   })
 
   it("done 委派 → notice（带结论摘要）；failed 仍是 blocked；acked 收项", () => {
@@ -157,5 +159,29 @@ describe("deriveCabinView", () => {
       acked: ["done-delegation-d1"],
     }))
     expect(acked.attention).toEqual([])
+  })
+
+  // ── 委派提问去重（v22 #9）────────────────────────────────────────
+  it("委派在问：消息派生的 ask 已带 subject → 不再重复产 delegation-ask-* 行", () => {
+    const v = deriveCabinView(base({
+      delegations: [{ id: "d1", title: "对比", state: "waiting_input", handle: "D1" }],
+      asks: [{
+        id: "a9", task_id: null, title: "对比 · 委派在问你",
+        subject: { kind: "delegation", id: "d1" }, handle: "D1",
+      }],
+    }))
+    const answers = v.attention.filter(a => a.stage === "answer")
+    expect(answers).toHaveLength(1)
+    expect(answers[0].id).toBe("ask-a9")
+    expect(answers[0].subject).toEqual({ kind: "delegation", id: "d1" })
+    expect(answers[0].handle).toBe("D1")
+    expect(v.attention.some(a => a.id === "delegation-ask-d1")).toBe(false)
+  })
+
+  it("委派在问但消息侧扫不到提问 → 状态行仍兜底出现", () => {
+    const v = deriveCabinView(base({
+      delegations: [{ id: "d1", title: "对比", state: "waiting_input" }],
+    }))
+    expect(v.attention.some(a => a.id === "delegation-ask-d1")).toBe(true)
   })
 })

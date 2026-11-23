@@ -1384,6 +1384,28 @@ button.ck12-ev:hover { background: rgba(255, 255, 255, 0.04); }
 }
 .ck12-docwin .ck12-jh { padding: 0; gap: 0; }
 .ck12-docwin .ck12-jh-x { margin-left: 0; }
+
+/* ═══ 知识中心窗（v22 #7 · 2026-11-23 用户）：HUD 左上「⚛」打开，
+       内容 = classic 的 /knowledge 页面原样嵌入（左树 / 阅读 / 右栏），
+       壳沿用目录窗 .ck12-treewin（✕ 左置 · 玻璃底 · 可拖）。 ═══ */
+.ck12-kcwin {
+  width: min(1180px, 94vw);
+  height: min(760px, calc(100vh - 150px));
+  top: 76px;
+}
+.ck12-kcwin .ck12-jh { padding: 0; gap: 0; }
+.ck12-kcwin .ck12-jh-x { margin-left: 0; }
+.ck12-kcwin-b {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  border-top: 1px solid var(--ck12-bd);
+  overflow: hidden;
+}
+@media (max-width: 900px) {
+  .ck12-kcwin { top: 64px; width: 96vw; height: calc(100vh - 130px); }
+}
 .ck12-docwin-b {
   flex: 1;
   min-height: 0;

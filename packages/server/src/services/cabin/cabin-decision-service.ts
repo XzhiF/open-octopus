@@ -937,7 +937,11 @@ export class CabinDecisionService {
     return record
   }
 
-  /** 任务 / 委派结束时置灰未决卡（expired）。 */
+  /** 任务 / 委派结束时收口该主体名下的提问（v22 #9：此前没有任何调用方，
+   *  已答未转达的卡与没人答的卡都会一直挂在「待你定」里）。
+   *   · 已答未转达 → 账本 expired（答案不丢，只是不再催汐音转达）；
+   *   · 作者线程里没人答的镜像卡 → activity.decision = 已结束 —— 派生的
+   *     attention / 提示队列随即不再列出。 */
   expireForSubject(cabinId: string, subjectId: string): void {
     for (const record of this.pendingRelays(cabinId)) {
       if (record.subject.id !== subjectId) continue
@@ -959,6 +963,41 @@ export class CabinDecisionService {
           }
         } catch { /* best effort */ }
       }
+    }
+
+    // 未答的镜像卡：主体已经结束，问题不再等人 —— 置灰，别留在「待你定」。
+    let main: { sessionId: string; workspaceId: string | null }
+    try { main = this.mainSession(cabinId) } catch { return }
+    let expiredCards = 0
+    try {
+      const rows = this.db().prepare(
+        `SELECT id, metadata FROM messages
+          WHERE session_id = ? AND metadata LIKE '%"authorAsk":true%'
+          ORDER BY created_at DESC, rowid DESC LIMIT 200`,
+      ).all(main.sessionId) as Array<{ id: string; metadata: string | null }>
+      const update = this.db().prepare("UPDATE messages SET metadata = ? WHERE id = ?")
+      for (const row of rows) {
+        if (!row.metadata) continue
+        let meta: Record<string, unknown>
+        try { meta = JSON.parse(row.metadata) as Record<string, unknown> } catch { continue }
+        const activity = meta.activity as Record<string, unknown> | undefined
+        const payload = activity?.payload as AskCardPayload | undefined
+        if (!payload?.authorAsk) continue
+        const subject = payload.subject
+          ?? (payload.taskId ? { kind: "task" as const, id: payload.taskId } : null)
+        if (!subject || subject.id !== subjectId) continue
+        if (!activity || typeof activity !== "object" || activity.decision) continue
+        activity.decision = { id: "expired", label: "已结束", at: now() }
+        meta.activity = activity
+        try {
+          update.run(JSON.stringify(meta), row.id)
+          expiredCards += 1
+        } catch { /* best effort */ }
+      }
+    } catch { /* old DB — best effort */ }
+    if (expiredCards > 0) {
+      this.deps.onAppend?.(main.sessionId, main.workspaceId)
+      try { this.deps.service.notifyViewChanged(cabinId) } catch { /* view hook optional */ }
     }
   }
 
