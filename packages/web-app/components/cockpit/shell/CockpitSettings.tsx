@@ -1,10 +1,11 @@
 'use client'
 
 // v21 二轮（原型 settings 弹窗）·「更多 → 设置」：
-//   声音（音效）/ 外观（主题色 · 窗口透明度）/ 场景（随机跃迁）/ 原型演练（自动回流）。
+//   声音（音效）/ 外观（主题色 · 窗口透明度）/ 场景（随机跃迁）/ 性能（星野帧率）/
+//   原型演练（自动回流）。
 //
 // 偏好真源：
-//   · 音效 / 主题色 / 窗口透明度 ← cockpit_prefs（本机落库，700ms 防抖）
+//   · 音效 / 主题色 / 窗口透明度 / 帧率 ← cockpit_prefs（本机落库，700ms 防抖）
 //   · 随机跃迁 ← CockpitState.autoWarp
 //   · 自动回流 ← sim-auto store（仅 DEV + ?demo=1 生效）
 //
@@ -12,13 +13,19 @@
 
 import { useEffect } from 'react'
 import { X } from 'lucide-react'
-import { THEMES, type CockpitTheme } from '@/components/cabin/cockpit'
+import { THEMES, type CockpitFrameRate, type CockpitTheme } from '@/components/cabin/cockpit'
 import { useCockpit } from '@/components/cabin/CockpitProvider'
 import { useCockpitState } from '../state/CockpitStateProvider'
 import { useSimAuto, setSimAuto } from '../fx/sim-auto'
 import { setCockpitSettingsOpen, useCockpitSettingsOpen } from './settings-store'
 
 const THEME_ORDER = Object.keys(THEMES) as CockpitTheme[]
+
+/** 星野帧率两档：默认 30fps；独显功耗放开后可选 60fps。 */
+const FRAME_RATES: { key: CockpitFrameRate; label: string; note: string }[] = [
+  { key: 'std', label: '30 帧', note: '默认 · 省电，流式文字更稳' },
+  { key: 'high', label: '60 帧', note: '星流更顺滑 · 功耗更高' },
+]
 
 const SETTINGS_LAYER_PRIORITY = 85
 
@@ -143,6 +150,27 @@ export function CockpitSettings() {
               title={autoWarp ? '关闭随机跃迁' : '开启随机跃迁'}
               onClick={() => setAutoWarp(!autoWarp)}
             />
+          </div>
+
+          <div className="ck12-sgrp">性能</div>
+          <div className="ck12-srow">
+            <span className="ck12-sk">
+              <b>星野帧率</b>
+              <span>舱窗星流 / 跃迁光效的刷新率；默认 30 帧，独显够用可开 60 帧</span>
+            </span>
+            <span className="ck12-seg" role="group" aria-label="星野帧率">
+              {FRAME_RATES.map((item) => (
+                <button
+                  key={item.key}
+                  type="button"
+                  className={prefs.frameRate === item.key ? 'on' : undefined}
+                  aria-pressed={prefs.frameRate === item.key}
+                  title={item.note}
+                  data-testid={`cockpit-setting-fps-${item.key}`}
+                  onClick={() => applyPrefs({ ...prefs, frameRate: item.key })}
+                >{item.label}</button>
+              ))}
+            </span>
           </div>
 
           <div className="ck12-sgrp">原型演练</div>

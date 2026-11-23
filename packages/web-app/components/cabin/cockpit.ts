@@ -12,6 +12,8 @@ export type CabinAutonomy = 'off' | 'observe' | 'auto'
 export type PresenceRate = 'quiet' | 'std' | 'active'
 /** 反馈特效强度：炫 / 标准 / 克制（只影响背景特效，不影响通知窗）。 */
 export type PresenceFxLevel = 'full' | 'std' | 'lite'
+/** 舱窗星野渲染帧率：std = 30fps（默认）/ high = 60fps。 */
+export type CockpitFrameRate = 'std' | 'high'
 export type MoodKey = 'boot' | 'idle' | 'working' | 'alert' | 'happy' | 'sleep' | 'thinking' | 'cheer' | 'wink' | 'worried'
 export type CabinMood = 'auto' | MoodKey
 
@@ -39,6 +41,8 @@ export interface CockpitPrefs {
   fxLevel: PresenceFxLevel
   /** v21 二轮：窗口整体不透明度（0.4–1，设置滑杆；只作用于舱系窗口）。 */
   winAlpha: number
+  /** v23：舱窗星野帧率（设置 → 性能）。std 省电、high 顺滑。 */
+  frameRate: CockpitFrameRate
 }
 
 export const THEMES: Record<CockpitTheme, { name: string; a: string; b: string; c: string }> = {
@@ -55,7 +59,7 @@ export const DEFAULT_COCKPIT: CockpitPrefs = {
   theme: 'terminal', float: 'glass', floatAmp: 5, hud: true, scan: 5, grid: 30,
   glow: 1, particles: 18, blur: 3, charScale: 1, mood: 'auto', sound: true,
   autonomy: 'auto', dormantMinutes: 30, presenceOn: true, presenceRate: 'active',
-  fxLevel: 'full', winAlpha: 1,
+  fxLevel: 'full', winAlpha: 1, frameRate: 'std',
 }
 
 export const PRESENCE_RATES: Record<PresenceRate, { label: string; seconds: number }> = {
@@ -151,9 +155,10 @@ export function normalizePrefs(raw: unknown): CockpitPrefs {
   const autonomy = (p.autonomy === 'off' || p.autonomy === 'observe' || p.autonomy === 'auto' ? p.autonomy : DEFAULT_COCKPIT.autonomy) as CabinAutonomy
   const presenceRate = (p.presenceRate === 'quiet' || p.presenceRate === 'std' || p.presenceRate === 'active' ? p.presenceRate : DEFAULT_COCKPIT.presenceRate) as PresenceRate
   const fxLevel = (p.fxLevel === 'full' || p.fxLevel === 'std' || p.fxLevel === 'lite' ? p.fxLevel : DEFAULT_COCKPIT.fxLevel) as PresenceFxLevel
+  const frameRate = (p.frameRate === 'std' || p.frameRate === 'high' ? p.frameRate : DEFAULT_COCKPIT.frameRate) as CockpitFrameRate
   const mood = (typeof p.mood === 'string' && (p.mood === 'auto' || p.mood in CREW) ? p.mood : DEFAULT_COCKPIT.mood) as CabinMood
   return {
-    theme, float, autonomy, mood, presenceRate, fxLevel,
+    theme, float, autonomy, mood, presenceRate, fxLevel, frameRate,
     floatAmp: clamp(p.floatAmp, 0, 10, DEFAULT_COCKPIT.floatAmp),
     hud: typeof p.hud === 'boolean' ? p.hud : DEFAULT_COCKPIT.hud,
     scan: clamp(p.scan, 0, 10, DEFAULT_COCKPIT.scan),

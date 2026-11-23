@@ -718,6 +718,34 @@
   font-family: var(--font-mono);
   font-weight: 700;
 }
+/* 设置 → 性能：两档分段控件（30 / 60 帧）。 */
+.ck12-seg {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  padding: 2px;
+  border-radius: 8px;
+  border: 1px solid rgba(185, 179, 217, 0.25);
+  background: rgba(10, 8, 24, 0.5);
+}
+.ck12-seg button {
+  height: 22px;
+  padding: 0 9px;
+  border-radius: 6px;
+  font-size: 9.5px;
+  font-family: var(--font-mono);
+  letter-spacing: 0.03em;
+  color: var(--ck12-ink2);
+  transition: 0.13s;
+}
+.ck12-seg button:hover { color: #fff; }
+.ck12-seg button.on {
+  background: rgba(46, 230, 214, 0.16);
+  color: var(--ck12-teal);
+  box-shadow: inset 0 0 0 1px rgba(46, 230, 214, 0.35);
+  font-weight: 700;
+}
 
 /* 账本作用域说明（本舱账本 = 全域累计；本会话明细在通讯台头部下拉） */
 .ck12-ledger-note {
