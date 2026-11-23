@@ -37,6 +37,8 @@
     "desktop:dev": "pnpm --filter @octopus/desktop dev",
     "desktop:pack": "pnpm --filter @octopus/desktop pack:dir",
     "desktop:dist": "pnpm --filter @octopus/desktop dist",
+    "desktop:pack:proxy": "pnpm --filter @octopus/desktop pack:dir:proxy",
+    "desktop:dist:proxy": "pnpm --filter @octopus/desktop dist:proxy",
     "kill:server": "node scripts/kill-port.mjs 3001",
     "kill:web": "node scripts/kill-port.mjs 3000",
     "test": "vitest run",

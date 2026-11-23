@@ -112,8 +112,8 @@ export interface CabinWorktreeChangeRepo {
 }
 
 export interface CabinWorktreeChanges {
-  /** 本舱 cwd 绝对路径。 */
-  dir: string
+  /** 比对目录绝对路径；单仓库接口里仓库没有本地路径时 = null。 */
+  dir: string | null
   repos: CabinWorktreeChangeRepo[]
 }
 
@@ -1543,8 +1543,36 @@ export class CabinService {
   async worktreeChanges(cabinId: string): Promise<CabinWorktreeChanges> {
     const row = this.mustGet(cabinId)
     const root = path.resolve(row.path)
+    const view = await this.readWorktreeChanges(root, path.basename(root) || root)
+    return { dir: root, repos: [view] }
+  }
+
+  /**
+   * 单个项目的 git 变更（2026-11-23 用户 #1：项目面「git 变更」页签）。
+   * 目标与舱籍读数同口径 = `worktree_path ?? main_path`，不是本舱 cwd。
+   * 只读；仓库没本地路径 → 单个 error 视图（不 500）。
+   */
+  async repoWorktreeChanges(cabinId: string, repoName: string): Promise<CabinWorktreeChanges> {
+    const repo = this.repoViews(cabinId).find((r) => r.name === repoName)
+    if (!repo) throw new CabinNotFoundError(`repo not in cabin: ${repoName}`)
+    const target = repo.worktree_path ?? repo.main_path
+    if (!target) {
+      return {
+        dir: null,
+        repos: [{
+          name: repoName, dir: null, branch: repo.branch ?? null, head: null,
+          error: "项目还没有本地路径", truncated: false, files: [],
+        }],
+      }
+    }
+    const root = path.resolve(target)
+    return { dir: root, repos: [await this.readWorktreeChanges(root, repoName)] }
+  }
+
+  /** 工作区改动的公共读法：本舱 cwd 与单仓库共用（name = 显示名）。 */
+  private async readWorktreeChanges(root: string, name: string): Promise<CabinWorktreeChangeRepo> {
     const view: CabinWorktreeChangeRepo = {
-      name: path.basename(root) || root, dir: root, branch: null, head: null,
+      name, dir: root, branch: null, head: null,
       error: null, truncated: false, files: [],
     }
     try {
@@ -1584,7 +1612,7 @@ export class CabinService {
     } catch (err) {
       view.error = errMsg(err)
     }
-    return { dir: root, repos: [view] }
+    return view
   }
 
   /** 本舱变更窗：单文件 unified patch（点开才拉）。untracked=true 走 /dev/null 一侧。 */
@@ -1598,6 +1626,28 @@ export class CabinService {
     const resolvedRoot = path.resolve(row.path)
     const name = path.basename(resolvedRoot) || resolvedRoot
     if (repoName !== name) throw new CabinNotFoundError(`repo not in cabin: ${repoName}`)
+    return this.readWorktreePatch(resolvedRoot, relPath, untracked)
+  }
+
+  /** 项目面「git 变更」：单文件 patch，根 = `worktree_path ?? main_path`。 */
+  async repoWorktreeChangePatch(
+    cabinId: string,
+    repoName: string,
+    relPath: string,
+    untracked: boolean,
+  ): Promise<{ patch: string; truncated: boolean }> {
+    const repo = this.repoViews(cabinId).find((r) => r.name === repoName)
+    if (!repo) throw new CabinNotFoundError(`repo not in cabin: ${repoName}`)
+    const target = repo.worktree_path ?? repo.main_path
+    if (!target) throw new Error("项目还没有本地路径")
+    return this.readWorktreePatch(path.resolve(target), relPath, untracked)
+  }
+
+  private async readWorktreePatch(
+    resolvedRoot: string,
+    relPath: string,
+    untracked: boolean,
+  ): Promise<{ patch: string; truncated: boolean }> {
     if (!isGitRepo(resolvedRoot)) throw new Error("不是 git 仓库")
     if (!relPath || relPath.includes("\0") || path.isAbsolute(relPath)) {
       throw new CabinRepoInputError(`非法文件路径: ${relPath}`)

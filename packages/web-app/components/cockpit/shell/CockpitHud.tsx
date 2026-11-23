@@ -2,14 +2,16 @@
 
 // v21 二轮（原型 cockpit-v21.html · HUD）—— 54px 抬头条：
 //
-//   [← 经典模式] │ 舱籍 chip(32) │ SCENE pill(居中) │ ▤ tok │ ◈ ctx │ ¥ 消耗
+//   [← 经典模式] │ 舱籍 chip(32) │ SCENE pill(居中) │ ▤ tok │ ¥ 消耗 │ ✎ 便签
 //
 // 纪律：
 //   · 读数全部来自真源（chat 遥测 / getCabinUsage / 舱籍）；拿不到就写「未就绪」，
 //     绝不把缺失值写成 0。
 //   · 右上不再有模型切换与 ♪ ◐ ✦：模型 / 上下文 / 会话 token 明细都在通讯台头部
 //     （MODEL / CTX / TOKEN 下拉），消耗完整账在右栏「消耗」；设置从「更多 → 设置」进。
-//   · 三枚读数只读：不可点、无所指弹层（原型 .cur cursor:default）。
+//   · 2026-11-23 用户 #2：上下文百分比读数删除（常被 compact，常温显示价值不大）；
+//     上下文明细仍在通讯台头部 CTX 芯片。两枚读数只读：不可点、无所指弹层。
+//   · 2026-11-23 用户 #3：最右新增「✎ 便签」—— classic 快速便签的入口（带条数徽标）。
 //   · v21 四轮：删掉原型左上的指挥官徽（16 / 指挥官 / CMDR·ID —— 偏高且无信息量，
 //     与右侧 32px chip 不齐）；导航只留一枚同高的「经典模式」返回钮。
 
@@ -25,6 +27,8 @@ import { HudClock } from './HudClock'
 import { useCabinProjects } from '../projects/use-cabin-projects'
 import { useCabinUsage } from '../bridge/use-cabin-usage'
 import { SCENES } from '../scene/scene-model'
+import { cabinAudio } from '@/lib/cabin-audio'
+import { toggleCockpitNotes, useCockpitNotesOpen, useQuickNoteCount } from './notes-store'
 
 /** 金额读数拆成「符号进六角、数字进 b」——原型 ¥ 徽 + 1.28。 */
 function splitCost(label: string): { unit: string; value: string } {
@@ -40,6 +44,8 @@ export function CockpitHud() {
   const cabinName = cabinCtx?.cabin?.name ?? '作战舱'
   const { usage, stale } = useCabinUsage(entryCabinId)
   const currency = useBillingCurrency()
+  const notesOpen = useCockpitNotesOpen()
+  const noteCount = useQuickNoteCount()
 
   const {
     projects, loading: projectsLoading, error: projectsError, refetch: refetchProjects,
@@ -59,11 +65,6 @@ export function CockpitHud() {
   // ── 读数（真源，缺值 → 未就绪）────────────────────────────────────────
   const tokenTotal = chat?.usage?.totals.tokens ?? null
   const tokenLabel = tokenTotal == null ? '未就绪' : formatTokenCount(tokenTotal)
-  const ctxPct = chat?.contextUsage?.percentage ?? null
-  const ctxLabel = ctxPct == null ? '未就绪' : `${Math.round(ctxPct)}%`
-  const ctxTitle = chat?.contextUsage
-    ? `上下文 ${formatTokenCount(chat.contextUsage.totalTokens)} / ${formatTokenCount(chat.contextUsage.maxTokens, 0)} · 只读（明细在通讯台头部 CTX）`
-    : '上下文占用 · 未就绪（明细在通讯台头部 CTX）'
 
   const costUsd = usage?.grand.totals.cost.usd ?? null
   const costComplete = usage?.grand.totals.cost.complete ?? true
@@ -129,15 +130,31 @@ export function CockpitHud() {
         <b>{tokenLabel}</b>
       </span>
 
-      <span className="ck12-hudcur is-ctx" title={ctxTitle} data-testid="ck12-rig-context">
-        <span className="ck12-hudcur-i" aria-hidden="true">◈</span>
-        <b>{ctxLabel}</b>
-      </span>
-
       <span className="ck12-hudcur is-cost" title={costTitle} data-testid="ck12-rig-cost">
         <span className="ck12-hudcur-i" aria-hidden="true">{cost.unit}</span>
         <b>{cost.value}</b>
       </span>
+
+      <button
+        type="button"
+        className={`ck12-hudcur is-notes${notesOpen ? ' on' : ''}`}
+        aria-expanded={notesOpen}
+        aria-haspopup="dialog"
+        title="便签 · 快速记事（本地自动保存）"
+        data-testid="cockpit-notes-btn"
+        onClick={() => {
+          toggleCockpitNotes()
+          cabinAudio.blip(660, 0.04)
+        }}
+      >
+        <span className="ck12-hudcur-i" aria-hidden="true">✎</span>
+        <b>便签</b>
+        {noteCount > 0 && (
+          <i className="ck12-nbadge" data-testid="cockpit-notes-badge">
+            {noteCount > 99 ? '99+' : noteCount}
+          </i>
+        )}
+      </button>
 
       <CockpitRepoBinder
         open={bindOpen}

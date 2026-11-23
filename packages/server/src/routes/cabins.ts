@@ -19,7 +19,7 @@ import {
   CabinService, CabinNotFoundError, CabinVersionConflictError, CabinStatusConflictError,
   WorktreeConflictError, CabinRepoInputError,
 } from "../services/cabin/cabin-service"
-import { scanLocalProjects, isGitRepo } from "../services/cabin/cabin-repos"
+import { scanLocalProjects, isGitRepo, isWorktreeDirty } from "../services/cabin/cabin-repos"
 import type { CabinInitService } from "../services/cabin/cabin-init-service"
 import { CabinCommService, CabinJobNotFoundError } from "../services/cabin/cabin-comm-service"
 import { CabinDecisionService, CabinDecisionError } from "../services/cabin/cabin-decision-service"
@@ -531,6 +531,9 @@ export function createCabinRoutes(
             git: {
               branch: info.branch, detached: info.detached,
               commit: commit.sha.slice(0, 8), msg: commit.msg, at: commit.at, remote,
+              // 工作区是否有未提交改动（浮层/项目面「dirty」徽标）。status 是
+              // best-effort：读不到按 clean，不把错误画成脏。
+              dirty: isWorktreeDirty(target),
             },
           }
         } catch {
@@ -868,6 +871,33 @@ export function createCabinRoutes(
       if (!st.isFile()) return c.json({ error: "not a regular file" }, 404)
       if (st.size > REPO_FILE_MAX_BYTES) return c.json({ error: "file too large to read" }, 413)
       return c.json({ path: rel, content: fs.readFileSync(abs, "utf8") })
+    } catch (err) {
+      const { status, message } = classifyError(err)
+      return c.json({ error: message }, status as 400)
+    }
+  })
+
+  /**
+   * 2026-11-23 用户 #1：项目面「git 变更」—— 单个关联项目的工作区改动。
+   * 目标 = worktree_path ?? main_path（与舱籍读数同口径）；只读。
+   */
+  router.get("/:id/repos/:name/worktree-changes", async (c) => {
+    try {
+      return c.json(await service.repoWorktreeChanges(c.req.param("id"), c.req.param("name")))
+    } catch (err) {
+      const { status, message } = classifyError(err)
+      return c.json({ error: message }, status as 400)
+    }
+  })
+
+  // 单文件 unified patch（点开才拉；untracked=1 时按新文件 diff /dev/null）。
+  router.get("/:id/repos/:name/worktree-changes/patch", async (c) => {
+    const rel = c.req.query("path")
+    if (!rel) return c.json({ error: "Query param 'path' is required" }, 400)
+    try {
+      return c.json(await service.repoWorktreeChangePatch(
+        c.req.param("id"), c.req.param("name"), rel, c.req.query("untracked") === "1",
+      ))
     } catch (err) {
       const { status, message } = classifyError(err)
       return c.json({ error: message }, status as 400)

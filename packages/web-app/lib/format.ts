@@ -136,6 +136,19 @@ export function formatBytes(n: number | null | undefined): string {
 }
 
 /**
+ * 绝对时刻（本地时区，`yyyy-MM-dd HH:mm:ss`）：要「准点」的读数（git 提交时间等）。
+ * null / 非法 → "—"。入参接受 ISO 8601（服务端 git 用 %aI）或 Date。
+ */
+export function formatDateTime(value: string | number | Date | null | undefined): string {
+  if (value == null) return "—"
+  const date = value instanceof Date ? value : new Date(value)
+  if (Number.isNaN(date.getTime())) return "—"
+  const p = (n: number) => String(n).padStart(2, "0")
+  return `${date.getFullYear()}-${p(date.getMonth() + 1)}-${p(date.getDate())} `
+    + `${p(date.getHours())}:${p(date.getMinutes())}:${p(date.getSeconds())}`
+}
+
+/**
  * 相对时间（看板卡片/工作空间卡同源）：刚刚 / N 分钟前 / N 小时前 / N 天前，
  * ≥7 天回退 zh-CN 日期；null / 非法 → "未知"。
  */

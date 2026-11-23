@@ -155,6 +155,15 @@ kbd{border:1px solid rgba(185,179,217,.35);border-bottom-width:2px;border-radius
 .cur.tok .ci{background:linear-gradient(160deg,var(--teal),var(--sky))}
 .cur b{font-size:14px;font-weight:800;text-shadow:0 1px 6px rgba(16,13,40,.8);font-variant-numeric:tabular-nums}
 .cur.hot b{color:var(--amber)}
+/* 便签入口（2026-11-23 用户 #3）：右上角最右，三枚读数之后。
+   便签是从 classic 快速便签迁过来的本地草稿纸，按钮可点、窗口开着时点亮。 */
+.cur.note{cursor:pointer;border:0;background:none;padding:0;font-family:inherit}
+.cur.note .ci{background:linear-gradient(160deg,var(--amber),var(--gold));transition:.15s}
+.cur.note b{font-size:12px;color:var(--ink2);letter-spacing:.04em;transition:.15s}
+.cur.note:hover b,.cur.note.on b{color:#fff}
+.cur.note:hover .ci{box-shadow:0 0 14px rgba(255,176,32,.5)}
+.cur.note.on .ci{box-shadow:0 0 16px rgba(255,176,32,.7)}
+.cur.note .nbadge{flex:none;min-width:15px;padding:0 4px;border-radius:999px;background:rgba(255,176,32,.18);border:1px solid rgba(255,176,32,.45);color:var(--gold);font-size:8.5px;font-weight:800;line-height:13px;text-align:center;font-variant-numeric:tabular-nums}
 
 /* ═══ 左 · 编队（hex 卡片列） ═══ */
 .fleetrail{position:absolute;left:10px;top:72px;z-index:20;width:var(--railw);max-height:calc(100vh - 88px);display:flex;flex-direction:column;min-height:0;
@@ -809,6 +818,105 @@ kbd{border:1px solid rgba(185,179,217,.35);border-bottom-width:2px;border-radius
 .pcard .go2{margin-top:6px;font-size:9.5px;font-weight:800;color:var(--sky)}
 .pnote{font-size:9.5px;color:var(--amber);border:1px dashed rgba(255,176,32,.4);padding:6px 10px;margin-bottom:9px;clip-path:var(--cut);background:rgba(255,176,32,.07)}
 
+/* ═══ 舱籍浮层（2026-11-23 用户 #1）══════════════════════════════════
+   HUD「⧉ 舱名 · N 项目」点开 = 关联项目清单（不再直接开整页面板）。
+   行只摆三样有用读数：项目是谁（名 + 来源 + 位置）、分支 / HEAD / 提交时间、
+   作战与工作树计数；分支吃剩余宽度并截断，HEAD 与时间定宽右靠，永不越框。
+   时间一律 yyyy-MM-dd HH:mm:ss（全天格式，不用「2h 前」）。 */
+.pjpop{position:fixed;left:124px;top:58px;z-index:52;display:none;width:min(460px,calc(100vw - 24px));max-height:min(560px,calc(100vh - 96px));overflow:hidden;border-radius:var(--wrad);background:var(--glass2);backdrop-filter:blur(16px) saturate(1.3);border:1px solid var(--edge);box-shadow:0 22px 64px rgba(16,13,40,.62);flex-direction:column;opacity:var(--winop,1)}
+.pjpop.on{display:flex;animation:popin .2s ease}
+.pjpop-h{display:flex;align-items:baseline;gap:8px;padding:9px 12px 7px;border-bottom:1px solid rgba(185,179,217,.16)}
+.pjpop-h .k{font-size:8.5px;letter-spacing:.16em;font-weight:800;color:var(--teal);font-family:var(--font-mono)}
+.pjpop-h .s{margin-left:auto;font-size:9px;color:var(--metal2);font-family:var(--font-mono)}
+.pjpop-list{padding:5px 6px 7px;overflow-y:auto;min-height:0}
+.pjpop-grp{padding:6px 8px 2px;font-size:8px;letter-spacing:.12em;color:var(--metal2);font-family:var(--font-mono)}
+.pjpop-grp b{color:var(--ink2);font-weight:700}
+.pjx{display:flex;align-items:flex-start;gap:8px;width:100%;padding:8px;text-align:left;border-radius:9px;border:1px solid transparent;transition:.13s}
+.pjx:hover{background:rgba(255,255,255,.06);border-color:rgba(46,230,214,.28)}
+.pjx-dot{flex:none;width:6px;height:6px;margin-top:6px;border-radius:50%;background:var(--accent,var(--sky))}
+.pjx-main{flex:1;min-width:0;display:flex;flex-direction:column;gap:2px}
+.pjx-t{display:flex;align-items:center;gap:6px;min-width:0}
+.pjx-t b{flex:none;font-size:11.5px;font-weight:800;font-family:var(--font-ui);color:#fff;white-space:nowrap}
+.pjx-tag{flex:none;font-size:8px;letter-spacing:.08em;padding:0 5px;border-radius:4px;border:1px solid rgba(185,179,217,.28);color:var(--ink2);font-family:var(--font-mono)}
+.pjx-tag.org{color:var(--teal);border-color:rgba(46,230,214,.4)}
+.pjx-tag.local{color:var(--violet);border-color:rgba(139,124,246,.45)}
+.pjx-where{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:8.5px;color:var(--metal2);font-family:var(--font-mono)}
+/* 三段一行：分支（吃宽度 + 截断）· HEAD · 提交时间（定宽右靠） */
+.pjx-git{display:flex;align-items:center;gap:7px;min-width:0;font-size:9px;font-family:var(--font-mono);color:var(--ink2)}
+.pjx-git .br{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--teal)}
+.pjx-git .head{flex:none;color:#fff;font-weight:700;white-space:nowrap}
+.pjx-git .at{flex:none;white-space:nowrap;font-variant-numeric:tabular-nums;color:var(--metal2)}
+.pjx-msg{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:9px;color:var(--metal2)}
+.pjx-facts{display:flex;gap:9px;margin-top:2px;font-size:8.5px;color:var(--ink2);font-family:var(--font-mono)}
+.pjx-facts b{color:#fff;font-variant-numeric:tabular-nums}
+.pjx-go{flex:none;align-self:center;font-size:9px;font-weight:800;color:var(--metal2);white-space:nowrap}
+.pjx:hover .pjx-go{color:var(--sky)}
+.pjpop-foot{display:flex;align-items:center;gap:8px;padding:7px 10px;border-top:1px solid rgba(185,179,217,.16);font-size:8.5px;color:var(--metal2)}
+.pjpop-foot .sp{flex:1}
+.pjpop-foot button{font-size:9px;font-weight:700;color:var(--sky);padding:0 3px}
+.pjpop-foot button:hover{color:#fff}
+
+/* ═══ 项目面（2026-11-23 用户 #1 · 二轮）══════════════════════════
+   点项目只看三样：分支信息 / 文件浏览器 / git 变更。
+   作战清单、工作树、远端、动作按钮、教学长文 —— 全部不显示。 */
+.pjf{display:flex;flex-direction:column;gap:12px}
+.pjf-sec{display:flex;align-items:center;gap:7px;font-size:9px;letter-spacing:.12em;color:var(--metal2);font-family:var(--font-mono)}
+.pjf-sec b{color:var(--ink2);font-weight:700;letter-spacing:.04em;font-family:var(--font-ui);font-size:10px}
+.pjf-sec .n{flex:none;min-width:16px;text-align:center;padding:0 4px;border-radius:999px;background:rgba(46,230,214,.14);border:1px solid rgba(46,230,214,.35);color:var(--teal);font-size:8.5px;font-variant-numeric:tabular-nums}
+.pjf-sec .sp{flex:1}
+.pjf-sec .hint{font-size:8.5px;color:var(--metal2);letter-spacing:0;font-family:var(--font-ui)}
+/* 分支信息压成一行（2026-11-23 用户 #1 · 三轮）：给页签内容让高度。 */
+.pjf-branch{display:flex;align-items:center;gap:8px;padding:5px 10px;border:1px solid rgba(185,179,217,.16);border-left:3px solid var(--accent,var(--sky));background:rgba(255,255,255,.04);border-radius:8px;min-width:0;font-family:var(--font-mono);font-size:10px}
+.pjf-branch b{flex:none;max-width:38%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--teal);font-weight:700;font-size:10.5px}
+.pjf-branch .head{flex:none;color:#fff;font-weight:700;font-size:9.5px}
+.pjf-branch .dirty{flex:none;font-size:8px;font-weight:800;padding:0 6px;border-radius:4px;line-height:14px}
+.pjf-branch .dirty.dirty{background:rgba(255,176,32,.22);color:var(--amber)}
+.pjf-branch .dirty.clean{background:rgba(61,220,151,.2);color:var(--green)}
+.pjf-branch .msg{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--metal2);font-size:9.5px}
+.pjf-branch .at{flex:none;color:var(--metal2);font-size:9px;font-variant-numeric:tabular-nums}
+/* 文件浏览器 / git 变更 = 两个页签，共用下方内容区 */
+.pjf-tabs{align-items:center;margin:2px 0 0}
+.pjf-tabs .dtab{display:inline-flex;align-items:center;gap:6px;height:26px;padding:0 14px;font-size:10.5px}
+.pjf-tabs .dtab .n{font-size:8.5px;font-family:var(--font-mono);color:var(--metal2);font-variant-numeric:tabular-nums}
+.pjf-tabs .dtab.on .n{color:#fff}
+.pjf-tabs .pjf-tabs-hint{margin-left:auto;font-size:8.5px;color:var(--metal2);font-family:var(--font-ui)}
+.pjf-files{height:300px;display:flex;min-height:0}
+.pjf-files .fwrap{flex:1;height:100%;min-height:0}
+.pjf-files .ftree{width:212px}
+/* 项目面撑满面板正文：页签内容吃掉剩余高度，不再固定 300px */
+.pb.pjf-on{display:flex;flex-direction:column;overflow:hidden}
+.pjf-on .pjf{flex:1;min-height:0;gap:10px}
+.pjf-on .pjf-files{flex:1;height:auto}
+.pjf-on .pjf-chg{flex:1;min-height:0;overflow:hidden}
+/* git 变更 = 目录树 + 右侧 diff 预览（2026-11-23 用户 #1 · 四轮：文件多时按目录折叠） */
+.pjf-chg{display:flex;min-height:0}
+.pjf-chg .fwrap{flex:1;height:100%;min-height:0}
+.pjf-chg .ftree{width:262px}
+.trow .cst{flex:none;width:12px;text-align:center;font-family:var(--font-mono);font-weight:800;font-size:9px}
+.trow .cst.M{color:var(--amber)}
+.trow .cst.A{color:var(--green)}
+.trow .cst.D{color:var(--red)}
+.trow .cst.R,.trow .cst.C{color:var(--sky)}
+.trow .cst.Q{color:var(--metal2)}
+.trow .cad{flex:none;margin-left:auto;color:var(--green);font-size:8.5px;font-variant-numeric:tabular-nums}
+.trow .cdl{flex:none;color:var(--red);font-size:8.5px;font-variant-numeric:tabular-nums}
+.tprev .tph .st{flex:none;font-weight:800;font-family:var(--font-mono)}
+.tprev .tph .st.M{color:var(--amber)}
+.tprev .tph .st.A{color:var(--green)}
+.tprev .tph .st.D{color:var(--red)}
+.tprev .tph .ad{flex:none;color:var(--green);font-size:9.5px}
+.tprev .tph .dl{flex:none;color:var(--red);font-size:9.5px}
+.tprev .cdiff{flex:1;min-height:0;overflow:auto;padding:4px 0}
+.pjf-empty{font-size:9.5px;line-height:1.55;color:var(--ink2);padding:2px 2px 4px}
+.pjback{font-size:9.5px;font-weight:800;color:var(--sky);padding:0 2px}
+.pjback:hover{color:#fff}
+/* 舱籍总览行：与浮层同一套读数，点击进项目面 */
+.pjx.ov{padding:10px 9px;margin-bottom:6px;background:rgba(255,255,255,.04);border-color:rgba(185,179,217,.16)}
+.pjx.ov:hover{background:rgba(255,255,255,.08)}
+.pjx.ov .pjx-go{font-size:9.5px;color:var(--sky)}
+@media (max-width:900px){.pjf-files{height:240px}.pjf-files .ftree{width:170px}.pjpop{left:8px;width:calc(100vw - 16px)}}
+@media (max-width:720px){.projchip .pn2{display:none}}
+
 /* ═══ 项目页签：一行一个项目（任务 = 它的 worktree；点击弹目录树窗口） ═══ */
 .pjrow{display:flex;align-items:center;gap:10px;width:100%;text-align:left;padding:9px 12px;margin-bottom:7px;clip-path:var(--cut);background:rgba(255,255,255,.05);border:1px solid rgba(185,179,217,.16);border-left:3px solid var(--accent,var(--sky));transition:.13s}
 .pjrow:hover{background:rgba(255,255,255,.1);border-color:rgba(46,230,214,.45);border-left-color:var(--accent,var(--sky))}
@@ -851,6 +959,62 @@ kbd{border:1px solid rgba(185,179,217,.35);border-bottom-width:2px;border-radius
 .docref .p{min-width:0;white-space:normal;overflow-wrap:anywhere;color:#9ff6ec;font-family:var(--font-mono);font-size:10.5px;line-height:16px}
 .docref .go{flex:none;display:inline-flex;align-items:center;justify-content:center;width:17px;height:17px;padding:0;border:1px solid rgba(46,230,214,.38);background:rgba(46,230,214,.09);color:#bffcf6;font-family:inherit;font-size:10.5px;font-weight:700;line-height:1;cursor:pointer;transition:.14s}
 .docref .go:hover{border-color:rgba(46,230,214,.9);background:rgba(46,230,214,.2);color:#fff;box-shadow:0 0 12px rgba(46,230,214,.35)}
+
+/* ═══ 便签窗（2026-11-23 用户 #3）：classic 的快速便签迁入全舱。
+       同一套 .twin 壳（✕ 左置 · 玻璃底 · 可拖可全屏）；左列表 + 右草稿纸，
+       本地自动保存、不上传。点 HUD 右上角「✎ 便签」开合。 ═══ */
+#notesWin{width:min(780px,92vw);height:min(560px,calc(100vh - 186px))}
+#notesWin::before{background:linear-gradient(90deg,var(--amber),var(--gold),var(--teal))}
+#notesWin .ph{cursor:grab;user-select:none;touch-action:none}
+#notesWin .ph:active{cursor:grabbing}
+.ntw{display:flex;gap:10px;flex:1;min-height:0;padding:10px 12px 0}
+.nt-side{flex:none;width:220px;display:flex;flex-direction:column;min-height:0;border:1px solid rgba(185,179,217,.16);background:rgba(10,8,24,.4);padding:6px;clip-path:var(--cut)}
+.nt-search{display:flex;gap:5px;align-items:center;margin-bottom:6px}
+.nt-search input{flex:1;min-width:0;height:26px;padding:0 8px;border:1px solid rgba(185,179,217,.18);background:rgba(255,255,255,.04);color:var(--ink);font-family:var(--font-ui);font-size:10.5px;outline:none;clip-path:var(--cut)}
+.nt-search input:focus{border-color:rgba(255,176,32,.6)}
+.nt-search .kbd{flex:none;font-size:8px;color:var(--metal2);font-family:var(--font-mono);letter-spacing:.04em}
+.nt-new{flex:none;width:26px;height:26px;display:grid;place-items:center;border:1px solid rgba(255,176,32,.45);background:rgba(255,176,32,.08);color:var(--gold);font-size:14px;font-weight:800;clip-path:var(--cut);transition:.14s}
+.nt-new:hover{background:rgba(255,176,32,.18);color:#fff}
+.nt-list{flex:1;min-height:0;overflow-y:auto}
+.nt-row{display:flex;align-items:center;gap:7px;width:100%;padding:6px 7px;margin-bottom:3px;text-align:left;border:1px solid transparent;border-radius:8px;color:var(--ink2);cursor:pointer;transition:.13s}
+.nt-row:hover{background:rgba(255,255,255,.05)}
+.nt-row.on{background:linear-gradient(90deg,rgba(255,176,32,.16),rgba(255,176,32,.05));border-color:rgba(255,176,32,.38)}
+.nt-row .dot{flex:none;width:6px;height:6px;border-radius:50%}
+.nt-row .tt{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:11px;font-weight:700;color:#fff}
+.nt-row .tm{flex:none;font-size:8.5px;color:var(--metal2);font-family:var(--font-mono)}
+.nt-row .dx{flex:none;width:18px;height:18px;display:none;place-items:center;color:var(--metal2);font-size:9.5px;border-radius:5px}
+.nt-row:hover .dx{display:grid}
+.nt-row .dx:hover{color:var(--red);background:rgba(255,92,92,.14)}
+.nt-main{flex:1;min-width:0;display:flex;flex-direction:column;min-height:0;border:1px solid rgba(185,179,217,.16);background:rgba(10,8,24,.32);clip-path:var(--cut)}
+.nt-head{flex:none;display:flex;align-items:center;gap:7px;padding:9px 12px 7px;border-bottom:1px solid rgba(185,179,217,.12)}
+.nt-title{flex:1;min-width:0;background:none;border:0;color:#fff;font-family:var(--font-ui);font-size:15px;font-weight:800;outline:none}
+.nt-title::placeholder{color:var(--metal2);font-weight:700}
+.nt-stamp{flex:none;font-size:8.5px;color:var(--metal2);font-family:var(--font-mono);font-variant-numeric:tabular-nums}
+.nt-colors{flex:none;display:flex;gap:5px;padding:0 3px}
+.nt-colors button{width:9px;height:9px;border-radius:50%;border:1px solid rgba(255,255,255,.25);opacity:.55;transition:.13s}
+.nt-colors button:hover{opacity:1;transform:scale(1.15)}
+.nt-colors button.on{opacity:1;box-shadow:0 0 0 2px #17142c,0 0 0 3px currentColor}
+.nt-del{flex:none;width:22px;height:22px;display:grid;place-items:center;color:var(--metal2);font-size:11px;opacity:.6;border-radius:5px}
+.nt-del:hover{color:var(--red);opacity:1;background:rgba(255,92,92,.1)}
+.nt-body{flex:1;min-height:0;resize:none;background:none;border:0;outline:none;padding:10px 13px 6px;color:#EDEBFA;font-family:var(--font-ui);font-size:12.5px;line-height:1.75;scrollbar-color:#3a3a45 transparent;white-space:pre-wrap}
+.nt-body::placeholder{color:var(--metal2)}
+.nt-foot{flex:none;display:flex;align-items:center;gap:8px;height:30px;padding:0 12px 2px;border-top:1px solid rgba(185,179,217,.12);font-size:9px;color:var(--metal2);font-family:var(--font-mono)}
+.nt-foot .st{flex:none;display:inline-flex;align-items:center;gap:5px}
+.nt-foot .st i{width:5px;height:5px;border-radius:50%;background:var(--green);box-shadow:0 0 6px rgba(61,220,151,.5)}
+.nt-foot .st.saving i{background:var(--gold);animation:bl 1s steps(1) infinite}
+.nt-foot .sp{flex:1}
+.nt-foot .keys{flex:none;letter-spacing:.04em}
+.nt-foot .n{flex:none;padding-left:8px;border-left:1px solid rgba(185,179,217,.2)}
+.nt-empty{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:6px;padding:18px;color:var(--metal2);font-size:11px;text-align:center;line-height:1.6}
+.nt-empty .big{font-size:24px;color:var(--gold)}
+.nt-empty b{color:#fff;font-size:12px}
+.nt-empty button{height:26px;margin-top:2px;padding:0 12px;border:1px solid rgba(255,176,32,.45);background:rgba(255,176,32,.08);color:var(--gold);font-size:10.5px;font-weight:700;clip-path:var(--cut)}
+.nt-empty button:hover{background:rgba(255,176,32,.18);color:#fff}
+.nt-undo{position:absolute;left:50%;bottom:44px;transform:translateX(-50%);z-index:2;display:flex;align-items:center;gap:10px;padding:6px 10px;background:rgba(24,21,44,.96);border:1px solid rgba(185,179,217,.25);font-size:10px;color:var(--ink2);clip-path:var(--cut);box-shadow:0 10px 26px rgba(0,0,0,.5)}
+.nt-undo button{color:var(--gold);font-size:10px;font-weight:800}
+.nt-undo button:hover{color:#fff}
+@media (max-width:900px){.nt-side{width:170px}}
+@media (max-width:720px){.ntw{flex-direction:column}.nt-side{width:100%;height:170px}}
 
 /* ═══ 本舱目录窗（v22 九轮）：右栏「目录」= 当前 cwd 只读目录树。
        cwd 绝对路径常显在标题条，可复制 / 桌面壳里直接在资源管理器打开。 ═══ */
@@ -1375,12 +1539,13 @@ kbd{border:1px solid rgba(185,179,217,.35);border-bottom-width:2px;border-radius
     </div>
     <span class="hudsp" aria-hidden="true"></span>
     <div class="cur tok" id="curTok" title="本会话 token · 只读（明细在通讯台头部 TOKEN）"><span class="ci">▤</span><b id="hTok">420k</b></div>
-    <div class="cur cry opt1" id="curCtx" title="上下文占用 · 只读（明细在通讯台头部 CTX）"><span class="ci">◈</span><b id="hCtx">42%</b></div>
     <div class="cur gold" id="curCost" title="本会话费用 · 只读（完整账在右栏 消耗）"><span class="ci">¥</span><b id="hCost">1.28</b></div>
+    <button class="cur note" id="curNotes" title="便签 · 快速记事（本地自动保存）" aria-expanded="false" aria-haspopup="dialog"><span class="ci">✎</span><b>便签</b><i class="nbadge" id="noteBadge" hidden>0</i></button>
   </header>
 
   <aside class="fleetrail" id="fleetrail" aria-label="编队"></aside>
 
+  <div class="pjpop" id="pjPop"></div>
   <div class="inboxpop" id="inboxPop"></div>
   <div class="inboxpop actpop" id="actPop"></div>
 
@@ -1421,7 +1586,8 @@ kbd{border:1px solid rgba(185,179,217,.35);border-bottom-width:2px;border-radius
   <section class="panel" id="panel"></section>
   <section class="twin" id="twin" aria-label="目录树"></section>
   <section class="twin" id="docwin" aria-label="文档查看器"></section>
-  <section class="twin actwin" id="actWin" aria-label="活动详情"></section>
+  <section class="twin" id="actWin" aria-label="活动详情"></section>
+  <section class="twin" id="notesWin" aria-label="便签 · 快速记事"></section>
 
   <section class="console" id="console" aria-label="TUI 通讯台">
     <div class="con-h">
@@ -1519,10 +1685,21 @@ const SCENES=[{name:'舰桥 · 日落',short:'舰桥·日落',file:'./assets/sce
  {name:'地出 · 家园',short:'地出·家园',file:'./assets/scene-earthrise.png'},
  {name:'深空 · 孤舰',short:'深空·孤舰',file:'./assets/scene-deepspace.png'}];
 const PROJECTS=[
- {id:'ledger',name:'账务核心',color:'#35C7F0',org:'octo-finance',group:'ledger',branch:'main',head:'a74bee6',commit:'2h 前',dirty:false},
- {id:'gateway',name:'API 网关',color:'#8B7CF6',org:'octo-finance',group:'gateway',branch:'main',head:'de29609',commit:'35m 前',dirty:true},
- {id:'risk',name:'风控引擎',color:'#FFB020',org:'octo-finance',group:'risk',branch:'main',head:'ec8a626',commit:'1d 前',dirty:false},
- {id:'edge',name:'边缘节点',color:'#3DDC97',org:'octo-edge',group:'edge',branch:'main',head:'3acd561',commit:'3d 前',dirty:false}];
+ /* 2026-11-23 用户 #1：时间来真值（yyyy-MM-dd HH:mm:ss）；gateway 故意留长分支，
+    验「分支吃剩余宽度 + 截断，HEAD / 时间定宽不越框」。 */
+ {id:'ledger',name:'账务核心',color:'#35C7F0',org:'octo-finance',group:'ledger',
+  branch:'main',head:'a74bee6',msg:'chore: bump settlement snapshot to 11-18',at:'2026-11-23 12:04:18',dirty:false,
+  remote:'git@github.com:octo-finance/ledger.git',
+  worktrees:[{branch:'fix/reconcile',path:'D:/octopus-ws/cabin/worktrees/ledger/reconcile'}]},
+ {id:'gateway',name:'API 网关',color:'#8B7CF6',org:'octo-finance',group:'gateway',
+  branch:'feat/rate-limit-token-bucket-per-tenant-v2-with-fallback-budget',head:'de29609',msg:'feat: per-tenant token bucket limiter',at:'2026-11-23 13:41:52',dirty:true,
+  remote:'git@github.com:octo-finance/gateway.git',worktrees:[]},
+ {id:'risk',name:'风控引擎',color:'#FFB020',org:'octo-finance',group:'risk',
+  branch:'main',head:'ec8a626',msg:'fix: alert dedup window',at:'2026-11-22 18:26:07',dirty:false,
+  remote:'git@github.com:octo-finance/risk.git',worktrees:[]},
+ {id:'edge',name:'边缘节点',color:'#3DDC97',org:'octo-edge',group:'edge',
+  branch:'main',head:'3acd561',msg:'chore: canary probe labels',at:'2026-11-20 09:12:45',dirty:false,
+  remote:'git@github.com:octo-edge/edge.git',worktrees:[]}];
 const projOf=id=>PROJECTS.find(p=>p.id===id)||PROJECTS[0];
 /* 工作树根（演示用绝对路径）：项目页签与目录树窗口都显示完整路径。 */
 const WS_ROOT='D:/octopus-ws/cabin';
@@ -1586,7 +1763,7 @@ const JOB_EVENTS={
  'j-edge':[['09:30','汐音','dispatch','边缘灰度'],['09:37','edge-1','report','2/5 正常']]};
 const CHANGES={
  'j-m1':{branch:'feat/refund-flow',base:'main',files:[{path:'gateway/src/refund/replay.ts',state:'M',add:71,del:33,diff:[['ctx','18','export function replay(orderId: string) {'],['del','19','  if (seen.has(orderId)) return'],['add','19',"  const key = orderId + ':' + idempotencyKey"],['add','20','  if (seen.has(key)) return { skipped: true }'],['ctx','21','  return refund(orderId)']]},{path:'gateway/src/refund/replay.test.ts',state:'M',add:25,del:8,diff:[['ctx','88',"it('replays idempotently', () => {"],['add','89','  replay(order); replay(order)'],['add','90','  expect(refunds()).toHaveLength(1)']]}]},
- 'j-m2g':{branch:'feat/rate-limit',base:'main',files:[{path:'gateway/config/rate-limit.yaml',state:'M',add:3,del:1,diff:[['ctx','1','limits:'],['del','2','  rps: 1200'],['add','2','  rps: 600'],['add','3','  burst: 1200']]}]},
+ 'j-m2g':{branch:'feat/rate-limit',base:'main',files:[{path:'gateway/config/rate-limit.yaml',state:'M',add:3,del:1,diff:[['ctx','1','limits:'],['del','2','  rps: 1200'],['add','2','  rps: 600'],['add','3','  burst: 1200']]},{path:'gateway/src/ratelimit/limiter.ts',state:'M',add:12,del:3,diff:[['ctx','8','export const limit = (rps: number) =>'],['del','9','  tokenBucket({ rps })'],['add','9','  tokenBucket({ rps, burst: rps * 2, tenant })'],['ctx','10','']]},{path:'gateway/src/ratelimit/bucket.ts',state:'A',add:36,del:0,diff:[['add','1','export class TenantBucket {'],['add','2','  constructor(private rps: number) {}'],['add','3','  take(tenant: string) {']]},{path:'gateway/README.md',state:'M',add:4,del:1,diff:[['ctx','3','退款链 · 限流 · 路由。'],['add','4','限流按租户独立桶 · burst = 2 × rps。']]},{path:'gateway/src/audit/chain/probe.ts',state:'A',add:18,del:0,diff:[['add','1','export const probe = (node: Node) =>'],['add','2','  fetch(node.health, { timeout: 800 })']]}]},
  'j-m2':{branch:'fix/reconcile',base:'main',files:[{path:'ledger/src/settlement/reconcile.ts',state:'M',add:58,del:21,diff:[['ctx','41','export function reconcile(day: string) {'],['add','42',"  const key = day + ':' + accountId"],['add','43','  if (seen.has(key)) return { skipped: true }'],['ctx','44','  return settle(loadRows(day))']]}]}};
 const AC={'j-m2':[{t:'AC-1 同日重复只落一笔',pass:true},{t:'AC-2 差异可追溯',pass:true},{t:'AC-3 重放幂等',pass:true},{t:'AC-4 大额差异覆盖',pass:false}],
  'j-m1':[{t:'AC-1 复用幂等键',pass:true},{t:'AC-2 退款不重复',pass:true},{t:'AC-3 CI 全绿',pass:false}],
@@ -1595,6 +1772,13 @@ const ACK=['收到，指挥官。我这就去办，有进展第一时间举上�
 const KW={'j-m1':'退款','j-m2g':'限流','j-m2':'对账','j-arch':'归档','j-ext':'审计','j-m2x':'迁移','j-m3':'风控','j-m2a':'幂等','j-edge':'灰度'};
 const SAY=[['指挥官，舰桥一切正常，编队在跑。','idle'],['我在。您说。','wink'],['要拍板的都在「决断」里，点一条就地回我。','thinking'],['跃迁可以换场景，星空巡航和星云门都准备好了。','happy'],['别担心，阻塞那条我先停住现场了。','worried'],['右边「要我处理」亮起来是有新回传，点进去就地处理。','alert']];
 const PROGRESS=['探针正常 · 推进到下一节点。','单测绿 · 继续 impl。','已写 round-report · 进入 verify。','缓存命中 82% · 成本低于预估。','worktree 干净 · 无越权改动。','第 2 阶段完成 · 进入第 3 阶段。'];
+/* 便签配色（与 classic 快速便签同一组）。 */
+const NOTE_COLORS=['#FFC857','#FF855C','#7EE787','#A78BFA','#4FD1D9'];
+const NOTES_SEED=[
+ {id:'nt1',title:'周会待确认',body:'周会待确认：\n- 限流阈值 1000 rpm / tenant\n- 对账口径按 settlement v3\n- 灰度先放 10% 流量',manual:true,color:'#FFC857',at:Date.now()-4*60000},
+ {id:'nt2',title:'',body:'网关侧的 token bucket 记得加 fallback budget，避免单租户打满。',manual:false,color:'#7EE787',at:Date.now()-52*60000},
+ {id:'nt3',title:'想法 · 全舱便签',body:'想法：全舱里也要能随手记，按钮放右上角最右。',manual:true,color:'#A78BFA',at:Date.now()-27*60000},
+];
 
 const state={sound:true,theme:0,winAlpha:1,thread:'main',panel:null,detailJob:null,detailTab:'dialog',scene:0,sceneFront:'A',
  settings:false,conPop:null,
@@ -1612,6 +1796,8 @@ const state={sound:true,theme:0,winAlpha:1,thread:'main',panel:null,detailJob:nu
  addOpen:false,addTab:'skill',addQ:'',attSkill:null,attExpert:null,attLb:null,apMcp:null,
  flash:{job:null,op:null,at:0},autoWarp:true,conMin:false,conLeft:null,conTop:null,conGeo:null,wins:[],winSeq:0,zTop:30,
  inboxOpen:false,inboxSel:null,inboxPick:null,fanOpen:false,fleetOpen:false,relayJump:false,panelGeo:null,panelMax:false,panelAside:false,
+ pjPop:false,projFocus:null,pjDiff:null,pjTab:'files',pjChgOpen:{},
+ notes:NOTES_SEED.map(n=>({...n})),notesOpen:false,noteSel:'nt1',noteQ:'',noteUndo:null,notesGeo:null,notesMax:false,
  conTurns:false,conTurnSel:0};
 let conMsgs=[];
 const jobOf=id=>state.jobs.find(j=>j.id===id);
@@ -1957,11 +2143,11 @@ function renderClock(){const hm=$('#srClockHM'),sec=$('#srClockSec');if(!hm)retu
  hm.textContent=String(d.getHours()).padStart(2,'0')+':'+String(d.getMinutes()).padStart(2,'0');
  sec.textContent=':'+String(d.getSeconds()).padStart(2,'0');}
 function renderHUD(){$('#hCost').textContent=state.cost.toFixed(2);
- const pct=Math.min(100,Math.round(state.tokens/state.ctxMax*100));
- $('#hCtx').textContent=pct+'%';
- $('#curCtx').classList.toggle('hot',pct>85);
+ /* 2026-11-23 用户 #2：右上角不再显示上下文百分比（会被 compact，价值不大）；
+    上下文构成仍可在通讯台头部 CTX 芯片里看。 */
  $('#hTok').textContent=fmtK(state.tokens);
- renderConTelemetry();}
+ renderNoteBadge();renderConTelemetry();}
+function renderNoteBadge(){const b=$('#noteBadge');if(!b)return;const n=state.notes.length;b.hidden=n===0;b.textContent=String(n);}
 
 /* ── console render（TUI 语法 + 皮肤外壳） ── */
 function currentOf(t){const m=threadOf(t);for(let i=m.length-1;i>=0;i--)if(m[i].who==='xy'||m[i].who==='doer')return m[i];return null;}
@@ -2395,7 +2581,7 @@ function cabinTree(){const root={n:'cabin',d:true,c:[]};
    else{let d=cur.c.find(x=>x.d&&x.n===s);if(!d){d={n:s,d:true,c:[]};cur.c.push(d);}cur=d;}});};
  CABIN_FILES.forEach(([p,b,txt,jid,img])=>add(p,txt,b,jid,img));
  for(const pid of Object.keys(WS_FILES)){const pr=projOf(pid);
-  if(!WS_FILES[pid].some(([p])=>p==='README.md'))add('projects/'+pid+'/README.md','# '+pr.name+'\n\n项目检出：'+wsPath(pid)+'\n分支 '+pr.branch+' · HEAD '+pr.head+' · '+pr.commit+(pr.dirty?' · dirty':' · clean')+'\n',null);
+  if(!WS_FILES[pid].some(([p])=>p==='README.md'))add('projects/'+pid+'/README.md','# '+pr.name+'\n\n项目检出：'+wsPath(pid)+'\n分支 '+pr.branch+' · HEAD '+pr.head+' · '+pr.at+(pr.dirty?' · dirty':' · clean')+'\n',null);
   for(const [p,txt,jid] of WS_FILES[pid])add('projects/'+pid+'/'+p,txt,jid?(jobOf(jid)||{}).short:null,jid);}
  const sortn=n=>{n.c.sort((a,b)=>(b.d-a.d)||a.n.localeCompare(b.n));n.c.forEach(c=>c.d&&sortn(c));};sortn(root);return root;}
 function cabinOpenSet(){if(!state.cabinOpen)state.cabinOpen=new Set(['projects']);return state.cabinOpen;}
@@ -2675,6 +2861,104 @@ function bindDocDrag(){const w=$('#docwin');if(!w||w.dataset.drag)return;w.datas
   const up=()=>{removeEventListener('pointermove',mv);removeEventListener('pointerup',up);};
   addEventListener('pointermove',mv);addEventListener('pointerup',up);});}
 
+/* ── 便签（2026-11-23 用户 #3）：classic 快速便签迁入全舱 ────────────────
+   本地草稿纸，不进入任务 / 知识数据域（线上复用 lib/quick-notes 的 localStorage
+   数据层）。窗口 = .twin 同壳；点 HUD 最右「✎ 便签」开合，Esc 先收它。
+   左列表（搜索 / 新建 / 删除撤销）+ 右草稿纸（自动标题 / 颜色 / 自动保存）。 */
+let noteSeq=0,noteSaveTimer=null,noteUndoTimer=null;
+function noteId(){return 'nt'+(++noteSeq)+'_'+Date.now().toString(36);}
+function noteChars(s){return Array.from(String(s||'')).filter(ch=>!/\s/.test(ch)).length;}
+function noteTitleOf(body){const first=String(body||'').split('\n').map(x=>x.trim()).find(Boolean)||'';return Array.from(first).slice(0,10).join('');}
+function noteRel(ts){const d=Math.max(0,Date.now()-ts);if(d<60000)return '刚刚';if(d<3600000)return Math.floor(d/60000)+'分';const t=new Date(ts),n=new Date();
+ if(t.toDateString()===n.toDateString())return String(t.getHours()).padStart(2,'0')+':'+String(t.getMinutes()).padStart(2,'0');
+ const y=new Date(n);y.setDate(n.getDate()-1);if(t.toDateString()===y.toDateString())return '昨天';return (t.getMonth()+1)+'/'+t.getDate();}
+function noteStamp(ts){const t=new Date(ts);return (t.getMonth()+1)+'月'+t.getDate()+'日 '+String(t.getHours()).padStart(2,'0')+':'+String(t.getMinutes()).padStart(2,'0');}
+function curNote(){return state.notes.find(n=>n.id===state.noteSel)||null;}
+function noteLabel(n){return n.title||noteTitleOf(n.body)||'未命名便签';}
+function noteSaveState(kind){const st=$('#ntSave'),lab=$('#ntSaveT');if(!st||!lab)return;st.classList.toggle('saving',kind==='saving');lab.textContent=kind==='saving'?'保存中…':'已保存 · 刚刚';}
+function scheduleNoteSave(){noteSaveState('saving');if(noteSaveTimer)clearTimeout(noteSaveTimer);noteSaveTimer=setTimeout(()=>{noteSaveTimer=null;noteSaveState('saved');},620);}
+function flushNoteEdit(){if(noteSaveTimer){clearTimeout(noteSaveTimer);noteSaveTimer=null;}noteSaveState('saved');}
+function toggleNotesWin(next){
+ const open=next==null?!state.notesOpen:!!next;
+ state.notesOpen=open;
+ const btn=$('#curNotes');if(btn){btn.classList.toggle('on',open);btn.setAttribute('aria-expanded',String(open));}
+ if(open){closePops();renderNotesWin();}
+ else{const w=$('#notesWin');if(w)w.classList.remove('open');}
+ Audio.sfx(open?'open':'close');
+}
+function createNote(){flushNoteEdit();const n={id:noteId(),title:'',body:'',manual:false,color:NOTE_COLORS[state.notes.length%NOTE_COLORS.length],at:Date.now()};
+ state.notes=[n,...state.notes];state.noteSel=n.id;state.noteQ='';state.noteUndo=null;renderNotesWin();renderNoteBadge();Audio.sfx('click');focusNoteBody();}
+function selectNote(id){if(id===state.noteSel)return;flushNoteEdit();state.noteSel=id;renderNotesWin();Audio.sfx('click');}
+function deleteNote(id){const list=state.notes;const i=list.findIndex(n=>n.id===id);if(i<0)return;const n=list[i];
+ state.notes=list.filter(x=>x.id!==id);state.noteSel=(state.notes[i]||state.notes[i-1]||{id:null}).id;
+ state.noteUndo={note:n,index:i};
+ if(noteUndoTimer)clearTimeout(noteUndoTimer);
+ noteUndoTimer=setTimeout(()=>{state.noteUndo=null;noteUndoTimer=null;if(state.notesOpen)renderNotesWin();},5000);
+ renderNotesWin();renderNoteBadge();Audio.sfx('click');}
+function undoNoteDelete(){const u=state.noteUndo;if(!u)return;const list=[...state.notes];list.splice(Math.min(u.index,list.length),0,u.note);
+ state.notes=list;state.noteSel=u.note.id;state.noteUndo=null;if(noteUndoTimer){clearTimeout(noteUndoTimer);noteUndoTimer=null;}
+ renderNotesWin();renderNoteBadge();Audio.sfx('click');}
+function focusNoteBody(){requestAnimationFrame(()=>{const t=$('#ntBody');if(t){t.focus();t.setSelectionRange(t.value.length,t.value.length);}});}
+function applyNotesGeo(){const w=$('#notesWin');if(!w)return;w.classList.toggle('geo',!!(state.notesGeo||state.notesMax));
+ if(state.notesMax){w.style.left='5px';w.style.top='52px';w.style.width=Math.max(420,innerWidth-10)+'px';w.style.height=Math.max(300,innerHeight-58)+'px';w.style.transform='none';return;}
+ const g=state.notesGeo;
+ if(!g){w.style.left='';w.style.top='';w.style.width='';w.style.height='';w.style.transform='';return;}
+ w.style.left=g.x+'px';w.style.top=g.y+'px';w.style.width=g.w+'px';w.style.height=g.h+'px';w.style.transform='none';}
+function toggleNotesMax(){const w=$('#notesWin');if(!w)return;
+ if(!state.notesMax){const r=w.getBoundingClientRect();state.notesGeo={x:r.left,y:r.top,w:r.width,h:r.height};state.notesMax=true;}else state.notesMax=false;
+ applyNotesGeo();const b=w.querySelector('[data-nmax]');if(b)b.textContent=state.notesMax?'⤡':'⛶';Audio.sfx('click');}
+function renderNotesWin(){
+ const w=$('#notesWin');if(!w)return;
+ if(!state.notesOpen){w.classList.remove('open');return;}
+ if(!state.notes.some(n=>n.id===state.noteSel))state.noteSel=state.notes[0]?state.notes[0].id:null;
+ const sel=curNote();
+ const q=state.noteQ.trim().toLowerCase();
+ const list=state.notes.filter(n=>!q||((n.title||'')+' '+n.body).toLowerCase().includes(q));
+ const rows=list.map(n=>`<div class="nt-row${n.id===state.noteSel?' on':''}" data-nnote="${n.id}" role="option" aria-selected="${n.id===state.noteSel}" tabindex="0"><i class="dot" style="background:${n.color}"></i><span class="tt">${esc(noteLabel(n))}</span><span class="tm">${noteRel(n.at)}</span><button class="dx" data-ndel="${n.id}" title="删除便签" aria-label="删除便签">✕</button></div>`).join('');
+ const main=sel?`
+  <div class="nt-head">
+   <input class="nt-title" id="ntTitle" value="${esc(sel.title)}" placeholder="自动取内容前 10 字" aria-label="便签标题" autocomplete="off" spellcheck="false"/>
+   <span class="nt-stamp">${noteStamp(sel.at)}</span>
+   <div class="nt-colors" role="group" aria-label="便签颜色">${NOTE_COLORS.map(c=>`<button data-ncolor="${c}" class="${c===sel.color?'on':''}" style="background:${c};color:${c}" aria-label="颜色 ${c}" aria-pressed="${c===sel.color}"></button>`).join('')}</div>
+   <button class="nt-del" data-ndel="${sel.id}" title="删除便签" aria-label="删除便签">🗑</button>
+  </div>
+  <textarea class="nt-body" id="ntBody" placeholder="写点什么…&#10;&#10;自动保存，随时点开继续写。" aria-label="便签内容" spellcheck="false">${esc(sel.body)}</textarea>
+  <div class="nt-foot"><span class="st" id="ntSave"><i></i><span id="ntSaveT">已保存 · ${noteRel(sel.at)}</span></span><span class="sp"></span><span class="keys">⌘N 新建 · ⌘F 搜索 · Esc 关闭</span><span class="n" id="ntCount">${noteChars(sel.body)} 字</span></div>`
+ :`<div class="nt-empty"><span class="big">✎</span><b>还没有便签</b><span>记一句待办、一个想法，随手就写。</span><button data-nnew>＋ 新建便签</button></div>`;
+ w.innerHTML=`<div class="ph"><button class="phx" data-nclose title="关闭（Esc）">✕</button><span class="pt"><b>✎ 便签 · 快速记事</b><span>NOTES · 本地自动保存 · 不上传</span></span><span class="sp"></span><button class="pwin" data-nmax title="全屏 / 还原（也可双击标题栏）">${state.notesMax?'⤡':'⛶'}</button></div>
+ <div class="pb"><div class="ntw"><aside class="nt-side">
+  <div class="nt-search"><input id="noteQ" placeholder="搜索便签" value="${esc(state.noteQ)}" aria-label="搜索便签" autocomplete="off"/><button class="nt-new" data-nnew title="新建便签（⌘N）">＋</button></div>
+  <div class="nt-list" role="listbox" aria-label="便签列表">${rows||`<div class="nt-empty" style="min-height:120px"><span class="big">⌕</span><b>${state.notes.length?'没有匹配的便签':'暂无便签'}</b></div>`}</div>
+ </aside><section class="nt-main">${main}</section></div>
+ ${state.noteUndo?`<div class="nt-undo">已删除「${esc(noteLabel(state.noteUndo.note))}」<button data-nundo>撤销</button></div>`:''}</div>`;
+ applyNotesGeo();bindNotesWin();w.classList.add('open');}
+function bindNotesWin(){const w=$('#notesWin');if(!w)return;
+ $('[data-nclose]',w)?.addEventListener('click',e=>{e.stopPropagation();toggleNotesWin(false);});
+ $('[data-nmax]',w)?.addEventListener('click',e=>{e.stopPropagation();toggleNotesMax();});
+ $$('[data-nnew]',w).forEach(b=>b.addEventListener('click',()=>createNote()));
+ $$('[data-nnote]',w).forEach(b=>{
+  b.addEventListener('click',e=>{if(e.target.closest('[data-ndel]'))return;selectNote(b.dataset.nnote);});
+  b.addEventListener('keydown',e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();selectNote(b.dataset.nnote);}});});
+ $$('[data-ndel]',w).forEach(b=>b.addEventListener('click',e=>{e.stopPropagation();deleteNote(b.dataset.ndel);}));
+ $('[data-nundo]',w)?.addEventListener('click',undoNoteDelete);
+ $$('[data-ncolor]',w).forEach(b=>b.addEventListener('click',()=>{const n=curNote();if(!n)return;n.color=b.dataset.ncolor;n.at=Date.now();renderNotesWin();Audio.sfx('click');}));
+ const q=$('#noteQ',w);if(q)q.addEventListener('input',()=>{state.noteQ=q.value;const pos=q.selectionStart;renderNotesWin();const nq=$('#noteQ');if(nq){nq.focus();nq.setSelectionRange(pos,pos);}});
+ const title=$('#ntTitle',w);if(title)title.addEventListener('input',()=>{const n=curNote();if(!n)return;const v=title.value;
+  n.title=v;n.manual=v.trim()!==''&&v!==noteTitleOf(n.body);n.at=Date.now();
+  const row=w.querySelector('[data-nnote="'+n.id+'"] .tt');if(row)row.textContent=noteLabel(n);scheduleNoteSave();});
+ const body=$('#ntBody',w);if(body)body.addEventListener('input',()=>{const n=curNote();if(!n)return;
+  n.body=body.value;if(!n.manual){n.title=noteTitleOf(n.body);const ti=$('#ntTitle',w);if(ti)ti.value=n.title;}
+  n.at=Date.now();
+  const row=w.querySelector('[data-nnote="'+n.id+'"] .tt');if(row)row.textContent=noteLabel(n);
+  const c=$('#ntCount',w);if(c)c.textContent=noteChars(n.body)+' 字';scheduleNoteSave();});}
+function bindNotesFrame(){const w=$('#notesWin');if(!w||w.dataset.drag)return;w.dataset.drag='1';
+ w.addEventListener('pointerdown',e=>{if(state.notesMax||e.target.closest('button,input,textarea,a,select'))return;if(!e.target.closest('.ph'))return;e.preventDefault();
+  const r=w.getBoundingClientRect(),sx=e.clientX,sy=e.clientY;
+  const mv=ev=>{state.notesGeo={x:clamp(r.left+ev.clientX-sx,4,Math.max(4,innerWidth-r.width-4)),y:clamp(r.top+ev.clientY-sy,52,Math.max(52,innerHeight-r.height-52)),w:r.width,h:r.height};applyNotesGeo();};
+  const up=()=>{removeEventListener('pointermove',mv);removeEventListener('pointerup',up);};
+  addEventListener('pointermove',mv);addEventListener('pointerup',up);});
+ w.addEventListener('dblclick',e=>{if(e.target.closest('button,input,textarea,a,select'))return;if(e.target.closest('.ph'))toggleNotesMax();});}
+
 /* ── 调试 inspect（作业坞同款） ── */
 function turnsFor(j){const seedN=j.id.length*7+j.title.length;const n=j.status==='blocked'?4:j.status==='done'?5:3;
  const switchAt=j.id==='j-m2g'?2:j.id==='j-m2'?3:0;const arr=[];
@@ -2764,7 +3048,7 @@ function panelHeadChrome(){const p=$('#panel'),h=p.querySelector('.ph');if(!h)re
    addEventListener('pointermove',mv);addEventListener('pointerup',up);});
   p.appendChild(g);}
 }
-function openPanel(k,keepInbox){state.panel=k;state.panelAside=!!keepInbox;closePops();closeConPop();if(!keepInbox&&state.inboxOpen){state.inboxOpen=false;state.inboxSel=null;state.inboxPick=null;renderInbox();}$('#pscrim').classList.add('on');renderPanel();renderFleetRail();Audio.sfx('open');}
+function openPanel(k,keepInbox){state.panel=k;state.panelAside=!!keepInbox;if(k==='projects')state.projFocus=null;if(state.pjPop){state.pjPop=false;renderPjPop();}closePops();closeConPop();if(!keepInbox&&state.inboxOpen){state.inboxOpen=false;state.inboxSel=null;state.inboxPick=null;renderInbox();}$('#pscrim').classList.add('on');renderPanel();renderFleetRail();Audio.sfx('open');}
 function closePanel(){state.panel=null;state.panelAside=false;state.relayJump=false;if(state.twin){state.twin=null;$('#twin').classList.remove('open');}$('#pscrim').classList.remove('on');$('#panel').classList.remove('open');renderFleetRail();Audio.sfx('close');}
 function evHTML(e){return `<div class="ev ${e[2]==='attention'?'attention':''}"><span class="t">${e[0]}</span><span class="w">${esc(e[1])}</span><span class="x">${esc(e[3])}</span></div>`;}
 /* ── 详情 · 对接：对齐 classic 作业详情的「对接」页签 ——
@@ -2804,8 +3088,144 @@ function renderJobProject(j){
   ids.map(id=>{const pr=projOf(id);const br=j.branch&&j.branch!=='—'?j.branch:'（未开工）';
    return `<button class="pjrow" data-jtree="${esc(j.id)}" data-jtree-proj="${esc(id)}" style="--accent:${pr.color}"><span class="pg3">⌗</span><span class="pm3"><b>${esc(pr.name)}</b><span>⎇ <b>${esc(br)}</b> · ${esc(wsPath(id))}</span></span><span class="ro3">只读</span><span class="go3">目录树 →</span></button>`;}).join('');
 }
+/* ── 舱籍（2026-11-23 用户 #1）：HUD ⧉ → 浮层 → 项目面 ──
+   浮层与总览共用 pjRowHTML：分支吃剩余宽度并截断，HEAD / 提交时间定宽；
+   项目面先摆「在跑 / 需要你」，再摆仓库事实，动作收一行。 */
+function pjProjStats(pr){
+ const js=state.jobs.filter(j=>j.proj===pr.id);
+ const run=js.filter(j=>j.status==='run'||j.status==='wait'||j.status==='blocked');
+ const cost=js.reduce((s,j)=>s+j.cost,0);
+ return {js,run,cost};
+}
+function pjRowHTML(pr,cls){
+ const {js,run}=pjProjStats(pr);const wts=(pr.worktrees||[]).length;
+ return `<button class="pjx${cls?' '+cls:''}" data-pjopen="${pr.id}" style="--accent:${pr.color}">
+  <span class="pjx-dot" aria-hidden="true"></span>
+  <span class="pjx-main">
+   <span class="pjx-t"><b>${esc(pr.name)}</b><span class="pjx-tag org">ORG</span><span class="pjx-where">${esc(pr.org+'/'+pr.group)}</span></span>
+   <span class="pjx-git"><span class="br" title="${esc(pr.branch)}">⎇ ${esc(pr.branch)}</span><span class="head">${esc(pr.head)}</span><span class="at">${esc(pr.at)}</span></span>
+   <span class="pjx-msg">${esc(pr.msg)}${pr.dirty?' · dirty':''}</span>
+   <span class="pjx-facts"><span>作战 <b>${js.length}</b></span><span>在跑 <b>${run.length}</b></span><span>工作树 <b>${wts}</b></span></span>
+  </span>
+  <span class="pjx-go">${cls==='ov'?'打开项目 →':'项目面 →'}</span>
+ </button>`;
+}
+function renderPjPop(){
+ const el=$('#pjPop');if(!state.pjPop){el.classList.remove('on');return;}
+ el.innerHTML=`<div class="pjpop-h"><span class="k">舱籍 · 关联项目</span><span class="s">账务中台 · ${PROJECTS.length} 项目</span></div>
+  <div class="pjpop-list"><div class="pjpop-grp">ORG 注册项目 <b>${PROJECTS.filter(pr=>pr.org).length}</b></div>${PROJECTS.map(pr=>pjRowHTML(pr)).join('')}</div>
+  <div class="pjpop-foot"><button data-pjbind-top>＋ 绑定项目</button><span>点一行开项目面</span><span class="sp"></span><button data-pjall>舱籍总览 →</button></div>`;
+ el.classList.add('on');
+ const b=$('#btnProj').getBoundingClientRect();
+ el.style.left=Math.max(8,b.left)+'px';el.style.top=(b.bottom+6)+'px';
+ $$('[data-pjopen]',el).forEach(x=>x.addEventListener('click',()=>openProject(x.dataset.pjopen)));
+ $('[data-pjall]',el)?.addEventListener('click',()=>{togglePjPop(false);openPanel('projects');Audio.sfx('click');});
+ $('[data-pjbind-top]',el)?.addEventListener('click',()=>toast('绑定项目 · 打开绑定面板（原型演示手感）'));
+}
+function togglePjPop(next){
+ state.pjPop=next==null?!state.pjPop:!!next;
+ if(state.pjPop){closePops();closeConPop();if(state.inboxOpen)toggleInbox(false);if(state.actOpen)toggleActPop(false);}
+ renderPjPop();Audio.sfx(state.pjPop?'open':'close');
+}
+function openProject(id){openPanel('projects');state.projFocus=id;state.pjTab='files';state.pjDiff=null;renderPanel();}
+function renderProjectsOverview(){
+ return `<div class="pnote">舱籍 = 本舱关联的项目 · 主仓只读 · 只能拉主线（ff-only）· 工作树按作业开。</div>
+  ${PROJECTS.map(pr=>pjRowHTML(pr,'ov')).join('')}
+  <div class="pjf-foot">点任一行进项目面：先看在跑，再看仓库事实与动作。</div>`;
+}
+/* 项目面的 git 变更 = 该项目下各作战的变更按路径去重（原型演示口径）。 */
+function projChanges(pr){
+ const out=[],seen=new Set();
+ state.jobs.filter(j=>j.proj===pr.id).forEach(j=>{const c=CHANGES[j.id];if(!c)return;
+  c.files.forEach(f=>{const p=f.path.replace(new RegExp('^'+pr.id+'/'),'');if(seen.has(p))return;seen.add(p);out.push({...f,path:p,job:j.short});});});
+ return out;
+}
+/* 变更按目录分组（2026-11-23 用户 #1 · 四轮：文件多时按树折叠）。
+   五轮：单链目录缩成一级（src → settlement → 文件 ⇒ `src/settlement`），
+   口径同线上 changes-model.compactChangeDir —— 没有直属文件且只有一个子目录就继续缩。 */
+function compactNode(node){
+ let t=node;const parts=[node.n];
+ while(t.c.length===1&&t.c[0].d){t=t.c[0];parts.push(t.n);}
+ return {label:parts.join('/'),target:t};
+}
+function projChangeTree(pr){
+ const root={n:'',d:true,c:[]};
+ projChanges(pr).forEach(f=>{
+  const segs=f.path.split('/');let cur=root;
+  segs.forEach((s,i)=>{if(i===segs.length-1)cur.c.push({n:s,d:false,f});
+   else{let d=cur.c.find(x=>x.d&&x.n===s);if(!d){d={n:s,d:true,c:[]};cur.c.push(d);}cur=d;}});
+ });
+ const sort=(node)=>{node.c.sort((a,b)=>a.d===b.d?a.n.localeCompare(b.n):(a.d?-1:1));node.c.forEach(c=>{if(c.d)sort(c);});};
+ sort(root);return root;
+}
+function pjChgOpenSet(pr){
+ if(!state.pjChgOpen[pr.id]){
+  const set=new Set();
+  const walk=(node,parentPath)=>{if(!node.d)return;const {label,target}=compactNode(node);const p=parentPath?parentPath+'/'+label:label;set.add(p);target.c.forEach(c=>walk(c,p));};
+  projChangeTree(pr).c.forEach(n=>walk(n,''));
+  state.pjChgOpen[pr.id]=set;
+ }
+ return state.pjChgOpen[pr.id];
+}
+/* 变更页签：左目录树（状态 + ±，可折叠）+ 右 diff 预览；空则「工作区干净」。 */
+function renderProjectChanges(pr){
+ const changes=projChanges(pr);
+ if(!changes.length)return `<div class="pjf-empty">工作区干净 —— 这个项目没有未提交的改动。</div>`;
+ const tree=projChangeTree(pr);const open=pjChgOpenSet(pr);const rows=[];
+ const wantPath=state.pjDiff&&state.pjDiff.pr===pr.id?state.pjDiff.path:null;
+ let sel=changes.find(f=>f.path===wantPath)||null;
+ if(!sel){sel=changes[0];state.pjDiff={pr:pr.id,path:sel.path};}
+ const selPath=sel.path;
+ const walk=(node,parentPath,depth)=>{
+  if(node.d){const {label,target}=compactNode(node);const p=parentPath?parentPath+'/'+label:label;const isOpen=open.has(p);
+   rows.push(`<button class="trow dir" data-pjchgdir="${esc(p)}" style="padding-left:${7+depth*13}px"><span class="tw">${isOpen?'▾':'▸'}</span><span class="ti2">📁</span><span class="tn">${esc(label)}</span></button>`);
+   if(isOpen)target.c.forEach(c=>walk(c,p,depth+1));}
+  else{const selRow=selPath===node.f.path;
+   rows.push(`<button class="trow${selRow?' sel':''}" data-pjchgfile="${esc(node.f.path)}" style="padding-left:${7+depth*13}px"><span class="tw"></span><span class="cst ${node.f.state}">${node.f.state}</span><span class="tn">${esc(node.n)}</span><span class="cad">+${node.f.add}</span><span class="cdl">−${node.f.del}</span></button>`);}};
+ tree.c.forEach(n=>walk(n,'',0));
+ const diff=sel.diff.map(l=>`<div class="ln ${l[0]}"><span class="n">${l[1]}</span><span>${l[0]==='add'?'+':l[0]==='del'?'−':' '} ${esc(l[2])}</span></div>`).join('');
+ return `<div class="fwrap"><div class="ftree">${rows.join('')}</div><div class="tprev"><div class="tph"><span class="st ${sel.state}">${sel.state}</span><span class="p">${esc(sel.path)}</span><span class="ad">+${sel.add}</span><span class="dl">−${sel.del}</span><span class="ro">${esc(sel.job||'')}</span></div><div class="cdiff"><div class="diff">${diff}</div></div></div></div>`;
+}
+/* 文件浏览器：复用本舱目录的树 / 预览样式，只读；展开集与选中集按项目 key 存。 */
+function renderProjectFiles(pr){
+ const pid=pr.id;const open=wsOpenSet(pid);const rows=[];
+ const walk=(node,path,depth)=>{const p=path?path+'/'+node.n:node.n;
+  if(node.d){const isOpen=open.has(p);
+   rows.push(`<button class="trow dir" data-pjdir="${esc(p)}" style="padding-left:${7+depth*13}px"><span class="tw">${isOpen?'▾':'▸'}</span><span class="ti2">📁</span><span class="tn">${esc(node.n)}</span></button>`);
+   if(isOpen)node.c.forEach(c=>walk(c,p,depth+1));}
+  else{const key=pid+':'+node.p;const sel=state.wsSel[pid]===key;
+   rows.push(`<button class="trow${sel?' sel':''}" data-pjfile="${esc(key)}" style="padding-left:${7+depth*13}px"><span class="tw"></span><span class="ti2">📄</span><span class="tn">${esc(node.n)}</span>${node.b?`<span class="tb tk" title="被作战「${esc(node.b)}」改过">${esc(node.b)}</span>`:''}</button>`);}};
+ walk(wsTree(pid),'',0);
+ const selKey=state.wsSel[pid];let selNode=null;
+ const find=(node)=>{if(!node.d&&pid+':'+node.p===selKey)selNode=node;if(node.d)node.c.forEach(find);};
+ find(wsTree(pid));
+ if(!selNode){const all=[];const ff=(node)=>{if(!node.d)all.push(node);else node.c.forEach(ff);};ff(wsTree(pid));
+  if(all.length){state.wsSel[pid]=pid+':'+all[0].p;selNode=all[0];}}
+ const prev=selNode?`<div class="tprev"><div class="tph"><span class="p">${esc(selNode.p)}</span><span class="ro">只读</span></div><pre>${esc(selNode.txt)}</pre></div>`:'<div class="tprev"><pre>选择左侧文件查阅。</pre></div>';
+ return `<div class="fwrap"><div class="ftree">${rows.join('')||'<div class="pempty">没有文件</div>'}</div>${prev}</div>`;
+}
+function renderProjectFace(pr){
+ const changes=projChanges(pr);
+ const tab=state.pjTab==='changes'?'changes':'files';
+ const fileCount=(()=>{let n=0;const w=(node)=>{if(!node.d)n++;else node.c.forEach(w);};w(wsTree(pr.id));return n;})();
+ return `<div class="pjf">
+  <div class="pjf-branch" style="--accent:${pr.color}">
+   <b title="${esc(pr.branch)}">⎇ ${esc(pr.branch)}</b>
+   <span class="head">${esc(pr.head)}</span>
+   <span class="dirty ${pr.dirty?'dirty':'clean'}">${pr.dirty?'dirty':'clean'}</span>
+   <span class="msg" title="${esc(pr.msg)}">${esc(pr.msg)}</span>
+   <span class="at">${esc(pr.at)}</span>
+  </div>
+  <div class="dtabs pjf-tabs">
+   <button class="dtab${tab==='files'?' on':''}" data-pjtab="files">文件浏览器 <span class="n">${fileCount}</span></button>
+   <button class="dtab${tab==='changes'?' on':''}" data-pjtab="changes">git 变更 <span class="n">${changes.length}</span></button>
+   <span class="pjf-tabs-hint">${tab==='files'?'点目录展开 · 点文件预览':'按目录折叠 · 点文件看 diff'}</span>
+  </div>
+  ${tab==='files'?`<div class="pjf-files">${renderProjectFiles(pr)}</div>`:`<div class="pjf-chg">${renderProjectChanges(pr)}</div>`}
+ </div>`;
+}
 function renderPanel(){const p=$('#panel');if(!state.panel){p.classList.remove('open');return;}p.classList.add('open');applyPanelGeo();
- const sig=state.panel+'|'+state.detailJob+'|'+state.detailTab+'|'+state.fleetFilter+'|'+(state.logQ||'');
+ const sig=state.panel+'|'+state.detailJob+'|'+state.detailTab+'|'+state.fleetFilter+'|'+(state.logQ||'')+'|'+(state.projFocus||'')+'|'+(state.pjDiff?state.pjDiff.path:'')+'|'+(state.pjTab||'');
  const keepScroll=sig===state._panelSig?(p.querySelector('.pb')?.scrollTop||0):0;state._panelSig=sig;
  const restore=()=>{const pb=p.querySelector('.pb');if(pb)pb.scrollTop=keepScroll;};
  const T={fleet:['⬡','编队','FLEET · 全部作战'],ops:['◈','待你决断','ONLY YOU'],detail:['▦','作战详情','HOLO DOSSIER'],log:['≡','对话日志','COMMS LOG · 指令时间线'],usage:['¥','本舱账本','CABIN LEDGER · 全域只读'],projects:['⧉','舱籍 · 绑定项目','CABIN REGISTRY'],ws:['⌗','作战舱文件','WORKSPACE TREE'],poses:['✧','汐音动作视频','CLIP GALLERY · '+CLIPS.length]}[state.panel];
@@ -2862,12 +3282,12 @@ function renderPanel(){const p=$('#panel');if(!state.panel){p.classList.remove('
   <div class="tokcells"><div class="tokc in"><div class="k">输入</div><div class="v">${fmtK(state.tokIn)}</div></div><div class="tokc out"><div class="k">输出</div><div class="v">${fmtK(state.tokOut)}</div></div><div class="tokc cr"><div class="k">缓存读</div><div class="v">${fmtK(state.tokCR)}</div></div><div class="tokc cw"><div class="k">缓存写</div><div class="v">${fmtK(state.tokCW)}</div></div></div>
   <div class="sect">按模型</div>${MODELS.filter(m=>perModel[m.id]).map(m=>`<div class="mrow"><span class="mn">${m.id}</span><span class="md">${perModel[m.id].calls} 次 · ${m.desc}</span><span class="mv">${fmtK(perModel[m.id].tok)}</span><span class="mc">¥${perModel[m.id].cost.toFixed(2)}</span></div>`).join('')}
   <div class="sect">按作战 · 点击看详情</div>${[...state.jobs].filter(j=>j.cost>0).sort((a,b)=>b.cost-a.cost).map(j=>`<button class="mrow" data-job="${j.id}"><span class="mn">${STATE_EMO[j.status]}</span><span class="md">${esc(j.title)} · ${esc(j.agent)}</span><span class="mv">${fmtK(j.tok)}</span><span class="mc">¥${j.cost.toFixed(2)}</span></button>`).join('')}`;}
- else if(state.panel==='projects'){body=`<div class="pnote">ORG 主仓只读 · 只能拉主线（ff-only）· worktree 按作业开，建舱不预建。</div>`+PROJECTS.map(pr=>{const js=state.jobs.filter(j=>j.proj===pr.id);const run=js.filter(j=>j.status==='run'||j.status==='wait'||j.status==='blocked').length;const cost=js.reduce((s,j)=>s+j.cost,0);const wt=js.filter(j=>j.status!=='queue'&&j.status!=='done').length;
-  return `<div class="pcard" style="--accent:${pr.color}"><div class="pt2"><b>${esc(pr.name)}</b><span class="og">${pr.org}/${pr.group}</span><span class="dirty ${pr.dirty?'dirty':'clean'}">${pr.dirty?'dirty':'clean'}</span></div><div class="git"><b>${pr.branch}</b> · HEAD ${pr.head} · ${pr.commit}</div><div class="stats"><span>作战 <b>${js.length}</b></span><span>在跑 <b>${run}</b></span><span>工作树 <b>${wt}</b></span><span>消耗 <b>¥${cost.toFixed(2)}</b></span></div><div class="wt">&lt;ws&gt;/projects/${pr.id}</div><div style="display:flex;gap:14px"><button class="go2" data-fproj-go="${pr.id}">看该项目作战 →</button><button class="go2" data-ws-go="${pr.id}">⌗ 工作区文件 →</button></div></div>`;}).join('');}
+ else if(state.panel==='projects'){const pr=state.projFocus?PROJECTS.find(x=>x.id===state.projFocus):null;body=pr?renderProjectFace(pr):renderProjectsOverview();}
  else if(state.panel==='ws'){body=renderWS();}
  else if(state.panel==='poses'){body=`<div class="pnote" style="color:var(--teal);border-color:rgba(46,230,214,.4);background:rgba(46,230,214,.06)">视频立绘：<b>${CLIPS.length} 支动作片段</b>（旧批次 3 + 新批次 10）。点立绘按顺序播下一支；卡片悬停预览动作，点击直接跳到该段。13 支已统一人物高 / 脚底 / 中轴，切换不跳位。</div><div class="posegrid">${CLIPS.map((c,i)=>{const m=POSE_META[c.pose];const th=c.src.replace('/v22/','/v22/thumbs/').replace('.webm','.png');return `<button class="posecard${state.clip===i?' on':''}" data-clip="${i}"><span class="pv"><img src="${th}" alt="${m.cn}" loading="lazy"/><video class="cv" muted playsinline loop preload="none" data-src="${c.src}" aria-hidden="true"></video><span class="mk">${String(i+1).padStart(2,'0')} · ${c.batch}</span></span><span class="pm"><b>${m.cn}</b><i>${m.en}</i></span><span class="pd">${m.desc}</span></button>`;}).join('')}</div>`;}
  else{body=threadOf(state.thread).map(m=>{if(m.who==='sys')return `<div class="loglm sys"><div class="bb">${esc(m.text)}</div></div>`;if(m.who==='you')return `<div class="loglm me"><div class="bb"><div class="who"><b>${esc(m.name||'指挥官')}</b><span>${esc(m.t||'')}</span></div>${esc(m.text)}</div></div>`;if(m.who==='doer')return `<div class="loglm"><span class="av doer">⚙</span><div class="bb"><div class="who"><b>${esc(m.name)}</b><span>${esc(m.t||'')}</span></div>${esc(m.text)}</div></div>`;return `<div class="loglm"><span class="av"><img src="${PORTRAIT[m.mood||'idle']}" alt=""/></span><div class="bb"><div class="who"><b>汐音</b><span>${esc(m.t||'')}</span></div>${esc(m.text)}</div></div>`;}).join('');}
- p.innerHTML=`<div class="ph"><button class="phx" data-close title="关闭">✕</button><span class="pt"><b>${T[1]}</b><span>${T[2]}</span></span><span class="sp"></span></div><div class="pb">${body}</div>`;bindPanel();restore();}
+ const prh=state.panel==='projects'&&state.projFocus?PROJECTS.find(x=>x.id===state.projFocus):null;
+ p.innerHTML=`<div class="ph"><button class="phx" data-close title="关闭">✕</button><span class="pt"><b>${prh?`⧉ 项目 · ${esc(prh.name)}`:T[1]}</b><span>${prh?`${esc(prh.org+'/'+prh.group)} · 主仓只读`:T[2]}</span></span><span class="sp">${prh?'<button class="pjback" data-pjback>← 舱籍总览</button>':''}</span></div><div class="pb${prh?' pjf-on':''}">${body}</div>`;bindPanel();restore();}
 function bindPanel(){const p=$('#panel');
  $('[data-close]',p)?.addEventListener('click',closePanel);
  $$('[data-job]',p).forEach(b=>{const go=e=>{if(e.target.closest('.fa'))return;state.detailJob=b.dataset.job;state.detailTab='dialog';state.panel='detail';renderPanel();Audio.sfx('click');};b.addEventListener('click',go);b.addEventListener('keydown',e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();go(e);}});});
@@ -2875,7 +3295,14 @@ function bindPanel(){const p=$('#panel');
  $$('[data-decide]',p).forEach(b=>b.addEventListener('click',e=>{e.stopPropagation();const jid=b.dataset.decide;closePanel();openThread(jid);}));
  $$('[data-fproj]',p).forEach(b=>b.addEventListener('click',()=>{state.fleetFilter=b.dataset.fproj;renderPanel();Audio.sfx('click');}));
  $$('[data-fproj-go]',p).forEach(b=>b.addEventListener('click',()=>{state.fleetFilter=b.dataset.fprojGo;state.panel='fleet';renderPanel();Audio.sfx('click');}));
- $('[data-proj-jump]',p)?.addEventListener('click',()=>{state.panel='projects';renderPanel();Audio.sfx('click');});
+ $('[data-proj-jump]',p)?.addEventListener('click',()=>{state.projFocus=null;state.panel='projects';renderPanel();Audio.sfx('click');});
+ /* 舱籍 / 项目面（2026-11-23 用户 #1 · 二轮）：只保留 分支 / 文件浏览器 / git 变更 */
+ $('[data-pjback]',p)?.addEventListener('click',()=>{state.projFocus=null;state.pjDiff=null;renderPanel();Audio.sfx('click');});
+ $$('[data-pjdir]',p).forEach(b=>b.addEventListener('click',()=>{const pid=state.projFocus;const set=wsOpenSet(pid);const k=b.dataset.pjdir;if(set.has(k))set.delete(k);else set.add(k);renderPanel();Audio.sfx('click');}));
+ $$('[data-pjfile]',p).forEach(b=>b.addEventListener('click',()=>{state.wsSel[state.projFocus]=b.dataset.pjfile;renderPanel();Audio.sfx('click');}));
+ $$('[data-pjchgdir]',p).forEach(b=>b.addEventListener('click',()=>{const pr=PROJECTS.find(x=>x.id===state.projFocus);if(!pr)return;const set=pjChgOpenSet(pr);const k=b.dataset.pjchgdir;if(set.has(k))set.delete(k);else set.add(k);renderPanel();Audio.sfx('click');}));
+ $$('[data-pjchgfile]',p).forEach(b=>b.addEventListener('click',()=>{state.pjDiff={pr:state.projFocus,path:b.dataset.pjchgfile};renderPanel();Audio.sfx('click');}));
+ $$('[data-pjtab]',p).forEach(b=>b.addEventListener('click',()=>{state.pjTab=b.dataset.pjtab==='changes'?'changes':'files';renderPanel();Audio.sfx('click');}));
  $('[data-dtab-jump]',p)?.addEventListener('click',e=>{state.detailTab=e.currentTarget.dataset.dtabJump;state.relayJump=false;renderPanel();Audio.sfx('click');});
  $$('[data-op]',p).forEach(c=>{const go=()=>{const o=opOf(c.dataset.op);closePanel();openThread(o.job);};c.addEventListener('click',e=>{if(e.target.closest('[data-opdetail]'))return;go();});c.addEventListener('keydown',e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();go();}});});
  $$('[data-opdetail]',p).forEach(b=>b.addEventListener('click',e=>{e.stopPropagation();state.detailJob=b.dataset.opdetail;state.detailTab='dialog';state.panel='detail';renderPanel();Audio.sfx('click');}));
@@ -2974,6 +3401,7 @@ function bindTwinWin(){const w=$('#twin');
  w.addEventListener('dblclick',e=>{if(e.target.closest('button,input,textarea,a,select'))return;if(e.target.closest('.ph'))toggleTwinMax();});}
 function fallbackCopy(txt,done){const ta=document.createElement('textarea');ta.value=txt;ta.style.position='fixed';ta.style.opacity='0';document.body.appendChild(ta);ta.select();try{document.execCommand('copy');done();}catch(e){toast('复制失败 · 请手动选择');}ta.remove();}
 $('#pscrim').addEventListener('click',closePanel);
+$('#curNotes').addEventListener('click',()=>{toggleNotesWin();if(state.notesOpen)Audio.sfx('click');});
 
 /* ── 多窗口管理器（用户自开 · 后台式切换） ── */
 function bumpZ(w){w.z=++state.zTop;if(state.zTop>36){[...state.wins].sort((a,b)=>a.z-b.z).forEach((x,i)=>x.z=31+i);state.zTop=36;}}
@@ -3092,6 +3520,7 @@ function openPop(kind){if(state.pop===kind){closePops();return;}closePops();stat
   Audio.sfx('click');}));}
 document.addEventListener('pointerdown',e=>{
  if(state.pop&&!e.target.closest('.pop'))closePops();
+ if(state.pjPop&&!e.target.closest('#pjPop')&&!e.target.closest('#btnProj')){state.pjPop=false;renderPjPop();}
 });
 
 /* ── theme / 声音（统一收进「设置」弹窗） ── */
@@ -3249,7 +3678,7 @@ $('#lUsage').addEventListener('click',()=>openPanel('usage'));
 /* v21 四轮：左上「经典模式」= 回 classic 舱页（真实产品走 /cabin/:id；原型只做提示）。 */
 $('#btnClassic').addEventListener('click',()=>toast('返回 classic 模式 · 作战舱'));
 $('#lDebug').addEventListener('click',()=>{const jid=state.thread!=='main'?state.thread:(state.focusJob||state.jobs.find(j=>j.status==='blocked')?.id||state.jobs[0].id);state.detailJob=jid;state.detailTab='debug';openPanel('detail');});
-$('#btnProj').addEventListener('click',()=>openPanel('projects'));
+$('#btnProj').addEventListener('click',e=>{e.stopPropagation();togglePjPop();});
 /* 原型验收入口：点立绘 = 按 CLIPS 顺序播下一支（13 支循环）。
    正式实现必须由真实状态/事件驱动（mood、作业阶段、回传、休眠等），不要保留点击轮播。 */
 $('#character').addEventListener('click',()=>{Audio.sfx('click');state.lastAct=Date.now();playClip(state.clip+1);});
@@ -3290,6 +3719,8 @@ addEventListener('keydown',e=>{const inIn=e.target.closest('textarea,input');
   if(e.key==='ArrowDown'||e.key==='ArrowUp'){e.preventDefault();const n=turnRows().length;if(n){state.conTurnSel=(state.conTurnSel+(e.key==='ArrowDown'?1:n-1))%n;renderTurnDrop();}return;}
   if(e.key==='Enter'){e.preventDefault();const r=turnRows()[state.conTurnSel];if(r)jumpConTurn(r.i);return;}
  }
+ if((e.metaKey||e.ctrlKey)&&state.notesOpen&&e.key.toLowerCase()==='n'){e.preventDefault();createNote();return;}
+ if((e.metaKey||e.ctrlKey)&&state.notesOpen&&e.key.toLowerCase()==='f'){e.preventDefault();$('#noteQ')?.focus();$('#noteQ')?.select();return;}
  if((e.metaKey||e.ctrlKey)&&e.key.toLowerCase()==='k'){e.preventDefault();openThread('main');$('#cmdInput').focus();return;}
  if(e.altKey&&e.key.toLowerCase()==='m'){e.preventDefault();setSoundOn(!state.sound);return;}
  if(e.altKey&&e.key.toLowerCase()==='w'){e.preventDefault();travel();return;}
@@ -3301,7 +3732,7 @@ addEventListener('keydown',e=>{const inIn=e.target.closest('textarea,input');
  if(e.altKey&&e.key.toLowerCase()==='c'){e.preventDefault();setConMin(!state.conMin);return;}
  if(e.altKey&&e.key.toLowerCase()==='i'){e.preventDefault();toggleInbox();return;}
  if(e.altKey&&e.key==='1'){e.preventDefault();const f=[...openOps()].sort((a,b)=>OP_KIND[a.kind].pri-OP_KIND[b.kind].pri)[0];if(f){state.inboxOpen=true;state.inboxSel=f.id;state.inboxPick=null;renderInbox();Audio.sfx('open');}else toggleInbox(true);return;}
- if(e.key==='Escape'){if(state.addOpen){openAdd(false);return;}if(state.settings){closeSettings();return;}if(state.doc){closeDocView();return;}if(state.twin){closeTree();return;}if(state.actOpen){if(state.actSel){state.actSel=null;renderActivityPop();}else toggleActPop(false);return;}if(state.conPop){closeConPop();return;}if(state.pop){closePops();return;}if(state.inboxOpen){if(state.inboxSel){state.inboxSel=null;state.inboxPick=null;renderInbox();}else toggleInbox(false);return;}if(state.brief){hideBanner();return;}if(state.relayJump){state.relayJump=false;renderPanel();return;}if(state.panel){closePanel();return;}if(!state.conMin){setConMin(true);return;}}
+ if(e.key==='Escape'){if(state.addOpen){openAdd(false);return;}if(state.settings){closeSettings();return;}if(state.doc){closeDocView();return;}if(state.notesOpen){toggleNotesWin(false);return;}if(state.twin){closeTree();return;}if(state.actOpen){if(state.actSel){state.actSel=null;renderActivityPop();}else toggleActPop(false);return;}if(state.conPop){closeConPop();return;}if(state.pjPop){state.pjPop=false;renderPjPop();return;}if(state.pop){closePops();return;}if(state.inboxOpen){if(state.inboxSel){state.inboxSel=null;state.inboxPick=null;renderInbox();}else toggleInbox(false);return;}if(state.brief){hideBanner();return;}if(state.relayJump){state.relayJump=false;renderPanel();return;}if(state.panel){closePanel();return;}if(!state.conMin){setConMin(true);return;}}
  if(!inIn&&state.inboxOpen&&state.inboxSel&&state.inboxPick!=null&&e.key==='Enter'){e.preventDefault();submitInbox(false);return;}
  if(!inIn&&state.inboxOpen&&state.inboxSel&&/^[1-9]$/.test(e.key)){const o=opOf(state.inboxSel);if(o&&o.status==='open'){const i=+e.key-1;if(o.options[i]){e.preventDefault();state.inboxPick=i;renderInbox();Audio.sfx('click');}}return;}
  if(!inIn&&/^[1-9]$/.test(e.key)&&state.thread!=='main'){const o=opForJob(state.thread);if(o){const i=+e.key-1;if(o.options[i]){e.preventDefault();resolveOp(o.id,o.options[i].label);}}}});
@@ -3314,7 +3745,7 @@ const CHARV=$('#charVid');
 CHARV.addEventListener('playing',()=>{if(!CHARV.currentSrc.endsWith(CLIPS[state.clip].src.replace('./','')))return;CHARV.style.opacity=1;$('#character').classList.add('live');});
 CHARV.addEventListener('error',()=>{CHARV.style.opacity=0;});
 playClip(0,{fx:false});
-bindGrips();bindPanelWin();bindTwinWin();bindDocDrag();renderBar();applyWinAlpha();
+bindGrips();bindPanelWin();bindTwinWin();bindDocDrag();bindNotesFrame();renderBar();applyWinAlpha();
 /* 通讯台里点文档 chip → 打开文档查看器（事件委托，重渲染后仍然有效） */
 $('#conLog').addEventListener('click',e=>{const chip=e.target.closest('[data-doc]');if(!chip)return;e.preventDefault();e.stopPropagation();openDoc(chip.dataset.doc);});
 $('#scA').dataset.init='1';

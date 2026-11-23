@@ -55,6 +55,8 @@ export interface CabinRepoEntry {
   git?: {
     branch: string; detached: boolean; commit: string
     msg?: string; at?: string; remote?: string | null
+    /** 工作区是否有未提交改动（enrich 时 best-effort 探测）。 */
+    dirty?: boolean
   } | null
 }
 
@@ -508,8 +510,8 @@ export interface CabinWorktreeChangeRepo {
 }
 
 export interface CabinWorktreeChanges {
-  /** 本舱 cwd 绝对路径。 */
-  dir: string
+  /** 比对目录绝对路径；项目没有本地路径时为 null。 */
+  dir: string | null
   /** 单元素（= 本舱 cwd 这一个仓库）；数组形态与变更树模型同构。 */
   repos: CabinWorktreeChangeRepo[]
 }
@@ -530,6 +532,33 @@ export async function getCabinWorktreeChangePatch(
   const query = new URLSearchParams({ repo, path: relPath })
   if (untracked) query.set('untracked', '1')
   const res = await fetch(url(`/${id}/worktree-changes/patch?${query.toString()}`))
+  return handleResponse<{ patch: string; truncated: boolean }>(res)
+}
+
+// ── v22 十四轮（2026-11-23 用户 #1）：单项目变更（项目面「git 变更」）──
+// 目标 = worktree_path ?? main_path，与舱籍读数同口径；只读。
+
+/** GET /api/cabins/:id/repos/:name/worktree-changes — 单个项目的工作区改动。 */
+export async function getRepoWorktreeChanges(
+  id: string,
+  name: string,
+): Promise<CabinWorktreeChanges> {
+  const res = await fetch(url(`/${id}/repos/${encodeURIComponent(name)}/worktree-changes`))
+  return handleResponse<CabinWorktreeChanges>(res)
+}
+
+/** GET /api/cabins/:id/repos/:name/worktree-changes/patch — 单文件 patch（点开才拉）。 */
+export async function getRepoWorktreeChangePatch(
+  id: string,
+  name: string,
+  relPath: string,
+  untracked: boolean,
+): Promise<{ patch: string; truncated: boolean }> {
+  const query = new URLSearchParams({ path: relPath })
+  if (untracked) query.set('untracked', '1')
+  const res = await fetch(
+    url(`/${id}/repos/${encodeURIComponent(name)}/worktree-changes/patch?${query.toString()}`),
+  )
   return handleResponse<{ patch: string; truncated: boolean }>(res)
 }
 

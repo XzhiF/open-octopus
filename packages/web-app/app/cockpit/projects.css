@@ -141,8 +141,10 @@
   min-width: 0;
 }
 .ck12-pjrow-t b {
+  flex: none;
   font-size: 12px;
   color: var(--ck12-ink);
+  white-space: nowrap;
 }
 .ck12-pjsrc-tag {
   flex: none;
@@ -162,6 +164,7 @@
   border-color: color-mix(in srgb, var(--ck12-violet) 40%, transparent);
 }
 .ck12-pjrow-where {
+  flex: 1;
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -169,19 +172,48 @@
   font-size: 9.5px;
   color: var(--ck12-faint);
 }
-.ck12-pjrow-sub {
+/* 分支 / HEAD / 时间一行（2026-11-23 用户 #1）：分支吃剩余宽度并截断，
+   HEAD 与时间定宽 —— 长分支名不再把行撑出浮层。 */
+.ck12-pjrow-git {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 7px;
   min-width: 0;
+  font-family: var(--font-mono);
   font-size: 9.5px;
-  color: var(--ck12-faint);
+  color: var(--ck12-dim);
+}
+.ck12-pjrow-git .br {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
   white-space: nowrap;
+  color: color-mix(in srgb, var(--ck-a) 80%, var(--ck12-ink));
+}
+.ck12-pjrow-git .head {
+  flex: none;
+  white-space: nowrap;
+  color: var(--ck12-ink);
+  font-weight: 700;
+}
+.ck12-pjrow-git .at {
+  flex: none;
+  white-space: nowrap;
+  color: var(--ck12-faint);
+  font-variant-numeric: tabular-nums;
 }
 .ck12-pjrow-msg {
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 9.5px;
+  color: var(--ck12-faint);
+}
+.ck12-pjrow-msg em {
+  font-style: normal;
+  color: var(--ck12-amber);
 }
 .ck12-pjrow-miss {
   color: var(--ck12-amber);
@@ -499,171 +531,134 @@
   background: color-mix(in srgb, var(--ck12-amber) 8%, transparent);
 }
 
-/* ── 项目面 ───────────────────────────────────────────────────────── */
+/* ── 项目面（2026-11-23 用户 #1 · 二轮）──────────────────────────────
+   点项目只看三样：分支信息 / 文件浏览器 / git 变更。
+   分支压成一行；两个页签共享下方内容区，树 + 预览吃掉剩余高度。 */
+.ck12-pjback {
+  font-size: 9.5px;
+  font-weight: 800;
+  color: var(--ck12-sky);
+  padding: 0 4px;
+  white-space: nowrap;
+}
+.ck12-pjback:hover {
+  color: var(--ck12-ink);
+}
 .ck12-pj-face-body {
   padding: 0;
   overflow: hidden;
 }
-.ck12-pj-panes {
-  display: grid;
-  grid-template-columns: 1.15fr 1fr;
-  gap: 0;
+.ck12-pjf {
+  flex: 1;
   min-height: 0;
-  height: 100%;
-}
-.ck12-pj-pane {
-  min-width: 0;
-  padding: 12px 14px 16px;
-  overflow-y: auto;
-  border-right: 1px solid var(--ck12-bd);
-}
-.ck12-pj-pane:last-child {
-  border-right: 0;
-}
-.ck12-pj-pane-h {
-  display: flex;
-  align-items: center;
-  gap: 7px;
-  margin-bottom: 8px;
-  font-size: 9.5px;
-  letter-spacing: 0.1em;
-  color: var(--ck12-faint);
-}
-.ck12-pj-pane-h b {
-  color: var(--ck12-dim);
-  font-weight: 600;
-}
-.ck12-pj-line {
-  display: flex;
-  gap: 10px;
-  padding: 3px 0;
-  font-size: 10.5px;
-  line-height: 1.5;
-}
-.ck12-pj-line .k {
-  flex: none;
-  width: 38px;
-  color: var(--ck12-faint);
-  font-size: 9.5px;
-  letter-spacing: 0.06em;
-}
-.ck12-pj-line .v {
-  min-width: 0;
-  color: var(--ck12-dim);
-  word-break: break-word;
-}
-.ck12-pj-line .v.mono {
-  font-family: var(--font-mono);
-  font-size: 9.5px;
-}
-.ck12-pj-line .v b {
-  color: var(--ck12-ink);
-}
-.ck12-pj-dim {
-  color: var(--ck12-faint);
-}
-.ck12-pj-sec {
-  display: flex;
-  align-items: center;
-  gap: 7px;
-  margin: 12px 0 6px;
-  font-size: 9.5px;
-  letter-spacing: 0.08em;
-  color: var(--ck12-faint);
-}
-.ck12-pj-sec b {
-  color: var(--ck12-dim);
-  font-weight: 600;
-}
-.ck12-pj-wt {
-  display: flex;
-  align-items: center;
-  gap: 7px;
-  padding: 4px 6px;
-  border-radius: 7px;
-  background: rgba(255, 255, 255, 0.03);
-  font-size: 10px;
-  color: var(--ck12-dim);
-}
-.ck12-pj-wt i {
-  color: var(--ck-violet, var(--ck12-violet));
-  font-style: normal;
-}
-.ck12-pj-wt span {
-  font-family: var(--font-mono);
-}
-.ck12-pj-wt em {
-  margin-left: auto;
-  font-style: normal;
-  font-size: 9px;
-  color: var(--ck12-faint);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  max-width: 55%;
-}
-.ck12-pj-none {
-  padding: 6px 2px;
-  font-size: 10px;
-  color: var(--ck12-faint);
-  line-height: 1.55;
-}
-.ck12-pj-acts {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 7px;
-}
-.ck12-pj-acts button {
-  height: 24px;
-  padding: 0 9px;
-  border-radius: 7px;
-  border: 1px solid var(--ck12-bd2);
-  font-size: 10px;
-  color: var(--ck12-dim);
-}
-.ck12-pj-acts button:hover:not(:disabled) {
-  color: var(--ck12-ink);
-  border-color: var(--ck-a);
-}
-.ck12-pj-acts button.is-danger {
-  color: var(--ck12-red);
-  border-color: color-mix(in srgb, var(--ck12-red) 35%, transparent);
-}
-.ck12-pj-jobs {
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: 10px;
+  padding-bottom: 4px;
 }
-.ck12-pj-job {
+/* 分支信息一行：分支吃宽度并截断，HEAD / dirty / 时间定宽。 */
+.ck12-pjf-branch {
+  flex: none;
   display: flex;
   align-items: center;
   gap: 8px;
-  width: 100%;
-  padding: 6px 8px;
+  min-width: 0;
+  padding: 5px 10px;
   border-radius: 8px;
-  border: 1px solid transparent;
-  text-align: left;
-  font-size: 11px;
-  color: var(--ck12-dim);
-}
-.ck12-pj-job:hover {
-  border-color: var(--ck12-bd2);
+  border: 1px solid var(--ck12-bd2);
+  border-left: 3px solid var(--ck-a);
   background: rgba(255, 255, 255, 0.04);
-  color: var(--ck12-ink);
+  font-family: var(--font-mono);
+  font-size: 10px;
 }
-.ck12-pj-job .t {
+.ck12-pjf-branch b {
+  flex: none;
+  max-width: 38%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--ck12-teal);
+  font-weight: 700;
+  font-size: 10.5px;
+}
+.ck12-pjf-branch .head {
+  flex: none;
+  white-space: nowrap;
+  color: var(--ck12-ink);
+  font-weight: 700;
+  font-size: 9.5px;
+}
+.ck12-pjf-branch .dirty {
+  flex: none;
+  font-size: 8px;
+  font-weight: 800;
+  padding: 0 6px;
+  border-radius: 4px;
+  line-height: 14px;
+}
+.ck12-pjf-branch .dirty.is-dirty {
+  background: color-mix(in srgb, var(--ck12-amber) 22%, transparent);
+  color: var(--ck12-amber);
+}
+.ck12-pjf-branch .dirty.is-clean {
+  background: color-mix(in srgb, var(--pop-green) 20%, transparent);
+  color: var(--pop-green);
+}
+.ck12-pjf-branch .msg {
+  flex: 1;
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-}
-.ck12-pj-job .s {
-  margin-left: auto;
-  flex: none;
+  color: var(--ck12-faint);
   font-size: 9.5px;
+}
+.ck12-pjf-branch .at {
+  flex: none;
+  white-space: nowrap;
+  color: var(--ck12-faint);
+  font-size: 9px;
+  font-variant-numeric: tabular-nums;
+}
+.ck12-pjf-tabs {
+  flex: none;
+  align-items: center;
+}
+.ck12-pjf-tabs .ck12-dtab {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 26px;
+  padding: 0 14px;
+  font-size: 10.5px;
+}
+.ck12-pjf-tabs .ck12-dtab .n {
+  font-size: 8.5px;
+  font-family: var(--font-mono);
+  color: var(--ck12-faint);
+  font-variant-numeric: tabular-nums;
+}
+.ck12-pjf-tabs .ck12-dtab.on .n {
+  color: #fff;
+}
+.ck12-pjf-hint {
+  margin-left: auto;
+  font-size: 8.5px;
   color: var(--ck12-faint);
 }
-
+/* 两页签共享的内容区：左树 + 右预览，吃满剩余高度。 */
+.ck12-pjf-pane {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  gap: 10px;
+}
+.ck12-pjf-pane .ck12-ckt-side {
+  width: 212px;
+}
+.ck12-pjf-pane.is-chg .ck12-ckt-side {
+  width: 262px;
+}
 /* ── 绑定面板（modal，portal 到 body）────────────────────────────── */
 .ck12-bindmodal {
   position: fixed;
@@ -769,14 +764,16 @@
   .ck12-pf-lanes {
     grid-template-columns: 1fr;
   }
-  .ck12-pj-panes {
-    grid-template-columns: 1fr;
-    overflow-y: auto;
+  .ck12-pjf-pane {
+    flex-direction: column;
   }
-  .ck12-pj-pane {
-    border-right: 0;
-    border-bottom: 1px solid var(--ck12-bd);
-    overflow: visible;
+  .ck12-pjf-pane .ck12-ckt-side,
+  .ck12-pjf-pane.is-chg .ck12-ckt-side {
+    width: 100%;
+    height: 190px;
+  }
+  .ck12-pjf-branch .msg {
+    display: none;
   }
   .ck12-pf-local-row {
     grid-template-columns: 1fr auto;

@@ -18,6 +18,7 @@ import { CockpitUrlSync } from '../entry/use-cockpit-url-sync'
 import { CockpitShortcuts } from '../entry/CockpitShortcuts'
 import { CockpitFleetProvider, useCockpitFleet } from '../fleet/CockpitFleetProvider'
 import { CockpitHud } from './CockpitHud'
+import { CockpitNotesWindow } from './CockpitNotesWindow'
 import { CockpitSettings } from './CockpitSettings'
 import { CockpitStarfield } from './CockpitStarfield'
 import { useCockpitCloseGuard } from './use-cockpit-close-guard'
@@ -195,6 +196,9 @@ function CockpitSurface({ cabin }: { cabin: CabinDetail }) {
 
       {/* 2026-11-19 用户 #4：聊天正文里的产物绝对路径点开 → 只读文档窗。 */}
       <CockpitDocWindow />
+
+      {/* 2026-11-23 用户 #3：便签窗（classic 快速便签迁入）。HUD 最右「✎ 便签」开合。 */}
+      <CockpitNotesWindow />
 
       {/* 原型没有屏幕级底栏：输入框在通讯台内（.con-in）。这里不再留 footer，
           通讯台底缘按视口 − 56 量（geometry 的 fallback）。 */}

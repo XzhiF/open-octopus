@@ -1,0 +1,357 @@
+/* ═══ 便签窗（2026-11-23 用户 #3）：classic 的快速便签迁入全舱。 ═══
+   壳 = 目录窗 / 文档窗同一套（.ck12-treewin）：✕ 左置 · 玻璃底 · 可拖可全屏；
+   左列表 + 右草稿纸，本地自动保存、不上传。点 HUD 右上角「✎ 便签」开合。
+   数据层复用 lib/quick-notes 的 localStorage（与 classic 同一份内容）。 */
+
+.ck12-noteswin {
+  width: min(780px, 92vw);
+  height: min(560px, calc(100vh - 186px));
+  z-index: 203;
+}
+.ck12-noteswin::before {
+  background: linear-gradient(90deg, var(--ck12-amber), var(--ck12-gold), var(--ck12-teal));
+}
+.ck12-noteswin .ck12-jh { padding: 0; gap: 0; }
+.ck12-noteswin .ck12-jh-x { margin-left: 0; }
+.ck12-noteswin-b {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.ck12-ntw {
+  display: flex;
+  gap: 10px;
+  flex: 1;
+  min-height: 0;
+  padding: 10px 12px;
+}
+
+/* ── 左列表 ── */
+.ck12-nt-side {
+  flex: none;
+  width: 220px;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  border: 1px solid rgba(185, 179, 217, 0.16);
+  background: rgba(10, 8, 24, 0.4);
+  padding: 6px;
+  clip-path: var(--ck12-cut);
+}
+.ck12-nt-search {
+  display: flex;
+  gap: 5px;
+  align-items: center;
+  margin-bottom: 6px;
+}
+.ck12-nt-search input {
+  flex: 1;
+  min-width: 0;
+  height: 26px;
+  padding: 0 8px;
+  border: 1px solid rgba(185, 179, 217, 0.18);
+  background: rgba(255, 255, 255, 0.04);
+  color: var(--ck12-ink);
+  font-family: var(--font-ui);
+  font-size: 10.5px;
+  outline: none;
+  clip-path: var(--ck12-cut);
+}
+.ck12-nt-search input:focus { border-color: rgba(255, 176, 32, 0.6); }
+.ck12-nt-search input::placeholder { color: var(--ck12-metal2); }
+.ck12-nt-kbd {
+  flex: none;
+  font-size: 8px;
+  color: var(--ck12-metal2);
+  font-family: var(--font-mono);
+  letter-spacing: 0.04em;
+}
+.ck12-nt-new {
+  flex: none;
+  width: 26px;
+  height: 26px;
+  display: grid;
+  place-items: center;
+  border: 1px solid rgba(255, 176, 32, 0.45);
+  background: rgba(255, 176, 32, 0.08);
+  color: var(--ck12-gold);
+  font-size: 14px;
+  font-weight: 800;
+  clip-path: var(--ck12-cut);
+  cursor: pointer;
+  transition: 0.14s;
+}
+.ck12-nt-new:hover { background: rgba(255, 176, 32, 0.18); color: #fff; }
+.ck12-nt-list {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  scrollbar-color: #3a3a45 transparent;
+  scrollbar-width: thin;
+}
+.ck12-nt-row {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  width: 100%;
+  padding: 6px 7px;
+  margin-bottom: 3px;
+  text-align: left;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  color: var(--ck12-ink2);
+  cursor: pointer;
+  outline: none;
+  transition: 0.13s;
+}
+.ck12-nt-row:hover { background: rgba(255, 255, 255, 0.05); }
+.ck12-nt-row:focus-visible { border-color: rgba(255, 176, 32, 0.45); }
+.ck12-nt-row.on {
+  background: linear-gradient(90deg, rgba(255, 176, 32, 0.16), rgba(255, 176, 32, 0.05));
+  border-color: rgba(255, 176, 32, 0.38);
+}
+.ck12-nt-row .dot { flex: none; width: 6px; height: 6px; border-radius: 50%; }
+.ck12-nt-row .tt {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 11px;
+  font-weight: 700;
+  color: #fff;
+  font-family: var(--font-ui);
+}
+.ck12-nt-row .tm { flex: none; font-size: 8.5px; color: var(--ck12-metal2); font-family: var(--font-mono); }
+.ck12-nt-row .dx {
+  flex: none;
+  width: 18px;
+  height: 18px;
+  display: none;
+  place-items: center;
+  color: var(--ck12-metal2);
+  font-size: 9.5px;
+  border-radius: 5px;
+  border: 0;
+  background: none;
+  cursor: pointer;
+}
+.ck12-nt-row:hover .dx,
+.ck12-nt-row:focus-within .dx { display: grid; }
+.ck12-nt-row .dx:hover { color: var(--ck12-red); background: rgba(255, 92, 92, 0.14); }
+
+/* ── 右草稿纸 ── */
+.ck12-nt-main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  border: 1px solid rgba(185, 179, 217, 0.16);
+  background: rgba(10, 8, 24, 0.32);
+  clip-path: var(--ck12-cut);
+}
+.ck12-nt-head {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 9px 12px 7px;
+  border-bottom: 1px solid rgba(185, 179, 217, 0.12);
+}
+.ck12-nt-title {
+  flex: 1;
+  min-width: 0;
+  background: none;
+  border: 0;
+  color: #fff;
+  font-family: var(--font-ui);
+  font-size: 15px;
+  font-weight: 800;
+  outline: none;
+}
+.ck12-nt-title::placeholder { color: var(--ck12-metal2); font-weight: 700; }
+.ck12-nt-stamp {
+  flex: none;
+  font-size: 8.5px;
+  color: var(--ck12-metal2);
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+}
+.ck12-nt-colors { flex: none; display: flex; gap: 5px; padding: 0 3px; }
+.ck12-nt-colors button {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  border: 1px solid rgba(255, 255, 255, 0.25);
+  opacity: 0.55;
+  cursor: pointer;
+  transition: 0.13s;
+}
+.ck12-nt-colors button:hover { opacity: 1; transform: scale(1.15); }
+.ck12-nt-colors button.on { opacity: 1; box-shadow: 0 0 0 2px #17142c, 0 0 0 3px currentColor; }
+.ck12-nt-del {
+  flex: none;
+  width: 22px;
+  height: 22px;
+  display: grid;
+  place-items: center;
+  color: var(--ck12-metal2);
+  font-size: 11px;
+  opacity: 0.6;
+  border-radius: 5px;
+  border: 0;
+  background: none;
+  cursor: pointer;
+}
+.ck12-nt-del:hover { color: var(--ck12-red); opacity: 1; background: rgba(255, 92, 92, 0.1); }
+.ck12-nt-body {
+  flex: 1;
+  min-height: 0;
+  resize: none;
+  background: none;
+  border: 0;
+  outline: none;
+  padding: 10px 13px 6px;
+  color: #EDEBFA;
+  font-family: var(--font-ui);
+  font-size: 12.5px;
+  line-height: 1.75;
+  scrollbar-color: #3a3a45 transparent;
+  scrollbar-width: thin;
+  white-space: pre-wrap;
+}
+.ck12-nt-body::placeholder { color: var(--ck12-metal2); }
+.ck12-nt-foot {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 30px;
+  padding: 0 12px 2px;
+  border-top: 1px solid rgba(185, 179, 217, 0.12);
+  font-size: 9px;
+  color: var(--ck12-metal2);
+  font-family: var(--font-mono);
+}
+.ck12-nt-st { flex: none; display: inline-flex; align-items: center; gap: 5px; }
+.ck12-nt-st i {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--ck12-green);
+  box-shadow: 0 0 6px rgba(61, 220, 151, 0.5);
+}
+.ck12-nt-st.is-saving i { background: var(--ck12-gold); animation: ck12-blink 1s steps(1) infinite; }
+.ck12-nt-foot .sp { flex: 1; }
+.ck12-nt-foot .keys { flex: none; letter-spacing: 0.04em; }
+.ck12-nt-foot .n { flex: none; padding-left: 8px; border-left: 1px solid rgba(185, 179, 217, 0.2); }
+
+.ck12-nt-empty {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 18px;
+  color: var(--ck12-metal2);
+  font-size: 11px;
+  text-align: center;
+  line-height: 1.6;
+}
+.ck12-nt-empty .big { font-size: 24px; color: var(--ck12-gold); }
+.ck12-nt-empty b { color: #fff; font-size: 12px; }
+.ck12-nt-empty button {
+  height: 26px;
+  margin-top: 2px;
+  padding: 0 12px;
+  border: 1px solid rgba(255, 176, 32, 0.45);
+  background: rgba(255, 176, 32, 0.08);
+  color: var(--ck12-gold);
+  font-size: 10.5px;
+  font-weight: 700;
+  clip-path: var(--ck12-cut);
+  cursor: pointer;
+}
+.ck12-nt-empty button:hover { background: rgba(255, 176, 32, 0.18); color: #fff; }
+
+.ck12-nt-undo {
+  position: absolute;
+  left: 50%;
+  bottom: 14px;
+  transform: translateX(-50%);
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 10px;
+  background: rgba(24, 21, 44, 0.96);
+  border: 1px solid rgba(185, 179, 217, 0.25);
+  font-size: 10px;
+  color: var(--ck12-ink2);
+  clip-path: var(--ck12-cut);
+  box-shadow: 0 10px 26px rgba(0, 0, 0, 0.5);
+}
+.ck12-nt-undo button {
+  color: var(--ck12-gold);
+  font-size: 10px;
+  font-weight: 800;
+  border: 0;
+  background: none;
+  cursor: pointer;
+}
+.ck12-nt-undo button:hover { color: #fff; }
+
+@media (max-width: 900px) {
+  .ck12-nt-side { width: 170px; }
+}
+@media (max-width: 720px) {
+  .ck12-ntw { flex-direction: column; }
+  .ck12-nt-side { width: 100%; height: 170px; }
+}
+
+/* ═══ HUD 最右「✎ 便签」（2026-11-23 用户 #3）：与两枚读数同一行高，
+       六角琥珀底 + 条数徽标；开着时点亮。 ═══ */
+.ck12-hudcur.is-notes {
+  cursor: pointer;
+  border: 0;
+  background: none;
+  padding: 0;
+  font-family: inherit;
+}
+.ck12-hudcur.is-notes .ck12-hudcur-i {
+  background: linear-gradient(160deg, var(--ck12-amber), var(--ck12-gold));
+  transition: 0.15s;
+}
+.ck12-hudcur.is-notes b {
+  font-family: var(--font-ui);
+  font-size: 12px;
+  color: var(--ck12-ink2);
+  letter-spacing: 0.04em;
+  transition: 0.15s;
+}
+.ck12-hudcur.is-notes:hover b,
+.ck12-hudcur.is-notes.on b { color: #fff; }
+.ck12-hudcur.is-notes:hover .ck12-hudcur-i { box-shadow: 0 0 14px rgba(255, 176, 32, 0.5); }
+.ck12-hudcur.is-notes.on .ck12-hudcur-i { box-shadow: 0 0 16px rgba(255, 176, 32, 0.7); }
+.ck12-nbadge {
+  flex: none;
+  min-width: 15px;
+  padding: 0 4px;
+  border-radius: 999px;
+  background: rgba(255, 176, 32, 0.18);
+  border: 1px solid rgba(255, 176, 32, 0.45);
+  color: var(--ck12-gold);
+  font-size: 8.5px;
+  font-weight: 800;
+  line-height: 13px;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+}
+@media (max-width: 900px) {
+  .ck12-hudcur.is-notes b { display: none; }
+}

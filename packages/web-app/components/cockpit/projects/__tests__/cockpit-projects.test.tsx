@@ -22,6 +22,10 @@ vi.mock('@/lib/cabin-api', async (importOriginal) => {
     pullCabinRepo: vi.fn(),
     createRepoWorktree: vi.fn(),
     removeCabinRepo: vi.fn(),
+    getRepoTree: vi.fn(),
+    getRepoFile: vi.fn(),
+    getRepoWorktreeChanges: vi.fn(),
+    getRepoWorktreeChangePatch: vi.fn(),
   }
 })
 vi.mock('@/lib/tasks-api', async (importOriginal) => {
@@ -35,8 +39,11 @@ vi.mock('@/lib/agent/api', async (importOriginal) => {
 vi.mock('sonner', () => ({ toast: { success: vi.fn(), error: vi.fn(), warning: vi.fn(), message: vi.fn() } }))
 
 import {
-  fetchCabinRepos, getCabin, listCabins, listCabinJobs, type CabinDetail, type CabinRepoEntry,
+  fetchCabinRepos, getCabin, getRepoFile, getRepoTree, getRepoWorktreeChangePatch,
+  getRepoWorktreeChanges, listCabins, listCabinJobs,
+  type CabinDetail, type CabinRepoEntry,
 } from '@/lib/cabin-api'
+import { formatDateTime } from '@/lib/format'
 import { listTasks } from '@/lib/tasks-api'
 import { listRunningSessions } from '@/lib/agent/api'
 import { CockpitStateProvider, useCockpitState } from '../../state/CockpitStateProvider'
@@ -67,7 +74,10 @@ function repo(over: Partial<CabinRepoEntry> & { key: string; name: string }): Ca
     source: 'org', org: 'XzhiF', group: 'XzhiF', repoName: over.name,
     main_path: `/repos/${over.name}`, local_path: null, external: false,
     mainline_branch: 'main', worktree_path: null, branch: null, worktrees: [],
-    git: { branch: 'main', detached: false, commit: 'a91f3c2', msg: '对齐尾差', at: '09:12', remote: 'git@x:ledger' },
+    git: {
+      branch: 'main', detached: false, commit: 'a91f3c2', msg: '对齐尾差',
+      at: '2026-11-23T05:12:00.000Z', remote: 'git@x:ledger', dirty: true,
+    },
     ...over,
   }
 }
@@ -135,9 +145,42 @@ beforeEach(() => {
       key: 'local:apps/console', name: 'console', source: 'local', org: null,
       group: null, local_path: 'apps/console', main_path: '/tmp/c1/apps/console',
       mainline_branch: 'feat/console',
-      git: { branch: 'feat/console', detached: false, commit: 'b7c1d10', msg: 'console', at: '10:00', remote: null },
+      git: { branch: 'feat/console', detached: false, commit: 'b7c1d10', msg: 'console', at: '2026-11-23T06:00:00.000Z', remote: null },
     }),
   ])
+  vi.mocked(getRepoTree).mockResolvedValue({
+    dir: '/repos/ledger',
+    entries: [
+      { path: 'src/', type: 'dir', bytes: 0 },
+      { path: 'src/reconcile.ts', type: 'file', bytes: 120 },
+      { path: 'README.md', type: 'file', bytes: 40 },
+    ],
+  })
+  vi.mocked(getRepoFile).mockImplementation(async (_id, _name, relPath) => ({
+    path: relPath,
+    content: relPath === 'src/reconcile.ts' ? 'export const a = 1\n' : '# ledger\n',
+  }))
+  vi.mocked(getRepoWorktreeChanges).mockResolvedValue({
+    dir: '/repos/ledger',
+    repos: [{
+      name: 'ledger', dir: '/repos/ledger', branch: 'main', head: 'a91f3c2',
+      error: null, truncated: false,
+      files: [
+        { path: 'src/reconcile.ts', status: 'M', adds: 2, dels: 1 },
+        { path: 'src/audit/chain/probe.ts', status: 'A', adds: 3, dels: 0 },
+      ],
+    }],
+  })
+  vi.mocked(getRepoWorktreeChangePatch).mockResolvedValue({
+    patch: [
+      'diff --git a/src/reconcile.ts b/src/reconcile.ts',
+      '@@ -1,1 +1,2 @@',
+      '-export const a = 1',
+      '+export const a = 2',
+      '+export const b = 3',
+    ].join('\n'),
+    truncated: false,
+  })
 })
 
 describe('project-model', () => {
@@ -208,7 +251,7 @@ describe('CockpitManifestFace · 舱籍面', () => {
 })
 
 describe('CockpitProjectFace · 点项目看仓库', () => {
-  it('展示仓库字段；「只看它的作业」只筛左栏，不换面', async () => {
+  it('分支信息一行 + 文件浏览器 / git 变更两页签；← 舱籍总览回总览', async () => {
     const stateRef: { current: ReturnType<typeof useCockpitState> | null } = { current: null }
     const initial = projectRef('c1', 'org:XzhiF/ledger')
     render(
@@ -216,18 +259,31 @@ describe('CockpitProjectFace · 点项目看仓库', () => {
         <CockpitProjectFace cabinId="c1" projectKey="org:XzhiF/ledger" onClose={() => {}} />
       </Harness>,
     )
-    expect(await screen.findByTestId('cockpit-project-face')).toBeInTheDocument()
-    // v21 五轮：整面按原型 .pnote / .pcard 重画（不再有 .ck12-pj-line 那种两栏）。
-    expect(screen.getByText(/主仓只读/)).toBeInTheDocument()
-    expect(screen.getByText('/repos/ledger')).toBeInTheDocument()
-    // 项目上的作业（编队行异步；按 .ck12-ev 的标题段找，避开 pcard 的 commit msg）。
-    expect(await screen.findByText('对齐尾差', { selector: '.ck12-ev .w' })).toBeInTheDocument()
-    // 未归属的作业不硬塞进来
-    expect(screen.queryByText('杂活')).toBeNull()
+    // 舱籍拉回来之后才出项目面（先「载入项目…」，拿到项目再切身体）。
+    expect(await screen.findByText('⎇ main')).toBeInTheDocument()
+    expect(screen.getByTestId('cockpit-project-face')).toBeInTheDocument()
 
-    fireEvent.click(screen.getByTestId('project-only-jobs'))
-    await waitFor(() => expect(stateRef.current?.projectFilter).toBe('org:XzhiF/ledger'))
-    expect(stateRef.current?.selection).toEqual(initial)
+    // 分支信息压成一行：分支 / HEAD / dirty / 提交时间（yyyy-MM-dd HH:mm:ss）。
+    expect(screen.getByText(/主仓只读/)).toBeInTheDocument()
+    expect(screen.getByText('⎇ main')).toBeInTheDocument()
+    expect(screen.getByText('HEAD a91f3c2')).toBeInTheDocument()
+    expect(screen.getByText('dirty')).toBeInTheDocument()
+    expect(screen.getByText(formatDateTime('2026-11-23T05:12:00.000Z'))).toBeInTheDocument()
+
+    // 文件浏览器：默认选中第一个文件并出内容。
+    expect(await screen.findByText(/export const a = 1/)).toBeInTheDocument()
+
+    // git 变更：目录树按单链缩一级（src 下 src/audit/chain 单链 ⇒ 一行 audit/chain）
+    // + diff 预览（点开才拉 patch）。
+    fireEvent.click(screen.getByTestId('project-tab-changes'))
+    expect(await screen.findByTestId('project-chg-file-src/reconcile.ts')).toBeInTheDocument()
+    expect(screen.getByText('audit/chain/')).toBeInTheDocument()
+    await waitFor(() => expect(getRepoWorktreeChangePatch).toHaveBeenCalled())
+    expect(await screen.findByText(/\+export const b = 3/)).toBeInTheDocument()
+
+    // 头部的返回按钮 = 回舱籍总览（不是关面）。
+    fireEvent.click(screen.getByTestId('project-back-roster'))
+    await waitFor(() => expect(stateRef.current?.selection).toEqual(rosterRef('c1')))
   })
 
   it('项目不在舱里 → 明确说明，不是空面', async () => {

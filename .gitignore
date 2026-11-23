@@ -100,3 +100,7 @@ docs/cabin-design/shots-fidelity/
 /pipeline.yaml
 # 由 pipeline.yaml 自动生成的说明文档
 /docs/octopus/pipeline-guide.md
+
+# ── 桌面壳打包产物与本机日志 ────────────────────────────────────────────
+packages/desktop/*.log
+packages/desktop/release-verify/

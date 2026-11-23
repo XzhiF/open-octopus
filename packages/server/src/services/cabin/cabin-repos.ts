@@ -188,6 +188,12 @@ export function readLocalRepoInfo(repoPath: string): LocalRepoInfo {
   return { branch, dirty: status !== null && status !== "", remote }
 }
 
+/** 只读探测：工作区是否有未提交改动（含未跟踪）。失败 = false，不把「读不到」画成脏。 */
+export function isWorktreeDirty(repoPath: string): boolean {
+  const status = gitOut(repoPath, ["status", "--porcelain"])
+  return status !== null && status !== ""
+}
+
 export function defaultMainlineBranch(repoPath: string): string | null {
   return gitOut(repoPath, ["symbolic-ref", "--short", "-q", "HEAD"])
 }

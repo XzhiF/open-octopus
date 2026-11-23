@@ -8,6 +8,7 @@
 import { useEffect, useState } from 'react'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import type { CabinRepoEntry } from '@/lib/cabin-api'
+import { formatDateTime } from '@/lib/format'
 import { useCockpitFleet } from '../fleet/CockpitFleetProvider'
 import { useCockpitState } from '../state/CockpitStateProvider'
 import { projectRef, projectStats, projectsOf, rosterRef } from './project-model'
@@ -138,8 +139,9 @@ function ProjectRow({
   const { rows } = useCockpitFleet()
   const stats = projectStats(cabinId, project, rows)
   const where = project.source === 'org'
-    ? `${project.org ?? ''}${project.group && project.group !== project.org ? ` · ${project.group}` : ''}`
+    ? [project.org, project.group].filter(Boolean).join('/') || '—'
     : (project.local_path ?? project.main_path ?? '')
+  const g = project.git
 
   return (
     <button
@@ -148,7 +150,7 @@ function ProjectRow({
       data-proj={project.key}
       data-source={project.source}
       onClick={() => onOpen(project.key)}
-      title={project.git ? `${project.git.branch} · ${project.git.commit}` : project.main_path ?? undefined}
+      title={g ? `${g.branch} · ${g.commit}` : project.main_path ?? undefined}
     >
       <span className="ck12-pjdot" aria-hidden="true" />
       <span className="ck12-pjrow-main">
@@ -159,26 +161,28 @@ function ProjectRow({
           </span>
           <span className="ck12-pjrow-where">{where}</span>
         </span>
-        <span className="ck12-pjrow-sub">
-          {project.git ? (
-            <>
-              <span>{project.git.branch}</span>
-              <span className="mono">{project.git.commit}</span>
-              {project.git.msg && <span className="ck12-pjrow-msg">{project.git.msg}</span>}
-              {project.git.at && <span>{project.git.at}</span>}
-            </>
-          ) : (
-            <span className="ck12-pjrow-miss">未检出 · 主仓路径不可达</span>
-          )}
-        </span>
+        {g ? (
+          <>
+            <span className="ck12-pjrow-git">
+              <span className="br" title={g.branch}>⎇ {g.branch}</span>
+              <span className="head">{g.commit}</span>
+              <span className="at">{formatDateTime(g.at)}</span>
+            </span>
+            <span className="ck12-pjrow-msg">
+              {g.msg || '（无提交说明）'}
+              {g.dirty && <em> · dirty</em>}
+            </span>
+          </>
+        ) : (
+          <span className="ck12-pjrow-miss">未检出 · 主仓路径不可达</span>
+        )}
         <span className="ck12-pjrow-facts">
-          <span><b>{stats.jobs}</b> 作业</span>
-          <span><b>{stats.running}</b> 运行</span>
-          <span><b>{stats.worktrees}</b> 工作树</span>
-          {project.mainline_branch && <span>主线 {project.mainline_branch}</span>}
+          <span>作战 <b>{stats.jobs}</b></span>
+          <span>在跑 <b>{stats.running}</b></span>
+          <span>工作树 <b>{stats.worktrees}</b></span>
         </span>
       </span>
-      <span className="ck12-pjrow-go" aria-hidden="true">打开 →</span>
+      <span className="ck12-pjrow-go" aria-hidden="true">项目面 →</span>
     </button>
   )
 }
