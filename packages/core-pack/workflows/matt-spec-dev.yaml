@@ -39,10 +39,11 @@ kind: Workflow
 # spec 权威（ADR-0018）：入队后批次目录的最终权威在 **ws 侧**；spec-rN.md 仅属
 # 起草窗口；本流取「最大 spec-rN.md，否则 spec.md」为底本。
 #
-# 打回不经本流（ADR-0024 打回单路径）：人打回时 server 恒派 built-in/task-fix 修复轮，
-# 绑定流不重跑；指向规格本身的反馈由修复轮经计划回写 REST 通道改 spec 并留痕（ADR-0026）。
-# 本流因此零 spec 再维护 —— 空转轮（票全 done/skip → planner 产 0 节点 DAG）由
-# spec-resolve 的票目录自检当场分流；规格级返工的正路 = task-author 改 spec 后重新入队。
+# 打回不经本流（2026-11-23 #11）：验收打回后由 task doer 在工作区原地修，
+# 不新开轮、不重跑本流；指向规格本身的反馈同样由 doer 经计划回写 REST 通道
+# 改 spec 并留痕（ADR-0026）。本流因此零 spec 再维护 —— 空转轮（票全 done/skip
+# → planner 产 0 节点 DAG）由 spec-resolve 的票目录自检当场分流；规格级返工
+# 的正路 = task-author 改 spec 后重新入队。
 #
 # 人 gate = 看板验收（K6）：本流内部零 approval/interaction 节点。
 # ============================================================
@@ -51,14 +52,14 @@ name: matt-spec-dev
 description: |
   规格直执行流：读 phase Batch 目录（spec.md + issues/，seed 下行后的 ws 同构位）
   直接执行 —— 票 DAG 实现 → Code Review → ship 出 PR。零需求澄清、零 spec 再生成；
-  验收打回走 task-fix 修复轮（ADR-0024），不经本流。
+  验收打回后由 task doer 在工作区原地修（不重跑本流）。
 version: 1.0.0
 stage: release
 
 # --- 全局配置 ---
 engine: claude
 model: pro-max
-timeout: 10800 # 全局 3h — 完整里程碑轮（含 E2E 票），显著大于 task-fix
+timeout: 10800 # 全局 3h — 完整里程碑轮（含 E2E 票）
 execution_mode: serial
 
 # --- 输入（phase input_values 绑定；${phase.batch_rel} 词表 materialize 时解析）---
@@ -280,7 +281,7 @@ nodes:
           esac
         done
         if [ "$PENDING" = "0" ]; then
-          REASON="no pending ticket under $BATCH/issues/ (all $TICKETS are done/skip) — 打回请走 task-fix 修复轮；规格级返工由 task-author 改 spec 后重新入队"
+          REASON="no pending ticket under $BATCH/issues/ (all $TICKETS are done/skip) — 规格级返工由 task-author 改 spec 后重新入队（打回修复由 doer 在工作区原地完成，不重跑本流）"
         fi
       fi
 

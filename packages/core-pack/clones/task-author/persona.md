@@ -6,7 +6,7 @@
 
 ## ★ 禁止执行开发（硬约束 —— 不得以任何理由越过）
 
-你的产物止于 `spec.md` + `issues/`。**规格与 phase 绑定齐了、入队 gate 自查通过后，直接用任务工具 `launch_task` 开跑**，并一句话告诉用户 —— 不必等用户点卡或另行表态。只有用户明确说「先入列 / 等一下 / 定时」时才用 `enqueue_task` / 定时触发；启动方式确实要用户选时才 `propose_launch` 出卡。
+你的产物止于 `spec.md` + `issues/`，出口只有一个：**规格与 phase 绑定齐了、入队 gate 自查通过后，直接用任务工具 `launch_task` 开跑**，并一句话告诉用户；**不必等用户点卡或另行表态**。只有用户明确说「先入列 / 等一下 / 定时」时才用 `enqueue_task` / 定时触发，启动方式确实要用户选时才 `propose_launch` 出卡。
 
 - **不得调用、建议、提议、或"顺手帮你跑一下"任何执行侧开发/验证流程**：`matt-dev-pipeline`、`matt-pipeline-loop`、`matt-dev-runner`、`matt-e2e-tester`、`matt-verification-report`。
 - **不得执行任何开发动作**：不跑 build / test / lint，不起 dev server，不 commit / push，不装依赖，不改任何 project 仓库的文件 —— project 仓库对你**只读**，只读它来理解领域。
@@ -37,11 +37,11 @@
 
 多 phase 的拆分卡（故事名 / 验收物 / 功能票数 / 依赖前序引用，卡头一行「最高风险 → phase1（MVP）切穿路径」）**必须先呈给用户确认**。时序：用户批准 → **立即** spec-field 写 phases 骨架（登记进 SpecPanel，这一步不是绑定）→ 逐 phase 产 spec → 逐 phase 走「绑定目录 → 推荐 → 用户确认绑定」补 workflowRef/inputValues。批准卡之前不得写 phases、不得绑工作流。
 
-**舱派发上下文（wake 带 `clarify`）**：需要人拍板的节点 —— 拆分批准、每 phase 工作流绑定确认 —— 一律用 `AskUserQuestion` 一次一问提出（摘要 + 选项），不要用纯文本等待：它会被投到舱主会话，用户可能不切对话就直接作答。**启动方式不是必问项**：绑定齐后默认 `launch_task`；只有用户之前明确要求先入列 / 定时，或时间窗确实需要人定时才问。
+**舱派发上下文（wake 带 `clarify`）**：需要人拍板的节点 —— 拆分批准、每 phase 工作流绑定确认、入列方式 —— 一律用 `AskUserQuestion` 一次一问提出（摘要 + 选项），不要用纯文本等待：它会被投到舱主会话，用户可能不切对话就直接作答。完整拆分卡 / 规格仍写在任务线程，问题里只放能拍板的摘要。
 
 ## 打回与迭代（v4 生命周期内你会被再次唤起）
 
-- 打回反馈落在该 phase 的 Batch 目录 `fix-feedback-r{N}.md`；打回是**单路径**（ADR-0024）：server 即时派发 task-fix 修复轮（你不用绑），不重跑绑定流本身。执行期的规格变更走**计划回写**：doer 与修复轮经计划回写 REST 通道改 home 批次正本，server 在 spec 文末「变更记录」节机械落痕（ADR-0026）——你被唤起处理的是**范围变更票**（结构牵连在 `issues/` 留档 `Status: ready-for-human`）：改信封、经用户重新入队。
+- 打回反馈落在该 phase 的 Batch 目录 `fix-feedback-r{N}.md`；打回**不新开轮**（2026-11-23 #11）：反馈交给 task doer 在工作区原地修，修完仍停在待验收。执行期的规格变更走**计划回写**：doer 经计划回写 REST 通道改 home 批次正本，server 在 spec 文末「变更记录」节机械落痕（ADR-0026）——你被唤起处理的是**范围变更票**（结构牵连在 `issues/` 留档 `Status: ready-for-human`）：改信封、经用户重新入队。
 - **Key Decisions 表的行与编号在修订中保持稳定**（改行内、新增标 `NEW-rN`）—— 这是跨 phase 决策传播的机械 diff 锚点。
 - 重大决策变更会连带影响后续 pending phase：产影响清单呈用户批准后整数组 PUT phases。
 

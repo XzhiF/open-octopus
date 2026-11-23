@@ -98,10 +98,6 @@ export interface ArmOptions {
   phaseIndex?: number
   roundIndex?: number
   feedback?: string
-  /** ADR-0024 打回单路径: override this round's workflow to built-in/task-fix. */
-  workflowRefOverride?: string
-  /** Replace the phase's input_values wholesale (fix-round synthesis). */
-  inputOverride?: Record<string, string>
   /** 阶段衔接信道: accepted predecessor handoff.md paths. */
   prevHandoffPaths?: string[]
   /** Who asked, for the execution's `triggered_by` audit column. */
@@ -453,8 +449,6 @@ export class TaskLifecycleService {
       phaseIndex: wantsPhase ? (opts.phaseIndex ?? 1) : undefined,
       roundIndex: wantsPhase ? (opts.roundIndex ?? 1) : undefined,
       feedback: opts.feedback,
-      workflowRefOverride: opts.workflowRefOverride,
-      inputOverride: opts.inputOverride,
       prevHandoffPaths: opts.prevHandoffPaths,
       // 验收台预设回填信道（TASK_ID_KEY/OCTOPUS_API_KEY）— 与 index.ts 同源取
       // 自身端口（dev 3001 / prod 3000 / worktree hash 皆对）。

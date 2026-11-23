@@ -1,4 +1,4 @@
-// 从「已有内容的自由会话」点「新建开发任务」必须进入新任务界面（bug 2026-11-09）。
+﻿// 从「已有内容的自由会话」点「新建开发任务」必须进入新任务界面（bug 2026-11-09）。
 //
 // 现场：chat 当前是一个普通会话（已有对话内容）时，侧栏「新建开发任务」没有
 // 进入任务 hero，界面停留在旧对话里；而 chat 当前是任务时一切正常。
@@ -20,6 +20,7 @@ vi.mock("@/lib/agent/api", () => ({
   deleteSession: vi.fn(),
   getSession: vi.fn(),
   getSessionRunning: vi.fn().mockResolvedValue({ running: false }),
+  injectChat: vi.fn().mockResolvedValue({ injected: true }),
   createCloneSession: vi.fn(),
   cloneChatStream: vi.fn(),
   stopCloneChat: vi.fn(),

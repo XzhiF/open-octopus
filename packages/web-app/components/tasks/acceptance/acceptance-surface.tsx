@@ -157,7 +157,7 @@ export function AcceptanceSurface({ task, onMutated, onDecided, detailOverride, 
   const [homeViewing, setHomeViewing] = useState<HomeViewEntry | null>(null)
   const [roundReport, setRoundReport] = useState<string | null>(null)
 
-  // 打回子块（右列展开）+ 提交后的去向回显（ADR-0024 单路径：恒派 task-fix）。
+  // 打回子块（右列展开）+ 提交后的去向回显（2026-11-23 #11：doer 原地修）。
   // 2026-10-30 验收台 v3（原型 v2 落地）：三步走 —— 看结果 / 试一试 / 拍个板。
   // 所有步骤面板常驻挂载（CSS 显隐）—— 勾选/预览/复检的会话状态跨步不丢，
   // 也保证既有 testid 在任意步骤都能被定位。
@@ -536,9 +536,9 @@ export function AcceptanceSurface({ task, onMutated, onDecided, detailOverride, 
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [taskId, awaitingExecId, readOnlyTarget?.phaseIndex, readOnlyTarget?.roundIndex])
 
-  // ── 打回→修复 回应对账（B 档）：round R 为修复轮时，批次目录成对存在
-  // fix-feedback-r{R-1}.md / fix-report-r{R-1}.md（task-fix SKILL：N=被打回轮，
-  // 成对可追溯）。report 三列表逐行 × 本轮实物 diff → 幻影回应在核对 tab 现形。
+  // ── 历史修复轮回应对账（兼容旧数据）：round R 为旧 task-fix 修复轮时，批次目录
+  // 成对存在 fix-feedback-r{R-1}.md / fix-report-r{R-1}.md（N=被打回轮）。新数据
+  // 不再产 fix-report（打回由 doer 原地修），找不到即成对为空、面板不显示。
   const fixPairRound = Math.max(0, (awaitingRound?.roundIndex ?? 1) - 1)
   const fixByName = useCallback((name: string) => (fixPairRound >= 1
     ? (files ?? []).find((f) => (f.path.split("/").pop() ?? "").toLowerCase() === `${name}-r${fixPairRound}.md`) ?? null
@@ -812,12 +812,12 @@ export function AcceptanceSurface({ task, onMutated, onDecided, detailOverride, 
       setRejectOpen(false)
       setFeedback("")
       onMutated()
-      // server 已写 fix-feedback-rN.md 并恒派 task-fix 修复轮即时开跑
-      //（ADR-0024 打回单路径 —— 反馈即修复指令，绑定流不重跑）。
-      const dispatched = result.next_action === "dispatched"
-        ? `修复轮 Round ${result.dispatch?.round_index ?? "?"} 已按 task-fix 开跑（反馈即指令）`
+      // server 已写 fix-feedback-rN.md 并唤醒 task doer 在工作区原地修
+      //（2026-11-23 #11 —— 不新开轮，任务保持待验收）。
+      const next = result.next_action === "fixing"
+        ? "doer 已接单，在工作区原地修（不新开轮）"
         : "反馈已落账（fix-feedback-rN.md）"
-      toast.success(`Phase ${awaitingPhase.index} Round ${awaitingPhase.awaitingRound} 已打回 — ${dispatched}`)
+      toast.success(`Phase ${awaitingPhase.index} Round ${awaitingPhase.awaitingRound} 已打回 — ${next}`)
       // 决策响应自带新 task 快照 —— 独立挂载直接吸收；嵌入态交还给父级重拉
       // （detail 单源，本地不留第四份副本）。
       if (embedded) onRefetch?.()
@@ -1329,11 +1329,11 @@ export function AcceptanceSurface({ task, onMutated, onDecided, detailOverride, 
 
               {rejectedSeam && (
                 <div className="ap-reject-echo" data-agent-recommend-card data-testid="agent-recommend-card">
-                  <b><Bot className="mr-1 inline size-3" />已退回 Round {rejectedSeam.roundIndex} — 已派 task-fix 修复轮</b>
+                  <b><Bot className="mr-1 inline size-3" />已退回 Round {rejectedSeam.roundIndex} — doer 在工作区原地修</b>
                   <p>
                     反馈 {rejectedSeam.feedback.length} 字已落 fix-feedback-r{rejectedSeam.roundIndex}.md，
-                    即 task-fix 修复指令（解析→开发/修复→回归→补产物→自动回待验收）。
-                    覆盖仅作用本轮 — phase 绑定不变（K16）。
+                    作为修复指令交给 task doer：它自己规划 → 在当前工作区改代码 → 跑验证 → 回报，
+                    完成后任务仍停在待验收，等你再验。不新开轮、不改 phase 绑定（K16）。
                   </p>
                 </div>
               )}
@@ -1398,7 +1398,7 @@ export function AcceptanceSurface({ task, onMutated, onDecided, detailOverride, 
                 </>
               ) : (
                 <p className="text-[11px] text-muted-foreground" data-acceptance-idle>
-                  {rejectedSeam ? "已退回 — 修复轮在跑（上方为去向回显）。" : "当前无待验收 round — 状态由 SSE 实时刷新。"}
+                  {rejectedSeam ? "已退回 — doer 在工作区原地修（上方为去向回显）。" : "当前无待验收 round — 状态由 SSE 实时刷新。"}
                 </p>
               )}
             </div>
@@ -1406,7 +1406,7 @@ export function AcceptanceSurface({ task, onMutated, onDecided, detailOverride, 
         </div>
       </div>
 
-      {/* 退回反馈弹窗：反馈即修复指令（ADR-0024 单路径）。 */}
+      {/* 退回反馈弹窗：反馈即 doer 的修复指令（原地修，不新开轮）。 */}
       <Dialog
         open={rejectOpen}
         onOpenChange={(o) => { if (!o && busy !== "reject") setRejectOpen(false) }}
@@ -1419,14 +1419,14 @@ export function AcceptanceSurface({ task, onMutated, onDecided, detailOverride, 
           </DialogHeader>
           <div className="space-y-3" data-reject-panel>
             <label className="text-[11px] font-medium text-pop-ink">
-              反馈（必填 — 落 fix-feedback-r{awaitingPhase?.awaitingRound}.md，即修复轮的指令）
+              反馈（必填 — 落 fix-feedback-r{awaitingPhase?.awaitingRound}.md，作为 doer 的修复指令）
             </label>
             <Textarea
               rows={6}
               autoFocus
               value={feedback}
               onChange={(e) => setFeedback(e.target.value)}
-              placeholder="哪里不对 / 期望怎么修 — agent 修复轮以此为输入"
+              placeholder="哪里不对 / 期望怎么修 — doer 以此为输入，在工作区原地修"
               className="min-h-[120px] text-xs"
               data-reject-feedback data-testid="reject-feedback"
             />
@@ -1442,7 +1442,7 @@ export function AcceptanceSurface({ task, onMutated, onDecided, detailOverride, 
                 data-reject-confirm data-testid="reject-confirm"
               >
                 {busy === "reject" ? <Spinner className="size-3 mr-1" /> : null}
-                确认退回 · 开始修复 R{awaitingPhase?.awaitingRound != null ? awaitingPhase.awaitingRound + 1 : "?"}
+                确认退回 · 交给 doer 原地修
               </Button>
             </div>
           </div>

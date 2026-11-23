@@ -38,6 +38,7 @@ import { CockpitChatHost } from '../chat/CockpitChatHost'
 import { CockpitChatWindow } from '../chat/CockpitChatWindow'
 import { CockpitDock } from '../chat/CockpitDock'
 import { CockpitPopWindows } from '../chat/CockpitPopWindows'
+import { CockpitTaskWindows } from '../chat/module-windows'
 import { CockpitWinBar } from '../chat/CockpitWinBar'
 import { CockpitThreadActivity } from '../chat/CockpitThreadActivity'
 import { CockpitCrew } from '../crew/CockpitCrew'
@@ -138,6 +139,7 @@ function CockpitSurface({ cabin }: { cabin: CabinDetail }) {
         包住右栏与详情窗 —— 按钮徽标 / 列表 / 详情共用同一次轮询。 */}
     <CockpitActivityProvider>
     <CockpitAskDeepLink />
+    <CockpitTaskWindows>
     <div className="ck12-app" data-testid="cockpit-shell">
       <div className="ck12-bg" aria-hidden="true">
         <CockpitScene />
@@ -227,6 +229,7 @@ function CockpitSurface({ cabin }: { cabin: CabinDetail }) {
 
       <div className="ck12-vignette" aria-hidden="true" />
     </div>
+    </CockpitTaskWindows>
     </CockpitActivityProvider>
     {/* 问答窗 portal 到 body；Esc 走 CockpitLayerStack（priority 75）。 */}
     <AskWindowLayer mode="cockpit" escLayer={layer} />

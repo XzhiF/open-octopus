@@ -1067,7 +1067,7 @@ export class RoundEvidenceService {
   ): Promise<{ result: AcceptanceResult; ledger_written: boolean; undecided: string[] }> {
     const feedback = (input.feedback ?? "").trim()
     if (input.decision === "rejected" && !feedback) {
-      // 与路由 zod 同律：反馈就是 task-fix 修复轮的指令，空指令 = 无修复轮可派。
+      // 与路由 zod 同律：反馈就是 doer 的修复指令，空指令 = 无从修复。
       throw new TaskSpecFieldError("打回必须给出反馈（feedback）—— 它就是修复轮的指令")
     }
     let phaseIndex = input.phase_index

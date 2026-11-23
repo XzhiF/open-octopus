@@ -692,9 +692,9 @@ describe("票08 人工接管 — 停流的接管轮不提前落待验收", () =>
     expect(view.taskStatus).toBe("awaiting_review")
   })
 
-  it("接管标记不覆写真在跑的轮（改派 task-fix 后新轮 live → phase 'running'）", () => {
+  it("接管标记不覆写真在跑的轮（同 phase 重跑后新轮 live → phase 'running'）", () => {
     const fixed = ex(1, 2, "running")
-    fixed.workflow_ref = "built-in/task-fix"
+    fixed.workflow_ref = "built-in/flow-p2"
     const view = deriveTaskView(task(v4Spec(2), "running"), [takeoverExec(1, 1), fixed], [])
     expect(view.phaseViews[0].status).toBe("running")
     expect(view.taskStatus).toBe("running")

@@ -19,7 +19,7 @@
 //                             the ws-isomorphic position (seed copies the batch dir there,
 //                             K10); spec-consuming execution flows (matt-spec-dev) bind to
 //                             THIS, not the absolute home path (${phase.spec_dir} stays for
-//                             home-side writers like task-fix)
+//                             home-side writers like plan-writeback)
 //   ${task.home}            → the task home dir (TaskHomeService.homePath)
 //   ${task_artifacts_dir}   → the task artifacts dir (same value as the managed
 //                             input_values key of the same name)

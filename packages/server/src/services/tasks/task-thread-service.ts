@@ -41,7 +41,7 @@ import type { TaskRow } from "../../db/types"
 import { WorkspaceService } from "../workspace"
 import { getAgentDir, getBuiltInCloneDir } from "../agent/paths"
 import { derivedTaskNameFromMessage, generateTaskTitle } from "./task-title"
-import { buildAcceptanceGuard, buildDoerBatchGuard, buildPathGuard } from "../agent/clone-runtime"
+import { buildDoerBatchGuard, buildPathGuard } from "../agent/clone-runtime"
 import { acceptancePlanReady } from "./acceptance-plan-service"
 import { TaskHomeService } from "./task-home-service"
 import { deriveTaskView, type TaskView } from "./derive-task-view"
@@ -94,7 +94,7 @@ export interface TaskThreadProfile {
   /** Latest round was stopped by a human and not delivered → [takeover-edit]. */
   takeover: boolean
   /** 2026-10-30 验收引导态：awaiting_review ∧ 方案已 ready → 本会话负责逐项引导
-   *  人验收；写权收窄为「≤2 文件的小修」，超范围必须升级 task-fix。 */
+   *  人验收；写权 = 工作区 projects/**（打回后原地修，见 #11）。 */
   acceptanceGuide: boolean
   /** 2026-10-31 AI-native 归档：archiving 态 → 主 Chat 负责播报进度、逐条问反思、
    *  在用户明确表态后执行落/跳过/重试；对话里只留一张归档总框。 */
@@ -320,7 +320,7 @@ export class TaskThreadService {
       identity === "doer" && !readOnly && info.awaitingReview && !!wsPath && acceptancePlanReady(task.id)
     const archiveGuide = identity === "doer" && info.status === "archiving"
     const archiveConsent = identity === "doer" && awaitingArchive
-    const guard = this.buildGuard(identity, { taskHome, wsPath, readOnly, taskId: task.id, acceptanceGuide })
+    const guard = this.buildGuard(identity, { taskHome, wsPath, readOnly, taskId: task.id })
     const { head: contextHead, playbook: contextPlaybook } = this.buildContext(info, {
       identity,
       spec,
@@ -368,7 +368,7 @@ export class TaskThreadService {
 
   private buildGuard(
     identity: TaskThreadIdentity,
-    input: { taskHome: string; wsPath: string | null; readOnly: boolean; taskId: string; acceptanceGuide?: boolean },
+    input: { taskHome: string; wsPath: string | null; readOnly: boolean; taskId: string },
   ): TaskThreadGuard | undefined {
     if (identity === "author") {
       return buildPathGuard(
@@ -377,11 +377,9 @@ export class TaskThreadService {
       ) as TaskThreadGuard
     }
     if (identity === "doer" && !input.readOnly && input.wsPath) {
-      // 验收引导轮：仍是 doer（可小修），但每次引导最多 2 个写目标 —— 超出就
-      // 提示升级大 fix（task-fix），不让人在验收里被无边界改动牵着走。
-      if (input.acceptanceGuide) {
-        return buildAcceptanceGuard(input.wsPath, input.taskId, { maxFiles: 2 }) as TaskThreadGuard
-      }
+      // 验收期也走同一道 doer 批次护栏：只写工作区 projects/**，.scratch 批次
+      // 目录仍只读。2026-11-23 #11：≤2 文件小修上限与 task-fix 升级出口已删除 ——
+      // 打回后由 doer 自己规划、在工作区原地修。
       return buildDoerBatchGuard(input.wsPath, input.taskId) as TaskThreadGuard
     }
     return buildReadOnlyGuard()
@@ -467,8 +465,8 @@ export class TaskThreadService {
         "  2. 开场用**一句话**播报机器证据（共几项、缺几件）；**不要逐条跑、不要逐项问** —— e2e / 慢命令尤其不要主动重跑。",
         "  3. 一次只推进**一条场景**：按 steps 讲清「打开哪 → 做什么 → 看到什么」，然后问「通过 / 不通过 / 跳过」。**提问一律用对话正文，不要调用 AskUserQuestion**（选项卡会打断逐条引导；验收卡只是快捷方式）。用户要看页面就 start_acceptance_preview（结束 stop_acceptance_preview）；**只有用户点名要新结果时**才 run_acceptance_probe 跑某条机器证据。",
         "  4. 用户**在对话里明确表态**（「通过」「可以」「不行，因为…」「跳过」）即可直接调 record_acceptance_check（confirmed=true），只对场景；卡片只是快捷方式。不要代替用户判断、不要批量代勾，也不要把机器证据当成人工勾选项。",
-        "  5. 用户说不通过 → 当场小修：只改与该问题直接相关的 **≤2 个文件**，不改 spec/票；改完按场景重新看一遍并把结果讲给用户，再问一次是否通过 —— 改完不等于通过，绝不默认勾上。",
-        "  6. 问题超出小修边界（要改 spec、要动 3 个以上文件、或反复修不好）→ 调 propose_acceptance_escalation，让用户确认升级 task-fix 大修复；不要硬改。",
+        "  5. 用户说不通过 → 自己规划修复：直接在工作区改（只改与该问题直接相关的代码，不限文件数；不改 spec/票），跑验证，改完按场景重新看一遍并把结果讲给用户，再问一次是否通过 —— 改完不等于通过，绝不默认勾上。",
+        "  6. 修不完或需要动规格/结构 → 把原因说清楚并开票留档（`Status: ready-for-agent`；要人定方向的用 `ready-for-human`），不要硬改、不要扩权。",
         "  7. 场景都有结论后，先做**放行前终检**：再调一次 get_acceptance_plan 看 postRound（末轮之后的新提交 / 未提交文件），把现场用一两句话讲给用户。有未提交改动就提醒：归档 preflight 会先拦下，届时再选「纳入 / 排除」，或现在先改完再放行。确认无遗漏后再问要不要「放行」或「退回修改」。",
         "  8. 用户**明确表态**后由你收口：放行 → submit_acceptance_decision(decision=\"accepted\", confirmed=true)；退回 → submit_acceptance_decision(decision=\"rejected\", feedback=用户说的原因, confirmed=true)。人点验收台是兜底，不是必需；但没有明确表态绝不放行、绝不退回，也不要把未勾场景当成通过。",
       ] : []

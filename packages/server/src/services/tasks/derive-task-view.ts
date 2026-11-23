@@ -106,9 +106,9 @@ export type TaskRoundDecision = "accepted" | "rejected"
 /** Only these TaskRow columns feed the derivation. */
 export type DeriveTaskInput = Pick<TaskRow, "id" | "status" | "task_spec">
 /** Only these ExecutionRow columns feed the derivation. `workflow_ref` rides
- *  along for the round view's ACTUALLY-RUN display (ADR-0018 打回路由: a fix
- *  round executes task-fix while the phase stays bound to its dev flow — the
- *  timeline must show what really ran, not the frozen binding).
+ *  along for the round view's ACTUALLY-RUN display (a round may run a different
+ *  flow than the frozen phase binding — the timeline must show what really ran,
+ *  not the binding).
  *  `takeover_at` / `takeover_delivered_at` ride along for 票08: a stopped round
  *  is 接管中 until the delivery event lands (derive branch 「停流未交付 ≠ 待验收」). */
 export type DeriveExecutionInput = Pick<

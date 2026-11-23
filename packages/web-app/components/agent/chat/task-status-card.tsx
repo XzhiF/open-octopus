@@ -25,6 +25,7 @@ import type { StepExecution } from '@/lib/types'
 import type { AgentMessage } from '@/lib/agent/types'
 import { formatRunClock } from '@/lib/format'
 import { TaskModuleInline, INLINE_MODULE_LABEL, type InlineTaskModule } from './task-module-inline'
+import { useTaskModuleSurface } from '@/lib/task-module-surface'
 
 const LIVE_TASK_STATUS = new Set(['running', 'paused'])
 const TERMINAL_EXEC_STATUS = new Set([
@@ -161,23 +162,33 @@ const SETTLED_HINT: Record<string, string> = {
   failed: '完整日志在作业坞「运行」',
 }
 
-/** 双会话查看入口：规格 / 运行 / 验收内嵌展开，纯查看，不改任务状态。 */
+/** 双会话查看入口：规格 / 运行 / 验收。
+ *  桌面 = 内嵌展开（纯查看，不改任务状态）；全舱 = 交给舱系浮窗（#10：打开同一扇
+ *  可拖可缩的窗，不在消息流里撑开）。 */
 function ModuleTabs({ taskId }: { taskId: string }) {
   const [open, setOpen] = useState<InlineTaskModule | null>(null)
+  const surface = useTaskModuleSurface()
+  const pick = (key: InlineTaskModule) => {
+    if (surface) {
+      surface.open({ module: key, taskId })
+      return
+    }
+    setOpen((cur) => (cur === key ? null : key))
+  }
   return (
     <>
       <div className="mt-1.5 flex items-center gap-1 pl-6" data-testid="task-module-tabs">
-        <span className="text-[9.5px] text-pop-dim/60">在对话里看</span>
+        <span className="text-[9.5px] text-pop-dim/60">{surface ? '打开' : '在对话里看'}</span>
         {(['plan', 'run', 'acceptance'] as const).map((key) => (
           <button
             key={key}
             type="button"
             data-testid={`task-module-tab-${key}`}
-            aria-pressed={open === key}
-            onClick={() => setOpen((cur) => (cur === key ? null : key))}
+            aria-pressed={!surface && open === key}
+            onClick={() => pick(key)}
             className={[
               'rounded border px-1.5 py-0.5 text-[10px] transition-colors',
-              open === key
+              !surface && open === key
                 ? 'border-pop-cyan/50 bg-pop-cyan/10 font-bold text-pop-cyan'
                 : 'border-pop-bd/70 bg-black/10 text-pop-dim hover:bg-white/[0.06] hover:text-pop-ink',
             ].join(' ')}
@@ -186,7 +197,7 @@ function ModuleTabs({ taskId }: { taskId: string }) {
           </button>
         ))}
       </div>
-      {open && <TaskModuleInline taskId={taskId} module={open} onClose={() => setOpen(null)} />}
+      {!surface && open && <TaskModuleInline taskId={taskId} module={open} onClose={() => setOpen(null)} />}
     </>
   )
 }

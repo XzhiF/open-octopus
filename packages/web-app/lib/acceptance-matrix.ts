@@ -318,7 +318,7 @@ export function flattenDiffFiles(repos: Array<{ groups: Array<{ files: DiffFile[
 }
 
 // ── 打回→修复 回应对账（B 档 2026-09-20）────────────────────────────────
-// task-fix 流（ADR-0018 轻量修复路由）必产 fix-report-rN.md（N=被打回轮），
+// 旧 task-fix 修复流必产 fix-report-rN.md（N=被打回轮），
 // 其「反馈条目表」是 SKILL 规定的三列契约：反馈 → 修复动作 → 验证证据。
 // 本节把第三列的路径 token 锚到修复轮的 diff 实物 —— 「幻影回应」（写了没改）
 // 在这里现形。零 AI、纯解析；无表/列缺 → 空数组，UI 走诚实降级（与票对账同纪律）。

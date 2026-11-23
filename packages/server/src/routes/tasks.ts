@@ -99,13 +99,13 @@ const acceptanceBodySchema = z
   })
   .strict()
   .superRefine((b, ctx) => {
-    // K7/US10: 打回必填反馈文本 —— ADR-0024 起反馈【就是】task-fix 修复轮的指令
+    // K7/US10: 打回必填反馈文本 —— 反馈【就是】交给 task doer 原地修的指令
     // （落 fix-feedback-r{N}.md + 注入 input_values.feedback），空指令 = 无修复轮可派。
     if (b.decision === "rejected" && !(b.feedback ?? "").trim()) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
         path: ["feedback"],
-        message: "decision='rejected' 必须携带非空 feedback（反馈即 task-fix 修复指令）",
+        message: "decision='rejected' 必须携带非空 feedback（反馈即 doer 修复指令）",
       })
     }
   })
@@ -156,14 +156,6 @@ function parseRoundTargetQuery(
 function parseRoundDiffScope(raw: string | undefined): RoundDiffScope {
   return raw === "cumulative" || raw === "task" ? raw : "round"
 }
-
-// 票08 分支③（改派 task-fix）body —— 指令即修复轮的输入，与打回反馈同额（≤20000）。
-// strict：未知字段 400（与 acceptance 契约同律 —— 路由级聚合端点不吃野键）。
-const fixRoundBodySchema = z
-  .object({
-    instruction: z.string().trim().min(1, "指令必填 —— task-fix 通用流按你的输入开发").max(20000),
-  })
-  .strict()
 
 // 计划回写 (票02 · ADR-0026 · S1) POST /:id/plan body。契约三条硬线：
 // ① reason/source 必填非空（trim 后 min(1)；缺失/纯空白 → ZodError → 400）——
@@ -927,9 +919,9 @@ export function createTasksRoutes(
   //   accepted ∧ i=n               → 持久态 'ready' + 派生 'awaiting_archive'
   //                                    （归档不自动开始：只有人明确说「归档」、
   //                                    走 POST /:id/archive/start 才进 archiving）
-  //   rejected (feedback 必填=修复指令) → fix-feedback-r{N}.md 进批次目录 + 同
-  //     phase 新 round 恒派 built-in/task-fix 修复轮（ADR-0024 打回单路径：
-  //     server override + 合成输入；绑定流再执行只剩 authoring 侧改 spec 重入队）
+  //   rejected (feedback 必填=修复指令) → fix-feedback-r{N}.md 进批次目录 +
+  //     requestFixGuide 唤醒 task doer 在工作区原地修；不新开 round、不写验收
+  //     账本（2026-11-23 #11：task-fix 修复轮已删除）
   // 409 = 派生态非待验收 / round 不匹配 / 该轮已验收 / 非 v4（state conflict,
   // not a body defect — the client re-GETs /:id's `derived` view and re-opens the
   // gate on whatever round is now awaiting）; 404 任务不存在; 400 body 非法
@@ -1271,7 +1263,8 @@ export function createTasksRoutes(
   //   ① 注入干预原流继续 = 既有 /:id/pause + /:id/resume（票06 接线，零新端点）
   //   ② 停流·人工接管   = POST /:id/takeover（abort+标记+会话）
   //      交付转待验收    = POST /:id/takeover/deliver
-  //   ③ 改派 task-fix   = POST /:id/fix-round（运行中决策，不写账本）
+  //   ③ 打回修复 = 验收通道的 rejected（2026-11-23 #11：task-fix 改派已删除，
+  //      doer 在工作区原地修，不另开修复轮）
 
   // POST /:id/takeover — 聚合端点：service 停流+落 takeover 标记 → doer 会话就绪
   // （01 的 ensureSession 原样复用，「做」面指针落 tasks.doer_session_id）。
@@ -1308,24 +1301,6 @@ export function createTasksRoutes(
   router.post("/:id/takeover/deliver", async (c) => {
     try {
       const result = await service.deliverTakeover(c.req.param("id"))
-      return c.json(result)
-    } catch (err: unknown) {
-      const { status, message } = classifyError(err)
-      return c.json({ error: message }, status)
-    }
-  })
-
-  // POST /:id/fix-round — 分支③「改派通用修复流 task-fix」（接管中「改派」钮走
-  // 同一条）。body { instruction } 必填非空（≤20000，与打回反馈同额）。行为 =
-  // abort 当前轮 → fix-feedback-r{N+1}.md 落批次目录 → 恒 task-fix 新轮派发
-  // （与票05 rejected 共用服务层路由私有件），**不写验收决策行**。
-  // 待验收轮 → 409 指路打回（两条入口各司其职）。
-  router.post("/:id/fix-round", async (c) => {
-    const body = await safeJson(c)
-    if (!body) return c.json({ error: "Invalid or missing JSON body" }, 400)
-    try {
-      const parsed = fixRoundBodySchema.parse(body)
-      const result = await service.fixRound(c.req.param("id"), parsed.instruction)
       return c.json(result)
     } catch (err: unknown) {
       const { status, message } = classifyError(err)

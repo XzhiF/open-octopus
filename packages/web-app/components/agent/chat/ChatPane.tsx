@@ -29,6 +29,7 @@ import { ChatArea, type ChatComposerBridge } from './ChatArea'
 import { TaskModulesLayer } from '@/components/chat-workbench/task-modules-layer'
 import { TriggerDialog } from '@/components/tasks/trigger-dialog'
 import type { RunTarget, SubagentTarget, TaskModule, TaskWindowMap, YamlTarget } from '@/components/chat-workbench/task-window-types'
+import { useTaskModuleSurface } from '@/lib/task-module-surface'
 import { TaskProjectChip } from '@/components/chat-workbench/task-project-chip'
 import { WorkspaceExplorerDock, type CabinDockModule } from '@/components/workspace/workspace-explorer-dock'
 import { useActivitySnapshot } from '@/components/chat-workbench/inspector-activity'
@@ -190,8 +191,8 @@ export interface ChatPaneProps {
  *  schedule / keep_editing 各自在分支里处理（定时要等对话框真正排上）。 */
 const DECISION_ACTION_IDS = new Set([
   'launch_now', 'enqueue', 'confirm_action',
-  // 2026-10-30 验收引导：逐项判定与升级确认同样写回卡片（只读留痕）。
-  'acceptance_pass', 'acceptance_fail', 'acceptance_skip', 'acceptance_escalate_confirm',
+  // 2026-10-30 验收引导：逐项判定同样写回卡片（只读留痕）。
+  'acceptance_pass', 'acceptance_fail', 'acceptance_skip',
 ])
 
 export function ChatPane({
@@ -243,6 +244,13 @@ export function ChatPane({
 
   const [creatingTask, setCreatingTask] = useState(false)
   const [taskModuleRequest, setTaskModuleRequest] = useState<{ module: TaskModule; nonce: number; runTarget?: RunTarget | null; subagentTarget?: SubagentTarget | null } | null>(null)
+  // 全舱宿主提供 → 规格/运行/验收开舱系浮窗；桌面（null）→ 回落 TaskModulesLayer。
+  const moduleSurface = useTaskModuleSurface()
+  const openModuleVia = useCallback((module: 'plan' | 'run' | 'acceptance', taskId: string | null, runTarget: RunTarget | null = null): boolean => {
+    if (!moduleSurface) return false
+    moduleSurface.open({ module, taskId, runTarget })
+    return true
+  }, [moduleSurface])
   const [yamlTarget, setYamlTarget] = useState<YamlTarget | null>(null)
   const [taskWindows, setTaskWindows] = useState<Record<string, TaskWindowMap>>({})
   // 2026-10-31 消耗窗通用化：纯会话（无任务）也有一扇消耗窗，窗口 id 与任务窗
@@ -962,16 +970,16 @@ export function ChatPane({
           return
         }
         case 'open_spec':
-          setTaskModuleRequest({ module: 'plan', nonce: Date.now() })
+          if (!openModuleVia('plan', taskId)) setTaskModuleRequest({ module: 'plan', nonce: Date.now() })
           return
         case 'open_changes':
           setTaskModuleRequest({ module: 'changes', nonce: Date.now() })
           return
         case 'open_acceptance':
-          setTaskModuleRequest({ module: 'acceptance', nonce: Date.now() })
+          if (!openModuleVia('acceptance', taskId)) setTaskModuleRequest({ module: 'acceptance', nonce: Date.now() })
           return
         case 'open_run':
-          setTaskModuleRequest({ module: 'run', nonce: Date.now() })
+          if (!openModuleVia('run', taskId)) setTaskModuleRequest({ module: 'run', nonce: Date.now() })
           return
         case 'open_archive':
           setTaskModuleRequest({ module: 'archive', nonce: Date.now() })
@@ -1012,34 +1020,6 @@ export function ChatPane({
           })
           return // 等用户在弹框里写原因
         }
-        case 'acceptance_escalate_confirm': {
-          const feedback = String(payload.feedback ?? '').trim()
-          const phaseIndex = Number(payload.phaseIndex)
-          const roundIndex = Number(payload.roundIndex)
-          if (!feedback || !Number.isFinite(phaseIndex) || !Number.isFinite(roundIndex)) {
-            toast.error('升级信息不完整（缺反馈或轮次坐标）')
-            return
-          }
-          const itemIds = Array.isArray(payload.itemIds) ? payload.itemIds as unknown[] : []
-          const reopen = itemIds
-            .map((id) => String(id).split(':')[1])
-            .filter((t): t is string => !!t && t !== 'spec')
-          const result = await postAcceptance(taskId, {
-            phase_index: phaseIndex,
-            round_index: roundIndex,
-            decision: 'rejected',
-            feedback,
-            ...(reopen.length ? { reopen_tickets: [...new Set(reopen)] } : {}),
-          })
-          void recordDecision(messageId, actionId, { label: clickedLabel })
-          toast.success(
-            result.next_action === 'dispatched'
-              ? `已升级 — 修复轮 Round ${result.dispatch?.round_index ?? '?'} 开跑`
-              : '已打回（反馈已落 fix-feedback）',
-          )
-          updated = result.task
-          break
-        }
         case 'acceptance_regenerate': {
           const r = await regenerateAcceptancePlan(taskId)
           toast[r.ok ? 'success' : 'error'](r.ok ? '已重新生成验收方案' : `重生成被拒：${r.reason ?? '未知原因'}`)
@@ -1066,7 +1046,7 @@ export function ChatPane({
     } finally {
       setCardBusy(false)
     }
-  }, [cardBusy, applyTaskResult, handleCreateTask, handleSelectTask, refreshChatTasks, refreshSessions, recordDecision, sendMessage, model, effort, maxContext])
+  }, [cardBusy, applyTaskResult, handleCreateTask, handleSelectTask, refreshChatTasks, refreshSessions, recordDecision, sendMessage, model, effort, maxContext, openModuleVia])
 
   const confirmDestructiveCardAction = useCallback(async () => {
     if (!cardConfirm || cardBusy) return
@@ -1087,7 +1067,7 @@ export function ChatPane({
   }, [cardConfirm, cardBusy, applyTaskResult, recordDecision])
 
   /** 验收 ✕/⊘ 的原因确认：写进 checks（进退回反馈 + 下轮 carryover），并让
-   *  Agent 接着引导（小修 / 升级由它按上下文处理）。 */
+   *  Agent 接着引导（不通过 → 自己规划、在工作区原地修）。 */
   const confirmAcceptNote = useCallback(async () => {
     if (!acceptNote || acceptNoteBusy) return
     const note = acceptNoteText.trim()
@@ -1104,8 +1084,8 @@ export function ChatPane({
       toast.success(`已记录：${mark}「${acceptNote.title}」`)
       sendMessage(
         `[验收] ${mark}「${acceptNote.title}」：${note}\n` +
-          '请按验收引导处理：能当场小修（只改直接相关的 ≤2 个文件、不改 spec）就修完重跑证据再确认；'
-          + '超出范围请发起升级（propose_acceptance_escalation）。',
+          '请按验收引导处理：不通过就自己规划修复（直接在工作区改相关代码，不限文件数、不改 spec），'
+          + '改完跑验证再按场景确认；修不完或要动规格就开票留档并说明原因。',
         { model, effort, maxContext },
       )
       setAcceptNote(null)
@@ -1195,9 +1175,22 @@ export function ChatPane({
   // 顶栏「运行中 Agent」也落到焦点栏）。新建/打开任务的全局入口在 ChatTab 壳里。
   useEffect(() => {
     const onOpenWorkflow = (event: Event) => {
-      if (!focusedRef.current) return
       const detail = (event as CustomEvent<{ workspaceId?: string; executionId?: string; title?: string }>).detail
       if (!detail?.workspaceId || !detail?.executionId) return
+      // 全舱：同一扇舱系运行窗（DAG + 日志 + YAML），不再开 classic Dialog。
+      if (moduleSurface) {
+        moduleSurface.open({
+          module: 'run',
+          taskId: activeTask?.id ?? null,
+          runTarget: {
+            executionId: detail.executionId,
+            workspaceId: detail.workspaceId,
+            title: detail.title ?? '工作流执行',
+          },
+        })
+        return
+      }
+      if (!focusedRef.current) return
       setWorkflowWindow({
         workspaceId: detail.workspaceId,
         executionId: detail.executionId,
@@ -1206,7 +1199,7 @@ export function ChatPane({
     }
     window.addEventListener('octopus:open-workflow', onOpenWorkflow)
     return () => window.removeEventListener('octopus:open-workflow', onOpenWorkflow)
-  }, [])
+  }, [moduleSurface, activeTask?.id])
 
   // 作业详情「打开运行 →」：开作业坞同款运行窗（RunWindow：DAG + 日志 + YAML），
   // 与作业坞运行列表点进来的那条路径同一个模块窗，不另做只给 DAG 的弹层。
@@ -1214,11 +1207,20 @@ export function ChatPane({
     const onOpenRunWindow = (event: Event) => {
       const detail = (event as CustomEvent<RunTarget>).detail
       if (!detail?.workspaceId || !detail?.executionId) return
+      // 全舱：作业详情「打开运行 →」也开舱系浮窗（与 chat 状态卡同一扇窗）。
+      if (moduleSurface) {
+        moduleSurface.open({
+          module: 'run',
+          taskId: detail.taskId ?? activeTask?.id ?? null,
+          runTarget: detail,
+        })
+        return
+      }
       setTaskModuleRequest({ module: 'run', nonce: Date.now(), runTarget: detail })
     }
     window.addEventListener('octopus:open-run-window', onOpenRunWindow)
     return () => window.removeEventListener('octopus:open-run-window', onOpenRunWindow)
-  }, [])
+  }, [moduleSurface, activeTask?.id])
 
   // 项目绑定入口（2026-10-28 用户定稿：项目是任务维度资产）：
   //   · pending（任务未落盘）——作业坞尚不存在（无 workspaceId），留在 composer
@@ -1688,7 +1690,7 @@ export function ChatPane({
           chat region (portaled to ChatTab's region) so split-mode windows can
           cross the divider; z-order follows the focused pane.
           2026-10-31 消耗窗通用化：这一层在没有任务时也挂载，只承载会话账本。 */}
-      {layerRoot && createPortal(
+      {layerRoot && !moduleSurface && createPortal(
         <TaskModulesLayer
           task={activeTask}
           sessionId={activeTask ? null : sessionId}

@@ -66,15 +66,18 @@ export function CockpitHud() {
   }, [streaming, refetchProjects])
 
   // ── 读数（真源，缺值 → 未就绪）────────────────────────────────────────
-  const tokenTotal = chat?.usage?.totals.tokens ?? null
+  // 2026-11-23 用户 #12：右上两枚读数 = **本舱累计**（主对话 + 任务 + 工作流 +
+  // 子代理），与右栏「消耗」同一账本（GET /api/cabins/:id/usage 的 grand）。
+  // 之前 token 只读主会话账，看起来「没包含下面的任务」。
+  const tokenTotal = usage == null ? null : usage.grand.totals.tokens
   const tokenLabel = tokenTotal == null ? '未就绪' : formatTokenCount(tokenTotal)
 
   const costUsd = usage?.grand.totals.cost.usd ?? null
   const costComplete = usage?.grand.totals.cost.complete ?? true
   const cost = splitCost(costUsd == null ? '—' : formatCost(costUsd, costComplete, currency))
   const costTitle = stale
-    ? '本舱累计消耗 · 上次读取失败，显示上次成功值'
-    : '本舱累计消耗 · 只读（完整账在右栏 消耗）'
+    ? '本舱累计消耗（主对话 + 任务 + 工作流 + 子代理）· 上次读取失败，显示上次成功值'
+    : '本舱累计消耗 · 含任务 / 工作流 / 子代理 · 只读（完整账在右栏 消耗）'
 
   const scene = SCENES[sceneIndex] ?? SCENES[0]
 
@@ -140,7 +143,7 @@ export function CockpitHud() {
 
       <span
         className="ck12-hudcur is-tok"
-        title={tokenTotal == null ? '本会话 token · 未就绪（明细在通讯台头部 TOKEN）' : `本会话 ${tokenTotal.toLocaleString()} tokens · 只读（明细在通讯台头部 TOKEN）`}
+        title={tokenTotal == null ? '本舱累计 token · 未就绪（主对话 / 任务 / 工作流 / 子代理）' : `本舱累计 ${tokenTotal.toLocaleString()} tokens · 含任务 / 工作流 / 子代理 · 明细在右栏 消耗`}
         data-testid="ck12-rig-tokens"
       >
         <span className="ck12-hudcur-i" aria-hidden="true">▤</span>

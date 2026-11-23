@@ -453,19 +453,14 @@ export interface TaskLaunchStep {
  * so the same values land on the executions row itself (input_values + phase_index +
  * round_index + task_id) and there is nothing to re-claim from a mutated definition.
  *
- * Round-level routing override (ADR-0024 打回单路径): `workflowRefOverride` swaps
- * the workflow this round runs (rejected 恒 built-in/task-fix) and `inputOverride`
- * REPLACES the phase's input_values wholesale (fix-round synthesis) — the frozen
- * phases[] binding is untouched, so round 1 of a later re-run returns to the bound
- * workflow.
+ * Round-level launch values: `feedback` rides into input_values (same-phase rerun
+ * channel); the frozen phases[] binding is untouched.
  */
 export function resolveTaskLaunchStep(args: {
   plan: WorkflowConfig
   phaseIndex?: number
   roundIndex?: number
   feedback?: string
-  workflowRefOverride?: string
-  inputOverride?: Record<string, string>
   prevHandoffPaths?: string[]
   /** 验收台预设回填信道（见 TASK_ID_KEY/OCTOPUS_API_KEY）— v4 分支恒注入。 */
   taskId?: string
@@ -484,7 +479,7 @@ export function resolveTaskLaunchStep(args: {
     // phase set here is the gate-resolved one (a missing spec never dispatches).
     const lastIndex = v4Phases.reduce((max, p) => Math.max(max, p.index), phase.index)
     const stepInputValues: Record<string, string> = {
-      ...(args.inputOverride ?? phase.inputValues),
+      ...phase.inputValues,
       ...(feedback && feedback.trim() ? { feedback } : {}),
       // phase-handoff-chaining: accepted predecessor handoffs, newline-joined.
       // Same-phase rerun/fix never passes it ⇒ never injected.
@@ -501,7 +496,7 @@ export function resolveTaskLaunchStep(args: {
       _round_index: String(roundIndex ?? 1),
     }
     return {
-      workflowRef: args.workflowRefOverride?.trim() || phase.workflowRef,
+      workflowRef: phase.workflowRef,
       inputValues: stepInputValues,
       phaseIndex: phaseIndex ?? 1,
       roundIndex: roundIndex ?? 1,
@@ -513,10 +508,9 @@ export function resolveTaskLaunchStep(args: {
   // emits a single-step chain; multi-step chains are the scheduler's own business).
   const first = plan.workflow_chain[0]
   return {
-    workflowRef: args.workflowRefOverride?.trim() || first?.workflow_ref || "",
+    workflowRef: first?.workflow_ref || "",
     inputValues: {
       ...((first?.input_values ?? {}) as Record<string, string>),
-      ...(args.inputOverride ?? {}),
       ...(feedback && feedback.trim() ? { feedback } : {}),
     },
     phaseIndex: null,

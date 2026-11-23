@@ -67,7 +67,7 @@ scenarios:
       task_artifacts_dir: "/Users/dev/.octopus/tasks/t-123/artifacts"
     mocks:
       spec-resolve:
-        output: 'PRECHECK FAILED: no pending ticket under .scratch/20260905/llm-event-bus-1/issues/ (all 3 are done/skip) — 打回请走 task-fix 修复轮；规格级返工由 task-author 改 spec 后重新入队'
+        output: 'PRECHECK FAILED: no pending ticket under .scratch/20260905/llm-event-bus-1/issues/ (all 3 are done/skip) — 规格级返工由 task-author 改 spec 后重新入队（打回修复由 doer 在工作区原地完成，不重跑本流）'
         update_vars:
           batch_ok: "false"
           batch_reason: "no pending ticket under .scratch/20260905/llm-event-bus-1/issues/ (all 3 are done/skip) - see fix-round routing"

@@ -7,9 +7,10 @@
 //     双会话内嵌模块，见 design 23 §2 续。
 
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { render, screen, waitFor } from '@testing-library/react'
+import { render, screen, waitFor, fireEvent } from '@testing-library/react'
 import type { Mock } from 'vitest'
 import { TaskStatusCard } from '../task-status-card'
+import { TaskModuleSurfaceContext } from '@/lib/task-module-surface'
 import type { AgentMessage } from '@/lib/agent/types'
 import { getTask } from '@/lib/tasks-api'
 import { fetchExecutionDetail } from '@/lib/api-client'
@@ -75,6 +76,36 @@ describe('TaskStatusCard', () => {
     expect(screen.getByText(/⏱/)).toBeTruthy()
     // 运行卡只有读数，没有按钮（操作走主 chat / 作业坞）。
     expect(screen.queryAllByRole('button').filter((b) => !b.getAttribute('data-testid')?.startsWith('task-module-tab-'))).toHaveLength(0)
+  })
+
+  it('全舱宿主：运行页签交给 surface.open（开舱系浮窗），不在消息流里内联展开', async () => {
+    ;(getTask as Mock).mockResolvedValue({
+      id: 't-run', name: '任务', status: 'running',
+      executions: [{
+        id: 'e-run', status: 'running', workflow_ref: 'matt-spec-dev',
+        name: null, phase_index: 1, round_index: 1, workspace_id: 'w-1',
+        started_at: new Date().toISOString(), completed_at: null,
+        created_at: new Date().toISOString(), error_summary: null,
+      }],
+    })
+    ;(fetchExecutionDetail as Mock).mockResolvedValue({
+      id: 'e-run', status: 'running', workflow_ref: 'matt-spec-dev',
+      started_at: new Date().toISOString(), completed_at: null, steps: [],
+    })
+    const open = vi.fn()
+    render(
+      <TaskModuleSurfaceContext.Provider value={{ open }}>
+        <TaskStatusCard message={eventMessage({
+          kind: 'task.status', title: '任务开始执行', status: 'running',
+          taskId: 't-run', executionId: 'e-run', workspaceId: 'w-1',
+          phaseIndex: 1, roundIndex: 1,
+        })} />
+      </TaskModuleSurfaceContext.Provider>,
+    )
+    await waitFor(() => expect(screen.getByTestId('task-module-tab-run')).toBeTruthy())
+    fireEvent.click(screen.getByTestId('task-module-tab-run'))
+    expect(open).toHaveBeenCalledWith({ module: 'run', taskId: 't-run' })
+    expect(screen.queryByTestId('task-module-inline')).toBeNull()
   })
 
   it('跑完定格：标题转「本轮执行完成」、圈 ✓、子工作流聚合回父节点', async () => {
