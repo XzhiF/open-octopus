@@ -21,6 +21,7 @@ import fs from "fs"
 import path from "path"
 import type Database from "better-sqlite3"
 import { defaultRun, resolveProjectDir, type CommandRunner } from "./archive-delta"
+import { readWorkspaceConfig } from "../workspace-paths"
 import type { TaskHomeService } from "./task-home-service"
 
 // ── Types ────────────────────────────────────────────────────────────
@@ -333,16 +334,12 @@ async function verifyWorktreeRoot(dir: string, run: CommandRunner): Promise<stri
   return null
 }
 
-/** config.json 里该 project 的主仓路径（用于「绝不清理主仓」的兜底判断）。 */
+/** workspace 配置里该 project 的主仓路径（用于「绝不清理主仓」的兜底判断）。 */
 function sourceRepoPath(wsPath: string, project: string): string | null {
-  try {
-    const cfg = JSON.parse(
-      fs.readFileSync(path.join(wsPath, "config.json"), "utf-8"),
-    ) as { repos?: Array<{ name?: string; main_path?: string }> }
-    return cfg.repos?.find((r) => r.name === project)?.main_path ?? null
-  } catch {
-    return null
-  }
+  const cfg = readWorkspaceConfig(wsPath) as {
+    repos?: Array<{ name?: string; main_path?: string }>
+  } | null
+  return cfg?.repos?.find((r) => r.name === project)?.main_path ?? null
 }
 
 /** 解析出的 worktree 若与主仓同一路径 → 拒绝（自动清理绝不碰用户主仓）。 */

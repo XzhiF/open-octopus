@@ -28,6 +28,23 @@ import {
   readLocalRepoInfo, isGitRepo, projectKey, type CabinRepoEntry,
 } from "./cabin-repos"
 import { nameForRequirements, UNNAMED_CABIN_NAME } from "./cabin-naming"
+import {
+  ensureRootClaudePointer,
+  upsertManagedBlock as upsertBlock,
+  workspaceInstructionPath,
+} from "../workspace-paths"
+
+/** Managed block markers — the only region of a pre-existing CLAUDE.md we touch. */
+export const CABIN_CLAUDE_BEGIN = "<!-- cabin:begin -->"
+export const CABIN_CLAUDE_END = "<!-- cabin:end -->"
+
+/**
+ * Replace (or append) the cabin block in a markdown file, preserving the rest.
+ * Kept as a 2-arg wrapper for existing callers/tests.
+ */
+export function upsertManagedBlock(filePath: string, body: string): void {
+  upsertBlock(filePath, body, CABIN_CLAUDE_BEGIN, CABIN_CLAUDE_END)
+}
 
 export interface CabinInitDeps {
   cabin: CabinDAO
@@ -397,8 +414,8 @@ export class CabinInitService {
     }
   }
 
-  /** 舱目录的 CLAUDE.md：项目清单 + 只读门槛 + 开工作树的命令。
-   *  Agent 起来就读得到「哪些仓库只读、要改怎么开工作树」，不靠记忆。 */
+  /** 舱的工作空间说明（项目清单 + 只读门槛 + 开工作树命令）写在
+   *  `.octopus/CLAUDE.md`；根目录 CLAUDE.md 只加一行指针，绝不整文件覆写。 */
   private writeProjectsClaudeMd(row: CabinRow, entries: CabinRepoEntry[]): void {
     const lines: string[] = [
       `# 作战舱：${row.name}`, "",
@@ -428,7 +445,8 @@ export class CabinInitService {
       "- 任务天然在自己的 workspace 里建工作树，不会写主仓。",
       "",
     )
-    fs.writeFileSync(path.join(row.path, "CLAUDE.md"), lines.join("\n"), "utf-8")
+    upsertManagedBlock(workspaceInstructionPath(row.path), lines.join("\n"))
+    ensureRootClaudePointer(row.path)
   }
 
   // ── persistence / streaming ────────────────────────────────────────

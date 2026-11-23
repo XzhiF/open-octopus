@@ -7,6 +7,14 @@ import fs from "fs"
 import path from "path"
 import os from "os"
 import { workspaceGuide } from "./workspace-scaffold"
+import {
+  ensureRootClaudePointer,
+  updateWorkspaceConfig,
+  upsertManagedBlock,
+  WORKSPACE_CLAUDE_BEGIN,
+  WORKSPACE_CLAUDE_END,
+  workspaceInstructionPath,
+} from "./workspace-paths"
 
 /** Escape a literal string for safe interpolation into a RegExp source. */
 function escapeRegex(s: string): string {
@@ -252,13 +260,12 @@ export class WorkspaceGit {
     wsName: string,
   ): void {
     if (entries.length === 0) return
-    const configPath = path.join(workspacePath, "config.json")
-    const config = JSON.parse(fs.readFileSync(configPath, "utf-8"))
-    config.repos = entries.map(e => ({
-      name: e.name, main_path: e.main_path, worktree_path: e.worktree_path, branch: e.branch,
-      ...(e.group ? { group: e.group } : {}),
-    }))
-    fs.writeFileSync(configPath, JSON.stringify(config, null, 2), "utf-8")
+    updateWorkspaceConfig(workspacePath, (config) => {
+      config.repos = entries.map(e => ({
+        name: e.name, main_path: e.main_path, worktree_path: e.worktree_path, branch: e.branch,
+        ...(e.group ? { group: e.group } : {}),
+      }))
+    })
 
     const claudeLines = [
       `# 工作空间: ${wsName}`, "",
@@ -269,17 +276,22 @@ export class WorkspaceGit {
       claudeLines.push(`  - 主仓库: \`${e.main_path}\``)
     }
     claudeLines.push("", "## 说明", "- 此工作空间由调度器自动创建")
-    fs.writeFileSync(path.join(workspacePath, "CLAUDE.md"), claudeLines.join("\n"), "utf-8")
+    upsertManagedBlock(
+      workspaceInstructionPath(workspacePath),
+      claudeLines.join("\n"),
+      WORKSPACE_CLAUDE_BEGIN,
+      WORKSPACE_CLAUDE_END,
+    )
+    ensureRootClaudePointer(workspacePath)
   }
 
   private writeProjectConfig(
     workspacePath: string,
     entries: { name: string; group: string; main_path: string; worktree_path: string }[],
   ): void {
-    const configPath = path.join(workspacePath, "config.json")
-    const config = JSON.parse(fs.readFileSync(configPath, "utf-8"))
-    config.repos = entries.map(e => ({ name: e.name, group: e.group, main_path: e.main_path, worktree_path: e.worktree_path }))
-    fs.writeFileSync(configPath, JSON.stringify(config, null, 2), "utf-8")
+    updateWorkspaceConfig(workspacePath, (config) => {
+      config.repos = entries.map(e => ({ name: e.name, group: e.group, main_path: e.main_path, worktree_path: e.worktree_path }))
+    })
   }
 
   private writeProjectClaudeMd(
@@ -303,6 +315,12 @@ export class WorkspaceGit {
       "- 主仓库保持干净，开发分支仅在 worktree 中",
     )
     claudeLines.push(...workspaceGuide())
-    fs.writeFileSync(path.join(workspacePath, "CLAUDE.md"), claudeLines.join("\n"), "utf-8")
+    upsertManagedBlock(
+      workspaceInstructionPath(workspacePath),
+      claudeLines.join("\n"),
+      WORKSPACE_CLAUDE_BEGIN,
+      WORKSPACE_CLAUDE_END,
+    )
+    ensureRootClaudePointer(workspacePath)
   }
 }

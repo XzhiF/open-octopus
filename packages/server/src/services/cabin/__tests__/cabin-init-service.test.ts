@@ -195,10 +195,12 @@ describe("CabinInitService", () => {
       expect(entry.branch).toBeUndefined()
       expect(entry.worktree_path).toBeUndefined()
       expect(fs.existsSync(path.join(tmpDir, "projects"))).toBe(false)
-      // 舱目录契约：CLAUDE.md 写清只读门槛与开工作树的命令。
-      const claude = fs.readFileSync(path.join(tmpDir, "CLAUDE.md"), "utf-8")
+      // 舱目录契约：完整说明写在 .octopus/CLAUDE.md，根 CLAUDE.md 只有一行指针。
+      const claude = fs.readFileSync(path.join(tmpDir, ".octopus", "CLAUDE.md"), "utf-8")
       expect(claude).toContain("只读")
       expect(claude).toContain("worktree add")
+      const rootClaude = fs.readFileSync(path.join(tmpDir, "CLAUDE.md"), "utf-8")
+      expect(rootClaude).toContain(".octopus/CLAUDE.md")
       const items = svc.loadState(dao.findById("cabin-1")!).items
       const clone = items.find((i) => i.key === "clone")!
       expect(clone.label).toBe("准备 ORG 仓库")

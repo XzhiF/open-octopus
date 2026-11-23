@@ -18,6 +18,10 @@ import {
   parseManifest, parseManifestJson, findLocalRepo, cloneProject,
   type ManifestEntry,
 } from "@octopus/shared"
+import {
+  readWorkspaceConfig,
+  updateWorkspaceConfig,
+} from "../workspace-paths"
 
 export function getOctopusHome(): string {
   return process.env.OCTOPUS_HOME ?? path.join(os.homedir(), ".octopus")
@@ -296,34 +300,23 @@ export function scanLocalProjects(root: string): LocalProjectCandidate[] {
   })
 }
 
-// ── config.json ─────────────────────────────────────────────────────
+// ── workspace config (canonical: .octopus/config.json) ───────────────
 
 export function readCabinConfig(cabinPath: string): { name: string; repos: CabinRepoEntry[] } {
-  const configPath = path.join(cabinPath, "config.json")
-  try {
-    const raw = JSON.parse(fs.readFileSync(configPath, "utf-8")) as { name?: string; repos?: unknown }
-    return {
-      name: typeof raw.name === "string" ? raw.name : path.basename(cabinPath),
-      repos: Array.isArray(raw.repos) ? (raw.repos as CabinRepoEntry[]) : [],
-    }
-  } catch {
-    return { name: path.basename(cabinPath), repos: [] }
+  const raw = readWorkspaceConfig(cabinPath)
+  return {
+    name: typeof raw?.name === "string" ? raw.name : path.basename(cabinPath),
+    repos: raw && Array.isArray(raw.repos) ? (raw.repos as CabinRepoEntry[]) : [],
   }
 }
 
-/** Merge repo entries into config.json (preserves other keys). Atomic write. */
+/** Merge repo entries into the workspace config (preserves other keys). Atomic write. */
 export function writeCabinConfigRepos(cabinPath: string, repos: CabinRepoEntry[]): void {
-  const configPath = path.join(cabinPath, "config.json")
-  let config: Record<string, unknown> = {}
-  try {
-    config = JSON.parse(fs.readFileSync(configPath, "utf-8")) as Record<string, unknown>
-  } catch {
-    config = { name: path.basename(cabinPath), created: new Date().toISOString() }
-  }
-  config.repos = repos
-  const tmp = `${configPath}.tmp`
-  fs.writeFileSync(tmp, JSON.stringify(config, null, 2), "utf-8")
-  fs.renameSync(tmp, configPath)
+  updateWorkspaceConfig(cabinPath, (config) => {
+    if (typeof config.name !== "string") config.name = path.basename(cabinPath)
+    if (typeof config.created !== "string") config.created = new Date().toISOString()
+    config.repos = repos
+  })
 }
 
 function stripUndefined<T extends object>(value: T): T {

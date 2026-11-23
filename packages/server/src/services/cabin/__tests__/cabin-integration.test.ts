@@ -71,8 +71,10 @@ describe("CabinService integration (real workspace/session infra)", () => {
     expect(ws.cabin_id).toBe(cabin.id)
     expect(ws.path).toBe(tmpDir)
     expect(ws.name).toMatch(/^[a-zA-Z0-9_-]+$/) // ASCII slug, Chinese display name stays on cabins.name
-    expect(fs.existsSync(path.join(tmpDir, "config.json"))).toBe(true)
-    const config = JSON.parse(fs.readFileSync(path.join(tmpDir, "config.json"), "utf-8"))
+    const configPath = path.join(tmpDir, ".octopus", "config.json")
+    expect(fs.existsSync(configPath)).toBe(true)
+    expect(fs.existsSync(path.join(tmpDir, "config.json"))).toBe(false)
+    const config = JSON.parse(fs.readFileSync(configPath, "utf-8"))
     expect(config.repos.map((r: { name: string }) => r.name)).toEqual(["demo"])
 
     const session = agentSessionDAO.findById(cabin.main_session_id!)!

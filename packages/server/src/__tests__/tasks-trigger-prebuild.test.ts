@@ -266,7 +266,7 @@ describe("触发预建 workspace+worktree（票03: 预建搬进 job 的 armTask�
     const branch = execFileSync("git", ["-C", wt, "branch", "--show-current"]).toString().trim()
     // 分支命名收口（2026-09-22）：有 slug 锚 → feat-<slug>-<YYYYMMDD>（旧 taskpool-{id}）。
     expect(branch.startsWith("feat-p1-")).toBe(true)
-    const config = JSON.parse(readFileSync(join(ws.path, "config.json"), "utf-8")) as {
+    const config = JSON.parse(readFileSync(join(ws.path, ".octopus", "config.json"), "utf-8")) as {
       repos: Array<Record<string, unknown>>
     }
     expect(config.repos[0]).toMatchObject({ name: REPO, main_path: repoDir })

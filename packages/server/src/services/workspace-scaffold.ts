@@ -6,12 +6,21 @@
 import fs from "fs"
 import path from "path"
 import os from "os"
+import {
+  ensureRootClaudePointer,
+  findWorkspaceConfigFile,
+  upsertManagedBlock,
+  WORKSPACE_CLAUDE_BEGIN,
+  WORKSPACE_CLAUDE_END,
+  workspaceConfigPath,
+  workspaceInstructionPath,
+} from "./workspace-paths"
 
 /**
  * Default pipeline.yaml template — auto-generated for new workspaces.
  */
 export const DEFAULT_PIPELINE_YAML = `# Octopus Pipeline v2 配置
-# 详细说明: 参见 docs/octopus/pipeline-guide.md
+# 详细说明: 参见 .octopus/pipeline-guide.md
 #
 # 没有此文件时，引擎使用 fail_fast + 无重试的默认行为。
 # 修改后下次执行自动生效，无需重启服务。
@@ -58,16 +67,15 @@ export function workspaceGuide(): string[] {
     "",
     "```",
     "<workspace>/",
-    "├── CLAUDE.md             ← 工作空间指令（本文件）",
-    "├── config.json           ← 工作空间配置（名称、关联仓库、创建时间、初始分支）",
-    "├── pipeline.yaml         ← Pipeline 配置（失败策略/重试/Checkpoint，详见 docs/octopus/pipeline-guide.md）",
+    "├── CLAUDE.md             ← 一行指路：完整工作空间说明在 .octopus/CLAUDE.md",
     "├── .claude/skills/       ← 已安装的 Claude Code Skills（从 core-pack 复制）",
-    "├── .octopus/             ← Octopus 运行时数据",
+    "├── .octopus/             ← Octopus 配置与说明（运行时目录仍在根目录）",
+    "│   ├── config.json         ← 工作空间配置（名称、关联仓库、创建时间、初始分支）",
+    "│   ├── CLAUDE.md           ← 工作空间完整说明（目录结构 / 项目 / 开工作树命令）",
+    "│   ├── pipeline.yaml       ← Pipeline 配置（失败策略/重试/Checkpoint）",
+    "│   ├── pipeline-guide.md   ← Pipeline 配置完整参考文档",
     "│   ├── checkpoints/        ← Checkpoint 中断恢复（每 execution 一个子目录）",
     "│   └── code-dev-copilot-rules/ ← 代码规范模板",
-    "├── docs/                 ← 文档",
-    "│   └── octopus/            ← Octopus 文档",
-    "│       └── pipeline-guide.md   ← Pipeline 配置完整参考文档",
     "├── projects/             ← 项目代码（每个子目录是一个 git worktree）",
     "├── workflows/          ← 工作流 YAML 定义（octopus workflow run 的执行目标）",
     "├── state/              ← 执行状态记录",
@@ -97,10 +105,12 @@ export class WorkspaceScaffold {
     }
   }
 
-  /** Write base CLAUDE.md with workspace name and usage guide. */
-  writeBaseClaudeMd(workspacePath: string, wsName: string): void {
-    const claudePath = path.join(workspacePath, "CLAUDE.md")
-    if (fs.existsSync(claudePath)) return
+  /**
+   * Full workspace instructions go to .octopus/CLAUDE.md (managed block, so a
+   * user-authored file there is never clobbered); the repo-root CLAUDE.md only
+   * carries a one-line pointer to it.
+   */
+  writeWorkspaceClaudeMd(workspacePath: string, wsName: string): void {
     const lines = [
       `# 工作空间: ${wsName}`,
       "",
@@ -109,13 +119,21 @@ export class WorkspaceScaffold {
       "- 使用 `octo-workflow-dev` skill 开发与校验工作流",
       ...workspaceGuide(),
     ]
-    fs.writeFileSync(claudePath, lines.join("\n"), "utf-8")
+    upsertManagedBlock(
+      workspaceInstructionPath(workspacePath),
+      lines.join("\n"),
+      WORKSPACE_CLAUDE_BEGIN,
+      WORKSPACE_CLAUDE_END,
+    )
+    ensureRootClaudePointer(workspacePath)
   }
 
-  /** Write config.json with workspace name, repos, and optional branch. */
+  /** Write workspace config under .octopus/ (never at the directory root). */
   writeConfigJson(workspacePath: string, name: string, repos: string[], branch?: string): void {
-    const configPath = path.join(workspacePath, "config.json")
-    if (fs.existsSync(configPath)) return
+    // Never write a second config when a usable one already exists (legacy root
+    // config.json is updated in place by updateWorkspaceConfig).
+    if (findWorkspaceConfigFile(workspacePath)) return
+    const configPath = workspaceConfigPath(workspacePath)
     const config: Record<string, unknown> = {
       name,
       repos: repos.map(r => {
@@ -125,6 +143,7 @@ export class WorkspaceScaffold {
       created: new Date().toISOString(),
     }
     if (branch) config.init_branch_name = branch
+    fs.mkdirSync(path.dirname(configPath), { recursive: true })
     fs.writeFileSync(configPath, JSON.stringify(config, null, 2), "utf-8")
   }
 
