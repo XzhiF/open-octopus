@@ -86,6 +86,11 @@ interface ChatAreaProps {
   /** 正在等的后台任务（provider `background_tasks` 电平，2026-11-04）。
    *  非空时流尾工作行换成「后台运行中：<description>」。 */
   backgroundTasks?: Array<{ id: string; description: string; taskType?: string }>
+  /** 后台等待期（2026-11-23 用户 #8）：模型空闲、只等后台任务唤醒。
+   *  true 时输入不锁，⏎ 走 onInterject 注进同一条查询（不打断后台）。 */
+  canInterject?: boolean
+  /** 后台等待期的追加发送（useAgentChat.interject）。 */
+  onInterject?: (message: string) => void
   onSend: (message: string, opts?: { subagents?: ChatSubagentRef[] }) => void
   onStop: () => void
   onConfirm: (eventId: string, decision: 'accept' | 'reject') => void
@@ -278,7 +283,7 @@ interface QueuedComposerMessage {
 export function ChatArea({
   messages, streaming, streamContent, streamThinking, isThinking, toolCalls, streamTimeline, turnStartedAt, pendingConfirm,
   hasMoreMessages, loadingOlderMessages, onLoadOlder,
-  error, statusMessage, backgroundTasks, onSend, onStop, onConfirm, hasSession, currentCloneName,
+  error, statusMessage, backgroundTasks, canInterject = false, onInterject, onSend, onStop, onConfirm, hasSession, currentCloneName,
   reviewItems, onReviewAction,
   emptyStateTitle, emptyStateDescription, hideEmptyState,
   commands, contextUsage, sessionUsage, taskUsage, currentModel, onModelChange,
@@ -448,12 +453,16 @@ export function ChatArea({
   }
 
   const handleSend = () => {
-    if (!input.trim() || streaming) return
+    if (!input.trim()) return
     const raw = input.trim()
     const { text, opts } = takeComposerAttachments(raw)
-    // `@分身` mentions stay in the text — the server parses them and consults
-    // the clone as a one-turn subagent (no delegation, no stripping).
-    onSend(text, opts)
+    // 后台等待期（#8）：注进同一条 provider 查询 —— 与 TUI 变体同语义。
+    if (streaming) {
+      if (!canInterject || !onInterject) return
+      onInterject(text)
+    } else {
+      onSend(text, opts)
+    }
     setInput('')
     stickBottomRef.current = true
   }
@@ -513,6 +522,18 @@ export function ChatArea({
         : undefined)
     }
   }, [streaming, tui, onSend, steerActiveRef])
+
+  // 后台等待期（#8）：队列不再无限期干等 —— 队首注进同一条查询（不打断后台）。
+  // 注入后队列变短，effect 重跑继续注下一条；SDK 按顺序把它们当各自一轮处理。
+  // 没有注入通道（canInterject=false）时维持原语义：等回合收口后 done-flush。
+  useEffect(() => {
+    if (!tui || !canInterject || !onInterject) return
+    if (steerActiveRef?.current) return
+    if (queueRef.current.length === 0) return
+    const [head, ...rest] = queueRef.current
+    setQueue(rest)
+    onInterject(head.text)
+  }, [canInterject, tui, onInterject, queue.length, steerActiveRef])
 
   const focusDockInput = () => {
     dockRef.current?.querySelector<HTMLTextAreaElement>('textarea')?.focus()
@@ -578,10 +599,15 @@ export function ChatArea({
       if (streaming) {
         setInput('')
         const take = takeComposerAttachments(text)
-        // 尾随他端回合（resume）时本实例没有可掐的流；后台任务运行中时
-        // Enter 的本来意思是问进度，不是杀掉那个程序。两种都只排队，回合
-        // 收口后 done-flush 自动发出（2026-11-10 用户事故：dev-up.sh 被
-        // Enter 打断，消息本身也被吞掉）。
+        // 后台等待期（2026-11-23 用户 #8）：模型空闲、只等后台唤醒 —— 直接把
+        // 话注进同一条 provider 查询，不打断后台（2026-11-10 dev-up.sh 事故：
+        // Enter 曾经会掐掉服务，后来改成只会排队，但队永远等不到收口）。
+        if (canInterject && !resumeTailing && onInterject) {
+          onInterject(take.text)
+          return
+        }
+        // 生成中 / 尾随他端回合：本实例没有可掐的流或不该掐 —— 只排队，
+        // 回合收口后 done-flush 自动发出。
         if (resumeTailing || (backgroundTasks?.length ?? 0) > 0) {
           pushQueue(take.text, take.expert)
           return
@@ -615,6 +641,11 @@ export function ChatArea({
     }
     if (streaming) {
       const taken = takeComposerAttachments(trimmed)
+      // 后台等待期：注入同一条查询（不打断后台）—— 与 ⏎ 分支同语义。
+      if (canInterject && !resumeTailing && onInterject) {
+        onInterject(taken.text)
+        return
+      }
       if (queueRef.current.length > 0 || resumeTailing || (backgroundTasks?.length ?? 0) > 0) {
         pushQueue(taken.text, taken.expert)
       } else if (onSteer) {
@@ -1006,7 +1037,10 @@ export function ChatArea({
                 title={backgroundTitle}
               >
                 <span className={workTone.spin} aria-hidden>{spinGlyph}</span>
-                <span className="truncate text-pop-ink/80">后台运行中：{backgroundLabel}</span>
+                <span className="truncate text-pop-ink/80">
+                  后台运行中：{backgroundLabel}
+                  {canInterject && <span className="ml-2 text-pop-green">· 可以直接说话</span>}
+                </span>
                 <span className={`tabular-nums ${workTone.secs}`}>{formatStopwatch(workElapsed * 1000)}</span>
               </div>
             ) : (
@@ -1236,7 +1270,9 @@ export function ChatArea({
                     queue.length > 0
                       ? '继续输入 —— ⏎/⇧⏎ 都会加入排队'
                       : streaming
-                        ? '输入新指令 —— ⏎ 打断接管 · ⇧⏎ 不打断排队'
+                        ? canInterject
+                          ? '后台任务运行中 —— ⏎ 直接发送（不打断后台）· ⇧⏎ 排队'
+                          : '输入新指令 —— ⏎ 打断接管 · ⇧⏎ 不打断排队'
                         : composerPlaceholder ?? '问 task-author…　⏎ 发送 · ⇧⏎ 排队 · Alt⏎ 换行'
                   }
                   className="flex-1 rounded-none border-0 bg-transparent px-0 py-1.5 text-[12.5px] text-pop-ink shadow-none placeholder:text-pop-dim focus-visible:ring-0"
@@ -1250,12 +1286,12 @@ export function ChatArea({
                     ? composerAttach
                     : <span className="shrink-0 pt-1" data-tui-attach-inline>{composerAttach}</span>
                 )}
-                <span className="shrink-0 pt-1" data-tui-send-wrap>
-                  {streaming ? (
+                <span className="flex shrink-0 items-center gap-1 pt-1" data-tui-send-wrap>
+                  {streaming && (
                     <button
                       type="button"
                       onClick={onStop}
-                      title="停止（esc 同效）"
+                      title={canInterject ? '停止整轮（会结束后台任务）' : '停止（esc 同效）'}
                       aria-label="停止生成"
                       data-tui-stop
                       className="grid size-6 place-items-center rounded-md border border-pop-bd text-[10px] text-pop-red transition-colors hover:border-pop-red"
@@ -1270,12 +1306,13 @@ export function ChatArea({
                         className="block h-3 w-3 rounded-[2.5px] bg-current"
                       />
                     </button>
-                  ) : (
+                  )}
+                  {(!streaming || canInterject) && (
                     <button
                       type="button"
                       onClick={handleSend}
                       disabled={!input.trim()}
-                      title="发送（⏎ 同效）"
+                      title={canInterject ? '发送（不打断后台）' : '发送（⏎ 同效）'}
                       data-tui-send
                       className="grid size-6 place-items-center rounded-md border border-pop-bd bg-pop-pink text-[10px] font-bold text-pop-bg transition-opacity disabled:opacity-40"
                     >
@@ -1463,8 +1500,14 @@ export function ChatArea({
               }}
               minRows={2}
               maxRows={5}
-              placeholder={streaming ? 'Agent 正在回复中...' : composerPlaceholder ?? '输入消息，/ 调用技能，@@ 委托分身，Enter 发送'}
-              disabled={streaming || !!pendingConfirm}
+              placeholder={
+                streaming
+                  ? canInterject
+                    ? '后台任务运行中 —— 可以直接输入（⏎ 发送，不打断后台）'
+                    : 'Agent 正在回复中...'
+                  : composerPlaceholder ?? '输入消息，/ 调用技能，@@ 委托分身，Enter 发送'
+              }
+              disabled={(streaming && !canInterject) || !!pendingConfirm}
               className="rounded-none border-0 bg-transparent px-3.5 pb-1 pt-2.5 text-[12.5px] text-pop-ink shadow-none focus-visible:ring-0"
             />
             <div
@@ -1535,21 +1578,24 @@ export function ChatArea({
                       <SessionCostChip usage={sessionUsage} contextUsage={contextUsage} placeholder={showUsagePlaceholders} />
                     ))}
               {identityDisplay && <ComposerIdentityChip display={identityDisplay} />}
-              <span className="ml-auto flex shrink-0 items-center">
-                {streaming ? (
+              <span className="ml-auto flex shrink-0 items-center gap-1.5">
+                {streaming && (
                   <Button
                     onClick={onStop}
                     variant="outline"
                     size="icon"
+                    title={canInterject ? '停止整轮（会结束后台任务）' : undefined}
                     className="h-8 w-8 rounded-xl border-2 border-pop-bd bg-pop-paper text-pop-red shadow-pop-sm pop-press hover:bg-pop-pink-soft"
                   >
                     <Square className="h-3.5 w-3.5" />
                   </Button>
-                ) : (
+                )}
+                {(!streaming || canInterject) && (
                   <Button
                     onClick={handleSend}
                     disabled={!input.trim()}
                     size="icon"
+                    title={canInterject ? '发送（不打断后台）' : undefined}
                     className="h-8 w-8 rounded-xl border-2 border-pop-bd bg-pop-pink text-pop-bg shadow-pop-sm pop-press hover:brightness-110"
                   >
                     <Send className="h-3.5 w-3.5" />

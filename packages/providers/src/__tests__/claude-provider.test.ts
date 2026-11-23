@@ -462,4 +462,56 @@ describe('ClaudeSDKProvider — background tasks', () => {
 
     expect(stopTask).toHaveBeenCalledWith('bg-1')
   })
+
+  // 2026-11-23 用户 #8：后台服务运行期间用户继续说话 —— push 的消息必须走
+  // **同一条** SDK 输入流（SDK 0.3.318 实测支持：注入轮与后台唤醒轮共用 query）。
+  it('onInputChannel：push 的用户消息进入同一条输入流（首条之后继续 yield）', async () => {
+    let promptIterable: AsyncIterable<{ message: { content: string } }> | undefined
+    let endStream: () => void = () => {}
+    const holdStream = new Promise<void>((resolve) => { endStream = resolve })
+    mockQuery.mockImplementation(((args: { prompt: AsyncIterable<{ message: { content: string } }> }) => {
+      promptIterable = args.prompt
+      return makeControlledQuery((async function* () {
+        yield bgChanged([{ task_id: 'bg-1', task_type: 'local_bash', description: 'dev server' }])
+        yield {
+          type: 'result', subtype: 'success', session_id: 's-1', num_turns: 1,
+          result: 'STARTED', usage: { input_tokens: 1, output_tokens: 1 },
+        }
+        await holdStream
+        yield bgChanged([])
+      })())
+    }) as never)
+
+    let push: ((text: string) => boolean) | null = null
+    const chunks: MessageChunk[] = []
+    const run = (async () => {
+      for await (const chunk of provider.sendQuery('起服务', '/tmp', undefined, {
+        interruptible: true,
+        awaitBackgroundTasks: true,
+        onInputChannel: (fn) => { push = fn },
+      })) {
+        chunks.push(chunk)
+      }
+    })()
+
+    for (let i = 0; i < 100 && (!push || !promptIterable); i++) {
+      await new Promise((r) => setTimeout(r, 5))
+    }
+    expect(push).toBeTruthy()
+
+    const iterator = promptIterable![Symbol.asyncIterator]()
+    const first = await iterator.next()
+    expect(first.value.message.content).toBe('起服务')
+
+    expect(push!('服务起来了吗？')).toBe(true)
+    const second = await iterator.next()
+    expect(second.value.message.content).toBe('服务起来了吗？')
+
+    endStream()
+    await run
+    expect(chunks.filter((c) => c.type === 'result')).toHaveLength(1)
+
+    // 通道关闭后 push 必须失败（调用方回退普通新回合）。
+    expect(push!('太晚了')).toBe(false)
+  })
 })

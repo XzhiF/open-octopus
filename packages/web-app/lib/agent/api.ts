@@ -100,8 +100,27 @@ export interface BackgroundTaskInfo {
   taskType?: string
 }
 
+/** 回合阶段（2026-11-23 用户 #8）：
+ *  - generating：模型在生成 / 调工具 —— 输入只能排队或 steer；
+ *  - background-wait：模型空闲、只等后台任务唤醒 —— 可以直接继续说话。 */
+export type TurnPhase = 'generating' | 'background-wait'
+
 export function getSessionRunning(id: string) {
-  return request<{ running: boolean; partial: boolean; background_tasks?: BackgroundTaskInfo[] }>(`/sessions/${id}/running`)
+  return request<{
+    running: boolean
+    partial: boolean
+    background_tasks?: BackgroundTaskInfo[]
+    phase?: TurnPhase | null
+  }>(`/sessions/${id}/running`)
+}
+
+/** 后台等待期的追加输入：注进服务端同一条 provider 查询（不新开回合）。
+ *  返回 `injected=false` / 抛 409 时应回退普通发送或排队。 */
+export function injectChat(id: string, message: string) {
+  return request<{ injected: boolean; session_id: string }>(`/sessions/${id}/chat/inject`, {
+    method: 'POST',
+    body: JSON.stringify({ message }),
+  })
 }
 /** Slash commands the CLI advertised for this session (empty until a turn ran). */
 export function getSessionSlashCommands(id: string) {
@@ -312,7 +331,23 @@ export function chatStream(id: string, message: string, opts?: {
       try {
         const response = await streamPromise
         if (!response.ok || !response.body) {
-          controller.error(new Error(`SSE connection failed: ${response.status}`))
+          // Surface the server's structured error (409 STREAM_IN_PROGRESS from
+          // the concurrency guard, with details.phase) — the hook branches on
+          // it: background-wait → inject, generating → tail/queue.
+          let code: string | undefined
+          let details: unknown
+          let message = `SSE connection failed: ${response.status}`
+          if (!response.ok) {
+            try {
+              const errBody = await response.json()
+              if (errBody?.error?.code) code = errBody.error.code
+              if (errBody?.error?.message) message = errBody.error.message
+              if (errBody?.error?.details) details = errBody.error.details
+            } catch { /* non-JSON error body — keep generic message */ }
+          }
+          controller.error(Object.assign(new Error(message), {
+            code, status: response.status, details,
+          }))
           return
         }
         const reader = response.body.getReader()

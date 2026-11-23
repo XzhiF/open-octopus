@@ -319,11 +319,12 @@ export function ChatPane({
 
   const mainChatApi = useMemo<UseAgentChatApiOverride>(() => ({
     checkRunning: agentApi.getSessionRunning,
+    injectChat: agentApi.injectChat,
   }), [])
 
   const {
     messages, streaming, streamContent, streamThinking, streamTimeline, isThinking, toolCalls, pendingConfirm,
-    error: chatError, statusMessage, backgroundTasks, contextUsage, slashCommands,
+    error: chatError, statusMessage, backgroundTasks, waitPhase, interject, contextUsage, slashCommands,
     sendMessage, stopGenerate, handleConfirm, loadMessages,
     hasMoreMessages, loadingOlderMessages, loadOlderMessages,
     steer, steeringRef, resumeStreaming, checkAndResume, streamingSessionId, turnStartedAt,
@@ -1583,6 +1584,10 @@ export function ChatPane({
             error={chatError}
             statusMessage={statusMessage}
             backgroundTasks={backgroundTasks}
+            // v22 #8（2026-11-23 用户）：后台服务还在跑、模型空闲等唤醒时，
+            // 输入不锁 —— ⏎ 注进同一条查询，不打断后台任务。
+            canInterject={streaming && waitPhase === 'background-wait'}
+            onInterject={(message) => { void interject(message) }}
             commands={slashCommandList}
             onSend={handleSendMessage}
             onStop={stopGenerate}

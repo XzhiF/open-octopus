@@ -15,6 +15,9 @@ export interface SSEHandlers {
   onStatus?: (data: Extract<AgentSSEEvent, { event: 'status' }>['data']) => void
   /** 后台任务电平（REPLACE 语义）：非空 = 本轮正在等后台任务。 */
   onBackgroundTasks?: (data: { tasks: BackgroundTaskInfo[] }) => void
+  /** 回合阶段（2026-11-23 用户 #8）：background-wait = 模型空闲等后台唤醒，
+   *  输入不锁定，可直接继续说话。 */
+  onTurnPhase?: (data: { phase: 'generating' | 'background-wait' }) => void
   /** 后台任务唤醒的续轮开始（首轮 result 后又来一段正文）。 */
   onAssistantContinue?: (data: { separator?: string }) => void
   onConfirm?: (data: Extract<AgentSSEEvent, { event: 'confirm' }>['data']) => void
@@ -33,7 +36,7 @@ export interface SSEHandlers {
   /** Keep-alive frame — only refreshes the stall watchdog. */
   onHeartbeat?: () => void
   onDone?: (data: Extract<AgentSSEEvent, { event: 'done' }>['data']) => void
-  onError?: (data: Extract<AgentSSEEvent, { event: 'error' }>['data']) => void
+  onError?: (data: Extract<AgentSSEEvent, { event: 'error' }>['data'] & { details?: unknown }) => void
 }
 
 export interface SSEConnectionOptions {
@@ -167,6 +170,9 @@ export function useSSEConnection(options?: SSEConnectionOptions) {
                 case 'background_tasks':
                   handlers.onBackgroundTasks?.(data)
                   break
+                case 'turn_phase':
+                  handlers.onTurnPhase?.(data)
+                  break
                 case 'assistant_continue':
                   handlers.onAssistantContinue?.(data)
                   break
@@ -202,13 +208,17 @@ export function useSSEConnection(options?: SSEConnectionOptions) {
           settle('STREAM_EOF', '连接已结束，但服务端未发送结束帧')
         }
       } catch (err) {
-        const e = err as Error & { code?: string }
+        const e = err as Error & { code?: string; details?: unknown }
         if (e.name !== 'AbortError' && !sawTerminal) {
           // Pass through the server's structured code when the transport
           // layer attached one (e.g. STREAM_IN_PROGRESS from the 409 guard) —
           // callers branch on it (resume-polling instead of a dead error).
           sawTerminal = true
-          handlers.onError?.({ code: e.code ?? 'STREAM_ERROR', message: e.message })
+          handlers.onError?.({
+            code: e.code ?? 'STREAM_ERROR',
+            message: e.message,
+            ...(e.details !== undefined ? { details: e.details } : {}),
+          })
         }
       } finally {
         if (watchdog) clearInterval(watchdog)

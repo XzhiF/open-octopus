@@ -556,19 +556,50 @@ export class ClaudeSDKProvider implements IAgentProvider {
     // Streaming input mode keeps the query alive after its turn; the input
     // generator must stay open until we are done with it. Ending it early makes
     // the SDK close the query ("Query closed before response received").
+    //
+    // 2026-11-23 用户 #8：输入流不再只装首条消息。后台任务（dev 服务等）跑着、
+    // 模型在等唤醒时，用户可以继续说话 —— 宿主经 `onInputChannel` 拿到的 push
+    // 把新消息塞进同一条流，SDK 按新一轮处理，后台完成后的唤醒轮照常到达
+    // （真机 SDK 0.3.318 实测：首轮 result 期间注入 → 第二轮回复 → 后台结束
+    // 再唤醒一轮，三条 result 走同一个 query）。
     let releaseInput: (() => void) | undefined
+    let pushInput: (text: string) => boolean = () => false
     let promptInput: string | AsyncIterable<SDKUserMessage> = prompt
     if (interruptible) {
-      const inputDone = new Promise<void>((resolve) => { releaseInput = resolve })
+      const inputQueue: string[] = []
+      let wakeInput: (() => void) | null = null
+      let inputClosed = false
+      const toUserMessage = (text: string): SDKUserMessage => ({
+        type: 'user',
+        message: { role: 'user', content: text },
+        parent_tool_use_id: null,
+      } as SDKUserMessage)
+      pushInput = (text) => {
+        if (inputClosed || !text.trim()) return false
+        inputQueue.push(text)
+        wakeInput?.()
+        wakeInput = null
+        return true
+      }
+      releaseInput = () => {
+        inputClosed = true
+        wakeInput?.()
+        wakeInput = null
+      }
       promptInput = (async function* () {
-        yield {
-          type: 'user',
-          message: { role: 'user', content: prompt },
-          parent_tool_use_id: null,
-        } as SDKUserMessage
-        await inputDone
+        yield toUserMessage(prompt)
+        for (;;) {
+          if (inputQueue.length === 0 && !inputClosed) {
+            await new Promise<void>((resolve) => { wakeInput = resolve })
+          }
+          if (inputClosed) return
+          const next = inputQueue.shift()
+          if (next == null) continue
+          yield toUserMessage(next)
+        }
       })()
     }
+    options?.onInputChannel?.(pushInput)
 
     // Store query reference so we can call getContextUsage() (control request)
     // after message_start. The Query object is an AsyncGenerator with extra

@@ -1,9 +1,13 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
+  attachActiveStreamInput,
+  findBackgroundWaitStream,
   getActiveStreamBackgroundTasks,
+  getActiveStreamPhase,
   listActiveStreams,
   registerActiveStream,
   setActiveStreamBackgroundTasks,
+  setActiveStreamPhase,
   unregisterActiveStream,
 } from '../services/agent/agent-service'
 
@@ -65,6 +69,52 @@ describe('listActiveStreams', () => {
     } finally {
       setActiveStreamBackgroundTasks(`${PREFIX}d`, null)
       unregisterActiveStream(`${PREFIX}d`, stream)
+    }
+  })
+
+  // 2026-11-23 用户 #8：后台等待期 = 模型空闲，允许把用户消息注进同一条查询。
+  it('phase / inject：只有 background-wait 且单流时给注入通道', () => {
+    const stream = registerActiveStream(`${PREFIX}e`, () => {})
+    try {
+      expect(getActiveStreamPhase(`${PREFIX}e`)).toBe('generating')
+      expect(findBackgroundWaitStream(`${PREFIX}e`)).toBeNull()
+
+      let injected: string | null = null
+      attachActiveStreamInput(`${PREFIX}e`, stream, (text) => { injected = text; return true })
+      // 生成中不给注入（否则等于并发第二条 SDK 查询，2026-11-10 事故）。
+      expect(findBackgroundWaitStream(`${PREFIX}e`)).toBeNull()
+
+      setActiveStreamBackgroundTasks(`${PREFIX}e`, [])
+      setActiveStreamPhase(`${PREFIX}e`, stream, 'background-wait')
+      expect(getActiveStreamPhase(`${PREFIX}e`)).toBe('background-wait')
+      const target = findBackgroundWaitStream(`${PREFIX}e`)
+      expect(target?.streamId).toBe(stream)
+      expect(target!.inject('服务起来了吗？')).toBe(true)
+      expect(injected).toBe('服务起来了吗？')
+
+      // 后台清空 = CLI 即将唤醒续轮：相位收回 generating，注入通道关闭。
+      setActiveStreamBackgroundTasks(`${PREFIX}e`, [{ id: 'bg-1', description: 'dev' }])
+      setActiveStreamPhase(`${PREFIX}e`, stream, 'background-wait')
+      setActiveStreamBackgroundTasks(`${PREFIX}e`, [])
+      expect(getActiveStreamPhase(`${PREFIX}e`)).toBe('generating')
+      expect(findBackgroundWaitStream(`${PREFIX}e`)).toBeNull()
+    } finally {
+      unregisterActiveStream(`${PREFIX}e`, stream)
+    }
+  })
+
+  it('phase / inject：两条并发流时不给注入通道', () => {
+    const a = registerActiveStream(`${PREFIX}f`, () => {})
+    const b = registerActiveStream(`${PREFIX}f`, () => {})
+    try {
+      attachActiveStreamInput(`${PREFIX}f`, a, () => true)
+      setActiveStreamPhase(`${PREFIX}f`, a, 'background-wait')
+      expect(findBackgroundWaitStream(`${PREFIX}f`)).toBeNull()
+      // 另一条流还在生成 → 会话整体仍是 generating（任一流生成即忙）。
+      expect(getActiveStreamPhase(`${PREFIX}f`)).toBe('generating')
+    } finally {
+      unregisterActiveStream(`${PREFIX}f`, a)
+      unregisterActiveStream(`${PREFIX}f`, b)
     }
   })
 })

@@ -61,10 +61,20 @@ interface StreamEntry {
    *  Non-empty = the turn is paused waiting for one, which is exactly what the
    *  header「运行中」chip should say (2026-11-04). */
   backgroundTasks: BackgroundTaskInfo[]
+  /** 流当前阶段（2026-11-23 用户 #8）：
+   *  - `generating`：模型在生成 / 调工具 —— 用户输入只能排队或 steer；
+   *  - `background-wait`：首轮已收，只等后台任务（dev 服务等）唤醒 ——
+   *    模型空闲，用户可以继续说话，经 `inject` 注入同一条 provider 查询。 */
+  phase: StreamPhase
+  /** 后台等待期的追加输入通道（provider `onInputChannel`）；未就绪 / 已关闭
+   * 时为 null。返回 false = 通道已关，调用方回退普通新回合。 */
+  inject: ((text: string) => boolean) | null
   /** Resolves when the owning route finalized its partial row (its `finally`). */
   done: Promise<void>
   finish: () => void
 }
+
+export type StreamPhase = 'generating' | 'background-wait'
 
 const activeStreams = new Map<string, Map<string, StreamEntry>>()
 let streamCounter = 0
@@ -97,10 +107,68 @@ export function registerActiveStream(sessionId: string, abort: () => void): stri
     abort,
     startedAt: Date.now(),
     backgroundTasks: [],
+    phase: 'generating',
+    inject: null,
     done,
     finish,
   })
   return streamId
+}
+
+/**
+ * 登记「后台等待期的追加输入」通道（2026-11-23 用户 #8）。
+ * provider 的 `onInputChannel` 就绪时调用；同一会话同时只有一条 chat 流，
+ * 后注册的覆盖先注册的即可。
+ */
+export function attachActiveStreamInput(
+  sessionId: string,
+  streamId: string,
+  inject: (text: string) => boolean,
+): void {
+  const entry = activeStreams.get(sessionId)?.get(streamId)
+  if (!entry) return
+  entry.inject = inject
+  if (entry.backgroundTasks.length === 0) entry.phase = 'generating'
+}
+
+/** 更新流阶段（route 在 result 续轮 / message_start 时调用）。 */
+export function setActiveStreamPhase(
+  sessionId: string,
+  streamId: string | undefined,
+  phase: StreamPhase,
+): void {
+  const sessionStreams = activeStreams.get(sessionId)
+  if (!sessionStreams) return
+  if (streamId) {
+    const entry = sessionStreams.get(streamId)
+    if (entry) entry.phase = phase
+    return
+  }
+  for (const entry of sessionStreams.values()) entry.phase = phase
+}
+
+/** 会话整体阶段：任一流在生成 → generating；否则有流即 background-wait。 */
+export function getActiveStreamPhase(sessionId: string): StreamPhase | null {
+  const sessionStreams = activeStreams.get(sessionId)
+  if (!sessionStreams || sessionStreams.size === 0) return null
+  for (const entry of sessionStreams.values()) {
+    if (entry.phase === 'generating') return 'generating'
+  }
+  return 'background-wait'
+}
+
+/**
+ * 找可注入的用户输入通道：只在「后台等待」阶段、且只有一个流时给出。
+ * 生成中注入等价于并发两条查询 —— 正是 2026-11-10 事故的坑，必须拒绝。
+ */
+export function findBackgroundWaitStream(
+  sessionId: string,
+): { streamId: string; inject: (text: string) => boolean } | null {
+  const sessionStreams = activeStreams.get(sessionId)
+  if (!sessionStreams || sessionStreams.size !== 1) return null
+  const [entry] = sessionStreams.values()
+  if (!entry || entry.phase !== 'background-wait' || !entry.inject) return null
+  return { streamId: entry.streamId, inject: entry.inject }
 }
 
 /**
@@ -116,6 +184,9 @@ export function setActiveStreamBackgroundTasks(
   const next = Array.isArray(tasks) ? tasks.map((t) => ({ ...t })) : []
   for (const entry of sessionStreams.values()) {
     entry.backgroundTasks = next.map((t) => ({ ...t }))
+    // 后台清空 = CLI 马上唤醒模型跑续轮：阶段先回到 generating，别在
+    // message_start 之前的空窗里继续放行注入（那会与新续轮抢同一输入流）。
+    if (next.length === 0) entry.phase = 'generating'
   }
 }
 
@@ -169,6 +240,8 @@ export interface ActiveStreamInfo {
   streamCount: number
   /** 正在等的后台任务（空数组 = 只在生成，没有后台等待）。 */
   backgroundTasks: BackgroundTaskInfo[]
+  /** 这一流当前阶段；多流时任一 generating 即 generating。 */
+  phase: StreamPhase
 }
 
 /** Sessions with at least one in-memory generation stream, newest first. */
@@ -185,6 +258,9 @@ export function listActiveStreams(): ActiveStreamInfo[] {
       startedAt,
       streamCount: streams.size,
       backgroundTasks: mergeBackgroundTasks(streams.values()),
+      phase: [...streams.values()].some((entry) => entry.phase === 'generating')
+        ? 'generating'
+        : 'background-wait',
     })
   }
   return result.sort((a, b) => b.startedAt - a.startedAt)

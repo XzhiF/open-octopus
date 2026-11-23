@@ -68,6 +68,16 @@ export interface SendQueryOptions {
   awaitBackgroundTasks?: boolean
   /** 等后台任务时的看门狗预算（默认 60min）；普通流的 300s 会误杀长构建。 */
   backgroundWaitTimeoutMs?: number
+  /**
+   * 流式输入模式的「追加输入」通道（2026-11-23 用户 #8）：
+   * 首条消息送出后输入流保持打开，宿主可再 push 用户消息 —— SDK 把每条当
+   * 新的一轮处理，后台任务跑完的唤醒轮照常到达（真机 SDK 0.3.318 实测）。
+   * 只在 `interruptible` 下有值；非流式调用回调一个恒 false 的 push。
+   *
+   * 返回 false = 通道已关闭（本轮正在收尾 / 已 abort），调用方应回退到
+   * 普通的新回合路径。
+   */
+  onInputChannel?: (push: (text: string) => boolean) => void
   /** Free-form tag (usually the workflow node id) echoed into [exec-timing]
    *  logs when OCTOPUS_EXEC_TIMING=1. No behavioral effect. */
   timingTag?: string
