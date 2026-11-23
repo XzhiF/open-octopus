@@ -44,8 +44,6 @@ describe("WorkflowDevService — workflow-dev task kind", () => {
     tmp = fs.mkdtempSync(path.join(os.tmpdir(), "wf-dev-"))
     wsDir = path.join(tmp, "ws")
     fs.mkdirSync(wsDir, { recursive: true })
-    // Legacy workspace identity at the root → runtime dirs stay at the root.
-    fs.writeFileSync(path.join(wsDir, "config.json"), JSON.stringify({ name: "ws-1", repos: [] }))
     process.env.OCTOPUS_HOME = path.join(tmp, "octopus")
 
     const now = new Date().toISOString()

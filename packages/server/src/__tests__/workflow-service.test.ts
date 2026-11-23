@@ -16,8 +16,6 @@ const NON_OCTOPUS_YAML = "foo: bar\nbaz: 123"
 
 beforeEach(() => {
   fs.mkdirSync(path.join(WORKSPACE_DIR, "workflows"), { recursive: true })
-  // Legacy workspace identity at the root → runtime dirs stay at the root.
-  fs.writeFileSync(path.join(WORKSPACE_DIR, "config.json"), JSON.stringify({ name: "test-wf", repos: [] }))
   service = new WorkflowService()
 })
 

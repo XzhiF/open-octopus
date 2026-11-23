@@ -16,7 +16,6 @@ import type { PipelineConfig, HookDef, NotifyProviderConfig, ChannelProfile } fr
 import type { EnginePool } from "./EnginePool"
 import type { ObservabilityService } from "../observability"
 import { getFlag } from "../../config/feature-flags"
-import { workspaceSubdir } from "../workspace-paths"
 import { appendFileSync, mkdirSync, existsSync } from "fs"
 import { join } from "path"
 import { NotifyDispatcher, ProviderRegistry, registerBuiltinProviders } from "@octopus/engine"
@@ -585,7 +584,7 @@ export class EngineCallbacks implements IEngineCallbacks {
           })
           // Persist heartbeat to JSONL alongside agent events
           try {
-            const logDir = join(workspaceSubdir(this.ctx.workspacePath, "logs"), id)
+            const logDir = join(this.ctx.workspacePath, "logs", id)
             if (!existsSync(logDir)) mkdirSync(logDir, { recursive: true })
             const line = JSON.stringify({
               timestamp: new Date().toISOString(),

@@ -34,7 +34,6 @@ import { getAgentDir } from "../agent/paths"
 import { TaskHomeService } from "./task-home-service"
 import { WorkspaceService } from "../workspace"
 import { WorkspaceGit } from "../workspace-git"
-import { workspaceSubdir } from "../workspace-paths"
 
 export type WorkflowDevKind = "workflow-dev"
 
@@ -213,7 +212,7 @@ export class WorkflowDevService {
   private mirrorToWorkspace(row: TaskRow, ref: string, content: string): void {
     const wsPath = this.workspacePath(row)
     if (!wsPath) return
-    const dir = workspaceSubdir(wsPath, "workflows")
+    const dir = path.join(wsPath, "workflows")
     fs.mkdirSync(dir, { recursive: true })
     fs.writeFileSync(path.join(dir, ref), content, "utf-8")
   }

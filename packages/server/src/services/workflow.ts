@@ -3,7 +3,6 @@ import path from "path"
 import os from "os"
 import { parseWorkflow, isOctopusWorkflow, WorkflowRef } from "@octopus/shared"
 import type { WorkflowInfo, WorkflowDetail } from "../types/workflow-api"
-import { workspaceSubdir } from "./workspace-paths"
 
 export class WorkflowService {
   private resolve(pathStr: string): string {
@@ -11,7 +10,7 @@ export class WorkflowService {
   }
 
   private workflowsDir(workspacePath: string): string {
-    return workspaceSubdir(this.resolve(workspacePath), "workflows")
+    return path.join(this.resolve(workspacePath), "workflows")
   }
 
   list(workspacePath: string): WorkflowInfo[] {
@@ -47,7 +46,7 @@ export class WorkflowService {
 
     // Try execution-scoped snapshot first (for dynamic sub-workflows)
     if (executionId) {
-      const snapshotDir = path.join(workspaceSubdir(resolvedWorkspacePath, "state"), "dynamic-workflows", executionId)
+      const snapshotDir = path.join(resolvedWorkspacePath, "state", "dynamic-workflows", executionId)
       const snapshotPath = WorkflowRef.toPath(snapshotDir, ref)
 
       if (fs.existsSync(snapshotPath)) {

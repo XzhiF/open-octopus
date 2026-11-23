@@ -11,7 +11,6 @@ import { getFlag, loadFeatureFlags } from '../config/feature-flags'
 import { SuggestionEngine } from '../services/suggestion-engine'
 import { WorkspaceDAO, ExecutionDAO, TokenUsageDAO, toLedgerRows } from '../db/dao'
 import { buildTurnBoundaries, deriveTurnForTs, toEpochMs, type TurnBoundary } from '../turn-index'
-import { workspaceSubdir } from '../services/workspace-paths'
 
 // ─── Workspace Analytics Routes (default export) ───────────────────
 // Mounted at: /api/workspaces/:id/analytics
@@ -67,7 +66,7 @@ export function createAnalyticsLogRoutes(workspaceDAO: WorkspaceDAO): Hono {
 
     try {
       const wsPath = (ws.path || "").replace(/^~/, os.homedir())
-      const jsonlPath = join(workspaceSubdir(wsPath, "logs"), executionId, `${nodeId}.jsonl`)
+      const jsonlPath = join(wsPath, "logs", executionId, `${nodeId}.jsonl`)
       if (!existsSync(jsonlPath)) {
         return c.json({ events: [], status: "not_found" })
       }
@@ -108,7 +107,7 @@ export function createAnalyticsLogRoutes(workspaceDAO: WorkspaceDAO): Hono {
 
     try {
       const wsPath = (ws.path || "").replace(/^~/, os.homedir())
-      const logsDir = workspaceSubdir(wsPath, "logs")
+      const logsDir = join(wsPath, "logs")
       const stats = aggregateSwarmStats(logsDir, from, to)
       return c.json(stats)
     } catch (e: any) {

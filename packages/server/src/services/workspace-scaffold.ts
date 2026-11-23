@@ -6,13 +6,12 @@
 import fs from "fs"
 import path from "path"
 import os from "os"
-import { findWorkspaceConfigFile, workspaceConfigPath, workspaceConfigMarker, workspaceSubdir } from "./workspace-paths"
 
 /**
  * Default pipeline.yaml template — auto-generated for new workspaces.
  */
 export const DEFAULT_PIPELINE_YAML = `# Octopus Pipeline v2 配置
-# 详细说明: 参见 .octopus/pipeline-guide.md
+# 详细说明: 参见 docs/octopus/pipeline-guide.md
 #
 # 没有此文件时，引擎使用 fail_fast + 无重试的默认行为。
 # 修改后下次执行自动生效，无需重启服务。
@@ -59,24 +58,26 @@ export function workspaceGuide(): string[] {
     "",
     "```",
     "<workspace>/",
-    "├── CLAUDE.md             ← 工作空间指令（已存在则只追加管理块，不覆写）",
+    "├── CLAUDE.md             ← 工作空间指令（本文件）",
+    "├── config.json           ← 工作空间配置（名称、关联仓库、创建时间、初始分支）",
+    "├── pipeline.yaml         ← Pipeline 配置（失败策略/重试/Checkpoint，详见 docs/octopus/pipeline-guide.md）",
     "├── .claude/skills/       ← 已安装的 Claude Code Skills（从 core-pack 复制）",
-    "├── .octopus/             ← Octopus 运行时基座（不在目录根生成 config.json / pipeline.yaml）",
-    "│   ├── workspace.json      ← 工作空间配置（名称、关联仓库、创建时间、初始分支）",
-    "│   ├── pipeline.yaml       ← Pipeline 配置（失败策略/重试/Checkpoint）",
-    "│   ├── pipeline-guide.md   ← Pipeline 配置完整参考文档",
+    "├── .octopus/             ← Octopus 运行时数据",
     "│   ├── checkpoints/        ← Checkpoint 中断恢复（每 execution 一个子目录）",
-    "│   ├── code-dev-copilot-rules/ ← 代码规范模板",
-    "│   ├── projects/           ← 项目代码（每个子目录是一个 git worktree）",
-    "│   ├── workflows/          ← 工作流 YAML 定义（octopus workflow run 的执行目标）",
-    "│   ├── state/              ← 执行状态记录",
-    "│   │   ├── executions.json   ← 执行索引（所有执行的注册表）",
-    "│   │   ├── {uuid}.json       ← 单次执行结果快照（含每个节点的 status/duration/outputs）",
-    "│   │   └── {uuid}-{name}.yaml ← 工作流 YAML 快照",
-    "│   └── logs/               ← 执行日志",
-    "│       └── {uuid}/           ← 每次执行的日志目录",
-    "│           ├── {node-id}.jsonl ← 按节点 ID 命名的 JSONL 日志",
-    "│           └── final-summary.jsonl",
+    "│   └── code-dev-copilot-rules/ ← 代码规范模板",
+    "├── docs/                 ← 文档",
+    "│   └── octopus/            ← Octopus 文档",
+    "│       └── pipeline-guide.md   ← Pipeline 配置完整参考文档",
+    "├── projects/             ← 项目代码（每个子目录是一个 git worktree）",
+    "├── workflows/          ← 工作流 YAML 定义（octopus workflow run 的执行目标）",
+    "├── state/              ← 执行状态记录",
+    "│   ├── executions.json   ← 执行索引（所有执行的注册表）",
+    "│   ├── {uuid}.json       ← 单次执行结果快照（含每个节点的 status/duration/outputs）",
+    "│   └── {uuid}-{name}.yaml ← 工作流 YAML 快照",
+    "├── logs/               ← 执行日志",
+    "│   └── {uuid}/           ← 每次执行的日志目录",
+    "│       ├── {node-id}.jsonl ← 按节点 ID 命名的 JSONL 日志",
+    "│       └── final-summary.jsonl",
     "└── dependencies/       ← 外部依赖（如 agency-agents-zh 克隆）",
     "```",
     "",
@@ -87,9 +88,8 @@ export class WorkspaceScaffold {
   /** Copy built-in workflow YAML files from ~/.octopus/workflows/ to workspace. */
   copyBuiltInWorkflows(workspacePath: string): void {
     const srcDir = path.join(os.homedir(), ".octopus", "workflows")
-    const destDir = workspaceSubdir(workspacePath, "workflows")
+    const destDir = path.join(workspacePath, "workflows")
     if (!fs.existsSync(srcDir)) return
-    fs.mkdirSync(destDir, { recursive: true })
 
     const files = fs.readdirSync(srcDir).filter(f => f.endsWith('.yaml') || f.endsWith('.yml'))
     for (const file of files) {
@@ -112,12 +112,11 @@ export class WorkspaceScaffold {
     fs.writeFileSync(claudePath, lines.join("\n"), "utf-8")
   }
 
-  /** Write workspace config under .octopus/ (never at the directory root). */
+  /** Write config.json with workspace name, repos, and optional branch. */
   writeConfigJson(workspacePath: string, name: string, repos: string[], branch?: string): void {
-    if (findWorkspaceConfigFile(workspacePath)) return
-    const configPath = workspaceConfigPath(workspacePath)
+    const configPath = path.join(workspacePath, "config.json")
+    if (fs.existsSync(configPath)) return
     const config: Record<string, unknown> = {
-      ...workspaceConfigMarker(),
       name,
       repos: repos.map(r => {
         const parts = r.includes("/") ? r.split("/") : ["", r]
@@ -126,7 +125,6 @@ export class WorkspaceScaffold {
       created: new Date().toISOString(),
     }
     if (branch) config.init_branch_name = branch
-    fs.mkdirSync(path.dirname(configPath), { recursive: true })
     fs.writeFileSync(configPath, JSON.stringify(config, null, 2), "utf-8")
   }
 

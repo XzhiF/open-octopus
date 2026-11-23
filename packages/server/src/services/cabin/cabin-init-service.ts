@@ -28,37 +28,6 @@ import {
   readLocalRepoInfo, isGitRepo, projectKey, type CabinRepoEntry,
 } from "./cabin-repos"
 import { nameForRequirements, UNNAMED_CABIN_NAME } from "./cabin-naming"
-import { workspaceSubdir } from "../workspace-paths"
-
-/** Managed block markers — the only region of a pre-existing CLAUDE.md we touch. */
-export const CABIN_CLAUDE_BEGIN = "<!-- cabin:begin -->"
-export const CABIN_CLAUDE_END = "<!-- cabin:end -->"
-
-/**
- * Replace (or append) a delimited block in a markdown file, preserving the
- * user's own content. A cabin directory is often an existing repo whose
- * CLAUDE.md describes the project — clobbering it silently loses that context.
- */
-export function upsertManagedBlock(filePath: string, body: string): void {
-  let existing = ""
-  try {
-    existing = fs.readFileSync(filePath, "utf-8")
-  } catch {
-    /* new file */
-  }
-  const block = `${CABIN_CLAUDE_BEGIN}\n${body.trimEnd()}\n${CABIN_CLAUDE_END}`
-  const begin = existing.indexOf(CABIN_CLAUDE_BEGIN)
-  const end = existing.indexOf(CABIN_CLAUDE_END)
-  let next: string
-  if (begin !== -1 && end !== -1 && end > begin) {
-    next = existing.slice(0, begin) + block + existing.slice(end + CABIN_CLAUDE_END.length)
-  } else if (existing.trim().length === 0) {
-    next = `${block}\n`
-  } else {
-    next = `${existing.replace(/\s*$/, "")}\n\n${block}\n`
-  }
-  fs.writeFileSync(filePath, next, "utf-8")
-}
 
 export interface CabinInitDeps {
   cabin: CabinDAO
@@ -429,8 +398,7 @@ export class CabinInitService {
   }
 
   /** 舱目录的 CLAUDE.md：项目清单 + 只读门槛 + 开工作树的命令。
-   *  Agent 起来就读得到「哪些仓库只读、要改怎么开工作树」，不靠记忆。
-   *  已存在的 CLAUDE.md 只替换/追加 `<!-- cabin:begin -->` 管理块，绝不整文件覆写。 */
+   *  Agent 起来就读得到「哪些仓库只读、要改怎么开工作树」，不靠记忆。 */
   private writeProjectsClaudeMd(row: CabinRow, entries: CabinRepoEntry[]): void {
     const lines: string[] = [
       `# 作战舱：${row.name}`, "",
@@ -449,7 +417,7 @@ export class CabinInitService {
       lines.push(`  - 主线：${entry.mainline_branch ?? "（未探测）"}`)
       lines.push(
         `  - 要改：开工作树 —— \`git -C "${mainPath ?? ""}" worktree add ` +
-        `"${workspaceSubdir(row.path, "projects")}/<instance>/${entry.name}" -b <branch>\``,
+        `"${row.path}/projects/<instance>/${entry.name}" -b <branch>\``,
       )
     }
     lines.push(
@@ -460,7 +428,7 @@ export class CabinInitService {
       "- 任务天然在自己的 workspace 里建工作树，不会写主仓。",
       "",
     )
-    upsertManagedBlock(path.join(row.path, "CLAUDE.md"), lines.join("\n"))
+    fs.writeFileSync(path.join(row.path, "CLAUDE.md"), lines.join("\n"), "utf-8")
   }
 
   // ── persistence / streaming ────────────────────────────────────────

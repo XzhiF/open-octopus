@@ -18,12 +18,6 @@ import {
   parseManifest, parseManifestJson, findLocalRepo, cloneProject,
   type ManifestEntry,
 } from "@octopus/shared"
-import {
-  WORKSPACE_CONFIG_KIND,
-  readWorkspaceConfig,
-  updateWorkspaceConfig,
-  workspaceSubdir,
-} from "../workspace-paths"
 
 export function getOctopusHome(): string {
   return process.env.OCTOPUS_HOME ?? path.join(os.homedir(), ".octopus")
@@ -302,24 +296,34 @@ export function scanLocalProjects(root: string): LocalProjectCandidate[] {
   })
 }
 
-// ── workspace config (canonical: .octopus/workspace.json) ────────────
+// ── config.json ─────────────────────────────────────────────────────
 
 export function readCabinConfig(cabinPath: string): { name: string; repos: CabinRepoEntry[] } {
-  const raw = readWorkspaceConfig(cabinPath)
-  return {
-    name: typeof raw?.name === "string" ? raw.name : path.basename(cabinPath),
-    repos: raw && Array.isArray(raw.repos) ? (raw.repos as CabinRepoEntry[]) : [],
+  const configPath = path.join(cabinPath, "config.json")
+  try {
+    const raw = JSON.parse(fs.readFileSync(configPath, "utf-8")) as { name?: string; repos?: unknown }
+    return {
+      name: typeof raw.name === "string" ? raw.name : path.basename(cabinPath),
+      repos: Array.isArray(raw.repos) ? (raw.repos as CabinRepoEntry[]) : [],
+    }
+  } catch {
+    return { name: path.basename(cabinPath), repos: [] }
   }
 }
 
-/** Merge repo entries into the workspace config (preserves other keys). Atomic write. */
+/** Merge repo entries into config.json (preserves other keys). Atomic write. */
 export function writeCabinConfigRepos(cabinPath: string, repos: CabinRepoEntry[]): void {
-  updateWorkspaceConfig(cabinPath, (config) => {
-    config.kind ??= WORKSPACE_CONFIG_KIND
-    if (typeof config.name !== "string") config.name = path.basename(cabinPath)
-    if (typeof config.created !== "string") config.created = new Date().toISOString()
-    config.repos = repos
-  })
+  const configPath = path.join(cabinPath, "config.json")
+  let config: Record<string, unknown> = {}
+  try {
+    config = JSON.parse(fs.readFileSync(configPath, "utf-8")) as Record<string, unknown>
+  } catch {
+    config = { name: path.basename(cabinPath), created: new Date().toISOString() }
+  }
+  config.repos = repos
+  const tmp = `${configPath}.tmp`
+  fs.writeFileSync(tmp, JSON.stringify(config, null, 2), "utf-8")
+  fs.renameSync(tmp, configPath)
 }
 
 function stripUndefined<T extends object>(value: T): T {
@@ -390,11 +394,10 @@ function safeSegment(raw: string, fallback: string): string {
 
 export function worktreeDirFor(cabinPath: string, name: string, instance?: string): string {
   const safeName = safeSegment(name, "repo")
-  const projectsDir = workspaceSubdir(cabinPath, "projects")
   if (instance && instance.trim() !== "") {
-    return path.join(projectsDir, safeSegment(instance, "wt"), safeName)
+    return path.join(cabinPath, "projects", safeSegment(instance, "wt"), safeName)
   }
-  return path.join(projectsDir, safeName)
+  return path.join(cabinPath, "projects", safeName)
 }
 
 // ── 克隆 ────────────────────────────────────────────────────────────

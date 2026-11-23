@@ -7,7 +7,6 @@ import { KnowledgeEffectivenessDAO } from "../../db/dao/knowledge-effectiveness-
 import { resolveKnowledgeRoot, WIKI_PAGE_DIRS } from "./global-paths"
 import { pageLedgerStem } from "./page-stem"
 import { ruleLinesForFormCheck } from "./wiki/lint"
-import { workspaceSubdir } from "../workspace-paths"
 
 /**
  * EffectivenessLedgerService — P4 票06「effectiveness 记账解析器」（spec 故事 1/6/7）。
@@ -265,7 +264,7 @@ export class EffectivenessLedgerService {
   private readPageKeys(exec: PendingExecution): string[] {
     if (!exec.ws_path) return []
     const wsPath = exec.ws_path.replace(/^~/, os.homedir())
-    const logDir = path.join(workspaceSubdir(wsPath, "logs"), exec.id)
+    const logDir = path.join(wsPath, "logs", exec.id)
     let files: string[]
     try {
       files = fs.readdirSync(logDir).filter(f => f.endsWith(".jsonl"))

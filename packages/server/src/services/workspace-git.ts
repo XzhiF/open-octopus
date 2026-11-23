@@ -7,7 +7,6 @@ import fs from "fs"
 import path from "path"
 import os from "os"
 import { workspaceGuide } from "./workspace-scaffold"
-import { updateWorkspaceConfig, workspaceSubdir } from "./workspace-paths"
 
 /** Escape a literal string for safe interpolation into a RegExp source. */
 function escapeRegex(s: string): string {
@@ -87,8 +86,7 @@ export class WorkspaceGit {
   ): { created: number; failed: string[] } {
     const failed: string[] = []
     const { spawnSync } = require("child_process") as typeof import("child_process")
-    const projectsDir = workspaceSubdir(workspacePath, "projects")
-    fs.mkdirSync(projectsDir, { recursive: true })
+    const projectsDir = path.join(workspacePath, "projects")
     const entries: { name: string; group: string; main_path: string; worktree_path: string }[] = []
 
     for (const spec of repoSpecs) {
@@ -186,8 +184,7 @@ export class WorkspaceGit {
     opts: { clobber?: boolean; worktreePath?: string } = {},
   ): SpecWorktreeEntry {
     const { spawnSync } = require("child_process") as typeof import("child_process")
-    const projectsDir = workspaceSubdir(workspacePath, "projects")
-    fs.mkdirSync(projectsDir, { recursive: true })
+    const projectsDir = path.join(workspacePath, "projects")
 
     // Explicit source_path wins; empty → repos/index.md lookup by name (+group).
     const rawSource = proj.source_path ?? ""
@@ -255,12 +252,13 @@ export class WorkspaceGit {
     wsName: string,
   ): void {
     if (entries.length === 0) return
-    updateWorkspaceConfig(workspacePath, (config) => {
-      config.repos = entries.map(e => ({
-        name: e.name, main_path: e.main_path, worktree_path: e.worktree_path, branch: e.branch,
-        ...(e.group ? { group: e.group } : {}),
-      }))
-    })
+    const configPath = path.join(workspacePath, "config.json")
+    const config = JSON.parse(fs.readFileSync(configPath, "utf-8"))
+    config.repos = entries.map(e => ({
+      name: e.name, main_path: e.main_path, worktree_path: e.worktree_path, branch: e.branch,
+      ...(e.group ? { group: e.group } : {}),
+    }))
+    fs.writeFileSync(configPath, JSON.stringify(config, null, 2), "utf-8")
 
     const claudeLines = [
       `# 工作空间: ${wsName}`, "",
@@ -278,9 +276,10 @@ export class WorkspaceGit {
     workspacePath: string,
     entries: { name: string; group: string; main_path: string; worktree_path: string }[],
   ): void {
-    updateWorkspaceConfig(workspacePath, (config) => {
-      config.repos = entries.map(e => ({ name: e.name, group: e.group, main_path: e.main_path, worktree_path: e.worktree_path }))
-    })
+    const configPath = path.join(workspacePath, "config.json")
+    const config = JSON.parse(fs.readFileSync(configPath, "utf-8"))
+    config.repos = entries.map(e => ({ name: e.name, group: e.group, main_path: e.main_path, worktree_path: e.worktree_path }))
+    fs.writeFileSync(configPath, JSON.stringify(config, null, 2), "utf-8")
   }
 
   private writeProjectClaudeMd(

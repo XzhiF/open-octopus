@@ -14,7 +14,6 @@
 import fs from "fs"
 import path from "path"
 import { QUICK_EDIT_MARKER, TAKEOVER_EDIT_MARKER, gitOps } from "../git-ops"
-import { workspaceSubdir } from "../workspace-paths"
 
 export interface QuickEditCommit {
   repo: string
@@ -50,7 +49,7 @@ export interface CommitWorkspaceEditsInput {
 export async function commitWorkspaceEdits(
   input: CommitWorkspaceEditsInput,
 ): Promise<QuickEditCommit[]> {
-  const projectsDir = workspaceSubdir(input.wsPath, "projects")
+  const projectsDir = path.join(input.wsPath, "projects")
   let names: string[]
   try {
     names = fs.readdirSync(projectsDir)

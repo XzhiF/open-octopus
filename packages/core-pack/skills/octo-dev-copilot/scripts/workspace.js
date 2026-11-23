@@ -263,20 +263,6 @@ function parseRepos(configFile) {
     return [];
   }
 }
-function workspaceConfigFile(wsDir) {
-  const canonical = path.join(wsDir, ".octopus", "workspace.json");
-  if (fs.existsSync(canonical)) return canonical;
-  const legacy = path.join(wsDir, "config.json");
-  if (fs.existsSync(legacy)) return legacy;
-  return canonical;
-}
-function writeWorkspaceConfigFile(configFile, data) {
-  fs.mkdirSync(path.dirname(configFile), { recursive: true });
-  fs.writeFileSync(configFile, JSON.stringify(data, null, 2), "utf-8");
-}
-function runtimeBase(wsDir) {
-  return workspaceConfigFile(wsDir) === path.join(wsDir, "config.json") ? wsDir : path.join(wsDir, ".octopus");
-}
 function worktreeDirName(group, name) {
   return `${group}-${name}`;
 }
@@ -430,19 +416,17 @@ function workspaceGuide() {
     "",
     "```",
     "<workspace>/",
-    "\u251C\u2500\u2500 CLAUDE.md           \u2190 \u5DE5\u4F5C\u7A7A\u95F4\u6307\u4EE4\uFF08\u5DF2\u5B58\u5728\u5219\u53EA\u8FFD\u52A0\u7BA1\u7406\u5757\uFF0C\u4E0D\u8986\u5199\uFF09",
-    "\u251C\u2500\u2500 .octopus/           \u2190 Octopus \u8FD0\u884C\u65F6\u57FA\u5EA7\uFF08\u4E0D\u5728\u76EE\u5F55\u6839\u751F\u6210 config.json / pipeline.yaml\uFF09",
-    "\u2502   \u251C\u2500\u2500 workspace.json    \u2190 \u5DE5\u4F5C\u7A7A\u95F4\u914D\u7F6E\uFF08\u540D\u79F0\u3001\u5173\u8054\u4ED3\u5E93\u3001\u521B\u5EFA\u65F6\u95F4\u3001\u521D\u59CB\u5206\u652F\uFF09",
-    "\u2502   \u251C\u2500\u2500 pipeline.yaml     \u2190 Pipeline \u914D\u7F6E",
-    "\u2502   \u251C\u2500\u2500 projects/         \u2190 \u9879\u76EE\u4EE3\u7801\uFF08\u6BCF\u4E2A\u5B50\u76EE\u5F55\u662F\u4E00\u4E2A git worktree\uFF09",
-    "\u2502   \u251C\u2500\u2500 workflows/        \u2190 \u5DE5\u4F5C\u6D41 YAML \u5B9A\u4E49\uFF08octopus workflow run \u7684\u6267\u884C\u76EE\u6807\uFF09",
-    "\u2502   \u251C\u2500\u2500 state/            \u2190 \u6267\u884C\u72B6\u6001\u8BB0\u5F55",
-    "\u2502   \u2502   \u251C\u2500\u2500 executions.json   \u2190 \u6267\u884C\u7D22\u5F15\uFF08\u6240\u6709\u6267\u884C\u7684\u6CE8\u518C\u8868\uFF09",
-    "\u2502   \u2502   \u251C\u2500\u2500 {uuid}.json       \u2190 \u5355\u6B21\u6267\u884C\u7ED3\u679C\u5FEB\u7167\uFF08\u542B\u6BCF\u4E2A\u8282\u70B9\u7684 status/duration/outputs\uFF09",
-    "\u2502   \u2502   \u2514\u2500\u2500 {uuid}-{name}.yaml \u2190 \u5DE5\u4F5C\u6D41 YAML \u5FEB\u7167",
-    "\u2502   \u2514\u2500\u2500 logs/             \u2190 \u6267\u884C\u65E5\u5FD7",
-    "\u2502       \u2514\u2500\u2500 {uuid}/         \u2190 \u6BCF\u6B21\u6267\u884C\u7684\u65E5\u5FD7\u76EE\u5F55",
+    "\u251C\u2500\u2500 CLAUDE.md           \u2190 \u5DE5\u4F5C\u7A7A\u95F4\u6307\u4EE4\uFF08\u672C\u6587\u4EF6\uFF09",
+    "\u251C\u2500\u2500 config.json         \u2190 \u5DE5\u4F5C\u7A7A\u95F4\u914D\u7F6E\uFF08\u540D\u79F0\u3001\u5173\u8054\u4ED3\u5E93\u3001\u521B\u5EFA\u65F6\u95F4\u3001\u521D\u59CB\u5206\u652F\uFF09",
     "\u251C\u2500\u2500 .claude/skills/     \u2190 \u5DF2\u5B89\u88C5\u7684 Claude Code Skills\uFF08\u4ECE core-pack \u590D\u5236\uFF09",
+    "\u251C\u2500\u2500 projects/           \u2190 \u9879\u76EE\u4EE3\u7801\uFF08\u6BCF\u4E2A\u5B50\u76EE\u5F55\u662F\u4E00\u4E2A git worktree\uFF09",
+    "\u251C\u2500\u2500 workflows/          \u2190 \u5DE5\u4F5C\u6D41 YAML \u5B9A\u4E49\uFF08octopus workflow run \u7684\u6267\u884C\u76EE\u6807\uFF09",
+    "\u251C\u2500\u2500 state/              \u2190 \u6267\u884C\u72B6\u6001\u8BB0\u5F55",
+    "\u2502   \u251C\u2500\u2500 executions.json   \u2190 \u6267\u884C\u7D22\u5F15\uFF08\u6240\u6709\u6267\u884C\u7684\u6CE8\u518C\u8868\uFF09",
+    "\u2502   \u251C\u2500\u2500 {uuid}.json       \u2190 \u5355\u6B21\u6267\u884C\u7ED3\u679C\u5FEB\u7167\uFF08\u542B\u6BCF\u4E2A\u8282\u70B9\u7684 status/duration/outputs\uFF09",
+    "\u2502   \u2514\u2500\u2500 {uuid}-{name}.yaml \u2190 \u5DE5\u4F5C\u6D41 YAML \u5FEB\u7167",
+    "\u251C\u2500\u2500 logs/               \u2190 \u6267\u884C\u65E5\u5FD7",
+    "\u2502   \u2514\u2500\u2500 {uuid}/           \u2190 \u6BCF\u6B21\u6267\u884C\u7684\u65E5\u5FD7\u76EE\u5F55",
     "\u2502       \u251C\u2500\u2500 {node-id}.jsonl \u2190 \u6309\u8282\u70B9 ID \u547D\u540D\u7684 JSONL \u65E5\u5FD7",
     "\u2502       \u2514\u2500\u2500 final-summary.jsonl",
     "\u2514\u2500\u2500 dependencies/       \u2190 \u5916\u90E8\u4F9D\u8D56\uFF08\u5982 agency-agents-zh \u514B\u9686\uFF09",
@@ -527,7 +511,7 @@ function writeClaudeMd(wsDir, wsName, repos) {
   let branchInfo = "";
   try {
     const data = JSON.parse(
-      fs.readFileSync(workspaceConfigFile(wsDir), "utf-8")
+      fs.readFileSync(path.join(wsDir, "config.json"), "utf-8")
     );
     branchInfo = data.branch || "";
   } catch {
@@ -549,7 +533,7 @@ function cmdInit(wsName, repos, org, serverUrl, overrideBranch) {
   }
   const branchName = overrideBranch || wsName;
   const wsDir = path.join(workspaceRoot, wsName);
-  const configFile = workspaceConfigFile(wsDir);
+  const configFile = path.join(wsDir, "config.json");
   const dirExisted = fs.existsSync(wsDir);
   if (dirExisted) {
     if (fs.existsSync(configFile)) {
@@ -600,7 +584,7 @@ function cmdInit(wsName, repos, org, serverUrl, overrideBranch) {
     if (!dirExisted) {
       fs.rmSync(wsDir, { recursive: true, force: true });
     } else {
-      const projectsDir = path.join(runtimeBase(wsDir), "projects");
+      const projectsDir = path.join(wsDir, "projects");
       if (fs.existsSync(projectsDir)) {
         fs.rmSync(projectsDir, { recursive: true, force: true });
       }
@@ -613,7 +597,11 @@ function cmdInit(wsName, repos, org, serverUrl, overrideBranch) {
     created: (/* @__PURE__ */ new Date()).toISOString(),
     init_branch_name: branchName
   };
-  writeWorkspaceConfigFile(configFile, configData);
+  fs.writeFileSync(
+    configFile,
+    JSON.stringify(configData, null, 2),
+    "utf-8"
+  );
   writeClaudeMd(wsDir, wsName, entries);
   copySkills(wsDir);
   copyAgents(wsDir);
@@ -644,7 +632,7 @@ function cmdAdd(wsName, repo, org, serverUrl) {
     console.error(`ERROR: \u5DE5\u4F5C\u7A7A\u95F4 ${wsName} \u4E0D\u5B58\u5728`);
     process.exit(1);
   }
-  const configFile = workspaceConfigFile(wsDir);
+  const configFile = path.join(wsDir, "config.json");
   const data = JSON.parse(fs.readFileSync(configFile, "utf-8"));
   const existingRepos = data.repos;
   const existingNames = existingRepos.map((r) => r.name);
@@ -676,7 +664,11 @@ function cmdAdd(wsName, repo, org, serverUrl) {
   };
   const updatedRepos = [...existingRepos, newEntry];
   const updatedData = { ...data, repos: updatedRepos };
-  writeWorkspaceConfigFile(configFile, updatedData);
+  fs.writeFileSync(
+    configFile,
+    JSON.stringify(updatedData, null, 2),
+    "utf-8"
+  );
   writeClaudeMd(wsDir, wsName, updatedRepos);
   console.log(`\u2705 \u5DF2\u6DFB\u52A0 ${wtName} \u5230\u5DE5\u4F5C\u7A7A\u95F4 ${wsName}`);
   console.log(`   worktree: ${wtPath}`);
@@ -700,7 +692,7 @@ function cmdRemove(wsName, repo, org, serverUrl) {
     console.error(`ERROR: \u5DE5\u4F5C\u7A7A\u95F4 ${wsName} \u4E0D\u5B58\u5728`);
     process.exit(1);
   }
-  const configFile = workspaceConfigFile(wsDir);
+  const configFile = path.join(wsDir, "config.json");
   const data = JSON.parse(fs.readFileSync(configFile, "utf-8"));
   const existingRepos = data.repos;
   const target = existingRepos.find(
@@ -718,7 +710,11 @@ function cmdRemove(wsName, repo, org, serverUrl) {
   }
   const updatedRepos = existingRepos.filter((r) => r !== target);
   const updatedData = { ...data, repos: updatedRepos };
-  writeWorkspaceConfigFile(configFile, updatedData);
+  fs.writeFileSync(
+    configFile,
+    JSON.stringify(updatedData, null, 2),
+    "utf-8"
+  );
   writeClaudeMd(wsDir, wsName, updatedRepos);
   console.log(`\u2705 \u5DF2\u79FB\u9664 ${wtName} \u4ECE\u5DE5\u4F5C\u7A7A\u95F4 ${wsName}`);
   if (serverUrl) {
@@ -741,7 +737,7 @@ function cmdDestroy(wsName, org, serverUrl) {
     console.error(`ERROR: \u5DE5\u4F5C\u7A7A\u95F4 ${wsName} \u4E0D\u5B58\u5728`);
     process.exit(1);
   }
-  const configFile = workspaceConfigFile(wsDir);
+  const configFile = path.join(wsDir, "config.json");
   if (!fs.existsSync(configFile)) {
     fs.rmSync(wsDir, { recursive: true, force: true });
     console.log(`\u2705 \u5DF2\u5220\u9664\u5DE5\u4F5C\u7A7A\u95F4\u76EE\u5F55 ${wsDir}`);
@@ -773,7 +769,7 @@ function cmdStatus(wsName, org) {
     process.exit(1);
   }
   console.log(`=== \u5DE5\u4F5C\u7A7A\u95F4: ${wsName} ===`);
-  const repos = parseRepos(workspaceConfigFile(wsDir));
+  const repos = parseRepos(path.join(wsDir, "config.json"));
   for (const r of repos) {
     const wtPath = r.worktree_path || r.path || "";
     const wtName = worktreeDirName(r.group, r.name);
@@ -816,7 +812,7 @@ function cmdBranch(wsName, branchName, org, serverUrl) {
     process.exit(1);
   }
   console.log(`=== \u4E3A\u5DE5\u4F5C\u7A7A\u95F4 ${wsName} \u5728 worktree \u4E0A\u521B\u5EFA\u5206\u652F ${branchName} ===`);
-  const repos = parseRepos(workspaceConfigFile(wsDir));
+  const repos = parseRepos(path.join(wsDir, "config.json"));
   for (const r of repos) {
     const wtPath = r.worktree_path || r.path || "";
     const wtName = worktreeDirName(r.group, r.name);
@@ -855,10 +851,14 @@ function cmdBranch(wsName, branchName, org, serverUrl) {
       }
     }
   }
-  const configFile = workspaceConfigFile(wsDir);
+  const configFile = path.join(wsDir, "config.json");
   const data = JSON.parse(fs.readFileSync(configFile, "utf-8"));
   const updatedData = { ...data, branch: branchName };
-  writeWorkspaceConfigFile(configFile, updatedData);
+  fs.writeFileSync(
+    configFile,
+    JSON.stringify(updatedData, null, 2),
+    "utf-8"
+  );
   const reposList = updatedData.repos;
   writeClaudeMd(wsDir, wsName, reposList);
   console.log();
@@ -883,7 +883,7 @@ function cmdList(org) {
   const entries = fs.readdirSync(workspaceRoot).sort();
   for (const wsName of entries) {
     const wsDir = path.join(workspaceRoot, wsName);
-    const configFile = workspaceConfigFile(wsDir);
+    const configFile = path.join(wsDir, "config.json");
     if (!fs.existsSync(configFile)) {
       continue;
     }
@@ -912,7 +912,7 @@ function cmdDiff(wsName, org) {
     process.exit(1);
   }
   console.log(`=== \u5DE5\u4F5C\u7A7A\u95F4 ${wsName} \u2014 \u53D8\u66F4\u6458\u8981 ===`);
-  const repos = parseRepos(workspaceConfigFile(wsDir));
+  const repos = parseRepos(path.join(wsDir, "config.json"));
   for (const r of repos) {
     const wtPath = r.worktree_path || r.path || "";
     const wtName = worktreeDirName(r.group, r.name);

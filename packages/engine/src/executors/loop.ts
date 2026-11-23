@@ -588,7 +588,6 @@ export class LoopExecutor implements NodeExecutor {
         return new SubWorkflowExecutor(node, p, {
           providers: this.config.providers,
           cwd: this.config.cwd,
-          runtimeDir: this.config.runtimeDir,
           signal: this.config.signal,
           callbacks: this.config.callbacks,
           logger: this.config.logger,
@@ -615,7 +614,6 @@ export class LoopExecutor implements NodeExecutor {
         return new DynamicSubWorkflowExecutor(node, p, {
           providers: this.config.providers,
           cwd: this.config.cwd,
-          runtimeDir: this.config.runtimeDir,
           signal: this.config.signal,
           callbacks: this.config.callbacks,
           logger: this.config.logger,
@@ -635,7 +633,7 @@ export class LoopExecutor implements NodeExecutor {
               iterationIndex: meta?.iterationIndex ?? (this.iterations - 1),
             })
           },
-          outputDir: join(this.config.runtimeDir ?? this.config.cwd, "workflows"),
+          outputDir: join(this.config.cwd, "workflows"),
           workflow: (this.config as any).workflow,
           identityResolver: this.config.identityResolver,
         })

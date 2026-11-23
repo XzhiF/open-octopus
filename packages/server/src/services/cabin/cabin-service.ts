@@ -28,7 +28,6 @@ import { isStreamActive } from "../agent/agent-service"
 import { UNNAMED_CABIN_NAME } from "./cabin-naming"
 import { gitOps } from "../git-ops"
 import { WorkspaceGit, type SpecWorktreeEntry } from "../workspace-git"
-import { readWorkspaceConfig } from "../workspace-paths"
 import { deriveTaskView } from "../tasks/derive-task-view"
 import type { RoundEvidenceService } from "../tasks/round-evidence-service"
 import type { IncidentStore } from "../supervision/incident-store"
@@ -1437,9 +1436,15 @@ export class CabinService {
     const ws = db.prepare("SELECT path FROM workspaces WHERE id = ?").get(exec.workspace_id) as
       { path?: string } | undefined
     if (!ws?.path) return []
-    // workspace 的项目登记在磁盘 workspace 配置（表里没有 config 列）。
-    const raw = readWorkspaceConfig(ws.path) as { repos?: Array<{ name?: string }> } | null
-    const names: string[] = (raw?.repos ?? []).map((r) => r.name ?? "").filter(Boolean)
+    // workspace 的项目登记在磁盘 config.json（表里没有 config 列）。
+    let names: string[] = []
+    try {
+      const raw = JSON.parse(fs.readFileSync(path.join(ws.path, "config.json"), "utf-8")) as
+        { repos?: Array<{ name?: string }> }
+      names = (raw.repos ?? []).map((r) => r.name ?? "").filter(Boolean)
+    } catch {
+      return []
+    }
     const keys = projects
       .filter((entry) => names.includes(entry.name) || names.includes(entry.repoName ?? ""))
       .map(projectKey)

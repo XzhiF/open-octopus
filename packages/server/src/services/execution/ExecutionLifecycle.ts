@@ -36,7 +36,6 @@ import { ResourcePreFlight } from "../resource-preflight"
 import { ResourceProvisioner } from "../resource-provisioner"
 import { getResourceRegistry } from "../resource-registry"
 import { SupervisionService } from "../supervision/supervision-service"
-import { readWorkspaceConfig, resolvePipelineConfigPath, workspaceSubdir } from "../workspace-paths"
 
 export class ExecutionLifecycle {
   private enginePool: EnginePool
@@ -193,7 +192,7 @@ export class ExecutionLifecycle {
     const wf = this.getWorkflow(exec.workflow_ref)
     if (!wf) throw Object.assign(new Error("Workflow not found"), { status: 404 })
 
-    const stateDir = workspaceSubdir(this.workspacePath, "state")
+    const stateDir = join(this.workspacePath, "state")
     if (!existsSync(stateDir)) mkdirSync(stateDir, { recursive: true })
     const snapshotName = `${id}-${WorkflowRef.sanitize(exec.workflow_ref)}`
     writeFileSync(join(stateDir, snapshotName), wf.content, "utf-8")
@@ -293,7 +292,7 @@ export class ExecutionLifecycle {
       this.dao.updateExecution(id, { pipeline_config: JSON.stringify(pipelineConfig) })
       const checkpointDir = join(this.workspacePath, ".octopus", "checkpoints")
       const checkpointStore = new FilesystemCheckpointStore(checkpointDir, pipelineConfig.checkpoint)
-      const pipelinePath = resolvePipelineConfigPath(this.workspacePath)
+      const pipelinePath = join(this.workspacePath, "pipeline.yaml")
       engine.setPipelineConfig(pipelineConfig, checkpointStore, pipelinePath)
 
       try {
@@ -1162,10 +1161,13 @@ export class ExecutionLifecycle {
   computeBranch(workspaceId: string, parentId: string | null | undefined, nodeType: string, newExecId: string): string | null {
     const isRoot = !parentId || parentId === "0"
     if (isRoot) {
-      const config = readWorkspaceConfig(this.workspacePath)
-      const initBranch = typeof config?.init_branch_name === "string" ? config.init_branch_name : undefined
-      const branch = typeof config?.branch === "string" ? config.branch : undefined
-      return initBranch || branch || "main"
+      const configPath = join(this.workspacePath, "config.json")
+      try {
+        const config = JSON.parse(readFileSync(configPath, "utf-8"))
+        return config.init_branch_name || config.branch || "main"
+      } catch {
+        return "main"
+      }
     }
     const parent = this.dao.findById(parentId!)
     if (!parent || parent.workspace_id !== workspaceId) {
@@ -1363,7 +1365,7 @@ export class ExecutionLifecycle {
   }
 
   private loadPipelineConfig(): PipelineConfig {
-    const pipelinePath = resolvePipelineConfigPath(this.workspacePath)
+    const pipelinePath = join(this.workspacePath, "pipeline.yaml")
     if (!existsSync(pipelinePath)) {
       return parsePipelineConfig({ apiVersion: "octopus/v1", kind: "Pipeline" })
     }

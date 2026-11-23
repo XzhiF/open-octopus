@@ -327,27 +327,6 @@ function parseRepos(configFile: string): RepoEntry[] {
   }
 }
 
-/** Workspace config lives under .octopus/workspace.json; legacy root config.json is read-only fallback. */
-function workspaceConfigFile(wsDir: string): string {
-  const canonical = path.join(wsDir, ".octopus", "workspace.json");
-  if (fs.existsSync(canonical)) return canonical;
-  const legacy = path.join(wsDir, "config.json");
-  if (fs.existsSync(legacy)) return legacy;
-  return canonical;
-}
-
-function writeWorkspaceConfigFile(configFile: string, data: ConfigData): void {
-  fs.mkdirSync(path.dirname(configFile), { recursive: true });
-  fs.writeFileSync(configFile, JSON.stringify(data, null, 2), "utf-8");
-}
-
-/** Runtime dirs (projects/workflows/logs/state) follow the layout of the config file. */
-function runtimeBase(wsDir: string): string {
-  return workspaceConfigFile(wsDir) === path.join(wsDir, "config.json")
-    ? wsDir
-    : path.join(wsDir, ".octopus");
-}
-
 function worktreeDirName(group: string, name: string): string {
   return `${group}-${name}`;
 }
@@ -534,19 +513,17 @@ function workspaceGuide(): string[] {
     "",
     "```",
     "<workspace>/",
-    "├── CLAUDE.md           ← 工作空间指令（已存在则只追加管理块，不覆写）",
-    "├── .octopus/           ← Octopus 运行时基座（不在目录根生成 config.json / pipeline.yaml）",
-    "│   ├── workspace.json    ← 工作空间配置（名称、关联仓库、创建时间、初始分支）",
-    "│   ├── pipeline.yaml     ← Pipeline 配置",
-    "│   ├── projects/         ← 项目代码（每个子目录是一个 git worktree）",
-    "│   ├── workflows/        ← 工作流 YAML 定义（octopus workflow run 的执行目标）",
-    "│   ├── state/            ← 执行状态记录",
-    "│   │   ├── executions.json   ← 执行索引（所有执行的注册表）",
-    "│   │   ├── {uuid}.json       ← 单次执行结果快照（含每个节点的 status/duration/outputs）",
-    "│   │   └── {uuid}-{name}.yaml ← 工作流 YAML 快照",
-    "│   └── logs/             ← 执行日志",
-    "│       └── {uuid}/         ← 每次执行的日志目录",
+    "├── CLAUDE.md           ← 工作空间指令（本文件）",
+    "├── config.json         ← 工作空间配置（名称、关联仓库、创建时间、初始分支）",
     "├── .claude/skills/     ← 已安装的 Claude Code Skills（从 core-pack 复制）",
+    "├── projects/           ← 项目代码（每个子目录是一个 git worktree）",
+    "├── workflows/          ← 工作流 YAML 定义（octopus workflow run 的执行目标）",
+    "├── state/              ← 执行状态记录",
+    "│   ├── executions.json   ← 执行索引（所有执行的注册表）",
+    "│   ├── {uuid}.json       ← 单次执行结果快照（含每个节点的 status/duration/outputs）",
+    "│   └── {uuid}-{name}.yaml ← 工作流 YAML 快照",
+    "├── logs/               ← 执行日志",
+    "│   └── {uuid}/           ← 每次执行的日志目录",
     "│       ├── {node-id}.jsonl ← 按节点 ID 命名的 JSONL 日志",
     "│       └── final-summary.jsonl",
     "└── dependencies/       ← 外部依赖（如 agency-agents-zh 克隆）",
@@ -637,7 +614,7 @@ function writeClaudeMd(wsDir: string, wsName: string, repos: RepoEntry[]): void 
   let branchInfo = "";
   try {
     const data: ConfigData = JSON.parse(
-      fs.readFileSync(workspaceConfigFile(wsDir), "utf-8")
+      fs.readFileSync(path.join(wsDir, "config.json"), "utf-8")
     );
     branchInfo = data.branch || "";
   } catch {
@@ -667,7 +644,7 @@ function cmdInit(wsName: string, repos: string[], org: string, serverUrl?: strin
   const branchName = overrideBranch || wsName;
 
   const wsDir = path.join(workspaceRoot, wsName);
-  const configFile = workspaceConfigFile(wsDir);
+  const configFile = path.join(wsDir, "config.json");
   const dirExisted = fs.existsSync(wsDir);
 
   if (dirExisted) {
@@ -730,7 +707,7 @@ function cmdInit(wsName: string, repos: string[], org: string, serverUrl?: strin
     if (!dirExisted) {
       fs.rmSync(wsDir, { recursive: true, force: true });
     } else {
-      const projectsDir = path.join(runtimeBase(wsDir), "projects");
+      const projectsDir = path.join(wsDir, "projects");
       if (fs.existsSync(projectsDir)) {
         fs.rmSync(projectsDir, { recursive: true, force: true });
       }
@@ -744,7 +721,11 @@ function cmdInit(wsName: string, repos: string[], org: string, serverUrl?: strin
     created: new Date().toISOString(),
     init_branch_name: branchName,
   };
-  writeWorkspaceConfigFile(configFile, configData);
+  fs.writeFileSync(
+    configFile,
+    JSON.stringify(configData, null, 2),
+    "utf-8"
+  );
 
   writeClaudeMd(wsDir, wsName, entries);
 
@@ -782,7 +763,7 @@ function cmdAdd(wsName: string, repo: string, org: string, serverUrl?: string): 
     process.exit(1);
   }
 
-  const configFile = workspaceConfigFile(wsDir);
+  const configFile = path.join(wsDir, "config.json");
   const data: ConfigData = JSON.parse(fs.readFileSync(configFile, "utf-8"));
   const existingRepos = data.repos;
 
@@ -819,7 +800,11 @@ function cmdAdd(wsName: string, repo: string, org: string, serverUrl?: string): 
 
   const updatedRepos = [...existingRepos, newEntry];
   const updatedData: ConfigData = { ...data, repos: updatedRepos };
-  writeWorkspaceConfigFile(configFile, updatedData);
+  fs.writeFileSync(
+    configFile,
+    JSON.stringify(updatedData, null, 2),
+    "utf-8"
+  );
 
   writeClaudeMd(wsDir, wsName, updatedRepos);
 
@@ -850,7 +835,7 @@ function cmdRemove(wsName: string, repo: string, org: string, serverUrl?: string
     process.exit(1);
   }
 
-  const configFile = workspaceConfigFile(wsDir);
+  const configFile = path.join(wsDir, "config.json");
   const data: ConfigData = JSON.parse(fs.readFileSync(configFile, "utf-8"));
   const existingRepos = data.repos;
 
@@ -872,7 +857,11 @@ function cmdRemove(wsName: string, repo: string, org: string, serverUrl?: string
 
   const updatedRepos = existingRepos.filter((r) => r !== target);
   const updatedData: ConfigData = { ...data, repos: updatedRepos };
-  writeWorkspaceConfigFile(configFile, updatedData);
+  fs.writeFileSync(
+    configFile,
+    JSON.stringify(updatedData, null, 2),
+    "utf-8"
+  );
 
   writeClaudeMd(wsDir, wsName, updatedRepos);
 
@@ -902,7 +891,7 @@ function cmdDestroy(wsName: string, org: string, serverUrl?: string): void {
     process.exit(1);
   }
 
-  const configFile = workspaceConfigFile(wsDir);
+  const configFile = path.join(wsDir, "config.json");
   if (!fs.existsSync(configFile)) {
     fs.rmSync(wsDir, { recursive: true, force: true });
     console.log(`✅ 已删除工作空间目录 ${wsDir}`);
@@ -942,7 +931,7 @@ function cmdStatus(wsName: string, org: string): void {
 
   console.log(`=== 工作空间: ${wsName} ===`);
 
-  const repos = parseRepos(workspaceConfigFile(wsDir));
+  const repos = parseRepos(path.join(wsDir, "config.json"));
   for (const r of repos) {
     const wtPath = r.worktree_path || (r as any).path || "";
     const wtName = worktreeDirName(r.group, r.name);
@@ -997,7 +986,7 @@ function cmdBranch(wsName: string, branchName: string, org: string, serverUrl?: 
 
   console.log(`=== 为工作空间 ${wsName} 在 worktree 上创建分支 ${branchName} ===`);
 
-  const repos = parseRepos(workspaceConfigFile(wsDir));
+  const repos = parseRepos(path.join(wsDir, "config.json"));
   for (const r of repos) {
     const wtPath = r.worktree_path || (r as any).path || "";
     const wtName = worktreeDirName(r.group, r.name);
@@ -1042,10 +1031,14 @@ function cmdBranch(wsName: string, branchName: string, org: string, serverUrl?: 
     }
   }
 
-  const configFile = workspaceConfigFile(wsDir);
+  const configFile = path.join(wsDir, "config.json");
   const data: ConfigData = JSON.parse(fs.readFileSync(configFile, "utf-8"));
   const updatedData: ConfigData = { ...data, branch: branchName };
-  writeWorkspaceConfigFile(configFile, updatedData);
+  fs.writeFileSync(
+    configFile,
+    JSON.stringify(updatedData, null, 2),
+    "utf-8"
+  );
 
   const reposList = updatedData.repos;
   writeClaudeMd(wsDir, wsName, reposList);
@@ -1077,7 +1070,7 @@ function cmdList(org: string): void {
   const entries = fs.readdirSync(workspaceRoot).sort();
   for (const wsName of entries) {
     const wsDir = path.join(workspaceRoot, wsName);
-    const configFile = workspaceConfigFile(wsDir);
+    const configFile = path.join(wsDir, "config.json");
     if (!fs.existsSync(configFile)) {
       continue;
     }
@@ -1110,7 +1103,7 @@ function cmdDiff(wsName: string, org: string): void {
 
   console.log(`=== 工作空间 ${wsName} — 变更摘要 ===`);
 
-  const repos = parseRepos(workspaceConfigFile(wsDir));
+  const repos = parseRepos(path.join(wsDir, "config.json"));
   for (const r of repos) {
     const wtPath = r.worktree_path || (r as any).path || "";
     const wtName = worktreeDirName(r.group, r.name);

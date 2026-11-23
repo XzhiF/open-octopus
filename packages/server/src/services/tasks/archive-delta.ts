@@ -18,7 +18,6 @@ import fs from "fs"
 import path from "path"
 import { spawn } from "child_process"
 import type Database from "better-sqlite3"
-import { readWorkspaceConfig, workspaceSubdir } from "../workspace-paths"
 
 export interface CommandResult {
   code: number
@@ -150,11 +149,20 @@ export interface ResolveRepoDirResult {
 /** Workspace config.json repos[].worktree_path first, then `{ws}/projects/<name>`. */
 export function resolveProjectDir(wsPath: string | null, project: string): ResolveRepoDirResult {
   if (!wsPath) return { dir: null, error: "workspace 未绑定" }
-  const cfg = readWorkspaceConfig(wsPath) as {
-    repos?: Array<{ name?: string; worktree_path?: string }>
-  } | null
-  const configured = cfg?.repos?.find((r) => r.name === project)?.worktree_path ?? null
-  const candidates = [configured, path.join(workspaceSubdir(wsPath, "projects"), project)].filter(
+  const cfgPath = path.join(wsPath, "config.json")
+  let configured: string | null = null
+  try {
+    if (fs.existsSync(cfgPath)) {
+      const cfg = parseJSONSafe<{ repos?: Array<{ name?: string; worktree_path?: string }> }>(
+        fs.readFileSync(cfgPath, "utf-8"),
+        {},
+      )
+      configured = cfg.repos?.find((r) => r.name === project)?.worktree_path ?? null
+    }
+  } catch {
+    /* malformed config — fall back to the canonical layout */
+  }
+  const candidates = [configured, path.join(wsPath, "projects", project)].filter(
     (p): p is string => typeof p === "string" && p.length > 0,
   )
   for (const dir of candidates) {
@@ -164,7 +172,7 @@ export function resolveProjectDir(wsPath: string | null, project: string): Resol
       /* try next */
     }
   }
-  return { dir: null, error: `worktree 不在盘: ${candidates[0] ?? path.join(workspaceSubdir(wsPath, "projects"), project)}` }
+  return { dir: null, error: `worktree 不在盘: ${candidates[0] ?? path.join(wsPath, "projects", project)}` }
 }
 
 /** Inspect every project of a task: commits since the last round end + dirty files. */

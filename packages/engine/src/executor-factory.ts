@@ -36,8 +36,6 @@ export interface ExecutorFactoryContext {
   logger?: JsonlLogger
   callbacks?: EngineCallbacks
   cwd: string
-  /** Runtime output base (logs/state/workflows); defaults to cwd. */
-  runtimeDir?: string
   crossExecResolver?: CrossExecResolver
   executionId?: string
   providers: Record<string, IAgentProvider>
@@ -171,7 +169,6 @@ export class ExecutorFactory {
         return new LoopExecutor(node, p, {
           providers: this.ctx.providers,
           cwd: this.ctx.cwd,
-          runtimeDir: this.ctx.runtimeDir,
           globalAutoAnswers: this.ctx.workflow.auto_answers,
           signal: s,
           callbacks: this.ctx.callbacks,
@@ -278,7 +275,6 @@ export class ExecutorFactory {
         return new SubWorkflowExecutor(node, p, {
           providers: this.ctx.providers,
           cwd: this.ctx.cwd,
-          runtimeDir: this.ctx.runtimeDir,
           signal: s,
           callbacks: this.ctx.callbacks,
           logger: this.ctx.logger,
@@ -315,8 +311,7 @@ export class ExecutorFactory {
           ensureNodeExecution: (scopedNodeId: string, nodeType: string, meta?: RuntimeNodeMeta) => {
             this.ctx.callbacks?.onRuntimeNodeAdded?.(scopedNodeId, nodeType, meta)
           },
-          outputDir: join(this.ctx.runtimeDir ?? this.ctx.cwd, "workflows"),
-          runtimeDir: this.ctx.runtimeDir,
+          outputDir: join(this.ctx.cwd, "workflows"),
           workflow: this.ctx.workflow,
           identityResolver: this.getIdentityResolver(),
         })

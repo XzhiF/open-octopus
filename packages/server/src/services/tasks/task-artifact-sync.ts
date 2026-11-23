@@ -33,7 +33,6 @@
 import fs from "fs"
 import path from "path"
 import { PHASE_STATUS_UPDATE_EVENT } from "@octopus/shared"
-import { workspaceSubdir } from "../workspace-paths"
 
 /** home-relative position of a phase batch dir — the ws mirror path (K10:
  *  ws 内落 `.scratch/<date>/<slug>/`，与 home 同构相对位，git-able 随 PR).
@@ -105,7 +104,7 @@ export function emitPhaseAwaitingReview(
  *  dir is also a no-op (legacy tasks may lack the dir). */
 export function copyTaskWorkflowsToWs(taskWorkflowsDir: string, wsPath: string): void {
   if (!fs.existsSync(taskWorkflowsDir)) return
-  const wsWorkflowsDir = workspaceSubdir(wsPath, "workflows")
+  const wsWorkflowsDir = path.join(wsPath, "workflows")
   // Ensure ws workflows/ exists (createFromSpec already creates it, but this
   // is defensive — a test or a non-standard scaffold may skip it).
   fs.mkdirSync(wsWorkflowsDir, { recursive: true })

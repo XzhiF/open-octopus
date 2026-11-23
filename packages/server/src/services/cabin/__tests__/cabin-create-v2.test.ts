@@ -89,7 +89,7 @@ describe("CabinService.createWithResult — v4 建舱契约", () => {
       ],
     })
     expect(cabin.org).toBe("XzhiF")
-    const config = JSON.parse(fs.readFileSync(path.join(cabinPath, ".octopus", "workspace.json"), "utf-8"))
+    const config = JSON.parse(fs.readFileSync(path.join(cabinPath, "config.json"), "utf-8"))
     // 2026-11-15 舱籍契约：source/org 显式落盘（本地/外部项目同表不同源）。
     expect(config.repos).toEqual([
       { name: "ledger", source: "org", org: "XzhiF", group: "XzhiF", repoName: "ledger" },
@@ -107,7 +107,7 @@ describe("CabinService.createWithResult — v4 建舱契约", () => {
       repos: ["old-repo"],
       projects: [{ org: "XzhiF", repo: "ledger" }],
     })
-    const config = JSON.parse(fs.readFileSync(path.join(cabinPath, ".octopus", "workspace.json"), "utf-8"))
+    const config = JSON.parse(fs.readFileSync(path.join(cabinPath, "config.json"), "utf-8"))
     expect(config.repos.map((r: { name: string }) => r.name)).toEqual(["ledger"])
   })
 
@@ -127,7 +127,7 @@ describe("CabinService.createWithResult — v4 建舱契约", () => {
     fs.mkdirSync(cabinPath, { recursive: true })
     const row = svc.create({ name: "老舱", path: cabinPath, org: "XzhiF", repos: ["a", "b"] })
     expect(row.name).toBe("老舱")
-    const config = JSON.parse(fs.readFileSync(path.join(cabinPath, ".octopus", "workspace.json"), "utf-8"))
+    const config = JSON.parse(fs.readFileSync(path.join(cabinPath, "config.json"), "utf-8"))
     expect(config.repos).toEqual([
       { group: "", name: "a", repoName: "a" },
       { group: "", name: "b", repoName: "b" },

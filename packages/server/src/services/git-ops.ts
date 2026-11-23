@@ -3,7 +3,6 @@ import { promisify } from "util"
 import { readdirSync, existsSync, statSync, mkdirSync } from "fs"
 import { readFile, stat } from "fs/promises"
 import { join, dirname } from "path"
-import { workspaceSubdir } from "./workspace-paths"
 
 const execFileAsync = promisify(execFile)
 
@@ -151,7 +150,7 @@ export class GitOps {
     action: (projectPath: string, projectName: string) => Promise<T>,
   ): Promise<Record<string, T>> {
     const results: Record<string, T> = {}
-    const projectsDir = workspaceSubdir(workspacePath, "projects")
+    const projectsDir = join(workspacePath, "projects")
     if (!existsSync(projectsDir)) return results
 
     const entries = readdirSync(projectsDir)
