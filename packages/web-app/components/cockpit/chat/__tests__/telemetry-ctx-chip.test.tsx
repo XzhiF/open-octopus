@@ -93,4 +93,37 @@ describe('通讯台 CTX 芯片 — 用量 / 上限 / 百分比 + 内部进度条
     expect(empty).toHaveTextContent('未就绪')
     expect(empty.querySelector('.ck12-ctx-bar')).toBeNull()
   })
+
+  // v22 #5：编队独立 chat 窗 —— 遥测用窗外传的 chat（本窗会话），
+  // testid 按 scope 命名，和主通讯台那份并存不互撞；TOKEN 读本窗会话的账。
+  it('独立窗域：chat 走外部源，testid 用 scope，不动通讯台那份', () => {
+    const chat = {
+      ...chatWith(ctxOf(8)),
+      usage: {
+        totalCalls: 11,
+        usage: { inputTokens: 136424, outputTokens: 89243, cacheReadTokens: 9820160, cacheCreationTokens: 0 },
+        totals: { tokens: 10_045_827, cost: { usd: 0.169, complete: true }, cacheHitRate: 0.98 },
+        modelBreakdown: {},
+      },
+    }
+    const { container } = render(
+      <CockpitStateProvider entryCabinId="cabin-1">
+        <div className="ck12-cwin">
+          <CockpitConsoleTelemetry
+            chat={chat}
+            hostSelector=".ck12-cwin"
+            scope="win-w1"
+          />
+        </div>
+      </CockpitStateProvider>,
+    )
+    const chip = screen.getByTestId('cockpit-win-w1-ctx')
+    expect(chip).toHaveTextContent('80.1K / 1M')
+    expect(chip).toHaveTextContent('8.0%')
+    expect(screen.getByTestId('cockpit-win-w1-model')).toHaveTextContent('pro')
+    const token = screen.getByTestId('cockpit-win-w1-token')
+    expect(token).toHaveTextContent('10.0M')
+    expect(token).not.toHaveTextContent('未就绪')
+    expect(container.querySelector('[data-testid="cockpit-con-ctx"]')).toBeNull()
+  })
 })

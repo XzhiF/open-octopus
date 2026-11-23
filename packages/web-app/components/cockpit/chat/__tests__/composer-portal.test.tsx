@@ -62,6 +62,37 @@ function AttachSlotHarness(props: Omit<Props, 'composerVariant'>) {
   )
 }
 
+/** 独立窗自己的「对话索引」槽（v22 #5：窗头 ≡ N 轮）。 */
+function IndexSlotHarness(props: Omit<Props, 'indexSlot' | 'inlineChrome'>) {
+  const [slot, setSlot] = useState<HTMLSpanElement | null>(null)
+  return (
+    <div>
+      <div data-testid="window-head">
+        <span data-testid="index-slot" ref={setSlot} />
+      </div>
+      <div data-testid="chat-area-host">
+        <ChatArea {...props} indexSlot={slot} inlineChrome composerVariant="cockpit" />
+      </div>
+    </div>
+  )
+}
+
+/** 独立窗自己的「星核」槽（v22 #5：窗头 ✕ 右边，与主通讯台同位）。
+ *  2026-11-23 用户：星核不能在输入行 ⏎ 左边。 */
+function WindowAttachHarness(props: Omit<Props, 'attachSlot' | 'inlineChrome'>) {
+  const [slot, setSlot] = useState<HTMLSpanElement | null>(null)
+  return (
+    <div>
+      <div data-testid="window-head">
+        <span data-testid="own-attach-slot" ref={setSlot} />
+      </div>
+      <div data-testid="chat-area-host">
+        <ChatArea {...props} attachSlot={slot} inlineChrome composerVariant="cockpit" showComposerAttach />
+      </div>
+    </div>
+  )
+}
+
 afterEach(() => resetChatSlots())
 
 function typeAndEnter(scope: HTMLElement, text: string) {
@@ -154,5 +185,48 @@ describe('ChatArea — composerSlot portal（全域座舱）', () => {
     expect(head.querySelector('[data-testid="cockpit-attach"]')).toBeTruthy()
     expect(head.querySelector('[data-testid="composer-plus"]')).toBeNull()
     expect(host.querySelector('[data-tui-attach-inline]')).toBeNull()
+  })
+
+  // v22 #5：编队独立窗 —— 助手行头换成该线程 agent 的身份；星核不抢主台槽。
+  it('assistantLabel：助手行头不是「汐音」，用传进来的身份', () => {
+    const { container } = render(
+      <ChatArea
+        {...baseProps}
+        composerVariant="cockpit"
+        assistantLabel="执行者 · task-doer"
+        messages={[{ id: 'm1', role: 'assistant', content: '收到', created_at: '2026-11-23T08:00:00Z' } as never]}
+      />,
+    )
+    const tags = Array.from(container.querySelectorAll('.ck12-tui-tag')).map((el) => el.textContent)
+    expect(tags).toContain('✦ 执行者 · task-doer')
+    expect(tags).not.toContain('✦ 汐音')
+  })
+
+  it('inlineChrome：独立窗的星核进自己的窗头槽（左上），不留在输入行', () => {
+    render(<WindowAttachHarness {...baseProps} />)
+    const slot = screen.getByTestId('own-attach-slot')
+    const host = screen.getByTestId('chat-area-host')
+    expect(slot.querySelector('[data-testid="cockpit-attach"]')).toBeTruthy()
+    expect(host.querySelector('[data-tui-attach-inline]')).toBeNull()
+  })
+
+  it('inlineChrome 且没有窗头槽时退回输入行（功能不丢）', () => {
+    render(<AttachSlotHarness {...baseProps} inlineChrome />)
+    const head = screen.getByTestId('window-head')
+    const host = screen.getByTestId('chat-area-host')
+    expect(head.querySelector('[data-testid="cockpit-attach"]')).toBeNull()
+    expect(host.querySelector('[data-tui-attach-inline]')).toBeTruthy()
+  })
+
+  it('独立窗的「≡ N 轮」索引进自己的槽，不回落到通讯台', () => {
+    render(
+      <IndexSlotHarness
+        {...baseProps}
+        messages={[{ id: 'u1', role: 'user', content: '第一句', created_at: '2026-11-23T08:00:00Z' } as never]}
+      />,
+    )
+    const slot = screen.getByTestId('index-slot')
+    expect(slot.querySelector('[data-testid="chat-timeline-handle"]')).toBeTruthy()
+    expect(screen.getByTestId('chat-area-host').querySelector('[data-testid="chat-timeline-handle"]')).toBeNull()
   })
 })

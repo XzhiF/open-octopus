@@ -62,6 +62,7 @@ function row(j: CabinJobView): CockpitRow {
 function fleet(rows: CockpitRow[]): CockpitFleetContextValue {
   return {
     rows,
+    mainSessionId: null,
     counts: buildCounts(rows, null),
     arrivals: [],
     loading: false,

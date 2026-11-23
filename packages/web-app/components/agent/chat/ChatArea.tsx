@@ -194,6 +194,18 @@ interface ChatAreaProps {
   composerHiddenHint?: string
   composerEnableLabel?: string
   onEnableComposer?: () => void
+  /** v22 #5：助手行头的身份标签（缺省「汐音」）—— 编队独立窗换成该线程的 agent
+   *  身份（执行者 / 作者 …），用户从句首就能看清在跟谁说话。 */
+  assistantLabel?: string
+  /** v22 #5：独立窗 —— 对话索引 / 星核挂载在本栏内渲染，不 portal 进主通讯台
+   *  头部槽（chat-slots 是单槽位，多个 ChatPane 同时挂会互相抢）。 */
+  inlineChrome?: boolean
+  /** 独立窗自己的「对话索引」槽（窗头 ≡ N 轮）；缺省沿用通讯台槽。 */
+  indexSlot?: HTMLElement | null
+  /** 独立窗自己的「星核」挂载槽（窗头左上角）；缺省沿用通讯台头部槽。 */
+  attachSlot?: HTMLElement | null
+  /** 索引面板的定位主机选择器：通讯台 = .ck12-comms，独立窗 = .ck12-cwin。 */
+  chromeHostSelector?: string
 }
 
 /** ChatArea 暴露给宿主的 composer 能力（只增不减，避免宿主另写 send）。 */
@@ -280,6 +292,7 @@ export function ChatArea({
   messageExtras, transcriptTail, composerDock, composerSeed, timelineClearDock, dockGutter,
   composerSlot, composerVariant = 'full', onQueueDepthChange, composerBridgeRef,
   composerHidden, composerHiddenHint, composerEnableLabel, onEnableComposer,
+  assistantLabel, inlineChrome, indexSlot, attachSlot, chromeHostSelector,
 }: ChatAreaProps) {
   const [input, setInput] = useState('')
   const [slashOpen, setSlashOpen] = useState(false)
@@ -640,9 +653,14 @@ export function ChatArea({
   const isCockpitVariant = composerVariant === 'cockpit'
   // 全域：标题栏「对话索引」槽（CockpitChatWindow 注册）。classic 拿到 null，
   // 继续用正文右侧那排短杠，行为逐字不变。
-  const cockpitIndexSlot = useChatSlot('index')
+  const globalIndexSlot = useChatSlot('index')
   // 全域：标题栏「星核」槽（v22 十轮）—— 挂载面板 portal 进台头。
-  const cockpitAttachSlot = useChatSlot('attach')
+  const globalAttachSlot = useChatSlot('attach')
+  // v22 #5 独立窗：槽是主通讯台的单实例 DOM —— 独立窗抢过去会让主台头部出现
+  // 两份索引/星核。独立窗一律用自己窗头的槽（inlineChrome + indexSlot/attachSlot）。 */
+  const cockpitIndexSlot = inlineChrome ? (indexSlot ?? null) : globalIndexSlot
+  const cockpitAttachSlot = inlineChrome ? (attachSlot ?? null) : globalAttachSlot
+  const assistantIdentity = assistantLabel ?? '汐音'
 
   // ⌥A 开合星核面板（原型口径，由 CockpitShortcuts 发事件）。classic 不响应：
   // 那里的入口在控件条，不抢这个键。
@@ -858,7 +876,7 @@ export function ChatArea({
                         message={msg}
                         compactEvent={compactEvent}
                         docLinks
-                        lead={msg.role === 'assistant' ? <span className="ck12-tui-tag">✦ 汐音</span> : undefined}
+                        lead={msg.role === 'assistant' ? <span className="ck12-tui-tag">✦ {assistantIdentity}</span> : undefined}
                         userLead={msg.role === 'user' ? <span className="ck12-tui-tag is-you">❯ YOU</span> : undefined}
                         trail={msg.role === 'assistant' && !msg.roleSwitch && msg.displayType !== 'event'
                           ? <CockpitMessageActs message={msg} />
@@ -882,7 +900,7 @@ export function ChatArea({
               isCockpitVariant ? (
                 // 流式过程同款行头：thinking / tool / 正文与历史态同一条左缘。
                 <div className="ck12-tui-msg" data-tui-row="assistant">
-                  <div className="ck12-tui-livehead"><span className="ck12-tui-tag">✦ 汐音</span><span className="ck12-tui-livehint">输出中…</span></div>
+                  <div className="ck12-tui-livehead"><span className="ck12-tui-tag">✦ {assistantIdentity}</span><span className="ck12-tui-livehint">输出中…</span></div>
                   <TuiLive items={streamTimeline} toolCalls={toolCalls} />
                 </div>
               ) : <TuiLive items={streamTimeline} toolCalls={toolCalls} />
@@ -1560,6 +1578,7 @@ export function ChatArea({
         clearDock={timelineClearDock}
         compact={isCockpitVariant}
         portalHost={isCockpitVariant ? cockpitIndexSlot : null}
+        hostSelector={chromeHostSelector}
       />
     </div>
   )

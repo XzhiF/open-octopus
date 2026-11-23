@@ -32,6 +32,7 @@ vi.mock('../../fleet/CockpitFleetProvider', () => ({
 function fleet(rows: CockpitRow[], loaded = true): CockpitFleetContextValue {
   return {
     rows,
+    mainSessionId: null,
     counts: loaded ? buildCounts(rows, null) : null,
     arrivals: [],
     loading: !loaded,

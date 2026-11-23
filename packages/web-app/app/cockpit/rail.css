@@ -298,6 +298,7 @@
   font-weight: 800;
 }
 .ck12-flpct {
+  margin-left: auto;
   flex: none;
   font-size: 8.5px;
   color: var(--ck12-metal2);
@@ -305,13 +306,14 @@
   font-weight: 700;
   font-variant-numeric: tabular-nums;
 }
+/* #5：状态签挪到副行左端 —— 给行尾两枚动作按钮让出宽度。 */
 .ck12-flst {
-  margin-left: auto;
   flex: none;
   font-size: 7.5px;
   font-weight: 800;
   letter-spacing: 0.04em;
-  padding: 1px 6px;
+  padding: 0 5px;
+  line-height: 13px;
   clip-path: polygon(3px 0, 100% 0, calc(100% - 3px) 100%, 0 100%);
   background: rgba(255, 255, 255, 0.1);
   color: var(--ck12-ink2);
@@ -327,11 +329,17 @@
 .ck12-flst.is-done { background: rgba(61, 220, 151, 0.18); color: var(--ck12-green); }
 
 .ck12-flsub {
-  display: block;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
   margin-top: 1px;
   font-size: 8.5px;
   color: var(--ck12-ink2);
   white-space: nowrap;
+}
+.ck12-flsub-t {
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
 }
@@ -353,23 +361,55 @@
   transition: width 0.5s;
 }
 
-/* 💬 直达线程（真会话才出现；hover 行才显形） */
-.ck12-fl-talk {
-  position: absolute;
-  right: 4px;
-  top: 4px;
-  width: 18px;
-  height: 18px;
+/* #5（2026-11-23 用户）：编队行两条入口 —— 行体点击 = 进这条作战的 chat；
+   行尾两枚小按钮：💬 对话（有未读加红点）/ ▦ 详情。主通讯台不再切线程。 */
+.ck12-flacts {
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  margin-left: 1px;
+}
+.ck12-flact {
+  position: relative;
+  width: 21px;
+  height: 23px;
+  clip-path: var(--ck12-hex);
   display: grid;
   place-items: center;
-  font-size: 9px;
-  opacity: 0;
-  color: var(--ck12-teal);
-  transition: opacity 0.12s;
+  background: rgba(255, 255, 255, 0.07);
+  border: 1px solid rgba(185, 179, 217, 0.22);
+  color: var(--ck12-ink2);
+  font-size: 9.5px;
+  transition: 0.13s;
 }
-.ck12-flrow:hover .ck12-fl-talk,
-.ck12-flrow.is-on .ck12-fl-talk,
-.ck12-flrow:focus-within .ck12-fl-talk { opacity: 1; }
+.ck12-flact:hover {
+  color: #fff;
+  border-color: var(--ck12-teal);
+  background: rgba(46, 230, 214, 0.16);
+}
+.ck12-flact.is-pri { color: color-mix(in srgb, var(--ck12-teal) 78%, var(--ck12-ink2)); }
+.ck12-flact-und {
+  position: absolute;
+  top: -3px;
+  right: -3px;
+  min-width: 12px;
+  height: 12px;
+  padding: 0 2px;
+  border-radius: 999px;
+  background: var(--ck12-red);
+  color: #fff;
+  font-style: normal;
+  font-family: var(--font-mono);
+  font-size: 7px;
+  font-weight: 800;
+  display: grid;
+  place-items: center;
+  box-shadow: 0 0 7px rgba(255, 59, 92, 0.6);
+}
+/* 这条作战的 chat 窗开着：行框亮一点，和详情选中态区分（选中 = is-on）。 */
+.ck12-flrow.is-chat { border-color: rgba(46, 230, 214, 0.45); }
+.ck12-flrow:focus-visible { outline: 1px solid var(--ck12-teal); outline-offset: 1px; }
 
 /* ── 底部：更多 / 收起 ── */
 .ck12-fr-foot {
@@ -513,7 +553,7 @@
   .ck12-raillist { padding: 5px 4px; }
   .ck12-raillist::before { left: 50%; transform: translateX(-0.5px); opacity: 0.4; }
   .ck12-flrow { justify-content: center; padding: 5px 1px; gap: 0; }
-  .ck12-flbody, .ck12-fl-talk { display: none; }
+  .ck12-flbody, .ck12-flacts { display: none; }
   .ck12-flrow::after {
     content: '';
     position: absolute;

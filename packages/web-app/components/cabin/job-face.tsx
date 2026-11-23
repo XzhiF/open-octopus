@@ -38,14 +38,13 @@ import { pctFromPhases } from './job-progress'
 import { jobStatusLabel, jobTone } from './job-status'
 import { traceKind } from './trace-meta'
 import {
-  COCKPIT_TABS, COCKPIT_TAB_LABELS, type CockpitTab,
+  COCKPIT_DEFAULT_TAB, COCKPIT_TABS, COCKPIT_TAB_LABELS, type CockpitTab,
 } from '@/components/cockpit/state/cockpit-state'
 import {
   CockpitElapsed, CockpitJobHeader, CockpitJobTabs,
 } from '@/components/cockpit/face/CockpitJobHeader'
 import { CockpitJobFiles } from '@/components/cockpit/face/CockpitJobFiles'
 import { CockpitJobDebug } from '@/components/cockpit/face/CockpitJobDebug'
-import { CockpitJobDialog } from '@/components/cockpit/face/CockpitJobDialog'
 import { CockpitJobProject } from '@/components/cockpit/face/CockpitJobProject'
 import { projectNameFromKey } from '@/components/cockpit/projects/project-model'
 import { PHASE_PILL, PHASE_STATUS_LABEL } from '@/components/tasks/run-console/phase-status'
@@ -292,6 +291,8 @@ export interface JobFaceCockpitControls {
   onTabChange(tab: CockpitTab): void
   /** 关闭 = 收面（select(null)）。 */
   onClose(): void
+  /** v22 #5：打开这条作战的独立 chat 窗（有会话才传）。 */
+  onOpenChat?: (() => void) | null
   /** 验收通过/打回后（CockpitFace 用来落下一行「需要你」）。 */
   onAcceptanceMutated?(): void
 }
@@ -323,7 +324,7 @@ export function JobFace({
   const [job, setJob] = useState<CabinJob | null>(null)
   const [jobView, setJobView] = useState<CabinJobView | null>(null)
   const [events, setEvents] = useState<CabinJobEvent[]>([])
-  const [innerTab, setInnerTab] = useState<CockpitTab>('dialog')
+  const [innerTab, setInnerTab] = useState<CockpitTab>(COCKPIT_DEFAULT_TAB)
   const [taskEntity, setTaskEntity] = useState<TaskDetail | null>(null)
   /** 舱主会话消息：对接里「汐音 → 你」那一跳的原始来源（任务卡）。 */
   const [mainMessages, setMainMessages] = useState<AgentMessage[]>([])
@@ -375,9 +376,9 @@ export function JobFace({
     setJobView(null)
     setEvents([])
     setLoadError(null)
-    // 旧窗行为：换作业回到首签（2026-11-19 起跟全域面一致 = 对话）。
+    // 旧窗行为：换作业回到首签（2026-11-19 起跟全域面一致）。
     // cockpit 的页签是受控的（URL 决定），不重置。
-    if (!controlled) setInnerTab('dialog')
+    if (!controlled) setInnerTab(COCKPIT_DEFAULT_TAB)
     void load()
   }, [load, controlled])
 
@@ -414,9 +415,6 @@ export function JobFace({
 
   // 运行/变更/验收都要任务实体（RunWindow 自己解析当前轮）。
   const taskId = job?.kind === 'task' ? job.ref_id : null
-  // v21 七轮：「对话」页签读任务主会话（= 通讯台里这条任务的线程）。
-  // workflow / subagent 没有主会话 → null，页签给明确空态。
-  const dialogSessionId = taskEntity?.source_chat_session_id ?? null
   useEffect(() => {
     let alive = true
     setTaskEntity(null)
@@ -526,6 +524,7 @@ export function JobFace({
               onClose={onClose}
               cabinName={cockpit?.cabinName ?? null}
               projectName={cockpit?.projectName ?? null}
+              onOpenChat={cockpit?.onOpenChat ?? null}
             />
           ) : (
             <CockpitJobHeader loading onClose={onClose} />
@@ -846,7 +845,6 @@ export function JobFace({
 
   const panes = (
     <>
-      {tab === 'dialog' && <CockpitJobDialog sessionId={dialogSessionId} cabinId={cabinId} taskId={taskId} />}
       {tab === 'overview' && (cockpitMode ? (
         // v21 三轮（原型 .panel 详情·概览）：kv 读数 + 当前在做 + 最近事件。
         <div data-testid="cabin-job-overview" className="ck12-dossier-ov">
@@ -1207,6 +1205,7 @@ export function JobFace({
           startedAt={job.created_at}
           endedAt={job.ended_at}
           costLabel={costLabel}
+          onOpenChat={cockpit?.onOpenChat ?? null}
         />
         <div className="ck12-face-body" data-testid="cockpit-face-job">
           {/* 原型 .dtabs 在滚动正文里（.pb）—— 页签跟着内容滚走，不是常驻条。 */}

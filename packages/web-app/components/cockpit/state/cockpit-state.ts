@@ -23,19 +23,20 @@ export type CockpitRef =
 
 export type CockpitRefKind = CockpitRef['kind']
 
-/** 座舱页签。v21 七轮（用户）：详情首签「概览」→「对话」—— 概览不需要，
- *  对话 = 这条作战的 chat 记录（只读，TUI 转录同肤）。
- *  `overview` 仍留在类型里，但已无页签入口（2026-11-19 起 classic 作业窗也用
- *  这一套 COCKPIT_TABS）；它不在 COCKPIT_TABS / isCockpitTab 里，`?tab=overview`
- *  旧深链会自然落回默认「对话」。 */
+/** 座舱页签。v22 #5（2026-11-23 用户）：详情不再承载 chat —— 编队对话是独立
+ *  chat 窗，详情首签改为「运行」。`dialog` / `overview` 仍留在类型里给旧深链
+ *  兜底：它们不在 COCKPIT_TABS / isCockpitTab 里，`?tab=dialog` 会自然落回默认。 */
 export type CockpitTab = 'dialog' | 'overview' | 'relay' | 'run' | 'changes' | 'accept' | 'files' | 'debug' | 'project'
 
 /** 面来源（v22.3）：inbox = 从「要我处理」打开 → 详情让到浮层左侧；
  *  fleet / url / acceptance = 从编队 / 深链 / 验收流转打开 → 居中。 */
 export type CockpitSelectSource = 'fleet' | 'inbox' | 'url' | 'acceptance'
 
-/** 页签顺序 = 原型 .dtabs（v21 七轮：首签「对话」）。 */
-export const COCKPIT_TABS: readonly CockpitTab[] = ['dialog', 'relay', 'run', 'changes', 'accept', 'files', 'debug', 'project']
+/** 页签顺序 = 原型 .dtabs（v22 #5：首签「运行」，对话页签已删除）。 */
+export const COCKPIT_TABS: readonly CockpitTab[] = ['relay', 'run', 'changes', 'accept', 'files', 'debug', 'project']
+
+/** 详情默认页签：URL 里省略它，保持链接干净。 */
+export const COCKPIT_DEFAULT_TAB: CockpitTab = 'run'
 
 export const COCKPIT_TAB_LABELS: Record<CockpitTab, string> = {
   dialog: '对话',
@@ -172,14 +173,10 @@ export interface CockpitFlash {
 }
 
 export interface CockpitThreadsApi {
-  activeThread: string
-  closedTabs: string[]
   unread: Record<string, number>
   receipts: Record<string, CockpitReceipt[]>
-  /** 切线程 + 消未读（tab 点击 / 回传立即激活 / 会话被别处切换）。 */
-  activateThread(key: string): void
-  closeTab(key: string): void
-  reopenTab(key: string): void
+  /** 只消未读（v22 #5：打开 / 聚焦编队 chat 窗时用）。 */
+  clearUnread(key: string): void
   bumpUnread(key: string, n?: number): void
   pushReceipt(key: string, text: string): void
 }

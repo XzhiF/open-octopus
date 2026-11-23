@@ -7,6 +7,7 @@
 import { useCockpitState } from '../state/CockpitStateProvider'
 import { THREAD_EMO } from '../fleet/threads-model'
 import { useCockpitThreads } from './use-cockpit-threads'
+import { openFleetChat } from './open-fleet-window'
 
 export function CockpitWinBar() {
   const { wins, chatWindow, threads: api } = useCockpitState()
@@ -40,7 +41,7 @@ export function CockpitWinBar() {
             className={`ck12-wbchip${win.min ? ' is-min' : ''}`}
             data-testid={`cockpit-winbar-chip-${win.id}`}
             title={win.min ? `恢复 ${thread.title}` : `聚焦 ${thread.title}`}
-            onClick={() => wins.openWindow(win.threadKey, win.rect)}
+            onClick={() => openFleetChat(wins, api, win.threadKey, chatWindow)}
           >
             <span aria-hidden="true">{THREAD_EMO[thread.state]}</span>
             <span className="ck12-wbchip-name">{thread.short}</span>

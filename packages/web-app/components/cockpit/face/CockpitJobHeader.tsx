@@ -87,6 +87,8 @@ export interface CockpitJobHeaderProps {
   endedAt?: string | null
   /** 行2：本作业消耗（已按计费设置格式化；null = 省略该段） */
   costLabel?: string | null
+  /** v22 #5：打开这条作战的独立 chat 窗（有会话才传；没传不画按钮）。 */
+  onOpenChat?: (() => void) | null
 }
 
 export function CockpitJobHeader({
@@ -99,6 +101,7 @@ export function CockpitJobHeader({
   jobNo,
   executor,
   cabinName,
+  onOpenChat,
 }: CockpitJobHeaderProps) {
   const win = useDossierWindow()
   const tone = jobTone(status)
@@ -128,8 +131,20 @@ export function CockpitJobHeader({
         </span>
 
         <span className="ck12-dh-sp" />
-        {/* v21 五轮：右上只有原型 .pwin 的 ⛶（全屏 / 还原，也可双击标题栏）。
-            不再有项目签 / 中止 / 谈 / 决断 / 调试 / 去处理 —— 那些都回到各自入口。 */}
+        {/* v22 #5：💬 对话 —— 打开这条作战的独立 chat 窗（详情收掉）；
+            右上其余仍只有原型 .pwin 的 ⛶。 */}
+        {!loading && onOpenChat && (
+          <button
+            type="button"
+            className="ck12-dh-chat"
+            data-testid="cockpit-dossier-chat"
+            aria-label="打开这条作战的对话"
+            title="💬 对话 · 独立 chat 窗"
+            onClick={onOpenChat}
+          >
+            💬 对话
+          </button>
+        )}
         {!loading && win && (
           <button
             type="button"

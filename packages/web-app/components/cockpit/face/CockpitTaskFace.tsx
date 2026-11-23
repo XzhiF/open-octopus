@@ -21,7 +21,6 @@ import type { CockpitTab } from '../state/cockpit-state'
 import { CockpitJobHeader, CockpitJobTabs } from './CockpitJobHeader'
 import { CockpitJobFiles } from './CockpitJobFiles'
 import { CockpitJobDebug } from './CockpitJobDebug'
-import { CockpitJobDialog } from './CockpitJobDialog'
 import { CockpitJobProject } from './CockpitJobProject'
 import { projectNameFromKey } from '../projects/project-model'
 
@@ -37,6 +36,8 @@ export interface CockpitTaskFaceProps {
   onClose: () => void
   onMutated?: () => void
   onAcceptanceMutated?(): void
+  /** v22 #5：打开这条任务的独立 chat 窗（有 doer 会话才传）。 */
+  onOpenChat?: (() => void) | null
 }
 
 export function CockpitTaskFace({
@@ -50,6 +51,7 @@ export function CockpitTaskFace({
   onClose,
   onMutated,
   onAcceptanceMutated,
+  onOpenChat,
 }: CockpitTaskFaceProps) {
   const { rows } = useCockpitFleet()
   const found = rows.find((entry) => entry.kind === 'task' && entry.task.id === taskId)
@@ -117,10 +119,6 @@ export function CockpitTaskFace({
 
   const panes = (
     <>
-      {tab === 'dialog' && (
-        <CockpitJobDialog sessionId={view?.source_chat_session_id ?? null} cabinId={cabinId} taskId={taskId} />
-      )}
-
       {tab === 'relay' && (
         <div data-testid="cockpit-face-task-relay">
           <div className="ck12-face-empty">
@@ -223,6 +221,7 @@ export function CockpitTaskFace({
         startedAt={startedAt}
         endedAt={endedAt}
         costLabel={costLabel}
+        onOpenChat={onOpenChat ?? null}
       />
       <div className="ck12-face-body" data-testid="cockpit-face-task">
         {view ? (

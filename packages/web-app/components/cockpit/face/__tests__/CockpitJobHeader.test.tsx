@@ -38,16 +38,18 @@ describe('CockpitJobHeader', () => {
     expect(head?.firstElementChild).toBe(screen.getByTestId('cockpit-job-close'))
   })
 
-  it('页签不在头部（原型 .pb 内），由 CockpitJobTabs 渲染八个平行四边形 .dtab', () => {
+  it('页签不在头部（原型 .pb 内），由 CockpitJobTabs 渲染七个平行四边形 .dtab', () => {
     const onTabChange = vi.fn()
     const { container: head } = renderHeader()
     expect(head.querySelector('.ck12-dtab')).toBeNull()
 
-    const { container } = render(<CockpitJobTabs tab="dialog" onTabChange={onTabChange} />)
-    for (const key of ['dialog', 'relay', 'run', 'changes', 'accept', 'files', 'debug', 'project']) {
+    // v22 #5：对话页签删除 —— 编队对话是独立 chat 窗。
+    const { container } = render(<CockpitJobTabs tab="run" onTabChange={onTabChange} />)
+    for (const key of ['relay', 'run', 'changes', 'accept', 'files', 'debug', 'project']) {
       expect(screen.getByTestId(`cockpit-tab-${key}`)).toBeInTheDocument()
     }
-    expect(container.querySelectorAll('.ck12-dtab').length).toBe(8)
+    expect(screen.queryByTestId('cockpit-tab-dialog')).toBeNull()
+    expect(container.querySelectorAll('.ck12-dtab').length).toBe(7)
     fireEvent.click(screen.getByTestId('cockpit-tab-run'))
     expect(onTabChange).toHaveBeenCalledWith('run')
   })

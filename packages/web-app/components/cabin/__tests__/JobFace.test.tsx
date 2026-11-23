@@ -126,7 +126,7 @@ function Harness({
   hint?: { title: string; kind: CabinJobView['kind']; status?: string | null } | null
   onMutated?: () => void
 }) {
-  const [tab, setTab] = useState<CockpitTab>('dialog')
+  const [tab, setTab] = useState<CockpitTab>('run')
   return (
     <JobFace
       cabinId={cabinId}
@@ -157,31 +157,27 @@ beforeEach(() => {
 })
 
 describe('JobFace（cockpit）', () => {
-  it('页签渲染与切换；首签「对话」= 任务 chat 记录（本作业无主会话给明确空态）', async () => {
+  it('页签渲染与切换；v22 #5 首签「运行」（对话页签已删除）', async () => {
     // workflow + 无 ref：运行/变更/验收都是轻量空态，只验页签与真读数。
     mockJob({ kind: 'workflow', ref_id: null, title: '接入渠道' })
     render(<Harness />)
     await screen.findByTestId('cockpit-job-header')
-    // v21 七轮：概览退役，首签换成对话 —— 转录件 ck12-dcon 就位，
-    // 没有关联主会话时给明确空态，不拿执行账本冒充对话。
-    const dialog = await screen.findByTestId('cockpit-dialog')
-    expect(dialog.textContent).toContain('任务对话')
-    expect(dialog.textContent).toContain('没有关联的对话会话')
+    // v22 #5（2026-11-23 用户）：对话页签删除 —— 编队对话是独立 chat 窗；
+    // 首签改为「运行」，概览与对话都不再有页签入口。
+    expect(screen.queryByTestId('cockpit-tab-dialog')).toBeNull()
+    expect(await screen.findByTestId('cabin-job-run')).toBeInTheDocument()
     expect(screen.queryByTestId('cabin-job-overview')).toBeNull()
+    expect(screen.queryByTestId('cockpit-dialog')).toBeNull()
 
     fireEvent.click(screen.getByTestId('cockpit-tab-relay'))
     expect(await screen.findByTestId('cabin-job-relay')).toBeInTheDocument()
-    fireEvent.click(screen.getByTestId('cockpit-tab-run'))
-    expect(await screen.findByTestId('cabin-job-run')).toBeInTheDocument()
     fireEvent.click(screen.getByTestId('cockpit-tab-changes'))
     expect(await screen.findByTestId('cabin-job-changes')).toBeInTheDocument()
     fireEvent.click(screen.getByTestId('cockpit-tab-accept'))
     expect(await screen.findByTestId('cabin-job-accept')).toBeInTheDocument()
-    // v21 五轮：第八个页签「项目」与原型一致（没有锚点时给明确空态）。
+    // 「项目」页签与原型一致（没有锚点时给明确空态）。
     fireEvent.click(screen.getByTestId('cockpit-tab-project'))
     expect(await screen.findByTestId('cabin-job-project')).toBeInTheDocument()
-    fireEvent.click(screen.getByTestId('cockpit-tab-dialog'))
-    expect(await screen.findByTestId('cockpit-dialog')).toBeInTheDocument()
   })
 
   it('头部副行按原型：项目/舱名 · 分支 · 编号（执行者与耗时只在概览 kv）', async () => {
@@ -573,7 +569,7 @@ describe('JobFace（cockpit）· 加载容错', () => {
     mockJob({ kind: 'workflow', ref_id: null, title: '接入渠道' })
     vi.mocked(listCabinJobs).mockImplementation(() => new Promise(() => {}))
     render(<Harness />)
-    expect(await screen.findByTestId('cockpit-dialog')).toBeInTheDocument()
+    expect(await screen.findByTestId('cabin-job-run')).toBeInTheDocument()
     expect(screen.queryByTestId('cockpit-face-job-error')).toBeNull()
     // 列表没回来时状态退回编队行摘要（没有就省略），面本身照常可用。
   })
@@ -593,16 +589,17 @@ describe('JobFace（window 回归形状）', () => {
     )
     const root = await screen.findByTestId('cabin-job-detail')
     expect(root.textContent).toContain('接入渠道')
-    // 2026-11-19 用户：classic 作业窗跟全域面同一套页签 —— 首签「对话」，
-    // 八枚页签（含调试/项目）全在，旧的「概览」退役。
+    // 2026-11-19 用户：classic 作业窗跟全域面同一套页签；v22 #5 起对话页签
+    // 删除、首签「运行」，旧的「概览」同样退役。
     const tabs = [
-      'dialog', 'relay', 'run', 'changes', 'accept', 'files', 'debug', 'project',
+      'relay', 'run', 'changes', 'accept', 'files', 'debug', 'project',
     ]
     for (const key of tabs) {
       expect(screen.getByTestId(`cabin-job-tab-${key}`)).toBeInTheDocument()
     }
     expect(screen.queryByTestId('cabin-job-tab-overview')).toBeNull()
-    expect(await screen.findByTestId('cockpit-dialog')).toBeInTheDocument()
+    expect(screen.queryByTestId('cabin-job-tab-dialog')).toBeNull()
+    expect(await screen.findByTestId('cabin-job-run')).toBeInTheDocument()
     // v21（2026-11-17 用户）：classic 作业窗也要能查 task home 文件。
     fireEvent.click(screen.getByTestId('cabin-job-tab-files'))
     expect(await screen.findByTestId('cabin-job-files')).toBeInTheDocument()

@@ -10,6 +10,7 @@
 // 里的 `cabin` 参数会被忽略并清掉，所有 ref 的所属舱一律 = 入口舱。
 
 import {
+  COCKPIT_DEFAULT_TAB,
   isCockpitTab,
   type CockpitRef,
   type CockpitTab,
@@ -62,7 +63,7 @@ export function parseCockpitUrl(
   return { ref: null, tab }
 }
 
-/** 序列化选中项 + 页签。dialog 是默认页签，省略以保持 URL 干净。 */
+/** 序列化选中项 + 页签。run 是默认页签，省略以保持 URL 干净。 */
 export function serializeCockpitHref(
   entryCabinId: string,
   ref: CockpitRef | null,
@@ -73,7 +74,8 @@ export function serializeCockpitHref(
     const key = ref.kind === 'attention' ? 'attn' : ref.kind
     params.set(key, ref.id)
   }
-  if (tab && tab !== 'dialog') params.set('tab', tab)
+  // 退役页签（dialog / overview）不写进 URL；默认页签也省略。
+  if (isCockpitTab(tab) && tab !== COCKPIT_DEFAULT_TAB) params.set('tab', tab)
   const query = params.toString()
   const base = cockpitPath(entryCabinId)
   return query ? `${base}?${query}` : base

@@ -167,6 +167,24 @@ export interface ChatPaneProps {
   cabinMainSessionId?: string | null
   /** 直连切换到主会话（缺省退回 octopus:cabin-main-chat 事件）。 */
   onBackToCabinMain?: () => void
+  /** v22 #5：编队独立 chat 窗 —— 直接跟这一行的 agent 对话（用户口径：
+   *  「跟主 chat 一样的对话框，直接在那里回复，有流式输出，身份对应」）。
+   *  给定时：composer 恒可用（不走只读兜底）、顶部不出「回主对话」条、
+   *  身份贴纸与助手行头都用这个标签。undefined = 既有行为逐字不变。 */
+  directThreadIdentity?: string | null
+  /** 独立窗：对话索引 / 星核挂载都在窗内自渲染，不 portal 进主通讯台头部
+   *  （chat-slots 是单槽位，多个 ChatPane 同时挂会互相抢）。 */
+  chromeInline?: boolean
+  /** v22 #5 独立窗：任务工作区的兜底来源 —— 窗口不持 activeTask，不补这一层
+   *  就会退到舱工作区，跨工作区的唤醒流（服务端补的卡片 / 尾随流）收不到。 */
+  workspaceIdOverride?: string | null
+  /** 独立窗自己的「对话索引」槽（窗头 ≡ N 轮）；给定时替代通讯台槽。 */
+  indexSlot?: HTMLElement | null
+  /** 独立窗自己的「星核」挂载槽（窗头左上角，与主通讯台同位）；给定时
+   *  星核按钮 portal 进窗头，而不是留在输入行 ⏎ 左边。 */
+  attachSlot?: HTMLElement | null
+  /** 索引面板定位主机：通讯台 = .ck12-comms（缺省），独立窗 = .ck12-cwin。 */
+  chromeHostSelector?: string
 }
 
 /** 决策卡上「选择即写回卡片」的按钮 id。其余按钮（打开规格/运行窗…）只是导航，
@@ -211,6 +229,12 @@ export function ChatPane({
   hideDock,
   cabinMainSessionId,
   onBackToCabinMain,
+  directThreadIdentity,
+  chromeInline,
+  workspaceIdOverride,
+  indexSlot,
+  attachSlot,
+  chromeHostSelector,
 }: ChatPaneProps) {
   const {
     sessions, sessionsLoading, createNewSession, updateSessionTitle,
@@ -1270,6 +1294,16 @@ export function ChatPane({
   //   · 普通会话：显示当前分身身份，悬停 ✕ 清除回主身份；
   //   · hero 新会话：身份由下方单选选择器承担，不重复挂贴纸。
   const identityDisplay: ComposerIdentityDisplay | undefined = (() => {
+    // v22 #5：编队独立 chat 窗 —— 直接跟该线程的 agent 对话；身份按任务/作业
+    // 状态派生（与任务线程同一口径），只读不可切。
+    if (directThreadIdentity) {
+      return {
+        label: directThreadIdentity,
+        active: directThreadIdentity !== '主 Agent',
+        readOnly: true,
+        title: '这是该编队线程的 agent 身份，就在这里直接对话（由任务状态自动派生，不可切换）',
+      }
+    }
     // 作战舱（classic-v3）：舱主对话只有一个身份 —— 汐音舰长，只读（不可切）。
     // 舱内打开的任务线程仍走下面按任务状态派生的只读身份。
     if (cabinId && !taskThread) {
@@ -1344,7 +1378,8 @@ export function ChatPane({
   // failure) only appear after F5 (2026-11-02 user bug).
   // 舱主对话不在会话列表里时，`activeSession` 可能晚一拍才由 shared.sessions
   // 补上；舱壳已经知道 workspace，直接兜底，避免 session_updated 订阅短暂缺失。
-  const activeWorkspaceId = activeTask?.workspace_id ?? activeSession?.workspace_id ?? cabinWorkspaceId ?? null
+  const activeWorkspaceId = activeTask?.workspace_id ?? activeSession?.workspace_id
+    ?? workspaceIdOverride ?? cabinWorkspaceId ?? null
   useEffect(() => {
     if (!activeWorkspaceId || !sessionId) return
     const off = subscribeSSE(
@@ -1402,7 +1437,8 @@ export function ChatPane({
 
   // 任务线程 → 主对话：直接可见的回头路（2026-11-16 用户反馈：从任务对话里
   // 答完题后没有入口回汐音）。缺省回调时退回作业面同一条事件。
-  const showBackToMain = !!cabinMainSessionId && !!sessionId && sessionId !== cabinMainSessionId
+  // v22 #5：编队独立窗里不存在「回主对话」—— 这扇窗就是跟该 agent 的直聊。
+  const showBackToMain = !directThreadIdentity && !!cabinMainSessionId && !!sessionId && sessionId !== cabinMainSessionId
   const backToMain = () => {
     if (onBackToCabinMain) onBackToCabinMain()
     else window.dispatchEvent(new CustomEvent('octopus:cabin-main-chat'))
@@ -1581,7 +1617,9 @@ export function ChatPane({
                 : '第一句话会成为任务草稿的标题，后续对话用于澄清与拆分 Phase。')
               : undefined}
             composerLeading={draftScope && !heroActive ? draftLead : mainLead}
-            composerPlaceholder={draftScope
+            composerPlaceholder={directThreadIdentity
+              ? `回应 ${directThreadIdentity} / 下指令…（⏎ 发送 · ⇧⏎ 换行）`
+              : draftScope
               ? (workflowDraft
                 ? '描述要开发或修改的工作流…　⏎ 发送'
                 : '描述要开发的任务…　⏎ 发送')
@@ -1630,6 +1668,11 @@ export function ChatPane({
             dockGutter={split}
             composerSlot={composerSlot}
             composerVariant={composerVariant}
+            assistantLabel={directThreadIdentity ?? undefined}
+            inlineChrome={chromeInline}
+            indexSlot={indexSlot}
+            attachSlot={attachSlot}
+            chromeHostSelector={chromeHostSelector}
             onQueueDepthChange={reportQueueDepth}
             composerBridgeRef={composerBridgeRef}
           />

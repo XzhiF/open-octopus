@@ -6,6 +6,7 @@
 import { describe, it, expect } from 'vitest'
 import {
   CHAT_ALPHA_STEPS,
+  cascadeFromConsole,
   clampCockpitRect,
   cockpitChatPadding,
   cockpitChatRect,
@@ -100,6 +101,40 @@ describe('resizeCockpitRect / moveCockpitRect', () => {
       .toEqual({ x: 700, y: 150, w: 400, h: 300 })
     expect(moveCockpitRect({ x: 600, y: 100, w: 400, h: 300 }, { dx: 9000, dy: 9000 }, { width: 1440, height: 900 }))
       .toEqual({ x: 1032, y: 592, w: 400, h: 300 })
+  })
+})
+
+describe('cascadeFromConsole — v22 #5 编队 chat 窗默认几何', () => {
+  const consoleRect = { x: 502, y: 66, w: 797, h: 580 }
+  const viewport = { width: 1440, height: 900 }
+
+  it('首扇 = 主通讯台同尺寸同位（直接盖在上面）', () => {
+    expect(cascadeFromConsole(consoleRect, 0, viewport)).toEqual(consoleRect)
+  })
+
+  it('多扇逐扇错开 18px，最后一扇仍夹回视口留白', () => {
+    expect(cascadeFromConsole(consoleRect, 2, viewport)).toEqual({
+      x: 502 + 36,
+      y: 66 + 36,
+      w: 797,
+      h: 580,
+    })
+    // 第 9 扇 x 会越界：夹回 视口 − 窗宽 − 8。
+    expect(cascadeFromConsole(consoleRect, 8, viewport)).toEqual({
+      x: 1440 - 797 - 8,
+      y: 66 + 144,
+      w: 797,
+      h: 580,
+    })
+  })
+
+  it('量不到通讯台（收起 / 停靠 / 最小化）按 560×520 兜底', () => {
+    expect(cascadeFromConsole(null, 0, viewport)).toEqual({ x: 120, y: 66, w: 560, h: 520 })
+  })
+
+  it('宽高夹进 [300×260, 视口−留白]（小视口不撑出屏幕）', () => {
+    expect(cascadeFromConsole({ x: 0, y: 0, w: 320, h: 47 }, 0, { width: 800, height: 600 }))
+      .toEqual({ x: 8, y: 54, w: 320, h: 260 })
   })
 })
 

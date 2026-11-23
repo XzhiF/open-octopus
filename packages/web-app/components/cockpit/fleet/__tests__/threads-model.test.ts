@@ -1,5 +1,5 @@
-// v20（design 29 §3.2）线程行模型锁：主对话恒首 / 有会话才进 tab / 状态表情语义 /
-// attention → 线程 key / 关闭只隐藏 / 未读可见性规则。
+// v20（design 29 §3.2）线程行模型锁：主对话恒首 / 有会话才进列表 / 状态表情语义 /
+// attention → 线程 key / 未读可见性规则（v22 #5：主台固定主对话，无线程切换）。
 
 import { describe, expect, it } from 'vitest'
 import type { CabinAttentionItem } from '@octopus/shared'
@@ -12,7 +12,6 @@ import {
   threadKeyOfSession,
   threadsFromRows,
   threadStateOf,
-  visibleThreads,
 } from '../threads-model'
 
 const cabin = { cabinId: 'c1', cabinName: '测试舱' }
@@ -107,6 +106,23 @@ describe('threadsFromRows', () => {
   })
 })
 
+describe('identity — 独立 chat 窗的对话对象（v22 #5）', () => {
+  it('主对话=汐音；草稿=作者，活态=执行者，终态回主 Agent；委派=执行者', () => {
+    const threads = threadsFromRows([
+      jobRow('1', { status: 'ready' }),
+      jobRow('2', { status: 'draft' }),
+      jobRow('3', { status: 'done', ended_at: '2026-11-17T01:00:00Z' }),
+      delegationRow('7'),
+    ], 'main-s')
+    const identity = new Map(threads.map((t) => [t.key, t.identity] as const))
+    expect(identity.get(MAIN_THREAD_KEY)).toBe('汐音')
+    expect(identity.get('job:1')).toBe('执行者 · task-doer')
+    expect(identity.get('job:2')).toBe('作者 · task-author')
+    expect(identity.get('job:3')).toBe('主 Agent')
+    expect(identity.get('delegation:7')).toBe('执行者 · task-doer')
+  })
+})
+
 describe('threadKeyOfAttention / threadKeyOfSession', () => {
   it('subject 优先，再 job_id / task_id 命中编队行', () => {
     const rows = [jobRow('1'), delegationRow('7')]
@@ -124,23 +140,18 @@ describe('threadKeyOfAttention / threadKeyOfSession', () => {
   })
 })
 
-describe('visibleThreads / isThreadVisible', () => {
-  it('关闭只隐藏：主对话不可关，closed 里的作战线程不出现在 tab 条', () => {
-    const threads = threadsFromRows([jobRow('1'), jobRow('2')], 'main-s')
-    const visible = visibleThreads(threads, ['job:1'])
-    expect(visible.map((t) => t.key)).toEqual([MAIN_THREAD_KEY, 'job:2'])
-  })
-
-  it('主通讯台正在看 / 非最小化弹出窗开着 → 可见；否则不可见', () => {
+describe('isThreadVisible — v22 #5 主通讯台固定主对话', () => {
+  it('只有主线程算台内可见；作战线程只靠非最小化弹出窗', () => {
     const base = {
-      activeThread: 'job:1',
       chatWindow: { open: true, mini: false, docked: false },
       windows: [] as { threadKey: string; min: boolean }[],
     }
-    expect(isThreadVisible('job:1', base)).toBe(true)
-    expect(isThreadVisible('job:1', { ...base, chatWindow: { ...base.chatWindow, mini: true } })).toBe(false)
-    expect(isThreadVisible('job:1', { ...base, chatWindow: { ...base.chatWindow, docked: true } })).toBe(false)
-    expect(isThreadVisible('job:2', { ...base, windows: [{ threadKey: 'job:2', min: false }] })).toBe(true)
-    expect(isThreadVisible('job:2', { ...base, windows: [{ threadKey: 'job:2', min: true }] })).toBe(false)
+    expect(isThreadVisible(MAIN_THREAD_KEY, base)).toBe(true)
+    expect(isThreadVisible(MAIN_THREAD_KEY, { ...base, chatWindow: { ...base.chatWindow, mini: true } })).toBe(false)
+    expect(isThreadVisible(MAIN_THREAD_KEY, { ...base, chatWindow: { ...base.chatWindow, docked: true } })).toBe(false)
+    // 主台不再「看」作战线程 —— 没有任何当前线程切换态。
+    expect(isThreadVisible('job:1', base)).toBe(false)
+    expect(isThreadVisible('job:1', { ...base, windows: [{ threadKey: 'job:1', min: false }] })).toBe(true)
+    expect(isThreadVisible('job:1', { ...base, windows: [{ threadKey: 'job:1', min: true }] })).toBe(false)
   })
 })

@@ -62,10 +62,23 @@ function effortLabelOf(effort: ComposerEffort | null | undefined): string {
   return EFFORTS.find((item) => item.id === effort)?.label ?? String(effort ?? '')
 }
 
-export function CockpitConsoleTelemetry() {
-  const { chat, entryCabinId, openPanel, layer } = useCockpitState()
+export function CockpitConsoleTelemetry({
+  chat: chatFromProp,
+  hostSelector = '.ck12-comms',
+  scope = 'con',
+}: {
+  /** 外部遥测源（v22 #5 编队独立 chat 窗用它自己那一份）；缺省读 CockpitState.chat。 */
+  chat?: CockpitChatApi | null
+  /** 下拉定位的主机选择器：通讯台 / 独立窗（.ck12-cwin）。 */
+  hostSelector?: string
+  /** data-testid / 层栈 id 的域（con / win-w1 …），多实例同时挂时不互撞。 */
+  scope?: string
+} = {}) {
+  const { chat: stateChat, entryCabinId, openPanel, layer } = useCockpitState()
+  const chat = chatFromProp !== undefined ? chatFromProp : stateChat
   const { usage, stale } = useCabinUsage(entryCabinId)
   const currency = useBillingCurrency()
+  const tid = useCallback((part: string) => `cockpit-${scope}-${part}`, [scope])
 
   const [open, setOpen] = useState<DropKind | null>(null)
   const [geom, setGeom] = useState<{ left: number; top: number; width: number; maxHeight: number } | null>(null)
@@ -86,7 +99,7 @@ export function CockpitConsoleTelemetry() {
   // 位置：以芯片为中心向下展开，夹在通讯台内（原型 posDrop）。
   useLayoutEffect(() => {
     if (!open) return
-    const hostEl = telemRef.current?.closest<HTMLElement>('.ck12-comms')
+    const hostEl = telemRef.current?.closest<HTMLElement>(hostSelector)
     const chip = chipRefs.current[open]
     if (!hostEl || !chip) return
     const place = () => {
@@ -102,7 +115,7 @@ export function CockpitConsoleTelemetry() {
     place()
     window.addEventListener('resize', place)
     return () => window.removeEventListener('resize', place)
-  }, [open])
+  }, [open, hostSelector])
 
   // 点外面收起。
   useEffect(() => {
@@ -119,8 +132,8 @@ export function CockpitConsoleTelemetry() {
   // Esc：先收下拉（层栈 65 > 通讯台 60）。
   useEffect(() => {
     if (!open) return
-    return layer.register('cockpit-console-telemetry', TELEMETRY_LAYER_PRIORITY, close)
-  }, [open, layer, close])
+    return layer.register(`cockpit-telemetry-${scope}`, TELEMETRY_LAYER_PRIORITY, close)
+  }, [open, layer, close, scope])
 
   // Escape 走层栈时不会到 React 的 onKeyDown；这里再兜一层 pointer 关不掉时的焦点场景。
   useEffect(() => {
@@ -167,7 +180,7 @@ export function CockpitConsoleTelemetry() {
         className="ck12-tc ck12-tcc"
         aria-expanded={open === 'model'}
         title="模型设置 · 模型 / 思考强度 / 最大上下文"
-        data-testid="cockpit-con-model"
+        data-testid={tid('model')}
         onClick={() => toggle('model')}
       >
         <i>MODEL</i>
@@ -182,16 +195,16 @@ export function CockpitConsoleTelemetry() {
         title={ctx
           ? `上下文占用 ${ctxTokensLabel} · 点击看构成与压缩`
           : '上下文占用 · 未就绪 · 点击看构成与压缩'}
-        data-testid="cockpit-con-ctx"
+        data-testid={tid('ctx')}
         onClick={() => toggle('ctx')}
       >
         <i>CTX</i>
         {ctx && ctxPct != null ? (
-          <b className="ck12-ctx-val" data-testid="cockpit-con-ctx-value">
+          <b className="ck12-ctx-val" data-testid={tid('ctx-value')}>
             <span className="ck12-ctx-tok">{ctxTokensLabel}</span>
             <span className="ck12-ctx-pct">
               {ctx.estimated ? '~' : ''}
-              {ctxPct.toFixed(1)}%
+              {/* fmt-ok: 舰桥 CTX 读数，量纲 0–100（SDK context_usage），按原值展示 */}{ctxPct.toFixed(1)}%
             </span>
           </b>
         ) : (
@@ -212,7 +225,7 @@ export function CockpitConsoleTelemetry() {
         className="ck12-tc ck12-tcc is-tok"
         aria-expanded={open === 'tok'}
         title="本次会话 token / 费用 · 点击看明细（只读）"
-        data-testid="cockpit-con-token"
+        data-testid={tid('token')}
         onClick={() => toggle('tok')}
       >
         <i>TOKEN</i>
@@ -223,7 +236,7 @@ export function CockpitConsoleTelemetry() {
         <div
           ref={panelRef}
           className="ck12-telemdrop"
-          data-testid={`cockpit-con-drop-${open}`}
+          data-testid={tid(`drop-${open}`)}
           style={{
             left: geom.left,
             top: geom.top,

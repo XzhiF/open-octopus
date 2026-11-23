@@ -900,8 +900,8 @@
   flex: none;
   display: flex;
   align-items: center;
-  gap: 7px;
-  height: 34px;
+  gap: 8px;
+  height: 36px;
   padding: 0 6px 0 10px;
   border-bottom: 1px solid rgba(255, 255, 255, 0.06);
   cursor: grab;
@@ -909,9 +909,12 @@
   touch-action: none;
 }
 .ck12-cwin-emo { font-size: 11px; }
+/* 窗头星核槽：技能 / 分身入口与主通讯台同位（✕ 右边），不占输入行。 */
+.ck12-cwin-attach { flex: none; display: inline-flex; align-items: center; }
 .ck12-cwin-title {
-  flex: 1;
+  flex: 0 1 auto;
   min-width: 0;
+  max-width: 30%;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -931,6 +934,25 @@
   font-weight: 800;
   text-align: center;
 }
+/* v22 #5：窗头的对话对象身份（执行者 / 作者 / 委派执行者）。 */
+.ck12-cwin-id {
+  flex: none;
+  max-width: 42%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  padding-left: 7px;
+  border-left: 1px solid rgba(255, 255, 255, 0.08);
+  font-family: var(--font-mono);
+  font-size: 9.5px;
+  color: var(--ck12-dim);
+}
+/* v22 #5（2026-11-23 用户）：窗头遥测（MODEL / CTX / TOKEN）排版与主通讯台一致 ——
+   跟在标题后面从左往右，尺寸 / 间距都用通讯台那一档（不再收窄字号），
+   「≡ N 轮」与身份紧接其后；剩余空间交给 .ck12-cwin-sp，按钮仍靠右。 */
+.ck12-cwin .ck12-telem { gap: 0; }
+.ck12-cwin-sp { flex: 1; min-width: 4px; }
+.ck12-cwin-idx { flex: none; display: inline-flex; align-items: center; }
 .ck12-cwin-btn {
   flex: none;
   display: grid;

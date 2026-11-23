@@ -13,26 +13,22 @@ function wrapper({ children }: { children: ReactNode }) {
 
 const rect = { x: 120, y: 84, w: 380, h: 440 }
 
-describe('v20 线程 tab / 未读 / 回执', () => {
-  it('activateThread 切线程并消未读；closeTab 回主对话；reopenTab 恢复', () => {
+describe('v20 线程未读 / 回执（v22 #5：无线程切换）', () => {
+  it('clearUnread 只消未读；状态里不再有切线程 / 关 tab 的入口', () => {
     const { result } = renderHook(() => useCockpitState(), { wrapper })
-    act(() => {
-      result.current.threads.bumpUnread('job:1', 2)
-      result.current.threads.activateThread('job:1')
-    })
-    expect(result.current.threads.activeThread).toBe('job:1')
+    act(() => result.current.threads.bumpUnread('job:1', 2))
+    expect(result.current.threads.unread['job:1']).toBe(2)
+
+    act(() => result.current.threads.clearUnread('job:1'))
     expect(result.current.threads.unread['job:1']).toBe(0)
 
-    act(() => result.current.threads.closeTab('job:1'))
-    expect(result.current.threads.activeThread).toBe('main')
-    expect(result.current.threads.closedTabs).toContain('job:1')
-
-    act(() => result.current.threads.reopenTab('job:1'))
-    expect(result.current.threads.closedTabs).not.toContain('job:1')
-
-    // 主对话不可关。
-    act(() => result.current.threads.closeTab('main'))
-    expect(result.current.threads.closedTabs).not.toContain('main')
+    // 主通讯台固定主对话 —— 切换 / 关闭 / 重开线程的 API 已整体撤掉。
+    const api = result.current.threads as unknown as Record<string, unknown>
+    expect(api.activateThread).toBeUndefined()
+    expect(api.closeTab).toBeUndefined()
+    expect(api.reopenTab).toBeUndefined()
+    expect(api.activeThread).toBeUndefined()
+    expect(api.closedTabs).toBeUndefined()
   })
 
   it('pushReceipt 落本地回执且封顶 40 条', () => {

@@ -1045,6 +1045,28 @@
   transition: 0.14s;
 }
 .ck12-pwin:hover { color: #fff; border-color: var(--ck12-teal); background: rgba(46, 230, 214, 0.2); }
+
+/* v22 #5：详情头「💬 对话」—— 平行四边形斜切，原型 .pha。 */
+.ck12-dh-chat {
+  flex: none;
+  height: 24px;
+  margin-right: 6px;
+  padding: 0 10px;
+  clip-path: polygon(5px 0, 100% 0, calc(100% - 5px) 100%, 0 100%);
+  border: 1px solid rgba(46, 230, 214, 0.4);
+  background: rgba(46, 230, 214, 0.1);
+  color: var(--ck12-teal);
+  font-family: var(--font-ui);
+  font-size: 9.5px;
+  font-weight: 800;
+  white-space: nowrap;
+  transition: 0.14s;
+}
+.ck12-dh-chat:hover {
+  color: #fff;
+  border-color: var(--ck12-teal);
+  background: rgba(46, 230, 214, 0.24);
+}
 .ck12-pgrip {
   position: absolute;
   right: 14px;

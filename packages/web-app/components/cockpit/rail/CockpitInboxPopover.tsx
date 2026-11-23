@@ -1,29 +1,20 @@
 'use client'
 
-// v21（design 31 §3.2.2）· 「要我处理」浮层：列表在右、回复卡在左。
+// v21（design 31 §3.2.2）· 「要我处理」浮层 —— v22 #5 起是**单栏一级列表**。
 //
-// 就地回：点一条 → 左侧开回复卡（两栏）→ 选项 / 自由输入 → 走 useAskSubmit
-// 真决策管线 → 回执 1.4s → 回列表。浮层**只手动关**（✕ / Esc），不自动收起
-// （2026-11-21 用户：待办为 0 时点开看过空态，不能被计时器关掉）。
-// **不跳作战线程** —— 这是 v21 与 v20 决断面板的关键区别（面板仍作为「全部决断」）。
-// 没有决策信封的行不假造选项，只给「去处理 ▦」（打开作业面 / attention 面）。
+// 2026-11-23 用户：不要二级「回复卡」包装。一级行直接给动作：
+//   · 💬 对话 = 打开这条作战的独立 chat 窗，AskUserQuestion 原样在 chat 里答；
+//   · ▦ 详情 = 作战详情（验收行落「验收」页签，其余落「运行」）；
+//   · 待放行（start）/ 完成回流（notice）聊天里答不了 —— 仍是一张就地小卡
+//     （放行：ready / trigger / resume；完成：无需回复 · 收下）。
+// 行体点击 = 按类型走默认动作：ask/blocked → 对话；验收 → 验收详情；放行 / 完成 → 卡片。
 //
-// v21 七轮（用户：「一步一步展开」）：待放行也不再弹独立放行窗 —— 和问答一样
-// 在浮层左栏就地展开（选项 + 确认执行 + 回执），关掉再开窗的跳变不符合原型。
-// 卡片底部保留「▦ 看任务详情」→ 弹作战详情、落在「对话」页签。
-//
-// 2026-11-19（用户：全舱点「待你定」只能看详情，classic 却能直接勾选）：
-// 任务作者的提问常常只带 AskUserQuestion 原问题体（`ask.questions`，没有扁平
-// `ask.options`），旧判定只看 options → 一律落到「去处理」。现在有原问题体就
-// 直接渲染 classic 同一张 AskUserQuestionCard（多选 / 其他 / 逐字选项），
-// 同时保留「▦ 看任务详情」入口。
+// 浮层**只手动关**（✕ / Esc），不自动收起；动作里开详情/对话按原型语义决定
+// 留不留浮层（看详情留着，去对话收掉）。
 
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { X } from 'lucide-react'
-import type { ChatMessage } from '@/lib/types'
-import { ackCabinAttention, discussCabinAsk } from '@/lib/cabin-api'
-import { AskUserQuestionCard } from '@/components/workspace/chat/ask-user-question-card'
-import { useAskSubmit } from '@/components/cabin/asks/ask-submit'
+import { ackCabinAttention } from '@/lib/cabin-api'
 import {
   START_SUMMARY,
   startDecisionKey,
@@ -34,13 +25,13 @@ import {
 } from '@/components/cabin/asks/start-window'
 import { readyTask, resumeTask, triggerTask } from '@/lib/tasks-api'
 import { useCockpitState } from '../state/CockpitStateProvider'
-import { attentionStageLabel } from '../fx/CockpitBrief'
+import { useCockpitFleet } from '../fleet/CockpitFleetProvider'
+import { useCockpitThreads } from '../chat/use-cockpit-threads'
+import { openFleetChat } from '../chat/open-fleet-window'
+import { threadKeyOfAttention } from '../fleet/threads-model'
 import {
-  askQuestionsOf,
-  canAnswerInline,
   groupedInbox,
   inboxGroupOf,
-  inboxVerb,
   type InboxCounts,
   type InboxEntry,
   type InboxGroup,
@@ -66,287 +57,22 @@ function jobLine(entry: InboxEntry): string {
   return entry.item.title.replace(/\s*·\s*.*$/, '')
 }
 
-interface ReplyCardProps {
-  entry: InboxEntry
-  onAnswered: (id: string, choice: string) => void
-  onDone: () => void
-  onDeal: (entry: InboxEntry) => void
-  onOpenDetail: (entry: InboxEntry) => void
+function isCardStage(entry: InboxEntry | null): boolean {
+  return entry?.item.stage === 'start' || entry?.item.stage === 'notice'
 }
 
-function ReplyCard({ entry, onAnswered, onDone, onDeal, onOpenDetail }: ReplyCardProps) {
-  const { closeInbox, selectInbox, entryCabinId } = useCockpitState()
-  const { item } = entry
-  const env = item.ask
-  const options = useMemo(() => env?.options ?? [], [env?.options])
-  // AskUserQuestion 原问题体：任务作者的提问多数只带这个（没有扁平 options）。
-  // 有它就用 classic 问答窗同一张卡，不再退化成「去处理」。
-  const questionBody = useMemo(() => askQuestionsOf(env?.questions), [env?.questions])
-  const useAskCard = questionBody.length > 0
-  const questionLabels = useMemo(() => {
-    const first = questionBody[0] as { options?: Array<{ label?: unknown }> } | undefined
-    if (!Array.isArray(first?.options)) return [] as string[]
-    return first.options
-      .map((option) => (typeof option?.label === 'string' ? option.label : ''))
-      .filter((label): label is string => !!label)
-  }, [questionBody])
-  const [pick, setPick] = useState<number | null>(null)
-  const [free, setFree] = useState('')
-  const [busyChoice, setBusyChoice] = useState<string | null>(null)
-  // 「还需讨论」（用户 #20）：不作答，请提问的 agent 先解释选项；提问仍待答。
-  const [discussBusy, setDiscussBusy] = useState(false)
-  const [discussNote, setDiscussNote] = useState<string | null>(null)
-
-  const { submit, busy, failed } = useAskSubmit({
-    cabinId: entry.cabinId || entryCabinId,
-    askId: env?.ask_id ?? item.id,
-    ...(env?.author_session_id ? { authorSessionId: env.author_session_id } : {}),
-    ...(item.handle ? { handle: item.handle } : {}),
-    ...(item.task_id ? { taskId: item.task_id } : {}),
-    optionLabels: options.length > 0 ? options.map((option) => option.label) : questionLabels,
-    ...(env?.message_id ? { messageId: env.message_id } : {}),
-    // 就地回复不偷偷转发：旧服务端只提示去线程。
-    threadFallback: false,
-  })
-
-  /** 提交正文（扁平选项与卡片都汇到这里）：卡片自带 `用户回答了以下问题：…` 正文。 */
-  const send = useCallback(async (content: string) => {
-    if (!content.trim() || busy) return
-    setBusyChoice(content)
-    const outcome = await submit(content)
-    setBusyChoice(null)
-    if (outcome.ok) {
-      onAnswered(item.id, outcome.choice ?? content)
-      onDone()
-    }
-  }, [busy, item.id, onAnswered, onDone, submit])
-
-  /** 扁平选项 / 自由输入 → 与 classic 问答窗同一段提交正文。 */
-  const sendLabel = useCallback((label: string) => {
-    void send(`用户回答了以下问题：\n\n1. [要定的事] ${env?.decision ?? item.question ?? '选择'}\n   → ${label}`)
-  }, [env?.decision, item.question, send])
-
-  /** 还需讨论：不提交答案，把讨论请求送进提问所在会话（提问仍待答）。 */
-  const chatAbout = useCallback(async (summary?: string) => {
-    const target = entry.cabinId || entryCabinId
-    if (!target || discussBusy || busy) return
-    setDiscussBusy(true)
-    setDiscussNote(null)
-    try {
-      const res = await discussCabinAsk(target, {
-        askId: env?.ask_id ?? item.id,
-        ...(summary ? { note: summary } : {}),
-      })
-      setDiscussNote(res.receipt)
-    } catch (err) {
-      setDiscussNote(err instanceof Error ? err.message : '讨论请求没有发出去')
-    } finally {
-      setDiscussBusy(false)
-    }
-  }, [busy, discussBusy, entry.cabinId, entryCabinId, env?.ask_id, item.id])
-
-  const canInline = canAnswerInline(item)
-
-  const synthetic = useMemo<ChatMessage | null>(() => {
-    if (!useAskCard) return null
-    return {
-      id: `cockpit-inbox-ask-${item.id}`,
-      sessionId: env?.author_session_id ?? '',
-      role: 'assistant',
-      displayType: 'ask_user_question',
-      content: '',
-      timestamp: '',
-      toolCallId: `cockpit-inbox-ask-${item.id}`,
-      toolName: 'AskUserQuestion',
-      toolInput: env?.questions,
-      toolStatus: 'done',
-    }
-  }, [useAskCard, item.id, env?.author_session_id, env?.questions])
-
-  return (
-    <div className="ck12-ipd" data-testid="cockpit-inbox-reply">
-      <div className="ck12-ipd-h">
-        <button
-          type="button"
-          className="ck12-ipx ck12-ipd-x"
-          aria-label="收起要我处理"
-          title="收起（Esc）"
-          onClick={closeInbox}
-        >
-          <X className="size-3" aria-hidden="true" />
-        </button>
-        <button
-          type="button"
-          className="ck12-ipd-back"
-          aria-label="回到列表"
-          title="回到列表"
-          onClick={() => selectInbox(null)}
-        >
-          ←
-        </button>
-        <span className="ck12-ipd-k" data-kind={groupClass(entry)}>
-          {item.handle ?? '待办'} · {groupClass(entry) === 'blk' ? '受阻' : groupClass(entry) === 'rev' ? '待验收' : '待你定'}
-        </span>
-        <span className="ck12-ipd-sp" />
-      </div>
-
-      <div className="ck12-ipd-body">
-        <div className="ck12-ipd-job">{item.title}</div>
-        {/* 卡片自己会印问题正文：这里不再重复一遍（repo / wt 照旧保留）。 */}
-        {(item.repo || item.wt || (!useAskCard && item.question)) && (
-          <div className="ck12-ipd-ctx">
-            {[item.repo, item.wt, useAskCard ? null : item.question].filter(Boolean).join(' · ')}
-          </div>
-        )}
-        {!useAskCard && (
-          <div className="ck12-ipd-q">{env?.decision ?? item.question ?? attentionStageLabel(item)}</div>
-        )}
-
-        {useAskCard ? (
-          <>
-            <div className="ck12-ipd-qa" data-testid="cockpit-inbox-askcard">
-              {synthetic && (
-                <AskUserQuestionCard
-                  message={synthetic}
-                  onAnswer={(content) => void send(content)}
-                  onChatAbout={(summary) => void chatAbout(summary)}
-                  disabled={busy || discussBusy}
-                  hideChatAbout
-                  hotkeyId={item.id}
-                />
-              )}
-            </div>
-            <div className="ck12-ipn">勾选后提交；不跳作战线程，汐音就地转达执行者。</div>
-            {discussNote && (
-              <div className="ck12-ipn" data-testid="cockpit-inbox-discuss-note">{discussNote}</div>
-            )}
-          </>
-        ) : canInline ? (
-          <>
-            <div className="ck12-ipd-opts" role="radiogroup" aria-label="选项">
-              {options.map((option, index) => {
-                const rec = env?.recommendation?.label === option.label
-                return (
-                  <button
-                    key={`${option.label}-${index}`}
-                    type="button"
-                    role="radio"
-                    aria-checked={pick === index}
-                    className={`ck12-ipd-opt${pick === index ? ' is-on' : ''}`}
-                    disabled={busy}
-                    onClick={() => setPick(index)}
-                  >
-                    <span className="ck12-ipd-optn">[{index + 1}]</span>
-                    <span className="ck12-ipd-opto">
-                      <b>{option.label}</b>
-                      {(option.impact || option.description) && (
-                        <span>{option.impact ?? option.description}</span>
-                      )}
-                    </span>
-                    {rec && <span className="ck12-ipd-rec">REC</span>}
-                  </button>
-                )
-              })}
-            </div>
-            <div className="ck12-ipd-free">
-              <input
-                value={free}
-                placeholder="或直接说你的定法…（⏎ 发送）"
-                aria-label="自由作答"
-                onChange={(event) => setFree(event.target.value)}
-                onKeyDown={(event) => {
-                  if (event.key === 'Enter' && !event.shiftKey) {
-                    event.preventDefault()
-                    sendLabel(free)
-                  }
-                }}
-              />
-              <button type="button" disabled={busy || !free.trim()} onClick={() => sendLabel(free)}>
-                发送
-              </button>
-            </div>
-            <div className="ck12-ipd-free">
-              <button
-                type="button"
-                className="ck12-ipd-deal"
-                data-testid="cockpit-inbox-discuss"
-                disabled={busy || discussBusy}
-                onClick={() => void chatAbout(pick != null ? `已勾选 ${options[pick].label}` : undefined)}
-              >
-                {discussBusy ? '发送讨论请求…' : '还需讨论 —— 先让对方解释这几个选项'}
-              </button>
-            </div>
-            {discussNote && (
-              <div className="ck12-ipn" data-testid="cockpit-inbox-discuss-note">{discussNote}</div>
-            )}
-            <div className="ck12-ipn">选一项 → 提交；不跳作战线程，汐音就地转达执行者。</div>
-          </>
-        ) : (
-          <>
-            <div className="ck12-ipn">
-              这条没有可拍板的选项（{attentionStageLabel(item)}）—— 去对应的作战面处理，处理完
-              attention 会自己消项。详情在浮层左侧打开，浮层留着方便你连着看下一条。
-            </div>
-            <div className="ck12-ipd-free">
-              <button
-                type="button"
-                className="ck12-ipd-deal"
-                data-testid="cockpit-inbox-deal"
-                onClick={() => onDeal(entry)}
-              >
-                ▦ 去处理 · 看作战详情 →
-              </button>
-            </div>
-          </>
-        )}
-
-        {(failed || (busyChoice && !busy && failed)) && (
-          <div className="ck12-ipd-err" data-testid="cockpit-inbox-error">{failed}</div>
-        )}
-      </div>
-
-      <div className="ck12-ipd-foot">
-        <button type="button" onClick={() => selectInbox(null)}>稍后</button>
-        <span className="ck12-ipd-sp" />
-        {canInline && (
-          <button
-            type="button"
-            className="ck12-ipd-deal"
-            data-testid="cockpit-inbox-ask-detail"
-            onClick={() => onOpenDetail(entry)}
-          >
-            ▦ 看任务详情
-          </button>
-        )}
-        <span className="ck12-ipd-cap">
-          {useAskCard ? '在卡片上勾选' : canInline ? (pick == null && !free.trim() ? '先选一项' : '已选 · 可提交') : '去处理 ▦'}
-        </span>
-        {/* AskUserQuestion 卡自带「提交答案」；扁平选项才用这张按钮，避免双提交。 */}
-        {!useAskCard && (
-          <button
-            type="button"
-            className="ck12-ipd-pri"
-            disabled={!canInline || busy || (pick == null && !free.trim())}
-            onClick={() => sendLabel(pick != null ? options[pick].label : free)}
-          >
-            {busy ? '提交中…' : '提交回答'}
-          </button>
-        )}
-      </div>
-    </div>
-  )
-}
-
-/** 待放行就地卡（v21 七轮）：与问答卡同一副骨架，选项 = ready / trigger / resume。 */
+/** 待放行就地卡：放行 = 任务生命周期动作，不在 chat 里回答。 */
 function StartReplyCard({
   entry,
   onDecided,
   onOpenDetail,
+  onOpenChat,
 }: {
   entry: InboxEntry
   /** 执行成功：乐观消项键（startDecisionKey）+ 回执文案。 */
   onDecided: (decisionKey: string, receipt: string) => void
   onOpenDetail: (entry: InboxEntry) => void
+  onOpenChat: (entry: InboxEntry) => void
 }) {
   const { closeInbox, selectInbox } = useCockpitState()
   const { item } = entry
@@ -455,6 +181,14 @@ function StartReplyCard({
         </button>
         <button
           type="button"
+          className="ck12-ipd-deal"
+          data-testid="cockpit-inbox-start-chat"
+          onClick={() => onOpenChat(entry)}
+        >
+          💬 去对话
+        </button>
+        <button
+          type="button"
           className="ck12-ipd-pri"
           data-testid="cockpit-inbox-start-exec"
           disabled={busy || !taskId}
@@ -473,10 +207,12 @@ function NoticeReplyCard({
   entry,
   onAcked,
   onOpenDetail,
+  onOpenChat,
 }: {
   entry: InboxEntry
   onAcked: (entry: InboxEntry) => void
   onOpenDetail: (entry: InboxEntry) => void
+  onOpenChat: (entry: InboxEntry) => void
 }) {
   const { closeInbox, selectInbox, entryCabinId } = useCockpitState()
   const { item } = entry
@@ -534,7 +270,7 @@ function NoticeReplyCard({
         )}
         <div className="ck12-ipn">
           汐音已经审过这一条。确认不用回复 → 直接收下；不会回复任务/会话，也不会唤醒执行者。
-          还想要个说法，就看详情或直接去主对话跟她说。
+          还想要个说法，就看详情或直接去这条作战的对话。
         </div>
         {error && <div className="ck12-ipd-err" data-testid="cockpit-inbox-error">{error}</div>}
       </div>
@@ -549,6 +285,14 @@ function NoticeReplyCard({
           onClick={() => onOpenDetail(entry)}
         >
           ▦ 看详情
+        </button>
+        <button
+          type="button"
+          className="ck12-ipd-deal"
+          data-testid="cockpit-inbox-notice-chat"
+          onClick={() => onOpenChat(entry)}
+        >
+          💬 去对话
         </button>
         <button
           type="button"
@@ -567,13 +311,13 @@ function NoticeReplyCard({
 function ReceiptCard({
   entry,
   choice,
-  kind = 'answer',
+  kind = 'start',
   onClose,
 }: {
   entry: InboxEntry
   choice: string
   /** start = 放行回执；notice = 完成项已收下（未回复执行者）。 */
-  kind?: 'answer' | 'start' | 'notice'
+  kind?: 'start' | 'notice'
   onClose: () => void
 }) {
   const started = kind === 'start'
@@ -622,11 +366,15 @@ export interface CockpitInboxPopoverProps {
 }
 
 export function CockpitInboxPopover({ entries, counts, answered, onAnswered, onStartDecided }: CockpitInboxPopoverProps) {
-  const { inboxSel, selectInbox, closeInbox, openPanel, select, layer } = useCockpitState()
+  const {
+    inboxSel, selectInbox, closeInbox, openPanel, select, layer, wins, chatWindow, threads: threadApi,
+  } = useCockpitState()
+  const { rows } = useCockpitFleet()
+  const { byKey } = useCockpitThreads()
   const [receipt, setReceipt] = useState<{
     entry: InboxEntry
     choice: string
-    kind: 'answer' | 'start' | 'notice'
+    kind: 'start' | 'notice'
   } | null>(null)
 
   const groups = useMemo(() => groupedInbox(entries, answered), [entries, answered])
@@ -634,90 +382,104 @@ export function CockpitInboxPopover({ entries, counts, answered, onAnswered, onS
     () => entries.find((entry) => entry.item.id === inboxSel) ?? null,
     [entries, inboxSel],
   )
-  // 选中的那条已被答掉 / 已从 attention 消失：回列表（回执照常显示）。
+  // 卡片态只留给放行 / 完成回流；ask / 验收已答掉或不在 attention 里 → 回列表。
   useEffect(() => {
-    if (inboxSel && !selected) selectInbox(null)
+    if (inboxSel && (!selected || !isCardStage(selected))) selectInbox(null)
   }, [inboxSel, selected, selectInbox])
 
   // Esc：只走唯一 layer 栈。
   useEffect(() => layer.register('cockpit-inbox', INBOX_LAYER_PRIORITY, closeInbox), [layer, closeInbox])
 
-  // 回执 1.4s 后回列表。浮层**只手动关**（✕ / Esc）—— 2026-11-21 用户：
-  // 待办为 0 时点开看过空态，不应被计时器自动收起。
+  // 回执 1.4s 后回列表。浮层**只手动关**（✕ / Esc）。
   useEffect(() => {
     if (!receipt) return
     const back = window.setTimeout(() => setReceipt(null), RECEIPT_MS)
     return () => window.clearTimeout(back)
   }, [receipt])
 
-  const deal = useCallback((entry: InboxEntry) => {
-    // v21 七轮：详情首签 = 对话（任务的 chat 记录）——「去处理」也落到这里。
-    // v22.3：来源标成 inbox —— 详情固定让到浮层左侧顺势打开（.is-aside-inbox），
-    // 与放行卡「看任务详情」同一手感；回单栏列表，把宽度留给详情。
-    select(entry.ref, 'dialog', 'inbox')
-    selectInbox(null)
-  }, [select, selectInbox])
-
-  // 放行卡「看任务详情」：只开作战详情，**不关浮层** —— 人还能接着在这张卡上
-  // 确认执行；浮层是 popover，点外面再收（用户反馈：点一下详情就把选中的窗口关了）。
-  const openDetail = useCallback((entry: InboxEntry) => {
-    select(entry.ref, 'dialog', 'inbox')
+  /** 详情：验收行落「验收」，其余落「运行」；从 inbox 打开 → 让到浮层左侧。
+   *  浮层留着（人还能接着看下一条）。 */
+  const openDetail = useCallback((entry: InboxEntry, tab: 'accept' | 'run' = 'run') => {
+    select(entry.ref, tab, 'inbox')
   }, [select])
+
+  /** 对话：打开这条作战的独立 chat 窗（浮层收掉）。没有会话的行退回详情。 */
+  const openChat = useCallback((entry: InboxEntry) => {
+    const key = threadKeyOfAttention(rows, entry.item)
+      ?? (byKey.has(entry.rowKey) ? entry.rowKey : null)
+    closeInbox()
+    if (key && byKey.has(key)) {
+      openFleetChat(wins, threadApi, key, chatWindow)
+      return
+    }
+    select(entry.ref, 'run', 'inbox')
+  }, [rows, byKey, closeInbox, wins, threadApi, chatWindow, select])
+
+  /** 行体默认动作（原型 inboxGo）。 */
+  const go = useCallback((entry: InboxEntry) => {
+    const group = groupClass(entry)
+    if (entry.item.stage === 'start' || group === 'done') {
+      selectInbox(entry.item.id)
+      return
+    }
+    if (group === 'rev') {
+      closeInbox()
+      openDetail(entry, 'accept')
+      return
+    }
+    openChat(entry)
+  }, [closeInbox, openChat, openDetail, selectInbox])
+
+  // 卡片态：放行 / 完成回流（单栏）。
+  if (receipt) {
+    return (
+      <div className="ck12-inboxpop" data-testid="cockpit-inbox-popover" role="dialog" aria-label="要我处理">
+        <ReceiptCard
+          entry={receipt.entry}
+          choice={receipt.choice}
+          kind={receipt.kind}
+          onClose={closeInbox}
+        />
+      </div>
+    )
+  }
+  if (selected && isCardStage(selected)) {
+    return (
+      <div className="ck12-inboxpop" data-testid="cockpit-inbox-popover" role="dialog" aria-label="要我处理">
+        {selected.item.stage === 'start' ? (
+          <StartReplyCard
+            key={`start-${selected.item.id}`}
+            entry={selected}
+            onDecided={(decisionKey, text) => {
+              onStartDecided(decisionKey)
+              setReceipt({ entry: selected, choice: text, kind: 'start' })
+            }}
+            onOpenDetail={(entry) => openDetail(entry, 'run')}
+            onOpenChat={openChat}
+          />
+        ) : (
+          <NoticeReplyCard
+            key={`notice-${selected.item.id}`}
+            entry={selected}
+            onAcked={(entry) => {
+              onAnswered(entry.item.id, '无需回复')
+              setReceipt({ entry, choice: '无需回复', kind: 'notice' })
+            }}
+            onOpenDetail={(entry) => openDetail(entry, 'run')}
+            onOpenChat={openChat}
+          />
+        )}
+      </div>
+    )
+  }
 
   return (
     <div
-      className={`ck12-inboxpop${selected || receipt ? ' is-two' : ''}`}
+      className="ck12-inboxpop"
       data-testid="cockpit-inbox-popover"
       role="dialog"
       aria-label="要我处理"
     >
-      {(receipt || selected) && (
-        receipt
-          ? (
-            <ReceiptCard
-              entry={receipt.entry}
-              choice={receipt.choice}
-              kind={receipt.kind}
-              onClose={closeInbox}
-            />
-          )
-          : selected && (
-            selected.item.stage === 'start' ? (
-              <StartReplyCard
-                key={`start-${selected.item.id}`}
-                entry={selected}
-                onDecided={(decisionKey, text) => {
-                  onStartDecided(decisionKey)
-                  setReceipt({ entry: selected, choice: text, kind: 'start' })
-                }}
-                onOpenDetail={openDetail}
-              />
-            ) : selected.item.stage === 'notice' ? (
-              <NoticeReplyCard
-                key={`notice-${selected.item.id}`}
-                entry={selected}
-                onAcked={(entry) => {
-                  onAnswered(entry.item.id, '无需回复')
-                  setReceipt({ entry, choice: '无需回复', kind: 'notice' })
-                }}
-                onOpenDetail={openDetail}
-              />
-            ) : (
-              <ReplyCard
-                key={selected.item.id}
-                entry={selected}
-                onAnswered={(id, choice) => {
-                  onAnswered(id, choice)
-                  setReceipt({ entry: selected, choice, kind: 'answer' })
-                }}
-                onDone={() => selectInbox(null)}
-                onDeal={deal}
-                onOpenDetail={openDetail}
-              />
-            )
-          )
-      )}
-
       <div className="ck12-ip-listwrap">
         <div className="ck12-ip-h">
           <button
@@ -748,26 +510,141 @@ export function CockpitInboxPopover({ entries, counts, answered, onAnswered, onS
                 <b>{group.items.length}</b>
               </div>
               {group.items.map((entry) => {
-                const on = entry.item.id === inboxSel
-                const shortName = jobLine(entry)
+                const groupKey = groupClass(entry)
+                const actions = entry.item.stage === 'start' ? (
+                  <>
+                    <button
+                      type="button"
+                      className="ck12-ipa is-pri"
+                      title="放行 / 入列 / 恢复"
+                      data-testid={`cockpit-inbox-start-${entry.item.id}`}
+                      onClick={(event) => {
+                        event.stopPropagation()
+                        selectInbox(entry.item.id)
+                      }}
+                    >
+                      ⚑ 放行
+                    </button>
+                    <button
+                      type="button"
+                      className="ck12-ipa"
+                      title="作战详情"
+                      data-testid={`cockpit-inbox-detail-${entry.item.id}`}
+                      onClick={(event) => {
+                        event.stopPropagation()
+                        openDetail(entry, 'run')
+                      }}
+                    >
+                      ▦
+                    </button>
+                  </>
+                ) : groupKey === 'rev' ? (
+                  <>
+                    <button
+                      type="button"
+                      className="ck12-ipa is-pri"
+                      title="看验收（作战详情）"
+                      data-testid={`cockpit-inbox-detail-${entry.item.id}`}
+                      onClick={(event) => {
+                        event.stopPropagation()
+                        openDetail(entry, 'accept')
+                      }}
+                    >
+                      ▦ 验收
+                    </button>
+                    <button
+                      type="button"
+                      className="ck12-ipa"
+                      title="去这条作战的对话"
+                      data-testid={`cockpit-inbox-chat-${entry.item.id}`}
+                      onClick={(event) => {
+                        event.stopPropagation()
+                        openChat(entry)
+                      }}
+                    >
+                      💬
+                    </button>
+                  </>
+                ) : groupKey === 'done' ? (
+                  <>
+                    <button
+                      type="button"
+                      className="ck12-ipa is-pri"
+                      title="收下 · 无需回复"
+                      data-testid={`cockpit-inbox-ack-${entry.item.id}`}
+                      onClick={(event) => {
+                        event.stopPropagation()
+                        selectInbox(entry.item.id)
+                      }}
+                    >
+                      ✓ 收下
+                    </button>
+                    <button
+                      type="button"
+                      className="ck12-ipa"
+                      title="作战详情"
+                      data-testid={`cockpit-inbox-detail-${entry.item.id}`}
+                      onClick={(event) => {
+                        event.stopPropagation()
+                        openDetail(entry, 'run')
+                      }}
+                    >
+                      ▦
+                    </button>
+                  </>
+                ) : (
+                  <>
+                    <button
+                      type="button"
+                      className="ck12-ipa is-pri"
+                      title="直接去这条作战的 chat 里回答"
+                      data-testid={`cockpit-inbox-chat-${entry.item.id}`}
+                      onClick={(event) => {
+                        event.stopPropagation()
+                        openChat(entry)
+                      }}
+                    >
+                      💬 对话
+                    </button>
+                    <button
+                      type="button"
+                      className="ck12-ipa"
+                      title="作战详情"
+                      data-testid={`cockpit-inbox-detail-${entry.item.id}`}
+                      onClick={(event) => {
+                        event.stopPropagation()
+                        openDetail(entry, 'run')
+                      }}
+                    >
+                      ▦
+                    </button>
+                  </>
+                )
                 return (
-                  <button
+                  <div
                     key={entry.item.id}
-                    type="button"
-                    className={`ck12-ip-row${on ? ' is-on' : ''}`}
+                    role="button"
+                    tabIndex={0}
+                    className="ck12-ip-row"
                     data-testid={`cockpit-inbox-row-${entry.item.id}`}
-                    data-group={groupClass(entry)}
-                    onClick={() => selectInbox(entry.item.id)}
+                    data-group={groupKey}
+                    onClick={() => go(entry)}
+                    onKeyDown={(event) => {
+                      if (event.key === 'Enter' || event.key === ' ') {
+                        event.preventDefault()
+                        go(entry)
+                      }
+                    }}
                   >
                     <span className="ck12-ip-r1">
-                      <span className={`ck12-ip-type is-${groupClass(entry)}`}>
+                      <span className={`ck12-ip-type is-${groupKey}`}>
                         {entry.item.handle ?? '#'}
                       </span>
-                      <span className="ck12-ip-name">{shortName}</span>
-                      <span className="ck12-ip-go">{inboxVerb(entry.item)}</span>
+                      <span className="ck12-ip-name">{jobLine(entry)}</span>
+                      <span className="ck12-ip-acts">{actions}</span>
                     </span>
                     <span className="ck12-ip-q">{entry.item.question ?? entry.item.detail ?? entry.item.title}</span>
-                  </button>
+                  </div>
                 )
               })}
             </div>
@@ -777,7 +654,7 @@ export function CockpitInboxPopover({ entries, counts, answered, onAnswered, onS
         <div className="ck12-ip-foot">
           <button type="button" onClick={() => openPanel('ops')}>▦ 全部决断 →</button>
           <span className="ck12-ip-sp" />
-          Esc 收起 · 处理完自动回来
+          点行进对话 · Esc 收起
         </div>
       </div>
     </div>

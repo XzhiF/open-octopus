@@ -5,14 +5,15 @@
 //   · 排序：状态优先（受阻 → 等你 → 在跑 → 待命 → 已归档），同状态按创建时间
 //     升序（旧 → 新）；纯 attention 行不进编队（归右栏 inbox）。
 //   · 默认 6 行；超出时底部「更多 +N ⌄ / 收起 ⌃」，展开只重渲染本栏。
-//   · 行点击 = 选中真实作业面（design 31 §5.1）—— 仍写 CockpitState.select()。
+//   · v22 #5（2026-11-23 用户）：行体 / 💬 = 打开这条作战的独立 chat 窗（默认
+//     和主通讯台一样大、盖在上面）；▦ = 作战详情。行不再切换主通讯台。
 //   · 数字纪律：pct 只在真实拿到时画条；null 一律不画，不猜。
 //
 // 数据只从 useCockpitFleet() 来（已经是入口舱单舱），不自己 fetch。
 
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { X } from 'lucide-react'
-import type { CabinDelegationView, CabinJobView } from '@/lib/cabin-api'
+import type { CabinDelegationView } from '@/lib/cabin-api'
 import { useCockpitFleet } from '../fleet/CockpitFleetProvider'
 import {
   fleetStatusOf,
@@ -25,6 +26,7 @@ import { sameCockpitRef, type CockpitRef } from '../state/cockpit-state'
 import { projectNameFromKey, rowProjectKeys } from '../projects/project-model'
 import { useCockpitState } from '../state/CockpitStateProvider'
 import { useCockpitThreads } from '../chat/use-cockpit-threads'
+import { openFleetChat } from '../chat/open-fleet-window'
 import { attentionStageLabel } from '../fx/CockpitBrief'
 
 const RAIL_LAYER_PRIORITY = 70
@@ -54,7 +56,8 @@ function accentOf(row: CockpitRow): string {
 function glyphOf(row: CockpitRow): string {
   if (row.kind === 'task') return '◆'
   if (row.kind === 'delegation') return '≫'
-  const kind = (row.job as CabinJobView).kind
+  if (row.kind !== 'job') return '◆'
+  const kind = row.job.kind
   return kind === 'workflow' ? '⬡' : kind === 'subagent' ? '◈' : '◆'
 }
 
@@ -116,7 +119,7 @@ export function CockpitFleetRail() {
   const { rows, counts, arrivals, loading, error, refetch } = useCockpitFleet()
   const {
     selection, select, railOpen, setRailOpen, layer, projectFilter, setProjectFilter,
-    flash, threads: threadApi, chatWindow,
+    flash, threads: threadApi, wins, chatWindow,
   } = useCockpitState()
 
   const [popped, setPopped] = useState<ReadonlySet<string>>(() => new Set())
@@ -137,14 +140,16 @@ export function CockpitFleetRail() {
   const queueCount = visible.filter((row) => fleetStatusOf(row) === 'queue').length
   const doneCount = visible.filter((row) => fleetStatusOf(row) === 'done').length
 
-  /** 委派行没有 cockpit ref：点开它的 doer 会话（证据面）。 */
-  const activate = (row: CockpitRow, ref: CockpitRef | null) => {
-    if (ref) { select(ref); return }
-    if (row.kind === 'delegation' && row.delegation.doer_session_id) {
-      window.dispatchEvent(new CustomEvent('octopus:open-session', {
-        detail: { sessionId: row.delegation.doer_session_id },
-      }))
-    }
+  /** v22 #5：行体 / 💬 = 这条作战的独立 chat 窗；没有会话的行退回详情。 */
+  const openChat = (row: CockpitRow) => {
+    if (byKey.has(row.key)) { openFleetChat(wins, threadApi, row.key, chatWindow); return }
+    const ref = rowRef(row)
+    if (ref) select(ref)
+  }
+  /** ▦ = 作战详情（落在「运行」页签）；不改主通讯台。 */
+  const openDetail = (row: CockpitRow) => {
+    const ref = rowRef(row)
+    if (ref) select(ref, 'run')
   }
 
   // ── 新行 pop：arrivals 命中的 attention + 首次出现的 key，900ms 后收 ──
@@ -332,7 +337,10 @@ export function CockpitFleetRail() {
           const pct = pctOf(row)
           const accent = accentOf(row)
           const title = titleOf(row)
-          const talkable = byKey.has(row.key) && !!ref
+          const talkable = byKey.has(row.key)
+          const chatOpen = wins.windows.some((win) => win.threadKey === row.key && !win.min)
+          const unread = threadApi.unread[row.key] ?? 0
+          const showActs = talkable || !!ref
           return (
             <div
               key={row.key}
@@ -342,16 +350,19 @@ export function CockpitFleetRail() {
               tabIndex={-1}
               data-testid={`cockpit-rail-row-${row.key}`}
               data-tone={status}
-              title={`${title} · ${statusTextOf(row, status)} · 点击看详情`}
+              title={talkable
+                ? `${title} · ${statusTextOf(row, status)} · 点行进对话`
+                : `${title} · ${statusTextOf(row, status)} · 点击看详情`}
               className={`ck12-flrow is-${status}${selected ? ' is-on' : ''}${
-                popped.has(row.key) ? ' is-pop' : ''
-              }${flash.key === row.key ? ` is-arrived-${flash.nonce % 2}` : ''}`}
+                chatOpen ? ' is-chat' : ''
+              }${popped.has(row.key) ? ' is-pop' : ''}${flash.key === row.key ? ` is-arrived-${flash.nonce % 2}` : ''}`}
               style={{ ['--accent' as string]: accent, ['--p' as string]: String(pct ?? 0) }}
-              onClick={() => activate(row, ref)}
+              onClick={() => (talkable ? openChat(row) : openDetail(row))}
               onKeyDown={(event) => {
                 if (event.key === 'Enter' || event.key === ' ') {
                   event.preventDefault()
-                  activate(row, ref)
+                  if (talkable) openChat(row)
+                  else openDetail(row)
                 }
               }}
             >
@@ -365,9 +376,11 @@ export function CockpitFleetRail() {
                   {pct !== null && status !== 'done' && (
                     <span className="ck12-flpct">{Math.round(pct)}%</span>
                   )}
-                  <span className={`ck12-flst is-${status}`}>{statusTextOf(row, status)}</span>
                 </span>
-                <span className="ck12-flsub">{subOf(row, status)}</span>
+                <span className="ck12-flsub">
+                  <span className={`ck12-flst is-${status}`}>{statusTextOf(row, status)}</span>
+                  <span className="ck12-flsub-t">{subOf(row, status)}</span>
+                </span>
                 {pct !== null && status !== 'done' && (
                   <span className="ck12-flbar" aria-hidden="true">
                     <i style={{ width: `${Math.max(0, Math.min(100, pct))}%` }} />
@@ -375,21 +388,40 @@ export function CockpitFleetRail() {
                 )}
               </span>
 
-              {talkable && (
-                <button
-                  type="button"
-                  className="ck12-fl-talk"
-                  aria-label={`谈 ${title}`}
-                  title="💬 直达该作战线程"
-                  data-testid={`cockpit-rail-talk-${row.key}`}
-                  onClick={(event) => {
-                    event.stopPropagation()
-                    threadApi.activateThread(row.key)
-                    chatWindow.openWithFocus()
-                  }}
-                >
-                  💬
-                </button>
+              {showActs && (
+                <span className="ck12-flacts">
+                  {talkable && (
+                    <button
+                      type="button"
+                      className="ck12-flact is-pri"
+                      aria-label={`对话 ${title}`}
+                      title="💬 对话 · 独立 chat 窗"
+                      data-testid={`cockpit-rail-chat-${row.key}`}
+                      onClick={(event) => {
+                        event.stopPropagation()
+                        openChat(row)
+                      }}
+                    >
+                      💬
+                      {unread > 0 && <i className="ck12-flact-und">{unread > 9 ? '9+' : unread}</i>}
+                    </button>
+                  )}
+                  {ref && (
+                    <button
+                      type="button"
+                      className="ck12-flact"
+                      aria-label={`详情 ${title}`}
+                      title="▦ 详情 · 作战详情（不动主通讯台）"
+                      data-testid={`cockpit-rail-detail-${row.key}`}
+                      onClick={(event) => {
+                        event.stopPropagation()
+                        openDetail(row)
+                      }}
+                    >
+                      ▦
+                    </button>
+                  )}
+                </span>
               )}
             </div>
           )

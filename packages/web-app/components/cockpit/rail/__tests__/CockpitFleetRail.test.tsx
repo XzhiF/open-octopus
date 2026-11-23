@@ -13,17 +13,25 @@ import type { CockpitFleetContextValue } from '../../fleet/CockpitFleetProvider'
 import { CockpitFleetRail } from '../CockpitFleetRail'
 
 const fleetState = vi.hoisted(() => ({ value: null as unknown }))
+/** 假线程表：key 在集合里 = 这条作战有会话，行体 / 💬 能开 chat 窗。 */
+const threadState = vi.hoisted(() => ({ keys: new Set<string>() }))
 
 vi.mock('../../fleet/CockpitFleetProvider', () => ({
   useCockpitFleet: () => fleetState.value,
 }))
 vi.mock('../../chat/use-cockpit-threads', () => ({
-  useCockpitThreads: () => ({ threads: [], byKey: new Map(), active: null, visible: [] }),
+  useCockpitThreads: () => ({
+    threads: [],
+    byKey: new Map([...threadState.keys].map((key) => [key, { key, short: key, state: 'wait', ref: null }])),
+    active: null,
+    visible: [],
+  }),
 }))
 
 function fleet(over: Partial<CockpitFleetContextValue> = {}): CockpitFleetContextValue {
   return {
     rows: [],
+    mainSessionId: null,
     counts: null,
     arrivals: [],
     loading: false,
@@ -112,9 +120,9 @@ function taskRow(id: string, over: Partial<CabinTaskRow> = {}, pct = 40): Cockpi
 }
 
 function SelectionProbe() {
-  const { selection } = useCockpitState()
+  const { selection, wins, tab } = useCockpitState()
   return (
-    <output data-testid="selection">
+    <output data-testid="selection" data-wins={wins.windows.length} data-tab={tab}>
       {selection ? `${selection.kind}:${selection.cabinId}:${selection.id}` : 'none'}
     </output>
   )
@@ -141,6 +149,7 @@ function row(key: string) {
 
 beforeEach(() => {
   fleetState.value = fleet()
+  threadState.keys = new Set()
 })
 
 describe('CockpitFleetRail · v21 单列编队', () => {
@@ -217,7 +226,7 @@ describe('CockpitFleetRail · v21 单列编队', () => {
     expect(document.querySelectorAll('[data-testid^="cockpit-rail-row-"]')).toHaveLength(6)
   })
 
-  it('点击 job / task 写出对应 select payload', () => {
+  it('没有会话的行：点击 job / task 退回详情（写出对应 select payload）', () => {
     renderRail({ rows: sortRows([jobRow(jobView('j1')), taskRow('t1')]) })
 
     fireEvent.click(row('job:j1'))
@@ -227,6 +236,21 @@ describe('CockpitFleetRail · v21 单列编队', () => {
     expect(screen.getByTestId('selection')).toHaveTextContent('task:c1:t1')
     expect(row('task:t1')).toHaveAttribute('aria-selected', 'true')
     expect(row('job:j1')).toHaveAttribute('aria-selected', 'false')
+  })
+
+  it('有会话的行：行体 / 💬 开独立 chat 窗（不动主通讯台）；▦ 开「运行」详情', () => {
+    threadState.keys.add('job:j1')
+    renderRail({ rows: sortRows([jobRow(jobView('j1'))]) })
+
+    fireEvent.click(row('job:j1'))
+    expect(screen.getByTestId('selection')).toHaveTextContent('none')
+    expect(screen.getByTestId('selection')).toHaveAttribute('data-wins', '1')
+
+    fireEvent.click(screen.getByTestId('cockpit-rail-detail-job:j1'))
+    expect(screen.getByTestId('selection')).toHaveTextContent('job:c1:j1')
+    expect(screen.getByTestId('selection')).toHaveAttribute('data-tab', 'run')
+    // 已开一扇窗：行框标 is-chat。
+    expect(row('job:j1').className).toMatch(/is-chat/)
   })
 
   it('空编队显示空态', () => {

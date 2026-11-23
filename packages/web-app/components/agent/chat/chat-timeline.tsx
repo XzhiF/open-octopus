@@ -25,6 +25,8 @@ interface ChatTimelineProps {
   /** compact 的挂载点（CockpitChatWindow 注册的标题栏槽）。没有槽就不渲染 ——
    *  绝不回退成正文右侧的悬浮把手。 */
   portalHost?: HTMLElement | null
+  /** 面板的定位主机（v22 #5：编队独立窗是 .ck12-cwin，通讯台缺省 .ck12-comms）。 */
+  hostSelector?: string
 }
 
 /** User-turn scrubber (DeepSeek style): one dash per prompt hugging the right
@@ -46,6 +48,7 @@ export function ChatTimeline({
   clearDock,
   compact,
   portalHost,
+  hostSelector = '.ck12-comms',
 }: ChatTimelineProps) {
   const listRef = useRef<HTMLDivElement>(null)
   const triggerRef = useRef<HTMLButtonElement>(null)
@@ -80,7 +83,7 @@ export function ChatTimeline({
   }, [compact, open])
 
   // compact：面板挂在浮窗本体上，按按钮位置算一个夹在窗内的 left/宽度。
-  const windowHost = portalHost?.closest<HTMLElement>('.ck12-comms') ?? portalHost ?? null
+  const windowHost = portalHost?.closest<HTMLElement>(hostSelector) ?? portalHost ?? null
   useLayoutEffect(() => {
     if (!compact || !open || !windowHost) return
     const place = () => {

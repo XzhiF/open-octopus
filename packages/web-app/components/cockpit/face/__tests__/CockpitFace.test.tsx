@@ -189,10 +189,11 @@ describe('CockpitFace — job 选中', () => {
     )
     expect(focusables[0]).toBe(screen.getByTestId('cockpit-job-close'))
 
-    // 五个页签都在
-    for (const key of ['dialog', 'relay', 'run', 'changes', 'accept']) {
+    // v22 #5：七页签（对话页签已删除），首签「运行」。
+    for (const key of ['relay', 'run', 'changes', 'accept']) {
       expect(screen.getByTestId(`cockpit-tab-${key}`)).toBeInTheDocument()
     }
+    expect(screen.queryByTestId('cockpit-tab-dialog')).toBeNull()
 
     fireEvent.click(screen.getByTestId('cockpit-job-close'))
     await waitFor(() => expect(screen.queryByTestId('cockpit-face')).toBeNull())
@@ -290,7 +291,7 @@ describe('CockpitFace — attention 面', () => {
     window.removeEventListener('octopus:open-task', spy)
   })
 
-  it('attention 挂在 job 上（job_id 命中）时落到该 job 的完整五页签面', async () => {
+  it('attention 挂在 job 上（job_id 命中）时落到该 job 的完整页签面', async () => {
     const item = attentionItem({ job_id: 'j1', stage: 'answer', awaiting: 'person', task_id: null })
     vi.mocked(getCabin).mockImplementation(async (id: string) => {
       const c = cabin(id)
@@ -306,12 +307,12 @@ describe('CockpitFace — attention 面', () => {
     // v21 五轮：头部不再有「去处理 →」捷径（用户：右上按钮多余）；
     // 待办入口在右栏「要我处理」，详情里按页签自己切。
     expect(screen.queryByTestId('cockpit-job-go')).toBeNull()
-    expect(screen.getByTestId('cockpit-tab-dialog')).toHaveAttribute('aria-selected', 'true')
+    expect(screen.getByTestId('cockpit-tab-run')).toHaveAttribute('aria-selected', 'true')
   })
 })
 
 describe('CockpitFace — task 选中（历史舱合成行）', () => {
-  it('渲染任务面：五页签 + 真实字段，没有 job 账本给明确空态', async () => {
+  it('渲染任务面：页签 + 真实字段，没有 job 账本给明确空态', async () => {
     vi.mocked(listTasks).mockResolvedValue({
       items: [
         {
@@ -346,14 +347,12 @@ describe('CockpitFace — task 选中（历史舱合成行）', () => {
     const header = await screen.findByTestId('cockpit-job-header')
     await waitFor(() => expect(header.textContent).toContain('接入渠道'))
     expect(header.textContent).toContain('接入渠道')
-    for (const key of ['dialog', 'relay', 'run', 'changes', 'accept']) {
+    for (const key of ['relay', 'run', 'changes', 'accept']) {
       expect(screen.getByTestId(`cockpit-tab-${key}`)).toBeInTheDocument()
     }
-    // v21 七轮：首签「对话」= 任务 chat 记录；没有 source_chat_session_id
-    // 给明确空态，不拿别的东西冒充对话。
-    const dialog = await screen.findByTestId('cockpit-dialog')
-    expect(dialog.textContent).toContain('任务对话')
-    expect(dialog.textContent).toContain('没有关联的对话会话')
+    // v22 #5：首签「运行」；对话页签已删除（编队对话是独立 chat 窗）。
+    expect(screen.queryByTestId('cockpit-tab-dialog')).toBeNull()
+    expect(screen.getByTestId('cockpit-tab-run')).toHaveAttribute('aria-selected', 'true')
 
     fireEvent.click(screen.getByTestId('cockpit-tab-relay'))
     expect((await screen.findByTestId('cockpit-face-task-relay')).textContent)

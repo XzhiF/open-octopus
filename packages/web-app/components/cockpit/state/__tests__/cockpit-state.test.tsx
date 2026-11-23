@@ -37,17 +37,20 @@ describe('cockpit URL 契约', () => {
       id: 'a1',
     })
     expect(parseCockpitUrl('?tab=nope', 'c1')).toEqual({ ref: null, tab: null })
-    // v21 七轮：overview 退役 —— 旧深链的 tab=overview 不当合法页签，落回默认对话。
+    // v21 七轮：overview 退役；v22 #5：dialog 也退役（编队对话是独立 chat 窗）
+    // —— 旧深链的这两个值都不当合法页签，落回默认「运行」。
     expect(parseCockpitUrl('?tab=overview', 'c1')).toEqual({ ref: null, tab: null })
-    expect(parseCockpitUrl('?tab=dialog', 'c1')).toEqual({ ref: null, tab: 'dialog' })
+    expect(parseCockpitUrl('?tab=dialog', 'c1')).toEqual({ ref: null, tab: null })
     expect(parseCockpitUrl('', 'c1')).toEqual({ ref: null, tab: null })
   })
 
-  it('serialize：attention 用 attn，默认页签省略，空选中回裸路径', () => {
+  it('serialize：attention 用 attn，默认页签（run）省略，退役页签不写，空选中回裸路径', () => {
+    expect(serializeCockpitHref('c1', { kind: 'job', cabinId: 'c1', id: 'j1' }, 'run'))
+      .toBe('/cabin/c1/cockpit?job=j1')
     expect(serializeCockpitHref('c1', { kind: 'job', cabinId: 'c1', id: 'j1' }, 'dialog'))
       .toBe('/cabin/c1/cockpit?job=j1')
-    expect(serializeCockpitHref('c1', { kind: 'attention', cabinId: 'c1', id: 'a1' }, 'run'))
-      .toBe('/cabin/c1/cockpit?attn=a1&tab=run')
+    expect(serializeCockpitHref('c1', { kind: 'attention', cabinId: 'c1', id: 'a1' }, 'accept'))
+      .toBe('/cabin/c1/cockpit?attn=a1&tab=accept')
     expect(serializeCockpitHref('c1', null)).toBe('/cabin/c1/cockpit')
   })
 
@@ -62,7 +65,7 @@ describe('cockpit URL 契约', () => {
 
   it('跨舱已退役：serialize 不写 &cabin=，parse 读到也归入口舱', () => {
     const href = serializeCockpitHref('c1', { kind: 'job', cabinId: 'c2', id: 'j9' }, 'run')
-    expect(href).toBe('/cabin/c1/cockpit?job=j9&tab=run')
+    expect(href).toBe('/cabin/c1/cockpit?job=j9')
     expect(parseCockpitUrl('?job=j9&cabin=c2', 'c1')).toEqual({
       ref: { kind: 'job', cabinId: 'c1', id: 'j9' },
       tab: null,
@@ -72,7 +75,7 @@ describe('cockpit URL 契约', () => {
   it('URL 同步保留调用方参数（?demo=1），只重写座舱自己的', () => {
     expect(
       cockpitHrefPreserving('c1', { kind: 'job', cabinId: 'c1', id: 'j1' }, 'run', '?demo=1&x=2'),
-    ).toBe('/cabin/c1/cockpit?job=j1&tab=run&demo=1&x=2')
+    ).toBe('/cabin/c1/cockpit?job=j1&demo=1&x=2')
     // 旧的座舱参数不残留（换选中后不重复 / 不留旧值）
     expect(
       cockpitHrefPreserving('c1', null, null, '?job=old&tab=run&demo=1'),
@@ -155,7 +158,7 @@ describe('CockpitStateProvider', () => {
     const { result } = renderHook(() => useCockpitState(), { wrapper })
     expect(result.current.entryCabinId).toBe('c1')
     expect(result.current.selection).toBeNull()
-    expect(result.current.tab).toBe('dialog')
+    expect(result.current.tab).toBe('run')
     expect(result.current.chat).toBeNull()
     expect(result.current.railOpen).toBe(false)
     expect(result.current.chatWindow).toMatchObject({

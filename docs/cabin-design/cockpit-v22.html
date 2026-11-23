@@ -198,18 +198,31 @@ kbd{border:1px solid rgba(185,179,217,.35);border-bottom-width:2px;border-radius
 .flbody{flex:1;min-width:0}
 .fltop{display:flex;align-items:center;gap:5px;font-size:11.5px;font-weight:800;font-family:var(--font-ui);color:#fff;white-space:nowrap}
 .fltop b{overflow:hidden;text-overflow:ellipsis;font-weight:800}
-.flpct{flex:none;font-size:8.5px;color:var(--metal2);font-family:var(--font-mono);font-weight:700}
-.flst{margin-left:auto;flex:none;font-size:7.5px;font-weight:800;letter-spacing:.04em;padding:1px 6px;clip-path:polygon(3px 0,100% 0,calc(100% - 3px) 100%,0 100%);background:rgba(255,255,255,.1);color:var(--ink2)}
+.flpct{margin-left:auto;flex:none;font-size:8.5px;color:var(--metal2);font-family:var(--font-mono);font-weight:700}
+/* #5：状态签挪到副行左端 —— 给行尾两枚动作按钮让出宽度，标题不再被压成两三个字。 */
+.flst{flex:none;font-size:7.5px;font-weight:800;letter-spacing:.04em;padding:0 5px;line-height:13px;clip-path:polygon(3px 0,100% 0,calc(100% - 3px) 100%,0 100%);background:rgba(255,255,255,.1);color:var(--ink2)}
 .flst.run{background:rgba(53,199,240,.2);color:var(--sky)}
 .flst.wait{background:rgba(255,176,32,.2);color:var(--amber)}
 .flst.blocked{background:rgba(255,59,92,.22);color:var(--red);box-shadow:0 0 8px rgba(255,59,92,.25)}
 .flst.done{background:rgba(61,220,151,.18);color:var(--green)}
-.flsub{display:block;margin-top:1px;font-size:8.5px;color:var(--ink2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.flsub{display:flex;align-items:center;gap:4px;min-width:0;margin-top:1px;font-size:8.5px;color:var(--ink2);white-space:nowrap}
+.flsub-t{min-width:0;overflow:hidden;text-overflow:ellipsis}
 .flrow.wait .flsub{color:color-mix(in srgb,var(--amber) 80%,var(--ink2))}
 .flrow.blocked .flsub{color:color-mix(in srgb,var(--red) 75%,var(--ink2))}
 .flbar{display:block;height:3px;margin-top:5px;background:rgba(255,255,255,.07);overflow:hidden}
 .flbar i{display:block;height:100%;background:linear-gradient(90deg,var(--accent,var(--sky)),var(--pink));box-shadow:0 0 8px color-mix(in srgb,var(--accent,var(--sky)) 55%,transparent);transition:width .5s}
 .flrow.done{opacity:.72}
+/* #5（2026-11-23 用户）：编队行两条入口 —— 行体点击 = 进这条作战的 chat；
+   行尾两枚小按钮：💬 对话（有未读加红点）/ ▦ 详情。主通讯台不再切线程。 */
+.flacts{flex:none;display:flex;flex-direction:column;gap:3px;margin-left:1px}
+.flact{position:relative;width:21px;height:23px;clip-path:var(--hex);display:grid;place-items:center;
+  background:rgba(255,255,255,.07);border:1px solid rgba(185,179,217,.22);color:var(--ink2);font-size:9.5px;transition:.13s}
+.flact:hover{color:#fff;border-color:var(--teal);background:rgba(46,230,214,.16)}
+.flact.pri{color:color-mix(in srgb,var(--teal) 78%,var(--ink2))}
+.flact .und{position:absolute;top:-3px;right:-3px;min-width:12px;height:12px;padding:0 2px;border-radius:999px;background:var(--red);color:#fff;font-size:7px;font-weight:800;display:grid;place-items:center;font-style:normal;font-family:var(--font-mono);box-shadow:0 0 7px rgba(255,59,92,.6)}
+.flrow{cursor:pointer}
+.flrow.is-chat{border-color:rgba(46,230,214,.45)}
+.flrow:focus-visible{outline:1px solid var(--teal);outline-offset:1px}
 .fr-foot{flex:none;padding:5px 6px 7px;border-top:1px solid rgba(185,179,217,.12);position:relative;z-index:2}
 .fr-more{display:flex;align-items:center;justify-content:center;gap:6px;width:100%;height:25px;clip-path:polygon(6px 0,100% 0,calc(100% - 6px) 100%,0 100%);background:rgba(46,230,214,.07);border:1px solid rgba(46,230,214,.28);color:var(--teal);font-size:9.5px;font-weight:800;font-family:var(--font-ui);letter-spacing:.06em;transition:.13s}
 .fr-more:hover{background:rgba(46,230,214,.18);color:#fff;border-color:var(--teal)}
@@ -217,7 +230,7 @@ kbd{border:1px solid rgba(185,179,217,.35);border-bottom-width:2px;border-radius
 .fr-empty{padding:22px 10px;text-align:center;font-size:10px;color:var(--metal2);font-family:var(--font-ui)}
 
 /* ═══ 右 · 紧凑 inbox + 主菜单 + 更多横排 ═══ */
-.rightrail{position:absolute;right:10px;top:64px;bottom:58px;z-index:22;display:flex;flex-direction:column;align-items:flex-end;pointer-events:none}
+.rightrail{position:absolute;right:10px;top:64px;bottom:58px;z-index:22;display:flex;flex-direction:column;align-items:center;row-gap:16px;pointer-events:none}
 .rightrail>*{pointer-events:auto}
 .inboxchip{position:relative;display:flex;flex-direction:column;align-items:center;gap:3px;width:78px;padding:7px 6px 6px;border-radius:14px;background:var(--glass2);backdrop-filter:blur(10px);border:1px solid rgba(255,176,32,.4);text-align:center;transition:.15s}
 .inboxchip:hover,.inboxchip.on{border-color:var(--hazard);background:color-mix(in srgb,var(--hazard) 12%,rgba(20,16,48,.7));box-shadow:0 0 18px rgba(255,176,32,.25)}
@@ -237,9 +250,11 @@ kbd{border:1px solid rgba(185,179,217,.35);border-bottom-width:2px;border-radius
 .inboxchip .bq.off{opacity:.3}
 .inboxchip .n{position:absolute;top:2px;right:3px;z-index:2;min-width:18px;height:18px;padding:0 4px;border-radius:999px;background:var(--hazard);color:var(--indigo);font-size:9.5px;font-weight:800;display:grid;place-items:center;font-family:var(--font-mono);box-shadow:0 0 10px rgba(255,176,32,.55)}
 .inboxchip.zero .n{background:rgba(255,255,255,.12);color:var(--metal2);box-shadow:none}
-.rmenu{margin:auto 0;display:flex;flex-direction:column;align-items:center;gap:12px}
+.rmenu{margin:auto 0;display:flex;flex-direction:column;align-items:center;gap:10px}
 /* 右栏六角按钮：同色系「金属边 + 内面」两层堆叠，高光 / 内阴影做出厚度，不再用撞色描边 */
-.rhex{position:relative;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:1px;width:63px;height:72px;color:#fff;transition:.16s;filter:drop-shadow(0 8px 12px rgba(8,6,20,.5))}
+/* 2026-11-23 用户 #4：整组收一档（原 63×72 / big 76×88 / more 56×63，gap 12），
+   ≤1320 的放大档同步删除 —— 否则一整列正好顶到最上面的「待我处理」chip。 */
+.rhex{position:relative;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:1px;width:58px;height:66px;color:#fff;transition:.16s;filter:drop-shadow(0 8px 12px rgba(8,6,20,.5))}
 .rhex::before{content:"";position:absolute;inset:0;z-index:0;clip-path:var(--hex);
   background:linear-gradient(158deg,rgba(205,226,255,.5),rgba(126,150,225,.2) 30%,rgba(34,26,74,.82) 72%,rgba(12,9,28,.94));transition:.16s}
 .rhex::after{content:"";position:absolute;inset:2px;z-index:0;clip-path:var(--hex);
@@ -248,18 +263,18 @@ kbd{border:1px solid rgba(185,179,217,.35);border-bottom-width:2px;border-radius
 .rhex .ri,.rhex .rl{position:relative;z-index:1}
 .rhex:hover{transform:scale(1.06);filter:drop-shadow(0 8px 18px rgba(46,230,214,.32))}
 .rhex:hover::after,.rhex.on::after{box-shadow:inset 0 1px 0 rgba(255,255,255,.36),inset 0 -7px 14px rgba(8,6,20,.42),inset 0 0 20px rgba(46,230,214,.3)}
-.rhex .ri{font-size:16px;text-shadow:0 0 12px rgba(46,230,214,.8)}
-.rhex .rl{font-size:9.5px;font-weight:800;font-family:var(--font-ui);letter-spacing:.08em;text-shadow:0 1px 6px rgba(16,13,40,.8)}
-.rhex.big{width:76px;height:88px}
+.rhex .ri{font-size:15px;text-shadow:0 0 12px rgba(46,230,214,.8)}
+.rhex .rl{font-size:9px;font-weight:800;font-family:var(--font-ui);letter-spacing:.08em;text-shadow:0 1px 6px rgba(16,13,40,.8)}
+.rhex.big{width:68px;height:78px}
 .rhex.big::before{background:linear-gradient(158deg,rgba(255,226,196,.55),rgba(255,158,92,.26) 30%,rgba(74,28,34,.82) 72%,rgba(28,12,18,.94))}
 .rhex.big::after{background:linear-gradient(160deg,rgba(255,150,70,.5),rgba(255,92,138,.42) 58%,rgba(66,24,44,.6));box-shadow:inset 0 1px 0 rgba(255,255,255,.3),inset 0 -7px 14px rgba(30,10,16,.5),inset 0 0 18px rgba(255,176,32,.16)}
 .rhex.big:hover{filter:drop-shadow(0 8px 20px rgba(255,138,61,.34))}
 .rhex.big:hover::after,.rhex.big.on::after{box-shadow:inset 0 1px 0 rgba(255,255,255,.42),inset 0 -7px 14px rgba(30,10,16,.42),inset 0 0 22px rgba(255,176,32,.34)}
-.rhex.big .ri{font-size:20px}.rhex.big .rl{font-size:10.5px}
+.rhex.big .ri{font-size:18px}.rhex.big .rl{font-size:10px}
 .rhex.warp::after{background:linear-gradient(160deg,rgba(123,77,255,.48),rgba(46,230,214,.3) 60%,rgba(26,20,58,.66))}
-.rhex.more{width:56px;height:63px}
+.rhex.more{width:52px;height:58px}
 .rhex.more::after{background:linear-gradient(160deg,rgba(185,179,217,.24),rgba(123,77,255,.28) 58%,rgba(26,20,58,.72))}
-.rhex.more .ri{font-size:13px}.rhex.more .rl{font-size:9px}
+.rhex.more .ri{font-size:12px}.rhex.more .rl{font-size:8.5px}
 /* 更多 → 向左横排展开 */
 .morewrap{position:relative}
 .fanwrap{position:absolute;right:calc(100% + 8px);top:50%;z-index:46;display:flex;align-items:center;gap:7px;padding:9px 11px;
@@ -303,6 +318,12 @@ kbd{border:1px solid rgba(185,179,217,.35);border-bottom-width:2px;border-radius
 .ip-name{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:11.5px;font-weight:700;font-family:var(--font-ui);color:#fff}
 .ip-go{flex:none;font-size:9.5px;font-weight:800;color:var(--teal)}
 .ip-q{padding-left:2px;font-size:10px;line-height:1.45;color:var(--ink2);font-family:var(--font-ui);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+/* #5：一级行直接给两枚动作（去对话 / 详情），不再进二级回复卡。 */
+.ip-acts{margin-left:auto;flex:none;display:flex;align-items:center;gap:4px}
+.ipa{height:20px;padding:0 7px;clip-path:polygon(4px 0,100% 0,calc(100% - 4px) 100%,0 100%);border:1px solid rgba(185,179,217,.26);background:rgba(255,255,255,.05);color:var(--ink2);font-size:9px;font-weight:800;font-family:var(--font-ui);white-space:nowrap;transition:.13s}
+.ipa:hover{color:#fff;border-color:var(--teal);background:rgba(46,230,214,.14)}
+.ipa.pri{color:var(--teal);border-color:rgba(46,230,214,.4);background:rgba(46,230,214,.09)}
+.ipa.pri:hover{color:#fff;background:rgba(46,230,214,.24)}
 .ip-foot{flex:none;display:flex;align-items:center;gap:8px;padding:6px 10px 7px;border-top:1px solid rgba(185,179,217,.12);font-size:8.5px;color:var(--metal2);font-family:var(--font-mono)}
 .ip-foot .sp{flex:1}
 .ip-foot button{font-size:9px;font-weight:800;color:var(--teal)}
@@ -522,6 +543,9 @@ kbd{border:1px solid rgba(185,179,217,.35);border-bottom-width:2px;border-radius
 .ph .sp{flex:1}
 .phx{width:26px;height:30px;clip-path:var(--hex);display:grid;place-items:center;background:rgba(255,255,255,.08);color:var(--ink2);font-size:12px}
 .phx:hover{background:var(--red);color:#fff}
+/* #5：详情头部的「💬 对话」—— 对话从详情页签挪成独立 chat 窗。 */
+.pha{flex:none;height:24px;padding:0 9px;clip-path:polygon(5px 0,100% 0,calc(100% - 5px) 100%,0 100%);border:1px solid rgba(46,230,214,.4);background:rgba(46,230,214,.1);color:var(--teal);font-size:9.5px;font-weight:800;font-family:var(--font-ui);white-space:nowrap}
+.pha:hover{color:#fff;background:rgba(46,230,214,.24);border-color:var(--teal)}
 /* 面板窗口：标题栏拖动 / 右下角缩放 / ⛶ 全屏（详情与各面板共用） */
 #panel .ph{cursor:grab;user-select:none;touch-action:none}
 #panel .ph:active{cursor:grabbing}
@@ -1306,10 +1330,24 @@ kbd{border:1px solid rgba(185,179,217,.35);border-bottom-width:2px;border-radius
 .cwh{flex:none;display:flex;align-items:center;gap:7px;padding:7px 10px;border-bottom:1px solid rgba(46,230,214,.22);cursor:grab;user-select:none}
 .cwh:active{cursor:grabbing}
 .cwh .te{font-size:12px}
-.cwh b{flex:1;min-width:0;font-size:11px;font-weight:800;font-family:var(--font-ui);color:#fff;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.cwh b{flex:0 1 auto;min-width:0;max-width:30%;font-size:11px;font-weight:800;font-family:var(--font-ui);color:#fff;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.cwh .cwid{flex:none;max-width:42%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;padding-left:7px;border-left:1px solid rgba(185,179,217,.25);font-size:9.5px;font-family:var(--font-mono);color:var(--ink2)}
+/* v22 #5：窗头遥测 = 通讯台同一套芯片（模型 / CTX / token·费用）+ ≡ 轮次，
+   数据来自该窗自己的会话。窗头空间紧，芯片收一档；窄窗由脚本按宽度省略。 */
+.cwh .csp{flex:1;min-width:4px}
+.cwh .telem{gap:0}
+.cwh .telem button{width:auto;height:auto;clip-path:none;border-radius:0;background:none;border:0;border-left:1px solid rgba(185,179,217,.22);display:flex;flex-direction:column;align-items:flex-start;line-height:1.15;padding:0 9px}
+.cwh .telem button i{font-style:normal;font-size:7px;letter-spacing:.14em;color:var(--metal2)}
+.cwh .telem button b{font-size:9.5px;font-weight:800;font-family:var(--font-mono);color:#fff;white-space:nowrap}
+.cwh .telem button.tok b{color:var(--gold)}
+.cwh .cwidx{flex:none;display:flex;align-items:center;gap:3px;padding:0 6px;border-left:1px solid rgba(185,179,217,.22);font-size:9px;color:var(--ink2);white-space:nowrap;font-family:var(--font-mono)}
+.cwh .cwidx b{font-size:9.5px;color:#fff}
 .cwh button{flex:none;width:22px;height:22px;clip-path:var(--hex);display:grid;place-items:center;background:rgba(255,255,255,.08);border:1px solid rgba(185,179,217,.25);color:var(--ink2);font-size:10px}
 .cwh button:hover{color:#fff;border-color:var(--teal)}
 .cwh button[data-wclose]:hover{background:var(--red);border-color:var(--red)}
+/* 窗头星核（技能 / 分身 / MCP）—— 与主通讯台同位：紧跟 ✕，不在输入行。 */
+.cwh .cwadd{clip-path:none;border-radius:50%;border-color:rgba(46,230,214,.5);background:rgba(46,230,214,.1);color:#9ff7ee;font-size:11px}
+.cwh .cwadd:hover{border-color:rgba(46,230,214,.95);background:rgba(46,230,214,.24);color:#eafffd;box-shadow:0 0 12px rgba(46,230,214,.45)}
 .cwl{flex:1;min-height:40px;overflow:auto;display:flex;flex-direction:column;gap:5px;padding:8px 12px;
   background:
     linear-gradient(180deg,rgba(6,5,16,.4),rgba(6,5,16,.22)),
@@ -1341,9 +1379,7 @@ kbd{border:1px solid rgba(185,179,217,.35);border-bottom-width:2px;border-radius
 /* ═══ 响应式 ═══ */
 @media (max-width:1320px){
   :root{--railw:186px;--railr:104px;--charh:70vh}
-  .rhex{width:78px;height:90px}.rhex .ri{font-size:19px}.rhex .rl{font-size:10.5px}
-  .rhex.big{width:96px;height:110px}.rhex.big .ri{font-size:24px}.rhex.big .rl{font-size:12px}
-  .rhex.more{width:70px;height:80px}
+  /* 2026-11-23 用户 #4：原 .rhex 放大档（78×90 / big 96×110 / more 70×80）删除。 */
   .inboxchip{width:78px}
   .cur.tok{display:none}
   .sr-k{display:none}
@@ -1359,6 +1395,8 @@ kbd{border:1px solid rgba(185,179,217,.35);border-bottom-width:2px;border-radius
   .fr-list::before{left:50%;transform:translateX(-.5px);opacity:.4}
   .flrow{justify-content:center;padding:5px 1px;gap:0}
   .flbody{display:none}
+  /* #5：极窄栏只剩图标 —— 行体点击仍进 chat，详情走窗头的 ▦。 */
+  .flacts{display:none}
   .flrow::after{content:"";position:absolute;right:6px;bottom:6px;width:5px;height:5px;border-radius:50%;background:var(--metal2)}
   .flrow.run::after{background:var(--sky);box-shadow:0 0 6px var(--sky)}
   .flrow.wait::after{background:var(--amber)}
@@ -1431,6 +1469,28 @@ kbd{border:1px solid rgba(185,179,217,.35);border-bottom-width:2px;border-radius
   .backchip{padding:0 8px}
   .hud{gap:6px;padding:0 8px}
   .tokcells{grid-template-columns:repeat(2,1fr)}
+}
+
+/* ═══ 高度断点（2026-11-23 用户：右栏看着不习惯）：矮窗口把 chip 和菜单一起收，
+       保证 chip ↕ 下指令 始终有间隙；整列共用一条中轴（.rightrail align-items:center）。 ═══ */
+@media (max-height:760px){
+  .rightrail{row-gap:14px}
+  .inboxchip{padding:5px 5px 4px;gap:2px}
+  .inboxchip .ic{width:26px;height:30px;font-size:12px}
+  .rmenu{gap:8px}
+  .rhex{width:54px;height:60px}.rhex .ri{font-size:14px}.rhex .rl{font-size:8.5px}
+  .rhex.big{width:66px;height:74px}.rhex.big .ri{font-size:17px}.rhex.big .rl{font-size:9.5px}
+  .rhex.more{width:48px;height:54px}
+}
+@media (max-height:660px){
+  .rightrail{top:58px;bottom:50px;row-gap:10px}
+  .inboxchip{padding:4px 5px 3px}
+  .inboxchip .ic{width:24px;height:27px;font-size:11px}
+  .inboxchip .t{font-size:8.5px}
+  .rmenu{gap:5px}
+  .rhex{width:48px;height:54px}.rhex .ri{font-size:13px}.rhex .rl{font-size:8px}
+  .rhex.big{width:58px;height:64px}.rhex.big .ri{font-size:15px}.rhex.big .rl{font-size:9px}
+  .rhex.more{width:44px;height:48px}.rhex.more .ri{font-size:11px}.rhex.more .rl{font-size:7.5px}
 }
 
 /* ═══ 活动（v22 十四轮 · rev2）：右栏「活动」—— 与「要我处理」同一套浮层。
@@ -1607,10 +1667,6 @@ kbd{border:1px solid rgba(185,179,217,.35);border-bottom-width:2px;border-radius
         <div class="turndrop" id="turnDrop" hidden></div>
       </span>
       <span class="sp"></span>
-      <button class="cbtn" id="conBack" hidden>← 主对话</button>
-      <button class="cbtn" id="conDebug" hidden>⚙ 调试</button>
-      <button class="cbtn" id="conDetail" hidden>▦ 详情</button>
-      <button class="cbtn" id="conPop" hidden title="弹出为独立窗口（可多开）">⧉ 弹出</button>
       <button class="cbtn" id="conMin" title="收起通讯台（⌥C）· 停靠pill 点击展开">⌄ 收起</button>
     </div>
     <div class="addpop" id="addPop" hidden role="dialog" aria-label="添加技能 / 分身 / MCP"></div>
@@ -1780,7 +1836,7 @@ const NOTES_SEED=[
  {id:'nt3',title:'想法 · 全舱便签',body:'想法：全舱里也要能随手记，按钮放右上角最右。',manual:true,color:'#A78BFA',at:Date.now()-27*60000},
 ];
 
-const state={sound:true,theme:0,winAlpha:1,thread:'main',panel:null,detailJob:null,detailTab:'dialog',scene:0,sceneFront:'A',
+const state={sound:true,theme:0,winAlpha:1,thread:'main',panel:null,detailJob:null,detailTab:'run',scene:0,sceneFront:'A',
  settings:false,conPop:null,
  jobs:JOBS_INIT.map(x=>({...x})),ops:OPS_INIT.map(x=>({...x})),pool:OPS_POOL.map(x=>({...x})),
  threads:Object.fromEntries(Object.entries(THREADS_INIT).map(([k,v])=>[k,v.map(m=>({...m}))])),
@@ -1908,13 +1964,17 @@ function renderFleetRail(){
   const run=state.jobs.filter(j=>j.status==='run').length;
   const queue=state.jobs.filter(j=>j.status==='queue').length;
   const done=state.jobs.filter(j=>j.status==='done').length;
-  const activeJob=state.panel==='detail'?state.detailJob:state.thread;
-  const row=j=>{const pr=projOf(j.proj);
-    return `<button class="flrow ${j.status}${activeJob===j.id?' on':''}" data-rail-job="${j.id}" style="--accent:${pr.color};--p:${Math.round(j.pct)}" title="${esc(j.title)} · ${STATE_LABEL[j.status]} · 点击看详情">
+  const openSet=new Set(state.wins.filter(w=>!w.min).map(w=>w.job));
+  const row=j=>{const pr=projOf(j.proj);const un=state.unread[j.id]||0;
+    return `<div class="flrow ${j.status}${openSet.has(j.id)?' is-chat':''}" role="option" tabindex="0" data-rail-job="${j.id}" style="--accent:${pr.color};--p:${Math.round(j.pct)}" title="${esc(j.title)} · ${STATE_LABEL[j.status]} · 点行进对话">
       <span class="flhw"><span class="flhg">${KIND[j.kind].g}</span></span>
-      <span class="flbody"><span class="fltop"><b>${esc(j.short)}</b>${j.status!=='done'?`<span class="flpct">${Math.round(j.pct)}%</span>`:''}<span class="flst ${j.status}">${STATE_LABEL[j.status]}</span></span>
-      <span class="flsub">${esc(j.doing)}</span>
-      ${j.status==='done'?'':`<span class="flbar"><i style="width:${Math.round(j.pct)}%"></i></span>`}</span></button>`;};
+      <span class="flbody"><span class="fltop"><b>${esc(j.short)}</b>${j.status!=='done'?`<span class="flpct">${Math.round(j.pct)}%</span>`:''}</span>
+      <span class="flsub"><span class="flst ${j.status}">${STATE_LABEL[j.status]}</span><span class="flsub-t">${esc(j.doing)}</span></span>
+      ${j.status==='done'?'':`<span class="flbar"><i style="width:${Math.round(j.pct)}%"></i></span>`}</span>
+      <span class="flacts">
+        <button class="flact pri" data-rail-chat="${j.id}" title="💬 对话 · 这条作战的 chat 窗" aria-label="对话">💬${un?`<i class="und">${un>9?'9+':un}</i>`:''}</button>
+        <button class="flact" data-rail-detail="${j.id}" title="▦ 详情 · 作战详情（不改主通讯台）" aria-label="详情">▦</button>
+      </span></div>`;};
   const list=fleetSorted();
   const LIMIT=6;
   const shownList=state.fleetOpen?list:list.slice(0,LIMIT);
@@ -1925,7 +1985,12 @@ function renderFleetRail(){
   el.innerHTML=`<div class="fr-h"><span class="fr-mark">⬡</span><span class="lh"><span>编队</span><b>${total}</b>${run?'<i class="live"></i>':''}</span><span class="sp"></span><button class="fr-all" data-fleet-all title="展开编队面板 · 按项目筛选">全部 →</button></div>
    <div class="fr-sub"><span>在跑 <b>${run}</b></span><span>待命 <b>${queue}</b></span><span>归档 <b>${done}</b></span></div>
    <div class="fr-list">${shownList.map(row).join('')||'<div class="fr-empty">本舱还没有作战</div>'}</div>${more}`;
-  $$('[data-rail-job]',el).forEach(b=>b.addEventListener('click',()=>{state.detailJob=b.dataset.railJob;state.detailTab='dialog';openPanel('detail');Audio.sfx('click');}));
+  /* #5：行体 = 进这条作战的 chat；💬 同义；▦ 只是打开详情，不换主通讯台。 */
+  $$('[data-rail-chat]',el).forEach(b=>b.addEventListener('click',e=>{e.stopPropagation();openJobChat(b.dataset.railChat);}));
+  $$('[data-rail-detail]',el).forEach(b=>b.addEventListener('click',e=>{e.stopPropagation();openDetail(b.dataset.railDetail,'run');}));
+  $$('[data-rail-job]',el).forEach(r=>{const go=()=>openJobChat(r.dataset.railJob);
+    r.addEventListener('click',e=>{if(e.target.closest('.flact'))return;go();});
+    r.addEventListener('keydown',e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();go();}});});
   $('[data-fleet-all]',el)?.addEventListener('click',()=>{openPanel('fleet');Audio.sfx('click');});
   $('[data-fleet-more]',el)?.addEventListener('click',()=>{state.fleetOpen=!state.fleetOpen;renderFleetRail();Audio.sfx('click');});
 }
@@ -2050,7 +2115,7 @@ function bindActPop(){
   $('[data-act-src]',pop)?.addEventListener('click',e=>{
     const jid=e.currentTarget.dataset.actSrc;
     toggleActPop(false);
-    state.detailJob=jid;state.detailTab='dialog';openPanel('detail');Audio.sfx('click');
+    state.detailJob=jid;state.detailTab='run';openPanel('detail');Audio.sfx('click');
   });
   $('[data-act-sim]',pop)?.addEventListener('click',()=>{
     ACTIVITY.forEach(a=>{if(a.status==='run'){a.status='done';a.exit=a.exit??0;}});
@@ -2076,50 +2141,71 @@ function inboxGroups(){return [
   {key:'rev',label:'待验收',items:openOps().filter(o=>o.kind==='accept')},
   {key:'blk',label:'受阻',items:openOps().filter(o=>o.kind==='block')},
 ].filter(g=>g.items.length);}
+/* #5（2026-11-23 用户）：一级列表直接给动作 ——
+   💬 对话 = 去这条作战的独立 chat 里回答（AskUserQuestion 原样在 chat 里）；
+   ▦ 详情 = 作战详情；待放行（start）聊天里答不了，仍给一张就地放行卡。
+   不再有二级「回复卡」包装。 */
+function inboxAction(o){
+  const j=jobOf(o.job);
+  if(o.kind==='accept')return `<button class="ipa pri" data-inbox-detail="${o.job}" data-detail-tab="accept" title="看验收（作战详情）">▦ 验收</button><button class="ipa" data-inbox-chat="${o.job}" title="去这条作战的对话">💬</button>`;
+  if(o.kind==='start')return `<button class="ipa pri" data-inbox-start="${o.id}" title="放行 / 入列 / 恢复">⚑ 放行</button><button class="ipa" data-inbox-detail="${o.job}" title="作战详情">▦</button>`;
+  return `<button class="ipa pri" data-inbox-chat="${o.job}" title="直接去这条作战的 chat 里回答">💬 对话</button><button class="ipa" data-inbox-detail="${o.job}" title="作战详情">▦</button>`;
+}
+/** 一级行的默认动作。 */
+function inboxGo(o){
+  if(!o)return;
+  if(o.kind==='start'){state.inboxSel=o.id;state.inboxPick=null;renderInbox();Audio.sfx('click');return;}
+  if(o.kind==='accept'){toggleInbox(false);openDetail(o.job,'accept');return;}
+  toggleInbox(false);openJobChat(o.job);
+}
 function renderInbox(){
   const pop=$('#inboxPop');if(!pop)return;
+  pop.classList.remove('two');
   pop.classList.toggle('on',state.inboxOpen);
-  pop.classList.toggle('two',state.inboxOpen&&!!state.inboxSel);
   renderInboxChip();
   if(!state.inboxOpen){pop.innerHTML='';return;}
   const c=inboxCounts();
   const sel=state.inboxSel?opOf(state.inboxSel):null;
+  if(sel&&sel.kind==='start'){pop.innerHTML=renderStartCard(sel);bindInbox();return;}
   const groups=inboxGroups();
-  const list=`<div class="ip-listwrap"><div class="ip-h"><button class="ipx" data-inbox-close title="收起">✕</button><span class="t">要我处理</span><b>${c.total}</b><span class="brk">待你定 ${c.ask} · 验收 ${c.rev} · 受阻 ${c.blk}</span></div>
-    <div class="ip-body">${groups.length?groups.map(g=>`<div class="ip-group ${g.key}"><span>${g.label}</span><b>${g.items.length}</b></div>${g.items.map(o=>{const j=jobOf(o.job);const gk=OP_GROUP[o.kind].key;return `<button class="ip-row${state.inboxSel===o.id?' on':''}" data-inbox-op="${o.id}"><span class="r1"><span class="ip-type ${gk}">${esc(o.handle)}</span><span class="ip-name">${esc(j?j.short:'—')}</span><span class="ip-go">${o.kind==='accept'?'验收 →':o.kind==='start'?'放行 →':'回答 →'}</span></span><span class="ip-q">${esc(o.question)}</span></button>`;}).join('')}`).join(''):'<div class="ip-empty"><b>✓</b>都处理完了</div>'}</div>
-    <div class="ip-foot"><button data-inbox-all>▦ 全部决断 →</button><span class="sp"></span>Esc 收起 · 处理完自动回来</div></div>`;
-  const detail=sel?renderInboxDetail(sel):'';
-  pop.innerHTML=detail+list;
+  pop.innerHTML=`<div class="ip-listwrap"><div class="ip-h"><button class="ipx" data-inbox-close title="收起">✕</button><span class="t">要我处理</span><b>${c.total}</b><span class="brk">待你定 ${c.ask} · 验收 ${c.rev} · 受阻 ${c.blk}</span></div>
+    <div class="ip-body">${groups.length?groups.map(g=>`<div class="ip-group ${g.key}"><span>${g.label}</span><b>${g.items.length}</b></div>${g.items.map(o=>{const j=jobOf(o.job);const gk=OP_GROUP[o.kind].key;return `<div class="ip-row" role="button" tabindex="0" data-inbox-go="${o.id}"><span class="r1"><span class="ip-type ${gk}">${esc(o.handle)}</span><span class="ip-name">${esc(j?j.short:'—')}</span><span class="ip-acts">${inboxAction(o)}</span></span><span class="ip-q">${esc(o.question)}</span></div>`;}).join('')}`).join(''):'<div class="ip-empty"><b>✓</b>都处理完了</div>'}</div>
+    <div class="ip-foot"><button data-inbox-all>▦ 全部决断 →</button><span class="sp"></span>点行进对话 · Esc 收起</div></div>`;
   bindInbox();
 }
-function renderInboxDetail(o){
+/** 待放行就地卡（单栏）：放行 = 任务生命周期动作，不在 chat 里回答。 */
+function renderStartCard(o){
   const k=OP_KIND[o.kind],j=jobOf(o.job)||state.jobs[0],sel=state.inboxPick;
   const head=`<div class="ipd-h"><button class="ipd-x" data-inbox-close title="收起">✕</button><button class="ipd-back" data-inbox-back title="回到列表">←</button><span class="ipd-k" style="color:${k.color}">${esc(o.handle)} · ${k.k}</span><span class="sp"></span></div>`;
   if(o.status!=='open'){
-    return `<div class="ipd" style="--accent:${k.color}">${head}<div class="ipd-body"><div class="ipd-receipt"><div class="ok">✓ ${o.kind==='start'?'已放行':'已答'} · ${esc(o.choice||'')}</div><div class="ans">${esc(o.question)}</div><div class="ip-note">${o.kind==='start'?'已按你的决定放行；这条从「要我处理」消项，编队状态跟着更新。':'已转达执行者并写入账本；这条从「要我处理」消项，编队状态跟着更新。'}</div></div></div></div>`;
+    return `<div class="ipd" style="--accent:${k.color}">${head}<div class="ipd-body"><div class="ipd-receipt"><div class="ok">✓ 已放行 · ${esc(o.choice||'')}</div><div class="ans">${esc(o.question)}</div><div class="ip-note">已按你的决定放行；这条从「要我处理」消项，编队状态跟着更新。</div></div></div></div>`;
   }
-  const start=o.kind==='start';
   return `<div class="ipd" style="--accent:${k.color}">${head}
    <div class="ipd-body"><div class="ipd-job">${STATE_EMO[j.status]} ${esc(j.title)}</div><div class="ipd-ctx">${esc(o.ctx)}</div><div class="ipd-q">${esc(o.question)}</div>
    <div class="ipd-opts">${o.options.map((opt,i)=>`<button class="ipd-opt${sel===i?' on':''}" data-inbox-pick="${i}" style="--accent:${k.color}"><span class="n">[${i+1}]</span><span class="oi"><b>${esc(opt.label)}</b><span>${esc(opt.impact)}</span></span>${opt.label===o.rec?'<span class="rec">REC</span>':''}</button>`).join('')}</div>
-   ${start?'':'<div class="ipd-free"><input id="inboxFree" placeholder="或直接说你的定法…（⏎ 发送）"/><button data-inbox-free>发送</button></div>'}
-   <div class="ip-note">${start?'选一项 → 确认执行；汐音当场放行并回执。':'选一项 → 提交；不跳作战线程，汐音就地转达执行者。'}</div></div>
-   <div class="ipd-foot"><button data-inbox-later>稍后</button>${start?'<button data-inbox-detail title="在右侧作战详情里看这条任务的对话（浮层不关）">▦ 看任务详情</button>':''}<span class="sp"></span><span class="cap">${sel==null?'先选一项':'已选 · 可提交'}</span><button class="pri" data-inbox-submit ${sel==null?'disabled':''}>${start?'确认执行':'提交回答'}</button></div></div>`;
+   <div class="ip-note">选一项 → 确认执行；汐音当场放行并回执。</div></div>
+   <div class="ipd-foot"><button data-inbox-later>稍后</button><button data-inbox-detail-for="${o.id}" title="作战详情（浮层不关）">▦ 看任务详情</button><button data-inbox-chat-for="${o.id}" title="去这条作战的对话">💬 去对话</button><span class="sp"></span><span class="cap">${sel==null?'先选一项':'已选 · 可提交'}</span><button class="pri" data-inbox-submit ${sel==null?'disabled':''}>确认执行</button></div></div>`;
 }
 function bindInbox(){
   const pop=$('#inboxPop');if(!pop)return;
-  $$('[data-inbox-op]',pop).forEach(b=>b.addEventListener('click',()=>{state.inboxSel=b.dataset.inboxOp;state.inboxPick=null;renderInbox();Audio.sfx('click');}));
+  /* 一级行：行体按类型走默认动作（decide/confirm/block → 对话；accept → 验收详情；start → 放行卡）。 */
+  $$('[data-inbox-go]',pop).forEach(r=>{
+    const go=()=>inboxGo(opOf(r.dataset.inboxGo));
+    r.addEventListener('click',e=>{if(e.target.closest('.ipa'))return;go();});
+    r.addEventListener('keydown',e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();go();}});
+  });
+  $$('[data-inbox-chat]',pop).forEach(b=>b.addEventListener('click',e=>{e.stopPropagation();toggleInbox(false);openJobChat(b.dataset.inboxChat);}));
+  $$('[data-inbox-start]',pop).forEach(b=>b.addEventListener('click',e=>{e.stopPropagation();state.inboxSel=b.dataset.inboxStart;state.inboxPick=null;renderInbox();Audio.sfx('click');}));
+  $$('[data-inbox-detail]',pop).forEach(b=>b.addEventListener('click',e=>{e.stopPropagation();openDetail(b.dataset.inboxDetail,b.dataset.detailTab||'run',true);}));
+  /* 放行卡里的两个跳转（浮层留着，详情开在左侧 / 对话开成独立窗）。 */
+  $('[data-inbox-detail-for]',pop)?.addEventListener('click',e=>{const o=opOf(e.currentTarget.dataset.inboxDetailFor);if(o)openDetail(o.job,'run',true);});
+  $('[data-inbox-chat-for]',pop)?.addEventListener('click',e=>{const o=opOf(e.currentTarget.dataset.inboxChatFor);if(o){toggleInbox(false);openJobChat(o.job);}});
   $('[data-inbox-back]',pop)?.addEventListener('click',()=>{state.inboxSel=null;state.inboxPick=null;renderInbox();Audio.sfx('click');});
   $$('[data-inbox-close]',pop).forEach(b=>b.addEventListener('click',()=>toggleInbox(false)));
   $('[data-inbox-later]',pop)?.addEventListener('click',()=>{state.inboxSel=null;state.inboxPick=null;renderInbox();Audio.sfx('click');});
-  $('[data-inbox-detail]',pop)?.addEventListener('click',()=>{const o=opOf(state.inboxSel);if(!o)return;
-    // 看任务详情 = 浮层不关，右侧就地再开作战详情（首签「对话」）。
-    state.detailJob=o.job;state.detailTab='dialog';openPanel('detail',true);Audio.sfx('click');});
   $('[data-inbox-all]',pop)?.addEventListener('click',()=>{toggleInbox(false);openPanel('ops');});
   $$('[data-inbox-pick]',pop).forEach(b=>b.addEventListener('click',()=>{state.inboxPick=+b.dataset.inboxPick;renderInbox();Audio.sfx('click');}));
   $('[data-inbox-submit]',pop)?.addEventListener('click',()=>submitInbox(false));
-  $('[data-inbox-free]',pop)?.addEventListener('click',()=>submitInbox(true));
-  const free=$('#inboxFree',pop);if(free)free.addEventListener('keydown',e=>{if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();submitInbox(true);}});
 }
 function submitInbox(fromFree){
   const o=opOf(state.inboxSel);if(!o||o.status!=='open')return;
@@ -2226,21 +2312,17 @@ function tlHTML(m){
  }
  return `<div class="tasst">${tuiMeta(m)}<div class="tline xy"><span class="mark">✦</span><span class="tx">${linkDocs(m.text)}</span></div></div>`;
 }
-function renderConsole(){const isMain=state.thread==='main';const j=isMain?null:jobOf(state.thread);
- $('#conThread').textContent=isMain?'主对话':(j?'▦ '+j.title:'对话');
- $('#conThread').hidden=isMain;
- $('#conBack').hidden=isMain;$('#conDetail').hidden=isMain;$('#conDebug').hidden=isMain;
- $('#conPop').hidden=isMain;
- applyGeo();renderDock();
- const cur=currentOf(state.thread);conMsgs=threadOf(state.thread).filter(m=>m!==cur);
+/* #5（2026-11-23 用户）：主通讯台恒为汐音主对话，不再切线程。
+   每条作战的 chat 走独立窗（openWin / 编队行 / inbox「💬 对话」），
+   主 chat 里不再需要「← 主对话 / ▦ 详情 / ⚙ 调试 / ⧉ 弹出」。 */
+function renderConsole(){applyGeo();renderDock();
+ const cur=currentOf('main');conMsgs=threadOf('main').filter(m=>m!==cur);
  $('#conLog').innerHTML=conMsgs.map(tlHTML).join('');
  [...$('#conLog').children].forEach((el,i)=>{el.dataset.mi=i;});
  $('#conLog').scrollTop=$('#conLog').scrollHeight;typeCurrent(cur);
  renderConTelemetry();
- const o=isMain?null:opForJob(state.thread);const ch=$('#conChoices');
- if(o){ch.hidden=false;ch.innerHTML=o.options.map((opt,i)=>`<button class="vchoice${opt.label===o.rec?' rec':''}" data-choice="${o.id}" data-label="${esc(opt.label)}" style="--accent:${OP_KIND[o.kind].color}"><span class="n">[${i+1}]</span><b>${esc(opt.label)}</b><span>${esc(opt.impact)}</span></button>`).join('');}
- else{ch.hidden=true;ch.innerHTML='';}
- $('#cmdInput').placeholder=isMain?'回应汐音 / 下达新指令…（⏎ 发送 · ⇧⏎ 换行）':`回应 ${j?j.agent:''} / 给这条作战下指令…（上方选项即拍板）`;
+ const ch=$('#conChoices');ch.hidden=true;ch.innerHTML='';
+ $('#cmdInput').placeholder='回应汐音 / 下达新指令…（⏎ 发送 · ⇧⏎ 换行）';
  renderFleetRail();}
 
 /* ── 通讯台 ＋（v22 十轮）：技能 / 分身 / MCP。技能 = 随本条消息生效（发出去时加 /skill 前缀）；
@@ -2417,12 +2499,15 @@ function pushMsg(t,m){threadOf(t).push(m);
  const conVisible=state.thread===t&&!state.conMin;
  if(conVisible)renderConsole();
  if(winVisible)renderWins();
- if(!conVisible&&!winVisible){state.unread[t]=(state.unread[t]||0)+1;renderBar();renderDock();}
+ if(!conVisible&&!winVisible){state.unread[t]=(state.unread[t]||0)+1;renderBar();renderDock();renderFleetRail();}
  renderBar();renderDock();
  if(state.conMin){const d=$('#conDock');d.classList.remove('ping');void d.offsetWidth;d.classList.add('ping');}}
 let typeT={};
 function pushReply(t,m,delay=700){clearTimeout(typeT[t]);if(state.thread===t){$('#curLine').innerHTML='<span class="typing"><i></i><i></i><i></i></span>';$('#curSpeaker').textContent=m.who==='doer'?m.name:'汐音';}typeT[t]=setTimeout(()=>{pushMsg(t,m);if(m.who==='xy'&&m.mood)setMood(m.mood,5000);},delay);}
-function openThread(jid){state.thread=jid;state.unread[jid]=0;state.conTurns=false;closeConPop();if(jid!=='main')state.focusJob=jid;if(state.conMin)setConMin(false);renderConsole();renderBar();Audio.sfx('open');if(!opForJob(jid))setTimeout(()=>$('#cmdInput').focus(),60);}
+/* #5：作战 chat = 独立窗（openWin）；详情 = dossier；主通讯台固定回主对话。 */
+function openJobChat(jid){if(!jid||jid==='main'){setConMin(false);requestAnimationFrame(()=>$('#cmdInput').focus());return;}
+ closePanel();openWin(jid);}
+function openDetail(jid,tab,keepInbox){if(!jid)return;state.detailJob=jid;state.detailTab=tab||'run';state.panel='detail';openPanel('detail',!!keepInbox);Audio.sfx('click');}
 
 /* ── send / spawn / resolve ── */
 function autoGrowEl(t){const win=!!t.closest('.cwi');t.style.height='auto';const min=win?28:36,max=win?70:92;const h=Math.max(min,Math.min(t.scrollHeight,max));t.style.height=h+'px';t.style.overflowY=t.scrollHeight>max?'auto':'hidden';}
@@ -3239,10 +3324,9 @@ function renderPanel(){const p=$('#panel');if(!state.panel){p.classList.remove('
   body+=open.map(o=>{const k=OP_KIND[o.kind];const j=jobOf(o.job);const arr=Date.now()-state.flash.at<1400&&state.flash.op===o.id;return `<div class="ocard${arr?' arrived':''}" data-op="${o.id}" style="--accent:${k.color}" role="button" tabindex="0"><span class="ot"><span class="oh">${esc(o.handle)}</span><span class="ok">${k.k}</span><span class="oa">${STATE_EMO[j?j.status:'run']} ${esc(o.age)}</span></span><span class="ti">${esc(o.title)}</span><span class="q">${esc(o.question)}</span><span class="orow"><span class="go">就地回答 →</span><button class="od" data-opdetail="${o.job}">▦ 详情</button></span></div>`;}).join('');
   body+=done.map(o=>`<div class="ocard done" data-opdone="${o.id}"><span class="ot"><span class="oh">${esc(o.handle)}</span><span class="ok">已处理</span></span><span class="rc">✓ ${esc(o.choice)}</span></div>`).join('');}
  else if(state.panel==='detail'){const j=jobOf(state.detailJob)||state.jobs[0];state.detailJob=j.id;state.focusJob=j.id;const pr=projOf(j.proj);const op=opForJob(j.id);
-  const tabs=['dialog','relay','run','changes','accept','files','debug','project'];const TL={dialog:'对话',relay:'对接',run:'运行',changes:'变更',accept:'验收',files:'文件',debug:'调试',project:'项目'};let inner='';
-  if(state.detailTab==='dialog'){const msgs=threadOf(j.id);const turns=msgs.filter(m=>m.who==='you').length;
-    inner=`<div class="dcon"><div class="dcon-h"><b>✦ 任务对话</b><span class="n">${msgs.length} 条 · ${turns} 轮提问 · 只读记录</span></div><div class="dcon-log">${msgs.map(tlHTML).join('')||'<div class="pempty">这条作战还没有对话记录。选一条先聊起来 →</div>'}</div></div>`;}
-  else if(state.detailTab==='relay')inner=renderRelay(j);
+  /* #5：详情不再带「对话」页签 —— 对话改走独立 chat 窗（头部 💬 对话）。 */
+  const tabs=['relay','run','changes','accept','files','debug','project'];const TL={relay:'对接',run:'运行',changes:'变更',accept:'验收',files:'文件',debug:'调试',project:'项目'};let inner='';
+  if(state.detailTab==='relay')inner=renderRelay(j);
   else if(state.detailTab==='run')inner=`<div class="sect">执行事件流</div>${(JOB_EVENTS[j.id]||[]).map(evHTML).join('')||'<div class="pempty">暂无事件</div>'}`;
   else if(state.detailTab==='changes'){const c=CHANGES[j.id];inner=c?`<div class="kv"><div class="kvi"><div class="k">分支</div><div class="v g">${esc(c.branch)}</div></div><div class="kvi"><div class="k">基线</div><div class="v">${esc(c.base)}</div></div><div class="kvi"><div class="k">文件</div><div class="v">${c.files.length}</div></div></div><div class="sect">变更 diff</div>${c.files.map(f=>`<div class="file"><div class="fh"><span class="st">${f.state}</span><span class="p">${esc(f.path)}</span><span class="ad">+${f.add}</span><span class="dl">−${f.del}</span></div><div class="diff">${f.diff.map(l=>`<div class="ln ${l[0]}"><span class="n">${l[1]}</span><span>${l[0]==='add'?'+':l[0]==='del'?'−':' '} ${esc(l[2])}</span></div>`).join('')}</div></div>`).join('')}`:'<div class="pempty">暂无代码变更。</div>';}
   else if(state.detailTab==='accept'){const a=AC[j.id];inner=a?`<div class="sect">验收单 AC</div>${a.map(x=>`<div class="ac ${x.pass?'pass':'open'}"><span class="ck">${x.pass?'✓':'!'}</span><span>${esc(x.t)}</span></div>`).join('')}<div class="sect">通用项</div>${['产物写入任务目录','没有越权改动','日志无未处理告警'].map(t=>`<div class="ac pass"><span class="ck">✓</span><span>${t}</span></div>`).join('')}`:'<div class="pempty">暂无验收单。</div>';}
@@ -3250,7 +3334,8 @@ function renderPanel(){const p=$('#panel');if(!state.panel){p.classList.remove('
   else if(state.detailTab==='project')inner=renderJobProject(j);
   else inner=renderDebug(j);
   body=`<div class="dtabs">${tabs.map(t=>`<button class="dtab${state.detailTab===t?' on':''}" data-dtab="${t}">${TL[t]}</button>`).join('')}</div>${inner}`;
-  p.innerHTML=`<div class="ph"><button class="phx" data-close title="关闭">✕</button><span class="pt"><b>${STATE_EMO[j.status]} ${esc(j.title)}</b><span>${esc(pr.name)} · ${esc(j.branch)} · ${esc(j.tid)}</span></span></div><div class="pb${state.detailTab==='dialog'?' dcon-on':''}">${body}</div>`;
+  p.innerHTML=`<div class="ph"><button class="phx" data-close title="关闭">✕</button><span class="pt"><b>${STATE_EMO[j.status]} ${esc(j.title)}</b><span>${esc(pr.name)} · ${esc(j.branch)} · ${esc(j.tid)}</span></span><span class="sp" style="flex:1"></span><button class="pha" data-phchat title="打开这条作战的对话（独立 chat 窗）">💬 对话</button></div><div class="pb">${body}</div>`;
+  p.querySelector('[data-phchat]')?.addEventListener('click',()=>{closePanel();openWin(j.id);Audio.sfx('click');});
   const dlog=p.querySelector('.dcon-log');if(dlog)dlog.scrollTop=dlog.scrollHeight;
   bindPanel();restore();return;}
  else if(state.panel==='log'){
@@ -3290,9 +3375,9 @@ function renderPanel(){const p=$('#panel');if(!state.panel){p.classList.remove('
  p.innerHTML=`<div class="ph"><button class="phx" data-close title="关闭">✕</button><span class="pt"><b>${prh?`⧉ 项目 · ${esc(prh.name)}`:T[1]}</b><span>${prh?`${esc(prh.org+'/'+prh.group)} · 主仓只读`:T[2]}</span></span><span class="sp">${prh?'<button class="pjback" data-pjback>← 舱籍总览</button>':''}</span></div><div class="pb${prh?' pjf-on':''}">${body}</div>`;bindPanel();restore();}
 function bindPanel(){const p=$('#panel');
  $('[data-close]',p)?.addEventListener('click',closePanel);
- $$('[data-job]',p).forEach(b=>{const go=e=>{if(e.target.closest('.fa'))return;state.detailJob=b.dataset.job;state.detailTab='dialog';state.panel='detail';renderPanel();Audio.sfx('click');};b.addEventListener('click',go);b.addEventListener('keydown',e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();go(e);}});});
- $$('[data-talk]',p).forEach(b=>b.addEventListener('click',e=>{e.stopPropagation();const jid=b.dataset.talk;closePanel();openThread(jid);}));
- $$('[data-decide]',p).forEach(b=>b.addEventListener('click',e=>{e.stopPropagation();const jid=b.dataset.decide;closePanel();openThread(jid);}));
+ $$('[data-job]',p).forEach(b=>{const go=e=>{if(e.target.closest('.fa'))return;state.detailJob=b.dataset.job;state.detailTab='run';state.panel='detail';renderPanel();Audio.sfx('click');};b.addEventListener('click',go);b.addEventListener('keydown',e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();go(e);}});});
+ $$('[data-talk]',p).forEach(b=>b.addEventListener('click',e=>{e.stopPropagation();const jid=b.dataset.talk;closePanel();openJobChat(jid);}));
+ $$('[data-decide]',p).forEach(b=>b.addEventListener('click',e=>{e.stopPropagation();const jid=b.dataset.decide;closePanel();openJobChat(jid);}));
  $$('[data-fproj]',p).forEach(b=>b.addEventListener('click',()=>{state.fleetFilter=b.dataset.fproj;renderPanel();Audio.sfx('click');}));
  $$('[data-fproj-go]',p).forEach(b=>b.addEventListener('click',()=>{state.fleetFilter=b.dataset.fprojGo;state.panel='fleet';renderPanel();Audio.sfx('click');}));
  $('[data-proj-jump]',p)?.addEventListener('click',()=>{state.projFocus=null;state.panel='projects';renderPanel();Audio.sfx('click');});
@@ -3304,12 +3389,12 @@ function bindPanel(){const p=$('#panel');
  $$('[data-pjchgfile]',p).forEach(b=>b.addEventListener('click',()=>{state.pjDiff={pr:state.projFocus,path:b.dataset.pjchgfile};renderPanel();Audio.sfx('click');}));
  $$('[data-pjtab]',p).forEach(b=>b.addEventListener('click',()=>{state.pjTab=b.dataset.pjtab==='changes'?'changes':'files';renderPanel();Audio.sfx('click');}));
  $('[data-dtab-jump]',p)?.addEventListener('click',e=>{state.detailTab=e.currentTarget.dataset.dtabJump;state.relayJump=false;renderPanel();Audio.sfx('click');});
- $$('[data-op]',p).forEach(c=>{const go=()=>{const o=opOf(c.dataset.op);closePanel();openThread(o.job);};c.addEventListener('click',e=>{if(e.target.closest('[data-opdetail]'))return;go();});c.addEventListener('keydown',e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();go();}});});
- $$('[data-opdetail]',p).forEach(b=>b.addEventListener('click',e=>{e.stopPropagation();state.detailJob=b.dataset.opdetail;state.detailTab='dialog';state.panel='detail';renderPanel();Audio.sfx('click');}));
+ $$('[data-op]',p).forEach(c=>{const go=()=>{const o=opOf(c.dataset.op);closePanel();openJobChat(o.job);};c.addEventListener('click',e=>{if(e.target.closest('[data-opdetail]'))return;go();});c.addEventListener('keydown',e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();go();}});});
+ $$('[data-opdetail]',p).forEach(b=>b.addEventListener('click',e=>{e.stopPropagation();state.detailJob=b.dataset.opdetail;state.detailTab='run';state.panel='detail';renderPanel();Audio.sfx('click');}));
  $$('[data-dtab]',p).forEach(b=>b.addEventListener('click',()=>{state.detailTab=b.dataset.dtab;state.relayJump=false;renderPanel();Audio.sfx('click');}));
  $('[data-relay-jump-btn]',p)?.addEventListener('click',()=>{state.relayJump=!state.relayJump;renderPanel();Audio.sfx('click');});
  $$('[data-relay-jump]',p).forEach(b=>b.addEventListener('click',()=>{const key=b.dataset.relayJump;state.relayJump=false;renderPanel();const pb=$('#panel .pb'),t=pb&&pb.querySelector(`[data-relay-key="${key}"]`);if(t){scrollIntoBox(pb,t);t.classList.add('flashin');setTimeout(()=>t.classList.remove('flashin'),1400);}Audio.sfx('click');}));
- $$('[data-relay-go]',p).forEach(b=>b.addEventListener('click',()=>{const jid=b.dataset.relayGo==='main'?'main':state.detailJob;closePanel();openThread(jid);}));
+ $$('[data-relay-go]',p).forEach(b=>b.addEventListener('click',()=>{const jid=b.dataset.relayGo==='main'?'main':state.detailJob;closePanel();openJobChat(jid);}));
  $$('[data-dsub]',p).forEach(b=>b.addEventListener('click',()=>{state.dbgTab=b.dataset.dsub;renderPanel();Audio.sfx('click');}));
  $$('#dbgFilter [data-f]',p).forEach(b=>b.addEventListener('click',()=>{state.dbgFilter=b.dataset.f;renderPanel();Audio.sfx('click');}));
  $$('[data-turn]',p).forEach(b=>b.addEventListener('click',()=>{state.dbgTurn[state.detailJob]=+b.dataset.turn;renderPanel();Audio.sfx('click');}));
@@ -3405,12 +3490,25 @@ $('#curNotes').addEventListener('click',()=>{toggleNotesWin();if(state.notesOpen
 
 /* ── 多窗口管理器（用户自开 · 后台式切换） ── */
 function bumpZ(w){w.z=++state.zTop;if(state.zTop>36){[...state.wins].sort((a,b)=>a.z-b.z).forEach((x,i)=>x.z=31+i);state.zTop=36;}}
+let lastConRect=null;
 function openWin(jid){const ex=state.wins.find(w=>w.job===jid);if(ex){focusWin(ex.id);return;}
  if(state.wins.length>=5){toast('独立窗口最多 5 个 · 先关一些');return;}
- const n=state.wins.length;const ww=Math.min(380,innerWidth-24);
- const conTop=innerWidth<=900?innerHeight-10-(innerWidth<=560?.52:.56)*innerHeight:66;
- const hh=Math.max(260,Math.min(440,innerHeight-140,innerWidth<=900?conTop-68:innerHeight-140));
- const w={id:'w'+(++state.winSeq),job:jid,x:clamp(120+n*64,8,Math.max(8,innerWidth-ww-8)),y:clamp(84+n*34,56,Math.max(56,(innerWidth<=900?conTop:innerHeight)-hh-8)),w:ww,h:hh,z:31,min:false};
+ const n=state.wins.length;
+ /* #5（2026-11-23 用户）：默认和主 chat 一样大，直接盖在主通讯台上面；
+    多扇时逐扇错开 18px，方便看见。宽度可拖拽调整（右下柄）。
+    通讯台收起 / 停靠时用上次量到的几何 —— 绝不退回小窗。 */
+ const con=$('#console');const cr=con&&!con.hidden?con.getBoundingClientRect():null;
+ if(cr) lastConRect={x:Math.round(cr.left),y:Math.round(cr.top),w:Math.round(cr.width),h:Math.round(cr.height)};
+ const base=cr?{x:Math.round(cr.left),y:Math.round(cr.top),w:Math.round(cr.width),h:Math.round(cr.height)}:lastConRect;
+ const dw=base?base.w:Math.min(560,innerWidth-24);
+ const dh=base?base.h:Math.min(520,innerHeight-140);
+ const ww=clamp(dw,300,innerWidth-16);
+ const hh=clamp(dh,260,innerHeight-70);
+ const shift=n*18;
+ const w={id:'w'+(++state.winSeq),job:jid,
+   x:clamp((base?base.x:120)+shift,8,Math.max(8,innerWidth-ww-8)),
+   y:clamp((base?base.y:66)+shift,54,Math.max(54,innerHeight-hh-8)),
+   w:ww,h:hh,z:31,min:false};
  state.wins.push(w);bumpZ(w);
  state.unread[jid]=0;renderWins();renderBar();Audio.sfx('open');toast('已开独立窗口 · '+jobOf(jid).title);}
 function focusWin(id){const w=state.wins.find(x=>x.id===id);if(!w)return;bumpZ(w);w.min=false;state.unread[w.job]=0;renderWins();renderBar();}
@@ -3419,13 +3517,19 @@ function minWin(id){const w=state.wins.find(x=>x.id===id);if(w){w.min=true;rende
 function renderWins(){const L=$('#winLayer');const top=state.wins.reduce((m,w)=>Math.max(m,w.z),0);
  L.innerHTML=state.wins.filter(w=>!w.min).map(w=>{const j=jobOf(w.job);const msgs=threadOf(w.job);const cur=currentOf(w.job);const o=opForJob(w.job);
   const X=w.max?4:w.x,Y=w.max?52:w.y,W=w.max?Math.max(320,innerWidth-8):w.w,H=w.max?Math.max(260,innerHeight-56):w.h;
+  /* v22 #5：窗 = 同一条会话的真 chat —— 遥测也用通讯台同一套芯片，读这扇窗自己的账。 */
+  const turns=msgs.filter(m=>m.who==='you').length;
+  const ctxTok=Math.min(260000,Math.round((j.tok||0)*0.4)+48000);
+  const ctxLabel=fmtK(ctxTok)+' / 1M '+(ctxTok/1e6*100).toFixed(1)+'%';
   return `<div class="cwin${w.z===top?' focus':''}${w.max?' maxed':''}" data-win="${w.id}" style="left:${X}px;top:${Y}px;width:${W}px;height:${H}px;z-index:${w.z}">
-  <div class="cwh" data-wdrag="${w.id}"><button data-wclose="${w.id}" title="关闭窗口（历史保留）">✕</button><button data-wmin="${w.id}" title="最小化到切换条">—</button><button data-wmax="${w.id}" title="全屏 / 还原">${w.max?'⤡':'⛶'}</button><span class="te">${STATE_EMO[j.status]}</span><b>${esc(j.title)}</b></div>
+  <div class="cwh" data-wdrag="${w.id}"><button data-wclose="${w.id}" title="关闭窗口（历史保留）">✕</button><button class="cwadd" title="添加：技能 / 分身 / MCP">✦</button><button data-wmin="${w.id}" title="最小化到切换条">—</button><button data-wmax="${w.id}" title="全屏 / 还原">${w.max?'⤡':'⛶'}</button><span class="te">${STATE_EMO[j.status]}</span><b>${esc(j.title)}</b>${W>=640?`<span class="telem" title="本窗会话的模型 / 上下文 / token 账"><button class="tc" title="模型设置 · 模型 / 思考强度 / 最大上下文"><i>MODEL</i><b>pro · 高</b></button><button class="tc" title="上下文占用"><i>CTX</i><b>${ctxLabel}</b></button><button class="tc tok" title="本次会话 token / 费用"><i>TOKEN</i><b>${fmtK(j.tok||0)} · ¥${(j.cost||0).toFixed(2)}</b></button></span>`:''}<span class="cwidx" title="用户输入历史 · 这是一个聊天窗的轮次索引">≡ <b>${turns}</b> 轮</span><span class="cwid" title="对话对象 · 身份由任务状态派生">${esc(j.agent)}</span><span class="csp"></span><button data-wdetail="${w.id}" title="▦ 作战详情（chat 窗留着）">▦</button></div>
   <div class="cwl">${msgs.filter(m=>m!==cur).slice(-40).map(tlHTML).join('')}</div>
   <div class="cwc">${cur?esc(cur.text):''}</div>
   ${o?`<div class="cwch">${o.options.map((opt,i)=>`<button class="vchoice${opt.label===o.rec?' rec':''}" data-wchoice="${o.id}" data-wlabel="${esc(opt.label)}" data-wid="${w.id}" style="--accent:${OP_KIND[o.kind].color}"><span class="n">[${i+1}]</span><b>${esc(opt.label)}</b></button>`).join('')}</div>`:''}
   <div class="cwi"><span class="pr">❯</span><textarea data-winput="${w.id}" rows="1" placeholder="回应 ${esc(j.agent)} / 下指令…"></textarea><button class="send" data-wsend="${w.id}">⏎</button></div>
   ${w.max?'':'<span class="cwgr" data-wgr="'+w.id+'" title="拖拽调整窗口大小"></span>'}</div>`;}).join('');
+ /* #5：编队行的「正在聊 / 未读」跟着窗与未读走。 */
+ renderFleetRail();
  bindWins();}
 function bindWins(){const L=$('#winLayer');
  $$('.cwin',L).forEach(el=>{el.addEventListener('pointerdown',()=>{const w=state.wins.find(x=>x.id===el.dataset.win);if(w&&w.z!==state.zTop){bumpZ(w);
@@ -3438,11 +3542,12 @@ function bindWins(){const L=$('#winLayer');
  $$('[data-wmin]',L).forEach(b=>b.addEventListener('click',e=>{e.stopPropagation();minWin(b.dataset.wmin);}));
  $$('[data-wmax]',L).forEach(b=>b.addEventListener('click',e=>{e.stopPropagation();const w=state.wins.find(x=>x.id===b.dataset.wmax);if(!w)return;w.max=!w.max;if(w.max)w.min=false;bumpZ(w);renderWins();renderBar();Audio.sfx('click');}));
  $$('[data-wclose]',L).forEach(b=>b.addEventListener('click',e=>{e.stopPropagation();closeWin(b.dataset.wclose);}));
+ $$('[data-wdetail]',L).forEach(b=>b.addEventListener('click',e=>{e.stopPropagation();const w=state.wins.find(x=>x.id===b.dataset.wdetail);if(w)openDetail(w.job,'run');}));
  $$('[data-wsend]',L).forEach(b=>b.addEventListener('click',()=>{const w=state.wins.find(x=>x.id===b.dataset.wsend);const ta=$(`[data-winput="${b.dataset.wsend}"]`);if(w&&ta)sendFrom(w.job,ta);}));
  $$('[data-winput]',L).forEach(t=>{t.addEventListener('keydown',e=>{if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();const w=state.wins.find(x=>x.id===t.dataset.winput);if(w)sendFrom(w.job,t);}});t.addEventListener('input',()=>autoGrowEl(t));});
  $$('[data-wchoice]',L).forEach(b=>b.addEventListener('click',()=>{const ta=$(`[data-winput="${b.dataset.wid}"]`);const note=ta?ta.value.trim():'';resolveOp(b.dataset.wchoice,b.dataset.wlabel,note===b.dataset.wlabel?'':note);if(ta){ta.value='';autoGrowEl(ta);}}));
  $$('[data-wgr]',L).forEach(g=>{g.addEventListener('pointerdown',e=>{e.stopPropagation();e.preventDefault();const w=state.wins.find(x=>x.id===g.dataset.wgr);if(!w||w.max)return;const sx=e.clientX,sy=e.clientY,ow=w.w,oh=w.h;
-  const mv=ev=>{w.w=clamp(ow+ev.clientX-sx,300,Math.min(680,innerWidth-16));w.h=clamp(oh+ev.clientY-sy,260,Math.max(260,innerHeight-80));const el=$(`[data-win="${w.id}"]`);if(el){el.style.width=w.w+'px';el.style.height=w.h+'px';}};
+  const mv=ev=>{w.w=clamp(ow+ev.clientX-sx,300,innerWidth-16);w.h=clamp(oh+ev.clientY-sy,260,Math.max(260,innerHeight-70));const el=$(`[data-win="${w.id}"]`);if(el){el.style.width=w.w+'px';el.style.height=w.h+'px';}};
   const up=()=>{removeEventListener('pointermove',mv);removeEventListener('pointerup',up);};
   addEventListener('pointermove',mv);addEventListener('pointerup',up);});});}
 function renderBar(){const bar=$('#winBar');$('#app').classList.toggle('has-wins',state.wins.length>0);if(!state.wins.length){bar.hidden=true;bar.innerHTML='';return;}
@@ -3659,7 +3764,7 @@ setInterval(()=>{if(document.hidden)return;const runs=state.jobs.filter(j=>j.sta
  if(state.thread===j.id&&state.pose==='working'){setPose('typing');setTimeout(()=>{if(state.pose==='typing')setPose('working');},1800);}},18000);
 
 /* ── events ── */
-$('#rCmd').addEventListener('click',()=>{openThread('main');state.warp=Math.max(state.warp,.5);$('#cmdInput').focus();});
+$('#rCmd').addEventListener('click',()=>{openJobChat('main');state.warp=Math.max(state.warp,.5);$('#cmdInput').focus();});
 $('#rDir').addEventListener('click',openCabinTree);
 $('#rActivity').addEventListener('click',()=>toggleActPop());
 $('#rChanges').addEventListener('click',openChanges);
@@ -3682,9 +3787,6 @@ $('#btnProj').addEventListener('click',e=>{e.stopPropagation();togglePjPop();});
 /* 原型验收入口：点立绘 = 按 CLIPS 顺序播下一支（13 支循环）。
    正式实现必须由真实状态/事件驱动（mood、作业阶段、回传、休眠等），不要保留点击轮播。 */
 $('#character').addEventListener('click',()=>{Audio.sfx('click');state.lastAct=Date.now();playClip(state.clip+1);});
-$('#conBack').addEventListener('click',()=>openThread('main'));
-$('#conDetail').addEventListener('click',()=>{state.detailJob=state.thread;state.detailTab='dialog';openPanel('detail');});
-$('#conDebug').addEventListener('click',()=>{state.detailJob=state.thread;state.detailTab='debug';openPanel('detail');});
 $('#conClose').addEventListener('click',()=>setConMin(true));
 $('#conMin').addEventListener('click',()=>setConMin(!state.conMin));
 $('#conAdd').addEventListener('click',e=>{e.stopPropagation();openAdd();});
@@ -3706,7 +3808,6 @@ $('#modelPop').addEventListener('click',e=>{
 addEventListener('pointerdown',e=>{if(!state.conPop)return;if(e.target.closest('#modelPop,#ctxPop,#tokPop,#conModelBtn,#conCtxBtn,#conTokBtn'))return;closeConPop();});
 addEventListener('pointerdown',e=>{if(!state.conTurns)return;if(e.target.closest('#turnDrop,#conTurns'))return;state.conTurns=false;renderTurnDrop();});
 $('#conDock').addEventListener('click',()=>setConMin(false));
-$('#conPop').addEventListener('click',()=>{if(state.thread!=='main')openWin(state.thread);});
 $('#btnSend').addEventListener('click',sendCommand);
 $('#cmdInput').addEventListener('input',autoGrow);
 $('#cmdInput').addEventListener('keydown',e=>{if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();sendCommand();}});
@@ -3721,7 +3822,7 @@ addEventListener('keydown',e=>{const inIn=e.target.closest('textarea,input');
  }
  if((e.metaKey||e.ctrlKey)&&state.notesOpen&&e.key.toLowerCase()==='n'){e.preventDefault();createNote();return;}
  if((e.metaKey||e.ctrlKey)&&state.notesOpen&&e.key.toLowerCase()==='f'){e.preventDefault();$('#noteQ')?.focus();$('#noteQ')?.select();return;}
- if((e.metaKey||e.ctrlKey)&&e.key.toLowerCase()==='k'){e.preventDefault();openThread('main');$('#cmdInput').focus();return;}
+ if((e.metaKey||e.ctrlKey)&&e.key.toLowerCase()==='k'){e.preventDefault();openJobChat('main');$('#cmdInput').focus();return;}
  if(e.altKey&&e.key.toLowerCase()==='m'){e.preventDefault();setSoundOn(!state.sound);return;}
  if(e.altKey&&e.key.toLowerCase()==='w'){e.preventDefault();travel();return;}
  if(e.altKey&&e.key.toLowerCase()==='d'){e.preventDefault();$('#lDebug').click();return;}
