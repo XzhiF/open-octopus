@@ -1,5 +1,5 @@
 import { query, type Options, type AgentDefinition, type CanUseTool, type SDKUserMessage } from '@anthropic-ai/claude-agent-sdk'
-import type { IAgentProvider, SendQueryOptions, MessageChunk, OctopusAgentDef, GoalTerminalReason, SystemInitData, BackgroundTaskInfo, SubagentEvent, SubagentLogBlock } from '../types'
+import type { IAgentProvider, SendQueryOptions, MessageChunk, OctopusAgentDef, GoalTerminalReason, SystemInitData, BackgroundTaskInfo, SubagentEvent, SubagentLogBlock, ContextUsageData } from '../types'
 import type { ModelUsage, TokenUsage, TokenUsageDelta } from '@octopus/shared'
 import { mergeModelUsages } from '@octopus/shared'
 import { LLMCallTracker } from '../llm-call-tracker'
@@ -671,7 +671,35 @@ export class ClaudeSDKProvider implements IAgentProvider {
       if (options.abortSignal.aborted) onAbort()
       else options.abortSignal.addEventListener('abort', onAbort, { once: true })
     }
-    let contextUsageEmitted = false
+    // ctx 角标（2026-11-24 用户）：长轮里工具结果持续进上下文，角标却只在首条
+    // message_start 报一次 —— 跑一小时都不动。改为**节流刷新**（多轮
+    // message_start 触发，≥20s 一次）+ **收轮强制一次**；压缩仍即时刷新。
+    // 控制请求连续失败 3 次即停（SDK/传输不支持时不做无谓等待）。
+    const CONTEXT_USAGE_MIN_INTERVAL_MS = 20_000
+    const CONTEXT_USAGE_MAX_FAILURES = 3
+    let contextUsageFailures = 0
+    let lastContextUsageAt = 0
+    const readContextUsage = async (
+      opts: { force?: boolean } = {},
+    ): Promise<ContextUsageData | null> => {
+      if (contextUsageFailures >= CONTEXT_USAGE_MAX_FAILURES) return null
+      if (!opts.force && Date.now() - lastContextUsageAt < CONTEXT_USAGE_MIN_INTERVAL_MS) {
+        return null
+      }
+      try {
+        // Control request, outside the event stream — a hung transport
+        // must not block the turn past the watchdog (P0-2).
+        const ctxUsage = await withSoftTimeout(q.getContextUsage(), 5_000, 'CONTEXT_USAGE_TIMEOUT')
+        contextUsageFailures = 0
+        lastContextUsageAt = Date.now()
+        return ctxUsage
+      } catch {
+        // getContextUsage may fail if the SDK subprocess doesn't support
+        // it or the transport isn't streaming mode — non-fatal, skip.
+        contextUsageFailures += 1
+        return null
+      }
+    }
     // Slash commands (/context, /compact, /usage …) are executed by the CLI
     // itself: they arrive as a complete `assistant` message + `result` and
     // carry NO stream_event deltas (verified against SDK 0.3.235). Track which
@@ -774,19 +802,11 @@ export class ClaudeSDKProvider implements IAgentProvider {
             yield { type: 'message_start', messageId: currentMessageId }
 
             // Fetch context window usage breakdown from the SDK (control request).
-            // Only do this once per stream to avoid repeated calls on multi-turn
-            // tool-use loops (message_start fires for each assistant message).
-            if (!contextUsageEmitted) {
-              contextUsageEmitted = true
-              try {
-                // Control request, outside the event stream — a hung transport
-                // must not block the turn past the watchdog (P0-2).
-                const ctxUsage = await withSoftTimeout(q.getContextUsage(), 5_000, 'CONTEXT_USAGE_TIMEOUT')
-                yield { type: 'context_usage', data: ctxUsage }
-              } catch {
-                // getContextUsage may fail if the SDK subprocess doesn't support
-                // it or the transport isn't streaming mode — non-fatal, skip.
-              }
+            // 首条 message_start 必报；其后按 20s 节流刷新 —— 每条 assistant
+            // message 开始前上一批工具结果已进上下文，长轮据此持续走动。
+            {
+              const ctxUsage = await readContextUsage({ force: lastContextUsageAt === 0 })
+              if (ctxUsage) yield { type: 'context_usage', data: ctxUsage }
             }
           }
 
@@ -1263,13 +1283,10 @@ export class ClaudeSDKProvider implements IAgentProvider {
               }
             }
           } else if (sm.subtype === 'compact_boundary') {
-            // 立即刷新占用；auto 压缩也走这里，让角标同样回落。
-            try {
-              const ctxUsage = await withSoftTimeout(q.getContextUsage(), 5_000, 'CONTEXT_USAGE_TIMEOUT')
-              contextUsageEmitted = true
-              yield { type: 'context_usage', data: ctxUsage }
-            } catch {
-              // 非致命：下一轮 message_start 仍会补报真实占用。
+            // 立即刷新占用；auto 压缩也走这里，让角标同样回落（不受节流限制）。
+            {
+              const ctxUsage = await readContextUsage({ force: true })
+              if (ctxUsage) yield { type: 'context_usage', data: ctxUsage }
             }
             // 转录被重写成了摘要：一轮性上下文（角色卡 / 任务 playbook）不保证
             // 还在摘要里，宿主需要在下一轮重新送达。manual/auto 都要报（auto 是
@@ -1397,6 +1414,12 @@ export class ClaudeSDKProvider implements IAgentProvider {
               yield { type: 'local_command_output', content: pendingCompactReceipt }
             }
             pendingCompactReceipt = undefined
+          }
+          // 收轮强制刷新一次（2026-11-24 用户）：长轮跑完时的最终占用。
+          // 必须早于 result chunk —— 宿主收到 result 会收轮，之后的帧可能没人读。
+          {
+            const ctxUsage = await readContextUsage({ force: true })
+            if (ctxUsage) yield { type: 'context_usage', data: ctxUsage }
           }
           // result.modelUsage is the ONLY authoritative source of per-model token totals.
           // SDK snake/原始 key → 规范 ModelUsage 的转换只发生在这里（seam adapter）。
