@@ -154,7 +154,7 @@ export function CockpitManifestFace({ cabinId, onClose }: CockpitManifestFacePro
             )}
             {local.length > 0 && (
               <>
-                <div className="ck12-sect">本地 / 外部 · 建舱时映射 <b>{local.length}</b></div>
+                <div className="ck12-sect">本地 / 外部 · 目录登记 <b>{local.length}</b></div>
                 {local.map(card)}
               </>
             )}
@@ -168,6 +168,7 @@ export function CockpitManifestFace({ cabinId, onClose }: CockpitManifestFacePro
       <CockpitRepoBinder
         open={bindOpen}
         cabinId={cabinId}
+        cabinName={cabinName}
         cabinPath={cabinPath}
         projects={projects}
         onClose={() => setBindOpen(false)}

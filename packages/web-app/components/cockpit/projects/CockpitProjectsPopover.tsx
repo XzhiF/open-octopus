@@ -110,7 +110,7 @@ export function CockpitProjectsPopover({
             )}
             {org.map((p) => <ProjectRow key={p.key} cabinId={cabinId} project={p} onOpen={openProject} />)}
             {local.length > 0 && (
-              <div className="ck12-pjsrc">本地 / 外部 · 建舱时映射 <b>{local.length}</b></div>
+              <div className="ck12-pjsrc">本地 / 外部 · 目录登记 <b>{local.length}</b></div>
             )}
             {local.map((p) => <ProjectRow key={p.key} cabinId={cabinId} project={p} onOpen={openProject} />)}
           </div>

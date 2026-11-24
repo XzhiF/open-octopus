@@ -179,6 +179,7 @@ export function CockpitHud() {
       <CockpitRepoBinder
         open={bindOpen}
         cabinId={entryCabinId}
+        cabinName={cabinName}
         cabinPath={entryCabinId === cabinCtx?.cabin?.id ? cabinCtx?.cabin?.path ?? null : null}
         projects={projects}
         onClose={closeBinder}

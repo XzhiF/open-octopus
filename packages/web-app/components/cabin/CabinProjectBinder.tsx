@@ -8,8 +8,8 @@
 
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { ChevronRight, Loader2, Search } from 'lucide-react'
-import { fetchManifestRepos } from '@/lib/api-client'
 import { scanLocalProjects, type LocalProjectCandidate } from '@/lib/cabin-api'
+import { loadOrgRepos } from '@/lib/org-repos'
 import { useOrgs } from '@/hooks/useOrgs'
 import { projectKey, type CabinProjectRef } from '@/lib/cabin-draft'
 import './CabinCreateHero.css'
@@ -23,33 +23,7 @@ const LOCAL_GROUP = '本地目录 · 建舱时映射'
 const LOCAL_TAG = '本地'
 
 const CACHE_TTL = 60_000
-const cache = new Map<string, { at: number; repos: CabinProjectRef[] }>()
 const localCache = new Map<string, { at: number; projects: LocalProjectCandidate[] }>()
-
-interface ManifestShape {
-  groups?: Record<string, Array<{ name?: string; group?: string }>>
-}
-
-async function loadOrgRepos(org: string): Promise<CabinProjectRef[]> {
-  const hit = cache.get(org)
-  if (hit && Date.now() - hit.at < CACHE_TTL) return hit.repos
-  const data = (await fetchManifestRepos(org)) as ManifestShape
-  const repos: CabinProjectRef[] = []
-  // manifest 的一个 org 可能有多组（miyuan / miyuan3.0 / bigdatabase），同名仓库会在
-  // 多组里重复出现。按名字去重 —— 否则 projectKey 重复 → React key 重复，过滤时
-  // 列表会残留旧行（2026-11-16 用户实测：搜 octopus 还挂着 miyuan 的项目）。
-  const seen = new Set<string>()
-  for (const items of Object.values(data?.groups ?? {})) {
-    for (const item of items ?? []) {
-      if (!item?.name || seen.has(item.name)) continue
-      seen.add(item.name)
-      // 归属 org = 被查询的那个 org（manifest 里的 group 是仓库分组，不是 org）。
-      repos.push({ source: 'org', org, repo: item.name })
-    }
-  }
-  cache.set(org, { at: Date.now(), repos })
-  return repos
-}
 
 async function loadLocalProjects(dirPath: string): Promise<LocalProjectCandidate[]> {
   const hit = localCache.get(dirPath)

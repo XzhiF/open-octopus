@@ -1310,6 +1310,78 @@ kbd{border:1px solid rgba(185,179,217,.35);border-bottom-width:2px;border-radius
 .tsw.on{border-color:#fff;box-shadow:0 0 12px rgba(255,255,255,.35)}
 .tsw:hover{transform:translateY(-2px)}
 .snote{font-size:8.5px;color:var(--metal2);line-height:1.6;padding:10px 2px 0}
+/* ═══ 绑定项目（2026-11-24 用户 · 舱籍两条来源：ORG 注册项目 / 本地 Git 仓库） ═══ */
+.bindwrap{position:absolute;inset:0;z-index:64;display:grid;place-items:center;background:rgba(16,13,40,.56);backdrop-filter:blur(5px)}
+.bindwrap[hidden]{display:none}
+.bindmodal{width:min(800px,94vw);height:min(660px,88vh);display:flex;flex-direction:column;min-height:0;border-radius:var(--wrad);overflow:hidden;background:linear-gradient(180deg,rgba(22,17,52,.93),rgba(11,8,28,.96));backdrop-filter:blur(18px) saturate(1.35);border:1px solid var(--edge);box-shadow:0 30px 90px rgba(6,4,18,.72)}
+.bind-h{flex:none;display:flex;align-items:center;gap:9px;padding:11px 13px;border-bottom:1px solid rgba(46,230,214,.2);background:linear-gradient(180deg,rgba(46,230,214,.06),transparent)}
+.bind-x{flex:none;width:22px;height:24px;display:grid;place-items:center;clip-path:var(--hex);border:1px solid rgba(185,179,217,.25);background:rgba(255,255,255,.08);color:var(--ink2);font-size:10px}
+.bind-x:hover{color:#fff;border-color:var(--teal);background:rgba(46,230,214,.14)}
+.bind-tt{display:flex;flex-direction:column;line-height:1.25;min-width:0}
+.bind-tt b{font-size:12.5px;font-weight:800;font-family:var(--font-ui);color:#fff}
+.bind-sub{font-size:8.5px;color:var(--ink2);letter-spacing:.1em;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.bind-tabs{flex:none;display:flex;border-bottom:1px solid rgba(185,179,217,.16);background:rgba(0,0,0,.18)}
+.bind-tab{position:relative;display:flex;align-items:center;gap:7px;padding:9px 16px;font-size:10.5px;font-weight:700;color:var(--ink2);border-right:1px solid rgba(185,179,217,.12);font-family:var(--font-ui);letter-spacing:.04em}
+.bind-tab b{min-width:16px;padding:0 5px;border-radius:999px;background:rgba(255,255,255,.07);font-size:9px;text-align:center;color:var(--ink2)}
+.bind-tab:hover{color:#fff}
+.bind-tab.on{color:var(--teal);background:rgba(46,230,214,.07)}
+.bind-tab.on::after{content:"";position:absolute;left:0;right:0;bottom:-1px;height:2px;background:var(--teal);box-shadow:0 0 10px rgba(46,230,214,.6)}
+.bind-tab.on b{background:rgba(46,230,214,.18);color:var(--teal)}
+.bind-body{flex:1;min-height:0;overflow:auto;padding:12px 14px}
+.bind-q{display:flex;align-items:center;gap:8px;height:32px;padding:0 10px;border-radius:9px;background:rgba(10,8,24,.55);border:1px solid rgba(185,179,217,.24);margin-bottom:10px}
+.bind-q input{flex:1;min-width:0;background:none;border:0;outline:none;font-size:11px}
+.bind-clr{color:var(--ink2);font-size:10px;font-weight:700}
+.bind-clr:hover{color:var(--teal)}
+.bind-grp{display:flex;align-items:center;gap:8px;margin:12px 0 4px;font-size:8.5px;letter-spacing:.16em;font-weight:800;color:var(--teal)}
+.bind-grp .n{padding:0 6px;border-radius:999px;background:rgba(46,230,214,.12);color:var(--teal);font-size:9px;letter-spacing:0}
+.bind-row{display:flex;align-items:center;gap:10px;width:100%;text-align:left;padding:8px;border-radius:8px;border:1px solid transparent;background:rgba(255,255,255,.02);margin-bottom:3px;transition:.12s}
+.bind-row:hover{border-color:rgba(46,230,214,.32);background:rgba(46,230,214,.05)}
+.bind-row[data-on="true"]{border-color:rgba(46,230,214,.42);background:rgba(46,230,214,.08)}
+.bind-ck{flex:none;width:16px;height:16px;border-radius:4px;border:1px solid rgba(185,179,217,.45);display:grid;place-items:center;font-size:10px;line-height:1;color:transparent}
+.bind-row[data-on="true"] .bind-ck{border-color:var(--teal);background:rgba(46,230,214,.22);color:var(--teal)}
+.bind-main{flex:1;min-width:0;display:flex;flex-direction:column;gap:1px}
+.bind-line{display:flex;align-items:center;gap:7px;min-width:0}
+.bind-name{min-width:0;font-size:11.5px;font-weight:700;font-family:var(--font-ui);color:#fff;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.bind-tag{flex:none;padding:1px 6px;border-radius:999px;font-size:8px;font-weight:800;letter-spacing:.06em;border:1px solid rgba(53,199,240,.4);color:var(--sky)}
+.bind-tag.local{border-color:rgba(139,124,246,.5);color:var(--violet)}
+.bind-tag.bound{border-color:rgba(245,197,66,.5);color:var(--gold)}
+.bind-where{font-size:9px;color:var(--ink2);font-family:var(--font-ui);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.bind-git{flex:none;display:flex;flex-direction:column;align-items:flex-end;gap:1px;font-size:9px;color:var(--ink2);max-width:42%}
+.bind-br{color:var(--sky);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:100%}
+.bind-hd{font-variant-numeric:tabular-nums}
+.bind-at{font-variant-numeric:tabular-nums;font-size:8.5px;color:var(--metal2)}
+.bind-empty{padding:22px 10px;text-align:center;color:var(--ink2);font-size:10.5px;line-height:1.7}
+.bind-empty b{display:block;font-size:20px;color:var(--metal2);margin-bottom:6px}
+.bind-path{display:flex;align-items:center;gap:8px;margin-bottom:10px}
+.bind-up{flex:none;display:grid;place-items:center;width:26px;height:26px;border-radius:7px;border:1px solid rgba(185,179,217,.28);color:var(--ink2);font-size:11px}
+.bind-up:hover{color:var(--teal);border-color:rgba(46,230,214,.45)}
+.bind-crumb{flex:1;min-width:0;display:flex;align-items:center;gap:2px;height:26px;padding:0 9px;border-radius:7px;background:rgba(10,8,24,.55);border:1px solid rgba(185,179,217,.2);font-size:10px;color:var(--ink);white-space:nowrap;overflow:hidden}
+.bind-crumb button{color:var(--ink2);padding:0 3px}
+.bind-crumb button:hover{color:var(--teal)}
+.bind-crumb .sep{color:var(--metal2);opacity:.5}
+.bind-cols{display:grid;grid-template-columns:214px minmax(0,1fr);gap:10px;height:330px}
+.bind-pane{border:1px solid rgba(185,179,217,.16);border-radius:10px;background:rgba(10,8,24,.35);overflow:auto;padding:6px;min-height:0}
+.bind-pane-h{font-size:8.5px;letter-spacing:.14em;color:var(--metal2);padding:2px 6px 6px;font-weight:700}
+.bind-dir{display:flex;align-items:center;gap:7px;width:100%;padding:6px 8px;border-radius:7px;font-size:10.5px;color:var(--ink2);text-align:left}
+.bind-dir:hover{background:rgba(46,230,214,.07);color:#fff}
+.bind-dir .ic{color:var(--gold);font-size:10px}
+.bind-dir .git{color:var(--green);font-size:9px}
+.bind-dir .go{margin-left:auto;color:var(--metal2);font-size:9px}
+.bind-hint{font-size:9px;color:var(--metal2);line-height:1.7;padding:8px 2px 0}
+.bind-hint b{color:var(--teal)}
+.bind-foot{flex:none;display:flex;align-items:flex-start;gap:10px;padding:9px 12px;border-top:1px solid rgba(185,179,217,.16);background:rgba(0,0,0,.18)}
+.bind-sel{flex:1;min-width:0;display:flex;flex-wrap:wrap;gap:4px;max-height:54px;overflow:auto}
+.bind-chip{display:inline-flex;align-items:center;gap:5px;padding:2px 7px;border-radius:999px;border:1px solid rgba(46,230,214,.32);background:rgba(46,230,214,.08);font-size:9.5px;color:var(--ink);max-width:230px}
+.bind-chip .nm{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.bind-chip i{font-style:normal;font-size:8px;color:var(--ink2);border-left:1px solid rgba(185,179,217,.25);padding-left:5px}
+.bind-chip button{color:var(--ink2);font-size:10px}
+.bind-chip button:hover{color:var(--red)}
+.bind-acts{flex:none;display:flex;gap:7px;align-items:center}
+.bind-btn{height:28px;padding:0 14px;clip-path:var(--btncut);border:1px solid rgba(185,179,217,.3);background:rgba(255,255,255,.05);font-size:10.5px;font-weight:800;font-family:var(--font-ui);color:var(--ink2)}
+.bind-btn:hover{color:#fff;border-color:rgba(46,230,214,.5)}
+.bind-btn.primary{background:linear-gradient(135deg,rgba(46,230,214,.28),rgba(123,77,255,.28));border-color:rgba(46,230,214,.6);color:#fff}
+.bind-btn.primary:hover{box-shadow:0 0 16px rgba(46,230,214,.35)}
+@media (max-width:640px){.bind-cols{grid-template-columns:1fr;height:auto}.bind-git{display:none}}
 /* ═══ 汐音档案（更多 → ♡ 汐音，2026-11-19 用户 #7 三版：盖在通讯台位置） ═══ */
 .xypop{position:fixed;z-index:61;display:flex;flex-direction:column;border:1px solid rgba(46,230,214,.32);border-radius:14px;overflow:hidden;background:linear-gradient(180deg,rgba(16,20,29,.97),rgba(9,11,17,.96));box-shadow:0 24px 64px rgba(0,0,0,.6),0 0 40px rgba(46,230,214,.09);animation:tpop .18s ease-out}
 .xypop[hidden]{display:none}
@@ -1708,6 +1780,21 @@ kbd{border:1px solid rgba(185,179,217,.35);border-bottom-width:2px;border-radius
     <div class="setmodal" role="dialog" aria-modal="true" aria-label="设置">
       <div class="sh"><button class="sx" id="setClose" title="关闭">✕</button><span class="st"><b>设置</b><span>SETTINGS · 舱内偏好（本地）</span></span></div>
       <div class="sb" id="setBody"></div>
+    </div>
+  </div>
+
+  <div class="bindwrap" id="bindWrap" hidden>
+    <div class="bindmodal" role="dialog" aria-modal="true" aria-label="绑定项目">
+      <div class="bind-h">
+        <button class="bind-x" id="bindClose" title="关闭（Esc）">✕</button>
+        <span class="bind-tt"><b>绑定项目</b><span class="bind-sub" id="bindSub">账务中台 · 项目是关联关系，不搬代码</span></span>
+      </div>
+      <div class="bind-tabs" id="bindTabs"></div>
+      <div class="bind-body" id="bindBody"></div>
+      <div class="bind-foot">
+        <div class="bind-sel" id="bindSel"></div>
+        <div class="bind-acts"><button class="bind-btn" id="bindCancel">取消</button><button class="bind-btn primary" id="bindSave">保存</button></div>
+      </div>
     </div>
   </div>
 
@@ -3418,10 +3505,13 @@ function pjProjStats(pr){
 }
 function pjRowHTML(pr,cls){
  const {js,run}=pjProjStats(pr);const wts=(pr.worktrees||[]).length;
+ /* 2026-11-24 用户：本地 Git 仓库与 ORG 项目同列一行 —— 本地行给路径与 LOCAL 标。 */
+ const where=pr.local?esc(pr.path):esc(pr.org+'/'+pr.group);
+ const tag=pr.local?'<span class="pjx-tag local">LOCAL</span>':'<span class="pjx-tag org">ORG</span>';
  return `<button class="pjx${cls?' '+cls:''}" data-pjopen="${pr.id}" style="--accent:${pr.color}">
   <span class="pjx-dot" aria-hidden="true"></span>
   <span class="pjx-main">
-   <span class="pjx-t"><b>${esc(pr.name)}</b><span class="pjx-tag org">ORG</span><span class="pjx-where">${esc(pr.org+'/'+pr.group)}</span></span>
+   <span class="pjx-t"><b>${esc(pr.name)}</b>${tag}<span class="pjx-where">${where}</span></span>
    <span class="pjx-git"><span class="br" title="${esc(pr.branch)}">⎇ ${esc(pr.branch)}</span><span class="head">${esc(pr.head)}</span><span class="at">${esc(pr.at)}</span></span>
    <span class="pjx-msg">${esc(pr.msg)}${pr.dirty?' · dirty':''}</span>
    <span class="pjx-facts"><span>作战 <b>${js.length}</b></span><span>在跑 <b>${run.length}</b></span><span>工作树 <b>${wts}</b></span></span>
@@ -3431,15 +3521,16 @@ function pjRowHTML(pr,cls){
 }
 function renderPjPop(){
  const el=$('#pjPop');if(!state.pjPop){el.classList.remove('on');return;}
+ const orgRows=PROJECTS.filter(pr=>!pr.local),locRows=PROJECTS.filter(pr=>pr.local);
  el.innerHTML=`<div class="pjpop-h"><span class="k">舱籍 · 关联项目</span><span class="s">账务中台 · ${PROJECTS.length} 项目</span></div>
-  <div class="pjpop-list"><div class="pjpop-grp">ORG 注册项目 <b>${PROJECTS.filter(pr=>pr.org).length}</b></div>${PROJECTS.map(pr=>pjRowHTML(pr)).join('')}</div>
-  <div class="pjpop-foot"><button data-pjbind-top>＋ 绑定项目</button><span>点一行开项目面</span><span class="sp"></span><button data-pjall>舱籍总览 →</button></div>`;
+  <div class="pjpop-list">${orgRows.length?`<div class="pjpop-grp">ORG 注册项目 <b>${orgRows.length}</b></div>${orgRows.map(pr=>pjRowHTML(pr)).join('')}`:''}${locRows.length?`<div class="pjpop-grp">本地 Git 仓库 <b>${locRows.length}</b></div>${locRows.map(pr=>pjRowHTML(pr)).join('')}`:''}${PROJECTS.length===0?'<div class="bind-empty"><b>⧉</b>这个舱还没绑项目</div>':''}</div>
+  <div class="pjpop-foot"><button data-pjbind-top>＋ 绑定项目</button><span>ORG 注册 / 本地目录</span><span class="sp"></span><button data-pjall>舱籍总览 →</button></div>`;
  el.classList.add('on');
  const b=$('#btnProj').getBoundingClientRect();
  el.style.left=Math.max(8,b.left)+'px';el.style.top=(b.bottom+6)+'px';
  $$('[data-pjopen]',el).forEach(x=>x.addEventListener('click',()=>openProject(x.dataset.pjopen)));
  $('[data-pjall]',el)?.addEventListener('click',()=>{togglePjPop(false);openPanel('projects');Audio.sfx('click');});
- $('[data-pjbind-top]',el)?.addEventListener('click',()=>toast('绑定项目 · 打开绑定面板（原型演示手感）'));
+ $('[data-pjbind-top]',el)?.addEventListener('click',()=>openBind());
 }
 function togglePjPop(next){
  state.pjPop=next==null?!state.pjPop:!!next;
@@ -3448,9 +3539,9 @@ function togglePjPop(next){
 }
 function openProject(id){openPanel('projects');state.projFocus=id;state.pjTab='files';state.pjDiff=null;renderPanel();}
 function renderProjectsOverview(){
- return `<div class="pnote">舱籍 = 本舱关联的项目 · 主仓只读 · 只能拉主线（ff-only）· 工作树按作业开。</div>
-  ${PROJECTS.map(pr=>pjRowHTML(pr,'ov')).join('')}
-  <div class="pjf-foot">点任一行进项目面：先看在跑，再看仓库事实与动作。</div>`;
+ return `<div class="pnote">舱籍 = 本舱关联的项目 · ORG 主仓只读（ff-only）· 本地只登记路径 · 工作树按作业开。</div>
+  ${PROJECTS.length?PROJECTS.map(pr=>pjRowHTML(pr,'ov')).join(''):'<div class="bind-empty"><b>⧉</b>这个舱还没绑项目<br/>从 ORG 注册表挑，或选一个本地 Git 仓库目录</div>'}
+  <div class="pjf-foot"><button class="bind-btn" data-pjbind style="margin-right:8px">＋ 绑定项目</button>点任一行进项目面：先看在跑，再看仓库事实与动作。</div>`;
 }
 /* 项目面的 git 变更 = 该项目下各作战的变更按路径去重（原型演示口径）。 */
 function projChanges(pr){
@@ -3606,7 +3697,7 @@ function renderPanel(){const p=$('#panel');if(!state.panel){p.classList.remove('
  else if(state.panel==='poses'){body=`<div class="pnote" style="color:var(--teal);border-color:rgba(46,230,214,.4);background:rgba(46,230,214,.06)">视频立绘：<b>${CLIPS.length} 支动作片段</b>（旧批次 3 + 新批次 10）。点立绘按顺序播下一支；卡片悬停预览动作，点击直接跳到该段。13 支已统一人物高 / 脚底 / 中轴，切换不跳位。</div><div class="posegrid">${CLIPS.map((c,i)=>{const m=POSE_META[c.pose];const th=c.src.replace('/v22/','/v22/thumbs/').replace('.webm','.png');return `<button class="posecard${state.clip===i?' on':''}" data-clip="${i}"><span class="pv"><img src="${th}" alt="${m.cn}" loading="lazy"/><video class="cv" muted playsinline loop preload="none" data-src="${c.src}" aria-hidden="true"></video><span class="mk">${String(i+1).padStart(2,'0')} · ${c.batch}</span></span><span class="pm"><b>${m.cn}</b><i>${m.en}</i></span><span class="pd">${m.desc}</span></button>`;}).join('')}</div>`;}
  else{body=threadOf(state.thread).map(m=>{if(m.who==='sys')return `<div class="loglm sys"><div class="bb">${esc(m.text)}</div></div>`;if(m.who==='you')return `<div class="loglm me"><div class="bb"><div class="who"><b>${esc(m.name||'指挥官')}</b><span>${esc(m.t||'')}</span></div>${esc(m.text)}</div></div>`;if(m.who==='doer')return `<div class="loglm"><span class="av doer">⚙</span><div class="bb"><div class="who"><b>${esc(m.name)}</b><span>${esc(m.t||'')}</span></div>${esc(m.text)}</div></div>`;return `<div class="loglm"><span class="av"><img src="${PORTRAIT[m.mood||'idle']}" alt=""/></span><div class="bb"><div class="who"><b>汐音</b><span>${esc(m.t||'')}</span></div>${esc(m.text)}</div></div>`;}).join('');}
  const prh=state.panel==='projects'&&state.projFocus?PROJECTS.find(x=>x.id===state.projFocus):null;
- p.innerHTML=`<div class="ph"><button class="phx" data-close title="关闭">✕</button><span class="pt"><b>${prh?`⧉ 项目 · ${esc(prh.name)}`:T[1]}</b><span>${prh?`${esc(prh.org+'/'+prh.group)} · 主仓只读`:T[2]}</span></span><span class="sp">${prh?'<button class="pjback" data-pjback>← 舱籍总览</button>':''}</span></div><div class="pb${prh?' pjf-on':''}">${body}</div>`;bindPanel();restore();}
+ p.innerHTML=`<div class="ph"><button class="phx" data-close title="关闭">✕</button><span class="pt"><b>${prh?`⧉ 项目 · ${esc(prh.name)}`:T[1]}</b><span>${prh?`${esc(prh.local?prh.path:prh.org+'/'+prh.group)} · ${prh.local?'本地仓库':'主仓只读'}`:T[2]}</span></span><span class="sp">${prh?'<button class="pjback" data-pjback>← 舱籍总览</button>':''}</span></div><div class="pb${prh?' pjf-on':''}">${body}</div>`;bindPanel();restore();}
 function bindPanel(){const p=$('#panel');
  $('[data-close]',p)?.addEventListener('click',closePanel);
  $$('[data-job]',p).forEach(b=>{const go=e=>{if(e.target.closest('.fa'))return;state.detailJob=b.dataset.job;state.detailTab='run';state.panel='detail';renderPanel();Audio.sfx('click');};b.addEventListener('click',go);b.addEventListener('keydown',e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();go(e);}});});
@@ -3617,6 +3708,8 @@ function bindPanel(){const p=$('#panel');
  $('[data-proj-jump]',p)?.addEventListener('click',()=>{state.projFocus=null;state.panel='projects';renderPanel();Audio.sfx('click');});
  /* 舱籍 / 项目面（2026-11-23 用户 #1 · 二轮）：只保留 分支 / 文件浏览器 / git 变更 */
  $('[data-pjback]',p)?.addEventListener('click',()=>{state.projFocus=null;state.pjDiff=null;renderPanel();Audio.sfx('click');});
+ $$('[data-pjopen]',p).forEach(x=>x.addEventListener('click',()=>openProject(x.dataset.pjopen)));
+ $('[data-pjbind]',p)?.addEventListener('click',()=>openBind());
  $$('[data-pjdir]',p).forEach(b=>b.addEventListener('click',()=>{const pid=state.projFocus;const set=wsOpenSet(pid);const k=b.dataset.pjdir;if(set.has(k))set.delete(k);else set.add(k);renderPanel();Audio.sfx('click');}));
  $$('[data-pjfile]',p).forEach(b=>b.addEventListener('click',()=>{state.wsSel[state.projFocus]=b.dataset.pjfile;renderPanel();Audio.sfx('click');}));
  $$('[data-pjchgdir]',p).forEach(b=>b.addEventListener('click',()=>{const pr=PROJECTS.find(x=>x.id===state.projFocus);if(!pr)return;const set=pjChgOpenSet(pr);const k=b.dataset.pjchgdir;if(set.has(k))set.delete(k);else set.add(k);renderPanel();Audio.sfx('click');}));
@@ -3891,6 +3984,179 @@ function applyWinAlpha(){document.documentElement.style.setProperty('--winop',St
 function openSettings(){closePops();closeConPop();state.settings=true;$('#setwrap').hidden=false;renderSettings();Audio.sfx('open');}
 function closeSettings(){state.settings=false;$('#setwrap').hidden=true;Audio.sfx('close');}
 
+/* ── 绑定项目（2026-11-24 用户 · 舱籍两条来源）────────────────────────
+   1) ORG 注册项目：各 org 清单里的仓库，多选；
+   2) 本地 Git 仓库：目录浏览器选一个目录 → 扫出目录自身与子目录里的 git 仓库
+      （深度 ≤2，跳过 node_modules / 隐藏目录）→ 多选。
+   口径：项目 = 关联关系，只登记 org 引用 / 目录路径，不搬代码；
+   保存 = 与已绑求差集（取消勾选即解绑）。 */
+const ORG_CATALOG={
+ 'octo-finance':[
+  {group:'ledger',name:'账务核心',branch:'main',head:'a74bee6',msg:'chore: bump settlement snapshot to 11-18',at:'2026-11-23 12:04:18',dirty:false,color:'#35C7F0'},
+  {group:'gateway',name:'API 网关',branch:'feat/rate-limit-token-bucket-per-tenant-v2-with-fallback-budget',head:'de29609',msg:'feat: per-tenant token bucket limiter',at:'2026-11-23 13:41:52',dirty:true,color:'#8B7CF6'},
+  {group:'risk',name:'风控引擎',branch:'main',head:'ec8a626',msg:'fix: alert dedup window',at:'2026-11-22 18:26:07',dirty:false,color:'#FFB020'},
+  {group:'settlement',name:'结算清分',branch:'main',head:'51cd9ab',msg:'feat: settling window v2',at:'2026-11-21 16:03:44',dirty:false,color:'#FF5C8A'},
+  {group:'billing',name:'计费中心',branch:'release/2026-11',head:'9f2e804',msg:'chore: rate card sync',at:'2026-11-20 10:22:19',dirty:false,color:'#3DDC97'}],
+ 'octo-edge':[
+  {group:'edge',name:'边缘节点',branch:'main',head:'3acd561',msg:'chore: canary probe labels',at:'2026-11-20 09:12:45',dirty:false,color:'#3DDC97'},
+  {group:'probe',name:'探针服务',branch:'main',head:'c41d7e2',msg:'fix: heartbeat jitter',at:'2026-11-19 22:48:31',dirty:false,color:'#35C7F0'},
+  {group:'canary',name:'灰度调度',branch:'feat/step-rollout',head:'88ab30f',msg:'feat: step rollout weights',at:'2026-11-23 08:15:02',dirty:true,color:'#FFB020'}],
+ 'open-octopus':[
+  {group:'core',name:'open-octopus',branch:'main',head:'e43d689',msg:'feat(cockpit,tasks): 全舱运行浮窗 + 右上合计消耗',at:'2026-11-23 21:14:07',dirty:true,color:'#2EE6D6'},
+  {group:'core',name:'octopus-docs',branch:'main',head:'7bd41c9',msg:'docs: cabin design v22',at:'2026-11-22 19:07:52',dirty:false,color:'#8B7CF6'},
+  {group:'web',name:'octopus-web',branch:'feat-new-ui',head:'12c9e70',msg:'feat: cockpit windows',at:'2026-11-21 14:36:20',dirty:false,color:'#FF5C8A'}]};
+/* 目录浏览器 mock：children = 子目录；git = 该目录本身是仓库。 */
+const LOCAL_DIRS={
+ 'D:/octopus-ws/cabin':{children:['D:/octopus-ws/cabin/projects','D:/octopus-ws/cabin/knowledge']},
+ 'D:/octopus-ws/cabin/projects':{children:[]},
+ 'D:/octopus-ws/cabin/knowledge':{children:[]},
+ 'D:/repos':{children:['D:/repos/open-octopus','D:/repos/client-sdk','D:/repos/tools','D:/repos/scratch-notes']},
+ 'D:/repos/open-octopus':{git:{branch:'main',head:'e43d689',msg:'feat(cockpit,tasks): 全舱运行浮窗 + 右上合计消耗，删除 task-fix 修复流',at:'2026-11-23 21:14:07',dirty:true,remote:'git@github.com:XzhiF/open-octopus.git'}},
+ 'D:/repos/client-sdk':{git:{branch:'feat/retry-policy',head:'b5e0a12',msg:'feat: retry policy hooks',at:'2026-11-23 17:52:40',dirty:false,remote:'git@github.com:XzhiF/client-sdk.git'}},
+ 'D:/repos/tools':{children:['D:/repos/tools/release-verify','D:/repos/tools/workflow-lint']},
+ 'D:/repos/tools/release-verify':{git:{branch:'main',head:'9a13f0d',msg:'chore: verify manifest',at:'2026-11-18 11:03:25',dirty:false,remote:'git@github.com:XzhiF/release-verify.git'}},
+ 'D:/repos/tools/workflow-lint':{git:{branch:'main',head:'4470bca',msg:'fix: yaml schema anchor',at:'2026-11-17 20:41:09',dirty:true,remote:'git@github.com:XzhiF/workflow-lint.git'}},
+ 'D:/repos/scratch-notes':{children:[]}};
+const bindState={open:false,tab:'org',query:'',dir:'D:/repos',sel:new Set()};
+const bindBasename=p=>String(p).replace(/[\\/]+$/,'').split(/[\\/]/).pop()||String(p);
+function bindParent(p){const s=String(p).replace(/[\\/]+$/,'');const i=Math.max(s.lastIndexOf('/'),s.lastIndexOf('\\'));if(i<0)return null;const parent=s.slice(0,i);return /^[A-Za-z]:$/.test(parent)?parent+'/':parent;}
+function bindSlug(s){return String(s).toLowerCase().replace(/[^a-z0-9\u4e00-\u9fa5]+/g,'-').replace(/^-+|-+$/g,'')||('p'+Date.now().toString(36));}
+const bindOrgKey=e=>`org:${e.org}/${e.name}`;
+const bindLocalKey=p=>`local:${p}`;
+const bindProjectKey=p=>p.local?bindLocalKey(p.path):`org:${p.org}/${p.name}`;
+function bindScan(dir){
+ const node=LOCAL_DIRS[dir];const out=[];
+ if(!node)return out;
+ const push=(p,depth)=>{const n=LOCAL_DIRS[p];if(n&&n.git)out.push({path:p,depth,...n.git});};
+ if(node.git){push(dir,0);return out;}
+ (node.children||[]).forEach(c=>{push(c,1);const n=LOCAL_DIRS[c];if(n&&!n.git)(n.children||[]).forEach(g=>push(g,2));});
+ return out;
+}
+function bindCrumbs(){
+ const segs=bindState.dir.replace(/\\/g,'/').split('/').filter(Boolean);
+ let acc='';
+ return segs.map((s,i)=>{
+  acc=i===0?s+'/':acc.replace(/\/$/,'')+'/'+s;
+  const last=i===segs.length-1;
+  const body=last?`<b style="color:var(--teal)">${esc(s)}</b>`:(LOCAL_DIRS[acc]?`<button data-bindcr="${esc(acc)}">${esc(s)}</button>`:`<span>${esc(s)}</span>`);
+  return body+(last?'':'<span class="sep">/</span>');
+ }).join('');
+}
+function openBind(){
+ closePops();closeConPop();togglePjPop(false);
+ bindState.open=true;bindState.tab='org';bindState.query='';bindState.dir='D:/repos';
+ bindState.sel=new Set(PROJECTS.map(bindProjectKey));
+ $('#bindWrap').hidden=false;renderBind();Audio.sfx('open');
+ setTimeout(()=>$('#bindQ')?.focus(),30);
+}
+function closeBind(){if(!bindState.open)return;bindState.open=false;$('#bindWrap').hidden=true;Audio.sfx('close');}
+function renderBind(){
+ const orgSel=[...bindState.sel].filter(k=>k.startsWith('org:')).length;
+ const locSel=[...bindState.sel].filter(k=>k.startsWith('local:')).length;
+ $('#bindSub').textContent=`账务中台 · ${PROJECTS.length} 已绑 · 项目是关联关系，不搬代码`;
+ $('#bindTabs').innerHTML=
+  `<button class="bind-tab${bindState.tab==='org'?' on':''}" data-bindtab="org">ORG 注册项目 <b>${orgSel}</b></button>`+
+  `<button class="bind-tab${bindState.tab==='local'?' on':''}" data-bindtab="local">本地 Git 仓库 <b>${locSel}</b></button>`;
+ $('#bindBody').innerHTML=bindState.tab==='org'?renderBindOrg():renderBindLocal();
+ $('#bindSel').innerHTML=bindState.sel.size?[...bindState.sel].map(k=>{
+   const label=k.startsWith('org:')?(()=>{const rest=k.slice(4);const i=rest.indexOf('/');return `<span class="nm">${esc(rest.slice(i+1))}</span><i>${esc(rest.slice(0,i))}</i>`;})():`<span class="nm">${esc(bindBasename(k.slice(6)))}</span><i>本地</i>`;
+   return `<span class="bind-chip">${label}<button data-bindunpick="${esc(k)}" aria-label="移除">×</button></span>`;
+ }).join(''):'<span style="font-size:9px;color:var(--metal2)">还没选项目 · 从上面勾选（ORG 或本地 Git 仓库）</span>';
+ /* 事件（重新渲染后重挂） */
+ $$('[data-bindtab]',$('#bindTabs')).forEach(b=>b.addEventListener('click',()=>{bindState.tab=b.dataset.bindtab;renderBind();Audio.sfx('click');}));
+ $$('[data-bindpick]',$('#bindBody')).forEach(b=>b.addEventListener('click',()=>{const k=b.dataset.bindpick;if(bindState.sel.has(k))bindState.sel.delete(k);else bindState.sel.add(k);renderBind();Audio.sfx('click');}));
+ $$('[data-bindunpick]',$('#bindSel')).forEach(b=>b.addEventListener('click',()=>{bindState.sel.delete(b.dataset.bindunpick);renderBind();Audio.sfx('click');}));
+ $$('[data-bindcr]',$('#bindBody')).forEach(b=>b.addEventListener('click',()=>{const p=b.dataset.bindcr;if(LOCAL_DIRS[p]){bindState.dir=p;renderBind();Audio.sfx('click');}}));
+ $('[data-bindup]',$('#bindBody'))?.addEventListener('click',()=>{const p=bindParent(bindState.dir);if(p&&LOCAL_DIRS[p]){bindState.dir=p;renderBind();Audio.sfx('click');}else{toast('已经在演示根目录（D:/repos）');}});
+ $('[data-bindclear]',$('#bindBody'))?.addEventListener('click',()=>{bindState.query='';renderBind();$('#bindQ')?.focus();});
+ const q=$('#bindQ');
+ if(q)q.addEventListener('input',()=>{bindState.query=q.value;const pos=q.selectionStart;renderBind();const nq=$('#bindQ');if(nq){nq.focus();nq.setSelectionRange(pos,pos);}});
+}
+function renderBindOrg(){
+ const terms=bindState.query.trim().toLowerCase().split(/\s+/).filter(Boolean);
+ const match=s=>terms.every(t=>String(s).toLowerCase().includes(t));
+ const groups=Object.entries(ORG_CATALOG)
+  .map(([org,list])=>({org,list:list.filter(e=>!terms.length||match(`${e.name} ${org} ${e.group}`))}))
+  .filter(g=>g.list.length);
+ const bound=new Set(PROJECTS.filter(p=>p.org).map(p=>`${p.org}/${p.name}`));
+ if(!groups.length)return `<div class="bind-q"><span style="color:var(--metal2);font-size:10px">⌕</span><input id="bindQ" value="${esc(bindState.query)}" placeholder="搜项目名 / org / 分组…" aria-label="搜索项目"/><button class="bind-clr" data-bindclear>清空</button></div><div class="bind-empty"><b>⌕</b>没有匹配「${esc(bindState.query)}」的项目</div>`;
+ return `<div class="bind-q"><span style="color:var(--metal2);font-size:10px">⌕</span><input id="bindQ" value="${esc(bindState.query)}" placeholder="搜项目名 / org / 分组…" aria-label="搜索项目"/><button class="bind-clr" data-bindclear>清空</button></div>`+
+  groups.map(g=>`<div class="bind-grp">${esc(g.org)} <span class="n">${g.list.length}</span></div>`+g.list.map(e=>{
+   const key=bindOrgKey({org:g.org,name:e.name});
+   const on=bindState.sel.has(key);
+   const isBound=bound.has(`${g.org}/${e.name}`);
+   return `<button class="bind-row" data-bindpick="${esc(key)}" data-on="${on}" title="${esc(g.org+'/'+g.group)}">
+    <span class="bind-ck">✓</span>
+    <span class="bind-main"><span class="bind-line"><span class="bind-name">${esc(e.name)}</span><span class="bind-tag">ORG</span>${isBound?'<span class="bind-tag bound">已绑</span>':''}<span class="bind-where">${esc(g.org+'/'+g.group)}</span></span></span>
+    <span class="bind-git"><span class="bind-br">⎇ ${esc(e.branch)}</span><span class="bind-hd">${esc(e.head)}</span><span class="bind-at">${esc(e.at)}</span></span>
+   </button>`;}).join('')).join('')+
+  `<div class="bind-hint">ORG 主仓只读 · 只能拉主线（ff-only）；绑的是<b>关联关系</b>，不搬代码。</div>`;
+}
+function renderBindLocal(){
+ const dir=bindState.dir;
+ const node=LOCAL_DIRS[dir]||{children:[]};
+ const kids=(node.children||[]).filter(p=>LOCAL_DIRS[p]);
+ const scan=bindScan(dir);
+ const rows=scan.map(c=>{
+  const key=bindLocalKey(c.path);
+  const on=bindState.sel.has(key);
+  const isBound=PROJECTS.some(p=>p.local&&p.path===c.path);
+  return `<button class="bind-row" data-bindpick="${esc(key)}" data-on="${on}" title="${esc(c.path)}">
+   <span class="bind-ck">✓</span>
+   <span class="bind-main">
+    <span class="bind-line"><span class="bind-name">${esc(bindBasename(c.path))}</span><span class="bind-tag local">LOCAL</span>${isBound?'<span class="bind-tag bound">已绑</span>':''}<span class="bind-where">${esc(c.path)}</span></span>
+    <span class="bind-line"><span class="bind-where">${c.depth===0?'当前目录自身就是 Git 仓库':'扫描到 · 深度 '+c.depth}</span></span>
+   </span>
+   <span class="bind-git"><span class="bind-br">⎇ ${esc(c.branch)}</span><span class="bind-hd">${esc(c.head)}</span><span class="bind-at">${esc(c.at)}${c.dirty?' · dirty':''}</span></span>
+  </button>`;
+ }).join('');
+ return `<div class="bind-path">
+   <button class="bind-up" data-bindup title="上一级">↑</button>
+   <span class="bind-crumb">${bindCrumbs()}</span>
+  </div>
+  <div class="bind-cols">
+   <div class="bind-pane"><div class="bind-pane-h">目录 · ${kids.length}</div>${kids.length?kids.map(p=>{
+     const g=!!(LOCAL_DIRS[p]&&LOCAL_DIRS[p].git);
+     return `<button class="bind-dir" data-bindcr="${esc(p)}" title="${esc(p)}"><span class="ic">▸</span><span>${esc(bindBasename(p))}</span>${g?'<span class="git">git</span>':'<span class="go">进入</span>'}</button>`;
+   }).join(''):'<div class="bind-empty" style="padding:14px 6px">没有子目录</div>'}</div>
+   <div class="bind-pane"><div class="bind-pane-h">扫描结果 · ${scan.length} 个 Git 仓库（深度 ≤2 · 跳过 node_modules / 隐藏目录）</div>
+    ${rows||`<div class="bind-empty"><b>◇</b>这个目录下没有发现 Git 仓库<br/>走进子目录，或换一个目录</div>`}</div>
+  </div>
+  <div class="bind-hint">只登记路径、不搬代码；目录里没有 <b>.git</b> 就不会出现在扫描结果里。勾选进入下方「已选」，保存时统一提交。</div>`;
+}
+function saveBind(){
+ const before=new Set(PROJECTS.map(bindProjectKey));
+ const added=[...bindState.sel].filter(k=>!before.has(k)).length;
+ const removed=[...before].filter(k=>!bindState.sel.has(k)).length;
+ const next=[];
+ PROJECTS.forEach(p=>{if(bindState.sel.has(bindProjectKey(p)))next.push(p);});
+ Object.entries(ORG_CATALOG).forEach(([org,list])=>list.forEach(e=>{
+  const key=`org:${org}/${e.name}`;
+  if(!bindState.sel.has(key))return;
+  if(next.some(p=>!p.local&&p.org===org&&p.name===e.name))return;
+  next.push({id:bindSlug(org+'-'+e.name),name:e.name,color:e.color,org,group:e.group,branch:e.branch,head:e.head,msg:e.msg,at:e.at,dirty:e.dirty,remote:`git@github.com:${org}/${e.name}.git`,worktrees:[]});
+ }));
+ [...bindState.sel].filter(k=>k.startsWith('local:')).forEach(k=>{
+  const path=k.slice(6);const git=LOCAL_DIRS[path]&&LOCAL_DIRS[path].git;if(!git)return;
+  if(next.some(p=>p.local&&p.path===path))return;
+  next.push({id:bindSlug('local-'+bindBasename(path)),name:bindBasename(path),color:'#8D86B8',local:true,path,branch:git.branch,head:git.head,msg:git.msg,at:git.at,dirty:git.dirty,remote:git.remote,worktrees:[]});
+ });
+ if(!next.length){toast('至少保留一个项目（原型约束）');return;}
+ PROJECTS.length=0;PROJECTS.push(...next);
+ /* 解绑后焦点项目可能没了：回到舱籍总览，避免项目面读到空对象。 */
+ if(state.projFocus&&!PROJECTS.some(p=>p.id===state.projFocus))state.projFocus=null;
+ if(state.wsProj&&!PROJECTS.some(p=>p.id===state.wsProj))state.wsProj=PROJECTS[0].id;
+ renderHUDProjects();renderPjPop();
+ if(state.panel==='projects')renderPanel();
+ closeBind();toast(`已保存 · +${added} / −${removed} · 舱籍 ${PROJECTS.length} 项目`);
+}
+function renderHUDProjects(){const el=$('#btnProj');if(!el)return;const pn=el.querySelector('.pn2');if(pn)pn.innerHTML=`账务中台 · <b>${PROJECTS.length}</b> 项目`;}
+$('#bindClose').addEventListener('click',closeBind);
+$('#bindCancel').addEventListener('click',closeBind);
+$('#bindSave').addEventListener('click',saveBind);
+$('#bindWrap').addEventListener('click',e=>{if(e.target===$('#bindWrap'))closeBind();});
+
+
 /* ── 汐音档案（更多 → ♡ 汐音，2026-11-19 用户 #7）──────────────────────
    打开 = 看她是谁：身份 / 模型 / 人格 / 技能 / 工具 / 记忆；同时她在台上换动作
    —— 点开档案本身就是在看她（报到 → 微笑 → 眨眼 → 警觉循环）。 */
@@ -4069,7 +4335,7 @@ addEventListener('keydown',e=>{const inIn=e.target.closest('textarea,input');
  if(e.altKey&&e.key.toLowerCase()==='c'){e.preventDefault();setConMin(!state.conMin);return;}
  if(e.altKey&&e.key.toLowerCase()==='i'){e.preventDefault();toggleInbox();return;}
  if(e.altKey&&e.key==='1'){e.preventDefault();const f=[...openOps()].sort((a,b)=>OP_KIND[a.kind].pri-OP_KIND[b.kind].pri)[0];if(f){state.inboxOpen=true;state.inboxSel=f.id;state.inboxPick=null;renderInbox();Audio.sfx('open');}else toggleInbox(true);return;}
- if(e.key==='Escape'){if(state.addOpen){openAdd(false);return;}if(state.settings){closeSettings();return;}if(state.kcOpen){toggleKc(false);return;}if(state.doc){closeDocView();return;}if(state.notesOpen){toggleNotesWin(false);return;}if(state.twin){closeTree();return;}if(state.actOpen){if(state.actSel){state.actSel=null;renderActivityPop();}else toggleActPop(false);return;}if(state.conPop){closeConPop();return;}if(state.pjPop){state.pjPop=false;renderPjPop();return;}if(state.pop){closePops();return;}if(state.inboxOpen){if(state.inboxSel){state.inboxSel=null;state.inboxPick=null;renderInbox();}else toggleInbox(false);return;}if(state.brief){hideBanner();return;}if(state.relayJump){state.relayJump=false;renderPanel();return;}if(state.panel){closePanel();return;}if(!state.conMin){setConMin(true);return;}}
+ if(e.key==='Escape'){if(bindState.open){closeBind();return;}if(state.addOpen){openAdd(false);return;}if(state.settings){closeSettings();return;}if(state.kcOpen){toggleKc(false);return;}if(state.doc){closeDocView();return;}if(state.notesOpen){toggleNotesWin(false);return;}if(state.twin){closeTree();return;}if(state.actOpen){if(state.actSel){state.actSel=null;renderActivityPop();}else toggleActPop(false);return;}if(state.conPop){closeConPop();return;}if(state.pjPop){state.pjPop=false;renderPjPop();return;}if(state.pop){closePops();return;}if(state.inboxOpen){if(state.inboxSel){state.inboxSel=null;state.inboxPick=null;renderInbox();}else toggleInbox(false);return;}if(state.brief){hideBanner();return;}if(state.relayJump){state.relayJump=false;renderPanel();return;}if(state.panel){closePanel();return;}if(!state.conMin){setConMin(true);return;}}
  if(!inIn&&state.inboxOpen&&state.inboxSel&&state.inboxPick!=null&&e.key==='Enter'){e.preventDefault();submitInbox(false);return;}
  if(!inIn&&state.inboxOpen&&state.inboxSel&&/^[1-9]$/.test(e.key)){const o=opOf(state.inboxSel);if(o&&o.status==='open'){const i=+e.key-1;if(o.options[i]){e.preventDefault();state.inboxPick=i;renderInbox();Audio.sfx('click');}}return;}
  if(!inIn&&/^[1-9]$/.test(e.key)&&state.thread!=='main'){const o=opForJob(state.thread);if(o){const i=+e.key-1;if(o.options[i]){e.preventDefault();resolveOp(o.id,o.options[i].label);}}}});
