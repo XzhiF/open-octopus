@@ -7,6 +7,7 @@
 // them (K3).
 
 import { getServerUrl } from "@/lib/server-config"
+import { subscribeSSE } from "@/lib/sse-manager"
 import type {
   CabinDTO,
   CabinView,
@@ -536,13 +537,46 @@ export async function pullCabinRepo(id: string, name: string): Promise<{ branch:
 export interface RepoTreeEntry {
   path: string
   type: "dir" | "file"
+  /** sizes=1 时的字节数；默认 0 = 未取（界面据此不显示大小）。 */
   bytes: number
 }
 
-/** GET /api/cabins/:id/repos/:name/tree — 只读 ff-only 目录树（depth≤6 / 2000 条）。 */
-export async function getRepoTree(id: string, name: string): Promise<{ dir: string; entries: RepoTreeEntry[] }> {
-  const res = await fetch(url(`/${id}/repos/${encodeURIComponent(name)}/tree`))
-  return handleResponse<{ dir: string; entries: RepoTreeEntry[] }>(res)
+/** 目录扫描结果（2026-11-24 目录窗优化）：截断如实上报，不再假装完整。 */
+export interface TreeScanResult {
+  dir: string
+  entries: RepoTreeEntry[]
+  /** 命中 depth / 条目上限，条目不完整。 */
+  truncated?: boolean
+  reason?: "depth" | "count" | null
+  /** 本次扫描允许的最大目录层数（提示文案用）。 */
+  maxDepth?: number
+}
+
+export interface TreeQueryOptions {
+  /** 手动重扫：绕过服务端 10s 缓存。 */
+  fresh?: boolean
+  /** 取文件字节数（每文件一次 stat）。 */
+  sizes?: boolean
+  /** 目录窗打开期间让服务端 chokidar 监听这个根（默认开，续租 120s）。 */
+  watch?: boolean
+}
+
+function treeQuery(opts: TreeQueryOptions = {}): string {
+  const params: string[] = []
+  if (opts.fresh) params.push("fresh=1")
+  if (opts.sizes) params.push("sizes=1")
+  if (opts.watch !== false) params.push("watch=1")
+  return params.length ? `?${params.join("&")}` : ""
+}
+
+/** GET /api/cabins/:id/repos/:name/tree — 只读 ff-only 目录树（depth≤14 / 20000 文件）。 */
+export async function getRepoTree(
+  id: string,
+  name: string,
+  opts?: TreeQueryOptions,
+): Promise<TreeScanResult> {
+  const res = await fetch(url(`/${id}/repos/${encodeURIComponent(name)}/tree${treeQuery(opts)}`))
+  return handleResponse<TreeScanResult>(res)
 }
 
 /** GET /api/cabins/:id/repos/:name/file?path= — 只读常规文件（不出根 / 512KB）。 */
@@ -554,10 +588,10 @@ export async function getRepoFile(id: string, name: string, relPath: string): Pr
 // ── v22 九轮：本舱 cwd（右栏「目录」）──────────────────────────────────
 // 一目录一舱：根 = cabin.path。tree/file 与 repo 版同口径；raw 只出图片字节。
 
-/** GET /api/cabins/:id/tree — 本舱 cwd 只读目录树（depth≤6 / 2000 条）。 */
-export async function getCabinTree(id: string): Promise<{ dir: string; entries: RepoTreeEntry[] }> {
-  const res = await fetch(url(`/${id}/tree`))
-  return handleResponse<{ dir: string; entries: RepoTreeEntry[] }>(res)
+/** GET /api/cabins/:id/tree — 本舱 cwd 只读目录树（depth≤14 / 20000 文件）。 */
+export async function getCabinTree(id: string, opts?: TreeQueryOptions): Promise<TreeScanResult> {
+  const res = await fetch(url(`/${id}/tree${treeQuery(opts)}`))
+  return handleResponse<TreeScanResult>(res)
 }
 
 /** GET /api/cabins/:id/file?path= — 本舱 cwd 只读文本文件（不出根 / 512KB）。 */
@@ -750,9 +784,34 @@ export async function getCabinUsage(id: string, signal?: AbortSignal): Promise<C
 // ============ SSE ============
 
 /** Shared SSE endpoint for the cabin channel (`cabin:<id>`): cabin_status /
- *  cabin_init_progress / heartbeat. Consume via subscribeSSE (sse-manager). */
+ *  cabin_init_progress / tree_changed / heartbeat. Consume via subscribeSSE (sse-manager). */
 export function cabinEventsUrl(id: string): string {
   return url(`/${id}/events`)
+}
+
+/**
+ * 订阅目录窗的增量刷新（2026-11-24）：服务端 chokidar 发现目录结构变化后，在
+ * cabin:<id> 频道推 `tree_changed { cabin_id, dir, dirs }`。只回传与本界面同一个根
+ * 的事件；SSE 不可用（测试 / 老浏览器）时退化为 no-op —— 调用方还有焦点与 30s 兜底刷新。
+ */
+export function subscribeTreeChanges(cabinId: string, dir: string, onChanged: () => void): () => void {
+  if (typeof EventSource === "undefined") return () => {}
+  const same = normalizeDir(dir)
+  return subscribeSSE(cabinEventsUrl(cabinId), "tree_changed", (event) => {
+    try {
+      const data = JSON.parse(event.data) as { dir?: string }
+      if (data.dir && same && normalizeDir(data.dir) !== same) return
+    } catch {
+      // 坏帧也照样刷新（本地缓存兜底）。
+    }
+    onChanged()
+  })
+}
+
+function normalizeDir(dir: string): string {
+  const trimmed = dir.replace(/[\\/]+$/, "")
+  // Windows 路径大小写不敏感（浏览器里不能用 process.platform）。
+  return trimmed.includes("\\") || /^[A-Za-z]:[\\/]/.test(trimmed) ? trimmed.toLowerCase() : trimmed
 }
 
 // ============ 决策（design 25 §7.1：票据 / 账本 / 队列）============

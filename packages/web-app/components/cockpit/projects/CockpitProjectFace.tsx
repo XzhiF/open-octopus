@@ -13,9 +13,9 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import {
-  getRepoFile, getRepoTree, getRepoWorktreeChangePatch, getRepoWorktreeChanges,
+  getRepoFile, getRepoWorktreeChangePatch, getRepoWorktreeChanges,
   setCabinRepoMainline,
-  type CabinRepoEntry, type CabinWorktreeChanges, type RepoTreeEntry,
+  type CabinRepoEntry, type CabinWorktreeChanges,
 } from '@/lib/cabin-api'
 import { formatDateTime } from '@/lib/format'
 import { patchRows } from '@/components/tasks/files-tab/diff-view'
@@ -24,6 +24,7 @@ import { useCabinProjects } from './use-cabin-projects'
 import { rosterRef } from './project-model'
 import { buildTree, TreeRows } from '../face/CockpitJobFiles'
 import { CockpitFaceHead } from '../face/CockpitFaceHead'
+import { useTreeScan } from '../face/use-tree-scan'
 import {
   buildChangeTree, collectChangeFiles, compactChangeDir,
   type ChangeEntry, type ChangeTreeNode,
@@ -114,13 +115,15 @@ function ProjectFaceBody({
   const [tab, setTab] = useState<ProjectTab>('files')
 
   // ── 文件浏览器 ──
-  const [entries, setEntries] = useState<RepoTreeEntry[] | null>(null)
-  const [treeDir, setTreeDir] = useState('')
-  const [treeLoading, setTreeLoading] = useState(true)
-  const [treeErr, setTreeErr] = useState<string | null>(null)
+  // 2026-11-24 目录窗优化：与目录树窗口共用 useTreeScan（异步扫描 + 缓存 +
+  // chokidar 增量刷新）；静默刷新不动展开 / 选中。
+  const scan = useTreeScan({ cabinId, repoName: project.name })
+  const entries = scan.entries
+  const treeDir = scan.dir
   const [open, setOpen] = useState<ReadonlySet<string>>(new Set())
   const [sel, setSel] = useState<string | null>(null)
   const [file, setFile] = useState<{ path: string; content: string | null; err: string | null } | null>(null)
+  const treeNodes = useMemo(() => buildTree(entries ?? []), [entries])
 
   // ── git 变更 ──
   const [changes, setChanges] = useState<CabinWorktreeChanges | null>(null)
@@ -135,34 +138,21 @@ function ProjectFaceBody({
 
   const repoName = project.name
 
-  // 文件树：默认全展开，选中第一个文件（与原型一致）；换项目回文件页签。
+  // 文件树：换项目 / 首次载入才回文件页签、重置展开与选中；静默刷新不动。
+  const initGenRef = useRef(0)
   useEffect(() => {
-    let alive = true
+    if (scan.generation === 0 || !scan.entries) return
+    if (initGenRef.current === scan.generation) return
+    initGenRef.current = scan.generation
     setTab('files')
     setCollapsed(new Set())
-    setTreeLoading(true)
-    setTreeErr(null)
-    setEntries(null)
-    setSel(null)
+    // 2026-11-24：默认只展开顶层目录（大仓不再一次铺满）；深层文件靠筛选/手动展开。
+    const dirs = scan.entries.filter((e) => e.type === 'dir').map((e) => e.path.replace(/\/$/, ''))
+    setOpen(new Set(dirs.filter((p) => !p.includes('/'))))
+    // 选中根层第一个文件（深层文件不在默认展开里）。
+    setSel(scan.entries.find((e) => e.type === 'file' && !e.path.includes('/'))?.path ?? null)
     setFile(null)
-    getRepoTree(cabinId, repoName)
-      .then((res) => {
-        if (!alive) return
-        setEntries(res.entries)
-        setTreeDir(res.dir)
-        setOpen(new Set(
-          res.entries.filter((e) => e.type === 'dir').map((e) => e.path.replace(/\/$/, '')),
-        ))
-        setSel(res.entries.find((e) => e.type === 'file')?.path ?? null)
-      })
-      .catch((err: unknown) => {
-        if (alive) setTreeErr(err instanceof Error ? err.message : '读取目录失败')
-      })
-      .finally(() => {
-        if (alive) setTreeLoading(false)
-      })
-    return () => { alive = false }
-  }, [cabinId, repoName])
+  }, [scan.generation, scan.entries])
 
   // 选中文件 → 拉内容（成功不缓存切换成本很低，保持简单）。
   useEffect(() => {
@@ -394,20 +384,41 @@ function ProjectFaceBody({
   }
 
   const renderFilesPane = (): ReactNode => {
-    if (treeLoading && !entries) return <div className="ck12-ckt-empty">扫仓储目录…</div>
-    if (treeErr && !entries) return <div className="ck12-ckt-empty is-err">{treeErr}</div>
-    const tree = buildTree(dirEntries)
+    if (!entries) {
+      if (scan.error) return <div className="ck12-ckt-empty is-err">{scan.error}</div>
+      return <div className="ck12-ckt-empty">扫仓储目录…</div>
+    }
     const abs = sel && treeDir ? `${treeDir.replace(/[\\/]+$/, '')}/${sel}` : sel
     return (
       <>
         <div className="ck12-ckt-side">
-          <div className="ck12-ckt-scope">{fileCount} 文件 · 只读</div>
+          <div className="ck12-ckt-scope">
+            <span>
+              {fileCount} 文件 · 只读
+              {scan.truncated && (
+                <span className="ck12-files-trunc">
+                  {' · 已截断'}
+                  {scan.truncReason === 'depth' ? `（只到 ${scan.maxDepth ?? 14} 层）` : '（文件过多）'}
+                </span>
+              )}
+            </span>
+            <button
+              type="button"
+              className="ck12-ckt-ib"
+              title="重扫磁盘"
+              aria-label="重扫项目目录"
+              data-testid="project-tree-rescan"
+              onClick={() => scan.reload({ fresh: true })}
+            >
+              ↻
+            </button>
+          </div>
           <div className="ck12-ckt-scroll" role="tree" aria-label="项目文件树">
             {dirEntries.length === 0 ? (
               <div className="ck12-ckt-empty">仓储目录空着</div>
             ) : (
               <TreeRows
-                nodes={tree}
+                nodes={treeNodes}
                 depth={0}
                 open={open}
                 onToggle={toggleDir}

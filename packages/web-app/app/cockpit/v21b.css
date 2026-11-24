@@ -1500,7 +1500,8 @@ button.ck12-ev:hover { background: rgba(255, 255, 255, 0.04); }
 }
 .ck12-ckt-ib:hover:not(:disabled) { color: var(--ck12-ink); border-color: color-mix(in srgb, var(--ck-a) 45%, transparent); }
 .ck12-ckt-ib:disabled { opacity: 0.45; }
-.ck12-ckt-scope { flex: none; font-size: 8.5px; font-weight: 800; letter-spacing: 0.08em; color: var(--ck-a); padding: 0 2px 5px; }
+.ck12-ckt-scope { flex: none; display: flex; align-items: center; gap: 6px; font-size: 8.5px; font-weight: 800; letter-spacing: 0.08em; color: var(--ck-a); padding: 0 2px 5px; }
+.ck12-ckt-scope > .ck12-ckt-ib { margin-left: auto; }
 .ck12-ckt-scroll { flex: 1; min-height: 0; overflow-y: auto; overscroll-behavior: contain; }
 .ck12-ckt-main {
   flex: 1; min-width: 0; min-height: 0; display: flex; flex-direction: column;

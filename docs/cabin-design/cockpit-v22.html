@@ -3671,7 +3671,7 @@ function wsTree(pid){const root={n:'<ws>/projects/'+pid,d:true,c:[]};
   segs.forEach((s,i)=>{if(i===segs.length-1){cur.c.push({n:s,d:false,txt,b:jid?(jobOf(jid)||{}).short:null,jid,p});}
    else{let d=cur.c.find(x=>x.d&&x.n===s);if(!d){d={n:s,d:true,c:[]};cur.c.push(d);}cur=d;}});}
  return root;}
-function wsOpenSet(pid){if(!state.wsOpen[pid]){const set=new Set();const walk=(n,p)=>{const q=p?p+'/'+n.n:n.n;if(n.d){set.add(q);n.c.forEach(c=>walk(c,q));}};walk(wsTree(pid),'');state.wsOpen[pid]=set;}return state.wsOpen[pid];}
+function wsOpenSet(pid){/* 2026-11-24 目录窗优化：默认只展开顶层（大仓不再一屏几千行）；⊞ 手动全展。 */if(!state.wsOpen[pid]){const set=new Set();const walk=(n,p,depth)=>{const q=p?p+'/'+n.n:n.n;if(n.d){if(depth===0)set.add(q);n.c.forEach(c=>walk(c,q,depth+1));}};walk(wsTree(pid),'',0);state.wsOpen[pid]=set;}return state.wsOpen[pid];}
 function renderWS(){const pid=state.wsProj;const open=wsOpenSet(pid);const q=state.wsQ.toLowerCase();
  const rows=[];let count=0;
  const walk=(node,path,depth)=>{const p=path?path+'/'+node.n:node.n;
@@ -3779,7 +3779,7 @@ function renderCabinTwin(){const w=$('#twin');const open=cabinOpenSet();const q=
  <div class="wsb cwd"><span class="br">⌂ 本舱 cwd</span><span class="p">${esc(CABIN_CWD)}</span><span class="ro">只读</span><span class="acts"><button class="cbtn" data-ccopy="${esc(CABIN_CWD)}" title="复制本舱 cwd 绝对路径">⧉ 复制路径</button><button class="cbtn" data-creveal title="桌面壳：在资源管理器里打开本舱目录">▦ 资源管理器</button></span></div>
  <div class="ck-tree">
   <div class="ck-side">
-   <div class="ck-side-h"><input id="cabinQ" placeholder="筛文件…" value="${esc(state.cabinQ)}" aria-label="筛选本舱文件"/><button class="ck-ib" data-cexp="1" title="全部展开">⊞</button><button class="ck-ib" data-cexp="0" title="全部收起">⊟</button></div>
+   <div class="ck-side-h"><input id="cabinQ" placeholder="筛文件…" value="${esc(state.cabinQ)}" aria-label="筛选本舱文件"/><button class="ck-ib" data-cexp="1" title="全部展开">⊞</button><button class="ck-ib" data-cexp="0" title="全部收起">⊟</button><button class="ck-ib" data-crescan title="重扫磁盘">↻</button></div>
    <div class="ck-scope">本舱 · ${count} 文件</div>
    <div class="ck-scroll" role="tree">${q&&!count?'<div class="pempty">无匹配文件</div>':rows.join('')}</div>
   </div>
@@ -3798,6 +3798,7 @@ function bindCabinTwin(){const w=$('#twin');
  $$('[data-ctab]',w).forEach(b=>b.addEventListener('click',e=>{if(e.target.closest('[data-ctabx]'))return;state.cabinTab=b.dataset.ctab;renderCabinTwin();Audio.sfx('click');}));
  $$('[data-ctabx]',w).forEach(b=>b.addEventListener('click',e=>{e.stopPropagation();closeCabinTab(b.dataset.ctabx);}));
  $$('[data-cexp]',w).forEach(b=>b.addEventListener('click',()=>{state.cabinOpen=new Set(b.dataset.cexp==='1'?cabinAllDirs():[]);renderCabinTwin();Audio.sfx('click');}));
+ $('[data-crescan]',w)?.addEventListener('click',()=>{state.cabinOpen=new Set(['projects']);toast('已重扫 · 本舱目录');renderCabinTwin();Audio.sfx('click');});
  $$('[data-ccopy]',w).forEach(b=>b.addEventListener('click',e=>{e.stopPropagation();const p=b.dataset.ccopy||CABIN_CWD;fallbackCopy(p,()=>toast('已复制 · '+p));Audio.sfx('click');}));
  $('[data-creveal]',w)?.addEventListener('click',()=>toast('桌面壳 · 在资源管理器打开 '+CABIN_CWD));
  $('[data-cws-job]',w)?.addEventListener('click',e=>{const jid=e.currentTarget.dataset.cwsJob;state.twin=null;w.classList.remove('open');state.detailJob=jid;state.detailTab='changes';state.panel='detail';renderPanel();Audio.sfx('click');});
@@ -4944,7 +4945,7 @@ function renderTwin(){const w=$('#twin');const t=state.twin;if(!t){w.classList.r
  w.innerHTML=`<div class="ph"><button class="phx" data-tclose title="关闭">✕</button><span class="pt"><b>⌗ 目录树 · ${esc(pr.name)}</b><span>⎇ ${esc(branch)} · ${esc(wsPath(pid))} · worktree 只读</span></span><span class="sp"></span><button class="pwin" data-tmax title="全屏 / 还原（也可双击标题栏）">${state.twinMax?'⤡':'⛶'}</button></div>
  <div class="pb"><div class="fchips">${ids.map(id=>{const p2=projOf(id);return `<button class="fchip${pid===id?' on':''}" data-tproj="${esc(id)}">⌗ ${esc(p2.name)}</button>`;}).join('')}</div>
  <div class="wsb"><span class="br">⎇ ${esc(branch)}</span><span class="p">${esc(wsPath(pid))}</span><span class="ro">worktree · 只读</span></div>
- <div class="fsearch"><input id="twinQ" placeholder="筛选文件…" value="${esc(state.twinQ)}"/><span class="scope">worktree · ${count} 文件</span></div>
+ <div class="fsearch"><input id="twinQ" placeholder="筛选文件…" value="${esc(state.twinQ)}"/><button class="ck-ib" data-texp="1" title="全部展开">⊞</button><button class="ck-ib" data-texp="0" title="全部收起">⊟</button><button class="ck-ib" data-trescan title="重扫磁盘">↻</button><span class="scope">worktree · ${count} 文件</span></div>
  <div class="wsplit"><div class="wcol"><div class="ftree">${rows.join('')||'<div class="pempty">无匹配文件</div>'}</div></div>${prev}</div></div>`;
  bindTwin();applyTwinGeo();w.classList.add('open');}
 function bindTwin(){const w=$('#twin');
@@ -4952,6 +4953,8 @@ function bindTwin(){const w=$('#twin');
  $('[data-tmax]',w)?.addEventListener('click',e=>{e.stopPropagation();toggleTwinMax();});
  $$('[data-tproj]',w).forEach(b=>b.addEventListener('click',()=>{state.twin.proj=b.dataset.tproj;renderTwin();Audio.sfx('click');}));
  $$('[data-ttree]',w).forEach(b=>b.addEventListener('click',()=>{const set=wsOpenSet(state.twin.proj);const path=b.dataset.ttree;set.has(path)?set.delete(path):set.add(path);renderTwin();Audio.sfx('click');}));
+ $$('[data-texp]',w).forEach(b=>b.addEventListener('click',()=>{const pid=state.twin.proj;const set=new Set();if(b.dataset.texp==='1'){const walk=(n,p)=>{const q=p?p+'/'+n.n:n.n;if(n.d){set.add(q);n.c.forEach(c=>walk(c,q));}};walk(wsTree(pid),'');}state.wsOpen[pid]=set;renderTwin();Audio.sfx('click');}));
+ $('[data-trescan]',w)?.addEventListener('click',()=>{delete state.wsOpen[state.twin.proj];toast('已重扫 · 目录树');renderTwin();Audio.sfx('click');});
  $$('[data-tfile]',w).forEach(b=>b.addEventListener('click',()=>{state.wsSel[state.twin.proj]=b.dataset.tfile;renderTwin();Audio.sfx('click');}));
  $('[data-tws-job]',w)?.addEventListener('click',e=>{const jid=e.currentTarget.dataset.twsJob;state.twin=null;w.classList.remove('open');state.detailJob=jid;state.detailTab='changes';state.panel='detail';renderPanel();Audio.sfx('click');});
  const tq=$('#twinQ',w);if(tq)tq.addEventListener('input',()=>{state.twinQ=tq.value;const pos=tq.selectionStart;renderTwin();const nq=$('#twinQ');if(nq){nq.focus();nq.setSelectionRange(pos,pos);}});}

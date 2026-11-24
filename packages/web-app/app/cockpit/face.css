@@ -885,6 +885,12 @@
   border: 1px solid var(--ck12-bd); color: var(--ck12-dim); font-size: 11px;
 }
 .ck12-files-re:hover { color: var(--ck12-ink); }
+/* 目录扫描截断提示（2026-11-24）：如实说清「只看到哪一层 / 只到多少个文件」。 */
+.ck12-files-note {
+  flex: none; font-family: var(--font-mono); font-size: 9px;
+  color: var(--ck12-metal2); padding: 0 2px;
+}
+.ck12-files-trunc { color: var(--ck12-metal2); font-weight: 600; }
 .ck12-files-b { flex: 1; min-height: 0; display: flex; gap: 10px; }
 .ck12-files-tree {
   flex: none; width: 46%; min-width: 220px; overflow-y: auto; overscroll-behavior: contain;

@@ -10,16 +10,20 @@
 // v22 九轮（右栏「目录」）：scope.mode = 'cabin' —— 根 = 本舱 cwd（一目录一舱），
 //   左树（筛选 + 全展/全收），右多标签查看器（代码 / Markdown / JSON / 图片），只读不编辑。
 //   数据 = GET /api/cabins/:id/tree|file；图片走 /raw（<img src> 直出）。
+//
+// 2026-11-24 目录窗优化：数据源换成共用 useTreeScan（服务端 depth≤14 / 20000 文件、
+//   异步扫描 + 10s 缓存 + chokidar 增量刷新）。默认只展开顶层目录；换根才重置
+//   展开 / 选中 / 标签，静默刷新只换 entries；↻ 手动重扫（fresh=1）。
 
 import {
-  useCallback, useEffect, useMemo, useRef, useState,
+  useCallback, useDeferredValue, useEffect, useMemo, useRef, useState,
   type CSSProperties, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent,
   type ReactNode,
 } from 'react'
 import { toast } from 'sonner'
 import { useCabinOptional } from '@/components/cabin/cabin-provider'
 import {
-  cabinRawUrl, getCabinFile, getCabinTree, getRepoFile, getRepoTree, type RepoTreeEntry,
+  cabinRawUrl, getCabinFile, getRepoFile,
 } from '@/lib/cabin-api'
 import { cn } from '@/lib/utils'
 import { useCockpitState } from '../state/CockpitStateProvider'
@@ -30,6 +34,7 @@ import { CockpitFaceHead } from './CockpitFaceHead'
 import { DossierWindowContext } from './dossier-window'
 import type { CockpitTreeScope } from './tree-window'
 import { MarkdownView } from './MarkdownView'
+import { useTreeScan } from './use-tree-scan'
 
 const TREE_LAYER_ID = 'cockpit-tree-win'
 /** 高于 dossier（65）：Esc 先收目录树，再收详情面；低于问答窗 75。 */
@@ -111,10 +116,6 @@ export function CockpitTreeWindow({ scope, onClose }: CockpitTreeWindowProps) {
   const cabinName = cabinCtx?.cabin?.name ?? '本舱'
   const label = isCabin ? cabinName : repo?.name ?? projectNameFromKey(active)
 
-  const [entries, setEntries] = useState<RepoTreeEntry[] | null>(null)
-  const [dir, setDir] = useState('')
-  const [error, setError] = useState<string | null>(null)
-  const [loading, setLoading] = useState(false)
   const [open, setOpen] = useState<ReadonlySet<string>>(new Set())
   const [sel, setSel] = useState<string | null>(null)
   const [content, setContent] = useState<string | null>(null)
@@ -127,54 +128,52 @@ export function CockpitTreeWindow({ scope, onClose }: CockpitTreeWindowProps) {
   const [fileState, setFileState] = useState<{ path: string; content: string | null; err: string | null } | null>(null)
   const contentCache = useRef(new Map<string, string>())
 
-  const load = useCallback(() => {
-    if (!isCabin && !repoName) return
-    setLoading(true)
-    const request = isCabin
-      ? getCabinTree(scope.cabinId)
-      : getRepoTree(scope.cabinId, repoName as string)
-    request
-      .then((res) => {
-        setEntries(res.entries)
-        setDir(res.dir)
-        const dirs = res.entries.filter((e) => e.type === 'dir').map((e) => e.path.replace(/\/$/, ''))
-        if (isCabin) {
-          // 本舱默认只展开顶层目录；文件按 cabin.md → 首个 md → 首个文件 的顺序开一个标签。
-          setOpen(new Set(dirs.filter((p) => !p.includes('/'))))
-          const files = res.entries.filter((e) => e.type === 'file').map((e) => e.path)
-          const initial = files.find((p) => p === 'cabin.md')
-            ?? files.find((p) => /\.md$/i.test(p))
-            ?? files[0]
-            ?? null
-          setTabs(initial ? [initial] : [])
-          setTab(initial)
-        } else {
-          // 与舱文件面板同口径：工作树默认全展开。
-          setOpen(new Set(dirs))
-        }
-        setError(null)
-      })
-      .catch((err: unknown) => setError(err instanceof Error ? err.message : '读取目录失败'))
-      .finally(() => setLoading(false))
-  }, [scope.cabinId, repoName, isCabin])
+  // 2026-11-24 目录窗优化：数据源 = 共用的 useTreeScan（REST + SSE tree_changed + 兜底轮询）。
+  // 换根 / 首次载入才重置展开与标签；静默刷新只换 entries，不动用户正在看的东西。
+  const scan = useTreeScan({
+    cabinId: scope.cabinId,
+    repoName: isCabin ? null : repoName,
+    enabled: isCabin || !!repoName,
+  })
+  const entries = scan.entries
+  const dir = scan.dir
+  const error = scan.error
+  const loading = scan.loading
+  const deferredQ = useDeferredValue(q)
 
+  const initGenRef = useRef(0)
   useEffect(() => {
-    setEntries(null)
+    if (scan.generation === 0 || !scan.entries) return
+    if (initGenRef.current === scan.generation) return
+    initGenRef.current = scan.generation
     setSel(null)
     setContent(null)
     setContentErr(null)
-    setQ('')
-    setTabs([])
-    setTab(null)
     setFileState(null)
+    setQ('')
     contentCache.current.clear()
-    load()
-  }, [load])
+    const dirs = scan.entries.filter((e) => e.type === 'dir').map((e) => e.path.replace(/\/$/, ''))
+    // 2026-11-24：默认只展开顶层目录（大仓不再一屏铺几千行）；「全部展开」留给手动。
+    setOpen(new Set(dirs.filter((p) => !p.includes('/'))))
+    if (!isCabin) {
+      setTabs([])
+      setTab(null)
+      return
+    }
+    // 本舱默认文件：cabin.md → 首个 md → 首个文件。
+    const files = scan.entries.filter((e) => e.type === 'file').map((e) => e.path)
+    const initial = files.find((p) => p === 'cabin.md')
+      ?? files.find((p) => /\.md$/i.test(p))
+      ?? files[0]
+      ?? null
+    setTabs(initial ? [initial] : [])
+    setTab(initial)
+  }, [scan.generation, scan.entries, isCabin])
 
   const tree = useMemo(() => buildTree(entries ?? []), [entries])
 
   const keep = useMemo(() => {
-    const query = q.trim().toLowerCase()
+    const query = deferredQ.trim().toLowerCase()
     if (!query || !entries) return null
     const set = new Set<string>()
     for (const entry of entries) {
@@ -183,7 +182,7 @@ export function CockpitTreeWindow({ scope, onClose }: CockpitTreeWindowProps) {
       for (const ancestor of ancestorsOf(entry.path)) set.add(ancestor)
     }
     return set
-  }, [q, entries])
+  }, [deferredQ, entries])
 
   const selectFile = useCallback((path: string) => {
     if (!repoName) return
@@ -464,18 +463,36 @@ export function CockpitTreeWindow({ scope, onClose }: CockpitTreeWindowProps) {
                 />
                 <button type="button" className="ck12-ckt-ib" title="全部展开" aria-label="全部展开" onClick={expandAll}>⊞</button>
                 <button type="button" className="ck12-ckt-ib" title="全部收起" aria-label="全部收起" onClick={collapseAll}>⊟</button>
+                <button
+                  type="button"
+                  className="ck12-ckt-ib"
+                  title="重扫磁盘"
+                  aria-label="重扫本舱目录"
+                  data-testid="cockpit-cabin-rescan"
+                  onClick={() => scan.reload({ fresh: true })}
+                >
+                  ↻
+                </button>
               </div>
-              <div className="ck12-ckt-scope">本舱 · {fileCount} 文件</div>
+              <div className="ck12-ckt-scope">
+                本舱 · {fileCount} 文件
+                {scan.truncated && (
+                  <span className="ck12-files-trunc">
+                    {' · 已截断'}
+                    {scan.truncReason === 'depth' ? `（只到 ${scan.maxDepth ?? 14} 层）` : '（文件过多）'}
+                  </span>
+                )}
+              </div>
               <div className="ck12-ckt-scroll" role="tree" aria-label="本舱目录树">
-                {loading && <div className="ck12-files-empty">扫磁盘…</div>}
-                {error && <div className="ck12-files-empty is-err">{error}</div>}
+                {!entries && !error && <div className="ck12-files-empty">扫磁盘…</div>}
+                {!entries && error && <div className="ck12-files-empty is-err">{error}</div>}
                 {!loading && !error && entries && entries.length === 0 && (
                   <div className="ck12-files-empty">本舱目录空着</div>
                 )}
                 {!loading && !error && keep && keep.size === 0 && (
                   <div className="ck12-files-empty">没有匹配「{q}」的文件</div>
                 )}
-                {!loading && !error && (
+                {!loading && entries && (
                   <TreeRows
                     nodes={tree}
                     depth={0}
@@ -553,21 +570,39 @@ export function CockpitTreeWindow({ scope, onClose }: CockpitTreeWindowProps) {
               aria-label="筛选工作树文件"
               onChange={(event) => setQ(event.target.value)}
             />
-            <button type="button" className="ck12-files-re" title="重扫磁盘" onClick={load}>↻</button>
+            <button type="button" className="ck12-files-re" title="全部展开" aria-label="全部展开" onClick={expandAll}>⊞</button>
+            <button type="button" className="ck12-files-re" title="全部收起" aria-label="全部收起" onClick={collapseAll}>⊟</button>
+            <button
+              type="button"
+              className="ck12-files-re"
+              title="重扫磁盘"
+              aria-label="重扫工作树"
+              data-testid="cockpit-treewin-rescan"
+              onClick={() => scan.reload({ fresh: true })}
+            >
+              ↻
+            </button>
           </div>
+          {scan.truncated && (
+            <div className="ck12-files-note" data-testid="cockpit-treewin-trunc">
+              已截断 · {scan.truncReason === 'depth'
+                ? `只显示前 ${scan.maxDepth ?? 14} 层目录`
+                : '文件过多，只显示前 20000 个'}
+            </div>
+          )}
 
           <div className="ck12-files-b">
             <div className="ck12-files-tree" role="tree" aria-label="工作树目录树">
               {!repoName && <div className="ck12-files-empty">这个项目不在当前舱的关联里</div>}
-              {repoName && loading && <div className="ck12-files-empty">扫磁盘…</div>}
-              {repoName && error && <div className="ck12-files-empty is-err">{error}</div>}
+              {repoName && loading && !entries && <div className="ck12-files-empty">扫磁盘…</div>}
+              {repoName && !entries && error && <div className="ck12-files-empty is-err">{error}</div>}
               {repoName && !loading && !error && entries && entries.length === 0 && (
                 <div className="ck12-files-empty">工作树空着</div>
               )}
               {repoName && !loading && !error && keep && keep.size === 0 && (
                 <div className="ck12-files-empty">没有匹配「{q}」的文件</div>
               )}
-              {repoName && !loading && !error && (
+              {repoName && !loading && entries && (
                 <TreeRows
                   nodes={tree}
                   depth={0}

@@ -271,8 +271,8 @@ describe('CockpitProjectFace · 点项目看仓库', () => {
     expect(screen.getByText('dirty')).toBeInTheDocument()
     expect(screen.getByText(formatDateTime('2026-11-23T05:12:00.000Z'))).toBeInTheDocument()
 
-    // 文件浏览器：默认选中第一个文件并出内容。
-    expect(await screen.findByText(/export const a = 1/)).toBeInTheDocument()
+    // 文件浏览器：默认展开顶层 + 选中根层第一个文件并出内容（2026-11-24 收敛默认展开）。
+    expect(await screen.findByText('# ledger')).toBeInTheDocument()
 
     // git 变更：目录树按单链缩一级（src 下 src/audit/chain 单链 ⇒ 一行 audit/chain）
     // + diff 预览（点开才拉 patch）。

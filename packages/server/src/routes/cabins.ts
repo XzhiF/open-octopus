@@ -28,6 +28,8 @@ import { CabinItemService, CabinItemError } from "../services/cabin/cabin-item-s
 import type { CabinRow, CabinJobRow, CabinJobEventRow } from "../db/types"
 import type { SSEService } from "../services/sse"
 import { gitOps } from "../services/git-ops"
+import { getLocalTree } from "../services/local-tree"
+import { touchTreeWatch } from "../services/tree-watch"
 import { findingView } from "./findings"
 
 function classifyError(err: unknown): { status: number; message: string } {
@@ -87,10 +89,7 @@ function toEventDTO(row: CabinJobEventRow) {
   return { ...row, payload }
 }
 
-/** v20 工作树只读查阅上限（design 29 §6 ws）：与 home-content 同口径。 */
-const REPO_TREE_SKIP = new Set([".git", "node_modules", "dist", ".next", "target", "__pycache__", ".venv"])
-const REPO_TREE_MAX_DEPTH = 6
-const REPO_TREE_MAX_ENTRIES = 2000
+/** 只读查阅的文本上限（tree 扫描 / 缓存 / 深度见 services/local-tree.ts）。 */
 const REPO_FILE_MAX_BYTES = 512 * 1024
 
 /** 本舱目录里允许直出原始字节的类型（v22 九轮：图片预览）；其余走 /file 文本接口。 */
@@ -161,43 +160,6 @@ function resolveCabinDoc(service: CabinService, cabinId: string, rawPath: string
     throw new DocAccessError(403, "path outside this cabin's docs")
   }
   return { abs, ext: path.extname(abs).toLowerCase() }
-}
-
-interface LocalTreeEntry { path: string; type: "dir" | "file"; bytes: number }
-
-/** 磁盘直扫（跳 .git/node_modules 等，depth≤6 / 2000 条上限）。repo tree 与 cabin tree 同口径。 */
-function scanLocalTree(root: string): LocalTreeEntry[] {
-  const resolvedRoot = path.resolve(root)
-  const entries: LocalTreeEntry[] = []
-  const walk = (dir: string, rel: string, depth: number): void => {
-    if (depth > REPO_TREE_MAX_DEPTH || entries.length >= REPO_TREE_MAX_ENTRIES) return
-    let names: fs.Dirent[]
-    try {
-      names = fs.readdirSync(dir, { withFileTypes: true })
-    } catch {
-      return
-    }
-    names.sort((a, b) => a.name.localeCompare(b.name))
-    for (const n of names) {
-      if (entries.length >= REPO_TREE_MAX_ENTRIES) return
-      const relPath = rel ? `${rel}/${n.name}` : n.name
-      if (n.isDirectory()) {
-        if (REPO_TREE_SKIP.has(n.name)) continue
-        entries.push({ path: `${relPath}/`, type: "dir", bytes: 0 })
-        walk(path.join(dir, n.name), relPath, depth + 1)
-      } else if (n.isFile()) {
-        let bytes = 0
-        try {
-          bytes = fs.statSync(path.join(dir, n.name)).size
-        } catch {
-          bytes = 0
-        }
-        entries.push({ path: relPath, type: "file", bytes })
-      }
-    }
-  }
-  walk(resolvedRoot, "", 0)
-  return entries
 }
 
 const createBodySchema = z.object({
@@ -322,6 +284,19 @@ export function createCabinRoutes(
   delegations?: CabinDelegationService,
 ): Hono {
   const router = new Hono()
+
+  /** 目录窗打开期间的增量刷新（2026-11-24 目录窗优化）：GET /tree?watch=1 续租，
+   *  chokidar 发现结构变化 → 失效缓存 + 在 cabin:<id> 推 tree_changed；
+   *  窗口关掉后没人续租，watcher 120s 自动退场。 */
+  const ensureTreeWatch = (cabinId: string, root: string) => {
+    touchTreeWatch(root, (dirs) => {
+      // tree-watch 已经失效缓存；这里只负责把变化广播给前端（静默重拉）。
+      sse.emit(`cabin:${cabinId}`, {
+        event: "tree_changed",
+        data: { cabin_id: cabinId, dir: path.resolve(root), dirs },
+      })
+    })
+  }
 
   // ── collection ─────────────────────────────────────────────────────
 
@@ -802,19 +777,26 @@ export function createCabinRoutes(
   })
 
   // ── v20（design 29 §6 ws）：工作树只读查阅（ff-only 纪律：只读不写）──
-  // tree = 磁盘直扫（跳 .git/node_modules 等，depth≤6 / 2000 条上限）；
+  // tree = 磁盘直扫（services/local-tree.ts：depth≤14 / 20000 文件，异步 + 10s 缓存，
+  //   响应带 truncated/reason；?fresh=1 绕过缓存，?sizes=1 才取每文件字节）；
+  //   ?watch=1 让 chokidar 盯着这个根，变化推 cabin:<id> 的 tree_changed。
   // file = 任意常规文件（守卫不出工作树根 + 512KB 上限，与 home-content 同码）。
 
   // ── v22 九轮：本舱 cwd 只读目录树（右栏「目录」）──
   // 一目录一舱：根 = cabin.path（不是某个项目的 worktree）。tree 与 repo tree 同口径；
   // file 只出常规文本（512KB）；raw 只给图片（8MB），UI 用 <img src> 直接预览。
 
-  router.get("/:id/tree", (c) => {
+  router.get("/:id/tree", async (c) => {
     try {
       const cabin = service.get(c.req.param("id"))
       if (!cabin.path) return c.json({ error: "cabin has no local path" }, 409)
       const resolvedRoot = path.resolve(cabin.path)
-      return c.json({ dir: resolvedRoot, entries: scanLocalTree(resolvedRoot) })
+      const scan = await getLocalTree(resolvedRoot, {
+        fresh: c.req.query("fresh") === "1",
+        withSizes: c.req.query("sizes") === "1",
+      })
+      if (c.req.query("watch") === "1") ensureTreeWatch(c.req.param("id"), resolvedRoot)
+      return c.json({ dir: resolvedRoot, ...scan })
     } catch (err) {
       const { status, message } = classifyError(err)
       return c.json({ error: message }, status as 400)
@@ -963,14 +945,19 @@ export function createCabinRoutes(
     }
   })
 
-  router.get("/:id/repos/:name/tree", (c) => {
+  router.get("/:id/repos/:name/tree", async (c) => {
     try {
       const repo = service.listRepos(c.req.param("id")).find((r) => r.name === c.req.param("name"))
       if (!repo) return c.json({ error: "repo not bound to cabin" }, 404)
       const root = repo.worktree_path ?? repo.main_path
       if (!root) return c.json({ error: "repo has no local path" }, 409)
       const resolvedRoot = path.resolve(root)
-      return c.json({ dir: resolvedRoot, entries: scanLocalTree(resolvedRoot) })
+      const scan = await getLocalTree(resolvedRoot, {
+        fresh: c.req.query("fresh") === "1",
+        withSizes: c.req.query("sizes") === "1",
+      })
+      if (c.req.query("watch") === "1") ensureTreeWatch(c.req.param("id"), resolvedRoot)
+      return c.json({ dir: resolvedRoot, ...scan })
     } catch (err) {
       const { status, message } = classifyError(err)
       return c.json({ error: message }, status as 400)
