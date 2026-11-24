@@ -1,8 +1,12 @@
 // packages/web-app/components/agent/chat/__tests__/tui-message-ask-text.test.tsx
 //
 // 2026-11-02 用户反馈：以 AskUserQuestion 收尾的回合，问题前的正文在流式期
-// 可见，回合结束、问题卡出现后却消失。TuiMessage 历史态现在按时间序显示
-// 全部正文段；思考 / 工具仍折叠在 meta，展开也不重复正文。
+// 可见，回合结束、问题卡出现后却消失。TuiMessage 历史态按时间序显示全部
+// 正文段；思考 / 工具仍折叠在 meta，展开也不重复正文。
+//
+// 2026-11-24 用户反馈（多 Agent 回合）：第一段正文在问用户问题，后续子代理
+// 陆续返回、模型在同一消息里继续追加正文段，旧规则只显最后一段 → 最初那段
+// 被折进 meta。现在规则统一：全部正文段进正文区（流式态与历史态一致）。
 
 import { describe, it, expect, vi } from "vitest"
 import { render, fireEvent } from "@testing-library/react"
@@ -56,6 +60,25 @@ const NORMAL_MESSAGE: AgentMessage = {
   tool_calls: [{ id: "t-1", name: "Bash", input: {}, status: "success" }],
 }
 
+const MULTI_AGENT_MESSAGE: AgentMessage = {
+  ...BASE,
+  id: "a-multi-agent",
+  role: "assistant",
+  content: "",
+  tool_calls: [
+    { id: "agent-1", name: "Agent", input: { description: "查右栏" }, status: "result" },
+    { id: "agent-2", name: "Agent", input: { description: "查版本" }, status: "result" },
+  ],
+  timeline: [
+    { kind: "tool", id: "agent-1" },
+    { kind: "text", text: "三个探子已派出。这轮问剩下的几条：\n❓ **Q13 补** — 右栏结构？" },
+    { kind: "thinking", text: "first agent back" },
+    { kind: "text", text: "右栏探子回来了：右栏是一排可开关的模块。" },
+    { kind: "tool", id: "agent-2" },
+    { kind: "text", text: "版本探子回来了：版本机制已有。" },
+  ],
+}
+
 const count = (haystack: string, needle: string) => haystack.split(needle).length - 1
 
 describe("TuiMessage — ask 回合的正文", () => {
@@ -74,10 +97,23 @@ describe("TuiMessage — ask 回合的正文", () => {
     expect(count(expanded, "收到，接口契约按 auth 独立控制器。")).toBe(1)
   })
 
-  it("普通回合保持紧凑：正文只显最后一段", () => {
+  it("普通回合也保留全部正文段（不再只显最后一段）", () => {
     const { container } = render(<TuiMessage message={NORMAL_MESSAGE} />)
     const text = container.textContent ?? ""
+    expect(text).toContain("第一段")
     expect(text).toContain("最后一段")
-    expect(text).not.toContain("第一段")
+  })
+
+  it("多 Agent 返回后，第一段正文（含待答问题）仍在正文区，展开 meta 不重复", () => {
+    const { container } = render(<TuiMessage message={MULTI_AGENT_MESSAGE} />)
+    const text = container.textContent ?? ""
+    expect(text).toContain("Q13 补")
+    expect(text).toContain("右栏探子回来了")
+    expect(text).toContain("版本探子回来了")
+
+    fireEvent.click(container.querySelector("[data-tui-meta]") as HTMLElement)
+    const expanded = container.textContent ?? ""
+    expect(expanded).not.toContain("✎")
+    expect(count(expanded, "Q13 补")).toBe(1)
   })
 })
