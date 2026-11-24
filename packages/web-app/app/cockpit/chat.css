@@ -571,7 +571,8 @@
 }
 
 /* ═══════════════ v13 · 多行草稿（浮层，底栏 54px 不变） ═══════════════
-   ⇧⏎ / ⌥⏎ 换行 → 编辑器 position:fixed 浮到底栏上方；底栏原地只显示首行与行数。
+   ⇧⏎ / ⌥⏎ 换行（空闲时）→ 编辑器 position:fixed 浮到底栏上方；底栏原地只显示首行与行数。
+   执行中 ⇧⏎ = 打断接管：不再落进多行草稿，这里只描述草稿自身的操作提示。
    几何由 CockpitCommandBar 写到 --ck12-draft-* 变量上（贴住底栏上沿）。
    纪律：不改任何 flex 高度，面 / ticker / 舰桥的 rect 全程不变。 */
 .ck12-cmdbar.is-draft {
@@ -598,7 +599,7 @@
   to { opacity: 1; transform: none; }
 }
 .ck12-cmdbar.is-draft [data-composer-block]::before {
-  content: '多行草稿 · ⇧⏎ 换行 · ⏎ 发送 · Esc 收起';
+  content: '多行草稿 · Alt⏎ 换行 · ⏎ 发送 · Esc 收起';
   display: block;
   margin-bottom: 7px;
   padding-bottom: 6px;

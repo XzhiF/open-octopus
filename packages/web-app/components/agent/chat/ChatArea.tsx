@@ -156,9 +156,9 @@ interface ChatAreaProps {
   identityDisplay?: ComposerIdentityDisplay
   /** 当前工作区（只读）：＋ 面板置顶它自带的 SKILL（<workspace>/.claude/skills）。 */
   workspaceContext?: { id: string; label: string } | null
-  /** TUI（claude-code 终端皮肤）变体 —— 任务草稿工作台 / 对话首页共用（2026-09-24 改版）：
-   *  等宽 transcript（❯/✳ 前缀 + ◌ 过程折叠）、⇧⏎ 排队 dock（≤3，done 即 flush）、
-   *  busy 时输入不锁死（⏎=打断接管 / esc=打断 / esc·点击=队列退回）。 */
+  /** TUI（claude-code 终端皮肤）变体 —— 任务草稿工作台 / 对话首页 / 舱系聊天共用（2026-09-24 改版）：
+   *  等宽 transcript（❯/✳ 前缀 + ◌ 过程折叠）、⏎ 排队 dock（≤3，done 即 flush）、
+   *  执行中输入不锁死（⏎=排队 / ⇧⏎=打断接管 / esc=打断 / esc·点击=队列退回）。 */
   tui?: boolean
   /** 打断接管（tui）：stop → 等服务端停 → 重发（useAgentChat.steer）。 */
   onSteer?: (message: string, opts?: { subagents?: ChatSubagentRef[] }) => void
@@ -272,7 +272,7 @@ function CockpitMessageActs({ message }: { message: AgentMessage }) {
   )
 }
 
-/** ⇧⏎ 排队上限（原型 chat-tui.html 拍板）。 */
+/** ⏎ 排队上限（原型 chat-tui.html 拍板）。 */
 const TUI_QUEUE_MAX = 3
 const TUI_SPIN = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏']
 
@@ -513,9 +513,9 @@ export function ChatArea({
   }
 
   // ── TUI 排队 / steer（2026-09-24 草稿工作台改版，仅 tui 变体生效）──────
-  // 语义（原型 chat-tui.html 拍板）：⇧⏎=排队（≤3，SDK done 立即 flush 队首）；
-  // 有排队时 ⏎=继续加入排队；无排队 busy ⏎=打断接管（steer）；有排队 esc=队尾
-  // 退回输入框（点击同效），无排队 esc=打断。
+  // 语义（2026-11-24 用户改判）：⏎ 执行中 = 排队（≤3，SDK done 立即 flush 队首）；
+  // ⇧⏎ 执行中 = 打断接管（steer）；⇧⏎ 空闲 = 换行；有排队 esc=队尾退回输入框
+  // （点击同效），无排队 esc=打断。
   const [queue, setQueueState] = useState<QueuedComposerMessage[]>([])
   const queueRef = useRef<QueuedComposerMessage[]>([])
   const setQueue = (next: QueuedComposerMessage[]) => { queueRef.current = next; setQueueState(next) }
@@ -642,10 +642,6 @@ export function ChatArea({
     focusDockInput()
   }
   const handleTuiKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
-    // v13 全域座舱：⇧⏎ 换行 —— 直接放行浏览器默认行为（textarea 原生插入换行 +
-    // 触发受控 onChange）。不要 preventDefault 再 execCommand：实测连打会吞字。
-    if (e.key === 'Enter' && isCockpitVariant && e.shiftKey && !e.altKey) return
-
     // Alt+⏎ = 换行不发送。浏览器对 alt+enter 没有默认换行行为；优先用原生
     // insertText（保住游标 + 触发受控 onChange，避免手动 rAF 复位与连打竞态），
     // 不支持时回退到 setState 插入。（下拉开着也要能换行，故在 slashOpen 门之前。）
@@ -666,53 +662,53 @@ export function ChatArea({
     if (mentionOpen) return // @分身 下拉打开时 Enter 归下拉
     const text = input.trim()
     if (e.key === 'Enter') {
-      e.preventDefault()
-      if (!text) return
+      // ⇧⏎（2026-11-24 用户）：空闲 = 换行；执行中 = 直接打断接管。
+      // classic 与全舱共用这一条，不再按 isCockpitVariant 区分。
       if (e.shiftKey) {
-        setInput('')
-        if (streaming) {
-          const take = takeComposerAttachments(text)
-          const meta = seedMetaNow()
-          pushQueue(take.text, take.expert, meta)
-          clearSeedItems()
-        } else {
-          handleSend()
-        }
-        return
-      }
-      if (queue.length > 0) {
+        if (!streaming) return // 放行浏览器默认换行（textarea 原生插入 + 受控 onChange）
+        e.preventDefault()
+        if (!text) return
         setInput('')
         const take = takeComposerAttachments(text)
         const meta = seedMetaNow()
-        pushQueue(take.text, take.expert, meta)
         clearSeedItems()
+        // 接管 = 掐掉本实例的流再重发（useAgentChat.steer）。尾随他端回合没有
+        // 可掐的本地流、事项投递带不上 metadata —— 都退回排队，消息不丢。
+        if (resumeTailing || !onSteer || meta) {
+          pushQueue(take.text, take.expert, meta)
+          setQueueHint(
+            resumeTailing ? '他端回合进行中 · 已改排队'
+              : meta ? '事项投递无法接管 · 已排队'
+                : '无接管通道 · 已排队',
+          )
+          setTimeout(() => setQueueHint(null), 1800)
+          return
+        }
+        onSteer(take.text, take.opts)
         return
       }
+      e.preventDefault()
+      if (!text) return
       if (streaming) {
         setInput('')
         const take = takeComposerAttachments(text)
         const meta = seedMetaNow()
+        clearSeedItems()
         // 事项投递（2026-11-24）：不能 inject（带不上 metadata）—— 排队等本轮收口。
         if (meta) {
           pushQueue(take.text, take.expert, meta)
-          clearSeedItems()
           return
         }
         // 后台等待期（2026-11-23 用户 #8）：模型空闲、只等后台唤醒 —— 直接把
         // 话注进同一条 provider 查询，不打断后台（2026-11-10 dev-up.sh 事故：
-        // Enter 曾经会掐掉服务，后来改成只会排队，但队永远等不到收口）。
+        // Enter 曾经会掐掉服务）。这是「发送」，不是「接管」。
         if (canInterject && !resumeTailing && onInterject) {
           interjectOrQueue(take.text, take.expert)
           return
         }
-        // 生成中 / 尾随他端回合：本实例没有可掐的流或不该掐 —— 只排队，
-        // 回合收口后 done-flush 自动发出。
-        if (resumeTailing || (backgroundTasks?.length ?? 0) > 0) {
-          pushQueue(take.text, take.expert)
-          return
-        }
-        if (onSteer) onSteer(take.text, take.opts)
-        else onStop()
+        // 执行中一律排队（2026-11-24 用户：⏎ = 排队，⇧⏎ 才打断接管）：
+        // 本实例拥有的流、尾随他端、后台任务运行中 —— 等本轮收口后 done-flush 发出。
+        pushQueue(take.text, take.expert)
         return
       }
       handleSend()
@@ -954,7 +950,7 @@ export function ChatArea({
               </div>
               <div className="mt-5 flex items-center gap-2 text-[11px] text-pop-dim/70">
                 <span className="text-pop-pink">✳</span>
-                <span>⏎ 发送 · ⇧⏎ 排队 · Alt⏎ 换行</span>
+                <span>⏎ 发送 · ⇧⏎ 换行 · Alt⏎ 换行</span>
               </div>
             </div>
           </div>
@@ -996,7 +992,7 @@ export function ChatArea({
                 </div>
                 <div className="mt-5 flex items-center gap-2 text-[11px] text-pop-dim/70">
                   <span className="text-pop-pink">✳</span>
-                  <span>⏎ 发送 · ⇧⏎ 排队 · Alt⏎ 换行</span>
+                  <span>⏎ 发送 · ⇧⏎ 换行 · Alt⏎ 换行</span>
                 </div>
               </div>
             )}
@@ -1412,12 +1408,12 @@ export function ChatArea({
                   disabled={!!pendingConfirm}
                   placeholder={
                     queue.length > 0
-                      ? '继续输入 —— ⏎/⇧⏎ 都会加入排队'
+                      ? '继续输入 —— ⏎ 加入排队 · ⇧⏎ 打断接管'
                       : streaming
                         ? canInterject
-                          ? '后台任务运行中 —— ⏎ 直接发送（不打断后台）· ⇧⏎ 排队'
-                          : '输入新指令 —— ⏎ 打断接管 · ⇧⏎ 不打断排队'
-                        : composerPlaceholder ?? '问 task-author…　⏎ 发送 · ⇧⏎ 排队 · Alt⏎ 换行'
+                          ? '后台任务运行中 —— ⏎ 直接发送（不打断后台）· ⇧⏎ 打断接管'
+                          : '输入新指令 —— ⏎ 排队 · ⇧⏎ 打断接管'
+                        : composerPlaceholder ?? '问 task-author…　⏎ 发送 · ⇧⏎/Alt⏎ 换行'
                   }
                   className="flex-1 rounded-none border-0 bg-transparent px-0 py-1.5 text-[12.5px] text-pop-ink shadow-none placeholder:text-pop-dim focus-visible:ring-0"
                 />
@@ -1610,17 +1606,17 @@ export function ChatArea({
                 {queueHint ? (
                   <span className="shrink-0 text-pop-red" data-tui-hint>{queueHint}</span>
                 ) : queue.length > 0 ? (
-                  <span className="truncate" data-tui-hint>⏎ 继续排队 · ⇧⏎ 排队 · esc 退回输入框 <span className="opacity-70">队列 {queue.length}/{TUI_QUEUE_MAX} · done 即发</span></span>
+                  <span className="truncate" data-tui-hint>⏎ 继续排队 · ⇧⏎ 打断接管 · esc 退回输入框 <span className="opacity-70">队列 {queue.length}/{TUI_QUEUE_MAX} · done 即发</span></span>
                 ) : streaming ? (
                   <span className="shrink-0" data-tui-hint>
                     {resumeTailing
-                      ? '⏎ 排队（正在跟随另一窗口的回合，结束即发）'
+                      ? '⏎ 排队（正在跟随另一窗口的回合，结束即发 · 不可接管）'
                       : bgTasks.length > 0
-                        ? '⏎ 排队（后台任务运行中，结束即发）· esc 停止'
-                        : '⏎ 打断并接管 · ⇧⏎ 不打断，排队 · esc 打断'}
+                        ? '⏎ 排队（后台任务运行中，结束即发）· ⇧⏎ 打断接管（会一并结束后台作业）· esc 停止'
+                        : '⏎ 排队 · ⇧⏎ 打断接管 · esc 打断'}
                   </span>
                 ) : (
-                  <span className="shrink-0" data-tui-hint>⏎ 发送 · ⇧⏎ 排队 · Alt⏎ 换行</span>
+                  <span className="shrink-0" data-tui-hint>⏎ 发送 · ⇧⏎ 换行 · Alt⏎ 换行</span>
                 )}
               </span>
             </div>
