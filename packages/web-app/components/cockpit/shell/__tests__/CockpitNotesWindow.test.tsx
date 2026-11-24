@@ -104,6 +104,58 @@ describe('CockpitNotesWindow — 全舱便签', () => {
     expect(screen.getByLabelText('便签标题')).toHaveValue('自定义标题')
   })
 
+  // 2026-11-24 用户：清空标题的瞬间不再被自动标题顶回来，整段重命名才做得了；
+  // 只有离开焦点时仍为空，才还原原标题。
+  it('清空标题时保持为空（不立刻还原），失焦仍为空才还原原标题', () => {
+    openWindow()
+    const title = screen.getByLabelText('便签标题')
+    fireEvent.focus(title)
+    fireEvent.change(title, { target: { value: '' } })
+
+    expect(screen.getByLabelText('便签标题')).toHaveValue('')
+    // 列表里的旧标题还在（没有写回空标题）
+    expect(screen.getByText('周会待确认')).toBeInTheDocument()
+    expect(getQuickNotes()[0].title).toBe('周会待确认')
+
+    fireEvent.blur(title)
+    expect(screen.getByLabelText('便签标题')).toHaveValue('周会待确认')
+    expect(getQuickNotes()[0].title).toBe('周会待确认')
+  })
+
+  it('整段重命名：先清空再输入新标题，失焦后保留并落盘', () => {
+    openWindow()
+    const title = screen.getByLabelText('便签标题')
+    fireEvent.focus(title)
+    fireEvent.change(title, { target: { value: '' } })
+    fireEvent.change(title, { target: { value: '新的完整标题' } })
+
+    expect(screen.getByLabelText('便签标题')).toHaveValue('新的完整标题')
+    fireEvent.blur(title)
+
+    expect(screen.getByLabelText('便签标题')).toHaveValue('新的完整标题')
+    const saved = savedNotes().find((note) => note.id === 'nt1')
+    expect(saved?.title).toBe('新的完整标题')
+    expect(saved?.manualTitle).toBe(true)
+  })
+
+  // 2026-11-24 用户：便签窗左列表 / 右草稿纸的宽度要能拖（双击回默认）。
+  it('拖动分隔条调节左列表宽度并记住；双击恢复默认', () => {
+    openWindow()
+    const divider = screen.getByTestId('cockpit-notes-divider')
+    const row = divider.parentElement as HTMLElement
+
+    fireEvent.pointerDown(divider, { button: 0, clientX: 300, pointerId: 1 })
+    fireEvent.pointerMove(divider, { clientX: 380, pointerId: 1 })
+    fireEvent.pointerUp(divider, { pointerId: 1 })
+
+    expect(row.style.getPropertyValue('--ck12-nt-side')).toBe('300px')
+    expect(localStorage.getItem('octopus.cockpit.notes.side-width.v1')).toBe('300')
+
+    fireEvent.doubleClick(divider)
+    expect(row.style.getPropertyValue('--ck12-nt-side')).toBe('220px')
+    expect(localStorage.getItem('octopus.cockpit.notes.side-width.v1')).toBe('220')
+  })
+
   it('搜索过滤：命中留行，无命中给空态', () => {
     openWindow()
     const search = screen.getByLabelText('搜索便签')

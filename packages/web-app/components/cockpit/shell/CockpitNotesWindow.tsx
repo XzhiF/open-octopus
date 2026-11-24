@@ -32,6 +32,41 @@ const NOTES_LAYER_PRIORITY = 67
 const SAVE_DELAY = 620
 const UNDO_MS = 5000
 
+// ── 左列表 / 右草稿纸分栏（2026-11-24 用户：宽度要能拖）──────────────
+// 与 classic 便签同一个交互口径（拖分隔条、双击回默认），但宽度单独存 ——
+// 全舱便签窗与桌面便签窗是两种尺寸的壳，宽度互不牵连。
+const SIDE_WIDTH_KEY = 'octopus.cockpit.notes.side-width.v1'
+const SIDE_DEFAULT = 220
+const SIDE_MIN = 140
+/** 右侧草稿纸至少留这么宽，拖到头也不能把编辑区挤没。 */
+const MIN_EDITOR_WIDTH = 260
+const SPLIT_HANDLE_WIDTH = 10
+
+function clampSideWidth(width: number, rowWidth: number): number {
+  if (rowWidth <= 0) return Math.max(width, SIDE_MIN)
+  const max = Math.max(SIDE_MIN, rowWidth - MIN_EDITOR_WIDTH - SPLIT_HANDLE_WIDTH)
+  return Math.min(Math.max(width, SIDE_MIN), max)
+}
+
+function readSideWidth(): number {
+  try {
+    const raw = window.localStorage.getItem(SIDE_WIDTH_KEY)
+    const width = raw === null ? NaN : Number(raw)
+    if (Number.isFinite(width) && width > 0) return Math.round(width)
+  } catch {
+    // storage 不可用：用默认宽度
+  }
+  return SIDE_DEFAULT
+}
+
+function persistSideWidth(width: number): void {
+  try {
+    window.localStorage.setItem(SIDE_WIDTH_KEY, String(width))
+  } catch {
+    // 隐私模式 / 配额满：宽度只在本次会话有效
+  }
+}
+
 const EMPTY_NOTES: QuickNote[] = []
 function getServerSnapshot(): QuickNote[] {
   return EMPTY_NOTES
@@ -72,6 +107,14 @@ export function CockpitNotesWindow() {
     w: typeof window === 'undefined' ? 1600 : window.innerWidth,
     h: typeof window === 'undefined' ? 900 : window.innerHeight,
   }))
+  // 左列表宽度（拖动 / 双击恢复默认，见 SIDE_WIDTH_KEY）。
+  const [sideWidth, setSideWidth] = useState(() =>
+    typeof window === 'undefined' ? SIDE_DEFAULT : readSideWidth())
+  const [splitting, setSplitting] = useState(false)
+  // 标题编辑草稿：null = 不在编辑，输入框直接显示便签标题。
+  // 2026-11-24 用户：整段改标题时可以先清空 —— 清空期间不能立刻把自动标题
+  // 顶回来，否则没法一次性重命名；只有失焦时仍是空的才还原。
+  const [titleDraft, setTitleDraft] = useState<string | null>(null)
 
   const winRef = useRef<HTMLDivElement | null>(null)
   const bodyRef = useRef<HTMLTextAreaElement | null>(null)
@@ -82,6 +125,10 @@ export function CockpitNotesWindow() {
   const pendingRef = useRef<{ note: QuickNote; index: number } | null>(null)
   const wasOpenRef = useRef(false)
   const dragCleanupRef = useRef<(() => void) | null>(null)
+  const rowRef = useRef<HTMLDivElement | null>(null)
+  const sideWidthRef = useRef(sideWidth)
+  const splitRef = useRef<{ startX: number; startWidth: number } | null>(null)
+  const titleBeforeRef = useRef<{ title: string; manualTitle: boolean } | null>(null)
 
   const activeNote = useMemo(
     () => notes.find((note) => note.id === activeId) ?? null,
@@ -101,6 +148,32 @@ export function CockpitNotesWindow() {
   useEffect(() => {
     pendingRef.current = pending
   }, [pending])
+
+  useEffect(() => {
+    sideWidthRef.current = sideWidth
+  }, [sideWidth])
+
+  // 换便签时丢掉没提交的标题草稿（失焦先于切行，正常编辑会先落定）。
+  useEffect(() => {
+    titleBeforeRef.current = null
+    setTitleDraft(null)
+  }, [activeId])
+
+  // 窗变窄（含全屏切换 / 视口缩小）时把左列表收回可用范围。
+  useEffect(() => {
+    if (!open) return
+    const row = rowRef.current
+    if (!row || typeof ResizeObserver === 'undefined') return
+    const observer = new ResizeObserver(() => {
+      const next = Math.round(clampSideWidth(sideWidthRef.current, row.clientWidth))
+      if (next === sideWidthRef.current) return
+      sideWidthRef.current = next
+      setSideWidth(next)
+      persistSideWidth(next)
+    })
+    observer.observe(row)
+    return () => observer.disconnect()
+  }, [open])
 
   // 当前选中项被删掉 / 清空后，回落到第一条。
   useEffect(() => {
@@ -237,10 +310,15 @@ export function CockpitNotesWindow() {
     updateQuickNotes((list) => list.map((note) => (note.id === id ? updater(note) : note)))
   }, [])
 
+  /** 标题输入：编辑期由本地草稿驱动输入框；清空期间不写回标题。
+   *  2026-11-24 用户：以前清空标题会立刻被自动标题顶回原值，整段重命名做不了；
+   *  现在只有失焦时仍为空才还原（见 onTitleBlur）。 */
   const onTitleChange = useCallback((value: string) => {
+    setTitleDraft(value)
+    if (!value.trim()) return
     updateActiveNote((note) => {
       const derived = deriveNoteTitle(note.body)
-      const manualTitle = value.trim() !== '' && value !== derived
+      const manualTitle = value !== derived
       return {
         ...note,
         title: manualTitle ? value : derived,
@@ -250,6 +328,30 @@ export function CockpitNotesWindow() {
     })
     scheduleSave()
   }, [scheduleSave, updateActiveNote])
+
+  /** 开始编辑标题：记住进编辑前的标题，清空后失焦时用它还原。 */
+  const onTitleFocus = useCallback(() => {
+    const id = activeIdRef.current
+    const note = id ? getQuickNotes().find((item) => item.id === id) : null
+    titleBeforeRef.current = note ? { title: note.title, manualTitle: note.manualTitle } : null
+  }, [])
+
+  /** 离开标题输入：非空 = 已写回；仍为空 = 放弃这次清空，还原原样。 */
+  const onTitleBlur = useCallback(() => {
+    if (titleDraft === null) return
+    if (!titleDraft.trim()) {
+      const before = titleBeforeRef.current
+      updateActiveNote((note) => ({
+        ...note,
+        title: before ? before.title : deriveNoteTitle(note.body),
+        manualTitle: before ? before.manualTitle : false,
+        updatedAt: Date.now(),
+      }))
+    }
+    flushSave()
+    titleBeforeRef.current = null
+    setTitleDraft(null)
+  }, [titleDraft, updateActiveNote, flushSave])
 
   const onBodyChange = useCallback((value: string) => {
     updateActiveNote((note) => ({
@@ -266,6 +368,60 @@ export function CockpitNotesWindow() {
     flushSave()
     cabinAudio.blip(640, 0.03)
   }, [flushSave, updateActiveNote])
+
+  // ── 左列表 / 右草稿纸分栏 ──────────────────────────────────────────────
+  /** 拖动中只改 DOM（不走 React），松手才落状态 + 记住宽度。 */
+  const applySideWidth = useCallback((width: number, commit: boolean) => {
+    const row = rowRef.current
+    const next = Math.round(clampSideWidth(width, row?.clientWidth ?? 0))
+    sideWidthRef.current = next
+    row?.style.setProperty('--ck12-nt-side', `${next}px`)
+    if (commit) {
+      setSideWidth(next)
+      persistSideWidth(next)
+    }
+  }, [])
+
+  const finishSplit = useCallback(() => {
+    if (!splitRef.current) return
+    splitRef.current = null
+    applySideWidth(sideWidthRef.current, true)
+    setSplitting(false)
+  }, [applySideWidth])
+
+  const onSplitPointerDown = useCallback((event: ReactPointerEvent<HTMLDivElement>) => {
+    if (event.button !== 0) return
+    event.preventDefault()
+    event.stopPropagation()
+    splitRef.current = { startX: event.clientX, startWidth: sideWidthRef.current }
+    setSplitting(true)
+    try {
+      event.currentTarget.setPointerCapture(event.pointerId)
+    } catch {
+      /* pointer capture unavailable */
+    }
+  }, [])
+
+  const onSplitPointerMove = useCallback((event: ReactPointerEvent<HTMLDivElement>) => {
+    const split = splitRef.current
+    if (!split) return
+    applySideWidth(split.startWidth + (event.clientX - split.startX), false)
+  }, [applySideWidth])
+
+  const onSplitPointerUp = useCallback((event: ReactPointerEvent<HTMLDivElement>) => {
+    if (splitRef.current) {
+      try {
+        event.currentTarget.releasePointerCapture(event.pointerId)
+      } catch {
+        /* pointer capture unavailable */
+      }
+    }
+    finishSplit()
+  }, [finishSplit])
+
+  const resetSideWidth = useCallback(() => {
+    applySideWidth(SIDE_DEFAULT, true)
+  }, [applySideWidth])
 
   // ── 关窗（含壳卸载）：落盘并丢掉没写任何内容的空便签 ──────────────────
   useEffect(() => {
@@ -441,7 +597,11 @@ export function CockpitNotesWindow() {
       </DossierWindowContext.Provider>
 
       <div className="ck12-noteswin-b">
-        <div className="ck12-ntw">
+        <div
+          ref={rowRef}
+          className="ck12-ntw"
+          style={{ '--ck12-nt-side': `${sideWidth}px` } as CSSProperties}
+        >
           <aside className="ck12-nt-side">
             <div className="ck12-nt-search">
               <input
@@ -513,14 +673,30 @@ export function CockpitNotesWindow() {
             </div>
           </aside>
 
+          <div
+            role="separator"
+            aria-orientation="vertical"
+            aria-label="调整列表宽度"
+            title="拖动调整列表宽度 · 双击恢复默认"
+            data-testid="cockpit-notes-divider"
+            className={`ck12-nt-split${splitting ? ' is-splitting' : ''}`}
+            onPointerDown={onSplitPointerDown}
+            onPointerMove={onSplitPointerMove}
+            onPointerUp={onSplitPointerUp}
+            onPointerCancel={onSplitPointerUp}
+            onDoubleClick={resetSideWidth}
+          />
+
           <section className="ck12-nt-main">
             {activeNote ? (
               <>
                 <div className="ck12-nt-head">
                   <input
                     className="ck12-nt-title"
-                    value={activeNote.title}
+                    value={titleDraft ?? activeNote.title}
                     onChange={(event) => onTitleChange(event.target.value)}
+                    onFocus={onTitleFocus}
+                    onBlur={onTitleBlur}
                     placeholder="自动取内容前 10 字"
                     aria-label="便签标题"
                     autoComplete="off"

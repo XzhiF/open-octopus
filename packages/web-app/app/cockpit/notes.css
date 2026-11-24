@@ -23,7 +23,7 @@
 
 .ck12-ntw {
   display: flex;
-  gap: 10px;
+  gap: 0;
   flex: 1;
   min-height: 0;
   padding: 10px 12px;
@@ -32,7 +32,9 @@
 /* ── 左列表 ── */
 .ck12-nt-side {
   flex: none;
-  width: 220px;
+  width: var(--ck12-nt-side, 220px);
+  /* 拖动宽度存在 --ck12-nt-side 上；任何情况下都给右侧草稿纸留出编辑宽度。 */
+  max-width: calc(100% - 250px);
   display: flex;
   flex-direction: column;
   min-height: 0;
@@ -40,6 +42,31 @@
   background: rgba(10, 8, 24, 0.4);
   padding: 6px;
   clip-path: var(--ck12-cut);
+}
+
+/* ── 分栏把手（2026-11-24 用户：左列表 / 右编辑区宽度可拖）── */
+.ck12-nt-split {
+  flex: none;
+  width: 10px;
+  align-self: stretch;
+  display: flex;
+  justify-content: center;
+  align-items: stretch;
+  cursor: col-resize;
+  touch-action: none;
+  user-select: none;
+  -webkit-user-select: none;
+}
+.ck12-nt-split::before {
+  content: '';
+  width: 1px;
+  background: rgba(185, 179, 217, 0.14);
+  transition: background 0.14s, width 0.14s;
+}
+.ck12-nt-split:hover::before,
+.ck12-nt-split.is-splitting::before {
+  width: 2px;
+  background: rgba(255, 176, 32, 0.55);
 }
 .ck12-nt-search {
   display: flex;
@@ -306,12 +333,10 @@
 }
 .ck12-nt-undo button:hover { color: #fff; }
 
-@media (max-width: 900px) {
-  .ck12-nt-side { width: 170px; }
-}
 @media (max-width: 720px) {
-  .ck12-ntw { flex-direction: column; }
-  .ck12-nt-side { width: 100%; height: 170px; }
+  .ck12-ntw { flex-direction: column; gap: 8px; }
+  .ck12-nt-side { width: 100%; max-width: none; height: 170px; }
+  .ck12-nt-split { display: none; }
 }
 
 /* ═══ HUD 最右「✎ 便签」（2026-11-23 用户 #3）：与两枚读数同一行高，

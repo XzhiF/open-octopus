@@ -63,6 +63,40 @@ describe('QuickNotesWindow — 便签窗口内容', () => {
     expect(title.value).toBe('自定义标题')
   })
 
+  // 2026-11-24 用户：清空标题的瞬间不再被自动标题顶回来，整段重命名才做得了；
+  // 只有离开焦点时仍为空，才还原原标题。
+  it('清空标题时保持为空（不立刻还原），失焦仍为空才还原原标题', () => {
+    render(<QuickNotesWindow />)
+    createNote()
+    typeBody('买咖啡')
+
+    const title = screen.getByLabelText('便签标题（自动取内容前 10 字）') as HTMLInputElement
+    fireEvent.focus(title)
+    fireEvent.change(title, { target: { value: '' } })
+
+    expect(title.value).toBe('')
+
+    fireEvent.blur(title)
+    expect(title.value).toBe('买咖啡')
+  })
+
+  it('整段重命名：先清空再输入新标题，失焦后保留并落盘', () => {
+    render(<QuickNotesWindow />)
+    createNote()
+    typeBody('买咖啡')
+
+    const title = screen.getByLabelText('便签标题（自动取内容前 10 字）') as HTMLInputElement
+    fireEvent.focus(title)
+    fireEvent.change(title, { target: { value: '' } })
+    fireEvent.change(title, { target: { value: '全新的便签标题' } })
+    fireEvent.blur(title)
+
+    expect(title.value).toBe('全新的便签标题')
+    const saved = JSON.parse(localStorage.getItem(QUICK_NOTES_STORAGE_KEY) ?? '[]')
+    expect(saved[0].title).toBe('全新的便签标题')
+    expect(saved[0].manualTitle).toBe(true)
+  })
+
   it('删除后可从 toast 撤销恢复', () => {
     render(<QuickNotesWindow />)
     createNote()
