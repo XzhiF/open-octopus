@@ -14,6 +14,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import {
   getRepoFile, getRepoTree, getRepoWorktreeChangePatch, getRepoWorktreeChanges,
+  setCabinRepoMainline,
   type CabinRepoEntry, type CabinWorktreeChanges, type RepoTreeEntry,
 } from '@/lib/cabin-api'
 import { formatDateTime } from '@/lib/format'
@@ -49,7 +50,7 @@ export interface CockpitProjectFaceProps {
 
 export function CockpitProjectFace({ cabinId, projectKey, onClose }: CockpitProjectFaceProps) {
   const { select } = useCockpitState()
-  const { projects, loading, error } = useCabinProjects(cabinId)
+  const { projects, loading, error, refetch } = useCabinProjects(cabinId)
   const project = projects.find((p) => p.key === projectKey)
 
   if (!project) {
@@ -94,7 +95,7 @@ export function CockpitProjectFace({ cabinId, projectKey, onClose }: CockpitProj
           </button>
         )}
       />
-      <ProjectFaceBody cabinId={cabinId} project={project} />
+      <ProjectFaceBody cabinId={cabinId} project={project} onProjectsChanged={refetch} />
     </>
   )
 }
@@ -107,7 +108,9 @@ function sourceLabel(project: CabinRepoEntry): string {
   return project.external ? '外部目录' : '本地目录'
 }
 
-function ProjectFaceBody({ cabinId, project }: { cabinId: string; project: CabinRepoEntry }) {
+function ProjectFaceBody({
+  cabinId, project, onProjectsChanged,
+}: { cabinId: string; project: CabinRepoEntry; onProjectsChanged: () => void }) {
   const [tab, setTab] = useState<ProjectTab>('files')
 
   // ── 文件浏览器 ──
@@ -450,6 +453,7 @@ function ProjectFaceBody({ cabinId, project }: { cabinId: string; project: Cabin
           <span className={`dirty ${dirty ? 'is-dirty' : 'is-clean'}`}>
             {dirty ? 'dirty' : 'clean'}
           </span>
+          <MainlineChip cabinId={cabinId} project={project} onSaved={onProjectsChanged} />
           {git?.msg && <span className="msg" title={git.msg}>{git.msg}</span>}
           <span className="at">{formatDateTime(git?.at)}</span>
         </div>
@@ -485,5 +489,89 @@ function ProjectFaceBody({ cabinId, project }: { cabinId: string; project: Cabin
         </div>
       </div>
     </div>
+  )
+}
+
+/** 落点分支（mainline_branch）芯片：任务分支从它 fork，MR 默认也合回它。
+ *  只影响此后新建的工作树 —— 已建工作树的分支计划固化在各自工作空间里。 */
+function MainlineChip({
+  cabinId, project, onSaved,
+}: { cabinId: string; project: CabinRepoEntry; onSaved: () => void }) {
+  const [editing, setEditing] = useState(false)
+  const [draft, setDraft] = useState(project.mainline_branch ?? '')
+  const [saving, setSaving] = useState(false)
+  const [err, setErr] = useState<string | null>(null)
+
+  // 外部改了（另一个窗口 / 汐音）→ 不编辑时跟随最新真值。
+  useEffect(() => {
+    if (!editing) setDraft(project.mainline_branch ?? '')
+  }, [project.mainline_branch, project.key, editing])
+
+  const save = useCallback(() => {
+    const value = draft.trim()
+    setSaving(true)
+    setErr(null)
+    setCabinRepoMainline(cabinId, project.name, value === '' ? null : value)
+      .then(() => {
+        setEditing(false)
+        onSaved()
+      })
+      .catch((e: unknown) => setErr(e instanceof Error ? e.message : '保存失败'))
+      .finally(() => setSaving(false))
+  }, [cabinId, project.name, draft, onSaved])
+
+  if (!editing) {
+    return (
+      <span
+        className="ck12-pjf-ml"
+        data-testid="project-mainline"
+        title="任务分支从这条分支 fork，MR 默认也合回这条（只影响此后新建的工作树）"
+      >
+        落点 ⎇ <b>{project.mainline_branch ?? '默认分支'}</b>
+        <button
+          type="button"
+          className="ck12-pjf-mlbtn"
+          data-testid="project-mainline-edit"
+          aria-label="改落点分支"
+          title="改落点分支"
+          onClick={() => {
+            setDraft(project.mainline_branch ?? '')
+            setErr(null)
+            setEditing(true)
+          }}
+        >
+          ✎
+        </button>
+      </span>
+    )
+  }
+
+  return (
+    <span className="ck12-pjf-mledit" data-testid="project-mainline-editor">
+      <span className="k">落点 ⎇</span>
+      <input
+        value={draft}
+        placeholder="留空 = 仓库默认分支"
+        aria-label="落点分支"
+        data-testid="project-mainline-input"
+        autoFocus
+        onChange={(e) => setDraft(e.target.value)}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter') { e.preventDefault(); save() }
+          if (e.key === 'Escape') { e.preventDefault(); setEditing(false); setErr(null) }
+        }}
+      />
+      <button type="button" className="ok" disabled={saving} onClick={save} data-testid="project-mainline-save">
+        {saving ? '…' : '保存'}
+      </button>
+      <button
+        type="button"
+        onClick={() => { setEditing(false); setErr(null) }}
+        data-testid="project-mainline-cancel"
+      >
+        取消
+      </button>
+      {err && <em className="err" data-testid="project-mainline-err">{err}</em>}
+    </span>
   )
 }

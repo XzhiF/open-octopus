@@ -70,6 +70,8 @@ import {
 // design 23 §3.2：舱本地/外部项目的 source_path 必须在建 worktree 前解析出来，
 // 否则 initWorktreeOne 只会走 org 注册表（本地项目找不到）。
 import { resolveTaskProjectPath } from "./task-project-resolver"
+// 分支计划（2026-11-24）：任务显式 → 舱 mainline_branch → 仓库默认分支。
+import { resolveBranchOverrides, fillTarget } from "./branch-plan"
 import { computeTaskWsLaunchParams } from "../scheduler/ws-launch"
 import { calculateNextExecutions } from "../cron-utils"
 import { getChatEventBridge } from "../activity/chat-event-bridge"
@@ -578,6 +580,13 @@ export class TaskLifecycleService {
     const projects = (plan.workspace_spec?.projects ?? []).filter(
       (p) => p.name && p.name !== "default",
     )
+    // 分支计划（2026-11-24）：每仓的 fork 点 / PR 落点。仅填显式与舱绑定两级；
+    // 两者都没有的仓不传 —— workspace-git 在解析到主仓路径后补仓库默认分支。
+    const branchPlans: Record<string, { base?: string; target?: string }> = {}
+    for (const p of projects) {
+      const resolved = fillTarget(resolveBranchOverrides(this.deps.db, task, p.name))
+      if (resolved.base || resolved.target) branchPlans[p.name] = resolved
+    }
 
     const bound = task.workspace_id ? ws.getById(task.workspace_id) : undefined
     if (bound) {
@@ -590,6 +599,7 @@ export class TaskLifecycleService {
             projects,
             branchPrefix,
             branchSuffix,
+            branchPlans,
           )
         } else {
           // Test doubles / older injected services only implement self-heal.
@@ -624,6 +634,7 @@ export class TaskLifecycleService {
         projects,
         branch_prefix: branchPrefix,
         branch_suffix: branchSuffix,
+        branch_plan: branchPlans,
         source: "task",
         task_id: task.id,
         workflow_chain: plan.workflow_chain ?? [],

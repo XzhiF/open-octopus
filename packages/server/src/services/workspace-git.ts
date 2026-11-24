@@ -30,6 +30,32 @@ export interface SpecWorktreeEntry {
   branch: string
   /** 仓库所属 org（作战舱跨 org 绑定用；老路径不填 = 舱级 org）。 */
   group?: string
+  /** 任务分支的 fork 点（分支计划，2026-11-24）。 */
+  base_branch?: string
+  /** PR 落点分支（分支计划；缺省 = base_branch）。 */
+  target_branch?: string
+}
+
+/** 仓库默认分支：origin/HEAD → origin/main → origin/master → 本地 main/master
+ *  → 当前 HEAD。分支计划在「任务显式 / 舱绑定」都没有时的最后一级。
+ *  每次建树 shell 一次即可，不做缓存 —— 远端默认分支可能被改。 */
+export function detectDefaultBranch(repoPath: string): string {
+  const { spawnSync } = require("child_process") as typeof import("child_process")
+  const out = (args: string[]): string | null => {
+    const r = spawnSync("git", args, { cwd: repoPath, encoding: "utf-8", timeout: 10000 })
+    return r.status === 0 ? (r.stdout as string).trim() : null
+  }
+  const sym = out(["symbolic-ref", "--short", "-q", "refs/remotes/origin/HEAD"])
+  if (sym) return sym.replace(/^origin\//, "")
+  for (const cand of ["main", "master"]) {
+    if (out(["rev-parse", "--verify", "--quiet", `refs/remotes/origin/${cand}`])) return cand
+  }
+  for (const cand of ["main", "master"]) {
+    if (out(["rev-parse", "--verify", "--quiet", `refs/heads/${cand}`])) return cand
+  }
+  const cur = out(["symbolic-ref", "--short", "-q", "HEAD"])
+  if (cur) return cur
+  throw new Error(`cannot determine default branch for ${repoPath}`)
 }
 
 export class WorkspaceGit {
@@ -173,23 +199,34 @@ export class WorkspaceGit {
     branchSuffix: string,
     wsName: string,
     org: string,
+    plans: Record<string, { base?: string; target?: string }> = {},
   ): void {
     const branchName = `${branchPrefix}-${branchSuffix}`
-    const entries = projects.map((proj) => this.initWorktreeOne(workspacePath, proj, branchName, org))
+    const entries = projects.map((proj) => {
+      const plan = plans[proj.name]
+      return this.initWorktreeOne(workspacePath, proj, branchName, org, {
+        ...(plan?.base ? { baseRef: plan.base } : {}),
+        ...(plan?.target ? { targetBranch: plan.target } : {}),
+      })
+    })
     if (entries.length > 0) this.writeSpecWorktreeMeta(workspacePath, entries, wsName)
   }
 
   /** 单项目 worktree 建立（trigger-prebuild 2026-09-08 抽出）：
-   *  resolve → prune → worktree add --detach → checkout -b <branch>（已存在则
+   *  resolve → fetch base → worktree add -b <branch> <wt> <base>（已存在则
    *  checkout 回退）。throw 语义与循环体时代逐字一致（G3 loud-fail）。
    *  复用同一函数给 ensureWorktreesForReuse 自愈重建（source 直接来自
-   *  config.repos.main_path，explicit source_path 分支跳过 index.md 解析）。 */
+   *  config.repos.main_path，explicit source_path 分支跳过 index.md 解析）。
+   *
+   *  分支计划（2026-11-24）：opts.baseRef 为空时取仓库默认分支（detectDefaultBranch），
+   *  不再用主仓当时的 HEAD —— 主仓 clean-main 后恒在默认分支，隐式 HEAD 会把舱
+   *  绑定分支的意图吃掉。base 不存在 = 硬失败，绝不静默回退。 */
   initWorktreeOne(
     workspacePath: string,
     proj: { name: string; source_path?: string; group?: string },
     branchName: string,
     org: string,
-    opts: { clobber?: boolean; worktreePath?: string } = {},
+    opts: { clobber?: boolean; worktreePath?: string; baseRef?: string; targetBranch?: string } = {},
   ): SpecWorktreeEntry {
     const { spawnSync } = require("child_process") as typeof import("child_process")
     const projectsDir = path.join(workspacePath, "projects")
@@ -207,6 +244,31 @@ export class WorkspaceGit {
       throw new Error(`source path unreachable for '${proj.name}': ${sourcePath}`)
     }
 
+    // ── 分支计划：fork 点显式化（2026-11-24）─────────────────────────
+    const base = (opts.baseRef ?? "").trim() || detectDefaultBranch(sourcePath)
+    const revExists = (ref: string): boolean =>
+      spawnSync("git", ["rev-parse", "--verify", "--quiet", ref], {
+        cwd: sourcePath, timeout: 10000,
+      }).status === 0
+    // 显式拉一次 base 的远端跟踪引用：主仓 clean-main 只镜像默认分支，feat/x
+    // 的 origin/ 引用可能是旧的；fetch 失败（无 origin / 离线）不致命，下面
+    // 会回退本地分支，两者都没有才硬失败。超时压到 30s：这是同步调用，
+    // 远端卡住时不能像异步 repo-sync 那样占着事件循环（2026-11-10 事故教训）。
+    spawnSync("git", ["fetch", "origin", `+refs/heads/${base}:refs/remotes/origin/${base}`], {
+      cwd: sourcePath, timeout: 30_000,
+    })
+    const startPoint = revExists(`refs/remotes/origin/${base}`)
+      ? `origin/${base}`
+      : revExists(`refs/heads/${base}`)
+        ? base
+        : null
+    if (!startPoint) {
+      throw new Error(
+        `base branch '${base}' not found for '${proj.name}' ` +
+          `(origin/refs and local branch both missing): ${sourcePath}`,
+      )
+    }
+
     spawnSync("git", ["worktree", "prune"], { cwd: sourcePath, timeout: 10000 })
     if (fs.existsSync(wtDir)) {
       // clobber:false — 活的 worktree 绝不删（同名并行会互删生产物），直接报冲突；
@@ -219,23 +281,33 @@ export class WorkspaceGit {
     }
 
     fs.mkdirSync(path.dirname(wtDir), { recursive: true })
-    const result = spawnSync("git", ["worktree", "add", "-f", wtDir, "--detach"], {
-      cwd: sourcePath, timeout: 60000,
-    })
+    let result = spawnSync(
+      "git",
+      ["worktree", "add", "-f", wtDir, "-b", branchName, startPoint],
+      { cwd: sourcePath, timeout: 60000 },
+    )
     if (result.status !== 0) {
-      throw new Error(`worktree add failed for '${proj.name}': ${result.stderr.toString().trim()}`)
-    }
-
-    const coResult = spawnSync("git", ["checkout", "-b", branchName], { cwd: wtDir, timeout: 30000 })
-    if (coResult.status !== 0) {
-      const switchResult = spawnSync("git", ["checkout", branchName], { cwd: wtDir, timeout: 30000 })
-      if (switchResult.status !== 0) {
-        throw new Error(`branch checkout failed for '${proj.name}': ${switchResult.stderr.toString().trim()}`)
+      // 分支已存在（复用/自愈路径）→ 检出既有分支，保留其历史（与改造前一致）。
+      if (!revExists(`refs/heads/${branchName}`)) {
+        throw new Error(`worktree add failed for '${proj.name}': ${result.stderr.toString().trim()}`)
+      }
+      result = spawnSync("git", ["worktree", "add", "-f", wtDir, branchName], {
+        cwd: sourcePath, timeout: 60000,
+      })
+      if (result.status !== 0) {
+        throw new Error(
+          `branch checkout failed for '${proj.name}': ${result.stderr.toString().trim()}`,
+        )
       }
     }
 
     return {
-      name: proj.name, main_path: sourcePath, worktree_path: wtDir, branch: branchName,
+      name: proj.name,
+      main_path: sourcePath,
+      worktree_path: wtDir,
+      branch: branchName,
+      base_branch: base,
+      target_branch: (opts.targetBranch ?? "").trim() || base,
       ...(proj.group ? { group: proj.group } : {}),
     }
   }
@@ -264,6 +336,8 @@ export class WorkspaceGit {
       config.repos = entries.map(e => ({
         name: e.name, main_path: e.main_path, worktree_path: e.worktree_path, branch: e.branch,
         ...(e.group ? { group: e.group } : {}),
+        ...(e.base_branch ? { base_branch: e.base_branch } : {}),
+        ...(e.target_branch ? { target_branch: e.target_branch } : {}),
       }))
     })
 
@@ -274,6 +348,9 @@ export class WorkspaceGit {
     for (const e of entries) {
       claudeLines.push(`- **${e.name}**: \`${e.worktree_path}\` [${e.branch}]`)
       claudeLines.push(`  - 主仓库: \`${e.main_path}\``)
+      if (e.base_branch || e.target_branch) {
+        claudeLines.push(`  - 分支计划: ← \`${e.base_branch ?? "?"}\` → 合入 \`${e.target_branch ?? e.base_branch ?? "?"}\``)
+      }
     }
     claudeLines.push("", "## 说明", "- 此工作空间由调度器自动创建")
     upsertManagedBlock(

@@ -2764,6 +2764,12 @@ export class TasksService {
       case "acceptance_runbook":
       case "slug":
       case "branch":
+      // 分支计划（2026-11-24）：fork 点 / PR 落点。与 slug/branch 同一条
+      // task_spec 合并信道；validator 已过 git ref 形态校验。
+      case "base_branch":
+      case "target_branch":
+      // 多仓分支计划（2026-11-24）：{ 仓名: { base?, target? } } 整表替换。
+      case "branch_plan":
         // Merge into task_spec JSON (all v3 confirmation/decision fields +
         // goal/ac live in task_spec).
         // acceptance_verify: validator returns undefined on null-clear →

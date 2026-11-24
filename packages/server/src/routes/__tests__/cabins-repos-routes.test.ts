@@ -154,6 +154,48 @@ describe("/api/cabins repos routes · 舱籍第三轮", () => {
     expect((await res.json()).error).toContain("external")
   })
 
+  it("PATCH /repos/:name 改落点分支（mainline_branch）：可改 / 非法或缺失 400 / null 清空", async () => {
+    await addLocalViaApi()
+    expect(git(path.join(cabin.path, "apps", "console"), ["branch", "feat/landing"]).status).toBe(0)
+
+    const patch = (body: unknown) => app.request(`/api/cabins/${cabin.id}/repos/console`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    })
+
+    const ok = await patch({ mainline: "feat/landing" })
+    expect(ok.status).toBe(200)
+    expect((await ok.json()).repo.mainline_branch).toBe("feat/landing")
+
+    // 本地与 origin 都没有 → 400；非法分支名 → 400；缺键 → 400（清空必须显式 null）。
+    expect((await patch({ mainline: "feat/missing" })).status).toBe(400)
+    expect((await patch({ mainline: "bad branch" })).status).toBe(400)
+    expect((await patch({})).status).toBe(400)
+
+    const cleared = await patch({ mainline: null })
+    expect(cleared.status).toBe(200)
+    expect((await cleared.json()).repo.mainline_branch).toBeUndefined()
+  })
+
+  it("POST /repos 可带 mainline 指定落点；不存在的分支 400", async () => {
+    makeRepo(path.join(cabin.path, "apps", "console"))
+    expect(git(path.join(cabin.path, "apps", "console"), ["branch", "feat/landing"]).status).toBe(0)
+    const ok = await post(`/api/cabins/${cabin.id}/repos`, {
+      source: "local", name: "console", localPath: path.join("apps", "console"),
+      mainline: "feat/landing",
+    })
+    expect(ok.status).toBe(201)
+    expect((await ok.json()).repo.mainline_branch).toBe("feat/landing")
+
+    makeRepo(path.join(cabin.path, "apps", "risk"))
+    const bad = await post(`/api/cabins/${cabin.id}/repos`, {
+      source: "local", name: "risk", localPath: path.join("apps", "risk"),
+      mainline: "feat/nope",
+    })
+    expect(bad.status).toBe(400)
+  })
+
   // ── v20（design 29 §6 ws）：工作树只读查阅 tree / file ────────────────
   it("GET /repos/:name/tree 磁盘直扫（跳 node_modules/.git）；未绑定 404", async () => {
     await addLocalViaApi()

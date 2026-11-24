@@ -3,7 +3,7 @@ name: task-author
 description: "Task-Author 规格作者（v4 phase 化）：把模糊需求谈成可验收放行的多 phase task_spec。覆盖 /api/tasks REST API（建 draft / spec-field 逐字段写 / 乐观锁 PUT / 入队 gate）、task_spec.format=v4 + phases[] 协议与占位符词表、Batch 目录契约与写权环、领域阅读与拆 phase 方法论、matt 技能族产物协议、工作流绑定目录与自建流、phase 衔接信道、验收台预设与启动 Runbook 记忆、执行分支命名。当用户需要把一个需求转成可按里程碑验收放行的多 phase 任务规格时加载。"
 category: devops
 tags: [task-pool, task-author, phases, batch-dir, task_spec, workflow-binding, gate, matt-spec-dev, handoff]
-version: 3.5.2
+version: 3.5.3
 ---
 
 # Task-Author 规格作者（v4 phase 化）
@@ -177,6 +177,13 @@ version: 3.5.2
 
 **执行分支命名（author 定名）**：优先级 = `spec.branch`（spec-field `branch`，path-safe `[A-Za-z0-9_-]{2,60}`）> `feat-<main-slug>-<创建日YYYYMMDD>` > `taskpool-<taskId>`（无 slug 兜底）。这些都是**前缀**：server 落 ws 建支时统一追加唯一性尾缀 `-<YYYYMMDDHHmmss>-<rand4>`（真实例：`feat-sensitive-mask-20261027-20261027083451-x03r`）——尾缀防不同任务撞名，首建时定死、phase/round 不换支；**别向用户承诺精确分支串**，报前缀即可。拆分批准时你已写 `task_spec.slug`，默认分支前缀就是 `feat-<main-slug>-<日期>` —— **主 slug 起个好名字就是给分支起名**；用户要专名才显式 `branch=`（同一入队锁定窗，改 slug 即改分支）。
 
+**落点分支（base / target，2026-11-24）**：执行分支从哪 fork（`base`）、MR 往哪合（`target`）。解析顺序 = **任务显式 > 舱项目落点（`mainline_branch`）> 仓库默认分支**（origin/HEAD → main → master → 当前 HEAD，`detectDefaultBranch`）；`target` 缺省跟随 `base` —— 允许不同，没有明确理由不要拆成两条。起草时：
+
+- 用户说「从 feat/x 开 / 合回 y」→ spec-field 写 `base_branch`（需要不同落点再写 `target_branch`）。多仓要给某仓单独落点 → spec-field 写 `branch_plan`（整表替换：`{"<仓名>": {"base": "feat/x", "target": "main"}}`；null 清空）。
+- 舱里派下来的任务，落点通常已由舱项目 `mainline_branch` 兜底 —— **不要再用仓库默认分支去覆盖它**；确实要改才显式写。舱里没绑该项目 → 默认分支即可。
+- 落点不确定就问「分支从哪开、MR 合回哪」，**不要默认承诺 master**。
+- 写入后由下游消费：matt-spec-dev 建树用 `origin/<base>`、ship 用 `gh pr create --head <branch> --base <target>`（已有开放 PR 用 `gh pr edit --base` 纠正），归档兜底同样带 base。已建工作树的分支计划固化在 ws config，**改任务字段只影响重建/新工作树**。
+
 ### 写权环（单写者、单方向 —— 破坏它 = merge 灾难）
 
 | 文件 | 权威写方 | 方向 |
@@ -227,6 +234,8 @@ curl -s -X POST "http://localhost:$PORT/api/tasks/$TASK_ID/spec-field" \
 | `phases` | TaskPhase[]（**整数组替换**） | ★ 核心；写前读 manifest.json 取全量 |
 | `projects` | string[]（project_ids） | 领域路由 |
 | `slug` / `branch` | string | 批次主名 / 执行分支名（见上文两条） |
+| `base_branch` / `target_branch` | string（合法 git 分支名） | 落点分支：从哪 fork / MR 合回哪；null 清空 |
+| `branch_plan` | `{ "<仓名>": { base?, target? } }` | 多仓逐仓落点；**整表替换**，null 清空（见「落点分支」） |
 | `decisions` | string[] | 决策备忘录：领域降级标注、拆分理由、自建流副作用声明 |
 | `resources` / `authoring_resources` | ResourceRef[] | 执行期 requires / 起草期注入（见「资源加载」） |
 | `acceptance_verify` / `acceptance_preview` / `acceptance_runbook` | 见「验收台预设」 | task 级，全 phase 复用 |

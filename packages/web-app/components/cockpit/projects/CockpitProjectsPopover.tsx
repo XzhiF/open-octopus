@@ -167,6 +167,9 @@ function ProjectRow({
               <span className="br" title={g.branch}>⎇ {g.branch}</span>
               <span className="head">{g.commit}</span>
               <span className="at">{formatDateTime(g.at)}</span>
+              <span className="ml" title="任务分支从这条分支 fork，MR 默认也合回这条">
+                落点 {project.mainline_branch ?? '默认'}
+              </span>
             </span>
             <span className="ck12-pjrow-msg">
               {g.msg || '（无提交说明）'}

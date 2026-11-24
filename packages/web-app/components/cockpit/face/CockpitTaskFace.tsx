@@ -199,6 +199,8 @@ export function CockpitTaskFace({
             cabinId={cabinId}
             projects={taskProjects}
             branch={detail?.task_spec?.branch ?? null}
+            baseBranch={detail?.task_spec?.base_branch ?? null}
+            targetBranch={detail?.task_spec?.target_branch ?? null}
           />
         </div>
       )}

@@ -350,6 +350,8 @@ export class WorkspaceService {
     projects: Array<{ name: string; source_path: string; group?: string }>
     branch_prefix: string
     branch_suffix: string
+    /** 分支计划（2026-11-24）：每仓 fork 点 / PR 落点；缺省走仓库默认分支。 */
+    branch_plan?: Record<string, { base?: string; target?: string }>
     // ADR-0021 票03: a task workspace is built by the built-in task-lifecycle job and
     // belongs to a TASK (`workspaces.task_id`). `source_schedule_id` stays for job
     // workspaces, which are still created by the pump. Task rows never carry a schedule
@@ -446,7 +448,7 @@ export class WorkspaceService {
     // Empty source_path is resolved from repos/index.md via resolveRepoPath;
     // resolution failures THROW (G3 fix: no silent skip).
     try {
-      this.git.initWorktreesFromSpec(wsDir, input.projects, input.branch_prefix, input.branch_suffix, input.name, input.repo_group ?? "")
+      this.git.initWorktreesFromSpec(wsDir, input.projects, input.branch_prefix, input.branch_suffix, input.name, input.repo_group ?? "", input.branch_plan ?? {})
     } catch (err: unknown) {
       try {
         fs.rmSync(wsDir, { recursive: true, force: true })
@@ -489,7 +491,7 @@ export class WorkspaceService {
     if (!raw) {
       return { rebuilt: [] } // 无可用 workspace 配置：无从核对，留给既有失败通道
     }
-    const entries = Array.isArray(raw.repos) ? (raw.repos as Array<{ name: string; main_path?: string; worktree_path?: string; branch?: string; group?: string }>) : []
+    const entries = Array.isArray(raw.repos) ? (raw.repos as Array<{ name: string; main_path?: string; worktree_path?: string; branch?: string; group?: string; base_branch?: string; target_branch?: string }>) : []
 
     const resolved: SpecWorktreeEntry[] = []
     const rebuilt: string[] = []
@@ -498,7 +500,12 @@ export class WorkspaceService {
         continue // user-ws 形态（无 branch）— v4 复用路径不触碰
       }
       if (this.git.worktreeAlive(e.worktree_path)) {
-        resolved.push({ name: e.name, main_path: e.main_path ?? "", worktree_path: e.worktree_path, branch: e.branch })
+        resolved.push({
+          name: e.name, main_path: e.main_path ?? "", worktree_path: e.worktree_path, branch: e.branch,
+          ...(e.group ? { group: e.group } : {}),
+          ...(e.base_branch ? { base_branch: e.base_branch } : {}),
+          ...(e.target_branch ? { target_branch: e.target_branch } : {}),
+        })
         continue
       }
       const fresh = this.git.initWorktreeOne(
@@ -506,6 +513,10 @@ export class WorkspaceService {
         { name: e.name, source_path: e.main_path ?? "", group: e.group },
         e.branch,
         ws.repo_group ?? "",
+        {
+          ...(e.base_branch ? { baseRef: e.base_branch } : {}),
+          ...(e.target_branch ? { targetBranch: e.target_branch } : {}),
+        },
       )
       rebuilt.push(e.name)
       resolved.push(fresh)
@@ -523,33 +534,46 @@ export class WorkspaceService {
     projects: Array<{ name: string; source_path: string; group?: string }>,
     branchPrefix: string,
     branchSuffix: string,
+    plans: Record<string, { base?: string; target?: string }> = {},
   ): { created: string[] } {
     const wanted = projects.filter((p) => p.name && p.name !== "default")
     if (wanted.length === 0) return { created: [] }
 
     const raw = readWorkspaceConfig(ws.path)
-    const entries: Array<{ name: string; main_path?: string; worktree_path?: string; branch?: string; group?: string }> =
-      raw && Array.isArray(raw.repos) ? (raw.repos as Array<{ name: string; main_path?: string; worktree_path?: string; branch?: string; group?: string }>) : []
+    const entries: Array<{ name: string; main_path?: string; worktree_path?: string; branch?: string; group?: string; base_branch?: string; target_branch?: string }> =
+      raw && Array.isArray(raw.repos) ? (raw.repos as Array<{ name: string; main_path?: string; worktree_path?: string; branch?: string; group?: string; base_branch?: string; target_branch?: string }>) : []
 
     const branchName = `${branchPrefix}-${branchSuffix}`
     const resolved: SpecWorktreeEntry[] = []
     const created: string[] = []
     for (const project of wanted) {
       const existing = entries.find((entry) => entry.name === project.name)
+      const plan = plans[project.name]
       if (
         existing?.worktree_path &&
         existing.branch &&
         this.git.worktreeAlive(existing.worktree_path)
       ) {
+        // 复用已有 worktree：分支不重建。落点（target）按「已有记录 > 本次解析」
+        // 补齐 —— 老 workspace 的 config 没有它，归档 PR 需要；base 不补：
+        // 既有分支的真实 fork 点已不可变，写一个没发生过的 base 只会误导下游。
         resolved.push({
           name: existing.name,
           main_path: existing.main_path ?? "",
           worktree_path: existing.worktree_path,
           branch: existing.branch,
+          ...(existing.group ? { group: existing.group } : {}),
+          ...(existing.base_branch ? { base_branch: existing.base_branch } : {}),
+          ...(existing.target_branch || plan?.target
+            ? { target_branch: existing.target_branch ?? plan?.target }
+            : {}),
         })
         continue
       }
-      const fresh = this.git.initWorktreeOne(ws.path, project, branchName, ws.repo_group ?? "")
+      const fresh = this.git.initWorktreeOne(ws.path, project, branchName, ws.repo_group ?? "", {
+        ...(plan?.base ? { baseRef: plan.base } : {}),
+        ...(plan?.target ? { targetBranch: plan.target } : {}),
+      })
       created.push(project.name)
       resolved.push(fresh)
     }

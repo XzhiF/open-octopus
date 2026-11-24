@@ -127,7 +127,7 @@ export function cabinDispatchDecision(
 const briefSchema = z.object({
   goal: z.string().min(1).describe("一句话目标（可执行）"),
   done_when: z.array(z.string()).optional().describe("完成判据（可验证）"),
-  constraints: z.array(z.string()).optional().describe("约束 / 不能碰的东西"),
+  constraints: z.array(z.string()).optional().describe("约束 / 不能碰的东西（含分支计划：<仓> ← base → 合入 target）"),
   non_goals: z.array(z.string()).optional().describe("明确不做"),
   refs: z.array(z.string()).optional().describe("相关文件 / 路径"),
   autonomy: z.enum(["approve", "checkpoint", "hands-off"]).optional(),
@@ -153,7 +153,7 @@ export function createCabinToolServer(cabinId: string) {
     ),
     tool(
       "cabin_dispatch_task",
-      "派发一个真实 Octopus 任务进舱：建任务+作者主线程+首回合授权 wake，执行在独立 worktree。brief 是**你编译后的可执行意图**（goal/done_when/constraints），系统会把用户原文逐字附后；不要用 brief 覆盖原文。mandate_strength=explicit 表示用户已明确授权（建任务/开工作树/消耗 token），**不表示跳过规格澄清**；clarify=auto 只在用户原话是「你看着办/直接做」时传。inferred 表示需人确认。",
+      "派发一个真实 Octopus 任务进舱：建任务+作者主线程+首回合授权 wake，执行在独立 worktree。brief 是**你编译后的可执行意图**（goal/done_when/constraints），系统会把用户原文逐字附后；不要用 brief 覆盖原文。mandate_strength=explicit 表示用户已明确授权（建任务/开工作树/消耗 token），**不表示跳过规格澄清**；clarify=auto 只在用户原话是「你看着办/直接做」时传。inferred 表示需人确认。落点分支（任务从哪 fork、MR 合回哪）默认取舱籍项目的 mainline_branch；用户要求别的分支时，把「分支计划：<仓> ← base → 合入 target」写进 brief.constraints。",
       {
         title: z.string().min(1).describe("任务显示名"),
         prompt: z.string().min(1).describe("用户需求原文（逐字，权威）"),

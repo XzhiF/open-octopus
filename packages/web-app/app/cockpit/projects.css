@@ -203,6 +203,12 @@
   color: var(--ck12-faint);
   font-variant-numeric: tabular-nums;
 }
+.ck12-pjrow-git .ml {
+  flex: none;
+  white-space: nowrap;
+  color: var(--ck12-teal);
+  opacity: 0.85;
+}
 .ck12-pjrow-msg {
   min-width: 0;
   overflow: hidden;
@@ -619,6 +625,93 @@
   color: var(--ck12-faint);
   font-size: 9px;
   font-variant-numeric: tabular-nums;
+}
+/* 落点分支芯片（2026-11-24）：任务从这里 fork、MR 默认合回；点 ✎ 原地改。 */
+.ck12-pjf-ml {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  max-width: 32%;
+  padding: 0 4px 0 7px;
+  border-radius: 999px;
+  border: 1px solid color-mix(in srgb, var(--ck12-teal) 35%, transparent);
+  background: color-mix(in srgb, var(--ck12-teal) 10%, transparent);
+  color: var(--ck12-teal);
+  font-size: 9px;
+  white-space: nowrap;
+  overflow: hidden;
+}
+.ck12-pjf-ml b {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-weight: 700;
+  color: var(--ck12-teal);
+}
+.ck12-pjf-mlbtn {
+  flex: none;
+  padding: 0 3px;
+  color: color-mix(in srgb, var(--ck12-teal) 70%, var(--ck12-faint));
+  font-size: 9.5px;
+}
+.ck12-pjf-mlbtn:hover {
+  color: #fff;
+}
+.ck12-pjf-mledit {
+  flex: 1 1 260px;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  min-width: 0;
+}
+.ck12-pjf-mledit .k {
+  flex: none;
+  color: var(--ck12-teal);
+  font-size: 9px;
+}
+.ck12-pjf-mledit input {
+  flex: 1 1 auto;
+  min-width: 80px;
+  height: 18px;
+  padding: 0 6px;
+  border-radius: 5px;
+  border: 1px solid var(--ck12-bd2);
+  background: rgba(0, 0, 0, 0.35);
+  color: var(--ck12-ink);
+  font-family: var(--font-mono);
+  font-size: 9.5px;
+}
+.ck12-pjf-mledit input:focus {
+  outline: none;
+  border-color: color-mix(in srgb, var(--ck12-teal) 55%, transparent);
+}
+.ck12-pjf-mledit button {
+  flex: none;
+  padding: 0 5px;
+  color: var(--ck12-faint);
+  font-size: 9px;
+}
+.ck12-pjf-mledit button:hover {
+  color: var(--ck12-ink);
+}
+.ck12-pjf-mledit button.ok {
+  color: var(--ck12-teal);
+  font-weight: 700;
+}
+.ck12-pjf-mledit button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+.ck12-pjf-mledit .err {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--ck12-red);
+  font-size: 9px;
+  font-style: normal;
 }
 .ck12-pjf-tabs {
   flex: none;

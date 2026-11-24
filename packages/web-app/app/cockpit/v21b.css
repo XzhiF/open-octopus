@@ -1236,6 +1236,8 @@
 .ck12-pcard-og { font-size: 9px; color: var(--ck12-ink2); }
 .ck12-pcard-git { margin-top: 3px; font-size: 9.5px; color: var(--ck12-ink2); }
 .ck12-pcard-git b { color: var(--ck12-teal); font-weight: 700; }
+/* 落点分支（mainline_branch）：任务从这里 fork、MR 默认合回。 */
+.ck12-pcard-ml { margin-top: 2px; font-size: 9px; color: var(--ck12-teal); opacity: 0.85; }
 .ck12-pcard-stats {
   display: flex;
   flex-wrap: wrap;
@@ -1319,6 +1321,8 @@ button.ck12-ev:hover { background: rgba(255, 255, 255, 0.04); }
   white-space: nowrap;
 }
 .ck12-pjrow-m span b { display: inline; color: var(--ck12-teal); font-weight: 800; }
+/* 任务的项目行：分支计划（从哪 fork → MR 合回哪）。 */
+.ck12-pjrow-m span.ck12-pjrow-plan { color: var(--ck12-teal); opacity: 0.85; }
 .ck12-pjrow-ro {
   flex: none;
   padding: 1px 7px;

@@ -43,6 +43,7 @@ import {
   mergeCabinRepoEntry, removeCabinRepoEntry, repoSource, resolveCabinRepo,
   projectKey, localRepoEntry, orgRepoEntry, worktreeDirFor, isPathInside,
   isGitRepo, readLocalRepoInfo, defaultMainlineBranch,
+  localBranchExists, remoteBranchExists,
   type CabinRepoEntry, type CabinProjectInput,
 } from "./cabin-repos"
 import { scopeCabinFindings } from "./cabin-knowledge"
@@ -1200,6 +1201,18 @@ export class CabinService {
     })
   }
 
+  /** 落点分支预检：本地/跟踪引用都没有时再问一次远端；远端探测失败（离线/
+   *  无 origin）按「未知」放行 —— 真正建树时 initWorktreeOne 会硬校验。 */
+  private assertMainlineBranch(mainPath: string | null, branch: string): void {
+    if (!mainPath || !fs.existsSync(mainPath)) return
+    if (localBranchExists(mainPath, branch)) return
+    if (remoteBranchExists(mainPath, branch) === false) {
+      throw new CabinRepoInputError(
+        `落点分支 '${branch}' 在本地与 origin 上都不存在：${path.basename(mainPath)}`,
+      )
+    }
+  }
+
   /** 绑定一个项目：ORG 只克隆 + 登记主线；本地/外部只校验 + 登记。
    *  **绝不预建 worktree**（worktree 是执行时产物）。 */
   addRepo(id: string, input: CabinProjectInput): CabinRepoEntry {
@@ -1215,7 +1228,10 @@ export class CabinService {
       if (!isPathInside(row.path, abs) && !input.external) {
         throw new CabinRepoInputError("舱目录之外的仓库需要显式登记（external: true）")
       }
-      return mergeCabinRepoEntry(row.path, localRepoEntry(row.path, { name, absPath: abs }))
+      const entry = localRepoEntry(row.path, { name, absPath: abs })
+      const mainline = input.mainline?.trim()
+      if (mainline) this.assertMainlineBranch(abs, mainline)
+      return mergeCabinRepoEntry(row.path, mainline ? { ...entry, mainline_branch: mainline } : entry)
     }
 
     const org = (input.org || row.org || "").trim()
@@ -1223,10 +1239,26 @@ export class CabinService {
     const res = ensureRepoCloned(org, name)
     if ("error" in res) throw new Error(res.error)
     const info = readLocalRepoInfo(res.localPath)
+    const mainline = input.mainline?.trim() || info.branch || defaultMainlineBranch(res.localPath) || undefined
+    if (mainline) this.assertMainlineBranch(res.localPath, mainline)
     return mergeCabinRepoEntry(row.path, orgRepoEntry({
       name, org, group: org, mainPath: res.localPath,
-      mainline: info.branch ?? defaultMainlineBranch(res.localPath),
+      mainline: mainline ?? null,
     }))
+  }
+
+  /** 改落点分支（mainline_branch）：只影响此后新建的 worktree / 任务分支；
+   *  已建工作树的分支计划固化在各自工作空间 config 里，不回改。null = 清空。 */
+  setRepoMainline(id: string, name: string, mainline: string | null): CabinRepoEntry {
+    const row = this.mustGet(id)
+    const entry = readCabinConfig(row.path).repos.find((r) => r.name === name)
+    if (!entry) throw new CabinRepoInputError(`repo not in cabin: ${name}`)
+    const branch = mainline?.trim() || null
+    if (branch) {
+      const { mainPath } = resolveCabinRepo(row.path, entry)
+      this.assertMainlineBranch(mainPath, branch)
+    }
+    return mergeCabinRepoEntry(row.path, { name, mainline_branch: branch })
   }
 
   /** 解绑：只动 config，不动磁盘（worktree / 主仓都保留）。
@@ -1270,7 +1302,11 @@ export class CabinService {
       const fresh = this.git.initWorktreeOne(
         row.path,
         { name: entry.name, source_path: mainPath, group: entry.group },
-        branch, row.org ?? "", { clobber: false, worktreePath: wtPath },
+        branch, row.org ?? "", {
+          clobber: false, worktreePath: wtPath,
+          // 分支计划（2026-11-24）：舱项目登记的落点分支即 fork 点。
+          ...(entry.mainline_branch ? { baseRef: entry.mainline_branch, targetBranch: entry.mainline_branch } : {}),
+        },
       )
       const next = mergeCabinRepoEntry(row.path, {
         ...entry,
@@ -1291,7 +1327,10 @@ export class CabinService {
     const fresh = this.git.initWorktreeOne(
       row.path,
       { name: entry.name, source_path: mainPath, group: entry.group },
-      branch, row.org ?? "", { clobber: false, worktreePath: wtPath },
+      branch, row.org ?? "", {
+        clobber: false, worktreePath: wtPath,
+        ...(entry.mainline_branch ? { baseRef: entry.mainline_branch, targetBranch: entry.mainline_branch } : {}),
+      },
     )
     return mergeCabinRepoEntry(row.path, {
       ...entry,

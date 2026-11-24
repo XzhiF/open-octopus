@@ -378,6 +378,8 @@ export interface AddCabinRepoInput {
   localPath?: string
   absolutePath?: string
   external?: boolean
+  /** 落点分支（mainline_branch）；空 = 按仓库当前分支探测。 */
+  mainline?: string
 }
 
 export async function addCabinRepo(
@@ -397,6 +399,19 @@ export async function removeCabinRepo(id: string, name: string): Promise<{ remov
     method: 'DELETE',
   })
   return handleResponse<{ removed: boolean }>(res)
+}
+
+/** 改项目落点分支（mainline_branch）：任务从它 fork、MR 默认合回它。
+ *  null = 清空回「按仓库默认分支探测」。只影响此后新建的工作树。 */
+export async function setCabinRepoMainline(
+  id: string, name: string, mainline: string | null,
+): Promise<CabinRepoEntry> {
+  const res = await fetch(url(`/${encodeURIComponent(id)}/repos/${encodeURIComponent(name)}`), {
+    method: 'PATCH',
+    headers: JSON_HEADERS,
+    body: JSON.stringify({ mainline }),
+  })
+  return (await handleResponse<{ repo: CabinRepoEntry }>(res)).repo
 }
 
 /** 显式开工作树；同分支已开 → 409（调用方按 CabinApiError.status 区分）。 */

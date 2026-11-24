@@ -13,7 +13,7 @@ import type { Context } from "hono"
 import { streamSSE } from "hono/streaming"
 import { z, ZodError } from "zod"
 import {
-  CabinStatusSchema, CabinJobKindSchema, CabinMandateSchema,
+  CabinStatusSchema, CabinJobKindSchema, CabinMandateSchema, gitBranchRefSchema,
 } from "@octopus/shared"
 import {
   CabinService, CabinNotFoundError, CabinVersionConflictError, CabinStatusConflictError,
@@ -228,6 +228,13 @@ const repoBodySchema = z.object({
   localPath: z.string().min(1).optional(),
   absolutePath: z.string().min(1).optional(),
   external: z.boolean().optional(),
+  /** 落点分支（mainline_branch）；空 = 按仓库当前分支探测。 */
+  mainline: gitBranchRefSchema.optional(),
+})
+
+/** 改项目落点分支：key 必须显式出现 —— null 表示清空回「按默认分支探测」。 */
+const repoPatchBodySchema = z.object({
+  mainline: gitBranchRefSchema.nullable(),
 })
 
 const worktreeBodySchema = z.object({
@@ -576,6 +583,20 @@ export function createCabinRoutes(
       if (!input.name && !input.repo) throw new Error("name or repo required")
       const entry = service.addRepo(c.req.param("id"), { ...input, name: input.name ?? input.repo })
       return c.json({ repo: entry }, 201)
+    } catch (err) {
+      const { status, message } = classifyError(err)
+      return c.json({ error: message }, status as 400)
+    }
+  })
+
+  /** 改项目落点分支（mainline_branch）：只影响此后新建的 worktree / 任务分支。 */
+  router.patch("/:id/repos/:name", async (c) => {
+    const body = await safeJson(c)
+    if (!body) return c.json({ error: "Invalid or missing JSON body" }, 400)
+    try {
+      const input = repoPatchBodySchema.parse(body)
+      const entry = service.setRepoMainline(c.req.param("id"), c.req.param("name"), input.mainline)
+      return c.json({ repo: entry })
     } catch (err) {
       const { status, message } = classifyError(err)
       return c.json({ error: message }, status as 400)

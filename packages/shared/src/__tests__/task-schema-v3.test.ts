@@ -126,8 +126,55 @@ describe("AC2 — TaskSpecFieldSchema + validateSpecFieldValue decisions branch"
 })
 
 // ── AC3: ArtifactIndexEntry type ─────────────────────────────────────
-describe("AC3 — ArtifactIndexEntry type", () => {
-  it("artifactIndexEntrySchema parses a valid internal entry", () => {
+// ── 分支计划（2026-11-24）：base_branch / target_branch / branch_plan ──
+describe("分支计划 — taskSpecSchema + validateSpecFieldValue", () => {
+  it("taskSpecSchema 接受 feat/xxx 形态的 base/target 与 per-repo branch_plan", () => {
+    const parsed = taskSpecSchema.parse({
+      base_branch: "feat/long-lived",
+      target_branch: "feat/long-lived",
+      branch_plan: { console: { base: "feat/console", target: "release-1.2" } },
+    })
+    expect(parsed.base_branch).toBe("feat/long-lived")
+    expect(parsed.target_branch).toBe("feat/long-lived")
+    expect(parsed.branch_plan?.console).toEqual({ base: "feat/console", target: "release-1.2" })
+  })
+
+  it("taskSpecSchema 拒绝非法 ref（空格 / .. / 结尾 .lock / 开头 /）", () => {
+    for (const bad of ["feat x", "feat..x", "feat/x.lock", "/feat", "feat/", "feat/@{x}"]) {
+      expect(() => taskSpecSchema.parse({ base_branch: bad })).toThrow()
+    }
+  })
+
+  it("spec-field 可写 base_branch/target_branch，null 清空", () => {
+    expect(validateSpecFieldValue("base_branch", "feat/abc")).toBe("feat/abc")
+    expect(validateSpecFieldValue("target_branch", "release/1.0")).toBe("release/1.0")
+    expect(validateSpecFieldValue("base_branch", null)).toBeUndefined()
+    expect(validateSpecFieldValue("target_branch", null)).toBeUndefined()
+  })
+
+  it("spec-field 拒绝非法分支名（TaskSpecFieldError）", () => {
+    expect(() => validateSpecFieldValue("base_branch", "feat x")).toThrow(TaskSpecFieldError)
+    expect(() => validateSpecFieldValue("target_branch", "a..b")).toThrow(TaskSpecFieldError)
+    expect(() => validateSpecFieldValue("base_branch", "")).toThrow(TaskSpecFieldError)
+  })
+
+  it("spec-field 可写 branch_plan（多仓逐仓落点），null 清空、坏项 400", () => {
+    expect(validateSpecFieldValue("branch_plan", {
+      console: { base: "feat/console", target: "release/1.2" },
+      ledger: { base: "feat/ledger" },
+    })).toEqual({
+      console: { base: "feat/console", target: "release/1.2" },
+      ledger: { base: "feat/ledger" },
+    })
+    expect(validateSpecFieldValue("branch_plan", null)).toBeUndefined()
+    expect(() => validateSpecFieldValue("branch_plan", [])).toThrow(TaskSpecFieldError)
+    expect(() => validateSpecFieldValue("branch_plan", "console")).toThrow(TaskSpecFieldError)
+    expect(() => validateSpecFieldValue("branch_plan", { console: { base: "feat x" } }))
+      .toThrow(TaskSpecFieldError)
+  })
+})
+
+describe("AC3 — ArtifactIndexEntry type", () => {  it("artifactIndexEntrySchema parses a valid internal entry", () => {
     const r = artifactIndexEntrySchema.safeParse({
       path: "spec.md",
       by: "open-spec",

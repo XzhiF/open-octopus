@@ -1182,6 +1182,8 @@ export function JobFace({
             cabinId={cabinId}
             projects={jobProjects}
             branch={branch}
+            baseBranch={taskEntity?.task_spec?.base_branch ?? null}
+            targetBranch={taskEntity?.task_spec?.target_branch ?? null}
           />
         </div>
       )}

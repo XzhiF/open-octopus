@@ -22,6 +22,7 @@ vi.mock('@/lib/cabin-api', async (importOriginal) => {
     pullCabinRepo: vi.fn(),
     createRepoWorktree: vi.fn(),
     removeCabinRepo: vi.fn(),
+    setCabinRepoMainline: vi.fn(),
     getRepoTree: vi.fn(),
     getRepoFile: vi.fn(),
     getRepoWorktreeChanges: vi.fn(),
@@ -40,7 +41,7 @@ vi.mock('sonner', () => ({ toast: { success: vi.fn(), error: vi.fn(), warning: v
 
 import {
   fetchCabinRepos, getCabin, getRepoFile, getRepoTree, getRepoWorktreeChangePatch,
-  getRepoWorktreeChanges, listCabins, listCabinJobs,
+  getRepoWorktreeChanges, listCabins, listCabinJobs, setCabinRepoMainline,
   type CabinDetail, type CabinRepoEntry,
 } from '@/lib/cabin-api'
 import { formatDateTime } from '@/lib/format'
@@ -294,6 +295,47 @@ describe('CockpitProjectFace · 点项目看仓库', () => {
       </Harness>,
     )
     expect(await screen.findByTestId('cockpit-project-missing')).toBeInTheDocument()
+  })
+
+  it('落点分支芯片：展示 mainline_branch，✎ 编辑保存走 PATCH，留空 = 显式清空', async () => {
+    vi.mocked(setCabinRepoMainline).mockResolvedValue(
+      repo({ key: 'org:XzhiF/ledger', name: 'ledger', mainline_branch: 'feat/landing' }),
+    )
+    render(
+      <Harness initial={projectRef('c1', 'org:XzhiF/ledger')}>
+        <CockpitProjectFace cabinId="c1" projectKey="org:XzhiF/ledger" onClose={() => {}} />
+      </Harness>,
+    )
+    // 默认展示舱籍登记的落点分支（ledger = main）。
+    const chip = await screen.findByTestId('project-mainline')
+    expect(chip.textContent).toContain('落点')
+    expect(chip.textContent).toContain('main')
+
+    fireEvent.click(screen.getByTestId('project-mainline-edit'))
+    const input = screen.getByTestId('project-mainline-input') as HTMLInputElement
+    fireEvent.change(input, { target: { value: 'feat/landing' } })
+    fireEvent.click(screen.getByTestId('project-mainline-save'))
+    await waitFor(() => expect(setCabinRepoMainline).toHaveBeenCalledWith('c1', 'ledger', 'feat/landing'))
+
+    // 再编辑 → 留空保存 = null（清空回「按仓库默认分支探测」）。
+    fireEvent.click(await screen.findByTestId('project-mainline-edit'))
+    fireEvent.change(screen.getByTestId('project-mainline-input'), { target: { value: '  ' } })
+    fireEvent.click(screen.getByTestId('project-mainline-save'))
+    await waitFor(() => expect(setCabinRepoMainline).toHaveBeenLastCalledWith('c1', 'ledger', null))
+  })
+
+  it('落点分支保存失败 → 原地显示错误，不退出编辑', async () => {
+    vi.mocked(setCabinRepoMainline).mockRejectedValue(new Error("落点分支 'feat/x' 在本地与 origin 上都不存在：ledger"))
+    render(
+      <Harness initial={projectRef('c1', 'org:XzhiF/ledger')}>
+        <CockpitProjectFace cabinId="c1" projectKey="org:XzhiF/ledger" onClose={() => {}} />
+      </Harness>,
+    )
+    fireEvent.click(await screen.findByTestId('project-mainline-edit'))
+    fireEvent.change(screen.getByTestId('project-mainline-input'), { target: { value: 'feat/x' } })
+    fireEvent.click(screen.getByTestId('project-mainline-save'))
+    expect(await screen.findByTestId('project-mainline-err')).toHaveTextContent('都不存在')
+    expect(screen.getByTestId('project-mainline-editor')).toBeInTheDocument()
   })
 })
 

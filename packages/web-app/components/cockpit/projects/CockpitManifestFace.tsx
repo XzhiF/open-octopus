@@ -74,6 +74,9 @@ export function CockpitManifestFace({ cabinId, onClose }: CockpitManifestFacePro
           {p.git && <> · HEAD {p.git.commit}</>}
           {p.git?.msg && <> · {p.git.msg}</>}
         </div>
+        <div className="ck12-pcard-ml" title="任务分支从这条分支 fork，MR 默认也合回这条">
+          落点 ⎇ {p.mainline_branch ?? '默认分支'}
+        </div>
         <div className="ck12-pcard-stats">
           <span>作战 <b>{stats.jobs}</b></span>
           <span>在跑 <b>{stats.running}</b></span>

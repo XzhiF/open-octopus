@@ -271,6 +271,34 @@ export const workflowDevStateSchema = z.object({
 })
 export type WorkflowDevState = z.infer<typeof workflowDevStateSchema>
 
+/** Git branch ref — a task's fork point (base) or PR landing branch (target).
+ *  Looser than the execution `branch` field (that one is also a Windows
+ *  directory name): `/` is allowed (`feat/long-lived`), but the ref-format
+ *  hazards that make `git check-ref-format` fail are rejected here so a bad
+ *  value fails at spec-write time (400) instead of at worktree/PR time. */
+export function isValidGitBranchRef(ref: string): boolean {
+  if (!ref || ref.length > 200) return false
+  if (ref === "@") return false
+  if (/[\s~^:?*\[\\\x00-\x1f\x7f]/.test(ref)) return false
+  if (ref.startsWith("/") || ref.endsWith("/")) return false
+  if (ref.startsWith(".") || ref.endsWith(".") || ref.endsWith(".lock")) return false
+  if (ref.includes("..") || ref.includes("//") || ref.includes("@{")) return false
+  return ref.split("/").every((seg) => seg.length > 0 && !seg.startsWith(".") && !seg.endsWith(".lock"))
+}
+
+export const gitBranchRefSchema = z
+  .string()
+  .min(1)
+  .max(200)
+  .refine(isValidGitBranchRef, { message: "invalid git branch name" })
+
+/** Per-repo override inside `task_spec.branch_plan` (reserved, 2026-11-24). */
+export const branchPlanEntrySchema = z.object({
+  base: gitBranchRefSchema.optional(),
+  target: gitBranchRefSchema.optional(),
+})
+export type BranchPlanEntry = z.infer<typeof branchPlanEntrySchema>
+
 export const taskSpecSchema = z.object({
   goal: z.string().min(1).optional(),
   ac: z.array(z.string().min(1)).min(1).optional(),
@@ -322,6 +350,13 @@ export const taskSpecSchema = z.object({
   branch: z.string().min(2).max(60).regex(/^[a-zA-Z0-9_-]+$/, {
     message: "branch must match ^[a-zA-Z0-9_-]+$",
   }).optional(),
+  // 分支计划（2026-11-24）—— fork 点与 PR 落点。缺省时 server 按
+  // 「舱项目 mainline_branch → 仓库默认分支」解析；target 缺省跟随 base。
+  base_branch: gitBranchRefSchema.optional(),
+  target_branch: gitBranchRefSchema.optional(),
+  // per-repo 覆盖（预留，当前只落 schema；批量版再开放 spec-field 入口）：
+  // { <project name>: { base, target } }。
+  branch_plan: z.record(z.string().min(1), branchPlanEntrySchema).optional(),
   // Phase plan (K1). Optional: a v4 draft mid-authoring may omit it entirely;
   // when present it must carry ≥1 phase (the ready gate, ticket 04, re-checks
   // ≥1 plus per-phase specPath/workflowRef resolvability — schema only owns

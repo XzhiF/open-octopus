@@ -8,6 +8,8 @@ import {
   acceptancePreviewSchema,
   acceptanceRunbookSchema,
   pathSafeSlugSchema,
+  gitBranchRefSchema,
+  branchPlanEntrySchema,
 } from "./scheduler-job"
 import type { LlmUsageSummary } from "../ledger"
 
@@ -102,6 +104,13 @@ export const TaskSpecFieldSchema = z.enum([
   // 执行分支名（2026-09-22）：author 起草时定名的显式来源；null 清空回退
   // `feat-<锚>-<YYYYMMDD>` 推导。ASCII 字符面由 validateSpecFieldValue 强校验。
   "branch",
+  // 分支计划（2026-11-24）：任务分支从哪 fork / PR 往哪合。覆盖舱绑定与仓库
+  // 默认分支；target 缺省跟随 base。允许 `/`（feat/xxx），走 git ref 校验。
+  "base_branch",
+  "target_branch",
+  // 多仓分支计划（2026-11-24）：{ "<仓名>": { base?, target? } }，整表替换；
+  // 单仓/任务级用上面的 base_branch / target_branch 即可。
+  "branch_plan",
   // 验收面 v2「验货台」: the on-demand re-verify command ({@link
   // acceptanceVerifySchema}). A task_spec JSON field (not a column) — merges
   // like every other spec-field; editable through awaiting_review.
@@ -392,6 +401,32 @@ export function validateSpecFieldValue(field: TaskSpecField, value: unknown): un
         throw new TaskSpecFieldError("field 'branch' must match ^[a-zA-Z0-9_-]{2,60}$")
       }
       return value
+    case "base_branch":
+    case "target_branch":
+      // 分支计划（2026-11-24）— null clears（回退舱绑定/仓库默认分支推导）。
+      // 允许 `/`（feat/xxx），但必须过 git check-ref-format 的形态约束。
+      if (value === null) return undefined
+      try {
+        return gitBranchRefSchema.parse(value)
+      } catch {
+        throw new TaskSpecFieldError(
+          `field '${field}' must be a valid git branch name (e.g. feat/my-branch)`,
+        )
+      }
+    case "branch_plan":
+      // 多仓分支计划 — WHOLE-OBJECT 替换（同 phases 的整数组纪律）；null 清空回
+      // 任务级 / 舱绑定 / 仓库默认。每项 repo → { base?, target? } 各自校验。
+      if (value === null) return undefined
+      if (typeof value !== "object" || Array.isArray(value)) {
+        throw new TaskSpecFieldError("field 'branch_plan' must be an object of { repo: { base?, target? } }")
+      }
+      try {
+        return z.record(z.string().min(1), branchPlanEntrySchema).parse(value)
+      } catch {
+        throw new TaskSpecFieldError(
+          "field 'branch_plan' entries must use valid git branch names for base/target",
+        )
+      }
     case "acceptance_verify":
       // 验收面 v2: null clears the field — undefined rides into the spec merge
       // and JSON.stringify drops the key (storing `null` would poison every
