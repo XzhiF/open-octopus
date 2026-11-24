@@ -4,7 +4,7 @@
 // 这里钉住「不再回退成字形」。
 
 import { describe, it, expect, vi } from 'vitest'
-import { render, fireEvent } from '@testing-library/react'
+import { render, fireEvent, screen } from '@testing-library/react'
 import { ChatArea } from '../ChatArea'
 import type { ToolCallRecord } from '@/lib/agent/types'
 
@@ -47,5 +47,49 @@ describe('ChatArea — 作战舱中断键', () => {
   it('空闲（不流式）时不渲染中断键', () => {
     const { container } = render(<ChatArea {...baseProps} streaming={false} />)
     expect(container.querySelector('[data-tui-stop]')).toBeNull()
+  })
+})
+
+describe('ChatArea — 有后台作业时停止整轮先确认（2026-11-24 用户 #3）', () => {
+  const bgTasks = [
+    { id: 'bg-1', description: 'pnpm dev', taskType: 'local_bash' },
+    { id: 'bg-2', description: 'vitest run', taskType: 'local_bash' },
+  ]
+
+  it('角标 = 运行中的后台作业数；点一次只出确认层，不直接停', () => {
+    const onStop = vi.fn()
+    const { container, getByTestId, queryByTestId } = render(
+      <ChatArea {...baseProps} onStop={onStop} backgroundTasks={bgTasks} />,
+    )
+    expect(getByTestId('cockpit-stop-count')).toHaveTextContent('2')
+
+    fireEvent.click(container.querySelector('[data-tui-stop]')!)
+    expect(onStop).not.toHaveBeenCalled()
+    expect(getByTestId('cockpit-stop-confirm')).toHaveTextContent('停止整轮')
+
+    fireEvent.click(getByTestId('cockpit-stop-all'))
+    expect(onStop).toHaveBeenCalledTimes(1)
+    expect(queryByTestId('cockpit-stop-confirm')).toBeNull()
+  })
+
+  it('「继续跑着」收起确认层，不打断这一轮', () => {
+    const onStop = vi.fn()
+    const { container, getByTestId, queryByTestId } = render(
+      <ChatArea {...baseProps} onStop={onStop} backgroundTasks={bgTasks} />,
+    )
+    fireEvent.click(container.querySelector('[data-tui-stop]')!)
+    fireEvent.click(screen.getByText('继续跑着'))
+    expect(onStop).not.toHaveBeenCalled()
+    expect(queryByTestId('cockpit-stop-confirm')).toBeNull()
+  })
+
+  it('没有后台作业：点红方块直接停，不出确认层', () => {
+    const onStop = vi.fn()
+    const { container, queryByTestId } = render(
+      <ChatArea {...baseProps} onStop={onStop} />,
+    )
+    fireEvent.click(container.querySelector('[data-tui-stop]')!)
+    expect(onStop).toHaveBeenCalledTimes(1)
+    expect(queryByTestId('cockpit-stop-confirm')).toBeNull()
   })
 })

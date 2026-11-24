@@ -607,6 +607,31 @@ export class ClaudeSDKProvider implements IAgentProvider {
     // during the active stream.
     const q = query({ prompt: promptInput, options: sdkOptions })
 
+    // 后台作业运行时控制（2026-11-24 用户 #1 · 活动日志）：
+    // `getTaskOutput` 是 SDK 0.3.318 的实现方法但未进公开 d.ts（控制请求
+    // `get_task_output`），这里按运行时存在性探测；`stopTask` 有正式类型。
+    // 宿主（server）持有这两个函数，实现「日志尾 / 单独停止某个后台作业」。
+    {
+      const qTask = q as unknown as {
+        getTaskOutput?: (taskId: string) => Promise<{ output: string; total_bytes: number; truncated: boolean }>
+        stopTask?: (taskId: string) => Promise<void>
+      }
+      const getTaskOutput = qTask.getTaskOutput?.bind(q)
+      const stopTask = qTask.stopTask?.bind(q)
+      if ((getTaskOutput || stopTask) && options?.onBackgroundControl) {
+        options.onBackgroundControl({
+          getTaskOutput: async (taskId) => {
+            if (!getTaskOutput) return { output: '', total_bytes: 0, truncated: false }
+            return getTaskOutput(taskId)
+          },
+          stopTask: async (taskId) => {
+            if (!stopTask) throw new Error('stopTask unavailable in this SDK build')
+            await stopTask(taskId)
+          },
+        })
+      }
+    }
+
     // Stop button. Interruptible queries ask the CLI to end the current turn
     // gracefully: the interrupted turn still emits its result, whose usage /
     // modelUsage carry every model call that DID complete (verified against the
@@ -1039,9 +1064,10 @@ export class ClaudeSDKProvider implements IAgentProvider {
             capabilities?: string[]
             betas?: string[]
             /** background_tasks_changed：电平信号，REPLACE 语义。 */
-            tasks?: Array<{ task_id?: string; task_type?: string; description?: string }>
+            tasks?: Array<{ task_id?: string; task_type?: string; description?: string; run_id?: string }>
             /** task_started / task_updated / task_notification 的边沿字段。 */
             task_id?: string
+            run_id?: string
             tool_use_id?: string
             description?: string
             task_type?: string
@@ -1051,6 +1077,8 @@ export class ClaudeSDKProvider implements IAgentProvider {
             prompt?: string
             /** task_notification：子代理的最终汇报。 */
             summary?: string
+            /** task_notification：CLI 侧输出文件（后台 shell 的完整日志）。 */
+            output_file?: string
             last_tool_name?: string
             usage?: { total_tokens?: number; tool_uses?: number; duration_ms?: number }
             patch?: { status?: 'pending' | 'running' | 'completed' | 'failed' | 'killed' | 'paused' }
@@ -1078,6 +1106,7 @@ export class ClaudeSDKProvider implements IAgentProvider {
                 id: t.task_id,
                 description: t.description?.trim() || t.task_id,
                 taskType: t.task_type,
+                ...(t.run_id ? { runId: t.run_id } : {}),
               })
             }
             yield { type: 'background_tasks', tasks: [...backgroundTasks.values()] }
@@ -1138,7 +1167,12 @@ export class ClaudeSDKProvider implements IAgentProvider {
               const description = sm.description?.trim() || sm.task_id
               const prev = backgroundTasks.get(sm.task_id)
               if (!prev || prev.description !== description) {
-                backgroundTasks.set(sm.task_id, { id: sm.task_id, description, taskType: sm.task_type })
+                backgroundTasks.set(sm.task_id, {
+                  id: sm.task_id,
+                  description,
+                  taskType: sm.task_type,
+                  ...(sm.run_id ? { runId: sm.run_id } : {}),
+                })
                 yield { type: 'background_tasks', tasks: [...backgroundTasks.values()] }
               }
             }
@@ -1211,6 +1245,22 @@ export class ClaudeSDKProvider implements IAgentProvider {
             }
             if (sm.task_id && backgroundTasks.delete(sm.task_id)) {
               yield { type: 'background_tasks', tasks: [...backgroundTasks.values()] }
+            }
+            // 非子代理任务（后台 shell / monitor …）的落档边沿：状态 / 摘要 /
+            // 输出文件路径。宿主据此把 history 行收口（电量信号之外的另一半）。
+            if (sm.task_id && !liveSubagents.has(sm.task_id)) {
+              yield {
+                type: 'background_task_ended',
+                task: {
+                  id: sm.task_id,
+                  ...(sm.run_id ? { runId: sm.run_id } : {}),
+                  status: sm.status === 'completed'
+                    ? 'completed'
+                    : sm.status === 'stopped' ? 'stopped' : 'failed',
+                  ...(sm.summary ? { summary: sm.summary } : {}),
+                  ...(sm.output_file ? { outputFile: sm.output_file } : {}),
+                },
+              }
             }
           } else if (sm.subtype === 'compact_boundary') {
             // 立即刷新占用；auto 压缩也走这里，让角标同样回落。

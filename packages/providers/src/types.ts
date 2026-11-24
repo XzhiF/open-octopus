@@ -78,6 +78,11 @@ export interface SendQueryOptions {
    * 普通的新回合路径。
    */
   onInputChannel?: (push: (text: string) => boolean) => void
+  /**
+   * 后台作业运行时控制（2026-11-24 用户 #1）：`get_task_output` / `stopTask`。
+   * 查询建立时回调一次；宿主持有到本轮结束（续轮会重新回调，以最新一次为准）。
+   */
+  onBackgroundControl?: (control: BackgroundTaskControl) => void
   /** Free-form tag (usually the workflow node id) echoed into [exec-timing]
    *  logs when OCTOPUS_EXEC_TIMING=1. No behavioral effect. */
   timingTag?: string
@@ -157,6 +162,37 @@ export interface BackgroundTaskInfo {
   id: string
   description: string
   taskType?: string
+  /** SDK run_id（同一 task 恢复后会换新 run）。历史行据此区分新一轮。 */
+  runId?: string
+}
+
+/** `get_task_output` 的应答：命令写出的最后 ≤8 KiB（SDK 口径，含转义序列）。 */
+export interface BackgroundTaskOutput {
+  output: string
+  total_bytes: number
+  truncated: boolean
+}
+
+/**
+ * 后台作业的运行时控制（2026-11-24 用户 #1 · 活动日志）。
+ *
+ * 只有正在消费同一条 SDK query 的宿主拿得到：输出尾读取走 `get_task_output`
+ * 控制请求，单作业停止走 `stopTask`（不打断当前模型轮）。回合结束后对象失效。
+ */
+export interface BackgroundTaskControl {
+  getTaskOutput(taskId: string): Promise<BackgroundTaskOutput>
+  stopTask(taskId: string): Promise<void>
+}
+
+/** 后台作业结束（`task_notification` 边沿，非子代理任务）。 */
+export interface BackgroundTaskEnded {
+  id: string
+  runId?: string
+  status: 'completed' | 'failed' | 'stopped'
+  /** 结束时 CLI 给的摘要（Bash 通常是最后几行 / 退出信息）。 */
+  summary?: string
+  /** CLI 侧输出文件路径；宿主可留档，但文件可能随会话清理消失。 */
+  outputFile?: string
 }
 
 /**
@@ -246,6 +282,8 @@ export type MessageChunk =
   | { type: 'status'; status: 'compacting' | 'requesting' | null; varsUpdate?: Record<string, unknown> }
   /** 后台任务集合变化（电平信号，REPLACE 语义）：空数组 = 已无后台任务。 */
   | { type: 'background_tasks'; tasks: BackgroundTaskInfo[] }
+  /** 单个后台作业结束（`task_notification`）：最终状态 / 摘要 / 输出文件。 */
+  | { type: 'background_task_ended'; task: BackgroundTaskEnded }
   /** 子代理生命周期 / 操作日志（作业坞「子代理」入口的数据源）。 */
   | { type: 'subagent'; event: SubagentEvent }
   | { type: 'context_usage'; data: ContextUsageData }

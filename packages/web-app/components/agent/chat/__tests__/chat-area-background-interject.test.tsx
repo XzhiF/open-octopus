@@ -4,7 +4,7 @@
 //   2. 进入后台等待时，队里积压的消息自动注入队首；
 //   3. 非 TUI 变体输入框同样解锁，⏎ 走 onInterject。
 
-import { render, fireEvent } from "@testing-library/react"
+import { render, fireEvent, waitFor } from "@testing-library/react"
 import { describe, it, expect, vi } from "vitest"
 import { ChatArea } from "../ChatArea"
 import type { ToolCallRecord } from "@/lib/agent/types"
@@ -109,5 +109,76 @@ describe("ChatArea — 后台等待期可以直接说话（#8）", () => {
     )
     const ta = container.querySelector("textarea") as HTMLTextAreaElement
     expect(ta.disabled).toBe(true)
+  })
+
+  // 2026-11-24 用户 #2：注入失败（本地相位过期 / 服务端正好收轮）原来被静默
+  // 吞掉 —— 乐观行撤掉、输入框清空，用户的话凭空消失。失败必须转排队，可见。
+  it("注入失败（同步 false）→ 消息转排队并在输入框上方可见", () => {
+    const onInterject = vi.fn(() => false)
+    const { container } = render(
+      <ChatArea
+        {...baseProps}
+        tui
+        streaming
+        canInterject
+        onInterject={onInterject}
+        backgroundTasks={bgTasks}
+      />,
+    )
+    typeAndKey(container, "服务起来了吗？", "Enter")
+    expect(onInterject).toHaveBeenCalledWith("服务起来了吗？")
+    expect(queuedText(container)).toContain("服务起来了吗？")
+  })
+
+  it("注入失败（异步 false）→ 消息回到队列，不丢", async () => {
+    const onInterject = vi.fn(async () => false)
+    const { container } = render(
+      <ChatArea
+        {...baseProps}
+        tui
+        streaming
+        canInterject
+        onInterject={onInterject}
+        backgroundTasks={bgTasks}
+      />,
+    )
+    typeAndKey(container, "还在吗？", "Enter")
+    await waitFor(() => expect(queuedText(container)).toContain("还在吗？"))
+  })
+
+  it("后台等待时队首注入失败 → 队首放回队列", async () => {
+    const onInterject = vi.fn(async () => false)
+    const props = {
+      ...baseProps,
+      tui: true,
+      streaming: true,
+      backgroundTasks: bgTasks,
+      onInterject,
+    }
+    const { container, rerender } = render(<ChatArea {...props} />)
+    typeAndKey(container, "起来了吗？", "Enter", true)
+    expect(queuedText(container)).toContain("起来了吗？")
+
+    rerender(<ChatArea {...props} canInterject />)
+    expect(onInterject).toHaveBeenCalledWith("起来了吗？")
+    await waitFor(() => expect(queuedText(container)).toContain("起来了吗？"))
+  })
+
+  it("非 TUI 注入失败（没有排队区）→ 原文放回输入框", async () => {
+    const onInterject = vi.fn(async () => false)
+    const { container } = render(
+      <ChatArea
+        {...baseProps}
+        streaming
+        canInterject
+        onInterject={onInterject}
+        backgroundTasks={bgTasks}
+      />,
+    )
+    typeAndKey(container, "服务起来了吗？", "Enter")
+    await waitFor(() => {
+      const ta = container.querySelector("textarea") as HTMLTextAreaElement
+      expect(ta.value).toBe("服务起来了吗？")
+    })
   })
 })

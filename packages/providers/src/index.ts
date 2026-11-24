@@ -9,7 +9,7 @@ export {
 } from './idle-watchdog'
 export type { GuardIdleOptions } from './idle-watchdog'
 export { createSdkMcpServer, tool, listSubagents, getSubagentMessages } from '@anthropic-ai/claude-agent-sdk'
-export type { IAgentProvider, SendQueryOptions, MessageChunk, SystemPromptInput, SystemPromptPreset, ContextUsageData, GoalTerminalReason, ActiveGoalChunk, BackgroundTaskInfo, SubagentEvent, SubagentLogBlock } from './types'
+export type { IAgentProvider, SendQueryOptions, MessageChunk, SystemPromptInput, SystemPromptPreset, ContextUsageData, GoalTerminalReason, ActiveGoalChunk, BackgroundTaskInfo, BackgroundTaskOutput, BackgroundTaskControl, BackgroundTaskEnded, SubagentEvent, SubagentLogBlock } from './types'
 export { registerProvider, getProvider, getProviderAsync, listProviders, resetProviderInstances } from './registry'
 export { LLMCallTracker } from './llm-call-tracker'
 export type { LLMCallRecord } from './llm-call-tracker'

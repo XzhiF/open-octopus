@@ -90,7 +90,7 @@ interface ChatAreaProps {
    *  true 时输入不锁，⏎ 走 onInterject 注进同一条查询（不打断后台）。 */
   canInterject?: boolean
   /** 后台等待期的追加发送（useAgentChat.interject）。 */
-  onInterject?: (message: string) => void
+  onInterject?: (message: string) => boolean | Promise<boolean> | void
   onSend: (message: string, opts?: { subagents?: ChatSubagentRef[]; meta?: ChatSendMeta }) => void
   onStop: () => void
   onConfirm: (eventId: string, decision: 'accept' | 'reject') => void
@@ -481,7 +481,7 @@ export function ChatArea({
       // 一律排到本轮收口后再发。
       if (meta) pushQueue(text, expert, meta)
       else if (!canInterject || !onInterject) return
-      else onInterject(text)
+      else interjectOrQueue(text, expert)
     } else {
       const sendOpts = { ...(opts ?? {}), ...(meta ? { meta } : {}) }
       onSend(text, Object.keys(sendOpts).length > 0 ? sendOpts : undefined)
@@ -520,6 +520,24 @@ export function ChatArea({
   const queueRef = useRef<QueuedComposerMessage[]>([])
   const setQueue = (next: QueuedComposerMessage[]) => { queueRef.current = next; setQueueState(next) }
   const [queueHint, setQueueHint] = useState<string | null>(null)
+  // 停止整轮确认（2026-11-24 用户 #3）：有后台作业在跑时，红方块先弹确认 ——
+  // 停止会一并结束那些后台程序（dev 服务等）。仅全域座舱变体。
+  const [stopConfirmOpen, setStopConfirmOpen] = useState(false)
+  const stopWrapRef = useRef<HTMLSpanElement | null>(null)
+  const bgLiveCount = backgroundTasks?.length ?? 0
+  useEffect(() => {
+    if (!streaming) setStopConfirmOpen(false)
+  }, [streaming])
+  useEffect(() => {
+    if (!stopConfirmOpen) return
+    const onPointerDown = (event: PointerEvent) => {
+      const target = event.target
+      if (target instanceof Node && stopWrapRef.current?.contains(target)) return
+      setStopConfirmOpen(false)
+    }
+    document.addEventListener('pointerdown', onPointerDown, true)
+    return () => document.removeEventListener('pointerdown', onPointerDown, true)
+  }, [stopConfirmOpen])
   const dockRef = useRef<HTMLDivElement>(null)
   const turnStartedAtRef = useRef(0)
   const [tick, setTick] = useState(0)
@@ -558,7 +576,20 @@ export function ChatArea({
     if (queueRef.current.length === 0) return
     const [head, ...rest] = queueRef.current
     setQueue(rest)
-    onInterject(head.text)
+    // 注入失败（相位又翻回 generating）→ 队首放回去，消息不丢（用户 #2）。
+    const restore = (ok: boolean | void) => {
+      if (ok === false) setQueue([head, ...queueRef.current])
+    }
+    try {
+      const result = onInterject(head.text)
+      if (result && typeof (result as Promise<boolean>).then === 'function') {
+        void (result as Promise<boolean>).then(restore, () => restore(false))
+      } else {
+        restore(result as boolean | void)
+      }
+    } catch {
+      restore(false)
+    }
   }, [canInterject, tui, onInterject, queue.length, steerActiveRef])
 
   const focusDockInput = () => {
@@ -571,6 +602,37 @@ export function ChatArea({
       return
     }
     setQueue([...queueRef.current, { text, expert, ...(meta ? { meta } : {}) }])
+  }
+  /**
+   * 后台等待期发送（2026-11-24 用户 #2）：注入失败（本地相位过期 / 正好收轮）
+   * 时**不能静默丢句话** —— 原来 onInterject 的失败结果被忽略，乐观行撤掉后
+   * 用户的消息就凭空消失了。失败一律转入排队，等相位回到 background-wait
+   * 或本轮收口后自动补发；排队的消息在输入框上方可见。
+   */
+  const interjectOrQueue = (text: string, expert: ComposerExpertRef | null) => {
+    if (!onInterject) { pushQueue(text, expert); return }
+    const fallback = (ok: boolean | void) => {
+      if (ok !== false) return
+      if (tui) {
+        pushQueue(text, expert)
+        setQueueHint('注入未成功 · 已转排队')
+        setTimeout(() => setQueueHint(null), 1800)
+      } else {
+        // 非 TUI（classic 通讯台）没有排队区：把原文放回输入框，别让用户的话消失。
+        setInput((prev) => (prev.trim() ? `${text}\n${prev}` : text))
+        toast('注入未成功 · 已放回输入框')
+      }
+    }
+    try {
+      const result = onInterject(text)
+      if (result && typeof (result as Promise<boolean>).then === 'function') {
+        void (result as Promise<boolean>).then(fallback, () => fallback(false))
+      } else {
+        fallback(result as boolean | void)
+      }
+    } catch {
+      fallback(false)
+    }
   }
   const recallQueue = (i: number) => {
     const back = queueRef.current[i]
@@ -640,7 +702,7 @@ export function ChatArea({
         // 话注进同一条 provider 查询，不打断后台（2026-11-10 dev-up.sh 事故：
         // Enter 曾经会掐掉服务，后来改成只会排队，但队永远等不到收口）。
         if (canInterject && !resumeTailing && onInterject) {
-          onInterject(take.text)
+          interjectOrQueue(take.text, take.expert)
           return
         }
         // 生成中 / 尾随他端回合：本实例没有可掐的流或不该掐 —— 只排队，
@@ -687,7 +749,7 @@ export function ChatArea({
       }
       // 后台等待期：注入同一条查询（不打断后台）—— 与 ⏎ 分支同语义。
       if (canInterject && !resumeTailing && onInterject) {
-        onInterject(taken.text)
+        interjectOrQueue(taken.text, taken.expert)
         return
       }
       if (queueRef.current.length > 0 || resumeTailing || (backgroundTasks?.length ?? 0) > 0) {
@@ -1370,24 +1432,82 @@ export function ChatArea({
                 )}
                 <span className="flex shrink-0 items-center gap-1 pt-1" data-tui-send-wrap>
                   {streaming && (
-                    <button
-                      type="button"
-                      onClick={onStop}
-                      title={canInterject ? '停止整轮（会结束后台任务）' : '停止（esc 同效）'}
-                      aria-label="停止生成"
-                      data-tui-stop
-                      className="grid size-6 place-items-center rounded-md border border-pop-bd text-[10px] text-pop-red transition-colors hover:border-pop-red"
-                    >
-                      {/* 方块用元素画，不用「■」字形（用户 #19：中断键变形、没居中）。
-                          等宽字体里 ■ 的墨迹不在字身中心，再叠 font-weight:800 的
-                          合成加粗，方块会被拉歪 —— 几何方块由 grid 居中，跨字体稳定。
-                          v21b.css 里这条键的外形也从六角改成了圆角方按钮。 */}
-                      <span
-                        aria-hidden
-                        data-tui-stop-glyph
-                        className="block h-3 w-3 rounded-[2.5px] bg-current"
-                      />
-                    </button>
+                    <span ref={stopWrapRef} className="relative inline-flex">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          // 2026-11-24 用户 #3：有后台作业时先确认 —— 停止整轮会把
+                          // 它们一起收掉（provider 对每个后台任务 stopTask + interrupt）。
+                          if (isCockpitVariant && bgLiveCount > 0) {
+                            setStopConfirmOpen((open) => !open)
+                            return
+                          }
+                          onStop()
+                        }}
+                        title={
+                          bgLiveCount > 0
+                            ? `停止整轮（会一并结束 ${bgLiveCount} 个后台作业）`
+                            : '停止（esc 同效）'
+                        }
+                        aria-label="停止生成"
+                        aria-expanded={isCockpitVariant && bgLiveCount > 0 ? stopConfirmOpen : undefined}
+                        data-tui-stop
+                        data-bg-live={isCockpitVariant && bgLiveCount > 0 ? 'true' : undefined}
+                        className="grid size-6 place-items-center rounded-md border border-pop-bd text-[10px] text-pop-red transition-colors hover:border-pop-red"
+                      >
+                        {/* 方块用元素画，不用「■」字形（用户 #19：中断键变形、没居中）。
+                            等宽字体里 ■ 的墨迹不在字身中心，再叠 font-weight:800 的
+                            合成加粗，方块会被拉歪 —— 几何方块由 grid 居中，跨字体稳定。
+                            v21b.css 里这条键的外形也从六角改成了圆角方按钮。 */}
+                        <span
+                          aria-hidden
+                          data-tui-stop-glyph
+                          className="block h-3 w-3 rounded-[2.5px] bg-current"
+                        />
+                        {isCockpitVariant && bgLiveCount > 0 && (
+                          <b className="ck12-stopcount" data-testid="cockpit-stop-count">
+                            {bgLiveCount}
+                          </b>
+                        )}
+                      </button>
+
+                      {isCockpitVariant && stopConfirmOpen && bgLiveCount > 0 && (
+                        <div
+                          className="ck12-stopconfirm"
+                          role="alertdialog"
+                          aria-label="停止整轮确认"
+                          data-testid="cockpit-stop-confirm"
+                        >
+                          <div className="t">⚠ 后台作业还在跑</div>
+                          <p>
+                            这一轮在等 <b>{bgLiveCount}</b> 个后台作业。点「停止整轮」会
+                            一并结束它们 —— 服务会直接停掉。
+                          </p>
+                          <div className="ck12-stopconfirm-row">
+                            <button
+                              type="button"
+                              onClick={() => setStopConfirmOpen(false)}
+                            >
+                              继续跑着
+                            </button>
+                            <button
+                              type="button"
+                              className="danger"
+                              data-testid="cockpit-stop-all"
+                              onClick={() => {
+                                setStopConfirmOpen(false)
+                                onStop()
+                              }}
+                            >
+                              停止整轮
+                            </button>
+                          </div>
+                          <small>
+                            只想停单个作业：更多 → 活动日志 → 选择该作业 →「停止作业」。
+                          </small>
+                        </div>
+                      )}
+                    </span>
                   )}
                   {(!streaming || canInterject) && (
                     <button

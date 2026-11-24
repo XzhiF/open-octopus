@@ -62,7 +62,7 @@ function ActivityRow({
           {activityRightLabel(item, now)}
         </span>
       </span>
-      <span className="ck12-ip-q">{activityMeta(item)}</span>
+      <span className="ck12-ip-q">{activityMeta(item, now)}</span>
     </button>
   )
 }
@@ -75,8 +75,8 @@ export function CockpitActivityPopover() {
   const [top, setTop] = useState<number | null>(null)
 
   const items = useMemo(
-    () => activityItems(feed.runs, feed.backgrounds),
-    [feed.runs, feed.backgrounds],
+    () => activityItems(feed.runs, feed.backgrounds, feed.backgroundRuns),
+    [feed.runs, feed.backgrounds, feed.backgroundRuns],
   )
   const groups = useMemo(() => groupActivity(items), [items])
 
@@ -123,7 +123,7 @@ export function CockpitActivityPopover() {
     return () => window.removeEventListener('resize', measure)
   }, [activitySel, groups.subTotal, groups.bgLive])
 
-  const noActivity = groups.subTotal === 0 && groups.bgLive === 0
+  const noActivity = groups.subTotal === 0 && groups.bgTotal === 0
 
   return (
     <div
@@ -148,7 +148,7 @@ export function CockpitActivityPopover() {
           <span className="ck12-ip-t">活动</span>
           <b className="ck12-ip-total">{groups.liveCount}</b>
           <span className="ck12-ip-brk">
-            子代理 {groups.subLive}/{groups.subTotal} · 后台 {groups.bgLive}
+            子代理 {groups.subLive}/{groups.subTotal} · 后台 {groups.bgLive}/{groups.bgTotal}
           </span>
         </div>
 
@@ -175,7 +175,7 @@ export function CockpitActivityPopover() {
 
           <div className="ck12-ip-group" data-group="bg">
             <span>后台作业</span>
-            <b>{groups.bgLive}</b>
+            <b>{groups.bgLive}/{groups.bgTotal}</b>
           </div>
           {groups.backgrounds.length === 0 ? (
             <div className="ck12-ip-empty">

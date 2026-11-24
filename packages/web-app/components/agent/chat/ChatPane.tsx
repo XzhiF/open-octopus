@@ -1604,7 +1604,7 @@ export function ChatPane({
             // v22 #8（2026-11-23 用户）：后台服务还在跑、模型空闲等唤醒时，
             // 输入不锁 —— ⏎ 注进同一条查询，不打断后台任务。
             canInterject={streaming && waitPhase === 'background-wait'}
-            onInterject={(message) => { void interject(message) }}
+            onInterject={(message) => interject(message)}
             commands={slashCommandList}
             onSend={handleSendMessage}
             onStop={stopGenerate}

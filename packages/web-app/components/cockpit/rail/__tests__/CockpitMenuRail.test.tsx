@@ -5,6 +5,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { fireEvent, render, screen } from '@testing-library/react'
 import { CockpitStateProvider, useCockpitState } from '../../state/CockpitStateProvider'
 import { CockpitMenuRail } from '../CockpitMenuRail'
+import { resetActivityLog, useActivityLogOpen } from '../activity-log-store'
 
 const cabinState = vi.hoisted(() => ({ cwdGit: true }))
 
@@ -26,6 +27,12 @@ function PanelProbe() {
   return <span data-testid="probe-panel">{panel ?? 'none'}</span>
 }
 
+/** 读活动日志窗开关 —— 验证「更多 → 活动日志」确实开了大窗。 */
+function ActivityLogProbe() {
+  const open = useActivityLogOpen()
+  return <span data-testid="probe-actlog">{open ? 'open' : 'closed'}</span>
+}
+
 /** 主按钮组里带 data-testid 的顺序（「更多」的风琴项不算）。 */
 function railOrder(): string[] {
   const rail = screen.getByTestId('cockpit-menu-rail')
@@ -37,6 +44,7 @@ function railOrder(): string[] {
 
 beforeEach(() => {
   cabinState.cwdGit = true
+  resetActivityLog()
 })
 
 describe('CockpitMenuRail · 变更按钮', () => {
@@ -98,7 +106,8 @@ describe('CockpitMenuRail · 活动按钮', () => {
 })
 
 describe('CockpitMenuRail · 更多', () => {
-  it('生产代码只留 汐音 / 动作 / 日志 / 设置；跃迁 / 模拟 / 编队已下线', () => {    renderRail()
+  it('生产代码只留 汐音 / 动作 / 日志 / 活动日志 / 设置；跃迁 / 模拟 / 编队已下线', () => {
+    renderRail()
     fireEvent.click(screen.getByTestId('cockpit-menu-more'))
     const fan = screen.getByTestId('cockpit-menu-fan')
     const items = [...fan.querySelectorAll<HTMLElement>('[data-testid^="cockpit-fan-"]')]
@@ -107,6 +116,7 @@ describe('CockpitMenuRail · 更多', () => {
       'cockpit-fan-xiyin',
       'cockpit-fan-poses',
       'cockpit-fan-log',
+      'cockpit-fan-actlog',
       'cockpit-fan-settings',
     ])
     expect(screen.queryByTestId('cockpit-fan-warp')).toBeNull()
@@ -114,7 +124,20 @@ describe('CockpitMenuRail · 更多', () => {
     expect(screen.queryByTestId('cockpit-fan-fleet')).toBeNull()
   })
 
-  it('点「日志」开指令时间线面板（log），并收起横排入口', () => {
+  it('点「活动日志」打开全部活动大窗（activity-log-store）', () => {
+    render(
+      <CockpitStateProvider entryCabinId="c1">
+        <CockpitMenuRail />
+        <ActivityLogProbe />
+      </CockpitStateProvider>,
+    )
+    expect(screen.getByTestId('probe-actlog')).toHaveTextContent('closed')
+    fireEvent.click(screen.getByTestId('cockpit-menu-more'))
+    fireEvent.click(screen.getByTestId('cockpit-fan-actlog'))
+    expect(screen.getByTestId('probe-actlog')).toHaveTextContent('open')
+  })
+
+  it('点「对话日志」开指令时间线面板（log），并收起横排入口', () => {
     render(
       <CockpitStateProvider entryCabinId="c1">
         <CockpitMenuRail />

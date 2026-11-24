@@ -30,6 +30,7 @@ import { CockpitFleetRail } from '../rail/CockpitFleetRail'
 import { CockpitRightRail } from '../rail/CockpitRightRail'
 import { CockpitActivityProvider } from '../rail/activity-feed'
 import { CockpitActivityWindow } from '../rail/CockpitActivityWindow'
+import { CockpitActivityLogWindow } from '../rail/CockpitActivityLogWindow'
 import { CockpitFace } from '../face/CockpitFace'
 import { CockpitCabinTree } from '../face/CockpitCabinTree'
 import { CockpitCabinChanges } from '../face/CockpitCabinChanges'
@@ -197,6 +198,9 @@ function CockpitSurface({ cabin }: { cabin: CabinDetail }) {
 
       {/* v22 十四轮：右栏「活动」二级大窗（贴在一级浮层左侧，只读）。 */}
       <CockpitActivityWindow />
+
+      {/* 2026-11-24 用户 #1：更多 → 活动日志（全部后台作业 + 子代理的留档）。 */}
+      <CockpitActivityLogWindow />
 
       {/* 2026-11-19 用户 #4：聊天正文里的产物绝对路径点开 → 只读文档窗。 */}
       <CockpitDocWindow />

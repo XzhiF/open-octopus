@@ -17,7 +17,7 @@ import type {
   HealthStatus,
 } from '@octopus/shared'
 
-import type { BackgroundTaskInfo } from '@octopus/providers'
+import type { BackgroundTaskControl, BackgroundTaskInfo } from '@octopus/providers'
 
 import { getSessionService } from './session-service'
 import { getMemoryService } from './memory-service'
@@ -69,6 +69,9 @@ interface StreamEntry {
   /** 后台等待期的追加输入通道（provider `onInputChannel`）；未就绪 / 已关闭
    * 时为 null。返回 false = 通道已关，调用方回退普通新回合。 */
   inject: ((text: string) => boolean) | null
+  /** 后台作业运行时控制（provider `onBackgroundControl`）：输出尾读取 /
+   *  单作业停止（2026-11-24 用户 #1）。续轮会覆盖成最新的 query。 */
+  control: BackgroundTaskControl | null
   /** Resolves when the owning route finalized its partial row (its `finally`). */
   done: Promise<void>
   finish: () => void
@@ -109,6 +112,7 @@ export function registerActiveStream(sessionId: string, abort: () => void): stri
     backgroundTasks: [],
     phase: 'generating',
     inject: null,
+    control: null,
     done,
     finish,
   })
@@ -131,8 +135,32 @@ export function attachActiveStreamInput(
   if (entry.backgroundTasks.length === 0) entry.phase = 'generating'
 }
 
-/** 更新流阶段（route 在 result 续轮 / message_start 时调用）。 */
-export function setActiveStreamPhase(
+/**
+ * 登记后台作业运行时控制（2026-11-24 用户 #1）。
+ * provider 的 `onBackgroundControl` 就绪时调用；续轮会重建 query，后注册覆盖。
+ */
+export function attachActiveStreamControl(
+  sessionId: string,
+  streamId: string,
+  control: BackgroundTaskControl,
+): void {
+  const entry = activeStreams.get(sessionId)?.get(streamId)
+  if (entry) entry.control = control
+}
+
+/** 该会话当前可用的后台作业控制（无活动流 / provider 未提供 → null）。 */
+export function getActiveStreamControl(
+  sessionId: string,
+): { streamId: string; control: BackgroundTaskControl } | null {
+  const sessionStreams = activeStreams.get(sessionId)
+  if (!sessionStreams) return null
+  for (const entry of sessionStreams.values()) {
+    if (entry.control) return { streamId: entry.streamId, control: entry.control }
+  }
+  return null
+}
+
+/** 更新流阶段（route 在 result 续轮 / message_start 时调用）。 */export function setActiveStreamPhase(
   sessionId: string,
   streamId: string | undefined,
   phase: StreamPhase,

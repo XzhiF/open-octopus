@@ -1,11 +1,13 @@
 // 右栏「活动」纯模型：裁剪 / 分组 / 列表文案。
 import { describe, it, expect } from 'vitest'
-import type { BackgroundTaskInfo, SubagentRunSummary } from '@/lib/agent/api'
+import type { BackgroundRunInfo, BackgroundTaskInfo, SubagentRunSummary } from '@/lib/agent/api'
 import {
   activityItems,
+  activityIsLive,
   activityMeta,
   activityRightLabel,
   activityTitle,
+  detectPorts,
   groupActivity,
   trimSubagentRuns,
 } from '../activity-model'
@@ -91,5 +93,62 @@ describe('activity-model · 分组 / 文案', () => {
       [],
     )
     expect(activityRightLabel(done, Date.now())).toBe('失败')
+  })
+})
+
+function bgRun(over: Partial<BackgroundRunInfo> = {}): BackgroundRunInfo {
+  return {
+    id: 'row-1',
+    session_id: 'sess-main',
+    task_id: 'bg-1',
+    run_id: 'run-1',
+    description: 'pnpm dev',
+    task_type: 'local_bash',
+    status: 'completed',
+    summary: 'ready on :3001',
+    output_file: 'C:/tmp/bg-1.log',
+    started_at: '2026-11-24T01:40:00.000Z',
+    ended_at: '2026-11-24T01:42:30.000Z',
+    created_at: '2026-11-24T01:40:00.000Z',
+    updated_at: '2026-11-24T01:42:30.000Z',
+    ...over,
+  }
+}
+
+describe('activity-model · 后台作业留档（2026-11-24 用户 #1）', () => {
+  it('结束行进列表：不计 live，右列显示终态；电平里的同 id 不重复', () => {
+    const items = activityItems(
+      [],
+      [{ id: 'bg-live', description: 'pnpm dev', taskType: 'local_bash' }],
+      [
+        bgRun({ task_id: 'bg-live', status: 'running', ended_at: null, description: 'pnpm dev' }),
+        bgRun({ task_id: 'bg-done', description: 'vitest run' }),
+        bgRun({ task_id: 'bg-fail', description: 'pnpm build', status: 'failed' }),
+      ],
+    )
+    const backgrounds = items.filter((item) => item.kind === 'background')
+    expect(backgrounds.map((item) => item.task.id)).toEqual(['bg-live', 'bg-done', 'bg-fail'])
+    expect(backgrounds.filter(activityIsLive)).toHaveLength(1)
+
+    const groups = groupActivity(items)
+    expect(groups.bgLive).toBe(1)
+    expect(groups.bgTotal).toBe(3)
+    expect(groups.liveCount).toBe(1)
+
+    const done = backgrounds[1]
+    expect(activityRightLabel(done, Date.now())).toBe('已完成')
+    expect(activityIsLive(done)).toBe(false)
+    expect(activityMeta(done, Date.now())).toContain('2m 30s')
+    expect(activityMeta(backgrounds[2], Date.now())).toContain('run_in_background')
+  })
+
+  it('detectPorts：命令 + 日志尾，去重且丢掉越界值', () => {
+    expect(detectPorts(
+      'pnpm dev --port 3000',
+      '[web] ➜ Local: http://localhost:3000/\n[server] listening on :3001\nPORT=3002',
+    )).toEqual([3000, 3001, 3002])
+    expect(detectPorts('vite -p 5173')).toEqual([5173])
+    expect(detectPorts('echo ready', 'no ports here')).toEqual([])
+    expect(detectPorts('--port 99999')).toEqual([])
   })
 })

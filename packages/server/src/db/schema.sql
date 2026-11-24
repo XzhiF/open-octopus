@@ -1374,6 +1374,33 @@ CREATE TABLE IF NOT EXISTS subagent_runs (
 CREATE INDEX IF NOT EXISTS idx_subagent_runs_session
   ON subagent_runs(session_id, started_at DESC);
 
+-- background_runs: `run_in_background` 的后台作业（dev 服务 / monitor …）。
+-- 2026-11-24 用户 #1（活动日志）：SDK 的 `background_tasks_changed` 只是运行中
+-- 电平，结束即出队；这里按电平 upsert running 行、按 `task_notification` 收口，
+-- 留下「今天跑过什么」。输出尾不落库（走 get_task_output 实时读，≤8 KiB）；
+-- output_file 只记 CLI 给的路径，供结束后再读一次。
+CREATE TABLE IF NOT EXISTS background_runs (
+  id            TEXT PRIMARY KEY,
+  session_id    TEXT NOT NULL,
+  task_id       TEXT NOT NULL,
+  run_id        TEXT,
+  description   TEXT NOT NULL,
+  task_type     TEXT,
+  status        TEXT NOT NULL DEFAULT 'running',
+  summary       TEXT,
+  output_file   TEXT,
+  started_at    TEXT NOT NULL,
+  ended_at      TEXT,
+  created_at    TEXT NOT NULL,
+  updated_at    TEXT NOT NULL,
+  FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS ux_background_runs_task
+  ON background_runs(session_id, task_id);
+CREATE INDEX IF NOT EXISTS idx_background_runs_session
+  ON background_runs(session_id, started_at DESC);
+
 -- ── Cabin (directory-bound long-lived cockpit) ──
 -- S2 convention: cross-domain links carry NO foreign key; app-level cascade.
 CREATE TABLE IF NOT EXISTS cabins (

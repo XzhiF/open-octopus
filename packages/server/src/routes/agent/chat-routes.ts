@@ -17,7 +17,7 @@ import { createTurnStream, DEFAULT_HEARTBEAT_MS } from '../../services/agent/tur
 import { SystemPromptAssembler } from '../../services/agent/system-prompt-assembler'
 import { getNotificationService } from '../../services/agent/notification-service'
 import { getSessionCompressService } from '../../services/agent/session-compress-service'
-import { getAgentService, getActiveStreamBackgroundTasks, getActiveStreamPhase, isStreamActive, registerActiveStream, setActiveStreamBackgroundTasks, attachActiveStreamInput, setActiveStreamPhase, findBackgroundWaitStream, unregisterActiveStream } from '../../services/agent/agent-service'
+import { getAgentService, getActiveStreamBackgroundTasks, getActiveStreamPhase, getActiveStreamControl, isStreamActive, registerActiveStream, setActiveStreamBackgroundTasks, attachActiveStreamInput, attachActiveStreamControl, setActiveStreamPhase, findBackgroundWaitStream, unregisterActiveStream } from '../../services/agent/agent-service'
 import { getSafetyInterceptor } from '../../services/agent/safety-interceptor'
 import { getAgentDir, getDailyMemoryDir, getExperiencesDir, getDebugTracesDir } from '../../services/agent/paths'
 import { deriveSessionTitle } from '../../services/agent/session-title'
@@ -32,6 +32,7 @@ import { withTransientReminder } from '../../services/agent/prompt-reminder'
 import { buildTaskPlaybookReminder } from '../../services/agent/turn-context'
 import { recordProviderResultUsage, ledgerStopReason } from '../../services/llm-call-ledger'
 import { SubagentRunService } from '../../services/agent/subagent-runs'
+import { BackgroundRunService } from '../../services/agent/background-runs'
 import { SessionTurnDebugDAO, hashPrompt } from '../../db/dao'
 import { TurnDebugRecorder, type TurnDebugIdentity } from '../../services/agent/turn-debug-recorder'
 import { expertName } from '@octopus/shared'
@@ -48,6 +49,31 @@ import type { EffortLevel } from '@octopus/shared'
 import { parseComposerContext, parseComposerEffort, resolveChatModel } from './composer-options'
 import type { TaskThreadService } from '../../services/tasks/task-thread-service'
 import { commitWorkspaceEdits, quickEditMarkerFor } from '../../services/tasks/quick-edit'
+
+/** 读取文件末尾 ≤ maxBytes（后台作业 output_file 的兜底；UTF-8 截断丢掉首行残片）。 */
+function readFileTail(
+  file: string,
+  maxBytes: number,
+): { output: string; total_bytes: number; truncated: boolean } | null {
+  try {
+    const stat = fs.statSync(file)
+    if (!stat.isFile()) return null
+    const start = Math.max(0, stat.size - maxBytes)
+    const len = stat.size - start
+    if (len <= 0) return { output: '', total_bytes: stat.size, truncated: false }
+    const buf = Buffer.alloc(len)
+    const fd = fs.openSync(file, 'r')
+    try { fs.readSync(fd, buf, 0, len, start) } finally { fs.closeSync(fd) }
+    let output = buf.toString('utf8')
+    if (start > 0) {
+      const nl = output.indexOf('\n')
+      if (nl >= 0) output = output.slice(nl + 1)
+    }
+    return { output, total_bytes: stat.size, truncated: start > 0 }
+  } catch {
+    return null
+  }
+}
 
 export interface ChatRouteDeps {
   sessionDAO: AgentSessionDAO
@@ -144,6 +170,10 @@ export function createChatRoutes(deps: ChatRouteDeps): Hono {
   // Lazy: route factories run at import time, before tests init the DB.
   let subagentRuns: SubagentRunService | null = null
   const getSubagentRuns = () => (subagentRuns ??= new SubagentRunService(sessionDao.getDb()))
+  // 后台作业记录（2026-11-24 用户 #1 · 活动日志）：电平 → running 行，
+  // 结束边沿 → 收口。与子代理同一套路，读侧还有 output 路由。
+  let backgroundRuns: BackgroundRunService | null = null
+  const getBackgroundRuns = () => (backgroundRuns ??= new BackgroundRunService(sessionDao.getDb()))
 
   // ── Session running state（"关闭不丢失"）──────────────────────────
   // running = 内存里仍有该会话的生成流；partial = DB 里还有 streaming partial。
@@ -200,6 +230,77 @@ export function createChatRoutes(deps: ChatRouteDeps): Hono {
       return c.json(createAgentError('NOT_FOUND', `Subagent ${agentId} not found`), 404)
     }
     return c.json({ run })
+  })
+
+  // ── Background jobs（2026-11-24 用户 #1 · 活动日志）─────────────────
+  // 运行中电平 + 已结束留档（background_runs）。右栏「活动」与「更多 →
+  // 活动日志」共用这一个数据源。
+  app.get('/sessions/:id/background-runs', (c) => {
+    const id = c.req.param('id')
+    const session = sessionDao.findById(id)
+    if (!session || session.is_deleted) {
+      return c.json(createAgentError('NOT_FOUND', `Session ${id} not found`), 404)
+    }
+    return c.json({ runs: getBackgroundRuns().list(id) })
+  })
+
+  // 输出尾：运行中走 SDK `get_task_output`（≤8 KiB，实时）；回合结束 / 进程
+  // 重启后回退读 CLI 留下的 output_file 末尾。两路都没有 → 409。
+  app.get('/sessions/:id/background/:taskId/output', async (c) => {
+    const id = c.req.param('id')
+    const taskId = c.req.param('taskId')
+    const session = sessionDao.findById(id)
+    if (!session || session.is_deleted) {
+      return c.json(createAgentError('NOT_FOUND', `Session ${id} not found`), 404)
+    }
+    const live = getActiveStreamControl(id)
+    if (live) {
+      try {
+        const out = await live.control.getTaskOutput(taskId)
+        return c.json({ ...out, source: 'live' as const })
+      } catch {
+        // 任务已结束 / 该 SDK 不支持 —— 落到下面的文件兜底。
+      }
+    }
+    const row = getBackgroundRuns().find(id, taskId)
+    if (row?.output_file) {
+      const tail = readFileTail(row.output_file, 8 * 1024)
+      if (tail) return c.json({ ...tail, source: 'file' as const })
+    }
+    return c.json(
+      createAgentError('UNAVAILABLE', '该作业的输出已不可读（进程已退出或文件被清理）'),
+      409,
+    )
+  })
+
+  // 单独停一个后台作业（不打断当前模型轮）。SDK 会补一条 status='stopped'
+  // 的 task_notification，provider 转成 background_task_ended 后由记录服务收口。
+  app.post('/sessions/:id/background/:taskId/stop', async (c) => {
+    const id = c.req.param('id')
+    const taskId = c.req.param('taskId')
+    const session = sessionDao.findById(id)
+    if (!session || session.is_deleted) {
+      return c.json(createAgentError('NOT_FOUND', `Session ${id} not found`), 404)
+    }
+    const tracked = getActiveStreamBackgroundTasks(id).some((task) => task.id === taskId)
+      || getBackgroundRuns().find(id, taskId)?.status === 'running'
+    if (!tracked) {
+      return c.json(createAgentError('NOT_FOUND', `Background task ${taskId} not found`), 404)
+    }
+    const live = getActiveStreamControl(id)
+    if (!live) {
+      return c.json(
+        createAgentError('UNAVAILABLE', '该会话没有活动中的查询，作业已不在运行'),
+        409,
+      )
+    }
+    try {
+      await live.control.stopTask(taskId)
+      return c.json({ success: true })
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err)
+      return c.json(createAgentError('INTERNAL_ERROR', msg), 500)
+    }
   })
 
   // ── Chat SSE streaming ─────────────────────────────────────────────
@@ -653,6 +754,8 @@ export function createChatRoutes(deps: ChatRouteDeps): Hono {
         }
         setActiveStreamBackgroundTasks(id, null)
         unregisterActiveStream(id, streamId)
+        // 回合收尾：不让 background_runs 留下永久 running 的行。
+        try { getBackgroundRuns().closeRunning(id) } catch { /* 观测面失败不影响收轮 */ }
         notifyWake('done')
         // Closes after the terminal frame has been flushed (terminate awaits
         // the serialized write chain).
@@ -1017,6 +1120,12 @@ export function createChatRoutes(deps: ChatRouteDeps): Hono {
               return true
             })
           },
+          // 后台作业运行时控制（2026-11-24 用户 #1）：输出尾 / 单作业停止。
+          // 续轮会重建 query，后注册覆盖先注册（以最新一条为准）。
+          onBackgroundControl: (control) => {
+            if (!extra?.streamId) return
+            attachActiveStreamControl(sessionId, extra.streamId, control)
+          },
           // AskUserQuestion 交互接管（2026-11-02）：与 clone-runtime 同构。
           // 10-28 任务线程把 task-author 搬进主对话后这里漏了开关 —— SDK 在
           // headless 下直接「执行」AskUserQuestion 并回空 answers，模型把
@@ -1133,7 +1242,27 @@ export function createChatRoutes(deps: ChatRouteDeps): Hono {
               // 后台任务电平：注册表供 header / running 探测，SSE 供对话内
               // 的「后台运行中：…」工作行。空数组 = 后台已清空、CLI 即将唤醒。
               setActiveStreamBackgroundTasks(sessionId, chunk.tasks)
+              // 活动日志留档：电平内任务 → running 行；已出电平的 running 行收口。
+              try {
+                getBackgroundRuns().syncLevel(sessionId, getActiveStreamBackgroundTasks(sessionId))
+              } catch (err: unknown) {
+                console.warn(
+                  '[agent-chat] background run sync failed (non-fatal):',
+                  err instanceof Error ? err.message : String(err),
+                )
+              }
               await stream.writeSSE({ event: 'background_tasks', data: JSON.stringify({ tasks: chunk.tasks }) })
+              break
+            case 'background_task_ended':
+              // 单个后台作业结束：最终状态 / 摘要 / output_file 落档。
+              try {
+                getBackgroundRuns().markEnded(sessionId, chunk.task)
+              } catch (err: unknown) {
+                console.warn(
+                  '[agent-chat] background run end failed (non-fatal):',
+                  err instanceof Error ? err.message : String(err),
+                )
+              }
               break
             case 'slash_commands':
               // CLI-advertised command set for this session (skills/plugins

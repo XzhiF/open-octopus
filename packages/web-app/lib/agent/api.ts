@@ -117,6 +117,51 @@ export function getSessionRunning(id: string) {
   }>(`/sessions/${id}/running`)
 }
 
+// ── 后台作业（run_in_background）· 2026-11-24 用户 #1 活动日志 ──────────
+/** 后台作业的一条记录：运行中来自电平，已结束来自 task_notification 留档。 */
+export interface BackgroundRunInfo {
+  id: string
+  session_id: string
+  task_id: string
+  run_id: string | null
+  description: string
+  task_type: string | null
+  status: 'running' | 'completed' | 'failed' | 'stopped'
+  summary: string | null
+  output_file: string | null
+  started_at: string
+  ended_at: string | null
+  created_at: string
+  updated_at: string
+}
+
+export function listSessionBackgroundRuns(id: string) {
+  return request<{ runs: BackgroundRunInfo[] }>(`/sessions/${id}/background-runs`)
+}
+
+export interface BackgroundTaskOutput {
+  output: string
+  total_bytes: number
+  truncated: boolean
+  /** live = SDK 实时读取；file = 结束后读 CLI 留下的输出文件末尾。 */
+  source: 'live' | 'file'
+}
+
+/** 后台作业输出末尾（≤8 KiB）。作业已结束且文件还在时也能读一次。 */
+export function getBackgroundOutput(id: string, taskId: string) {
+  return request<BackgroundTaskOutput>(
+    `/sessions/${id}/background/${encodeURIComponent(taskId)}/output`,
+  )
+}
+
+/** 单独停一个后台作业（不打断主对话的当前轮）。 */
+export function stopBackgroundTask(id: string, taskId: string) {
+  return request<{ success: boolean }>(
+    `/sessions/${id}/background/${encodeURIComponent(taskId)}/stop`,
+    { method: 'POST' },
+  )
+}
+
 /** 后台等待期的追加输入：注进服务端同一条 provider 查询（不新开回合）。
  *  返回 `injected=false` / 抛 409 时应回退普通发送或排队。 */
 export function injectChat(id: string, message: string) {

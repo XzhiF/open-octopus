@@ -1840,6 +1840,78 @@ kbd{border:1px solid rgba(185,179,217,.35);border-bottom-width:2px;border-radius
 .act-tfoot .chip{padding:1px 5px;border:1px solid rgba(185,179,217,.2);background:rgba(255,255,255,.04);color:var(--ink2)}
 .act-tfoot .chip b{color:#fff;font-weight:800}
 .act-tfoot .sp{flex:1}
+/* ═══ 活动日志（v23 · 2026-11-24 用户）：「更多 → 活动日志」大窗 + 后台详情补强。
+       一级 = 左列表（运行中置顶 / 已结束留档）+ 右详情；后台作业显示启动命令、
+       识别到的端口、日志尾，并可单独「停止作业」（二次确认）。 ═══ */
+.actlogwin{width:min(1120px,94vw);height:min(680px,calc(100vh - 150px))}
+.actlogwin .pb{gap:0}
+.actlogwin .ph .chip{display:inline-flex;align-items:center;gap:4px;height:18px;padding:0 7px;border:1px solid rgba(185,179,217,.22);background:rgba(255,255,255,.04);color:var(--ink2);font-size:8px;font-weight:800;font-family:var(--font-mono)}
+.actlogwin .ph .chip.run{border-color:rgba(61,220,151,.4);background:rgba(61,220,151,.12);color:var(--green)}
+.altools{flex:none;display:flex;align-items:center;gap:8px;flex-wrap:wrap;padding:7px 14px;border-bottom:1px solid rgba(185,179,217,.14);background:rgba(255,255,255,.025)}
+.altools input{flex:none;width:220px;height:24px;border:1px solid rgba(46,230,214,.3);background:rgba(10,8,24,.55);color:#fff;padding:0 9px;font-size:10px}
+.altools input:focus{outline:none;border-color:var(--teal)}
+.altools .hint{margin-left:auto;font-size:8.5px;color:var(--metal2)}
+.albody{flex:1;min-height:0;display:flex}
+.allist{flex:none;width:318px;min-height:0;overflow:auto;border-right:1px solid rgba(185,179,217,.14);padding:4px 5px 10px}
+.alg{display:flex;align-items:center;justify-content:space-between;padding:7px 6px 3px;font-size:8px;font-weight:800;letter-spacing:.14em;color:var(--metal2)}
+.alg b{color:#fff}
+.alrow{width:100%;display:flex;flex-direction:column;gap:3px;padding:7px 8px;text-align:left;border-radius:7px;border:1px solid transparent}
+.alrow:hover{background:rgba(46,230,214,.07)}
+.alrow.on{background:linear-gradient(90deg,rgba(123,77,255,.26),rgba(53,199,240,.1));border-color:rgba(123,77,255,.42);box-shadow:inset 2px 0 0 var(--violet)}
+.alrow .r1{display:flex;align-items:center;gap:6px;min-width:0}
+.alname{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:10.5px;color:#fff}
+.algo{flex:none;font-size:8.5px;color:var(--metal2)}
+.algo.live{color:var(--green)}
+.alq{font-size:8.5px;color:var(--metal2);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.aldetail{flex:1;min-width:0;overflow:auto;padding:12px 16px 14px;display:flex;flex-direction:column;gap:2px;font-size:10.5px;color:var(--ink2)}
+.ald-head{display:flex;align-items:center;gap:7px;flex-wrap:wrap;margin-bottom:9px}
+.ald-head b{font-size:13px;color:#fff;font-family:var(--font-ui)}
+.ald-head .sp{flex:1}
+.ald-head .chip{display:inline-flex;align-items:center;gap:4px;height:17px;padding:0 6px;border:1px solid rgba(185,179,217,.22);background:rgba(255,255,255,.04);color:var(--ink2);font-size:8px;font-family:var(--font-mono)}
+.ald-head .chip.run{border-color:rgba(61,220,151,.4);background:rgba(61,220,151,.12);color:var(--green)}
+.ald-head .chip.done{border-color:rgba(61,220,151,.4);background:rgba(61,220,151,.12);color:var(--green)}
+.ald-head .chip.failed{border-color:rgba(255,59,92,.4);background:rgba(255,59,92,.12);color:var(--red)}
+.aldetail .act-meta{margin:0 0 9px}
+.aldetail .act-body{display:flex;flex-direction:column;gap:2px;padding:0;overflow:visible;flex:none}
+.aldetail .act-tfoot{margin-top:8px;border-top:1px solid rgba(46,230,214,.16);padding:6px 0 0;background:none}
+.alfoot{flex:none;display:flex;align-items:center;gap:8px;padding:6px 14px;border-top:1px solid rgba(185,179,217,.12);font-size:8.5px;color:var(--metal2)}
+.alfoot .sp{flex:1}
+.alfoot .chip{padding:1px 6px;border:1px solid rgba(185,179,217,.2);background:rgba(255,255,255,.04);color:var(--ink2)}
+/* 后台详情补强：端口 / 作业操作 / 单作业停止确认 */
+.act-ports{flex:none;display:flex;align-items:center;gap:7px;flex-wrap:wrap;margin:0 0 9px;padding:6px 9px;border:1px solid rgba(53,199,240,.28);background:rgba(53,199,240,.07);border-radius:8px}
+.act-ports .k{font-size:8px;font-weight:800;letter-spacing:.1em;color:var(--sky)}
+.act-ports .hint{font-size:8px;color:var(--metal2);margin-left:auto}
+.act-port{height:20px;padding:0 8px;border:1px solid rgba(53,199,240,.4);background:rgba(53,199,240,.1);color:var(--sky);font-size:9px;font-weight:800;clip-path:var(--btncut)}
+.act-port:hover{color:#fff;border-color:var(--sky);background:rgba(53,199,240,.2)}
+.act-acts{flex:none;display:flex;align-items:center;gap:7px;flex-wrap:wrap;margin:0 0 9px}
+.act-acts .hint{font-size:8.5px;color:var(--metal2)}
+.act-stopbtn{height:24px;padding:0 10px;border:1px solid rgba(255,59,92,.55);background:rgba(255,59,92,.1);color:var(--red);font-size:9.5px;font-weight:800;clip-path:var(--btncut)}
+.act-stopbtn:hover{background:rgba(255,59,92,.2);color:#fff}
+.act-openurl{height:24px;padding:0 10px;border:1px solid rgba(53,199,240,.4);background:rgba(53,199,240,.08);color:var(--sky);font-size:9.5px;font-weight:800;clip-path:var(--btncut)}
+.act-openurl:hover{background:rgba(53,199,240,.18);color:#fff}
+.act-stopconfirm{flex:none;display:flex;align-items:center;gap:8px;margin:0 0 9px;padding:7px 9px;border:1px solid rgba(255,59,92,.5);background:rgba(255,59,92,.1);border-radius:8px;font-size:9.5px;color:#ffd3dc}
+.act-stopconfirm[hidden]{display:none}
+.act-stopconfirm .sp{flex:1}
+.act-stopconfirm button{height:22px;padding:0 9px;border:1px solid rgba(185,179,217,.3);background:rgba(255,255,255,.06);color:var(--ink2);font-size:9px;font-weight:800;clip-path:var(--btncut)}
+.act-stopconfirm button.danger{color:#fff;background:rgba(255,59,92,.35);border-color:rgba(255,59,92,.7)}
+.act-stopconfirm button.danger:hover{background:rgba(255,59,92,.55)}
+/* 通讯台：停止整轮（红色方块）+ 确认层（2026-11-24 用户问题 3） */
+.con-in .send.stop{clip-path:none;border-radius:9px;background:rgba(255,59,92,.1);color:var(--red);border:1px solid rgba(255,59,92,.6);box-shadow:none;animation:stopPulse 1.8s ease-in-out infinite}
+.con-in .send.stop:hover{background:rgba(255,59,92,.22);color:#fff;filter:none}
+.con-in .send.stop i{width:12px;height:12px;border-radius:2px;background:currentColor;font-size:0}
+.con-in .send.stop .sn{position:absolute;top:-6px;right:-6px;min-width:15px;height:15px;padding:0 3px;border-radius:999px;background:var(--amber);color:#241600;font-size:8.5px;font-weight:900;display:grid;place-items:center;font-family:var(--font-mono)}
+.con-in .send.stop .sn[hidden]{display:none}
+@keyframes stopPulse{0%,100%{box-shadow:0 0 0 0 rgba(255,59,92,.4),0 0 12px rgba(255,59,92,.3)}50%{box-shadow:0 0 0 4px rgba(255,59,92,0),0 0 20px rgba(255,59,92,.55)}}
+.stopconfirm{position:fixed;z-index:80;width:340px;padding:11px 12px;border-radius:12px;border:1px solid rgba(255,176,32,.55);background:rgba(28,20,10,.97);box-shadow:0 22px 60px rgba(0,0,0,.6);font-size:10.5px;color:#ffe6b8}
+.stopconfirm[hidden]{display:none}
+.stopconfirm .t{font-family:var(--font-ui);font-size:12px;font-weight:800;color:var(--hazard)}
+.stopconfirm p{margin:6px 0 9px;line-height:1.62;color:#ffd9a3}
+.stopconfirm p b{color:#fff}
+.stopconfirm .row{display:flex;gap:7px;justify-content:flex-end}
+.stopconfirm .row button{height:24px;padding:0 10px;border:1px solid rgba(185,179,217,.3);background:rgba(255,255,255,.06);color:var(--ink2);font-size:9.5px;font-weight:800;clip-path:var(--btncut)}
+.stopconfirm .row button.danger{color:#fff;background:rgba(255,59,92,.4);border-color:rgba(255,59,92,.75)}
+.stopconfirm .row button.danger:hover{background:rgba(255,59,92,.6)}
+.stopconfirm small{display:block;margin-top:7px;color:#c9a86a;font-size:8.5px}
 @media (max-width:900px){
   #rActivity{display:none}
 }
@@ -1904,6 +1976,12 @@ kbd{border:1px solid rgba(185,179,217,.35);border-bottom-width:2px;border-radius
   </div>
 
   <div class="pop" id="popSim"></div>
+  <div class="stopconfirm" id="stopConfirm" hidden role="dialog" aria-label="停止整轮确认">
+    <div class="t">⚠ 后台作业还在跑</div>
+    <p>这一轮在等 <b id="stopConfirmN">0</b> 个后台作业。点「停止整轮」会一并结束它们——服务会直接停掉。</p>
+    <div class="row"><button data-stop-cancel>继续跑着</button><button class="danger" data-stop-all>停止整轮</button></div>
+    <small>只想停单个作业：更多 → 活动日志 → 选择该作业 →「停止作业」。</small>
+  </div>
   <div class="toast" id="toast"></div>
 
   <div class="setwrap" id="setwrap" hidden>
@@ -1935,6 +2013,7 @@ kbd{border:1px solid rgba(185,179,217,.35);border-bottom-width:2px;border-radius
   <section class="twin" id="twin" aria-label="目录树"></section>
   <section class="twin" id="docwin" aria-label="文档查看器"></section>
   <section class="twin" id="actWin" aria-label="活动详情"></section>
+  <section class="twin actlogwin" id="actLogWin" aria-label="活动日志"></section>
   <section class="twin" id="notesWin" aria-label="便签 · 快速记事"></section>
   <section class="twin" id="kcWin" aria-label="知识中心"></section>
   <section class="twin" id="itemsWin" aria-label="事项 · 舱内小待办"></section>
@@ -1969,7 +2048,7 @@ kbd{border:1px solid rgba(185,179,217,.35);border-bottom-width:2px;border-radius
     <div class="con-choices" id="conChoices" hidden></div>
     <div class="con-queue" id="conQueue" hidden></div>
     <div class="con-attach" id="conAttach" hidden></div>
-    <div class="con-in" id="conIn"><span class="pr">❯</span><textarea id="cmdInput" rows="1" placeholder="回应汐音 / 下达新指令…（⏎ 发送 · ⇧⏎ 换行）"></textarea><button class="send" id="btnSend">⏎</button></div>
+    <div class="con-in" id="conIn"><span class="pr">❯</span><textarea id="cmdInput" rows="1" placeholder="回应汐音 / 下达新指令…（⏎ 发送 · ⇧⏎ 换行）"></textarea><button class="send stop" id="btnStop" hidden title="停止整轮（会一并结束后台作业）"><i></i><b class="sn" id="btnStopN" hidden>0</b></button><button class="send" id="btnSend">⏎</button></div>
   </section>
 
   <button id="conDock" hidden><span class="dl"></span>💬 <b id="dockThread">主对话</b><span class="un" id="dockUn" hidden>0</span>通讯停靠 · 点击展开</button>
@@ -2154,6 +2233,7 @@ const state={sound:true,theme:0,winAlpha:1,thread:'main',panel:null,detailJob:nu
  chgQ:'',chgSel:null,chgOpen:null,chgTabs:[],
  logQ:'',
  actOpen:false,actSel:null,
+ actLogOpen:false,actLogSel:'a-bg-3',actLogFilter:'all',actLogQ:'',
  doc:null,
  addOpen:false,addTab:'skill',addQ:'',attSkill:null,attExpert:null,attLb:null,apMcp:null,
  flash:{job:null,op:null,at:0},autoWarp:true,conMin:false,conLeft:null,conTop:null,conGeo:null,wins:[],winSeq:0,zTop:30,
@@ -2333,6 +2413,15 @@ function renderActivityButton(){
   const n=$('#rActivityN');
   if(n){n.hidden=live.length===0;n.textContent=String(live.length);}
   btn.title=live.length?`活动 · ${live.length} 项后台运行中（⌥V，只读）`:'活动 · 当前没有后台作业或子代理';
+  syncStopButton();
+}
+/* 通讯台红色方块（v23）：只在有后台作业运行时点亮 —— 与真实产品「等后台 = 回合仍活着」同口径。 */
+function bgLiveCount(){return ACTIVITY.filter(a=>a.kind==='background'&&a.status==='run').length;}
+function syncStopButton(){
+  const n=bgLiveCount(),b=$('#btnStop');if(!b)return;
+  b.hidden=n===0;
+  const badge=$('#btnStopN');
+  if(badge){badge.hidden=n===0;badge.textContent=String(n);}
 }
 function positionActPop(){
   const pop=$('#actPop'),btn=$('#rActivity');
@@ -2388,11 +2477,20 @@ function renderActWin(){
   const w=$('#actWin');if(!w)return;
   const a=state.actSel?actOf(state.actSel):null;
   if(!a||!state.actOpen){w.classList.remove('open');w.innerHTML='';return;}
+  const isBg=a.kind==='background';
+  const head=`${isBg?'⌁ 后台作业':'◈ 子代理详情'} · ${esc(a.title)}`;
+  const sub=`${isBg?'BACKGROUND TASK':'SUBAGENT'} · ${esc(a.by)} · 只读${isBg&&a.status==='run'?'（可停止）':''}`;
+  w.innerHTML=`<div class="ph"><button class="phx" data-actwin-close title="关闭详情（Esc）">✕</button><span class="pt"><b>${head}</b><span>${sub}</span></span><span class="sp"></span></div>
+   <div class="pb">${actDetailHTML(a)}</div>`;
+  $('[data-actwin-close]',w)?.addEventListener('click',()=>{state.actSel=null;renderActivityPop();Audio.sfx('close');});
+  w.classList.add('open');
+}
+/* 活动详情正文（v23）：一级浮层的详情窗与「活动日志」大窗共用。
+   后台作业在 v22 的「启动命令 + 输出」之外补上：识别端口、单作业停止（二次确认）。 */
+function actDetailHTML(a){
   const live=a.status==='run';
   const isBg=a.kind==='background';
   const src=a.src?jobOf(a.src):null;
-  const head=`${isBg?'⌁ 后台作业':'◈ 子代理详情'} · ${esc(a.title)}`;
-  const sub=`${isBg?'BACKGROUND TASK':'SUBAGENT'} · ${esc(a.by)} · 只读`;
   const meta=`<div class="act-meta">
     <span class="chip ${actStatusCls(a.status)}">${live?'●':'✓'} ${actStatusLabel(a.status)}</span>
     <span class="chip">${esc(a.type||(isBg?'bash':'subagent'))}</span>
@@ -2402,17 +2500,102 @@ function renderActWin(){
     ${src?`<button class="src" data-act-src="${esc(src.id)}" title="回到编队里这条作业">▦ ${esc(src.short)}</button>`:''}
   </div>`;
   const prompt=`<div class="act-prompt"><div class="k">${isBg?'⌁ 启动命令':'✦ 主 Agent 的指令'}</div><pre>${esc(isBg?(a.command||''):(a.prompt||'（SDK 未回传指令正文）'))}</pre></div>`;
+  const ports=isBg&&a.ports&&a.ports.length
+    ?`<div class="act-ports"><span class="k">↗ 识别到的端口</span>${a.ports.map(p=>`<button class="act-port" data-act-port="${esc(p)}" title="打开 http://localhost:${esc(p)}">localhost:${esc(p)}</button>`).join('')}<span class="hint">来自命令 + 日志尾</span></div>`
+    :'';
+  const actions=isBg
+    ?`<div class="act-acts">
+        ${live?`<button class="act-stopbtn" data-act-stop="${esc(a.id)}">■ 停止作业</button>`:''}
+        ${a.ports&&a.ports.length?`<button class="act-openurl" data-act-port="${esc(a.ports[0])}">↗ 打开 localhost:${esc(a.ports[0])}</button>`:''}
+        <span class="hint">${live?'只结束这一个作业 · 主对话继续跑':'已结束 · 留档只读'}</span>
+      </div>
+      ${live?`<div class="act-stopconfirm" data-act-confirmwrap="${esc(a.id)}" hidden>
+        <span>停止「${esc(a.title)}」？进程会被结束，日志保留到结束。</span><span class="sp"></span>
+        <button data-act-stopcancel="${esc(a.id)}">取消</button>
+        <button class="danger" data-act-stopconfirm="${esc(a.id)}">确认停止</button>
+      </div>`:''}`
+    :'';
   const body=isBg
-    ?`${prompt}${actLogHTML(a)}`
+    ?`${prompt}${ports}${actions}${actLogHTML(a)}`
     :`${prompt}${actLogHTML(a)}${a.summary?`<div class="act-sum"><div class="k">✓ 最终汇报</div><pre>${esc(a.summary)}</pre></div>`:''}`;
   const foot=isBg
-    ?`<div class="act-tfoot"><span class="chip">退出码 <b>${a.exit==null?'—':a.exit}</b></span><span class="chip">pid <b>${esc(a.pid||'—')}</b></span><span class="chip">run_in_background</span><span class="sp"></span>${live?'实时输出中 · 只读':'已结束 · 留档只读'}</div>`
+    ?`<div class="act-tfoot"><span class="chip">退出码 <b>${a.exit==null?'—':a.exit}</b></span><span class="chip">pid <b>${esc(a.pid||'—')}</b></span><span class="chip">run_in_background</span><span class="sp"></span>${live?'日志尾 2s 刷新 · 只读':'已结束 · 读 output_file 末尾'}</div>`
     :`<div class="act-tfoot"><span class="chip">输入 <b>${fmtK(a.tin||0)}</b></span><span class="chip">输出 <b>${fmtK(a.tout||0)}</b></span><span class="chip">缓存读 <b>${fmtK(a.tcache||0)}</b></span><span class="chip">合计 <b>${fmtK(actTok(a))}</b> tok</span><span class="chip">费用 <b>${a.cost==null?'—':'¥'+a.cost.toFixed(2)}</b></span><span class="chip">${a.steps||0} 步</span><span class="sp"></span>${live?'↻ 实时更新中 · 只读':'已结束 · 留档只读'}</div>`;
-  w.innerHTML=`<div class="ph"><button class="phx" data-actwin-close title="关闭详情（Esc）">✕</button><span class="pt"><b>${head}</b><span>${sub}</span></span><span class="sp"></span></div>
-   <div class="pb">${meta}<div class="act-body">${body}</div>${foot}</div>`;
-  $('[data-actwin-close]',w)?.addEventListener('click',()=>{state.actSel=null;renderActivityPop();Audio.sfx('close');});
+  return `${meta}<div class="act-body">${body}</div>${foot}`;
+}
+/* 活动日志（v23）：更多 → 活动日志。左列表（运行中置顶 / 已结束留档）+ 右详情，
+   与一级浮层共用 actDetailHTML；筛选 / 搜索只重画列表，不动输入框。 */
+function alFiltered(){
+  const q=(state.actLogQ||'').trim().toLowerCase();
+  return ACTIVITY.filter(a=>{
+    if(state.actLogFilter==='background'&&a.kind!=='background')return false;
+    if(state.actLogFilter==='subagent'&&a.kind!=='subagent')return false;
+    if(!q)return true;
+    return [a.title,a.command,a.by,a.type].filter(Boolean).some(x=>String(x).toLowerCase().includes(q));
+  });
+}
+function alRow(a){
+  const live=a.status==='run';
+  return `<button class="alrow${state.actLogSel===a.id?' on':''}" data-al-item="${esc(a.id)}">
+    <span class="r1"><span class="ap-kind ${a.kind==='subagent'?'sub':'bg'}">${a.kind==='subagent'?'◈ 子代理':'⌁ 后台'}</span><span class="alname">${esc(a.title)}</span><span class="algo${live?' live':''}">${live?'运行中':esc(actStatusLabel(a.status))}</span></span>
+    <span class="alq">${esc(a.by)} · ${esc(a.started||'')} · ${esc(a.elapsed||'—')}${a.ports&&a.ports.length?' · :'+a.ports.join(' :'):''}</span></button>`;
+}
+function renderActLogList(){
+  const box=$('#alList');if(!box)return;
+  const list=alFiltered();
+  const live=list.filter(a=>a.status==='run');
+  const done=list.filter(a=>a.status!=='run');
+  const group=(label,arr)=>arr.length?`<div class="alg"><span>${label}</span><b>${arr.length}</b></div>`+arr.map(alRow).join(''):'';
+  box.innerHTML=(group('运行中',live)+group('已结束',done))||'<div class="ip-empty"><b>◳</b>没有匹配的活动</div>';
+  const n=$('#alLiveN');if(n)n.textContent=String(actLive().length);
+}
+function renderActLogDetail(){
+  const box=$('#alDetail');if(!box)return;
+  const a=state.actLogSel?actOf(state.actLogSel):null;
+  if(!a){box.innerHTML='<div class="ip-empty"><b>◳</b>选一条活动看命令 / 端口 / 日志</div>';return;}
+  const live=a.status==='run';
+  box.innerHTML=`<div class="ald-head"><span class="ap-kind ${a.kind==='subagent'?'sub':'bg'}">${a.kind==='subagent'?'◈ 子代理':'⌁ 后台'}</span><b>${esc(a.title)}</b><span class="sp"></span><span class="chip">${esc(a.by)}</span></div>`+actDetailHTML(a);
+}
+function renderActLog(){
+  const w=$('#actLogWin');if(!w)return;
+  if(!state.actLogOpen){w.classList.remove('open');return;}
+  if(!w.querySelector('#alList')){
+    w.innerHTML=`<div class="ph"><button class="phx" data-al-close title="关闭活动日志（Esc）">✕</button><span class="pt"><b>◳ 活动日志</b><span>ACTIVITY LOG · 本舱 · 主会话「汐音」</span></span><span class="sp"></span><span class="chip run">在跑 <b id="alLiveN">0</b></span><span class="chip">今日 ${ACTIVITY.length} 条</span></div>
+     <div class="pb">
+       <div class="altools">
+         <div class="seg" id="alSeg">
+           <button data-al-filter="all" class="on">全部</button><button data-al-filter="background">后台作业</button><button data-al-filter="subagent">子代理</button>
+         </div>
+         <div class="seg"><button class="on" title="原型：本舱主会话">本舱</button><button title="原型：跨会话聚合（仅演示）">全部会话</button></div>
+         <input id="alQ" placeholder="搜命令 / 名称 / 会话…" value="${esc(state.actLogQ)}" />
+         <span class="hint">运行中置顶 · 已结束留档 24h</span>
+       </div>
+       <div class="albody"><div class="allist" id="alList"></div><div class="aldetail" id="alDetail"></div></div>
+       <div class="alfoot"><span class="chip">日志尾（最后 8 KiB）· 2s 刷新</span><span class="sp"></span><span>已结束读 output_file 末尾 · 停止作业仅对运行中生效</span></div>
+     </div>`;
+    $('#alQ').addEventListener('input',e=>{state.actLogQ=e.target.value;renderActLogList();});
+  }
+  if(!state.actLogSel||!actOf(state.actLogSel))state.actLogSel=(actLive()[0]||ACTIVITY[0]||{}).id||null;
+  $$('#alSeg button').forEach(b=>b.classList.toggle('on',b.dataset.alFilter===state.actLogFilter));
+  renderActLogList();renderActLogDetail();
   w.classList.add('open');
 }
+function openActLog(){
+  closeFan();
+  if(state.actOpen)toggleActPop(false);
+  state.actLogOpen=true;renderActLog();Audio.sfx('open');
+}
+function closeActLog(){state.actLogOpen=false;$('#actLogWin')?.classList.remove('open');Audio.sfx('close');}
+/* 单作业停止（真实产品 = provider q.stopTask；原型只改状态并联动各处读数）。 */
+function stopActivity(id){
+  const a=actOf(id);if(!a)return;
+  a.status='done';a.exit=a.exit??'stopped';
+  syncStopButton();
+  if(state.actOpen)renderActivityPop();else renderActivityButton();
+  if(state.actLogOpen)renderActLog();
+  toast(`已停止「${a.title}」· 日志保留到进程退出`);
+}
+
 function actLogHTML(a){
   if(a.kind==='background'){
     return `<div class="act-out"><div class="oh">${a.status==='run'?'<i></i>':''}实时输出 · 只读</div><pre>${esc(a.output||'')}</pre></div>`;
@@ -2442,9 +2625,66 @@ function bindActPop(){
     ACTIVITY.forEach(a=>{if(a.status==='run'){a.status='done';a.exit=a.exit??0;}});
     state.actSel=null;
     toggleActPop(false);
+    if(state.actLogOpen)renderActLog();
+    syncStopButton();
     toast('活动已全部收口 · 右栏按钮随之隐藏');
   });
 }
+/* ── v23：活动日志 / 后台详情 / 停止整轮（委托事件；浮层详情与日志大窗共用同一份 HTML） ── */
+document.addEventListener('click',e=>{
+  const f=e.target.closest('[data-al-filter]');
+  if(f){state.actLogFilter=f.dataset.alFilter;renderActLog();return;}
+  const pick=e.target.closest('[data-al-item]');
+  if(pick){state.actLogSel=pick.dataset.alItem;renderActLog();Audio.sfx('click');return;}
+  const close=e.target.closest('[data-al-close]');
+  if(close){closeActLog();return;}
+  const port=e.target.closest('[data-act-port]');
+  if(port){toast('打开 http://localhost:'+port.dataset.actPort+'（原型演示）');return;}
+  const stop=e.target.closest('[data-act-stop]');
+  if(stop){
+    stop.closest('.act-body, .aldetail')?.querySelector(`[data-act-confirmwrap="${stop.dataset.actStop}"]`)?.removeAttribute('hidden');
+    return;
+  }
+  const cancel=e.target.closest('[data-act-stopcancel]');
+  if(cancel){
+    cancel.closest('.act-body, .aldetail')?.querySelector(`[data-act-confirmwrap="${cancel.dataset.actStopcancel}"]`)?.setAttribute('hidden','');
+    return;
+  }
+  const ok=e.target.closest('[data-act-stopconfirm]');
+  if(ok){stopActivity(ok.dataset.actStopconfirm);return;}
+});
+/* 通讯台红色方块（问题 3）：只在有后台作业运行时点亮；点开确认「整轮 + 后台一起停」。 */
+function showStopConfirm(){
+  const c=$('#stopConfirm'),b=$('#btnStop');if(!c||!b)return;
+  $('#stopConfirmN').textContent=String(bgLiveCount());
+  c.hidden=false;
+  const r=b.getBoundingClientRect(),w=c.offsetWidth||340,h=c.offsetHeight||130;
+  c.style.left=clamp(Math.round(r.right-w),12,innerWidth-w-12)+'px';
+  c.style.top=Math.round(r.top-h-12)+'px';
+}
+function hideStopConfirm(){$('#stopConfirm')?.setAttribute('hidden','');}
+function stopAllActivities(){
+  const n=ACTIVITY.filter(a=>a.status==='run').length;
+  ACTIVITY.forEach(a=>{if(a.status==='run'){a.status='done';a.exit=a.exit??'stopped';}});
+  hideStopConfirm();renderActivityButton();
+  if(state.actOpen)renderActivityPop();
+  if(state.actLogOpen)renderActLog();
+  toast(`已停止整轮 · ${n} 项活动一并结束`);
+}
+$('#btnStop').addEventListener('click',e=>{
+  e.stopPropagation();
+  if($('#stopConfirm').hidden)showStopConfirm();else hideStopConfirm();
+  Audio.sfx('click');
+});
+addEventListener('pointerdown',e=>{
+  const c=$('#stopConfirm');if(!c||c.hidden)return;
+  if(e.target.closest('#stopConfirm')||e.target.closest('#btnStop'))return;
+  hideStopConfirm();
+});
+document.addEventListener('click',e=>{
+  if(e.target.closest('[data-stop-cancel]')){hideStopConfirm();return;}
+  if(e.target.closest('[data-stop-all]')){stopAllActivities();return;}
+});
 
 /* ── 右栏待办 inbox：计数 + 悬浮列表 + 就地回复卡（不跳作战线程） ── */
 const OP_GROUP={block:{key:'blk',label:'受阻'},start:{key:'ask',label:'待你定'},decide:{key:'ask',label:'待你定'},confirm:{key:'ask',label:'待你定'},accept:{key:'rev',label:'待验收'}};
@@ -3190,6 +3430,10 @@ const ACTIVITY_INIT=[
  {id:'a-bg-2',kind:'background',title:'pnpm build --filter @octo/ledger',type:'bash',by:'ledger-2 · M2',status:'done',started:'09:36',elapsed:'2m11s',pid:'4388',exit:0,src:'j-m2',
   command:'pnpm --filter @octo/ledger build',
   output:'@octo/ledger build$ tsup src/index.ts --format esm,cjs --dts\nESM dist/index.mjs 412.08 KB\nDTS dist/index.d.ts 175.00 B\n✔ build success in 2.11s\n\n[exit 0]'},
+ {id:'a-bg-3',kind:'background',title:'pnpm dev · web 3000 / server 3001',type:'bash',by:'汐音 · 主会话',status:'run',started:'09:42',elapsed:'2m30s',pid:'4460',src:'j-m2',
+  command:'pnpm dev',
+  ports:[3000,3001],
+  output:'> open-octopus@1.0.0 dev\n> node scripts/dev.mjs\n\n[web]    vite v5.4.8  ready in 812 ms\n[web]    ➜  Local:   http://localhost:3000/\n[server] Octopus server listening on :3001\n[server] SQLite  ~/.octopus/db/octopus.db\n[web]    hmr update  /components/cockpit/rail/CockpitRightRail.tsx\n[web]    hmr update ok  (128 ms)'},
  {id:'a-sa-3',kind:'subagent',title:'M1 回滚影响面核对',type:'Explore',by:'gateway-2 · M1',status:'done',started:'09:32',elapsed:'4m36s',steps:24,
   tin:21000,tout:9000,tcache:15000,cost:0.07,model:'qwen3.7-plus',src:'j-m1',
   prompt:'核对回滚到上一个绿提交 a74bee6 会丢掉哪些改动，给出影响面清单与建议。',
@@ -4657,7 +4901,7 @@ function closeXyPanel(){
 }
 
 /* ── 更多：向左横排展开（常驻之外的入口） ── */
-const FAN_ITEMS=[['lXiyin','♡','汐音'],['lPoses','✧','动作'],['lLog','≡','日志'],['lWarp','⟳','跃迁'],['lSim','✦','模拟'],['lSet','⚙','设置'],['lFleet','⬡','编队']];
+const FAN_ITEMS=[['lXiyin','♡','汐音'],['lPoses','✧','动作'],['lLog','≡','对话日志'],['lActLog','◳','活动日志'],['lWarp','⟳','跃迁'],['lSim','✦','模拟'],['lSet','⚙','设置'],['lFleet','⬡','编队']];
 function renderFan(){const el=$('#fan');if(!el)return;
  el.innerHTML=FAN_ITEMS.map(([id,g,l],i)=>`<button id="${id}" class="fitem" data-fan="${id}" style="--d:${i*24}ms" title="${l}"><span class="ah">${g}</span><span class="al">${l}</span></button>`).join('');}
 let fanT=null;
@@ -4667,6 +4911,7 @@ function fanAction(k){
  if(k==='lXiyin'){toggleXyPanel();}
  else if(k==='lPoses')openPanel('poses');
  else if(k==='lLog')openPanel('log');
+ else if(k==='lActLog')openActLog();
  else if(k==='lWarp')travel();
  else if(k==='lUsage')openPanel('usage');
  else if(k==='lDebug'){const jid=state.thread!=='main'?state.thread:(state.focusJob||state.jobs.find(j=>j.status==='blocked')?.id||state.jobs[0].id);state.detailJob=jid;state.detailTab='debug';openPanel('detail');}
@@ -4757,7 +5002,7 @@ addEventListener('keydown',e=>{const inIn=e.target.closest('textarea,input');
  if(e.altKey&&e.key.toLowerCase()==='c'){e.preventDefault();setConMin(!state.conMin);return;}
  if(e.altKey&&e.key.toLowerCase()==='i'){e.preventDefault();toggleInbox();return;}
  if(e.altKey&&e.key==='1'){e.preventDefault();const f=[...openOps()].sort((a,b)=>OP_KIND[a.kind].pri-OP_KIND[b.kind].pri)[0];if(f){state.inboxOpen=true;state.inboxSel=f.id;state.inboxPick=null;renderInbox();Audio.sfx('open');}else toggleInbox(true);return;}
- if(e.key==='Escape'){if(bindState.open){closeBind();return;}if(state.addOpen){openAdd(false);return;}if(state.settings){closeSettings();return;}if(state.kcOpen){toggleKc(false);return;}if(state.itemsOpen){toggleItemsWin(false);return;}if(state.doc){closeDocView();return;}if(state.notesOpen){toggleNotesWin(false);return;}if(state.twin){closeTree();return;}if(state.actOpen){if(state.actSel){state.actSel=null;renderActivityPop();}else toggleActPop(false);return;}if(state.conPop){closeConPop();return;}if(state.pjPop){state.pjPop=false;renderPjPop();return;}if(state.pop){closePops();return;}if(state.inboxOpen){if(state.inboxSel){state.inboxSel=null;state.inboxPick=null;renderInbox();}else toggleInbox(false);return;}if(state.brief){hideBanner();return;}if(state.relayJump){state.relayJump=false;renderPanel();return;}if(state.panel){closePanel();return;}if(!state.conMin){setConMin(true);return;}}
+ if(e.key==='Escape'){if(!$('#stopConfirm').hidden){hideStopConfirm();return;}if(state.actLogOpen){closeActLog();return;}if(bindState.open){closeBind();return;}if(state.addOpen){openAdd(false);return;}if(state.settings){closeSettings();return;}if(state.kcOpen){toggleKc(false);return;}if(state.itemsOpen){toggleItemsWin(false);return;}if(state.doc){closeDocView();return;}if(state.notesOpen){toggleNotesWin(false);return;}if(state.twin){closeTree();return;}if(state.actOpen){if(state.actSel){state.actSel=null;renderActivityPop();}else toggleActPop(false);return;}if(state.conPop){closeConPop();return;}if(state.pjPop){state.pjPop=false;renderPjPop();return;}if(state.pop){closePops();return;}if(state.inboxOpen){if(state.inboxSel){state.inboxSel=null;state.inboxPick=null;renderInbox();}else toggleInbox(false);return;}if(state.brief){hideBanner();return;}if(state.relayJump){state.relayJump=false;renderPanel();return;}if(state.panel){closePanel();return;}if(!state.conMin){setConMin(true);return;}}
  if(!inIn&&state.inboxOpen&&state.inboxSel&&state.inboxPick!=null&&e.key==='Enter'){e.preventDefault();submitInbox(false);return;}
  if(!inIn&&state.inboxOpen&&state.inboxSel&&/^[1-9]$/.test(e.key)){const o=opOf(state.inboxSel);if(o&&o.status==='open'){const i=+e.key-1;if(o.options[i]){e.preventDefault();state.inboxPick=i;renderInbox();Audio.sfx('click');}}return;}
  if(!inIn&&/^[1-9]$/.test(e.key)&&state.thread!=='main'){const o=opForJob(state.thread);if(o){const i=+e.key-1;if(o.options[i]){e.preventDefault();resolveOp(o.id,o.options[i].label);}}}});

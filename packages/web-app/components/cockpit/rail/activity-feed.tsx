@@ -22,12 +22,15 @@ import {
 import { useCabinOptional } from '@/components/cabin/cabin-provider'
 import {
   getSessionRunning,
+  listSessionBackgroundRuns,
   listSessionSubagents,
+  type BackgroundRunInfo,
   type BackgroundTaskInfo,
   type SubagentRunSummary,
 } from '@/lib/agent/api'
 import { isSubagentLive } from '@/lib/subagent-format'
 import {
+  backgroundRunsSignature,
   backgroundTasksSignature,
   subagentRunsSignature,
   trimSubagentRuns,
@@ -42,6 +45,8 @@ export interface CockpitActivityFeed {
   runs: SubagentRunSummary[]
   /** 服务端只给运行中的后台作业。 */
   backgrounds: BackgroundTaskInfo[]
+  /** 后台作业留档（运行中 + 已结束），活动日志的历史来源。 */
+  backgroundRuns: BackgroundRunInfo[]
   /** 按钮徽标 = 运行中总数（子代理 + 后台作业）。 */
   liveCount: number
   loading: boolean
@@ -52,6 +57,7 @@ const EMPTY: CockpitActivityFeed = {
   sessionId: null,
   runs: [],
   backgrounds: [],
+  backgroundRuns: [],
   liveCount: 0,
   loading: false,
   error: null,
@@ -72,16 +78,20 @@ export function CockpitActivityProvider({ children }: { children: ReactNode }) {
 
   const [runs, setRuns] = useState<SubagentRunSummary[]>([])
   const [backgrounds, setBackgrounds] = useState<BackgroundTaskInfo[]>([])
+  const [backgroundRuns, setBackgroundRuns] = useState<BackgroundRunInfo[]>([])
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const runsSigRef = useRef('')
   const bgSigRef = useRef('')
+  const bgRunsSigRef = useRef('')
 
   useEffect(() => {
     runsSigRef.current = ''
     bgSigRef.current = ''
+    bgRunsSigRef.current = ''
     setRuns([])
     setBackgrounds([])
+    setBackgroundRuns([])
     setError(null)
     if (!sessionId) {
       setLoading(false)
@@ -93,9 +103,10 @@ export function CockpitActivityProvider({ children }: { children: ReactNode }) {
     setLoading(true)
 
     const tick = async () => {
-      const [subRes, runningRes] = await Promise.allSettled([
+      const [subRes, runningRes, bgRunsRes] = await Promise.allSettled([
         listSessionSubagents(sessionId),
         getSessionRunning(sessionId),
+        listSessionBackgroundRuns(sessionId),
       ])
       if (!alive) return
 
@@ -121,6 +132,15 @@ export function CockpitActivityProvider({ children }: { children: ReactNode }) {
         }
       }
 
+      if (bgRunsRes.status === 'fulfilled') {
+        const next = bgRunsRes.value.runs ?? []
+        const sig = backgroundRunsSignature(next)
+        if (sig !== bgRunsSigRef.current) {
+          bgRunsSigRef.current = sig
+          setBackgroundRuns(next)
+        }
+      }
+
       setLoading(false)
       timer = window.setTimeout(() => { void tick() }, POLL_MS)
     }
@@ -136,10 +156,11 @@ export function CockpitActivityProvider({ children }: { children: ReactNode }) {
     sessionId,
     runs,
     backgrounds,
+    backgroundRuns,
     liveCount: runs.filter(isSubagentLive).length + backgrounds.length,
     loading,
     error,
-  }), [sessionId, runs, backgrounds, loading, error])
+  }), [sessionId, runs, backgrounds, backgroundRuns, loading, error])
 
   return (
     <CockpitActivityContext.Provider value={value}>

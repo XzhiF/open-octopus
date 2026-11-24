@@ -13,7 +13,7 @@
 // 「更多」= **纯点击开合**（再点收回；点外面也收），向左横排展开
 // （汐音 / 动作 / 日志 / 设置）。不再用悬停开合。
 // 2026-11-21 用户：生产代码不再提供「跃迁 / 模拟 / 编队」三项（原型保留）。
-// v22 十五轮（2026-11-21 用户）：「日志」= 主会话指令时间线面板（关键词搜索 +
+// v22 十五轮（2026-11-21 用户）：「对话日志」= 主会话指令时间线面板（关键词搜索 +
 //   顶部统计 + 每条 prompt 的 TUI 摘要行），不再把主对话拉高。
 //
 // 动作全部复用既有入口（不新造面板）：账本 = ledger 面板、调试 = 本舱主会话
@@ -27,11 +27,14 @@ import { toggleCabinTree } from '../face/cabin-tree-store'
 import { toggleChanges } from '../face/changes-store'
 import { useCockpitState } from '../state/CockpitStateProvider'
 import { setCockpitSettingsOpen } from '../shell/settings-store'
+import { toggleActivityLog } from './activity-log-store'
 
 const FAN_ITEMS = [
   { id: 'xiyin', glyph: '♡', label: '汐音' },
   { id: 'poses', glyph: '✧', label: '动作' },
-  { id: 'log', glyph: '≡', label: '日志' },
+  { id: 'log', glyph: '≡', label: '对话日志' },
+  // 2026-11-24 用户 #1：全部活动（后台作业 + 子代理，运行中 + 已结束留档）。
+  { id: 'actlog', glyph: '▤', label: '活动日志' },
   { id: 'settings', glyph: '⚙', label: '设置' },
 ] as const
 
@@ -72,10 +75,15 @@ export function CockpitMenuRail({ activityLive = 0 }: CockpitMenuRailProps) {
       case 'xiyin': toggleCrewSettings(); break
       case 'poses': openPanel('poses'); break
       case 'log': openPanel('log'); break
+      case 'actlog':
+        // 活动日志是「全部活动」大窗：开它时顺手收回右栏浮层，避免两层叠着。
+        closeActivity()
+        toggleActivityLog()
+        break
       case 'settings': setCockpitSettingsOpen(true); break
       default: break
     }
-  }, [openPanel])
+  }, [openPanel, closeActivity])
 
   const openCommand = useCallback(() => {
     chatWindow.openWithFocus()

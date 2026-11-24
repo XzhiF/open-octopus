@@ -229,6 +229,10 @@ export function useAgentChat(sessionId: string | null, options?: {
   const streamThinkingRef = useRef('')
   const toolCallsRef = useRef<ToolCallRecord[]>([])
   const streamingRef = useRef(false)
+  /** 乐观行 id 序号：同一毫秒连发两条时 `temp-${Date.now()}` 会撞 id，
+   *  转录按 id 去重后只画得出一条（用户 #2 的另一种「输入消失」）。 */
+  const tempIdSeqRef = useRef(0)
+  const nextTempId = () => `temp-${Date.now()}-${++tempIdSeqRef.current}`
   // Track the session that initiated the current stream to prevent cross-session contamination
   const streamingSessionRef = useRef<string | null>(null)
   // 409 弹回的普通发送（消息没落库）→ 尾随的回合收口后自动补发一次。
@@ -598,7 +602,7 @@ export function useAgentChat(sessionId: string | null, options?: {
 
     // Optimistic: add user message (preserve original @@syntax for display)
     const userMsg: AgentMessage = {
-      id: `temp-${Date.now()}`,
+      id: nextTempId(),
       session_id: sessionId,
       role: 'user',
       content: message,
@@ -922,7 +926,7 @@ export function useAgentChat(sessionId: string | null, options?: {
   const interject = useCallback(async (message: string): Promise<boolean> => {
     if (!sessionId || !message.trim()) return false
     const injectFn = apiOverrideRef.current?.injectChat ?? api.injectChat
-    const optimisticId = `temp-${Date.now()}`
+    const optimisticId = nextTempId()
     setMessages((prev) => [...prev, {
       id: optimisticId,
       session_id: sessionId,
