@@ -253,6 +253,27 @@ describe('CockpitFleetRail · v21 单列编队', () => {
     expect(row('job:j1').className).toMatch(/is-chat/)
   })
 
+  it('待归档任务：状态签写「待归档」、不画假百分比；详情按钮变 📦 并落归档页签', () => {
+    renderRail({ rows: sortRows([taskRow('t-arch', { status: 'awaiting_archive' }, 100)]) })
+    const node = row('task:t-arch')
+    expect(within(node).getByText('待归档')).toBeInTheDocument()
+    expect(node.querySelector('.ck12-flpct')).toBeNull()
+
+    const detail = screen.getByTestId('cockpit-rail-detail-task:t-arch')
+    expect(detail.textContent).toContain('📦')
+    fireEvent.click(detail)
+    expect(screen.getByTestId('selection')).toHaveTextContent('task:c1:t-arch')
+    expect(screen.getByTestId('selection')).toHaveAttribute('data-tab', 'archive')
+  })
+
+  it('归档中：按「在跑」计数与排序，状态签写「归档中」', () => {
+    const archiving = taskRow('t-run-arch', { status: 'archiving' })
+    const waiting = taskRow('t-queue', { status: 'ready' })
+    renderRail({ rows: sortRows([waiting, archiving]) })
+    expect(within(row('task:t-run-arch')).getByText('归档中')).toBeInTheDocument()
+    expect(row('task:t-run-arch').getAttribute('data-tone')).toBe('run')
+  })
+
   it('空编队显示空态', () => {
     renderRail({ rows: [] })
     expect(screen.getByText('编队空着 · 从主对话派一条')).toBeInTheDocument()

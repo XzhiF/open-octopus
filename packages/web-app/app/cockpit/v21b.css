@@ -1066,6 +1066,17 @@
   border-color: var(--ck12-teal);
   background: rgba(46, 230, 214, 0.24);
 }
+/* 2026-11-24：归档闸头部签（待归档粉 / 归档中跟状态共用粉色系）。 */
+.ck12-dh-chat.is-arch {
+  border-color: rgba(255, 92, 138, 0.45);
+  background: rgba(255, 92, 138, 0.12);
+  color: var(--ck12-pink);
+}
+.ck12-dh-chat.is-arch:hover {
+  color: #fff;
+  border-color: var(--ck12-pink);
+  background: rgba(255, 92, 138, 0.28);
+}
 .ck12-pgrip {
   position: absolute;
   right: 14px;
@@ -2488,4 +2499,580 @@ button.ck12-ev:hover { background: rgba(255, 255, 255, 0.04); }
     bottom: 10px;
     width: 96vw;
   }
+}
+
+/* ═══ 作战详情 → 归档（v22 原型 .arc* · 2026-11-24 用户）══════════════
+   编队任务的归档闸 / 编排 / 落点。内容口径同 classic ArchiveWindow，
+   皮肤走舱系暗色：粉=待归档、天蓝=归档中、绿=已归档。 */
+.ck12-arc { display: flex; flex-direction: column; min-width: 0; }
+.ck12-arcbar { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 8px; }
+.ck12-arcchip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 22px;
+  padding: 0 10px;
+  clip-path: polygon(0 0, 100% 0, calc(100% - 7px) 100%, 0 100%);
+  font-size: 10px;
+  font-weight: 800;
+  font-family: var(--font-ui);
+  background: rgba(255, 255, 255, 0.07);
+  color: var(--ck12-ink2);
+}
+.ck12-arcchip i {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: currentColor;
+  box-shadow: 0 0 7px currentColor;
+}
+.ck12-arcchip.is-pending {
+  background: rgba(255, 92, 138, 0.16);
+  color: var(--ck12-pink);
+  box-shadow: inset 0 0 0 1px rgba(255, 92, 138, 0.35);
+}
+.ck12-arcchip.is-running {
+  background: rgba(53, 199, 240, 0.16);
+  color: var(--ck12-sky);
+  box-shadow: inset 0 0 0 1px rgba(53, 199, 240, 0.4);
+}
+.ck12-arcchip.is-done {
+  background: rgba(61, 220, 151, 0.16);
+  color: var(--ck12-green);
+  box-shadow: inset 0 0 0 1px rgba(61, 220, 151, 0.4);
+}
+.ck12-arclbl { font-size: 9.5px; color: var(--ck12-ink2); font-family: var(--font-mono); }
+.ck12-arclbl b { color: var(--ck12-ink); font-weight: 800; }
+.ck12-arcgate {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding: 8px 11px;
+  margin-bottom: 9px;
+  clip-path: var(--ck12-cut);
+  border: 1px dashed rgba(255, 92, 138, 0.45);
+  background: rgba(255, 92, 138, 0.06);
+  font-size: 10px;
+  color: var(--ck12-ink2);
+  line-height: 1.55;
+}
+.ck12-arcgate b { color: var(--ck12-pink); font-size: 10.5px; letter-spacing: 0.04em; }
+.ck12-arcgate.is-wait { border-color: rgba(255, 176, 32, 0.45); background: rgba(255, 176, 32, 0.06); }
+.ck12-arcgate.is-wait b { color: var(--ck12-amber); }
+.ck12-arcsay {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  flex-wrap: wrap;
+  padding: 7px 9px;
+  margin-bottom: 2px;
+  clip-path: var(--ck12-cut);
+  border: 1px solid rgba(185, 179, 217, 0.16);
+  background: rgba(255, 255, 255, 0.04);
+  font-size: 9.5px;
+  color: var(--ck12-ink2);
+}
+.ck12-arcsay-k { font-size: 8px; letter-spacing: 0.12em; color: var(--ck12-metal2); font-family: var(--font-mono); }
+.ck12-arcsay code {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: 800;
+  color: var(--ck12-teal);
+  background: rgba(46, 230, 214, 0.08);
+  border: 1px solid rgba(46, 230, 214, 0.28);
+  padding: 1px 7px;
+}
+.ck12-arcsay .ck12-arcbtn { margin-left: auto; }
+.ck12-arcbtn {
+  height: 23px;
+  padding: 0 11px;
+  clip-path: polygon(0 0, 100% 0, calc(100% - 6px) 100%, 0 100%);
+  background: rgba(255, 255, 255, 0.07);
+  border: 1px solid rgba(185, 179, 217, 0.28);
+  color: var(--ck12-ink2);
+  font-size: 9.5px;
+  font-weight: 700;
+  font-family: var(--font-ui);
+  white-space: nowrap;
+}
+.ck12-arcbtn:hover {
+  color: #fff;
+  border-color: var(--ck12-teal);
+  background: rgba(46, 230, 214, 0.14);
+}
+.ck12-arcsteps { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 6px; margin-bottom: 2px; }
+.ck12-arcstep {
+  position: relative;
+  padding: 7px 9px 8px;
+  clip-path: var(--ck12-cut);
+  border: 1px solid rgba(185, 179, 217, 0.14);
+  background: rgba(255, 255, 255, 0.035);
+}
+.ck12-arcstep .n {
+  display: grid;
+  place-items: center;
+  width: 17px;
+  height: 19px;
+  clip-path: var(--ck12-hex);
+  font-size: 9px;
+  font-weight: 800;
+  background: rgba(255, 255, 255, 0.1);
+  color: var(--ck12-ink2);
+  margin-bottom: 4px;
+}
+.ck12-arcstep b { display: block; font-size: 10px; color: #fff; font-family: var(--font-ui); }
+.ck12-arcstep span:not(.n) { display: block; margin-top: 2px; font-size: 8.5px; color: var(--ck12-ink2); line-height: 1.45; }
+.ck12-arcstep.is-on { border-color: rgba(53, 199, 240, 0.5); background: rgba(53, 199, 240, 0.08); }
+.ck12-arcstep.is-on .n { background: rgba(53, 199, 240, 0.25); color: var(--ck12-sky); }
+.ck12-arcstep.is-ok { border-color: rgba(61, 220, 151, 0.35); background: rgba(61, 220, 151, 0.06); }
+.ck12-arcstep.is-ok .n { background: rgba(61, 220, 151, 0.22); color: var(--ck12-green); }
+.ck12-arcstep.is-bad { border-color: rgba(255, 92, 92, 0.45); background: rgba(255, 92, 92, 0.07); }
+.ck12-arcstep.is-bad .n { background: rgba(255, 92, 92, 0.22); color: var(--ck12-red); }
+.ck12-arctblwrap { overflow: auto; }
+.ck12-arctbl { width: 100%; border-collapse: collapse; font-size: 10px; }
+.ck12-arctbl th {
+  font-size: 8px;
+  letter-spacing: 0.12em;
+  color: var(--ck12-metal2);
+  font-weight: 700;
+  text-align: left;
+  padding: 4px 8px;
+  border-bottom: 1px solid rgba(185, 179, 217, 0.18);
+  white-space: nowrap;
+}
+.ck12-arctbl td {
+  padding: 5px 8px;
+  border-bottom: 1px dashed rgba(185, 179, 217, 0.12);
+  color: var(--ck12-ink2);
+  white-space: nowrap;
+}
+.ck12-arctbl tr:last-child td { border-bottom: 0; }
+.ck12-arctbl td b { color: #fff; font-weight: 800; }
+.ck12-arctbl .mono { font-family: var(--font-mono); font-size: 9.5px; }
+.ck12-arctbl .is-pr {
+  color: var(--ck12-sky);
+  font-weight: 800;
+  text-decoration: underline dotted;
+  text-underline-offset: 2px;
+}
+.ck12-arctbl .is-ok { color: var(--ck12-green); font-weight: 800; }
+.ck12-arctbl .is-run { color: var(--ck12-sky); font-weight: 800; }
+.ck12-arctbl .is-wait { color: var(--ck12-amber); font-weight: 800; }
+.ck12-arctbl .is-bad { color: var(--ck12-red); font-weight: 800; }
+.ck12-arclog {
+  margin-top: 2px;
+  padding: 6px 9px;
+  background: rgba(6, 5, 16, 0.4);
+  border: 1px solid rgba(46, 230, 214, 0.14);
+  font-family: var(--font-mono);
+  font-size: 9px;
+  color: var(--ck12-ink2);
+  line-height: 1.7;
+}
+.ck12-arclog b { color: var(--ck12-teal); }
+.ck12-arc-ac {
+  display: flex;
+  gap: 8px;
+  align-items: flex-start;
+  padding: 5px 9px;
+  margin-bottom: 4px;
+  font-size: 10px;
+  color: var(--ck12-ink2);
+  border: 1px solid rgba(185, 179, 217, 0.14);
+  background: rgba(255, 255, 255, 0.035);
+}
+.ck12-arc-ac .ck { flex: none; font-weight: 800; font-family: var(--font-mono); }
+.ck12-arc-ac.is-pass .ck { color: var(--ck12-green); }
+.ck12-arc-ac.is-open { border-color: rgba(255, 176, 32, 0.35); background: rgba(255, 176, 32, 0.05); }
+.ck12-arc-ac.is-open .ck { color: var(--ck12-amber); }
+.ck12-arcfoot { font-size: 9px; color: var(--ck12-metal2); margin-top: 7px; line-height: 1.55; }
+.ck12-arcfoot b { color: var(--ck12-teal); font-weight: 800; }
+
+/* ── 状态条（归档 → 素材 → Wiki → 落点）── */
+.ck12-arcstat {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  padding: 6px 9px;
+  margin-bottom: 8px;
+  border: 1px solid rgba(185, 179, 217, 0.14);
+  background: rgba(255, 255, 255, 0.035);
+  font-size: 9px;
+  color: var(--ck12-ink2);
+}
+.ck12-arcstat .it { display: flex; align-items: center; gap: 5px; white-space: nowrap; }
+.ck12-arcstat .dot { width: 5px; height: 5px; border-radius: 50%; background: var(--ck12-metal2); flex: none; }
+.ck12-arcstat .dot.ok { background: var(--ck12-green); box-shadow: 0 0 6px var(--ck12-green); }
+.ck12-arcstat .dot.run { background: var(--ck12-amber); box-shadow: 0 0 6px var(--ck12-amber); }
+.ck12-arcstat .dot.bad { background: var(--ck12-red); }
+.ck12-arcstat .k { font-size: 8px; letter-spacing: 0.1em; color: var(--ck12-metal2); font-family: var(--font-mono); }
+.ck12-arcstat .v { color: var(--ck12-ink); font-weight: 700; }
+.ck12-arcstat .ar { color: var(--ck12-metal2); opacity: 0.6; }
+
+/* ── 内层页签 概览 / 知识落点 / 明细 ── */
+.ck12-atabs {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  margin-bottom: 8px;
+  border-bottom: 1px solid rgba(185, 179, 217, 0.18);
+}
+.ck12-atab {
+  padding: 6px 10px;
+  margin-bottom: -1px;
+  border-bottom: 2px solid transparent;
+  font-size: 9.5px;
+  font-weight: 800;
+  font-family: var(--font-ui);
+  color: var(--ck12-ink2);
+}
+.ck12-atab small { margin-left: 4px; font-size: 8px; color: var(--ck12-metal2); font-family: var(--font-mono); }
+.ck12-atab:hover { color: #fff; }
+.ck12-atab.on { color: #fff; border-bottom-color: var(--ck12-pink); }
+.ck12-atabs .hint { margin-left: auto; font-size: 8.5px; color: var(--ck12-metal2); font-family: var(--font-mono); }
+
+/* ── 结论行 ── */
+.ck12-arcverdict {
+  margin-bottom: 8px;
+  border: 1px solid rgba(185, 179, 217, 0.16);
+  background: rgba(255, 255, 255, 0.03);
+}
+.ck12-arcv { display: flex; align-items: center; gap: 9px; padding: 7px 10px; border-top: 1px dashed rgba(185, 179, 217, 0.12); }
+.ck12-arcv:first-child { border-top: 0; }
+.ck12-arcv .ic {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 17px;
+  height: 17px;
+  border-radius: 50%;
+  border: 1px solid currentColor;
+  font-size: 9px;
+  font-weight: 800;
+  font-family: var(--font-mono);
+}
+.ck12-arcv .ic.ok { color: var(--ck12-green); }
+.ck12-arcv .ic.run { color: var(--ck12-amber); }
+.ck12-arcv .ic.bad { color: var(--ck12-red); }
+.ck12-arcv .ic.idle { color: var(--ck12-metal2); }
+.ck12-arcv .tx { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
+.ck12-arcv b { font-size: 10.5px; color: #fff; font-family: var(--font-ui); }
+.ck12-arcv .tx > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 9px; color: var(--ck12-ink2); }
+
+/* ── 告警 / 提示条 ── */
+.ck12-arcwarn {
+  padding: 7px 10px;
+  margin-bottom: 8px;
+  border: 1px dashed rgba(255, 176, 32, 0.42);
+  background: rgba(255, 176, 32, 0.06);
+  font-size: 9.5px;
+  color: var(--ck12-ink2);
+  line-height: 1.6;
+}
+.ck12-arcwarn b { display: block; margin-bottom: 2px; color: var(--ck12-amber); font-size: 10px; }
+.ck12-arcwarn.is-bad { border-color: rgba(255, 92, 92, 0.42); background: rgba(255, 92, 92, 0.06); }
+.ck12-arcwarn.is-bad b { color: var(--ck12-red); }
+.ck12-arcwarn .msg { margin-top: 4px; font-size: 9px; color: var(--ck12-metal2); }
+.ck12-arcnote {
+  padding: 6px 9px;
+  margin-bottom: 8px;
+  border: 1px solid rgba(53, 199, 240, 0.2);
+  background: rgba(53, 199, 240, 0.05);
+  font-size: 9px;
+  color: var(--ck12-ink2);
+  line-height: 1.6;
+}
+.ck12-arcnote.is-ok { border-color: rgba(61, 220, 151, 0.25); background: rgba(61, 220, 151, 0.05); color: var(--ck12-green); }
+.ck12-arcnote b { display: block; margin-bottom: 2px; color: var(--ck12-ink); font-size: 9.5px; }
+.ck12-arcnote.slim { margin-bottom: 6px; font-family: var(--font-mono); border-color: rgba(185, 179, 217, 0.14); background: rgba(6, 5, 16, 0.3); }
+
+/* ── 页级回执 ── */
+.ck12-arcpages { border: 1px solid rgba(185, 179, 217, 0.14); background: rgba(255, 255, 255, 0.025); }
+.ck12-arcpage {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 8px;
+  border-bottom: 1px dashed rgba(185, 179, 217, 0.1);
+  font-size: 9.5px;
+  color: var(--ck12-ink2);
+}
+.ck12-arcpage:last-child { border-bottom: 0; }
+.ck12-arcpage .dom {
+  flex: none;
+  width: 58px;
+  font-size: 8px;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  color: var(--ck12-sky);
+  font-family: var(--font-mono);
+  text-transform: uppercase;
+}
+.ck12-arcpage .p {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--font-mono);
+  font-size: 9px;
+  color: var(--ck12-ink);
+}
+.ck12-arcpage .tag { flex: none; padding: 0 6px; border: 1px solid rgba(185, 179, 217, 0.24); font-size: 7.5px; font-weight: 800; }
+.ck12-arcpage .tag.new { color: var(--ck12-green); border-color: rgba(61, 220, 151, 0.35); background: rgba(61, 220, 151, 0.08); }
+.ck12-arcpage .tag.upd { color: var(--ck12-sky); border-color: rgba(53, 199, 240, 0.35); background: rgba(53, 199, 240, 0.08); }
+.ck12-arcpage.err { color: var(--ck12-red); font-family: var(--font-mono); font-size: 9px; }
+
+/* ── 明细两栏 ── */
+.ck12-arcgrid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; margin-bottom: 8px; }
+.ck12-arcblock {
+  min-width: 0;
+  padding: 8px 9px;
+  border: 1px solid rgba(185, 179, 217, 0.16);
+  background: rgba(255, 255, 255, 0.03);
+}
+.ck12-arcblock h4 {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0 0 6px;
+  font-size: 8.5px;
+  letter-spacing: 0.12em;
+  color: var(--ck12-metal2);
+  font-family: var(--font-mono);
+  font-weight: 700;
+}
+.ck12-arcblock h4 span { margin-left: auto; font-size: 8px; letter-spacing: 0; font-weight: 400; text-transform: none; }
+.ck12-arcblock p { margin: 5px 0 0; font-size: 8.5px; line-height: 1.55; color: var(--ck12-metal2); }
+
+/* ── 素材包件列表 ── */
+.ck12-arcpack { display: flex; flex-direction: column; }
+.ck12-arcpackrow {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  padding: 3px 5px;
+  border-bottom: 1px dashed rgba(185, 179, 217, 0.1);
+  font-size: 9px;
+  color: var(--ck12-ink2);
+  text-align: left;
+  transition: background 0.12s;
+}
+.ck12-arcpackrow:last-child { border-bottom: 0; }
+button.ck12-arcpackrow:hover { background: rgba(46, 230, 214, 0.08); }
+.ck12-arcpackrow.is-out { opacity: 0.5; }
+.ck12-arcpackrow .kind { flex: none; width: 58px; font-size: 8px; color: var(--ck12-teal); font-family: var(--font-mono); }
+.ck12-arcpackrow .kind.is-ok { color: var(--ck12-green); }
+.ck12-arcpackrow .kind.is-merged { color: var(--ck12-violet); }
+.ck12-arcpackrow .kind.is-bad { color: var(--ck12-red); }
+.ck12-arcpackrow .nm {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--ck12-ink);
+  font-family: var(--font-mono);
+  font-size: 9px;
+}
+.ck12-arcpackrow.is-out .nm { text-decoration: line-through; }
+.ck12-arcpackrow .badge {
+  flex: none;
+  padding: 0 5px;
+  border: 1px solid rgba(61, 220, 151, 0.35);
+  background: rgba(61, 220, 151, 0.08);
+  font-size: 7.5px;
+  font-weight: 800;
+  color: var(--ck12-green);
+}
+.ck12-arcpackrow .badge.ptr,
+.ck12-arcpackrow .badge.out {
+  color: var(--ck12-amber);
+  border-color: rgba(255, 176, 32, 0.35);
+  background: rgba(255, 176, 32, 0.08);
+}
+.ck12-arcpackrow .sz {
+  flex: none;
+  font-size: 8.5px;
+  color: var(--ck12-metal2);
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 160px;
+  white-space: nowrap;
+}
+.ck12-arcpackrow .go { flex: none; color: var(--ck12-metal2); }
+
+/* ── 清理 / 反思 ── */
+.ck12-arcclean { display: flex; flex-direction: column; gap: 4px; }
+.ck12-arccleanrow {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 3px 5px;
+  border-bottom: 1px dashed rgba(185, 179, 217, 0.1);
+  font-size: 9px;
+}
+.ck12-arccleanrow:last-child { border-bottom: 0; }
+.ck12-arccleanrow b { color: var(--ck12-ink); font-size: 9.5px; }
+.ck12-arccleanrow .g { color: var(--ck12-green); font-family: var(--font-mono); font-size: 8.5px; }
+.ck12-arccleanrow .l { margin-left: auto; color: var(--ck12-amber); font-family: var(--font-mono); font-size: 8.5px; }
+.ck12-arcref { display: flex; flex-direction: column; gap: 4px; }
+.ck12-arcrefrow {
+  padding: 4px 6px;
+  border: 1px solid rgba(139, 124, 246, 0.24);
+  background: rgba(139, 124, 246, 0.07);
+  font-size: 9px;
+  color: var(--ck12-ink2);
+}
+.ck12-arcrefrow b { display: block; font-size: 9.5px; font-weight: 700; color: #fff; }
+.ck12-arcrefrow span { font-size: 8.5px; font-family: var(--font-mono); color: var(--ck12-violet); }
+.ck12-arcrefrow .dec { float: right; font-size: 8px; font-weight: 800; color: var(--ck12-green); }
+.ck12-arcrefrow .dec.skip { color: var(--ck12-metal2); }
+.ck12-arcrefrow .raw { margin-top: 2px; font-size: 8px; color: var(--ck12-metal2); font-family: var(--font-mono); }
+.ck12-arcref p { margin: 2px 0 0; font-size: 8.5px; color: var(--ck12-metal2); }
+
+/* ── 时间线 ── */
+.ck12-arctl {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  padding: 7px 9px;
+  margin-bottom: 8px;
+  border: 1px solid rgba(185, 179, 217, 0.14);
+  background: rgba(255, 255, 255, 0.03);
+}
+.ck12-arctl .nd { position: relative; flex: 1; min-width: 0; padding-right: 8px; }
+.ck12-arctl .nd::before {
+  content: '';
+  position: absolute;
+  left: 2px;
+  right: 0;
+  top: 3px;
+  height: 1px;
+  background: rgba(185, 179, 217, 0.25);
+}
+.ck12-arctl .nd:last-child::before { display: none; }
+.ck12-arctl .dt {
+  position: relative;
+  z-index: 1;
+  display: block;
+  width: 7px;
+  height: 7px;
+  margin-bottom: 4px;
+  border-radius: 50%;
+  background: var(--ck12-green);
+}
+.ck12-arctl .nd.hot .dt { background: var(--ck12-amber); box-shadow: 0 0 7px var(--ck12-amber); }
+.ck12-arctl .t { font-size: 8.5px; color: var(--ck12-sky); font-family: var(--font-mono); }
+.ck12-arctl .n { margin-top: 1px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 9px; color: var(--ck12-ink); }
+.ck12-arctl .s {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 8px;
+  color: var(--ck12-metal2);
+  font-family: var(--font-mono);
+}
+
+.ck12-arctbl .err { margin-top: 2px; white-space: pre-wrap; word-break: break-word; font-size: 8.5px; font-family: var(--font-mono); }
+
+/* ── 归档二级窗（素材件 / 报告）──
+   舱系规范：关闭按钮一律左上角；窗底不透明，压在详情面之上。 */
+.ck12-arcwin-back {
+  position: fixed;
+  inset: 0;
+  z-index: 92;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  background: rgba(4, 3, 12, 0.72);
+  backdrop-filter: blur(6px);
+}
+.ck12-arcwin {
+  display: flex;
+  flex-direction: column;
+  width: min(880px, 100%);
+  max-height: min(84vh, 760px);
+  border: 1px solid rgba(46, 230, 214, 0.34);
+  background: linear-gradient(180deg, rgba(22, 17, 52, 0.98), rgba(8, 6, 22, 0.995));
+  box-shadow: 0 30px 90px rgba(4, 3, 12, 0.8);
+}
+.ck12-arcwin-h {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 9px 12px;
+  border-bottom: 1px solid rgba(185, 179, 217, 0.16);
+}
+.ck12-arcwin-x {
+  order: -1;
+  flex: none;
+  width: 22px;
+  height: 22px;
+  display: grid;
+  place-items: center;
+  clip-path: var(--ck12-cut);
+  border: 1px solid rgba(255, 92, 138, 0.35);
+  background: rgba(255, 92, 138, 0.1);
+  color: var(--ck12-pink);
+  font-size: 10px;
+  font-weight: 800;
+}
+.ck12-arcwin-x:hover { color: #fff; border-color: var(--ck12-pink); background: rgba(255, 92, 138, 0.22); }
+.ck12-arcwin-h .pt { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
+.ck12-arcwin-h .pt b { font-size: 11.5px; color: #fff; font-family: var(--font-ui); }
+.ck12-arcwin-h .pt span { font-size: 8px; letter-spacing: 0.08em; color: var(--ck12-metal2); font-family: var(--font-mono); }
+.ck12-arcwin-h .ro { margin-left: auto; font-size: 8.5px; color: var(--ck12-metal2); font-family: var(--font-mono); white-space: nowrap; }
+.ck12-arcwin-path {
+  padding: 5px 12px;
+  border-bottom: 1px dashed rgba(185, 179, 217, 0.14);
+  font-size: 8.5px;
+  color: var(--ck12-teal);
+  font-family: var(--font-mono);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.ck12-arcwin-body {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  margin: 8px 12px;
+  padding: 10px 12px;
+  border: 1px solid rgba(185, 179, 217, 0.14);
+  background: rgba(6, 5, 16, 0.35);
+}
+.ck12-arcwin-pre {
+  margin: 0;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  line-height: 1.75;
+  color: var(--ck12-ink2);
+}
+.ck12-arcwin-empty { padding: 18px 6px; text-align: center; font-size: 10.5px; color: var(--ck12-metal2); }
+.ck12-arcwin-empty.is-bad { color: var(--ck12-red); }
+.ck12-arcwin-foot {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 7px 12px 9px;
+  border-top: 1px solid rgba(185, 179, 217, 0.12);
+  font-size: 8.5px;
+  color: var(--ck12-metal2);
+  font-family: var(--font-mono);
+}
+.ck12-arcwin-foot .ft-stat { margin-left: auto; font-variant-numeric: tabular-nums; white-space: nowrap; }
+
+@media (max-width: 900px) {
+  .ck12-arcsteps { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .ck12-arcgrid { grid-template-columns: minmax(0, 1fr); }
+  .ck12-arcwin-back { padding: 10px; }
+  .ck12-arcwin { max-height: 92vh; }
 }

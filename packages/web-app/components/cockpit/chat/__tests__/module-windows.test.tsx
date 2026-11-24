@@ -10,9 +10,10 @@ import type { Mock } from 'vitest'
 import { CockpitTaskWindows } from '../module-windows'
 import { useTaskModuleSurface } from '@/lib/task-module-surface'
 import { fetchExecutionDetail } from '@/lib/api-client'
+import { getTask, getTaskArchive } from '@/lib/tasks-api'
 
 vi.mock('@/lib/api-client', () => ({ fetchExecutionDetail: vi.fn() }))
-vi.mock('@/lib/tasks-api', () => ({ getTask: vi.fn() }))
+vi.mock('@/lib/tasks-api', () => ({ getTask: vi.fn(), getTaskArchive: vi.fn() }))
 vi.mock('../../state/CockpitStateProvider', () => ({
   useCockpitState: () => ({ layer: { register: () => () => {} } }),
 }))
@@ -20,16 +21,25 @@ vi.mock('../../state/CockpitStateProvider', () => ({
 function Opener() {
   const api = useTaskModuleSurface()
   return (
-    <button
-      type="button"
-      data-testid="open-yaml"
-      onClick={() => api?.open({
-        module: 'yaml',
-        yamlTarget: { workspaceId: 'w-1', executionId: 'e-1', workflowRef: 'built-in/matt-spec-dev' },
-      })}
-    >
-      open
-    </button>
+    <>
+      <button
+        type="button"
+        data-testid="open-yaml"
+        onClick={() => api?.open({
+          module: 'yaml',
+          yamlTarget: { workspaceId: 'w-1', executionId: 'e-1', workflowRef: 'built-in/matt-spec-dev' },
+        })}
+      >
+        open
+      </button>
+      <button
+        type="button"
+        data-testid="open-archive"
+        onClick={() => api?.open({ module: 'archive', taskId: 't-arch' })}
+      >
+        archive
+      </button>
+    </>
   )
 }
 
@@ -52,5 +62,38 @@ describe('CockpitTaskWindows', () => {
 
     fireEvent.click(within(win).getByLabelText('关闭'))
     expect(screen.queryByTestId('cockpit-twin-yaml')).toBeNull()
+  })
+
+  it('surface.open(archive) → 舱系浮窗用 v22 归档面（同一份归档读模型）', async () => {
+    ;(getTask as Mock).mockResolvedValue({
+      id: 't-arch', name: '待归档任务', status: 'awaiting_archive',
+      task_spec: {}, executions: [],
+    })
+    ;(getTaskArchive as Mock).mockResolvedValue({
+      task_id: 't-arch',
+      status: 'awaiting_archive',
+      in_flight: false,
+      projects: [],
+      state: null,
+      report: null,
+      report_md: null,
+      reflection: null,
+      knowledge: null,
+      amendments: [],
+      cleanup: null,
+      cleanup_in_flight: false,
+    })
+    render(
+      <CockpitTaskWindows>
+        <Opener />
+      </CockpitTaskWindows>,
+    )
+    fireEvent.click(screen.getByTestId('open-archive'))
+    const win = await screen.findByTestId('cockpit-twin-archive')
+    expect(win.className).toContain('ck12-twin')
+    await waitFor(() => expect(win.textContent).toContain('待归档 · 未启动'))
+    expect(getTaskArchive).toHaveBeenCalledWith('t-arch')
+    fireEvent.click(within(win).getByLabelText('关闭'))
+    expect(screen.queryByTestId('cockpit-twin-archive')).toBeNull()
   })
 })

@@ -8,7 +8,7 @@
 import { createContext, useContext } from 'react'
 import type { RunTarget, YamlTarget } from '@/components/chat-workbench/task-window-types'
 
-export type TaskModuleSurfaceModule = 'plan' | 'run' | 'acceptance' | 'yaml'
+export type TaskModuleSurfaceModule = 'plan' | 'run' | 'acceptance' | 'archive' | 'yaml'
 
 export interface TaskModuleOpenSpec {
   module: TaskModuleSurfaceModule

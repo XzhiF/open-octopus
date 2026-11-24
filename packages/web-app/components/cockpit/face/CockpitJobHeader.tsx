@@ -89,6 +89,8 @@ export interface CockpitJobHeaderProps {
   costLabel?: string | null
   /** v22 #5：打开这条作战的独立 chat 窗（有会话才传；没传不画按钮）。 */
   onOpenChat?: (() => void) | null
+  /** 2026-11-24：待归档 / 归档中时头部挂 📦，直接切到「归档」页签。 */
+  onOpenArchive?: (() => void) | null
 }
 
 export function CockpitJobHeader({
@@ -102,10 +104,12 @@ export function CockpitJobHeader({
   executor,
   cabinName,
   onOpenChat,
+  onOpenArchive,
 }: CockpitJobHeaderProps) {
   const win = useDossierWindow()
   const tone = jobTone(status)
   const emoji = TONE_EMOJI[tone]
+  const atArchiveGate = status === 'awaiting_archive' || status === 'archiving'
   // 原型 .ph 副行：项目 · 分支 · 编号（拿不到的段整段省略）。
   // 项目优先用编队行派生名，没有锚点才退回舱名；编号缺省退回执行者短 id。
   const subtitle = [projectName ?? cabinName, branch, jobNo ?? executor].filter(Boolean).join(' · ')
@@ -131,6 +135,19 @@ export function CockpitJobHeader({
         </span>
 
         <span className="ck12-dh-sp" />
+        {/* 2026-11-24：归档闸 —— 头部先给一枚粉签，和详情里的「归档」页签同源。 */}
+        {!loading && atArchiveGate && onOpenArchive && (
+          <button
+            type="button"
+            className="ck12-dh-chat is-arch"
+            data-testid="cockpit-dossier-archive"
+            aria-label="打开归档明细"
+            title="📦 归档 · 待归档 / 归档中"
+            onClick={onOpenArchive}
+          >
+            📦 {status === 'awaiting_archive' ? '待归档' : '归档中'}
+          </button>
+        )}
         {/* v22 #5：💬 对话 —— 打开这条作战的独立 chat 窗（详情收掉）；
             右上其余仍只有原型 .pwin 的 ⛶。 */}
         {!loading && onOpenChat && (
@@ -163,17 +180,20 @@ export function CockpitJobHeader({
 }
 
 /** 详情页签（原型 .dtabs）：v21 五轮按原型放进滚动正文，和内容一起滚走。
- *  受控组件 —— tab / onTabChange 由宿主（URL 同步的 CockpitState）给。 */
+ *  受控组件 —— tab / onTabChange 由宿主（URL 同步的 CockpitState）给。
+ *  tabs 缺省 = COCKPIT_TABS；非任务类作业由宿主过滤掉「归档」。 */
 export function CockpitJobTabs({
   tab,
   onTabChange,
+  tabs = COCKPIT_TABS,
 }: {
   tab?: CockpitTab | null
   onTabChange?: (tab: CockpitTab) => void
+  tabs?: readonly CockpitTab[]
 }) {
   return (
     <div className="ck12-dtabs" role="tablist" aria-label="作业页签">
-      {COCKPIT_TABS.map((key) => (
+      {tabs.map((key) => (
         <button
           key={key}
           type="button"

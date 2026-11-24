@@ -75,7 +75,8 @@ export interface CockpitFleetCounts {
 /** 「需要你」的作业状态：待验收 / 待归档 / 失败升级。job 带 attention 时
  *  也在 need（见 groupOf），这条兜住服务端还没来得及派生 attention 的窗口。 */
 const NEED_STATUSES = new Set(['awaiting_review', 'awaiting_archive', 'failed', 'blocked', 'waiting_input'])
-const RUN_STATUSES = new Set(['running'])
+/** archiving = 归档编排在跑（git 同步 / 清理 / 知识编译），算「在跑」不算待命。 */
+const RUN_STATUSES = new Set(['running', 'archiving'])
 /** 已结束组只留最近 3 条（plans Step 2 task 1）。 */
 const DONE_LIMIT = 3
 

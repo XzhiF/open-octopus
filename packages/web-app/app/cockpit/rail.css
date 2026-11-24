@@ -327,6 +327,9 @@
   box-shadow: 0 0 8px rgba(255, 59, 92, 0.25);
 }
 .ck12-flst.is-done { background: rgba(61, 220, 151, 0.18); color: var(--ck12-green); }
+/* 2026-11-24：归档最后一道人工闸 —— 待归档粉 / 归档中蓝，看签就知道要不要点头。 */
+.ck12-flst.is-arch { background: rgba(255, 92, 138, 0.2); color: var(--ck12-pink); }
+.ck12-flst.is-archrun { background: rgba(53, 199, 240, 0.2); color: var(--ck12-sky); }
 
 .ck12-flsub {
   display: flex;
@@ -419,6 +422,17 @@
   background: rgba(46, 230, 214, 0.16);
 }
 .ck12-flact.is-pri { color: color-mix(in srgb, var(--ck12-teal) 78%, var(--ck12-ink2)); }
+/* 待归档 / 归档中：▦ 换成 📦，一眼看出这行的详情落在归档页签。 */
+.ck12-flact.is-arch {
+  color: var(--ck12-pink);
+  border-color: rgba(255, 92, 138, 0.45);
+  background: rgba(255, 92, 138, 0.12);
+}
+.ck12-flact.is-arch:hover {
+  color: #fff;
+  border-color: var(--ck12-pink);
+  background: rgba(255, 92, 138, 0.28);
+}
 /* 未读徽标挂在按钮**外面**的包层：按钮本身是六边形 clip-path，徽标挂里面会被裁掉一半。 */
 .ck12-flactwrap {
   position: relative;

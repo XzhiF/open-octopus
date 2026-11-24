@@ -14,15 +14,17 @@ import { getTask, type TaskView } from '@/lib/tasks-api'
 import { TaskPlanWindow } from '@/components/chat-workbench/task-plan-window'
 import { RunWindow } from '@/components/chat-workbench/run-window'
 import { AcceptanceWindow } from '@/components/chat-workbench/acceptance-window'
+import { ArchiveWindow } from '@/components/chat-workbench/archive-window'
 import { Spinner } from '@/components/ui/spinner'
 import { cn } from '@/lib/utils'
 
-export type InlineTaskModule = 'plan' | 'run' | 'acceptance'
+export type InlineTaskModule = 'plan' | 'run' | 'acceptance' | 'archive'
 
 export const INLINE_MODULE_LABEL: Record<InlineTaskModule, string> = {
   plan: '规格',
   run: '运行',
   acceptance: '验收',
+  archive: '归档',
 }
 
 export function TaskModuleInline({
@@ -85,6 +87,8 @@ export function TaskModuleInline({
           <TaskPlanWindow task={task} />
         ) : module === 'run' ? (
           <RunWindow task={task} />
+        ) : module === 'archive' ? (
+          <ArchiveWindow task={task} />
         ) : (
           <AcceptanceWindow task={task} onMutated={() => {}} />
         )}

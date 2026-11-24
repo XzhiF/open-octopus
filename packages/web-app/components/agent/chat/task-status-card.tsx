@@ -162,10 +162,12 @@ const SETTLED_HINT: Record<string, string> = {
   failed: '完整日志在作业坞「运行」',
 }
 
-/** 双会话查看入口：规格 / 运行 / 验收。
+/** 双会话查看入口：规格 / 运行 / 验收（+ 归档，仅收尾后的任务）。
  *  桌面 = 内嵌展开（纯查看，不改任务状态）；全舱 = 交给舱系浮窗（#10：打开同一扇
- *  可拖可缩的窗，不在消息流里撑开）。 */
-function ModuleTabs({ taskId }: { taskId: string }) {
+ *  可拖可缩的窗，不在消息流里撑开）。
+ *  2026-11-24 用户：归档在 chat 里原来只有一句文字提示、点不开；补一个「归档」签，
+ *  落到作业详情同一份只读归档明细（操作仍在对话里完成）。 */
+function ModuleTabs({ taskId, showArchive = false }: { taskId: string; showArchive?: boolean }) {
   const [open, setOpen] = useState<InlineTaskModule | null>(null)
   const surface = useTaskModuleSurface()
   const pick = (key: InlineTaskModule) => {
@@ -175,11 +177,14 @@ function ModuleTabs({ taskId }: { taskId: string }) {
     }
     setOpen((cur) => (cur === key ? null : key))
   }
+  const modules: InlineTaskModule[] = showArchive
+    ? ['plan', 'run', 'acceptance', 'archive']
+    : ['plan', 'run', 'acceptance']
   return (
     <>
       <div className="mt-1.5 flex items-center gap-1 pl-6" data-testid="task-module-tabs">
         <span className="text-[9.5px] text-pop-dim/60">{surface ? '打开' : '在对话里看'}</span>
-        {(['plan', 'run', 'acceptance'] as const).map((key) => (
+        {modules.map((key) => (
           <button
             key={key}
             type="button"
@@ -207,6 +212,8 @@ export function TaskStatusCard({ message, compact = false }: { message: AgentMes
   const taskId = activity?.taskId ?? null
   const executionId = activity?.executionId ?? null
   const cardStatus = activity?.status ?? ''
+  /** 归档签只在任务走到归档闸之后出现（待归档 / 归档中 / 已归档）。 */
+  const showArchiveTab = cardStatus === 'awaiting_archive' || cardStatus === 'archiving' || cardStatus === 'done'
   const isRunCard = LIVE_TASK_STATUS.has(cardStatus)
   // 人工「暂停 / 继续运行」的轻量转场卡（2026-11-14）：只报状态与坐标，
   // 不再拉同一 execution 的节点摘要 —— 否则和「任务开始执行」那张运行卡
@@ -373,7 +380,7 @@ export function TaskStatusCard({ message, compact = false }: { message: AgentMes
         {SETTLED_HINT[cardStatus] && (
           <div className="mt-0.5 pl-6 text-[10px] text-pop-dim/70">{SETTLED_HINT[cardStatus]}</div>
         )}
-        {taskId && <ModuleTabs taskId={taskId} />}
+        {taskId && <ModuleTabs taskId={taskId} showArchive={showArchiveTab} />}
       </div>
     )
   }

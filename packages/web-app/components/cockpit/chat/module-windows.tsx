@@ -29,6 +29,7 @@ import {
 import { RunWindow } from '@/components/chat-workbench/run-window'
 import { TaskPlanWindow } from '@/components/chat-workbench/task-plan-window'
 import { AcceptanceWindow } from '@/components/chat-workbench/acceptance-window'
+import { CockpitArchivePanel } from '@/components/cockpit/face/CockpitArchivePanel'
 import type { RunTarget, YamlTarget } from '@/components/chat-workbench/task-window-types'
 import {
   clampCockpitRect, moveCockpitRect, resizeCockpitRect, type Viewport,
@@ -41,7 +42,7 @@ const WIN_LAYER_PRIORITY = 68
 const WIN_MIN_WIDTH = 560
 const WIN_MIN_HEIGHT = 360
 
-type TwinModule = 'plan' | 'run' | 'acceptance' | 'yaml'
+type TwinModule = 'plan' | 'run' | 'acceptance' | 'archive' | 'yaml'
 
 interface TwinWin {
   id: string
@@ -57,6 +58,7 @@ const MODULE_META: Record<TwinModule, { emoji: string; label: string }> = {
   plan: { emoji: '▤', label: '规格' },
   run: { emoji: '⚡', label: '运行' },
   acceptance: { emoji: '✓', label: '验收' },
+  archive: { emoji: '📦', label: '归档' },
   yaml: { emoji: '⚙', label: '工作流' },
 }
 
@@ -66,8 +68,9 @@ function viewportSize(): Viewport {
 
 function defaultRect(module: TwinModule): CockpitRect {
   const vp = viewportSize()
-  const w = Math.max(WIN_MIN_WIDTH, Math.min(module === 'run' ? 960 : 820, Math.round(vp.width * 0.62)))
-  const h = Math.max(WIN_MIN_HEIGHT, Math.min(module === 'run' ? 620 : 560, Math.round(vp.height * 0.7)))
+  const widen = module === 'run' || module === 'archive'
+  const w = Math.max(WIN_MIN_WIDTH, Math.min(widen ? 960 : 820, Math.round(vp.width * 0.62)))
+  const h = Math.max(WIN_MIN_HEIGHT, Math.min(widen ? 620 : 560, Math.round(vp.height * 0.7)))
   // 落点：右侧偏中（不压左编队，也不盖住通讯台输入行）。
   const x = Math.max(24, Math.round(vp.width * 0.5 - w * 0.15))
   const y = Math.max(64, Math.round((vp.height - h) / 2 - 10))
@@ -86,6 +89,9 @@ function titleOf(win: TwinWin): string {
   }
   if (win.module === 'run') {
     return `${meta.label} · ${win.runTarget?.title ?? '任务当前一轮'}`
+  }
+  if (win.module === 'archive') {
+    return `${meta.label} · 任务归档`
   }
   return `${meta.label} · 任务`
 }
@@ -153,6 +159,7 @@ function TwinBody({ win, onOpenYaml }: { win: TwinWin; onOpenYaml: (t: YamlTarge
   }
   if (!task) return <div className="ck12-twin-empty">载入任务…</div>
   if (win.module === 'plan') return <TaskPlanWindow task={task} />
+  if (win.module === 'archive') return <CockpitArchivePanel task={task} />
   return <AcceptanceWindow task={task} onMutated={() => {}} />
 }
 

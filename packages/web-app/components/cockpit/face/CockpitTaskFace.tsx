@@ -13,6 +13,7 @@ import { useBillingCurrency } from '@/lib/billing-currency'
 import { formatCost } from '@/lib/format'
 import { ChangesWindow } from '@/components/chat-workbench/changes-window'
 import { AcceptanceWindow } from '@/components/chat-workbench/acceptance-window'
+import { CockpitArchivePanel } from './CockpitArchivePanel'
 import { CabinRunSummary, type CabinRunTarget } from '@/components/cabin/modules/CabinRunSummary'
 import { openTaskInChat, taskDisplayStatus } from '@/components/cabin/modules/ui'
 import { isEndedJob, jobStatusLabel } from '@/components/cabin/job-status'
@@ -183,6 +184,16 @@ export function CockpitTaskFace({
         </div>
       )}
 
+      {tab === 'archive' && (
+        <div data-testid="cockpit-face-task-archive">
+          {view ? (
+            <CockpitArchivePanel task={view} onOpenAcceptance={() => onTabChange('accept')} />
+          ) : (
+            <div className="ck12-face-empty">任务还没载入 · 暂时没有归档明细。</div>
+          )}
+        </div>
+      )}
+
       {tab === 'files' && (
         <div data-testid="cockpit-face-task-files">
           <CockpitJobFiles taskId={taskId} />
@@ -224,6 +235,7 @@ export function CockpitTaskFace({
         endedAt={endedAt}
         costLabel={costLabel}
         onOpenChat={onOpenChat ?? null}
+        onOpenArchive={() => onTabChange('archive')}
       />
       <div className="ck12-face-body" data-testid="cockpit-face-task">
         {view ? (

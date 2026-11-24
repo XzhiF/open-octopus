@@ -93,6 +93,9 @@ describe('groupOf', () => {
     expect(groupOf(jobRow('j6', { status: 'cancelled' }))).toBe('done')
     expect(groupOf(jobRow('j7', { status: 'awaiting_review' }))).toBe('need')
     expect(groupOf(jobRow('j8', { status: 'failed' }))).toBe('need')
+    // 2026-11-24：归档闸 —— 待归档要人点头（need），归档编排在跑（run）。
+    expect(groupOf(jobRow('j13', { status: 'awaiting_archive' }))).toBe('need')
+    expect(groupOf(jobRow('j14', { status: 'archiving' }))).toBe('run')
     // 主线程 agent 在跑：生命周期还是 ready/paused，编队归「运行中」。
     expect(groupOf(jobRow('j9', { status: 'ready', agent_running: true }))).toBe('run')
     expect(groupOf(jobRow('j10', { status: 'paused', agent_running: true }))).toBe('run')

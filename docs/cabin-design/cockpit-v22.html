@@ -221,6 +221,8 @@ kbd{border:1px solid rgba(185,179,217,.35);border-bottom-width:2px;border-radius
 .flst.wait{background:rgba(255,176,32,.2);color:var(--amber)}
 .flst.blocked{background:rgba(255,59,92,.22);color:var(--red);box-shadow:0 0 8px rgba(255,59,92,.25)}
 .flst.done{background:rgba(61,220,151,.18);color:var(--green)}
+.flst.arch{background:rgba(255,92,138,.2);color:var(--pink)}
+.flst.archiving{background:rgba(53,199,240,.2);color:var(--sky)}
 .flsub{display:flex;align-items:center;gap:4px;min-width:0;margin-top:1px;font-size:8.5px;color:var(--ink2);white-space:nowrap}
 .flsub-t{min-width:0;overflow:hidden;text-overflow:ellipsis}
 /* #6（2026-11-23 用户）：秒表统一 = 「已作战」job 起点 → 现在；≥1h 显示 h:mm。
@@ -231,6 +233,7 @@ kbd{border:1px solid rgba(185,179,217,.35);border-bottom-width:2px;border-radius
 .fltime::before{content:"";width:4px;height:4px;border-radius:50%;background:var(--green);box-shadow:0 0 6px var(--green)}
 .flrow.wait .flsub{color:color-mix(in srgb,var(--amber) 80%,var(--ink2))}
 .flrow.blocked .flsub{color:color-mix(in srgb,var(--red) 75%,var(--ink2))}
+.flrow.arch .flsub{color:color-mix(in srgb,var(--pink) 78%,var(--ink2))}
 .flbar{display:block;height:3px;margin-top:5px;background:rgba(255,255,255,.07);overflow:hidden}
 .flbar i{display:block;height:100%;background:linear-gradient(90deg,var(--accent,var(--sky)),var(--pink));box-shadow:0 0 8px color-mix(in srgb,var(--accent,var(--sky)) 55%,transparent);transition:width .5s}
 .flrow.done{opacity:.72}
@@ -658,8 +661,11 @@ kbd{border:1px solid rgba(185,179,217,.35);border-bottom-width:2px;border-radius
 .fstate.wait{background:rgba(255,176,32,.2);color:var(--amber)}
 .fstate.blocked{background:rgba(255,59,92,.2);color:var(--red)}
 .fstate.done{background:rgba(61,220,151,.2);color:var(--green)}
+.fstate.arch{background:rgba(255,92,138,.2);color:var(--pink)}
+.fstate.archiving{background:rgba(53,199,240,.2);color:var(--sky)}
 .fneed{font-size:8.5px;font-weight:800;color:var(--dot);display:inline-flex;gap:4px;align-items:center}
 .fneed i{width:5px;height:5px;border-radius:50%;background:var(--dot);animation:np 1.4s infinite}
+.fneed.arc{color:var(--pink)}.fneed.arc i{background:var(--pink)}
 .ocard{display:flex;flex-direction:column;gap:4px;width:100%;text-align:left;padding:10px 12px;margin-bottom:8px;clip-path:var(--cut);background:rgba(255,255,255,.05);border:1px solid rgba(185,179,217,.16);border-left:3px solid var(--accent,var(--sun));transition:.14s;cursor:pointer}
 .ocard:hover{transform:translateX(-3px);background:rgba(255,255,255,.1)}
 .ocard .ot{display:flex;align-items:center;gap:8px}
@@ -917,6 +923,128 @@ kbd{border:1px solid rgba(185,179,217,.35);border-bottom-width:2px;border-radius
 .pcard .wt{font-size:8.5px;color:var(--metal2);margin-top:4px}
 .pcard .go2{margin-top:6px;font-size:9.5px;font-weight:800;color:var(--sky)}
 .pnote{font-size:9.5px;color:var(--amber);border:1px dashed rgba(255,176,32,.4);padding:6px 10px;margin-bottom:9px;clip-path:var(--cut);background:rgba(255,176,32,.07)}
+/* ═══ v23 · 作战详情 → 归档（2026-11-24 用户）：编队任务的归档闸 / 编排 / 落点 ═══ */
+.arcbar{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:8px}
+.arcchip{display:inline-flex;align-items:center;gap:6px;height:22px;padding:0 10px;clip-path:var(--btncut);font-size:10px;font-weight:800;font-family:var(--font-ui);background:rgba(255,255,255,.07);color:var(--ink2)}
+.arcchip i{width:6px;height:6px;border-radius:50%;background:currentColor;box-shadow:0 0 7px currentColor}
+.arcchip.pending{background:rgba(255,92,138,.16);color:var(--pink);box-shadow:inset 0 0 0 1px rgba(255,92,138,.35)}
+.arcchip.running{background:rgba(53,199,240,.16);color:var(--sky);box-shadow:inset 0 0 0 1px rgba(53,199,240,.4)}
+.arcchip.done{background:rgba(61,220,151,.16);color:var(--green);box-shadow:inset 0 0 0 1px rgba(61,220,151,.4)}
+.arclbl{font-size:9.5px;color:var(--ink2);font-family:var(--font-mono)}
+.arclbl b{color:var(--ink);font-weight:800}
+.arcgate{display:flex;flex-direction:column;gap:3px;padding:8px 11px;margin-bottom:9px;clip-path:var(--cut);border:1px dashed rgba(255,92,138,.45);background:rgba(255,92,138,.06);font-size:10px;color:var(--ink2);line-height:1.55}
+.arcgate b{color:var(--pink);font-size:10.5px;letter-spacing:.04em}
+.arcsay{display:flex;align-items:center;gap:7px;flex-wrap:wrap;padding:7px 9px;margin-bottom:2px;clip-path:var(--cut);border:1px solid rgba(185,179,217,.16);background:rgba(255,255,255,.04);font-size:9.5px;color:var(--ink2)}
+.arcsay-k{font-size:8px;letter-spacing:.12em;color:var(--metal2);font-family:var(--font-mono)}
+.arcsay code{font-family:var(--font-mono);font-size:10px;font-weight:800;color:var(--teal);background:rgba(46,230,214,.08);border:1px solid rgba(46,230,214,.28);padding:1px 7px;clip-path:var(--btncut-sm)}
+.arcbtn{height:23px;padding:0 11px;clip-path:var(--btncut);background:rgba(255,255,255,.07);border:1px solid rgba(185,179,217,.28);color:var(--ink2);font-size:9.5px;font-weight:700;font-family:var(--font-ui);white-space:nowrap}
+.arcbtn:hover{color:#fff;border-color:var(--teal);background:rgba(46,230,214,.14)}
+.arcbtn.go{color:var(--pink);border-color:rgba(255,92,138,.45)}
+.arcbtn.go:hover{color:#fff;border-color:var(--pink);background:rgba(255,92,138,.18)}
+.arcsteps{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:6px;margin-bottom:2px}
+.arcstep{position:relative;padding:7px 9px 8px;clip-path:var(--cut);border:1px solid rgba(185,179,217,.14);background:rgba(255,255,255,.035)}
+.arcstep .n{display:grid;place-items:center;width:17px;height:19px;clip-path:var(--hex);font-size:9px;font-weight:800;background:rgba(255,255,255,.1);color:var(--ink2);margin-bottom:4px}
+.arcstep b{display:block;font-size:10px;color:#fff;font-family:var(--font-ui)}
+.arcstep span:not(.n){display:block;margin-top:2px;font-size:8.5px;color:var(--ink2);line-height:1.45}
+.arcstep.on{border-color:rgba(53,199,240,.5);background:rgba(53,199,240,.08)}
+.arcstep.on .n{background:rgba(53,199,240,.25);color:var(--sky)}
+.arcstep.ok{border-color:rgba(61,220,151,.35);background:rgba(61,220,151,.06)}
+.arcstep.ok .n{background:rgba(61,220,151,.22);color:var(--green)}
+.arctblwrap{overflow:auto}
+.arctbl{width:100%;border-collapse:collapse;font-size:10px}
+.arctbl th{font-size:8px;letter-spacing:.12em;color:var(--metal2);font-weight:700;text-align:left;padding:4px 8px;border-bottom:1px solid rgba(185,179,217,.18);white-space:nowrap}
+.arctbl td{padding:5px 8px;border-bottom:1px dashed rgba(185,179,217,.12);color:var(--ink2);white-space:nowrap}
+.arctbl tr:last-child td{border-bottom:0}
+.arctbl td b{color:#fff;font-weight:800}
+.arctbl .mono{font-family:var(--font-mono);font-size:9.5px}
+.arctbl .pr{color:var(--sky);font-weight:800;text-decoration:underline dotted;text-underline-offset:2px}
+.arctbl .st-ok{color:var(--green);font-weight:800}
+.arctbl .st-run{color:var(--sky);font-weight:800}
+.arctbl .st-wait{color:var(--amber);font-weight:800}
+.arcfoot{font-size:9px;color:var(--metal2);margin-top:7px;line-height:1.55}
+.arclog{margin-top:2px;padding:6px 9px;background:rgba(6,5,16,.4);border:1px solid rgba(46,230,214,.14);font-family:var(--font-mono);font-size:9px;color:var(--ink2);line-height:1.7}
+.arclog b{color:var(--teal)}
+.dtab .dtab-dot{display:inline-block;width:5px;height:5px;border-radius:50%;background:var(--pink);margin-left:5px;vertical-align:1px;box-shadow:0 0 6px var(--pink)}
+.pha.arc{color:var(--pink);border-color:rgba(255,92,138,.45);background:rgba(255,92,138,.1)}
+.pha.arc:hover{color:#fff;background:rgba(255,92,138,.22);border-color:var(--pink)}
+
+/* ── 归档 · 复刻 classic 归档台的信息架构（概览 / 知识落点 / 明细 + 二级预览窗）── */
+.arcstat{display:flex;align-items:center;gap:8px;flex-wrap:wrap;padding:6px 9px;margin-bottom:8px;border:1px solid rgba(185,179,217,.14);background:rgba(255,255,255,.035);font-size:9px;color:var(--ink2)}
+.arcstat .it{display:flex;align-items:center;gap:5px;white-space:nowrap}
+.arcstat .dot{width:5px;height:5px;border-radius:50%;background:var(--metal2);flex:none}
+.arcstat .dot.ok{background:var(--green);box-shadow:0 0 6px var(--green)}
+.arcstat .dot.run{background:var(--amber);box-shadow:0 0 6px var(--amber)}
+.arcstat .dot.bad{background:var(--red)}
+.arcstat .k{font-size:8px;letter-spacing:.1em;color:var(--metal2);font-family:var(--font-mono)}
+.arcstat .v{color:var(--ink);font-weight:700}
+.arcstat .ar{color:var(--metal2);opacity:.6}
+.atabs{display:flex;align-items:center;gap:2px;margin-bottom:8px;border-bottom:1px solid rgba(185,179,217,.18)}
+.atab{padding:6px 10px;font-size:9.5px;font-weight:800;font-family:var(--font-ui);color:var(--ink2);border-bottom:2px solid transparent;margin-bottom:-1px}
+.atab small{font-size:8px;color:var(--metal2);margin-left:4px;font-family:var(--font-mono)}
+.atab:hover{color:#fff}
+.atab.on{color:#fff;border-bottom-color:var(--pink)}
+.atabs .hint{margin-left:auto;font-size:8.5px;color:var(--metal2);font-family:var(--font-mono)}
+.arcverdict{border:1px solid rgba(185,179,217,.16);background:rgba(255,255,255,.03);margin-bottom:8px}
+.arcv{display:flex;align-items:center;gap:9px;padding:7px 10px;border-top:1px dashed rgba(185,179,217,.12)}
+.arcv:first-child{border-top:0}
+.arcv .ic{flex:none;display:grid;place-items:center;width:17px;height:17px;border-radius:50%;border:1px solid currentColor;font-size:9px;font-weight:800}
+.arcv .ic.ok{color:var(--green)}.arcv .ic.run{color:var(--amber)}.arcv .ic.bad{color:var(--red)}.arcv .ic.idle{color:var(--metal2)}
+.arcv .tx{flex:1;min-width:0;display:flex;flex-direction:column;gap:1px}
+.arcv b{font-size:10.5px;color:#fff;font-family:var(--font-ui)}
+.arcv span{font-size:9px;color:var(--ink2);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.arcwarn{padding:7px 10px;margin-bottom:8px;border:1px dashed rgba(255,176,32,.42);background:rgba(255,176,32,.06);font-size:9.5px;color:var(--ink2);line-height:1.6}
+.arcwarn b{display:block;color:var(--amber);font-size:10px;margin-bottom:2px}
+.arcpages{border:1px solid rgba(185,179,217,.14);background:rgba(255,255,255,.025)}
+.arcpage{display:flex;align-items:center;gap:8px;padding:4px 8px;border-bottom:1px dashed rgba(185,179,217,.1);font-size:9.5px;color:var(--ink2)}
+.arcpage:last-child{border-bottom:0}
+.arcpage .dom{flex:none;width:58px;font-size:8px;font-weight:800;letter-spacing:.04em;color:var(--sky);font-family:var(--font-mono);text-transform:uppercase}
+.arcpage .p{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-family:var(--font-mono);font-size:9px;color:var(--ink)}
+.arcpage .tag{flex:none;font-size:7.5px;font-weight:800;padding:0 6px;border:1px solid rgba(185,179,217,.24);color:var(--ink2)}
+.arcpage .tag.new{color:var(--green);border-color:rgba(61,220,151,.35);background:rgba(61,220,151,.08)}
+.arcpage .tag.upd{color:var(--sky);border-color:rgba(53,199,240,.35);background:rgba(53,199,240,.08)}
+.arcgrid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px;margin-bottom:8px}
+.arcblock{border:1px solid rgba(185,179,217,.16);background:rgba(255,255,255,.03);padding:8px 9px;min-width:0}
+.arcblock h4{display:flex;align-items:center;gap:6px;margin:0 0 6px;font-size:8.5px;letter-spacing:.12em;color:var(--metal2);font-family:var(--font-mono);font-weight:700}
+.arcblock h4 span{margin-left:auto;font-size:8px;letter-spacing:0;color:var(--metal2);font-weight:400;text-transform:none}
+.arcpack{display:flex;flex-direction:column}
+.arcpackrow{display:flex;align-items:center;gap:6px;width:100%;text-align:left;padding:3px 5px;border-bottom:1px dashed rgba(185,179,217,.1);font-size:9px;color:var(--ink2);transition:.12s}
+.arcpackrow:last-child{border-bottom:0}
+.arcpackrow:hover{background:rgba(46,230,214,.08)}
+.arcpackrow.excluded{opacity:.5}
+.arcpackrow .kind{flex:none;width:58px;font-size:8px;color:var(--teal);font-family:var(--font-mono)}
+.arcpackrow .nm{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--ink);font-family:var(--font-mono);font-size:9px}
+.arcpackrow .badge{flex:none;font-size:7.5px;font-weight:800;padding:0 5px;border:1px solid rgba(61,220,151,.35);color:var(--green);background:rgba(61,220,151,.08)}
+.arcpackrow .badge.ptr{color:var(--amber);border-color:rgba(255,176,32,.35);background:rgba(255,176,32,.08)}
+.arcpackrow .badge.out{color:var(--amber);border-color:rgba(255,176,32,.35);background:rgba(255,176,32,.08)}
+.arcpackrow .sz{flex:none;font-size:8.5px;color:var(--metal2);font-family:var(--font-mono);font-variant-numeric:tabular-nums}
+.arcpackrow .go{flex:none;color:var(--metal2)}
+.arcblock p{margin:5px 0 0;font-size:8.5px;line-height:1.55;color:var(--metal2)}
+.arcclean{display:flex;flex-direction:column;gap:4px}
+.arccleanrow{display:flex;align-items:center;gap:7px;padding:3px 5px;border-bottom:1px dashed rgba(185,179,217,.1);font-size:9px}
+.arccleanrow:last-child{border-bottom:0}
+.arccleanrow b{color:var(--ink);font-size:9.5px}
+.arccleanrow .g{color:var(--green);font-family:var(--font-mono);font-size:8.5px}
+.arccleanrow .l{color:var(--amber);font-family:var(--font-mono);font-size:8.5px;margin-left:auto}
+.arcref{display:flex;flex-direction:column;gap:4px}
+.arcrefrow{padding:4px 6px;border:1px solid rgba(139,124,246,.24);background:rgba(139,124,246,.07);font-size:9px;color:var(--ink2)}
+.arcrefrow b{display:block;font-size:9.5px;color:#fff;font-weight:700}
+.arcrefrow span{font-size:8.5px;font-family:var(--font-mono);color:var(--violet)}
+.arcrefrow .dec{float:right;font-size:8px;font-weight:800;color:var(--green)}
+.arcrefrow .dec.skip{color:var(--metal2)}
+.arctl{display:flex;align-items:flex-start;gap:6px;padding:7px 9px;border:1px solid rgba(185,179,217,.14);background:rgba(255,255,255,.03);margin-bottom:8px}
+.arctl .nd{position:relative;flex:1;min-width:0;padding-right:8px}
+.arctl .nd::before{content:'';position:absolute;left:2px;right:0;top:3px;height:1px;background:rgba(185,179,217,.25)}
+.arctl .nd:last-child::before{display:none}
+.arctl .dt{position:relative;z-index:1;width:7px;height:7px;border-radius:50%;background:var(--green);display:block;margin-bottom:4px}
+.arctl .nd.hot .dt{background:var(--amber);box-shadow:0 0 7px var(--amber)}
+.arctl .t{font-size:8.5px;color:var(--sky);font-family:var(--font-mono)}
+.arctl .n{font-size:9px;color:var(--ink);margin-top:1px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.arctl .s{font-size:8px;color:var(--metal2);font-family:var(--font-mono);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.arcwin .pb{padding:10px 12px;overflow:auto;display:flex;flex-direction:column;gap:8px}
+#arcFileWin,#arcReportWin{z-index:56;width:min(780px,94vw);background:linear-gradient(180deg,rgba(22,17,52,.97),rgba(8,6,22,.985));box-shadow:0 30px 90px rgba(4,3,12,.8)}
+.arcwin .ph .pt b{font-size:11.5px}
+.arcwin .ph .pt span{font-size:8px;letter-spacing:.08em}
+.arcwin .ck-view{border:1px solid rgba(185,179,217,.14);background:rgba(6,5,16,.35);padding:10px 12px;overflow:auto}
 
 /* ═══ 舱籍浮层（2026-11-23 用户 #1）══════════════════════════════════
    HUD「⧉ 舱名 · N 项目」点开 = 关联项目清单（不再直接开整页面板）。
@@ -1647,6 +1775,8 @@ kbd{border:1px solid rgba(185,179,217,.35);border-bottom-width:2px;border-radius
 .cwh button{flex:none;width:22px;height:22px;clip-path:var(--hex);display:grid;place-items:center;background:rgba(255,255,255,.08);border:1px solid rgba(185,179,217,.25);color:var(--ink2);font-size:10px}
 .cwh button:hover{color:#fff;border-color:var(--teal)}
 .cwh button[data-wclose]:hover{background:var(--red);border-color:var(--red)}
+.cwh button[data-warch]{color:var(--pink);border-color:rgba(255,92,138,.5);background:rgba(255,92,138,.12)}
+.cwh button[data-warch]:hover{color:#fff;background:rgba(255,92,138,.28);border-color:var(--pink)}
 /* 窗头星核（技能 / 分身 / MCP）—— 与主通讯台同位：紧跟 ✕，不在输入行。 */
 .cwh .cwadd{clip-path:none;border-radius:50%;border-color:rgba(46,230,214,.5);background:rgba(46,230,214,.1);color:#9ff7ee;font-size:11px}
 .cwh .cwadd:hover{border-color:rgba(46,230,214,.95);background:rgba(46,230,214,.24);color:#eafffd;box-shadow:0 0 12px rgba(46,230,214,.45)}
@@ -2046,6 +2176,8 @@ kbd{border:1px solid rgba(185,179,217,.35);border-bottom-width:2px;border-radius
   <section class="panel" id="panel"></section>
   <section class="twin" id="twin" aria-label="目录树"></section>
   <section class="twin" id="docwin" aria-label="文档查看器"></section>
+  <section class="twin arcwin" id="arcFileWin" aria-label="归档素材预览"></section>
+  <section class="twin arcwin" id="arcReportWin" aria-label="归档报告"></section>
   <section class="twin" id="actWin" aria-label="活动详情"></section>
   <section class="twin actlogwin" id="actLogWin" aria-label="活动日志"></section>
   <section class="twin" id="notesWin" aria-label="便签 · 快速记事"></section>
@@ -2165,8 +2297,8 @@ const projOf=id=>PROJECTS.find(p=>p.id===id)||PROJECTS[0];
 const WS_ROOT='D:/octopus-ws/cabin';
 const wsPath=id=>WS_ROOT+'/projects/'+id;
 const KIND={task:{g:'◆',label:'任务'},workflow:{g:'⬡',label:'工作流'},subagent:{g:'◈',label:'分身'},external:{g:'⧉',label:'外部'},wfdev:{g:'⚙',label:'流程开发'}};
-const STATE_LABEL={run:'作战中',wait:'等你答',blocked:'受阻',queue:'待命',done:'已归档'};
-const STATE_EMO={run:'⚡',wait:'❗',blocked:'💦',queue:'💤',done:'✅'};
+const STATE_LABEL={run:'作战中',wait:'等你答',blocked:'受阻',queue:'待命',arch:'待归档',archiving:'归档中',done:'已归档'};
+const STATE_EMO={run:'⚡',wait:'❗',blocked:'💦',queue:'💤',arch:'📦',archiving:'⚙',done:'✅'};
 const MODELS=[
  {id:'pro-max',eff:'qwen3.7-max',desc:'最强 · 复杂重构与 Spec 共建',mult:3},
  {id:'pro',eff:'qwen3.7-plus',desc:'均衡 · 日常执行',mult:1,def:true},
@@ -2185,6 +2317,7 @@ const JOBS_INIT=[
  {id:'j-m3',proj:'risk',kind:'task',title:'M3 · 风控告警',short:'M3 风控',status:'queue',pct:0,doing:'待命 · 等并发位',agent:'—',branch:'—',clock:'—',cost:0,tok:0,rarity:1,tid:'t-2645',slug:'risk-alert',born:44},
  {id:'j-m5',proj:'risk',kind:'task',title:'M5 · 账单导出',short:'M5 导出',status:'queue',st:'待命',pct:0,doing:'dev 服务起着 · 等唤醒',agent:'risk-1',branch:'feat/bill-export',clock:'—',live:'等后台',liveSec:305,cost:0.03,tok:9000,rarity:2,tid:'t-2648',slug:'bill-export',born:3},
  {id:'j-m2a',proj:'ledger',kind:'workflow',title:'M1 · 幂等修复',short:'M1 幂等',status:'done',pct:100,doing:'已验收归档',agent:'ledger-2',branch:'fix/idempotent',clock:'34m',cost:0.08,tok:26000,rarity:3,tid:'t-2631',slug:'idempotent',born:150},
+ {id:'j-m7',proj:'ledger',kind:'task',title:'M7 · 对账导出',short:'M7 导出',status:'arch',pct:100,doing:'末 phase 已通过 · 归档未启动',agent:'ledger-2',branch:'feat/reconcile-export',clock:'18m',cost:0.36,tok:121000,rarity:3,tid:'t-2650',slug:'reconcile-export',born:0},
  {id:'j-edge',proj:'edge',kind:'workflow',title:'边缘节点灰度',short:'边缘灰度',status:'run',pct:45,doing:'灰度 2/5 · 探针正常',agent:'edge-1',branch:'feat/edge-canary',clock:'5m20s',cost:0.09,tok:29000,rarity:2,tid:'t-2646',slug:'edge-canary',born:5}];
 const OP_KIND={block:{k:'阻塞',color:'#FF3B5C',pri:0},start:{k:'待放行',color:'#FFB020',pri:0},decide:{k:'等你拍板',color:'#35C7F0',pri:1},accept:{k:'等你验收',color:'#3DDC97',pri:2},confirm:{k:'等你确认',color:'#FFB020',pri:3}};
 const OPS_INIT=[
@@ -2213,6 +2346,7 @@ const THREADS_INIT={
  'j-m2x':[{who:'sys',text:'—— 发布脚本迁移 ——'},{who:'xy',name:'汐音',text:'发布脚本迁移，7 个逐个过。',t:'09:31',mood:'working'},{who:'doer',name:'ledger-2',text:'前 3 个已迁 · 第 4 个遇回滚边界。',t:'09:39'}],
  'j-m3':[{who:'sys',text:'—— M3 · 风控告警 · 待命 ——'},{who:'xy',name:'汐音',text:'风控扫描在待命，等并发位。',t:'09:31',mood:'idle'}],
  'j-m2a':[{who:'sys',text:'—— M1 · 幂等修复 · 已归档 ——'},{who:'doer',name:'ledger-2',text:'2 文件 +96/−41 · 42 passed · 验收通过。',t:'09:02'}],
+ 'j-m7':[{who:'sys',text:'—— M7 · 对账导出 · 待归档 ——'},{who:'you',name:'指挥官',text:'M7 导出跑完直接收口。',t:'09:40'},{who:'xy',name:'汐音',text:'接 M7 对账导出，CSV 走差异行与大额标记。',t:'09:40',mood:'working'},{who:'doer',name:'ledger-2',text:'impl 完成 · 1 文件 +64 · 42 passed。',t:'09:52'},{who:'xy',name:'汐音',text:'M7 两轮验收都过了，我停在归档闸：您说「归档」我就开始同步与消化；说「暂不归档」就先放着。',t:'09:58',mood:'happy'}],
  'j-edge':[{who:'sys',text:'—— 边缘节点灰度 ——'},{who:'xy',name:'汐音',text:'边缘灰度 5 节点逐个放、探针盯着。',t:'09:30',mood:'working'},{who:'doer',name:'edge-1',text:'灰度 2/5 · 探针正常。',t:'09:37'}]};
 const JOB_EVENTS={
  'j-m1':[['09:31','汐音','dispatch','接 M1 退款链'],['09:38','gateway-2','report','impl 完成 +96/−41'],['09:38','gateway-2','attention','CI 红 expected 1 got 2'],['09:39','汐音','report','停住、现场保留']],
@@ -2223,16 +2357,78 @@ const JOB_EVENTS={
  'j-m2x':[['09:31','汐音','dispatch','脚本迁移'],['09:40','ledger-2','attention','回滚策略待定']],
  'j-m3':[['09:31','汐音','note','待命']],
  'j-m2a':[['08:58','ledger-2','report','42 passed'],['09:02','ledger-2','report','已归档']],
+ 'j-m7':[['09:40','汐音','dispatch','接 M7 对账导出'],['09:52','ledger-2','tool','42 passed'],['09:58','汐音','attention','末 phase 通过 · 待归档']],
  'j-edge':[['09:30','汐音','dispatch','边缘灰度'],['09:37','edge-1','report','2/5 正常']]};
 const CHANGES={
  'j-m1':{branch:'feat/refund-flow',base:'main',files:[{path:'gateway/src/refund/replay.ts',state:'M',add:71,del:33,diff:[['ctx','18','export function replay(orderId: string) {'],['del','19','  if (seen.has(orderId)) return'],['add','19',"  const key = orderId + ':' + idempotencyKey"],['add','20','  if (seen.has(key)) return { skipped: true }'],['ctx','21','  return refund(orderId)']]},{path:'gateway/src/refund/replay.test.ts',state:'M',add:25,del:8,diff:[['ctx','88',"it('replays idempotently', () => {"],['add','89','  replay(order); replay(order)'],['add','90','  expect(refunds()).toHaveLength(1)']]}]},
  'j-m2g':{branch:'feat/rate-limit',base:'main',files:[{path:'gateway/config/rate-limit.yaml',state:'M',add:3,del:1,diff:[['ctx','1','limits:'],['del','2','  rps: 1200'],['add','2','  rps: 600'],['add','3','  burst: 1200']]},{path:'gateway/src/ratelimit/limiter.ts',state:'M',add:12,del:3,diff:[['ctx','8','export const limit = (rps: number) =>'],['del','9','  tokenBucket({ rps })'],['add','9','  tokenBucket({ rps, burst: rps * 2, tenant })'],['ctx','10','']]},{path:'gateway/src/ratelimit/bucket.ts',state:'A',add:36,del:0,diff:[['add','1','export class TenantBucket {'],['add','2','  constructor(private rps: number) {}'],['add','3','  take(tenant: string) {']]},{path:'gateway/README.md',state:'M',add:4,del:1,diff:[['ctx','3','退款链 · 限流 · 路由。'],['add','4','限流按租户独立桶 · burst = 2 × rps。']]},{path:'gateway/src/audit/chain/probe.ts',state:'A',add:18,del:0,diff:[['add','1','export const probe = (node: Node) =>'],['add','2','  fetch(node.health, { timeout: 800 })']]}]},
- 'j-m2':{branch:'fix/reconcile',base:'main',files:[{path:'ledger/src/settlement/reconcile.ts',state:'M',add:58,del:21,diff:[['ctx','41','export function reconcile(day: string) {'],['add','42',"  const key = day + ':' + accountId"],['add','43','  if (seen.has(key)) return { skipped: true }'],['ctx','44','  return settle(loadRows(day))']]}]}};
+ 'j-m2':{branch:'fix/reconcile',base:'main',files:[{path:'ledger/src/settlement/reconcile.ts',state:'M',add:58,del:21,diff:[['ctx','41','export function reconcile(day: string) {'],['add','42',"  const key = day + ':' + accountId"],['add','43','  if (seen.has(key)) return { skipped: true }'],['ctx','44','  return settle(loadRows(day))']]}]},
+ 'j-m7':{branch:'feat/reconcile-export',base:'main',files:[{path:'ledger/src/settlement/export.ts',state:'A',add:64,del:0,diff:[['add','1','export async function exportReconcile(day: string) {'],['add','2','  const rows = await reconcile(day)'],['add','3','  return toCsv(rows.map(markLargeDiff))'],['add','4','}']]},{path:'ledger/src/settlement/export.test.ts',state:'A',add:38,del:0,diff:[['add','1',"it('exports every diff row', async () => {"],['add','2','  const csv = await exportReconcile(day)'],['add','3',"  expect(csv.split(',')).toHaveLength(6)"]]}]}};
 const AC={'j-m2':[{t:'AC-1 同日重复只落一笔',pass:true},{t:'AC-2 差异可追溯',pass:true},{t:'AC-3 重放幂等',pass:true},{t:'AC-4 大额差异覆盖',pass:false}],
+ 'j-m7':[{t:'AC-1 导出含全部差异行',pass:true},{t:'AC-2 大额差异带标记',pass:true},{t:'AC-3 CSV 可被 Excel 打开',pass:true}],
  'j-m1':[{t:'AC-1 复用幂等键',pass:true},{t:'AC-2 退款不重复',pass:true},{t:'AC-3 CI 全绿',pass:false}],
  'j-m2g':[{t:'AC-1 三档压测',pass:true},{t:'AC-2 阈值落配置',pass:false},{t:'AC-3 灰度回归',pass:false}]};
 const ACK=['收到，指挥官。我这就去办，有进展第一时间举上来。','明白。我把它排进编队，盯到收口。','好的，我 relay 给执行分身，结果回来整理给您。','收到。这条我记下了，跑完向您汇报。'];
-const KW={'j-m1':'退款','j-m2g':'限流','j-m2':'对账','j-arch':'归档','j-ext':'审计','j-m2x':'迁移','j-m3':'风控','j-m2a':'幂等','j-edge':'灰度'};
+/* ── 归档（2026-11-24 用户）：编队任务在作战详情里的归档闸 / 编排 / 落点 ──
+   口径同任务域：待归档（awaiting_archive）→ 归档中（archiving）→ 已归档（done）。
+   归档是最后一道人工闸：验收 ≠ 归档，人说「归档」才启动 git 同步 / 产物清理 / 知识沉淀。 */
+const ARCH_STEPS=[
+ {t:'git 同步',d:'每仓一条归档 commit → push → PR 合入落点'},
+ {t:'素材冻结',d:'结论 / ADR / 术语进 raw/archives'},
+ {t:'知识编译',d:'wiki 页落库 · 判例入档 · 冲突进 PR review'},
+ {t:'产物清理',d:'构建产物 / 临时目录释放（done 后）'}];
+const ARCHIVE={
+ 'j-m7':{state:'pending',verifiedAt:'11-24 09:58',by:'验收 R2 · 2 场景通过 · 42 passed',
+  projects:[{name:'ledger',branch:'feat/reconcile-export',base:'main',target:'main',status:'pending'}]},
+ 'j-arch':{state:'running',startedAt:'09:31',step:1,elapsed:'6m10s',
+  pack_path:'raw/archives/2026-11-24-M2',
+  projects:[
+   {name:'ledger',branch:'fix/reconcile',base:'main',target:'main',status:'synced',commit:'a41f2c9',pr:'#128'},
+   {name:'risk',branch:'fix/reconcile',base:'main',target:'main',status:'syncing'},
+   {name:'edge',branch:'fix/reconcile',base:'main',target:'main',status:'pending'}],
+  knowledge:{compile:'running',pack:6,packItems:[
+   {kind:'spec',name:'spec.md',bytes:7214},{kind:'round-report',name:'round-report-r1.md',bytes:9888},
+   {kind:'diff',name:'risk.diff',bytes:31002}]},
+  events:[['09:31','汐音','dispatch','M2 归档启动 · 3 project'],['09:33','ledger','tool','commit a41f2c9 · push'],['09:34','ledger','tool','PR #128 → main'],['09:36','risk','tool','同步术语表…']]},
+ 'j-m2a':{state:'done',finishedAt:'09:02',elapsed:'10m12s',
+  pack_path:'raw/archives/2026-11-24-M1',
+  projects:[
+   {name:'ledger',branch:'fix/idempotent',base:'main',target:'main',status:'synced',commit:'7c9d21e',pr:'#126',terms:2},
+   {name:'gateway',branch:'fix/idempotent',base:'main',target:'main',status:'synced',commit:'3ff81ab',pushOnly:true,terms:1}],
+  knowledge:{wikiUpdated:3,wikiCreated:1,cases:2,conflicts:0,pack:18,freed:'42.6 MB',compileMs:'3m40s',
+   pages:[
+    {type:'concepts',path:'wiki/concepts/幂等键.md',created:false},
+    {type:'concepts',path:'wiki/concepts/归档闸.md',created:true},
+    {type:'topics',path:'wiki/topics/结算对账.md',created:false},
+    {type:'cases',path:'wiki/cases/退款重复落账.md',created:false}],
+   findings:[],
+   caseList:[{action:'created',symptom:'同日重复退款落两笔',path:'wiki/cases/退款重复落账.md'},
+    {action:'merged',symptom:'幂等键选型',path:'wiki/cases/幂等键.md',before:1,after:3}],
+   packItems:[
+    {kind:'spec',name:'spec.md',bytes:8214},
+    {kind:'acceptance',name:'acceptance-plan-r2.json',bytes:4210},
+    {kind:'round-report',name:'round-report-r2.md',bytes:12888},
+    {kind:'diff',name:'ledger.diff',bytes:44211},
+    {kind:'archive-summary',name:'archive-summary.md',bytes:3210},
+    {kind:'log',name:'verify.log',bytes:91233,excluded:true}],
+   reflection:[{title:'结算对账以 settlement v3 为口径',target:'wiki/concepts/结算口径.md',decision:'ingest'},
+    {title:'灰度先放 10% 流量',target:'',decision:'skip'}]},
+  cleanup:{status:'done',totalFreed:'42.6 MB',projects:[
+   {name:'ledger',removed:3,freed:'38.4 MB',leftover:2},
+   {name:'gateway',removed:2,freed:'4.2 MB',leftover:0}]},
+  report:'2026-11-24-M1归档报告.md',
+  reportMd:'# 2026-11-24 · M1 归档报告\n\n## ledger · fix/idempotent\n- commit 7c9d21e · push ✓ · PR #126\n- ADR 合并 1 · 术语追加 2 · 冲突 0\n\n## gateway · fix/idempotent\n- commit 3ff81ab · push 即落点\n\n## 知识落点\n- 更新 3 页 · 新建 1 页 · 判例入档 2\n- 构建产物释放 42.6 MB'}};
+/* 素材包冻结件正文（原型演示用；真实实现读知识库 raw 冻结件）。 */
+const ARC_FILES={
+ 'spec.md':'# 对账导出 · spec\n\n## 目标\n按日导出全部对账差异行，大额差异带标记。\n\n## AC\n- AC-1 导出含全部差异行\n- AC-2 大额差异带标记\n- AC-3 CSV 可被 Excel 打开\n',
+ 'round-report-r2.md':'# Round 2 · report\n\n- 42 passed · 0 failed\n- 变更窗：feat/reconcile-export\n- 证据：diff / 测试 / 报告已落盘\n',
+ 'acceptance-plan-r2.json':'{\n  "round": 2,\n  "cases": [\n    { "id": "AC-1", "pass": true },\n    { "id": "AC-2", "pass": true },\n    { "id": "AC-3", "pass": true }\n  ]\n}\n',
+ 'archive-summary.md':'# 归档摘要\n\n- 3 project 全绿\n- 术语冲突 0\n- wiki 4 页\n',
+ 'ledger.diff':'diff --git a/src/settlement/export.ts b/src/settlement/export.ts\n+export async function exportReconcile(day: string) {\n+  const rows = await reconcile(day)\n+  return toCsv(rows.map(markLargeDiff))\n+}\n',
+ 'verify.log':'[verify] 42 tests passed\n[verify] 0 failed\n',
+ 'round-report-r1.md':'# Round 1 · report\n\n- 31 passed · 0 failed\n',
+ 'risk.diff':'diff --git a/src/risk/terms.ts b/src/risk/terms.ts\n+export const TERMS = { idempotent: "幂等" }\n'};
+const KW={'j-m1':'退款','j-m2g':'限流','j-m2':'对账','j-arch':'归档','j-ext':'审计','j-m2x':'迁移','j-m3':'风控','j-m2a':'幂等','j-m7':'导出','j-edge':'灰度'};
 const SAY=[['指挥官，舰桥一切正常，编队在跑。','idle'],['我在。您说。','wink'],['要拍板的都在「决断」里，点一条就地回我。','thinking'],['跃迁可以换场景，星空巡航和星云门都准备好了。','happy'],['别担心，阻塞那条我先停住现场了。','worried'],['右边「要我处理」亮起来是有新回传，点进去就地处理。','alert']];
 const PROGRESS=['探针正常 · 推进到下一节点。','单测绿 · 继续 impl。','已写 round-report · 进入 verify。','缓存命中 82% · 成本低于预估。','worktree 干净 · 无越权改动。','第 2 阶段完成 · 进入第 3 阶段。'];
 /* 便签配色（与 classic 快速便签同一组）。 */
@@ -2258,7 +2454,7 @@ const ITEMS_SEED=[
  {id:'it8',n:8,kind:'想法',status:'dropped',title:'给舱加一个「静音今晚」开关',body:'晚上不想被回传铃声打扰。',createdAt:Date.now()-80*3600e3,closedAt:Date.now()-70*3600e3},
 ];
 
-const state={sound:true,theme:0,winAlpha:1,thread:'main',panel:null,detailJob:null,detailTab:'run',scene:0,sceneFront:'A',
+const state={sound:true,theme:0,winAlpha:1,thread:'main',panel:null,detailJob:null,detailTab:'run',archTab:'overview',archFile:null,archReport:false,scene:0,sceneFront:'A',
  settings:false,conPop:null,
  jobs:JOBS_INIT.map(x=>({...x})),ops:OPS_INIT.map(x=>({...x})),pool:OPS_POOL.map(x=>({...x})),
  threads:Object.fromEntries(Object.entries(THREADS_INIT).map(([k,v])=>[k,v.map(m=>({...m}))])),
@@ -2382,7 +2578,7 @@ function toast(msg){const e=$('#toast');e.textContent=msg;e.classList.add('show'
 function renderDots(){renderInboxChip();}
 
 /* ── 左栏编队：单列，状态优先 + 创建时间（新→旧）；待办只在右栏 inbox，不重复分组 ── */
-const STATUS_RANK={blocked:0,wait:1,run:2,queue:3,done:4};
+const STATUS_RANK={blocked:0,arch:1,wait:1,run:2,archiving:2,queue:3,done:4};
 /* 统一秒表（2026-11-24 用户）：作战中 / 待验收在跑 / 待命在跑 都用同一口径 ——
    「已作战」= job 起点 → now；≥1h 只显示 h:mm，完整 h:mm:ss 放悬停 title。
    演示里起点用 born（分钟）；真实实现用 cabin_jobs.created_at。 */
@@ -2405,21 +2601,22 @@ function fleetSorted(){return [...state.jobs].sort((a,b)=>rankOf(a)-rankOf(b)||(
 function renderFleetRail(){
   const el=$('#fleetrail');if(!el)return;
   const total=state.jobs.length;
-  /* 在跑 = 真正有 agent 在干活（含「待验收 / 待命」里作者在跑的行），不再只看 status。 */
-  const run=state.jobs.filter(j=>j.live||j.status==='run').length;
+  /* 在跑 = 真正有 agent 在干活（含「待验收 / 待命 / 归档中」里作者在跑的行），不再只看 status。 */
+  const run=state.jobs.filter(j=>j.live||j.status==='run'||j.status==='archiving').length;
   const queue=state.jobs.filter(j=>j.status==='queue'&&!j.live).length;
+  const arch=state.jobs.filter(j=>j.status==='arch').length;
   const done=state.jobs.filter(j=>j.status==='done').length;
   const openSet=new Set(state.wins.filter(w=>!w.min).map(w=>w.job));
   const row=j=>{const pr=projOf(j.proj);const un=state.unread[j.id]||0;const label=labelOf(j);
     const active=activeOf(j);
     const clock=jobClockOf(j), full=jobClockOf(j,true);
     const timer=clock?`<span class="fltime${j.live==='等后台'?' bgw':''}" data-fltime="${j.id}" title="已作战 ${full}">⏱ ${clock}</span>`:'';
-    const bar=j.status==='done'?'':(j.live?'<span class="flbar is-live"><i></i></span>'
+    const bar=j.status==='done'||j.status==='arch'?'':(j.live?'<span class="flbar is-live"><i></i></span>'
       :j.status==='run'?`<span class="flbar is-run"><i style="width:${Math.round(j.pct)}%"></i></span>`
       :`<span class="flbar"><i style="width:${Math.round(j.pct)}%"></i></span>`);
     return `<div class="flrow ${j.status}${j.live?' live':''}${active?' is-flow':''}${openSet.has(j.id)?' is-chat':''}" role="option" tabindex="0" data-rail-job="${j.id}" style="--accent:${pr.color};--p:${j.live?0:Math.round(j.pct)}" title="${esc(j.title)} · ${label}${j.live?` · ${liveTextOf(j)}`:''}${full?` · 已作战 ${full}`:''} · ${esc(j.doing)} · 点行进对话">
       <span class="flhw"><span class="flhg">${KIND[j.kind].g}</span></span>
-      <span class="flbody"><span class="fltop"><b>${esc(j.short)}</b>${j.live||j.status==='done'?'':`<span class="flpct">${Math.round(j.pct)}%</span>`}</span>
+      <span class="flbody"><span class="fltop"><b>${esc(j.short)}</b>${j.live||j.status==='done'||j.status==='arch'?'':`<span class="flpct">${Math.round(j.pct)}%</span>`}</span>
       <span class="flsub"><span class="flst ${j.status}">${label}</span>${j.live||j.status==='done'?'':`<span class="flsub-t">${esc(j.doing)}</span>`}${timer}</span>
       ${bar}</span>
       <span class="flacts">
@@ -2427,7 +2624,7 @@ function renderFleetRail(){
           <button class="flact pri" data-rail-chat="${j.id}" title="💬 对话 · 这条作战的 chat 窗" aria-label="对话">💬</button>
           ${un?`<i class="und">${un>9?'9+':un}</i>`:''}
         </span>
-        <button class="flact" data-rail-detail="${j.id}" title="▦ 详情 · 作战详情（不改主通讯台）" aria-label="详情">▦</button>
+        <button class="flact" data-rail-detail="${j.id}" title="▦ 详情 · 作战详情（${j.status==='arch'||j.status==='archiving'?'归档页签':'不改主通讯台'}）" aria-label="详情">${j.status==='arch'||j.status==='archiving'?'📦':'▦'}</button>
       </span></div>`;};
   const list=fleetSorted();
   const LIMIT=6;
@@ -2437,11 +2634,11 @@ function renderFleetRail(){
     ? `<div class="fr-foot"><button class="fr-more" data-fleet-more>${state.fleetOpen?'<span class="fml">收起</span><b>⌃</b>':`<span class="fml">更多</span><b>+${hidden}</b><span class="fmc">⌄</span>`}</button></div>`
     : '';
   el.innerHTML=`<div class="fr-h"><span class="fr-mark">⬡</span><span class="lh"><span>编队</span><b>${total}</b>${run?'<i class="live"></i>':''}</span><span class="sp"></span><button class="fr-all" data-fleet-all title="展开编队面板 · 按项目筛选">全部 →</button></div>
-   <div class="fr-sub"><span>在跑 <b>${run}</b></span><span>待命 <b>${queue}</b></span><span>归档 <b>${done}</b></span></div>
+   <div class="fr-sub"><span>在跑 <b>${run}</b></span><span>待命 <b>${queue}</b></span>${arch?`<span style="color:var(--pink)">待归档 <b style="color:var(--pink)">${arch}</b></span>`:''}<span>归档 <b>${done}</b></span></div>
    <div class="fr-list">${shownList.map(row).join('')||'<div class="fr-empty">本舱还没有作战</div>'}</div>${more}`;
   /* #5：行体 = 进这条作战的 chat；💬 同义；▦ 只是打开详情，不换主通讯台。 */
   $$('[data-rail-chat]',el).forEach(b=>b.addEventListener('click',e=>{e.stopPropagation();openJobChat(b.dataset.railChat);}));
-  $$('[data-rail-detail]',el).forEach(b=>b.addEventListener('click',e=>{e.stopPropagation();openDetail(b.dataset.railDetail,'run');}));
+  $$('[data-rail-detail]',el).forEach(b=>b.addEventListener('click',e=>{e.stopPropagation();openDetail(b.dataset.railDetail,detailTabFor(jobOf(b.dataset.railDetail)));}));
   $$('[data-rail-job]',el).forEach(r=>{const go=()=>openJobChat(r.dataset.railJob);
     r.addEventListener('click',e=>{if(e.target.closest('.flact'))return;go();});
     r.addEventListener('keydown',e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();go();}});});
@@ -2679,7 +2876,7 @@ function bindActPop(){
   $('[data-act-src]',pop)?.addEventListener('click',e=>{
     const jid=e.currentTarget.dataset.actSrc;
     toggleActPop(false);
-    state.detailJob=jid;state.detailTab='run';openPanel('detail');Audio.sfx('click');
+    state.detailJob=jid;state.detailTab=detailTabFor(jobOf(jid));openPanel('detail');Audio.sfx('click');
   });
   $('[data-act-sim]',pop)?.addEventListener('click',()=>{
     ACTIVITY.forEach(a=>{if(a.status==='run'){a.status='done';a.exit=a.exit??0;}});
@@ -3165,7 +3362,192 @@ function pushReply(t,m,delay=700){clearTimeout(typeT[t]);if(state.thread===t){$(
 /* #5：作战 chat = 独立窗（openWin）；详情 = dossier；主通讯台固定回主对话。 */
 function openJobChat(jid){if(!jid||jid==='main'){setConMin(false);requestAnimationFrame(()=>$('#cmdInput').focus());return;}
  closePanel();openWin(jid);}
-function openDetail(jid,tab,keepInbox){if(!jid)return;state.detailJob=jid;state.detailTab=tab||'run';state.panel='detail';openPanel('detail',!!keepInbox);Audio.sfx('click');}
+/* ── 归档页签（2026-11-24 用户）：编队任务在三处都能落到这同一扇只读明细 ──
+   ① 编队行 / 作战详情页签；② chat 窗头部 📦；③ 主对话任务状态卡的归档角标。
+   操作仍在对话里完成：这里只展示归档闸、四步编排与逐仓落点。 */
+const detailTabFor=j=>j&&(j.status==='arch'||j.status==='archiving'||ARCHIVE[j.id]?.state==='pending'||ARCHIVE[j.id]?.state==='running')?'archive':'run';
+function archRun(jid){const a=ARCHIVE[jid],j=jobOf(jid);if(!a||a.state!=='pending')return;
+ a.state='running';a.step=0;a.startedAt=nowHM();a.elapsed='0:12';
+ a.events=[['刚刚','汐音','dispatch','你说「归档」· 启动归档编排']];
+ a.projects.forEach(p=>{p.status='pending';});
+ if(j){j.status='archiving';j.doing='归档编排中 · git 同步';}
+ toast('归档已启动 · git 同步 → 产物清理 → 素材冻结 → 知识编译');
+ renderPanel();renderFleetRail();Audio.sfx('click');}
+function archAdvance(jid){const a=ARCHIVE[jid],j=jobOf(jid);if(!a||a.state!=='running')return;
+ const st=Math.min(ARCH_STEPS.length,(a.step||0)+1);a.step=st;
+ if(st>=1&&a.projects[0]){a.projects[0].status='synced';a.projects[0].commit='a41f2c9';a.projects[0].pr='#128';}
+ if(st>=2&&a.projects[1]){a.projects[1].status='synced';a.projects[1].commit='3ff81ab';a.projects[1].pr='#129';}
+ if(j)j.doing='归档编排中 · '+ARCH_STEPS[Math.min(st,ARCH_STEPS.length-1)].t;
+ if(st>=ARCH_STEPS.length){
+  a.state='done';a.finishedAt=nowHM();a.elapsed='1:24';
+  a.knowledge={wikiUpdated:3,wikiCreated:1,cases:1,conflicts:0,pack:12,freed:'31.8 MB'};
+  if(j){j.status='done';j.pct=100;j.doing='已验收归档';}
+  toast('归档完成 · 报告已落盘');
+ }
+ renderPanel();renderFleetRail();Audio.sfx('click');}
+/* ── 归档页签（2026-11-24 用户二轮 · 复刻 classic 归档台）──────────────
+   classic 的内容一件不少：结论行 / KPI / 知识落点 / 素材包文件 / 清理 / 报告。
+   皮肤仍是舱系 v22：内层三个页签 概览 / 知识落点 / 明细；素材件与报告走
+   .twin 二级窗（✕ 一律左上角），只读。 */
+const ARCH_TABS=[['overview','概览'],['knowledge','知识落点'],['detail','明细']];
+function fmtBytes(n){if(n==null)return '—';if(n<1024)return n+' B';if(n<1048576)return (n/1024).toFixed(1)+' KB';return (n/1048576).toFixed(1)+' MB';}
+function arcStatBar(a){
+ const k=a.knowledge||{};const pageN=(k.pages||[]).length;
+ const items=[
+  ['归档',a.state==='done'?`${a.finishedAt||'—'} 全绿`:a.state==='running'?'编排中':'未启动',a.state==='done'?'ok':a.state==='running'?'run':'idle'],
+  ['素材',k.pack?`${k.pack} 件`:'未投喂',k.pack?'ok':'idle'],
+  ['Wiki',a.state==='running'?(k.compile==='running'?'编译中':'排队中'):k.wikiCreated!=null?`${pageN} 页`:'—',a.state==='running'?'run':k.wikiCreated!=null?'ok':'idle'],
+  ['落点',k.wikiCreated!=null?`新 ${k.wikiCreated} / 更 ${k.wikiUpdated}`:(k.cases?`判例 ${k.cases}`:'—'),k.wikiCreated!=null?'ok':'idle']];
+ return `<div class="arcstat">${items.map(([l,v,t])=>`<span class="it"><i class="dot ${t}"></i><span class="k">${l}</span><span class="v">${esc(v)}</span></span>`).join('<span class="ar">→</span>')}</div>`;
+}
+function arcTabBar(a,tab){
+ const n=(a.knowledge?.pages||[]).length;
+ const hint=tab==='overview'?'一屏结论 · 先看这里':tab==='knowledge'?'更新优先 · 矛盾置顶':'素材件点开只读预览';
+ return `<div class="atabs">${ARCH_TABS.map(([id,label])=>`<button class="atab${tab===id?' on':''}" data-arctab="${id}">${label}${id==='knowledge'&&n?`<small>${n}</small>`:''}</button>`).join('')}<span class="hint">${hint}</span></div>`;
+}
+function arcHead(a,j){
+ if(a.state==='pending')return `<span class="arcchip pending"><i></i>待归档 · 未启动</span><span class="arclbl"><b>${esc(a.verifiedAt)}</b> 末 phase 已验收</span><span class="arclbl">${esc(a.by)}</span><span style="flex:1"></span><button class="arcbtn go" data-arch-run="${j.id}" title="原型演示：按「归档」推进一次">▶ 按「归档」推进（演示）</button>`;
+ if(a.state==='running'){const n=a.step||0;return `<span class="arcchip running"><i></i>归档编排中</span><span class="arclbl"><b>${esc(a.startedAt||'—')}</b> 开始 · 已运行 <b>${esc(a.elapsed||'—')}</b></span><span class="arclbl">步骤 ${Math.min(ARCH_STEPS.length,n+1)}/${ARCH_STEPS.length}</span><span style="flex:1"></span><button class="arcbtn" data-arch-next="${j.id}">下一步（演示）→</button>`;}
+ return `<span class="arcchip done"><i></i>✓ 已归档</span><span class="arclbl"><b>${esc(a.finishedAt||'—')}</b> 完成 · 用时 <b>${esc(a.elapsed||'—')}</b></span><span class="arclbl">done 之后不再开写</span>`;
+}
+function arcVerdict(a){
+ const k=a.knowledge||{};const synced=(a.projects||[]).filter(x=>x.status==='synced').length;
+ const rows=[];
+ if(a.state==='done'){
+  rows.push(['ok','归档完成',`${synced}/${a.projects.length} project 同步成功 · 无术语冲突 · 构建产物已清理`]);
+  rows.push(['ok','知识已落库',`${(k.wikiUpdated||0)+(k.wikiCreated||0)} 页：更新 ${k.wikiUpdated||0} · 新建 ${k.wikiCreated||0} · 判例入档 ${k.cases||0}`]);
+ }else if(a.state==='running'){
+  rows.push(['run','归档编排中',`${synced}/${a.projects.length} project 已同步 · 步骤 ${Math.min(ARCH_STEPS.length,(a.step||0)+1)}/${ARCH_STEPS.length}`]);
+  rows.push(['run','知识编译中','归档与 wiki 编译是两条并行轨；完成后原地出回执']);
+ }else{
+  rows.push(['idle','归档未启动','末 phase 已验收，回主对话说「归档」后才执行同步与知识沉淀']);
+ }
+ return `<div class="arcverdict">${rows.map(([t,title,detail])=>`<div class="arcv"><span class="ic ${t}">${t==='ok'?'✓':t==='run'?'●':'·'}</span><span class="tx"><b>${esc(title)}</b><span>${esc(detail)}</span></span></div>`).join('')}</div>`;
+}
+function arcProjectTable(a,plan){
+ if(plan){
+  const p=a.projects[0]||{base:'main',target:'main'};
+  return `<div class="arctblwrap"><table class="arctbl"><tr><th>项目</th><th>worktree 分支</th><th>落点</th><th>状态</th></tr>${a.projects.map(x=>`<tr><td><b>${esc(x.name)}</b></td><td class="mono">${esc(x.branch)}</td><td class="mono">⎇ ${esc(x.base)} → 合入 ${esc(x.target)}</td><td class="st-wait">○ 待执行</td></tr>`).join('')}</table></div>
+  <div class="arcfoot">落点＝舱籍项目「落点 ⎇」（${esc(p.base)} → 合入 ${esc(p.target)}）；PR 目标分支取 config.repos[].target_branch。</div>`;
+ }
+ return `<div class="arctblwrap"><table class="arctbl"><tr><th>项目</th><th>ADR</th><th>术语</th><th>冲突</th><th>commit</th><th>push</th><th>归档 PR</th></tr>${a.projects.map(x=>`<tr><td><b>${esc(x.name)}</b></td><td class="mono">${x.adr||0}</td><td class="mono">${x.terms||0}</td><td class="${x.conflicts?'st-wait':'mono'}">${x.conflicts||0}</td><td class="mono">${esc(x.commit||'—')}</td><td class="${x.status==='synced'?'st-ok':'st-wait'}">${x.status==='synced'?'✓':'—'}</td><td>${x.pr?`<span class="pr">${esc(x.pr)}</span>`:x.pushOnly?'push 即落点':'—'}</td></tr>`).join('')}</table></div>
+ <div class="arcfoot">全绿才 done；任一 project 失败停在 archiving，说「重试」由主对话按 project 幂等续跑。</div>`;
+}
+function arcPages(pages,created){
+ const rows=(pages||[]).filter(p=>p.created===created);
+ if(!rows.length)return '';
+ return `<div class="sect">${created?'新建':'更新'} · ${rows.length}</div><div class="arcpages">${rows.map(p=>`<div class="arcpage"><span class="dom">${esc(p.type)}</span><span class="p" title="${esc(p.path)}">${esc(p.path)}</span><span class="tag ${created?'new':'upd'}">${created?'新建':'更新'}</span></div>`).join('')}</div>`;
+}
+function arcCaseRows(a){
+ const k=a.knowledge||{};if(!k.cases)return '';
+ const list=k.caseList||[];
+ return `<div class="sect">判例入档 · ${k.cases}</div><div class="arcpack">${list.map(c=>`<div class="arcpackrow"><span class="kind">${c.action==='created'?'新建':c.action==='merged'?'并档':'失败'}</span><span class="nm">${esc(c.symptom)}</span>${c.before!=null?`<span class="sz">occurrence ${c.before} → ${c.after}</span>`:`<span class="sz">${esc(c.path||'')}</span>`}</div>`).join('')}</div>`;
+}
+function arcPackRows(a){
+ const items=a.knowledge?.packItems||[];
+ if(!items.length)return '<div class="arcpage"><span class="p">素材包尚未冻结</span></div>';
+ return items.map(x=>{const ptr=!x.excluded&&x.bytes>6000&&x.kind!=='archive-summary';
+  return `<button class="arcpackrow${x.excluded?' excluded':''}" data-arc-file="${esc(x.name)}" title="${esc(x.name)}"><span class="kind">${esc(x.kind)}</span><span class="nm">${esc(x.name)}</span>${x.excluded?'<span class="badge out">已剔除</span>':`<span class="badge${ptr?' ptr':''}">${ptr?'仅指针':'载入'}</span>`}<span class="sz">${fmtBytes(x.bytes)}</span><span class="go">▸</span></button>`;}).join('');
+}
+function arcCleanup(a){
+ const c=a.cleanup;
+ if(!c)return '<div class="arcpage"><span class="p">归档完成后自动清理构建产物</span></div>';
+ return `<div class="arcclean">${c.projects.map(p=>`<div class="arccleanrow"><b>${esc(p.name)}</b><span class="g">删除 ${p.removed} 项 · ${esc(p.freed)}</span>${p.leftover?`<span class="l">剩余 ignored ${p.leftover} 项</span>`:''}</div>`).join('')}</div><p>只删 git 忽略且内部无跟踪文件的构建产物；白名单之外只保留清单。</p>`;
+}
+function arcOverview(a){
+ const k=a.knowledge||{};
+ if(a.state==='pending'){
+  return `<div class="arcgate"><b>验收 ≠ 归档 · 这是最后一道人工闸</b><span>末 phase 通过只代表停在待归档。你说「归档」才开始 git 同步 / 素材冻结 / 知识沉淀；说「暂不归档」保持现状；说「中止」结束任务。</span></div>
+  <div class="sect">怎么说</div>
+  <div class="arcsay"><span class="arcsay-k">主对话</span><code>❯ 归档</code><span>开始归档</span><code>❯ 暂不归档</code><span>保持待归档</span></div>
+  <div class="sect">归档会做什么</div>
+  <div class="arcsteps">${ARCH_STEPS.map((s,i)=>`<div class="arcstep"><span class="n">${i+1}</span><b>${esc(s.t)}</b><span>${esc(s.d)}</span></div>`).join('')}</div>
+  <div class="sect">项目同步计划</div>${arcProjectTable(a,true)}`;
+ }
+ if(a.state==='running'){
+  const n=a.step||0;
+  return `<div class="arcsteps">${ARCH_STEPS.map((s,i)=>`<div class="arcstep${i<n?' ok':i===n?' on':''}"><span class="n">${i<n?'✓':i+1}</span><b>${esc(s.t)}</b><span>${esc(s.d)}</span></div>`).join('')}</div>
+  ${arcVerdict(a)}
+  <div class="sect">项目同步</div>${arcProjectTable(a)}
+  <div class="sect">实时事件</div>
+  <div class="arclog">${(a.events||[]).map(e=>`<div><b>${esc(e[0])}</b> · ${esc(e[2])} · ${esc(e[3])}</div>`).join('')||'<div>等待编排事件…</div>'}</div>`;
+ }
+ const pages=k.pages||[];
+ const tl=[['08:52','编排开始','2 project',false],['09:02','编排完成','用时 10m12s',false],['09:05','wiki 提交','4 页 · 3m40s',true],['09:02','产物清理','释放 42.6 MB',false]];
+ return `${arcVerdict(a)}
+ <div class="kv"><div class="kvi"><div class="k">WIKI 落点</div><div class="v gr">${pages.length} 页</div></div><div class="kvi"><div class="k">PROJECT 同步</div><div class="v">${a.projects.filter(x=>x.status==='synced').length}/${a.projects.length}</div></div><div class="kvi"><div class="k">术语冲突</div><div class="v">${k.conflicts||0}</div></div><div class="kvi"><div class="k">构建产物释放</div><div class="v a">${esc(k.freed||'—')}</div></div></div>
+ ${pages.length?`<div class="sect">知识落点 · 更新优先</div><div class="arcpages">${pages.slice(0,5).map(p=>`<div class="arcpage"><span class="dom">${esc(p.type)}</span><span class="p">${esc(p.path)}</span><span class="tag ${p.created?'new':'upd'}">${p.created?'新建':'更新'}</span></div>`).join('')}</div>`:''}
+ <div class="sect">时间线</div>
+ <div class="arctl">${tl.map(([t,n,s,hot])=>`<div class="nd${hot?' hot':''}"><span class="dt"></span><div class="t">${esc(t)}</div><div class="n">${esc(n)}</div><div class="s">${esc(s)}</div></div>`).join('')}</div>
+ <div class="arcsay"><span class="arcsay-k">二级窗</span><button class="arcbtn" data-arctab="detail">素材包 ${k.pack||0} 件</button><button class="arcbtn" data-arctab="knowledge">知识落点 ${pages.length} 页</button><button class="arcbtn" data-arch-report="1">归档报告 ↗</button></div>`;
+}
+function arcKnowledge(a){
+ const k=a.knowledge||{};
+ if(a.state==='pending')return '<div class="pempty"><b>◇ 还没有知识落点</b>说「归档」启动后，素材冻结 → wiki 编译，这里出页级回执。</div>';
+ if(a.state==='running')return `<div class="arcwarn"><b>● 知识编译中</b>素材已冻结 ${k.pack||0} 件，等待知识中心串行队列编译；完成后本页自动出回执，不需要重开知识中心。</div>`;
+ const pages=k.pages||[];const findings=k.findings||[];
+ return `<div class="kv"><div class="kvi"><div class="k">新建页</div><div class="v gr">${k.wikiCreated||0}</div></div><div class="kvi"><div class="k">更新页</div><div class="v a">${k.wikiUpdated||0}</div></div><div class="kvi"><div class="k">矛盾待裁决</div><div class="v">${findings.length}</div></div><div class="kvi"><div class="k">触及页</div><div class="v">${pages.length}</div></div><div class="kvi"><div class="k">编译用时</div><div class="v">${esc(k.compileMs||'—')}</div></div></div>
+ ${findings.length?`<div class="arcwarn"><b>! 矛盾待裁决 · ${findings.length}</b>${findings.map(f=>`<div>${esc(f.id)} · ${esc(f.title)}</div>`).join('')}</div>`:''}
+ ${arcPages(pages,false)}${arcPages(pages,true)}
+ ${arcCaseRows(a)}
+ <div class="arcfoot">编译是一次原子提交；知识中心 INDEX / LOG 与这里同源。</div>`;
+}
+function arcDetail(a){
+ const k=a.knowledge||{};
+ return `<div class="arcgrid">
+ <section class="arcblock"><h4>知识素材包 <span>${esc(a.pack_path||'raw/archives/…')}</span></h4><div class="arcpack">${arcPackRows(a)}</div><p>点任意件打开只读预览（.md 渲染 / .json 高亮）；关闭按钮在左上角。</p></section>
+ <section class="arcblock"><h4>反思 · 沉淀决策</h4><div class="arcref">${(k.reflection||[]).map(r=>`<div class="arcrefrow"><span class="dec${r.decision==='skip'?' skip':''}">${r.decision==='ingest'?'已落 wiki':'已跳过'}</span><b>${esc(r.title)}</b>${r.target?`<span>${esc(r.target)}</span>`:''}</div>`).join('')||'<div class="arcpage"><span class="p">本次没有人工反思提案</span></div>'}</div></section>
+ <section class="arcblock"><h4>构建产物清理 <span>${a.cleanup?`释放 ${esc(a.cleanup.totalFreed)}`:'未清理'}</span></h4>${arcCleanup(a)}</section>
+ <section class="arcblock"><h4>归档报告 <span>archive/report.md</span></h4><button class="arcbtn" data-arch-report="1">打开归档报告 ↗</button><p>报告正文较长，放在二级窗里单独滚动，主窗不套第二层滚动条。</p></section>
+ </div>
+ <div class="sect">PROJECT 同步结果</div>${arcProjectTable(a,a.state==='pending')}`;
+}
+function renderArchive(j){
+ const a=ARCHIVE[j.id];
+ if(!a&&j.kind!=='task'&&j.kind!=='workflow')
+  return '<div class="pempty"><b>◇ 该类作战没有归档阶段</b>外部审计 / 分身 / 流程开发不走任务归档闸。</div>';
+ if(!a){
+  if(j.status==='wait'||j.status==='blocked')return `<div class="arcgate" style="border-color:rgba(255,176,32,.45);background:rgba(255,176,32,.06)"><b style="color:var(--amber)">还没到归档</b><span>末 phase 验收通过后才进入待归档；先在「验收」页签把这轮拍板。</span></div><div><button class="arcbtn" data-dtab-jump="accept">去「验收」→</button></div>`;
+  return '<div class="pempty"><b>◇ 还没到归档</b>任务跑到末 phase、逐轮验收通过后，这里才会亮起归档闸。</div>';
+ }
+ const tab=state.archTab||'overview';
+ const body=tab==='knowledge'?arcKnowledge(a):tab==='detail'?arcDetail(a):arcOverview(a);
+ return `<div class="arcbar">${arcHead(a,j)}</div>${arcStatBar(a)}${arcTabBar(a,tab)}${body}
+ <div class="arcfoot">归档明细只读，操作在对话里完成；主对话状态卡归档角标 / chat 窗头部 📦 都跳到这里。</div>`;
+}
+function openArcFile(name){
+ const a=ARCHIVE[state.detailJob];if(!a||!(a.knowledge?.packItems||[]).some(x=>x.name===name))return;
+ state.archFile=name;renderArcFile();Audio.sfx('open');
+}
+function closeArcFile(){state.archFile=null;$('#arcFileWin')?.classList.remove('open');Audio.sfx('close');}
+function renderArcFile(){
+ const w=$('#arcFileWin');if(!w)return;
+ const a=ARCHIVE[state.detailJob];const item=(a?.knowledge?.packItems||[]).find(x=>x.name===state.archFile);
+ if(!item){w.classList.remove('open');return;}
+ const txt=ARC_FILES[item.name]||'（原型演示：此处为冻结件正文）';
+ const ext=(item.name.split('.').pop()||'').toLowerCase();
+ const body=ext==='md'?`<div class="ck-doc">${mdHTML(txt)}</div>`:`<pre class="ck-code">${esc(txt)}</pre>`;
+ w.innerHTML=`<div class="ph"><button class="phx" data-arc-close="file" title="关闭（Esc）">✕</button><span class="pt"><b>📦 ${esc(item.name)}</b><span>ARCHIVE PACK · ${esc(item.kind)} · ${fmtBytes(item.bytes)}</span></span><span class="sp"></span><span class="arclbl">只读 · front-matter 省略</span></div>
+ <div class="pb"><div class="wsb cwd"><span class="br">📦 素材件</span><span class="p">${esc(a.pack_path||'raw/archives/…')}/${esc(item.name)}</span><span class="ro">只读</span></div><div class="ck-main" style="flex:1;min-height:0"><div class="ck-view">${body}</div></div></div>`;
+ bindArcWins();w.classList.add('open');
+}
+function openArcReport(){
+ const a=ARCHIVE[state.detailJob];if(!a?.reportMd){toast('报告尚未生成');return;}
+ state.archReport=true;renderArcReport();Audio.sfx('open');
+}
+function closeArcReport(){state.archReport=false;$('#arcReportWin')?.classList.remove('open');Audio.sfx('close');}
+function renderArcReport(){
+ const w=$('#arcReportWin');if(!w)return;
+ const a=ARCHIVE[state.detailJob];
+ if(!state.archReport||!a?.reportMd){w.classList.remove('open');return;}
+ w.innerHTML=`<div class="ph"><button class="phx" data-arc-close="report" title="关闭（Esc）">✕</button><span class="pt"><b>📄 归档报告</b><span>archive/report.md · ${esc(a.report||'')}</span></span><span class="sp"></span><span class="arclbl">只读 · 不在此处编辑</span></div>
+ <div class="pb"><div class="wsb cwd"><span class="br">📄 报告</span><span class="p">${esc(a.report||'report.md')}</span><span class="ro">只读</span></div><div class="ck-main" style="flex:1;min-height:0"><div class="ck-view"><div class="ck-doc">${mdHTML(a.reportMd)}</div></div></div></div>`;
+ bindArcWins();w.classList.add('open');
+}
+function bindArcWins(){
+ $$('#arcFileWin [data-arc-close],#arcReportWin [data-arc-close]').forEach(b=>b.addEventListener('click',e=>{e.stopPropagation();b.dataset.arcClose==='file'?closeArcFile():closeArcReport();}));
+}
+function openDetail(jid,tab,keepInbox){if(!jid)return;state.detailJob=jid;state.detailTab=tab||detailTabFor(jobOf(jid));state.archTab='overview';state.panel='detail';openPanel('detail',!!keepInbox);Audio.sfx('click');}
 
 /* ── send / spawn / resolve ── */
 function autoGrowEl(t){const win=!!t.closest('.cwi');t.style.height='auto';const min=win?28:36,max=win?70:92;const h=Math.max(min,Math.min(t.scrollHeight,max));t.style.height=h+'px';t.style.overflowY=t.scrollHeight>max?'auto':'hidden';}
@@ -4362,12 +4744,12 @@ function renderProjectFace(pr){
 function lvSamp(o){
   const active=o.live||o.status==='run';
   const timer=active&&o.clock?`<span class="fltime${o.live==='等后台'?' bgw':''}">⏱ ${o.clock}</span>`:'';
-  const bar=o.status==='done'?'':(o.live?'<span class="flbar is-live"><i></i></span>'
+  const bar=o.status==='done'||o.status==='arch'?'':(o.live?'<span class="flbar is-live"><i></i></span>'
     :o.status==='run'?`<span class="flbar is-run"><i style="width:${o.pct??0}%"></i></span>`
     :`<span class="flbar"><i style="width:${o.pct??0}%"></i></span>`);
   return `<div><span class="lvtag">${o.tag}</span><div class="flrow ${o.status}${o.live?' live':''}${active?' is-flow':''}" style="--accent:${o.accent};--p:${o.live?0:(o.pct??0)}">
     <span class="flhw"><span class="flhg">${o.g||'◆'}</span></span>
-    <span class="flbody"><span class="fltop"><b>${esc(o.title)}</b>${o.live||o.pct==null?'':`<span class="flpct">${o.pct}%</span>`}</span>
+    <span class="flbody"><span class="fltop"><b>${esc(o.title)}</b>${o.live||o.pct==null||o.status==='arch'?'':`<span class="flpct">${o.pct}%</span>`}</span>
     <span class="flsub"><span class="flst ${o.status}">${o.label}</span>${o.live||o.status==='done'?'':`<span class="flsub-t">${esc(o.doing)}</span>`}${timer}</span>
     ${bar}</span>
   </div></div>`;
@@ -4381,7 +4763,7 @@ function renderPanel(){const p=$('#panel');if(!state.panel){p.classList.remove('
  if(state.panel==='fleet'){
   const js=[...state.jobs].filter(j=>state.fleetFilter==='all'||j.proj===state.fleetFilter).sort((a,b)=>rankOf(a)-rankOf(b)||((a.born??999)-(b.born??999)));
   body=`<div class="fchips"><button class="fchip${state.fleetFilter==='all'?' on':''}" data-fproj="all">全部 ${state.jobs.length}</button>${PROJECTS.map(pr=>`<button class="fchip${state.fleetFilter===pr.id?' on':''}" data-fproj="${pr.id}">${pr.name} ${state.jobs.filter(j=>j.proj===pr.id).length}</button>`).join('')}<button class="fchip" data-ops-jump style="color:var(--amber);border-color:rgba(255,176,32,.5)">◈ 待你决断 ${openOps().length}</button></div>`;
-  body+=js.map(j=>{const pr=projOf(j.proj),op=opForJob(j.id);const arr=Date.now()-state.flash.at<1400&&state.flash.job===j.id;const label=labelOf(j);return `<div class="frow${arr?' arrived':''}" data-job="${j.id}" style="--accent:${pr.color}" role="button" tabindex="0"><span class="fg">${KIND[j.kind].g}</span><span class="fm"><span class="ft">${esc(j.title)}<span class="stars">${'★'.repeat(j.rarity||1)}</span></span><span class="fd">${esc(pr.name)} · ${esc(j.doing)}</span><span class="fb"><i style="width:${Math.round(j.pct)}%"></i></span></span><span class="fr">${j.live?`<span class="fstate run">⌁ ${liveTextOf(j)}</span>`:''}<span class="fstate ${j.status}">${STATE_EMO[j.status]} ${label}</span>${op?'<span class="fneed"><i></i>需要你</span>':''}</span><span class="fa"><button data-talk="${j.id}" title="与汐音谈这条">💬</button>${op?`<button class="dec" data-decide="${j.id}" title="就地决断">◈</button>`:''}</span></div>`;}).join('')||'<div class="pempty">该项目暂无作战。</div>';
+  body+=js.map(j=>{const pr=projOf(j.proj),op=opForJob(j.id);const archP=ARCHIVE[j.id]?.state==='pending';const arr=Date.now()-state.flash.at<1400&&state.flash.job===j.id;const label=labelOf(j);return `<div class="frow${arr?' arrived':''}" data-job="${j.id}" style="--accent:${pr.color}" role="button" tabindex="0"><span class="fg">${KIND[j.kind].g}</span><span class="fm"><span class="ft">${esc(j.title)}<span class="stars">${'★'.repeat(j.rarity||1)}</span></span><span class="fd">${esc(pr.name)} · ${esc(j.doing)}</span><span class="fb"><i style="width:${Math.round(j.pct)}%"></i></span></span><span class="fr">${j.live?`<span class="fstate run">⌁ ${liveTextOf(j)}</span>`:''}<span class="fstate ${j.status}">${STATE_EMO[j.status]} ${label}</span>${op?'<span class="fneed"><i></i>需要你</span>':''}${archP?'<span class="fneed arc"><i></i>等你点头</span>':''}</span><span class="fa"><button data-talk="${j.id}" title="与汐音谈这条">💬</button>${op?`<button class="dec" data-decide="${j.id}" title="就地决断">◈</button>`:''}${archP?`<button class="dec" data-archtab="${j.id}" title="📦 归档 · 待归档，打开归档页签">📦</button>`:''}</span></div>`;}).join('')||'<div class="pempty">该项目暂无作战。</div>';
   body+=`<div class="sect">原型样张 · 作者在干活（编队行实宽 198px）</div><div class="lvsamp">${[
     lvSamp({tag:'① 待验收 · 无人在跑',status:'wait',label:'待验收',g:'◆',title:'M2 · 对账',doing:'停在验收 · 等你决定',pct:100,accent:'#8B7CF6'}),
     lvSamp({tag:'② 待验收 · Agent工作中',status:'wait',label:'待验收',g:'◆',title:'M4 · 结息',doing:'补 AC-5 覆盖 · 2 文件',pct:100,live:'在跑',clock:'42:41',accent:'#8B7CF6'}),
@@ -4390,8 +4772,10 @@ function renderPanel(){const p=$('#panel');if(!state.panel){p.classList.remove('
     lvSamp({tag:'⑤ 作战中（真实进度条 + 缓行流光）',status:'run',label:'作战中',g:'⬡',title:'边缘节点灰度',doing:'灰度 2/5 · 探针正常',pct:45,clock:'1:05',accent:'#3DDC97'}),
     lvSamp({tag:'⑥ 待验收 · 等后台',status:'wait',label:'待验收',g:'◆',title:'M6 · 脚本迁移',doing:'dev 服务起着 · 等唤醒',pct:100,live:'等后台',clock:'5:05',accent:'#35C7F0'}),
     lvSamp({tag:'⑦ 已归档（无秒表）',status:'done',label:'已归档',g:'⬡',title:'M1 · 幂等修复',doing:'已验收归档',pct:null,accent:'#A78BFA'}),
+    lvSamp({tag:'⑧ 待归档（末 phase 已通过 · 最后一道人工闸）',status:'arch',label:'待归档',g:'◆',title:'M7 · 对账导出',doing:'等你说「归档」',pct:100,accent:'#FF5C8A'}),
   ].join('')}<div class="lvnote">
     <b>左侧保留 44×50 六边形</b>：种类字形（◆ 任务 / ⬡ 工作流 / ◈ 分身）+ 进度环；不换小图标。<br>
+    <b>待归档</b>是独立状态签（📦 粉），行尾 📦 直达「作战详情 → 归档」；chat 窗头部 📦 与主对话任务状态卡的归档角标落到同一页签。<br>
     <b>计时统一</b>：只要 agent 在跑（作战中 / 待验收在跑 / 待命在跑），秒表口径一致 = <b>已作战</b> job 起点 → now；≥1h 只显示 h:mm，完整 h:mm:ss 在悬停 title。<br>
     <b>执行中不闪</b>：作战中用真实进度条 + 一道缓行的流光；待验收/待命在跑没有真实进度，底部用不定长滚动条；扫光 / 呼吸 / 脉冲全部去掉。<br>
     <b>签</b>只表示生命周期（待验收仍是待验收）；是否 agent 在跑看秒表 + 状态签；doing 文本在 Agent 工作中的行让位给秒表（细节进 title）。<br>
@@ -4405,16 +4789,19 @@ function renderPanel(){const p=$('#panel');if(!state.panel){p.classList.remove('
   body+=done.map(o=>`<div class="ocard done" data-opdone="${o.id}"><span class="ot"><span class="oh">${esc(o.handle)}</span><span class="ok">已处理</span></span><span class="rc">✓ ${esc(o.choice)}</span></div>`).join('');}
  else if(state.panel==='detail'){const j=jobOf(state.detailJob)||state.jobs[0];state.detailJob=j.id;state.focusJob=j.id;const pr=projOf(j.proj);const op=opForJob(j.id);
   /* #5：详情不再带「对话」页签 —— 对话改走独立 chat 窗（头部 💬 对话）。 */
-  const tabs=['relay','run','changes','accept','files','debug','project'];const TL={relay:'对接',run:'运行',changes:'变更',accept:'验收',files:'文件',debug:'调试',project:'项目'};let inner='';
+  const tabs=['relay','run','changes','accept',...(j.kind==='task'||j.kind==='workflow'||ARCHIVE[j.id]?['archive']:[]),'files','debug','project'];const TL={relay:'对接',run:'运行',changes:'变更',accept:'验收',archive:'归档',files:'文件',debug:'调试',project:'项目'};let inner='';
   if(state.detailTab==='relay')inner=renderRelay(j);
   else if(state.detailTab==='run')inner=`<div class="sect">执行事件流</div>${(JOB_EVENTS[j.id]||[]).map(evHTML).join('')||'<div class="pempty">暂无事件</div>'}`;
   else if(state.detailTab==='changes'){const c=CHANGES[j.id];inner=c?`<div class="kv"><div class="kvi"><div class="k">分支</div><div class="v g">${esc(c.branch)}</div></div><div class="kvi"><div class="k">基线</div><div class="v">${esc(c.base)}</div></div><div class="kvi"><div class="k">文件</div><div class="v">${c.files.length}</div></div></div><div class="sect">变更 diff</div>${c.files.map(f=>`<div class="file"><div class="fh"><span class="st">${f.state}</span><span class="p">${esc(f.path)}</span><span class="ad">+${f.add}</span><span class="dl">−${f.del}</span></div><div class="diff">${f.diff.map(l=>`<div class="ln ${l[0]}"><span class="n">${l[1]}</span><span>${l[0]==='add'?'+':l[0]==='del'?'−':' '} ${esc(l[2])}</span></div>`).join('')}</div></div>`).join('')}`:'<div class="pempty">暂无代码变更。</div>';}
   else if(state.detailTab==='accept'){const a=AC[j.id];inner=a?`<div class="sect">验收单 AC</div>${a.map(x=>`<div class="ac ${x.pass?'pass':'open'}"><span class="ck">${x.pass?'✓':'!'}</span><span>${esc(x.t)}</span></div>`).join('')}<div class="sect">通用项</div>${['产物写入任务目录','没有越权改动','日志无未处理告警'].map(t=>`<div class="ac pass"><span class="ck">✓</span><span>${t}</span></div>`).join('')}`:'<div class="pempty">暂无验收单。</div>';}
+  else if(state.detailTab==='archive')inner=renderArchive(j);
   else if(state.detailTab==='files')inner=renderFiles(j);
   else if(state.detailTab==='project')inner=renderJobProject(j);
   else inner=renderDebug(j);
-  body=`<div class="dtabs">${tabs.map(t=>`<button class="dtab${state.detailTab===t?' on':''}" data-dtab="${t}">${TL[t]}</button>`).join('')}</div>${inner}`;
-  p.innerHTML=`<div class="ph"><button class="phx" data-close title="关闭">✕</button><span class="pt"><b>${STATE_EMO[j.status]} ${esc(j.title)}</b><span>${esc(pr.name)} · ${esc(j.branch)} · ${esc(j.tid)}</span></span><span class="sp" style="flex:1"></span><button class="pha" data-phchat title="打开这条作战的对话（独立 chat 窗）">💬 对话</button></div><div class="pb">${body}</div>`;
+  body=`<div class="dtabs">${tabs.map(t=>`<button class="dtab${state.detailTab===t?' on':''}" data-dtab="${t}">${TL[t]}${t==='archive'&&ARCHIVE[j.id]&&ARCHIVE[j.id].state!=='done'?'<i class="dtab-dot"></i>':''}</button>`).join('')}</div>${inner}`;
+  const archA=ARCHIVE[j.id];
+  const archHead=archA&&archA.state==='pending'?`<button class="pha arc" data-dtab="archive" title="待归档 · 末 phase 已通过，去归档页签">📦 待归档</button>`:archA&&archA.state==='running'?`<button class="pha arc" data-dtab="archive" title="归档编排中 · 看进度">📦 归档中</button>`:'';
+  p.innerHTML=`<div class="ph"><button class="phx" data-close title="关闭">✕</button><span class="pt"><b>${STATE_EMO[j.status]} ${esc(j.title)}</b><span>${esc(pr.name)} · ${esc(j.branch)} · ${esc(j.tid)}</span></span><span class="sp" style="flex:1"></span>${archHead}<button class="pha" data-phchat title="打开这条作战的对话（独立 chat 窗）">💬 对话</button></div><div class="pb">${body}</div>`;
   p.querySelector('[data-phchat]')?.addEventListener('click',()=>{closePanel();openWin(j.id);Audio.sfx('click');});
   const dlog=p.querySelector('.dcon-log');if(dlog)dlog.scrollTop=dlog.scrollHeight;
   bindPanel();restore();return;}
@@ -4455,7 +4842,7 @@ function renderPanel(){const p=$('#panel');if(!state.panel){p.classList.remove('
  p.innerHTML=`<div class="ph"><button class="phx" data-close title="关闭">✕</button><span class="pt"><b>${prh?`⧉ 项目 · ${esc(prh.name)}`:T[1]}</b><span>${prh?`${esc(prh.local?prh.path:prh.org+'/'+prh.group)} · ${prh.local?'本地仓库':'主仓只读'}`:T[2]}</span></span><span class="sp">${prh?'<button class="pjback" data-pjback>← 舱籍总览</button>':''}</span></div><div class="pb${prh?' pjf-on':''}">${body}</div>`;bindPanel();restore();}
 function bindPanel(){const p=$('#panel');
  $('[data-close]',p)?.addEventListener('click',closePanel);
- $$('[data-job]',p).forEach(b=>{const go=e=>{if(e.target.closest('.fa'))return;state.detailJob=b.dataset.job;state.detailTab='run';state.panel='detail';renderPanel();Audio.sfx('click');};b.addEventListener('click',go);b.addEventListener('keydown',e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();go(e);}});});
+ $$('[data-job]',p).forEach(b=>{const go=e=>{if(e.target.closest('.fa'))return;state.detailJob=b.dataset.job;state.detailTab=detailTabFor(jobOf(b.dataset.job));state.panel='detail';renderPanel();Audio.sfx('click');};b.addEventListener('click',go);b.addEventListener('keydown',e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();go(e);}});});
  $$('[data-talk]',p).forEach(b=>b.addEventListener('click',e=>{e.stopPropagation();const jid=b.dataset.talk;closePanel();openJobChat(jid);}));
  $$('[data-decide]',p).forEach(b=>b.addEventListener('click',e=>{e.stopPropagation();const jid=b.dataset.decide;closePanel();openJobChat(jid);}));
  $$('[data-fproj]',p).forEach(b=>b.addEventListener('click',()=>{state.fleetFilter=b.dataset.fproj;renderPanel();Audio.sfx('click');}));
@@ -4472,8 +4859,15 @@ function bindPanel(){const p=$('#panel');
  $$('[data-pjtab]',p).forEach(b=>b.addEventListener('click',()=>{state.pjTab=b.dataset.pjtab==='changes'?'changes':'files';renderPanel();Audio.sfx('click');}));
  $('[data-dtab-jump]',p)?.addEventListener('click',e=>{state.detailTab=e.currentTarget.dataset.dtabJump;state.relayJump=false;renderPanel();Audio.sfx('click');});
  $$('[data-op]',p).forEach(c=>{const go=()=>{const o=opOf(c.dataset.op);closePanel();openJobChat(o.job);};c.addEventListener('click',e=>{if(e.target.closest('[data-opdetail]'))return;go();});c.addEventListener('keydown',e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();go();}});});
- $$('[data-opdetail]',p).forEach(b=>b.addEventListener('click',e=>{e.stopPropagation();state.detailJob=b.dataset.opdetail;state.detailTab='run';state.panel='detail';renderPanel();Audio.sfx('click');}));
+ $$('[data-opdetail]',p).forEach(b=>b.addEventListener('click',e=>{e.stopPropagation();state.detailJob=b.dataset.opdetail;state.detailTab=detailTabFor(jobOf(b.dataset.opdetail));state.panel='detail';renderPanel();Audio.sfx('click');}));
  $$('[data-dtab]',p).forEach(b=>b.addEventListener('click',()=>{state.detailTab=b.dataset.dtab;state.relayJump=false;renderPanel();Audio.sfx('click');}));
+ /* 归档：行内 📦 直达页签；页签里的演示按钮推进归档闸（真产品里操作仍在主对话）。 */
+ $$('[data-archtab]',p).forEach(b=>b.addEventListener('click',e=>{e.stopPropagation();state.detailJob=b.dataset.archtab;state.detailTab='archive';state.archTab='overview';state.panel='detail';renderPanel();Audio.sfx('click');}));
+ $$('[data-arctab]',p).forEach(b=>b.addEventListener('click',()=>{state.archTab=b.dataset.arctab;renderPanel();Audio.sfx('click');}));
+ $('[data-arch-run]',p)?.addEventListener('click',e=>archRun(e.currentTarget.dataset.archRun));
+ $('[data-arch-next]',p)?.addEventListener('click',e=>archAdvance(e.currentTarget.dataset.archNext));
+ $$('[data-arc-file]',p).forEach(b=>b.addEventListener('click',e=>{e.stopPropagation();openArcFile(b.dataset.arcFile);}));
+ $$('[data-arch-report]',p).forEach(b=>b.addEventListener('click',e=>{e.stopPropagation();openArcReport();}));
  $('[data-relay-jump-btn]',p)?.addEventListener('click',()=>{state.relayJump=!state.relayJump;renderPanel();Audio.sfx('click');});
  $$('[data-relay-jump]',p).forEach(b=>b.addEventListener('click',()=>{const key=b.dataset.relayJump;state.relayJump=false;renderPanel();const pb=$('#panel .pb'),t=pb&&pb.querySelector(`[data-relay-key="${key}"]`);if(t){scrollIntoBox(pb,t);t.classList.add('flashin');setTimeout(()=>t.classList.remove('flashin'),1400);}Audio.sfx('click');}));
  $$('[data-relay-go]',p).forEach(b=>b.addEventListener('click',()=>{const jid=b.dataset.relayGo==='main'?'main':state.detailJob;closePanel();openJobChat(jid);}));
@@ -4604,7 +4998,7 @@ function renderWins(){const L=$('#winLayer');const top=state.wins.reduce((m,w)=>
   const ctxTok=Math.min(260000,Math.round((j.tok||0)*0.4)+48000);
   const ctxLabel=fmtK(ctxTok)+' / 1M '+(ctxTok/1e6*100).toFixed(1)+'%';
   return `<div class="cwin${w.z===top?' focus':''}${w.max?' maxed':''}" data-win="${w.id}" style="left:${X}px;top:${Y}px;width:${W}px;height:${H}px;z-index:${w.z}">
-  <div class="cwh" data-wdrag="${w.id}"><button data-wclose="${w.id}" title="关闭窗口（历史保留）">✕</button><button class="cwadd" title="添加：技能 / 分身 / MCP">✦</button><button data-wmin="${w.id}" title="最小化到切换条">—</button><button data-wmax="${w.id}" title="全屏 / 还原">${w.max?'⤡':'⛶'}</button><span class="te">${STATE_EMO[j.status]}</span><b>${esc(j.title)}</b>${W>=640?`<span class="telem" title="本窗会话的模型 / 上下文 / token 账"><button class="tc" title="模型设置 · 模型 / 思考强度 / 最大上下文"><i>MODEL</i><b>pro · 高</b></button><button class="tc" title="上下文占用"><i>CTX</i><b>${ctxLabel}</b></button><button class="tc tok" title="本次会话 token / 费用"><i>TOKEN</i><b>${fmtK(j.tok||0)} · ¥${(j.cost||0).toFixed(2)}</b></button></span>`:''}<span class="cwidx" title="用户输入历史 · 这是一个聊天窗的轮次索引">≡ <b>${turns}</b> 轮</span><span class="cwid" title="对话对象 · 身份由任务状态派生">${esc(j.agent)}</span><span class="csp"></span><button data-wdetail="${w.id}" title="▦ 作战详情（chat 窗留着）">▦</button></div>
+  <div class="cwh" data-wdrag="${w.id}"><button data-wclose="${w.id}" title="关闭窗口（历史保留）">✕</button><button class="cwadd" title="添加：技能 / 分身 / MCP">✦</button><button data-wmin="${w.id}" title="最小化到切换条">—</button><button data-wmax="${w.id}" title="全屏 / 还原">${w.max?'⤡':'⛶'}</button><span class="te">${STATE_EMO[j.status]}</span><b>${esc(j.title)}</b>${W>=640?`<span class="telem" title="本窗会话的模型 / 上下文 / token 账"><button class="tc" title="模型设置 · 模型 / 思考强度 / 最大上下文"><i>MODEL</i><b>pro · 高</b></button><button class="tc" title="上下文占用"><i>CTX</i><b>${ctxLabel}</b></button><button class="tc tok" title="本次会话 token / 费用"><i>TOKEN</i><b>${fmtK(j.tok||0)} · ¥${(j.cost||0).toFixed(2)}</b></button></span>`:''}<span class="cwidx" title="用户输入历史 · 这是一个聊天窗的轮次索引">≡ <b>${turns}</b> 轮</span><span class="cwid" title="对话对象 · 身份由任务状态派生">${esc(j.agent)}</span><span class="csp"></span>${ARCHIVE[j.id]&&ARCHIVE[j.id].state!=='done'?`<button data-warch="${w.id}" title="📦 归档 · 待归档 / 编排中（打开作战详情 · 归档页签）">📦</button>`:''}<button data-wdetail="${w.id}" title="▦ 作战详情（chat 窗留着）">▦</button></div>
   <div class="cwl">${msgs.filter(m=>m!==cur).slice(-40).map(tlHTML).join('')}</div>
   <div class="cwc">${cur?esc(cur.text):''}</div>
   ${o?`<div class="cwch">${o.options.map((opt,i)=>`<button class="vchoice${opt.label===o.rec?' rec':''}" data-wchoice="${o.id}" data-wlabel="${esc(opt.label)}" data-wid="${w.id}" style="--accent:${OP_KIND[o.kind].color}"><span class="n">[${i+1}]</span><b>${esc(opt.label)}</b></button>`).join('')}</div>`:''}
@@ -4624,7 +5018,8 @@ function bindWins(){const L=$('#winLayer');
  $$('[data-wmin]',L).forEach(b=>b.addEventListener('click',e=>{e.stopPropagation();minWin(b.dataset.wmin);}));
  $$('[data-wmax]',L).forEach(b=>b.addEventListener('click',e=>{e.stopPropagation();const w=state.wins.find(x=>x.id===b.dataset.wmax);if(!w)return;w.max=!w.max;if(w.max)w.min=false;bumpZ(w);renderWins();renderBar();Audio.sfx('click');}));
  $$('[data-wclose]',L).forEach(b=>b.addEventListener('click',e=>{e.stopPropagation();closeWin(b.dataset.wclose);}));
- $$('[data-wdetail]',L).forEach(b=>b.addEventListener('click',e=>{e.stopPropagation();const w=state.wins.find(x=>x.id===b.dataset.wdetail);if(w)openDetail(w.job,'run');}));
+ $$('[data-wdetail]',L).forEach(b=>b.addEventListener('click',e=>{e.stopPropagation();const w=state.wins.find(x=>x.id===b.dataset.wdetail);if(w)openDetail(w.job,detailTabFor(jobOf(w.job)));}));
+ $$('[data-warch]',L).forEach(b=>b.addEventListener('click',e=>{e.stopPropagation();const w=state.wins.find(x=>x.id===b.dataset.warch);if(w)openDetail(w.job,'archive');}));
  $$('[data-wsend]',L).forEach(b=>b.addEventListener('click',()=>{const w=state.wins.find(x=>x.id===b.dataset.wsend);const ta=$(`[data-winput="${b.dataset.wsend}"]`);if(w&&ta)sendFrom(w.job,ta);}));
  $$('[data-winput]',L).forEach(t=>{t.addEventListener('keydown',e=>{if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();const w=state.wins.find(x=>x.id===t.dataset.winput);if(w)sendFrom(w.job,t);}});t.addEventListener('input',()=>autoGrowEl(t));});
  $$('[data-wchoice]',L).forEach(b=>b.addEventListener('click',()=>{const ta=$(`[data-winput="${b.dataset.wid}"]`);const note=ta?ta.value.trim():'';resolveOp(b.dataset.wchoice,b.dataset.wlabel,note===b.dataset.wlabel?'':note);if(ta){ta.value='';autoGrowEl(ta);}}));
@@ -5093,7 +5488,7 @@ addEventListener('keydown',e=>{const inIn=e.target.closest('textarea,input');
  if(e.altKey&&e.key.toLowerCase()==='c'){e.preventDefault();setConMin(!state.conMin);return;}
  if(e.altKey&&e.key.toLowerCase()==='i'){e.preventDefault();toggleInbox();return;}
  if(e.altKey&&e.key==='1'){e.preventDefault();const f=[...openOps()].sort((a,b)=>OP_KIND[a.kind].pri-OP_KIND[b.kind].pri)[0];if(f){state.inboxOpen=true;state.inboxSel=f.id;state.inboxPick=null;renderInbox();Audio.sfx('open');}else toggleInbox(true);return;}
- if(e.key==='Escape'){if(!$('#stopConfirm').hidden){hideStopConfirm();return;}if(state.actLogOpen){closeActLog();return;}if(bindState.open){closeBind();return;}if(state.addOpen){openAdd(false);return;}if(state.settings){closeSettings();return;}if(state.kcOpen){toggleKc(false);return;}if(state.itemsOpen){toggleItemsWin(false);return;}if(state.doc){closeDocView();return;}if(state.notesOpen){toggleNotesWin(false);return;}if(state.twin){closeTree();return;}if(state.actOpen){if(state.actSel){state.actSel=null;renderActivityPop();}else toggleActPop(false);return;}if(state.conPop){closeConPop();return;}if(state.pjPop){state.pjPop=false;renderPjPop();return;}if(state.pop){closePops();return;}if(state.inboxOpen){if(state.inboxSel){state.inboxSel=null;state.inboxPick=null;renderInbox();}else toggleInbox(false);return;}if(state.brief){hideBanner();return;}if(state.relayJump){state.relayJump=false;renderPanel();return;}if(state.panel){closePanel();return;}if(!state.conMin){setConMin(true);return;}}
+ if(e.key==='Escape'){if(state.archFile){closeArcFile();return;}if(state.archReport){closeArcReport();return;}if(!$('#stopConfirm').hidden){hideStopConfirm();return;}if(state.actLogOpen){closeActLog();return;}if(bindState.open){closeBind();return;}if(state.addOpen){openAdd(false);return;}if(state.settings){closeSettings();return;}if(state.kcOpen){toggleKc(false);return;}if(state.itemsOpen){toggleItemsWin(false);return;}if(state.doc){closeDocView();return;}if(state.notesOpen){toggleNotesWin(false);return;}if(state.twin){closeTree();return;}if(state.actOpen){if(state.actSel){state.actSel=null;renderActivityPop();}else toggleActPop(false);return;}if(state.conPop){closeConPop();return;}if(state.pjPop){state.pjPop=false;renderPjPop();return;}if(state.pop){closePops();return;}if(state.inboxOpen){if(state.inboxSel){state.inboxSel=null;state.inboxPick=null;renderInbox();}else toggleInbox(false);return;}if(state.brief){hideBanner();return;}if(state.relayJump){state.relayJump=false;renderPanel();return;}if(state.panel){closePanel();return;}if(!state.conMin){setConMin(true);return;}}
  if(!inIn&&state.inboxOpen&&state.inboxSel&&state.inboxPick!=null&&e.key==='Enter'){e.preventDefault();submitInbox(false);return;}
  if(!inIn&&state.inboxOpen&&state.inboxSel&&/^[1-9]$/.test(e.key)){const o=opOf(state.inboxSel);if(o&&o.status==='open'){const i=+e.key-1;if(o.options[i]){e.preventDefault();state.inboxPick=i;renderInbox();Audio.sfx('click');}}return;}
  if(!inIn&&/^[1-9]$/.test(e.key)&&state.thread!=='main'){const o=opForJob(state.thread);if(o){const i=+e.key-1;if(o.options[i]){e.preventDefault();resolveOp(o.id,o.options[i].label);}}}});
@@ -5106,7 +5501,7 @@ const CHARV=$('#charVid');
 CHARV.addEventListener('playing',()=>{if(!CHARV.currentSrc.endsWith(CLIPS[state.clip].src.replace('./','')))return;CHARV.style.opacity=1;$('#character').classList.add('live');});
 CHARV.addEventListener('error',()=>{CHARV.style.opacity=0;});
 playClip(0,{fx:false});
-bindGrips();bindPanelWin();bindTwinWin();bindDocDrag();bindNotesFrame();bindKcFrame();renderBar();applyWinAlpha();
+bindGrips();bindPanelWin();bindTwinWin();bindDocDrag();bindArcWins();bindNotesFrame();bindKcFrame();renderBar();applyWinAlpha();
 bindItemsFrame();renderItemBadge();renderQueue();
 /* 通讯台里点文档 chip → 打开文档查看器；点回执卡上的「完成 / 搁置」→ 关闭对应事项。
    都是事件委托，重渲染后仍然有效。 */

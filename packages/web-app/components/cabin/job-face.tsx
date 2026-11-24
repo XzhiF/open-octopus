@@ -32,6 +32,8 @@ import { cn } from '@/lib/utils'
 import { SubagentWindow } from '@/components/chat-workbench/subagent-window'
 import { ChangesWindow } from '@/components/chat-workbench/changes-window'
 import { AcceptanceWindow } from '@/components/chat-workbench/acceptance-window'
+import { ArchiveWindow } from '@/components/chat-workbench/archive-window'
+import { CockpitArchivePanel } from '@/components/cockpit/face/CockpitArchivePanel'
 import { CabinRunSummary, type CabinRunTarget } from './modules/CabinRunSummary'
 import { clockLabel, openTaskInChat } from './modules/ui'
 import { pctFromPhases } from './job-progress'
@@ -577,6 +579,10 @@ export function JobFace({
   const tone = jobTone(status)
   const taskForRun = job.kind === 'task' ? taskEntity : null
   const subagentRun = job.kind === 'subagent' && !!job.ref_id
+  /** 归档页签只给任务类作业；其它作业（workflow / subagent / external）不出现这一签。 */
+  const jobTabs = job.kind === 'task'
+    ? COCKPIT_TABS
+    : COCKPIT_TABS.filter((key) => key !== 'archive')
 
   // 运行 tab 只给摘要；「打开运行 →」开作业坞同款运行窗（DAG + 日志 + YAML）。
   // 任务类作业取当前一轮执行（运行中的优先，否则最新一轮）。
@@ -1163,6 +1169,23 @@ export function JobFace({
           )}
         </div>
       )}
+      {tab === 'archive' && (
+        <div data-testid={cockpitMode ? 'cockpit-job-archive' : 'cabin-job-archive'} className={frameOf()}>
+          {taskForRun ? (
+            cockpitMode ? (
+              <CockpitArchivePanel task={taskForRun} onOpenAcceptance={() => changeTab('accept')} />
+            ) : (
+              <div className={cn('overflow-hidden rounded-lg border-[1.5px] border-pop-bd bg-pop-paper', fillOf('h-[520px]'))}>
+                <ArchiveWindow task={taskForRun} />
+              </div>
+            )
+          ) : (
+            <div className={emptyOf()}>
+              {cockpitMode ? `这条${kind.label}作业没有归档阶段` : '只有任务类作业有归档'}
+            </div>
+          )}
+        </div>
+      )}
       {tab === 'files' && (
         <div
           data-testid={cockpitMode ? 'cockpit-job-files' : 'cabin-job-files'}
@@ -1208,10 +1231,11 @@ export function JobFace({
           endedAt={job.ended_at}
           costLabel={costLabel}
           onOpenChat={cockpit?.onOpenChat ?? null}
+          onOpenArchive={job.kind === 'task' ? () => changeTab('archive') : null}
         />
         <div className="ck12-face-body" data-testid="cockpit-face-job">
           {/* 原型 .dtabs 在滚动正文里（.pb）—— 页签跟着内容滚走，不是常驻条。 */}
-          <CockpitJobTabs tab={tab} onTabChange={changeTab} />
+          <CockpitJobTabs tab={tab} onTabChange={changeTab} tabs={jobTabs} />
           {panes}
         </div>
       </>
@@ -1242,7 +1266,7 @@ export function JobFace({
       </div>
 
       <div className="mb-2.5 flex shrink-0 gap-1 overflow-x-auto border-b-[1.5px] border-pop-bd" role="tablist" aria-label="作战页签">
-        {COCKPIT_TABS.map((key) => (
+        {jobTabs.map((key) => (
           <button
             key={key}
             type="button"

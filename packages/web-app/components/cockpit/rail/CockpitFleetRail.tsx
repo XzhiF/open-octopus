@@ -29,6 +29,7 @@ import {
 } from '../fleet/fleet-model'
 import { sameCockpitRef, type CockpitRef } from '../state/cockpit-state'
 import { projectNameFromKey, rowProjectKeys } from '../projects/project-model'
+import { taskDisplayStatus } from '@/components/cabin/modules/ui'
 import { useCockpitState } from '../state/CockpitStateProvider'
 import { useCockpitThreads } from '../chat/use-cockpit-threads'
 import { openFleetChat } from '../chat/open-fleet-window'
@@ -108,7 +109,25 @@ function subOf(row: CockpitRow, status: FleetStatus): string {
   return project ?? statusLabel(row)
 }
 
+/** 原始生命周期状态（行摘要）：归档闸用。 */
+function rawStatusOf(row: CockpitRow): string | null {
+  if (row.kind === 'task') return taskDisplayStatus(row.task)
+  if (row.kind === 'job') return row.job.status ?? null
+  if (row.kind === 'delegation') return row.delegation.state ?? null
+  return null
+}
+
+/** 待归档 / 归档中：详情默认落在「归档」页签，行尾 ▦ 换成 📦（v22 原型同款）。 */
+const ARCHIVE_STATUSES = new Set(['awaiting_archive', 'archiving'])
+function onArchiveGate(row: CockpitRow): boolean {
+  const raw = rawStatusOf(row)
+  return raw != null && ARCHIVE_STATUSES.has(raw)
+}
+
 function statusTextOf(row: CockpitRow, status: FleetStatus): string {
+  const raw = rawStatusOf(row)
+  if (raw === 'awaiting_archive') return '待归档'
+  if (raw === 'archiving') return '归档中'
   if (row.kind === 'job' && row.attention) return attentionStageLabel(row.attention)
   if (status === 'wait') return '等你答'
   return STATUS_LABEL[status]
@@ -188,10 +207,10 @@ export function CockpitFleetRail() {
     const ref = rowRef(row)
     if (ref) select(ref)
   }
-  /** ▦ = 作战详情（落在「运行」页签）；不改主通讯台。 */
+  /** ▦ = 作战详情（落在「运行」页签）；待归档 / 归档中直接落「归档」页签。 */
   const openDetail = (row: CockpitRow) => {
     const ref = rowRef(row)
-    if (ref) select(ref, 'run')
+    if (ref) select(ref, onArchiveGate(row) ? 'archive' : 'run')
   }
 
   // ── 新行 pop：arrivals 命中的 attention + 首次出现的 key，900ms 后收 ──
@@ -379,7 +398,9 @@ export function CockpitFleetRail() {
           // 待验收的作者还在推进时不改 chip，只加流动态 + 统一秒表。
           const stage = fleetStageOf(row)
           const live = isLiveRow(row)
-          const pct = pctOf(row)
+          const rawStatus = rawStatusOf(row)
+          const archGate = onArchiveGate(row)
+          const pct = rawStatus === 'awaiting_archive' ? null : pctOf(row)
           const startedAt = live ? startedAtOf(row) : null
           const backgroundWait = live && row.kind === 'job' && row.live_phase === 'background-wait'
           const liveText = live ? (backgroundWait ? '作者在等后台' : '作者在跑') : null
@@ -430,7 +451,7 @@ export function CockpitFleetRail() {
                   )}
                 </span>
                 <span className="ck12-flsub">
-                  <span className={`ck12-flst is-${stage}`}>{statusText}</span>
+                  <span className={`ck12-flst is-${stage}${rawStatus === 'awaiting_archive' ? ' is-arch' : rawStatus === 'archiving' ? ' is-archrun' : ''}`}>{statusText}</span>
                   {/* 干活行把副行让给秒表（细节在悬停 title），避免和计时抢宽度。 */}
                   {!live && <span className="ck12-flsub-t">{subOf(row, stage)}</span>}
                   {startedAt !== null && (
@@ -477,16 +498,18 @@ export function CockpitFleetRail() {
                   {ref && (
                     <button
                       type="button"
-                      className="ck12-flact"
-                      aria-label={`详情 ${title}`}
-                      title="▦ 详情 · 作战详情（不动主通讯台）"
+                      className={`ck12-flact${archGate ? ' is-arch' : ''}`}
+                      aria-label={`${archGate ? '归档' : '详情'} ${title}`}
+                      title={archGate
+                        ? '📦 归档 · 作战详情 · 归档页签'
+                        : '▦ 详情 · 作战详情（不动主通讯台）'}
                       data-testid={`cockpit-rail-detail-${row.key}`}
                       onClick={(event) => {
                         event.stopPropagation()
                         openDetail(row)
                       }}
                     >
-                      ▦
+                      {archGate ? '📦' : '▦'}
                     </button>
                   )}
                 </span>

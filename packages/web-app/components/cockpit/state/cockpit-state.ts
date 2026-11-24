@@ -26,14 +26,16 @@ export type CockpitRefKind = CockpitRef['kind']
 /** 座舱页签。v22 #5（2026-11-23 用户）：详情不再承载 chat —— 编队对话是独立
  *  chat 窗，详情首签改为「运行」。`dialog` / `overview` 仍留在类型里给旧深链
  *  兜底：它们不在 COCKPIT_TABS / isCockpitTab 里，`?tab=dialog` 会自然落回默认。 */
-export type CockpitTab = 'dialog' | 'overview' | 'relay' | 'run' | 'changes' | 'accept' | 'files' | 'debug' | 'project'
+export type CockpitTab = 'dialog' | 'overview' | 'relay' | 'run' | 'changes' | 'accept' | 'archive' | 'files' | 'debug' | 'project'
 
 /** 面来源（v22.3）：inbox = 从「要我处理」打开 → 详情让到浮层左侧；
  *  fleet / url / acceptance = 从编队 / 深链 / 验收流转打开 → 居中。 */
 export type CockpitSelectSource = 'fleet' | 'inbox' | 'url' | 'acceptance'
 
-/** 页签顺序 = 原型 .dtabs（v22 #5：首签「运行」，对话页签已删除）。 */
-export const COCKPIT_TABS: readonly CockpitTab[] = ['relay', 'run', 'changes', 'accept', 'files', 'debug', 'project']
+/** 页签顺序 = 原型 .dtabs（v22 #5：首签「运行」，对话页签已删除）。
+ *  2026-11-24：验收之后加「归档」—— 只读归档明细，操作仍在对话里完成；
+ *  非任务类作业由渲染方过滤掉这一签。 */
+export const COCKPIT_TABS: readonly CockpitTab[] = ['relay', 'run', 'changes', 'accept', 'archive', 'files', 'debug', 'project']
 
 /** 详情默认页签：URL 里省略它，保持链接干净。 */
 export const COCKPIT_DEFAULT_TAB: CockpitTab = 'run'
@@ -45,6 +47,7 @@ export const COCKPIT_TAB_LABELS: Record<CockpitTab, string> = {
   run: '运行',
   changes: '变更',
   accept: '验收',
+  archive: '归档',
   files: '文件',
   debug: '调试',
   project: '项目',
