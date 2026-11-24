@@ -1,6 +1,7 @@
 // 右栏「活动」（v22 十四轮 · 2026-11-21 用户）：
-//   · 有运行中的子代理 / 后台作业才出按钮，徽标 = 运行中总数；
-//   · 点开 = inbox 同款浮层（子代理 / 后台作业两组）；
+//   · 按钮常住，徽标 = 运行中总数；没有运行中活动时徽标不显示；
+//   · 点开 = inbox 同款浮层（子代理 / 后台作业两组），**只列运行中**——
+//     已结束的留档去「更多 → 活动日志」（2026-11-24 用户 #2）；
 //   · 点一条 → 左侧大详情窗；子代理复用作业坞 SubagentWindow（指令 / 日志 / token）；
 //   · Esc 先收详情，再收浮层。
 
@@ -134,7 +135,7 @@ beforeEach(() => {
 })
 
 describe('CockpitRightRail · 活动', () => {
-  it('运行中的子代理 / 后台作业 → 按钮带计数，点开是 inbox 同款浮层', async () => {
+  it('运行中的子代理 / 后台作业 → 按钮带计数，点开是 inbox 同款浮层（只列运行中）', async () => {
     api.listSessionSubagents.mockResolvedValue({
       runs: [run(), run({ id: 'sa-done', status: 'completed', ended_at: new Date().toISOString() })],
     })
@@ -154,10 +155,13 @@ describe('CockpitRightRail · 活动', () => {
     expect(pop).toHaveTextContent('子代理')
     expect(pop).toHaveTextContent('后台作业')
     expect(pop.querySelector('.ck12-ip-total')).toHaveTextContent('2')
-    expect(pop).toHaveTextContent('子代理 1/2 · 后台 1/1')
+    expect(pop).toHaveTextContent('子代理 1 · 后台 1')
+    expect(pop).toHaveTextContent('只显示运行中 · 历史在 活动日志')
 
     expect(within(pop).getByTestId('cockpit-activity-row-subagent-sa-1')).toHaveTextContent('对账差异定位')
     expect(within(pop).getByTestId('cockpit-activity-row-background-bg-1')).toHaveTextContent(BG.description)
+    // 2026-11-24 用户 #2：已结束的子代理不进浮层，历史去「更多 → 活动日志」。
+    expect(within(pop).queryByTestId('cockpit-activity-row-subagent-sa-done')).toBeNull()
   })
 
   it('点运行中的子代理 → 左侧大窗复用作业坞 SubagentWindow；Esc 先收详情再收浮层', async () => {
@@ -231,11 +235,13 @@ describe('CockpitRightRail · 活动', () => {
     expect(await screen.findByTestId('cockpit-menu-activity-count')).toHaveTextContent('1')
     fireEvent.click(button)
     const pop = screen.getByTestId('cockpit-activity-popover')
-    expect(pop).toHaveTextContent('子代理 0/0 · 后台 1/1')
-    expect(pop).toHaveTextContent('本会话还没有子代理')
+    expect(pop).toHaveTextContent('子代理 0 · 后台 1')
+    expect(within(pop).getByTestId('cockpit-activity-row-background-bg-1')).toBeTruthy()
+    // 没有运行中的子代理 → 连分组都不占位。
+    expect(within(pop).queryByTestId('cockpit-activity-row-subagent-sa-1')).toBeNull()
   })
 
-  it('没有运行中活动（只有已结束子代理）→ 按钮常住，点开还能回看已结束的子代理', async () => {
+  it('没有运行中活动（只有已结束子代理）→ 按钮常住，浮层给空态并指向活动日志', async () => {
     api.listSessionSubagents.mockResolvedValue({
       runs: [run({ id: 'sa-old', status: 'completed', ended_at: new Date().toISOString() })],
     })
@@ -245,8 +251,10 @@ describe('CockpitRightRail · 活动', () => {
     expect(screen.queryByTestId('cockpit-menu-activity-count')).toBeNull()
     fireEvent.click(button)
 
-    expect(await screen.findByTestId('cockpit-activity-row-subagent-sa-old')).toHaveTextContent('已完成')
-    expect(screen.getByTestId('cockpit-activity-popover')).toHaveTextContent('没有后台程序在跑')
+    const pop = screen.getByTestId('cockpit-activity-popover')
+    expect(await screen.findByText('当前没有运行中的后台作业')).toBeTruthy()
+    expect(pop).toHaveTextContent('历史去 更多 → ▤ 活动日志')
+    expect(within(pop).queryByTestId('cockpit-activity-row-subagent-sa-old')).toBeNull()
   })
 
   it('完全没有活动 → 按钮常住，点开是空态而不是什么都不发生', async () => {
@@ -257,9 +265,8 @@ describe('CockpitRightRail · 活动', () => {
     fireEvent.click(button)
 
     const pop = screen.getByTestId('cockpit-activity-popover')
-    expect(pop).toHaveTextContent('本会话还没有子代理')
-    expect(pop).toHaveTextContent('没有后台程序在跑')
-    expect(pop).toHaveTextContent('当前没有后台活动')
+    expect(pop).toHaveTextContent('当前没有运行中的后台作业')
+    expect(pop).toHaveTextContent('历史去 更多 → ▤ 活动日志')
   })
 })
 

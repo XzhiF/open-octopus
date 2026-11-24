@@ -386,6 +386,7 @@ kbd{border:1px solid rgba(185,179,217,.35);border-bottom-width:2px;border-radius
 .ip-foot button:hover{color:#fff}
 .ip-empty{display:flex;flex-direction:column;align-items:center;gap:5px;padding:30px 0 24px;font-size:11px;color:var(--ink2);font-family:var(--font-ui)}
 .ip-empty b{font-size:18px;line-height:1;color:var(--green);font-weight:700}
+.ip-empty small{font-size:9px;color:var(--metal2);font-family:var(--font-mono)}
 /* 回复卡（左窗） */
 .ipd{flex:1;min-width:0;display:flex;flex-direction:column;min-height:0;border-right:1px solid rgba(185,179,217,.14);background:rgba(10,8,24,.28)}
 .ipd-h{flex:none;display:flex;align-items:center;gap:7px;padding:8px 10px;border-bottom:1px solid rgba(46,230,214,.18)}
@@ -2661,7 +2662,8 @@ setInterval(()=>{if(document.hidden)return;const el=$('#fleetrail');if(!el)retur
 
 /* ── 右栏「活动」（v22 十四轮 · rev2 · 2026-11-21 用户）：
       与「要我处理」同一套浮层 —— 一级 = 列表；点一条 → 浮层变两栏，列表左边出详情；
-      「←」回列表，Esc 先回列表再收起。出现条件 = 有运行中的子代理 / 后台作业。 ── */
+      「←」回列表，Esc 先回列表再收起。出现条件 = 有运行中的子代理 / 后台作业。
+      2026-11-24 用户 #2：列表只列运行中，历史去「更多 → 活动日志」。 ── */
 function renderActivityButton(){
   const btn=$('#rActivity');if(!btn)return;
   const live=actLive();
@@ -2710,20 +2712,20 @@ function renderActivityPop(){
   renderActivityButton();
   if(!state.actOpen){pop.innerHTML='';renderActWin();return;}
   const live=actLive();
-  const subs=ACTIVITY.filter(a=>a.kind==='subagent');
-  const bgs=ACTIVITY.filter(a=>a.kind==='background');
-  const subLive=subs.filter(a=>a.status==='run').length;
-  const bgLive=bgs.filter(a=>a.status==='run').length;
-  const sorted=arr=>[...arr].sort((x,y)=>(x.status==='run'?0:1)-(y.status==='run'?0:1));
+  const subs=live.filter(a=>a.kind==='subagent');
+  const bgs=live.filter(a=>a.kind==='background');
+  const subLive=subs.length;
+  const bgLive=bgs.length;
+  const sorted=arr=>[...arr];
   const list=`<div class="ip-listwrap">
-    <div class="ip-h"><button class="ipx" data-act-close title="收起">✕</button><span class="t">活动</span><b>${live.length}</b><span class="brk">子代理 ${subs.length} · 后台 ${bgs.length} · 运行中 ${live.length}</span></div>
+    <div class="ip-h"><button class="ipx" data-act-close title="收起">✕</button><span class="t">活动</span><b>${live.length}</b><span class="brk">子代理 ${subLive} · 后台 ${bgLive}</span></div>
     <div class="ip-body">
-      <div class="ip-group vio"><span>子代理</span><b>${subLive}/${subs.length}</b></div>
-      ${sorted(subs).map(actListRow).join('')||'<div class="ip-empty"><b>◈</b>本会话还没有子代理</div>'}
-      <div class="ip-group vio"><span>后台作业</span><b>${bgLive}/${bgs.length}</b></div>
-      ${sorted(bgs).map(actListRow).join('')||'<div class="ip-empty"><b>⌁</b>没有后台程序在跑</div>'}
+      ${live.length?`
+      ${subLive?`<div class="ip-group vio"><span>子代理</span><b>${subLive}</b></div>${sorted(subs).map(actListRow).join('')}`:''}
+      ${bgLive?`<div class="ip-group vio"><span>后台作业</span><b>${bgLive}</b></div>${sorted(bgs).map(actListRow).join('')}`:''}
+      `:'<div class="ip-empty"><b>✓</b>当前没有运行中的后台作业<br><small>历史去 更多 → 活动日志</small></div>'}
     </div>
-    <div class="ip-foot"><span>点一条看 指令 / 日志 / token</span><span class="sp"></span><button data-act-sim title="演示：把运行中活动全部收口，右栏按钮随之隐藏">模拟收口</button><span>Esc 收起</span></div>
+    <div class="ip-foot"><span>只显示运行中 · 历史在 更多 → 活动日志</span><span class="sp"></span><button data-act-sim title="演示：把运行中活动全部收口，右栏按钮随之隐藏">模拟收口</button><span>Esc 收起</span></div>
   </div>`;
   pop.innerHTML=list;
   bindActPop();

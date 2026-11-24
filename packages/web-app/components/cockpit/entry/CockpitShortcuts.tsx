@@ -169,7 +169,7 @@ export function CockpitShortcuts() {
         return
       }
 
-      // v22 十四轮：⌥V 开合右栏「活动」。按钮只在该有活动时渲染，
+      // v22 十四轮：⌥V 开合右栏「活动」。按钮常住（无运行中活动时点开是空态），
       // 窄屏（≤900）按钮退场 —— 这里点不到就什么也不做。
       if (key === 'v') {
         if (window.innerWidth <= 900) return

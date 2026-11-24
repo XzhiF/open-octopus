@@ -3,7 +3,8 @@
 // v22 十四轮（2026-11-21 用户）· 右栏「活动」一级浮层：
 // 与「要我处理」同一套 inbox 姿势 —— 贴着右栏向左浮出，纵向对齐「活动」按钮。
 //
-// 列表只列正在跑的子代理 / 后台作业（子代理额外带最近已结束的，方便回看）。
+// 列表只列**正在跑**的子代理 / 后台作业（2026-11-24 用户 #2：已结束的一律不进
+// 浮层，历史去「更多 → ▤ 活动日志」）。
 // 入口是**常住按钮**：没有活动时也点得开，列表给空态；运行中活动全部结束时
 // 浮层不自动收（与「变更」的条件出现不同，2026-11-21 用户）。
 // 点一条 → 列表左边缘无缝接出大详情窗（CockpitActivityWindow），一级宽度固定
@@ -74,8 +75,9 @@ export function CockpitActivityPopover() {
   const [now, setNow] = useState(() => Date.now())
   const [top, setTop] = useState<number | null>(null)
 
+  // 只留运行中：已结束的子代理 / 后台作业留档归「更多 → 活动日志」。
   const items = useMemo(
-    () => activityItems(feed.runs, feed.backgrounds, feed.backgroundRuns),
+    () => activityItems(feed.runs, feed.backgrounds, feed.backgroundRuns).filter(activityIsLive),
     [feed.runs, feed.backgrounds, feed.backgroundRuns],
   )
   const groups = useMemo(() => groupActivity(items), [items])
@@ -121,9 +123,9 @@ export function CockpitActivityPopover() {
     measure()
     window.addEventListener('resize', measure)
     return () => window.removeEventListener('resize', measure)
-  }, [activitySel, groups.subTotal, groups.bgLive])
+  }, [activitySel, groups.liveCount])
 
-  const noActivity = groups.subTotal === 0 && groups.bgTotal === 0
+  const noActivity = groups.liveCount === 0
 
   return (
     <div
@@ -148,60 +150,59 @@ export function CockpitActivityPopover() {
           <span className="ck12-ip-t">活动</span>
           <b className="ck12-ip-total">{groups.liveCount}</b>
           <span className="ck12-ip-brk">
-            子代理 {groups.subLive}/{groups.subTotal} · 后台 {groups.bgLive}/{groups.bgTotal}
+            子代理 {groups.subLive} · 后台 {groups.bgLive}
           </span>
         </div>
 
         <div className="ck12-ip-body">
-          <div className="ck12-ip-group" data-group="sub">
-            <span>子代理</span>
-            <b>{groups.subLive}/{groups.subTotal}</b>
-          </div>
-          {groups.subagents.length === 0 ? (
+          {noActivity ? (
             <div className="ck12-ip-empty">
-              <b>◈</b>本会话还没有子代理
+              <b>✓</b>当前没有运行中的后台作业
+              <small>历史去 更多 → ▤ 活动日志</small>
             </div>
           ) : (
-            groups.subagents.map((item) => (
-              <ActivityRow
-                key={item.id}
-                item={item}
-                active={activitySel === item.id}
-                now={now}
-                onPick={() => selectActivity(item.id)}
-              />
-            ))
-          )}
+            <>
+              {groups.subLive > 0 && (
+                <>
+                  <div className="ck12-ip-group" data-group="sub">
+                    <span>子代理</span>
+                    <b>{groups.subLive}</b>
+                  </div>
+                  {groups.subagents.map((item) => (
+                    <ActivityRow
+                      key={item.id}
+                      item={item}
+                      active={activitySel === item.id}
+                      now={now}
+                      onPick={() => selectActivity(item.id)}
+                    />
+                  ))}
+                </>
+              )}
 
-          <div className="ck12-ip-group" data-group="bg">
-            <span>后台作业</span>
-            <b>{groups.bgLive}/{groups.bgTotal}</b>
-          </div>
-          {groups.backgrounds.length === 0 ? (
-            <div className="ck12-ip-empty">
-              <b>⌁</b>没有后台程序在跑
-            </div>
-          ) : (
-            groups.backgrounds.map((item) => (
-              <ActivityRow
-                key={item.id}
-                item={item}
-                active={activitySel === item.id}
-                now={now}
-                onPick={() => selectActivity(item.id)}
-              />
-            ))
-          )}
-
-          {noActivity && (
-            <div className="ck12-ip-empty">
-              <b>✓</b>当前没有后台活动
-            </div>
+              {groups.bgLive > 0 && (
+                <>
+                  <div className="ck12-ip-group" data-group="bg">
+                    <span>后台作业</span>
+                    <b>{groups.bgLive}</b>
+                  </div>
+                  {groups.backgrounds.map((item) => (
+                    <ActivityRow
+                      key={item.id}
+                      item={item}
+                      active={activitySel === item.id}
+                      now={now}
+                      onPick={() => selectActivity(item.id)}
+                    />
+                  ))}
+                </>
+              )}
+            </>
           )}
         </div>
 
         <div className="ck12-ip-foot">
-          <span>点一条看 指令 / 日志 / token</span>
+          <span>只显示运行中 · 历史在 活动日志</span>
           <span className="ck12-ip-sp" />
           {feed.error && (
             <span className="ck12-act-err" title={feed.error}>⚠ 活动刷新失败 · 沿上一帧</span>

@@ -484,6 +484,7 @@
   font-family: var(--font-ui);
 }
 .ck12-ip-empty b { font-size: 18px; line-height: 1; color: var(--ck12-green); font-weight: 700; }
+.ck12-ip-empty small { font-size: 9px; color: var(--ck12-metal2); font-family: var(--font-mono); }
 
 /* ── 放行 / 完成回流卡（单栏占满浮层） ── */
 .ck12-ipd {
