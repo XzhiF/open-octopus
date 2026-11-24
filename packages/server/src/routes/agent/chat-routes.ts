@@ -463,15 +463,18 @@ export function createChatRoutes(deps: ChatRouteDeps): Hono {
     // A user-picked third clone is respected until the next task transition.
     if (thread) {
       const workflowDev = thread.task.kind === 'workflow-dev'
+      const cloneDev = thread.task.kind === 'clone-dev'
       const desired = thread.identity === 'base'
         ? null
         : workflowDev
           ? 'workflow-author'
-          : thread.identity === 'author'
-            ? 'task-author'
-            : 'task-doer'
+          : cloneDev
+            ? 'clone-author'
+            : thread.identity === 'author'
+              ? 'task-author'
+              : 'task-doer'
       const currentRole = cacheCtx.getRoleState(id)
-      const taskRoles = new Set(['task-author', 'task-doer', 'workflow-author'])
+      const taskRoles = new Set(['task-author', 'task-doer', 'workflow-author', 'clone-author'])
       if (
         (currentRole.activeExpert == null || taskRoles.has(currentRole.activeExpert)) &&
         currentRole.activeExpert !== desired

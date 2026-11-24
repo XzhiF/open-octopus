@@ -120,6 +120,23 @@ export function findWorkflowAuthorSeedDir(): string | null {
   return null
 }
 
+/** Locate the clone-author persona fork (clone-dev task kind, 2026-11-25). */
+export function findCloneAuthorSeedDir(): string | null {
+  const override = process.env.OCTOPUS_CLONE_AUTHOR_SEED_DIR
+  if (override && fs.existsSync(path.join(override, 'persona.md'))) return override
+
+  const candidates = [
+    path.resolve(__dirname, '../../../../core-pack/clones/clone-author'),
+    path.resolve(process.cwd(), 'packages/core-pack/clones/clone-author'),
+    path.resolve(process.cwd(), '../core-pack/clones/clone-author'),
+    path.resolve(process.cwd(), '../../core-pack/clones/clone-author'),
+  ]
+  for (const c of candidates) {
+    if (fs.existsSync(path.join(c, 'persona.md'))) return c
+  }
+  return null
+}
+
 /** Locate packages/core-pack/skills (source for the workflow-author skill fork). */
 export function findCorePackSkillsSeedDir(): string | null {
   const candidates = [
@@ -270,6 +287,11 @@ export class CloneInitService {
       })
     }
     this.seedAssetSources('workflow-author', sources, cloneDir, result)
+  }
+
+  /** Seed clone-author: persona fork only（技能走共享层 octo-*，不复制一份）。 */
+  private seedCloneAuthorAssets(cloneDir: string, result: CloneInitResult): void {
+    this.seedForkAssets('clone-author', findCloneAuthorSeedDir(), cloneDir, result)
   }
 
   private seedForkAssets(cloneName: string, srcRoot: string | null, cloneDir: string, result: CloneInitResult): void {
@@ -609,6 +631,9 @@ export class CloneInitService {
     if (name === 'workflow-author') {
       this.seedWorkflowAuthorAssets(cloneDir, result)
     }
+    if (name === 'clone-author') {
+      this.seedCloneAuthorAssets(cloneDir, result)
+    }
 
     // 3. Write/migrate persona.md. task-author / archive personas are owned by
     // their forks (step 2) and left alone; every other built-in template is
@@ -619,7 +644,8 @@ export class CloneInitService {
     //                              seed copy must never shadow a code update.
     //   hand-edited              → preserve + warn once (delete to re-seed)
     const personaPath = path.join(cloneDir, 'persona.md')
-    const forkOwnedPersona = name === 'task-author' || name === 'archive' || name === 'workflow-author'
+    const forkOwnedPersona =
+      name === 'task-author' || name === 'archive' || name === 'workflow-author' || name === 'clone-author'
     if (forkOwnedPersona) {
       result.filesSkipped.push(`built-in/${name}/persona.md`)
     } else {

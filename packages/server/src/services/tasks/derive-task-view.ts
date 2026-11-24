@@ -361,18 +361,20 @@ export function deriveTaskView(
     return { taskStatus: task.status as TaskStatus, isV4: false, phaseViews: [] }
   }
 
-  // workflow-dev task kind (2026-11-06): no phases, no per-phase acceptance.
-  // Lifecycle: draft (研发中) → workflow_dev.complete (parked awaiting_archive)
+  // workflow-dev / clone-dev task kinds: no phases, no per-phase acceptance.
+  // Lifecycle: draft (研发中) → *.complete (parked awaiting_archive)
   // → archiving → done. Persisted aborted/done always win; archiving is read
   // from the row exactly like the v4 path. Ordinary v4 tasks never enter here.
-  if (spec.kind === "workflow-dev") {
+  if (spec.kind === "workflow-dev" || spec.kind === "clone-dev") {
     if (task.status === "aborted" || task.status === "done") {
       return { taskStatus: task.status as TaskStatus, isV4: true, phaseViews: [] }
     }
     if (task.status === "archiving") {
       return { taskStatus: "archiving", isV4: true, phaseViews: [] }
     }
-    if (spec.workflow_dev?.complete) {
+    const devComplete =
+      spec.kind === "clone-dev" ? spec.clone_dev?.complete : spec.workflow_dev?.complete
+    if (devComplete) {
       return { taskStatus: "awaiting_archive", isV4: true, phaseViews: [] }
     }
     return { taskStatus: "ready", isV4: true, phaseViews: [] }

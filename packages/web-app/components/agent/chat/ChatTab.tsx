@@ -438,8 +438,15 @@ export function ChatTab({ cabinBridge }: { cabinBridge?: ChatTabCabinBridge } = 
     issueCommand(split ? focus : 'left', { type: 'new-session' })
   }, [split, focus, issueCommand])
 
-  const handleCreateTask = useCallback((kind?: 'workflow-dev') => {
-    issueCommand(split ? focus : 'left', { type: 'new-task', ...(kind ? { kind } : {}) })
+  const handleCreateTask = useCallback((
+    kind?: 'workflow-dev' | 'clone-dev',
+    presetClone?: { name: string; type: 'built-in' | 'user' },
+  ) => {
+    issueCommand(split ? focus : 'left', {
+      type: 'new-task',
+      ...(kind ? { kind } : {}),
+      ...(presetClone ? { presetClone } : {}),
+    })
   }, [split, focus, issueCommand])
 
   const openInOtherPane = useCallback((target: { kind: 'session' | 'task'; id: string; task?: TaskView }) => {
@@ -471,6 +478,12 @@ export function ChatTab({ cabinBridge }: { cabinBridge?: ChatTabCabinBridge } = 
   useEffect(() => {
     const onNewTask = () => { handleCreateTask() }
     const onNewWorkflowTask = () => { handleCreateTask('workflow-dev') }
+    const onNewCloneTask = () => { handleCreateTask('clone-dev') }
+    const onEditCloneTask = (event: Event) => {
+      const detail = (event as CustomEvent<{ name?: string; type?: 'built-in' | 'user' }>).detail
+      if (!detail?.name) return
+      handleCreateTask('clone-dev', { name: detail.name, type: detail.type ?? 'user' })
+    }
     const onOpenTask = (event: Event) => {
       const detail = (event as CustomEvent<{ taskId?: string; view?: 'acceptance' }>).detail
       const taskId = detail?.taskId
@@ -484,10 +497,14 @@ export function ChatTab({ cabinBridge }: { cabinBridge?: ChatTabCabinBridge } = 
     }
     window.addEventListener('octopus:new-task', onNewTask)
     window.addEventListener('octopus:new-workflow-task', onNewWorkflowTask)
+    window.addEventListener('octopus:new-clone-task', onNewCloneTask)
+    window.addEventListener('octopus:edit-clone-task', onEditCloneTask)
     window.addEventListener('octopus:open-task', onOpenTask)
     return () => {
       window.removeEventListener('octopus:new-task', onNewTask)
       window.removeEventListener('octopus:new-workflow-task', onNewWorkflowTask)
+      window.removeEventListener('octopus:new-clone-task', onNewCloneTask)
+      window.removeEventListener('octopus:edit-clone-task', onEditCloneTask)
       window.removeEventListener('octopus:open-task', onOpenTask)
     }
   }, [handleCreateTask, handleSelectTask, refreshChatTasks])
@@ -681,6 +698,7 @@ export function ChatTab({ cabinBridge }: { cabinBridge?: ChatTabCabinBridge } = 
     onCreateSession: handleCreateSession,
     onCreateTask: () => { handleCreateTask() },
     onCreateWorkflowTask: () => { handleCreateTask('workflow-dev') },
+    onCreateCloneTask: () => { handleCreateTask('clone-dev') },
     onRenameSession: renameSession,
     onDeleteSession: (id: string) => { void handleDeleteSession(id) },
     onRenameTask: openTaskRename,

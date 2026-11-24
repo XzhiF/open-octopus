@@ -44,6 +44,7 @@ import {
   isStreamActive,
 } from '../../services/agent/agent-service'
 import { getBuiltInCloneDir, getCloneDir, getAgentDir } from '../../services/agent/paths'
+import { getCloneDevService } from '../../services/tasks/clone-dev-service'
 import { getProvider } from '@octopus/providers'
 import { getMemoryService } from '../../services/agent/memory-service'
 import { deriveSessionTitle } from '../../services/agent/session-title'
@@ -186,6 +187,25 @@ export function createCloneSessionRoutes(deps: CloneSessionRouteDeps): Hono {
       const msg = err instanceof Error ? err.message : String(err)
       return c.json({ error: { code: 'INTERNAL_ERROR', message: msg } }, 500)
     }
+  })
+
+  // ── Uninstall user clone (removes dir + kit; built-ins are refused) ──
+  app.post('/:name/uninstall', (c) => {
+    const name = c.req.param('name')
+    const svc = getCloneDevService()
+    if (svc) {
+      try {
+        return c.json(svc.uninstall(name))
+      } catch (err: unknown) {
+        const status = (err as { status?: number }).status ?? 500
+        return c.json({ error: { code: 'UNINSTALL_ERROR', message: err instanceof Error ? err.message : String(err) } }, status as 400)
+      }
+    }
+    const result = deleteUserClone(name)
+    if (!result.ok) {
+      return c.json({ error: { code: 'UNINSTALL_ERROR', message: result.error } }, (result.status ?? 500) as 400)
+    }
+    return c.json({ ok: true })
   })
 
   // ── Get clone details ────────────────────────────────────────────

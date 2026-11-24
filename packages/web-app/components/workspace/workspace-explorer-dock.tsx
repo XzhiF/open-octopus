@@ -22,6 +22,7 @@ import {
   Play,
   Square,
   Upload,
+  UserRound,
   Users,
   Workflow,
   X,
@@ -169,6 +170,8 @@ const PANEL_RESIZE_DIRECTIONS: readonly ResizeDirection[] = ['w', 'n', 's', 'nw'
 const MODULE_ROWS: Array<{ id: TaskModule; label: string; icon: typeof FileText }> = [
   // workflow-dev 任务专用（2026-11-06）：DAG + YAML，放在运行前。
   { id: 'workflow', label: '工作流', icon: Workflow },
+  // clone-dev 任务专用（2026-11-25）：分身业务弹窗。
+  { id: 'clone', label: '分身', icon: UserRound },
   // 2026-11-04 用户：运行提到「项目」下面第一个。
   { id: 'run', label: '运行', icon: Play },
   { id: 'plan', label: '规格', icon: FileText },
@@ -560,25 +563,29 @@ export function WorkspaceExplorerDock({
   // workflow-dev tasks are driven from the left chat: the dock exposes the
   // workflow editor + workspace runs, not the phase/spec/acceptance modules.
   const isWorkflowDev = task?.task_spec?.kind === 'workflow-dev'
+  // clone-dev：只暴露「分身」业务弹窗 + 运行/消耗，不显示 phase 那套。
+  const isCloneDev = task?.task_spec?.kind === 'clone-dev'
   const hasExecution =
-    !!task?.execution || isWorkflowDev || ['running', 'paused', 'awaiting_review', 'awaiting_archive', 'archiving', 'done'].includes(status)
+    !!task?.execution || isWorkflowDev || isCloneDev || ['running', 'paused', 'awaiting_review', 'awaiting_archive', 'archiving', 'done'].includes(status)
   const visibleModules = task
     ? MODULE_ROWS.filter((row) => {
         switch (row.id) {
           case 'workflow':
             // 只有工作流开发任务有这个模块；普通任务连按钮都不出现。
             return isWorkflowDev
+          case 'clone':
+            return isCloneDev
           case 'plan':
           case 'artifacts':
-            return !isWorkflowDev
+            return !isWorkflowDev && !isCloneDev
           case 'changes':
-            return !isDraft && !isWorkflowDev
+            return !isDraft && !isWorkflowDev && !isCloneDev
           case 'run':
             return hasExecution
           case 'acceptance':
             // 2026-10-30 用户：归档后验收台仍要在 —— 只读回看「我签了什么」，
             // 不用翻聊天记录；done 的窗口内容由 AcceptanceSurface 降级为台账。
-            return !isWorkflowDev && (status === 'awaiting_review' || status === 'awaiting_archive' || status === 'archiving' || status === 'done')
+            return !isWorkflowDev && !isCloneDev && (status === 'awaiting_review' || status === 'awaiting_archive' || status === 'archiving' || status === 'done')
           case 'archive':
             return status === 'archiving' || status === 'done'
           default:

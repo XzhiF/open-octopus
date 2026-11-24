@@ -357,7 +357,8 @@ export class TaskThreadService {
    *  fork for the workflow-author fork (persona + octo-workflow-* skills); the
    *  shared agent dir and task home stay so skills never appear/disappear. */
   private buildPlugins(taskHome: string, kind: string | null): Array<{ type: "local"; path: string }> {
-    const cloneDir = kind === "workflow-dev" ? "workflow-author" : "task-author"
+    const cloneDir =
+      kind === "workflow-dev" ? "workflow-author" : kind === "clone-dev" ? "clone-author" : "task-author"
     const plugins: Array<{ type: "local"; path: string }> = [
       { type: "local", path: getAgentDir() },
       { type: "local", path: getBuiltInCloneDir(cloneDir) },
@@ -411,6 +412,23 @@ export class TaskThreadService {
         ? `Phase ${info.phaseIndex}${info.roundIndex != null ? ` · Round ${info.roundIndex}` : ""}`
         : "尚未开始"
     const head = `[任务线程] 任务：${info.name}（id: ${info.id}）· 状态：${label} · ${coord}`
+
+    if (extra.identity === "author" && info.kind === "clone-dev") {
+      return {
+        head,
+        playbook: [
+          "[身份] 铸分身者（clone-author）。交付物是一个能用的分身：persona + skills +（可选）进程内工具包。",
+          `[任务 home] ${info.taskHome} · 分身目录 ~/.octopus/agent/clones/<name>/ · 工具包 packages/clone-kits/<slug>/`,
+          "[一次一问] 按顺序问清三件事：代号（slug）→ 人格（3–5 条可执行准则）→ 工具清单（要不要可执行工具；要就每个一行）。每问都给推荐答案。",
+          "[登记] 用户确认后调 clone_dev_set_meta 写入 clone_name / mode / kit 声明；代号一旦写入不可改名。",
+          "[实现] 人格写 persona.md；技能写 skills/<name>/SKILL.md；工具代码写 packages/clone-kits/<slug>/index.ts（用 _sdk 的 defineTool + buildServer），并导出 selfTest。改完跑 `node scripts/build-clone-kits.mjs` 生成 dist（验证与运行都读 dist）。",
+          "[验证] 调 clone_dev_verify；三条硬判据必须全绿：工具可用 / 越权被拦 / 身份可用。改过工具代码后必须重跑。",
+          "[收尾] 向用户报告文件与验证结果，然后 clone_dev_finish 进入「待合入」。合入由人拍板，不自己 merge、不自己 archive。",
+          "[硬边界] 不改 shared / server / engine / web-app；需要核心配合时停下来列「核心改动清单」请用户确认。",
+          "[状态感知] 状态以 get_task_status / clone_dev_get_state 为准。",
+        ].join("\n"),
+      }
+    }
 
     if (extra.identity === "author" && info.kind === "workflow-dev") {
       return {
@@ -491,6 +509,25 @@ export class TaskThreadService {
         "  5. 用户说「中止 / 不做了」→ request_task_action(action=\"abort\", reason=...)，仍需人点确认卡。",
         "  6. 不要声称 done —— done 由服务端在全部 project 的 git 同步成功后才写入。",
       ] : []
+      if (info.kind === "clone-dev") {
+        const devLine = info.displayStatus === "awaiting_archive"
+          ? "[分身开发] 验证已全绿，任务停在「待合入」。只读：不要改工具/人格；只能确认合入或中止。"
+          : info.displayStatus === "archiving"
+            ? "[分身开发] 合入进行中：只读；可以复述 merge / 装包 / 注册结果。"
+            : "[分身开发] 当前没有在开发的阶段。"
+        return {
+          head,
+          playbook: [
+            ...consentLines,
+            ...archiveLines,
+            devLine,
+            "[身份] 铸分身者（clone-author）。分身开发已完成；合入由服务端执行。",
+            "[跟进] 用户要再改分身时，先确认是开新任务还是回草稿；不要在待合入态直接改文件。",
+            "[状态感知] 任务状态变化会以事件卡出现在本会话。",
+          ].filter(Boolean).join("\n"),
+        }
+      }
+
       if (info.kind === "workflow-dev") {
         const devLine = info.displayStatus === "awaiting_archive"
           ? "[工作流开发] 全部工作流已完成，任务停在「待归档」。只读：不要改 YAML；只能确认是否归档或中止。"

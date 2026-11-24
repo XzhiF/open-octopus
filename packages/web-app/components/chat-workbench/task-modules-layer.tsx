@@ -17,11 +17,13 @@ import { ArtifactsWindow } from './artifacts-window'
 import { ArchiveWindow } from './archive-window'
 import { SubagentWindow } from './subagent-window'
 import { WorkflowDevWindow } from './workflow-dev-window'
+import { CloneDevWindow } from './clone-dev-window'
 import type { TaskModule, TaskWindowMap, TaskWindowRecord, RunTarget, SubagentTarget, YamlTarget } from './task-window-types'
 
 const MODULE_TITLE: Record<TaskModule, string> = {
   plan: '规格',
   workflow: '工作流',
+  clone: '分身',
   changes: '变更',
   run: '运行',
   acceptance: '验收',
@@ -249,6 +251,9 @@ export function TaskModulesLayer({
             ) : module === 'workflow' ? (
               // workflow-dev 任务专用：DAG + Monaco YAML（查看/修改）。
               task ? <WorkflowDevWindow task={task} onMutated={onMutated} /> : null
+            ) : module === 'clone' ? (
+              // clone-dev 任务专用：分身卡片 / 人格 / 工具 / 技能 / 边界 / 验证 / 包。
+              task ? <CloneDevWindow task={task} onMutated={onMutated} /> : null
             ) : !task ? null : module === 'changes' ? (
               <ChangesWindow task={task} />
             ) : module === 'plan' ? (

@@ -41,6 +41,7 @@ export interface YamlTarget {
 export type TaskModule =
   | 'plan'
   | 'workflow'
+  | 'clone'
   | 'changes'
   | 'run'
   | 'acceptance'

@@ -1,0 +1,1053 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Octopus · classic · 分身任务 v2 —— 新建/编辑分身 · chat 主流程 · 验证闸门 · 高保真</title>
+<style>
+/* ══════════════════════════════════════════════════════════════════
+   Token 全部取自真实前端 packages/web-app/app/globals.css
+   #0A0A0C bg / #1C1C22 paper / #F5F5F2 ink / #9698A3 dim / #32323B bd
+   #FF855C pink(主色) / #131318 idle / #020202 inset
+   全站字体：SF Mono（真实 app 的 body 就是 mono，中文回退苹方）
+   ══════════════════════════════════════════════════════════════════ */
+:root{
+  --pop-bg:#0A0A0C; --pop-paper:#1C1C22; --pop-ink:#F5F5F2; --pop-dim:#9698A3; --pop-bd:#32323B;
+  --pop-pink:#FF855C; --pop-pink-soft:#2A1B19;
+  --pop-yellow:#FFC857; --pop-yellow-soft:#231E17;
+  --pop-purple:#D2A8FF; --pop-purple-soft:#221E29;
+  --pop-violet:#A78BFA; --pop-violet-soft:#201C2D;
+  --pop-green:#7EE787; --pop-green-soft:#18211A;
+  --pop-amber:#FFC857; --pop-amber-soft:#231E17;
+  --pop-cyan:#4FD1D9; --pop-cyan-soft:#151F21;
+  --pop-red:#FF5C5C; --pop-navy:#4C79BF; --pop-navy-soft:#181F2D;
+  --pop-idle:#131318; --pop-inset:#020202;
+  --pop-dot:rgba(245,245,242,.05);
+  --pop-bdw:1.5px;
+  --shadow-sm:0 2px 8px rgba(0,0,0,.35);
+  --shadow:0 4px 16px rgba(0,0,0,.45);
+  --shadow-lg:0 18px 48px rgba(0,0,0,.6);
+  --w4:rgba(255,255,255,.04); --w6:rgba(255,255,255,.06); --w8:rgba(255,255,255,.08);
+  --w10:rgba(255,255,255,.10); --w14:rgba(255,255,255,.14);
+  --font-mono:'SF Mono','JetBrains Mono',Menlo,Consolas,ui-monospace,monospace;
+  --font-ui:-apple-system,BlinkMacSystemFont,'SF Pro Text','Helvetica Neue','PingFang SC','Hiragino Sans GB','Microsoft YaHei',sans-serif;
+  color-scheme:dark;
+}
+*{box-sizing:border-box}
+html,body{height:100%}
+body{
+  margin:0;color:var(--pop-ink);font-family:var(--font-mono);font-size:12.5px;line-height:1.55;
+  -webkit-font-smoothing:antialiased;overflow:hidden;
+  background-color:var(--pop-bg);
+  background-image:radial-gradient(var(--pop-dot) 1.6px,transparent 1.6px);
+  background-size:26px 26px;
+}
+button,input,textarea{font:inherit;color:inherit}
+button{border:0;background:none;padding:0;cursor:pointer}
+::selection{background:var(--pop-pink-soft)}
+html,html *{scrollbar-width:thin;scrollbar-color:#3A3A43 transparent}
+html *::-webkit-scrollbar{width:8px;height:8px}
+html *::-webkit-scrollbar-thumb{background:#3A3A43;border-radius:5px;border:2px solid transparent;background-clip:content-box}
+.trunc{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.mono{font-family:var(--font-mono)}
+.dim{color:var(--pop-dim)}
+
+/* ── app shell ─────────────────────────────────────────────────── */
+.app{display:flex;flex-direction:column;height:100vh}
+.topbar{
+  height:34px;flex:none;display:flex;align-items:center;gap:10px;padding:0 10px;
+  background:rgba(18,18,21,.86);border-bottom:1px solid var(--w6);z-index:60;
+}
+.lights{display:flex;gap:7px;padding-right:4px}
+.lights i{width:10px;height:10px;border-radius:50%;display:block;opacity:.85}
+.lights i:nth-child(1){background:#FF5F57}.lights i:nth-child(2){background:#FEBC2E}.lights i:nth-child(3){background:#28C840}
+.appmark{width:18px;height:18px;border-radius:5px;display:grid;place-items:center;font-size:10px;
+  background:linear-gradient(135deg,var(--pop-pink),var(--pop-violet));color:#0A0A0C;font-weight:700}
+.brand{font-size:11.5px;font-weight:700;letter-spacing:.01em}
+.brand em{font-style:normal;color:var(--pop-dim);font-weight:400;font-size:10px;margin-left:6px}
+.topbar .sp{flex:1}
+.tb-btn{height:24px;padding:0 8px;border-radius:6px;color:var(--pop-dim);font-size:10.5px;display:flex;align-items:center;gap:5px}
+.tb-btn:hover{background:var(--w6);color:var(--pop-ink)}
+.tb-btn.on{background:rgba(255,133,92,.12);color:var(--pop-pink)}
+
+/* 视图切换（原型专用，放在顶栏） */
+.viewswitch{display:flex;gap:2px;padding:2px;border:1px solid var(--w8);border-radius:8px;background:rgba(0,0,0,.28)}
+.viewswitch button{height:20px;padding:0 9px;border-radius:6px;font-size:10px;color:var(--pop-dim)}
+.viewswitch button.on{background:rgba(255,200,87,.13);color:var(--pop-amber)}
+
+.workspace{display:flex;flex:1;min-height:0}
+
+/* ── 左栏（对齐真实：约 205px，行高 30，12px 字） ─────────────── */
+.sidebar{width:206px;flex:none;display:flex;flex-direction:column;background:var(--pop-idle);
+  border-right:1px solid var(--w6);min-height:0}
+.sb-top{height:46px;flex:none;display:flex;align-items:center;gap:6px;padding:0 10px}
+.sb-new{flex:1;display:flex;align-items:center;justify-content:center;gap:6px;height:28px;
+  border-radius:7px;background:rgba(255,255,255,.07);font-size:11.5px}
+.sb-new:hover{background:rgba(255,255,255,.12)}
+.sb-ico{width:28px;height:28px;border-radius:6px;display:grid;place-items:center;color:var(--pop-dim);font-size:13px}
+.sb-ico:hover{background:var(--w6);color:var(--pop-ink)}
+.sb-list{flex:1;overflow-y:auto;min-height:0;padding:2px 8px 14px}
+.sec{display:flex;align-items:center;height:26px;padding:12px 6px 0;font-size:10px;color:rgba(150,152,163,.75)}
+.sec span{margin-left:6px;color:rgba(150,152,163,.4)}
+.srow{display:flex;align-items:center;gap:8px;width:100%;min-height:30px;border-radius:6px;
+  padding:4px 7px;text-align:left;font-size:12px;color:rgba(245,245,242,.74);margin-bottom:1px}
+.srow:hover{background:var(--w4);color:var(--pop-ink)}
+.srow.active{background:var(--w8);color:var(--pop-ink)}
+.srow .k{width:15px;flex:none;text-align:center;color:rgba(150,152,163,.6);font-size:11px}
+.srow .mid{flex:1;min-width:0}
+.srow .nm{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.srow .sub{display:block;font-size:9px;color:rgba(150,152,163,.5);margin-top:1px;font-family:var(--font-mono)}
+.srow .n{flex:none;font-size:9.5px;color:rgba(150,152,163,.45)}
+.sb-foot{flex:none;border-top:1px solid var(--w6);padding:7px 10px;font-size:9px;color:rgba(150,152,163,.5)}
+
+/* ── 中栏 ─────────────────────────────────────────────────────── */
+.main{flex:1;min-width:0;display:flex;flex-direction:column;position:relative;
+  background:radial-gradient(760px 340px at 72% -6%,rgba(167,139,250,.055),transparent 70%),
+             radial-gradient(620px 300px at 34% 106%,rgba(79,209,217,.035),transparent 70%),
+             var(--pop-bg)}
+.taskbar{flex:none;display:flex;align-items:center;gap:9px;height:38px;padding:0 14px;
+  border-bottom:1px solid var(--w6);background:rgba(19,19,24,.72)}
+.kindbadge{flex:none;font-size:8.5px;font-weight:700;letter-spacing:.06em;color:var(--pop-purple);
+  border:1px solid rgba(210,168,255,.32);border-radius:4px;padding:1px 5px;line-height:13px;background:var(--pop-purple-soft)}
+.taskbar .t{font-size:11.5px;font-weight:600;white-space:nowrap}
+.taskbar .t b{font-weight:600;color:var(--pop-ink)}
+.taskbar .path{font-size:9.5px;color:rgba(150,152,163,.55)}
+.taskbar .sp{flex:1}
+.statepill{display:flex;align-items:center;gap:5px;height:20px;padding:0 8px;border-radius:999px;
+  font-size:9.5px;border:1px solid rgba(255,200,87,.3);background:rgba(255,200,87,.07);color:var(--pop-amber)}
+.statepill .d{width:5px;height:5px;border-radius:50%;background:currentColor;animation:pulse 1.7s infinite}
+.statepill.ok{border-color:rgba(126,231,135,.3);background:rgba(126,231,135,.07);color:var(--pop-green)}
+.taskbar button.go{height:23px;padding:0 8px;border-radius:6px;border:1px solid var(--w10);font-size:10px;color:var(--pop-dim)}
+.taskbar button.go:hover{color:var(--pop-ink);background:var(--w6)}
+
+.transcript{flex:1;overflow-y:auto;min-height:0}
+.tui{max-width:820px;margin:0 auto;padding:20px 26px 6px;display:flex;flex-direction:column;gap:13px;
+  font-size:12px;line-height:1.68}
+
+/* 消息：真实 TUI 是纯文本块 + 左侧角色标记，不做聊天气泡 */
+.tmsg{display:flex;gap:12px;align-items:flex-start;position:relative}
+.tmsg .who{width:62px;flex:none;text-align:right;font-size:9px;line-height:1.9;color:var(--pop-dim);letter-spacing:.02em}
+.tmsg.me .who{color:var(--pop-green)}
+.tmsg.clone .who{color:var(--pop-purple)}
+.tmsg .bb{flex:1;min-width:0;max-width:88%;color:rgba(245,245,242,.9);font-family:var(--font-ui)}
+.tmsg.me .bb{color:var(--pop-ink)}
+.tmsg .bb p{margin:0 0 5px}
+.tmsg .bb p:last-child{margin-bottom:0}
+.tmsg .bb ul{margin:4px 0 0;padding-left:17px}
+.tmsg .bb li{margin:1px 0}
+.tmsg .bb code{font-family:var(--font-mono);font-size:10.5px;background:rgba(255,255,255,.055);
+  border-radius:3px;padding:0 4px;color:var(--pop-amber)}
+.tmsg .bb b{color:var(--pop-violet);font-weight:600}
+.tmsg .bb .mnote{display:block;margin-top:6px;font-family:var(--font-mono);font-size:9px;color:rgba(150,152,163,.55)}
+
+.ttool{display:flex;gap:12px;font-family:var(--font-mono);font-size:10.5px;color:rgba(150,152,163,.85);align-items:baseline}
+.ttool .who{width:62px;flex:none;text-align:right;font-size:9px;color:rgba(150,152,163,.35)}
+.ttool .bd{flex:1;min-width:0;display:flex;gap:8px;align-items:baseline;flex-wrap:wrap}
+.ttool .ar{color:var(--pop-cyan)}
+.ttool .nm{color:rgba(245,245,242,.86)}
+.ttool .args{color:rgba(150,152,163,.55)}
+.ttool .ok{font-size:9px;color:var(--pop-green)}
+.ttool .warn{font-size:9px;color:var(--pop-amber)}
+.tsys{display:flex;gap:12px;font-size:10px;color:rgba(150,152,163,.72);font-family:var(--font-mono);align-items:center}
+.tsys .who{width:62px;flex:none;text-align:right;font-size:9px;color:transparent}
+.tsys .bd{display:flex;gap:7px;align-items:center}
+.tsys .g{width:5px;height:5px;border-radius:50%;background:var(--pop-green);flex:none}
+.tsys.amber{color:rgba(255,200,87,.85)}
+.tsys.amber .g{background:var(--pop-amber);animation:pulse 1.6s infinite}
+
+/* 合入确认卡 */
+.mergecard{margin-left:74px;max-width:620px;border:1px solid rgba(255,200,87,.28);border-radius:12px;
+  background:linear-gradient(180deg,rgba(255,200,87,.065),rgba(255,200,87,.025));padding:12px 14px;box-shadow:var(--shadow-sm)}
+.mergecard .h{display:flex;align-items:center;gap:8px;font-size:12px;font-weight:700}
+.mergecard .h .tag{font-size:8px;font-weight:800;letter-spacing:.08em;color:var(--pop-amber);
+  border:1px solid rgba(255,200,87,.4);border-radius:999px;padding:1px 6px}
+.mergecard .sub{margin-top:3px;font-size:10px;color:var(--pop-dim)}
+.mergecard .rows{margin-top:9px;display:flex;flex-direction:column;gap:4px}
+.mergecard .row{display:flex;gap:8px;align-items:baseline;font-size:10.5px;font-family:var(--font-mono);color:rgba(245,245,242,.84)}
+.mergecard .row i{width:12px;flex:none;text-align:center;color:var(--pop-green);font-style:normal}
+.mergecard .row span{color:rgba(150,152,163,.68)}
+.mergecard .acts{display:flex;gap:8px;margin-top:11px}
+.mergecard .acts button{height:26px;padding:0 11px;border-radius:6px;border:1px solid var(--pop-bd);font-size:10.5px;color:var(--pop-dim)}
+.mergecard .acts button:hover{color:var(--pop-ink);background:var(--w6)}
+.mergecard .acts button.pri{border-color:rgba(255,133,92,.42);background:rgba(255,133,92,.16);color:#FFB08F;font-weight:700}
+.mergecard .acts button.pri:hover{background:rgba(255,133,92,.26)}
+
+/* composer */
+.composer{flex:none;padding:0 26px 12px}
+.composer .in{max-width:820px;margin:0 auto;border:1.5px solid var(--pop-bd);border-radius:10px;
+  background:rgba(20,20,24,.95);padding:8px 8px 6px 12px;box-shadow:var(--shadow-sm)}
+.composer .row1{display:flex;align-items:flex-end;gap:8px}
+.composer textarea{flex:1;min-height:22px;max-height:110px;border:0;background:none;outline:none;resize:none;
+  font-family:var(--font-ui);font-size:12px;line-height:1.55;padding:2px 0;color:var(--pop-ink)}
+.composer textarea::placeholder{color:rgba(150,152,163,.55)}
+.send{width:28px;height:28px;border-radius:7px;display:grid;place-items:center;flex:none;
+  background:rgba(255,133,92,.16);color:#FFB08F;border:1px solid rgba(255,133,92,.32);font-size:13px}
+.composer .chips{display:flex;align-items:center;gap:6px;margin-top:6px;padding-top:6px;border-top:1px solid var(--w4)}
+.chip{display:flex;align-items:center;gap:4px;height:18px;padding:0 6px;border-radius:5px;
+  font-size:9px;color:var(--pop-dim);background:rgba(255,255,255,.035);border:1px solid var(--w6);white-space:nowrap}
+.chip b{color:var(--pop-ink);font-weight:500}
+.chip.own{border-color:rgba(255,133,92,.28);color:#FFB08F;background:rgba(255,133,92,.08)}
+.composer .chips .sp{flex:1}
+.composer .hint{font-size:9px;color:rgba(150,152,163,.42)}
+
+/* ── 右侧贴边 dock（真实：约 44px 竖条） ───────────────────────── */
+.dock{width:58px;flex:none;display:flex;flex-direction:column;align-items:center;gap:8px;
+  padding:12px 0;background:transparent}
+.rail{width:44px;display:flex;flex-direction:column;align-items:center;gap:1px;padding:5px 0;
+  border:1px solid var(--w8);border-radius:12px;background:rgba(16,16,19,.9);
+  box-shadow:var(--shadow-sm);backdrop-filter:blur(10px)}
+.ditem{width:36px;padding:6px 0 5px;border-radius:8px;display:flex;flex-direction:column;align-items:center;gap:2px;
+  color:rgba(150,152,163,.8);position:relative}
+.ditem:hover{background:var(--w6);color:var(--pop-ink)}
+.ditem .i{font-size:14px;line-height:1.05}
+.ditem .l{font-size:8.5px;letter-spacing:.02em;white-space:nowrap}
+.ditem.biz{margin:3px 0;color:#FFB08F;background:rgba(255,133,92,.1);border:1px solid rgba(255,133,92,.24)}
+.ditem.biz:hover{background:rgba(255,133,92,.18);color:#FFC3AA}
+.dock .sp{flex:1}
+.dock .mini{width:28px;height:28px;border-radius:8px;display:grid;place-items:center;color:rgba(150,152,163,.5);font-size:11px;
+  border:1px solid var(--w6);background:rgba(16,16,19,.7)}
+.dock .mini:hover{background:var(--w6);color:var(--pop-ink)}
+
+/* ── 浮窗（任务看板 / 分身）──────────────────────────────────── */
+.win-backdrop{position:fixed;inset:0;background:rgba(0,0,0,.28);z-index:80;display:none}
+.win-backdrop.show{display:block}
+.win{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);
+  width:min(1360px,94vw);height:min(800px,88vh);display:flex;flex-direction:column;
+  border:1px solid #3A3A44;border-radius:14px;background:#0D0D10;box-shadow:var(--shadow-lg);overflow:hidden}
+.win.small{width:min(1080px,90vw);height:min(720px,84vh)}
+.win-title{flex:none;height:36px;display:flex;align-items:center;padding:0 12px;gap:8px;
+  background:#15151A;border-bottom:1px solid #2A2A32;position:relative}
+.win-title .lights{gap:7px}
+.win-title .lights i{width:11px;height:11px}
+.win-title .tt{position:absolute;left:0;right:0;text-align:center;font-size:11.5px;color:rgba(245,245,242,.8);pointer-events:none}
+.win-title .x{margin-left:auto;width:24px;height:22px;border-radius:5px;color:var(--pop-dim);font-size:12px;display:grid;place-items:center;z-index:2}
+.win-title .x:hover{background:var(--w8);color:var(--pop-ink)}
+.win-body{flex:1;min-height:0;display:flex;flex-direction:column}
+
+/* 看板 */
+.bhead{flex:none;display:flex;align-items:center;gap:10px;height:52px;padding:0 18px;border-bottom:1px solid #22222A}
+.bhead .t{font-size:15px;font-weight:700}
+.bhead .cnt{font-size:10px;color:var(--pop-dim);border:1px solid var(--w8);border-radius:999px;padding:1px 7px}
+.bhead .cost{font-size:10px;color:var(--pop-dim);background:rgba(255,200,87,.07);border:1px solid rgba(255,200,87,.18);border-radius:5px;padding:2px 7px}
+.bhead .sp{flex:1}
+.search{display:flex;align-items:center;gap:6px;height:28px;width:230px;padding:0 9px;
+  border:1px solid var(--w8);border-radius:7px;background:rgba(0,0,0,.3);color:rgba(150,152,163,.55);font-size:10.5px}
+.bhead .btn{height:28px;padding:0 10px;border-radius:7px;border:1px solid var(--w10);font-size:10.5px;color:var(--pop-dim);display:flex;align-items:center;gap:5px}
+.bhead .btn:hover{color:var(--pop-ink);background:var(--w6)}
+.bhead .btn.pri{background:var(--pop-pink);border-color:var(--pop-pink);color:#0A0A0C;font-weight:700}
+.bhead .btn.pri:hover{filter:brightness(1.06)}
+
+.filters{display:flex;align-items:center;gap:6px;padding:10px 18px 2px}
+.fchip{height:22px;padding:0 9px;border-radius:999px;border:1px solid var(--w8);font-size:9.5px;color:var(--pop-dim);background:rgba(255,255,255,.02)}
+.fchip:hover{color:var(--pop-ink)}
+.fchip.on{background:rgba(255,133,92,.13);border-color:rgba(255,133,92,.32);color:#FFB08F}
+.filters .sp{flex:1}
+.filters .hint{font-size:9px;color:rgba(150,152,163,.42)}
+
+.board{flex:1;min-height:0;display:grid;grid-template-columns:repeat(6,minmax(0,1fr));gap:10px;padding:10px 18px 18px;overflow:auto}
+.col{display:flex;flex-direction:column;min-height:0;border:1px solid #23232B;border-radius:11px;
+  background:rgba(255,255,255,.012);padding:8px}
+.col.draft{background:rgba(210,168,255,.022)}
+.col.ready{background:rgba(79,209,217,.018)}
+.col.running{background:rgba(255,200,87,.018)}
+.col.review{background:rgba(255,200,87,.014)}
+.col.archive{background:rgba(255,133,92,.018)}
+.col.done{background:rgba(126,231,135,.016)}
+.col-h{flex:none;display:flex;align-items:center;gap:6px;height:26px;padding:0 3px;font-size:10.5px;color:rgba(245,245,242,.82)}
+.col-h .d{width:6px;height:6px;border-radius:50%;background:var(--pop-dim)}
+.col.draft .col-h .d{background:var(--pop-purple)}
+.col.ready .col-h .d{background:var(--pop-cyan)}
+.col.running .col-h .d{background:var(--pop-amber)}
+.col.review .col-h .d{background:var(--pop-yellow)}
+.col.archive .col-h .d{background:var(--pop-pink)}
+.col.done .col-h .d{background:var(--pop-green)}
+.col-h .c{font-size:9.5px;color:rgba(150,152,163,.55)}
+.col-h .sp{flex:1}
+.col-h .plus{width:16px;height:16px;border-radius:4px;color:rgba(150,152,163,.45);display:grid;place-items:center;font-size:11px}
+.col-h .plus:hover{background:var(--w8);color:var(--pop-ink)}
+.col-body{flex:1;min-height:0;overflow-y:auto;display:flex;flex-direction:column;gap:7px;padding:5px 1px 1px}
+.tcard{border:1px solid #2B2B33;border-radius:10px;background:linear-gradient(180deg,#17171C,#141419);
+  padding:8px 9px;box-shadow:var(--shadow-sm);cursor:pointer}
+.tcard:hover{border-color:#3B3B45;transform:translateY(-1px)}
+.tcard .ttl{font-size:11.5px;font-weight:600;line-height:1.35;margin-bottom:4px}
+.tcard .m{display:flex;align-items:center;gap:6px;font-size:9px;color:rgba(150,152,163,.6);flex-wrap:wrap}
+.tcard .m .dot{width:3px;height:3px;border-radius:50%;background:rgba(150,152,163,.35)}
+.tcard .kb{font-size:7.5px;letter-spacing:.05em;border-radius:3px;padding:1px 4px;border:1px solid}
+.tcard .kb.clone{color:var(--pop-purple);border-color:rgba(210,168,255,.3);background:var(--pop-purple-soft)}
+.tcard .kb.wf{color:var(--pop-cyan);border-color:rgba(79,209,217,.3);background:var(--pop-cyan-soft)}
+.tcard .kb.dev{color:rgba(245,245,242,.55);border-color:var(--w10);background:var(--w4)}
+.tcard .prog{height:2px;border-radius:2px;background:rgba(255,255,255,.07);margin-top:6px;overflow:hidden}
+.tcard .prog i{display:block;height:100%;background:var(--pop-pink);border-radius:2px}
+.empty-col{flex:1;display:grid;place-items:center;border:1px dashed rgba(255,255,255,.11);border-radius:10px;
+  color:rgba(150,152,163,.4);font-size:9.5px;min-height:110px;text-align:center;line-height:1.7}
+.empty-col .ico{font-size:16px;display:block;margin-bottom:4px;opacity:.5}
+
+/* 分身窗 */
+.cbody{flex:1;min-height:0;display:flex;flex-direction:row}
+.clist{width:300px;flex:none;display:flex;flex-direction:column;border-right:1px solid #22222A;min-height:0}
+.clist-h{flex:none;height:46px;display:flex;align-items:center;gap:8px;padding:0 14px}
+.clist-h .t{font-size:13px;font-weight:700}
+.clist-h .cnt{font-size:9px;color:var(--pop-dim);border:1px solid var(--w8);border-radius:999px;padding:0 6px}
+.clist-h .sp{flex:1}
+.clist-h .add{width:22px;height:22px;border-radius:5px;border:1px solid var(--w10);color:var(--pop-dim);display:grid;place-items:center;font-size:12px}
+.clist-h .add:hover{color:var(--pop-ink);background:var(--w6)}
+.csearch{flex:none;margin:0 14px 8px;height:26px;display:flex;align-items:center;gap:6px;padding:0 8px;
+  border:1px solid var(--w8);border-radius:6px;background:rgba(0,0,0,.32);font-size:10px;color:rgba(150,152,163,.55)}
+.ctabs{flex:none;display:flex;gap:4px;padding:0 14px 8px}
+.ctab{height:20px;padding:0 8px;border-radius:999px;font-size:9px;color:var(--pop-dim);border:1px solid var(--w8)}
+.ctab.on{background:rgba(255,255,255,.07);color:var(--pop-ink)}
+.clist-body{flex:1;overflow-y:auto;min-height:0;padding:0 8px 10px}
+.cgroup{font-size:9px;color:rgba(150,152,163,.5);padding:8px 8px 3px}
+.crow{display:flex;align-items:center;gap:8px;width:100%;padding:5px 7px;border-radius:7px;text-align:left}
+.crow:hover{background:var(--w4)}
+.crow.on{background:var(--w8)}
+.av{width:24px;height:24px;border-radius:6px;flex:none;display:grid;place-items:center;font-size:9px;font-weight:700;
+  border:1px solid var(--w10);color:rgba(245,245,242,.82);background:rgba(255,255,255,.05)}
+.av.p{color:var(--pop-purple);border-color:rgba(210,168,255,.28);background:var(--pop-purple-soft)}
+.av.c{color:var(--pop-cyan);border-color:rgba(79,209,217,.26);background:var(--pop-cyan-soft)}
+.av.g{color:var(--pop-green);border-color:rgba(126,231,135,.26);background:var(--pop-green-soft)}
+.av.a{color:var(--pop-amber);border-color:rgba(255,200,87,.26);background:var(--pop-amber-soft)}
+.crow .meta{flex:1;min-width:0}
+.crow .n{display:block;font-size:11px;color:rgba(245,245,242,.88)}
+.crow .s{display:block;font-size:8.5px;color:rgba(150,152,163,.55);margin-top:1px}
+.crow .live{flex:none;font-size:8px;color:var(--pop-green);display:flex;align-items:center;gap:3px}
+.crow .live i{width:4px;height:4px;border-radius:50%;background:currentColor;display:block}
+.clist-foot{flex:none;padding:10px 14px;border-top:1px solid #22222A}
+.clist-foot button{width:100%;height:28px;border-radius:7px;border:1px dashed rgba(255,255,255,.16);
+  color:var(--pop-dim);font-size:10.5px}
+.clist-foot button:hover{color:var(--pop-ink);border-color:rgba(255,255,255,.28)}
+
+.cdetail{flex:1;min-width:0;display:flex;flex-direction:column}
+.cd-h{flex:none;display:flex;align-items:center;gap:10px;padding:16px 18px 0}
+.cd-h .av{width:34px;height:34px;border-radius:8px;font-size:11px}
+.cd-h .nm{font-size:14px;font-weight:700}
+.cd-h .sl{font-size:9.5px;color:var(--pop-dim);margin-top:1px}
+.cd-h .sp{flex:1}
+.cd-h .btn{height:26px;padding:0 10px;border-radius:6px;border:1px solid var(--w10);font-size:10px;color:var(--pop-dim)}
+.cd-h .btn:hover{color:var(--pop-ink);background:var(--w6)}
+.cd-h .btn.pri{background:rgba(255,133,92,.14);border-color:rgba(255,133,92,.34);color:#FFB08F}
+.cdtabs{flex:none;display:flex;gap:2px;padding:12px 18px 0;border-bottom:1px solid #22222A}
+.cdtab{height:28px;padding:0 10px;font-size:10.5px;color:var(--pop-dim);border-bottom:2px solid transparent}
+.cdtab.on{color:var(--pop-ink);border-bottom-color:var(--pop-pink)}
+.cdbody{flex:1;overflow-y:auto;min-height:0;padding:14px 18px 20px}
+.kv{display:grid;grid-template-columns:120px 1fr;gap:7px 14px;font-size:10.5px}
+.kv .k{color:rgba(150,152,163,.6)}
+.kv .v{color:rgba(245,245,242,.86)}
+.panel{border:1px solid #26262E;border-radius:9px;background:rgba(255,255,255,.018);padding:11px 12px;margin-top:12px}
+.panel h4{margin:0 0 7px;font-size:10.5px;font-weight:600;color:rgba(245,245,242,.82)}
+.panel p{margin:0;font-size:10px;color:rgba(150,152,163,.72);line-height:1.7}
+.list-row{display:flex;align-items:center;gap:8px;padding:6px 0;border-bottom:1px solid rgba(255,255,255,.045);font-size:10.5px}
+.list-row:last-child{border-bottom:0}
+.list-row .nm{color:rgba(245,245,242,.86);font-family:var(--font-mono)}
+.list-row .ds{flex:1;color:rgba(150,152,163,.6);font-size:9.5px}
+.tag{font-size:8px;border-radius:3px;padding:0 4px;line-height:14px;border:1px solid}
+.tag.ok{color:var(--pop-green);border-color:rgba(126,231,135,.3);background:var(--pop-green-soft)}
+.tag.wait{color:var(--pop-amber);border-color:rgba(255,200,87,.3);background:var(--pop-amber-soft)}
+.tag.info{color:var(--pop-cyan);border-color:rgba(79,209,217,.28);background:var(--pop-cyan-soft)}
+
+/* ── 分身业务弹窗（7 tab） ───────────────────────────────────── */
+.modal-backdrop{position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:100;display:none;place-items:center}
+.modal-backdrop.show{display:grid}
+.modal{width:min(880px,92vw);height:min(620px,86vh);display:flex;flex-direction:column;
+  border:1px solid #3A3A44;border-radius:14px;background:#0D0D10;box-shadow:var(--shadow-lg);overflow:hidden}
+.modal .win-title{height:34px}
+.mtabs{flex:none;display:flex;gap:2px;padding:10px 14px 0;border-bottom:1px solid #22222A;overflow-x:auto}
+.mtab{height:27px;padding:0 9px;font-size:10px;color:var(--pop-dim);border-bottom:2px solid transparent;white-space:nowrap}
+.mtab:hover{color:var(--pop-ink)}
+.mtab.on{color:var(--pop-ink);border-bottom-color:var(--pop-pink)}
+.mbody{flex:1;overflow-y:auto;min-height:0;padding:14px 16px 18px}
+.mpane{display:none}
+.mpane.on{display:block}
+.tree{font-family:var(--font-mono);font-size:10px;line-height:1.85;color:rgba(245,245,242,.78);
+  background:var(--pop-inset);border:1px solid #23232B;border-radius:8px;padding:10px 12px;white-space:pre}
+.tree .c{color:rgba(150,152,163,.6)}
+.tree .g{color:var(--pop-green)}
+.tree .p{color:var(--pop-purple)}
+.vitem{display:flex;align-items:flex-start;gap:9px;padding:9px 0;border-bottom:1px solid rgba(255,255,255,.045)}
+.vitem:last-child{border-bottom:0}
+.vitem .ck{width:16px;height:16px;border-radius:4px;flex:none;display:grid;place-items:center;font-size:9px;
+  border:1px solid rgba(126,231,135,.35);background:var(--pop-green-soft);color:var(--pop-green);margin-top:1px}
+.vitem .tx{flex:1;min-width:0}
+.vitem .tx b{display:block;font-size:11px;font-weight:600;color:rgba(245,245,242,.9)}
+.vitem .tx span{display:block;font-size:9px;color:rgba(150,152,163,.6);margin-top:2px;font-family:var(--font-mono)}
+.persona{font-family:var(--font-ui);font-size:11px;line-height:1.85;color:rgba(245,245,242,.86);
+  background:var(--pop-inset);border:1px solid #23232B;border-radius:8px;padding:12px 14px}
+.persona h3{margin:0 0 6px;font-size:12px;color:var(--pop-purple);font-weight:700}
+.persona h3 .h{color:var(--pop-dim);font-weight:400;font-size:9px;margin-left:8px;font-family:var(--font-mono)}
+.persona ul{margin:6px 0 10px;padding-left:17px}
+.persona li{margin:2px 0}
+.persona .q{color:var(--pop-dim);font-style:italic}
+.mini-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}
+.mini{border:1px solid #26262E;border-radius:8px;background:rgba(255,255,255,.018);padding:9px 10px}
+.mini .k{font-size:8.5px;color:rgba(150,152,163,.55);letter-spacing:.05em}
+.mini .v{font-size:11px;margin-top:2px;color:rgba(245,245,242,.88)}
+
+/* ── 备注层 ──────────────────────────────────────────────────── */
+.anno{position:absolute;width:17px;height:17px;border-radius:50%;display:none;place-items:center;
+  font-size:8.5px;font-weight:700;color:#0A0A0C;background:var(--pop-amber);z-index:120;cursor:help;
+  box-shadow:0 0 0 3px rgba(255,200,87,.16)}
+body.notes .anno{display:grid}
+.anno:hover{transform:scale(1.15)}
+.note-tip{position:fixed;z-index:130;display:none;width:280px;padding:9px 11px;border-radius:9px;
+  border:1px solid rgba(255,200,87,.35);background:#1B1A14;box-shadow:var(--shadow-lg);font-size:9.5px;line-height:1.65;color:rgba(245,245,242,.86);pointer-events:none}
+.note-tip.show{display:block}
+.note-tip b{display:block;color:var(--pop-amber);font-size:10px;margin-bottom:3px}
+.note-tip .q{color:var(--pop-purple);font-family:var(--font-mono);font-size:8.5px}
+.note-tip .cmp{display:block;margin-top:4px;color:rgba(150,152,163,.65);font-family:var(--font-mono);font-size:8.5px}
+.notelist{position:fixed;right:60px;top:46px;width:300px;max-height:76vh;overflow:auto;z-index:119;
+  display:none;border:1px solid rgba(255,200,87,.25);border-radius:12px;background:#121210;box-shadow:var(--shadow-lg);padding:10px}
+body.notes .notelist{display:block}
+.notelist h4{margin:0 0 8px;font-size:10px;color:var(--pop-amber);letter-spacing:.06em}
+.notelist .ni{padding:7px 8px;border-radius:7px;font-size:9px;line-height:1.6;color:rgba(245,245,242,.78);cursor:pointer}
+.notelist .ni:hover{background:rgba(255,200,87,.07)}
+.notelist .ni b{color:var(--pop-amber);margin-right:5px}
+.notelist .ni .q{color:var(--pop-purple);font-family:var(--font-mono);font-size:8px;margin-left:4px}
+
+.toast{position:fixed;left:50%;bottom:34px;transform:translateX(-50%) translateY(16px);opacity:0;
+  padding:8px 14px;border-radius:9px;background:#1C1C22;border:1px solid var(--pop-bd);box-shadow:var(--shadow);
+  font-size:10.5px;color:var(--pop-ink);z-index:200;transition:.22s;pointer-events:none}
+.toast.show{opacity:1;transform:translateX(-50%) translateY(0)}
+.hidden{display:none !important}
+</style>
+</head>
+<body>
+<div class="app">
+
+  <!-- ═══ 顶栏 ═══ -->
+  <header class="topbar">
+    <div class="lights"><i></i><i></i><i></i></div>
+    <div class="appmark">✦</div>
+    <div class="brand">Octopus<em>classic · feat-new-ui-20261022</em></div>
+    <div class="viewswitch">
+      <button class="on" data-view="task">分身任务</button>
+      <button data-view="board">任务看板</button>
+      <button data-view="clones">分身</button>
+    </div>
+    <div class="sp"></div>
+    <button class="tb-btn" id="noteToggle">◈ 备注</button>
+    <button class="tb-btn">⇥ 1 个任务在跑</button>
+    <button class="tb-btn">账本</button>
+    <button class="tb-btn">设置</button>
+  </header>
+
+  <div class="workspace">
+
+    <!-- ═══ 左栏 ═══ -->
+    <aside class="sidebar">
+      <div class="sb-top">
+        <button class="sb-new">＋ 开启新对话 <span class="dim" style="font-size:9px">▾</span></button>
+        <button class="sb-ico">⌕</button>
+        <button class="sb-ico">▤</button>
+      </div>
+      <div class="sb-list">
+        <div class="sec">应用</div>
+        <button class="srow"><span class="k">◷</span><span class="mid"><span class="nm">今日</span></span></button>
+        <button class="srow" data-open="board"><span class="k">▦</span><span class="mid"><span class="nm">任务看板</span></span><span class="n">26</span></button>
+        <button class="srow"><span class="k">❖</span><span class="mid"><span class="nm">分身</span></span><span class="n">11</span></button>
+        <button class="srow"><span class="k">◇</span><span class="mid"><span class="nm">知识中心</span></span></button>
+        <button class="srow"><span class="k">▨</span><span class="mid"><span class="nm">资源</span></span></button>
+        <button class="srow"><span class="k">◷</span><span class="mid"><span class="nm">系统调度</span></span></button>
+        <button class="srow"><span class="k">⚙</span><span class="mid"><span class="nm">系统管理</span></span></button>
+        <button class="srow"><span class="k">⋯</span><span class="mid"><span class="nm">设置</span></span></button>
+
+        <div class="sec">分身任务 <span>1</span></div>
+        <button class="srow active">
+          <span class="k">✦</span>
+          <span class="mid"><span class="nm">值班工程师</span><span class="sub">clone-dev · draft</span></span>
+          <span class="n">●</span>
+        </button>
+
+        <div class="sec">会话 <span>12</span></div>
+        <button class="srow"><span class="k">❯</span><span class="mid"><span class="nm trunc">为什么现在火：模型不再是瓶颈…</span><span class="sub">09:41</span></span></button>
+        <button class="srow"><span class="k">❯</span><span class="mid"><span class="nm trunc">订单对账流的节点重试策略</span><span class="sub">昨天</span></span></button>
+        <button class="srow"><span class="k">❯</span><span class="mid"><span class="nm trunc">cabin 立绘动效验收</span><span class="sub">11-22</span></span></button>
+      </div>
+      <div class="sb-foot">octopus · feat-new-ui-20261022</div>
+    </aside>
+
+    <!-- ═══ 中栏 ═══ -->
+    <main class="main">
+      <div class="taskbar">
+        <span class="kindbadge">clone-dev</span>
+        <span class="t">分身任务 · 新建 <b>「值班工程师」</b></span>
+        <span class="path">oncall-eng · 目标分支 feat-new-ui-20261022</span>
+        <span class="sp"></span>
+        <span class="statepill" id="taskState"><span class="d"></span>draft</span>
+        <button class="go" data-open="clones">查看分身 →</button>
+        <span class="anno" style="right:16px;top:12px" data-note="1">1</span>
+      </div>
+
+      <div class="transcript" id="transcript">
+        <div class="tui">
+
+          <div class="tsys"><span class="who"></span><span class="bd"><span class="g"></span>任务已创建 · clone-dev · 目标分支 feat-new-ui-20261022 · task home 已就绪</span>
+            <span class="anno" style="right:6px;top:0" data-note="2">2</span>
+          </div>
+
+          <div class="tmsg me">
+            <span class="who">❯ 你</span>
+            <div class="bb"><p>做一个值班分身，线上出事的时候能查失败执行、能把失败的节点重跑，还能翻日志。平时我切到这个身份直接问它就行。</p></div>
+          </div>
+
+          <div class="tmsg clone">
+            <span class="who">✦ 铸分身者</span>
+            <div class="bb">
+              <p>先定身份标识。建议 <code>oncall-eng</code> 作代号、<b>「值班工程师」</b>作显示名——代号会进目录和工具包名，短、全小写、稳定。</p>
+              <span class="anno" style="top:4px;right:8px" data-note="3">3</span>
+              <p class="mnote">代号不可后改（会影响包名与历史记录）；显示名随时可改。</p>
+              <span class="anno" style="top:2px;right:0" data-note="4">4</span>
+            </div>
+          </div>
+
+          <div class="tmsg me">
+            <span class="who">❯ 你</span>
+            <div class="bb"><p>可以。</p></div>
+          </div>
+
+          <div class="tmsg clone">
+            <span class="who">✦ 铸分身者</span>
+            <div class="bb">
+              <p>第二件：人格。我起草了四条要点，你看要不要加：</p>
+              <ul>
+                <li>面向线上故障，先止血再定位，不做无关重构</li>
+                <li>任何重跑/回滚动作前，先说明影响面并等确认</li>
+                <li>只读日志与执行数据；写操作限于重跑节点</li>
+                <li>结论必须带证据：执行 id、节点 id、日志行号</li>
+              </ul>
+              <p class="mnote">确认后写入 persona.md，后续可在编辑任务里改</p>
+              <span class="anno" style="top:2px;right:0" data-note="5">5</span>
+            </div>
+          </div>
+
+          <div class="tmsg me">
+            <span class="who">❯ 你</span>
+            <div class="bb"><p>加一条：不确定就说不确定，别编。</p></div>
+          </div>
+
+          <div class="tmsg clone">
+            <span class="who">✦ 铸分身者</span>
+            <div class="bb">
+              <p>已加。第三件：工具。这三个是我按你的需求拆的，每个工具配一份技能说明：</p>
+              <ul>
+                <li><code>list_failed_executions</code> — 按时间窗查失败执行，返回执行 id / 节点 / 错误摘要</li>
+                <li><code>rerun_node</code> — 重跑指定执行里的失败节点，带确认参数</li>
+                <li><code>read_node_logs</code> — 读节点日志片段，支持按行号窗口</li>
+              </ul>
+              <p>另外挂两个技能：<code>octo-workflow-repair</code>、<code>octo-actuator-guide</code>。</p>
+              <p class="mnote">工具代码会落在 packages/clone-kits/oncall-eng/，独立包，不碰平台核心</p>
+              <span class="anno" style="top:2px;right:0" data-note="6">6</span>
+            </div>
+          </div>
+
+          <div class="tmsg me">
+            <span class="who">❯ 你</span>
+            <div class="bb"><p>行，开始做吧。</p></div>
+          </div>
+
+          <div class="tmsg clone">
+            <span class="who">✦ 铸分身者</span>
+            <div class="bb"><p>开始。先建独立工作树，再写人格与工具包，最后跑验证闸门。</p>
+              <p class="mnote">分支 clone/oncall-eng ← feat-new-ui-20261022 · 未合入前不影响主代码</p>
+              <span class="anno" style="top:2px;right:0" data-note="7">7</span>
+            </div>
+          </div>
+
+          <div class="ttool">
+            <span class="who">▸</span>
+            <div class="bd"><span class="ar">▸</span><span class="nm">bash</span><span class="args">git worktree add ../oncall-eng clone/oncall-eng</span><span class="ok">ok</span></div>
+          </div>
+          <div class="ttool"><span class="who">▸</span><div class="bd"><span class="ar">▸</span><span class="nm">write_file</span><span class="args">persona.md · 5 条人格 · 1.2 KB</span><span class="ok">ok</span></div></div>
+          <div class="ttool"><span class="who">▸</span><div class="bd"><span class="ar">▸</span><span class="nm">write_file</span><span class="args">tools/list_failed_executions.ts</span><span class="ok">ok</span></div></div>
+          <div class="ttool"><span class="who">▸</span><div class="bd"><span class="ar">▸</span><span class="nm">write_file</span><span class="args">tools/rerun_node.ts</span><span class="ok">ok</span></div></div>
+          <div class="ttool"><span class="who">▸</span><div class="bd"><span class="ar">▸</span><span class="nm">write_file</span><span class="args">tools/read_node_logs.ts</span><span class="ok">ok</span></div></div>
+          <div class="ttool"><span class="who">▸</span><div class="bd"><span class="ar">▸</span><span class="nm">write_file</span><span class="args">skills/oncall-repair/SKILL.md</span><span class="ok">ok</span></div></div>
+
+          <div class="ttool">
+            <span class="who">▸</span>
+            <div class="bd"><span class="ar">▸</span><span class="nm">clone_verify</span><span class="args">oncall-eng</span><span class="ok">3/3 通过 · 24s</span>
+              <span class="anno" style="right:6px;top:0" data-note="8">8</span></div>
+          </div>
+
+          <div class="tsys amber"><span class="who"></span><span class="bd"><span class="g"></span>验证通过 · 等待你确认合入 · 未合入前主分支不受影响</span></div>
+
+          <div class="mergecard">
+            <div class="h">确认合入「值班工程师」？<span class="tag">待你定</span></div>
+            <div class="sub">合入 = merge worktree + 安装 kit + 注册分身 + 发布 1.0.0</div>
+            <div class="rows">
+              <div class="row"><i>✓</i>工具可用 <span>list_failed_executions · rerun_node · read_node_logs（3/3）</span></div>
+              <div class="row"><i>✓</i>越权被拦 <span>尝试写入 packages/server/src → 安全层拒绝</span></div>
+              <div class="row"><i>✓</i>身份切换 <span>切换为 oncall-eng 完成 2 轮真实对话</span></div>
+              <div class="row"><i>＋</i>变更 <span>6 文件 +214 −0 · 分支 clone/oncall-eng</span></div>
+              <div class="row"><i>◈</i>版本 <span>1.0.0（初始）</span></div>
+            </div>
+            <div class="acts">
+              <button class="pri" id="mergeBtn">确认合入</button>
+              <button>先看看</button>
+            </div>
+          </div>
+
+          <div style="height:6px"></div>
+        </div>
+      </div>
+
+      <div class="composer">
+        <div class="in">
+          <div class="row1">
+            <textarea rows="1" placeholder="对铸分身者说点什么…（改人格 / 加工具 / 提验证要求）"></textarea>
+            <button class="send">↑</button>
+          </div>
+          <div class="chips">
+            <span class="chip">＋</span>
+            <span class="chip">model <b>pro</b></span>
+            <span class="chip">53.8K / 1M <b>5.0%</b></span>
+            <span class="chip">tok 820.3K · <b>¥0.28</b></span>
+            <span class="chip own">✦ 铸分身者</span>
+            <span class="sp"></span>
+            <span class="hint">⏎ 发送 · ⇧⏎ 换行</span>
+          </div>
+        </div>
+      </div>
+    </main>
+
+    <!-- ═══ 右侧贴边 dock ═══ -->
+    <aside class="dock">
+      <div class="rail">
+        <button class="ditem"><span class="i">▤</span><span class="l">文件</span></button>
+        <button class="ditem"><span class="i">◷</span><span class="l">活动</span></button>
+        <button class="ditem"><span class="i">◈</span><span class="l">调试</span></button>
+        <button class="ditem"><span class="i">❖</span><span class="l">子代理</span></button>
+        <button class="ditem"><span class="i">▥</span><span class="l">消耗</span></button>
+        <button class="ditem biz" id="bizBtn"><span class="i">✦</span><span class="l">分身</span></button>
+        <span class="anno" style="right:-6px;top:216px" data-note="9">9</span>
+      </div>
+      <div class="sp"></div>
+      <button class="mini">≡</button>
+      <button class="mini">?</button>
+    </aside>
+  </div>
+</div>
+
+<!-- ═══════ 任务看板浮窗 ═══════ -->
+<div class="win-backdrop" id="winBoard">
+  <div class="win">
+    <div class="win-title">
+      <div class="lights"><i></i><i></i><i></i></div>
+      <span class="tt">任务看板</span>
+      <button class="x" data-close="winBoard">✕</button>
+    </div>
+    <div class="win-body">
+      <div class="bhead">
+        <span class="t">❯ 任务看板</span>
+        <span class="cnt">26 个任务</span>
+        <span class="cost">¥0.79</span>
+        <span class="sp"></span>
+        <span class="search">⌕ 搜索任务 / 语义摘要…</span>
+        <button class="btn">⟳ 刷新</button>
+        <button class="btn pri">＋ 新建开发任务</button>
+        <button class="btn" style="border-color:rgba(210,168,255,.32);color:var(--pop-purple)">＋ 新建分身任务</button>
+      </div>
+      <div class="filters">
+        <button class="fchip on" data-filter="all">全部 26</button>
+        <button class="fchip" data-filter="dev">开发 22</button>
+        <button class="fchip" data-filter="workflow">工作流 2</button>
+        <button class="fchip" data-filter="clone">分身 2</button>
+        <span class="anno" style="left:238px;top:9px" data-note="10">10</span>
+        <span class="sp"></span>
+        <span class="hint">kind 徽标 · 点击卡片进入任务</span>
+      </div>
+      <div class="board" id="board">
+        <div class="col draft">
+          <div class="col-h"><span class="d"></span>草稿<span class="c">6</span><span class="sp"></span><span class="plus">＋</span></div>
+          <div class="col-body">
+            <div class="tcard" data-kind="clone">
+              <div class="ttl">分身任务 · 值班工程师</div>
+              <div class="m"><span class="kb clone">CLONE</span><span>draft</span><span class="dot"></span><span>oncall-eng</span></div>
+              <div class="prog"><i style="width:78%"></i></div>
+            </div>
+            <div class="tcard" data-kind="workflow">
+              <div class="ttl">工作流开发任务 · 订单对账流</div>
+              <div class="m"><span class="kb wf">WORKFLOW</span><span>draft</span><span class="dot"></span><span>v3</span></div>
+            </div>
+            <div class="tcard" data-kind="dev">
+              <div class="ttl">订单导出重构</div>
+              <div class="m"><span class="kb dev">DEV</span><span>Phase 1/2</span><span class="dot"></span><span>11-23</span></div>
+            </div>
+            <div class="tcard" data-kind="dev">
+              <div class="ttl">支付回调幂等修复</div>
+              <div class="m"><span class="kb dev">DEV</span><span>Phase 1/1</span><span class="dot"></span><span>11-22</span></div>
+            </div>
+            <div class="tcard" data-kind="dev">
+              <div class="ttl">多租户隔离审计</div>
+              <div class="m"><span class="kb dev">DEV</span><span>Phase 1/3</span><span class="dot"></span><span>11-22</span></div>
+            </div>
+            <div class="tcard" data-kind="dev">
+              <div class="ttl">日志检索提速</div>
+              <div class="m"><span class="kb dev">DEV</span><span>Phase 2/2</span><span class="dot"></span><span>11-21</span></div>
+            </div>
+          </div>
+        </div>
+        <div class="col ready">
+          <div class="col-h"><span class="d"></span>待执行<span class="c">0</span><span class="sp"></span><span class="plus">＋</span></div>
+          <div class="col-body"><div class="empty-col"><span class="ico">▤</span>暂无任务</div></div>
+        </div>
+        <div class="col running">
+          <div class="col-h"><span class="d"></span>执行中<span class="c">0</span><span class="sp"></span><span class="plus">＋</span></div>
+          <div class="col-body"><div class="empty-col"><span class="ico">▤</span>暂无任务</div></div>
+        </div>
+        <div class="col review">
+          <div class="col-h"><span class="d"></span>待验收<span class="c">0</span><span class="sp"></span><span class="plus">＋</span></div>
+          <div class="col-body"><div class="empty-col"><span class="ico">▤</span>暂无任务</div></div>
+        </div>
+        <div class="col archive">
+          <div class="col-h"><span class="d"></span>待归档<span class="c">1</span><span class="sp"></span><span class="plus">＋</span></div>
+          <div class="col-body">
+            <div class="tcard" data-kind="clone">
+              <div class="ttl">分身任务 · 竞品监测</div>
+              <div class="m"><span class="kb clone">CLONE</span><span>待合入</span><span class="dot"></span><span>cmp-watch</span></div>
+            </div>
+          </div>
+        </div>
+        <div class="col done">
+          <div class="col-h"><span class="d"></span>完成<span class="c">2</span><span class="sp"></span><span class="plus">＋</span></div>
+          <div class="col-body">
+            <div class="tcard" data-kind="dev">
+              <div class="ttl">端用户体系 · Phase 1/1</div>
+              <div class="m"><span class="kb dev">DEV</span><span>已完成</span><span class="dot"></span><span>26m</span></div>
+            </div>
+            <div class="tcard" data-kind="dev">
+              <div class="ttl">任务作业 · E2E 播种</div>
+              <div class="m"><span class="kb dev">DEV</span><span>已完成</span><span class="dot"></span><span>8h</span></div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════ 分身浮窗 ═══════ -->
+<div class="win-backdrop" id="winClones">
+  <div class="win small">
+    <div class="win-title">
+      <div class="lights"><i></i><i></i><i></i></div>
+      <span class="tt">分身</span>
+      <button class="x" data-close="winClones">✕</button>
+    </div>
+    <div class="win-body cbody">
+      <div class="clist">
+        <div class="clist-h"><span class="t">分身</span><span class="cnt">11</span><span class="sp"></span><span class="add">＋</span></div>
+        <div class="csearch">⌕ 搜索分身…</div>
+        <div class="ctabs"><button class="ctab on">全部 11</button><button class="ctab">系统 9</button><button class="ctab">用户 2</button></div>
+        <div class="clist-body">
+          <div class="cgroup">系统分身 9</div>
+          <button class="crow"><span class="av">WS</span><span class="meta"><span class="n">全栈开发助手</span><span class="s">workspace · 共享记忆</span></span><span class="live"><i></i>活跃</span></button>
+          <button class="crow"><span class="av">SC</span><span class="meta"><span class="n">定时任务管理</span><span class="s">scheduler · 独立记忆</span></span><span class="live"><i></i>活跃</span></button>
+          <button class="crow"><span class="av">AR</span><span class="meta"><span class="n">工程分析师</span><span class="s">archive · 共享记忆</span></span><span class="live"><i></i>活跃</span></button>
+          <button class="crow"><span class="av">RS</span><span class="meta"><span class="n">资源操作专家</span><span class="s">resource · 独立记忆</span></span><span class="live"><i></i>活跃</span></button>
+          <button class="crow"><span class="av">TA</span><span class="meta"><span class="n">任务规格作者</span><span class="s">task-author · 独立记忆</span></span><span class="live"><i></i>活跃</span></button>
+          <button class="crow"><span class="av">TD</span><span class="meta"><span class="n">任务执行者</span><span class="s">task-doer · 独立记忆</span></span><span class="live"><i></i>活跃</span></button>
+          <button class="crow"><span class="av">WA</span><span class="meta"><span class="n">工作流开发者</span><span class="s">workflow-author · 独立记忆</span></span><span class="live"><i></i>活跃</span></button>
+          <button class="crow"><span class="av">WO</span><span class="meta"><span class="n">工作流工程师</span><span class="s">workflow-operator · 独立记忆</span></span><span class="live"><i></i>活跃</span></button>
+          <button class="crow"><span class="av">CA</span><span class="meta"><span class="n">舱调度者</span><span class="s">cabin-orchestrator · 独立记忆</span></span><span class="live"><i></i>活跃</span></button>
+          <div class="cgroup">用户分身 2</div>
+          <button class="crow on"><span class="av p">OC</span><span class="meta"><span class="n">值班工程师</span><span class="s">oncall-eng · 独立记忆</span></span><span class="live"><i></i>验证中</span></button>
+          <button class="crow"><span class="av c">CW</span><span class="meta"><span class="n">竞品监测</span><span class="s">cmp-watch · 独立记忆</span></span><span class="live"><i></i>待合入</span></button>
+        </div>
+        <div class="clist-foot"><button>＋ 新建分身</button></div>
+      </div>
+      <div class="cdetail">
+        <div class="cd-h">
+          <span class="av p">OC</span>
+          <div><div class="nm">值班工程师</div><div class="sl">oncall-eng · 用户自定义 · 独立记忆</div></div>
+          <span class="sp"></span>
+          <button class="btn">打开会话</button>
+          <button class="btn pri" id="editBtn">编辑分身</button>
+        </div>
+        <div class="cdtabs">
+          <button class="cdtab on" data-cdtab="persona">人格</button>
+          <button class="cdtab" data-cdtab="config">配置</button>
+          <button class="cdtab" data-cdtab="skills">技能</button>
+          <button class="cdtab" data-cdtab="tools">工具</button>
+          <button class="cdtab" data-cdtab="versions">版本</button>
+        </div>
+        <div class="cdbody">
+          <div class="cdpane" data-cdpane="persona">
+            <div class="persona">
+              <h3>值班工程师<span class="h">persona.md · 1.2 KB</span></h3>
+              <p>你是值班工程师，负责线上故障的第一响应。你的目标是在最短时间内判断影响面并给出可执行的下一步。</p>
+              <ul>
+                <li>先止血再定位，不做无关重构</li>
+                <li>任何重跑/回滚动作前，说明影响面并等确认</li>
+                <li>只读日志与执行数据；写操作限于重跑节点</li>
+                <li>结论必须带证据：执行 id、节点 id、日志行号</li>
+                <li>不确定就说不确定，不要编造</li>
+              </ul>
+            </div>
+          </div>
+          <div class="cdpane hidden" data-cdpane="config">
+            <div class="kv">
+              <span class="k">代号</span><span class="v mono">oncall-eng</span>
+              <span class="k">显示名</span><span class="v">值班工程师</span>
+              <span class="k">类型</span><span class="v">用户自定义</span>
+              <span class="k">记忆域</span><span class="v">独立（isolated）</span>
+              <span class="k">模型</span><span class="v mono">pro</span>
+              <span class="k">工具包</span><span class="v mono">packages/clone-kits/oncall-eng</span>
+              <span class="k">状态</span><span class="v"><span class="tag wait">验证中</span></span>
+            </div>
+          </div>
+          <div class="cdpane hidden" data-cdpane="skills">
+            <div class="list-row"><span class="nm">octo-workflow-repair</span><span class="ds">执行故障诊断与修复</span><span class="tag info">授予</span></div>
+            <div class="list-row"><span class="nm">octo-actuator-guide</span><span class="ds">运行时端点查询</span><span class="tag info">授予</span></div>
+          </div>
+          <div class="cdpane hidden" data-cdpane="tools">
+            <div class="list-row"><span class="nm">list_failed_executions</span><span class="ds">按时间窗查失败执行</span><span class="tag ok">已验证</span></div>
+            <div class="list-row"><span class="nm">rerun_node</span><span class="ds">重跑失败节点</span><span class="tag ok">已验证</span></div>
+            <div class="list-row"><span class="nm">read_node_logs</span><span class="ds">读节点日志片段</span><span class="tag ok">已验证</span></div>
+          </div>
+          <div class="cdpane hidden" data-cdpane="versions">
+            <div class="list-row"><span class="nm">1.0.0</span><span class="ds">初始版本 · 待合入时发布</span><span class="tag wait">draft</span></div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════ 分身业务弹窗（7 tab） ═══════ -->
+<div class="modal-backdrop" id="mClone">
+  <div class="modal">
+    <div class="win-title">
+      <div class="lights"><i></i><i></i><i></i></div>
+      <span class="tt">分身 · oncall-eng</span>
+      <button class="x" data-close="mClone">✕</button>
+    </div>
+    <div class="mtabs">
+      <button class="mtab on" data-mtab="card">分身卡片</button>
+      <button class="mtab" data-mtab="persona">人格</button>
+      <button class="mtab" data-mtab="tools">工具</button>
+      <button class="mtab" data-mtab="skills">技能</button>
+      <button class="mtab" data-mtab="perm">权限与边界</button>
+      <button class="mtab" data-mtab="verify">验证清单</button>
+      <button class="mtab" data-mtab="pkg">包与台账</button>
+    </div>
+    <div class="mbody">
+      <div class="mpane on" data-mpane="card">
+        <div class="mini-grid">
+          <div class="mini"><div class="k">代号</div><div class="v mono">oncall-eng</div></div>
+          <div class="mini"><div class="k">显示名</div><div class="v">值班工程师</div></div>
+          <div class="mini"><div class="k">类型</div><div class="v">用户自定义 · 可卸载</div></div>
+          <div class="mini"><div class="k">记忆域</div><div class="v">独立（isolated）</div></div>
+          <div class="mini"><div class="k">任务</div><div class="v mono">clone-dev · draft</div></div>
+          <div class="mini"><div class="k">版本</div><div class="v mono">1.0.0（初始）</div></div>
+        </div>
+        <div class="panel">
+          <h4>当前状态</h4>
+          <p>四条验证已通过，等待你确认合入。合入后自动安装到 <span class="mono">~/.octopus/agent/clones/oncall-eng/</span>，可立即切换身份使用。</p>
+        </div>
+      </div>
+
+      <div class="mpane" data-mpane="persona">
+        <div class="persona">
+          <h3>值班工程师<span class="h">persona.md · 1.2 KB</span></h3>
+          <p>你是值班工程师，负责线上故障的第一响应。你的目标是在最短时间内判断影响面并给出可执行的下一步。</p>
+          <ul>
+            <li>先止血再定位，不做无关重构</li>
+            <li>任何重跑/回滚动作前，说明影响面并等确认</li>
+            <li>只读日志与执行数据；写操作限于重跑节点</li>
+            <li>结论必须带证据：执行 id、节点 id、日志行号</li>
+            <li>不确定就说不确定，不要编造</li>
+          </ul>
+          <p class="q">你说话简短、给结论、带证据。遇到权限之外的事，直接说做不到。</p>
+        </div>
+      </div>
+
+      <div class="mpane" data-mpane="tools">
+        <div class="list-row"><span class="nm">list_failed_executions</span><span class="ds">按时间窗查失败执行，返回执行 id / 节点 / 错误摘要</span><span class="tag ok">已验证</span></div>
+        <div class="list-row"><span class="nm">rerun_node</span><span class="ds">重跑指定执行里的失败节点，带确认参数</span><span class="tag ok">已验证</span></div>
+        <div class="list-row"><span class="nm">read_node_logs</span><span class="ds">读节点日志片段，支持按行号窗口</span><span class="tag ok">已验证</span></div>
+        <div class="panel">
+          <h4>工具形态</h4>
+          <p>进程内 MCP 工具（<span class="mono">createSdkMcpServer</span> + <span class="mono">tool()</span>），与平台内置工具同构，可直接读写 DB 与调用服务。每个工具配一份技能说明，写清何时用、怎么用。</p>
+        </div>
+      </div>
+
+      <div class="mpane" data-mpane="skills">
+        <div class="list-row"><span class="nm">octo-workflow-repair</span><span class="ds">执行故障诊断与修复</span><span class="tag info">授予</span></div>
+        <div class="list-row"><span class="nm">octo-actuator-guide</span><span class="ds">运行时端点查询与诊断</span><span class="tag info">授予</span></div>
+        <div class="list-row"><span class="nm">oncall-repair</span><span class="ds">包内自带：本分身的三工具使用说明</span><span class="tag ok">随包</span></div>
+      </div>
+
+      <div class="mpane" data-mpane="perm">
+        <div class="kv">
+          <span class="k">可调工具</span><span class="v mono">list_failed_executions · rerun_node · read_node_logs</span>
+          <span class="k">可写路径</span><span class="v mono">~/.octopus/agent/clones/oncall-eng/**</span>
+          <span class="k">只读路径</span><span class="v mono">packages/** · ~/.octopus/db/octopus.db</span>
+          <span class="k">硬规则</span><span class="v">不得修改 shared / server / engine / web-app 核心代码</span>
+          <span class="k">依赖方向</span><span class="v">kit → 核心 允许 · 核心 → kit 禁止 · kit → kit 禁止</span>
+        </div>
+        <div class="panel">
+          <h4>越权验证</h4>
+          <p>验证阶段尝试写入 <span class="mono">packages/server/src/index.ts</span>，被安全层拦截并记录事件。这一条是合入的硬闸之一。</p>
+        </div>
+      </div>
+
+      <div class="mpane" data-mpane="verify">
+        <div class="vitem"><span class="ck">✓</span><div class="tx"><b>工具可用</b><span>3/3 工具在真实会话中被成功调用 · 证据：.scratch/2026-11-24/oncall-eng/verify.json</span></div></div>
+        <div class="vitem"><span class="ck">✓</span><div class="tx"><b>越权被拦</b><span>尝试写入 packages/server/src → 安全层拒绝 · 证据：safety-events.jsonl#184</span></div></div>
+        <div class="vitem"><span class="ck">✓</span><div class="tx"><b>身份切换可用</b><span>切换为 oncall-eng 完成 2 轮真实对话 · 证据：session 9f2c…</span></div></div>
+        <div class="panel">
+          <h4>闸门规则</h4>
+          <p>三条全绿才允许调用 <span class="mono">finish_clone_dev</span>；服务端二次校验，缺一条直接拒绝。卸载能力不进闸门，由独立测试覆盖。</p>
+        </div>
+      </div>
+
+      <div class="mpane" data-mpane="pkg">
+        <div class="tree"><span class="c"># 开发期（仓库内，git 管理，合入后保留）</span>
+packages/clone-kits/<span class="p">oncall-eng</span>/
+├── package.json          <span class="c">@octopus/clone-kit-oncall-eng</span>
+├── index.ts              <span class="c">export createKitServer(ctx)</span>
+├── tools/
+│   ├── list_failed_executions.ts
+│   ├── rerun_node.ts
+│   └── read_node_logs.ts
+├── persona.md
+└── skills/oncall-repair/SKILL.md
+
+<span class="c"># 合入后安装到用户目录（卸载 = 删这个目录）</span>
+~/.octopus/agent/clones/<span class="p">oncall-eng</span>/
+├── config.json
+├── persona.md
+├── memory/daily/
+├── skills/
+├── CHANGES.jsonl
+└── kit/                  <span class="c">← packages/clone-kits/oncall-eng 的产物</span></div>
+        <div class="panel">
+          <h4>CHANGES.jsonl · 最近</h4>
+          <p class="mono" style="line-height:2">
+            {"ts":"…","kind":"file","path":"persona.md","delta_lines":12}<br>
+            {"ts":"…","kind":"skill","summary":"技能变更 + oncall-repair"}<br>
+            {"ts":"…","kind":"version","summary":"1.0.0 待发布"}
+          </p>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- 备注 -->
+<div class="notelist" id="notelist">
+  <h4>◈ 设计备注 · 点一条定位</h4>
+  <div class="ni" data-goto="1"><b>①</b>任务条：kind 徽标 + 状态 pill + 目标分支<span class="q">Q15 / Q23</span></div>
+  <div class="ni" data-goto="2"><b>②</b>系统行：任务创建即落 draft，不走引擎<span class="q">Q7 / Q23</span></div>
+  <div class="ni" data-goto="3"><b>③</b>一次一问、每问带推荐，是全流程唯一的交互方式<span class="q">Q11</span></div>
+  <div class="ni" data-goto="4"><b>④</b>代号进包名与目录，显示名可改<span class="q">Q15</span></div>
+  <div class="ni" data-goto="5"><b>⑤</b>人格以条目呈现，确认后写 persona.md<span class="q">Q6</span></div>
+  <div class="ni" data-goto="6"><b>⑥</b>工具清单与技能分开列，工具要能执行<span class="q">Q17</span></div>
+  <div class="ni" data-goto="7"><b>⑦</b>独立 worktree，未合入不影响主代码<span class="q">Q12 / Q27</span></div>
+  <div class="ni" data-goto="8"><b>⑧</b>验证闸门：三条全绿才允许 finish<span class="q">Q5 / Q24</span></div>
+  <div class="ni" data-goto="9"><b>⑨</b>右 dock 五个固定入口 + 业务入口，点开 7 tab<span class="q">Q13 / Q33</span></div>
+  <div class="ni" data-goto="10"><b>⑩</b>看板按 kind 筛选，工作流任务一并补上<span class="q">Q21</span></div>
+</div>
+<div class="note-tip" id="noteTip"></div>
+<div class="toast" id="toast"></div>
+
+<script>
+(function(){
+  const $ = (s,r=document)=>r.querySelector(s);
+  const $$ = (s,r=document)=>[...r.querySelectorAll(s)];
+
+  /* 视图：任务工作台常驻，看板与分身是浮窗 */
+  function showView(v){
+    $('#winBoard').classList.toggle('show', v==='board');
+    $('#winClones').classList.toggle('show', v==='clones');
+    $$('.viewswitch button').forEach(b=>b.classList.toggle('on', b.dataset.view===v));
+  }
+  $$('.viewswitch button').forEach(b=>b.onclick=()=>showView(b.dataset.view));
+  $$('[data-open]').forEach(b=>b.onclick=()=>showView(b.dataset.open));
+  $$('[data-close]').forEach(b=>b.onclick=()=>showView('task'));
+  $$('.win-backdrop').forEach(b=>b.addEventListener('mousedown',e=>{
+    if(e.target===b) showView('task');
+  }));
+
+  /* 看板筛选 */
+  $$('.fchip').forEach(c=>c.onclick=()=>{
+    $$('.fchip').forEach(x=>x.classList.toggle('on',x===c));
+    const f=c.dataset.filter;
+    $$('#board .tcard').forEach(card=>{
+      card.style.display = (f==='all'||card.dataset.kind===f)?'':'none';
+    });
+  });
+
+  /* 分身详情 tab */
+  $$('.cdtab').forEach(t=>t.onclick=()=>{
+    $$('.cdtab').forEach(x=>x.classList.toggle('on',x===t));
+    $$('[data-cdpane]').forEach(p=>p.classList.toggle('hidden',p.dataset.cdpane!==t.dataset.cdtab));
+  });
+
+  /* 分身业务弹窗 */
+  $('#bizBtn').onclick=()=>$('#mClone').classList.add('show');
+  $$('[data-close="mClone"]').forEach(b=>b.onclick=()=>$('#mClone').classList.remove('show'));
+  $('#mClone').addEventListener('mousedown',e=>{ if(e.target===$('#mClone')) $('#mClone').classList.remove('show') });
+  document.addEventListener('keydown',e=>{
+    if(e.key==='Escape'){ $('#mClone').classList.remove('show'); showView('task'); }
+  });
+  $$('.mtab').forEach(t=>t.onclick=()=>{
+    $$('.mtab').forEach(x=>x.classList.toggle('on',x===t));
+    $$('.mpane').forEach(p=>p.classList.toggle('on',p.dataset.mpane===t.dataset.mtab));
+  });
+
+  /* 编辑分身 → 回到任务工作台并切成编辑态 */
+  $('#editBtn').onclick=()=>{
+    showView('task');
+    $('.taskbar .t').innerHTML='分身任务 · 编辑 <b>「值班工程师」</b>';
+    toast('已切换到编辑任务 · 仍走 worktree → 验证 → 合入');
+  };
+
+  /* 合并 */
+  const toastEl=$('#toast'); let tt;
+  function toast(msg){ toastEl.textContent=msg; toastEl.classList.add('show'); clearTimeout(tt); tt=setTimeout(()=>toastEl.classList.remove('show'),2400) }
+  $('#mergeBtn').onclick=()=>{
+    const pill=$('#taskState');
+    pill.className='statepill'; pill.innerHTML='<span class="d"></span>archiving';
+    toast('合入中 · merge worktree → 安装 kit → 注册分身 → 发布 1.0.0');
+    setTimeout(()=>{
+      pill.className='statepill ok'; pill.innerHTML='<span class="d"></span>done';
+      toast('已完成 · 值班工程师 1.0.0 已安装，可切换身份使用');
+      $('#mergeBtn').textContent='已合入'; $('#mergeBtn').disabled=true; $('#mergeBtn').style.opacity=.6;
+    },1800);
+  };
+
+  /* 备注 */
+  const tip=$('#noteTip');
+  $('#noteToggle').onclick=()=>{
+    document.body.classList.toggle('notes');
+    $('#noteToggle').classList.toggle('on');
+  };
+  $$('.anno').forEach(n=>{
+    n.addEventListener('mouseenter',()=>{
+      const id=n.dataset.note; if(!id) return;
+      const src=$(`.notelist .ni[data-goto="${id}"]`);
+      if(!src) return;
+      tip.innerHTML=`<b>${src.querySelector('b').textContent} ${src.childNodes[1]?.textContent||''}</b>`+
+        `<span class="cmp">${src.querySelector('.q')?.outerHTML||''}</span>`;
+      tip.classList.add('show');
+      const r=n.getBoundingClientRect();
+      tip.style.left=Math.min(window.innerWidth-300,Math.max(8,r.left-130))+'px';
+      tip.style.top=(r.bottom+8)+'px';
+    });
+    n.addEventListener('mouseleave',()=>tip.classList.remove('show'));
+  });
+  $$('.notelist .ni').forEach(i=>i.onclick=()=>{
+    const id=i.dataset.goto;
+    const target=$(`.anno[data-note="${id}"]`);
+    if(target){
+      target.scrollIntoView({block:'center',behavior:'smooth'});
+      target.style.transition='transform .2s';
+      target.style.transform='scale(1.5)';
+      setTimeout(()=>target.style.transform='',320);
+    }
+  });
+})();
+</script>
+</body>
+</html>

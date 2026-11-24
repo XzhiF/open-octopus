@@ -271,6 +271,56 @@ export const workflowDevStateSchema = z.object({
 })
 export type WorkflowDevState = z.infer<typeof workflowDevStateSchema>
 
+/** 分身开发任务（2026-11-25）的研发状态。
+ *
+ *  与 workflow-dev 同构：走轻量任务流（draft → 开发完成 → awaiting_archive →
+ *  archiving → done），不拆 phase、不走工作流引擎。状态放 task_spec JSON，
+ *  不新增 tasks 列。
+ *
+ *  只有服务端 CloneDevService / 专用任务工具可以写这个对象 —— 刻意不在
+ *  `TaskSpecFieldSchema` 里，避免 Agent 用通用 spec-field 绕过验证硬闸。 */
+export const cloneDevStateSchema = z.object({
+  /** create = 新建分身；edit = 维护既有分身。 */
+  mode: z.enum(["create", "edit"]).default("create"),
+  /** 分身目录名（slug），同时是 kit 包名后缀。 */
+  clone_name: z.string().min(1),
+  /** 内置分身还是用户分身。编辑内置分身时最终改 core-pack 种子。 */
+  clone_type: z.enum(["built-in", "user"]).default("user"),
+  /** draft = 开发中；verified = 三条判据全绿；merged = 已合入。 */
+  stage: z.enum(["draft", "verified", "merged"]).default("draft"),
+  /** 工具包。无工具的轻分身 enabled=false，不生成 kit。 */
+  kit: z
+    .object({
+      enabled: z.boolean().default(false),
+      package: z.string().optional(),
+      tools: z.array(z.string()).default([]),
+    })
+    .optional(),
+  /** 三条硬验证判据 + 证据指针。 */
+  verification: z
+    .object({
+      tools_called: z.boolean().default(false),
+      boundary_blocked: z.boolean().default(false),
+      identity_switch: z.boolean().default(false),
+      evidence: z.array(z.string()).default([]),
+      ran_at: z.string().optional(),
+      message: z.string().optional(),
+    })
+    .optional(),
+  /** 任务级「开发完成」：置 true 后派生 awaiting_archive。 */
+  complete: z.boolean().optional(),
+  /** 开发/合入运行态（worktree、分支、安装时间）。 */
+  runtime: z
+    .object({
+      worktree: z.string().optional(),
+      branch: z.string().optional(),
+      installed_at: z.string().optional(),
+      merged_at: z.string().optional(),
+    })
+    .optional(),
+})
+export type CloneDevState = z.infer<typeof cloneDevStateSchema>
+
 /** Git branch ref — a task's fork point (base) or PR landing branch (target).
  *  Looser than the execution `branch` field (that one is also a Windows
  *  directory name): `/` is allowed (`feat/long-lived`), but the ref-format
@@ -377,12 +427,16 @@ export const taskSpecSchema = z.object({
   // 缺省时 server 从 acceptance_preview 合成一份；两者都无 → 「未配置预览」。
   acceptance_runbook: acceptanceRunbookSchema.optional(),
   // ── workflow-dev task kind (2026-11-06) ──
-  // 任务类型。缺省 = 普通 v4 开发任务；`workflow-dev` = 工作流开发任务。
+  // 任务类型。缺省 = 普通 v4 开发任务；`workflow-dev` = 工作流开发任务，
+  // `clone-dev` = 分身开发任务（新建或维护分身）。
   // 放在 task_spec 而非 tasks 列：不需要 DB 迁移，duplicateTask 原样带过去。
-  kind: z.enum(["workflow-dev"]).optional(),
+  kind: z.enum(["workflow-dev", "clone-dev"]).optional(),
   // 工作流开发状态（active/completed/validation/simulation/waiver/complete）。
   // 仅由 WorkflowDevService 写 —— 不在 TaskSpecFieldSchema 中。
   workflow_dev: workflowDevStateSchema.optional(),
+  // 分身开发状态（mode/clone_name/stage/kit/verification/complete）。
+  // 仅由 CloneDevService 写 —— 不在 TaskSpecFieldSchema 中。
+  clone_dev: cloneDevStateSchema.optional(),
 })
 
 // ── Zod schemas (single source of truth) ────────────────────────────

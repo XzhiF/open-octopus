@@ -14,6 +14,9 @@ export const NEW_TASK_NAME = '新开发任务'
 /** workflow-dev task kind (2026-11-06): the pending draft's placeholder name. */
 export const NEW_WORKFLOW_TASK_NAME = '新工作流开发任务'
 
+/** clone-dev task kind (2026-11-25): 新建或维护分身。 */
+export const NEW_CLONE_TASK_NAME = '新分身任务'
+
 /** First message seeds the task title (deterministic, instant). */
 export function taskNameFromMessage(message: string): string {
   const first = message.split(/\r?\n/)[0].trim()

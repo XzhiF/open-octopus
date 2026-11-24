@@ -1,0 +1,20 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "commonjs",
+    "moduleResolution": "node",
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "strict": false,
+    "noEmitOnError": false,
+    "outDir": "packages/clone-kits/dist",
+    "rootDir": "packages/clone-kits",
+    "declaration": false,
+    "baseUrl": ".",
+    "typeRoots": ["packages/server/node_modules/@types"],
+    "paths": {
+      "@octopus/providers": ["packages/providers/dist/index.d.ts"]
+    }
+  },
+  "include": ["packages/clone-kits/**/*.ts"]
+}
