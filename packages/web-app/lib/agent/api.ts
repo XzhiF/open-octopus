@@ -8,6 +8,7 @@ import type {
   AgentConfig, SafeModeStatus,
   SafetyEvent, DebugLogEntry,
   AgentVersionInfo, VersionListResponse, VersionDiffResponse, RollbackResponse,
+  ChatSendMeta,
 } from './types'
 import type { ComposerContext, ComposerEffort } from './composer-settings'
 import { getServerUrl } from '@/lib/server-config'
@@ -41,6 +42,8 @@ export function parseMessageMetadata(msg: any): AgentMessage {
       displayType: meta.displayType ?? normalized.displayType,
       activity: meta.activity ?? normalized.activity,
       roleSwitch: meta.role_switch ?? normalized.roleSwitch,
+      via: meta.via ?? normalized.via,
+      items: meta.items ?? normalized.items,
     }
   } catch {
     return normalized
@@ -305,6 +308,8 @@ export function chatStream(id: string, message: string, opts?: {
   effort?: ComposerEffort
   maxContext?: ComposerContext
   subagents?: Array<{ id: string; label?: string }>
+  /** 事项投递（2026-11-24）：来源 + itemIds；服务端写进 user message metadata。 */
+  meta?: ChatSendMeta
 }): AgentSSEConnection {
   const controller = new AbortController()
   const url = `${BASE()}/sessions/${id}/chat`
@@ -316,6 +321,9 @@ export function chatStream(id: string, message: string, opts?: {
     ...(opts?.effort ? { effort: opts.effort } : {}),
     ...(opts?.subagents && opts.subagents.length > 0 ? { subagents: opts.subagents } : {}),
     ...(opts?.maxContext ? { maxContext: opts.maxContext } : {}),
+    ...(opts?.meta?.via === 'items' && opts.meta.itemIds && opts.meta.itemIds.length > 0
+      ? { meta: { via: 'items', itemIds: opts.meta.itemIds } }
+      : {}),
   })
 
   const streamPromise = fetch(url, {

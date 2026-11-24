@@ -297,3 +297,32 @@ export const CabinInitStateSchema = z.object({
   items: z.array(CabinInitItemSchema),
 })
 export type CabinInitState = z.infer<typeof CabinInitStateSchema>
+
+// ── 舱内事项（2026-11-24 用户）──────────────────────────────────────────
+// 一条事项 = 随手记下的小优化 / 小修复 / 小想法。与「任务」不是一层：
+// 任务是执行单位，事项是待办条目 —— 投递给主对话即 delivered，
+// 主对话做完由人确认「完成 / 搁置」才关项（done / dropped）。记录保留，不硬删。
+export const CabinItemKindSchema = z.enum(["optimize", "fix", "idea"])
+export type CabinItemKind = z.infer<typeof CabinItemKindSchema>
+
+export const CabinItemStatusSchema = z.enum(["todo", "delivered", "done", "dropped"])
+export type CabinItemStatus = z.infer<typeof CabinItemStatusSchema>
+
+export const CabinItemSchema = z.object({
+  id: z.string(),
+  cabin_id: z.string(),
+  /** 舱内自增序号（#IT-12 的 12）；删除不回收。 */
+  seq: z.number(),
+  kind: CabinItemKindSchema,
+  status: CabinItemStatusSchema,
+  title: z.string(),
+  body: z.string(),
+  created_at: z.string(),
+  updated_at: z.string(),
+  delivered_at: z.string().nullable(),
+  closed_at: z.string().nullable(),
+  /** 投递落点（主会话 + 那条 user message），排障 / 留痕用。 */
+  delivery_session_id: z.string().nullable(),
+  delivery_message_id: z.string().nullable(),
+})
+export type CabinItemDTO = z.infer<typeof CabinItemSchema>

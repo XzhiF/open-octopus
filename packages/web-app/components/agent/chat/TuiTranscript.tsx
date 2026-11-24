@@ -788,6 +788,15 @@ export function TuiMessage({ message, compactEvent, ask, docLinks = false, lead,
       >
         {userLead ? <>{userLead} </> : <span className="font-bold text-pop-pink">❯ </span>}
         <span className="break-words whitespace-pre-wrap">{message.content}</span>
+        {message.via === 'items' && message.items && message.items.length > 0 && (
+          <span
+            className="ck12-tui-via"
+            title="从「事项」窗投递 · 来源写在消息 meta 里"
+            data-testid="cockpit-items-via-tag"
+          >
+            ☑ 事项 ×{message.items.length}
+          </span>
+        )}
       </div>
     )
   }

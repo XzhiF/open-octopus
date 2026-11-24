@@ -3,7 +3,7 @@
 import { useState, useRef, useEffect, useLayoutEffect, useCallback, useMemo, Fragment, type ReactNode, type MutableRefObject } from 'react'
 import { createPortal } from 'react-dom'
 import { Send, Square, MessageSquare, Sparkles, Users, X, Check, Copy } from 'lucide-react'
-import type { AgentMessage, ToolCallRecord, ContextUsageData } from '@/lib/agent/types'
+import type { AgentMessage, ToolCallRecord, ContextUsageData, ChatSendMeta, ChatSeedMeta } from '@/lib/agent/types'
 import type { LlmUsageAggregates } from '@octopus/shared'
 import type { StreamTimelineItem } from '@/hooks/useAgentChat'
 import { AutoResizeTextarea } from '@/components/ui/auto-resize-textarea'
@@ -91,7 +91,7 @@ interface ChatAreaProps {
   canInterject?: boolean
   /** 后台等待期的追加发送（useAgentChat.interject）。 */
   onInterject?: (message: string) => void
-  onSend: (message: string, opts?: { subagents?: ChatSubagentRef[] }) => void
+  onSend: (message: string, opts?: { subagents?: ChatSubagentRef[]; meta?: ChatSendMeta }) => void
   onStop: () => void
   onConfirm: (eventId: string, decision: 'accept' | 'reject') => void
   hasSession: boolean
@@ -213,7 +213,9 @@ interface ChatAreaProps {
 /** ChatArea 暴露给宿主的 composer 能力（只增不减，避免宿主另写 send）。 */
 export interface ChatComposerBridge {
   /** 程序化提交一句话：与在输入框里按 ⏎ 的分支完全一致（含队列/steer）。 */
-  submit(text: string): void
+  submit(text: string, meta?: ChatSendMeta): void
+  /** 预填输入框（「事项 → 带到输入框」）：可随后编辑再发；挂件随本条生效。 */
+  seed(text: string, meta?: ChatSeedMeta): void
   /** 聚焦真输入框（底栏点一下/⌘K 后）。 */
   focus(): void
 }
@@ -274,10 +276,12 @@ function CockpitMessageActs({ message }: { message: AgentMessage }) {
 const TUI_QUEUE_MAX = 3
 const TUI_SPIN = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏']
 
-/** TUI 队列项：消息文本 + 发送时选中的专家（SKILL 已编码进 /命令前缀）。 */
+/** TUI 队列项：消息文本 + 发送时选中的专家（SKILL 已编码进 /命令前缀）+ 来源元数据。 */
 interface QueuedComposerMessage {
   text: string
   expert: ComposerExpertRef | null
+  /** 事项投递（2026-11-24）：排队期间不丢来源；出队时随 onSend 一起交给服务端。 */
+  meta?: ChatSendMeta
 }
 
 export function ChatArea({
@@ -302,6 +306,20 @@ export function ChatArea({
   const [contextExpanded, setContextExpanded] = useState(false)
   const [attachedSkill, setAttachedSkill] = useState<ComposerSkillRef | null>(null)
   const [attachedExpert, setAttachedExpert] = useState<ComposerExpertRef | null>(null)
+
+  // 事项投递（2026-11-24 用户）：从「事项」窗「带到输入框」时挂上的来源。
+  // ids 随消息发给服务端（meta）；labels 只用于输入框上方的挂件。
+  const [seedItems, setSeedItems] = useState<{ ids: string[]; labels: string[] } | null>(null)
+  const seedItemsRef = useRef<{ ids: string[]; labels: string[] } | null>(null)
+  useEffect(() => { seedItemsRef.current = seedItems }, [seedItems])
+  const clearSeedItems = () => {
+    seedItemsRef.current = null
+    setSeedItems(null)
+  }
+  const seedMetaNow = (): ChatSendMeta | undefined => {
+    const seed = seedItemsRef.current
+    return seed && seed.ids.length > 0 ? { via: 'items', itemIds: seed.ids } : undefined
+  }
 
   // 任务清单（Claude Code 风格置顶面板）：历史消息里的 tool_calls + 当前流的
   // toolCalls 合成；同一 tool_call id 只认一次（流式与持久化重叠时防重复）。
@@ -455,14 +473,20 @@ export function ChatArea({
   const handleSend = () => {
     if (!input.trim()) return
     const raw = input.trim()
-    const { text, opts } = takeComposerAttachments(raw)
+    const { text, opts, expert } = takeComposerAttachments(raw)
+    const meta = seedMetaNow()
     // 后台等待期（#8）：注进同一条 provider 查询 —— 与 TUI 变体同语义。
     if (streaming) {
-      if (!canInterject || !onInterject) return
-      onInterject(text)
+      // 事项投递不能走 inject（注入不带 metadata，事项不会被标成 delivered）——
+      // 一律排到本轮收口后再发。
+      if (meta) pushQueue(text, expert, meta)
+      else if (!canInterject || !onInterject) return
+      else onInterject(text)
     } else {
-      onSend(text, opts)
+      const sendOpts = { ...(opts ?? {}), ...(meta ? { meta } : {}) }
+      onSend(text, Object.keys(sendOpts).length > 0 ? sendOpts : undefined)
     }
+    clearSeedItems()
     setInput('')
     stickBottomRef.current = true
   }
@@ -517,9 +541,11 @@ export function ChatArea({
     if (was && !streaming && queueRef.current.length > 0 && !steerActiveRef?.current) {
       const [head, ...rest] = queueRef.current
       setQueue(rest)
-      onSend(head.text, head.expert
-        ? { subagents: [{ id: head.expert.name, label: head.expert.displayName }] }
-        : undefined)
+      const opts = {
+        ...(head.expert ? { subagents: [{ id: head.expert.name, label: head.expert.displayName }] } : {}),
+        ...(head.meta ? { meta: head.meta } : {}),
+      }
+      onSend(head.text, Object.keys(opts).length > 0 ? opts : undefined)
     }
   }, [streaming, tui, onSend, steerActiveRef])
 
@@ -538,13 +564,13 @@ export function ChatArea({
   const focusDockInput = () => {
     dockRef.current?.querySelector<HTMLTextAreaElement>('textarea')?.focus()
   }
-  const pushQueue = (text: string, expert: ComposerExpertRef | null) => {
+  const pushQueue = (text: string, expert: ComposerExpertRef | null, meta?: ChatSendMeta) => {
     if (queueRef.current.length >= TUI_QUEUE_MAX) {
       setQueueHint(`队列已满（${TUI_QUEUE_MAX}）`)
       setTimeout(() => setQueueHint(null), 1400)
       return
     }
-    setQueue([...queueRef.current, { text, expert }])
+    setQueue([...queueRef.current, { text, expert, ...(meta ? { meta } : {}) }])
   }
   const recallQueue = (i: number) => {
     const back = queueRef.current[i]
@@ -584,7 +610,9 @@ export function ChatArea({
         setInput('')
         if (streaming) {
           const take = takeComposerAttachments(text)
-          pushQueue(take.text, take.expert)
+          const meta = seedMetaNow()
+          pushQueue(take.text, take.expert, meta)
+          clearSeedItems()
         } else {
           handleSend()
         }
@@ -593,12 +621,21 @@ export function ChatArea({
       if (queue.length > 0) {
         setInput('')
         const take = takeComposerAttachments(text)
-        pushQueue(take.text, take.expert)
+        const meta = seedMetaNow()
+        pushQueue(take.text, take.expert, meta)
+        clearSeedItems()
         return
       }
       if (streaming) {
         setInput('')
         const take = takeComposerAttachments(text)
+        const meta = seedMetaNow()
+        // 事项投递（2026-11-24）：不能 inject（带不上 metadata）—— 排队等本轮收口。
+        if (meta) {
+          pushQueue(take.text, take.expert, meta)
+          clearSeedItems()
+          return
+        }
         // 后台等待期（2026-11-23 用户 #8）：模型空闲、只等后台唤醒 —— 直接把
         // 话注进同一条 provider 查询，不打断后台（2026-11-10 dev-up.sh 事故：
         // Enter 曾经会掐掉服务，后来改成只会排队，但队永远等不到收口）。
@@ -628,19 +665,26 @@ export function ChatArea({
   // ── 全域座舱（S5）：把**同一份**提交管线暴露出去 ─────────────────────
   // 不新写 send：submit 走的就是上面 ⏎ 的分支（附件 / 流式排队 / steer），
   // 宿主（CockpitChatHost → ChatPane.onTelemetry.submit）只是换了个触发源。
-  const submitFromBridge = (raw: string) => {
+  // 2026-11-24：submit 可带来源 meta（事项投递）；seed = 预填输入框并挂来源挂件。
+  const submitFromBridge = (raw: string, meta?: ChatSendMeta) => {
     const trimmed = raw.trim()
     if (!trimmed) return
     if (!tui) {
       // 非 TUI composer 原本就在流式中直接 return（handleSend 的守卫）。
       if (streaming) return
       const taken = takeComposerAttachments(trimmed)
-      onSend(taken.text, taken.opts)
+      const sendOpts = { ...(taken.opts ?? {}), ...(meta ? { meta } : {}) }
+      onSend(taken.text, Object.keys(sendOpts).length > 0 ? sendOpts : undefined)
       stickBottomRef.current = true
       return
     }
     if (streaming) {
       const taken = takeComposerAttachments(trimmed)
+      // 事项投递（带 meta）不能 inject：排队等本轮收口，出队时随消息带上。
+      if (meta) {
+        pushQueue(taken.text, taken.expert, meta)
+        return
+      }
       // 后台等待期：注入同一条查询（不打断后台）—— 与 ⏎ 分支同语义。
       if (canInterject && !resumeTailing && onInterject) {
         onInterject(taken.text)
@@ -656,8 +700,24 @@ export function ChatArea({
       return
     }
     const taken = takeComposerAttachments(trimmed)
-    onSend(taken.text, taken.opts)
+    const sendOpts = { ...(taken.opts ?? {}), ...(meta ? { meta } : {}) }
+    onSend(taken.text, Object.keys(sendOpts).length > 0 ? sendOpts : undefined)
     stickBottomRef.current = true
+  }
+
+  /** 事项 → 带到输入框：预填文案 + 挂件；发出去才算交付（服务端收到 meta 才关状态）。 */
+  const seedFromBridge = (text: string, meta?: ChatSeedMeta) => {
+    setInput(text)
+    const ids = meta?.via === 'items' && meta.itemIds ? meta.itemIds : []
+    if (ids.length > 0) {
+      const labels = meta?.labels && meta.labels.length > 0 ? meta.labels : ids
+      const next = { ids, labels }
+      seedItemsRef.current = next
+      setSeedItems(next)
+    } else {
+      clearSeedItems()
+    }
+    focusDockInput()
   }
 
   // ref 每轮渲染后刷新：bridge 里调用到的永远是最新的 handler，
@@ -666,6 +726,7 @@ export function ChatArea({
     if (!composerBridgeRef) return
     composerBridgeRef.current = {
       submit: submitFromBridge,
+      seed: seedFromBridge,
       focus: focusDockInput,
     }
   })
@@ -1214,8 +1275,29 @@ export function ChatArea({
                 ))}
               </div>
             )}
-            {(attachedSkill || attachedExpert) && (
+            {(attachedSkill || attachedExpert || seedItems) && (
               <div className="mb-1.5 flex flex-wrap items-center gap-1" data-composer-chips>
+                {seedItems && (
+                  <span
+                    className="ck12-composer-items flex max-w-full items-center gap-1 rounded-full border border-[rgba(61,220,151,.45)] bg-[rgba(61,220,151,.1)] px-2 py-0.5 text-[10.5px] text-[#7ff0bd]"
+                    data-composer-items
+                    data-testid="composer-items-chip"
+                    title="从「事项」窗投递 · 发出去才算交付"
+                  >
+                    <span aria-hidden>☑</span>
+                    <span className="truncate">
+                      事项 ×{seedItems.ids.length} · {seedItems.labels.join(' ')}
+                    </span>
+                    <button
+                      type="button"
+                      onClick={clearSeedItems}
+                      aria-label="取消事项投递"
+                      className="text-[#7ff0bd]/70 transition-colors hover:text-pop-red"
+                    >
+                      <X className="size-2.5" />
+                    </button>
+                  </span>
+                )}
                 {attachedSkill && (
                   <span className="flex items-center gap-1 rounded-full border border-pop-cyan/40 bg-pop-cyan-soft px-2 py-0.5 text-[10.5px] text-pop-cyan">
                     <Sparkles className="size-2.5" />

@@ -24,6 +24,7 @@ import type { CabinInitService } from "../services/cabin/cabin-init-service"
 import { CabinCommService, CabinJobNotFoundError } from "../services/cabin/cabin-comm-service"
 import { CabinDecisionService, CabinDecisionError } from "../services/cabin/cabin-decision-service"
 import { CabinDelegationService } from "../services/cabin/cabin-delegation-service"
+import { CabinItemService, CabinItemError } from "../services/cabin/cabin-item-service"
 import type { CabinRow, CabinJobRow, CabinJobEventRow } from "../db/types"
 import type { SSEService } from "../services/sse"
 import { gitOps } from "../services/git-ops"
@@ -36,6 +37,7 @@ function classifyError(err: unknown): { status: number; message: string } {
   if (err instanceof CabinNotFoundError) return { status: 404, message: err.message }
   if (err instanceof CabinJobNotFoundError) return { status: 404, message: err.message }
   if (err instanceof CabinDecisionError) return { status: err.status, message: err.message }
+  if (err instanceof CabinItemError) return { status: err.status, message: err.message }
   if (err instanceof CabinVersionConflictError) return { status: 409, message: err.message }
   if (err instanceof CabinStatusConflictError) return { status: 409, message: err.message }
   if (err instanceof WorktreeConflictError) return { status: 409, message: err.message }
@@ -283,6 +285,25 @@ const delegationBodySchema = z.object({
     autonomy: z.enum(["approve", "checkpoint", "hands-off"]).optional(),
   }).optional(),
   autonomy: z.enum(["approve", "checkpoint", "hands-off"]).optional(),
+})
+
+/** 舱内事项（2026-11-24 用户）：零散小待办。 */
+const cabinItemKindSchema = z.enum(["optimize", "fix", "idea"])
+const cabinItemCreateSchema = z.object({
+  title: z.string().max(200).optional(),
+  body: z.string().max(8000).optional(),
+  kind: cabinItemKindSchema.optional(),
+})
+const cabinItemPatchSchema = z.object({
+  title: z.string().max(200).optional(),
+  body: z.string().max(8000).optional(),
+  kind: cabinItemKindSchema.optional(),
+})
+const cabinItemIdsSchema = z.object({
+  ids: z.array(z.string().min(1)).min(1).max(50),
+})
+const cabinItemCloseSchema = cabinItemIdsSchema.extend({
+  outcome: z.enum(["done", "dropped"]),
 })
 
 export function createCabinRoutes(
@@ -648,6 +669,92 @@ export function createCabinRoutes(
   router.get("/:id/usage", (c) => {
     try {
       return c.json(service.usage(c.req.param("id")))
+    } catch (err) {
+      const { status, message } = classifyError(err)
+      return c.json({ error: message }, status as 400)
+    }
+  })
+
+  // ── 舱内事项（2026-11-24 用户）────────────────────────────────────────
+  // 零散小待办：新增 / 编辑 / 删除 / 投递 / 关项 / 重开。与「任务」不是一层：
+  // 事项只是待办条目，投递给主对话即 delivered；人确认「完成 / 搁置」才关项。
+  const cabinItems = new CabinItemService(service.getDb())
+
+  router.get("/:id/items", (c) => {
+    try {
+      const list = cabinItems.list(c.req.param("id"))
+      const open = list.filter((item) => item.status === "todo" || item.status === "delivered").length
+      return c.json({ items: list, open })
+    } catch (err) {
+      const { status, message } = classifyError(err)
+      return c.json({ error: message }, status as 400)
+    }
+  })
+
+  router.post("/:id/items", async (c) => {
+    const body = await safeJson(c)
+    if (!body) return c.json({ error: "Invalid or missing JSON body" }, 400)
+    try {
+      const input = cabinItemCreateSchema.parse(body)
+      return c.json({ item: cabinItems.create(c.req.param("id"), input) }, 201)
+    } catch (err) {
+      const { status, message } = classifyError(err)
+      return c.json({ error: message }, status as 400)
+    }
+  })
+
+  /** 投递：把事项标成 delivered（todo → delivered，幂等）。聊天路由发送时也会
+   *  自动调用同一个口径；这里留一个显式入口，便于重试 / 外部投递。 */
+  router.post("/:id/items/deliver", async (c) => {
+    const body = await safeJson(c)
+    if (!body) return c.json({ error: "Invalid or missing JSON body" }, 400)
+    try {
+      const input = cabinItemIdsSchema.parse(body)
+      return c.json({ items: cabinItems.deliver(c.req.param("id"), input.ids) })
+    } catch (err) {
+      const { status, message } = classifyError(err)
+      return c.json({ error: message }, status as 400)
+    }
+  })
+
+  /** 关项：人确认「完成 / 搁置」；写 closed_at，记录保留。 */
+  router.post("/:id/items/close", async (c) => {
+    const body = await safeJson(c)
+    if (!body) return c.json({ error: "Invalid or missing JSON body" }, 400)
+    try {
+      const input = cabinItemCloseSchema.parse(body)
+      return c.json({ items: cabinItems.close(c.req.param("id"), input.ids, input.outcome) })
+    } catch (err) {
+      const { status, message } = classifyError(err)
+      return c.json({ error: message }, status as 400)
+    }
+  })
+
+  router.patch("/:id/items/:itemId", async (c) => {
+    const body = await safeJson(c)
+    if (!body) return c.json({ error: "Invalid or missing JSON body" }, 400)
+    try {
+      const input = cabinItemPatchSchema.parse(body)
+      return c.json({ item: cabinItems.update(c.req.param("id"), c.req.param("itemId"), input) })
+    } catch (err) {
+      const { status, message } = classifyError(err)
+      return c.json({ error: message }, status as 400)
+    }
+  })
+
+  router.delete("/:id/items/:itemId", (c) => {
+    try {
+      cabinItems.remove(c.req.param("id"), c.req.param("itemId"))
+      return c.json({ ok: true })
+    } catch (err) {
+      const { status, message } = classifyError(err)
+      return c.json({ error: message }, status as 400)
+    }
+  })
+
+  router.post("/:id/items/:itemId/reopen", (c) => {
+    try {
+      return c.json({ item: cabinItems.reopen(c.req.param("id"), c.req.param("itemId")) })
     } catch (err) {
       const { status, message } = classifyError(err)
       return c.json({ error: message }, status as 400)

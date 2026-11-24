@@ -41,6 +41,7 @@ import { getChatEventBridge } from '../../services/activity/chat-event-bridge'
 import { createMemoryToolServer, resolveLongTermConsent } from '../../services/chat/memory-tools'
 import { createCabinToolServer, createCabinDelegationToolServer, getCabinToolsProvider, buildCabinSummaryReminder } from '../../services/chat/cabin-tools'
 import { parseDecisionEnvelope } from '../../services/cabin/cabin-brief'
+import { CabinItemService } from '../../services/cabin/cabin-item-service'
 import { getSlashCommands, rememberSlashCommands } from '../../services/chat/slash-commands'
 import type { TokenUsageDAO } from '../../db/dao/token-usage-dao'
 import type { EffortLevel } from '@octopus/shared'
@@ -216,6 +217,10 @@ export function createChatRoutes(deps: ChatRouteDeps): Hono {
       /** 2026-10-28 task-thread: the bridge already appended the deterministic
        *  event card, so the wake turn must not persist a second copy. */
       ephemeral?: boolean
+      /** 事项投递（2026-11-24 用户）：via='items' 时 itemIds = 舱内事项 id。
+       *  服务端把来源写进 user message metadata（via / items），并把事项标成
+       *  delivered —— 单写一次，客户端只负责展示与关项。 */
+      meta?: { via?: 'items'; itemIds?: string[] }
     }
     try {
       body = await c.req.json()
@@ -226,6 +231,12 @@ export function createChatRoutes(deps: ChatRouteDeps): Hono {
     if (!body.message) {
       return c.json(createAgentError('INVALID_PARAM', 'message is required'), 400)
     }
+
+    // 事项投递（2026-11-24 用户）：只在用户真发消息时生效；wake / ephemeral 不带。
+    const itemIds = Array.isArray(body.meta?.itemIds)
+      ? body.meta!.itemIds.filter((x): x is string => typeof x === 'string' && x.length > 0).slice(0, 50)
+      : []
+    const viaItems = !body.wake && !body.ephemeral && body.meta?.via === 'items' && itemIds.length > 0
 
     const effort = parseComposerEffort(body.effort)
     const model = resolveChatModel(body.model, parseComposerContext(body.maxContext))
@@ -266,14 +277,27 @@ export function createChatRoutes(deps: ChatRouteDeps): Hono {
     const userMsgId = crypto.randomUUID()
     const now = new Date().toISOString()
     if (!body.ephemeral) {
+      // metadata：wake 事件卡带 displayType/activity；事项投递带来源（via + items），
+      // 其余普通消息不写 metadata —— 转录行据此渲染「☑ 事项」来源签。
+      const userMeta = body.wake
+        ? { displayType: 'event', activity: body.activity ?? null }
+        : viaItems
+          ? { via: 'items', items: itemIds }
+          : null
       sessionDao.insertMessage({
         id: userMsgId, session_id: id, role: 'user',
         content: body.message, created_at: now,
-        ...(body.wake
-          ? { metadata: JSON.stringify({ displayType: 'event', activity: body.activity ?? null }) }
-          : {}),
+        ...(userMeta ? { metadata: JSON.stringify(userMeta) } : {}),
       })
       sessionDao.updateLastMessageAt(id, now)
+      // 投递 = 事项 todo → delivered（幂等）。落点写回事项，便于排障 / 回执对账。
+      if (viaItems && session.cabin_id) {
+        try {
+          new CabinItemService(sessionDao.getDb()).deliver(session.cabin_id, itemIds, {
+            sessionId: id, messageId: userMsgId,
+          })
+        } catch { /* 事项表不可用不影响对话本身 */ }
+      }
       // 双会话同步（v22 #9，2026-11-23 用户）：在作者线程里说话 = 这条提问
       // 已经答了 —— 决策代述（「用户回答了以下问题」）和编队 chat 里的直接
       // 回复走同一个销账入口，只是回执文案不同。服务端 wake 不是人，跳过。
@@ -400,7 +424,12 @@ export function createChatRoutes(deps: ChatRouteDeps): Hono {
     const cabinReminder = !thread && session.cabin_id && cabinProvider
       ? buildCabinSummaryReminder(cabinProvider.service, session.cabin_id, cabinProvider.decisions)
       : null
-    const turnReminder = [roleCard, mentionReminder, playbookReminder?.text, cabinReminder].filter(Boolean).join('\n\n')
+    // 事项投递（2026-11-24 用户）：告诉模型这是舱内小待办，按条目汇报；
+    // 关项由人在回执卡上确认 —— 模型不要自行标记完成。
+    const itemReminder = viaItems
+      ? `本轮消息是从舱内「事项」窗投递的 ${itemIds.length} 条小待办。请逐条处理，并在最后按条目汇报（做了什么 / 证据）；不要自行标记完成，关项由人在回执卡上确认。`
+      : null
+    const turnReminder = [roleCard, mentionReminder, playbookReminder?.text, cabinReminder, itemReminder].filter(Boolean).join('\n\n')
     const providerMessage = withTransientReminder(body.message!, turnReminder)
     // Workflow control tools (list/run/status/cancel/approve/retry) are
     // registered as an in-process MCP server bound to this chat's workspace.

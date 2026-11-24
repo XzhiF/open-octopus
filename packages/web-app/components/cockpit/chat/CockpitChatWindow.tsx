@@ -38,6 +38,7 @@ import type { CockpitRect } from '../state/cockpit-state'
 import { MAIN_THREAD_KEY } from '../fleet/threads-model'
 import { CockpitConsoleTelemetry } from './CockpitConsoleTelemetry'
 import { CockpitReceipts } from './CockpitReceipts'
+import { CockpitItemsQueue } from '../items/CockpitItemsQueue'
 
 /** plans §1.4：popover(100) → 立绘控制条(90) → 任务模块窗(80) → 编队抽屉(70)
  *  → **聊天浮窗(60)** → 作业面(50)。Esc 关栈顶 = 数字大者先关。 */
@@ -352,6 +353,8 @@ export function CockpitChatWindow() {
           data-testid="cockpit-chat-transcript"
         />
         <CockpitReceipts threadKey={MAIN_THREAD_KEY} />
+        {/* 2026-11-24 用户：事项投递排队条（主对话在跑时贴在输入行上方）。 */}
+        <CockpitItemsQueue />
         {/* 2026-11-20 用户：输入框上方的「待你决断 · N 项 · 键 1–9 直达」条已移除 ——
             聊天内容里有提问卡、右栏也有 inbox，三条入口重复。 */}
         {/* v22 #9（2026-11-23 用户）：输入框上方不再有任何「待你定」浮条 ——

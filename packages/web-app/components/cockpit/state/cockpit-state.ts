@@ -8,7 +8,7 @@
 //   · Esc 只有一个 capture 阶段监听（CockpitLayerStack），layer 栈按 priority + 注册序。
 
 import type { LlmUsageAggregates } from '@octopus/shared'
-import type { ContextUsageData } from '@/lib/agent/types'
+import type { ContextUsageData, ChatSendMeta, ChatSeedMeta } from '@/lib/agent/types'
 import type { ComposerContext, ComposerEffort } from '@/lib/agent/composer-settings'
 import type { MoodKey } from '@/components/cabin/cockpit'
 
@@ -75,8 +75,10 @@ export interface CockpitChatApi {
   canSend: boolean
   contextUsage: ContextUsageData | null
   usage: LlmUsageAggregates | null
-  /** 走真正的 composer 管线（含队列 / steer / 流式保护）。 */
-  submit(text: string): void
+  /** 走真正的 composer 管线（含队列 / steer / 流式保护）。meta = 事项投递来源。 */
+  submit(text: string, meta?: ChatSendMeta): void
+  /** 预填输入框（事项「带到输入框」）；发出去才算交付。 */
+  seed(text: string, meta?: ChatSeedMeta): void
   stop(): void
   setModel(id: string): void
   setEffort(effort: ComposerEffort): void

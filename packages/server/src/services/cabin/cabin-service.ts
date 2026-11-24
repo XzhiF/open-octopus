@@ -429,6 +429,9 @@ export class CabinService {
 
   constructor(private cabin: CabinDAO) {}
 
+  /** 路由层组合出来的舱域服务（事项等）复用同一条连接。 */
+  getDb(): ReturnType<CabinDAO["getDb"]> { return this.cabin.getDb() }
+
   bindInfra(infra: CabinInfra): void { this.infra = infra }
   /** P5 wires cabin-level sediment (G3) here; archive stays soft until then. */
   setArchiveHook(hook: (cabinId: string) => Promise<void>): void { this.archiveHook = hook }

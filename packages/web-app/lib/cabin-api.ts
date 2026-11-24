@@ -18,6 +18,8 @@ import type {
   CabinMandate,
   CabinAttentionItem,
   CabinHealth,
+  CabinItemDTO,
+  CabinItemKind,
 } from "@octopus/shared"
 
 /** Wire DTO = shared CabinDTO + the UI-prefs JSON the route parses out. */
@@ -275,6 +277,80 @@ export async function setCabinRequirements(id: string, version: number, requirem
 export async function getCabinAttention(id: string): Promise<{ attention: CabinAttentionItem[]; health: CabinHealth }> {
   const res = await fetch(url(`/${id}/attention`))
   return handleResponse<{ attention: CabinAttentionItem[]; health: CabinHealth }>(res)
+}
+
+// ============ 舱内事项（2026-11-24）============
+
+export interface CabinItemsPayload {
+  items: CabinItemDTO[]
+  /** 未决条数（todo + delivered）—— 服务端算好，HUD 徽标直接读。 */
+  open: number
+}
+
+export async function fetchCabinItems(id: string, signal?: AbortSignal): Promise<CabinItemsPayload> {
+  const res = await fetch(url(`/${encodeURIComponent(id)}/items`), { signal })
+  return handleResponse<CabinItemsPayload>(res)
+}
+
+export interface CabinItemInput {
+  title?: string
+  body?: string
+  kind?: CabinItemKind
+}
+
+export async function createCabinItem(id: string, input: CabinItemInput): Promise<CabinItemDTO> {
+  const res = await fetch(url(`/${encodeURIComponent(id)}/items`), {
+    method: "POST",
+    headers: JSON_HEADERS,
+    body: JSON.stringify(input),
+  })
+  return (await handleResponse<{ item: CabinItemDTO }>(res)).item
+}
+
+export async function updateCabinItem(
+  id: string, itemId: string, patch: CabinItemInput,
+): Promise<CabinItemDTO> {
+  const res = await fetch(url(`/${encodeURIComponent(id)}/items/${encodeURIComponent(itemId)}`), {
+    method: "PATCH",
+    headers: JSON_HEADERS,
+    body: JSON.stringify(patch),
+  })
+  return (await handleResponse<{ item: CabinItemDTO }>(res)).item
+}
+
+export async function deleteCabinItem(id: string, itemId: string): Promise<void> {
+  const res = await fetch(url(`/${encodeURIComponent(id)}/items/${encodeURIComponent(itemId)}`), {
+    method: "DELETE",
+  })
+  await handleResponse<{ ok: true }>(res)
+}
+
+/** 显式投递（聊天路由发送时也会同口径落库；这里给重试 / 外部投递用）。 */
+export async function deliverCabinItems(id: string, ids: string[]): Promise<CabinItemDTO[]> {
+  const res = await fetch(url(`/${encodeURIComponent(id)}/items/deliver`), {
+    method: "POST",
+    headers: JSON_HEADERS,
+    body: JSON.stringify({ ids }),
+  })
+  return (await handleResponse<{ items: CabinItemDTO[] }>(res)).items
+}
+
+export async function closeCabinItems(
+  id: string, ids: string[], outcome: "done" | "dropped",
+): Promise<CabinItemDTO[]> {
+  const res = await fetch(url(`/${encodeURIComponent(id)}/items/close`), {
+    method: "POST",
+    headers: JSON_HEADERS,
+    body: JSON.stringify({ ids, outcome }),
+  })
+  return (await handleResponse<{ items: CabinItemDTO[] }>(res)).items
+}
+
+export async function reopenCabinItem(id: string, itemId: string): Promise<CabinItemDTO> {
+  const res = await fetch(url(`/${encodeURIComponent(id)}/items/${encodeURIComponent(itemId)}/reopen`), {
+    method: "POST",
+  })
+  return (await handleResponse<{ item: CabinItemDTO }>(res)).item
 }
 
 // ============ Repos / worktrees ============

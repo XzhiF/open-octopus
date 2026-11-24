@@ -1452,6 +1452,30 @@ CREATE TABLE IF NOT EXISTS cabin_delegations (
 CREATE INDEX IF NOT EXISTS idx_cabin_delegations_cabin ON cabin_delegations(cabin_id, created_at);
 CREATE INDEX IF NOT EXISTS idx_cabin_delegations_doer ON cabin_delegations(doer_session_id);
 
+-- ── 舱内事项（2026-11-24 用户）──────────────────────────────────────────
+-- 零散小待办：优化 / 修复 / 想法。与「任务」不是一层 —— 事项只是待办条目，
+-- 投递给主对话即 delivered；主对话做完，人确认「完成 / 搁置」才关项。
+-- 记录保留（closed_at），删除是显式动作，不做 TTL。seq 舱内自增（#IT-12）。
+CREATE TABLE IF NOT EXISTS cabin_items (
+  id TEXT PRIMARY KEY,
+  cabin_id TEXT NOT NULL,
+  seq INTEGER NOT NULL,
+  kind TEXT NOT NULL DEFAULT 'optimize'
+    CHECK (kind IN ('optimize','fix','idea')),
+  status TEXT NOT NULL DEFAULT 'todo'
+    CHECK (status IN ('todo','delivered','done','dropped')),
+  title TEXT NOT NULL DEFAULT '',
+  body TEXT NOT NULL DEFAULT '',
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  delivered_at TEXT,
+  closed_at TEXT,
+  delivery_session_id TEXT,
+  delivery_message_id TEXT
+);
+CREATE UNIQUE INDEX IF NOT EXISTS ux_cabin_items_seq ON cabin_items(cabin_id, seq);
+CREATE INDEX IF NOT EXISTS idx_cabin_items_cabin ON cabin_items(cabin_id, status);
+
 -- 完成回流 ack（2026-11-19 用户 #9）：任务 / 委派正常完成后先进「要我处理」，
 -- 汐音先审一道；人点「无需回复」只在此表留痕，**不回写任务 / 会话、不唤醒执行者**。
 -- 读侧 derive 按 (cabin_id, item_id) 过滤；item_id 形如 done-task-<id> /

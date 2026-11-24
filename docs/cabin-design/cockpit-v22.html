@@ -139,6 +139,15 @@ kbd{border:1px solid rgba(185,179,217,.35);border-bottom-width:2px;border-radius
 .projchip:hover{border-color:var(--teal);color:#fff;box-shadow:0 0 14px rgba(53,199,240,.35)}
 .projchip .pg2{font-size:13px}
 .projchip b{color:#fff}
+/* 事项入口（2026-11-24 用户）：紧挨「知识中心」右边，同高同壳；徽标 = 未决条数。
+   点开 = 全舱内的事项窗（新增 / 编辑 / 删除 · 投递给主对话 · 完成回执留记录）。 */
+.itchip{border-color:rgba(61,220,151,.42)}
+.itchip .pg2{color:var(--green)}
+.itchip:hover{border-color:var(--green);box-shadow:0 0 14px rgba(61,220,151,.26)}
+.itchip.on{border-color:var(--green);color:#fff;background:rgba(61,220,151,.13);box-shadow:0 0 14px rgba(61,220,151,.28)}
+.itchip.on b{color:#fff}
+.itchip .itn{flex:none;min-width:16px;height:16px;padding:0 4px;display:grid;place-items:center;border-radius:999px;background:rgba(61,220,151,.18);border:1px solid rgba(61,220,151,.5);color:var(--green);font-size:8.5px;font-weight:900;font-style:normal;line-height:1;text-align:center;font-variant-numeric:tabular-nums}
+.itchip .itn[hidden]{display:none}
 /* 中间读数 pill（2026-11-18 八轮）：左段 = 舱景名（真实背景，点击跃迁），
    右段 = 当前时间（每秒变动）；点左段换幕。
    原「RA 05h35m · DEC −05°」是纯氛围假坐标，已撤掉。
@@ -511,6 +520,29 @@ kbd{border:1px solid rgba(185,179,217,.35);border-bottom-width:2px;border-radius
 .tline.tool .st{flex:none;font-weight:800;font-family:var(--font-mono)}
 .tline.tool .st.ok{color:var(--green)}.tline.tool .st.err{color:var(--red)}.tline.tool .st.run{color:var(--metal2)}
 .tline.sys{justify-content:center;color:var(--metal2);font-size:9.5px;text-align:center;letter-spacing:.08em}
+/* 事项投递（2026-11-24 用户）：对话行上的来源签 + 完成回执卡。
+   来源签 = 可见标识；真正的来源由消息 meta（via:'items' + item_ids）承载，不靠文本约定。
+   回执卡 = 汐音做完后举上来的关项确认，完成 / 搁置二选一，结果写回事项记录。 */
+.tline .tvia{display:inline-flex;align-items:center;vertical-align:-2px;margin-left:6px;padding:0 6px;line-height:16px;font-size:8.5px;font-weight:800;letter-spacing:.04em;color:var(--green);border:1px solid rgba(61,220,151,.42);background:rgba(61,220,151,.1);clip-path:var(--cut);white-space:nowrap}
+.rcpt{display:flex;flex-direction:column;border:1px solid rgba(61,220,151,.32);background:linear-gradient(180deg,rgba(61,220,151,.09),rgba(10,8,24,.42));clip-path:var(--cut);animation:mi .3s ease}
+.rcpt.closed{border-color:rgba(185,179,217,.2);background:rgba(255,255,255,.03)}
+.rcpt-h{display:flex;align-items:center;gap:8px;padding:6px 10px;border-bottom:1px solid rgba(61,220,151,.18);font-size:9px;font-weight:800;letter-spacing:.08em;color:var(--green)}
+.rcpt.closed .rcpt-h{color:var(--metal2);border-color:rgba(185,179,217,.14)}
+.rcpt-h .tm{margin-left:auto;font-family:var(--font-mono);font-weight:400;color:var(--metal2)}
+.rcpt-row{display:flex;align-items:center;gap:8px;padding:5px 10px;border-bottom:1px solid rgba(185,179,217,.08);font-size:10.5px}
+.rcpt-row .ri{flex:none;font-family:var(--font-mono);font-size:9px;color:var(--green);font-weight:700}
+.rcpt-row .rt{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:#fff}
+.rcpt-row .rn{flex:none;font-size:8.5px;color:var(--metal2);font-family:var(--font-mono)}
+.rcpt-row .rs{flex:none;padding:0 6px;line-height:15px;font-size:8px;font-weight:800;letter-spacing:.06em;clip-path:var(--cut);background:rgba(53,199,240,.16);color:var(--sky)}
+.rcpt-row .rs.done{background:rgba(61,220,151,.18);color:var(--green)}
+.rcpt-row .rs.dropped{background:rgba(185,179,217,.14);color:var(--metal2)}
+.rcpt-acts{display:flex;align-items:center;gap:8px;padding:7px 10px;font-size:9.5px;color:var(--ink2)}
+.rcpt-acts .rk{flex:1;min-width:0}
+.rcpt-btn{height:22px;padding:0 10px;clip-path:var(--btncut);font-size:9.5px;font-weight:800;border:1px solid rgba(185,179,217,.28);background:rgba(255,255,255,.06);color:var(--ink2)}
+.rcpt-btn:hover{color:#fff;border-color:var(--teal)}
+.rcpt-btn.ok{color:var(--green);border-color:rgba(61,220,151,.5);background:rgba(61,220,151,.12)}
+.rcpt-btn.ok:hover{background:rgba(61,220,151,.22);color:#fff}
+.rcpt-done{padding:6px 10px;font-size:9.5px;color:var(--metal2);letter-spacing:.04em}
 .cwl .tline{font-size:11px}
 .cwl .tmeta{font-size:8.5px;padding-left:0}
 .cwl .tline.me .tx{padding:0 6px}
@@ -1053,6 +1085,93 @@ kbd{border:1px solid rgba(185,179,217,.35);border-bottom-width:2px;border-radius
 @media (max-width:900px){.nt-side{width:170px}}
 @media (max-width:720px){.ntw{flex-direction:column}.nt-side{width:100%;height:170px}}
 
+/* ═══ 事项窗（2026-11-24 用户）：舱内零散小待办 —— 优化 / 修复 / 想法。
+       同一套 .twin 壳（✕ 左置 · 玻璃底 · 可拖可全屏）；左 = 未决 / 记录 / 全部
+       （行首勾选 = 多选投递），右 = 编辑（标题 / 类型 / 正文 / 流转时间）。
+       底栏「带到输入框 / 投递给主对话」；投递消息带 via:'items' + item_ids，
+       主对话据此识别来源，做完举回执，完成 / 搁置后写回记录。 ═══ */
+#itemsWin{width:min(940px,94vw);height:min(640px,calc(100vh - 150px));top:84px}
+#itemsWin::before{background:linear-gradient(90deg,var(--green),var(--teal),var(--sky))}
+#itemsWin .ph{cursor:grab;user-select:none;touch-action:none}
+#itemsWin .ph:active{cursor:grabbing}
+.itw{display:flex;gap:10px;flex:1;min-height:0;padding:10px 12px 0}
+.it-side{flex:none;width:318px;display:flex;flex-direction:column;min-height:0;border:1px solid rgba(185,179,217,.16);background:rgba(10,8,24,.4);padding:6px;clip-path:var(--cut)}
+.it-search{display:flex;gap:5px;align-items:center;margin-bottom:6px}
+.it-search input{flex:1;min-width:0;height:26px;padding:0 8px;border:1px solid rgba(185,179,217,.18);background:rgba(255,255,255,.04);color:var(--ink);font-family:var(--font-ui);font-size:10.5px;outline:none;clip-path:var(--cut)}
+.it-search input:focus{border-color:rgba(61,220,151,.6)}
+.it-new{flex:none;width:26px;height:26px;display:grid;place-items:center;border:1px solid rgba(61,220,151,.45);background:rgba(61,220,151,.08);color:var(--green);font-size:14px;font-weight:800;clip-path:var(--cut);transition:.14s}
+.it-new:hover{background:rgba(61,220,151,.2);color:#fff}
+.it-tabs{display:flex;gap:3px;margin-bottom:6px}
+.it-tab{flex:1;height:22px;border:1px solid rgba(185,179,217,.16);background:rgba(255,255,255,.04);color:var(--ink2);font-size:9px;font-weight:800;letter-spacing:.04em;clip-path:var(--cut);transition:.13s}
+.it-tab b{color:var(--metal2);font-weight:800;font-family:var(--font-mono);margin-left:2px}
+.it-tab:hover{color:#fff;border-color:rgba(61,220,151,.4)}
+.it-tab.on{color:var(--green);border-color:rgba(61,220,151,.5);background:rgba(61,220,151,.12)}
+.it-tab.on b{color:#dffff1}
+.it-list{flex:1;min-height:0;overflow-y:auto;overflow-x:hidden}
+.it-row{display:flex;align-items:center;gap:6px;width:100%;padding:5px 6px;margin-bottom:3px;border:1px solid transparent;border-radius:8px;color:var(--ink2);cursor:pointer;transition:.13s}
+.it-row:hover{background:rgba(255,255,255,.05)}
+.it-row.on{background:linear-gradient(90deg,rgba(61,220,151,.15),rgba(61,220,151,.04));border-color:rgba(61,220,151,.36)}
+.it-row.picked{box-shadow:inset 2px 0 0 rgba(61,220,151,.75)}
+.it-ck{flex:none;width:15px;height:15px;display:grid;place-items:center;border:1px solid rgba(185,179,217,.35);border-radius:4px;background:rgba(255,255,255,.03);color:transparent;font-size:9px;font-weight:900;transition:.13s}
+.it-ck:hover{border-color:var(--green)}
+.it-ck.on{border-color:rgba(61,220,151,.7);background:rgba(61,220,151,.2);color:var(--green)}
+.it-ck.off{border-color:rgba(185,179,217,.18);color:rgba(185,179,217,.35);cursor:default}
+.it-id{flex:none;font-family:var(--font-mono);font-size:8.5px;color:var(--metal2);font-weight:700}
+.it-tt{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:10.5px;font-weight:700;color:#fff}
+.it-kd{flex:none;padding:0 5px;line-height:14px;font-size:8px;font-weight:800;letter-spacing:.04em;clip-path:var(--cut);background:rgba(255,176,32,.16);color:var(--amber)}
+.it-kd.kf{background:rgba(255,59,92,.16);color:var(--red)}
+.it-kd.ki{background:rgba(139,124,246,.18);color:#c9b6ff}
+.it-st{flex:none;font-size:8px;font-weight:800;letter-spacing:.04em;color:var(--metal2)}
+.it-st.del{color:var(--sky)}
+.it-st.done{color:var(--green)}
+.it-main{flex:1;min-width:0;display:flex;flex-direction:column;min-height:0;border:1px solid rgba(185,179,217,.16);background:rgba(10,8,24,.32);clip-path:var(--cut)}
+.it-head{flex:none;display:flex;align-items:center;gap:8px;padding:10px 12px 6px}
+.it-title{flex:1;min-width:0;background:none;border:0;color:#fff;font-family:var(--font-ui);font-size:15px;font-weight:800;outline:none}
+.it-title::placeholder{color:var(--metal2);font-weight:700}
+.it-no{flex:none;font-family:var(--font-mono);font-size:9px;color:var(--metal2)}
+.it-kindrow{flex:none;display:flex;align-items:center;gap:5px;padding:0 12px 8px;border-bottom:1px solid rgba(185,179,217,.12);font-size:9px}
+.it-kindrow .kl{font-size:8px;letter-spacing:.1em;color:var(--metal2);margin-right:2px}
+.it-kindrow .sp{flex:1}
+.it-kb{height:20px;padding:0 8px;border:1px solid rgba(185,179,217,.2);background:rgba(255,255,255,.04);color:var(--ink2);font-size:9px;font-weight:800;clip-path:var(--cut)}
+.it-kb:hover{color:#fff;border-color:rgba(61,220,151,.4)}
+.it-kb.on{color:var(--green);border-color:rgba(61,220,151,.55);background:rgba(61,220,151,.12)}
+.it-state{font-size:8.5px;font-weight:800;letter-spacing:.06em;color:var(--metal2)}
+.it-state.del{color:var(--sky)}.it-state.done{color:var(--green)}.it-state.drop{color:var(--metal2)}
+.it-body{flex:1;min-height:0;resize:none;background:none;border:0;outline:none;padding:9px 13px 6px;color:#EDEBFA;font-family:var(--font-ui);font-size:12px;line-height:1.7}
+.it-body::placeholder{color:var(--metal2)}
+.it-meta{flex:none;display:flex;flex-wrap:wrap;gap:4px 12px;padding:6px 12px;border-top:1px solid rgba(185,179,217,.1);font-size:8.5px;color:var(--metal2);font-family:var(--font-mono)}
+.it-meta .dl{color:var(--sky)}
+.it-meta .ok{color:var(--green)}
+.it-meta .no{color:var(--amber)}
+.it-acts{flex:none;display:flex;align-items:center;gap:6px;padding:6px 12px 10px}
+.it-acts .sp{flex:1}
+.it-act{height:24px;padding:0 10px;border:1px solid rgba(185,179,217,.22);background:rgba(255,255,255,.05);color:var(--ink2);font-size:9.5px;font-weight:800;clip-path:var(--cut);transition:.13s}
+.it-act:hover:not(:disabled){color:#fff;border-color:var(--teal)}
+.it-act:disabled{opacity:.35;cursor:not-allowed}
+.it-act.primary{color:var(--green);border-color:rgba(61,220,151,.5);background:rgba(61,220,151,.12)}
+.it-act.primary:hover:not(:disabled){background:rgba(61,220,151,.22);color:#fff}
+.it-act.ok{color:var(--green)}
+.it-act.danger{color:var(--red);border-color:rgba(255,59,92,.3)}
+.it-act.danger:hover{background:rgba(255,59,92,.14);color:#fff}
+.it-foot{flex:none;display:flex;align-items:center;gap:8px;padding:7px 12px 9px;border-top:1px solid rgba(185,179,217,.12);font-size:9px;color:var(--metal2)}
+.it-foot .sel b{color:var(--green);font-size:11px;font-family:var(--font-mono)}
+.it-foot .q{font-family:var(--font-mono);font-size:8.5px;color:var(--metal2)}
+.it-foot .sp{flex:1}
+.it-btn{height:26px;padding:0 13px;border:1px solid rgba(185,179,217,.24);background:rgba(255,255,255,.06);color:var(--ink2);font-size:10px;font-weight:800;clip-path:var(--btncut);transition:.13s}
+.it-btn:hover:not(:disabled){color:#fff;border-color:var(--teal)}
+.it-btn:disabled{opacity:.35;cursor:not-allowed}
+.it-btn.primary{color:#06121a;background:linear-gradient(100deg,var(--green),var(--teal));border-color:transparent;text-shadow:0 1px 0 rgba(255,255,255,.25)}
+.it-btn.primary:hover:not(:disabled){filter:brightness(1.12);color:#06121a}
+.it-empty{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:6px;padding:18px;color:var(--metal2);font-size:11px;text-align:center;line-height:1.6}
+.it-empty.sm{min-height:120px}
+.it-empty .big{font-size:24px;color:var(--green)}
+.it-empty b{color:#fff;font-size:12px}
+.it-undo{position:absolute;left:50%;bottom:44px;transform:translateX(-50%);z-index:2;display:flex;align-items:center;gap:10px;padding:6px 10px;background:rgba(24,21,44,.96);border:1px solid rgba(185,179,217,.25);font-size:10px;color:var(--ink2);clip-path:var(--cut);box-shadow:0 10px 26px rgba(0,0,0,.5)}
+.it-undo button{color:var(--green);font-size:10px;font-weight:800}
+.it-undo button:hover{color:#fff}
+@media (max-width:900px){.it-side{width:240px}}
+@media (max-width:720px){.itw{flex-direction:column}.it-side{width:100%;height:190px}}
+
 /* ═══ 知识中心窗（2026-11-23 用户 #7）：全舱模式左上「⚛」→ 全局 wiki 只读浏览。
        与目录窗 / 便签窗同一套 .twin 壳（✕ 左置 · 玻璃底 · 可拖可全屏）；
        左 = wiki 目录树，中 = 文章阅读，右 = 本页目录 / 反链 / 实效账。 ═══ */
@@ -1247,6 +1366,16 @@ kbd{border:1px solid rgba(185,179,217,.35);border-bottom-width:2px;border-radius
 .con-attach .ch.exp{border-color:rgba(123,77,255,.5);background:rgba(123,77,255,.16);color:#c9b6ff}
 .con-attach .ch button{width:16px;height:16px;display:grid;place-items:center;color:var(--metal2);font-size:9px}
 .con-attach .ch button:hover{color:var(--red)}
+/* 事项投递（2026-11-24 用户）：挂件 = 发出去前的可见标识；排队条 = 主对话在跑时先候着。 */
+.con-attach .ch.it{border-color:rgba(61,220,151,.45);background:rgba(61,220,151,.1);color:var(--green)}
+.con-attach .ch.it b{color:#dffff1;font-weight:800}
+.con-queue{flex:none;display:flex;align-items:center;gap:6px;padding:4px 14px;border-top:1px solid rgba(255,176,32,.2);background:rgba(255,176,32,.06);font-size:9px;color:var(--ink2)}
+.con-queue[hidden]{display:none}
+.con-queue .qi{display:inline-flex;align-items:center;gap:1px;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.con-queue .qi b{color:var(--amber);font-weight:800;margin-right:4px}
+.con-queue .sp{flex:1}
+.con-queue button{flex:none;height:18px;padding:0 7px;border:1px solid rgba(255,176,32,.35);background:rgba(255,176,32,.08);color:var(--gold);font-size:8.5px;clip-path:var(--cut)}
+.con-queue button:hover{color:#fff;border-color:var(--gold)}
 @media (max-width:900px){
   .addpop{left:8px;width:calc(100% - 16px)}
 }
@@ -1733,6 +1862,7 @@ kbd{border:1px solid rgba(185,179,217,.35);border-bottom-width:2px;border-radius
   <header class="hud">
     <button class="backchip" id="btnClassic" title="返回 classic 模式（作战舱）"><span class="pg2">←</span><b>经典模式</b></button>
     <button class="backchip kcchip" id="btnKc" title="知识中心 · 星空知识库（全局 wiki · 只读）" aria-expanded="false" aria-haspopup="dialog"><span class="pg2">⚛</span><b>知识中心</b></button>
+    <button class="backchip itchip" id="btnItems" title="事项 · 舱内小待办（投递给主对话 · 完成留记录）" aria-expanded="false" aria-haspopup="dialog"><span class="pg2">☑</span><b>事项</b><i class="itn" id="itemBadge" hidden>0</i></button>
     <button class="projchip" id="btnProj" title="舱籍 · 绑定项目"><span class="pg2">⧉</span><span class="pn2">账务中台 · <b>4</b> 项目</span></button>
     <div class="sceneread" id="sceneRead" role="group" aria-label="舱景与当前时间">
       <span class="sr-k" aria-hidden="true">SCENE</span>
@@ -1807,6 +1937,7 @@ kbd{border:1px solid rgba(185,179,217,.35);border-bottom-width:2px;border-radius
   <section class="twin" id="actWin" aria-label="活动详情"></section>
   <section class="twin" id="notesWin" aria-label="便签 · 快速记事"></section>
   <section class="twin" id="kcWin" aria-label="知识中心"></section>
+  <section class="twin" id="itemsWin" aria-label="事项 · 舱内小待办"></section>
 
   <section class="console" id="console" aria-label="TUI 通讯台">
     <div class="con-h">
@@ -1836,6 +1967,7 @@ kbd{border:1px solid rgba(185,179,217,.35);border-bottom-width:2px;border-radius
     <div class="con-log" id="conLog"></div>
     <div class="con-cur"><div class="spk"><i></i><span id="curSpeaker">汐音</span></div><div class="line" id="curLine"></div></div>
     <div class="con-choices" id="conChoices" hidden></div>
+    <div class="con-queue" id="conQueue" hidden></div>
     <div class="con-attach" id="conAttach" hidden></div>
     <div class="con-in" id="conIn"><span class="pr">❯</span><textarea id="cmdInput" rows="1" placeholder="回应汐音 / 下达新指令…（⏎ 发送 · ⇧⏎ 换行）"></textarea><button class="send" id="btnSend">⏎</button></div>
   </section>
@@ -1995,6 +2127,21 @@ const NOTES_SEED=[
  {id:'nt3',title:'想法 · 全舱便签',body:'想法：全舱里也要能随手记，按钮放右上角最右。',manual:true,color:'#A78BFA',at:Date.now()-27*60000},
 ];
 
+/* 事项种子（2026-11-24 用户）：舱内零散小待办 —— 优化 / 修复 / 想法。
+   与「任务」不是一回事：一条事项 = 随手记下的一处小改动 / 小 issue；
+   投递给主对话即交付（delivered），主对话回执后由人确认「完成 / 搁置」才关项。
+   状态：todo 未决 → delivered 交付中 → done 已完成 / dropped 已搁置；关闭时间留在记录里。 */
+const ITEM_KINDS=['优化','修复','想法'];
+const ITEMS_SEED=[
+ {id:'it12',n:12,kind:'优化',status:'todo',title:'设置页保存按钮要点两次才生效',body:'第一次点没反应，第二次才保存。怀疑受控表单首次校验把提交吞了。',createdAt:Date.now()-2*3600e3},
+ {id:'it15',n:15,kind:'优化',status:'todo',title:'舱籍列表里时间列太窄',body:'长提交时间被截成「2026-11-23 ...」；按原型给时间列固定宽度，HEAD 与时间不越框。',createdAt:Date.now()-5*3600e3},
+ {id:'it9',n:9,kind:'修复',status:'todo',title:'任务详情按 Esc 关闭后焦点丢失',body:'关掉详情后键盘不能继续操作编队，得再点一下。',createdAt:Date.now()-26*3600e3},
+ {id:'it16',n:16,kind:'修复',status:'delivered',title:'座位图里克隆头像偶尔不加载',body:'首次进入座位图 1–2 个头像 404，刷新才好。',createdAt:Date.now()-7*3600e3,deliveredAt:Date.now()-52*60000},
+ {id:'it14',n:14,kind:'想法',status:'todo',title:'知识中心搜索不区分中英文标点',body:'输入「结算对账」搜不到带引号的条目。',createdAt:Date.now()-30*3600e3},
+ {id:'it11',n:11,kind:'修复',status:'done',title:'归档报告里附录顺序反了',body:'附录应按 A→C 排，现在是倒序。',createdAt:Date.now()-56*3600e3,deliveredAt:Date.now()-50*3600e3,closedAt:Date.now()-49*3600e3},
+ {id:'it8',n:8,kind:'想法',status:'dropped',title:'给舱加一个「静音今晚」开关',body:'晚上不想被回传铃声打扰。',createdAt:Date.now()-80*3600e3,closedAt:Date.now()-70*3600e3},
+];
+
 const state={sound:true,theme:0,winAlpha:1,thread:'main',panel:null,detailJob:null,detailTab:'run',scene:0,sceneFront:'A',
  settings:false,conPop:null,
  jobs:JOBS_INIT.map(x=>({...x})),ops:OPS_INIT.map(x=>({...x})),pool:OPS_POOL.map(x=>({...x})),
@@ -2013,6 +2160,7 @@ const state={sound:true,theme:0,winAlpha:1,thread:'main',panel:null,detailJob:nu
  inboxOpen:false,inboxSel:null,inboxPick:null,fanOpen:false,fleetOpen:false,relayJump:false,panelGeo:null,panelMax:false,panelAside:false,
  pjPop:false,projFocus:null,pjDiff:null,pjTab:'files',pjChgOpen:{},
  notes:NOTES_SEED.map(n=>({...n})),notesOpen:false,noteSel:'nt1',noteQ:'',noteUndo:null,notesGeo:null,notesMax:false,
+ items:ITEMS_SEED.map(i=>({...i})),itemsOpen:false,itemSel:'it12',itemQ:'',itTab:'open',itemPicks:[],itemsMax:false,itemsGeo:null,itemUndo:null,itemSeq:16,attItems:null,msgQueue:[],
  kcOpen:false,kcMax:false,kcGeo:null,kcSel:'con-compiled-rag',kcQ:'',
  kcDirs:['knowledge','knowledge/wiki','knowledge/wiki/concepts','knowledge/wiki/topics','knowledge/wiki/cases'],
  conTurns:false,conTurnSel:0};
@@ -2485,8 +2633,10 @@ function linkDocs(text){return esc(text).replace(DOC_REF_RE,(m,ref)=>{const node
  return `<span class="docref"><span class="ic">${cabinGlyph(node.n)}</span><span class="p" title="${esc(node.abs)}">${esc(node.abs)}</span><button class="go" data-doc="${esc(node.p)}" title="打开 · ${esc(node.abs)}">↗</button></span>`;});}
 function tlHTML(m){
  if(m.who==='sys')return `<div class="tline sys">${esc(m.text)}</div>`;
+ if(m.who==='receipt')return rcptHTML(m);
  const tm=`<span class="tm">${esc(m.t||nowHM())}</span>`;
- if(m.who==='you')return `<div class="tline me"><span class="p">❯</span><span class="tx">${esc(m.text)}</span>${tm}</div>`;
+ if(m.who==='you'){const via=m.via==='items'&&m.items&&m.items.length?`<span class="tvia" title="从「事项」窗投递 · 来源写在消息 meta 里">☑ 事项 ×${m.items.length}</span>`:'';
+  return `<div class="tline me"><span class="p">❯</span><span class="tx">${esc(m.text)}${via}</span>${tm}</div>`;}
  if(m.who==='doer'){
   const bad=/红|失败|异常|error|✗|超时/i.test(m.text);
   const good=/完成|正常|通过|绿|✓|已出|命中/i.test(m.text);
@@ -2494,6 +2644,22 @@ function tlHTML(m){
   return `<div class="tline tool"><span class="ar">▸</span><span class="nm">${esc(m.name||'tool')}</span><span class="tx">${esc(m.text)}</span><span class="st ${st}">[${st==='err'?'✗':st==='ok'?'✓':'…'}]</span>${tm}</div>`;
  }
  return `<div class="tasst">${tuiMeta(m)}<div class="tline xy"><span class="mark">✦</span><span class="tx">${linkDocs(m.text)}</span></div></div>`;
+}
+/* 事项回执（2026-11-24 用户）：汐音做完一组投递后举上来的关项卡。
+   行 = 每条事项的处理结果（随事项状态实时刷新）；底部二选一：关闭为完成 / 搁置。
+   关项后卡片收起成一行记录，不消失（留痕），事项窗「记录」页签同步。 */
+function rcptHTML(m){
+ const rows=(m.items||[]).map(x=>{const it=itemById(x.id);if(!it)return '';
+  const st=it.status==='done'?'done':it.status==='dropped'?'dropped':'delivered';
+  const stt=st==='done'?'已完成':st==='dropped'?'已搁置':'待确认';
+  return `<div class="rcpt-row"><span class="ri">#IT-${it.n}</span><span class="rt">${esc(it.title||'未命名事项')}</span><span class="rn">${esc(x.note||'')}</span><span class="rs ${st}">${stt}</span></div>`;}).join('');
+ const closed=!!m.outcome;
+ return `<div class="rcpt${closed?' closed':''}">
+  <div class="rcpt-h"><span class="rh">✦ 回执 · ${(m.items||[]).length} 条事项</span><span class="tm">${esc(m.t||nowHM())}</span></div>
+  ${rows}
+  ${closed?`<div class="rcpt-done">✓ 已关闭为「${m.outcome==='done'?'完成':'搁置'}」 · ${esc(m.closedT||'')}</div>`
+   :`<div class="rcpt-acts"><span class="rk">这几条可以关项吗？</span><button class="rcpt-btn ok" data-rcpt-ok="${esc(m.rid)}">✓ 关闭为完成</button><button class="rcpt-btn" data-rcpt-drop="${esc(m.rid)}">搁置</button></div>`}
+ </div>`;
 }
 /* #5（2026-11-23 用户）：主通讯台恒为汐音主对话，不再切线程。
    每条作战的 chat 走独立窗（openWin / 编队行 / inbox「💬 对话」），
@@ -2577,11 +2743,18 @@ function bindAddPop(){const p=$('#addPop');
  $$('[data-apmcp]',p).forEach(b=>b.addEventListener('click',()=>{const n=b.dataset.apmcp;state.apMcp=state.apMcp===n?null:n;renderAddPop();Audio.sfx('click');}));
  const q=$('#apQ',p);if(q)q.addEventListener('input',()=>{state.addQ=q.value;const pos=q.selectionStart;renderAddPop();const nq=$('#apQ');if(nq){nq.focus();nq.setSelectionRange(pos,pos);}});}
 function renderAttach(){const el=$('#conAttach');if(!el)return;const chips=[];
+ if(state.attItems&&state.attItems.length){const its=state.attItems.map(itemById).filter(Boolean);
+  chips.push(`<span class="ch it">☑ 事项 ×${its.length} · ${its.map(i=>'#IT-'+i.n).join(' ')}<button data-apclear="items" title="取消投递（取消后不进主对话）">✕</button></span>`);}
  if(state.attSkill)chips.push(`<span class="ch">✦ /${esc(state.attSkill)}<button data-apclear="skill" title="取消技能（本条不再挂）">✕</button></span>`);
  if(state.attExpert)chips.push(`<span class="ch exp">◈ 分身 · ${esc(state.attLb||state.attExpert)}<button data-apclear="clone" title="取消委派">✕</button></span>`);
  el.hidden=chips.length===0;el.innerHTML=chips.join('');
- const b=$('#conAddN');if(b){b.hidden=chips.length===0;b.textContent=String(chips.length);}
- $$('[data-apclear]',el).forEach(x=>x.addEventListener('click',()=>{if(x.dataset.apclear==='skill')state.attSkill=null;else{state.attExpert=null;state.attLb=null;}renderAttach();if(state.addOpen)renderAddPop();Audio.sfx('click');}));}
+ const addN=(state.attSkill?1:0)+(state.attExpert?1:0);
+ const b=$('#conAddN');if(b){b.hidden=addN===0;b.textContent=String(addN);}
+ $$('[data-apclear]',el).forEach(x=>x.addEventListener('click',()=>{
+  if(x.dataset.apclear==='items')state.attItems=null;
+  else if(x.dataset.apclear==='skill')state.attSkill=null;
+  else{state.attExpert=null;state.attLb=null;}
+  renderAttach();if(state.addOpen)renderAddPop();Audio.sfx('click');}));}
 
 /* ── 通讯台遥测（model / ctx / token·费用）+ 轮次历史（≡ N轮 → 下拉跳转） ── */
 function renderConTelemetry(){const pct=Math.min(100,Math.round(state.tokens/state.ctxMax*100));
@@ -2686,7 +2859,9 @@ function pushMsg(t,m){threadOf(t).push(m);
  renderBar();renderDock();
  if(state.conMin){const d=$('#conDock');d.classList.remove('ping');void d.offsetWidth;d.classList.add('ping');}}
 let typeT={};
-function pushReply(t,m,delay=700){clearTimeout(typeT[t]);if(state.thread===t){$('#curLine').innerHTML='<span class="typing"><i></i><i></i><i></i></span>';$('#curSpeaker').textContent=m.who==='doer'?m.name:'汐音';}typeT[t]=setTimeout(()=>{pushMsg(t,m);if(m.who==='xy'&&m.mood)setMood(m.mood,5000);},delay);}
+function pushReply(t,m,delay=700){clearTimeout(typeT[t]);if(state.thread===t){$('#curLine').innerHTML='<span class="typing"><i></i><i></i><i></i></span>';$('#curSpeaker').textContent=m.who==='doer'?m.name:'汐音';}typeT[t]=setTimeout(()=>{typeT[t]=null;pushMsg(t,m);if(m.who==='xy'&&m.mood)setMood(m.mood,5000);
+ /* 事项投递排队：主对话这一轮落定后，把排队的投递自动送进去。 */
+ if(t==='main'&&state.msgQueue.length)setTimeout(flushQueue,600);},delay);}
 /* #5：作战 chat = 独立窗（openWin）；详情 = dossier；主通讯台固定回主对话。 */
 function openJobChat(jid){if(!jid||jid==='main'){setConMin(false);requestAnimationFrame(()=>$('#cmdInput').focus());return;}
  closePanel();openWin(jid);}
@@ -2700,9 +2875,18 @@ function sendCommand(){const t=$('#cmdInput');const raw=t.value.trim();
  sendFrom(state.thread,t);
  if(raw&&(state.attSkill||state.attExpert)){state.attSkill=null;state.attExpert=null;state.attLb=null;renderAttach();}}
 function sendFrom(th,t){const text=t.value.trim();if(!text){const box=t.closest('.con-in')||t.closest('.cwi');if(box){box.classList.remove('shake');void box.offsetWidth;box.classList.add('shake');}Audio.sfx('deny');return;}
- pushMsg(th,{who:'you',name:'指挥官',text,t:nowHM()});t.value='';autoGrowEl(t);Audio.sfx('send');state.cost+=.01*modelMult();renderHUD();
+ /* 事项投递（2026-11-24 用户）：输入框上方挂着事项挂件时，本条消息带 via:'items'。
+    可见标识 = 挂件 / 对话行来源签；可靠标识 = 消息 meta（via + item_ids），不靠正文约定。 */
+ const itemIds=(th==='main'&&state.attItems&&state.attItems.length)?state.attItems.slice():null;
+ const meta=itemIds?{via:'items',items:itemIds.map(id=>(itemById(id)||{}).n).filter(x=>x!=null)}:null;
+ pushMsg(th,{who:'you',name:'指挥官',text,t:nowHM(),...(meta||{})});t.value='';autoGrowEl(t);Audio.sfx('send');state.cost+=.01*modelMult();renderHUD();
+ if(itemIds){state.attItems=null;renderAttach();markItemsDelivered(itemIds);}
  const o=th!=='main'?opForJob(th):null;if(o){const hit=o.options.find(x=>text.includes(x.label)||x.label.includes(text));if(hit){resolveOp(o.id,hit.label,text===hit.label?'':text);return;}}
- if(th==='main'){setMood('thinking',4000);const sp=maybeSpawn(text);
+ if(th==='main'){setMood('thinking',4000);
+  if(itemIds){const ns=itemIds.map(id=>'#IT-'+((itemById(id)||{}).n)).join(' ');
+   pushReply('main',{who:'xy',name:'汐音',text:`收到，${itemIds.length} 条事项我排进这一轮（${ns}）。做完给您回执。`,t:nowHM(),mood:'working'},800);
+   scheduleItemReceipt(itemIds);return;}
+  const sp=maybeSpawn(text);
   if(!sp){const rj=state.jobs.find(j=>(KW[j.id]||j.kw)&&text.includes(KW[j.id]||j.kw)&&j.status!=='done');
    if(rj){relayTo(rj,text);return;}}
   pushReply('main',{who:'xy',name:'汐音',text:sp?sp.ack:rnd(ACK),t:nowHM(),mood:sp?'working':'idle'},800);}
@@ -3226,6 +3410,242 @@ function bindNotesFrame(){const w=$('#notesWin');if(!w||w.dataset.drag)return;w.
   const up=()=>{removeEventListener('pointermove',mv);removeEventListener('pointerup',up);};
   addEventListener('pointermove',mv);addEventListener('pointerup',up);});
  w.addEventListener('dblclick',e=>{if(e.target.closest('button,input,textarea,a,select'))return;if(e.target.closest('.ph'))toggleNotesMax();});}
+
+/* ── 事项（2026-11-24 用户）：舱内零散小待办 ───────────────────────────────
+   一条事项 = 随手记下的小优化 / 小修复 / 小想法；与「任务」不是一层：
+   任务是执行单位，事项是待办条目 —— 投递给主对话即交付，做完由人确认关项。
+   数据：原型在内存（线上落 cabin_items：id / cabin_id / n / kind / status /
+   title / body / created_at / delivered_at / closed_at；关闭记录保留，不做硬删）。
+   入口：HUD「☑ 事项 · N」；窗口同 .twin 壳，Esc 先收它。
+   投递：消息 meta = {via:'items', items:[序号]}；主对话做完举回执，人点完成 / 搁置。
+   排队：主对话在跑（typeT.main）时投递进排队条，当前一轮结束后自动送达。 */
+let itemUndoTimer=null;
+function itemById(id){return state.items.find(i=>i.id===id);}
+function itemOpen(i){return !!i&&(i.status==='todo'||i.status==='delivered');}
+function openItemCount(){return state.items.filter(itemOpen).length;}
+function renderItemBadge(){const b=$('#itemBadge');if(!b)return;const n=openItemCount();b.hidden=n===0;b.textContent=String(n);}
+function pickedItems(){return state.itemPicks.map(itemById).filter(itemOpen);}
+function markItemsDelivered(ids){const at=Date.now();ids.forEach(id=>{const it=itemById(id);if(it&&it.status==='todo'){it.status='delivered';it.deliveredAt=at;}});renderItemBadge();if(state.itemsOpen)renderItemsWin();}
+function itemMsgText(list){return '处理这几条事项：\n'+list.map(i=>'- #IT-'+i.n+'　'+i.title).join('\n');}
+
+function toggleItemsWin(next){
+ const open=next==null?!state.itemsOpen:!!next;
+ state.itemsOpen=open;
+ const btn=$('#btnItems');if(btn){btn.classList.toggle('on',open);btn.setAttribute('aria-expanded',String(open));}
+ if(open){closePops();renderItemsWin();}
+ else{const w=$('#itemsWin');if(w)w.classList.remove('open');}
+ Audio.sfx(open?'open':'close');
+}
+function applyItemsGeo(){const w=$('#itemsWin');if(!w)return;w.classList.toggle('geo',!!(state.itemsGeo||state.itemsMax));
+ if(state.itemsMax){w.style.left='5px';w.style.top='52px';w.style.width=Math.max(420,innerWidth-10)+'px';w.style.height=Math.max(300,innerHeight-58)+'px';w.style.transform='none';return;}
+ const g=state.itemsGeo;
+ if(!g){w.style.left='';w.style.top='';w.style.width='';w.style.height='';w.style.transform='';return;}
+ w.style.left=g.x+'px';w.style.top=g.y+'px';w.style.width=g.w+'px';w.style.height=g.h+'px';w.style.transform='none';}
+function toggleItemsMax(){const w=$('#itemsWin');if(!w)return;
+ if(!state.itemsMax){const r=w.getBoundingClientRect();state.itemsGeo={x:r.left,y:r.top,w:r.width,h:r.height};state.itemsMax=true;}else state.itemsMax=false;
+ applyItemsGeo();const b=w.querySelector('[data-imax]');if(b)b.textContent=state.itemsMax?'⤡':'⛶';Audio.sfx('click');}
+
+function createItem(){
+ const n=++state.itemSeq;
+ const it={id:'it'+n,n,kind:'优化',status:'todo',title:'',body:'',createdAt:Date.now()};
+ state.items=[it,...state.items];state.itemSel=it.id;state.itTab='open';state.itemQ='';state.itemUndo=null;
+ renderItemsWin();renderItemBadge();Audio.sfx('click');
+ requestAnimationFrame(()=>{const t=$('#itTitle');if(t)t.focus();});
+}
+function selectItem(id){if(id===state.itemSel)return;state.itemSel=id;renderItemsWin();Audio.sfx('click');}
+function toggleItemPick(id){const it=itemById(id);if(!itemOpen(it))return;const i=state.itemPicks.indexOf(id);if(i<0)state.itemPicks.push(id);else state.itemPicks.splice(i,1);renderItemsWin();Audio.sfx('click');}
+function deleteItem(id){const list=state.items;const i=list.findIndex(x=>x.id===id);if(i<0)return;const it=list[i];
+ state.items=list.filter(x=>x.id!==id);
+ state.itemSel=(state.items[i]||state.items[i-1]||{id:null}).id;
+ state.itemPicks=state.itemPicks.filter(x=>x!==id);
+ state.itemUndo={item:it,index:i};
+ if(itemUndoTimer)clearTimeout(itemUndoTimer);
+ itemUndoTimer=setTimeout(()=>{state.itemUndo=null;if(state.itemsOpen)renderItemsWin();},5000);
+ renderItemsWin();renderItemBadge();Audio.sfx('click');}
+function undoItemDelete(){const u=state.itemUndo;if(!u)return;const list=[...state.items];list.splice(Math.min(u.index,list.length),0,u.item);
+ state.items=list;state.itemSel=u.item.id;state.itemUndo=null;
+ if(itemUndoTimer){clearTimeout(itemUndoTimer);itemUndoTimer=null;}
+ renderItemsWin();renderItemBadge();Audio.sfx('click');}
+function closeItem(id,outcome){
+ const it=itemById(id);if(!it)return;
+ it.status=outcome;it.closedAt=Date.now();
+ renderItemsWin();renderItemBadge();Audio.sfx(outcome==='done'?'confirm':'click');
+ toast(outcome==='done'?'已勾掉 · 记录已留':'已搁置 · 记录已留');
+}
+function reopenItem(id){const it=itemById(id);if(!it)return;it.status='todo';delete it.closedAt;
+ renderItemsWin();renderItemBadge();Audio.sfx('click');toast('已重新打开 · 回到未决');}
+
+/* 投递：stage = 带到输入框（可改文案，发出去才算交付）；send = 直接投递。
+   主对话在跑时 send 先排队，当前一轮落定后自动送达。 */
+function deliverItems(mode,idsOverride){
+ const list=(idsOverride&&idsOverride.length?idsOverride.map(itemById):pickedItems()).filter(itemOpen);
+ if(!list.length){toast('先选一条未决事项');Audio.sfx('deny');return;}
+ const ids=list.map(i=>i.id);
+ if(mode==='stage'){
+  state.attItems=ids;
+  const inp=$('#cmdInput');inp.value=itemMsgText(list);autoGrow();renderAttach();
+  toggleItemsWin(false);setConMin(false);renderConsole();
+  requestAnimationFrame(()=>{inp.focus();inp.setSelectionRange(inp.value.length,inp.value.length);});
+  Audio.sfx('click');toast('已带到输入框 · 发出去才算交付');return;
+ }
+ if(!!typeT.main){
+  state.msgQueue.push({ids});
+  renderQueue();toggleItemsWin(false);setConMin(false);renderConsole();
+  toast('主对话在跑 · 已排队（第 '+state.msgQueue.length+' 位）');Audio.sfx('click');return;
+ }
+ sendItemDelivery(ids);
+}
+function sendItemDelivery(ids){
+ const list=ids.map(itemById).filter(itemOpen);
+ if(!list.length)return;
+ markItemsDelivered(ids);
+ pushMsg('main',{who:'you',name:'指挥官',text:itemMsgText(list),t:nowHM(),via:'items',items:list.map(i=>i.n)});
+ state.cost+=.01*modelMult();renderHUD();
+ pushReply('main',{who:'xy',name:'汐音',text:`收到，${list.length} 条事项我排进这一轮（${list.map(i=>'#IT-'+i.n).join(' ')}）。做完给您回执。`,t:nowHM(),mood:'working'},800);
+ scheduleItemReceipt(ids);
+ toggleItemsWin(false);setConMin(false);renderConsole();
+ Audio.sfx('send');
+}
+function scheduleItemReceipt(ids){
+ setTimeout(()=>{
+  const list=ids.map(itemById).filter(i=>i&&i.status==='delivered');
+  if(!list.length)return;
+  const notes=['已修 · 单测随行','已改 · 截图对齐','已处理 · 待您验收'];
+  pushMsg('main',{who:'xy',name:'汐音',text:'这几条都处理完了，证据我整理成回执 —— 您确认一下，我就关项。',t:nowHM(),mood:'happy'});
+  pushMsg('main',{who:'receipt',rid:'r'+Date.now().toString(36),items:list.map((it,i)=>({id:it.id,note:notes[i%notes.length]})),t:nowHM()});
+ },3400);
+}
+function closeReceipt(rid,outcome){
+ const m=threadOf('main').find(x=>x.who==='receipt'&&x.rid===rid);
+ if(!m||m.outcome)return;
+ m.outcome=outcome;m.closedT=nowHM();
+ const at=Date.now();
+ (m.items||[]).forEach(x=>{const it=itemById(x.id);if(itemOpen(it)){it.status=outcome;it.closedAt=at;}});
+ const ns=(m.items||[]).map(x=>{const it=itemById(x.id);return it?'#IT-'+it.n:'';}).filter(Boolean).join(' ');
+ pushMsg('main',{who:'sys',text:`✓ 事项 ${ns} 已关闭 · ${outcome==='done'?'完成':'搁置'}`});
+ renderItemBadge();if(state.itemsOpen)renderItemsWin();
+ Audio.sfx(outcome==='done'?'confirm':'click');
+ if(outcome==='done'){setMood('happy',5000);toast('已关项 · 记录已留');}else toast('已搁置 · 记录已留');
+}
+function renderQueue(){
+ const el=$('#conQueue');if(!el)return;
+ const q=state.msgQueue;el.hidden=q.length===0;
+ if(!q.length){el.innerHTML='';return;}
+ const ns=[...new Set(q.flatMap(x=>x.ids))].map(id=>{const it=itemById(id);return it?'#IT-'+it.n:'#'+id;}).join(' ');
+ el.innerHTML=`<span class="qi"><b>⏳ 排队 ${q.length}</b> · 事项 ${ns} · 主对话当前一轮结束后自动送达</span><span class="sp"></span><button data-queue-cancel>撤回</button>`;
+ $('[data-queue-cancel]',el).addEventListener('click',()=>{state.msgQueue=[];renderQueue();Audio.sfx('click');toast('已撤回排队');});
+}
+function flushQueue(){
+ if(!state.msgQueue.length)return;
+ const ids=[...new Set(state.msgQueue.flatMap(x=>x.ids))];
+ state.msgQueue=[];renderQueue();
+ sendItemDelivery(ids);
+}
+
+function renderItemsWin(){
+ const w=$('#itemsWin');if(!w)return;
+ if(!state.itemsOpen){w.classList.remove('open');return;}
+ if(!state.items.some(i=>i.id===state.itemSel))state.itemSel=state.items[0]?state.items[0].id:null;
+ const q=state.itemQ.trim().toLowerCase();
+ const matchQ=i=>!q||((i.title||'')+' '+(i.body||'')).toLowerCase().includes(q);
+ const openList=state.items.filter(itemOpen);
+ const recList=state.items.filter(i=>i.status==='done'||i.status==='dropped');
+ const tab=state.itTab;
+ const list=state.items.filter(i=>matchQ(i)&&(tab==='all'||(tab==='open'?itemOpen(i):!itemOpen(i))))
+   .sort((a,b)=>(itemOpen(a)?0:1)-(itemOpen(b)?0:1)||b.createdAt-a.createdAt);
+ const sel=itemById(state.itemSel);
+ const stLabel={todo:'未决',delivered:'交付中',done:'已完成',dropped:'已搁置'};
+ const stCls={todo:'todo',delivered:'del',done:'done',dropped:'drop'};
+ const rows=list.map(i=>{
+  const picked=state.itemPicks.includes(i.id);
+  const ck=itemOpen(i)?`<button class="it-ck${picked?' on':''}" data-ipick="${i.id}" aria-pressed="${picked}" title="选中投递">✓</button>`:`<span class="it-ck off" title="已关闭 · 不可投递">✓</span>`;
+  return `<div class="it-row${i.id===state.itemSel?' on':''}${picked?' picked':''}" data-item="${i.id}" role="option" aria-selected="${i.id===state.itemSel}" tabindex="0">
+   ${ck}
+   <span class="it-id">#IT-${i.n}</span>
+   <span class="it-tt">${esc(i.title||'（未命名事项）')}</span>
+   <span class="it-kd ${i.kind==='修复'?'kf':i.kind==='想法'?'ki':''}">${esc(i.kind)}</span>
+   <span class="it-st ${stCls[i.status]}">${stLabel[i.status]}</span>
+  </div>`;}).join('');
+ const picked=pickedItems();
+ const curSel=sel?`
+   <div class="it-head">
+     <input class="it-title" id="itTitle" value="${esc(sel.title)}" placeholder="一句话说清这条事项" aria-label="事项标题" autocomplete="off" spellcheck="false"/>
+     <span class="it-no">#IT-${sel.n}</span>
+   </div>
+   <div class="it-kindrow"><span class="kl">类型</span>${ITEM_KINDS.map(k=>`<button class="it-kb${sel.kind===k?' on':''}" data-ikind="${k}">${k}</button>`).join('')}<span class="sp"></span><span class="it-state ${stCls[sel.status]}">${stLabel[sel.status]}</span></div>
+   <textarea class="it-body" id="itBody" placeholder="补充上下文：复现步骤 / 期望行为 / 约束…" aria-label="事项正文" spellcheck="false">${esc(sel.body)}</textarea>
+   <div class="it-meta">
+     <span>创建 ${noteStamp(sel.createdAt)}</span>
+     ${sel.deliveredAt?`<span class="dl">交付 ${noteStamp(sel.deliveredAt)} · 主对话</span>`:''}
+     ${sel.closedAt?`<span class="${sel.status==='done'?'ok':'no'}">关闭 ${noteStamp(sel.closedAt)} · ${stLabel[sel.status]}</span>`:''}
+   </div>
+   <div class="it-acts">
+     ${itemOpen(sel)?`<button class="it-act primary" data-ideliver ${sel.status==='delivered'?'disabled title="已交付，等回执"':''}>投递给主对话</button>
+      <button class="it-act" data-istageone ${sel.status==='delivered'?'disabled':''}>带到输入框</button>
+      <button class="it-act ok" data-idone>✓ 完成</button>
+      <button class="it-act" data-iddrop>搁置</button>`
+     :`<button class="it-act" data-ireopen>重新打开</button>`}
+     <span class="sp"></span>
+     <button class="it-act danger" data-idel>删除</button>
+   </div>`
+  :`<div class="it-empty"><span class="big">☑</span><b>还没有选中事项</b><span>左边点一条，或者新建一条小待办。</span></div>`;
+ w.innerHTML=`<div class="ph"><button class="phx" data-iclose title="关闭（Esc）">✕</button><span class="pt"><b>☑ 事项 · 舱内小待办</b><span>ITEMS · 随手记 · 投递给主对话 · 完成回执留记录</span></span><span class="sp"></span><button class="pwin" data-imax title="全屏 / 还原（也可双击标题栏）">${state.itemsMax?'⤡':'⛶'}</button></div>
+ <div class="pb"><div class="itw">
+  <aside class="it-side">
+   <div class="it-search"><input id="itemQ" placeholder="搜索事项" value="${esc(state.itemQ)}" aria-label="搜索事项" autocomplete="off"/><button class="it-new" data-inew title="新建事项">＋</button></div>
+   <div class="it-tabs">
+    <button class="it-tab${tab==='open'?' on':''}" data-itab="open">未决 <b>${openList.length}</b></button>
+    <button class="it-tab${tab==='record'?' on':''}" data-itab="record">记录 <b>${recList.length}</b></button>
+    <button class="it-tab${tab==='all'?' on':''}" data-itab="all">全部 <b>${state.items.length}</b></button>
+   </div>
+   <div class="it-list" role="listbox" aria-label="事项列表">${rows||`<div class="it-empty sm"><span class="big">⌕</span><b>${q?'没有匹配的事项':'这里是空的'}</b></div>`}</div>
+  </aside>
+  <section class="it-main">${curSel}</section>
+ </div>
+ <div class="it-foot">
+  <span class="sel">已选 <b>${picked.length}</b> 条</span>
+  <span class="q">主对话 · ${typeT.main?'正在跑 · 投递将排队':'空闲'}</span>
+  <span class="sp"></span>
+  <button class="it-btn" data-istage ${picked.length?'':'disabled'}>带到输入框</button>
+  <button class="it-btn primary" data-isend ${picked.length?'':'disabled'}>投递给主对话 →</button>
+ </div>
+ ${state.itemUndo?`<div class="it-undo">已删除「${esc(state.itemUndo.item.title||'未命名事项')}」<button data-iundo>撤销</button></div>`:''}
+ </div>`;
+ applyItemsGeo();bindItemsWin();w.classList.add('open');
+}
+function bindItemsWin(){const w=$('#itemsWin');if(!w)return;
+ $('[data-iclose]',w)?.addEventListener('click',e=>{e.stopPropagation();toggleItemsWin(false);});
+ $('[data-imax]',w)?.addEventListener('click',e=>{e.stopPropagation();toggleItemsMax();});
+ $$('[data-inew]',w).forEach(b=>b.addEventListener('click',()=>createItem()));
+ $$('[data-itab]',w).forEach(b=>b.addEventListener('click',()=>{state.itTab=b.dataset.itab;
+  const inTab=i=>state.itTab==='all'||(state.itTab==='open'?itemOpen(i):!itemOpen(i));
+  if(!state.items.some(i=>i.id===state.itemSel&&inTab(i))){const first=state.items.find(inTab);if(first)state.itemSel=first.id;}
+  renderItemsWin();Audio.sfx('click');}));
+ $$('[data-item]',w).forEach(row=>{
+  row.addEventListener('click',e=>{if(e.target.closest('[data-ipick]'))return;selectItem(row.dataset.item);});
+  row.addEventListener('keydown',e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();selectItem(row.dataset.item);}});});
+ $$('[data-ipick]',w).forEach(b=>b.addEventListener('click',e=>{e.stopPropagation();toggleItemPick(b.dataset.ipick);}));
+ $$('[data-ikind]',w).forEach(b=>b.addEventListener('click',()=>{const it=itemById(state.itemSel);if(!it)return;it.kind=b.dataset.ikind;renderItemsWin();Audio.sfx('click');}));
+ $('[data-idone]',w)?.addEventListener('click',()=>closeItem(state.itemSel,'done'));
+ $('[data-iddrop]',w)?.addEventListener('click',()=>closeItem(state.itemSel,'dropped'));
+ $('[data-ireopen]',w)?.addEventListener('click',()=>reopenItem(state.itemSel));
+ $('[data-idel]',w)?.addEventListener('click',()=>deleteItem(state.itemSel));
+ $('[data-ideliver]',w)?.addEventListener('click',()=>deliverItems('send',[state.itemSel]));
+ $('[data-istageone]',w)?.addEventListener('click',()=>deliverItems('stage',[state.itemSel]));
+ $('[data-isend]',w)?.addEventListener('click',()=>deliverItems('send'));
+ $('[data-istage]',w)?.addEventListener('click',()=>deliverItems('stage'));
+ $('[data-iundo]',w)?.addEventListener('click',undoItemDelete);
+ const q=$('#itemQ',w);if(q)q.addEventListener('input',()=>{state.itemQ=q.value;const pos=q.selectionStart;renderItemsWin();const nq=$('#itemQ');if(nq){nq.focus();nq.setSelectionRange(pos,pos);}});
+ const title=$('#itTitle',w);if(title)title.addEventListener('input',()=>{const it=itemById(state.itemSel);if(!it)return;it.title=title.value;const row=w.querySelector('[data-item="'+it.id+'"] .it-tt');if(row)row.textContent=it.title||'（未命名事项）';});
+ const body=$('#itBody',w);if(body)body.addEventListener('input',()=>{const it=itemById(state.itemSel);if(!it)return;it.body=body.value;});
+}
+function bindItemsFrame(){const w=$('#itemsWin');if(!w||w.dataset.drag)return;w.dataset.drag='1';
+ w.addEventListener('pointerdown',e=>{if(state.itemsMax||e.target.closest('button,input,textarea,a,select'))return;if(!e.target.closest('.ph'))return;e.preventDefault();
+  const r=w.getBoundingClientRect(),sx=e.clientX,sy=e.clientY;
+  const mv=ev=>{state.itemsGeo={x:clamp(r.left+ev.clientX-sx,4,Math.max(4,innerWidth-r.width-4)),y:clamp(r.top+ev.clientY-sy,52,Math.max(52,innerHeight-r.height-52)),w:r.width,h:r.height};applyItemsGeo();};
+  const up=()=>{removeEventListener('pointermove',mv);removeEventListener('pointerup',up);};
+  addEventListener('pointermove',mv);addEventListener('pointerup',up);});
+ w.addEventListener('dblclick',e=>{if(e.target.closest('button,input,textarea,a,select'))return;if(e.target.closest('.ph'))toggleItemsMax();});}
 
 /* ── 知识中心（#7 · 2026-11-23 用户）：全舱内的 global wiki 只读窗 —— classic 知识中心换皮。
       左树 = 知识根真实目录（▸/▾ 展开收起，同 classic 的 KcKnowledgeTree）；
@@ -4284,6 +4704,8 @@ $('#lUsage').addEventListener('click',()=>openPanel('usage'));
 $('#btnClassic').addEventListener('click',()=>toast('返回 classic 模式 · 作战舱'));
 /* #7：知识中心 —— 全舱内开窗（Esc 先收它，再收别的层）。 */
 $('#btnKc').addEventListener('click',()=>toggleKc());
+/* 事项（2026-11-24 用户）：HUD 左上一排的第三颗，徽标 = 未决条数。 */
+$('#btnItems').addEventListener('click',()=>toggleItemsWin());
 $('#lDebug').addEventListener('click',()=>{const jid=state.thread!=='main'?state.thread:(state.focusJob||state.jobs.find(j=>j.status==='blocked')?.id||state.jobs[0].id);state.detailJob=jid;state.detailTab='debug';openPanel('detail');});
 $('#btnProj').addEventListener('click',e=>{e.stopPropagation();togglePjPop();});
 /* 原型验收入口：点立绘 = 按 CLIPS 顺序播下一支（13 支循环）。
@@ -4335,7 +4757,7 @@ addEventListener('keydown',e=>{const inIn=e.target.closest('textarea,input');
  if(e.altKey&&e.key.toLowerCase()==='c'){e.preventDefault();setConMin(!state.conMin);return;}
  if(e.altKey&&e.key.toLowerCase()==='i'){e.preventDefault();toggleInbox();return;}
  if(e.altKey&&e.key==='1'){e.preventDefault();const f=[...openOps()].sort((a,b)=>OP_KIND[a.kind].pri-OP_KIND[b.kind].pri)[0];if(f){state.inboxOpen=true;state.inboxSel=f.id;state.inboxPick=null;renderInbox();Audio.sfx('open');}else toggleInbox(true);return;}
- if(e.key==='Escape'){if(bindState.open){closeBind();return;}if(state.addOpen){openAdd(false);return;}if(state.settings){closeSettings();return;}if(state.kcOpen){toggleKc(false);return;}if(state.doc){closeDocView();return;}if(state.notesOpen){toggleNotesWin(false);return;}if(state.twin){closeTree();return;}if(state.actOpen){if(state.actSel){state.actSel=null;renderActivityPop();}else toggleActPop(false);return;}if(state.conPop){closeConPop();return;}if(state.pjPop){state.pjPop=false;renderPjPop();return;}if(state.pop){closePops();return;}if(state.inboxOpen){if(state.inboxSel){state.inboxSel=null;state.inboxPick=null;renderInbox();}else toggleInbox(false);return;}if(state.brief){hideBanner();return;}if(state.relayJump){state.relayJump=false;renderPanel();return;}if(state.panel){closePanel();return;}if(!state.conMin){setConMin(true);return;}}
+ if(e.key==='Escape'){if(bindState.open){closeBind();return;}if(state.addOpen){openAdd(false);return;}if(state.settings){closeSettings();return;}if(state.kcOpen){toggleKc(false);return;}if(state.itemsOpen){toggleItemsWin(false);return;}if(state.doc){closeDocView();return;}if(state.notesOpen){toggleNotesWin(false);return;}if(state.twin){closeTree();return;}if(state.actOpen){if(state.actSel){state.actSel=null;renderActivityPop();}else toggleActPop(false);return;}if(state.conPop){closeConPop();return;}if(state.pjPop){state.pjPop=false;renderPjPop();return;}if(state.pop){closePops();return;}if(state.inboxOpen){if(state.inboxSel){state.inboxSel=null;state.inboxPick=null;renderInbox();}else toggleInbox(false);return;}if(state.brief){hideBanner();return;}if(state.relayJump){state.relayJump=false;renderPanel();return;}if(state.panel){closePanel();return;}if(!state.conMin){setConMin(true);return;}}
  if(!inIn&&state.inboxOpen&&state.inboxSel&&state.inboxPick!=null&&e.key==='Enter'){e.preventDefault();submitInbox(false);return;}
  if(!inIn&&state.inboxOpen&&state.inboxSel&&/^[1-9]$/.test(e.key)){const o=opOf(state.inboxSel);if(o&&o.status==='open'){const i=+e.key-1;if(o.options[i]){e.preventDefault();state.inboxPick=i;renderInbox();Audio.sfx('click');}}return;}
  if(!inIn&&/^[1-9]$/.test(e.key)&&state.thread!=='main'){const o=opForJob(state.thread);if(o){const i=+e.key-1;if(o.options[i]){e.preventDefault();resolveOp(o.id,o.options[i].label);}}}});
@@ -4349,8 +4771,14 @@ CHARV.addEventListener('playing',()=>{if(!CHARV.currentSrc.endsWith(CLIPS[state.
 CHARV.addEventListener('error',()=>{CHARV.style.opacity=0;});
 playClip(0,{fx:false});
 bindGrips();bindPanelWin();bindTwinWin();bindDocDrag();bindNotesFrame();bindKcFrame();renderBar();applyWinAlpha();
-/* 通讯台里点文档 chip → 打开文档查看器（事件委托，重渲染后仍然有效） */
-$('#conLog').addEventListener('click',e=>{const chip=e.target.closest('[data-doc]');if(!chip)return;e.preventDefault();e.stopPropagation();openDoc(chip.dataset.doc);});
+bindItemsFrame();renderItemBadge();renderQueue();
+/* 通讯台里点文档 chip → 打开文档查看器；点回执卡上的「完成 / 搁置」→ 关闭对应事项。
+   都是事件委托，重渲染后仍然有效。 */
+$('#conLog').addEventListener('click',e=>{
+ const chip=e.target.closest('[data-doc]');if(chip){e.preventDefault();e.stopPropagation();openDoc(chip.dataset.doc);return;}
+ const ok=e.target.closest('[data-rcpt-ok]');if(ok){closeReceipt(ok.dataset.rcptOk,'done');return;}
+ const dr=e.target.closest('[data-rcpt-drop]');if(dr){closeReceipt(dr.dataset.rcptDrop,'dropped');return;}
+});
 $('#scA').dataset.init='1';
 arrT=setTimeout(arriveNext,16000);
 scheduleWarp();

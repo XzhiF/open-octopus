@@ -22,7 +22,8 @@ import { useKcFeed } from '@/hooks/use-kc-feed'
 import { useKcFindings } from '@/hooks/use-kc-findings'
 import { useSessionIdentity } from '@/hooks/use-session-identity'
 import * as agentApi from '@/lib/agent/api'
-import type { AgentSession, AgentMessage } from '@/lib/agent/types'
+import type { AgentSession, AgentMessage, ChatSendMeta, ChatSeedMeta } from '@/lib/agent/types'
+import { CockpitItemReceipt } from '@/components/cockpit/items/CockpitItemReceipt'
 import type { RunningAgentSession } from '@/lib/agent/api'
 import { CwdPicker, type CwdChoice } from './cwd-picker'
 import { ChatArea, type ChatComposerBridge } from './ChatArea'
@@ -419,8 +420,11 @@ export function ChatPane({
   useEffect(() => {
     composerApiRef.current = { setModel, setEffort, setMaxContext, stopGenerate }
   })
-  const submitFromComposer = useCallback((text: string) => {
-    composerBridgeRef.current?.submit(text)
+  const submitFromComposer = useCallback((text: string, meta?: ChatSendMeta) => {
+    composerBridgeRef.current?.submit(text, meta)
+  }, [])
+  const seedFromComposer = useCallback((text: string, meta?: ChatSeedMeta) => {
+    composerBridgeRef.current?.seed(text, meta)
   }, [])
   const stopFromComposer = useCallback(() => {
     void composerApiRef.current.stopGenerate()
@@ -445,13 +449,14 @@ export function ChatPane({
     contextUsage: contextUsage ?? null,
     usage: sessionUsage ?? null,
     submit: submitFromComposer,
+    seed: seedFromComposer,
     stop: stopFromComposer,
     setModel: setModelStable,
     setEffort: setEffortStable,
     setContext: setContextStable,
   }), [
     model, effort, maxContext, streaming, queueDepth, sessionId, contextUsage, sessionUsage,
-    submitFromComposer, stopFromComposer, setModelStable, setEffortStable, setContextStable,
+    submitFromComposer, seedFromComposer, stopFromComposer, setModelStable, setEffortStable, setContextStable,
   ])
   useChatTelemetry(chatTelemetry, onTelemetry)
 
@@ -571,16 +576,25 @@ export function ChatPane({
 
   const extras = useCallback((msg: AgentMessage) => {
     const events = laneAByMsgId.get(msg.id)
-    if (!events || events.length === 0) return null
-    return events.map(e => <KcCard key={e.id} event={withCardStates(e)} ctx={ctx} />)
-  }, [laneAByMsgId, ctx, withCardStates])
+    // 2026-11-24 用户：事项投递的关项回执卡 —— 挂在那条带 via='items' 的 user 消息后。
+    const receipt = cabinId && msg.role === 'user' && msg.via === 'items' && msg.items && msg.items.length > 0
+      ? <CockpitItemReceipt cabinId={cabinId} message={msg} messages={messages} />
+      : null
+    if ((!events || events.length === 0) && !receipt) return null
+    return (
+      <>
+        {receipt}
+        {events?.map(e => <KcCard key={e.id} event={withCardStates(e)} ctx={ctx} />)}
+      </>
+    )
+  }, [laneAByMsgId, ctx, withCardStates, cabinId, messages])
 
   const tail = tailEvents.length > 0
     ? <div data-testid="chat-tab-card-tail">{tailEvents.map(e => <KcCard key={e.id} event={e} ctx={ctx} />)}</div>
     : null
 
   // Pending message when auto-creating a session (carries + panel clone consult)
-  const pendingMessageRef = useRef<{ message: string; subagents?: ChatSubagentRef[] } | null>(null)
+  const pendingMessageRef = useRef<{ message: string; subagents?: ChatSubagentRef[]; meta?: ChatSendMeta } | null>(null)
   // Task-thread first message (bug 2026-10-29): a task's first turn must wait
   // until the task row exists (server derives the task-author identity from
   // task state). The plain "session ready → send pending" effect would fire the
@@ -595,6 +609,7 @@ export function ChatPane({
     sessionId: string
     message: string
     subagents?: ChatSubagentRef[]
+    meta?: ChatSendMeta
   } | null>(null)
   // 新会话（hero）里选的身份：还没有 session 可写角色卡，先存在本地，
   // 第一条消息创建会话后立刻写入，再发消息（否则第一轮会用基础身份）。
@@ -630,7 +645,7 @@ export function ChatPane({
     pendingIdentityRef.current = null
     setPendingIdentity(null)
     const fire = () => requestAnimationFrame(() => sendMessage(pending.message, {
-      model, effort, maxContext, subagents: pending.subagents,
+      model, effort, maxContext, subagents: pending.subagents, meta: pending.meta,
     }))
     if (!identityToApply) {
       fire()
@@ -652,18 +667,18 @@ export function ChatPane({
     pendingMessageRef.current = null
     setPendingTaskSend(null)
     sendMessage(pending.message, {
-      model, effort, maxContext, subagents: pending.subagents,
+      model, effort, maxContext, subagents: pending.subagents, meta: pending.meta,
     })
   }, [pendingTaskSend, sessionId, sendMessage, model, effort, maxContext])
 
-  const handleSendMessage = useCallback((message: string, opts?: { subagents?: ChatSubagentRef[] }) => {
+  const handleSendMessage = useCallback((message: string, opts?: { subagents?: ChatSubagentRef[]; meta?: ChatSendMeta }) => {
     if (!pendingTaskSession) {
       if (sessionId) {
-        sendMessage(message, { model, effort, maxContext, subagents: opts?.subagents })
+        sendMessage(message, { model, effort, maxContext, subagents: opts?.subagents, meta: opts?.meta })
       } else {
         // First prompt creates the session (lazy). cwd/workspace is chosen here,
         // not when the empty "+" tab was opened.
-        pendingMessageRef.current = { message, subagents: opts?.subagents }
+        pendingMessageRef.current = { message, subagents: opts?.subagents, meta: opts?.meta }
         // 没手动挑目录时把身份带下去：服务端把 cwd 落在该分身自己的工作区，
         // 而不是所有分身都挤在 Main Agent 的目录里。
         const identityClone = pendingIdentityRef.current?.name
@@ -694,7 +709,7 @@ export function ChatPane({
         // Hold the plain send-effect and the transcript reload: this message
         // belongs to the task thread and needs the task row in place first.
         taskSendPendingRef.current = true
-        pendingMessageRef.current = { message, subagents: opts?.subagents }
+        pendingMessageRef.current = { message, subagents: opts?.subagents, meta: opts?.meta }
         const created = await createNewSession(
           taskCwd.kind === 'default'
             ? undefined
@@ -725,7 +740,7 @@ export function ChatPane({
         // Send from the render that has `sid` as the hook's session — the
         // closure captured here still holds the pre-create null id (2026-10-29
         // bug: the turn silently never started, only a refresh showed it).
-        setPendingTaskSend({ sessionId: sid, message, subagents: opts?.subagents })
+        setPendingTaskSend({ sessionId: sid, message, subagents: opts?.subagents, meta: opts?.meta })
       } catch (err: unknown) {
         taskSendPendingRef.current = false
         pendingMessageRef.current = null

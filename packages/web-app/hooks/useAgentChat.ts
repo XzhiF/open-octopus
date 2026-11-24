@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, useCallback, useRef, useEffect } from 'react'
-import type { AgentMessage, ToolCallRecord, ContextUsageData } from '@/lib/agent/types'
+import type { AgentMessage, ToolCallRecord, ContextUsageData, ChatSendMeta } from '@/lib/agent/types'
 import type { ComposerContext, ComposerEffort } from '@/lib/agent/composer-settings'
 import * as api from '@/lib/agent/api'
 import { useSSEConnection, type SSEHandlers } from '@/lib/agent/sse'
@@ -29,6 +29,8 @@ export type ChatSendOptions = {
   effort?: ComposerEffort
   maxContext?: ComposerContext
   subagents?: ChatSubagentRef[]
+  /** 事项投递来源（via='items' + itemIds）；服务端写进 user message metadata。 */
+  meta?: ChatSendMeta
 }
 
 /** Transcript reload banner text — cleared by any later successful load. */
@@ -604,6 +606,9 @@ export function useAgentChat(sessionId: string | null, options?: {
       is_summary: false,
       is_compressed: false,
       is_edited: false,
+      ...(opts?.meta?.via === 'items' && opts.meta.itemIds && opts.meta.itemIds.length > 0
+        ? { via: 'items', items: opts.meta.itemIds }
+        : {}),
     }
     setMessages(prev => [...prev, userMsg])
     setStreaming(true)
@@ -633,6 +638,7 @@ export function useAgentChat(sessionId: string | null, options?: {
       effort: opts?.effort,
       maxContext: opts?.maxContext,
       subagents: opts?.subagents,
+      meta: opts?.meta,
     })
 
     const handlers: SSEHandlers = {

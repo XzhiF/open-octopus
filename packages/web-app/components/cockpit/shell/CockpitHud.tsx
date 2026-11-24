@@ -32,6 +32,7 @@ import { useCabinUsage } from '../bridge/use-cabin-usage'
 import { SCENES } from '../scene/scene-model'
 import { cabinAudio } from '@/lib/cabin-audio'
 import { toggleCockpitNotes, useCockpitNotesOpen, useQuickNoteCount } from './notes-store'
+import { toggleCabinItems, useCabinItems, useCabinItemsOpen } from '../items/items-store'
 
 /** 金额读数拆成「符号进六角、数字进 b」——原型 ¥ 徽 + 1.28。 */
 function splitCost(label: string): { unit: string; value: string } {
@@ -49,6 +50,8 @@ export function CockpitHud() {
   const currency = useBillingCurrency()
   const notesOpen = useCockpitNotesOpen()
   const noteCount = useQuickNoteCount()
+  const itemsOpen = useCabinItemsOpen()
+  const items = useCabinItems(entryCabinId)
 
   const {
     projects, loading: projectsLoading, error: projectsError, refetch: refetchProjects,
@@ -109,6 +112,30 @@ export function CockpitHud() {
       >
         <span className="ck12-hud-classic-i" aria-hidden="true">⚛</span>
         <b>知识中心</b>
+      </button>
+
+      {/* 2026-11-24 用户：事项 —— 舱内零散小待办（优化 / 修复 / 想法）。
+          徽标 = 未决条数（todo + delivered）；点开是舱内事项窗，投递给主对话。 */}
+      <button
+        type="button"
+        className={`ck12-hud-classic ck12-hud-items${itemsOpen ? ' on' : ''}`}
+        onClick={() => {
+          toggleCabinItems()
+          cabinAudio.blip(660, 0.04)
+        }}
+        title="事项 · 舱内小待办（投递给主对话 · 完成留记录）"
+        aria-label="打开事项"
+        aria-expanded={itemsOpen}
+        aria-haspopup="dialog"
+        data-testid="cockpit-items"
+      >
+        <span className="ck12-hud-classic-i" aria-hidden="true">☑</span>
+        <b>事项</b>
+        {items.open > 0 && (
+          <i className="ck12-itn" data-testid="cockpit-items-badge">
+            {items.open > 99 ? '99+' : items.open}
+          </i>
+        )}
       </button>
 
       <CockpitProjectsPopover
