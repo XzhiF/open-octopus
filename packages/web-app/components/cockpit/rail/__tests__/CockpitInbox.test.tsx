@@ -153,6 +153,22 @@ describe('CockpitRightRail · 待办（v22 #5 一级动作）', () => {
     expect(screen.getByTestId('cockpit-inbox-chip').className).toMatch(/is-zero/)
   })
 
+  it('浮层打开时右栏走共享 z 栈：每次重开都压过已抬高的主 chat（用户 #1）', () => {
+    fleetState.value = fleet([row('a1')])
+    render(ui())
+    const rail = screen.getByTestId('cockpit-right-rail')
+    expect(rail.style.zIndex).toBe('')
+
+    fireEvent.click(screen.getByTestId('cockpit-inbox-chip'))
+    const first = Number(rail.style.zIndex)
+    expect(first).toBeGreaterThan(0)
+
+    // 关掉再开 → 重新取号，必须比上一次更高（主 chat 的 z 会一直涨）。
+    fireEvent.click(screen.getByTestId('cockpit-inbox-chip'))
+    fireEvent.click(screen.getByTestId('cockpit-inbox-chip'))
+    expect(Number(rail.style.zIndex)).toBeGreaterThan(first)
+  })
+
   it('点 chip 开浮层：✕ 在头部最左，按 待你定/待验收/受阻 分组', () => {
     fleetState.value = fleet([
       row('a1', { stage: 'answer' }),

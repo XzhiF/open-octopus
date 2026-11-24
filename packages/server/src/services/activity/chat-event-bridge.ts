@@ -1420,6 +1420,88 @@ class ChatEventBridge {
     }
   }
 
+  /** 2026-11-24 用户 #2：任务 / 委派线程里的一轮回复 → 舱主会话的只读回传卡。
+   *
+   *  汐音派出去的任务，人可能直接在任务 chat 里跟执行者交互；那条线的回复原先
+   *  只有该线程自己看得到，汐音完全无感（设计断路）。这里在回合收尾时把
+   *  「人说了什么 + agent 回了什么」压成一张 event 卡落进主会话：零 LLM、不唤醒，
+   *  下一轮她自然在转录里看到；要展开就点编队 / 详情进那条线程。
+   *
+   *  wake 回合（汐音转达 / 恢复 / 引导）的回复同样回传 —— 那正是
+   *  「汐音 → 任务 agent」这条路的回声；系统指令不作为「你说了什么」写进来。 */
+  requestThreadReplyMirror(input: {
+    sessionId: string
+    messageId: string
+    userText: string
+    replyText: string
+  }): void {
+    if (!this.db) return
+    const subject = this.resolveAskSubject(input.sessionId)
+    if (!subject?.mainSessionId || subject.mainSessionId === input.sessionId) return
+
+    const clip = (text: string, max: number) => {
+      const flat = text.replace(/\s+/g, " ").trim()
+      return flat.length > max ? `${flat.slice(0, max)}…` : flat
+    }
+    const reply = input.replyText.replace(/\s+/g, " ").trim()
+    // 纯应答（「收到 / 好」）不值得占主会话上下文；有实质内容的才回传。
+    if (reply.length < 20) return
+
+    try {
+      const dup = this.db.prepare(
+        "SELECT 1 FROM messages WHERE session_id = ? AND metadata LIKE ? LIMIT 1",
+      ).get(subject.mainSessionId, `%"threadReplyMessageId":"${input.messageId}"%`)
+      if (dup) return
+    } catch { return }
+
+    const now = new Date().toISOString()
+    const replyExcerpt = clip(input.replyText, 520)
+    const userExcerpt = clip(input.userText, 160)
+    const title = `${subject.handle} ${subject.title} · 回复`
+    try {
+      this.db.prepare(
+        "INSERT INTO messages (id, session_id, role, content, metadata, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+      ).run(
+        randomUUID(),
+        subject.mainSessionId,
+        "user",
+        // 第 2 行是 TUI 事件卡显示的摘要（回复本身）；用户原话紧随其后，
+        // 只在转录里给模型看，不在卡面重复。wake 回合没有「你说了什么」。
+        `[任务回复] ${subject.handle} ${subject.title}\n↳ ${replyExcerpt}` +
+          (userExcerpt ? `\n你：${userExcerpt}` : ''),
+        JSON.stringify({
+          displayType: "event",
+          activity: {
+            kind: "cabin.thread_reply",
+            severity: "info",
+            title,
+            message: replyExcerpt,
+            workspaceId: subject.workspaceId,
+            // 不带 status：带 status + taskId 会被前端当任务状态卡接管。
+            taskId: null,
+            payload: {
+              threadReply: {
+                threadReplyMessageId: input.messageId,
+                sessionId: input.sessionId,
+                subject: subject.subject,
+                handle: subject.handle,
+                title: subject.title,
+                chars: reply.length,
+                at: now,
+              },
+            },
+          },
+        }),
+        now,
+      )
+      this.db.prepare(
+        "UPDATE sessions SET last_message_at = ?, updated_at = ? WHERE id = ?",
+      ).run(now, now, subject.mainSessionId)
+      // 开着的主对话立即刷新（零 LLM、不唤醒）。
+      this.notifySession(subject.mainSessionId, subject.workspaceId)
+    } catch { /* best effort：回传失败不影响线程本身 */ }
+  }
+
   /** design 24 §5：答完留一条回执（幂等键 = askMessageId），刷新/换设备也在。 */
   private appendAskReceipt(input: {
     sessionId: string

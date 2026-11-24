@@ -1332,6 +1332,20 @@ export function createChatRoutes(deps: ChatRouteDeps): Hono {
         }
         sessionDao.updateLastMessageAt(sessionId, assistantNow)
 
+        // 2026-11-24 用户 #2：任务 / 委派线程的一轮回复回传舱主会话（汐音）。
+        // 人在任务 chat 里直接跟执行者交互、或汐音转达后执行者的回应，原先这条线
+        // 对汐音完全不可见 —— 这里落一张只读 event 卡（零 LLM、不唤醒）。
+        // wake 回合也回传（汐音 → 任务 agent 这条路的回复正是要看的），
+        // 但 wake 的系统指令不作为「你说了什么」展示。
+        try {
+          getChatEventBridge().requestThreadReplyMirror({
+            sessionId,
+            messageId: assistantMsgId,
+            userText: body.wake ? '' : message,
+            replyText: fullContent,
+          })
+        } catch { /* bridge not attached (unit tests) — 回传是增强，不阻断本轮 */ }
+
         turnDebug?.finish({ status: 'ok', assistantMessageId: assistantMsgId })
         autoGenerateTitle(sessionId, org, message, sessionDao)
         recordDebugLog(assistantMsgId, sessionId, assistantNow, fullContent.length, 'chat', orchestrationResult, orchestrationFullResult, org)

@@ -7,6 +7,7 @@
 // attention 里已经消失的 id 会被清出集合，避免无限增长。
 
 import { useCallback, useEffect, useMemo, useState } from 'react'
+import { nextZ } from '@/components/cabin/z-order'
 import { startDecisionKey } from '@/components/cabin/asks/start-window'
 import { useCockpitFleet } from '../fleet/CockpitFleetProvider'
 import { useCockpitState } from '../state/CockpitStateProvider'
@@ -25,6 +26,14 @@ export function CockpitRightRail() {
   const [answered, setAnswered] = useState<ReadonlySet<string>>(() => new Set())
   /** 待放行：已执行成功的 decision key（同一 attention id 换动作时不能一起藏）。 */
   const [startDecided, setStartDecided] = useState<ReadonlySet<string>>(() => new Set())
+  /** 右栏层级（2026-11-24 用户 #1）：主 chat 每次 pointerdown 都会 nextZ() 抬层，
+   *  固定 160 的右栏聊上几十轮就被埋 —— 「要我处理」浮层点开却落在主 chat 后面。
+   *  浮层开合与右栏内交互都走共享 z 栈：新点开的永远在最上层。 */
+  const [z, setZ] = useState<number | null>(null)
+  const bumpZ = useCallback(() => setZ(nextZ()), [])
+  useEffect(() => {
+    if (inboxOpen || activityOpen) bumpZ()
+  }, [inboxOpen, activityOpen, bumpZ])
 
   const markAnswered = useCallback((id: string) => {
     setAnswered((prev) => {
@@ -100,7 +109,14 @@ export function CockpitRightRail() {
   }, [refetch])
 
   return (
-    <aside className="ck12-rightrail" aria-label="待办与主菜单" data-testid="cockpit-right-rail">
+    <aside
+      className="ck12-rightrail"
+      aria-label="待办与主菜单"
+      data-testid="cockpit-right-rail"
+      style={z != null ? { zIndex: z } : undefined}
+      // 浮层开着时点它（选行 / 切换卡片）→ 再抬一次，别被聚焦的主 chat 反压。
+      onPointerDownCapture={() => { if (inboxOpen || activityOpen) bumpZ() }}
+    >
       <CockpitAttentionChip counts={counts} />
       {inboxOpen && (
         <CockpitInboxPopover
