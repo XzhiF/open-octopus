@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useMemo, useEffect, useRef } from "react"
+import { useState, useMemo, useEffect, useRef, useId } from "react"
 import type { ChatMessage } from "@/lib/types"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
@@ -115,6 +115,11 @@ function formatChatAboutContent(
 
 export function QuestionCard({ message, onAnswer, disabled }: QuestionCardProps) {
   const questions = useMemo(() => parseQuestions(message.toolInput), [message.toolInput])
+  // 2026-11-24 用户（prod）：同一条 chat 可能同时挂着多张提问卡（旧问题没答又来了
+  // 新问题）。<label htmlFor> 是按全局 DOM id 找控件的，id 不按实例隔离时，点新卡
+  // 「其他」会命中文档里第一张旧卡的同名单选框，焦点被送回旧卡并滚过去 —— 当前卡
+  // 反而答不上。用 useId 给每张卡的控件做实例前缀。
+  const uid = useId()
   const [answers, setAnswers] = useState<Record<number, string | string[]>>({})
   const [otherInputs, setOtherInputs] = useState<Record<string, string>>({})
   const [submitted, setSubmitted] = useState(false)
@@ -280,7 +285,7 @@ export function QuestionCard({ message, onAnswer, disabled }: QuestionCardProps)
                       return (
                         <label
                           key={optIndex}
-                          htmlFor={`aq-${qIndex}-${optIndex}`}
+                          htmlFor={`${uid}-aq-${qIndex}-${optIndex}`}
                           className={cn(
                             "flex items-start gap-2 px-2 py-1.5 rounded-md transition-colors",
                             phase === "answered"
@@ -290,7 +295,7 @@ export function QuestionCard({ message, onAnswer, disabled }: QuestionCardProps)
                           )}
                         >
                           <Checkbox
-                            id={`aq-${qIndex}-${optIndex}`}
+                            id={`${uid}-aq-${qIndex}-${optIndex}`}
                             checked={isSelected}
                             onCheckedChange={() => handleMultiSelect(qIndex, opt.label)}
                             disabled={phase !== "ready"}
@@ -309,7 +314,7 @@ export function QuestionCard({ message, onAnswer, disabled }: QuestionCardProps)
                     })}
                     {/* 其他（CLI 的 __other__）：可与任意选项同时勾选 */}
                     <label
-                      htmlFor={`aq-${qIndex}-other`}
+                      htmlFor={`${uid}-aq-${qIndex}-other`}
                       className={cn(
                         "flex items-start gap-2 px-2 py-1.5 rounded-md transition-colors",
                         phase === "answered"
@@ -319,7 +324,7 @@ export function QuestionCard({ message, onAnswer, disabled }: QuestionCardProps)
                       )}
                     >
                       <Checkbox
-                        id={`aq-${qIndex}-other`}
+                        id={`${uid}-aq-${qIndex}-other`}
                         checked={otherSelected}
                         onCheckedChange={() => selectOther(qIndex, q)}
                         disabled={phase !== "ready"}
@@ -360,7 +365,7 @@ export function QuestionCard({ message, onAnswer, disabled }: QuestionCardProps)
                       return (
                         <label
                           key={optIndex}
-                          htmlFor={`aq-${qIndex}-${optIndex}`}
+                          htmlFor={`${uid}-aq-${qIndex}-${optIndex}`}
                           className={cn(
                             "flex items-start gap-2 px-2 py-1.5 rounded-md transition-colors",
                             phase === "answered"
@@ -370,7 +375,7 @@ export function QuestionCard({ message, onAnswer, disabled }: QuestionCardProps)
                           )}
                         >
                           <RadioGroupItem
-                            id={`aq-${qIndex}-${optIndex}`}
+                            id={`${uid}-aq-${qIndex}-${optIndex}`}
                             value={opt.label}
                             className="mt-0.5 shrink-0"
                           />
@@ -387,7 +392,7 @@ export function QuestionCard({ message, onAnswer, disabled }: QuestionCardProps)
                     })}
                     {/* 其他（CLI 的 __other__）：输入的文本就是答案 */}
                     <label
-                      htmlFor={`aq-${qIndex}-other`}
+                      htmlFor={`${uid}-aq-${qIndex}-other`}
                       className={cn(
                         "flex items-start gap-2 px-2 py-1.5 rounded-md transition-colors",
                         phase === "answered"
@@ -397,7 +402,7 @@ export function QuestionCard({ message, onAnswer, disabled }: QuestionCardProps)
                       )}
                     >
                       <RadioGroupItem
-                        id={`aq-${qIndex}-other`}
+                        id={`${uid}-aq-${qIndex}-other`}
                         value={otherLabel}
                         className="mt-0.5 shrink-0"
                       />

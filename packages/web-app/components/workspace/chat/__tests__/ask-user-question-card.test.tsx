@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest'
-import { render, screen, fireEvent } from '@testing-library/react'
+import { render, screen, fireEvent, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { AskUserQuestionCard } from '../ask-user-question-card'
 
@@ -259,6 +259,35 @@ describe("AskUserQuestionCard", () => {
 
     expect(screen.getByText(/定义自动化任务流程/)).toBeInTheDocument()
     expect(screen.getByText(/GitHub Actions CI\/CD 流程配置/)).toBeInTheDocument()
+  })
+
+  // 2026-11-24 用户（prod）：旧问题还没答、又来了新问题 —— 两张卡同屏时，
+  // 点新卡的「其他」，<label htmlFor> 不能被解析到旧卡里同 id 的控件（浏览器会把
+  // 焦点送回旧卡并滚过去，聊天记录整个跳回上面）。控件 id 必须按卡片实例隔离。
+  it("两张卡同屏：控件 id 不重复，点第二张「其他」只作用于第二张", async () => {
+    const user = userEvent.setup()
+    const first = render(
+      <AskUserQuestionCard message={makeMessage(singleSelectQuestions)} onAnswer={vi.fn()} />,
+    )
+    const second = render(
+      <AskUserQuestionCard message={makeMessage(singleSelectQuestions)} onAnswer={vi.fn()} />,
+    )
+
+    const idsOf = (el: HTMLElement) =>
+      [...el.querySelectorAll<HTMLElement>("[id]")].map((node) => node.id)
+    const firstIds = idsOf(first.container)
+    const secondIds = idsOf(second.container)
+    expect(firstIds.length).toBeGreaterThan(0)
+    expect(secondIds.filter((id) => firstIds.includes(id))).toEqual([])
+
+    // 第二张卡里每个 label 都指向自己卡内的控件。
+    for (const label of second.container.querySelectorAll<HTMLLabelElement>("label[for]")) {
+      expect(second.container.contains(document.getElementById(label.htmlFor))).toBe(true)
+    }
+
+    await user.click(within(second.container).getByText("其他"))
+    expect(within(second.container).getByTestId("aq-other-input-0")).toBeInTheDocument()
+    expect(within(first.container).queryByTestId("aq-other-input-0")).toBeNull()
   })
 
   })

@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from "vitest"
-import { render, screen, act } from "@testing-library/react"
+import { render, screen, act, within } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 import { QuestionCard } from "../question-card"
 
@@ -266,6 +266,34 @@ describe("QuestionCard", () => {
 
       expect(screen.getByText(/定义自动化任务流程/)).toBeInTheDocument()
       expect(screen.getByText(/GitHub Actions CI\/CD 流程配置/)).toBeInTheDocument()
+    })
+
+    // 2026-11-24 用户（prod）：旧问题没答、新问题又来了 —— 两张卡同屏时，点新卡
+    // 的「其他」不能被 <label htmlFor> 解析到旧卡同 id 的控件（会把焦点和视口送回
+    // 旧卡）。控件 id 必须按卡片实例隔离。
+    it("两张卡同屏：控件 id 不重复，点第二张「其他」只作用于第二张", async () => {
+      const user = userEvent.setup()
+      const first = render(
+        <QuestionCard message={makeMessage(singleSelectQuestions)} onAnswer={vi.fn()} />,
+      )
+      const second = render(
+        <QuestionCard message={makeMessage(singleSelectQuestions)} onAnswer={vi.fn()} />,
+      )
+
+      const idsOf = (el: HTMLElement) =>
+        [...el.querySelectorAll<HTMLElement>("[id]")].map((node) => node.id)
+      const firstIds = idsOf(first.container)
+      const secondIds = idsOf(second.container)
+      expect(firstIds.length).toBeGreaterThan(0)
+      expect(secondIds.filter((id) => firstIds.includes(id))).toEqual([])
+
+      for (const label of second.container.querySelectorAll<HTMLLabelElement>("label[for]")) {
+        expect(second.container.contains(document.getElementById(label.htmlFor))).toBe(true)
+      }
+
+      await user.click(within(second.container).getByText("其他"))
+      expect(within(second.container).getByTestId("aq-other-input-0")).toBeInTheDocument()
+      expect(within(first.container).queryByTestId("aq-other-input-0")).toBeNull()
     })
 
     it("shows empty state for missing questions", () => {
