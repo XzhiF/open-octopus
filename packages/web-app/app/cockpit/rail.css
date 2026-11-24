@@ -365,7 +365,13 @@
   border-radius: 50%;
   background: var(--ck12-green);
   box-shadow: 0 0 6px var(--ck12-green);
-  animation: ck12-np 1.6s infinite;
+}
+/* 作者在等后台任务（回合还活着，只是模型空闲）：点与字转琥珀色。 */
+.ck12-fltime.is-bgw,
+.ck12-fltime.is-bgw::before { color: var(--ck12-amber); }
+.ck12-fltime.is-bgw::before {
+  background: var(--ck12-amber);
+  box-shadow: 0 0 6px var(--ck12-amber);
 }
 .ck12-flrow.is-wait .ck12-flsub { color: color-mix(in srgb, var(--ck12-amber) 80%, var(--ck12-ink2)); }
 .ck12-flrow.is-blocked .ck12-flsub { color: color-mix(in srgb, var(--ck12-red) 75%, var(--ck12-ink2)); }
@@ -413,24 +419,81 @@
   background: rgba(46, 230, 214, 0.16);
 }
 .ck12-flact.is-pri { color: color-mix(in srgb, var(--ck12-teal) 78%, var(--ck12-ink2)); }
+/* 未读徽标挂在按钮**外面**的包层：按钮本身是六边形 clip-path，徽标挂里面会被裁掉一半。 */
+.ck12-flactwrap {
+  position: relative;
+  flex: none;
+  display: block;
+  width: 21px;
+  height: 23px;
+}
 .ck12-flact-und {
   position: absolute;
-  top: -3px;
-  right: -3px;
-  min-width: 12px;
-  height: 12px;
-  padding: 0 2px;
+  top: -4px;
+  right: -5px;
+  min-width: 13px;
+  height: 13px;
+  padding: 0 3px;
   border-radius: 999px;
   background: var(--ck12-red);
   color: #fff;
   font-style: normal;
   font-family: var(--font-mono);
-  font-size: 7px;
+  font-size: 7.5px;
   font-weight: 800;
+  line-height: 1;
   display: grid;
   place-items: center;
-  box-shadow: 0 0 7px rgba(255, 59, 92, 0.6);
+  box-shadow: 0 0 7px rgba(255, 59, 92, 0.6), 0 0 0 1px rgba(16, 13, 40, 0.75);
 }
+/* 2026-11-24 用户：干活的编队行不再闪动 —— 静态青色左缘 + 进度条连续滚动。
+   · 有真实进度（作战中）：真实进度条 + 一道缓行流光（连续，不闪）；
+   · agent 在跑但没有真实进度（待验收 / 待命 / 受阻里作者在推进）：底部不定长滚动条。
+   选中行保留自己的强调色左缘，不被流动态盖掉。 */
+.ck12-flrow.is-flow {
+  border-color: color-mix(in srgb, var(--ck12-teal) 34%, rgba(185, 179, 217, 0.13));
+}
+.ck12-flrow.is-flow:not(.is-on)::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 20%;
+  bottom: 20%;
+  width: 2px;
+  border-radius: 2px;
+  background: var(--ck12-teal);
+  box-shadow: 0 0 8px color-mix(in srgb, var(--ck12-teal) 65%, transparent);
+  pointer-events: none;
+}
+.ck12-flbar.is-live { background: rgba(46, 230, 214, 0.1); }
+.ck12-flbar.is-live i {
+  display: block;
+  width: 40%;
+  height: 100%;
+  background: linear-gradient(90deg, transparent, var(--ck12-teal), transparent);
+  box-shadow: 0 0 8px var(--ck12-teal);
+  animation: ck12-flbar 2.6s linear infinite;
+}
+@keyframes ck12-flbar {
+  0% { transform: translateX(-105%); }
+  100% { transform: translateX(255%); }
+}
+.ck12-flbar.is-run i { position: relative; overflow: hidden; }
+.ck12-flbar.is-run i::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: -35%;
+  width: 35%;
+  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.5), transparent);
+  animation: ck12-runflow 2.4s linear infinite;
+}
+@keyframes ck12-runflow {
+  0% { left: -35%; }
+  100% { left: 100%; }
+}
+
 /* 这条作战的 chat 窗开着：行框亮一点，和详情选中态区分（选中 = is-on）。 */
 .ck12-flrow.is-chat { border-color: rgba(46, 230, 214, 0.45); }
 .ck12-flrow:focus-visible { outline: 1px solid var(--ck12-teal); outline-offset: 1px; }
@@ -592,6 +655,12 @@
   .ck12-flrow.is-wait::after { background: var(--ck12-amber); }
   .ck12-flrow.is-blocked::after { background: var(--ck12-red); animation: ck12-np 1.5s infinite; }
   .ck12-flrow.is-done::after { background: var(--ck12-green); }
+  /* 极窄档：干活行用静态青点代替（优先于上面的状态点）。 */
+  .ck12-flrow.is-flow::after {
+    background: var(--ck12-teal);
+    box-shadow: 0 0 7px var(--ck12-teal);
+    animation: none;
+  }
   .ck12-fr-foot { padding: 4px 3px; }
   .ck12-fr-more { font-size: 8px; padding: 0 3px; gap: 3px; }
   .ck12-fr-more-l { display: none; }
@@ -647,5 +716,14 @@
   .ck12-flrow.is-blocked::after,
   .ck12-fltime::before,
   .ck12-fr-live { animation: none; }
+  /* 滚动条改成静态读数：不定长条铺满浅青，流光不再跑。 */
+  .ck12-flbar.is-live i {
+    animation: none;
+    width: 100%;
+    transform: none;
+    background: rgba(46, 230, 214, 0.45);
+    box-shadow: none;
+  }
+  .ck12-flbar.is-run i::after { animation: none; display: none; }
   .ck12-rail { transition: none; }
 }

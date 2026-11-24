@@ -19,7 +19,9 @@ import type { CabinDelegationView } from '@/lib/cabin-api'
 import { formatRunClock } from '@/lib/format'
 import { useCockpitFleet } from '../fleet/CockpitFleetProvider'
 import {
+  fleetStageOf,
   fleetStatusOf,
+  isLiveRow,
   sortFleet,
   statusLabel,
   type CockpitRow,
@@ -123,21 +125,26 @@ function startedAtOf(row: CockpitRow): number | null {
   return Number.isNaN(at) ? null : at
 }
 
-/** v22 #6（2026-11-23 用户）：作战中的活秒表 —— 每秒 +1，同流式卡的 ⏱ 读数。
- *  自带 interval，只有这一格文本重渲染，整条编队不跟着每秒重建。 */
-function RunClock({ start }: { start: number }) {
+/** v22 #6（2026-11-23 用户）：干活行的活秒表 —— 每秒 +1，同流式卡的 ⏱ 读数。
+ *  v23 十六轮（2026-11-24 用户）：口径统一成「已作战」= job 起点 → now，
+ *  作战中 / 待验收在跑 / 待命在跑 共用；≥1h 只显示 h:mm（完整值在 title）。
+ *  自带 interval，只有这一格文本重渲染，整条编队不跟着每秒重建。
+ *  backgroundWait = 作者在等后台任务：点与字转琥珀色（仍是静态，不闪）。 */
+function RunClock({ start, backgroundWait = false }: { start: number; backgroundWait?: boolean }) {
   const [now, setNow] = useState(() => Date.now())
   useEffect(() => {
     setNow(Date.now())
     const timer = window.setInterval(() => setNow(Date.now()), 1000)
     return () => window.clearInterval(timer)
   }, [start])
-  const label = formatRunClock(Math.max(0, now - start))
+  const ms = Math.max(0, now - start)
+  const label = formatRunClock(ms, { compact: true })
+  const full = formatRunClock(ms)
   return (
     <span
-      className="ck12-fltime"
+      className={`ck12-fltime${backgroundWait ? ' is-bgw' : ''}`}
       data-testid="cockpit-rail-clock"
-      title={`已作战 ${label} · 每秒走字 = 还活着`}
+      title={`已作战 ${full} · ${backgroundWait ? '作者在等后台，回合还活着' : '每秒走字 = 还活着'}`}
     >
       ⏱ {label}
     </span>
@@ -368,9 +375,18 @@ export function CockpitFleetRail() {
         {shown.map((row) => {
           const ref = rowRef(row)
           const selected = ref ? sameCockpitRef(selection, ref) : false
-          const status = fleetStatusOf(row)
+          // stage = 生命周期口径（chip / 行色 / 窄栏点）；live = 真有 agent 在干活。
+          // 待验收的作者还在推进时不改 chip，只加流动态 + 统一秒表。
+          const stage = fleetStageOf(row)
+          const live = isLiveRow(row)
           const pct = pctOf(row)
-          const startedAt = status === 'run' ? startedAtOf(row) : null
+          const startedAt = live ? startedAtOf(row) : null
+          const backgroundWait = live && row.kind === 'job' && row.live_phase === 'background-wait'
+          const liveText = live ? (backgroundWait ? '作者在等后台' : '作者在跑') : null
+          const showBar = stage !== 'done' && (live || pct !== null)
+          /** 没有真实进度（pct=null）的干活行：底部用不定长滚动条，不猜百分比。 */
+          const indeterminate = live && pct === null
+          const statusText = statusTextOf(row, stage)
           const accent = accentOf(row)
           const title = titleOf(row)
           const talkable = byKey.has(row.key)
@@ -385,11 +401,11 @@ export function CockpitFleetRail() {
               aria-selected={selected}
               tabIndex={-1}
               data-testid={`cockpit-rail-row-${row.key}`}
-              data-tone={status}
+              data-tone={stage}
               title={talkable
-                ? `${title} · ${statusTextOf(row, status)} · 点行进对话`
-                : `${title} · ${statusTextOf(row, status)} · 点击看详情`}
-              className={`ck12-flrow is-${status}${selected ? ' is-on' : ''}${
+                ? `${title} · ${statusText}${liveText ? ` · ${liveText}` : ''} · 点行进对话`
+                : `${title} · ${statusText}${liveText ? ` · ${liveText}` : ''} · 点击看详情`}
+              className={`ck12-flrow is-${stage}${live ? ' is-flow' : ''}${selected ? ' is-on' : ''}${
                 chatOpen ? ' is-chat' : ''
               }${popped.has(row.key) ? ' is-pop' : ''}${flash.key === row.key ? ` is-arrived-${flash.nonce % 2}` : ''}`}
               style={{ ['--accent' as string]: accent, ['--p' as string]: String(pct ?? 0) }}
@@ -409,18 +425,28 @@ export function CockpitFleetRail() {
               <span className="ck12-flbody">
                 <span className="ck12-fltop">
                   <b className="ck12-fl-title">{title}</b>
-                  {pct !== null && status !== 'done' && (
+                  {pct !== null && stage !== 'done' && (
                     <span className="ck12-flpct">{Math.round(pct)}%</span>
                   )}
                 </span>
                 <span className="ck12-flsub">
-                  <span className={`ck12-flst is-${status}`}>{statusTextOf(row, status)}</span>
-                  <span className="ck12-flsub-t">{subOf(row, status)}</span>
-                  {startedAt !== null && <RunClock start={startedAt} />}
+                  <span className={`ck12-flst is-${stage}`}>{statusText}</span>
+                  {/* 干活行把副行让给秒表（细节在悬停 title），避免和计时抢宽度。 */}
+                  {!live && <span className="ck12-flsub-t">{subOf(row, stage)}</span>}
+                  {startedAt !== null && (
+                    <RunClock start={startedAt} backgroundWait={backgroundWait} />
+                  )}
                 </span>
-                {pct !== null && status !== 'done' && (
-                  <span className="ck12-flbar" aria-hidden="true">
-                    <i style={{ width: `${Math.max(0, Math.min(100, pct))}%` }} />
+                {showBar && (
+                  <span
+                    className={`ck12-flbar${indeterminate ? ' is-live' : live ? ' is-run' : ''}`}
+                    aria-hidden="true"
+                  >
+                    <i
+                      style={indeterminate
+                        ? undefined
+                        : { width: `${Math.max(0, Math.min(100, pct ?? 0))}%` }}
+                    />
                   </span>
                 )}
               </span>
@@ -428,20 +454,25 @@ export function CockpitFleetRail() {
               {showActs && (
                 <span className="ck12-flacts">
                   {talkable && (
-                    <button
-                      type="button"
-                      className="ck12-flact is-pri"
-                      aria-label={`对话 ${title}`}
-                      title="💬 对话 · 独立 chat 窗"
-                      data-testid={`cockpit-rail-chat-${row.key}`}
-                      onClick={(event) => {
-                        event.stopPropagation()
-                        openChat(row)
-                      }}
-                    >
-                      💬
-                      {unread > 0 && <i className="ck12-flact-und">{unread > 9 ? '9+' : unread}</i>}
-                    </button>
+                    <span className="ck12-flactwrap">
+                      <button
+                        type="button"
+                        className="ck12-flact is-pri"
+                        aria-label={`对话 ${title}`}
+                        title="💬 对话 · 独立 chat 窗"
+                        data-testid={`cockpit-rail-chat-${row.key}`}
+                        onClick={(event) => {
+                          event.stopPropagation()
+                          openChat(row)
+                        }}
+                      >
+                        💬
+                      </button>
+                      {/* 徽标挂在按钮外面：按钮是六边形 clip-path，挂里面会被裁掉一半。 */}
+                      {unread > 0 && (
+                        <i className="ck12-flact-und">{unread > 9 ? '9+' : unread}</i>
+                      )}
+                    </span>
                   )}
                   {ref && (
                     <button

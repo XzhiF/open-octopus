@@ -183,6 +183,8 @@ export interface RunningAgentSession {
   stream_count: number
   /** 非空 = 这轮在等后台任务（chip 上显示「后台：在跑什么」）。 */
   background_tasks?: BackgroundTaskInfo[]
+  /** 这一流当前阶段；多流时任一 generating 即 generating。老服务端没有该字段。 */
+  phase?: TurnPhase
 }
 export function listRunningSessions(limit = 50, signal?: AbortSignal) {
   return request<{ items: RunningAgentSession[] }>(`/sessions/running?limit=${limit}`, { signal })

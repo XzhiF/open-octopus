@@ -166,6 +166,23 @@ describe('useFleetQuery — 基础装配', () => {
     expect(vi.mocked(getTask)).not.toHaveBeenCalled()
   })
 
+  it('作者流相位：session_id 命中的 job 行带上 live_phase（等后台 → 琥珀秒表）', async () => {
+    wire({
+      c1: {
+        cabin: cabin('c1'),
+        jobs: [job('j1', { status: 'awaiting_review', agent_running: true, session_id: 's1' })],
+      },
+    })
+    vi.mocked(listRunningSessions).mockResolvedValue({
+      items: [{ id: 's1', phase: 'background-wait' }],
+    } as never)
+
+    const { result } = renderHook(() => useFleetQuery('c1'))
+    await waitFor(() => {
+      expect(result.current.rows[0]).toMatchObject({ key: 'job:j1', live_phase: 'background-wait' })
+    })
+  })
+
   it('只轮询入口舱：别的舱有作业也不请求、不进编队', async () => {
     wire({
       c1: { cabin: cabin('c1') },

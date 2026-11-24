@@ -21,7 +21,7 @@
   --font-ui:-apple-system,BlinkMacSystemFont,'SF Pro Text','Helvetica Neue','PingFang SC','Hiragino Sans GB','Microsoft YaHei',sans-serif;
   --font-mono:'SF Mono','JetBrains Mono',Menlo,Consolas,ui-monospace,monospace;
   /* v21 三栏：左编队 · 汐音 · 通讯台 / 右紧凑 inbox+更多 */
-  --railw:198px;
+  --railw:198px; /* v23 十六轮：保持 198 —— 本轮时长嵌进状态签，不再单独占秒表位 */
   --railr:100px;
   --charh:74vh;
   --charshift:36px; /* v22：立绘整体左移，把让出的宽度给主对话框（不与左侧编队重合） */
@@ -223,12 +223,12 @@ kbd{border:1px solid rgba(185,179,217,.35);border-bottom-width:2px;border-radius
 .flst.done{background:rgba(61,220,151,.18);color:var(--green)}
 .flsub{display:flex;align-items:center;gap:4px;min-width:0;margin-top:1px;font-size:8.5px;color:var(--ink2);white-space:nowrap}
 .flsub-t{min-width:0;overflow:hidden;text-overflow:ellipsis}
-/* #6（2026-11-23 用户）：作战中行挂活秒表 —— 每秒往上走（同流式卡 ⏱ 读数），
-   一眼看出它没卡住；绿点呼吸 = 还活着。归位副行最右，doing 文本先截断。 */
+/* #6（2026-11-23 用户）：秒表统一 = 「已作战」job 起点 → 现在；≥1h 显示 h:mm。
+   不再呼吸闪动，点用状态色静态表示「活着」。 */
 .fltime{margin-left:auto;flex:none;display:inline-flex;align-items:center;gap:3px;
   font-family:var(--font-mono);font-size:8.5px;font-weight:700;color:var(--sky);
   font-variant-numeric:tabular-nums;letter-spacing:.02em}
-.fltime::before{content:"";width:4px;height:4px;border-radius:50%;background:var(--green);box-shadow:0 0 6px var(--green);animation:np 1.6s infinite}
+.fltime::before{content:"";width:4px;height:4px;border-radius:50%;background:var(--green);box-shadow:0 0 6px var(--green)}
 .flrow.wait .flsub{color:color-mix(in srgb,var(--amber) 80%,var(--ink2))}
 .flrow.blocked .flsub{color:color-mix(in srgb,var(--red) 75%,var(--ink2))}
 .flbar{display:block;height:3px;margin-top:5px;background:rgba(255,255,255,.07);overflow:hidden}
@@ -237,14 +237,45 @@ kbd{border:1px solid rgba(185,179,217,.35);border-bottom-width:2px;border-radius
 /* #5（2026-11-23 用户）：编队行两条入口 —— 行体点击 = 进这条作战的 chat；
    行尾两枚小按钮：💬 对话（有未读加红点）/ ▦ 详情。主通讯台不再切线程。 */
 .flacts{flex:none;display:flex;flex-direction:column;gap:3px;margin-left:1px}
+/* 未读徽标挂在按钮**外面**的包层：按钮本身是六边形 clip-path，徽标若挂里面会被裁掉一半。 */
+.flactwrap{position:relative;flex:none;display:block;width:21px;height:23px}
 .flact{position:relative;width:21px;height:23px;clip-path:var(--hex);display:grid;place-items:center;
   background:rgba(255,255,255,.07);border:1px solid rgba(185,179,217,.22);color:var(--ink2);font-size:9.5px;transition:.13s}
 .flact:hover{color:#fff;border-color:var(--teal);background:rgba(46,230,214,.16)}
 .flact.pri{color:color-mix(in srgb,var(--teal) 78%,var(--ink2))}
-.flact .und{position:absolute;top:-3px;right:-3px;min-width:12px;height:12px;padding:0 2px;border-radius:999px;background:var(--red);color:#fff;font-size:7px;font-weight:800;display:grid;place-items:center;font-style:normal;font-family:var(--font-mono);box-shadow:0 0 7px rgba(255,59,92,.6)}
+.flactwrap .und{position:absolute;top:-4px;right:-5px;min-width:13px;height:13px;padding:0 3px;border-radius:999px;background:var(--red);color:#fff;font-size:7.5px;font-weight:800;display:grid;place-items:center;font-style:normal;font-family:var(--font-mono);line-height:1;box-shadow:0 0 7px rgba(255,59,92,.6),0 0 0 1px rgba(16,13,40,.75)}
 .flrow{cursor:pointer}
 .flrow.is-chat{border-color:rgba(46,230,214,.45)}
 .flrow:focus-visible{outline:1px solid var(--teal);outline-offset:1px}
+/* v23 十六轮 rev4（2026-11-24 用户）：运行中不再闪动 —— 静态青色左缘 + 进度条滚动。
+   · 作战中：真实进度条上有一道缓行的流光（连续，不闪）；
+   · 待验收/待命在跑：没有真实进度，底部用不定长滚动条（占原进度条槽位）。 */
+.flrow.is-flow{border-color:color-mix(in srgb,var(--teal) 34%,rgba(185,179,217,.13))}
+.flrow.is-flow::before{content:"";position:absolute;left:0;top:20%;bottom:20%;width:2px;border-radius:2px;
+  background:var(--teal);box-shadow:0 0 8px color-mix(in srgb,var(--teal) 65%,transparent);pointer-events:none}
+.flbar.is-live{background:rgba(46,230,214,.10)}
+.flbar.is-live i{display:block;width:40%;height:100%;background:linear-gradient(90deg,transparent,var(--teal),transparent);
+  box-shadow:0 0 8px var(--teal);animation:flbar 2.6s linear infinite}
+@keyframes flbar{0%{transform:translateX(-105%)}100%{transform:translateX(255%)}}
+.flbar.is-run i{position:relative;overflow:hidden}
+.flbar.is-run i::after{content:"";position:absolute;top:0;bottom:0;left:-35%;width:35%;
+  background:linear-gradient(90deg,transparent,rgba(255,255,255,.5),transparent);animation:runflow 2.4s linear infinite}
+@keyframes runflow{0%{left:-35%}100%{left:100%}}
+@media (prefers-reduced-motion:reduce){
+  .flbar.is-live i{animation:none;width:100%;transform:none;background:rgba(46,230,214,.45);box-shadow:none}
+  .flbar.is-run i::after{animation:none;display:none}
+}
+.fltime.bgw,.fltime.bgw::before{color:var(--amber)}
+.fltime.bgw::before{background:var(--amber);box-shadow:0 0 6px var(--amber)}
+/* 原型样张（打开「全部 →」看）：编队行实宽下并列摆出所有干活态。 */
+.lvsamp{margin-top:8px;display:grid;grid-template-columns:repeat(auto-fill,minmax(198px,198px));gap:8px}
+.lvsamp .flrow{margin-bottom:0;cursor:default}
+.lvsamp .flrow:hover{transform:none;background:linear-gradient(90deg,rgba(255,255,255,.055),rgba(255,255,255,.018));border-color:rgba(185,179,217,.13)}
+.lvsamp .flacts{display:none}
+.lvnote{grid-column:1/-1;margin-top:4px;padding:8px 10px;border-left:2px solid var(--teal);background:rgba(46,230,214,.06);
+  font-size:9px;line-height:1.7;color:var(--ink2);font-family:var(--font-ui)}
+.lvnote b{color:var(--teal);font-family:var(--font-mono)}
+.lvtag{display:block;margin:0 0 4px;font-size:8px;font-family:var(--font-mono);letter-spacing:.08em;color:var(--metal2)}
 .fr-foot{flex:none;padding:5px 6px 7px;border-top:1px solid rgba(185,179,217,.12);position:relative;z-index:2}
 .fr-more{display:flex;align-items:center;justify-content:center;gap:6px;width:100%;height:25px;clip-path:polygon(6px 0,100% 0,calc(100% - 6px) 100%,0 100%);background:rgba(46,230,214,.07);border:1px solid rgba(46,230,214,.28);color:var(--teal);font-size:9.5px;font-weight:800;font-family:var(--font-ui);letter-spacing:.06em;transition:.13s}
 .fr-more:hover{background:rgba(46,230,214,.18);color:#fff;border-color:var(--teal)}
@@ -1673,6 +1704,9 @@ kbd{border:1px solid rgba(185,179,217,.35);border-bottom-width:2px;border-radius
   .flrow.wait::after{background:var(--amber)}
   .flrow.blocked::after{background:var(--red);animation:np 1.5s infinite}
   .flrow.done::after{background:var(--green)}
+  /* 极窄档：干活行用静态青点代替（优先于上面的状态点）。 */
+  .flrow.is-flow::after{left:auto;top:auto;right:6px;bottom:6px;width:5px;height:5px;border-radius:50%;
+    background:var(--teal);box-shadow:0 0 7px var(--teal);animation:none;transform:none}
   .fr-foot{padding:4px 3px}
   .fr-more{font-size:8px;padding:0 3px;gap:3px}
   .fr-more .fml{display:none}
@@ -2140,13 +2174,16 @@ const MODELS=[
 const EFFORTS=['低','标准','高','极深'];
 const modelOf=id=>MODELS.find(m=>m.id===id)||MODELS[1];
 const JOBS_INIT=[
+ {id:'j-m6',proj:'gateway',kind:'task',title:'M0 · 回调重试',short:'M0 回调',status:'blocked',st:'受阻',pct:60,doing:'CI 红 · 作者在排原因',agent:'gateway-1',branch:'fix/callback-retry',clock:'—',live:'在跑',liveSec:22,cost:0.12,tok:41000,rarity:3,tid:'t-2649',slug:'callback-retry',born:1},
  {id:'j-m1',proj:'gateway',kind:'workflow',title:'M1 · 退款链路',short:'M1 退款',status:'blocked',pct:72,doing:'CI 红 · 现场冻结',agent:'gateway-2',branch:'feat/refund-flow',clock:'9m03s',cost:0.27,tok:86000,rarity:3,tid:'t-2641',slug:'refund-flow',born:9},
  {id:'j-m2g',proj:'gateway',kind:'workflow',title:'M2 · 限流阈值',short:'M2 限流',status:'wait',pct:60,doing:'decide 暂停 · 等你选阈值',agent:'gateway-1',branch:'feat/rate-limit',clock:'12m40s',cost:0.31,tok:104000,rarity:3,tid:'t-2642',slug:'rate-limit',born:13},
- {id:'j-m2',proj:'ledger',projs:['ledger','risk','edge'],kind:'task',title:'M2 · 结算对账',short:'M2 对账',status:'wait',pct:100,doing:'停在验收 · AC-4 待决定',agent:'ledger-2',branch:'fix/reconcile',clock:'41m12s',cost:0.42,tok:152000,rarity:4,tid:'t-2638',slug:'reconcile',born:41},
+ {id:'j-m2',proj:'ledger',projs:['ledger','risk','edge'],kind:'task',title:'M2 · 结算对账',short:'M2 对账',status:'wait',st:'待验收',pct:100,doing:'停在验收 · AC-4 待决定',agent:'ledger-2',branch:'fix/reconcile',clock:'41m12s',cost:0.42,tok:152000,rarity:4,tid:'t-2638',slug:'reconcile',born:41},
+ {id:'j-m4',proj:'ledger',kind:'task',title:'M4 · 结息重算',short:'M4 结息',status:'wait',st:'待验收',pct:100,doing:'补 AC-5 覆盖 · 2 文件',agent:'ledger-1',branch:'fix/interest',clock:'—',live:'在跑',liveSec:161,cost:0.18,tok:63000,rarity:3,tid:'t-2647',slug:'interest',born:2},
  {id:'j-arch',proj:'ledger',kind:'subagent',title:'归档沉淀 · M2',short:'归档 M2',status:'run',pct:40,doing:'编译 wiki/结算对账.md',agent:'ledger-1',branch:'archive/m2',clock:'6m10s',cost:0.05,tok:18000,rarity:2,tid:'t-2643',slug:'archive-m2',born:6},
  {id:'j-ext',proj:'gateway',kind:'external',title:'合规审计 · 网关',short:'合规审计',status:'run',pct:65,doing:'扫描配置 · 2 处偏差',agent:'claude-code',branch:'audit/gateway',clock:'22m',cost:0.10,tok:31000,rarity:2,tid:'t-2640',slug:'audit-gateway',born:22},
  {id:'j-m2x',proj:'ledger',kind:'wfdev',title:'发布脚本迁移',short:'脚本迁移',status:'run',pct:55,doing:'迁移第 4/7 个脚本',agent:'ledger-2',branch:'feat/release-scripts',clock:'8m',cost:0.05,tok:22000,rarity:2,tid:'t-2644',slug:'release-scripts',born:8},
  {id:'j-m3',proj:'risk',kind:'task',title:'M3 · 风控告警',short:'M3 风控',status:'queue',pct:0,doing:'待命 · 等并发位',agent:'—',branch:'—',clock:'—',cost:0,tok:0,rarity:1,tid:'t-2645',slug:'risk-alert',born:44},
+ {id:'j-m5',proj:'risk',kind:'task',title:'M5 · 账单导出',short:'M5 导出',status:'queue',st:'待命',pct:0,doing:'dev 服务起着 · 等唤醒',agent:'risk-1',branch:'feat/bill-export',clock:'—',live:'等后台',liveSec:305,cost:0.03,tok:9000,rarity:2,tid:'t-2648',slug:'bill-export',born:3},
  {id:'j-m2a',proj:'ledger',kind:'workflow',title:'M1 · 幂等修复',short:'M1 幂等',status:'done',pct:100,doing:'已验收归档',agent:'ledger-2',branch:'fix/idempotent',clock:'34m',cost:0.08,tok:26000,rarity:3,tid:'t-2631',slug:'idempotent',born:150},
  {id:'j-edge',proj:'edge',kind:'workflow',title:'边缘节点灰度',short:'边缘灰度',status:'run',pct:45,doing:'灰度 2/5 · 探针正常',agent:'edge-1',branch:'feat/edge-canary',clock:'5m20s',cost:0.09,tok:29000,rarity:2,tid:'t-2646',slug:'edge-canary',born:5}];
 const OP_KIND={block:{k:'阻塞',color:'#FF3B5C',pri:0},start:{k:'待放行',color:'#FFB020',pri:0},decide:{k:'等你拍板',color:'#35C7F0',pri:1},accept:{k:'等你验收',color:'#3DDC97',pri:2},confirm:{k:'等你确认',color:'#FFB020',pri:3}};
@@ -2346,30 +2383,50 @@ function renderDots(){renderInboxChip();}
 
 /* ── 左栏编队：单列，状态优先 + 创建时间（新→旧）；待办只在右栏 inbox，不重复分组 ── */
 const STATUS_RANK={blocked:0,wait:1,run:2,queue:3,done:4};
-/* #6：作战中秒表 —— 每条 run 行首次渲染时把 clock 串（'6m10s'）折成起点，
-   之后由 1s ticker 只改这一格的 textContent，不重建整条 rail。 */
+/* 统一秒表（2026-11-24 用户）：作战中 / 待验收在跑 / 待命在跑 都用同一口径 ——
+   「已作战」= job 起点 → now；≥1h 只显示 h:mm，完整 h:mm:ss 放悬停 title。
+   演示里起点用 born（分钟）；真实实现用 cabin_jobs.created_at。 */
 function clockSecOf(s){const m=/^(?:(\d+)m)?(?:(\d+)s)?$/.exec(String(s||''));if(!m||(!m[1]&&!m[2]))return null;return (+m[1]||0)*60+(+m[2]||0);}
 function fmtClock(sec){const t=Math.max(0,Math.floor(sec));const h=Math.floor(t/3600),m=Math.floor(t%3600/60),s=t%60;
+  return h?h+':'+String(m).padStart(2,'0'):String(m).padStart(2,'0')+':'+String(s).padStart(2,'0');}
+function fmtClockFull(sec){const t=Math.max(0,Math.floor(sec));const h=Math.floor(t/3600),m=Math.floor(t%3600/60),s=t%60;
   return (h?h+':':'')+String(m).padStart(2,'0')+':'+String(s).padStart(2,'0');}
-function runClockOf(j){if(j.status!=='run')return null;
-  if(!j._startedAt){const base=clockSecOf(j.clock);j._startedAt=Date.now()-(base??0)*1000;}
-  return fmtClock((Date.now()-j._startedAt)/1000);}
-function fleetSorted(){return [...state.jobs].sort((a,b)=>(STATUS_RANK[a.status]??9)-(STATUS_RANK[b.status]??9)||((a.born??999)-(b.born??999)));}
+function jobClockOf(j,full){
+  if(!(j.status==='run'||j.live))return null;
+  if(!j._jobAt){const seed=j.born!=null?j.born*60:(clockSecOf(j.clock)??0);j._jobAt=Date.now()-seed*1000;}
+  const sec=(Date.now()-j._jobAt)/1000;
+  return full?fmtClockFull(sec):fmtClock(sec);}
+const labelOf=j=>j.st||STATE_LABEL[j.status];
+const liveTextOf=j=>j.live==='等后台'?'作者在等后台':'作者在跑';
+function activeOf(j){return j.status==='run'||!!j.live}
+/* 干活的行离开「等你 / 待命」组进「在跑」组；受阻仍排最上（阻塞不能藏）。 */
+const rankOf=j=>j.live&&j.status!=='blocked'&&j.status!=='done'?2:(STATUS_RANK[j.status]??9);
+function fleetSorted(){return [...state.jobs].sort((a,b)=>rankOf(a)-rankOf(b)||((a.born??999)-(b.born??999)));}
 function renderFleetRail(){
   const el=$('#fleetrail');if(!el)return;
   const total=state.jobs.length;
-  const run=state.jobs.filter(j=>j.status==='run').length;
-  const queue=state.jobs.filter(j=>j.status==='queue').length;
+  /* 在跑 = 真正有 agent 在干活（含「待验收 / 待命」里作者在跑的行），不再只看 status。 */
+  const run=state.jobs.filter(j=>j.live||j.status==='run').length;
+  const queue=state.jobs.filter(j=>j.status==='queue'&&!j.live).length;
   const done=state.jobs.filter(j=>j.status==='done').length;
   const openSet=new Set(state.wins.filter(w=>!w.min).map(w=>w.job));
-  const row=j=>{const pr=projOf(j.proj);const un=state.unread[j.id]||0;const rc=runClockOf(j);
-    return `<div class="flrow ${j.status}${openSet.has(j.id)?' is-chat':''}" role="option" tabindex="0" data-rail-job="${j.id}" style="--accent:${pr.color};--p:${Math.round(j.pct)}" title="${esc(j.title)} · ${STATE_LABEL[j.status]} · 点行进对话">
+  const row=j=>{const pr=projOf(j.proj);const un=state.unread[j.id]||0;const label=labelOf(j);
+    const active=activeOf(j);
+    const clock=jobClockOf(j), full=jobClockOf(j,true);
+    const timer=clock?`<span class="fltime${j.live==='等后台'?' bgw':''}" data-fltime="${j.id}" title="已作战 ${full}">⏱ ${clock}</span>`:'';
+    const bar=j.status==='done'?'':(j.live?'<span class="flbar is-live"><i></i></span>'
+      :j.status==='run'?`<span class="flbar is-run"><i style="width:${Math.round(j.pct)}%"></i></span>`
+      :`<span class="flbar"><i style="width:${Math.round(j.pct)}%"></i></span>`);
+    return `<div class="flrow ${j.status}${j.live?' live':''}${active?' is-flow':''}${openSet.has(j.id)?' is-chat':''}" role="option" tabindex="0" data-rail-job="${j.id}" style="--accent:${pr.color};--p:${j.live?0:Math.round(j.pct)}" title="${esc(j.title)} · ${label}${j.live?` · ${liveTextOf(j)}`:''}${full?` · 已作战 ${full}`:''} · ${esc(j.doing)} · 点行进对话">
       <span class="flhw"><span class="flhg">${KIND[j.kind].g}</span></span>
-      <span class="flbody"><span class="fltop"><b>${esc(j.short)}</b>${j.status!=='done'?`<span class="flpct">${Math.round(j.pct)}%</span>`:''}</span>
-      <span class="flsub"><span class="flst ${j.status}">${STATE_LABEL[j.status]}</span><span class="flsub-t">${esc(j.doing)}</span>${rc?`<span class="fltime" data-fltime="${j.id}" title="已作战 ${rc}">⏱ ${rc}</span>`:''}</span>
-      ${j.status==='done'?'':`<span class="flbar"><i style="width:${Math.round(j.pct)}%"></i></span>`}</span>
+      <span class="flbody"><span class="fltop"><b>${esc(j.short)}</b>${j.live||j.status==='done'?'':`<span class="flpct">${Math.round(j.pct)}%</span>`}</span>
+      <span class="flsub"><span class="flst ${j.status}">${label}</span>${j.live||j.status==='done'?'':`<span class="flsub-t">${esc(j.doing)}</span>`}${timer}</span>
+      ${bar}</span>
       <span class="flacts">
-        <button class="flact pri" data-rail-chat="${j.id}" title="💬 对话 · 这条作战的 chat 窗" aria-label="对话">💬${un?`<i class="und">${un>9?'9+':un}</i>`:''}</button>
+        <span class="flactwrap">
+          <button class="flact pri" data-rail-chat="${j.id}" title="💬 对话 · 这条作战的 chat 窗" aria-label="对话">💬</button>
+          ${un?`<i class="und">${un>9?'9+':un}</i>`:''}
+        </span>
         <button class="flact" data-rail-detail="${j.id}" title="▦ 详情 · 作战详情（不改主通讯台）" aria-label="详情">▦</button>
       </span></div>`;};
   const list=fleetSorted();
@@ -2395,12 +2452,15 @@ function renderFleetRail(){
 function tickFleetRail(){const el=$('#fleetrail');if(!el)return;
   state.jobs.forEach(j=>{const row=el.querySelector(`[data-rail-job="${j.id}"]`);if(!row)return;
     const pct=row.querySelector('.flpct');if(pct)pct.textContent=Math.round(j.pct)+'%';
-    const bar=row.querySelector('.flbar i');if(bar)bar.style.width=Math.round(j.pct)+'%';
+    const bar=row.querySelector('.flbar i');
+    // 不定长滚动条（待验收/待命在跑）不吃真实 pct，别把它的宽度改掉。
+    if(bar&&!bar.closest('.flbar.is-live'))bar.style.width=Math.round(j.pct)+'%';
     row.style.setProperty('--p',Math.round(j.pct));});}
-/* #6：作战中秒表每秒走字 —— 只改读数，不动整行（悬停/点击都不闪）。 */
+/* 统一秒表每秒走字：只改这一格的 textContent，不重建整行。 */
 setInterval(()=>{if(document.hidden)return;const el=$('#fleetrail');if(!el)return;
-  state.jobs.forEach(j=>{if(j.status!=='run')return;const t=el.querySelector(`[data-fltime="${j.id}"]`);
-    if(!t)return;const rc=runClockOf(j);t.textContent='⏱ '+rc;t.title='已作战 '+rc;});},1000);
+  state.jobs.forEach(j=>{const t=el.querySelector(`[data-fltime="${j.id}"]`);if(!t)return;
+    const rc=jobClockOf(j);if(!rc)return;
+    t.textContent='⏱ '+rc;t.title='已作战 '+jobClockOf(j,true);});},1000);
 
 /* ── 右栏「活动」（v22 十四轮 · rev2 · 2026-11-21 用户）：
       与「要我处理」同一套浮层 —— 一级 = 列表；点一条 → 浮层变两栏，列表左边出详情；
@@ -4298,16 +4358,47 @@ function renderProjectFace(pr){
   ${tab==='files'?`<div class="pjf-files">${renderProjectFiles(pr)}</div>`:`<div class="pjf-chg">${renderProjectChanges(pr)}</div>`}
  </div>`;
 }
+/* 原型样张（v23 十六轮）：用编队真行的 markup 摆出各干活态，实宽 198px。 */
+function lvSamp(o){
+  const active=o.live||o.status==='run';
+  const timer=active&&o.clock?`<span class="fltime${o.live==='等后台'?' bgw':''}">⏱ ${o.clock}</span>`:'';
+  const bar=o.status==='done'?'':(o.live?'<span class="flbar is-live"><i></i></span>'
+    :o.status==='run'?`<span class="flbar is-run"><i style="width:${o.pct??0}%"></i></span>`
+    :`<span class="flbar"><i style="width:${o.pct??0}%"></i></span>`);
+  return `<div><span class="lvtag">${o.tag}</span><div class="flrow ${o.status}${o.live?' live':''}${active?' is-flow':''}" style="--accent:${o.accent};--p:${o.live?0:(o.pct??0)}">
+    <span class="flhw"><span class="flhg">${o.g||'◆'}</span></span>
+    <span class="flbody"><span class="fltop"><b>${esc(o.title)}</b>${o.live||o.pct==null?'':`<span class="flpct">${o.pct}%</span>`}</span>
+    <span class="flsub"><span class="flst ${o.status}">${o.label}</span>${o.live||o.status==='done'?'':`<span class="flsub-t">${esc(o.doing)}</span>`}${timer}</span>
+    ${bar}</span>
+  </div></div>`;
+}
 function renderPanel(){const p=$('#panel');if(!state.panel){p.classList.remove('open');return;}p.classList.add('open');applyPanelGeo();
  const sig=state.panel+'|'+state.detailJob+'|'+state.detailTab+'|'+state.fleetFilter+'|'+(state.logQ||'')+'|'+(state.projFocus||'')+'|'+(state.pjDiff?state.pjDiff.path:'')+'|'+(state.pjTab||'');
  const keepScroll=sig===state._panelSig?(p.querySelector('.pb')?.scrollTop||0):0;state._panelSig=sig;
  const restore=()=>{const pb=p.querySelector('.pb');if(pb)pb.scrollTop=keepScroll;};
  const T={fleet:['⬡','编队','FLEET · 全部作战'],ops:['◈','待你决断','ONLY YOU'],detail:['▦','作战详情','HOLO DOSSIER'],log:['≡','对话日志','COMMS LOG · 指令时间线'],usage:['¥','本舱账本','CABIN LEDGER · 全域只读'],projects:['⧉','舱籍 · 绑定项目','CABIN REGISTRY'],ws:['⌗','作战舱文件','WORKSPACE TREE'],poses:['✧','汐音动作视频','CLIP GALLERY · '+CLIPS.length]}[state.panel];
  let body='';
- if(state.panel==='fleet'){const order={blocked:0,wait:1,run:2,queue:3,done:4};
-  const js=[...state.jobs].filter(j=>state.fleetFilter==='all'||j.proj===state.fleetFilter).sort((a,b)=>order[a.status]-order[b.status]);
+ if(state.panel==='fleet'){
+  const js=[...state.jobs].filter(j=>state.fleetFilter==='all'||j.proj===state.fleetFilter).sort((a,b)=>rankOf(a)-rankOf(b)||((a.born??999)-(b.born??999)));
   body=`<div class="fchips"><button class="fchip${state.fleetFilter==='all'?' on':''}" data-fproj="all">全部 ${state.jobs.length}</button>${PROJECTS.map(pr=>`<button class="fchip${state.fleetFilter===pr.id?' on':''}" data-fproj="${pr.id}">${pr.name} ${state.jobs.filter(j=>j.proj===pr.id).length}</button>`).join('')}<button class="fchip" data-ops-jump style="color:var(--amber);border-color:rgba(255,176,32,.5)">◈ 待你决断 ${openOps().length}</button></div>`;
-  body+=js.map(j=>{const pr=projOf(j.proj),op=opForJob(j.id);const arr=Date.now()-state.flash.at<1400&&state.flash.job===j.id;return `<div class="frow${arr?' arrived':''}" data-job="${j.id}" style="--accent:${pr.color}" role="button" tabindex="0"><span class="fg">${KIND[j.kind].g}</span><span class="fm"><span class="ft">${esc(j.title)}<span class="stars">${'★'.repeat(j.rarity||1)}</span></span><span class="fd">${esc(pr.name)} · ${esc(j.doing)}</span><span class="fb"><i style="width:${Math.round(j.pct)}%"></i></span></span><span class="fr"><span class="fstate ${j.status}">${STATE_EMO[j.status]} ${STATE_LABEL[j.status]}</span>${op?'<span class="fneed"><i></i>需要你</span>':''}</span><span class="fa"><button data-talk="${j.id}" title="与汐音谈这条">💬</button>${op?`<button class="dec" data-decide="${j.id}" title="就地决断">◈</button>`:''}</span></div>`;}).join('')||'<div class="pempty">该项目暂无作战。</div>';}
+  body+=js.map(j=>{const pr=projOf(j.proj),op=opForJob(j.id);const arr=Date.now()-state.flash.at<1400&&state.flash.job===j.id;const label=labelOf(j);return `<div class="frow${arr?' arrived':''}" data-job="${j.id}" style="--accent:${pr.color}" role="button" tabindex="0"><span class="fg">${KIND[j.kind].g}</span><span class="fm"><span class="ft">${esc(j.title)}<span class="stars">${'★'.repeat(j.rarity||1)}</span></span><span class="fd">${esc(pr.name)} · ${esc(j.doing)}</span><span class="fb"><i style="width:${Math.round(j.pct)}%"></i></span></span><span class="fr">${j.live?`<span class="fstate run">⌁ ${liveTextOf(j)}</span>`:''}<span class="fstate ${j.status}">${STATE_EMO[j.status]} ${label}</span>${op?'<span class="fneed"><i></i>需要你</span>':''}</span><span class="fa"><button data-talk="${j.id}" title="与汐音谈这条">💬</button>${op?`<button class="dec" data-decide="${j.id}" title="就地决断">◈</button>`:''}</span></div>`;}).join('')||'<div class="pempty">该项目暂无作战。</div>';
+  body+=`<div class="sect">原型样张 · 作者在干活（编队行实宽 198px）</div><div class="lvsamp">${[
+    lvSamp({tag:'① 待验收 · 无人在跑',status:'wait',label:'待验收',g:'◆',title:'M2 · 对账',doing:'停在验收 · 等你决定',pct:100,accent:'#8B7CF6'}),
+    lvSamp({tag:'② 待验收 · Agent工作中',status:'wait',label:'待验收',g:'◆',title:'M4 · 结息',doing:'补 AC-5 覆盖 · 2 文件',pct:100,live:'在跑',clock:'42:41',accent:'#8B7CF6'}),
+    lvSamp({tag:'③ 待命 · Agent工作中',status:'queue',label:'待命',g:'◆',title:'M5 · 账单导出',doing:'dev 服务起着 · 等唤醒',live:'在跑',clock:'3:07',accent:'#FFB020'}),
+    lvSamp({tag:'④ 受阻 · Agent工作中',status:'blocked',label:'受阻',g:'◆',title:'M0 · 回调重试',doing:'CI 红 · 作者在排原因',live:'在跑',clock:'18:22',accent:'#FF3B5C'}),
+    lvSamp({tag:'⑤ 作战中（真实进度条 + 缓行流光）',status:'run',label:'作战中',g:'⬡',title:'边缘节点灰度',doing:'灰度 2/5 · 探针正常',pct:45,clock:'1:05',accent:'#3DDC97'}),
+    lvSamp({tag:'⑥ 待验收 · 等后台',status:'wait',label:'待验收',g:'◆',title:'M6 · 脚本迁移',doing:'dev 服务起着 · 等唤醒',pct:100,live:'等后台',clock:'5:05',accent:'#35C7F0'}),
+    lvSamp({tag:'⑦ 已归档（无秒表）',status:'done',label:'已归档',g:'⬡',title:'M1 · 幂等修复',doing:'已验收归档',pct:null,accent:'#A78BFA'}),
+  ].join('')}<div class="lvnote">
+    <b>左侧保留 44×50 六边形</b>：种类字形（◆ 任务 / ⬡ 工作流 / ◈ 分身）+ 进度环；不换小图标。<br>
+    <b>计时统一</b>：只要 agent 在跑（作战中 / 待验收在跑 / 待命在跑），秒表口径一致 = <b>已作战</b> job 起点 → now；≥1h 只显示 h:mm，完整 h:mm:ss 在悬停 title。<br>
+    <b>执行中不闪</b>：作战中用真实进度条 + 一道缓行的流光；待验收/待命在跑没有真实进度，底部用不定长滚动条；扫光 / 呼吸 / 脉冲全部去掉。<br>
+    <b>签</b>只表示生命周期（待验收仍是待验收）；是否 agent 在跑看秒表 + 状态签；doing 文本在 Agent 工作中的行让位给秒表（细节进 title）。<br>
+    <b>顶栏「在跑」</b>按真正在干活计数——含待验收 / 待命里在跑的行；受阻行即使作者在跑也仍排最上（阻塞不能藏）。<br>
+    <b>reduced-motion</b>：滚动条静止，只留静态色块。
+  </div></div>`;
+ }
  else if(state.panel==='ops'){const open=[...openOps()].sort((a,b)=>OP_KIND[a.kind].pri-OP_KIND[b.kind].pri);const done=state.ops.filter(o=>o.status==='done'&&!o.removed);
   body=(!open.length&&!done.length)?'<div class="pempty"><b>✓ 全舱无待办</b>没有要您决断的事。</div>':'';
   body+=open.map(o=>{const k=OP_KIND[o.kind];const j=jobOf(o.job);const arr=Date.now()-state.flash.at<1400&&state.flash.op===o.id;return `<div class="ocard${arr?' arrived':''}" data-op="${o.id}" style="--accent:${k.color}" role="button" tabindex="0"><span class="ot"><span class="oh">${esc(o.handle)}</span><span class="ok">${k.k}</span><span class="oa">${STATE_EMO[j?j.status:'run']} ${esc(o.age)}</span></span><span class="ti">${esc(o.title)}</span><span class="q">${esc(o.question)}</span><span class="orow"><span class="go">就地回答 →</span><button class="od" data-opdetail="${o.job}">▦ 详情</button></span></div>`;}).join('');

@@ -272,15 +272,18 @@ describe('CockpitFleetRail · v21 单列编队', () => {
     expect(row('job:j1')).toBeInTheDocument()
   })
 
-  it('pct=null 不画进度条；真 pct 才画条并写 --p', () => {
-    const job = jobRow(jobView('j1', { status: 'running' }), { pct: null })
+  it('pct=null：运行中画不定长滚动条（不猜百分比）；待命行不画条', () => {
+    const running = jobRow(jobView('j1', { status: 'running' }), { pct: null })
+    const pending = jobRow(jobView('j2', { status: 'pending' }), { pct: null })
     const task = taskRow('t1', {}, 40)
-    renderRail({ rows: sortRows([job, task]) })
+    renderRail({ rows: sortRows([running, pending, task]) })
 
-    const jobNode = row('job:j1')
-    expect(jobNode.querySelector('.ck12-flbar')).toBeNull()
-    expect(within(jobNode).queryByText(/%/)).toBeNull()
-    expect(jobNode.style.getPropertyValue('--p')).toBe('0')
+    const runNode = row('job:j1')
+    expect(runNode.querySelector('.ck12-flbar.is-live')).not.toBeNull()
+    expect(within(runNode).queryByText(/%/)).toBeNull()
+    expect(runNode.style.getPropertyValue('--p')).toBe('0')
+
+    expect(row('job:j2').querySelector('.ck12-flbar')).toBeNull()
 
     const taskNode = row('task:t1')
     expect(taskNode.querySelector('.ck12-flbar')).not.toBeNull()
@@ -328,6 +331,63 @@ describe('CockpitFleetRail · v21 单列编队', () => {
     } finally {
       vi.useRealTimers()
     }
+  })
+
+  // v23 十六轮（2026-11-24 用户）：待验收的任务作者还在推进 —— chip 保持生命周期
+  // 「等你验收」，行加流动态 / 统一秒表 / 不定长滚动条；副行让给秒表。
+  it('待验收 + 作者在跑：chip 仍等你验收，加流动态、统一秒表与不定长滚动条', () => {
+    vi.useFakeTimers()
+    try {
+      vi.setSystemTime(new Date('2026-11-14T09:02:00.000Z'))
+      const reviewed = jobRow(jobView('j1', {
+        status: 'awaiting_review',
+        agent_running: true,
+        created_at: '2026-11-14T09:00:00.000Z',
+      }), {
+        attention: attention('a1', { job_id: 'j1', stage: 'review', title: '待验收' }),
+        pct: 100,
+      })
+      renderRail({ rows: sortRows([reviewed]) })
+
+      const node = row('job:j1')
+      expect(node.className).toMatch(/is-wait/)
+      expect(node.className).toMatch(/is-flow/)
+      expect(within(node).getByText('等你验收')).toBeInTheDocument()
+      expect(within(node).queryByText('作战中')).toBeNull()
+      expect(within(node).getByTestId('cockpit-rail-clock')).toHaveTextContent('⏱ 02:00')
+      expect(node.querySelector('.ck12-flbar.is-live')).not.toBeNull()
+      // 干活行不再显示「项目 · transport」，宽度留给秒表。
+      expect(node.querySelector('.ck12-flsub-t')).toBeNull()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('作者在等后台：秒表转琥珀色（is-bgw）', () => {
+    const waiting = jobRow(jobView('j1', {
+      status: 'ready',
+      agent_running: true,
+      created_at: '2026-11-14T09:00:00.000Z',
+    }), { live_phase: 'background-wait' })
+    renderRail({ rows: sortRows([waiting]) })
+
+    const clock = within(row('job:j1')).getByTestId('cockpit-rail-clock')
+    expect(clock.className).toMatch(/is-bgw/)
+  })
+
+  it('已归档行：残留流不点秒表，也不加流动态', () => {
+    const done = jobRow(jobView('j1', {
+      status: 'done',
+      ended_at: '2026-11-14T09:30:00.000Z',
+      agent_running: true,
+      created_at: '2026-11-14T09:00:00.000Z',
+    }), { pct: 100 })
+    renderRail({ rows: sortRows([done]) })
+
+    const node = row('job:j1')
+    expect(within(node).queryByTestId('cockpit-rail-clock')).toBeNull()
+    expect(node.className).not.toMatch(/is-flow/)
+    expect(node.querySelector('.ck12-flbar')).toBeNull()
   })
 
   it('↑↓ 在可见行内移动并 select；输入框聚焦时不抢键', () => {
