@@ -24,6 +24,7 @@ import type { ChecksFile, ProbeRunResult } from "../tasks/playbook-types"
 import type { AcceptanceResult } from "../tasks/tasks-service"
 import type { ProjectDelta } from "../tasks/archive-delta"
 import { getWorkflowDevService } from "../tasks/workflow-dev-service"
+import { getCloneDevService } from "../tasks/clone-dev-service"
 
 export interface TaskToolsService {
   updateSpecField(
@@ -1160,6 +1161,79 @@ export function createTaskToolServer(input: TaskToolServerInput) {
     ),
   ] : []
 
+  const cloneDevTools = task.kind === "clone-dev" ? [
+    tool(
+      "clone_dev_get_state",
+      "Clone-dev only. Read the clone development state: clone_name, mode, stage, kit tools, and the three verification criteria. Read-only.",
+      {},
+      async () => {
+        const svc = getCloneDevService()
+        if (!svc) return text({ ok: false, error: "clone-dev service not ready" })
+        try {
+          return text(svc.getState(task.id))
+        } catch (err: unknown) {
+          return text({ ok: false, error: err instanceof Error ? err.message : String(err) })
+        }
+      },
+    ),
+    tool(
+      "clone_dev_set_meta",
+      "Clone-dev only. Register the clone identity after the human confirmed: slug name, create/edit mode, and the tool list. clone_name is locked once written.",
+      {
+        clone_name: z.string().min(1).describe("Slug: lowercase letters/digits/hyphens, 1-50 chars"),
+        mode: z.enum(["create", "edit"]).default("create"),
+        display_name: z.string().optional(),
+        kit_enabled: z.boolean().optional().describe("true when the clone ships executable tools"),
+        tools: z.array(z.string()).optional().describe("Declared tool names"),
+      },
+      async ({ clone_name, mode, display_name, kit_enabled, tools }) => {
+        const svc = getCloneDevService()
+        if (!svc) return text({ ok: false, error: "clone-dev service not ready" })
+        try {
+          return text(svc.setMeta(task.id, { clone_name, mode, display_name, kit_enabled, tools }))
+        } catch (err: unknown) {
+          return text({ ok: false, error: err instanceof Error ? err.message : String(err) })
+        }
+      },
+    ),
+    tool(
+      "clone_dev_verify",
+      "Clone-dev only. Run the three hard checks: tools callable, boundary blocked, identity usable. Writes evidence into the task home. Re-run after every tool/persona change.",
+      {},
+      async () => {
+        const svc = getCloneDevService()
+        if (!svc) return text({ ok: false, error: "clone-dev service not ready" })
+        try {
+          return text(await svc.verify(task.id))
+        } catch (err: unknown) {
+          return text({ ok: false, error: err instanceof Error ? err.message : String(err) })
+        }
+      },
+    ),
+    tool(
+      "clone_dev_finish",
+      "Clone-dev only. Mark development complete. Refused unless all three verification criteria are green. Parks the task at awaiting_archive; ask the human whether to merge.",
+      {
+        confirmed: z.boolean().describe("true only when the human explicitly said development is finished — never infer"),
+      },
+      async ({ confirmed }) => {
+        if (!confirmed) return text({ ok: false, error: "必须等用户明确确认开发完成后再执行（confirmed=true）。" })
+        const svc = getCloneDevService()
+        if (!svc) return text({ ok: false, error: "clone-dev service not ready" })
+        try {
+          const snap = svc.completeTask(task.id)
+          return text({
+            ok: true,
+            state: snap.state,
+            next: "任务已停在「待合入」。问用户是否合入；用户明确确认后由归档链路执行 merge + 装包。",
+          })
+        } catch (err: unknown) {
+          return text({ ok: false, error: err instanceof Error ? err.message : String(err) })
+        }
+      },
+    ),
+  ] : []
+
   const tools = [
     tool(
       "get_task_status",
@@ -1315,6 +1389,7 @@ export function createTaskToolServer(input: TaskToolServerInput) {
       },
     ),
     ...workflowDevTools,
+    ...cloneDevTools,
     ...acceptanceTools,
     ...archiveConsentTools,
     ...archiveTools,

@@ -22,6 +22,7 @@ import {
   getCloneSkillsDir,
 } from './paths'
 import { withTransientReminder } from './prompt-reminder'
+import { kitContext, loadCloneKit } from './clone-kit-registry'
 
 // ── Types ──────────────────────────────────────────────────────────
 
@@ -271,6 +272,20 @@ export class CloneRuntime {
     return plugins
   }
 
+  /** 分身工具包 → SDK mcpServers。没有 kit 返回 undefined（保持旧行为）。 */
+  private async loadCloneKitServers(): Promise<Record<string, unknown> | undefined> {
+    try {
+      const kit = await loadCloneKit(this.cloneDef.name)
+      if (!kit) return undefined
+      const server = kit.module.createKitServer(kitContext(this.cloneDef.name, kit.entry))
+      if (!server) return undefined
+      return { [`octopus-clone-${this.cloneDef.name}`]: server }
+    } catch (err) {
+      console.warn('[clone-kit] load failed:', this.cloneDef.name, err instanceof Error ? err.message : err)
+      return undefined
+    }
+  }
+
   // ── Provider Call Encapsulation ─────────────────────────────────
 
   /**
@@ -402,7 +417,7 @@ export class CloneRuntime {
    * `<system-reminder>` on the user message — they change per turn and would
    * otherwise invalidate the entire resumed transcript's prefix cache.
    */
-  private sendWithProvider(
+  private async *sendWithProvider(
     message: string,
     cwd: string,
     resumeSessionId: string | null,
@@ -425,7 +440,11 @@ export class CloneRuntime {
       .join('\n\n')
     const prompt = withTransientReminder(message, reminder)
 
-    return provider.sendQuery(prompt, cwd, resumeSessionId ?? undefined, {
+    // 分身自带的进程内工具包（clone-dev）。懒加载：合入装包后下一次会话即生效，
+    // 不需要重启 server。加载失败不阻断聊天，只是本轮没有工具。
+    const cloneKitServers = await this.loadCloneKitServers()
+
+    yield* provider.sendQuery(prompt, cwd, resumeSessionId ?? undefined, {
       systemPrompt: {
         type: 'preset',
         preset: 'claude_code',
@@ -439,6 +458,7 @@ export class CloneRuntime {
       ...(effort ? { effort } : {}),
       agents: subagents,
       plugins: this.getPlugins(taskHomePath),
+      ...(cloneKitServers ? { mcpServers: cloneKitServers } : {}),
       // AskUserQuestion 交互接管（2026-09-09）：不传则 canUseTool 直接 allow，
       // SDK 在 headless 下把工具「执行」成 input 原样回显 —— 模型把自己的问题
       // 当成用户答案，同一轮继续输出，Web 端的 QuestionCard 永远等不到回答。

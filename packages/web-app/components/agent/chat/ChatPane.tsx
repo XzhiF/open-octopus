@@ -44,7 +44,7 @@ import {
   type TaskView,
 } from '@/lib/tasks-api'
 import { rememberTaskOrg } from '@/lib/task-org'
-import { NEW_TASK_NAME, NEW_WORKFLOW_TASK_NAME, taskNameFromMessage } from '@/lib/task-name'
+import { NEW_CLONE_TASK_NAME, NEW_TASK_NAME, NEW_WORKFLOW_TASK_NAME, taskNameFromMessage } from '@/lib/task-name'
 import { buildTurnStats } from '@/lib/turn-stats'
 import { writeLastChatContext } from '@/lib/last-chat-context'
 import { subscribeSSE } from '@/lib/sse-manager'
@@ -75,8 +75,10 @@ export interface PendingTaskSession {
   org: string
   title: string
   projectIds: string[]
-  /** workflow-dev task kind (2026-11-06). */
-  kind?: 'workflow-dev'
+  /** workflow-dev / clone-dev task kinds (2026-11-06 / 2026-11-25). */
+  kind?: 'workflow-dev' | 'clone-dev'
+  /** clone-dev 编辑既有分身时预置的目标（由分身详情「编辑分身」带入）。 */
+  presetClone?: { name: string; type: 'built-in' | 'user' }
 }
 
 export interface ChatPaneWorkspaceOption {
@@ -113,7 +115,7 @@ export type ChatPaneAction =
   | { type: 'rename-task'; task: TaskView }
   | { type: 'delete-task'; task: TaskView }
   | { type: 'new-session' }
-  | { type: 'new-task'; kind?: 'workflow-dev' }
+  | { type: 'new-task'; kind?: 'workflow-dev' | 'clone-dev'; presetClone?: { name: string; type: 'built-in' | 'user' } }
 
 export type ChatPaneCommand = ChatPaneAction & { nonce: number }
 
@@ -300,6 +302,8 @@ export function ChatPane({
   const draftScope = pendingTaskSession !== null || activeTask?.status === 'draft'
   const workflowDraft =
     pendingTaskSession?.kind === 'workflow-dev' || activeTask?.task_spec?.kind === 'workflow-dev'
+  const cloneDraft =
+    pendingTaskSession?.kind === 'clone-dev' || activeTask?.task_spec?.kind === 'clone-dev'
 
   // 会话长期身份（v59 分身）：主对话用 agent 作用域，交给 ChatArea 的 ＋ 面板。
   // 任务线程的基础身份由服务端按任务状态派生（角色卡），这里只保留手动分身切换。
@@ -721,7 +725,20 @@ export function ChatPane({
           repo_group: session.org || undefined,
           name: taskNameFromMessage(message),
           source_chat_session_id: sid,
-          task_spec: { format: 'v4', ...(session.kind ? { kind: session.kind } : {}) },
+          task_spec: {
+            format: 'v4',
+            ...(session.kind ? { kind: session.kind } : {}),
+            ...(session.kind === 'clone-dev' && session.presetClone
+              ? {
+                  clone_dev: {
+                    mode: 'edit',
+                    clone_name: session.presetClone.name,
+                    clone_type: session.presetClone.type,
+                    stage: 'draft',
+                  },
+                }
+              : {}),
+          },
           project_ids: session.projectIds,
           ...(cabinId ? { cabin_id: cabinId } : {}),
           ...(taskCwd.kind === 'default'
@@ -857,7 +874,10 @@ export function ChatPane({
     writeLastChatContext(null)
   }, [choosePendingIdentity, setActiveTask, setPendingTaskSession, setSessionId])
 
-  const handleCreateTask = useCallback(async (kind?: 'workflow-dev') => {
+  const handleCreateTask = useCallback(async (
+    kind?: 'workflow-dev' | 'clone-dev',
+    presetClone?: { name: string; type: 'built-in' | 'user' },
+  ) => {
     if (creatingTask) return
     // 2026-11-09 用户反馈：从「自由会话」点新建开发任务没有进入新任务界面 ——
     // 旧逻辑会复用当前会话，于是界面停留在旧对话（只有侧栏多一条草稿行）。
@@ -868,9 +888,15 @@ export function ChatPane({
     setActiveTask(null)
     setPendingTaskSession({
       org: preferredOrg,
-      title: kind === 'workflow-dev' ? NEW_WORKFLOW_TASK_NAME : NEW_TASK_NAME,
+      title:
+        kind === 'workflow-dev'
+          ? NEW_WORKFLOW_TASK_NAME
+          : kind === 'clone-dev'
+            ? NEW_CLONE_TASK_NAME
+            : NEW_TASK_NAME,
       projectIds: [],
       ...(kind ? { kind } : {}),
+      ...(presetClone ? { presetClone } : {}),
     })
     setSessionId(null)
     writeLastChatContext(null)
@@ -1335,7 +1361,11 @@ export function ChatPane({
       const status = activeTask?.status
       if (pendingTaskSession || status === 'draft') {
         return {
-          label: workflowDraft ? '工作流开发者 · workflow-author' : '作者 · task-author',
+          label: workflowDraft
+            ? '工作流开发者 · workflow-author'
+            : cloneDraft
+              ? '铸分身者 · clone-author'
+              : '作者 · task-author',
           active: true,
           readOnly: true,
           title: '任务对话的身份由任务状态自动派生，不可手动切换',
@@ -1345,7 +1375,11 @@ export function ChatPane({
         return { label: '主 Agent', active: false, readOnly: true, title: '任务已结束，对话回到主身份（只读）' }
       }
       return {
-        label: workflowDraft ? '工作流开发者 · workflow-author' : '执行者 · task-doer',
+        label: workflowDraft
+          ? '工作流开发者 · workflow-author'
+          : cloneDraft
+            ? '铸分身者 · clone-author'
+            : '执行者 · task-doer',
         active: true,
         readOnly: true,
         title: '任务对话的身份由任务状态自动派生，不可手动切换',
@@ -1432,7 +1466,7 @@ export function ChatPane({
     } else if (command.type === 'rename-task') openTaskRename(command.task)
     else if (command.type === 'delete-task') setDeleteTarget(command.task)
     else if (command.type === 'new-session') handleCreateSession()
-    else if (command.type === 'new-task') void handleCreateTask(command.kind)
+    else if (command.type === 'new-task') void handleCreateTask(command.kind, command.presetClone)
     // handlers are recreated per render; nonce guard keeps this one-shot.
   }, [command, handleCreateTask, handleSelectTask, handleSelectSession, handleCreateSession, openTaskRename])
 
@@ -1632,11 +1666,21 @@ export function ChatPane({
             composerHiddenHint="汐音代你在与作者对话 · 你的决定都在主对话"
             composerEnableLabel="在此处回答（兜底）"
             onEnableComposer={() => setThreadComposerEnabled(true)}
-            emptyStateTitle={draftScope ? (workflowDraft ? '描述要开发的工作流' : '描述要开发的任务') : undefined}
+            emptyStateTitle={
+              draftScope
+                ? workflowDraft
+                  ? '描述要开发的工作流'
+                  : cloneDraft
+                    ? '描述你要的分身'
+                    : '描述要开发的任务'
+                : undefined
+            }
             emptyStateDescription={draftScope
-              ? (workflowDraft
+              ? workflowDraft
                 ? '第一句话会成为工作流开发任务的标题；后续对话用于澄清需求、确认设计并生成可运行的 YAML。'
-                : '第一句话会成为任务草稿的标题，后续对话用于澄清与拆分 Phase。')
+                : cloneDraft
+                  ? '第一句话会成为分身任务的标题；铸分身者会一次一问地确认代号、人格与工具，验证通过后等你确认合入。'
+                  : '第一句话会成为任务草稿的标题，后续对话用于澄清与拆分 Phase。'
               : undefined}
             composerLeading={draftScope && !heroActive ? draftLead : mainLead}
             composerPlaceholder={directThreadIdentity
@@ -1644,7 +1688,9 @@ export function ChatPane({
               : draftScope
               ? (workflowDraft
                 ? '描述要开发或修改的工作流…　⏎ 发送'
-                : '描述要开发的任务…　⏎ 发送')
+                : cloneDraft
+                  ? '描述你要的分身…（做什么、什么时候用）　⏎ 发送'
+                  : '描述要开发的任务…　⏎ 发送')
               : cabinId && !taskThread
                 // classic-v3：舱主对话固定问汐音舰长（不再露出「主 Agent」）。
                 // 全域座舱（v21 三轮）：逐字用原型 .con-in 的 placeholder。

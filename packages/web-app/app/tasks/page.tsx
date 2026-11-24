@@ -133,6 +133,8 @@ export default function TasksPage() {
   // （deriveTaskView 唯一真相，票 07 嵌在 GET /:id 上 — list 端点不带）。
   // 看板 v4 任务量小：每次列表刷新后对 format==="v4" 的行逐个补拉 detail。
   const [derivedMap, setDerivedMap] = useState<Record<string, TaskDerivedView>>({})
+  /** kind 筛选（2026-11-25）：分身任务与工作流任务此前混在列表里，无法区分。 */
+  const [kindFilter, setKindFilter] = useState<'all' | 'dev' | 'workflow' | 'clone'>('all')
 
   const fetchTasks = useCallback(async () => {
     try {
@@ -270,9 +272,9 @@ export default function TasksPage() {
   const tasksRef = useRef<TaskView[]>(tasks)
   useEffect(() => { tasksRef.current = tasks }, [tasks])
 
-  const openNew = () => {
+  const openNew = (kind?: 'clone-dev') => {
     // AI-native: task creation is a chat session, not the legacy template modal.
-    window.dispatchEvent(new Event('octopus:new-task'))
+    window.dispatchEvent(new Event(kind === 'clone-dev' ? 'octopus:new-clone-task' : 'octopus:new-task'))
     window.dispatchEvent(new Event('octopus:focus-desktop'))
     window.dispatchEvent(new CustomEvent('octopus:close-app', { detail: { id: 'tasks' } }))
   }
@@ -382,10 +384,18 @@ export default function TasksPage() {
   // 展平渲染（archiving→执行中, failed/aborted→完成(终态)）。
   // sortByCreatedDesc 在装桶前过一次：groupTasksByStatus 按迭代序 push，
   // 每列因此天然「新→旧」（用户要求列内从新到旧）。
-  const displayTasks = tasks.map((t) => {
-    const eff = effectiveStatusOf(t, derivedMap[t.id])
-    return eff === t.status ? t : { ...t, status: eff }
-  })
+  const kindOf = (t: TaskView): 'dev' | 'workflow' | 'clone' => {
+    const kind = (t.task_spec as { kind?: string } | undefined)?.kind
+    return kind === 'workflow-dev' ? 'workflow' : kind === 'clone-dev' ? 'clone' : 'dev'
+  }
+  const kindCounts = { all: tasks.length, dev: 0, workflow: 0, clone: 0 }
+  for (const t of tasks) kindCounts[kindOf(t)]++
+  const displayTasks = tasks
+    .filter((t) => kindFilter === 'all' || kindOf(t) === kindFilter)
+    .map((t) => {
+      const eff = effectiveStatusOf(t, derivedMap[t.id])
+      return eff === t.status ? t : { ...t, status: eff }
+    })
   const grouped = groupTasksByStatus(sortByCreatedDesc(displayTasks))
   const budgetMs = phaseBudgetMs()
   const currency = useBillingCurrency()
@@ -423,6 +433,29 @@ export default function TasksPage() {
         <header className="flex flex-wrap items-center gap-2 border-b-[1.5px] border-pop-bd bg-pop-paper px-4 py-2.5 sm:gap-3 sm:px-6 sm:py-3">
           <h1 className="shrink-0 whitespace-nowrap text-lg font-black tracking-tight before:text-pop-pink before:content-['❯_']">任务看板</h1>
           <span className="shrink-0 rounded-full border border-pop-bd bg-pop-idle px-2 py-0.5 text-xs font-black tabular-nums text-pop-dim">{tasks.length} 个任务</span>
+          <div className="flex shrink-0 items-center gap-1" data-testid="task-kind-filter">
+            {([
+              ['all', '全部'],
+              ['dev', '开发'],
+              ['workflow', '工作流'],
+              ['clone', '分身'],
+            ] as const).map(([key, label]) => (
+              <button
+                key={key}
+                type="button"
+                onClick={() => setKindFilter(key)}
+                data-active={kindFilter === key}
+                className={
+                  kindFilter === key
+                    ? 'rounded-full border border-pop-pink/60 bg-pop-pink/15 px-2 py-0.5 text-[11px] font-black text-pop-pink'
+                    : 'rounded-full border border-pop-bd bg-pop-paper px-2 py-0.5 text-[11px] font-bold text-pop-dim hover:text-pop-ink'
+                }
+              >
+                {label}
+                <span className="ml-1 tabular-nums opacity-60">{kindCounts[key]}</span>
+              </button>
+            ))}
+          </div>
           {boardUsage && (
             <span
               data-board-usage
@@ -452,9 +485,18 @@ export default function TasksPage() {
               <RefreshCw className="size-4" />
               刷新
             </Button>
-            <Button variant="pop" size="sm" onClick={openNew} data-task-new>
+            <Button variant="pop" size="sm" onClick={() => openNew()} data-task-new>
               <Plus className="size-4" />
               新建开发任务
+            </Button>
+            <Button
+              variant="pop-quiet"
+              size="sm"
+              data-task-new-clone
+              onClick={() => openNew('clone-dev')}
+            >
+              <Plus className="size-4" />
+              新建分身任务
             </Button>
           </div>
         </header>

@@ -16,14 +16,22 @@ import {
   getAgentDir,
 } from './paths'
 import { isBuiltinClone, BUILTIN_CLONES } from './builtin-clones'
+import { findRepoRoot } from './clone-kit-registry'
 import type { CloneConfig } from './clone-resolver'
 
 // ── Types ──────────────────────────────────────────────────────────
+
+export interface KitSnapshotEntry {
+  path: string
+  sha256: string
+}
 
 export interface AgentSnapshot {
   persona: string
   config: Record<string, unknown>
   skills: string[]
+  /** 分身工具包内容清单（clone-dev，2026-11-25）。缺省 = 无 kit。 */
+  kit?: KitSnapshotEntry[]
 }
 
 export interface VersionDiff {
@@ -107,7 +115,29 @@ export function filesToSnapshot(cloneDir: string): AgentSnapshot {
     }
   }
 
-  return { persona, config, skills }
+  const kit = snapshotKit(path.join(cloneDir, 'kit'))
+  return { persona, config, skills, ...(kit.length > 0 ? { kit } : {}) }
+}
+
+/** 递归列出 kit 目录下的文件 + sha256（相对 kit 根）。 */
+function snapshotKit(kitDir: string): KitSnapshotEntry[] {
+  if (!fs.existsSync(kitDir)) return []
+  const out: KitSnapshotEntry[] = []
+  const walk = (dir: string): void => {
+    for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+      const full = path.join(dir, entry.name)
+      if (entry.isDirectory()) {
+        walk(full)
+      } else if (entry.isFile()) {
+        out.push({
+          path: path.relative(kitDir, full).replace(/\\/g, '/'),
+          sha256: crypto.createHash('sha256').update(fs.readFileSync(full)).digest('hex'),
+        })
+      }
+    }
+  }
+  walk(kitDir)
+  return out.sort((a, b) => a.path.localeCompare(b.path))
 }
 
 /**
@@ -146,6 +176,15 @@ export function snapshotToFiles(snapshot: AgentSnapshot, targetDir: string): voi
         fs.copyFileSync(srcPath, destPath)
       }
     }
+  }
+
+  // kit 内容清单：代码本身不进版本目录，回滚时按清单从仓库重建。
+  if (snapshot.kit && snapshot.kit.length > 0) {
+    fs.writeFileSync(
+      path.join(targetDir, 'kit-manifest.json'),
+      JSON.stringify(snapshot.kit, null, 2),
+      'utf-8',
+    )
   }
 }
 
@@ -336,6 +375,18 @@ export class AgentVersionService {
       // Step 3: Atomic replace — copy temp over clone dir
       // First, backup existing files that aren't in the snapshot
       copyDirOverwrite(tempDir, cloneDir)
+
+      // kit 代码不进版本目录：按清单从仓库构建产物重建（clone-dev）。
+      if (snapshot.kit && snapshot.kit.length > 0) {
+        const repoRoot = findRepoRoot()
+        const distRoot = repoRoot ? path.join(repoRoot, 'packages', 'clone-kits', 'dist') : null
+        if (distRoot && fs.existsSync(path.join(distRoot, agentName, 'index.js'))) {
+          const target = path.join(cloneDir, 'kit', 'dist')
+          fs.rmSync(path.join(cloneDir, 'kit'), { recursive: true, force: true })
+          fs.mkdirSync(target, { recursive: true })
+          copyDirSync(distRoot, target)
+        }
+      }
 
       // Step 4: Update DB pointer
       this.dao.updateCloneVersionId(agentName, target.id)

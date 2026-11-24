@@ -54,6 +54,7 @@ import {
   type LlmUsageSummary,
   type ModelUsageBreakdown,
 } from "@octopus/shared"
+import { getCloneDevService } from "./clone-dev-service"
 import {
   TaskDAO,
   AgentSessionDAO,
@@ -4162,6 +4163,20 @@ export class TasksService {
   private endArchiving(taskId: string): void {
     const row = this.taskDAO.getById(taskId)
     if (!row || row.status !== "archiving") return
+    // clone-dev：合入即安装。装包失败不标 done —— 停在 archiving 让人重试。
+    const spec = parseJSON<{ kind?: string }>(row.task_spec, {})
+    if (spec.kind === "clone-dev") {
+      try {
+        getCloneDevService()?.installKit(taskId)
+      } catch (err) {
+        console.error(`[TasksService] clone-dev install failed for ${taskId}:`, err)
+        this.sse.emit("taskpool", {
+          event: TASK_STATUS_EVENT,
+          data: { task_id: taskId, status: "archiving", error: err instanceof Error ? err.message : String(err) },
+        })
+        return
+      }
+    }
     const nowIso = new Date().toISOString()
     this.taskDAO
       .getDb()

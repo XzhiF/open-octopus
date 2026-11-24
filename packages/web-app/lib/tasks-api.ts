@@ -1855,6 +1855,43 @@ export async function getDoerChatHistory(workspaceId: string, sessionId: string,
   }))
 }
 
+// ── clone-dev (2026-11-25) ──────────────────────────────────────────
+
+export interface CloneDevVerification {
+  tools_called: boolean
+  boundary_blocked: boolean
+  identity_switch: boolean
+  evidence: string[]
+  ran_at?: string
+  message?: string
+}
+
+export interface CloneDevSnapshot {
+  taskId: string
+  kind: "clone-dev"
+  state: {
+    mode: "create" | "edit"
+    clone_name: string
+    clone_type: "built-in" | "user"
+    stage: "draft" | "verified" | "merged"
+    kit?: { enabled: boolean; package?: string; tools: string[] }
+    verification?: CloneDevVerification
+    complete?: boolean
+    runtime?: { worktree?: string; branch?: string; installed_at?: string; merged_at?: string }
+  }
+  clone: { info: { name: string; displayName?: string; skills?: string[] } | null; dir: string } | null
+}
+
+export async function getCloneDevState(taskId: string): Promise<CloneDevSnapshot> {
+  const res = await fetch(buildUrl(`/${taskId}/clone-dev`))
+  return handleResponse<CloneDevSnapshot>(res)
+}
+
+export async function verifyCloneDev(taskId: string): Promise<CloneDevSnapshot> {
+  const res = await fetch(buildUrl(`/${taskId}/clone-dev/verify`), { method: "POST" })
+  return handleResponse<CloneDevSnapshot>(res)
+}
+
 // Re-export shared types so callers can import everything from one place.
 export type {
   Task,

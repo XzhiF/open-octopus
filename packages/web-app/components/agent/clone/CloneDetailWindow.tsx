@@ -75,6 +75,23 @@ export function CloneDetailWindow({ clone, onMerge, onDelete, onRefresh }: Clone
         <div className="ml-auto flex flex-none items-center gap-1.5">
           <button
             type="button"
+            data-clone-edit
+            onClick={() => {
+              // clone-dev（2026-11-25）：编辑走任务 + worktree，验证后合入。
+              window.dispatchEvent(
+                new CustomEvent('octopus:edit-clone-task', {
+                  detail: { name: clone.name, type: clone.type },
+                }),
+              )
+              window.dispatchEvent(new Event('octopus:focus-desktop'))
+              window.dispatchEvent(new CustomEvent('octopus:close-app', { detail: { id: 'clones' } }))
+            }}
+            className="inline-flex h-6 items-center gap-1 rounded-[6px] border-[1.5px] border-pop-purple/40 bg-pop-purple/10 px-2 text-[9.5px] font-bold text-pop-purple transition-colors hover:bg-pop-purple/15"
+          >
+            编辑分身
+          </button>
+          <button
+            type="button"
             onClick={onMerge}
             className="inline-flex h-6 items-center gap-1 rounded-[6px] border-[1.5px] border-pop-bd bg-pop-idle px-2 text-[9.5px] font-bold text-pop-ink transition-colors hover:border-pop-purple/45"
           >
