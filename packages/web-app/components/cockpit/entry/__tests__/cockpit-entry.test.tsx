@@ -70,6 +70,33 @@ function jobRow(j: CabinJobView): CockpitRow {
   }
 }
 
+/** 会话行（2026-11-25）：?delegation= 深链与默认页签「对接」。 */
+function delegationRow(id: string): CockpitRow {
+  return {
+    key: `delegation:${id}`,
+    kind: 'delegation',
+    cabinId: 'c1',
+    cabinName: '舱 c1',
+    delegation: {
+      id,
+      cabin_id: 'c1',
+      title: `会话 ${id}`,
+      intent_text: '把字段对一下',
+      brief: null,
+      autonomy: 'checkpoint',
+      state: 'running',
+      doer_session_id: `s-${id}`,
+      result_summary: null,
+      created_at: '2026-11-25T09:00:00.000Z',
+      updated_at: '2026-11-25T09:10:00.000Z',
+      ended_at: null,
+      handle: 'D1',
+      color: 2,
+    },
+    pct: null,
+  }
+}
+
 function SelectionProbe() {
   const { selection } = useCockpitState()
   return (
@@ -77,6 +104,11 @@ function SelectionProbe() {
       {selection ? `${selection.kind}:${selection.cabinId}:${selection.id}` : 'none'}
     </output>
   )
+}
+
+function TabProbe() {
+  const { tab } = useCockpitState()
+  return <output data-testid="tab">{tab}</output>
 }
 
 function UrlProbe() {
@@ -100,6 +132,7 @@ function renderSync(initial: string, initialFleet: CockpitFleetContextValue) {
         <CockpitStateProvider entryCabinId="c1">
           <CockpitUrlSync />
           <SelectionProbe />
+          <TabProbe />
           <UrlProbe />
           <CollapseButton />
         </CockpitStateProvider>
@@ -180,6 +213,23 @@ describe('CockpitUrlSync — 默认选中 / 无效 ref 回退 / 跨舱', () => {
     load(rows)
     await waitFor(() => expect(screen.getByTestId('selection').textContent).toBe('attention:c1:a1'))
     expect(screen.getByTestId('url').textContent).toBe('/cabin/c1/cockpit?attn=a1')
+  })
+
+  // 2026-11-25：会话（delegation）有详情面 —— ?delegation= 深链有效，默认落「对接」。
+  it('?delegation 深链：选中会话并默认落「对接」页签', async () => {
+    const rows = [delegationRow('d1')]
+    const { load } = renderSync('/cabin/c1/cockpit?delegation=d1', fleet([], false))
+    load(rows)
+    await waitFor(() => expect(screen.getByTestId('selection').textContent).toBe('delegation:c1:d1'))
+    expect(screen.getByTestId('tab').textContent).toBe('relay')
+    expect(screen.getByTestId('url').textContent).toBe('/cabin/c1/cockpit?delegation=d1&tab=relay')
+  })
+
+  it('?delegation 失效（编队里没有这条会话）→ 收面并清掉 URL 参数', async () => {
+    const { load } = renderSync('/cabin/c1/cockpit?delegation=gone', fleet([], false))
+    load([delegationRow('d1')])
+    await waitFor(() => expect(screen.getByTestId('selection').textContent).toBe('none'))
+    await waitFor(() => expect(screen.getByTestId('url').textContent).toBe('/cabin/c1/cockpit'))
   })
 })
 

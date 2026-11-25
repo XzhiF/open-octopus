@@ -1120,6 +1120,23 @@
   color: #fff;
   border-color: transparent;
 }
+/* 页签角标（2026-11-25 · 原型 .dtab .n）：「子代理 5」。 */
+.ck12-dtab .n {
+  display: inline-block;
+  min-width: 13px;
+  margin-left: 5px;
+  padding: 0 3px;
+  font-size: 8px;
+  line-height: 13px;
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.16);
+  color: var(--ck12-ink2);
+  font-family: var(--font-mono);
+  font-style: normal;
+  font-variant-numeric: tabular-nums;
+  text-align: center;
+}
+.ck12-dtab.on .n { background: rgba(255, 255, 255, 0.28); color: #fff; }
 
 .ck12-face-body { padding: 10px 14px; }
 

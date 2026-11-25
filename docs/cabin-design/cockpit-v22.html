@@ -688,6 +688,29 @@ kbd{border:1px solid rgba(185,179,217,.35);border-bottom-width:2px;border-radius
 .dtabs{display:flex;gap:5px;margin-bottom:8px;flex-wrap:wrap}
 .dtab{height:24px;padding:0 12px;clip-path:var(--btncut);background:rgba(255,255,255,.07);color:var(--ink2);font-size:10px;font-weight:700;font-family:var(--font-ui)}
 .dtab.on{background:linear-gradient(90deg,var(--sky),var(--violet));color:#fff}
+.dtab .n{display:inline-block;min-width:13px;margin-left:5px;padding:0 3px;font-size:8px;line-height:13px;border-radius:6px;background:rgba(255,255,255,.14);color:var(--ink2);font-family:var(--font-mono);font-style:normal;text-align:center}
+.dtab.on .n{background:rgba(255,255,255,.28);color:#fff}
+/* ═══ 详情 · 消耗 / 子代理（2026-11-25 用户）：会话与任务共用的两个基础页签。
+       消耗 = 这一个作业自己的账（主回合 + 子代理单列，防双算）；子代理 = 按作业归属过滤的活动。 ═══ */
+.agsum{display:flex;align-items:center;gap:8px;flex-wrap:wrap;padding:6px 9px;margin-bottom:8px;clip-path:var(--cut);border:1px solid rgba(185,179,217,.16);background:rgba(255,255,255,.04);font-size:9px;color:var(--ink2)}
+.agsum .k{font-size:8px;letter-spacing:.12em;color:var(--metal2);font-family:var(--font-mono)}
+.agsum b{color:#fff;font-weight:800}
+.agsum .sp{flex:1}
+.aggrp{font-size:9.5px;letter-spacing:.16em;color:var(--teal);font-weight:700;margin:12px 0 6px;display:flex;gap:8px;align-items:center}
+.aggrp::after{content:"";flex:1;height:1px;background:linear-gradient(90deg,rgba(46,230,214,.4),transparent)}
+.agrow{display:flex;align-items:center;gap:9px;width:100%;text-align:left;padding:8px 10px;margin-bottom:6px;clip-path:var(--cut);background:rgba(255,255,255,.05);border:1px solid rgba(185,179,217,.16);border-left:3px solid var(--violet);transition:.14s}
+.agrow.bg{border-left-color:var(--sky)}
+.agrow:hover{transform:translateX(2px);background:rgba(255,255,255,.1)}
+.agrow .agk{flex:none;font-size:8px;font-weight:800;letter-spacing:.04em;line-height:15px;padding:0 5px;border:1px solid rgba(123,77,255,.45);color:#c9b6ff;clip-path:polygon(3px 0,100% 0,calc(100% - 3px) 100%,0 100%)}
+.agrow.bg .agk{color:var(--sky);border-color:rgba(53,199,240,.4)}
+.agrow .agb{flex:1;min-width:0}
+.agrow .agb b{display:block;font-size:11.5px;font-weight:700;font-family:var(--font-ui);color:#fff;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.agrow .agb span{display:block;margin-top:1px;font-size:9px;color:var(--ink2);font-family:var(--font-mono);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.agrow .agr{flex:none;display:flex;flex-direction:column;align-items:flex-end;gap:2px}
+.agrow .agr .st{font-size:8.5px;font-weight:800;color:var(--green)}
+.agrow .agr .st.done{color:var(--metal2)}
+.agrow .agr .mt{font-size:8.5px;color:var(--ink2);font-family:var(--font-mono)}
+.agrow .go{flex:none;font-size:9.5px;font-weight:800;color:var(--teal)}
 /* ── 详情 · 对话：这条作战的 chat 记录（TUI 转录同肤，只读；去通讯台接着聊） ── */
 .pb.dcon-on{overflow:hidden;display:flex;flex-direction:column}
 .dcon{flex:1;min-height:0;display:flex;flex-direction:column;gap:8px}
@@ -2297,7 +2320,7 @@ const projOf=id=>PROJECTS.find(p=>p.id===id)||PROJECTS[0];
 /* 工作树根（演示用绝对路径）：项目页签与目录树窗口都显示完整路径。 */
 const WS_ROOT='D:/octopus-ws/cabin';
 const wsPath=id=>WS_ROOT+'/projects/'+id;
-const KIND={task:{g:'◆',label:'任务'},workflow:{g:'⬡',label:'工作流'},subagent:{g:'◈',label:'分身'},external:{g:'⧉',label:'外部'},wfdev:{g:'⚙',label:'流程开发'}};
+const KIND={task:{g:'◆',label:'任务'},workflow:{g:'⬡',label:'工作流'},chat:{g:'❯',label:'会话'},subagent:{g:'◈',label:'分身'},external:{g:'⧉',label:'外部'},wfdev:{g:'⚙',label:'流程开发'}};
 /* 2026-11-25 用户：完结 ≠ 归档 —— done 组只说「已完成」；真正的归档态由归档页签 / 📦 表达。 */
 const STATE_LABEL={run:'作战中',wait:'等你答',blocked:'受阻',queue:'待命',arch:'待归档',archiving:'归档中',done:'已完成'};
 const STATE_EMO={run:'⚡',wait:'❗',blocked:'💦',queue:'💤',arch:'📦',archiving:'⚙',done:'✅'};
@@ -2315,6 +2338,7 @@ const JOBS_INIT=[
  {id:'j-m4',proj:'ledger',kind:'task',title:'M4 · 结息重算',short:'M4 结息',status:'wait',st:'待验收',pct:100,doing:'补 AC-5 覆盖 · 2 文件',agent:'ledger-1',branch:'fix/interest',clock:'—',live:'在跑',liveSec:161,cost:0.18,tok:63000,rarity:3,tid:'t-2647',slug:'interest',born:2},
  {id:'j-arch',proj:'ledger',kind:'subagent',title:'归档沉淀 · M2',short:'归档 M2',status:'run',pct:40,doing:'编译 wiki/结算对账.md',agent:'ledger-1',branch:'archive/m2',clock:'6m10s',cost:0.05,tok:18000,rarity:2,tid:'t-2643',slug:'archive-m2',born:6},
  {id:'j-ext',proj:'gateway',kind:'external',title:'合规审计 · 网关',short:'合规审计',status:'run',pct:65,doing:'扫描配置 · 2 处偏差',agent:'claude-code',branch:'audit/gateway',clock:'22m',cost:0.10,tok:31000,rarity:2,tid:'t-2640',slug:'audit-gateway',born:22},
+ {id:'j-s1',proj:'ledger',kind:'chat',title:'收银台对接 · 会话',short:'收银台对接',status:'run',pct:null,doing:'比对旧适配器与新版返回字段',agent:'ledger-1',branch:'—',clock:'12m',live:'在跑',liveSec:740,cost:0.14,tok:48000,rarity:2,tid:'s-9f2a',slug:'cashier-session',born:12},
  {id:'j-m2x',proj:'ledger',kind:'wfdev',title:'发布脚本迁移',short:'脚本迁移',status:'run',pct:55,doing:'迁移第 4/7 个脚本',agent:'ledger-2',branch:'feat/release-scripts',clock:'8m',cost:0.05,tok:22000,rarity:2,tid:'t-2644',slug:'release-scripts',born:8},
  {id:'j-m3',proj:'risk',kind:'task',title:'M3 · 风控告警',short:'M3 风控',status:'queue',pct:0,doing:'待命 · 等并发位',agent:'—',branch:'—',clock:'—',cost:0,tok:0,rarity:1,tid:'t-2645',slug:'risk-alert',born:44},
  {id:'j-m5',proj:'risk',kind:'task',title:'M5 · 账单导出',short:'M5 导出',status:'queue',st:'待命',pct:0,doing:'dev 服务起着 · 等唤醒',agent:'risk-1',branch:'feat/bill-export',clock:'—',live:'等后台',liveSec:305,cost:0.03,tok:9000,rarity:2,tid:'t-2648',slug:'bill-export',born:3},
@@ -2345,6 +2369,7 @@ const THREADS_INIT={
  'j-m2':[{who:'sys',text:'—— M2 · 结算对账 ——'},{who:'you',name:'指挥官',text:'M2 的验收跑完叫我。',t:'09:31'},{who:'xy',name:'汐音',text:'接 M2 结算对账，走 spec-dev，AC 1–4 逐条对齐。',t:'09:31',mood:'working'},{who:'doer',name:'ledger-2',text:'impl 完成 · 2 文件 +184/−32 · 42 passed。',t:'09:36'},{who:'doer',name:'ledger-2',text:'AC-4 大额差异缺覆盖，要指挥决定本轮补不补。',t:'09:41'},{who:'xy',name:'汐音',text:'M2 可以验收了，证据与变更都摊好了。AC-4 我建议下一轮补，您定。',t:'09:41',mood:'happy'}],
  'j-arch':[{who:'sys',text:'—— 归档沉淀 · M2 ——'},{who:'xy',name:'汐音',text:'M2 归档沉淀，编译 wiki。',t:'09:31',mood:'working'},{who:'doer',name:'ledger-1',text:'抽 2 条可复用结论 · 1 处术语冲突。',t:'09:36'}],
  'j-ext':[{who:'sys',text:'—— 合规审计 · 网关 ——'},{who:'xy',name:'汐音',text:'派外部 agent 做合规审计，只回报结果。',t:'09:20',mood:'working'},{who:'doer',name:'claude-code',text:'扫描 12 个配置文件 · 2 处突发偏差。',t:'09:36'}],
+ 'j-s1':[{who:'sys',text:'—— 收银台对接 · 会话 ——'},{who:'you',name:'指挥官',text:'收银台新旧接口的返回字段对一下，差异列给我。',t:'09:38'},{who:'xy',name:'汐音',text:'接这件事：比对旧适配器与新版返回字段，差异落成清单。',t:'09:38',mood:'working'},{who:'doer',name:'ledger-1',text:'旧适配器 12 个字段，新版 15 个：3 个新增、2 个语义变了。',t:'09:47'}],
  'j-m2x':[{who:'sys',text:'—— 发布脚本迁移 ——'},{who:'xy',name:'汐音',text:'发布脚本迁移，7 个逐个过。',t:'09:31',mood:'working'},{who:'doer',name:'ledger-2',text:'前 3 个已迁 · 第 4 个遇回滚边界。',t:'09:39'}],
  'j-m3':[{who:'sys',text:'—— M3 · 风控告警 · 待命 ——'},{who:'xy',name:'汐音',text:'风控扫描在待命，等并发位。',t:'09:31',mood:'idle'}],
  'j-m2a':[{who:'sys',text:'—— M1 · 幂等修复 · 已归档 ——'},{who:'doer',name:'ledger-2',text:'2 文件 +96/−41 · 42 passed · 验收通过。',t:'09:02'}],
@@ -2356,6 +2381,7 @@ const JOB_EVENTS={
  'j-m2':[['09:31','汐音','dispatch','接 M2 结算对账'],['09:33','ledger-2','report','spec 定稿 4 tickets'],['09:36','ledger-2','tool','42 passed'],['09:41','ledger-2','attention','AC-4 未覆盖']],
  'j-arch':[['09:31','汐音','dispatch','归档沉淀'],['09:36','ledger-1','tool','写 wiki']],
  'j-ext':[['09:20','汐音','dispatch','外部合规审计'],['09:36','claude-code','tool','2 偏差']],
+ 'j-s1':[['09:38','汐音','dispatch','接下收银台字段比对'],['09:44','ledger-1','tool','读取旧适配器 12 字段'],['09:47','ledger-1','report','差异清单 3 新增 / 2 语义变更']],
  'j-m2x':[['09:31','汐音','dispatch','脚本迁移'],['09:40','ledger-2','attention','回滚策略待定']],
  'j-m3':[['09:31','汐音','note','待命']],
  'j-m2a':[['08:58','ledger-2','report','42 passed'],['09:02','ledger-2','report','已归档']],
@@ -2430,7 +2456,7 @@ const ARC_FILES={
  'verify.log':'[verify] 42 tests passed\n[verify] 0 failed\n',
  'round-report-r1.md':'# Round 1 · report\n\n- 31 passed · 0 failed\n',
  'risk.diff':'diff --git a/src/risk/terms.ts b/src/risk/terms.ts\n+export const TERMS = { idempotent: "幂等" }\n'};
-const KW={'j-m1':'退款','j-m2g':'限流','j-m2':'对账','j-arch':'归档','j-ext':'审计','j-m2x':'迁移','j-m3':'风控','j-m2a':'幂等','j-m7':'导出','j-edge':'灰度'};
+const KW={'j-m1':'退款','j-m2g':'限流','j-m2':'对账','j-arch':'归档','j-ext':'审计','j-s1':'收银台','j-m2x':'迁移','j-m3':'风控','j-m2a':'幂等','j-m7':'导出','j-edge':'灰度'};
 const SAY=[['指挥官，舰桥一切正常，编队在跑。','idle'],['我在。您说。','wink'],['要拍板的都在「决断」里，点一条就地回我。','thinking'],['跃迁可以换场景，星空巡航和星云门都准备好了。','happy'],['别担心，阻塞那条我先停住现场了。','worried'],['右边「要我处理」亮起来是有新回传，点进去就地处理。','alert']];
 const PROGRESS=['探针正常 · 推进到下一节点。','单测绿 · 继续 impl。','已写 round-report · 进入 verify。','缓存命中 82% · 成本低于预估。','worktree 干净 · 无越权改动。','第 2 阶段完成 · 进入第 3 阶段。'];
 /* 便签配色（与 classic 快速便签同一组）。 */
@@ -2626,7 +2652,7 @@ function renderFleetRail(){
           <button class="flact pri" data-rail-chat="${j.id}" title="💬 对话 · 这条作战的 chat 窗" aria-label="对话">💬</button>
           ${un?`<i class="und">${un>9?'9+':un}</i>`:''}
         </span>
-        <button class="flact" data-rail-detail="${j.id}" title="▦ 详情 · 作战详情（${j.status==='arch'||j.status==='archiving'?'归档页签':'不改主通讯台'}）" aria-label="详情">${j.status==='arch'||j.status==='archiving'?'📦':'▦'}</button>
+        <button class="flact" data-rail-detail="${j.id}" title="▦ 详情 · ${j.kind==='chat'?'会话详情':'作战详情'}（${j.status==='arch'||j.status==='archiving'?'归档页签':'不改主通讯台'}）" aria-label="详情">${j.status==='arch'||j.status==='archiving'?'📦':'▦'}</button>
       </span></div>`;};
   const list=fleetSorted();
   const LIMIT=6;
@@ -3368,7 +3394,8 @@ function openJobChat(jid){if(!jid||jid==='main'){setConMin(false);requestAnimati
 /* ── 归档页签（2026-11-24 用户）：编队任务在三处都能落到这同一扇只读明细 ──
    ① 编队行 / 作战详情页签；② chat 窗头部 📦；③ 主对话任务状态卡的归档角标。
    操作仍在对话里完成：这里只展示归档闸、四步编排与逐仓落点。 */
-const detailTabFor=j=>j&&(j.status==='arch'||j.status==='archiving'||ARCHIVE[j.id]?.state==='pending'||ARCHIVE[j.id]?.state==='running')?'archive':'run';
+/* 详情默认页签：归档态优先；会话（chat）默认落「对接」（它那六项的首页签）；其余落「运行」。 */
+const detailTabFor=j=>j&&(j.status==='arch'||j.status==='archiving'||ARCHIVE[j.id]?.state==='pending'||ARCHIVE[j.id]?.state==='running')?'archive':(j&&j.kind==='chat')?'relay':'run';
 function archRun(jid){const a=ARCHIVE[jid],j=jobOf(jid);if(!a||a.state!=='pending')return;
  a.state='running';a.step=0;a.startedAt=nowHM();a.elapsed='0:12';
  a.events=[['刚刚','汐音','dispatch','你说「归档」· 启动归档编排']];
@@ -3870,6 +3897,18 @@ const ACTIVITY_INIT=[
    {k:'tool',name:'Read',arg:'wiki/结算对账.md',res:'74 lines'},
    {k:'text',t:'「结算日」在 wiki 指 T+1 入账日，M2 报告里却指交易发生日 —— 这是一处真冲突。'},
   ],summary:null},
+ {id:'a-sa-4',kind:'subagent',title:'返回字段语义比对',type:'Explore',by:'ledger-1 · 收银台会话',status:'run',started:'09:44',elapsed:'2m10s',steps:9,
+  tin:5200,tout:3100,tcache:4200,cost:0.02,model:'qwen3.7-plus',src:'j-s1',
+  prompt:'把旧适配器与新版收银台接口的返回字段逐项比对：列出新增 / 删除 / 语义变更，给出兼容层的最小改法。只读，不改文件。',
+  log:[
+   {k:'think',t:'先读旧适配器的字段定义，再拉新版接口的样例返回。'},
+   {k:'tool',name:'Read',arg:'src/pay/cashier-adapter.ts',res:'96 lines'},
+   {k:'tool',name:'Bash',arg:'curl -s /pay/settle/sample | jq keys',res:'15 keys'},
+   {k:'text',t:'新增 3 个字段（channel_trace / settle_cycle / fee_detail），其中 fee_detail 是嵌套结构。'},
+  ],summary:null},
+ {id:'a-bg-4',kind:'background',title:'curl 新版收银台 /pay/settle',type:'bash',by:'ledger-1 · 收银台会话',status:'done',started:'09:43',elapsed:'8s',pid:'4521',exit:0,src:'j-s1',
+  command:'curl -s http://localhost:4100/pay/settle/sample | jq .',
+  output:'{\n  "order_id": "A-9201",\n  "amount": 128.00,\n  "currency": "CNY",\n  "channel_trace": "wxpay-7f2c",\n  "settle_cycle": "T+1",\n  "fee_detail": { "rate": 0.006, "fixed": 0 }\n}\n\n[exit 0]'},
  {id:'a-bg-1',kind:'background',title:'vitest --run src/settlement',type:'bash',by:'汐音 · 主会话',status:'run',started:'09:40',elapsed:'1m05s',pid:'4412',src:'j-m2',
   command:'pnpm vitest run src/settlement --reporter=dot',
   output:'RUN  v2.1.9  D:/octopus-ws/cabin/projects/ledger\n\n❯ src/settlement/reconcile.test.ts (14 tests | 3 failed) 812ms\n   × reconciles cross-account replay\n     → expected 1 but got 2\n   ✓ settles T+1 boundary\n   ✓ ignores duplicate events\n\nTest Files  1 failed (1)\n     Tests  3 failed | 11 passed (14)\n  Start at  09:40:12\n  Duration  1.05s\n\n[watch] waiting for file changes…'},
@@ -4595,6 +4634,41 @@ function renderRelay(j){
    <div class="rl-flow">${lines.length?lines.map(l=>`<div class="rm is-${l.from}${l.head?' head':''}" data-relay-key="${l.key}"><div class="rm-h"><b>${esc(roleName(l.from))} → ${esc(roleName(l.to))}</b><span class="k">${esc(l.kind)}</span><span class="t">${esc(l.at)}</span></div><p>${esc(l.text)}</p></div>`).join(''):'<div class="pempty">还没有交接事件 · 派发后这里留痕</div>'}</div>
    <div class="rl-foot">${esc(doer)}不直接找你：它的回报先到汐音，汐音汇总后再找你；要它做什么，也由汐音转达。</div>`;
 }
+/* ── 详情 · 消耗 / 子代理（2026-11-25 用户）：会话与任务共用的两个基础页签。
+      消耗 = 这一个作业自己的账（主回合 + 子代理单列，防双算）；本舱全域累计仍在右栏「消耗」。
+      子代理 = 按作业归属过滤的 subagent / 后台作业，点开进「活动日志」看过程。 ── */
+function jobActs(j){return ACTIVITY.filter(a=>a.src===j.id);}
+function renderUsage(j){
+ const turns=turnsFor(j),acts=jobActs(j);
+ const inTok=turns.reduce((s,t)=>s+t.inTok,0),outTok=turns.reduce((s,t)=>s+t.outTok,0);
+ const cr=turns.reduce((s,t)=>s+t.cr,0),cw=turns.reduce((s,t)=>s+t.cw,0);
+ const turnCost=turns.reduce((s,t)=>s+t.cost,0);
+ const subCost=acts.reduce((s,a)=>s+(a.cost||0),0);
+ const subTok=acts.reduce((s,a)=>s+((a.tin||0)+(a.tout||0)+(a.tcache||0)),0);
+ const byModel={};turns.forEach(t=>{const m=byModel[t.model]=byModel[t.model]||{calls:0,tok:0,cost:0};m.calls++;m.tok+=t.inTok+t.cr+t.outTok;m.cost+=t.cost;});
+ const what=j.kind==='chat'?'会话':'作业';
+ const subRow=a=>`<div class="mrow"><span class="mn">${a.kind==='subagent'?'◈':'⌁'}</span><span class="md">${esc(a.title)} · ${esc(a.type||'')} · ${a.status==='run'?'运行中':'已结束'}</span><span class="mv">${fmtK((a.tin||0)+(a.tout||0))}</span><span class="mc">¥${(a.cost||0).toFixed(2)}</span></div>`;
+ return `<div class="pnote">本${what}账本 = 这一个${what}自己的消耗（主回合 + 子代理单列，只读）；本舱全域累计看右栏 <b>「消耗」</b>。</div>
+  <div class="ledger"><div><div class="big">${fmtK(inTok+cr+outTok)} <small>tok</small></div><div style="font-size:9px;color:var(--ink2)">${turns.length} 轮 · ${acts.length} 个子代理 · 只读</div></div><div class="cost"><b>¥${(turnCost+subCost).toFixed(2)}</b><span>主回合 + 子代理单列</span></div></div>
+  <div class="tokcells"><div class="tokc in"><div class="k">输入</div><div class="v">${fmtK(inTok)}</div></div><div class="tokc out"><div class="k">输出</div><div class="v">${fmtK(outTok)}</div></div><div class="tokc cr"><div class="k">缓存读</div><div class="v">${fmtK(cr)}</div></div><div class="tokc cw"><div class="k">缓存写</div><div class="v">${fmtK(cw)}</div></div></div>
+  <div class="sect">按轮 · 主回合</div>${turns.map(t=>`<div class="mrow"><span class="mn">T${t.n}</span><span class="md">${esc(t.model)} · ${esc(t.status)} · ${esc(t.dur)}</span><span class="mv">${fmtK(t.inTok+t.cr+t.outTok)}</span><span class="mc">¥${t.cost.toFixed(3)}</span></div>`).join('')}
+  <div class="sect">按模型</div>${Object.entries(byModel).map(([id,m])=>`<div class="mrow"><span class="mn">${esc(id)}</span><span class="md">${m.calls} 次 · ${esc(modelOf(id).desc)}</span><span class="mv">${fmtK(m.tok)}</span><span class="mc">¥${m.cost.toFixed(3)}</span></div>`).join('')}
+  <div class="sect">子代理 · 单列（不与主回合盲加）</div>${acts.length?acts.map(subRow).join(''):`<div class="pempty">这个${what}还没有子代理 · 需要时在对话里让它派一个</div>`}
+  <div class="pnote" style="color:var(--metal2);border-color:rgba(185,179,217,.24);background:rgba(255,255,255,.025);margin-top:9px">防双算：子代理 token 走 subagent_runs 单列（${fmtK(subTok)} tok · ¥${subCost.toFixed(2)}），不与主回合的 llm_calls 相加；成本按 token 用量派生，钱不落账本。</div>`;
+}
+function renderAgents(j){
+ const acts=jobActs(j);
+ const live=acts.filter(a=>a.status==='run'),done=acts.filter(a=>a.status!=='run');
+ const what=j.kind==='chat'?'会话':'作业';
+ const row=a=>{const bg=a.kind==='background';return `<button class="agrow${bg?' bg':''}" data-agopen="${esc(a.id)}" title="点开看过程（活动日志）">
+   <span class="agk">${bg?'⌁ 后台':'◈ 子代理'}</span>
+   <span class="agb"><b>${esc(a.title)}</b><span>${esc(a.type||(bg?'bash':'subagent'))} · ${esc(a.by)} · ${bg?`pid ${esc(a.pid||'—')}`:`${a.steps||0} 步`} · ${esc(a.started||'')} 起</span></span>
+   <span class="agr"><span class="st${a.status==='run'?'':' done'}">${a.status==='run'?'运行中':'已结束'}</span><span class="mt">${esc(a.elapsed||'—')} · ${fmtK((a.tin||0)+(a.tout||0))} tok · ¥${(a.cost||0).toFixed(2)}</span></span>
+   <span class="go">详情 →</span></button>`;};
+ return `<div class="pnote">只列这个${what}自己派出去的 —— 子代理与后台作业都归到发起它的作业；全舱历史在右栏「更多 → 活动日志」。</div>
+  <div class="agsum"><span class="k">子代理</span><b>${acts.filter(a=>a.kind==='subagent').length}</b><span class="k">后台</span><b>${acts.filter(a=>a.kind==='background').length}</b><span class="k">合计</span><b>¥${acts.reduce((s,a)=>s+(a.cost||0),0).toFixed(2)}</b><span class="sp"></span><span>运行中 <b>${live.length}</b></span></div>
+  ${acts.length?`${live.length?`<div class="aggrp">运行中</div>${live.map(row).join('')}`:''}${done.length?`<div class="aggrp">已结束</div>${done.map(row).join('')}`:''}`:`<div class="pempty">这个${what}还没有子代理<br><small>需要时在对话里让它开一个</small></div>`}`;
+}
 /* ── 详情 · 项目：只摆本作战的 worktree（任务 = 任务绑定的项目集；会话 = 会话锚点）。
       一行一个项目：名称 / 分支 / 路径；点击在 dossier 之上弹「目录树」窗口（只读）。 ── */
 function jobProjIds(j){return (j.projs&&j.projs.length)?j.projs:[j.proj];}
@@ -4767,7 +4841,7 @@ function renderPanel(){const p=$('#panel');if(!state.panel){p.classList.remove('
  if(state.panel==='fleet'){
   const js=[...state.jobs].filter(j=>state.fleetFilter==='all'||j.proj===state.fleetFilter).sort((a,b)=>rankOf(a)-rankOf(b)||((a.born??999)-(b.born??999)));
   body=`<div class="fchips"><button class="fchip${state.fleetFilter==='all'?' on':''}" data-fproj="all">全部 ${state.jobs.length}</button>${PROJECTS.map(pr=>`<button class="fchip${state.fleetFilter===pr.id?' on':''}" data-fproj="${pr.id}">${pr.name} ${state.jobs.filter(j=>j.proj===pr.id).length}</button>`).join('')}<button class="fchip" data-ops-jump style="color:var(--amber);border-color:rgba(255,176,32,.5)">◈ 待你决断 ${openOps().length}</button></div>`;
-  body+=js.map(j=>{const pr=projOf(j.proj),op=opForJob(j.id);const archP=ARCHIVE[j.id]?.state==='pending';const arr=Date.now()-state.flash.at<1400&&state.flash.job===j.id;const label=labelOf(j);return `<div class="frow${arr?' arrived':''}" data-job="${j.id}" style="--accent:${pr.color}" role="button" tabindex="0"><span class="fg">${KIND[j.kind].g}</span><span class="fm"><span class="ft">${esc(j.title)}<span class="stars">${'★'.repeat(j.rarity||1)}</span></span><span class="fd">${esc(pr.name)} · ${esc(j.doing)}</span><span class="fb"><i style="width:${Math.round(j.pct)}%"></i></span></span><span class="fr">${j.live?`<span class="fstate run">⌁ ${liveTextOf(j)}</span>`:''}<span class="fstate ${j.status}">${STATE_EMO[j.status]} ${label}</span>${op?'<span class="fneed"><i></i>需要你</span>':''}${archP?'<span class="fneed arc"><i></i>等你点头</span>':''}</span><span class="fa"><button data-talk="${j.id}" title="与汐音谈这条">💬</button>${op?`<button class="dec" data-decide="${j.id}" title="就地决断">◈</button>`:''}${archP?`<button class="dec" data-archtab="${j.id}" title="📦 归档 · 待归档，打开归档页签">📦</button>`:''}</span></div>`;}).join('')||'<div class="pempty">该项目暂无作战。</div>';
+  body+=js.map(j=>{const pr=projOf(j.proj),op=opForJob(j.id);const archP=ARCHIVE[j.id]?.state==='pending';const arr=Date.now()-state.flash.at<1400&&state.flash.job===j.id;const label=labelOf(j);return `<div class="frow${arr?' arrived':''}" data-job="${j.id}" style="--accent:${pr.color}" role="button" tabindex="0"><span class="fg">${KIND[j.kind].g}</span><span class="fm"><span class="ft">${esc(j.title)}<span class="stars">${'★'.repeat(j.rarity||1)}</span></span><span class="fd">${esc(pr.name)} · ${esc(j.doing)}</span><span class="fb"><i style="width:${j.pct==null?0:Math.round(j.pct)}%"></i></span></span><span class="fr">${j.live?`<span class="fstate run">⌁ ${liveTextOf(j)}</span>`:''}<span class="fstate ${j.status}">${STATE_EMO[j.status]} ${label}</span>${op?'<span class="fneed"><i></i>需要你</span>':''}${archP?'<span class="fneed arc"><i></i>等你点头</span>':''}</span><span class="fa"><button data-talk="${j.id}" title="与汐音谈这条">💬</button>${op?`<button class="dec" data-decide="${j.id}" title="就地决断">◈</button>`:''}${archP?`<button class="dec" data-archtab="${j.id}" title="📦 归档 · 待归档，打开归档页签">📦</button>`:''}</span></div>`;}).join('')||'<div class="pempty">该项目暂无作战。</div>';
   body+=`<div class="sect">原型样张 · 作者在干活（编队行实宽 198px）</div><div class="lvsamp">${[
     lvSamp({tag:'① 待验收 · 无人在跑',status:'wait',label:'待验收',g:'◆',title:'M2 · 对账',doing:'停在验收 · 等你决定',pct:100,accent:'#8B7CF6'}),
     lvSamp({tag:'② 待验收 · Agent工作中',status:'wait',label:'待验收',g:'◆',title:'M4 · 结息',doing:'补 AC-5 覆盖 · 2 文件',pct:100,live:'在跑',clock:'42:41',accent:'#8B7CF6'}),
@@ -4792,8 +4866,12 @@ function renderPanel(){const p=$('#panel');if(!state.panel){p.classList.remove('
   body+=open.map(o=>{const k=OP_KIND[o.kind];const j=jobOf(o.job);const arr=Date.now()-state.flash.at<1400&&state.flash.op===o.id;return `<div class="ocard${arr?' arrived':''}" data-op="${o.id}" style="--accent:${k.color}" role="button" tabindex="0"><span class="ot"><span class="oh">${esc(o.handle)}</span><span class="ok">${k.k}</span><span class="oa">${STATE_EMO[j?j.status:'run']} ${esc(o.age)}</span></span><span class="ti">${esc(o.title)}</span><span class="q">${esc(o.question)}</span><span class="orow"><span class="go">就地回答 →</span><button class="od" data-opdetail="${o.job}">▦ 详情</button></span></div>`;}).join('');
   body+=done.map(o=>`<div class="ocard done" data-opdone="${o.id}"><span class="ot"><span class="oh">${esc(o.handle)}</span><span class="ok">已处理</span></span><span class="rc">✓ ${esc(o.choice)}</span></div>`).join('');}
  else if(state.panel==='detail'){const j=jobOf(state.detailJob)||state.jobs[0];state.detailJob=j.id;state.focusJob=j.id;const pr=projOf(j.proj);const op=opForJob(j.id);
-  /* #5：详情不再带「对话」页签 —— 对话改走独立 chat 窗（头部 💬 对话）。 */
-  const tabs=['relay','run','changes','accept',...(j.kind==='task'||j.kind==='workflow'||ARCHIVE[j.id]?['archive']:[]),'files','debug','project'];const TL={relay:'对接',run:'运行',changes:'变更',accept:'验收',archive:'归档',files:'文件',debug:'调试',project:'项目'};let inner='';
+  /* #5：详情不再带「对话」页签 —— 对话改走独立 chat 窗（头部 💬 对话）。
+     2026-11-25 用户：会话（chat）至少要有 对接 / 文件 / 运行 / 调试 / 消耗 / 子代理；
+     任务在这些之外保留 变更 / 验收 / 归档 / 项目，并补 消耗 / 子代理。 */
+  const tabs=j.kind==='chat'?['relay','files','run','debug','usage','agents']:['relay','run','changes','accept',...(j.kind==='task'||j.kind==='workflow'||ARCHIVE[j.id]?['archive']:[]),'files','debug','project','usage','agents'];
+  const TL={relay:'对接',run:'运行',changes:'变更',accept:'验收',archive:'归档',files:'文件',debug:'调试',project:'项目',usage:'消耗',agents:'子代理'};
+  const agentsN=jobActs(j).length;let inner='';
   if(state.detailTab==='relay')inner=renderRelay(j);
   else if(state.detailTab==='run')inner=`<div class="sect">执行事件流</div>${(JOB_EVENTS[j.id]||[]).map(evHTML).join('')||'<div class="pempty">暂无事件</div>'}`;
   else if(state.detailTab==='changes'){const c=CHANGES[j.id];inner=c?`<div class="kv"><div class="kvi"><div class="k">分支</div><div class="v g">${esc(c.branch)}</div></div><div class="kvi"><div class="k">基线</div><div class="v">${esc(c.base)}</div></div><div class="kvi"><div class="k">文件</div><div class="v">${c.files.length}</div></div></div><div class="sect">变更 diff</div>${c.files.map(f=>`<div class="file"><div class="fh"><span class="st">${f.state}</span><span class="p">${esc(f.path)}</span><span class="ad">+${f.add}</span><span class="dl">−${f.del}</span></div><div class="diff">${f.diff.map(l=>`<div class="ln ${l[0]}"><span class="n">${l[1]}</span><span>${l[0]==='add'?'+':l[0]==='del'?'−':' '} ${esc(l[2])}</span></div>`).join('')}</div></div>`).join('')}`:'<div class="pempty">暂无代码变更。</div>';}
@@ -4801,11 +4879,13 @@ function renderPanel(){const p=$('#panel');if(!state.panel){p.classList.remove('
   else if(state.detailTab==='archive')inner=renderArchive(j);
   else if(state.detailTab==='files')inner=renderFiles(j);
   else if(state.detailTab==='project')inner=renderJobProject(j);
+  else if(state.detailTab==='usage')inner=renderUsage(j);
+  else if(state.detailTab==='agents')inner=renderAgents(j);
   else inner=renderDebug(j);
-  body=`<div class="dtabs">${tabs.map(t=>`<button class="dtab${state.detailTab===t?' on':''}" data-dtab="${t}">${TL[t]}${t==='archive'&&ARCHIVE[j.id]&&ARCHIVE[j.id].state!=='done'?'<i class="dtab-dot"></i>':''}</button>`).join('')}</div>${inner}`;
+  body=`<div class="dtabs">${tabs.map(t=>`<button class="dtab${state.detailTab===t?' on':''}" data-dtab="${t}">${TL[t]}${t==='archive'&&ARCHIVE[j.id]&&ARCHIVE[j.id].state!=='done'?'<i class="dtab-dot"></i>':''}${t==='agents'&&agentsN?`<i class="n">${agentsN}</i>`:''}</button>`).join('')}</div>${inner}`;
   const archA=ARCHIVE[j.id];
   const archHead=archA&&archA.state==='pending'?`<button class="pha arc" data-dtab="archive" title="待归档 · 末 phase 已通过，去归档页签">📦 待归档</button>`:archA&&archA.state==='running'?`<button class="pha arc" data-dtab="archive" title="归档编排中 · 看进度">📦 归档中</button>`:'';
-  p.innerHTML=`<div class="ph"><button class="phx" data-close title="关闭">✕</button><span class="pt"><b>${STATE_EMO[j.status]} ${esc(j.title)}</b><span>${esc(pr.name)} · ${esc(j.branch)} · ${esc(j.tid)}</span></span><span class="sp" style="flex:1"></span>${archHead}<button class="pha" data-phchat title="打开这条作战的对话（独立 chat 窗）">💬 对话</button></div><div class="pb">${body}</div>`;
+  p.innerHTML=`<div class="ph"><button class="phx" data-close title="关闭">✕</button><span class="pt"><b>${STATE_EMO[j.status]} ${esc(j.title)}</b><span>${esc(pr.name)} · ${j.kind==='chat'?`会话 ${esc(j.tid)}`:`${esc(j.branch)} · ${esc(j.tid)}`}</span></span><span class="sp" style="flex:1"></span>${archHead}<button class="pha" data-phchat title="打开这条作战的对话（独立 chat 窗）">💬 对话</button></div><div class="pb">${body}</div>`;
   p.querySelector('[data-phchat]')?.addEventListener('click',()=>{closePanel();openWin(j.id);Audio.sfx('click');});
   const dlog=p.querySelector('.dcon-log');if(dlog)dlog.scrollTop=dlog.scrollHeight;
   bindPanel();restore();return;}
@@ -4865,6 +4945,8 @@ function bindPanel(){const p=$('#panel');
  $$('[data-op]',p).forEach(c=>{const go=()=>{const o=opOf(c.dataset.op);closePanel();openJobChat(o.job);};c.addEventListener('click',e=>{if(e.target.closest('[data-opdetail]'))return;go();});c.addEventListener('keydown',e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();go();}});});
  $$('[data-opdetail]',p).forEach(b=>b.addEventListener('click',e=>{e.stopPropagation();state.detailJob=b.dataset.opdetail;state.detailTab=detailTabFor(jobOf(b.dataset.opdetail));state.panel='detail';renderPanel();Audio.sfx('click');}));
  $$('[data-dtab]',p).forEach(b=>b.addEventListener('click',()=>{state.detailTab=b.dataset.dtab;state.relayJump=false;renderPanel();Audio.sfx('click');}));
+ /* 子代理页签：点一行 → 活动日志窗（左列表 + 右详情），与本舱「更多 → 活动日志」同源。 */
+ $$('[data-agopen]',p).forEach(b=>b.addEventListener('click',()=>{state.actLogFilter='all';state.actLogSel=b.dataset.agopen;openActLog();Audio.sfx('click');}));
  /* 归档：行内 📦 直达页签；页签里的演示按钮推进归档闸（真产品里操作仍在主对话）。 */
  $$('[data-archtab]',p).forEach(b=>b.addEventListener('click',e=>{e.stopPropagation();state.detailJob=b.dataset.archtab;state.detailTab='archive';state.archTab='overview';state.panel='detail';renderPanel();Audio.sfx('click');}));
  $$('[data-arctab]',p).forEach(b=>b.addEventListener('click',()=>{state.archTab=b.dataset.arctab;renderPanel();Audio.sfx('click');}));
@@ -5004,7 +5086,7 @@ function renderWins(){const L=$('#winLayer');const top=state.wins.reduce((m,w)=>
   const ctxTok=Math.min(260000,Math.round((j.tok||0)*0.4)+48000);
   const ctxLabel=fmtK(ctxTok)+' / 1M '+(ctxTok/1e6*100).toFixed(1)+'%';
   return `<div class="cwin${w.z===top?' focus':''}${w.max?' maxed':''}" data-win="${w.id}" style="left:${X}px;top:${Y}px;width:${W}px;height:${H}px;z-index:${w.z}">
-  <div class="cwh" data-wdrag="${w.id}"><button data-wclose="${w.id}" title="关闭窗口（历史保留）">✕</button><button class="cwadd" title="添加：技能 / 分身 / MCP">✦</button><button data-wmin="${w.id}" title="最小化到切换条">—</button><button data-wmax="${w.id}" title="全屏 / 还原">${w.max?'⤡':'⛶'}</button><span class="te">${STATE_EMO[j.status]}</span><b>${esc(j.title)}</b>${W>=640?`<span class="telem" title="本窗会话的模型 / 上下文 / token 账"><button class="tc" title="模型设置 · 模型 / 思考强度 / 最大上下文"><i>MODEL</i><b>pro · 高</b></button><button class="tc" title="上下文占用"><i>CTX</i><b>${ctxLabel}</b></button><button class="tc tok" title="本次会话 token / 费用"><i>TOKEN</i><b>${fmtK(j.tok||0)} · ¥${(j.cost||0).toFixed(2)}</b></button></span>`:''}<span class="cwidx" title="用户输入历史 · 这是一个聊天窗的轮次索引">≡ <b>${turns}</b> 轮</span><span class="cwid" title="对话对象 · 身份由任务状态派生">${esc(j.agent)}</span><span class="csp"></span>${ARCHIVE[j.id]&&ARCHIVE[j.id].state!=='done'?`<button data-warch="${w.id}" title="📦 归档 · 待归档 / 编排中（打开作战详情 · 归档页签）">📦</button>`:''}<button data-wdetail="${w.id}" title="▦ 作战详情（chat 窗留着）">▦</button></div>
+  <div class="cwh" data-wdrag="${w.id}"><button data-wclose="${w.id}" title="关闭窗口（历史保留）">✕</button><button class="cwadd" title="添加：技能 / 分身 / MCP">✦</button><button data-wmin="${w.id}" title="最小化到切换条">—</button><button data-wmax="${w.id}" title="全屏 / 还原">${w.max?'⤡':'⛶'}</button><span class="te">${STATE_EMO[j.status]}</span><b>${esc(j.title)}</b>${W>=640?`<span class="telem" title="本窗会话的模型 / 上下文 / token 账"><button class="tc" title="模型设置 · 模型 / 思考强度 / 最大上下文"><i>MODEL</i><b>pro · 高</b></button><button class="tc" title="上下文占用"><i>CTX</i><b>${ctxLabel}</b></button><button class="tc tok" title="本次会话 token / 费用"><i>TOKEN</i><b>${fmtK(j.tok||0)} · ¥${(j.cost||0).toFixed(2)}</b></button></span>`:''}<span class="cwidx" title="用户输入历史 · 这是一个聊天窗的轮次索引">≡ <b>${turns}</b> 轮</span><span class="cwid" title="对话对象 · 身份由任务状态派生">${esc(j.agent)}</span><span class="csp"></span>${ARCHIVE[j.id]&&ARCHIVE[j.id].state!=='done'?`<button data-warch="${w.id}" title="📦 归档 · 待归档 / 编排中（打开作战详情 · 归档页签）">📦</button>`:''}<button data-wdetail="${w.id}" title="▦ ${j.kind==='chat'?'会话详情':'作战详情'}（chat 窗留着）">▦</button></div>
   <div class="cwl">${msgs.filter(m=>m!==cur).slice(-40).map(tlHTML).join('')}</div>
   <div class="cwc">${cur?esc(cur.text):''}</div>
   ${o?`<div class="cwch">${o.options.map((opt,i)=>`<button class="vchoice${opt.label===o.rec?' rec':''}" data-wchoice="${o.id}" data-wlabel="${esc(opt.label)}" data-wid="${w.id}" style="--accent:${OP_KIND[o.kind].color}"><span class="n">[${i+1}]</span><b>${esc(opt.label)}</b></button>`).join('')}</div>`:''}

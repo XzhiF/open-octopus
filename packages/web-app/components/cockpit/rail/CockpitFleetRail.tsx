@@ -27,7 +27,7 @@ import {
   type CockpitRow,
   type FleetStatus,
 } from '../fleet/fleet-model'
-import { sameCockpitRef, type CockpitRef } from '../state/cockpit-state'
+import { sameCockpitRef, defaultTabForRef, type CockpitRef } from '../state/cockpit-state'
 import { projectNameFromKey, rowProjectKeys } from '../projects/project-model'
 import { taskDisplayStatus } from '@/components/cabin/modules/ui'
 import { jobStatusLabel } from '@/components/cabin/job-status'
@@ -60,10 +60,11 @@ function accentOf(row: CockpitRow): string {
   return ACCENTS[Math.abs(hash) % ACCENTS.length]
 }
 
-/** 类型字形（原型 KIND）；attention 行不进编队。 */
+/** 类型字形（原型 KIND）；attention 行不进编队。
+ *  会话（delegation）用 ❯ —— 它是一条聊天会话，不是任务/工作流。 */
 function glyphOf(row: CockpitRow): string {
   if (row.kind === 'task') return '◆'
-  if (row.kind === 'delegation') return '≫'
+  if (row.kind === 'delegation') return '❯'
   if (row.kind !== 'job') return '◆'
   const kind = row.job.kind
   return kind === 'workflow' ? '⬡' : kind === 'subagent' ? '◈' : '◆'
@@ -72,6 +73,7 @@ function glyphOf(row: CockpitRow): string {
 function rowRef(row: CockpitRow): CockpitRef | null {
   if (row.kind === 'job') return { kind: 'job', cabinId: row.cabinId, id: row.job.id }
   if (row.kind === 'task') return { kind: 'task', cabinId: row.cabinId, id: row.task.id }
+  if (row.kind === 'delegation') return { kind: 'delegation', cabinId: row.cabinId, id: row.delegation.id }
   if (row.kind === 'attention') return { kind: 'attention', cabinId: row.cabinId, id: row.item.id }
   return null
 }
@@ -219,10 +221,10 @@ export function CockpitFleetRail() {
     const ref = rowRef(row)
     if (ref) select(ref)
   }
-  /** ▦ = 作战详情（落在「运行」页签）；待归档 / 归档中直接落「归档」页签。 */
+  /** ▦ = 详情（会话落「对接」，任务/作业落「运行」）；待归档 / 归档中直接落「归档」页签。 */
   const openDetail = (row: CockpitRow) => {
     const ref = rowRef(row)
-    if (ref) select(ref, onArchiveGate(row) ? 'archive' : 'run')
+    if (ref) select(ref, onArchiveGate(row) ? 'archive' : defaultTabForRef(ref))
   }
 
   // ── 新行 pop：arrivals 命中的 attention + 首次出现的 key，900ms 后收 ──
@@ -513,8 +515,10 @@ export function CockpitFleetRail() {
                       className={`ck12-flact${archGate ? ' is-arch' : ''}`}
                       aria-label={`${archGate ? '归档' : '详情'} ${title}`}
                       title={archGate
-                        ? '📦 归档 · 作战详情 · 归档页签'
-                        : '▦ 详情 · 作战详情（不动主通讯台）'}
+                        ? '📦 归档 · 详情 · 归档页签'
+                        : row.kind === 'delegation'
+                          ? '▦ 会话详情（对接 / 文件 / 运行 / 调试 / 消耗 / 子代理）'
+                          : '▦ 详情 · 作战详情（不动主通讯台）'}
                       data-testid={`cockpit-rail-detail-${row.key}`}
                       onClick={(event) => {
                         event.stopPropagation()

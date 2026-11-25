@@ -40,7 +40,7 @@ export interface CockpitThread {
   /** 独立 chat 窗里「跟谁说话」的身份标签（v22 #5 用户：身份要对应）——
    *  与 ChatPane 的任务身份派生同口径，只读、不可切。 */
   identity: string
-  /** ▦ 详情目标；delegation 没有 cockpit ref → null（不画 ▦）。 */
+  /** ▦ 详情目标；2026-11-25 起会话（delegation）也有详情面（六页签）。 */
   ref: CockpitRef | null
 }
 
@@ -116,7 +116,7 @@ function threadOfRow(row: CockpitRow): CockpitThread | null {
       short: shortOf(row.delegation.handle ?? row.delegation.title),
       state: threadStateOf(row),
       identity: '执行者 · task-doer',
-      ref: null,
+      ref: { kind: 'delegation', cabinId: row.cabinId, id: row.delegation.id },
     }
   }
   return null

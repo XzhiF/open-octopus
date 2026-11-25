@@ -937,3 +937,244 @@
   .ck12-files-tree { width: 100%; min-width: 0; max-height: 40%; }
   .ck12-files-q { width: 130px; }
 }
+
+/* ───────────── 详情 · 消耗 / 子代理 / 会话（2026-11-25 用户 · 原型 cockpit-v22）─────────────
+   消耗 = 这一个作业自己的账（主回合按轮 + 子代理单列）；子代理 = 本会话派出的
+   子代理 / 后台作业（运行中置顶）。会话面 = 六项基础页签（对接 / 文件 / 运行 /
+   调试 / 消耗 / 子代理），默认落「对接」。 */
+
+.ck12-pnote.is-faint {
+  color: var(--ck12-metal2);
+  border-color: rgba(185, 179, 217, 0.24);
+  background: rgba(255, 255, 255, 0.025);
+}
+
+/* 消耗 · ledger 头 */
+.ck12-uledger {
+  display: flex;
+  align-items: flex-end;
+  gap: 14px;
+  padding: 10px 12px;
+  margin-bottom: 8px;
+  border: 1px solid rgba(46, 230, 214, 0.2);
+  background:
+    radial-gradient(120% 90% at 0% 0%, rgba(46, 230, 214, 0.1), transparent 62%),
+    rgba(255, 255, 255, 0.03);
+}
+.ck12-ulbig {
+  font-size: 26px;
+  font-weight: 900;
+  letter-spacing: -0.02em;
+  color: #fff;
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
+}
+.ck12-ulbig small { font-size: 10px; font-weight: 700; color: var(--ck12-ink2); }
+.ck12-ulsub { margin-top: 3px; font-size: 9px; color: var(--ck12-ink2); }
+.ck12-ulcost { margin-left: auto; text-align: right; }
+.ck12-ulcost b {
+  display: block;
+  font-size: 16px;
+  font-weight: 900;
+  color: var(--ck12-amber);
+  font-variant-numeric: tabular-nums;
+}
+.ck12-ulcost span { font-size: 8.5px; color: var(--ck12-ink2); }
+
+/* 消耗 · token 四格 */
+.ck12-utok {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 6px;
+  margin-bottom: 2px;
+}
+.ck12-utokc {
+  padding: 6px 9px;
+  border: 1px solid rgba(185, 179, 217, 0.14);
+  background: rgba(255, 255, 255, 0.04);
+}
+.ck12-utokc .k { font-size: 8px; letter-spacing: 0.12em; color: var(--ck12-ink2); }
+.ck12-utokc .v {
+  margin-top: 1px;
+  font-size: 12px;
+  font-weight: 800;
+  color: #fff;
+  font-variant-numeric: tabular-nums;
+}
+.ck12-utokc.is-in { border-left: 2px solid var(--ck12-sky); }
+.ck12-utokc.is-out { border-left: 2px solid var(--ck12-pink); }
+.ck12-utokc.is-cr { border-left: 2px solid var(--ck12-green); }
+.ck12-utokc.is-cw { border-left: 2px solid var(--ck12-metal2); }
+
+/* 消耗 · 按轮 / 按模型 / 子代理行 */
+.ck12-umrow {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 5px 8px;
+  border-bottom: 1px dashed rgba(185, 179, 217, 0.12);
+  font-size: 10.5px;
+}
+.ck12-umrow .mn {
+  flex: none;
+  min-width: 56px;
+  font-family: var(--font-mono);
+  font-size: 9.5px;
+  color: var(--ck12-teal);
+}
+.ck12-umrow .md {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--ck12-ink2);
+}
+.ck12-umrow .md em { font-style: normal; color: var(--ck12-metal2); }
+.ck12-umrow .mv {
+  flex: none;
+  width: 64px;
+  text-align: right;
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  color: var(--ck12-ink);
+}
+.ck12-umrow .mc {
+  flex: none;
+  width: 62px;
+  text-align: right;
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  color: var(--ck12-amber);
+}
+
+/* 子代理 / 后台 · 列表 + 过程 */
+.ck12-agwrap {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+.ck12-agwrap:has(.ck12-agdetail) .ck12-aglist {
+  flex: none;
+  max-height: 44%;
+  overflow: auto;
+}
+.ck12-agsum {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 6px 10px;
+  margin-bottom: 6px;
+  font-size: 9.5px;
+  color: var(--ck12-ink2);
+  border: 1px solid rgba(185, 179, 217, 0.16);
+  background: rgba(255, 255, 255, 0.04);
+}
+.ck12-agsum .k { font-size: 8.5px; letter-spacing: 0.1em; color: var(--ck12-metal2); }
+.ck12-agsum b { color: #fff; font-variant-numeric: tabular-nums; }
+.ck12-aggrp {
+  margin: 9px 0 5px;
+  font-size: 9.5px;
+  letter-spacing: 0.16em;
+  font-weight: 700;
+  color: var(--ck12-teal);
+}
+.ck12-agrow {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  width: 100%;
+  margin-bottom: 6px;
+  padding: 8px 10px;
+  text-align: left;
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(185, 179, 217, 0.16);
+  border-left: 3px solid var(--ck12-violet);
+  transition: 0.14s;
+}
+.ck12-agrow.is-bg { border-left-color: var(--ck12-sky); }
+.ck12-agrow:hover { border-color: rgba(46, 230, 214, 0.4); background: rgba(46, 230, 214, 0.08); }
+.ck12-agrow.is-on { border-color: rgba(46, 230, 214, 0.5); background: rgba(46, 230, 214, 0.1); }
+.ck12-agrow .agk {
+  flex: none;
+  width: 62px;
+  font-size: 9.5px;
+  font-weight: 700;
+  color: var(--ck12-violet);
+}
+.ck12-agrow.is-bg .agk { color: var(--ck12-sky); }
+.ck12-agrow .agb {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+.ck12-agrow .agb b {
+  font-size: 11px;
+  font-weight: 700;
+  color: #fff;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.ck12-agrow .agb span {
+  font-size: 9px;
+  color: var(--ck12-ink2);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.ck12-agrow .agr {
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 1px;
+}
+.ck12-agrow .agr .st { font-size: 9.5px; font-weight: 700; color: var(--ck12-teal); }
+.ck12-agrow .agr .st.is-done { color: var(--ck12-dim); }
+.ck12-agrow .agr .mt {
+  font-size: 9px;
+  color: var(--ck12-metal2);
+  font-variant-numeric: tabular-nums;
+}
+.ck12-agrow .go { flex: none; font-size: 9px; color: var(--ck12-faint); }
+.ck12-agdetail {
+  flex: 1;
+  min-height: 280px;
+  display: flex;
+  flex-direction: column;
+  border: 1px solid rgba(46, 230, 214, 0.24);
+  background: rgba(255, 255, 255, 0.03);
+}
+.ck12-agdetail-h {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  border-bottom: 1px solid rgba(185, 179, 217, 0.16);
+}
+.ck12-agdetail-h b { font-size: 10.5px; color: #fff; }
+.ck12-agdetail-h span { font-size: 9px; color: var(--ck12-ink2); }
+.ck12-agclose { margin-left: auto; display: grid; place-items: center; color: var(--ck12-faint); }
+.ck12-agclose:hover { color: #fff; }
+.ck12-agdetail-b { flex: 1; min-height: 0; overflow: auto; }
+
+/* 会话 · 文件页签里的图片预览（只读） */
+.ck12-sess-img {
+  flex: 1;
+  min-height: 0;
+  display: grid;
+  place-items: center;
+  padding: 10px;
+  overflow: auto;
+}
+.ck12-sess-img img { max-width: 100%; max-height: 100%; object-fit: contain; border-radius: 6px; }
+
+@media (max-width: 900px) {
+  .ck12-utok { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .ck12-ulbig { font-size: 22px; }
+}

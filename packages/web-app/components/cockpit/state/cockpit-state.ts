@@ -18,6 +18,8 @@ import type { MoodKey } from '@/components/cabin/cockpit'
 export type CockpitRef =
   | { kind: 'job'; cabinId: string; id: string }
   | { kind: 'task'; cabinId: string; id: string }
+  /** 会话（cabin_delegations 的 doer 会话）：详情面 = 对接/文件/运行/调试/消耗/子代理。 */
+  | { kind: 'delegation'; cabinId: string; id: string }
   | { kind: 'attention'; cabinId: string; id: string }
   | { kind: 'project'; cabinId: string; id: string }
 
@@ -25,8 +27,9 @@ export type CockpitRefKind = CockpitRef['kind']
 
 /** 座舱页签。v22 #5（2026-11-23 用户）：详情不再承载 chat —— 编队对话是独立
  *  chat 窗，详情首签改为「运行」。`dialog` / `overview` 仍留在类型里给旧深链
- *  兜底：它们不在 COCKPIT_TABS / isCockpitTab 里，`?tab=dialog` 会自然落回默认。 */
-export type CockpitTab = 'dialog' | 'overview' | 'relay' | 'run' | 'changes' | 'accept' | 'archive' | 'files' | 'debug' | 'project'
+ *  兜底：它们不在 COCKPIT_TABS / isCockpitTab 里，`?tab=dialog` 会自然落回默认。
+ *  2026-11-25 用户：补「消耗 / 子代理」两签（classic 作业坞早有对应面）。 */
+export type CockpitTab = 'dialog' | 'overview' | 'relay' | 'run' | 'changes' | 'accept' | 'archive' | 'files' | 'debug' | 'project' | 'usage' | 'agents'
 
 /** 面来源（v22.3）：inbox = 从「要我处理」打开 → 详情让到浮层左侧；
  *  fleet / url / acceptance = 从编队 / 深链 / 验收流转打开 → 居中。 */
@@ -34,11 +37,21 @@ export type CockpitSelectSource = 'fleet' | 'inbox' | 'url' | 'acceptance'
 
 /** 页签顺序 = 原型 .dtabs（v22 #5：首签「运行」，对话页签已删除）。
  *  2026-11-24：验收之后加「归档」—— 只读归档明细，操作仍在对话里完成；
- *  非任务类作业由渲染方过滤掉这一签。 */
-export const COCKPIT_TABS: readonly CockpitTab[] = ['relay', 'run', 'changes', 'accept', 'archive', 'files', 'debug', 'project']
+ *  非任务类作业由渲染方过滤掉这一签。
+ *  2026-11-25：末尾补「消耗 / 子代理」（原型 cockpit-v22 同款）。 */
+export const COCKPIT_TABS: readonly CockpitTab[] = ['relay', 'run', 'changes', 'accept', 'archive', 'files', 'debug', 'project', 'usage', 'agents']
+
+/** 会话（delegation）的六项基础页签（2026-11-25 用户）：
+ *  没有任务口径的变更 / 验收 / 归档 / 项目；默认落「对接」。 */
+export const COCKPIT_SESSION_TABS: readonly CockpitTab[] = ['relay', 'files', 'run', 'debug', 'usage', 'agents']
 
 /** 详情默认页签：URL 里省略它，保持链接干净。 */
 export const COCKPIT_DEFAULT_TAB: CockpitTab = 'run'
+
+/** 按 ref 取默认页签：会话落「对接」（它那六项的首签），其余落「运行」。 */
+export function defaultTabForRef(ref: CockpitRef | null | undefined): CockpitTab {
+  return ref?.kind === 'delegation' ? 'relay' : COCKPIT_DEFAULT_TAB
+}
 
 export const COCKPIT_TAB_LABELS: Record<CockpitTab, string> = {
   dialog: '对话',
@@ -51,6 +64,8 @@ export const COCKPIT_TAB_LABELS: Record<CockpitTab, string> = {
   files: '文件',
   debug: '调试',
   project: '项目',
+  usage: '消耗',
+  agents: '子代理',
 }
 
 export function isCockpitTab(value: string | null | undefined): value is CockpitTab {

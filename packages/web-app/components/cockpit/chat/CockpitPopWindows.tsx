@@ -19,7 +19,7 @@ import { useCabinChatWiring } from '@/components/cabin/use-cabin-chat-wiring'
 import { nextZ } from '@/components/cabin/z-order'
 import { moveCockpitRect, resizeCockpitRect, type Viewport } from './geometry'
 import { useCockpitState } from '../state/CockpitStateProvider'
-import type { CockpitChatApi, CockpitPopWin, CockpitRect } from '../state/cockpit-state'
+import { defaultTabForRef, type CockpitChatApi, type CockpitPopWin, type CockpitRect } from '../state/cockpit-state'
 import { THREAD_EMO } from '../fleet/threads-model'
 import { CockpitConsoleTelemetry } from './CockpitConsoleTelemetry'
 import { CockpitReceipts } from './CockpitReceipts'
@@ -176,15 +176,17 @@ function CockpitPopWinView({
         {/* 遥测 / 轮次 / 身份都贴左侧排（与主通讯台同序），余量在这里，按钮仍在最右。 */}
         <span className="ck12-cwin-sp" aria-hidden="true" />
         {unread > 0 && <i className="ck12-cwin-unread">{unread > 9 ? '9+' : unread}</i>}
-        {/* v22 #5：▦ 作战详情（窗留着，方便对照）。委派没有 cockpit ref → 不画。 */}
+        {/* v22 #5：▦ 详情（窗留着，方便对照）。2026-11-25：会话也有详情面。 */}
         {thread.ref && (
           <button
             type="button"
             className="ck12-cwin-btn"
-            aria-label="作战详情"
-            title="▦ 作战详情（窗留着）"
+            aria-label={thread.kind === 'delegation' ? '会话详情' : '作战详情'}
+            title={thread.kind === 'delegation'
+              ? '▦ 会话详情（对接 / 文件 / 运行 / 调试 / 消耗 / 子代理）'
+              : '▦ 作战详情（窗留着）'}
             data-testid={`cockpit-win-detail-${win.id}`}
-            onClick={() => select(thread.ref!, 'run')}
+            onClick={() => select(thread.ref!, defaultTabForRef(thread.ref))}
           >
             <Square className="ck12-cwin-ico" aria-hidden="true" />
           </button>

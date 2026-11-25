@@ -13,10 +13,11 @@ import { groupOf, type CockpitRow } from '../fleet/fleet-model'
 import type { CockpitRef } from '../state/cockpit-state'
 import type { CockpitCandidate } from './cockpit-url'
 
-/** 行 → 选中项。三型行与 fleet-model 的 key 一一对应。 */
+/** 行 → 选中项。四型行与 fleet-model 的 key 一一对应。 */
 export function rowCockpitRef(row: CockpitRow): CockpitRef {
   if (row.kind === 'job') return { kind: 'job', cabinId: row.cabinId, id: row.job.id }
   if (row.kind === 'task') return { kind: 'task', cabinId: row.cabinId, id: row.task.id }
+  if (row.kind === 'delegation') return { kind: 'delegation', cabinId: row.cabinId, id: row.delegation.id }
   return { kind: 'attention', cabinId: row.cabinId, id: row.item.id }
 }
 
@@ -42,6 +43,7 @@ export function refInRows(ref: CockpitRef, rows: readonly CockpitRow[]): boolean
     if (row.cabinId !== ref.cabinId) continue
     if (ref.kind === 'job' && row.kind === 'job' && row.job.id === ref.id) return true
     if (ref.kind === 'task' && row.kind === 'task' && row.task.id === ref.id) return true
+    if (ref.kind === 'delegation' && row.kind === 'delegation' && row.delegation.id === ref.id) return true
     if (ref.kind === 'attention') {
       if (row.kind === 'attention' && row.item.id === ref.id) return true
       if (row.kind === 'job' && row.attention?.id === ref.id) return true

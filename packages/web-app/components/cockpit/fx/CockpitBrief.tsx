@@ -82,10 +82,13 @@ function findAttention(rows: readonly CockpitRow[], id: string): CabinAttentionI
   return null
 }
 
-/** attention → 点开现场的目标：挂在 job 上就开作业面，否则只开对话。 */
+/** attention → 点开现场的目标：挂在 job 上就开作业面；委派 → 会话详情面；否则只开对话。 */
 function refOfAttention(rows: readonly CockpitRow[], id: string): CockpitRef | undefined {
   for (const row of rows) {
     if (row.kind === 'attention' && row.item.id === id) {
+      if (row.item.subject?.kind === 'delegation') {
+        return { kind: 'delegation', cabinId: row.cabinId, id: row.item.subject.id }
+      }
       return { kind: 'attention', cabinId: row.cabinId, id: row.item.id }
     }
     if (row.kind === 'job' && row.attention?.id === id) {

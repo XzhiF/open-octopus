@@ -18,6 +18,7 @@ import {
   sameCockpitRef,
   COCKPIT_DEFAULT_TAB,
   COCKPIT_WIN_LIMIT,
+  defaultTabForRef,
   type CockpitChatApi,
   type CockpitChatWindow,
   type CockpitChatWindowPatch,
@@ -128,7 +129,12 @@ export function CockpitStateProvider({ entryCabinId, children }: CockpitStatePro
   // ── selection / tab ────────────────────────────────────────────────
   const select = useCallback((ref: CockpitRef | null, nextTab?: CockpitTab, source: CockpitSelectSource = 'fleet') => {
     setSelection((current) => (sameCockpitRef(current, ref) ? current : ref))
+    // 2026-11-25：会话（delegation）没指定页签时落「对接」—— 它没有「运行」首签，
+    // 留在上一个任务的页签会出现「选中签不在页签栏里」的空白面。
     if (nextTab) setTabState(nextTab)
+    else if (ref?.kind === 'delegation') setTabState(defaultTabForRef(ref))
+    // 收面回默认页签：?tab=relay 这类非默认签不跟到下一件作业 / URL 里。
+    else if (!ref) setTabState(COCKPIT_DEFAULT_TAB)
     // 来源跟着这次选中走：同一条作业从编队点（居中）后再从 inbox 点「去处理」，
     // 也要切成左侧 aside。
     setDetailSource(ref ? source : 'fleet')

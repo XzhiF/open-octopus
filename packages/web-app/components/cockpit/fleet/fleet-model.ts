@@ -310,7 +310,8 @@ export function statusLabel(row: CockpitRow): string {
   return ATTENTION_STAGE_LABEL[row.item.stage]
 }
 
-const DELEGATION_STATE_LABEL: Record<CabinDelegationView['state'], string> = {
+/** 委派 / 会话状态词（会话详情面复用，单源）。 */
+export const DELEGATION_STATE_LABEL: Record<CabinDelegationView['state'], string> = {
   queued: '排队',
   running: '跑着',
   waiting_input: '在问你',
