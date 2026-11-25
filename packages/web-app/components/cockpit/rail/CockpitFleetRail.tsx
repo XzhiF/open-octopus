@@ -8,9 +8,11 @@
 //   · 默认 6 行；超出时底部「更多 +N ⌄ / 收起 ⌃」，展开只重渲染本栏。
 //   · v22 #5（2026-11-23 用户）：行体 / 💬 = 打开这条作战的独立 chat 窗（默认
 //     和主通讯台一样大、盖在上面）；▦ = 作战详情。行不再切换主通讯台。
-//   · 数字纪律：pct 只在真实拿到时画条；null 一律不画，不猜。
-//   · v22 #6（2026-11-23 用户）：作战中行副行最右挂活秒表（⏱ mm:ss，每秒走字）
+//   · 数字纪律：pct 只在真实拿到时显示数字；null 一律不显示，不猜。
+//   · v22 #6（2026-11-23 用户）：作战中行副行最右挂活秒表（mm:ss，每秒走字）
 //     —— 与流式卡的计时同一套读数，一眼看出它没卡住；只这一格每秒重渲染。
+//   · 2026-11-25 用户：编队行去掉进度条 / 六边进度环 —— 运行中 = 天蓝左缘竖条
+//     + 秒表前的 braille 转字（与 chat 流尾工作行同一套帧，10fps）。
 //
 // 数据只从 useCockpitFleet() 来（已经是入口舱单舱），不自己 fetch。
 
@@ -89,7 +91,7 @@ function titleOf(row: CockpitRow): string {
 
 function pctOf(row: CockpitRow): number | null {
   if (row.kind === 'attention' || row.kind === 'delegation') return null
-  // 主线程 agent 在跑、执行还没开始：不显示 0% 的假进度条。
+  // 主线程 agent 在跑、执行还没开始：不显示 0% 的假进度。
   if (row.kind === 'job' && row.job.agent_running && row.job.status !== 'running') return null
   return row.pct
 }
@@ -158,18 +160,32 @@ function startedAtOf(row: CockpitRow): number | null {
   return Number.isNaN(at) ? null : at
 }
 
-/** v22 #6（2026-11-23 用户）：干活行的活秒表 —— 每秒 +1，同流式卡的 ⏱ 读数。
+/** chat 流尾工作行同款 braille 转字（2026-11-25 用户）：10fps 循环，表示「还在干活」。 */
+const RUN_SPIN = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏']
+
+/** v22 #6（2026-11-23 用户）：干活行的活秒表 —— 每秒 +1，同流式卡的读数。
  *  v23 十六轮（2026-11-24 用户）：口径统一成「已作战」= job 起点 → now，
  *  作战中 / 待验收在跑 / 待命在跑 共用；≥1h 只显示 h:mm（完整值在 title）。
+ *  2026-11-25 用户：秒表前加一枚 braille 转字（与 chat 工作行同一套帧，10fps），
+ *  替换原来的 ⏱ 字形；reduced-motion 下冻结首帧。
  *  自带 interval，只有这一格文本重渲染，整条编队不跟着每秒重建。
- *  backgroundWait = 作者在等后台任务：点与字转琥珀色（仍是静态，不闪）。 */
+ *  backgroundWait = 作者在等后台任务：点、字、转字一并转琥珀色（仍是静态，不闪）。 */
 function RunClock({ start, backgroundWait = false }: { start: number; backgroundWait?: boolean }) {
   const [now, setNow] = useState(() => Date.now())
+  const [frame, setFrame] = useState(0)
   useEffect(() => {
     setNow(Date.now())
     const timer = window.setInterval(() => setNow(Date.now()), 1000)
     return () => window.clearInterval(timer)
   }, [start])
+  useEffect(() => {
+    if (
+      typeof window.matchMedia === 'function'
+      && window.matchMedia('(prefers-reduced-motion: reduce)').matches
+    ) return
+    const timer = window.setInterval(() => setFrame((f) => (f + 1) % RUN_SPIN.length), 100)
+    return () => window.clearInterval(timer)
+  }, [])
   const ms = Math.max(0, now - start)
   const label = formatRunClock(ms, { compact: true })
   const full = formatRunClock(ms)
@@ -179,7 +195,7 @@ function RunClock({ start, backgroundWait = false }: { start: number; background
       data-testid="cockpit-rail-clock"
       title={`已作战 ${full} · ${backgroundWait ? '作者在等后台，回合还活着' : '每秒走字 = 还活着'}`}
     >
-      ⏱ {label}
+      <span className="ck12-flspin" aria-hidden="true">{RUN_SPIN[frame]}</span> {label}
     </span>
   )
 }
@@ -419,9 +435,6 @@ export function CockpitFleetRail() {
           const backgroundWait = live && row.kind === 'job' && row.live_phase === 'background-wait'
           const liveText = live ? (backgroundWait ? '作者在等后台' : '作者在跑') : null
           const endedStage = stage === 'done' || stage === 'archived'
-          const showBar = !endedStage && (live || pct !== null)
-          /** 没有真实进度（pct=null）的干活行：底部用不定长滚动条，不猜百分比。 */
-          const indeterminate = live && pct === null
           const statusText = statusTextOf(row, stage)
           const accent = accentOf(row)
           const title = titleOf(row)
@@ -444,7 +457,7 @@ export function CockpitFleetRail() {
               className={`ck12-flrow is-${stage}${live ? ' is-flow' : ''}${selected ? ' is-on' : ''}${
                 chatOpen ? ' is-chat' : ''
               }${popped.has(row.key) ? ' is-pop' : ''}${flash.key === row.key ? ` is-arrived-${flash.nonce % 2}` : ''}`}
-              style={{ ['--accent' as string]: accent, ['--p' as string]: String(pct ?? 0) }}
+              style={{ ['--accent' as string]: accent }}
               onClick={() => (talkable ? openChat(row) : openDetail(row))}
               onKeyDown={(event) => {
                 if (event.key === 'Enter' || event.key === ' ') {
@@ -473,18 +486,6 @@ export function CockpitFleetRail() {
                     <RunClock start={startedAt} backgroundWait={backgroundWait} />
                   )}
                 </span>
-                {showBar && (
-                  <span
-                    className={`ck12-flbar${indeterminate ? ' is-live' : live ? ' is-run' : ''}`}
-                    aria-hidden="true"
-                  >
-                    <i
-                      style={indeterminate
-                        ? undefined
-                        : { width: `${Math.max(0, Math.min(100, pct ?? 0))}%` }}
-                    />
-                  </span>
-                )}
               </span>
 
               {showActs && (

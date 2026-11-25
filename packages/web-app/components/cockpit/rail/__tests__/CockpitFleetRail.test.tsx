@@ -293,23 +293,24 @@ describe('CockpitFleetRail · v21 单列编队', () => {
     expect(row('job:j1')).toBeInTheDocument()
   })
 
-  it('pct=null：运行中画不定长滚动条（不猜百分比）；待命行不画条', () => {
+  it('pct=null：不画进度条也不猜百分比；真实 pct 只显示数字', () => {
     const running = jobRow(jobView('j1', { status: 'running' }), { pct: null })
     const pending = jobRow(jobView('j2', { status: 'pending' }), { pct: null })
     const task = taskRow('t1', {}, 40)
     renderRail({ rows: sortRows([running, pending, task]) })
 
     const runNode = row('job:j1')
-    expect(runNode.querySelector('.ck12-flbar.is-live')).not.toBeNull()
+    expect(runNode.querySelector('.ck12-flbar')).toBeNull()
     expect(within(runNode).queryByText(/%/)).toBeNull()
-    expect(runNode.style.getPropertyValue('--p')).toBe('0')
+    expect(runNode.style.getPropertyValue('--p')).toBe('')
 
     expect(row('job:j2').querySelector('.ck12-flbar')).toBeNull()
 
+    // 2026-11-25 用户：进度条撤了，真实 pct 仍以数字保留。
     const taskNode = row('task:t1')
-    expect(taskNode.querySelector('.ck12-flbar')).not.toBeNull()
+    expect(taskNode.querySelector('.ck12-flbar')).toBeNull()
     expect(within(taskNode).getByText('40%')).toBeInTheDocument()
-    expect(taskNode.style.getPropertyValue('--p')).toBe('40')
+    expect(taskNode.style.getPropertyValue('--p')).toBe('')
   })
 
   it('arrivals 命中的 job 行带 pop class', () => {
@@ -323,7 +324,8 @@ describe('CockpitFleetRail · v21 单列编队', () => {
   })
 
   // v22 #6（2026-11-23 用户）：作战中要有计时，跟流式结果一样每秒走字。
-  it('作战中行挂活秒表（⏱ mm:ss 每秒走字）；待命/等你答行不画', () => {
+  // 2026-11-25 用户：秒表前加 braille 转字（与 chat 工作行同一套帧）。
+  it('作战中行挂活秒表（braille 转字 + mm:ss 每秒走字）；待命/等你答行不画', () => {
     vi.useFakeTimers()
     try {
       vi.setSystemTime(new Date('2026-11-14T09:01:05.000Z'))
@@ -340,23 +342,25 @@ describe('CockpitFleetRail · v21 单列编队', () => {
       renderRail({ rows: sortRows([run, authoring, queue]) })
 
       const clock = within(row('job:j1')).getByTestId('cockpit-rail-clock')
-      expect(clock).toHaveTextContent('⏱ 01:05')
+      expect(clock).toHaveTextContent('01:05')
+      expect(clock.querySelector('.ck12-flspin')).not.toBeNull()
       expect(clock).toHaveAttribute('title', expect.stringContaining('01:05'))
       // 作者在推进（job 还没进 running）同样算作战中。
-      expect(within(row('job:j3')).getByTestId('cockpit-rail-clock')).toHaveTextContent('⏱ 01:00')
+      expect(within(row('job:j3')).getByTestId('cockpit-rail-clock')).toHaveTextContent('01:00')
       // 待命行不画秒表。
       expect(within(row('job:j2')).queryByTestId('cockpit-rail-clock')).toBeNull()
 
       act(() => { vi.advanceTimersByTime(1000) })
-      expect(within(row('job:j1')).getByTestId('cockpit-rail-clock')).toHaveTextContent('⏱ 01:06')
+      expect(within(row('job:j1')).getByTestId('cockpit-rail-clock')).toHaveTextContent('01:06')
     } finally {
       vi.useRealTimers()
     }
   })
 
   // v23 十六轮（2026-11-24 用户）：待验收的任务作者还在推进 —— chip 保持生命周期
-  // 「等你验收」，行加流动态 / 统一秒表 / 不定长滚动条；副行让给秒表。
-  it('待验收 + 作者在跑：chip 仍等你验收，加流动态、统一秒表与不定长滚动条', () => {
+  // 「等你验收」，行加流动态 / 统一秒表；副行让给秒表。
+  // 2026-11-25 用户：进度条撤掉，动势只剩天蓝左缘 + 秒表转字。
+  it('待验收 + 作者在跑：chip 仍等你验收，加流动态与统一秒表，不画进度条', () => {
     vi.useFakeTimers()
     try {
       vi.setSystemTime(new Date('2026-11-14T09:02:00.000Z'))
@@ -375,8 +379,9 @@ describe('CockpitFleetRail · v21 单列编队', () => {
       expect(node.className).toMatch(/is-flow/)
       expect(within(node).getByText('等你验收')).toBeInTheDocument()
       expect(within(node).queryByText('作战中')).toBeNull()
-      expect(within(node).getByTestId('cockpit-rail-clock')).toHaveTextContent('⏱ 02:00')
-      expect(node.querySelector('.ck12-flbar.is-live')).not.toBeNull()
+      expect(within(node).getByTestId('cockpit-rail-clock')).toHaveTextContent('02:00')
+      expect(node.querySelector('.ck12-flbar')).toBeNull()
+      expect(node.querySelector('.ck12-flspin')).not.toBeNull()
       // 干活行不再显示「项目 · transport」，宽度留给秒表。
       expect(node.querySelector('.ck12-flsub-t')).toBeNull()
     } finally {
