@@ -30,7 +30,11 @@ vi.mock('@/lib/agent/api', async (importOriginal) => {
 })
 
 import { getTaskUsage } from '@/lib/tasks-api'
-import { listSessionSubagents } from '@/lib/agent/api'
+import {
+  getSessionRunning,
+  listSessionBackgroundRuns,
+  listSessionSubagents,
+} from '@/lib/agent/api'
 import { CockpitJobUsage } from '../CockpitJobUsage'
 import { CockpitJobAgents } from '../CockpitJobAgents'
 
@@ -96,6 +100,8 @@ function run(over: Partial<SubagentRunSummary> = {}): SubagentRunSummary {
 beforeEach(() => {
   vi.mocked(getTaskUsage).mockResolvedValue(usage())
   vi.mocked(listSessionSubagents).mockResolvedValue({ runs: [] })
+  vi.mocked(getSessionRunning).mockClear()
+  vi.mocked(listSessionBackgroundRuns).mockClear()
 })
 
 describe('CockpitJobUsage — 任务账本', () => {
@@ -135,6 +141,31 @@ describe('CockpitJobAgents — 按会话归属的子代理', () => {
     expect(screen.getAllByText('已结束').length).toBeGreaterThan(0)
     expect(screen.getByText('已完成比对')).toBeInTheDocument()
     expect(screen.getByText('子代理')).toBeInTheDocument()
+  })
+
+  it('只列子代理：只有后台作业时是空态，不拉后台接口', async () => {
+    // 后台作业（run_in_background 的 Bash）不进「子代理」页签 —— 2026-11-25 用户。
+    vi.mocked(getSessionRunning).mockResolvedValue({
+      running: true,
+      partial: false,
+      background_tasks: [{ id: 'bg-1', description: 'sleep 60 等构建', taskType: 'bash' }],
+    })
+    vi.mocked(listSessionBackgroundRuns).mockResolvedValue({
+      runs: [{
+        id: 'r1', session_id: 's-1', task_id: 'bg-1', run_id: null,
+        description: 'sleep 60 等构建', task_type: 'bash', status: 'running',
+        summary: null, output_file: null,
+        started_at: '2026-11-25T09:40:00.000Z', ended_at: null,
+        created_at: '2026-11-25T09:40:00.000Z', updated_at: '2026-11-25T09:40:00.000Z',
+      }],
+    })
+    render(<CockpitJobAgents sessionId="s-1" what="任务" />)
+
+    expect(await screen.findByTestId('cockpit-job-agents-empty')).toBeInTheDocument()
+    expect(screen.queryByText('sleep 60 等构建')).not.toBeInTheDocument()
+    expect(screen.queryByText(/后台/)).not.toBeInTheDocument()
+    expect(getSessionRunning).not.toHaveBeenCalled()
+    expect(listSessionBackgroundRuns).not.toHaveBeenCalled()
   })
 
   it('没有会话 → 空态；会话没有子代理 → 引导派一个', async () => {

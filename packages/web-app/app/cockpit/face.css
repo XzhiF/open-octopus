@@ -1048,7 +1048,7 @@
   color: var(--ck12-amber);
 }
 
-/* 子代理 / 后台 · 列表 + 过程 */
+/* 子代理 · 列表 + 过程（后台作业不进这一页，见 CockpitJobAgents） */
 .ck12-agwrap {
   flex: 1;
   min-height: 0;
@@ -1093,7 +1093,6 @@
   border-left: 3px solid var(--ck12-violet);
   transition: 0.14s;
 }
-.ck12-agrow.is-bg { border-left-color: var(--ck12-sky); }
 .ck12-agrow:hover { border-color: rgba(46, 230, 214, 0.4); background: rgba(46, 230, 214, 0.08); }
 .ck12-agrow.is-on { border-color: rgba(46, 230, 214, 0.5); background: rgba(46, 230, 214, 0.1); }
 .ck12-agrow .agk {
@@ -1103,7 +1102,6 @@
   font-weight: 700;
   color: var(--ck12-violet);
 }
-.ck12-agrow.is-bg .agk { color: var(--ck12-sky); }
 .ck12-agrow .agb {
   flex: 1;
   min-width: 0;
