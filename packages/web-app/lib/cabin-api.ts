@@ -962,6 +962,8 @@ export interface CabinDelegationView {
   created_at: string
   updated_at: string
   ended_at: string | null
+  /** 归档时间（2026-11-25）：null = 未归档。state=done 只代表「活跃」。 */
+  archived_at?: string | null
   handle: string | null
   color: number | null
 }

@@ -747,7 +747,9 @@ export interface CabinJobEventRow {
   created_at: string
 }
 
-/** 独立委派（design 25 §4.2）：不是任务 —— 没有 phase / worktree / 验收 / 归档。
+/** 独立委派（design 25 §4.2）：不是任务 —— 没有 phase / worktree / 验收。
+ *  会话有自己的归档闸（2026-11-25 用户）：state=done 只代表交完结论（活跃），
+ *  `archived_at` 有值才是已归档（由汐音管理，可带反思 / wiki 沉淀）。
  *  与 cabin_jobs 账本不合并（CHECK 约束不可扩值），读侧归一化。 */
 export type CabinDelegationState = 'queued' | 'running' | 'waiting_input' | 'done' | 'failed' | 'cancelled'
 
@@ -764,6 +766,7 @@ export interface CabinDelegationRow {
   created_at: string
   updated_at: string
   ended_at: string | null
+  archived_at: string | null
 }
 
 /** 舱内事项（2026-11-24）：零散小待办；与 task 不是一层。 */

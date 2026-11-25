@@ -16,7 +16,7 @@
 // 只是这一轮没有 attention（作业行照常出图）。卸载 abort（能传 signal 的
 // getCabin/getTask），其余请求用 aborted 标记丢弃结果。
 //
-// rows 是 sortRows（done 截前 3）的显示行；counts 用未截断的行集统计。
+// rows 是 sortRows（组序 + done 按结束时间）的显示行；counts 用同一份行集统计。
 
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { getCabin, listCabinDelegations, listCabinJobs, type CabinDelegationView, type CabinJobView } from '@/lib/cabin-api'

@@ -108,6 +108,45 @@ describe("CabinDelegationService：一份 brief + 一个 doer 会话", () => {
     expect(delegations.get(done.id)?.state).toBe("done")
   })
 
+  it("归档：done 后写 archived_at（终态 done 不变），重复归档幂等", () => {
+    const row = delegations.delegate(CABIN, { title: "t", intent: "i", noWake: true })
+    delegations.finish(row.id, "结论", true)
+    const archived = delegations.archive(row.id, { summary: "收口进 wiki" })
+    expect(archived?.state).toBe("done")
+    expect(archived?.archived_at).toBeTruthy()
+    expect(archived?.result_summary).toBe("收口进 wiki")
+    expect(delegations.get(row.id)?.archived_at).toBeTruthy()
+
+    const again = delegations.archive(row.id)
+    expect(again?.archived_at).toBe(archived?.archived_at)
+  })
+
+  it("归档：waiting_input 关闸成 done；运行中的会话拒绝归档", () => {
+    const waiting = delegations.delegate(CABIN, { title: "等你答", intent: "i", noWake: true })
+    delegations.markWaitingInput(waiting.id)
+    const archived = delegations.archive(waiting.id)
+    expect(archived?.state).toBe("done")
+    expect(archived?.archived_at).toBeTruthy()
+
+    const running = delegations.delegate(CABIN, { title: "还在跑", intent: "i", noWake: true })
+    expect(() => delegations.archive(running.id)).toThrow(/还在跑/)
+  })
+
+  it("已归档是终态：迟到的 finish / markRunning / markWaitingInput 都改不回来", () => {
+    const row = delegations.delegate(CABIN, { title: "t", intent: "i", noWake: true })
+    delegations.markWaitingInput(row.id)
+    const archived = delegations.archive(row.id)
+    expect(archived?.archived_at).toBeTruthy()
+
+    delegations.markRunning(row.id)
+    expect(delegations.get(row.id)?.state).toBe("done")
+    delegations.markWaitingInput(row.id)
+    expect(delegations.get(row.id)?.state).toBe("done")
+    const late = delegations.finish(row.id, "迟到结论", true)
+    expect(late?.archived_at).toBe(archived?.archived_at)
+    expect(delegations.get(row.id)?.result_summary).not.toBe("迟到结论")
+  })
+
   it("委派完成 → 主会话回执落库并通知打开着的对话刷新", () => {
     const row = delegations.delegate(CABIN, { title: "三方案对比", intent: "对比一下", noWake: true })
     appended.length = 0

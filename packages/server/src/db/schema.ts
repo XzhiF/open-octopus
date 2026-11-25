@@ -40,6 +40,7 @@ export function applySchema(db: Database.Database): void {
     ["sessions", "cabin_id"],
     ["executions", "cabin_id"],
     ["cabins", "deleted_at"],
+    ["cabin_delegations", "archived_at"],
   ] as const) {
     try { db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} TEXT`) } catch { /* table absent or column exists */ }
   }

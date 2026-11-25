@@ -32,12 +32,16 @@ export function getCabinToolsProvider(): CabinToolsService | null {
 }
 
 /** 工作实体状态 → 人能扫一眼的短词（编队 / reminder 共用）。 */
-function workStatusLabel(status: string): string {
+function workStatusLabel(status: string, kind?: string): string {
+  // 会话的 done 不叫「完成」：交完结论仍是活的，和任务一样写「待命」；归档才是终态。
+  if (kind === "delegation" && status === "done") return "待命"
+  // 任务 raw done 是走完归档闸的终态；其它作业（workflow / subagent）done 才是已完成。
+  if (kind === "task" && status === "done") return "已归档"
   const map: Record<string, string> = {
     draft: "草稿", ready: "待触发", running: "执行中", paused: "已暂停",
     awaiting_review: "待验收", awaiting_archive: "待归档", archiving: "归档中",
     done: "已完成", aborted: "已中止", failed: "失败",
-    queued: "排队", waiting_input: "在问你", cancelled: "已取消",
+    queued: "排队", waiting_input: "在问你", cancelled: "已取消", archived: "已归档",
   }
   return map[status] ?? status
 }
@@ -68,7 +72,7 @@ export function buildCabinSummaryReminder(
     })
 
     const fleetLines = works.slice(0, 10).map((w) =>
-      `${w.handle} ${w.title}  ${workStatusLabel(w.status)}`,
+      `${w.handle} ${w.title}  ${workStatusLabel(w.status, w.kind)}`,
     )
 
     // 决策：待人答 vs 已答待转达（后者是汐音这回合必须处理的事）。
@@ -219,6 +223,39 @@ export function createCabinToolServer(cabinId: string) {
       },
     ),
     tool(
+      "cabin_delegation_archive",
+      "归档一条委派会话（D1/D2…）。归档前可选：通读整段会话做一次反思、用 octo-wiki 技能落一条沉淀，然后再调本工具；不做沉淀也可以直接归档。归档后编队写「已归档」并沉到归档区，不再回流任何待办。运行中 / 排队的会话不能归档（先等它交结论或取消）。summary 是归档说明（进审计与结论）。",
+      {
+        delegation_id: z.string().min(1).describe("委派 id（不是句柄）"),
+        summary: z.string().optional().describe("一句话归档说明（可选）"),
+      },
+      async (input) => {
+        const { delegations } = must()
+        if (!delegations) throw new Error("delegation service not wired")
+        const row = delegations.get(input.delegation_id)
+        if (!row || row.cabin_id !== cabinId) {
+          return { content: [{ type: "text" as const, text: JSON.stringify({
+            status: "not_found", delegation_id: input.delegation_id,
+          }) }] }
+        }
+        try {
+          const res = delegations.archive(row.id, { summary: input.summary })
+          return { content: [{ type: "text" as const, text: JSON.stringify({
+            status: "archived", delegation_id: row.id,
+            handle: delegationHandle(cabinId, row.id),
+            state: res?.state ?? row.state,
+            archived_at: res?.archived_at ?? null,
+          }) }] }
+        } catch (err) {
+          return { content: [{ type: "text" as const, text: JSON.stringify({
+            status: "rejected",
+            error: err instanceof Error ? err.message : String(err),
+            message: "没有归档：按 error 处理（运行中的会话先等结论或取消）。",
+          }) }] }
+        }
+      },
+    ),
+    tool(
       "cabin_relay_decision",
       "把用户在**主对话**里做的决定代述给 doer（任务或委派）。verbatim 逐字来自用户点选的选项 —— 不要改写、不要换成同义词。framing 只允许补充边界 / 理由 / 影响，不允许改选择、不允许加新条件。同一 ask 重复调用是幂等的。",
       {
@@ -343,7 +380,7 @@ export function createCabinToolServer(cabinId: string) {
     name: "octopus-cabin",
     version: "1.1.0",
     instructions:
-      "舱主的调度工具集（自己动手用通用的 Read/Edit/Bash，不在这里）。派发=建真实任务（执行在 doer/worktree）；轻活=独立委派（无 phase/验收）；决策用 cabin_relay_decision 代述，逐字不改。监督读派生视图；一次只问人一个结构化问题。完成回流先审一道：需要人回复就 AskUserQuestion，不需要就一句提示 + cabin_ack_attention 收项（不回复执行者）。直接改了任务 home 或范围变更后，用 cabin_note_job 留痕，不要让它只存在于主对话。",
+      "舱主的调度工具集（自己动手用通用的 Read/Edit/Bash，不在这里）。派发=建真实任务（执行在 doer/worktree）；轻活=独立委派（无 phase/验收、有归档闸）；决策用 cabin_relay_decision 代述，逐字不改。监督读派生视图；一次只问人一个结构化问题。完成回流先审一道：需要人回复就 AskUserQuestion，不需要就一句提示 + cabin_ack_attention 收项（不回复执行者）。会话跑完只是「待命」，归档由你管：用户说归档（或你判断该收口）时，可先通读会话做反思、用 octo-wiki 技能落沉淀，再调 cabin_delegation_archive；不沉淀也能直接归档。直接改了任务 home 或范围变更后，用 cabin_note_job 留痕，不要让它只存在于主对话。",
     tools,
     alwaysLoad: true,
   })

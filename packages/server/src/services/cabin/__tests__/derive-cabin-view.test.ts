@@ -161,6 +161,17 @@ describe("deriveCabinView", () => {
     expect(acked.attention).toEqual([])
   })
 
+  it("已归档委派：不再产任何 attention（完成回流 / 在问 / 失败都闭嘴）", () => {
+    const v = deriveCabinView(base({
+      delegations: [
+        { id: "d1", title: "完成已归档", state: "done", summary: "结论", archived_at: "2026-11-25T02:00:00.000Z" },
+        { id: "d2", title: "在问已归档", state: "waiting_input", archived_at: "2026-11-25T02:00:00.000Z" },
+        { id: "d3", title: "失败已归档", state: "failed", archived_at: "2026-11-25T02:00:00.000Z" },
+      ],
+    }))
+    expect(v.attention.filter(a => a.id.includes("delegation"))).toEqual([])
+  })
+
   // ── 委派提问去重（v22 #9）────────────────────────────────────────
   it("委派在问：消息派生的 ask 已带 subject → 不再重复产 delegation-ask-* 行", () => {
     const v = deriveCabinView(base({

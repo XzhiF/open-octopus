@@ -899,6 +899,7 @@ export class CabinService {
         return {
           id: d.id, title: d.title, state: d.state,
           ...(d.result_summary ? { summary: d.result_summary } : {}),
+          ...(d.archived_at ? { archived_at: d.archived_at } : {}),
           ...(h ? { handle: h.handle, color: h.color } : {}),
         }
       }),
@@ -1470,7 +1471,9 @@ export class CabinService {
         return {
           id: d.id, kind: "delegation" as const,
           handle: h?.handle ?? "D?", color: h?.color ?? 0,
-          title: d.title, status: d.state,
+          title: d.title,
+          // 归档是独立一档（2026-11-25 用户）：state=done 只是「待命」。
+          status: d.archived_at ? "archived" : d.state,
           session_id: d.doer_session_id, job_id: d.id,
         } satisfies CabinWorkRow
       }),

@@ -231,6 +231,8 @@
   box-shadow: 0 0 10px var(--accent, var(--ck12-sky));
 }
 .ck12-flrow.is-done { opacity: 0.72; }
+/* 2026-11-25 用户：会话交完结论 = 待命（还能继续聊），与任务同档；已归档才是终态。 */
+.ck12-flrow.is-archived { opacity: 0.6; }
 
 /* 进度环 44×50：conic 外环 + 内衬 + 实心亮色字形 */
 .ck12-flhw {
@@ -327,6 +329,7 @@
   box-shadow: 0 0 8px rgba(255, 59, 92, 0.25);
 }
 .ck12-flst.is-done { background: rgba(61, 220, 151, 0.18); color: var(--ck12-green); }
+.ck12-flst.is-archived { background: rgba(185, 179, 217, 0.14); color: var(--ck12-metal2); }
 /* 2026-11-24：归档最后一道人工闸 —— 待归档粉 / 归档中蓝，看签就知道要不要点头。 */
 .ck12-flst.is-arch { background: rgba(255, 92, 138, 0.2); color: var(--ck12-pink); }
 .ck12-flst.is-archrun { background: rgba(53, 199, 240, 0.2); color: var(--ck12-sky); }
@@ -669,6 +672,7 @@
   .ck12-flrow.is-wait::after { background: var(--ck12-amber); }
   .ck12-flrow.is-blocked::after { background: var(--ck12-red); animation: ck12-np 1.5s infinite; }
   .ck12-flrow.is-done::after { background: var(--ck12-green); }
+  .ck12-flrow.is-archived::after { background: var(--ck12-metal2); }
   /* 极窄档：干活行用静态青点代替（优先于上面的状态点）。 */
   .ck12-flrow.is-flow::after {
     background: var(--ck12-teal);

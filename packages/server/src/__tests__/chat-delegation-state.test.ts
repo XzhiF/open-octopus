@@ -109,6 +109,7 @@ function insertDelegation(delegationId: string, doerSessionId: string) {
     created_at: now,
     updated_at: now,
     ended_at: null,
+    archived_at: null,
   })
 }
 

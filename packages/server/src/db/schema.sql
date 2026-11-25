@@ -1474,7 +1474,10 @@ CREATE TABLE IF NOT EXISTS cabin_delegations (
   result_summary TEXT,
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL,
-  ended_at TEXT
+  ended_at TEXT,
+  -- 归档闸（2026-11-25 用户）：会话也有归档；结束 ≠ 归档。
+  -- 归档由汐音管理（可选：先做会话反思并写 wiki，再归档）。
+  archived_at TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_cabin_delegations_cabin ON cabin_delegations(cabin_id, created_at);
 CREATE INDEX IF NOT EXISTS idx_cabin_delegations_doer ON cabin_delegations(doer_session_id);

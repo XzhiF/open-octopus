@@ -69,7 +69,9 @@ export const CabinDecisionTicketSchema = z.object({
 })
 export type CabinDecisionTicket = z.infer<typeof CabinDecisionTicketSchema>
 
-/** 独立委派（design 25 §4.2）：不是任务，没有 phase / worktree / 验收 / 归档。 */
+/** 独立委派（design 25 §4.2）：不是任务，没有 phase / worktree / 验收。
+ *  会话有归档闸（2026-11-25 用户）：state=done 是「活跃」（交完结论、仍可交互），
+ *  archived_at 有值才是「已归档」。 */
 export const CabinDelegationStateSchema = z.enum([
   "queued", "running", "waiting_input", "done", "failed", "cancelled",
 ])
@@ -88,6 +90,8 @@ export const CabinDelegationSchema = z.object({
   created_at: z.string(),
   updated_at: z.string(),
   ended_at: z.string().nullable(),
+  /** 归档时间；null = 未归档。老调用方可以不带。 */
+  archived_at: z.string().nullable().optional(),
 })
 export type CabinDelegationDTO = z.infer<typeof CabinDelegationSchema>
 

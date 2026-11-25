@@ -26,7 +26,7 @@ import {
   CockpitElapsed, CockpitJobHeader, CockpitJobTabs,
 } from './CockpitJobHeader'
 import { COCKPIT_SESSION_TABS, type CockpitTab } from '../state/cockpit-state'
-import { DELEGATION_STATE_LABEL } from '../fleet/fleet-model'
+import { delegationStatusLabel } from '../fleet/fleet-model'
 
 const POLL_MS = 10_000
 const IMAGE_EXT = new Set(['png', 'jpg', 'jpeg', 'gif', 'webp', 'avif', 'svg', 'bmp', 'ico'])
@@ -70,6 +70,11 @@ function asJobStatus(state: CabinDelegationView['state'] | null | undefined): st
   if (state === 'queued') return 'pending'
   if (state === 'waiting_input') return 'pending_interaction'
   return state
+}
+
+/** 归档后的会话沿用 done 的色调（头部 emoji / 状态色），状态词靠 kv 表达。 */
+function headStatusOf(delegation: CabinDelegationView): string | null {
+  return delegation.archived_at ? 'done' : asJobStatus(delegation.state)
 }
 
 function turnStatusLabel(status: TurnDebugSummary['status']): string {
@@ -142,7 +147,8 @@ export function CockpitSessionFace({
   }
 
   const brief = briefOf(delegation.brief)
-  const status = asJobStatus(delegation.state)
+  const status = headStatusOf(delegation)
+  const statusText = delegationStatusLabel(delegation)
   const sessionShort = shortId(sessionId)
   const subtitle = [cabinName, sessionShort ? `会话 ${sessionShort}` : null].filter(Boolean).join(' · ')
 
@@ -158,7 +164,7 @@ export function CockpitSessionFace({
           <div className="ck12-kv">
             <div className="ck12-kvi">
               <div className="k">状态</div>
-              <div className="v is-a">{DELEGATION_STATE_LABEL[delegation.state]}</div>
+              <div className="v is-a">{statusText}</div>
             </div>
             <div className="ck12-kvi">
               <div className="k">会话</div>
@@ -252,7 +258,7 @@ export function CockpitSessionFace({
           <div className="ck12-kv">
             <div className="ck12-kvi">
               <div className="k">状态</div>
-              <div className="v is-a">{DELEGATION_STATE_LABEL[delegation.state]}</div>
+              <div className="v is-a">{statusText}</div>
             </div>
             <div className="ck12-kvi">
               <div className="k">回合</div>

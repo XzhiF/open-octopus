@@ -2,7 +2,8 @@
 //
 // design 25 §4.2：轻量委派 —— 「替我跑一件事，回来告诉我」。
 //
-// 明确边界：不做多 phase、不做 spec 票、不做 worktree 隔离、不接验收 / 归档。
+// 明确边界：不做多 phase、不做 spec 票、不做 worktree 隔离、不接验收。
+// 归档有自己的闸（archived_at，由汐音管理），不是任务的归档编排。
 // 一份 brief + 一个 doer 会话 + 一句话结论。
 //
 // 与 cabin_jobs 的关系：账本不合并，视图统一（读侧归一化）。
@@ -95,6 +96,7 @@ export class CabinDelegationService {
       created_at: ts,
       updated_at: ts,
       ended_at: null,
+      archived_at: null,
     }
     this.deps.delegations.insert(row)
     try {
@@ -160,16 +162,60 @@ export class CabinDelegationService {
 
   markWaitingInput(id: string): void {
     const row = this.deps.delegations.getById(id)
-    if (!row || row.state === "done" || row.state === "failed" || row.state === "cancelled") return
+    if (!row || row.archived_at) return
+    if (row.state === "done" || row.state === "failed" || row.state === "cancelled") return
     this.deps.delegations.updateState(id, "waiting_input")
     try { this.deps.service.notifyViewChanged(row.cabin_id) } catch { /* view hook optional */ }
   }
 
   markRunning(id: string): void {
     const row = this.deps.delegations.getById(id)
-    if (row?.state === "waiting_input") {
+    if (!row || row.archived_at) return
+    if (row.state === "waiting_input") {
       this.deps.delegations.updateState(id, "running")
       try { this.deps.service.notifyViewChanged(row.cabin_id) } catch { /* view hook optional */ }
+    }
+  }
+
+  /**
+   * 归档（2026-11-25 用户）：会话也有归档闸，由汐音管理。
+   *
+   * 归档 ≠ 结束：`state=done` 只代表交完结论（编队写「待命」——人还能继续跟它
+   * 互动）；归档是显式动作，写 `archived_at` 后编队才写「已归档」并沉到归档组。
+   * 反思 + wiki 沉淀不属于这里的状态机：汐音可以在调用前自己做（可做可不做）。
+   *
+   * · 还在跑 / 排队的会话不能归档 —— 先等结论或取消；
+   * · waiting_input 归档时顺手收口成 done（没交结论也关闸）；
+   * · failed / cancelled 保留原终态，只补 archived_at；
+   * · 已归档再调是幂等的。
+   */
+  archive(id: string, opts: { summary?: string } = {}): CabinDelegationRow | undefined {
+    const row = this.deps.delegations.getById(id)
+    if (!row) return undefined
+    if (row.archived_at) return row
+    if (row.state === "running" || row.state === "queued") {
+      throw new Error("会话还在跑：先等它交结论或取消后再归档")
+    }
+    const ts = now()
+    const nextState: CabinDelegationState = row.state === "waiting_input" ? "done" : row.state
+    this.deps.delegations.updateState(id, nextState, {
+      ...(opts.summary ? { result_summary: opts.summary } : {}),
+      ...(row.ended_at ? {} : { ended_at: ts }),
+      archived_at: ts,
+    })
+    this.appendAudit(row.cabin_id, row, "archive", {
+      state: nextState,
+      ...(opts.summary ? { summary: opts.summary } : {}),
+    })
+    try { this.subjectEndHook?.(row.cabin_id, row.id) } catch { /* 收口失败不影响归档 */ }
+    try { this.deps.service.notifyViewChanged(row.cabin_id) } catch { /* view hook optional */ }
+    return {
+      ...row,
+      state: nextState,
+      updated_at: ts,
+      ended_at: row.ended_at ?? ts,
+      archived_at: ts,
+      ...(opts.summary ? { result_summary: opts.summary } : {}),
     }
   }
 
@@ -193,6 +239,8 @@ export class CabinDelegationService {
   finish(id: string, summary: string, ok = true): CabinDelegationRow | undefined {
     const row = this.deps.delegations.getById(id)
     if (!row) return undefined
+    // 已归档是终态：迟到的 cabin_delegation_done 不再把状态拉回「待命」。
+    if (row.archived_at) return row
     const next = this.setState(id, ok ? "done" : "failed", { result_summary: summary, ended_at: now() })
     this.appendAudit(row.cabin_id, row, ok ? "done" : "failed", { summary })
     try { this.subjectEndHook?.(row.cabin_id, row.id) } catch { /* 收口失败不影响完成态 */ }
@@ -277,6 +325,8 @@ export class CabinDelegationService {
 
   cancel(id: string): CabinDelegationRow | undefined {
     const row = this.deps.delegations.getById(id)
+    if (!row) return undefined
+    if (row.archived_at) return row
     const next = this.setState(id, "cancelled", { ended_at: now() })
     if (row) {
       try { this.subjectEndHook?.(row.cabin_id, row.id) } catch { /* 收口失败不影响取消态 */ }

@@ -77,8 +77,6 @@ export interface CockpitFleetCounts {
 const NEED_STATUSES = new Set(['awaiting_review', 'awaiting_archive', 'failed', 'blocked', 'waiting_input'])
 /** archiving = 归档编排在跑（git 同步 / 清理 / 知识编译），算「在跑」不算待命。 */
 const RUN_STATUSES = new Set(['running', 'archiving'])
-/** 已结束组只留最近 3 条（plans Step 2 task 1）。 */
-const DONE_LIMIT = 3
 
 /**
  * need / run / queue / done。
@@ -95,6 +93,8 @@ export function groupOf(row: CockpitRow): CockpitRowGroup {
     return 'done'
   }
   if (row.kind === 'delegation') {
+    // 归档优先（2026-11-25 用户）：归档是终态，哪怕是 failed 也不再回流 need。
+    if (row.delegation.archived_at) return 'done'
     if (row.delegation.state === 'waiting_input' || row.delegation.state === 'failed') return 'need'
     if (row.delegation.state === 'running') return 'run'
     if (row.delegation.state === 'queued') return 'queue'
@@ -132,10 +132,14 @@ function endedAtOf(row: CockpitRow): number | null {
   if (row.kind === 'task') {
     return isEndedJob(taskDisplayStatus(row.task)) ? timeOf(row.task.updated_at) : null
   }
-  const state = row.delegation.state
-  return state === 'done' || state === 'failed' || state === 'cancelled'
-    ? timeOf(row.delegation.ended_at ?? row.delegation.updated_at)
-    : null
+  if (row.kind === 'delegation') {
+    if (row.delegation.archived_at) return timeOf(row.delegation.archived_at)
+    const state = row.delegation.state
+    return state === 'done' || state === 'failed' || state === 'cancelled'
+      ? timeOf(row.delegation.ended_at ?? row.delegation.updated_at)
+      : null
+  }
+  return null
 }
 
 /**
@@ -143,7 +147,8 @@ function endedAtOf(row: CockpitRow): number | null {
  *   · need：job/task 行在前、纯 attention 行在后，组内保持编队顺序；
  *   · run：先开始的在前；
  *   · queue：FIFO（created_at 升序，缺时间放最后）；
- *   · done：ended_at 降序，只留前 3。
+ *   · done：ended_at 降序（不截断 —— 编队的 6 行 / 更多负责显示上限；
+ *           归档行还要按「创建时间新→旧」重排，先截断会把归档挤没）。
  */
 export function sortRows(rows: readonly CockpitRow[]): CockpitRow[] {
   const buckets: Record<CockpitRowGroup, CockpitRow[]> = { need: [], run: [], queue: [], done: [] }
@@ -167,7 +172,6 @@ export function sortRows(rows: readonly CockpitRow[]): CockpitRow[] {
     .sort((a, b) =>
       (endedAtOf(b) ?? Number.NEGATIVE_INFINITY) - (endedAtOf(a) ?? Number.NEGATIVE_INFINITY) ||
       stable(a, b))
-    .slice(0, DONE_LIMIT)
 
   return [...buckets.need, ...buckets.run, ...buckets.queue, ...buckets.done]
 }
@@ -235,7 +239,7 @@ export function mergeAttention(
  * `jobs` 只数 job/task 行 —— 纯 attention 行是待办，不是作业；命中 job 的
  * attention 已经随该 job 计入，不重复。
  *
- * 传入未截断的行集时 done 是真实条数（sortRows 的「前 3」只影响显示）。
+ * 传入未截断的行集时 done 是真实条数（编队 rail 只靠 FLEET_LIMIT / 更多折叠，不丢行）。
  */
 export function buildCounts(
   rows: readonly CockpitRow[],
@@ -306,32 +310,47 @@ export function statusLabel(row: CockpitRow): string {
     const status = taskDisplayStatus(row.task)
     return TASK_STATUS_LABEL[status] ?? jobStatusLabel(status)
   }
-  if (row.kind === 'delegation') return DELEGATION_STATE_LABEL[row.delegation.state]
+  if (row.kind === 'delegation') return delegationStatusLabel(row.delegation)
   return ATTENTION_STAGE_LABEL[row.item.stage]
 }
 
-/** 委派 / 会话状态词（会话详情面复用，单源）。 */
+/**
+ * 委派 / 会话状态词（会话详情面复用，单源）。
+ *
+ * 2026-11-25 用户：交完结论 ≠ 收工。`done` 写「待命」——会话还能继续聊，与任务
+ * 的待命同一档；「已归档」是汐音管理的独立终态（archived_at 有值），不再由 state 表达。
+ */
 export const DELEGATION_STATE_LABEL: Record<CabinDelegationView['state'], string> = {
   queued: '排队',
-  running: '跑着',
-  waiting_input: '在问你',
-  done: '已完成',
+  running: '作战中',
+  waiting_input: '等你答',
+  done: '待命',
   failed: '失败',
   cancelled: '已取消',
 }
 
+/** 会话状态词（含归档）：archived_at 优先，其次 state。 */
+export function delegationStatusLabel(delegation: Pick<CabinDelegationView, 'state' | 'archived_at'>): string {
+  if (delegation.archived_at) return '已归档'
+  return DELEGATION_STATE_LABEL[delegation.state]
+}
+
 // ── v21（design 31 §3.1.1）：左栏单列编队的排序 ─────────────────────────
 //
-// 状态优先（受阻 → 等你 → 在跑 → 待命 → 已结束），同状态按创建时间升序
-// （旧 → 新落地：created_at 数值小 = 更早创建，排在上面）。纯 attention 行
-// 不进编队 —— 它们是「要我处理」，归右栏 inbox（design 31 §0 #2）。
+// 状态优先（受阻 → 等你 → 在跑 → 待命 → 已完成 → 已归档），同状态按创建时间
+// 升序（旧 → 新；归档档相反：创建时间新 → 旧）。纯 attention 行不进编队 —— 它们是
+// 「要我处理」，归右栏 inbox（design 31 §0 #2）。会话交完结论也是「待命」（与任务
+// 同一档，可继续聊）；归档才沉最后一档。
 
 export const FLEET_STATUS_RANK = {
   blocked: 0,
   wait: 1,
   run: 2,
   queue: 3,
+  /** 非会话作业（workflow / subagent）跑完：已完成。 */
   done: 4,
+  /** 归档是最后一档（任务已归档 / 会话已归档）。 */
+  archived: 5,
 } as const
 
 export type FleetStatus = keyof typeof FLEET_STATUS_RANK
@@ -352,6 +371,12 @@ export function isLiveRow(row: CockpitRow): boolean {
 /** 生命周期口径的状态（chip 文案 / 行色 / 窄栏状态点）—— 不被「agent 在跑」改写。
  *  语义与 threads-model 的 threadStateOf 一致（那边是 tab 表情）。 */
 export function fleetStageOf(row: CockpitRow): FleetStatus {
+  // 2026-11-25 用户：会话交完结论 = 待命（与任务的待命同一档，可继续聊）；
+  // 归档才是独立终态。放在 groupOf 之前判，done 组也能落待命。
+  if (row.kind === 'delegation') {
+    if (row.delegation.archived_at) return 'archived'
+    if (row.delegation.state === 'done') return 'queue'
+  }
   const group = groupOf(row)
   if (group === 'need') {
     if (row.kind === 'attention') return row.item.stage === 'blocked' ? 'blocked' : 'wait'
@@ -362,7 +387,14 @@ export function fleetStageOf(row: CockpitRow): FleetStatus {
     return 'wait'
   }
   if (group === 'run') return 'run'
-  if (group === 'done') return 'done'
+  if (group === 'done') {
+    // 任务只有真的走完归档闸（raw done）才写「已归档」；其它结束态仍是已完成。
+    if (row.kind === 'task') return taskDisplayStatus(row.task) === 'done' ? 'archived' : 'done'
+    if (row.kind === 'job' && row.job.kind === 'task') {
+      return row.job.status === 'done' ? 'archived' : 'done'
+    }
+    return 'done'
+  }
   return 'queue'
 }
 
@@ -377,15 +409,22 @@ export function fleetStatusOf(row: CockpitRow): FleetStatus {
 }
 
 /**
- * 左栏编队顺序：状态 rank → 创建时间升序。attention-only 行剔除（归 inbox）。
+ * 左栏编队顺序：状态 rank → 创建时间。attention-only 行剔除（归 inbox）。
+ * 归档档（2026-11-25 用户）同档按创建时间新→旧；其余同状态仍是旧→新。
  * 入参不动，返回新数组。
  */
 export function sortFleet(rows: readonly CockpitRow[]): CockpitRow[] {
   const order = new Map(rows.map((row, index) => [row, index] as const))
   return rows
     .filter((row) => row.kind !== 'attention')
-    .sort((a, b) =>
-      FLEET_STATUS_RANK[fleetStatusOf(a)] - FLEET_STATUS_RANK[fleetStatusOf(b)] ||
-      (createdAtOf(a) ?? Number.POSITIVE_INFINITY) - (createdAtOf(b) ?? Number.POSITIVE_INFINITY) ||
-      (order.get(a) ?? 0) - (order.get(b) ?? 0))
+    .map((row) => ({ row, status: fleetStatusOf(row) }))
+    .sort((a, b) => {
+      const rank = FLEET_STATUS_RANK[a.status] - FLEET_STATUS_RANK[b.status]
+      if (rank !== 0) return rank
+      const ac = createdAtOf(a.row) ?? Number.POSITIVE_INFINITY
+      const bc = createdAtOf(b.row) ?? Number.POSITIVE_INFINITY
+      const time = a.status === 'archived' ? bc - ac : ac - bc
+      return time || (order.get(a.row) ?? 0) - (order.get(b.row) ?? 0)
+    })
+    .map((entry) => entry.row)
 }

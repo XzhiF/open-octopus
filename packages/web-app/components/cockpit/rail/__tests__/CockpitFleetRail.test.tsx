@@ -411,8 +411,9 @@ describe('CockpitFleetRail · v21 单列编队', () => {
     expect(node.querySelector('.ck12-flbar')).toBeNull()
   })
 
-  // 2026-11-25 用户：完结 ≠ 归档。归档是人工闸，状态词不能说会话「已被归档」。
-  it('完结 ≠ 归档：会话 / 委派跑完显示「已完成」，只有任务走完归档闸才显示「已归档」', () => {
+  // 2026-11-25 用户：完结 ≠ 归档。会话交完结论是「待命」（还能继续聊），
+  // 归档是汐音管理的独立终态；任务走完归档闸才写「已归档」。
+  it('完结 ≠ 归档：会话 done = 待命、archived_at = 已归档；任务走完归档闸 = 已归档', () => {
     const chatJob = jobRow(jobView('chat1', {
       kind: 'subagent', status: 'completed', title: 'D · 环境体检',
       ended_at: '2026-11-14T09:30:00.000Z',
@@ -432,15 +433,26 @@ describe('CockpitFleetRail · v21 单列编队', () => {
         brief: null, autonomy: 'hands-off', state: 'done',
         doer_session_id: 's1', result_summary: '全绿',
         created_at: '2026-11-14T09:00:00.000Z', updated_at: '2026-11-14T09:30:00.000Z',
-        ended_at: '2026-11-14T09:30:00.000Z', handle: 'D1', color: 1,
+        ended_at: '2026-11-14T09:30:00.000Z', archived_at: null, handle: 'D1', color: 1,
+      },
+    }
+    const archived: CockpitRow = {
+      ...delegation,
+      key: 'delegation:c1:d2',
+      delegation: {
+        ...delegation.delegation,
+        id: 'd2', title: '环境体检：已收口', archived_at: '2026-11-14T10:00:00.000Z',
       },
     }
 
-    renderRail({ rows: sortRows([chatJob, taskJob, delegation]) })
+    renderRail({ rows: sortRows([chatJob, taskJob, delegation, archived]) })
 
     expect(within(row('job:chat1')).getByText('已完成')).toBeInTheDocument()
-    expect(within(row('delegation:c1:d1')).getByText('已完成')).toBeInTheDocument()
     expect(within(row('job:t1')).getByText('已归档')).toBeInTheDocument()
+    expect(within(row('delegation:c1:d1')).getByText('待命')).toBeInTheDocument()
+    expect(within(row('delegation:c1:d2')).getByText('已归档')).toBeInTheDocument()
+    expect(row('delegation:c1:d1').getAttribute('data-tone')).toBe('queue')
+    expect(row('delegation:c1:d2').getAttribute('data-tone')).toBe('archived')
   })
 
   it('↑↓ 在可见行内移动并 select；输入框聚焦时不抢键', () => {

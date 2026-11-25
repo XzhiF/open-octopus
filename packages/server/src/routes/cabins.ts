@@ -1230,6 +1230,20 @@ export function createCabinRoutes(
     return c.json({ delegation: delegations.cancel(row.id) })
   })
 
+  // 归档闸（2026-11-25 用户）：会话也有归档；汐音走工具，REST 留给面板 / 脚本。
+  router.post("/:id/delegations/:did/archive", async (c) => {
+    if (!delegations) return c.json({ error: "delegation service not wired" }, 503)
+    const row = delegations.get(c.req.param("did"))
+    if (!row || row.cabin_id !== c.req.param("id")) return c.json({ error: "delegation not found" }, 404)
+    const body = await safeJson(c)
+    const summary = typeof body?.summary === "string" && body.summary.trim() ? body.summary : undefined
+    try {
+      return c.json({ delegation: delegations.archive(row.id, { summary }) })
+    } catch (err) {
+      return c.json({ error: err instanceof Error ? err.message : String(err) }, 409)
+    }
+  })
+
   // ── SSE (channel cabin:<id>) ───────────────────────────────────────
 
   router.get("/:id/events", (c) => {

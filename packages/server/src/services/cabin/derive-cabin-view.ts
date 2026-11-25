@@ -76,6 +76,8 @@ export interface DeriveDelegationInput {
   state: "queued" | "running" | "waiting_input" | "done" | "failed" | "cancelled"
   /** 完成结论（state=done 时进「已完成」条目的正文）。 */
   summary?: string | null
+  /** 归档时间（2026-11-25 用户）：有值 = 已归档，不再产任何 attention。 */
+  archived_at?: string | null
   /** 派生句柄：`D1`。由调用方按创建顺序分配。 */
   handle?: string
   color?: number
@@ -259,7 +261,9 @@ export function deriveCabinView(input: DeriveCabinInput): DerivedCabinView {
   }
   // 委派（design 25 §4.2）：waiting_input → answer；failed → blocked；
   // done 不产 attention（只留回执，免得跑一趟的小事把决策队列占满）。
+  // 2026-11-25 用户：已归档的委派整条闭嘴 —— 归档是终态，不再回流任何待办。
   for (const d of delegations) {
+    if (d.archived_at) continue
     const subject = {
       subject: { kind: "delegation" as const, id: d.id },
       ...(d.handle ? { handle: d.handle } : {}),
