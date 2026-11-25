@@ -98,6 +98,16 @@ describe("CabinDelegationService：一份 brief + 一个 doer 会话", () => {
     expect(done?.ended_at).toBeTruthy()
   })
 
+  it("开机对账：残留 running 的委派落到 waiting_input（重启后编队不再空转秒表）", () => {
+    const running = delegations.delegate(CABIN, { title: "跑到一半", intent: "i", noWake: true })
+    const done = delegations.delegate(CABIN, { title: "已完成", intent: "i", noWake: true })
+    delegations.finish(done.id, "结论", true)
+
+    expect(delegations.reconcileRunning()).toBe(1)
+    expect(delegations.get(running.id)?.state).toBe("waiting_input")
+    expect(delegations.get(done.id)?.state).toBe("done")
+  })
+
   it("委派完成 → 主会话回执落库并通知打开着的对话刷新", () => {
     const row = delegations.delegate(CABIN, { title: "三方案对比", intent: "对比一下", noWake: true })
     appended.length = 0

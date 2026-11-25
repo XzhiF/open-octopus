@@ -1589,6 +1589,16 @@ if (shouldServe) {
         decisions: cabinDecisionService,
         delegations: cabinDelegationService,
       }))
+      // 2026-11-25 用户：重启即无活跃流 —— 残留 running 的委派一律落到「等你答」。
+      // 进程上次死在一轮中间时（doer 已回复、状态没来得及收口），编队会一直显示
+      // 作战中、秒表空转；开机对账一次，不靠人手动去点。定时迁移仍在 /chat 的
+      // 回合开始 / 收尾两处（chat-routes），这里只兜历史残留。
+      try {
+        const repaired = cabinDelegationService.reconcileRunning()
+        if (repaired > 0) console.log(`[cabin] reconciled ${repaired} orphaned running delegation(s) → waiting_input`)
+      } catch (err) {
+        console.warn("[cabin] delegation running-state reconciliation skipped:", err)
+      }
       app.route('/api/cabins', createCabinRoutes(
         cabinService, cabinInitService, sse, cabinComm,
         cabinDecisionService, cabinDelegationService,

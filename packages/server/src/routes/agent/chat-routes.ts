@@ -568,16 +568,18 @@ export function createChatRoutes(deps: ChatRouteDeps): Hono {
     }
     // Cabin P3（C3）：舱主会话挂调度工具集（只调度不执行）。
     // design 25 §4.2：委派 doer 只挂「交结论」这一个工具，不能派任务 / 建任务。
+    // 2026-11-25 用户：这个 id 还要驱动委派状态机（回合开始=作战中，回合结束=等你答），
+    // 必须让下面的 streamSSE 闭包也看得到。
+    let doerDelegationId: string | null = null
     if (!thread && session.cabin_id && cabinProvider) {
-      let delegationId: string | null = null
       try {
         const row = sessionDao.getDb().prepare(
           "SELECT id FROM cabin_delegations WHERE doer_session_id = ? LIMIT 1",
         ).get(id) as { id?: string } | undefined
-        delegationId = row?.id ?? null
+        doerDelegationId = row?.id ?? null
       } catch { /* old DB without cabin_delegations — feature off */ }
-      toolServers[delegationId ? 'octopus-cabin-doer' : 'octopus-cabin'] = delegationId
-        ? createCabinDelegationToolServer(delegationId)
+      toolServers[doerDelegationId ? 'octopus-cabin-doer' : 'octopus-cabin'] = doerDelegationId
+        ? createCabinDelegationToolServer(doerDelegationId)
         : createCabinToolServer(session.cabin_id)
     }
     const mcpServers = Object.keys(toolServers).length > 0 ? toolServers : undefined
@@ -639,6 +641,10 @@ export function createChatRoutes(deps: ChatRouteDeps): Hono {
         : undefined
 
       try {
+        // 2026-11-25 用户：委派 doer 的回合开始 → 作战中（人刚答完，doer 接着干）。
+        if (doerDelegationId) {
+          try { cabinProvider?.delegations?.markRunning(doerDelegationId) } catch { /* best effort */ }
+        }
         // Step 1: Auto-compress long sessions
         await autoCompressSession(id, org, turnStream)
 
@@ -757,6 +763,12 @@ export function createChatRoutes(deps: ChatRouteDeps): Hono {
         }
         setActiveStreamBackgroundTasks(id, null)
         unregisterActiveStream(id, streamId)
+        // 2026-11-25 用户：doer 这一轮结束了还没交结论（cabin_delegation_done 会把
+        // 状态置 done）→ 回到「等你答」。否则 state 永远停在 running，编队一直显示
+        // 作战中、秒表空转 —— 会话明明已经回复了人，却看起来还在干。
+        if (doerDelegationId) {
+          try { cabinProvider?.delegations?.markWaitingInput(doerDelegationId) } catch { /* best effort */ }
+        }
         // 回合收尾：不让 background_runs 留下永久 running 的行。
         try { getBackgroundRuns().closeRunning(id) } catch { /* 观测面失败不影响收轮 */ }
         notifyWake('done')

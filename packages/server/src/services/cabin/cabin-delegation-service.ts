@@ -173,6 +173,23 @@ export class CabinDelegationService {
     }
   }
 
+  /**
+   * 开机对账（2026-11-25 用户）：进程刚起来时没有任何活跃流，残留 running 的委派
+   * 一定是上次死在一轮中间的 —— 落到「等你答」。否则编队一直显示作战中、秒表空转
+   * （doer 明明已经回复了人）。返回修好的条数。
+   */
+  reconcileRunning(): number {
+    let repaired = 0
+    for (const cabin of this.deps.cabin.list()) {
+      for (const delegation of this.list(cabin.id)) {
+        if (delegation.state !== "running") continue
+        this.markWaitingInput(delegation.id)
+        repaired += 1
+      }
+    }
+    return repaired
+  }
+
   finish(id: string, summary: string, ok = true): CabinDelegationRow | undefined {
     const row = this.deps.delegations.getById(id)
     if (!row) return undefined
