@@ -411,6 +411,38 @@ describe('CockpitFleetRail · v21 单列编队', () => {
     expect(node.querySelector('.ck12-flbar')).toBeNull()
   })
 
+  // 2026-11-25 用户：完结 ≠ 归档。归档是人工闸，状态词不能说会话「已被归档」。
+  it('完结 ≠ 归档：会话 / 委派跑完显示「已完成」，只有任务走完归档闸才显示「已归档」', () => {
+    const chatJob = jobRow(jobView('chat1', {
+      kind: 'subagent', status: 'completed', title: 'D · 环境体检',
+      ended_at: '2026-11-14T09:30:00.000Z',
+    }))
+    const taskJob = jobRow(jobView('t1', {
+      kind: 'task', status: 'done', title: 'M2 · 结算',
+      ended_at: '2026-11-14T09:30:00.000Z',
+    }))
+    const delegation: CockpitRow = {
+      key: 'delegation:c1:d1',
+      kind: 'delegation',
+      cabinId: 'c1',
+      cabinName: '舱一',
+      pct: null,
+      delegation: {
+        id: 'd1', cabin_id: 'c1', title: '环境体检：五仓 + UAT', intent_text: '体检',
+        brief: null, autonomy: 'hands-off', state: 'done',
+        doer_session_id: 's1', result_summary: '全绿',
+        created_at: '2026-11-14T09:00:00.000Z', updated_at: '2026-11-14T09:30:00.000Z',
+        ended_at: '2026-11-14T09:30:00.000Z', handle: 'D1', color: 1,
+      },
+    }
+
+    renderRail({ rows: sortRows([chatJob, taskJob, delegation]) })
+
+    expect(within(row('job:chat1')).getByText('已完成')).toBeInTheDocument()
+    expect(within(row('delegation:c1:d1')).getByText('已完成')).toBeInTheDocument()
+    expect(within(row('job:t1')).getByText('已归档')).toBeInTheDocument()
+  })
+
   it('↑↓ 在可见行内移动并 select；输入框聚焦时不抢键', () => {
     const j1 = jobRow(jobView('j1'))
     const j2 = jobRow(jobView('j2', { created_at: '2026-11-14T10:00:00.000Z' }))

@@ -2298,7 +2298,8 @@ const projOf=id=>PROJECTS.find(p=>p.id===id)||PROJECTS[0];
 const WS_ROOT='D:/octopus-ws/cabin';
 const wsPath=id=>WS_ROOT+'/projects/'+id;
 const KIND={task:{g:'◆',label:'任务'},workflow:{g:'⬡',label:'工作流'},subagent:{g:'◈',label:'分身'},external:{g:'⧉',label:'外部'},wfdev:{g:'⚙',label:'流程开发'}};
-const STATE_LABEL={run:'作战中',wait:'等你答',blocked:'受阻',queue:'待命',arch:'待归档',archiving:'归档中',done:'已归档'};
+/* 2026-11-25 用户：完结 ≠ 归档 —— done 组只说「已完成」；真正的归档态由归档页签 / 📦 表达。 */
+const STATE_LABEL={run:'作战中',wait:'等你答',blocked:'受阻',queue:'待命',arch:'待归档',archiving:'归档中',done:'已完成'};
 const STATE_EMO={run:'⚡',wait:'❗',blocked:'💦',queue:'💤',arch:'📦',archiving:'⚙',done:'✅'};
 const MODELS=[
  {id:'pro-max',eff:'qwen3.7-max',desc:'最强 · 复杂重构与 Spec 共建',mult:3},

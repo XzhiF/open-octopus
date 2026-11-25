@@ -23,7 +23,8 @@ export const THREAD_STATE_LABEL: Record<CockpitThreadState, string> = {
   wait: '等你答',
   blocked: '受阻',
   queue: '待命',
-  done: '已归档',
+  // 完结 ≠ 归档（2026-11-25 用户）：线程跑完只代表结束，归档是人工闸。
+  done: '已完成',
 }
 
 export interface CockpitThread {

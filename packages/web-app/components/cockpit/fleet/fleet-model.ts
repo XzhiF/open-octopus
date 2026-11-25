@@ -321,7 +321,7 @@ const DELEGATION_STATE_LABEL: Record<CabinDelegationView['state'], string> = {
 
 // ── v21（design 31 §3.1.1）：左栏单列编队的排序 ─────────────────────────
 //
-// 状态优先（受阻 → 等你 → 在跑 → 待命 → 已归档），同状态按创建时间升序
+// 状态优先（受阻 → 等你 → 在跑 → 待命 → 已结束），同状态按创建时间升序
 // （旧 → 新落地：created_at 数值小 = 更早创建，排在上面）。纯 attention 行
 // 不进编队 —— 它们是「要我处理」，归右栏 inbox（design 31 §0 #2）。
 
@@ -339,7 +339,7 @@ export type FleetStatus = keyof typeof FLEET_STATUS_RANK
  * 行上此刻是否真有 agent 在干活（编队「在跑」的语义）：
  *   · 行本身在运行组（running / 委派跑着 / 子代理 working）；
  *   · 或 job 的主线程 agent 正在流式 —— 即使生命周期还停在待验收 / 待命 / 受阻。
- * 已归档行永远不算（残留流不该把归档行点亮）。
+ * 已结束行永远不算（残留流不该把结束行点亮）。
  */
 export function isLiveRow(row: CockpitRow): boolean {
   const group = groupOf(row)
@@ -367,7 +367,7 @@ export function fleetStageOf(row: CockpitRow): FleetStatus {
 
 /**
  * 排序 / 计数口径：真在干活的行挪进「在跑」组（待验收的作者还在推进，编队要把
- * 它排到干活那档）；受阻仍排最上（阻塞不能藏），已归档不动。
+ * 它排到干活那档）；受阻仍排最上（阻塞不能藏），已结束不动。
  */
 export function fleetStatusOf(row: CockpitRow): FleetStatus {
   const stage = fleetStageOf(row)

@@ -2,7 +2,7 @@
 
 // v21（design 31 §3.1）· 左栏编队 —— 单列 hex 卡。
 //
-//   · 排序：状态优先（受阻 → 等你 → 在跑 → 待命 → 已归档），同状态按创建时间
+//   · 排序：状态优先（受阻 → 等你 → 在跑 → 待命 → 已结束），同状态按创建时间
 //     升序（旧 → 新）；纯 attention 行不进编队（归右栏 inbox）。
 //   · 默认 6 行；超出时底部「更多 +N ⌄ / 收起 ⌃」，展开只重渲染本栏。
 //   · v22 #5（2026-11-23 用户）：行体 / 💬 = 打开这条作战的独立 chat 窗（默认
@@ -30,6 +30,7 @@ import {
 import { sameCockpitRef, type CockpitRef } from '../state/cockpit-state'
 import { projectNameFromKey, rowProjectKeys } from '../projects/project-model'
 import { taskDisplayStatus } from '@/components/cabin/modules/ui'
+import { jobStatusLabel } from '@/components/cabin/job-status'
 import { useCockpitState } from '../state/CockpitStateProvider'
 import { useCockpitThreads } from '../chat/use-cockpit-threads'
 import { openFleetChat } from '../chat/open-fleet-window'
@@ -45,7 +46,8 @@ const STATUS_LABEL: Record<FleetStatus, string> = {
   wait: '等你答',
   run: '作战中',
   queue: '待命',
-  done: '已归档',
+  // done 组按实体细分（见 statusTextOf）：任务走完归档闸 = 已归档，其余 = 已完成。
+  done: '已完成',
 }
 
 /** 原型四个项目色 —— 用项目 key 稳定 hash 取一个，不依赖服务端多给字段。 */
@@ -130,6 +132,16 @@ function statusTextOf(row: CockpitRow, status: FleetStatus): string {
   if (raw === 'archiving') return '归档中'
   if (row.kind === 'job' && row.attention) return attentionStageLabel(row.attention)
   if (status === 'wait') return '等你答'
+  // 2026-11-25 用户：完结 ≠ 归档。只有走完归档闸的任务（task 派生 done）才配
+  // 「已归档」；会话 / 委派 / 其它作业跑完只是「已完成」。归档是人工闸——用户
+  // 在对话里说「归档」才启动，状态词不能暗示它已经发生过。
+  if (status === 'done') {
+    const isTask = row.kind === 'task' || (row.kind === 'job' && row.job.kind === 'task')
+    if (isTask && raw === 'done') return '已归档'
+    if (row.kind === 'delegation') return statusLabel(row)
+    if (row.kind === 'job' && raw && raw !== 'unknown') return jobStatusLabel(raw)
+    return '已完成'
+  }
   return STATUS_LABEL[status]
 }
 
