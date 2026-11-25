@@ -34,6 +34,8 @@ import { getAgentDir } from "../agent/paths"
 import { TaskHomeService } from "./task-home-service"
 import { WorkspaceService } from "../workspace"
 import { WorkspaceGit } from "../workspace-git"
+// 分支计划（2026-11-24）：workflow-dev 中途加项目也沿用同一套落点。
+import { resolveBranchOverrides, fillTarget } from "./branch-plan"
 
 export type WorkflowDevKind = "workflow-dev"
 
@@ -639,11 +641,17 @@ export class WorkflowDevService {
     }
     let created: string[] = []
     if (refs.length > 0) {
+      const plans: Record<string, { base?: string; target?: string }> = {}
+      for (const ref of refs) {
+        const plan = fillTarget(resolveBranchOverrides(this.taskDAO.getDb(), task, ref.name))
+        if (plan.base || plan.target) plans[ref.name] = plan
+      }
       const out = this.workspaceService.ensureWorktreesForProjects(
         ws,
         refs,
         "workflow-dev",
         taskId.slice(0, 8),
+        plans,
       )
       created = out.created
     }

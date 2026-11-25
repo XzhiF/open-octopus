@@ -19,7 +19,7 @@ const CELL_LABELS = [
 ] as const
 
 export function CockpitLedgerPanel() {
-  const { entryCabinId, select, closePanel, threads: api, chatWindow } = useCockpitState()
+  const { entryCabinId, select, closePanel, chatWindow } = useCockpitState()
   const { usage, stale } = useCabinUsage(entryCabinId)
   const currency = useBillingCurrency()
 
@@ -36,7 +36,7 @@ export function CockpitLedgerPanel() {
       select({ kind: 'task', cabinId: entryCabinId, id: refId })
       return
     }
-    api.activateThread('main')
+    // 主通讯台固定主对话：直接展开即可（v22 #5 起不再有线程切换）。
     chatWindow.openWithFocus()
   }
 

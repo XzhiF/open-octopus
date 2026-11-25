@@ -57,7 +57,13 @@ const TREE_W_DEFAULT = 260
 const TREE_W_MIN = 200
 const TREE_W_MAX = 560
 
-export default function KnowledgePage() {
+export interface KnowledgePageProps {
+  /** 嵌入宿主（全舱知识窗）时隐藏自己的标题条 —— 宿主窗口头已给「⚛ 知识中心」，
+   *  搜索 / 阅读史 / 健康读数照常保留。2026-11-23 用户 #7。 */
+  embedded?: boolean
+}
+
+export default function KnowledgePage({ embedded = false }: KnowledgePageProps) {
   const isActive = useIsActiveRoute()
   const [tree, setTree] = useState<KcTree | null>(null)
   const [treeError, setTreeError] = useState<string | null>(null)
@@ -263,13 +269,15 @@ export default function KnowledgePage() {
           健康件/药丸浮层压过主场与抽屉；抽屉本体已改锚定在主场上（absolute，
           顶边=页头下沿），与页头结构上不再重叠（bug-fix 20261016） */}
       <div data-testid="kc-page-header" className="relative z-[60] flex shrink-0 items-center gap-2 border-b-[1.5px] border-pop-bd bg-pop-paper px-3 py-2">
-        <span className="text-[13px] font-black text-pop-ink">🐙 知识中心</span>
-        <span className="rounded-full border-[1.5px] border-pop-cyan px-2 py-0.5 text-[10px] font-bold text-pop-cyan">global wiki</span>
+        {!embedded && <span className="text-[13px] font-black text-pop-ink">⚛ 知识中心</span>}
+        {!embedded && (
+          <span className="rounded-full border-[1.5px] border-pop-cyan px-2 py-0.5 text-[10px] font-bold text-pop-cyan">global wiki</span>
+        )}
         <button
           type="button"
           data-testid="kc-search-open"
           onClick={() => setPaletteOpen(true)}
-          className="ml-2 flex h-8 w-[300px] items-center gap-2 rounded-lg border-[1.5px] border-pop-bd bg-pop-inset px-3 text-left text-xs font-bold text-pop-dim hover:bg-accent hover:text-pop-ink"
+          className={`${embedded ? '' : 'ml-2 '}flex h-8 w-[300px] items-center gap-2 rounded-lg border-[1.5px] border-pop-bd bg-pop-inset px-3 text-left text-xs font-bold text-pop-dim hover:bg-accent hover:text-pop-ink`}
         >
           🔍 搜索知识… <span className="ml-auto text-[10px] font-normal">Ctrl+K</span>
         </button>

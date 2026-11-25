@@ -14,7 +14,7 @@
 //
 // 旧服务端（没有 decisions 端点）自动退回「直接转发作者线程」的兼容路径。
 
-import { useCallback, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { CheckCircle2, ChevronDown, MessageSquare } from 'lucide-react'
 import type { AgentMessage } from '@/lib/agent/types'
 import type { ChatMessage } from '@/lib/types'
@@ -81,6 +81,22 @@ export function AuthorAskCard({ message }: { message: AgentMessage }) {
   const taskName = payload.taskName ?? '任务'
   const anchorId = `author-ask-${askId}`
   const { phase, options } = envelopeState(payload)
+
+  // v22 #9（2026-11-23 用户）：输入框上方的「待你定」浮条退役 —— 原来由它接的
+  // `octopus:open-ask`（滚到这张卡）改由卡片自己接住。
+  useEffect(() => {
+    const onOpen = (event: Event) => {
+      const id = (event as CustomEvent<{ askMessageId?: string }>).detail?.askMessageId
+      if (!id || id !== askId) return
+      const el = document.getElementById(anchorId)
+      if (!el) return
+      el.scrollIntoView({ behavior: 'smooth', block: 'center' })
+      el.classList.add('ring-2', 'ring-pop-amber')
+      window.setTimeout(() => el.classList.remove('ring-2', 'ring-pop-amber'), 1_800)
+    }
+    window.addEventListener('octopus:open-ask', onOpen)
+    return () => window.removeEventListener('octopus:open-ask', onOpen)
+  }, [askId, anchorId])
 
   // 与问答窗共用同一套提交语义（design 26 §5.1）：票据、幂等、回执、事件。
   const { submit, busy, failed } = useAskSubmit({

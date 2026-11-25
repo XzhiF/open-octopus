@@ -137,7 +137,8 @@ export function resizeCockpitRectTop(
   return { ...start, y, h: bottom - y }
 }
 
-/** v20 弹出窗级联几何（design 29 §4）：x=120+n*64, y=84+n*34，夹回视口。 */
+/** v20 弹出窗级联几何（design 29 §4）：x=120+n*64, y=84+n*34，夹回视口。
+ *  v22 #5 起只作兜底（默认几何以主通讯台为准，见 `cascadeFromConsole`）。 */
 export function cascadeWinRect(index: number, viewport: Viewport): CockpitRect {
   const vw = Math.max(1, Math.round(viewport.width))
   const vh = Math.max(1, Math.round(viewport.height))
@@ -145,6 +146,25 @@ export function cascadeWinRect(index: number, viewport: Viewport): CockpitRect {
   const h = Math.min(440, vh - 140)
   const x = clamp(120 + index * 64, CHAT_MARGIN, Math.max(CHAT_MARGIN, vw - w - CHAT_MARGIN))
   const y = clamp(84 + index * 34, CHAT_MARGIN, Math.max(CHAT_MARGIN, vh - h - CHAT_MARGIN))
+  return { x, y, w, h }
+}
+
+/** v22 #5（2026-11-23 用户）：编队 chat 窗默认几何 = 主通讯台那么大，直接盖在
+ *  它上面；多扇逐扇错开 18px（谁后开谁在上由共享 z 栈决定）。量不到通讯台
+ *  （收起 / 停靠）时按 560×520 兜底。夹回视口，最小 300×260 —— 与原型
+ *  `openWin` 同口径。 */
+export function cascadeFromConsole(
+  consoleRect: CockpitRect | null,
+  index: number,
+  viewport: Viewport,
+): CockpitRect {
+  const vw = Math.max(1, Math.round(viewport.width))
+  const vh = Math.max(1, Math.round(viewport.height))
+  const w = clamp(Math.round(consoleRect?.w ?? Math.min(560, vw - 24)), 300, Math.max(300, vw - 16))
+  const h = clamp(Math.round(consoleRect?.h ?? Math.min(520, vh - 140)), 260, Math.max(260, vh - 70))
+  const shift = index * 18
+  const x = clamp(Math.round((consoleRect?.x ?? 120) + shift), 8, Math.max(8, vw - w - 8))
+  const y = clamp(Math.round((consoleRect?.y ?? 66) + shift), 54, Math.max(54, vh - h - 8))
   return { x, y, w, h }
 }
 

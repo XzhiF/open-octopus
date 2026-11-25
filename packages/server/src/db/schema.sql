@@ -1374,6 +1374,33 @@ CREATE TABLE IF NOT EXISTS subagent_runs (
 CREATE INDEX IF NOT EXISTS idx_subagent_runs_session
   ON subagent_runs(session_id, started_at DESC);
 
+-- background_runs: `run_in_background` 的后台作业（dev 服务 / monitor …）。
+-- 2026-11-24 用户 #1（活动日志）：SDK 的 `background_tasks_changed` 只是运行中
+-- 电平，结束即出队；这里按电平 upsert running 行、按 `task_notification` 收口，
+-- 留下「今天跑过什么」。输出尾不落库（走 get_task_output 实时读，≤8 KiB）；
+-- output_file 只记 CLI 给的路径，供结束后再读一次。
+CREATE TABLE IF NOT EXISTS background_runs (
+  id            TEXT PRIMARY KEY,
+  session_id    TEXT NOT NULL,
+  task_id       TEXT NOT NULL,
+  run_id        TEXT,
+  description   TEXT NOT NULL,
+  task_type     TEXT,
+  status        TEXT NOT NULL DEFAULT 'running',
+  summary       TEXT,
+  output_file   TEXT,
+  started_at    TEXT NOT NULL,
+  ended_at      TEXT,
+  created_at    TEXT NOT NULL,
+  updated_at    TEXT NOT NULL,
+  FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS ux_background_runs_task
+  ON background_runs(session_id, task_id);
+CREATE INDEX IF NOT EXISTS idx_background_runs_session
+  ON background_runs(session_id, started_at DESC);
+
 -- ── Cabin (directory-bound long-lived cockpit) ──
 -- S2 convention: cross-domain links carry NO foreign key; app-level cascade.
 CREATE TABLE IF NOT EXISTS cabins (
@@ -1451,6 +1478,30 @@ CREATE TABLE IF NOT EXISTS cabin_delegations (
 );
 CREATE INDEX IF NOT EXISTS idx_cabin_delegations_cabin ON cabin_delegations(cabin_id, created_at);
 CREATE INDEX IF NOT EXISTS idx_cabin_delegations_doer ON cabin_delegations(doer_session_id);
+
+-- ── 舱内事项（2026-11-24 用户）──────────────────────────────────────────
+-- 零散小待办：优化 / 修复 / 想法。与「任务」不是一层 —— 事项只是待办条目，
+-- 投递给主对话即 delivered；主对话做完，人确认「完成 / 搁置」才关项。
+-- 记录保留（closed_at），删除是显式动作，不做 TTL。seq 舱内自增（#IT-12）。
+CREATE TABLE IF NOT EXISTS cabin_items (
+  id TEXT PRIMARY KEY,
+  cabin_id TEXT NOT NULL,
+  seq INTEGER NOT NULL,
+  kind TEXT NOT NULL DEFAULT 'optimize'
+    CHECK (kind IN ('optimize','fix','idea')),
+  status TEXT NOT NULL DEFAULT 'todo'
+    CHECK (status IN ('todo','delivered','done','dropped')),
+  title TEXT NOT NULL DEFAULT '',
+  body TEXT NOT NULL DEFAULT '',
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  delivered_at TEXT,
+  closed_at TEXT,
+  delivery_session_id TEXT,
+  delivery_message_id TEXT
+);
+CREATE UNIQUE INDEX IF NOT EXISTS ux_cabin_items_seq ON cabin_items(cabin_id, seq);
+CREATE INDEX IF NOT EXISTS idx_cabin_items_cabin ON cabin_items(cabin_id, status);
 
 -- 完成回流 ack（2026-11-19 用户 #9）：任务 / 委派正常完成后先进「要我处理」，
 -- 汐音先审一道；人点「无需回复」只在此表留痕，**不回写任务 / 会话、不唤醒执行者**。

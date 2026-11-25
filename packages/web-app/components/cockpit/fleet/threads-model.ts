@@ -23,7 +23,8 @@ export const THREAD_STATE_LABEL: Record<CockpitThreadState, string> = {
   wait: '等你答',
   blocked: '受阻',
   queue: '待命',
-  done: '已归档',
+  // 完结 ≠ 归档（2026-11-25 用户）：线程跑完只代表结束，归档是人工闸。
+  done: '已完成',
 }
 
 export interface CockpitThread {
@@ -36,11 +37,23 @@ export interface CockpitThread {
   /** tab / chip 上的短名（CSS 再 ellipsis 兜底）。 */
   short: string
   state: CockpitThreadState
+  /** 独立 chat 窗里「跟谁说话」的身份标签（v22 #5 用户：身份要对应）——
+   *  与 ChatPane 的任务身份派生同口径，只读、不可切。 */
+  identity: string
   /** ▦ 详情目标；delegation 没有 cockpit ref → null（不画 ▦）。 */
   ref: CockpitRef | null
 }
 
 export const MAIN_THREAD_KEY = 'main'
+
+/** 与 ChatPane identityDisplay 同口径：草稿期=作者，终态回主 Agent，其余=执行者。 */
+const ENDED_TASK_STATUSES = new Set(['done', 'aborted', 'failed'])
+
+function identityOfStatus(status: string | null | undefined): string {
+  if (status === 'draft') return '作者 · task-author'
+  if (status && ENDED_TASK_STATUSES.has(status)) return '主 Agent'
+  return '执行者 · task-doer'
+}
 
 function shortOf(title: string): string {
   return title.length > 12 ? `${title.slice(0, 12)}…` : title
@@ -73,6 +86,7 @@ function threadOfRow(row: CockpitRow): CockpitThread | null {
       title: row.job.title,
       short: shortOf(row.job.title),
       state: threadStateOf(row),
+      identity: identityOfStatus(row.job.status),
       ref: { kind: 'job', cabinId: row.cabinId, id: row.job.id },
     }
   }
@@ -87,6 +101,7 @@ function threadOfRow(row: CockpitRow): CockpitThread | null {
       title: row.task.name,
       short: shortOf(row.task.name),
       state: threadStateOf(row),
+      identity: identityOfStatus(row.task.status),
       ref: { kind: 'task', cabinId: row.cabinId, id: row.task.id },
     }
   }
@@ -100,6 +115,7 @@ function threadOfRow(row: CockpitRow): CockpitThread | null {
       title: row.delegation.title,
       short: shortOf(row.delegation.handle ?? row.delegation.title),
       state: threadStateOf(row),
+      identity: '执行者 · task-doer',
       ref: null,
     }
   }
@@ -119,6 +135,7 @@ export function threadsFromRows(
     title: '汐音 · 主对话',
     short: '主对话',
     state: 'queue',
+    identity: '汐音',
     ref: null,
   }
   const seen = new Set<string>()
@@ -164,26 +181,17 @@ export function threadKeyOfSession(
   return threads.find((thread) => thread.sessionId === sessionId)?.key ?? null
 }
 
-/** tab 条顺序：主对话 + 未关闭线程（关闭只是隐藏，历史与未读仍在）。 */
-export function visibleThreads(
-  threads: readonly CockpitThread[],
-  closedTabs: readonly string[],
-): CockpitThread[] {
-  const closed = new Set(closedTabs)
-  return threads.filter((thread) => thread.key === MAIN_THREAD_KEY || !closed.has(thread.key))
-}
-
-/** v20 未读可见性规则（design 29 §3.3）：主通讯台正在看它，或有非最小化弹出窗
- *  开着它 → 可见（不累未读）；否则才 unread++ / ping。 */
+/** v20 未读可见性规则（design 29 §3.3）：主通讯台永远钉在主对话上，所以只有主
+ *  线程算「台内可见」；其余线程靠非最小化弹出窗开着才算可见，否则 unread++ / ping。
+ *  v22 #5：主通讯台固定主对话 —— 这里不再有任何「当前线程」切换态。 */
 export function isThreadVisible(
   key: string,
   view: {
-    activeThread: string
     chatWindow: { open: boolean; mini: boolean; docked: boolean }
     windows: readonly { threadKey: string; min: boolean }[]
   },
 ): boolean {
-  if (view.activeThread === key && view.chatWindow.open && !view.chatWindow.mini && !view.chatWindow.docked) {
+  if (key === MAIN_THREAD_KEY && view.chatWindow.open && !view.chatWindow.mini && !view.chatWindow.docked) {
     return true
   }
   return view.windows.some((w) => w.threadKey === key && !w.min)

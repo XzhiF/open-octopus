@@ -1,22 +1,28 @@
 // 右栏「活动」（v22 十四轮 · 2026-11-21 用户）：
-//   · 有运行中的子代理 / 后台作业才出按钮，徽标 = 运行中总数；
-//   · 点开 = inbox 同款浮层（子代理 / 后台作业两组）；
+//   · 按钮常住，徽标 = 运行中总数；没有运行中活动时徽标不显示；
+//   · 点开 = inbox 同款浮层（子代理 / 后台作业两组），**只列运行中**——
+//     已结束的留档去「更多 → 活动日志」（2026-11-24 用户 #2）；
 //   · 点一条 → 左侧大详情窗；子代理复用作业坞 SubagentWindow（指令 / 日志 / token）；
 //   · Esc 先收详情，再收浮层。
 
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
-import type { BackgroundTaskInfo, SubagentRunSummary } from '@/lib/agent/api'
+import type { BackgroundRunInfo, BackgroundTaskInfo, SubagentRunSummary } from '@/lib/agent/api'
 import { CockpitStateProvider } from '../../state/CockpitStateProvider'
 import { CockpitLayerStack } from '../../state/CockpitLayerStack'
 import { CockpitRightRail } from '../CockpitRightRail'
 import { CockpitActivityProvider } from '../activity-feed'
 import { CockpitActivityWindow } from '../CockpitActivityWindow'
+import { CockpitActivityLogWindow } from '../CockpitActivityLogWindow'
+import { resetActivityLog, setActivityLogOpen } from '../activity-log-store'
 
 const api = vi.hoisted(() => ({
   listSessionSubagents: vi.fn(),
   getSessionRunning: vi.fn(),
   getSessionSubagent: vi.fn(),
+  listSessionBackgroundRuns: vi.fn(),
+  getBackgroundOutput: vi.fn(),
+  stopBackgroundTask: vi.fn(),
 }))
 
 vi.mock('@/lib/agent/api', async (importOriginal) => {
@@ -105,8 +111,17 @@ function ui() {
 
 beforeEach(() => {
   vi.clearAllMocks()
+  resetActivityLog()
   api.listSessionSubagents.mockResolvedValue({ runs: [] })
   api.getSessionRunning.mockResolvedValue({ running: true, partial: false, background_tasks: [] })
+  api.listSessionBackgroundRuns.mockResolvedValue({ runs: [] })
+  api.getBackgroundOutput.mockResolvedValue({
+    output: '[web] ➜  Local:   http://localhost:3000/\n[server] listening on :3001\n[server] SQLite ready',
+    total_bytes: 96,
+    truncated: false,
+    source: 'live',
+  })
+  api.stopBackgroundTask.mockResolvedValue({ success: true })
   api.getSessionSubagent.mockResolvedValue({
     run: {
       ...run(),
@@ -120,7 +135,7 @@ beforeEach(() => {
 })
 
 describe('CockpitRightRail · 活动', () => {
-  it('运行中的子代理 / 后台作业 → 按钮带计数，点开是 inbox 同款浮层', async () => {
+  it('运行中的子代理 / 后台作业 → 按钮带计数，点开是 inbox 同款浮层（只列运行中）', async () => {
     api.listSessionSubagents.mockResolvedValue({
       runs: [run(), run({ id: 'sa-done', status: 'completed', ended_at: new Date().toISOString() })],
     })
@@ -140,10 +155,13 @@ describe('CockpitRightRail · 活动', () => {
     expect(pop).toHaveTextContent('子代理')
     expect(pop).toHaveTextContent('后台作业')
     expect(pop.querySelector('.ck12-ip-total')).toHaveTextContent('2')
-    expect(pop).toHaveTextContent('子代理 1/2 · 后台 1')
+    expect(pop).toHaveTextContent('子代理 1 · 后台 1')
+    expect(pop).toHaveTextContent('只显示运行中 · 历史在 活动日志')
 
     expect(within(pop).getByTestId('cockpit-activity-row-subagent-sa-1')).toHaveTextContent('对账差异定位')
     expect(within(pop).getByTestId('cockpit-activity-row-background-bg-1')).toHaveTextContent(BG.description)
+    // 2026-11-24 用户 #2：已结束的子代理不进浮层，历史去「更多 → 活动日志」。
+    expect(within(pop).queryByTestId('cockpit-activity-row-subagent-sa-done')).toBeNull()
   })
 
   it('点运行中的子代理 → 左侧大窗复用作业坞 SubagentWindow；Esc 先收详情再收浮层', async () => {
@@ -176,7 +194,7 @@ describe('CockpitRightRail · 活动', () => {
     await waitFor(() => expect(screen.queryByTestId('cockpit-activity-popover')).toBeNull())
   })
 
-  it('点后台作业 → 详情给启动命令；不伪造终端输出', async () => {
+  it('点后台作业 → 启动命令 / 识别端口 / 日志尾 / 停止作业（二次确认）', async () => {
     api.listSessionSubagents.mockResolvedValue({ runs: [] })
     api.getSessionRunning.mockResolvedValue({
       running: true,
@@ -194,8 +212,15 @@ describe('CockpitRightRail · 活动', () => {
     expect(win).toHaveTextContent('⌁ 启动命令')
     expect(win).toHaveTextContent(BG.description)
     expect(win).toHaveTextContent('run_in_background')
-    expect(win).toHaveTextContent('服务端不存终端输出')
+    // 2026-11-24 用户 #1：日志尾从 SDK 实时读，端口从输出识别。
+    expect(await screen.findByTestId('cockpit-act-output')).toHaveTextContent('listening on')
+    expect(win).toHaveTextContent('localhost:3001')
     expect(screen.queryByTestId('subagent-window')).toBeNull()
+
+    // 停止作业：先出确认层，确认后才真的调服务端。
+    fireEvent.click(screen.getByTestId('cockpit-act-stop'))
+    fireEvent.click(await screen.findByTestId('cockpit-act-stop-confirm'))
+    await waitFor(() => expect(api.stopBackgroundTask).toHaveBeenCalledWith('sess-main', 'bg-1'))
   })
 
   it('只有后台作业在跑也能出按钮（活动不限于子代理）', async () => {
@@ -210,11 +235,13 @@ describe('CockpitRightRail · 活动', () => {
     expect(await screen.findByTestId('cockpit-menu-activity-count')).toHaveTextContent('1')
     fireEvent.click(button)
     const pop = screen.getByTestId('cockpit-activity-popover')
-    expect(pop).toHaveTextContent('子代理 0/0 · 后台 1')
-    expect(pop).toHaveTextContent('本会话还没有子代理')
+    expect(pop).toHaveTextContent('子代理 0 · 后台 1')
+    expect(within(pop).getByTestId('cockpit-activity-row-background-bg-1')).toBeTruthy()
+    // 没有运行中的子代理 → 连分组都不占位。
+    expect(within(pop).queryByTestId('cockpit-activity-row-subagent-sa-1')).toBeNull()
   })
 
-  it('没有运行中活动（只有已结束子代理）→ 按钮常住，点开还能回看已结束的子代理', async () => {
+  it('没有运行中活动（只有已结束子代理）→ 按钮常住，浮层给空态并指向活动日志', async () => {
     api.listSessionSubagents.mockResolvedValue({
       runs: [run({ id: 'sa-old', status: 'completed', ended_at: new Date().toISOString() })],
     })
@@ -224,8 +251,10 @@ describe('CockpitRightRail · 活动', () => {
     expect(screen.queryByTestId('cockpit-menu-activity-count')).toBeNull()
     fireEvent.click(button)
 
-    expect(await screen.findByTestId('cockpit-activity-row-subagent-sa-old')).toHaveTextContent('已完成')
-    expect(screen.getByTestId('cockpit-activity-popover')).toHaveTextContent('没有后台程序在跑')
+    const pop = screen.getByTestId('cockpit-activity-popover')
+    expect(await screen.findByText('当前没有运行中的后台作业')).toBeTruthy()
+    expect(pop).toHaveTextContent('历史去 更多 → ▤ 活动日志')
+    expect(within(pop).queryByTestId('cockpit-activity-row-subagent-sa-old')).toBeNull()
   })
 
   it('完全没有活动 → 按钮常住，点开是空态而不是什么都不发生', async () => {
@@ -236,8 +265,119 @@ describe('CockpitRightRail · 活动', () => {
     fireEvent.click(button)
 
     const pop = screen.getByTestId('cockpit-activity-popover')
-    expect(pop).toHaveTextContent('本会话还没有子代理')
-    expect(pop).toHaveTextContent('没有后台程序在跑')
-    expect(pop).toHaveTextContent('当前没有后台活动')
+    expect(pop).toHaveTextContent('当前没有运行中的后台作业')
+    expect(pop).toHaveTextContent('历史去 更多 → ▤ 活动日志')
+  })
+})
+
+function bgRow(over: Partial<BackgroundRunInfo> = {}): BackgroundRunInfo {
+  return {
+    id: 'row-1',
+    session_id: 'sess-main',
+    task_id: 'bg-1',
+    run_id: 'r1',
+    description: BG.description,
+    task_type: 'local_bash',
+    status: 'running',
+    summary: null,
+    output_file: null,
+    started_at: new Date(Date.now() - 150_000).toISOString(),
+    ended_at: null,
+    created_at: new Date().toISOString(),
+    updated_at: new Date().toISOString(),
+    ...over,
+  }
+}
+
+function logUi() {
+  return (
+    <CockpitStateProvider entryCabinId="c1">
+      <CockpitLayerStack>
+        <CockpitActivityProvider>
+          <CockpitActivityLogWindow />
+        </CockpitActivityProvider>
+      </CockpitLayerStack>
+    </CockpitStateProvider>
+  )
+}
+
+describe('more → 活动日志大窗（2026-11-24 用户 #1）', () => {
+  it('运行中置顶 + 已结束留档；筛选与搜索；Esc 关窗', async () => {
+    api.getSessionRunning.mockResolvedValue({
+      running: true,
+      partial: false,
+      background_tasks: [BG],
+    })
+    api.listSessionBackgroundRuns.mockResolvedValue({
+      runs: [
+        bgRow(),
+        bgRow({
+          id: 'row-2',
+          task_id: 'bg-old',
+          run_id: 'r2',
+          description: 'docker compose up',
+          status: 'completed',
+          summary: 'exit 0',
+          ended_at: new Date(Date.now() - 60_000).toISOString(),
+        }),
+        bgRow({
+          id: 'row-3',
+          task_id: 'bg-fail',
+          run_id: 'r3',
+          description: 'pnpm build',
+          status: 'failed',
+          ended_at: new Date(Date.now() - 30_000).toISOString(),
+        }),
+      ],
+    })
+
+    setActivityLogOpen(true)
+    render(logUi())
+
+    const list = await screen.findByTestId('cockpit-actlog-list')
+    await waitFor(() => expect(list).toHaveTextContent('docker compose up'))
+    expect(list).toHaveTextContent(BG.description)
+    expect(list).toHaveTextContent('已完成')
+    expect(list).toHaveTextContent('失败')
+    // 运行中置顶：第一条是 pnpm vitest…（bg-1）。
+    const rows = [...list.querySelectorAll<HTMLElement>('[data-testid^="cockpit-actlog-row-"]')]
+    expect(rows[0].textContent).toContain(BG.description.trim())
+
+    // 搜索 docker → 只剩已结束那一条。
+    fireEvent.change(screen.getByTestId('cockpit-actlog-search'), { target: { value: 'docker' } })
+    await waitFor(() => expect(list).not.toHaveTextContent(BG.description))
+
+    // 点选中行 → 右侧详情读 output 文件留档（已结束）。
+    fireEvent.click(screen.getByTestId('cockpit-actlog-row-background-bg-old'))
+    const detail = await screen.findByTestId('cockpit-actlog-detail')
+    expect(detail).toHaveTextContent('已结束 · 留档只读')
+    expect(await screen.findByTestId('cockpit-act-output')).toHaveTextContent('listening on')
+
+    // Esc 关窗。
+    fireEvent.keyDown(window, { key: 'Escape' })
+    await waitFor(() => expect(screen.queryByTestId('cockpit-activity-log')).toBeNull())
+  })
+
+  it('筛选「子代理」：只剩子代理行', async () => {
+    api.listSessionSubagents.mockResolvedValue({
+      runs: [run({ id: 'sa-1', description: '对账差异定位' })],
+    })
+    api.getSessionRunning.mockResolvedValue({
+      running: true,
+      partial: false,
+      background_tasks: [BG],
+    })
+    api.listSessionBackgroundRuns.mockResolvedValue({ runs: [bgRow()] })
+
+    setActivityLogOpen(true)
+    render(logUi())
+
+    const list = await screen.findByTestId('cockpit-actlog-list')
+    await waitFor(() => expect(list).toHaveTextContent('对账差异定位'))
+    expect(list).toHaveTextContent(BG.description)
+
+    fireEvent.click(screen.getByTestId('cockpit-actlog-filter-subagent'))
+    await waitFor(() => expect(list).not.toHaveTextContent(BG.description))
+    expect(list).toHaveTextContent('对账差异定位')
   })
 })

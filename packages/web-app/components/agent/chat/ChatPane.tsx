@@ -22,14 +22,15 @@ import { useKcFeed } from '@/hooks/use-kc-feed'
 import { useKcFindings } from '@/hooks/use-kc-findings'
 import { useSessionIdentity } from '@/hooks/use-session-identity'
 import * as agentApi from '@/lib/agent/api'
-import type { AgentSession, AgentMessage } from '@/lib/agent/types'
+import type { AgentSession, AgentMessage, ChatSendMeta, ChatSeedMeta } from '@/lib/agent/types'
+import { CockpitItemReceipt } from '@/components/cockpit/items/CockpitItemReceipt'
 import type { RunningAgentSession } from '@/lib/agent/api'
 import { CwdPicker, type CwdChoice } from './cwd-picker'
 import { ChatArea, type ChatComposerBridge } from './ChatArea'
-import { AuthorAskInbox } from './author-ask-inbox'
 import { TaskModulesLayer } from '@/components/chat-workbench/task-modules-layer'
 import { TriggerDialog } from '@/components/tasks/trigger-dialog'
 import type { RunTarget, SubagentTarget, TaskModule, TaskWindowMap, YamlTarget } from '@/components/chat-workbench/task-window-types'
+import { useTaskModuleSurface } from '@/lib/task-module-surface'
 import { TaskProjectChip } from '@/components/chat-workbench/task-project-chip'
 import { WorkspaceExplorerDock, type CabinDockModule } from '@/components/workspace/workspace-explorer-dock'
 import { useActivitySnapshot } from '@/components/chat-workbench/inspector-activity'
@@ -43,7 +44,7 @@ import {
   type TaskView,
 } from '@/lib/tasks-api'
 import { rememberTaskOrg } from '@/lib/task-org'
-import { NEW_TASK_NAME, NEW_WORKFLOW_TASK_NAME, taskNameFromMessage } from '@/lib/task-name'
+import { NEW_CLONE_TASK_NAME, NEW_TASK_NAME, NEW_WORKFLOW_TASK_NAME, taskNameFromMessage } from '@/lib/task-name'
 import { buildTurnStats } from '@/lib/turn-stats'
 import { writeLastChatContext } from '@/lib/last-chat-context'
 import { subscribeSSE } from '@/lib/sse-manager'
@@ -74,8 +75,10 @@ export interface PendingTaskSession {
   org: string
   title: string
   projectIds: string[]
-  /** workflow-dev task kind (2026-11-06). */
-  kind?: 'workflow-dev'
+  /** workflow-dev / clone-dev task kinds (2026-11-06 / 2026-11-25). */
+  kind?: 'workflow-dev' | 'clone-dev'
+  /** clone-dev 编辑既有分身时预置的目标（由分身详情「编辑分身」带入）。 */
+  presetClone?: { name: string; type: 'built-in' | 'user' }
 }
 
 export interface ChatPaneWorkspaceOption {
@@ -112,7 +115,7 @@ export type ChatPaneAction =
   | { type: 'rename-task'; task: TaskView }
   | { type: 'delete-task'; task: TaskView }
   | { type: 'new-session' }
-  | { type: 'new-task'; kind?: 'workflow-dev' }
+  | { type: 'new-task'; kind?: 'workflow-dev' | 'clone-dev'; presetClone?: { name: string; type: 'built-in' | 'user' } }
 
 export type ChatPaneCommand = ChatPaneAction & { nonce: number }
 
@@ -167,14 +170,32 @@ export interface ChatPaneProps {
   cabinMainSessionId?: string | null
   /** 直连切换到主会话（缺省退回 octopus:cabin-main-chat 事件）。 */
   onBackToCabinMain?: () => void
+  /** v22 #5：编队独立 chat 窗 —— 直接跟这一行的 agent 对话（用户口径：
+   *  「跟主 chat 一样的对话框，直接在那里回复，有流式输出，身份对应」）。
+   *  给定时：composer 恒可用（不走只读兜底）、顶部不出「回主对话」条、
+   *  身份贴纸与助手行头都用这个标签。undefined = 既有行为逐字不变。 */
+  directThreadIdentity?: string | null
+  /** 独立窗：对话索引 / 星核挂载都在窗内自渲染，不 portal 进主通讯台头部
+   *  （chat-slots 是单槽位，多个 ChatPane 同时挂会互相抢）。 */
+  chromeInline?: boolean
+  /** v22 #5 独立窗：任务工作区的兜底来源 —— 窗口不持 activeTask，不补这一层
+   *  就会退到舱工作区，跨工作区的唤醒流（服务端补的卡片 / 尾随流）收不到。 */
+  workspaceIdOverride?: string | null
+  /** 独立窗自己的「对话索引」槽（窗头 ≡ N 轮）；给定时替代通讯台槽。 */
+  indexSlot?: HTMLElement | null
+  /** 独立窗自己的「星核」挂载槽（窗头左上角，与主通讯台同位）；给定时
+   *  星核按钮 portal 进窗头，而不是留在输入行 ⏎ 左边。 */
+  attachSlot?: HTMLElement | null
+  /** 索引面板定位主机：通讯台 = .ck12-comms（缺省），独立窗 = .ck12-cwin。 */
+  chromeHostSelector?: string
 }
 
 /** 决策卡上「选择即写回卡片」的按钮 id。其余按钮（打开规格/运行窗…）只是导航，
  *  schedule / keep_editing 各自在分支里处理（定时要等对话框真正排上）。 */
 const DECISION_ACTION_IDS = new Set([
   'launch_now', 'enqueue', 'confirm_action',
-  // 2026-10-30 验收引导：逐项判定与升级确认同样写回卡片（只读留痕）。
-  'acceptance_pass', 'acceptance_fail', 'acceptance_skip', 'acceptance_escalate_confirm',
+  // 2026-10-30 验收引导：逐项判定同样写回卡片（只读留痕）。
+  'acceptance_pass', 'acceptance_fail', 'acceptance_skip',
 ])
 
 export function ChatPane({
@@ -211,6 +232,12 @@ export function ChatPane({
   hideDock,
   cabinMainSessionId,
   onBackToCabinMain,
+  directThreadIdentity,
+  chromeInline,
+  workspaceIdOverride,
+  indexSlot,
+  attachSlot,
+  chromeHostSelector,
 }: ChatPaneProps) {
   const {
     sessions, sessionsLoading, createNewSession, updateSessionTitle,
@@ -220,6 +247,13 @@ export function ChatPane({
 
   const [creatingTask, setCreatingTask] = useState(false)
   const [taskModuleRequest, setTaskModuleRequest] = useState<{ module: TaskModule; nonce: number; runTarget?: RunTarget | null; subagentTarget?: SubagentTarget | null } | null>(null)
+  // 全舱宿主提供 → 规格/运行/验收开舱系浮窗；桌面（null）→ 回落 TaskModulesLayer。
+  const moduleSurface = useTaskModuleSurface()
+  const openModuleVia = useCallback((module: 'plan' | 'run' | 'acceptance', taskId: string | null, runTarget: RunTarget | null = null): boolean => {
+    if (!moduleSurface) return false
+    moduleSurface.open({ module, taskId, runTarget })
+    return true
+  }, [moduleSurface])
   const [yamlTarget, setYamlTarget] = useState<YamlTarget | null>(null)
   const [taskWindows, setTaskWindows] = useState<Record<string, TaskWindowMap>>({})
   // 2026-10-31 消耗窗通用化：纯会话（无任务）也有一扇消耗窗，窗口 id 与任务窗
@@ -268,6 +302,8 @@ export function ChatPane({
   const draftScope = pendingTaskSession !== null || activeTask?.status === 'draft'
   const workflowDraft =
     pendingTaskSession?.kind === 'workflow-dev' || activeTask?.task_spec?.kind === 'workflow-dev'
+  const cloneDraft =
+    pendingTaskSession?.kind === 'clone-dev' || activeTask?.task_spec?.kind === 'clone-dev'
 
   // 会话长期身份（v59 分身）：主对话用 agent 作用域，交给 ChatArea 的 ＋ 面板。
   // 任务线程的基础身份由服务端按任务状态派生（角色卡），这里只保留手动分身切换。
@@ -296,11 +332,12 @@ export function ChatPane({
 
   const mainChatApi = useMemo<UseAgentChatApiOverride>(() => ({
     checkRunning: agentApi.getSessionRunning,
+    injectChat: agentApi.injectChat,
   }), [])
 
   const {
     messages, streaming, streamContent, streamThinking, streamTimeline, isThinking, toolCalls, pendingConfirm,
-    error: chatError, statusMessage, backgroundTasks, contextUsage, slashCommands,
+    error: chatError, statusMessage, backgroundTasks, waitPhase, interject, contextUsage, slashCommands,
     sendMessage, stopGenerate, handleConfirm, loadMessages,
     hasMoreMessages, loadingOlderMessages, loadOlderMessages,
     steer, steeringRef, resumeStreaming, checkAndResume, streamingSessionId, turnStartedAt,
@@ -387,8 +424,11 @@ export function ChatPane({
   useEffect(() => {
     composerApiRef.current = { setModel, setEffort, setMaxContext, stopGenerate }
   })
-  const submitFromComposer = useCallback((text: string) => {
-    composerBridgeRef.current?.submit(text)
+  const submitFromComposer = useCallback((text: string, meta?: ChatSendMeta) => {
+    composerBridgeRef.current?.submit(text, meta)
+  }, [])
+  const seedFromComposer = useCallback((text: string, meta?: ChatSeedMeta) => {
+    composerBridgeRef.current?.seed(text, meta)
   }, [])
   const stopFromComposer = useCallback(() => {
     void composerApiRef.current.stopGenerate()
@@ -413,13 +453,14 @@ export function ChatPane({
     contextUsage: contextUsage ?? null,
     usage: sessionUsage ?? null,
     submit: submitFromComposer,
+    seed: seedFromComposer,
     stop: stopFromComposer,
     setModel: setModelStable,
     setEffort: setEffortStable,
     setContext: setContextStable,
   }), [
     model, effort, maxContext, streaming, queueDepth, sessionId, contextUsage, sessionUsage,
-    submitFromComposer, stopFromComposer, setModelStable, setEffortStable, setContextStable,
+    submitFromComposer, seedFromComposer, stopFromComposer, setModelStable, setEffortStable, setContextStable,
   ])
   useChatTelemetry(chatTelemetry, onTelemetry)
 
@@ -539,16 +580,25 @@ export function ChatPane({
 
   const extras = useCallback((msg: AgentMessage) => {
     const events = laneAByMsgId.get(msg.id)
-    if (!events || events.length === 0) return null
-    return events.map(e => <KcCard key={e.id} event={withCardStates(e)} ctx={ctx} />)
-  }, [laneAByMsgId, ctx, withCardStates])
+    // 2026-11-24 用户：事项投递的关项回执卡 —— 挂在那条带 via='items' 的 user 消息后。
+    const receipt = cabinId && msg.role === 'user' && msg.via === 'items' && msg.items && msg.items.length > 0
+      ? <CockpitItemReceipt cabinId={cabinId} message={msg} messages={messages} />
+      : null
+    if ((!events || events.length === 0) && !receipt) return null
+    return (
+      <>
+        {receipt}
+        {events?.map(e => <KcCard key={e.id} event={withCardStates(e)} ctx={ctx} />)}
+      </>
+    )
+  }, [laneAByMsgId, ctx, withCardStates, cabinId, messages])
 
   const tail = tailEvents.length > 0
     ? <div data-testid="chat-tab-card-tail">{tailEvents.map(e => <KcCard key={e.id} event={e} ctx={ctx} />)}</div>
     : null
 
   // Pending message when auto-creating a session (carries + panel clone consult)
-  const pendingMessageRef = useRef<{ message: string; subagents?: ChatSubagentRef[] } | null>(null)
+  const pendingMessageRef = useRef<{ message: string; subagents?: ChatSubagentRef[]; meta?: ChatSendMeta } | null>(null)
   // Task-thread first message (bug 2026-10-29): a task's first turn must wait
   // until the task row exists (server derives the task-author identity from
   // task state). The plain "session ready → send pending" effect would fire the
@@ -563,6 +613,7 @@ export function ChatPane({
     sessionId: string
     message: string
     subagents?: ChatSubagentRef[]
+    meta?: ChatSendMeta
   } | null>(null)
   // 新会话（hero）里选的身份：还没有 session 可写角色卡，先存在本地，
   // 第一条消息创建会话后立刻写入，再发消息（否则第一轮会用基础身份）。
@@ -598,7 +649,7 @@ export function ChatPane({
     pendingIdentityRef.current = null
     setPendingIdentity(null)
     const fire = () => requestAnimationFrame(() => sendMessage(pending.message, {
-      model, effort, maxContext, subagents: pending.subagents,
+      model, effort, maxContext, subagents: pending.subagents, meta: pending.meta,
     }))
     if (!identityToApply) {
       fire()
@@ -620,18 +671,18 @@ export function ChatPane({
     pendingMessageRef.current = null
     setPendingTaskSend(null)
     sendMessage(pending.message, {
-      model, effort, maxContext, subagents: pending.subagents,
+      model, effort, maxContext, subagents: pending.subagents, meta: pending.meta,
     })
   }, [pendingTaskSend, sessionId, sendMessage, model, effort, maxContext])
 
-  const handleSendMessage = useCallback((message: string, opts?: { subagents?: ChatSubagentRef[] }) => {
+  const handleSendMessage = useCallback((message: string, opts?: { subagents?: ChatSubagentRef[]; meta?: ChatSendMeta }) => {
     if (!pendingTaskSession) {
       if (sessionId) {
-        sendMessage(message, { model, effort, maxContext, subagents: opts?.subagents })
+        sendMessage(message, { model, effort, maxContext, subagents: opts?.subagents, meta: opts?.meta })
       } else {
         // First prompt creates the session (lazy). cwd/workspace is chosen here,
         // not when the empty "+" tab was opened.
-        pendingMessageRef.current = { message, subagents: opts?.subagents }
+        pendingMessageRef.current = { message, subagents: opts?.subagents, meta: opts?.meta }
         // 没手动挑目录时把身份带下去：服务端把 cwd 落在该分身自己的工作区，
         // 而不是所有分身都挤在 Main Agent 的目录里。
         const identityClone = pendingIdentityRef.current?.name
@@ -662,7 +713,7 @@ export function ChatPane({
         // Hold the plain send-effect and the transcript reload: this message
         // belongs to the task thread and needs the task row in place first.
         taskSendPendingRef.current = true
-        pendingMessageRef.current = { message, subagents: opts?.subagents }
+        pendingMessageRef.current = { message, subagents: opts?.subagents, meta: opts?.meta }
         const created = await createNewSession(
           taskCwd.kind === 'default'
             ? undefined
@@ -674,7 +725,20 @@ export function ChatPane({
           repo_group: session.org || undefined,
           name: taskNameFromMessage(message),
           source_chat_session_id: sid,
-          task_spec: { format: 'v4', ...(session.kind ? { kind: session.kind } : {}) },
+          task_spec: {
+            format: 'v4',
+            ...(session.kind ? { kind: session.kind } : {}),
+            ...(session.kind === 'clone-dev' && session.presetClone
+              ? {
+                  clone_dev: {
+                    mode: 'edit',
+                    clone_name: session.presetClone.name,
+                    clone_type: session.presetClone.type,
+                    stage: 'draft',
+                  },
+                }
+              : {}),
+          },
           project_ids: session.projectIds,
           ...(cabinId ? { cabin_id: cabinId } : {}),
           ...(taskCwd.kind === 'default'
@@ -693,7 +757,7 @@ export function ChatPane({
         // Send from the render that has `sid` as the hook's session — the
         // closure captured here still holds the pre-create null id (2026-10-29
         // bug: the turn silently never started, only a refresh showed it).
-        setPendingTaskSend({ sessionId: sid, message, subagents: opts?.subagents })
+        setPendingTaskSend({ sessionId: sid, message, subagents: opts?.subagents, meta: opts?.meta })
       } catch (err: unknown) {
         taskSendPendingRef.current = false
         pendingMessageRef.current = null
@@ -810,7 +874,10 @@ export function ChatPane({
     writeLastChatContext(null)
   }, [choosePendingIdentity, setActiveTask, setPendingTaskSession, setSessionId])
 
-  const handleCreateTask = useCallback(async (kind?: 'workflow-dev') => {
+  const handleCreateTask = useCallback(async (
+    kind?: 'workflow-dev' | 'clone-dev',
+    presetClone?: { name: string; type: 'built-in' | 'user' },
+  ) => {
     if (creatingTask) return
     // 2026-11-09 用户反馈：从「自由会话」点新建开发任务没有进入新任务界面 ——
     // 旧逻辑会复用当前会话，于是界面停留在旧对话（只有侧栏多一条草稿行）。
@@ -821,9 +888,15 @@ export function ChatPane({
     setActiveTask(null)
     setPendingTaskSession({
       org: preferredOrg,
-      title: kind === 'workflow-dev' ? NEW_WORKFLOW_TASK_NAME : NEW_TASK_NAME,
+      title:
+        kind === 'workflow-dev'
+          ? NEW_WORKFLOW_TASK_NAME
+          : kind === 'clone-dev'
+            ? NEW_CLONE_TASK_NAME
+            : NEW_TASK_NAME,
       projectIds: [],
       ...(kind ? { kind } : {}),
+      ...(presetClone ? { presetClone } : {}),
     })
     setSessionId(null)
     writeLastChatContext(null)
@@ -938,16 +1011,16 @@ export function ChatPane({
           return
         }
         case 'open_spec':
-          setTaskModuleRequest({ module: 'plan', nonce: Date.now() })
+          if (!openModuleVia('plan', taskId)) setTaskModuleRequest({ module: 'plan', nonce: Date.now() })
           return
         case 'open_changes':
           setTaskModuleRequest({ module: 'changes', nonce: Date.now() })
           return
         case 'open_acceptance':
-          setTaskModuleRequest({ module: 'acceptance', nonce: Date.now() })
+          if (!openModuleVia('acceptance', taskId)) setTaskModuleRequest({ module: 'acceptance', nonce: Date.now() })
           return
         case 'open_run':
-          setTaskModuleRequest({ module: 'run', nonce: Date.now() })
+          if (!openModuleVia('run', taskId)) setTaskModuleRequest({ module: 'run', nonce: Date.now() })
           return
         case 'open_archive':
           setTaskModuleRequest({ module: 'archive', nonce: Date.now() })
@@ -988,34 +1061,6 @@ export function ChatPane({
           })
           return // 等用户在弹框里写原因
         }
-        case 'acceptance_escalate_confirm': {
-          const feedback = String(payload.feedback ?? '').trim()
-          const phaseIndex = Number(payload.phaseIndex)
-          const roundIndex = Number(payload.roundIndex)
-          if (!feedback || !Number.isFinite(phaseIndex) || !Number.isFinite(roundIndex)) {
-            toast.error('升级信息不完整（缺反馈或轮次坐标）')
-            return
-          }
-          const itemIds = Array.isArray(payload.itemIds) ? payload.itemIds as unknown[] : []
-          const reopen = itemIds
-            .map((id) => String(id).split(':')[1])
-            .filter((t): t is string => !!t && t !== 'spec')
-          const result = await postAcceptance(taskId, {
-            phase_index: phaseIndex,
-            round_index: roundIndex,
-            decision: 'rejected',
-            feedback,
-            ...(reopen.length ? { reopen_tickets: [...new Set(reopen)] } : {}),
-          })
-          void recordDecision(messageId, actionId, { label: clickedLabel })
-          toast.success(
-            result.next_action === 'dispatched'
-              ? `已升级 — 修复轮 Round ${result.dispatch?.round_index ?? '?'} 开跑`
-              : '已打回（反馈已落 fix-feedback）',
-          )
-          updated = result.task
-          break
-        }
         case 'acceptance_regenerate': {
           const r = await regenerateAcceptancePlan(taskId)
           toast[r.ok ? 'success' : 'error'](r.ok ? '已重新生成验收方案' : `重生成被拒：${r.reason ?? '未知原因'}`)
@@ -1042,7 +1087,7 @@ export function ChatPane({
     } finally {
       setCardBusy(false)
     }
-  }, [cardBusy, applyTaskResult, handleCreateTask, handleSelectTask, refreshChatTasks, refreshSessions, recordDecision, sendMessage, model, effort, maxContext])
+  }, [cardBusy, applyTaskResult, handleCreateTask, handleSelectTask, refreshChatTasks, refreshSessions, recordDecision, sendMessage, model, effort, maxContext, openModuleVia])
 
   const confirmDestructiveCardAction = useCallback(async () => {
     if (!cardConfirm || cardBusy) return
@@ -1063,7 +1108,7 @@ export function ChatPane({
   }, [cardConfirm, cardBusy, applyTaskResult, recordDecision])
 
   /** 验收 ✕/⊘ 的原因确认：写进 checks（进退回反馈 + 下轮 carryover），并让
-   *  Agent 接着引导（小修 / 升级由它按上下文处理）。 */
+   *  Agent 接着引导（不通过 → 自己规划、在工作区原地修）。 */
   const confirmAcceptNote = useCallback(async () => {
     if (!acceptNote || acceptNoteBusy) return
     const note = acceptNoteText.trim()
@@ -1080,8 +1125,8 @@ export function ChatPane({
       toast.success(`已记录：${mark}「${acceptNote.title}」`)
       sendMessage(
         `[验收] ${mark}「${acceptNote.title}」：${note}\n` +
-          '请按验收引导处理：能当场小修（只改直接相关的 ≤2 个文件、不改 spec）就修完重跑证据再确认；'
-          + '超出范围请发起升级（propose_acceptance_escalation）。',
+          '请按验收引导处理：不通过就自己规划修复（直接在工作区改相关代码，不限文件数、不改 spec），'
+          + '改完跑验证再按场景确认；修不完或要动规格就开票留档并说明原因。',
         { model, effort, maxContext },
       )
       setAcceptNote(null)
@@ -1171,9 +1216,22 @@ export function ChatPane({
   // 顶栏「运行中 Agent」也落到焦点栏）。新建/打开任务的全局入口在 ChatTab 壳里。
   useEffect(() => {
     const onOpenWorkflow = (event: Event) => {
-      if (!focusedRef.current) return
       const detail = (event as CustomEvent<{ workspaceId?: string; executionId?: string; title?: string }>).detail
       if (!detail?.workspaceId || !detail?.executionId) return
+      // 全舱：同一扇舱系运行窗（DAG + 日志 + YAML），不再开 classic Dialog。
+      if (moduleSurface) {
+        moduleSurface.open({
+          module: 'run',
+          taskId: activeTask?.id ?? null,
+          runTarget: {
+            executionId: detail.executionId,
+            workspaceId: detail.workspaceId,
+            title: detail.title ?? '工作流执行',
+          },
+        })
+        return
+      }
+      if (!focusedRef.current) return
       setWorkflowWindow({
         workspaceId: detail.workspaceId,
         executionId: detail.executionId,
@@ -1182,7 +1240,7 @@ export function ChatPane({
     }
     window.addEventListener('octopus:open-workflow', onOpenWorkflow)
     return () => window.removeEventListener('octopus:open-workflow', onOpenWorkflow)
-  }, [])
+  }, [moduleSurface, activeTask?.id])
 
   // 作业详情「打开运行 →」：开作业坞同款运行窗（RunWindow：DAG + 日志 + YAML），
   // 与作业坞运行列表点进来的那条路径同一个模块窗，不另做只给 DAG 的弹层。
@@ -1190,11 +1248,20 @@ export function ChatPane({
     const onOpenRunWindow = (event: Event) => {
       const detail = (event as CustomEvent<RunTarget>).detail
       if (!detail?.workspaceId || !detail?.executionId) return
+      // 全舱：作业详情「打开运行 →」也开舱系浮窗（与 chat 状态卡同一扇窗）。
+      if (moduleSurface) {
+        moduleSurface.open({
+          module: 'run',
+          taskId: detail.taskId ?? activeTask?.id ?? null,
+          runTarget: detail,
+        })
+        return
+      }
       setTaskModuleRequest({ module: 'run', nonce: Date.now(), runTarget: detail })
     }
     window.addEventListener('octopus:open-run-window', onOpenRunWindow)
     return () => window.removeEventListener('octopus:open-run-window', onOpenRunWindow)
-  }, [])
+  }, [moduleSurface, activeTask?.id])
 
   // 项目绑定入口（2026-10-28 用户定稿：项目是任务维度资产）：
   //   · pending（任务未落盘）——作业坞尚不存在（无 workspaceId），留在 composer
@@ -1270,6 +1337,16 @@ export function ChatPane({
   //   · 普通会话：显示当前分身身份，悬停 ✕ 清除回主身份；
   //   · hero 新会话：身份由下方单选选择器承担，不重复挂贴纸。
   const identityDisplay: ComposerIdentityDisplay | undefined = (() => {
+    // v22 #5：编队独立 chat 窗 —— 直接跟该线程的 agent 对话；身份按任务/作业
+    // 状态派生（与任务线程同一口径），只读不可切。
+    if (directThreadIdentity) {
+      return {
+        label: directThreadIdentity,
+        active: directThreadIdentity !== '主 Agent',
+        readOnly: true,
+        title: '这是该编队线程的 agent 身份，就在这里直接对话（由任务状态自动派生，不可切换）',
+      }
+    }
     // 作战舱（classic-v3）：舱主对话只有一个身份 —— 汐音舰长，只读（不可切）。
     // 舱内打开的任务线程仍走下面按任务状态派生的只读身份。
     if (cabinId && !taskThread) {
@@ -1284,7 +1361,11 @@ export function ChatPane({
       const status = activeTask?.status
       if (pendingTaskSession || status === 'draft') {
         return {
-          label: workflowDraft ? '工作流开发者 · workflow-author' : '作者 · task-author',
+          label: workflowDraft
+            ? '工作流开发者 · workflow-author'
+            : cloneDraft
+              ? '铸分身者 · clone-author'
+              : '作者 · task-author',
           active: true,
           readOnly: true,
           title: '任务对话的身份由任务状态自动派生，不可手动切换',
@@ -1294,7 +1375,11 @@ export function ChatPane({
         return { label: '主 Agent', active: false, readOnly: true, title: '任务已结束，对话回到主身份（只读）' }
       }
       return {
-        label: workflowDraft ? '工作流开发者 · workflow-author' : '执行者 · task-doer',
+        label: workflowDraft
+          ? '工作流开发者 · workflow-author'
+          : cloneDraft
+            ? '铸分身者 · clone-author'
+            : '执行者 · task-doer',
         active: true,
         readOnly: true,
         title: '任务对话的身份由任务状态自动派生，不可手动切换',
@@ -1344,7 +1429,8 @@ export function ChatPane({
   // failure) only appear after F5 (2026-11-02 user bug).
   // 舱主对话不在会话列表里时，`activeSession` 可能晚一拍才由 shared.sessions
   // 补上；舱壳已经知道 workspace，直接兜底，避免 session_updated 订阅短暂缺失。
-  const activeWorkspaceId = activeTask?.workspace_id ?? activeSession?.workspace_id ?? cabinWorkspaceId ?? null
+  const activeWorkspaceId = activeTask?.workspace_id ?? activeSession?.workspace_id
+    ?? workspaceIdOverride ?? cabinWorkspaceId ?? null
   useEffect(() => {
     if (!activeWorkspaceId || !sessionId) return
     const off = subscribeSSE(
@@ -1380,7 +1466,7 @@ export function ChatPane({
     } else if (command.type === 'rename-task') openTaskRename(command.task)
     else if (command.type === 'delete-task') setDeleteTarget(command.task)
     else if (command.type === 'new-session') handleCreateSession()
-    else if (command.type === 'new-task') void handleCreateTask(command.kind)
+    else if (command.type === 'new-task') void handleCreateTask(command.kind, command.presetClone)
     // handlers are recreated per render; nonce guard keeps this one-shot.
   }, [command, handleCreateTask, handleSelectTask, handleSelectSession, handleCreateSession, openTaskRename])
 
@@ -1402,7 +1488,8 @@ export function ChatPane({
 
   // 任务线程 → 主对话：直接可见的回头路（2026-11-16 用户反馈：从任务对话里
   // 答完题后没有入口回汐音）。缺省回调时退回作业面同一条事件。
-  const showBackToMain = !!cabinMainSessionId && !!sessionId && sessionId !== cabinMainSessionId
+  // v22 #5：编队独立窗里不存在「回主对话」—— 这扇窗就是跟该 agent 的直聊。
+  const showBackToMain = !directThreadIdentity && !!cabinMainSessionId && !!sessionId && sessionId !== cabinMainSessionId
   const backToMain = () => {
     if (onBackToCabinMain) onBackToCabinMain()
     else window.dispatchEvent(new CustomEvent('octopus:cabin-main-chat'))
@@ -1535,7 +1622,8 @@ export function ChatPane({
             hasMoreMessages={hasMoreMessages}
             loadingOlderMessages={loadingOlderMessages}
             onLoadOlder={loadOlderMessages}
-            composerDock={<AuthorAskInbox messages={viewMessages} />}
+            // v22 #9（2026-11-23 用户）：输入框上方的「待你定」浮条整体退役 ——
+            // 全舱与 classic 都不再挂；提问统一进 inbox / 会话里的提问卡。
             streaming={streaming}
             streamContent={streamContent}
             streamThinking={streamThinking}
@@ -1547,6 +1635,10 @@ export function ChatPane({
             error={chatError}
             statusMessage={statusMessage}
             backgroundTasks={backgroundTasks}
+            // v22 #8（2026-11-23 用户）：后台服务还在跑、模型空闲等唤醒时，
+            // 输入不锁 —— ⏎ 注进同一条查询，不打断后台任务。
+            canInterject={streaming && waitPhase === 'background-wait'}
+            onInterject={(message) => interject(message)}
             commands={slashCommandList}
             onSend={handleSendMessage}
             onStop={stopGenerate}
@@ -1574,24 +1666,38 @@ export function ChatPane({
             composerHiddenHint="汐音代你在与作者对话 · 你的决定都在主对话"
             composerEnableLabel="在此处回答（兜底）"
             onEnableComposer={() => setThreadComposerEnabled(true)}
-            emptyStateTitle={draftScope ? (workflowDraft ? '描述要开发的工作流' : '描述要开发的任务') : undefined}
+            emptyStateTitle={
+              draftScope
+                ? workflowDraft
+                  ? '描述要开发的工作流'
+                  : cloneDraft
+                    ? '描述你要的分身'
+                    : '描述要开发的任务'
+                : undefined
+            }
             emptyStateDescription={draftScope
-              ? (workflowDraft
+              ? workflowDraft
                 ? '第一句话会成为工作流开发任务的标题；后续对话用于澄清需求、确认设计并生成可运行的 YAML。'
-                : '第一句话会成为任务草稿的标题，后续对话用于澄清与拆分 Phase。')
+                : cloneDraft
+                  ? '第一句话会成为分身任务的标题；铸分身者会一次一问地确认代号、人格与工具，验证通过后等你确认合入。'
+                  : '第一句话会成为任务草稿的标题，后续对话用于澄清与拆分 Phase。'
               : undefined}
             composerLeading={draftScope && !heroActive ? draftLead : mainLead}
-            composerPlaceholder={draftScope
+            composerPlaceholder={directThreadIdentity
+              ? `回应 ${directThreadIdentity} / 下指令…（⏎ 发送 · ⇧⏎ 换行）`
+              : draftScope
               ? (workflowDraft
                 ? '描述要开发或修改的工作流…　⏎ 发送'
-                : '描述要开发的任务…　⏎ 发送')
+                : cloneDraft
+                  ? '描述你要的分身…（做什么、什么时候用）　⏎ 发送'
+                  : '描述要开发的任务…　⏎ 发送')
               : cabinId && !taskThread
                 // classic-v3：舱主对话固定问汐音舰长（不再露出「主 Agent」）。
                 // 全域座舱（v21 三轮）：逐字用原型 .con-in 的 placeholder。
                 ? composerVariant === 'cockpit'
                   ? '回应汐音 / 下达新指令…（⏎ 发送 · ⇧⏎ 换行）'
-                  : `问${CABIN_MAIN_IDENTITY}…\u3000⏎ 发送 · ⇧⏎ 排队 · Alt⏎ 换行`
-                : '问主 Agent…　⏎ 发送 · ⇧⏎ 排队 · Alt⏎ 换行'}
+                  : `问${CABIN_MAIN_IDENTITY}…\u3000⏎ 发送 · ⇧⏎ 换行 · Alt⏎ 换行`
+                : '问主 Agent…　⏎ 发送 · ⇧⏎ 换行 · Alt⏎ 换行'}
             // hero：新建对话 = 空主会话；新建开发任务 = 未落盘的 pendingTask（同一套
             // 居中 composer + 第二行控件，2026-10-28 看齐）。
             heroEmpty={heroActive}
@@ -1630,6 +1736,11 @@ export function ChatPane({
             dockGutter={split}
             composerSlot={composerSlot}
             composerVariant={composerVariant}
+            assistantLabel={directThreadIdentity ?? undefined}
+            inlineChrome={chromeInline}
+            indexSlot={indexSlot}
+            attachSlot={attachSlot}
+            chromeHostSelector={chromeHostSelector}
             onQueueDepthChange={reportQueueDepth}
             composerBridgeRef={composerBridgeRef}
           />
@@ -1640,7 +1751,7 @@ export function ChatPane({
           chat region (portaled to ChatTab's region) so split-mode windows can
           cross the divider; z-order follows the focused pane.
           2026-10-31 消耗窗通用化：这一层在没有任务时也挂载，只承载会话账本。 */}
-      {layerRoot && createPortal(
+      {layerRoot && !moduleSurface && createPortal(
         <TaskModulesLayer
           task={activeTask}
           sessionId={activeTask ? null : sessionId}

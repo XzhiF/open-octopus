@@ -206,6 +206,7 @@ export function CabinChatHost({ onSelectCabin, onCreateCabin, onExitCabin }: Cab
     onCreateSession: () => issueCommand({ type: 'new-session' }),
     onCreateTask: () => issueCommand({ type: 'new-task' }),
     onCreateWorkflowTask: () => issueCommand({ type: 'new-task', kind: 'workflow-dev' }),
+    onCreateCloneTask: () => issueCommand({ type: 'new-task', kind: 'clone-dev' }),
     onRenameSession: renameSession,
     onDeleteSession: (id: string) => { void handleDeleteSession(id) },
     // 舱内任务行的「⋯」与桌面对话同一套动作：重命名/删除都经 ChatPane 命令执行

@@ -41,7 +41,7 @@ import type { TaskRow } from "../../db/types"
 import { WorkspaceService } from "../workspace"
 import { getAgentDir, getBuiltInCloneDir } from "../agent/paths"
 import { derivedTaskNameFromMessage, generateTaskTitle } from "./task-title"
-import { buildAcceptanceGuard, buildDoerBatchGuard, buildPathGuard } from "../agent/clone-runtime"
+import { buildDoerBatchGuard, buildPathGuard } from "../agent/clone-runtime"
 import { acceptancePlanReady } from "./acceptance-plan-service"
 import { TaskHomeService } from "./task-home-service"
 import { deriveTaskView, type TaskView } from "./derive-task-view"
@@ -94,7 +94,7 @@ export interface TaskThreadProfile {
   /** Latest round was stopped by a human and not delivered → [takeover-edit]. */
   takeover: boolean
   /** 2026-10-30 验收引导态：awaiting_review ∧ 方案已 ready → 本会话负责逐项引导
-   *  人验收；写权收窄为「≤2 文件的小修」，超范围必须升级 task-fix。 */
+   *  人验收；写权 = 工作区 projects/**（打回后原地修，见 #11）。 */
   acceptanceGuide: boolean
   /** 2026-10-31 AI-native 归档：archiving 态 → 主 Chat 负责播报进度、逐条问反思、
    *  在用户明确表态后执行落/跳过/重试；对话里只留一张归档总框。 */
@@ -320,7 +320,7 @@ export class TaskThreadService {
       identity === "doer" && !readOnly && info.awaitingReview && !!wsPath && acceptancePlanReady(task.id)
     const archiveGuide = identity === "doer" && info.status === "archiving"
     const archiveConsent = identity === "doer" && awaitingArchive
-    const guard = this.buildGuard(identity, { taskHome, wsPath, readOnly, taskId: task.id, acceptanceGuide })
+    const guard = this.buildGuard(identity, { taskHome, wsPath, readOnly, taskId: task.id })
     const { head: contextHead, playbook: contextPlaybook } = this.buildContext(info, {
       identity,
       spec,
@@ -357,7 +357,8 @@ export class TaskThreadService {
    *  fork for the workflow-author fork (persona + octo-workflow-* skills); the
    *  shared agent dir and task home stay so skills never appear/disappear. */
   private buildPlugins(taskHome: string, kind: string | null): Array<{ type: "local"; path: string }> {
-    const cloneDir = kind === "workflow-dev" ? "workflow-author" : "task-author"
+    const cloneDir =
+      kind === "workflow-dev" ? "workflow-author" : kind === "clone-dev" ? "clone-author" : "task-author"
     const plugins: Array<{ type: "local"; path: string }> = [
       { type: "local", path: getAgentDir() },
       { type: "local", path: getBuiltInCloneDir(cloneDir) },
@@ -368,7 +369,7 @@ export class TaskThreadService {
 
   private buildGuard(
     identity: TaskThreadIdentity,
-    input: { taskHome: string; wsPath: string | null; readOnly: boolean; taskId: string; acceptanceGuide?: boolean },
+    input: { taskHome: string; wsPath: string | null; readOnly: boolean; taskId: string },
   ): TaskThreadGuard | undefined {
     if (identity === "author") {
       return buildPathGuard(
@@ -377,11 +378,9 @@ export class TaskThreadService {
       ) as TaskThreadGuard
     }
     if (identity === "doer" && !input.readOnly && input.wsPath) {
-      // 验收引导轮：仍是 doer（可小修），但每次引导最多 2 个写目标 —— 超出就
-      // 提示升级大 fix（task-fix），不让人在验收里被无边界改动牵着走。
-      if (input.acceptanceGuide) {
-        return buildAcceptanceGuard(input.wsPath, input.taskId, { maxFiles: 2 }) as TaskThreadGuard
-      }
+      // 验收期也走同一道 doer 批次护栏：只写工作区 projects/**，.scratch 批次
+      // 目录仍只读。2026-11-23 #11：≤2 文件小修上限与 task-fix 升级出口已删除 ——
+      // 打回后由 doer 自己规划、在工作区原地修。
       return buildDoerBatchGuard(input.wsPath, input.taskId) as TaskThreadGuard
     }
     return buildReadOnlyGuard()
@@ -413,6 +412,23 @@ export class TaskThreadService {
         ? `Phase ${info.phaseIndex}${info.roundIndex != null ? ` · Round ${info.roundIndex}` : ""}`
         : "尚未开始"
     const head = `[任务线程] 任务：${info.name}（id: ${info.id}）· 状态：${label} · ${coord}`
+
+    if (extra.identity === "author" && info.kind === "clone-dev") {
+      return {
+        head,
+        playbook: [
+          "[身份] 铸分身者（clone-author）。交付物是一个能用的分身：persona + skills +（可选）进程内工具包。",
+          `[任务 home] ${info.taskHome} · 分身目录 ~/.octopus/agent/clones/<name>/ · 工具包 packages/clone-kits/<slug>/`,
+          "[一次一问] 按顺序问清三件事：代号（slug）→ 人格（3–5 条可执行准则）→ 工具清单（要不要可执行工具；要就每个一行）。每问都给推荐答案。",
+          "[登记] 用户确认后调 clone_dev_set_meta 写入 clone_name / mode / kit 声明；代号一旦写入不可改名。",
+          "[实现] 人格写 persona.md；技能写 skills/<name>/SKILL.md；工具代码写 packages/clone-kits/<slug>/index.ts（用 _sdk 的 defineTool + buildServer），并导出 selfTest。改完跑 `node scripts/build-clone-kits.mjs` 生成 dist（验证与运行都读 dist）。",
+          "[验证] 调 clone_dev_verify；三条硬判据必须全绿：工具可用 / 越权被拦 / 身份可用。改过工具代码后必须重跑。",
+          "[收尾] 向用户报告文件与验证结果，然后 clone_dev_finish 进入「待合入」。合入由人拍板，不自己 merge、不自己 archive。",
+          "[硬边界] 不改 shared / server / engine / web-app；需要核心配合时停下来列「核心改动清单」请用户确认。",
+          "[状态感知] 状态以 get_task_status / clone_dev_get_state 为准。",
+        ].join("\n"),
+      }
+    }
 
     if (extra.identity === "author" && info.kind === "workflow-dev") {
       return {
@@ -467,8 +483,8 @@ export class TaskThreadService {
         "  2. 开场用**一句话**播报机器证据（共几项、缺几件）；**不要逐条跑、不要逐项问** —— e2e / 慢命令尤其不要主动重跑。",
         "  3. 一次只推进**一条场景**：按 steps 讲清「打开哪 → 做什么 → 看到什么」，然后问「通过 / 不通过 / 跳过」。**提问一律用对话正文，不要调用 AskUserQuestion**（选项卡会打断逐条引导；验收卡只是快捷方式）。用户要看页面就 start_acceptance_preview（结束 stop_acceptance_preview）；**只有用户点名要新结果时**才 run_acceptance_probe 跑某条机器证据。",
         "  4. 用户**在对话里明确表态**（「通过」「可以」「不行，因为…」「跳过」）即可直接调 record_acceptance_check（confirmed=true），只对场景；卡片只是快捷方式。不要代替用户判断、不要批量代勾，也不要把机器证据当成人工勾选项。",
-        "  5. 用户说不通过 → 当场小修：只改与该问题直接相关的 **≤2 个文件**，不改 spec/票；改完按场景重新看一遍并把结果讲给用户，再问一次是否通过 —— 改完不等于通过，绝不默认勾上。",
-        "  6. 问题超出小修边界（要改 spec、要动 3 个以上文件、或反复修不好）→ 调 propose_acceptance_escalation，让用户确认升级 task-fix 大修复；不要硬改。",
+        "  5. 用户说不通过 → 自己规划修复：直接在工作区改（只改与该问题直接相关的代码，不限文件数；不改 spec/票），跑验证，改完按场景重新看一遍并把结果讲给用户，再问一次是否通过 —— 改完不等于通过，绝不默认勾上。",
+        "  6. 修不完或需要动规格/结构 → 把原因说清楚并开票留档（`Status: ready-for-agent`；要人定方向的用 `ready-for-human`），不要硬改、不要扩权。",
         "  7. 场景都有结论后，先做**放行前终检**：再调一次 get_acceptance_plan 看 postRound（末轮之后的新提交 / 未提交文件），把现场用一两句话讲给用户。有未提交改动就提醒：归档 preflight 会先拦下，届时再选「纳入 / 排除」，或现在先改完再放行。确认无遗漏后再问要不要「放行」或「退回修改」。",
         "  8. 用户**明确表态**后由你收口：放行 → submit_acceptance_decision(decision=\"accepted\", confirmed=true)；退回 → submit_acceptance_decision(decision=\"rejected\", feedback=用户说的原因, confirmed=true)。人点验收台是兜底，不是必需；但没有明确表态绝不放行、绝不退回，也不要把未勾场景当成通过。",
       ] : []
@@ -493,6 +509,25 @@ export class TaskThreadService {
         "  5. 用户说「中止 / 不做了」→ request_task_action(action=\"abort\", reason=...)，仍需人点确认卡。",
         "  6. 不要声称 done —— done 由服务端在全部 project 的 git 同步成功后才写入。",
       ] : []
+      if (info.kind === "clone-dev") {
+        const devLine = info.displayStatus === "awaiting_archive"
+          ? "[分身开发] 验证已全绿，任务停在「待合入」。只读：不要改工具/人格；只能确认合入或中止。"
+          : info.displayStatus === "archiving"
+            ? "[分身开发] 合入进行中：只读；可以复述 merge / 装包 / 注册结果。"
+            : "[分身开发] 当前没有在开发的阶段。"
+        return {
+          head,
+          playbook: [
+            ...consentLines,
+            ...archiveLines,
+            devLine,
+            "[身份] 铸分身者（clone-author）。分身开发已完成；合入由服务端执行。",
+            "[跟进] 用户要再改分身时，先确认是开新任务还是回草稿；不要在待合入态直接改文件。",
+            "[状态感知] 任务状态变化会以事件卡出现在本会话。",
+          ].filter(Boolean).join("\n"),
+        }
+      }
+
       if (info.kind === "workflow-dev") {
         const devLine = info.displayStatus === "awaiting_archive"
           ? "[工作流开发] 全部工作流已完成，任务停在「待归档」。只读：不要改 YAML；只能确认是否归档或中止。"

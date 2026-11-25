@@ -13,6 +13,8 @@ export const SILENT_EVENTS = new Set([
   "agent_heartbeat", "heartbeat_stall",
   // 验货台当场复检：逐行输出 = node_log 同频率级别（task_verify 终态事件不静默）。
   "task_verify_log",
+  // 目录窗增量刷新：每次文件增删一条，属于高频结构事件（不刷屏）。
+  "tree_changed",
 ])
 
 export class SSEService {

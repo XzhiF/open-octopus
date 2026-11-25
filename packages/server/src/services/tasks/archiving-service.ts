@@ -37,6 +37,9 @@ import path from "path"
 import type Database from "better-sqlite3"
 import { TaskDAO } from "../../db/dao"
 import type { TaskHomeService } from "./task-home-service"
+import { readWorkspaceConfig } from "../workspace-paths"
+import { detectDefaultBranch } from "../workspace-git"
+import { resolveBranchOverrides } from "./branch-plan"
 import {
   defaultRun,
   dirtyFingerprint,
@@ -382,6 +385,8 @@ export interface PrContext {
   branch: string
   title: string
   body: string
+  /** PR 落点分支（gh 的 --base）。缺省时不传，交由仓库默认分支兜底。 */
+  base?: string
 }
 export interface PrResult {
   action: "skipped" | "merged-into-open" | "created" | "none"
@@ -448,8 +453,9 @@ export interface ArchivingDeps {
 
 /** Default PR handler (no existing gh/PR code in the repo — 票 08 grep).
  *  Local/self-hosted remotes (bare-repo fixtures, Gitea, …) → 'skipped': the
- *  pushed branch IS the archive landing, review happens outside GitHub. */
-const defaultPrHandler: PrHandler = async (ctx, run) => {
+ *  pushed branch IS the archive landing, review happens outside GitHub.
+ *  Exported for tests — the argv (--base) is the contract under test. */
+export const defaultPrHandler: PrHandler = async (ctx, run) => {
   const remote = await run("git", ["remote", "get-url", "origin"], ctx.worktreePath)
   if (remote.code !== 0 || !remote.stdout.trim()) {
     return { action: "skipped", note: "no origin remote" }
@@ -460,9 +466,29 @@ const defaultPrHandler: PrHandler = async (ctx, run) => {
   const list = await run("gh", ["pr", "list", "--head", ctx.branch, "--state", "open", "--json", "url", "-q", ".[0].url"], ctx.worktreePath)
   const url = list.stdout.trim()
   if (list.code === 0 && url && url !== "null") {
+    // 分支计划（2026-11-24）：已有开放 PR 的 base 不对时顺手纠正 —— 旧代码只出
+    // PR 不管落点，用户只能手工关掉重开。edit 失败不阻断归档（push 已在）。
+    if (ctx.base) {
+      const edit = await run("gh", ["pr", "edit", url, "--base", ctx.base], ctx.worktreePath)
+      if (edit.code !== 0) {
+        console.error(
+          `[Archiving] gh pr edit --base ${ctx.base} failed for ${url} (non-fatal): ${edit.stderr.trim() || edit.stdout.trim()}`,
+        )
+      }
+    }
     return { action: "merged-into-open", url }
   }
-  const create = await run("gh", ["pr", "create", "--head", ctx.branch, "--title", ctx.title, "--body", ctx.body], ctx.worktreePath)
+  const create = await run(
+    "gh",
+    [
+      "pr", "create",
+      "--head", ctx.branch,
+      ...(ctx.base ? ["--base", ctx.base] : []),
+      "--title", ctx.title,
+      "--body", ctx.body,
+    ],
+    ctx.worktreePath,
+  )
   if (create.code !== 0) {
     throw new Error(`gh pr create failed for '${ctx.branch}': ${create.stderr.trim() || create.stdout.trim()}`)
   }
@@ -536,6 +562,8 @@ function attributeAdr(content: string, projectNames: string[]): string | null {
 interface WorktreeRef {
   dir: string
   branch: string
+  /** 分支计划的 PR 落点（config.repos[].target_branch；老 workspace 缺）。 */
+  target?: string
 }
 
 async function resolveWorktree(
@@ -543,10 +571,9 @@ async function resolveWorktree(
   projectName: string,
   run: CommandRunner,
 ): Promise<WorktreeRef> {
-  const cfg = parseJSONSafe<{ repos?: Array<{ name?: string; worktree_path?: string; branch?: string }> }>(
-    fs.existsSync(path.join(wsPath, "config.json")) ? fs.readFileSync(path.join(wsPath, "config.json"), "utf-8") : "",
-    {},
-  )
+  const cfg = (readWorkspaceConfig(wsPath) ?? {}) as {
+    repos?: Array<{ name?: string; worktree_path?: string; branch?: string; target_branch?: string }>
+  }
   const entry = (cfg.repos ?? []).find((r) => r.name === projectName)
   const dir = entry?.worktree_path || path.join(wsPath, "projects", projectName)
   if (!fs.existsSync(dir)) {
@@ -559,7 +586,8 @@ async function resolveWorktree(
     branch = b.stdout.trim()
   }
   if (!branch || branch === "HEAD") throw new Error(`worktree '${projectName}' is on a detached HEAD — cannot push`)
-  return { dir, branch }
+  const target = entry?.target_branch?.trim()
+  return { dir, branch, ...(target ? { target } : {}) }
 }
 
 /**
@@ -855,8 +883,29 @@ export function createTaskArchiver(deps: ArchivingDeps): TaskArchiver {
 
         // 并入开放 PR 或开归档 PR (冲突清单进 PR 描述 — AC11/K11)
         if (r.commit) {
+          // 分支计划（2026-11-24）：落点优先读建树时写下的 target_branch；
+          // 老 workspace 缺 → 现解析（任务显式 > 舱 mainline_branch）→ 仓库默认分支。
+          let landing = wt.target ?? ""
+          if (!landing) {
+            const ov = resolveBranchOverrides(deps.db, row, projectName)
+            landing = ov?.target ?? ov?.base ?? ""
+          }
+          if (!landing) {
+            try {
+              landing = detectDefaultBranch(wt.dir)
+            } catch {
+              /* no origin / detached fixture — leave undefined (gh default) */
+            }
+          }
           const body = buildProjectReportMd(row.name, taskId, state.date, r, incoming)
-          r.pr = await pr({ project: projectName, worktreePath: wt.dir, branch: wt.branch, title: commitMsg, body }, run)
+          r.pr = await pr({
+            project: projectName,
+            worktreePath: wt.dir,
+            branch: wt.branch,
+            title: commitMsg,
+            body,
+            ...(landing ? { base: landing } : {}),
+          }, run)
         } else {
           r.pr = { action: "none", note: "no archive commit (nothing new to merge)" }
         }

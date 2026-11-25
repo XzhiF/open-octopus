@@ -1,6 +1,6 @@
 // packages/server/src/services/pipeline-config.ts
-import { readFileSync, existsSync, writeFileSync, statSync } from "fs"
-import { join } from "path"
+import { readFileSync, existsSync, writeFileSync, statSync, mkdirSync } from "fs"
+import { dirname } from "path"
 import { load as yamlLoad, dump as yamlDump } from "js-yaml"
 import {
   PipelineConfig,
@@ -8,6 +8,7 @@ import {
   PipelineConfigV1Schema,
 } from "@octopus/shared"
 import { createHash } from "crypto"
+import { pipelineConfigPath, resolvePipelineConfigPath } from "./workspace-paths"
 
 export class PipelineConfigLoader {
   private config: PipelineConfig | null = null
@@ -84,13 +85,14 @@ export class PipelineConfigLoader {
    * 保存配置到文件
    */
   save(config: PipelineConfig): void {
-    const configPath = this.getConfigPath()
+    const configPath = pipelineConfigPath(this.workspacePath)
+    mkdirSync(dirname(configPath), { recursive: true })
     const yaml = yamlDump(config, { indent: 2 })
     writeFileSync(configPath, yaml, "utf-8")
     this.reload()
   }
 
   private getConfigPath(): string {
-    return join(this.workspacePath, "pipeline.yaml")
+    return resolvePipelineConfigPath(this.workspacePath)
   }
 }

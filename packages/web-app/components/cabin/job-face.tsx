@@ -32,20 +32,21 @@ import { cn } from '@/lib/utils'
 import { SubagentWindow } from '@/components/chat-workbench/subagent-window'
 import { ChangesWindow } from '@/components/chat-workbench/changes-window'
 import { AcceptanceWindow } from '@/components/chat-workbench/acceptance-window'
+import { ArchiveWindow } from '@/components/chat-workbench/archive-window'
+import { CockpitArchivePanel } from '@/components/cockpit/face/CockpitArchivePanel'
 import { CabinRunSummary, type CabinRunTarget } from './modules/CabinRunSummary'
 import { clockLabel, openTaskInChat } from './modules/ui'
 import { pctFromPhases } from './job-progress'
 import { jobStatusLabel, jobTone } from './job-status'
 import { traceKind } from './trace-meta'
 import {
-  COCKPIT_TABS, COCKPIT_TAB_LABELS, type CockpitTab,
+  COCKPIT_DEFAULT_TAB, COCKPIT_TABS, COCKPIT_TAB_LABELS, type CockpitTab,
 } from '@/components/cockpit/state/cockpit-state'
 import {
   CockpitElapsed, CockpitJobHeader, CockpitJobTabs,
 } from '@/components/cockpit/face/CockpitJobHeader'
 import { CockpitJobFiles } from '@/components/cockpit/face/CockpitJobFiles'
 import { CockpitJobDebug } from '@/components/cockpit/face/CockpitJobDebug'
-import { CockpitJobDialog } from '@/components/cockpit/face/CockpitJobDialog'
 import { CockpitJobProject } from '@/components/cockpit/face/CockpitJobProject'
 import { projectNameFromKey } from '@/components/cockpit/projects/project-model'
 import { PHASE_PILL, PHASE_STATUS_LABEL } from '@/components/tasks/run-console/phase-status'
@@ -292,6 +293,8 @@ export interface JobFaceCockpitControls {
   onTabChange(tab: CockpitTab): void
   /** 关闭 = 收面（select(null)）。 */
   onClose(): void
+  /** v22 #5：打开这条作战的独立 chat 窗（有会话才传）。 */
+  onOpenChat?: (() => void) | null
   /** 验收通过/打回后（CockpitFace 用来落下一行「需要你」）。 */
   onAcceptanceMutated?(): void
 }
@@ -323,7 +326,7 @@ export function JobFace({
   const [job, setJob] = useState<CabinJob | null>(null)
   const [jobView, setJobView] = useState<CabinJobView | null>(null)
   const [events, setEvents] = useState<CabinJobEvent[]>([])
-  const [innerTab, setInnerTab] = useState<CockpitTab>('dialog')
+  const [innerTab, setInnerTab] = useState<CockpitTab>(COCKPIT_DEFAULT_TAB)
   const [taskEntity, setTaskEntity] = useState<TaskDetail | null>(null)
   /** 舱主会话消息：对接里「汐音 → 你」那一跳的原始来源（任务卡）。 */
   const [mainMessages, setMainMessages] = useState<AgentMessage[]>([])
@@ -375,9 +378,9 @@ export function JobFace({
     setJobView(null)
     setEvents([])
     setLoadError(null)
-    // 旧窗行为：换作业回到首签（2026-11-19 起跟全域面一致 = 对话）。
+    // 旧窗行为：换作业回到首签（2026-11-19 起跟全域面一致）。
     // cockpit 的页签是受控的（URL 决定），不重置。
-    if (!controlled) setInnerTab('dialog')
+    if (!controlled) setInnerTab(COCKPIT_DEFAULT_TAB)
     void load()
   }, [load, controlled])
 
@@ -414,9 +417,6 @@ export function JobFace({
 
   // 运行/变更/验收都要任务实体（RunWindow 自己解析当前轮）。
   const taskId = job?.kind === 'task' ? job.ref_id : null
-  // v21 七轮：「对话」页签读任务主会话（= 通讯台里这条任务的线程）。
-  // workflow / subagent 没有主会话 → null，页签给明确空态。
-  const dialogSessionId = taskEntity?.source_chat_session_id ?? null
   useEffect(() => {
     let alive = true
     setTaskEntity(null)
@@ -526,6 +526,7 @@ export function JobFace({
               onClose={onClose}
               cabinName={cockpit?.cabinName ?? null}
               projectName={cockpit?.projectName ?? null}
+              onOpenChat={cockpit?.onOpenChat ?? null}
             />
           ) : (
             <CockpitJobHeader loading onClose={onClose} />
@@ -578,6 +579,10 @@ export function JobFace({
   const tone = jobTone(status)
   const taskForRun = job.kind === 'task' ? taskEntity : null
   const subagentRun = job.kind === 'subagent' && !!job.ref_id
+  /** 归档页签只给任务类作业；其它作业（workflow / subagent / external）不出现这一签。 */
+  const jobTabs = job.kind === 'task'
+    ? COCKPIT_TABS
+    : COCKPIT_TABS.filter((key) => key !== 'archive')
 
   // 运行 tab 只给摘要；「打开运行 →」开作业坞同款运行窗（DAG + 日志 + YAML）。
   // 任务类作业取当前一轮执行（运行中的优先，否则最新一轮）。
@@ -846,7 +851,6 @@ export function JobFace({
 
   const panes = (
     <>
-      {tab === 'dialog' && <CockpitJobDialog sessionId={dialogSessionId} cabinId={cabinId} taskId={taskId} />}
       {tab === 'overview' && (cockpitMode ? (
         // v21 三轮（原型 .panel 详情·概览）：kv 读数 + 当前在做 + 最近事件。
         <div data-testid="cabin-job-overview" className="ck12-dossier-ov">
@@ -1165,6 +1169,23 @@ export function JobFace({
           )}
         </div>
       )}
+      {tab === 'archive' && (
+        <div data-testid={cockpitMode ? 'cockpit-job-archive' : 'cabin-job-archive'} className={frameOf()}>
+          {taskForRun ? (
+            cockpitMode ? (
+              <CockpitArchivePanel task={taskForRun} onOpenAcceptance={() => changeTab('accept')} />
+            ) : (
+              <div className={cn('overflow-hidden rounded-lg border-[1.5px] border-pop-bd bg-pop-paper', fillOf('h-[520px]'))}>
+                <ArchiveWindow task={taskForRun} />
+              </div>
+            )
+          ) : (
+            <div className={emptyOf()}>
+              {cockpitMode ? `这条${kind.label}作业没有归档阶段` : '只有任务类作业有归档'}
+            </div>
+          )}
+        </div>
+      )}
       {tab === 'files' && (
         <div
           data-testid={cockpitMode ? 'cockpit-job-files' : 'cabin-job-files'}
@@ -1184,6 +1205,8 @@ export function JobFace({
             cabinId={cabinId}
             projects={jobProjects}
             branch={branch}
+            baseBranch={taskEntity?.task_spec?.base_branch ?? null}
+            targetBranch={taskEntity?.task_spec?.target_branch ?? null}
           />
         </div>
       )}
@@ -1207,10 +1230,12 @@ export function JobFace({
           startedAt={job.created_at}
           endedAt={job.ended_at}
           costLabel={costLabel}
+          onOpenChat={cockpit?.onOpenChat ?? null}
+          onOpenArchive={job.kind === 'task' ? () => changeTab('archive') : null}
         />
         <div className="ck12-face-body" data-testid="cockpit-face-job">
           {/* 原型 .dtabs 在滚动正文里（.pb）—— 页签跟着内容滚走，不是常驻条。 */}
-          <CockpitJobTabs tab={tab} onTabChange={changeTab} />
+          <CockpitJobTabs tab={tab} onTabChange={changeTab} tabs={jobTabs} />
           {panes}
         </div>
       </>
@@ -1241,7 +1266,7 @@ export function JobFace({
       </div>
 
       <div className="mb-2.5 flex shrink-0 gap-1 overflow-x-auto border-b-[1.5px] border-pop-bd" role="tablist" aria-label="作战页签">
-        {COCKPIT_TABS.map((key) => (
+        {jobTabs.map((key) => (
           <button
             key={key}
             type="button"

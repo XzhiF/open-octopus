@@ -20,11 +20,19 @@ export interface CockpitJobProjectProps {
   projects: readonly string[]
   /** 作业分支（舱籍条目没检出 git 时的兜底）。 */
   branch?: string | null
+  /** 分支计划（task_spec.base_branch / target_branch）：从哪 fork、MR 合回哪。
+   *  空 = 走舱项目落点 / 仓库默认分支（不在任务上写死，就不假装知道）。 */
+  baseBranch?: string | null
+  targetBranch?: string | null
 }
 
-export function CockpitJobProject({ cabinId, projects, branch }: CockpitJobProjectProps) {
+export function CockpitJobProject({
+  cabinId, projects, branch, baseBranch, targetBranch,
+}: CockpitJobProjectProps) {
   const { projects: repos, loading, error } = useCabinProjects(cabinId)
   const tree = useCockpitTree()
+  const planBase = baseBranch ?? null
+  const planTarget = targetBranch ?? planBase
 
   return (
     <div data-testid="cabin-job-project">
@@ -55,6 +63,14 @@ export function CockpitJobProject({ cabinId, projects, branch }: CockpitJobProje
                   {' · '}
                   {path ?? (loading ? '载入项目…' : '不在当前舱的关联里')}
                 </span>
+                {(planBase || planTarget) && (
+                  <span
+                    className="ck12-pjrow-plan"
+                    title="任务分支的落点（task_spec）：从 base fork，MR 合入 target；未写则走舱项目落点 / 仓库默认分支"
+                  >
+                    落点 ⟵ {planBase ?? '默认'} → 合入 {planTarget ?? planBase ?? '默认'}
+                  </span>
+                )}
               </span>
               <span className="ck12-pjrow-ro">只读</span>
               {tree && <span className="ck12-pjrow-go">目录树 →</span>}

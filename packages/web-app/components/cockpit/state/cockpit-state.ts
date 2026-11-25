@@ -8,7 +8,7 @@
 //   · Esc 只有一个 capture 阶段监听（CockpitLayerStack），layer 栈按 priority + 注册序。
 
 import type { LlmUsageAggregates } from '@octopus/shared'
-import type { ContextUsageData } from '@/lib/agent/types'
+import type { ContextUsageData, ChatSendMeta, ChatSeedMeta } from '@/lib/agent/types'
 import type { ComposerContext, ComposerEffort } from '@/lib/agent/composer-settings'
 import type { MoodKey } from '@/components/cabin/cockpit'
 
@@ -23,19 +23,22 @@ export type CockpitRef =
 
 export type CockpitRefKind = CockpitRef['kind']
 
-/** 座舱页签。v21 七轮（用户）：详情首签「概览」→「对话」—— 概览不需要，
- *  对话 = 这条作战的 chat 记录（只读，TUI 转录同肤）。
- *  `overview` 仍留在类型里，但已无页签入口（2026-11-19 起 classic 作业窗也用
- *  这一套 COCKPIT_TABS）；它不在 COCKPIT_TABS / isCockpitTab 里，`?tab=overview`
- *  旧深链会自然落回默认「对话」。 */
-export type CockpitTab = 'dialog' | 'overview' | 'relay' | 'run' | 'changes' | 'accept' | 'files' | 'debug' | 'project'
+/** 座舱页签。v22 #5（2026-11-23 用户）：详情不再承载 chat —— 编队对话是独立
+ *  chat 窗，详情首签改为「运行」。`dialog` / `overview` 仍留在类型里给旧深链
+ *  兜底：它们不在 COCKPIT_TABS / isCockpitTab 里，`?tab=dialog` 会自然落回默认。 */
+export type CockpitTab = 'dialog' | 'overview' | 'relay' | 'run' | 'changes' | 'accept' | 'archive' | 'files' | 'debug' | 'project'
 
 /** 面来源（v22.3）：inbox = 从「要我处理」打开 → 详情让到浮层左侧；
  *  fleet / url / acceptance = 从编队 / 深链 / 验收流转打开 → 居中。 */
 export type CockpitSelectSource = 'fleet' | 'inbox' | 'url' | 'acceptance'
 
-/** 页签顺序 = 原型 .dtabs（v21 七轮：首签「对话」）。 */
-export const COCKPIT_TABS: readonly CockpitTab[] = ['dialog', 'relay', 'run', 'changes', 'accept', 'files', 'debug', 'project']
+/** 页签顺序 = 原型 .dtabs（v22 #5：首签「运行」，对话页签已删除）。
+ *  2026-11-24：验收之后加「归档」—— 只读归档明细，操作仍在对话里完成；
+ *  非任务类作业由渲染方过滤掉这一签。 */
+export const COCKPIT_TABS: readonly CockpitTab[] = ['relay', 'run', 'changes', 'accept', 'archive', 'files', 'debug', 'project']
+
+/** 详情默认页签：URL 里省略它，保持链接干净。 */
+export const COCKPIT_DEFAULT_TAB: CockpitTab = 'run'
 
 export const COCKPIT_TAB_LABELS: Record<CockpitTab, string> = {
   dialog: '对话',
@@ -44,6 +47,7 @@ export const COCKPIT_TAB_LABELS: Record<CockpitTab, string> = {
   run: '运行',
   changes: '变更',
   accept: '验收',
+  archive: '归档',
   files: '文件',
   debug: '调试',
   project: '项目',
@@ -74,8 +78,10 @@ export interface CockpitChatApi {
   canSend: boolean
   contextUsage: ContextUsageData | null
   usage: LlmUsageAggregates | null
-  /** 走真正的 composer 管线（含队列 / steer / 流式保护）。 */
-  submit(text: string): void
+  /** 走真正的 composer 管线（含队列 / steer / 流式保护）。meta = 事项投递来源。 */
+  submit(text: string, meta?: ChatSendMeta): void
+  /** 预填输入框（事项「带到输入框」）；发出去才算交付。 */
+  seed(text: string, meta?: ChatSeedMeta): void
   stop(): void
   setModel(id: string): void
   setEffort(effort: ComposerEffort): void
@@ -172,14 +178,10 @@ export interface CockpitFlash {
 }
 
 export interface CockpitThreadsApi {
-  activeThread: string
-  closedTabs: string[]
   unread: Record<string, number>
   receipts: Record<string, CockpitReceipt[]>
-  /** 切线程 + 消未读（tab 点击 / 回传立即激活 / 会话被别处切换）。 */
-  activateThread(key: string): void
-  closeTab(key: string): void
-  reopenTab(key: string): void
+  /** 只消未读（v22 #5：打开 / 聚焦编队 chat 窗时用）。 */
+  clearUnread(key: string): void
   bumpUnread(key: string, n?: number): void
   pushReceipt(key: string, text: string): void
 }

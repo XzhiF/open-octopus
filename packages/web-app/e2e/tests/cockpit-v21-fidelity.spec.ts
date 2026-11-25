@@ -61,10 +61,13 @@ test.describe("全域座舱 v21 · 高保真", () => {
     await expect(page.getByTestId("cockpit-projects-btn")).toBeVisible()
     await expect(page.getByTestId("cockpit-scene-pill")).toContainText("SCENE")
 
-    // v21 二轮：右上只剩三枚只读读数（模型切换 / ♪◐✦ / 时间横条全部撤除）。
+    // v21 二轮：右上只剩两枚只读读数（模型切换 / ♪◐✦ / 时间横条全部撤除）。
+    // 2026-11-23 用户 #2：上下文百分比读数删除（上下文明细在通讯台头部 CTX）；
+    // 用户 #3：最右新增「✎ 便签」入口。
     await expect(page.getByTestId("ck12-rig-tokens")).toBeVisible()
-    await expect(page.getByTestId("ck12-rig-context")).toBeVisible()
     await expect(page.getByTestId("ck12-rig-cost")).toBeVisible()
+    await expect(page.getByTestId("ck12-rig-context")).toHaveCount(0)
+    await expect(page.getByTestId("cockpit-notes-btn")).toBeVisible()
     await expect(page.getByTestId("cockpit-hud-model")).toHaveCount(0)
     await expect(page.getByTestId("cockpit-sound")).toHaveCount(0)
     await expect(page.getByTestId("cockpit-theme")).toHaveCount(0)

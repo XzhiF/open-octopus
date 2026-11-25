@@ -102,9 +102,9 @@ export type TaskRoundDecision = "accepted" | "rejected"
 export interface TaskRoundExec {
   id: string
   status: string
-  /** ADR-0018: the workflow this round ACTUALLY ran (打回轻量修复轮 = task-fix
-   *  while the phase binding stays the dev flow). Older servers omit it →
-   *  consumers fall back to the phase's workflowRef. */
+  /** The workflow this round ACTUALLY ran (the timeline must show what ran, not
+   *  the frozen phase binding). Older servers omit it → consumers fall back to
+   *  the phase's workflowRef. */
   workflow_ref?: string
   phase_index: number | null
   round_index: number | null
@@ -567,9 +567,9 @@ export class TaskApiError extends Error {
 
 /** Body of POST /api/tasks/:id/acceptance (票 07 契约). Indices are 1-based,
  *  matching TaskPhase.index / executions.phase_index. rejected 必填 feedback
- *  (缺 → 400)。ADR-0024 打回单路径：原 next_flow 枚举已删除，server schema 为
- *  严格对象 —— 携带 next_flow（或任何未知字段）的请求 → 400。rejected 恒由
- *  server 派 built-in/task-fix 修复轮（反馈即修复指令）。 */
+ *  (缺 → 400)。server schema 为严格对象 —— 携带 next_flow（或任何未知字段）
+ *  的请求 → 400。rejected 不再开修复轮：反馈交给 task doer 在工作区原地修
+ *  （2026-11-23 #11），任务保持待验收。 */
 export interface AcceptanceInput {
   phase_index: number
   round_index: number
@@ -586,8 +586,15 @@ export interface AcceptanceInput {
  *                               human must say 「归档」 (2026-10-31 archive-consent)
  *  - "archiving"                legacy server: last phase accepted auto-started archive
  *  - "awaiting_manual_trigger"  accepted with autoAdvance=false — parked at the
- *                               human gate (K6/US11), nothing was started. */
-export type AcceptanceNextAction = "dispatched" | "awaiting_archive" | "archiving" | "awaiting_manual_trigger"
+ *                               human gate (K6/US11), nothing was started.
+ *  - "fixing"                   rejected — doer 在工作区原地修（不新开轮，
+ *                               任务保持待验收；2026-11-23 #11）。 */
+export type AcceptanceNextAction =
+  | "dispatched"
+  | "awaiting_archive"
+  | "archiving"
+  | "awaiting_manual_trigger"
+  | "fixing"
 
 /** Round identity the server actually dispatched (present iff
  *  next_action === "dispatched"). 票03: `schedule_id` left with the envelope row —
@@ -656,11 +663,11 @@ export async function postAdvance(taskId: string): Promise<AdvanceResult> {
   return res.json()
 }
 
-// ── 票08 人工接管三分支端点（taskboard-modal-v2, ADR-0025）────────────
+// ── 票08 人工接管（taskboard-modal-v2, ADR-0025）──────────────────────
 //
 // ② = takeover（停流+标记+doer 会话就绪的聚合端点）→ takeover/deliver（确认
-// 交付 · 转待验收）；③ = fix-round（改派 task-fix，运行中决策不写账本）。
-// ① 不在这里 —— 它是既有 pauseTask + resumeTask(intervention)（票 06 通道）。
+// 交付 · 转待验收）。① 不在这里 —— 它是既有 pauseTask + resumeTask(intervention)。
+// 2026-11-23 #11：③ 改派 task-fix（POST /:id/fix-round）已整体删除。
 
 /** POST /api/tasks/:id/takeover 响应：标记 + doer 会话 + 最新 detail（derived
  *  随即 phase='takeover'）。session=null 仅见于服务端未接线；session_error =
@@ -677,11 +684,6 @@ export interface DeliverTakeoverResultWire {
   delivered: { execution_id: string; phase_index: number; round_index: number; delivered_at: string }
 }
 
-export interface FixRoundResultWire {
-  task: TaskDetail
-  dispatch: AcceptanceDispatch
-}
-
 /** 分支②：停流 · 人工接管。409 = 无在飞轮/排队中/abort 失败（接管未产生）。 */
 export async function takeoverTask(taskId: string): Promise<TakeoverResultWire> {
   const res = await fetch(buildUrl(`/${taskId}/takeover`), { method: "POST" })
@@ -692,17 +694,6 @@ export async function takeoverTask(taskId: string): Promise<TakeoverResultWire> 
 export async function deliverTakeover(taskId: string): Promise<DeliverTakeoverResultWire> {
   const res = await fetch(buildUrl(`/${taskId}/takeover/deliver`), { method: "POST" })
   return handleResponse<DeliverTakeoverResultWire>(res)
-}
-
-/** 分支③：改派通用修复流 task-fix（指令必填）。409 = 待验收轮（走打回）/ 无进行中
- *  phase；400 = 空指令/未知字段（strict）。dispatch 形状与 acceptance 修复轮同构。 */
-export async function postFixRound(taskId: string, instruction: string): Promise<FixRoundResultWire> {
-  const res = await fetch(buildUrl(`/${taskId}/fix-round`), {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ instruction }),
-  })
-  return handleResponse<FixRoundResultWire>(res)
 }
 
 /** POST /api/tasks/:id/archive/retry — 票 08 归档幂等续跑（仅 archiving 态，
@@ -1862,6 +1853,43 @@ export async function getDoerChatHistory(workspaceId: string, sessionId: string,
     metadata: (m.metadata as string | null) ?? null,
     created_at: (m.created_at as string) ?? new Date().toISOString(),
   }))
+}
+
+// ── clone-dev (2026-11-25) ──────────────────────────────────────────
+
+export interface CloneDevVerification {
+  tools_called: boolean
+  boundary_blocked: boolean
+  identity_switch: boolean
+  evidence: string[]
+  ran_at?: string
+  message?: string
+}
+
+export interface CloneDevSnapshot {
+  taskId: string
+  kind: "clone-dev"
+  state: {
+    mode: "create" | "edit"
+    clone_name: string
+    clone_type: "built-in" | "user"
+    stage: "draft" | "verified" | "merged"
+    kit?: { enabled: boolean; package?: string; tools: string[] }
+    verification?: CloneDevVerification
+    complete?: boolean
+    runtime?: { worktree?: string; branch?: string; installed_at?: string; merged_at?: string }
+  }
+  clone: { info: { name: string; displayName?: string; skills?: string[] } | null; dir: string } | null
+}
+
+export async function getCloneDevState(taskId: string): Promise<CloneDevSnapshot> {
+  const res = await fetch(buildUrl(`/${taskId}/clone-dev`))
+  return handleResponse<CloneDevSnapshot>(res)
+}
+
+export async function verifyCloneDev(taskId: string): Promise<CloneDevSnapshot> {
+  const res = await fetch(buildUrl(`/${taskId}/clone-dev/verify`), { method: "POST" })
+  return handleResponse<CloneDevSnapshot>(res)
 }
 
 // Re-export shared types so callers can import everything from one place.

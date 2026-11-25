@@ -144,7 +144,10 @@ export function TreeRows({
           >
             <span className="ck12-tree-name">{node.name}</span>
             {tag && <i className="ck12-tree-tag">{tag}</i>}
-            <span className="ck12-tree-bytes">{node.bytes > 1024 ? `${Math.round(node.bytes / 1024)}k` : `${node.bytes}b`}</span>
+            {/* 目录扫描默认不取每文件字节（2026-11-24）；0 = 未取，不显示 0b 噪音。 */}
+            {node.bytes > 0 && (
+              <span className="ck12-tree-bytes">{node.bytes > 1024 ? `${Math.round(node.bytes / 1024)}k` : `${node.bytes}b`}</span>
+            )}
           </button>
         )
       })}

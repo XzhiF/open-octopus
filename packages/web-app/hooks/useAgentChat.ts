@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, useCallback, useRef, useEffect } from 'react'
-import type { AgentMessage, ToolCallRecord, ContextUsageData } from '@/lib/agent/types'
+import type { AgentMessage, ToolCallRecord, ContextUsageData, ChatSendMeta } from '@/lib/agent/types'
 import type { ComposerContext, ComposerEffort } from '@/lib/agent/composer-settings'
 import * as api from '@/lib/agent/api'
 import { useSSEConnection, type SSEHandlers } from '@/lib/agent/sse'
@@ -29,6 +29,8 @@ export type ChatSendOptions = {
   effort?: ComposerEffort
   maxContext?: ComposerContext
   subagents?: ChatSubagentRef[]
+  /** 事项投递来源（via='items' + itemIds）；服务端写进 user message metadata。 */
+  meta?: ChatSendMeta
 }
 
 /** Transcript reload banner text — cleared by any later successful load. */
@@ -101,6 +103,9 @@ export interface UseAgentChatApiOverride {
   }) => import('@/lib/agent/api').AgentSSEConnection
   /** Stop an in-progress chat stream */
   stopChat?: (id: string) => Promise<unknown>
+  /** 后台等待期追加发送（2026-11-23 用户 #8）：注进服务端同一条 provider
+   *  查询。缺省走 api.injectChat。 */
+  injectChat?: (id: string, message: string) => Promise<{ injected: boolean; session_id: string }>
   /** CLI-advertised slash commands for the session (composer `/` menu). */
   getSlashCommands?: (id: string) => Promise<{ commands: string[] }>
   /** Probe whether the session has an in-flight server-side turn (clone chat
@@ -112,6 +117,7 @@ export interface UseAgentChatApiOverride {
     running: boolean
     partial: boolean
     background_tasks?: api.BackgroundTaskInfo[]
+    phase?: api.TurnPhase | null
   }>
 }
 
@@ -193,6 +199,10 @@ export function useAgentChat(sessionId: string | null, options?: {
   /** 正在等的后台任务（provider `background_tasks` 电平）。非空时流尾显示
    *  「后台运行中：<description>」，回合收口/停止/新回合都会清空。 */
   const [backgroundTasks, setBackgroundTasks] = useState<api.BackgroundTaskInfo[]>([])
+  /** 回合阶段（2026-11-23 用户 #8，server `turn_phase` / `/running.phase`）：
+   *  `background-wait` = 模型空闲、只等后台任务唤醒 → 输入不锁定，可直接说话
+   *  （经 /chat/inject 注进同一条 provider 查询，不打断后台）。 */
+  const [waitPhase, setWaitPhase] = useState<api.TurnPhase | null>(null)
   /** Slash commands the CLI advertises for this session (`system:init`). The
    *  set is skills/plugins-dependent, so it cannot be hardcoded in the UI. */
   const [slashCommands, setSlashCommands] = useState<string[]>([])
@@ -219,12 +229,18 @@ export function useAgentChat(sessionId: string | null, options?: {
   const streamThinkingRef = useRef('')
   const toolCallsRef = useRef<ToolCallRecord[]>([])
   const streamingRef = useRef(false)
+  /** 乐观行 id 序号：同一毫秒连发两条时 `temp-${Date.now()}` 会撞 id，
+   *  转录按 id 去重后只画得出一条（用户 #2 的另一种「输入消失」）。 */
+  const tempIdSeqRef = useRef(0)
+  const nextTempId = () => `temp-${Date.now()}-${++tempIdSeqRef.current}`
   // Track the session that initiated the current stream to prevent cross-session contamination
   const streamingSessionRef = useRef<string | null>(null)
   // 409 弹回的普通发送（消息没落库）→ 尾随的回合收口后自动补发一次。
   // 2026-11-10 用户事故：上一轮还在收尾时发的「起来了吗？」被静默吞掉，只好
   // 再问一遍。steer 有自己的重试环（steerLostRef），不走这里。
   const pendingSendRef = useRef<{ message: string; opts?: ChatSendOptions } | null>(null)
+  // 后台等待期追加发送（#8）：定义在 sendMessage 之后，409 分支经 ref 调用。
+  const interjectRef = useRef<((message: string) => Promise<boolean>) | null>(null)
   // sendMessage 定义在 resume 轮询之后 —— 轮询退出分支经 ref 补发，避免 TDZ。
   const sendMessageRef = useRef<((message: string, opts?: ChatSendOptions) => Promise<void>) | null>(null)
   // ── Resume-polling state (clone chat stream-resume, "关闭不丢失") ──
@@ -287,6 +303,7 @@ export function useAgentChat(sessionId: string | null, options?: {
     pendingSendRef.current = null
     setStatusMessage('')
     setBackgroundTasks([])
+    setWaitPhase(null)
     setStreamContent('')
     setStreamThinking('')
     setIsThinking(false)
@@ -504,6 +521,7 @@ export function useAgentChat(sessionId: string | null, options?: {
         const r = await checkRunningFn(sid)
         // 切回会话时补齐「后台运行中」——本实例没有这条 SSE，只能从运行态探测拿。
         if (Array.isArray(r.background_tasks)) setBackgroundTasks(r.background_tasks)
+        if (r.phase !== undefined) setWaitPhase(r.phase)
         if (!r.running) {
           // The route finalizes the row BEFORE unregistering the stream, so
           // running=false guarantees the finalized content is on this fetch.
@@ -522,6 +540,7 @@ export function useAgentChat(sessionId: string | null, options?: {
           timelineRef.current = []
           setStatusMessage('')
           setBackgroundTasks([])
+          setWaitPhase(null)
           // 被 409 弹回的发送：会话已真正空闲，补发一次（在飞时 sendMessage
           // 会被 streaming 闸挡住，所以放在清状态之后、下一次 tick 之前）。
           const pending = pendingSendRef.current
@@ -583,7 +602,7 @@ export function useAgentChat(sessionId: string | null, options?: {
 
     // Optimistic: add user message (preserve original @@syntax for display)
     const userMsg: AgentMessage = {
-      id: `temp-${Date.now()}`,
+      id: nextTempId(),
       session_id: sessionId,
       role: 'user',
       content: message,
@@ -591,6 +610,9 @@ export function useAgentChat(sessionId: string | null, options?: {
       is_summary: false,
       is_compressed: false,
       is_edited: false,
+      ...(opts?.meta?.via === 'items' && opts.meta.itemIds && opts.meta.itemIds.length > 0
+        ? { via: 'items', items: opts.meta.itemIds }
+        : {}),
     }
     setMessages(prev => [...prev, userMsg])
     setStreaming(true)
@@ -604,6 +626,7 @@ export function useAgentChat(sessionId: string | null, options?: {
     setError(null)
     setStatusMessage('')
     setBackgroundTasks([])
+    setWaitPhase(null)
     // contextUsage: NOT reset here — preserve the last known value so the
     // status bar stays populated between sends (and across dialog reopens).
     // The new value arrives via onContextUsage SSE handler during the stream.
@@ -619,6 +642,7 @@ export function useAgentChat(sessionId: string | null, options?: {
       effort: opts?.effort,
       maxContext: opts?.maxContext,
       subagents: opts?.subagents,
+      meta: opts?.meta,
     })
 
     const handlers: SSEHandlers = {
@@ -758,6 +782,9 @@ export function useAgentChat(sessionId: string | null, options?: {
       onBackgroundTasks: (data) => {
         setBackgroundTasks(Array.isArray(data.tasks) ? data.tasks : [])
       },
+      onTurnPhase: (data) => {
+        setWaitPhase(data.phase)
+      },
       onAssistantContinue: (data) => {
         // 后台任务唤醒的续轮：与上一段正文之间留空行，并新开一个 text 段，
         // 避免直播时两段话粘成一个气泡（2026-11-04）。
@@ -818,6 +845,7 @@ export function useAgentChat(sessionId: string | null, options?: {
         timelineRef.current = []
         setStatusMessage('')
         setBackgroundTasks([])
+        setWaitPhase(null)
         // Server-side event cards appended during this turn (task tools:
         // launch proposal / action request / reflection…) never ride the SSE
         // stream — without a re-read the card stays invisible until a manual
@@ -837,6 +865,21 @@ export function useAgentChat(sessionId: string | null, options?: {
         // and resent). Don't surface an error: drop the (never-persisted)
         // optimistic send and tail the live turn instead.
         if (data.code === 'STREAM_IN_PROGRESS' && apiOverrideRef.current?.checkRunning) {
+          // 后台等待期（#8）：这条消息该注进同一条 provider 查询，不是「被弹回」。
+          // 本地状态可能过期（刚好错过 turn_phase），服务端 409 的 phase 是权威。
+          const details = data.details as { phase?: string } | undefined
+          if (details?.phase === 'background-wait' && !steeringRef.current) {
+            // 先撤掉本次普通发送的乐观行；interject 自己维护乐观行并在失败时回退。
+            setMessages((prev) => prev.filter((m) => !m.id.startsWith('temp-')))
+            void (async () => {
+              const injected = await interjectRef.current?.(message)
+              if (injected) return
+              // 注入没成（回合正好开始生成等）：退回「尾随 + 收口补发」。
+              pendingSendRef.current = { message, opts }
+              startResumePolling(sessionId)
+            })()
+            return
+          }
           if (steeringRef.current) {
             steerLostRef.current = true
           } else {
@@ -857,6 +900,7 @@ export function useAgentChat(sessionId: string | null, options?: {
         streamingRef.current = false
         streamingSessionRef.current = null
         setBackgroundTasks([])
+        setWaitPhase(null)
         // Transport died without a terminal frame: the server may still have
         // finalized a partial row before the socket dropped. Re-read once so a
         // reload-after-crash shows whatever was actually produced (and the
@@ -874,6 +918,35 @@ export function useAgentChat(sessionId: string | null, options?: {
     connect(source, handlers)
   }, [sessionId, connect, setContextUsage, startResumePolling, loadMessages])
   sendMessageRef.current = sendMessage
+
+  /** 后台等待期追加发送（2026-11-23 用户 #8）：模型空闲等后台唤醒时，用户的
+   *  新指令注进服务端**同一条** provider 查询 —— 不开新回合、不打断后台。
+   *  成功 = true（乐观行留在转录里，回答经现有 SSE 继续流）；失败 = false
+   *  （乐观行撤掉，调用方回退普通发送 / 排队）。 */
+  const interject = useCallback(async (message: string): Promise<boolean> => {
+    if (!sessionId || !message.trim()) return false
+    const injectFn = apiOverrideRef.current?.injectChat ?? api.injectChat
+    const optimisticId = nextTempId()
+    setMessages((prev) => [...prev, {
+      id: optimisticId,
+      session_id: sessionId,
+      role: 'user',
+      content: message,
+      created_at: new Date().toISOString(),
+      is_summary: false,
+      is_compressed: false,
+      is_edited: false,
+    }])
+    try {
+      const res = await injectFn(sessionId, message)
+      if (!res?.injected) throw new Error('not injected')
+      return true
+    } catch {
+      setMessages((prev) => prev.filter((m) => m.id !== optimisticId))
+      return false
+    }
+  }, [sessionId])
+  interjectRef.current = interject
 
   const stopGenerate = useCallback(async () => {
     if (!sessionId) return
@@ -955,6 +1028,7 @@ export function useAgentChat(sessionId: string | null, options?: {
     toolCallsRef.current = []
     setStatusMessage('')
     setBackgroundTasks([])
+    setWaitPhase(null)
 
     // 中断的这一轮由 server 落成 interrupted 行（stopChat 等 finalize 完成才
     // 返回），这里重拉一遍让实录成为权威：本地的 partial 只是即时回显，服务端
@@ -1051,12 +1125,16 @@ export function useAgentChat(sessionId: string | null, options?: {
     statusMessage,
     /** 正在等的后台任务（非空时流尾显示「后台运行中：…」）。 */
     backgroundTasks,
+    /** 回合阶段（#8）：`background-wait` = 模型空闲等后台，输入不锁定。 */
+    waitPhase,
     /** Slash commands advertised by the CLI for the active session. */
     slashCommands,
     contextUsage,
     sendMessage,
     stopGenerate,
     steer,
+    /** 后台等待期追加发送（#8）：不打断后台、不开新回合。 */
+    interject,
     /** true 期间（stop→重发谷）UI 不应 flush 排队消息。 */
     steeringRef,
     handleConfirm,

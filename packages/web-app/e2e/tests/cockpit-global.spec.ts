@@ -260,12 +260,11 @@ test.describe("全局座舱 · 真数据 E2E", () => {
     await page.keyboard.press("Escape")
     await expect(page.getByTestId("cockpit-face")).toBeHidden({ timeout: 10_000 })
 
-    // v21 二轮起 HUD 只剩三枚只读读数：上下文 / 在场 / 模型 popover 的触发入口
-    // 已退役（明细在通讯台头部 MODEL / CTX / TOKEN 下拉），关闭钮左置由
-    // components/cockpit/__tests__/close-left-audit.test.tsx 单测覆盖。
-    await expect(page.getByTestId("ck12-rig-context")).toBeVisible()
-    const ctxTag = await page.getByTestId("ck12-rig-context").evaluate((el) => el.tagName)
-    expect(ctxTag).toBe("SPAN")
+    // v21 二轮起 HUD 只剩两枚只读读数（上下文百分比已于 2026-11-23 用户 #2 删除）；
+    // 在场 / 模型 popover 的触发入口已退役（明细在通讯台头部 MODEL / CTX / TOKEN 下拉），
+    // 关闭钮左置由 components/cockpit/__tests__/close-left-audit.test.tsx 单测覆盖。
+    await expect(page.getByTestId("ck12-rig-tokens")).toBeVisible()
+    await expect(page.getByTestId("ck12-rig-context")).toHaveCount(0)
 
     expect(audit.filtered, `console errors: ${JSON.stringify(audit.raw, null, 2)}`).toEqual([])
     audit.dispose()

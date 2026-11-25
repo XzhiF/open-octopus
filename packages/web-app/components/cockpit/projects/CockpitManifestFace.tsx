@@ -74,6 +74,9 @@ export function CockpitManifestFace({ cabinId, onClose }: CockpitManifestFacePro
           {p.git && <> · HEAD {p.git.commit}</>}
           {p.git?.msg && <> · {p.git.msg}</>}
         </div>
+        <div className="ck12-pcard-ml" title="任务分支从这条分支 fork，MR 默认也合回这条">
+          落点 ⎇ {p.mainline_branch ?? '默认分支'}
+        </div>
         <div className="ck12-pcard-stats">
           <span>作战 <b>{stats.jobs}</b></span>
           <span>在跑 <b>{stats.running}</b></span>
@@ -154,7 +157,7 @@ export function CockpitManifestFace({ cabinId, onClose }: CockpitManifestFacePro
             )}
             {local.length > 0 && (
               <>
-                <div className="ck12-sect">本地 / 外部 · 建舱时映射 <b>{local.length}</b></div>
+                <div className="ck12-sect">本地 / 外部 · 目录登记 <b>{local.length}</b></div>
                 {local.map(card)}
               </>
             )}
@@ -168,6 +171,7 @@ export function CockpitManifestFace({ cabinId, onClose }: CockpitManifestFacePro
       <CockpitRepoBinder
         open={bindOpen}
         cabinId={cabinId}
+        cabinName={cabinName}
         cabinPath={cabinPath}
         projects={projects}
         onClose={() => setBindOpen(false)}

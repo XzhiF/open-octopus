@@ -43,13 +43,46 @@ describe('CockpitJobHeader', () => {
     const { container: head } = renderHeader()
     expect(head.querySelector('.ck12-dtab')).toBeNull()
 
-    const { container } = render(<CockpitJobTabs tab="dialog" onTabChange={onTabChange} />)
-    for (const key of ['dialog', 'relay', 'run', 'changes', 'accept', 'files', 'debug', 'project']) {
+    // v22 #5：对话页签删除 —— 编队对话是独立 chat 窗。
+    // 2026-11-24：验收后加「归档」只读明细页签。
+    const { container } = render(<CockpitJobTabs tab="run" onTabChange={onTabChange} />)
+    for (const key of ['relay', 'run', 'changes', 'accept', 'archive', 'files', 'debug', 'project']) {
       expect(screen.getByTestId(`cockpit-tab-${key}`)).toBeInTheDocument()
     }
+    expect(screen.queryByTestId('cockpit-tab-dialog')).toBeNull()
     expect(container.querySelectorAll('.ck12-dtab').length).toBe(8)
     fireEvent.click(screen.getByTestId('cockpit-tab-run'))
     expect(onTabChange).toHaveBeenCalledWith('run')
+  })
+
+  it('非任务作业由宿主过滤「归档」：传 tabs 时只渲染给定页签', () => {
+    render(
+      <CockpitJobTabs
+        tab="run"
+        onTabChange={() => {}}
+        tabs={['relay', 'run', 'changes', 'accept', 'files', 'debug', 'project']}
+      />,
+    )
+    expect(screen.queryByTestId('cockpit-tab-archive')).toBeNull()
+  })
+
+  it('归档闸：待归档 / 归档中时头部挂 📦 签，点了切归档页签', () => {
+    const onOpenArchive = vi.fn()
+    const { rerender } = renderHeader({ status: 'awaiting_archive', onOpenArchive })
+    expect(screen.getByTestId('cockpit-dossier-archive').textContent).toContain('待归档')
+    fireEvent.click(screen.getByTestId('cockpit-dossier-archive'))
+    expect(onOpenArchive).toHaveBeenCalledTimes(1)
+
+    rerender(
+      <CockpitJobHeader
+        kind="task"
+        title="接入渠道"
+        status="archiving"
+        onClose={() => {}}
+        onOpenArchive={onOpenArchive}
+      />,
+    )
+    expect(screen.getByTestId('cockpit-dossier-archive').textContent).toContain('归档中')
   })
 
   it('副行空值整段省略：全空时没有副行', () => {

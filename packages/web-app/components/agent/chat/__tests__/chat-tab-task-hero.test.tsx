@@ -1,4 +1,4 @@
-// 新建开发任务向新建对话看齐（2026-10-28）：点「新建开发任务」后不再走底部
+﻿// 新建开发任务向新建对话看齐（2026-10-28）：点「新建开发任务」后不再走底部
 // 停靠工作台，而是同一套 hero —— composer 居中、标题换文案、cwd/项目控件
 // 挪到输入框下方第二行（hero footer），ctrlbar 内不再重复挂小 chip。
 
@@ -20,6 +20,7 @@ vi.mock("@/lib/agent/api", () => ({
   deleteSession: vi.fn(),
   getSession: vi.fn(),
   getSessionRunning: vi.fn().mockResolvedValue({ running: false }),
+  injectChat: vi.fn().mockResolvedValue({ injected: true }),
   createCloneSession: vi.fn(),
   cloneChatStream: vi.fn(),
   stopCloneChat: vi.fn(),

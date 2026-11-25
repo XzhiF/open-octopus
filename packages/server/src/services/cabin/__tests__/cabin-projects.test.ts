@@ -130,6 +130,42 @@ describe("CabinService · 项目关联 / 工作树 / 锚点", () => {
     expect(fs.existsSync(path.join(cabinPath, "projects", "console", "a.txt"))).toBe(true)
   })
 
+  it("setRepoMainline：可改 / 不存在拒绝 / null 清空，失败不改旧值", () => {
+    addLocal()
+    const repo = path.join(cabinPath, "apps", "console")
+    expect(git(repo, ["branch", "feat/landing"]).status).toBe(0)
+
+    expect(svc.setRepoMainline(cabinId, "console", "feat/landing").mainline_branch).toBe("feat/landing")
+    expect(svc.repoViews(cabinId)[0].mainline_branch).toBe("feat/landing")
+
+    // 本地与 origin 都没有 → 400 语义，落盘保持旧值。
+    expect(() => svc.setRepoMainline(cabinId, "console", "feat/missing")).toThrow(/都不存在/)
+    expect(readCabinConfig(cabinPath).repos[0].mainline_branch).toBe("feat/landing")
+
+    expect(svc.setRepoMainline(cabinId, "console", null).mainline_branch).toBeUndefined()
+    expect(readCabinConfig(cabinPath).repos[0].mainline_branch).toBeUndefined()
+
+    expect(() => svc.setRepoMainline(cabinId, "nope", "main")).toThrow(/repo not in cabin/)
+  })
+
+  it("openRepoWorktree 从落点分支 fork（mainline_branch 生效）", () => {
+    addLocal()
+    const repo = path.join(cabinPath, "apps", "console")
+    // 在 feat/landing 上多一个提交，主线切回去 —— 落点必须取这个提交。
+    expect(git(repo, ["checkout", "-b", "feat/landing"]).status).toBe(0)
+    fs.writeFileSync(path.join(repo, "landing.txt"), "landing\n")
+    expect(git(repo, ["add", "."]).status).toBe(0)
+    expect(git(repo, ["commit", "-m", "landing"]).status).toBe(0)
+    expect(git(repo, ["checkout", "feat/console"]).status).toBe(0)
+
+    svc.setRepoMainline(cabinId, "console", "feat/landing")
+    const entry = svc.openRepoWorktree(cabinId, "console")
+    const head = git(entry.worktree_path!, ["rev-parse", "HEAD"]).stdout.trim()
+    const landing = git(repo, ["rev-parse", "feat/landing"]).stdout.trim()
+    expect(head).toBe(landing)
+    expect(fs.existsSync(path.join(entry.worktree_path!, "landing.txt"))).toBe(true)
+  })
+
   it("removeRepo：无活跃任务时只删 config，不动磁盘", () => {
     const entry = addLocal()
     const wt = svc.openRepoWorktree(cabinId, "console")

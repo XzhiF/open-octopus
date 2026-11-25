@@ -1,4 +1,4 @@
-// packages/server/src/__tests__/tasks-v4-acceptance.test.ts
+﻿// packages/server/src/__tests__/tasks-v4-acceptance.test.ts
 //
 // task-phase-redesign ticket 07 — the acceptance API (通过/打回/auto_advance/入
 // archiving) + the derived view on GET /:id + the `phases` spec-field.
@@ -64,7 +64,6 @@ const KNOWN_REFS = new Set([
   "built-in/flow-p1",
   "built-in/flow-p2",
   "built-in/flow-p3",
-  "built-in/task-fix",
 ])
 const builtInStub = {
   get: (ref: string) =>
@@ -257,10 +256,6 @@ function launchedRow(taskId: string) {
   const row = new ExecutionDAO(mockHooks.db!).findLatestTaskInstance(taskId)
   if (!row) throw new Error(`no launch row for ${taskId}`)
   return row
-}
-
-function launchedIV(taskId: string): Record<string, string> {
-  return JSON.parse(launchedRow(taskId).input_values) as Record<string, string>
 }
 
 function specPhasesOf(taskId: string): Array<Record<string, unknown>> {
@@ -508,129 +503,37 @@ describe("AC1 — accepted: ledger + advance", () => {
   })
 })
 
-describe("AC3 — rejected: feedback artefact + next round on the same phase", () => {
-  it("writes fix-feedback-r{N}.md into the batch dir and dispatches round N+1 (same phase, same ws)", async () => {
-    const { taskId, home, wsPath, workspaceId } = seedAwaitingReview()
-    const res = await postAcceptance(taskId, {
-      phase_index: 1, round_index: 1, decision: "rejected", feedback: "登录跳转丢了 session，补 E2E",
-    })
-    expect(res.status, await res.clone().text()).toBe(200)
-    const body = (await res.json()) as { next_action: string; dispatch: Record<string, unknown> }
-
-    expect(body.next_action).toBe("dispatched")
-    // 同一 phase 的下一轮（不是下一个 phase）。
-    expect(body.dispatch).toMatchObject({ phase_index: 1, round_index: 2, workspace_id: workspaceId })
-
-    // 账本一行：rejected + feedback 全文（可追溯）。
-    expect(ledgerRows(db, taskId)).toEqual([
-      { phase_index: 1, round_index: 1, decision: "rejected", feedback: "登录跳转丢了 session，补 E2E" },
-    ])
-
-    // K7 反馈产物化 — N = 被打回的那一轮。
-    const artifact = path.join(home, batchRel("p1"), "fix-feedback-r1.md")
-    expect(fs.existsSync(artifact), artifact).toBe(true)
-    const text = fs.readFileSync(artifact, "utf-8")
-    expect(text).toContain("登录跳转丢了 session，补 E2E")
-    expect(text).toContain("Round 1")
-    // 同一次派发把它 seed 进了 ws（K9 下行 — 执行侧 agent 读得到）。
-    expect(fs.existsSync(path.join(wsPath, batchRel("p1"), "fix-feedback-r1.md"))).toBe(true)
-
-    // 新 round 落在同一 ws、打标 (1,2)，feedback 同时走 input_values。
-    const tagged = db
-      .prepare("SELECT phase_index, round_index, workspace_id, status FROM executions WHERE round_index = 2")
-      .all() as Array<{ phase_index: number; round_index: number; workspace_id: string; status: string }>
-    expect(tagged).toHaveLength(1)
-    expect(tagged[0].phase_index).toBe(1)
-    expect(tagged[0].workspace_id).toBe(workspaceId)
-    const iv = stubService.create.mock.calls.at(-1)![1].input_values as Record<string, string>
-    expect(iv.feedback).toBe("登录跳转丢了 session，补 E2E")
-    expect(iv._phase_index).toBe("1")
-    expect(iv._round_index).toBe("2")
-    // 票03: 轮次坐标同样长在行上（派生视图/账本按键取行，不再从 config 反查）。
-    expect([launchedRow(taskId).phase_index, launchedRow(taskId).round_index]).toEqual([1, 2])
-
-    expect(sseOf(PHASE_STATUS_UPDATE_EVENT)).toEqual([
-      { event: PHASE_STATUS_UPDATE_EVENT, data: { task_id: taskId, phase_index: 1, status: "running", round_index: 2 } },
-    ])
-    // 修复轮同样是新 episode：行一直是 running，也必须补发状态帧。
-    expect(sseOf(TASK_STATUS_EVENT).map((e) => e.data)).toContainEqual({
-      task_id: taskId,
-      status: "running",
-    })
-  })
-
-  it("round index follows the ledger (rejects+1) and the whole rejection chain stays traceable", async () => {
-    const { taskId, home } = seedAwaitingReview()
-    // r1 rejected → round 2 dispatches.
-    const r1 = await postAcceptance(taskId, { phase_index: 1, round_index: 1, decision: "rejected", feedback: "first" })
-    const d1 = ((await r1.json()) as { dispatch: { execution_id: string } }).dispatch
-    completeDispatchedRound(d1.execution_id, "completed")
-
-    // r2 rejected → round 3 (2 rejected rows + 1).
-    const r2 = await postAcceptance(taskId, { phase_index: 1, round_index: 2, decision: "rejected", feedback: "second" })
-    const d2 = ((await r2.json()) as { dispatch: { round_index: number } }).dispatch
-    expect(d2.round_index).toBe(3)
-    expect(fs.existsSync(path.join(home, batchRel("p1"), "fix-feedback-r2.md"))).toBe(true)
-    completeDispatchedRound((
-      db.prepare("SELECT id FROM executions WHERE round_index = 3 AND phase_index = 1").get() as { id: string }
-    ).id, "failed")
-
-    // r3 (a FAILED round — US8: 失败进待验收，不是红死状态) accepted → 账本三行可追溯 + 进 phase 2.
-    const r3 = await postAcceptance(taskId, { phase_index: 1, round_index: 3, decision: "accepted" })
-    expect(r3.status, await r3.clone().text()).toBe(200)
-    const body = (await r3.json()) as {
-      next_action: string
-      dispatch: { phase_index: number }
-      task: { derived: { phaseViews: unknown[] } }
-    }
-    expect(body.next_action).toBe("dispatched")
-    expect(body.dispatch.phase_index).toBe(2)
-    expect(ledgerRows(db, taskId).map((r) => [r.phase_index, r.round_index, r.decision])).toEqual([
-      [1, 1, "rejected"],
-      [1, 2, "rejected"],
-      [1, 3, "accepted"],
-    ])
-    const p1 = phaseOf(body.task.derived as never, 1)
-    expect(p1.status).toBe("accepted")
-    expect(p1.acceptedRound).toBe(3)
-    // 轮次历史完整（票 11 时间线吃的就是这张表）。
-    expect(p1.rounds.map((r) => [r.roundIndex, r.state, r.decision])).toEqual([
-      [1, "succeeded", "rejected"],
-      [2, "succeeded", "rejected"],
-      [3, "failed", "accepted"],
-    ])
-  })
-})
-
-describe("AC3.5 — ADR-0024 打回单路径（rejected 恒派 task-fix 修复轮；next_flow 已删除）", () => {
-  const posix = (p: string): string => p.split(path.sep).join("/")
-
-  it("rejected（无路由字段）→ 本轮行上是 built-in/task-fix + server 合成输入；K16 spec.phases[] 绑定冻结不动", async () => {
+describe("AC3.5 — 打回 = doer 在工作区原地修（2026-11-23 #11 删 task-fix 后）", () => {
+  it("rejected → 200 fixing：只落 fix-feedback-r1.md，不派新轮、不写账本，任务仍待验收", async () => {
     const { taskId } = seedAwaitingReview()
     const res = await postAcceptance(taskId, {
       phase_index: 1, round_index: 1, decision: "rejected", feedback: "小错直接修",
     })
     expect(res.status, await res.clone().text()).toBe(200)
-    // 票03 之后没有信封可读：本轮实际跑的流就是行上的 workflow_ref —— 单路径后恒 task-fix。
-    const row = launchedRow(taskId)
-    expect(row.workflow_ref).toBe("built-in/task-fix")
-    // K16 回归（ADR-0024 Consequences）：路由覆盖只落本轮 launch step，spec phases[] 绑定不改写。
-    expect(specPhasesOf(taskId)[0].workflowRef).toBe("built-in/flow-p1")
-    // 合成输入长在这一轮的行上（ws 同构相对位 —— 执行侧在 ws 操作，collect 回流 home）。
-    const iv = launchedIV(taskId)
-    expect(iv.phase_spec_dir).toBe(posix(batchRel("p1")))
-    expect(iv.feedback_path).toBe(posix(path.join(batchRel("p1"), "fix-feedback-r1.md")))
-    expect(iv.task_artifacts_dir).toBe(taskHome.artifactsDir(taskId))
-    // 反馈即修复指令：同时走 input_values.feedback（task-fix 的指令信道）。
-    expect(iv.feedback).toBe("小错直接修")
-    expect(iv._phase_index).toBe("1")
-    expect(iv._round_index).toBe("2")
-    // 行上的轮次坐标与 input_values 的 stamps 同段共存。
-    expect([row.phase_index, row.round_index]).toEqual([1, 2])
-    // 派生视图末轮带上实际执行流 = task-fix（round 徽标数据源 — 修复轮审计线）。
-    const body = (await res.json()) as { task: { derived: never } }
+    const body = (await res.json()) as {
+      next_action: string
+      acceptance_id: string
+      task: { derived: never }
+    }
+    expect(body.next_action).toBe("fixing")
+    expect(body.acceptance_id).toBe("")
+
+    // 不新开轮：没有新的 execution 行（原来的 1 轮还在等验收）。
+    expect(stubService.create).not.toHaveBeenCalled()
     const p1 = phaseOf(body.task.derived, 1)
-    expect(p1.rounds.at(-1)!.exec).toMatchObject({ workflow_ref: "built-in/task-fix" })
+    expect(p1.status).toBe("awaiting_review")
+    expect(p1.awaitingRound).toBe(1)
+    expect(p1.rounds).toHaveLength(1)
+
+    // 不写验收账本 —— 该轮的唯一终局仍是人后来的「通过」。
+    expect(ledgerRows(db, taskId)).toHaveLength(0)
+
+    // 反馈产物化（doer 的修复指令来源）。
+    const fb = path.join(taskHome.homePath(taskId), batchRel("p1"), "fix-feedback-r1.md")
+    expect(fs.readFileSync(fb, "utf-8")).toContain("小错直接修")
+
+    // K16：spec.phases[] 绑定冻结不动。
+    expect(specPhasesOf(taskId)[0].workflowRef).toBe("built-in/flow-p1")
   })
 
   it("请求仍携带 next_flow（旧客户端残留）→ 400 响亮拒收；账本不脏、零派发（ADR-0024 干净删除，无隐藏档）", async () => {
@@ -722,21 +625,16 @@ describe("AC4 — guards (409/404/400)", () => {
     expect(ledgerRows(db, taskId)).toEqual([])
   })
 
-  it("a rejected decision is STILL recorded when the retry dispatch fails (contract broke out of band)", async () => {
+  it("打回不依赖派发：批次 spec.md 缺失也照样落 fix-feedback 并保持待验收", async () => {
     const { taskId, specDirs } = seedAwaitingReview()
-    // 票03 换了失败面：deriveView 按 executions.task_id 取轮次（不再 join 工作区/信封），
-    // 所以工作区消失也照样看得见轮次、闸门照开；而 arm 每次都从 task_spec + home 现算
-    // 启动计划 ⇒ 带外删掉批次的 spec.md 就是「决定能落、派发被拒」的现实来源。
+    // 新模型里打回只产物化 + 唤醒 doer，不再 arm 新轮 —— 批次缺角不再是 409 面。
     fs.rmSync(path.join(specDirs.get(1)!, "spec.md"))
     const res = await postAcceptance(taskId, { phase_index: 1, round_index: 1, decision: "rejected", feedback: "x" })
-    expect(res.status, await res.clone().text()).toBe(409)
-    expect(((await res.json()) as { error: string }).error).toMatch(/phase:1:spec-missing/)
-    // 人的决定是历史事实：账本保留，只是没有新轮次。
-    expect(ledgerRows(db, taskId)).toHaveLength(1)
+    expect(res.status, await res.clone().text()).toBe(200)
+    expect(((await res.json()) as { next_action: string }).next_action).toBe("fixing")
+    expect(ledgerRows(db, taskId)).toHaveLength(0)
     expect((db.prepare("SELECT COUNT(*) c FROM executions WHERE round_index = 2").get() as { c: number }).c).toBe(0)
-    // 派生态退到 pending（无在跑 round、最新轮已 rejected）— 重试由人发起。
-    const detail = service.getTask(taskId)
-    expect(phaseOf(detail.derived, 1).status).toBe("pending")
+    expect(phaseOf(service.getTask(taskId).derived, 1).status).toBe("awaiting_review")
   })
 })
 
@@ -913,15 +811,15 @@ describe("AC2 — autoAdvance=false parks at the human gate", () => {
 // 真实派发路径上验它的可观察面（见 P3 的 failed 用例）。
 
 describe("review P3 — dispatched round terminal fires awaiting_review", () => {
-  it("rejected → round 2 dispatches → round completes → awaiting_review frame (1,2)", async () => {
+  it("accepted → 下一 phase 派发 → 该轮完成 → awaiting_review frame (2,1)", async () => {
     const { taskId } = seedAwaitingReview()
-    const res = await postAcceptance(taskId, { phase_index: 1, round_index: 1, decision: "rejected", feedback: "x" })
+    const res = await postAcceptance(taskId, { phase_index: 1, round_index: 1, decision: "accepted" })
     const dispatch = ((await res.json()) as { dispatch: { execution_id: string } }).dispatch
     completeDispatchedRound(dispatch.execution_id, "completed")
     const frames = sseOf(PHASE_STATUS_UPDATE_EVENT)
     expect(frames.some((f) => (f.data as { status?: string }).status === "awaiting_review"
-      && (f.data as { phase_index?: number }).phase_index === 1
-      && (f.data as { round_index?: number }).round_index === 2)).toBe(true)
+      && (f.data as { phase_index?: number }).phase_index === 2
+      && (f.data as { round_index?: number }).round_index === 1)).toBe(true)
     // 卡片进「待验收」是派生态：没有新行被持久化成终态。
     expect(taskRow(db, taskId).status).toBe("running")
     expect(service.getTask(taskId).derived.taskStatus).toBe("awaiting_review")
@@ -929,7 +827,7 @@ describe("review P3 — dispatched round terminal fires awaiting_review", () => 
 
   it("failed round also fires awaiting_review (terminal ≠ success)", async () => {
     const { taskId } = seedAwaitingReview()
-    const res = await postAcceptance(taskId, { phase_index: 1, round_index: 1, decision: "rejected", feedback: "x" })
+    const res = await postAcceptance(taskId, { phase_index: 1, round_index: 1, decision: "accepted" })
     const dispatch = ((await res.json()) as { dispatch: { execution_id: string } }).dispatch
     completeDispatchedRound(dispatch.execution_id, "failed")
     const frames = sseOf(PHASE_STATUS_UPDATE_EVENT)
@@ -938,7 +836,7 @@ describe("review P3 — dispatched round terminal fires awaiting_review", () => 
     // 否则卡片离开「待验收」列，acceptance 就再也点不动了。
     expect(taskRow(db, taskId).status).toBe("running")
     expect(sseOf(TASK_STATUS_EVENT).filter((e) => e.data.status === "failed")).toHaveLength(0)
-    const res2 = await postAcceptance(taskId, { phase_index: 1, round_index: 2, decision: "accepted" })
+    const res2 = await postAcceptance(taskId, { phase_index: 2, round_index: 1, decision: "accepted" })
     expect(res2.status, await res2.clone().text()).toBe(200)
   })
 })

@@ -126,6 +126,8 @@ class ChatEventBridge {
   private lastTaskStatus = new Map<string, string>()
   /** 验收引导唤醒去重：task:phase:round → 已唤醒。 */
   private acceptanceGuided = new Set<string>()
+  /** 打回修复唤醒去重：task:phase:round:反馈指纹 → 已唤醒（同一条反馈只叫一次）。 */
+  private fixGuided = new Set<string>()
   /** 通用工作流运行卡去重：executionId → 已落卡（一次执行一张，原地走生命周期）。 */
   private workflowRunCarded = new Set<string>()
   /** 运行事件卡去重：incidentId:status:options → 已落卡（升级会再落一张）。 */
@@ -1353,17 +1355,23 @@ class ChatEventBridge {
   }
 
   /**
-   * 作者提问已被回答（2026-11-16 双会话同步）：用户在**任务线程**里直接答了
-   * 一张问题卡时，舱主会话里镜像的那张 authorAsk 卡也要变成只读 —— 否则
-   * 主会话的「待回答」队列永远挂着一条已经答过的问题。
+   * 作者提问已被回答（2026-11-16 双会话同步 + v22 #9）：作者线程里出现真人
+   * 消息（决策代述 / 编队 chat 直接回复都算）时，舱主会话里镜像的那张
+   * authorAsk 卡也要变成只读 —— 否则「待你定」永远挂着一条已经答过的问题。
    *
-   * 判据：作者线程收到「用户回答了以下问题」用户消息 → 把该线程在舱主会话
-   * 里最新一张无 decision 的 authorAsk 卡写回 activity.decision。
+   * 判据：把该线程在舱主会话里最新一张无 decision 的 authorAsk 卡写回
+   * activity.decision + 一条回执；委派同时回 running。via 只区分回执文案。
    */
-  markAuthorAskAnswered(authorSessionId: string): void {
+  markAuthorAskAnswered(
+    authorSessionId: string,
+    opts: { via?: "thread" | "direct" } = {},
+  ): void {
     if (!this.db) return
     const subject = this.resolveAskSubject(authorSessionId)
     if (!subject?.mainSessionId) return
+    // v22 #9（2026-11-23 用户）：判据不再只认决策代述那一句固定文案 ——
+    // 人在编队 chat 里直接说话同样算「这条提问已经答了」；via 只影响回执文案。
+    const direct = opts.via === "direct"
     let cards: Array<{ id: string; metadata: string | null }> = []
     try {
       cards = this.db.prepare(
@@ -1385,7 +1393,7 @@ class ChatEventBridge {
       if (activity.decision) return // 最新一张已经答过，不同步更早的
       activity.decision = {
         id: "answer_from_thread",
-        label: "已回答",
+        label: direct ? "对话里直接回复" : "已回答",
         at: new Date().toISOString(),
       }
       meta.activity = activity
@@ -1401,7 +1409,7 @@ class ChatEventBridge {
           ?? subject.subject,
         handle: typeof payload.handle === "string" ? payload.handle : subject.handle,
         title: typeof payload.taskName === "string" ? payload.taskName : subject.title,
-        label: "已回答（任务线程兜底）",
+        label: direct ? "已回答（对话里直接回复）" : "已回答（任务线程兜底）",
       })
       if (subject.subject.kind === "delegation") {
         try { this.delegationStateHook?.(subject.subject.id, "running") } catch { /* best effort */ }
@@ -1410,6 +1418,88 @@ class ChatEventBridge {
       this.emitCabinView(subject.cabinId)
       return
     }
+  }
+
+  /** 2026-11-24 用户 #2：任务 / 委派线程里的一轮回复 → 舱主会话的只读回传卡。
+   *
+   *  汐音派出去的任务，人可能直接在任务 chat 里跟执行者交互；那条线的回复原先
+   *  只有该线程自己看得到，汐音完全无感（设计断路）。这里在回合收尾时把
+   *  「人说了什么 + agent 回了什么」压成一张 event 卡落进主会话：零 LLM、不唤醒，
+   *  下一轮她自然在转录里看到；要展开就点编队 / 详情进那条线程。
+   *
+   *  wake 回合（汐音转达 / 恢复 / 引导）的回复同样回传 —— 那正是
+   *  「汐音 → 任务 agent」这条路的回声；系统指令不作为「你说了什么」写进来。 */
+  requestThreadReplyMirror(input: {
+    sessionId: string
+    messageId: string
+    userText: string
+    replyText: string
+  }): void {
+    if (!this.db) return
+    const subject = this.resolveAskSubject(input.sessionId)
+    if (!subject?.mainSessionId || subject.mainSessionId === input.sessionId) return
+
+    const clip = (text: string, max: number) => {
+      const flat = text.replace(/\s+/g, " ").trim()
+      return flat.length > max ? `${flat.slice(0, max)}…` : flat
+    }
+    const reply = input.replyText.replace(/\s+/g, " ").trim()
+    // 纯应答（「收到 / 好」）不值得占主会话上下文；有实质内容的才回传。
+    if (reply.length < 20) return
+
+    try {
+      const dup = this.db.prepare(
+        "SELECT 1 FROM messages WHERE session_id = ? AND metadata LIKE ? LIMIT 1",
+      ).get(subject.mainSessionId, `%"threadReplyMessageId":"${input.messageId}"%`)
+      if (dup) return
+    } catch { return }
+
+    const now = new Date().toISOString()
+    const replyExcerpt = clip(input.replyText, 520)
+    const userExcerpt = clip(input.userText, 160)
+    const title = `${subject.handle} ${subject.title} · 回复`
+    try {
+      this.db.prepare(
+        "INSERT INTO messages (id, session_id, role, content, metadata, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+      ).run(
+        randomUUID(),
+        subject.mainSessionId,
+        "user",
+        // 第 2 行是 TUI 事件卡显示的摘要（回复本身）；用户原话紧随其后，
+        // 只在转录里给模型看，不在卡面重复。wake 回合没有「你说了什么」。
+        `[任务回复] ${subject.handle} ${subject.title}\n↳ ${replyExcerpt}` +
+          (userExcerpt ? `\n你：${userExcerpt}` : ''),
+        JSON.stringify({
+          displayType: "event",
+          activity: {
+            kind: "cabin.thread_reply",
+            severity: "info",
+            title,
+            message: replyExcerpt,
+            workspaceId: subject.workspaceId,
+            // 不带 status：带 status + taskId 会被前端当任务状态卡接管。
+            taskId: null,
+            payload: {
+              threadReply: {
+                threadReplyMessageId: input.messageId,
+                sessionId: input.sessionId,
+                subject: subject.subject,
+                handle: subject.handle,
+                title: subject.title,
+                chars: reply.length,
+                at: now,
+              },
+            },
+          },
+        }),
+        now,
+      )
+      this.db.prepare(
+        "UPDATE sessions SET last_message_at = ?, updated_at = ? WHERE id = ?",
+      ).run(now, now, subject.mainSessionId)
+      // 开着的主对话立即刷新（零 LLM、不唤醒）。
+      this.notifySession(subject.mainSessionId, subject.workspaceId)
+    } catch { /* best effort：回传失败不影响线程本身 */ }
   }
 
   /** design 24 §5：答完留一条回执（幂等键 = askMessageId），刷新/换设备也在。 */
@@ -1703,14 +1793,120 @@ class ChatEventBridge {
       "3. 一次只推进一条场景：按 steps 讲清「打开哪 → 做什么 → 看到什么」；提问一律用对话正文，不要调用 AskUserQuestion（选项卡会打断逐条引导）；用户要看页面就 start_acceptance_preview（结束 stop_acceptance_preview）。",
       "4. 只有用户点名「这条再跑一下」时，才对该机器证据项调 run_acceptance_probe；结果讲给用户，但不要让它变成人工勾选项。",
       "5. 用户明确表态后直接调 record_acceptance_check(confirmed=true)（只对 cases）；不要代替人判断。",
-      "不通过 → 当场小修（只改直接相关的 ≤2 个文件，不改 spec），改完按场景重看再确认；",
-      "超出小修边界 → 调 propose_acceptance_escalation 让人确认升级大修复。",
+      "不通过 → 自己规划修复：直接在工作区改（相关文件不限个数，不改 spec/票），跑验证，改完按场景重看再确认；",
+      "修不完或要动规格 → 开票留档（ready-for-agent / ready-for-human），不要硬改。",
       "场景都有结论后：用户明确说「放行 / 通过 / 可以了」→ submit_acceptance_decision(decision=\"accepted\", confirmed=true)；",
       "用户明确说「退回 / 不行，让他改…」→ submit_acceptance_decision(decision=\"rejected\", feedback=他的原话, confirmed=true)。",
       "人点验收台是兜底，不是必需；但没有明确表态绝不放行、绝不退回，也不要把未勾场景当成通过。",
     ].join("\n")
     void this.wake(
       { sessionId: row.source_chat_session_id, org: row.repo_group ?? "", workspaceId: row.workspace_id ?? null },
+      event,
+      { ephemeral: true, message },
+    )
+  }
+
+  /** 验收打回（2026-11-23 #11）：把反馈交给 task doer 在**工作区原地修**。
+   *
+   *  与其它引导不同，唤醒目标 = 任务线程（tasks.source_chat_session_id，ADR-0025
+   *  唯一写者）—— 它带着 workspace cwd 和 doer 写权；舱主会话只补一张卡，不唤醒。
+   *  不新开轮、不写验收账本：任务保持待验收，doer 修完由人再验。 */
+  requestFixGuide(
+    taskId: string,
+    info: { phaseIndex: number; roundIndex: number; feedback: string },
+  ): void {
+    if (!this.db) return
+    const feedback = info.feedback.trim()
+    if (!feedback) return
+    const key = `${taskId}:${info.phaseIndex}:${info.roundIndex}:${feedback.length}:${feedback.slice(0, 48)}`
+    if (this.fixGuided.has(key)) return
+    let row: {
+      name?: string
+      repo_group?: string | null
+      source_chat_session_id?: string | null
+      workspace_id?: string | null
+      cabin_id?: string | null
+    } | undefined
+    try {
+      row = this.db.prepare(
+        "SELECT name, repo_group, source_chat_session_id, workspace_id, cabin_id FROM tasks WHERE id = ?",
+      ).get(taskId) as typeof row
+    } catch {
+      return
+    }
+    const threadSessionId = row?.source_chat_session_id ?? null
+    const mainSessionId = row?.cabin_id ? this.cabinMainSession(row.cabin_id) : null
+    const target = threadSessionId ?? mainSessionId
+    if (!target) return
+    let session: { clone_name?: string | null } | undefined
+    try {
+      session = this.db.prepare("SELECT clone_name FROM sessions WHERE id = ?")
+        .get(target) as typeof session
+    } catch {
+      return
+    }
+    if (!session || session.clone_name) return // legacy clone thread — untouched
+    this.fixGuided.add(key)
+
+    const name = row?.name ?? taskId.slice(0, 8)
+    const coord = `P${info.phaseIndex} · R${info.roundIndex}`
+    const title = `已退回 · ${name}`
+    const detail = `任务：${name} · ${coord} · 反馈 ${feedback.length} 字 —— doer 在工作区原地修，修完再验`
+    const actions: TaskCardAction[] = [{ id: "acceptance_open_window", label: "打开验收台" }]
+    const event = getActivityBus().publish({
+      kind: "task.review",
+      severity: "warn",
+      title,
+      message: detail,
+      workspaceId: row?.workspace_id ?? null,
+      taskId,
+      sessionId: target,
+      payload: {
+        status: "awaiting_review",
+        actions,
+        phaseIndex: info.phaseIndex,
+        roundIndex: info.roundIndex,
+        fixRequest: true,
+      },
+    })
+    this.appendTaskCard({
+      sessionId: target,
+      workspaceId: row?.workspace_id ?? null,
+      title,
+      detail,
+      event,
+      status: "awaiting_review",
+      actions,
+    })
+    this.notifySession(target, row?.workspace_id ?? null)
+    this.emitCabinView(row?.cabin_id)
+    // 舱主会话补同一张卡（只读回看），不唤醒 —— 真正动手的是任务线程。
+    if (mainSessionId && mainSessionId !== target) {
+      this.appendTaskCard({
+        sessionId: mainSessionId,
+        workspaceId: row?.workspace_id ?? null,
+        title,
+        detail,
+        event,
+        status: "awaiting_review",
+        actions,
+      })
+      this.notifySession(mainSessionId, row?.workspace_id ?? null)
+    }
+
+    const message = [
+      `[打回修复] 任务 ${taskId} 的 ${coord} 验收被打回。反馈如下（原文另存 fix-feedback-r${info.roundIndex}.md）：`,
+      "",
+      feedback,
+      "",
+      "本轮不另开工作流、不新建 Round：你在当前工作区**原地修**。",
+      "1. 先把反馈拆成条目，定位到代码/测试，再动手；只改与该问题直接相关的代码，不顺手重构、不扩范围。",
+      "2. 改完必须跑验证（测试 / 命令），证据要可定位；仅声称完成不算。",
+      "3. 用一两句话把「改了什么 / 验证结果」告诉用户，停在待验收等用户再验。",
+      "4. 不要调用 submit_acceptance_decision（放行/退回由人决定）；修不完或需要动规格 → 开票留档并说明原因。",
+    ].join("\n")
+    void this.wake(
+      { sessionId: target, org: row?.repo_group ?? "", workspaceId: row?.workspace_id ?? null },
       event,
       { ephemeral: true, message },
     )

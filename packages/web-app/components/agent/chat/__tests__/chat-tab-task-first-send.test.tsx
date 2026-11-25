@@ -1,4 +1,4 @@
-// 新建开发任务的首条消息必须真的发出去（bug 2026-10-29）。
+﻿// 新建开发任务的首条消息必须真的发出去（bug 2026-10-29）。
 //
 // 现场：从没有 activeSessionId 的界面点「新建开发任务」→ 输入第一句话 → 界面
 // 跳到 chat 后完全静止，没有运行中、没有回复；刷新后才看到任务。
@@ -32,6 +32,7 @@ vi.mock("@/lib/agent/api", () => ({
   getSessionSlashCommands: vi.fn().mockResolvedValue({ commands: [] }),
   chatStream,
   stopChat: vi.fn().mockResolvedValue({ success: true }),
+  injectChat: vi.fn().mockResolvedValue({ injected: true }),
   createCloneSession: vi.fn(),
   cloneChatStream: vi.fn(),
   stopCloneChat: vi.fn(),

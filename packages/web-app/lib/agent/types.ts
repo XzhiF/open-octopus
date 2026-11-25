@@ -72,6 +72,21 @@ export interface MessageTimelineEntry {
   id?: string
 }
 
+/** 发送时附带的来源元数据（2026-11-24 用户）。
+ *  via='items' = 从舱内「事项」窗投递；itemIds = cabin_items.id 列表。
+ *  服务端把它写进 user message 的 metadata，转录行据此渲染来源签，
+ *  并把事项标成 delivered —— 不靠正文文本约定。 */
+export interface ChatSendMeta {
+  via?: 'items'
+  itemIds?: string[]
+}
+
+/** 只用于输入框挂件展示的附加字段（不发给服务端）。 */
+export interface ChatSeedMeta extends ChatSendMeta {
+  /** 挂件上的可读标签（#IT-12 …）。 */
+  labels?: string[]
+}
+
 export interface AgentMessage {
   id: string
   session_id: string
@@ -86,6 +101,10 @@ export interface AgentMessage {
   is_edited: boolean
   /** metadata.displayType — e.g. 'event' for server-originated activity cards. */
   displayType?: string
+  /** metadata.via — 'items' = 从「事项」窗投递（来源签据此渲染）。 */
+  via?: 'items' | string
+  /** metadata.items — 投递的事项 id 列表（舱内事项窗 / 回执卡用）。 */
+  items?: string[]
   /** metadata.activity — payload of a server-originated activity event. */
   activity?: {
     kind?: string

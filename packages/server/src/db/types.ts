@@ -765,3 +765,20 @@ export interface CabinDelegationRow {
   updated_at: string
   ended_at: string | null
 }
+
+/** 舱内事项（2026-11-24）：零散小待办；与 task 不是一层。 */
+export interface CabinItemRow {
+  id: string
+  cabin_id: string
+  seq: number
+  kind: 'optimize' | 'fix' | 'idea'
+  status: 'todo' | 'delivered' | 'done' | 'dropped'
+  title: string
+  body: string
+  created_at: string
+  updated_at: string
+  delivered_at: string | null
+  closed_at: string | null
+  delivery_session_id: string | null
+  delivery_message_id: string | null
+}

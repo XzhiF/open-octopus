@@ -1,19 +1,16 @@
-// packages/server/src/__tests__/tasks-takeover.test.ts
+﻿// packages/server/src/__tests__/tasks-takeover.test.ts
 //
-// taskboard-modal-v2 票08 — 人工接管聚合端点（三分支的服务端两条）。
+// taskboard-modal-v2 票08 — 人工接管聚合端点（服务端面）。
 //
 //   POST /api/tasks/:id/takeover          ② 停流·接管：abort 绑定执行 → 执行行
 //                                          takeover_at 标记 → doer 会话就绪。
 //   POST /api/tasks/:id/takeover/deliver  「✓ 确认本 Round 交付 · 转待验收」：
 //                                          takeover_delivered_at + 现场 HEAD 快照
 //                                          进 end_commit_id —— 派生链随即放行 awaiting_review。
-//   POST /api/tasks/:id/fix-round         ③ 派 task-fix（运行中·非验收决策）：
-//                                          abort 当前轮 → fix-feedback-r{N+1}.md →
-//                                          恒 built-in/task-fix 新轮派发；不写账本决策行。
+// 2026-11-23 #11：③ 改派 task-fix（POST /:id/fix-round）随修复轮一起删除 ——
 //
 // 期望值来源（防自证）：ADR-0025 三条后果（abort 不留 paused 半程 / 交付仍过 Gate /
-// 无复检不加机器闸）+ spec.md 三分支段 + 票05 已钉的 fix 路由契约（override 只进
-// workflow_chain，信封 phases[] 冻结 K16）。不测内部调用次序。
+// 无复检不加机器闸）+ spec.md 接管段。不测内部调用次序。
 //
 // 真 better-sqlite3 + applySchema + 真 tmp task home + stub 执行服务注册表
 // （tasks-v4-pause-resume.test.ts 惯例）+ 真 TaskDoerService（01 现成，doer 会话
@@ -75,7 +72,7 @@ vi.mock("../services/execution-service-registry", () => ({
   },
 }))
 
-// 派发路径（fix-round 的新轮）经 task-lifecycle armAndLaunch → 静态注册表拿执行服务，
+// 派发路径经 task-lifecycle armAndLaunch → 静态注册表拿执行服务，
 // 与上面同一 stub。create 落真实 pending 行，start 翻 running —— 镜像
 // tasks-v4-acceptance.test.ts 的写法（读模型看的是真行）。
 function seedLaunchRows() {
@@ -102,7 +99,7 @@ function seedLaunchRows() {
 }
 let launchSeq = 0
 
-const KNOWN_REFS = new Set(["built-in/flow-p1", "built-in/flow-p2", "built-in/task-fix"])
+const KNOWN_REFS = new Set(["built-in/flow-p1", "built-in/flow-p2"])
 const builtInStub = {
   get: (ref: string) => (KNOWN_REFS.has(ref) ? { ref, content: "name: demo\nnodes: []\n", name: "demo" } : null),
 } as never
@@ -437,84 +434,6 @@ describe("POST /:id/takeover/deliver — 确认本 Round 交付 · 转待验收"
     const blocked = await post(`${again.taskId}/acceptance`, { phase_index: 1, round_index: 1, decision: "accepted" })
     expect(blocked.status).toBe(409)
     expect((await blocked.json()).error).toContain("takeover")
-  })
-})
-
-// ── 分支③：运行中改派 task-fix（恒修复轮，不写验收决策行）────────────────
-
-describe("POST /:id/fix-round — 三分支 ③ / 接管中「改派 task-fix」", () => {
-  it("运行中派 ③：abort 当前轮 → fix-feedback-r2.md 落批次目录 → 恒 task-fix 新轮 2 开跑；零账本行", async () => {
-    const { taskId, execIds, home } = seed({ rounds: [{ phase: 1, round: 1, status: "running" }] })
-    const res = await post(`${taskId}/fix-round`, { instruction: "剩余收敛为：行号对齐 + hover 描边" })
-    expect(res.status).toBe(200)
-    const body = (await res.json()) as Record<string, any>
-
-    expect(stubCalls).toContain(`cancel:${execIds["1:1"]}`)
-    // 反馈产物化（复用 05 路由的落点约定：批次目录内 fix-feedback-rN.md）
-    const fb = path.join(home, ".scratch", BATCH_DATE, "p1", "fix-feedback-r2.md")
-    expect(fs.existsSync(fb)).toBe(true)
-    expect(fs.readFileSync(fb, "utf-8")).toContain("行号对齐 + hover 描边")
-
-    // 新轮 = 当前轮+1，恒 built-in/task-fix override + 合成输入。
-    const execs = mockHooks.db!
-      .prepare("SELECT * FROM executions WHERE task_id = ? ORDER BY created_at, rowid")
-      .all(taskId) as Array<Record<string, unknown>>
-    const fix = execs[execs.length - 1]
-    expect(fix.workflow_ref).toBe("built-in/task-fix")
-    expect(fix.round_index).toBe(2)
-    expect(fix.phase_index).toBe(1)
-    const inputs = JSON.parse(String(fix.input_values)) as Record<string, string>
-    expect(inputs.feedback).toContain("行号对齐")
-    expect(inputs.feedback_path).toContain("fix-feedback-r2.md")
-    expect(inputs.phase_spec_dir).toContain("p1")
-    expect(body.dispatch.execution_id).toBe(fix.id)
-    expect(body.dispatch.round_index).toBe(2)
-
-    // 不写 acceptance 决策行（③ 是运行中决策，不是验收决策）。
-    expect(ledgerRows(taskId)).toHaveLength(0)
-    // K16：信封 phases[] 冻结不动（override 只进本轮 launch）。
-    const spec = JSON.parse(String(taskRow(taskId).task_spec)) as { phases: Array<{ workflowRef: string }> }
-    expect(spec.phases[0].workflowRef).toBe("built-in/flow-p1")
-    // 盘面随即 = 修复轮在跑。
-    expect(derived(taskId).taskStatus).toBe("running")
-    expect(derived(taskId).phaseViews[0].status).toBe("running")
-  })
-
-  it("接管中改派（无 live 轮）：不重复 abort，直接派新轮 2；takeover 标记保留在原轮", async () => {
-    const { taskId, execIds } = seed({ rounds: [{ phase: 1, round: 1, status: "running" }] })
-    await post(`${taskId}/takeover`)
-    const res = await post(`${taskId}/fix-round`, { instruction: "活不适合对话干，交通用流收尾" })
-    expect(res.status).toBe(200)
-    expect(stubCalls.filter((c) => c.startsWith("cancel:"))).toHaveLength(1) // 只有接管那一刀
-    expect(execRow(execIds["1:1"]).takeover_at).toBeTruthy()
-    expect(execRow(execIds["1:1"]).takeover_delivered_at).toBeNull()
-    expect(derived(taskId).phaseViews[0].status).toBe("running")
-  })
-
-  it("指令必填：缺失/空/纯空白 → 400；未知字段 strict → 400", async () => {
-    const { taskId } = seed({ rounds: [{ phase: 1, round: 1, status: "running" }] })
-    expect((await post(`${taskId}/fix-round`, {})).status).toBe(400)
-    expect((await post(`${taskId}/fix-round`, { instruction: "   " })).status).toBe(400)
-    expect((await post(`${taskId}/fix-round`, { instruction: "x", phase_index: 1 })).status).toBe(400)
-    // 被拒的请求没有派任何轮、没有 abort。
-    const execs = mockHooks.db!.prepare("SELECT COUNT(*) n FROM executions WHERE task_id=?").get(taskId) as { n: number }
-    expect(execs.n).toBe(1)
-    expect(stubCalls.filter((c) => c.startsWith("cancel:"))).toHaveLength(0)
-  })
-
-  it("待验收轮不走 ③（那是打回的领地）→ 409 指路", async () => {
-    const { taskId } = seed({ rounds: [{ phase: 1, round: 1, status: "completed" }] })
-    const res = await post(`${taskId}/fix-round`, { instruction: "试试直接派" })
-    expect(res.status).toBe(409)
-    expect((await res.json()).error).toContain("打回")
-  })
-
-  it("接管交付后不走 ③（Gate 已开 —— 通过/打回各就各位）", async () => {
-    const { taskId } = seed({ rounds: [{ phase: 1, round: 1, status: "running" }] })
-    await post(`${taskId}/takeover`)
-    await post(`${taskId}/takeover/deliver`)
-    const res = await post(`${taskId}/fix-round`, { instruction: "回马枪" })
-    expect(res.status).toBe(409)
   })
 })
 

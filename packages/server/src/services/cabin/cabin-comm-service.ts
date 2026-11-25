@@ -38,6 +38,14 @@ export class CabinJobNotFoundError extends Error {
 export class CabinCommService {
   constructor(private deps: CabinCommDeps) {}
 
+  /** 工作实体结束（任务 done/failed/aborted）：决策服务据此把该主体名下
+   *  未决卡收口（v22 #9 —— 之前 expireForSubject 没有任何调用方）。 */
+  private subjectEndHook: ((cabinId: string, subjectId: string) => void) | null = null
+
+  setSubjectEndHook(hook: ((cabinId: string, subjectId: string) => void) | null): void {
+    this.subjectEndHook = hook
+  }
+
   private mustCabin(id: string) {
     const row = this.deps.cabin.findById(id)
     if (!row) throw new CabinNotFoundError(id)
@@ -259,6 +267,7 @@ export class CabinCommService {
     this.appendEvent(job.id, cabinId, kind, "doer", { status, summary })
     if (status === "done" || status === "failed" || status === "aborted") {
       this.deps.cabin.endJob(job.id, now())
+      try { this.subjectEndHook?.(cabinId, taskId) } catch { /* 收口失败不影响状态 */ }
     }
   }
 

@@ -21,7 +21,7 @@
     "loop-engineering"
   ],
   "scripts": {
-    "build": "pnpm -r run build && node scripts/sync-builtin.mjs",
+    "build": "pnpm -r run build && node scripts/build-clone-kits.mjs && node scripts/sync-builtin.mjs",
     "build:shared": "pnpm --filter @octopus/shared build",
     "build:engine": "pnpm --filter @octopus/engine build",
     "build:server": "pnpm --filter @octopus/server build",
@@ -37,6 +37,8 @@
     "desktop:dev": "pnpm --filter @octopus/desktop dev",
     "desktop:pack": "pnpm --filter @octopus/desktop pack:dir",
     "desktop:dist": "pnpm --filter @octopus/desktop dist",
+    "desktop:pack:proxy": "pnpm --filter @octopus/desktop pack:dir:proxy",
+    "desktop:dist:proxy": "pnpm --filter @octopus/desktop dist:proxy",
     "kill:server": "node scripts/kill-port.mjs 3001",
     "kill:web": "node scripts/kill-port.mjs 3000",
     "test": "vitest run",

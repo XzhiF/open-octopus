@@ -116,8 +116,29 @@ describe("CabinService · 本舱变更（cwd 自身的工作区）", () => {
     expect(view.repos).toHaveLength(1)
     const repo = view.repos[0]!
     expect(repo.dir).toBe(path.resolve(cabinPath))
-    // 只有 cwd 自己因登记项目而改的 config.json；外部仓的 a.txt / reconcile.ts 不出现。
-    expect(repo.files.map((f) => f.path)).toEqual(["config.json"])
+    // 只有 cwd 自己因登记项目而改的 workspace 配置；外部仓的 a.txt / reconcile.ts 不出现。
+    expect(repo.files.map((f) => f.path)).toEqual([".octopus/config.json"])
+  })
+
+  it("单项目变更：目标是项目自己的仓（worktree_path ?? main_path），不是本舱 cwd", async () => {
+    makeRepo(cabinPath, "main", { "a.txt": "hello\n" })
+    const project = path.join(path.dirname(cabinPath), "ledger-repo")
+    makeRepo(project, "feat/proj")
+    svc.addRepo(cabinId, { source: "local", name: "proj", absolutePath: project, external: true })
+    fs.writeFileSync(path.join(project, "src", "reconcile.ts"), "export const a = 2\n")
+
+    const view = await svc.repoWorktreeChanges(cabinId, "proj")
+    expect(view.dir).toBe(path.resolve(project))
+    const repo = view.repos[0]!
+    expect(repo.name).toBe("proj")
+    expect(repo.error).toBeNull()
+    expect(repo.branch).toBe("feat/proj")
+    expect(repo.files.map((f) => f.path)).toContain("src/reconcile.ts")
+
+    const patch = await svc.repoWorktreeChangePatch(cabinId, "proj", "src/reconcile.ts", false)
+    expect(patch.patch).toContain("+export const a = 2")
+    await expect(svc.repoWorktreeChanges(cabinId, "nope")).rejects.toThrow(/repo not in cabin/)
+    await expect(svc.repoWorktreeChangePatch(cabinId, "proj", "../escape.ts", false)).rejects.toThrow(/越出|非法/)
   })
 
   it("cwd 不是 git 仓：error 如实上报，files 为空", async () => {

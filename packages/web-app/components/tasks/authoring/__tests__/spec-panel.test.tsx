@@ -1,4 +1,4 @@
-// spec-panel.test.tsx — 右栏原型面板（phases 卡 / 入队清单 / 输出区磁盘树 / 缩放弹窗）
+﻿// spec-panel.test.tsx — 右栏原型面板（phases 卡 / 入队清单 / 输出区磁盘树 / 缩放弹窗）
 // 自 workflow-box.test.tsx 移植核心契约用例（add/edit PUT 纪律、ready 只读、
 // 清单钉点），并覆盖原型改版新增行为。
 
@@ -92,7 +92,7 @@ const SPEC_DEV: WorkflowPreset = {
   workflow: "built-in/matt-spec-dev",
   inputs: { batch_dir: "${phase.batch_rel}" },
 }
-const FIXER: WorkflowPreset = { name: "fixer", workflow: "built-in/task-fix", inputs: { feedback_path: "f.md" } }
+const FIXER: WorkflowPreset = { name: "fixer", workflow: "built-in/fixer", inputs: { feedback_path: "f.md" } }
 const SPEC_DEV_DEF: BuiltInWorkflowSummary = {
   ref: "built-in/matt-spec-dev", name: "Matt Spec Dev", group: "built-in",
   inputs: { batch_dir: { description: "批次目录", required: true } },
@@ -257,11 +257,11 @@ describe("SpecPanel — 添加/编辑（缩放弹窗 + S5 整数组 PUT）", () 
     renderPanel(makeTask({ task_spec: { format: "v4", phases } as unknown as TaskSpec }))
     fireEventClick(q('[data-phase-bind-card="1"]')!)
     await waitFor(() => expect(q("[data-phase-add-workflow]")).toBeTruthy())
-    fireEventChange(q("[data-phase-add-workflow]")!, "built-in/task-fix")
+    fireEventChange(q("[data-phase-add-workflow]")!, "built-in/fixer")
     fireEventClick(q('[data-phase-edit-save="1"]')!)
     await waitFor(() => expect(updateTask).toHaveBeenCalledOnce())
     const sent = (vi.mocked(updateTask).mock.calls[0][1].task_spec as TaskSpec).phases!
-    expect(sent[0].workflowRef).toBe("built-in/task-fix")
+    expect(sent[0].workflowRef).toBe("built-in/fixer")
     expect(sent[0].inputValues).toEqual({ feedback_path: "f.md" })
   })
 })

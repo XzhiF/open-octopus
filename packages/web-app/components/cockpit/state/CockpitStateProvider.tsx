@@ -16,6 +16,7 @@ import {
 import type { MoodKey } from '@/components/cabin/cockpit'
 import {
   sameCockpitRef,
+  COCKPIT_DEFAULT_TAB,
   COCKPIT_WIN_LIMIT,
   type CockpitChatApi,
   type CockpitChatWindow,
@@ -35,7 +36,6 @@ import {
   type CockpitThreadsApi,
   type CockpitWindowsApi,
 } from './cockpit-state'
-import { MAIN_THREAD_KEY } from '../fleet/threads-model'
 import { SCENE_COUNT } from '../scene/scene-model'
 
 const CockpitStateContext = createContext<CockpitState | null>(null)
@@ -95,9 +95,8 @@ export interface CockpitStateProviderProps {
 export function CockpitStateProvider({ entryCabinId, children }: CockpitStateProviderProps) {
   const [selection, setSelection] = useState<CockpitRef | null>(null)
   const [projectFilter, setProjectFilterState] = useState<string | null>(null)
-  // v21 七轮：默认页签 = 对话（概览退役；链接里旧的 tab=overview 由
-  // isCockpitTab 丢掉 → 自然落回这里）。
-  const [tab, setTabState] = useState<CockpitTab>('dialog')
+  // v22 #5：默认页签 = 运行（对话页签已删除；旧 ?tab=dialog 由 isCockpitTab 丢掉）。
+  const [tab, setTabState] = useState<CockpitTab>(COCKPIT_DEFAULT_TAB)
   /** v22.3：面来源 —— 从「要我处理」打开的面让到浮层左侧，其余居中。 */
   const [detailSource, setDetailSource] = useState<CockpitSelectSource>('fleet')
   const [chat, setChat] = useState<CockpitChatApi | null>(null)
@@ -105,9 +104,8 @@ export function CockpitStateProvider({ entryCabinId, children }: CockpitStatePro
   const [railOpen, setRailOpenState] = useState(false)
   const [fxState, setFxState] = useState<FxState>(INITIAL_FX)
 
-  // ── v20：线程 tab / 未读 / 本地回执 / 弹出窗 / 面板 / flash ───────────
-  const [activeThread, setActiveThreadState] = useState(MAIN_THREAD_KEY)
-  const [closedTabs, setClosedTabs] = useState<string[]>([])
+  // ── v20 线程未读 / 本地回执 ──────────────────────────────────────────
+  // v22 #5：主通讯台固定主对话，线程切换整套撤掉 —— 这里只剩未读与回执。
   const [unread, setUnread] = useState<Record<string, number>>({})
   const [receipts, setReceipts] = useState<Record<string, CockpitReceipt[]>>({})
   const [windows, setWindows] = useState<CockpitPopWin[]>([])
@@ -171,20 +169,9 @@ export function CockpitStateProvider({ entryCabinId, children }: CockpitStatePro
   // ── 编队抽屉（≤1120 由 S3 消费）─────────────────────────────────────
   const setRailOpen = useCallback((open: boolean) => setRailOpenState(open), [])
 
-  // ── v20 线程 tab（design 29 §3.2）─────────────────────────────────────
-  const activateThread = useCallback((key: string) => {
-    setActiveThreadState(key)
+  // ── v20 线程未读 / 本地回执（v22 #5：无线程切换） ─────────────────────
+  const clearUnread = useCallback((key: string) => {
     setUnread((prev) => (prev[key] ? { ...prev, [key]: 0 } : prev))
-  }, [])
-
-  const closeTab = useCallback((key: string) => {
-    if (key === MAIN_THREAD_KEY) return
-    setClosedTabs((prev) => (prev.includes(key) ? prev : [...prev, key]))
-    setActiveThreadState((current) => (current === key ? MAIN_THREAD_KEY : current))
-  }, [])
-
-  const reopenTab = useCallback((key: string) => {
-    setClosedTabs((prev) => (prev.includes(key) ? prev.filter((k) => k !== key) : prev))
   }, [])
 
   const bumpUnread = useCallback((key: string, n = 1) => {
@@ -200,11 +187,8 @@ export function CockpitStateProvider({ entryCabinId, children }: CockpitStatePro
   }, [])
 
   const threads = useMemo<CockpitThreadsApi>(
-    () => ({
-      activeThread, closedTabs, unread, receipts,
-      activateThread, closeTab, reopenTab, bumpUnread, pushReceipt,
-    }),
-    [activeThread, closedTabs, unread, receipts, activateThread, closeTab, reopenTab, bumpUnread, pushReceipt],
+    () => ({ unread, receipts, clearUnread, bumpUnread, pushReceipt }),
+    [unread, receipts, clearUnread, bumpUnread, pushReceipt],
   )
 
   // ── v20 弹出窗（design 29 §4）────────────────────────────────────────

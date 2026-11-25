@@ -28,6 +28,7 @@ import { isStreamActive } from "../agent/agent-service"
 import { UNNAMED_CABIN_NAME } from "./cabin-naming"
 import { gitOps } from "../git-ops"
 import { WorkspaceGit, type SpecWorktreeEntry } from "../workspace-git"
+import { readWorkspaceConfig } from "../workspace-paths"
 import { deriveTaskView } from "../tasks/derive-task-view"
 import type { RoundEvidenceService } from "../tasks/round-evidence-service"
 import type { IncidentStore } from "../supervision/incident-store"
@@ -42,6 +43,7 @@ import {
   mergeCabinRepoEntry, removeCabinRepoEntry, repoSource, resolveCabinRepo,
   projectKey, localRepoEntry, orgRepoEntry, worktreeDirFor, isPathInside,
   isGitRepo, readLocalRepoInfo, defaultMainlineBranch,
+  localBranchExists, remoteBranchExists,
   type CabinRepoEntry, type CabinProjectInput,
 } from "./cabin-repos"
 import { scopeCabinFindings } from "./cabin-knowledge"
@@ -111,8 +113,8 @@ export interface CabinWorktreeChangeRepo {
 }
 
 export interface CabinWorktreeChanges {
-  /** 本舱 cwd 绝对路径。 */
-  dir: string
+  /** 比对目录绝对路径；单仓库接口里仓库没有本地路径时 = null。 */
+  dir: string | null
   repos: CabinWorktreeChangeRepo[]
 }
 
@@ -427,6 +429,9 @@ export class CabinService {
   private viewHook: ((cabinId: string) => void) | null = null
 
   constructor(private cabin: CabinDAO) {}
+
+  /** 路由层组合出来的舱域服务（事项等）复用同一条连接。 */
+  getDb(): ReturnType<CabinDAO["getDb"]> { return this.cabin.getDb() }
 
   bindInfra(infra: CabinInfra): void { this.infra = infra }
   /** P5 wires cabin-level sediment (G3) here; archive stays soft until then. */
@@ -865,12 +870,25 @@ export class CabinService {
     const delegationHandles = assignHandles(
       delegationRows.map((d) => ({ id: d.id, created_at: d.created_at })), "delegation",
     )
+    // v22 #9：doer 会话 → 委派归属 —— 消息派生的 ask 自带 subject/handle，
+    // derive 侧据此不再重复产 delegation-ask-* 状态行。
+    const delegationBySession = new Map<string, {
+      id: string; title: string; handle?: string; color?: number
+    }>()
+    for (const d of delegationRows) {
+      if (!d.doer_session_id) continue
+      const h = delegationHandles.get(d.id)
+      delegationBySession.set(d.doer_session_id, {
+        id: d.id, title: d.title,
+        ...(h ? { handle: h.handle, color: h.color } : {}),
+      })
+    }
     const isStreaming = this.infra?.isSessionStreaming ?? isStreamActive
     const view = deriveCabinView({
       cabin: { id: row.id, status: row.status },
       tasks, executions,
       incidents: this.gatherIncidents(taskRows.map((t) => t.id), execToTask),
-      asks: this.gatherAsks(row, executions, execToTask, sessionToTask),
+      asks: this.gatherAsks(row, executions, execToTask, sessionToTask, delegationBySession),
       findings: this.listFindings(id, "open").map((f) => ({ id: f.id, title: f.title, status: f.status })),
       jobs: jobs.map((j) => ({
         id: j.id, kind: j.kind, ref_id: j.ref_id, title: j.title,
@@ -913,6 +931,9 @@ export class CabinService {
     executions: DeriveCabinInput["executions"],
     execToTask: Map<string, string>,
     sessionToTask: Map<string, string>,
+    delegationBySession: ReadonlyMap<string, {
+      id: string; title: string; handle?: string; color?: number
+    }> = new Map(),
   ): DeriveCabinInput["asks"] {
     const infra = this.infra
     if (!infra) return []
@@ -1030,10 +1051,17 @@ export class CabinService {
           message_id: rows[i].id,
           ...(clipQuestions(questions) ? { questions: clipQuestions(questions) } : {}),
         }
+        const deleg = delegationBySession.get(sessionId)
         asks.push({
-          id: askId, task_id: info.taskId,
-          title: `${info.label} · 待回答`, question: firstQuestionText(questions),
+          id: askId, task_id: deleg ? null : info.taskId,
+          title: deleg ? `${deleg.title} · 委派在问你` : `${info.label} · 待回答`,
+          question: firstQuestionText(questions),
           ask: envelope,
+          ...(deleg ? {
+            subject: { kind: "delegation" as const, id: deleg.id },
+            ...(deleg.handle ? { handle: deleg.handle } : {}),
+            ...(deleg.color !== undefined ? { color: deleg.color } : {}),
+          } : {}),
         })
       }
     }
@@ -1173,6 +1201,18 @@ export class CabinService {
     })
   }
 
+  /** 落点分支预检：本地/跟踪引用都没有时再问一次远端；远端探测失败（离线/
+   *  无 origin）按「未知」放行 —— 真正建树时 initWorktreeOne 会硬校验。 */
+  private assertMainlineBranch(mainPath: string | null, branch: string): void {
+    if (!mainPath || !fs.existsSync(mainPath)) return
+    if (localBranchExists(mainPath, branch)) return
+    if (remoteBranchExists(mainPath, branch) === false) {
+      throw new CabinRepoInputError(
+        `落点分支 '${branch}' 在本地与 origin 上都不存在：${path.basename(mainPath)}`,
+      )
+    }
+  }
+
   /** 绑定一个项目：ORG 只克隆 + 登记主线；本地/外部只校验 + 登记。
    *  **绝不预建 worktree**（worktree 是执行时产物）。 */
   addRepo(id: string, input: CabinProjectInput): CabinRepoEntry {
@@ -1188,7 +1228,10 @@ export class CabinService {
       if (!isPathInside(row.path, abs) && !input.external) {
         throw new CabinRepoInputError("舱目录之外的仓库需要显式登记（external: true）")
       }
-      return mergeCabinRepoEntry(row.path, localRepoEntry(row.path, { name, absPath: abs }))
+      const entry = localRepoEntry(row.path, { name, absPath: abs })
+      const mainline = input.mainline?.trim()
+      if (mainline) this.assertMainlineBranch(abs, mainline)
+      return mergeCabinRepoEntry(row.path, mainline ? { ...entry, mainline_branch: mainline } : entry)
     }
 
     const org = (input.org || row.org || "").trim()
@@ -1196,10 +1239,26 @@ export class CabinService {
     const res = ensureRepoCloned(org, name)
     if ("error" in res) throw new Error(res.error)
     const info = readLocalRepoInfo(res.localPath)
+    const mainline = input.mainline?.trim() || info.branch || defaultMainlineBranch(res.localPath) || undefined
+    if (mainline) this.assertMainlineBranch(res.localPath, mainline)
     return mergeCabinRepoEntry(row.path, orgRepoEntry({
       name, org, group: org, mainPath: res.localPath,
-      mainline: info.branch ?? defaultMainlineBranch(res.localPath),
+      mainline: mainline ?? null,
     }))
+  }
+
+  /** 改落点分支（mainline_branch）：只影响此后新建的 worktree / 任务分支；
+   *  已建工作树的分支计划固化在各自工作空间 config 里，不回改。null = 清空。 */
+  setRepoMainline(id: string, name: string, mainline: string | null): CabinRepoEntry {
+    const row = this.mustGet(id)
+    const entry = readCabinConfig(row.path).repos.find((r) => r.name === name)
+    if (!entry) throw new CabinRepoInputError(`repo not in cabin: ${name}`)
+    const branch = mainline?.trim() || null
+    if (branch) {
+      const { mainPath } = resolveCabinRepo(row.path, entry)
+      this.assertMainlineBranch(mainPath, branch)
+    }
+    return mergeCabinRepoEntry(row.path, { name, mainline_branch: branch })
   }
 
   /** 解绑：只动 config，不动磁盘（worktree / 主仓都保留）。
@@ -1243,7 +1302,11 @@ export class CabinService {
       const fresh = this.git.initWorktreeOne(
         row.path,
         { name: entry.name, source_path: mainPath, group: entry.group },
-        branch, row.org ?? "", { clobber: false, worktreePath: wtPath },
+        branch, row.org ?? "", {
+          clobber: false, worktreePath: wtPath,
+          // 分支计划（2026-11-24）：舱项目登记的落点分支即 fork 点。
+          ...(entry.mainline_branch ? { baseRef: entry.mainline_branch, targetBranch: entry.mainline_branch } : {}),
+        },
       )
       const next = mergeCabinRepoEntry(row.path, {
         ...entry,
@@ -1264,7 +1327,10 @@ export class CabinService {
     const fresh = this.git.initWorktreeOne(
       row.path,
       { name: entry.name, source_path: mainPath, group: entry.group },
-      branch, row.org ?? "", { clobber: false, worktreePath: wtPath },
+      branch, row.org ?? "", {
+        clobber: false, worktreePath: wtPath,
+        ...(entry.mainline_branch ? { baseRef: entry.mainline_branch, targetBranch: entry.mainline_branch } : {}),
+      },
     )
     return mergeCabinRepoEntry(row.path, {
       ...entry,
@@ -1436,15 +1502,9 @@ export class CabinService {
     const ws = db.prepare("SELECT path FROM workspaces WHERE id = ?").get(exec.workspace_id) as
       { path?: string } | undefined
     if (!ws?.path) return []
-    // workspace 的项目登记在磁盘 config.json（表里没有 config 列）。
-    let names: string[] = []
-    try {
-      const raw = JSON.parse(fs.readFileSync(path.join(ws.path, "config.json"), "utf-8")) as
-        { repos?: Array<{ name?: string }> }
-      names = (raw.repos ?? []).map((r) => r.name ?? "").filter(Boolean)
-    } catch {
-      return []
-    }
+    // workspace 的项目登记在磁盘 workspace 配置（表里没有 config 列）。
+    const raw = readWorkspaceConfig(ws.path) as { repos?: Array<{ name?: string }> } | null
+    const names: string[] = (raw?.repos ?? []).map((r) => r.name ?? "").filter(Boolean)
     const keys = projects
       .filter((entry) => names.includes(entry.name) || names.includes(entry.repoName ?? ""))
       .map(projectKey)
@@ -1548,8 +1608,36 @@ export class CabinService {
   async worktreeChanges(cabinId: string): Promise<CabinWorktreeChanges> {
     const row = this.mustGet(cabinId)
     const root = path.resolve(row.path)
+    const view = await this.readWorktreeChanges(root, path.basename(root) || root)
+    return { dir: root, repos: [view] }
+  }
+
+  /**
+   * 单个项目的 git 变更（2026-11-23 用户 #1：项目面「git 变更」页签）。
+   * 目标与舱籍读数同口径 = `worktree_path ?? main_path`，不是本舱 cwd。
+   * 只读；仓库没本地路径 → 单个 error 视图（不 500）。
+   */
+  async repoWorktreeChanges(cabinId: string, repoName: string): Promise<CabinWorktreeChanges> {
+    const repo = this.repoViews(cabinId).find((r) => r.name === repoName)
+    if (!repo) throw new CabinNotFoundError(`repo not in cabin: ${repoName}`)
+    const target = repo.worktree_path ?? repo.main_path
+    if (!target) {
+      return {
+        dir: null,
+        repos: [{
+          name: repoName, dir: null, branch: repo.branch ?? null, head: null,
+          error: "项目还没有本地路径", truncated: false, files: [],
+        }],
+      }
+    }
+    const root = path.resolve(target)
+    return { dir: root, repos: [await this.readWorktreeChanges(root, repoName)] }
+  }
+
+  /** 工作区改动的公共读法：本舱 cwd 与单仓库共用（name = 显示名）。 */
+  private async readWorktreeChanges(root: string, name: string): Promise<CabinWorktreeChangeRepo> {
     const view: CabinWorktreeChangeRepo = {
-      name: path.basename(root) || root, dir: root, branch: null, head: null,
+      name, dir: root, branch: null, head: null,
       error: null, truncated: false, files: [],
     }
     try {
@@ -1589,7 +1677,7 @@ export class CabinService {
     } catch (err) {
       view.error = errMsg(err)
     }
-    return { dir: root, repos: [view] }
+    return view
   }
 
   /** 本舱变更窗：单文件 unified patch（点开才拉）。untracked=true 走 /dev/null 一侧。 */
@@ -1603,6 +1691,28 @@ export class CabinService {
     const resolvedRoot = path.resolve(row.path)
     const name = path.basename(resolvedRoot) || resolvedRoot
     if (repoName !== name) throw new CabinNotFoundError(`repo not in cabin: ${repoName}`)
+    return this.readWorktreePatch(resolvedRoot, relPath, untracked)
+  }
+
+  /** 项目面「git 变更」：单文件 patch，根 = `worktree_path ?? main_path`。 */
+  async repoWorktreeChangePatch(
+    cabinId: string,
+    repoName: string,
+    relPath: string,
+    untracked: boolean,
+  ): Promise<{ patch: string; truncated: boolean }> {
+    const repo = this.repoViews(cabinId).find((r) => r.name === repoName)
+    if (!repo) throw new CabinNotFoundError(`repo not in cabin: ${repoName}`)
+    const target = repo.worktree_path ?? repo.main_path
+    if (!target) throw new Error("项目还没有本地路径")
+    return this.readWorktreePatch(path.resolve(target), relPath, untracked)
+  }
+
+  private async readWorktreePatch(
+    resolvedRoot: string,
+    relPath: string,
+    untracked: boolean,
+  ): Promise<{ patch: string; truncated: boolean }> {
     if (!isGitRepo(resolvedRoot)) throw new Error("不是 git 仓库")
     if (!relPath || relPath.includes("\0") || path.isAbsolute(relPath)) {
       throw new CabinRepoInputError(`非法文件路径: ${relPath}`)

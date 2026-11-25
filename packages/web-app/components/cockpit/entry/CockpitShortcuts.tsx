@@ -24,7 +24,6 @@ import { useCabinOptional } from '@/components/cabin/cabin-provider'
 import { useCockpitFleet } from '../fleet/CockpitFleetProvider'
 import { useCockpitState } from '../state/CockpitStateProvider'
 import { getChatSlot } from '../chat/chat-slots'
-import { useCockpitThreads } from '../chat/use-cockpit-threads'
 import { toggleCrewSettings } from '../crew/crew-settings'
 import { toggleCabinTree } from '../face/cabin-tree-store'
 import { toggleChanges } from '../face/changes-store'
@@ -39,7 +38,7 @@ function isEditableTarget(target: EventTarget | null): boolean {
 }
 
 /** Alt + 哪个键（不认识返回 null）。兼容 event.code 缺失的合成事件与测试。 */
-function altKeyOf(event: KeyboardEvent): '1' | '2' | 'w' | 'x' | 'c' | 'd' | 'f' | 'g' | 'v' | 'a' | 'left' | 'right' | null {
+function altKeyOf(event: KeyboardEvent): '1' | '2' | 'w' | 'x' | 'c' | 'd' | 'f' | 'g' | 'v' | 'a' | null {
   if (!event.altKey || event.metaKey || event.ctrlKey || event.shiftKey) return null
   if (event.code === 'Digit1' || event.code === 'Numpad1' || event.key === '1') return '1'
   if (event.code === 'Digit2' || event.code === 'Numpad2' || event.key === '2') return '2'
@@ -51,8 +50,6 @@ function altKeyOf(event: KeyboardEvent): '1' | '2' | 'w' | 'x' | 'c' | 'd' | 'f'
   if (event.code === 'KeyG' || event.key.toLowerCase() === 'g') return 'g'
   if (event.code === 'KeyV' || event.key.toLowerCase() === 'v') return 'v'
   if (event.code === 'KeyA' || event.key.toLowerCase() === 'a') return 'a'
-  if (event.code === 'ArrowLeft' || event.key === 'ArrowLeft') return 'left'
-  if (event.code === 'ArrowRight' || event.key === 'ArrowRight') return 'right'
   return null
 }
 
@@ -64,8 +61,7 @@ function isCommandK(event: KeyboardEvent): boolean {
 export function CockpitShortcuts() {
   const active = useOptionalIsActiveRoute()
   const { rows } = useCockpitFleet()
-  const { select, chatWindow, openPanel, threads: threadApi, travel } = useCockpitState()
-  const { visible, byKey } = useCockpitThreads()
+  const { select, chatWindow, openPanel, travel } = useCockpitState()
   const cabin = useCabinOptional()?.cabin
 
   // 监听只挂一次（active 变化时重挂）；其余可变值走 ref，避免每 10s 轮询
@@ -76,9 +72,6 @@ export function CockpitShortcuts() {
   const jumpRef = useRef(travel)
   const cwRef = useRef(chatWindow)
   const panelRef = useRef(openPanel)
-  const taRef = useRef(threadApi)
-  const visRef = useRef(visible)
-  const byKeyRef = useRef(byKey)
   /** ⌥G 只在本舱 cwd 是独立 git 仓库时生效 —— 与右栏「变更」按钮同一出现条件。 */
   const cwdGitRef = useRef(false)
   rowsRef.current = rows
@@ -87,9 +80,6 @@ export function CockpitShortcuts() {
   jumpRef.current = travel
   cwRef.current = chatWindow
   panelRef.current = openPanel
-  taRef.current = threadApi
-  visRef.current = visible
-  byKeyRef.current = byKey
   cwdGitRef.current = cabin?.cwd_git === true
 
   useEffect(() => {
@@ -127,9 +117,6 @@ export function CockpitShortcuts() {
         if (!ref) return
         event.preventDefault()
         selectRef.current(ref)
-        // v20：最紧要的一条同时激活它的作战线程（有会话才切）。
-        const threadKey = `${ref.kind}:${ref.id}`
-        if (byKeyRef.current.has(threadKey)) taRef.current.activateThread(threadKey)
         return
       }
 
@@ -182,7 +169,7 @@ export function CockpitShortcuts() {
         return
       }
 
-      // v22 十四轮：⌥V 开合右栏「活动」。按钮只在该有活动时渲染，
+      // v22 十四轮：⌥V 开合右栏「活动」。按钮常住（无运行中活动时点开是空态），
       // 窄屏（≤900）按钮退场 —— 这里点不到就什么也不做。
       if (key === 'v') {
         if (window.innerWidth <= 900) return
@@ -197,17 +184,6 @@ export function CockpitShortcuts() {
       if (key === 'a') {
         event.preventDefault()
         window.dispatchEvent(new Event('octopus:composer-attach'))
-        return
-      }
-
-      if (key === 'left' || key === 'right') {
-        const list = visRef.current
-        if (list.length < 2) return
-        event.preventDefault()
-        const index = list.findIndex((t) => t.key === taRef.current.activeThread)
-        const delta = key === 'right' ? 1 : -1
-        const next = list[(index + delta + list.length) % list.length]
-        taRef.current.activateThread(next.key)
         return
       }
     }

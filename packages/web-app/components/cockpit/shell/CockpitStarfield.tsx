@@ -2,7 +2,9 @@
 
 // 舱窗星野（原型 cockpit-v12.html 的 warp IIFE，逐字移植）：
 //   · 300 星 z 投影拖尾 + 230 远景尘埃；prefers-reduced-motion → 130 / 90 近静止；
-//   · DPR ≤ 2；document.hidden 暂停；卸载清理 RAF + resize/visibility 监听；
+//   · DPR ≤ 1.5；canvas 尺寸由 ResizeObserver 跟随自身 CSS 盒（首帧布局定稿也补算），
+//     document.hidden 暂停；卸载清理 RAF + ResizeObserver / resize / visibility 监听；
+//   · 帧率两档（设置 → 性能）：默认 30fps，可选 60fps；
 //   · fx.jumpNonce 变化 → 拉线 + 跃迁环（warpflash 用 key 重挂重放动画）；
 //   · 调色板从 getComputedStyle(document.body) 的 --ck-a / --ck-b 读，
 //     换色后下一帧刷新（父级 CockpitProvider 的 effect 在子 effect 之后写变量）。
@@ -47,6 +49,8 @@ interface Palette {
 interface StarfieldHandle {
   jump(power?: number): void
   refreshPalette(): void
+  /** 设置 → 性能：true = 60fps，false = 30fps（减动效下 15fps）。 */
+  setFrameRate(high: boolean): void
 }
 
 const WHITE: Rgb = [222, 234, 255]
@@ -77,18 +81,21 @@ function createStarfield(canvas: HTMLCanvasElement): {
 } {
   const ctx = canvas.getContext('2d')
   if (!ctx || typeof window === 'undefined') {
-    return { handle: { jump() {}, refreshPalette() {} }, destroy() {} }
+    return { handle: { jump() {}, refreshPalette() {}, setFrameRate() {} }, destroy() {} }
   }
   const context: CanvasRenderingContext2D = ctx
 
   const reduce = window.matchMedia('(prefers-reduced-motion: reduce)').matches
   // 2026-11-16 性能：星野是常驻全屏 canvas，旧 Intel 驱动上 300 星 × 60fps
-  // 会和聊天流式渲染抢帧。降到 200 星 / 150 尘，并以 ~30fps 渲染（巡航本身
+  // 会和聊天流式渲染抢帧。降到 200 星 / 150 尘，默认以 ~30fps 渲染（巡航本身
   // 很慢，30fps 肉眼无差），DPR 上限压到 1.5，省一半以上像素填充。
+  // 2026-11-23：独显功耗放开，设置 → 性能 可切到 60fps（不改星数）。
   const starCount = reduce ? 90 : 200
   const dustCount = reduce ? 60 : 150
   const cruise = reduce ? 0.005 : 0.028
-  const frameMs = reduce ? 1000 / 15 : 1000 / 30
+  const baseFrameMs = reduce ? 1000 / 15 : 1000 / 30
+  const highFrameMs = 1000 / 60
+  let frameMs = baseFrameMs
 
   let width = 1
   let height = 1
@@ -99,6 +106,9 @@ function createStarfield(canvas: HTMLCanvasElement): {
   let speed = cruise
   let target = cruise
   let last = performance.now()
+  /** 下一帧的目标时刻：按帧间隔累加，而不是「距上一帧 ≥ 间隔」——144Hz 屏上
+   *  后者凑不齐整数倍会掉到 ~48fps。0 = 首帧 / 刚切档，立即渲染并对齐。 */
+  let nextAt = 0
   let flash = 0
   let raf = 0
 
@@ -121,13 +131,28 @@ function createStarfield(canvas: HTMLCanvasElement): {
     ) as Rgb
   }
 
+  // 几何以 canvas 自己的 CSS 盒为准，并由 ResizeObserver 驱动：挂载那一刻骨架屏
+  // 还没退场，clientWidth/Height 量到的是旧值（实测背存储 1903×473、CSS 盒
+  // 1522×755，星野被纵向拉伸）；只靠 window.resize 的话布局定稿后再也不会重算。
+  // ResizeObserver 在首次布局完成时会回调一次，正好补上这个缺口。
   function resize() {
+    const nextWidth = Math.round(canvas.clientWidth || window.innerWidth)
+    const nextHeight = Math.round(canvas.clientHeight || window.innerHeight)
+    // 0×0（面板收起 / 窗口最小化）时保留上一帧的几何，别把画布清成 1px。
+    if (nextWidth < 2 || nextHeight < 2) return
     // DPR 上限 1.5：全屏 canvas 在 2x 屏上像素量翻倍，旧 GPU 吃不消。
-    dpr = Math.min(1.5, window.devicePixelRatio || 1)
-    width = canvas.clientWidth || window.innerWidth
-    height = canvas.clientHeight || window.innerHeight
-    canvas.width = Math.round(width * dpr)
-    canvas.height = Math.round(height * dpr)
+    const nextDpr = Math.min(1.5, window.devicePixelRatio || 1)
+    const pixelWidth = Math.round(nextWidth * nextDpr)
+    const pixelHeight = Math.round(nextHeight * nextDpr)
+    // 改 canvas.width/height 会清空画布并重置变换，尺寸没变就别碰。
+    if (width === nextWidth && height === nextHeight && canvas.width === pixelWidth && canvas.height === pixelHeight) {
+      return
+    }
+    dpr = nextDpr
+    width = nextWidth
+    height = nextHeight
+    canvas.width = pixelWidth
+    canvas.height = pixelHeight
     context.setTransform(dpr, 0, 0, dpr, 0, 0)
     centerX = width * 0.5
     centerY = height * 0.44
@@ -172,8 +197,14 @@ function createStarfield(canvas: HTMLCanvasElement): {
 
   function frame(now: number) {
     raf = requestAnimationFrame(frame)
-    // ~30fps 上限：慢速星野不需要 60fps，省下的合成时间留给流式文字。
-    if (now - last < frameMs) return
+    // 帧率上限（默认 30fps：慢速星野够用，省下的合成时间留给流式文字）。
+    if (now < nextAt) return
+    nextAt += frameMs
+    // 掉帧 / 切后台回来落后超过一帧：重新对齐，别连发补帧。
+    if (nextAt < now) nextAt = now + frameMs
+    // 拖到缩放不同的屏幕 / 改系统缩放时 CSS 盒不变、ResizeObserver 不回调，
+    // 这里每帧比对一次 DPR 兜底（一次浮点比较）。
+    if (Math.min(1.5, window.devicePixelRatio || 1) !== dpr) resize()
     const dt = Math.min(0.05, Math.max(0, (now - last) / 1000))
     last = now
     speed += (target - speed) * Math.min(1, dt * 3.2)
@@ -277,6 +308,7 @@ function createStarfield(canvas: HTMLCanvasElement): {
   function start() {
     if (raf) return
     last = performance.now()
+    nextAt = 0
     raf = requestAnimationFrame(frame)
   }
 
@@ -293,6 +325,11 @@ function createStarfield(canvas: HTMLCanvasElement): {
 
   refreshPalette()
   resize()
+  // 画布尺寸跟着自己的 CSS 盒走：首帧布局定稿、窗口 / 侧栏 / 缩放变化都能收到。
+  const resizeObserver =
+    typeof ResizeObserver === 'undefined' ? null : new ResizeObserver(() => resize())
+  resizeObserver?.observe(canvas)
+  // window.resize 兜底（部分环境下 RO 对纯窗口尺寸变化回调有延迟）。
   window.addEventListener('resize', resize)
   document.addEventListener('visibilitychange', onVisibilityChange)
   if (!document.hidden) start()
@@ -304,9 +341,15 @@ function createStarfield(canvas: HTMLCanvasElement): {
         target = Math.max(target, cruise + 0.55 * power)
       },
       refreshPalette,
+      setFrameRate(high: boolean) {
+        frameMs = high ? highFrameMs : baseFrameMs
+        // 立即按新档位出下一帧，再重新对齐节奏。
+        nextAt = 0
+      },
     },
     destroy() {
       stop()
+      resizeObserver?.disconnect()
       window.removeEventListener('resize', resize)
       document.removeEventListener('visibilitychange', onVisibilityChange)
     },
@@ -336,6 +379,11 @@ export function CockpitStarfield() {
     const id = requestAnimationFrame(() => handleRef.current?.refreshPalette())
     return () => cancelAnimationFrame(id)
   }, [prefs.theme])
+
+  // 帧率档位（设置 → 性能）：挂载和切档各跑一次，新建的引擎也会立刻对齐。
+  useEffect(() => {
+    handleRef.current?.setFrameRate(prefs.frameRate === 'high')
+  }, [prefs.frameRate])
 
   useEffect(() => {
     if (fx.jumpNonce <= 0) return

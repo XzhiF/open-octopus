@@ -426,7 +426,6 @@
 }
 @media (max-width: 900px) {
   .ck12-sceneread { display: none; }
-  .ck12-hudcur.is-ctx { display: none; }
   .ck12-hud .ck12-pjname { display: none; }
   .ck12-hud-classic b { display: none; }
   .ck12-hud-settings { display: none; }

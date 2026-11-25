@@ -15,6 +15,8 @@ import { SSEService } from "../../services/sse"
 import { CabinService } from "../../services/cabin/cabin-service"
 import { CabinInitService } from "../../services/cabin/cabin-init-service"
 import { createCabinRoutes } from "../cabins"
+import { closeAllTreeWatches } from "../../services/tree-watch"
+import { clearTreeCache } from "../../services/local-tree"
 
 function git(cwd: string, args: string[]) {
   return spawnSync("git", ["-c", "user.email=t@t", "-c", "user.name=t", ...args], {
@@ -35,12 +37,13 @@ describe("/api/cabins repos routes · 舱籍第三轮", () => {
   let app: Hono
   let tmpDir: string
   let cabin: Record<string, any>
+  let sse: SSEService
 
   beforeEach(async () => {
     db = new Database(":memory:")
     applySchema(db)
     const dao = new CabinDAO(db)
-    const sse = new SSEService()
+    sse = new SSEService()
     tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "cabin-repo-routes-"))
     const agentSessionDAO = new AgentSessionDAO(db)
     initSessionService(agentSessionDAO)
@@ -69,6 +72,8 @@ describe("/api/cabins repos routes · 舱籍第三轮", () => {
   })
 
   afterEach(() => {
+    closeAllTreeWatches()
+    clearTreeCache()
     db.close()
     fs.rmSync(tmpDir, { recursive: true, force: true })
   })
@@ -154,6 +159,48 @@ describe("/api/cabins repos routes · 舱籍第三轮", () => {
     expect((await res.json()).error).toContain("external")
   })
 
+  it("PATCH /repos/:name 改落点分支（mainline_branch）：可改 / 非法或缺失 400 / null 清空", async () => {
+    await addLocalViaApi()
+    expect(git(path.join(cabin.path, "apps", "console"), ["branch", "feat/landing"]).status).toBe(0)
+
+    const patch = (body: unknown) => app.request(`/api/cabins/${cabin.id}/repos/console`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    })
+
+    const ok = await patch({ mainline: "feat/landing" })
+    expect(ok.status).toBe(200)
+    expect((await ok.json()).repo.mainline_branch).toBe("feat/landing")
+
+    // 本地与 origin 都没有 → 400；非法分支名 → 400；缺键 → 400（清空必须显式 null）。
+    expect((await patch({ mainline: "feat/missing" })).status).toBe(400)
+    expect((await patch({ mainline: "bad branch" })).status).toBe(400)
+    expect((await patch({})).status).toBe(400)
+
+    const cleared = await patch({ mainline: null })
+    expect(cleared.status).toBe(200)
+    expect((await cleared.json()).repo.mainline_branch).toBeUndefined()
+  })
+
+  it("POST /repos 可带 mainline 指定落点；不存在的分支 400", async () => {
+    makeRepo(path.join(cabin.path, "apps", "console"))
+    expect(git(path.join(cabin.path, "apps", "console"), ["branch", "feat/landing"]).status).toBe(0)
+    const ok = await post(`/api/cabins/${cabin.id}/repos`, {
+      source: "local", name: "console", localPath: path.join("apps", "console"),
+      mainline: "feat/landing",
+    })
+    expect(ok.status).toBe(201)
+    expect((await ok.json()).repo.mainline_branch).toBe("feat/landing")
+
+    makeRepo(path.join(cabin.path, "apps", "risk"))
+    const bad = await post(`/api/cabins/${cabin.id}/repos`, {
+      source: "local", name: "risk", localPath: path.join("apps", "risk"),
+      mainline: "feat/nope",
+    })
+    expect(bad.status).toBe(400)
+  })
+
   // ── v20（design 29 §6 ws）：工作树只读查阅 tree / file ────────────────
   it("GET /repos/:name/tree 磁盘直扫（跳 node_modules/.git）；未绑定 404", async () => {
     await addLocalViaApi()
@@ -215,6 +262,56 @@ describe("/api/cabins repos routes · 舱籍第三轮", () => {
     expect(file.status).toBe(200)
     expect((await file.json()).content).toBe("# 本舱\n")
   })
+
+  it("GET /tree 深层 Java 文件可见（depth 6 → 14）；截断字段如实上报；?sizes=1 才取字节", async () => {
+    const root = cabin.path
+    const pkg = path.join(root, "src", "main", "java", "com", "acme", "order", "domain", "entity")
+    fs.mkdirSync(pkg, { recursive: true })
+    fs.writeFileSync(path.join(pkg, "Order.java"), "class Order {}\n")
+
+    const res = await app.request(`/api/cabins/${cabin.id}/tree`)
+    expect(res.status).toBe(200)
+    const body = await res.json()
+    const paths = body.entries.map((e: { path: string }) => e.path)
+    expect(paths).toContain("src/main/java/com/acme/order/domain/entity/Order.java")
+    expect(body.truncated).toBe(false)
+    expect(body.reason).toBeNull()
+    expect(body.maxDepth).toBe(14)
+    // 默认不取每文件字节（不跑一次 stat）。
+    const java = body.entries.find((e: { path: string }) => e.path.endsWith("Order.java"))
+    expect(java.bytes).toBe(0)
+
+    const sized = await (await app.request(`/api/cabins/${cabin.id}/tree?fresh=1&sizes=1`)).json()
+    const sizedJava = sized.entries.find((e: { path: string }) => e.path.endsWith("Order.java"))
+    expect(sizedJava.bytes).toBeGreaterThan(0)
+  })
+
+  it("GET /tree?watch=1 → 结构变化在 cabin:<id> 推 tree_changed，且缓存失效后能看到新文件", async () => {
+    fs.mkdirSync(cabin.path, { recursive: true })
+    const events: Array<{ event: string; data: any }> = []
+    const unsub = sse.subscribe(`cabin:${cabin.id}`, (event) => events.push(event as never))
+    try {
+      expect((await app.request(`/api/cabins/${cabin.id}/tree?watch=1`)).status).toBe(200)
+      // 等 chokidar 首轮扫描就绪（ignoreInitial: true）。
+      await new Promise((resolve) => setTimeout(resolve, 600))
+      fs.writeFileSync(path.join(cabin.path, "NewOrder.java"), "class NewOrder {}\n")
+
+      const deadline = Date.now() + 5000
+      while (!events.some((event) => event.event === "tree_changed") && Date.now() < deadline) {
+        await new Promise((resolve) => setTimeout(resolve, 100))
+      }
+      const hit = events.find((event) => event.event === "tree_changed")
+      expect(hit).toBeTruthy()
+      expect(hit?.data.cabin_id).toBe(cabin.id)
+      expect(hit?.data.dir).toBe(path.resolve(cabin.path))
+
+      // watcher 已失效缓存 → 下一次 GET 能看到新文件。
+      const body = await (await app.request(`/api/cabins/${cabin.id}/tree`)).json()
+      expect(body.entries.map((e: { path: string }) => e.path)).toContain("NewOrder.java")
+    } finally {
+      unsub()
+    }
+  }, 15_000)
 
   it("GET /file 守卫：缺参 400 / 出根 403 / 目录 404 / 超大 413", async () => {
     fs.mkdirSync(cabin.path, { recursive: true })

@@ -335,6 +335,14 @@
 }
 .ck12-hud-classic:hover b { color: #fff; }
 
+/* v22 #7：知识中心入口 —— 与返回钮同高同壳，紫色描边（knowledge / 星空）。 */
+.ck12-hud-kc { border-color: rgba(139, 124, 246, 0.42); }
+.ck12-hud-kc .ck12-hud-classic-i { color: var(--ck12-violet); }
+.ck12-hud-kc:hover {
+  border-color: var(--ck12-violet);
+  box-shadow: 0 0 12px rgba(139, 124, 246, 0.28);
+}
+
 /* 舱籍 chip（复用 CockpitProjectsPopover 的 .ck12-pjbtn，重排成原型 .projchip） */
 .ck12-hud .ck12-pjbtn {
   display: flex;
@@ -503,7 +511,6 @@
   font-family: var(--font-mono);
 }
 .ck12-hudcur.is-tok .ck12-hudcur-i { background: linear-gradient(160deg, var(--ck12-teal), var(--ck12-sky)); }
-.ck12-hudcur.is-ctx .ck12-hudcur-i { background: linear-gradient(160deg, var(--ck12-sky), #7B4DFF); }
 .ck12-hudcur.is-cost .ck12-hudcur-i { background: linear-gradient(160deg, var(--ck12-gold), #FF8A3D); color: #100D28; }
 .ck12-hudcur b {
   font-size: 14px;
@@ -513,7 +520,6 @@
   text-shadow: 0 1px 6px rgba(16, 13, 40, 0.8);
 }
 .ck12-hudcur.is-cost b { color: var(--ck12-gold); }
-.ck12-hudcur.is-ctx b { color: var(--ck12-ink); }
 
 /* 右侧三个 32×36 六角按钮（原型 .hudhex） */
 .ck12-hudhex {

@@ -108,17 +108,11 @@ export function askQuestionsOf(value: unknown): unknown[] {
   return Array.isArray(list) ? list : []
 }
 
-/** 有决策信封（扁平可选项 / AskUserQuestion 原问题体）才画就地回复卡；
- *  两条都给不出选项的行（验收 / 受阻 / 工作流提问）只给「去处理」。 */
+/** 有决策信封（扁平可选项 / AskUserQuestion 原问题体）才算「能就地答」。
+ *  v22 #5 起浮层不再就地渲染问答卡（改为去编队 chat 里答），这个判定留给
+ *  classic 问答窗 / 调用方复用。 */
 export function canAnswerInline(item: CabinAttentionItem): boolean {
   if (!item.ask?.ask_id) return false
   if ((item.ask.options?.length ?? 0) > 0) return true
   return askQuestionsOf(item.ask.questions).length > 0
-}
-
-/** 原型 `.ip-row` 右侧动词。待放行与 classic 同：直接开「放行窗」。 */
-export function inboxVerb(item: CabinAttentionItem): string {
-  if (item.stage === 'start') return '放行 →'
-  if (item.stage === 'notice') return '确认 →'
-  return inboxGroupOf(item) === 'rev' ? '验收 →' : '回答 →'
 }

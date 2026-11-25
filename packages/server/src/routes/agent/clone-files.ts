@@ -13,6 +13,7 @@ import {
   getCloneDir,
 } from '../../services/agent/paths'
 import { appendCloneChange, textDelta, CLONE_CHANGES_FILE } from '../../services/agent/clone-changes'
+import { resolveCloneFilePath, isReadonlyClonePath } from '../../services/agent/clone-paths'
 
 export interface FileInfo {
   path: string
@@ -301,38 +302,9 @@ function recordCloneFileChange(
 }
 
 function resolveFilePath(name: string, filePath: string): string | null {
-  // Handle __inherited__/ virtual paths → resolve to main agent shared dirs
-  if (filePath.startsWith('__inherited__/skills/')) {
-    const relative = filePath.replace('__inherited__/skills/', '')
-    const skillsDir = getAgentSkillsDir()
-    const targetPath = path.join(skillsDir, relative)
-    if (!targetPath.startsWith(skillsDir)) return null // traversal guard
-    return targetPath
-  }
-  if (filePath.startsWith('__inherited__/memory/')) {
-    const relative = filePath.replace('__inherited__/memory/', '')
-    const agentDir = getAgentDir()
-    const memoryDir = path.join(agentDir, 'memory')
-    const targetPath = path.join(memoryDir, relative)
-    if (!targetPath.startsWith(memoryDir)) return null
-    return targetPath
-  }
-
-  const cloneDir = getCloneDirectory(name)
-  const targetPath = path.join(cloneDir, filePath)
-
-  // Path traversal guard
-  if (!targetPath.startsWith(cloneDir)) {
-    return null
-  }
-
-  return targetPath
+  return resolveCloneFilePath(name, filePath)
 }
 
 function isReadonlyPath(targetPath: string): boolean {
-  const agentDir = getAgentDir()
-  const skillsDir = getAgentSkillsDir()
-  const memoryDir = path.join(agentDir, 'memory')
-
-  return targetPath.startsWith(skillsDir) || targetPath.startsWith(memoryDir)
+  return isReadonlyClonePath(targetPath)
 }

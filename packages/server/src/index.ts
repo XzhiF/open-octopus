@@ -107,6 +107,8 @@ import { createTasksRoutes, createSessionUsageRoutes } from "./routes/tasks"
 import { createCabinRoutes } from "./routes/cabins"
 import { createTaskWorkflowDevRoutes } from "./routes/task-workflow-dev"
 import { initWorkflowDevService } from "./services/tasks/workflow-dev-service"
+import { createTaskCloneDevRoutes } from "./routes/task-clone-dev"
+import { initCloneDevService } from "./services/tasks/clone-dev-service"
 import { TASK_STATUS_EVENT } from "@octopus/shared"
 import { RoundEvidenceService } from "./services/tasks/round-evidence-service"
 import {
@@ -1318,6 +1320,15 @@ if (shouldServe) {
         emitTaskStatus: (taskId, status) =>
           sse.emit("taskpool", { event: TASK_STATUS_EVENT, data: { task_id: taskId, status } }),
       })
+      // clone-dev task kind (2026-11-25): 分身开发/维护。同构的轻量任务流，
+      // 三条硬验证全绿才允许完成；合入时装 kit 到用户分身目录。
+      initCloneDevService({
+        db,
+        taskDAO: daos!.task,
+        taskHomeService,
+        emitTaskStatus: (taskId, status) =>
+          sse.emit("taskpool", { event: TASK_STATUS_EVENT, data: { task_id: taskId, status } }),
+      })
       // 2026-11-03 只读知识库：wiki 冲突裁决回主 Chat —— 人明确说「采纳/忽略」后，
       // 归档对话里的 Agent 经 resolve_wiki_finding 直连同一 FindingOpsService。
       setWikiFindingToolsProvider(() => ({
@@ -1478,6 +1489,7 @@ if (shouldServe) {
       // reuses the task's main thread (source_chat_session_id).
       app.route('/api/tasks', createTasksRoutes(tasksService, sse, roundEvidence, reflectionIngest))
       app.route('/api/tasks', createTaskWorkflowDevRoutes())
+      app.route('/api/tasks', createTaskCloneDevRoutes())
       // 2026-10-31 消耗窗通用化：/api/sessions/:id/usage（会话聊天行 + 本会话发起的全部工作流）。
       app.route('/api/sessions', createSessionUsageRoutes(tasksService))
       // task-workflow-presets (T3): preset catalog API
@@ -1557,6 +1569,9 @@ if (shouldServe) {
         // 委派的提问被转达后回到 running（否则编队里会一直挂着「在问你」）。
         onDelegationRelayed: (delegationId) => cabinDelegationService.markRunning(delegationId),
       })
+      // v22 #9：任务 / 委派收尾时把该主体名下未决卡收口（unanswered 镜像卡也置灰）。
+      cabinComm.setSubjectEndHook((cabinId, subjectId) => cabinDecisionService.expireForSubject(cabinId, subjectId))
+      cabinDelegationService.setSubjectEndHook((cabinId, subjectId) => cabinDecisionService.expireForSubject(cabinId, subjectId))
       getChatEventBridge().setDelegationStateHook((delegationId, state) => {
         if (state === "waiting_input") cabinDelegationService.markWaitingInput(delegationId)
         else cabinDelegationService.markRunning(delegationId)

@@ -339,7 +339,7 @@ function makeControlledQuery(
   return q
 }
 
-const bgChanged = (tasks: Array<{ task_id: string; task_type?: string; description?: string }>) => ({
+const bgChanged = (tasks: Array<{ task_id: string; task_type?: string; description?: string; run_id?: string }>) => ({
   type: 'system',
   subtype: 'background_tasks_changed',
   tasks,
@@ -404,6 +404,75 @@ describe('ClaudeSDKProvider — background tasks', () => {
     expect(chunks.filter((c) => c.type === 'result')).toHaveLength(2)
   })
 
+  // 2026-11-24 用户 #1：后台作业留档需要「结束边沿」（状态 / 摘要 / 输出文件），
+  // 以及运行时的输出尾 / 单作业停止控制通道。
+  it('后台作业结束 → background_task_ended（状态 / 摘要 / output_file / run_id）', async () => {
+    mockQuery.mockReturnValue(
+      makeControlledQuery(
+        makeMessageChunks([
+          bgChanged([{ task_id: 'bg-1', run_id: 'r1', task_type: 'local_bash', description: 'pnpm dev' }]),
+          ...textTurn('m-1', '起服务'),
+          {
+            type: 'result', subtype: 'success', session_id: 's-1', num_turns: 2,
+            result: '起服务', usage: { input_tokens: 10, output_tokens: 5 },
+          },
+          bgChanged([]),
+          {
+            type: 'system', subtype: 'task_notification', task_id: 'bg-1', run_id: 'r1',
+            status: 'completed', summary: 'ready', output_file: 'C:/tmp/bg-1.log',
+          },
+        ]),
+      ),
+    )
+
+    const chunks: MessageChunk[] = []
+    for await (const chunk of provider.sendQuery('起服务', '/tmp', undefined, {
+      interruptible: true,
+      awaitBackgroundTasks: true,
+    })) {
+      chunks.push(chunk)
+    }
+
+    const level = chunks.find((c) => c.type === 'background_tasks') as {
+      tasks: Array<{ id: string; runId?: string }>
+    }
+    expect(level.tasks[0]).toMatchObject({ id: 'bg-1', runId: 'r1' })
+
+    const ended = chunks.filter((c) => c.type === 'background_task_ended') as Array<{
+      task: Record<string, unknown>
+    }>
+    expect(ended).toEqual([{
+      type: 'background_task_ended',
+      task: { id: 'bg-1', runId: 'r1', status: 'completed', summary: 'ready', outputFile: 'C:/tmp/bg-1.log' },
+    }])
+  })
+
+  it('onBackgroundControl：暴露 get_task_output 与 stopTask', async () => {
+    const stopTask = vi.fn(async () => {})
+    const getTaskOutput = vi.fn(async () => ({ output: 'tail line', total_bytes: 9, truncated: false }))
+    const q = makeControlledQuery(
+      makeMessageChunks([{ type: 'result', subtype: 'success' }]),
+      { stopTask },
+    ) as unknown as { getTaskOutput?: (id: string) => Promise<unknown> }
+    q.getTaskOutput = getTaskOutput
+    mockQuery.mockReturnValue(q)
+
+    let control: { getTaskOutput: (id: string) => Promise<unknown>; stopTask: (id: string) => Promise<void> } | null = null
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+    for await (const _chunk of provider.sendQuery('hi', '/tmp', undefined, {
+      interruptible: true,
+      onBackgroundControl: (c) => { control = c },
+    })) { /* drain */ }
+
+    expect(control).not.toBeNull()
+    await control!.stopTask('bg-1')
+    expect(stopTask).toHaveBeenCalledWith('bg-1')
+    await expect(control!.getTaskOutput('bg-1')).resolves.toEqual({
+      output: 'tail line', total_bytes: 9, truncated: false,
+    })
+    expect(getTaskOutput).toHaveBeenCalledWith('bg-1')
+  })
+
   it('未开 awaitBackgroundTasks 时仍在首个 result 收轮（workflow/engine 行为不变）', async () => {
     mockQuery.mockReturnValue(
       makeControlledQuery(
@@ -461,5 +530,57 @@ describe('ClaudeSDKProvider — background tasks', () => {
     }
 
     expect(stopTask).toHaveBeenCalledWith('bg-1')
+  })
+
+  // 2026-11-23 用户 #8：后台服务运行期间用户继续说话 —— push 的消息必须走
+  // **同一条** SDK 输入流（SDK 0.3.318 实测支持：注入轮与后台唤醒轮共用 query）。
+  it('onInputChannel：push 的用户消息进入同一条输入流（首条之后继续 yield）', async () => {
+    let promptIterable: AsyncIterable<{ message: { content: string } }> | undefined
+    let endStream: () => void = () => {}
+    const holdStream = new Promise<void>((resolve) => { endStream = resolve })
+    mockQuery.mockImplementation(((args: { prompt: AsyncIterable<{ message: { content: string } }> }) => {
+      promptIterable = args.prompt
+      return makeControlledQuery((async function* () {
+        yield bgChanged([{ task_id: 'bg-1', task_type: 'local_bash', description: 'dev server' }])
+        yield {
+          type: 'result', subtype: 'success', session_id: 's-1', num_turns: 1,
+          result: 'STARTED', usage: { input_tokens: 1, output_tokens: 1 },
+        }
+        await holdStream
+        yield bgChanged([])
+      })())
+    }) as never)
+
+    let push: ((text: string) => boolean) | null = null
+    const chunks: MessageChunk[] = []
+    const run = (async () => {
+      for await (const chunk of provider.sendQuery('起服务', '/tmp', undefined, {
+        interruptible: true,
+        awaitBackgroundTasks: true,
+        onInputChannel: (fn) => { push = fn },
+      })) {
+        chunks.push(chunk)
+      }
+    })()
+
+    for (let i = 0; i < 100 && (!push || !promptIterable); i++) {
+      await new Promise((r) => setTimeout(r, 5))
+    }
+    expect(push).toBeTruthy()
+
+    const iterator = promptIterable![Symbol.asyncIterator]()
+    const first = await iterator.next()
+    expect(first.value.message.content).toBe('起服务')
+
+    expect(push!('服务起来了吗？')).toBe(true)
+    const second = await iterator.next()
+    expect(second.value.message.content).toBe('服务起来了吗？')
+
+    endStream()
+    await run
+    expect(chunks.filter((c) => c.type === 'result')).toHaveLength(1)
+
+    // 通道关闭后 push 必须失败（调用方回退普通新回合）。
+    expect(push!('太晚了')).toBe(false)
   })
 })

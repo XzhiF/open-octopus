@@ -92,12 +92,12 @@ export function CockpitOpsPanel() {
       openAsk(item.ask.ask_id)
       return
     }
-    select(refOfItem(item, entryCabinId), item.stage === 'review' ? 'accept' : 'dialog')
+    select(refOfItem(item, entryCabinId), item.stage === 'review' ? 'accept' : 'run')
   }
 
   const detail = (item: CabinAttentionItem) => {
     closePanel()
-    select(refOfItem(item, entryCabinId), item.stage === 'review' ? 'accept' : 'dialog')
+    select(refOfItem(item, entryCabinId), item.stage === 'review' ? 'accept' : 'run')
   }
 
   return (

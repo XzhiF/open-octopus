@@ -2,19 +2,15 @@
 
 // S5 owns this file —— 浮动对话窗（v12 .comms → v20 通讯台）。
 //
-//   position:fixed; z-index:24；默认几何来自 arena + .ck12-scene 的 paddingLeft
-//   （plans §0.3），经 chat/geometry 夹回视口；
-//   header 灯组在左：关闭 / 收起 / 锁定（X / Minus / Pin 图标，DOM 顺序就是
-//   前三颗可聚焦元素），右侧只放拖拽握把与只读读数；右下 18px 缩放；
-//   锁定后拖不动；收起成 47px；
-//   ◍ 五档 94/82/70/55/100 写 --oa（底板透、字不透）。
+//   position:fixed；默认几何来自 arena + .ck12-scene 的 paddingLeft（plans §0.3），
+//   经 chat/geometry 夹回视口；header 灯组在左：关闭 / 收起 / 锁定（X / Minus / Pin
+//   图标，DOM 顺序就是前三颗可聚焦元素），右侧只放拖拽握把与只读读数；右下 18px
+//   缩放；锁定后拖不动；收起成 47px；◍ 五档 94/82/70/55/100 写 --oa。
 //
-// v20（design 29 §3/§5）增量：
-//   · 多作战 tab 条（状态表情 / 未读 / ✕ 关闭 / 回传重开）；
-//   · 本地同步回执 overlay；
-//   · 左缘 / 上缘 grip 缩放（双击复位默认几何）；
-//   · ⌄ 整台收起成停靠 pill（docked，比 mini 更彻底）；
-//   · ⧉ 弹出作战窗（仅用户主动，上限 5）· ▦ 详情 · ⚙ 调试 · ⌃ 加高。
+// v22 #5（2026-11-23 用户）：**主通讯台固定回汐音主对话** —— 线程切换整套撤掉
+//   （← 主对话 / ⚙ 调试 / ▦ 详情 / ⧉ 弹出 / 作业线程标题）。编队对话是独立 chat
+//   窗（CockpitPopWindows），详情是 dossier。主台只留：✕ 收起 / 星核挂载 /
+//   遥测 / 对话索引 / ⌄ 停靠。
 //
 // **常驻挂载**：关闭只把 root 切成 display:none，header/body 两个 DOM 节点不动 ——
 // body 是 ChatPane transcript 的 portal 挂载点（模块级 chat-slots），节点一换
@@ -26,12 +22,10 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { X } from 'lucide-react'
-import { toast } from 'sonner'
 import { useCockpitState } from '../state/CockpitStateProvider'
 import { nextZ } from '@/components/cabin/z-order'
 import { setChatSlot, useChatSlot } from './chat-slots'
 import {
-  cascadeWinRect,
   clampCockpitRect,
   cockpitConsoleRect,
   moveCockpitRect,
@@ -41,9 +35,10 @@ import {
   type Viewport,
 } from './geometry'
 import type { CockpitRect } from '../state/cockpit-state'
+import { MAIN_THREAD_KEY } from '../fleet/threads-model'
 import { CockpitConsoleTelemetry } from './CockpitConsoleTelemetry'
 import { CockpitReceipts } from './CockpitReceipts'
-import { useCockpitThreads } from './use-cockpit-threads'
+import { CockpitItemsQueue } from '../items/CockpitItemsQueue'
 
 /** plans §1.4：popover(100) → 立绘控制条(90) → 任务模块窗(80) → 编队抽屉(70)
  *  → **聊天浮窗(60)** → 作业面(50)。Esc 关栈顶 = 数字大者先关。 */
@@ -62,8 +57,7 @@ interface DragState {
 }
 
 export function CockpitChatWindow() {
-  const { chatWindow, chat, layer, wins, select, threads: threadApi } = useCockpitState()
-  const { active } = useCockpitThreads()
+  const { chatWindow, chat, layer } = useCockpitState()
   const {
     open, mini, pinned, alpha, rect, docked,
   } = chatWindow
@@ -277,13 +271,6 @@ export function CockpitChatWindow() {
     })
   }, [])
 
-  /** v20 ⧉ 弹出：仅用户主动；同线程已存在则聚焦；上限 5 toast 拒绝。 */
-  const popOut = useCallback(() => {
-    if (active.key === 'main') return
-    const ok = wins.openWindow(active.key, cascadeWinRect(wins.windows.length, viewportSize()))
-    if (!ok) toast.error('弹出窗最多 5 个 —— 先关一扇再开')
-  }, [active.key, wins])
-
   const bodyVisible = open && !mini && !docked
 
   return (
@@ -330,16 +317,6 @@ export function CockpitChatWindow() {
           className="ck12-comms-attach-slot"
           data-testid="cockpit-attach-slot"
         />
-        <span className="ck12-comms-ident">
-          <b
-            className="ck12-comms-title"
-            data-testid="cockpit-comms-title"
-            hidden={active.kind === 'main'}
-          >
-            {active.kind === 'main' ? '主对话' : `▦ ${active.short}`}
-          </b>
-        </span>
-
         {/* 遥测：MODEL / CTX / TOKEN —— 都以芯片为中心向下展开、夹在台内。 */}
         <CockpitConsoleTelemetry />
 
@@ -351,55 +328,7 @@ export function CockpitChatWindow() {
         />
 
         <span className="ck12-comms-spacer" />
-        {/* 原型头按钮组（左 → 右）：← 主对话 / ⚙ 调试 / ▦ 详情 / ⧉ 弹出 / ⌄ 收起。 */}
-        {active.key !== 'main' && (
-          <button
-            type="button"
-            className="ck12-comms-act"
-            aria-label="回到主对话"
-            title="← 回到主对话"
-            data-testid="cockpit-comms-back"
-            onClick={() => threadApi.activateThread('main')}
-          >
-            ← 主对话
-          </button>
-        )}
-        {active.ref && (
-          <button
-            type="button"
-            className="ck12-comms-act ck12-comms-dbg"
-            aria-label="看调试 inspect"
-            title="⚙ 调试 inspect"
-            data-testid="cockpit-comms-debug"
-            onClick={() => select(active.ref, 'debug')}
-          >
-            ⚙ 调试
-          </button>
-        )}
-        {active.ref && (
-          <button
-            type="button"
-            className="ck12-comms-act"
-            aria-label="看作战详情"
-            title="▦ 作战详情"
-            data-testid="cockpit-comms-detail"
-            onClick={() => select(active.ref)}
-          >
-            ▦ 详情
-          </button>
-        )}
-        {active.key !== 'main' && (
-          <button
-            type="button"
-            className="ck12-comms-act"
-            aria-label="弹出作战窗"
-            title="⧉ 弹出成独立窗（最多 5 个）"
-            data-testid="cockpit-popout"
-            onClick={popOut}
-          >
-            ⧉ 弹出
-          </button>
-        )}
+        {/* v22 #5：主通讯台固定主对话，头部只剩 ⌄ 收起（原型 .con-h）。 */}
         <button
           type="button"
           className="ck12-comms-act"
@@ -423,11 +352,13 @@ export function CockpitChatWindow() {
           className="ck12-comms-body"
           data-testid="cockpit-chat-transcript"
         />
-        <CockpitReceipts threadKey={active.key} />
+        <CockpitReceipts threadKey={MAIN_THREAD_KEY} />
+        {/* 2026-11-24 用户：事项投递排队条（主对话在跑时贴在输入行上方）。 */}
+        <CockpitItemsQueue />
         {/* 2026-11-20 用户：输入框上方的「待你决断 · N 项 · 键 1–9 直达」条已移除 ——
             聊天内容里有提问卡、右栏也有 inbox，三条入口重复。 */}
-        {/* 原型 .con-in：❯ + 输入框 + 金色六角 ⏎；「待你定」dock 由 composer
-            自带的 composerDock 渲染在这行之上。 */}
+        {/* v22 #9（2026-11-23 用户）：输入框上方不再有任何「待你定」浮条 ——
+            提问只看转录里的卡片与右栏 inbox。原型 .con-in：❯ + 输入框 + ⏎。 */}
         <div className="ck12-comms-in">
           <div
             ref={attachComposer}

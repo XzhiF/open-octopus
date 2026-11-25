@@ -1,4 +1,4 @@
-// task-phase-redesign 票 12（AC1/AC2）+ 验货台 v2（实物 diff / 当场复检 / 票对账）
+﻿// task-phase-redesign 票 12（AC1/AC2）+ 验货台 v2（实物 diff / 当场复检 / 票对账）
 // — AcceptanceSurface 组件测试（2026-09-16：三栏弹窗 AcceptanceModal 收编为执行
 // 控制台的「验货台」tab，本测试随内容组件迁移）。数据权威 = GET /:id.derived
 // （票 03 唯一真相），fixture 独立于组件实现。中列两 tab：默认「实物」+「核对」
@@ -317,7 +317,7 @@ const REPORT_MATRIX_MD = `# Round Report · scaffold-1 · r1
 | 02 | 挂点 | ✅ done | 改了些不存在的路径/ghost-file.ts |
 `
 
-// task-fix SKILL 三列契约（反馈→修复动作→验证证据）fixture：
+// 旧 task-fix 修复报告三列契约（反馈→修复动作→验证证据）fixture（兼容历史数据）：
 // 行1 usage-writer.ts 在 ROUND_DIFF 实物里 → 有实物；行2 ghost-readme 不在 → 幻影；
 // 行3 无路径 token → 文字证据（不许假装对上过）。
 const FIX_REPORT_MD = `# Fix Report r1
@@ -805,8 +805,8 @@ describe("AcceptanceSurface — 批次定位（specPath 回退 / idle）", () =>
   })
 })
 
-describe("AcceptanceSurface — AC2 打回反馈必填 + 单路径提交链（ADR-0024：无路由选项）", () => {
-  it("反馈为空/全空白 → 确认 disabled；弹窗无路由二选一；body 恒不带 next_flow；确认文案=派 task-fix 开 R{m+1}", async () => {
+describe("AcceptanceSurface — AC2 打回反馈必填 + 单一提交链（doer 原地修，无路由选项）", () => {
+  it("反馈为空/全空白 → 确认 disabled；弹窗无路由二选一；body 恒不带 next_flow；确认文案=交给 doer 原地修", async () => {
     renderModal()
     fireEvent.click(await screen.findByTestId("acceptance-reject"))
     const confirm = screen.getByTestId("reject-confirm") as HTMLButtonElement
@@ -822,11 +822,10 @@ describe("AcceptanceSurface — AC2 打回反馈必填 + 单路径提交链（AD
     fireEvent.change(screen.getByTestId("reject-feedback"), { target: { value: "登录跳转丢了 session" } })
     const confirm2 = screen.getByTestId("reject-confirm") as HTMLButtonElement
     expect(confirm2.disabled).toBe(false)
-    expect(confirm2.textContent).toContain("确认退回 · 开始修复 R2")
+    expect(confirm2.textContent).toContain("确认退回 · 交给 doer 原地修")
 
     mockPostAcceptance.mockResolvedValueOnce({
-      task: makeDetail(PHASE1_AWAITING), acceptance_id: "a-1", next_action: "dispatched",
-      dispatch: { execution_id: "exec-2", workspace_id: "ws-1", phase_index: 1, round_index: 2 },
+      task: makeDetail(PHASE1_AWAITING), acceptance_id: "", next_action: "fixing",
     })
     fireEvent.click(screen.getByTestId("reject-confirm"))
     // 契约 = server strict schema 的合法集：不含 next_flow（携带即 400）。
@@ -835,18 +834,17 @@ describe("AcceptanceSurface — AC2 打回反馈必填 + 单路径提交链（AD
     }))
   })
 
-  it("提交成功后回显卡显示 task-fix 修复轮（单一去向，无二分文案）", async () => {
+  it("提交成功后回显卡显示 doer 原地修（单一去向，无二分文案）", async () => {
     renderModal()
     fireEvent.click(await screen.findByTestId("acceptance-reject"))
     fireEvent.change(screen.getByTestId("reject-feedback"), { target: { value: "重做" } })
     mockPostAcceptance.mockResolvedValueOnce({
-      task: makeDetail(PHASE1_AWAITING), acceptance_id: "a-1", next_action: "dispatched",
-      dispatch: { execution_id: "exec-2", workspace_id: "ws-1", phase_index: 1, round_index: 2 },
+      task: makeDetail(PHASE1_AWAITING), acceptance_id: "", next_action: "fixing",
     })
     fireEvent.click(screen.getByTestId("reject-confirm"))
     const card = await screen.findByTestId("agent-recommend-card")
-    expect(card.textContent).toContain("task-fix")
-    expect(card.textContent).toContain("修复轮")
+    expect(card.textContent).toContain("doer")
+    expect(card.textContent).toContain("原地修")
     expect(card.textContent).not.toContain("修订重跑")
     expect(card.textContent).toContain("fix-feedback-r1.md")
     // D14 空卡已摘除（items 恒空 = 每次打回必亮「未上线」告示，纯噪音）
@@ -1039,7 +1037,7 @@ describe("验货台 — 实况可信与决策诚实（A/C 档）", () => {
     await act(async () => { api.openReject("打回派修复轮：统一按钮圆角体系并回归样式令牌。") })
     const ta = await screen.findByTestId("reject-feedback")
     expect((ta as HTMLTextAreaElement).value).toContain("统一按钮圆角体系并回归样式令牌")
-    // 草稿即指令（票 05：反馈必填 = task-fix 输入）—— 确认键不为空文Disabled
+    // 草稿即指令（票 05：反馈必填 = doer 修复输入）—— 确认键不为空文Disabled
     expect((screen.getByTestId("reject-confirm") as HTMLButtonElement).disabled).toBe(false)
     expect(await screen.findByTestId("reject-dialog")).toBeTruthy()
   })

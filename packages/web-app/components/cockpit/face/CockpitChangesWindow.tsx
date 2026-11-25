@@ -505,7 +505,7 @@ export function CockpitChangesWindow({ cabinId, onClose }: { cabinId: string; on
       <div className="ck12-treewin-b">
         <div className="ck12-ckt-cwd" data-testid="cockpit-chg-cwd">
           <span className="ck12-ckt-cwd-k">⌂ 本舱 cwd</span>
-          <span className="ck12-ckt-cwd-p" title={data?.dir}>{data?.dir ?? '—'}</span>
+          <span className="ck12-ckt-cwd-p" title={data?.dir ?? undefined}>{data?.dir ?? '—'}</span>
           <span className="ck12-ckt-ro">
             {totals.files > 0 ? `${totals.files} 文件有改动` : '工作区干净'}
           </span>

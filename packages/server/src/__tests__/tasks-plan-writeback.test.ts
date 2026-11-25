@@ -9,7 +9,7 @@
 //     落库恒 running —— 由「running 可写」用例覆盖其派生面）
 //   · reason/source 缺失或空白 → 400；server 不判语义（任意非空 reason 皆放行）
 //   · 路径限批次内（复用 resolveWithinRoot 不放宽）→ 越界 403；任务不存在 404
-//   · actor = server 按 DB 推定（活跃 task-fix 执行 > doer 会话 > unattributed），body 自报身份不采信（.strict() → 400）
+//   · actor = server 按 DB 推定（任务主线程 > unattributed），body 自报身份不采信（.strict() → 400）
 //   · 变更记录多次写入按时间累积不覆盖
 //   · 写成功后既有产物 manifest 即列出该文件（零 manifest 改动）
 // harness 先例：tasks-ledger-columns.test.ts（in-memory DB + Hono 直调 + tmp home）。
@@ -46,7 +46,7 @@ async function seedTask(status: string): Promise<string> {
   const r = await app.request("/api/tasks", {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({
+    body: JSON.stringify({
       name: `PWB-02 ${seq++}`,
       task_spec: {
         format: "v4", goal: "g", ac: ["a"], autoAdvance: false,
@@ -293,24 +293,15 @@ describe("票02 AC6 — actor 由 server 按 DB 推定，body 自报身份不采
     expect(res.status).toBe(400)
   })
 
-  it("拍板规则钉：fixing 两态并存（活跃 task-fix 执行 + 主对话均在场）→ 归 task-fix 不双计", async () => {
-    const id = await seedTask("running") // fixing 的落库态恒 running（派生态）
-    bindThread(id, "sess-doer-2")
-    seedExec(id, { workflowRef: "built-in/task-fix", status: "running", execId: "exec-fix-1" })
-    const res = await postPlan(id, { batch: BATCH1, file: "spec.md", content: "c\n", reason: "反馈指向规格即改", source: "修复轮 r2" })
-    expect(res.status).toBe(200)
-    expect(((await res.json()) as { actor: string }).actor).toBe("task-fix(execution=exec-fix-1)")
-    const line = readHome(id, `${BATCH1}/spec.md`)
-    expect(line).toContain("· task-fix(execution=exec-fix-1) ·")
-    expect(line).not.toContain("sess-doer-2")
-  })
-
-  it("活跃执行非 task-fix（绑定流在跑）→ 不抢归属，仍归主对话", async () => {
+  it("拍板规则钉：修复也在主线程原地做 → 活跃执行与主线程并存时仍归主线程（不双计）", async () => {
     const id = await seedTask("running")
-    bindThread(id, "sess-doer-3")
+    bindThread(id, "sess-doer-2")
     seedExec(id, { workflowRef: "task-dev", status: "running", execId: "exec-main-1" })
-    const res = await postPlan(id, { batch: BATCH1, file: "spec.md", content: "c\n", reason: "r", source: "s" })
-    expect(((await res.json()) as { actor: string }).actor).toBe("task-thread(session=sess-doer-3)")
+    const res = await postPlan(id, { batch: BATCH1, file: "spec.md", content: "c\n", reason: "反馈指向规格即改", source: "doer 修复" })
+    expect(res.status).toBe(200)
+    expect(((await res.json()) as { actor: string }).actor).toBe("task-thread(session=sess-doer-2)")
+    const line = readHome(id, `${BATCH1}/spec.md`)
+    expect(line).toContain("· task-thread(session=sess-doer-2) ·")
   })
 
   it("主线程指针悬空（会话行已不存在）→ unattributed（宁缺不伪）", async () => {
@@ -320,13 +311,6 @@ describe("票02 AC6 — actor 由 server 按 DB 推定，body 自报身份不采
     db.pragma("foreign_keys = OFF")
     db.prepare(`UPDATE tasks SET source_chat_session_id = 'sess-gone' WHERE id = ?`).run(id)
     db.pragma("foreign_keys = ON")
-    const res = await postPlan(id, { batch: BATCH1, file: "spec.md", content: "c\n", reason: "r", source: "s" })
-    expect(((await res.json()) as { actor: string }).actor).toBe("unattributed")
-  })
-
-  it("终态执行行（completed）不在飞 → 不判 task-fix，走会话/缺账轨道", async () => {
-    const id = await seedTask("awaiting_review")
-    seedExec(id, { workflowRef: "built-in/task-fix", status: "completed", execId: "exec-fix-old" })
     const res = await postPlan(id, { batch: BATCH1, file: "spec.md", content: "c\n", reason: "r", source: "s" })
     expect(((await res.json()) as { actor: string }).actor).toBe("unattributed")
   })
@@ -585,17 +569,7 @@ describe("票03 AC4 — 与 02 同语义逐条独立成测（状态闸/越界 40
     expect(((await res.json()) as { actor: string }).actor).toBe("task-thread(session=t3-sess-doer-1)")
   })
 
-  it("活跃 task-fix 执行与 doer 会话并存 → 归 task-fix 不双计（与 02 同优先级规则，票侧独立钉）", async () => {
-    const id = await seedTask("running")
-    bindThread(id, "t3-sess-doer-2")
-    seedExec(id, { workflowRef: "built-in/task-fix", status: "running", execId: "t3-exec-fix-1" })
-    const res = await postPlanIssues(id, {
-      batch: BATCH1, file: "issues/fix-round-ticket.md", content: OK_TICKET, reason: "反馈指向新范围", source: "修复轮 r2",
-    })
-    expect(((await res.json()) as { actor: string }).actor).toBe("task-fix(execution=t3-exec-fix-1)")
-  })
-
-  it("无会话无修复轮 → actor = unattributed（宁缺不伪，票侧独立钉）", async () => {
+  it("无会话 → actor = unattributed（宁缺不伪，票侧独立钉）", async () => {
     const id = await seedTask("running")
     const res = await postPlanIssues(id, {
       batch: BATCH1, file: "issues/t.md", content: OK_TICKET, reason: "r", source: "s",

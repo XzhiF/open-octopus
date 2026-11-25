@@ -59,6 +59,17 @@ pnpm --filter @octopus/desktop pack:dir
 
 `prepare:resources` 会先构建 server/web，再 deploy 生产依赖、清理外部软链、重命名 vendor、复制 Node runtime 与 core-pack 数据，并用打包后的 Node 实际加载一次 better-sqlite3 做自检。
 
+### 走代理打包（国内网络）
+
+```bash
+pnpm desktop:dist:proxy        # 全量打包，自动读系统代理
+pnpm desktop:pack:proxy        # 同上，只出 release/win-unpacked
+pnpm desktop:dist:proxy -- --proxy http://127.0.0.1:7890
+node packages/desktop/scripts/pack.mjs --dry-run    # 只看代理 / Electron zip 缓存状态
+```
+
+代理按 `HTTP(S)_PROXY` 环境变量 → Windows 系统代理设置（Internet Settings）的顺序自动发现，并同时注入给 `pnpm deploy` 与 electron-builder。打包前会打印 Electron zip 的缓存命中情况：命中则 130MB 发行包不会重下；日志里的 `downloaded label=electron` 多半是每次都会重拉的 `SHASUMS256.txt` 校验文件。
+
 分发前需要：
 - 配置 Developer ID 签名与 notarization（当前 `identity: null` 仅用于本地冒烟）。
 - 在目标平台（mac/win/linux）上执行打包，或提供对应平台的 Node runtime 与 Claude SDK 二进制。

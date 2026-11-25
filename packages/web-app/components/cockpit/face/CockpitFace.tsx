@@ -22,7 +22,8 @@ import { useCabinOptional } from '@/components/cabin/cabin-provider'
 import { JobFace } from '@/components/cabin/job-face'
 import { cn } from '@/lib/utils'
 import { useCockpitState } from '../state/CockpitStateProvider'
-import { cockpitRefKey, type CockpitRef } from '../state/cockpit-state'
+import { cockpitRefKey, COCKPIT_DEFAULT_TAB, type CockpitRef } from '../state/cockpit-state'
+import { openFleetChat } from '../chat/open-fleet-window'
 import { useCockpitFleet } from '../fleet/CockpitFleetProvider'
 import { groupOf, type CockpitRow } from '../fleet/fleet-model'
 import { CockpitAttentionFace } from './CockpitAttentionFace'
@@ -82,7 +83,9 @@ function hintOf(row: CockpitRow | null) {
 }
 
 export function CockpitFace({ entryCabinId }: CockpitFaceProps) {
-  const { selection, tab, setTab, select, layer, inboxOpen, inboxSel, detailSource } = useCockpitState()
+  const {
+    selection, tab, setTab, select, layer, inboxOpen, inboxSel, detailSource, wins, chatWindow, threads: threadApi,
+  } = useCockpitState()
   const { rows, counts, error, refetch } = useCockpitFleet()
   const cabinCtx = useCabinOptional()
   // counts !== null = 编队至少成功接过一次真值（FleetProvider 契约）。
@@ -101,6 +104,20 @@ export function CockpitFace({ entryCabinId }: CockpitFaceProps) {
   }, [rows, selection, row])
 
   const close = useCallback(() => select(null), [select])
+
+  /** v22 #5：详情头「💬 对话」—— 打开这条作战的独立 chat 窗并收起详情。
+   *  线程 key = 编队行 key（与 threadsFromRows 同命名）；没有会话就没有这扇窗。 */
+  const chatRow = row ?? attentionOnJob
+  const chatThreadKey = useMemo(() => {
+    if (!chatRow) return null
+    if (chatRow.kind === 'job') return chatRow.job.session_id ? chatRow.key : null
+    if (chatRow.kind === 'task') return chatRow.task.doer_session_id ? chatRow.key : null
+    return null
+  }, [chatRow])
+  const openChat = useCallback(() => {
+    if (!chatThreadKey) return
+    if (openFleetChat(wins, threadApi, chatThreadKey, chatWindow)) select(null)
+  }, [chatThreadKey, wins, threadApi, chatWindow, select])
 
   // ── 窗口化（原型 .pwin / .pgrip / bindPanelWin）─────────────────────────
   const faceRef = useRef<HTMLDivElement | null>(null)
@@ -280,7 +297,7 @@ export function CockpitFace({ entryCabinId }: CockpitFaceProps) {
     })
     const nextRef = next ? refOfRow(next) : null
     // 验收通过后落下一行：保持在同一种落位（inbox 开的继续在左侧，编队开的居中）。
-    if (nextRef) select(nextRef, 'dialog', detailSource)
+    if (nextRef) select(nextRef, COCKPIT_DEFAULT_TAB, detailSource)
   }, [rows, select, detailSource])
 
   if (!selection) return null
@@ -345,6 +362,7 @@ export function CockpitFace({ entryCabinId }: CockpitFaceProps) {
             tab,
             onTabChange: setTab,
             onClose: close,
+            onOpenChat: chatThreadKey ? openChat : null,
             onAcceptanceMutated: () => advance(selection),
           }}
         />
@@ -369,6 +387,7 @@ export function CockpitFace({ entryCabinId }: CockpitFaceProps) {
             tab,
             onTabChange: setTab,
             onClose: close,
+            onOpenChat: chatThreadKey ? openChat : null,
             onAcceptanceMutated: () => advance(selection),
           }}
         />
@@ -388,6 +407,7 @@ export function CockpitFace({ entryCabinId }: CockpitFaceProps) {
           onClose={close}
           onMutated={refetch}
           onAcceptanceMutated={() => advance(selection)}
+          onOpenChat={chatThreadKey ? openChat : null}
         />
       )
     }

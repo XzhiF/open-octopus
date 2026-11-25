@@ -17,7 +17,7 @@ import { createTurnStream, DEFAULT_HEARTBEAT_MS } from '../../services/agent/tur
 import { SystemPromptAssembler } from '../../services/agent/system-prompt-assembler'
 import { getNotificationService } from '../../services/agent/notification-service'
 import { getSessionCompressService } from '../../services/agent/session-compress-service'
-import { getAgentService, getActiveStreamBackgroundTasks, isStreamActive, registerActiveStream, setActiveStreamBackgroundTasks, unregisterActiveStream } from '../../services/agent/agent-service'
+import { getAgentService, getActiveStreamBackgroundTasks, getActiveStreamPhase, getActiveStreamControl, isStreamActive, registerActiveStream, setActiveStreamBackgroundTasks, attachActiveStreamInput, attachActiveStreamControl, setActiveStreamPhase, findBackgroundWaitStream, unregisterActiveStream } from '../../services/agent/agent-service'
 import { getSafetyInterceptor } from '../../services/agent/safety-interceptor'
 import { getAgentDir, getDailyMemoryDir, getExperiencesDir, getDebugTracesDir } from '../../services/agent/paths'
 import { deriveSessionTitle } from '../../services/agent/session-title'
@@ -32,6 +32,7 @@ import { withTransientReminder } from '../../services/agent/prompt-reminder'
 import { buildTaskPlaybookReminder } from '../../services/agent/turn-context'
 import { recordProviderResultUsage, ledgerStopReason } from '../../services/llm-call-ledger'
 import { SubagentRunService } from '../../services/agent/subagent-runs'
+import { BackgroundRunService } from '../../services/agent/background-runs'
 import { SessionTurnDebugDAO, hashPrompt } from '../../db/dao'
 import { TurnDebugRecorder, type TurnDebugIdentity } from '../../services/agent/turn-debug-recorder'
 import { expertName } from '@octopus/shared'
@@ -41,12 +42,38 @@ import { getChatEventBridge } from '../../services/activity/chat-event-bridge'
 import { createMemoryToolServer, resolveLongTermConsent } from '../../services/chat/memory-tools'
 import { createCabinToolServer, createCabinDelegationToolServer, getCabinToolsProvider, buildCabinSummaryReminder } from '../../services/chat/cabin-tools'
 import { parseDecisionEnvelope } from '../../services/cabin/cabin-brief'
+import { CabinItemService } from '../../services/cabin/cabin-item-service'
 import { getSlashCommands, rememberSlashCommands } from '../../services/chat/slash-commands'
 import type { TokenUsageDAO } from '../../db/dao/token-usage-dao'
 import type { EffortLevel } from '@octopus/shared'
 import { parseComposerContext, parseComposerEffort, resolveChatModel } from './composer-options'
 import type { TaskThreadService } from '../../services/tasks/task-thread-service'
 import { commitWorkspaceEdits, quickEditMarkerFor } from '../../services/tasks/quick-edit'
+
+/** 读取文件末尾 ≤ maxBytes（后台作业 output_file 的兜底；UTF-8 截断丢掉首行残片）。 */
+function readFileTail(
+  file: string,
+  maxBytes: number,
+): { output: string; total_bytes: number; truncated: boolean } | null {
+  try {
+    const stat = fs.statSync(file)
+    if (!stat.isFile()) return null
+    const start = Math.max(0, stat.size - maxBytes)
+    const len = stat.size - start
+    if (len <= 0) return { output: '', total_bytes: stat.size, truncated: false }
+    const buf = Buffer.alloc(len)
+    const fd = fs.openSync(file, 'r')
+    try { fs.readSync(fd, buf, 0, len, start) } finally { fs.closeSync(fd) }
+    let output = buf.toString('utf8')
+    if (start > 0) {
+      const nl = output.indexOf('\n')
+      if (nl >= 0) output = output.slice(nl + 1)
+    }
+    return { output, total_bytes: stat.size, truncated: start > 0 }
+  } catch {
+    return null
+  }
+}
 
 export interface ChatRouteDeps {
   sessionDAO: AgentSessionDAO
@@ -143,6 +170,10 @@ export function createChatRoutes(deps: ChatRouteDeps): Hono {
   // Lazy: route factories run at import time, before tests init the DB.
   let subagentRuns: SubagentRunService | null = null
   const getSubagentRuns = () => (subagentRuns ??= new SubagentRunService(sessionDao.getDb()))
+  // 后台作业记录（2026-11-24 用户 #1 · 活动日志）：电平 → running 行，
+  // 结束边沿 → 收口。与子代理同一套路，读侧还有 output 路由。
+  let backgroundRuns: BackgroundRunService | null = null
+  const getBackgroundRuns = () => (backgroundRuns ??= new BackgroundRunService(sessionDao.getDb()))
 
   // ── Session running state（"关闭不丢失"）──────────────────────────
   // running = 内存里仍有该会话的生成流；partial = DB 里还有 streaming partial。
@@ -158,6 +189,9 @@ export function createChatRoutes(deps: ChatRouteDeps): Hono {
       partial: sessionDao.hasStreamingMessage(id),
       // resume 回来时补显示「等待后台」——SSE 不重连也能看到在跑什么。
       background_tasks: getActiveStreamBackgroundTasks(id),
+      // 2026-11-23 用户 #8：generating = 模型在生成（输入只能排队/steer）；
+      // background-wait = 只等后台任务（可经 /chat/inject 继续说话）。
+      phase: getActiveStreamPhase(id),
     })
   })
 
@@ -198,6 +232,77 @@ export function createChatRoutes(deps: ChatRouteDeps): Hono {
     return c.json({ run })
   })
 
+  // ── Background jobs（2026-11-24 用户 #1 · 活动日志）─────────────────
+  // 运行中电平 + 已结束留档（background_runs）。右栏「活动」与「更多 →
+  // 活动日志」共用这一个数据源。
+  app.get('/sessions/:id/background-runs', (c) => {
+    const id = c.req.param('id')
+    const session = sessionDao.findById(id)
+    if (!session || session.is_deleted) {
+      return c.json(createAgentError('NOT_FOUND', `Session ${id} not found`), 404)
+    }
+    return c.json({ runs: getBackgroundRuns().list(id) })
+  })
+
+  // 输出尾：运行中走 SDK `get_task_output`（≤8 KiB，实时）；回合结束 / 进程
+  // 重启后回退读 CLI 留下的 output_file 末尾。两路都没有 → 409。
+  app.get('/sessions/:id/background/:taskId/output', async (c) => {
+    const id = c.req.param('id')
+    const taskId = c.req.param('taskId')
+    const session = sessionDao.findById(id)
+    if (!session || session.is_deleted) {
+      return c.json(createAgentError('NOT_FOUND', `Session ${id} not found`), 404)
+    }
+    const live = getActiveStreamControl(id)
+    if (live) {
+      try {
+        const out = await live.control.getTaskOutput(taskId)
+        return c.json({ ...out, source: 'live' as const })
+      } catch {
+        // 任务已结束 / 该 SDK 不支持 —— 落到下面的文件兜底。
+      }
+    }
+    const row = getBackgroundRuns().find(id, taskId)
+    if (row?.output_file) {
+      const tail = readFileTail(row.output_file, 8 * 1024)
+      if (tail) return c.json({ ...tail, source: 'file' as const })
+    }
+    return c.json(
+      createAgentError('UNAVAILABLE', '该作业的输出已不可读（进程已退出或文件被清理）'),
+      409,
+    )
+  })
+
+  // 单独停一个后台作业（不打断当前模型轮）。SDK 会补一条 status='stopped'
+  // 的 task_notification，provider 转成 background_task_ended 后由记录服务收口。
+  app.post('/sessions/:id/background/:taskId/stop', async (c) => {
+    const id = c.req.param('id')
+    const taskId = c.req.param('taskId')
+    const session = sessionDao.findById(id)
+    if (!session || session.is_deleted) {
+      return c.json(createAgentError('NOT_FOUND', `Session ${id} not found`), 404)
+    }
+    const tracked = getActiveStreamBackgroundTasks(id).some((task) => task.id === taskId)
+      || getBackgroundRuns().find(id, taskId)?.status === 'running'
+    if (!tracked) {
+      return c.json(createAgentError('NOT_FOUND', `Background task ${taskId} not found`), 404)
+    }
+    const live = getActiveStreamControl(id)
+    if (!live) {
+      return c.json(
+        createAgentError('UNAVAILABLE', '该会话没有活动中的查询，作业已不在运行'),
+        409,
+      )
+    }
+    try {
+      await live.control.stopTask(taskId)
+      return c.json({ success: true })
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err)
+      return c.json(createAgentError('INTERNAL_ERROR', msg), 500)
+    }
+  })
+
   // ── Chat SSE streaming ─────────────────────────────────────────────
   app.post('/sessions/:id/chat', async (c) => {
     const org = c.req.header('X-Octopus-Org') || (c.get('org') as string) || ''
@@ -213,6 +318,10 @@ export function createChatRoutes(deps: ChatRouteDeps): Hono {
       /** 2026-10-28 task-thread: the bridge already appended the deterministic
        *  event card, so the wake turn must not persist a second copy. */
       ephemeral?: boolean
+      /** 事项投递（2026-11-24 用户）：via='items' 时 itemIds = 舱内事项 id。
+       *  服务端把来源写进 user message metadata（via / items），并把事项标成
+       *  delivered —— 单写一次，客户端只负责展示与关项。 */
+      meta?: { via?: 'items'; itemIds?: string[] }
     }
     try {
       body = await c.req.json()
@@ -223,6 +332,12 @@ export function createChatRoutes(deps: ChatRouteDeps): Hono {
     if (!body.message) {
       return c.json(createAgentError('INVALID_PARAM', 'message is required'), 400)
     }
+
+    // 事项投递（2026-11-24 用户）：只在用户真发消息时生效；wake / ephemeral 不带。
+    const itemIds = Array.isArray(body.meta?.itemIds)
+      ? body.meta!.itemIds.filter((x): x is string => typeof x === 'string' && x.length > 0).slice(0, 50)
+      : []
+    const viaItems = !body.wake && !body.ephemeral && body.meta?.via === 'items' && itemIds.length > 0
 
     const effort = parseComposerEffort(body.effort)
     const model = resolveChatModel(body.model, parseComposerContext(body.maxContext))
@@ -249,7 +364,11 @@ export function createChatRoutes(deps: ChatRouteDeps): Hono {
     // 消息不落转录，客户端按 STREAM_IN_PROGRESS 转成尾随（或排队补发）。
     if (isStreamActive(id)) {
       return c.json(
-        createAgentError('STREAM_IN_PROGRESS', '该会话上一轮回复仍在生成中，请稍候或先停止'),
+        createAgentError('STREAM_IN_PROGRESS', '该会话上一轮回复仍在生成中，请稍候或先停止', {
+          // 后台等待阶段本身允许继续说话 —— 走 /chat/inject 注入同一个
+          // provider 查询；生成中只能等。客户端据此选路径（2026-11-23 #8）。
+          phase: getActiveStreamPhase(id),
+        }),
         409,
       )
     }
@@ -259,17 +378,37 @@ export function createChatRoutes(deps: ChatRouteDeps): Hono {
     const userMsgId = crypto.randomUUID()
     const now = new Date().toISOString()
     if (!body.ephemeral) {
+      // metadata：wake 事件卡带 displayType/activity；事项投递带来源（via + items），
+      // 其余普通消息不写 metadata —— 转录行据此渲染「☑ 事项」来源签。
+      const userMeta = body.wake
+        ? { displayType: 'event', activity: body.activity ?? null }
+        : viaItems
+          ? { via: 'items', items: itemIds }
+          : null
       sessionDao.insertMessage({
         id: userMsgId, session_id: id, role: 'user',
         content: body.message, created_at: now,
-        ...(body.wake
-          ? { metadata: JSON.stringify({ displayType: 'event', activity: body.activity ?? null }) }
-          : {}),
+        ...(userMeta ? { metadata: JSON.stringify(userMeta) } : {}),
       })
       sessionDao.updateLastMessageAt(id, now)
-      // 双会话同步：在任务线程里直接答了问题卡 → 舱主会话的镜像卡变只读。
-      if (body.message.includes('用户回答了以下问题')) {
-        try { getChatEventBridge().markAuthorAskAnswered(id) } catch { /* bridge off */ }
+      // 投递 = 事项 todo → delivered（幂等）。落点写回事项，便于排障 / 回执对账。
+      if (viaItems && session.cabin_id) {
+        try {
+          new CabinItemService(sessionDao.getDb()).deliver(session.cabin_id, itemIds, {
+            sessionId: id, messageId: userMsgId,
+          })
+        } catch { /* 事项表不可用不影响对话本身 */ }
+      }
+      // 双会话同步（v22 #9，2026-11-23 用户）：在作者线程里说话 = 这条提问
+      // 已经答了 —— 决策代述（「用户回答了以下问题」）和编队 chat 里的直接
+      // 回复走同一个销账入口，只是回执文案不同。服务端 wake 不是人，跳过。
+      if (!body.wake) {
+        try {
+          getChatEventBridge().markAuthorAskAnswered(
+            id,
+            body.message.includes('用户回答了以下问题') ? undefined : { via: 'direct' },
+          )
+        } catch { /* bridge off */ }
       }
     }
 
@@ -324,15 +463,18 @@ export function createChatRoutes(deps: ChatRouteDeps): Hono {
     // A user-picked third clone is respected until the next task transition.
     if (thread) {
       const workflowDev = thread.task.kind === 'workflow-dev'
+      const cloneDev = thread.task.kind === 'clone-dev'
       const desired = thread.identity === 'base'
         ? null
         : workflowDev
           ? 'workflow-author'
-          : thread.identity === 'author'
-            ? 'task-author'
-            : 'task-doer'
+          : cloneDev
+            ? 'clone-author'
+            : thread.identity === 'author'
+              ? 'task-author'
+              : 'task-doer'
       const currentRole = cacheCtx.getRoleState(id)
-      const taskRoles = new Set(['task-author', 'task-doer', 'workflow-author'])
+      const taskRoles = new Set(['task-author', 'task-doer', 'workflow-author', 'clone-author'])
       if (
         (currentRole.activeExpert == null || taskRoles.has(currentRole.activeExpert)) &&
         currentRole.activeExpert !== desired
@@ -386,7 +528,12 @@ export function createChatRoutes(deps: ChatRouteDeps): Hono {
     const cabinReminder = !thread && session.cabin_id && cabinProvider
       ? buildCabinSummaryReminder(cabinProvider.service, session.cabin_id, cabinProvider.decisions)
       : null
-    const turnReminder = [roleCard, mentionReminder, playbookReminder?.text, cabinReminder].filter(Boolean).join('\n\n')
+    // 事项投递（2026-11-24 用户）：告诉模型这是舱内小待办，按条目汇报；
+    // 关项由人在回执卡上确认 —— 模型不要自行标记完成。
+    const itemReminder = viaItems
+      ? `本轮消息是从舱内「事项」窗投递的 ${itemIds.length} 条小待办。请逐条处理，并在最后按条目汇报（做了什么 / 证据）；不要自行标记完成，关项由人在回执卡上确认。`
+      : null
+    const turnReminder = [roleCard, mentionReminder, playbookReminder?.text, cabinReminder, itemReminder].filter(Boolean).join('\n\n')
     const providerMessage = withTransientReminder(body.message!, turnReminder)
     // Workflow control tools (list/run/status/cancel/approve/retry) are
     // registered as an in-process MCP server bound to this chat's workspace.
@@ -541,6 +688,7 @@ export function createChatRoutes(deps: ChatRouteDeps): Hono {
               },
             })
         const llmResult = await tryClaudeSDK(body.message!, systemPrompt, turnStream, id, org, sessionDao, undefined, undefined, model, effort, {
+          streamId,
           resumeSessionId,
           providerMessage,
           agents,
@@ -609,12 +757,72 @@ export function createChatRoutes(deps: ChatRouteDeps): Hono {
         }
         setActiveStreamBackgroundTasks(id, null)
         unregisterActiveStream(id, streamId)
+        // 回合收尾：不让 background_runs 留下永久 running 的行。
+        try { getBackgroundRuns().closeRunning(id) } catch { /* 观测面失败不影响收轮 */ }
         notifyWake('done')
         // Closes after the terminal frame has been flushed (terminate awaits
         // the serialized write chain).
         turn.close()
       }
     })
+  })
+
+  // ── 追加输入（后台等待期）────────────────────────────────────────────
+  // 2026-11-23 用户 #8：`run_in_background` 的服务还在跑时，模型空闲等唤醒，
+  // 这段时间用户继续说话不该被「会话忙」挡住。普通 /chat 会开第二条 SDK 查询
+  // （与后台唤醒并发 resume 同一会话 → 只拿到回放空回复，2026-11-10 事故），
+  // 所以这里把消息注进**同一条** provider 查询的输入流 —— SDK 0.3.318 真机
+  // 实测：注入轮与后台唤醒轮共用同一个 query，互不吞并。
+  // 只在 background-wait 阶段接受；生成中 / 没有后台等待一律 409。
+  app.post('/sessions/:id/chat/inject', async (c) => {
+    const org = c.req.header('X-Octopus-Org') || (c.get('org') as string) || ''
+    const id = c.req.param('id')
+
+    let body: { message?: string }
+    try {
+      body = await c.req.json()
+    } catch {
+      return c.json(createAgentError('INVALID_PARAM', 'Invalid JSON body'), 400)
+    }
+    const message = body.message?.trim()
+    if (!message) return c.json(createAgentError('INVALID_PARAM', 'message is required'), 400)
+
+    const session = sessionDao.findSessionById(id)
+    if (!session || session.is_deleted) {
+      return c.json(createAgentError('NOT_FOUND', `Session ${id} not found`), 404)
+    }
+
+    const target = findBackgroundWaitStream(id)
+    if (!target) {
+      return c.json(
+        createAgentError('STREAM_IN_PROGRESS', '该会话当前不在「等后台」阶段，请走普通发送', {
+          phase: getActiveStreamPhase(id),
+        }),
+        409,
+      )
+    }
+    // 先注入再落库：通道已关（回合正好收尾）时，这条消息不该进转录。
+    if (!target.inject(message)) {
+      return c.json(createAgentError('STREAM_IN_PROGRESS', '上一轮正在收尾，请稍后重试'), 409)
+    }
+
+    const now = new Date().toISOString()
+    sessionDao.insertMessage({
+      id: crypto.randomUUID(), session_id: id, role: 'user',
+      content: message, created_at: now,
+    })
+    sessionDao.updateLastMessageAt(id, now)
+    if (session.cabin_id) {
+      try {
+        getCabinToolsProvider()?.service.activity(session.cabin_id)
+      } catch { /* 活性信号尽力而为 */ }
+    }
+    // 与普通发送同一个销账入口（在作者线程里说话 = 提问已答）。
+    try {
+      getChatEventBridge().markAuthorAskAnswered(id, { via: 'direct' })
+    } catch { /* bridge off */ }
+
+    return c.json({ injected: true, session_id: id }, 202)
   })
 
   // ── Stop generation ──────────────────────────────────────────────────
@@ -678,6 +886,8 @@ export function createChatRoutes(deps: ChatRouteDeps): Hono {
     org: string, sessionDao: AgentSessionDAO, orchestrationResult: string | undefined,
     orchestrationFullResult: any, model?: string, effort?: EffortLevel,
     extra?: {
+      /** The owning active-stream id (phase / injection registry key). */
+      streamId?: string
       resumeSessionId?: string
       /** Message actually sent to the provider (raw + role card/@ reminder). */
       providerMessage?: string
@@ -747,8 +957,12 @@ export function createChatRoutes(deps: ChatRouteDeps): Hono {
       turnTimeline.length > 0 ? JSON.stringify({ timeline: turnTimeline }) : null
     // "关闭不丢失"：流式期间增量写同一条 assistant partial（metadata.streaming），
     // 刷新/重开时前端用 running + messages 轮询续看；轮次结束再原地 finalize。
-    const assistantMsgId = crypto.randomUUID()
+    // 2026-11-23 #8：后台等待期用户追加消息（/chat/inject）会开启新一轮 ——
+    // 下一轮 message_start 时把上一行收口、换一个新 id，转录顺序才是
+    // 「助手(前半) → 用户(追加) → 助手(回答)」，而不是回答并进前半行。
+    let assistantMsgId = crypto.randomUUID()
     let partialRowId: string | null = null
+    let rotateBeforeNextMessage = false
     // Wrapper for the messages.tool_calls column. Write null when there is
     // nothing to keep — JSON.stringify of all-undefined fields persists "{}",
     // a truthy non-iterable that readers can hand to the transcript UI (which
@@ -816,6 +1030,22 @@ export function createChatRoutes(deps: ChatRouteDeps): Hono {
         )
       }
     }
+    /** 追加输入开启的新一轮：上一行收口、换新 id / 清空本轮缓冲。
+     *  用户消息行已由 /chat/inject 先落库，新行的 created_at 必然晚于它 ——
+     *  转录顺序「助手(前半) → 用户(追加) → 助手(回答)」才对（2026-11-23 #8）。 */
+    const rotateAssistantRow = () => {
+      if (partialRowId || fullContent || fullThinking || currentToolCalls.length > 0 || turnTimeline.length > 0) {
+        finalizePartial(false)
+      }
+      assistantMsgId = crypto.randomUUID()
+      partialRowId = null
+      fullContent = ''
+      fullThinking = ''
+      currentToolCalls.length = 0
+      turnTimeline.length = 0
+      askQuestions = null
+      streamedSinceMessageStart = false
+    }
     const RESUME_FAILED = Symbol('resume-failed')
     const isResumeFailure = isResumeFailureMessage
 
@@ -861,6 +1091,7 @@ export function createChatRoutes(deps: ChatRouteDeps): Hono {
       // `Query.interrupt()` 下，被中断轮仍会产出一条 error result，里面带着
       // 已完成模型调用的真实 usage；break 掉消费循环会让它永远到不了账本。
       const consume = async (resume: string | undefined) => {
+        setActiveStreamPhase(sessionId, extra?.streamId, 'generating')
         for await (const chunk of provider.sendQuery(providerMessage, cwd, resume, {
           systemPrompt: { type: 'preset', preset: 'claude_code', append: systemPrompt },
           ...(model ? { model } : {}),
@@ -875,6 +1106,29 @@ export function createChatRoutes(deps: ChatRouteDeps): Hono {
           // 不继续消费的话 query 会被关掉，后台任务完成后的唤醒永远到不了
           // （用户表现为「Agent 说稍后汇报，然后会话死掉」）。
           awaitBackgroundTasks: true,
+          // 2026-11-23 用户 #8：后台等待期的追加输入通道。注入成功 = 用户已经在
+          // 这条线程里说话了 → 下一轮 message_start 换新的 assistant 行。
+          onInputChannel: (push) => {
+            if (!extra?.streamId) return
+            attachActiveStreamInput(sessionId, extra.streamId, (text) => {
+              if (!push(text)) return false
+              // 注入前把当前这一行立刻落库：行还没到 500ms 的增量 flush 时，
+              // 等到下一轮 message_start 才落会让它的 created_at 晚于用户消息
+              // —— 重载后转录顺序变成「用户(追加) → 助手(前半)」。这里落库时
+              // 仍在 /chat/inject 写用户行之前，顺序才是对的。
+              if (partialRowId || fullContent || fullThinking || currentToolCalls.length > 0) {
+                finalizePartial(false)
+              }
+              rotateBeforeNextMessage = true
+              return true
+            })
+          },
+          // 后台作业运行时控制（2026-11-24 用户 #1）：输出尾 / 单作业停止。
+          // 续轮会重建 query，后注册覆盖先注册（以最新一条为准）。
+          onBackgroundControl: (control) => {
+            if (!extra?.streamId) return
+            attachActiveStreamControl(sessionId, extra.streamId, control)
+          },
           // AskUserQuestion 交互接管（2026-11-02）：与 clone-runtime 同构。
           // 10-28 任务线程把 task-author 搬进主对话后这里漏了开关 —— SDK 在
           // headless 下直接「执行」AskUserQuestion 并回空 answers，模型把
@@ -891,17 +1145,29 @@ export function createChatRoutes(deps: ChatRouteDeps): Hono {
           if (stopped && chunk.type !== 'result' && chunk.type !== 'error') continue
           turnDebug?.observe(chunk)
           switch (chunk.type) {
-            case 'message_start':
-              // 后台任务唤醒的续轮（2026-11-04）：首轮已经出过正文时，两段之间
-              // 补一个空行，避免「服务启动中服务就绪…」粘成一句。
-              if (generated && !continuationMarked) {
+            case 'message_start': {
+              const injected = rotateBeforeNextMessage
+              rotateBeforeNextMessage = false
+              setActiveStreamPhase(sessionId, extra?.streamId, 'generating')
+              // 后台等待期的追加输入开启了新一轮（2026-11-23 #8）：上一行收口、
+              // 换新行，且不补空行 —— 那会把两条不同轮次的话粘成一句。
+              if (injected) {
+                rotateAssistantRow()
+                // 新行的第一段不补空行；但这一轮之后再来的后台唤醒续轮仍要
+                // 与它分开 —— 把「已续轮」标记复位，下一段自己补。
+                continuationMarked = false
+              } else if (generated && !continuationMarked) {
+                // 后台任务唤醒的续轮（2026-11-04）：首轮已经出过正文时，两段之间
+                // 补一个空行，避免「服务启动中服务就绪…」粘成一句。
                 continuationMarked = true
                 const separator = fullContent ? '\n\n' : ''
                 fullContent += separator
                 await stream.writeSSE({ event: 'assistant_continue', data: JSON.stringify({ separator }) })
               }
+              await stream.writeSSE({ event: 'turn_phase', data: JSON.stringify({ phase: 'generating' }) })
               streamedSinceMessageStart = false
               break
+            }
             case 'text_delta':
               streamedSinceMessageStart = true
               fullContent += chunk.content
@@ -979,7 +1245,27 @@ export function createChatRoutes(deps: ChatRouteDeps): Hono {
               // 后台任务电平：注册表供 header / running 探测，SSE 供对话内
               // 的「后台运行中：…」工作行。空数组 = 后台已清空、CLI 即将唤醒。
               setActiveStreamBackgroundTasks(sessionId, chunk.tasks)
+              // 活动日志留档：电平内任务 → running 行；已出电平的 running 行收口。
+              try {
+                getBackgroundRuns().syncLevel(sessionId, getActiveStreamBackgroundTasks(sessionId))
+              } catch (err: unknown) {
+                console.warn(
+                  '[agent-chat] background run sync failed (non-fatal):',
+                  err instanceof Error ? err.message : String(err),
+                )
+              }
               await stream.writeSSE({ event: 'background_tasks', data: JSON.stringify({ tasks: chunk.tasks }) })
+              break
+            case 'background_task_ended':
+              // 单个后台作业结束：最终状态 / 摘要 / output_file 落档。
+              try {
+                getBackgroundRuns().markEnded(sessionId, chunk.task)
+              } catch (err: unknown) {
+                console.warn(
+                  '[agent-chat] background run end failed (non-fatal):',
+                  err instanceof Error ? err.message : String(err),
+                )
+              }
               break
             case 'slash_commands':
               // CLI-advertised command set for this session (skills/plugins
@@ -1058,6 +1344,13 @@ export function createChatRoutes(deps: ChatRouteDeps): Hono {
               if (!resultNotified) {
                 resultNotified = true
                 extra?.onResult?.()
+              }
+              // 首轮 result 后仍有后台任务 = 模型空闲、只等唤醒（2026-11-23 #8）：
+              // 注册表相位切到 background-wait，客户端据此不锁输入。
+              const waitingBackground = !stopped && getActiveStreamBackgroundTasks(sessionId).length > 0
+              if (waitingBackground) {
+                setActiveStreamPhase(sessionId, extra?.streamId, 'background-wait')
+                await stream.writeSSE({ event: 'turn_phase', data: JSON.stringify({ phase: 'background-wait' }) })
               }
               break
             case 'error':
@@ -1170,6 +1463,20 @@ export function createChatRoutes(deps: ChatRouteDeps): Hono {
           })
         }
         sessionDao.updateLastMessageAt(sessionId, assistantNow)
+
+        // 2026-11-24 用户 #2：任务 / 委派线程的一轮回复回传舱主会话（汐音）。
+        // 人在任务 chat 里直接跟执行者交互、或汐音转达后执行者的回应，原先这条线
+        // 对汐音完全不可见 —— 这里落一张只读 event 卡（零 LLM、不唤醒）。
+        // wake 回合也回传（汐音 → 任务 agent 这条路的回复正是要看的），
+        // 但 wake 的系统指令不作为「你说了什么」展示。
+        try {
+          getChatEventBridge().requestThreadReplyMirror({
+            sessionId,
+            messageId: assistantMsgId,
+            userText: body.wake ? '' : message,
+            replyText: fullContent,
+          })
+        } catch { /* bridge not attached (unit tests) — 回传是增强，不阻断本轮 */ }
 
         turnDebug?.finish({ status: 'ok', assistantMessageId: assistantMsgId })
         autoGenerateTitle(sessionId, org, message, sessionDao)

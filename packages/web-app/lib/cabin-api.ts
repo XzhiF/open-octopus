@@ -7,6 +7,7 @@
 // them (K3).
 
 import { getServerUrl } from "@/lib/server-config"
+import { subscribeSSE } from "@/lib/sse-manager"
 import type {
   CabinDTO,
   CabinView,
@@ -18,6 +19,8 @@ import type {
   CabinMandate,
   CabinAttentionItem,
   CabinHealth,
+  CabinItemDTO,
+  CabinItemKind,
 } from "@octopus/shared"
 
 /** Wire DTO = shared CabinDTO + the UI-prefs JSON the route parses out. */
@@ -55,6 +58,8 @@ export interface CabinRepoEntry {
   git?: {
     branch: string; detached: boolean; commit: string
     msg?: string; at?: string; remote?: string | null
+    /** 工作区是否有未提交改动（enrich 时 best-effort 探测）。 */
+    dirty?: boolean
   } | null
 }
 
@@ -275,6 +280,80 @@ export async function getCabinAttention(id: string): Promise<{ attention: CabinA
   return handleResponse<{ attention: CabinAttentionItem[]; health: CabinHealth }>(res)
 }
 
+// ============ 舱内事项（2026-11-24）============
+
+export interface CabinItemsPayload {
+  items: CabinItemDTO[]
+  /** 未决条数（todo + delivered）—— 服务端算好，HUD 徽标直接读。 */
+  open: number
+}
+
+export async function fetchCabinItems(id: string, signal?: AbortSignal): Promise<CabinItemsPayload> {
+  const res = await fetch(url(`/${encodeURIComponent(id)}/items`), { signal })
+  return handleResponse<CabinItemsPayload>(res)
+}
+
+export interface CabinItemInput {
+  title?: string
+  body?: string
+  kind?: CabinItemKind
+}
+
+export async function createCabinItem(id: string, input: CabinItemInput): Promise<CabinItemDTO> {
+  const res = await fetch(url(`/${encodeURIComponent(id)}/items`), {
+    method: "POST",
+    headers: JSON_HEADERS,
+    body: JSON.stringify(input),
+  })
+  return (await handleResponse<{ item: CabinItemDTO }>(res)).item
+}
+
+export async function updateCabinItem(
+  id: string, itemId: string, patch: CabinItemInput,
+): Promise<CabinItemDTO> {
+  const res = await fetch(url(`/${encodeURIComponent(id)}/items/${encodeURIComponent(itemId)}`), {
+    method: "PATCH",
+    headers: JSON_HEADERS,
+    body: JSON.stringify(patch),
+  })
+  return (await handleResponse<{ item: CabinItemDTO }>(res)).item
+}
+
+export async function deleteCabinItem(id: string, itemId: string): Promise<void> {
+  const res = await fetch(url(`/${encodeURIComponent(id)}/items/${encodeURIComponent(itemId)}`), {
+    method: "DELETE",
+  })
+  await handleResponse<{ ok: true }>(res)
+}
+
+/** 显式投递（聊天路由发送时也会同口径落库；这里给重试 / 外部投递用）。 */
+export async function deliverCabinItems(id: string, ids: string[]): Promise<CabinItemDTO[]> {
+  const res = await fetch(url(`/${encodeURIComponent(id)}/items/deliver`), {
+    method: "POST",
+    headers: JSON_HEADERS,
+    body: JSON.stringify({ ids }),
+  })
+  return (await handleResponse<{ items: CabinItemDTO[] }>(res)).items
+}
+
+export async function closeCabinItems(
+  id: string, ids: string[], outcome: "done" | "dropped",
+): Promise<CabinItemDTO[]> {
+  const res = await fetch(url(`/${encodeURIComponent(id)}/items/close`), {
+    method: "POST",
+    headers: JSON_HEADERS,
+    body: JSON.stringify({ ids, outcome }),
+  })
+  return (await handleResponse<{ items: CabinItemDTO[] }>(res)).items
+}
+
+export async function reopenCabinItem(id: string, itemId: string): Promise<CabinItemDTO> {
+  const res = await fetch(url(`/${encodeURIComponent(id)}/items/${encodeURIComponent(itemId)}/reopen`), {
+    method: "POST",
+  })
+  return (await handleResponse<{ item: CabinItemDTO }>(res)).item
+}
+
 // ============ Repos / worktrees ============
 
 export async function fetchCabinRepos(
@@ -300,6 +379,8 @@ export interface AddCabinRepoInput {
   localPath?: string
   absolutePath?: string
   external?: boolean
+  /** 落点分支（mainline_branch）；空 = 按仓库当前分支探测。 */
+  mainline?: string
 }
 
 export async function addCabinRepo(
@@ -319,6 +400,19 @@ export async function removeCabinRepo(id: string, name: string): Promise<{ remov
     method: 'DELETE',
   })
   return handleResponse<{ removed: boolean }>(res)
+}
+
+/** 改项目落点分支（mainline_branch）：任务从它 fork、MR 默认合回它。
+ *  null = 清空回「按仓库默认分支探测」。只影响此后新建的工作树。 */
+export async function setCabinRepoMainline(
+  id: string, name: string, mainline: string | null,
+): Promise<CabinRepoEntry> {
+  const res = await fetch(url(`/${encodeURIComponent(id)}/repos/${encodeURIComponent(name)}`), {
+    method: 'PATCH',
+    headers: JSON_HEADERS,
+    body: JSON.stringify({ mainline }),
+  })
+  return (await handleResponse<{ repo: CabinRepoEntry }>(res)).repo
 }
 
 /** 显式开工作树；同分支已开 → 409（调用方按 CabinApiError.status 区分）。 */
@@ -443,13 +537,46 @@ export async function pullCabinRepo(id: string, name: string): Promise<{ branch:
 export interface RepoTreeEntry {
   path: string
   type: "dir" | "file"
+  /** sizes=1 时的字节数；默认 0 = 未取（界面据此不显示大小）。 */
   bytes: number
 }
 
-/** GET /api/cabins/:id/repos/:name/tree — 只读 ff-only 目录树（depth≤6 / 2000 条）。 */
-export async function getRepoTree(id: string, name: string): Promise<{ dir: string; entries: RepoTreeEntry[] }> {
-  const res = await fetch(url(`/${id}/repos/${encodeURIComponent(name)}/tree`))
-  return handleResponse<{ dir: string; entries: RepoTreeEntry[] }>(res)
+/** 目录扫描结果（2026-11-24 目录窗优化）：截断如实上报，不再假装完整。 */
+export interface TreeScanResult {
+  dir: string
+  entries: RepoTreeEntry[]
+  /** 命中 depth / 条目上限，条目不完整。 */
+  truncated?: boolean
+  reason?: "depth" | "count" | null
+  /** 本次扫描允许的最大目录层数（提示文案用）。 */
+  maxDepth?: number
+}
+
+export interface TreeQueryOptions {
+  /** 手动重扫：绕过服务端 10s 缓存。 */
+  fresh?: boolean
+  /** 取文件字节数（每文件一次 stat）。 */
+  sizes?: boolean
+  /** 目录窗打开期间让服务端 chokidar 监听这个根（默认开，续租 120s）。 */
+  watch?: boolean
+}
+
+function treeQuery(opts: TreeQueryOptions = {}): string {
+  const params: string[] = []
+  if (opts.fresh) params.push("fresh=1")
+  if (opts.sizes) params.push("sizes=1")
+  if (opts.watch !== false) params.push("watch=1")
+  return params.length ? `?${params.join("&")}` : ""
+}
+
+/** GET /api/cabins/:id/repos/:name/tree — 只读 ff-only 目录树（depth≤14 / 20000 文件）。 */
+export async function getRepoTree(
+  id: string,
+  name: string,
+  opts?: TreeQueryOptions,
+): Promise<TreeScanResult> {
+  const res = await fetch(url(`/${id}/repos/${encodeURIComponent(name)}/tree${treeQuery(opts)}`))
+  return handleResponse<TreeScanResult>(res)
 }
 
 /** GET /api/cabins/:id/repos/:name/file?path= — 只读常规文件（不出根 / 512KB）。 */
@@ -461,10 +588,10 @@ export async function getRepoFile(id: string, name: string, relPath: string): Pr
 // ── v22 九轮：本舱 cwd（右栏「目录」）──────────────────────────────────
 // 一目录一舱：根 = cabin.path。tree/file 与 repo 版同口径；raw 只出图片字节。
 
-/** GET /api/cabins/:id/tree — 本舱 cwd 只读目录树（depth≤6 / 2000 条）。 */
-export async function getCabinTree(id: string): Promise<{ dir: string; entries: RepoTreeEntry[] }> {
-  const res = await fetch(url(`/${id}/tree`))
-  return handleResponse<{ dir: string; entries: RepoTreeEntry[] }>(res)
+/** GET /api/cabins/:id/tree — 本舱 cwd 只读目录树（depth≤14 / 20000 文件）。 */
+export async function getCabinTree(id: string, opts?: TreeQueryOptions): Promise<TreeScanResult> {
+  const res = await fetch(url(`/${id}/tree${treeQuery(opts)}`))
+  return handleResponse<TreeScanResult>(res)
 }
 
 /** GET /api/cabins/:id/file?path= — 本舱 cwd 只读文本文件（不出根 / 512KB）。 */
@@ -508,8 +635,8 @@ export interface CabinWorktreeChangeRepo {
 }
 
 export interface CabinWorktreeChanges {
-  /** 本舱 cwd 绝对路径。 */
-  dir: string
+  /** 比对目录绝对路径；项目没有本地路径时为 null。 */
+  dir: string | null
   /** 单元素（= 本舱 cwd 这一个仓库）；数组形态与变更树模型同构。 */
   repos: CabinWorktreeChangeRepo[]
 }
@@ -530,6 +657,33 @@ export async function getCabinWorktreeChangePatch(
   const query = new URLSearchParams({ repo, path: relPath })
   if (untracked) query.set('untracked', '1')
   const res = await fetch(url(`/${id}/worktree-changes/patch?${query.toString()}`))
+  return handleResponse<{ patch: string; truncated: boolean }>(res)
+}
+
+// ── v22 十四轮（2026-11-23 用户 #1）：单项目变更（项目面「git 变更」）──
+// 目标 = worktree_path ?? main_path，与舱籍读数同口径；只读。
+
+/** GET /api/cabins/:id/repos/:name/worktree-changes — 单个项目的工作区改动。 */
+export async function getRepoWorktreeChanges(
+  id: string,
+  name: string,
+): Promise<CabinWorktreeChanges> {
+  const res = await fetch(url(`/${id}/repos/${encodeURIComponent(name)}/worktree-changes`))
+  return handleResponse<CabinWorktreeChanges>(res)
+}
+
+/** GET /api/cabins/:id/repos/:name/worktree-changes/patch — 单文件 patch（点开才拉）。 */
+export async function getRepoWorktreeChangePatch(
+  id: string,
+  name: string,
+  relPath: string,
+  untracked: boolean,
+): Promise<{ patch: string; truncated: boolean }> {
+  const query = new URLSearchParams({ path: relPath })
+  if (untracked) query.set('untracked', '1')
+  const res = await fetch(
+    url(`/${id}/repos/${encodeURIComponent(name)}/worktree-changes/patch?${query.toString()}`),
+  )
   return handleResponse<{ patch: string; truncated: boolean }>(res)
 }
 
@@ -630,9 +784,34 @@ export async function getCabinUsage(id: string, signal?: AbortSignal): Promise<C
 // ============ SSE ============
 
 /** Shared SSE endpoint for the cabin channel (`cabin:<id>`): cabin_status /
- *  cabin_init_progress / heartbeat. Consume via subscribeSSE (sse-manager). */
+ *  cabin_init_progress / tree_changed / heartbeat. Consume via subscribeSSE (sse-manager). */
 export function cabinEventsUrl(id: string): string {
   return url(`/${id}/events`)
+}
+
+/**
+ * 订阅目录窗的增量刷新（2026-11-24）：服务端 chokidar 发现目录结构变化后，在
+ * cabin:<id> 频道推 `tree_changed { cabin_id, dir, dirs }`。只回传与本界面同一个根
+ * 的事件；SSE 不可用（测试 / 老浏览器）时退化为 no-op —— 调用方还有焦点与 30s 兜底刷新。
+ */
+export function subscribeTreeChanges(cabinId: string, dir: string, onChanged: () => void): () => void {
+  if (typeof EventSource === "undefined") return () => {}
+  const same = normalizeDir(dir)
+  return subscribeSSE(cabinEventsUrl(cabinId), "tree_changed", (event) => {
+    try {
+      const data = JSON.parse(event.data) as { dir?: string }
+      if (data.dir && same && normalizeDir(data.dir) !== same) return
+    } catch {
+      // 坏帧也照样刷新（本地缓存兜底）。
+    }
+    onChanged()
+  })
+}
+
+function normalizeDir(dir: string): string {
+  const trimmed = dir.replace(/[\\/]+$/, "")
+  // Windows 路径大小写不敏感（浏览器里不能用 process.platform）。
+  return trimmed.includes("\\") || /^[A-Za-z]:[\\/]/.test(trimmed) ? trimmed.toLowerCase() : trimmed
 }
 
 // ============ 决策（design 25 §7.1：票据 / 账本 / 队列）============

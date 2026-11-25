@@ -84,3 +84,23 @@ docs/cabin-design/assets/motion-*.mp4
 docs/cabin-design/shots-v20/
 
 docs/cabin-design/shots-fidelity/
+
+# ── 作战舱 / 工作空间运行时（本机生成，勿提交、勿共享）────────────────
+# 舱身份 / 需求 / 初始化进度 / 会话快照
+.cabin/
+# 工作空间运行时（checkpoints / rules / 配置 / 管道 / 工作树 / 日志 / 状态）
+/.octopus/
+# worktree add 的默认落点（projects/<instance>/<repo>）
+/projects/
+/logs/
+/state/
+/workflows/
+# 建舱/建工作空间时写进目录根的通用名文件 —— 与业务文件极易撞名
+/config.json
+/pipeline.yaml
+# 由 pipeline.yaml 自动生成的说明文档
+/docs/octopus/pipeline-guide.md
+
+# ── 桌面壳打包产物与本机日志 ────────────────────────────────────────────
+packages/desktop/*.log
+packages/desktop/release-verify/

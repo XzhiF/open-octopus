@@ -383,17 +383,16 @@ describe("AC2 — 存在性过滤 / 全空不注入键", () => {
 })
 
 describe("AC3 — rerun 不注入；多前序按 index 升序换行连接", () => {
-  it("打回 rerun 同 phase 不注入（即便存在带 handoff 的 accepted 前序）", async () => {
+  it("同 phase 重跑（round 2）不注入交接（即便存在带 handoff 的 accepted 前序）", async () => {
     const { taskId } = seed({
       phases: THREE_PHASES,
       ledger: [{ phase_index: 1, round_index: 1, decision: "accepted" }],
       roundsByPhase: { 1: [{ round: 1, status: "completed" }], 2: [{ round: 1, status: "completed" }] },
       handoffs: { 1: "# handoff p1\n" },
     })
-    const res = await postAcceptance(taskId, {
-      phase_index: 2, round_index: 1, decision: "rejected", feedback: "接口漏了分页",
-    })
-    expect(res.status, await res.clone().text()).toBe(200)
+    // 2026-11-23 #11：打回不再派新轮 —— 同 phase 重跑由人工 /advance 或显式
+    // dispatchPhaseRound 发起；交接只给跨 phase，这一点不变。
+    await service.dispatchPhaseRound(taskId, 2, 2, "接口漏了分页")
     const iv = launchedIV(taskId)
     expect("prev_handoff_paths" in iv).toBe(false)
     // 既有信道不受影响：feedback + stamps 原样。
@@ -555,20 +554,17 @@ describe("AC6 — is_final_phase 恒注入（末 phase 无下游执行会话）"
     expect(launchedIV(taskId).is_final_phase).toBe("false")
   })
 
-  it("打回重跑轮也带 —— 与前序在场与否无关（恒注入）", async () => {
-    // 打回 rerun 是「同 phase 开下一轮」：prev_handoff_paths 按设计不注入（那是给
-    // 跨 phase 的），但末站标记仍须在场，否则 ship-pr 那段提示词读到的会是未解析的
-    // 字面量 `$inputs.is_final_phase` 而不是 "false" —— 恒注入的全部意义在此。
+  it("同 phase 重跑轮也带 is_final_phase —— 与前序在场与否无关（恒注入）", async () => {
+    // 同 phase 重跑：prev_handoff_paths 按设计不注入（那是给跨 phase 的），但末站
+    // 标记仍须在场，否则 ship-pr 那段提示词读到的会是未解析的字面量
+    // `$inputs.is_final_phase` 而不是 "false" —— 恒注入的全部意义在此。
     const { taskId } = seed({
       phases: THREE_PHASES,
       ledger: [{ phase_index: 1, round_index: 1, decision: "accepted" }],
       roundsByPhase: { 1: [{ round: 1, status: "completed" }], 2: [{ round: 1, status: "completed" }] },
       handoffs: { 1: "# handoff p1\n" },
     })
-    const res = await postAcceptance(taskId, {
-      phase_index: 2, round_index: 1, decision: "rejected", feedback: "接口漏了分页",
-    })
-    expect(res.status, await res.clone().text()).toBe(200)
+    await service.dispatchPhaseRound(taskId, 2, 2, "接口漏了分页")
     const iv = launchedIV(taskId)
     expect("prev_handoff_paths" in iv).toBe(false) // 同 phase 重跑，无跨 phase 交接
     expect(iv.is_final_phase).toBe("false")        // phase 2/3 —— 后面还有一站

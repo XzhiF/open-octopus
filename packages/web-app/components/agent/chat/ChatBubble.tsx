@@ -2,7 +2,7 @@
 
 import { useState, useMemo } from 'react'
 import type { AgentMessage, MessageTimelineEntry, ToolCallRecord } from '@/lib/agent/types'
-import { displayContentFor, endsOnAsk } from '@/lib/agent/display-content'
+import { displayContentFor, showsAllTimelineTexts } from '@/lib/agent/display-content'
 import { cn } from '@/lib/utils'
 import { Bot, User, Brain, Wrench, ChevronRight, Square } from 'lucide-react'
 import { ToolCallCard } from './ToolCallCard'
@@ -18,12 +18,12 @@ export function ChatBubble({ message }: ChatBubbleProps) {
   const hasTimeline = !!timeline && timeline.length > 0
   const hasMeta = !isUser && !!(message.thinking || (message.tool_calls && message.tool_calls.length > 0) || hasTimeline)
 
-  // Chronological timeline (2026-08-19): the bubble body shows only the FINAL
-  // agent text segment; earlier fragments / thinking / tools live in the
-  // collapsed meta in arrival order. Without a timeline (old messages) the
-  // full content is shown as before. AskUserQuestion 收尾的回合例外：
-  // 问题前后的正文都留下（见 lib/agent/display-content.ts）。
-  const askTurn = endsOnAsk(message)
+  // Chronological timeline (2026-08-19 / 2026-11-24): the bubble body shows ALL
+  // agent text segments in arrival order; thinking / tools live in the collapsed
+  // meta. Showing only the final segment dropped earlier user-facing text (e.g.
+  // questions asked before sub-agents returned). Without a timeline (old
+  // messages) the full content is shown as before.
+  const textsInBody = showsAllTimelineTexts(message)
   const displayContent = useMemo(() => displayContentFor(message), [message])
 
   // Identity-switch marker rides its own compact card (whole pack collapsible).
@@ -71,7 +71,7 @@ export function ChatBubble({ message }: ChatBubbleProps) {
       )}>
         {/* Collapsible thinking + tool calls (+ chronological timeline) */}
         {hasMeta && (
-          <CollapsibleMeta thinking={message.thinking} toolCalls={message.tool_calls ?? []} timeline={timeline} hideTextFrags={askTurn} />
+          <CollapsibleMeta thinking={message.thinking} toolCalls={message.tool_calls ?? []} timeline={timeline} hideTextFrags={textsInBody} />
         )}
 
         {/* Main content */}
@@ -120,7 +120,7 @@ function CollapsibleMeta({ thinking, toolCalls, timeline, hideTextFrags }: {
   thinking?: string
   toolCalls?: ToolCallRecord[]
   timeline?: MessageTimelineEntry[]
-  /** 正文段已在 bubble 全量显示（ask 回合）→ meta 展开时不再重复。 */
+  /** 正文段已在 bubble 全量显示 → meta 展开时不再重复。 */
   hideTextFrags?: boolean
 }) {
   const [open, setOpen] = useState(false)
@@ -130,15 +130,6 @@ function CollapsibleMeta({ thinking, toolCalls, timeline, hideTextFrags }: {
   const tcCount = toolList.length
   const hasThinking = !!thinking
   const hasTimeline = !!timeline && timeline.length > 0
-
-  // The final text fragment is the bubble body — don't repeat it in the meta.
-  const lastTextIdx = useMemo(() => {
-    if (!hasTimeline) return -1
-    for (let i = timeline!.length - 1; i >= 0; i--) {
-      if (timeline![i].kind === 'text') return i
-    }
-    return -1
-  }, [hasTimeline, timeline])
 
   const label = hasTimeline
     ? `💭 过程（时间序）· ${timeline!.length} 步`
@@ -179,9 +170,8 @@ function CollapsibleMeta({ thinking, toolCalls, timeline, hideTextFrags }: {
                 const tc = toolList.find((t) => t.id === entry.id)
                 return tc ? <ToolCallCard key={i} toolCall={tc} /> : null
               }
-              // text fragment：最后一段是 bubble body；ask 回合全部正文段都
-              // 已进 body —— 两种情况都不在 meta 里重复。
-              if (hideTextFrags || i === lastTextIdx) return null
+              // text fragment：全部正文段都已在 bubble body —— 不在 meta 里重复。
+              if (hideTextFrags) return null
               return (
                 <div key={i}>
                   <div className="text-xs font-medium text-muted-foreground mb-1">agent 输出片段</div>

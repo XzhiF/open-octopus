@@ -6,17 +6,22 @@
 // 窗内能直接回话，走与主通讯台同一套服务端管线。共享 z 栈（cabin/z-order），
 // 聚焦只改 inline z / class，不重建 DOM（重建会吞掉本次 click —— 原型五轮根因）。
 // 最小化 → WINDOWS 条 chip 虚线态；关闭 → 线程历史仍在 tab / 面板可回。
+//
+// v22 #5（2026-11-23 用户）：这扇窗就是跟该编队 agent 的直聊 —— 直接回复、
+// 流式输出与主 chat 同管线；身份用线程身份（执行者 / 作者 / 委派执行者），
+// 不再有「回主对话」条，也不再把任务线程锁成只读兜底。
 
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { Minus, X } from 'lucide-react'
+import { Minus, Square, X } from 'lucide-react'
 import { ChatPane } from '@/components/agent/chat/ChatPane'
 import { useCabinContext } from '@/components/cabin/cabin-provider'
 import { useCabinChatWiring } from '@/components/cabin/use-cabin-chat-wiring'
 import { nextZ } from '@/components/cabin/z-order'
 import { moveCockpitRect, resizeCockpitRect, type Viewport } from './geometry'
 import { useCockpitState } from '../state/CockpitStateProvider'
-import type { CockpitPopWin, CockpitRect } from '../state/cockpit-state'
+import type { CockpitChatApi, CockpitPopWin, CockpitRect } from '../state/cockpit-state'
 import { THREAD_EMO } from '../fleet/threads-model'
+import { CockpitConsoleTelemetry } from './CockpitConsoleTelemetry'
 import { CockpitReceipts } from './CockpitReceipts'
 import { useCockpitThreads } from './use-cockpit-threads'
 
@@ -34,16 +39,29 @@ interface WinDrag {
   rect: CockpitRect
 }
 
-function CockpitPopWinView({ win }: { win: CockpitPopWin }) {
-  const { wins, layer, chatWindow, threads: threadApi } = useCockpitState()
+function CockpitPopWinView({
+  win,
+  shared,
+}: {
+  win: CockpitPopWin
+  shared: ReturnType<typeof useCabinChatWiring>['shared']
+}) {
+  const { wins, layer, threads: threadApi, select } = useCockpitState()
   const { cabinId, cabin } = useCabinContext()
   const { byKey } = useCockpitThreads()
   const thread = byKey.get(win.threadKey)
-  const { shared, mainSessionId } = useCabinChatWiring({ sidebarWidth: 0 })
 
   const [z, setZ] = useState(() => nextZ())
   const bumpZ = useCallback(() => setZ(nextZ()), [])
   const [sessionId, setSessionId] = useState<string | null>(thread?.sessionId ?? null)
+  // v22 #5：这扇窗自己的遥测（模型 / CTX / token·费用）—— ChatPane 按窗上报，
+  // 与主通讯台同一形状，但绝不串台。
+  const [telemetry, setTelemetry] = useState<CockpitChatApi | null>(null)
+  // 窗头「≡ N 轮」索引槽：ChatTimeline（compact）portal 进来，跳转只滚本窗转录。
+  const [indexSlot, setIndexSlot] = useState<HTMLSpanElement | null>(null)
+  // 窗头「星核」挂载槽（2026-11-23 用户：技能 / 分身入口跟主 chat 一样在左上，
+  // 不在输入行 ⏎ 左边）—— ComposerAttachPopover portal 进这里。
+  const [attachSlot, setAttachSlot] = useState<HTMLSpanElement | null>(null)
   const dragRef = useRef<WinDrag | null>(null)
   const rectRef = useRef(win.rect)
   useEffect(() => { rectRef.current = win.rect }, [win.rect])
@@ -85,13 +103,13 @@ function CockpitPopWinView({ win }: { win: CockpitPopWin }) {
     dragRef.current = null
   }, [])
 
-  const backToMain = useCallback(() => {
-    threadApi.activateThread('main')
-    chatWindow.openWithFocus()
-  }, [threadApi, chatWindow])
-
   if (!thread) return null
   const unread = threadApi.unread[win.threadKey] ?? 0
+  // 任务线程的 workspace 由任务行兜底：session_updated（尾随流 / 服务端卡片）
+  // 按 workspace 分发，窗口不持 activeTask 时不能只退到舱工作区。
+  const taskWorkspaceId = thread.taskId
+    ? shared.chatTasks.find((task) => task.id === thread.taskId)?.workspace_id ?? null
+    : null
   const layerRoot = typeof document !== 'undefined'
     ? document.getElementById('ck12-layer-root')
     : null
@@ -118,18 +136,7 @@ function CockpitPopWinView({ win }: { win: CockpitPopWin }) {
         onPointerUp={endDrag}
         onPointerCancel={endDrag}
       >
-        <span className="ck12-cwin-emo" aria-hidden="true">{THREAD_EMO[thread.state]}</span>
-        <span className="ck12-cwin-title">{thread.title}</span>
-        {unread > 0 && <i className="ck12-cwin-unread">{unread > 9 ? '9+' : unread}</i>}
-        <button
-          type="button"
-          className="ck12-cwin-btn"
-          aria-label="最小化到 WINDOWS 条"
-          title="最小化（WINDOWS 条可恢复）"
-          onClick={() => wins.setWindowMin(win.id, true)}
-        >
-          <Minus className="ck12-cwin-ico" aria-hidden="true" />
-        </button>
+        {/* 舱系口径：✕ 一律在容器最左。 */}
         <button
           type="button"
           className="ck12-cwin-btn ck12-cwin-close"
@@ -138,6 +145,58 @@ function CockpitPopWinView({ win }: { win: CockpitPopWin }) {
           onClick={close}
         >
           <X className="ck12-cwin-ico" aria-hidden="true" />
+        </button>
+        {/* 星核（技能 / 分身 / MCP）—— 与主通讯台同位：紧跟 ✕。 */}
+        <span
+          ref={setAttachSlot}
+          className="ck12-cwin-attach"
+          data-testid={`cockpit-win-attach-${win.id}`}
+        />
+        <span className="ck12-cwin-emo" aria-hidden="true">{THREAD_EMO[thread.state]}</span>
+        <span className="ck12-cwin-title">{thread.title}</span>
+        {/* 遥测：与主通讯台同一套芯片 + 同一份真源（本窗自己的会话）。窗太窄时不画，
+            保住标题与按钮。 */}
+        {win.rect.w >= 640 && (
+          <CockpitConsoleTelemetry
+            chat={telemetry}
+            hostSelector=".ck12-cwin"
+            scope={`win-${win.id}`}
+          />
+        )}
+        {/* ≡ N 轮：ChatTimeline（compact）portal 进这个槽，点开可跳本窗的某一轮。 */}
+        <span
+          ref={setIndexSlot}
+          className="ck12-cwin-idx"
+          data-testid={`cockpit-win-index-${win.id}`}
+        />
+        {/* v22 #5：在跟谁说话 —— 线程身份（执行者 / 作者 / 委派执行者）。 */}
+        {win.rect.w >= 460 && (
+          <span className="ck12-cwin-id" data-testid={`cockpit-win-identity-${win.id}`}>{thread.identity}</span>
+        )}
+        {/* 遥测 / 轮次 / 身份都贴左侧排（与主通讯台同序），余量在这里，按钮仍在最右。 */}
+        <span className="ck12-cwin-sp" aria-hidden="true" />
+        {unread > 0 && <i className="ck12-cwin-unread">{unread > 9 ? '9+' : unread}</i>}
+        {/* v22 #5：▦ 作战详情（窗留着，方便对照）。委派没有 cockpit ref → 不画。 */}
+        {thread.ref && (
+          <button
+            type="button"
+            className="ck12-cwin-btn"
+            aria-label="作战详情"
+            title="▦ 作战详情（窗留着）"
+            data-testid={`cockpit-win-detail-${win.id}`}
+            onClick={() => select(thread.ref!, 'run')}
+          >
+            <Square className="ck12-cwin-ico" aria-hidden="true" />
+          </button>
+        )}
+        <button
+          type="button"
+          className="ck12-cwin-btn"
+          aria-label="最小化到 WINDOWS 条"
+          title="最小化（WINDOWS 条可恢复）"
+          onClick={() => wins.setWindowMin(win.id, true)}
+        >
+          <Minus className="ck12-cwin-ico" aria-hidden="true" />
         </button>
       </header>
 
@@ -167,8 +226,13 @@ function CockpitPopWinView({ win }: { win: CockpitPopWin }) {
           canSwap={false}
           cabinId={cabinId}
           cabinWorkspaceId={cabin?.workspace_id ?? null}
-          cabinMainSessionId={mainSessionId}
-          onBackToCabinMain={backToMain}
+          directThreadIdentity={thread.identity}
+          chromeInline
+          workspaceIdOverride={taskWorkspaceId}
+          indexSlot={indexSlot}
+          attachSlot={attachSlot}
+          chromeHostSelector=".ck12-cwin"
+          onTelemetry={setTelemetry}
           composerVariant="cockpit"
           hideDock
         />
@@ -190,9 +254,19 @@ function CockpitPopWinView({ win }: { win: CockpitPopWin }) {
 
 export function CockpitPopWindows() {
   const { wins } = useCockpitState()
+  // 无窗不挂接线：useCabinChatWiring 会拉会话/任务/运行态，别为了空列表白轮询。
+  if (!wins.windows.length) return null
+  return <CockpitPopWindowsBody />
+}
+
+function CockpitPopWindowsBody() {
+  const { wins } = useCockpitState()
+  // 接线（会话 / 任务 / 运行态 / 共享 shared）只跑一份：每扇窗各自调
+  // useCabinChatWiring 会按窗数重复轮询并重复注册事件监听。
+  const { shared } = useCabinChatWiring({ sidebarWidth: 0 })
   return (
     <>
-      {wins.windows.map((win) => <CockpitPopWinView key={win.id} win={win} />)}
+      {wins.windows.map((win) => <CockpitPopWinView key={win.id} win={win} shared={shared} />)}
     </>
   )
 }

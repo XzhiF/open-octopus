@@ -33,7 +33,7 @@ interface AcMatrixPanelProps {
   /** round-report.md 全文（核对 tab 的唯一「报告声称」源；叙述 tab 已退役）。 */
   reportMd: string | null
   diff: RoundDiffPayload | null
-  /** 修复轮的 fix-report-rN.md 全文（task-fix 三列契约：反馈→动作→证据）。 */
+  /** 历史修复轮的 fix-report-rN.md 全文（旧 task-fix 三列契约；新数据不再产出）。 */
   fixReportMd?: string | null
   /** 上轮确被打回（fix-feedback-rN.md 存在）但 report 缺席/无表时的诚实提示。 */
   hasFixFeedback?: boolean

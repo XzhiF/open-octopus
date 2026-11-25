@@ -234,7 +234,11 @@ describe("WorkspaceService · one-workspace model", () => {
       execFileSync("git", ["commit", "-m", "init"], { cwd: repo })
 
       const ws = service.create({ name: "shell", repo_group: "xzf", path: wsPath })
-      fs.writeFileSync(path.join(wsPath, "config.json"), JSON.stringify({ repos: [] }))
+      fs.mkdirSync(path.join(wsPath, ".octopus"), { recursive: true })
+      fs.writeFileSync(
+        path.join(wsPath, ".octopus", "config.json"),
+        JSON.stringify({ name: "shell", repos: [] }),
+      )
 
       const result = service.ensureWorktreesForProjects(
         ws,
@@ -244,7 +248,7 @@ describe("WorkspaceService · one-workspace model", () => {
       )
       expect(result.created).toEqual(["repo"])
       expect(fs.existsSync(path.join(wsPath, "projects", "repo", ".git"))).toBe(true)
-      const config = JSON.parse(fs.readFileSync(path.join(wsPath, "config.json"), "utf-8"))
+      const config = JSON.parse(fs.readFileSync(path.join(wsPath, ".octopus", "config.json"), "utf-8"))
       expect(config.repos).toHaveLength(1)
       expect(config.repos[0]).toMatchObject({ name: "repo", branch: "feat-smoke" })
 

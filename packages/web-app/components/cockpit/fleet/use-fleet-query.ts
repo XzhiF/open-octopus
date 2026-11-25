@@ -23,7 +23,7 @@ import { getCabin, listCabinDelegations, listCabinJobs, type CabinDelegationView
 import type { CabinAttentionItem } from '@octopus/shared'
 import { getTask, listTasks } from '@/lib/tasks-api'
 import { withDeadline } from '@/lib/with-deadline'
-import { listRunningSessions } from '@/lib/agent/api'
+import { listRunningSessions, type TurnPhase } from '@/lib/agent/api'
 import { taskPct } from '@/components/cabin/job-progress'
 import type { CabinTaskRow } from '@/components/cabin/modules/ui'
 import {
@@ -121,6 +121,22 @@ function delegationRow(base: CockpitCabinRef, delegation: CabinDelegationView): 
     delegation,
     pct: null,
   }
+}
+
+/**
+ * 把 /sessions/running 的相位挂到对应 job 行（session_id 命中）——
+ * 编队秒表据此区分「作者在跑」与「作者在等后台」。拿不到相位就保持 undefined。
+ */
+function withLivePhase(
+  rows: readonly CockpitRow[],
+  phases: ReadonlyMap<string, TurnPhase>,
+): CockpitRow[] {
+  if (phases.size === 0) return [...rows]
+  return rows.map((row) => {
+    if (row.kind !== 'job' || !row.job.session_id) return row
+    const phase = phases.get(row.job.session_id)
+    return phase ? { ...row, live_phase: phase } : row
+  })
 }
 
 async function loadCabin(
@@ -262,6 +278,8 @@ export function useFleetQuery(cabinId: string): FleetQuery {
   const tickStartedAtRef = useRef(0)
   /** 上一次拿到的分身数（拿不到时沿用，不把 null 当 0）。 */
   const sessionsRef = useRef<number | null>(null)
+  /** session_id → 这一流的相位（编队秒表的「作者在跑 / 等后台」）。 */
+  const phaseRef = useRef<Map<string, TurnPhase>>(new Map())
 
   const tick = useCallback(async () => {
     const startedAt = Date.now()
@@ -292,6 +310,9 @@ export function useFleetQuery(cabinId: string): FleetQuery {
       const sessionsTask = withDeadline(signal, SESSIONS_TIMEOUT_MS, '分身数', (s) => listRunningSessions(50, s))
         .then((payload) => {
           sessionsRef.current = payload.items.length
+          phaseRef.current = new Map(
+            payload.items.map((item) => [item.id, item.phase ?? 'generating']),
+          )
           return payload.items.length
         })
         .catch(() => null) // 分身数拿不到不影响编队（HUD 隐藏该统计）。
@@ -310,6 +331,10 @@ export function useFleetQuery(cabinId: string): FleetQuery {
             : row
         })
       }
+
+      // 相位（作者在跑 / 在等后台）先按上一 tick 的映射挂上 —— 不等会话请求，
+      // 它是锦上添花的颜色，不能挡首帧。
+      fresh.rows = withLivePhase(fresh.rows, phaseRef.current)
 
       // ── arrivals：比较本 tick 的 attention 集合与上一份 ──────────────
       const currentAttention = new Set(fresh.attentionIds)
@@ -355,6 +380,9 @@ export function useFleetQuery(cabinId: string): FleetQuery {
       // 分身数若还没回来，等它（自带预算）再收正 counts；行已经在首帧发过了。
       await sessionsTask
       if (!mountedRef.current || signal.aborted || abortRef.current !== controller) return
+      // 相位刷新了：重新挂一遍再发最终一帧（首帧可能用的是上一 tick 的映射）。
+      fresh.rows = withLivePhase(fresh.rows, phaseRef.current)
+      snapshotRef.current = fresh
       setState({
         rows: sortRows(fresh.rows),
         counts: buildCounts(fresh.rows, sessionsRef.current),
@@ -395,6 +423,7 @@ export function useFleetQuery(cabinId: string): FleetQuery {
     prevAttentionRef.current = null
     cacheRef.current.clear()
     sessionsRef.current = null
+    phaseRef.current = new Map()
     setState({ rows: [], counts: null, arrivals: [], loading: true, error: null, mainSessionId: null })
     void tick()
     const timer = window.setInterval(() => { void tick() }, POLL_MS)

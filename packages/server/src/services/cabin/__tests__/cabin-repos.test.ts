@@ -7,6 +7,7 @@ import {
   scanLocalProjects, isPathInside, worktreeDirFor, projectKey,
   mergeCabinRepoEntry, removeCabinRepoEntry, readCabinConfig,
   resolveCabinRepo, localRepoEntry, repoSource,
+  localBranchExists, remoteBranchExists,
 } from "../cabin-repos"
 
 function git(cwd: string, args: string[]) {
@@ -139,6 +140,19 @@ describe("cabin-repos · config 合并", () => {
     expect(raw.created).toBe("2026-01-01")
   })
 
+  it("mergeCabinRepoEntry：mainline_branch = null 显式清除，其余字段不动", () => {
+    mergeCabinRepoEntry(cabin, {
+      name: "console", source: "local", local_path: "apps/console", mainline_branch: "feat/x",
+    })
+    const cleared = mergeCabinRepoEntry(cabin, { name: "console", mainline_branch: null })
+    expect(cleared.mainline_branch).toBeUndefined()
+    expect(cleared.source).toBe("local")
+    expect(cleared.local_path).toBe("apps/console")
+    // 落盘里不留 null。
+    const raw = JSON.parse(fs.readFileSync(path.join(cabin, "config.json"), "utf-8"))
+    expect(raw.repos[0]).not.toHaveProperty("mainline_branch")
+  })
+
   it("removeCabinRepoEntry 只删目标条目", () => {
     mergeCabinRepoEntry(cabin, { name: "a", source: "org" })
     mergeCabinRepoEntry(cabin, { name: "b", source: "local" })
@@ -186,5 +200,32 @@ describe("cabin-repos · config 合并", () => {
     const b = resolveCabinRepo(cabin, { name: "b", source: "local", local_path: "apps/b" })
     expect(b.mainPath).toBe(path.join(cabin, "apps", "b"))
     expect(b.external).toBe(false)
+  })
+})
+
+describe("cabin-repos · 分支探测", () => {
+  let root: string
+
+  beforeEach(() => {
+    root = fs.mkdtempSync(path.join(os.tmpdir(), "cabin-repos-br-"))
+  })
+
+  afterEach(() => {
+    fs.rmSync(root, { recursive: true, force: true })
+  })
+
+  it("localBranchExists：本地分支命中，缺失返回 false", () => {
+    const repo = path.join(root, "repo")
+    makeRepo(repo)
+    expect(git(repo, ["branch", "feat/landing"]).status).toBe(0)
+    expect(localBranchExists(repo, "main")).toBe(true)
+    expect(localBranchExists(repo, "feat/landing")).toBe(true)
+    expect(localBranchExists(repo, "feat/missing")).toBe(false)
+  })
+
+  it("remoteBranchExists：无 origin = false（本地是唯一真相）", () => {
+    const repo = path.join(root, "repo")
+    makeRepo(repo)
+    expect(remoteBranchExists(repo, "main")).toBe(false)
   })
 })

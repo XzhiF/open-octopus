@@ -2,16 +2,18 @@
 
 // v20（design 29 §6 ws）：作战舱文件面板 —— 舱籍项目的工作树只读查阅。
 // 真数据 = GET /api/cabins/:id/repos/:name/tree|file（ff-only：只读不写）。
-// 项目 chips + 筛选 + 默认全展开树 + 只读预览；被改文件徽标 = 作战名
+// 项目 chips + 筛选 + 默认只展开顶层（2026-11-24 收敛；⊞ 手动全展）+ 只读预览；
+// 被改文件徽标 = 作战名
 // （changes 汇总里 commits>0 的任务 → round-diff(scope=task) 实物文件列表，
 // 上限 6 个任务，拿不到就不画徽标 —— 不猜）。预览头「▦ 看作战变更」跳详情变更页签。
 
-import { useCallback, useEffect, useMemo, useState } from 'react'
-import { getCabinChanges, getRepoFile, getRepoTree, type RepoTreeEntry } from '@/lib/cabin-api'
+import { useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from 'react'
+import { getCabinChanges, getRepoFile } from '@/lib/cabin-api'
 import { getRoundDiff } from '@/lib/tasks-api'
 import { useCockpitState } from '../state/CockpitStateProvider'
 import { useCabinProjects } from '../projects/use-cabin-projects'
 import { ancestorsOf, buildTree, TreeRows } from '../face/CockpitJobFiles'
+import { useTreeScan } from '../face/use-tree-scan'
 import { CockpitPanelShell } from './CockpitPanelShell'
 
 const BADGE_TASK_CAP = 6
@@ -22,41 +24,34 @@ export function CockpitWsPanel() {
   const [proj, setProj] = useState<string | null>(panelArg)
   const active = proj ?? projects[0]?.name ?? null
 
-  const [entries, setEntries] = useState<RepoTreeEntry[] | null>(null)
-  const [dir, setDir] = useState('')
-  const [error, setError] = useState<string | null>(null)
-  const [loading, setLoading] = useState(false)
+  // 2026-11-24 目录窗优化：与目录树 / 项目面共用 useTreeScan（异步 + 缓存 + 增量刷新）。
+  const scan = useTreeScan({ cabinId: entryCabinId, repoName: active, enabled: !!active })
+  const entries = scan.entries
+  const dir = scan.dir
+
   const [open, setOpen] = useState<ReadonlySet<string>>(new Set())
   const [sel, setSel] = useState<string | null>(null)
   const [content, setContent] = useState<string | null>(null)
   const [contentErr, setContentErr] = useState<string | null>(null)
   const [q, setQ] = useState('')
+  const deferredQ = useDeferredValue(q)
   const [badges, setBadges] = useState<Map<string, string>>(new Map())
   const [badgeTask, setBadgeTask] = useState<Map<string, string>>(new Map())
 
-  const load = useCallback(() => {
-    if (!active) return
-    setLoading(true)
-    getRepoTree(entryCabinId, active)
-      .then((res) => {
-        setEntries(res.entries)
-        setDir(res.dir)
-        // v20：工作树默认全展开。
-        setOpen(new Set(res.entries.filter((e) => e.type === 'dir').map((e) => e.path.replace(/\/$/, ''))))
-        setError(null)
-      })
-      .catch((err: unknown) => setError(err instanceof Error ? err.message : '读取工作树失败'))
-      .finally(() => setLoading(false))
-  }, [entryCabinId, active])
-
+  // 换项目 / 首次载入才重置展开与选中；静默刷新不动。
+  const initGenRef = useRef(0)
   useEffect(() => {
-    setEntries(null)
+    if (scan.generation === 0 || !scan.entries) return
+    if (initGenRef.current === scan.generation) return
+    initGenRef.current = scan.generation
     setSel(null)
     setContent(null)
     setContentErr(null)
     setQ('')
-    load()
-  }, [load])
+    // 2026-11-24：默认只展开顶层目录。
+    const dirs = scan.entries.filter((e) => e.type === 'dir').map((e) => e.path.replace(/\/$/, ''))
+    setOpen(new Set(dirs.filter((p) => !p.includes('/'))))
+  }, [scan.generation, scan.entries])
 
   // 被改文件徽标：changes 汇总 → 有 commits 的任务 → round-diff 实物文件。
   useEffect(() => {
@@ -98,7 +93,7 @@ export function CockpitWsPanel() {
   const tree = useMemo(() => buildTree(entries ?? []), [entries])
 
   const keep = useMemo(() => {
-    const query = q.trim().toLowerCase()
+    const query = deferredQ.trim().toLowerCase()
     if (!query || !entries) return null
     const set = new Set<string>()
     for (const entry of entries) {
@@ -107,7 +102,7 @@ export function CockpitWsPanel() {
       for (const ancestor of ancestorsOf(entry.path)) set.add(ancestor)
     }
     return set
-  }, [q, entries])
+  }, [deferredQ, entries])
 
   const selectFile = useCallback((path: string) => {
     if (!active) return
@@ -153,19 +148,34 @@ export function CockpitWsPanel() {
           aria-label="筛选工作树文件"
           onChange={(event) => setQ(event.target.value)}
         />
-        <button type="button" className="ck12-files-re" title="重扫磁盘" onClick={load}>↻</button>
+        <button
+          type="button"
+          className="ck12-files-re"
+          title="重扫磁盘"
+          aria-label="重扫工作树"
+          onClick={() => scan.reload({ fresh: true })}
+        >
+          ↻
+        </button>
       </div>
+      {scan.truncated && (
+        <div className="ck12-files-note" data-testid="cockpit-ws-trunc">
+          已截断 · {scan.truncReason === 'depth'
+            ? `只显示前 ${scan.maxDepth ?? 14} 层目录`
+            : '文件过多，只显示前 20000 个'}
+        </div>
+      )}
       <div className="ck12-files-b ck12-ws-b">
         <div className="ck12-files-tree" role="tree" aria-label="工作树目录树">
-          {loading && <div className="ck12-files-empty">扫磁盘…</div>}
-          {error && <div className="ck12-files-empty is-err">{error}</div>}
-          {!loading && !error && entries && entries.length === 0 && (
+          {!entries && !scan.error && <div className="ck12-files-empty">扫磁盘…</div>}
+          {!entries && scan.error && <div className="ck12-files-empty is-err">{scan.error}</div>}
+          {!scan.loading && !scan.error && entries && entries.length === 0 && (
             <div className="ck12-files-empty">工作树空着</div>
           )}
-          {!loading && !error && keep && keep.size === 0 && (
+          {!scan.loading && !scan.error && keep && keep.size === 0 && (
             <div className="ck12-files-empty">没有匹配「{q}」的文件</div>
           )}
-          {!loading && !error && (
+          {!scan.loading && entries && (
             <TreeRows
               nodes={tree}
               depth={0}

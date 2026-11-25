@@ -37,7 +37,7 @@ function seedReflection(): void {
     created_at: NOW,
     entries: [
       { id: "refl-1", title: "长词优先匹配", content: "敏感词要先长后短。", target: "GLOSSARY · 敏感词匹配" },
-      { id: "refl-2", title: "修复轮不换绑定流", content: "打回只派 task-fix。" },
+      { id: "refl-2", title: "修复轮不换绑定流", content: "打回由 doer 原地修。" },
     ],
     decisions: {},
   })
@@ -232,7 +232,7 @@ describe("reflection store + decisions", () => {
     expect(calls).toHaveLength(1)
     expect(calls[0]).toMatchObject({
       title: "改过的标题",
-      text: "打回只派 task-fix。",
+      text: "打回由 doer 原地修。",
       origin: "task-reflection:t-ingest:refl-2",
     })
     expect(result.decision.raw_path).toBe("raw/inbox/x.md")

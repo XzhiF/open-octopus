@@ -1,9 +1,9 @@
----
+﻿---
 name: task-author
 description: "Task-Author 规格作者（v4 phase 化）：把模糊需求谈成可验收放行的多 phase task_spec。覆盖 /api/tasks REST API（建 draft / spec-field 逐字段写 / 乐观锁 PUT / 入队 gate）、task_spec.format=v4 + phases[] 协议与占位符词表、Batch 目录契约与写权环、领域阅读与拆 phase 方法论、matt 技能族产物协议、工作流绑定目录与自建流、phase 衔接信道、验收台预设与启动 Runbook 记忆、执行分支命名。当用户需要把一个需求转成可按里程碑验收放行的多 phase 任务规格时加载。"
 category: devops
-tags: [task-pool, task-author, phases, batch-dir, task_spec, workflow-binding, gate, matt-spec-dev, task-fix, handoff]
-version: 3.5.2
+tags: [task-pool, task-author, phases, batch-dir, task_spec, workflow-binding, gate, matt-spec-dev, handoff]
+version: 3.5.3
 ---
 
 # Task-Author 规格作者（v4 phase 化）
@@ -80,7 +80,7 @@ version: 3.5.2
 ├── issues/              DAG 票：01-xxx.md … NN-e2e-verification.md（执行侧原位增量）
 ├── spec-r2.md           仅起草窗口的整版修订（ready 后不再新增）
 ├── fix-feedback-r1.md   人打回时 server 产物化（你只读，不预造）
-├── fix-report-r1.md     task-fix 轻量修复轮产出（ws → collect 上行）
+├── fix-feedback-r1.md   打回反馈（server 落盘；doer 在工作区原地修）
 ├── round-report.md      每轮终报，含「Spec 修订」节（反馈→是否改 spec→改了什么）
 ├── runbook/runbook.json 本轮起法快照，与 spec-field 内容一致（随 seed 下行）
 └── handoff.md           ship 每轮产/覆写的下游交接短页（末 phase 不产，见「衔接信道」）
@@ -113,13 +113,13 @@ version: 3.5.2
 | 占位符 | 解析为 | 典型用法 |
 |--------|--------|----------|
 | `${phase.slug}` | 本 phase slug | 分支名 / 产物命名 |
-| `${phase.spec_dir}` | specPath 的 dirname（home 相对 → 绝对） | home 侧读写的流（如 task-fix 直绑） |
+| `${phase.spec_dir}` | specPath 的 dirname（home 相对 → 绝对） | home 侧读写的流 |
 | `${phase.batch_rel}` | home 相对 posix 批次目录 `.scratch/<main>/<sub>`（= ws 同构位） | ★ spec 消费型流（matt-spec-dev 的 `batch_dir`）恒用它 |
 | `${task.home}` | task home 绝对路径 | 读快照 / 登记产物 |
 | `${task_artifacts_dir}` | `{home}/artifacts` | 一般不用填（见下） |
 | `${goal}` / `${ac}` | v3 遗留，v4 通常无值 → 解析为空并计入 missing | v4 起草**禁用** |
 
-- **管理键自动注入**：`task_artifacts_dir`、`task_workflows_dir`、`prev_handoff_paths`、`feedback`、`is_final_phase` 由 server 派发时写进该轮 input_values（用户同名键被覆盖）→ 工作流经 `$vars.x` 读即可，**绑定表单一律不要手填**。注意时序：gate 早于注入 —— 流若把它们声明成 `required: true`，gate 阶段仍要值（可用 `${task_artifacts_dir}` 自解析）；task-fix 因此把 `feedback_path` 声明为 `required: false` 绕开。
+- **管理键自动注入**：`task_artifacts_dir`、`task_workflows_dir`、`prev_handoff_paths`、`feedback`、`is_final_phase` 由 server 派发时写进该轮 input_values（用户同名键被覆盖）→ 工作流经 `$vars.x` 读即可，**绑定表单一律不要手填**。注意时序：gate 早于注入 —— 流若把它们声明成 `required: true`，gate 阶段仍要值（可用 `${task_artifacts_dir}` 自解析）。
 - `prev_handoff_paths` 不是占位符：任何 `${...}` 写法都不命中词表 → 解析为空 + 计入 missing。
 - 未知占位符（`${nope}`）不 500：解析为空 + 该键进 missing（`phase:<i>:input:<key>`）。**发布前自查每个 value 里的 `${}` 都在上表内。**
 
@@ -177,6 +177,13 @@ version: 3.5.2
 
 **执行分支命名（author 定名）**：优先级 = `spec.branch`（spec-field `branch`，path-safe `[A-Za-z0-9_-]{2,60}`）> `feat-<main-slug>-<创建日YYYYMMDD>` > `taskpool-<taskId>`（无 slug 兜底）。这些都是**前缀**：server 落 ws 建支时统一追加唯一性尾缀 `-<YYYYMMDDHHmmss>-<rand4>`（真实例：`feat-sensitive-mask-20261027-20261027083451-x03r`）——尾缀防不同任务撞名，首建时定死、phase/round 不换支；**别向用户承诺精确分支串**，报前缀即可。拆分批准时你已写 `task_spec.slug`，默认分支前缀就是 `feat-<main-slug>-<日期>` —— **主 slug 起个好名字就是给分支起名**；用户要专名才显式 `branch=`（同一入队锁定窗，改 slug 即改分支）。
 
+**落点分支（base / target，2026-11-24）**：执行分支从哪 fork（`base`）、MR 往哪合（`target`）。解析顺序 = **任务显式 > 舱项目落点（`mainline_branch`）> 仓库默认分支**（origin/HEAD → main → master → 当前 HEAD，`detectDefaultBranch`）；`target` 缺省跟随 `base` —— 允许不同，没有明确理由不要拆成两条。起草时：
+
+- 用户说「从 feat/x 开 / 合回 y」→ spec-field 写 `base_branch`（需要不同落点再写 `target_branch`）。多仓要给某仓单独落点 → spec-field 写 `branch_plan`（整表替换：`{"<仓名>": {"base": "feat/x", "target": "main"}}`；null 清空）。
+- 舱里派下来的任务，落点通常已由舱项目 `mainline_branch` 兜底 —— **不要再用仓库默认分支去覆盖它**；确实要改才显式写。舱里没绑该项目 → 默认分支即可。
+- 落点不确定就问「分支从哪开、MR 合回哪」，**不要默认承诺 master**。
+- 写入后由下游消费：matt-spec-dev 建树用 `origin/<base>`、ship 用 `gh pr create --head <branch> --base <target>`（已有开放 PR 用 `gh pr edit --base` 纠正），归档兜底同样带 base。已建工作树的分支计划固化在 ws config，**改任务字段只影响重建/新工作树**。
+
 ### 写权环（单写者、单方向 —— 破坏它 = merge 灾难）
 
 | 文件 | 权威写方 | 方向 |
@@ -189,7 +196,7 @@ version: 3.5.2
 
 在对话里改**已入队任务**的 spec：**编辑前先 Read home 的 spec.md** —— 执行侧的计划回写直接落在 home 正本（文末「变更记录」可核对，ADR-0026），别拿旧草稿覆盖；你的 home 编辑会随下一轮 seed 下行覆盖 ws 同名。
 
-**rN 与打回**：起草期随便改 spec.md，重大修订可新增 `spec-r2.md` 并存（守 Key Decisions 行稳定 + `NEW-rN`）。ready 后批次 spec 与票是**活计划**：执行期变更（doer 对话与修复轮）经**计划回写** REST 通道改 home 正本，server 在文末「变更记录」节机械落痕（时间·actor·source·reason·文件，ADR-0026）—— 向用户解释「task 空间的 spec 跟着变了」就指这份变更记录，决策级改判（K8 表行变化）必须让用户在验收面看到。`issues/` 只原位增量：新票加文件，已写票改 Status（`ready-for-agent`/`in-progress`/`done`/`skip`）与补 Verification Result，不重排编号。打回是**单路径**（ADR-0024）：server 即时派发 task-fix 修复轮（合成 `fix-feedback-rN.md`，产 `fix-report-rN.md`），不重跑绑定流本身；结构牵连（加/减 phase、换绑定流）执行侧只留档**范围变更票**（`Status: ready-for-human`）—— 那是你被再次唤起的输入：改信封、经用户重新入队。round 号取反馈文件名。
+**rN 与打回**：起草期随便改 spec.md，重大修订可新增 `spec-r2.md` 并存（守 Key Decisions 行稳定 + `NEW-rN`）。ready 后批次 spec 与票是**活计划**：执行期变更（doer 对话）经**计划回写** REST 通道改 home 正本，server 在文末「变更记录」节机械落痕（时间·actor·source·reason·文件，ADR-0026）—— 向用户解释「task 空间的 spec 跟着变了」就指这份变更记录，决策级改判（K8 表行变化）必须让用户在验收面看到。`issues/` 只原位增量：新票加文件，已写票改 Status（`ready-for-agent`/`in-progress`/`done`/`skip`）与补 Verification Result，不重排编号。打回**不新开轮**（2026-11-23 #11）：反馈落 `fix-feedback-rN.md` 后交给 task doer 在工作区原地修，修完仍停在待验收；结构牵连（加/减 phase、换绑定流）执行侧只留档**范围变更票**（`Status: ready-for-human`）—— 那是你被再次唤起的输入：改信封、经用户重新入队。round 号取反馈文件名。
 
 ## API 端点清单
 
@@ -227,11 +234,13 @@ curl -s -X POST "http://localhost:$PORT/api/tasks/$TASK_ID/spec-field" \
 | `phases` | TaskPhase[]（**整数组替换**） | ★ 核心；写前读 manifest.json 取全量 |
 | `projects` | string[]（project_ids） | 领域路由 |
 | `slug` / `branch` | string | 批次主名 / 执行分支名（见上文两条） |
+| `base_branch` / `target_branch` | string（合法 git 分支名） | 落点分支：从哪 fork / MR 合回哪；null 清空 |
+| `branch_plan` | `{ "<仓名>": { base?, target? } }` | 多仓逐仓落点；**整表替换**，null 清空（见「落点分支」） |
 | `decisions` | string[] | 决策备忘录：领域降级标注、拆分理由、自建流副作用声明 |
 | `resources` / `authoring_resources` | ResourceRef[] | 执行期 requires / 起草期注入（见「资源加载」） |
 | `acceptance_verify` / `acceptance_preview` / `acceptance_runbook` | 见「验收台预设」 | task 级，全 phase 复用 |
 
-返回 `{version}`；409 = 用户刚 [保存草稿] → 重新 `GET /api/tasks/:id` 取 version 重试。`workflowRef` 可解析集 = 已安装内置（`group/name`，如 `built-in/task-fix`）∪ task home `workflows/` 文件名，**不接受**全局 `~/.octopus/workflows/`；绑定时自查，ready gate 由 server 复核（不可解析 → `phase:<i>:workflow-ref`）。旧字段 `goal`/`ac`/`workflow_ref`/`skills` 是 v3 面，v4 起草一律不写。
+返回 `{version}`；409 = 用户刚 [保存草稿] → 重新 `GET /api/tasks/:id` 取 version 重试。`workflowRef` 可解析集 = 已安装内置（`group/name`，如 `built-in/matt-spec-dev`）∪ task home `workflows/` 文件名，**不接受**全局 `~/.octopus/workflows/`；绑定时自查，ready gate 由 server 复核（不可解析 → `phase:<i>:workflow-ref`）。旧字段 `goal`/`ac`/`workflow_ref`/`skills` 是 v3 面，v4 起草一律不写。
 
 ### 3. 编辑 draft（PUT，整-spec 乐观锁）
 
@@ -312,7 +321,7 @@ curl -s "http://localhost:$PORT/api/workflows/built-in/built-in%2Fmatt-spec-dev"
 
 **自建流**（目录无合适项）：写 `{home}/workflows/my-flow.yaml` → `octopus workflow validate|simulate workflows/my-flow.yaml`（双硬门槛，simulate 自动发现同名 `.test.yaml`，无 fixture 就写一个最小场景）→ `workflowRef = "my-flow.yaml"` → **登记进绑定目录**（`workflow-presets.yaml` 加一行 name/desc/workflow/inputs 骨架），看板与你此后都看得见。含真实外部副作用（删数据/改 git/调外部 API）的自建流：副作用声明 + 理由写进 `decisions`。
 
-**task-fix 起草期永远不绑**：`built-in/task-fix` 是修复流（inputs `phase_spec_dir` / `feedback_path` / 自动注入的 `task_artifacts_dir`），`feedback_path` 必填但反馈文件要到打回后才存在 —— gate 阶段绑不了也不该绑。**人打回时 server 一律 override 本流并合成两个输入**（ws 同构批次位 + 本轮 `fix-feedback-rN.md`）—— 打回是单路径（ADR-0024），不重跑绑定流本身。你起草期把 phase 绑到 matt-spec-dev 即可；向用户解释回路：打回 → task-fix 修复轮定点修 → fix-report-rN.md，规格级反馈由修复轮经计划回写通道直接改 spec 并留痕（ADR-0026），路由只作用本轮，phase 绑定不变。
+**打回不需要你预先绑任何修复流**（2026-11-23 #11：task-fix 修复轮已删除）：验收打回后由 task doer 在当前工作区原地修，不新开轮、不重跑绑定流。你起草期把 phase 绑到它的开发流（如 matt-spec-dev）即可；向用户解释回路：打回 → doer 按 `fix-feedback-rN.md` 原地修 → 回报后仍停在待验收；规格级反馈由 doer 经计划回写通道直接改 spec 并留痕（ADR-0026）。
 
 ## 资源加载
 

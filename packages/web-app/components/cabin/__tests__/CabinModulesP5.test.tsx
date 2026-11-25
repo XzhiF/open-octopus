@@ -173,6 +173,11 @@ describe('在场纯派生（classic-v4）', () => {
     const q = normalizePrefs({ presenceOn: false, presenceRate: 'quiet' })
     expect(q.presenceOn).toBe(false); expect(q.presenceRate).toBe('quiet')
   })
+  it('normalizePrefs：星野帧率校验 + 默认 30 帧', () => {
+    expect(normalizePrefs({}).frameRate).toBe('std')
+    expect(normalizePrefs({ frameRate: 'nope' }).frameRate).toBe('std')
+    expect(normalizePrefs({ frameRate: 'high' }).frameRate).toBe('high')
+  })
 })
 
 describe('C11 打盹（互动即醒）', () => {

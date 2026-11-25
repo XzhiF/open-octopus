@@ -8,7 +8,7 @@ import { Fragment, useMemo, useState, type ReactNode } from 'react'
 import type { AgentMessage, MessageTimelineEntry, ToolCallRecord } from '@/lib/agent/types'
 import type { ChatMessage } from '@/lib/types'
 import type { StreamTimelineItem } from '@/hooks/useAgentChat'
-import { displayContentFor, endsOnAsk, proxyTurnOf } from '@/lib/agent/display-content'
+import { displayContentFor, showsAllTimelineTexts, proxyTurnOf } from '@/lib/agent/display-content'
 import { AskUserQuestionCard } from '@/components/workspace/chat/ask-user-question-card'
 import { formatCost, formatDuration, formatTokenCount } from '@/lib/format'
 import { useBillingCurrency } from '@/lib/billing-currency'
@@ -258,7 +258,7 @@ function TuiMeta({ thinking, toolCalls, timeline, stats, interrupted, hideTextFr
   stats?: TurnStats
   /** 本轮被用户截断 → 状态词换成「已中断」。 */
   interrupted?: boolean
-  /** 正文段已在 body 全量显示（ask 回合）→ meta 展开时不再重复。 */
+  /** 正文段已在 body 全量显示 → meta 展开时不再重复。 */
   hideTextFrags?: boolean
   /** 行头（全域座舱的 `✦ 汐音`）：跟统计挤同一行，不额外占一行。 */
   lead?: ReactNode
@@ -757,13 +757,13 @@ export function TuiMessage({ message, compactEvent, ask, docLinks = false, lead,
   const timeline = !isUser ? message.timeline : undefined
   const hasTimeline = !!timeline && timeline.length > 0
 
-  // 与 ChatBubble 同语义：有 timeline 时正文只显最后一段 text，其余收进 meta。
-  // 例外：AskUserQuestion 收尾的回合按时间序显示全部正文段（问题前的正文也要
-  // 留下，2026-11-02 用户反馈「本来显示，问题卡一出来就没了」）。
+  // 与 ChatBubble 同语义：timeline 的全部正文段按时间序进正文区，思考 / 工具
+  // 收进折叠 meta。2026-11-02 ask 回合、2026-11-24 多 Agent 回合都验证过：
+  // 只显最后一段会让流式期可见的正文（常含待用户回答的问题）在结束后消失。
   // Hooks must run before the early returns below — a message that flips between
   // roleSwitch / event / normal types across renders would otherwise change the
   // hook order (React: "Rendered fewer hooks than expected").
-  const askTurn = endsOnAsk(message)
+  const textsInBody = showsAllTimelineTexts(message)
   const displayContent = useMemo(() => displayContentFor(message), [message])
   const askCall = useMemo(() => lastAskCallOf(message), [message])
 
@@ -788,6 +788,15 @@ export function TuiMessage({ message, compactEvent, ask, docLinks = false, lead,
       >
         {userLead ? <>{userLead} </> : <span className="font-bold text-pop-pink">❯ </span>}
         <span className="break-words whitespace-pre-wrap">{message.content}</span>
+        {message.via === 'items' && message.items && message.items.length > 0 && (
+          <span
+            className="ck12-tui-via"
+            title="从「事项」窗投递 · 来源写在消息 meta 里"
+            data-testid="cockpit-items-via-tag"
+          >
+            ☑ 事项 ×{message.items.length}
+          </span>
+        )}
       </div>
     )
   }
@@ -801,7 +810,7 @@ export function TuiMessage({ message, compactEvent, ask, docLinks = false, lead,
         timeline={timeline}
         stats={message.turnStats}
         interrupted={message.interrupted}
-        hideTextFrags={askTurn}
+        hideTextFrags={textsInBody}
         lead={lead}
         trail={trail}
       />

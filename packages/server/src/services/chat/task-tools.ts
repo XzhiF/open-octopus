@@ -24,6 +24,7 @@ import type { ChecksFile, ProbeRunResult } from "../tasks/playbook-types"
 import type { AcceptanceResult } from "../tasks/tasks-service"
 import type { ProjectDelta } from "../tasks/archive-delta"
 import { getWorkflowDevService } from "../tasks/workflow-dev-service"
+import { getCloneDevService } from "../tasks/clone-dev-service"
 
 export interface TaskToolsService {
   updateSpecField(
@@ -611,10 +612,10 @@ export function createTaskToolServer(input: TaskToolServerInput) {
     ),
     tool(
       "submit_acceptance_decision",
-      "Finalize this round's acceptance decision: accepted = 放行/通过 (advance, or on the LAST phase park at awaiting_archive — archive does NOT start automatically), rejected = 退回修改 (dispatches the task-fix round). Call ONLY when the human explicitly says so in this chat (e.g. 「全部通过，放行」「可以了，收」「退回，让他改…」). The acceptance window click is their fallback, not a requirement — but never infer consent: no explicit instruction, no call. accepted is refused while any item is ✗. rejected requires feedback, which becomes the fix-round instruction.",
+      "Finalize this round's acceptance decision: accepted = 放行/通过 (advance, or on the LAST phase park at awaiting_archive — archive does NOT start automatically), rejected = 退回让 task doer 在工作区原地修 (feedback becomes the fix request; no new round is dispatched). Call ONLY when the human explicitly says so in this chat (e.g. 「全部通过，放行」「可以了，收」「退回，让他改…」). The acceptance window click is their fallback, not a requirement — but never infer consent: no explicit instruction, no call. accepted is refused while any item is ✗. rejected requires feedback.",
       {
-        decision: z.enum(["accepted", "rejected"]).describe("accepted = 放行 (advance/archive); rejected = 退回修改 (dispatch task-fix)"),
-        feedback: z.string().max(20000).optional().describe("Required for rejected: what must be fixed (becomes the fix-round instruction)"),
+        decision: z.enum(["accepted", "rejected"]).describe("accepted = 放行 (advance/archive); rejected = 退回让 doer 原地修"),
+        feedback: z.string().max(20000).optional().describe("Required for rejected: what must be fixed (becomes the fix request)"),
         reopen_tickets: z
           .array(z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._-]{0,120}$/))
           .max(20)
@@ -694,37 +695,6 @@ export function createTaskToolServer(input: TaskToolServerInput) {
         } catch (err: unknown) {
           return text({ ok: false, error: err instanceof Error ? err.message : String(err) })
         }
-      },
-    ),
-    tool(
-      "propose_acceptance_escalation",
-      "When a problem is beyond a ≤2-file small fix (needs spec change, 3+ files, or repeated failed fixes), ask the human to confirm escalating to the task-fix big-fix workflow. Appends a confirmation card; does NOT execute — the human clicks to dispatch.",
-      {
-        feedback: z.string().min(1).max(4000).describe("What is wrong and why it needs a fix round"),
-        item_ids: z.array(z.string()).max(20).optional().describe("Acceptance items this feedback relates to"),
-      },
-      async ({ feedback, item_ids }) => {
-        appendTaskToolCard(db, sessionId, {
-          kind: "task.acceptance_escalation",
-          severity: "warn",
-          title: "升级为大修复（task-fix）？",
-          message: feedback,
-          taskId: task.id,
-          phaseIndex: task.phaseIndex,
-          roundIndex: task.roundIndex,
-          workspaceId: task.workspaceId,
-          actions: [
-            { id: "acceptance_escalate_confirm", label: "确认升级 · 开修复轮" },
-            { id: "cancel_action", label: "取消" },
-          ],
-          payload: {
-            feedback,
-            itemIds: item_ids ?? [],
-            phaseIndex: task.phaseIndex,
-            roundIndex: task.roundIndex,
-          },
-        })
-        return text({ ok: true, card: "task.acceptance_escalation" })
       },
     ),
   ] : []
@@ -1191,6 +1161,79 @@ export function createTaskToolServer(input: TaskToolServerInput) {
     ),
   ] : []
 
+  const cloneDevTools = task.kind === "clone-dev" ? [
+    tool(
+      "clone_dev_get_state",
+      "Clone-dev only. Read the clone development state: clone_name, mode, stage, kit tools, and the three verification criteria. Read-only.",
+      {},
+      async () => {
+        const svc = getCloneDevService()
+        if (!svc) return text({ ok: false, error: "clone-dev service not ready" })
+        try {
+          return text(svc.getState(task.id))
+        } catch (err: unknown) {
+          return text({ ok: false, error: err instanceof Error ? err.message : String(err) })
+        }
+      },
+    ),
+    tool(
+      "clone_dev_set_meta",
+      "Clone-dev only. Register the clone identity after the human confirmed: slug name, create/edit mode, and the tool list. clone_name is locked once written.",
+      {
+        clone_name: z.string().min(1).describe("Slug: lowercase letters/digits/hyphens, 1-50 chars"),
+        mode: z.enum(["create", "edit"]).default("create"),
+        display_name: z.string().optional(),
+        kit_enabled: z.boolean().optional().describe("true when the clone ships executable tools"),
+        tools: z.array(z.string()).optional().describe("Declared tool names"),
+      },
+      async ({ clone_name, mode, display_name, kit_enabled, tools }) => {
+        const svc = getCloneDevService()
+        if (!svc) return text({ ok: false, error: "clone-dev service not ready" })
+        try {
+          return text(svc.setMeta(task.id, { clone_name, mode, display_name, kit_enabled, tools }))
+        } catch (err: unknown) {
+          return text({ ok: false, error: err instanceof Error ? err.message : String(err) })
+        }
+      },
+    ),
+    tool(
+      "clone_dev_verify",
+      "Clone-dev only. Run the three hard checks: tools callable, boundary blocked, identity usable. Writes evidence into the task home. Re-run after every tool/persona change.",
+      {},
+      async () => {
+        const svc = getCloneDevService()
+        if (!svc) return text({ ok: false, error: "clone-dev service not ready" })
+        try {
+          return text(await svc.verify(task.id))
+        } catch (err: unknown) {
+          return text({ ok: false, error: err instanceof Error ? err.message : String(err) })
+        }
+      },
+    ),
+    tool(
+      "clone_dev_finish",
+      "Clone-dev only. Mark development complete. Refused unless all three verification criteria are green. Parks the task at awaiting_archive; ask the human whether to merge.",
+      {
+        confirmed: z.boolean().describe("true only when the human explicitly said development is finished — never infer"),
+      },
+      async ({ confirmed }) => {
+        if (!confirmed) return text({ ok: false, error: "必须等用户明确确认开发完成后再执行（confirmed=true）。" })
+        const svc = getCloneDevService()
+        if (!svc) return text({ ok: false, error: "clone-dev service not ready" })
+        try {
+          const snap = svc.completeTask(task.id)
+          return text({
+            ok: true,
+            state: snap.state,
+            next: "任务已停在「待合入」。问用户是否合入；用户明确确认后由归档链路执行 merge + 装包。",
+          })
+        } catch (err: unknown) {
+          return text({ ok: false, error: err instanceof Error ? err.message : String(err) })
+        }
+      },
+    ),
+  ] : []
+
   const tools = [
     tool(
       "get_task_status",
@@ -1346,6 +1389,7 @@ export function createTaskToolServer(input: TaskToolServerInput) {
       },
     ),
     ...workflowDevTools,
+    ...cloneDevTools,
     ...acceptanceTools,
     ...archiveConsentTools,
     ...archiveTools,

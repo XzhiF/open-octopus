@@ -206,7 +206,7 @@ export function CabinTuning() {
         <div className="hgroup">
           <span className="gl">声音 AUDIO</span>
           <Toggle k="sound" label="舱内音效" />
-          <span className="tlabel" style={{ fontSize: 9, opacity: .7 }}>环境低鸣 + 操作提示音</span>
+          <span className="tlabel" style={{ fontSize: 9, opacity: .7 }}>操作提示音（点击 / 发送 / 回传）</span>
         </div>
 
         <div className="hgroup">

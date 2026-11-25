@@ -8,6 +8,7 @@ import type {
   AgentConfig, SafeModeStatus,
   SafetyEvent, DebugLogEntry,
   AgentVersionInfo, VersionListResponse, VersionDiffResponse, RollbackResponse,
+  ChatSendMeta,
 } from './types'
 import type { ComposerContext, ComposerEffort } from './composer-settings'
 import { getServerUrl } from '@/lib/server-config'
@@ -41,6 +42,8 @@ export function parseMessageMetadata(msg: any): AgentMessage {
       displayType: meta.displayType ?? normalized.displayType,
       activity: meta.activity ?? normalized.activity,
       roleSwitch: meta.role_switch ?? normalized.roleSwitch,
+      via: meta.via ?? normalized.via,
+      items: meta.items ?? normalized.items,
     }
   } catch {
     return normalized
@@ -100,8 +103,72 @@ export interface BackgroundTaskInfo {
   taskType?: string
 }
 
+/** 回合阶段（2026-11-23 用户 #8）：
+ *  - generating：模型在生成 / 调工具 —— 输入只能排队或 steer；
+ *  - background-wait：模型空闲、只等后台任务唤醒 —— 可以直接继续说话。 */
+export type TurnPhase = 'generating' | 'background-wait'
+
 export function getSessionRunning(id: string) {
-  return request<{ running: boolean; partial: boolean; background_tasks?: BackgroundTaskInfo[] }>(`/sessions/${id}/running`)
+  return request<{
+    running: boolean
+    partial: boolean
+    background_tasks?: BackgroundTaskInfo[]
+    phase?: TurnPhase | null
+  }>(`/sessions/${id}/running`)
+}
+
+// ── 后台作业（run_in_background）· 2026-11-24 用户 #1 活动日志 ──────────
+/** 后台作业的一条记录：运行中来自电平，已结束来自 task_notification 留档。 */
+export interface BackgroundRunInfo {
+  id: string
+  session_id: string
+  task_id: string
+  run_id: string | null
+  description: string
+  task_type: string | null
+  status: 'running' | 'completed' | 'failed' | 'stopped'
+  summary: string | null
+  output_file: string | null
+  started_at: string
+  ended_at: string | null
+  created_at: string
+  updated_at: string
+}
+
+export function listSessionBackgroundRuns(id: string) {
+  return request<{ runs: BackgroundRunInfo[] }>(`/sessions/${id}/background-runs`)
+}
+
+export interface BackgroundTaskOutput {
+  output: string
+  total_bytes: number
+  truncated: boolean
+  /** live = SDK 实时读取；file = 结束后读 CLI 留下的输出文件末尾。 */
+  source: 'live' | 'file'
+}
+
+/** 后台作业输出末尾（≤8 KiB）。作业已结束且文件还在时也能读一次。 */
+export function getBackgroundOutput(id: string, taskId: string) {
+  return request<BackgroundTaskOutput>(
+    `/sessions/${id}/background/${encodeURIComponent(taskId)}/output`,
+  )
+}
+
+/** 单独停一个后台作业（不打断主对话的当前轮）。 */
+export function stopBackgroundTask(id: string, taskId: string) {
+  return request<{ success: boolean }>(
+    `/sessions/${id}/background/${encodeURIComponent(taskId)}/stop`,
+    { method: 'POST' },
+  )
+}
+
+/** 后台等待期的追加输入：注进服务端同一条 provider 查询（不新开回合）。
+ *  返回 `injected=false` / 抛 409 时应回退普通发送或排队。 */
+export function injectChat(id: string, message: string) {
+  return request<{ injected: boolean; session_id: string }>(`/sessions/${id}/chat/inject`, {
+    method: 'POST',
+    body: JSON.stringify({ message }),
+  })
 }
 /** Slash commands the CLI advertised for this session (empty until a turn ran). */
 export function getSessionSlashCommands(id: string) {
@@ -116,6 +183,8 @@ export interface RunningAgentSession {
   stream_count: number
   /** 非空 = 这轮在等后台任务（chip 上显示「后台：在跑什么」）。 */
   background_tasks?: BackgroundTaskInfo[]
+  /** 这一流当前阶段；多流时任一 generating 即 generating。老服务端没有该字段。 */
+  phase?: TurnPhase
 }
 export function listRunningSessions(limit = 50, signal?: AbortSignal) {
   return request<{ items: RunningAgentSession[] }>(`/sessions/running?limit=${limit}`, { signal })
@@ -286,6 +355,8 @@ export function chatStream(id: string, message: string, opts?: {
   effort?: ComposerEffort
   maxContext?: ComposerContext
   subagents?: Array<{ id: string; label?: string }>
+  /** 事项投递（2026-11-24）：来源 + itemIds；服务端写进 user message metadata。 */
+  meta?: ChatSendMeta
 }): AgentSSEConnection {
   const controller = new AbortController()
   const url = `${BASE()}/sessions/${id}/chat`
@@ -297,6 +368,9 @@ export function chatStream(id: string, message: string, opts?: {
     ...(opts?.effort ? { effort: opts.effort } : {}),
     ...(opts?.subagents && opts.subagents.length > 0 ? { subagents: opts.subagents } : {}),
     ...(opts?.maxContext ? { maxContext: opts.maxContext } : {}),
+    ...(opts?.meta?.via === 'items' && opts.meta.itemIds && opts.meta.itemIds.length > 0
+      ? { meta: { via: 'items', itemIds: opts.meta.itemIds } }
+      : {}),
   })
 
   const streamPromise = fetch(url, {
@@ -312,7 +386,23 @@ export function chatStream(id: string, message: string, opts?: {
       try {
         const response = await streamPromise
         if (!response.ok || !response.body) {
-          controller.error(new Error(`SSE connection failed: ${response.status}`))
+          // Surface the server's structured error (409 STREAM_IN_PROGRESS from
+          // the concurrency guard, with details.phase) — the hook branches on
+          // it: background-wait → inject, generating → tail/queue.
+          let code: string | undefined
+          let details: unknown
+          let message = `SSE connection failed: ${response.status}`
+          if (!response.ok) {
+            try {
+              const errBody = await response.json()
+              if (errBody?.error?.code) code = errBody.error.code
+              if (errBody?.error?.message) message = errBody.error.message
+              if (errBody?.error?.details) details = errBody.error.details
+            } catch { /* non-JSON error body — keep generic message */ }
+          }
+          controller.error(Object.assign(new Error(message), {
+            code, status: response.status, details,
+          }))
           return
         }
         const reader = response.body.getReader()

@@ -143,14 +143,29 @@ export function ClonesLayout() {
           )}
         </div>
 
-        <button
-          type="button"
-          onClick={() => setWizardOpen(true)}
-          className="m-2 flex items-center justify-center gap-1.5 rounded-[7px] border-[1.5px] border-dashed border-pop-bd py-1.5 text-[10px] font-bold text-pop-dim transition-colors hover:border-pop-purple/40 hover:text-pop-purple"
-        >
-          <Plus className="size-3" />
-          新建分身
-        </button>
+        <div className="m-2 flex flex-col gap-1.5">
+          <button
+            type="button"
+            onClick={() => {
+              // clone-dev（2026-11-25）：推荐入口 —— 对话即创建，验证后合入。
+              window.dispatchEvent(new Event('octopus:new-clone-task'))
+              window.dispatchEvent(new Event('octopus:focus-desktop'))
+              window.dispatchEvent(new CustomEvent('octopus:close-app', { detail: { id: 'clones' } }))
+            }}
+            className="flex items-center justify-center gap-1.5 rounded-[7px] border-[1.5px] border-pop-purple/40 bg-pop-purple/10 py-1.5 text-[10px] font-bold text-pop-purple transition-colors hover:bg-pop-purple/15"
+          >
+            <Plus className="size-3" />
+            用对话创建分身
+          </button>
+          <button
+            type="button"
+            onClick={() => setWizardOpen(true)}
+            className="flex items-center justify-center gap-1.5 rounded-[7px] border-[1.5px] border-dashed border-pop-bd py-1.5 text-[10px] font-bold text-pop-dim transition-colors hover:border-pop-purple/40 hover:text-pop-purple"
+          >
+            <Plus className="size-3" />
+            新建空分身
+          </button>
+        </div>
       </aside>
 
       {/* ── 右：分身详情 ─────────────────────────────────────────── */}

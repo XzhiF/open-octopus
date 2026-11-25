@@ -47,13 +47,13 @@ describe("resolveTaskLaunchStep — 验收台预设回填信道注入", () => {
     expect(step.inputValues).toHaveProperty(OCTOPUS_API_KEY, "")
   })
 
-  it("打回轮 override（task-fix）同走 v4 分支 → 两键照注", () => {
+  it("同 phase 重跑（round 2 + feedback）同走 v4 分支 → 两键照注，feedback 进 input_values", () => {
     const step = resolveTaskLaunchStep({
       plan: v4Plan([phase()]), phaseIndex: 1, roundIndex: 2,
-      feedback: "重来", workflowRefOverride: "built-in/task-fix",
+      feedback: "重来",
       taskId: "t-42", serverUrl: "http://127.0.0.1:3001",
     })
-    expect(step.workflowRef).toBe("built-in/task-fix")
+    expect(step.workflowRef).toBe("built-in/matt-spec-dev")
     expect(step.inputValues[TASK_ID_KEY]).toBe("t-42")
     expect(step.inputValues.feedback).toBe("重来")
   })

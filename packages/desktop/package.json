@@ -11,7 +11,9 @@
     "typecheck": "tsc --noEmit",
     "prepare:resources": "node scripts/prepare-resources.mjs",
     "pack:dir": "node scripts/build-main.mjs && node scripts/prepare-resources.mjs && electron-builder --dir",
-    "dist": "node scripts/build-main.mjs && node scripts/prepare-resources.mjs && electron-builder"
+    "dist": "node scripts/build-main.mjs && node scripts/prepare-resources.mjs && electron-builder",
+    "pack:dir:proxy": "node scripts/pack.mjs --dir",
+    "dist:proxy": "node scripts/pack.mjs"
   },
   "devDependencies": {
     "@types/node": "^22.15.0",

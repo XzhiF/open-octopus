@@ -15,7 +15,11 @@
   z-index: 160;
   display: flex;
   flex-direction: column;
-  align-items: flex-end;
+  /* 2026-11-23 用户：整列同一条中轴（待我处理 chip 与六角按钮共用中心线），
+     并保证 chip 与下指令之间始终留出间隙 —— 以前 flex-end 右对齐，矮窗口下
+     菜单 auto margin 归零，下指令直接贴到 chip 上。 */
+  align-items: center;
+  row-gap: 16px;
   pointer-events: none;
 }
 .ck12-rightrail > * { pointer-events: auto; }
@@ -111,12 +115,15 @@
 }
 
 /* ── 主按钮组 ── */
+/* 2026-11-23 用户 #4：整组按钮收一档（原 63×72 / big 76×88，gap 12）。
+   原因：≤1320 断点旧规则把按钮**放大**到 78×90 / big 96×110，900 高视口下
+   一整列（≈712px）正好顶到上面的「待我处理」chip —— 按钮显示全了就没缝。 */
 .ck12-rmenu {
   margin: auto 0;
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 12px;
+  gap: 10px;
 }
 .ck12-rhex {
   position: relative;
@@ -125,8 +132,8 @@
   align-items: center;
   justify-content: center;
   gap: 1px;
-  width: 63px;
-  height: 72px;
+  width: 58px;
+  height: 66px;
   color: #fff;
   transition: 0.16s;
   cursor: pointer;
@@ -149,17 +156,17 @@
   box-shadow: inset 0 0 0 2px var(--ck12-teal), 0 0 22px rgba(46, 230, 214, 0.5);
 }
 .ck12-rhex-i {
-  font-size: 16px;
+  font-size: 15px;
   text-shadow: 0 0 12px rgba(46, 230, 214, 0.8);
 }
 .ck12-rhex-l {
-  font-size: 9.5px;
+  font-size: 9px;
   font-weight: 800;
   font-family: var(--font-ui);
   letter-spacing: 0.08em;
   text-shadow: 0 1px 6px rgba(16, 13, 40, 0.8);
 }
-.ck12-rhex.is-big { width: 76px; height: 88px; }
+.ck12-rhex.is-big { width: 68px; height: 78px; }
 .ck12-rhex.is-big::before {
   background: linear-gradient(160deg, rgba(255, 138, 61, 0.46), rgba(255, 92, 138, 0.46));
   box-shadow: inset 0 0 0 2px rgba(255, 176, 32, 0.7);
@@ -167,17 +174,17 @@
 .ck12-rhex.is-big:hover::before {
   box-shadow: inset 0 0 0 2px var(--ck12-hazard), 0 0 26px rgba(255, 138, 61, 0.6);
 }
-.ck12-rhex.is-big .ck12-rhex-i { font-size: 20px; }
-.ck12-rhex.is-big .ck12-rhex-l { font-size: 10.5px; }
+.ck12-rhex.is-big .ck12-rhex-i { font-size: 18px; }
+.ck12-rhex.is-big .ck12-rhex-l { font-size: 10px; }
 .ck12-rhex.is-warp::before {
   background: linear-gradient(160deg, rgba(123, 77, 255, 0.4), rgba(46, 230, 214, 0.34));
 }
-.ck12-rhex.is-more { width: 56px; height: 63px; }
+.ck12-rhex.is-more { width: 52px; height: 58px; }
 .ck12-rhex.is-more::before {
   background: linear-gradient(160deg, rgba(185, 179, 217, 0.16), rgba(123, 77, 255, 0.24));
 }
-.ck12-rhex.is-more .ck12-rhex-i { font-size: 13px; }
-.ck12-rhex.is-more .ck12-rhex-l { font-size: 9px; }
+.ck12-rhex.is-more .ck12-rhex-i { font-size: 12px; }
+.ck12-rhex.is-more .ck12-rhex-l { font-size: 8.5px; }
 
 /* 更多 → 向左横排展开 */
 .ck12-morewrap { position: relative; }
@@ -288,14 +295,14 @@
   font-size: 11px;
 }
 
-/* ── inbox 浮层：列表在右，回复卡在左 ── */
+/* ── inbox 浮层：v22 #5 起单栏（一级列表直给动作；放行 / 完成卡占满） ── */
 .ck12-inboxpop {
   position: absolute;
   right: calc(var(--ck12-railr) - 6px);
   top: -2px;
   z-index: 44;
   display: flex;
-  flex-direction: row;
+  flex-direction: column;
   width: 378px;
   max-height: calc(100vh - 126px);
   clip-path: var(--ck12-cut);
@@ -305,15 +312,13 @@
   box-shadow: 0 22px 64px rgba(16, 13, 40, 0.62);
   animation: ck12-popin 0.2s ease;
 }
-.ck12-inboxpop.is-two { width: 764px; }
 .ck12-ip-listwrap {
   flex: none;
-  width: 378px;
+  width: 100%;
   display: flex;
   flex-direction: column;
   min-height: 0;
 }
-.ck12-inboxpop:not(.is-two) .ck12-ip-listwrap { width: 100%; }
 @keyframes ck12-popin {
   0% { opacity: 0; transform: translateY(-6px); }
   100% { opacity: 1; transform: none; }
@@ -426,6 +431,24 @@
   color: #fff;
 }
 .ck12-ip-go { flex: none; font-size: 9.5px; font-weight: 800; color: var(--ck12-teal); }
+/* #5：一级行右侧动作 —— 💬 对话（主）/ ▦ 详情；放行、验收、收下同一套外框。 */
+.ck12-ip-acts { flex: none; display: flex; align-items: center; gap: 4px; }
+.ck12-ipa {
+  flex: none;
+  height: 18px;
+  padding: 0 6px;
+  clip-path: polygon(4px 0, 100% 0, calc(100% - 4px) 100%, 0 100%);
+  background: rgba(255, 255, 255, 0.07);
+  border: 1px solid rgba(185, 179, 217, 0.24);
+  color: var(--ck12-ink2);
+  font-family: var(--font-ui);
+  font-size: 8.5px;
+  font-weight: 800;
+  white-space: nowrap;
+  transition: 0.13s;
+}
+.ck12-ipa:hover { color: #fff; border-color: var(--ck12-teal); background: rgba(46, 230, 214, 0.16); }
+.ck12-ipa.is-pri { color: var(--ck12-teal); border-color: rgba(46, 230, 214, 0.4); background: rgba(46, 230, 214, 0.1); }
 .ck12-ip-q {
   padding-left: 2px;
   font-size: 10px;
@@ -461,15 +484,15 @@
   font-family: var(--font-ui);
 }
 .ck12-ip-empty b { font-size: 18px; line-height: 1; color: var(--ck12-green); font-weight: 700; }
+.ck12-ip-empty small { font-size: 9px; color: var(--ck12-metal2); font-family: var(--font-mono); }
 
-/* ── 回复卡（左窗） ── */
+/* ── 放行 / 完成回流卡（单栏占满浮层） ── */
 .ck12-ipd {
   flex: 1;
   min-width: 0;
   display: flex;
   flex-direction: column;
   min-height: 0;
-  border-right: 1px solid rgba(185, 179, 217, 0.14);
   background: rgba(10, 8, 24, 0.28);
 }
 .ck12-ipd-h {
@@ -670,15 +693,8 @@
 }
 
 /* ── 断点：与原型逐档一致 ── */
-@media (max-width: 1320px) {
-  .ck12-rhex { width: 78px; height: 90px; }
-  .ck12-rhex-i { font-size: 19px; }
-  .ck12-rhex-l { font-size: 10.5px; }
-  .ck12-rhex.is-big { width: 96px; height: 110px; }
-  .ck12-rhex.is-big .ck12-rhex-i { font-size: 24px; }
-  .ck12-rhex.is-big .ck12-rhex-l { font-size: 12px; }
-  .ck12-rhex.is-more { width: 70px; height: 80px; }
-}
+/* 2026-11-23 用户 #4：原 ≤1320 断点把按钮放大（78×90 / big 96×110 / more 70×80），
+   一整列顶到待办 chip；该放大档已删除，窄屏只沿用基准尺寸、≤900 再缩一档。 */
 
 @media (max-width: 900px) {
   .ck12-rightrail { top: 58px; bottom: 10px; right: 6px; }
@@ -723,4 +739,37 @@
   .ck12-inboxpop { animation: none; }
   .ck12-fanwrap,
   .ck12-fitem { transition: none; }
+}
+
+/* ── 高度断点：矮窗口（≈1366×768 笔记本的浏览器内容区）不能把菜单顶到
+   「待我处理」上。宽度断点管横向，这里按视口高度逐档收，chip 与按钮仍同中轴。 */
+@media (max-height: 760px) {
+  .ck12-rightrail { row-gap: 14px; }
+  .ck12-inboxchip { padding: 5px 5px 4px; gap: 2px; }
+  .ck12-inboxchip-ic { width: 26px; height: 30px; font-size: 12px; }
+  .ck12-rmenu { gap: 8px; }
+  .ck12-rhex { width: 54px; height: 60px; }
+  .ck12-rhex-i { font-size: 14px; }
+  .ck12-rhex-l { font-size: 8.5px; }
+  .ck12-rhex.is-big { width: 66px; height: 74px; }
+  .ck12-rhex.is-big .ck12-rhex-i { font-size: 17px; }
+  .ck12-rhex.is-big .ck12-rhex-l { font-size: 9.5px; }
+  .ck12-rhex.is-more { width: 48px; height: 54px; }
+}
+
+@media (max-height: 660px) {
+  .ck12-rightrail { top: 58px; bottom: 50px; row-gap: 10px; }
+  .ck12-inboxchip { padding: 4px 5px 3px; }
+  .ck12-inboxchip-ic { width: 24px; height: 27px; font-size: 11px; }
+  .ck12-inboxchip-t { font-size: 8.5px; }
+  .ck12-rmenu { gap: 5px; }
+  .ck12-rhex { width: 48px; height: 54px; }
+  .ck12-rhex-i { font-size: 13px; }
+  .ck12-rhex-l { font-size: 8px; }
+  .ck12-rhex.is-big { width: 58px; height: 64px; }
+  .ck12-rhex.is-big .ck12-rhex-i { font-size: 15px; }
+  .ck12-rhex.is-big .ck12-rhex-l { font-size: 9px; }
+  .ck12-rhex.is-more { width: 44px; height: 48px; }
+  .ck12-rhex.is-more .ck12-rhex-i { font-size: 11px; }
+  .ck12-rhex.is-more .ck12-rhex-l { font-size: 7.5px; }
 }

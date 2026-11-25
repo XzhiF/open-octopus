@@ -12,6 +12,7 @@
 
 import type { CabinAttentionItem } from '@octopus/shared'
 import type { CabinDelegationView, CabinJobView } from '@/lib/cabin-api'
+import type { TurnPhase } from '@/lib/agent/api'
 import { formatDuration } from '@/lib/format'
 import { taskDisplayStatus, type CabinTaskRow } from '@/components/cabin/modules/ui'
 import { isEndedJob, jobStatusLabel } from '@/components/cabin/job-status'
@@ -26,6 +27,9 @@ export type CockpitRow =
       job: CabinJobView
       attention?: CabinAttentionItem
       pct: number | null
+      /** agent_running 时这轮流式的阶段（/sessions/running 的 phase）。
+       *  background-wait = 作者在等后台，编队秒表转琥珀色；未知 = undefined。 */
+      live_phase?: TurnPhase
     }
   | {
       key: `task:${string}`
@@ -71,7 +75,8 @@ export interface CockpitFleetCounts {
 /** 「需要你」的作业状态：待验收 / 待归档 / 失败升级。job 带 attention 时
  *  也在 need（见 groupOf），这条兜住服务端还没来得及派生 attention 的窗口。 */
 const NEED_STATUSES = new Set(['awaiting_review', 'awaiting_archive', 'failed', 'blocked', 'waiting_input'])
-const RUN_STATUSES = new Set(['running'])
+/** archiving = 归档编排在跑（git 同步 / 清理 / 知识编译），算「在跑」不算待命。 */
+const RUN_STATUSES = new Set(['running', 'archiving'])
 /** 已结束组只留最近 3 条（plans Step 2 task 1）。 */
 const DONE_LIMIT = 3
 
@@ -316,7 +321,7 @@ const DELEGATION_STATE_LABEL: Record<CabinDelegationView['state'], string> = {
 
 // ── v21（design 31 §3.1.1）：左栏单列编队的排序 ─────────────────────────
 //
-// 状态优先（受阻 → 等你 → 在跑 → 待命 → 已归档），同状态按创建时间升序
+// 状态优先（受阻 → 等你 → 在跑 → 待命 → 已结束），同状态按创建时间升序
 // （旧 → 新落地：created_at 数值小 = 更早创建，排在上面）。纯 attention 行
 // 不进编队 —— 它们是「要我处理」，归右栏 inbox（design 31 §0 #2）。
 
@@ -330,8 +335,22 @@ export const FLEET_STATUS_RANK = {
 
 export type FleetStatus = keyof typeof FLEET_STATUS_RANK
 
-/** 行 → 排序状态。语义与 threads-model 的 threadStateOf 一致（那边是 tab 表情）。 */
-export function fleetStatusOf(row: CockpitRow): FleetStatus {
+/**
+ * 行上此刻是否真有 agent 在干活（编队「在跑」的语义）：
+ *   · 行本身在运行组（running / 委派跑着 / 子代理 working）；
+ *   · 或 job 的主线程 agent 正在流式 —— 即使生命周期还停在待验收 / 待命 / 受阻。
+ * 已结束行永远不算（残留流不该把结束行点亮）。
+ */
+export function isLiveRow(row: CockpitRow): boolean {
+  const group = groupOf(row)
+  if (group === 'done') return false
+  if (row.kind === 'job' && row.job.agent_running === true) return true
+  return group === 'run'
+}
+
+/** 生命周期口径的状态（chip 文案 / 行色 / 窄栏状态点）—— 不被「agent 在跑」改写。
+ *  语义与 threads-model 的 threadStateOf 一致（那边是 tab 表情）。 */
+export function fleetStageOf(row: CockpitRow): FleetStatus {
   const group = groupOf(row)
   if (group === 'need') {
     if (row.kind === 'attention') return row.item.stage === 'blocked' ? 'blocked' : 'wait'
@@ -344,6 +363,16 @@ export function fleetStatusOf(row: CockpitRow): FleetStatus {
   if (group === 'run') return 'run'
   if (group === 'done') return 'done'
   return 'queue'
+}
+
+/**
+ * 排序 / 计数口径：真在干活的行挪进「在跑」组（待验收的作者还在推进，编队要把
+ * 它排到干活那档）；受阻仍排最上（阻塞不能藏），已结束不动。
+ */
+export function fleetStatusOf(row: CockpitRow): FleetStatus {
+  const stage = fleetStageOf(row)
+  if ((stage === 'wait' || stage === 'queue') && isLiveRow(row)) return 'run'
+  return stage
 }
 
 /**

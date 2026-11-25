@@ -1,4 +1,4 @@
-// 新会话里选的身份要跟着第一条消息生效（bug/需求 2026-10-27）：
+﻿// 新会话里选的身份要跟着第一条消息生效（bug/需求 2026-10-27）：
 // hero 阶段还没有 session，身份先存本地；createNewSession 后必须先写角色卡，
 // 再发首条消息 —— 否则第一轮会用基础身份，用户会觉得「选了没用」。
 
@@ -26,6 +26,7 @@ vi.mock("@/lib/agent/api", () => ({
   deleteSession: vi.fn(),
   getSession: vi.fn(),
   getSessionRunning: vi.fn().mockResolvedValue({ running: false }),
+  injectChat: vi.fn().mockResolvedValue({ injected: true }),
   createCloneSession: vi.fn(),
   cloneChatStream: vi.fn(),
   stopCloneChat: vi.fn(),

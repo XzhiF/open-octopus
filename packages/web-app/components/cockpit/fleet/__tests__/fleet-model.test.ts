@@ -8,9 +8,13 @@ import type { CabinTaskRow } from '@/components/cabin/modules/ui'
 import {
   buildCounts,
   durationLabel,
+  fleetStageOf,
+  fleetStatusOf,
   groupOf,
+  isLiveRow,
   mergeAttention,
   metaLine,
+  sortFleet,
   sortRows,
   statusLabel,
   type CockpitRow,
@@ -89,6 +93,9 @@ describe('groupOf', () => {
     expect(groupOf(jobRow('j6', { status: 'cancelled' }))).toBe('done')
     expect(groupOf(jobRow('j7', { status: 'awaiting_review' }))).toBe('need')
     expect(groupOf(jobRow('j8', { status: 'failed' }))).toBe('need')
+    // 2026-11-24：归档闸 —— 待归档要人点头（need），归档编排在跑（run）。
+    expect(groupOf(jobRow('j13', { status: 'awaiting_archive' }))).toBe('need')
+    expect(groupOf(jobRow('j14', { status: 'archiving' }))).toBe('run')
     // 主线程 agent 在跑：生命周期还是 ready/paused，编队归「运行中」。
     expect(groupOf(jobRow('j9', { status: 'ready', agent_running: true }))).toBe('run')
     expect(groupOf(jobRow('j10', { status: 'paused', agent_running: true }))).toBe('run')
@@ -249,6 +256,71 @@ describe('sortRows', () => {
     const before = rows.map((row) => row.key)
     sortRows(rows)
     expect(rows.map((row) => row.key)).toEqual(before)
+  })
+})
+
+describe('isLiveRow / fleetStageOf / fleetStatusOf', () => {
+  it('job 主线程在跑：算在干活；生命周期 chip 口径不变', () => {
+    const row = jobRow('j1', { status: 'awaiting_review', agent_running: true })
+    expect(isLiveRow(row)).toBe(true)
+    expect(fleetStageOf(row)).toBe('wait')
+    expect(fleetStatusOf(row)).toBe('run')
+  })
+
+  it('待验收 + attention + 作者在跑：stage 仍是 wait（chip 等你验收），排序进在跑组', () => {
+    const [merged] = mergeAttention(
+      [jobRow('j1', { status: 'awaiting_review', agent_running: true })],
+      [attention('a1', { job_id: 'j1', stage: 'review' })],
+      { cabinId: 'c1', cabinName: 'A舱' },
+    )
+    expect(isLiveRow(merged)).toBe(true)
+    expect(fleetStageOf(merged)).toBe('wait')
+    expect(fleetStatusOf(merged)).toBe('run')
+  })
+
+  it('受阻 + 作者在跑：still blocked 排最上，但算在干活（要点秒表）', () => {
+    const row = jobRow('j1', { status: 'blocked', agent_running: true })
+    expect(isLiveRow(row)).toBe(true)
+    expect(fleetStageOf(row)).toBe('blocked')
+    expect(fleetStatusOf(row)).toBe('blocked')
+  })
+
+  it('已归档 + 残留流：不算在干活（归档行不点秒表）', () => {
+    const row = jobRow('j1', {
+      status: 'done',
+      ended_at: '2026-11-14T01:00:00.000Z',
+      agent_running: true,
+    })
+    expect(isLiveRow(row)).toBe(false)
+    expect(fleetStatusOf(row)).toBe('done')
+  })
+
+  it('普通待验收 / 待命 / running 的判定', () => {
+    expect(isLiveRow(jobRow('j1', { status: 'awaiting_review' }))).toBe(false)
+    expect(fleetStatusOf(jobRow('j1', { status: 'awaiting_review' }))).toBe('wait')
+    expect(isLiveRow(jobRow('j2', { status: 'pending' }))).toBe(false)
+    expect(isLiveRow(jobRow('j3', { status: 'running' }))).toBe(true)
+    expect(fleetStatusOf(jobRow('j3', { status: 'running' }))).toBe('run')
+  })
+
+  it('sortFleet：作者在跑的待验收行排进在跑组（受阻仍最上、队列在后）', () => {
+    const reviewLive = jobRow('a', {
+      status: 'awaiting_review',
+      agent_running: true,
+      created_at: '2026-11-14T02:00:00.000Z',
+    })
+    const run = jobRow('b', { status: 'running', created_at: '2026-11-14T01:00:00.000Z' })
+    const queue = jobRow('c', { status: 'pending', created_at: '2026-11-14T00:30:00.000Z' })
+    const review = jobRow('d', { status: 'awaiting_review', created_at: '2026-11-14T00:00:00.000Z' })
+    const blocked = jobRow('e', { status: 'blocked', created_at: '2026-11-14T03:00:00.000Z' })
+
+    expect(sortFleet([queue, reviewLive, run, review, blocked]).map((r) => r.key)).toEqual([
+      'job:e', // 受阻最上
+      'job:d', // 待你验收
+      'job:b', // 在跑（先开始）
+      'job:a', // 作者在跑的待验收行 → 在跑组
+      'job:c', // 待命
+    ])
   })
 })
 

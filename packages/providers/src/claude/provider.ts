@@ -1,5 +1,5 @@
 import { query, type Options, type AgentDefinition, type CanUseTool, type SDKUserMessage } from '@anthropic-ai/claude-agent-sdk'
-import type { IAgentProvider, SendQueryOptions, MessageChunk, OctopusAgentDef, GoalTerminalReason, SystemInitData, BackgroundTaskInfo, SubagentEvent, SubagentLogBlock } from '../types'
+import type { IAgentProvider, SendQueryOptions, MessageChunk, OctopusAgentDef, GoalTerminalReason, SystemInitData, BackgroundTaskInfo, SubagentEvent, SubagentLogBlock, ContextUsageData } from '../types'
 import type { ModelUsage, TokenUsage, TokenUsageDelta } from '@octopus/shared'
 import { mergeModelUsages } from '@octopus/shared'
 import { LLMCallTracker } from '../llm-call-tracker'
@@ -556,25 +556,81 @@ export class ClaudeSDKProvider implements IAgentProvider {
     // Streaming input mode keeps the query alive after its turn; the input
     // generator must stay open until we are done with it. Ending it early makes
     // the SDK close the query ("Query closed before response received").
+    //
+    // 2026-11-23 用户 #8：输入流不再只装首条消息。后台任务（dev 服务等）跑着、
+    // 模型在等唤醒时，用户可以继续说话 —— 宿主经 `onInputChannel` 拿到的 push
+    // 把新消息塞进同一条流，SDK 按新一轮处理，后台完成后的唤醒轮照常到达
+    // （真机 SDK 0.3.318 实测：首轮 result 期间注入 → 第二轮回复 → 后台结束
+    // 再唤醒一轮，三条 result 走同一个 query）。
     let releaseInput: (() => void) | undefined
+    let pushInput: (text: string) => boolean = () => false
     let promptInput: string | AsyncIterable<SDKUserMessage> = prompt
     if (interruptible) {
-      const inputDone = new Promise<void>((resolve) => { releaseInput = resolve })
+      const inputQueue: string[] = []
+      let wakeInput: (() => void) | null = null
+      let inputClosed = false
+      const toUserMessage = (text: string): SDKUserMessage => ({
+        type: 'user',
+        message: { role: 'user', content: text },
+        parent_tool_use_id: null,
+      } as SDKUserMessage)
+      pushInput = (text) => {
+        if (inputClosed || !text.trim()) return false
+        inputQueue.push(text)
+        wakeInput?.()
+        wakeInput = null
+        return true
+      }
+      releaseInput = () => {
+        inputClosed = true
+        wakeInput?.()
+        wakeInput = null
+      }
       promptInput = (async function* () {
-        yield {
-          type: 'user',
-          message: { role: 'user', content: prompt },
-          parent_tool_use_id: null,
-        } as SDKUserMessage
-        await inputDone
+        yield toUserMessage(prompt)
+        for (;;) {
+          if (inputQueue.length === 0 && !inputClosed) {
+            await new Promise<void>((resolve) => { wakeInput = resolve })
+          }
+          if (inputClosed) return
+          const next = inputQueue.shift()
+          if (next == null) continue
+          yield toUserMessage(next)
+        }
       })()
     }
+    options?.onInputChannel?.(pushInput)
 
     // Store query reference so we can call getContextUsage() (control request)
     // after message_start. The Query object is an AsyncGenerator with extra
     // methods (getContextUsage, interrupt, setModel, etc.) — only available
     // during the active stream.
     const q = query({ prompt: promptInput, options: sdkOptions })
+
+    // 后台作业运行时控制（2026-11-24 用户 #1 · 活动日志）：
+    // `getTaskOutput` 是 SDK 0.3.318 的实现方法但未进公开 d.ts（控制请求
+    // `get_task_output`），这里按运行时存在性探测；`stopTask` 有正式类型。
+    // 宿主（server）持有这两个函数，实现「日志尾 / 单独停止某个后台作业」。
+    {
+      const qTask = q as unknown as {
+        getTaskOutput?: (taskId: string) => Promise<{ output: string; total_bytes: number; truncated: boolean }>
+        stopTask?: (taskId: string) => Promise<void>
+      }
+      const getTaskOutput = qTask.getTaskOutput?.bind(q)
+      const stopTask = qTask.stopTask?.bind(q)
+      if ((getTaskOutput || stopTask) && options?.onBackgroundControl) {
+        options.onBackgroundControl({
+          getTaskOutput: async (taskId) => {
+            if (!getTaskOutput) return { output: '', total_bytes: 0, truncated: false }
+            return getTaskOutput(taskId)
+          },
+          stopTask: async (taskId) => {
+            if (!stopTask) throw new Error('stopTask unavailable in this SDK build')
+            await stopTask(taskId)
+          },
+        })
+      }
+    }
 
     // Stop button. Interruptible queries ask the CLI to end the current turn
     // gracefully: the interrupted turn still emits its result, whose usage /
@@ -615,7 +671,35 @@ export class ClaudeSDKProvider implements IAgentProvider {
       if (options.abortSignal.aborted) onAbort()
       else options.abortSignal.addEventListener('abort', onAbort, { once: true })
     }
-    let contextUsageEmitted = false
+    // ctx 角标（2026-11-24 用户）：长轮里工具结果持续进上下文，角标却只在首条
+    // message_start 报一次 —— 跑一小时都不动。改为**节流刷新**（多轮
+    // message_start 触发，≥20s 一次）+ **收轮强制一次**；压缩仍即时刷新。
+    // 控制请求连续失败 3 次即停（SDK/传输不支持时不做无谓等待）。
+    const CONTEXT_USAGE_MIN_INTERVAL_MS = 20_000
+    const CONTEXT_USAGE_MAX_FAILURES = 3
+    let contextUsageFailures = 0
+    let lastContextUsageAt = 0
+    const readContextUsage = async (
+      opts: { force?: boolean } = {},
+    ): Promise<ContextUsageData | null> => {
+      if (contextUsageFailures >= CONTEXT_USAGE_MAX_FAILURES) return null
+      if (!opts.force && Date.now() - lastContextUsageAt < CONTEXT_USAGE_MIN_INTERVAL_MS) {
+        return null
+      }
+      try {
+        // Control request, outside the event stream — a hung transport
+        // must not block the turn past the watchdog (P0-2).
+        const ctxUsage = await withSoftTimeout(q.getContextUsage(), 5_000, 'CONTEXT_USAGE_TIMEOUT')
+        contextUsageFailures = 0
+        lastContextUsageAt = Date.now()
+        return ctxUsage
+      } catch {
+        // getContextUsage may fail if the SDK subprocess doesn't support
+        // it or the transport isn't streaming mode — non-fatal, skip.
+        contextUsageFailures += 1
+        return null
+      }
+    }
     // Slash commands (/context, /compact, /usage …) are executed by the CLI
     // itself: they arrive as a complete `assistant` message + `result` and
     // carry NO stream_event deltas (verified against SDK 0.3.235). Track which
@@ -718,19 +802,11 @@ export class ClaudeSDKProvider implements IAgentProvider {
             yield { type: 'message_start', messageId: currentMessageId }
 
             // Fetch context window usage breakdown from the SDK (control request).
-            // Only do this once per stream to avoid repeated calls on multi-turn
-            // tool-use loops (message_start fires for each assistant message).
-            if (!contextUsageEmitted) {
-              contextUsageEmitted = true
-              try {
-                // Control request, outside the event stream — a hung transport
-                // must not block the turn past the watchdog (P0-2).
-                const ctxUsage = await withSoftTimeout(q.getContextUsage(), 5_000, 'CONTEXT_USAGE_TIMEOUT')
-                yield { type: 'context_usage', data: ctxUsage }
-              } catch {
-                // getContextUsage may fail if the SDK subprocess doesn't support
-                // it or the transport isn't streaming mode — non-fatal, skip.
-              }
+            // 首条 message_start 必报；其后按 20s 节流刷新 —— 每条 assistant
+            // message 开始前上一批工具结果已进上下文，长轮据此持续走动。
+            {
+              const ctxUsage = await readContextUsage({ force: lastContextUsageAt === 0 })
+              if (ctxUsage) yield { type: 'context_usage', data: ctxUsage }
             }
           }
 
@@ -1008,9 +1084,10 @@ export class ClaudeSDKProvider implements IAgentProvider {
             capabilities?: string[]
             betas?: string[]
             /** background_tasks_changed：电平信号，REPLACE 语义。 */
-            tasks?: Array<{ task_id?: string; task_type?: string; description?: string }>
+            tasks?: Array<{ task_id?: string; task_type?: string; description?: string; run_id?: string }>
             /** task_started / task_updated / task_notification 的边沿字段。 */
             task_id?: string
+            run_id?: string
             tool_use_id?: string
             description?: string
             task_type?: string
@@ -1020,6 +1097,8 @@ export class ClaudeSDKProvider implements IAgentProvider {
             prompt?: string
             /** task_notification：子代理的最终汇报。 */
             summary?: string
+            /** task_notification：CLI 侧输出文件（后台 shell 的完整日志）。 */
+            output_file?: string
             last_tool_name?: string
             usage?: { total_tokens?: number; tool_uses?: number; duration_ms?: number }
             patch?: { status?: 'pending' | 'running' | 'completed' | 'failed' | 'killed' | 'paused' }
@@ -1047,6 +1126,7 @@ export class ClaudeSDKProvider implements IAgentProvider {
                 id: t.task_id,
                 description: t.description?.trim() || t.task_id,
                 taskType: t.task_type,
+                ...(t.run_id ? { runId: t.run_id } : {}),
               })
             }
             yield { type: 'background_tasks', tasks: [...backgroundTasks.values()] }
@@ -1107,7 +1187,12 @@ export class ClaudeSDKProvider implements IAgentProvider {
               const description = sm.description?.trim() || sm.task_id
               const prev = backgroundTasks.get(sm.task_id)
               if (!prev || prev.description !== description) {
-                backgroundTasks.set(sm.task_id, { id: sm.task_id, description, taskType: sm.task_type })
+                backgroundTasks.set(sm.task_id, {
+                  id: sm.task_id,
+                  description,
+                  taskType: sm.task_type,
+                  ...(sm.run_id ? { runId: sm.run_id } : {}),
+                })
                 yield { type: 'background_tasks', tasks: [...backgroundTasks.values()] }
               }
             }
@@ -1181,14 +1266,27 @@ export class ClaudeSDKProvider implements IAgentProvider {
             if (sm.task_id && backgroundTasks.delete(sm.task_id)) {
               yield { type: 'background_tasks', tasks: [...backgroundTasks.values()] }
             }
+            // 非子代理任务（后台 shell / monitor …）的落档边沿：状态 / 摘要 /
+            // 输出文件路径。宿主据此把 history 行收口（电量信号之外的另一半）。
+            if (sm.task_id && !liveSubagents.has(sm.task_id)) {
+              yield {
+                type: 'background_task_ended',
+                task: {
+                  id: sm.task_id,
+                  ...(sm.run_id ? { runId: sm.run_id } : {}),
+                  status: sm.status === 'completed'
+                    ? 'completed'
+                    : sm.status === 'stopped' ? 'stopped' : 'failed',
+                  ...(sm.summary ? { summary: sm.summary } : {}),
+                  ...(sm.output_file ? { outputFile: sm.output_file } : {}),
+                },
+              }
+            }
           } else if (sm.subtype === 'compact_boundary') {
-            // 立即刷新占用；auto 压缩也走这里，让角标同样回落。
-            try {
-              const ctxUsage = await withSoftTimeout(q.getContextUsage(), 5_000, 'CONTEXT_USAGE_TIMEOUT')
-              contextUsageEmitted = true
-              yield { type: 'context_usage', data: ctxUsage }
-            } catch {
-              // 非致命：下一轮 message_start 仍会补报真实占用。
+            // 立即刷新占用；auto 压缩也走这里，让角标同样回落（不受节流限制）。
+            {
+              const ctxUsage = await readContextUsage({ force: true })
+              if (ctxUsage) yield { type: 'context_usage', data: ctxUsage }
             }
             // 转录被重写成了摘要：一轮性上下文（角色卡 / 任务 playbook）不保证
             // 还在摘要里，宿主需要在下一轮重新送达。manual/auto 都要报（auto 是
@@ -1316,6 +1414,12 @@ export class ClaudeSDKProvider implements IAgentProvider {
               yield { type: 'local_command_output', content: pendingCompactReceipt }
             }
             pendingCompactReceipt = undefined
+          }
+          // 收轮强制刷新一次（2026-11-24 用户）：长轮跑完时的最终占用。
+          // 必须早于 result chunk —— 宿主收到 result 会收轮，之后的帧可能没人读。
+          {
+            const ctxUsage = await readContextUsage({ force: true })
+            if (ctxUsage) yield { type: 'context_usage', data: ctxUsage }
           }
           // result.modelUsage is the ONLY authoritative source of per-model token totals.
           // SDK snake/原始 key → 规范 ModelUsage 的转换只发生在这里（seam adapter）。

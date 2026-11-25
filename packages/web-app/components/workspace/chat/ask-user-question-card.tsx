@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useMemo, useEffect } from "react"
+import { useState, useMemo, useEffect, useId } from "react"
 import type { ChatMessage } from "@/lib/types"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
@@ -136,6 +136,11 @@ function formatChatAboutSummary(
 
 export function AskUserQuestionCard({ message, onAnswer, disabled, hideChatAbout, onChatAbout, hotkeyId }: AskUserQuestionCardProps) {
   const questions = useMemo(() => parseQuestions(message.toolInput), [message.toolInput])
+  // 2026-11-24 用户（prod）：一条 chat 里可能同时挂着多张未答的提问卡（旧问题
+  // 还没答又来了新问题）。radio / checkbox 靠 <label htmlFor> + 全局 DOM id 关联，
+  // id 不按实例隔离时，点新卡「其他」只会命中文档里第一张同 id 的旧卡控件 ——
+  // 浏览器把焦点送回旧卡并滚过去，聊天记录整个跳走，当前这张卡反而答不上。
+  const uid = useId()
   const [answers, setAnswers] = useState<Record<number, string | string[]>>({})
   const [otherInputs, setOtherInputs] = useState<Record<string, string>>({})
   const [submitted, setSubmitted] = useState(false)
@@ -276,7 +281,7 @@ export function AskUserQuestionCard({ message, onAnswer, disabled, hideChatAbout
                       return (
                         <label
                           key={optIndex}
-                          htmlFor={`aq-${qIndex}-${optIndex}`}
+                          htmlFor={`${uid}-aq-${qIndex}-${optIndex}`}
                           className={cn(
                             "flex items-start gap-2 px-2 py-1.5 rounded-md transition-colors",
                             submitted || disabled ? "cursor-default opacity-60 pointer-events-none" : "cursor-pointer hover:bg-accent/50",
@@ -284,7 +289,7 @@ export function AskUserQuestionCard({ message, onAnswer, disabled, hideChatAbout
                           )}
                         >
                           <Checkbox
-                            id={`aq-${qIndex}-${optIndex}`}
+                            id={`${uid}-aq-${qIndex}-${optIndex}`}
                             checked={isSelected}
                             onCheckedChange={() => handleMultiSelect(qIndex, opt.label)}
                             disabled={submitted || disabled}
@@ -303,7 +308,7 @@ export function AskUserQuestionCard({ message, onAnswer, disabled, hideChatAbout
                     })}
                     {/* 其他（CLI 的 __other__）：可与任意选项同时勾选 */}
                     <label
-                      htmlFor={`aq-${qIndex}-other`}
+                      htmlFor={`${uid}-aq-${qIndex}-other`}
                       className={cn(
                         "flex items-start gap-2 px-2 py-1.5 rounded-md transition-colors",
                         submitted || disabled ? "cursor-default opacity-60 pointer-events-none" : "cursor-pointer hover:bg-accent/50",
@@ -311,7 +316,7 @@ export function AskUserQuestionCard({ message, onAnswer, disabled, hideChatAbout
                       )}
                     >
                       <Checkbox
-                        id={`aq-${qIndex}-other`}
+                        id={`${uid}-aq-${qIndex}-other`}
                         checked={otherSelected}
                         onCheckedChange={() => selectOther(qIndex, q)}
                         disabled={submitted || disabled}
@@ -352,7 +357,7 @@ export function AskUserQuestionCard({ message, onAnswer, disabled, hideChatAbout
                         return (
                           <label
                             key={optIndex}
-                            htmlFor={`aq-${qIndex}-${optIndex}`}
+                            htmlFor={`${uid}-aq-${qIndex}-${optIndex}`}
                             className={cn(
                               "flex items-start gap-2 px-2 py-1.5 rounded-md transition-colors",
                               submitted || disabled ? "cursor-default opacity-60 pointer-events-none" : "cursor-pointer hover:bg-accent/50",
@@ -360,7 +365,7 @@ export function AskUserQuestionCard({ message, onAnswer, disabled, hideChatAbout
                             )}
                           >
                             <RadioGroupItem
-                              id={`aq-${qIndex}-${optIndex}`}
+                              id={`${uid}-aq-${qIndex}-${optIndex}`}
                               value={opt.label}
                               className="mt-0.5 shrink-0"
                             />
@@ -382,7 +387,7 @@ export function AskUserQuestionCard({ message, onAnswer, disabled, hideChatAbout
                       })}
                       {/* 其他（CLI 的 __other__）：输入的文本就是答案 */}
                       <label
-                        htmlFor={`aq-${qIndex}-other`}
+                        htmlFor={`${uid}-aq-${qIndex}-other`}
                         className={cn(
                           "flex items-start gap-2 px-2 py-1.5 rounded-md transition-colors",
                           submitted || disabled ? "cursor-default opacity-60 pointer-events-none" : "cursor-pointer hover:bg-accent/50",
@@ -390,7 +395,7 @@ export function AskUserQuestionCard({ message, onAnswer, disabled, hideChatAbout
                         )}
                       >
                         <RadioGroupItem
-                          id={`aq-${qIndex}-other`}
+                          id={`${uid}-aq-${qIndex}-other`}
                           value={otherLabel}
                           className="mt-0.5 shrink-0"
                         />

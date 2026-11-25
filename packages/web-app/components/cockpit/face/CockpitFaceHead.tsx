@@ -18,6 +18,8 @@ export interface CockpitFaceHeadProps {
   title: ReactNode
   /** 副行（拿不到的段整段省略）。 */
   sub?: ReactNode
+  /** 标题右侧的局部动作（项目面的「← 舱籍总览」）；不传就只剩 ⛶。 */
+  actions?: ReactNode
   onClose: () => void
   closeLabel?: string
 }
@@ -28,6 +30,7 @@ export function CockpitFaceHead({
   glyph,
   title,
   sub,
+  actions,
   onClose,
   closeLabel = '收起',
 }: CockpitFaceHeadProps) {
@@ -50,6 +53,7 @@ export function CockpitFaceHead({
           {sub && <span>{sub}</span>}
         </span>
         <span className="ck12-dh-sp" />
+        {actions}
         {win && (
           <button
             type="button"

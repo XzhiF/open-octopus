@@ -18,6 +18,10 @@ import {
   parseManifest, parseManifestJson, findLocalRepo, cloneProject,
   type ManifestEntry,
 } from "@octopus/shared"
+import {
+  readWorkspaceConfig,
+  updateWorkspaceConfig,
+} from "../workspace-paths"
 
 export function getOctopusHome(): string {
   return process.env.OCTOPUS_HOME ?? path.join(os.homedir(), ".octopus")
@@ -105,6 +109,8 @@ export interface CabinProjectInput {
   /** 舱外绝对路径（显式登记，需 external=true）。 */
   absolutePath?: string
   external?: boolean
+  /** 落点分支（mainline_branch）显式指定；空 = 按仓库当前分支探测。 */
+  mainline?: string
 }
 
 /** 本地扫描候选（建舱初始化 / 绑定面板用）。 */
@@ -184,6 +190,12 @@ export function readLocalRepoInfo(repoPath: string): LocalRepoInfo {
   return { branch, dirty: status !== null && status !== "", remote }
 }
 
+/** 只读探测：工作区是否有未提交改动（含未跟踪）。失败 = false，不把「读不到」画成脏。 */
+export function isWorktreeDirty(repoPath: string): boolean {
+  const status = gitOut(repoPath, ["status", "--porcelain"])
+  return status !== null && status !== ""
+}
+
 export function defaultMainlineBranch(repoPath: string): string | null {
   return gitOut(repoPath, ["symbolic-ref", "--short", "-q", "HEAD"])
 }
@@ -192,6 +204,25 @@ export function isGitRepo(dir: string): boolean {
   if (!fs.existsSync(dir)) return false
   const dotGit = path.join(dir, ".git")
   return fs.existsSync(dotGit)
+}
+
+/** 分支是否已在本地可见（本地分支或 origin 跟踪引用）。只读，不联网。 */
+export function localBranchExists(repoPath: string, branch: string): boolean {
+  return gitOut(repoPath, ["rev-parse", "--verify", "--quiet", `refs/heads/${branch}`]) !== null
+    || gitOut(repoPath, ["rev-parse", "--verify", "--quiet", `refs/remotes/origin/${branch}`]) !== null
+}
+
+/** 远端是否有该分支。无 origin = false（本地是唯一真相）；有 origin 但探测
+ *  失败（离线 / 超时） = null —— 调用方按「未知」放行，真正建树时
+ *  initWorktreeOne 还会硬校验一次。 */
+export function remoteBranchExists(repoPath: string, branch: string): boolean | null {
+  if (!gitOut(repoPath, ["remote", "get-url", "origin"])) return false
+  const r = spawnSync(
+    "git", ["-C", repoPath, "ls-remote", "--heads", "origin", branch],
+    { timeout: 10_000, encoding: "utf-8" },
+  )
+  if (r.status !== 0) return null
+  return (r.stdout ?? "").trim() !== ""
 }
 
 // ── 本地项目扫描 ────────────────────────────────────────────────────
@@ -296,34 +327,23 @@ export function scanLocalProjects(root: string): LocalProjectCandidate[] {
   })
 }
 
-// ── config.json ─────────────────────────────────────────────────────
+// ── workspace config (canonical: .octopus/config.json) ───────────────
 
 export function readCabinConfig(cabinPath: string): { name: string; repos: CabinRepoEntry[] } {
-  const configPath = path.join(cabinPath, "config.json")
-  try {
-    const raw = JSON.parse(fs.readFileSync(configPath, "utf-8")) as { name?: string; repos?: unknown }
-    return {
-      name: typeof raw.name === "string" ? raw.name : path.basename(cabinPath),
-      repos: Array.isArray(raw.repos) ? (raw.repos as CabinRepoEntry[]) : [],
-    }
-  } catch {
-    return { name: path.basename(cabinPath), repos: [] }
+  const raw = readWorkspaceConfig(cabinPath)
+  return {
+    name: typeof raw?.name === "string" ? raw.name : path.basename(cabinPath),
+    repos: raw && Array.isArray(raw.repos) ? (raw.repos as CabinRepoEntry[]) : [],
   }
 }
 
-/** Merge repo entries into config.json (preserves other keys). Atomic write. */
+/** Merge repo entries into the workspace config (preserves other keys). Atomic write. */
 export function writeCabinConfigRepos(cabinPath: string, repos: CabinRepoEntry[]): void {
-  const configPath = path.join(cabinPath, "config.json")
-  let config: Record<string, unknown> = {}
-  try {
-    config = JSON.parse(fs.readFileSync(configPath, "utf-8")) as Record<string, unknown>
-  } catch {
-    config = { name: path.basename(cabinPath), created: new Date().toISOString() }
-  }
-  config.repos = repos
-  const tmp = `${configPath}.tmp`
-  fs.writeFileSync(tmp, JSON.stringify(config, null, 2), "utf-8")
-  fs.renameSync(tmp, configPath)
+  updateWorkspaceConfig(cabinPath, (config) => {
+    if (typeof config.name !== "string") config.name = path.basename(cabinPath)
+    if (typeof config.created !== "string") config.created = new Date().toISOString()
+    config.repos = repos
+  })
 }
 
 function stripUndefined<T extends object>(value: T): T {
@@ -334,21 +354,29 @@ function stripUndefined<T extends object>(value: T): T {
   return out as T
 }
 
+/** merge 入参：undefined = 不动该字段；`mainline_branch: null` = 显式清除。 */
+export type CabinRepoEntryPatch = Omit<Partial<CabinRepoEntry>, "mainline_branch"> & {
+  name: string
+  mainline_branch?: string | null
+}
+
 /**
  * 按 name 合并一条项目登记，**保留未知字段**。
  *
  * 这是 Cabin 侧唯一允许的 config.repos 写口：`writeSpecWorktreeMeta` 会整表
  * 重写成 5 个字段，把 source / local_path / mainline_branch 抹掉。
  */
-export function mergeCabinRepoEntry(cabinPath: string, entry: CabinRepoEntry): CabinRepoEntry {
+export function mergeCabinRepoEntry(cabinPath: string, entry: CabinRepoEntryPatch): CabinRepoEntry {
   const config = readCabinConfig(cabinPath)
   const next = stripUndefined(entry)
   const index = config.repos.findIndex((r) => r.name === entry.name)
-  if (index >= 0) {
-    config.repos[index] = stripUndefined({ ...config.repos[index], ...next })
-  } else {
-    config.repos.push(next)
-  }
+  const merged = stripUndefined({
+    ...(index >= 0 ? config.repos[index] : {}), ...next,
+  }) as Record<string, unknown>
+  // null = 显式清除（落点分支可清空回「按仓库默认探测」）。
+  for (const [k, v] of Object.entries(merged)) if (v === null) delete merged[k]
+  if (index >= 0) config.repos[index] = merged as unknown as CabinRepoEntry
+  else config.repos.push(merged as unknown as CabinRepoEntry)
   writeCabinConfigRepos(cabinPath, config.repos)
   return config.repos.find((r) => r.name === entry.name) as CabinRepoEntry
 }

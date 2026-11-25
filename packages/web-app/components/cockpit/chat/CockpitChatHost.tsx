@@ -20,11 +20,8 @@ import { ChatPane } from '@/components/agent/chat/ChatPane'
 import { useCabinContext } from '@/components/cabin/cabin-provider'
 import { useCockpit } from '@/components/cabin/CockpitProvider'
 import { useCabinChatWiring } from '@/components/cabin/use-cabin-chat-wiring'
-import { getTask } from '@/lib/tasks-api'
 import { useCockpitState } from '../state/CockpitStateProvider'
-import { threadKeyOfSession } from '../fleet/threads-model'
 import { useChatSlot } from './chat-slots'
-import { useCockpitThreads } from './use-cockpit-threads'
 
 export interface CockpitChatHostProps {
   entryCabinId: string
@@ -49,7 +46,7 @@ export function CockpitChatHost({ entryCabinId }: CockpitChatHostProps) {
   useEffect(() => {
     const onOpenTask = () => chatWindow.openWithFocus()
     // 就地回答（design 23 §2 续）：attention 面「在对话里回答」只发事件，
-    // 浮窗同样要展开；滚动到具体卡片由转录里的 AuthorAskInbox 负责。
+    // 浮窗同样要展开；滚动到具体卡片由转录里的 AuthorAskCard 负责。
     const onOpenAsk = () => chatWindow.openWithFocus()
     // 作业面「去主对话」：切面会自动收窗（ce078160），只切会话不展开浮窗的话
     // 人看到的是「点了没反应」—— 与「去任务对话」同样先开窗。
@@ -72,19 +69,6 @@ export function CockpitChatHost({ entryCabinId }: CockpitChatHostProps) {
     mainSessionId, shared,
   } = useCabinChatWiring({ sidebarWidth: 0 })
 
-  // design 25 §4.2：委派行点开 = doer 会话（证据面）。委派没有 cockpit ref
-  // （它不占用 task:/job: 命名空间），所以走独立的 open-session 事件。
-  useEffect(() => {
-    const onOpenSession = (event: Event) => {
-      const id = (event as CustomEvent<{ sessionId?: string }>).detail?.sessionId
-      if (!id) return
-      issueCommand({ type: 'select-session', sessionId: id })
-      chatWindow.openWithFocus()
-    }
-    window.addEventListener('octopus:open-session', onOpenSession)
-    return () => window.removeEventListener('octopus:open-session', onOpenSession)
-  }, [issueCommand, chatWindow])
-
   // layerRoot：任务模块窗（运行 / YAML / 子代理）挂在整个舱面之上。
   // 注意不能挂 #ck12-arena —— arena 在 .ck12-stage 的 stacking context（z-index:2）里，
   // 子节点 z-[60] 也压不过 fixed 的聊天浮窗（z-index:24）。所以用一个与 .ck12-app
@@ -105,35 +89,9 @@ export function CockpitChatHost({ entryCabinId }: CockpitChatHostProps) {
     if (mainSessionId) issueCommand({ type: 'select-session', sessionId: mainSessionId })
   }, [issueCommand, mainSessionId])
 
-  // ── v20（design 29 §3.2）：线程 tab ↔ 真会话双向同步 ─────────────────
-  // tab 激活 → 切 ChatPane 会话（task 线程走 select-task 带任务上下文）；
-  // 会话被别处切换（卡片 / 事件）→ 反写 tab 高亮 + 消未读。
-  const { threads: threadApi } = useCockpitState()
-  const { threads, byKey } = useCockpitThreads()
-  const activeThread = byKey.get(threadApi.activeThread)
-  const activeSessionId = activeThread?.sessionId ?? null
-  const activeTaskId = activeThread?.taskId ?? null
-
-  useEffect(() => {
-    if (!activeSessionId || activeSessionId === sessionId) return
-    if (activeTaskId) {
-      let cancelled = false
-      getTask(activeTaskId)
-        .then((task) => {
-          if (!cancelled) issueCommand({ type: 'select-task', task })
-        })
-        .catch(() => {
-          if (!cancelled) issueCommand({ type: 'select-session', sessionId: activeSessionId })
-        })
-      return () => { cancelled = true }
-    }
-    issueCommand({ type: 'select-session', sessionId: activeSessionId })
-  }, [activeSessionId, activeTaskId, sessionId, issueCommand])
-
-  useEffect(() => {
-    const key = threadKeyOfSession(threads, sessionId)
-    if (key && key !== threadApi.activeThread) threadApi.activateThread(key)
-  }, [sessionId, threads, threadApi])
+  // v22 #5：主通讯台固定汐音主对话 —— 不再做 activeThread ↔ ChatPane 的线程
+  // 双向同步（切线程整套撤掉）。台内仍可点任务卡钻进任务线；回来由 ChatPane
+  // 自带的「主对话」按钮（onBackToCabinMain）负责。
 
   if (!mainSessionId) return null
 

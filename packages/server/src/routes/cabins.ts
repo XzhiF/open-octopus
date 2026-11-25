@@ -13,20 +13,23 @@ import type { Context } from "hono"
 import { streamSSE } from "hono/streaming"
 import { z, ZodError } from "zod"
 import {
-  CabinStatusSchema, CabinJobKindSchema, CabinMandateSchema,
+  CabinStatusSchema, CabinJobKindSchema, CabinMandateSchema, gitBranchRefSchema,
 } from "@octopus/shared"
 import {
   CabinService, CabinNotFoundError, CabinVersionConflictError, CabinStatusConflictError,
   WorktreeConflictError, CabinRepoInputError,
 } from "../services/cabin/cabin-service"
-import { scanLocalProjects, isGitRepo } from "../services/cabin/cabin-repos"
+import { scanLocalProjects, isGitRepo, isWorktreeDirty } from "../services/cabin/cabin-repos"
 import type { CabinInitService } from "../services/cabin/cabin-init-service"
 import { CabinCommService, CabinJobNotFoundError } from "../services/cabin/cabin-comm-service"
 import { CabinDecisionService, CabinDecisionError } from "../services/cabin/cabin-decision-service"
 import { CabinDelegationService } from "../services/cabin/cabin-delegation-service"
+import { CabinItemService, CabinItemError } from "../services/cabin/cabin-item-service"
 import type { CabinRow, CabinJobRow, CabinJobEventRow } from "../db/types"
 import type { SSEService } from "../services/sse"
 import { gitOps } from "../services/git-ops"
+import { getLocalTree } from "../services/local-tree"
+import { touchTreeWatch } from "../services/tree-watch"
 import { findingView } from "./findings"
 
 function classifyError(err: unknown): { status: number; message: string } {
@@ -36,6 +39,7 @@ function classifyError(err: unknown): { status: number; message: string } {
   if (err instanceof CabinNotFoundError) return { status: 404, message: err.message }
   if (err instanceof CabinJobNotFoundError) return { status: 404, message: err.message }
   if (err instanceof CabinDecisionError) return { status: err.status, message: err.message }
+  if (err instanceof CabinItemError) return { status: err.status, message: err.message }
   if (err instanceof CabinVersionConflictError) return { status: 409, message: err.message }
   if (err instanceof CabinStatusConflictError) return { status: 409, message: err.message }
   if (err instanceof WorktreeConflictError) return { status: 409, message: err.message }
@@ -85,10 +89,7 @@ function toEventDTO(row: CabinJobEventRow) {
   return { ...row, payload }
 }
 
-/** v20 工作树只读查阅上限（design 29 §6 ws）：与 home-content 同口径。 */
-const REPO_TREE_SKIP = new Set([".git", "node_modules", "dist", ".next", "target", "__pycache__", ".venv"])
-const REPO_TREE_MAX_DEPTH = 6
-const REPO_TREE_MAX_ENTRIES = 2000
+/** 只读查阅的文本上限（tree 扫描 / 缓存 / 深度见 services/local-tree.ts）。 */
 const REPO_FILE_MAX_BYTES = 512 * 1024
 
 /** 本舱目录里允许直出原始字节的类型（v22 九轮：图片预览）；其余走 /file 文本接口。 */
@@ -161,43 +162,6 @@ function resolveCabinDoc(service: CabinService, cabinId: string, rawPath: string
   return { abs, ext: path.extname(abs).toLowerCase() }
 }
 
-interface LocalTreeEntry { path: string; type: "dir" | "file"; bytes: number }
-
-/** 磁盘直扫（跳 .git/node_modules 等，depth≤6 / 2000 条上限）。repo tree 与 cabin tree 同口径。 */
-function scanLocalTree(root: string): LocalTreeEntry[] {
-  const resolvedRoot = path.resolve(root)
-  const entries: LocalTreeEntry[] = []
-  const walk = (dir: string, rel: string, depth: number): void => {
-    if (depth > REPO_TREE_MAX_DEPTH || entries.length >= REPO_TREE_MAX_ENTRIES) return
-    let names: fs.Dirent[]
-    try {
-      names = fs.readdirSync(dir, { withFileTypes: true })
-    } catch {
-      return
-    }
-    names.sort((a, b) => a.name.localeCompare(b.name))
-    for (const n of names) {
-      if (entries.length >= REPO_TREE_MAX_ENTRIES) return
-      const relPath = rel ? `${rel}/${n.name}` : n.name
-      if (n.isDirectory()) {
-        if (REPO_TREE_SKIP.has(n.name)) continue
-        entries.push({ path: `${relPath}/`, type: "dir", bytes: 0 })
-        walk(path.join(dir, n.name), relPath, depth + 1)
-      } else if (n.isFile()) {
-        let bytes = 0
-        try {
-          bytes = fs.statSync(path.join(dir, n.name)).size
-        } catch {
-          bytes = 0
-        }
-        entries.push({ path: relPath, type: "file", bytes })
-      }
-    }
-  }
-  walk(resolvedRoot, "", 0)
-  return entries
-}
-
 const createBodySchema = z.object({
   /** v5：可选。空名先落「未命名舱」，init 开头按需求取名（一次请求就建）。 */
   name: z.string().max(64).optional(),
@@ -226,6 +190,13 @@ const repoBodySchema = z.object({
   localPath: z.string().min(1).optional(),
   absolutePath: z.string().min(1).optional(),
   external: z.boolean().optional(),
+  /** 落点分支（mainline_branch）；空 = 按仓库当前分支探测。 */
+  mainline: gitBranchRefSchema.optional(),
+})
+
+/** 改项目落点分支：key 必须显式出现 —— null 表示清空回「按默认分支探测」。 */
+const repoPatchBodySchema = z.object({
+  mainline: gitBranchRefSchema.nullable(),
 })
 
 const worktreeBodySchema = z.object({
@@ -285,6 +256,25 @@ const delegationBodySchema = z.object({
   autonomy: z.enum(["approve", "checkpoint", "hands-off"]).optional(),
 })
 
+/** 舱内事项（2026-11-24 用户）：零散小待办。 */
+const cabinItemKindSchema = z.enum(["optimize", "fix", "idea"])
+const cabinItemCreateSchema = z.object({
+  title: z.string().max(200).optional(),
+  body: z.string().max(8000).optional(),
+  kind: cabinItemKindSchema.optional(),
+})
+const cabinItemPatchSchema = z.object({
+  title: z.string().max(200).optional(),
+  body: z.string().max(8000).optional(),
+  kind: cabinItemKindSchema.optional(),
+})
+const cabinItemIdsSchema = z.object({
+  ids: z.array(z.string().min(1)).min(1).max(50),
+})
+const cabinItemCloseSchema = cabinItemIdsSchema.extend({
+  outcome: z.enum(["done", "dropped"]),
+})
+
 export function createCabinRoutes(
   service: CabinService,
   initService: CabinInitService,
@@ -294,6 +284,19 @@ export function createCabinRoutes(
   delegations?: CabinDelegationService,
 ): Hono {
   const router = new Hono()
+
+  /** 目录窗打开期间的增量刷新（2026-11-24 目录窗优化）：GET /tree?watch=1 续租，
+   *  chokidar 发现结构变化 → 失效缓存 + 在 cabin:<id> 推 tree_changed；
+   *  窗口关掉后没人续租，watcher 120s 自动退场。 */
+  const ensureTreeWatch = (cabinId: string, root: string) => {
+    touchTreeWatch(root, (dirs) => {
+      // tree-watch 已经失效缓存；这里只负责把变化广播给前端（静默重拉）。
+      sse.emit(`cabin:${cabinId}`, {
+        event: "tree_changed",
+        data: { cabin_id: cabinId, dir: path.resolve(root), dirs },
+      })
+    })
+  }
 
   // ── collection ─────────────────────────────────────────────────────
 
@@ -531,6 +534,9 @@ export function createCabinRoutes(
             git: {
               branch: info.branch, detached: info.detached,
               commit: commit.sha.slice(0, 8), msg: commit.msg, at: commit.at, remote,
+              // 工作区是否有未提交改动（浮层/项目面「dirty」徽标）。status 是
+              // best-effort：读不到按 clean，不把错误画成脏。
+              dirty: isWorktreeDirty(target),
             },
           }
         } catch {
@@ -552,6 +558,20 @@ export function createCabinRoutes(
       if (!input.name && !input.repo) throw new Error("name or repo required")
       const entry = service.addRepo(c.req.param("id"), { ...input, name: input.name ?? input.repo })
       return c.json({ repo: entry }, 201)
+    } catch (err) {
+      const { status, message } = classifyError(err)
+      return c.json({ error: message }, status as 400)
+    }
+  })
+
+  /** 改项目落点分支（mainline_branch）：只影响此后新建的 worktree / 任务分支。 */
+  router.patch("/:id/repos/:name", async (c) => {
+    const body = await safeJson(c)
+    if (!body) return c.json({ error: "Invalid or missing JSON body" }, 400)
+    try {
+      const input = repoPatchBodySchema.parse(body)
+      const entry = service.setRepoMainline(c.req.param("id"), c.req.param("name"), input.mainline)
+      return c.json({ repo: entry })
     } catch (err) {
       const { status, message } = classifyError(err)
       return c.json({ error: message }, status as 400)
@@ -651,6 +671,92 @@ export function createCabinRoutes(
     }
   })
 
+  // ── 舱内事项（2026-11-24 用户）────────────────────────────────────────
+  // 零散小待办：新增 / 编辑 / 删除 / 投递 / 关项 / 重开。与「任务」不是一层：
+  // 事项只是待办条目，投递给主对话即 delivered；人确认「完成 / 搁置」才关项。
+  const cabinItems = new CabinItemService(service.getDb())
+
+  router.get("/:id/items", (c) => {
+    try {
+      const list = cabinItems.list(c.req.param("id"))
+      const open = list.filter((item) => item.status === "todo" || item.status === "delivered").length
+      return c.json({ items: list, open })
+    } catch (err) {
+      const { status, message } = classifyError(err)
+      return c.json({ error: message }, status as 400)
+    }
+  })
+
+  router.post("/:id/items", async (c) => {
+    const body = await safeJson(c)
+    if (!body) return c.json({ error: "Invalid or missing JSON body" }, 400)
+    try {
+      const input = cabinItemCreateSchema.parse(body)
+      return c.json({ item: cabinItems.create(c.req.param("id"), input) }, 201)
+    } catch (err) {
+      const { status, message } = classifyError(err)
+      return c.json({ error: message }, status as 400)
+    }
+  })
+
+  /** 投递：把事项标成 delivered（todo → delivered，幂等）。聊天路由发送时也会
+   *  自动调用同一个口径；这里留一个显式入口，便于重试 / 外部投递。 */
+  router.post("/:id/items/deliver", async (c) => {
+    const body = await safeJson(c)
+    if (!body) return c.json({ error: "Invalid or missing JSON body" }, 400)
+    try {
+      const input = cabinItemIdsSchema.parse(body)
+      return c.json({ items: cabinItems.deliver(c.req.param("id"), input.ids) })
+    } catch (err) {
+      const { status, message } = classifyError(err)
+      return c.json({ error: message }, status as 400)
+    }
+  })
+
+  /** 关项：人确认「完成 / 搁置」；写 closed_at，记录保留。 */
+  router.post("/:id/items/close", async (c) => {
+    const body = await safeJson(c)
+    if (!body) return c.json({ error: "Invalid or missing JSON body" }, 400)
+    try {
+      const input = cabinItemCloseSchema.parse(body)
+      return c.json({ items: cabinItems.close(c.req.param("id"), input.ids, input.outcome) })
+    } catch (err) {
+      const { status, message } = classifyError(err)
+      return c.json({ error: message }, status as 400)
+    }
+  })
+
+  router.patch("/:id/items/:itemId", async (c) => {
+    const body = await safeJson(c)
+    if (!body) return c.json({ error: "Invalid or missing JSON body" }, 400)
+    try {
+      const input = cabinItemPatchSchema.parse(body)
+      return c.json({ item: cabinItems.update(c.req.param("id"), c.req.param("itemId"), input) })
+    } catch (err) {
+      const { status, message } = classifyError(err)
+      return c.json({ error: message }, status as 400)
+    }
+  })
+
+  router.delete("/:id/items/:itemId", (c) => {
+    try {
+      cabinItems.remove(c.req.param("id"), c.req.param("itemId"))
+      return c.json({ ok: true })
+    } catch (err) {
+      const { status, message } = classifyError(err)
+      return c.json({ error: message }, status as 400)
+    }
+  })
+
+  router.post("/:id/items/:itemId/reopen", (c) => {
+    try {
+      return c.json({ item: cabinItems.reopen(c.req.param("id"), c.req.param("itemId")) })
+    } catch (err) {
+      const { status, message } = classifyError(err)
+      return c.json({ error: message }, status as 400)
+    }
+  })
+
   router.get("/:id/worktrees", async (c) => {
     try {
       const repos = service.listRepos(c.req.param("id"))
@@ -671,19 +777,26 @@ export function createCabinRoutes(
   })
 
   // ── v20（design 29 §6 ws）：工作树只读查阅（ff-only 纪律：只读不写）──
-  // tree = 磁盘直扫（跳 .git/node_modules 等，depth≤6 / 2000 条上限）；
+  // tree = 磁盘直扫（services/local-tree.ts：depth≤14 / 20000 文件，异步 + 10s 缓存，
+  //   响应带 truncated/reason；?fresh=1 绕过缓存，?sizes=1 才取每文件字节）；
+  //   ?watch=1 让 chokidar 盯着这个根，变化推 cabin:<id> 的 tree_changed。
   // file = 任意常规文件（守卫不出工作树根 + 512KB 上限，与 home-content 同码）。
 
   // ── v22 九轮：本舱 cwd 只读目录树（右栏「目录」）──
   // 一目录一舱：根 = cabin.path（不是某个项目的 worktree）。tree 与 repo tree 同口径；
   // file 只出常规文本（512KB）；raw 只给图片（8MB），UI 用 <img src> 直接预览。
 
-  router.get("/:id/tree", (c) => {
+  router.get("/:id/tree", async (c) => {
     try {
       const cabin = service.get(c.req.param("id"))
       if (!cabin.path) return c.json({ error: "cabin has no local path" }, 409)
       const resolvedRoot = path.resolve(cabin.path)
-      return c.json({ dir: resolvedRoot, entries: scanLocalTree(resolvedRoot) })
+      const scan = await getLocalTree(resolvedRoot, {
+        fresh: c.req.query("fresh") === "1",
+        withSizes: c.req.query("sizes") === "1",
+      })
+      if (c.req.query("watch") === "1") ensureTreeWatch(c.req.param("id"), resolvedRoot)
+      return c.json({ dir: resolvedRoot, ...scan })
     } catch (err) {
       const { status, message } = classifyError(err)
       return c.json({ error: message }, status as 400)
@@ -832,14 +945,19 @@ export function createCabinRoutes(
     }
   })
 
-  router.get("/:id/repos/:name/tree", (c) => {
+  router.get("/:id/repos/:name/tree", async (c) => {
     try {
       const repo = service.listRepos(c.req.param("id")).find((r) => r.name === c.req.param("name"))
       if (!repo) return c.json({ error: "repo not bound to cabin" }, 404)
       const root = repo.worktree_path ?? repo.main_path
       if (!root) return c.json({ error: "repo has no local path" }, 409)
       const resolvedRoot = path.resolve(root)
-      return c.json({ dir: resolvedRoot, entries: scanLocalTree(resolvedRoot) })
+      const scan = await getLocalTree(resolvedRoot, {
+        fresh: c.req.query("fresh") === "1",
+        withSizes: c.req.query("sizes") === "1",
+      })
+      if (c.req.query("watch") === "1") ensureTreeWatch(c.req.param("id"), resolvedRoot)
+      return c.json({ dir: resolvedRoot, ...scan })
     } catch (err) {
       const { status, message } = classifyError(err)
       return c.json({ error: message }, status as 400)
@@ -868,6 +986,33 @@ export function createCabinRoutes(
       if (!st.isFile()) return c.json({ error: "not a regular file" }, 404)
       if (st.size > REPO_FILE_MAX_BYTES) return c.json({ error: "file too large to read" }, 413)
       return c.json({ path: rel, content: fs.readFileSync(abs, "utf8") })
+    } catch (err) {
+      const { status, message } = classifyError(err)
+      return c.json({ error: message }, status as 400)
+    }
+  })
+
+  /**
+   * 2026-11-23 用户 #1：项目面「git 变更」—— 单个关联项目的工作区改动。
+   * 目标 = worktree_path ?? main_path（与舱籍读数同口径）；只读。
+   */
+  router.get("/:id/repos/:name/worktree-changes", async (c) => {
+    try {
+      return c.json(await service.repoWorktreeChanges(c.req.param("id"), c.req.param("name")))
+    } catch (err) {
+      const { status, message } = classifyError(err)
+      return c.json({ error: message }, status as 400)
+    }
+  })
+
+  // 单文件 unified patch（点开才拉；untracked=1 时按新文件 diff /dev/null）。
+  router.get("/:id/repos/:name/worktree-changes/patch", async (c) => {
+    const rel = c.req.query("path")
+    if (!rel) return c.json({ error: "Query param 'path' is required" }, 400)
+    try {
+      return c.json(await service.repoWorktreeChangePatch(
+        c.req.param("id"), c.req.param("name"), rel, c.req.query("untracked") === "1",
+      ))
     } catch (err) {
       const { status, message } = classifyError(err)
       return c.json({ error: message }, status as 400)

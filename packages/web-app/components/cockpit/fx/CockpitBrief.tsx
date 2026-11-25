@@ -148,7 +148,7 @@ export function CockpitBrief() {
   const { rows, arrivals } = useCockpitFleet()
   const { prefs } = useCockpit()
   const {
-    fx, layer, select, chatWindow, chat, wins,
+    fx, layer, select, chatWindow, wins,
     threads: threadApi, markArrival, openInbox,
   } = useCockpitState()
   const [brief, setBrief] = useState<BriefView | null>(null)
@@ -178,24 +178,19 @@ export function CockpitBrief() {
     fx.say(arrivalLine(first), 'alert')
     setBrief({ items, demo: false })
 
-    // v20（design 29 §7.1）：flash 先设 → 行/卡 arrived + hex 环；线程重开 +
-    // 立即激活（流式中不打断当前会话，只累未读）；不可见才 unread++。
-    const view = {
-      activeThread: threadApi.activeThread,
-      chatWindow,
-      windows: wins.windows,
-    }
+    // v20（design 29 §7.1）：flash 先设 → 行/卡 arrived + hex 环。
+    // v22 #5（2026-11-23 用户）：主通讯台固定主对话 —— 新回流**不再切线程**，
+    // 只在不可见时累未读（编队行 💬 徽标 / WINDOWS 条），人自己去开那扇窗。
+    const view = { chatWindow, windows: wins.windows }
     for (const id of arrivals) {
       const attention = findAttention(rows, id)
       if (!attention) continue
       const key = threadKeyOfAttention(rows, attention)
       if (!key) continue
       markArrival(key)
-      threadApi.reopenTab(key)
       if (!isThreadVisible(key, view)) threadApi.bumpUnread(key)
-      if (!chat?.streaming) threadApi.activateThread(key)
     }
-  }, [arrivals, rows, fx, prefs.fxLevel, chatWindow, wins.windows, threadApi, markArrival, chat])
+  }, [arrivals, rows, fx, prefs.fxLevel, chatWindow, wins.windows, threadApi, markArrival])
 
   // ── 10s 自动收（新简报会重置计时）────────────────────────────────────
   // 2026-11-20 用户 #21：页面在后台 / 桌面窗最小化时不计时 —— 否则回流到达、

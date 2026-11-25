@@ -47,6 +47,11 @@ export interface DeriveAskInput {
   question?: string
   /** design 26：有决策票据的提问把信封一起带进 attention（可选）。 */
   ask?: CabinAttentionItem["ask"]
+  /** v22 #9：消息派生的委派提问自带归属 —— 同一条问题不再另产
+   *  `delegation-ask-*` 状态行（inbox 里会重复两行）。 */
+  subject?: { kind: "task" | "delegation"; id: string }
+  handle?: string
+  color?: number
 }
 
 export interface DeriveFindingInput {
@@ -111,6 +116,10 @@ export function deriveCabinView(input: DeriveCabinInput): DerivedCabinView {
   const askTaskIds = new Set(
     asks.map(a => a.task_id).filter((v): v is string => !!v),
   )
+  // v22 #9：委派提问已由消息派生（带信封），状态派生行不再重复投一条。
+  const askSubjectKeys = new Set(
+    asks.filter(a => a.subject).map(a => `${a.subject!.kind}:${a.subject!.id}`),
+  )
   const blockedTaskIds = new Set(
     incidents
       .filter(i => i.status === "waiting_human" && i.task_id)
@@ -118,7 +127,12 @@ export function deriveCabinView(input: DeriveCabinInput): DerivedCabinView {
   )
 
   const attention: CabinAttentionItem[] = []
-  const push = (a: CabinAttentionItem) => attention.push(a)
+  // 人主动忽略（inbox「✓ 忽略」）只作用于提问类：ack 过的 ask 不再派生。
+  // 其余条目（验收 / 受阻 / 放行 / 完成）仍按原口径处理，不在这里吞。
+  const push = (a: CabinAttentionItem) => {
+    if (acked.has(a.id) && (a.id.startsWith("ask-") || a.id.startsWith("delegation-ask-"))) return
+    attention.push(a)
+  }
   /** 两种工作实体共用一套 attention：subject / handle / color 由这里统一挂上。 */
   const subjectOf = (taskId: string | null): Pick<CabinAttentionItem, "subject" | "handle" | "color"> => {
     if (!taskId) return {}
@@ -229,6 +243,9 @@ export function deriveCabinView(input: DeriveCabinInput): DerivedCabinView {
       stage: "answer", awaiting: "person", title: a.title, question: a.question,
       task_id: a.task_id, repo: null, wt: null, deep_link: `ask:${a.id}`,
       ...subjectOf(a.task_id),
+      ...(a.subject ? { subject: a.subject } : {}),
+      ...(a.handle ? { handle: a.handle } : {}),
+      ...(a.color !== undefined ? { color: a.color } : {}),
       ...(a.ask ? { ask: a.ask } : {}),
     })
   }
@@ -248,7 +265,7 @@ export function deriveCabinView(input: DeriveCabinInput): DerivedCabinView {
       ...(d.handle ? { handle: d.handle } : {}),
       ...(d.color !== undefined ? { color: d.color } : {}),
     }
-    if (d.state === "waiting_input") {
+    if (d.state === "waiting_input" && !askSubjectKeys.has(`delegation:${d.id}`)) {
       push({
         id: `delegation-ask-${d.id}`, job_id: null, stage: "answer", awaiting: "person",
         title: `${d.title} · 委派在问你`, task_id: null, repo: null, wt: null,

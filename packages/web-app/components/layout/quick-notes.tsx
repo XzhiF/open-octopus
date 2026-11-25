@@ -139,6 +139,10 @@ export function QuickNotesWindow() {
   const [splitting, setSplitting] = useState(false)
   const [lineTops, setLineTops] = useState<number[]>([0])
   const [sideWidth, setSideWidth] = useState(() => loadQuickNotesSideWidth())
+  // 标题编辑草稿：null = 不在编辑，输入框直接显示便签标题。
+  // 2026-11-24 用户：整段改标题时可以先清空 —— 清空期间不能立刻把自动标题
+  // 顶回来，否则没法一次性重命名；只有失焦时仍是空的才还原。
+  const [titleDraft, setTitleDraft] = useState<string | null>(null)
 
   const rowRef = useRef<HTMLDivElement>(null)
   const asideRef = useRef<HTMLElement>(null)
@@ -158,6 +162,7 @@ export function QuickNotesWindow() {
   const suppressClickRef = useRef(false)
   const pendingDeleteRef = useRef<{ note: QuickNote; index: number } | null>(null)
   const activeIdRef = useRef<string | null>(null)
+  const titleBeforeRef = useRef<{ title: string; manualTitle: boolean } | null>(null)
 
   const activeNote = useMemo(
     () => notes.find((note) => note.id === activeId) ?? null,
@@ -189,6 +194,12 @@ export function QuickNotesWindow() {
 
   useEffect(() => {
     activeIdRef.current = activeId
+  }, [activeId])
+
+  // 换便签时丢掉没提交的标题草稿（失焦先于切行，正常编辑会先落定）。
+  useEffect(() => {
+    titleBeforeRef.current = null
+    setTitleDraft(null)
   }, [activeId])
 
   // 列表里的相对时间（刚刚 / N分）自己往前走
@@ -325,11 +336,16 @@ export function QuickNotesWindow() {
     updateQuickNotes((list) => list.map((note) => (note.id === id ? updater(note) : note)))
   }, [])
 
+  /** 标题输入：编辑期由本地草稿驱动输入框；清空期间不写回标题。
+   *  2026-11-24 用户：以前清空标题会立刻被自动标题顶回原值，整段重命名做不了；
+   *  现在只有失焦时仍为空才还原（见 onTitleBlur）。 */
   const onTitleChange = useCallback(
     (value: string) => {
+      setTitleDraft(value)
+      if (!value.trim()) return
       updateActiveNote((note) => {
         const derived = deriveNoteTitle(note.body)
-        const manualTitle = value.trim() !== '' && value !== derived
+        const manualTitle = value !== derived
         return {
           ...note,
           title: manualTitle ? value : derived,
@@ -341,6 +357,30 @@ export function QuickNotesWindow() {
     },
     [scheduleSave, updateActiveNote],
   )
+
+  /** 开始编辑标题：记住进编辑前的标题，清空后失焦时用它还原。 */
+  const onTitleFocus = useCallback(() => {
+    const id = activeIdRef.current
+    const note = id ? getQuickNotes().find((item) => item.id === id) : null
+    titleBeforeRef.current = note ? { title: note.title, manualTitle: note.manualTitle } : null
+  }, [])
+
+  /** 离开标题输入：非空 = 已写回；仍为空 = 放弃这次清空，还原原样。 */
+  const onTitleBlur = useCallback(() => {
+    if (titleDraft === null) return
+    if (!titleDraft.trim()) {
+      const before = titleBeforeRef.current
+      updateActiveNote((note) => ({
+        ...note,
+        title: before ? before.title : deriveNoteTitle(note.body),
+        manualTitle: before ? before.manualTitle : false,
+        updatedAt: Date.now(),
+      }))
+    }
+    flushSave()
+    titleBeforeRef.current = null
+    setTitleDraft(null)
+  }, [titleDraft, updateActiveNote, flushSave])
 
   const onBodyChange = useCallback(
     (value: string) => {
@@ -908,8 +948,10 @@ export function QuickNotesWindow() {
                 style={{ color: activeNote.color }}
               />
               <input
-                value={activeNote.title}
+                value={titleDraft ?? activeNote.title}
                 onChange={(event) => onTitleChange(event.target.value)}
+                onFocus={onTitleFocus}
+                onBlur={onTitleBlur}
                 placeholder="自动取内容前 10 字"
                 aria-label="便签标题（自动取内容前 10 字）"
                 autoComplete="off"

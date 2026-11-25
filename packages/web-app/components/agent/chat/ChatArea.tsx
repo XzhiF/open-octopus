@@ -3,7 +3,7 @@
 import { useState, useRef, useEffect, useLayoutEffect, useCallback, useMemo, Fragment, type ReactNode, type MutableRefObject } from 'react'
 import { createPortal } from 'react-dom'
 import { Send, Square, MessageSquare, Sparkles, Users, X, Check, Copy } from 'lucide-react'
-import type { AgentMessage, ToolCallRecord, ContextUsageData } from '@/lib/agent/types'
+import type { AgentMessage, ToolCallRecord, ContextUsageData, ChatSendMeta, ChatSeedMeta } from '@/lib/agent/types'
 import type { LlmUsageAggregates } from '@octopus/shared'
 import type { StreamTimelineItem } from '@/hooks/useAgentChat'
 import { AutoResizeTextarea } from '@/components/ui/auto-resize-textarea'
@@ -86,7 +86,12 @@ interface ChatAreaProps {
   /** 正在等的后台任务（provider `background_tasks` 电平，2026-11-04）。
    *  非空时流尾工作行换成「后台运行中：<description>」。 */
   backgroundTasks?: Array<{ id: string; description: string; taskType?: string }>
-  onSend: (message: string, opts?: { subagents?: ChatSubagentRef[] }) => void
+  /** 后台等待期（2026-11-23 用户 #8）：模型空闲、只等后台任务唤醒。
+   *  true 时输入不锁，⏎ 走 onInterject 注进同一条查询（不打断后台）。 */
+  canInterject?: boolean
+  /** 后台等待期的追加发送（useAgentChat.interject）。 */
+  onInterject?: (message: string) => boolean | Promise<boolean> | void
+  onSend: (message: string, opts?: { subagents?: ChatSubagentRef[]; meta?: ChatSendMeta }) => void
   onStop: () => void
   onConfirm: (eventId: string, decision: 'accept' | 'reject') => void
   hasSession: boolean
@@ -151,9 +156,9 @@ interface ChatAreaProps {
   identityDisplay?: ComposerIdentityDisplay
   /** 当前工作区（只读）：＋ 面板置顶它自带的 SKILL（<workspace>/.claude/skills）。 */
   workspaceContext?: { id: string; label: string } | null
-  /** TUI（claude-code 终端皮肤）变体 —— 任务草稿工作台 / 对话首页共用（2026-09-24 改版）：
-   *  等宽 transcript（❯/✳ 前缀 + ◌ 过程折叠）、⇧⏎ 排队 dock（≤3，done 即 flush）、
-   *  busy 时输入不锁死（⏎=打断接管 / esc=打断 / esc·点击=队列退回）。 */
+  /** TUI（claude-code 终端皮肤）变体 —— 任务草稿工作台 / 对话首页 / 舱系聊天共用（2026-09-24 改版）：
+   *  等宽 transcript（❯/✳ 前缀 + ◌ 过程折叠）、⏎ 排队 dock（≤3，done 即 flush）、
+   *  执行中输入不锁死（⏎=排队 / ⇧⏎=打断接管 / esc=打断 / esc·点击=队列退回）。 */
   tui?: boolean
   /** 打断接管（tui）：stop → 等服务端停 → 重发（useAgentChat.steer）。 */
   onSteer?: (message: string, opts?: { subagents?: ChatSubagentRef[] }) => void
@@ -168,9 +173,6 @@ interface ChatAreaProps {
   /** 知识中心票12：transcript 末尾（流式区之前）的结构化节点——异步任务卡等
    *  不锚定具体消息的 Lane B 沉淀态。缺省 = 零变化。 */
   transcriptTail?: ReactNode
-  /** composer 上沿挂件（2026-11-16 用户定稿 B）：待你定队列贴在输入区上方，
-   *  不占转录阅读区；TUI / 非 TUI / cockpit portal 三种路径同一位置。 */
-  composerDock?: ReactNode
   /** 知识中心票12：卡片钮「对策展人说」等动作预进取号器文本（值变化即灌入输入框）。 */
   composerSeed?: string
   /** 右列有工作区作业坞（lg+）：用户输入历史让开该列，避免重叠。 */
@@ -194,12 +196,26 @@ interface ChatAreaProps {
   composerHiddenHint?: string
   composerEnableLabel?: string
   onEnableComposer?: () => void
+  /** v22 #5：助手行头的身份标签（缺省「汐音」）—— 编队独立窗换成该线程的 agent
+   *  身份（执行者 / 作者 …），用户从句首就能看清在跟谁说话。 */
+  assistantLabel?: string
+  /** v22 #5：独立窗 —— 对话索引 / 星核挂载在本栏内渲染，不 portal 进主通讯台
+   *  头部槽（chat-slots 是单槽位，多个 ChatPane 同时挂会互相抢）。 */
+  inlineChrome?: boolean
+  /** 独立窗自己的「对话索引」槽（窗头 ≡ N 轮）；缺省沿用通讯台槽。 */
+  indexSlot?: HTMLElement | null
+  /** 独立窗自己的「星核」挂载槽（窗头左上角）；缺省沿用通讯台头部槽。 */
+  attachSlot?: HTMLElement | null
+  /** 索引面板的定位主机选择器：通讯台 = .ck12-comms，独立窗 = .ck12-cwin。 */
+  chromeHostSelector?: string
 }
 
 /** ChatArea 暴露给宿主的 composer 能力（只增不减，避免宿主另写 send）。 */
 export interface ChatComposerBridge {
   /** 程序化提交一句话：与在输入框里按 ⏎ 的分支完全一致（含队列/steer）。 */
-  submit(text: string): void
+  submit(text: string, meta?: ChatSendMeta): void
+  /** 预填输入框（「事项 → 带到输入框」）：可随后编辑再发；挂件随本条生效。 */
+  seed(text: string, meta?: ChatSeedMeta): void
   /** 聚焦真输入框（底栏点一下/⌘K 后）。 */
   focus(): void
 }
@@ -256,20 +272,22 @@ function CockpitMessageActs({ message }: { message: AgentMessage }) {
   )
 }
 
-/** ⇧⏎ 排队上限（原型 chat-tui.html 拍板）。 */
+/** ⏎ 排队上限（原型 chat-tui.html 拍板）。 */
 const TUI_QUEUE_MAX = 3
 const TUI_SPIN = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏']
 
-/** TUI 队列项：消息文本 + 发送时选中的专家（SKILL 已编码进 /命令前缀）。 */
+/** TUI 队列项：消息文本 + 发送时选中的专家（SKILL 已编码进 /命令前缀）+ 来源元数据。 */
 interface QueuedComposerMessage {
   text: string
   expert: ComposerExpertRef | null
+  /** 事项投递（2026-11-24）：排队期间不丢来源；出队时随 onSend 一起交给服务端。 */
+  meta?: ChatSendMeta
 }
 
 export function ChatArea({
   messages, streaming, streamContent, streamThinking, isThinking, toolCalls, streamTimeline, turnStartedAt, pendingConfirm,
   hasMoreMessages, loadingOlderMessages, onLoadOlder,
-  error, statusMessage, backgroundTasks, onSend, onStop, onConfirm, hasSession, currentCloneName,
+  error, statusMessage, backgroundTasks, canInterject = false, onInterject, onSend, onStop, onConfirm, hasSession, currentCloneName,
   reviewItems, onReviewAction,
   emptyStateTitle, emptyStateDescription, hideEmptyState,
   commands, contextUsage, sessionUsage, taskUsage, currentModel, onModelChange,
@@ -277,9 +295,10 @@ export function ChatArea({
   effort, onEffortChange, maxContext, onMaxContextChange, modelPresets,
   composerLeading, composerPlaceholder, heroEmpty, composerHeroFooter, identity, identityDisplay, workspaceContext,
   tui, onSteer, steerActiveRef, resumeTailing,
-  messageExtras, transcriptTail, composerDock, composerSeed, timelineClearDock, dockGutter,
+  messageExtras, transcriptTail, composerSeed, timelineClearDock, dockGutter,
   composerSlot, composerVariant = 'full', onQueueDepthChange, composerBridgeRef,
   composerHidden, composerHiddenHint, composerEnableLabel, onEnableComposer,
+  assistantLabel, inlineChrome, indexSlot, attachSlot, chromeHostSelector,
 }: ChatAreaProps) {
   const [input, setInput] = useState('')
   const [slashOpen, setSlashOpen] = useState(false)
@@ -287,6 +306,20 @@ export function ChatArea({
   const [contextExpanded, setContextExpanded] = useState(false)
   const [attachedSkill, setAttachedSkill] = useState<ComposerSkillRef | null>(null)
   const [attachedExpert, setAttachedExpert] = useState<ComposerExpertRef | null>(null)
+
+  // 事项投递（2026-11-24 用户）：从「事项」窗「带到输入框」时挂上的来源。
+  // ids 随消息发给服务端（meta）；labels 只用于输入框上方的挂件。
+  const [seedItems, setSeedItems] = useState<{ ids: string[]; labels: string[] } | null>(null)
+  const seedItemsRef = useRef<{ ids: string[]; labels: string[] } | null>(null)
+  useEffect(() => { seedItemsRef.current = seedItems }, [seedItems])
+  const clearSeedItems = () => {
+    seedItemsRef.current = null
+    setSeedItems(null)
+  }
+  const seedMetaNow = (): ChatSendMeta | undefined => {
+    const seed = seedItemsRef.current
+    return seed && seed.ids.length > 0 ? { via: 'items', itemIds: seed.ids } : undefined
+  }
 
   // 任务清单（Claude Code 风格置顶面板）：历史消息里的 tool_calls + 当前流的
   // toolCalls 合成；同一 tool_call id 只认一次（流式与持久化重叠时防重复）。
@@ -438,12 +471,22 @@ export function ChatArea({
   }
 
   const handleSend = () => {
-    if (!input.trim() || streaming) return
+    if (!input.trim()) return
     const raw = input.trim()
-    const { text, opts } = takeComposerAttachments(raw)
-    // `@分身` mentions stay in the text — the server parses them and consults
-    // the clone as a one-turn subagent (no delegation, no stripping).
-    onSend(text, opts)
+    const { text, opts, expert } = takeComposerAttachments(raw)
+    const meta = seedMetaNow()
+    // 后台等待期（#8）：注进同一条 provider 查询 —— 与 TUI 变体同语义。
+    if (streaming) {
+      // 事项投递不能走 inject（注入不带 metadata，事项不会被标成 delivered）——
+      // 一律排到本轮收口后再发。
+      if (meta) pushQueue(text, expert, meta)
+      else if (!canInterject || !onInterject) return
+      else interjectOrQueue(text, expert)
+    } else {
+      const sendOpts = { ...(opts ?? {}), ...(meta ? { meta } : {}) }
+      onSend(text, Object.keys(sendOpts).length > 0 ? sendOpts : undefined)
+    }
+    clearSeedItems()
     setInput('')
     stickBottomRef.current = true
   }
@@ -470,13 +513,31 @@ export function ChatArea({
   }
 
   // ── TUI 排队 / steer（2026-09-24 草稿工作台改版，仅 tui 变体生效）──────
-  // 语义（原型 chat-tui.html 拍板）：⇧⏎=排队（≤3，SDK done 立即 flush 队首）；
-  // 有排队时 ⏎=继续加入排队；无排队 busy ⏎=打断接管（steer）；有排队 esc=队尾
-  // 退回输入框（点击同效），无排队 esc=打断。
+  // 语义（2026-11-24 用户改判）：⏎ 执行中 = 排队（≤3，SDK done 立即 flush 队首）；
+  // ⇧⏎ 执行中 = 打断接管（steer）；⇧⏎ 空闲 = 换行；有排队 esc=队尾退回输入框
+  // （点击同效），无排队 esc=打断。
   const [queue, setQueueState] = useState<QueuedComposerMessage[]>([])
   const queueRef = useRef<QueuedComposerMessage[]>([])
   const setQueue = (next: QueuedComposerMessage[]) => { queueRef.current = next; setQueueState(next) }
   const [queueHint, setQueueHint] = useState<string | null>(null)
+  // 停止整轮确认（2026-11-24 用户 #3）：有后台作业在跑时，红方块先弹确认 ——
+  // 停止会一并结束那些后台程序（dev 服务等）。仅全域座舱变体。
+  const [stopConfirmOpen, setStopConfirmOpen] = useState(false)
+  const stopWrapRef = useRef<HTMLSpanElement | null>(null)
+  const bgLiveCount = backgroundTasks?.length ?? 0
+  useEffect(() => {
+    if (!streaming) setStopConfirmOpen(false)
+  }, [streaming])
+  useEffect(() => {
+    if (!stopConfirmOpen) return
+    const onPointerDown = (event: PointerEvent) => {
+      const target = event.target
+      if (target instanceof Node && stopWrapRef.current?.contains(target)) return
+      setStopConfirmOpen(false)
+    }
+    document.addEventListener('pointerdown', onPointerDown, true)
+    return () => document.removeEventListener('pointerdown', onPointerDown, true)
+  }, [stopConfirmOpen])
   const dockRef = useRef<HTMLDivElement>(null)
   const turnStartedAtRef = useRef(0)
   const [tick, setTick] = useState(0)
@@ -498,22 +559,80 @@ export function ChatArea({
     if (was && !streaming && queueRef.current.length > 0 && !steerActiveRef?.current) {
       const [head, ...rest] = queueRef.current
       setQueue(rest)
-      onSend(head.text, head.expert
-        ? { subagents: [{ id: head.expert.name, label: head.expert.displayName }] }
-        : undefined)
+      const opts = {
+        ...(head.expert ? { subagents: [{ id: head.expert.name, label: head.expert.displayName }] } : {}),
+        ...(head.meta ? { meta: head.meta } : {}),
+      }
+      onSend(head.text, Object.keys(opts).length > 0 ? opts : undefined)
     }
   }, [streaming, tui, onSend, steerActiveRef])
+
+  // 后台等待期（#8）：队列不再无限期干等 —— 队首注进同一条查询（不打断后台）。
+  // 注入后队列变短，effect 重跑继续注下一条；SDK 按顺序把它们当各自一轮处理。
+  // 没有注入通道（canInterject=false）时维持原语义：等回合收口后 done-flush。
+  useEffect(() => {
+    if (!tui || !canInterject || !onInterject) return
+    if (steerActiveRef?.current) return
+    if (queueRef.current.length === 0) return
+    const [head, ...rest] = queueRef.current
+    setQueue(rest)
+    // 注入失败（相位又翻回 generating）→ 队首放回去，消息不丢（用户 #2）。
+    const restore = (ok: boolean | void) => {
+      if (ok === false) setQueue([head, ...queueRef.current])
+    }
+    try {
+      const result = onInterject(head.text)
+      if (result && typeof (result as Promise<boolean>).then === 'function') {
+        void (result as Promise<boolean>).then(restore, () => restore(false))
+      } else {
+        restore(result as boolean | void)
+      }
+    } catch {
+      restore(false)
+    }
+  }, [canInterject, tui, onInterject, queue.length, steerActiveRef])
 
   const focusDockInput = () => {
     dockRef.current?.querySelector<HTMLTextAreaElement>('textarea')?.focus()
   }
-  const pushQueue = (text: string, expert: ComposerExpertRef | null) => {
+  const pushQueue = (text: string, expert: ComposerExpertRef | null, meta?: ChatSendMeta) => {
     if (queueRef.current.length >= TUI_QUEUE_MAX) {
       setQueueHint(`队列已满（${TUI_QUEUE_MAX}）`)
       setTimeout(() => setQueueHint(null), 1400)
       return
     }
-    setQueue([...queueRef.current, { text, expert }])
+    setQueue([...queueRef.current, { text, expert, ...(meta ? { meta } : {}) }])
+  }
+  /**
+   * 后台等待期发送（2026-11-24 用户 #2）：注入失败（本地相位过期 / 正好收轮）
+   * 时**不能静默丢句话** —— 原来 onInterject 的失败结果被忽略，乐观行撤掉后
+   * 用户的消息就凭空消失了。失败一律转入排队，等相位回到 background-wait
+   * 或本轮收口后自动补发；排队的消息在输入框上方可见。
+   */
+  const interjectOrQueue = (text: string, expert: ComposerExpertRef | null) => {
+    if (!onInterject) { pushQueue(text, expert); return }
+    const fallback = (ok: boolean | void) => {
+      if (ok !== false) return
+      if (tui) {
+        pushQueue(text, expert)
+        setQueueHint('注入未成功 · 已转排队')
+        setTimeout(() => setQueueHint(null), 1800)
+      } else {
+        // 非 TUI（classic 通讯台）没有排队区：把原文放回输入框，别让用户的话消失。
+        setInput((prev) => (prev.trim() ? `${text}\n${prev}` : text))
+        toast('注入未成功 · 已放回输入框')
+      }
+    }
+    try {
+      const result = onInterject(text)
+      if (result && typeof (result as Promise<boolean>).then === 'function') {
+        void (result as Promise<boolean>).then(fallback, () => fallback(false))
+      } else {
+        fallback(result as boolean | void)
+      }
+    } catch {
+      fallback(false)
+    }
   }
   const recallQueue = (i: number) => {
     const back = queueRef.current[i]
@@ -523,10 +642,6 @@ export function ChatArea({
     focusDockInput()
   }
   const handleTuiKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
-    // v13 全域座舱：⇧⏎ 换行 —— 直接放行浏览器默认行为（textarea 原生插入换行 +
-    // 触发受控 onChange）。不要 preventDefault 再 execCommand：实测连打会吞字。
-    if (e.key === 'Enter' && isCockpitVariant && e.shiftKey && !e.altKey) return
-
     // Alt+⏎ = 换行不发送。浏览器对 alt+enter 没有默认换行行为；优先用原生
     // insertText（保住游标 + 触发受控 onChange，避免手动 rAF 复位与连打竞态），
     // 不支持时回退到 setState 插入。（下拉开着也要能换行，故在 slashOpen 门之前。）
@@ -547,37 +662,53 @@ export function ChatArea({
     if (mentionOpen) return // @分身 下拉打开时 Enter 归下拉
     const text = input.trim()
     if (e.key === 'Enter') {
-      e.preventDefault()
-      if (!text) return
+      // ⇧⏎（2026-11-24 用户）：空闲 = 换行；执行中 = 直接打断接管。
+      // classic 与全舱共用这一条，不再按 isCockpitVariant 区分。
       if (e.shiftKey) {
-        setInput('')
-        if (streaming) {
-          const take = takeComposerAttachments(text)
-          pushQueue(take.text, take.expert)
-        } else {
-          handleSend()
-        }
-        return
-      }
-      if (queue.length > 0) {
+        if (!streaming) return // 放行浏览器默认换行（textarea 原生插入 + 受控 onChange）
+        e.preventDefault()
+        if (!text) return
         setInput('')
         const take = takeComposerAttachments(text)
-        pushQueue(take.text, take.expert)
+        const meta = seedMetaNow()
+        clearSeedItems()
+        // 接管 = 掐掉本实例的流再重发（useAgentChat.steer）。尾随他端回合没有
+        // 可掐的本地流、事项投递带不上 metadata —— 都退回排队，消息不丢。
+        if (resumeTailing || !onSteer || meta) {
+          pushQueue(take.text, take.expert, meta)
+          setQueueHint(
+            resumeTailing ? '他端回合进行中 · 已改排队'
+              : meta ? '事项投递无法接管 · 已排队'
+                : '无接管通道 · 已排队',
+          )
+          setTimeout(() => setQueueHint(null), 1800)
+          return
+        }
+        onSteer(take.text, take.opts)
         return
       }
+      e.preventDefault()
+      if (!text) return
       if (streaming) {
         setInput('')
         const take = takeComposerAttachments(text)
-        // 尾随他端回合（resume）时本实例没有可掐的流；后台任务运行中时
-        // Enter 的本来意思是问进度，不是杀掉那个程序。两种都只排队，回合
-        // 收口后 done-flush 自动发出（2026-11-10 用户事故：dev-up.sh 被
-        // Enter 打断，消息本身也被吞掉）。
-        if (resumeTailing || (backgroundTasks?.length ?? 0) > 0) {
-          pushQueue(take.text, take.expert)
+        const meta = seedMetaNow()
+        clearSeedItems()
+        // 事项投递（2026-11-24）：不能 inject（带不上 metadata）—— 排队等本轮收口。
+        if (meta) {
+          pushQueue(take.text, take.expert, meta)
           return
         }
-        if (onSteer) onSteer(take.text, take.opts)
-        else onStop()
+        // 后台等待期（2026-11-23 用户 #8）：模型空闲、只等后台唤醒 —— 直接把
+        // 话注进同一条 provider 查询，不打断后台（2026-11-10 dev-up.sh 事故：
+        // Enter 曾经会掐掉服务）。这是「发送」，不是「接管」。
+        if (canInterject && !resumeTailing && onInterject) {
+          interjectOrQueue(take.text, take.expert)
+          return
+        }
+        // 执行中一律排队（2026-11-24 用户：⏎ = 排队，⇧⏎ 才打断接管）：
+        // 本实例拥有的流、尾随他端、后台任务运行中 —— 等本轮收口后 done-flush 发出。
+        pushQueue(take.text, take.expert)
         return
       }
       handleSend()
@@ -592,19 +723,31 @@ export function ChatArea({
   // ── 全域座舱（S5）：把**同一份**提交管线暴露出去 ─────────────────────
   // 不新写 send：submit 走的就是上面 ⏎ 的分支（附件 / 流式排队 / steer），
   // 宿主（CockpitChatHost → ChatPane.onTelemetry.submit）只是换了个触发源。
-  const submitFromBridge = (raw: string) => {
+  // 2026-11-24：submit 可带来源 meta（事项投递）；seed = 预填输入框并挂来源挂件。
+  const submitFromBridge = (raw: string, meta?: ChatSendMeta) => {
     const trimmed = raw.trim()
     if (!trimmed) return
     if (!tui) {
       // 非 TUI composer 原本就在流式中直接 return（handleSend 的守卫）。
       if (streaming) return
       const taken = takeComposerAttachments(trimmed)
-      onSend(taken.text, taken.opts)
+      const sendOpts = { ...(taken.opts ?? {}), ...(meta ? { meta } : {}) }
+      onSend(taken.text, Object.keys(sendOpts).length > 0 ? sendOpts : undefined)
       stickBottomRef.current = true
       return
     }
     if (streaming) {
       const taken = takeComposerAttachments(trimmed)
+      // 事项投递（带 meta）不能 inject：排队等本轮收口，出队时随消息带上。
+      if (meta) {
+        pushQueue(taken.text, taken.expert, meta)
+        return
+      }
+      // 后台等待期：注入同一条查询（不打断后台）—— 与 ⏎ 分支同语义。
+      if (canInterject && !resumeTailing && onInterject) {
+        interjectOrQueue(taken.text, taken.expert)
+        return
+      }
       if (queueRef.current.length > 0 || resumeTailing || (backgroundTasks?.length ?? 0) > 0) {
         pushQueue(taken.text, taken.expert)
       } else if (onSteer) {
@@ -615,8 +758,24 @@ export function ChatArea({
       return
     }
     const taken = takeComposerAttachments(trimmed)
-    onSend(taken.text, taken.opts)
+    const sendOpts = { ...(taken.opts ?? {}), ...(meta ? { meta } : {}) }
+    onSend(taken.text, Object.keys(sendOpts).length > 0 ? sendOpts : undefined)
     stickBottomRef.current = true
+  }
+
+  /** 事项 → 带到输入框：预填文案 + 挂件；发出去才算交付（服务端收到 meta 才关状态）。 */
+  const seedFromBridge = (text: string, meta?: ChatSeedMeta) => {
+    setInput(text)
+    const ids = meta?.via === 'items' && meta.itemIds ? meta.itemIds : []
+    if (ids.length > 0) {
+      const labels = meta?.labels && meta.labels.length > 0 ? meta.labels : ids
+      const next = { ids, labels }
+      seedItemsRef.current = next
+      setSeedItems(next)
+    } else {
+      clearSeedItems()
+    }
+    focusDockInput()
   }
 
   // ref 每轮渲染后刷新：bridge 里调用到的永远是最新的 handler，
@@ -625,6 +784,7 @@ export function ChatArea({
     if (!composerBridgeRef) return
     composerBridgeRef.current = {
       submit: submitFromBridge,
+      seed: seedFromBridge,
       focus: focusDockInput,
     }
   })
@@ -640,9 +800,14 @@ export function ChatArea({
   const isCockpitVariant = composerVariant === 'cockpit'
   // 全域：标题栏「对话索引」槽（CockpitChatWindow 注册）。classic 拿到 null，
   // 继续用正文右侧那排短杠，行为逐字不变。
-  const cockpitIndexSlot = useChatSlot('index')
+  const globalIndexSlot = useChatSlot('index')
   // 全域：标题栏「星核」槽（v22 十轮）—— 挂载面板 portal 进台头。
-  const cockpitAttachSlot = useChatSlot('attach')
+  const globalAttachSlot = useChatSlot('attach')
+  // v22 #5 独立窗：槽是主通讯台的单实例 DOM —— 独立窗抢过去会让主台头部出现
+  // 两份索引/星核。独立窗一律用自己窗头的槽（inlineChrome + indexSlot/attachSlot）。 */
+  const cockpitIndexSlot = inlineChrome ? (indexSlot ?? null) : globalIndexSlot
+  const cockpitAttachSlot = inlineChrome ? (attachSlot ?? null) : globalAttachSlot
+  const assistantIdentity = assistantLabel ?? '汐音'
 
   // ⌥A 开合星核面板（原型口径，由 CockpitShortcuts 发事件）。classic 不响应：
   // 那里的入口在控件条，不抢这个键。
@@ -785,7 +950,7 @@ export function ChatArea({
               </div>
               <div className="mt-5 flex items-center gap-2 text-[11px] text-pop-dim/70">
                 <span className="text-pop-pink">✳</span>
-                <span>⏎ 发送 · ⇧⏎ 排队 · Alt⏎ 换行</span>
+                <span>⏎ 发送 · ⇧⏎ 换行 · Alt⏎ 换行</span>
               </div>
             </div>
           </div>
@@ -827,7 +992,7 @@ export function ChatArea({
                 </div>
                 <div className="mt-5 flex items-center gap-2 text-[11px] text-pop-dim/70">
                   <span className="text-pop-pink">✳</span>
-                  <span>⏎ 发送 · ⇧⏎ 排队 · Alt⏎ 换行</span>
+                  <span>⏎ 发送 · ⇧⏎ 换行 · Alt⏎ 换行</span>
                 </div>
               </div>
             )}
@@ -858,7 +1023,7 @@ export function ChatArea({
                         message={msg}
                         compactEvent={compactEvent}
                         docLinks
-                        lead={msg.role === 'assistant' ? <span className="ck12-tui-tag">✦ 汐音</span> : undefined}
+                        lead={msg.role === 'assistant' ? <span className="ck12-tui-tag">✦ {assistantIdentity}</span> : undefined}
                         userLead={msg.role === 'user' ? <span className="ck12-tui-tag is-you">❯ YOU</span> : undefined}
                         trail={msg.role === 'assistant' && !msg.roleSwitch && msg.displayType !== 'event'
                           ? <CockpitMessageActs message={msg} />
@@ -882,7 +1047,7 @@ export function ChatArea({
               isCockpitVariant ? (
                 // 流式过程同款行头：thinking / tool / 正文与历史态同一条左缘。
                 <div className="ck12-tui-msg" data-tui-row="assistant">
-                  <div className="ck12-tui-livehead"><span className="ck12-tui-tag">✦ 汐音</span><span className="ck12-tui-livehint">输出中…</span></div>
+                  <div className="ck12-tui-livehead"><span className="ck12-tui-tag">✦ {assistantIdentity}</span><span className="ck12-tui-livehint">输出中…</span></div>
                   <TuiLive items={streamTimeline} toolCalls={toolCalls} />
                 </div>
               ) : <TuiLive items={streamTimeline} toolCalls={toolCalls} />
@@ -991,7 +1156,10 @@ export function ChatArea({
                 title={backgroundTitle}
               >
                 <span className={workTone.spin} aria-hidden>{spinGlyph}</span>
-                <span className="truncate text-pop-ink/80">后台运行中：{backgroundLabel}</span>
+                <span className="truncate text-pop-ink/80">
+                  后台运行中：{backgroundLabel}
+                  {canInterject && <span className="ml-2 text-pop-green">· 可以直接说话</span>}
+                </span>
                 <span className={`tabular-nums ${workTone.secs}`}>{formatStopwatch(workElapsed * 1000)}</span>
               </div>
             ) : (
@@ -1118,9 +1286,6 @@ export function ChatArea({
           data-tui-hero={heroMode ? 'true' : undefined}
         >
           <div className={cn('relative', isCockpitVariant ? 'w-full' : 'mx-auto max-w-4xl')} data-tui-composer>
-            {/* 挂在 composer 列内部：宽度自动继承列宽（舱里被 CSS 收窄到
-                min(756px, 100% - 144px)，外置会成为另一条宽带）。 */}
-            {composerDock && <div className="-mb-px">{composerDock}</div>}
             {taskProgress && (
               <TaskProgressPanel progress={taskProgress} className="mb-1.5" />
             )}
@@ -1168,8 +1333,29 @@ export function ChatArea({
                 ))}
               </div>
             )}
-            {(attachedSkill || attachedExpert) && (
+            {(attachedSkill || attachedExpert || seedItems) && (
               <div className="mb-1.5 flex flex-wrap items-center gap-1" data-composer-chips>
+                {seedItems && (
+                  <span
+                    className="ck12-composer-items flex max-w-full items-center gap-1 rounded-full border border-[rgba(61,220,151,.45)] bg-[rgba(61,220,151,.1)] px-2 py-0.5 text-[10.5px] text-[#7ff0bd]"
+                    data-composer-items
+                    data-testid="composer-items-chip"
+                    title="从「事项」窗投递 · 发出去才算交付"
+                  >
+                    <span aria-hidden>☑</span>
+                    <span className="truncate">
+                      事项 ×{seedItems.ids.length} · {seedItems.labels.join(' ')}
+                    </span>
+                    <button
+                      type="button"
+                      onClick={clearSeedItems}
+                      aria-label="取消事项投递"
+                      className="text-[#7ff0bd]/70 transition-colors hover:text-pop-red"
+                    >
+                      <X className="size-2.5" />
+                    </button>
+                  </span>
+                )}
                 {attachedSkill && (
                   <span className="flex items-center gap-1 rounded-full border border-pop-cyan/40 bg-pop-cyan-soft px-2 py-0.5 text-[10.5px] text-pop-cyan">
                     <Sparkles className="size-2.5" />
@@ -1222,10 +1408,12 @@ export function ChatArea({
                   disabled={!!pendingConfirm}
                   placeholder={
                     queue.length > 0
-                      ? '继续输入 —— ⏎/⇧⏎ 都会加入排队'
+                      ? '继续输入 —— ⏎ 加入排队 · ⇧⏎ 打断接管'
                       : streaming
-                        ? '输入新指令 —— ⏎ 打断接管 · ⇧⏎ 不打断排队'
-                        : composerPlaceholder ?? '问 task-author…　⏎ 发送 · ⇧⏎ 排队 · Alt⏎ 换行'
+                        ? canInterject
+                          ? '后台任务运行中 —— ⏎ 直接发送（不打断后台）· ⇧⏎ 打断接管'
+                          : '输入新指令 —— ⏎ 排队 · ⇧⏎ 打断接管'
+                        : composerPlaceholder ?? '问 task-author…　⏎ 发送 · ⇧⏎/Alt⏎ 换行'
                   }
                   className="flex-1 rounded-none border-0 bg-transparent px-0 py-1.5 text-[12.5px] text-pop-ink shadow-none placeholder:text-pop-dim focus-visible:ring-0"
                 />
@@ -1238,32 +1426,91 @@ export function ChatArea({
                     ? composerAttach
                     : <span className="shrink-0 pt-1" data-tui-attach-inline>{composerAttach}</span>
                 )}
-                <span className="shrink-0 pt-1" data-tui-send-wrap>
-                  {streaming ? (
-                    <button
-                      type="button"
-                      onClick={onStop}
-                      title="停止（esc 同效）"
-                      aria-label="停止生成"
-                      data-tui-stop
-                      className="grid size-6 place-items-center rounded-md border border-pop-bd text-[10px] text-pop-red transition-colors hover:border-pop-red"
-                    >
-                      {/* 方块用元素画，不用「■」字形（用户 #19：中断键变形、没居中）。
-                          等宽字体里 ■ 的墨迹不在字身中心，再叠 font-weight:800 的
-                          合成加粗，方块会被拉歪 —— 几何方块由 grid 居中，跨字体稳定。
-                          v21b.css 里这条键的外形也从六角改成了圆角方按钮。 */}
-                      <span
-                        aria-hidden
-                        data-tui-stop-glyph
-                        className="block h-3 w-3 rounded-[2.5px] bg-current"
-                      />
-                    </button>
-                  ) : (
+                <span className="flex shrink-0 items-center gap-1 pt-1" data-tui-send-wrap>
+                  {streaming && (
+                    <span ref={stopWrapRef} className="relative inline-flex">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          // 2026-11-24 用户 #3：有后台作业时先确认 —— 停止整轮会把
+                          // 它们一起收掉（provider 对每个后台任务 stopTask + interrupt）。
+                          if (isCockpitVariant && bgLiveCount > 0) {
+                            setStopConfirmOpen((open) => !open)
+                            return
+                          }
+                          onStop()
+                        }}
+                        title={
+                          bgLiveCount > 0
+                            ? `停止整轮（会一并结束 ${bgLiveCount} 个后台作业）`
+                            : '停止（esc 同效）'
+                        }
+                        aria-label="停止生成"
+                        aria-expanded={isCockpitVariant && bgLiveCount > 0 ? stopConfirmOpen : undefined}
+                        data-tui-stop
+                        data-bg-live={isCockpitVariant && bgLiveCount > 0 ? 'true' : undefined}
+                        className="grid size-6 place-items-center rounded-md border border-pop-bd text-[10px] text-pop-red transition-colors hover:border-pop-red"
+                      >
+                        {/* 方块用元素画，不用「■」字形（用户 #19：中断键变形、没居中）。
+                            等宽字体里 ■ 的墨迹不在字身中心，再叠 font-weight:800 的
+                            合成加粗，方块会被拉歪 —— 几何方块由 grid 居中，跨字体稳定。
+                            v21b.css 里这条键的外形也从六角改成了圆角方按钮。 */}
+                        <span
+                          aria-hidden
+                          data-tui-stop-glyph
+                          className="block h-3 w-3 rounded-[2.5px] bg-current"
+                        />
+                        {isCockpitVariant && bgLiveCount > 0 && (
+                          <b className="ck12-stopcount" data-testid="cockpit-stop-count">
+                            {bgLiveCount}
+                          </b>
+                        )}
+                      </button>
+
+                      {isCockpitVariant && stopConfirmOpen && bgLiveCount > 0 && (
+                        <div
+                          className="ck12-stopconfirm"
+                          role="alertdialog"
+                          aria-label="停止整轮确认"
+                          data-testid="cockpit-stop-confirm"
+                        >
+                          <div className="t">⚠ 后台作业还在跑</div>
+                          <p>
+                            这一轮在等 <b>{bgLiveCount}</b> 个后台作业。点「停止整轮」会
+                            一并结束它们 —— 服务会直接停掉。
+                          </p>
+                          <div className="ck12-stopconfirm-row">
+                            <button
+                              type="button"
+                              onClick={() => setStopConfirmOpen(false)}
+                            >
+                              继续跑着
+                            </button>
+                            <button
+                              type="button"
+                              className="danger"
+                              data-testid="cockpit-stop-all"
+                              onClick={() => {
+                                setStopConfirmOpen(false)
+                                onStop()
+                              }}
+                            >
+                              停止整轮
+                            </button>
+                          </div>
+                          <small>
+                            只想停单个作业：更多 → 活动日志 → 选择该作业 →「停止作业」。
+                          </small>
+                        </div>
+                      )}
+                    </span>
+                  )}
+                  {(!streaming || canInterject) && (
                     <button
                       type="button"
                       onClick={handleSend}
                       disabled={!input.trim()}
-                      title="发送（⏎ 同效）"
+                      title={canInterject ? '发送（不打断后台）' : '发送（⏎ 同效）'}
                       data-tui-send
                       className="grid size-6 place-items-center rounded-md border border-pop-bd bg-pop-pink text-[10px] font-bold text-pop-bg transition-opacity disabled:opacity-40"
                     >
@@ -1359,17 +1606,17 @@ export function ChatArea({
                 {queueHint ? (
                   <span className="shrink-0 text-pop-red" data-tui-hint>{queueHint}</span>
                 ) : queue.length > 0 ? (
-                  <span className="truncate" data-tui-hint>⏎ 继续排队 · ⇧⏎ 排队 · esc 退回输入框 <span className="opacity-70">队列 {queue.length}/{TUI_QUEUE_MAX} · done 即发</span></span>
+                  <span className="truncate" data-tui-hint>⏎ 继续排队 · ⇧⏎ 打断接管 · esc 退回输入框 <span className="opacity-70">队列 {queue.length}/{TUI_QUEUE_MAX} · done 即发</span></span>
                 ) : streaming ? (
                   <span className="shrink-0" data-tui-hint>
                     {resumeTailing
-                      ? '⏎ 排队（正在跟随另一窗口的回合，结束即发）'
+                      ? '⏎ 排队（正在跟随另一窗口的回合，结束即发 · 不可接管）'
                       : bgTasks.length > 0
-                        ? '⏎ 排队（后台任务运行中，结束即发）· esc 停止'
-                        : '⏎ 打断并接管 · ⇧⏎ 不打断，排队 · esc 打断'}
+                        ? '⏎ 排队（后台任务运行中，结束即发）· ⇧⏎ 打断接管（会一并结束后台作业）· esc 停止'
+                        : '⏎ 排队 · ⇧⏎ 打断接管 · esc 打断'}
                   </span>
                 ) : (
-                  <span className="shrink-0" data-tui-hint>⏎ 发送 · ⇧⏎ 排队 · Alt⏎ 换行</span>
+                  <span className="shrink-0" data-tui-hint>⏎ 发送 · ⇧⏎ 换行 · Alt⏎ 换行</span>
                 )}
               </span>
             </div>
@@ -1395,7 +1642,6 @@ export function ChatArea({
       <ComposerSlotPortal slot={composerSlot}>
       <div className="border-t-[1.5px] border-pop-bd bg-pop-paper p-3">
         <div className="max-w-3xl mx-auto relative">
-          {composerDock && <div className="mb-2">{composerDock}</div>}
           {taskProgress && <TaskProgressPanel progress={taskProgress} className="mb-2" />}
           {/* @分身 mention autocomplete */}
           <MentionAutocomplete
@@ -1452,8 +1698,14 @@ export function ChatArea({
               }}
               minRows={2}
               maxRows={5}
-              placeholder={streaming ? 'Agent 正在回复中...' : composerPlaceholder ?? '输入消息，/ 调用技能，@@ 委托分身，Enter 发送'}
-              disabled={streaming || !!pendingConfirm}
+              placeholder={
+                streaming
+                  ? canInterject
+                    ? '后台任务运行中 —— 可以直接输入（⏎ 发送，不打断后台）'
+                    : 'Agent 正在回复中...'
+                  : composerPlaceholder ?? '输入消息，/ 调用技能，@@ 委托分身，Enter 发送'
+              }
+              disabled={(streaming && !canInterject) || !!pendingConfirm}
               className="rounded-none border-0 bg-transparent px-3.5 pb-1 pt-2.5 text-[12.5px] text-pop-ink shadow-none focus-visible:ring-0"
             />
             <div
@@ -1524,21 +1776,24 @@ export function ChatArea({
                       <SessionCostChip usage={sessionUsage} contextUsage={contextUsage} placeholder={showUsagePlaceholders} />
                     ))}
               {identityDisplay && <ComposerIdentityChip display={identityDisplay} />}
-              <span className="ml-auto flex shrink-0 items-center">
-                {streaming ? (
+              <span className="ml-auto flex shrink-0 items-center gap-1.5">
+                {streaming && (
                   <Button
                     onClick={onStop}
                     variant="outline"
                     size="icon"
+                    title={canInterject ? '停止整轮（会结束后台任务）' : undefined}
                     className="h-8 w-8 rounded-xl border-2 border-pop-bd bg-pop-paper text-pop-red shadow-pop-sm pop-press hover:bg-pop-pink-soft"
                   >
                     <Square className="h-3.5 w-3.5" />
                   </Button>
-                ) : (
+                )}
+                {(!streaming || canInterject) && (
                   <Button
                     onClick={handleSend}
                     disabled={!input.trim()}
                     size="icon"
+                    title={canInterject ? '发送（不打断后台）' : undefined}
                     className="h-8 w-8 rounded-xl border-2 border-pop-bd bg-pop-pink text-pop-bg shadow-pop-sm pop-press hover:brightness-110"
                   >
                     <Send className="h-3.5 w-3.5" />
@@ -1560,6 +1815,7 @@ export function ChatArea({
         clearDock={timelineClearDock}
         compact={isCockpitVariant}
         portalHost={isCockpitVariant ? cockpitIndexSlot : null}
+        hostSelector={chromeHostSelector}
       />
     </div>
   )

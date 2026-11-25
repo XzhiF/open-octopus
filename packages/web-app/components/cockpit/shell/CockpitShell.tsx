@@ -18,6 +18,8 @@ import { CockpitUrlSync } from '../entry/use-cockpit-url-sync'
 import { CockpitShortcuts } from '../entry/CockpitShortcuts'
 import { CockpitFleetProvider, useCockpitFleet } from '../fleet/CockpitFleetProvider'
 import { CockpitHud } from './CockpitHud'
+import { CockpitNotesWindow } from './CockpitNotesWindow'
+import { CockpitItemsWindow } from '../items/CockpitItemsWindow'
 import { CockpitSettings } from './CockpitSettings'
 import { CockpitStarfield } from './CockpitStarfield'
 import { useCockpitCloseGuard } from './use-cockpit-close-guard'
@@ -28,14 +30,17 @@ import { CockpitFleetRail } from '../rail/CockpitFleetRail'
 import { CockpitRightRail } from '../rail/CockpitRightRail'
 import { CockpitActivityProvider } from '../rail/activity-feed'
 import { CockpitActivityWindow } from '../rail/CockpitActivityWindow'
+import { CockpitActivityLogWindow } from '../rail/CockpitActivityLogWindow'
 import { CockpitFace } from '../face/CockpitFace'
 import { CockpitCabinTree } from '../face/CockpitCabinTree'
 import { CockpitCabinChanges } from '../face/CockpitCabinChanges'
 import { CockpitDocWindow } from '../face/CockpitDocWindow'
+import { CockpitKnowledgeWindow } from '../face/CockpitKnowledgeWindow'
 import { CockpitChatHost } from '../chat/CockpitChatHost'
 import { CockpitChatWindow } from '../chat/CockpitChatWindow'
 import { CockpitDock } from '../chat/CockpitDock'
 import { CockpitPopWindows } from '../chat/CockpitPopWindows'
+import { CockpitTaskWindows } from '../chat/module-windows'
 import { CockpitWinBar } from '../chat/CockpitWinBar'
 import { CockpitThreadActivity } from '../chat/CockpitThreadActivity'
 import { CockpitCrew } from '../crew/CockpitCrew'
@@ -136,6 +141,7 @@ function CockpitSurface({ cabin }: { cabin: CabinDetail }) {
         包住右栏与详情窗 —— 按钮徽标 / 列表 / 详情共用同一次轮询。 */}
     <CockpitActivityProvider>
     <CockpitAskDeepLink />
+    <CockpitTaskWindows>
     <div className="ck12-app" data-testid="cockpit-shell">
       <div className="ck12-bg" aria-hidden="true">
         <CockpitScene />
@@ -193,8 +199,20 @@ function CockpitSurface({ cabin }: { cabin: CabinDetail }) {
       {/* v22 十四轮：右栏「活动」二级大窗（贴在一级浮层左侧，只读）。 */}
       <CockpitActivityWindow />
 
+      {/* 2026-11-24 用户 #1：更多 → 活动日志（全部后台作业 + 子代理的留档）。 */}
+      <CockpitActivityLogWindow />
+
       {/* 2026-11-19 用户 #4：聊天正文里的产物绝对路径点开 → 只读文档窗。 */}
       <CockpitDocWindow />
+
+      {/* 2026-11-23 用户 #7：知识中心窗（classic knowledge 换皮搬进全舱）。 */}
+      <CockpitKnowledgeWindow />
+
+      {/* 2026-11-23 用户 #3：便签窗（classic 快速便签迁入）。HUD 最右「✎ 便签」开合。 */}
+      <CockpitNotesWindow />
+
+      {/* 2026-11-24 用户：事项窗 —— 舱内零散小待办。HUD「☑ 事项」开合。 */}
+      <CockpitItemsWindow />
 
       {/* 原型没有屏幕级底栏：输入框在通讯台内（.con-in）。这里不再留 footer，
           通讯台底缘按视口 − 56 量（geometry 的 fallback）。 */}
@@ -219,6 +237,7 @@ function CockpitSurface({ cabin }: { cabin: CabinDetail }) {
 
       <div className="ck12-vignette" aria-hidden="true" />
     </div>
+    </CockpitTaskWindows>
     </CockpitActivityProvider>
     {/* 问答窗 portal 到 body；Esc 走 CockpitLayerStack（priority 75）。 */}
     <AskWindowLayer mode="cockpit" escLayer={layer} />

@@ -1,4 +1,4 @@
-// 对话分屏（2026-11-08）：左右两栏、右栏选择器、L/R 标记、退出保留焦点栏、
+﻿// 对话分屏（2026-11-08）：左右两栏、右栏选择器、L/R 标记、退出保留焦点栏、
 // 窄屏自动退出。这里走 <ChatTab/> 真组件，只用 mock 把网络/重面板挡掉。
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
@@ -34,6 +34,7 @@ vi.mock('@/lib/agent/api', () => ({
   getSessionSlashCommands: vi.fn().mockResolvedValue({ commands: [] }),
   chatStream: vi.fn(),
   stopChat: vi.fn().mockResolvedValue({ success: true }),
+  injectChat: vi.fn().mockResolvedValue({ injected: true }),
   createCloneSession: vi.fn(),
   cloneChatStream: vi.fn(),
   stopCloneChat: vi.fn(),

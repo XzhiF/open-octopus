@@ -163,3 +163,95 @@ describe("WorkspaceGit.initWorktreesFromSpec (source_path resolution)", () => {
     ).toThrow(/index\.md not found/)
   })
 })
+
+// 分支计划（2026-11-24）：worktree 的 fork 点显式化 —— 不再取主仓当时的 HEAD
+// （clean-main 主仓恒在默认分支，会把舱绑定分支的意图吃掉）。
+describe("WorkspaceGit.initWorktreesFromSpec — 分支计划 base/target", () => {
+  function addFeatCommit(): string {
+    execFileSync("git", ["checkout", "-b", "feat/long-lived"], { cwd: repoDir })
+    writeFileSync(join(repoDir, "feat.txt"), "feat work")
+    execFileSync("git", ["add", "-A"], { cwd: repoDir })
+    execFileSync("git", ["commit", "-m", "feat work"], { cwd: repoDir })
+    const sha = execFileSync("git", ["rev-parse", "HEAD"], { cwd: repoDir, encoding: "utf-8" }).trim()
+    // 主仓回到默认分支 —— 模拟 clean-main 镜像后的状态。
+    execFileSync("git", ["checkout", "-"], { cwd: repoDir })
+    return sha
+  }
+
+  function readRepoEntry(): Record<string, string> {
+    const config = JSON.parse(readFileSync(join(wsDir, "config.json"), "utf-8")) as {
+      repos: Array<Record<string, string>>
+    }
+    return config.repos[0]
+  }
+
+  it("按 base 建树：worktree HEAD = base 分支提交，config 落 base/target", () => {
+    const featSha = addFeatCommit()
+    git.initWorktreesFromSpec(
+      wsDir,
+      [{ name: REPO_NAME, source_path: repoDir, group: "" }],
+      "taskpool-b1",
+      "s1",
+      "test-ws",
+      ORG,
+      { [REPO_NAME]: { base: "feat/long-lived", target: "feat/long-lived" } },
+    )
+
+    const wtDir = join(wsDir, "projects", REPO_NAME)
+    const head = execFileSync("git", ["rev-parse", "HEAD"], { cwd: wtDir, encoding: "utf-8" }).trim()
+    expect(head).toBe(featSha)
+    expect(existsSync(join(wtDir, "feat.txt"))).toBe(true)
+
+    const entry = readRepoEntry()
+    expect(entry.base_branch).toBe("feat/long-lived")
+    expect(entry.target_branch).toBe("feat/long-lived")
+    expect(entry.branch).toBe("taskpool-b1-s1")
+  })
+
+  it("base 与 target 允许不同，原样落盘", () => {
+    addFeatCommit()
+    git.initWorktreesFromSpec(
+      wsDir,
+      [{ name: REPO_NAME, source_path: repoDir, group: "" }],
+      "taskpool-b2",
+      "s2",
+      "test-ws",
+      ORG,
+      { [REPO_NAME]: { base: "feat/long-lived", target: "master" } },
+    )
+    const entry = readRepoEntry()
+    expect(entry.base_branch).toBe("feat/long-lived")
+    expect(entry.target_branch).toBe("master")
+  })
+
+  it("base 不存在 → 硬失败（绝不静默回退默认分支）", () => {
+    expect(() =>
+      git.initWorktreesFromSpec(
+        wsDir,
+        [{ name: REPO_NAME, source_path: repoDir, group: "" }],
+        "taskpool-b3",
+        "s3",
+        "test-ws",
+        ORG,
+        { [REPO_NAME]: { base: "feat/missing" } },
+      ),
+    ).toThrow(/base branch 'feat\/missing' not found/)
+  })
+
+  it("无计划 → 从仓库默认分支建树，target 跟随 base", () => {
+    const defaultBranch = execFileSync("git", ["symbolic-ref", "--short", "HEAD"], {
+      cwd: repoDir, encoding: "utf-8",
+    }).trim()
+    git.initWorktreesFromSpec(
+      wsDir,
+      [{ name: REPO_NAME, source_path: repoDir, group: "" }],
+      "taskpool-b4",
+      "s4",
+      "test-ws",
+      ORG,
+    )
+    const entry = readRepoEntry()
+    expect(entry.base_branch).toBe(defaultBranch)
+    expect(entry.target_branch).toBe(defaultBranch)
+  })
+})

@@ -130,6 +130,49 @@ describe("作者提问卡（design 23 §2 · 舱主会话就地作答）", () =>
     const again = cards("s-cabin")[0] as { activity?: { decision?: { id?: string } } }
     expect(again.activity?.decision?.id).toBe("answer_from_thread")
   })
+
+  it("编队 chat 里直接回复（via=direct）同样销账，回执文案区分来源（v22 #9）", () => {
+    const bridge = getChatEventBridge()
+    bridge.requestAuthorAskCard({
+      authorSessionId: "s-task", askMessageId: "ask-direct-1", questions: QUESTIONS,
+    })
+    bridge.markAuthorAskAnswered("s-task", { via: "direct" })
+
+    const rows = cards("s-cabin") as Array<{
+      activity?: { decision?: { label?: string }; payload?: Record<string, unknown> }
+    }>
+    const card = rows.find((r) => r.activity?.payload?.askMessageId === "ask-direct-1")
+    expect(card?.activity?.decision?.label).toBe("对话里直接回复")
+    const receipt = rows.find((r) => JSON.stringify(r).includes("authorAskReceipt")) as {
+      activity?: { payload?: { authorAskReceipt?: { label?: string } } }
+    } | undefined
+    expect(receipt?.activity?.payload?.authorAskReceipt?.label).toBe("已回答（对话里直接回复）")
+  })
+
+  it("委派的提问被直接回复 → 委派回 running（不再挂着「在问你」）", () => {
+    db.prepare(`
+      INSERT INTO cabin_delegations
+        (id, cabin_id, title, intent_text, autonomy, state, doer_session_id, created_at, updated_at)
+      VALUES ('d-direct', 'c1', '直接答复', '帮我看看', 'checkpoint', 'waiting_input', 's-deleg-direct', ?, ?)
+    `).run(NOW, NOW)
+    insertSession("s-deleg-direct")
+    try {
+      const states: Array<{ id: string; state: string }> = []
+      const bridge = getChatEventBridge()
+      bridge.setDelegationStateHook((id, state) => { states.push({ id, state }) })
+      bridge.requestAuthorAskCard({
+        authorSessionId: "s-deleg-direct", askMessageId: "ask-direct-del", questions: QUESTIONS,
+      })
+      bridge.markAuthorAskAnswered("s-deleg-direct", { via: "direct" })
+      expect(states).toEqual([
+        { id: "d-direct", state: "waiting_input" },
+        { id: "d-direct", state: "running" },
+      ])
+    } finally {
+      // 句柄按创建顺序派生：不清掉会抢走后续用例的 D1。
+      db.prepare("DELETE FROM cabin_delegations WHERE id = 'd-direct'").run()
+    }
+  })
 })
 
 describe("决策信封 / 句柄 / 回执（design 24 §3 + design 25 §4.1 / §5.1）", () => {
@@ -299,5 +342,79 @@ describe("舱任务的路由（2026-11-16 双会话修订）", () => {
     expect(cards("s-task")).toHaveLength(1)
     expect(cards("s-cabin")).toHaveLength(0)
     expect(signals).toHaveLength(0)
+  })
+})
+
+// 2026-11-24 用户 #2：人在任务 chat 里直接跟执行者交互完，汐音原先完全无感。
+// 回合收尾回传一张只读卡到舱主会话（零 LLM、不唤醒）。
+describe("任务线程回复回传舱主会话", () => {
+  it("人发起的一轮：卡落主会话，带 handle / 回复摘要 / 用户原话", () => {
+    const bridge = getChatEventBridge()
+    bridge.requestThreadReplyMirror({
+      sessionId: "s-task",
+      messageId: "m-reply-1",
+      userText: "把这个接口改成分页",
+      replyText: "已改好：/api/users 支持 page/size 两个参数，默认 20 条；单测与新接口都通过。",
+    })
+    const rows = cards("s-cabin") as Array<{
+      activity?: { title?: string; payload?: { threadReply?: Record<string, unknown> } }
+    }>
+    expect(rows).toHaveLength(1)
+    const tr = rows[0].activity?.payload?.threadReply
+    expect(tr?.subject).toEqual({ kind: "task", id: "t1" })
+    expect(tr?.handle).toBe("#1")
+    expect(tr?.sessionId).toBe("s-task")
+    expect(rows[0].activity?.title).toContain("#1")
+    const row = db.prepare("SELECT content FROM messages WHERE session_id = 's-cabin'").get() as
+      { content: string }
+    expect(row.content).toContain("已改好")
+    expect(row.content).toContain("你：把这个接口改成分页")
+    // 开着的主对话立即刷新（Sse → 主会话自己的 workspace）。
+    expect(emit).toHaveBeenCalledWith('ws-cabin', expect.objectContaining({
+      event: 'session_updated',
+      data: expect.objectContaining({ sessionId: 's-cabin' }),
+    }))
+  })
+
+  it("同一条回复幂等：重复回传不重复落卡", () => {
+    const bridge = getChatEventBridge()
+    const input = {
+      sessionId: "s-task",
+      messageId: "m-reply-2",
+      userText: "再跑一次回归",
+      replyText: "回归已跑：42 个用例全绿，耗时 3 分 12 秒。",
+    }
+    bridge.requestThreadReplyMirror(input)
+    bridge.requestThreadReplyMirror(input)
+    expect(cards("s-cabin")).toHaveLength(1)
+  })
+
+  it("wake 回合（汐音转达 / 恢复）也回传，但系统指令不写成「你说了什么」", () => {
+    const bridge = getChatEventBridge()
+    bridge.requestThreadReplyMirror({
+      sessionId: "s-task",
+      messageId: "m-reply-wake",
+      userText: "",
+      replyText: "已按转达的选择把管理面改成 admin 令牌校验，单测通过，等你验收。",
+    })
+    const row = db.prepare("SELECT content FROM messages WHERE session_id = 's-cabin'").get() as
+      { content: string }
+    expect(row.content).toContain("↳ 已按转达的选择")
+    expect(row.content).not.toContain("你：")
+  })
+
+  it("短应答 / 主会话自身 / 无舱会话都不回传", () => {
+    insertSession("s-free")
+    const bridge = getChatEventBridge()
+    bridge.requestThreadReplyMirror({
+      sessionId: "s-task", messageId: "m-ack", userText: "收到", replyText: "好",
+    })
+    bridge.requestThreadReplyMirror({
+      sessionId: "s-cabin", messageId: "m-main", userText: "在吗", replyText: "有什么需要我处理的吗？这条回复属于主会话自己。",
+    })
+    bridge.requestThreadReplyMirror({
+      sessionId: "s-free", messageId: "m-free", userText: "聊两句", replyText: "这条回复不属于任何舱，不该进舱主会话。",
+    })
+    expect(cards("s-cabin")).toHaveLength(0)
   })
 })

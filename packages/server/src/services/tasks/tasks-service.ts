@@ -54,6 +54,7 @@ import {
   type LlmUsageSummary,
   type ModelUsageBreakdown,
 } from "@octopus/shared"
+import { getCloneDevService } from "./clone-dev-service"
 import {
   TaskDAO,
   AgentSessionDAO,
@@ -91,7 +92,7 @@ import { PLAN_CHANGELOG_HEADING, extractChangelogEntries, stripChangelogSection 
 import type { ProjectRef } from "./task-home-service"
 import type { BatchTreeEntry, HomeTreeEntry } from "./task-home-service"
 // task-phase-redesign (ticket 06): the one-way artifact loop (K9/K10/K16).
-import { seedPhaseToWorkspace, collectFromWorkspace, batchRelPath, resolvePhaseSpecDir, emitPhaseAwaitingReview, isV4TaskSpec } from "./task-artifact-sync"
+import { seedPhaseToWorkspace, collectFromWorkspace, resolvePhaseSpecDir, emitPhaseAwaitingReview, isV4TaskSpec } from "./task-artifact-sync"
 import { specRunbookLevel } from "./runbook-spec"
 // task-phase-redesign (ticket 08): the archiving orchestrator (K11 归并面).
 import { createTaskArchiver, type TaskArchiver, type ArchiveReport } from "./archiving-service"
@@ -536,15 +537,15 @@ const EMPTY_LLM_USAGE: LlmUsageSummary = {
 
 /** Body of POST /api/tasks/:id/acceptance (spec API table). Indices are
  *  1-based, matching TaskPhase.index / executions.phase_index.
- *  ADR-0024 打回单路径：原 next_flow 枚举（"fix"|"rerun"）已干净删除 —— rejected
- *  恒派 built-in/task-fix 修复轮，绑定流再执行不再验收台入口。route 层 schema
- *  以 .strict() 拒收任何残留字段（老客户端得 400 的响亮信号，不是静默换轨）。 */
+ *  打回入口稳定：原 next_flow 枚举（"fix"|"rerun"）已删除；rejected 不再派
+ *  新轮（2026-11-23 #11 起由 doer 在工作区原地修）。route 层 schema 以 .strict()
+ *  拒收任何残留字段（老客户端得 400 的响亮信号，不是静默换轨）。 */
 export interface AcceptanceInput {
   phase_index: number
   round_index: number
   decision: "accepted" | "rejected"
   /** K7: 打回必填反馈文本（route 的 zod 拦空）；accepted 时忽略。
-   *  ADR-0024: 反馈即 task-fix 修复轮的指令（fix-feedback 文件 + input_values.feedback 双通道）。 */
+   *  反馈即 doer 的修复指令（落 fix-feedback-rN.md + 唤醒任务线程）。 */
   feedback?: string
 }
 
@@ -553,7 +554,14 @@ export interface AcceptanceInput {
  *  - "archiving"                last phase accepted — the task is in 归档 (票 08)
  *  - "awaiting_manual_trigger"  accepted with autoAdvance=false — parked at the
  *                               human gate (K6/US11), nothing was started. */
-export type AcceptanceNextAction = "dispatched" | "awaiting_archive" | "archiving" | "awaiting_manual_trigger"
+export type AcceptanceNextAction =
+  | "dispatched"
+  | "awaiting_archive"
+  | "archiving"
+  | "awaiting_manual_trigger"
+  /** 打回（2026-11-23 #11）：不新开轮 —— 反馈交给 task doer 在工作区原地修，
+   *  任务保持待验收，修完由人再验。 */
+  | "fixing"
 
 /** Round identity that {@link TasksService.acceptance} actually dispatched
  *  (present iff next_action === "dispatched"). */
@@ -597,13 +605,6 @@ export interface DeliverTakeoverResult {
     round_index: number
     delivered_at: string
   }
-}
-
-/** POST /:id/fix-round 响应体 —— dispatch 形状与 AcceptanceDispatch 同构
- *  （UI 的「新轮已开跑」深链单源）。 */
-export interface FixRoundResult {
-  task: TaskDetailDTO
-  dispatch: AcceptanceDispatch
 }
 
 export interface CreateTaskInput {
@@ -2260,36 +2261,22 @@ export class TasksService {
   }
 
   /** 计划回写的 actor 归属（票02 AC6 + 本票拍板规则）。优先级：
-   *  ① 活跃 task-fix 执行优先 —— ux_exec_task_active 部分唯一索引保证一条任务至多
-   *    一条在飞实例；该实例 workflow_ref='built-in/task-fix'（ADR-0024 打回恒
-   *    override）即修复轮在作。fixing 域内「对话也开着、修复轮也在跑」的两态并存
-   *    按此归修复轮（写动作发生在修复轮职责内，且不双计）。
-   *  ② 其余状态归 doer 会话 —— tasks.doer_session_id（ADR-0025 任务唯一绑定）且
-   *    chat_sessions 行仍存活（悬空指针不造假）。
-   *  ③ 两者皆无 → 'unattributed'：诚实缺账。/api/tasks 域本就匿名（现状同风险面），
-   *    记录宁缺不伪 —— 这是"不信 body 自报"的另一半：推定不出就不写假名字。 */
+   *  ① 任务主线程 —— tasks.source_chat_session_id（2026-10-28 task-thread 起唯一
+   *    写者）且 chat_sessions 行仍存活（悬空指针不造假）。
+   *  ② 都没有 → 'unattributed'：诚实缺账。/api/tasks 域本就匿名（现状同风险面），
+   *    记录宁缺不伪 —— 这是"不信 body 自报"的另一半：推定不出就不写假名字。
+   *
+   *  2026-11-23 #11：原「活跃 task-fix 执行优先」一支随 task-fix 修复轮一起删除；
+   *  打回后的修复也由任务主线程就地完成，不再存在第二写者。 */
   private resolvePlanActor(row: TaskRow): string {
-    // ① 活跃 task-fix 执行（LIVE_ROUND_STATUSES 词表与轮次 diff 端点同源；不加
-    //    start_commit_id 条件 —— 归属看"谁在作"，与 diff 供货锚无关）。
-    const live = this.db
-      .prepare(
-        `SELECT id, workflow_ref FROM executions
-         WHERE task_id = ? AND (parent_id = '0' OR phase_index IS NOT NULL)
-           AND status IN (${LIVE_ROUND_STATUSES.map(() => "?").join(", ")})
-         ORDER BY created_at DESC, rowid DESC LIMIT 1`,
-      )
-      .get(row.id, ...LIVE_ROUND_STATUSES) as { id: string; workflow_ref: string } | undefined
-    if (live && live.workflow_ref === "built-in/task-fix") {
-      return `task-fix(execution=${live.id})`
-    }
-    // ② 任务主线程（2026-10-28 task-thread 起唯一写者；旧 doer 会话已退役）。
+    // 任务主线程（旧 doer 会话已退役）。
     if (row.source_chat_session_id) {
       const session = this.db
         .prepare("SELECT id FROM sessions WHERE id = ?")
         .get(row.source_chat_session_id) as { id: string } | undefined
       if (session) return `task-thread(session=${row.source_chat_session_id})`
     }
-    // ③ 诚实缺账。
+    // 诚实缺账。
     return "unattributed"
   }
 
@@ -2778,6 +2765,12 @@ export class TasksService {
       case "acceptance_runbook":
       case "slug":
       case "branch":
+      // 分支计划（2026-11-24）：fork 点 / PR 落点。与 slug/branch 同一条
+      // task_spec 合并信道；validator 已过 git ref 形态校验。
+      case "base_branch":
+      case "target_branch":
+      // 多仓分支计划（2026-11-24）：{ 仓名: { base?, target? } } 整表替换。
+      case "branch_plan":
         // Merge into task_spec JSON (all v3 confirmation/decision fields +
         // goal/ac live in task_spec).
         // acceptance_verify: validator returns undefined on null-clear →
@@ -3542,8 +3535,6 @@ export class TasksService {
     roundIdx: number,
     feedback?: string,
     opts?: {
-      workflowRefOverride?: string
-      inputOverride?: Record<string, string>
       prevHandoffPaths?: string[]
     },
   ): Promise<{ executionId: string; workspaceId: string }> {
@@ -3551,8 +3542,6 @@ export class TasksService {
       phaseIndex: phaseIdx,
       roundIndex: roundIdx,
       feedback,
-      workflowRefOverride: opts?.workflowRefOverride,
-      inputOverride: opts?.inputOverride,
       prevHandoffPaths: opts?.prevHandoffPaths,
       triggeredBy: "task-dispatch",
     }
@@ -3579,7 +3568,7 @@ export class TasksService {
    *  by design, but a round gets one human decision (idempotency belt for the
    *  spec-R2 concurrent POST/PUT window).
    *
-   *  Effects (K6/K7), all after the ledger append:
+   *  Effects (K6/K7), after the decision:
    *    accepted ∧ i<n ∧ autoAdvance(默认开) → dispatchPhaseRound(i+1, 1)
    *    accepted ∧ i=n                        → persisted 'ready' + derived
    *                                            awaiting_archive + consent guide
@@ -3587,11 +3576,10 @@ export class TasksService {
    *    accepted ∧ autoAdvance=false          → nothing starts (awaiting_manual_trigger)
    *    rejected                              → `fix-feedback-r{N}.md` written into
    *                                            the phase's batch dir (home) +
-   *                                            dispatchPhaseRound(i, R+1) where
-   *                                            R+1 = 该 phase 账本 rejected 行数 + 1,
-   *                                            恒以 built-in/task-fix override 派
-   *                                            修复轮（ADR-0024 打回单路径；反馈
-   *                                            即修复指令，绑定流不重跑）
+   *                                            requestFixGuide 唤醒任务 doer 在工作区
+   *                                            原地修（2026-11-23 #11：不再开
+   *                                            task-fix 修复轮、不写验收账本 ——
+   *                                            任务保持待验收，修完由人再验）
    *
    *  Persisted-status normalization (票03 rewrite): the task-lifecycle job leaves a v4
    *  card at 'running' when a round ends (K3 — 待验收 is derived, not stored), so after
@@ -3664,42 +3652,34 @@ export class TasksService {
     const nextPhaseIndex = isLast ? null : view.phaseViews[pos + 1].index
     const acceptanceId = randomUUID()
     const feedback = (input.feedback ?? "").trim()
-    this.acceptanceDAO.insert({
-      id: acceptanceId,
-      task_id: taskId,
-      phase_index: pv.index,
-      round_index: input.round_index,
-      decision: input.decision,
-      feedback: input.decision === "rejected" ? feedback : null,
-    })
-
     let dispatch: AcceptanceDispatch | undefined
     let next_action: AcceptanceNextAction
 
     if (input.decision === "rejected") {
-      // 轮号规则（票 07）: 同一 phase 的 rejected 行数 + 1 —— 打完一轮长一轮。
-      const rejectedCount = this.acceptanceDAO
-        .listByPhase(taskId, pv.index)
-        .filter((r) => r.decision === "rejected").length
-      // ADR-0024 打回单路径：rejected 恒派 built-in/task-fix 修复轮（反馈即修复
-      // 指令）。绑定流重跑（原 ADR-0018 rerun）已删除 —— 规格级再执行只剩
-      // authoring 侧改 spec 重入队。override 只进本轮 launch step（K16：spec
-      // phases[] 绑定冻结不动，下一段绑定流再执行仍回到原 workflowRef）。
-      // K7 反馈产物化 + 合成输入的单源在 dispatchFixRound（票08 与分支③ 共用）；
-      // 文件名号 = 被打回的那一轮（fix-feedback-r{N}.md 驱动 round N+1），
-      // 与票 05 已并面的行为逐字一致。
-      const nextRound = rejectedCount + 1
-      const d = await this.dispatchFixRound(taskId, pv, nextRound, feedback, input.round_index)
-      dispatch = {
-        execution_id: d.executionId,
-        workspace_id: d.workspaceId,
-        phase_index: pv.index,
-        round_index: nextRound,
+      // 2026-11-23 #11：打回不再开 task-fix 修复轮。反馈产物化后交给 task doer
+      // 在工作区原地修（自己规划、改代码、跑验证），任务保持待验收 —— 不落验收
+      // 账本（该轮的唯一终局仍是人后来的「通过」；连续打回只是多次修复请求）。
+      this.writeFixFeedbackArtifact(taskId, pv.index, pv.name, pv.slug, input.round_index, feedback)
+      next_action = "fixing"
+      this.emitPhaseStatus(taskId, pv.index, "awaiting_review", input.round_index)
+      try {
+        getChatEventBridge().requestFixGuide(taskId, {
+          phaseIndex: pv.index,
+          roundIndex: input.round_index,
+          feedback,
+        })
+      } catch {
+        /* observability only — never block acceptance */
       }
-      next_action = "dispatched"
-      this.setPersistedTaskStatus(taskId, "running", { force: true })
-      this.emitPhaseStatus(taskId, pv.index, "running", nextRound)
     } else {
+      this.acceptanceDAO.insert({
+        id: acceptanceId,
+        task_id: taskId,
+        phase_index: pv.index,
+        round_index: input.round_index,
+        decision: "accepted",
+        feedback: null,
+      })
       // accepted — 人的放行先落帧（UI 立刻把该 phase 变绿）。
       this.emitPhaseStatus(taskId, pv.index, "accepted", input.round_index)
       if (isLast) {
@@ -3741,7 +3721,13 @@ export class TasksService {
       }
     }
 
-    return { task: this.getTask(taskId), next_action, ...(dispatch ? { dispatch } : {}), acceptance_id: acceptanceId }
+    // accepted 才写账本行；打回（fixing）没有账本行 → acceptance_id 为空串。
+    return {
+      task: this.getTask(taskId),
+      next_action,
+      ...(dispatch ? { dispatch } : {}),
+      acceptance_id: input.decision === "rejected" ? "" : acceptanceId,
+    }
   }
 
   /** Flip the persisted status into 'archiving' and hand off to 票 08.
@@ -4177,6 +4163,20 @@ export class TasksService {
   private endArchiving(taskId: string): void {
     const row = this.taskDAO.getById(taskId)
     if (!row || row.status !== "archiving") return
+    // clone-dev：合入即安装。装包失败不标 done —— 停在 archiving 让人重试。
+    const spec = parseJSON<{ kind?: string }>(row.task_spec, {})
+    if (spec.kind === "clone-dev") {
+      try {
+        getCloneDevService()?.installKit(taskId)
+      } catch (err) {
+        console.error(`[TasksService] clone-dev install failed for ${taskId}:`, err)
+        this.sse.emit("taskpool", {
+          event: TASK_STATUS_EVENT,
+          data: { task_id: taskId, status: "archiving", error: err instanceof Error ? err.message : String(err) },
+        })
+        return
+      }
+    }
     const nowIso = new Date().toISOString()
     this.taskDAO
       .getDb()
@@ -4582,17 +4582,15 @@ export class TasksService {
     return this.attachInstances([row])[0] ?? toDTO(row)
   }
 
-  // ── 人工接管 / 改派修复轮 (taskboard-modal-v2 票08, ADR-0025) ──────────
+  // ── 人工接管 (taskboard-modal-v2 票08, ADR-0025) ─────────────────────
 
   /**
-   * 共用停流件（票10 review-5，票08 的 ②/③ 两支原为逐字重复）：cancellable
-   * 判定 → 执行注册表 → cancel → 失败包 409（原文透出，绝不先写状态再补刀）→
-   * beforeEmit（被停轮的留痕写点，如 takeover_at —— 必须赶在转场事件之前，
-   * 否则订阅方会先看见 'cancelled' 而派生瞬时误读 awaiting_review）→
-   * emitRunTransition。文案参数保留两处历史原句：
-   *   - verb 进 noLiveRoundMessage（「停流接管」/「改派 task-fix」）；
-   *   - registryVerb 进注册表缺失句（「无法停流接管」/「无法改派」）；
-   *   - cancelFailLabel 进停流失败包（「接管未产生」/「未派发修复轮」）。
+   * 停流件：cancellable 判定 → 执行注册表 → cancel → 失败包 409（原文透出，
+   * 绝不先写状态再补刀）→ beforeEmit（被停轮的留痕写点，如 takeover_at ——
+   * 必须赶在转场事件之前，否则订阅方会先看见 'cancelled' 而派生瞬时误读
+   * awaiting_review）→ emitRunTransition。
+   * 文案参数：verb 进 noLiveRoundMessage（「停流接管」）、registryVerb 进注册表
+   * 缺失句（「无法停流接管」）、cancelFailLabel 进停流失败包（「接管未产生」）。
    * 'pending' 排队行与终态行都走 noLiveRoundMessage 的分状态文案。
    */
   private async stopLiveRound(
@@ -4626,7 +4624,7 @@ export class TasksService {
    *  ADR-0025 的三条后果在这一个动作里落地：
    *   1. 直接 abort 绑定执行（ExecutionLifecycle.cancel 既有路径 —— 节点终止、
    *      行落 'cancelled'、**不回滚工作区**，⏹ 现场原样保留；不留 paused 半程，
-   *      反悔场景由「改派 task-fix / 打回修复轮」覆盖）。
+   *      反悔场景由「打回 · doer 原地修」覆盖）。
    *   2. 来源标记落被停轮的 execution 行（takeover_at；最小落点 —— 不新建
    *      TaskStatus、不动信封 K16、不新增事件表）。派生规则随即认 phase
    *      'takeover'：任务态仍 running(takeover)，Gate 不开。
@@ -4717,97 +4715,6 @@ export class TasksService {
       task: this.getTask(id),
       delivered: { execution_id: execId, phase_index: pv.index, round_index: roundIndex, delivered_at: now },
     }
-  }
-
-  /** POST /api/tasks/:id/fix-round — 分支③「改派通用修复流 task-fix」（运行中
-   *  决策，不是验收决策）。
-   *
-   *  与 05 的 rejected 分支共用 dispatchFixRound 私有路由（恒 task-fix +
-   *  fix-feedback 产物化 + 合成输入，ADR-0024 打回单路径的机制本体），差别
-   *  只在授权来源：这里是「✋ 有问题」框里的改派指令，**不写账本决策行** ——
-   *  task_phase_acceptances 只收通过/打回，③ 不冒充验收决定。
-   *
-   *  顺序 = abort（有 live 轮才补刀；接管中改派时轮已停，跳过）→ 反馈落批次
-   *  目录（fix-feedback-r{N+1}.md，N=当前轮）→ 恒 task-fix 派新轮 N+1。接管
-   *  轮的 takeover 标记原样留在被停的那一轮（票09 看得见「这轮被人接管过」）。
-   *  快改 commit 不丢：K4 同 ws 同执行分支，task-fix 就地续写。 */
-  async fixRound(id: string, instruction: string): Promise<FixRoundResult> {
-    const row = this.taskDAO.getById(id)
-    if (!row) throw new TaskNotFoundError()
-    if (row.status !== "running") {
-      throw new TaskStatusConflictError(
-        `任务当前不在执行中（'${row.status}'）—— 修复轮改派只适用于进行中的 Round`,
-      )
-    }
-    const view = this.deriveView(row)
-    const pv = view.phaseViews.find(
-      (p) => p.status === "running" || p.status === "paused" || p.status === "takeover",
-    )
-    if (!pv) {
-      if (view.phaseViews.some((p) => p.status === "awaiting_review")) {
-        throw new TaskStatusConflictError(
-          "当前 phase 已到待验收 —— 派修复轮请走「✗ 打回 · 写反馈」（验收决策通道，ADR-0024）",
-        )
-      }
-      throw new TaskStatusConflictError("任务没有进行中的 Round —— 无轮可改派")
-    }
-    const currentRound = pv.currentRound ?? 1
-    const nextRound = currentRound + 1
-
-    // abort 当前轮 —— 仅当还有活轮可停（接管中改派 = 轮已 cancelled，不再补刀）。
-    const inst = this.liveInstance(id)
-    if (inst) {
-      await this.stopLiveRound(id, inst, {
-        verb: "改派 task-fix",
-        registryVerb: "改派",
-        cancelFailLabel: "未派发修复轮",
-      })
-    }
-
-    const d = await this.dispatchFixRound(id, pv, nextRound, instruction)
-    this.setPersistedTaskStatus(id, "running", { force: true })
-    this.emitPhaseStatus(id, pv.index, "running", nextRound)
-    return {
-      task: this.getTask(id),
-      dispatch: {
-        execution_id: d.executionId,
-        workspace_id: d.workspaceId,
-        phase_index: pv.index,
-        round_index: nextRound,
-      },
-    }
-  }
-
-  /** 修复轮路由的共用私有件（票08 从 05 的 rejected 分支抽出 —— 一条机制单源）：
-   *  反馈产物化进 phase 批次目录 + 恒 built-in/task-fix override 派 nextRound。
-   *  feedback_path 的文件号 = fileRound（调用方决定语义：05 用被打回轮号，
-   *  ③ 用新轮号 r{N+1}）。K16 不变：override 只进本轮 launch 的 workflow_chain，
-   *  信封 phases[] 冻结。 */
-  private async dispatchFixRound(
-    taskId: string,
-    pv: { index: number; name: string; slug: string },
-    nextRound: number,
-    instruction: string,
-    fileRound = nextRound,
-  ): Promise<{ executionId: string; workspaceId: string }> {
-    this.writeFixFeedbackArtifact(taskId, pv.index, pv.name, pv.slug, fileRound, instruction)
-    const fixHomeDir = this.taskHomeService.homePath(taskId)
-    const fixBatchDir = this.phaseSpecDir(taskId, pv.index) ?? ""
-    const fixBatchRel = fixBatchDir
-      ? (() => {
-          const rel = batchRelPath(fixHomeDir, fixBatchDir)
-          return rel ? rel.split(path.sep).join("/") : fixBatchDir
-        })()
-      : ""
-    const routing = {
-      workflowRefOverride: "built-in/task-fix",
-      inputOverride: {
-        phase_spec_dir: fixBatchRel,
-        feedback_path: path.posix.join(fixBatchRel, `fix-feedback-r${fileRound}.md`),
-        task_artifacts_dir: this.taskHomeService.artifactsDir(taskId),
-      },
-    }
-    return this.dispatchPhaseRound(taskId, pv.index, nextRound, instruction, routing)
   }
 
   /** 交付现场的逐仓 HEAD 快照（end_commit_id 的接管件写者）：只认本轮 start 锚

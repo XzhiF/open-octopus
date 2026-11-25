@@ -53,7 +53,6 @@ const TASK_TOOL_NAMES = [
   "run_acceptance_probe",
   "start_acceptance_preview",
   "stop_acceptance_preview",
-  "propose_acceptance_escalation",
   "get_archive_state",
   "start_archive",
   "record_reflection_decision",
@@ -68,6 +67,10 @@ const TASK_TOOL_NAMES = [
   "complete_workflow",
   "finish_workflow_dev",
   "add_workspace_projects",
+  "clone_dev_get_state",
+  "clone_dev_set_meta",
+  "clone_dev_verify",
+  "clone_dev_finish",
 ] as const
 
 const MEMORY_TOOL_NAMES = ["record_daily", "remember"] as const
@@ -180,7 +183,6 @@ const TASK_TOOL_DESC: Record<string, string> = {
   run_acceptance_probe: "仅按用户点名重跑某条机器证据；不自动、不批量。",
   start_acceptance_preview: "按任务配置的 runbook 起验收预览。",
   stop_acceptance_preview: "停止验收预览并执行 teardown。",
-  propose_acceptance_escalation: "超出小修边界时请人确认升级 task-fix 大修复。",
   get_archive_state: "读取归档只读读模型：git 同步、失败、术语冲突、反思决策、知识包编译状态。",
   start_archive: "人明确说「归档」后，从待归档启动 git 同步 / ADR·术语合并 / commit+push+PR / 知识沉淀。",
   record_reflection_decision: "人明确说落/跳过之后，记录一条归档反思决策并执行入队。",
@@ -195,4 +197,8 @@ const TASK_TOOL_DESC: Record<string, string> = {
   complete_workflow: "（工作流开发任务）校验+仿真通过后完成单个工作流，并记录 release/snapshot 选择。",
   finish_workflow_dev: "（工作流开发任务）全部工作流完成后结束开发，任务停在待归档。",
   add_workspace_projects: "（工作流开发任务）把项目仓库引入当前工作空间，供工作流调试运行。",
+  clone_dev_get_state: "（分身开发任务）读取分身开发状态：代号、阶段、工具清单与三条验证。",
+  clone_dev_set_meta: "（分身开发任务）登记分身代号 / 模式 / 工具清单；代号写入后锁定。",
+  clone_dev_verify: "（分身开发任务）跑三条硬验证：工具可用、越权被拦、身份可用。",
+  clone_dev_finish: "（分身开发任务）三条全绿后结束开发，任务停在待合入。",
 }

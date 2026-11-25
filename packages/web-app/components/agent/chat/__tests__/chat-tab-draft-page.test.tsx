@@ -1,4 +1,4 @@
-// 新建作战舱右页（CabinCreateHero）接管对话区时，左栏导航必须先收起它。
+﻿// 新建作战舱右页（CabinCreateHero）接管对话区时，左栏导航必须先收起它。
 //
 // 2026-11-16 用户实测：进「新建作战舱」页后，点左栏会话 / 任务 / 「新建对话」
 // 都没反应 —— 右页把 ChatPane 整块卸掉了，指令发给不存在的栏就被吞掉。
@@ -24,6 +24,7 @@ vi.mock('@/lib/agent/api', () => ({
   getSessionSlashCommands: vi.fn().mockResolvedValue({ commands: [] }),
   chatStream: vi.fn(),
   stopChat: vi.fn().mockResolvedValue({ success: true }),
+  injectChat: vi.fn().mockResolvedValue({ injected: true }),
   createCloneSession: vi.fn(),
   cloneChatStream: vi.fn(),
   stopCloneChat: vi.fn(),

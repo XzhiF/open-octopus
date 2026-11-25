@@ -16,6 +16,7 @@ import {
   Search,
   SquarePen,
   Trash2,
+  UserRound,
   Workflow,
   X,
 } from 'lucide-react'
@@ -43,7 +44,7 @@ interface ChatSidebarProps {
   onSelectTask: (task: TaskView) => void
   /** Task session being authored, before its draft row exists. `kind` follows
    *  task_spec.kind so the row can show the workflow-dev marker (2026-11-06). */
-  pendingTask?: { title: string; kind?: 'workflow-dev' } | null
+  pendingTask?: { title: string; kind?: 'workflow-dev' | 'clone-dev' } | null
   activePendingTask?: boolean
   sessions: AgentSession[]
   sessionsLoading: boolean
@@ -56,6 +57,8 @@ interface ChatSidebarProps {
   /** workflow-dev task kind (2026-11-06): author a workflow YAML. Optional so
    *  read-only/test renderings keep working without the entry. */
   onCreateWorkflowTask?: () => void
+  /** clone-dev task kind (2026-11-25): create/maintain a clone via chat. */
+  onCreateCloneTask?: () => void
   onRenameSession: (id: string, title: string) => void
   onDeleteSession: (id: string) => void
   /** Task row management (chat sidebar mirrors the board's rename/delete). */
@@ -229,15 +232,19 @@ function OpenInOther({
   )
 }
 
-/** 任务类型（2026-11-06）：缺省 = 开发任务；workflow-dev = 工作流开发。 */
-type TaskKind = 'workflow-dev' | 'dev'
+/** 任务类型（2026-11-06 / 2026-11-25）：缺省 = 开发任务；workflow-dev = 工作流开发；clone-dev = 分身开发。 */
+type TaskKind = 'workflow-dev' | 'clone-dev' | 'dev'
 
 function taskKindOf(task: TaskView): TaskKind {
-  return task.task_spec?.kind === 'workflow-dev' ? 'workflow-dev' : 'dev'
+  const kind = task.task_spec?.kind
+  if (kind === 'workflow-dev') return 'workflow-dev'
+  if (kind === 'clone-dev') return 'clone-dev'
+  return 'dev'
 }
 
 const TASK_KIND_LABEL: Record<TaskKind, string> = {
   'workflow-dev': '工作流开发任务',
+  'clone-dev': '分身任务',
   dev: '开发任务',
 }
 
@@ -245,14 +252,18 @@ const TASK_KIND_LABEL: Record<TaskKind, string> = {
  *  工作流开发用 --pop-purple（与作业坞「工作流」入口同色），开发任务用弱化的
  *  --pop-dim，避免整列都是高饱和。 */
 function TaskKindIcon({ kind }: { kind: TaskKind }) {
-  const Icon = kind === 'workflow-dev' ? Workflow : ListTodo
+  const Icon = kind === 'workflow-dev' ? Workflow : kind === 'clone-dev' ? UserRound : ListTodo
   return (
     <span
       aria-hidden
       data-task-kind-icon={kind}
       className={cn(
         'flex size-4 shrink-0 items-center justify-center',
-        kind === 'workflow-dev' ? 'text-pop-purple' : 'text-pop-dim/70',
+        kind === 'workflow-dev'
+          ? 'text-pop-purple'
+          : kind === 'clone-dev'
+            ? 'text-pop-amber'
+            : 'text-pop-dim/70',
       )}
     >
       <Icon className="size-[13px]" strokeWidth={1.9} />
@@ -277,6 +288,7 @@ export function ChatSidebar({
   onCreateSession,
   onCreateTask,
   onCreateWorkflowTask,
+  onCreateCloneTask,
   onRenameSession,
   onDeleteSession,
   onRenameTask,
@@ -378,7 +390,8 @@ export function ChatSidebar({
     ? scopedTasks.filter((task) => task.name.toLowerCase().includes(needle))
     : scopedTasks
   const pendingMatches = !!pendingTask && (!needle || pendingTask.title.toLowerCase().includes(needle))
-  const pendingKind: TaskKind = pendingTask?.kind === 'workflow-dev' ? 'workflow-dev' : 'dev'
+  const pendingKind: TaskKind =
+    pendingTask?.kind === 'workflow-dev' ? 'workflow-dev' : pendingTask?.kind === 'clone-dev' ? 'clone-dev' : 'dev'
   const filteredSessions = needle
     ? scopedSessions.filter((session) => session.title.toLowerCase().includes(needle))
     : scopedSessions
@@ -529,6 +542,15 @@ export function ChatSidebar({
                 <span className="flex flex-col">
                   <span className="text-[12.5px] text-pop-ink">工作流开发</span>
                   <span className="text-[10.5px] text-pop-dim">从工作流开发者开始，产出可运行的 YAML</span>
+                </span>
+              </DropdownMenuItem>
+            )}
+            {onCreateCloneTask && (
+              <DropdownMenuItem onClick={onCreateCloneTask} className="gap-2.5 py-2">
+                <UserRound className="size-3.5 shrink-0 text-pop-dim" strokeWidth={1.8} />
+                <span className="flex flex-col">
+                  <span className="text-[12.5px] text-pop-ink">新建分身任务</span>
+                  <span className="text-[10.5px] text-pop-dim">从铸分身者开始，对话产出可用的分身</span>
                 </span>
               </DropdownMenuItem>
             )}

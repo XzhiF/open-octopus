@@ -13,6 +13,7 @@ import { useBillingCurrency } from '@/lib/billing-currency'
 import { formatCost } from '@/lib/format'
 import { ChangesWindow } from '@/components/chat-workbench/changes-window'
 import { AcceptanceWindow } from '@/components/chat-workbench/acceptance-window'
+import { CockpitArchivePanel } from './CockpitArchivePanel'
 import { CabinRunSummary, type CabinRunTarget } from '@/components/cabin/modules/CabinRunSummary'
 import { openTaskInChat, taskDisplayStatus } from '@/components/cabin/modules/ui'
 import { isEndedJob, jobStatusLabel } from '@/components/cabin/job-status'
@@ -21,7 +22,6 @@ import type { CockpitTab } from '../state/cockpit-state'
 import { CockpitJobHeader, CockpitJobTabs } from './CockpitJobHeader'
 import { CockpitJobFiles } from './CockpitJobFiles'
 import { CockpitJobDebug } from './CockpitJobDebug'
-import { CockpitJobDialog } from './CockpitJobDialog'
 import { CockpitJobProject } from './CockpitJobProject'
 import { projectNameFromKey } from '../projects/project-model'
 
@@ -37,6 +37,8 @@ export interface CockpitTaskFaceProps {
   onClose: () => void
   onMutated?: () => void
   onAcceptanceMutated?(): void
+  /** v22 #5：打开这条任务的独立 chat 窗（有 doer 会话才传）。 */
+  onOpenChat?: (() => void) | null
 }
 
 export function CockpitTaskFace({
@@ -50,6 +52,7 @@ export function CockpitTaskFace({
   onClose,
   onMutated,
   onAcceptanceMutated,
+  onOpenChat,
 }: CockpitTaskFaceProps) {
   const { rows } = useCockpitFleet()
   const found = rows.find((entry) => entry.kind === 'task' && entry.task.id === taskId)
@@ -117,10 +120,6 @@ export function CockpitTaskFace({
 
   const panes = (
     <>
-      {tab === 'dialog' && (
-        <CockpitJobDialog sessionId={view?.source_chat_session_id ?? null} cabinId={cabinId} taskId={taskId} />
-      )}
-
       {tab === 'relay' && (
         <div data-testid="cockpit-face-task-relay">
           <div className="ck12-face-empty">
@@ -185,6 +184,16 @@ export function CockpitTaskFace({
         </div>
       )}
 
+      {tab === 'archive' && (
+        <div data-testid="cockpit-face-task-archive">
+          {view ? (
+            <CockpitArchivePanel task={view} onOpenAcceptance={() => onTabChange('accept')} />
+          ) : (
+            <div className="ck12-face-empty">任务还没载入 · 暂时没有归档明细。</div>
+          )}
+        </div>
+      )}
+
       {tab === 'files' && (
         <div data-testid="cockpit-face-task-files">
           <CockpitJobFiles taskId={taskId} />
@@ -201,6 +210,8 @@ export function CockpitTaskFace({
             cabinId={cabinId}
             projects={taskProjects}
             branch={detail?.task_spec?.branch ?? null}
+            baseBranch={detail?.task_spec?.base_branch ?? null}
+            targetBranch={detail?.task_spec?.target_branch ?? null}
           />
         </div>
       )}
@@ -223,6 +234,8 @@ export function CockpitTaskFace({
         startedAt={startedAt}
         endedAt={endedAt}
         costLabel={costLabel}
+        onOpenChat={onOpenChat ?? null}
+        onOpenArchive={() => onTabChange('archive')}
       />
       <div className="ck12-face-body" data-testid="cockpit-face-task">
         {view ? (
