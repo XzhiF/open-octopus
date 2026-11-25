@@ -17,6 +17,10 @@ const kits = fs
   .filter((d) => fs.existsSync(path.join(kitsDir, d.name, "index.ts")))
 if (kits.length === 0) process.exit(0)
 
-const tsc = path.join(root, "node_modules", ".bin", "tsc")
-execFileSync(tsc, ["-p", path.join(root, "tsconfig.clone-kits.json")], { stdio: "inherit", cwd: root })
+// Windows 上 node_modules/.bin/tsc 是 sh 脚本，spawn 不能直接执行（ENOENT）；
+// 走 node + typescript/bin/tsc 才是全平台一致的调用方式。
+const tsc = path.join(root, "node_modules", "typescript", "bin", "tsc")
+execFileSync(process.execPath, [tsc, "-p", path.join(root, "tsconfig.clone-kits.json")], {
+  stdio: "inherit", cwd: root,
+})
 console.log(`[clone-kits] built ${kits.map((k) => k.name).join(", ")}`)
