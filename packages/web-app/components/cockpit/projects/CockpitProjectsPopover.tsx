@@ -84,7 +84,6 @@ export function CockpitProjectsPopover({
         <div className="ck12-pjpop-h">
           <span className="ck12-pjpop-k">舱籍 · 关联项目</span>
           <span className="ck12-pjpop-sub">{cabinName} · {count} 项目</span>
-          <span className="ck12-pjpop-ln" aria-hidden="true" />
         </div>
 
         {error && (
@@ -110,7 +109,7 @@ export function CockpitProjectsPopover({
             )}
             {org.map((p) => <ProjectRow key={p.key} cabinId={cabinId} project={p} onOpen={openProject} />)}
             {local.length > 0 && (
-              <div className="ck12-pjsrc">本地 / 外部 · 目录登记 <b>{local.length}</b></div>
+              <div className="ck12-pjsrc">本地 Git 仓库 <b>{local.length}</b></div>
             )}
             {local.map((p) => <ProjectRow key={p.key} cabinId={cabinId} project={p} onOpen={openProject} />)}
           </div>
@@ -119,7 +118,9 @@ export function CockpitProjectsPopover({
         {count > 0 && (
           <div className="ck12-pjpop-foot">
             <button type="button" className="ck12-pjpop-btn" onClick={onBind}>＋ 绑定项目</button>
-            <button type="button" className="ck12-pjpop-btn is-go" onClick={openRoster}>看全 →</button>
+            <span>ORG 注册 / 本地目录</span>
+            <span className="ck12-pjpop-sp" />
+            <button type="button" className="ck12-pjpop-btn is-go" onClick={openRoster}>舱籍总览 →</button>
           </div>
         )}
       </PopoverContent>
@@ -146,24 +147,24 @@ function ProjectRow({
   return (
     <button
       type="button"
-      className="ck12-pjrow"
+      className="ck12-pjx"
       data-proj={project.key}
       data-source={project.source}
       onClick={() => onOpen(project.key)}
       title={g ? `${g.branch} · ${g.commit}` : project.main_path ?? undefined}
     >
-      <span className="ck12-pjdot" aria-hidden="true" />
-      <span className="ck12-pjrow-main">
-        <span className="ck12-pjrow-t">
+      <span className="ck12-pjx-dot" aria-hidden="true" />
+      <span className="ck12-pjx-main">
+        <span className="ck12-pjx-t">
           <b>{project.name}</b>
-          <span className="ck12-pjsrc-tag" data-source={project.source}>
-            {project.source === 'org' ? 'ORG' : project.external ? '外部' : '本地'}
+          <span className="ck12-pjx-tag" data-source={project.source}>
+            {project.source === 'org' ? 'ORG' : project.external ? '外部' : 'LOCAL'}
           </span>
-          <span className="ck12-pjrow-where">{where}</span>
+          <span className="ck12-pjx-where">{where}</span>
         </span>
         {g ? (
           <>
-            <span className="ck12-pjrow-git">
+            <span className="ck12-pjx-git">
               <span className="br" title={g.branch}>⎇ {g.branch}</span>
               <span className="head">{g.commit}</span>
               <span className="at">{formatDateTime(g.at)}</span>
@@ -171,21 +172,21 @@ function ProjectRow({
                 落点 {project.mainline_branch ?? '默认'}
               </span>
             </span>
-            <span className="ck12-pjrow-msg">
+            <span className="ck12-pjx-msg">
               {g.msg || '（无提交说明）'}
               {g.dirty && <em> · dirty</em>}
             </span>
           </>
         ) : (
-          <span className="ck12-pjrow-miss">未检出 · 主仓路径不可达</span>
+          <span className="ck12-pjx-miss">未检出 · 主仓路径不可达</span>
         )}
-        <span className="ck12-pjrow-facts">
+        <span className="ck12-pjx-facts">
           <span>作战 <b>{stats.jobs}</b></span>
           <span>在跑 <b>{stats.running}</b></span>
           <span>工作树 <b>{stats.worktrees}</b></span>
         </span>
       </span>
-      <span className="ck12-pjrow-go" aria-hidden="true">项目面 →</span>
+      <span className="ck12-pjx-go" aria-hidden="true">项目面 →</span>
     </button>
   )
 }

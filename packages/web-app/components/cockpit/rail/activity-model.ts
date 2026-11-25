@@ -78,21 +78,39 @@ export function activityRawId(item: ActivityItem): string {
   return item.kind === 'subagent' ? item.run.id : item.task.id
 }
 
+/**
+ * 后台化的子代理在 SDK 里有两份身份：subagent_runs（子代理）与 background_tasks
+ * （`task_type: 'local_agent'`，同一个 task_id）。2026-11-25 用户：两边并排会
+ * 重复显示同一次派工 —— 是子代理就只按子代理显示，后台作业不再重复列一遍。
+ */
+function isSubagentBackground(
+  taskId: string,
+  taskType: string | null | undefined,
+  subagentIds: ReadonlySet<string>,
+): boolean {
+  return taskType === 'local_agent' || subagentIds.has(taskId)
+}
+
 export function activityItems(
   runs: readonly SubagentRunSummary[],
   backgrounds: readonly BackgroundTaskInfo[],
   records: readonly BackgroundRunInfo[] = [],
 ): ActivityItem[] {
+  const subagentIds = new Set(runs.map((run) => run.id))
+  const bgTasks = backgrounds.filter(
+    (task) => !isSubagentBackground(task.id, task.taskType, subagentIds),
+  )
   const byTask = new Map(records.map((row) => [row.task_id, row]))
-  const live = backgrounds.map<ActivityItem>((task) => ({
+  const live = bgTasks.map<ActivityItem>((task) => ({
     kind: 'background',
     id: `background:${task.id}`,
     task,
     ...(byTask.get(task.id) ? { record: byTask.get(task.id) } : {}),
   }))
   // 已结束留档：不在电平里的行（电平是权威的「还在跑」）。
-  const liveIds = new Set(backgrounds.map((task) => task.id))
+  const liveIds = new Set(bgTasks.map((task) => task.id))
   const ended = records
+    .filter((row) => !isSubagentBackground(row.task_id, row.task_type, subagentIds))
     .filter((row) => row.status !== 'running' && !liveIds.has(row.task_id))
     .sort((a, b) => endedAtOfRun(b) - endedAtOfRun(a))
     .slice(0, BACKGROUND_ENDED_LIMIT)
