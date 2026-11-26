@@ -33,6 +33,7 @@ import type { RunTarget, SubagentTarget, TaskModule, TaskWindowMap, YamlTarget }
 import { useTaskModuleSurface } from '@/lib/task-module-surface'
 import { TaskProjectChip } from '@/components/chat-workbench/task-project-chip'
 import { ChatMediaProvider } from './chat-images'
+import { ChatDocWindow } from './chat-doc-window'
 import { WorkspaceExplorerDock, type CabinDockModule } from '@/components/workspace/workspace-explorer-dock'
 import { useActivitySnapshot } from '@/components/chat-workbench/inspector-activity'
 import { WorkflowWindow } from '@/components/chat-workbench/workflow-window'
@@ -1751,6 +1752,10 @@ export function ChatPane({
           </ChatMediaProvider>
         )}
       </div>
+
+      {/* 2026-11-26 用户：桌面 / 经典舱的文档 chip 点开 → 会话级只读窗。
+          全舱已有 CockpitDocWindow（舱级白名单），这里只补非全舱表面。 */}
+      {composerVariant !== 'cockpit' && <ChatDocWindow sessionId={sessionId} />}
 
       {/* One main chat for every task state. Task modules float over the whole
           chat region (portaled to ChatTab's region) so split-mode windows can

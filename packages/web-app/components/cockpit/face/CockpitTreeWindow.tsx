@@ -33,7 +33,7 @@ import { ancestorsOf, buildTree, TreeRows } from './CockpitJobFiles'
 import { CockpitFaceHead } from './CockpitFaceHead'
 import { DossierWindowContext } from './dossier-window'
 import type { CockpitTreeScope } from './tree-window'
-import { MarkdownView } from './MarkdownView'
+import { MarkdownView } from '@/components/ui/markdown-view'
 import { useTreeScan } from './use-tree-scan'
 
 const TREE_LAYER_ID = 'cockpit-tree-win'

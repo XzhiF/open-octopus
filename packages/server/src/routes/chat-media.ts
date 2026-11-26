@@ -1,10 +1,12 @@
 // packages/server/src/routes/chat-media.ts
 //
-// 对话里的图片字节流（2026-11-26 用户 · 无工具版缩略图）。
-// <img src> 带不了 Authorization，所以不能挂在 /api/agent 的鉴权闸后面；
-// 与舱文档窗（/api/cabins/:id/doc-raw）同一口径：只读、白名单、现读不缓存。
+// 对话里的图片缩略图与文档查阅（2026-11-26 用户 · 无工具版）：
+//   · GET /:sessionId/image —— <img src> 直连的图片字节（带不了 Authorization，
+//     所以独立挂在 /api/agent 的鉴权闸外；与舱文档窗同一口径：只读、白名单、现读不缓存）。
+//   · GET /:sessionId/doc   —— 桌面 / 经典舱聊天里的文档 chip 点开（文本回内容、媒体回 kind）。
+//   · GET /:sessionId/raw   —— 媒体字节流（图片 / 视频 / 音频，支持 Range）。
 //
-// 白名单按「会话」解析：cwd / 绑定的工作区 / 舱目录 + 本舱任务工作区 /
+// 白名单按「会话」解析：cwd / 绑定的工作区 / 舱目录 + 本舱项目与任务工作区 /
 // ~/.octopus/chat-media/<session>（约定给生成图用的落点）。
 
 import { Hono } from "hono"
@@ -14,6 +16,8 @@ import os from "os"
 import path from "path"
 import type { AgentSessionDAO } from "../db/dao"
 import type { SessionRow } from "../db/types"
+import { readCabinConfig } from "../services/cabin/cabin-repos"
+import { readDoc, readDocRaw, resolveDocPath, withinDocRoot, DocAccessError } from "../services/doc-file"
 
 const IMAGE_MIME: Record<string, string> = {
   ".png": "image/png",
@@ -31,14 +35,6 @@ const MAX_BYTES = 8 * 1024 * 1024
 
 function expandHome(value: string): string {
   return value.replace(/^~(?=$|[\\/])/, os.homedir())
-}
-
-/** Windows 盘符大小写不敏感；POSIX 保持原样。 */
-function within(target: string, root: string): boolean {
-  const fold = (v: string) => (process.platform === "win32" ? v.toLowerCase() : v)
-  const t = fold(target)
-  const r = fold(path.resolve(root))
-  return t === r || t.startsWith(r.endsWith(path.sep) ? r : r + path.sep)
 }
 
 /** 会话可见的媒体根（导出给单测钉白名单口径）。 */
@@ -68,6 +64,18 @@ export function chatMediaRoots(
       .prepare("SELECT path FROM cabins WHERE id = ? AND deleted_at IS NULL")
       .get(row.cabin_id) as { path?: string } | undefined
     push(cabin?.path)
+
+    // 2026-11-26：与舱文档窗同口径 —— 项目检出 / 外部项目 / worktree 里的产物也能点开。
+    if (cabin?.path) {
+      try {
+        for (const repo of readCabinConfig(cabin.path).repos) {
+          push(repo.main_path)
+          push(repo.worktree_path)
+          for (const wt of repo.worktrees ?? []) push(wt.path)
+          if (repo.local_path) push(path.resolve(cabin.path, repo.local_path))
+        }
+      } catch { /* 坏 cabin.json 不影响其余根 */ }
+    }
 
     const tasks = db
       .prepare("SELECT id FROM tasks WHERE cabin_id = ?")
@@ -105,7 +113,7 @@ export function createChatMediaRoutes(sessionDAO: AgentSessionDAO): Hono {
     if (!mime) return c.json({ error: "unsupported image type" }, 415)
 
     const roots = chatMediaRoots(sessionDAO.getDb(), row)
-    if (!roots.some((root) => within(abs, root))) {
+    if (!roots.some((root) => withinDocRoot(abs, root))) {
       return c.json({ error: "path outside this chat's media roots" }, 403)
     }
 
@@ -126,6 +134,60 @@ export function createChatMediaRoutes(sessionDAO: AgentSessionDAO): Hono {
       "X-Content-Type-Options": "nosniff",
       "Content-Security-Policy": "sandbox",
     })
+  })
+
+  // GET /:sessionId/doc?path= —— 聊天里的文档 chip：文本回内容，媒体只回 kind。
+  app.get("/:sessionId/doc", (c) => {
+    const row = sessionDAO.findById(c.req.param("sessionId"))
+    if (!row) return c.json({ error: "session not found" }, 404)
+    try {
+      const { abs, ext } = resolveDocPath(
+        c.req.query("path") ?? "",
+        chatMediaRoots(sessionDAO.getDb(), row),
+        "path outside this chat's media roots",
+      )
+      return c.json(readDoc(abs, ext))
+    } catch (err) {
+      if (err instanceof DocAccessError) return c.json({ error: err.message }, err.status as 400)
+      return c.json({ error: err instanceof Error ? err.message : String(err) }, 500)
+    }
+  })
+
+  // GET /:sessionId/raw?path= —— 图片 / 视频 / 音频字节流；支持 Range（视频可拖进度）。
+  app.get("/:sessionId/raw", (c) => {
+    const row = sessionDAO.findById(c.req.param("sessionId"))
+    if (!row) return c.json({ error: "session not found" }, 404)
+    try {
+      const { abs, ext } = resolveDocPath(
+        c.req.query("path") ?? "",
+        chatMediaRoots(sessionDAO.getDb(), row),
+        "path outside this chat's media roots",
+      )
+      const raw = readDocRaw(abs, ext, c.req.header("range"))
+      if (raw.kind === "range-not-satisfiable") {
+        return c.body(null, 416, { "Content-Range": `bytes */${raw.total}` })
+      }
+      const headers: Record<string, string> = {
+        "Content-Type": raw.mime,
+        "Cache-Control": "no-store",
+        "Accept-Ranges": "bytes",
+        "X-Content-Type-Options": "nosniff",
+      }
+      if (raw.kind === "partial") {
+        return c.body(new Uint8Array(raw.buf), 206, {
+          ...headers,
+          "Content-Range": `bytes ${raw.start}-${raw.end}/${raw.total}`,
+          "Content-Length": String(raw.buf.byteLength),
+        })
+      }
+      return c.body(new Uint8Array(raw.buf), 200, {
+        ...headers,
+        "Content-Length": String(raw.buf.byteLength),
+      })
+    } catch (err) {
+      if (err instanceof DocAccessError) return c.json({ error: err.message }, err.status as 400)
+      return c.json({ error: err instanceof Error ? err.message : String(err) }, 500)
+    }
   })
 
   return app

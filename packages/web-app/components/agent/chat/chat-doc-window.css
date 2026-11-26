@@ -1,0 +1,198 @@
+/* 桌面 / 经典舱的文档查看窗（2026-11-26 用户）。
+   壳 = components/ui/dialog（左上关闭灯 / 贴纸边框）；这里只管正文排版。 */
+
+.chat-docwin-head {
+  flex: none;
+  display: flex;
+  align-items: flex-start;
+  gap: 9px;
+  padding: 0 16px 10px;
+  border-bottom: 1px solid var(--pop-bd);
+}
+.chat-docwin-glyph {
+  flex: none;
+  margin-top: 1px;
+  color: var(--pop-cyan);
+  font-size: 13px;
+  line-height: 1.2;
+}
+.chat-docwin-title {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  line-height: 1.25;
+}
+.chat-docwin-title b {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 13px;
+  font-weight: 800;
+  color: var(--pop-ink);
+}
+.chat-docwin-title span {
+  font-size: 10.5px;
+  color: var(--pop-dim);
+  letter-spacing: 0.02em;
+}
+
+.chat-docwin-pathbar {
+  flex: none;
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  padding: 7px 16px;
+  border-bottom: 1px solid color-mix(in srgb, var(--pop-bd) 60%, transparent);
+  background: color-mix(in srgb, var(--pop-bd) 12%, transparent);
+}
+.chat-docwin-path {
+  flex: 1;
+  min-width: 0;
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: 10.5px;
+  line-height: 16px;
+  color: var(--pop-cyan);
+  overflow-wrap: anywhere;
+  user-select: text;
+}
+.chat-docwin-btn {
+  flex: none;
+  padding: 1px 7px;
+  border: 1px solid color-mix(in srgb, var(--pop-cyan) 32%, transparent);
+  border-radius: 5px;
+  background: transparent;
+  color: var(--pop-ink);
+  font-size: 10px;
+  line-height: 16px;
+  transition: 0.13s;
+}
+.chat-docwin-btn:hover {
+  border-color: var(--pop-cyan);
+  background: color-mix(in srgb, var(--pop-cyan) 14%, transparent);
+}
+
+.chat-docwin-body {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: 14px 18px 20px;
+}
+
+.chat-doc-empty {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  padding: 22px 4px;
+  color: var(--pop-dim);
+  font-size: 11.5px;
+  line-height: 1.6;
+}
+.chat-doc-empty span { color: color-mix(in srgb, var(--pop-dim) 78%, transparent); font-size: 10.5px; }
+.chat-doc-empty.is-err { color: var(--pop-red); }
+
+.chat-doc-imgwrap {
+  display: grid;
+  place-items: center;
+  min-height: 160px;
+}
+.chat-doc-img {
+  max-width: 100%;
+  max-height: 100%;
+  border: 1px solid color-mix(in srgb, var(--pop-bd) 70%, transparent);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--pop-bd) 18%, transparent);
+  object-fit: contain;
+}
+.chat-doc-media {
+  display: block;
+  max-width: 100%;
+  margin: 8px auto;
+}
+
+/* md 版式：与全舱 .ck12-ckt-doc 同一气质，尺寸按桌面窗收敛。 */
+.chat-doc-md {
+  max-width: 78ch;
+  font-size: 12.5px;
+  line-height: 1.75;
+  color: var(--pop-ink);
+}
+.chat-doc-md h1 { margin: 0 0 10px; font-size: 16px; font-weight: 800; line-height: 1.35; }
+.chat-doc-md h2 { margin: 16px 0 8px; font-size: 14px; font-weight: 800; line-height: 1.4; }
+.chat-doc-md h3 { margin: 14px 0 6px; font-size: 13px; font-weight: 700; line-height: 1.4; }
+.chat-doc-md p { margin: 6px 0; }
+.chat-doc-md ul { margin: 6px 0; padding-left: 18px; list-style: disc; }
+.chat-doc-md li { margin: 2px 0; }
+.chat-doc-md blockquote {
+  margin: 8px 0;
+  padding: 4px 10px;
+  border-left: 2px solid color-mix(in srgb, var(--pop-cyan) 55%, transparent);
+  color: var(--pop-dim);
+}
+.chat-doc-md code {
+  border-radius: 3px;
+  background: color-mix(in srgb, var(--pop-bd) 55%, transparent);
+  padding: 0 4px;
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: 11px;
+  color: var(--pop-green);
+}
+.chat-doc-md pre {
+  margin: 8px 0;
+  padding: 9px 11px;
+  overflow-x: auto;
+  border: 1px solid color-mix(in srgb, var(--pop-bd) 60%, transparent);
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--pop-bd) 20%, transparent);
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: 11px;
+  line-height: 1.6;
+}
+.chat-doc-md pre code { background: none; padding: 0; color: var(--pop-ink); }
+
+.chat-doc-code {
+  margin: 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: 11.5px;
+  line-height: 1.65;
+  color: var(--pop-ink);
+}
+
+/* 转录里的文档 chip 兜底皮肤（全舱有 .ck12-app .doc-ref 覆盖，桌面 / 经典舱吃这套）。
+   路径是纯文本可选中，只有右侧 ↗ 按钮可点。 */
+.doc-ref-path {
+  min-width: 0;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  color: var(--pop-cyan);
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: 10.5px;
+  line-height: 16px;
+}
+.doc-ref > :first-child { flex: none; line-height: 16px; }
+.doc-ref-open {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 17px;
+  height: 17px;
+  padding: 0;
+  border-radius: 3px;
+  border: 1px solid color-mix(in srgb, var(--pop-cyan) 38%, transparent);
+  background: color-mix(in srgb, var(--pop-cyan) 9%, transparent);
+  color: var(--pop-cyan);
+  font-size: 10.5px;
+  font-weight: 700;
+  line-height: 1;
+  cursor: pointer;
+  transition: 0.14s;
+}
+.doc-ref-open:hover {
+  border-color: var(--pop-cyan);
+  background: color-mix(in srgb, var(--pop-cyan) 20%, transparent);
+  color: var(--pop-ink);
+  box-shadow: 0 0 10px color-mix(in srgb, var(--pop-cyan) 30%, transparent);
+}

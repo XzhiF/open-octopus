@@ -22,8 +22,8 @@ describe("/api/chat-media/:sessionId/image", () => {
   let cwd: string
   const sessionId = "s-1"
 
-  const get = (query: string, id = sessionId) =>
-    app.request(`/api/chat-media/${id}/image?${query}`)
+  const get = (query: string, id = sessionId, kind = "image") =>
+    app.request(`/api/chat-media/${id}/${kind}?${query}`)
 
   beforeEach(() => {
     db = new Database(":memory:")
@@ -33,6 +33,9 @@ describe("/api/chat-media/:sessionId/image", () => {
     cwd = path.join(tmp, "ws")
     fs.mkdirSync(path.join(cwd, "shots"), { recursive: true })
     fs.writeFileSync(path.join(cwd, "shots", "qr.png"), PNG)
+    fs.mkdirSync(path.join(cwd, "docs"), { recursive: true })
+    fs.writeFileSync(path.join(cwd, "docs", "report.md"), "# 验收报告\n\n通过 2/3。")
+    fs.writeFileSync(path.join(cwd, "docs", "blob.bin"), Buffer.from([0, 1, 2, 3]))
     const now = new Date().toISOString()
     db.prepare(
       "INSERT INTO sessions (id, title, cwd, created_at, updated_at) VALUES (?,?,?,?,?)",
@@ -86,5 +89,45 @@ describe("/api/chat-media/:sessionId/image", () => {
     expect(roots.map(norm)).toContain(norm(path.join(os.homedir(), ".octopus", "chat-media", sessionId)))
     expect(roots.map(norm)).toContain(norm(path.join(tmp, "task-ws")))
     expect(roots.map(norm)).toContain(norm(path.join(os.homedir(), ".octopus", "tasks", "t1")))
+  })
+
+  it("doc：md 回文本内容；未知扩展 = binary；相对路径 400；根外 403", async () => {
+    const md = path.join(cwd, "docs", "report.md")
+    const res = await get(`path=${encodeURIComponent(md)}`, sessionId, "doc")
+    expect(res.status).toBe(200)
+    const body = await res.json() as { kind: string; content?: string; ext: string; size: number }
+    expect(body.kind).toBe("text")
+    expect(body.ext).toBe(".md")
+    expect(body.content).toContain("通过 2/3")
+    expect(body.size).toBeGreaterThan(0)
+
+    const bin = await get(`path=${encodeURIComponent(path.join(cwd, "docs", "blob.bin"))}`, sessionId, "doc")
+    expect((await bin.json() as { kind: string }).kind).toBe("binary")
+
+    expect((await get(`path=${encodeURIComponent("docs/report.md")}`, sessionId, "doc")).status).toBe(400)
+    const outside = path.join(tmp, "outside.md")
+    fs.writeFileSync(outside, "# x")
+    expect((await get(`path=${encodeURIComponent(outside)}`, sessionId, "doc")).status).toBe(403)
+  })
+
+  it("raw：完整字节 200；Range 206 + Content-Range", async () => {
+    const png = path.join(cwd, "shots", "qr.png")
+    const full = await get(`path=${encodeURIComponent(png)}`, sessionId, "raw")
+    expect(full.status).toBe(200)
+    expect(full.headers.get("accept-ranges")).toBe("bytes")
+    expect(Buffer.from(await full.arrayBuffer())).toEqual(PNG)
+
+    const part = await app.request(
+      `/api/chat-media/${sessionId}/raw?path=${encodeURIComponent(png)}`,
+      { headers: { Range: "bytes=0-3" } },
+    )
+    expect(part.status).toBe(206)
+    expect(part.headers.get("content-range")).toBe(`bytes 0-3/${PNG.byteLength}`)
+    expect(Buffer.from(await part.arrayBuffer())).toEqual(PNG.subarray(0, 4))
+  })
+
+  it("raw：非媒体扩展 415", async () => {
+    const md = path.join(cwd, "docs", "report.md")
+    expect((await get(`path=${encodeURIComponent(md)}`, sessionId, "raw")).status).toBe(415)
   })
 })
