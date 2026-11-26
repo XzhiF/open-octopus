@@ -213,6 +213,9 @@ export class SystemPromptAssembler {
     // Segment 5: Context — workspace rules (priority 4)
     segments.push(this.buildContextSegment())
 
+    // Segment 5b: 产物展示（图片缩略图，2026-11-26 用户）
+    segments.push(this.buildArtifactDisplaySegment())
+
     // Segment 6: Clone-specific (priority 5, only if clone_name provided)
     if (options.clone_name) {
       segments.push(this.buildCloneSegment(options.clone_name))
@@ -227,6 +230,23 @@ export class SystemPromptAssembler {
   }
 
   // ── Segment builders ─────────────────────────────────────────
+
+  /** 产物展示（2026-11-26 用户）：对话里会把图片绝对路径渲染成缩略图。
+   *  模型只要把路径写进正文即可 —— 不需要任何额外工具。 */
+  private buildArtifactDisplaySegment(): PromptSegment {
+    const content = [
+      '# 产物展示',
+      '- 生成的图片（截图 / 二维码 / 图表）写到当前工作目录或 ~/.octopus/chat-media/ 下，并在最终回复里给出绝对路径（可写成 ![说明](绝对路径)，也可放在反引号里）。',
+      '- 前端会把正文里的图片绝对路径显示成缩略图；只写「已生成」不给路径，用户就看不到图。',
+    ].join('\n')
+    return {
+      name: 'artifact_display',
+      content,
+      tokenEstimate: Math.ceil(content.length / CHARS_PER_TOKEN),
+      priority: 4,
+      source: 'context',
+    }
+  }
 
   private buildCoreSegment(): PromptSegment {
     // Platform protocol only. The IDENTITY lives in the persona segment (and,

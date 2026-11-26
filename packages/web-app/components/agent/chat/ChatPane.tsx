@@ -32,6 +32,7 @@ import { TriggerDialog } from '@/components/tasks/trigger-dialog'
 import type { RunTarget, SubagentTarget, TaskModule, TaskWindowMap, YamlTarget } from '@/components/chat-workbench/task-window-types'
 import { useTaskModuleSurface } from '@/lib/task-module-surface'
 import { TaskProjectChip } from '@/components/chat-workbench/task-project-chip'
+import { ChatMediaProvider } from './chat-images'
 import { WorkspaceExplorerDock, type CabinDockModule } from '@/components/workspace/workspace-explorer-dock'
 import { useActivitySnapshot } from '@/components/chat-workbench/inspector-activity'
 import { WorkflowWindow } from '@/components/chat-workbench/workflow-window'
@@ -246,6 +247,8 @@ export function ChatPane({
   } = shared
 
   const [creatingTask, setCreatingTask] = useState(false)
+  // 对话图片缩略图（2026-11-26 用户）：会话 id 下发给渲染层，图片接口按会话解析白名单。
+  const mediaScope = useMemo(() => ({ sessionId: sessionId ?? null }), [sessionId])
   const [taskModuleRequest, setTaskModuleRequest] = useState<{ module: TaskModule; nonce: number; runTarget?: RunTarget | null; subagentTarget?: SubagentTarget | null } | null>(null)
   // 全舱宿主提供 → 规格/运行/验收开舱系浮窗；桌面（null）→ 回落 TaskModulesLayer。
   const moduleSurface = useTaskModuleSurface()
@@ -1617,6 +1620,7 @@ export function ChatPane({
             onNew={startNewFromPicker}
           />
         ) : (
+          <ChatMediaProvider value={mediaScope}>
           <ChatArea
             messages={viewMessages}
             hasMoreMessages={hasMoreMessages}
@@ -1744,6 +1748,7 @@ export function ChatPane({
             onQueueDepthChange={reportQueueDepth}
             composerBridgeRef={composerBridgeRef}
           />
+          </ChatMediaProvider>
         )}
       </div>
 

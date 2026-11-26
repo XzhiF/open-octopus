@@ -105,6 +105,7 @@ import scheduleRoutes, { setScheduleService } from "./routes/schedule"
 import { createSchedulerRoutes } from "./routes/scheduler"
 import { createTasksRoutes, createSessionUsageRoutes } from "./routes/tasks"
 import { createCabinRoutes } from "./routes/cabins"
+import { createChatMediaRoutes } from "./routes/chat-media"
 import { createTaskWorkflowDevRoutes } from "./routes/task-workflow-dev"
 import { initWorkflowDevService } from "./services/tasks/workflow-dev-service"
 import { createTaskCloneDevRoutes } from "./routes/task-clone-dev"
@@ -1607,6 +1608,9 @@ if (shouldServe) {
         cabinService, cabinInitService, sse, cabinComm,
         cabinDecisionService, cabinDelegationService,
       ))
+      // 对话图片缩略图（2026-11-26 用户）：<img src> 带不了 Bearer，独立挂在
+      // 鉴权闸外，与舱 doc-raw 同一口径（只读 / 白名单 / 现读）。
+      app.route('/api/chat-media', createChatMediaRoutes(daos!.agentSession))
 
       // ★ Initialize Scheduler Engine with executors
       if (getFlag('scheduler')) {

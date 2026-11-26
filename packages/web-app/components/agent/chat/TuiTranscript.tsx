@@ -21,6 +21,7 @@ import { AcceptanceCheckCard } from './acceptance-check-card'
 import { ArchiveSummaryCard } from './archive-summary-card'
 import { AuthorAskCard } from './author-ask-card'
 import { CabinInitGateCard } from '@/components/cabin/CabinInitGateCard'
+import { ChatImages } from './chat-images'
 
 /** 文档扩展名（与服务端 GET /api/cabins/:id/doc 同一张表）：命中才渲染成可点 chip。 */
 const DOC_EXT_PATTERN = 'md|markdown|mdx|txt|json|jsonc|ya?ml|toml|ini|conf|csv|tsv|log|xml|html?|css|scss|less|js|mjs|cjs|ts|tsx|jsx|vue|svelte|py|go|rs|java|kt|kts|sh|bash|zsh|ps1|sql|graphql|proto|diff|patch|rst|adoc|png|jpe?g|gif|webp|avif|svg|bmp|ico|mp4|m4v|webm|ogv|mov|mp3|m4a|wav|ogg'
@@ -824,6 +825,7 @@ export function TuiMessage({ message, compactEvent, ask, docLinks = false, lead,
           </div>
         )
         : metaCount > 0 && <div className="text-pop-dim"><TuiMark />（未生成文本回复）</div>}
+      {displayContent && <ChatImages text={displayContent} />}
       {ask && askCall && (
         ask.answered ? (
           <div

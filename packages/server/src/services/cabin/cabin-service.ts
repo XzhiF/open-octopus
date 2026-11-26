@@ -1386,11 +1386,29 @@ export class CabinService {
   docRoots(cabinId: string): string[] {
     const row = this.mustGet(cabinId)
     const roots: string[] = []
-    if (row.path) roots.push(path.resolve(row.path))
+    const push = (value: string | null | undefined) => {
+      if (value) roots.push(path.resolve(value.replace(/^~/, os.homedir())))
+    }
+    push(row.path)
+    // 2026-11-26 用户：生成物常见落点 —— 项目检出 / 外部项目 / worktree /
+    // 旧任务 home / 对话媒体目录，都放进文档窗白名单，避免「磁盘上有、点开 404」。
+    if (row.path) {
+      try {
+        for (const repo of readCabinConfig(row.path).repos) {
+          if (repo.main_path) push(repo.main_path)
+          if (repo.worktree_path) push(repo.worktree_path)
+          for (const wt of repo.worktrees ?? []) push(wt.path)
+          if (repo.local_path) push(path.resolve(row.path, repo.local_path))
+        }
+      } catch { /* 坏 cabin.json 不影响文档窗其余根 */ }
+    }
+    push(path.join(os.homedir(), ".octopus", "chat-media"))
     if (this.infra) {
       for (const t of this.infra.taskDAO.findByCabinId(cabinId)) {
         const wsPath = t.workspace_id ? this.infra.workspaceDAO.findPathById(t.workspace_id) : null
         if (wsPath) roots.push(path.resolve(wsPath.replace(/^~/, os.homedir())))
+        // 老任务 home（resolver 之前的 ~/.octopus/tasks/<id>）仍可能留着产物。
+        push(path.join(os.homedir(), ".octopus", "tasks", t.id))
       }
     }
     return [...new Set(roots)]

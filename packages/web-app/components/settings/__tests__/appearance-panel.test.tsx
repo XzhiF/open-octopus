@@ -3,7 +3,7 @@
 import { fireEvent, render, screen } from "@testing-library/react"
 import { beforeEach, describe, expect, it } from "vitest"
 import { AppearancePanel } from "../appearance-panel"
-import { __resetDockLabelsForTests, getDockLabelsVisible } from "@/lib/ui-preferences"
+import { __resetDockLabelsForTests, getChatImageThumbs, getDockLabelsVisible } from "@/lib/ui-preferences"
 
 beforeEach(() => {
   localStorage.clear()
@@ -24,6 +24,24 @@ describe("AppearancePanel — 作业坞", () => {
 
     fireEvent.click(toggle)
     expect(getDockLabelsVisible()).toBe(true)
+    expect(toggle.getAttribute("data-state")).toBe("checked")
+  })
+})
+
+describe("AppearancePanel — 对话图片缩略图", () => {
+  it("默认开启；点开关落盘为关闭，再点恢复", () => {
+    render(<AppearancePanel />)
+
+    const toggle = screen.getByTestId("chat-image-thumbs-switch")
+    expect(toggle.getAttribute("data-state")).toBe("checked")
+
+    fireEvent.click(toggle)
+    expect(getChatImageThumbs()).toBe(false)
+    expect(localStorage.getItem("octopus.ui.chatImageThumbs.v1")).toBe("false")
+    expect(toggle.getAttribute("data-state")).toBe("unchecked")
+
+    fireEvent.click(toggle)
+    expect(getChatImageThumbs()).toBe(true)
     expect(toggle.getAttribute("data-state")).toBe("checked")
   })
 })
