@@ -21,6 +21,10 @@ extraResources:
     to: server/node_modules
   - from: resources/packages/core-pack
     to: packages/core-pack
+  # 托盘图标：由 prepare-resources 从 build/tray 拷进 resources/，
+  # 运行时从 process.resourcesPath/tray 读。
+  - from: resources/tray
+    to: tray
 asar: true
 npmRebuild: false
 publish: null
