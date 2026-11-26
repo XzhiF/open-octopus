@@ -1,12 +1,13 @@
 'use client'
 
 // v21 二轮（原型 settings 弹窗）·「更多 → 设置」：
-//   声音（音效）/ 外观（主题色 · 窗口透明度）/ 场景（随机跃迁）/ 性能（星野帧率）/
-//   原型演练（自动回流）。
+//   声音（音效）/ 外观（主题色 · 窗口透明度）/ 对话（图片缩略图）/ 场景（随机跃迁）/
+//   性能（星野帧率）/ 原型演练（自动回流）。
 //
 // 偏好真源：
 //   · 音效 / 主题色 / 窗口透明度 / 帧率 ← cockpit_prefs（本机落库，700ms 防抖）
 //   · 随机跃迁 ← CockpitState.autoWarp
+//   · 图片缩略图 ← localStorage octopus.ui.chatImageThumbs.v1（与桌面 设置 → 外观 同一个开关）
 //   · 自动回流 ← sim-auto store（仅 DEV + ?demo=1 生效）
 //
 // 设置窗本身不跟随窗口透明度（方便边调边看，原型同口径）。
@@ -17,6 +18,8 @@ import { THEMES, type CockpitFrameRate, type CockpitTheme } from '@/components/c
 import { useCockpit } from '@/components/cabin/CockpitProvider'
 import { useCockpitState } from '../state/CockpitStateProvider'
 import { useSimAuto, setSimAuto } from '../fx/sim-auto'
+import { useChatImageThumbs } from '@/hooks/use-chat-image-thumbs'
+import { setChatImageThumbs } from '@/lib/ui-preferences'
 import { setCockpitSettingsOpen, useCockpitSettingsOpen } from './settings-store'
 
 const THEME_ORDER = Object.keys(THEMES) as CockpitTheme[]
@@ -34,6 +37,7 @@ export function CockpitSettings() {
   const { prefs, applyPrefs } = useCockpit()
   const { autoWarp, setAutoWarp, layer } = useCockpitState()
   const simAuto = useSimAuto()
+  const chatImages = useChatImageThumbs()
 
   const close = () => setCockpitSettingsOpen(false)
 
@@ -134,6 +138,22 @@ export function CockpitSettings() {
               />
               <b>{alpha}%</b>
             </span>
+          </div>
+
+          <div className="ck12-sgrp">对话</div>
+          <div className="ck12-srow">
+            <span className="ck12-sk">
+              <b>显示图片缩略图</b>
+              <span>对话里出现图片路径时直接显示缩略图，点开看大图；关闭后只显示路径文本</span>
+            </span>
+            <button
+              type="button"
+              className={`ck12-sw${chatImages ? ' is-on' : ''}`}
+              aria-pressed={chatImages}
+              data-testid="cockpit-setting-chat-images"
+              title={chatImages ? '关闭图片缩略图' : '开启图片缩略图'}
+              onClick={() => setChatImageThumbs(!chatImages)}
+            />
           </div>
 
           <div className="ck12-sgrp">场景</div>
