@@ -104,3 +104,17 @@ docs/cabin-design/shots-fidelity/
 # ── 桌面壳打包产物与本机日志 ────────────────────────────────────────────
 packages/desktop/*.log
 packages/desktop/release-verify/
+
+# packages/mobile (Flutter) — 构建产物 + 同步来的素材（真源在 docs/cabin-design）
+packages/mobile/.dart_tool/
+packages/mobile/build/
+packages/mobile/.flutter-plugins
+packages/mobile/.flutter-plugins-dependencies
+packages/mobile/android/.gradle/
+packages/mobile/android/local.properties
+packages/mobile/android/app/debug/
+packages/mobile/android/app/release/
+packages/mobile/ios/Pods/
+packages/mobile/ios/.symlinks/
+packages/mobile/assets/
+packages/mobile/android/build/

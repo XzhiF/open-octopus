@@ -44,7 +44,8 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "lint": "pnpm -r run lint",
-    "kill:port": "node scripts/kill-port.mjs"
+    "kill:port": "node scripts/kill-port.mjs",
+    "mobile:assets": "node packages/mobile/scripts/sync-assets.mjs"
   },
   "devDependencies": {
     "@playwright/test": "^1.61.1",
